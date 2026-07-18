@@ -980,6 +980,8 @@ class _ArrowItem(_HandleResizeMixin, QGraphicsItem):
         self._head_at_end = head_at_end
         self._bind1 = None     # 지속 연결: 끝점0이 묶인 도형(_RectItem/_EllipseItem) or None
         self._bind2 = None     # 끝점1이 묶인 도형 or None
+        self._bind1_pt = None  # 그 도형의 '로컬 좌표' 부착점(고정) — 도형 이동/스케일 시 mapToScene로 추종
+        self._bind2_pt = None
         self._init_resize()
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -1014,6 +1016,8 @@ class _ArrowItem(_HandleResizeMixin, QGraphicsItem):
             c._ctrl1 = QPointF(self._ctrl1)
             c._ctrl2 = QPointF(self._ctrl2)
         c._bind1, c._bind2 = self._bind1, self._bind2  # 지속 연결 바인딩 유지
+        c._bind1_pt = None if self._bind1_pt is None else QPointF(self._bind1_pt)
+        c._bind2_pt = None if self._bind2_pt is None else QPointF(self._bind2_pt)
         return self._copy_common_to(c)
 
     # ---- 끝점(양끝 이동) 핸들 -------------------------------------------
@@ -1041,84 +1045,54 @@ class _ArrowItem(_HandleResizeMixin, QGraphicsItem):
     def _move_endpoint_with_snap(self, idx, local_p):
         # 끝점을 테두리에 재스냅하면 생성 때처럼 바깥 법선으로 제어점을 다시 잡아 S자(수직 도착/이탈)
         # 복원, 테두리 밖이면 끝점만 이동(수동으로 구부린 곡선은 delta 추종으로 보존).
-        # 지속 연결: 스냅되면 그 도형에 바인딩, 멀리 끌어 스냅 안 되면 바인딩 해제(unbind).
+        # 지속 연결: 스냅되면 그 도형의 '그 지점'(로컬 좌표)에 고정 바인딩,
+        # 멀리 끌어 스냅 안 되면 바인딩 해제(unbind). 곡선은 기존 스냅 곡선 로직 유지.
         snapped = self._endpoint_border_snap(local_p)
         if snapped is None:
             self.set_bound(idx, None)
             self._set_endpoint(idx, local_p)
             return
-        self.set_bound(idx, snapped[2])
+        shape = snapped[2]
+        self.set_bound(idx, shape, shape.mapFromScene(self.mapToScene(snapped[0])))
         self._set_endpoint(idx, snapped[0])
         self._recompute_snap_curve(idx, snapped[1])
 
-    # ---- 지속 연결(persistent connection) -------------------------------
+    # ---- 지속 연결(persistent connection) — 고정 부착점 방식 --------------
     def _bound(self, idx):
         return self._bind1 if idx == 0 else self._bind2
 
-    def set_bound(self, idx, shape):
+    def _bind_pt(self, idx):
+        return self._bind1_pt if idx == 0 else self._bind2_pt
+
+    def set_bound(self, idx, shape, local_pt=None):
+        """끝점 idx를 shape에 고정. local_pt는 shape 로컬 좌표의 부착점(None이면 해제)."""
         if idx == 0:
-            self._bind1 = shape
+            self._bind1, self._bind1_pt = shape, (None if shape is None else local_pt)
         else:
-            self._bind2 = shape
+            self._bind2, self._bind2_pt = shape, (None if shape is None else local_pt)
 
     def has_binding(self) -> bool:
         return self._bind1 is not None or self._bind2 is not None
 
-    def _apply_curve_from_normals(self, normals):
-        # _recompute_snap_curve와 동일 공식 — 두 끝의 바깥 법선(scene)으로 3차 베지어 제어점 산출.
-        p1, p2 = self._p1, self._p2
-        dx, dy = p2.x() - p1.x(), p2.y() - p1.y()
-        dist = math.hypot(dx, dy)
-        if (normals[0] is None and normals[1] is None) or dist < 8:
-            self._ctrl1 = self._ctrl2 = None
-            return
-        k = max(30.0, min(dist * 0.5, 200.0))
-        if normals[0] is not None:
-            e1 = self._scene_dir_to_local(normals[0])
-        else:
-            e1 = QPointF(dx / dist, dy / dist)
-        if normals[1] is not None:
-            e2 = self._scene_dir_to_local(normals[1])
-        else:
-            e2 = QPointF(-e1.x(), -e1.y())
-        self._ctrl1 = QPointF(p1.x() + e1.x() * k, p1.y() + e1.y() * k)
-        self._ctrl2 = QPointF(p2.x() + e2.x() * k, p2.y() + e2.y() * k)
-
     def reroute(self, pin_pred=None) -> bool:
-        """바인딩된 끝점을 그 도형 테두리(상대편을 향한 최근접점)로 재계산. 변경이 있었으면 True.
-        pin_pred(idx)가 False인 끝점은 재고정하지 않는다(강체 이동 — 같은 선택으로 함께 움직이는 경우).
-        무변경이면 geometry를 안 건드려 scene.changed 되먹임 루프를 끊는다."""
+        """바인딩된 끝점을 '도형의 고정 부착점'(로컬→씬)으로 추종. 변경 있었으면 True.
+        곡선은 재계산하지 않는다 — _set_endpoint가 제어점을 delta로 끌고 가 사용자가 그린 곡선을 보존.
+        pin_pred(idx)가 False면 재고정 안 함(강체). 무변경이면 geometry 미변경으로 되먹임 루프 차단."""
         if not self.has_binding():
             return False
-        old_p1, old_p2 = QPointF(self._p1), QPointF(self._p2)
-        old_c1 = None if self._ctrl1 is None else QPointF(self._ctrl1)
-        old_c2 = None if self._ctrl2 is None else QPointF(self._ctrl2)
-
-        pts = [self.mapToScene(self._p1), self.mapToScene(self._p2)]
-        normals = [None, None]
-        touched = False
+        changed = False
         for idx in (0, 1):
             sh = self._bound(idx)
-            if sh is None or sh.scene() is None:
+            pt = self._bind_pt(idx)
+            if sh is None or pt is None or sh.scene() is None:
                 continue
             if pin_pred is not None and not pin_pred(idx):
                 continue
-            toward = pts[1 - idx]
-            sp, n = _nearest_border(sh, toward)
-            self._set_endpoint(idx, self.mapFromScene(sp))
-            pts[idx] = sp
-            normals[idx] = n
-            touched = True
-        if touched:
-            self._apply_curve_from_normals(normals)
-
-        def _close(a, b):
-            if a is None or b is None:
-                return a is None and b is None
-            return abs(a.x() - b.x()) < 1e-6 and abs(a.y() - b.y()) < 1e-6
-
-        changed = not (_close(old_p1, self._p1) and _close(old_p2, self._p2)
-                       and _close(old_c1, self._ctrl1) and _close(old_c2, self._ctrl2))
+            target = self.mapFromScene(sh.mapToScene(pt))   # 부착점의 현재 씬위치 → 화살표 로컬
+            cur = self._endpoints()[idx]
+            if abs(target.x() - cur.x()) > 1e-6 or abs(target.y() - cur.y()) > 1e-6:
+                self._set_endpoint(idx, target)   # 제어점도 같은 delta로 따라감(곡선 보존)
+                changed = True
         if changed:
             self.prepareGeometryChange()
             self.update()
@@ -1905,7 +1879,10 @@ class _AnnotatorView(QGraphicsView):
         if snap is not None:
             tip, back = snap[0], snap[1]   # 타깃 바깥 법선 쪽에 ctrl2 → 수직 도착
         self._arrow_tip_snap = snap[0] if snap is not None else None
-        it._bind2 = snap[2] if snap is not None else None  # 지속 연결: tip이 붙은 도형
+        if snap is not None:   # 지속 연결: tip이 붙은 도형 + 그 지점(로컬 좌표) 고정
+            it.set_bound(1, snap[2], snap[2].mapFromScene(snap[0]))
+        else:
+            it.set_bound(1, None)
         start = self._start
         exit_dir = self._arrow_snap_exit
         dist = math.hypot(tip.x() - start.x(), tip.y() - start.y())
@@ -2042,7 +2019,7 @@ class _AnnotatorView(QGraphicsView):
                 self._start = snap[0]
                 self._arrow_snap_exit = snap[1]
                 self._arrow_tip_snap = None
-                it._bind1 = snap[2]   # 지속 연결: 시작이 붙은 도형
+                it.set_bound(0, snap[2], snap[2].mapFromScene(snap[0]))  # 시작 고정 부착점
                 it.set_points(self._start, self._start)
                 self._begin_draw(it)
                 return

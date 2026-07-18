@@ -105,22 +105,37 @@ def test_persistent_connection():
     w = CanvasWindow()
     r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     ar = _ArrowItem(QColor("#ffff0000"), 6, True)
-    ar.set_points(QPointF(500, 30), QPointF(200, 30)); ar.set_bound(1, r)
+    # 고정 부착점: 우측 테두리 (100,30)에 tip 고정, 시작은 자유(500,30)
+    ar.set_points(QPointF(500, 30), QPointF(100, 30))
+    ar.set_bound(1, r, QPointF(100, 30))
     ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(ar)
 
     ar.reroute(pin_pred=lambda i: True)
-    assert _close(ar.mapToScene(ar._p2), QPointF(100, 30))     # 테두리에 고정
+    assert _close(ar.mapToScene(ar._p2), QPointF(100, 30))     # 고정점에 붙음
 
     r.setPos(QPointF(200, 0)); w._on_scene_changed(None)
-    assert _close(ar.mapToScene(ar._p2), QPointF(300, 30))     # 도형 따라 늘어남
+    assert _close(ar.mapToScene(ar._p2), QPointF(300, 30))     # 도형 따라 이동(상대점 유지)
 
+    # 반대편(far side) 부착 — 최근접이 아니라 '떨군 자리'를 지킨다(버그 수정 검증)
+    r.setPos(QPointF(0, 0))
+    ar.set_bound(1, r, QPointF(0, 30))    # 좌측 테두리에 고정
+    ar.reroute(pin_pred=lambda i: True)
+    assert _close(ar.mapToScene(ar._p2), QPointF(0, 30)), "far-side attach must hold"
+
+    # 곡선 보존: 수동 제어점이 리라우트(도형 무이동)로 사라지지 않음
+    ar.set_bound(1, r, QPointF(100, 30)); ar.reroute(pin_pred=lambda i: True)
+    ar._ctrl1 = QPointF(200, -50); ar._ctrl2 = QPointF(150, 80)
+    ar.reroute(pin_pred=lambda i: True)   # 도형 안 움직였으니 곡선 그대로여야
+    assert ar._ctrl1 == QPointF(200, -50) and ar._ctrl2 == QPointF(150, 80), "curve preserved"
+
+    # 강체/늘림 규칙
     r.setSelected(True); ar.setSelected(True)
     assert w._make_pin_pred(ar)(1) is False                    # 둘 다 선택 = 강체
     r.setSelected(False)
     assert w._make_pin_pred(ar)(1) is True                     # 도형만 제자리 = 늘림
 
-    # 왕복: 바인딩 재연결
+    # 왕복: 바인딩 + 고정점 재연결
     path = os.path.join(_TMP, "conn.ecad")
     save_document(w._scene, path)
     from PyQt6.QtWidgets import QGraphicsScene
@@ -129,6 +144,7 @@ def test_persistent_connection():
     a2 = [it for it in sc2.items() if isinstance(it, _ArrowItem)][0]
     r2 = [it for it in sc2.items() if isinstance(it, _RectItem)][0]
     assert a2._bound(1) is r2 and a2._bound(0) is None
+    assert a2._bind_pt(1) == QPointF(100, 30)
 
 
 def _run_all():

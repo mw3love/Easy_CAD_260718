@@ -170,12 +170,18 @@ def save_document(scene, path: str):
     serial = [(it, item_to_dict(it)) for it in reversed(scene.items())]
     serial = [(it, d) for it, d in serial if d is not None]
     idx_of = {id(it): i for i, (it, _d) in enumerate(serial)}
-    # 화살표의 지속 연결 바인딩을 '저장 리스트 인덱스'로 기록(로드 시 인덱스로 재연결).
+    # 화살표의 지속 연결 바인딩을 '저장 리스트 인덱스' + 고정 부착점(도형 로컬좌표)으로 기록.
     for it, d in serial:
         if d["type"] == "arrow":
-            for key, bi in (("bind1", 0), ("bind2", 1)):
+            for key, pkey, bi in (("bind1", "bind1_pt", 0), ("bind2", "bind2_pt", 1)):
                 sh = it._bound(bi)
-                d[key] = idx_of.get(id(sh)) if (sh is not None and id(sh) in idx_of) else None
+                pt = it._bind_pt(bi)
+                if sh is not None and id(sh) in idx_of and pt is not None:
+                    d[key] = idx_of[id(sh)]
+                    d[pkey] = [pt.x(), pt.y()]
+                else:
+                    d[key] = None
+                    d[pkey] = None
     items = [d for _it, d in serial]
     doc = {"format": FORMAT, "version": VERSION, "items": items}
     with open(path, "w", encoding="utf-8") as f:
@@ -198,8 +204,9 @@ def load_document(scene, path: str) -> int:
     for d, it in zip(items, created):
         if it is None or d.get("type") != "arrow":
             continue
-        for key, bi in (("bind1", 0), ("bind2", 1)):
+        for key, pkey, bi in (("bind1", "bind1_pt", 0), ("bind2", "bind2_pt", 1)):
             j = d.get(key)
-            if j is not None and 0 <= j < len(created) and created[j] is not None:
-                it.set_bound(bi, created[j])
+            pt = d.get(pkey)
+            if j is not None and 0 <= j < len(created) and created[j] is not None and pt is not None:
+                it.set_bound(bi, created[j], QPointF(*pt))
     return sum(1 for it in created if it is not None)
