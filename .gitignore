@@ -9,3 +9,6 @@ dist/
 .pytest_cache/
 .DS_Store
 Thumbs.db
+
+# 참고자료 대용량 PDF (로컬만 유지, 리포 경량화)
+docs/reference/*.pdf
