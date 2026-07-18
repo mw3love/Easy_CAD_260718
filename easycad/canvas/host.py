@@ -45,6 +45,7 @@ class CanvasWindow(QMainWindow):
         self.current_badge_size = _DEFAULT_BADGE
         self.current_text_bg = None
         self.arrow_head_at_end = True
+        self.snap_enabled = True         # o-snap 토글(F3) — 도형 테두리 달라붙기 켜고 끄기
         self._bg_item = None            # 배경 이미지 없음(무한 캔버스)
         self._badge_n = 0
         self._undo: list[tuple[str, list]] = []
@@ -103,6 +104,43 @@ class CanvasWindow(QMainWindow):
         a_sel.setShortcut(QKeySequence("Ctrl+Shift+P"))
         a_sel.triggered.connect(lambda: self._export_pdf(selection_only=True))
         m.addAction(a_sel)
+
+        # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
+        v = self.menuBar().addMenu("보기(&V)")
+        a_100 = QAction("100% (1:1)", self)
+        a_100.setShortcut(QKeySequence("Ctrl+0"))
+        a_100.triggered.connect(self._zoom_reset)
+        v.addAction(a_100)
+        a_fit = QAction("전체 맞춤", self)
+        a_fit.setShortcut(QKeySequence("Ctrl+9"))
+        a_fit.triggered.connect(self._zoom_fit)
+        v.addAction(a_fit)
+        v.addSeparator()
+        self._act_snap = QAction("스냅 (o-snap)", self)
+        self._act_snap.setCheckable(True)
+        self._act_snap.setChecked(True)
+        self._act_snap.setShortcut(QKeySequence("F3"))
+        self._act_snap.triggered.connect(self._toggle_snap)
+        v.addAction(self._act_snap)
+
+    # ---- 보기: 기준 zoom / 스냅 -------------------------------------------
+    def _zoom_reset(self):
+        """기준 zoom = 100%(1:1). 무한캔버스에서 돌아올 홈."""
+        self._view.resetTransform()
+
+    def _zoom_fit(self):
+        rect = self._scene.itemsBoundingRect()
+        if rect.isEmpty():
+            self._view.resetTransform()
+            return
+        pad = max(rect.width(), rect.height()) * 0.05 + 20
+        self._view.fitInView(rect.adjusted(-pad, -pad, pad, pad),
+                             Qt.AspectRatioMode.KeepAspectRatio)
+
+    def _toggle_snap(self, checked: bool):
+        self.snap_enabled = checked
+        self.statusBar().showMessage(
+            "스냅 켜짐" if checked else "스냅 꺼짐 — 자유 배치", 3000)
 
     # ---- 저장 / 열기 --------------------------------------------------------
     _DOC_FILTER = "Easy CAD 문서 (*.ecad)"
@@ -184,7 +222,8 @@ class CanvasWindow(QMainWindow):
             h.addWidget(btn)
             self._tool_buttons[key] = btn
         h.addStretch(1)
-        h.addWidget(QLabel("스크롤=줌 · 가운데버튼/손모드 드래그=이동 · Del=삭제 · Ctrl+Z=되돌리기"))
+        h.addWidget(QLabel("휠=줌 · Shift+휠=두께/크기 · 가운데버튼 드래그=이동 · "
+                           "Ctrl+0=100% · Ctrl+9=전체맞춤 · F3=스냅 · Del=삭제 · Ctrl+Z=되돌리기"))
         return bar
 
     # ---- 지속 연결 리라우트 -------------------------------------------------

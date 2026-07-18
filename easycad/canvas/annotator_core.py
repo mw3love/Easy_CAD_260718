@@ -1834,7 +1834,10 @@ class _AnnotatorView(QGraphicsView):
     def _border_snap_at(self, view_pos):
         """커서가 어떤 네모/원 테두리에서 _BORDER_SNAP_PX 이내면 (snap_scene, exit_unit, shape),
         아니면 None. 여러 도형이 후보면 가장 가까운 테두리점을 고른다.
-        (shape는 지속 연결 바인딩용 — 기존 인덱서 snap[0]/snap[1]과 호환되게 뒤에 붙임.)"""
+        (shape는 지속 연결 바인딩용 — 기존 인덱서 snap[0]/snap[1]과 호환되게 뒤에 붙임.)
+        owner.snap_enabled가 False면 스냅을 끈다(o-snap 토글 — 세밀 제어용)."""
+        if not getattr(self._owner, "snap_enabled", True):
+            return None
         scene_pt = self.mapToScene(view_pos)
         best = None
         bestd = self._BORDER_SNAP_PX
@@ -1939,9 +1942,10 @@ class _AnnotatorView(QGraphicsView):
         dy = event.angleDelta().y()
         if dy == 0:
             return
-        # 편집 모드에서 커서 아래에 주석이 있으면 줌 대신 그 주석 속성을 조절
-        # (도형=두께 / 텍스트·번호=크기). 없으면 기존대로 이미지 줌.
-        if self._owner.is_edit_mode():
+        # 무한캔버스는 줌이 잦으므로 '그냥 휠 = 항상 줌'. 커서 아래 주석의 속성 조절
+        # (도형=두께 / 텍스트·번호=크기)은 'Shift+휠'로 옮긴다(휠-줌 충돌 방지).
+        if (self._owner.is_edit_mode()
+                and event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
             bg = getattr(self._owner, "_bg_item", None)
             for it in self.items(event.position().toPoint()):
                 if it is bg:

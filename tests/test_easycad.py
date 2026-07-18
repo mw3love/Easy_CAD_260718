@@ -147,6 +147,29 @@ def test_persistent_connection():
     assert a2._bind_pt(1) == QPointF(100, 30)
 
 
+def test_view_controls():
+    w = CanvasWindow(); w.show()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    vpos = w._view.mapFromScene(QPointF(100, 30))   # 우측 테두리 근처
+
+    # o-snap 토글: 켜짐이면 스냅, 꺼짐이면 None
+    w.snap_enabled = True
+    assert w._view._border_snap_at(vpos) is not None
+    w.snap_enabled = False
+    assert w._view._border_snap_at(vpos) is None
+    w.snap_enabled = True
+
+    # 기준 zoom(100%) 복귀
+    w._view.scale(2.5, 2.5)
+    assert abs(w._view.transform().m11() - 2.5) < 1e-6
+    w._zoom_reset()
+    assert abs(w._view.transform().m11() - 1.0) < 1e-6
+
+    # 전체 맞춤 — 크래시 없이 변환 적용
+    w._zoom_fit()
+    assert w._view.transform().m11() > 0
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
