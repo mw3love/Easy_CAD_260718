@@ -25,6 +25,7 @@ from easycad.canvas.annotator_core import (
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
+from easycad.fileio.document import save_document, load_document
 
 # 무한 캔버스: 아주 큰 sceneRect로 사실상 무한한 팬 범위 제공.
 _SCENE_HALF = 50000.0
@@ -69,9 +70,28 @@ class CanvasWindow(QMainWindow):
         self._build_menu()
         self.set_tool("select")
 
-    # ---- 메뉴 (파일 → PDF 출력) --------------------------------------------
+    # ---- 메뉴 (파일 → 저장/열기/PDF) ----------------------------------------
     def _build_menu(self):
+        self._doc_path = None
         m = self.menuBar().addMenu("파일(&F)")
+
+        a_new = QAction("새로 만들기", self)
+        a_new.setShortcut(QKeySequence.StandardKey.New)
+        a_new.triggered.connect(self._new_doc)
+        m.addAction(a_new)
+
+        a_open = QAction("열기…", self)
+        a_open.setShortcut(QKeySequence.StandardKey.Open)
+        a_open.triggered.connect(self._open_doc)
+        m.addAction(a_open)
+
+        a_save = QAction("저장…", self)
+        a_save.setShortcut(QKeySequence.StandardKey.Save)
+        a_save.triggered.connect(self._save_doc)
+        m.addAction(a_save)
+
+        m.addSeparator()
+
         a_full = QAction("PDF 내보내기 — 전체…", self)
         a_full.setShortcut(QKeySequence("Ctrl+P"))
         a_full.triggered.connect(lambda: self._export_pdf(selection_only=False))
@@ -80,6 +100,47 @@ class CanvasWindow(QMainWindow):
         a_sel.setShortcut(QKeySequence("Ctrl+Shift+P"))
         a_sel.triggered.connect(lambda: self._export_pdf(selection_only=True))
         m.addAction(a_sel)
+
+    # ---- 저장 / 열기 --------------------------------------------------------
+    _DOC_FILTER = "Easy CAD 문서 (*.ecad)"
+
+    def _new_doc(self):
+        self._scene.clear()
+        self._undo.clear()
+        self._clip.clear()
+        self._badge_n = 0
+        self._doc_path = None
+
+    def _open_doc(self):
+        path, _ = QFileDialog.getOpenFileName(self, "열기", "", self._DOC_FILTER)
+        if not path:
+            return
+        try:
+            n = load_document(self._scene, path)
+        except Exception as e:  # noqa: BLE001 — 사용자에게 오류만 전달
+            QMessageBox.warning(self, "열기 실패", str(e))
+            return
+        self._undo.clear()
+        self._doc_path = path
+        # 번호 마커 카운터를 로드된 최대값 뒤로 재설정
+        nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
+        self._badge_n = max(nums) if nums else 0
+        self.statusBar().showMessage(f"열기 완료: {n}개 객체 — {path}", 5000)
+
+    def _save_doc(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "저장", self._doc_path or "", self._DOC_FILTER)
+        if not path:
+            return
+        if not path.lower().endswith(".ecad"):
+            path += ".ecad"
+        try:
+            save_document(self._scene, path)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "저장 실패", str(e))
+            return
+        self._doc_path = path
+        self.statusBar().showMessage(f"저장 완료: {path}", 5000)
 
     def _export_pdf(self, selection_only: bool):
         if selection_only and not self._scene.selectedItems():
