@@ -56,6 +56,9 @@ class CanvasWindow(QMainWindow):
         self._scene = QGraphicsScene(self)
         self._scene.setSceneRect(-_SCENE_HALF, -_SCENE_HALF, 2 * _SCENE_HALF, 2 * _SCENE_HALF)
         self._scene.setBackgroundBrush(QBrush(QColor("#ffffff")))
+        # 지속 연결: 도형/화살표가 움직이면 바인딩된 화살표 끝을 재계산(scene.changed 트리거).
+        self._rerouting = False
+        self._scene.changed.connect(self._on_scene_changed)
         self._view = _AnnotatorView(self._scene, self)
         self._view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self._view.centerOn(0, 0)
@@ -183,6 +186,31 @@ class CanvasWindow(QMainWindow):
         h.addStretch(1)
         h.addWidget(QLabel("스크롤=줌 · 가운데버튼/손모드 드래그=이동 · Del=삭제 · Ctrl+Z=되돌리기"))
         return bar
+
+    # ---- 지속 연결 리라우트 -------------------------------------------------
+    def _on_scene_changed(self, region):
+        if self._rerouting:
+            return  # 재진입 가드 — reroute가 유발한 changed로 되돌아오지 않게
+        if getattr(self._view, "_drawing", False):
+            return  # 화살표 그리는 중엔 _update_arrow_draw가 tip을 주도 — 간섭 방지
+        self._rerouting = True
+        try:
+            for it in self._scene.items():
+                if isinstance(it, _ArrowItem) and it.has_binding():
+                    it.reroute(pin_pred=self._make_pin_pred(it))
+        finally:
+            self._rerouting = False
+
+    @staticmethod
+    def _make_pin_pred(arrow):
+        # 끝점 idx를 도형에 재고정할지: 붙은 도형과 화살표가 '같은 선택'으로 함께 움직이면
+        # 강체(재고정 안 함), 아니면 붙은 채 늘림. → 사용자 합의 규칙.
+        def pred(idx):
+            sh = arrow._bound(idx)
+            if sh is not None and arrow.isSelected() and sh.isSelected():
+                return False
+            return True
+        return pred
 
     # ---- owner 인터페이스 ---------------------------------------------------
     def is_edit_mode(self) -> bool:

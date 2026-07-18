@@ -167,11 +167,16 @@ def dict_to_item(d: dict):
 # ---- 파일 저장/열기 -------------------------------------------------------
 def save_document(scene, path: str):
     # 아래→위(stacking) 순으로 저장해 열 때 순서·겹침이 보존되게 한다.
-    items = []
-    for it in reversed(scene.items()):
-        d = item_to_dict(it)
-        if d is not None:
-            items.append(d)
+    serial = [(it, item_to_dict(it)) for it in reversed(scene.items())]
+    serial = [(it, d) for it, d in serial if d is not None]
+    idx_of = {id(it): i for i, (it, _d) in enumerate(serial)}
+    # 화살표의 지속 연결 바인딩을 '저장 리스트 인덱스'로 기록(로드 시 인덱스로 재연결).
+    for it, d in serial:
+        if d["type"] == "arrow":
+            for key, bi in (("bind1", 0), ("bind2", 1)):
+                sh = it._bound(bi)
+                d[key] = idx_of.get(id(sh)) if (sh is not None and id(sh) in idx_of) else None
+    items = [d for _it, d in serial]
     doc = {"format": FORMAT, "version": VERSION, "items": items}
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
@@ -184,10 +189,17 @@ def load_document(scene, path: str) -> int:
     if doc.get("format") != FORMAT:
         raise ValueError("Easy CAD 문서가 아닙니다.")
     scene.clear()
-    n = 0
-    for d in doc.get("items", []):
-        it = dict_to_item(d)
+    items = doc.get("items", [])
+    # 1-pass: 아이템 생성. 2-pass: 인덱스로 바인딩 재연결.
+    created = [dict_to_item(d) for d in items]
+    for it in created:
         if it is not None:
             scene.addItem(it)
-            n += 1
-    return n
+    for d, it in zip(items, created):
+        if it is None or d.get("type") != "arrow":
+            continue
+        for key, bi in (("bind1", 0), ("bind2", 1)):
+            j = d.get(key)
+            if j is not None and 0 <= j < len(created) and created[j] is not None:
+                it.set_bound(bi, created[j])
+    return sum(1 for it in created if it is not None)
