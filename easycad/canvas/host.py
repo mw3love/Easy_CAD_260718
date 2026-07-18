@@ -14,16 +14,17 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
           copy_selection/paste_selection
 """
 from PyQt6.QtCore import Qt, QPointF, QSize
-from PyQt6.QtGui import QPen, QColor, QBrush
+from PyQt6.QtGui import QPen, QColor, QBrush, QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QHBoxLayout, QToolButton, QLabel,
+    QHBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
 )
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
 )
+from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 
 # 무한 캔버스: 아주 큰 sceneRect로 사실상 무한한 팬 범위 제공.
 _SCENE_HALF = 50000.0
@@ -65,7 +66,41 @@ class CanvasWindow(QMainWindow):
         lay.addWidget(self._build_toolbar())
         lay.addWidget(self._view, 1)
         self.setCentralWidget(central)
+        self._build_menu()
         self.set_tool("select")
+
+    # ---- 메뉴 (파일 → PDF 출력) --------------------------------------------
+    def _build_menu(self):
+        m = self.menuBar().addMenu("파일(&F)")
+        a_full = QAction("PDF 내보내기 — 전체…", self)
+        a_full.setShortcut(QKeySequence("Ctrl+P"))
+        a_full.triggered.connect(lambda: self._export_pdf(selection_only=False))
+        m.addAction(a_full)
+        a_sel = QAction("PDF 내보내기 — 선택영역…", self)
+        a_sel.setShortcut(QKeySequence("Ctrl+Shift+P"))
+        a_sel.triggered.connect(lambda: self._export_pdf(selection_only=True))
+        m.addAction(a_sel)
+
+    def _export_pdf(self, selection_only: bool):
+        if selection_only and not self._scene.selectedItems():
+            QMessageBox.information(self, "PDF 내보내기", "선택된 객체가 없습니다.")
+            return
+        if self._scene.itemsBoundingRect().isEmpty():
+            QMessageBox.information(self, "PDF 내보내기", "출력할 객체가 없습니다.")
+            return
+        pages = list(PAGE_SIZES.keys())
+        page, ok = QInputDialog.getItem(self, "용지 크기", "용지:", pages, 0, False)
+        if not ok:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "PDF로 저장", "", "PDF 파일 (*.pdf)")
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+        if export_pdf(self._scene, path, page=page, selection_only=selection_only):
+            QMessageBox.information(self, "PDF 내보내기", f"저장 완료:\n{path}")
+        else:
+            QMessageBox.warning(self, "PDF 내보내기", "저장에 실패했습니다.")
 
     # ---- 툴바 (최소) --------------------------------------------------------
     def _build_toolbar(self) -> QWidget:
