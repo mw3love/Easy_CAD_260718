@@ -170,6 +170,44 @@ def test_view_controls():
     assert w._view.transform().m11() > 0
 
 
+def test_direction_rubber_band():
+    # 방향 감지 러버밴드: 왼→오=window(완전포함), 오→왼=crossing(걸침), Shift=추가선택.
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    view = w._view
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)     # 상자에 완전 포함될 도형
+    b = _mk_rect(w._scene, w.make_pen(), 450, 0, 100, 60)   # 상자 우측 경계를 걸치는 도형
+    tl = view.mapFromScene(QPointF(-10, -10))               # 상자 좌상단(view 좌표)
+    br = view.mapFromScene(QPointF(500, 300))               # 상자 우하단(view 좌표)
+
+    # window(왼→오): 완전 포함만 → a만
+    view._rb_origin, view._rb_current = tl, br
+    assert view._rb_is_window() is True
+    view._apply_rubber_selection()
+    assert set(w._scene.selectedItems()) == {a}, set(w._scene.selectedItems())
+
+    # crossing(오→왼): 걸치기만 해도 → a, b 둘 다
+    view._rb_origin, view._rb_current = br, tl
+    assert view._rb_is_window() is False
+    view._apply_rubber_selection()
+    assert set(w._scene.selectedItems()) == {a, b}, set(w._scene.selectedItems())
+
+    # Shift 추가선택: 기존 선택(b)을 유지한 채 window(a) 결과를 더함
+    view._rb_base = [b]
+    view._rb_origin, view._rb_current = tl, br
+    view._apply_rubber_selection()
+    assert set(w._scene.selectedItems()) == {a, b}
+    view._rb_base = []
+
+    # 보이는 외형에 딱 맞는(핸들 여유 제외) window 박스도 잡혀야 함(사용자 리포트 회귀).
+    # 예전엔 sceneBoundingRect의 핸들 패딩 때문에 보이는 것보다 넓게 그려야만 잡혔다.
+    snug_tl = view.mapFromScene(QPointF(-4, -4))
+    snug_br = view.mapFromScene(QPointF(104, 64))     # a(0,0,100,60) + 4px 여유
+    view._rb_origin, view._rb_current = snug_tl, snug_br
+    view._apply_rubber_selection()
+    assert a in set(w._scene.selectedItems()), "snug window box must select fully-visible item"
+    view._rb_origin = view._rb_current = None
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

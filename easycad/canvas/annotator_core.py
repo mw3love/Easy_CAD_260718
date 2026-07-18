@@ -1731,6 +1731,12 @@ class _AnnotatorView(QGraphicsView):
         self._arrow_snap_exit = None # 그리는 화살표 시작이 테두리에 스냅됐으면 그 바깥 법선(이탈 접선), or None
         self._arrow_tip_snap = None  # 그리는 화살표 tip이 테두리에 스냅된 지점(씬 좌표) or None
         self._none_win_dragging = False  # 손 모드(도구 없음) 빈영역 좌드래그 = 창 이동 중
+        # [우리 확장] 방향 감지 러버밴드(AutoCAD window/crossing) — Qt 기본 RubberBandDrag 대체.
+        # 왼→오 = window(완전포함, 파란 실선) / 오→왼 = crossing(걸침, 초록 점선).
+        self._rb_active = False           # 러버밴드 드래그 중
+        self._rb_origin = None            # 시작점(view 좌표) — 방향 판정 기준
+        self._rb_current = None           # 현재점(view 좌표)
+        self._rb_base = []                # Shift 추가선택용 기존 선택 스냅샷
 
     def _is_empty_area(self, view_pos) -> bool:
         """클릭 위치에 선택 가능한 주석 아이템이 없으면(배경뿐) True."""
@@ -1796,6 +1802,49 @@ class _AnnotatorView(QGraphicsView):
     def _over_selected_endpoint(self, view_pos) -> bool:
         """커서가 '선택된' 선·화살표의 끝점 핸들 안이면 True(hover 커서 판정용)."""
         return self._selected_endpoint_item(view_pos) is not None
+
+    # ---- [우리 확장] 방향 감지 러버밴드 (AutoCAD window/crossing) -----------
+    def _rb_is_window(self) -> bool:
+        """왼→오 드래그(현재 x ≥ 시작 x) = window(완전포함). 오→왼 = crossing(걸침)."""
+        return self._rb_current.x() >= self._rb_origin.x()
+
+    def _rb_scene_rect(self) -> QRectF:
+        return QRectF(self.mapToScene(self._rb_origin),
+                      self.mapToScene(self._rb_current)).normalized()
+
+    def _apply_rubber_selection(self):
+        """드래그 방향으로 window/crossing을 정해 선택을 실시간 재계산.
+        window: 아이템이 상자에 '완전 포함'되어야 선택(sceneBoundingRect 포함).
+        crossing: 아이템 외형(shape)이 상자와 '겹치기만' 하면 선택(AutoCAD와 동일)."""
+        if self._rb_origin is None or self._rb_current is None:
+            return
+        rect = self._rb_scene_rect()
+        window = self._rb_is_window()
+        sel_path = QPainterPath()
+        sel_path.addRect(rect)
+        bg = getattr(self._owner, "_bg_item", None)
+        self.scene().clearSelection()
+        for it in self._rb_base:            # Shift 추가선택: 기존 선택 유지
+            if it.scene() is not None:
+                it.setSelected(True)
+        for it in self.scene().items():
+            if it is bg:
+                continue
+            if not (it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable):
+                continue
+            if window:
+                # 완전 포함 판정은 '보이는 외형'(_content_rect) 기준 — 선택·회전 핸들 여유가
+                # 들어간 sceneBoundingRect로 하면 보이는 것보다 박스를 더 넓게 그려야 잡혔다.
+                cr = it._content_rect() if hasattr(it, "_content_rect") \
+                    else it.boundingRect()
+                hit = rect.contains(it.mapToScene(cr).boundingRect())
+            else:
+                # 걸침 판정도 '보이는 외형'(_base_shape) 기준 — shape()는 선택 시 핸들 잡기
+                # 영역이 붙어 보이지 않는 곳에서 잡히므로 base 외형만 쓴다.
+                outline = it._base_shape() if hasattr(it, "_base_shape") else it.shape()
+                hit = it.mapToScene(outline).intersects(sel_path)
+            if hit:
+                it.setSelected(True)
 
     def _snapshot_movable(self):
         """드래그 이동 전 이동 가능 아이템들의 위치를 기록(release에서 변경분만 undo에 커밋)."""
@@ -1936,6 +1985,20 @@ class _AnnotatorView(QGraphicsView):
         elif self._snap_preview is not None:
             # 유휴 — 화살표 도구가 테두리 근처(스냅 발동 예고)
             self._draw_snap_marker(painter, self._snap_preview, s)
+        # [우리 확장] 방향 감지 러버밴드 박스 — window=파란 실선, crossing=초록 점선(AutoCAD).
+        if self._rb_active and self._rb_origin is not None \
+                and self._rb_origin != self._rb_current:
+            rect = self._rb_scene_rect()
+            window = self._rb_is_window()
+            color = QColor(70, 130, 220) if window else QColor(90, 190, 90)
+            fill = QColor(color); fill.setAlpha(45)
+            pen = QPen(color, 1.0)
+            pen.setCosmetic(True)  # 줌과 무관하게 1px(선 두께 흔들림 방지)
+            if not window:
+                pen.setStyle(Qt.PenStyle.DashLine)  # crossing = 점선
+            painter.setPen(pen)
+            painter.setBrush(QBrush(fill))
+            painter.drawRect(rect)
 
     # ---- 줌 (휠) — 주석 위면 속성 변경, 아니면 owner의 hug-zoom(창이 이미지에 맞게) ----
     def wheelEvent(self, event):
@@ -2037,8 +2100,19 @@ class _AnnotatorView(QGraphicsView):
             self._snapshot_movable()   # 주석 드래그 이동을 undo로 되돌리기 위해
             return super().mousePressEvent(event)
         if tool == "select":
-            # Qt 기본: 빈 영역 드래그 = 러버밴드 다중선택, 아이템 위 = 이동/선택.
+            # 빈 영역 드래그 = 방향 감지 러버밴드(window/crossing), 아이템 위 = 이동/선택.
             # 창 이동은 상단 코랄 드래그바로. (편집 모드 본문 pan은 제거)
+            if self._is_empty_area(vpos):
+                # [우리 확장] Qt 기본 RubberBandDrag 대신 커스텀 밴드 시작(방향별 window/crossing).
+                self._rb_active = True
+                self._rb_origin = QPoint(vpos)
+                self._rb_current = QPoint(vpos)
+                # Shift면 기존 선택에 더하고, 아니면 새로 시작(빈영역 클릭=선택해제와 일관).
+                shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+                self._rb_base = list(self.scene().selectedItems()) if shift else []
+                self._apply_rubber_selection()
+                self.viewport().update()
+                return
             self._snapshot_movable()   # 아이템 드래그 이동을 undo로 되돌리기 위해
             return super().mousePressEvent(event)
 
@@ -2167,6 +2241,11 @@ class _AnnotatorView(QGraphicsView):
         if self._none_win_dragging:  # 손 모드 빈영역 좌드래그 = 창 이동
             self._owner._win_drag_move(event.globalPosition().toPoint())
             return
+        if self._rb_active:  # [우리 확장] 방향 감지 러버밴드 — 드래그 중 실시간 선택
+            self._rb_current = event.position().toPoint()
+            self._apply_rubber_selection()
+            self.viewport().update()
+            return
         if not self._owner.is_edit_mode():
             if event.buttons() & Qt.MouseButton.LeftButton:
                 self._owner._win_drag_move(event.globalPosition().toPoint())
@@ -2201,6 +2280,14 @@ class _AnnotatorView(QGraphicsView):
             self._owner._win_drag_end()
             self._none_win_dragging = False
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+            return
+        if self._rb_active:  # [우리 확장] 러버밴드 종료 — 최종 선택은 이미 반영됨, 밴드만 지움
+            self._rb_current = event.position().toPoint()
+            self._apply_rubber_selection()
+            self._rb_active = False
+            self._rb_origin = self._rb_current = None
+            self._rb_base = []
+            self.viewport().update()
             return
         if not self._owner.is_edit_mode():
             self._owner._win_drag_end()
