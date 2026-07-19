@@ -38,11 +38,13 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
   - 휠=줌 / **Shift+휠=두께·크기** 조절(무한캔버스 휠-줌 충돌 해소).
   - 기준 zoom: **Ctrl+0=100%(1:1)**, **Ctrl+9=전체 맞춤**.
   - **o-snap 토글**(F3 / 보기 메뉴) — 스냅 켜고 끄기.
+  - **다중선택 그룹 변형** 완료: 회전·균일/비균일 스케일·미러(Shift+H/V) + **stretch**(crossing
+    박스 걸친 정점만 이동, 명시적 `S` 모드). 상세 이력은 메모리 `connector-roadmap`.
 
 ## 다음 할 일 (우선순위)
 1. **좌/우 드래그 선택**(window: 왼→오 완전포함 / crossing: 오→왼 걸침) — AutoCAD 시그니처. (다음 세션 지정)
 2. **선/화살표 더블클릭 라벨** — 선 움직이면 라벨도 따라오게(부착) 설계 포함.
-3. 회전/미러/스케일/stretch(다중 선택).
+3. ~~회전/미러/스케일/stretch(다중 선택)~~ — **완료**(그룹 변형 Stage 1·2a·2b).
 4. (계획서 §5 권장 흡수) 심볼/스텐실 라이브러리 · 직교 커넥터+자동라우팅 · 포트/접속점.
 그 후 Phase 3(DXF, ezdxf) · Phase 4(표·이미지·표제란·Mermaid import) · Phase 5(AI 이미지→도면).
 
