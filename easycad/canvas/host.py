@@ -333,6 +333,12 @@ class CanvasWindow(QMainWindow):
     def push_undo_move(self, pairs, coalesce_key=None):
         self._undo.append(("move", [(it, QPointF(old)) for it, old in pairs]))
 
+    def push_undo_xform(self, snaps):
+        """[우리 확장] 그룹 변형(회전·스케일) 되돌리기 — 변형 전 pos/rotation/scale/origin 스냅샷.
+        push_undo_move가 위치만 복원하는 것과 달리 회전·스케일까지 통째로 되돌린다."""
+        self._undo.append(("xform", [
+            (it, QPointF(pos), rot, scale, QPointF(org)) for it, pos, rot, scale, org in snaps]))
+
     def undo(self):
         if not self._undo:
             return
@@ -347,6 +353,12 @@ class CanvasWindow(QMainWindow):
         elif kind == "move":
             for it, old in payload:
                 it.setPos(old)
+        elif kind == "xform":
+            for it, pos, rot, scale, org in payload:
+                it.setTransformOriginPoint(org)
+                it.setRotation(rot)
+                it.setScale(scale)
+                it.setPos(pos)
 
     # 복사 / 연속 붙여넣기
     def copy_selection(self):

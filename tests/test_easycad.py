@@ -857,6 +857,108 @@ def test_sarrow_routes_around_obstacle():
     assert len(sp) == 4 and _close(sp[1], QPointF(200, 30)) and _close(sp[2], QPointF(200, 230)), sp
 
 
+def _rot(p, c, deg):
+    import math
+    r = math.radians(deg); cs, sn = math.cos(r), math.sin(r)
+    dx, dy = p.x() - c.x(), p.y() - c.y()
+    return QPointF(c.x() + dx * cs - dy * sn, c.y() + dx * sn + dy * cs)
+
+
+def test_group_transform_availability():
+    # [Stage1] 그룹 오버레이는 최상위 2개 이상 선택 & select/손 도구에서만 활성.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 300, 0, 100, 60)
+    g = w._view._group
+    assert g.bbox() is None and not g.available()      # 0개
+    a.setSelected(True)
+    assert g.bbox() is None and not g.available()      # 1개 — 그룹 아님(개별 핸들)
+    b.setSelected(True)
+    assert g.bbox() is not None and g.available()      # 2개 — 그룹 활성
+    # 그리기 도구로 바꾸면 그룹 조작 비활성(오버레이 숨김)
+    w.set_tool("rect")
+    assert not g.available()
+    w.set_tool("select")
+    # 개별 핸들은 그룹 중엔 꺼진다(그룹 오버레이가 대신 변형)
+    assert a._group_active() and not a._handle_active()
+    # 회전 핸들 히트테스트가 상단 회전점을 잡는다
+    bb = g.bbox()
+    assert g.handle_at(g._rot_center(bb))[0] == "rotate"
+    assert g.handle_at(bb.topLeft())[0] == "scale"
+
+
+def test_group_rotate():
+    # [Stage1] 그룹 중심 기준 90° 회전 — 각 아이템의 씬 중심이 그룹 중심 둘레로 회전.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)      # pos (0,0)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); b.setPos(QPointF(300, 0))
+    a.setSelected(True); b.setSelected(True)
+    g = w._view._group
+    c = g.bbox().center()
+    ca0 = a.mapToScene(a._content_rect().center())
+    cb0 = b.mapToScene(b._content_rect().center())
+    g.begin(("rotate", c), QPointF(c.x() + 50, c.y()))       # start_angle = 0°
+    g.update_to(QPointF(c.x(), c.y() + 50))                  # → +90° (y-down)
+    assert abs(a.rotation() - 90) < 1e-6 and abs(b.rotation() - 90) < 1e-6
+    assert _close(a.mapToScene(a._content_rect().center()), _rot(ca0, c, 90))
+    assert _close(b.mapToScene(b._content_rect().center()), _rot(cb0, c, 90))
+    g.end()
+    # undo → 원상복구(위치·회전 모두)
+    w.undo()
+    assert abs(a.rotation()) < 1e-6 and _close(a.mapToScene(a._content_rect().center()), ca0)
+    assert _close(b.mapToScene(b._content_rect().center()), cb0)
+
+
+def test_group_scale():
+    # [Stage1] 대각 모서리(anchor) 기준 균일 ×2 — 씬 위치는 anchor 기준 2배, 아이템 scale도 2배.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); b.setPos(QPointF(300, 200))
+    a.setSelected(True); b.setSelected(True)
+    g = w._view._group
+    bb = g.bbox()
+    anchor, corner = bb.topLeft(), bb.bottomRight()
+    pa0 = a.mapToScene(a._content_rect().center())
+    pb0 = b.mapToScene(b._content_rect().center())
+    g.begin(("scale", anchor, corner), corner)
+    g.update_to(QPointF(2 * corner.x() - anchor.x(), 2 * corner.y() - anchor.y()))  # f=2
+    assert abs(a.scale() - 2.0) < 1e-6 and abs(b.scale() - 2.0) < 1e-6
+    exp_a = QPointF(anchor.x() + 2 * (pa0.x() - anchor.x()), anchor.y() + 2 * (pa0.y() - anchor.y()))
+    exp_b = QPointF(anchor.x() + 2 * (pb0.x() - anchor.x()), anchor.y() + 2 * (pb0.y() - anchor.y()))
+    assert _close(a.mapToScene(a._content_rect().center()), exp_a)
+    assert _close(b.mapToScene(b._content_rect().center()), exp_b)
+    g.end()
+    w.undo()
+    assert abs(a.scale() - 1.0) < 1e-6 and _close(a.mapToScene(a._content_rect().center()), pa0)
+
+
+def test_group_rotate_keeps_binding():
+    # [Stage1] 바인딩 화살표+양끝 도형을 함께 그룹 회전 → 화살표가 강체로 따라가 부착 유지.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)          # 우측 (100,30)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); b.setPos(QPointF(300, 200))  # 좌측 (300,230)
+    ar = _ArrowItem(QColor("#ffff9500"), 6, True)
+    ar.set_points(QPointF(100, 30), QPointF(300, 230))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    ar.set_bound(0, a, a.mapFromScene(QPointF(100, 30)))
+    ar.set_bound(1, b, b.mapFromScene(QPointF(300, 230)))
+    assert ar.has_binding()
+    ep0 = [ar.mapToScene(p) for p in ar._endpoints()]
+    a.setSelected(True); b.setSelected(True); ar.setSelected(True)
+    g = w._view._group
+    c = g.bbox().center()
+    g.begin(("rotate", c), QPointF(c.x() + 50, c.y()))
+    g.update_to(QPointF(c.x(), c.y() + 50))                      # +90°
+    g.end()
+    w._on_scene_changed(None)   # 리라우트 — 전부 선택(rigid)이라 끝점 안 흔들림
+    ep1 = [ar.mapToScene(p) for p in ar._endpoints()]
+    # 끝점이 회전된 원위치에 그대로(강체) — 도형 테두리에 붙은 채 유지
+    assert _close(ep1[0], _rot(ep0[0], c, 90)), (ep1[0], _rot(ep0[0], c, 90))
+    assert _close(ep1[1], _rot(ep0[1], c, 90)), (ep1[1], _rot(ep0[1], c, 90))
+    assert ar.has_binding()
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

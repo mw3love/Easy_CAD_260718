@@ -451,9 +451,24 @@ class _HandleResizeMixin:
         """끝점 idx를 로컬 좌표 p로 이동(선·화살표가 override)."""
         pass
 
+    def _group_active(self) -> bool:
+        """[우리 확장] 씬에 최상위(라벨 등 자식 제외) 선택 아이템이 2개 이상인가.
+        참이면 개별 회전·크기·끝점 핸들을 숨기고 그룹 변형 오버레이(_GroupTransform)에 넘긴다."""
+        sc = self.scene()
+        if sc is None:
+            return False
+        n = 0
+        for it in sc.selectedItems():
+            if it.parentItem() is None:
+                n += 1
+                if n >= 2:
+                    return True
+        return False
+
     def _endpoint_active(self) -> bool:
         # 선택돼 있으면 어떤 도구에서든 끝점 이동·재스냅 가능(회전·크기조절 핸들과 동일 정책).
-        return self.isSelected()
+        # 단 다중선택(그룹 변형) 중엔 개별 끝점 핸들을 감춘다 — 그룹 오버레이가 대신 변형.
+        return self.isSelected() and not self._group_active()
 
     def _endpoint_rect(self, idx: int) -> QRectF:
         d = self._handle_px()
@@ -615,6 +630,9 @@ class _HandleResizeMixin:
 
     def _handle_active(self) -> bool:
         if not self.isSelected():
+            return False
+        # 다중선택(그룹 변형) 중엔 개별 회전·크기 핸들을 감춘다 — 그룹 오버레이가 대신 변형.
+        if self._group_active():
             return False
         # 선택돼 있으면 어떤 도구에서든 이동·회전·크기조절을 바로 할 수 있게 핸들을 띄운다
         # (선택 도구는 러버밴드 다중선택을 계속 담당). 도구 전환 없이 방금 그린 도형을 다듬기 위함.
@@ -2277,6 +2295,172 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0):
     return preferred
 
 
+# ---------------------------------------------------------------------------
+# [우리 확장] 다중선택 그룹 변형 (회전·스케일) — Stage 1
+# ---------------------------------------------------------------------------
+def _rotate_about(p: QPointF, c: QPointF, deg: float) -> QPointF:
+    """씬 좌표점 p를 중심 c 기준 deg만큼 회전(양수=시계, y-down 화면 규약 — setRotation과 동일)."""
+    r = math.radians(deg)
+    cos, sin = math.cos(r), math.sin(r)
+    dx, dy = p.x() - c.x(), p.y() - c.y()
+    return QPointF(c.x() + dx * cos - dy * sin, c.y() + dx * sin + dy * cos)
+
+
+class _GroupTransform:
+    """다중선택(최상위 2개 이상) 시 공통 바운딩 박스 + 회전·스케일 핸들.
+
+    개별 아이템 변형(_HandleResizeMixin)이 '자기 중심' 기준인 것과 달리, 그룹 중심/모서리를
+    기준으로 **여러 아이템을 한 번에** 강체 회전·균일 스케일한다. 각 아이템은 Qt의
+    pos/rotation/scale만 바꾸므로(기하 리베이크 없음) 되돌리기·직렬화가 기존과 호환된다.
+
+    핵심 수학: 아이템의 transformOrigin 씬점 A = mapToScene(origin) = pos+origin 은 회전·스케일과
+    무관(Qt는 origin을 기준으로 회전·스케일하되 그 점의 씬 위치는 pos에만 의존). 그래서
+    A를 그룹 기준으로 옮기고(pos 조정) rotation/scale을 더하면 아이템 전체가 강체로 변형된다.
+    (비유: 회전목마 — 각 말은 제자리서 돌면서(회전) 동시에 축을 중심으로 공전(pos)한다.)
+    """
+    _HANDLE_PX = 9.0    # 화면 px — 모서리 사각 핸들 한 변
+    _HIT_PX = 24.0      # 화면 px — 핸들 잡기 지름(줌 무관)
+    _ROT_GAP_PX = 22.0  # 화면 px — bbox 위 회전 핸들 간격
+
+    def __init__(self, view):
+        self._view = view
+        self._active = None   # None | ("rotate", center) | ("scale", anchor, corner)
+        self._snap = None     # 변형 전 상태 스냅샷(undo·기준값)
+        self._center = None
+        self._anchor = None
+        self._start_angle = 0.0
+        self._start_dx = 0.0
+        self._start_dy = 0.0
+
+    def _scene(self):
+        return self._view.scene()
+
+    def _s(self) -> float:
+        return self._view._view_scale()
+
+    def items(self):
+        sc = self._scene()
+        if sc is None:
+            return []
+        return [it for it in sc.selectedItems()
+                if it.parentItem() is None and isinstance(it, _HandleResizeMixin)]
+
+    def available(self) -> bool:
+        """그룹 오버레이 표시·조작 조건 — 최상위 2개 이상 선택 & select/손 도구."""
+        if len(self.items()) < 2:
+            return False
+        return getattr(self._view._owner, "current_tool", None) in ("select", None)
+
+    def bbox(self) -> QRectF | None:
+        its = self.items()
+        if len(its) < 2:
+            return None
+        r = None
+        for it in its:
+            br = it.mapToScene(it._content_rect()).boundingRect()
+            r = br if r is None else r.united(br)
+        return r
+
+    # ---- 핸들 기하(씬 좌표) --------------------------------------------------
+    def _corners(self, b: QRectF):
+        return [b.topLeft(), b.topRight(), b.bottomRight(), b.bottomLeft()]
+
+    def _rot_center(self, b: QRectF) -> QPointF:
+        return QPointF(b.center().x(), b.top() - self._ROT_GAP_PX / self._s())
+
+    def handle_at(self, scene_pt: QPointF):
+        """씬점이 회전/스케일 핸들 위면 조작 튜플, 아니면 None."""
+        b = self.bbox()
+        if b is None:
+            return None
+        hit = (self._HIT_PX / self._s()) / 2.0
+        if QLineF(self._rot_center(b), scene_pt).length() <= hit:
+            return ("rotate", b.center())
+        corners = self._corners(b)
+        for i, c in enumerate(corners):
+            if QLineF(c, scene_pt).length() <= hit:
+                return ("scale", corners[(i + 2) % 4], c)  # anchor = 대각 모서리
+        return None
+
+    # ---- 페인트 -------------------------------------------------------------
+    def paint(self, painter: QPainter, s: float):
+        b = self.bbox()
+        if b is None:
+            return
+        painter.setPen(QPen(QColor(_BLUE), 1.0 / s, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(b)
+        h = self._HANDLE_PX / s
+        painter.setPen(QPen(QColor("white"), 1.0 / s))
+        painter.setBrush(QBrush(QColor(_BLUE)))
+        for c in self._corners(b):
+            painter.drawRect(QRectF(c.x() - h / 2, c.y() - h / 2, h, h))
+        rc = self._rot_center(b)                       # 회전 핸들 — 코랄 원(개별 회전 핸들과 색 통일)
+        painter.setBrush(QBrush(QColor(_PEACH)))
+        painter.drawEllipse(rc, h / 2, h / 2)
+
+    # ---- 변형 트랜잭션 ------------------------------------------------------
+    def begin(self, hit, scene_pt: QPointF):
+        self._snap = [(it, QPointF(it.pos()), it.rotation(), it._scale_or_1(),
+                       QPointF(it.transformOriginPoint())) for it in self.items()]
+        self._active = hit
+        if hit[0] == "rotate":
+            self._center = hit[1]
+            self._start_angle = math.degrees(math.atan2(
+                scene_pt.y() - self._center.y(), scene_pt.x() - self._center.x()))
+        else:
+            self._anchor = hit[1]
+            self._start_dx = hit[2].x() - self._anchor.x()
+            self._start_dy = hit[2].y() - self._anchor.y()
+
+    def update_to(self, scene_pt: QPointF, shift: bool = False):
+        if self._active is None:
+            return
+        if self._active[0] == "rotate":
+            cur = math.degrees(math.atan2(
+                scene_pt.y() - self._center.y(), scene_pt.x() - self._center.x()))
+            d = cur - self._start_angle
+            if shift:
+                d = round(d / 15.0) * 15.0
+            self._apply_rotate(self._center, d)
+        else:
+            dx = scene_pt.x() - self._anchor.x()
+            dy = scene_pt.y() - self._anchor.y()
+            denom = self._start_dx * self._start_dx + self._start_dy * self._start_dy
+            if denom < 1e-9:
+                return
+            # 대각선 방향에 커서를 투영 → 균일 스케일 배율(바깥=확대, 안쪽=축소). Stage1은
+            # 미러(음수 뒤집기) 미지원이라 하한 클램프로 뒤집힘·소실 방지.
+            f = (dx * self._start_dx + dy * self._start_dy) / denom
+            f = max(0.05, min(f, 20.0))
+            self._apply_scale(self._anchor, f)
+
+    def _apply_rotate(self, center: QPointF, ddeg: float):
+        for it, pos0, rot0, _sc0, org0 in self._snap:
+            a = QPointF(pos0.x() + org0.x(), pos0.y() + org0.y())
+            a2 = _rotate_about(a, center, ddeg)
+            it.setRotation((rot0 + ddeg) % 360)
+            it.setPos(a2.x() - org0.x(), a2.y() - org0.y())
+
+    def _apply_scale(self, anchor: QPointF, f: float):
+        for it, pos0, _rot0, sc0, org0 in self._snap:
+            ax = pos0.x() + org0.x()
+            ay = pos0.y() + org0.y()
+            a2x = anchor.x() + (ax - anchor.x()) * f
+            a2y = anchor.y() + (ay - anchor.y()) * f
+            # 이 코드베이스의 boundingRect는 핸들 여유분이 scale 의존(_handle_px가 /scale)이라
+            # scale 변경 전 경계 캐시를 무효화해야 잔상·페인트 잘림을 막는다(단일 리사이즈와 동일).
+            it.prepareGeometryChange()
+            it.setScale(sc0 * f)
+            it.setPos(a2x - org0.x(), a2y - org0.y())
+
+    def end(self):
+        if self._active is not None and self._snap:
+            self._view._owner.push_undo_xform(self._snap)
+        self._active = None
+        self._snap = None
+
+
 class _AnnotatorView(QGraphicsView):
     _SHORTCUTS = {
         Qt.Key.Key_1: "select", Qt.Key.Key_2: "rect", Qt.Key.Key_3: "arrow",
@@ -2319,6 +2503,11 @@ class _AnnotatorView(QGraphicsView):
         # [우리 확장] 직선화살표 waypoint 추가 예고 — 선택된 폴리라인 세그먼트 hover 시
         # (item, seg_idx, 씬 최근접점) or None. 클릭하면 그 자리에 정점 삽입 후 바로 드래그.
         self._seg_add = None
+        # [우리 확장] 다중선택 그룹 변형(회전·스케일) — 2개 이상 선택 시 공통 bbox+핸들.
+        self._group = _GroupTransform(self)
+        self._group_dragging = False
+        # 선택이 바뀌면 그룹 오버레이(bbox·핸들)를 다시 그린다(개별 아이템 repaint와 별개).
+        scene.selectionChanged.connect(self.viewport().update)
 
     def _is_empty_area(self, view_pos) -> bool:
         """클릭 위치에 선택 가능한 주석 아이템이 없으면(배경뿐) True."""
@@ -2620,6 +2809,9 @@ class _AnnotatorView(QGraphicsView):
             painter.setPen(QPen(QColor("white"), 1.4 / s))
             painter.drawLine(QPointF(c.x() - r * 0.6, c.y()), QPointF(c.x() + r * 0.6, c.y()))
             painter.drawLine(QPointF(c.x(), c.y() - r * 0.6), QPointF(c.x(), c.y() + r * 0.6))
+        # [우리 확장] 다중선택 그룹 변형 오버레이 — 공통 bbox + 모서리(스케일)·상단(회전) 핸들.
+        if self._group.available():
+            self._group.paint(painter, s)
 
     # ---- 줌 (휠) — 주석 위면 속성 변경, 아니면 owner의 hug-zoom(창이 이미지에 맞게) ----
     def wheelEvent(self, event):
@@ -2735,6 +2927,13 @@ class _AnnotatorView(QGraphicsView):
             item.setZValue(old_z)
             self.viewport().update()
             return
+        # [우리 확장] 다중선택 그룹 변형 핸들(회전·스케일) press — 선택/이동보다 우선.
+        if self._group.available():
+            hit = self._group.handle_at(self.mapToScene(vpos))
+            if hit is not None:
+                self._group.begin(hit, self.mapToScene(vpos))
+                self._group_dragging = True
+                return
         tool = self._owner.current_tool
         # 화살표 도구 + 도형 테두리 근처 press → 테두리에 스냅된 곡선 화살표 시작(도형 선택/이동보다 우선).
         # 이 분기가 빈영역/도형-위 선택 판정보다 앞서야 테두리에서 새 화살표가 시작된다(이슈 A).
@@ -3062,6 +3261,13 @@ class _AnnotatorView(QGraphicsView):
         vp = self.viewport()
         tool = self._owner.current_tool
         edit_text = self._editing_text_hover(view_pos)
+        # [우리 확장] 그룹 변형 핸들 hover — 회전(코랄 커서)·스케일(대각 리사이즈).
+        if self._group.available():
+            g = self._group.handle_at(self.mapToScene(view_pos))
+            if g is not None:
+                vp.setCursor(_rotate_cursor() if g[0] == "rotate"
+                             else Qt.CursorShape.SizeFDiagCursor)
+                return
         if self._bend_handle_at(view_pos) is not None:
             vp.setCursor(Qt.CursorShape.PointingHandCursor)  # 곡선 조절 손잡이(이동과 구분)
         elif self._over_selected_endpoint(view_pos):
@@ -3101,6 +3307,11 @@ class _AnnotatorView(QGraphicsView):
         if self._rb_active:  # [우리 확장] 방향 감지 러버밴드 — 드래그 중 실시간 선택
             self._rb_current = event.position().toPoint()
             self._apply_rubber_selection()
+            self.viewport().update()
+            return
+        if self._group_dragging:  # [우리 확장] 그룹 변형 드래그 — 회전·스케일 실시간 적용
+            self._group.update_to(self.mapToScene(event.position().toPoint()),
+                                  bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
             self.viewport().update()
             return
         if not self._owner.is_edit_mode():
@@ -3167,6 +3378,11 @@ class _AnnotatorView(QGraphicsView):
             self._rb_active = False
             self._rb_origin = self._rb_current = None
             self._rb_base = []
+            self.viewport().update()
+            return
+        if self._group_dragging:  # [우리 확장] 그룹 변형 종료 — undo에 변형 트랜잭션 커밋
+            self._group.end()
+            self._group_dragging = False
             self.viewport().update()
             return
         # [우리 확장] 클릭 배치 진행 중이면 릴리스는 무시 — 점은 클릭(press)으로만 놓는다.
