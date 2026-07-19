@@ -327,6 +327,10 @@ class CanvasWindow(QMainWindow):
     def push_undo_add(self, item):
         self._undo.append(("add", [item]))
 
+    def push_undo_add_many(self, items):
+        """[2d] 여러 아이템(복제 도형+연결 화살표)을 한 번의 undo로 함께 제거."""
+        self._undo.append(("add", list(items)))
+
     def push_undo_delete(self, items):
         self._undo.append(("delete", list(items)))
 

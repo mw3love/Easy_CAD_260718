@@ -1169,6 +1169,58 @@ def test_box_handle_cursor():
     assert a._box_handle_cursor(a._box_rot_rect().center()) == "rotate"
 
 
+def test_qc_dots_geometry():
+    # [2d] 선택된 네모는 상하좌우 외부 도트 4개(테두리 바깥).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    dots = dict((k, r) for k, r in a._qc_dot_rects())
+    assert set(dots) == {"t", "r", "b", "l"}
+    assert dots["r"].center().x() > a.rect().right()      # 우측 도트는 우변 바깥
+    assert dots["l"].center().x() < a.rect().left()
+    assert dots["t"].center().y() < a.rect().top()
+    assert dots["b"].center().y() > a.rect().bottom()
+
+
+def test_qc_create_default():
+    # [2d] 클릭(기본 배치) — 우측 도트 → 우측에 동일도형 복제 + 양끝 바인딩 연결 화살표.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    dup, arrow = w._view._qc_create(a, "r", None)
+    sr = a.mapToScene(a.rect()).boundingRect()
+    dsr = dup.mapToScene(dup.rect()).boundingRect()
+    assert abs(dsr.left() - (sr.right() + 40)) < 1e-6     # 간격 40
+    assert abs(dsr.center().y() - sr.center().y()) < 1e-6 # 같은 축 정렬
+    assert isinstance(dup, _RectItem) and abs(dup.rect().width() - 100) < 1e-6
+    assert arrow.has_binding() and arrow._bind_start is a and arrow._bind_end is dup
+    assert _close(arrow.mapToScene(arrow._pts[0]), QPointF(100, 30))   # 원본 우변 중점
+    assert _close(arrow.mapToScene(arrow._pts[-1]), QPointF(dsr.left(), 30))
+    assert dup.isSelected() and not a.isSelected()        # 새 도형 선택
+    w.undo()                                              # 한 번에 둘 다 제거
+    assert dup.scene() is None and arrow.scene() is None
+
+
+def test_qc_create_drag_position():
+    # [2d] 드래그(커서 위치) — 복제 중심이 커서 씬좌표.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    dup, _arrow = w._view._qc_create(a, "b", QPointF(250, 400))
+    dsr = dup.mapToScene(dup.rect()).boundingRect()
+    assert _close(dsr.center(), QPointF(250, 400))
+
+
+def test_qc_dot_at_roundtrip():
+    # [2d] 도트 씬좌표 → 뷰좌표 → _qc_dot_at. 핸들과 동일하게 '어느 도구에서든' 잡혀야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    v = w._view
+    rd_local = dict(a._qc_dot_rects())["r"].center()
+    view_pos = v.mapFromScene(a.mapToScene(rd_local))
+    for tool in ("select", "rect", "ellipse"):
+        w.set_tool(tool); a.setSelected(True)
+        hit = v._qc_dot_at(view_pos)
+        assert hit is not None and hit[0] is a and hit[1] == "r", tool
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

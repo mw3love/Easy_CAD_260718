@@ -650,9 +650,12 @@ class _HandleResizeMixin:
                 r = r.united(self._inflate_to_hit(self._endpoint_rect(i)))
             return r.adjusted(-pad, -pad, pad, pad)
         if self._box_handles():
-            # 꼭짓점·변 핸들은 rect 경계서 half-handle 삐져나오고, 회전 핸들은 좌상단 바깥.
+            # 꼭짓점·변 핸들은 rect 경계서 half-handle 삐져나오고, 회전 핸들·빠른생성 도트는 바깥.
             h = self._handle_px()
-            return self._content_rect().united(self._box_rot_rect()).adjusted(-h, -h, h, h)
+            r = self._content_rect().united(self._box_rot_rect())
+            for _k, dr in self._qc_dot_rects():
+                r = r.united(dr)
+            return r.adjusted(-h, -h, h, h)
         return self._content_rect().united(self._rot_handle_rect().adjusted(-pad, -pad, pad, pad))
 
     def _handle_local_rect(self) -> QRectF:
@@ -702,6 +705,19 @@ class _HandleResizeMixin:
         d = self._handle_px()
         c = self._box_rot_center()
         return QRectF(c.x() - d / 2, c.y() - d / 2, d, d)
+
+    # [2d] 빠른 생성 도트 — 상하좌우 테두리서 바깥으로 살짝 뗀 점. 드래그/클릭 시 그 방향으로
+    # 연결 화살표 + 동일도형 복제 생성(호버 시 고스트 미리보기). 위치·hover·생성은 뷰가 담당.
+    def _qc_dot_rects(self):
+        br = self.rect()
+        h = self._handle_px()
+        gap = h * 2.5
+        d = h * 0.9
+        pos = [("t", QPointF(br.center().x(), br.top() - gap)),
+               ("r", QPointF(br.right() + gap, br.center().y())),
+               ("b", QPointF(br.center().x(), br.bottom() + gap)),
+               ("l", QPointF(br.left() - gap, br.center().y()))]
+        return [(k, QRectF(p.x() - d / 2, p.y() - d / 2, d, d)) for k, p in pos]
 
     def _box_handle_cursor(self, local_pt: QPointF):
         """local_pt가 어느 박스 핸들 위인지 → 커서('rotate' or Qt.CursorShape), 없으면 None."""
@@ -821,6 +837,11 @@ class _HandleResizeMixin:
             rh = self._handle_px() * 0.5
             painter.setBrush(QBrush(QColor(_PEACH)))
             painter.drawEllipse(self._box_rot_center(), rh, rh)
+            # [2d] 빠른 생성 도트 — 옅은 파란 원(흰 테두리). 호버 시 뷰가 고스트 미리보기.
+            painter.setPen(QPen(QColor("white"), 1.0 / s))
+            painter.setBrush(QBrush(QColor(90, 150, 235)))
+            for _k, dr in self._qc_dot_rects():
+                painter.drawEllipse(dr)
             return
         # 회전 핸들 — 우상단 코너 안쪽 코랄 점(줄기 없음, 우하단 크기조절 점과 대칭)
         rc = self._rot_handle_center()
@@ -2736,6 +2757,35 @@ def _rebake_selection(geom_items, bound_info, fn):
             arrow.reroute(pin_pred=lambda i: True)
 
 
+# ---------------------------------------------------------------------------
+# [2d] 빠른 생성(quick-create) — 도트 방향으로 화살표+동일도형 생성
+# ---------------------------------------------------------------------------
+_QC_OPP = {"r": "l", "l": "r", "t": "b", "b": "t"}
+_QC_GAP = 40.0   # 원본과 복제 사이 씬 간격(기본 배치)
+
+
+def _edge_mid(r: QRectF, side: str) -> QPointF:
+    """씬 사각 r의 한 변(t/r/b/l) 중점."""
+    if side == "r":
+        return QPointF(r.right(), r.center().y())
+    if side == "l":
+        return QPointF(r.left(), r.center().y())
+    if side == "t":
+        return QPointF(r.center().x(), r.top())
+    return QPointF(r.center().x(), r.bottom())
+
+
+def _qc_default_delta(sr: QRectF, side: str) -> QPointF:
+    """기본 배치 델타 — 원본 씬사각 sr에서 side 방향으로 (도형크기+간격)만큼."""
+    if side == "r":
+        return QPointF(sr.width() + _QC_GAP, 0.0)
+    if side == "l":
+        return QPointF(-(sr.width() + _QC_GAP), 0.0)
+    if side == "b":
+        return QPointF(0.0, sr.height() + _QC_GAP)
+    return QPointF(0.0, -(sr.height() + _QC_GAP))
+
+
 class _GroupTransform:
     """다중선택(최상위 2개 이상) 시 공통 바운딩 박스 + 회전·스케일 핸들.
 
@@ -2995,6 +3045,13 @@ class _AnnotatorView(QGraphicsView):
         # [우리 확장] 다중선택 그룹 변형(회전·스케일) — 2개 이상 선택 시 공통 bbox+핸들.
         self._group = _GroupTransform(self)
         self._group_dragging = False
+        # [2d] 빠른 생성 — 선택된 네모·원의 외부 도트 hover/drag 상태.
+        self._qc_hover = None       # (item, side) — 도트 위 hover(고스트 미리보기) or None
+        self._qc_dragging = False
+        self._qc_src = None         # 원본 도형
+        self._qc_side = None        # "t"/"r"/"b"/"l"
+        self._qc_cursor = None      # 드래그 중 커서 씬좌표(복제 중심). None=기본 배치(클릭)
+        self._qc_press_scene = None # 도트 press 지점(씬) — 클릭/드래그 판정 기준
         # 선택이 바뀌면 그룹 오버레이(bbox·핸들)를 다시 그린다(개별 아이템 repaint와 별개).
         scene.selectionChanged.connect(self.viewport().update)
 
@@ -3029,6 +3086,77 @@ class _AnnotatorView(QGraphicsView):
             if c is not None:
                 return c
         return None
+
+    # ---- [2d] 빠른 생성(quick-create) ---------------------------------------
+    def _qc_dot_at(self, view_pos):
+        """커서가 선택된 네모·원의 외부 도트 위면 (item, side), 아니면 None.
+        [2d] 핸들과 동일하게 '어느 도구에서든' 작동 — 그린 직후 도구 전환 없이 빠른 생성."""
+        scene_pt = self.mapToScene(view_pos)
+        for it in self.scene().selectedItems():
+            if getattr(it, "_box_handles", None) is None or not it._box_handles():
+                continue
+            if not it._handle_active():
+                continue
+            lp = it.mapFromScene(scene_pt)
+            for side, dr in it._qc_dot_rects():
+                if dr.contains(lp):
+                    return (it, side)
+        return None
+
+    def _qc_src_scene_rect(self, src) -> QRectF:
+        """원본 도형의 씬 사각(회전 무시한 축정렬 bbox — 배치·고스트 기준)."""
+        return src.mapToScene(src.rect()).boundingRect()
+
+    def _qc_target_center(self, src, side, cursor_scene):
+        """복제 도형 중심(씬) — 드래그 중이면 커서, 아니면 기본 배치 델타."""
+        sr = self._qc_src_scene_rect(src)
+        if cursor_scene is not None:
+            return QPointF(cursor_scene)
+        return sr.center() + _qc_default_delta(sr, side)
+
+    def _qc_target_rect(self, src, side, cursor_scene) -> QRectF:
+        sr = self._qc_src_scene_rect(src)
+        c = self._qc_target_center(src, side, cursor_scene)
+        return QRectF(c.x() - sr.width() / 2, c.y() - sr.height() / 2, sr.width(), sr.height())
+
+    def _qc_create(self, src, side, cursor_scene):
+        """복제 도형 + 연결 화살표 생성(양끝 바인딩). 한 undo로 둘 다 되돌림."""
+        sr = self._qc_src_scene_rect(src)
+        center = self._qc_target_center(src, side, cursor_scene)
+        dup = src.clone()
+        self.scene().addItem(dup)
+        dup.setPos(src.pos() + (center - sr.center()))   # 복제 중심 = 목표 중심
+        # 연결 화살표 — 원본 side 변 중점 → 복제 반대 변 중점(양끝 도형 바인딩).
+        opp = _QC_OPP[side]
+        p_src = _edge_mid(self._qc_src_scene_rect(src), side)
+        p_dup = _edge_mid(self._qc_src_scene_rect(dup), opp)
+        owner = self._owner
+        arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+        arrow.set_points(p_src, p_dup)
+        arrow.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                       | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        arrow.set_bound(0, src, src.mapFromScene(p_src))
+        arrow.set_bound(1, dup, dup.mapFromScene(p_dup))
+        self.scene().addItem(arrow)
+        self._owner.push_undo_add_many([dup, arrow])
+        self.scene().clearSelection()
+        dup.setSelected(True)
+        return dup, arrow
+
+    def _qc_paint_ghost(self, painter, src, side, cursor_scene):
+        """빠른 생성 고스트 — 복제 도형 점선 외곽 + 연결선(원본 side변 → 타깃 반대변)."""
+        tr = self._qc_target_rect(src, side, cursor_scene)
+        pen = QPen(QColor(90, 150, 235), 1.5, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        p_src = _edge_mid(self._qc_src_scene_rect(src), side)
+        p_tgt = _edge_mid(tr, _QC_OPP[side])
+        painter.drawLine(p_src, p_tgt)
+        if isinstance(src, _EllipseItem):
+            painter.drawEllipse(tr)
+        else:
+            painter.drawRect(tr)
 
     def _rot_handle_at(self, view_pos) -> bool:
         """커서가 '선택된' 도형의 회전 점 안이면 True — hover 회전 커서 판정용."""
@@ -3304,6 +3432,12 @@ class _AnnotatorView(QGraphicsView):
             painter.setPen(pen)
             painter.setBrush(QBrush(fill))
             painter.drawRect(rect)
+        # [2d] 빠른 생성 고스트 — 도트 hover(기본 배치) 또는 드래그(커서 위치)에 복제 도형+연결선 미리보기.
+        if self._qc_dragging and self._qc_src is not None:
+            self._qc_paint_ghost(painter, self._qc_src, self._qc_side, self._qc_cursor)
+        elif self._qc_hover is not None and self._qc_hover[0].isSelected() \
+                and self._qc_hover[0].scene() is not None:
+            self._qc_paint_ghost(painter, self._qc_hover[0], self._qc_hover[1], None)
         # [우리 확장] 직선화살표 waypoint 추가 예고 — 세그먼트 위 hover 지점에 '+' 고스트 마커.
         if self._seg_add is not None:
             c = self._seg_add[2]
@@ -3438,6 +3572,16 @@ class _AnnotatorView(QGraphicsView):
             if hit is not None:
                 self._group.begin(hit, self.mapToScene(vpos))
                 self._group_dragging = True
+                return
+        # [2d] 빠른 생성 도트 press → 그 방향으로 복제+연결화살표 생성 드래그 시작(이동/선택보다 우선).
+        if event.button() == Qt.MouseButton.LeftButton:
+            dot = self._qc_dot_at(vpos)
+            if dot is not None:
+                self._qc_src, self._qc_side = dot
+                self._qc_dragging = True
+                self._qc_cursor = None   # 릴리스까지 이동(임계 초과) 없으면 기본 배치
+                self._qc_press_scene = self.mapToScene(vpos)
+                self._qc_hover = None
                 return
         tool = self._owner.current_tool
         # 화살표 도구 + 도형 테두리 근처 press → 테두리에 스냅된 곡선 화살표 시작(도형 선택/이동보다 우선).
@@ -3726,6 +3870,7 @@ class _AnnotatorView(QGraphicsView):
         self._place_tool = None
         self._arrow_snap_exit = None
         self._arrow_tip_snap = None
+        self._qc_hover = None   # [2d] 도구 전환 시 빠른 생성 고스트도 지움
         if it is not None and it.scene() is not None:
             self.scene().removeItem(it)
             self.viewport().update()
@@ -3801,6 +3946,9 @@ class _AnnotatorView(QGraphicsView):
                 else:
                     vp.setCursor(Qt.CursorShape.SizeFDiagCursor)
                 return
+        if self._qc_dot_at(view_pos) is not None:            # [2d] 빠른 생성 도트
+            vp.setCursor(Qt.CursorShape.PointingHandCursor)
+            return
         box_h = self._box_handle_at(view_pos)
         if box_h is not None:                                # [2c] 네모·원 박스 핸들
             vp.setCursor(_rotate_cursor() if box_h == "rotate" else box_h)
@@ -3851,6 +3999,13 @@ class _AnnotatorView(QGraphicsView):
                                   bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
             self.viewport().update()
             return
+        if self._qc_dragging:  # [2d] 빠른 생성 드래그 — 임계 넘게 끌면 커서 위치, 아니면 기본 배치
+            cur = self.mapToScene(event.position().toPoint())
+            thr = 8.0 / self._view_scale()
+            self._qc_cursor = cur if (self._qc_press_scene is not None
+                                      and QLineF(self._qc_press_scene, cur).length() > thr) else None
+            self.viewport().update()
+            return
         if not self._owner.is_edit_mode():
             if event.buttons() & Qt.MouseButton.LeftButton:
                 self._owner._win_drag_move(event.globalPosition().toPoint())
@@ -3873,6 +4028,11 @@ class _AnnotatorView(QGraphicsView):
                     prev is not None and self._seg_add is not None
                     and prev[2] != self._seg_add[2]):
                 self.viewport().update()   # waypoint 예고 마커 갱신
+            # [2d] 빠른 생성 도트 hover — 고스트 미리보기 갱신.
+            prev_qc = self._qc_hover
+            self._qc_hover = self._qc_dot_at(event.position().toPoint())
+            if prev_qc != self._qc_hover:
+                self.viewport().update()
             self._update_hover_cursor(event.position().toPoint())
         if self._drawing and self._temp is not None:
             tool = self._owner.current_tool
@@ -3920,6 +4080,16 @@ class _AnnotatorView(QGraphicsView):
         if self._group_dragging:  # [우리 확장] 그룹 변형 종료 — undo에 변형 트랜잭션 커밋
             self._group.end()
             self._group_dragging = False
+            self.viewport().update()
+            return
+        if self._qc_dragging:  # [2d] 빠른 생성 종료 — 복제 도형 + 연결 화살표 생성
+            src, side, cur = self._qc_src, self._qc_side, self._qc_cursor
+            self._qc_dragging = False
+            self._qc_src = self._qc_side = self._qc_cursor = None
+            self._qc_press_scene = None
+            self._qc_hover = None
+            if src is not None and src.scene() is not None:
+                self._qc_create(src, side, cur)   # cur=None이면 기본 배치(클릭)
             self.viewport().update()
             return
         # [우리 확장] 클릭 배치 진행 중이면 릴리스는 무시 — 점은 클릭(press)으로만 놓는다.
