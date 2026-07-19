@@ -509,6 +509,11 @@ class _HandleResizeMixin:
             local_p = snapped[0]
         self._set_endpoint(idx, local_p)
 
+    def _on_endpoint_drag_start(self, idx: int):
+        """[우리 확장] 정점 핸들 드래그가 '시작'될 때 호출(mousePress choke point). 기본 no-op.
+        _PolyArrowItem이 override해 자동 직교 라우팅을 해제한다(수동 정점 조작 = 수동 경로)."""
+        pass
+
     def _paint_endpoint_handles(self, painter: QPainter):
         if not self._endpoint_active():
             return
@@ -673,6 +678,7 @@ class _HandleResizeMixin:
                 for i in range(len(self._endpoints())):
                     if self._inflate_to_hit(self._endpoint_rect(i)).contains(event.pos()):
                         self._drag_endpoint = i
+                        self._on_endpoint_drag_start(i)   # [Stage1] 수동 정점 드래그 → 자동 라우팅 해제 훅
                         event.accept()
                         return
             super().mousePressEvent(event)
@@ -1531,6 +1537,10 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._bind_end = None
         self._bind_start_pt = None   # 시작이 붙은 도형의 로컬 부착점
         self._bind_end_pt = None
+        # [Stage1] Lucid식 직교 자동 라우팅. True면 중간 정점(_pts[1:-1])은 라우터 소유물 —
+        # 양끝 부착점에서 매 reroute마다 엘보로 재계산된다. 사용자가 정점 핸들을 드래그하거나
+        # waypoint를 추가/삭제하면 False로 내려가 '수동 폴리라인'이 된다(경로 그대로 유지).
+        self._auto_route = False
         self._init_resize()
         self._init_label()
         self.setFlags(
@@ -1585,7 +1595,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     def reroute(self, pin_pred=None) -> bool:
         """바인딩된 끝(시작·끝)을 도형의 고정 부착점(로컬→씬)으로 추종. 변경 있으면 True.
-        pin_pred(idx)=False면 재고정 안 함(강체). 무변경이면 되먹임 루프 차단."""
+        pin_pred(idx)=False면 재고정 안 함(강체). 무변경이면 되먹임 루프 차단.
+        [Stage1] 자동 라우팅(_auto_route)이고 양끝 모두 바인딩이면 끝점 추종 후 직교 엘보를 재계산."""
         if not self.has_binding():
             return False
         changed = False
@@ -1601,10 +1612,54 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             if abs(target.x() - cur.x()) > 1e-6 or abs(target.y() - cur.y()) > 1e-6:
                 self._set_endpoint(idx, target)
                 changed = True
+        if self._auto_route and self._bind_start is not None and self._bind_end is not None:
+            if self.build_elbow():
+                changed = True
         if changed:
             self.prepareGeometryChange()
             self.update()
         return changed
+
+    def _bound_normal_scene(self, idx):
+        """바인딩된 끝(idx=0 시작 / last 끝)의 도형 테두리 '바깥 단위 법선'(scene), 없으면 None.
+        부착점이 정확히 테두리 위이므로 _nearest_border가 그 점의 법선을 돌려준다."""
+        sh = self._bound(idx)
+        pt = self._bind_pt(idx)
+        if sh is None or pt is None or sh.scene() is None:
+            return None
+        try:
+            _, n = _nearest_border(sh, sh.mapToScene(pt))
+        except Exception:
+            return None
+        return n
+
+    def build_elbow(self) -> bool:
+        """[Stage1] 현재 양끝점 + 부착 변 법선으로 직교 엘보를 계산해 _pts를 교체. 변경 있으면 True.
+        _pts[0]/_pts[-1](끝점)은 유지하고 중간 정점만 라우터가 생성한다."""
+        if self._bind_start is None or self._bind_end is None:
+            return False
+        end_idx = len(self._pts) - 1
+        s = self.mapToScene(self._pts[0])
+        e = self.mapToScene(self._pts[end_idx])
+        if abs(s.x() - e.x()) < 1e-6 and abs(s.y() - e.y()) < 1e-6:
+            return False
+        ns = self._bound_normal_scene(0)
+        ne = self._bound_normal_scene(end_idx)
+        new_scene = _dedup_pts([s] + _ortho_elbow(s, e, ns, ne) + [e])
+        new_local = [self.mapFromScene(p) for p in new_scene]
+        if len(new_local) == len(self._pts) and all(
+                abs(a.x() - b.x()) <= 1e-6 and abs(a.y() - b.y()) <= 1e-6
+                for a, b in zip(new_local, self._pts)):
+            return False   # 동일 → 되먹임 루프 차단
+        self.prepareGeometryChange()
+        self._pts = new_local
+        self.update()
+        self._sync_label()
+        return True
+
+    def _on_endpoint_drag_start(self, idx):
+        # [Stage1] 정점 핸들을 손으로 잡는 순간 자동 라우팅 해제 — 이후 경로는 사용자 소유(수동).
+        self._auto_route = False
 
     def _endpoints(self):
         return self._pts
@@ -1624,6 +1679,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     def insert_vertex(self, seg_idx: int, p: QPointF):
         """세그먼트 seg_idx(정점 seg_idx~seg_idx+1 사이)에 정점 p 삽입(waypoint 추가)."""
+        self._auto_route = False   # [Stage1] waypoint 추가 = 수동 편집 → 자동 라우팅 해제
         self.prepareGeometryChange()
         self._pts.insert(seg_idx + 1, QPointF(p))
         self.update()
@@ -1642,6 +1698,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         """정점 삭제(최소 2정점은 유지). 삭제했으면 True."""
         if len(self._pts) <= 2:
             return False
+        self._auto_route = False   # [Stage1] 정점 삭제 = 수동 편집 → 자동 라우팅 해제
         self.prepareGeometryChange()
         del self._pts[idx]
         self.update()
@@ -1664,6 +1721,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         c._bind_start, c._bind_end = self._bind_start, self._bind_end   # [A3] 지속 연결 유지
         c._bind_start_pt = None if self._bind_start_pt is None else QPointF(self._bind_start_pt)
         c._bind_end_pt = None if self._bind_end_pt is None else QPointF(self._bind_end_pt)
+        c._auto_route = self._auto_route   # [Stage1] 자동 라우팅 상태 유지
         return self._copy_common_to(c)
 
     # ---- 화살촉(끝 세그먼트 방향) --------------------------------------
@@ -2086,6 +2144,53 @@ def _nearest_border(item, scene_pt):
     nd = item.mapToScene(QPointF(q.x() + n.x(), q.y() + n.y())) - sp
     L = math.hypot(nd.x(), nd.y()) or 1.0
     return sp, QPointF(nd.x() / L, nd.y() / L)
+
+
+# ---- [Stage1] Lucid식 직교 자동 라우팅(기본 엘보) -----------------------------
+def _dedup_pts(pts, eps=1e-6):
+    """연속 중복점 + 공선(collinear) 중간점 제거. 정렬된 도형 사이의 퇴화 엘보를 직선으로 접는다."""
+    out = [pts[0]]
+    for p in pts[1:]:
+        if abs(p.x() - out[-1].x()) <= eps and abs(p.y() - out[-1].y()) <= eps:
+            continue
+        out.append(p)
+    i = 1
+    while i < len(out) - 1:
+        a, b, c = out[i - 1], out[i], out[i + 1]
+        cross = (b.x() - a.x()) * (c.y() - a.y()) - (b.y() - a.y()) * (c.x() - a.x())
+        if abs(cross) <= eps:
+            del out[i]   # b가 a-c 선분 위 → 불필요
+        else:
+            i += 1
+    return out
+
+
+def _ortho_elbow(s: QPointF, e: QPointF, ns, ne):
+    """시작 s·끝 e(scene)와 부착 변의 바깥 법선 ns·ne로 직각 엘보의 '중간 정점들'을 계산.
+    법선의 우세축(수평/수직)이 각 끝의 이탈·도착 축을 정한다:
+      · 양끝 수평 → H-V-H (중간 x = 두 x의 중점)
+      · 양끝 수직 → V-H-V (중간 y = 두 y의 중점)
+      · 혼합(한쪽 수평·한쪽 수직) → L자(모서리 하나)
+    법선이 없으면(방어) 두 점의 우세 델타로 축을 대체. 반환은 중간 정점 리스트(0~2개)."""
+    dx, dy = e.x() - s.x(), e.y() - s.y()
+    default_h = abs(dx) >= abs(dy)
+
+    def is_horizontal(n):
+        if n is None:
+            return default_h
+        return abs(n.x()) >= abs(n.y())
+
+    sh = is_horizontal(ns)
+    eh = is_horizontal(ne)
+    if sh and eh:
+        mx = (s.x() + e.x()) / 2.0
+        return [QPointF(mx, s.y()), QPointF(mx, e.y())]
+    if (not sh) and (not eh):
+        my = (s.y() + e.y()) / 2.0
+        return [QPointF(s.x(), my), QPointF(e.x(), my)]
+    if sh and not eh:
+        return [QPointF(e.x(), s.y())]   # 수평 이탈 → 수직 도착
+    return [QPointF(s.x(), e.y())]       # 수직 이탈 → 수평 도착
 
 
 class _AnnotatorView(QGraphicsView):
@@ -2763,12 +2868,17 @@ class _AnnotatorView(QGraphicsView):
         """좌클릭: sarrow=정점 추가(계속) / 2점 도구=둘째 클릭 확정."""
         if self._place_tool == "sarrow":
             it = self._place
-            p = self._poly_place_point(event, it)   # 미리보기(_update_place)와 동일 계산
+            p = self._poly_place_point(event, it)   # 미리보기(_update_place)와 동일 계산 + _arrow_tip_snap 갱신
             local = QPointF(it.mapFromScene(p))
             it.prepareGeometryChange()
             it._pts[-1] = QPointF(local)      # 미리보기 → 확정
-            it._pts.append(QPointF(local))    # 새 미리보기(커서 추종)
+            it._pts.append(QPointF(local))    # 새 미리보기(커서 추종) — _finish_place가 pop
             it.update()
+            # [우리 확장] 클릭점이 도형 테두리에 스냅됐으면 그 점이 종점 — 더블클릭 없이 자동 마무리.
+            # (시작점은 _enter_click_place로 배치되므로 이 경로를 안 타 조기 종료되지 않는다.)
+            if self._arrow_tip_snap is not None:
+                self._finish_place()
+                return
             self.viewport().update()
         else:
             self._finish_place(event)
@@ -2841,6 +2951,11 @@ class _AnnotatorView(QGraphicsView):
             if snap is not None and snap[2] is not None:
                 it._set_endpoint(idx, it.mapFromScene(snap[0]))
                 it.set_bound(idx, snap[2], snap[2].mapFromScene(snap[0]))
+        # [Stage1] 양끝이 모두 도형에 붙고 수동 waypoint가 없는(2정점) 직선화살은 자동 직교 엘보로 전환.
+        # 수동 폴리라인(정점 3개↑)은 사용자 경로이므로 건드리지 않는다.
+        if it._bind_start is not None and it._bind_end is not None and len(it._pts) == 2:
+            it._auto_route = True
+            it.build_elbow()
 
     def _editing_text_hover(self, view_pos) -> str | None:
         """편집 중인 텍스트 위 hover면 'text'(내부=캐럿) / 'move'(테두리 band=이동), 아니면 None.
@@ -3075,7 +3190,13 @@ class _AnnotatorView(QGraphicsView):
                 self._finish_place()
                 return
             if key == Qt.Key.Key_Escape:
-                self._cancel_place()
+                # [우리 확장] sarrow는 Esc=전체취소가 아니라 '지금까지 놓은 점으로 확정'(마지막 커서
+                # 추종 미리보기만 버림). 확정할 정점이 부족하면(시작점만) _finish_place가 알아서 폐기.
+                # 다른 도구(2점)는 종전대로 취소.
+                if self._place_tool == "sarrow":
+                    self._finish_place()
+                else:
+                    self._cancel_place()
                 return
         if editing_text and key == Qt.Key.Key_Escape:
             # 텍스트 편집 중 ESC = 편집기 닫기가 아니라 텍스트 완료(=Ctrl+Enter와 동일).

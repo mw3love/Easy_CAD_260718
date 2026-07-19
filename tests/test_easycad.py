@@ -401,7 +401,7 @@ def _draw_helpers(view):
 
 
 def test_straight_arrow_click_draw():
-    # 하이브리드 클릭 배치(직선화살표): 클릭→이동→클릭으로 정점 누적, 더블클릭 마무리, Esc 취소.
+    # 하이브리드 클릭 배치(직선화살표): 클릭→이동→클릭으로 정점 누적, 더블클릭 마무리, Esc=마지막 점까지 확정.
     from PyQt6.QtGui import QKeyEvent
     from PyQt6.QtCore import QEvent
     NO = Qt.KeyboardModifier.NoModifier
@@ -429,14 +429,27 @@ def test_straight_arrow_click_draw():
     assert pts == [(0, 0), (100, 0), (80, 100)], pts
     assert sas[0].isSelected()
 
-    # Esc 취소: 진행 중이던 폴리라인은 통째로 폐기
+    # [개정] Esc = 취소가 아니라 '지금까지 놓은 점으로 확정'(마지막 커서 추종 미리보기만 버림)
     before = len([it for it in w._scene.items() if isinstance(it, _PolyArrowItem)])
     click(QPointF(300, 300)); move(QPointF(400, 300)); click(QPointF(400, 300))
+    move(QPointF(500, 300))                 # 미리보기만 이동(확정 안 함)
     assert view._place is not None
     view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, NO))
     assert view._place is None
-    after = len([it for it in w._scene.items() if isinstance(it, _PolyArrowItem)])
-    assert after == before, "Esc는 진행 중 폴리라인을 폐기해야 함"
+    sas2 = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(sas2) == before + 1, "Esc는 놓은 점까지 확정해야 함(폐기 아님)"
+    committed = [s for s in sas2 if s.isSelected()][0]
+    pts = [(round(p.x()), round(p.y())) for p in committed._pts]
+    assert pts == [(300, 300), (400, 300)], pts   # 미리보기(500,300)는 버려짐
+
+    # 시작점만 놓고 Esc → 확정할 정점 부족(1개) → 폐기
+    before2 = len([it for it in w._scene.items() if isinstance(it, _PolyArrowItem)])
+    click(QPointF(700, 700))
+    assert view._place is not None
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, NO))
+    assert view._place is None
+    after2 = len([it for it in w._scene.items() if isinstance(it, _PolyArrowItem)])
+    assert after2 == before2, "시작점만 있으면 Esc는 폐기(2정점 미만)"
 
 
 def test_straight_arrow_click_draw_ortho():
@@ -660,6 +673,129 @@ def test_sarrow_ortho_snaps_to_border():
     assert view._arrow_tip_snap is not None and _close(view._arrow_tip_snap, QPointF(300, 30))
     assert _close(view._place._pts[-1], QPointF(300, 30)), "수평(y=30) 유지 + 테두리 스냅"
     view._cancel_place()
+
+
+def test_sarrow_snap_click_auto_finishes():
+    # [개정] 클릭 배치 중 도형 테두리에 스냅된 클릭 = 종점 → 더블클릭 없이 자동 마무리.
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)      # 우측 테두리 x=300, 중앙 y=30
+    view = w._view
+    _p, _r, click, move, _dm, _d = _draw_helpers(view)
+
+    click(QPointF(0, 30))                 # 시작(테두리에서 멂) → 배치 모드
+    assert view._place is not None
+    move(QPointF(305, 30)); click(QPointF(305, 30))   # 테두리 근처 클릭 = 스냅 → 자동 마무리
+    assert view._place is None, "스냅점 클릭은 더블클릭 없이 마무리돼야"
+    sas = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(sas) == 1
+    sa = sas[0]
+    assert _close(sa.mapToScene(sa._pts[-1]), QPointF(300, 30)), sa.mapToScene(sa._pts[-1])
+    assert sa._bound(len(sa._pts) - 1) is not None   # 종점이 도형에 바인딩
+
+    # 시작점이 테두리 근처여도(_enter_click_place 경로) 조기 종료되지 않는다.
+    w2 = CanvasWindow(); w2.show(); w2.set_tool("sarrow"); w2._zoom_reset()
+    _mk_rect(w2._scene, w2.make_pen(), 200, 0, 100, 60)
+    v2 = w2._view
+    _p2, _r2, click2, _m2, _dm2, _d2 = _draw_helpers(v2)
+    click2(QPointF(305, 30))              # 시작이 테두리 스냅
+    assert v2._place is not None, "시작 스냅은 마무리 트리거가 아님(배치 계속)"
+    v2._cancel_place()
+
+
+def test_ortho_elbow_pure():
+    # [Stage1] _ortho_elbow / _dedup_pts 순수함수 — 법선 우세축으로 엘보 정점 생성 + 퇴화 접힘.
+    from easycad.canvas.annotator_core import _ortho_elbow, _dedup_pts
+    P = QPointF
+    s, e = P(100, 30), P(300, 230)
+    # 양끝 수평 법선 → H-V-H (중간 x=200)
+    mids = _ortho_elbow(s, e, P(1, 0), P(-1, 0))
+    assert [(round(m.x()), round(m.y())) for m in mids] == [(200, 30), (200, 230)]
+    # 양끝 수직 법선 → V-H-V (중간 y=130)
+    mids = _ortho_elbow(s, e, P(0, 1), P(0, -1))
+    assert [(round(m.x()), round(m.y())) for m in mids] == [(100, 130), (300, 130)]
+    # 혼합(시작 수평·끝 수직) → L자 모서리 하나 = (e.x, s.y)
+    mids = _ortho_elbow(s, e, P(1, 0), P(0, -1))
+    assert [(round(m.x()), round(m.y())) for m in mids] == [(300, 30)]
+    # 수평 정렬(같은 y) + 양끝 수평 → 엘보가 직선으로 접힘(공선 제거)
+    full = _dedup_pts([P(100, 30)] + _ortho_elbow(P(100, 30), P(300, 30), P(1, 0), P(-1, 0)) + [P(300, 30)])
+    assert [(round(m.x()), round(m.y())) for m in full] == [(100, 30), (300, 30)]
+
+
+def test_sarrow_auto_elbow_route():
+    # [Stage1] 양끝 바인딩 직선화살 → 직교 엘보 자동 생성 / 도형 이동 시 엘보 재계산.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)       # 우측 테두리 (100,30), 법선 +x
+    b = _mk_rect(w._scene, w.make_pen(), 300, 200, 100, 60)   # 좌측 테두리 (300,230), 법선 -x
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(100, 30), QPointF(300, 230))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, QPointF(100, 30))
+    sa.set_bound(1, b, QPointF(300, 230))
+    sa._auto_route = True
+    assert sa.build_elbow()
+    sp = [sa.mapToScene(p) for p in sa._pts]
+    assert len(sp) == 4, sp
+    assert _close(sp[0], QPointF(100, 30)) and _close(sp[-1], QPointF(300, 230))
+    assert _close(sp[1], QPointF(200, 30)) and _close(sp[2], QPointF(200, 230))   # H-V-H, mx=200
+
+    # 도형 이동 → reroute가 끝점 추종 + 엘보 재계산
+    b.setPos(QPointF(0, 100))            # b 좌측 테두리 → 씬 (300,330)
+    w._on_scene_changed(None)
+    sp = [sa.mapToScene(p) for p in sa._pts]
+    assert _close(sp[-1], QPointF(300, 330)), sp[-1]
+    assert _close(sp[1], QPointF(200, 30)) and _close(sp[2], QPointF(200, 330)), sp
+
+
+def test_sarrow_manual_edit_disables_auto():
+    # [Stage1] 수동 정점 조작(핸들 드래그 시작·waypoint 삽입·삭제) → 자동 라우팅 해제, 경로 동결.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 300, 200, 100, 60)
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(100, 30), QPointF(300, 230))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, QPointF(100, 30)); sa.set_bound(1, b, QPointF(300, 230))
+    sa._auto_route = True; sa.build_elbow()
+
+    # (1) 정점 핸들 드래그 시작 훅 → 해제
+    sa._on_endpoint_drag_start(1)
+    assert sa._auto_route is False
+    frozen = [(round(p.x()), round(p.y())) for p in sa._pts]
+    b.setPos(QPointF(0, 100)); w._on_scene_changed(None)   # 도형 이동해도 엘보 재계산 안 함
+    mids = [(round(sa._pts[i].x()), round(sa._pts[i].y())) for i in (1, 2)]
+    assert mids == frozen[1:3], "해제 후 중간 정점은 동결(재계산 금지)"
+
+    # (2) waypoint 삽입도 해제 트리거
+    sa2 = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa2.set_points(QPointF(0, 0), QPointF(400, 400)); w._scene.addItem(sa2)
+    sa2._auto_route = True
+    sa2.insert_vertex(0, QPointF(200, 0))
+    assert sa2._auto_route is False
+
+
+def test_sarrow_draw_between_shapes_auto_routes():
+    # [Stage1] 드래그로 양끝을 도형 테두리에 붙이면 확정 시 자동 직교 엘보로 전환.
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)          # 우측 (100,30)
+    _mk_rect(w._scene, w.make_pen(), 300, 200, 100, 60)      # 좌측 (300,230)
+    view = w._view
+    press, release, _c, _m, drag_move, _d = _draw_helpers(view)
+    press(QPointF(100, 30)); drag_move(QPointF(300, 230)); release(QPointF(300, 230))
+    sa = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)][0]
+    last = len(sa._pts) - 1
+    assert sa._bound(0) is not None and sa._bound(last) is not None
+    assert sa._auto_route is True
+    assert len(sa._pts) == 4, [(round(p.x()), round(p.y())) for p in sa._pts]
+
+    # .ecad 왕복 — auto_route 상태 보존
+    from PyQt6.QtWidgets import QGraphicsScene
+    path = os.path.join(_TMP, "sa_autoroute.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene(); load_document(sc2, path)
+    a2 = [it for it in sc2.items() if isinstance(it, _PolyArrowItem)][0]
+    assert a2._auto_route is True
 
 
 def _run_all():

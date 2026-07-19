@@ -120,7 +120,8 @@ def item_to_dict(it) -> dict | None:
                  else _col(it.brush().color()))
     elif isinstance(it, _PolyArrowItem):
         d.update(type="sarrow", pts=[[p.x(), p.y()] for p in it._pts],
-                 color=_col(it._color), width=it._width, head=it._head_at_end)
+                 color=_col(it._color), width=it._width, head=it._head_at_end,
+                 auto_route=it._auto_route)   # [Stage1] 직교 자동 라우팅 상태
     elif isinstance(it, _LineItem):
         ln = it.line()
         d.update(type="line", line=[ln.x1(), ln.y1(), ln.x2(), ln.y2()],
@@ -165,6 +166,7 @@ def dict_to_item(d: dict):
     elif t == "sarrow":
         it = _PolyArrowItem(QColor(d["color"]), d["width"], d.get("head", True))
         it._pts = [QPointF(*xy) for xy in d["pts"]]
+        it._auto_route = d.get("auto_route", False)   # [Stage1] 직교 자동 라우팅 상태
     elif t == "line":
         it = _LineItem(QLineF(*d["line"])); it.setPen(_mkpen(d))
     elif t == "path":
