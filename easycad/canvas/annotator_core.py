@@ -800,10 +800,79 @@ class _EllipseItem(_HandleResizeMixin, QGraphicsEllipseItem):
         self._paint_handle(painter)
 
 
-class _LineItem(_HandleResizeMixin, QGraphicsLineItem):
+# ---------------------------------------------------------------------------
+# [우리 확장] 선·화살표 라벨 — 본체에 '부착'되어 함께 이동하는 자식 텍스트
+# ---------------------------------------------------------------------------
+class _LabelMixin:
+    """선/화살표에 더블클릭으로 다는 텍스트 라벨. 라벨은 자식(child _TextItem)이라
+    본체가 통째로 이동하면 Qt가 자동으로 따라 옮기고, 끝점·곡선 편집처럼 로컬 기하가
+    바뀔 때만 _sync_label로 중점에 재배치한다. 라벨은 부착 전용(독립 이동 불가)."""
+
+    def _init_label(self):
+        self._label = None  # 자식 _TextItem or None
+
+    def _label_anchor(self) -> QPointF:      # 하위 클래스 구현: 라벨을 붙일 로컬 기준점(중점)
+        raise NotImplementedError
+
+    def _label_color(self) -> QColor:        # 하위 클래스가 본체 색으로 override
+        return QColor(_TEXT)
+
+    def _label_alive(self) -> bool:
+        lbl = getattr(self, "_label", None)
+        return lbl is not None and lbl.scene() is not None
+
+    def has_label(self) -> bool:
+        return self._label_alive() and bool(self._label.toPlainText().strip())
+
+    def ensure_label(self):
+        """라벨이 없으면 생성해 중점에 부착하고 반환(있으면 그대로 반환)."""
+        if not self._label_alive():
+            lbl = _TextItem(self._label_color())
+            lbl.setParentItem(self)
+            # 부착 전용 — 독립 이동 금지(선을 따라만 다닌다). 선택·편집·삭제는 가능.
+            lbl.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+            lbl.document().contentsChanged.connect(self._sync_label)  # 타이핑 중 중앙 유지
+            self._label = lbl
+        self._sync_label()
+        return self._label
+
+    def restore_label(self, d: dict):
+        """문서 로드용 — 저장된 라벨(dict)을 자식으로 복원."""
+        lbl = self.ensure_label()
+        lbl.apply_font_size(d.get("font", 16))
+        lbl.setPlainText(d.get("text", ""))
+        lbl.apply_color(QColor(d.get("color", _TEXT)))
+        if d.get("bg") is not None:
+            lbl.set_bg(QColor(*d["bg"]))
+        self._sync_label()
+        return lbl
+
+    def _sync_label(self):
+        """라벨을 본체 중점 '위쪽'에 재배치. _content_rect(편집 프레임 여유 제외)을 써
+        편집 중·완료 후 위치가 흔들리지 않게 한다."""
+        if not self._label_alive():
+            return
+        a = self._label_anchor()
+        br = self._label._content_rect()
+        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() - 4.0)
+
+
+class _LineItem(_LabelMixin, _HandleResizeMixin, QGraphicsLineItem):
     def __init__(self, *args):
         super().__init__(*args)
         self._init_resize()
+        self._init_label()
+
+    def setLine(self, *args):
+        super().setLine(*args)
+        self._sync_label()   # 끝점 이동·그리기로 선 기하가 바뀌면 라벨을 중점에 재배치
+
+    def _label_anchor(self) -> QPointF:
+        line = self.line()
+        return QPointF((line.x1() + line.x2()) / 2.0, (line.y1() + line.y2()) / 2.0)
+
+    def _label_color(self) -> QColor:
+        return self.pen().color()
 
     def clone(self):
         c = _LineItem(QLineF(self.line()))
@@ -965,7 +1034,7 @@ def _cubic_bezier_bbox(p1: QPointF, c1: QPointF, c2: QPointF, p2: QPointF) -> QR
     return QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
 
 
-class _ArrowItem(_HandleResizeMixin, QGraphicsItem):
+class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     """선 + 끝점 삼각형 화살촉. 머리 방향(head_at_end) 선택 가능."""
 
     def __init__(self, color: QColor, width: int, head_at_end: bool = True):
@@ -983,15 +1052,23 @@ class _ArrowItem(_HandleResizeMixin, QGraphicsItem):
         self._bind1_pt = None  # 그 도형의 '로컬 좌표' 부착점(고정) — 도형 이동/스케일 시 mapToScene로 추종
         self._bind2_pt = None
         self._init_resize()
+        self._init_label()
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
             | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
         )
 
+    def _label_anchor(self) -> QPointF:
+        return self._point_at(0.5)   # 곡선/직선 위 중점
+
+    def _label_color(self) -> QColor:
+        return QColor(self._color)
+
     def set_points(self, p1: QPointF, p2: QPointF):
         self.prepareGeometryChange()
         self._p1, self._p2 = p1, p2
         self.update()
+        self._sync_label()
 
     def set_head_at_end(self, value: bool):
         self._head_at_end = value
@@ -1041,6 +1118,7 @@ class _ArrowItem(_HandleResizeMixin, QGraphicsItem):
             if self._ctrl2 is not None:
                 self._ctrl2 = self._ctrl2 + (p - self._p2)
             self._p2 = p
+        self._sync_label()   # 끝점(및 곡선 delta) 이동 시 라벨을 새 중점으로
 
     def _move_endpoint_with_snap(self, idx, local_p):
         # 끝점을 테두리에 재스냅하면 생성 때처럼 바깥 법선으로 제어점을 다시 잡아 S자(수직 도착/이탈)
@@ -1376,6 +1454,7 @@ class _ArrowItem(_HandleResizeMixin, QGraphicsItem):
                     and math.hypot(self._ctrl2.x() - s2.x(), self._ctrl2.y() - s2.y()) < thresh):
                 self._ctrl1 = self._ctrl2 = None
             self.update()
+            self._sync_label()   # 곡선(중점) 변형 시 라벨 재배치
             event.accept()
             return
         super().mouseMoveEvent(event)
@@ -2324,12 +2403,44 @@ class _AnnotatorView(QGraphicsView):
         self._commit_move()   # 드래그 이동이 있었으면 undo에 기록
         super().mouseReleaseEvent(event)
 
+    def _labelable_at(self, view_pos):
+        """[우리 확장] 커서 아래 '맨 위 선택가능 아이템'이 선/화살표면 그 아이템, 아니면 None.
+        위에 텍스트·도형이 있으면 None(그쪽 기본 동작을 살린다 — 라벨 더블클릭=그 라벨 편집)."""
+        for it in self.items(view_pos):
+            if it is getattr(self._owner, "_bg_item", None):
+                continue
+            if isinstance(it, (_LineItem, _ArrowItem)):
+                return it
+            if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
+                return None
+        return None
+
+    def _begin_label_edit(self, item):
+        """[우리 확장] 선/화살표의 라벨을 생성(없으면)하고 편집 모드로 진입."""
+        new = not item._label_alive()
+        lbl = item.ensure_label()
+        if new:
+            self._owner.push_undo_add(lbl)   # 라벨 생성 되돌리기(빈 채 나가면 자동 폐기됨)
+        self.scene().clearSelection()
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+        lbl.setFocus()
+        cur = lbl.textCursor()               # 기존 텍스트 전체 선택(빠른 교체)
+        cur.select(cur.SelectionType.Document)
+        lbl.setTextCursor(cur)
+
     def mouseDoubleClickEvent(self, event):
         # 뷰어 모드: 더블클릭 = 닫기 (편집 모드는 텍스트 재편집 등 기본 동작 유지)
         if not self._owner.is_edit_mode():
             if event.button() == Qt.MouseButton.LeftButton:
                 self._owner.close()
             return
+        # [우리 확장] 선/화살표 더블클릭 = 라벨 달기/편집(위에 다른 선택형이 없을 때만).
+        if event.button() == Qt.MouseButton.LeftButton:
+            target = self._labelable_at(event.position().toPoint())
+            if target is not None:
+                self._begin_label_edit(target)
+                event.accept()
+                return
         super().mouseDoubleClickEvent(event)
 
     # ---- 키 (Space 토글 / 도구 단축키 / Delete / Ctrl+Z / Esc) -------------

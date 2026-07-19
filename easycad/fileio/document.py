@@ -133,6 +133,16 @@ def item_to_dict(it) -> dict | None:
         d.update(type="badge", number=it._number, color=_col(it._color))
     else:
         return None
+    # [우리 확장] 선·화살표에 붙은 라벨(자식 텍스트) — 본체 dict 안에 함께 직렬화.
+    if isinstance(it, (_ArrowItem, _LineItem)) and it.has_label():
+        lbl = it._label
+        bg = lbl._bg
+        d["label"] = {
+            "text": lbl.toPlainText(),
+            "color": _col(lbl.defaultTextColor()),
+            "font": lbl.font().pointSize(),
+            "bg": None if bg is None else [bg.red(), bg.green(), bg.blue(), bg.alpha()],
+        }
     return d
 
 
@@ -167,7 +177,9 @@ def dict_to_item(d: dict):
 # ---- 파일 저장/열기 -------------------------------------------------------
 def save_document(scene, path: str):
     # 아래→위(stacking) 순으로 저장해 열 때 순서·겹침이 보존되게 한다.
-    serial = [(it, item_to_dict(it)) for it in reversed(scene.items())]
+    # 자식 아이템(선/화살표에 부착된 라벨)은 부모 dict 안에 직렬화하므로 최상위에서 제외.
+    serial = [(it, item_to_dict(it)) for it in reversed(scene.items())
+              if it.parentItem() is None]
     serial = [(it, d) for it, d in serial if d is not None]
     idx_of = {id(it): i for i, (it, _d) in enumerate(serial)}
     # 화살표의 지속 연결 바인딩을 '저장 리스트 인덱스' + 고정 부착점(도형 로컬좌표)으로 기록.
@@ -209,4 +221,8 @@ def load_document(scene, path: str) -> int:
             pt = d.get(pkey)
             if j is not None and 0 <= j < len(created) and created[j] is not None and pt is not None:
                 it.set_bound(bi, created[j], QPointF(*pt))
+    # [우리 확장] 선·화살표 라벨 복원(본체가 씬에 들어간 뒤라 자식 부착 가능).
+    for d, it in zip(items, created):
+        if it is not None and d.get("label") and hasattr(it, "restore_label"):
+            it.restore_label(d["label"])
     return sum(1 for it in created if it is not None)

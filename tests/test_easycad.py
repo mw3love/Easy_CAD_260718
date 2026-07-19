@@ -208,6 +208,49 @@ def test_direction_rubber_band():
     view._rb_origin = view._rb_current = None
 
 
+def test_line_arrow_label():
+    # 선/화살표 라벨: 자식으로 부착 → 본체 이동·끝점 이동 시 중점 추종, .ecad 왕복 보존.
+    from PyQt6.QtWidgets import QGraphicsScene
+    w = CanvasWindow()
+    ln = _LineItem(QLineF(0, 0, 100, 0)); ln.setPen(w.make_pen())
+    ln.setFlags(ln.GraphicsItemFlag.ItemIsSelectable | ln.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ln)
+
+    lbl = ln.ensure_label(); lbl.setPlainText("L1"); ln._sync_label()
+    assert lbl.parentItem() is ln                       # 자식으로 부착
+    lc = lbl.mapToScene(lbl._content_rect().center())
+    assert abs(lc.x() - 50) < 2 and lc.y() < 0          # 중점 x≈50, 선 위쪽
+
+    ln.setPos(QPointF(200, 0))                          # 본체 이동 → 자식 자동 추종
+    assert abs(lbl.mapToScene(lbl._content_rect().center()).x() - 250) < 2
+
+    ln.setPos(QPointF(0, 0))
+    ln._set_endpoint(1, QPointF(0, 100))                # (0,0)-(0,100), 중점 (0,50)
+    lc3 = lbl.mapToScene(lbl._content_rect().center())
+    assert abs(lc3.x()) < 2 and abs(lc3.y() - 50) < 30  # 끝점 이동 추종
+
+    ar = _ArrowItem(QColor("#ffff0000"), 6, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 0))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    albl = ar.ensure_label(); albl.setPlainText("A1"); ar._sync_label()
+    assert abs(albl.mapToScene(albl._content_rect().center()).x() - 50) < 2
+    ar._set_endpoint(1, QPointF(100, 100))              # 중점 (50,50)
+    ac2 = albl.mapToScene(albl._content_rect().center())
+    assert abs(ac2.x() - 50) < 2 and abs(ac2.y() - 50) < 40
+
+    # .ecad 왕복 — 라벨은 자식이라 최상위 카운트 제외, 텍스트 보존
+    path = os.path.join(_TMP, "label.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene()
+    assert load_document(sc2, path) == 2                # 선 + 화살표(라벨 제외)
+    tops = [it for it in sc2.items() if it.parentItem() is None]
+    lines = [it for it in tops if isinstance(it, _LineItem)]
+    arrows = [it for it in tops if isinstance(it, _ArrowItem)]
+    assert len(lines) == 1 and lines[0].has_label() and lines[0]._label.toPlainText() == "L1"
+    assert len(arrows) == 1 and arrows[0].has_label() and arrows[0]._label.toPlainText() == "A1"
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
