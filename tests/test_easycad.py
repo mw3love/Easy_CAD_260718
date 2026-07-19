@@ -17,7 +17,8 @@ from PyQt6.QtGui import QBrush, QColor, QPainterPath
 
 from easycad.canvas.host import CanvasWindow
 from easycad.canvas.annotator_core import (
-    _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem)
+    _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
+    _PolyArrowItem)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
 
@@ -37,7 +38,7 @@ def _mk_rect(scene, pen, x, y, w, h):
 
 def test_host_construction():
     w = CanvasWindow()
-    assert len(w._tool_buttons) == 8
+    assert len(w._tool_buttons) == 9
     r = w._scene.sceneRect()
     assert r.width() > 90000 and r.height() > 90000
     m0 = w._view.transform().m11()
@@ -281,6 +282,68 @@ def test_click_outside_finishes_text_edit():
     assert not calls, "click inside editing text must not finish edit"
     press_at(QPointF(5000, 5000))      # 텍스트 '바깥' 빈 영역 = 편집 종료 호출
     assert calls, "click outside editing text must finish edit"
+
+
+def test_straight_arrow():
+    # 직선(꺾은선) 화살표: 정점 드래그(끝점 재사용)·waypoint 삽입·라벨·.ecad 왕복.
+    from PyQt6.QtWidgets import QGraphicsScene
+    w = CanvasWindow()
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(0, 0), QPointF(100, 0))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    assert len(sa._endpoints()) == 2                       # 정점 = 끝점 핸들
+
+    sa.insert_vertex(0, QPointF(50, 40))                   # 세그먼트0에 waypoint 삽입
+    assert len(sa._pts) == 3 and sa._pts[1] == QPointF(50, 40)
+    sa._set_endpoint(2, QPointF(100, 80))                  # 정점 드래그(끝점 machinery 경로)
+    assert sa._pts[2] == QPointF(100, 80)
+
+    tip, _ang = sa._tip_and_angle()                        # 화살촉 = 마지막 정점
+    assert tip == QPointF(100, 80)
+
+    lbl = sa.ensure_label(); lbl.setPlainText("S1"); sa._sync_label()
+    assert lbl.parentItem() is sa
+
+    path = os.path.join(_TMP, "sarrow.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene()
+    assert load_document(sc2, path) == 1                   # 라벨은 자식이라 카운트 제외
+    tops = [it for it in sc2.items() if it.parentItem() is None]
+    sas = [it for it in tops if isinstance(it, _PolyArrowItem)]
+    assert len(sas) == 1
+    assert [(p.x(), p.y()) for p in sas[0]._pts] == [(0, 0), (50, 40), (100, 80)]
+    assert sas[0].has_label() and sas[0]._label.toPlainText() == "S1"
+
+
+def test_straight_arrow_waypoint():
+    # 세그먼트 위 hover 감지 → 클릭 시 그 자리에 정점(waypoint) 삽입(A2).
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(0, 0), QPointF(100, 0))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa); sa.setSelected(True)
+    view = w._view
+
+    vp = view.mapFromScene(QPointF(50, 0))          # 세그먼트0 중앙 hover
+    hit = view._segment_add_at(vp)
+    assert hit is not None and hit[0] is sa and hit[1] == 0
+
+    view._seg_add = hit                              # 클릭 → 정점 삽입 + 드래그
+    view.mousePressEvent(QMouseEvent(
+        QEvent.Type.MouseButtonPress, QPointF(vp), QPointF(vp),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    view.mouseReleaseEvent(QMouseEvent(
+        QEvent.Type.MouseButtonRelease, QPointF(vp), QPointF(vp),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+    assert len(sa._pts) == 3
+    assert abs(sa._pts[1].x() - 50) < 3 and abs(sa._pts[1].y()) < 3   # 세그먼트 중앙에 삽입
+
+    # 정점 위(끝점) hover는 세그먼트 추가가 아니라 이동 우선 → None
+    vtx = view.mapFromScene(QPointF(0, 0))
+    assert view._segment_add_at(vtx) is None
 
 
 def _run_all():

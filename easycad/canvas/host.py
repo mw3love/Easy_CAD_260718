@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem,
+    _AnnotatorView, _ArrowItem, _PolyArrowItem,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
@@ -278,7 +278,7 @@ class CanvasWindow(QMainWindow):
         return self._badge_n
 
     def adjust_item_property(self, item, step: int):
-        if isinstance(item, _ArrowItem):
+        if isinstance(item, (_ArrowItem, _PolyArrowItem)):
             item.apply_width(max(1, item._width + step))
         elif hasattr(item, "pen"):
             item.apply_width(max(1.0, item.pen().widthF() + step))

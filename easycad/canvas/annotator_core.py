@@ -60,9 +60,9 @@ _DEFAULT_COLOR = _COLOR_PRESETS[0]
 _ICON_DARK = "#3a3a3a"
 
 # 그리기 도구가 만드는 도형(릴리스 시 너무 작으면 폐기 대상)
-_SHAPE_TOOLS = ("rect", "ellipse", "line", "arrow")
+_SHAPE_TOOLS = ("rect", "ellipse", "line", "arrow", "sarrow")
 # 현재 색으로 아이콘을 칠하는 도구(나머지는 중립색)
-_DRAW_TOOLS = ("rect", "ellipse", "line", "arrow", "pen", "text", "badge")
+_DRAW_TOOLS = ("rect", "ellipse", "line", "arrow", "sarrow", "pen", "text", "badge")
 
 # 텍스트 배경 선택지: 투명 / 흰 / 회 / 검 / 반투명 검 (자막·스티커 느낌). 스와치로 직접 선택.
 _TEXT_BG_OPTIONS = [
@@ -77,7 +77,7 @@ _TEXT_BG_OPTIONS = [
 _TOOLS = [
     ("select", "선택", "1"), ("rect", "네모", "2"), ("arrow", "화살표", "3"),
     ("text", "텍스트", "4"), ("ellipse", "원", "5"), ("line", "선", "6"),
-    ("pen", "펜", "7"), ("badge", "번호", "8"),
+    ("pen", "펜", "7"), ("badge", "번호", "8"), ("sarrow", "직선화살", "9"),
 ]
 
 
@@ -158,6 +158,12 @@ def _tool_icon(tool: str, color=None, neutral_override=None) -> QIcon:
         p.setBrush(col)
         p.setPen(QPen(col, 1))
         p.drawPolygon(QPolygonF([QPointF(18, 4), QPointF(11, 7), QPointF(15, 11)]))
+    elif tool == "sarrow":
+        # 꺾은선(직선 폴리라인) + 위 향한 촉 — 곡선 화살표와 구분되는 엘보 형태
+        p.drawPolyline(QPolygonF([QPointF(4, 18), QPointF(13, 18), QPointF(13, 9)]))
+        p.setBrush(col)
+        p.setPen(QPen(col, 1))
+        p.drawPolygon(QPolygonF([QPointF(13, 3), QPointF(10, 9), QPointF(16, 9)]))
     elif tool == "pen":
         path = QPainterPath(QPointF(4, 16))
         path.cubicTo(8, 5, 14, 21, 18, 7)
@@ -1467,6 +1473,205 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         super().mouseReleaseEvent(event)
 
 
+# ---------------------------------------------------------------------------
+# [우리 확장] 직선(꺾은선) 화살표 — Lucid식 직선 커넥터
+#   정점 리스트 폴리라인 + 끝 화살촉. 각 정점이 드래그 핸들(끝점 machinery 재사용),
+#   선택 후 세그먼트 hover로 정점 추가(Stage A2). 곡선 스플라인은 Stage B에서 얹는다.
+# ---------------------------------------------------------------------------
+def _point_seg_proj(p: QPointF, a: QPointF, b: QPointF):
+    """점 p를 선분 ab에 정사영. (선분 위 최근접점, p까지 거리) 반환(선분 밖이면 끝점으로 클램프)."""
+    abx, aby = b.x() - a.x(), b.y() - a.y()
+    denom = abx * abx + aby * aby
+    if denom < 1e-12:
+        t = 0.0
+    else:
+        t = ((p.x() - a.x()) * abx + (p.y() - a.y()) * aby) / denom
+        t = max(0.0, min(1.0, t))
+    proj = QPointF(a.x() + abx * t, a.y() + aby * t)
+    return proj, math.hypot(p.x() - proj.x(), p.y() - proj.y())
+
+
+class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
+    """정점 리스트로 이루어진 직선 화살표. _endpoints()로 모든 정점을 노출하므로
+    _HandleResizeMixin의 끝점 드래그 machinery가 정점 이동을 그대로 처리한다."""
+
+    def __init__(self, color: QColor, width: int, head_at_end: bool = True):
+        super().__init__()
+        self._pts = [QPointF(0, 0), QPointF(0, 0)]   # 정점 리스트(최소 2)
+        self._color = QColor(color)
+        self._width = width
+        self._head_at_end = head_at_end
+        self._init_resize()
+        self._init_label()
+        self.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        )
+
+    # ---- 정점 = 끝점 핸들(재사용) --------------------------------------
+    def _uses_endpoints(self):
+        return True
+
+    def _endpoints(self):
+        return self._pts
+
+    def _set_endpoint(self, idx, p):
+        self.prepareGeometryChange()
+        self._pts[idx] = QPointF(p)
+        self.update()
+        self._sync_label()
+
+    def set_points(self, p1: QPointF, p2: QPointF):
+        """그리기용 — 2정점으로 초기화."""
+        self.prepareGeometryChange()
+        self._pts = [QPointF(p1), QPointF(p2)]
+        self.update()
+        self._sync_label()
+
+    def insert_vertex(self, seg_idx: int, p: QPointF):
+        """세그먼트 seg_idx(정점 seg_idx~seg_idx+1 사이)에 정점 p 삽입(waypoint 추가)."""
+        self.prepareGeometryChange()
+        self._pts.insert(seg_idx + 1, QPointF(p))
+        self.update()
+        self._sync_label()
+
+    def _nearest_segment(self, local_p: QPointF):
+        """local_p에 가장 가까운 세그먼트 (seg_idx, 선분 위 최근접점(local), 거리) 반환."""
+        best = None
+        for i in range(len(self._pts) - 1):
+            proj, d = _point_seg_proj(local_p, self._pts[i], self._pts[i + 1])
+            if best is None or d < best[2]:
+                best = (i, proj, d)
+        return best
+
+    def remove_vertex(self, idx: int) -> bool:
+        """정점 삭제(최소 2정점은 유지). 삭제했으면 True."""
+        if len(self._pts) <= 2:
+            return False
+        self.prepareGeometryChange()
+        del self._pts[idx]
+        self.update()
+        self._sync_label()
+        return True
+
+    # ---- 색/두께 -------------------------------------------------------
+    def apply_color(self, color):
+        self._color = QColor(color)
+        self.update()
+
+    def apply_width(self, width):
+        self.prepareGeometryChange()
+        self._width = width
+        self.update()
+
+    def clone(self):
+        c = _PolyArrowItem(QColor(self._color), self._width, self._head_at_end)
+        c._pts = [QPointF(p) for p in self._pts]
+        return self._copy_common_to(c)
+
+    # ---- 화살촉(끝 세그먼트 방향) --------------------------------------
+    def _tip_and_angle(self):
+        if self._head_at_end:
+            tip, tail = self._pts[-1], self._pts[-2]
+        else:
+            tip, tail = self._pts[0], self._pts[1]
+        ang = (math.atan2(tip.y() - tail.y(), tip.x() - tail.x())
+               if tip != tail else 0.0)
+        return tip, ang
+
+    def _head_size(self) -> float:
+        return max(self._width * 2.5, 7.0)
+
+    def _head_points(self):
+        tip, ang = self._tip_and_angle()
+        size = self._head_size()
+        a1, a2 = ang + math.radians(150), ang - math.radians(150)
+        return [
+            QPointF(tip),
+            QPointF(tip.x() + size * math.cos(a1), tip.y() + size * math.sin(a1)),
+            QPointF(tip.x() + size * math.cos(a2), tip.y() + size * math.sin(a2)),
+        ]
+
+    def _polyline_path(self) -> QPainterPath:
+        path = QPainterPath(self._pts[0])
+        for pt in self._pts[1:]:
+            path.lineTo(pt)
+        return path
+
+    # ---- 라벨 앵커 = 폴리라인 길이의 중점 -------------------------------
+    def _label_color(self) -> QColor:
+        return QColor(self._color)
+
+    def _label_anchor(self) -> QPointF:
+        segs, total = [], 0.0
+        for a, b in zip(self._pts[:-1], self._pts[1:]):
+            d = math.hypot(b.x() - a.x(), b.y() - a.y())
+            segs.append((a, b, d))
+            total += d
+        if total < 1e-9:
+            return QPointF(self._pts[0])
+        target, run = total * 0.5, 0.0
+        for a, b, d in segs:
+            if run + d >= target:
+                t = (target - run) / d if d > 1e-9 else 0.0
+                return QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
+            run += d
+        return QPointF(self._pts[-1])
+
+    # ---- 경계/외형 -----------------------------------------------------
+    def _content_rect(self) -> QRectF:
+        xs = [p.x() for p in self._pts]
+        ys = [p.y() for p in self._pts]
+        r = QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
+        stroke = self._width / 2.0 + 2
+        r = r.adjusted(-stroke, -stroke, stroke, stroke)
+        hp = self._head_points()
+        hx = [p.x() for p in hp]
+        hy = [p.y() for p in hp]
+        head_r = QRectF(QPointF(min(hx), min(hy)), QPointF(max(hx), max(hy)))
+        return r.united(head_r.adjusted(-2, -2, 2, 2))
+
+    def boundingRect(self) -> QRectF:
+        r = self._content_rect()
+        for i in range(len(self._pts)):
+            r = r.united(self._inflate_to_hit(self._endpoint_rect(i)))
+        pad = 4.0 / self._scale_or_1()
+        return r.adjusted(-pad, -pad, pad, pad)
+
+    def _base_shape(self):
+        stroker = QPainterPathStroker()
+        stroker.setWidth(max(self._width, 10) + 4)   # 잡기 쉬운 폭
+        stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
+        stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        shape = stroker.createStroke(self._polyline_path())
+        shape.addPolygon(QPolygonF(self._head_points()))
+        return shape
+
+    def _paint_selection_outline(self, painter, scale):
+        stroker = QPainterPathStroker()
+        stroker.setWidth(self._width + 8)
+        stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
+        stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        outline = stroker.createStroke(self._polyline_path())
+        painter.setPen(QPen(QColor(_BLUE), 1.0 / (scale or 1.0), Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(outline.simplified())
+
+    def paint(self, painter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(self._color, self._width, Qt.PenStyle.SolidLine,
+                   Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(self._polyline_path())
+        painter.setPen(QPen(self._color, 1))
+        painter.setBrush(QBrush(self._color))
+        painter.drawPolygon(QPolygonF(self._head_points()))
+        if self.isSelected():
+            self._paint_selection_outline(painter, self._scale_or_1())
+        self._paint_endpoint_handles(painter)
+
+
 class _BadgeItem(_HandleResizeMixin, QGraphicsItem):
     """원 배경 + 중앙 번호. 클릭 위치(pos)에 배치."""
 
@@ -1790,7 +1995,7 @@ class _AnnotatorView(QGraphicsView):
     _SHORTCUTS = {
         Qt.Key.Key_1: "select", Qt.Key.Key_2: "rect", Qt.Key.Key_3: "arrow",
         Qt.Key.Key_4: "text", Qt.Key.Key_5: "ellipse", Qt.Key.Key_6: "line",
-        Qt.Key.Key_7: "pen", Qt.Key.Key_8: "badge",
+        Qt.Key.Key_7: "pen", Qt.Key.Key_8: "badge", Qt.Key.Key_9: "sarrow",
     }
 
     def __init__(self, scene: QGraphicsScene, owner):
@@ -1816,6 +2021,9 @@ class _AnnotatorView(QGraphicsView):
         self._rb_origin = None            # 시작점(view 좌표) — 방향 판정 기준
         self._rb_current = None           # 현재점(view 좌표)
         self._rb_base = []                # Shift 추가선택용 기존 선택 스냅샷
+        # [우리 확장] 직선화살표 waypoint 추가 예고 — 선택된 폴리라인 세그먼트 hover 시
+        # (item, seg_idx, 씬 최근접점) or None. 클릭하면 그 자리에 정점 삽입 후 바로 드래그.
+        self._seg_add = None
 
     def _is_empty_area(self, view_pos) -> bool:
         """클릭 위치에 선택 가능한 주석 아이템이 없으면(배경뿐) True."""
@@ -1881,6 +2089,26 @@ class _AnnotatorView(QGraphicsView):
     def _over_selected_endpoint(self, view_pos) -> bool:
         """커서가 '선택된' 선·화살표의 끝점 핸들 안이면 True(hover 커서 판정용)."""
         return self._selected_endpoint_item(view_pos) is not None
+
+    def _segment_add_at(self, view_pos):
+        """[우리 확장] 선택된 직선화살표의 '세그먼트 위'(정점 핸들 아님)에 커서가 있으면
+        (item, seg_idx, 씬 최근접점), 아니면 None. 정점 위는 이동(끝점 드래그)이 우선한다."""
+        if self._selected_endpoint_item(view_pos) is not None:
+            return None   # 정점 핸들 위 = 이동 우선
+        scene_pt = self.mapToScene(view_pos)
+        total = self._view_scale()
+        best = None
+        for it in self.scene().selectedItems():
+            if not isinstance(it, _PolyArrowItem):
+                continue
+            local = it.mapFromScene(scene_pt)
+            seg = it._nearest_segment(local)
+            if seg is None:
+                continue
+            px = seg[2] * total * it._scale_or_1()   # 화면 px 거리
+            if px <= 10.0 and (best is None or px < best[0]):
+                best = (px, it, seg[0], it.mapToScene(seg[1]))
+        return None if best is None else (best[1], best[2], best[3])
 
     # ---- [우리 확장] 방향 감지 러버밴드 (AutoCAD window/crossing) -----------
     def _rb_is_window(self) -> bool:
@@ -2043,9 +2271,10 @@ class _AnnotatorView(QGraphicsView):
         painter.drawEllipse(sp, base, base)
 
     def leaveEvent(self, event):
-        # 커서가 뷰를 벗어나면 스냅 예고 마커 정리(잔상 방지).
-        if self._snap_preview is not None:
+        # 커서가 뷰를 벗어나면 스냅·waypoint 예고 마커 정리(잔상 방지).
+        if self._snap_preview is not None or self._seg_add is not None:
             self._snap_preview = None
+            self._seg_add = None
             self.viewport().update()
         super().leaveEvent(event)
 
@@ -2078,6 +2307,16 @@ class _AnnotatorView(QGraphicsView):
             painter.setPen(pen)
             painter.setBrush(QBrush(fill))
             painter.drawRect(rect)
+        # [우리 확장] 직선화살표 waypoint 추가 예고 — 세그먼트 위 hover 지점에 '+' 고스트 마커.
+        if self._seg_add is not None:
+            c = self._seg_add[2]
+            r = 5.0 / s
+            painter.setPen(QPen(QColor("white"), 1.0 / s))
+            painter.setBrush(QBrush(QColor(_BLUE)))
+            painter.drawEllipse(c, r, r)
+            painter.setPen(QPen(QColor("white"), 1.4 / s))
+            painter.drawLine(QPointF(c.x() - r * 0.6, c.y()), QPointF(c.x() + r * 0.6, c.y()))
+            painter.drawLine(QPointF(c.x(), c.y() - r * 0.6), QPointF(c.x(), c.y() + r * 0.6))
 
     # ---- 줌 (휠) — 주석 위면 속성 변경, 아니면 owner의 hug-zoom(창이 이미지에 맞게) ----
     def wheelEvent(self, event):
@@ -2119,7 +2358,7 @@ class _AnnotatorView(QGraphicsView):
             tool = self._owner.current_tool
             if tool in ("rect", "ellipse"):
                 return self._constrain(self._start, sp, "square")
-            if tool in ("line", "arrow"):
+            if tool in ("line", "arrow", "sarrow"):
                 return self._constrain(self._start, sp, "angle")
         return sp
 
@@ -2162,6 +2401,17 @@ class _AnnotatorView(QGraphicsView):
             grab.setZValue(1e9)
             super().mousePressEvent(event)
             grab.setZValue(old_z)
+            return
+        # [우리 확장] 직선화살표 세그먼트 위 press(정점 아님) = 그 자리에 waypoint 삽입 후 바로 드래그.
+        if self._seg_add is not None:
+            item, seg_idx, scene_pt = self._seg_add
+            self._seg_add = None
+            item.insert_vertex(seg_idx, item.mapFromScene(scene_pt))
+            old_z = item.zValue()
+            item.setZValue(1e9)
+            super().mousePressEvent(event)   # 커서 아래 새 정점 핸들을 끝점 machinery가 잡음
+            item.setZValue(old_z)
+            self.viewport().update()
             return
         tool = self._owner.current_tool
         # 화살표 도구 + 도형 테두리 근처 press → 테두리에 스냅된 곡선 화살표 시작(도형 선택/이동보다 우선).
@@ -2234,6 +2484,10 @@ class _AnnotatorView(QGraphicsView):
             self._arrow_snap_exit = None   # 자유 시작(테두리 스냅 아님) → 직선/자유 곡선
             self._arrow_tip_snap = None
             self._begin_draw(it)
+        elif tool == "sarrow":
+            it = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+            it.set_points(sp, sp)
+            self._begin_draw(it)
         elif tool == "pen":
             self._path = QPainterPath(sp)
             it = _PathItem(self._path)
@@ -2298,6 +2552,8 @@ class _AnnotatorView(QGraphicsView):
             vp.setCursor(Qt.CursorShape.PointingHandCursor)  # 곡선 조절 손잡이(이동과 구분)
         elif self._over_selected_endpoint(view_pos):
             vp.setCursor(Qt.CursorShape.PointingHandCursor)  # 끝점 핸들(이동/재스냅) — 곡선 핸들과 동일
+        elif self._seg_add is not None:
+            vp.setCursor(Qt.CursorShape.CrossCursor)         # 직선화살표 세그먼트 — waypoint 추가
         elif self._rot_handle_at(view_pos):
             vp.setCursor(_rotate_cursor())                   # 회전 점 — 곡선 화살표 커서
         elif self._scale_handle_at(view_pos):
@@ -2341,6 +2597,12 @@ class _AnnotatorView(QGraphicsView):
             return
         if not (event.buttons() & Qt.MouseButton.LeftButton):
             self._update_snap_preview(event.position().toPoint())
+            prev = self._seg_add
+            self._seg_add = self._segment_add_at(event.position().toPoint())
+            if (prev is None) != (self._seg_add is None) or (
+                    prev is not None and self._seg_add is not None
+                    and prev[2] != self._seg_add[2]):
+                self.viewport().update()   # waypoint 예고 마커 갱신
             self._update_hover_cursor(event.position().toPoint())
         if self._drawing and self._temp is not None:
             tool = self._owner.current_tool
@@ -2352,6 +2614,8 @@ class _AnnotatorView(QGraphicsView):
                 self._temp.setRect(QRectF(self._start, sp).normalized())
             elif tool == "line":
                 self._temp.setLine(QLineF(self._start, sp))
+            elif tool == "sarrow":
+                self._temp.set_points(self._start, sp)   # 그리는 동안은 2정점 직선
             elif tool == "pen" and self._path is not None:
                 self._path.lineTo(sp)
                 self._temp.setPath(self._path)
@@ -2417,7 +2681,7 @@ class _AnnotatorView(QGraphicsView):
         for it in self.items(view_pos):
             if it is getattr(self._owner, "_bg_item", None):
                 continue
-            if isinstance(it, (_LineItem, _ArrowItem)):
+            if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem)):
                 return it
             if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
                 return None

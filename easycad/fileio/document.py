@@ -13,6 +13,7 @@ from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont
 
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
+    _PolyArrowItem,
 )
 
 FORMAT = "easycad-doc"
@@ -117,6 +118,9 @@ def item_to_dict(it) -> dict | None:
                  pen=_col(it.pen().color()), width=it.pen().widthF(),
                  fill=None if it.brush().style() == Qt.BrushStyle.NoBrush
                  else _col(it.brush().color()))
+    elif isinstance(it, _PolyArrowItem):
+        d.update(type="sarrow", pts=[[p.x(), p.y()] for p in it._pts],
+                 color=_col(it._color), width=it._width, head=it._head_at_end)
     elif isinstance(it, _LineItem):
         ln = it.line()
         d.update(type="line", line=[ln.x1(), ln.y1(), ln.x2(), ln.y2()],
@@ -134,7 +138,7 @@ def item_to_dict(it) -> dict | None:
     else:
         return None
     # [우리 확장] 선·화살표에 붙은 라벨(자식 텍스트) — 본체 dict 안에 함께 직렬화.
-    if isinstance(it, (_ArrowItem, _LineItem)) and it.has_label():
+    if isinstance(it, (_ArrowItem, _LineItem, _PolyArrowItem)) and it.has_label():
         lbl = it._label
         bg = lbl._bg
         d["label"] = {
@@ -158,6 +162,9 @@ def dict_to_item(d: dict):
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
     elif t == "ellipse":
         it = _EllipseItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
+    elif t == "sarrow":
+        it = _PolyArrowItem(QColor(d["color"]), d["width"], d.get("head", True))
+        it._pts = [QPointF(*xy) for xy in d["pts"]]
     elif t == "line":
         it = _LineItem(QLineF(*d["line"])); it.setPen(_mkpen(d))
     elif t == "path":
