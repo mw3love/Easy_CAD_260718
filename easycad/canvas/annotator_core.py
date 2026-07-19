@@ -469,6 +469,17 @@ class _HandleResizeMixin:
         rad = math.radians(round(math.degrees(math.atan2(dy, dx)) / 45.0) * 45.0)
         return QPointF(anchor.x() + dist * math.cos(rad), anchor.y() + dist * math.sin(rad))
 
+    def _ortho_endpoint(self, idx: int, p: QPointF) -> QPointF:
+        """[우리 확장] F8 Ortho 정점 드래그: 인접 정점 기준 0/90°에 스냅(로컬 좌표).
+        인접 = 이전 정점 우선(없으면 다음). |dx|≥|dy|면 수평, 아니면 수직."""
+        pts = self._endpoints()
+        if len(pts) < 2:
+            return p
+        anchor = pts[idx - 1] if idx > 0 else pts[idx + 1]
+        if abs(p.x() - anchor.x()) >= abs(p.y() - anchor.y()):
+            return QPointF(p.x(), anchor.y())
+        return QPointF(anchor.x(), p.y())
+
     def _connects_to_border(self) -> bool:
         """이 아이템의 끝점이 도형 테두리에 재스냅되는가(화살표만 override)."""
         return False
@@ -588,6 +599,15 @@ class _HandleResizeMixin:
                 return getattr(owner, "current_tool", None)
         return None
 
+    def _owner_ortho(self) -> bool:
+        """[우리 확장] F8 Ortho 활성 여부를 뷰→owner로 조회(정점 드래그 0/90° 제약용)."""
+        sc = self.scene()
+        if sc is not None and sc.views():
+            owner = getattr(sc.views()[0], "_owner", None)
+            if owner is not None:
+                return bool(getattr(owner, "ortho_enabled", False))
+        return False
+
     def _handle_active(self) -> bool:
         if not self.isSelected():
             return False
@@ -685,6 +705,9 @@ class _HandleResizeMixin:
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 # Shift = 각도 스냅(테두리 스냅과 상호배타)
                 self._set_endpoint(self._drag_endpoint, self._snap_endpoint(self._drag_endpoint, p))
+            elif self._owner_ortho():
+                # [우리 확장] F8 Ortho = 인접 정점 기준 0/90° 제약(테두리 스냅보다 우선)
+                self._set_endpoint(self._drag_endpoint, self._ortho_endpoint(self._drag_endpoint, p))
             else:
                 # 근처 도형 테두리에 재스냅(뗐다 다시 붙이기). 화살표는 S자 곡선까지 복원.
                 self._move_endpoint_with_snap(self._drag_endpoint, p)
@@ -2007,6 +2030,10 @@ class _AnnotatorView(QGraphicsView):
         self.setMouseTracking(True)
         self._drawing = False
         self._temp: QGraphicsItem | None = None
+        # [우리 확장] CAD식 클릭-드로우(직선화살표 전용) 진행 상태 — 여러 클릭에 걸친 폴리라인.
+        # press-drag-release가 아니라 클릭으로 정점을 쌓으므로 _drawing/_temp와 분리한다
+        # (release로 끝나지 않게). None=진행 중 아님. 마지막 정점은 커서 추종 미리보기.
+        self._poly_draw: _PolyArrowItem | None = None
         self._start = QPointF()
         self._path: QPainterPath | None = None
         self._move_snap = None       # 드래그 이동 전 위치 스냅샷([(item, QPointF), ...]) — undo용
@@ -2350,16 +2377,25 @@ class _AnnotatorView(QGraphicsView):
             snapped = round(math.atan2(dy, dx) / (math.pi / 4)) * (math.pi / 4)
             return QPointF(start.x() + length * math.cos(snapped),
                            start.y() + length * math.sin(snapped))
+        if mode == "ortho":
+            # [우리 확장] F8 Ortho — start 기준 0°/90°만. |dx|≥|dy|면 수평(y 고정), 아니면 수직(x 고정).
+            if abs(dx) >= abs(dy):
+                return QPointF(cur.x(), start.y())
+            return QPointF(start.x(), cur.y())
         return cur
 
     def _cur_point(self, event) -> QPointF:
         sp = self.mapToScene(event.position().toPoint())
+        tool = self._owner.current_tool
         if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-            tool = self._owner.current_tool
             if tool in ("rect", "ellipse"):
                 return self._constrain(self._start, sp, "square")
             if tool in ("line", "arrow", "sarrow"):
                 return self._constrain(self._start, sp, "angle")
+        # [우리 확장] F8 Ortho — Shift(45°)가 없을 때 선·화살표 그리기를 0/90°로 제약.
+        # (sarrow는 클릭-드로우 경로에서 _poly_apply_ortho가 따로 처리)
+        if getattr(self._owner, "ortho_enabled", False) and tool in ("line", "arrow"):
+            return self._constrain(self._start, sp, "ortho")
         return sp
 
     # ---- 그리기 ------------------------------------------------------------
@@ -2369,6 +2405,15 @@ class _AnnotatorView(QGraphicsView):
             self._owner._win_drag_start(event.globalPosition().toPoint())
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             return
+        # [우리 확장] CAD식 클릭-드로우 진행 중이면: 좌클릭=정점 추가, 우클릭=마무리.
+        # (릴리스로 끝내지 않으므로 이 분기가 최우선 — 끝점/세그먼트 판정보다 앞선다.)
+        if self._poly_draw is not None:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._poly_add_vertex(event)
+                return
+            if event.button() == Qt.MouseButton.RightButton:
+                self._finish_poly_draw()
+                return
         # 뷰어 모드: 좌클릭 드래그 = 창 이동 (그리기·선택 안 함)
         if not self._owner.is_edit_mode():
             if event.button() == Qt.MouseButton.LeftButton:
@@ -2485,9 +2530,16 @@ class _AnnotatorView(QGraphicsView):
             self._arrow_tip_snap = None
             self._begin_draw(it)
         elif tool == "sarrow":
+            # [우리 확장] CAD식 클릭-드로우 시작 — 드래그가 아니라 첫 정점 배치.
+            # v0(첫 클릭) + 커서 추종 미리보기 정점 하나. 이후 클릭마다 정점이 쌓인다.
             it = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
             it.set_points(sp, sp)
-            self._begin_draw(it)
+            it.setZValue(1)
+            self.scene().addItem(it)
+            self._poly_draw = it
+            self._snap_preview = None
+            self.scene().clearSelection()
+            self.viewport().update()
         elif tool == "pen":
             self._path = QPainterPath(sp)
             it = _PathItem(self._path)
@@ -2526,6 +2578,61 @@ class _AnnotatorView(QGraphicsView):
         self._drawing = True
         self._snap_preview = None   # 그리기 시작 → 유휴 스냅 예고 마커 정리
         self.viewport().update()
+
+    # ---- [우리 확장] CAD식 클릭-드로우 (직선화살표 전용) --------------------
+    # 클릭→이동→클릭으로 정점을 쌓는다. self._poly_draw._pts의 마지막 정점은 커서를
+    # 따라다니는 '미리보기'이며, 마무리(더블클릭/Enter/우클릭) 시 제거한다. F8 Ortho면
+    # 직전(확정) 정점 기준 0/90°로 스냅. Esc·도구 전환은 통째로 폐기.
+    def _poly_apply_ortho(self, it: "_PolyArrowItem", scene_p: QPointF) -> QPointF:
+        if not getattr(self._owner, "ortho_enabled", False) or len(it._pts) < 2:
+            return scene_p
+        anchor = it.mapToScene(it._pts[-2])   # 직전(확정) 정점
+        return self._constrain(anchor, scene_p, "ortho")
+
+    def _update_poly_draw(self, event):
+        """진행 중 폴리라인의 마지막(미리보기) 정점을 커서 위치로 갱신."""
+        it = self._poly_draw
+        p = self._poly_apply_ortho(it, self.mapToScene(event.position().toPoint()))
+        it._set_endpoint(len(it._pts) - 1, it.mapFromScene(p))
+
+    def _poly_add_vertex(self, event):
+        """좌클릭 = 미리보기 정점을 확정하고 새 미리보기 정점을 잇는다(정점 1개 추가)."""
+        it = self._poly_draw
+        p = self._poly_apply_ortho(it, self.mapToScene(event.position().toPoint()))
+        local = QPointF(it.mapFromScene(p))
+        it.prepareGeometryChange()
+        it._pts[-1] = QPointF(local)      # 미리보기 → 확정
+        it._pts.append(QPointF(local))    # 새 미리보기(커서 추종)
+        it.update()
+        self.viewport().update()
+
+    def _finish_poly_draw(self):
+        """더블클릭/Enter/우클릭 — 커서 추종 미리보기 정점을 떼고, 정점 2개 이상이면
+        확정(undo+선택). 부족하면 폐기."""
+        it = self._poly_draw
+        self._poly_draw = None
+        if it is None:
+            return
+        it.prepareGeometryChange()
+        if it._pts:
+            it._pts.pop()                 # 커서 추종 미리보기 정점 제거
+        if len(it._pts) >= 2:
+            self._owner.push_undo_add(it)
+            self.scene().clearSelection()
+            it.setSelected(True)
+            it._sync_label()
+            it.update()
+        elif it.scene() is not None:
+            self.scene().removeItem(it)   # 정점 부족 → 폐기
+        self.viewport().update()
+
+    def _cancel_poly_draw(self):
+        """Esc/도구 전환 — 진행 중 폴리라인을 통째로 폐기(있을 때만)."""
+        it = self._poly_draw
+        self._poly_draw = None
+        if it is not None and it.scene() is not None:
+            self.scene().removeItem(it)
+            self.viewport().update()
 
     def _editing_text_hover(self, view_pos) -> str | None:
         """편집 중인 텍스트 위 hover면 'text'(내부=캐럿) / 'move'(테두리 band=이동), 아니면 None.
@@ -2595,6 +2702,14 @@ class _AnnotatorView(QGraphicsView):
             else:
                 self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
             return
+        # [우리 확장] 클릭-드로우 진행 중 — 버튼 없이 이동해도 마지막 정점을 커서로 미리보기.
+        if self._poly_draw is not None:
+            if self._owner.current_tool != "sarrow":
+                self._cancel_poly_draw()   # 도구가 바뀌었으면 진행 중 드로우 폐기 후 정상 처리로
+            else:
+                self._update_poly_draw(event)
+                self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+                return
         if not (event.buttons() & Qt.MouseButton.LeftButton):
             self._update_snap_preview(event.position().toPoint())
             prev = self._seg_add
@@ -2639,6 +2754,9 @@ class _AnnotatorView(QGraphicsView):
             self._rb_origin = self._rb_current = None
             self._rb_base = []
             self.viewport().update()
+            return
+        # [우리 확장] 클릭-드로우 진행 중이면 릴리스는 무시 — 정점은 클릭(press)으로만 배치.
+        if self._poly_draw is not None:
             return
         if not self._owner.is_edit_mode():
             self._owner._win_drag_end()
@@ -2706,6 +2824,13 @@ class _AnnotatorView(QGraphicsView):
             if event.button() == Qt.MouseButton.LeftButton:
                 self._owner.close()
             return
+        # [우리 확장] 클릭-드로우 마무리(더블클릭). 이 더블클릭의 첫 press가 이미 정점을
+        # 추가했으므로, 마무리 시 커서 추종 미리보기 정점만 떼면 그 자리가 끝점이 된다.
+        if self._poly_draw is not None:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._finish_poly_draw()
+                event.accept()
+            return
         # [우리 확장] 선/화살표 더블클릭 = 라벨 달기/편집(위에 다른 선택형이 없을 때만).
         if event.button() == Qt.MouseButton.LeftButton:
             target = self._labelable_at(event.position().toPoint())
@@ -2724,6 +2849,14 @@ class _AnnotatorView(QGraphicsView):
         )
         key = event.key()
         mods = event.modifiers()
+        # [우리 확장] 클릭-드로우 진행 중(텍스트 편집 아님): Enter=마무리 / Esc=취소. 최우선.
+        if self._poly_draw is not None and not editing_text:
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._finish_poly_draw()
+                return
+            if key == Qt.Key.Key_Escape:
+                self._cancel_poly_draw()
+                return
         if editing_text and key == Qt.Key.Key_Escape:
             # 텍스트 편집 중 ESC = 편집기 닫기가 아니라 텍스트 완료(=Ctrl+Enter와 동일).
             # clearFocus → focusOutEvent가 정리(빈 텍스트 폐기 / 비어있지 않으면 선택 해제).

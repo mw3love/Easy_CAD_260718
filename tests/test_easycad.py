@@ -346,6 +346,110 @@ def test_straight_arrow_waypoint():
     assert view._segment_add_at(vtx) is None
 
 
+def test_ortho_constraint():
+    # F8 Ortho 제약 계산: start 기준 0/90°. |dx|≥|dy|=수평(y 고정), 아니면 수직(x 고정).
+    from easycad.canvas.annotator_core import _AnnotatorView
+    c = _AnnotatorView._constrain
+    assert c(QPointF(0, 0), QPointF(100, 20), "ortho") == QPointF(100, 0)   # 수평
+    assert c(QPointF(0, 0), QPointF(20, 100), "ortho") == QPointF(0, 100)   # 수직
+    assert c(QPointF(50, 50), QPointF(10, 55), "ortho") == QPointF(10, 50)  # 수평(음의 dx)
+
+    # 정점 드래그 ortho: 인접 정점(이전 우선) 기준 0/90° 스냅.
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(0, 0), QPointF(100, 0))
+    # 끝점 1 드래그(anchor=pts[0]=(0,0)). (90,30) → |dx|90≥|dy|30 → 수평 → (90,0)
+    assert sa._ortho_endpoint(1, QPointF(90, 30)) == QPointF(90, 0)
+    # (30,90) → 수직 → x=anchor.x=0 → (0,90)
+    assert sa._ortho_endpoint(1, QPointF(30, 90)) == QPointF(0, 90)
+    # 끝점 0 드래그(anchor=pts[1]=(100,0)). (70,90) → dx=-30,dy=90 → 수직 → x=100 → (100,90)
+    assert sa._ortho_endpoint(0, QPointF(70, 90)) == QPointF(100, 90)
+
+
+def test_straight_arrow_click_draw():
+    # CAD식 클릭-드로우(직선화살표): 클릭→이동→클릭으로 정점 누적, 더블클릭 마무리, Esc 취소.
+    from PyQt6.QtGui import QMouseEvent, QKeyEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    view = w._view
+    NO = Qt.KeyboardModifier.NoModifier
+    L = Qt.MouseButton.LeftButton
+
+    def _ev(t, sp, btn, btns):
+        vp = view.mapFromScene(sp)
+        return QMouseEvent(t, QPointF(vp), QPointF(vp), btn, btns, NO)
+
+    def click(sp):
+        view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, sp, L, L))
+        view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, sp, L, Qt.MouseButton.NoButton))
+
+    def move(sp):
+        view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, sp, Qt.MouseButton.NoButton, Qt.MouseButton.NoButton))
+
+    def dbl(sp):
+        # 실제 Qt 시퀀스: 첫 press가 정점 추가 → dblclick이 마무리
+        view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, sp, L, L))
+        view.mouseDoubleClickEvent(_ev(QEvent.Type.MouseButtonDblClick, sp, L, L))
+        view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, sp, L, Qt.MouseButton.NoButton))
+
+    # 첫 클릭 = 진행 시작(v0 + 미리보기 정점)
+    click(QPointF(0, 0))
+    assert view._poly_draw is not None
+    assert len(view._poly_draw._pts) == 2
+
+    # 이동 = 미리보기 정점이 커서 추종
+    move(QPointF(100, 0))
+    assert _close(view._poly_draw._pts[-1], QPointF(100, 0))
+
+    # 둘째 클릭 = 정점 확정(정점 1개 추가)
+    click(QPointF(100, 0))
+    assert len(view._poly_draw._pts) == 3
+
+    move(QPointF(80, 100))
+    # 더블클릭 = 마무리(그 자리를 끝점으로, 미리보기 정점 제거)
+    dbl(QPointF(80, 100))
+    assert view._poly_draw is None
+    sas = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(sas) == 1
+    pts = [(round(p.x()), round(p.y())) for p in sas[0]._pts]
+    assert pts == [(0, 0), (100, 0), (80, 100)], pts
+    assert sas[0].isSelected()
+
+    # Esc 취소: 진행 중이던 폴리라인은 통째로 폐기(씬에 새 아이템 안 남음)
+    before = len([it for it in w._scene.items() if isinstance(it, _PolyArrowItem)])
+    click(QPointF(300, 300)); move(QPointF(400, 300)); click(QPointF(400, 300))
+    assert view._poly_draw is not None
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, NO))
+    assert view._poly_draw is None
+    after = len([it for it in w._scene.items() if isinstance(it, _PolyArrowItem)])
+    assert after == before, "Esc는 진행 중 폴리라인을 폐기해야 함"
+
+
+def test_straight_arrow_click_draw_ortho():
+    # F8 Ortho 켜짐 + 클릭-드로우: 미리보기 정점이 직전 정점 기준 0/90°로 스냅.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    w.ortho_enabled = True
+    view = w._view
+    NO = Qt.KeyboardModifier.NoModifier
+    L = Qt.MouseButton.LeftButton
+
+    def _ev(t, sp, btn, btns):
+        vp = view.mapFromScene(sp)
+        return QMouseEvent(t, QPointF(vp), QPointF(vp), btn, btns, NO)
+
+    view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, QPointF(0, 0), L, L))
+    view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, QPointF(0, 0), L, Qt.MouseButton.NoButton))
+    # (100,20): |dx|>|dy| → 수평 → y=0
+    view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, QPointF(100, 20), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton))
+    assert _close(view._poly_draw._pts[-1], QPointF(100, 0))
+    # (20,100): 수직 → x=0
+    view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, QPointF(20, 100), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton))
+    assert _close(view._poly_draw._pts[-1], QPointF(0, 100))
+    view._cancel_poly_draw()
+    assert view._poly_draw is None
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

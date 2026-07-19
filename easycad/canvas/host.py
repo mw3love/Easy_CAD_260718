@@ -46,6 +46,7 @@ class CanvasWindow(QMainWindow):
         self.current_text_bg = None
         self.arrow_head_at_end = True
         self.snap_enabled = True         # o-snap 토글(F3) — 도형 테두리 달라붙기 켜고 끄기
+        self.ortho_enabled = False       # Ortho 토글(F8) — 그리기·정점드래그를 수평/수직(0/90°)로 제약
         self._bg_item = None            # 배경 이미지 없음(무한 캔버스)
         self._badge_n = 0
         self._undo: list[tuple[str, list]] = []
@@ -122,6 +123,12 @@ class CanvasWindow(QMainWindow):
         self._act_snap.setShortcut(QKeySequence("F3"))
         self._act_snap.triggered.connect(self._toggle_snap)
         v.addAction(self._act_snap)
+        self._act_ortho = QAction("직교 제약 (Ortho)", self)
+        self._act_ortho.setCheckable(True)
+        self._act_ortho.setChecked(False)
+        self._act_ortho.setShortcut(QKeySequence("F8"))
+        self._act_ortho.triggered.connect(self._toggle_ortho)
+        v.addAction(self._act_ortho)
 
     # ---- 보기: 기준 zoom / 스냅 -------------------------------------------
     def _zoom_reset(self):
@@ -141,6 +148,11 @@ class CanvasWindow(QMainWindow):
         self.snap_enabled = checked
         self.statusBar().showMessage(
             "스냅 켜짐" if checked else "스냅 꺼짐 — 자유 배치", 3000)
+
+    def _toggle_ortho(self, checked: bool):
+        self.ortho_enabled = checked
+        self.statusBar().showMessage(
+            "Ortho 켜짐 — 수평/수직만" if checked else "Ortho 꺼짐 — 자유 각도", 3000)
 
     # ---- 저장 / 열기 --------------------------------------------------------
     _DOC_FILTER = "Easy CAD 문서 (*.ecad)"
@@ -223,7 +235,7 @@ class CanvasWindow(QMainWindow):
             self._tool_buttons[key] = btn
         h.addStretch(1)
         h.addWidget(QLabel("휠=줌 · Shift+휠=두께/크기 · 가운데버튼 드래그=이동 · "
-                           "Ctrl+0=100% · Ctrl+9=전체맞춤 · F3=스냅 · Del=삭제 · Ctrl+Z=되돌리기"))
+                           "Ctrl+0=100% · Ctrl+9=전체맞춤 · F3=스냅 · F8=직교 · Del=삭제 · Ctrl+Z=되돌리기"))
         return bar
 
     # ---- 지속 연결 리라우트 -------------------------------------------------
@@ -269,6 +281,10 @@ class CanvasWindow(QMainWindow):
         return pen
 
     def set_tool(self, key):
+        # 도구를 바꾸면 진행 중이던 sarrow 클릭-드로우는 폐기(반쯤 그린 폴리라인이 남지 않게).
+        view = getattr(self, "_view", None)
+        if view is not None:
+            view._cancel_poly_draw()
         self.current_tool = key
         for k, b in self._tool_buttons.items():
             b.setChecked(k == key)
