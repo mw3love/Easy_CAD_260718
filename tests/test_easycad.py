@@ -251,6 +251,38 @@ def test_line_arrow_label():
     assert len(arrows) == 1 and arrows[0].has_label() and arrows[0]._label.toPlainText() == "A1"
 
 
+def test_click_outside_finishes_text_edit():
+    # 편집 중 텍스트 바깥을 좌클릭하면 편집을 마무리(clearFocus)해야 한다. 실제 포커스 해제는
+    # 활성창이 필요해 offscreen에선 관측 불가 → '바깥 클릭이면 clearFocus 호출, 텍스트 위면
+    # 미호출'이라는 우리 분기 판정만 검증(실제 종료는 GUI에서 확인).
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    tx = _TextItem(QColor("#ff000000")); tx.setPlainText("hi")
+    tx.setFlags(tx.GraphicsItemFlag.ItemIsSelectable | tx.GraphicsItemFlag.ItemIsMovable)
+    tx.setPos(QPointF(50, 50)); w._scene.addItem(tx)
+    tx.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+    tx.setFocus()
+    calls = []
+    tx.clearFocus = lambda: calls.append(1)   # 호출 여부 감지(offscreen 무해)
+
+    def press_at(scene_pt):
+        vp = w._view.mapFromScene(scene_pt)
+        w._view.mousePressEvent(QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(vp), QPointF(vp),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier))
+        w._view.mouseReleaseEvent(QMouseEvent(
+            QEvent.Type.MouseButtonRelease, QPointF(vp), QPointF(vp),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier))
+
+    press_at(QPointF(55, 55))          # 텍스트 '위' 클릭 = 캐럿 이동, 종료 안 함
+    assert not calls, "click inside editing text must not finish edit"
+    press_at(QPointF(5000, 5000))      # 텍스트 '바깥' 빈 영역 = 편집 종료 호출
+    assert calls, "click outside editing text must finish edit"
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

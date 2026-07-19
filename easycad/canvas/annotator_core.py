@@ -2137,6 +2137,14 @@ class _AnnotatorView(QGraphicsView):
             return
         if event.button() != Qt.MouseButton.LeftButton:
             return super().mousePressEvent(event)
+        # [우리 확장] 편집 중 텍스트가 있고 이번 좌클릭이 그 텍스트 위가 아니면 편집을 마무리한다.
+        # (빈 영역 클릭은 아래 러버밴드 분기가 super 전에 return해 focusOut이 안 나던 문제 보완 —
+        #  clearFocus → focusOutEvent가 빈 텍스트는 폐기, 아니면 완료. 그 텍스트 위 클릭은 캐럿 이동.)
+        fi = self.scene().focusItem()
+        if isinstance(fi, QGraphicsTextItem) \
+                and fi.textInteractionFlags() != Qt.TextInteractionFlag.NoTextInteraction \
+                and fi not in self.items(event.position().toPoint()):
+            fi.clearFocus()
         # 이미 선택된 화살표/선의 끝점·곡선(bend) 조절 핸들 위 press는 겹친 도형 테두리보다 우선한다
         # (선택된 아이템의 핸들이 먼저 작동해야 함). 끝점/핸들은 도형 테두리에 딱 붙는 일이 잦아
         # Z-order 배달로는 아래 도형이 press를 가로챈다 → 그 아이템을 잠깐 최상단으로 올려 Qt가
