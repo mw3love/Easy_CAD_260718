@@ -1082,6 +1082,93 @@ def test_mirror_keeps_binding():
     assert _close(ar.mapToScene(ar._endpoints()[0]), QPointF(100, 30))
 
 
+def _box_drag(item, kind, key, lp, host):
+    """[2c] 박스 리사이즈 한 번 시뮬레이트(press→move→release) + geom undo 커밋."""
+    item._begin_box_geom()
+    item._box_resize = (kind, key)
+    item._apply_box_resize(lp)
+    snap = item._box_snap
+    item._box_resize = None
+    item._box_snap = None
+    item._box_bound = None
+    item._box_orig_rect = None
+    if snap:
+        host.push_undo_geom(snap)
+
+
+def test_box_handles_gate():
+    # [2c] 네모·원만 박스 8핸들, 텍스트·번호는 기존 단일 핸들.
+    w = CanvasWindow()
+    assert _mk_rect(w._scene, w.make_pen(), 0, 0, 50, 50)._box_handles()
+    el = _EllipseItem(QRectF(0, 0, 50, 50)); w._scene.addItem(el)
+    assert el._box_handles()
+    t = _TextItem(QColor("black")); w._scene.addItem(t)
+    assert not t._box_handles()
+    b = _BadgeItem(1, QColor("black")); w._scene.addItem(b)
+    assert not b._box_handles()
+
+
+def test_box_corner_resize():
+    # [2c] 꼭짓점 = 2D 자유 리사이즈, 반대 꼭짓점 고정.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    _box_drag(a, "corner", 2, QPointF(150, 90), w)   # 우하단(BR) → (150,90), 좌상단 고정
+    assert a.rect() == QRectF(0, 0, 150, 90)
+    w.undo()
+    assert a.rect() == QRectF(0, 0, 100, 60)
+    _box_drag(a, "corner", 0, QPointF(-20, -10), w)  # 좌상단(TL) → (-20,-10), 우하단(100,60) 고정
+    assert a.rect() == QRectF(-20, -10, 120, 70)
+    w.undo()
+    assert a.rect() == QRectF(0, 0, 100, 60)
+
+
+def test_box_edge_resize():
+    # [2c] 변 = 1축만. 우변=가로만(세로 불변), 상변=세로만(가로 불변).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    _box_drag(a, "edge", "r", QPointF(200, 999), w)  # y는 무시돼야 함
+    assert a.rect() == QRectF(0, 0, 200, 60)
+    w.undo()
+    _box_drag(a, "edge", "t", QPointF(999, -40), w)  # x는 무시돼야 함
+    assert a.rect() == QRectF(0, -40, 100, 100)
+    w.undo()
+    assert a.rect() == QRectF(0, 0, 100, 60)
+
+
+def test_box_resize_keeps_binding():
+    # [2c] 네모에 붙은 화살표 — 리사이즈해도 상대 테두리 위치 유지(우변 중점→새 우변 중점).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); b.setPos(QPointF(400, 0))
+    ar = _ArrowItem(QColor("#ffff9500"), 6, True)
+    ar.set_points(QPointF(100, 30), QPointF(400, 30))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    ar.set_bound(0, a, a.mapFromScene(QPointF(100, 30)))   # a 우변 중점
+    ar.set_bound(1, b, b.mapFromScene(QPointF(400, 30)))
+    _box_drag(a, "edge", "r", QPointF(200, 30), w)         # a 우변 100→200
+    assert a.rect() == QRectF(0, 0, 200, 60)
+    # 부착점이 새 우변 중점(200,30)으로 재매핑되고 끝점이 따라옴.
+    assert _close(a.mapToScene(ar._bind1_pt), QPointF(200, 30))
+    assert _close(ar.mapToScene(ar._endpoints()[0]), QPointF(200, 30))
+    assert _close(ar.mapToScene(ar._endpoints()[1]), QPointF(400, 30))   # 반대끝 불변
+    w.undo()
+    assert a.rect() == QRectF(0, 0, 100, 60) and ar.has_binding()
+
+
+def test_box_handle_cursor():
+    # [2c] 호버 커서 매핑 — 꼭짓점=대각, 변=가로/세로, 좌상단 회전.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    corners = dict((i, r.center()) for i, r in a._box_corner_rects())
+    assert a._box_handle_cursor(corners[0]) == Qt.CursorShape.SizeFDiagCursor   # TL ↖↘
+    assert a._box_handle_cursor(corners[1]) == Qt.CursorShape.SizeBDiagCursor   # TR ↗↙
+    edges = dict((k, r.center()) for k, r in a._box_edge_rects())
+    assert a._box_handle_cursor(edges["r"]) == Qt.CursorShape.SizeHorCursor
+    assert a._box_handle_cursor(edges["t"]) == Qt.CursorShape.SizeVerCursor
+    assert a._box_handle_cursor(a._box_rot_rect().center()) == "rotate"
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

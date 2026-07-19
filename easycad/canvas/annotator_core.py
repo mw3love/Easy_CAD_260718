@@ -435,6 +435,11 @@ class _HandleResizeMixin:
         self._press_dist = 1.0
         self._press_rot = 0.0
         self._press_angle = 0.0
+        # [2c] 네모·원 박스 리사이즈(꼭짓점 2D·변 1축, setRect 기반) 상태
+        self._box_resize = None     # None | ("corner", 0..3) | ("edge", "l"/"r"/"t"/"b")
+        self._box_orig_rect = None  # 드래그 시작 시 rect()(원본 기준 — 누적 방지)
+        self._box_snap = None       # [(item, capture_geom()), ...] — geom undo
+        self._box_bound = None      # _collect_bound_arrows 결과(부착점 상대유지)
 
     # ---- 끝점(양끝 이동) 모드 -------------------------------------------
     # 선·화살표처럼 '2점으로 완전히 결정되는' 도형은 회전+균일스케일 핸들 대신
@@ -644,6 +649,10 @@ class _HandleResizeMixin:
                 # boundingRect 밖으로 나가 Qt에 컬링당하지 않는다.
                 r = r.united(self._inflate_to_hit(self._endpoint_rect(i)))
             return r.adjusted(-pad, -pad, pad, pad)
+        if self._box_handles():
+            # 꼭짓점·변 핸들은 rect 경계서 half-handle 삐져나오고, 회전 핸들은 좌상단 바깥.
+            h = self._handle_px()
+            return self._content_rect().united(self._box_rot_rect()).adjusted(-h, -h, h, h)
         return self._content_rect().united(self._rot_handle_rect().adjusted(-pad, -pad, pad, pad))
 
     def _handle_local_rect(self) -> QRectF:
@@ -661,6 +670,107 @@ class _HandleResizeMixin:
         d = self._handle_px()  # 원 지름 = 크기조절 사각 변
         c = self._rot_handle_center()
         return QRectF(c.x() - d / 2, c.y() - d / 2, d, d)
+
+    # ---- [2c] 네모·원 박스 핸들(꼭짓점 4·변 중점 4·좌상단 회전) ------------------
+    # 텍스트·번호는 기존 단일 핸들(중심 균일 스케일)을 그대로 쓰고, setRect가 있는 네모·원만
+    # Lucid식 8핸들로 자유 리사이즈한다. 핸들 위치·리사이즈 모두 '기하 rect()' 기준(펜 여유 없이
+    # 정확). 선택 점선은 _content_rect(펜 밖)이라 핸들이 그 안쪽에 살짝 들어오지만 무해.
+    def _box_handles(self) -> bool:
+        return hasattr(self, "setRect") and not self._uses_endpoints()
+
+    def _box_corner_rects(self):
+        br = self.rect()
+        h = self._handle_px()
+        pts = [br.topLeft(), br.topRight(), br.bottomRight(), br.bottomLeft()]  # 0TL 1TR 2BR 3BL
+        return [(i, QRectF(p.x() - h / 2, p.y() - h / 2, h, h)) for i, p in enumerate(pts)]
+
+    def _box_edge_rects(self):
+        br = self.rect()
+        h = self._handle_px()
+        mids = [("t", QPointF(br.center().x(), br.top())),
+                ("r", QPointF(br.right(), br.center().y())),
+                ("b", QPointF(br.center().x(), br.bottom())),
+                ("l", QPointF(br.left(), br.center().y()))]
+        return [(k, QRectF(p.x() - h / 2, p.y() - h / 2, h, h)) for k, p in mids]
+
+    def _box_rot_center(self) -> QPointF:
+        br = self.rect()
+        gap = self._handle_px() * 1.6   # 좌상단서 대각으로 살짝 뗌
+        return QPointF(br.left() - gap, br.top() - gap)
+
+    def _box_rot_rect(self) -> QRectF:
+        d = self._handle_px()
+        c = self._box_rot_center()
+        return QRectF(c.x() - d / 2, c.y() - d / 2, d, d)
+
+    def _box_handle_cursor(self, local_pt: QPointF):
+        """local_pt가 어느 박스 핸들 위인지 → 커서('rotate' or Qt.CursorShape), 없으면 None."""
+        if not (self._box_handles() and self._handle_active()):
+            return None
+        if self._box_rot_rect().contains(local_pt):
+            return "rotate"
+        for i, r in self._box_corner_rects():
+            if r.contains(local_pt):   # TL·BR = ↖↘, TR·BL = ↗↙
+                return (Qt.CursorShape.SizeFDiagCursor if i in (0, 2)
+                        else Qt.CursorShape.SizeBDiagCursor)
+        for k, r in self._box_edge_rects():
+            if r.contains(local_pt):   # 좌우변=가로, 상하변=세로
+                return (Qt.CursorShape.SizeHorCursor if k in ("l", "r")
+                        else Qt.CursorShape.SizeVerCursor)
+        return None
+
+    def _host(self):
+        sc = self.scene()
+        if sc is not None and sc.views():
+            return getattr(sc.views()[0], "_owner", None)
+        return None
+
+    def _begin_box_geom(self):
+        """박스 리사이즈·회전 시작 — 원본 rect + undo 스냅샷(자신+부착 화살표) 확보."""
+        self._box_orig_rect = QRectF(self.rect())
+        self._box_bound = _collect_bound_arrows(self.scene(), [self])
+        self._box_snap = [(it, it.capture_geom())
+                          for it in _snapshot_set([self], self._box_bound)]
+
+    def _set_box_rect(self, new_rect: QRectF):
+        """rect 교체 + 부착 화살표 부착점을 '상대 위치 유지'로 재매핑 후 추종(reroute)."""
+        old = self.rect()
+        ow = old.width() if abs(old.width()) > 1e-6 else 1.0
+        oh = old.height() if abs(old.height()) > 1e-6 else 1.0
+        for arrow, idx, sh in (self._box_bound or []):
+            bp = arrow._bind_pt(idx)
+            if bp is None:
+                continue
+            relx = (bp.x() - old.left()) / ow
+            rely = (bp.y() - old.top()) / oh
+            arrow.set_bound(idx, sh, QPointF(new_rect.left() + relx * new_rect.width(),
+                                             new_rect.top() + rely * new_rect.height()))
+        self.prepareGeometryChange()
+        self.setRect(new_rect)
+        for arrow, idx, sh in (self._box_bound or []):
+            arrow.reroute(pin_pred=lambda i: True)
+
+    def _apply_box_resize(self, lp: QPointF):
+        o = self._box_orig_rect
+        kind, key = self._box_resize
+        if kind == "corner":
+            opp = [o.bottomRight(), o.bottomLeft(), o.topLeft(), o.topRight()][key]  # 대각 고정
+            new = QRectF(opp, lp).normalized()
+        else:
+            left, top, right, bot = o.left(), o.top(), o.right(), o.bottom()
+            if key == "l":
+                left = lp.x()
+            elif key == "r":
+                right = lp.x()
+            elif key == "t":
+                top = lp.y()
+            else:
+                bot = lp.y()
+            new = QRectF(QPointF(left, top), QPointF(right, bot)).normalized()
+        MIN = 3.0
+        if new.width() < MIN or new.height() < MIN:
+            new = QRectF(new.x(), new.y(), max(new.width(), MIN), max(new.height(), MIN))
+        self._set_box_rect(new)
 
     def _owner_tool(self):
         """현재 활성 도구를 뷰→owner 경로로 조회(없으면 None)."""
@@ -700,6 +810,18 @@ class _HandleResizeMixin:
         if not self._handle_active():
             return
         s = self._scale_or_1()
+        if self._box_handles():
+            # [2c] 꼭짓점 4 + 변 중점 4 = 파란 사각, 좌상단 회전 = 코랄 원.
+            painter.setPen(QPen(QColor("white"), 1.0 / s))
+            painter.setBrush(QBrush(QColor(_BLUE)))
+            for _i, r in self._box_corner_rects():
+                painter.drawRect(r)
+            for _k, r in self._box_edge_rects():
+                painter.drawRect(r)
+            rh = self._handle_px() * 0.5
+            painter.setBrush(QBrush(QColor(_PEACH)))
+            painter.drawEllipse(self._box_rot_center(), rh, rh)
+            return
         # 회전 핸들 — 우상단 코너 안쪽 코랄 점(줄기 없음, 우하단 크기조절 점과 대칭)
         rc = self._rot_handle_center()
         rh = self._handle_px() * 0.5  # 반지름 — 지름이 크기조절 사각 변과 같게
@@ -737,8 +859,15 @@ class _HandleResizeMixin:
             return base
         if self._handle_active():
             hp = QPainterPath()
-            hp.addRect(self._handle_local_rect())
-            hp.addEllipse(self._rot_handle_rect())
+            if self._box_handles():
+                for _i, r in self._box_corner_rects():
+                    hp.addRect(r)
+                for _k, r in self._box_edge_rects():
+                    hp.addRect(r)
+                hp.addEllipse(self._box_rot_rect())
+            else:
+                hp.addRect(self._handle_local_rect())
+                hp.addEllipse(self._rot_handle_rect())
             return base.united(hp)
         return base
 
@@ -751,6 +880,32 @@ class _HandleResizeMixin:
                         self._on_endpoint_drag_start(i)   # [Stage1] 수동 정점 드래그 → 자동 라우팅 해제 훅
                         event.accept()
                         return
+            super().mousePressEvent(event)
+            return
+        if self._handle_active() and self._box_handles():
+            # [2c] 네모·원: 회전(좌상단) → 꼭짓점 → 변 순으로 검사. setRect 자유 리사이즈.
+            lp = event.pos()
+            if self._box_rot_rect().contains(lp):
+                self._rotating = True
+                self.setTransformOriginPoint(self._content_rect().center())
+                center = self.mapToScene(self._content_rect().center())
+                self._press_angle = QLineF(center, event.scenePos()).angle()
+                self._press_rot = self.rotation()
+                self._begin_box_geom()   # 회전도 geom undo(기존 단일 핸들은 undo 없었음 — 개선)
+                event.accept()
+                return
+            for i, r in self._box_corner_rects():
+                if r.contains(lp):
+                    self._box_resize = ("corner", i)
+                    self._begin_box_geom()
+                    event.accept()
+                    return
+            for k, r in self._box_edge_rects():
+                if r.contains(lp):
+                    self._box_resize = ("edge", k)
+                    self._begin_box_geom()
+                    event.accept()
+                    return
             super().mousePressEvent(event)
             return
         if self._handle_active():
@@ -790,6 +945,10 @@ class _HandleResizeMixin:
             self.update()
             event.accept()
             return
+        if self._box_resize is not None:   # [2c] 네모·원 자유 리사이즈(setRect)
+            self._apply_box_resize(event.pos())
+            event.accept()
+            return
         if getattr(self, "_rotating", False):
             center = self.mapToScene(self._content_rect().center())
             cur = QLineF(center, event.scenePos()).angle()
@@ -813,6 +972,19 @@ class _HandleResizeMixin:
     def mouseReleaseEvent(self, event):
         if getattr(self, "_drag_endpoint", None) is not None:
             self._drag_endpoint = None
+            event.accept()
+            return
+        # [2c] 박스 리사이즈·회전 종료 — geom undo 커밋(자신+부착 화살표 통째 복원).
+        if self._box_resize is not None or (self._rotating and self._box_handles()):
+            self._box_resize = None
+            self._rotating = False
+            snap = self._box_snap
+            self._box_snap = None
+            self._box_bound = None
+            self._box_orig_rect = None
+            h = self._host()
+            if snap and h is not None:
+                h.push_undo_geom(snap)
             event.accept()
             return
         if getattr(self, "_rotating", False) or getattr(self, "_resizing", False):
@@ -2846,10 +3018,24 @@ class _AnnotatorView(QGraphicsView):
                 return it
         return None
 
+    def _box_handle_at(self, view_pos):
+        """[2c] 커서가 선택된 네모·원의 박스 핸들 위면 커서('rotate' or Qt.CursorShape), 없으면 None."""
+        scene_pt = self.mapToScene(view_pos)
+        for it in self.scene().selectedItems():
+            f = getattr(it, "_box_handle_cursor", None)
+            if f is None:
+                continue
+            c = f(it.mapFromScene(scene_pt))
+            if c is not None:
+                return c
+        return None
+
     def _rot_handle_at(self, view_pos) -> bool:
         """커서가 '선택된' 도형의 회전 점 안이면 True — hover 회전 커서 판정용."""
         scene_pt = self.mapToScene(view_pos)
         for it in self.scene().selectedItems():
+            if getattr(it, "_box_handles", None) is not None and it._box_handles():
+                continue   # [2c] 네모·원은 _box_handle_at이 담당
             rr = getattr(it, "_rot_handle_rect", None)
             active = getattr(it, "_handle_active", None)
             if rr is None or active is None or not active():
@@ -2865,6 +3051,8 @@ class _AnnotatorView(QGraphicsView):
         커서 판정용. press 처리는 리사이즈로 받는데 커서만 이동으로 뜨던 불일치를 없앤다."""
         scene_pt = self.mapToScene(view_pos)
         for it in self.scene().selectedItems():
+            if getattr(it, "_box_handles", None) is not None and it._box_handles():
+                continue   # [2c] 네모·원은 _box_handle_at이 담당
             hr = getattr(it, "_handle_local_rect", None)
             active = getattr(it, "_handle_active", None)
             if hr is None or active is None or not active():
@@ -3613,6 +3801,10 @@ class _AnnotatorView(QGraphicsView):
                 else:
                     vp.setCursor(Qt.CursorShape.SizeFDiagCursor)
                 return
+        box_h = self._box_handle_at(view_pos)
+        if box_h is not None:                                # [2c] 네모·원 박스 핸들
+            vp.setCursor(_rotate_cursor() if box_h == "rotate" else box_h)
+            return
         if self._bend_handle_at(view_pos) is not None:
             vp.setCursor(Qt.CursorShape.PointingHandCursor)  # 곡선 조절 손잡이(이동과 구분)
         elif self._over_selected_endpoint(view_pos):
