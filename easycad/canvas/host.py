@@ -339,6 +339,11 @@ class CanvasWindow(QMainWindow):
         self._undo.append(("xform", [
             (it, QPointF(pos), rot, scale, QPointF(org)) for it, pos, rot, scale, org in snaps]))
 
+    def push_undo_geom(self, snaps):
+        """[Stage2] 기하 리베이크(비균일 스케일·미러) 되돌리기 — capture_geom 토큰 스냅샷.
+        xform과 달리 기하 자체(rect/끝점/정점/패스)+바인딩까지 통째로 복원한다."""
+        self._undo.append(("geom", list(snaps)))
+
     def undo(self):
         if not self._undo:
             return
@@ -359,6 +364,11 @@ class CanvasWindow(QMainWindow):
                 it.setRotation(rot)
                 it.setScale(scale)
                 it.setPos(pos)
+        elif kind == "geom":
+            # [Stage2] 기하+바인딩 통째 복원. 도형·바인딩 화살표를 모두 스냅샷에 담았으므로
+            # apply_geom만으로 일관 복원된다(reroute 불필요).
+            for it, tok in payload:
+                it.apply_geom(tok)
 
     # 복사 / 연속 붙여넣기
     def copy_selection(self):

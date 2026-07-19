@@ -565,6 +565,58 @@ class _HandleResizeMixin:
         )
         return dst
 
+    # ---- [Stage2] 기하 리베이크(비균일 스케일·미러) — 스냅샷/복원/씬공간 변형 ----------
+    # Stage1의 xform(pos/rot/scale/origin만)과 달리 '기하 자체'를 바꾼다. 씬공간 함수 fn을 받아
+    # 각 기하 제어점을 fn(현재 씬위치)로 다시 굽는다(rebake). pos/rot/scale/origin은 그대로 두고
+    # fn을 아이템 transform을 '통과'시켜 적용하므로(mapToScene→fn→mapFromScene) 기존 setScale·
+    # 회전 상태와 안 엉킨다(회전=0·스케일 임의면 정확, 회전 도형은 로컬 AABB 근사 — 설계 합의).
+    def capture_geom(self) -> dict:
+        """undo·드래그 복원용 기하 스냅샷(pos/rot/scale/origin + 타입별 기하 + 바인딩)."""
+        return {
+            "pos": QPointF(self.pos()),
+            "rot": self.rotation(),
+            "scale": self.scale(),
+            "org": QPointF(self.transformOriginPoint()),
+            "geom": self._capture_geom_local(),
+            "binds": self._capture_binds(),
+        }
+
+    def apply_geom(self, tok: dict):
+        """capture_geom 스냅샷 복원(원복)."""
+        self.prepareGeometryChange()
+        self.setTransformOriginPoint(tok["org"])
+        self.setRotation(tok["rot"])
+        self.setScale(tok["scale"])
+        self.setPos(tok["pos"])
+        self._apply_geom_local(tok["geom"])
+        self._apply_binds(tok["binds"])
+        self.update()
+
+    def _capture_geom_local(self):
+        """타입별 기하 복사(하위 클래스 override)."""
+        return None
+
+    def _apply_geom_local(self, g):
+        pass
+
+    def _capture_binds(self):
+        """지속연결 바인딩(도형·부착점) 복사 — 화살표만 override."""
+        return None
+
+    def _apply_binds(self, b):
+        pass
+
+    def _rebake_pt(self, fn, p_local: QPointF) -> QPointF:
+        """로컬 제어점 → 씬 → fn → 로컬(아이템 transform 통과)."""
+        return self.mapFromScene(fn(self.mapToScene(p_local)))
+
+    def rebake_scene(self, fn):
+        """기하 제어점을 씬공간 함수 fn으로 다시 굽는다(하위 클래스 override).
+        기본(스칼라 폴백: 텍스트·번호)은 왜곡 대신 내용 중심을 fn으로 옮겨 위치만 따라가게 한다."""
+        c = self.mapToScene(self._content_rect().center())
+        d = fn(c) - c
+        self.setPos(self.pos() + d)
+
     def _scale_or_1(self) -> float:
         s = self.scale()
         return s if s else 1.0
@@ -800,6 +852,22 @@ class _RectItem(_HandleResizeMixin, QGraphicsRectItem):
         c.setBrush(QBrush(self.brush()))
         return self._copy_common_to(c)
 
+    # [Stage2] 기하 리베이크 — 네 모서리를 씬변형 후 로컬 AABB로 setRect(회전=0면 정확).
+    def _capture_geom_local(self):
+        return QRectF(self.rect())
+
+    def _apply_geom_local(self, g):
+        self.setRect(g)
+
+    def rebake_scene(self, fn):
+        r = self.rect()
+        pts = [self._rebake_pt(fn, c) for c in
+               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        self.prepareGeometryChange()
+        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
+
     def _base_shape(self):
         # 속 빈 네모(NoBrush)는 '테두리 링'만 클릭 영역으로 — 내부를 통과시켜 네모 안에서
         # 다른 주석을 잡거나 새 도형(화살표 등)을 그릴 수 있게. 채움이 있으면 기본대로 전체.
@@ -826,6 +894,22 @@ class _EllipseItem(_HandleResizeMixin, QGraphicsEllipseItem):
         c.setPen(QPen(self.pen()))
         c.setBrush(QBrush(self.brush()))
         return self._copy_common_to(c)
+
+    # [Stage2] 기하 리베이크 — 네모와 동일(로컬 AABB setRect).
+    def _capture_geom_local(self):
+        return QRectF(self.rect())
+
+    def _apply_geom_local(self, g):
+        self.setRect(g)
+
+    def rebake_scene(self, fn):
+        r = self.rect()
+        pts = [self._rebake_pt(fn, c) for c in
+               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        self.prepareGeometryChange()
+        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
 
     def _content_rect(self):
         # _LineItem과 동일 사이클 방지: QGraphicsEllipseItem.boundingRect()는 펜 두께가
@@ -932,6 +1016,17 @@ class _LineItem(_LabelMixin, _HandleResizeMixin, QGraphicsLineItem):
         c.setPen(QPen(self.pen()))
         return self._copy_common_to(c)
 
+    # [Stage2] 기하 리베이크 — 두 끝점을 씬변형.
+    def _capture_geom_local(self):
+        return QLineF(self.line())
+
+    def _apply_geom_local(self, g):
+        self.setLine(g)
+
+    def rebake_scene(self, fn):
+        ln = self.line()
+        self.setLine(QLineF(self._rebake_pt(fn, ln.p1()), self._rebake_pt(fn, ln.p2())))
+
     def _uses_endpoints(self):
         return True
 
@@ -999,6 +1094,35 @@ class _PathItem(_HandleResizeMixin, QGraphicsPathItem):
         c = _PathItem(QPainterPath(self.path()))
         c.setPen(QPen(self.pen()))
         return self._copy_common_to(c)
+
+    # [Stage2] 기하 리베이크 — 패스 원소(Move/Line/Curve)의 모든 점을 씬변형.
+    def _capture_geom_local(self):
+        return QPainterPath(self.path())
+
+    def _apply_geom_local(self, g):
+        self.setPath(g)
+
+    def rebake_scene(self, fn):
+        old = self.path()
+        np = QPainterPath()
+        i, n = 0, old.elementCount()
+        while i < n:
+            el = old.elementAt(i)
+            p = self._rebake_pt(fn, QPointF(el.x, el.y))
+            if el.isMoveTo():
+                np.moveTo(p)
+                i += 1
+            elif el.isCurveTo():   # 3개(제어1·제어2·끝점) 묶음
+                e2 = old.elementAt(i + 1)
+                e3 = old.elementAt(i + 2)
+                np.cubicTo(p, self._rebake_pt(fn, QPointF(e2.x, e2.y)),
+                           self._rebake_pt(fn, QPointF(e3.x, e3.y)))
+                i += 3
+            else:              # LineToElement
+                np.lineTo(p)
+                i += 1
+        self.prepareGeometryChange()
+        self.setPath(np)
 
     def _content_rect(self):
         # _LineItem과 동일 사이클 방지: QGraphicsPathItem.boundingRect()는 brush가 NoBrush일 때
@@ -1149,6 +1273,38 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         c._bind1_pt = None if self._bind1_pt is None else QPointF(self._bind1_pt)
         c._bind2_pt = None if self._bind2_pt is None else QPointF(self._bind2_pt)
         return self._copy_common_to(c)
+
+    # [Stage2] 기하 리베이크 — 끝점·제어점을 씬변형(곡선 형태 보존). 바인딩 부착점은
+    # 도형쪽 리베이크가 별도로 보정하므로 여기서 건드리지 않는다.
+    def _capture_geom_local(self):
+        return (QPointF(self._p1), QPointF(self._p2),
+                None if self._ctrl1 is None else QPointF(self._ctrl1),
+                None if self._ctrl2 is None else QPointF(self._ctrl2))
+
+    def _apply_geom_local(self, g):
+        self.prepareGeometryChange()
+        self._p1, self._p2 = QPointF(g[0]), QPointF(g[1])
+        self._ctrl1 = None if g[2] is None else QPointF(g[2])
+        self._ctrl2 = None if g[3] is None else QPointF(g[3])
+        self._sync_label()
+
+    def _capture_binds(self):
+        return (self._bind1, None if self._bind1_pt is None else QPointF(self._bind1_pt),
+                self._bind2, None if self._bind2_pt is None else QPointF(self._bind2_pt))
+
+    def _apply_binds(self, b):
+        self._bind1, self._bind1_pt = b[0], (None if b[1] is None else QPointF(b[1]))
+        self._bind2, self._bind2_pt = b[2], (None if b[3] is None else QPointF(b[3]))
+
+    def rebake_scene(self, fn):
+        self.prepareGeometryChange()
+        self._p1 = self._rebake_pt(fn, self._p1)
+        self._p2 = self._rebake_pt(fn, self._p2)
+        if self._ctrl1 is not None:
+            self._ctrl1 = self._rebake_pt(fn, self._ctrl1)
+            self._ctrl2 = self._rebake_pt(fn, self._ctrl2)
+        self._sync_label()
+        self.update()
 
     # ---- 끝점(양끝 이동) 핸들 -------------------------------------------
     def _uses_endpoints(self):
@@ -1761,6 +1917,34 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         c._auto_route = self._auto_route   # [Stage1] 자동 라우팅 상태 유지
         return self._copy_common_to(c)
 
+    # [Stage2] 기하 리베이크 — 모든 정점을 씬변형. 왜곡·미러는 자동 엘보가 되돌리지 않게
+    # 수동 폴리라인으로 전환(_auto_route=False). undo 스냅샷은 원래 _auto_route를 복원한다.
+    def _capture_geom_local(self):
+        return ([QPointF(p) for p in self._pts], self._auto_route)
+
+    def _apply_geom_local(self, g):
+        self.prepareGeometryChange()
+        self._pts = [QPointF(p) for p in g[0]]
+        self._auto_route = g[1]
+        self._sync_label()
+
+    def _capture_binds(self):
+        return (self._bind_start,
+                None if self._bind_start_pt is None else QPointF(self._bind_start_pt),
+                self._bind_end,
+                None if self._bind_end_pt is None else QPointF(self._bind_end_pt))
+
+    def _apply_binds(self, b):
+        self._bind_start, self._bind_start_pt = b[0], (None if b[1] is None else QPointF(b[1]))
+        self._bind_end, self._bind_end_pt = b[2], (None if b[3] is None else QPointF(b[3]))
+
+    def rebake_scene(self, fn):
+        self.prepareGeometryChange()
+        self._pts = [self._rebake_pt(fn, p) for p in self._pts]
+        self._auto_route = False
+        self._sync_label()
+        self.update()
+
     # ---- 화살촉(끝 세그먼트 방향) --------------------------------------
     def _tip_and_angle(self):
         if self._head_at_end:
@@ -2306,6 +2490,80 @@ def _rotate_about(p: QPointF, c: QPointF, deg: float) -> QPointF:
     return QPointF(c.x() + dx * cos - dy * sin, c.y() + dx * sin + dy * cos)
 
 
+# ---------------------------------------------------------------------------
+# [Stage2] 기하 리베이크 그룹 변형 — 비균일 스케일(1축)·미러 공통 machinery
+# ---------------------------------------------------------------------------
+def _axis_scale_fn(axis: str, anchor: float, f: float):
+    """씬공간 1축 스케일 함수 — axis('x'|'y') 방향으로 anchor 좌표선 기준 f배(다른 축 불변)."""
+    if axis == "x":
+        return lambda p: QPointF(anchor + (p.x() - anchor) * f, p.y())
+    return lambda p: QPointF(p.x(), anchor + (p.y() - anchor) * f)
+
+
+def _mirror_fn(axis: str, c: float):
+    """씬공간 반사 함수 — axis('x'|'y') 좌표를 c 기준 반전. axis='x'=좌우, 'y'=상하 미러."""
+    if axis == "x":
+        return lambda p: QPointF(2.0 * c - p.x(), p.y())
+    return lambda p: QPointF(p.x(), 2.0 * c - p.y())
+
+
+def _iter_bound_endpoints(arrow):
+    """화살표의 '바인딩된' 끝점 (idx, shape) 나열(곡선=0·1, 직선=0·마지막)."""
+    if isinstance(arrow, _ArrowItem):
+        idxs = (0, 1)
+    elif isinstance(arrow, _PolyArrowItem):
+        idxs = (0, len(arrow._pts) - 1)
+    else:
+        return
+    for idx in idxs:
+        sh = arrow._bound(idx)
+        if sh is not None:
+            yield idx, sh
+
+
+def _collect_bound_arrows(scene, shapes):
+    """scene의 모든 화살표 중 shapes 안 도형에 끝점이 바인딩된 (arrow, idx, shape) 목록."""
+    out = []
+    if scene is None:
+        return out
+    shapeset = set(shapes)
+    for it in scene.items():
+        if isinstance(it, (_ArrowItem, _PolyArrowItem)):
+            for idx, sh in _iter_bound_endpoints(it):
+                if sh in shapeset:
+                    out.append((it, idx, sh))
+    return out
+
+
+def _snapshot_set(geom_items, bound_info):
+    """undo·드래그 복원 대상 = 변형할 아이템 ∪ 부착점만 바뀌는 (미선택) 화살표."""
+    snap_set = list(geom_items)
+    for arrow, _idx, _sh in bound_info:
+        if arrow not in snap_set:
+            snap_set.append(arrow)
+    return snap_set
+
+
+def _rebake_selection(geom_items, bound_info, fn):
+    """geom_items 기하를 fn으로 리베이크 + 바인딩 부착점 fn 보정 + 미선택 추종 화살표 reroute.
+    호출 전 각 아이템은 '원본 상태'여야 한다(드래그는 매 프레임 apply_geom로 원복 후 호출).
+    도형 transform은 리베이크로 안 바뀌므로 부착점 보정에 mapTo/FromScene을 그대로 쓴다."""
+    geomset = set(geom_items)
+    # 부착점 보정 — 도형이 리베이크되면 그 로컬 부착점도 같은 씬변형으로 옮겨야 상대 테두리
+    # 위치가 유지된다(먼저: 원본 부착점 기준으로 계산해야 하므로 기하 리베이크보다 앞).
+    for arrow, idx, sh in bound_info:
+        old = arrow._bind_pt(idx)
+        if old is None:
+            continue
+        arrow.set_bound(idx, sh, sh.mapFromScene(fn(sh.mapToScene(old))))
+    for it in geom_items:
+        it.rebake_scene(fn)
+    # 미선택(그룹에 안 든) 바인딩 화살표는 새 부착점으로 추종(선택된 화살표는 이미 리베이크됨).
+    for arrow, _idx, _sh in bound_info:
+        if arrow not in geomset:
+            arrow.reroute(pin_pred=lambda i: True)
+
+
 class _GroupTransform:
     """다중선택(최상위 2개 이상) 시 공통 바운딩 박스 + 회전·스케일 핸들.
 
@@ -2324,13 +2582,20 @@ class _GroupTransform:
 
     def __init__(self, view):
         self._view = view
-        self._active = None   # None | ("rotate", center) | ("scale", anchor, corner)
-        self._snap = None     # 변형 전 상태 스냅샷(undo·기준값)
+        self._active = None   # None | ("rotate",..) | ("scale",..) | ("scale_axis",axis,anchor,pt)
+        self._snap = None     # 회전·균일스케일 전 상태 스냅샷(xform undo·기준값)
         self._center = None
         self._anchor = None
         self._start_angle = 0.0
         self._start_dx = 0.0
         self._start_dy = 0.0
+        # [Stage2] 비균일 스케일(1축 변 핸들) — 기하 리베이크 기반
+        self._axis = None          # "x" | "y"
+        self._anchor_val = 0.0     # 고정 좌표선(반대 변)
+        self._axis_start = 0.0     # 시작 델타(bbox 폭·높이)
+        self._geom_snap = None     # [(item, capture_geom()), ...] — 원복·undo
+        self._geom_items = None    # 기하 리베이크 대상(선택 아이템)
+        self._bound_info = None    # _collect_bound_arrows 결과
 
     def _scene(self):
         return self._view.scene()
@@ -2365,11 +2630,20 @@ class _GroupTransform:
     def _corners(self, b: QRectF):
         return [b.topLeft(), b.topRight(), b.bottomRight(), b.bottomLeft()]
 
+    def _edges(self, b: QRectF):
+        """변 중점 핸들 — (핸들점, 축, 고정좌표선(반대 변)). 축 방향으로 1축 비균일 스케일."""
+        return [
+            (QPointF(b.center().x(), b.top()),    "y", b.bottom()),  # 상
+            (QPointF(b.right(), b.center().y()),  "x", b.left()),    # 우
+            (QPointF(b.center().x(), b.bottom()), "y", b.top()),     # 하
+            (QPointF(b.left(), b.center().y()),   "x", b.right()),   # 좌
+        ]
+
     def _rot_center(self, b: QRectF) -> QPointF:
         return QPointF(b.center().x(), b.top() - self._ROT_GAP_PX / self._s())
 
     def handle_at(self, scene_pt: QPointF):
-        """씬점이 회전/스케일 핸들 위면 조작 튜플, 아니면 None."""
+        """씬점이 회전/스케일/변 핸들 위면 조작 튜플, 아니면 None."""
         b = self.bbox()
         if b is None:
             return None
@@ -2380,6 +2654,9 @@ class _GroupTransform:
         for i, c in enumerate(corners):
             if QLineF(c, scene_pt).length() <= hit:
                 return ("scale", corners[(i + 2) % 4], c)  # anchor = 대각 모서리
+        for pt, axis, anchor_val in self._edges(b):        # [Stage2] 변 중점 = 1축 비균일
+            if QLineF(pt, scene_pt).length() <= hit:
+                return ("scale_axis", axis, anchor_val, pt)
         return None
 
     # ---- 페인트 -------------------------------------------------------------
@@ -2395,15 +2672,25 @@ class _GroupTransform:
         painter.setBrush(QBrush(QColor(_BLUE)))
         for c in self._corners(b):
             painter.drawRect(QRectF(c.x() - h / 2, c.y() - h / 2, h, h))
+        for pt, _axis, _av in self._edges(b):          # [Stage2] 변 중점 핸들(1축 비균일 스케일)
+            painter.drawRect(QRectF(pt.x() - h / 2, pt.y() - h / 2, h, h))
         rc = self._rot_center(b)                       # 회전 핸들 — 코랄 원(개별 회전 핸들과 색 통일)
         painter.setBrush(QBrush(QColor(_PEACH)))
         painter.drawEllipse(rc, h / 2, h / 2)
 
     # ---- 변형 트랜잭션 ------------------------------------------------------
     def begin(self, hit, scene_pt: QPointF):
+        self._active = hit
+        if hit[0] == "scale_axis":
+            self._axis = hit[1]
+            self._anchor_val = hit[2]
+            hp = hit[3]
+            self._axis_start = (hp.x() if self._axis == "x" else hp.y()) - self._anchor_val
+            self._begin_geom()
+            return
+        # 회전·균일 스케일(Stage1) — pos/rot/scale/origin 스냅샷.
         self._snap = [(it, QPointF(it.pos()), it.rotation(), it._scale_or_1(),
                        QPointF(it.transformOriginPoint())) for it in self.items()]
-        self._active = hit
         if hit[0] == "rotate":
             self._center = hit[1]
             self._start_angle = math.degrees(math.atan2(
@@ -2413,8 +2700,25 @@ class _GroupTransform:
             self._start_dx = hit[2].x() - self._anchor.x()
             self._start_dy = hit[2].y() - self._anchor.y()
 
+    def _begin_geom(self):
+        """[Stage2] 기하 리베이크용 스냅샷 — 선택 아이템 + 부착점 바뀌는 화살표까지."""
+        self._geom_items = self.items()
+        shapes = [it for it in self._geom_items
+                  if not isinstance(it, (_ArrowItem, _PolyArrowItem))]
+        self._bound_info = _collect_bound_arrows(self._scene(), shapes)
+        self._geom_snap = [(it, it.capture_geom())
+                           for it in _snapshot_set(self._geom_items, self._bound_info)]
+
     def update_to(self, scene_pt: QPointF, shift: bool = False):
         if self._active is None:
+            return
+        if self._active[0] == "scale_axis":
+            cur = scene_pt.x() if self._axis == "x" else scene_pt.y()
+            if abs(self._axis_start) < 1e-9:
+                return
+            f = (cur - self._anchor_val) / self._axis_start
+            f = max(0.05, min(f, 20.0))   # 미러(음수)는 별도 액션 — 여기선 뒤집힘 방지
+            self._apply_geom_fn(_axis_scale_fn(self._axis, self._anchor_val, f))
             return
         if self._active[0] == "rotate":
             cur = math.degrees(math.atan2(
@@ -2454,10 +2758,23 @@ class _GroupTransform:
             it.setScale(sc0 * f)
             it.setPos(a2x - org0.x(), a2y - org0.y())
 
+    def _apply_geom_fn(self, fn):
+        """[Stage2] 원본 스냅샷으로 원복 후 fn으로 리베이크(매 프레임 — 누적 방지)."""
+        for it, tok in self._geom_snap:
+            it.apply_geom(tok)
+        _rebake_selection(self._geom_items, self._bound_info, fn)
+
     def end(self):
-        if self._active is not None and self._snap:
-            self._view._owner.push_undo_xform(self._snap)
+        if self._active is not None:
+            if self._active[0] == "scale_axis":
+                if self._geom_snap:
+                    self._view._owner.push_undo_geom(self._geom_snap)
+            elif self._snap:
+                self._view._owner.push_undo_xform(self._snap)
         self._active = None
+        self._geom_snap = None
+        self._geom_items = None
+        self._bound_info = None
         self._snap = None
 
 
@@ -3255,6 +3572,29 @@ class _AnnotatorView(QGraphicsView):
                 return "text" if inner.contains(it.mapFromScene(scene_pt)) else "move"
         return None
 
+    def mirror_selection(self, axis: str):
+        """[Stage2] 선택(1개↑)을 공통 bbox 중심 기준 반사. axis='x'=좌우, 'y'=상하.
+        도형·선·화살표는 기하 반전(화살촉 방향은 기하에서 자동 보정), 텍스트·번호는 위치만
+        반사(글자 가독 유지). 도형에 붙은 화살표 부착점도 함께 반사돼 연결 유지."""
+        sel = [it for it in self.scene().selectedItems()
+               if it.parentItem() is None and isinstance(it, _HandleResizeMixin)]
+        if not sel:
+            return
+        r = None
+        for it in sel:
+            br = it.mapToScene(it._content_rect()).boundingRect()
+            r = br if r is None else r.united(br)
+        if r is None:
+            return
+        c = r.center().x() if axis == "x" else r.center().y()
+        fn = _mirror_fn(axis, c)
+        shapes = [it for it in sel if not isinstance(it, (_ArrowItem, _PolyArrowItem))]
+        bound = _collect_bound_arrows(self.scene(), shapes)
+        snaps = [(it, it.capture_geom()) for it in _snapshot_set(sel, bound)]
+        _rebake_selection(sel, bound, fn)
+        self._owner.push_undo_geom(snaps)
+        self.viewport().update()
+
     def _update_hover_cursor(self, view_pos):
         """편집 모드 hover 커서: 주석 위=이동, 도형 도구+빈영역=십자, select+빈영역=손바닥.
         편집 중 텍스트는 예외 — 내부=캐럿(I빔), 테두리만 이동."""
@@ -3265,8 +3605,13 @@ class _AnnotatorView(QGraphicsView):
         if self._group.available():
             g = self._group.handle_at(self.mapToScene(view_pos))
             if g is not None:
-                vp.setCursor(_rotate_cursor() if g[0] == "rotate"
-                             else Qt.CursorShape.SizeFDiagCursor)
+                if g[0] == "rotate":
+                    vp.setCursor(_rotate_cursor())
+                elif g[0] == "scale_axis":                       # [Stage2] 1축 비균일
+                    vp.setCursor(Qt.CursorShape.SizeHorCursor if g[1] == "x"
+                                 else Qt.CursorShape.SizeVerCursor)
+                else:
+                    vp.setCursor(Qt.CursorShape.SizeFDiagCursor)
                 return
         if self._bend_handle_at(view_pos) is not None:
             vp.setCursor(Qt.CursorShape.PointingHandCursor)  # 곡선 조절 손잡이(이동과 구분)
@@ -3534,6 +3879,12 @@ class _AnnotatorView(QGraphicsView):
                     for it in sel:
                         it.moveBy(arrow[0] * step, arrow[1] * step)
                     return
+            if (mods & Qt.KeyboardModifier.ShiftModifier) and key == Qt.Key.Key_H:
+                self.mirror_selection("x")   # [Stage2] 좌우 반전
+                return
+            if (mods & Qt.KeyboardModifier.ShiftModifier) and key == Qt.Key.Key_V:
+                self.mirror_selection("y")   # [Stage2] 상하 반전
+                return
             if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_A:
                 for it in self.scene().items():
                     if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:

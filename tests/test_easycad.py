@@ -18,7 +18,7 @@ from PyQt6.QtGui import QBrush, QColor, QPainterPath
 from easycad.canvas.host import CanvasWindow
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem)
+    _PolyArrowItem, _axis_scale_fn, _mirror_fn)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
 
@@ -957,6 +957,129 @@ def test_group_rotate_keeps_binding():
     assert _close(ep1[0], _rot(ep0[0], c, 90)), (ep1[0], _rot(ep0[0], c, 90))
     assert _close(ep1[1], _rot(ep0[1], c, 90)), (ep1[1], _rot(ep0[1], c, 90))
     assert ar.has_binding()
+
+
+def test_rebake_scene_pure():
+    # [Stage2] 씬공간 함수로 기하를 다시 굽는 핵심 수학 — 회전=0·스케일=1이면 정확.
+    w = CanvasWindow()
+    sc, pen = w._scene, w.make_pen()
+    # 네모: x축 ×2(anchor=0) → 폭 2배, 좌변 고정. 미러 x(anchor=0) → 좌우 반전.
+    a = _mk_rect(sc, pen, 0, 0, 100, 60)
+    a.rebake_scene(_axis_scale_fn("x", 0.0, 2.0))
+    assert _close(a.rect().topLeft(), QPointF(0, 0)) and abs(a.rect().width() - 200) < 1e-6
+    a2 = _mk_rect(sc, pen, 0, 0, 100, 60)
+    a2.rebake_scene(_mirror_fn("x", 0.0))
+    assert _close(a2.rect().topLeft(), QPointF(-100, 0)) and abs(a2.rect().width() - 100) < 1e-6
+    # 타원(네모와 동일 경로)
+    el = _EllipseItem(QRectF(0, 0, 100, 60)); sc.addItem(el)
+    el.rebake_scene(_axis_scale_fn("y", 0.0, 3.0))
+    assert abs(el.rect().height() - 180) < 1e-6
+    # 선
+    ln = _LineItem(QLineF(0, 0, 100, 0)); sc.addItem(ln)
+    ln.rebake_scene(_axis_scale_fn("x", 0.0, 2.0))
+    assert _close(ln.line().p2(), QPointF(200, 0))
+    # 곡선 화살표(끝점+제어점 반전)
+    ar = _ArrowItem(QColor("#ffff9500"), 6, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 0)); sc.addItem(ar)
+    ar.rebake_scene(_mirror_fn("x", 0.0))
+    assert _close(ar._p1, QPointF(0, 0)) and _close(ar._p2, QPointF(-100, 0))
+    # 직선 화살표(정점 스케일) — 미러/왜곡은 수동 폴리라인으로
+    pa = _PolyArrowItem(QColor("#ffff9500"), 6, True)
+    pa.set_points(QPointF(0, 0), QPointF(0, 100)); pa._auto_route = True; sc.addItem(pa)
+    pa.rebake_scene(_axis_scale_fn("y", 0.0, 2.0))
+    assert _close(pa._pts[1], QPointF(0, 200)) and pa._auto_route is False
+    # 텍스트(스칼라 폴백 — 내용 중심만 반사, 글자 크기·방향 유지)
+    t = _TextItem(QColor("black")); t.setPlainText("hi"); t.setPos(QPointF(10, 10)); sc.addItem(t)
+    c0 = t.mapToScene(t._content_rect().center())
+    t.rebake_scene(_mirror_fn("x", 0.0))
+    c1 = t.mapToScene(t._content_rect().center())
+    assert _close(c1, QPointF(-c0.x(), c0.y()))
+
+
+def test_group_nonuniform_scale():
+    # [Stage2] 변 중점 핸들 = 1축 비균일 스케일. 오른 변 핸들 잡아 x ×2 → 각 네모 폭 2배.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); b.setPos(QPointF(200, 0))
+    a.setSelected(True); b.setSelected(True)
+    g = w._view._group
+    bb = g.bbox()
+    right_pt, axis, anchor_val = g._edges(bb)[1]   # 우측 변
+    assert axis == "x"
+    hit = g.handle_at(right_pt)
+    assert hit[0] == "scale_axis" and hit[1] == "x"
+    wa0, wb0 = a.rect().width(), b.rect().width()
+    ha0 = a.rect().height()
+    g.begin(hit, right_pt)
+    g.update_to(QPointF(anchor_val + 2 * (right_pt.x() - anchor_val), right_pt.y()))  # f=2
+    g.end()
+    assert abs(a.rect().width() - 2 * wa0) < 1e-6 and abs(b.rect().width() - 2 * wb0) < 1e-6
+    assert abs(a.rect().height() - ha0) < 1e-6   # y축은 불변(1축)
+    w.undo()
+    assert abs(a.rect().width() - wa0) < 1e-6 and abs(b.rect().width() - wb0) < 1e-6
+
+
+def test_group_nonuniform_scale_keeps_binding():
+    # [Stage2] 바인딩 화살표+양끝 도형을 함께 1축 스케일 → 부착점도 같이 스케일돼 연결 유지.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); b.setPos(QPointF(300, 0))
+    ar = _ArrowItem(QColor("#ffff9500"), 6, True)
+    ar.set_points(QPointF(100, 30), QPointF(300, 30))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    ar.set_bound(0, a, a.mapFromScene(QPointF(100, 30)))
+    ar.set_bound(1, b, b.mapFromScene(QPointF(300, 30)))
+    a.setSelected(True); b.setSelected(True); ar.setSelected(True)
+    g = w._view._group
+    bb = g.bbox()
+    right_pt, _axis, anchor_val = g._edges(bb)[1]
+    g.begin(g.handle_at(right_pt), right_pt)
+    g.update_to(QPointF(anchor_val + 2 * (right_pt.x() - anchor_val), right_pt.y()))
+    g.end()
+    assert ar.has_binding()
+    # 끝점이 각 도형의 (스케일된) 부착점에 그대로 붙어 있다.
+    assert _close(ar.mapToScene(ar._endpoints()[0]), a.mapToScene(ar._bind1_pt))
+    assert _close(ar.mapToScene(ar._endpoints()[1]), b.mapToScene(ar._bind2_pt))
+    w.undo()
+    assert abs(a.rect().width() - 100) < 1e-6 and ar.has_binding()
+
+
+def test_mirror_horizontal():
+    # [Stage2] 좌우 미러 — 각 아이템 씬 중심이 그룹 bbox 중심 기준 x반사. undo로 원복.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); b.setPos(QPointF(300, 0))
+    a.setSelected(True); b.setSelected(True)
+    cx = w._view._group.bbox().center().x()
+    ca0 = a.mapToScene(a._content_rect().center())
+    cb0 = b.mapToScene(b._content_rect().center())
+    w._view.mirror_selection("x")
+    assert _close(a.mapToScene(a._content_rect().center()), QPointF(2 * cx - ca0.x(), ca0.y()))
+    assert _close(b.mapToScene(b._content_rect().center()), QPointF(2 * cx - cb0.x(), cb0.y()))
+    w.undo()
+    assert _close(a.mapToScene(a._content_rect().center()), ca0)
+    assert _close(b.mapToScene(b._content_rect().center()), cb0)
+
+
+def test_mirror_keeps_binding():
+    # [Stage2] 바인딩 화살표+양끝 도형을 함께 미러 → 부착점도 반사돼 연결·화살표 유지.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); b.setPos(QPointF(300, 0))
+    ar = _ArrowItem(QColor("#ffff9500"), 6, True)
+    ar.set_points(QPointF(100, 30), QPointF(300, 30))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    ar.set_bound(0, a, a.mapFromScene(QPointF(100, 30)))
+    ar.set_bound(1, b, b.mapFromScene(QPointF(300, 30)))
+    a.setSelected(True); b.setSelected(True); ar.setSelected(True)
+    w._view.mirror_selection("x")
+    assert ar.has_binding()
+    assert _close(ar.mapToScene(ar._endpoints()[0]), a.mapToScene(ar._bind1_pt))
+    assert _close(ar.mapToScene(ar._endpoints()[1]), b.mapToScene(ar._bind2_pt))
+    w.undo()
+    assert _close(ar.mapToScene(ar._endpoints()[0]), QPointF(100, 30))
 
 
 def _run_all():
