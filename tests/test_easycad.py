@@ -798,6 +798,65 @@ def test_sarrow_draw_between_shapes_auto_routes():
     assert a2._auto_route is True
 
 
+def test_route_ortho_pure():
+    # [Stage2] _route_ortho 순수함수 — 장애물 없으면 Stage1 그대로, 있으면 관통 없는 경로 선택.
+    from easycad.canvas.annotator_core import _route_ortho, _ortho_elbow, _path_hits_rects
+    P = QPointF
+    s, e = P(100, 30), P(300, 230)
+    ns, ne = P(1, 0), P(-1, 0)   # 양끝 수평 → Stage1은 H-V-H(x=200)
+    # (1) 장애물 없음 → Stage1과 동일
+    assert _route_ortho(s, e, ns, ne, [], 12.0) == _ortho_elbow(s, e, ns, ne)
+    # (2) 수직 채널(x=200) 위에 장애물 → 우회 경로가 그 사각형을 관통하지 않음
+    obs = QRectF(180, 110, 40, 40)   # x180..220, y110..150 — 채널 x=200 가로막음
+    mids = _route_ortho(s, e, ns, ne, [obs], 12.0)
+    assert not _path_hits_rects([s] + mids + [e], [obs]), mids
+    # 우회는 Stage1과 달라야 함(관통했으므로 대체됨)
+    assert mids != _ortho_elbow(s, e, ns, ne)
+    # (3) 장애물이 경로에서 비켜 있으면(멀리) Stage1 유지
+    far = QRectF(1000, 1000, 40, 40)
+    assert _route_ortho(s, e, ns, ne, [far], 12.0) == _ortho_elbow(s, e, ns, ne)
+
+
+def test_sarrow_routes_around_obstacle():
+    # [Stage2] 양끝 도형 사이 세 번째 도형이 경로를 가로막으면 우회 라우팅 / 장애물 이동 시 재라우팅 /
+    #          양끝 바인딩 도형은 장애물에서 제외.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)       # 우측 (100,30), 법선 +x
+    b = _mk_rect(w._scene, w.make_pen(), 300, 200, 100, 60)   # 좌측 (300,230), 법선 -x
+    c = _mk_rect(w._scene, w.make_pen(), 700, 700, 60, 60)    # 처음엔 경로 밖(멀리)
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(100, 30), QPointF(300, 230))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, QPointF(100, 30)); sa.set_bound(1, b, QPointF(300, 230))
+    sa._auto_route = True
+
+    # 바인딩 도형(a,b)은 장애물에서 제외 — c만 장애물
+    obst = sa._obstacle_rects()
+    assert len(obst) == 1, obst
+
+    # (1) 장애물이 경로 밖 → Stage1 H-V-H(x=200) 그대로
+    sa.build_elbow()
+    sp = [sa.mapToScene(p) for p in sa._pts]
+    assert len(sp) == 4 and _close(sp[1], QPointF(200, 30)) and _close(sp[2], QPointF(200, 230)), sp
+
+    # (2) 장애물을 수직 채널(x=200) 위로 이동 → reroute가 우회 경로로 재계산 → c 관통 안 함
+    c.setPos(QPointF(-520, -580))    # 700-520=180 → x180..240, 700-580=120 → y120..180 (채널 가로막음)
+    w._on_scene_changed(None)
+    from easycad.canvas.annotator_core import _path_hits_rects
+    c_rect = c.mapRectToScene(c.rect())
+    sp = [sa.mapToScene(p) for p in sa._pts]
+    assert _close(sp[0], QPointF(100, 30)) and _close(sp[-1], QPointF(300, 230)), sp
+    assert not _path_hits_rects(sp, [c_rect]), (sp, c_rect)
+    assert len(sp) > 2   # 여전히 직교 엘보(≥1 모서리)
+
+    # (3) 장애물을 다시 치우면 Stage1로 복귀(우회 해제) — 무변경 가드가 되먹임 없이 안정
+    c.setPos(QPointF(0, 0))          # 다시 (700,700) 멀리
+    w._on_scene_changed(None)
+    sp = [sa.mapToScene(p) for p in sa._pts]
+    assert len(sp) == 4 and _close(sp[1], QPointF(200, 30)) and _close(sp[2], QPointF(200, 230)), sp
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

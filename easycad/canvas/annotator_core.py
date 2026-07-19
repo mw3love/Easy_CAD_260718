@@ -1552,6 +1552,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def _uses_endpoints(self):
         return True
 
+    _ROUTE_CLEARANCE = 12.0   # [Stage2] 라우팅이 장애물에서 유지할 여유(scene 단위)
+
     # ---- [A3] 지속 연결(도형 테두리 부착) — 곡선화살표 인프라 재사용 --------
     def _connects_to_border(self):
         return True   # 끝점을 도형 테두리 근처로 가져가면 재스냅·바인딩
@@ -1645,7 +1647,10 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             return False
         ns = self._bound_normal_scene(0)
         ne = self._bound_normal_scene(end_idx)
-        new_scene = _dedup_pts([s] + _ortho_elbow(s, e, ns, ne) + [e])
+        # [Stage2] 장애물(양끝 바인딩 도형 제외)을 피하는 직교 경로. 장애물이 없거나 Stage1
+        # 엘보가 이미 안전하면 Stage1과 동일 결과 → 아래 무변경 가드가 되먹임 루프를 끊는다.
+        mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE)
+        new_scene = _dedup_pts([s] + mids + [e])
         new_local = [self.mapFromScene(p) for p in new_scene]
         if len(new_local) == len(self._pts) and all(
                 abs(a.x() - b.x()) <= 1e-6 and abs(a.y() - b.y()) <= 1e-6
@@ -1656,6 +1661,20 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self.update()
         self._sync_label()
         return True
+
+    def _obstacle_rects(self):
+        """[Stage2] 라우팅이 피해야 할 장애물 사각형(scene, 축정렬 bbox). 양끝 바인딩 도형
+        (출발/도착)은 제외. 원은 외접 사각형으로 근사(보수적). scene이 없으면 빈 리스트."""
+        sc = self.scene()
+        if sc is None:
+            return []
+        out = []
+        for it in sc.items():
+            if it is self._bind_start or it is self._bind_end:
+                continue
+            if isinstance(it, (_RectItem, _EllipseItem)):
+                out.append(it.mapRectToScene(it.rect()))
+        return out
 
     def _on_endpoint_drag_start(self, idx):
         # [Stage1] 정점 핸들을 손으로 잡는 순간 자동 라우팅 해제 — 이후 경로는 사용자 소유(수동).
@@ -2191,6 +2210,71 @@ def _ortho_elbow(s: QPointF, e: QPointF, ns, ne):
     if sh and not eh:
         return [QPointF(e.x(), s.y())]   # 수평 이탈 → 수직 도착
     return [QPointF(s.x(), e.y())]       # 수직 이탈 → 수평 도착
+
+
+# ---- [Stage2] 직교 라우팅 장애물 회피 — 충돌 없는 후보 엘보 선택 -------------------
+def _seg_hits_rect(a: QPointF, b: QPointF, r: QRectF, eps=1e-6) -> bool:
+    """축정렬 선분 a-b가 사각형 r의 '속'을 지나는가(테두리 접촉은 통과로 봄).
+    엘보 세그먼트는 전부 수평/수직이라 축별로 판정. 대각선(엘보에선 미발생)은 bbox 겹침으로 보수 판정."""
+    if abs(a.y() - b.y()) <= eps:          # 수평
+        y = a.y()
+        if y <= r.top() + eps or y >= r.bottom() - eps:
+            return False
+        x0, x1 = (a.x(), b.x()) if a.x() <= b.x() else (b.x(), a.x())
+        return x1 > r.left() + eps and x0 < r.right() - eps
+    if abs(a.x() - b.x()) <= eps:          # 수직
+        x = a.x()
+        if x <= r.left() + eps or x >= r.right() - eps:
+            return False
+        y0, y1 = (a.y(), b.y()) if a.y() <= b.y() else (b.y(), a.y())
+        return y1 > r.top() + eps and y0 < r.bottom() - eps
+    x0, x1 = (a.x(), b.x()) if a.x() <= b.x() else (b.x(), a.x())
+    y0, y1 = (a.y(), b.y()) if a.y() <= b.y() else (b.y(), a.y())
+    return x1 > r.left() and x0 < r.right() and y1 > r.top() and y0 < r.bottom()
+
+
+def _path_hits_rects(pts, rects, eps=1e-6) -> bool:
+    """정점 리스트 pts로 이루어진 폴리라인이 사각형들 중 하나라도 관통하면 True."""
+    for i in range(len(pts) - 1):
+        for r in rects:
+            if _seg_hits_rect(pts[i], pts[i + 1], r, eps):
+                return True
+    return False
+
+
+def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0):
+    """[Stage2] Stage1 엘보(_ortho_elbow)를 우선하되, 그 경로가 장애물을 관통하면 대체 후보 중
+    충돌 없는 첫 경로의 '중간 정점'을 반환(최소구현 (b): 소수 후보 스캔).
+      · 장애물 없음 또는 Stage1이 이미 안전 → Stage1 그대로(무변경 보장, 되먹임 없음).
+      · 후보 순서: Stage1 → L자(2) → 중앙채널(2) → 장애물 bbox 좌/우/상/하 우회(4).
+      · 전부 실패 → Stage1 폴백(관통하더라도 안정적으로 종료).
+    obstacles: scene 좌표 사각형(양끝 바인딩 도형은 호출부에서 이미 제외). clearance만큼 팽창해 여유 확보."""
+    preferred = _ortho_elbow(s, e, ns, ne)
+    if not obstacles:
+        return preferred
+    infl = [r.adjusted(-clearance, -clearance, clearance, clearance) for r in obstacles]
+    if not _path_hits_rects([s] + preferred + [e], infl):
+        return preferred
+    mx, my = (s.x() + e.x()) / 2.0, (s.y() + e.y()) / 2.0
+    bb = QRectF(infl[0])
+    for r in infl[1:]:
+        bb = bb.united(r)
+    g = clearance
+    cands = [
+        preferred,
+        [QPointF(e.x(), s.y())],                                            # L자(수평 이탈)
+        [QPointF(s.x(), e.y())],                                            # L자(수직 이탈)
+        [QPointF(mx, s.y()), QPointF(mx, e.y())],                           # H-V-H 중앙채널
+        [QPointF(s.x(), my), QPointF(e.x(), my)],                          # V-H-V 중앙채널
+        [QPointF(bb.left() - g, s.y()), QPointF(bb.left() - g, e.y())],     # 좌회
+        [QPointF(bb.right() + g, s.y()), QPointF(bb.right() + g, e.y())],   # 우회
+        [QPointF(s.x(), bb.top() - g), QPointF(e.x(), bb.top() - g)],       # 상회
+        [QPointF(s.x(), bb.bottom() + g), QPointF(e.x(), bb.bottom() + g)], # 하회
+    ]
+    for mids in cands:
+        if not _path_hits_rects([s] + mids + [e], infl):
+            return mids
+    return preferred
 
 
 class _AnnotatorView(QGraphicsView):
