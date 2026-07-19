@@ -623,6 +623,15 @@ class _HandleResizeMixin:
         d = fn(c) - c
         self.setPos(self.pos() + d)
 
+    # [Stage2b] stretch — 이 아이템의 '정점(grip)' 씬좌표들. crossing 박스 안에 든 grip만
+    # stretch 시 delta로 이동한다(밖은 고정). 하이라이트(●) 표시 전용 — 실제 이동은
+    # rebake_scene(공간 fn)이 담당한다(네모·원은 걸친 모서리 AABB로 자연히 일치).
+    # 기본: 끝점 보유형(선·화살표·폴리)은 끝점들, 아니면 내용 중심(텍스트·번호=스칼라 폴백).
+    def _stretch_grips(self):
+        if self._uses_endpoints():
+            return [self.mapToScene(p) for p in self._endpoints()]
+        return [self.mapToScene(self._content_rect().center())]
+
     def _scale_or_1(self) -> float:
         s = self.scale()
         return s if s else 1.0
@@ -1062,6 +1071,11 @@ class _RectItem(_HandleResizeMixin, QGraphicsRectItem):
         self.prepareGeometryChange()
         self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
 
+    def _stretch_grips(self):   # [Stage2b] 네모 grip = 네 모서리(걸친 모서리만 stretch 이동).
+        r = self.rect()
+        return [self.mapToScene(c) for c in
+                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+
     def _base_shape(self):
         # 속 빈 네모(NoBrush)는 '테두리 링'만 클릭 영역으로 — 내부를 통과시켜 네모 안에서
         # 다른 주석을 잡거나 새 도형(화살표 등)을 그릴 수 있게. 채움이 있으면 기본대로 전체.
@@ -1104,6 +1118,11 @@ class _EllipseItem(_HandleResizeMixin, QGraphicsEllipseItem):
         ys = [p.y() for p in pts]
         self.prepareGeometryChange()
         self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
+
+    def _stretch_grips(self):   # [Stage2b] 원 grip = 외접 사각 네 모서리(네모와 동일).
+        r = self.rect()
+        return [self.mapToScene(c) for c in
+                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
 
     def _content_rect(self):
         # _LineItem과 동일 사이클 방지: QGraphicsEllipseItem.boundingRect()는 펜 두께가
@@ -3123,6 +3142,18 @@ class _AnnotatorView(QGraphicsView):
         # [우리 확장] 다중선택 그룹 변형(회전·스케일) — 2개 이상 선택 시 공통 bbox+핸들.
         self._group = _GroupTransform(self)
         self._group_dragging = False
+        # [Stage2b] AutoCAD 정통 stretch — crossing 박스에 걸친 정점만 이동(명시적 S 모드).
+        # crossing(또는 window) 러버밴드 선택 → S로 무장 → 기준점 클릭 → 도착 클릭. Esc=취소.
+        self._last_sel_rect = None    # 마지막 러버밴드 씬 사각(crossing 박스 '기억')
+        self._stretch_arm = False     # S로 무장 — 기준점 클릭 대기
+        self._stretch_active = False  # 기준점 클릭 후 — 도착점 대기(실시간 프리뷰)
+        self._stretch_box = None      # 걸친 정점 판정 박스(씬, 원본 위치 기준)
+        self._stretch_base = None     # 기준점(씬)
+        self._stretch_cursor = None   # 현재 커서(씬) — 프리뷰 선
+        self._stretch_items = None    # 변형 대상 선택 아이템
+        self._stretch_binds = None    # _collect_bound_arrows 결과(부착점 추종)
+        self._stretch_snap = None     # 기하 스냅샷([(item, capture_geom), ...]) — 원복·undo
+        self._stretch_grip_pts = []   # 걸친 grip 하이라이트 점(씬)
         # [2d] 빠른 생성 — 선택된 네모·원의 외부 도트 hover/drag 상태.
         self._qc_hover = None       # (item, side) — 도트 위 hover(고스트 미리보기) or None
         self._qc_dragging = False
@@ -3590,8 +3621,12 @@ class _AnnotatorView(QGraphicsView):
             painter.drawLine(QPointF(c.x() - r * 0.6, c.y()), QPointF(c.x() + r * 0.6, c.y()))
             painter.drawLine(QPointF(c.x(), c.y() - r * 0.6), QPointF(c.x(), c.y() + r * 0.6))
         # [우리 확장] 다중선택 그룹 변형 오버레이 — 공통 bbox + 모서리(스케일)·상단(회전) 핸들.
-        if self._group.available():
+        # stretch 진행 중엔 그리지 않는다(두 오버레이 겹침 방지 — 그때 조작은 stretch가 소유).
+        if self._group.available() and not (self._stretch_arm or self._stretch_active):
             self._group.paint(painter, s)
+        # [Stage2b] stretch 오버레이 — 무장(걸친 정점 ●)·활성(기준점→커서 프리뷰선) + crossing 박스.
+        if self._stretch_arm or self._stretch_active:
+            self._paint_stretch(painter, s)
 
     # ---- 줌 (휠) — 주석 위면 속성 변경, 아니면 owner의 hug-zoom(창이 이미지에 맞게) ----
     def wheelEvent(self, event):
@@ -3670,6 +3705,14 @@ class _AnnotatorView(QGraphicsView):
         if event.button() != Qt.MouseButton.LeftButton:
             return super().mousePressEvent(event)
         self._press_scene = self.mapToScene(event.position().toPoint())   # 실제 클릭 지점(스냅 전)
+        # [Stage2b] stretch 진행 — 활성(기준점 이미 찍음) 클릭=도착점 확정, 무장 클릭=기준점. 최우선.
+        if self._stretch_active:
+            self._stretch_apply(self._press_scene)
+            self._stretch_commit()
+            return
+        if self._stretch_arm:
+            self._stretch_begin(self._press_scene)
+            return
         # [우리 확장] 편집 중 텍스트가 있고 이번 좌클릭이 그 텍스트 위가 아니면 편집을 마무리한다.
         # (빈 영역 클릭은 아래 러버밴드 분기가 super 전에 return해 focusOut이 안 나던 문제 보완 —
         #  clearFocus → focusOutEvent가 빈 텍스트는 폐기, 아니면 완료. 그 텍스트 위 클릭은 캐럿 이동.)
@@ -4069,6 +4112,111 @@ class _AnnotatorView(QGraphicsView):
         self._owner.push_undo_geom(snaps)
         self.viewport().update()
 
+    # ---- [Stage2b] AutoCAD 정통 stretch — crossing 박스에 걸친 정점만 이동 ----------
+    # 명시적 모드(암묵 트리거 금지 — 과거 '이동 폴백' 혼동으로 롤백된 전례): crossing(또는
+    # window) 러버밴드 선택으로 박스를 '기억'(_last_sel_rect) → S로 무장(_stretch_arm) →
+    # 기준점 클릭(_stretch_begin) → 이동(프리뷰) → 도착 클릭(_stretch_commit). Esc=취소.
+    # 이동은 '전체 아이템 fn' 리베이크가 아니라 '박스 안 grip만 +delta'인 공간 fn을 기존
+    # _rebake_selection에 흘려보내 재사용한다: 점 기반(선·화살표·폴리)=정점별 이동, 네모·원=
+    # 걸친 모서리 AABB, 바인딩 부착점=박스 안이면 fn으로 따라옴 → "걸친 쪽만 따라온다".
+    # 완전포함 도형은 모든 grip이 박스 안 → 전부 +delta → 강체 이동. 판정은 항상 '원본 위치'
+    # 기준(매 프레임 스냅샷 원복 후 fn 적용)이라 박스가 고정된다.
+    @staticmethod
+    def _stretch_inside_fn(box: QRectF, delta: QPointF):
+        def fn(p):
+            return (QPointF(p.x() + delta.x(), p.y() + delta.y())
+                    if box.contains(p) else QPointF(p))
+        return fn
+
+    def _stretch_arm_now(self):
+        """S키 — 러버밴드 박스가 기억돼 있고 선택이 있으면 stretch 무장."""
+        if self._stretch_active or self._stretch_arm:
+            return
+        sel = [it for it in self.scene().selectedItems()
+               if it.parentItem() is None and isinstance(it, _HandleResizeMixin)]
+        box = self._last_sel_rect
+        if not sel or box is None or box.width() < 1e-6 or box.height() < 1e-6:
+            return
+        self._stretch_box = QRectF(box)
+        self._stretch_items = sel
+        self._stretch_grip_pts = [g for it in sel for g in it._stretch_grips()
+                                  if self._stretch_box.contains(g)]
+        self._stretch_arm = True
+        self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        self.viewport().update()
+
+    def _stretch_begin(self, base_scene: QPointF):
+        """무장 상태에서 기준점 클릭 — 기하 스냅샷 + 트랜잭션 시작."""
+        items = self._stretch_items
+        shapes = [it for it in items if not isinstance(it, (_ArrowItem, _PolyArrowItem))]
+        self._stretch_binds = _collect_bound_arrows(self.scene(), shapes)
+        self._stretch_snap = [(it, it.capture_geom())
+                              for it in _snapshot_set(items, self._stretch_binds)]
+        self._stretch_base = QPointF(base_scene)
+        self._stretch_cursor = QPointF(base_scene)
+        self._stretch_arm = False
+        self._stretch_active = True
+
+    def _stretch_apply(self, cur_scene: QPointF):
+        """프리뷰/확정 공통 — 매 프레임 원복 후 공간 fn으로 리베이크. F8이면 기준점서 0/90°."""
+        if not self._stretch_active:
+            return
+        base = self._stretch_base
+        if getattr(self._owner, "ortho_enabled", False):
+            cur_scene = self._constrain(base, cur_scene, "ortho")
+        delta = QPointF(cur_scene.x() - base.x(), cur_scene.y() - base.y())
+        for it, tok in self._stretch_snap:   # 원복(누적 방지)
+            it.apply_geom(tok)
+        fn = self._stretch_inside_fn(self._stretch_box, delta)
+        _rebake_selection(self._stretch_items, self._stretch_binds, fn)
+        self._stretch_cursor = QPointF(cur_scene)
+        self.viewport().update()
+
+    def _stretch_commit(self):
+        if self._stretch_snap:
+            self._owner.push_undo_geom(self._stretch_snap)
+        self._stretch_clear()
+
+    def _stretch_cancel(self):
+        if self._stretch_active and self._stretch_snap:
+            for it, tok in self._stretch_snap:
+                it.apply_geom(tok)   # 원본으로 되돌림(커밋 안 함)
+        self._stretch_clear()
+
+    def _stretch_clear(self):
+        was = self._stretch_arm or self._stretch_active
+        self._stretch_arm = self._stretch_active = False
+        self._stretch_box = self._stretch_base = self._stretch_cursor = None
+        self._stretch_items = self._stretch_binds = self._stretch_snap = None
+        self._stretch_grip_pts = []
+        if was:
+            self.viewport().unsetCursor()
+            self.viewport().update()
+
+    def _paint_stretch(self, painter, s):
+        """[Stage2b] stretch 오버레이 — crossing 박스 + 걸친 정점(●) 또는 기준점→커서 프리뷰선."""
+        if self._stretch_box is not None:
+            pen = QPen(QColor(90, 190, 90), 1.0, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(self._stretch_box)
+        r = 4.0 / s
+        if self._stretch_arm:   # 무장 — 걸친 정점을 빨간 도트로(무엇이 움직일지 예고)
+            painter.setPen(QPen(QColor("white"), 1.0 / s))
+            painter.setBrush(QBrush(QColor(230, 60, 60)))
+            for g in self._stretch_grip_pts:
+                painter.drawEllipse(g, r, r)
+        if self._stretch_active and self._stretch_base is not None \
+                and self._stretch_cursor is not None:
+            pen = QPen(QColor(90, 190, 90), 1.0, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.drawLine(self._stretch_base, self._stretch_cursor)
+            painter.setPen(QPen(QColor("white"), 1.0 / s))
+            painter.setBrush(QBrush(QColor(90, 190, 90)))
+            painter.drawEllipse(self._stretch_base, r, r)   # 기준점
+
     def _update_hover_cursor(self, view_pos):
         """편집 모드 hover 커서: 주석 위=이동, 도형 도구+빈영역=십자, select+빈영역=손바닥.
         편집 중 텍스트는 예외 — 내부=캐럿(I빔), 테두리만 이동."""
@@ -4147,6 +4295,13 @@ class _AnnotatorView(QGraphicsView):
                                       and QLineF(self._qc_press_scene, cur).length() > thr) else None
             self.viewport().update()
             return
+        if self._stretch_active:  # [Stage2b] stretch 프리뷰 — 버튼 없이 이동해도 갱신(클릭-이동-클릭)
+            self._stretch_apply(self.mapToScene(event.position().toPoint()))
+            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+            return
+        if self._stretch_arm:     # [Stage2b] 무장 — 기준점 클릭 대기(십자 커서 유지)
+            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+            return
         if not self._owner.is_edit_mode():
             if event.buttons() & Qt.MouseButton.LeftButton:
                 self._owner._win_drag_move(event.globalPosition().toPoint())
@@ -4219,6 +4374,7 @@ class _AnnotatorView(QGraphicsView):
         if self._rb_active:  # [우리 확장] 러버밴드 종료 — 최종 선택은 이미 반영됨, 밴드만 지움
             self._rb_current = event.position().toPoint()
             self._apply_rubber_selection()
+            self._last_sel_rect = self._rb_scene_rect()   # [Stage2b] 박스 '기억'(S stretch용)
             self._rb_active = False
             self._rb_origin = self._rb_current = None
             self._rb_base = []
@@ -4365,6 +4521,9 @@ class _AnnotatorView(QGraphicsView):
             self._owner.toggle_edit_mode()
             return
         if not editing_text and key == Qt.Key.Key_Escape:
+            if self._stretch_arm or self._stretch_active:   # [Stage2b] stretch 취소 최우선
+                self._stretch_cancel()
+                return
             # 선택된 주석이 있으면 ESC는 선택(파란 점선)만 해제 — 편집기는 안 닫는다.
             # 선택이 없을 때만 편집기 종료로 넘어간다(주석 → 뷰어 → 닫기 단계적 취소).
             if self.scene().selectedItems():
@@ -4397,6 +4556,13 @@ class _AnnotatorView(QGraphicsView):
                 return
             if (mods & Qt.KeyboardModifier.ShiftModifier) and key == Qt.Key.Key_V:
                 self.mirror_selection("y")   # [Stage2] 상하 반전
+                return
+            if (key == Qt.Key.Key_S and not (mods & (
+                    Qt.KeyboardModifier.ControlModifier
+                    | Qt.KeyboardModifier.AltModifier
+                    | Qt.KeyboardModifier.ShiftModifier))
+                    and self._owner.current_tool in ("select", None)):
+                self._stretch_arm_now()   # [Stage2b] 러버밴드 선택 후 S = stretch 무장
                 return
             if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_A:
                 for it in self.scene().items():

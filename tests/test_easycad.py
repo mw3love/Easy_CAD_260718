@@ -1299,6 +1299,98 @@ def test_smart_align_skips_multiselect():
     assert abs(_cleft(b) - before) < 1e-6 and v._align_guides == []
 
 
+def test_stretch_grips_pure():
+    # [2b] grip 수집 — 네모=4모서리, 선/화살표/폴리=끝점들.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 10, 20, 100, 60)
+    gs = a._stretch_grips()
+    assert len(gs) == 4
+    assert any(_close(g, QPointF(10, 20)) for g in gs)
+    assert any(_close(g, QPointF(110, 80)) for g in gs)
+    ln = _LineItem(QLineF(0, 0, 200, 40)); w._scene.addItem(ln)
+    gl = ln._stretch_grips()
+    assert len(gl) == 2 and _close(gl[0], QPointF(0, 0)) and _close(gl[1], QPointF(200, 40))
+    pa = _PolyArrowItem(QColor("black"), 4, True)
+    pa.set_points(QPointF(0, 0), QPointF(50, 0)); pa.insert_vertex(0, QPointF(25, 30))
+    w._scene.addItem(pa)
+    assert len(pa._stretch_grips()) == 3   # 3정점(waypoint 포함)
+
+
+def test_stretch_arm_requires_box():
+    # [2b] 명시적 모드 — 러버밴드 박스가 '기억'돼 있고 선택이 있을 때만 S 무장.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    v = w._view
+    v._last_sel_rect = None
+    v._stretch_arm_now()
+    assert not v._stretch_arm            # 박스 기억 없으면 무장 안 됨(암묵 트리거 방지)
+    v._last_sel_rect = QRectF(-10, -10, 200, 200)
+    v._stretch_arm_now()
+    assert v._stretch_arm and len(v._stretch_grip_pts) == 4   # 전 모서리 박스 안
+    v._stretch_cancel()
+    assert not v._stretch_arm and v._stretch_grip_pts == []
+
+
+def test_stretch_straddle_line():
+    # [2b] crossing 박스가 오른 끝만 걸침 → 그 끝만 이동, 왼 끝은 고정(AutoCAD stretch 핵심).
+    w = CanvasWindow()
+    ln = _LineItem(QLineF(0, 0, 200, 0)); ln.setPen(w.make_pen())
+    ln.setFlags(ln.GraphicsItemFlag.ItemIsSelectable | ln.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ln); ln.setSelected(True)
+    v = w._view
+    v._last_sel_rect = QRectF(150, -50, 100, 100)   # 오른 끝(200,0)만 포함
+    v._stretch_arm_now()
+    assert v._stretch_arm and len(v._stretch_grip_pts) == 1
+    assert _close(v._stretch_grip_pts[0], QPointF(200, 0))
+    v._stretch_begin(QPointF(200, 0))               # 기준점
+    v._stretch_apply(QPointF(300, 0))               # 도착 → delta (100,0)
+    v._stretch_commit()
+    eps = ln._endpoints()
+    assert _close(ln.mapToScene(eps[0]), QPointF(0, 0))      # 왼 끝 고정
+    assert _close(ln.mapToScene(eps[1]), QPointF(300, 0))    # 오른 끝만 이동
+    w.undo()
+    assert _close(ln._endpoints()[1], QPointF(200, 0))
+
+
+def test_stretch_contained_translates():
+    # [2b] 완전포함 도형 = 모든 grip이 박스 안 → 전부 +delta = 강체 이동(왜곡 없음).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    v = w._view
+    v._last_sel_rect = QRectF(-20, -20, 200, 200)
+    v._stretch_arm_now()
+    v._stretch_begin(QPointF(0, 0))
+    v._stretch_apply(QPointF(50, 30))               # delta (50,30)
+    v._stretch_commit()
+    assert a.rect() == QRectF(50, 30, 100, 60)       # 크기 불변, 위치만 +delta
+    w.undo()
+    assert a.rect() == QRectF(0, 0, 100, 60)
+
+
+def test_stretch_binding_follows_crossed_side():
+    # [2b] 도형의 걸친 변만 stretch → 그 변에 붙은 (미선택) 화살표 부착점이 따라온다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    ar = _ArrowItem(QColor("#ffff9500"), 6, True)
+    ar.set_points(QPointF(100, 30), QPointF(250, 30))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    ar.set_bound(0, a, a.mapFromScene(QPointF(100, 30)))   # 시작 = 네모 오른 변
+    v = w._view
+    v._last_sel_rect = QRectF(80, -20, 60, 100)     # 오른 두 모서리+부착점만(왼 변·화살표 끝 제외)
+    v._stretch_arm_now()
+    v._stretch_begin(QPointF(100, 30))
+    v._stretch_apply(QPointF(150, 30))              # delta (50,0) → 오른 변 150으로
+    v._stretch_commit()
+    assert a.rect() == QRectF(0, 0, 150, 60)         # 오른 변만 +50
+    assert ar.has_binding()
+    assert _close(ar.mapToScene(ar._endpoints()[0]), QPointF(150, 30))   # 시작이 새 변 추종
+    assert _close(ar.mapToScene(ar._endpoints()[1]), QPointF(250, 30))   # 끝은 고정
+    w.undo()
+    assert a.rect() == QRectF(0, 0, 100, 60)
+    assert _close(ar.mapToScene(ar._endpoints()[0]), QPointF(100, 30))
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
