@@ -3028,6 +3028,9 @@ class _AnnotatorView(QGraphicsView):
         self._start = QPointF()
         self._path: QPainterPath | None = None
         self._move_snap = None       # 드래그 이동 전 위치 스냅샷([(item, QPointF), ...]) — undo용
+        # [2e] 스마트 정렬 가이드 — 단일 도형 이동 중 근처 도형과 모서리·중심 정렬 시 스냅+가상선.
+        self._move_active = False    # 도형 드래그(이동/핸들) 진행 중(_snapshot_movable서 set)
+        self._align_guides = []      # 그릴 가이드선 [("v", x, y0, y1) | ("h", y, x0, x1)]
         # 테두리 스냅(화살표 도구 전용) — 도형 테두리 어디든 최근접점에 붙음
         self._snap_preview = None    # 화살표 도구 유휴 시 커서 근처 테두리 최근접점(마커 표시), 씬 좌표 or None
         self._arrow_snap_exit = None # 그리는 화살표 시작이 테두리에 스냅됐으면 그 바깥 법선(이탈 접선), or None
@@ -3272,10 +3275,63 @@ class _AnnotatorView(QGraphicsView):
 
     def _snapshot_movable(self):
         """드래그 이동 전 이동 가능 아이템들의 위치를 기록(release에서 변경분만 undo에 커밋)."""
+        self._move_active = True   # [2e] 도형 드래그 시작(이동/핸들) — 스마트 정렬 스냅 판정 활성
         self._move_snap = [
             (it, QPointF(it.pos())) for it in self.scene().items()
             if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable
         ]
+
+    def _apply_smart_snap(self):
+        """[2e] 단일 도형 이동 중 — 근처 도형과 모서리(좌/우/상/하)·중심 정렬 시 스냅 + 가상선.
+        Qt가 커서로 옮긴 뒤 호출돼, 임계 내면 정렬 좌표로 살짝 당기고 가이드선을 기록한다.
+        핸들 조작(리사이즈·회전·끝점) 중이거나 단일 선택이 아니면 건드리지 않는다."""
+        self._align_guides = []
+        sel = [it for it in self.scene().selectedItems() if it.parentItem() is None]
+        if len(sel) != 1:
+            return
+        it = sel[0]
+        if (getattr(it, "_resizing", False) or getattr(it, "_rotating", False)
+                or getattr(it, "_box_resize", None) is not None
+                or getattr(it, "_drag_endpoint", None) is not None):
+            return
+        bg = getattr(self._owner, "_bg_item", None)
+
+        def srect(o):   # 보이는 외형(_content_rect) 기준 씬 사각 — 핸들·도트 여유 제외.
+            cr = o._content_rect() if hasattr(o, "_content_rect") else o.boundingRect()
+            return o.mapToScene(cr).boundingRect()
+
+        others = [srect(o) for o in self.scene().items()
+                  if o is not it and o is not bg and o.parentItem() is None
+                  and (o.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)]
+        if not others:
+            return
+        nr = srect(it)
+        thr = 6.0 / self._view_scale()
+        bx = by = None   # (absdiff, delta, snap_coord, other_rect)
+        for orr in others:
+            for myx in (nr.left(), nr.center().x(), nr.right()):
+                for ox in (orr.left(), orr.center().x(), orr.right()):
+                    d = ox - myx
+                    if abs(d) <= thr and (bx is None or abs(d) < bx[0]):
+                        bx = (abs(d), d, ox, orr)
+            for myy in (nr.top(), nr.center().y(), nr.bottom()):
+                for oy in (orr.top(), orr.center().y(), orr.bottom()):
+                    d = oy - myy
+                    if abs(d) <= thr and (by is None or abs(d) < by[0]):
+                        by = (abs(d), d, oy, orr)
+        dx = bx[1] if bx else 0.0
+        dy = by[1] if by else 0.0
+        if dx or dy:
+            it.moveBy(dx, dy)
+            nr = srect(it)
+        if bx:
+            o = bx[3]
+            self._align_guides.append(("v", bx[2], min(nr.top(), o.top()),
+                                       max(nr.bottom(), o.bottom())))
+        if by:
+            o = by[3]
+            self._align_guides.append(("h", by[2], min(nr.left(), o.left()),
+                                       max(nr.right(), o.right())))
 
     def _commit_move(self):
         """release 시 실제로 위치가 바뀐 아이템만 이동 undo로 기록."""
@@ -3438,6 +3494,16 @@ class _AnnotatorView(QGraphicsView):
         elif self._qc_hover is not None and self._qc_hover[0].isSelected() \
                 and self._qc_hover[0].scene() is not None:
             self._qc_paint_ghost(painter, self._qc_hover[0], self._qc_hover[1], None)
+        # [2e] 스마트 정렬 가이드선 — 이동 중 정렬 맞은 축에 마젠타 실선.
+        if self._align_guides:
+            pen = QPen(QColor(230, 60, 160), 1.0)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            for g in self._align_guides:
+                if g[0] == "v":
+                    painter.drawLine(QPointF(g[1], g[2]), QPointF(g[1], g[3]))
+                else:
+                    painter.drawLine(QPointF(g[2], g[1]), QPointF(g[3], g[1]))
         # [우리 확장] 직선화살표 waypoint 추가 예고 — 세그먼트 위 hover 지점에 '+' 고스트 마커.
         if self._seg_add is not None:
             c = self._seg_add[2]
@@ -4057,6 +4123,12 @@ class _AnnotatorView(QGraphicsView):
                 self._path.lineTo(sp)
                 self._temp.setPath(self._path)
             return
+        # [2e] 도형 이동 드래그 — Qt로 옮긴 뒤 스마트 정렬 스냅 + 가이드선.
+        if self._move_active and (event.buttons() & Qt.MouseButton.LeftButton):
+            super().mouseMoveEvent(event)
+            self._apply_smart_snap()
+            self.viewport().update()
+            return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -4133,6 +4205,10 @@ class _AnnotatorView(QGraphicsView):
                 item.setSelected(True)
             return
         self._commit_move()   # 드래그 이동이 있었으면 undo에 기록
+        if self._move_active or self._align_guides:   # [2e] 스마트 정렬 상태 정리
+            self._move_active = False
+            self._align_guides = []
+            self.viewport().update()
         super().mouseReleaseEvent(event)
 
     def _labelable_at(self, view_pos):

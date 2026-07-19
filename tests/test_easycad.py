@@ -1221,6 +1221,51 @@ def test_qc_dot_at_roundtrip():
         assert hit is not None and hit[0] is a and hit[1] == "r", tool
 
 
+def _cleft(o):
+    return o.mapToScene(o._content_rect()).boundingRect().left()
+
+
+def test_smart_align_snaps_within_threshold():
+    # [2e] 임계 내로 어긋난 좌변 → 정렬 스냅 + 세로 가이드 기록.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    v = w._view
+    thr = 6.0 / v._view_scale()
+    b.setPos(QPointF(thr * 0.5, 300)); b.setSelected(True)   # 좌변 임계 내 어긋남
+    assert abs(_cleft(a) - _cleft(b)) > 1e-6
+    v._apply_smart_snap()
+    assert abs(_cleft(a) - _cleft(b)) < 1e-6                 # 정렬됨
+    assert any(g[0] == "v" for g in v._align_guides)
+
+
+def test_smart_align_no_snap_beyond_threshold():
+    # [2e] 임계 밖이면 스냅·가이드 없음(자유 이동).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    v = w._view
+    thr = 6.0 / v._view_scale()
+    b.setPos(QPointF(thr * 4, 300)); b.setSelected(True)
+    before = _cleft(b)
+    v._apply_smart_snap()
+    assert abs(_cleft(b) - before) < 1e-6 and v._align_guides == []
+
+
+def test_smart_align_skips_multiselect():
+    # [2e] 2개 이상 선택 시엔 스마트 정렬 스냅을 적용하지 않는다(그룹 변형 영역).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    v = w._view
+    thr = 6.0 / v._view_scale()
+    b.setPos(QPointF(thr * 0.5, 300))
+    a.setSelected(True); b.setSelected(True)
+    before = _cleft(b)
+    v._apply_smart_snap()
+    assert abs(_cleft(b) - before) < 1e-6 and v._align_guides == []
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
