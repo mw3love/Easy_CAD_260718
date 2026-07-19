@@ -1524,6 +1524,13 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._color = QColor(color)
         self._width = width
         self._head_at_end = head_at_end
+        # [A3] 지속 연결 — 양 끝(시작=idx0, 끝=idx last)만 도형에 고정 부착(중간 waypoint 제외).
+        # 곡선화살표와 같은 방식(도형 로컬좌표 부착점 + scene.changed 리라우트). waypoint 삽입·삭제로
+        # 인덱스가 바뀌므로 절대 idx가 아닌 '시작/끝 역할'로 저장한다.
+        self._bind_start = None
+        self._bind_end = None
+        self._bind_start_pt = None   # 시작이 붙은 도형의 로컬 부착점
+        self._bind_end_pt = None
         self._init_resize()
         self._init_label()
         self.setFlags(
@@ -1534,6 +1541,70 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     # ---- 정점 = 끝점 핸들(재사용) --------------------------------------
     def _uses_endpoints(self):
         return True
+
+    # ---- [A3] 지속 연결(도형 테두리 부착) — 곡선화살표 인프라 재사용 --------
+    def _connects_to_border(self):
+        return True   # 끝점을 도형 테두리 근처로 가져가면 재스냅·바인딩
+
+    def _bound(self, idx):
+        if idx == 0:
+            return self._bind_start
+        if idx == len(self._pts) - 1:
+            return self._bind_end
+        return None
+
+    def _bind_pt(self, idx):
+        if idx == 0:
+            return self._bind_start_pt
+        if idx == len(self._pts) - 1:
+            return self._bind_end_pt
+        return None
+
+    def set_bound(self, idx, shape, local_pt=None):
+        """끝점(시작/끝)만 shape에 고정. 중간 정점 idx는 무시."""
+        if idx == 0:
+            self._bind_start, self._bind_start_pt = shape, (None if shape is None else local_pt)
+        elif idx == len(self._pts) - 1:
+            self._bind_end, self._bind_end_pt = shape, (None if shape is None else local_pt)
+
+    def has_binding(self) -> bool:
+        return self._bind_start is not None or self._bind_end is not None
+
+    def _move_endpoint_with_snap(self, idx, local_p):
+        # 양 끝점만 테두리에 스냅·바인딩(중간 waypoint는 자유 이동). 멀리 끌면 unbind.
+        is_end = idx == 0 or idx == len(self._pts) - 1
+        snapped = self._endpoint_border_snap(local_p) if is_end else None
+        if snapped is None:
+            if is_end:
+                self.set_bound(idx, None)
+            self._set_endpoint(idx, local_p)
+            return
+        shape = snapped[2]
+        self.set_bound(idx, shape, shape.mapFromScene(self.mapToScene(snapped[0])))
+        self._set_endpoint(idx, snapped[0])
+
+    def reroute(self, pin_pred=None) -> bool:
+        """바인딩된 끝(시작·끝)을 도형의 고정 부착점(로컬→씬)으로 추종. 변경 있으면 True.
+        pin_pred(idx)=False면 재고정 안 함(강체). 무변경이면 되먹임 루프 차단."""
+        if not self.has_binding():
+            return False
+        changed = False
+        for idx in (0, len(self._pts) - 1):
+            sh = self._bound(idx)
+            pt = self._bind_pt(idx)
+            if sh is None or pt is None or sh.scene() is None:
+                continue
+            if pin_pred is not None and not pin_pred(idx):
+                continue
+            target = self.mapFromScene(sh.mapToScene(pt))
+            cur = self._pts[idx]
+            if abs(target.x() - cur.x()) > 1e-6 or abs(target.y() - cur.y()) > 1e-6:
+                self._set_endpoint(idx, target)
+                changed = True
+        if changed:
+            self.prepareGeometryChange()
+            self.update()
+        return changed
 
     def _endpoints(self):
         return self._pts
@@ -1590,6 +1661,9 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def clone(self):
         c = _PolyArrowItem(QColor(self._color), self._width, self._head_at_end)
         c._pts = [QPointF(p) for p in self._pts]
+        c._bind_start, c._bind_end = self._bind_start, self._bind_end   # [A3] 지속 연결 유지
+        c._bind_start_pt = None if self._bind_start_pt is None else QPointF(self._bind_start_pt)
+        c._bind_end_pt = None if self._bind_end_pt is None else QPointF(self._bind_end_pt)
         return self._copy_common_to(c)
 
     # ---- 화살촉(끝 세그먼트 방향) --------------------------------------
@@ -2030,10 +2104,15 @@ class _AnnotatorView(QGraphicsView):
         self.setMouseTracking(True)
         self._drawing = False
         self._temp: QGraphicsItem | None = None
-        # [우리 확장] CAD식 클릭-드로우(직선화살표 전용) 진행 상태 — 여러 클릭에 걸친 폴리라인.
-        # press-drag-release가 아니라 클릭으로 정점을 쌓으므로 _drawing/_temp와 분리한다
-        # (release로 끝나지 않게). None=진행 중 아님. 마지막 정점은 커서 추종 미리보기.
-        self._poly_draw: _PolyArrowItem | None = None
+        # [우리 확장] 하이브리드 클릭 배치(투클릭/멀티클릭) 진행 상태 — 모든 도형 도구 공통.
+        # press-drag-release로 끝나는 '드래그'와 달리 클릭으로 점을 놓으므로 _drawing/_temp와
+        # 분리한다(release로 끝나지 않게). None=진행 중 아님. 2점 도구는 둘째 클릭이 확정,
+        # 직선화살(sarrow)은 클릭마다 정점 추가·더블클릭/Enter 마무리. 마지막 점은 커서 추종.
+        self._place: QGraphicsItem | None = None   # 배치 중 아이템
+        self._place_tool: str | None = None        # 그 도구 키
+        # 실제 press 지점(씬) — 드래그/클릭 판정 기준. self._start는 테두리 스냅으로 '점프'할 수
+        # 있어(시작 스냅), 그걸로 이동량을 재면 가만히 클릭해도 드래그로 오인된다(→극소 화살표).
+        self._press_scene = QPointF()
         self._start = QPointF()
         self._path: QPainterPath | None = None
         self._move_snap = None       # 드래그 이동 전 위치 스냅샷([(item, QPointF), ...]) — undo용
@@ -2242,7 +2321,7 @@ class _AnnotatorView(QGraphicsView):
         # 커서가 이미 선택된 화살표의 끝점/곡선 핸들 위면(= 이동·재스냅 모드, 손가락 커서)
         # '새 화살표 시작' 예고 마커를 띄우지 않는다 — 끝점이 도형 테두리에 붙어 있어
         # 생성-스냅점과 겹칠 때 큰 파란 점이 손가락 커서와 함께 남던 문제 방지.
-        if (self._owner.is_edit_mode() and self._owner.current_tool == "arrow"
+        if (self._owner.is_edit_mode() and self._owner.current_tool in ("arrow", "sarrow")
                 and not self._drawing
                 and self._selected_endpoint_item(view_pos) is None
                 and self._bend_handle_at(view_pos) is None):
@@ -2253,14 +2332,21 @@ class _AnnotatorView(QGraphicsView):
         if new != prev:
             self.viewport().update()
 
-    def _update_arrow_draw(self, event):
+    def _update_arrow_draw(self, event, it=None):
         """화살표 그리기 갱신 — tip=커서(테두리 근처면 스냅). 시작·tip 중 하나라도 테두리에
-        스냅되면 그 바깥 법선을 이탈/도착 접선으로 쓴 3차 베지어(자동 S자), 둘 다 자유면 직선."""
-        it = self._temp
+        스냅되면 그 바깥 법선을 이탈/도착 접선으로 쓴 3차 베지어(자동 S자), 둘 다 자유면 직선.
+        it=None이면 드래그 중(self._temp), 아니면 클릭 배치 중 아이템."""
+        if it is None:
+            it = self._temp
         view_pos = event.position().toPoint()
         tip = self._cur_point(event)   # Shift 각도 제약 반영(스냅되면 아래에서 덮어씀)
         # tip 스냅 — 도형 테두리 최근접점
         snap = self._border_snap_at(view_pos)
+        # [이슈2] 시작점 바로 근처의 tip 스냅은 무시 — 시작·끝이 같은 테두리에 겹쳐 보이지 않는
+        # 극소 화살표가 만들어지는 것을 막는다(사용자: '가상점은 유지되는데 클릭하면 안 생김').
+        if (snap is not None
+                and self._view_dist(snap[0], self.mapFromScene(self._start)) < self._MIN_SNAP_SPAN_PX):
+            snap = None
         back = None
         if snap is not None:
             tip, back = snap[0], snap[1]   # 타깃 바깥 법선 쪽에 ctrl2 → 수직 도착
@@ -2311,8 +2397,9 @@ class _AnnotatorView(QGraphicsView):
             return
         s = self._view_scale()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self._drawing and self._temp is not None:
-            # 그리는 중 — 스냅된 시작·tip에 마커
+        # 그리는 중(드래그)이거나 클릭 배치 중이면 스냅된 시작·tip에 마커(곡선·직선화살 공통).
+        drawing = (self._drawing and self._temp is not None) or (self._place is not None)
+        if drawing:
             if self._arrow_snap_exit is not None:
                 self._draw_snap_marker(painter, self._start, s)
             if self._arrow_tip_snap is not None:
@@ -2392,9 +2479,9 @@ class _AnnotatorView(QGraphicsView):
                 return self._constrain(self._start, sp, "square")
             if tool in ("line", "arrow", "sarrow"):
                 return self._constrain(self._start, sp, "angle")
-        # [우리 확장] F8 Ortho — Shift(45°)가 없을 때 선·화살표 그리기를 0/90°로 제약.
-        # (sarrow는 클릭-드로우 경로에서 _poly_apply_ortho가 따로 처리)
-        if getattr(self._owner, "ortho_enabled", False) and tool in ("line", "arrow"):
+        # [우리 확장] F8 Ortho — Shift(45°)가 없을 때 선·화살표 드래그를 0/90°로 제약.
+        # (sarrow 멀티정점 클릭 배치는 _poly_apply_ortho가 별도 처리 — 여기선 드래그 2점만)
+        if getattr(self._owner, "ortho_enabled", False) and tool in ("line", "arrow", "sarrow"):
             return self._constrain(self._start, sp, "ortho")
         return sp
 
@@ -2405,14 +2492,14 @@ class _AnnotatorView(QGraphicsView):
             self._owner._win_drag_start(event.globalPosition().toPoint())
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             return
-        # [우리 확장] CAD식 클릭-드로우 진행 중이면: 좌클릭=정점 추가, 우클릭=마무리.
-        # (릴리스로 끝내지 않으므로 이 분기가 최우선 — 끝점/세그먼트 판정보다 앞선다.)
-        if self._poly_draw is not None:
+        # [우리 확장] 클릭 배치 진행 중이면: 좌클릭=다음 점(2점도구 확정·sarrow 정점추가),
+        # 우클릭=마무리. (릴리스로 끝내지 않으므로 이 분기가 최우선 — 끝점/세그먼트 판정보다 앞선다.)
+        if self._place is not None:
             if event.button() == Qt.MouseButton.LeftButton:
-                self._poly_add_vertex(event)
+                self._place_click(event)
                 return
             if event.button() == Qt.MouseButton.RightButton:
-                self._finish_poly_draw()
+                self._finish_place(event)
                 return
         # 뷰어 모드: 좌클릭 드래그 = 창 이동 (그리기·선택 안 함)
         if not self._owner.is_edit_mode():
@@ -2421,6 +2508,7 @@ class _AnnotatorView(QGraphicsView):
             return
         if event.button() != Qt.MouseButton.LeftButton:
             return super().mousePressEvent(event)
+        self._press_scene = self.mapToScene(event.position().toPoint())   # 실제 클릭 지점(스냅 전)
         # [우리 확장] 편집 중 텍스트가 있고 이번 좌클릭이 그 텍스트 위가 아니면 편집을 마무리한다.
         # (빈 영역 클릭은 아래 러버밴드 분기가 super 전에 return해 focusOut이 안 나던 문제 보완 —
         #  clearFocus → focusOutEvent가 빈 텍스트는 폐기, 아니면 완료. 그 텍스트 위 클릭은 캐럿 이동.)
@@ -2460,6 +2548,7 @@ class _AnnotatorView(QGraphicsView):
             return
         tool = self._owner.current_tool
         # 화살표 도구 + 도형 테두리 근처 press → 테두리에 스냅된 곡선 화살표 시작(도형 선택/이동보다 우선).
+        # 이 분기가 빈영역/도형-위 선택 판정보다 앞서야 테두리에서 새 화살표가 시작된다(이슈 A).
         if tool == "arrow":
             snap = self._border_snap_at(event.position().toPoint())
             if snap is not None:
@@ -2467,6 +2556,20 @@ class _AnnotatorView(QGraphicsView):
                 it = _ArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
                 self._start = snap[0]
                 self._arrow_snap_exit = snap[1]
+                self._arrow_tip_snap = None
+                it.set_bound(0, snap[2], snap[2].mapFromScene(snap[0]))  # 시작 고정 부착점
+                it.set_points(self._start, self._start)
+                self._begin_draw(it)
+                return
+        # 직선화살(sarrow)도 도형 테두리 근처 press면 테두리-스냅 시작(도형 선택/이동보다 우선).
+        # sarrow는 멀티정점이라 드래그 전용으로 두지 않는다(테두리에서도 클릭 배치 허용).
+        if tool == "sarrow":
+            snap = self._border_snap_at(event.position().toPoint())
+            if snap is not None:
+                owner = self._owner
+                it = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+                self._start = snap[0]
+                self._arrow_snap_exit = snap[1]   # 시작 마커
                 self._arrow_tip_snap = None
                 it.set_bound(0, snap[2], snap[2].mapFromScene(snap[0]))  # 시작 고정 부착점
                 it.set_points(self._start, self._start)
@@ -2530,16 +2633,18 @@ class _AnnotatorView(QGraphicsView):
             self._arrow_tip_snap = None
             self._begin_draw(it)
         elif tool == "sarrow":
-            # [우리 확장] CAD식 클릭-드로우 시작 — 드래그가 아니라 첫 정점 배치.
-            # v0(첫 클릭) + 커서 추종 미리보기 정점 하나. 이후 클릭마다 정점이 쌓인다.
+            # [우리 확장] 하이브리드: 다른 도형처럼 드래그로 시작(드래그=2점 직선, 릴리스 시
+            # 이동이 없으면 클릭 배치 모드로 전환돼 멀티정점 폴리라인이 된다).
             it = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
-            it.set_points(sp, sp)
-            it.setZValue(1)
-            self.scene().addItem(it)
-            self._poly_draw = it
-            self._snap_preview = None
-            self.scene().clearSelection()
-            self.viewport().update()
+            # [A3] 시작점이 도형 테두리 근처면 스냅(라이브 시작 마커 + 확정 시 _bind_poly_ends가 바인딩).
+            ssnap = self._border_snap_at(event.position().toPoint())
+            if ssnap is not None:
+                self._start = ssnap[0]
+                self._arrow_snap_exit = ssnap[1]   # drawForeground 시작 마커 트리거
+            else:
+                self._arrow_snap_exit = None
+            it.set_points(self._start, self._start)
+            self._begin_draw(it)
         elif tool == "pen":
             self._path = QPainterPath(sp)
             it = _PathItem(self._path)
@@ -2579,60 +2684,163 @@ class _AnnotatorView(QGraphicsView):
         self._snap_preview = None   # 그리기 시작 → 유휴 스냅 예고 마커 정리
         self.viewport().update()
 
-    # ---- [우리 확장] CAD식 클릭-드로우 (직선화살표 전용) --------------------
-    # 클릭→이동→클릭으로 정점을 쌓는다. self._poly_draw._pts의 마지막 정점은 커서를
-    # 따라다니는 '미리보기'이며, 마무리(더블클릭/Enter/우클릭) 시 제거한다. F8 Ortho면
-    # 직전(확정) 정점 기준 0/90°로 스냅. Esc·도구 전환은 통째로 폐기.
+    # ---- [우리 확장] 하이브리드 클릭 배치 (모든 도형 도구) ------------------
+    # 드래그(press-move-release)로 그릴 수도, 클릭으로 점을 놓을 수도 있다. 릴리스 시
+    # 이동량이 임계 미만(=끌지 않은 클릭)이면 _enter_click_place로 전환한다.
+    #   · 2점 도구(rect/ellipse/line/arrow): 둘째 클릭이 확정.
+    #   · sarrow: 클릭마다 정점 추가, 더블클릭/Enter/우클릭 마무리.
+    # 마지막 점은 커서를 따라다니는 미리보기. F8 Ortho면 직전 점 기준 0/90°. Esc·도구전환=폐기.
     def _poly_apply_ortho(self, it: "_PolyArrowItem", scene_p: QPointF) -> QPointF:
         if not getattr(self._owner, "ortho_enabled", False) or len(it._pts) < 2:
             return scene_p
         anchor = it.mapToScene(it._pts[-2])   # 직전(확정) 정점
         return self._constrain(anchor, scene_p, "ortho")
 
-    def _update_poly_draw(self, event):
-        """진행 중 폴리라인의 마지막(미리보기) 정점을 커서 위치로 갱신."""
-        it = self._poly_draw
-        p = self._poly_apply_ortho(it, self.mapToScene(event.position().toPoint()))
-        it._set_endpoint(len(it._pts) - 1, it.mapFromScene(p))
+    _MIN_SNAP_SPAN_PX = 30.0  # tip 스냅점이 직전 점에서 이 픽셀 미만이면 무시(극소 화살표 방지)
 
-    def _poly_add_vertex(self, event):
-        """좌클릭 = 미리보기 정점을 확정하고 새 미리보기 정점을 잇는다(정점 1개 추가)."""
-        it = self._poly_draw
-        p = self._poly_apply_ortho(it, self.mapToScene(event.position().toPoint()))
-        local = QPointF(it.mapFromScene(p))
-        it.prepareGeometryChange()
-        it._pts[-1] = QPointF(local)      # 미리보기 → 확정
-        it._pts.append(QPointF(local))    # 새 미리보기(커서 추종)
-        it.update()
+    def _snap_ortho_to_border(self, ortho_p: QPointF, anchor_scene: QPointF) -> QPointF:
+        """[A3] F8일 때도 ortho'd 점이 도형 테두리 근처면 그 테두리점으로 스냅(+마커).
+        수직 모서리에 수평선이 닿으면 최근접점이 같은 y라 축(수평/수직)이 보존된다.
+        직전 점(anchor)에서 너무 가까운 스냅은 무시(극소 세그먼트 방지)."""
+        snap = self._border_snap_at(self.mapFromScene(ortho_p))
+        if (snap is not None and snap[2] is not None
+                and self._view_dist(snap[0], self.mapFromScene(anchor_scene)) >= self._MIN_SNAP_SPAN_PX):
+            self._arrow_tip_snap = snap[0]
+            return snap[0]
+        self._arrow_tip_snap = None
+        return ortho_p
+
+    def _poly_place_point(self, event, item):
+        """[버그수정] sarrow 배치·미리보기 공통 점 — 미리보기(move)와 클릭(_place_click)이 항상
+        같은 좌표를 쓰게 한다(전엔 미리보기=테두리스냅 / 클릭=ortho로 어긋나, F8에서 수평이
+        더블클릭 때만 되던 문제). F8 Ortho면 직전 점 기준 0/90° + 테두리 근처면 그 위로 스냅
+        (축 보존), 아니면 테두리 스냅, 둘 다 아니면 커서."""
+        anchor = item.mapToScene(item._pts[-2])
+        if getattr(self._owner, "ortho_enabled", False):
+            ortho_p = self._constrain(anchor, self.mapToScene(event.position().toPoint()), "ortho")
+            return self._snap_ortho_to_border(ortho_p, anchor)
+        snapped = self._poly_border_snap_tip(event, anchor)
+        return snapped if snapped is not None else self.mapToScene(event.position().toPoint())
+
+    def _poly_border_snap_tip(self, event, anchor_scene=None):
+        """[A3] 직선화살 끝점 라이브 스냅 — 도형 테두리 근처면 그 씬점(+마커), 아니면 None(+마커 해제).
+        곡선화살처럼 그리는 중 끝점이 테두리에 시각적으로 달라붙어 사용자가 붙일 위치를 본다.
+        단 직전 점(anchor)에서 너무 가까운 스냅은 무시 — 같은 테두리에 겹친 극소 세그먼트 방지."""
+        snap = self._border_snap_at(event.position().toPoint())
+        if (snap is not None and anchor_scene is not None
+                and self._view_dist(snap[0], self.mapFromScene(anchor_scene)) < self._MIN_SNAP_SPAN_PX):
+            snap = None
+        self._arrow_tip_snap = snap[0] if snap is not None else None
+        return snap[0] if snap is not None else None
+
+    def _enter_click_place(self, item, tool):
+        """드래그 없는 클릭 → 클릭 배치 모드 진입. item은 이미 시작점을 가진 상태(퇴화)."""
+        self._place = item
+        self._place_tool = tool
+        self._snap_preview = None
+        self.scene().clearSelection()
         self.viewport().update()
 
-    def _finish_poly_draw(self):
-        """더블클릭/Enter/우클릭 — 커서 추종 미리보기 정점을 떼고, 정점 2개 이상이면
-        확정(undo+선택). 부족하면 폐기."""
-        it = self._poly_draw
-        self._poly_draw = None
-        if it is None:
+    def _update_place(self, event):
+        """배치 중 아이템의 '현재 점'을 커서로 갱신(드래그 move와 동일 기하 로직 재사용)."""
+        item, tool = self._place, self._place_tool
+        if tool == "arrow":
+            self._update_arrow_draw(event, item)   # 테두리 스냅 + 자동 S자 + 바인딩
             return
-        it.prepareGeometryChange()
-        if it._pts:
-            it._pts.pop()                 # 커서 추종 미리보기 정점 제거
-        if len(it._pts) >= 2:
+        if tool == "sarrow":
+            p = self._poly_place_point(event, item)   # 클릭과 동일 계산(미리보기 일치)
+            item._set_endpoint(len(item._pts) - 1, item.mapFromScene(p))
+            self.viewport().update()   # 스냅 마커 갱신
+            return
+        sp = self._cur_point(event)
+        if tool in ("rect", "ellipse"):
+            item.setRect(QRectF(self._start, sp).normalized())
+        elif tool == "line":
+            item.setLine(QLineF(self._start, sp))
+        self.viewport().update()
+
+    def _place_click(self, event):
+        """좌클릭: sarrow=정점 추가(계속) / 2점 도구=둘째 클릭 확정."""
+        if self._place_tool == "sarrow":
+            it = self._place
+            p = self._poly_place_point(event, it)   # 미리보기(_update_place)와 동일 계산
+            local = QPointF(it.mapFromScene(p))
+            it.prepareGeometryChange()
+            it._pts[-1] = QPointF(local)      # 미리보기 → 확정
+            it._pts.append(QPointF(local))    # 새 미리보기(커서 추종)
+            it.update()
+            self.viewport().update()
+        else:
+            self._finish_place(event)
+
+    def _place_nondegenerate(self, it, tool) -> bool:
+        """2점 도구가 '점 하나'로 퇴화하지 않았는지(너무 작지 않은지)."""
+        if tool in ("rect", "ellipse"):
+            r = it.rect()
+            return abs(r.width()) >= 2 or abs(r.height()) >= 2
+        if tool == "line":
+            ln = it.line()
+            return math.hypot(ln.dx(), ln.dy()) >= 2
+        if tool == "arrow":
+            return math.hypot(it._p2.x() - it._p1.x(), it._p2.y() - it._p1.y()) >= 2
+        return True
+
+    def _finish_place(self, event=None):
+        """더블클릭/Enter/우클릭/2점 둘째 클릭 — 확정(undo+선택), 유효하지 않으면 폐기."""
+        it, tool = self._place, self._place_tool
+        if it is None:
+            self._place = self._place_tool = None
+            return
+        if tool == "sarrow":
+            it.prepareGeometryChange()
+            if it._pts:
+                it._pts.pop()             # 커서 추종 미리보기 정점 제거
+            valid = len(it._pts) >= 2
+        else:
+            if event is not None:
+                self._update_place(event)  # 마지막 클릭 위치로 2nd point 확정
+            valid = self._place_nondegenerate(it, tool)
+        self._place = None
+        self._place_tool = None
+        self._arrow_snap_exit = None
+        self._arrow_tip_snap = None
+        if valid:
+            if isinstance(it, _PolyArrowItem):
+                self._bind_poly_ends(it)   # [A3] 끝점이 도형 테두리 근처면 스냅+바인딩
+            it.setFlags(
+                QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            )
             self._owner.push_undo_add(it)
             self.scene().clearSelection()
             it.setSelected(True)
-            it._sync_label()
+            if hasattr(it, "_sync_label"):
+                it._sync_label()
             it.update()
         elif it.scene() is not None:
-            self.scene().removeItem(it)   # 정점 부족 → 폐기
+            self.scene().removeItem(it)   # 퇴화/정점 부족 → 폐기
         self.viewport().update()
 
-    def _cancel_poly_draw(self):
-        """Esc/도구 전환 — 진행 중 폴리라인을 통째로 폐기(있을 때만)."""
-        it = self._poly_draw
-        self._poly_draw = None
+    def _cancel_place(self):
+        """Esc/도구 전환 — 진행 중 배치를 통째로 폐기(있을 때만)."""
+        it = self._place
+        self._place = None
+        self._place_tool = None
+        self._arrow_snap_exit = None
+        self._arrow_tip_snap = None
         if it is not None and it.scene() is not None:
             self.scene().removeItem(it)
             self.viewport().update()
+
+    def _bind_poly_ends(self, it):
+        """[A3] 직선화살표 확정 시 — 시작·끝 정점이 도형 테두리 근처면 그 지점으로 스냅하고
+        지속 연결 바인딩(도형 이동 시 추종). o-snap(F3) 꺼짐이면 _border_snap_at이 None → 무바인딩."""
+        for idx in (0, len(it._pts) - 1):
+            vscene = it.mapToScene(it._pts[idx])
+            snap = self._border_snap_at(self.mapFromScene(vscene))
+            if snap is not None and snap[2] is not None:
+                it._set_endpoint(idx, it.mapFromScene(snap[0]))
+                it.set_bound(idx, snap[2], snap[2].mapFromScene(snap[0]))
 
     def _editing_text_hover(self, view_pos) -> str | None:
         """편집 중인 텍스트 위 hover면 'text'(내부=캐럿) / 'move'(테두리 band=이동), 아니면 None.
@@ -2669,7 +2877,7 @@ class _AnnotatorView(QGraphicsView):
             vp.setCursor(Qt.CursorShape.IBeamCursor)         # 편집 중 텍스트 내부 — 캐럿
         elif edit_text == "move":
             vp.setCursor(Qt.CursorShape.SizeAllCursor)       # 편집 중 텍스트 테두리 — 이동
-        elif tool == "arrow" and self._snap_preview is not None:
+        elif tool in ("arrow", "sarrow") and self._snap_preview is not None:
             vp.setCursor(Qt.CursorShape.CrossCursor)          # 테두리 스냅 — 화살표 시작(도형 위여도)
         elif tool == "pen":
             vp.setCursor(Qt.CursorShape.CrossCursor)         # 펜 — 주석 위에서도 항상 그리기
@@ -2702,12 +2910,12 @@ class _AnnotatorView(QGraphicsView):
             else:
                 self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
             return
-        # [우리 확장] 클릭-드로우 진행 중 — 버튼 없이 이동해도 마지막 정점을 커서로 미리보기.
-        if self._poly_draw is not None:
-            if self._owner.current_tool != "sarrow":
-                self._cancel_poly_draw()   # 도구가 바뀌었으면 진행 중 드로우 폐기 후 정상 처리로
+        # [우리 확장] 클릭 배치 진행 중 — 버튼 없이 이동해도 마지막 점을 커서로 미리보기.
+        if self._place is not None:
+            if self._owner.current_tool != self._place_tool:
+                self._cancel_place()   # 도구가 바뀌었으면 진행 중 배치 폐기 후 정상 처리로
             else:
-                self._update_poly_draw(event)
+                self._update_place(event)
                 self.viewport().setCursor(Qt.CursorShape.CrossCursor)
                 return
         if not (event.buttons() & Qt.MouseButton.LeftButton):
@@ -2730,7 +2938,14 @@ class _AnnotatorView(QGraphicsView):
             elif tool == "line":
                 self._temp.setLine(QLineF(self._start, sp))
             elif tool == "sarrow":
-                self._temp.set_points(self._start, sp)   # 그리는 동안은 2정점 직선
+                if getattr(self._owner, "ortho_enabled", False):
+                    # F8: sp가 이미 ortho 처리됨 + 테두리 근처면 그 위로 스냅(축 보존)
+                    tip = self._snap_ortho_to_border(sp, self._start)
+                    self._temp.set_points(self._start, tip)
+                else:
+                    snapped = self._poly_border_snap_tip(event, self._start)   # [A3] 라이브 테두리 스냅
+                    self._temp.set_points(self._start, snapped if snapped is not None else sp)
+                self.viewport().update()   # 스냅 마커 갱신
             elif tool == "pen" and self._path is not None:
                 self._path.lineTo(sp)
                 self._temp.setPath(self._path)
@@ -2755,8 +2970,8 @@ class _AnnotatorView(QGraphicsView):
             self._rb_base = []
             self.viewport().update()
             return
-        # [우리 확장] 클릭-드로우 진행 중이면 릴리스는 무시 — 정점은 클릭(press)으로만 배치.
-        if self._poly_draw is not None:
+        # [우리 확장] 클릭 배치 진행 중이면 릴리스는 무시 — 점은 클릭(press)으로만 놓는다.
+        if self._place is not None:
             return
         if not self._owner.is_edit_mode():
             self._owner._win_drag_end()
@@ -2767,28 +2982,33 @@ class _AnnotatorView(QGraphicsView):
             self._drawing = False
             self._temp = None
             self._path = None
+            self.viewport().update()   # 스냅 마커 지우기
+            # 시작점→놓은 점 이동량으로 '드래그'인지 '클릭'인지 판정(boundingRect는 펜 두께·
+            # 화살촉만큼 부풀어 못 씀). 이동이 임계 미만이면 클릭 → 하이브리드 클릭 배치로 전환.
+            release = self.mapToScene(event.position().toPoint())
+            # 실제 press 지점 기준 이동량 — 시작 스냅 점프를 드래그로 오인하지 않게(버그 수정).
+            moved = max(abs(release.x() - self._press_scene.x()),
+                        abs(release.y() - self._press_scene.y()))
+            if tool in _SHAPE_TOOLS and moved < 4:
+                # 끌지 않은 클릭 → 폐기 대신 투클릭/멀티클릭 배치 모드로 진입(점은 유지).
+                # 곡선·직선화살 모두 테두리에서도 클릭 배치 허용(하이브리드 일관).
+                self._enter_click_place(item, tool)
+                return
+            # 드래그로 그린 경우 — 즉시 확정.
             self._arrow_snap_exit = None
             self._arrow_tip_snap = None
-            self.viewport().update()   # 스냅 마커 지우기
-            # 드래그 없이 클릭만 한 경우 폐기. boundingRect는 펜 두께·화살촉만큼
-            # 부풀어 클릭 판정에 못 쓰므로(특히 화살표), 시작점→놓은 점 이동량으로 본다.
-            release = self.mapToScene(event.position().toPoint())
-            moved = max(abs(release.x() - self._start.x()), abs(release.y() - self._start.y()))
-            discard = tool in _SHAPE_TOOLS and moved < 4
-            if discard:
-                self.scene().removeItem(item)  # 클릭만 한 경우 폐기
-                self.scene().clearSelection()  # 빈 공간 클릭 = 선택 해제
-            else:
-                item.setFlags(
-                    QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-                    | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-                )
-                self._owner.push_undo_add(item)
-                # 방금 그린 주석을 바로 선택 — 추가 클릭 없이 이동/색·두께 수정 가능.
-                # 단 펜은 연속 그리기라 선택 네모가 거슬리므로 선택하지 않는다.
-                self.scene().clearSelection()
-                if tool != "pen":
-                    item.setSelected(True)
+            if isinstance(item, _PolyArrowItem):
+                self._bind_poly_ends(item)   # [A3] 끝점이 도형 테두리 근처면 스냅+바인딩
+            item.setFlags(
+                QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            )
+            self._owner.push_undo_add(item)
+            # 방금 그린 주석을 바로 선택 — 추가 클릭 없이 이동/색·두께 수정 가능.
+            # 단 펜은 연속 그리기라 선택 네모가 거슬리므로 선택하지 않는다.
+            self.scene().clearSelection()
+            if tool != "pen":
+                item.setSelected(True)
             return
         self._commit_move()   # 드래그 이동이 있었으면 undo에 기록
         super().mouseReleaseEvent(event)
@@ -2824,11 +3044,11 @@ class _AnnotatorView(QGraphicsView):
             if event.button() == Qt.MouseButton.LeftButton:
                 self._owner.close()
             return
-        # [우리 확장] 클릭-드로우 마무리(더블클릭). 이 더블클릭의 첫 press가 이미 정점을
-        # 추가했으므로, 마무리 시 커서 추종 미리보기 정점만 떼면 그 자리가 끝점이 된다.
-        if self._poly_draw is not None:
+        # [우리 확장] 클릭 배치 마무리(더블클릭). 이 더블클릭의 첫 press가 이미 점을
+        # 놓았으므로(sarrow), 마무리 시 커서 추종 미리보기 점만 떼면 그 자리가 끝점이 된다.
+        if self._place is not None:
             if event.button() == Qt.MouseButton.LeftButton:
-                self._finish_poly_draw()
+                self._finish_place(event)
                 event.accept()
             return
         # [우리 확장] 선/화살표 더블클릭 = 라벨 달기/편집(위에 다른 선택형이 없을 때만).
@@ -2849,13 +3069,13 @@ class _AnnotatorView(QGraphicsView):
         )
         key = event.key()
         mods = event.modifiers()
-        # [우리 확장] 클릭-드로우 진행 중(텍스트 편집 아님): Enter=마무리 / Esc=취소. 최우선.
-        if self._poly_draw is not None and not editing_text:
+        # [우리 확장] 클릭 배치 진행 중(텍스트 편집 아님): Enter=마무리 / Esc=취소. 최우선.
+        if self._place is not None and not editing_text:
             if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                self._finish_poly_draw()
+                self._finish_place()
                 return
             if key == Qt.Key.Key_Escape:
-                self._cancel_poly_draw()
+                self._cancel_place()
                 return
         if editing_text and key == Qt.Key.Key_Escape:
             # 텍스트 편집 중 ESC = 편집기 닫기가 아니라 텍스트 완료(=Ctrl+Enter와 동일).

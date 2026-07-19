@@ -190,9 +190,11 @@ def save_document(scene, path: str):
     serial = [(it, d) for it, d in serial if d is not None]
     idx_of = {id(it): i for i, (it, _d) in enumerate(serial)}
     # 화살표의 지속 연결 바인딩을 '저장 리스트 인덱스' + 고정 부착점(도형 로컬좌표)으로 기록.
+    # 곡선(arrow)은 끝점 idx 0·1, 직선(sarrow)은 시작 idx 0·끝 idx last를 bind1·bind2에 매핑.
     for it, d in serial:
-        if d["type"] == "arrow":
-            for key, pkey, bi in (("bind1", "bind1_pt", 0), ("bind2", "bind2_pt", 1)):
+        if d["type"] in ("arrow", "sarrow"):
+            end_idx = [0, 1] if d["type"] == "arrow" else [0, len(it._pts) - 1]
+            for (key, pkey), bi in zip((("bind1", "bind1_pt"), ("bind2", "bind2_pt")), end_idx):
                 sh = it._bound(bi)
                 pt = it._bind_pt(bi)
                 if sh is not None and id(sh) in idx_of and pt is not None:
@@ -221,9 +223,10 @@ def load_document(scene, path: str) -> int:
         if it is not None:
             scene.addItem(it)
     for d, it in zip(items, created):
-        if it is None or d.get("type") != "arrow":
+        if it is None or d.get("type") not in ("arrow", "sarrow"):
             continue
-        for key, pkey, bi in (("bind1", "bind1_pt", 0), ("bind2", "bind2_pt", 1)):
+        end_idx = [0, 1] if d["type"] == "arrow" else [0, len(it._pts) - 1]
+        for (key, pkey), bi in zip((("bind1", "bind1_pt"), ("bind2", "bind2_pt")), end_idx):
             j = d.get(key)
             pt = d.get(pkey)
             if j is not None and 0 <= j < len(created) and created[j] is not None and pt is not None:

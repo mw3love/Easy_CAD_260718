@@ -244,10 +244,13 @@ class CanvasWindow(QMainWindow):
             return  # 재진입 가드 — reroute가 유발한 changed로 되돌아오지 않게
         if getattr(self._view, "_drawing", False):
             return  # 화살표 그리는 중엔 _update_arrow_draw가 tip을 주도 — 간섭 방지
+        if getattr(self._view, "_place", None) is not None:
+            return  # 클릭 배치 중엔 배치 로직이 끝점을 주도 — 간섭 방지
         self._rerouting = True
         try:
             for it in self._scene.items():
-                if isinstance(it, _ArrowItem) and it.has_binding():
+                # 곡선화살표(_ArrowItem)·직선화살표(_PolyArrowItem) 모두 지속 연결 리라우트.
+                if isinstance(it, (_ArrowItem, _PolyArrowItem)) and it.has_binding():
                     it.reroute(pin_pred=self._make_pin_pred(it))
         finally:
             self._rerouting = False
@@ -281,10 +284,10 @@ class CanvasWindow(QMainWindow):
         return pen
 
     def set_tool(self, key):
-        # 도구를 바꾸면 진행 중이던 sarrow 클릭-드로우는 폐기(반쯤 그린 폴리라인이 남지 않게).
+        # 도구를 바꾸면 진행 중이던 클릭 배치는 폐기(반쯤 그린 도형이 남지 않게).
         view = getattr(self, "_view", None)
         if view is not None:
-            view._cancel_poly_draw()
+            view._cancel_place()
         self.current_tool = key
         for k, b in self._tool_buttons.items():
             b.setChecked(k == key)

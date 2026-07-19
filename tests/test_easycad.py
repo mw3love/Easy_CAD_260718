@@ -365,89 +365,301 @@ def test_ortho_constraint():
     assert sa._ortho_endpoint(0, QPointF(70, 90)) == QPointF(100, 90)
 
 
-def test_straight_arrow_click_draw():
-    # CAD식 클릭-드로우(직선화살표): 클릭→이동→클릭으로 정점 누적, 더블클릭 마무리, Esc 취소.
-    from PyQt6.QtGui import QMouseEvent, QKeyEvent
+def _draw_helpers(view):
+    """뷰 이벤트 시뮬 헬퍼(핸들러 직접 호출 — 클릭 배치·드래그 경로는 아이템 라우팅 불요)."""
+    from PyQt6.QtGui import QMouseEvent
     from PyQt6.QtCore import QEvent
-    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
-    view = w._view
     NO = Qt.KeyboardModifier.NoModifier
     L = Qt.MouseButton.LeftButton
+    NB = Qt.MouseButton.NoButton
 
     def _ev(t, sp, btn, btns):
         vp = view.mapFromScene(sp)
         return QMouseEvent(t, QPointF(vp), QPointF(vp), btn, btns, NO)
 
-    def click(sp):
+    def press(sp):
         view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, sp, L, L))
-        view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, sp, L, Qt.MouseButton.NoButton))
+
+    def release(sp):
+        view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, sp, L, NB))
+
+    def click(sp):
+        press(sp); release(sp)
 
     def move(sp):
-        view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, sp, Qt.MouseButton.NoButton, Qt.MouseButton.NoButton))
+        view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, sp, NB, NB))
+
+    def drag_move(sp):
+        view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, sp, NB, L))
 
     def dbl(sp):
-        # 실제 Qt 시퀀스: 첫 press가 정점 추가 → dblclick이 마무리
-        view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, sp, L, L))
+        press(sp)
         view.mouseDoubleClickEvent(_ev(QEvent.Type.MouseButtonDblClick, sp, L, L))
-        view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, sp, L, Qt.MouseButton.NoButton))
+        release(sp)
 
-    # 첫 클릭 = 진행 시작(v0 + 미리보기 정점)
+    return press, release, click, move, drag_move, dbl
+
+
+def test_straight_arrow_click_draw():
+    # 하이브리드 클릭 배치(직선화살표): 클릭→이동→클릭으로 정점 누적, 더블클릭 마무리, Esc 취소.
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtCore import QEvent
+    NO = Qt.KeyboardModifier.NoModifier
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    view = w._view
+    _p, _r, click, move, _dm, dbl = _draw_helpers(view)
+
+    # 첫 클릭(드래그 없음) = 배치 시작(v0 + 미리보기 정점)
     click(QPointF(0, 0))
-    assert view._poly_draw is not None
-    assert len(view._poly_draw._pts) == 2
+    assert view._place is not None and view._place_tool == "sarrow"
+    assert len(view._place._pts) == 2
 
-    # 이동 = 미리보기 정점이 커서 추종
     move(QPointF(100, 0))
-    assert _close(view._poly_draw._pts[-1], QPointF(100, 0))
+    assert _close(view._place._pts[-1], QPointF(100, 0))
 
-    # 둘째 클릭 = 정점 확정(정점 1개 추가)
-    click(QPointF(100, 0))
-    assert len(view._poly_draw._pts) == 3
+    click(QPointF(100, 0))                 # 둘째 클릭 = 정점 확정
+    assert len(view._place._pts) == 3
 
     move(QPointF(80, 100))
-    # 더블클릭 = 마무리(그 자리를 끝점으로, 미리보기 정점 제거)
-    dbl(QPointF(80, 100))
-    assert view._poly_draw is None
+    dbl(QPointF(80, 100))                   # 더블클릭 = 마무리
+    assert view._place is None
     sas = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
     assert len(sas) == 1
     pts = [(round(p.x()), round(p.y())) for p in sas[0]._pts]
     assert pts == [(0, 0), (100, 0), (80, 100)], pts
     assert sas[0].isSelected()
 
-    # Esc 취소: 진행 중이던 폴리라인은 통째로 폐기(씬에 새 아이템 안 남음)
+    # Esc 취소: 진행 중이던 폴리라인은 통째로 폐기
     before = len([it for it in w._scene.items() if isinstance(it, _PolyArrowItem)])
     click(QPointF(300, 300)); move(QPointF(400, 300)); click(QPointF(400, 300))
-    assert view._poly_draw is not None
+    assert view._place is not None
     view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, NO))
-    assert view._poly_draw is None
+    assert view._place is None
     after = len([it for it in w._scene.items() if isinstance(it, _PolyArrowItem)])
     assert after == before, "Esc는 진행 중 폴리라인을 폐기해야 함"
 
 
 def test_straight_arrow_click_draw_ortho():
-    # F8 Ortho 켜짐 + 클릭-드로우: 미리보기 정점이 직전 정점 기준 0/90°로 스냅.
-    from PyQt6.QtGui import QMouseEvent
-    from PyQt6.QtCore import QEvent
+    # F8 Ortho + 클릭 배치: 미리보기 정점이 직전 정점 기준 0/90°로 스냅.
     w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
     w.ortho_enabled = True
     view = w._view
-    NO = Qt.KeyboardModifier.NoModifier
-    L = Qt.MouseButton.LeftButton
+    _p, _r, click, move, _dm, _d = _draw_helpers(view)
 
-    def _ev(t, sp, btn, btns):
-        vp = view.mapFromScene(sp)
-        return QMouseEvent(t, QPointF(vp), QPointF(vp), btn, btns, NO)
+    click(QPointF(0, 0))
+    move(QPointF(100, 20))                  # |dx|>|dy| → 수평 → y=0
+    assert _close(view._place._pts[-1], QPointF(100, 0))
+    move(QPointF(20, 100))                   # 수직 → x=0
+    assert _close(view._place._pts[-1], QPointF(0, 100))
+    view._cancel_place()
+    assert view._place is None
 
-    view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, QPointF(0, 0), L, L))
-    view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, QPointF(0, 0), L, Qt.MouseButton.NoButton))
-    # (100,20): |dx|>|dy| → 수평 → y=0
-    view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, QPointF(100, 20), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton))
-    assert _close(view._poly_draw._pts[-1], QPointF(100, 0))
-    # (20,100): 수직 → x=0
-    view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, QPointF(20, 100), Qt.MouseButton.NoButton, Qt.MouseButton.NoButton))
-    assert _close(view._poly_draw._pts[-1], QPointF(0, 100))
-    view._cancel_poly_draw()
-    assert view._poly_draw is None
+
+def test_hybrid_two_click_shapes():
+    # 2점 도구(선·네모)를 투클릭으로: 클릭→이동→클릭 = 확정(드래그 안 해도 그려짐).
+    w = CanvasWindow(); w.show(); w._zoom_reset()
+    view = w._view
+    _p, _r, click, move, _dm, _d = _draw_helpers(view)
+
+    # 선: 투클릭
+    w.set_tool("line")
+    click(QPointF(0, 0))
+    assert view._place is not None and view._place_tool == "line"
+    move(QPointF(100, 50))
+    click(QPointF(100, 50))                  # 둘째 클릭 = 확정
+    assert view._place is None
+    lines = [it for it in w._scene.items() if isinstance(it, _LineItem)]
+    assert len(lines) == 1
+    ln = lines[0].line()
+    assert _close(ln.p1(), QPointF(0, 0)) and _close(ln.p2(), QPointF(100, 50))
+    assert lines[0].isSelected()
+
+    # 네모: 투클릭
+    w.set_tool("rect")
+    click(QPointF(200, 0)); move(QPointF(320, 80)); click(QPointF(320, 80))
+    assert view._place is None
+    rects = [it for it in w._scene.items() if isinstance(it, _RectItem)]
+    assert len(rects) == 1
+    r = rects[0].rect()
+    assert abs(r.width() - 120) < 2 and abs(r.height() - 80) < 2, (r.width(), r.height())
+
+
+def test_hybrid_drag_still_works():
+    # 드래그(press-move(버튼)-release, 이동>=임계) = 즉시 확정(기존 동작 보존).
+    w = CanvasWindow(); w.show(); w._zoom_reset()
+    view = w._view
+    press, release, _c, _m, drag_move, _d = _draw_helpers(view)
+
+    # 네모 드래그
+    w.set_tool("rect")
+    press(QPointF(0, 0)); drag_move(QPointF(120, 80)); release(QPointF(120, 80))
+    assert view._place is None and view._drawing is False
+    rects = [it for it in w._scene.items() if isinstance(it, _RectItem)]
+    assert len(rects) == 1 and rects[0].isSelected()
+
+    # 직선화살 드래그 = 2점 직선(멀티정점 아님)
+    w.set_tool("sarrow")
+    press(QPointF(0, 200)); drag_move(QPointF(150, 200)); release(QPointF(150, 200))
+    assert view._place is None
+    sas = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(sas) == 1 and len(sas[0]._pts) == 2
+    assert sas[0].isSelected()
+
+
+def test_straight_arrow_binding():
+    # [A3] 직선화살표 끝점을 도형 테두리에 지속 연결 → 도형 이동 시 추종, waypoint는 제외, .ecad 왕복.
+    from PyQt6.QtWidgets import QGraphicsScene
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(500, 30), QPointF(100, 30))     # 끝(idx1)을 우측 테두리(100,30)에
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+
+    sa.set_bound(1, r, QPointF(100, 30))                  # 끝을 도형 로컬(100,30)에 고정
+    assert sa.has_binding()
+    sa.reroute(pin_pred=lambda i: True)
+    assert _close(sa.mapToScene(sa._pts[1]), QPointF(100, 30))
+
+    r.setPos(QPointF(200, 0)); w._on_scene_changed(None)   # 도형 이동 → 끝점 추종
+    assert _close(sa.mapToScene(sa._pts[-1]), QPointF(300, 30))
+
+    r.setSelected(True); sa.setSelected(True)              # 둘 다 선택 = 강체
+    assert w._make_pin_pred(sa)(1) is False
+    r.setSelected(False)                                   # 도형만 = 늘림
+    assert w._make_pin_pred(sa)(1) is True
+
+    # 중간 waypoint 삽입 → 끝 바인딩은 '역할'로 새 끝(idx2)에 유지, 중간(idx1)은 무바인딩
+    r.setPos(QPointF(0, 0)); sa.set_bound(1, r, QPointF(100, 30)); sa.reroute(pin_pred=lambda i: True)
+    sa.insert_vertex(0, QPointF(300, 100))                 # pts=[(500,30),(300,100),(100,30)]
+    assert sa._bound(2) is r and sa._bound(1) is None
+
+    # .ecad 왕복 — 바인딩 보존
+    path = os.path.join(_TMP, "sabind.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene()
+    load_document(sc2, path)
+    a2 = [it for it in sc2.items() if isinstance(it, _PolyArrowItem)][0]
+    r2 = [it for it in sc2.items() if isinstance(it, _RectItem)][0]
+    last = len(a2._pts) - 1
+    assert a2._bound(last) is r2 and a2._bound(0) is None
+    assert a2._bind_pt(last) == QPointF(100, 30)
+
+
+def test_straight_arrow_draw_binds():
+    # [A3] 드래그로 그린 직선화살표의 끝이 도형 테두리 근처면 확정 시 스냅+바인딩(그리기-시점 부착).
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    r = _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)   # 우측 테두리 x=300, 중앙 y=30
+    view = w._view
+    press, release, _c, _m, drag_move, _d = _draw_helpers(view)
+
+    press(QPointF(0, 30)); drag_move(QPointF(305, 30)); release(QPointF(305, 30))
+    sas = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(sas) == 1
+    sa = sas[0]
+    assert sa.has_binding()
+    assert _close(sa.mapToScene(sa._pts[-1]), QPointF(300, 30)), sa.mapToScene(sa._pts[-1])
+    assert sa._bound(0) is None                             # 시작(0,30)은 테두리에서 멀어 무바인딩
+
+    # o-snap(F3) 꺼짐이면 새로 그려도 바인딩 안 됨
+    w.snap_enabled = False
+    press(QPointF(0, 130)); drag_move(QPointF(305, 130)); release(QPointF(305, 130))
+    sas2 = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    newest = [s for s in sas2 if s is not sa][0]
+    assert not newest.has_binding()
+    w.snap_enabled = True
+
+
+def test_straight_arrow_live_snap():
+    # [이슈] sarrow 그리는 중 끝점이 도형 테두리에 '라이브 스냅'(마커) + 직전 점 근처 스냅은 무시.
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)      # 우측 테두리 x=300, 중앙 y=30
+    view = w._view
+    press, release, _c, _m, drag_move, _d = _draw_helpers(view)
+
+    # 시작(0,30) 멀리 → 끝을 테두리 근처(305,30)로 드래그 → 라이브 tip 마커 = 테두리점(300,30)
+    press(QPointF(0, 30)); drag_move(QPointF(305, 30))
+    assert view._arrow_tip_snap is not None and _close(view._arrow_tip_snap, QPointF(300, 30))
+    release(QPointF(305, 30))
+
+    # 직전 점 바로 근처(30px 이내)의 테두리 스냅은 무시 — 겹친 극소 화살표 방지
+    press(QPointF(295, 30)); drag_move(QPointF(305, 30))   # 시작이 테두리에 스냅→끝이 그 30px내
+    assert view._arrow_tip_snap is None, "직전 점 근처 스냅은 무시돼야(극소 화살표 방지)"
+    view._cancel_place() if view._place is not None else release(QPointF(305, 30))
+
+
+def test_arrow_border_start_gestures():
+    # [이슈] sarrow·곡선화살 모두 테두리에서 시작 가능(하이브리드): 드래그도 클릭(투클릭)도.
+    w = CanvasWindow(); w.show(); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)      # 우측 테두리 x=300, 중앙 y=30
+    view = w._view
+    press, release, click, move, drag_move, _d = _draw_helpers(view)
+
+    # sarrow: 테두리 근처(305,30)서 press → 드래그 → 시작이 테두리에 스냅·바인딩된 화살표
+    w.set_tool("sarrow")
+    press(QPointF(305, 30)); drag_move(QPointF(500, 30)); release(QPointF(500, 30))
+    sas = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(sas) == 1
+    assert _close(sas[0].mapToScene(sas[0]._pts[0]), QPointF(300, 30))   # 시작 테두리 스냅
+    assert sas[0]._bound(0) is not None                                   # 시작 바인딩
+
+    # 곡선화살: 테두리 근처 클릭 → 배치 모드(하이브리드 복원, sarrow와 동일) — 시작 바인딩.
+    # 앞서 그린 sarrow 선택 해제 + 그 sarrow와 안 겹치는 상단 테두리(y=0)에서 시작.
+    w.set_tool("arrow")
+    w._scene.clearSelection()
+    click(QPointF(250, 3))                                                # 네모 상단 테두리 근처
+    assert view._place is not None and view._place_tool == "arrow"
+    assert view._place._bound(0) is not None                             # 시작이 테두리에 바인딩
+    view._cancel_place()
+
+    # 곡선화살: 테두리서 드래그도 정상 생성
+    n0 = len([it for it in w._scene.items() if isinstance(it, _ArrowItem)])
+    press(QPointF(250, 3)); drag_move(QPointF(250, 300)); release(QPointF(250, 300))
+    assert len([it for it in w._scene.items() if isinstance(it, _ArrowItem)]) == n0 + 1
+
+
+def test_sarrow_click_near_border_no_tiny_arrow():
+    # [버그] 테두리 근처 '가만히 클릭'은 시작 스냅 점프를 드래그로 오인해 극소 화살표를 만들면 안 됨.
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)      # 우측 테두리 x=300, 중앙 y=30
+    view = w._view
+    _p, _r, click, _m, _dm, _d = _draw_helpers(view)
+
+    click(QPointF(308, 30))          # 테두리(300,30)서 8px 떨어진 곳을 가만히 클릭
+    assert view._place is not None, "가만히 클릭은 배치 모드로 들어가야(드래그 오인 금지)"
+    pts = [(round(p.x()), round(p.y())) for p in view._place._pts]
+    assert pts == [(300, 30), (300, 30)], pts   # 시작이 테두리 스냅, 둘 다 같은 점(배치 대기)
+    view._cancel_place()
+
+
+def test_sarrow_ortho_preview_matches_click():
+    # [버그] F8 Ortho에서 미리보기(move)와 클릭(_place_click)이 같은 좌표여야(전엔 더블클릭 때만 수평).
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    w.ortho_enabled = True
+    view = w._view
+    _p, _r, click, move, _dm, _d = _draw_helpers(view)
+
+    click(QPointF(0, 30))            # 시작
+    move(QPointF(200, 50))           # dx=200>dy=20 → 수평 → y=30
+    assert _close(view._place._pts[-1], QPointF(200, 30)), "미리보기가 수평이어야"
+    click(QPointF(200, 50))          # 클릭 배치 — 미리보기와 같은 (200,30)
+    assert _close(view._place._pts[-2], QPointF(200, 30)), "클릭 배치가 미리보기와 일치해야"
+    view._cancel_place()
+
+
+def test_sarrow_ortho_snaps_to_border():
+    # [버그] F8 Ortho에서도 끝이 도형 테두리 근처면 스냅+마커(수직 모서리면 수평 유지).
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    w.ortho_enabled = True
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)     # 우측 테두리 x=300, y[0..60]
+    view = w._view
+    _p, _r, click, move, _dm, _d = _draw_helpers(view)
+
+    click(QPointF(0, 30))            # 시작(테두리와 같은 y=30)
+    move(QPointF(305, 40))           # 우측 테두리 근처. ortho→y=30, 근처면 (300,30)로 스냅
+    assert view._arrow_tip_snap is not None and _close(view._arrow_tip_snap, QPointF(300, 30))
+    assert _close(view._place._pts[-1], QPointF(300, 30)), "수평(y=30) 유지 + 테두리 스냅"
+    view._cancel_place()
 
 
 def _run_all():
