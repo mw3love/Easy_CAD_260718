@@ -817,6 +817,39 @@ def test_route_ortho_pure():
     assert _route_ortho(s, e, ns, ne, [far], 12.0) == _ortho_elbow(s, e, ns, ne)
 
 
+def test_route_ortho_astar_dense():
+    # [Stage2 승격] Hanan 그리드 A* — 엇갈린 장애물 벽(단순 후보로는 못 뚫는 밀집 배치)에서도
+    #   관통 0 우회로 보장. 직교성·끝점 보존·실제 우회(Stage1 관통) 함께 검증.
+    from easycad.canvas.annotator_core import _route_ortho, _ortho_elbow, _path_hits_rects
+    P = QPointF
+    c = 12.0
+    s, e = P(0, 0), P(300, 0)
+    ns, ne = P(1, 0), P(-1, 0)          # 양끝 수평 → Stage1은 y=0 직선(같은 y)
+    # y=0 선을 엇갈려 막는 세 기둥 — 좁은 세로 틈으로만 통과 가능(밀집).
+    obs = [QRectF(80, -50, 40, 60),     # x80..120,  y-50..10
+           QRectF(160, -10, 40, 60),    # x160..200, y-10..50
+           QRectF(240, -50, 40, 60)]    # x240..280, y-50..10
+    infl = [r.adjusted(-c, -c, c, c) for r in obs]
+
+    # 전제: Stage1 직선은 세 기둥을 관통한다(우회가 실제로 필요한 밀집 상황).
+    pref = _ortho_elbow(s, e, ns, ne)
+    assert _path_hits_rects([s] + pref + [e], infl), "테스트 전제: Stage1이 관통해야 함"
+
+    mids = _route_ortho(s, e, ns, ne, obs, c)
+    full = [s] + mids + [e]
+    # (a) 관통 0 — 팽창 장애물에도 안 걸림(핵심 보장)
+    assert not _path_hits_rects(full, infl), (mids, "관통 발생")
+    # (b) 원본 장애물에도 당연히 관통 0
+    assert not _path_hits_rects(full, obs), mids
+    # (c) 전 구간 직교(수평 또는 수직)
+    for a, b in zip(full, full[1:]):
+        assert abs(a.x() - b.x()) < 1e-6 or abs(a.y() - b.y()) < 1e-6, (a, b)
+    # (d) 끝점 보존
+    assert _close(full[0], s) and _close(full[-1], e), full
+    # (e) 실제로 우회했다(Stage1과 다름)
+    assert mids != pref
+
+
 def test_sarrow_routes_around_obstacle():
     # [Stage2] 양끝 도형 사이 세 번째 도형이 경로를 가로막으면 우회 라우팅 / 장애물 이동 시 재라우팅 /
     #          양끝 바인딩 도형은 장애물에서 제외.

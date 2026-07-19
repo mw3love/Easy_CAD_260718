@@ -7,6 +7,7 @@
 Shift: 정사각형/정원/45° 스냅. 선택 후 우하단 핸들 드래그로 크기조절(균일 스케일).
 완료 동작은 main이 처리한다(시그널만 emit): 클립보드 복사 / 새 히스토리 항목 / 파일 저장.
 """
+import heapq
 import io
 import math
 import struct
@@ -2637,12 +2638,90 @@ def _path_hits_rects(pts, rects, eps=1e-6) -> bool:
     return False
 
 
+def _normal_stub(p: QPointF, n, d: float) -> QPointF:
+    """부착 법선 n의 우세축으로 점 p를 d만큼 바깥으로 민 '스텁점'. n이 없으면 p 그대로.
+    A* 라우팅 전 시작·끝에 강제해 ⓐ 테두리 수직 이탈/도착(미관) ⓑ 바인딩 도형을 가로지르지
+    않게(스텁이 이미 도형 밖 clearance 거리) 한다."""
+    if n is None:
+        return p
+    if abs(n.x()) >= abs(n.y()):
+        return QPointF(p.x() + (d if n.x() >= 0 else -d), p.y())
+    return QPointF(p.x(), p.y() + (d if n.y() >= 0 else -d))
+
+
+def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6):
+    """[Stage2 승격] Hanan 그리드 위의 직교 A*. 팽창 장애물(infl)을 관통하지 않는 최단 직각
+    경로의 '중간 정점'을 반환(없으면 None). 후보 스캔과 달리 임의 밀집 배치에서도 경로가
+    존재하면 반드시 찾는다(Hanan 그리드 완전성: 직교 우회로가 있으면 장애물 모서리선 위에도 있다).
+
+    격자선 = {start·goal 좌표} ∪ {각 장애물의 left/right(세로선)·top/bottom(가로선)}.
+    노드는 이 선들의 교점, 간선은 인접 노드 사이 축정렬 선분(_seg_hits_rect로 관통 검사).
+    회전 벌점(clearance*0.5)으로 엘보 수를 최소화해 경로를 깔끔하게. 상태에 진행축을 넣어
+    벌점을 정확히 계산(Manhattan 휴리스틱은 벌점을 무시 → admissible)."""
+    xs = sorted({start.x(), goal.x(), *(v for r in infl for v in (r.left(), r.right()))})
+    ys = sorted({start.y(), goal.y(), *(v for r in infl for v in (r.top(), r.bottom()))})
+    nx, ny = len(xs), len(ys)
+    xi = {v: i for i, v in enumerate(xs)}
+    yi = {v: i for i, v in enumerate(ys)}
+    sx, sy = xi[start.x()], yi[start.y()]
+    gx, gy = xi[goal.x()], yi[goal.y()]
+
+    def edge_ok(ax, ay, bx, by):
+        a = QPointF(xs[ax], ys[ay])
+        b = QPointF(xs[bx], ys[by])
+        return not any(_seg_hits_rect(a, b, r, eps) for r in infl)
+
+    turn_cost = clearance * 0.5
+
+    def h(ix, iy):
+        return abs(xs[ix] - xs[gx]) + abs(ys[iy] - ys[gy])
+
+    start_state = (sx, sy, 0)                 # axis: 0=출발(무), 1=수평, 2=수직
+    dist = {start_state: 0.0}
+    prev = {}
+    pq = [(h(sx, sy), 0.0, start_state)]
+    goal_state = None
+    while pq:
+        _f, g, st = heapq.heappop(pq)
+        if g > dist.get(st, float("inf")):
+            continue
+        ix, iy, axis = st
+        if ix == gx and iy == gy:
+            goal_state = st
+            break
+        for dix, diy, nax in ((1, 0, 1), (-1, 0, 1), (0, 1, 2), (0, -1, 2)):
+            jx, jy = ix + dix, iy + diy
+            if not (0 <= jx < nx and 0 <= jy < ny):
+                continue
+            if not edge_ok(ix, iy, jx, jy):
+                continue
+            step = abs(xs[jx] - xs[ix]) + abs(ys[jy] - ys[iy])
+            turn = turn_cost if (axis != 0 and axis != nax) else 0.0
+            ng = g + step + turn
+            nst = (jx, jy, nax)
+            if ng < dist.get(nst, float("inf")):
+                dist[nst] = ng
+                prev[nst] = st
+                heapq.heappush(pq, (ng + h(jx, jy), ng, nst))
+    if goal_state is None:
+        return None
+    # 재구성 → 끝점 제외한 중간 정점만 반환(_dedup_pts가 공선점을 접는다).
+    path = []
+    st = goal_state
+    while st is not None:
+        ix, iy, _ax = st
+        path.append(QPointF(xs[ix], ys[iy]))
+        st = prev.get(st)
+    path.reverse()
+    return path[1:-1]
+
+
 def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0):
-    """[Stage2] Stage1 엘보(_ortho_elbow)를 우선하되, 그 경로가 장애물을 관통하면 대체 후보 중
-    충돌 없는 첫 경로의 '중간 정점'을 반환(최소구현 (b): 소수 후보 스캔).
+    """[Stage2 승격] Stage1 엘보(_ortho_elbow)를 우선하되, 그 경로가 장애물을 관통하면
+    Hanan 그리드 A*(_astar_ortho)로 우회로를 찾아 '중간 정점'을 반환.
       · 장애물 없음 또는 Stage1이 이미 안전 → Stage1 그대로(무변경 보장, 되먹임 없음).
-      · 후보 순서: Stage1 → L자(2) → 중앙채널(2) → 장애물 bbox 좌/우/상/하 우회(4).
-      · 전부 실패 → Stage1 폴백(관통하더라도 안정적으로 종료).
+      · 관통 시 → 법선 스텁을 씌운 A* → (실패 시) 스텁 없는 A* → (실패 시) Stage1 폴백.
+    후보 스캔(구현 (b))과 달리 밀집 배치에서도 우회로가 존재하면 반드시 찾는다(그리드 완전성).
     obstacles: scene 좌표 사각형(양끝 바인딩 도형은 호출부에서 이미 제외). clearance만큼 팽창해 여유 확보."""
     preferred = _ortho_elbow(s, e, ns, ne)
     if not obstacles:
@@ -2650,23 +2729,19 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0):
     infl = [r.adjusted(-clearance, -clearance, clearance, clearance) for r in obstacles]
     if not _path_hits_rects([s] + preferred + [e], infl):
         return preferred
-    mx, my = (s.x() + e.x()) / 2.0, (s.y() + e.y()) / 2.0
-    bb = QRectF(infl[0])
-    for r in infl[1:]:
-        bb = bb.united(r)
-    g = clearance
-    cands = [
-        preferred,
-        [QPointF(e.x(), s.y())],                                            # L자(수평 이탈)
-        [QPointF(s.x(), e.y())],                                            # L자(수직 이탈)
-        [QPointF(mx, s.y()), QPointF(mx, e.y())],                           # H-V-H 중앙채널
-        [QPointF(s.x(), my), QPointF(e.x(), my)],                          # V-H-V 중앙채널
-        [QPointF(bb.left() - g, s.y()), QPointF(bb.left() - g, e.y())],     # 좌회
-        [QPointF(bb.right() + g, s.y()), QPointF(bb.right() + g, e.y())],   # 우회
-        [QPointF(s.x(), bb.top() - g), QPointF(e.x(), bb.top() - g)],       # 상회
-        [QPointF(s.x(), bb.bottom() + g), QPointF(e.x(), bb.bottom() + g)], # 하회
+    s2 = _normal_stub(s, ns, clearance)
+    e2 = _normal_stub(e, ne, clearance)
+    # (1) 법선 스텁을 강제한 A*(수직 이탈/도착·바인딩 도형 회피) → (2) 스텁 없는 A*(스텁이
+    #     막혔을 때 폴백). 각 후보는 s→...→e 전체 경로의 관통을 최종 확인한 뒤에만 채택.
+    attempts = [
+        (s2, e2, ([] if s2 == s else [s2]), ([] if e2 == e else [e2])),
+        (s, e, [], []),
     ]
-    for mids in cands:
+    for a, b, pre, post in attempts:
+        interior = _astar_ortho(a, b, infl, clearance)
+        if interior is None:
+            continue
+        mids = pre + interior + post
         if not _path_hits_rects([s] + mids + [e], infl):
             return mids
     return preferred
