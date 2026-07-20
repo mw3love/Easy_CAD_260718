@@ -27,24 +27,45 @@ def _selection_rect(scene) -> QRectF:
     return r
 
 
+def _find_title_frame(scene):
+    """[Phase 4] 씬에 표제란/용지틀이 있으면 그 아이템(없으면 None). 순환 임포트 방지 위해 지연 임포트."""
+    from easycad.canvas.annotator_core import _TitleBlockItem
+    for it in scene.items():
+        if isinstance(it, _TitleBlockItem):
+            return it
+    return None
+
+
 def export_pdf(scene, path: str, page: str = "A4",
                selection_only: bool = False, margin_mm: float = 10.0) -> bool:
     """scene을 path에 PDF로 저장. selection_only면 선택영역만. 성공 True.
 
+    [Phase 4] 전체 출력이고 씬에 표제란/용지틀이 있으면 그 '용지 경계'를 출력 대상으로
+    자동 전환한다(용지 크기·방향도 프레임을 따름). 프레임이 없으면 기존 itemsBoundingRect fit.
     렌더 전 선택을 잠시 해제해 파란 핸들/점선이 PDF에 찍히지 않게 하고, 끝나면 복원한다.
     """
-    if selection_only:
-        source = _selection_rect(scene)
+    frame = None if selection_only else _find_title_frame(scene)
+    if frame is not None:
+        # 용지 프레임 기준: 정확한 용지 경계를 페이지 전체에 맞춤(패드·여백 없음, 종횡비 일치).
+        source = frame.mapRectToScene(frame.rect())
+        page = frame._size
+        landscape = frame._orient == "landscape"
+        margin_mm = 0.0
     else:
-        source = scene.itemsBoundingRect()
+        if selection_only:
+            source = _selection_rect(scene)
+        else:
+            source = scene.itemsBoundingRect()
+        if source.isEmpty():
+            return False
+        # 여백(획 두께·화살촉이 경계 밖으로 삐져나오는 것 보정)
+        pad = max(source.width(), source.height()) * 0.02
+        source = source.adjusted(-pad, -pad, pad, pad)
+        landscape = source.width() >= source.height()
     if source.isEmpty():
         return False
-    # 여백(획 두께·화살촉이 경계 밖으로 삐져나오는 것 보정)
-    pad = max(source.width(), source.height()) * 0.02
-    source = source.adjusted(-pad, -pad, pad, pad)
 
     page_id = PAGE_SIZES.get(page, QPageSize.PageSizeId.A4)
-    landscape = source.width() >= source.height()
 
     printer = QPrinter(QPrinter.PrinterMode.HighResolution)
     printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)

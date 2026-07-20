@@ -18,8 +18,8 @@ from PyQt6.QtGui import QBrush, QColor, QPainterPath, QPixmap
 from easycad.canvas.host import CanvasWindow
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _SymbolItem, _ImageItem, _SYMBOL_KINDS, _nearest_border, _shape_ports,
-    _axis_scale_fn, _mirror_fn)
+    _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _SYMBOL_KINDS,
+    _nearest_border, _shape_ports, _axis_scale_fn, _mirror_fn)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
 from easycad.fileio.dxf_export import export_dxf
@@ -1941,6 +1941,73 @@ def test_image_pdf_export():
     out = os.path.join(_TMP, "img.pdf")
     assert export_pdf(w._scene, out, page="A4") is True
     assert os.path.getsize(out) > 0
+
+
+def test_titleblock_roundtrip():
+    # [Phase 4] 표제란/용지틀: 삽입 → 필드 설정 → .ecad 왕복에서 용지 크기·방향·필드값 보존.
+    from PyQt6.QtWidgets import QGraphicsScene
+    w = CanvasWindow()
+    tb = _TitleBlockItem("A2", "landscape",
+                         {"number": "E-001", "title": "결선도", "scale": "1:50",
+                          "client": "KBS", "author": "김민무", "reviewer": "홍길동",
+                          "date": "2026-07-20"})
+    tb.setFlags(tb.GraphicsItemFlag.ItemIsSelectable | tb.GraphicsItemFlag.ItemIsMovable)
+    tb.setPos(QPointF(300, 400)); tb.setZValue(-1000.0)
+    w._scene.addItem(tb)
+    # 용지 치수: A2 가로 = 594 × 420
+    pw, ph = tb.paper_wh()
+    assert abs(pw - 594.0) < 0.1 and abs(ph - 420.0) < 0.1
+    path = os.path.join(_TMP, "tb.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene()
+    assert load_document(sc2, path) == 1
+    got = [it for it in sc2.items() if isinstance(it, _TitleBlockItem)][0]
+    assert got._size == "A2" and got._orient == "landscape"
+    assert got._fields["number"] == "E-001"
+    assert got._fields["scale"] == "1:50"
+    assert got._fields["author"] == "김민무"
+    assert _close(got.pos(), QPointF(300, 400))
+    assert got.zValue() == -1000.0
+
+
+def test_titleblock_drives_pdf_page():
+    # 씬에 표제란이 있으면 PDF가 프레임 용지 경계를 기준으로 자동 전환(출력 성공).
+    w = CanvasWindow()
+    tb = _TitleBlockItem("A3", "portrait")
+    tb.setFlags(tb.GraphicsItemFlag.ItemIsSelectable | tb.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tb)
+    _mk_rect(w._scene, w.make_pen(), 40, 40, 120, 80)   # 용지 안 도형
+    out = os.path.join(_TMP, "tb.pdf")
+    # page 인자를 A4로 줘도 프레임(A3)이 우선함 — 성공 여부만 확인(실제 페이지는 실조건).
+    assert export_pdf(w._scene, out, page="A4") is True
+    assert os.path.getsize(out) > 0
+
+
+def test_titleblock_shape_is_clickthrough():
+    # 용지 내부는 히트영역에서 제외(shape 통과) → 그 위에 도형을 그리거나 잡을 수 있다.
+    # 표제란 표 영역과 용지 테두리 밴드만 히트영역.
+    tb = _TitleBlockItem("A2", "landscape")
+    r = tb.rect()
+    interior = QPointF(r.center().x(), r.top() + 60.0)   # 상단 여백 아래 내부
+    assert not tb.shape().contains(interior)             # 내부는 통과(선택 안 됨)
+    tbr = tb._tb_rect()
+    assert tb.shape().contains(tbr.center())             # 표제란 표는 히트영역
+    assert tb.shape().contains(QPointF(r.left() + 2.0, r.center().y()))  # 좌측 테두리 밴드
+
+
+def test_titleblock_skipped_in_dxf():
+    # 스코프: DXF 내보내기는 표제란 제외(조용히 skip), 다른 엔티티는 정상 export.
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    tb = _TitleBlockItem("A2", "landscape")
+    tb.setFlags(tb.GraphicsItemFlag.ItemIsSelectable | tb.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tb)
+    out = os.path.join(_TMP, "tb_skip.dxf")
+    assert export_dxf(w._scene, out) is not False
+    import ezdxf
+    doc = ezdxf.readfile(out)
+    types = [e.dxftype() for e in doc.modelspace()]
+    assert "LWPOLYLINE" in types            # 네모는 export됨
 
 
 def _run_all():

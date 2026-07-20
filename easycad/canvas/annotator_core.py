@@ -1461,6 +1461,180 @@ class _ImageItem(_HandleResizeMixin, QGraphicsRectItem):
         self._paint_handle(painter)
 
 
+# ---------------------------------------------------------------------------
+# [우리 확장 · Phase 4] 표제란 / 용지틀 — 도면번호·축척·발주처가 들어가는 우하단 표 + A-size 용지경계
+# ---------------------------------------------------------------------------
+# 설계(deep-interview 2026-07-20): 진짜 paper space(뷰포트·이중좌표계)를 도입하지 않고,
+# 무한 모델공간(mm 월드좌표) 위에 '용지 프레임 객체' 하나를 얹는다. 프레임은 A-size 고정
+# (임의 리사이즈 금지 — '용지'의 의미 보존), 이동만 가능. 크기·방향은 삽입/편집 시 재선택.
+# rect는 용지 mm 치수(0,0,W,H). 표제란 필드값은 dict로 보관하고 paint가 표 칸에 텍스트로 렌더.
+# 참고 도면(docs/reference/)에 정형 표제란이 없어 표준 KS식 3행 표로 잡음(레이아웃은 조정 가능).
+
+# 용지 mm 치수(세로 기준 w,h). 가로(landscape)는 w·h 교환.
+PAPER_SIZES_MM = {
+    "A4": (210.0, 297.0),
+    "A3": (297.0, 420.0),
+    "A2": (420.0, 594.0),
+    "A1": (594.0, 841.0),
+}
+
+# 표제란 행 정의: (행 높이 가중치, [(라벨, 필드키, 열 폭 가중치), ...]).
+# 각 행의 열 폭 가중치 합은 같아야(=5) 열이 세로로 정렬된다. 필드키 ""는 라벨만(값 칸 없음).
+_TB_ROWS = [
+    (1.2, [("발주처 / 프로젝트", "client", 3), ("도면번호", "number", 2)]),
+    (1.2, [("도면명", "title", 3), ("축척", "scale", 2)]),
+    (1.0, [("작성", "author", 2), ("검토", "reviewer", 2), ("날짜", "date", 1)]),
+]
+# 표제란 필드키(폼·직렬화 공용) — _TB_ROWS에서 실제 쓰는 키만.
+TB_FIELD_KEYS = ("client", "number", "title", "scale", "author", "reviewer", "date")
+TB_FIELD_LABELS = {
+    "client": "발주처 / 프로젝트", "number": "도면번호", "title": "도면명",
+    "scale": "축척", "author": "작성자", "reviewer": "검토자", "date": "날짜",
+}
+
+
+class _TitleBlockItem(QGraphicsRectItem):
+    """용지틀 + 표제란 — A-size 용지경계 rect와 우하단 표제란 표를 그린다. rect 기반이지만
+    _HandleResizeMixin은 쓰지 않는다(용지는 고정 크기, 이동만). 더블클릭 편집은 host의 폼
+    다이얼로그가 처리(뷰가 _edit_titleblock으로 위임). 필드값(_fields)만 바뀌므로 paint로 반영.
+    DXF 내보내기에서는 _RectItem이 아니라 isinstance 체인에 안 걸려 조용히 제외된다(스코프)."""
+
+    _M = 10.0        # 용지 가장자리 → 도면 테두리 여백(mm)
+    _TB_W = 180.0    # 표제란 표 폭(mm)
+    _TB_H = 33.0     # 표제란 표 높이(mm)
+    _PAPER_FILL = QColor("#FFFFFF")
+    _LINE = QColor("#333333")
+    _INK = QColor("#111111")
+
+    def __init__(self, size: str = "A2", orient: str = "landscape", fields: dict | None = None):
+        super().__init__()
+        self._size = size if size in PAPER_SIZES_MM else "A2"
+        self._orient = "portrait" if orient == "portrait" else "landscape"
+        self._fields = {k: "" for k in TB_FIELD_KEYS}
+        if fields:
+            self._fields.update({k: str(v) for k, v in fields.items() if k in TB_FIELD_KEYS})
+        self.setPen(QPen(Qt.PenStyle.NoPen))   # 테두리는 paint가 직접 그림
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self._apply_paper_rect()
+
+    # ---- 용지 치수 ----------------------------------------------------------
+    def paper_wh(self) -> tuple[float, float]:
+        w, h = PAPER_SIZES_MM[self._size]
+        return (h, w) if self._orient == "landscape" else (w, h)
+
+    def _apply_paper_rect(self):
+        w, h = self.paper_wh()
+        self.prepareGeometryChange()
+        self.setRect(QRectF(0.0, 0.0, w, h))
+
+    def set_paper(self, size: str, orient: str):
+        if size in PAPER_SIZES_MM:
+            self._size = size
+        self._orient = "portrait" if orient == "portrait" else "landscape"
+        self._apply_paper_rect()
+        self.update()
+
+    def set_fields(self, fields: dict):
+        for k in TB_FIELD_KEYS:
+            if k in fields:
+                self._fields[k] = str(fields[k])
+        self.update()
+
+    def clone(self):
+        c = _TitleBlockItem(self._size, self._orient, dict(self._fields))
+        c.setPos(self.pos())
+        c.setZValue(self.zValue())
+        c.setFlags(self.flags())
+        return c
+
+    # ---- 표제란 표 영역(용지 로컬좌표, 도면 테두리 안쪽 우하단) --------------------
+    def _tb_rect(self) -> QRectF:
+        inner = self.rect().adjusted(self._M, self._M, -self._M, -self._M)
+        w = min(self._TB_W, inner.width())
+        return QRectF(inner.right() - w, inner.bottom() - self._TB_H, w, self._TB_H)
+
+    # ---- 히트 영역: 용지 테두리 밴드 + 표제란만(내부는 통과시켜 위에 그리기 가능) --------
+    def boundingRect(self) -> QRectF:
+        return self.rect().adjusted(-3.0, -3.0, 3.0, 3.0)
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        border = QPainterPath()
+        border.addRect(self.rect())
+        stroker = QPainterPathStroker()
+        stroker.setWidth(self._M)
+        path.addPath(stroker.createStroke(border))
+        path.addRect(self._tb_rect())
+        return path
+
+    # ---- 렌더 ---------------------------------------------------------------
+    @staticmethod
+    def _font_px(painter, px: float, bold: bool = False):
+        f = painter.font()
+        f.setPixelSize(max(1, int(round(px))))
+        f.setBold(bold)
+        painter.setFont(f)
+
+    def paint(self, painter, option, widget=None):
+        r = self.rect()
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # 용지 바탕(흰 시트) + 용지 경계선
+        painter.setBrush(QBrush(self._PAPER_FILL))
+        painter.setPen(QPen(self._LINE, 0.5))
+        painter.drawRect(r)
+        # 도면 테두리(안쪽, 굵게)
+        inner = r.adjusted(self._M, self._M, -self._M, -self._M)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(self._LINE, 1.2))
+        painter.drawRect(inner)
+        # 표제란 표
+        self._paint_table(painter)
+        painter.restore()
+        if self.isSelected():
+            _draw_selection_box(painter, r, self._scale_or_1())
+
+    def _scale_or_1(self) -> float:
+        s = self.scale()
+        return s if s else 1.0
+
+    def _paint_table(self, painter):
+        tb = self._tb_rect()
+        painter.setBrush(QBrush(self._PAPER_FILL))
+        painter.setPen(QPen(self._LINE, 1.2))
+        painter.drawRect(tb)
+        painter.setPen(QPen(self._LINE, 0.5))
+        h_weight = sum(rw for rw, _ in _TB_ROWS)
+        y = tb.top()
+        for ri, (rw, cells) in enumerate(_TB_ROWS):
+            rh = tb.height() * (rw / h_weight)
+            if ri > 0:  # 행 구분선
+                painter.drawLine(QPointF(tb.left(), y), QPointF(tb.right(), y))
+            c_weight = sum(cw for _l, _k, cw in cells)
+            x = tb.left()
+            for ci, (label, key, cw) in enumerate(cells):
+                cwid = tb.width() * (cw / c_weight)
+                cell = QRectF(x, y, cwid, rh)
+                if ci > 0:  # 열 구분선
+                    painter.setPen(QPen(self._LINE, 0.5))
+                    painter.drawLine(QPointF(x, y), QPointF(x, y + rh))
+                self._paint_cell(painter, cell, label, self._fields.get(key, ""))
+                x += cwid
+            y += rh
+
+    def _paint_cell(self, painter, cell: QRectF, label: str, value: str):
+        pad = 1.2
+        # 라벨(작게, 좌상단)
+        painter.setPen(QPen(self._INK))
+        self._font_px(painter, 2.6)
+        lbl_rect = cell.adjusted(pad, pad, -pad, -pad)
+        painter.drawText(lbl_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), label)
+        # 값(크게, 가운데)
+        if value:
+            self._font_px(painter, 3.8)
+            painter.drawText(cell, int(Qt.AlignmentFlag.AlignCenter), value)
+
+
 class _LineItem(_LabelMixin, _HandleResizeMixin, QGraphicsLineItem):
     def __init__(self, *args):
         super().__init__(*args)
@@ -4800,6 +4974,18 @@ class _AnnotatorView(QGraphicsView):
                 return None
         return None
 
+    def _titleblock_at(self, view_pos):
+        """[우리 확장 · Phase 4] 커서 아래 '맨 위 선택형'이 표제란 프레임이면 그것, 아니면 None.
+        프레임(z 최하단) 위에 도형이 얹혀 있으면 그 도형의 기본 동작(라벨 편집)을 살린다."""
+        for it in self.items(view_pos):   # 위→아래 stacking 순
+            if it is getattr(self._owner, "_bg_item", None):
+                continue
+            if isinstance(it, _TitleBlockItem):
+                return it
+            if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
+                return None
+        return None
+
     def _begin_label_edit(self, item):
         """[우리 확장] 선/화살표의 라벨을 생성(없으면)하고 편집 모드로 진입."""
         new = not item._label_alive()
@@ -4826,6 +5012,13 @@ class _AnnotatorView(QGraphicsView):
                 self._finish_place(event)
                 event.accept()
             return
+        # [우리 확장 · Phase 4] 표제란 프레임 더블클릭 = 필드 편집 폼(host가 소유).
+        if event.button() == Qt.MouseButton.LeftButton:
+            tb = self._titleblock_at(event.position().toPoint())
+            if tb is not None and hasattr(self._owner, "_edit_titleblock"):
+                self._owner._edit_titleblock(tb)
+                event.accept()
+                return
         # [우리 확장] 선/화살표 더블클릭 = 라벨 달기/편집(위에 다른 선택형이 없을 때만).
         if event.button() == Qt.MouseButton.LeftButton:
             target = self._labelable_at(event.position().toPoint())

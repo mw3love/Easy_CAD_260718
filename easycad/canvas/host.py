@@ -20,13 +20,14 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
     QHBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QDockWidget, QGridLayout,
+    QDockWidget, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
+    QDialogButtonBox,
 )
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem,
+    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
-    _SYMBOL_KINDS,
+    _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -130,6 +131,11 @@ class CanvasWindow(QMainWindow):
         a_img.setShortcut(QKeySequence("Ctrl+Shift+M"))
         a_img.triggered.connect(self._insert_image)
         m.addAction(a_img)
+
+        a_tb = QAction("표제란 / 용지틀 삽입…", self)     # Phase 4 — title block / paper frame
+        a_tb.setShortcut(QKeySequence("Ctrl+Shift+T"))
+        a_tb.triggered.connect(self._insert_titleblock)
+        m.addAction(a_tb)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
@@ -330,6 +336,52 @@ class CanvasWindow(QMainWindow):
                 n += 1
         if n:
             e.acceptProposedAction()
+
+    # ---- 표제란 / 용지틀 (Phase 4) ------------------------------------------
+    def _insert_titleblock(self):
+        """용지 크기·방향을 고르고 표제란 프레임을 삽입. 프레임은 뷰 중앙 근처에 좌상단 배치."""
+        existing = self._find_titleblock()
+        if existing is not None:
+            QMessageBox.information(
+                self, "표제란", "이미 표제란/용지틀이 있습니다.\n"
+                "더블클릭해 내용을 편집하거나, 지운 뒤 다시 삽입하세요.")
+            self._scene.clearSelection()
+            existing.setSelected(True)
+            return
+        dlg = _PaperSizeDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        size, orient = dlg.result_size_orient()
+        item = _TitleBlockItem(size, orient)
+        w, h = item.paper_wh()
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        item.setPos(center.x() - w / 2.0, center.y() - h / 2.0)
+        item.setZValue(-1000.0)   # 용지는 그린 도형들 뒤에(시트처럼)
+        item.setFlags(item.GraphicsItemFlag.ItemIsMovable
+                      | item.GraphicsItemFlag.ItemIsSelectable)
+        self._scene.addItem(item)
+        self._scene.clearSelection()
+        item.setSelected(True)
+        self.push_undo_add(item)
+        self.set_tool("select")
+        self.statusBar().showMessage(
+            f"표제란/용지틀 삽입: {size} {orient} — 더블클릭해 필드 입력", 5000)
+
+    def _edit_titleblock(self, item):
+        """표제란 더블클릭 → 필드 편집 폼(용지 크기·방향 포함)."""
+        dlg = _TitleBlockDialog(self, item)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        size, orient = dlg.result_size_orient()
+        item.set_paper(size, orient)
+        item.set_fields(dlg.result_fields())
+        self.statusBar().showMessage("표제란 갱신됨", 3000)
+
+    def _find_titleblock(self):
+        for it in self._scene.items():
+            if isinstance(it, _TitleBlockItem):
+                return it
+        return None
 
     # ---- 툴바 (최소) --------------------------------------------------------
     def _build_toolbar(self) -> QWidget:
@@ -596,3 +648,72 @@ class CanvasWindow(QMainWindow):
             new_items.append(c)
         if new_items:
             self._undo.append(("add", new_items))
+
+
+# ---------------------------------------------------------------------------
+# [Phase 4] 표제란 다이얼로그 — 삽입 시 용지 선택 / 더블클릭 시 필드 편집
+# ---------------------------------------------------------------------------
+_ORIENTS = [("landscape", "가로"), ("portrait", "세로")]
+
+
+def _build_paper_combos(dlg, size: str, orient: str):
+    """용지 크기·방향 콤보 2개를 만들어 (size_combo, orient_combo)로 반환."""
+    size_cb = QComboBox(dlg)
+    for k in PAPER_SIZES_MM:
+        size_cb.addItem(k, k)
+    idx = size_cb.findData(size)
+    size_cb.setCurrentIndex(idx if idx >= 0 else 0)
+    orient_cb = QComboBox(dlg)
+    for key, label in _ORIENTS:
+        orient_cb.addItem(label, key)
+    oidx = orient_cb.findData(orient)
+    orient_cb.setCurrentIndex(oidx if oidx >= 0 else 0)
+    return size_cb, orient_cb
+
+
+class _PaperSizeDialog(QDialog):
+    """표제란 삽입 시 용지 크기·방향만 고르는 작은 다이얼로그."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("용지 선택")
+        form = QFormLayout(self)
+        self._size_cb, self._orient_cb = _build_paper_combos(self, "A2", "landscape")
+        form.addRow("용지 크기", self._size_cb)
+        form.addRow("방향", self._orient_cb)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        form.addRow(btns)
+
+    def result_size_orient(self):
+        return self._size_cb.currentData(), self._orient_cb.currentData()
+
+
+class _TitleBlockDialog(QDialog):
+    """표제란 필드 편집 폼 + 용지 크기·방향 재선택."""
+
+    def __init__(self, parent, item):
+        super().__init__(parent)
+        self.setWindowTitle("표제란 편집")
+        form = QFormLayout(self)
+        self._size_cb, self._orient_cb = _build_paper_combos(self, item._size, item._orient)
+        form.addRow("용지 크기", self._size_cb)
+        form.addRow("방향", self._orient_cb)
+        self._edits = {}
+        for key in TB_FIELD_KEYS:
+            ed = QLineEdit(item._fields.get(key, ""), self)
+            self._edits[key] = ed
+            form.addRow(TB_FIELD_LABELS[key], ed)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        form.addRow(btns)
+
+    def result_size_orient(self):
+        return self._size_cb.currentData(), self._orient_cb.currentData()
+
+    def result_fields(self):
+        return {k: ed.text() for k, ed in self._edits.items()}

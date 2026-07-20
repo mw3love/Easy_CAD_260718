@@ -14,7 +14,7 @@ from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPixmap
 
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _SymbolItem, _ImageItem,
+    _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem,
 )
 
 FORMAT = "easycad-doc"
@@ -115,7 +115,10 @@ def _elems_to_path(elems: list) -> QPainterPath:
 # ---- 아이템 ↔ dict --------------------------------------------------------
 def item_to_dict(it) -> dict | None:
     d = _common(it)
-    if isinstance(it, _ImageItem):
+    if isinstance(it, _TitleBlockItem):
+        d.update(type="titleblock", size=it._size, orient=it._orient,
+                 fields=dict(it._fields))
+    elif isinstance(it, _ImageItem):
         r = it.rect()
         d.update(type="image", rect=[r.x(), r.y(), r.width(), r.height()],
                  data=_pixmap_to_b64(it._pixmap))
@@ -181,7 +184,10 @@ def item_to_dict(it) -> dict | None:
 
 def dict_to_item(d: dict):
     t = d.get("type")
-    if t == "image":
+    if t == "titleblock":
+        it = _TitleBlockItem(d.get("size", "A2"), d.get("orient", "landscape"),
+                             d.get("fields"))
+    elif t == "image":
         it = _ImageItem(_b64_to_pixmap(d["data"]), QRectF(*d["rect"]))
     elif t == "arrow":
         it = _ArrowItem(QColor(d["color"]), d["width"], d.get("head", True))
