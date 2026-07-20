@@ -39,12 +39,30 @@ def _mk_rect(scene, pen, x, y, w, h):
 
 def test_host_construction():
     w = CanvasWindow()
-    assert len(w._tool_buttons) == 9
+    # 상단 툴바 = 그리기 도구 7종(네모·원은 왼쪽 「도형」 팔레트로 이관).
+    assert len(w._tool_buttons) == 7
+    assert "rect" not in w._tool_buttons and "ellipse" not in w._tool_buttons
+    # 왼쪽 팔레트: 기본(네모·원) + 순서도 6종.
+    assert set(w._shape_tool_buttons) == {"rect", "ellipse"}
+    assert len(w._sym_buttons) == 6
     r = w._scene.sceneRect()
     assert r.width() > 90000 and r.height() > 90000
     m0 = w._view.transform().m11()
     w._on_wheel_zoom(120)
     assert w._view.transform().m11() > m0
+
+
+def test_shape_palette_arms_tool():
+    # 팔레트 네모 버튼 클릭 → rect 도구 무장 + 버튼 체크 동기화. 단축키 경로도 유지.
+    w = CanvasWindow()
+    w._shape_tool_buttons["rect"].click()
+    assert w.current_tool == "rect" and w._shape_tool_buttons["rect"].isChecked()
+    w.set_tool("select")
+    assert not w._shape_tool_buttons["rect"].isChecked()
+    # 심볼 무장 시 기본 버튼은 해제 유지
+    w.set_tool("sym:decision")
+    assert not w._shape_tool_buttons["rect"].isChecked()
+    assert w._sym_buttons["decision"].isChecked()
 
 
 def test_pdf_export():

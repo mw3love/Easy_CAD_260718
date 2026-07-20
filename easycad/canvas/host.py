@@ -77,7 +77,7 @@ class CanvasWindow(QMainWindow):
         lay.addWidget(self._view, 1)
         self.setCentralWidget(central)
         self._build_menu()
-        self._build_symbol_dock()
+        self._build_shapes_dock()
         self.set_tool("select")
 
     # ---- 메뉴 (파일 → 저장/열기/PDF) ----------------------------------------
@@ -229,6 +229,10 @@ class CanvasWindow(QMainWindow):
         h.setSpacing(4)
         self._tool_buttons: dict[str, QToolButton] = {}
         for key, name, sc in _TOOLS:
+            # 네모·원(닫힌 도형)은 왼쪽 「도형」 팔레트로 이동 — 상단은 그리기 도구만(정리).
+            # 단축키(2·5)는 팔레트 버튼과 무관하게 계속 동작.
+            if key in ("rect", "ellipse"):
+                continue
             btn = QToolButton()
             btn.setText(f"{name}")
             btn.setToolTip(f"{name} ({sc})")
@@ -243,10 +247,11 @@ class CanvasWindow(QMainWindow):
                            "Ctrl+0=100% · Ctrl+9=전체맞춤 · F3=스냅 · F8=직교 · Del=삭제 · Ctrl+Z=되돌리기"))
         return bar
 
-    # ---- 심볼/스텐실 팔레트 (좌측 dock) -------------------------------------
+    # ---- 도형 팔레트 (좌측 dock) — 기본(네모·원) + 순서도(심볼 6종) -----------
     @staticmethod
-    def _symbol_icon(kind: str, px: int = 30) -> QIcon:
-        """심볼 경로 팩토리로 팔레트 아이콘을 그린다(캔버스 도형과 같은 모양)."""
+    def _shape_icon(kind: str, px: int = 30) -> QIcon:
+        """팔레트 아이콘 — 캔버스 도형과 같은 모양으로 그린다. 심볼은 경로 팩토리,
+        기본 도형(rect/ellipse)은 직접."""
         pm = QPixmap(px, px)
         pm.fill(Qt.GlobalColor.transparent)
         p = QPainter(pm)
@@ -254,34 +259,68 @@ class CanvasWindow(QMainWindow):
         pen = QPen(QColor("#333333")); pen.setWidthF(1.6)
         p.setPen(pen); p.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         m = 4
-        p.drawPath(_SYMBOL_KINDS[kind][1](QRectF(m, m, px - 2 * m, px - 2 * m)))
+        r = QRectF(m, m, px - 2 * m, px - 2 * m)
+        if kind == "rect":
+            p.drawRect(r)
+        elif kind == "ellipse":
+            p.drawEllipse(r)
+        else:
+            p.drawPath(_SYMBOL_KINDS[kind][1](r))
         p.end()
         return QIcon(pm)
 
-    def _build_symbol_dock(self):
-        dock = QDockWidget("심볼", self)
+    def _palette_button(self, label: str, icon_kind: str, tooltip: str, tool_key: str) -> QToolButton:
+        btn = QToolButton()
+        btn.setText(label)
+        btn.setIcon(self._shape_icon(icon_kind))
+        btn.setIconSize(QSize(30, 30))
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        btn.setToolTip(tooltip)
+        btn.setCheckable(True)
+        btn.setMinimumSize(QSize(64, 56))
+        btn.clicked.connect(
+            lambda _c=False, k=tool_key: self.set_tool(None if self.current_tool == k else k))
+        return btn
+
+    @staticmethod
+    def _section_label(text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color:#888; font-size:11px; padding:3px 2px 1px 2px;")
+        return lbl
+
+    def _build_shapes_dock(self):
+        dock = QDockWidget("도형", self)
         dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea
                              | Qt.DockWidgetArea.RightDockWidgetArea)
         panel = QWidget()
-        grid = QGridLayout(panel)
-        grid.setContentsMargins(6, 6, 6, 6)
-        grid.setSpacing(4)
+        vbox = QVBoxLayout(panel)
+        vbox.setContentsMargins(6, 6, 6, 6)
+        vbox.setSpacing(4)
+
+        # 기본 도형(네모·원) — 상단 툴바에서 이관.
+        vbox.addWidget(self._section_label("기본"))
+        basic_grid = QGridLayout()
+        basic_grid.setSpacing(4)
+        self._shape_tool_buttons: dict[str, QToolButton] = {}
+        for i, (key, label) in enumerate((("rect", "네모"), ("ellipse", "원"))):
+            btn = self._palette_button(label, key, f"{label} — 클릭 후 캔버스에 드래그", key)
+            basic_grid.addWidget(btn, i // 2, i % 2)
+            self._shape_tool_buttons[key] = btn
+        vbox.addLayout(basic_grid)
+
+        # 순서도 심볼 6종.
+        vbox.addWidget(self._section_label("순서도"))
+        sym_grid = QGridLayout()
+        sym_grid.setSpacing(4)
         self._sym_buttons: dict[str, QToolButton] = {}
         for i, (kind, (label, _fn)) in enumerate(_SYMBOL_KINDS.items()):
-            btn = QToolButton()
-            btn.setText(label)
-            btn.setIcon(self._symbol_icon(kind))
-            btn.setIconSize(QSize(30, 30))
-            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-            btn.setToolTip(f"{label} 심볼 — 클릭 후 캔버스에 드래그")
-            btn.setCheckable(True)
-            btn.setMinimumSize(QSize(64, 56))
-            key = f"sym:{kind}"
-            btn.clicked.connect(
-                lambda _c=False, k=key: self.set_tool(None if self.current_tool == k else k))
-            grid.addWidget(btn, i // 2, i % 2)
+            btn = self._palette_button(label, kind, f"{label} 심볼 — 클릭 후 캔버스에 드래그",
+                                       f"sym:{kind}")
+            sym_grid.addWidget(btn, i // 2, i % 2)
             self._sym_buttons[kind] = btn
-        grid.setRowStretch(grid.rowCount(), 1)
+        vbox.addLayout(sym_grid)
+
+        vbox.addStretch(1)
         dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
 
@@ -338,7 +377,9 @@ class CanvasWindow(QMainWindow):
         self.current_tool = key
         for k, b in self._tool_buttons.items():
             b.setChecked(k == key)
-        # 심볼 팔레트 버튼: 무장된 것만 체크(다른 도구 선택 시 전부 해제).
+        # 왼쪽 「도형」 팔레트 버튼 동기화: 기본(네모·원)은 key 직접, 심볼은 sym:kind.
+        for k, b in getattr(self, "_shape_tool_buttons", {}).items():
+            b.setChecked(k == key)
         for k, b in getattr(self, "_sym_buttons", {}).items():
             b.setChecked(f"sym:{k}" == key)
 
