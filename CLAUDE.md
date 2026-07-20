@@ -87,13 +87,13 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
    기하 유지·배치만 통일, 단축키 2·5 유지). 상단은 그리기 도구 7종만. 추가 정리 아이디어는 메모리 `toolbar-cleanup-plan`.
 **Phase 4(문서 완성도) 진행 중** — **이미지 삽입 완료**(`_ImageItem` rect 기반 재사용, `Ctrl+Shift+M`
 +드래그앤드롭, `.ecad` base64 embed, PDF 렌더·DXF 제외, 종횡비 고정 리사이즈, 실조건검증 2026-07-20).
-**표제란/용지틀 구현(프록시검증, 실조건 대기)** — `_TitleBlockItem`(모델공간 위 A-size 용지경계
+**표제란/용지틀 완료(실조건검증 2026-07-20)** — `_TitleBlockItem`(모델공간 위 A-size 용지경계
 프레임 객체, 진짜 paper space 아님·뷰포트 없음). 우하단 3행 표제란 표(발주처/프로젝트·도면번호·도면명·
 축척·작성/검토/날짜) + 도면 테두리. 삽입 `Ctrl+Shift+T`(용지 크기·방향 선택), 더블클릭→필드 편집 폼
 (용지 재선택 포함). 프레임 있으면 **PDF가 용지경계·크기·방향으로 자동 전환**. `.ecad` 직렬화(size·
 orient·fields). 단일 프레임(다중 페이지 스코프 밖), 축척=텍스트 필드(자동계산 없음), DXF 제외(조용히
-skip), 용지 내부 클릭통과(위에 그리기 가능). 설계 근거: deep-interview 2026-07-20. ⏳ 실조건 미확인:
-한글 글리프·폼 상호작용·실제 A2 PDF 치수. 남은 것: 표·Mermaid import. 그 후 Phase 5(AI 이미지→도면).
+skip), 용지 내부 클릭통과(위에 그리기 가능). 설계 근거: deep-interview 2026-07-20. 실조건검증 ✓(한글
+필드·더블클릭 폼·A2 PDF 사용자 확인). 남은 것: 표·Mermaid import. 그 후 Phase 5(AI 이미지→도면).
 Phase 3(DXF)은 위 진행 상태 참조 — 내보내기·가져오기·펜 두께 왕복 완료. 후속: 외부 CAD 두께 렌더용
 `lineweight` 병행 저장, 구식 POLYLINE·ARC 등 외부 DXF 엔티티 흡수 확대.
 
