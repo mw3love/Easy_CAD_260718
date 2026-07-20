@@ -1236,65 +1236,6 @@ _SYMBOL_KINDS = {
 }
 
 
-class _SymbolItem(_HandleResizeMixin, QGraphicsRectItem):
-    """순서도 심볼 — rect 기반이라 _RectItem과 동일한 리사이즈·회전·stretch·undo를
-    물려받고, paint/shape만 kind별 경로(_SYMBOL_KINDS)로 그린다."""
-
-    def __init__(self, kind: str, rect: QRectF):
-        super().__init__(rect)
-        self._kind = kind if kind in _SYMBOL_KINDS else "decision"
-        self._init_resize()
-
-    def _sym_path(self) -> QPainterPath:
-        return _SYMBOL_KINDS[self._kind][1](self.rect())
-
-    def clone(self):
-        c = _SymbolItem(self._kind, QRectF(self.rect()))
-        c.setPen(QPen(self.pen()))
-        c.setBrush(QBrush(self.brush()))
-        return self._copy_common_to(c)
-
-    # [Stage2] 기하 리베이크 — 네모·원과 동일(로컬 AABB setRect).
-    def _capture_geom_local(self):
-        return QRectF(self.rect())
-
-    def _apply_geom_local(self, g):
-        self.setRect(g)
-
-    def rebake_scene(self, fn):
-        r = self.rect()
-        pts = [self._rebake_pt(fn, c) for c in
-               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
-        xs = [p.x() for p in pts]
-        ys = [p.y() for p in pts]
-        self.prepareGeometryChange()
-        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
-
-    def _stretch_grips(self):   # [Stage2b] grip = 외접 사각 네 모서리(네모와 동일).
-        r = self.rect()
-        return [self.mapToScene(c) for c in
-                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
-
-    def _base_shape(self):
-        # 속 빈 심볼(NoBrush)은 외곽선만 클릭 영역으로(네모와 동일 — 안에서 화살표 시작 가능),
-        # 채움이 있으면 심볼 전체가 클릭 영역.
-        path = self._sym_path()
-        if self.brush().style() != Qt.BrushStyle.NoBrush:
-            return path
-        stroker = QPainterPathStroker()
-        stroker.setWidth(max(self.pen().widthF(), self._EDGE_HIT_MIN / self._scale_or_1()))
-        return stroker.createStroke(path)
-
-    def paint(self, painter, option, widget=None):
-        # 네모의 _paint_base_no_select(super().paint()가 사각을 그림) 대신 심볼 경로를 직접 그린다.
-        painter.setPen(self.pen())
-        painter.setBrush(self.brush())
-        painter.drawPath(self._sym_path())
-        if self.isSelected():
-            _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
-        self._paint_handle(painter)
-
-
 # ---------------------------------------------------------------------------
 # [우리 확장] 선·화살표 라벨 — 본체에 '부착'되어 함께 이동하는 자식 텍스트
 # ---------------------------------------------------------------------------
@@ -1350,6 +1291,88 @@ class _LabelMixin:
         a = self._label_anchor()
         br = self._label._content_rect()
         self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() - 4.0)
+
+
+class _SymbolItem(_LabelMixin, _HandleResizeMixin, QGraphicsRectItem):
+    """순서도 심볼 — rect 기반이라 _RectItem과 동일한 리사이즈·회전·stretch·undo를
+    물려받고, paint/shape만 kind별 경로(_SYMBOL_KINDS)로 그린다. 더블클릭 라벨은
+    선·화살표와 달리 도형 '중앙'에 놓는다(_sync_label override).
+    (_LabelMixin 뒤에 정의해야 하므로 심볼 경로 팩토리와 떨어져 여기 둔다.)"""
+
+    def __init__(self, kind: str, rect: QRectF):
+        super().__init__(rect)
+        self._kind = kind if kind in _SYMBOL_KINDS else "decision"
+        self._init_resize()
+        self._init_label()
+
+    def _sym_path(self) -> QPainterPath:
+        return _SYMBOL_KINDS[self._kind][1](self.rect())
+
+    # ---- 라벨(중앙 배치) — _LabelMixin의 '중점 위쪽' 대신 도형 정중앙 -------------
+    def _label_anchor(self) -> QPointF:
+        return self.rect().center()
+
+    def _label_color(self) -> QColor:
+        return QColor(self.pen().color())
+
+    def _sync_label(self):
+        if not self._label_alive():
+            return
+        a = self._label_anchor()
+        br = self._label._content_rect()
+        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+
+    def setRect(self, *args):
+        # rect가 바뀌면(그리기·박스 리사이즈·리베이크) 라벨을 새 중앙으로 재배치.
+        super().setRect(*args)
+        if self._label_alive():
+            self._sync_label()
+
+    def clone(self):
+        c = _SymbolItem(self._kind, QRectF(self.rect()))
+        c.setPen(QPen(self.pen()))
+        c.setBrush(QBrush(self.brush()))
+        return self._copy_common_to(c)
+
+    # [Stage2] 기하 리베이크 — 네모·원과 동일(로컬 AABB setRect).
+    def _capture_geom_local(self):
+        return QRectF(self.rect())
+
+    def _apply_geom_local(self, g):
+        self.setRect(g)
+
+    def rebake_scene(self, fn):
+        r = self.rect()
+        pts = [self._rebake_pt(fn, c) for c in
+               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        self.prepareGeometryChange()
+        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
+
+    def _stretch_grips(self):   # [Stage2b] grip = 외접 사각 네 모서리(네모와 동일).
+        r = self.rect()
+        return [self.mapToScene(c) for c in
+                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+
+    def _base_shape(self):
+        # 속 빈 심볼(NoBrush)은 외곽선만 클릭 영역으로(네모와 동일 — 안에서 화살표 시작 가능),
+        # 채움이 있으면 심볼 전체가 클릭 영역.
+        path = self._sym_path()
+        if self.brush().style() != Qt.BrushStyle.NoBrush:
+            return path
+        stroker = QPainterPathStroker()
+        stroker.setWidth(max(self.pen().widthF(), self._EDGE_HIT_MIN / self._scale_or_1()))
+        return stroker.createStroke(path)
+
+    def paint(self, painter, option, widget=None):
+        # 네모의 _paint_base_no_select(super().paint()가 사각을 그림) 대신 심볼 경로를 직접 그린다.
+        painter.setPen(self.pen())
+        painter.setBrush(self.brush())
+        painter.drawPath(self._sym_path())
+        if self.isSelected():
+            _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
+        self._paint_handle(painter)
 
 
 class _LineItem(_LabelMixin, _HandleResizeMixin, QGraphicsLineItem):
@@ -4638,7 +4661,7 @@ class _AnnotatorView(QGraphicsView):
         for it in self.items(view_pos):
             if it is getattr(self._owner, "_bg_item", None):
                 continue
-            if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem)):
+            if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem, _SymbolItem)):
                 return it
             if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
                 return None

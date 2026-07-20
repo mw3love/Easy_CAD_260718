@@ -1509,6 +1509,44 @@ def test_symbol_border_follows_outline():
     assert snap.y() > 3.5, snap   # 박스 top(y=0)이 아니라 마름모 변 위로
 
 
+def test_symbol_center_label():
+    # 심볼 라벨은 선·화살표(중점 위쪽)와 달리 도형 '정중앙'에 놓이고, 리사이즈하면 따라온다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    sym = _SymbolItem("decision", QRectF(0, 0, 120, 80))
+    sym.setPen(QPen(QColor("#ff000000"))); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sc.addItem(sym)
+    lbl = sym.ensure_label(); lbl.setPlainText("예"); sym._sync_label()
+    assert sym.has_label()
+    br = lbl._content_rect()
+    # _sync_label 공식상 pos.x + br.w/2 == anchor.x(중앙). 중앙(60,40)에 정렬.
+    assert abs(lbl.pos().x() + br.width() / 2.0 - 60) < 1, lbl.pos()
+    assert abs(lbl.pos().y() + br.height() / 2.0 - 40) < 1, lbl.pos()
+    # 리사이즈 → 라벨이 새 중앙(100,50)으로 자동 이동(setRect override)
+    sym.setRect(QRectF(0, 0, 200, 100))
+    br = lbl._content_rect()
+    assert abs(lbl.pos().x() + br.width() / 2.0 - 100) < 1, lbl.pos()
+    assert abs(lbl.pos().y() + br.height() / 2.0 - 50) < 1, lbl.pos()
+
+
+def test_symbol_label_roundtrip():
+    # 심볼 중앙 라벨이 .ecad 저장/열기로 왕복한다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    sym = _SymbolItem("terminal", QRectF(0, 0, 100, 60))
+    sym.setPen(QPen(QColor("#ff112233"))); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sc.addItem(sym)
+    sym.ensure_label().setPlainText("시작"); sym._sync_label()
+    path = os.path.join(_TMP, "symlabel.ecad")
+    save_document(sc, path)
+    sc2 = QGraphicsScene()
+    assert load_document(sc2, path) == 1
+    got = [it for it in sc2.items() if isinstance(it, _SymbolItem)][0]
+    assert got.has_label() and got._label.toPlainText() == "시작"
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
