@@ -46,6 +46,18 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
     중점을 따라옴(`_LabelMixin`). 선·베지어화살·직선화살 모두 지원. `.ecad`에 직렬화.
   - **직교 자동라우팅** 완료(`ddd4ca3`·`75d8abc`·`d454227`): 직선화살(sarrow)의 Lucid식 직교 라우팅
     + 장애물 회피 → A* 승격(Hanan 그리드)으로 밀집 배치에서도 관통 0.
+  - **화살표-화살표 교차 회피(soft 벌점)** 완료(`dde043b`, Stage3): 코어 라우터가 다른 화살표를
+    A* 비용의 **soft 벌점**으로 회피(장애물 아님 — hard는 경로실패→폴백 절벽·순서의존이라 배제).
+    preferred 엘보가 도형은 안전하나 화살표를 가로지르면 두 A* 시도를 평가해 **교차를 가장 줄이는
+    도형-안전 후보만** 채택(개선 없으면 preferred 유지). `_seg_cross_seg`·`_count_seg_crossings` 신설,
+    `_astar_ortho(avoid_segs,cross_penalty)`, `_obstacle_arrow_segs`(self 제외), `_ARROW_CROSS_PENALTY=200`.
+    되먹임 없음(재라우팅 트리거 불변 + `host._rerouting` 재진입 가드 + `build_elbow` 멱등). 인터랙티브는
+    scene-change당 단일패스라 회피 1회 적용(순서의존)→다음 조작에서 자기교정. **실조건검증 ✓**(2026-07-21:
+    run.py 로그인 순서도 — 긴 루프백들이 다른 화살표 관통 없이 우회 확인). ⚠ 함정(메모리
+    `core-arrow-avoidance-deferred`): 화살표 좌표를 Hanan 격자선에 넣으면 A* 노드가 교차점에 얹혀
+    벌점이 눈멂(해법: 안 넣음, 우회 레인은 도형 팽창 모서리만으로 충분). **잔여(open):** 연결 도형
+    중심축 몇 px 어긋남으로 인한 작은 계단(`[A]`백엣지 재진입·`[B]`하단 수렴부) + 라벨-선 겹침(`[C]`)
+    — 다음 세션(다른 PC) 진단→수정 예정.
   - **단일객체 Lucid식 박스 핸들**(`3eec670`): 꼭짓점 2D·변 1축·좌상단 회전.
   - **스마트 정렬 가이드**(`ee0346a`): 이동 중 모서리·중심 정렬 스냅 + 가상선.
   - **빠른 생성 도트 + 고스트 미리보기**(`65b5958`).
