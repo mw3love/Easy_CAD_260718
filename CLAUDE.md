@@ -71,6 +71,8 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
   - **펜 두께 왕복** 완료(`262a904`): 두께를 XDATA(AppID `EASYCAD`, 코드 1040 float)로 실어 복원.
     DXF 표준 `lineweight`는 enum 스냅(6→9)으로 무손실 불가라 배제(실측). 실조건 확인.
   - 파일 메뉴: **DXF 내보내기 `Ctrl+Shift+D`** / **가져오기 `Ctrl+Shift+I`**(열기 시맨틱, 씬 대체).
+  - **실조건검증 완료 ✓**(2026-07-20): 우리 DXF를 **AutoCAD 2022**에서 열어 도형·텍스트·화살표가 개별
+    엔티티로 인식됨 확인 → 계획서의 Phase 3 완료 게이트 충족(Phase 3 종료). 왕복도 정상.
 
 ## 다음 할 일 (우선순위)
 > 1·2·3번은 완료됨(2026-07-20 코드 대조로 문서 갱신). 남은 것은 4번 일부와 Phase 3 이후.
