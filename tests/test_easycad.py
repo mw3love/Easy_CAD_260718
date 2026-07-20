@@ -18,7 +18,7 @@ from PyQt6.QtGui import QBrush, QColor, QPainterPath
 from easycad.canvas.host import CanvasWindow
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _SymbolItem, _SYMBOL_KINDS, _nearest_border,
+    _PolyArrowItem, _SymbolItem, _SYMBOL_KINDS, _nearest_border, _shape_ports,
     _axis_scale_fn, _mirror_fn)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
@@ -1583,6 +1583,52 @@ def test_rect_label_roundtrip():
     load_document(sc2, path)
     got = [it for it in sc2.items() if isinstance(it, _RectItem)][0]
     assert got.has_label() and got._label.toPlainText() == "상자"
+
+
+def test_shape_ports_pure():
+    # M1: 포트 = 변 중점 4개(N/E/S/W)를 실제 외곽선에 투영. 네모=변 중점, 마름모=꼭짓점.
+    r = _RectItem(QRectF(0, 0, 100, 60))
+    got = sorted((round(p.x()), round(p.y())) for p, _n in _shape_ports(r))
+    assert got == sorted([(50, 0), (100, 30), (50, 60), (0, 30)]), got
+    # 법선은 바깥(중심 반대). 중심 (50,30).
+    for p, n in _shape_ports(r):
+        assert (p.x() - 50) * n.x() + (p.y() - 30) * n.y() >= -1e-6, (p, n)
+    sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))   # 마름모 꼭짓점 = N/E/S/W
+    got2 = sorted((round(p.x()), round(p.y())) for p, _n in _shape_ports(sym))
+    assert got2 == sorted([(250, 0), (300, 30), (250, 60), (200, 30)]), got2
+
+
+def test_port_priority_then_continuous_fallback():
+    # M2: 포트 근처 커서 → 포트에 딱. 포트에서 먼 변 중간 → 기존 연속 외곽선 폴백.
+    w = CanvasWindow(); w.show(); w.set_tool("arrow"); w._zoom_reset()
+    view = w._view
+    sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))
+    sym.setPen(w.make_pen()); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sym.setFlags(sym.GraphicsItemFlag.ItemIsSelectable | sym.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sym)
+    # N 포트(250,0) 근처(253,3) → 포트로 스냅
+    snap = view._border_snap_at(view.mapFromScene(QPointF(253, 3)))
+    assert snap is not None and _close(snap[0], QPointF(250, 0)), snap
+    # 상-우 변 중점(275,15) — 꼭짓점서 ~29px라 포트 밖 → 연속 외곽선(그 점 그대로)
+    snap2 = view._border_snap_at(view.mapFromScene(QPointF(275, 15)))
+    assert snap2 is not None and _close(snap2[0], QPointF(275, 15), eps=2), snap2
+
+
+def test_arrow_binds_to_port_and_follows():
+    # M4: 화살표를 포트 근처로 그리면 포트에 부착, 도형을 옮기면 포트 따라 이동.
+    w = CanvasWindow(); w.show(); w.set_tool("arrow"); w._zoom_reset()
+    view = w._view
+    sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))
+    sym.setPen(w.make_pen()); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sym.setFlags(sym.GraphicsItemFlag.ItemIsSelectable | sym.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sym)
+    press, release, _c, _m, drag_move, _d = _draw_helpers(view)
+    press(QPointF(50, 200)); drag_move(QPointF(253, 3)); release(QPointF(253, 3))
+    ar = [it for it in w._scene.items() if isinstance(it, _ArrowItem)][-1]
+    assert ar.has_binding()
+    assert _close(ar.mapToScene(ar._p2), QPointF(250, 0)), ar.mapToScene(ar._p2)
+    sym.moveBy(40, 0); w._on_scene_changed(None)              # N 포트 (250,0)→(290,0)
+    assert _close(ar.mapToScene(ar._p2), QPointF(290, 0)), ar.mapToScene(ar._p2)
 
 
 def _run_all():

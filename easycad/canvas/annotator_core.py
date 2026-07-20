@@ -2800,6 +2800,18 @@ def _nearest_border(item, scene_pt):
     return sp, QPointF(nd.x() / L, nd.y() / L)
 
 
+def _shape_ports(item):
+    """도형의 이산 접속점(포트) → [(scene_pt, 바깥법선), ...]. 변 중점 4개(N·E·S·W)를
+    _nearest_border로 '실제 외곽선'에 투영한다 — 네모·원은 변 중점 그대로, 심볼은 슬랜트 변
+    (평행사변형 등)이라 투영해야 붕 뜨지 않는다. 마름모는 4 꼭짓점이 그대로 N/E/S/W가 된다.
+    회전·스케일은 _nearest_border가 아이템 변환으로 왕복 환산."""
+    r = item.rect()
+    cx, cy = r.center().x(), r.center().y()
+    cardinals = (QPointF(cx, r.top()), QPointF(r.right(), cy),
+                 QPointF(cx, r.bottom()), QPointF(r.left(), cy))
+    return [_nearest_border(item, item.mapToScene(cl)) for cl in cardinals]
+
+
 # ---- [Stage1] Lucid식 직교 자동 라우팅(기본 엘보) -----------------------------
 def _dedup_pts(pts, eps=1e-6):
     """연속 중복점 + 공선(collinear) 중간점 제거. 정렬된 도형 사이의 퇴화 엘보를 직선으로 접는다."""
@@ -3672,6 +3684,7 @@ class _AnnotatorView(QGraphicsView):
 
     # ---- 테두리 스냅 (화살표 도구가 네모/원 테두리에서 시작·도착하면 붙음) ----
     _BORDER_SNAP_PX = 14.0  # 커서~테두리 최근접점이 이 픽셀 이내면 스냅(시작·tip 공통, 뷰 픽셀)
+    _PORT_SNAP_PX = 18.0    # 포트(변 중점 접속점) 우선 스냅 반경 — 연속보다 넓어 먼저 끌린다(뷰 픽셀)
 
     def _view_scale(self) -> float:
         m = self.transform().m11()
@@ -3687,18 +3700,32 @@ class _AnnotatorView(QGraphicsView):
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
 
     def _border_snap_at(self, view_pos):
-        """커서가 어떤 네모/원 테두리에서 _BORDER_SNAP_PX 이내면 (snap_scene, exit_unit, shape),
-        아니면 None. 여러 도형이 후보면 가장 가까운 테두리점을 고른다.
-        (shape는 지속 연결 바인딩용 — 기존 인덱서 snap[0]/snap[1]과 호환되게 뒤에 붙임.)
-        owner.snap_enabled가 False면 스냅을 끈다(o-snap 토글 — 세밀 제어용)."""
+        """커서 근처 도형에 스냅 → (snap_scene, exit_unit, shape) 또는 None.
+        [우리 확장] 포트 우선 + 연속 폴백: 커서가 어떤 포트(변 중점 접속점)의 _PORT_SNAP_PX
+        이내면 그 포트로 딱 붙고(깔끔), 아니면 기존처럼 외곽선 최근접점에 _BORDER_SNAP_PX로 스냅.
+        (shape는 지속 연결 바인딩용.) owner.snap_enabled가 False면 스냅 전체 off."""
         if not getattr(self._owner, "snap_enabled", True):
             return None
         scene_pt = self.mapToScene(view_pos)
+        shapes = self._conn_shapes()
+        # Pass 1: 포트 우선 — 포트 반경이 연속보다 살짝 넓어 먼저 끌린다.
+        bestp = None
+        bestpd = self._PORT_SNAP_PX
+        pexit = None
+        pshape = None
+        for sh in shapes:
+            for sp, n in _shape_ports(sh):
+                d = self._view_dist(sp, view_pos)
+                if d <= bestpd:
+                    bestpd, bestp, pexit, pshape = d, sp, n, sh
+        if bestp is not None:
+            return bestp, pexit, pshape
+        # Pass 2: 연속 외곽선 폴백(포트에서 먼 변 중간 등).
         best = None
         bestd = self._BORDER_SNAP_PX
         bexit = None
         bshape = None
-        for sh in self._conn_shapes():
+        for sh in shapes:
             sp, n = _nearest_border(sh, scene_pt)
             d = self._view_dist(sp, view_pos)
             if d <= bestd:
@@ -3776,6 +3803,23 @@ class _AnnotatorView(QGraphicsView):
         painter.setBrush(QBrush(QColor(_BLUE)))
         painter.drawEllipse(sp, base, base)
 
+    def _draw_port_dots(self, painter, s):
+        """[우리 확장] 화살표 도구로 도형 근처에 가면 그 도형의 포트(변 중점 4점)를 속 빈 점으로
+        예고. 실제 스냅된 포트는 _draw_snap_marker(채운 파란 점)가 위에 덮어 강조한다."""
+        if not self._owner.is_edit_mode() or self._owner.current_tool not in ("arrow", "sarrow"):
+            return
+        scene_c = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
+        margin = 30.0 / s
+        r = 3.5 / s
+        painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
+        painter.setBrush(QBrush(QColor("white")))
+        for sh in self._conn_shapes():
+            br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
+            if not br.contains(scene_c):
+                continue
+            for sp, _n in _shape_ports(sh):
+                painter.drawEllipse(sp, r, r)
+
     def leaveEvent(self, event):
         # 커서가 뷰를 벗어나면 스냅·waypoint 예고 마커 정리(잔상 방지).
         if self._snap_preview is not None or self._seg_add is not None:
@@ -3790,6 +3834,8 @@ class _AnnotatorView(QGraphicsView):
             return
         s = self._view_scale()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # [우리 확장] 화살표 도구로 도형 근처면 포트 점 예고(스냅 마커보다 먼저 그려 아래 깔림).
+        self._draw_port_dots(painter, s)
         # 그리는 중(드래그)이거나 클릭 배치 중이면 스냅된 시작·tip에 마커(곡선·직선화살 공통).
         drawing = (self._drawing and self._temp is not None) or (self._place is not None)
         if drawing:
