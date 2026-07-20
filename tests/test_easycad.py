@@ -1698,6 +1698,139 @@ def test_dxf_export():
     assert {"EC_RECT", "EC_ARROW", "EC_SARROW", "EC_SYMBOL", "EC_TEXT"} <= layers, layers
 
 
+def _rect_world_corners(it):
+    r = it.rect()
+    pts = [(r.left(), r.top()), (r.right(), r.top()), (r.right(), r.bottom()), (r.left(), r.bottom())]
+    return sorted((round(it.mapToScene(QPointF(x, y)).x(), 1),
+                   round(it.mapToScene(QPointF(x, y)).y(), 1)) for x, y in pts)
+
+
+def test_dxf_import_roundtrip():
+    # Phase 3 후반: export→import 왕복에서 핵심 기하(꼭짓점·끝점·중심·텍스트·번호)가 보존되는지.
+    # 소실 허용(설계 결정): 심볼 kind(→외곽선 _PathItem), 지속연결 바인딩, 자식 라벨(→독립),
+    # 폭, 변환 필드값(회전/스케일은 월드 기하로만 보존). 판정은 dict 일치가 아니라 월드 기하 일치.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    from easycad.fileio.dxf_import import import_dxf
+
+    def pen(c="#ffff0000", wd=3):
+        p = QPen(QColor(c)); p.setWidthF(wd); return p
+
+    sc = QGraphicsScene()
+    # 네모(평행이동) + 회전 네모(회전 흡수 검증)
+    rect = _RectItem(QRectF(0, 0, 100, 60)); rect.setPen(pen()); rect.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    rect.setPos(QPointF(10, 20)); sc.addItem(rect)
+    rrot = _RectItem(QRectF(0, 0, 80, 40)); rrot.setPen(pen()); rrot.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    rrot.setPos(QPointF(600, 500)); rrot.setTransformOriginPoint(QPointF(40, 20)); rrot.setRotation(30); sc.addItem(rrot)
+    # 정원 + 타원
+    circ = _EllipseItem(QRectF(0, 0, 80, 80)); circ.setPen(pen("#ff0000ff")); circ.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    circ.setPos(QPointF(200, 0)); sc.addItem(circ)
+    ell = _EllipseItem(QRectF(0, 0, 120, 60)); ell.setPen(pen("#ff0000ff")); ell.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    ell.setPos(QPointF(400, 0)); sc.addItem(ell)
+    # 선
+    line = _LineItem(QLineF(0, 0, 100, 50)); line.setPen(pen("#ff333333")); sc.addItem(line)
+    # 곡선 화살표(끝쪽 촉) + 직선 화살표(시작쪽 촉 — 방향 복원 검증)
+    ar = _ArrowItem(QColor("#ff00ff00"), 6, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 40)); ar._ctrl1 = QPointF(30, -20); ar._ctrl2 = QPointF(70, 60)
+    sc.addItem(ar)
+    ars = _ArrowItem(QColor("#ff00ff00"), 6, False)      # head_at_end=False
+    ars.set_points(QPointF(0, 700), QPointF(150, 760)); sc.addItem(ars)
+    # 직교 화살표
+    sar = _PolyArrowItem(QColor("#ffff00ff"), 6, True)
+    sar._pts = [QPointF(0, 0), QPointF(50, 0), QPointF(50, 40)]; sc.addItem(sar)
+    # 텍스트
+    txt = _TextItem(QColor("#ff000000")); txt.apply_font_size(20); txt.setPlainText("hello")
+    txt.setPos(QPointF(0, 300)); sc.addItem(txt)
+    # 번호 배지
+    badge = _BadgeItem(7, QColor("#ffff9500")); badge.setPos(QPointF(300, 300)); badge.setScale(2.0); sc.addItem(badge)
+    # 심볼(kind 소실 → 외곽선만)
+    sym = _SymbolItem("decision", QRectF(0, 0, 100, 60)); sym.setPen(pen("#ff008080"))
+    sym.setBrush(QBrush(Qt.BrushStyle.NoBrush)); sym.setPos(QPointF(0, 400)); sc.addItem(sym)
+
+    path = os.path.join(_TMP, "roundtrip_dxf.dxf")
+    assert export_dxf(sc, path)
+    sc2 = QGraphicsScene()
+    import_dxf(sc2, path)
+
+    # 네모 2개(평행이동·회전) — 월드 꼭짓점 집합 일치.
+    rects = [it for it in sc2.items() if isinstance(it, _RectItem)]
+    assert len(rects) == 2, len(rects)
+    want = {tuple(_rect_world_corners(rect)), tuple(_rect_world_corners(rrot))}
+    got = {tuple(_rect_world_corners(r)) for r in rects}
+    assert got == want, (got, want)
+
+    # 원/타원 — 월드 경계 꼭짓점 집합 일치(_RectItem과 같은 방식).
+    ells = [it for it in sc2.items() if isinstance(it, _EllipseItem)]
+    assert len(ells) == 2, len(ells)
+    ewant = {tuple(_rect_world_corners(circ)), tuple(_rect_world_corners(ell))}
+    egot = {tuple(_rect_world_corners(e)) for e in ells}
+    assert egot == ewant, (egot, ewant)
+
+    # 선 — 끝점 집합 일치.
+    lines = [it for it in sc2.items() if isinstance(it, _LineItem)]
+    assert len(lines) == 1
+    ln = lines[0].line()
+    ends = sorted([(round(ln.x1(), 1), round(ln.y1(), 1)), (round(ln.x2(), 1), round(ln.y2(), 1))])
+    assert ends == sorted([(0.0, 0.0), (100.0, 50.0)]), ends
+
+    # 곡선 화살표 — 끝점+제어점(월드) 보존, 방향 복원.
+    arrows = [it for it in sc2.items() if isinstance(it, _ArrowItem)]
+    assert len(arrows) == 2, len(arrows)
+    curved = [a for a in arrows if a._ctrl1 is not None]
+    assert len(curved) == 1
+    c = curved[0]
+    assert _close(c.mapToScene(c._p1), QPointF(0, 0)) and _close(c.mapToScene(c._p2), QPointF(100, 40))
+    assert _close(c.mapToScene(c._ctrl1), QPointF(30, -20)) and _close(c.mapToScene(c._ctrl2), QPointF(70, 60))
+    assert c._head_at_end is True
+    straight = [a for a in arrows if a._ctrl1 is None][0]
+    assert straight._head_at_end is False, "시작쪽 촉 방향이 복원돼야(무시+방향복원)"
+
+    # 직교 화살표 — 정점 보존.
+    sas = [it for it in sc2.items() if isinstance(it, _PolyArrowItem)]
+    assert len(sas) == 1
+    spts = [(round(p.x(), 1), round(p.y(), 1)) for p in sas[0]._pts]
+    assert spts == [(0.0, 0.0), (50.0, 0.0), (50.0, 40.0)], spts
+
+    # 텍스트 — 문자열+위치.
+    texts = [it for it in sc2.items() if isinstance(it, _TextItem)]
+    assert len(texts) == 1 and texts[0].toPlainText() == "hello"
+    assert _close(texts[0].pos(), QPointF(0, 300), eps=1.5)
+
+    # 배지 — 번호+중심+스케일(반경).
+    badges = [it for it in sc2.items() if isinstance(it, _BadgeItem)]
+    assert len(badges) == 1 and badges[0]._number == 7
+    assert _close(badges[0].pos(), QPointF(300, 300), eps=1.0)
+    assert abs(badges[0].scale() - 2.0) < 0.05, badges[0].scale()
+
+    # 심볼 — kind 소실, 외곽선 _PathItem으로 복원(마름모 4변 영역 안).
+    paths = [it for it in sc2.items() if isinstance(it, _PathItem)]
+    assert len(paths) >= 1, "심볼 외곽선이 path로 복원돼야"
+    dia = [p for p in paths if p.mapToScene(p.boundingRect()).boundingRect().center().y() > 380]
+    assert dia, "심볼(y≈400 부근) 외곽선 path 존재해야"
+
+
+def test_dxf_import_external_fallback():
+    # 임의 외부 DXF(우리 레이어 관례 없음) → dxftype 폴백으로 손실 매핑(LINE·CIRCLE·TEXT).
+    from PyQt6.QtWidgets import QGraphicsScene
+    import ezdxf
+    from easycad.fileio.dxf_import import import_dxf
+
+    doc = ezdxf.new("R2010")
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (100, 0))                    # 레이어 "0"
+    msp.add_circle((50, 50), 25)
+    msp.add_text("EXT", dxfattribs={"insert": (10, 10)})
+    path = os.path.join(_TMP, "external.dxf")
+    doc.saveas(path)
+
+    sc = QGraphicsScene()
+    n = import_dxf(sc, path)
+    assert n >= 3, n
+    assert any(isinstance(it, _LineItem) for it in sc.items())
+    assert any(isinstance(it, _EllipseItem) for it in sc.items())
+    assert any(isinstance(it, _TextItem) for it in sc.items())
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

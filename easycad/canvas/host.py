@@ -30,6 +30,7 @@ from easycad.canvas.annotator_core import (
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
+from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.document import save_document, load_document
 
 # 무한 캔버스: 아주 큰 sceneRect로 사실상 무한한 팬 범위 제공.
@@ -116,6 +117,11 @@ class CanvasWindow(QMainWindow):
         a_dxf.setShortcut(QKeySequence("Ctrl+Shift+D"))
         a_dxf.triggered.connect(self._export_dxf)
         m.addAction(a_dxf)
+
+        a_dxf_in = QAction("DXF 가져오기…", self)    # Phase 3 후반 — 역방향
+        a_dxf_in.setShortcut(QKeySequence("Ctrl+Shift+I"))
+        a_dxf_in.triggered.connect(self._import_dxf)
+        m.addAction(a_dxf_in)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
@@ -242,6 +248,21 @@ class CanvasWindow(QMainWindow):
             QMessageBox.warning(self, "DXF 내보내기", f"저장에 실패했습니다:\n{e}")
             return
         QMessageBox.information(self, "DXF 내보내기", f"저장 완료:\n{path}")
+
+    def _import_dxf(self):
+        # 현재 씬을 대체하는 '열기' 시맨틱(import_dxf clear=True 기본).
+        path, _ = QFileDialog.getOpenFileName(self, "DXF 가져오기", "", "DXF 파일 (*.dxf)")
+        if not path:
+            return
+        try:
+            n = import_dxf(self._scene, path)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "DXF 가져오기", f"가져오기에 실패했습니다:\n{e}")
+            return
+        self._undo.clear()
+        nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
+        self._badge_n = max(nums) if nums else 0
+        self.statusBar().showMessage(f"가져오기 완료: {n}개 객체 — {path}", 5000)
 
     # ---- 툴바 (최소) --------------------------------------------------------
     def _build_toolbar(self) -> QWidget:
