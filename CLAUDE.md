@@ -101,7 +101,20 @@ QLineEdit, Enter=아래·Tab=오른쪽 줄넘김·Shift+Tab=왼쪽·Esc=취소·
 삽입 `Ctrl+Shift+B`(행·열·헤더 다이얼로그). `.ecad` 직렬화(rows·cols·header·rect·cells), DXF 제외
 (조용히 skip). 설계 근거: deep-interview 2026-07-20(표 vs Mermaid 중 표 선택, 균등만·인라인편집으로
 스코프 확정). 스코프 밖: 개별 열폭 드래그·셀 병합·텍스트 붙여넣기 파싱·셀편집 undo. 실조건검증 ✓(삽입·인라인
-편집 엔터/탭·리사이즈·저장/재열기·PDF 사용자 확인). 남은 것: Mermaid import. 그 후 Phase 5(AI 이미지→도면).
+편집 엔터/탭·리사이즈·저장/재열기·PDF 사용자 확인).
+**Mermaid import 완료(실조건검증 2026-07-21 ✓)** — `fileio/mermaid_import.py`(순수 Python, Qt 비의존):
+flowchart 파서 + **자체 BFS 계층 배치**(외부 의존성 0 — 규칙 2 손안의 카드: 엣지 라우팅은 기존
+`_PolyArrowItem` 직교 자동라우팅이 담당, 노드 배치만 자체 구현). 붙여넣기 다이얼로그 `Ctrl+Shift+G`.
+지원(핵심 부분집합): 방향 5종(TD/TB/LR/RL/BT)·노드 8모양→우리 도형 매핑(마름모=decision·스타디움=
+terminal·평행사변형=data·육각형=prep·원기둥=database·원=ellipse·나머지=rect)·화살표 4종(--> --- -.->
+==>)+파이프/인라인 라벨·한 줄 체인. 노드→`_RectItem`/`_EllipseItem`/`_SymbolItem`(중앙 라벨), 엣지→
+`_PolyArrowItem`(지속연결 바인딩+직교 엘보). `.ecad`·PDF는 기존 아이템 직렬화 재사용(코드 변경 0),
+DXF는 대상 아님. 스코프 밖(승인): subgraph·classDef/스타일·click·`&`·점선/굵은선 스타일(실선 흡수).
+설계 근거: deep-interview 2026-07-21. **Phase 4 완료 → 다음 Phase 5(AI 이미지→도면).**
+  ⚠ 이때 라벨 중앙정렬 순서 버그 발견·수정: 삽입 헬퍼가 `addItem` **전**에 라벨을 붙이면
+  `_sync_label`이 씬 멤버십 가드로 no-op해 라벨이 좌상단(0,0)에 박힘 → addItem **후** `_sync_label()`
+  재호출로 해결. 라벨 세로는 글리프 잉크 중심 보정(`_ink_center_dy`, 실렌더 픽셀측정)·원기둥 광학중심
+  오프셋 추가. (검증 함정: 헤드리스는 한글 tofu라 정렬 못 봄 → 비-헤드리스 `QGraphicsView.grab()`으로 실폰트 재현.)
 Phase 3(DXF)은 위 진행 상태 참조 — 내보내기·가져오기·펜 두께 왕복 완료. 후속: 외부 CAD 두께 렌더용
 `lineweight` 병행 저장, 구식 POLYLINE·ARC 등 외부 DXF 엔티티 흡수 확대.
 

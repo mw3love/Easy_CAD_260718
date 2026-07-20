@@ -1110,10 +1110,51 @@ class _LabelMixin:
         self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() - 4.0)
 
 
+# [우리 확장] 라벨 세로 광학정렬 — 글리프 '실제 잉크' 중심을 도형 중심에 맞춘다.
+def _ink_center_dy(lbl) -> float:
+    """라벨 글리프의 실제 잉크 세로중심이 문서박스 중심에서 벗어난 양(아래로 +).
+    QGraphicsTextItem의 실렌더 글리프 배치가 baseline·폰트메트릭 추정과 어긋나(폰트·언어마다
+    다름 — Malgun/폴백이 부호까지 반대), 어떤 공식으로도 못 맞춘다. 그래서 텍스트를 작은
+    오프스크린에 그려 잉크를 픽셀로 직접 재 폰트·언어 무관하게 정확히 센터링한다.
+    같은 (텍스트·폰트크기·여백)이면 캐시해 리사이즈 드래그 중 재계산을 피한다."""
+    text = lbl.toPlainText()
+    if not text.strip():
+        return 0.0
+    key = (text, round(lbl.font().pointSizeF(), 2), round(lbl.document().documentMargin(), 2))
+    cached = getattr(lbl, "_ink_dy_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    br = lbl._content_rect()
+    w = max(1, int(br.width()) + 2)
+    h = max(1, int(br.height()) + 2)
+    dy = 0.0
+    if h > 2 and w > 2:
+        img = QImage(w, h, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        p = QPainter(img)
+        try:
+            lbl.document().drawContents(p)   # 아이템 paint와 같은 문서 렌더 경로
+        finally:
+            p.end()
+        top = bot = None
+        for y in range(h):
+            for x in range(w):
+                if img.pixelColor(x, y).alpha() > 40:
+                    if top is None:
+                        top = y
+                    bot = y
+                    break
+        if top is not None:
+            dy = br.height() / 2.0 - (top + bot) / 2.0
+    lbl._ink_dy_cache = (key, dy)
+    return dy
+
+
 class _CenterLabelMixin(_LabelMixin):
     """닫힌 도형(네모·원·심볼)용 라벨 — 선·화살표의 '중점 위쪽'과 달리 도형 '정중앙'에 놓고,
     rect가 바뀌면(그리기·박스 리사이즈·리베이크) 새 중앙으로 재동기한다. 앵커=rect 중심,
-    색=테두리색. 셋이 공유해 중복을 없앤다."""
+    색=테두리색. 셋이 공유해 중복을 없앤다. 세로는 문서박스가 아니라 글리프 '잉크' 중심을
+    맞춘다(_ink_center_dy) — 폰트가 baseline 아래로 여유를 더 둬 글자가 위로 쏠려 보이는 것 교정."""
 
     def _label_anchor(self) -> QPointF:
         return self.rect().center()
@@ -1126,7 +1167,8 @@ class _CenterLabelMixin(_LabelMixin):
             return
         a = self._label_anchor()
         br = self._label._content_rect()
-        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+        dy = _ink_center_dy(self._label)
+        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0 + dy)
 
     def setRect(self, *args):
         # rect가 바뀌면(그리기·박스 리사이즈·리베이크) 라벨을 새 중앙으로 재배치.
@@ -1346,6 +1388,20 @@ class _SymbolItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
 
     def _sym_path(self) -> QPainterPath:
         return _SYMBOL_KINDS[self._kind][1](self.rect())
+
+    def _label_anchor(self) -> QPointF:
+        # 광학 중심 보정: 외접 rect 중심이 도형의 '보이는 무게중심'과 어긋나는 kind만 라벨을
+        # 옮긴다. 원기둥(database)은 윗 타원이 중심을 위로 끌어 라벨이 윗 곡선에 겹치므로 아래로,
+        # 문서(document)는 아래 물결이 무게를 아래로 내리므로 살짝 위로. 나머지(마름모·스타디움·
+        # 평행사변형·육각형)는 상하 대칭이라 rect 중심이 곧 광학 중심 → 보정 없음.
+        c = self.rect().center()
+        r = self.rect()
+        if self._kind == "database":
+            e = min(r.height() * 0.18, r.width() * 0.5)   # 윗/아랫 타원 반높이(_sym_database와 동일)
+            return QPointF(c.x(), c.y() + e * 0.7)
+        if self._kind == "document":
+            return QPointF(c.x(), c.y() - r.height() * 0.06)
+        return c
 
     def clone(self):
         c = _SymbolItem(self._kind, QRectF(self.rect()))

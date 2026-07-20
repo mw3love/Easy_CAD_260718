@@ -1539,14 +1539,14 @@ def test_symbol_center_label():
     lbl = sym.ensure_label(); lbl.setPlainText("예"); sym._sync_label()
     assert sym.has_label()
     br = lbl._content_rect()
-    # _sync_label 공식상 pos.x + br.w/2 == anchor.x(중앙). 중앙(60,40)에 정렬.
+    # x는 문서박스 중심, y는 글리프 잉크 광학중심(작은 세로 보정 허용). 중앙(60,40) 근방.
     assert abs(lbl.pos().x() + br.width() / 2.0 - 60) < 1, lbl.pos()
-    assert abs(lbl.pos().y() + br.height() / 2.0 - 40) < 1, lbl.pos()
+    assert abs(lbl.pos().y() + br.height() / 2.0 - 40) < 4, lbl.pos()
     # 리사이즈 → 라벨이 새 중앙(100,50)으로 자동 이동(setRect override)
     sym.setRect(QRectF(0, 0, 200, 100))
     br = lbl._content_rect()
     assert abs(lbl.pos().x() + br.width() / 2.0 - 100) < 1, lbl.pos()
-    assert abs(lbl.pos().y() + br.height() / 2.0 - 50) < 1, lbl.pos()
+    assert abs(lbl.pos().y() + br.height() / 2.0 - 50) < 4, lbl.pos()
 
 
 def test_symbol_label_roundtrip():
@@ -1579,8 +1579,9 @@ def test_rect_ellipse_center_label():
         lbl = it.ensure_label(); lbl.setPlainText("칸"); it._sync_label()
         assert it.has_label(), cls.__name__
         br = lbl._content_rect()
+        # x=문서박스 중심, y=글리프 잉크 광학중심(작은 세로 보정 허용)
         assert abs(lbl.pos().x() + br.width() / 2.0 - 60) < 1, (cls.__name__, lbl.pos())
-        assert abs(lbl.pos().y() + br.height() / 2.0 - 40) < 1, (cls.__name__, lbl.pos())
+        assert abs(lbl.pos().y() + br.height() / 2.0 - 40) < 4, (cls.__name__, lbl.pos())
         it.setRect(QRectF(0, 0, 200, 100))         # 리사이즈 → 새 중앙(100,50) 추종
         br = lbl._content_rect()
         assert abs(lbl.pos().x() + br.width() / 2.0 - 100) < 1, (cls.__name__, lbl.pos())
@@ -2114,6 +2115,158 @@ def test_table_pdf_export():
     t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(t)
     out = os.path.join(_TMP, "table.pdf")
+    assert export_pdf(w._scene, out, page="A4") is True
+    assert os.path.getsize(out) > 0
+
+
+def test_symbol_label_optical_center():
+    # 원기둥은 윗 타원을 피해 라벨을 rect 중심보다 아래(광학중심)로, 문서는 아래 물결을 피해
+    # 살짝 위로. 상하 대칭 kind(마름모·스타디움 등)는 rect 중심 그대로.
+    cyl = _SymbolItem("database", QRectF(0, 0, 120, 56))
+    dia = _SymbolItem("decision", QRectF(0, 0, 120, 56))
+    doc = _SymbolItem("document", QRectF(0, 0, 120, 56))
+    assert cyl._label_anchor().y() > cyl.rect().center().y()      # 아래로
+    assert doc._label_anchor().y() < doc.rect().center().y()      # 위로
+    assert abs(dia._label_anchor().y() - dia.rect().center().y()) < 1e-6  # 대칭=보정없음
+    # 리사이즈 후에도 광학중심 오프셋이 rect에 비례해 유지된다.
+    cyl.setRect(QRectF(0, 0, 240, 120))
+    assert cyl._label_anchor().y() > cyl.rect().center().y()
+
+
+def test_mermaid_parse_core():
+    # 핵심 부분집합: 방향·노드 모양 8종 매핑·엣지 4종·파이프 라벨.
+    from easycad.fileio.mermaid_import import parse_mermaid
+    g = parse_mermaid(
+        "flowchart TD\n"
+        "  A[start] --> B{cond}\n"
+        "  B -->|yes| C([end])\n"
+        "  B -->|no| D[retry]\n"
+        "  D --> B\n"
+        "  E[(db)] --- C\n")
+    assert g.direction == "TD"
+    assert set(g.nodes) == {"A", "B", "C", "D", "E"}
+    assert g.nodes["B"].shape == "rhombus"
+    assert g.nodes["C"].shape == "stadium"
+    assert g.nodes["E"].shape == "cylinder"
+    assert g.nodes["A"].label == "start"
+    assert len(g.edges) == 5
+    # 파이프 라벨 흡수
+    yes = [e for e in g.edges if e.src == "B" and e.dst == "C"][0]
+    assert yes.label == "yes" and yes.arrow is True
+    # --- 는 화살촉 없는 선
+    line = [e for e in g.edges if e.src == "E"][0]
+    assert line.arrow is False
+
+
+def test_mermaid_parse_lr_inline_and_styles():
+    # LR 방향 + 인라인 라벨(-- txt -->) + 점선/굵은선 스타일 분류.
+    from easycad.fileio.mermaid_import import parse_mermaid
+    g = parse_mermaid(
+        "graph LR\n"
+        "  S([start]) -- go --> T[work]\n"
+        "  T -.-> U{ok?}\n"
+        "  U ==> V\n")
+    assert g.direction == "LR"
+    e_go = [e for e in g.edges if e.src == "S"][0]
+    assert e_go.label == "go"
+    assert [e for e in g.edges if e.src == "T"][0].style == "dotted"
+    assert [e for e in g.edges if e.src == "U"][0].style == "thick"
+    assert g.nodes["V"].label == "V"   # bare 참조는 id를 라벨로
+
+
+def test_mermaid_layout_levels_no_cycle_blowup():
+    # 사이클(D-->B)이 있어도 레벨이 발산하지 않는다(BFS 거리).
+    from easycad.fileio.mermaid_import import parse_mermaid, layout_positions
+    g = parse_mermaid("flowchart TD\n A-->B\n B-->C\n C-->B\n A-->D\n")
+    pos = layout_positions(g, node_w=120, node_h=56)
+    ys = {k: pos[k][1] for k in pos}
+    assert ys["A"] < ys["B"]          # 레벨 0 < 레벨 1
+    assert ys["B"] == ys["D"]         # 같은 레벨(둘 다 A의 자식/형제)
+    assert max(ys.values()) < 1000    # 발산 없음(예전 버그는 y가 수천까지 치솟았음)
+
+
+def test_mermaid_layout_lr_axis_swap():
+    # LR은 흐름이 x축, TD는 y축.
+    from easycad.fileio.mermaid_import import parse_mermaid, layout_positions
+    g = parse_mermaid("flowchart LR\n A-->B-->C\n")
+    pos = layout_positions(g, node_w=120, node_h=56)
+    assert pos["A"][0] < pos["B"][0] < pos["C"][0]   # x 증가
+    assert pos["A"][1] == pos["B"][1] == pos["C"][1]  # y 동일
+
+
+def test_mermaid_empty_raises():
+    from easycad.fileio.mermaid_import import parse_mermaid, MermaidError
+    for bad in ("", "   \n  ", "flowchart TD\n"):
+        try:
+            parse_mermaid(bad)
+            assert False, "MermaidError 기대"
+        except MermaidError:
+            pass
+
+
+def test_mermaid_import_via_host():
+    # 전체 빌더: 도형+화살표 개수·라벨·지속연결 바인딩·자동라우팅·단일 undo.
+    w = CanvasWindow()
+    n_nodes, n_arrows, direction = w._build_mermaid(
+        "flowchart TD\n"
+        "  A[시작] --> B{조건?}\n"
+        "  B -->|예| C[처리]\n"
+        "  B -->|아니오| D([종료])\n"
+        "  C --> D\n"
+        "  E[(DB)] --- C\n")
+    assert direction == "TD"
+    assert n_nodes == 5 and n_arrows == 5
+    nodes = [it for it in w._scene.items()
+             if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
+    arrows = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(nodes) == 5 and len(arrows) == 5
+    assert all(it.has_label() for it in nodes)               # 노드 라벨 부착
+    assert all(a.has_binding() and a._auto_route for a in arrows)  # 지속연결+직교라우팅
+    # 심볼 kind 매핑(마름모=decision, 스타디움=terminal, 원기둥=database)
+    kinds = {it._kind for it in nodes if isinstance(it, _SymbolItem)}
+    assert {"decision", "terminal", "database"} <= kinds
+    assert len(w._undo) == 1                                  # 배치 전체가 한 번의 undo
+
+
+def test_mermaid_labels_centered_not_stuck_at_origin():
+    # 회귀: 라벨을 씬에 넣기 '전'에 붙이면 _sync_label이 no-op해 라벨이 도형 좌상단(0,0)에
+    # 박힌다(초기 버그). 빌드 후 각 노드 라벨의 중심이 도형 중심 근방(가로 정렬, 세로는 광학보정
+    # 허용)인지 확인 — (0,0)에 박히면 가로 오프셋이 도형 반폭만큼 크게 벌어진다.
+    w = CanvasWindow()
+    w._build_mermaid(
+        "flowchart TD\n A[처리] --> B{유효?}\n B -->|예| C([끝])\n B -->|아니오| D[(저장)]\n")
+    nodes = [it for it in w._scene.items()
+             if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem)) and it._label is not None]
+    assert len(nodes) == 4
+    for it in nodes:
+        sc = it.sceneBoundingRect().center()
+        lc = it._label.sceneBoundingRect().center()
+        assert abs(lc.x() - sc.x()) < 4, (it, lc, sc)     # 가로 중앙(0,0 박힘이면 크게 벗어남)
+        assert abs(lc.y() - sc.y()) < 12, (it, lc, sc)    # 세로 중앙 근방(원기둥 광학보정 여유)
+
+
+def test_mermaid_roundtrip():
+    # import한 도면을 .ecad로 저장→열기 하면 노드·화살표가 보존된다(기존 직렬화 재사용).
+    w = CanvasWindow()
+    w._build_mermaid("flowchart LR\n A[a] --> B{b}\n B -->|x| C([c])\n")
+    n0 = len([it for it in w._scene.items()
+              if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))])
+    a0 = len([it for it in w._scene.items() if isinstance(it, _PolyArrowItem)])
+    path = os.path.join(_TMP, "mermaid.ecad")
+    save_document(w._scene, path)
+    w2 = CanvasWindow()
+    load_document(w2._scene, path)
+    n1 = len([it for it in w2._scene.items()
+              if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))])
+    a1 = len([it for it in w2._scene.items() if isinstance(it, _PolyArrowItem)])
+    assert n1 == n0 == 3 and a1 == a0 == 2
+
+
+def test_mermaid_pdf_export():
+    # import 결과가 PDF로 렌더된다(paint 경로 안전).
+    w = CanvasWindow()
+    w._build_mermaid("flowchart TD\n A[a]-->B{b}\n B-->C([c])\n")
+    out = os.path.join(_TMP, "mermaid.pdf")
     assert export_pdf(w._scene, out, page="A4") is True
     assert os.path.getsize(out) > 0
 

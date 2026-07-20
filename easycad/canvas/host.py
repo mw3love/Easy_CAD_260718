@@ -21,12 +21,12 @@ from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
     QHBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QDockWidget, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QCheckBox,
+    QDialogButtonBox, QSpinBox, QCheckBox, QPlainTextEdit,
 )
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem,
+    _TableItem, _RectItem, _EllipseItem, _SymbolItem,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
 )
@@ -34,6 +34,34 @@ from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.document import save_document, load_document
+from easycad.fileio.mermaid_import import (
+    parse_mermaid, layout_positions, MermaidError,
+)
+
+# Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
+# deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
+_MERMAID_SHAPE_ITEM = {
+    "rect":          ("rect", None),
+    "rounded":       ("rect", None),
+    "stadium":       ("symbol", "terminal"),
+    "rhombus":       ("symbol", "decision"),
+    "hexagon":       ("symbol", "prep"),
+    "parallelogram": ("symbol", "data"),
+    "cylinder":      ("symbol", "database"),
+    "circle":        ("ellipse", None),
+}
+
+
+def _border_attach(rect_scene: QRectF, toward: QPointF) -> QPointF:
+    """rect(scene)의 변 중점 중 toward 방향에 면한 점 — 화살표 부착점. 회전 없는 import
+    도형이라 외접 사각형 변 중점으로 충분(_PolyArrowItem이 이후 직교 라우팅으로 다듬음)."""
+    c = rect_scene.center()
+    dx, dy = toward.x() - c.x(), toward.y() - c.y()
+    if abs(dx) >= abs(dy):
+        x = rect_scene.right() if dx >= 0 else rect_scene.left()
+        return QPointF(x, c.y())
+    y = rect_scene.bottom() if dy >= 0 else rect_scene.top()
+    return QPointF(c.x(), y)
 
 # 무한 캔버스: 아주 큰 sceneRect로 사실상 무한한 팬 범위 제공.
 _SCENE_HALF = 50000.0
@@ -142,6 +170,11 @@ class CanvasWindow(QMainWindow):
         a_tbl.setShortcut(QKeySequence("Ctrl+Shift+B"))
         a_tbl.triggered.connect(self._insert_table)
         m.addAction(a_tbl)
+
+        a_mmd = QAction("Mermaid 가져오기…", self)          # Phase 4 — 순서도 코드 → 도형
+        a_mmd.setShortcut(QKeySequence("Ctrl+Shift+G"))
+        a_mmd.triggered.connect(self._insert_mermaid)
+        m.addAction(a_mmd)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
@@ -411,6 +444,107 @@ class CanvasWindow(QMainWindow):
         self.set_tool("select")
         self.statusBar().showMessage(
             f"표 삽입: {rows}×{cols} — 셀 더블클릭해 편집(Enter/Tab 이동)", 5000)
+
+    # ---- Mermaid 가져오기 (Phase 4) -----------------------------------------
+    _MMD_NODE_W, _MMD_NODE_H = 120.0, 56.0   # 노드 기본 치수(mermaid_import 레이아웃 상수와 동일)
+
+    def _insert_mermaid(self):
+        """Mermaid flowchart 코드를 붙여넣어 편집가능 도형+화살표로 자동배치(뷰 중앙 기준).
+        노드는 _RectItem/_EllipseItem/_SymbolItem, 엣지는 _PolyArrowItem 직교 라우팅으로 연결."""
+        dlg = _MermaidDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            n_nodes, n_arrows, direction = self._build_mermaid(dlg.text())
+        except MermaidError as ex:
+            QMessageBox.warning(self, "Mermaid 가져오기", str(ex))
+            return
+        self.set_tool("select")
+        self.statusBar().showMessage(
+            f"Mermaid 가져오기: 노드 {n_nodes} · 화살표 {n_arrows} "
+            f"(방향 {direction}) — 도형을 개별 이동·편집 가능", 6000)
+
+    def _build_mermaid(self, text):
+        """텍스트 → 도형·화살표를 씬에 배치(한 번의 undo). (노드수, 화살표수, 방향) 반환.
+        파싱 실패 시 MermaidError를 올린다(UI 없음 — 스모크에서 그대로 호출 가능)."""
+        graph = parse_mermaid(text)   # 실패 시 MermaidError
+
+        W, H = self._MMD_NODE_W, self._MMD_NODE_H
+        pos = layout_positions(graph, node_w=W, node_h=H)
+        xs = [p[0] for p in pos.values()]
+        ys = [p[1] for p in pos.values()]
+        min_x, min_y = (min(xs), min(ys)) if xs else (0.0, 0.0)
+        span_x = (max(xs) - min_x + W) if xs else 0.0
+        span_y = (max(ys) - min_y + H) if ys else 0.0
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        ox = center.x() - span_x / 2.0 - min_x
+        oy = center.y() - span_y / 2.0 - min_y
+
+        pen = self.make_pen()
+        items_by_id: dict[str, object] = {}
+        added: list = []
+        for nid, node in graph.nodes.items():
+            x, y = pos[nid]
+            it = self._make_mermaid_node(node, ox + x, oy + y, W, H, pen)
+            self._scene.addItem(it)
+            it._sync_label()   # 라벨 중앙 정렬은 씬에 든 뒤라야 동작(_label_alive가 씬 멤버십을 봄)
+            items_by_id[nid] = it
+            added.append(it)
+
+        arrows: list = []
+        for e in graph.edges:
+            s = items_by_id.get(e.src)
+            d = items_by_id.get(e.dst)
+            if s is None or d is None or s is d:   # self-loop은 스킵(직교 엘보 무의미)
+                continue
+            arr = self._make_mermaid_edge(e, s, d)
+            self._scene.addItem(arr)
+            arrows.append(arr)
+            added.append(arr)
+
+        # 노드·화살표를 모두 씬에 올린 뒤 직교 엘보를 계산(장애물·부착 법선이 씬 존재를 전제).
+        for arr in arrows:
+            try:
+                arr.build_elbow()
+            except Exception:
+                pass
+            arr._sync_label()   # 엣지 라벨도 씬에 든 뒤 재동기(build_elbow가 무변경이면 sync 생략되므로)
+
+        self.push_undo_add_many(added)
+        self._scene.clearSelection()
+        return len(items_by_id), len(arrows), graph.direction
+
+    def _make_mermaid_node(self, node, x, y, w, h, pen):
+        shape, kind = _MERMAID_SHAPE_ITEM.get(node.shape, ("rect", None))
+        rect = QRectF(0.0, 0.0, w, h)
+        if shape == "ellipse":
+            it = _EllipseItem(rect)
+        elif shape == "symbol":
+            it = _SymbolItem(kind, rect)
+        else:
+            it = _RectItem(rect)
+        it.setPen(QPen(pen))
+        it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        it.setPos(x, y)
+        it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
+        if node.label:
+            it.ensure_label().setPlainText(node.label)
+        return it
+
+    def _make_mermaid_edge(self, edge, src_it, dst_it):
+        rs = src_it.mapRectToScene(src_it.rect())
+        rd = dst_it.mapRectToScene(dst_it.rect())
+        a_src = _border_attach(rs, rd.center())
+        a_dst = _border_attach(rd, rs.center())
+        arr = _PolyArrowItem(self.current_color, self.current_width, edge.arrow)
+        arr.set_points(a_src, a_dst)   # arrow pos=(0,0) → local==scene 좌표
+        # 지속 연결 — 도형 이동 시 화살표가 따라오도록 양끝을 부착점에 바인딩(부착점=변 중점 로컬좌표).
+        arr.set_bound(0, src_it, src_it.mapFromScene(a_src))
+        arr.set_bound(len(arr._pts) - 1, dst_it, dst_it.mapFromScene(a_dst))
+        arr._auto_route = True   # 직교 자동 엘보(양끝 바인딩 → build_elbow가 경로 생성)
+        if edge.label:
+            arr.ensure_label().setPlainText(edge.label)
+        return arr
 
     # ---- 툴바 (최소) --------------------------------------------------------
     def _build_toolbar(self) -> QWidget:
@@ -774,3 +908,33 @@ class _TableSizeDialog(QDialog):
 
     def result(self):
         return self._rows_sb.value(), self._cols_sb.value(), self._header_cb.isChecked()
+
+
+class _MermaidDialog(QDialog):
+    """Mermaid flowchart 코드를 붙여넣는 입력창(붙여넣기 다이얼로그 — deep-interview 확정)."""
+
+    _SAMPLE = ("flowchart TD\n"
+               "    A[시작] --> B{조건?}\n"
+               "    B -->|예| C[처리]\n"
+               "    B -->|아니오| D([종료])\n"
+               "    C --> D")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mermaid 가져오기")
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("Mermaid flowchart 코드를 붙여넣으세요 "
+                             "(flowchart TD/LR … · 노드 모양·화살표·라벨 지원):"))
+        self._edit = QPlainTextEdit(self)
+        self._edit.setPlaceholderText(self._SAMPLE)
+        self._edit.setMinimumSize(QSize(460, 280))
+        self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        lay.addWidget(self._edit)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+    def text(self):
+        return self._edit.toPlainText()
