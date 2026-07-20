@@ -22,6 +22,7 @@ from easycad.canvas.annotator_core import (
     _axis_scale_fn, _mirror_fn)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
+from easycad.fileio.dxf_export import export_dxf
 
 _app = QApplication.instance() or QApplication([])
 _TMP = tempfile.mkdtemp(prefix="easycad_test_")
@@ -1647,6 +1648,54 @@ def test_arrow_binds_to_port_and_follows():
     assert _close(ar.mapToScene(ar._p2), QPointF(250, 0)), ar.mapToScene(ar._p2)
     sym.moveBy(40, 0); w._on_scene_changed(None)              # N 포트 (250,0)→(290,0)
     assert _close(ar.mapToScene(ar._p2), QPointF(290, 0)), ar.mapToScene(ar._p2)
+
+
+def test_dxf_export():
+    # Phase 3: 각 도형 타입이 개별 DXF 엔티티로 매핑되는지 + Y축 뒤집기 확인.
+    import ezdxf
+    from PyQt6.QtGui import QPen
+    w = CanvasWindow(); w.show()
+    sc = w._scene
+
+    rect = _RectItem(QRectF(0, 0, 100, 60)); rect.setPen(QPen(QColor("red")))
+    rect.setBrush(QBrush(Qt.BrushStyle.NoBrush)); rect.setPos(QPointF(10, 20)); sc.addItem(rect)
+    circ = _EllipseItem(QRectF(0, 0, 80, 80)); circ.setPen(QPen(QColor("blue")))
+    circ.setBrush(QBrush(Qt.BrushStyle.NoBrush)); circ.setPos(QPointF(200, 0)); sc.addItem(circ)
+    ell = _EllipseItem(QRectF(0, 0, 120, 60)); ell.setPen(QPen(QColor("blue")))
+    ell.setBrush(QBrush(Qt.BrushStyle.NoBrush)); ell.setPos(QPointF(400, 0)); sc.addItem(ell)
+    line = _LineItem(QLineF(0, 0, 100, 50)); line.setPen(QPen(QColor("black"))); sc.addItem(line)
+    ar = _ArrowItem(QColor("green"), 2.0, True)      # 베지어 화살 → SPLINE
+    ar.set_points(QPointF(0, 0), QPointF(100, 40)); ar._ctrl1 = QPointF(30, -20)
+    ar._ctrl2 = QPointF(70, 60); sc.addItem(ar)
+    sar = _PolyArrowItem(QColor("purple"), 2.0, True)
+    sar._pts = [QPointF(0, 0), QPointF(50, 0), QPointF(50, 40)]; sc.addItem(sar)
+    txt = _TextItem(QColor("black")); txt.setPlainText("hello"); txt.setPos(QPointF(0, 300))
+    sc.addItem(txt)
+    badge = _BadgeItem(7, QColor("orange")); badge.setPos(QPointF(300, 300)); sc.addItem(badge)
+    sym = _SymbolItem("decision", QRectF(0, 0, 100, 60)); sym.setPen(QPen(QColor("teal")))
+    sym.setBrush(QBrush(Qt.BrushStyle.NoBrush)); sym.setPos(QPointF(0, 400)); sc.addItem(sym)
+
+    path = os.path.join(_TMP, "export.dxf")
+    assert export_dxf(sc, path)
+    doc = ezdxf.readfile(path)
+    msp = doc.modelspace()
+    kinds = {}
+    for e in msp:
+        kinds[e.dxftype()] = kinds.get(e.dxftype(), 0) + 1
+    # 베지어 화살 = SPLINE, 정원 = CIRCLE, 타원 = ELLIPSE, 직교화살+심볼+네모 = LWPOLYLINE.
+    assert kinds.get("SPLINE", 0) >= 1, kinds          # arrow 샤프트
+    assert kinds.get("CIRCLE", 0) >= 2, kinds          # circ + badge
+    assert kinds.get("ELLIPSE", 0) >= 1, kinds         # ell
+    assert kinds.get("LINE", 0) >= 1, kinds            # line
+    assert kinds.get("LWPOLYLINE", 0) >= 4, kinds      # rect + sarrow + symbol(1+) + 화살촉2
+    assert kinds.get("MTEXT", 0) >= 2, kinds           # txt + badge 번호
+    # Y축 뒤집기: rect 좌상단 로컬(0,0)+pos(10,20) → world(10,20) → DXF(10,-20).
+    rects = [e for e in msp if e.dxftype() == "LWPOLYLINE"]
+    corners = [tuple(p[:2]) for e in rects for p in e.get_points()]
+    assert any(abs(x - 10) < 1e-6 and abs(y + 20) < 1e-6 for x, y in corners), corners
+    # 타입별 레이어 분리 확인.
+    layers = {e.dxf.layer for e in msp}
+    assert {"EC_RECT", "EC_ARROW", "EC_SARROW", "EC_SYMBOL", "EC_TEXT"} <= layers, layers
 
 
 def _run_all():

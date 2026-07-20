@@ -29,6 +29,7 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
+from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.document import save_document, load_document
 
 # 무한 캔버스: 아주 큰 sceneRect로 사실상 무한한 팬 범위 제공.
@@ -110,6 +111,11 @@ class CanvasWindow(QMainWindow):
         a_sel.setShortcut(QKeySequence("Ctrl+Shift+P"))
         a_sel.triggered.connect(lambda: self._export_pdf(selection_only=True))
         m.addAction(a_sel)
+
+        a_dxf = QAction("DXF 내보내기…", self)      # Phase 3 — CAD 상호운용
+        a_dxf.setShortcut(QKeySequence("Ctrl+Shift+D"))
+        a_dxf.triggered.connect(self._export_dxf)
+        m.addAction(a_dxf)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
@@ -220,6 +226,22 @@ class CanvasWindow(QMainWindow):
             QMessageBox.information(self, "PDF 내보내기", f"저장 완료:\n{path}")
         else:
             QMessageBox.warning(self, "PDF 내보내기", "저장에 실패했습니다.")
+
+    def _export_dxf(self):
+        if self._scene.itemsBoundingRect().isEmpty():
+            QMessageBox.information(self, "DXF 내보내기", "출력할 객체가 없습니다.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "DXF로 저장", "", "DXF 파일 (*.dxf)")
+        if not path:
+            return
+        if not path.lower().endswith(".dxf"):
+            path += ".dxf"
+        try:
+            export_dxf(self._scene, path)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "DXF 내보내기", f"저장에 실패했습니다:\n{e}")
+            return
+        QMessageBox.information(self, "DXF 내보내기", f"저장 완료:\n{path}")
 
     # ---- 툴바 (최소) --------------------------------------------------------
     def _build_toolbar(self) -> QWidget:
