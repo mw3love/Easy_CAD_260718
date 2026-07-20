@@ -13,7 +13,7 @@ from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont
 
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem,
+    _PolyArrowItem, _SymbolItem,
 )
 
 FORMAT = "easycad-doc"
@@ -106,6 +106,12 @@ def item_to_dict(it) -> dict | None:
             ctrl2=None if it._ctrl2 is None else [it._ctrl2.x(), it._ctrl2.y()],
             color=_col(it._color), width=it._width, head=it._head_at_end,
         )
+    elif isinstance(it, _SymbolItem):
+        r = it.rect()
+        d.update(type="symbol", kind=it._kind, rect=[r.x(), r.y(), r.width(), r.height()],
+                 pen=_col(it.pen().color()), width=it.pen().widthF(),
+                 fill=None if it.brush().style() == Qt.BrushStyle.NoBrush
+                 else _col(it.brush().color()))
     elif isinstance(it, _RectItem):
         r = it.rect()
         d.update(type="rect", rect=[r.x(), r.y(), r.width(), r.height()],
@@ -159,6 +165,9 @@ def dict_to_item(d: dict):
         if d.get("ctrl1") is not None:
             it._ctrl1 = QPointF(*d["ctrl1"])
             it._ctrl2 = QPointF(*d["ctrl2"])
+    elif t == "symbol":
+        it = _SymbolItem(d.get("kind", "decision"), QRectF(*d["rect"]))
+        it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
     elif t == "rect":
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
     elif t == "ellipse":

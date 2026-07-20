@@ -1151,6 +1151,151 @@ class _EllipseItem(_HandleResizeMixin, QGraphicsEllipseItem):
 
 
 # ---------------------------------------------------------------------------
+# [우리 확장] 심볼/스텐실 — 순서도 표준 도형(판단·입출력·준비 등)
+# ---------------------------------------------------------------------------
+# 설계: 종류마다 클래스를 만들지 않고 단일 _SymbolItem(rect 기반)에 kind만 달리한다.
+# rect 기반이라 _RectItem이 쓰는 기계(_box_handles 리사이즈·회전·stretch·geom undo)를
+# 그대로 물려받고, paint/shape만 kind별 경로로 갈아끼운다. 경로 팩토리는 QRectF→QPainterPath.
+def _sym_decision(r: QRectF) -> QPainterPath:      # 판단 — 마름모
+    p = QPainterPath()
+    c = r.center()
+    p.moveTo(c.x(), r.top())
+    p.lineTo(r.right(), c.y())
+    p.lineTo(c.x(), r.bottom())
+    p.lineTo(r.left(), c.y())
+    p.closeSubpath()
+    return p
+
+
+def _sym_terminal(r: QRectF) -> QPainterPath:      # 시작/끝 — 스타디움(둥근 양끝)
+    p = QPainterPath()
+    rad = min(r.width(), r.height()) / 2.0
+    p.addRoundedRect(r, rad, rad)
+    return p
+
+
+def _sym_data(r: QRectF) -> QPainterPath:          # 입출력 — 평행사변형
+    p = QPainterPath()
+    dx = r.width() * 0.22
+    p.moveTo(r.left() + dx, r.top())
+    p.lineTo(r.right(), r.top())
+    p.lineTo(r.right() - dx, r.bottom())
+    p.lineTo(r.left(), r.bottom())
+    p.closeSubpath()
+    return p
+
+
+def _sym_prep(r: QRectF) -> QPainterPath:          # 준비 — 육각형
+    p = QPainterPath()
+    dx = r.width() * 0.2
+    cy = r.center().y()
+    p.moveTo(r.left() + dx, r.top())
+    p.lineTo(r.right() - dx, r.top())
+    p.lineTo(r.right(), cy)
+    p.lineTo(r.right() - dx, r.bottom())
+    p.lineTo(r.left() + dx, r.bottom())
+    p.lineTo(r.left(), cy)
+    p.closeSubpath()
+    return p
+
+
+def _sym_document(r: QRectF) -> QPainterPath:      # 문서 — 아래 물결
+    p = QPainterPath()
+    wave = r.height() * 0.14
+    p.moveTo(r.left(), r.top())
+    p.lineTo(r.right(), r.top())
+    p.lineTo(r.right(), r.bottom() - wave)
+    p.cubicTo(r.right() - r.width() * 0.25, r.bottom() - wave * 3.0,
+              r.left() + r.width() * 0.25, r.bottom() + wave,
+              r.left(), r.bottom() - wave)
+    p.closeSubpath()
+    return p
+
+
+def _sym_database(r: QRectF) -> QPainterPath:      # 저장소 — 원기둥
+    p = QPainterPath()
+    e = min(r.height() * 0.18, r.width() * 0.5)   # 윗/아랫 타원 반높이
+    top = QRectF(r.left(), r.top(), r.width(), 2 * e)
+    bot = QRectF(r.left(), r.bottom() - 2 * e, r.width(), 2 * e)
+    p.addEllipse(top)                              # 윗면 타원(완전)
+    p.moveTo(r.left(), r.top() + e)                # 몸통 왼쪽
+    p.lineTo(r.left(), r.bottom() - e)
+    p.arcTo(bot, 180.0, 180.0)                     # 아랫면 앞쪽 반원
+    p.lineTo(r.right(), r.top() + e)               # 몸통 오른쪽
+    return p
+
+
+# kind → (한글 라벨, 경로 팩토리). 팔레트·직렬화·그리기가 이 하나를 공유한다.
+_SYMBOL_KINDS = {
+    "decision": ("판단", _sym_decision),
+    "terminal": ("시작/끝", _sym_terminal),
+    "data":     ("입출력", _sym_data),
+    "prep":     ("준비", _sym_prep),
+    "document": ("문서", _sym_document),
+    "database": ("저장소", _sym_database),
+}
+
+
+class _SymbolItem(_HandleResizeMixin, QGraphicsRectItem):
+    """순서도 심볼 — rect 기반이라 _RectItem과 동일한 리사이즈·회전·stretch·undo를
+    물려받고, paint/shape만 kind별 경로(_SYMBOL_KINDS)로 그린다."""
+
+    def __init__(self, kind: str, rect: QRectF):
+        super().__init__(rect)
+        self._kind = kind if kind in _SYMBOL_KINDS else "decision"
+        self._init_resize()
+
+    def _sym_path(self) -> QPainterPath:
+        return _SYMBOL_KINDS[self._kind][1](self.rect())
+
+    def clone(self):
+        c = _SymbolItem(self._kind, QRectF(self.rect()))
+        c.setPen(QPen(self.pen()))
+        c.setBrush(QBrush(self.brush()))
+        return self._copy_common_to(c)
+
+    # [Stage2] 기하 리베이크 — 네모·원과 동일(로컬 AABB setRect).
+    def _capture_geom_local(self):
+        return QRectF(self.rect())
+
+    def _apply_geom_local(self, g):
+        self.setRect(g)
+
+    def rebake_scene(self, fn):
+        r = self.rect()
+        pts = [self._rebake_pt(fn, c) for c in
+               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        self.prepareGeometryChange()
+        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
+
+    def _stretch_grips(self):   # [Stage2b] grip = 외접 사각 네 모서리(네모와 동일).
+        r = self.rect()
+        return [self.mapToScene(c) for c in
+                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+
+    def _base_shape(self):
+        # 속 빈 심볼(NoBrush)은 외곽선만 클릭 영역으로(네모와 동일 — 안에서 화살표 시작 가능),
+        # 채움이 있으면 심볼 전체가 클릭 영역.
+        path = self._sym_path()
+        if self.brush().style() != Qt.BrushStyle.NoBrush:
+            return path
+        stroker = QPainterPathStroker()
+        stroker.setWidth(max(self.pen().widthF(), self._EDGE_HIT_MIN / self._scale_or_1()))
+        return stroker.createStroke(path)
+
+    def paint(self, painter, option, widget=None):
+        # 네모의 _paint_base_no_select(super().paint()가 사각을 그림) 대신 심볼 경로를 직접 그린다.
+        painter.setPen(self.pen())
+        painter.setBrush(self.brush())
+        painter.drawPath(self._sym_path())
+        if self.isSelected():
+            _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
+        self._paint_handle(painter)
+
+
+# ---------------------------------------------------------------------------
 # [우리 확장] 선·화살표 라벨 — 본체에 '부착'되어 함께 이동하는 자식 텍스트
 # ---------------------------------------------------------------------------
 class _LabelMixin:
@@ -2059,7 +2204,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         for it in sc.items():
             if it is self._bind_start or it is self._bind_end:
                 continue
-            if isinstance(it, (_RectItem, _EllipseItem)):
+            if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem)):
                 out.append(it.mapRectToScene(it.rect()))
         return out
 
@@ -2565,13 +2710,52 @@ def _ellipse_nearest(r, p):
     return q, QPointF(nx / L, ny / L)
 
 
+def _seg_nearest(a: QPointF, b: QPointF, p: QPointF) -> QPointF:
+    """선분 a-b 위에서 점 p 최근접점(로컬)."""
+    abx, aby = b.x() - a.x(), b.y() - a.y()
+    denom = abx * abx + aby * aby
+    if denom < 1e-12:
+        return QPointF(a)
+    t = ((p.x() - a.x()) * abx + (p.y() - a.y()) * aby) / denom
+    t = max(0.0, min(1.0, t))
+    return QPointF(a.x() + t * abx, a.y() + t * aby)
+
+
+def _symbol_nearest(item, p):
+    """심볼의 실제 외곽선(_sym_path)에서 점 p(로컬) 최근접점 + 바깥 단위 법선(로컬).
+    경로를 폴리곤으로 평탄화(곡선 포함)해 각 변에서 최근접점을 찾고, 법선은 중심 반대쪽(바깥)으로
+    향한다. 마름모·평행사변형처럼 외접 박스와 어긋나는 도형도 '보이는 외곽선'에 정확히 스냅한다."""
+    path = item._sym_path()
+    c = item.rect().center()
+    best_q = None
+    best_seg = None
+    best_d = float("inf")
+    for poly in path.toSubpathPolygons():
+        for i in range(poly.count() - 1):
+            a, b = poly.at(i), poly.at(i + 1)
+            q = _seg_nearest(a, b, p)
+            d = (q.x() - p.x()) ** 2 + (q.y() - p.y()) ** 2
+            if d < best_d:
+                best_d, best_q, best_seg = d, q, (a, b)
+    if best_q is None:                       # 방어(빈 경로) — 박스 폴백
+        return _rect_nearest(item.rect(), p)
+    a, b = best_seg
+    nx, ny = -(b.y() - a.y()), (b.x() - a.x())   # 변에 수직
+    if (best_q.x() - c.x()) * nx + (best_q.y() - c.y()) * ny < 0:
+        nx, ny = -nx, -ny                        # 중심 반대(바깥)로 정렬
+    L = math.hypot(nx, ny) or 1.0
+    return best_q, QPointF(nx / L, ny / L)
+
+
 def _nearest_border(item, scene_pt):
-    """네모/원 테두리에서 scene_pt 최근접점 → (snap_scene, outward_unit_scene).
+    """네모/원/심볼 테두리에서 scene_pt 최근접점 → (snap_scene, outward_unit_scene).
     회전·스케일은 아이템 변환으로 왕복 환산(바깥 법선도 씬 방향으로 변환)."""
     p = item.mapFromScene(scene_pt)
     r = item.rect()
     if isinstance(item, _EllipseItem):
         q, n = _ellipse_nearest(r, p)
+    elif isinstance(item, _SymbolItem):
+        q, n = _symbol_nearest(item, p)
     else:
         q, n = _rect_nearest(r, p)
     sp = item.mapToScene(q)
@@ -3462,9 +3646,9 @@ class _AnnotatorView(QGraphicsView):
         return math.hypot(vp.x() - view_pos.x(), vp.y() - view_pos.y())
 
     def _conn_shapes(self):
-        """씬의 네모·원 아이템(위→아래 순)."""
+        """씬의 네모·원·심볼 아이템(위→아래 순) — 화살표 테두리 스냅·지속연결 대상."""
         return [it for it in self.scene().items()
-                if isinstance(it, (_RectItem, _EllipseItem))]
+                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
 
     def _border_snap_at(self, view_pos):
         """커서가 어떤 네모/원 테두리에서 _BORDER_SNAP_PX 이내면 (snap_scene, exit_unit, shape),
@@ -3838,6 +4022,12 @@ class _AnnotatorView(QGraphicsView):
             it.setPen(pen)
             it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
             self._begin_draw(it)
+        elif tool.startswith("sym:"):
+            # [우리 확장] 심볼/스텐실 — 네모와 동일한 드래그 그리기(setRect 기반).
+            it = _SymbolItem(tool[4:], QRectF(sp, sp))
+            it.setPen(pen)
+            it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            self._begin_draw(it)
         elif tool == "ellipse":
             it = _EllipseItem(QRectF(sp, sp))
             it.setPen(pen)
@@ -3974,7 +4164,7 @@ class _AnnotatorView(QGraphicsView):
             self.viewport().update()   # 스냅 마커 갱신
             return
         sp = self._cur_point(event)
-        if tool in ("rect", "ellipse"):
+        if tool in ("rect", "ellipse") or tool.startswith("sym:"):
             item.setRect(QRectF(self._start, sp).normalized())
         elif tool == "line":
             item.setLine(QLineF(self._start, sp))
@@ -4001,7 +4191,7 @@ class _AnnotatorView(QGraphicsView):
 
     def _place_nondegenerate(self, it, tool) -> bool:
         """2점 도구가 '점 하나'로 퇴화하지 않았는지(너무 작지 않은지)."""
-        if tool in ("rect", "ellipse"):
+        if tool in ("rect", "ellipse") or tool.startswith("sym:"):
             r = it.rect()
             return abs(r.width()) >= 2 or abs(r.height()) >= 2
         if tool == "line":
@@ -4336,7 +4526,7 @@ class _AnnotatorView(QGraphicsView):
                 self._update_arrow_draw(event)   # 테두리 스냅 + 자동 S자
                 return
             sp = self._cur_point(event)
-            if tool in ("rect", "ellipse"):
+            if tool in ("rect", "ellipse") or tool.startswith("sym:"):
                 self._temp.setRect(QRectF(self._start, sp).normalized())
             elif tool == "line":
                 self._temp.setLine(QLineF(self._start, sp))
@@ -4414,7 +4604,7 @@ class _AnnotatorView(QGraphicsView):
             # 실제 press 지점 기준 이동량 — 시작 스냅 점프를 드래그로 오인하지 않게(버그 수정).
             moved = max(abs(release.x() - self._press_scene.x()),
                         abs(release.y() - self._press_scene.y()))
-            if tool in _SHAPE_TOOLS and moved < 4:
+            if (tool in _SHAPE_TOOLS or tool.startswith("sym:")) and moved < 4:
                 # 끌지 않은 클릭 → 폐기 대신 투클릭/멀티클릭 배치 모드로 진입(점은 유지).
                 # 곡선·직선화살 모두 테두리에서도 클릭 배치 허용(하이브리드 일관).
                 self._enter_click_place(item, tool)

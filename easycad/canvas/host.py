@@ -13,16 +13,20 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
           push_undo_add/push_undo_delete/push_undo_move/undo/
           copy_selection/paste_selection
 """
-from PyQt6.QtCore import Qt, QPointF, QSize
-from PyQt6.QtGui import QPen, QColor, QBrush, QAction, QKeySequence
+from PyQt6.QtCore import Qt, QPointF, QRectF, QSize
+from PyQt6.QtGui import (
+    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
+)
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
     QHBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
+    QDockWidget, QGridLayout,
 )
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
+    _SYMBOL_KINDS,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.document import save_document, load_document
@@ -73,6 +77,7 @@ class CanvasWindow(QMainWindow):
         lay.addWidget(self._view, 1)
         self.setCentralWidget(central)
         self._build_menu()
+        self._build_symbol_dock()
         self.set_tool("select")
 
     # ---- 메뉴 (파일 → 저장/열기/PDF) ----------------------------------------
@@ -238,6 +243,48 @@ class CanvasWindow(QMainWindow):
                            "Ctrl+0=100% · Ctrl+9=전체맞춤 · F3=스냅 · F8=직교 · Del=삭제 · Ctrl+Z=되돌리기"))
         return bar
 
+    # ---- 심볼/스텐실 팔레트 (좌측 dock) -------------------------------------
+    @staticmethod
+    def _symbol_icon(kind: str, px: int = 30) -> QIcon:
+        """심볼 경로 팩토리로 팔레트 아이콘을 그린다(캔버스 도형과 같은 모양)."""
+        pm = QPixmap(px, px)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor("#333333")); pen.setWidthF(1.6)
+        p.setPen(pen); p.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        m = 4
+        p.drawPath(_SYMBOL_KINDS[kind][1](QRectF(m, m, px - 2 * m, px - 2 * m)))
+        p.end()
+        return QIcon(pm)
+
+    def _build_symbol_dock(self):
+        dock = QDockWidget("심볼", self)
+        dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea
+                             | Qt.DockWidgetArea.RightDockWidgetArea)
+        panel = QWidget()
+        grid = QGridLayout(panel)
+        grid.setContentsMargins(6, 6, 6, 6)
+        grid.setSpacing(4)
+        self._sym_buttons: dict[str, QToolButton] = {}
+        for i, (kind, (label, _fn)) in enumerate(_SYMBOL_KINDS.items()):
+            btn = QToolButton()
+            btn.setText(label)
+            btn.setIcon(self._symbol_icon(kind))
+            btn.setIconSize(QSize(30, 30))
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            btn.setToolTip(f"{label} 심볼 — 클릭 후 캔버스에 드래그")
+            btn.setCheckable(True)
+            btn.setMinimumSize(QSize(64, 56))
+            key = f"sym:{kind}"
+            btn.clicked.connect(
+                lambda _c=False, k=key: self.set_tool(None if self.current_tool == k else k))
+            grid.addWidget(btn, i // 2, i % 2)
+            self._sym_buttons[kind] = btn
+        grid.setRowStretch(grid.rowCount(), 1)
+        dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+
     # ---- 지속 연결 리라우트 -------------------------------------------------
     def _on_scene_changed(self, region):
         if self._rerouting:
@@ -291,6 +338,9 @@ class CanvasWindow(QMainWindow):
         self.current_tool = key
         for k, b in self._tool_buttons.items():
             b.setChecked(k == key)
+        # 심볼 팔레트 버튼: 무장된 것만 체크(다른 도구 선택 시 전부 해제).
+        for k, b in getattr(self, "_sym_buttons", {}).items():
+            b.setChecked(f"sym:{k}" == key)
 
     def next_badge_number(self) -> int:
         self._badge_n += 1

@@ -18,7 +18,8 @@ from PyQt6.QtGui import QBrush, QColor, QPainterPath
 from easycad.canvas.host import CanvasWindow
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _axis_scale_fn, _mirror_fn)
+    _PolyArrowItem, _SymbolItem, _SYMBOL_KINDS, _nearest_border,
+    _axis_scale_fn, _mirror_fn)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
 
@@ -1389,6 +1390,123 @@ def test_stretch_binding_follows_crossed_side():
     w.undo()
     assert a.rect() == QRectF(0, 0, 100, 60)
     assert _close(ar.mapToScene(ar._endpoints()[0]), QPointF(100, 30))
+
+
+def test_symbol_kinds_render_and_geom():
+    # M1: 6종 심볼이 모두 경로를 만들고, rect 기반 기계(박스핸들·geom undo·clone)를 물려받는다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    assert set(_SYMBOL_KINDS) == {"decision", "terminal", "data", "prep", "document", "database"}
+    for kind in _SYMBOL_KINDS:
+        it = _SymbolItem(kind, QRectF(0, 0, 120, 80))
+        it.setPen(QPen(QColor("#ff000000"))); it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+        sc.addItem(it)
+        # 경로·경계·shape 모두 실체가 있어야(빈 도형이면 클릭/렌더 불가)
+        assert it._sym_path().elementCount() > 0, kind
+        assert not it.boundingRect().isEmpty(), kind
+        assert not it.shape().isEmpty(), kind
+        # rect 기반이라 Lucid 박스 핸들이 자동 활성(리사이즈 공짜)
+        assert it._box_handles() is True, kind
+        # geom 스냅샷 → 리사이즈 → 복원이 정확히 되돌아온다
+        tok = it.capture_geom()
+        it.setRect(QRectF(5, 5, 200, 140))
+        it.apply_geom(tok)
+        assert _close(it.rect().topLeft(), QPointF(0, 0)) and abs(it.rect().width() - 120) < 0.5, kind
+        # clone은 kind·기하·스타일 보존
+        c = it.clone()
+        assert isinstance(c, _SymbolItem) and c._kind == kind
+        assert _close(c.rect().topLeft(), it.rect().topLeft())
+
+
+def test_symbol_draw_via_tool():
+    # M2: 심볼 도구 무장 → 캔버스 드래그 → 해당 kind의 _SymbolItem이 생성·선택된다.
+    w = CanvasWindow(); w.show(); w.set_tool("sym:decision"); w._zoom_reset()
+    view = w._view
+    press, release, _click, _move, drag_move, _dbl = _draw_helpers(view)
+    press(QPointF(0, 0)); drag_move(QPointF(140, 90)); release(QPointF(140, 90))
+    syms = [it for it in w._scene.items() if isinstance(it, _SymbolItem)]
+    assert len(syms) == 1
+    s = syms[0]
+    assert s._kind == "decision"
+    r = s.mapRectToScene(s.rect())
+    assert abs(r.width() - 140) < 2 and abs(r.height() - 90) < 2
+    assert s.isSelected()
+    # 팔레트 버튼 무장 상태가 set_tool과 동기화됐는지
+    assert w._sym_buttons["decision"].isChecked()
+    w.set_tool("select")
+    assert not w._sym_buttons["decision"].isChecked()
+
+
+def test_symbol_roundtrip():
+    # M4: 심볼(kind 포함)이 .ecad 저장/열기로 무손실 왕복한다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    for i, kind in enumerate(("data", "database")):
+        it = _SymbolItem(kind, QRectF(0, 0, 100, 60))
+        p = QPen(QColor("#ff112233")); p.setWidthF(3.0)
+        it.setPen(p); it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        it.setPos(QPointF(50 * i, 20 * i)); it.setRotation(10 * i)
+        sc.addItem(it)
+    before = [item_to_dict(it) for it in reversed(sc.items())]
+    assert all(d["type"] == "symbol" for d in before)
+    path = os.path.join(_TMP, "symbols.ecad")
+    save_document(sc, path)
+    sc2 = QGraphicsScene()
+    assert load_document(sc2, path) == 2
+    after = [item_to_dict(it) for it in reversed(sc2.items())]
+    assert [d["kind"] for d in after] == ["data", "database"]
+    for b, a in zip(before, after):
+        assert b["kind"] == a["kind"] and b["type"] == a["type"]
+
+
+def test_symbol_is_arrow_connectable():
+    # self-review 갭: 순서도의 본질은 '심볼 잇는 화살표'. 심볼이 _conn_shapes/장애물에 포함돼
+    # 화살표가 테두리 스냅+지속연결로 붙어야 한다(네모와 동일 동작).
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))   # 우측 박스 테두리 x=300, 중앙 y=30
+    sym.setPen(w.make_pen()); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sym.setFlags(sym.GraphicsItemFlag.ItemIsSelectable | sym.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sym)
+    view = w._view
+    assert sym in view._conn_shapes()                        # 연결 대상 목록에 포함
+    press, release, _c, _m, drag_move, _d = _draw_helpers(view)
+    press(QPointF(0, 30)); drag_move(QPointF(305, 30)); release(QPointF(305, 30))
+    sa = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)][0]
+    assert sa.has_binding()                                  # 심볼 테두리에 부착됨
+    assert _close(sa.mapToScene(sa._pts[-1]), QPointF(300, 30)), sa.mapToScene(sa._pts[-1])
+    # 심볼을 옮기면 지속연결로 화살표 끝이 따라온다
+    sym.moveBy(40, 0)
+    w._on_scene_changed(None)
+    assert _close(sa.mapToScene(sa._pts[-1]), QPointF(340, 30)), sa.mapToScene(sa._pts[-1])
+
+
+def test_symbol_border_follows_outline():
+    # GUI 리포트 수정: 화살표 스냅이 외접 '박스'가 아니라 심볼의 '실제 외곽선'에 닿아야 한다.
+    # 마름모(판단)는 박스와 4점에서만 만나므로, 박스 기반이면 대부분 허공에 스냅돼 안 붙는다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    import math as _m
+    sc = QGraphicsScene()
+    sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))   # 중심(250,30), a=50 b=30
+    sym.setPen(QPen(QColor("#ff000000"))); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sc.addItem(sym)
+
+    def on_diamond(q):   # 마름모 경계식 |x-250|/50 + |y-30|/30 = 1
+        return abs(q.x() - 250) / 50.0 + abs(q.y() - 30) / 30.0
+
+    # 변(꼭짓점 아님) 근처의 여러 점 → 스냅점이 마름모 외곽선 위(경계식≈1)에 있어야
+    for scene_pt in (QPointF(210, 8), QPointF(288, 12), QPointF(215, 52), QPointF(285, 50)):
+        snap, n = _nearest_border(sym, scene_pt)
+        assert abs(on_diamond(snap) - 1.0) < 0.02, (scene_pt, snap, on_diamond(snap))
+        # 법선은 바깥(중심 반대)을 향한다
+        assert (snap.x() - 250) * n.x() + (snap.y() - 30) * n.y() > 0, (snap, n)
+
+    # 박스 위이되 마름모 '밖'인 점(좌상단 코너 근처)도 외곽선으로 당겨진다(박스 top y=0이 아님)
+    snap, _n = _nearest_border(sym, QPointF(205, 3))
+    assert snap.y() > 3.5, snap   # 박스 top(y=0)이 아니라 마름모 변 위로
 
 
 def _run_all():
