@@ -14,7 +14,7 @@ from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPixmap
 
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem,
+    _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem,
 )
 
 FORMAT = "easycad-doc"
@@ -118,6 +118,11 @@ def item_to_dict(it) -> dict | None:
     if isinstance(it, _TitleBlockItem):
         d.update(type="titleblock", size=it._size, orient=it._orient,
                  fields=dict(it._fields))
+    elif isinstance(it, _TableItem):
+        r = it.rect()
+        d.update(type="table", rows=it._rows, cols=it._cols, header=it._header,
+                 rect=[r.x(), r.y(), r.width(), r.height()],
+                 cells=[row[:] for row in it._cells])
     elif isinstance(it, _ImageItem):
         r = it.rect()
         d.update(type="image", rect=[r.x(), r.y(), r.width(), r.height()],
@@ -187,6 +192,9 @@ def dict_to_item(d: dict):
     if t == "titleblock":
         it = _TitleBlockItem(d.get("size", "A2"), d.get("orient", "landscape"),
                              d.get("fields"))
+    elif t == "table":
+        it = _TableItem(d.get("rows", 1), d.get("cols", 1), QRectF(*d["rect"]),
+                        d.get("cells"), d.get("header", True))
     elif t == "image":
         it = _ImageItem(_b64_to_pixmap(d["data"]), QRectF(*d["rect"]))
     elif t == "arrow":

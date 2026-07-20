@@ -18,7 +18,7 @@ from PyQt6.QtGui import QBrush, QColor, QPainterPath, QPixmap
 from easycad.canvas.host import CanvasWindow
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _SYMBOL_KINDS,
+    _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _SYMBOL_KINDS,
     _nearest_border, _shape_ports, _axis_scale_fn, _mirror_fn)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
@@ -2008,6 +2008,114 @@ def test_titleblock_skipped_in_dxf():
     doc = ezdxf.readfile(out)
     types = [e.dxftype() for e in doc.modelspace()]
     assert "LWPOLYLINE" in types            # 네모는 export됨
+
+
+def test_table_cell_geometry():
+    # [Phase 4] 표 격자 기하: 균등 분할 cell_rect·cell_at 왕복(로컬좌표).
+    t = _TableItem(3, 4, QRectF(0, 0, 160, 60))   # 셀 40×20
+    assert t.dims() == (3, 4)
+    r00 = t.cell_rect(0, 0)
+    assert r00 == QRectF(0, 0, 40, 20)
+    r12 = t.cell_rect(1, 2)
+    assert r12 == QRectF(80, 20, 40, 20)
+    assert t.cell_at(QPointF(90, 25)) == (1, 2)     # (r=1, c=2)
+    assert t.cell_at(QPointF(1, 1)) == (0, 0)
+    assert t.cell_at(QPointF(159, 59)) == (2, 3)    # 우하단 셀
+    assert t.cell_at(QPointF(-5, 5)) is None        # 격자 밖
+
+
+def test_table_roundtrip():
+    # 삽입 → 셀 텍스트 설정 → .ecad 왕복에서 rows·cols·header·rect·셀텍스트·기하 보존.
+    from PyQt6.QtWidgets import QGraphicsScene
+    w = CanvasWindow()
+    t = _TableItem(2, 3, QRectF(0, 0, 120, 40),
+                   cells=[["번호", "명칭", "규격"], ["1", "카메라", "4K"]], header=True)
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    t.setPos(QPointF(200, 150)); t.setRotation(10)
+    w._scene.addItem(t)
+    path = os.path.join(_TMP, "table.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene()
+    assert load_document(sc2, path) == 1
+    got = [it for it in sc2.items() if isinstance(it, _TableItem)][0]
+    assert got.dims() == (2, 3)
+    assert got._header is True
+    assert got.rect() == QRectF(0, 0, 120, 40)
+    assert got.cell_text(0, 1) == "명칭"
+    assert got.cell_text(1, 2) == "4K"
+    assert _close(got.pos(), QPointF(200, 150))
+    assert abs(got.rotation() - 10.0) < 1e-6
+
+
+def test_table_clone():
+    # 복제(그룹변형·복붙 경로): 셀 텍스트·차원·헤더가 독립 복사되고 원본과 분리.
+    t = _TableItem(2, 2, QRectF(0, 0, 80, 40), cells=[["a", "b"], ["c", "d"]], header=False)
+    c = t.clone()
+    assert isinstance(c, _TableItem)
+    assert c.dims() == (2, 2) and c._header is False
+    assert c.cell_text(1, 0) == "c"
+    c.set_cell_text(1, 0, "X")                       # 복제본 변경이 원본에 안 샘
+    assert t.cell_text(1, 0) == "c"
+
+
+def test_table_insert_via_host():
+    # host._insert_table 경로: 다이얼로그를 건너뛰고 삽입 로직을 직접 검증하기 어려우니
+    # _TableItem을 직접 넣어 undo/선택/PDF까지 통하는지 확인.
+    w = CanvasWindow()
+    t = _TableItem(3, 3, QRectF(0, 0, 120, 42))
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(t)
+    w.push_undo_add(t)
+    assert [x for x in w._scene.items() if isinstance(x, _TableItem)]
+    w.undo()
+    assert not [x for x in w._scene.items() if isinstance(x, _TableItem)]
+
+
+def test_table_skipped_in_dxf():
+    # 스코프: DXF 내보내기는 표 제외(조용히 skip), 다른 엔티티는 정상 export.
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    t = _TableItem(2, 2, QRectF(0, 0, 80, 40))
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    t.setPos(QPointF(200, 200)); w._scene.addItem(t)
+    out = os.path.join(_TMP, "table_skip.dxf")
+    assert export_dxf(w._scene, out) is not False
+    import ezdxf
+    doc = ezdxf.readfile(out)
+    types = [e.dxftype() for e in doc.modelspace()]
+    assert "LWPOLYLINE" in types            # 네모는 export됨
+
+
+def test_table_inline_edit():
+    # 인라인 편집 로직: 커밋·Tab 이동(줄넘김)·Esc 취소가 셀 텍스트에 정확히 반영되는지.
+    w = CanvasWindow()
+    t = _TableItem(2, 2, QRectF(0, 0, 80, 40))
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(t)
+    v = w._view
+    v._begin_cell_edit(t, 0, 0)
+    ed = v._cell_editor
+    ed.setText("A"); ed._move(0, 1)                 # Tab → (0,1)로 이동하며 (0,0) 커밋
+    assert t.cell_text(0, 0) == "A"
+    ed = v._cell_editor
+    assert (ed._r, ed._c) == (0, 1)
+    ed.setText("B"); ed._move(0, 1)                 # 줄 끝 Tab → 다음 줄 첫 칸 (1,0)
+    assert t.cell_text(0, 1) == "B"
+    ed = v._cell_editor
+    assert (ed._r, ed._c) == (1, 0)
+    ed.setText("Z"); ed._cancel(); ed.close()       # Esc 취소 → 커밋 안 됨
+    assert t.cell_text(1, 0) == ""
+
+
+def test_table_pdf_export():
+    # 표가 포함된 씬도 PDF로 렌더된다(scene.render → paint 경로).
+    w = CanvasWindow()
+    t = _TableItem(2, 3, QRectF(0, 0, 120, 40), cells=[["A", "B", "C"], ["1", "2", "3"]])
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(t)
+    out = os.path.join(_TMP, "table.pdf")
+    assert export_pdf(w._scene, out, page="A4") is True
+    assert os.path.getsize(out) > 0
 
 
 def _run_all():

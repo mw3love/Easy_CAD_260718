@@ -21,11 +21,12 @@ from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
     QHBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QDockWidget, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox,
+    QDialogButtonBox, QSpinBox, QCheckBox,
 )
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
+    _TableItem,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
 )
@@ -136,6 +137,11 @@ class CanvasWindow(QMainWindow):
         a_tb.setShortcut(QKeySequence("Ctrl+Shift+T"))
         a_tb.triggered.connect(self._insert_titleblock)
         m.addAction(a_tb)
+
+        a_tbl = QAction("표 삽입…", self)                  # Phase 4 — NxM 균등 격자 표
+        a_tbl.setShortcut(QKeySequence("Ctrl+Shift+B"))
+        a_tbl.triggered.connect(self._insert_table)
+        m.addAction(a_tbl)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
@@ -382,6 +388,29 @@ class CanvasWindow(QMainWindow):
             if isinstance(it, _TitleBlockItem):
                 return it
         return None
+
+    # ---- 표(table) 삽입 (Phase 4) -------------------------------------------
+    _CELL_W, _CELL_H = 40.0, 14.0   # 삽입 시 셀 기본 치수(mm 월드좌표)
+
+    def _insert_table(self):
+        """행·열 개수를 고르고 균등 격자 표를 삽입(뷰 중앙에 배치). 셀은 더블클릭해 인라인 편집."""
+        dlg = _TableSizeDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        rows, cols, header = dlg.result()
+        W, H = cols * self._CELL_W, rows * self._CELL_H
+        item = _TableItem(rows, cols, QRectF(0.0, 0.0, W, H), header=header)
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        item.setPos(center.x() - W / 2.0, center.y() - H / 2.0)
+        item.setFlags(item.GraphicsItemFlag.ItemIsMovable
+                      | item.GraphicsItemFlag.ItemIsSelectable)
+        self._scene.addItem(item)
+        self._scene.clearSelection()
+        item.setSelected(True)
+        self.push_undo_add(item)
+        self.set_tool("select")
+        self.statusBar().showMessage(
+            f"표 삽입: {rows}×{cols} — 셀 더블클릭해 편집(Enter/Tab 이동)", 5000)
 
     # ---- 툴바 (최소) --------------------------------------------------------
     def _build_toolbar(self) -> QWidget:
@@ -717,3 +746,31 @@ class _TitleBlockDialog(QDialog):
 
     def result_fields(self):
         return {k: ed.text() for k, ed in self._edits.items()}
+
+
+class _TableSizeDialog(QDialog):
+    """표 삽입 시 행·열 개수와 헤더 행 여부를 고르는 작은 다이얼로그."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("표 삽입")
+        form = QFormLayout(self)
+        self._rows_sb = QSpinBox(self)
+        self._rows_sb.setRange(1, 100)
+        self._rows_sb.setValue(3)
+        self._cols_sb = QSpinBox(self)
+        self._cols_sb.setRange(1, 50)
+        self._cols_sb.setValue(3)
+        self._header_cb = QCheckBox("첫 행을 헤더로(굵게)", self)
+        self._header_cb.setChecked(True)
+        form.addRow("행", self._rows_sb)
+        form.addRow("열", self._cols_sb)
+        form.addRow(self._header_cb)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        form.addRow(btns)
+
+    def result(self):
+        return self._rows_sb.value(), self._cols_sb.value(), self._header_cb.isChecked()

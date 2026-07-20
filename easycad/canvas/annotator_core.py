@@ -14,7 +14,8 @@ import struct
 import time
 
 from PyQt6.QtCore import (
-    Qt, QPoint, QPointF, QRectF, QLineF, QSize, QBuffer, QIODevice, QTimer, pyqtSignal,
+    Qt, QPoint, QPointF, QRectF, QLineF, QSize, QBuffer, QIODevice, QTimer, QEvent,
+    pyqtSignal,
 )
 from PyQt6.QtGui import (
     QPixmap, QImage, QPainter, QPen, QBrush, QColor, QPainterPath,
@@ -25,7 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget, QGraphicsScene, QGraphicsView, QGraphicsRectItem,
     QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsPathItem,
     QGraphicsTextItem, QGraphicsItem, QHBoxLayout,
-    QPushButton, QToolButton, QButtonGroup, QLabel,
+    QPushButton, QToolButton, QButtonGroup, QLabel, QLineEdit,
     QStyle, QStyleOptionGraphicsItem,
 )
 
@@ -1633,6 +1634,228 @@ class _TitleBlockItem(QGraphicsRectItem):
         if value:
             self._font_px(painter, 3.8)
             painter.drawText(cell, int(Qt.AlignmentFlag.AlignCenter), value)
+
+
+# ---------------------------------------------------------------------------
+# [우리 확장 · Phase 4] 표(table) — NxM 균등 격자 + 셀 텍스트(인라인 편집)
+# ---------------------------------------------------------------------------
+# 설계(deep-interview 2026-07-20): rect 기반이라 _ImageItem·_TitleBlockItem처럼 리사이즈·회전·
+# undo·그룹변형·PDF·복제를 그대로 상속(_HandleResizeMixin + setRect → 8핸들 자유 리사이즈).
+# 균등 비례 격자(전체 리사이즈 시 모든 열·행이 같은 비율로 스케일 — 개별 열폭 조절은 후속 스코프).
+# 셀 텍스트는 2차원 리스트(_cells[r][c]). 셀 편집은 뷰가 인라인 QLineEdit(_CellEditor)로 처리.
+# 첫 행 헤더(_header=True면 굵게+옅은 배경). DXF 제외(isinstance 체인 밖), .ecad 직렬화.
+class _TableItem(_HandleResizeMixin, QGraphicsRectItem):
+    """NxM 균등 격자 표. rect 기반 — _ImageItem과 동일한 자유 리사이즈(꼭짓점 2D·변 1축)를 상속.
+    종횡비 고정은 하지 않는다(표는 임의 비율) — 기본 _constrain_box_rect(무변형)를 그대로 쓴다."""
+
+    _LINE = QColor("#333333")
+    _INK = QColor("#111111")
+    _HEADER_FILL = QColor("#EEEEEE")
+
+    def __init__(self, rows: int, cols: int, rect: QRectF,
+                 cells: list | None = None, header: bool = True):
+        super().__init__(rect)
+        self._rows = max(1, int(rows))
+        self._cols = max(1, int(cols))
+        self._header = bool(header)
+        self._cells = self._norm_cells(cells)
+        self.setPen(QPen(Qt.PenStyle.NoPen))     # 격자·외곽은 paint가 직접 그림
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self._init_resize()
+
+    def _norm_cells(self, cells) -> list:
+        """cells를 rows×cols 문자열 격자로 정규화(부족분은 빈칸, 초과분은 잘라냄)."""
+        grid = [["" for _ in range(self._cols)] for _ in range(self._rows)]
+        if cells:
+            for r in range(min(self._rows, len(cells))):
+                row = cells[r] or []
+                for c in range(min(self._cols, len(row))):
+                    grid[r][c] = "" if row[c] is None else str(row[c])
+        return grid
+
+    # ---- 셀 접근(뷰 인라인 편집이 사용) --------------------------------------
+    def dims(self) -> tuple[int, int]:
+        return self._rows, self._cols
+
+    def cell_text(self, r: int, c: int) -> str:
+        return self._cells[r][c]
+
+    def set_cell_text(self, r: int, c: int, text: str):
+        if 0 <= r < self._rows and 0 <= c < self._cols:
+            self._cells[r][c] = str(text)
+            self.update()
+
+    # ---- 셀 기하(로컬좌표) --------------------------------------------------
+    def cell_rect(self, r: int, c: int) -> QRectF:
+        box = self.rect()
+        cw = box.width() / self._cols
+        ch = box.height() / self._rows
+        return QRectF(box.left() + c * cw, box.top() + r * ch, cw, ch)
+
+    def cell_at(self, local: QPointF):
+        """로컬좌표 local이 속한 (r, c) — 격자 밖이면 None."""
+        box = self.rect()
+        if not box.contains(local):
+            return None
+        cw = box.width() / self._cols
+        ch = box.height() / self._rows
+        if cw <= 0 or ch <= 0:
+            return None
+        c = min(max(int((local.x() - box.left()) / cw), 0), self._cols - 1)
+        r = min(max(int((local.y() - box.top()) / ch), 0), self._rows - 1)
+        return (r, c)
+
+    def clone(self):
+        c = _TableItem(self._rows, self._cols, QRectF(self.rect()),
+                       [row[:] for row in self._cells], self._header)
+        return self._copy_common_to(c)
+
+    # [Stage2] rect 기반 리베이크·grip — _ImageItem과 동일(로컬 AABB setRect).
+    def _capture_geom_local(self):
+        return QRectF(self.rect())
+
+    def _apply_geom_local(self, g):
+        self.setRect(g)
+
+    def rebake_scene(self, fn):
+        r = self.rect()
+        pts = [self._rebake_pt(fn, cc) for cc in
+               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        self.prepareGeometryChange()
+        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
+
+    def _stretch_grips(self):
+        r = self.rect()
+        return [self.mapToScene(cc) for cc in
+                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+
+    def _content_rect(self) -> QRectF:
+        return QRectF(self.rect())
+
+    @staticmethod
+    def _font_px(painter, px: float, bold: bool = False):
+        f = painter.font()
+        f.setPixelSize(max(1, int(round(px))))
+        f.setBold(bold)
+        painter.setFont(f)
+
+    def paint(self, painter, option, widget=None):
+        box = self.rect()
+        cw = box.width() / self._cols
+        ch = box.height() / self._rows
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        # 헤더 행 옅은 배경
+        if self._header:
+            painter.setPen(QPen(Qt.PenStyle.NoPen))
+            painter.setBrush(QBrush(self._HEADER_FILL))
+            painter.drawRect(QRectF(box.left(), box.top(), box.width(), ch))
+            painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        # 셀 텍스트(폰트 크기는 셀 치수에 맞춰 축소)
+        fs = max(2.0, min(ch * 0.5, cw * 0.30))
+        for r in range(self._rows):
+            for c in range(self._cols):
+                txt = self._cells[r][c]
+                if not txt:
+                    continue
+                self._font_px(painter, fs, bold=(self._header and r == 0))
+                painter.setPen(QPen(self._INK))
+                painter.drawText(
+                    self.cell_rect(r, c).adjusted(1.0, 1.0, -1.0, -1.0),
+                    int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap), txt)
+        # 내부 격자선
+        painter.setPen(QPen(self._LINE, 0.5))
+        for i in range(1, self._cols):
+            x = box.left() + i * cw
+            painter.drawLine(QPointF(x, box.top()), QPointF(x, box.bottom()))
+        for j in range(1, self._rows):
+            y = box.top() + j * ch
+            painter.drawLine(QPointF(box.left(), y), QPointF(box.right(), y))
+        # 외곽선
+        painter.setPen(QPen(self._LINE, 1.0))
+        painter.drawRect(box)
+        painter.restore()
+        if self.isSelected():
+            _draw_selection_box(painter, box, self._scale_or_1())
+        self._paint_handle(painter)
+
+
+class _CellEditor(QLineEdit):
+    """[우리 확장 · Phase 4] 표 셀 인라인 편집기 — 뷰 viewport 위에 떠서 한 셀을 편집.
+    Enter=아래 칸, Tab=오른쪽(줄 끝이면 다음 줄 첫 칸), Shift+Tab=왼쪽, Esc=취소, 포커스 상실=커밋.
+    셀 편집은 undo 스코프 밖(표제란 필드와 동일) — set_cell_text로 직접 반영."""
+
+    def __init__(self, view, item: "_TableItem", r: int, c: int):
+        super().__init__(view.viewport())
+        self._view = view
+        self._item = item
+        self._r = r
+        self._c = c
+        self._done = False
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setText(item.cell_text(r, c))
+        self.selectAll()
+        self._place()
+        self.show()
+        self.setFocus()
+
+    def _place(self):
+        """셀 rect(아이템 로컬)를 뷰 픽셀좌표로 매핑해 편집기 위치·크기 설정."""
+        cell = self._item.cell_rect(self._r, self._c)
+        pts = [self._view.mapFromScene(self._item.mapToScene(p)) for p in
+               (cell.topLeft(), cell.topRight(), cell.bottomRight(), cell.bottomLeft())]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        self.setGeometry(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+    def _commit(self):
+        if not self._done:
+            self._done = True
+            self._item.set_cell_text(self._r, self._c, self.text())
+
+    def _cancel(self):
+        self._done = True   # 커밋하지 않고 닫기
+
+    def _move(self, dr: int, dc: int):
+        rows, cols = self._item.dims()
+        r, c = self._r + dr, self._c + dc
+        while c >= cols:       # Tab 줄넘김(오른쪽 끝 → 다음 줄 첫 칸)
+            c -= cols
+            r += 1
+        while c < 0:           # Shift+Tab 줄넘김(왼쪽 끝 → 이전 줄 마지막 칸)
+            c += cols
+            r -= 1
+        self._commit()
+        self.close()
+        if 0 <= r < rows and 0 <= c < cols:
+            self._view._begin_cell_edit(self._item, r, c)
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._move(1, 0)
+            return
+        if key == Qt.Key.Key_Escape:
+            self._cancel()
+            self.close()
+            return
+        super().keyPressEvent(event)
+
+    def event(self, e):
+        # Tab/Backtab은 위젯 포커스 순회로 먼저 소비되므로 event()에서 가로챈다.
+        if e.type() == QEvent.Type.KeyPress and e.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            self._move(0, 1 if e.key() == Qt.Key.Key_Tab else -1)
+            return True
+        return super().event(e)
+
+    def focusOutEvent(self, event):
+        self._commit()
+        self.close()
+        super().focusOutEvent(event)
 
 
 class _LineItem(_LabelMixin, _HandleResizeMixin, QGraphicsLineItem):
@@ -4986,6 +5209,22 @@ class _AnnotatorView(QGraphicsView):
                 return None
         return None
 
+    def _table_cell_at(self, view_pos):
+        """[우리 확장 · Phase 4] view_pos 아래의 표 셀 (item, r, c) — 표가 없거나 격자 밖이면 None.
+        표 위에 다른 선택형 아이템이 얹혀 있으면(위 stacking) 그쪽 우선이라 None."""
+        scene_pt = self.mapToScene(view_pos)
+        for it in self.items(view_pos):
+            if isinstance(it, _TableItem):
+                rc = it.cell_at(it.mapFromScene(scene_pt))
+                return (it, rc[0], rc[1]) if rc is not None else None
+            if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
+                return None
+        return None
+
+    def _begin_cell_edit(self, item, r, c):
+        """[우리 확장 · Phase 4] 표 셀 (r, c)에 인라인 편집기를 띄운다."""
+        self._cell_editor = _CellEditor(self, item, r, c)
+
     def _begin_label_edit(self, item):
         """[우리 확장] 선/화살표의 라벨을 생성(없으면)하고 편집 모드로 진입."""
         new = not item._label_alive()
@@ -5017,6 +5256,13 @@ class _AnnotatorView(QGraphicsView):
             tb = self._titleblock_at(event.position().toPoint())
             if tb is not None and hasattr(self._owner, "_edit_titleblock"):
                 self._owner._edit_titleblock(tb)
+                event.accept()
+                return
+        # [우리 확장 · Phase 4] 표 셀 더블클릭 = 인라인 편집(엑셀식).
+        if event.button() == Qt.MouseButton.LeftButton:
+            hit = self._table_cell_at(event.position().toPoint())
+            if hit is not None:
+                self._begin_cell_edit(*hit)
                 event.accept()
                 return
         # [우리 확장] 선/화살표 더블클릭 = 라벨 달기/편집(위에 다른 선택형이 없을 때만).
