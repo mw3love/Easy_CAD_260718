@@ -2352,6 +2352,25 @@ def test_sketch_arrow_port_side_hint():
         pass
 
 
+def test_sketch_arrow_outer_channel():
+    # 긴 루프백을 외곽 채널로 우회: channel_x면 명시 4점 경로 + auto_route=False
+    # (코어 라우터가 다른 화살표를 장애물로 안 봐 생기는 내부 교차를 손수 회피).
+    s = Sketch()
+    a = s.box(0, 0, 100, 60, "A")          # A E=(100,30)
+    b = s.box(0, 400, 100, 60, "B")        # B E=(100,430)
+    s.arrow(b, a, from_side="E", to_side="E", channel_x=300)
+    ar = s.to_dict()["items"][2]
+    assert ar["auto_route"] is False
+    assert ar["pts"] == [[100.0, 430.0], [300.0, 430.0], [300.0, 30.0], [100.0, 30.0]]
+    assert ar["bind1"] == 1 and ar["bind2"] == 0        # 바인딩은 유지(끝점 추종)
+    # 채널 2개 동시 지정은 실패
+    try:
+        s.arrow(a, b, channel_x=1, channel_y=1)
+        assert False, "channel_x/y 동시 지정이 통과됨"
+    except ValueError:
+        pass
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

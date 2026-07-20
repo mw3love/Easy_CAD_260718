@@ -145,7 +145,7 @@ class Sketch:
 
     # ---- 화살표 -----------------------------------------------------------
     def arrow(self, src: Node, dst: Node, label=None, *, head=True,
-              from_side=None, to_side=None,
+              from_side=None, to_side=None, channel_x=None, channel_y=None,
               color=_DEFAULT_COLOR, width=_DEFAULT_WIDTH) -> None:
         """src→dst 직선 화살표(_PolyArrowItem). 양 끝을 도형 변 중점 포트에 **지속연결**하고
         auto_route=True로 둬, 앱이 열릴 때 씬 신호로 직교 엘보를 자동 재계산한다(도형을 옮기면 추종).
@@ -154,13 +154,32 @@ class Sketch:
         from_side/to_side(N·E·S·W)로 접속 변을 **명시**할 수 있다(생략 시 상대 도형을 향하는 최근접
         변). ⚠ 밀집 순서도에서 필요: ⓐ 정렬된 두 노드의 **피드백 루프**는 양끝을 같은 측면으로 빼야
         본선과 안 겹친다(예: 아래→위 루프에 from_side="E", to_side="E") ⓑ 한 노드에 여러 화살표가
-        같은 변으로 들어와 겹칠 때 서로 다른 변으로 분산."""
+        같은 변으로 들어와 겹칠 때 서로 다른 변으로 분산.
+
+        channel_x/channel_y로 **외곽 채널 우회**를 준다(둘 중 하나만). 긴 루프백이 내부를 가로질러
+        다른 화살표와 겹치는 걸 막으려, 자동 라우팅 대신 지정 좌표까지 빼서 도는 명시 경로를 쓴다.
+        channel_x=X: 양끝을 x=X 세로 채널로(우회) → [p1,(X,p1y),(X,p2y),p2]. channel_y=Y: 가로 채널.
+        ⚠ 코어 라우터는 다른 화살표를 장애물로 안 보므로(되먹임 위험), 긴 루프백은 이걸로 손수 우회한다.
+        채널을 주면 auto_route=False(도형 이동 시 끝점만 추종, 채널 경로는 고정)."""
+        if channel_x is not None and channel_y is not None:
+            raise ValueError("channel_x와 channel_y는 동시에 줄 수 없다(둘 중 하나)")
         p1 = src.port(from_side) if from_side else src._port_facing(dst.cx, dst.cy)
         p2 = dst.port(to_side) if to_side else dst._port_facing(src.cx, src.cy)
+        if channel_x is not None:
+            pts = [[p1[0], p1[1]], [float(channel_x), p1[1]],
+                   [float(channel_x), p2[1]], [p2[0], p2[1]]]
+            auto = False
+        elif channel_y is not None:
+            pts = [[p1[0], p1[1]], [p1[0], float(channel_y)],
+                   [p2[0], float(channel_y)], [p2[0], p2[1]]]
+            auto = False
+        else:
+            pts = [[p1[0], p1[1]], [p2[0], p2[1]]]
+            auto = True
         d = self._common()
-        d.update(type="sarrow", pts=[[p1[0], p1[1]], [p2[0], p2[1]]],
+        d.update(type="sarrow", pts=pts,
                  color=_argb(color), width=float(width), head=bool(head),
-                 auto_route=True,
+                 auto_route=auto,
                  bind1=src.idx, bind1_pt=[p1[0], p1[1]],   # 시작=idx0 → src 로컬 부착점(==씬)
                  bind2=dst.idx, bind2_pt=[p2[0], p2[1]])   # 끝=idx last → dst 로컬 부착점
         if label:
