@@ -46,7 +46,24 @@ def _color(e) -> QColor:
     return QColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
 
 
-def _pen(e, width: float = 1.0) -> QPen:
+_APPID = "EASYCAD"
+
+
+def _width_of(e, default: float = 1.0) -> float:
+    """export가 실은 펜 두께 XDATA(AppID EASYCAD, 코드 1040) 복원. 없으면 기본값."""
+    try:
+        if e.has_xdata(_APPID):
+            for code, val in e.get_xdata(_APPID):
+                if code == 1040:
+                    return float(val)
+    except Exception:  # noqa: BLE001 — XDATA 없음/형식 이상은 기본값으로
+        pass
+    return default
+
+
+def _pen(e, width: float = None) -> QPen:
+    if width is None:
+        width = _width_of(e)
     p = QPen(_color(e))
     p.setWidthF(width)
     p.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -143,7 +160,7 @@ def _match_head(p_start, p_end, tips) -> bool:
 
 def _arrow_from_spline(e, head_at_end: bool):
     cps = [_uf(p[0], p[1]) for p in e.control_points]
-    it = _ArrowItem(_color(e), 2.0, head_at_end)   # 폭은 DXF에 안 실려 기본값(왕복 근사)
+    it = _ArrowItem(_color(e), _width_of(e, 2.0), head_at_end)
     it.set_points(QPointF(*cps[0]), QPointF(*cps[-1]))
     if len(cps) >= 4:
         it._ctrl1 = QPointF(*cps[1])
@@ -154,13 +171,13 @@ def _arrow_from_spline(e, head_at_end: bool):
 def _arrow_from_line(e, head_at_end: bool):
     s = _uf(e.dxf.start.x, e.dxf.start.y)
     t = _uf(e.dxf.end.x, e.dxf.end.y)
-    it = _ArrowItem(_color(e), 2.0, head_at_end)
+    it = _ArrowItem(_color(e), _width_of(e, 2.0), head_at_end)
     it.set_points(QPointF(*s), QPointF(*t))
     return _flag(it)
 
 
 def _sarrow_item(pts, e, head_at_end: bool):
-    it = _PolyArrowItem(_color(e), 2.0, head_at_end)
+    it = _PolyArrowItem(_color(e), _width_of(e, 2.0), head_at_end)
     it._pts = [QPointF(x, y) for x, y in pts]
     return _flag(it)
 

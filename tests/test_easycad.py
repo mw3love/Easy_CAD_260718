@@ -1766,12 +1766,17 @@ def test_dxf_import_roundtrip():
     egot = {tuple(_rect_world_corners(e)) for e in ells}
     assert egot == ewant, (egot, ewant)
 
-    # 선 — 끝점 집합 일치.
+    # 선 — 끝점 집합 일치 + 펜 두께(XDATA) 보존.
     lines = [it for it in sc2.items() if isinstance(it, _LineItem)]
     assert len(lines) == 1
     ln = lines[0].line()
     ends = sorted([(round(ln.x1(), 1), round(ln.y1(), 1)), (round(ln.x2(), 1), round(ln.y2(), 1))])
     assert ends == sorted([(0.0, 0.0), (100.0, 50.0)]), ends
+    assert abs(lines[0].pen().widthF() - 3.0) < 1e-6, lines[0].pen().widthF()
+
+    # 펜 두께 왕복 — 네모(3)·화살표(6)·직교화살(6)이 XDATA로 보존(기본값 1로 얇아지지 않음).
+    r_thick = [r for r in rects if abs(r.pen().widthF() - 3.0) < 1e-6]
+    assert len(r_thick) == 2, [r.pen().widthF() for r in rects]
 
     # 곡선 화살표 — 끝점+제어점(월드) 보존, 방향 복원.
     arrows = [it for it in sc2.items() if isinstance(it, _ArrowItem)]
@@ -1782,6 +1787,7 @@ def test_dxf_import_roundtrip():
     assert _close(c.mapToScene(c._p1), QPointF(0, 0)) and _close(c.mapToScene(c._p2), QPointF(100, 40))
     assert _close(c.mapToScene(c._ctrl1), QPointF(30, -20)) and _close(c.mapToScene(c._ctrl2), QPointF(70, 60))
     assert c._head_at_end is True
+    assert abs(c._width - 6.0) < 1e-6, c._width          # 화살표 폭 XDATA 보존
     straight = [a for a in arrows if a._ctrl1 is None][0]
     assert straight._head_at_end is False, "시작쪽 촉 방향이 복원돼야(무시+방향복원)"
 

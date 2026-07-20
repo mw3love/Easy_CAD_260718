@@ -55,6 +55,20 @@ def _attrs(layer: str, color) -> dict:
     return {"layer": layer, "true_color": _true_color(color)}
 
 
+# 펜 두께는 DXF 표준 lineweight가 enum으로 스냅돼(6→9) 무손실 왕복이 안 되므로,
+# 앱 전용 XDATA(AppID EASYCAD, 코드 1040 float)로 실어 import가 정확히 복원하게 한다.
+_APPID = "EASYCAD"
+
+
+def _wx(entity, width):
+    """생성된 엔티티에 펜 두께를 XDATA로 부착 후 그대로 반환."""
+    try:
+        entity.set_xdata(_APPID, [(1040, float(width))])
+    except Exception:  # noqa: BLE001 — 두께 부착 실패가 export를 막지 않게
+        pass
+    return entity
+
+
 def _unit(dx: float, dy: float):
     n = (dx * dx + dy * dy) ** 0.5
     return (dx / n, dy / n) if n > 1e-9 else (0.0, 0.0)
@@ -84,14 +98,15 @@ def _export_symbol(msp, it):
         closed = (abs(pts[0][0] - pts[-1][0]) < 1e-6 and abs(pts[0][1] - pts[-1][1]) < 1e-6)
         if closed:
             pts = pts[:-1]
-        msp.add_lwpolyline(pts, close=closed, dxfattribs=attrs)
+        _wx(msp.add_lwpolyline(pts, close=closed, dxfattribs=attrs), it.pen().widthF())
 
 
 def _export_rect(msp, it):
     r = it.rect()
     pts = [_w(it, r.left(), r.top()), _w(it, r.right(), r.top()),
            _w(it, r.right(), r.bottom()), _w(it, r.left(), r.bottom())]
-    msp.add_lwpolyline(pts, close=True, dxfattribs=_attrs(_LAYERS["rect"], it.pen().color()))
+    _wx(msp.add_lwpolyline(pts, close=True, dxfattribs=_attrs(_LAYERS["rect"], it.pen().color())),
+        it.pen().widthF())
 
 
 def _export_ellipse(msp, it):
@@ -106,17 +121,17 @@ def _export_ellipse(msp, it):
     la = (va[0] ** 2 + va[1] ** 2) ** 0.5
     lb = (vb[0] ** 2 + vb[1] ** 2) ** 0.5
     if abs(la - lb) < 1e-6:
-        msp.add_circle((cx, cy), la, dxfattribs=attrs)
+        _wx(msp.add_circle((cx, cy), la, dxfattribs=attrs), it.pen().widthF())
         return
     major, minor = (va, lb / la) if la >= lb else (vb, la / lb)
-    msp.add_ellipse((cx, cy), major_axis=(major[0], major[1], 0.0),
-                    ratio=minor, dxfattribs=attrs)
+    _wx(msp.add_ellipse((cx, cy), major_axis=(major[0], major[1], 0.0),
+                        ratio=minor, dxfattribs=attrs), it.pen().widthF())
 
 
 def _export_line(msp, it):
     ln = it.line()
-    msp.add_line(_w(it, ln.x1(), ln.y1()), _w(it, ln.x2(), ln.y2()),
-                 dxfattribs=_attrs(_LAYERS["line"], it.pen().color()))
+    _wx(msp.add_line(_w(it, ln.x1(), ln.y1()), _w(it, ln.x2(), ln.y2()),
+                     dxfattribs=_attrs(_LAYERS["line"], it.pen().color())), it.pen().widthF())
 
 
 def _export_arrow(msp, it):
@@ -127,9 +142,9 @@ def _export_arrow(msp, it):
         # 3차 베지어 = 4점 클램프 B-스플라인(degree 3, open uniform 노트).
         ctrl = [_w(it, *p1), _w(it, it._ctrl1.x(), it._ctrl1.y()),
                 _w(it, it._ctrl2.x(), it._ctrl2.y()), _w(it, *p2)]
-        msp.add_open_spline(ctrl, degree=3, dxfattribs=attrs)
+        _wx(msp.add_open_spline(ctrl, degree=3, dxfattribs=attrs), it._width)
     else:
-        msp.add_line(_w(it, *p1), _w(it, *p2), dxfattribs=attrs)
+        _wx(msp.add_line(_w(it, *p1), _w(it, *p2), dxfattribs=attrs), it._width)
     if it._head_at_end:
         near = it._ctrl2 if it._ctrl2 is not None else it._p1
         _arrowhead(msp, _w(it, *p2), _w(it, near.x(), near.y()), it._width, attrs)
@@ -142,7 +157,7 @@ def _export_sarrow(msp, it):
     attrs = _attrs(_LAYERS["sarrow"], it._color)
     pts = [_w(it, p.x(), p.y()) for p in it._pts]
     if len(pts) >= 2:
-        msp.add_lwpolyline(pts, close=False, dxfattribs=attrs)
+        _wx(msp.add_lwpolyline(pts, close=False, dxfattribs=attrs), it._width)
         if it._head_at_end:
             _arrowhead(msp, pts[-1], pts[-2], it._width, attrs)
         else:
@@ -160,13 +175,13 @@ def _export_path(msp, it):
         if e.type == ET.MoveToElement:
             cur = (e.x, e.y); i += 1
         elif e.type == ET.LineToElement:
-            msp.add_line(_w(it, *cur), _w(it, e.x, e.y), dxfattribs=attrs)
+            _wx(msp.add_line(_w(it, *cur), _w(it, e.x, e.y), dxfattribs=attrs), it.pen().widthF())
             cur = (e.x, e.y); i += 1
         elif e.type == ET.CurveToElement:
             c2 = path.elementAt(i + 1)
             ep = path.elementAt(i + 2)
             ctrl = [_w(it, *cur), _w(it, e.x, e.y), _w(it, c2.x, c2.y), _w(it, ep.x, ep.y)]
-            msp.add_open_spline(ctrl, degree=3, dxfattribs=attrs)
+            _wx(msp.add_open_spline(ctrl, degree=3, dxfattribs=attrs), it.pen().widthF())
             cur = (ep.x, ep.y); i += 3
         else:
             i += 1
@@ -203,6 +218,8 @@ def export_dxf(scene, path: str) -> bool:
     """
     import ezdxf
     doc = ezdxf.new("R2010")             # true_color·MTEXT·SPLINE 지원 버전
+    if not doc.appids.has_entry(_APPID):  # 펜 두께 XDATA용 AppID
+        doc.appids.add(_APPID)
     for name in _LAYERS.values():
         doc.layers.add(name)
     msp = doc.modelspace()
