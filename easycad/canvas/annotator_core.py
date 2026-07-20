@@ -2647,6 +2647,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         return True
 
     _ROUTE_CLEARANCE = 12.0   # [Stage2] 라우팅이 장애물에서 유지할 여유(scene 단위)
+    _ARROW_CROSS_PENALTY = 200.0   # [Stage3] 다른 화살표를 가로지를 때 A* 간선에 더할 soft 벌점
 
     # ---- [A3] 지속 연결(도형 테두리 부착) — 곡선화살표 인프라 재사용 --------
     def _connects_to_border(self):
@@ -2743,7 +2744,9 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         ne = self._bound_normal_scene(end_idx)
         # [Stage2] 장애물(양끝 바인딩 도형 제외)을 피하는 직교 경로. 장애물이 없거나 Stage1
         # 엘보가 이미 안전하면 Stage1과 동일 결과 → 아래 무변경 가드가 되먹임 루프를 끊는다.
-        mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE)
+        mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
+                            avoid_segs=self._obstacle_arrow_segs(),
+                            cross_penalty=self._ARROW_CROSS_PENALTY)
         new_scene = _dedup_pts([s] + mids + [e])
         new_local = [self.mapFromScene(p) for p in new_scene]
         if len(new_local) == len(self._pts) and all(
@@ -2769,6 +2772,22 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem)):
                 out.append(it.mapRectToScene(it.rect()))
         return out
+
+    def _obstacle_arrow_segs(self):
+        """[Stage3] soft 회피용 — 다른 화살표(self 제외)의 렌더 폴리라인을 씬좌표 선분 리스트로.
+        _PolyArrowItem=엘보 전체 정점, _ArrowItem=양끝 코드(베지어는 직선 근사). 장애물이 아니라
+        비용에만 반영하므로 self의 현재 경로는 넣지 않는다(되먹임 방지). scene 없으면 빈 리스트."""
+        sc = self.scene()
+        if sc is None:
+            return []
+        segs = []
+        for it in sc.items():
+            if it is self or not isinstance(it, (_ArrowItem, _PolyArrowItem)):
+                continue
+            pts = [it.mapToScene(p) for p in it._endpoints()]
+            for i in range(len(pts) - 1):
+                segs.append((pts[i], pts[i + 1]))
+        return segs
 
     def _on_endpoint_drag_start(self, idx):
         # [Stage1] 정점 핸들을 손으로 잡는 순간 자동 라우팅 해제 — 이후 경로는 사용자 소유(수동).
@@ -3426,7 +3445,35 @@ def _normal_stub(p: QPointF, n, d: float) -> QPointF:
     return QPointF(p.x(), p.y() + (d if n.y() >= 0 else -d))
 
 
-def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6):
+# ---- [Stage3] 화살표-화살표 soft 회피 — 세그먼트 교차 판정/집계 --------------------
+def _seg_cross_seg(a: QPointF, b: QPointF, c: QPointF, d: QPointF, eps=1e-9) -> bool:
+    """두 선분 a-b, c-d의 '내부'가 진짜로 가로지르면 True. 끝점 공유·공선 접촉은 비교차로
+    본다(끝점을 공유하는 화살표들이 부착 도형 근처에서 만나는 것을 교차로 오판하지 않게).
+    orientation 4-부호(양쪽 모두 엄격히 반대 부호일 때만 교차)."""
+    def orient(p, q, r):
+        return (q.x() - p.x()) * (r.y() - p.y()) - (q.y() - p.y()) * (r.x() - p.x())
+    o1, o2 = orient(a, b, c), orient(a, b, d)
+    o3, o4 = orient(c, d, a), orient(c, d, b)
+    ab_split = (o1 > eps and o2 < -eps) or (o1 < -eps and o2 > eps)
+    cd_split = (o3 > eps and o4 < -eps) or (o3 < -eps and o4 > eps)
+    return ab_split and cd_split
+
+
+def _count_seg_crossings(pts, segs) -> int:
+    """폴리라인 pts가 회피 세그먼트 segs를 가로지르는 총 횟수(soft 벌점·진단 공용)."""
+    if not segs:
+        return 0
+    n = 0
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]
+        for c, d in segs:
+            if _seg_cross_seg(a, b, c, d):
+                n += 1
+    return n
+
+
+def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6,
+                 avoid_segs=(), cross_penalty=0.0):
     """[Stage2 승격] Hanan 그리드 위의 직교 A*. 팽창 장애물(infl)을 관통하지 않는 최단 직각
     경로의 '중간 정점'을 반환(없으면 None). 후보 스캔과 달리 임의 밀집 배치에서도 경로가
     존재하면 반드시 찾는다(Hanan 그리드 완전성: 직교 우회로가 있으면 장애물 모서리선 위에도 있다).
@@ -3434,7 +3481,14 @@ def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6):
     격자선 = {start·goal 좌표} ∪ {각 장애물의 left/right(세로선)·top/bottom(가로선)}.
     노드는 이 선들의 교점, 간선은 인접 노드 사이 축정렬 선분(_seg_hits_rect로 관통 검사).
     회전 벌점(clearance*0.5)으로 엘보 수를 최소화해 경로를 깔끔하게. 상태에 진행축을 넣어
-    벌점을 정확히 계산(Manhattan 휴리스틱은 벌점을 무시 → admissible)."""
+    벌점을 정확히 계산(Manhattan 휴리스틱은 벌점을 무시 → admissible).
+
+    [Stage3] avoid_segs(다른 화살표 세그먼트, 씬좌표)는 hard 장애물이 아니라 soft다:
+    간선이 그걸 가로지르면 cross_penalty를 g에 가산(교차 최소화). 우회 레인은 도형 팽창 모서리
+    격자선에서 나온다. ⚠ 화살표 좌표는 격자선에 넣지 않는다 — 넣으면 A* 노드가 교차점에 정확히
+    얹혀 교차가 '끝점 접촉'이 되고 _seg_cross_seg가 이를 비교차로 처리해 벌점이 눈머는 함정.
+    벌점은 비용에만 더하므로 Manhattan 휴리스틱은 여전히 admissible(과대추정 없음).
+    avoid_segs가 비면 기존 순수 도형회피와 동일(무회귀)."""
     xs = sorted({start.x(), goal.x(), *(v for r in infl for v in (r.left(), r.right()))})
     ys = sorted({start.y(), goal.y(), *(v for r in infl for v in (r.top(), r.bottom()))})
     nx, ny = len(xs), len(ys)
@@ -3474,7 +3528,11 @@ def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6):
                 continue
             step = abs(xs[jx] - xs[ix]) + abs(ys[jy] - ys[iy])
             turn = turn_cost if (axis != 0 and axis != nax) else 0.0
-            ng = g + step + turn
+            pen = 0.0
+            if cross_penalty and avoid_segs:   # [Stage3] soft: 다른 화살표를 가로지르면 벌점
+                ea, eb = QPointF(xs[ix], ys[iy]), QPointF(xs[jx], ys[jy])
+                pen = cross_penalty * sum(1 for c, d in avoid_segs if _seg_cross_seg(ea, eb, c, d))
+            ng = g + step + turn + pen
             nst = (jx, jy, nax)
             if ng < dist.get(nst, float("inf")):
                 dist[nst] = ng
@@ -3493,35 +3551,59 @@ def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6):
     return path[1:-1]
 
 
-def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0):
+def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
+                 avoid_segs=(), cross_penalty=0.0):
     """[Stage2 승격] Stage1 엘보(_ortho_elbow)를 우선하되, 그 경로가 장애물을 관통하면
     Hanan 그리드 A*(_astar_ortho)로 우회로를 찾아 '중간 정점'을 반환.
-      · 장애물 없음 또는 Stage1이 이미 안전 → Stage1 그대로(무변경 보장, 되먹임 없음).
-      · 관통 시 → 법선 스텁을 씌운 A* → (실패 시) 스텁 없는 A* → (실패 시) Stage1 폴백.
+      · 장애물 없음 또는 Stage1이 이미 안전(도형·화살표 모두) → Stage1 그대로(무변경·되먹임 없음).
+      · 관통/교차 시 → 법선 스텁을 씌운 A* → (실패 시) 스텁 없는 A* → (실패 시) Stage1 폴백.
     후보 스캔(구현 (b))과 달리 밀집 배치에서도 우회로가 존재하면 반드시 찾는다(그리드 완전성).
-    obstacles: scene 좌표 사각형(양끝 바인딩 도형은 호출부에서 이미 제외). clearance만큼 팽창해 여유 확보."""
+    obstacles: scene 좌표 사각형(양끝 바인딩 도형은 호출부에서 이미 제외). clearance만큼 팽창해 여유 확보.
+    [Stage3] avoid_segs/cross_penalty: 도형은 hard(관통 금지), 다른 화살표는 soft(교차 최소화).
+    preferred가 도형은 안전하나 화살표를 가로지르면 A* 우회를 시도하되, 교차를 실제로 줄일 때만
+    채택(개선 없으면 preferred 유지 → 불필요한 우회·되먹임 방지)."""
     preferred = _ortho_elbow(s, e, ns, ne)
-    if not obstacles:
-        return preferred
-    infl = [r.adjusted(-clearance, -clearance, clearance, clearance) for r in obstacles]
-    if not _path_hits_rects([s] + preferred + [e], infl):
+    infl = ([r.adjusted(-clearance, -clearance, clearance, clearance) for r in obstacles]
+            if obstacles else [])
+    pref_hits_shape = _path_hits_rects([s] + preferred + [e], infl) if infl else False
+    pref_cross = _count_seg_crossings([s] + preferred + [e], avoid_segs)
+    # preferred가 도형 안전 + 화살표 교차 없음 → 그대로(기존 무변경 보장).
+    if not pref_hits_shape and pref_cross == 0:
         return preferred
     s2 = _normal_stub(s, ns, clearance)
     e2 = _normal_stub(e, ne, clearance)
     # (1) 법선 스텁을 강제한 A*(수직 이탈/도착·바인딩 도형 회피) → (2) 스텁 없는 A*(스텁이
-    #     막혔을 때 폴백). 각 후보는 s→...→e 전체 경로의 관통을 최종 확인한 뒤에만 채택.
+    #     막혔을 때 폴백). 각 후보는 s→...→e 전체 경로의 도형 관통을 최종 확인한 뒤에만 채택.
     attempts = [
         (s2, e2, ([] if s2 == s else [s2]), ([] if e2 == e else [e2])),
         (s, e, [], []),
     ]
+    if pref_hits_shape:
+        # 도형 관통 회피는 hard 요구 — 기존대로 첫 안전 후보 채택(화살표는 벌점으로 A*가 이미 최소화).
+        for a, b, pre, post in attempts:
+            interior = _astar_ortho(a, b, infl, clearance,
+                                    avoid_segs=avoid_segs, cross_penalty=cross_penalty)
+            if interior is None:
+                continue
+            mids = pre + interior + post
+            if not _path_hits_rects([s] + mids + [e], infl):
+                return mids
+        return preferred
+    # preferred가 도형은 안전하나 화살표를 가로지름 — 두 시도를 모두 평가해 '교차를 가장 많이
+    # 줄이는' 도형-안전 후보만 채택(개선 없으면 preferred 유지 → 불필요한 우회·되먹임 방지).
+    best, best_cross = preferred, pref_cross
     for a, b, pre, post in attempts:
-        interior = _astar_ortho(a, b, infl, clearance)
+        interior = _astar_ortho(a, b, infl, clearance,
+                                avoid_segs=avoid_segs, cross_penalty=cross_penalty)
         if interior is None:
             continue
         mids = pre + interior + post
-        if not _path_hits_rects([s] + mids + [e], infl):
-            return mids
-    return preferred
+        if _path_hits_rects([s] + mids + [e], infl):   # 도형 관통은 hard — 후보 기각
+            continue
+        c = _count_seg_crossings([s] + mids + [e], avoid_segs)
+        if c < best_cross:
+            best, best_cross = mids, c
+    return best
 
 
 # ---------------------------------------------------------------------------

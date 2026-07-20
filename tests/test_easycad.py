@@ -19,7 +19,8 @@ from easycad.canvas.host import CanvasWindow
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _SYMBOL_KINDS,
-    _nearest_border, _shape_ports, _axis_scale_fn, _mirror_fn)
+    _nearest_border, _shape_ports, _axis_scale_fn, _mirror_fn,
+    _seg_cross_seg, _count_seg_crossings)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
 from easycad.fileio.dxf_export import export_dxf
@@ -909,6 +910,100 @@ def test_sarrow_routes_around_obstacle():
     w._on_scene_changed(None)
     sp = [sa.mapToScene(p) for p in sa._pts]
     assert len(sp) == 4 and _close(sp[1], QPointF(200, 30)) and _close(sp[2], QPointF(200, 230)), sp
+
+
+def test_seg_cross_seg():
+    # [Stage3] 진짜 교차만 True — 끝점 공유·공선 접촉·비접촉은 False(부착 도형 근처 오탐 방지).
+    P = QPointF
+    assert _seg_cross_seg(P(0, 0), P(10, 0), P(5, -5), P(5, 5))       # 十자 진짜 교차
+    assert not _seg_cross_seg(P(0, 0), P(10, 0), P(10, 0), P(10, 10))  # 끝점 공유(T)
+    assert not _seg_cross_seg(P(0, 0), P(10, 0), P(5, 0), P(15, 0))    # 공선 겹침
+    assert not _seg_cross_seg(P(0, 0), P(10, 0), P(5, 1), P(5, 5))     # 스쳐만 감(안 닿음)
+    # 끝점이 상대 선분 내부에 딱 닿는 T접촉도 비교차(우리 규약)
+    assert not _seg_cross_seg(P(0, 0), P(10, 0), P(5, 0), P(5, 5))
+
+
+def _mk_loopback_scene(w, penalty):
+    """[Stage3] 진단 축소판 — 세로 전진엣지 4개를 가로지르는 긴 수평 루프백.
+    penalty로 _ARROW_CROSS_PENALTY를 세팅하고 (rects, arrows)를 안정 라우팅해 반환."""
+    _PolyArrowItem._ARROW_CROSS_PENALTY = penalty
+    sc = w._scene
+    rects, arrows = [], []
+
+    def arrow(a, pa, b, pb):
+        sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+        sa.set_points(pa, pb)
+        sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+        sc.addItem(sa)
+        sa.set_bound(0, a, a.mapFromScene(pa)); sa.set_bound(1, b, b.mapFromScene(pb))
+        sa._auto_route = True
+        return sa
+
+    for k in range(4):                       # 세로 전진엣지 4개(x=130,230,330,430)
+        x = 100 * (k + 1)
+        top = _mk_rect(sc, w.make_pen(), x, -100, 60, 60)
+        bot = _mk_rect(sc, w.make_pen(), x, 300, 60, 60)
+        rects += [top, bot]
+        arrows.append(arrow(top, QPointF(x + 30, -40), bot, QPointF(x + 30, 300)))
+    L = _mk_rect(sc, w.make_pen(), 0, 120, 60, 60)     # E 포트 (60,150)
+    R = _mk_rect(sc, w.make_pen(), 500, 120, 60, 60)   # W 포트 (500,150)
+    rects += [L, R]
+    arrows.append(arrow(R, QPointF(500, 150), L, QPointF(60, 150)))   # 긴 수평 루프백
+    for _ in range(4):                       # 안정될 때까지(다른 화살표 최종 경로 반영)
+        if not any(sa.build_elbow() for sa in arrows):
+            break
+    return rects, arrows
+
+
+def _arrow_cross_and_hits(rects, arrows):
+    from easycad.canvas.annotator_core import _path_hits_rects
+    segs = []
+    for sa in arrows:
+        pts = [sa.mapToScene(p) for p in sa._pts]
+        segs.append([(pts[i], pts[i + 1]) for i in range(len(pts) - 1)])
+    cross = 0
+    for i in range(len(segs)):
+        for j in range(i + 1, len(segs)):
+            for a, b in segs[i]:
+                cross += _count_seg_crossings([a, b], segs[j])
+    rr = [r.mapRectToScene(r.rect()) for r in rects]
+    hits = 0
+    for sa in arrows:
+        pts = [sa.mapToScene(p) for p in sa._pts]
+        for r, box in zip(rects, rr):
+            if r is sa._bind_start or r is sa._bind_end:
+                continue
+            if _path_hits_rects(pts, [box]):
+                hits += 1
+    return cross, hits
+
+
+def test_sarrow_soft_avoids_arrows():
+    # [Stage3] 화살표-화살표 soft 회피 — 수평 루프백이 세로 전진엣지 4개를 관통하던 것을
+    #   벌점으로 우회시켜 교차를 없앤다. 도형 관통 0·멱등(되먹임 없음)·회귀(벌점0=원래대로) 동반 검증.
+    orig = _PolyArrowItem._ARROW_CROSS_PENALTY
+    try:
+        # (baseline) 벌점 0 → 루프백 직선 관통 = 4교차(기능 없을 때의 원래 동작)
+        w0 = CanvasWindow()
+        rects0, arrows0 = _mk_loopback_scene(w0, 0.0)
+        base_cross, base_hits = _arrow_cross_and_hits(rects0, arrows0)
+        assert base_cross == 4 and base_hits == 0, (base_cross, base_hits)
+
+        # (after) 벌점 200 → 우회로 교차 제거, 도형 관통은 여전히 0
+        w1 = CanvasWindow()
+        rects1, arrows1 = _mk_loopback_scene(w1, orig)
+        aft_cross, aft_hits = _arrow_cross_and_hits(rects1, arrows1)
+        assert aft_cross < base_cross, (aft_cross, base_cross)
+        assert aft_cross == 0 and aft_hits == 0, (aft_cross, aft_hits)
+
+        # (멱등/되먹임 없음) 안정 후 재라우팅은 전부 무변경
+        assert not any(sa.build_elbow() for sa in arrows1)
+
+        # (self 제외) 루프백의 회피 세그에 자기 자신 없음 — 다른 4개 화살표만
+        lb = arrows1[-1]
+        assert len(lb._obstacle_arrow_segs()) == 4
+    finally:
+        _PolyArrowItem._ARROW_CROSS_PENALTY = orig
 
 
 def _rot(p, c, deg):
