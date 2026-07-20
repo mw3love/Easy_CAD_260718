@@ -94,14 +94,14 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
 orient·fields). 단일 프레임(다중 페이지 스코프 밖), 축척=텍스트 필드(자동계산 없음), DXF 제외(조용히
 skip), 용지 내부 클릭통과(위에 그리기 가능). 설계 근거: deep-interview 2026-07-20. 실조건검증 ✓(한글
 필드·더블클릭 폼·A2 PDF 사용자 확인).
-**표 삽입 완료(프록시검증 2026-07-20, 실조건 대기)** — `_TableItem`(rect 기반 → `_ImageItem`처럼
+**표 삽입 완료(실조건검증 2026-07-20 ✓)** — `_TableItem`(rect 기반 → `_ImageItem`처럼
 `_HandleResizeMixin`·회전·undo·그룹변형·복제·PDF 재사용). NxM **균등 비례** 격자(전체 리사이즈 시 열·행
 동일 비율, 개별 열폭은 후속), 첫 행 헤더(굵게+음영 옵션). 셀 더블클릭→**인라인 편집**(`_CellEditor`
 QLineEdit, Enter=아래·Tab=오른쪽 줄넘김·Shift+Tab=왼쪽·Esc=취소·포커스상실=커밋, undo 스코프 밖).
 삽입 `Ctrl+Shift+B`(행·열·헤더 다이얼로그). `.ecad` 직렬화(rows·cols·header·rect·cells), DXF 제외
 (조용히 skip). 설계 근거: deep-interview 2026-07-20(표 vs Mermaid 중 표 선택, 균등만·인라인편집으로
-스코프 확정). 스코프 밖: 개별 열폭 드래그·셀 병합·텍스트 붙여넣기 파싱·셀편집 undo. 남은 것: Mermaid
-import. 그 후 Phase 5(AI 이미지→도면).
+스코프 확정). 스코프 밖: 개별 열폭 드래그·셀 병합·텍스트 붙여넣기 파싱·셀편집 undo. 실조건검증 ✓(삽입·인라인
+편집 엔터/탭·리사이즈·저장/재열기·PDF 사용자 확인). 남은 것: Mermaid import. 그 후 Phase 5(AI 이미지→도면).
 Phase 3(DXF)은 위 진행 상태 참조 — 내보내기·가져오기·펜 두께 왕복 완료. 후속: 외부 CAD 두께 렌더용
 `lineweight` 병행 저장, 구식 POLYLINE·ARC 등 외부 DXF 엔티티 흡수 확대.
 
