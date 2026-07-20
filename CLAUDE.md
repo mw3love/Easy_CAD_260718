@@ -60,6 +60,17 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
     변 중점을 실제 외곽선에 투영(마름모=꼭짓점). 스냅은 **포트 우선(18px) + 연속 폴백(14px)**
     2패스(`_border_snap_at`) — 기존 자유 스냅 유지. 화살표 도구로 도형 근처면 포트 점 예고, 바인딩은
     `set_bound` 재사용(이동 추종).
+- **Phase 3** 진행: DXF 상호운용(`ezdxf`).
+  - **DXF 내보내기** 완료(`3f4afde`): `fileio/dxf_export.py`. .ecad 각 아이템 → 개별 DXF 엔티티
+    (rect→LWPOLYLINE·ellipse→CIRCLE/ELLIPSE·arrow→SPLINE·sarrow→LWPOLYLINE·text→MTEXT·
+    badge→CIRCLE+MTEXT·symbol→외곽선 폴리라인). 타입별 레이어(EC_*)·true_color·Y축 뒤집기(CAD Y-up).
+  - **DXF 가져오기** 완료(`dd31967`): `fileio/dxf_import.py`. export의 역매핑 — 레이어 힌트로 타입
+    판정, Y-flip 역변환(involution), 4꼭짓점/타원 장축으로 회전 흡수. 화살촉 삼각형=무시+tip으로 head
+    방향복원, 심볼 kind=외곽선 `_PathItem`으로만 복원(소실), 외부 DXF는 dxftype 폴백. 왕복 스모크 2종
+    (핵심 월드 기하 일치). 손실 범위(승인됨): 바인딩·라벨(→독립 텍스트)·심볼 kind·변환 필드값.
+  - **펜 두께 왕복** 완료(`262a904`): 두께를 XDATA(AppID `EASYCAD`, 코드 1040 float)로 실어 복원.
+    DXF 표준 `lineweight`는 enum 스냅(6→9)으로 무손실 불가라 배제(실측). 실조건 확인.
+  - 파일 메뉴: **DXF 내보내기 `Ctrl+Shift+D`** / **가져오기 `Ctrl+Shift+I`**(열기 시맨틱, 씬 대체).
 
 ## 다음 할 일 (우선순위)
 > 1·2·3번은 완료됨(2026-07-20 코드 대조로 문서 갱신). 남은 것은 4번 일부와 Phase 3 이후.
@@ -72,7 +83,9 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
    - ~~포트/접속점~~ — **완료**(`1b06976`, 변 중점 4포트 우선 스냅 + 연속 폴백). 후속: 8포트(꼭짓점 추가).
 5. **상단바 정리** — 네모·원 버튼을 왼쪽 「도형」 팔레트로 이관 **완료**(기본+순서도 섹션, 원은 곡선
    기하 유지·배치만 통일, 단축키 2·5 유지). 상단은 그리기 도구 7종만. 추가 정리 아이디어는 메모리 `toolbar-cleanup-plan`.
-그 후 Phase 3(DXF, ezdxf) · Phase 4(표·이미지·표제란·Mermaid import) · Phase 5(AI 이미지→도면).
+그 후 Phase 4(표·이미지·표제란·Mermaid import) · Phase 5(AI 이미지→도면).
+Phase 3(DXF)은 위 진행 상태 참조 — 내보내기·가져오기·펜 두께 왕복 완료. 후속: 외부 CAD 두께 렌더용
+`lineweight` 병행 저장, 구식 POLYLINE·ARC 등 외부 DXF 엔티티 흡수 확대.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.
