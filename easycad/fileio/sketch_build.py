@@ -67,16 +67,23 @@ class Node:
     def cy(self):
         return self.y + self.h / 2.0
 
+    def port(self, side):
+        """지정한 변 중점(N·E·S·W) 좌표. 도형 pos=[0,0]·무회전이라 로컬좌표 == 씬좌표."""
+        s = side.upper()
+        if s == "N":
+            return (self.cx, self.y)
+        if s == "E":
+            return (self.x + self.w, self.cy)
+        if s == "S":
+            return (self.cx, self.y + self.h)
+        if s == "W":
+            return (self.x, self.cy)
+        raise ValueError(f"포트 방향 오류: {side!r} (N·E·S·W 중 하나)")
+
     def _port_facing(self, tx, ty):
-        """상대 지점(tx,ty)을 향하는 변 중점(N·E·S·W) 하나 — 앱의 포트 모델과 일치.
-        도형 pos=[0,0]·무회전이라 로컬좌표 == 씬좌표."""
-        ports = (
-            (self.cx, self.y),            # N
-            (self.x + self.w, self.cy),   # E
-            (self.cx, self.y + self.h),   # S
-            (self.x, self.cy),            # W
-        )
-        return min(ports, key=lambda p: (p[0] - tx) ** 2 + (p[1] - ty) ** 2)
+        """상대 지점(tx,ty)을 향하는 변 중점(N·E·S·W) 하나 — 앱의 포트 모델과 일치."""
+        return min((self.port(s) for s in "NESW"),
+                   key=lambda p: (p[0] - tx) ** 2 + (p[1] - ty) ** 2)
 
 
 class Sketch:
@@ -138,12 +145,18 @@ class Sketch:
 
     # ---- 화살표 -----------------------------------------------------------
     def arrow(self, src: Node, dst: Node, label=None, *, head=True,
+              from_side=None, to_side=None,
               color=_DEFAULT_COLOR, width=_DEFAULT_WIDTH) -> None:
         """src→dst 직선 화살표(_PolyArrowItem). 양 끝을 도형 변 중점 포트에 **지속연결**하고
         auto_route=True로 둬, 앱이 열릴 때 씬 신호로 직교 엘보를 자동 재계산한다(도형을 옮기면 추종).
-        label이면 화살표 중점 위쪽에 텍스트."""
-        p1 = src._port_facing(dst.cx, dst.cy)   # src에서 dst를 향하는 포트
-        p2 = dst._port_facing(src.cx, src.cy)   # dst에서 src를 향하는 포트
+        label이면 화살표 중점 위쪽에 텍스트.
+
+        from_side/to_side(N·E·S·W)로 접속 변을 **명시**할 수 있다(생략 시 상대 도형을 향하는 최근접
+        변). ⚠ 밀집 순서도에서 필요: ⓐ 정렬된 두 노드의 **피드백 루프**는 양끝을 같은 측면으로 빼야
+        본선과 안 겹친다(예: 아래→위 루프에 from_side="E", to_side="E") ⓑ 한 노드에 여러 화살표가
+        같은 변으로 들어와 겹칠 때 서로 다른 변으로 분산."""
+        p1 = src.port(from_side) if from_side else src._port_facing(dst.cx, dst.cy)
+        p2 = dst.port(to_side) if to_side else dst._port_facing(src.cx, src.cy)
         d = self._common()
         d.update(type="sarrow", pts=[[p1[0], p1[1]], [p2[0], p2[1]]],
                  color=_argb(color), width=float(width), head=bool(head),

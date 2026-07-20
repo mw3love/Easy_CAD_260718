@@ -2331,6 +2331,27 @@ def test_sketch_arrow_binding_follows_move():
     assert len(ar._pts) >= 2                                # 유효한 폴리라인 유지
 
 
+def test_sketch_arrow_port_side_hint():
+    # 밀집 순서도용: from_side/to_side로 접속 변을 명시하면 그 변 중점 포트에 붙는다
+    # (피드백 루프를 본선과 겹치지 않게 측면으로 빼는 용도). 생략 시 최근접(기존 동작).
+    s = Sketch()
+    a = s.box(0, 0, 100, 60, "A")          # cx=50, cy=30
+    b = s.box(0, 200, 100, 60, "B")        # cx=50, cy=230
+    s.arrow(a, b)                          # 자동: a S(50,60) → b N(50,200)
+    s.arrow(b, a, from_side="E", to_side="E")   # 루프: 둘 다 오른쪽 변으로
+    doc = s.to_dict()
+    down, loop = doc["items"][2], doc["items"][3]
+    assert down["bind1_pt"] == [50.0, 60.0] and down["bind2_pt"] == [50.0, 200.0]
+    assert loop["bind1_pt"] == [100.0, 230.0]   # b E
+    assert loop["bind2_pt"] == [100.0, 30.0]    # a E
+    # 잘못된 방향은 즉시 실패
+    try:
+        s.arrow(a, b, from_side="X")
+        assert False, "잘못된 포트 방향이 통과됨"
+    except ValueError:
+        pass
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
