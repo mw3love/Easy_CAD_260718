@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem, _PolyArrowItem,
+    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _SYMBOL_KINDS,
 )
@@ -70,6 +70,7 @@ class CanvasWindow(QMainWindow):
         self._view = _AnnotatorView(self._scene, self)
         self._view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self._view.centerOn(0, 0)
+        self.setAcceptDrops(True)   # [Phase 4] 이미지 파일 드래그앤드롭 삽입
 
         central = QWidget()
         lay = QVBoxLayout(central)
@@ -122,6 +123,13 @@ class CanvasWindow(QMainWindow):
         a_dxf_in.setShortcut(QKeySequence("Ctrl+Shift+I"))
         a_dxf_in.triggered.connect(self._import_dxf)
         m.addAction(a_dxf_in)
+
+        m.addSeparator()
+
+        a_img = QAction("이미지 삽입…", self)          # Phase 4 — PNG/JPG 삽입
+        a_img.setShortcut(QKeySequence("Ctrl+Shift+M"))
+        a_img.triggered.connect(self._insert_image)
+        m.addAction(a_img)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
@@ -263,6 +271,65 @@ class CanvasWindow(QMainWindow):
         nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
         self._badge_n = max(nums) if nums else 0
         self.statusBar().showMessage(f"가져오기 완료: {n}개 객체 — {path}", 5000)
+
+    # ---- 이미지 삽입 (Phase 4) ---------------------------------------------
+    _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
+    _IMG_LONG = 400.0   # 삽입 시 긴 변 기본 크기(씬 단위) — 대형 사진이 캔버스를 뒤덮지 않게
+
+    def _insert_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "이미지 삽입", "", "이미지 (*.png *.jpg *.jpeg *.bmp *.gif)")
+        if not path:
+            return
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        self._insert_image_at(path, center)
+
+    def _insert_image_at(self, path: str, scene_pos: QPointF):
+        """path의 이미지를 scene_pos를 중심으로 삽입(긴 변 _IMG_LONG로 축소, 종횡비 유지)."""
+        pm = QPixmap(path)
+        if pm.isNull():
+            QMessageBox.warning(self, "이미지 삽입", f"이미지를 열 수 없습니다:\n{path}")
+            return
+        w, h = pm.width(), pm.height()
+        s = min(1.0, self._IMG_LONG / max(w, h)) if max(w, h) > 0 else 1.0
+        W, H = w * s, h * s
+        item = _ImageItem(pm, QRectF(0.0, 0.0, W, H))
+        item.setPos(scene_pos.x() - W / 2.0, scene_pos.y() - H / 2.0)
+        item.setFlags(item.GraphicsItemFlag.ItemIsMovable
+                      | item.GraphicsItemFlag.ItemIsSelectable)
+        self._scene.addItem(item)
+        self._scene.clearSelection()
+        item.setSelected(True)
+        self.push_undo_add(item)
+        self.set_tool("select")
+        self.statusBar().showMessage(f"이미지 삽입: {w}×{h}px — {path}", 4000)
+
+    # 파일 탐색기에서 이미지를 캔버스로 끌어다 놓기 — QMainWindow가 드롭을 받는다(코어 뷰 무수정).
+    def dragEnterEvent(self, e):
+        md = e.mimeData()
+        if md.hasUrls() and any(u.toLocalFile().lower().endswith(self._IMG_EXTS)
+                                for u in md.urls()):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        md = e.mimeData()
+        if not md.hasUrls():
+            return
+        view_pt = self._view.mapFrom(self, e.position().toPoint())
+        scene_pos = self._view.mapToScene(view_pt)
+        n = 0
+        for u in md.urls():
+            p = u.toLocalFile()
+            if p.lower().endswith(self._IMG_EXTS):
+                self._insert_image_at(p, scene_pos)
+                scene_pos = QPointF(scene_pos.x() + 20.0, scene_pos.y() + 20.0)
+                n += 1
+        if n:
+            e.acceptProposedAction()
 
     # ---- 툴바 (최소) --------------------------------------------------------
     def _build_toolbar(self) -> QWidget:

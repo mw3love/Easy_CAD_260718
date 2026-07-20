@@ -796,7 +796,12 @@ class _HandleResizeMixin:
         MIN = 3.0
         if new.width() < MIN or new.height() < MIN:
             new = QRectF(new.x(), new.y(), max(new.width(), MIN), max(new.height(), MIN))
+        new = self._constrain_box_rect(new, kind, key)
         self._set_box_rect(new)
+
+    def _constrain_box_rect(self, new: QRectF, kind: str, key) -> QRectF:
+        """박스 리사이즈 결과 rect 후처리 훅(기본 무변경). _ImageItem이 종횡비 고정에 override."""
+        return new
 
     def _owner_tool(self):
         """현재 활성 도구를 뷰→owner 경로로 조회(없으면 None)."""
@@ -1383,6 +1388,74 @@ class _SymbolItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
         painter.setPen(self.pen())
         painter.setBrush(self.brush())
         painter.drawPath(self._sym_path())
+        if self.isSelected():
+            _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
+        self._paint_handle(painter)
+
+
+# ---------------------------------------------------------------------------
+# [우리 확장 · Phase 4] 삽입 이미지 — PNG/JPG를 도면에 배치
+# ---------------------------------------------------------------------------
+class _ImageItem(_HandleResizeMixin, QGraphicsRectItem):
+    """삽입 이미지 — rect 기반이라 _RectItem·_SymbolItem과 동일한 리사이즈·회전·stretch·undo를
+    그대로 물려받고, paint만 원본 픽스맵을 rect에 스케일해 그리도록 갈아끼운다.
+    원본 픽스맵(_pixmap)을 전체 해상도로 보관 → 저장/재열기·PDF에도 화질 손실 없음(rect는 표시 크기).
+    종횡비는 꼭짓점 리사이즈에서 고정(_constrain_box_rect) — 변 리사이즈는 자유(의도적 늘림)."""
+
+    def __init__(self, pixmap: QPixmap, rect: QRectF):
+        super().__init__(rect)
+        self._pixmap = pixmap
+        self.setPen(QPen(Qt.PenStyle.NoPen))   # 테두리 없음 — 이미지 픽셀만 그린다
+        self._init_resize()
+
+    def _aspect(self) -> float:
+        w, h = self._pixmap.width(), self._pixmap.height()
+        return (w / h) if h else 1.0
+
+    def clone(self):
+        c = _ImageItem(QPixmap(self._pixmap), QRectF(self.rect()))
+        return self._copy_common_to(c)
+
+    # [Stage2] 기하 리베이크 — 네모·심볼과 동일(로컬 AABB setRect).
+    def _capture_geom_local(self):
+        return QRectF(self.rect())
+
+    def _apply_geom_local(self, g):
+        self.setRect(g)
+
+    def rebake_scene(self, fn):
+        r = self.rect()
+        pts = [self._rebake_pt(fn, c) for c in
+               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        self.prepareGeometryChange()
+        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
+
+    def _stretch_grips(self):   # [Stage2b] grip = 네 모서리(네모와 동일).
+        r = self.rect()
+        return [self.mapToScene(c) for c in
+                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+
+    def _content_rect(self) -> QRectF:
+        return QRectF(self.rect())
+
+    def _constrain_box_rect(self, new: QRectF, kind: str, key) -> QRectF:
+        # 꼭짓점 드래그는 원본 종횡비를 유지(사진 왜곡 방지). 대각 고정점(opp) 기준으로,
+        # 폭·높이 중 더 많이 자란 쪽에 비율을 맞춰 사각형을 다시 세운다.
+        if kind != "corner":
+            return new
+        o = self._box_orig_rect
+        opp = [o.bottomRight(), o.bottomLeft(), o.topLeft(), o.topRight()][key]  # 0TL 1TR 2BR 3BL
+        asp = self._aspect()
+        w = max(new.width(), new.height() * asp)
+        h = w / asp
+        sx = 1.0 if key in (1, 2) else -1.0   # TR·BR = 오른쪽, TL·BL = 왼쪽
+        sy = 1.0 if key in (2, 3) else -1.0   # BR·BL = 아래,   TL·TR = 위
+        return QRectF(opp, QPointF(opp.x() + sx * w, opp.y() + sy * h)).normalized()
+
+    def paint(self, painter, option, widget=None):
+        painter.drawPixmap(self.rect(), self._pixmap, QRectF(self._pixmap.rect()))
         if self.isSelected():
             _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
         self._paint_handle(painter)

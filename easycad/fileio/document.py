@@ -6,14 +6,15 @@
 지원 타입: rect · ellipse · line · path(펜) · arrow(2점 베지어) · text · badge(번호)
 공통: 위치·스케일·회전·z·변환원점.
 """
+import base64
 import json
 
-from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF
-from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont
+from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF, QBuffer, QByteArray, QIODevice
+from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPixmap
 
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _SymbolItem,
+    _PolyArrowItem, _SymbolItem, _ImageItem,
 )
 
 FORMAT = "easycad-doc"
@@ -62,6 +63,22 @@ def _mkbrush(d: dict) -> QBrush:
     return QBrush(QColor(fill)) if fill else QBrush(Qt.BrushStyle.NoBrush)
 
 
+# ---- 삽입 이미지 base64 embed (단일 .ecad 이동에도 이미지가 안 깨지게) ----------
+def _pixmap_to_b64(pm: QPixmap) -> str:
+    ba = QByteArray()
+    buf = QBuffer(ba)
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    pm.save(buf, "PNG")   # 원본 해상도 그대로 PNG 인코딩(무손실)
+    buf.close()
+    return base64.b64encode(bytes(ba)).decode("ascii")
+
+
+def _b64_to_pixmap(s: str) -> QPixmap:
+    pm = QPixmap()
+    pm.loadFromData(base64.b64decode(s), "PNG")
+    return pm
+
+
 # ---- 펜(자유곡선) 경로 직렬화 ---------------------------------------------
 def _path_elems(path: QPainterPath) -> list:
     out = []
@@ -98,7 +115,11 @@ def _elems_to_path(elems: list) -> QPainterPath:
 # ---- 아이템 ↔ dict --------------------------------------------------------
 def item_to_dict(it) -> dict | None:
     d = _common(it)
-    if isinstance(it, _ArrowItem):
+    if isinstance(it, _ImageItem):
+        r = it.rect()
+        d.update(type="image", rect=[r.x(), r.y(), r.width(), r.height()],
+                 data=_pixmap_to_b64(it._pixmap))
+    elif isinstance(it, _ArrowItem):
         d.update(
             type="arrow",
             p1=[it._p1.x(), it._p1.y()], p2=[it._p2.x(), it._p2.y()],
@@ -160,7 +181,9 @@ def item_to_dict(it) -> dict | None:
 
 def dict_to_item(d: dict):
     t = d.get("type")
-    if t == "arrow":
+    if t == "image":
+        it = _ImageItem(_b64_to_pixmap(d["data"]), QRectF(*d["rect"]))
+    elif t == "arrow":
         it = _ArrowItem(QColor(d["color"]), d["width"], d.get("head", True))
         it.set_points(QPointF(*d["p1"]), QPointF(*d["p2"]))
         if d.get("ctrl1") is not None:

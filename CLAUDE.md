@@ -85,7 +85,9 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
    - ~~포트/접속점~~ — **완료**(`1b06976`, 변 중점 4포트 우선 스냅 + 연속 폴백). 후속: 8포트(꼭짓점 추가).
 5. **상단바 정리** — 네모·원 버튼을 왼쪽 「도형」 팔레트로 이관 **완료**(기본+순서도 섹션, 원은 곡선
    기하 유지·배치만 통일, 단축키 2·5 유지). 상단은 그리기 도구 7종만. 추가 정리 아이디어는 메모리 `toolbar-cleanup-plan`.
-그 후 Phase 4(표·이미지·표제란·Mermaid import) · Phase 5(AI 이미지→도면).
+**Phase 4(문서 완성도) 진행 중** — **이미지 삽입 완료**(`_ImageItem` rect 기반 재사용, `Ctrl+Shift+M`
++드래그앤드롭, `.ecad` base64 embed, PDF 렌더·DXF 제외, 종횡비 고정 리사이즈, 실조건검증 2026-07-20).
+남은 것: 표·**표제란/paper space**(다음 착수 예정, 별도 스코핑 인터뷰)·Mermaid import. 그 후 Phase 5(AI 이미지→도면).
 Phase 3(DXF)은 위 진행 상태 참조 — 내보내기·가져오기·펜 두께 왕복 완료. 후속: 외부 CAD 두께 렌더용
 `lineweight` 병행 저장, 구식 POLYLINE·ARC 등 외부 DXF 엔티티 흡수 확대.
 

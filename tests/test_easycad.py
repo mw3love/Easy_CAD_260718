@@ -13,12 +13,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF
-from PyQt6.QtGui import QBrush, QColor, QPainterPath
+from PyQt6.QtGui import QBrush, QColor, QPainterPath, QPixmap
 
 from easycad.canvas.host import CanvasWindow
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _SymbolItem, _SYMBOL_KINDS, _nearest_border, _shape_ports,
+    _PolyArrowItem, _SymbolItem, _ImageItem, _SYMBOL_KINDS, _nearest_border, _shape_ports,
     _axis_scale_fn, _mirror_fn)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
@@ -1835,6 +1835,112 @@ def test_dxf_import_external_fallback():
     assert any(isinstance(it, _LineItem) for it in sc.items())
     assert any(isinstance(it, _EllipseItem) for it in sc.items())
     assert any(isinstance(it, _TextItem) for it in sc.items())
+
+
+# ---- Phase 4: 이미지 삽입 ---------------------------------------------------
+def _mk_pixmap(w=40, h=20, color="#3366cc"):
+    pm = QPixmap(w, h)
+    pm.fill(QColor(color))
+    return pm
+
+
+def test_image_item_basic():
+    # rect 기반이라 박스 8핸들·리사이즈 기계를 물려받고, 픽스맵을 보관한다.
+    it = _ImageItem(_mk_pixmap(), QRectF(0, 0, 40, 20))
+    assert it._box_handles() is True          # setRect 보유 → 박스 핸들 경로
+    assert it._pixmap.width() == 40 and it._pixmap.height() == 20
+    c = it.clone()                            # 복제도 픽스맵·rect 보존
+    assert isinstance(c, _ImageItem)
+    assert c._pixmap.width() == 40 and c.rect() == QRectF(0, 0, 40, 20)
+
+
+def test_image_aspect_lock_on_corner():
+    # 꼭짓점 리사이즈는 원본 종횡비(2:1) 유지. 변 리사이즈는 자유(늘림 허용).
+    it = _ImageItem(_mk_pixmap(40, 20), QRectF(0, 0, 40, 20))   # aspect 2.0
+    it._box_orig_rect = QRectF(it.rect())
+    it._box_bound = []
+    it._box_snap = []
+    it._box_resize = ("corner", 2)            # BR 꼭짓점(대각 고정 = TL)
+    it._apply_box_resize(QPointF(100, 100))   # 자유라면 100×100(1:1)이 될 지점
+    r = it.rect()
+    assert abs(r.width() / r.height() - 2.0) < 1e-6   # 종횡비 고정됨
+    # 변 드래그(오른쪽)는 종횡비 무시하고 자유.
+    it2 = _ImageItem(_mk_pixmap(40, 20), QRectF(0, 0, 40, 20))
+    it2._box_orig_rect = QRectF(it2.rect())
+    it2._box_bound = []; it2._box_snap = []
+    it2._box_resize = ("edge", "r")
+    it2._apply_box_resize(QPointF(200, 0))
+    r2 = it2.rect()
+    assert r2.width() > 150 and abs(r2.height() - 20) < 1e-6   # 높이 불변, 폭만 늘어남
+
+
+def test_image_roundtrip():
+    # .ecad 저장/재열기에서 픽스맵 픽셀·크기·기하가 base64 embed로 보존되는지.
+    w = CanvasWindow()
+    it = _ImageItem(_mk_pixmap(40, 20, "#cc2233"), QRectF(0, 0, 40, 20))
+    it.setPos(QPointF(120, 80))
+    it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(it)
+    path = os.path.join(_TMP, "img.ecad")
+    save_document(w._scene, path)
+    w2 = CanvasWindow()
+    n = load_document(w2._scene, path)
+    assert n == 1
+    imgs = [x for x in w2._scene.items() if isinstance(x, _ImageItem)]
+    assert len(imgs) == 1
+    lo = imgs[0]
+    assert lo._pixmap.width() == 40 and lo._pixmap.height() == 20
+    assert _close(lo.pos(), QPointF(120, 80))
+    assert lo.rect() == QRectF(0, 0, 40, 20)
+    # 픽셀 색 보존(무손실 PNG embed) — 좌상단 픽셀이 원본 색.
+    col = lo._pixmap.toImage().pixelColor(0, 0)
+    assert (col.red(), col.green(), col.blue()) == (0xcc, 0x22, 0x33)
+
+
+def test_image_insert_via_host():
+    # host._insert_image_at: 파일 → 씬에 삽입(중심 배치·긴 변 축소·undo 등록).
+    w = CanvasWindow()
+    png = os.path.join(_TMP, "src.png")
+    _mk_pixmap(800, 400, "#22aa55").save(png, "PNG")   # 대형 → 긴 변 400으로 축소돼야
+    w._insert_image_at(png, QPointF(0, 0))
+    imgs = [x for x in w._scene.items() if isinstance(x, _ImageItem)]
+    assert len(imgs) == 1
+    it = imgs[0]
+    assert it._pixmap.width() == 800                    # 원본 해상도 보관(표시만 축소)
+    assert abs(it.rect().width() - 400.0) < 1e-6        # 긴 변 = _IMG_LONG
+    assert abs(it.rect().height() - 200.0) < 1e-6       # 종횡비 유지(2:1)
+    assert _close(it.sceneBoundingRect().center(), QPointF(0, 0), eps=1.0)  # 중심 배치
+    assert it.isSelected()
+    w.undo()                                            # 삽입 undo로 제거
+    assert not [x for x in w._scene.items() if isinstance(x, _ImageItem)]
+
+
+def test_image_skipped_in_dxf():
+    # 범위 결정: DXF 내보내기는 이미지 제외(외부참조 배제). 씬에 이미지가 있어도
+    # 크래시 없이 건너뛰고, 다른 엔티티(네모)는 정상 export.
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    img = _ImageItem(_mk_pixmap(40, 20), QRectF(0, 0, 40, 20))
+    img.setFlags(img.GraphicsItemFlag.ItemIsSelectable | img.GraphicsItemFlag.ItemIsMovable)
+    img.setPos(QPointF(200, 200)); w._scene.addItem(img)
+    out = os.path.join(_TMP, "img_skip.dxf")
+    assert export_dxf(w._scene, out) is not False
+    import ezdxf
+    doc = ezdxf.readfile(out)
+    types = [e.dxftype() for e in doc.modelspace()]
+    assert "LWPOLYLINE" in types            # 네모는 export됨
+    assert "IMAGE" not in types             # 이미지는 제외됨
+
+
+def test_image_pdf_export():
+    # 이미지가 포함된 씬도 PDF로 렌더된다(scene.render 경로).
+    w = CanvasWindow()
+    it = _ImageItem(_mk_pixmap(60, 40), QRectF(0, 0, 60, 40))
+    it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(it)
+    out = os.path.join(_TMP, "img.pdf")
+    assert export_pdf(w._scene, out, page="A4") is True
+    assert os.path.getsize(out) > 0
 
 
 def _run_all():
