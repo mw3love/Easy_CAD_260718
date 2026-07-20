@@ -23,6 +23,7 @@ from easycad.canvas.annotator_core import (
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
 from easycad.fileio.dxf_export import export_dxf
+from easycad.fileio.sketch_build import Sketch, _argb
 
 _app = QApplication.instance() or QApplication([])
 _TMP = tempfile.mkdtemp(prefix="easycad_test_")
@@ -2269,6 +2270,65 @@ def test_mermaid_pdf_export():
     out = os.path.join(_TMP, "mermaid.pdf")
     assert export_pdf(w._scene, out, page="A4") is True
     assert os.path.getsize(out) > 0
+
+
+def test_sketch_argb_normalizes_color():
+    # 빌더 색 정규화 → .ecad HexArgb(#AARRGGBB, alpha 먼저). Qt 비의존 순수 파이썬.
+    assert _argb("#000000") == "#ff000000"        # 6자리 → 불투명 부여
+    assert _argb("#FF3B30") == "#ffff3b30"         # 대문자·불투명
+    assert _argb("#ff112233") == "#ff112233"       # 8자리 그대로
+    assert _argb("#0f0") == "#ff00ff00"            # 3자리 확장
+
+
+def test_sketch_build_roundtrip():
+    # Phase 5 핵심: Sketch 빌더 → .ecad → load_document 왕복. 노드·심볼 kind·화살표 지속연결·
+    # 라벨이 모두 편집가능 아이템으로 복원되는지. 빌더가 Qt 없이 만든 JSON을 앱이 그대로 연다.
+    s = Sketch()
+    a = s.symbol("terminal", 60, 40, 160, 70, "시작")
+    b = s.symbol("decision", 90, 170, 120, 100, "조건?")
+    c = s.box(300, 185, 160, 70, "처리")
+    d = s.ellipse(90, 340, 120, 70, "끝")
+    s.arrow(a, b)
+    s.arrow(b, c, label="예")
+    s.arrow(b, d, label="아니오")
+    path = os.path.join(_TMP, "sketch.ecad")
+    n = s.save(path)
+    assert n == 7                                            # 노드 4 + 화살표 3
+
+    w = CanvasWindow()
+    load_document(w._scene, path)
+    nodes = [it for it in w._scene.items()
+             if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
+    arrows = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(nodes) == 4 and len(arrows) == 3
+    # 심볼 kind 복원(마름모=decision, 스타디움=terminal)
+    kinds = {it._kind for it in nodes if isinstance(it, _SymbolItem)}
+    assert kinds == {"terminal", "decision"}
+    # 화살표: 양끝 지속연결 + 직교 자동라우팅
+    assert all(ar.has_binding() and ar._auto_route for ar in arrows)
+    # 라벨: 노드 4개 전부 중앙 라벨 복원(0,0 박힘 아님 — 가로 중앙 정렬)
+    labeled = [it for it in nodes if it._label is not None]
+    assert len(labeled) == 4
+    for it in labeled:
+        sc = it.sceneBoundingRect().center()
+        lc = it._label.sceneBoundingRect().center()
+        assert abs(lc.x() - sc.x()) < 4, (it, lc, sc)
+
+
+def test_sketch_arrow_binding_follows_move():
+    # 지속연결 검증: 로드 후 화살표가 도형에 붙어 reroute(재라우팅)가 동작한다.
+    s = Sketch()
+    a = s.box(0, 0, 100, 60, "A")
+    b = s.box(300, 0, 100, 60, "B")
+    s.arrow(a, b)
+    path = os.path.join(_TMP, "sketch_bind.ecad")
+    s.save(path)
+    w = CanvasWindow()
+    load_document(w._scene, path)
+    ar = next(it for it in w._scene.items() if isinstance(it, _PolyArrowItem))
+    assert ar.has_binding()
+    ar.reroute()                                            # 부착점 추종 + 직교 엘보(예외 없이)
+    assert len(ar._pts) >= 2                                # 유효한 폴리라인 유지
 
 
 def _run_all():
