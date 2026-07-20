@@ -1547,6 +1547,44 @@ def test_symbol_label_roundtrip():
     assert got.has_label() and got._label.toPlainText() == "시작"
 
 
+def test_rect_ellipse_center_label():
+    # A: 네모·원도 심볼과 같은 중앙 라벨을 공유(_CenterLabelMixin). 더블클릭 라벨 + 리사이즈 추종.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    for cls, make in ((_RectItem, lambda: _RectItem(QRectF(0, 0, 120, 80))),
+                      (_EllipseItem, lambda: _EllipseItem(QRectF(0, 0, 120, 80)))):
+        it = make()
+        it.setPen(QPen(QColor("#ff0000ff"))); it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        sc.addItem(it)
+        lbl = it.ensure_label(); lbl.setPlainText("칸"); it._sync_label()
+        assert it.has_label(), cls.__name__
+        br = lbl._content_rect()
+        assert abs(lbl.pos().x() + br.width() / 2.0 - 60) < 1, (cls.__name__, lbl.pos())
+        assert abs(lbl.pos().y() + br.height() / 2.0 - 40) < 1, (cls.__name__, lbl.pos())
+        it.setRect(QRectF(0, 0, 200, 100))         # 리사이즈 → 새 중앙(100,50) 추종
+        br = lbl._content_rect()
+        assert abs(lbl.pos().x() + br.width() / 2.0 - 100) < 1, (cls.__name__, lbl.pos())
+        # 라벨 색 = 테두리색(파랑)
+        assert lbl.defaultTextColor().name() == QColor("#0000ff").name(), cls.__name__
+
+
+def test_rect_label_roundtrip():
+    # 네모 중앙 라벨이 .ecad로 왕복한다(직렬화에 _RectItem 포함).
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    r = _RectItem(QRectF(0, 0, 100, 60)); r.setPen(QPen(QColor("#ff333333")))
+    r.setBrush(QBrush(Qt.BrushStyle.NoBrush)); sc.addItem(r)
+    r.ensure_label().setPlainText("상자"); r._sync_label()
+    path = os.path.join(_TMP, "rectlabel.ecad")
+    save_document(sc, path)
+    sc2 = QGraphicsScene()
+    load_document(sc2, path)
+    got = [it for it in sc2.items() if isinstance(it, _RectItem)][0]
+    assert got.has_label() and got._label.toPlainText() == "상자"
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

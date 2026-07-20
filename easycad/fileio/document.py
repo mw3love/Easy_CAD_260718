@@ -144,8 +144,9 @@ def item_to_dict(it) -> dict | None:
         d.update(type="badge", number=it._number, color=_col(it._color))
     else:
         return None
-    # [우리 확장] 선·화살표·심볼에 붙은 라벨(자식 텍스트) — 본체 dict 안에 함께 직렬화.
-    if isinstance(it, (_ArrowItem, _LineItem, _PolyArrowItem, _SymbolItem)) and it.has_label():
+    # [우리 확장] 선·화살표·닫힌도형(네모·원·심볼)에 붙은 라벨 — 본체 dict 안에 함께 직렬화.
+    if isinstance(it, (_ArrowItem, _LineItem, _PolyArrowItem,
+                       _SymbolItem, _RectItem, _EllipseItem)) and it.has_label():
         lbl = it._label
         bg = lbl._bg
         d["label"] = {

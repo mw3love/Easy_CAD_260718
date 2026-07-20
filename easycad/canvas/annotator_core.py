@@ -1044,10 +1044,96 @@ def _draw_selection_ellipse(painter: QPainter, rect: QRectF, scale: float = 1.0)
     painter.drawEllipse(rect)
 
 
-class _RectItem(_HandleResizeMixin, QGraphicsRectItem):
+# ---------------------------------------------------------------------------
+# [우리 확장] 라벨 믹스인 — 본체에 '부착'되어 함께 이동하는 자식 텍스트
+#   _LabelMixin        : 공통 로직 + 선·화살표용 '중점 위쪽' 배치
+#   _CenterLabelMixin  : 닫힌 도형(네모·원·심볼)용 '정중앙' 배치
+# (도형 클래스보다 앞서야 상속 가능하므로 여기 둔다.)
+# ---------------------------------------------------------------------------
+class _LabelMixin:
+    """더블클릭으로 다는 텍스트 라벨. 라벨은 자식(child _TextItem)이라 본체가 통째로
+    이동하면 Qt가 자동으로 따라 옮기고, 로컬 기하가 바뀔 때만 _sync_label로 재배치한다.
+    라벨은 부착 전용(독립 이동 불가). 기본 배치는 앵커 '위쪽'(선·화살표)."""
+
+    def _init_label(self):
+        self._label = None  # 자식 _TextItem or None
+
+    def _label_anchor(self) -> QPointF:      # 하위 클래스 구현: 라벨을 붙일 로컬 기준점(중점)
+        raise NotImplementedError
+
+    def _label_color(self) -> QColor:        # 하위 클래스가 본체 색으로 override
+        return QColor(_TEXT)
+
+    def _label_alive(self) -> bool:
+        lbl = getattr(self, "_label", None)
+        return lbl is not None and lbl.scene() is not None
+
+    def has_label(self) -> bool:
+        return self._label_alive() and bool(self._label.toPlainText().strip())
+
+    def ensure_label(self):
+        """라벨이 없으면 생성해 중점에 부착하고 반환(있으면 그대로 반환)."""
+        if not self._label_alive():
+            lbl = _TextItem(self._label_color())
+            lbl.setParentItem(self)
+            # 부착 전용 — 독립 이동 금지(선을 따라만 다닌다). 선택·편집·삭제는 가능.
+            lbl.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+            lbl.document().contentsChanged.connect(self._sync_label)  # 타이핑 중 중앙 유지
+            self._label = lbl
+        self._sync_label()
+        return self._label
+
+    def restore_label(self, d: dict):
+        """문서 로드용 — 저장된 라벨(dict)을 자식으로 복원."""
+        lbl = self.ensure_label()
+        lbl.apply_font_size(d.get("font", 16))
+        lbl.setPlainText(d.get("text", ""))
+        lbl.apply_color(QColor(d.get("color", _TEXT)))
+        if d.get("bg") is not None:
+            lbl.set_bg(QColor(*d["bg"]))
+        self._sync_label()
+        return lbl
+
+    def _sync_label(self):
+        """라벨을 본체 중점 '위쪽'에 재배치. _content_rect(편집 프레임 여유 제외)을 써
+        편집 중·완료 후 위치가 흔들리지 않게 한다."""
+        if not self._label_alive():
+            return
+        a = self._label_anchor()
+        br = self._label._content_rect()
+        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() - 4.0)
+
+
+class _CenterLabelMixin(_LabelMixin):
+    """닫힌 도형(네모·원·심볼)용 라벨 — 선·화살표의 '중점 위쪽'과 달리 도형 '정중앙'에 놓고,
+    rect가 바뀌면(그리기·박스 리사이즈·리베이크) 새 중앙으로 재동기한다. 앵커=rect 중심,
+    색=테두리색. 셋이 공유해 중복을 없앤다."""
+
+    def _label_anchor(self) -> QPointF:
+        return self.rect().center()
+
+    def _label_color(self) -> QColor:
+        return QColor(self.pen().color())
+
+    def _sync_label(self):
+        if not self._label_alive():
+            return
+        a = self._label_anchor()
+        br = self._label._content_rect()
+        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+
+    def setRect(self, *args):
+        # rect가 바뀌면(그리기·박스 리사이즈·리베이크) 라벨을 새 중앙으로 재배치.
+        super().setRect(*args)
+        if self._label_alive():
+            self._sync_label()
+
+
+class _RectItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
     def __init__(self, *args):
         super().__init__(*args)
         self._init_resize()
+        self._init_label()
 
     def clone(self):
         c = _RectItem(QRectF(self.rect()))
@@ -1092,10 +1178,11 @@ class _RectItem(_HandleResizeMixin, QGraphicsRectItem):
         self._paint_handle(painter)
 
 
-class _EllipseItem(_HandleResizeMixin, QGraphicsEllipseItem):
+class _EllipseItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsEllipseItem):
     def __init__(self, *args):
         super().__init__(*args)
         self._init_resize()
+        self._init_label()
 
     def clone(self):
         c = _EllipseItem(QRectF(self.rect()))
@@ -1236,68 +1323,14 @@ _SYMBOL_KINDS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# [우리 확장] 선·화살표 라벨 — 본체에 '부착'되어 함께 이동하는 자식 텍스트
-# ---------------------------------------------------------------------------
-class _LabelMixin:
-    """선/화살표에 더블클릭으로 다는 텍스트 라벨. 라벨은 자식(child _TextItem)이라
-    본체가 통째로 이동하면 Qt가 자동으로 따라 옮기고, 끝점·곡선 편집처럼 로컬 기하가
-    바뀔 때만 _sync_label로 중점에 재배치한다. 라벨은 부착 전용(독립 이동 불가)."""
-
-    def _init_label(self):
-        self._label = None  # 자식 _TextItem or None
-
-    def _label_anchor(self) -> QPointF:      # 하위 클래스 구현: 라벨을 붙일 로컬 기준점(중점)
-        raise NotImplementedError
-
-    def _label_color(self) -> QColor:        # 하위 클래스가 본체 색으로 override
-        return QColor(_TEXT)
-
-    def _label_alive(self) -> bool:
-        lbl = getattr(self, "_label", None)
-        return lbl is not None and lbl.scene() is not None
-
-    def has_label(self) -> bool:
-        return self._label_alive() and bool(self._label.toPlainText().strip())
-
-    def ensure_label(self):
-        """라벨이 없으면 생성해 중점에 부착하고 반환(있으면 그대로 반환)."""
-        if not self._label_alive():
-            lbl = _TextItem(self._label_color())
-            lbl.setParentItem(self)
-            # 부착 전용 — 독립 이동 금지(선을 따라만 다닌다). 선택·편집·삭제는 가능.
-            lbl.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
-            lbl.document().contentsChanged.connect(self._sync_label)  # 타이핑 중 중앙 유지
-            self._label = lbl
-        self._sync_label()
-        return self._label
-
-    def restore_label(self, d: dict):
-        """문서 로드용 — 저장된 라벨(dict)을 자식으로 복원."""
-        lbl = self.ensure_label()
-        lbl.apply_font_size(d.get("font", 16))
-        lbl.setPlainText(d.get("text", ""))
-        lbl.apply_color(QColor(d.get("color", _TEXT)))
-        if d.get("bg") is not None:
-            lbl.set_bg(QColor(*d["bg"]))
-        self._sync_label()
-        return lbl
-
-    def _sync_label(self):
-        """라벨을 본체 중점 '위쪽'에 재배치. _content_rect(편집 프레임 여유 제외)을 써
-        편집 중·완료 후 위치가 흔들리지 않게 한다."""
-        if not self._label_alive():
-            return
-        a = self._label_anchor()
-        br = self._label._content_rect()
-        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() - 4.0)
+# (_LabelMixin·_CenterLabelMixin은 도형 클래스보다 앞서야 해서 _RectItem 위로 이동함)
 
 
-class _SymbolItem(_LabelMixin, _HandleResizeMixin, QGraphicsRectItem):
+class _SymbolItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
     """순서도 심볼 — rect 기반이라 _RectItem과 동일한 리사이즈·회전·stretch·undo를
-    물려받고, paint/shape만 kind별 경로(_SYMBOL_KINDS)로 그린다. 더블클릭 라벨은
-    선·화살표와 달리 도형 '중앙'에 놓는다(_sync_label override).
-    (_LabelMixin 뒤에 정의해야 하므로 심볼 경로 팩토리와 떨어져 여기 둔다.)"""
+    물려받고, paint/shape만 kind별 경로(_SYMBOL_KINDS)로 그린다. 더블클릭 중앙 라벨은
+    _CenterLabelMixin이 네모·원과 공유한다.
+    (_SYMBOL_KINDS를 참조하므로 경로 팩토리 뒤에 둔다.)"""
 
     def __init__(self, kind: str, rect: QRectF):
         super().__init__(rect)
@@ -1307,26 +1340,6 @@ class _SymbolItem(_LabelMixin, _HandleResizeMixin, QGraphicsRectItem):
 
     def _sym_path(self) -> QPainterPath:
         return _SYMBOL_KINDS[self._kind][1](self.rect())
-
-    # ---- 라벨(중앙 배치) — _LabelMixin의 '중점 위쪽' 대신 도형 정중앙 -------------
-    def _label_anchor(self) -> QPointF:
-        return self.rect().center()
-
-    def _label_color(self) -> QColor:
-        return QColor(self.pen().color())
-
-    def _sync_label(self):
-        if not self._label_alive():
-            return
-        a = self._label_anchor()
-        br = self._label._content_rect()
-        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
-
-    def setRect(self, *args):
-        # rect가 바뀌면(그리기·박스 리사이즈·리베이크) 라벨을 새 중앙으로 재배치.
-        super().setRect(*args)
-        if self._label_alive():
-            self._sync_label()
 
     def clone(self):
         c = _SymbolItem(self._kind, QRectF(self.rect()))
@@ -4661,7 +4674,8 @@ class _AnnotatorView(QGraphicsView):
         for it in self.items(view_pos):
             if it is getattr(self._owner, "_bg_item", None):
                 continue
-            if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem, _SymbolItem)):
+            if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem,
+                               _SymbolItem, _RectItem, _EllipseItem)):
                 return it
             if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
                 return None
