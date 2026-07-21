@@ -44,6 +44,14 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
     초록 점선). AutoCAD 시그니처. Qt 기본 RubberBandDrag를 방향 감지 커스텀 밴드로 대체.
   - **선/화살표 더블클릭 라벨** 완료(`260f73c`): 더블클릭으로 텍스트 부착, 본체 이동·변형 시 라벨이
     중점을 따라옴(`_LabelMixin`). 선·베지어화살·직선화살 모두 지원. `.ecad`에 직렬화.
+  - **FigJam 라벨 갭 + 드래그** 완료(`391b65f`, 실조건검증 ✓ 2026-07-21): 화살표 라벨을 선/곡선 위
+    **완전중앙**에 앉히고 paint에서 라벨 사각형과 겹치는 선을 끊어(=[C] 겹침 해결) 그 gap에 텍스트를
+    놓는다(FigJam). 라벨 드래그=경로 따라 슬라이드(정규화 `t`)+옆으로 수직 오프셋(Lucid), `.ecad`에
+    `t·off` 직렬화(하위호환). sarrow(`_PolyArrowItem`)=선분 Liang-Barsky 클리핑(`_seg_rect_interval`),
+    곡선/직선 arrow(`_ArrowItem`)=QPainter 클립(3차 베지어 곡률 유지·선분근사 아님). 라벨은
+    `_ConnectorLabel`(itemChange가 자유이동→경로 재투영, `ItemSendsGeometryChanges` 플래그 필수).
+    히트테스트·직렬화·DXF는 전체 선 그대로(시각 갭만). ⚠ 함정: `itemChange(ItemPositionChange)`는
+    `ItemSendsGeometryChanges` 없으면 발화 안 함.
   - **직교 자동라우팅** 완료(`ddd4ca3`·`75d8abc`·`d454227`): 직선화살(sarrow)의 Lucid식 직교 라우팅
     + 장애물 회피 → A* 승격(Hanan 그리드)으로 밀집 배치에서도 관통 0.
   - **화살표-화살표 교차 회피(soft 벌점)** 완료(`dde043b`, Stage3): 코어 라우터가 다른 화살표를
@@ -67,8 +75,8 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
     ⚠ **v1 함정(실조건서 발견):** 방향판정을 법선으로 하면 마름모 E꼭짓점의 **대각 법선**에 속아
     decision 연결 6px 계단을 못 잡았다 → 법선 대신 **분리축**으로 교체(v2). 폭 다른 E-E 루프는 양쪽
     다 테두리 밖이라 코어로 못 잡음 → **build에서 열별 폭 통일**로 처리(코어+빌드 병행). 스모크
-    `test_sarrow_absorbs_near_alignment`·`test_sarrow_absorbs_decision_alignment`. **잔여(open):**
-    라벨-선 겹침(`[C]`) — 라벨 오프셋/배치 계열, 후속.
+    `test_sarrow_absorbs_near_alignment`·`test_sarrow_absorbs_decision_alignment`. **[C] 라벨-선 겹침
+    해결**(`391b65f`) — 위 'FigJam 라벨 갭 + 드래그' 항목으로 근본 해결(선을 라벨 자리에서 끊음).
   - **image→ecad 빌드 지침(밀집 순서도):** 실조건서 확인 — 열별 **박스 폭 통일**(E/W·N/S 포트 정렬),
     피드백 루프는 `channel_x`(열 변 밖 U-bump), 여러 화살표 합류는 `channel_y` 공통 레일(병합 버스),
     루프백은 `channel_x`를 서로 다르게(겹침 방지). 계단은 코어(Stage4)가, 겹침은 이 빌드 힌트가 잡는다.
@@ -81,7 +89,11 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
     연결(`_symbol_nearest`, 외접 박스 아님 — GUI 실조건 확인). `.ecad`에 kind 직렬화.
   - **닫힌 도형 중앙 라벨** 완료: 네모·원·심볼을 더블클릭하면 도형 **정중앙**에 텍스트 부착,
     리사이즈 시 추종. `_CenterLabelMixin`(`_LabelMixin`의 '중점 위쪽' 대신 '정중앙')을 셋이 공유.
-    선·화살표는 기존 `_LabelMixin`(중점 위쪽) 유지. `.ecad`에 직렬화.
+    화살표는 FigJam 갭(위 항목), 플레인 선(`_LineItem`)만 기존 '중점 위쪽' 유지. `.ecad`에 직렬화.
+    긴 라벨이 도형 내접폭 초과 시 **폰트 축소**(단일 줄, `_fit_label_to_shape`, 마름모 0.6·원 0.72·
+    심볼 0.78·rect 0.85 내접비율)로 세로 spill 방지 — 실조건검증 ✓(2026-07-21, 마름모 shrink+수동
+    엔터 다줄). ⚠ 함정: wrap(줄바꿈)은 마름모서 줄 수 폭발→세로 spill이라 배제(실측); 폭 측정은
+    `_content_rect`가 contentsChanged 콜백서 stale이라 `QFontMetricsF` 직접측정.
   - **포트/접속점** 완료(`1b06976`): 도형의 변 중점 4개(N·E·S·W)를 이산 접속점으로. `_shape_ports`가
     변 중점을 실제 외곽선에 투영(마름모=꼭짓점). 스냅은 **포트 우선(18px) + 연속 폴백(14px)**
     2패스(`_border_snap_at`) — 기존 자유 스냅 유지. 화살표 도구로 도형 근처면 포트 점 예고, 바인딩은
