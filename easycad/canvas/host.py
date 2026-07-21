@@ -13,19 +13,55 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
           push_undo_add/push_undo_delete/push_undo_move/undo/
           copy_selection/paste_selection
 """
-from PyQt6.QtCore import Qt, QPointF, QSize
-from PyQt6.QtGui import QPen, QColor, QBrush, QAction, QKeySequence
+from PyQt6.QtCore import Qt, QPointF, QRectF, QSize
+from PyQt6.QtGui import (
+    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
+)
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
     QHBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
+    QDockWidget, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
+    QDialogButtonBox, QSpinBox, QCheckBox, QPlainTextEdit,
 )
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem, _PolyArrowItem,
+    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
+    _TableItem, _RectItem, _EllipseItem, _SymbolItem,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
+    _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
+from easycad.fileio.dxf_export import export_dxf
+from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.document import save_document, load_document
+from easycad.fileio.mermaid_import import (
+    parse_mermaid, layout_positions, MermaidError,
+)
+
+# Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
+# deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
+_MERMAID_SHAPE_ITEM = {
+    "rect":          ("rect", None),
+    "rounded":       ("rect", None),
+    "stadium":       ("symbol", "terminal"),
+    "rhombus":       ("symbol", "decision"),
+    "hexagon":       ("symbol", "prep"),
+    "parallelogram": ("symbol", "data"),
+    "cylinder":      ("symbol", "database"),
+    "circle":        ("ellipse", None),
+}
+
+
+def _border_attach(rect_scene: QRectF, toward: QPointF) -> QPointF:
+    """rect(scene)의 변 중점 중 toward 방향에 면한 점 — 화살표 부착점. 회전 없는 import
+    도형이라 외접 사각형 변 중점으로 충분(_PolyArrowItem이 이후 직교 라우팅으로 다듬음)."""
+    c = rect_scene.center()
+    dx, dy = toward.x() - c.x(), toward.y() - c.y()
+    if abs(dx) >= abs(dy):
+        x = rect_scene.right() if dx >= 0 else rect_scene.left()
+        return QPointF(x, c.y())
+    y = rect_scene.bottom() if dy >= 0 else rect_scene.top()
+    return QPointF(c.x(), y)
 
 # 무한 캔버스: 아주 큰 sceneRect로 사실상 무한한 팬 범위 제공.
 _SCENE_HALF = 50000.0
@@ -64,6 +100,7 @@ class CanvasWindow(QMainWindow):
         self._view = _AnnotatorView(self._scene, self)
         self._view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self._view.centerOn(0, 0)
+        self.setAcceptDrops(True)   # [Phase 4] 이미지 파일 드래그앤드롭 삽입
 
         central = QWidget()
         lay = QVBoxLayout(central)
@@ -73,6 +110,7 @@ class CanvasWindow(QMainWindow):
         lay.addWidget(self._view, 1)
         self.setCentralWidget(central)
         self._build_menu()
+        self._build_shapes_dock()
         self.set_tool("select")
 
     # ---- 메뉴 (파일 → 저장/열기/PDF) ----------------------------------------
@@ -105,6 +143,38 @@ class CanvasWindow(QMainWindow):
         a_sel.setShortcut(QKeySequence("Ctrl+Shift+P"))
         a_sel.triggered.connect(lambda: self._export_pdf(selection_only=True))
         m.addAction(a_sel)
+
+        a_dxf = QAction("DXF 내보내기…", self)      # Phase 3 — CAD 상호운용
+        a_dxf.setShortcut(QKeySequence("Ctrl+Shift+D"))
+        a_dxf.triggered.connect(self._export_dxf)
+        m.addAction(a_dxf)
+
+        a_dxf_in = QAction("DXF 가져오기…", self)    # Phase 3 후반 — 역방향
+        a_dxf_in.setShortcut(QKeySequence("Ctrl+Shift+I"))
+        a_dxf_in.triggered.connect(self._import_dxf)
+        m.addAction(a_dxf_in)
+
+        m.addSeparator()
+
+        a_img = QAction("이미지 삽입…", self)          # Phase 4 — PNG/JPG 삽입
+        a_img.setShortcut(QKeySequence("Ctrl+Shift+M"))
+        a_img.triggered.connect(self._insert_image)
+        m.addAction(a_img)
+
+        a_tb = QAction("표제란 / 용지틀 삽입…", self)     # Phase 4 — title block / paper frame
+        a_tb.setShortcut(QKeySequence("Ctrl+Shift+T"))
+        a_tb.triggered.connect(self._insert_titleblock)
+        m.addAction(a_tb)
+
+        a_tbl = QAction("표 삽입…", self)                  # Phase 4 — NxM 균등 격자 표
+        a_tbl.setShortcut(QKeySequence("Ctrl+Shift+B"))
+        a_tbl.triggered.connect(self._insert_table)
+        m.addAction(a_tbl)
+
+        a_mmd = QAction("Mermaid 가져오기…", self)          # Phase 4 — 순서도 코드 → 도형
+        a_mmd.setShortcut(QKeySequence("Ctrl+Shift+G"))
+        a_mmd.triggered.connect(self._insert_mermaid)
+        m.addAction(a_mmd)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
@@ -216,6 +286,266 @@ class CanvasWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "PDF 내보내기", "저장에 실패했습니다.")
 
+    def _export_dxf(self):
+        if self._scene.itemsBoundingRect().isEmpty():
+            QMessageBox.information(self, "DXF 내보내기", "출력할 객체가 없습니다.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "DXF로 저장", "", "DXF 파일 (*.dxf)")
+        if not path:
+            return
+        if not path.lower().endswith(".dxf"):
+            path += ".dxf"
+        try:
+            export_dxf(self._scene, path)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "DXF 내보내기", f"저장에 실패했습니다:\n{e}")
+            return
+        QMessageBox.information(self, "DXF 내보내기", f"저장 완료:\n{path}")
+
+    def _import_dxf(self):
+        # 현재 씬을 대체하는 '열기' 시맨틱(import_dxf clear=True 기본).
+        path, _ = QFileDialog.getOpenFileName(self, "DXF 가져오기", "", "DXF 파일 (*.dxf)")
+        if not path:
+            return
+        try:
+            n = import_dxf(self._scene, path)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "DXF 가져오기", f"가져오기에 실패했습니다:\n{e}")
+            return
+        self._undo.clear()
+        nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
+        self._badge_n = max(nums) if nums else 0
+        self.statusBar().showMessage(f"가져오기 완료: {n}개 객체 — {path}", 5000)
+
+    # ---- 이미지 삽입 (Phase 4) ---------------------------------------------
+    _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
+    _IMG_LONG = 400.0   # 삽입 시 긴 변 기본 크기(씬 단위) — 대형 사진이 캔버스를 뒤덮지 않게
+
+    def _insert_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "이미지 삽입", "", "이미지 (*.png *.jpg *.jpeg *.bmp *.gif)")
+        if not path:
+            return
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        self._insert_image_at(path, center)
+
+    def _insert_image_at(self, path: str, scene_pos: QPointF):
+        """path의 이미지를 scene_pos를 중심으로 삽입(긴 변 _IMG_LONG로 축소, 종횡비 유지)."""
+        pm = QPixmap(path)
+        if pm.isNull():
+            QMessageBox.warning(self, "이미지 삽입", f"이미지를 열 수 없습니다:\n{path}")
+            return
+        w, h = pm.width(), pm.height()
+        s = min(1.0, self._IMG_LONG / max(w, h)) if max(w, h) > 0 else 1.0
+        W, H = w * s, h * s
+        item = _ImageItem(pm, QRectF(0.0, 0.0, W, H))
+        item.setPos(scene_pos.x() - W / 2.0, scene_pos.y() - H / 2.0)
+        item.setFlags(item.GraphicsItemFlag.ItemIsMovable
+                      | item.GraphicsItemFlag.ItemIsSelectable)
+        self._scene.addItem(item)
+        self._scene.clearSelection()
+        item.setSelected(True)
+        self.push_undo_add(item)
+        self.set_tool("select")
+        self.statusBar().showMessage(f"이미지 삽입: {w}×{h}px — {path}", 4000)
+
+    # 파일 탐색기에서 이미지를 캔버스로 끌어다 놓기 — QMainWindow가 드롭을 받는다(코어 뷰 무수정).
+    def dragEnterEvent(self, e):
+        md = e.mimeData()
+        if md.hasUrls() and any(u.toLocalFile().lower().endswith(self._IMG_EXTS)
+                                for u in md.urls()):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        md = e.mimeData()
+        if not md.hasUrls():
+            return
+        view_pt = self._view.mapFrom(self, e.position().toPoint())
+        scene_pos = self._view.mapToScene(view_pt)
+        n = 0
+        for u in md.urls():
+            p = u.toLocalFile()
+            if p.lower().endswith(self._IMG_EXTS):
+                self._insert_image_at(p, scene_pos)
+                scene_pos = QPointF(scene_pos.x() + 20.0, scene_pos.y() + 20.0)
+                n += 1
+        if n:
+            e.acceptProposedAction()
+
+    # ---- 표제란 / 용지틀 (Phase 4) ------------------------------------------
+    def _insert_titleblock(self):
+        """용지 크기·방향을 고르고 표제란 프레임을 삽입. 프레임은 뷰 중앙 근처에 좌상단 배치."""
+        existing = self._find_titleblock()
+        if existing is not None:
+            QMessageBox.information(
+                self, "표제란", "이미 표제란/용지틀이 있습니다.\n"
+                "더블클릭해 내용을 편집하거나, 지운 뒤 다시 삽입하세요.")
+            self._scene.clearSelection()
+            existing.setSelected(True)
+            return
+        dlg = _PaperSizeDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        size, orient = dlg.result_size_orient()
+        item = _TitleBlockItem(size, orient)
+        w, h = item.paper_wh()
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        item.setPos(center.x() - w / 2.0, center.y() - h / 2.0)
+        item.setZValue(-1000.0)   # 용지는 그린 도형들 뒤에(시트처럼)
+        item.setFlags(item.GraphicsItemFlag.ItemIsMovable
+                      | item.GraphicsItemFlag.ItemIsSelectable)
+        self._scene.addItem(item)
+        self._scene.clearSelection()
+        item.setSelected(True)
+        self.push_undo_add(item)
+        self.set_tool("select")
+        self.statusBar().showMessage(
+            f"표제란/용지틀 삽입: {size} {orient} — 더블클릭해 필드 입력", 5000)
+
+    def _edit_titleblock(self, item):
+        """표제란 더블클릭 → 필드 편집 폼(용지 크기·방향 포함)."""
+        dlg = _TitleBlockDialog(self, item)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        size, orient = dlg.result_size_orient()
+        item.set_paper(size, orient)
+        item.set_fields(dlg.result_fields())
+        self.statusBar().showMessage("표제란 갱신됨", 3000)
+
+    def _find_titleblock(self):
+        for it in self._scene.items():
+            if isinstance(it, _TitleBlockItem):
+                return it
+        return None
+
+    # ---- 표(table) 삽입 (Phase 4) -------------------------------------------
+    _CELL_W, _CELL_H = 40.0, 14.0   # 삽입 시 셀 기본 치수(mm 월드좌표)
+
+    def _insert_table(self):
+        """행·열 개수를 고르고 균등 격자 표를 삽입(뷰 중앙에 배치). 셀은 더블클릭해 인라인 편집."""
+        dlg = _TableSizeDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        rows, cols, header = dlg.result()
+        W, H = cols * self._CELL_W, rows * self._CELL_H
+        item = _TableItem(rows, cols, QRectF(0.0, 0.0, W, H), header=header)
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        item.setPos(center.x() - W / 2.0, center.y() - H / 2.0)
+        item.setFlags(item.GraphicsItemFlag.ItemIsMovable
+                      | item.GraphicsItemFlag.ItemIsSelectable)
+        self._scene.addItem(item)
+        self._scene.clearSelection()
+        item.setSelected(True)
+        self.push_undo_add(item)
+        self.set_tool("select")
+        self.statusBar().showMessage(
+            f"표 삽입: {rows}×{cols} — 셀 더블클릭해 편집(Enter/Tab 이동)", 5000)
+
+    # ---- Mermaid 가져오기 (Phase 4) -----------------------------------------
+    _MMD_NODE_W, _MMD_NODE_H = 120.0, 56.0   # 노드 기본 치수(mermaid_import 레이아웃 상수와 동일)
+
+    def _insert_mermaid(self):
+        """Mermaid flowchart 코드를 붙여넣어 편집가능 도형+화살표로 자동배치(뷰 중앙 기준).
+        노드는 _RectItem/_EllipseItem/_SymbolItem, 엣지는 _PolyArrowItem 직교 라우팅으로 연결."""
+        dlg = _MermaidDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            n_nodes, n_arrows, direction = self._build_mermaid(dlg.text())
+        except MermaidError as ex:
+            QMessageBox.warning(self, "Mermaid 가져오기", str(ex))
+            return
+        self.set_tool("select")
+        self.statusBar().showMessage(
+            f"Mermaid 가져오기: 노드 {n_nodes} · 화살표 {n_arrows} "
+            f"(방향 {direction}) — 도형을 개별 이동·편집 가능", 6000)
+
+    def _build_mermaid(self, text):
+        """텍스트 → 도형·화살표를 씬에 배치(한 번의 undo). (노드수, 화살표수, 방향) 반환.
+        파싱 실패 시 MermaidError를 올린다(UI 없음 — 스모크에서 그대로 호출 가능)."""
+        graph = parse_mermaid(text)   # 실패 시 MermaidError
+
+        W, H = self._MMD_NODE_W, self._MMD_NODE_H
+        pos = layout_positions(graph, node_w=W, node_h=H)
+        xs = [p[0] for p in pos.values()]
+        ys = [p[1] for p in pos.values()]
+        min_x, min_y = (min(xs), min(ys)) if xs else (0.0, 0.0)
+        span_x = (max(xs) - min_x + W) if xs else 0.0
+        span_y = (max(ys) - min_y + H) if ys else 0.0
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        ox = center.x() - span_x / 2.0 - min_x
+        oy = center.y() - span_y / 2.0 - min_y
+
+        pen = self.make_pen()
+        items_by_id: dict[str, object] = {}
+        added: list = []
+        for nid, node in graph.nodes.items():
+            x, y = pos[nid]
+            it = self._make_mermaid_node(node, ox + x, oy + y, W, H, pen)
+            self._scene.addItem(it)
+            it._sync_label()   # 라벨 중앙 정렬은 씬에 든 뒤라야 동작(_label_alive가 씬 멤버십을 봄)
+            items_by_id[nid] = it
+            added.append(it)
+
+        arrows: list = []
+        for e in graph.edges:
+            s = items_by_id.get(e.src)
+            d = items_by_id.get(e.dst)
+            if s is None or d is None or s is d:   # self-loop은 스킵(직교 엘보 무의미)
+                continue
+            arr = self._make_mermaid_edge(e, s, d)
+            self._scene.addItem(arr)
+            arrows.append(arr)
+            added.append(arr)
+
+        # 노드·화살표를 모두 씬에 올린 뒤 직교 엘보를 계산(장애물·부착 법선이 씬 존재를 전제).
+        for arr in arrows:
+            try:
+                arr.build_elbow()
+            except Exception:
+                pass
+            arr._sync_label()   # 엣지 라벨도 씬에 든 뒤 재동기(build_elbow가 무변경이면 sync 생략되므로)
+
+        self.push_undo_add_many(added)
+        self._scene.clearSelection()
+        return len(items_by_id), len(arrows), graph.direction
+
+    def _make_mermaid_node(self, node, x, y, w, h, pen):
+        shape, kind = _MERMAID_SHAPE_ITEM.get(node.shape, ("rect", None))
+        rect = QRectF(0.0, 0.0, w, h)
+        if shape == "ellipse":
+            it = _EllipseItem(rect)
+        elif shape == "symbol":
+            it = _SymbolItem(kind, rect)
+        else:
+            it = _RectItem(rect)
+        it.setPen(QPen(pen))
+        it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        it.setPos(x, y)
+        it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
+        if node.label:
+            it.ensure_label().setPlainText(node.label)
+        return it
+
+    def _make_mermaid_edge(self, edge, src_it, dst_it):
+        rs = src_it.mapRectToScene(src_it.rect())
+        rd = dst_it.mapRectToScene(dst_it.rect())
+        a_src = _border_attach(rs, rd.center())
+        a_dst = _border_attach(rd, rs.center())
+        arr = _PolyArrowItem(self.current_color, self.current_width, edge.arrow)
+        arr.set_points(a_src, a_dst)   # arrow pos=(0,0) → local==scene 좌표
+        # 지속 연결 — 도형 이동 시 화살표가 따라오도록 양끝을 부착점에 바인딩(부착점=변 중점 로컬좌표).
+        arr.set_bound(0, src_it, src_it.mapFromScene(a_src))
+        arr.set_bound(len(arr._pts) - 1, dst_it, dst_it.mapFromScene(a_dst))
+        arr._auto_route = True   # 직교 자동 엘보(양끝 바인딩 → build_elbow가 경로 생성)
+        if edge.label:
+            arr.ensure_label().setPlainText(edge.label)
+        return arr
+
     # ---- 툴바 (최소) --------------------------------------------------------
     def _build_toolbar(self) -> QWidget:
         bar = QWidget()
@@ -224,6 +554,10 @@ class CanvasWindow(QMainWindow):
         h.setSpacing(4)
         self._tool_buttons: dict[str, QToolButton] = {}
         for key, name, sc in _TOOLS:
+            # 네모·원(닫힌 도형)은 왼쪽 「도형」 팔레트로 이동 — 상단은 그리기 도구만(정리).
+            # 단축키(2·5)는 팔레트 버튼과 무관하게 계속 동작.
+            if key in ("rect", "ellipse"):
+                continue
             btn = QToolButton()
             btn.setText(f"{name}")
             btn.setToolTip(f"{name} ({sc})")
@@ -237,6 +571,83 @@ class CanvasWindow(QMainWindow):
         h.addWidget(QLabel("휠=줌 · Shift+휠=두께/크기 · 가운데버튼 드래그=이동 · "
                            "Ctrl+0=100% · Ctrl+9=전체맞춤 · F3=스냅 · F8=직교 · Del=삭제 · Ctrl+Z=되돌리기"))
         return bar
+
+    # ---- 도형 팔레트 (좌측 dock) — 기본(네모·원) + 순서도(심볼 6종) -----------
+    @staticmethod
+    def _shape_icon(kind: str, px: int = 30) -> QIcon:
+        """팔레트 아이콘 — 캔버스 도형과 같은 모양으로 그린다. 심볼은 경로 팩토리,
+        기본 도형(rect/ellipse)은 직접."""
+        pm = QPixmap(px, px)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor("#333333")); pen.setWidthF(1.6)
+        p.setPen(pen); p.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        m = 4
+        r = QRectF(m, m, px - 2 * m, px - 2 * m)
+        if kind == "rect":
+            p.drawRect(r)
+        elif kind == "ellipse":
+            p.drawEllipse(r)
+        else:
+            p.drawPath(_SYMBOL_KINDS[kind][1](r))
+        p.end()
+        return QIcon(pm)
+
+    def _palette_button(self, label: str, icon_kind: str, tooltip: str, tool_key: str) -> QToolButton:
+        btn = QToolButton()
+        btn.setText(label)
+        btn.setIcon(self._shape_icon(icon_kind))
+        btn.setIconSize(QSize(30, 30))
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        btn.setToolTip(tooltip)
+        btn.setCheckable(True)
+        btn.setMinimumSize(QSize(64, 56))
+        btn.clicked.connect(
+            lambda _c=False, k=tool_key: self.set_tool(None if self.current_tool == k else k))
+        return btn
+
+    @staticmethod
+    def _section_label(text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet("color:#888; font-size:11px; padding:3px 2px 1px 2px;")
+        return lbl
+
+    def _build_shapes_dock(self):
+        dock = QDockWidget("도형", self)
+        dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea
+                             | Qt.DockWidgetArea.RightDockWidgetArea)
+        panel = QWidget()
+        vbox = QVBoxLayout(panel)
+        vbox.setContentsMargins(6, 6, 6, 6)
+        vbox.setSpacing(4)
+
+        # 기본 도형(네모·원) — 상단 툴바에서 이관.
+        vbox.addWidget(self._section_label("기본"))
+        basic_grid = QGridLayout()
+        basic_grid.setSpacing(4)
+        self._shape_tool_buttons: dict[str, QToolButton] = {}
+        for i, (key, label) in enumerate((("rect", "네모"), ("ellipse", "원"))):
+            btn = self._palette_button(label, key, f"{label} — 클릭 후 캔버스에 드래그", key)
+            basic_grid.addWidget(btn, i // 2, i % 2)
+            self._shape_tool_buttons[key] = btn
+        vbox.addLayout(basic_grid)
+
+        # 순서도 심볼 6종.
+        vbox.addWidget(self._section_label("순서도"))
+        sym_grid = QGridLayout()
+        sym_grid.setSpacing(4)
+        self._sym_buttons: dict[str, QToolButton] = {}
+        for i, (kind, (label, _fn)) in enumerate(_SYMBOL_KINDS.items()):
+            btn = self._palette_button(label, kind, f"{label} 심볼 — 클릭 후 캔버스에 드래그",
+                                       f"sym:{kind}")
+            sym_grid.addWidget(btn, i // 2, i % 2)
+            self._sym_buttons[kind] = btn
+        vbox.addLayout(sym_grid)
+
+        vbox.addStretch(1)
+        dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
 
     # ---- 지속 연결 리라우트 -------------------------------------------------
     def _on_scene_changed(self, region):
@@ -291,6 +702,11 @@ class CanvasWindow(QMainWindow):
         self.current_tool = key
         for k, b in self._tool_buttons.items():
             b.setChecked(k == key)
+        # 왼쪽 「도형」 팔레트 버튼 동기화: 기본(네모·원)은 key 직접, 심볼은 sym:kind.
+        for k, b in getattr(self, "_shape_tool_buttons", {}).items():
+            b.setChecked(k == key)
+        for k, b in getattr(self, "_sym_buttons", {}).items():
+            b.setChecked(f"sym:{k}" == key)
 
     def next_badge_number(self) -> int:
         self._badge_n += 1
@@ -395,3 +811,130 @@ class CanvasWindow(QMainWindow):
             new_items.append(c)
         if new_items:
             self._undo.append(("add", new_items))
+
+
+# ---------------------------------------------------------------------------
+# [Phase 4] 표제란 다이얼로그 — 삽입 시 용지 선택 / 더블클릭 시 필드 편집
+# ---------------------------------------------------------------------------
+_ORIENTS = [("landscape", "가로"), ("portrait", "세로")]
+
+
+def _build_paper_combos(dlg, size: str, orient: str):
+    """용지 크기·방향 콤보 2개를 만들어 (size_combo, orient_combo)로 반환."""
+    size_cb = QComboBox(dlg)
+    for k in PAPER_SIZES_MM:
+        size_cb.addItem(k, k)
+    idx = size_cb.findData(size)
+    size_cb.setCurrentIndex(idx if idx >= 0 else 0)
+    orient_cb = QComboBox(dlg)
+    for key, label in _ORIENTS:
+        orient_cb.addItem(label, key)
+    oidx = orient_cb.findData(orient)
+    orient_cb.setCurrentIndex(oidx if oidx >= 0 else 0)
+    return size_cb, orient_cb
+
+
+class _PaperSizeDialog(QDialog):
+    """표제란 삽입 시 용지 크기·방향만 고르는 작은 다이얼로그."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("용지 선택")
+        form = QFormLayout(self)
+        self._size_cb, self._orient_cb = _build_paper_combos(self, "A2", "landscape")
+        form.addRow("용지 크기", self._size_cb)
+        form.addRow("방향", self._orient_cb)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        form.addRow(btns)
+
+    def result_size_orient(self):
+        return self._size_cb.currentData(), self._orient_cb.currentData()
+
+
+class _TitleBlockDialog(QDialog):
+    """표제란 필드 편집 폼 + 용지 크기·방향 재선택."""
+
+    def __init__(self, parent, item):
+        super().__init__(parent)
+        self.setWindowTitle("표제란 편집")
+        form = QFormLayout(self)
+        self._size_cb, self._orient_cb = _build_paper_combos(self, item._size, item._orient)
+        form.addRow("용지 크기", self._size_cb)
+        form.addRow("방향", self._orient_cb)
+        self._edits = {}
+        for key in TB_FIELD_KEYS:
+            ed = QLineEdit(item._fields.get(key, ""), self)
+            self._edits[key] = ed
+            form.addRow(TB_FIELD_LABELS[key], ed)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        form.addRow(btns)
+
+    def result_size_orient(self):
+        return self._size_cb.currentData(), self._orient_cb.currentData()
+
+    def result_fields(self):
+        return {k: ed.text() for k, ed in self._edits.items()}
+
+
+class _TableSizeDialog(QDialog):
+    """표 삽입 시 행·열 개수와 헤더 행 여부를 고르는 작은 다이얼로그."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("표 삽입")
+        form = QFormLayout(self)
+        self._rows_sb = QSpinBox(self)
+        self._rows_sb.setRange(1, 100)
+        self._rows_sb.setValue(3)
+        self._cols_sb = QSpinBox(self)
+        self._cols_sb.setRange(1, 50)
+        self._cols_sb.setValue(3)
+        self._header_cb = QCheckBox("첫 행을 헤더로(굵게)", self)
+        self._header_cb.setChecked(True)
+        form.addRow("행", self._rows_sb)
+        form.addRow("열", self._cols_sb)
+        form.addRow(self._header_cb)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        form.addRow(btns)
+
+    def result(self):
+        return self._rows_sb.value(), self._cols_sb.value(), self._header_cb.isChecked()
+
+
+class _MermaidDialog(QDialog):
+    """Mermaid flowchart 코드를 붙여넣는 입력창(붙여넣기 다이얼로그 — deep-interview 확정)."""
+
+    _SAMPLE = ("flowchart TD\n"
+               "    A[시작] --> B{조건?}\n"
+               "    B -->|예| C[처리]\n"
+               "    B -->|아니오| D([종료])\n"
+               "    C --> D")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mermaid 가져오기")
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("Mermaid flowchart 코드를 붙여넣으세요 "
+                             "(flowchart TD/LR … · 노드 모양·화살표·라벨 지원):"))
+        self._edit = QPlainTextEdit(self)
+        self._edit.setPlaceholderText(self._SAMPLE)
+        self._edit.setMinimumSize(QSize(460, 280))
+        self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        lay.addWidget(self._edit)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+    def text(self):
+        return self._edit.toPlainText()

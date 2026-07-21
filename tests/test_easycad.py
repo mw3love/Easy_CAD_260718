@@ -13,14 +13,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF
-from PyQt6.QtGui import QBrush, QColor, QPainterPath
+from PyQt6.QtGui import QBrush, QColor, QPainterPath, QPixmap
 
 from easycad.canvas.host import CanvasWindow
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _axis_scale_fn, _mirror_fn)
+    _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _SYMBOL_KINDS,
+    _nearest_border, _shape_ports, _axis_scale_fn, _mirror_fn,
+    _seg_cross_seg, _count_seg_crossings, _ConnectorLabel)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
+from easycad.fileio.dxf_export import export_dxf
+from easycad.fileio.sketch_build import Sketch, _argb
 
 _app = QApplication.instance() or QApplication([])
 _TMP = tempfile.mkdtemp(prefix="easycad_test_")
@@ -38,12 +42,30 @@ def _mk_rect(scene, pen, x, y, w, h):
 
 def test_host_construction():
     w = CanvasWindow()
-    assert len(w._tool_buttons) == 9
+    # 상단 툴바 = 그리기 도구 7종(네모·원은 왼쪽 「도형」 팔레트로 이관).
+    assert len(w._tool_buttons) == 7
+    assert "rect" not in w._tool_buttons and "ellipse" not in w._tool_buttons
+    # 왼쪽 팔레트: 기본(네모·원) + 순서도 6종.
+    assert set(w._shape_tool_buttons) == {"rect", "ellipse"}
+    assert len(w._sym_buttons) == 6
     r = w._scene.sceneRect()
     assert r.width() > 90000 and r.height() > 90000
     m0 = w._view.transform().m11()
     w._on_wheel_zoom(120)
     assert w._view.transform().m11() > m0
+
+
+def test_shape_palette_arms_tool():
+    # 팔레트 네모 버튼 클릭 → rect 도구 무장 + 버튼 체크 동기화. 단축키 경로도 유지.
+    w = CanvasWindow()
+    w._shape_tool_buttons["rect"].click()
+    assert w.current_tool == "rect" and w._shape_tool_buttons["rect"].isChecked()
+    w.set_tool("select")
+    assert not w._shape_tool_buttons["rect"].isChecked()
+    # 심볼 무장 시 기본 버튼은 해제 유지
+    w.set_tool("sym:decision")
+    assert not w._shape_tool_buttons["rect"].isChecked()
+    assert w._sym_buttons["decision"].isChecked()
 
 
 def test_pdf_export():
@@ -314,6 +336,102 @@ def test_straight_arrow():
     assert len(sas) == 1
     assert [(p.x(), p.y()) for p in sas[0]._pts] == [(0, 0), (50, 40), (100, 80)]
     assert sas[0].has_label() and sas[0]._label.toPlainText() == "S1"
+
+
+def test_sarrow_label_gap_breaks_line():
+    # [FigJam 갭] 라벨이 있으면 그 자리에서 선을 끊고(가시 경로가 쪼개짐), 없으면 연속(2요소).
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    sa = _PolyArrowItem(QColor("#000000ff"), 3, True)
+    sa._pts = [QPointF(0, 0), QPointF(200, 0)]
+    sc.addItem(sa)
+    assert sa._visible_polyline_path().elementCount() == 2      # 라벨 없음 = 통짜 선(move+line)
+    sa.ensure_label().setPlainText("예"); sa._sync_label()
+    assert isinstance(sa._label, _ConnectorLabel)
+    assert sa._visible_polyline_path().elementCount() > 2        # 라벨 자리에서 끊김
+    # 히트/직렬화 경로는 전체 폴리라인 그대로(갭은 시각뿐).
+    assert sa._polyline_path().elementCount() == 2
+
+
+def test_sarrow_label_drag_slides_and_offsets():
+    # 라벨 드래그(Movable+itemChange 재투영) — 자유 이동을 경로 위 t·off로 구속(FigJam/Lucid).
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    sa = _PolyArrowItem(QColor("#000000ff"), 3, True)
+    sa._pts = [QPointF(0, 0), QPointF(200, 0)]
+    sc.addItem(sa)
+    lbl = sa.ensure_label(); lbl.setPlainText("예"); sa._sync_label()
+    assert (round(sa._label_t, 3), round(sa._label_off, 3)) == (0.5, 0.0)
+    br = lbl._content_rect()
+    # t≈0.25(x=50), 선 위로 15px 오프셋 되도록 라벨 중심을 (50,-15)에 놓는다.
+    lbl.setPos(QPointF(50 - br.width() / 2, -15 - br.height() / 2))
+    assert abs(sa._label_t - 0.25) < 0.02
+    assert abs(sa._label_off - (-15)) < 0.5                       # 왼쪽 법선(+x→아래) 기준 부호
+    a = sa._label_anchor()                                        # 구속 중심 == 앵커
+    c = QPointF(lbl.pos().x() + br.width() / 2, lbl.pos().y() + br.height() / 2)
+    assert abs(c.x() - a.x()) < 0.5 and abs(c.y() - a.y()) < 0.5
+
+
+def test_sarrow_label_t_off_roundtrip():
+    # 라벨 위치(t·off)가 .ecad 저장/열기로 보존.
+    from PyQt6.QtWidgets import QGraphicsScene
+    w = CanvasWindow()
+    sa = _PolyArrowItem(QColor("#000000ff"), 3, True)
+    sa._pts = [QPointF(0, 0), QPointF(200, 0)]
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.ensure_label().setPlainText("예"); sa._label_t = 0.3; sa._label_off = 12.0; sa._sync_label()
+    path = os.path.join(_TMP, "sarrow_label_pos.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene(); load_document(sc2, path)
+    a2 = [it for it in sc2.items() if isinstance(it, _PolyArrowItem)][0]
+    assert abs(a2._label_t - 0.3) < 1e-6 and abs(a2._label_off - 12.0) < 1e-6
+
+
+def test_arrow_curved_label_gap_drag_roundtrip():
+    # [FigJam 갭·드래그] 곡선(베지어) 화살표도 라벨 자리에 갭 + 드래그로 곡선 위 슬라이드/오프셋.
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    a = _ArrowItem(QColor("#e02424ff"), 4, True); sc.addItem(a)
+    a._p1 = QPointF(0, 0); a._p2 = QPointF(300, 0)
+    a._ctrl1 = QPointF(100, -120); a._ctrl2 = QPointF(200, -120)   # 아치형 곡선
+    assert a._label_gap_rect() is None                             # 라벨 없음 = 갭 없음
+    lbl = a.ensure_label(); lbl.setPlainText("반가워"); a._sync_label()
+    assert isinstance(a._label, _ConnectorLabel)
+    assert a._label_gap_rect() is not None                         # 라벨 = 갭 사각형 생김
+    assert (round(a._label_t, 2), round(a._label_off, 2)) == (0.5, 0.0)
+    # 드래그: 곡선 위 t≈0.25 지점 근처 + 바깥으로 당김 → t·off 갱신, 중심이 앵커에 구속.
+    br = lbl._content_rect(); q = a._point_at(0.25)
+    lbl.setPos(QPointF(q.x() - br.width() / 2, q.y() - 30 - br.height() / 2))
+    assert abs(a._label_t - 0.25) < 0.08 and abs(a._label_off) > 5
+    c = QPointF(lbl.pos().x() + br.width() / 2, lbl.pos().y() + br.height() / 2)
+    a2anchor = a._label_anchor()
+    assert abs(c.x() - a2anchor.x()) < 0.5 and abs(c.y() - a2anchor.y()) < 0.5
+    # .ecad 왕복으로 t·off 보존.
+    w = CanvasWindow()
+    path = os.path.join(_TMP, "arrow_curve_label.ecad")
+    save_document(sc, path)
+    sc2 = QGraphicsScene(); load_document(sc2, path)
+    a3 = [it for it in sc2.items() if isinstance(it, _ArrowItem)][0]
+    assert abs(a3._label_t - a._label_t) < 1e-6 and abs(a3._label_off - a._label_off) < 1e-6
+
+
+def test_center_label_shrinks_not_wraps():
+    # 마름모 중앙 라벨은 넘칠 때 폰트 축소(단일 줄), 세로로 안 삐져나온다(wrap 결함 회피).
+    # (_sync_label의 폰트 적합은 라벨이 씬에 있을 때만 돈다 — 실제 사용과 동일하게 씬에 넣는다.)
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    d = _SymbolItem("decision", QRectF(0, 0, 150, 92)); sc.addItem(d)
+    d.ensure_label().setPlainText("검색 결과 있음 판정 오래된 것")   # 아주 긴 라벨
+    d._sync_label()
+    lbl = d._label
+    assert lbl.textWidth() == -1                                   # 줄바꿈 안 함(단일 줄)
+    assert lbl.font().pointSize() < lbl._base_pt                   # 넘쳐서 축소됨
+    assert lbl._content_rect().height() < d.rect().height()        # 세로로 안 넘침(spill 없음)
+    # 짧은 라벨은 축소 없이 기준 크기 유지.
+    d2 = _SymbolItem("decision", QRectF(0, 0, 150, 92)); sc.addItem(d2)
+    d2.ensure_label().setPlainText("예"); d2._sync_label()
+    assert d2._label.font().pointSize() == d2._label._base_pt
 
 
 def test_straight_arrow_waypoint():
@@ -1054,6 +1172,173 @@ def test_route_hint_drop_threshold_scales_with_zoom():
     assert len(sa._route_hints) == 0, "축소된 뷰에서는 판정 반경이 넓어 이 거리도 제거돼야 함"
 
 
+def test_seg_cross_seg():
+    # [Stage3] 진짜 교차만 True — 끝점 공유·공선 접촉·비접촉은 False(부착 도형 근처 오탐 방지).
+    P = QPointF
+    assert _seg_cross_seg(P(0, 0), P(10, 0), P(5, -5), P(5, 5))       # 十자 진짜 교차
+    assert not _seg_cross_seg(P(0, 0), P(10, 0), P(10, 0), P(10, 10))  # 끝점 공유(T)
+    assert not _seg_cross_seg(P(0, 0), P(10, 0), P(5, 0), P(15, 0))    # 공선 겹침
+    assert not _seg_cross_seg(P(0, 0), P(10, 0), P(5, 1), P(5, 5))     # 스쳐만 감(안 닿음)
+    # 끝점이 상대 선분 내부에 딱 닿는 T접촉도 비교차(우리 규약)
+    assert not _seg_cross_seg(P(0, 0), P(10, 0), P(5, 0), P(5, 5))
+
+
+def _mk_loopback_scene(w, penalty):
+    """[Stage3] 진단 축소판 — 세로 전진엣지 4개를 가로지르는 긴 수평 루프백.
+    penalty로 _ARROW_CROSS_PENALTY를 세팅하고 (rects, arrows)를 안정 라우팅해 반환."""
+    _PolyArrowItem._ARROW_CROSS_PENALTY = penalty
+    sc = w._scene
+    rects, arrows = [], []
+
+    def arrow(a, pa, b, pb):
+        sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+        sa.set_points(pa, pb)
+        sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+        sc.addItem(sa)
+        sa.set_bound(0, a, a.mapFromScene(pa)); sa.set_bound(1, b, b.mapFromScene(pb))
+        sa._auto_route = True
+        return sa
+
+    for k in range(4):                       # 세로 전진엣지 4개(x=130,230,330,430)
+        x = 100 * (k + 1)
+        top = _mk_rect(sc, w.make_pen(), x, -100, 60, 60)
+        bot = _mk_rect(sc, w.make_pen(), x, 300, 60, 60)
+        rects += [top, bot]
+        arrows.append(arrow(top, QPointF(x + 30, -40), bot, QPointF(x + 30, 300)))
+    L = _mk_rect(sc, w.make_pen(), 0, 120, 60, 60)     # E 포트 (60,150)
+    R = _mk_rect(sc, w.make_pen(), 500, 120, 60, 60)   # W 포트 (500,150)
+    rects += [L, R]
+    arrows.append(arrow(R, QPointF(500, 150), L, QPointF(60, 150)))   # 긴 수평 루프백
+    for _ in range(4):                       # 안정될 때까지(다른 화살표 최종 경로 반영)
+        if not any(sa.build_elbow() for sa in arrows):
+            break
+    return rects, arrows
+
+
+def _arrow_cross_and_hits(rects, arrows):
+    from easycad.canvas.annotator_core import _path_hits_rects
+    segs = []
+    for sa in arrows:
+        pts = [sa.mapToScene(p) for p in sa._pts]
+        segs.append([(pts[i], pts[i + 1]) for i in range(len(pts) - 1)])
+    cross = 0
+    for i in range(len(segs)):
+        for j in range(i + 1, len(segs)):
+            for a, b in segs[i]:
+                cross += _count_seg_crossings([a, b], segs[j])
+    rr = [r.mapRectToScene(r.rect()) for r in rects]
+    hits = 0
+    for sa in arrows:
+        pts = [sa.mapToScene(p) for p in sa._pts]
+        for r, box in zip(rects, rr):
+            if r is sa._bind_start or r is sa._bind_end:
+                continue
+            if _path_hits_rects(pts, [box]):
+                hits += 1
+    return cross, hits
+
+
+def test_sarrow_soft_avoids_arrows():
+    # [Stage3] 화살표-화살표 soft 회피 — 수평 루프백이 세로 전진엣지 4개를 관통하던 것을
+    #   벌점으로 우회시켜 교차를 없앤다. 도형 관통 0·멱등(되먹임 없음)·회귀(벌점0=원래대로) 동반 검증.
+    orig = _PolyArrowItem._ARROW_CROSS_PENALTY
+    try:
+        # (baseline) 벌점 0 → 루프백 직선 관통 = 4교차(기능 없을 때의 원래 동작)
+        w0 = CanvasWindow()
+        rects0, arrows0 = _mk_loopback_scene(w0, 0.0)
+        base_cross, base_hits = _arrow_cross_and_hits(rects0, arrows0)
+        assert base_cross == 4 and base_hits == 0, (base_cross, base_hits)
+
+        # (after) 벌점 200 → 우회로 교차 제거, 도형 관통은 여전히 0
+        w1 = CanvasWindow()
+        rects1, arrows1 = _mk_loopback_scene(w1, orig)
+        aft_cross, aft_hits = _arrow_cross_and_hits(rects1, arrows1)
+        assert aft_cross < base_cross, (aft_cross, base_cross)
+        assert aft_cross == 0 and aft_hits == 0, (aft_cross, aft_hits)
+
+        # (멱등/되먹임 없음) 안정 후 재라우팅은 전부 무변경
+        assert not any(sa.build_elbow() for sa in arrows1)
+
+        # (self 제외) 루프백의 회피 세그에 자기 자신 없음 — 다른 4개 화살표만
+        lb = arrows1[-1]
+        assert len(lb._obstacle_arrow_segs()) == 4
+    finally:
+        _PolyArrowItem._ARROW_CROSS_PENALTY = orig
+
+
+def _route_vertical_pair(w, dx):
+    """[Stage4] 위/아래 박스를 세로연결 — 아래 박스 center-x를 dx만큼 어긋냄. 안정 라우팅 후
+    화살표 세그먼트(씬) 개수를 반환. dx≤_ALIGN_TOL이면 흡수로 직선(1개), 초과면 계단(3개)."""
+    sc = w._scene
+    top = _mk_rect(sc, w.make_pen(), 100, 0, 60, 40)          # S-port center-x = 130
+    bot = _mk_rect(sc, w.make_pen(), 100 + dx, 200, 60, 40)   # N-port center-x = 130+dx
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    s, e = QPointF(130, 40), QPointF(130 + dx, 200)
+    sa.set_points(s, e)
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    sc.addItem(sa)
+    sa.set_bound(0, top, top.mapFromScene(s)); sa.set_bound(1, bot, bot.mapFromScene(e))
+    sa._auto_route = True
+    for _ in range(4):
+        if not sa.build_elbow():
+            break
+    return sa, len(sa._pts) - 1
+
+
+def test_sarrow_absorbs_near_alignment():
+    # [Stage4] 연결 도형 중심축이 몇 px 어긋나면 직교 라우터가 넣던 미세 계단([A]·[B])을,
+    #   임계(_ALIGN_TOL=8px) 이하일 때 부착점을 공통 축으로 스냅해 직선으로 붕괴시킨다.
+    tol = _PolyArrowItem._ALIGN_TOL
+    # (정렬) dx=0 → 흡수 무관, 이미 직선 1세그.
+    sa0, n0 = _route_vertical_pair(CanvasWindow(), 0)
+    assert n0 == 1, n0
+    # (미세 어긋남) dx=1·6(≤8) → 흡수로 직선 1세그(계단 소멸), 멱등(재라우팅 무변경).
+    for dx in (1, 6):
+        sa, n = _route_vertical_pair(CanvasWindow(), dx)
+        assert n == 1, (dx, n)
+        assert not sa.build_elbow(), dx                 # 멱등 — 되먹임 없음
+    # (임계 초과) dx=12(>8) → 미변경, 계단 3세그(의도적 오프셋 보존).
+    sa2, n2 = _route_vertical_pair(CanvasWindow(), 12)
+    assert n2 == 3, n2
+    # (혼합 L자 미대상) 정렬 흡수는 같은 방향 포트에만 — L자(수평↔수직 혼합)는 안 건드림.
+    w = CanvasWindow(); sc = w._scene
+    a = _mk_rect(sc, w.make_pen(), 0, 0, 60, 40)             # E-port (60,20)
+    b = _mk_rect(sc, w.make_pen(), 200, 100, 60, 40)         # N-port (230,100)
+    sL = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    p0, p1 = QPointF(60, 20), QPointF(230, 100)
+    sL.set_points(p0, p1)
+    sL.setFlags(sL.GraphicsItemFlag.ItemIsSelectable | sL.GraphicsItemFlag.ItemIsMovable)
+    sc.addItem(sL)
+    sL.set_bound(0, a, a.mapFromScene(p0)); sL.set_bound(1, b, b.mapFromScene(p1))
+    sL._auto_route = True
+    sL.build_elbow()
+    assert len(sL._pts) - 1 == 2, len(sL._pts)              # L자(모서리 1개) 유지
+    assert tol == 8.0
+
+
+def test_sarrow_absorbs_decision_alignment():
+    # [Stage4] 마름모 E꼭짓점 → 박스 W변, 세로 6px 어긋남. 분리축 판정(가로연결→Y정렬)이라
+    #   대각 법선에 안 속고 흡수. 꼭짓점은 축 밖으로 못 나가므로 '움직일 수 있는 박스 변'만 옮긴다.
+    w = CanvasWindow(); sc = w._scene
+    dec = _SymbolItem("decision", QRectF(0, 0, 100, 80)); dec.setPen(w.make_pen())
+    dec.setBrush(QBrush(Qt.BrushStyle.NoBrush)); dec.setPos(QPointF(0, 0)); sc.addItem(dec)  # E꼭짓점 (100,40)
+    box = _mk_rect(sc, w.make_pen(), 200, 21, 100, 50)      # W변 중점 (200,46) — dy=6
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    p0, p1 = QPointF(100, 40), QPointF(200, 46)
+    sa.set_points(p0, p1)
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    sc.addItem(sa)
+    sa.set_bound(0, dec, dec.mapFromScene(p0)); sa.set_bound(1, box, box.mapFromScene(p1))
+    sa._auto_route = True
+    for _ in range(4):
+        if not sa.build_elbow():
+            break
+    pts = [sa.mapToScene(p) for p in sa._pts]
+    assert len(pts) - 1 == 1, [(round(p.x()), round(p.y())) for p in pts]   # 직선(계단 소멸)
+    assert abs(pts[0].x() - 100) < 1e-6 and abs(pts[0].y() - 40) < 1e-6      # 꼭짓점 불변
+    assert abs(pts[-1].y() - 40) < 1e-6                                      # 박스 변만 y=40으로 이동
+
+
 def _rot(p, c, deg):
     import math
     r = math.radians(deg); cs, sn = math.cos(r), math.sin(r)
@@ -1553,6 +1838,965 @@ def test_stretch_binding_follows_crossed_side():
     w.undo()
     assert a.rect() == QRectF(0, 0, 100, 60)
     assert _close(ar.mapToScene(ar._endpoints()[0]), QPointF(100, 30))
+
+
+def test_symbol_kinds_render_and_geom():
+    # M1: 6종 심볼이 모두 경로를 만들고, rect 기반 기계(박스핸들·geom undo·clone)를 물려받는다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    assert set(_SYMBOL_KINDS) == {"decision", "terminal", "data", "prep", "document", "database"}
+    for kind in _SYMBOL_KINDS:
+        it = _SymbolItem(kind, QRectF(0, 0, 120, 80))
+        it.setPen(QPen(QColor("#ff000000"))); it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+        sc.addItem(it)
+        # 경로·경계·shape 모두 실체가 있어야(빈 도형이면 클릭/렌더 불가)
+        assert it._sym_path().elementCount() > 0, kind
+        assert not it.boundingRect().isEmpty(), kind
+        assert not it.shape().isEmpty(), kind
+        # rect 기반이라 Lucid 박스 핸들이 자동 활성(리사이즈 공짜)
+        assert it._box_handles() is True, kind
+        # geom 스냅샷 → 리사이즈 → 복원이 정확히 되돌아온다
+        tok = it.capture_geom()
+        it.setRect(QRectF(5, 5, 200, 140))
+        it.apply_geom(tok)
+        assert _close(it.rect().topLeft(), QPointF(0, 0)) and abs(it.rect().width() - 120) < 0.5, kind
+        # clone은 kind·기하·스타일 보존
+        c = it.clone()
+        assert isinstance(c, _SymbolItem) and c._kind == kind
+        assert _close(c.rect().topLeft(), it.rect().topLeft())
+
+
+def test_symbol_draw_via_tool():
+    # M2: 심볼 도구 무장 → 캔버스 드래그 → 해당 kind의 _SymbolItem이 생성·선택된다.
+    w = CanvasWindow(); w.show(); w.set_tool("sym:decision"); w._zoom_reset()
+    view = w._view
+    press, release, _click, _move, drag_move, _dbl = _draw_helpers(view)
+    press(QPointF(0, 0)); drag_move(QPointF(140, 90)); release(QPointF(140, 90))
+    syms = [it for it in w._scene.items() if isinstance(it, _SymbolItem)]
+    assert len(syms) == 1
+    s = syms[0]
+    assert s._kind == "decision"
+    r = s.mapRectToScene(s.rect())
+    assert abs(r.width() - 140) < 2 and abs(r.height() - 90) < 2
+    assert s.isSelected()
+    # 팔레트 버튼 무장 상태가 set_tool과 동기화됐는지
+    assert w._sym_buttons["decision"].isChecked()
+    w.set_tool("select")
+    assert not w._sym_buttons["decision"].isChecked()
+
+
+def test_symbol_roundtrip():
+    # M4: 심볼(kind 포함)이 .ecad 저장/열기로 무손실 왕복한다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    for i, kind in enumerate(("data", "database")):
+        it = _SymbolItem(kind, QRectF(0, 0, 100, 60))
+        p = QPen(QColor("#ff112233")); p.setWidthF(3.0)
+        it.setPen(p); it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        it.setPos(QPointF(50 * i, 20 * i)); it.setRotation(10 * i)
+        sc.addItem(it)
+    before = [item_to_dict(it) for it in reversed(sc.items())]
+    assert all(d["type"] == "symbol" for d in before)
+    path = os.path.join(_TMP, "symbols.ecad")
+    save_document(sc, path)
+    sc2 = QGraphicsScene()
+    assert load_document(sc2, path) == 2
+    after = [item_to_dict(it) for it in reversed(sc2.items())]
+    assert [d["kind"] for d in after] == ["data", "database"]
+    for b, a in zip(before, after):
+        assert b["kind"] == a["kind"] and b["type"] == a["type"]
+
+
+def test_symbol_is_arrow_connectable():
+    # self-review 갭: 순서도의 본질은 '심볼 잇는 화살표'. 심볼이 _conn_shapes/장애물에 포함돼
+    # 화살표가 테두리 스냅+지속연결로 붙어야 한다(네모와 동일 동작).
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))   # 우측 박스 테두리 x=300, 중앙 y=30
+    sym.setPen(w.make_pen()); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sym.setFlags(sym.GraphicsItemFlag.ItemIsSelectable | sym.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sym)
+    view = w._view
+    assert sym in view._conn_shapes()                        # 연결 대상 목록에 포함
+    press, release, _c, _m, drag_move, _d = _draw_helpers(view)
+    press(QPointF(0, 30)); drag_move(QPointF(305, 30)); release(QPointF(305, 30))
+    sa = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)][0]
+    assert sa.has_binding()                                  # 심볼 테두리에 부착됨
+    assert _close(sa.mapToScene(sa._pts[-1]), QPointF(300, 30)), sa.mapToScene(sa._pts[-1])
+    # 심볼을 옮기면 지속연결로 화살표 끝이 따라온다
+    sym.moveBy(40, 0)
+    w._on_scene_changed(None)
+    assert _close(sa.mapToScene(sa._pts[-1]), QPointF(340, 30)), sa.mapToScene(sa._pts[-1])
+
+
+def test_symbol_border_follows_outline():
+    # GUI 리포트 수정: 화살표 스냅이 외접 '박스'가 아니라 심볼의 '실제 외곽선'에 닿아야 한다.
+    # 마름모(판단)는 박스와 4점에서만 만나므로, 박스 기반이면 대부분 허공에 스냅돼 안 붙는다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    import math as _m
+    sc = QGraphicsScene()
+    sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))   # 중심(250,30), a=50 b=30
+    sym.setPen(QPen(QColor("#ff000000"))); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sc.addItem(sym)
+
+    def on_diamond(q):   # 마름모 경계식 |x-250|/50 + |y-30|/30 = 1
+        return abs(q.x() - 250) / 50.0 + abs(q.y() - 30) / 30.0
+
+    # 변(꼭짓점 아님) 근처의 여러 점 → 스냅점이 마름모 외곽선 위(경계식≈1)에 있어야
+    for scene_pt in (QPointF(210, 8), QPointF(288, 12), QPointF(215, 52), QPointF(285, 50)):
+        snap, n = _nearest_border(sym, scene_pt)
+        assert abs(on_diamond(snap) - 1.0) < 0.02, (scene_pt, snap, on_diamond(snap))
+        # 법선은 바깥(중심 반대)을 향한다
+        assert (snap.x() - 250) * n.x() + (snap.y() - 30) * n.y() > 0, (snap, n)
+
+    # 박스 위이되 마름모 '밖'인 점(좌상단 코너 근처)도 외곽선으로 당겨진다(박스 top y=0이 아님)
+    snap, _n = _nearest_border(sym, QPointF(205, 3))
+    assert snap.y() > 3.5, snap   # 박스 top(y=0)이 아니라 마름모 변 위로
+
+
+def test_symbol_center_label():
+    # 심볼 라벨은 선·화살표(중점 위쪽)와 달리 도형 '정중앙'에 놓이고, 리사이즈하면 따라온다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    sym = _SymbolItem("decision", QRectF(0, 0, 120, 80))
+    sym.setPen(QPen(QColor("#ff000000"))); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sc.addItem(sym)
+    lbl = sym.ensure_label(); lbl.setPlainText("예"); sym._sync_label()
+    assert sym.has_label()
+    br = lbl._content_rect()
+    # x는 문서박스 중심, y는 글리프 잉크 광학중심(작은 세로 보정 허용). 중앙(60,40) 근방.
+    assert abs(lbl.pos().x() + br.width() / 2.0 - 60) < 1, lbl.pos()
+    assert abs(lbl.pos().y() + br.height() / 2.0 - 40) < 4, lbl.pos()
+    # 리사이즈 → 라벨이 새 중앙(100,50)으로 자동 이동(setRect override)
+    sym.setRect(QRectF(0, 0, 200, 100))
+    br = lbl._content_rect()
+    assert abs(lbl.pos().x() + br.width() / 2.0 - 100) < 1, lbl.pos()
+    assert abs(lbl.pos().y() + br.height() / 2.0 - 50) < 4, lbl.pos()
+
+
+def test_symbol_label_roundtrip():
+    # 심볼 중앙 라벨이 .ecad 저장/열기로 왕복한다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    sym = _SymbolItem("terminal", QRectF(0, 0, 100, 60))
+    sym.setPen(QPen(QColor("#ff112233"))); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sc.addItem(sym)
+    sym.ensure_label().setPlainText("시작"); sym._sync_label()
+    path = os.path.join(_TMP, "symlabel.ecad")
+    save_document(sc, path)
+    sc2 = QGraphicsScene()
+    assert load_document(sc2, path) == 1
+    got = [it for it in sc2.items() if isinstance(it, _SymbolItem)][0]
+    assert got.has_label() and got._label.toPlainText() == "시작"
+
+
+def test_rect_ellipse_center_label():
+    # A: 네모·원도 심볼과 같은 중앙 라벨을 공유(_CenterLabelMixin). 더블클릭 라벨 + 리사이즈 추종.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    for cls, make in ((_RectItem, lambda: _RectItem(QRectF(0, 0, 120, 80))),
+                      (_EllipseItem, lambda: _EllipseItem(QRectF(0, 0, 120, 80)))):
+        it = make()
+        it.setPen(QPen(QColor("#ff0000ff"))); it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        sc.addItem(it)
+        lbl = it.ensure_label(); lbl.setPlainText("칸"); it._sync_label()
+        assert it.has_label(), cls.__name__
+        br = lbl._content_rect()
+        # x=문서박스 중심, y=글리프 잉크 광학중심(작은 세로 보정 허용)
+        assert abs(lbl.pos().x() + br.width() / 2.0 - 60) < 1, (cls.__name__, lbl.pos())
+        assert abs(lbl.pos().y() + br.height() / 2.0 - 40) < 4, (cls.__name__, lbl.pos())
+        it.setRect(QRectF(0, 0, 200, 100))         # 리사이즈 → 새 중앙(100,50) 추종
+        br = lbl._content_rect()
+        assert abs(lbl.pos().x() + br.width() / 2.0 - 100) < 1, (cls.__name__, lbl.pos())
+        # 라벨 색 = 테두리색(파랑)
+        assert lbl.defaultTextColor().name() == QColor("#0000ff").name(), cls.__name__
+
+
+def test_rect_label_roundtrip():
+    # 네모 중앙 라벨이 .ecad로 왕복한다(직렬화에 _RectItem 포함).
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    r = _RectItem(QRectF(0, 0, 100, 60)); r.setPen(QPen(QColor("#ff333333")))
+    r.setBrush(QBrush(Qt.BrushStyle.NoBrush)); sc.addItem(r)
+    r.ensure_label().setPlainText("상자"); r._sync_label()
+    path = os.path.join(_TMP, "rectlabel.ecad")
+    save_document(sc, path)
+    sc2 = QGraphicsScene()
+    load_document(sc2, path)
+    got = [it for it in sc2.items() if isinstance(it, _RectItem)][0]
+    assert got.has_label() and got._label.toPlainText() == "상자"
+
+
+def test_shape_ports_pure():
+    # M1: 포트 = 변 중점 4개(N/E/S/W)를 실제 외곽선에 투영. 네모=변 중점, 마름모=꼭짓점.
+    r = _RectItem(QRectF(0, 0, 100, 60))
+    got = sorted((round(p.x()), round(p.y())) for p, _n in _shape_ports(r))
+    assert got == sorted([(50, 0), (100, 30), (50, 60), (0, 30)]), got
+    # 법선은 바깥(중심 반대). 중심 (50,30).
+    for p, n in _shape_ports(r):
+        assert (p.x() - 50) * n.x() + (p.y() - 30) * n.y() >= -1e-6, (p, n)
+    sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))   # 마름모 꼭짓점 = N/E/S/W
+    got2 = sorted((round(p.x()), round(p.y())) for p, _n in _shape_ports(sym))
+    assert got2 == sorted([(250, 0), (300, 30), (250, 60), (200, 30)]), got2
+
+
+def test_port_priority_then_continuous_fallback():
+    # M2: 포트 근처 커서 → 포트에 딱. 포트에서 먼 변 중간 → 기존 연속 외곽선 폴백.
+    w = CanvasWindow(); w.show(); w.set_tool("arrow"); w._zoom_reset()
+    view = w._view
+    sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))
+    sym.setPen(w.make_pen()); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sym.setFlags(sym.GraphicsItemFlag.ItemIsSelectable | sym.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sym)
+    # N 포트(250,0) 근처(253,3) → 포트로 스냅
+    snap = view._border_snap_at(view.mapFromScene(QPointF(253, 3)))
+    assert snap is not None and _close(snap[0], QPointF(250, 0)), snap
+    # 상-우 변 중점(275,15) — 꼭짓점서 ~29px라 포트 밖 → 연속 외곽선(그 점 그대로)
+    snap2 = view._border_snap_at(view.mapFromScene(QPointF(275, 15)))
+    assert snap2 is not None and _close(snap2[0], QPointF(275, 15), eps=2), snap2
+
+
+def test_arrow_binds_to_port_and_follows():
+    # M4: 화살표를 포트 근처로 그리면 포트에 부착, 도형을 옮기면 포트 따라 이동.
+    w = CanvasWindow(); w.show(); w.set_tool("arrow"); w._zoom_reset()
+    view = w._view
+    sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))
+    sym.setPen(w.make_pen()); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sym.setFlags(sym.GraphicsItemFlag.ItemIsSelectable | sym.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sym)
+    press, release, _c, _m, drag_move, _d = _draw_helpers(view)
+    press(QPointF(50, 200)); drag_move(QPointF(253, 3)); release(QPointF(253, 3))
+    ar = [it for it in w._scene.items() if isinstance(it, _ArrowItem)][-1]
+    assert ar.has_binding()
+    assert _close(ar.mapToScene(ar._p2), QPointF(250, 0)), ar.mapToScene(ar._p2)
+    sym.moveBy(40, 0); w._on_scene_changed(None)              # N 포트 (250,0)→(290,0)
+    assert _close(ar.mapToScene(ar._p2), QPointF(290, 0)), ar.mapToScene(ar._p2)
+
+
+def test_dxf_export():
+    # Phase 3: 각 도형 타입이 개별 DXF 엔티티로 매핑되는지 + Y축 뒤집기 확인.
+    import ezdxf
+    from PyQt6.QtGui import QPen
+    w = CanvasWindow(); w.show()
+    sc = w._scene
+
+    rect = _RectItem(QRectF(0, 0, 100, 60)); rect.setPen(QPen(QColor("red")))
+    rect.setBrush(QBrush(Qt.BrushStyle.NoBrush)); rect.setPos(QPointF(10, 20)); sc.addItem(rect)
+    circ = _EllipseItem(QRectF(0, 0, 80, 80)); circ.setPen(QPen(QColor("blue")))
+    circ.setBrush(QBrush(Qt.BrushStyle.NoBrush)); circ.setPos(QPointF(200, 0)); sc.addItem(circ)
+    ell = _EllipseItem(QRectF(0, 0, 120, 60)); ell.setPen(QPen(QColor("blue")))
+    ell.setBrush(QBrush(Qt.BrushStyle.NoBrush)); ell.setPos(QPointF(400, 0)); sc.addItem(ell)
+    line = _LineItem(QLineF(0, 0, 100, 50)); line.setPen(QPen(QColor("black"))); sc.addItem(line)
+    ar = _ArrowItem(QColor("green"), 2.0, True)      # 베지어 화살 → SPLINE
+    ar.set_points(QPointF(0, 0), QPointF(100, 40)); ar._ctrl1 = QPointF(30, -20)
+    ar._ctrl2 = QPointF(70, 60); sc.addItem(ar)
+    sar = _PolyArrowItem(QColor("purple"), 2.0, True)
+    sar._pts = [QPointF(0, 0), QPointF(50, 0), QPointF(50, 40)]; sc.addItem(sar)
+    txt = _TextItem(QColor("black")); txt.setPlainText("hello"); txt.setPos(QPointF(0, 300))
+    sc.addItem(txt)
+    badge = _BadgeItem(7, QColor("orange")); badge.setPos(QPointF(300, 300)); sc.addItem(badge)
+    sym = _SymbolItem("decision", QRectF(0, 0, 100, 60)); sym.setPen(QPen(QColor("teal")))
+    sym.setBrush(QBrush(Qt.BrushStyle.NoBrush)); sym.setPos(QPointF(0, 400)); sc.addItem(sym)
+
+    path = os.path.join(_TMP, "export.dxf")
+    assert export_dxf(sc, path)
+    doc = ezdxf.readfile(path)
+    msp = doc.modelspace()
+    kinds = {}
+    for e in msp:
+        kinds[e.dxftype()] = kinds.get(e.dxftype(), 0) + 1
+    # 베지어 화살 = SPLINE, 정원 = CIRCLE, 타원 = ELLIPSE, 직교화살+심볼+네모 = LWPOLYLINE.
+    assert kinds.get("SPLINE", 0) >= 1, kinds          # arrow 샤프트
+    assert kinds.get("CIRCLE", 0) >= 2, kinds          # circ + badge
+    assert kinds.get("ELLIPSE", 0) >= 1, kinds         # ell
+    assert kinds.get("LINE", 0) >= 1, kinds            # line
+    assert kinds.get("LWPOLYLINE", 0) >= 4, kinds      # rect + sarrow + symbol(1+) + 화살촉2
+    assert kinds.get("MTEXT", 0) >= 2, kinds           # txt + badge 번호
+    # Y축 뒤집기: rect 좌상단 로컬(0,0)+pos(10,20) → world(10,20) → DXF(10,-20).
+    rects = [e for e in msp if e.dxftype() == "LWPOLYLINE"]
+    corners = [tuple(p[:2]) for e in rects for p in e.get_points()]
+    assert any(abs(x - 10) < 1e-6 and abs(y + 20) < 1e-6 for x, y in corners), corners
+    # 타입별 레이어 분리 확인.
+    layers = {e.dxf.layer for e in msp}
+    assert {"EC_RECT", "EC_ARROW", "EC_SARROW", "EC_SYMBOL", "EC_TEXT"} <= layers, layers
+
+
+def _rect_world_corners(it):
+    r = it.rect()
+    pts = [(r.left(), r.top()), (r.right(), r.top()), (r.right(), r.bottom()), (r.left(), r.bottom())]
+    return sorted((round(it.mapToScene(QPointF(x, y)).x(), 1),
+                   round(it.mapToScene(QPointF(x, y)).y(), 1)) for x, y in pts)
+
+
+def test_dxf_import_roundtrip():
+    # Phase 3 후반: export→import 왕복에서 핵심 기하(꼭짓점·끝점·중심·텍스트·번호)가 보존되는지.
+    # 소실 허용(설계 결정): 심볼 kind(→외곽선 _PathItem), 지속연결 바인딩, 자식 라벨(→독립),
+    # 폭, 변환 필드값(회전/스케일은 월드 기하로만 보존). 판정은 dict 일치가 아니라 월드 기하 일치.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    from easycad.fileio.dxf_import import import_dxf
+
+    def pen(c="#ffff0000", wd=3):
+        p = QPen(QColor(c)); p.setWidthF(wd); return p
+
+    sc = QGraphicsScene()
+    # 네모(평행이동) + 회전 네모(회전 흡수 검증)
+    rect = _RectItem(QRectF(0, 0, 100, 60)); rect.setPen(pen()); rect.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    rect.setPos(QPointF(10, 20)); sc.addItem(rect)
+    rrot = _RectItem(QRectF(0, 0, 80, 40)); rrot.setPen(pen()); rrot.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    rrot.setPos(QPointF(600, 500)); rrot.setTransformOriginPoint(QPointF(40, 20)); rrot.setRotation(30); sc.addItem(rrot)
+    # 정원 + 타원
+    circ = _EllipseItem(QRectF(0, 0, 80, 80)); circ.setPen(pen("#ff0000ff")); circ.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    circ.setPos(QPointF(200, 0)); sc.addItem(circ)
+    ell = _EllipseItem(QRectF(0, 0, 120, 60)); ell.setPen(pen("#ff0000ff")); ell.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    ell.setPos(QPointF(400, 0)); sc.addItem(ell)
+    # 선
+    line = _LineItem(QLineF(0, 0, 100, 50)); line.setPen(pen("#ff333333")); sc.addItem(line)
+    # 곡선 화살표(끝쪽 촉) + 직선 화살표(시작쪽 촉 — 방향 복원 검증)
+    ar = _ArrowItem(QColor("#ff00ff00"), 6, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 40)); ar._ctrl1 = QPointF(30, -20); ar._ctrl2 = QPointF(70, 60)
+    sc.addItem(ar)
+    ars = _ArrowItem(QColor("#ff00ff00"), 6, False)      # head_at_end=False
+    ars.set_points(QPointF(0, 700), QPointF(150, 760)); sc.addItem(ars)
+    # 직교 화살표
+    sar = _PolyArrowItem(QColor("#ffff00ff"), 6, True)
+    sar._pts = [QPointF(0, 0), QPointF(50, 0), QPointF(50, 40)]; sc.addItem(sar)
+    # 텍스트
+    txt = _TextItem(QColor("#ff000000")); txt.apply_font_size(20); txt.setPlainText("hello")
+    txt.setPos(QPointF(0, 300)); sc.addItem(txt)
+    # 번호 배지
+    badge = _BadgeItem(7, QColor("#ffff9500")); badge.setPos(QPointF(300, 300)); badge.setScale(2.0); sc.addItem(badge)
+    # 심볼(kind 소실 → 외곽선만)
+    sym = _SymbolItem("decision", QRectF(0, 0, 100, 60)); sym.setPen(pen("#ff008080"))
+    sym.setBrush(QBrush(Qt.BrushStyle.NoBrush)); sym.setPos(QPointF(0, 400)); sc.addItem(sym)
+
+    path = os.path.join(_TMP, "roundtrip_dxf.dxf")
+    assert export_dxf(sc, path)
+    sc2 = QGraphicsScene()
+    import_dxf(sc2, path)
+
+    # 네모 2개(평행이동·회전) — 월드 꼭짓점 집합 일치.
+    rects = [it for it in sc2.items() if isinstance(it, _RectItem)]
+    assert len(rects) == 2, len(rects)
+    want = {tuple(_rect_world_corners(rect)), tuple(_rect_world_corners(rrot))}
+    got = {tuple(_rect_world_corners(r)) for r in rects}
+    assert got == want, (got, want)
+
+    # 원/타원 — 월드 경계 꼭짓점 집합 일치(_RectItem과 같은 방식).
+    ells = [it for it in sc2.items() if isinstance(it, _EllipseItem)]
+    assert len(ells) == 2, len(ells)
+    ewant = {tuple(_rect_world_corners(circ)), tuple(_rect_world_corners(ell))}
+    egot = {tuple(_rect_world_corners(e)) for e in ells}
+    assert egot == ewant, (egot, ewant)
+
+    # 선 — 끝점 집합 일치 + 펜 두께(XDATA) 보존.
+    lines = [it for it in sc2.items() if isinstance(it, _LineItem)]
+    assert len(lines) == 1
+    ln = lines[0].line()
+    ends = sorted([(round(ln.x1(), 1), round(ln.y1(), 1)), (round(ln.x2(), 1), round(ln.y2(), 1))])
+    assert ends == sorted([(0.0, 0.0), (100.0, 50.0)]), ends
+    assert abs(lines[0].pen().widthF() - 3.0) < 1e-6, lines[0].pen().widthF()
+
+    # 펜 두께 왕복 — 네모(3)·화살표(6)·직교화살(6)이 XDATA로 보존(기본값 1로 얇아지지 않음).
+    r_thick = [r for r in rects if abs(r.pen().widthF() - 3.0) < 1e-6]
+    assert len(r_thick) == 2, [r.pen().widthF() for r in rects]
+
+    # 곡선 화살표 — 끝점+제어점(월드) 보존, 방향 복원.
+    arrows = [it for it in sc2.items() if isinstance(it, _ArrowItem)]
+    assert len(arrows) == 2, len(arrows)
+    curved = [a for a in arrows if a._ctrl1 is not None]
+    assert len(curved) == 1
+    c = curved[0]
+    assert _close(c.mapToScene(c._p1), QPointF(0, 0)) and _close(c.mapToScene(c._p2), QPointF(100, 40))
+    assert _close(c.mapToScene(c._ctrl1), QPointF(30, -20)) and _close(c.mapToScene(c._ctrl2), QPointF(70, 60))
+    assert c._head_at_end is True
+    assert abs(c._width - 6.0) < 1e-6, c._width          # 화살표 폭 XDATA 보존
+    straight = [a for a in arrows if a._ctrl1 is None][0]
+    assert straight._head_at_end is False, "시작쪽 촉 방향이 복원돼야(무시+방향복원)"
+
+    # 직교 화살표 — 정점 보존.
+    sas = [it for it in sc2.items() if isinstance(it, _PolyArrowItem)]
+    assert len(sas) == 1
+    spts = [(round(p.x(), 1), round(p.y(), 1)) for p in sas[0]._pts]
+    assert spts == [(0.0, 0.0), (50.0, 0.0), (50.0, 40.0)], spts
+
+    # 텍스트 — 문자열+위치.
+    texts = [it for it in sc2.items() if isinstance(it, _TextItem)]
+    assert len(texts) == 1 and texts[0].toPlainText() == "hello"
+    assert _close(texts[0].pos(), QPointF(0, 300), eps=1.5)
+
+    # 배지 — 번호+중심+스케일(반경).
+    badges = [it for it in sc2.items() if isinstance(it, _BadgeItem)]
+    assert len(badges) == 1 and badges[0]._number == 7
+    assert _close(badges[0].pos(), QPointF(300, 300), eps=1.0)
+    assert abs(badges[0].scale() - 2.0) < 0.05, badges[0].scale()
+
+    # 심볼 — kind 소실, 외곽선 _PathItem으로 복원(마름모 4변 영역 안).
+    paths = [it for it in sc2.items() if isinstance(it, _PathItem)]
+    assert len(paths) >= 1, "심볼 외곽선이 path로 복원돼야"
+    dia = [p for p in paths if p.mapToScene(p.boundingRect()).boundingRect().center().y() > 380]
+    assert dia, "심볼(y≈400 부근) 외곽선 path 존재해야"
+
+
+def test_dxf_import_external_fallback():
+    # 임의 외부 DXF(우리 레이어 관례 없음) → dxftype 폴백으로 손실 매핑(LINE·CIRCLE·TEXT).
+    from PyQt6.QtWidgets import QGraphicsScene
+    import ezdxf
+    from easycad.fileio.dxf_import import import_dxf
+
+    doc = ezdxf.new("R2010")
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (100, 0))                    # 레이어 "0"
+    msp.add_circle((50, 50), 25)
+    msp.add_text("EXT", dxfattribs={"insert": (10, 10)})
+    path = os.path.join(_TMP, "external.dxf")
+    doc.saveas(path)
+
+    sc = QGraphicsScene()
+    n = import_dxf(sc, path)
+    assert n >= 3, n
+    assert any(isinstance(it, _LineItem) for it in sc.items())
+    assert any(isinstance(it, _EllipseItem) for it in sc.items())
+    assert any(isinstance(it, _TextItem) for it in sc.items())
+
+
+# ---- Phase 4: 이미지 삽입 ---------------------------------------------------
+def _mk_pixmap(w=40, h=20, color="#3366cc"):
+    pm = QPixmap(w, h)
+    pm.fill(QColor(color))
+    return pm
+
+
+def test_image_item_basic():
+    # rect 기반이라 박스 8핸들·리사이즈 기계를 물려받고, 픽스맵을 보관한다.
+    it = _ImageItem(_mk_pixmap(), QRectF(0, 0, 40, 20))
+    assert it._box_handles() is True          # setRect 보유 → 박스 핸들 경로
+    assert it._pixmap.width() == 40 and it._pixmap.height() == 20
+    c = it.clone()                            # 복제도 픽스맵·rect 보존
+    assert isinstance(c, _ImageItem)
+    assert c._pixmap.width() == 40 and c.rect() == QRectF(0, 0, 40, 20)
+
+
+def test_image_aspect_lock_on_corner():
+    # 꼭짓점 리사이즈는 원본 종횡비(2:1) 유지. 변 리사이즈는 자유(늘림 허용).
+    it = _ImageItem(_mk_pixmap(40, 20), QRectF(0, 0, 40, 20))   # aspect 2.0
+    it._box_orig_rect = QRectF(it.rect())
+    it._box_bound = []
+    it._box_snap = []
+    it._box_resize = ("corner", 2)            # BR 꼭짓점(대각 고정 = TL)
+    it._apply_box_resize(QPointF(100, 100))   # 자유라면 100×100(1:1)이 될 지점
+    r = it.rect()
+    assert abs(r.width() / r.height() - 2.0) < 1e-6   # 종횡비 고정됨
+    # 변 드래그(오른쪽)는 종횡비 무시하고 자유.
+    it2 = _ImageItem(_mk_pixmap(40, 20), QRectF(0, 0, 40, 20))
+    it2._box_orig_rect = QRectF(it2.rect())
+    it2._box_bound = []; it2._box_snap = []
+    it2._box_resize = ("edge", "r")
+    it2._apply_box_resize(QPointF(200, 0))
+    r2 = it2.rect()
+    assert r2.width() > 150 and abs(r2.height() - 20) < 1e-6   # 높이 불변, 폭만 늘어남
+
+
+def test_image_roundtrip():
+    # .ecad 저장/재열기에서 픽스맵 픽셀·크기·기하가 base64 embed로 보존되는지.
+    w = CanvasWindow()
+    it = _ImageItem(_mk_pixmap(40, 20, "#cc2233"), QRectF(0, 0, 40, 20))
+    it.setPos(QPointF(120, 80))
+    it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(it)
+    path = os.path.join(_TMP, "img.ecad")
+    save_document(w._scene, path)
+    w2 = CanvasWindow()
+    n = load_document(w2._scene, path)
+    assert n == 1
+    imgs = [x for x in w2._scene.items() if isinstance(x, _ImageItem)]
+    assert len(imgs) == 1
+    lo = imgs[0]
+    assert lo._pixmap.width() == 40 and lo._pixmap.height() == 20
+    assert _close(lo.pos(), QPointF(120, 80))
+    assert lo.rect() == QRectF(0, 0, 40, 20)
+    # 픽셀 색 보존(무손실 PNG embed) — 좌상단 픽셀이 원본 색.
+    col = lo._pixmap.toImage().pixelColor(0, 0)
+    assert (col.red(), col.green(), col.blue()) == (0xcc, 0x22, 0x33)
+
+
+def test_image_insert_via_host():
+    # host._insert_image_at: 파일 → 씬에 삽입(중심 배치·긴 변 축소·undo 등록).
+    w = CanvasWindow()
+    png = os.path.join(_TMP, "src.png")
+    _mk_pixmap(800, 400, "#22aa55").save(png, "PNG")   # 대형 → 긴 변 400으로 축소돼야
+    w._insert_image_at(png, QPointF(0, 0))
+    imgs = [x for x in w._scene.items() if isinstance(x, _ImageItem)]
+    assert len(imgs) == 1
+    it = imgs[0]
+    assert it._pixmap.width() == 800                    # 원본 해상도 보관(표시만 축소)
+    assert abs(it.rect().width() - 400.0) < 1e-6        # 긴 변 = _IMG_LONG
+    assert abs(it.rect().height() - 200.0) < 1e-6       # 종횡비 유지(2:1)
+    assert _close(it.sceneBoundingRect().center(), QPointF(0, 0), eps=1.0)  # 중심 배치
+    assert it.isSelected()
+    w.undo()                                            # 삽입 undo로 제거
+    assert not [x for x in w._scene.items() if isinstance(x, _ImageItem)]
+
+
+def test_image_skipped_in_dxf():
+    # 범위 결정: DXF 내보내기는 이미지 제외(외부참조 배제). 씬에 이미지가 있어도
+    # 크래시 없이 건너뛰고, 다른 엔티티(네모)는 정상 export.
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    img = _ImageItem(_mk_pixmap(40, 20), QRectF(0, 0, 40, 20))
+    img.setFlags(img.GraphicsItemFlag.ItemIsSelectable | img.GraphicsItemFlag.ItemIsMovable)
+    img.setPos(QPointF(200, 200)); w._scene.addItem(img)
+    out = os.path.join(_TMP, "img_skip.dxf")
+    assert export_dxf(w._scene, out) is not False
+    import ezdxf
+    doc = ezdxf.readfile(out)
+    types = [e.dxftype() for e in doc.modelspace()]
+    assert "LWPOLYLINE" in types            # 네모는 export됨
+    assert "IMAGE" not in types             # 이미지는 제외됨
+
+
+def test_image_pdf_export():
+    # 이미지가 포함된 씬도 PDF로 렌더된다(scene.render 경로).
+    w = CanvasWindow()
+    it = _ImageItem(_mk_pixmap(60, 40), QRectF(0, 0, 60, 40))
+    it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(it)
+    out = os.path.join(_TMP, "img.pdf")
+    assert export_pdf(w._scene, out, page="A4") is True
+    assert os.path.getsize(out) > 0
+
+
+def test_titleblock_roundtrip():
+    # [Phase 4] 표제란/용지틀: 삽입 → 필드 설정 → .ecad 왕복에서 용지 크기·방향·필드값 보존.
+    from PyQt6.QtWidgets import QGraphicsScene
+    w = CanvasWindow()
+    tb = _TitleBlockItem("A2", "landscape",
+                         {"number": "E-001", "title": "결선도", "scale": "1:50",
+                          "client": "KBS", "author": "김민무", "reviewer": "홍길동",
+                          "date": "2026-07-20"})
+    tb.setFlags(tb.GraphicsItemFlag.ItemIsSelectable | tb.GraphicsItemFlag.ItemIsMovable)
+    tb.setPos(QPointF(300, 400)); tb.setZValue(-1000.0)
+    w._scene.addItem(tb)
+    # 용지 치수: A2 가로 = 594 × 420
+    pw, ph = tb.paper_wh()
+    assert abs(pw - 594.0) < 0.1 and abs(ph - 420.0) < 0.1
+    path = os.path.join(_TMP, "tb.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene()
+    assert load_document(sc2, path) == 1
+    got = [it for it in sc2.items() if isinstance(it, _TitleBlockItem)][0]
+    assert got._size == "A2" and got._orient == "landscape"
+    assert got._fields["number"] == "E-001"
+    assert got._fields["scale"] == "1:50"
+    assert got._fields["author"] == "김민무"
+    assert _close(got.pos(), QPointF(300, 400))
+    assert got.zValue() == -1000.0
+
+
+def test_titleblock_drives_pdf_page():
+    # 씬에 표제란이 있으면 PDF가 프레임 용지 경계를 기준으로 자동 전환(출력 성공).
+    w = CanvasWindow()
+    tb = _TitleBlockItem("A3", "portrait")
+    tb.setFlags(tb.GraphicsItemFlag.ItemIsSelectable | tb.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tb)
+    _mk_rect(w._scene, w.make_pen(), 40, 40, 120, 80)   # 용지 안 도형
+    out = os.path.join(_TMP, "tb.pdf")
+    # page 인자를 A4로 줘도 프레임(A3)이 우선함 — 성공 여부만 확인(실제 페이지는 실조건).
+    assert export_pdf(w._scene, out, page="A4") is True
+    assert os.path.getsize(out) > 0
+
+
+def test_titleblock_shape_is_clickthrough():
+    # 용지 내부는 히트영역에서 제외(shape 통과) → 그 위에 도형을 그리거나 잡을 수 있다.
+    # 표제란 표 영역과 용지 테두리 밴드만 히트영역.
+    tb = _TitleBlockItem("A2", "landscape")
+    r = tb.rect()
+    interior = QPointF(r.center().x(), r.top() + 60.0)   # 상단 여백 아래 내부
+    assert not tb.shape().contains(interior)             # 내부는 통과(선택 안 됨)
+    tbr = tb._tb_rect()
+    assert tb.shape().contains(tbr.center())             # 표제란 표는 히트영역
+    assert tb.shape().contains(QPointF(r.left() + 2.0, r.center().y()))  # 좌측 테두리 밴드
+
+
+def test_titleblock_skipped_in_dxf():
+    # 스코프: DXF 내보내기는 표제란 제외(조용히 skip), 다른 엔티티는 정상 export.
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    tb = _TitleBlockItem("A2", "landscape")
+    tb.setFlags(tb.GraphicsItemFlag.ItemIsSelectable | tb.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tb)
+    out = os.path.join(_TMP, "tb_skip.dxf")
+    assert export_dxf(w._scene, out) is not False
+    import ezdxf
+    doc = ezdxf.readfile(out)
+    types = [e.dxftype() for e in doc.modelspace()]
+    assert "LWPOLYLINE" in types            # 네모는 export됨
+
+
+def test_table_cell_geometry():
+    # [Phase 4] 표 격자 기하: 균등 분할 cell_rect·cell_at 왕복(로컬좌표).
+    t = _TableItem(3, 4, QRectF(0, 0, 160, 60))   # 셀 40×20
+    assert t.dims() == (3, 4)
+    r00 = t.cell_rect(0, 0)
+    assert r00 == QRectF(0, 0, 40, 20)
+    r12 = t.cell_rect(1, 2)
+    assert r12 == QRectF(80, 20, 40, 20)
+    assert t.cell_at(QPointF(90, 25)) == (1, 2)     # (r=1, c=2)
+    assert t.cell_at(QPointF(1, 1)) == (0, 0)
+    assert t.cell_at(QPointF(159, 59)) == (2, 3)    # 우하단 셀
+    assert t.cell_at(QPointF(-5, 5)) is None        # 격자 밖
+
+
+def test_table_roundtrip():
+    # 삽입 → 셀 텍스트 설정 → .ecad 왕복에서 rows·cols·header·rect·셀텍스트·기하 보존.
+    from PyQt6.QtWidgets import QGraphicsScene
+    w = CanvasWindow()
+    t = _TableItem(2, 3, QRectF(0, 0, 120, 40),
+                   cells=[["번호", "명칭", "규격"], ["1", "카메라", "4K"]], header=True)
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    t.setPos(QPointF(200, 150)); t.setRotation(10)
+    w._scene.addItem(t)
+    path = os.path.join(_TMP, "table.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene()
+    assert load_document(sc2, path) == 1
+    got = [it for it in sc2.items() if isinstance(it, _TableItem)][0]
+    assert got.dims() == (2, 3)
+    assert got._header is True
+    assert got.rect() == QRectF(0, 0, 120, 40)
+    assert got.cell_text(0, 1) == "명칭"
+    assert got.cell_text(1, 2) == "4K"
+    assert _close(got.pos(), QPointF(200, 150))
+    assert abs(got.rotation() - 10.0) < 1e-6
+
+
+def test_table_clone():
+    # 복제(그룹변형·복붙 경로): 셀 텍스트·차원·헤더가 독립 복사되고 원본과 분리.
+    t = _TableItem(2, 2, QRectF(0, 0, 80, 40), cells=[["a", "b"], ["c", "d"]], header=False)
+    c = t.clone()
+    assert isinstance(c, _TableItem)
+    assert c.dims() == (2, 2) and c._header is False
+    assert c.cell_text(1, 0) == "c"
+    c.set_cell_text(1, 0, "X")                       # 복제본 변경이 원본에 안 샘
+    assert t.cell_text(1, 0) == "c"
+
+
+def test_table_insert_via_host():
+    # host._insert_table 경로: 다이얼로그를 건너뛰고 삽입 로직을 직접 검증하기 어려우니
+    # _TableItem을 직접 넣어 undo/선택/PDF까지 통하는지 확인.
+    w = CanvasWindow()
+    t = _TableItem(3, 3, QRectF(0, 0, 120, 42))
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(t)
+    w.push_undo_add(t)
+    assert [x for x in w._scene.items() if isinstance(x, _TableItem)]
+    w.undo()
+    assert not [x for x in w._scene.items() if isinstance(x, _TableItem)]
+
+
+def test_table_skipped_in_dxf():
+    # 스코프: DXF 내보내기는 표 제외(조용히 skip), 다른 엔티티는 정상 export.
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    t = _TableItem(2, 2, QRectF(0, 0, 80, 40))
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    t.setPos(QPointF(200, 200)); w._scene.addItem(t)
+    out = os.path.join(_TMP, "table_skip.dxf")
+    assert export_dxf(w._scene, out) is not False
+    import ezdxf
+    doc = ezdxf.readfile(out)
+    types = [e.dxftype() for e in doc.modelspace()]
+    assert "LWPOLYLINE" in types            # 네모는 export됨
+
+
+def test_table_inline_edit():
+    # 인라인 편집 로직: 커밋·Tab 이동(줄넘김)·Esc 취소가 셀 텍스트에 정확히 반영되는지.
+    w = CanvasWindow()
+    t = _TableItem(2, 2, QRectF(0, 0, 80, 40))
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(t)
+    v = w._view
+    v._begin_cell_edit(t, 0, 0)
+    ed = v._cell_editor
+    ed.setText("A"); ed._move(0, 1)                 # Tab → (0,1)로 이동하며 (0,0) 커밋
+    assert t.cell_text(0, 0) == "A"
+    ed = v._cell_editor
+    assert (ed._r, ed._c) == (0, 1)
+    ed.setText("B"); ed._move(0, 1)                 # 줄 끝 Tab → 다음 줄 첫 칸 (1,0)
+    assert t.cell_text(0, 1) == "B"
+    ed = v._cell_editor
+    assert (ed._r, ed._c) == (1, 0)
+    ed.setText("Z"); ed._cancel(); ed.close()       # Esc 취소 → 커밋 안 됨
+    assert t.cell_text(1, 0) == ""
+
+
+def test_table_pdf_export():
+    # 표가 포함된 씬도 PDF로 렌더된다(scene.render → paint 경로).
+    w = CanvasWindow()
+    t = _TableItem(2, 3, QRectF(0, 0, 120, 40), cells=[["A", "B", "C"], ["1", "2", "3"]])
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(t)
+    out = os.path.join(_TMP, "table.pdf")
+    assert export_pdf(w._scene, out, page="A4") is True
+    assert os.path.getsize(out) > 0
+
+
+def test_symbol_label_optical_center():
+    # 원기둥은 윗 타원을 피해 라벨을 rect 중심보다 아래(광학중심)로, 문서는 아래 물결을 피해
+    # 살짝 위로. 상하 대칭 kind(마름모·스타디움 등)는 rect 중심 그대로.
+    cyl = _SymbolItem("database", QRectF(0, 0, 120, 56))
+    dia = _SymbolItem("decision", QRectF(0, 0, 120, 56))
+    doc = _SymbolItem("document", QRectF(0, 0, 120, 56))
+    assert cyl._label_anchor().y() > cyl.rect().center().y()      # 아래로
+    assert doc._label_anchor().y() < doc.rect().center().y()      # 위로
+    assert abs(dia._label_anchor().y() - dia.rect().center().y()) < 1e-6  # 대칭=보정없음
+    # 리사이즈 후에도 광학중심 오프셋이 rect에 비례해 유지된다.
+    cyl.setRect(QRectF(0, 0, 240, 120))
+    assert cyl._label_anchor().y() > cyl.rect().center().y()
+
+
+def test_mermaid_parse_core():
+    # 핵심 부분집합: 방향·노드 모양 8종 매핑·엣지 4종·파이프 라벨.
+    from easycad.fileio.mermaid_import import parse_mermaid
+    g = parse_mermaid(
+        "flowchart TD\n"
+        "  A[start] --> B{cond}\n"
+        "  B -->|yes| C([end])\n"
+        "  B -->|no| D[retry]\n"
+        "  D --> B\n"
+        "  E[(db)] --- C\n")
+    assert g.direction == "TD"
+    assert set(g.nodes) == {"A", "B", "C", "D", "E"}
+    assert g.nodes["B"].shape == "rhombus"
+    assert g.nodes["C"].shape == "stadium"
+    assert g.nodes["E"].shape == "cylinder"
+    assert g.nodes["A"].label == "start"
+    assert len(g.edges) == 5
+    # 파이프 라벨 흡수
+    yes = [e for e in g.edges if e.src == "B" and e.dst == "C"][0]
+    assert yes.label == "yes" and yes.arrow is True
+    # --- 는 화살촉 없는 선
+    line = [e for e in g.edges if e.src == "E"][0]
+    assert line.arrow is False
+
+
+def test_mermaid_parse_lr_inline_and_styles():
+    # LR 방향 + 인라인 라벨(-- txt -->) + 점선/굵은선 스타일 분류.
+    from easycad.fileio.mermaid_import import parse_mermaid
+    g = parse_mermaid(
+        "graph LR\n"
+        "  S([start]) -- go --> T[work]\n"
+        "  T -.-> U{ok?}\n"
+        "  U ==> V\n")
+    assert g.direction == "LR"
+    e_go = [e for e in g.edges if e.src == "S"][0]
+    assert e_go.label == "go"
+    assert [e for e in g.edges if e.src == "T"][0].style == "dotted"
+    assert [e for e in g.edges if e.src == "U"][0].style == "thick"
+    assert g.nodes["V"].label == "V"   # bare 참조는 id를 라벨로
+
+
+def test_mermaid_layout_levels_no_cycle_blowup():
+    # 사이클(D-->B)이 있어도 레벨이 발산하지 않는다(BFS 거리).
+    from easycad.fileio.mermaid_import import parse_mermaid, layout_positions
+    g = parse_mermaid("flowchart TD\n A-->B\n B-->C\n C-->B\n A-->D\n")
+    pos = layout_positions(g, node_w=120, node_h=56)
+    ys = {k: pos[k][1] for k in pos}
+    assert ys["A"] < ys["B"]          # 레벨 0 < 레벨 1
+    assert ys["B"] == ys["D"]         # 같은 레벨(둘 다 A의 자식/형제)
+    assert max(ys.values()) < 1000    # 발산 없음(예전 버그는 y가 수천까지 치솟았음)
+
+
+def test_mermaid_layout_lr_axis_swap():
+    # LR은 흐름이 x축, TD는 y축.
+    from easycad.fileio.mermaid_import import parse_mermaid, layout_positions
+    g = parse_mermaid("flowchart LR\n A-->B-->C\n")
+    pos = layout_positions(g, node_w=120, node_h=56)
+    assert pos["A"][0] < pos["B"][0] < pos["C"][0]   # x 증가
+    assert pos["A"][1] == pos["B"][1] == pos["C"][1]  # y 동일
+
+
+def test_mermaid_empty_raises():
+    from easycad.fileio.mermaid_import import parse_mermaid, MermaidError
+    for bad in ("", "   \n  ", "flowchart TD\n"):
+        try:
+            parse_mermaid(bad)
+            assert False, "MermaidError 기대"
+        except MermaidError:
+            pass
+
+
+def test_mermaid_import_via_host():
+    # 전체 빌더: 도형+화살표 개수·라벨·지속연결 바인딩·자동라우팅·단일 undo.
+    w = CanvasWindow()
+    n_nodes, n_arrows, direction = w._build_mermaid(
+        "flowchart TD\n"
+        "  A[시작] --> B{조건?}\n"
+        "  B -->|예| C[처리]\n"
+        "  B -->|아니오| D([종료])\n"
+        "  C --> D\n"
+        "  E[(DB)] --- C\n")
+    assert direction == "TD"
+    assert n_nodes == 5 and n_arrows == 5
+    nodes = [it for it in w._scene.items()
+             if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
+    arrows = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(nodes) == 5 and len(arrows) == 5
+    assert all(it.has_label() for it in nodes)               # 노드 라벨 부착
+    assert all(a.has_binding() and a._auto_route for a in arrows)  # 지속연결+직교라우팅
+    # 심볼 kind 매핑(마름모=decision, 스타디움=terminal, 원기둥=database)
+    kinds = {it._kind for it in nodes if isinstance(it, _SymbolItem)}
+    assert {"decision", "terminal", "database"} <= kinds
+    assert len(w._undo) == 1                                  # 배치 전체가 한 번의 undo
+
+
+def test_mermaid_labels_centered_not_stuck_at_origin():
+    # 회귀: 라벨을 씬에 넣기 '전'에 붙이면 _sync_label이 no-op해 라벨이 도형 좌상단(0,0)에
+    # 박힌다(초기 버그). 빌드 후 각 노드 라벨의 중심이 도형 중심 근방(가로 정렬, 세로는 광학보정
+    # 허용)인지 확인 — (0,0)에 박히면 가로 오프셋이 도형 반폭만큼 크게 벌어진다.
+    w = CanvasWindow()
+    w._build_mermaid(
+        "flowchart TD\n A[처리] --> B{유효?}\n B -->|예| C([끝])\n B -->|아니오| D[(저장)]\n")
+    nodes = [it for it in w._scene.items()
+             if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem)) and it._label is not None]
+    assert len(nodes) == 4
+    for it in nodes:
+        sc = it.sceneBoundingRect().center()
+        lc = it._label.sceneBoundingRect().center()
+        assert abs(lc.x() - sc.x()) < 4, (it, lc, sc)     # 가로 중앙(0,0 박힘이면 크게 벗어남)
+        assert abs(lc.y() - sc.y()) < 12, (it, lc, sc)    # 세로 중앙 근방(원기둥 광학보정 여유)
+
+
+def test_mermaid_roundtrip():
+    # import한 도면을 .ecad로 저장→열기 하면 노드·화살표가 보존된다(기존 직렬화 재사용).
+    w = CanvasWindow()
+    w._build_mermaid("flowchart LR\n A[a] --> B{b}\n B -->|x| C([c])\n")
+    n0 = len([it for it in w._scene.items()
+              if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))])
+    a0 = len([it for it in w._scene.items() if isinstance(it, _PolyArrowItem)])
+    path = os.path.join(_TMP, "mermaid.ecad")
+    save_document(w._scene, path)
+    w2 = CanvasWindow()
+    load_document(w2._scene, path)
+    n1 = len([it for it in w2._scene.items()
+              if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))])
+    a1 = len([it for it in w2._scene.items() if isinstance(it, _PolyArrowItem)])
+    assert n1 == n0 == 3 and a1 == a0 == 2
+
+
+def test_mermaid_pdf_export():
+    # import 결과가 PDF로 렌더된다(paint 경로 안전).
+    w = CanvasWindow()
+    w._build_mermaid("flowchart TD\n A[a]-->B{b}\n B-->C([c])\n")
+    out = os.path.join(_TMP, "mermaid.pdf")
+    assert export_pdf(w._scene, out, page="A4") is True
+    assert os.path.getsize(out) > 0
+
+
+def test_sketch_argb_normalizes_color():
+    # 빌더 색 정규화 → .ecad HexArgb(#AARRGGBB, alpha 먼저). Qt 비의존 순수 파이썬.
+    assert _argb("#000000") == "#ff000000"        # 6자리 → 불투명 부여
+    assert _argb("#FF3B30") == "#ffff3b30"         # 대문자·불투명
+    assert _argb("#ff112233") == "#ff112233"       # 8자리 그대로
+    assert _argb("#0f0") == "#ff00ff00"            # 3자리 확장
+
+
+def test_sketch_build_roundtrip():
+    # Phase 5 핵심: Sketch 빌더 → .ecad → load_document 왕복. 노드·심볼 kind·화살표 지속연결·
+    # 라벨이 모두 편집가능 아이템으로 복원되는지. 빌더가 Qt 없이 만든 JSON을 앱이 그대로 연다.
+    s = Sketch()
+    a = s.symbol("terminal", 60, 40, 160, 70, "시작")
+    b = s.symbol("decision", 90, 170, 120, 100, "조건?")
+    c = s.box(300, 185, 160, 70, "처리")
+    d = s.ellipse(90, 340, 120, 70, "끝")
+    s.arrow(a, b)
+    s.arrow(b, c, label="예")
+    s.arrow(b, d, label="아니오")
+    path = os.path.join(_TMP, "sketch.ecad")
+    n = s.save(path)
+    assert n == 7                                            # 노드 4 + 화살표 3
+
+    w = CanvasWindow()
+    load_document(w._scene, path)
+    nodes = [it for it in w._scene.items()
+             if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
+    arrows = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(nodes) == 4 and len(arrows) == 3
+    # 심볼 kind 복원(마름모=decision, 스타디움=terminal)
+    kinds = {it._kind for it in nodes if isinstance(it, _SymbolItem)}
+    assert kinds == {"terminal", "decision"}
+    # 화살표: 양끝 지속연결 + 직교 자동라우팅
+    assert all(ar.has_binding() and ar._auto_route for ar in arrows)
+    # 라벨: 노드 4개 전부 중앙 라벨 복원(0,0 박힘 아님 — 가로 중앙 정렬)
+    labeled = [it for it in nodes if it._label is not None]
+    assert len(labeled) == 4
+    for it in labeled:
+        sc = it.sceneBoundingRect().center()
+        lc = it._label.sceneBoundingRect().center()
+        assert abs(lc.x() - sc.x()) < 4, (it, lc, sc)
+
+
+def test_sketch_arrow_binding_follows_move():
+    # 지속연결 검증: 로드 후 화살표가 도형에 붙어 reroute(재라우팅)가 동작한다.
+    s = Sketch()
+    a = s.box(0, 0, 100, 60, "A")
+    b = s.box(300, 0, 100, 60, "B")
+    s.arrow(a, b)
+    path = os.path.join(_TMP, "sketch_bind.ecad")
+    s.save(path)
+    w = CanvasWindow()
+    load_document(w._scene, path)
+    ar = next(it for it in w._scene.items() if isinstance(it, _PolyArrowItem))
+    assert ar.has_binding()
+    ar.reroute()                                            # 부착점 추종 + 직교 엘보(예외 없이)
+    assert len(ar._pts) >= 2                                # 유효한 폴리라인 유지
+
+
+def test_sketch_arrow_port_side_hint():
+    # 밀집 순서도용: from_side/to_side로 접속 변을 명시하면 그 변 중점 포트에 붙는다
+    # (피드백 루프를 본선과 겹치지 않게 측면으로 빼는 용도). 생략 시 최근접(기존 동작).
+    s = Sketch()
+    a = s.box(0, 0, 100, 60, "A")          # cx=50, cy=30
+    b = s.box(0, 200, 100, 60, "B")        # cx=50, cy=230
+    s.arrow(a, b)                          # 자동: a S(50,60) → b N(50,200)
+    s.arrow(b, a, from_side="E", to_side="E")   # 루프: 둘 다 오른쪽 변으로
+    doc = s.to_dict()
+    down, loop = doc["items"][2], doc["items"][3]
+    assert down["bind1_pt"] == [50.0, 60.0] and down["bind2_pt"] == [50.0, 200.0]
+    assert loop["bind1_pt"] == [100.0, 230.0]   # b E
+    assert loop["bind2_pt"] == [100.0, 30.0]    # a E
+    # 잘못된 방향은 즉시 실패
+    try:
+        s.arrow(a, b, from_side="X")
+        assert False, "잘못된 포트 방향이 통과됨"
+    except ValueError:
+        pass
+
+
+def test_sketch_arrow_outer_channel():
+    # 긴 루프백을 외곽 채널로 우회: channel_x면 명시 4점 경로 + auto_route=False
+    # (코어 라우터가 다른 화살표를 장애물로 안 봐 생기는 내부 교차를 손수 회피).
+    s = Sketch()
+    a = s.box(0, 0, 100, 60, "A")          # A E=(100,30)
+    b = s.box(0, 400, 100, 60, "B")        # B E=(100,430)
+    s.arrow(b, a, from_side="E", to_side="E", channel_x=300)
+    ar = s.to_dict()["items"][2]
+    assert ar["auto_route"] is False
+    assert ar["pts"] == [[100.0, 430.0], [300.0, 430.0], [300.0, 30.0], [100.0, 30.0]]
+    assert ar["bind1"] == 1 and ar["bind2"] == 0        # 바인딩은 유지(끝점 추종)
+    # 채널 2개 동시 지정은 실패
+    try:
+        s.arrow(a, b, channel_x=1, channel_y=1)
+        assert False, "channel_x/y 동시 지정이 통과됨"
+    except ValueError:
+        pass
 
 
 def _run_all():

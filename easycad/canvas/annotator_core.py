@@ -14,7 +14,8 @@ import struct
 import time
 
 from PyQt6.QtCore import (
-    Qt, QPoint, QPointF, QRectF, QLineF, QSize, QBuffer, QIODevice, QTimer, pyqtSignal,
+    Qt, QPoint, QPointF, QRectF, QLineF, QSize, QBuffer, QIODevice, QTimer, QEvent,
+    pyqtSignal,
 )
 from PyQt6.QtGui import (
     QPixmap, QImage, QPainter, QPen, QBrush, QColor, QPainterPath,
@@ -25,7 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget, QGraphicsScene, QGraphicsView, QGraphicsRectItem,
     QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsPathItem,
     QGraphicsTextItem, QGraphicsItem, QHBoxLayout,
-    QPushButton, QToolButton, QButtonGroup, QLabel,
+    QPushButton, QToolButton, QButtonGroup, QLabel, QLineEdit,
     QStyle, QStyleOptionGraphicsItem,
 )
 
@@ -801,7 +802,12 @@ class _HandleResizeMixin:
         MIN = 3.0
         if new.width() < MIN or new.height() < MIN:
             new = QRectF(new.x(), new.y(), max(new.width(), MIN), max(new.height(), MIN))
+        new = self._constrain_box_rect(new, kind, key)
         self._set_box_rect(new)
+
+    def _constrain_box_rect(self, new: QRectF, kind: str, key) -> QRectF:
+        """박스 리사이즈 결과 rect 후처리 훅(기본 무변경). _ImageItem이 종횡비 고정에 override."""
+        return new
 
     def _owner_tool(self):
         """현재 활성 도구를 뷰→owner 경로로 조회(없으면 None)."""
@@ -1051,10 +1057,193 @@ def _draw_selection_ellipse(painter: QPainter, rect: QRectF, scale: float = 1.0)
     painter.drawEllipse(rect)
 
 
-class _RectItem(_HandleResizeMixin, QGraphicsRectItem):
+# ---------------------------------------------------------------------------
+# [우리 확장] 라벨 믹스인 — 본체에 '부착'되어 함께 이동하는 자식 텍스트
+#   _LabelMixin        : 공통 로직 + 선·화살표용 '중점 위쪽' 배치
+#   _CenterLabelMixin  : 닫힌 도형(네모·원·심볼)용 '정중앙' 배치
+# (도형 클래스보다 앞서야 상속 가능하므로 여기 둔다.)
+# ---------------------------------------------------------------------------
+class _LabelMixin:
+    """더블클릭으로 다는 텍스트 라벨. 라벨은 자식(child _TextItem)이라 본체가 통째로
+    이동하면 Qt가 자동으로 따라 옮기고, 로컬 기하가 바뀔 때만 _sync_label로 재배치한다.
+    라벨은 부착 전용(독립 이동 불가). 기본 배치는 앵커 '위쪽'(선·화살표)."""
+
+    def _init_label(self):
+        self._label = None  # 자식 _TextItem or None
+
+    def _label_anchor(self) -> QPointF:      # 하위 클래스 구현: 라벨을 붙일 로컬 기준점(중점)
+        raise NotImplementedError
+
+    def _label_color(self) -> QColor:        # 하위 클래스가 본체 색으로 override
+        return QColor(_TEXT)
+
+    def _label_alive(self) -> bool:
+        lbl = getattr(self, "_label", None)
+        return lbl is not None and lbl.scene() is not None
+
+    def has_label(self) -> bool:
+        return self._label_alive() and bool(self._label.toPlainText().strip())
+
+    def _make_label(self):
+        """라벨 아이템 생성(하위 클래스가 override 가능). 기본은 부착 전용 _TextItem."""
+        return _TextItem(self._label_color())
+
+    def ensure_label(self):
+        """라벨이 없으면 생성해 중점에 부착하고 반환(있으면 그대로 반환)."""
+        if not self._label_alive():
+            lbl = self._make_label()
+            lbl.setParentItem(self)
+            # 부착 전용(선택·편집·삭제 가능). 화살표(sarrow) 라벨은 _ConnectorLabel이라 드래그로
+            # 경로 위를 슬라이드하도록 Movable도 켠다(FigJam/Lucid) — itemChange가 경로에 재투영.
+            flags = QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            if isinstance(lbl, _ConnectorLabel):
+                # Movable=드래그, SendsGeometryChanges=itemChange(ItemPositionChange) 발화(경로 재투영에 필수).
+                flags |= (QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                          | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
+            lbl.setFlags(flags)
+            lbl.document().contentsChanged.connect(self._sync_label)  # 타이핑 중 중앙 유지
+            self._label = lbl
+        self._sync_label()
+        return self._label
+
+    def restore_label(self, d: dict):
+        """문서 로드용 — 저장된 라벨(dict)을 자식으로 복원."""
+        lbl = self.ensure_label()
+        lbl.apply_font_size(d.get("font", 16))
+        lbl.setPlainText(d.get("text", ""))
+        lbl.apply_color(QColor(d.get("color", _TEXT)))
+        if d.get("bg") is not None:
+            lbl.set_bg(QColor(*d["bg"]))
+        self._sync_label()
+        return lbl
+
+    def _sync_label(self):
+        """라벨을 본체 중점 '위쪽'에 재배치. _content_rect(편집 프레임 여유 제외)을 써
+        편집 중·완료 후 위치가 흔들리지 않게 한다."""
+        if not self._label_alive():
+            return
+        a = self._label_anchor()
+        br = self._label._content_rect()
+        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() - 4.0)
+
+
+# [우리 확장] 라벨 세로 광학정렬 — 글리프 '실제 잉크' 중심을 도형 중심에 맞춘다.
+def _ink_center_dy(lbl) -> float:
+    """라벨 글리프의 실제 잉크 세로중심이 문서박스 중심에서 벗어난 양(아래로 +).
+    QGraphicsTextItem의 실렌더 글리프 배치가 baseline·폰트메트릭 추정과 어긋나(폰트·언어마다
+    다름 — Malgun/폴백이 부호까지 반대), 어떤 공식으로도 못 맞춘다. 그래서 텍스트를 작은
+    오프스크린에 그려 잉크를 픽셀로 직접 재 폰트·언어 무관하게 정확히 센터링한다.
+    같은 (텍스트·폰트크기·여백)이면 캐시해 리사이즈 드래그 중 재계산을 피한다."""
+    text = lbl.toPlainText()
+    if not text.strip():
+        return 0.0
+    key = (text, round(lbl.font().pointSizeF(), 2), round(lbl.document().documentMargin(), 2))
+    cached = getattr(lbl, "_ink_dy_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    br = lbl._content_rect()
+    w = max(1, int(br.width()) + 2)
+    h = max(1, int(br.height()) + 2)
+    dy = 0.0
+    if h > 2 and w > 2:
+        img = QImage(w, h, QImage.Format.Format_ARGB32)
+        img.fill(Qt.GlobalColor.transparent)
+        p = QPainter(img)
+        try:
+            lbl.document().drawContents(p)   # 아이템 paint와 같은 문서 렌더 경로
+        finally:
+            p.end()
+        top = bot = None
+        for y in range(h):
+            for x in range(w):
+                if img.pixelColor(x, y).alpha() > 40:
+                    if top is None:
+                        top = y
+                    bot = y
+                    break
+        if top is not None:
+            dy = br.height() / 2.0 - (top + bot) / 2.0
+    lbl._ink_dy_cache = (key, dy)
+    return dy
+
+
+class _CenterLabelMixin(_LabelMixin):
+    """닫힌 도형(네모·원·심볼)용 라벨 — 선·화살표의 '중점 위쪽'과 달리 도형 '정중앙'에 놓고,
+    rect가 바뀌면(그리기·박스 리사이즈·리베이크) 새 중앙으로 재동기한다. 앵커=rect 중심,
+    색=테두리색. 셋이 공유해 중복을 없앤다. 세로는 문서박스가 아니라 글리프 '잉크' 중심을
+    맞춘다(_ink_center_dy) — 폰트가 baseline 아래로 여유를 더 둬 글자가 위로 쏠려 보이는 것 교정."""
+
+    def _label_anchor(self) -> QPointF:
+        return self.rect().center()
+
+    def _label_color(self) -> QColor:
+        return QColor(self.pen().color())
+
+    def _label_inset_ratio(self) -> float:
+        """라벨이 들어갈 도형 내접 가용폭(도형폭 대비 비율). 이 폭을 넘기면 폰트를 축소해
+        긴 텍스트가 빗변/곡선 밖으로 삐져나오지 않게 한다. 하위 클래스가 도형별로 override."""
+        return 0.85
+
+    _LABEL_MIN_PT = 5   # 축소 하한(이하로는 안 줄임 — 너무 작으면 차라리 도형을 키우는 게 답)
+
+    def _fit_label_to_shape(self):
+        """[우리 확장] 중앙 라벨을 도형 내접폭에 맞춰 '폰트 축소'로 맞춘다(단일 줄 유지, 줄바꿈 안 함).
+        · 줄바꿈(wrap)은 마름모에서 줄 수가 폭발해 세로로 삐져나오는 결함이 있어 배제(실측). 폰트 축소는
+          폭·세로를 동시에 보장한다. · 기준은 사용자 크기(_base_pt) — 도형이 커지면 그 값까지 되키운다.
+        · 폭 측정은 _content_rect(문서 레이아웃)이 아니라 QFontMetricsF로 직접 한다 — contentsChanged
+          콜백 시점엔 문서 레이아웃이 미완이라 _content_rect 폭이 stale이기 때문(실측). 멱등.
+        · setFont이 contentsChanged를 재발화해 _sync_label→_fit이 재진입하면 서로의 폰트를 덮어써
+          비결정적이 되므로 _fitting 가드로 재진입을 막는다(바깥 호출의 setFont 결과가 확정으로 남음)."""
+        if getattr(self, "_fitting", False):
+            return
+        lbl = self._label
+        self._fitting = True
+        try:
+            self._fit_label_impl(lbl)
+        finally:
+            self._fitting = False
+
+    def _fit_label_impl(self, lbl):
+        lbl.setTextWidth(-1)   # 단일 줄(폭은 폰트 축소로 맞춤)
+        base = max(self._LABEL_MIN_PT, int(getattr(lbl, "_base_pt", lbl.font().pointSize() or 16)))
+        margin = 2 * lbl.document().documentMargin()
+        inner = max(1.0, self.rect().width() * self._label_inset_ratio())
+        lines = lbl.toPlainText().split("\n") or [""]
+        f = QFont(lbl.font())
+        pt = base
+        while pt > self._LABEL_MIN_PT:
+            f.setPointSize(pt)
+            fm = QFontMetricsF(f)
+            widest = max((fm.horizontalAdvance(ln) for ln in lines), default=0.0)
+            if widest + margin <= inner:
+                break
+            pt -= 1
+        if lbl.font().pointSize() != pt:
+            f2 = lbl.font()
+            f2.setPointSize(pt)
+            lbl.setFont(f2)
+
+    def _sync_label(self):
+        if not self._label_alive():
+            return
+        self._fit_label_to_shape()   # [우리 확장] 도형 내접폭에 맞춰 폰트 축소(넘침 방지)
+        a = self._label_anchor()
+        br = self._label._content_rect()
+        dy = _ink_center_dy(self._label)
+        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0 + dy)
+
+    def setRect(self, *args):
+        # rect가 바뀌면(그리기·박스 리사이즈·리베이크) 라벨을 새 중앙으로 재배치.
+        super().setRect(*args)
+        if self._label_alive():
+            self._sync_label()
+
+
+class _RectItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
     def __init__(self, *args):
         super().__init__(*args)
         self._init_resize()
+        self._init_label()
 
     def clone(self):
         c = _RectItem(QRectF(self.rect()))
@@ -1099,10 +1288,14 @@ class _RectItem(_HandleResizeMixin, QGraphicsRectItem):
         self._paint_handle(painter)
 
 
-class _EllipseItem(_HandleResizeMixin, QGraphicsEllipseItem):
+class _EllipseItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsEllipseItem):
     def __init__(self, *args):
         super().__init__(*args)
         self._init_resize()
+        self._init_label()
+
+    def _label_inset_ratio(self) -> float:
+        return 0.72   # 타원은 세로중앙에서만 최대폭이라 네모보다 좁게 잡아 줄바꿈
 
     def clone(self):
         c = _EllipseItem(QRectF(self.rect()))
@@ -1158,60 +1351,641 @@ class _EllipseItem(_HandleResizeMixin, QGraphicsEllipseItem):
 
 
 # ---------------------------------------------------------------------------
-# [우리 확장] 선·화살표 라벨 — 본체에 '부착'되어 함께 이동하는 자식 텍스트
+# [우리 확장] 심볼/스텐실 — 순서도 표준 도형(판단·입출력·준비 등)
 # ---------------------------------------------------------------------------
-class _LabelMixin:
-    """선/화살표에 더블클릭으로 다는 텍스트 라벨. 라벨은 자식(child _TextItem)이라
-    본체가 통째로 이동하면 Qt가 자동으로 따라 옮기고, 끝점·곡선 편집처럼 로컬 기하가
-    바뀔 때만 _sync_label로 중점에 재배치한다. 라벨은 부착 전용(독립 이동 불가)."""
+# 설계: 종류마다 클래스를 만들지 않고 단일 _SymbolItem(rect 기반)에 kind만 달리한다.
+# rect 기반이라 _RectItem이 쓰는 기계(_box_handles 리사이즈·회전·stretch·geom undo)를
+# 그대로 물려받고, paint/shape만 kind별 경로로 갈아끼운다. 경로 팩토리는 QRectF→QPainterPath.
+def _sym_decision(r: QRectF) -> QPainterPath:      # 판단 — 마름모
+    p = QPainterPath()
+    c = r.center()
+    p.moveTo(c.x(), r.top())
+    p.lineTo(r.right(), c.y())
+    p.lineTo(c.x(), r.bottom())
+    p.lineTo(r.left(), c.y())
+    p.closeSubpath()
+    return p
 
-    def _init_label(self):
-        self._label = None  # 자식 _TextItem or None
 
-    def _label_anchor(self) -> QPointF:      # 하위 클래스 구현: 라벨을 붙일 로컬 기준점(중점)
-        raise NotImplementedError
+def _sym_terminal(r: QRectF) -> QPainterPath:      # 시작/끝 — 스타디움(둥근 양끝)
+    p = QPainterPath()
+    rad = min(r.width(), r.height()) / 2.0
+    p.addRoundedRect(r, rad, rad)
+    return p
 
-    def _label_color(self) -> QColor:        # 하위 클래스가 본체 색으로 override
-        return QColor(_TEXT)
 
-    def _label_alive(self) -> bool:
-        lbl = getattr(self, "_label", None)
-        return lbl is not None and lbl.scene() is not None
+def _sym_data(r: QRectF) -> QPainterPath:          # 입출력 — 평행사변형
+    p = QPainterPath()
+    dx = r.width() * 0.22
+    p.moveTo(r.left() + dx, r.top())
+    p.lineTo(r.right(), r.top())
+    p.lineTo(r.right() - dx, r.bottom())
+    p.lineTo(r.left(), r.bottom())
+    p.closeSubpath()
+    return p
 
-    def has_label(self) -> bool:
-        return self._label_alive() and bool(self._label.toPlainText().strip())
 
-    def ensure_label(self):
-        """라벨이 없으면 생성해 중점에 부착하고 반환(있으면 그대로 반환)."""
-        if not self._label_alive():
-            lbl = _TextItem(self._label_color())
-            lbl.setParentItem(self)
-            # 부착 전용 — 독립 이동 금지(선을 따라만 다닌다). 선택·편집·삭제는 가능.
-            lbl.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
-            lbl.document().contentsChanged.connect(self._sync_label)  # 타이핑 중 중앙 유지
-            self._label = lbl
-        self._sync_label()
-        return self._label
+def _sym_prep(r: QRectF) -> QPainterPath:          # 준비 — 육각형
+    p = QPainterPath()
+    dx = r.width() * 0.2
+    cy = r.center().y()
+    p.moveTo(r.left() + dx, r.top())
+    p.lineTo(r.right() - dx, r.top())
+    p.lineTo(r.right(), cy)
+    p.lineTo(r.right() - dx, r.bottom())
+    p.lineTo(r.left() + dx, r.bottom())
+    p.lineTo(r.left(), cy)
+    p.closeSubpath()
+    return p
 
-    def restore_label(self, d: dict):
-        """문서 로드용 — 저장된 라벨(dict)을 자식으로 복원."""
-        lbl = self.ensure_label()
-        lbl.apply_font_size(d.get("font", 16))
-        lbl.setPlainText(d.get("text", ""))
-        lbl.apply_color(QColor(d.get("color", _TEXT)))
-        if d.get("bg") is not None:
-            lbl.set_bg(QColor(*d["bg"]))
-        self._sync_label()
-        return lbl
 
-    def _sync_label(self):
-        """라벨을 본체 중점 '위쪽'에 재배치. _content_rect(편집 프레임 여유 제외)을 써
-        편집 중·완료 후 위치가 흔들리지 않게 한다."""
-        if not self._label_alive():
+def _sym_document(r: QRectF) -> QPainterPath:      # 문서 — 아래 물결
+    p = QPainterPath()
+    wave = r.height() * 0.14
+    p.moveTo(r.left(), r.top())
+    p.lineTo(r.right(), r.top())
+    p.lineTo(r.right(), r.bottom() - wave)
+    p.cubicTo(r.right() - r.width() * 0.25, r.bottom() - wave * 3.0,
+              r.left() + r.width() * 0.25, r.bottom() + wave,
+              r.left(), r.bottom() - wave)
+    p.closeSubpath()
+    return p
+
+
+def _sym_database(r: QRectF) -> QPainterPath:      # 저장소 — 원기둥
+    p = QPainterPath()
+    e = min(r.height() * 0.18, r.width() * 0.5)   # 윗/아랫 타원 반높이
+    top = QRectF(r.left(), r.top(), r.width(), 2 * e)
+    bot = QRectF(r.left(), r.bottom() - 2 * e, r.width(), 2 * e)
+    p.addEllipse(top)                              # 윗면 타원(완전)
+    p.moveTo(r.left(), r.top() + e)                # 몸통 왼쪽
+    p.lineTo(r.left(), r.bottom() - e)
+    p.arcTo(bot, 180.0, 180.0)                     # 아랫면 앞쪽 반원
+    p.lineTo(r.right(), r.top() + e)               # 몸통 오른쪽
+    return p
+
+
+# kind → (한글 라벨, 경로 팩토리). 팔레트·직렬화·그리기가 이 하나를 공유한다.
+_SYMBOL_KINDS = {
+    "decision": ("판단", _sym_decision),
+    "terminal": ("시작/끝", _sym_terminal),
+    "data":     ("입출력", _sym_data),
+    "prep":     ("준비", _sym_prep),
+    "document": ("문서", _sym_document),
+    "database": ("저장소", _sym_database),
+}
+
+
+# (_LabelMixin·_CenterLabelMixin은 도형 클래스보다 앞서야 해서 _RectItem 위로 이동함)
+
+
+class _SymbolItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
+    """순서도 심볼 — rect 기반이라 _RectItem과 동일한 리사이즈·회전·stretch·undo를
+    물려받고, paint/shape만 kind별 경로(_SYMBOL_KINDS)로 그린다. 더블클릭 중앙 라벨은
+    _CenterLabelMixin이 네모·원과 공유한다.
+    (_SYMBOL_KINDS를 참조하므로 경로 팩토리 뒤에 둔다.)"""
+
+    def __init__(self, kind: str, rect: QRectF):
+        super().__init__(rect)
+        self._kind = kind if kind in _SYMBOL_KINDS else "decision"
+        self._init_resize()
+        self._init_label()
+
+    def _sym_path(self) -> QPainterPath:
+        return _SYMBOL_KINDS[self._kind][1](self.rect())
+
+    def _label_inset_ratio(self) -> float:
+        # kind별 내접 가용폭 — 마름모는 세로중앙 한 점에서만 최대폭이라 가장 좁게, 원기둥·문서 등
+        # 곡선 심볼은 중간, 상하 평행한 스타디움·평행사변형·육각형은 넉넉히.
+        if self._kind == "decision":
+            return 0.6
+        if self._kind in ("database", "document"):
+            return 0.72
+        return 0.78
+
+    def _label_anchor(self) -> QPointF:
+        # 광학 중심 보정: 외접 rect 중심이 도형의 '보이는 무게중심'과 어긋나는 kind만 라벨을
+        # 옮긴다. 원기둥(database)은 윗 타원이 중심을 위로 끌어 라벨이 윗 곡선에 겹치므로 아래로,
+        # 문서(document)는 아래 물결이 무게를 아래로 내리므로 살짝 위로. 나머지(마름모·스타디움·
+        # 평행사변형·육각형)는 상하 대칭이라 rect 중심이 곧 광학 중심 → 보정 없음.
+        c = self.rect().center()
+        r = self.rect()
+        if self._kind == "database":
+            e = min(r.height() * 0.18, r.width() * 0.5)   # 윗/아랫 타원 반높이(_sym_database와 동일)
+            return QPointF(c.x(), c.y() + e * 0.7)
+        if self._kind == "document":
+            return QPointF(c.x(), c.y() - r.height() * 0.06)
+        return c
+
+    def clone(self):
+        c = _SymbolItem(self._kind, QRectF(self.rect()))
+        c.setPen(QPen(self.pen()))
+        c.setBrush(QBrush(self.brush()))
+        return self._copy_common_to(c)
+
+    # [Stage2] 기하 리베이크 — 네모·원과 동일(로컬 AABB setRect).
+    def _capture_geom_local(self):
+        return QRectF(self.rect())
+
+    def _apply_geom_local(self, g):
+        self.setRect(g)
+
+    def rebake_scene(self, fn):
+        r = self.rect()
+        pts = [self._rebake_pt(fn, c) for c in
+               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        self.prepareGeometryChange()
+        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
+
+    def _stretch_grips(self):   # [Stage2b] grip = 외접 사각 네 모서리(네모와 동일).
+        r = self.rect()
+        return [self.mapToScene(c) for c in
+                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+
+    def _base_shape(self):
+        # 속 빈 심볼(NoBrush)은 외곽선만 클릭 영역으로(네모와 동일 — 안에서 화살표 시작 가능),
+        # 채움이 있으면 심볼 전체가 클릭 영역.
+        path = self._sym_path()
+        if self.brush().style() != Qt.BrushStyle.NoBrush:
+            return path
+        stroker = QPainterPathStroker()
+        stroker.setWidth(max(self.pen().widthF(), self._EDGE_HIT_MIN / self._scale_or_1()))
+        return stroker.createStroke(path)
+
+    def paint(self, painter, option, widget=None):
+        # 네모의 _paint_base_no_select(super().paint()가 사각을 그림) 대신 심볼 경로를 직접 그린다.
+        painter.setPen(self.pen())
+        painter.setBrush(self.brush())
+        painter.drawPath(self._sym_path())
+        if self.isSelected():
+            _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
+        self._paint_handle(painter)
+
+
+# ---------------------------------------------------------------------------
+# [우리 확장 · Phase 4] 삽입 이미지 — PNG/JPG를 도면에 배치
+# ---------------------------------------------------------------------------
+class _ImageItem(_HandleResizeMixin, QGraphicsRectItem):
+    """삽입 이미지 — rect 기반이라 _RectItem·_SymbolItem과 동일한 리사이즈·회전·stretch·undo를
+    그대로 물려받고, paint만 원본 픽스맵을 rect에 스케일해 그리도록 갈아끼운다.
+    원본 픽스맵(_pixmap)을 전체 해상도로 보관 → 저장/재열기·PDF에도 화질 손실 없음(rect는 표시 크기).
+    종횡비는 꼭짓점 리사이즈에서 고정(_constrain_box_rect) — 변 리사이즈는 자유(의도적 늘림)."""
+
+    def __init__(self, pixmap: QPixmap, rect: QRectF):
+        super().__init__(rect)
+        self._pixmap = pixmap
+        self.setPen(QPen(Qt.PenStyle.NoPen))   # 테두리 없음 — 이미지 픽셀만 그린다
+        self._init_resize()
+
+    def _aspect(self) -> float:
+        w, h = self._pixmap.width(), self._pixmap.height()
+        return (w / h) if h else 1.0
+
+    def clone(self):
+        c = _ImageItem(QPixmap(self._pixmap), QRectF(self.rect()))
+        return self._copy_common_to(c)
+
+    # [Stage2] 기하 리베이크 — 네모·심볼과 동일(로컬 AABB setRect).
+    def _capture_geom_local(self):
+        return QRectF(self.rect())
+
+    def _apply_geom_local(self, g):
+        self.setRect(g)
+
+    def rebake_scene(self, fn):
+        r = self.rect()
+        pts = [self._rebake_pt(fn, c) for c in
+               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        self.prepareGeometryChange()
+        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
+
+    def _stretch_grips(self):   # [Stage2b] grip = 네 모서리(네모와 동일).
+        r = self.rect()
+        return [self.mapToScene(c) for c in
+                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+
+    def _content_rect(self) -> QRectF:
+        return QRectF(self.rect())
+
+    def _constrain_box_rect(self, new: QRectF, kind: str, key) -> QRectF:
+        # 꼭짓점 드래그는 원본 종횡비를 유지(사진 왜곡 방지). 대각 고정점(opp) 기준으로,
+        # 폭·높이 중 더 많이 자란 쪽에 비율을 맞춰 사각형을 다시 세운다.
+        if kind != "corner":
+            return new
+        o = self._box_orig_rect
+        opp = [o.bottomRight(), o.bottomLeft(), o.topLeft(), o.topRight()][key]  # 0TL 1TR 2BR 3BL
+        asp = self._aspect()
+        w = max(new.width(), new.height() * asp)
+        h = w / asp
+        sx = 1.0 if key in (1, 2) else -1.0   # TR·BR = 오른쪽, TL·BL = 왼쪽
+        sy = 1.0 if key in (2, 3) else -1.0   # BR·BL = 아래,   TL·TR = 위
+        return QRectF(opp, QPointF(opp.x() + sx * w, opp.y() + sy * h)).normalized()
+
+    def paint(self, painter, option, widget=None):
+        painter.drawPixmap(self.rect(), self._pixmap, QRectF(self._pixmap.rect()))
+        if self.isSelected():
+            _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
+        self._paint_handle(painter)
+
+
+# ---------------------------------------------------------------------------
+# [우리 확장 · Phase 4] 표제란 / 용지틀 — 도면번호·축척·발주처가 들어가는 우하단 표 + A-size 용지경계
+# ---------------------------------------------------------------------------
+# 설계(deep-interview 2026-07-20): 진짜 paper space(뷰포트·이중좌표계)를 도입하지 않고,
+# 무한 모델공간(mm 월드좌표) 위에 '용지 프레임 객체' 하나를 얹는다. 프레임은 A-size 고정
+# (임의 리사이즈 금지 — '용지'의 의미 보존), 이동만 가능. 크기·방향은 삽입/편집 시 재선택.
+# rect는 용지 mm 치수(0,0,W,H). 표제란 필드값은 dict로 보관하고 paint가 표 칸에 텍스트로 렌더.
+# 참고 도면(docs/reference/)에 정형 표제란이 없어 표준 KS식 3행 표로 잡음(레이아웃은 조정 가능).
+
+# 용지 mm 치수(세로 기준 w,h). 가로(landscape)는 w·h 교환.
+PAPER_SIZES_MM = {
+    "A4": (210.0, 297.0),
+    "A3": (297.0, 420.0),
+    "A2": (420.0, 594.0),
+    "A1": (594.0, 841.0),
+}
+
+# 표제란 행 정의: (행 높이 가중치, [(라벨, 필드키, 열 폭 가중치), ...]).
+# 각 행의 열 폭 가중치 합은 같아야(=5) 열이 세로로 정렬된다. 필드키 ""는 라벨만(값 칸 없음).
+_TB_ROWS = [
+    (1.2, [("발주처 / 프로젝트", "client", 3), ("도면번호", "number", 2)]),
+    (1.2, [("도면명", "title", 3), ("축척", "scale", 2)]),
+    (1.0, [("작성", "author", 2), ("검토", "reviewer", 2), ("날짜", "date", 1)]),
+]
+# 표제란 필드키(폼·직렬화 공용) — _TB_ROWS에서 실제 쓰는 키만.
+TB_FIELD_KEYS = ("client", "number", "title", "scale", "author", "reviewer", "date")
+TB_FIELD_LABELS = {
+    "client": "발주처 / 프로젝트", "number": "도면번호", "title": "도면명",
+    "scale": "축척", "author": "작성자", "reviewer": "검토자", "date": "날짜",
+}
+
+
+class _TitleBlockItem(QGraphicsRectItem):
+    """용지틀 + 표제란 — A-size 용지경계 rect와 우하단 표제란 표를 그린다. rect 기반이지만
+    _HandleResizeMixin은 쓰지 않는다(용지는 고정 크기, 이동만). 더블클릭 편집은 host의 폼
+    다이얼로그가 처리(뷰가 _edit_titleblock으로 위임). 필드값(_fields)만 바뀌므로 paint로 반영.
+    DXF 내보내기에서는 _RectItem이 아니라 isinstance 체인에 안 걸려 조용히 제외된다(스코프)."""
+
+    _M = 10.0        # 용지 가장자리 → 도면 테두리 여백(mm)
+    _TB_W = 180.0    # 표제란 표 폭(mm)
+    _TB_H = 33.0     # 표제란 표 높이(mm)
+    _PAPER_FILL = QColor("#FFFFFF")
+    _LINE = QColor("#333333")
+    _INK = QColor("#111111")
+
+    def __init__(self, size: str = "A2", orient: str = "landscape", fields: dict | None = None):
+        super().__init__()
+        self._size = size if size in PAPER_SIZES_MM else "A2"
+        self._orient = "portrait" if orient == "portrait" else "landscape"
+        self._fields = {k: "" for k in TB_FIELD_KEYS}
+        if fields:
+            self._fields.update({k: str(v) for k, v in fields.items() if k in TB_FIELD_KEYS})
+        self.setPen(QPen(Qt.PenStyle.NoPen))   # 테두리는 paint가 직접 그림
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self._apply_paper_rect()
+
+    # ---- 용지 치수 ----------------------------------------------------------
+    def paper_wh(self) -> tuple[float, float]:
+        w, h = PAPER_SIZES_MM[self._size]
+        return (h, w) if self._orient == "landscape" else (w, h)
+
+    def _apply_paper_rect(self):
+        w, h = self.paper_wh()
+        self.prepareGeometryChange()
+        self.setRect(QRectF(0.0, 0.0, w, h))
+
+    def set_paper(self, size: str, orient: str):
+        if size in PAPER_SIZES_MM:
+            self._size = size
+        self._orient = "portrait" if orient == "portrait" else "landscape"
+        self._apply_paper_rect()
+        self.update()
+
+    def set_fields(self, fields: dict):
+        for k in TB_FIELD_KEYS:
+            if k in fields:
+                self._fields[k] = str(fields[k])
+        self.update()
+
+    def clone(self):
+        c = _TitleBlockItem(self._size, self._orient, dict(self._fields))
+        c.setPos(self.pos())
+        c.setZValue(self.zValue())
+        c.setFlags(self.flags())
+        return c
+
+    # ---- 표제란 표 영역(용지 로컬좌표, 도면 테두리 안쪽 우하단) --------------------
+    def _tb_rect(self) -> QRectF:
+        inner = self.rect().adjusted(self._M, self._M, -self._M, -self._M)
+        w = min(self._TB_W, inner.width())
+        return QRectF(inner.right() - w, inner.bottom() - self._TB_H, w, self._TB_H)
+
+    # ---- 히트 영역: 용지 테두리 밴드 + 표제란만(내부는 통과시켜 위에 그리기 가능) --------
+    def boundingRect(self) -> QRectF:
+        return self.rect().adjusted(-3.0, -3.0, 3.0, 3.0)
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        border = QPainterPath()
+        border.addRect(self.rect())
+        stroker = QPainterPathStroker()
+        stroker.setWidth(self._M)
+        path.addPath(stroker.createStroke(border))
+        path.addRect(self._tb_rect())
+        return path
+
+    # ---- 렌더 ---------------------------------------------------------------
+    @staticmethod
+    def _font_px(painter, px: float, bold: bool = False):
+        f = painter.font()
+        f.setPixelSize(max(1, int(round(px))))
+        f.setBold(bold)
+        painter.setFont(f)
+
+    def paint(self, painter, option, widget=None):
+        r = self.rect()
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        # 용지 바탕(흰 시트) + 용지 경계선
+        painter.setBrush(QBrush(self._PAPER_FILL))
+        painter.setPen(QPen(self._LINE, 0.5))
+        painter.drawRect(r)
+        # 도면 테두리(안쪽, 굵게)
+        inner = r.adjusted(self._M, self._M, -self._M, -self._M)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(self._LINE, 1.2))
+        painter.drawRect(inner)
+        # 표제란 표
+        self._paint_table(painter)
+        painter.restore()
+        if self.isSelected():
+            _draw_selection_box(painter, r, self._scale_or_1())
+
+    def _scale_or_1(self) -> float:
+        s = self.scale()
+        return s if s else 1.0
+
+    def _paint_table(self, painter):
+        tb = self._tb_rect()
+        painter.setBrush(QBrush(self._PAPER_FILL))
+        painter.setPen(QPen(self._LINE, 1.2))
+        painter.drawRect(tb)
+        painter.setPen(QPen(self._LINE, 0.5))
+        h_weight = sum(rw for rw, _ in _TB_ROWS)
+        y = tb.top()
+        for ri, (rw, cells) in enumerate(_TB_ROWS):
+            rh = tb.height() * (rw / h_weight)
+            if ri > 0:  # 행 구분선
+                painter.drawLine(QPointF(tb.left(), y), QPointF(tb.right(), y))
+            c_weight = sum(cw for _l, _k, cw in cells)
+            x = tb.left()
+            for ci, (label, key, cw) in enumerate(cells):
+                cwid = tb.width() * (cw / c_weight)
+                cell = QRectF(x, y, cwid, rh)
+                if ci > 0:  # 열 구분선
+                    painter.setPen(QPen(self._LINE, 0.5))
+                    painter.drawLine(QPointF(x, y), QPointF(x, y + rh))
+                self._paint_cell(painter, cell, label, self._fields.get(key, ""))
+                x += cwid
+            y += rh
+
+    def _paint_cell(self, painter, cell: QRectF, label: str, value: str):
+        pad = 1.2
+        # 라벨(작게, 좌상단)
+        painter.setPen(QPen(self._INK))
+        self._font_px(painter, 2.6)
+        lbl_rect = cell.adjusted(pad, pad, -pad, -pad)
+        painter.drawText(lbl_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), label)
+        # 값(크게, 가운데)
+        if value:
+            self._font_px(painter, 3.8)
+            painter.drawText(cell, int(Qt.AlignmentFlag.AlignCenter), value)
+
+
+# ---------------------------------------------------------------------------
+# [우리 확장 · Phase 4] 표(table) — NxM 균등 격자 + 셀 텍스트(인라인 편집)
+# ---------------------------------------------------------------------------
+# 설계(deep-interview 2026-07-20): rect 기반이라 _ImageItem·_TitleBlockItem처럼 리사이즈·회전·
+# undo·그룹변형·PDF·복제를 그대로 상속(_HandleResizeMixin + setRect → 8핸들 자유 리사이즈).
+# 균등 비례 격자(전체 리사이즈 시 모든 열·행이 같은 비율로 스케일 — 개별 열폭 조절은 후속 스코프).
+# 셀 텍스트는 2차원 리스트(_cells[r][c]). 셀 편집은 뷰가 인라인 QLineEdit(_CellEditor)로 처리.
+# 첫 행 헤더(_header=True면 굵게+옅은 배경). DXF 제외(isinstance 체인 밖), .ecad 직렬화.
+class _TableItem(_HandleResizeMixin, QGraphicsRectItem):
+    """NxM 균등 격자 표. rect 기반 — _ImageItem과 동일한 자유 리사이즈(꼭짓점 2D·변 1축)를 상속.
+    종횡비 고정은 하지 않는다(표는 임의 비율) — 기본 _constrain_box_rect(무변형)를 그대로 쓴다."""
+
+    _LINE = QColor("#333333")
+    _INK = QColor("#111111")
+    _HEADER_FILL = QColor("#EEEEEE")
+
+    def __init__(self, rows: int, cols: int, rect: QRectF,
+                 cells: list | None = None, header: bool = True):
+        super().__init__(rect)
+        self._rows = max(1, int(rows))
+        self._cols = max(1, int(cols))
+        self._header = bool(header)
+        self._cells = self._norm_cells(cells)
+        self.setPen(QPen(Qt.PenStyle.NoPen))     # 격자·외곽은 paint가 직접 그림
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self._init_resize()
+
+    def _norm_cells(self, cells) -> list:
+        """cells를 rows×cols 문자열 격자로 정규화(부족분은 빈칸, 초과분은 잘라냄)."""
+        grid = [["" for _ in range(self._cols)] for _ in range(self._rows)]
+        if cells:
+            for r in range(min(self._rows, len(cells))):
+                row = cells[r] or []
+                for c in range(min(self._cols, len(row))):
+                    grid[r][c] = "" if row[c] is None else str(row[c])
+        return grid
+
+    # ---- 셀 접근(뷰 인라인 편집이 사용) --------------------------------------
+    def dims(self) -> tuple[int, int]:
+        return self._rows, self._cols
+
+    def cell_text(self, r: int, c: int) -> str:
+        return self._cells[r][c]
+
+    def set_cell_text(self, r: int, c: int, text: str):
+        if 0 <= r < self._rows and 0 <= c < self._cols:
+            self._cells[r][c] = str(text)
+            self.update()
+
+    # ---- 셀 기하(로컬좌표) --------------------------------------------------
+    def cell_rect(self, r: int, c: int) -> QRectF:
+        box = self.rect()
+        cw = box.width() / self._cols
+        ch = box.height() / self._rows
+        return QRectF(box.left() + c * cw, box.top() + r * ch, cw, ch)
+
+    def cell_at(self, local: QPointF):
+        """로컬좌표 local이 속한 (r, c) — 격자 밖이면 None."""
+        box = self.rect()
+        if not box.contains(local):
+            return None
+        cw = box.width() / self._cols
+        ch = box.height() / self._rows
+        if cw <= 0 or ch <= 0:
+            return None
+        c = min(max(int((local.x() - box.left()) / cw), 0), self._cols - 1)
+        r = min(max(int((local.y() - box.top()) / ch), 0), self._rows - 1)
+        return (r, c)
+
+    def clone(self):
+        c = _TableItem(self._rows, self._cols, QRectF(self.rect()),
+                       [row[:] for row in self._cells], self._header)
+        return self._copy_common_to(c)
+
+    # [Stage2] rect 기반 리베이크·grip — _ImageItem과 동일(로컬 AABB setRect).
+    def _capture_geom_local(self):
+        return QRectF(self.rect())
+
+    def _apply_geom_local(self, g):
+        self.setRect(g)
+
+    def rebake_scene(self, fn):
+        r = self.rect()
+        pts = [self._rebake_pt(fn, cc) for cc in
+               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        self.prepareGeometryChange()
+        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
+
+    def _stretch_grips(self):
+        r = self.rect()
+        return [self.mapToScene(cc) for cc in
+                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+
+    def _content_rect(self) -> QRectF:
+        return QRectF(self.rect())
+
+    @staticmethod
+    def _font_px(painter, px: float, bold: bool = False):
+        f = painter.font()
+        f.setPixelSize(max(1, int(round(px))))
+        f.setBold(bold)
+        painter.setFont(f)
+
+    def paint(self, painter, option, widget=None):
+        box = self.rect()
+        cw = box.width() / self._cols
+        ch = box.height() / self._rows
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        # 헤더 행 옅은 배경
+        if self._header:
+            painter.setPen(QPen(Qt.PenStyle.NoPen))
+            painter.setBrush(QBrush(self._HEADER_FILL))
+            painter.drawRect(QRectF(box.left(), box.top(), box.width(), ch))
+            painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        # 셀 텍스트(폰트 크기는 셀 치수에 맞춰 축소)
+        fs = max(2.0, min(ch * 0.5, cw * 0.30))
+        for r in range(self._rows):
+            for c in range(self._cols):
+                txt = self._cells[r][c]
+                if not txt:
+                    continue
+                self._font_px(painter, fs, bold=(self._header and r == 0))
+                painter.setPen(QPen(self._INK))
+                painter.drawText(
+                    self.cell_rect(r, c).adjusted(1.0, 1.0, -1.0, -1.0),
+                    int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap), txt)
+        # 내부 격자선
+        painter.setPen(QPen(self._LINE, 0.5))
+        for i in range(1, self._cols):
+            x = box.left() + i * cw
+            painter.drawLine(QPointF(x, box.top()), QPointF(x, box.bottom()))
+        for j in range(1, self._rows):
+            y = box.top() + j * ch
+            painter.drawLine(QPointF(box.left(), y), QPointF(box.right(), y))
+        # 외곽선
+        painter.setPen(QPen(self._LINE, 1.0))
+        painter.drawRect(box)
+        painter.restore()
+        if self.isSelected():
+            _draw_selection_box(painter, box, self._scale_or_1())
+        self._paint_handle(painter)
+
+
+class _CellEditor(QLineEdit):
+    """[우리 확장 · Phase 4] 표 셀 인라인 편집기 — 뷰 viewport 위에 떠서 한 셀을 편집.
+    Enter=아래 칸, Tab=오른쪽(줄 끝이면 다음 줄 첫 칸), Shift+Tab=왼쪽, Esc=취소, 포커스 상실=커밋.
+    셀 편집은 undo 스코프 밖(표제란 필드와 동일) — set_cell_text로 직접 반영."""
+
+    def __init__(self, view, item: "_TableItem", r: int, c: int):
+        super().__init__(view.viewport())
+        self._view = view
+        self._item = item
+        self._r = r
+        self._c = c
+        self._done = False
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setText(item.cell_text(r, c))
+        self.selectAll()
+        self._place()
+        self.show()
+        self.setFocus()
+
+    def _place(self):
+        """셀 rect(아이템 로컬)를 뷰 픽셀좌표로 매핑해 편집기 위치·크기 설정."""
+        cell = self._item.cell_rect(self._r, self._c)
+        pts = [self._view.mapFromScene(self._item.mapToScene(p)) for p in
+               (cell.topLeft(), cell.topRight(), cell.bottomRight(), cell.bottomLeft())]
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        self.setGeometry(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+    def _commit(self):
+        if not self._done:
+            self._done = True
+            self._item.set_cell_text(self._r, self._c, self.text())
+
+    def _cancel(self):
+        self._done = True   # 커밋하지 않고 닫기
+
+    def _move(self, dr: int, dc: int):
+        rows, cols = self._item.dims()
+        r, c = self._r + dr, self._c + dc
+        while c >= cols:       # Tab 줄넘김(오른쪽 끝 → 다음 줄 첫 칸)
+            c -= cols
+            r += 1
+        while c < 0:           # Shift+Tab 줄넘김(왼쪽 끝 → 이전 줄 마지막 칸)
+            c += cols
+            r -= 1
+        self._commit()
+        self.close()
+        if 0 <= r < rows and 0 <= c < cols:
+            self._view._begin_cell_edit(self._item, r, c)
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._move(1, 0)
             return
-        a = self._label_anchor()
-        br = self._label._content_rect()
-        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() - 4.0)
+        if key == Qt.Key.Key_Escape:
+            self._cancel()
+            self.close()
+            return
+        super().keyPressEvent(event)
+
+    def event(self, e):
+        # Tab/Backtab은 위젯 포커스 순회로 먼저 소비되므로 event()에서 가로챈다.
+        if e.type() == QEvent.Type.KeyPress and e.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            self._move(0, 1 if e.key() == Qt.Key.Key_Tab else -1)
+            return True
+        return super().event(e)
+
+    def focusOutEvent(self, event):
+        self._commit()
+        self.close()
+        super().focusOutEvent(event)
 
 
 class _LineItem(_LabelMixin, _HandleResizeMixin, QGraphicsLineItem):
@@ -1448,6 +2222,9 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._bind2 = None     # 끝점1이 묶인 도형 or None
         self._bind1_pt = None  # 그 도형의 '로컬 좌표' 부착점(고정) — 도형 이동/스케일 시 mapToScene로 추종
         self._bind2_pt = None
+        # [우리 확장] 라벨 위치 = 곡선 길이 정규화 t(0~1) + 수직 오프셋 off (sarrow와 동일 FigJam/Lucid).
+        self._label_t = 0.5
+        self._label_off = 0.0
         self._init_resize()
         self._init_label()
         self.setFlags(
@@ -1455,8 +2232,72 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
         )
 
+    # ---- 라벨: 곡선 위 t 지점 + 수직 오프셋에 완전중앙 배치, paint가 그 자리에 갭(FigJam/Lucid) ----
+    def _make_label(self):
+        return _ConnectorLabel(self._label_color())   # 드래그로 곡선 위 슬라이드/오프셋
+
+    def _point_at_t_normal(self, t: float):
+        """곡선 위 t 지점의 (점, 왼쪽 단위법선). 유한차분 접선으로 법선을 구한다."""
+        dt = 1e-3
+        a = self._point_at(max(0.0, t - dt))
+        b = self._point_at(min(1.0, t + dt))
+        tx, ty = b.x() - a.x(), b.y() - a.y()
+        L = math.hypot(tx, ty)
+        if L < 1e-9:
+            return self._point_at(t), QPointF(0.0, -1.0)
+        return self._point_at(t), QPointF(-ty / L, tx / L)
+
     def _label_anchor(self) -> QPointF:
-        return self._point_at(0.5)   # 곡선/직선 위 중점
+        p, n = self._point_at_t_normal(getattr(self, "_label_t", 0.5))
+        off = getattr(self, "_label_off", 0.0)
+        return QPointF(p.x() + n.x() * off, p.y() + n.y() * off)
+
+    def _project_to_curve(self, p: QPointF):
+        """로컬 점 p를 곡선에 투영해 (t, 부호있는 수직오프셋). 라벨 드래그 재투영용(샘플링 최근접)."""
+        N = 120
+        best_t, best_d = 0.5, None
+        for i in range(N + 1):
+            t = i / N
+            q = self._point_at(t)
+            d = (p.x() - q.x()) ** 2 + (p.y() - q.y()) ** 2
+            if best_d is None or d < best_d:
+                best_d, best_t = d, t
+        pt, n = self._point_at_t_normal(best_t)
+        off = (p.x() - pt.x()) * n.x() + (p.y() - pt.y()) * n.y()
+        return best_t, off
+
+    def _reproject_label(self, proposed_topleft: QPointF) -> QPointF:
+        lbl = self._label
+        br = lbl._content_rect()
+        center = QPointF(proposed_topleft.x() + br.width() / 2.0,
+                         proposed_topleft.y() + br.height() / 2.0)
+        self._label_t, self._label_off = self._project_to_curve(center)
+        self.update()   # 라벨만 움직여도 부모 화살표 paint(갭)가 새 위치로 다시 그려지게
+        a = self._label_anchor()
+        return QPointF(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+
+    def _sync_label(self):
+        """라벨을 곡선 위 앵커에 완전중앙 배치(선 위) — paint가 그 자리에 갭을 낸다."""
+        if not self._label_alive():
+            return
+        a = self._label_anchor()
+        br = self._label._content_rect()
+        self._label._syncing = True
+        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+        self._label._syncing = False
+
+    _LABEL_GAP_PAD = 5.0
+
+    def _label_gap_rect(self):
+        """라벨이 차지하는 로컬 사각형(+패딩). paint에서 이 안의 선(직선/곡선)을 비운다(FigJam 갭)."""
+        if not self.has_label():
+            return None
+        lbl = self._label
+        br = lbl._content_rect()
+        pos = lbl.pos()
+        pad = self._LABEL_GAP_PAD
+        return QRectF(pos.x() + br.x() - pad, pos.y() + br.y() - pad,
+                     br.width() + 2 * pad, br.height() + 2 * pad)
 
     def _label_color(self) -> QColor:
         return QColor(self._color)
@@ -1492,6 +2333,7 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         c._bind1, c._bind2 = self._bind1, self._bind2  # 지속 연결 바인딩 유지
         c._bind1_pt = None if self._bind1_pt is None else QPointF(self._bind1_pt)
         c._bind2_pt = None if self._bind2_pt is None else QPointF(self._bind2_pt)
+        c._label_t, c._label_off = self._label_t, self._label_off   # 라벨 위치(t·off) 유지
         return self._copy_common_to(c)
 
     # [Stage2] 기하 리베이크 — 끝점·제어점을 씬변형(곡선 형태 보존). 바인딩 부착점은
@@ -1768,6 +2610,16 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         pen = QPen(self._color, self._width, Qt.PenStyle.SolidLine,
                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
 
+        # [FigJam 갭] 라벨이 있으면 그 사각형만 클립으로 비워 선/곡선이 텍스트를 관통하지 않게 한다.
+        # 클립이라 3차 베지어의 매끄러움이 그대로 유지된다(선분 근사 아님). 화살촉은 클립 복원 뒤 그린다.
+        gap = self._label_gap_rect()
+        if gap is not None:
+            painter.save()
+            big = self.boundingRect().adjusted(-2000, -2000, 2000, 2000)
+            clip = QPainterPath(); clip.addRect(big)
+            hole = QPainterPath(); hole.addRect(gap)
+            painter.setClipPath(clip.subtracted(hole))
+
         if self._ctrl1 is None:
             # 직선: 선은 화살촉 밑변까지만 그린다. 짧은 화살표에서 base가 tail 뒤로 넘어가
             # 선이 거꾸로 삐져나오지 않도록 tail~tip 구간 안으로 클램프한다.
@@ -1799,6 +2651,9 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(path)
+
+        if gap is not None:
+            painter.restore()   # 화살촉·핸들은 클립 없이 온전히 그린다
 
         head = QPolygonF(self._head_points())
         painter.setBrush(QBrush(self._color))
@@ -1914,6 +2769,32 @@ def _point_seg_proj(p: QPointF, a: QPointF, b: QPointF):
     return proj, math.hypot(p.x() - proj.x(), p.y() - proj.y())
 
 
+def _seg_rect_interval(a: QPointF, b: QPointF, rect: QRectF):
+    """[우리 확장] 선분 a→b가 rect '내부'를 지나는 파라미터 구간 (t0, t1)를 Liang-Barsky로
+    구한다. 교차 없으면 None. 화살표 선을 라벨 자리에서 끊는(FigJam 갭) 데 쓴다."""
+    x0, y0 = a.x(), a.y()
+    dx, dy = b.x() - x0, b.y() - y0
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, x0 - rect.left()), (dx, rect.right() - x0),
+                 (-dy, y0 - rect.top()), (dy, rect.bottom() - y0)):
+        if abs(p) < 1e-12:
+            if q < 0:
+                return None            # 축에 평행하며 슬래브 밖 → 교차 없음
+        else:
+            r = q / p
+            if p < 0:
+                if r > t1:
+                    return None
+                if r > t0:
+                    t0 = r
+            else:
+                if r < t0:
+                    return None
+                if r < t1:
+                    t1 = r
+    return None if t0 > t1 else (t0, t1)
+
+
 class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     """정점 리스트로 이루어진 직선 화살표. _endpoints()로 모든 정점을 노출하므로
     _HandleResizeMixin의 끝점 드래그 machinery가 정점 이동을 그대로 처리한다."""
@@ -1943,6 +2824,11 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._route_hints = []
         self._hint_dragging = False       # 힌트 정점 드래그 진행 중(build_elbow 클로버 방지 가드)
         self._hint_undo = None            # 힌트 커밋 undo 스냅샷
+        # [우리 확장] 라벨 위치를 절대좌표가 아니라 경로 길이 정규화 t(0~1)+수직 오프셋 off로 소유.
+        # FigJam/Lucid식 — 리라우트돼도 라벨이 비율 자리를 지킨다(절대좌표면 재라우팅 때 튐).
+        # 드래그하면 _reproject_label이 t·off를 갱신하고, paint가 그 자리에 선 갭을 낸다.
+        self._label_t = 0.5
+        self._label_off = 0.0
         self._init_resize()
         self._init_label()
         self.setFlags(
@@ -1955,6 +2841,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         return True
 
     _ROUTE_CLEARANCE = 12.0   # [Stage2] 라우팅이 장애물에서 유지할 여유(scene 단위)
+    _ARROW_CROSS_PENALTY = 200.0   # [Stage3] 다른 화살표를 가로지를 때 A* 간선에 더할 soft 벌점
+    _ALIGN_TOL = 8.0   # [Stage4] 근접정렬 흡수 임계(px) — 이하 어긋남만 흡수, 의도적 오프셋은 보존
 
     # ---- [A3] 지속 연결(도형 테두리 부착) — 곡선화살표 인프라 재사용 --------
     def _connects_to_border(self):
@@ -2037,6 +2925,47 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             return None
         return n
 
+    def _absorb_near_alignment(self) -> bool:
+        """[Stage4] 양끝의 교차축 어긋남이 _ALIGN_TOL 이하면 부착점을 공통 축으로 스냅해 직교 라우터가
+        넣는 미세 계단([A]백엣지·[B]수렴부·decision 연결)을 직선으로 붕괴시킨다. 실제로 옮겼으면 True.
+        · 교차축 = 두 끝점의 '지배적 분리축'의 수직(가로연결 |dx|≥|dy|→Y정렬 / 세로연결→X정렬). 법선이
+          아니라 분리축으로 판정 — 마름모 꼭짓점의 대각 법선에 안 속는다(직전 실조건서 6px 계단 놓친 갭).
+        · 정렬 목표는 후보(상대 끝점 좌표 → 자기 좌표 → 중점) 중 두 부착점이 모두 도형 '테두리 위'에
+          남는 첫 값 — 꼭짓점은 축 밖으로 못 나가 자연히 '움직일 수 있는 쪽(박스 변)'만 옮긴다(폭 다른
+          E-E는 양쪽 다 테두리 밖이라 미적용 → build에서 폭 통일로 처리).
+        · 큰(의도적) 어긋남은 임계 밖이라 미변경, 스냅 후 어긋남=0이라 멱등(되먹임 없음)."""
+        end_idx = len(self._pts) - 1
+        s = self.mapToScene(self._pts[0])
+        e = self.mapToScene(self._pts[end_idx])
+        horizontal = abs(e.x() - s.x()) >= abs(e.y() - s.y())
+        c0 = s.y() if horizontal else s.x()
+        c1 = e.y() if horizontal else e.x()
+        if abs(c0 - c1) <= 1e-6 or abs(c0 - c1) > self._ALIGN_TOL:
+            return False
+        sh0, sh1 = self._bound(0), self._bound(end_idx)
+
+        def on_border(sh, sp):   # 이동한 부착점이 도형 테두리 위에 남는가(꼭짓점 이탈 방지)
+            if sh is None or sh.scene() is None:
+                return True
+            try:
+                bp, _ = _nearest_border(sh, sp)
+            except Exception:
+                return False
+            return (bp - sp).manhattanLength() <= 0.5
+
+        def at(p, target):
+            return QPointF(p.x(), target) if horizontal else QPointF(target, p.y())
+
+        for target in (c1, c0, (c0 + c1) / 2.0):
+            p0, p1 = at(s, target), at(e, target)
+            if on_border(sh0, p0) and on_border(sh1, p1):
+                for idx, sh, np in ((0, sh0, p0), (end_idx, sh1, p1)):
+                    if sh is not None:
+                        self.set_bound(idx, sh, sh.mapFromScene(np))
+                    self._set_endpoint(idx, self.mapFromScene(np))
+                return True
+        return False
+
     def build_elbow(self) -> bool:
         """[Stage1] 현재 양끝점 + 부착 변 법선으로 직교 엘보를 계산해 _pts를 교체. 변경 있으면 True.
         _pts[0]/_pts[-1](끝점)은 유지하고 중간 정점만 라우터가 생성한다.
@@ -2051,10 +2980,26 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         e = self.mapToScene(self._pts[end_idx])
         if abs(s.x() - e.x()) < 1e-6 and abs(s.y() - e.y()) < 1e-6:
             return False
-        hint_scenes = [self._hint_to_scene(h) for h in self._route_hints]
-        scene_pts, flags = self._route_with_hints(hint_scenes)
-        merged, _mflag = self._dedup_hint(scene_pts, flags)
-        new_local = [self.mapFromScene(p) for p in merged]
+        # [Stage4] 라우팅 전 근접정렬 흡수 — 미세 어긋남(≤_ALIGN_TOL)을 직선으로 붕괴. 옮겼으면 s·e 갱신.
+        if self._absorb_near_alignment():
+            s = self.mapToScene(self._pts[0])
+            e = self.mapToScene(self._pts[end_idx])
+        if self._route_hints:
+            # [경유지 힌트(2f)] 힌트가 있으면 구간별 라우팅(내부적으로 Stage2/3 회피 동반).
+            hint_scenes = [self._hint_to_scene(h) for h in self._route_hints]
+            scene_pts, flags = self._route_with_hints(hint_scenes)
+            merged, _mflag = self._dedup_hint(scene_pts, flags)
+            new_local = [self.mapFromScene(p) for p in merged]
+        else:
+            ns = self._bound_normal_scene(0)
+            ne = self._bound_normal_scene(end_idx)
+            # [Stage2] 장애물(양끝 바인딩 도형 제외)을 피하는 직교 경로. 장애물이 없거나 Stage1
+            # 엘보가 이미 안전하면 Stage1과 동일 결과 → 아래 무변경 가드가 되먹임 루프를 끊는다.
+            mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
+                                avoid_segs=self._obstacle_arrow_segs(),
+                                cross_penalty=self._ARROW_CROSS_PENALTY)
+            new_scene = _dedup_pts([s] + mids + [e])
+            new_local = [self.mapFromScene(p) for p in new_scene]
         if len(new_local) == len(self._pts) and all(
                 abs(a.x() - b.x()) <= 1e-6 and abs(a.y() - b.y()) <= 1e-6
                 for a, b in zip(new_local, self._pts)):
@@ -2089,13 +3034,15 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         ns = self._bound_normal_scene(0)
         ne = self._bound_normal_scene(end_idx)
         obst = self._obstacle_rects()
+        avoid_segs = self._obstacle_arrow_segs()   # [Stage3] 힌트 구간에도 화살표 회피 동반
         waypts = [s] + list(hint_scenes) + [e]
         norms = [ns] + [None] * len(hint_scenes) + [ne]
         scene_pts = [s]
         flags = [False]
         for i in range(len(waypts) - 1):
             a, b = waypts[i], waypts[i + 1]
-            mids = _route_ortho(a, b, norms[i], norms[i + 1], obst, self._ROUTE_CLEARANCE)
+            mids = _route_ortho(a, b, norms[i], norms[i + 1], obst, self._ROUTE_CLEARANCE,
+                                avoid_segs=avoid_segs, cross_penalty=self._ARROW_CROSS_PENALTY)
             for m in mids:
                 scene_pts.append(m)
                 flags.append(False)
@@ -2168,7 +3115,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         for it in sc.items():
             if it is self._bind_start or it is self._bind_end:
                 continue
-            if isinstance(it, (_RectItem, _EllipseItem)):
+            if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem)):
                 out.append(it.mapRectToScene(it.rect()))
         return out
 
@@ -2183,6 +3130,22 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         if sc is not None and sc.views():
             view_s = sc.views()[0]._view_scale()
         return self._HINT_DROP_PX / max(view_s, 1e-6)
+
+    def _obstacle_arrow_segs(self):
+        """[Stage3] soft 회피용 — 다른 화살표(self 제외)의 렌더 폴리라인을 씬좌표 선분 리스트로.
+        _PolyArrowItem=엘보 전체 정점, _ArrowItem=양끝 코드(베지어는 직선 근사). 장애물이 아니라
+        비용에만 반영하므로 self의 현재 경로는 넣지 않는다(되먹임 방지). scene 없으면 빈 리스트."""
+        sc = self.scene()
+        if sc is None:
+            return []
+        segs = []
+        for it in sc.items():
+            if it is self or not isinstance(it, (_ArrowItem, _PolyArrowItem)):
+                continue
+            pts = [it.mapToScene(p) for p in it._endpoints()]
+            for i in range(len(pts) - 1):
+                segs.append((pts[i], pts[i + 1]))
+        return segs
 
     def _on_endpoint_drag_start(self, idx):
         # [경유지 힌트(2f)] 자동라우팅 중 '중간' 정점을 잡으면 freeze하지 않고 힌트 모드로 진입 —
@@ -2262,6 +3225,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         c._bind_end_pt = None if self._bind_end_pt is None else QPointF(self._bind_end_pt)
         c._auto_route = self._auto_route   # [Stage1] 자동 라우팅 상태 유지
         c._route_hints = [QPointF(p) for p in self._route_hints]   # [경유지 힌트] 유지
+        c._label_t, c._label_off = self._label_t, self._label_off   # 라벨 위치(t·off) 유지
         return self._copy_common_to(c)
 
     # [Stage2] 기하 리베이크 — 모든 정점을 씬변형. 왜곡·미러는 자동 엘보가 되돌리지 않게
@@ -2324,25 +3288,124 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             path.lineTo(pt)
         return path
 
-    # ---- 라벨 앵커 = 폴리라인 길이의 중점 -------------------------------
+    _LABEL_GAP_PAD = 5.0   # [우리 확장] 라벨 사각형 둘레로 선을 끊을 때의 여유(px)
+
+    def _label_gap_rect(self):
+        """[우리 확장] 라벨(있으면)이 차지하는 로컬 사각형(+패딩). 이 안의 선을 지워 텍스트를 앉힌다.
+        라벨이 선에서 멀리 떨어지면(오프셋 드래그) 이 사각형이 선과 안 겹쳐 자연히 갭이 사라진다."""
+        if not self.has_label():
+            return None
+        lbl = self._label
+        br = lbl._content_rect()
+        pos = lbl.pos()
+        pad = self._LABEL_GAP_PAD
+        return QRectF(pos.x() + br.x() - pad, pos.y() + br.y() - pad,
+                     br.width() + 2 * pad, br.height() + 2 * pad)
+
+    def _visible_polyline_path(self) -> QPainterPath:
+        """[우리 확장 · FigJam 갭] 라벨 사각형과 겹치는 폴리라인 구간만 빼고 그린 경로.
+        히트테스트(_base_shape)·선택외곽선·직렬화는 전체 폴리라인을 그대로 쓴다 — 시각 갭만."""
+        rect = self._label_gap_rect()
+        if rect is None:
+            return self._polyline_path()
+        path = QPainterPath()
+        for a, b in zip(self._pts[:-1], self._pts[1:]):
+            inside = _seg_rect_interval(a, b, rect)
+            if inside is None:
+                path.moveTo(a)
+                path.lineTo(b)
+                continue
+            i0, i1 = inside
+            dx, dy = b.x() - a.x(), b.y() - a.y()
+            if i0 > 1e-6:
+                path.moveTo(a)
+                path.lineTo(QPointF(a.x() + dx * i0, a.y() + dy * i0))
+            if i1 < 1.0 - 1e-6:
+                path.moveTo(QPointF(a.x() + dx * i1, a.y() + dy * i1))
+                path.lineTo(b)
+        return path
+
+    # ---- 라벨 앵커 = 경로 위 t(0~1) 지점 + 수직 오프셋 (FigJam/Lucid) ----
+    def _make_label(self):
+        return _ConnectorLabel(self._label_color())   # 드래그로 경로 위 슬라이드/오프셋
+
     def _label_color(self) -> QColor:
         return QColor(self._color)
 
-    def _label_anchor(self) -> QPointF:
+    def _point_at_t(self, t: float):
+        """경로 길이 정규화 파라미터 t(0~1) 지점의 (점, 왼쪽 단위법선). 라벨 앵커·오프셋에 쓴다."""
         segs, total = [], 0.0
         for a, b in zip(self._pts[:-1], self._pts[1:]):
             d = math.hypot(b.x() - a.x(), b.y() - a.y())
             segs.append((a, b, d))
             total += d
         if total < 1e-9:
-            return QPointF(self._pts[0])
-        target, run = total * 0.5, 0.0
-        for a, b, d in segs:
-            if run + d >= target:
-                t = (target - run) / d if d > 1e-9 else 0.0
-                return QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
+            return QPointF(self._pts[0]), QPointF(0.0, -1.0)
+        target, run = max(0.0, min(1.0, t)) * total, 0.0
+        for i, (a, b, d) in enumerate(segs):
+            if run + d >= target or i == len(segs) - 1:   # 마지막 세그먼트면 t=1 끝점도 여기서 잡음
+                tt = (target - run) / d if d > 1e-9 else 0.0
+                px, py = a.x() + (b.x() - a.x()) * tt, a.y() + (b.y() - a.y()) * tt
+                if d > 1e-9:
+                    n = QPointF(-(b.y() - a.y()) / d, (b.x() - a.x()) / d)   # 왼쪽 단위법선
+                else:
+                    n = QPointF(0.0, -1.0)
+                return QPointF(px, py), n
             run += d
-        return QPointF(self._pts[-1])
+        return QPointF(self._pts[-1]), QPointF(0.0, -1.0)
+
+    def _label_anchor(self) -> QPointF:
+        p, n = self._point_at_t(getattr(self, "_label_t", 0.5))
+        off = getattr(self, "_label_off", 0.0)
+        return QPointF(p.x() + n.x() * off, p.y() + n.y() * off)
+
+    def _project_to_path(self, p: QPointF):
+        """로컬 점 p를 폴리라인에 투영해 (t, 부호있는 수직오프셋)을 반환. 라벨 드래그 재투영용.
+        오프셋 부호는 _point_at_t의 왼쪽 법선과 같은 방향(양수=선 왼쪽)."""
+        segs, total = [], 0.0
+        for a, b in zip(self._pts[:-1], self._pts[1:]):
+            d = math.hypot(b.x() - a.x(), b.y() - a.y())
+            segs.append((a, b, d))
+            total += d
+        if total < 1e-9:
+            return 0.5, 0.0
+        best = None   # (거리, 경로누적길이, 부호오프셋)
+        run = 0.0
+        for a, b, d in segs:
+            if d < 1e-9:
+                continue
+            dx, dy = b.x() - a.x(), b.y() - a.y()
+            tt = max(0.0, min(1.0, ((p.x() - a.x()) * dx + (p.y() - a.y()) * dy) / (d * d)))
+            projx, projy = a.x() + dx * tt, a.y() + dy * tt
+            dist = math.hypot(p.x() - projx, p.y() - projy)
+            if best is None or dist < best[0]:
+                off = (-dy * (p.x() - projx) + dx * (p.y() - projy)) / d   # 왼쪽 법선 성분
+                best = (dist, run + d * tt, off)
+            run += d
+        return best[1] / total, best[2]
+
+    def _reproject_label(self, proposed_topleft: QPointF) -> QPointF:
+        """[우리 확장] 라벨 자유 드래그(itemChange가 넘긴 top-left 후보)를 경로 위로 재투영해
+        t·off를 갱신하고, 그 t·off에 대응하는 '구속된' top-left를 돌려준다(FigJam 슬라이드+Lucid 오프셋)."""
+        lbl = self._label
+        br = lbl._content_rect()
+        center = QPointF(proposed_topleft.x() + br.width() / 2.0,
+                         proposed_topleft.y() + br.height() / 2.0)
+        self._label_t, self._label_off = self._project_to_path(center)
+        self.update()   # 라벨(자식)만 움직여도 부모 화살표 paint(갭)가 새 위치로 다시 그려지게
+        a = self._label_anchor()
+        return QPointF(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+
+    def _sync_label(self):
+        """[우리 확장] 라벨을 앵커에 '완전 중앙'(x·y)으로 놓는다 — 선·베지어의 '중점 위쪽'과 달리
+        선 위에 앉히고 paint가 그 자리에 갭을 낸다. _syncing 가드로 setPos→itemChange 되먹임 차단."""
+        if not self._label_alive():
+            return
+        a = self._label_anchor()
+        br = self._label._content_rect()
+        self._label._syncing = True
+        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+        self._label._syncing = False
 
     # ---- 경계/외형 -----------------------------------------------------
     def _content_rect(self) -> QRectF:
@@ -2389,7 +3452,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(self._polyline_path())
+        painter.drawPath(self._visible_polyline_path())   # [FigJam 갭] 라벨 자리에서 선 끊음
         painter.setPen(QPen(self._color, 1))
         painter.setBrush(QBrush(self._color))
         painter.drawPolygon(QPolygonF(self._head_points()))
@@ -2458,6 +3521,9 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         f = self.font()
         f.setPointSize(16)
         self.setFont(f)
+        # [우리 확장] 사용자가 의도한 '기준' 폰트 크기. 중앙 라벨은 도형에 맞춰 이보다 작게 축소해
+        # 렌더할 수 있으나(_fit_label_to_shape), 저장·재적합의 기준은 항상 이 값이다(축소값 아님).
+        self._base_pt = 16
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
             | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
@@ -2467,6 +3533,7 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         self.setDefaultTextColor(QColor(color))
 
     def apply_font_size(self, size):
+        self._base_pt = int(size)   # 기준 크기 갱신(중앙 라벨 축소의 상한)
         f = self.font()
         f.setPointSize(int(size))
         self.setFont(f)
@@ -2532,6 +3599,21 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
             painter.drawRoundedRect(self._content_rect().adjusted(1, 1, -1, -1), 4, 4)
         self._paint_base_no_select(painter, option, widget)
         self._paint_handle(painter)
+
+
+class _ConnectorLabel(_TextItem):
+    """[우리 확장] 화살표(sarrow)에 붙는 라벨 — 드래그하면 부모 폴리라인을 따라 슬라이드하고
+    (FigJam), 선 옆으로 당기면 수직 오프셋으로 뜬다(Lucid). 위치는 부모(_PolyArrowItem)가
+    t·off로 소유하며, itemChange가 Qt 기본 자유 이동을 경로 위로 재투영해 구속한다.
+    _syncing 플래그가 켜진 동안(_sync_label의 setPos)엔 재투영을 건너뛴다(되먹임 차단)."""
+
+    def itemChange(self, change, value):
+        if (change == QGraphicsItem.GraphicsItemChange.ItemPositionChange
+                and not getattr(self, "_syncing", False)):
+            parent = self.parentItem()
+            if parent is not None and hasattr(parent, "_reproject_label"):
+                return parent._reproject_label(value)
+        return super().itemChange(change, value)
 
 
 # ---------------------------------------------------------------------------
@@ -2702,19 +3784,70 @@ def _ellipse_nearest(r, p):
     return q, QPointF(nx / L, ny / L)
 
 
+def _seg_nearest(a: QPointF, b: QPointF, p: QPointF) -> QPointF:
+    """선분 a-b 위에서 점 p 최근접점(로컬)."""
+    abx, aby = b.x() - a.x(), b.y() - a.y()
+    denom = abx * abx + aby * aby
+    if denom < 1e-12:
+        return QPointF(a)
+    t = ((p.x() - a.x()) * abx + (p.y() - a.y()) * aby) / denom
+    t = max(0.0, min(1.0, t))
+    return QPointF(a.x() + t * abx, a.y() + t * aby)
+
+
+def _symbol_nearest(item, p):
+    """심볼의 실제 외곽선(_sym_path)에서 점 p(로컬) 최근접점 + 바깥 단위 법선(로컬).
+    경로를 폴리곤으로 평탄화(곡선 포함)해 각 변에서 최근접점을 찾고, 법선은 중심 반대쪽(바깥)으로
+    향한다. 마름모·평행사변형처럼 외접 박스와 어긋나는 도형도 '보이는 외곽선'에 정확히 스냅한다."""
+    path = item._sym_path()
+    c = item.rect().center()
+    best_q = None
+    best_seg = None
+    best_d = float("inf")
+    for poly in path.toSubpathPolygons():
+        for i in range(poly.count() - 1):
+            a, b = poly.at(i), poly.at(i + 1)
+            q = _seg_nearest(a, b, p)
+            d = (q.x() - p.x()) ** 2 + (q.y() - p.y()) ** 2
+            if d < best_d:
+                best_d, best_q, best_seg = d, q, (a, b)
+    if best_q is None:                       # 방어(빈 경로) — 박스 폴백
+        return _rect_nearest(item.rect(), p)
+    a, b = best_seg
+    nx, ny = -(b.y() - a.y()), (b.x() - a.x())   # 변에 수직
+    if (best_q.x() - c.x()) * nx + (best_q.y() - c.y()) * ny < 0:
+        nx, ny = -nx, -ny                        # 중심 반대(바깥)로 정렬
+    L = math.hypot(nx, ny) or 1.0
+    return best_q, QPointF(nx / L, ny / L)
+
+
 def _nearest_border(item, scene_pt):
-    """네모/원 테두리에서 scene_pt 최근접점 → (snap_scene, outward_unit_scene).
+    """네모/원/심볼 테두리에서 scene_pt 최근접점 → (snap_scene, outward_unit_scene).
     회전·스케일은 아이템 변환으로 왕복 환산(바깥 법선도 씬 방향으로 변환)."""
     p = item.mapFromScene(scene_pt)
     r = item.rect()
     if isinstance(item, _EllipseItem):
         q, n = _ellipse_nearest(r, p)
+    elif isinstance(item, _SymbolItem):
+        q, n = _symbol_nearest(item, p)
     else:
         q, n = _rect_nearest(r, p)
     sp = item.mapToScene(q)
     nd = item.mapToScene(QPointF(q.x() + n.x(), q.y() + n.y())) - sp
     L = math.hypot(nd.x(), nd.y()) or 1.0
     return sp, QPointF(nd.x() / L, nd.y() / L)
+
+
+def _shape_ports(item):
+    """도형의 이산 접속점(포트) → [(scene_pt, 바깥법선), ...]. 변 중점 4개(N·E·S·W)를
+    _nearest_border로 '실제 외곽선'에 투영한다 — 네모·원은 변 중점 그대로, 심볼은 슬랜트 변
+    (평행사변형 등)이라 투영해야 붕 뜨지 않는다. 마름모는 4 꼭짓점이 그대로 N/E/S/W가 된다.
+    회전·스케일은 _nearest_border가 아이템 변환으로 왕복 환산."""
+    r = item.rect()
+    cx, cy = r.center().x(), r.center().y()
+    cardinals = (QPointF(cx, r.top()), QPointF(r.right(), cy),
+                 QPointF(cx, r.bottom()), QPointF(r.left(), cy))
+    return [_nearest_border(item, item.mapToScene(cl)) for cl in cardinals]
 
 
 # ---- [Stage1] Lucid식 직교 자동 라우팅(기본 엘보) -----------------------------
@@ -2805,7 +3938,35 @@ def _normal_stub(p: QPointF, n, d: float) -> QPointF:
     return QPointF(p.x(), p.y() + (d if n.y() >= 0 else -d))
 
 
-def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6):
+# ---- [Stage3] 화살표-화살표 soft 회피 — 세그먼트 교차 판정/집계 --------------------
+def _seg_cross_seg(a: QPointF, b: QPointF, c: QPointF, d: QPointF, eps=1e-9) -> bool:
+    """두 선분 a-b, c-d의 '내부'가 진짜로 가로지르면 True. 끝점 공유·공선 접촉은 비교차로
+    본다(끝점을 공유하는 화살표들이 부착 도형 근처에서 만나는 것을 교차로 오판하지 않게).
+    orientation 4-부호(양쪽 모두 엄격히 반대 부호일 때만 교차)."""
+    def orient(p, q, r):
+        return (q.x() - p.x()) * (r.y() - p.y()) - (q.y() - p.y()) * (r.x() - p.x())
+    o1, o2 = orient(a, b, c), orient(a, b, d)
+    o3, o4 = orient(c, d, a), orient(c, d, b)
+    ab_split = (o1 > eps and o2 < -eps) or (o1 < -eps and o2 > eps)
+    cd_split = (o3 > eps and o4 < -eps) or (o3 < -eps and o4 > eps)
+    return ab_split and cd_split
+
+
+def _count_seg_crossings(pts, segs) -> int:
+    """폴리라인 pts가 회피 세그먼트 segs를 가로지르는 총 횟수(soft 벌점·진단 공용)."""
+    if not segs:
+        return 0
+    n = 0
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]
+        for c, d in segs:
+            if _seg_cross_seg(a, b, c, d):
+                n += 1
+    return n
+
+
+def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6,
+                 avoid_segs=(), cross_penalty=0.0):
     """[Stage2 승격] Hanan 그리드 위의 직교 A*. 팽창 장애물(infl)을 관통하지 않는 최단 직각
     경로의 '중간 정점'을 반환(없으면 None). 후보 스캔과 달리 임의 밀집 배치에서도 경로가
     존재하면 반드시 찾는다(Hanan 그리드 완전성: 직교 우회로가 있으면 장애물 모서리선 위에도 있다).
@@ -2813,7 +3974,14 @@ def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6):
     격자선 = {start·goal 좌표} ∪ {각 장애물의 left/right(세로선)·top/bottom(가로선)}.
     노드는 이 선들의 교점, 간선은 인접 노드 사이 축정렬 선분(_seg_hits_rect로 관통 검사).
     회전 벌점(clearance*0.5)으로 엘보 수를 최소화해 경로를 깔끔하게. 상태에 진행축을 넣어
-    벌점을 정확히 계산(Manhattan 휴리스틱은 벌점을 무시 → admissible)."""
+    벌점을 정확히 계산(Manhattan 휴리스틱은 벌점을 무시 → admissible).
+
+    [Stage3] avoid_segs(다른 화살표 세그먼트, 씬좌표)는 hard 장애물이 아니라 soft다:
+    간선이 그걸 가로지르면 cross_penalty를 g에 가산(교차 최소화). 우회 레인은 도형 팽창 모서리
+    격자선에서 나온다. ⚠ 화살표 좌표는 격자선에 넣지 않는다 — 넣으면 A* 노드가 교차점에 정확히
+    얹혀 교차가 '끝점 접촉'이 되고 _seg_cross_seg가 이를 비교차로 처리해 벌점이 눈머는 함정.
+    벌점은 비용에만 더하므로 Manhattan 휴리스틱은 여전히 admissible(과대추정 없음).
+    avoid_segs가 비면 기존 순수 도형회피와 동일(무회귀)."""
     xs = sorted({start.x(), goal.x(), *(v for r in infl for v in (r.left(), r.right()))})
     ys = sorted({start.y(), goal.y(), *(v for r in infl for v in (r.top(), r.bottom()))})
     nx, ny = len(xs), len(ys)
@@ -2853,7 +4021,11 @@ def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6):
                 continue
             step = abs(xs[jx] - xs[ix]) + abs(ys[jy] - ys[iy])
             turn = turn_cost if (axis != 0 and axis != nax) else 0.0
-            ng = g + step + turn
+            pen = 0.0
+            if cross_penalty and avoid_segs:   # [Stage3] soft: 다른 화살표를 가로지르면 벌점
+                ea, eb = QPointF(xs[ix], ys[iy]), QPointF(xs[jx], ys[jy])
+                pen = cross_penalty * sum(1 for c, d in avoid_segs if _seg_cross_seg(ea, eb, c, d))
+            ng = g + step + turn + pen
             nst = (jx, jy, nax)
             if ng < dist.get(nst, float("inf")):
                 dist[nst] = ng
@@ -2872,35 +4044,59 @@ def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6):
     return path[1:-1]
 
 
-def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0):
+def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
+                 avoid_segs=(), cross_penalty=0.0):
     """[Stage2 승격] Stage1 엘보(_ortho_elbow)를 우선하되, 그 경로가 장애물을 관통하면
     Hanan 그리드 A*(_astar_ortho)로 우회로를 찾아 '중간 정점'을 반환.
-      · 장애물 없음 또는 Stage1이 이미 안전 → Stage1 그대로(무변경 보장, 되먹임 없음).
-      · 관통 시 → 법선 스텁을 씌운 A* → (실패 시) 스텁 없는 A* → (실패 시) Stage1 폴백.
+      · 장애물 없음 또는 Stage1이 이미 안전(도형·화살표 모두) → Stage1 그대로(무변경·되먹임 없음).
+      · 관통/교차 시 → 법선 스텁을 씌운 A* → (실패 시) 스텁 없는 A* → (실패 시) Stage1 폴백.
     후보 스캔(구현 (b))과 달리 밀집 배치에서도 우회로가 존재하면 반드시 찾는다(그리드 완전성).
-    obstacles: scene 좌표 사각형(양끝 바인딩 도형은 호출부에서 이미 제외). clearance만큼 팽창해 여유 확보."""
+    obstacles: scene 좌표 사각형(양끝 바인딩 도형은 호출부에서 이미 제외). clearance만큼 팽창해 여유 확보.
+    [Stage3] avoid_segs/cross_penalty: 도형은 hard(관통 금지), 다른 화살표는 soft(교차 최소화).
+    preferred가 도형은 안전하나 화살표를 가로지르면 A* 우회를 시도하되, 교차를 실제로 줄일 때만
+    채택(개선 없으면 preferred 유지 → 불필요한 우회·되먹임 방지)."""
     preferred = _ortho_elbow(s, e, ns, ne)
-    if not obstacles:
-        return preferred
-    infl = [r.adjusted(-clearance, -clearance, clearance, clearance) for r in obstacles]
-    if not _path_hits_rects([s] + preferred + [e], infl):
+    infl = ([r.adjusted(-clearance, -clearance, clearance, clearance) for r in obstacles]
+            if obstacles else [])
+    pref_hits_shape = _path_hits_rects([s] + preferred + [e], infl) if infl else False
+    pref_cross = _count_seg_crossings([s] + preferred + [e], avoid_segs)
+    # preferred가 도형 안전 + 화살표 교차 없음 → 그대로(기존 무변경 보장).
+    if not pref_hits_shape and pref_cross == 0:
         return preferred
     s2 = _normal_stub(s, ns, clearance)
     e2 = _normal_stub(e, ne, clearance)
     # (1) 법선 스텁을 강제한 A*(수직 이탈/도착·바인딩 도형 회피) → (2) 스텁 없는 A*(스텁이
-    #     막혔을 때 폴백). 각 후보는 s→...→e 전체 경로의 관통을 최종 확인한 뒤에만 채택.
+    #     막혔을 때 폴백). 각 후보는 s→...→e 전체 경로의 도형 관통을 최종 확인한 뒤에만 채택.
     attempts = [
         (s2, e2, ([] if s2 == s else [s2]), ([] if e2 == e else [e2])),
         (s, e, [], []),
     ]
+    if pref_hits_shape:
+        # 도형 관통 회피는 hard 요구 — 기존대로 첫 안전 후보 채택(화살표는 벌점으로 A*가 이미 최소화).
+        for a, b, pre, post in attempts:
+            interior = _astar_ortho(a, b, infl, clearance,
+                                    avoid_segs=avoid_segs, cross_penalty=cross_penalty)
+            if interior is None:
+                continue
+            mids = pre + interior + post
+            if not _path_hits_rects([s] + mids + [e], infl):
+                return mids
+        return preferred
+    # preferred가 도형은 안전하나 화살표를 가로지름 — 두 시도를 모두 평가해 '교차를 가장 많이
+    # 줄이는' 도형-안전 후보만 채택(개선 없으면 preferred 유지 → 불필요한 우회·되먹임 방지).
+    best, best_cross = preferred, pref_cross
     for a, b, pre, post in attempts:
-        interior = _astar_ortho(a, b, infl, clearance)
+        interior = _astar_ortho(a, b, infl, clearance,
+                                avoid_segs=avoid_segs, cross_penalty=cross_penalty)
         if interior is None:
             continue
         mids = pre + interior + post
-        if not _path_hits_rects([s] + mids + [e], infl):
-            return mids
-    return preferred
+        if _path_hits_rects([s] + mids + [e], infl):   # 도형 관통은 hard — 후보 기각
+            continue
+        c = _count_seg_crossings([s] + mids + [e], avoid_segs)
+        if c < best_cross:
+            best, best_cross = mids, c
+    return best
 
 
 # ---------------------------------------------------------------------------
@@ -3458,6 +4654,9 @@ class _AnnotatorView(QGraphicsView):
         (item, seg_idx, 씬 최근접점), 아니면 None. 정점 위는 이동(끝점 드래그)이 우선한다."""
         if self._selected_endpoint_item(view_pos) is not None:
             return None   # 정점 핸들 위 = 이동 우선
+        top = self.items(view_pos)
+        if top and isinstance(top[0], _ConnectorLabel):
+            return None   # 라벨 위 press = 라벨 드래그 우선(waypoint 삽입 안 함)
         scene_pt = self.mapToScene(view_pos)
         total = self._view_scale()
         best = None
@@ -3522,6 +4721,7 @@ class _AnnotatorView(QGraphicsView):
         self._move_snap = [
             (it, QPointF(it.pos())) for it in self.scene().items()
             if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            and not isinstance(it, _ConnectorLabel)   # 라벨 드래그는 t·off 소유라 위치-undo 스코프 밖
         ]
 
     def _apply_smart_snap(self):
@@ -3589,6 +4789,7 @@ class _AnnotatorView(QGraphicsView):
 
     # ---- 테두리 스냅 (화살표 도구가 네모/원 테두리에서 시작·도착하면 붙음) ----
     _BORDER_SNAP_PX = 14.0  # 커서~테두리 최근접점이 이 픽셀 이내면 스냅(시작·tip 공통, 뷰 픽셀)
+    _PORT_SNAP_PX = 18.0    # 포트(변 중점 접속점) 우선 스냅 반경 — 연속보다 넓어 먼저 끌린다(뷰 픽셀)
 
     def _view_scale(self) -> float:
         m = self.transform().m11()
@@ -3599,23 +4800,37 @@ class _AnnotatorView(QGraphicsView):
         return math.hypot(vp.x() - view_pos.x(), vp.y() - view_pos.y())
 
     def _conn_shapes(self):
-        """씬의 네모·원 아이템(위→아래 순)."""
+        """씬의 네모·원·심볼 아이템(위→아래 순) — 화살표 테두리 스냅·지속연결 대상."""
         return [it for it in self.scene().items()
-                if isinstance(it, (_RectItem, _EllipseItem))]
+                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
 
     def _border_snap_at(self, view_pos):
-        """커서가 어떤 네모/원 테두리에서 _BORDER_SNAP_PX 이내면 (snap_scene, exit_unit, shape),
-        아니면 None. 여러 도형이 후보면 가장 가까운 테두리점을 고른다.
-        (shape는 지속 연결 바인딩용 — 기존 인덱서 snap[0]/snap[1]과 호환되게 뒤에 붙임.)
-        owner.snap_enabled가 False면 스냅을 끈다(o-snap 토글 — 세밀 제어용)."""
+        """커서 근처 도형에 스냅 → (snap_scene, exit_unit, shape) 또는 None.
+        [우리 확장] 포트 우선 + 연속 폴백: 커서가 어떤 포트(변 중점 접속점)의 _PORT_SNAP_PX
+        이내면 그 포트로 딱 붙고(깔끔), 아니면 기존처럼 외곽선 최근접점에 _BORDER_SNAP_PX로 스냅.
+        (shape는 지속 연결 바인딩용.) owner.snap_enabled가 False면 스냅 전체 off."""
         if not getattr(self._owner, "snap_enabled", True):
             return None
         scene_pt = self.mapToScene(view_pos)
+        shapes = self._conn_shapes()
+        # Pass 1: 포트 우선 — 포트 반경이 연속보다 살짝 넓어 먼저 끌린다.
+        bestp = None
+        bestpd = self._PORT_SNAP_PX
+        pexit = None
+        pshape = None
+        for sh in shapes:
+            for sp, n in _shape_ports(sh):
+                d = self._view_dist(sp, view_pos)
+                if d <= bestpd:
+                    bestpd, bestp, pexit, pshape = d, sp, n, sh
+        if bestp is not None:
+            return bestp, pexit, pshape
+        # Pass 2: 연속 외곽선 폴백(포트에서 먼 변 중간 등).
         best = None
         bestd = self._BORDER_SNAP_PX
         bexit = None
         bshape = None
-        for sh in self._conn_shapes():
+        for sh in shapes:
             sp, n = _nearest_border(sh, scene_pt)
             d = self._view_dist(sp, view_pos)
             if d <= bestd:
@@ -3693,6 +4908,23 @@ class _AnnotatorView(QGraphicsView):
         painter.setBrush(QBrush(QColor(_BLUE)))
         painter.drawEllipse(sp, base, base)
 
+    def _draw_port_dots(self, painter, s):
+        """[우리 확장] 화살표 도구로 도형 근처에 가면 그 도형의 포트(변 중점 4점)를 속 빈 점으로
+        예고. 실제 스냅된 포트는 _draw_snap_marker(채운 파란 점)가 위에 덮어 강조한다."""
+        if not self._owner.is_edit_mode() or self._owner.current_tool not in ("arrow", "sarrow"):
+            return
+        scene_c = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
+        margin = 30.0 / s
+        r = 3.5 / s
+        painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
+        painter.setBrush(QBrush(QColor("white")))
+        for sh in self._conn_shapes():
+            br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
+            if not br.contains(scene_c):
+                continue
+            for sp, _n in _shape_ports(sh):
+                painter.drawEllipse(sp, r, r)
+
     def leaveEvent(self, event):
         # 커서가 뷰를 벗어나면 스냅·waypoint 예고 마커 정리(잔상 방지).
         if self._snap_preview is not None or self._seg_add is not None:
@@ -3707,6 +4939,8 @@ class _AnnotatorView(QGraphicsView):
             return
         s = self._view_scale()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # [우리 확장] 화살표 도구로 도형 근처면 포트 점 예고(스냅 마커보다 먼저 그려 아래 깔림).
+        self._draw_port_dots(painter, s)
         # 그리는 중(드래그)이거나 클릭 배치 중이면 스냅된 시작·tip에 마커(곡선·직선화살 공통).
         drawing = (self._drawing and self._temp is not None) or (self._place is not None)
         if drawing:
@@ -3864,7 +5098,10 @@ class _AnnotatorView(QGraphicsView):
         # 그 아이템에 press를 배달(=grab)하게 한 뒤 Z를 즉시 복원한다(grab은 Z와 무관하게 유지).
         # 끝점 우선은 "새 연결 화살표 생성"(arrow 도구)보다도 앞서야 겹칠 때 새 화살표가 안 생긴다.
         vpos = event.position().toPoint()
-        grab = self._selected_endpoint_item(vpos) or self._bend_handle_at(vpos)
+        # 커서 맨 위가 화살표 라벨이면 라벨 드래그 우선(끝점·bend 핸들보다) — 라벨이 핸들과 겹칠 때 대비.
+        _top = self.items(vpos)
+        _on_label = bool(_top) and isinstance(_top[0], _ConnectorLabel)
+        grab = None if _on_label else (self._selected_endpoint_item(vpos) or self._bend_handle_at(vpos))
         if grab is not None:
             if self._snap_preview is not None:
                 # 끝점/핸들 드래그 시작 → 유휴 테두리 스냅 예고 마커를 즉시 제거(드래그 중엔
@@ -3972,6 +5209,12 @@ class _AnnotatorView(QGraphicsView):
 
         if tool == "rect":
             it = _RectItem(QRectF(sp, sp))
+            it.setPen(pen)
+            it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            self._begin_draw(it)
+        elif tool.startswith("sym:"):
+            # [우리 확장] 심볼/스텐실 — 네모와 동일한 드래그 그리기(setRect 기반).
+            it = _SymbolItem(tool[4:], QRectF(sp, sp))
             it.setPen(pen)
             it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
             self._begin_draw(it)
@@ -4111,7 +5354,7 @@ class _AnnotatorView(QGraphicsView):
             self.viewport().update()   # 스냅 마커 갱신
             return
         sp = self._cur_point(event)
-        if tool in ("rect", "ellipse"):
+        if tool in ("rect", "ellipse") or tool.startswith("sym:"):
             item.setRect(QRectF(self._start, sp).normalized())
         elif tool == "line":
             item.setLine(QLineF(self._start, sp))
@@ -4138,7 +5381,7 @@ class _AnnotatorView(QGraphicsView):
 
     def _place_nondegenerate(self, it, tool) -> bool:
         """2점 도구가 '점 하나'로 퇴화하지 않았는지(너무 작지 않은지)."""
-        if tool in ("rect", "ellipse"):
+        if tool in ("rect", "ellipse") or tool.startswith("sym:"):
             r = it.rect()
             return abs(r.width()) >= 2 or abs(r.height()) >= 2
         if tool == "line":
@@ -4473,7 +5716,7 @@ class _AnnotatorView(QGraphicsView):
                 self._update_arrow_draw(event)   # 테두리 스냅 + 자동 S자
                 return
             sp = self._cur_point(event)
-            if tool in ("rect", "ellipse"):
+            if tool in ("rect", "ellipse") or tool.startswith("sym:"):
                 self._temp.setRect(QRectF(self._start, sp).normalized())
             elif tool == "line":
                 self._temp.setLine(QLineF(self._start, sp))
@@ -4551,7 +5794,7 @@ class _AnnotatorView(QGraphicsView):
             # 실제 press 지점 기준 이동량 — 시작 스냅 점프를 드래그로 오인하지 않게(버그 수정).
             moved = max(abs(release.x() - self._press_scene.x()),
                         abs(release.y() - self._press_scene.y()))
-            if tool in _SHAPE_TOOLS and moved < 4:
+            if (tool in _SHAPE_TOOLS or tool.startswith("sym:")) and moved < 4:
                 # 끌지 않은 클릭 → 폐기 대신 투클릭/멀티클릭 배치 모드로 진입(점은 유지).
                 # 곡선·직선화살 모두 테두리에서도 클릭 배치 허용(하이브리드 일관).
                 self._enter_click_place(item, tool)
@@ -4585,11 +5828,40 @@ class _AnnotatorView(QGraphicsView):
         for it in self.items(view_pos):
             if it is getattr(self._owner, "_bg_item", None):
                 continue
-            if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem)):
+            if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem,
+                               _SymbolItem, _RectItem, _EllipseItem)):
                 return it
             if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
                 return None
         return None
+
+    def _titleblock_at(self, view_pos):
+        """[우리 확장 · Phase 4] 커서 아래 '맨 위 선택형'이 표제란 프레임이면 그것, 아니면 None.
+        프레임(z 최하단) 위에 도형이 얹혀 있으면 그 도형의 기본 동작(라벨 편집)을 살린다."""
+        for it in self.items(view_pos):   # 위→아래 stacking 순
+            if it is getattr(self._owner, "_bg_item", None):
+                continue
+            if isinstance(it, _TitleBlockItem):
+                return it
+            if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
+                return None
+        return None
+
+    def _table_cell_at(self, view_pos):
+        """[우리 확장 · Phase 4] view_pos 아래의 표 셀 (item, r, c) — 표가 없거나 격자 밖이면 None.
+        표 위에 다른 선택형 아이템이 얹혀 있으면(위 stacking) 그쪽 우선이라 None."""
+        scene_pt = self.mapToScene(view_pos)
+        for it in self.items(view_pos):
+            if isinstance(it, _TableItem):
+                rc = it.cell_at(it.mapFromScene(scene_pt))
+                return (it, rc[0], rc[1]) if rc is not None else None
+            if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
+                return None
+        return None
+
+    def _begin_cell_edit(self, item, r, c):
+        """[우리 확장 · Phase 4] 표 셀 (r, c)에 인라인 편집기를 띄운다."""
+        self._cell_editor = _CellEditor(self, item, r, c)
 
     def _begin_label_edit(self, item):
         """[우리 확장] 선/화살표의 라벨을 생성(없으면)하고 편집 모드로 진입."""
@@ -4617,6 +5889,20 @@ class _AnnotatorView(QGraphicsView):
                 self._finish_place(event)
                 event.accept()
             return
+        # [우리 확장 · Phase 4] 표제란 프레임 더블클릭 = 필드 편집 폼(host가 소유).
+        if event.button() == Qt.MouseButton.LeftButton:
+            tb = self._titleblock_at(event.position().toPoint())
+            if tb is not None and hasattr(self._owner, "_edit_titleblock"):
+                self._owner._edit_titleblock(tb)
+                event.accept()
+                return
+        # [우리 확장 · Phase 4] 표 셀 더블클릭 = 인라인 편집(엑셀식).
+        if event.button() == Qt.MouseButton.LeftButton:
+            hit = self._table_cell_at(event.position().toPoint())
+            if hit is not None:
+                self._begin_cell_edit(*hit)
+                event.accept()
+                return
         # [우리 확장] 선/화살표 더블클릭 = 라벨 달기/편집(위에 다른 선택형이 없을 때만).
         if event.button() == Qt.MouseButton.LeftButton:
             target = self._labelable_at(event.position().toPoint())

@@ -6,14 +6,15 @@
 지원 타입: rect · ellipse · line · path(펜) · arrow(2점 베지어) · text · badge(번호)
 공통: 위치·스케일·회전·z·변환원점.
 """
+import base64
 import json
 
-from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF
-from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont
+from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF, QBuffer, QByteArray, QIODevice
+from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPixmap
 
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem,
+    _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem,
 )
 
 FORMAT = "easycad-doc"
@@ -62,6 +63,22 @@ def _mkbrush(d: dict) -> QBrush:
     return QBrush(QColor(fill)) if fill else QBrush(Qt.BrushStyle.NoBrush)
 
 
+# ---- 삽입 이미지 base64 embed (단일 .ecad 이동에도 이미지가 안 깨지게) ----------
+def _pixmap_to_b64(pm: QPixmap) -> str:
+    ba = QByteArray()
+    buf = QBuffer(ba)
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    pm.save(buf, "PNG")   # 원본 해상도 그대로 PNG 인코딩(무손실)
+    buf.close()
+    return base64.b64encode(bytes(ba)).decode("ascii")
+
+
+def _b64_to_pixmap(s: str) -> QPixmap:
+    pm = QPixmap()
+    pm.loadFromData(base64.b64decode(s), "PNG")
+    return pm
+
+
 # ---- 펜(자유곡선) 경로 직렬화 ---------------------------------------------
 def _path_elems(path: QPainterPath) -> list:
     out = []
@@ -98,7 +115,19 @@ def _elems_to_path(elems: list) -> QPainterPath:
 # ---- 아이템 ↔ dict --------------------------------------------------------
 def item_to_dict(it) -> dict | None:
     d = _common(it)
-    if isinstance(it, _ArrowItem):
+    if isinstance(it, _TitleBlockItem):
+        d.update(type="titleblock", size=it._size, orient=it._orient,
+                 fields=dict(it._fields))
+    elif isinstance(it, _TableItem):
+        r = it.rect()
+        d.update(type="table", rows=it._rows, cols=it._cols, header=it._header,
+                 rect=[r.x(), r.y(), r.width(), r.height()],
+                 cells=[row[:] for row in it._cells])
+    elif isinstance(it, _ImageItem):
+        r = it.rect()
+        d.update(type="image", rect=[r.x(), r.y(), r.width(), r.height()],
+                 data=_pixmap_to_b64(it._pixmap))
+    elif isinstance(it, _ArrowItem):
         d.update(
             type="arrow",
             p1=[it._p1.x(), it._p1.y()], p2=[it._p2.x(), it._p2.y()],
@@ -106,6 +135,12 @@ def item_to_dict(it) -> dict | None:
             ctrl2=None if it._ctrl2 is None else [it._ctrl2.x(), it._ctrl2.y()],
             color=_col(it._color), width=it._width, head=it._head_at_end,
         )
+    elif isinstance(it, _SymbolItem):
+        r = it.rect()
+        d.update(type="symbol", kind=it._kind, rect=[r.x(), r.y(), r.width(), r.height()],
+                 pen=_col(it.pen().color()), width=it.pen().widthF(),
+                 fill=None if it.brush().style() == Qt.BrushStyle.NoBrush
+                 else _col(it.brush().color()))
     elif isinstance(it, _RectItem):
         r = it.rect()
         d.update(type="rect", rect=[r.x(), r.y(), r.width(), r.height()],
@@ -139,27 +174,44 @@ def item_to_dict(it) -> dict | None:
         d.update(type="badge", number=it._number, color=_col(it._color))
     else:
         return None
-    # [우리 확장] 선·화살표에 붙은 라벨(자식 텍스트) — 본체 dict 안에 함께 직렬화.
-    if isinstance(it, (_ArrowItem, _LineItem, _PolyArrowItem)) and it.has_label():
+    # [우리 확장] 선·화살표·닫힌도형(네모·원·심볼)에 붙은 라벨 — 본체 dict 안에 함께 직렬화.
+    if isinstance(it, (_ArrowItem, _LineItem, _PolyArrowItem,
+                       _SymbolItem, _RectItem, _EllipseItem)) and it.has_label():
         lbl = it._label
         bg = lbl._bg
         d["label"] = {
             "text": lbl.toPlainText(),
             "color": _col(lbl.defaultTextColor()),
-            "font": lbl.font().pointSize(),
+            # 중앙 라벨은 도형에 맞춰 렌더 폰트가 축소될 수 있으니 '기준' 크기(_base_pt)를 저장.
+            "font": getattr(lbl, "_base_pt", lbl.font().pointSize()),
             "bg": None if bg is None else [bg.red(), bg.green(), bg.blue(), bg.alpha()],
         }
+        # [우리 확장] 화살표 라벨은 경로/곡선 위 위치(t)+수직 오프셋(off)까지 저장(FigJam/Lucid 드래그).
+        if isinstance(it, (_ArrowItem, _PolyArrowItem)):
+            d["label"]["t"] = it._label_t
+            d["label"]["off"] = it._label_off
     return d
 
 
 def dict_to_item(d: dict):
     t = d.get("type")
-    if t == "arrow":
+    if t == "titleblock":
+        it = _TitleBlockItem(d.get("size", "A2"), d.get("orient", "landscape"),
+                             d.get("fields"))
+    elif t == "table":
+        it = _TableItem(d.get("rows", 1), d.get("cols", 1), QRectF(*d["rect"]),
+                        d.get("cells"), d.get("header", True))
+    elif t == "image":
+        it = _ImageItem(_b64_to_pixmap(d["data"]), QRectF(*d["rect"]))
+    elif t == "arrow":
         it = _ArrowItem(QColor(d["color"]), d["width"], d.get("head", True))
         it.set_points(QPointF(*d["p1"]), QPointF(*d["p2"]))
         if d.get("ctrl1") is not None:
             it._ctrl1 = QPointF(*d["ctrl1"])
             it._ctrl2 = QPointF(*d["ctrl2"])
+    elif t == "symbol":
+        it = _SymbolItem(d.get("kind", "decision"), QRectF(*d["rect"]))
+        it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
     elif t == "rect":
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
     elif t == "ellipse":
@@ -239,4 +291,9 @@ def load_document(scene, path: str) -> int:
     for d, it in zip(items, created):
         if it is not None and d.get("label") and hasattr(it, "restore_label"):
             it.restore_label(d["label"])
+            # [우리 확장] 화살표 라벨의 경로/곡선 위 위치(t·off) 복원 후 재배치(없으면 기본 중점).
+            if isinstance(it, (_ArrowItem, _PolyArrowItem)):
+                it._label_t = d["label"].get("t", 0.5)
+                it._label_off = d["label"].get("off", 0.0)
+                it._sync_label()
     return sum(1 for it in created if it is not None)

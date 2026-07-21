@@ -12,3 +12,6 @@ Thumbs.db
 
 # 참고자료 대용량 PDF (로컬만 유지, 리포 경량화)
 docs/reference/*.pdf
+
+# 오프스크린 스크린샷 산출물(tools/screenshot.py)
+tools/_shot*.png
