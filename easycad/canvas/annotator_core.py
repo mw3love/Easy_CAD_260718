@@ -1077,13 +1077,23 @@ class _LabelMixin:
     def has_label(self) -> bool:
         return self._label_alive() and bool(self._label.toPlainText().strip())
 
+    def _make_label(self):
+        """라벨 아이템 생성(하위 클래스가 override 가능). 기본은 부착 전용 _TextItem."""
+        return _TextItem(self._label_color())
+
     def ensure_label(self):
         """라벨이 없으면 생성해 중점에 부착하고 반환(있으면 그대로 반환)."""
         if not self._label_alive():
-            lbl = _TextItem(self._label_color())
+            lbl = self._make_label()
             lbl.setParentItem(self)
-            # 부착 전용 — 독립 이동 금지(선을 따라만 다닌다). 선택·편집·삭제는 가능.
-            lbl.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+            # 부착 전용(선택·편집·삭제 가능). 화살표(sarrow) 라벨은 _ConnectorLabel이라 드래그로
+            # 경로 위를 슬라이드하도록 Movable도 켠다(FigJam/Lucid) — itemChange가 경로에 재투영.
+            flags = QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            if isinstance(lbl, _ConnectorLabel):
+                # Movable=드래그, SendsGeometryChanges=itemChange(ItemPositionChange) 발화(경로 재투영에 필수).
+                flags |= (QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                          | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
+            lbl.setFlags(flags)
             lbl.document().contentsChanged.connect(self._sync_label)  # 타이핑 중 중앙 유지
             self._label = lbl
         self._sync_label()
@@ -1162,9 +1172,54 @@ class _CenterLabelMixin(_LabelMixin):
     def _label_color(self) -> QColor:
         return QColor(self.pen().color())
 
+    def _label_inset_ratio(self) -> float:
+        """라벨이 들어갈 도형 내접 가용폭(도형폭 대비 비율). 이 폭을 넘기면 폰트를 축소해
+        긴 텍스트가 빗변/곡선 밖으로 삐져나오지 않게 한다. 하위 클래스가 도형별로 override."""
+        return 0.85
+
+    _LABEL_MIN_PT = 5   # 축소 하한(이하로는 안 줄임 — 너무 작으면 차라리 도형을 키우는 게 답)
+
+    def _fit_label_to_shape(self):
+        """[우리 확장] 중앙 라벨을 도형 내접폭에 맞춰 '폰트 축소'로 맞춘다(단일 줄 유지, 줄바꿈 안 함).
+        · 줄바꿈(wrap)은 마름모에서 줄 수가 폭발해 세로로 삐져나오는 결함이 있어 배제(실측). 폰트 축소는
+          폭·세로를 동시에 보장한다. · 기준은 사용자 크기(_base_pt) — 도형이 커지면 그 값까지 되키운다.
+        · 폭 측정은 _content_rect(문서 레이아웃)이 아니라 QFontMetricsF로 직접 한다 — contentsChanged
+          콜백 시점엔 문서 레이아웃이 미완이라 _content_rect 폭이 stale이기 때문(실측). 멱등.
+        · setFont이 contentsChanged를 재발화해 _sync_label→_fit이 재진입하면 서로의 폰트를 덮어써
+          비결정적이 되므로 _fitting 가드로 재진입을 막는다(바깥 호출의 setFont 결과가 확정으로 남음)."""
+        if getattr(self, "_fitting", False):
+            return
+        lbl = self._label
+        self._fitting = True
+        try:
+            self._fit_label_impl(lbl)
+        finally:
+            self._fitting = False
+
+    def _fit_label_impl(self, lbl):
+        lbl.setTextWidth(-1)   # 단일 줄(폭은 폰트 축소로 맞춤)
+        base = max(self._LABEL_MIN_PT, int(getattr(lbl, "_base_pt", lbl.font().pointSize() or 16)))
+        margin = 2 * lbl.document().documentMargin()
+        inner = max(1.0, self.rect().width() * self._label_inset_ratio())
+        lines = lbl.toPlainText().split("\n") or [""]
+        f = QFont(lbl.font())
+        pt = base
+        while pt > self._LABEL_MIN_PT:
+            f.setPointSize(pt)
+            fm = QFontMetricsF(f)
+            widest = max((fm.horizontalAdvance(ln) for ln in lines), default=0.0)
+            if widest + margin <= inner:
+                break
+            pt -= 1
+        if lbl.font().pointSize() != pt:
+            f2 = lbl.font()
+            f2.setPointSize(pt)
+            lbl.setFont(f2)
+
     def _sync_label(self):
         if not self._label_alive():
             return
+        self._fit_label_to_shape()   # [우리 확장] 도형 내접폭에 맞춰 폰트 축소(넘침 방지)
         a = self._label_anchor()
         br = self._label._content_rect()
         dy = _ink_center_dy(self._label)
@@ -1231,6 +1286,9 @@ class _EllipseItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsEllipseItem):
         super().__init__(*args)
         self._init_resize()
         self._init_label()
+
+    def _label_inset_ratio(self) -> float:
+        return 0.72   # 타원은 세로중앙에서만 최대폭이라 네모보다 좁게 잡아 줄바꿈
 
     def clone(self):
         c = _EllipseItem(QRectF(self.rect()))
@@ -1388,6 +1446,15 @@ class _SymbolItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
 
     def _sym_path(self) -> QPainterPath:
         return _SYMBOL_KINDS[self._kind][1](self.rect())
+
+    def _label_inset_ratio(self) -> float:
+        # kind별 내접 가용폭 — 마름모는 세로중앙 한 점에서만 최대폭이라 가장 좁게, 원기둥·문서 등
+        # 곡선 심볼은 중간, 상하 평행한 스타디움·평행사변형·육각형은 넉넉히.
+        if self._kind == "decision":
+            return 0.6
+        if self._kind in ("database", "document"):
+            return 0.72
+        return 0.78
 
     def _label_anchor(self) -> QPointF:
         # 광학 중심 보정: 외접 rect 중심이 도형의 '보이는 무게중심'과 어긋나는 kind만 라벨을
@@ -2148,6 +2215,9 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._bind2 = None     # 끝점1이 묶인 도형 or None
         self._bind1_pt = None  # 그 도형의 '로컬 좌표' 부착점(고정) — 도형 이동/스케일 시 mapToScene로 추종
         self._bind2_pt = None
+        # [우리 확장] 라벨 위치 = 곡선 길이 정규화 t(0~1) + 수직 오프셋 off (sarrow와 동일 FigJam/Lucid).
+        self._label_t = 0.5
+        self._label_off = 0.0
         self._init_resize()
         self._init_label()
         self.setFlags(
@@ -2155,8 +2225,72 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
         )
 
+    # ---- 라벨: 곡선 위 t 지점 + 수직 오프셋에 완전중앙 배치, paint가 그 자리에 갭(FigJam/Lucid) ----
+    def _make_label(self):
+        return _ConnectorLabel(self._label_color())   # 드래그로 곡선 위 슬라이드/오프셋
+
+    def _point_at_t_normal(self, t: float):
+        """곡선 위 t 지점의 (점, 왼쪽 단위법선). 유한차분 접선으로 법선을 구한다."""
+        dt = 1e-3
+        a = self._point_at(max(0.0, t - dt))
+        b = self._point_at(min(1.0, t + dt))
+        tx, ty = b.x() - a.x(), b.y() - a.y()
+        L = math.hypot(tx, ty)
+        if L < 1e-9:
+            return self._point_at(t), QPointF(0.0, -1.0)
+        return self._point_at(t), QPointF(-ty / L, tx / L)
+
     def _label_anchor(self) -> QPointF:
-        return self._point_at(0.5)   # 곡선/직선 위 중점
+        p, n = self._point_at_t_normal(getattr(self, "_label_t", 0.5))
+        off = getattr(self, "_label_off", 0.0)
+        return QPointF(p.x() + n.x() * off, p.y() + n.y() * off)
+
+    def _project_to_curve(self, p: QPointF):
+        """로컬 점 p를 곡선에 투영해 (t, 부호있는 수직오프셋). 라벨 드래그 재투영용(샘플링 최근접)."""
+        N = 120
+        best_t, best_d = 0.5, None
+        for i in range(N + 1):
+            t = i / N
+            q = self._point_at(t)
+            d = (p.x() - q.x()) ** 2 + (p.y() - q.y()) ** 2
+            if best_d is None or d < best_d:
+                best_d, best_t = d, t
+        pt, n = self._point_at_t_normal(best_t)
+        off = (p.x() - pt.x()) * n.x() + (p.y() - pt.y()) * n.y()
+        return best_t, off
+
+    def _reproject_label(self, proposed_topleft: QPointF) -> QPointF:
+        lbl = self._label
+        br = lbl._content_rect()
+        center = QPointF(proposed_topleft.x() + br.width() / 2.0,
+                         proposed_topleft.y() + br.height() / 2.0)
+        self._label_t, self._label_off = self._project_to_curve(center)
+        self.update()   # 라벨만 움직여도 부모 화살표 paint(갭)가 새 위치로 다시 그려지게
+        a = self._label_anchor()
+        return QPointF(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+
+    def _sync_label(self):
+        """라벨을 곡선 위 앵커에 완전중앙 배치(선 위) — paint가 그 자리에 갭을 낸다."""
+        if not self._label_alive():
+            return
+        a = self._label_anchor()
+        br = self._label._content_rect()
+        self._label._syncing = True
+        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+        self._label._syncing = False
+
+    _LABEL_GAP_PAD = 5.0
+
+    def _label_gap_rect(self):
+        """라벨이 차지하는 로컬 사각형(+패딩). paint에서 이 안의 선(직선/곡선)을 비운다(FigJam 갭)."""
+        if not self.has_label():
+            return None
+        lbl = self._label
+        br = lbl._content_rect()
+        pos = lbl.pos()
+        pad = self._LABEL_GAP_PAD
+        return QRectF(pos.x() + br.x() - pad, pos.y() + br.y() - pad,
+                     br.width() + 2 * pad, br.height() + 2 * pad)
 
     def _label_color(self) -> QColor:
         return QColor(self._color)
@@ -2192,6 +2326,7 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         c._bind1, c._bind2 = self._bind1, self._bind2  # 지속 연결 바인딩 유지
         c._bind1_pt = None if self._bind1_pt is None else QPointF(self._bind1_pt)
         c._bind2_pt = None if self._bind2_pt is None else QPointF(self._bind2_pt)
+        c._label_t, c._label_off = self._label_t, self._label_off   # 라벨 위치(t·off) 유지
         return self._copy_common_to(c)
 
     # [Stage2] 기하 리베이크 — 끝점·제어점을 씬변형(곡선 형태 보존). 바인딩 부착점은
@@ -2468,6 +2603,16 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         pen = QPen(self._color, self._width, Qt.PenStyle.SolidLine,
                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
 
+        # [FigJam 갭] 라벨이 있으면 그 사각형만 클립으로 비워 선/곡선이 텍스트를 관통하지 않게 한다.
+        # 클립이라 3차 베지어의 매끄러움이 그대로 유지된다(선분 근사 아님). 화살촉은 클립 복원 뒤 그린다.
+        gap = self._label_gap_rect()
+        if gap is not None:
+            painter.save()
+            big = self.boundingRect().adjusted(-2000, -2000, 2000, 2000)
+            clip = QPainterPath(); clip.addRect(big)
+            hole = QPainterPath(); hole.addRect(gap)
+            painter.setClipPath(clip.subtracted(hole))
+
         if self._ctrl1 is None:
             # 직선: 선은 화살촉 밑변까지만 그린다. 짧은 화살표에서 base가 tail 뒤로 넘어가
             # 선이 거꾸로 삐져나오지 않도록 tail~tip 구간 안으로 클램프한다.
@@ -2499,6 +2644,9 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(path)
+
+        if gap is not None:
+            painter.restore()   # 화살촉·핸들은 클립 없이 온전히 그린다
 
         head = QPolygonF(self._head_points())
         painter.setBrush(QBrush(self._color))
@@ -2614,6 +2762,32 @@ def _point_seg_proj(p: QPointF, a: QPointF, b: QPointF):
     return proj, math.hypot(p.x() - proj.x(), p.y() - proj.y())
 
 
+def _seg_rect_interval(a: QPointF, b: QPointF, rect: QRectF):
+    """[우리 확장] 선분 a→b가 rect '내부'를 지나는 파라미터 구간 (t0, t1)를 Liang-Barsky로
+    구한다. 교차 없으면 None. 화살표 선을 라벨 자리에서 끊는(FigJam 갭) 데 쓴다."""
+    x0, y0 = a.x(), a.y()
+    dx, dy = b.x() - x0, b.y() - y0
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, x0 - rect.left()), (dx, rect.right() - x0),
+                 (-dy, y0 - rect.top()), (dy, rect.bottom() - y0)):
+        if abs(p) < 1e-12:
+            if q < 0:
+                return None            # 축에 평행하며 슬래브 밖 → 교차 없음
+        else:
+            r = q / p
+            if p < 0:
+                if r > t1:
+                    return None
+                if r > t0:
+                    t0 = r
+            else:
+                if r < t0:
+                    return None
+                if r < t1:
+                    t1 = r
+    return None if t0 > t1 else (t0, t1)
+
+
 class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     """정점 리스트로 이루어진 직선 화살표. _endpoints()로 모든 정점을 노출하므로
     _HandleResizeMixin의 끝점 드래그 machinery가 정점 이동을 그대로 처리한다."""
@@ -2635,6 +2809,11 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # 양끝 부착점에서 매 reroute마다 엘보로 재계산된다. 사용자가 정점 핸들을 드래그하거나
         # waypoint를 추가/삭제하면 False로 내려가 '수동 폴리라인'이 된다(경로 그대로 유지).
         self._auto_route = False
+        # [우리 확장] 라벨 위치를 절대좌표가 아니라 경로 길이 정규화 t(0~1)+수직 오프셋 off로 소유.
+        # FigJam/Lucid식 — 리라우트돼도 라벨이 비율 자리를 지킨다(절대좌표면 재라우팅 때 튐).
+        # 드래그하면 _reproject_label이 t·off를 갱신하고, paint가 그 자리에 선 갭을 낸다.
+        self._label_t = 0.5
+        self._label_off = 0.0
         self._init_resize()
         self._init_label()
         self.setFlags(
@@ -2900,6 +3079,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         c._bind_start_pt = None if self._bind_start_pt is None else QPointF(self._bind_start_pt)
         c._bind_end_pt = None if self._bind_end_pt is None else QPointF(self._bind_end_pt)
         c._auto_route = self._auto_route   # [Stage1] 자동 라우팅 상태 유지
+        c._label_t, c._label_off = self._label_t, self._label_off   # 라벨 위치(t·off) 유지
         return self._copy_common_to(c)
 
     # [Stage2] 기하 리베이크 — 모든 정점을 씬변형. 왜곡·미러는 자동 엘보가 되돌리지 않게
@@ -2959,25 +3139,124 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             path.lineTo(pt)
         return path
 
-    # ---- 라벨 앵커 = 폴리라인 길이의 중점 -------------------------------
+    _LABEL_GAP_PAD = 5.0   # [우리 확장] 라벨 사각형 둘레로 선을 끊을 때의 여유(px)
+
+    def _label_gap_rect(self):
+        """[우리 확장] 라벨(있으면)이 차지하는 로컬 사각형(+패딩). 이 안의 선을 지워 텍스트를 앉힌다.
+        라벨이 선에서 멀리 떨어지면(오프셋 드래그) 이 사각형이 선과 안 겹쳐 자연히 갭이 사라진다."""
+        if not self.has_label():
+            return None
+        lbl = self._label
+        br = lbl._content_rect()
+        pos = lbl.pos()
+        pad = self._LABEL_GAP_PAD
+        return QRectF(pos.x() + br.x() - pad, pos.y() + br.y() - pad,
+                     br.width() + 2 * pad, br.height() + 2 * pad)
+
+    def _visible_polyline_path(self) -> QPainterPath:
+        """[우리 확장 · FigJam 갭] 라벨 사각형과 겹치는 폴리라인 구간만 빼고 그린 경로.
+        히트테스트(_base_shape)·선택외곽선·직렬화는 전체 폴리라인을 그대로 쓴다 — 시각 갭만."""
+        rect = self._label_gap_rect()
+        if rect is None:
+            return self._polyline_path()
+        path = QPainterPath()
+        for a, b in zip(self._pts[:-1], self._pts[1:]):
+            inside = _seg_rect_interval(a, b, rect)
+            if inside is None:
+                path.moveTo(a)
+                path.lineTo(b)
+                continue
+            i0, i1 = inside
+            dx, dy = b.x() - a.x(), b.y() - a.y()
+            if i0 > 1e-6:
+                path.moveTo(a)
+                path.lineTo(QPointF(a.x() + dx * i0, a.y() + dy * i0))
+            if i1 < 1.0 - 1e-6:
+                path.moveTo(QPointF(a.x() + dx * i1, a.y() + dy * i1))
+                path.lineTo(b)
+        return path
+
+    # ---- 라벨 앵커 = 경로 위 t(0~1) 지점 + 수직 오프셋 (FigJam/Lucid) ----
+    def _make_label(self):
+        return _ConnectorLabel(self._label_color())   # 드래그로 경로 위 슬라이드/오프셋
+
     def _label_color(self) -> QColor:
         return QColor(self._color)
 
-    def _label_anchor(self) -> QPointF:
+    def _point_at_t(self, t: float):
+        """경로 길이 정규화 파라미터 t(0~1) 지점의 (점, 왼쪽 단위법선). 라벨 앵커·오프셋에 쓴다."""
         segs, total = [], 0.0
         for a, b in zip(self._pts[:-1], self._pts[1:]):
             d = math.hypot(b.x() - a.x(), b.y() - a.y())
             segs.append((a, b, d))
             total += d
         if total < 1e-9:
-            return QPointF(self._pts[0])
-        target, run = total * 0.5, 0.0
-        for a, b, d in segs:
-            if run + d >= target:
-                t = (target - run) / d if d > 1e-9 else 0.0
-                return QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
+            return QPointF(self._pts[0]), QPointF(0.0, -1.0)
+        target, run = max(0.0, min(1.0, t)) * total, 0.0
+        for i, (a, b, d) in enumerate(segs):
+            if run + d >= target or i == len(segs) - 1:   # 마지막 세그먼트면 t=1 끝점도 여기서 잡음
+                tt = (target - run) / d if d > 1e-9 else 0.0
+                px, py = a.x() + (b.x() - a.x()) * tt, a.y() + (b.y() - a.y()) * tt
+                if d > 1e-9:
+                    n = QPointF(-(b.y() - a.y()) / d, (b.x() - a.x()) / d)   # 왼쪽 단위법선
+                else:
+                    n = QPointF(0.0, -1.0)
+                return QPointF(px, py), n
             run += d
-        return QPointF(self._pts[-1])
+        return QPointF(self._pts[-1]), QPointF(0.0, -1.0)
+
+    def _label_anchor(self) -> QPointF:
+        p, n = self._point_at_t(getattr(self, "_label_t", 0.5))
+        off = getattr(self, "_label_off", 0.0)
+        return QPointF(p.x() + n.x() * off, p.y() + n.y() * off)
+
+    def _project_to_path(self, p: QPointF):
+        """로컬 점 p를 폴리라인에 투영해 (t, 부호있는 수직오프셋)을 반환. 라벨 드래그 재투영용.
+        오프셋 부호는 _point_at_t의 왼쪽 법선과 같은 방향(양수=선 왼쪽)."""
+        segs, total = [], 0.0
+        for a, b in zip(self._pts[:-1], self._pts[1:]):
+            d = math.hypot(b.x() - a.x(), b.y() - a.y())
+            segs.append((a, b, d))
+            total += d
+        if total < 1e-9:
+            return 0.5, 0.0
+        best = None   # (거리, 경로누적길이, 부호오프셋)
+        run = 0.0
+        for a, b, d in segs:
+            if d < 1e-9:
+                continue
+            dx, dy = b.x() - a.x(), b.y() - a.y()
+            tt = max(0.0, min(1.0, ((p.x() - a.x()) * dx + (p.y() - a.y()) * dy) / (d * d)))
+            projx, projy = a.x() + dx * tt, a.y() + dy * tt
+            dist = math.hypot(p.x() - projx, p.y() - projy)
+            if best is None or dist < best[0]:
+                off = (-dy * (p.x() - projx) + dx * (p.y() - projy)) / d   # 왼쪽 법선 성분
+                best = (dist, run + d * tt, off)
+            run += d
+        return best[1] / total, best[2]
+
+    def _reproject_label(self, proposed_topleft: QPointF) -> QPointF:
+        """[우리 확장] 라벨 자유 드래그(itemChange가 넘긴 top-left 후보)를 경로 위로 재투영해
+        t·off를 갱신하고, 그 t·off에 대응하는 '구속된' top-left를 돌려준다(FigJam 슬라이드+Lucid 오프셋)."""
+        lbl = self._label
+        br = lbl._content_rect()
+        center = QPointF(proposed_topleft.x() + br.width() / 2.0,
+                         proposed_topleft.y() + br.height() / 2.0)
+        self._label_t, self._label_off = self._project_to_path(center)
+        self.update()   # 라벨(자식)만 움직여도 부모 화살표 paint(갭)가 새 위치로 다시 그려지게
+        a = self._label_anchor()
+        return QPointF(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+
+    def _sync_label(self):
+        """[우리 확장] 라벨을 앵커에 '완전 중앙'(x·y)으로 놓는다 — 선·베지어의 '중점 위쪽'과 달리
+        선 위에 앉히고 paint가 그 자리에 갭을 낸다. _syncing 가드로 setPos→itemChange 되먹임 차단."""
+        if not self._label_alive():
+            return
+        a = self._label_anchor()
+        br = self._label._content_rect()
+        self._label._syncing = True
+        self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+        self._label._syncing = False
 
     # ---- 경계/외형 -----------------------------------------------------
     def _content_rect(self) -> QRectF:
@@ -3024,7 +3303,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(self._polyline_path())
+        painter.drawPath(self._visible_polyline_path())   # [FigJam 갭] 라벨 자리에서 선 끊음
         painter.setPen(QPen(self._color, 1))
         painter.setBrush(QBrush(self._color))
         painter.drawPolygon(QPolygonF(self._head_points()))
@@ -3093,6 +3372,9 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         f = self.font()
         f.setPointSize(16)
         self.setFont(f)
+        # [우리 확장] 사용자가 의도한 '기준' 폰트 크기. 중앙 라벨은 도형에 맞춰 이보다 작게 축소해
+        # 렌더할 수 있으나(_fit_label_to_shape), 저장·재적합의 기준은 항상 이 값이다(축소값 아님).
+        self._base_pt = 16
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
             | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
@@ -3102,6 +3384,7 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         self.setDefaultTextColor(QColor(color))
 
     def apply_font_size(self, size):
+        self._base_pt = int(size)   # 기준 크기 갱신(중앙 라벨 축소의 상한)
         f = self.font()
         f.setPointSize(int(size))
         self.setFont(f)
@@ -3167,6 +3450,21 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
             painter.drawRoundedRect(self._content_rect().adjusted(1, 1, -1, -1), 4, 4)
         self._paint_base_no_select(painter, option, widget)
         self._paint_handle(painter)
+
+
+class _ConnectorLabel(_TextItem):
+    """[우리 확장] 화살표(sarrow)에 붙는 라벨 — 드래그하면 부모 폴리라인을 따라 슬라이드하고
+    (FigJam), 선 옆으로 당기면 수직 오프셋으로 뜬다(Lucid). 위치는 부모(_PolyArrowItem)가
+    t·off로 소유하며, itemChange가 Qt 기본 자유 이동을 경로 위로 재투영해 구속한다.
+    _syncing 플래그가 켜진 동안(_sync_label의 setPos)엔 재투영을 건너뛴다(되먹임 차단)."""
+
+    def itemChange(self, change, value):
+        if (change == QGraphicsItem.GraphicsItemChange.ItemPositionChange
+                and not getattr(self, "_syncing", False)):
+            parent = self.parentItem()
+            if parent is not None and hasattr(parent, "_reproject_label"):
+                return parent._reproject_label(value)
+        return super().itemChange(change, value)
 
 
 # ---------------------------------------------------------------------------
@@ -4207,6 +4505,9 @@ class _AnnotatorView(QGraphicsView):
         (item, seg_idx, 씬 최근접점), 아니면 None. 정점 위는 이동(끝점 드래그)이 우선한다."""
         if self._selected_endpoint_item(view_pos) is not None:
             return None   # 정점 핸들 위 = 이동 우선
+        top = self.items(view_pos)
+        if top and isinstance(top[0], _ConnectorLabel):
+            return None   # 라벨 위 press = 라벨 드래그 우선(waypoint 삽입 안 함)
         scene_pt = self.mapToScene(view_pos)
         total = self._view_scale()
         best = None
@@ -4271,6 +4572,7 @@ class _AnnotatorView(QGraphicsView):
         self._move_snap = [
             (it, QPointF(it.pos())) for it in self.scene().items()
             if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            and not isinstance(it, _ConnectorLabel)   # 라벨 드래그는 t·off 소유라 위치-undo 스코프 밖
         ]
 
     def _apply_smart_snap(self):
@@ -4647,7 +4949,10 @@ class _AnnotatorView(QGraphicsView):
         # 그 아이템에 press를 배달(=grab)하게 한 뒤 Z를 즉시 복원한다(grab은 Z와 무관하게 유지).
         # 끝점 우선은 "새 연결 화살표 생성"(arrow 도구)보다도 앞서야 겹칠 때 새 화살표가 안 생긴다.
         vpos = event.position().toPoint()
-        grab = self._selected_endpoint_item(vpos) or self._bend_handle_at(vpos)
+        # 커서 맨 위가 화살표 라벨이면 라벨 드래그 우선(끝점·bend 핸들보다) — 라벨이 핸들과 겹칠 때 대비.
+        _top = self.items(vpos)
+        _on_label = bool(_top) and isinstance(_top[0], _ConnectorLabel)
+        grab = None if _on_label else (self._selected_endpoint_item(vpos) or self._bend_handle_at(vpos))
         if grab is not None:
             if self._snap_preview is not None:
                 # 끝점/핸들 드래그 시작 → 유휴 테두리 스냅 예고 마커를 즉시 제거(드래그 중엔

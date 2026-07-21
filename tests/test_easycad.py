@@ -20,7 +20,7 @@ from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _SYMBOL_KINDS,
     _nearest_border, _shape_ports, _axis_scale_fn, _mirror_fn,
-    _seg_cross_seg, _count_seg_crossings)
+    _seg_cross_seg, _count_seg_crossings, _ConnectorLabel)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
 from easycad.fileio.dxf_export import export_dxf
@@ -336,6 +336,102 @@ def test_straight_arrow():
     assert len(sas) == 1
     assert [(p.x(), p.y()) for p in sas[0]._pts] == [(0, 0), (50, 40), (100, 80)]
     assert sas[0].has_label() and sas[0]._label.toPlainText() == "S1"
+
+
+def test_sarrow_label_gap_breaks_line():
+    # [FigJam 갭] 라벨이 있으면 그 자리에서 선을 끊고(가시 경로가 쪼개짐), 없으면 연속(2요소).
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    sa = _PolyArrowItem(QColor("#000000ff"), 3, True)
+    sa._pts = [QPointF(0, 0), QPointF(200, 0)]
+    sc.addItem(sa)
+    assert sa._visible_polyline_path().elementCount() == 2      # 라벨 없음 = 통짜 선(move+line)
+    sa.ensure_label().setPlainText("예"); sa._sync_label()
+    assert isinstance(sa._label, _ConnectorLabel)
+    assert sa._visible_polyline_path().elementCount() > 2        # 라벨 자리에서 끊김
+    # 히트/직렬화 경로는 전체 폴리라인 그대로(갭은 시각뿐).
+    assert sa._polyline_path().elementCount() == 2
+
+
+def test_sarrow_label_drag_slides_and_offsets():
+    # 라벨 드래그(Movable+itemChange 재투영) — 자유 이동을 경로 위 t·off로 구속(FigJam/Lucid).
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    sa = _PolyArrowItem(QColor("#000000ff"), 3, True)
+    sa._pts = [QPointF(0, 0), QPointF(200, 0)]
+    sc.addItem(sa)
+    lbl = sa.ensure_label(); lbl.setPlainText("예"); sa._sync_label()
+    assert (round(sa._label_t, 3), round(sa._label_off, 3)) == (0.5, 0.0)
+    br = lbl._content_rect()
+    # t≈0.25(x=50), 선 위로 15px 오프셋 되도록 라벨 중심을 (50,-15)에 놓는다.
+    lbl.setPos(QPointF(50 - br.width() / 2, -15 - br.height() / 2))
+    assert abs(sa._label_t - 0.25) < 0.02
+    assert abs(sa._label_off - (-15)) < 0.5                       # 왼쪽 법선(+x→아래) 기준 부호
+    a = sa._label_anchor()                                        # 구속 중심 == 앵커
+    c = QPointF(lbl.pos().x() + br.width() / 2, lbl.pos().y() + br.height() / 2)
+    assert abs(c.x() - a.x()) < 0.5 and abs(c.y() - a.y()) < 0.5
+
+
+def test_sarrow_label_t_off_roundtrip():
+    # 라벨 위치(t·off)가 .ecad 저장/열기로 보존.
+    from PyQt6.QtWidgets import QGraphicsScene
+    w = CanvasWindow()
+    sa = _PolyArrowItem(QColor("#000000ff"), 3, True)
+    sa._pts = [QPointF(0, 0), QPointF(200, 0)]
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.ensure_label().setPlainText("예"); sa._label_t = 0.3; sa._label_off = 12.0; sa._sync_label()
+    path = os.path.join(_TMP, "sarrow_label_pos.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene(); load_document(sc2, path)
+    a2 = [it for it in sc2.items() if isinstance(it, _PolyArrowItem)][0]
+    assert abs(a2._label_t - 0.3) < 1e-6 and abs(a2._label_off - 12.0) < 1e-6
+
+
+def test_arrow_curved_label_gap_drag_roundtrip():
+    # [FigJam 갭·드래그] 곡선(베지어) 화살표도 라벨 자리에 갭 + 드래그로 곡선 위 슬라이드/오프셋.
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    a = _ArrowItem(QColor("#e02424ff"), 4, True); sc.addItem(a)
+    a._p1 = QPointF(0, 0); a._p2 = QPointF(300, 0)
+    a._ctrl1 = QPointF(100, -120); a._ctrl2 = QPointF(200, -120)   # 아치형 곡선
+    assert a._label_gap_rect() is None                             # 라벨 없음 = 갭 없음
+    lbl = a.ensure_label(); lbl.setPlainText("반가워"); a._sync_label()
+    assert isinstance(a._label, _ConnectorLabel)
+    assert a._label_gap_rect() is not None                         # 라벨 = 갭 사각형 생김
+    assert (round(a._label_t, 2), round(a._label_off, 2)) == (0.5, 0.0)
+    # 드래그: 곡선 위 t≈0.25 지점 근처 + 바깥으로 당김 → t·off 갱신, 중심이 앵커에 구속.
+    br = lbl._content_rect(); q = a._point_at(0.25)
+    lbl.setPos(QPointF(q.x() - br.width() / 2, q.y() - 30 - br.height() / 2))
+    assert abs(a._label_t - 0.25) < 0.08 and abs(a._label_off) > 5
+    c = QPointF(lbl.pos().x() + br.width() / 2, lbl.pos().y() + br.height() / 2)
+    a2anchor = a._label_anchor()
+    assert abs(c.x() - a2anchor.x()) < 0.5 and abs(c.y() - a2anchor.y()) < 0.5
+    # .ecad 왕복으로 t·off 보존.
+    w = CanvasWindow()
+    path = os.path.join(_TMP, "arrow_curve_label.ecad")
+    save_document(sc, path)
+    sc2 = QGraphicsScene(); load_document(sc2, path)
+    a3 = [it for it in sc2.items() if isinstance(it, _ArrowItem)][0]
+    assert abs(a3._label_t - a._label_t) < 1e-6 and abs(a3._label_off - a._label_off) < 1e-6
+
+
+def test_center_label_shrinks_not_wraps():
+    # 마름모 중앙 라벨은 넘칠 때 폰트 축소(단일 줄), 세로로 안 삐져나온다(wrap 결함 회피).
+    # (_sync_label의 폰트 적합은 라벨이 씬에 있을 때만 돈다 — 실제 사용과 동일하게 씬에 넣는다.)
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    d = _SymbolItem("decision", QRectF(0, 0, 150, 92)); sc.addItem(d)
+    d.ensure_label().setPlainText("검색 결과 있음 판정 오래된 것")   # 아주 긴 라벨
+    d._sync_label()
+    lbl = d._label
+    assert lbl.textWidth() == -1                                   # 줄바꿈 안 함(단일 줄)
+    assert lbl.font().pointSize() < lbl._base_pt                   # 넘쳐서 축소됨
+    assert lbl._content_rect().height() < d.rect().height()        # 세로로 안 넘침(spill 없음)
+    # 짧은 라벨은 축소 없이 기준 크기 유지.
+    d2 = _SymbolItem("decision", QRectF(0, 0, 150, 92)); sc.addItem(d2)
+    d2.ensure_label().setPlainText("예"); d2._sync_label()
+    assert d2._label.font().pointSize() == d2._label._base_pt
 
 
 def test_straight_arrow_waypoint():

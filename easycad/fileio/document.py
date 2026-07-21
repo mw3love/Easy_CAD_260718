@@ -181,9 +181,14 @@ def item_to_dict(it) -> dict | None:
         d["label"] = {
             "text": lbl.toPlainText(),
             "color": _col(lbl.defaultTextColor()),
-            "font": lbl.font().pointSize(),
+            # 중앙 라벨은 도형에 맞춰 렌더 폰트가 축소될 수 있으니 '기준' 크기(_base_pt)를 저장.
+            "font": getattr(lbl, "_base_pt", lbl.font().pointSize()),
             "bg": None if bg is None else [bg.red(), bg.green(), bg.blue(), bg.alpha()],
         }
+        # [우리 확장] 화살표 라벨은 경로/곡선 위 위치(t)+수직 오프셋(off)까지 저장(FigJam/Lucid 드래그).
+        if isinstance(it, (_ArrowItem, _PolyArrowItem)):
+            d["label"]["t"] = it._label_t
+            d["label"]["off"] = it._label_off
     return d
 
 
@@ -284,4 +289,9 @@ def load_document(scene, path: str) -> int:
     for d, it in zip(items, created):
         if it is not None and d.get("label") and hasattr(it, "restore_label"):
             it.restore_label(d["label"])
+            # [우리 확장] 화살표 라벨의 경로/곡선 위 위치(t·off) 복원 후 재배치(없으면 기본 중점).
+            if isinstance(it, (_ArrowItem, _PolyArrowItem)):
+                it._label_t = d["label"].get("t", 0.5)
+                it._label_off = d["label"].get("off", 0.0)
+                it._sync_label()
     return sum(1 for it in created if it is not None)
