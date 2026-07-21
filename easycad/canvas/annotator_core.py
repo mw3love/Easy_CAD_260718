@@ -535,6 +535,11 @@ class _HandleResizeMixin:
         _PolyArrowItem이 override해 자동 직교 라우팅을 해제한다(수동 정점 조작 = 수동 경로)."""
         pass
 
+    def _on_endpoint_drag_end(self, idx: int):
+        """[경유지 힌트] 정점 핸들 드래그가 '끝날' 때 호출(mouseRelease choke point). 기본 no-op.
+        _PolyArrowItem이 override해 드래그한 중간 정점을 자동라우팅 경유 힌트로 커밋한다."""
+        pass
+
     def _paint_endpoint_handles(self, painter: QPainter):
         if not self._endpoint_active():
             return
@@ -1002,7 +1007,9 @@ class _HandleResizeMixin:
 
     def mouseReleaseEvent(self, event):
         if getattr(self, "_drag_endpoint", None) is not None:
+            idx = self._drag_endpoint
             self._drag_endpoint = None
+            self._on_endpoint_drag_end(idx)   # [경유지 힌트] 중간 정점 드래그 → 힌트 커밋(override)
             event.accept()
             return
         # [2c] 박스 리사이즈·회전 종료 — geom undo 커밋(자신+부착 화살표 통째 복원).
@@ -1928,6 +1935,14 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # 양끝 부착점에서 매 reroute마다 엘보로 재계산된다. 사용자가 정점 핸들을 드래그하거나
         # waypoint를 추가/삭제하면 False로 내려가 '수동 폴리라인'이 된다(경로 그대로 유지).
         self._auto_route = False
+        # [경유지 힌트(2f)] 자동라우팅을 '유지'하면서 경로를 이 점 근처로 지나가게 강제하는 힌트.
+        # 화살표당 최대 1개(리스트지만 길이 0 또는 1 — 직렬화 형식만 재사용, 2026-07-20 실측으로
+        # 단일 제한: 여러 개 허용했더니 드래그할수록 힌트가 누적돼 계단식으로 지저분해졌다).
+        # 상대좌표는 양 끝점 중점 기준 scene 오프셋 — 도형이 움직이면 커넥터와 함께 평행이동.
+        # 중간 정점을 드래그하면 freeze 대신 힌트로 교체 커밋되고, 직선경로 근처로 되끌면 제거된다.
+        self._route_hints = []
+        self._hint_dragging = False       # 힌트 정점 드래그 진행 중(build_elbow 클로버 방지 가드)
+        self._hint_undo = None            # 힌트 커밋 undo 스냅샷
         self._init_resize()
         self._init_label()
         self.setFlags(
@@ -2024,21 +2039,22 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     def build_elbow(self) -> bool:
         """[Stage1] 현재 양끝점 + 부착 변 법선으로 직교 엘보를 계산해 _pts를 교체. 변경 있으면 True.
-        _pts[0]/_pts[-1](끝점)은 유지하고 중간 정점만 라우터가 생성한다."""
+        _pts[0]/_pts[-1](끝점)은 유지하고 중간 정점만 라우터가 생성한다.
+        [경유지 힌트(2f)] _route_hints가 있으면 '출발→힌트…→도착'을 구간별로 A* 라우팅해
+        힌트를 반드시 지나가되 각 구간은 계속 장애물을 자동 회피한다."""
         if self._bind_start is None or self._bind_end is None:
             return False
+        if self._hint_dragging:
+            return False   # [경유지 힌트] 힌트 정점 드래그 중 — 라우터가 드래그 정점을 덮어쓰지 않게
         end_idx = len(self._pts) - 1
         s = self.mapToScene(self._pts[0])
         e = self.mapToScene(self._pts[end_idx])
         if abs(s.x() - e.x()) < 1e-6 and abs(s.y() - e.y()) < 1e-6:
             return False
-        ns = self._bound_normal_scene(0)
-        ne = self._bound_normal_scene(end_idx)
-        # [Stage2] 장애물(양끝 바인딩 도형 제외)을 피하는 직교 경로. 장애물이 없거나 Stage1
-        # 엘보가 이미 안전하면 Stage1과 동일 결과 → 아래 무변경 가드가 되먹임 루프를 끊는다.
-        mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE)
-        new_scene = _dedup_pts([s] + mids + [e])
-        new_local = [self.mapFromScene(p) for p in new_scene]
+        hint_scenes = [self._hint_to_scene(h) for h in self._route_hints]
+        scene_pts, flags = self._route_with_hints(hint_scenes)
+        merged, _mflag = self._dedup_hint(scene_pts, flags)
+        new_local = [self.mapFromScene(p) for p in merged]
         if len(new_local) == len(self._pts) and all(
                 abs(a.x() - b.x()) <= 1e-6 and abs(a.y() - b.y()) <= 1e-6
                 for a, b in zip(new_local, self._pts)):
@@ -2048,6 +2064,99 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self.update()
         self._sync_label()
         return True
+
+    # ---- [경유지 힌트(2f)] 상대좌표 변환 · 구간별 라우팅 · 커밋 ------------------
+    def _hint_midpoint_scene(self) -> QPointF:
+        """힌트 상대좌표의 기준점 = 현재 양 끝점의 중점(scene). 도형이 움직이면 함께 이동."""
+        s = self.mapToScene(self._pts[0])
+        e = self.mapToScene(self._pts[-1])
+        return QPointF((s.x() + e.x()) / 2.0, (s.y() + e.y()) / 2.0)
+
+    def _hint_to_scene(self, h: QPointF) -> QPointF:
+        m = self._hint_midpoint_scene()
+        return QPointF(m.x() + h.x(), m.y() + h.y())
+
+    def _scene_to_hint(self, ps: QPointF) -> QPointF:
+        m = self._hint_midpoint_scene()
+        return QPointF(ps.x() - m.x(), ps.y() - m.y())
+
+    def _route_with_hints(self, hint_scenes):
+        """출발 s → 힌트들 → 도착 e를 구간별로 _route_ortho해 이어붙인 (scene 정점, hint 플래그).
+        진짜 양끝만 테두리 법선 구속, 힌트점은 자유 통과. flags[i]=True면 그 정점이 힌트."""
+        end_idx = len(self._pts) - 1
+        s = self.mapToScene(self._pts[0])
+        e = self.mapToScene(self._pts[end_idx])
+        ns = self._bound_normal_scene(0)
+        ne = self._bound_normal_scene(end_idx)
+        obst = self._obstacle_rects()
+        waypts = [s] + list(hint_scenes) + [e]
+        norms = [ns] + [None] * len(hint_scenes) + [ne]
+        scene_pts = [s]
+        flags = [False]
+        for i in range(len(waypts) - 1):
+            a, b = waypts[i], waypts[i + 1]
+            mids = _route_ortho(a, b, norms[i], norms[i + 1], obst, self._ROUTE_CLEARANCE)
+            for m in mids:
+                scene_pts.append(m)
+                flags.append(False)
+            scene_pts.append(b)
+            flags.append(i + 1 <= len(hint_scenes))   # 마지막 b(=e)만 False
+        return scene_pts, flags
+
+    @staticmethod
+    def _dedup_hint(pts, flags, eps=1e-6):
+        """_dedup_pts와 동일하되 '힌트 정점은 공선이어도 보존'(사용자가 다시 잡을 수 있게).
+        연속 중복은 항상 접고(둘 중 하나라도 힌트면 힌트 유지), 공선 중간점은 비-힌트만 제거."""
+        out_p, out_f = [pts[0]], [flags[0]]
+        for p, f in zip(pts[1:], flags[1:]):
+            if abs(p.x() - out_p[-1].x()) <= eps and abs(p.y() - out_p[-1].y()) <= eps:
+                out_f[-1] = out_f[-1] or f
+                continue
+            out_p.append(p)
+            out_f.append(f)
+        i = 1
+        while i < len(out_p) - 1:
+            if out_f[i]:
+                i += 1
+                continue   # 힌트 정점은 접지 않는다
+            a, b, c = out_p[i - 1], out_p[i], out_p[i + 1]
+            cross = (b.x() - a.x()) * (c.y() - a.y()) - (b.y() - a.y()) * (c.x() - a.x())
+            if abs(cross) <= eps:
+                del out_p[i]
+                del out_f[i]
+            else:
+                i += 1
+        return out_p, out_f
+
+    @staticmethod
+    def _dist_to_polyline(p: QPointF, pts) -> float:
+        best = float("inf")
+        for i in range(len(pts) - 1):
+            _proj, d = _point_seg_proj(p, pts[i], pts[i + 1])
+            best = min(best, d)
+        return best
+
+    def _on_endpoint_drag_end(self, idx):
+        """[경유지 힌트(2f)] 중간 정점 드래그 종료 — 드래그 위치를 힌트로 커밋(자동라우팅 유지).
+        순수경로(무힌트)에 충분히 가까우면 힌트를 제거해 순수 자동으로 되돌린다.
+        [단일 힌트 제한 — 2026-07-20 GUI 실측] 화살표당 힌트는 항상 최대 1개로 '교체'한다(누적 금지).
+        애초 여러 힌트를 허용했더니, 이미 라우터가 만든 중간 꺾임점(힌트 아님)을 다시 잡을 때마다
+        그게 별개 힌트로 또 추가돼 드래그할수록 계단식으로 지저분해졌다(실측으로 발견). 여러 지점을
+        경유해야 하면 그건 자동라우팅의 영역이 아니라 완전 수동 폴리라인(waypoint 삽입)의 몫이다."""
+        if not self._hint_dragging:
+            return
+        self._hint_dragging = False
+        p_new = self.mapToScene(self._pts[idx])
+        wo_scene, _f = self._route_with_hints([])   # 힌트 없는 순수경로 기준
+        if self._dist_to_polyline(p_new, wo_scene) <= self._hint_drop_scene():
+            self._route_hints = []                              # 순수경로 근처 → 힌트 제거
+        else:
+            self._route_hints = [self._scene_to_hint(p_new)]    # 단일 힌트로 교체(누적 아님)
+        self.build_elbow()
+        h = self._host()
+        if self._hint_undo and h is not None:
+            h.push_undo_geom(self._hint_undo)
+        self._hint_undo = None
 
     def _obstacle_rects(self):
         """[Stage2] 라우팅이 피해야 할 장애물 사각형(scene, 축정렬 bbox). 양끝 바인딩 도형
@@ -2063,9 +2172,31 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                 out.append(it.mapRectToScene(it.rect()))
         return out
 
+    # [경유지 힌트 — 2026-07-20 실측] 씬 단위 고정값(8.0)은 줌아웃 시 화면상 몇 px밖에 안 돼
+    # 정밀 조작을 요구했다(사용자 피드백: "상당히 미세하게 해야 함"). _BORDER_SNAP_PX(14)와 같은
+    # 관례로 화면 고정 px를 뷰 배율로 환산 — 줌과 무관하게 항상 같은 크기의 표적.
+    _HINT_DROP_PX = 16.0   # 화면 px — 힌트를 순수경로 근처로 되끌면 제거되는 판정 반경
+
+    def _hint_drop_scene(self) -> float:
+        view_s = 1.0
+        sc = self.scene()
+        if sc is not None and sc.views():
+            view_s = sc.views()[0]._view_scale()
+        return self._HINT_DROP_PX / max(view_s, 1e-6)
+
     def _on_endpoint_drag_start(self, idx):
-        # [Stage1] 정점 핸들을 손으로 잡는 순간 자동 라우팅 해제 — 이후 경로는 사용자 소유(수동).
+        # [경유지 힌트(2f)] 자동라우팅 중 '중간' 정점을 잡으면 freeze하지 않고 힌트 모드로 진입 —
+        # 드래그가 끝나는 위치를 경유 힌트로 커밋해 자동라우팅을 살린 채 경로만 조정한다.
+        is_middle = 0 < idx < len(self._pts) - 1
+        if self._auto_route and is_middle:
+            self._hint_dragging = True
+            h = self._host()
+            self._hint_undo = [(self, self.capture_geom())] if h is not None else None
+            return
+        # [Stage1] 끝점 드래그 또는 이미 수동 → 자동 라우팅 해제(수동 폴리라인), 힌트 폐기.
+        self._hint_dragging = False
         self._auto_route = False
+        self._route_hints = []
 
     def _endpoints(self):
         return self._pts
@@ -2086,6 +2217,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def insert_vertex(self, seg_idx: int, p: QPointF):
         """세그먼트 seg_idx(정점 seg_idx~seg_idx+1 사이)에 정점 p 삽입(waypoint 추가)."""
         self._auto_route = False   # [Stage1] waypoint 추가 = 수동 편집 → 자동 라우팅 해제
+        self._route_hints = []     # [경유지 힌트] 수동 전환 → 힌트 폐기
         self.prepareGeometryChange()
         self._pts.insert(seg_idx + 1, QPointF(p))
         self.update()
@@ -2105,6 +2237,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         if len(self._pts) <= 2:
             return False
         self._auto_route = False   # [Stage1] 정점 삭제 = 수동 편집 → 자동 라우팅 해제
+        self._route_hints = []     # [경유지 힌트] 수동 전환 → 힌트 폐기
         self.prepareGeometryChange()
         del self._pts[idx]
         self.update()
@@ -2128,17 +2261,20 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         c._bind_start_pt = None if self._bind_start_pt is None else QPointF(self._bind_start_pt)
         c._bind_end_pt = None if self._bind_end_pt is None else QPointF(self._bind_end_pt)
         c._auto_route = self._auto_route   # [Stage1] 자동 라우팅 상태 유지
+        c._route_hints = [QPointF(p) for p in self._route_hints]   # [경유지 힌트] 유지
         return self._copy_common_to(c)
 
     # [Stage2] 기하 리베이크 — 모든 정점을 씬변형. 왜곡·미러는 자동 엘보가 되돌리지 않게
-    # 수동 폴리라인으로 전환(_auto_route=False). undo 스냅샷은 원래 _auto_route를 복원한다.
+    # 수동 폴리라인으로 전환(_auto_route=False). undo 스냅샷은 원래 _auto_route·힌트를 복원한다.
     def _capture_geom_local(self):
-        return ([QPointF(p) for p in self._pts], self._auto_route)
+        return ([QPointF(p) for p in self._pts], self._auto_route,
+                [QPointF(p) for p in self._route_hints])
 
     def _apply_geom_local(self, g):
         self.prepareGeometryChange()
         self._pts = [QPointF(p) for p in g[0]]
         self._auto_route = g[1]
+        self._route_hints = [QPointF(p) for p in g[2]] if len(g) > 2 else []
         self._sync_label()
 
     def _capture_binds(self):
@@ -2155,6 +2291,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self.prepareGeometryChange()
         self._pts = [self._rebake_pt(fn, p) for p in self._pts]
         self._auto_route = False
+        self._route_hints = []   # [경유지 힌트] 임의 왜곡 후엔 힌트 무의미 → 폐기
         self._sync_label()
         self.update()
 

@@ -748,7 +748,8 @@ def test_sarrow_auto_elbow_route():
 
 
 def test_sarrow_manual_edit_disables_auto():
-    # [Stage1] 수동 정점 조작(핸들 드래그 시작·waypoint 삽입·삭제) → 자동 라우팅 해제, 경로 동결.
+    # [Stage1/2f] 끝점 드래그·waypoint 삽입/삭제 → 자동 해제·동결. 단 자동 중 '중간' 정점 드래그는
+    #   [경유지 힌트]로 바뀌어 해제하지 않는다(freeze 아님 — test_route_hint_*가 커밋 경로를 커버).
     w = CanvasWindow()
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     b = _mk_rect(w._scene, w.make_pen(), 300, 200, 100, 60)
@@ -759,8 +760,13 @@ def test_sarrow_manual_edit_disables_auto():
     sa.set_bound(0, a, QPointF(100, 30)); sa.set_bound(1, b, QPointF(300, 230))
     sa._auto_route = True; sa.build_elbow()
 
-    # (1) 정점 핸들 드래그 시작 훅 → 해제
+    # (1a) [2f] 자동라우팅 중 중간 정점 드래그 시작 → freeze 아님(힌트 모드 진입)
     sa._on_endpoint_drag_start(1)
+    assert sa._auto_route is True and sa._hint_dragging is True
+    sa._hint_dragging = False   # 정리(커밋 없이 종료)
+
+    # (1b) 끝점 드래그 시작은 여전히 수동 전환(freeze) → 도형 이동해도 엘보 동결
+    sa._on_endpoint_drag_start(0)
     assert sa._auto_route is False
     frozen = [(round(p.x()), round(p.y())) for p in sa._pts]
     b.setPos(QPointF(0, 100)); w._on_scene_changed(None)   # 도형 이동해도 엘보 재계산 안 함
@@ -888,6 +894,164 @@ def test_sarrow_routes_around_obstacle():
     w._on_scene_changed(None)
     sp = [sa.mapToScene(p) for p in sa._pts]
     assert len(sp) == 4 and _close(sp[1], QPointF(200, 30)) and _close(sp[2], QPointF(200, 230)), sp
+
+
+def _hint_arrow(w):
+    """[경유지 힌트(2f)] 오프셋 배치 두 도형 + 자동라우팅 화살표(H-V-H, 중간정점 2개) 준비."""
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)       # 우측 (100,30), 법선 +x
+    b = _mk_rect(w._scene, w.make_pen(), 400, 200, 100, 60)   # 좌측 (400,230), 법선 -x
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(100, 30), QPointF(400, 230))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, QPointF(100, 30)); sa.set_bound(1, b, QPointF(400, 230))
+    sa._auto_route = True; sa.build_elbow()
+    return a, b, sa
+
+
+def _drag_vertex(sa, idx, to_scene):
+    """실제 마우스 드래그를 프록시: 정점 idx를 to_scene으로 끌어 힌트 커밋 파이프라인을 태운다."""
+    sa._on_endpoint_drag_start(idx)
+    sa._set_endpoint(idx, sa.mapFromScene(to_scene))
+    sa._on_endpoint_drag_end(idx)
+
+
+def _idx_near(sa, scene_pt):
+    return min(range(len(sa._pts)),
+               key=lambda i: (sa.mapToScene(sa._pts[i]) - scene_pt).manhattanLength())
+
+
+def test_route_hint_create_and_persist():
+    # [경유지 힌트(2f)] 중간정점을 경로 밖으로 끌면 힌트로 커밋 — 자동라우팅 유지·직교·끝점보존,
+    #   경로가 힌트를 통과, .ecad 왕복에 힌트 보존.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from easycad.canvas.annotator_core import _path_hits_rects
+    w = CanvasWindow()
+    a, b, sa = _hint_arrow(w)
+    sp0 = [sa.mapToScene(p) for p in sa._pts]
+    assert len(sp0) == 4 and _close(sp0[1], QPointF(250, 30))   # Stage1 H-V-H(x=250)
+
+    # 상단 수평선 위 중간정점(250,30)을 위로(경로 밖) 끌기 → 힌트 (250,-40)
+    _drag_vertex(sa, 1, QPointF(250, -40))
+    assert sa._auto_route is True                       # 자동 유지(freeze 아님)
+    assert len(sa._route_hints) == 1                    # 힌트 1개 생성
+    sp = [sa.mapToScene(p) for p in sa._pts]
+    assert _close(sp[0], QPointF(100, 30)) and _close(sp[-1], QPointF(400, 230))  # 끝점 보존
+    assert any(_close(p, QPointF(250, -40)) for p in sp)  # 경로가 힌트를 통과
+    for u, v in zip(sp, sp[1:]):                        # 전 구간 직교
+        assert abs(u.x() - v.x()) < 1e-6 or abs(u.y() - v.y()) < 1e-6, (u, v)
+
+    # .ecad 왕복 — 힌트 보존
+    path = os.path.join(_TMP, "hint.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene(); load_document(sc2, path)
+    sa2 = [it for it in sc2.items() if isinstance(it, _PolyArrowItem)][0]
+    assert len(sa2._route_hints) == 1
+    assert _close(sa2._route_hints[0], sa._route_hints[0])
+
+
+def test_route_hint_follows_shape_move():
+    # [경유지 힌트(2f)] 힌트는 끝점 중점 기준 상대좌표 — 도형을 옮기면 힌트도 함께 평행이동해
+    #   경로가 계속 (이동한) 힌트를 지난다. 저장값(오프셋)은 불변.
+    w = CanvasWindow()
+    a, b, sa = _hint_arrow(w)
+    _drag_vertex(sa, 1, QPointF(250, -40))
+    off = QPointF(sa._route_hints[0])                  # 상대 오프셋(불변이어야)
+
+    b.setPos(QPointF(0, 100))                           # 도착 도형 아래로 100 이동
+    w._on_scene_changed(None)                           # reroute → 힌트 유지 재라우팅
+    assert _close(sa._route_hints[0], off)              # 오프셋 저장값 불변
+    mid = QPointF((100 + 400) / 2, (30 + 330) / 2)      # 새 끝점 중점
+    hint_scene = QPointF(mid.x() + off.x(), mid.y() + off.y())  # (250,10)
+    sp = [sa.mapToScene(p) for p in sa._pts]
+    assert _close(sp[-1], QPointF(400, 330))            # 끝점이 도형 추종
+    assert any(_close(p, hint_scene) for p in sp), (sp, hint_scene)  # 경로가 이동한 힌트 통과
+
+
+def test_route_hint_remove_and_manual_clear():
+    # [경유지 힌트(2f)] 힌트를 순수경로 근처로 되끌면 제거(순수 자동 복귀) / 드래그 중 가드로
+    #   라우터가 정점을 덮어쓰지 않음 / waypoint 삽입(수동 전환)은 힌트를 폐기.
+    w = CanvasWindow()
+    a, b, sa = _hint_arrow(w)
+    _drag_vertex(sa, 1, QPointF(250, -40))
+    assert len(sa._route_hints) == 1
+
+    # (가드) 힌트 드래그 중엔 build_elbow가 정점을 덮어쓰지 않는다
+    sa._hint_dragging = True
+    before = [QPointF(p) for p in sa._pts]
+    assert sa.build_elbow() is False
+    assert all(_close(p, q) for p, q in zip(sa._pts, before))
+    sa._hint_dragging = False
+
+    # (제거) 힌트 정점을 순수경로(Stage1 세로선 x=250) 위로 되끌기 → 힌트 삭제 → Stage1 복귀
+    hi = _idx_near(sa, QPointF(250, -40))
+    _drag_vertex(sa, hi, QPointF(250, 80))
+    assert len(sa._route_hints) == 0
+    sp = [sa.mapToScene(p) for p in sa._pts]
+    assert len(sp) == 4 and _close(sp[1], QPointF(250, 30))   # 순수 Stage1 H-V-H
+
+    # (수동 전환) 힌트 재생성 후 waypoint 삽입 → auto 해제 + 힌트 폐기
+    _drag_vertex(sa, 1, QPointF(250, -40))
+    assert len(sa._route_hints) == 1
+    sa.insert_vertex(0, QPointF(150, 0))
+    assert sa._auto_route is False and len(sa._route_hints) == 0
+
+
+def test_route_hint_never_accumulates():
+    # [경유지 힌트(2f) — 2026-07-20 GUI 실측 회귀] 힌트가 있는 상태에서 라우터가 만든(힌트가
+    #   아닌) 다른 중간 꺾임점을 반복해서 잡아 옮기면, 매번 별개 힌트로 추가돼 계단식으로
+    #   지저분해지던 버그. 몇 번을 다시 잡아도 힌트는 항상 1개 이하여야 하고(누적 금지),
+    #   최종 정점 개수도 '단일 경유 힌트' 경로의 상한(끝점 2 + 힌트 1 + 구간당 엘보 최대 2×2구간 = 7)
+    #   을 넘지 않는다.
+    w = CanvasWindow()
+    a, b, sa = _hint_arrow(w)
+
+    _drag_vertex(sa, 1, QPointF(250, -40))
+    assert len(sa._route_hints) == 1
+
+    # 이제 라우터가 새로 만든(힌트 아닌) 다른 중간 정점을 골라 또 옮긴다 — 예전엔 이게 추가 힌트였다.
+    other_idx = None
+    hint_scene = sa._hint_to_scene(sa._route_hints[0])
+    for i in range(1, len(sa._pts) - 1):
+        if not _close(sa.mapToScene(sa._pts[i]), hint_scene):
+            other_idx = i
+            break
+    assert other_idx is not None, "테스트 전제: 힌트 아닌 다른 중간 정점이 있어야 함"
+    _drag_vertex(sa, other_idx, QPointF(350, 260))
+
+    assert len(sa._route_hints) <= 1, sa._route_hints   # 누적 금지 — 항상 최대 1개
+    assert len(sa._pts) <= 7, [(round(p.x()), round(p.y())) for p in sa._pts]
+
+    # 반복해서 여러 번 더 잡아 옮겨도 마찬가지(계단식 증가 없음)
+    for target in (QPointF(260, -60), QPointF(300, 260), QPointF(220, -20)):
+        idx = 1 if len(sa._pts) > 2 else None
+        if idx is None:
+            break
+        _drag_vertex(sa, idx, target)
+        assert len(sa._route_hints) <= 1, sa._route_hints
+        assert len(sa._pts) <= 7, [(round(p.x()), round(p.y())) for p in sa._pts]
+
+
+def test_route_hint_drop_threshold_scales_with_zoom():
+    # [경유지 힌트 — 2026-07-20 실측] 힌트 제거 판정 반경이 화면 px 고정(다른 스냅과 동일 관례)
+    #   이라 줌아웃할수록 씬 단위로는 더 넓어져야 한다(줌아웃 시 씬 단위 고정이면 화면상 표적이
+    #   작아져 정밀 조작을 요구했던 문제 — 사용자 피드백으로 발견).
+    w = CanvasWindow()
+    a, b, sa = _hint_arrow(w)
+    base = sa._hint_drop_scene()
+    assert abs(base - sa._HINT_DROP_PX) < 1e-6   # 배율 1.0에서는 화면 px == 씬 단위
+
+    w._view.scale(0.5, 0.5)   # 50% 축소(줌아웃)
+    zoomed_out = sa._hint_drop_scene()
+    assert zoomed_out > base * 1.9   # 씬 단위 판정 반경이 그만큼 넓어져야(약 2배)
+
+    # 넓어진 판정 반경 덕에, 예전엔 안 붙던 살짝 먼 지점도 이제 힌트 제거로 판정돼야 한다.
+    _drag_vertex(sa, 1, QPointF(250, -40))
+    assert len(sa._route_hints) == 1
+    hi = _idx_near(sa, QPointF(250, -40))
+    # 순수경로(x=250 세로선)에서 base(=16 scene) 이내지만 base*0.5보단 먼 지점(예: 10 옵셋)
+    _drag_vertex(sa, hi, QPointF(250 + 10, 30))
+    assert len(sa._route_hints) == 0, "축소된 뷰에서는 판정 반경이 넓어 이 거리도 제거돼야 함"
 
 
 def _rot(p, c, deg):

@@ -121,7 +121,8 @@ def item_to_dict(it) -> dict | None:
     elif isinstance(it, _PolyArrowItem):
         d.update(type="sarrow", pts=[[p.x(), p.y()] for p in it._pts],
                  color=_col(it._color), width=it._width, head=it._head_at_end,
-                 auto_route=it._auto_route)   # [Stage1] 직교 자동 라우팅 상태
+                 auto_route=it._auto_route,   # [Stage1] 직교 자동 라우팅 상태
+                 route_hints=[[h.x(), h.y()] for h in it._route_hints])  # [경유지 힌트(2f)]
     elif isinstance(it, _LineItem):
         ln = it.line()
         d.update(type="line", line=[ln.x1(), ln.y1(), ln.x2(), ln.y2()],
@@ -167,6 +168,7 @@ def dict_to_item(d: dict):
         it = _PolyArrowItem(QColor(d["color"]), d["width"], d.get("head", True))
         it._pts = [QPointF(*xy) for xy in d["pts"]]
         it._auto_route = d.get("auto_route", False)   # [Stage1] 직교 자동 라우팅 상태
+        it._route_hints = [QPointF(*xy) for xy in d.get("route_hints", [])]  # [경유지 힌트(2f)]
     elif t == "line":
         it = _LineItem(QLineF(*d["line"])); it.setPen(_mkpen(d))
     elif t == "path":
