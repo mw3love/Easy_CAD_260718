@@ -1056,6 +1056,29 @@ def test_sarrow_absorbs_near_alignment():
     assert tol == 8.0
 
 
+def test_sarrow_absorbs_decision_alignment():
+    # [Stage4] 마름모 E꼭짓점 → 박스 W변, 세로 6px 어긋남. 분리축 판정(가로연결→Y정렬)이라
+    #   대각 법선에 안 속고 흡수. 꼭짓점은 축 밖으로 못 나가므로 '움직일 수 있는 박스 변'만 옮긴다.
+    w = CanvasWindow(); sc = w._scene
+    dec = _SymbolItem("decision", QRectF(0, 0, 100, 80)); dec.setPen(w.make_pen())
+    dec.setBrush(QBrush(Qt.BrushStyle.NoBrush)); dec.setPos(QPointF(0, 0)); sc.addItem(dec)  # E꼭짓점 (100,40)
+    box = _mk_rect(sc, w.make_pen(), 200, 21, 100, 50)      # W변 중점 (200,46) — dy=6
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    p0, p1 = QPointF(100, 40), QPointF(200, 46)
+    sa.set_points(p0, p1)
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    sc.addItem(sa)
+    sa.set_bound(0, dec, dec.mapFromScene(p0)); sa.set_bound(1, box, box.mapFromScene(p1))
+    sa._auto_route = True
+    for _ in range(4):
+        if not sa.build_elbow():
+            break
+    pts = [sa.mapToScene(p) for p in sa._pts]
+    assert len(pts) - 1 == 1, [(round(p.x()), round(p.y())) for p in pts]   # 직선(계단 소멸)
+    assert abs(pts[0].x() - 100) < 1e-6 and abs(pts[0].y() - 40) < 1e-6      # 꼭짓점 불변
+    assert abs(pts[-1].y() - 40) < 1e-6                                      # 박스 변만 y=40으로 이동
+
+
 def _rot(p, c, deg):
     import math
     r = math.radians(deg); cs, sn = math.cos(r), math.sin(r)

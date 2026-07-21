@@ -2731,34 +2731,46 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             return None
         return n
 
-    def _absorb_near_alignment(self, ns, ne) -> bool:
-        """[Stage4] 양끝이 같은 방향 포트로 바인딩됐고 교차축 어긋남이 _ALIGN_TOL 이하면, 두 부착점을
-        공통 축(중점)으로 스냅해 직교 라우터가 넣는 미세 계단([A]백엣지·[B]수렴부)을 직선으로 붕괴시킨다.
-        _pts 끝점과 bind_pt(로컬)를 함께 갱신(reroute가 되돌리지 않게). 실제로 옮겼으면 True.
-        큰(의도적) 어긋남은 임계 밖이라 미변경, 스냅 후 어긋남≈0이라 멱등(되먹임 없음). 혼합(L자)
-        포트는 미세 계단이 없어(모서리 하나) 대상 아님. 어긋남 원인=진단상 노드 좌표 어긋남(ⓐ)."""
-        if ns is None or ne is None:
-            return False
-        s_h = abs(ns.x()) >= abs(ns.y())
-        e_h = abs(ne.x()) >= abs(ne.y())
-        if s_h != e_h:
-            return False   # 혼합(L자) — 미세 계단 없음
+    def _absorb_near_alignment(self) -> bool:
+        """[Stage4] 양끝의 교차축 어긋남이 _ALIGN_TOL 이하면 부착점을 공통 축으로 스냅해 직교 라우터가
+        넣는 미세 계단([A]백엣지·[B]수렴부·decision 연결)을 직선으로 붕괴시킨다. 실제로 옮겼으면 True.
+        · 교차축 = 두 끝점의 '지배적 분리축'의 수직(가로연결 |dx|≥|dy|→Y정렬 / 세로연결→X정렬). 법선이
+          아니라 분리축으로 판정 — 마름모 꼭짓점의 대각 법선에 안 속는다(직전 실조건서 6px 계단 놓친 갭).
+        · 정렬 목표는 후보(상대 끝점 좌표 → 자기 좌표 → 중점) 중 두 부착점이 모두 도형 '테두리 위'에
+          남는 첫 값 — 꼭짓점은 축 밖으로 못 나가 자연히 '움직일 수 있는 쪽(박스 변)'만 옮긴다(폭 다른
+          E-E는 양쪽 다 테두리 밖이라 미적용 → build에서 폭 통일로 처리).
+        · 큰(의도적) 어긋남은 임계 밖이라 미변경, 스냅 후 어긋남=0이라 멱등(되먹임 없음)."""
         end_idx = len(self._pts) - 1
         s = self.mapToScene(self._pts[0])
         e = self.mapToScene(self._pts[end_idx])
-        # 수평 포트(E/W) → 교차축 Y(변 위아래로 슬라이드), 수직 포트(N/S) → 교차축 X(변 좌우로).
-        axis = "y" if s_h else "x"
-        off = (s.y() - e.y()) if axis == "y" else (s.x() - e.x())
-        if abs(off) <= 1e-6 or abs(off) > self._ALIGN_TOL:
+        horizontal = abs(e.x() - s.x()) >= abs(e.y() - s.y())
+        c0 = s.y() if horizontal else s.x()
+        c1 = e.y() if horizontal else e.x()
+        if abs(c0 - c1) <= 1e-6 or abs(c0 - c1) > self._ALIGN_TOL:
             return False
-        mid = ((s.y() + e.y()) / 2.0) if axis == "y" else ((s.x() + e.x()) / 2.0)
-        for idx, p in ((0, s), (end_idx, e)):
-            new_scene = QPointF(p.x(), mid) if axis == "y" else QPointF(mid, p.y())
-            sh = self._bound(idx)
-            if sh is not None:
-                self.set_bound(idx, sh, sh.mapFromScene(new_scene))
-            self._set_endpoint(idx, self.mapFromScene(new_scene))
-        return True
+        sh0, sh1 = self._bound(0), self._bound(end_idx)
+
+        def on_border(sh, sp):   # 이동한 부착점이 도형 테두리 위에 남는가(꼭짓점 이탈 방지)
+            if sh is None or sh.scene() is None:
+                return True
+            try:
+                bp, _ = _nearest_border(sh, sp)
+            except Exception:
+                return False
+            return (bp - sp).manhattanLength() <= 0.5
+
+        def at(p, target):
+            return QPointF(p.x(), target) if horizontal else QPointF(target, p.y())
+
+        for target in (c1, c0, (c0 + c1) / 2.0):
+            p0, p1 = at(s, target), at(e, target)
+            if on_border(sh0, p0) and on_border(sh1, p1):
+                for idx, sh, np in ((0, sh0, p0), (end_idx, sh1, p1)):
+                    if sh is not None:
+                        self.set_bound(idx, sh, sh.mapFromScene(np))
+                    self._set_endpoint(idx, self.mapFromScene(np))
+                return True
+        return False
 
     def build_elbow(self) -> bool:
         """[Stage1] 현재 양끝점 + 부착 변 법선으로 직교 엘보를 계산해 _pts를 교체. 변경 있으면 True.
@@ -2773,7 +2785,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         ns = self._bound_normal_scene(0)
         ne = self._bound_normal_scene(end_idx)
         # [Stage4] 라우팅 전 근접정렬 흡수 — 미세 어긋남(≤_ALIGN_TOL)을 직선으로 붕괴. 옮겼으면 s·e 갱신.
-        if self._absorb_near_alignment(ns, ne):
+        if self._absorb_near_alignment():
             s = self.mapToScene(self._pts[0])
             e = self.mapToScene(self._pts[end_idx])
         # [Stage2] 장애물(양끝 바인딩 도형 제외)을 피하는 직교 경로. 장애물이 없거나 Stage1
