@@ -1006,6 +1006,56 @@ def test_sarrow_soft_avoids_arrows():
         _PolyArrowItem._ARROW_CROSS_PENALTY = orig
 
 
+def _route_vertical_pair(w, dx):
+    """[Stage4] 위/아래 박스를 세로연결 — 아래 박스 center-x를 dx만큼 어긋냄. 안정 라우팅 후
+    화살표 세그먼트(씬) 개수를 반환. dx≤_ALIGN_TOL이면 흡수로 직선(1개), 초과면 계단(3개)."""
+    sc = w._scene
+    top = _mk_rect(sc, w.make_pen(), 100, 0, 60, 40)          # S-port center-x = 130
+    bot = _mk_rect(sc, w.make_pen(), 100 + dx, 200, 60, 40)   # N-port center-x = 130+dx
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    s, e = QPointF(130, 40), QPointF(130 + dx, 200)
+    sa.set_points(s, e)
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    sc.addItem(sa)
+    sa.set_bound(0, top, top.mapFromScene(s)); sa.set_bound(1, bot, bot.mapFromScene(e))
+    sa._auto_route = True
+    for _ in range(4):
+        if not sa.build_elbow():
+            break
+    return sa, len(sa._pts) - 1
+
+
+def test_sarrow_absorbs_near_alignment():
+    # [Stage4] 연결 도형 중심축이 몇 px 어긋나면 직교 라우터가 넣던 미세 계단([A]·[B])을,
+    #   임계(_ALIGN_TOL=8px) 이하일 때 부착점을 공통 축으로 스냅해 직선으로 붕괴시킨다.
+    tol = _PolyArrowItem._ALIGN_TOL
+    # (정렬) dx=0 → 흡수 무관, 이미 직선 1세그.
+    sa0, n0 = _route_vertical_pair(CanvasWindow(), 0)
+    assert n0 == 1, n0
+    # (미세 어긋남) dx=1·6(≤8) → 흡수로 직선 1세그(계단 소멸), 멱등(재라우팅 무변경).
+    for dx in (1, 6):
+        sa, n = _route_vertical_pair(CanvasWindow(), dx)
+        assert n == 1, (dx, n)
+        assert not sa.build_elbow(), dx                 # 멱등 — 되먹임 없음
+    # (임계 초과) dx=12(>8) → 미변경, 계단 3세그(의도적 오프셋 보존).
+    sa2, n2 = _route_vertical_pair(CanvasWindow(), 12)
+    assert n2 == 3, n2
+    # (혼합 L자 미대상) 정렬 흡수는 같은 방향 포트에만 — L자(수평↔수직 혼합)는 안 건드림.
+    w = CanvasWindow(); sc = w._scene
+    a = _mk_rect(sc, w.make_pen(), 0, 0, 60, 40)             # E-port (60,20)
+    b = _mk_rect(sc, w.make_pen(), 200, 100, 60, 40)         # N-port (230,100)
+    sL = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    p0, p1 = QPointF(60, 20), QPointF(230, 100)
+    sL.set_points(p0, p1)
+    sL.setFlags(sL.GraphicsItemFlag.ItemIsSelectable | sL.GraphicsItemFlag.ItemIsMovable)
+    sc.addItem(sL)
+    sL.set_bound(0, a, a.mapFromScene(p0)); sL.set_bound(1, b, b.mapFromScene(p1))
+    sL._auto_route = True
+    sL.build_elbow()
+    assert len(sL._pts) - 1 == 2, len(sL._pts)              # L자(모서리 1개) 유지
+    assert tol == 8.0
+
+
 def _rot(p, c, deg):
     import math
     r = math.radians(deg); cs, sn = math.cos(r), math.sin(r)

@@ -2648,6 +2648,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     _ROUTE_CLEARANCE = 12.0   # [Stage2] 라우팅이 장애물에서 유지할 여유(scene 단위)
     _ARROW_CROSS_PENALTY = 200.0   # [Stage3] 다른 화살표를 가로지를 때 A* 간선에 더할 soft 벌점
+    _ALIGN_TOL = 8.0   # [Stage4] 근접정렬 흡수 임계(px) — 이하 어긋남만 흡수, 의도적 오프셋은 보존
 
     # ---- [A3] 지속 연결(도형 테두리 부착) — 곡선화살표 인프라 재사용 --------
     def _connects_to_border(self):
@@ -2730,6 +2731,35 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             return None
         return n
 
+    def _absorb_near_alignment(self, ns, ne) -> bool:
+        """[Stage4] 양끝이 같은 방향 포트로 바인딩됐고 교차축 어긋남이 _ALIGN_TOL 이하면, 두 부착점을
+        공통 축(중점)으로 스냅해 직교 라우터가 넣는 미세 계단([A]백엣지·[B]수렴부)을 직선으로 붕괴시킨다.
+        _pts 끝점과 bind_pt(로컬)를 함께 갱신(reroute가 되돌리지 않게). 실제로 옮겼으면 True.
+        큰(의도적) 어긋남은 임계 밖이라 미변경, 스냅 후 어긋남≈0이라 멱등(되먹임 없음). 혼합(L자)
+        포트는 미세 계단이 없어(모서리 하나) 대상 아님. 어긋남 원인=진단상 노드 좌표 어긋남(ⓐ)."""
+        if ns is None or ne is None:
+            return False
+        s_h = abs(ns.x()) >= abs(ns.y())
+        e_h = abs(ne.x()) >= abs(ne.y())
+        if s_h != e_h:
+            return False   # 혼합(L자) — 미세 계단 없음
+        end_idx = len(self._pts) - 1
+        s = self.mapToScene(self._pts[0])
+        e = self.mapToScene(self._pts[end_idx])
+        # 수평 포트(E/W) → 교차축 Y(변 위아래로 슬라이드), 수직 포트(N/S) → 교차축 X(변 좌우로).
+        axis = "y" if s_h else "x"
+        off = (s.y() - e.y()) if axis == "y" else (s.x() - e.x())
+        if abs(off) <= 1e-6 or abs(off) > self._ALIGN_TOL:
+            return False
+        mid = ((s.y() + e.y()) / 2.0) if axis == "y" else ((s.x() + e.x()) / 2.0)
+        for idx, p in ((0, s), (end_idx, e)):
+            new_scene = QPointF(p.x(), mid) if axis == "y" else QPointF(mid, p.y())
+            sh = self._bound(idx)
+            if sh is not None:
+                self.set_bound(idx, sh, sh.mapFromScene(new_scene))
+            self._set_endpoint(idx, self.mapFromScene(new_scene))
+        return True
+
     def build_elbow(self) -> bool:
         """[Stage1] 현재 양끝점 + 부착 변 법선으로 직교 엘보를 계산해 _pts를 교체. 변경 있으면 True.
         _pts[0]/_pts[-1](끝점)은 유지하고 중간 정점만 라우터가 생성한다."""
@@ -2742,6 +2772,10 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             return False
         ns = self._bound_normal_scene(0)
         ne = self._bound_normal_scene(end_idx)
+        # [Stage4] 라우팅 전 근접정렬 흡수 — 미세 어긋남(≤_ALIGN_TOL)을 직선으로 붕괴. 옮겼으면 s·e 갱신.
+        if self._absorb_near_alignment(ns, ne):
+            s = self.mapToScene(self._pts[0])
+            e = self.mapToScene(self._pts[end_idx])
         # [Stage2] 장애물(양끝 바인딩 도형 제외)을 피하는 직교 경로. 장애물이 없거나 Stage1
         # 엘보가 이미 안전하면 Stage1과 동일 결과 → 아래 무변경 가드가 되먹임 루프를 끊는다.
         mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
