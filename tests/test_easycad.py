@@ -141,6 +141,9 @@ def test_dock_areas_and_zoom_readout():
     # 팔레트 버튼 키가 보존(테스트 계약).
     assert set(w._shape_tool_buttons) == {"rect", "ellipse"}
     assert len(w._sym_buttons) == 6
+    # 버튼 고정 크기 — dock이 넓어도 커지거나 벌어지지 않는다(좌측 뭉침).
+    b = w._shape_tool_buttons["rect"]
+    assert b.minimumWidth() == b.maximumWidth() == 64
     # 줌 % 리드아웃.
     assert w._zoom_btn.text() == "100 %"
     w._on_wheel_zoom(120)

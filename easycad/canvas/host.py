@@ -13,7 +13,7 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
           push_undo_add/push_undo_delete/push_undo_move/undo/
           copy_selection/paste_selection
 """
-from PyQt6.QtCore import Qt, QPointF, QRectF, QSize, QSettings
+from PyQt6.QtCore import Qt, QPointF, QRectF, QSize, QSettings, QTimer
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
     QFont, QPolygonF, QPainterPath, QPalette,
@@ -221,6 +221,10 @@ _STYLE_NAMES = {
 
 
 class CanvasWindow(QMainWindow):
+    _SHAPES_DOCK_W = 156    # 세로 dock 콤팩트 폭(버튼 2열 + 여백)
+    _SHAPES_DOCK_H = 140    # 가로 dock 콤팩트 높이(제목 + 라벨 + 버튼 1줄)
+    _PROPS_DOCK_W = 200     # 속성 dock 콤팩트 폭
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Easy CAD")
@@ -266,6 +270,10 @@ class CanvasWindow(QMainWindow):
         self._build_statusbar()
         self.set_tool("select")
         self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
+        # 패널 기본 폭을 콤팩트하게 — 처음 뜰 때 너무 넓어 수동 축소해야 했던 문제(사용자 피드백).
+        self.resizeDocks([self._shapes_dock, self._props_dock],
+                         [self._SHAPES_DOCK_W, self._PROPS_DOCK_W],
+                         Qt.Orientation.Horizontal)
 
     # ---- 메뉴 (파일 → 저장/열기/PDF) ----------------------------------------
     def _make_action(self, text, icon, slot, shortcut=None, checkable=False):
@@ -848,7 +856,7 @@ class CanvasWindow(QMainWindow):
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         btn.setToolTip(tooltip)
         btn.setCheckable(True)
-        btn.setMinimumSize(QSize(64, 56))
+        btn.setFixedSize(QSize(64, 56))   # 고정 크기 — dock이 넓어도 버튼이 커지거나 벌어지지 않게
         btn.clicked.connect(
             lambda _c=False, k=tool_key: self.set_tool(None if self.current_tool == k else k))
         return btn
@@ -879,13 +887,18 @@ class CanvasWindow(QMainWindow):
 
     def _relayout_sections(self, horiz: bool):
         """[Phase 6 M1] 각 섹션 그리드 열 수를 dock 방향에 맞춘다 — 세로 dock=2열(정사각),
-        가로(상/하) dock=한 줄로 눕혀 위아래 폭을 최소화(사용자 요청: 가로 dock은 가로 길게)."""
+        가로(상/하) dock=한 줄로 눕혀 위아래 폭을 최소화(사용자 요청: 가로 dock은 가로 길게).
+        여분 폭은 실제 열 뒤 빈 열이 흡수 → 버튼이 왼쪽으로 뭉쳐 벌어지지 않는다(사용자 피드백)."""
         for grid, btns in self._shape_sections:
             for b in btns:
                 grid.removeWidget(b)
             cols = len(btns) if horiz else 2
             for i, b in enumerate(btns):
                 grid.addWidget(b, i // cols, i % cols)
+            # 스트레치 초기화 후 실제 열 다음 빈 열에만 1 → 넓어져도 버튼은 좌측 정렬 유지.
+            for ci in range(len(btns) + 2):
+                grid.setColumnStretch(ci, 0)
+            grid.setColumnStretch(cols, 1)
 
     def _build_shapes_dock(self):
         dock = QDockWidget("⋮⋮  도형", self)     # 그립 글리프로 '잡아 옮기는 바'임을 표시
@@ -920,6 +933,17 @@ class CanvasWindow(QMainWindow):
         self._dock_box.setDirection(QBoxLayout.Direction.LeftToRight if horiz
                                     else QBoxLayout.Direction.TopToBottom)
         self._relayout_sections(horiz)
+        # 재도킹 시 Qt가 콘텐츠 폭만큼 넓게 잡아 매번 수동 축소해야 했던 문제 → 콤팩트로 자동 조정.
+        # 드래그가 settle된 뒤 적용(singleShot 0).
+        QTimer.singleShot(0, lambda: self._compact_shapes_dock(horiz))
+
+    def _compact_shapes_dock(self, horiz: bool):
+        """도형 dock을 콤팩트 크기로 — 세로 dock=좁은 폭, 가로 dock=낮은 높이."""
+        dock = self._shapes_dock
+        if horiz:
+            self.resizeDocks([dock], [self._SHAPES_DOCK_H], Qt.Orientation.Vertical)
+        else:
+            self.resizeDocks([dock], [self._SHAPES_DOCK_W], Qt.Orientation.Horizontal)
 
     # ---- 속성 dock (M1: 값 표시만 — 편집은 M2에서 Undo 개편과 함께) -----------
     def _build_properties_dock(self):
