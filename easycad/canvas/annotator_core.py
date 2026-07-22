@@ -2258,6 +2258,22 @@ def _cubic_bezier_bbox(p1: QPointF, c1: QPointF, c2: QPointF, p2: QPointF) -> QR
     return QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
 
 
+# [Phase 6 M4-1] 화살표 라벨 정밀화 — 선-텍스트 갭을 좁히고(패딩 축소), 수직 오프셋을
+# Lucid/FigJam처럼 3위치(선 위 / 한쪽 / 반대쪽)로만 제한한다. 선 따라 슬라이드(t)는 유지.
+_LABEL_SIDE_GAP = 2.0   # 라벨을 옆으로 뺄 때 텍스트-선 사이 여백(px). 좁을수록 붙는다.
+
+
+def _snap_label_off(n: QPointF, raw_off: float, br: QRectF) -> float:
+    """수직 오프셋을 3위치 중 하나로 스냅: 선 위(0) / 한쪽(+D) / 반대쪽(-D).
+    D = 라벨의 법선 방향 반너비 + 여백 → 옆 위치에서도 선과 살짝만 띄운다(과한 간격 제거).
+    n=경로 접점의 왼쪽 단위법선, br=라벨 내용 사각형. |off|가 D 절반 미만이면 선 위로 흡수."""
+    half = abs(n.x()) * br.width() / 2.0 + abs(n.y()) * br.height() / 2.0
+    D = half + _LABEL_SIDE_GAP
+    if abs(raw_off) < D * 0.5:
+        return 0.0
+    return D if raw_off > 0 else -D
+
+
 class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     """선 + 끝점 삼각형 화살촉. 머리 방향(head_at_end) 선택 가능."""
 
@@ -2325,7 +2341,9 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         br = lbl._content_rect()
         center = QPointF(proposed_topleft.x() + br.width() / 2.0,
                          proposed_topleft.y() + br.height() / 2.0)
-        self._label_t, self._label_off = self._project_to_curve(center)
+        self._label_t, raw_off = self._project_to_curve(center)
+        _, n = self._point_at_t_normal(self._label_t)   # [M4-1] 3위치 스냅용 법선
+        self._label_off = _snap_label_off(n, raw_off, br)
         self.update()   # 라벨만 움직여도 부모 화살표 paint(갭)가 새 위치로 다시 그려지게
         a = self._label_anchor()
         return QPointF(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
@@ -2340,7 +2358,7 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._label.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
         self._label._syncing = False
 
-    _LABEL_GAP_PAD = 5.0
+    _LABEL_GAP_PAD = 2.0   # [M4-1] 선-텍스트 갭 축소(5→2). 라벨 둘레로 선을 비우는 여유.
 
     def _label_gap_rect(self):
         """라벨이 차지하는 로컬 사각형(+패딩). paint에서 이 안의 선(직선/곡선)을 비운다(FigJam 갭)."""
@@ -3361,7 +3379,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             path.lineTo(pt)
         return path
 
-    _LABEL_GAP_PAD = 5.0   # [우리 확장] 라벨 사각형 둘레로 선을 끊을 때의 여유(px)
+    _LABEL_GAP_PAD = 2.0   # [M4-1] 선-텍스트 갭 축소(5→2). 라벨 둘레로 선을 끊을 때의 여유(px)
 
     def _label_gap_rect(self):
         """[우리 확장] 라벨(있으면)이 차지하는 로컬 사각형(+패딩). 이 안의 선을 지워 텍스트를 앉힌다.
@@ -3464,7 +3482,9 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         br = lbl._content_rect()
         center = QPointF(proposed_topleft.x() + br.width() / 2.0,
                          proposed_topleft.y() + br.height() / 2.0)
-        self._label_t, self._label_off = self._project_to_path(center)
+        self._label_t, raw_off = self._project_to_path(center)
+        _, n = self._point_at_t(self._label_t)   # [M4-1] 3위치 스냅용 법선
+        self._label_off = _snap_label_off(n, raw_off, br)
         self.update()   # 라벨(자식)만 움직여도 부모 화살표 paint(갭)가 새 위치로 다시 그려지게
         a = self._label_anchor()
         return QPointF(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)

@@ -763,6 +763,32 @@ def test_click_outside_finishes_text_edit():
     assert calls, "click outside editing text must finish edit"
 
 
+def test_arrow_label_3_positions_and_gap():
+    # [M4-1] 라벨 수직 오프셋이 3위치(선 위 0 / ±D)로만 스냅 + 갭 패딩 축소(5→2).
+    # along-line t(0.5)는 유지된다(수평 슬라이드 자유).
+    from easycad.canvas.annotator_core import _snap_label_off, _LABEL_SIDE_GAP
+    w = CanvasWindow()
+    for cls in (_ArrowItem, _PolyArrowItem):
+        ar = cls(QColor("#ff111111"), 4, True)
+        ar.set_points(QPointF(0, 0), QPointF(100, 0))       # 수평선 → 법선 (0,1)
+        ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+        w._scene.addItem(ar)
+        lbl = ar.ensure_label(); lbl.setPlainText("Lx"); ar._sync_label()
+        br = lbl._content_rect()
+        D = br.height() / 2.0 + _LABEL_SIDE_GAP
+        assert cls._LABEL_GAP_PAD == 2.0                    # 갭 패딩 축소
+        # 큰 아래 오프셋 → +D 스냅, t 유지
+        ar._reproject_label(QPointF(50 - br.width() / 2, 40 - br.height() / 2))
+        assert abs(ar._label_off - D) < 1e-6 and abs(ar._label_t - 0.5) < 0.05
+        # 큰 위 오프셋 → -D 스냅
+        ar._reproject_label(QPointF(50 - br.width() / 2, -40 - br.height() / 2))
+        assert abs(ar._label_off + D) < 1e-6
+        # 선 근처(작은 오프셋) → 0(선 위)로 흡수
+        ar._reproject_label(QPointF(50 - br.width() / 2, 1 - br.height() / 2))
+        assert ar._label_off == 0.0
+        w._scene.removeItem(ar)
+
+
 def test_straight_arrow():
     # 직선(꺾은선) 화살표: 정점 드래그(끝점 재사용)·waypoint 삽입·라벨·.ecad 왕복.
     from PyQt6.QtWidgets import QGraphicsScene
@@ -811,8 +837,9 @@ def test_sarrow_label_gap_breaks_line():
 
 
 def test_sarrow_label_drag_slides_and_offsets():
-    # 라벨 드래그(Movable+itemChange 재투영) — 자유 이동을 경로 위 t·off로 구속(FigJam/Lucid).
+    # 라벨 드래그(Movable+itemChange 재투영) — 슬라이드(t)는 자유, 수직 오프셋은 [M4-1] 3위치 스냅.
     from PyQt6.QtWidgets import QGraphicsScene
+    from easycad.canvas.annotator_core import _LABEL_SIDE_GAP
     sc = QGraphicsScene()
     sa = _PolyArrowItem(QColor("#000000ff"), 3, True)
     sa._pts = [QPointF(0, 0), QPointF(200, 0)]
@@ -820,10 +847,11 @@ def test_sarrow_label_drag_slides_and_offsets():
     lbl = sa.ensure_label(); lbl.setPlainText("예"); sa._sync_label()
     assert (round(sa._label_t, 3), round(sa._label_off, 3)) == (0.5, 0.0)
     br = lbl._content_rect()
-    # t≈0.25(x=50), 선 위로 15px 오프셋 되도록 라벨 중심을 (50,-15)에 놓는다.
+    D = br.height() / 2.0 + _LABEL_SIDE_GAP                       # 수평선 → 법선 (0,1)
+    # t≈0.25(x=50)로 슬라이드는 자유, 위로 크게 뺀 오프셋은 -D(위쪽)로 스냅.
     lbl.setPos(QPointF(50 - br.width() / 2, -15 - br.height() / 2))
-    assert abs(sa._label_t - 0.25) < 0.02
-    assert abs(sa._label_off - (-15)) < 0.5                       # 왼쪽 법선(+x→아래) 기준 부호
+    assert abs(sa._label_t - 0.25) < 0.02                        # 슬라이드 유지(자유)
+    assert abs(sa._label_off - (-D)) < 0.5                       # 3위치 스냅(-15→-D)
     a = sa._label_anchor()                                        # 구속 중심 == 앵커
     c = QPointF(lbl.pos().x() + br.width() / 2, lbl.pos().y() + br.height() / 2)
     assert abs(c.x() - a.x()) < 0.5 and abs(c.y() - a.y()) < 0.5
