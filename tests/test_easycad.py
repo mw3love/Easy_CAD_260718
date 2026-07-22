@@ -117,6 +117,29 @@ def test_pdf_export_forces_white_bg():
     assert w._scene.backgroundBrush().color().name() == before   # 배경 복원됨
 
 
+def test_dock_areas_and_zoom_readout():
+    # [Phase 6 M1] 도형 dock 4방향 허용 + 상/하 dock이면 섹션 가로 흐름 + 줌% 실시간 표시.
+    from PyQt6.QtWidgets import QBoxLayout
+    w = CanvasWindow()
+    allowed = w._shapes_dock.allowedAreas()
+    for a in (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea,
+              Qt.DockWidgetArea.TopDockWidgetArea, Qt.DockWidgetArea.BottomDockWidgetArea):
+        assert bool(allowed & a)
+    w._on_dock_moved(Qt.DockWidgetArea.TopDockWidgetArea)
+    assert w._dock_box.direction() == QBoxLayout.Direction.LeftToRight
+    w._on_dock_moved(Qt.DockWidgetArea.LeftDockWidgetArea)
+    assert w._dock_box.direction() == QBoxLayout.Direction.TopToBottom
+    # 팔레트 버튼 키가 보존(테스트 계약).
+    assert set(w._shape_tool_buttons) == {"rect", "ellipse"}
+    assert len(w._sym_buttons) == 6
+    # 줌 % 리드아웃.
+    assert w._zoom_btn.text() == "100 %"
+    w._on_wheel_zoom(120)
+    assert w._zoom_btn.text() != "100 %"
+    w._zoom_reset()
+    assert w._zoom_btn.text() == "100 %"
+
+
 def test_shape_palette_arms_tool():
     # 팔레트 네모 버튼 클릭 → rect 도구 무장 + 버튼 체크 동기화. 단축키 경로도 유지.
     w = CanvasWindow()

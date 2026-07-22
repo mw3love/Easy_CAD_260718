@@ -20,7 +20,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
+    QBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QDockWidget, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QCheckBox, QPlainTextEdit, QSizePolicy,
 )
@@ -209,7 +209,7 @@ def _dark_palette() -> QPalette:
 class CanvasWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Easy CAD — Phase 0")
+        self.setWindowTitle("Easy CAD")
         self.resize(1200, 800)
 
         # ---- 편집 상태 (owner 인터페이스) ----
@@ -248,6 +248,7 @@ class CanvasWindow(QMainWindow):
         self.setCentralWidget(self._view)
         self._build_toolbar()
         self._build_shapes_dock()
+        self._build_statusbar()
         self.set_tool("select")
         self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
 
@@ -335,15 +336,32 @@ class CanvasWindow(QMainWindow):
     def _zoom_reset(self):
         """기준 zoom = 100%(1:1). 무한캔버스에서 돌아올 홈."""
         self._view.resetTransform()
+        self._update_zoom_label()
 
     def _zoom_fit(self):
         rect = self._scene.itemsBoundingRect()
         if rect.isEmpty():
             self._view.resetTransform()
+            self._update_zoom_label()
             return
         pad = max(rect.width(), rect.height()) * 0.05 + 20
         self._view.fitInView(rect.adjusted(-pad, -pad, pad, pad),
                              Qt.AspectRatioMode.KeepAspectRatio)
+        self._update_zoom_label()
+
+    # ---- 상태바 (줌 %) ------------------------------------------------------
+    def _build_statusbar(self):
+        self._zoom_btn = QToolButton()
+        self._zoom_btn.setText("100 %")
+        self._zoom_btn.setAutoRaise(True)
+        self._zoom_btn.setToolTip("클릭: 100%(1:1)로")
+        self._zoom_btn.clicked.connect(self._zoom_reset)
+        self.statusBar().addPermanentWidget(self._zoom_btn)
+
+    def _update_zoom_label(self):
+        btn = getattr(self, "_zoom_btn", None)
+        if btn is not None:
+            btn.setText(f"{round(self._view.transform().m11() * 100)} %")
 
     def _toggle_snap(self, checked: bool):
         self.snap_enabled = checked
@@ -747,6 +765,15 @@ class CanvasWindow(QMainWindow):
             b.setIcon(self._shape_icon(k))
         for k, b in getattr(self, "_sym_buttons", {}).items():
             b.setIcon(self._shape_icon(k))
+        # dock 제목표시줄 = '잡아 옮기는 바'로 보이게(accent 밑줄 + 틴트 배경). 회색이라 안 보이던 문제.
+        dock = getattr(self, "_shapes_dock", None)
+        if dock is not None:
+            accent = "#54a9ff" if dark else "#1f7ae0"
+            title_bg = "#232f3d" if dark else "#e8eef5"
+            dock.setStyleSheet(
+                "QDockWidget { font-weight:600; }"
+                f"QDockWidget::title {{ background:{title_bg}; padding:5px 9px;"
+                f" text-align:left; border-bottom:2px solid {accent}; }}")
         if persist:
             QSettings("EasyCAD", "EasyCAD").setValue("dark", dark)
 
@@ -817,41 +844,51 @@ class CanvasWindow(QMainWindow):
         lbl.setStyleSheet("color:#888; font-size:11px; padding:3px 2px 1px 2px;")
         return lbl
 
+    def _make_shape_section(self, title, entries, store) -> QWidget:
+        """[Phase 6 M1] 팔레트 한 섹션(제목+2열 그리드)을 독립 위젯으로. 섹션을 위젯으로 감싸야
+        가로/세로 dock 전환 시 '제목 위 그리드' 구조를 유지한 채 섹션끼리만 좌우/상하로 흐른다."""
+        sec = QWidget()
+        v = QVBoxLayout(sec)
+        v.setContentsMargins(0, 0, 0, 0); v.setSpacing(4)
+        v.addWidget(self._section_label(title))
+        grid = QGridLayout(); grid.setSpacing(4)
+        for i, (label, icon_kind, tooltip, tool_key) in enumerate(entries):
+            btn = self._palette_button(label, icon_kind, tooltip, tool_key)
+            grid.addWidget(btn, i // 2, i % 2)
+            store[icon_kind] = btn   # 기본=rect/ellipse, 심볼=kind(=icon_kind)로 키
+        v.addLayout(grid)
+        return sec
+
     def _build_shapes_dock(self):
-        dock = QDockWidget("도형", self)
-        dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea
-                             | Qt.DockWidgetArea.RightDockWidgetArea)
+        dock = QDockWidget("⋮⋮  도형", self)     # 그립 글리프로 '잡아 옮기는 바'임을 표시
+        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)   # 상/하/좌/우 전체
+        self._shapes_dock = dock
         panel = QWidget()
-        vbox = QVBoxLayout(panel)
-        vbox.setContentsMargins(6, 6, 6, 6)
-        vbox.setSpacing(4)
+        box = QVBoxLayout(panel)
+        box.setContentsMargins(6, 6, 6, 6); box.setSpacing(10)
+        self._dock_box = box
 
-        # 기본 도형(네모·원) — 상단 툴바에서 이관.
-        vbox.addWidget(self._section_label("기본"))
-        basic_grid = QGridLayout()
-        basic_grid.setSpacing(4)
         self._shape_tool_buttons: dict[str, QToolButton] = {}
-        for i, (key, label) in enumerate((("rect", "네모"), ("ellipse", "원"))):
-            btn = self._palette_button(label, key, f"{label} — 클릭 후 캔버스에 드래그", key)
-            basic_grid.addWidget(btn, i // 2, i % 2)
-            self._shape_tool_buttons[key] = btn
-        vbox.addLayout(basic_grid)
-
-        # 순서도 심볼 6종.
-        vbox.addWidget(self._section_label("순서도"))
-        sym_grid = QGridLayout()
-        sym_grid.setSpacing(4)
         self._sym_buttons: dict[str, QToolButton] = {}
-        for i, (kind, (label, _fn)) in enumerate(_SYMBOL_KINDS.items()):
-            btn = self._palette_button(label, kind, f"{label} 심볼 — 클릭 후 캔버스에 드래그",
-                                       f"sym:{kind}")
-            sym_grid.addWidget(btn, i // 2, i % 2)
-            self._sym_buttons[kind] = btn
-        vbox.addLayout(sym_grid)
+        basic = self._make_shape_section("기본", [
+            ("네모", "rect", "네모 — 클릭 후 캔버스에 드래그", "rect"),
+            ("원", "ellipse", "원 — 클릭 후 캔버스에 드래그", "ellipse"),
+        ], self._shape_tool_buttons)
+        sym_entries = [(label, kind, f"{label} 심볼 — 클릭 후 캔버스에 드래그", f"sym:{kind}")
+                       for kind, (label, _fn) in _SYMBOL_KINDS.items()]
+        syms = self._make_shape_section("순서도", sym_entries, self._sym_buttons)
 
-        vbox.addStretch(1)
+        box.addWidget(basic); box.addWidget(syms); box.addStretch(1)
         dock.setWidget(panel)
+        dock.dockLocationChanged.connect(self._on_dock_moved)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+
+    def _on_dock_moved(self, area):
+        """[Phase 6 M1] 상/하 dock이면 섹션을 가로로 흐르게(세로로 길어지지 않도록)."""
+        horiz = area in (Qt.DockWidgetArea.TopDockWidgetArea,
+                         Qt.DockWidgetArea.BottomDockWidgetArea)
+        self._dock_box.setDirection(QBoxLayout.Direction.LeftToRight if horiz
+                                    else QBoxLayout.Direction.TopToBottom)
 
     # ---- 지속 연결 리라우트 -------------------------------------------------
     def _on_scene_changed(self, region):
@@ -926,6 +963,7 @@ class CanvasWindow(QMainWindow):
     def _on_wheel_zoom(self, dy: int):
         factor = 1.15 if dy > 0 else 1.0 / 1.15
         self._view.scale(factor, factor)
+        self._update_zoom_label()
 
     # 팬 (창 이동 대신 캔버스 스크롤)
     def _win_drag_start(self, gpos):
