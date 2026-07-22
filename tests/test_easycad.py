@@ -260,6 +260,120 @@ def test_arrow_style_backcompat_defaults_solid():
     assert it._style == Qt.PenStyle.SolidLine
 
 
+def test_sarrow_routing_roundtrip():
+    # [M4-4] _routing(straight/ortho/ortho_curved)이 .ecad 왕복에 보존된다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    for mode in ("straight", "ortho", "ortho_curved"):
+        sc = QGraphicsScene()
+        sar = _PolyArrowItem(QColor("#123456"), 3, True)
+        sar._pts = [QPointF(0, 0), QPointF(80, 40)]
+        sar._routing = mode
+        sc.addItem(sar)
+        p = os.path.join(_TMP, f"routing_{mode}.ecad")
+        save_document(sc, p)
+        sc2 = QGraphicsScene(); load_document(sc2, p)
+        s2 = [x for x in sc2.items() if isinstance(x, _PolyArrowItem)][0]
+        assert s2._routing == mode, mode
+
+
+def test_sarrow_routing_backcompat():
+    # [M4-4] 옛 .ecad(routing 키 없음): auto_route→ortho / 없으면 straight로 유추(무손실).
+    from easycad.fileio.document import dict_to_item
+    base = {"type": "sarrow", "pos": [0, 0], "pts": [[0, 0], [50, 0], [50, 30]],
+            "color": "#ff000000", "width": 3, "head": True}
+    it_auto = dict_to_item({**base, "auto_route": True})
+    assert it_auto._routing == "ortho"
+    it_manual = dict_to_item({**base, "auto_route": False})
+    assert it_manual._routing == "straight"
+
+
+def test_sarrow_set_routing_regenerates():
+    # [M4-4] set_routing: straight=2점 직선 / ortho=자유 끝점 사이 직교(대각→계단).
+    sar = _PolyArrowItem(QColor("#111111"), 3, True)
+    sar.set_points(QPointF(0, 0), QPointF(100, 60))
+    sar.set_routing("ortho")
+    assert len(sar._pts) >= 3                 # 대각선이 직교 계단으로
+    assert all(abs(a.x() - b.x()) < 1e-6 or abs(a.y() - b.y()) < 1e-6
+               for a, b in zip(sar._pts[:-1], sar._pts[1:]))   # 모든 변이 수직/수평
+    sar.set_routing("straight")
+    assert len(sar._pts) == 2                  # 다시 2점 직선
+
+
+def test_sarrow_straight_routing_survives_reroute():
+    # [M4-4] straight 라우팅 + 바인딩 커넥터는 도형 이동(reroute) 후에도 2점 직선(엘보로 안 튐).
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    a = _RectItem(QRectF(0, 0, 80, 50)); a.setPos(QPointF(0, 0)); sc.addItem(a)
+    b = _RectItem(QRectF(0, 0, 80, 50)); b.setPos(QPointF(300, 20)); sc.addItem(b)
+    it = _PolyArrowItem(QColor("#111111"), 3, True)
+    pa, pb = QPointF(80, 25), QPointF(0, 25)
+    it.set_points(a.mapToScene(pa), b.mapToScene(pb))
+    it.set_bound(0, a, pa); it.set_bound(1, b, pb)
+    it._routing = "straight"; it._auto_route = True
+    sc.addItem(it)
+    b.setPos(QPointF(300, 140))               # 도형 이동 → reroute
+    it.reroute()
+    assert it._routing == "straight" and len(it._pts) == 2   # 직선 유지
+    it.set_routing("ortho"); it.reroute()     # ortho로 바꾸면 엘보 재계산
+    assert len(it._pts) >= 3
+
+
+def test_sarrow_one_bound_stays_ortho_on_move():
+    # [M4-4 ⑦] 한쪽만 바인딩된 직교 커넥터도 도형 이동(reroute) 후 직교 유지(대각선 안 생김).
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    a = _RectItem(QRectF(0, 0, 80, 50)); a.setPos(QPointF(0, 0)); sc.addItem(a)
+    it = _PolyArrowItem(QColor("#111111"), 3, True)
+    pa = QPointF(80, 25)
+    it.set_points(a.mapToScene(pa), QPointF(400, 200))   # 끝은 자유
+    it.set_bound(0, a, pa)
+    it._routing = "ortho"; it._auto_route = True
+    sc.addItem(it); it.build_elbow()
+    a.setPos(QPointF(0, 150))                            # 바인딩 도형 이동 → reroute
+    it.reroute()
+    assert all(abs(p1.x() - p2.x()) < 1e-6 or abs(p1.y() - p2.y()) < 1e-6
+               for p1, p2 in zip(it._pts[:-1], it._pts[1:]))   # 모든 변 직교
+
+
+def test_sarrow_manual_ortho_stays_ortho_on_move():
+    # [M4-4 ⑦] 세그먼트 드래그(수동 직교, auto_route off)한 커넥터도 도형 이동 시 스텁을 직교로 유지.
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    a = _RectItem(QRectF(0, 0, 80, 50)); a.setPos(QPointF(0, 0)); sc.addItem(a)
+    b = _RectItem(QRectF(0, 0, 80, 50)); b.setPos(QPointF(300, 20)); sc.addItem(b)
+    it = _PolyArrowItem(QColor("#111111"), 3, True)
+    pa, pb = QPointF(80, 25), QPointF(0, 25)
+    it.set_points(a.mapToScene(pa), b.mapToScene(pb))
+    it.set_bound(0, a, pa); it.set_bound(1, b, pb)
+    it._routing = "ortho"; it._auto_route = True
+    sc.addItem(it); it.build_elbow()
+    it._begin_segment_drag(1); it._drag_segment_to(QPointF(150, 200)); it._end_segment_drag()
+    assert not it._auto_route                          # 수동 직교로 전환
+    b.setPos(QPointF(300, 260)); it.reroute()          # 도형 이동
+    assert all(abs(p1.x() - p2.x()) < 1e-6 or abs(p1.y() - p2.y()) < 1e-6
+               for p1, p2 in zip(it._pts[:-1], it._pts[1:]))   # 여전히 전부 직교
+
+
+def test_sarrow_segment_drag_snaps_straight():
+    # [M4-4 ①b] 세그먼트 드래그가 끝점 축에 가까우면 착 붙어 완벽한 직선이 된다.
+    it = _PolyArrowItem(QColor("#111111"), 3, True)
+    it._pts = [QPointF(0, 0), QPointF(0, 40), QPointF(200, 40), QPointF(200, 0)]  # U자
+    it._routing = "ortho"
+    it._begin_segment_drag(1)                    # 중간 수평 변(y=40) 잡기
+    it._drag_segment_to(QPointF(100, 3))         # y=0(끝점 축)에서 3px 이내로 끌기 → 스냅
+    it._end_segment_drag()
+    assert any(abs(p.y()) < 1e-6 for p in it._pts[1:-1]) or len(it._pts) == 2  # 끝점 축(y=0)에 스냅
+
+
+def test_sarrow_curved_rounded_path():
+    # [M4-4] ortho_curved 둥근 경로 — 3정점 이상이면 원호(quadTo)가 들어가 요소 수가 늘어난다.
+    sar = _PolyArrowItem(QColor("#111111"), 3, True)
+    sar._pts = [QPointF(0, 0), QPointF(50, 0), QPointF(50, 40)]
+    straight = sar._polyline_path()
+    rounded = sar._rounded_polyline_path()
+    assert rounded.elementCount() > straight.elementCount()
+
+
 def test_arrow_style_edit_and_undo():
     # [M2 #3] 속성 dock 선스타일 콤보가 화살표에도 적용되고 undo/redo 된다.
     w = CanvasWindow()
@@ -563,6 +677,23 @@ def test_floating_toolbar_arrow_flip_undo():
     w._floating_flip_arrows()
     assert ar._head_at_end != before
     w.undo(); assert ar._head_at_end == before            # 방향 토글이 되돌려진다
+
+
+def test_floating_toolbar_routing_dropdown():
+    # [M4-4 #4] 단일 직선화살표 선택 시 라우팅 버튼 노출 + 스타일 전환이 geom undo로 되돌려진다.
+    w = CanvasWindow()
+    ar = _PolyArrowItem(QColor("#111111"), 3.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 60))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar); ar.setSelected(True)
+    w._reposition_floating_toolbar()
+    assert not w._float_routing_btn.isHidden()            # 직선화살표 → 라우팅 버튼 노출
+    w._floating_set_routing("ortho")
+    assert ar._routing == "ortho" and len(ar._pts) >= 3    # 직교로 재생성(대각→계단)
+    w._floating_set_routing("straight")
+    assert ar._routing == "straight" and len(ar._pts) == 2
+    w.undo()                                              # geom undo → 직전(ortho) 복원
+    assert ar._routing == "ortho"
 
 
 def test_shape_swap_preserves_and_rebinds():
@@ -1044,12 +1175,12 @@ def test_center_label_shrinks_not_wraps():
     assert d2._label.font().pointSize() == d2._label._base_pt
 
 
-def test_straight_arrow_waypoint():
-    # 세그먼트 위 hover 감지 → 클릭 시 그 자리에 정점(waypoint) 삽입(A2).
+def test_sarrow_segment_drag():
+    # [M4-4] 세그먼트 위 hover 감지 → press·drag로 그 변을 수직 이동(끝점은 고정, 직교 유지).
     from PyQt6.QtGui import QMouseEvent
     from PyQt6.QtCore import QEvent
     w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
-    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)   # 기본 라우팅=ortho
     sa.set_points(QPointF(0, 0), QPointF(100, 0))
     sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(sa); sa.setSelected(True)
@@ -1059,17 +1190,30 @@ def test_straight_arrow_waypoint():
     hit = view._segment_add_at(vp)
     assert hit is not None and hit[0] is sa and hit[1] == 0
 
-    view._seg_add = hit                              # 클릭 → 정점 삽입 + 드래그
+    view._seg_add = hit                              # press → 세그먼트 드래그 시작
     view.mousePressEvent(QMouseEvent(
         QEvent.Type.MouseButtonPress, QPointF(vp), QPointF(vp),
         Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    assert view._seg_drag is sa
+    tgt = view.mapFromScene(QPointF(50, 40))         # 변을 아래(y=40)로 끌기
+    view.mouseMoveEvent(QMouseEvent(
+        QEvent.Type.MouseMove, QPointF(tgt), QPointF(tgt),
+        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
     view.mouseReleaseEvent(QMouseEvent(
-        QEvent.Type.MouseButtonRelease, QPointF(vp), QPointF(vp),
+        QEvent.Type.MouseButtonRelease, QPointF(tgt), QPointF(tgt),
         Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
-    assert len(sa._pts) == 3
-    assert abs(sa._pts[1].x() - 50) < 3 and abs(sa._pts[1].y()) < 3   # 세그먼트 중앙에 삽입
+    assert view._seg_drag is None
+    assert not sa._auto_route                        # 세그먼트 드래그 = 수동 직교로 전환
+    # 끝점은 (0,0)·(100,0) 그대로, 중간 변이 y=40로 내려가 U자(모든 변 직교).
+    assert abs(sa._pts[0].x()) < 1 and abs(sa._pts[0].y()) < 1
+    assert abs(sa._pts[-1].x() - 100) < 1 and abs(sa._pts[-1].y()) < 1
+    assert any(abs(p.y() - 40) < 3 for p in sa._pts)
+    assert all(abs(a.x() - b.x()) < 1e-6 or abs(a.y() - b.y()) < 1e-6
+               for a, b in zip(sa._pts[:-1], sa._pts[1:]))
+    w.undo()                                         # undo → 원래 2점 직선 복원
+    assert len(sa._pts) == 2
 
-    # 정점 위(끝점) hover는 세그먼트 추가가 아니라 이동 우선 → None
+    # 정점 위(끝점) hover는 세그먼트 이동이 아니라 끝점 이동 우선 → None
     vtx = view.mapFromScene(QPointF(0, 0))
     assert view._segment_add_at(vtx) is None
 
@@ -1493,13 +1637,16 @@ def test_sarrow_manual_edit_disables_auto():
     assert sa._auto_route is True and sa._hint_dragging is True
     sa._hint_dragging = False   # 정리(커밋 없이 종료)
 
-    # (1b) 끝점 드래그 시작은 여전히 수동 전환(freeze) → 도형 이동해도 엘보 동결
+    # (1b) 끝점 드래그 시작은 수동 전환(auto_route off) → A* 전체 재계산은 안 하되,
+    # [M4-4 ⑦] 도형 이동 시 스텁(끝-이웃 변)만 직교로 유지(전부 대각화되던 옛 동작 수정).
     sa._on_endpoint_drag_start(0)
     assert sa._auto_route is False
-    frozen = [(round(p.x()), round(p.y())) for p in sa._pts]
-    b.setPos(QPointF(0, 100)); w._on_scene_changed(None)   # 도형 이동해도 엘보 재계산 안 함
-    mids = [(round(sa._pts[i].x()), round(sa._pts[i].y())) for i in (1, 2)]
-    assert mids == frozen[1:3], "해제 후 중간 정점은 동결(재계산 금지)"
+    frozen1 = (round(sa._pts[1].x()), round(sa._pts[1].y()))
+    b.setPos(QPointF(0, 100)); w._on_scene_changed(None)   # b(끝점 idx last) 이동
+    # a는 안 움직였으니 시작 쪽 중간정점(idx1)은 동결, 전체는 직교 유지
+    assert (round(sa._pts[1].x()), round(sa._pts[1].y())) == frozen1, "안 움직인 끝 쪽은 동결"
+    assert all(abs(p1.x() - p2.x()) < 1e-6 or abs(p1.y() - p2.y()) < 1e-6
+               for p1, p2 in zip(sa._pts[:-1], sa._pts[1:])), "수동 직교도 이동 후 직교 유지"
 
     # (2) waypoint 삽입도 해제 트리거
     sa2 = _PolyArrowItem(QColor("#ff0000ff"), 6, True)

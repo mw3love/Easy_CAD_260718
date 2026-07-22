@@ -1675,6 +1675,13 @@ class CanvasWindow(QMainWindow):
         self._float_swap_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._float_swap_btn.setMenu(self._build_swap_menu())
         lay.addWidget(self._float_swap_btn)
+        # [M4-4 #4] 라우팅 스타일 — 단일 직선화살표 선택 시만 노출(직선·직각·곡선 엘보).
+        self._float_routing_btn = QToolButton(); self._float_routing_btn.setText("⌐▾")
+        self._float_routing_btn.setFixedSize(QSize(26, 18))
+        self._float_routing_btn.setToolTip("커넥터 라우팅(직선·직각·곡선)")
+        self._float_routing_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._float_routing_btn.setMenu(self._build_routing_menu())
+        lay.addWidget(self._float_routing_btn)
         self._float_dir_btn = QToolButton(); self._float_dir_btn.setText("⇄")
         self._float_dir_btn.setFixedSize(QSize(22, 18))
         self._float_dir_btn.setToolTip("화살표 방향 뒤집기")
@@ -1727,6 +1734,25 @@ class CanvasWindow(QMainWindow):
             return
         self._edit_items(arrows, lambda it: it.flip_head())
 
+    def _build_routing_menu(self):
+        """[M4-4 #4] 커넥터 라우팅 스타일 메뉴 — 직선/직각/곡선(둥근 모서리)."""
+        m = QMenu(self)
+        m.addAction("직선", lambda: self._floating_set_routing("straight"))
+        m.addAction("직각 엘보", lambda: self._floating_set_routing("ortho"))
+        m.addAction("곡선 엘보", lambda: self._floating_set_routing("ortho_curved"))
+        return m
+
+    def _floating_set_routing(self, mode):
+        """[M4-4 #4] 선택된 직선화살표의 라우팅 스타일 전환 — _pts 재생성이라 geom undo로 커밋."""
+        sel = [it for it in self._scene.selectedItems() if isinstance(it, _PolyArrowItem)]
+        if not sel:
+            return
+        snaps = [(it, it.capture_geom()) for it in sel]
+        for it in sel:
+            it.set_routing(mode)
+        self.push_undo_geom(snaps)
+        self._view.viewport().update()
+
     def _reposition_floating_toolbar(self):
         """선택 bbox 상단중앙 위에 배치(뷰 상단 침범 시 아래로 반전, 창 경계 클램프).
         선택 없음/뷰어 모드면 숨긴다. 씬→뷰포트→host 좌표 변환은 _arrow_dir_btn 관례를 따른다."""
@@ -1742,6 +1768,9 @@ class CanvasWindow(QMainWindow):
         # [M4-3] 도형 교체 버튼 — 단일 도형(네모·원·심볼)만 선택했을 때.
         self._float_swap_btn.setVisible(
             len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem)))
+        # [M4-4 #4] 라우팅 드롭다운 — 단일 직선화살표 선택 시만.
+        self._float_routing_btn.setVisible(
+            len(sel) == 1 and isinstance(sel[0], _PolyArrowItem))
         bar.adjustSize()
         w, h = bar.width(), bar.height()
         r = QRectF()

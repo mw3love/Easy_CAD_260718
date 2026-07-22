@@ -477,6 +477,11 @@ class _HandleResizeMixin:
         # 단 다중선택(그룹 변형) 중엔 개별 끝점 핸들을 감춘다 — 그룹 오버레이가 대신 변형.
         return self.isSelected() and not self._group_active()
 
+    def _handle_indices(self):
+        """끝점 핸들(파란 사각)을 그릴 정점 인덱스. 기본은 모든 끝점. [M4-4] _PolyArrowItem은
+        양끝(시작·끝)만 노출해 중간 정점 자유드래그로 직교가 깨지는 걸 막는다(중간은 세그먼트 드래그)."""
+        return list(range(len(self._endpoints())))
+
     def _endpoint_rect(self, idx: int) -> QRectF:
         d = self._handle_px()
         c = self._endpoints()[idx]
@@ -547,7 +552,7 @@ class _HandleResizeMixin:
         s = self._scale_or_1()
         painter.setPen(QPen(QColor("white"), 1.0 / s))
         painter.setBrush(QBrush(QColor(_BLUE)))
-        for i in range(len(self._endpoints())):
+        for i in self._handle_indices():
             painter.drawRect(self._endpoint_rect(i))
 
     # 선택된 도형에 현재 색/두께 적용 — pen 기반(rect/ellipse/line/path) 공통 구현.
@@ -948,7 +953,7 @@ class _HandleResizeMixin:
         if self._uses_endpoints():
             if self._endpoint_active():
                 hp = QPainterPath()
-                for i in range(len(self._endpoints())):
+                for i in self._handle_indices():
                     hp.addRect(self._inflate_to_hit(self._endpoint_rect(i)))
                 return base.united(hp)
             return base
@@ -969,7 +974,7 @@ class _HandleResizeMixin:
     def mousePressEvent(self, event):
         if self._uses_endpoints():
             if self._endpoint_active():
-                for i in range(len(self._endpoints())):
+                for i in self._handle_indices():
                     if self._inflate_to_hit(self._endpoint_rect(i)).contains(event.pos()):
                         self._drag_endpoint = i
                         self._on_endpoint_drag_start(i)   # [Stage1] 수동 정점 드래그 → 자동 라우팅 해제 훅
@@ -2893,9 +2898,14 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._bind_end = None
         self._bind_start_pt = None   # 시작이 붙은 도형의 로컬 부착점
         self._bind_end_pt = None
+        # [M4-4 ③] 라우팅 스타일(#4 FigJam/Lucid 드롭다운). "ortho_curved"=둥근 모서리 엘보(기본 —
+        # Lucid식 곡선 커넥터), "ortho"=직각 엘보(반경 0), "straight"=2점 직선(대각 허용). 곡선·직각은
+        # 같은 직교 경로에 모서리 반경(_corner_radius, 0=직각)만 다른 통합 관계. 그리기·바인딩 시
+        # _apply_routing()이 이 스타일대로 _pts를 생성하고 paint가 반경대로 모서리를 둥글린다.
+        self._routing = "ortho_curved"
         # [Stage1] Lucid식 직교 자동 라우팅. True면 중간 정점(_pts[1:-1])은 라우터 소유물 —
-        # 양끝 부착점에서 매 reroute마다 엘보로 재계산된다. 사용자가 정점 핸들을 드래그하거나
-        # waypoint를 추가/삭제하면 False로 내려가 '수동 폴리라인'이 된다(경로 그대로 유지).
+        # 양끝 부착점에서 매 reroute마다 엘보로 재계산된다. [M4-4] 세그먼트를 드래그하면 False로
+        # 내려가 '수동 직교 폴리라인'이 된다(끝점만 follow, 내부는 사용자 소유).
         self._auto_route = False
         # [경유지 힌트(2f)] 자동라우팅을 '유지'하면서 경로를 이 점 근처로 지나가게 강제하는 힌트.
         # 화살표당 최대 1개(리스트지만 길이 0 또는 1 — 직렬화 형식만 재사용, 2026-07-20 실측으로
@@ -2920,6 +2930,11 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     # ---- 정점 = 끝점 핸들(재사용) --------------------------------------
     def _uses_endpoints(self):
         return True
+
+    def _handle_indices(self):
+        # [M4-4] 양끝(시작·끝)만 사각 핸들로 노출 — 중간 정점은 세그먼트 드래그가 관리(직교 유지).
+        end = len(self._pts) - 1
+        return [0] if end == 0 else [0, end]
 
     _ROUTE_CLEARANCE = 12.0   # [Stage2] 라우팅이 장애물에서 유지할 여유(scene 단위)
     _ARROW_CROSS_PENALTY = 200.0   # [Stage3] 다른 화살표를 가로지를 때 A* 간선에 더할 soft 벌점
@@ -2976,6 +2991,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         if not self.has_binding():
             return False
         changed = False
+        manual_ortho = self._is_ortho() and not self._auto_route and len(self._pts) >= 3
         for idx in (0, len(self._pts) - 1):
             sh = self._bound(idx)
             pt = self._bind_pt(idx)
@@ -2986,10 +3002,22 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             target = self.mapFromScene(sh.mapToScene(pt))
             cur = self._pts[idx]
             if abs(target.x() - cur.x()) > 1e-6 or abs(target.y() - cur.y()) > 1e-6:
+                # [M4-4 ⑦] 수동 직교 폴리라인(세그먼트 드래그 후)은 끝점을 따라가되 인접 정점을 함께
+                # 옮겨 첫/끝 변(스텁)을 직교로 유지한다(auto_route면 아래 _apply_routing이 통째로 재계산).
+                if manual_ortho:
+                    nb_idx = 1 if idx == 0 else len(self._pts) - 2
+                    nb = self._pts[nb_idx]
+                    vertical = abs(cur.x() - nb.x()) <= abs(cur.y() - nb.y())  # 스텁이 세로(x 공유)?
+                    self._pts[nb_idx] = (QPointF(target.x(), nb.y()) if vertical
+                                         else QPointF(nb.x(), target.y()))
                 self._set_endpoint(idx, target)
                 changed = True
-        if self._auto_route and self._bind_start is not None and self._bind_end is not None:
-            if self.build_elbow():
+        # [M4-4 ⑦] 자동 라우팅이면 라우팅 스타일대로 재계산(straight=2점 유지 / ortho=엘보 재계산).
+        # 한쪽만 바인딩돼도(has_binding) 재적용해 도형 이동 시 직교가 깨지지 않게 한다
+        # (_apply_routing이 양끝 바인딩=A*, 한쪽=단순 엘보로 분기). 수동 세그먼트 편집(auto_route
+        # False)은 끝점만 추종(사용자 경로 보존).
+        if self._auto_route and self.has_binding():
+            if self._apply_routing():
                 changed = True
         if changed:
             self.prepareGeometryChange()
@@ -3093,6 +3121,158 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self.update()
         self._sync_label()
         return True
+
+    # ---- [M4-4] 라우팅 스타일(#4) — 통합 경로 생성 ------------------------------
+    def set_routing(self, mode: str):
+        """[M4-4 #4] 라우팅 스타일 전환(straight/ortho/ortho_curved). 자동 경로를 다시 켜고
+        _apply_routing으로 즉시 재생성한다(세그먼트 수동편집 상태도 초기화)."""
+        if mode not in ("straight", "ortho", "ortho_curved"):
+            return
+        self._routing = mode
+        self._auto_route = True   # 스타일 전환 = 라우터가 다시 경로 소유
+        self._route_hints = []
+        self.prepareGeometryChange()
+        self._apply_routing()
+        self.update()
+
+    def _is_ortho(self) -> bool:
+        return self._routing in ("ortho", "ortho_curved")
+
+    def _apply_routing(self) -> bool:
+        """[M4-4] 현재 _routing에 맞춰 _pts를 재생성(양끝점은 유지, 중간만 라우터 소유). 변경 시 True.
+        · straight=2점 직선(대각 허용). · ortho/ortho_curved=직교 경로 — 양끝 바인딩이면 build_elbow
+          (A* 회피·법선·정렬흡수), 아니면 자유 끝점 사이 단순 L/HVH 엘보(_ortho_elbow)."""
+        end_idx = len(self._pts) - 1
+        s = self.mapToScene(self._pts[0])
+        e = self.mapToScene(self._pts[end_idx])
+        if self._routing == "straight":
+            new_local = [self.mapFromScene(s), self.mapFromScene(e)]
+        elif self._bind_start is not None and self._bind_end is not None:
+            return self.build_elbow()   # 바인딩 직교 — 기존 A* 라우팅 재사용
+        else:                            # 자유(미바인딩) 직교 — 단순 엘보
+            ns = self._bound_normal_scene(0)
+            ne = self._bound_normal_scene(end_idx)
+            mids = _ortho_elbow(s, e, ns, ne)
+            new_scene = _dedup_pts([s] + mids + [e])
+            new_local = [self.mapFromScene(p) for p in new_scene]
+        if len(new_local) == len(self._pts) and all(
+                abs(a.x() - b.x()) <= 1e-6 and abs(a.y() - b.y()) <= 1e-6
+                for a, b in zip(new_local, self._pts)):
+            return False
+        self.prepareGeometryChange()
+        self._pts = new_local
+        self.update()
+        self._sync_label()
+        return True
+
+    # ---- [M4-4] 세그먼트 드래그(변 수직 이동, Lucid/FigJam 파란 세그먼트 핸들) -----------
+    _SEG_HANDLE_PX = 12.0   # 세그먼트 핸들(알약) 화면 px 길이 반값 — 길쭉해 끝점 사각과 구별
+    _SEG_MIN_PX = 26.0      # 이 화면 px보다 짧은 변엔 핸들 안 그림(끝점 핸들과 겹침 방지)
+
+    def _segment_orientation(self, seg_idx: int) -> bool:
+        a, b = self._pts[seg_idx], self._pts[seg_idx + 1]
+        return abs(b.y() - a.y()) <= abs(b.x() - a.x())   # True=수평 변
+
+    def _segment_handles(self):
+        """[M4-4] 세그먼트 핸들을 그릴 (seg_idx, 중점 local, 수평여부) 목록. 직교 라우팅 + 충분히
+        긴 변만(끝점 핸들과 겹치지 않게). straight 라우팅은 세그먼트 드래그 없음(빈 목록)."""
+        if not self._is_ortho():
+            return []
+        s = self._scale_or_1() * self._view_scale_or_1()
+        min_local = self._SEG_MIN_PX / max(s, 1e-6)
+        out = []
+        for i in range(len(self._pts) - 1):
+            a, b = self._pts[i], self._pts[i + 1]
+            if math.hypot(b.x() - a.x(), b.y() - a.y()) < min_local:
+                continue
+            mid = QPointF((a.x() + b.x()) / 2.0, (a.y() + b.y()) / 2.0)
+            out.append((i, mid, abs(b.y() - a.y()) <= abs(b.x() - a.x())))
+        return out
+
+    def _view_scale_or_1(self) -> float:
+        sc = self.scene()
+        if sc is not None and sc.views():
+            return sc.views()[0]._view_scale()
+        return 1.0
+
+    def _begin_segment_drag(self, seg_idx: int):
+        """[M4-4] 세그먼트 드래그 시작 — 자동라우팅 해제(수동 직교)+경유힌트 폐기. 끝점(0·last)에
+        닿은 변이면 그 끝점을 고정하려 복제 정점을 끼워 '움직일 수 있는 내부 변'으로 만든 뒤,
+        이동할 두 정점 인덱스와 방향(수평/수직)을 기록한다. 이후 _drag_segment_to가 그 변을 수직 이동."""
+        self._auto_route = False
+        self._route_hints = []
+        horizontal = self._segment_orientation(seg_idx)
+        lo, hi = seg_idx, seg_idx + 1
+        self.prepareGeometryChange()
+        if lo == 0:                                  # 시작 끝점 보호
+            self._pts.insert(1, QPointF(self._pts[0]))
+            lo += 1
+            hi += 1
+        if hi == len(self._pts) - 1:                 # 끝 끝점 보호(삽입은 old last를 hi+1로 밀어냄)
+            self._pts.insert(hi, QPointF(self._pts[hi]))
+        self._seg_move = (lo, hi, horizontal)
+        self.update()
+
+    def _drag_segment_to(self, scene_p: QPointF):
+        move = getattr(self, "_seg_move", None)
+        if not move:
+            return
+        lo, hi, horizontal = move
+        p = self.mapFromScene(scene_p)
+        # [M4-4 ①b] 일직선 스냅 — 변을 끌 때 그 좌표가 양끝점·이웃 정점의 축과 가까우면 착 붙여
+        # 완벽한 직선/정렬을 쉽게 만든다. 끝점과 나란해지면 U가 직선으로 붕괴.
+        snap_px = 7.0 / max(self._scale_or_1() * self._view_scale_or_1(), 1e-6)
+        axis = (lambda q: q.y()) if horizontal else (lambda q: q.x())
+        cand = [axis(self._pts[0]), axis(self._pts[-1])]
+        if lo - 1 >= 0:
+            cand.append(axis(self._pts[lo - 1]))
+        if hi + 1 <= len(self._pts) - 1:
+            cand.append(axis(self._pts[hi + 1]))
+        newc = axis(p)
+        for t in cand:
+            if abs(newc - t) < snap_px:
+                newc = t
+                break
+        self.prepareGeometryChange()
+        if horizontal:                               # 수평 변 → y만 이동
+            self._pts[lo] = QPointF(self._pts[lo].x(), newc)
+            self._pts[hi] = QPointF(self._pts[hi].x(), newc)
+        else:                                        # 수직 변 → x만 이동
+            self._pts[lo] = QPointF(newc, self._pts[lo].y())
+            self._pts[hi] = QPointF(newc, self._pts[hi].y())
+        self.update()
+        self._sync_label()
+
+    def _end_segment_drag(self):
+        """드래그 종료 — 공선·중복 정점 정리(보호 삽입 잔재 접힘, 끝점은 보존)."""
+        if getattr(self, "_seg_move", None) is None:
+            return
+        self._seg_move = None
+        self.prepareGeometryChange()
+        cleaned = _dedup_pts(self._pts)
+        if len(cleaned) >= 2:
+            self._pts = cleaned
+        self.update()
+        self._sync_label()
+
+    def _paint_segment_handles(self, painter):
+        """[M4-4] 각 직교 세그먼트 중점에 파란 알약 핸들(변 방향으로 길쭉). 끝점 사각 핸들과 구분."""
+        if not self._endpoint_active():
+            return
+        handles = self._segment_handles()
+        if not handles:
+            return
+        s = self._scale_or_1() * self._view_scale_or_1()
+        half = self._SEG_HANDLE_PX / max(s, 1e-6)
+        thick = 3.5 / max(s, 1e-6)   # 얇게 고정 → 길쭉한 알약(끝점 사각과 확실히 구별)
+        painter.setPen(QPen(QColor("white"), 1.0 / self._scale_or_1()))
+        painter.setBrush(QBrush(QColor(_BLUE)))
+        for _i, mid, horizontal in handles:
+            if horizontal:
+                r = QRectF(mid.x() - half, mid.y() - thick, 2 * half, 2 * thick)
+            else:
+                r = QRectF(mid.x() - thick, mid.y() - half, 2 * thick, 2 * half)
+            painter.drawRoundedRect(r, thick, thick)
 
     # ---- [경유지 힌트(2f)] 상대좌표 변환 · 구간별 라우팅 · 커밋 ------------------
     def _hint_midpoint_scene(self) -> QPointF:
@@ -3320,6 +3500,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         c._bind_start, c._bind_end = self._bind_start, self._bind_end   # [A3] 지속 연결 유지
         c._bind_start_pt = None if self._bind_start_pt is None else QPointF(self._bind_start_pt)
         c._bind_end_pt = None if self._bind_end_pt is None else QPointF(self._bind_end_pt)
+        c._routing = self._routing   # [M4-4] 라우팅 스타일 유지
         c._auto_route = self._auto_route   # [Stage1] 자동 라우팅 상태 유지
         c._route_hints = [QPointF(p) for p in self._route_hints]   # [경유지 힌트] 유지
         c._label_t, c._label_off = self._label_t, self._label_off   # 라벨 위치(t·off) 유지
@@ -3329,13 +3510,15 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     # 수동 폴리라인으로 전환(_auto_route=False). undo 스냅샷은 원래 _auto_route·힌트를 복원한다.
     def _capture_geom_local(self):
         return ([QPointF(p) for p in self._pts], self._auto_route,
-                [QPointF(p) for p in self._route_hints])
+                [QPointF(p) for p in self._route_hints], self._routing)
 
     def _apply_geom_local(self, g):
         self.prepareGeometryChange()
         self._pts = [QPointF(p) for p in g[0]]
         self._auto_route = g[1]
         self._route_hints = [QPointF(p) for p in g[2]] if len(g) > 2 else []
+        if len(g) > 3:
+            self._routing = g[3]   # [M4-4] 라우팅 스타일 복원
         self._sync_label()
 
     def _capture_binds(self):
@@ -3380,9 +3563,46 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         ]
 
     def _polyline_path(self) -> QPainterPath:
-        path = QPainterPath(self._pts[0])
-        for pt in self._pts[1:]:
+        return self._segment_path(self._pts)
+
+    @staticmethod
+    def _segment_path(pts) -> QPainterPath:
+        path = QPainterPath(pts[0])
+        for pt in pts[1:]:
             path.lineTo(pt)
+        return path
+
+    _CORNER_R = 10.0   # [M4-4] 곡선 엘보 기본 모서리 반경(로컬 단위, 인접 변 절반으로 클램프)
+
+    def _corner_radius(self) -> float:
+        """[M4-4 ③] 곡선 엘보 모서리 반경. ortho_curved면 조절값(_curve_r, 기본 _CORNER_R),
+        그 외(직각·직선)는 0(각짐). 반경 0 = 직각 — Lucid식 '곡선값 조절'의 통합 지점."""
+        if self._routing != "ortho_curved":
+            return 0.0
+        return getattr(self, "_curve_r", self._CORNER_R)
+
+    def _rounded_polyline_path(self) -> QPainterPath:
+        """[M4-4 #4] ortho_curved용 — 각 중간 정점의 모서리를 원호(quadTo)로 둥글린다.
+        반경은 인접 두 변 길이의 절반으로 클램프(짧은 변에서 겹치지 않게). paint 전용(히트테스트·
+        직렬화·라벨갭 사각형은 직선 폴리라인 그대로 — 시각만 둥글게)."""
+        pts = self._pts
+        if len(pts) < 3:
+            return QPainterPath(pts[0]) if len(pts) == 1 else self._segment_path(pts)
+        radius = self._corner_radius() or self._CORNER_R
+        path = QPainterPath(pts[0])
+        for i in range(1, len(pts) - 1):
+            a, c, b = pts[i - 1], pts[i], pts[i + 1]
+            la = math.hypot(c.x() - a.x(), c.y() - a.y())
+            lb = math.hypot(b.x() - c.x(), b.y() - c.y())
+            r = min(radius, la / 2.0, lb / 2.0)
+            if r < 1e-3:
+                path.lineTo(c)
+                continue
+            p_in = QPointF(c.x() + (a.x() - c.x()) / la * r, c.y() + (a.y() - c.y()) / la * r)
+            p_out = QPointF(c.x() + (b.x() - c.x()) / lb * r, c.y() + (b.y() - c.y()) / lb * r)
+            path.lineTo(p_in)
+            path.quadTo(c, p_out)
+        path.lineTo(pts[-1])
         return path
 
     _LABEL_GAP_PAD = 2.0   # [M4-1] 선-텍스트 갭 축소(5→2). 라벨 둘레로 선을 끊을 때의 여유(px)
@@ -3402,11 +3622,12 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def _visible_polyline_path(self) -> QPainterPath:
         """[우리 확장 · FigJam 갭] 라벨 사각형과 겹치는 폴리라인 구간만 빼고 그린 경로.
         히트테스트(_base_shape)·선택외곽선·직렬화는 전체 폴리라인을 그대로 쓴다 — 시각 갭만."""
+        pts = self._pts
         rect = self._label_gap_rect()
         if rect is None:
-            return self._polyline_path()
+            return self._segment_path(pts)
         path = QPainterPath()
-        for a, b in zip(self._pts[:-1], self._pts[1:]):
+        for a, b in zip(pts[:-1], pts[1:]):
             inside = _seg_rect_interval(a, b, rect)
             if inside is None:
                 path.moveTo(a)
@@ -3523,7 +3744,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         r = self._content_rect()
         for i in range(len(self._pts)):
             r = r.united(self._inflate_to_hit(self._endpoint_rect(i)))
-        pad = 4.0 / self._scale_or_1()
+        # [M4-4] 세그먼트 알약 핸들도 boundingRect에 포함(paint 잔상 방지).
+        pad = (4.0 + self._SEG_HANDLE_PX) / max(self._scale_or_1() * self._view_scale_or_1(), 1e-6)
         return r.adjusted(-pad, -pad, pad, pad)
 
     def _base_shape(self):
@@ -3551,12 +3773,28 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(self._visible_polyline_path())   # [FigJam 갭] 라벨 자리에서 선 끊음
+        if self._routing == "ortho_curved":
+            # [M4-4] 둥근 모서리 — 세그먼트 클립 대신 QPainter 클립으로 라벨 갭을 낸다(원호 보존).
+            gap = self._label_gap_rect()
+            if gap is not None:
+                painter.save()
+                clip = QPainterPath()
+                clip.addRect(self.boundingRect())
+                hole = QPainterPath()
+                hole.addRect(gap)
+                painter.setClipPath(clip.subtracted(hole))
+                painter.drawPath(self._rounded_polyline_path())
+                painter.restore()
+            else:
+                painter.drawPath(self._rounded_polyline_path())
+        else:
+            painter.drawPath(self._visible_polyline_path())   # [FigJam 갭] 라벨 자리에서 선 끊음
         painter.setPen(QPen(self._color, 1))
         painter.setBrush(QBrush(self._color))
         painter.drawPolygon(QPolygonF(self._head_points()))
         if self.isSelected():
             self._paint_selection_outline(painter, self._scale_or_1())
+        self._paint_segment_handles(painter)   # [M4-4] 변 중점 알약 핸들(끝점 사각 아래에)
         self._paint_endpoint_handles(painter)
 
 
@@ -4620,9 +4858,11 @@ class _AnnotatorView(QGraphicsView):
         self._rb_origin = None            # 시작점(view 좌표) — 방향 판정 기준
         self._rb_current = None           # 현재점(view 좌표)
         self._rb_base = []                # Shift 추가선택용 기존 선택 스냅샷
-        # [우리 확장] 직선화살표 waypoint 추가 예고 — 선택된 폴리라인 세그먼트 hover 시
-        # (item, seg_idx, 씬 최근접점) or None. 클릭하면 그 자리에 정점 삽입 후 바로 드래그.
+        # [M4-4] 직선화살표 세그먼트 hover 시 (item, seg_idx, 씬 최근접점) or None.
+        # ortho 라우팅 sarrow의 변 위(정점 아님)에 커서 → 클릭·드래그로 그 변을 수직 이동.
         self._seg_add = None
+        self._seg_drag = None   # [M4-4] 세그먼트 드래그 중인 sarrow(변 수직 이동)
+        self._seg_undo = None
         # [우리 확장] 다중선택 그룹 변형(회전·스케일) — 2개 이상 선택 시 공통 bbox+핸들.
         self._group = _GroupTransform(self)
         self._group_dragging = False
@@ -4845,7 +5085,7 @@ class _AnnotatorView(QGraphicsView):
             uses = getattr(it, "_uses_endpoints", None)
             if uses and it._uses_endpoints() and it._endpoint_active():
                 local = it.mapFromScene(scene_pt)
-                for i in range(len(it._endpoints())):
+                for i in it._handle_indices():
                     if it._inflate_to_hit(it._endpoint_rect(i)).contains(local):
                         return it
         return None
@@ -4855,18 +5095,19 @@ class _AnnotatorView(QGraphicsView):
         return self._selected_endpoint_item(view_pos) is not None
 
     def _segment_add_at(self, view_pos):
-        """[우리 확장] 선택된 직선화살표의 '세그먼트 위'(정점 핸들 아님)에 커서가 있으면
-        (item, seg_idx, 씬 최근접점), 아니면 None. 정점 위는 이동(끝점 드래그)이 우선한다."""
+        """[M4-4] 선택된 직선화살표(ortho 라우팅)의 '세그먼트 위'(정점 핸들 아님)에 커서가 있으면
+        (item, seg_idx, 씬 최근접점), 아니면 None. 정점 위는 이동(끝점 드래그)이 우선한다.
+        press·drag 시 그 변을 수직 이동한다(straight 라우팅은 세그먼트 드래그 없음)."""
         if self._selected_endpoint_item(view_pos) is not None:
             return None   # 정점 핸들 위 = 이동 우선
         top = self.items(view_pos)
         if top and isinstance(top[0], _ConnectorLabel):
-            return None   # 라벨 위 press = 라벨 드래그 우선(waypoint 삽입 안 함)
+            return None   # 라벨 위 press = 라벨 드래그 우선
         scene_pt = self.mapToScene(view_pos)
         total = self._view_scale()
         best = None
         for it in self.scene().selectedItems():
-            if not isinstance(it, _PolyArrowItem):
+            if not isinstance(it, _PolyArrowItem) or not it._is_ortho():
                 continue
             local = it.mapFromScene(scene_pt)
             seg = it._nearest_segment(local)
@@ -5206,16 +5447,7 @@ class _AnnotatorView(QGraphicsView):
                     painter.drawLine(QPointF(g[1], g[2]), QPointF(g[1], g[3]))
                 else:
                     painter.drawLine(QPointF(g[2], g[1]), QPointF(g[3], g[1]))
-        # [우리 확장] 직선화살표 waypoint 추가 예고 — 세그먼트 위 hover 지점에 '+' 고스트 마커.
-        if self._seg_add is not None:
-            c = self._seg_add[2]
-            r = 5.0 / s
-            painter.setPen(QPen(QColor("white"), 1.0 / s))
-            painter.setBrush(QBrush(QColor(_BLUE)))
-            painter.drawEllipse(c, r, r)
-            painter.setPen(QPen(QColor("white"), 1.4 / s))
-            painter.drawLine(QPointF(c.x() - r * 0.6, c.y()), QPointF(c.x() + r * 0.6, c.y()))
-            painter.drawLine(QPointF(c.x(), c.y() - r * 0.6), QPointF(c.x(), c.y() + r * 0.6))
+        # [M4-4] 세그먼트 핸들은 아이템(_paint_segment_handles)이 직접 그린다 — 여기선 마커 없음.
         # [우리 확장] 다중선택 그룹 변형 오버레이 — 공통 bbox + 모서리(스케일)·상단(회전) 핸들.
         # stretch 진행 중엔 그리지 않는다(두 오버레이 겹침 방지 — 그때 조작은 stretch가 소유).
         if self._group.available() and not (self._stretch_arm or self._stretch_active):
@@ -5346,15 +5578,13 @@ class _AnnotatorView(QGraphicsView):
             super().mousePressEvent(event)
             grab.setZValue(old_z)
             return
-        # [우리 확장] 직선화살표 세그먼트 위 press(정점 아님) = 그 자리에 waypoint 삽입 후 바로 드래그.
-        if self._seg_add is not None:
-            item, seg_idx, scene_pt = self._seg_add
+        # [M4-4] 직선화살표 세그먼트 위 press(정점 아님) = 그 변을 잡아 수직 이동(세그먼트 드래그).
+        if self._seg_add is not None and event.button() == Qt.MouseButton.LeftButton:
+            item, seg_idx, _scene_pt = self._seg_add
             self._seg_add = None
-            item.insert_vertex(seg_idx, item.mapFromScene(scene_pt))
-            old_z = item.zValue()
-            item.setZValue(1e9)
-            super().mousePressEvent(event)   # 커서 아래 새 정점 핸들을 끝점 machinery가 잡음
-            item.setZValue(old_z)
+            self._seg_undo = [(item, item.capture_geom())]   # 드래그 전 스냅샷(undo)
+            item._begin_segment_drag(seg_idx)
+            self._seg_drag = item
             self.viewport().update()
             return
         # [우리 확장] 다중선택 그룹 변형 핸들(회전·스케일) press — 선택/이동보다 우선.
@@ -5715,11 +5945,13 @@ class _AnnotatorView(QGraphicsView):
                 it._set_endpoint(idx, it.mapFromScene(snap[0]))   # [M4-2b] 기하 스냅(선/화살표 끝점 포함)
                 if snap[2] is not None:
                     it.set_bound(idx, snap[2], snap[2].mapFromScene(snap[0]))   # 도형만 지속 바인딩
-        # [Stage1] 양끝이 모두 도형에 붙고 수동 waypoint가 없는(2정점) 직선화살은 자동 직교 엘보로 전환.
-        # 수동 폴리라인(정점 3개↑)은 사용자 경로이므로 건드리지 않는다.
-        if it._bind_start is not None and it._bind_end is not None and len(it._pts) == 2:
-            it._auto_route = True
-            it.build_elbow()
+        # [M4-4] 드래그로 그린(2정점) 직선화살은 라우팅 스타일대로 확정 — ortho(기본)면 직교 경로 생성
+        # (양끝 바인딩=A* 회피 자동라우팅, 자유=단순 엘보), straight면 2점 직선 유지. 멀티정점 클릭배치
+        # (3정점↑)는 사용자가 손으로 놓은 경로이므로 건드리지 않는다(수동 폴리라인 보존).
+        if len(it._pts) == 2 and it._is_ortho():
+            if it.has_binding():   # [⑦] 한쪽만 붙어도 자동라우팅 켜기 → 도형 이동 시 직교 유지
+                it._auto_route = True
+            it._apply_routing()
 
     def _editing_text_hover(self, view_pos) -> str | None:
         """편집 중인 텍스트 위 hover면 'text'(내부=캐럿) / 'move'(테두리 band=이동), 아니면 None.
@@ -5894,7 +6126,10 @@ class _AnnotatorView(QGraphicsView):
         elif self._over_selected_endpoint(view_pos):
             vp.setCursor(Qt.CursorShape.PointingHandCursor)  # 끝점 핸들(이동/재스냅) — 곡선 핸들과 동일
         elif self._seg_add is not None:
-            vp.setCursor(Qt.CursorShape.CrossCursor)         # 직선화살표 세그먼트 — waypoint 추가
+            # [M4-4] 세그먼트 hover — 변 방향에 수직인 이동 커서(수평 변=상하, 수직 변=좌우).
+            item, seg_idx = self._seg_add[0], self._seg_add[1]
+            horiz = item._segment_orientation(seg_idx)
+            vp.setCursor(Qt.CursorShape.SizeVerCursor if horiz else Qt.CursorShape.SizeHorCursor)
         elif self._rot_handle_at(view_pos):
             vp.setCursor(_rotate_cursor())                   # 회전 점 — 곡선 화살표 커서
         elif self._scale_handle_at(view_pos):
@@ -5933,6 +6168,10 @@ class _AnnotatorView(QGraphicsView):
             return
         if self._none_win_dragging:  # 손 모드 빈영역 좌드래그 = 창 이동
             self._owner._win_drag_move(event.globalPosition().toPoint())
+            return
+        if self._seg_drag is not None:  # [M4-4] 세그먼트 드래그 — 변을 커서 위치로 수직 이동
+            self._seg_drag._drag_segment_to(self.mapToScene(event.position().toPoint()))
+            self.viewport().update()
             return
         if self._rb_active:  # [우리 확장] 방향 감지 러버밴드 — 드래그 중 실시간 선택
             self._rb_current = event.position().toPoint()
@@ -6037,6 +6276,15 @@ class _AnnotatorView(QGraphicsView):
             self._owner._win_drag_end()
             self._none_win_dragging = False
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+            return
+        if self._seg_drag is not None:  # [M4-4] 세그먼트 드래그 종료 — 정점 정리 + undo 커밋
+            item = self._seg_drag
+            self._seg_drag = None
+            item._end_segment_drag()
+            if self._seg_undo:
+                self._owner.push_undo_geom(self._seg_undo)
+            self._seg_undo = None
+            self.viewport().update()
             return
         if self._rb_active:  # [우리 확장] 러버밴드 종료 — 최종 선택은 이미 반영됨, 밴드만 지움
             self._rb_current = event.position().toPoint()

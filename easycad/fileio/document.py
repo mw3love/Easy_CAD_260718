@@ -171,6 +171,7 @@ def item_to_dict(it) -> dict | None:
                  color=_col(it._color), width=it._width, head=it._head_at_end,
                  style=int(it._style.value),   # [M2 #3] 몸통 선스타일(점선 등)
                  auto_route=it._auto_route,   # [Stage1] 직교 자동 라우팅 상태
+                 routing=it._routing,         # [M4-4] 라우팅 스타일(#4)
                  route_hints=[[h.x(), h.y()] for h in it._route_hints])  # [경유지 힌트(2f)]
     elif isinstance(it, _LineItem):
         ln = it.line()
@@ -240,6 +241,8 @@ def dict_to_item(d: dict):
         it = _PolyArrowItem(QColor(d["color"]), d["width"], d.get("head", True))
         it._pts = [QPointF(*xy) for xy in d["pts"]]
         it._auto_route = d.get("auto_route", False)   # [Stage1] 직교 자동 라우팅 상태
+        # [M4-4] 라우팅 스타일 — 신규 필드. 옛 파일은 auto_route→ortho / 아니면 straight로 유추(무손실).
+        it._routing = d.get("routing", "ortho" if it._auto_route else "straight")
         it._route_hints = [QPointF(*xy) for xy in d.get("route_hints", [])]  # [경유지 힌트(2f)]
         _apply_arrow_style(it, d)   # [M2 #3] 하위호환: 없으면 solid 유지
     elif t == "line":
