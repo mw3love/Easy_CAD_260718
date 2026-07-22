@@ -155,27 +155,80 @@ def test_dock_areas_and_zoom_readout():
 
 
 def test_properties_dock_readout():
-    # [Phase 6 M1] 속성 dock 읽기전용 표시 — 선택 없음/단일/다중(혼합) 집계.
+    # [Phase 6 M2 #2] 속성 dock 편집 컨트롤 — 선택에 맞춰 값·활성 상태가 채워진다.
     from PyQt6.QtGui import QPen
     w = CanvasWindow()
     w._scene.clearSelection(); w._refresh_properties()
-    assert w._pf_type.text() == "—" and w._pf_width.text() == "—"
-    # 빨강 두께3 네모 단일 선택
+    assert w._pf_type.text() == "—"
+    # 선택 없으면 편집 컨트롤 비활성.
+    assert not w._pf_width.isEnabled() and not w._pf_style.isEnabled()
+    assert not w._pf_font.isEnabled()
+    # 빨강 두께3 네모 단일 선택 → 값 채워지고 도형 속성 활성, 폰트만 비활성.
     pen = QPen(QColor("#ff0000")); pen.setWidthF(3.0)
     r = _mk_rect(w._scene, pen, 0, 0, 100, 50)
     r.setSelected(True); w._refresh_properties()
     assert w._pf_type.text() == "네모"
-    assert "3.0 px" in w._pf_width.text()
-    assert "#ff0000" in w._pf_color.text()
-    assert w._pf_style.text() == "실선"
-    assert w._pf_font.text() == "—"          # 도형은 폰트 없음
-    # 색이 다른 네모 추가 선택 → 색 혼합, 두께는 동일 유지
+    assert abs(w._pf_width.value() - 3.0) < 1e-6
+    assert w._pf_color_val.text() == "#ff0000"
+    assert w._pf_style.currentData() == Qt.PenStyle.SolidLine
+    assert w._pf_width.isEnabled() and w._pf_style.isEnabled()
+    assert not w._pf_font.isEnabled()        # 도형은 폰트 없음
+    # 색이 다른 네모 추가 선택 → 색 '혼합' 표시, 두께는 동일 유지.
     pen2 = QPen(QColor("#00ff00")); pen2.setWidthF(3.0)
     r2 = _mk_rect(w._scene, pen2, 200, 0, 100, 50)
     r2.setSelected(True); w._refresh_properties()
-    assert w._pf_color.text() == "혼합"
-    assert "3.0 px" in w._pf_width.text()
+    assert w._pf_color_val.text() == "혼합"
+    assert abs(w._pf_width.value() - 3.0) < 1e-6
     assert w._pf_type.text() == "네모"        # 둘 다 네모 → 종류 유지
+
+
+def test_props_edit_width_color_font_undoable():
+    # [M2 #2] dock 편집이 push_undo_state 경로로 undo/redo 된다(색·두께·폰트).
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, width=2.0, color="#111111"); it.setSelected(True)
+    w._edit_width(7.0)
+    assert abs(it.pen().widthF() - 7.0) < 1e-6
+    w.undo(); assert abs(it.pen().widthF() - 2.0) < 1e-6
+    w.redo(); assert abs(it.pen().widthF() - 7.0) < 1e-6
+    w._edit_items([it], lambda x: x.apply_color(QColor("#00ff00")))
+    assert it.pen().color().name() == "#00ff00"
+    w.undo(); assert it.pen().color().name() == "#111111"
+    # 폰트(텍스트 아이템)
+    t = _TextItem(QColor("#111111")); t.setPlainText("hi"); t.apply_font_size(16)
+    w._scene.addItem(t); w._scene.clearSelection(); t.setSelected(True)
+    w._edit_font(28)
+    assert t.font().pointSize() == 28
+    w.undo(); assert t.font().pointSize() == 16
+
+
+def test_props_multiselect_width_single_undo():
+    # 다중선택 두께 편집 = 전체 적용 + undo 1스텝(각자 원값으로 복원).
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, width=2.0); b = _mk_pen_rect(w, x=200, width=3.0)
+    a.setSelected(True); b.setSelected(True)
+    d0 = len(w._undo)
+    w._edit_width(8.0)
+    assert len(w._undo) == d0 + 1
+    assert abs(a.pen().widthF() - 8.0) < 1e-6 and abs(b.pen().widthF() - 8.0) < 1e-6
+    w.undo()
+    assert abs(a.pen().widthF() - 2.0) < 1e-6 and abs(b.pen().widthF() - 3.0) < 1e-6
+
+
+def test_props_style_edit_and_ecad_roundtrip():
+    # [M2 #2] 선스타일 편집(pen 기반) → undo/redo + .ecad 왕복 보존.
+    from PyQt6.QtWidgets import QGraphicsScene
+    w = CanvasWindow()
+    it = _mk_pen_rect(w); it.setSelected(True)
+    di = w._pf_style.findData(Qt.PenStyle.DashLine)
+    w._pf_style.setCurrentIndex(di)          # currentIndexChanged → _edit_style
+    assert it.pen().style() == Qt.PenStyle.DashLine
+    w.undo(); assert it.pen().style() == Qt.PenStyle.SolidLine
+    w.redo(); assert it.pen().style() == Qt.PenStyle.DashLine
+    p = os.path.join(_TMP, "style_rt.ecad")
+    save_document(w._scene, p)
+    sc2 = QGraphicsScene(); load_document(sc2, p)
+    r2 = [x for x in sc2.items() if isinstance(x, _RectItem)][0]
+    assert r2.pen().style() == Qt.PenStyle.DashLine
 
 
 def test_shape_palette_arms_tool():

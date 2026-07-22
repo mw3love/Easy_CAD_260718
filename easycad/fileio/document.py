@@ -55,6 +55,9 @@ def _mkpen(d: dict) -> QPen:
     pen.setWidthF(float(d.get("width", 1.0)))
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    st = d.get("style")   # [M2 #2] 선스타일(실선/점선…) — 하위호환: 없으면 기본(실선) 유지
+    if st is not None:
+        pen.setStyle(Qt.PenStyle(int(st)))
     return pen
 
 
@@ -174,6 +177,11 @@ def item_to_dict(it) -> dict | None:
         d.update(type="badge", number=it._number, color=_col(it._color))
     else:
         return None
+    # [M2 #2] pen 기반 도형(심볼·네모·원·선·펜)의 선스타일 직렬화 — 이들만 "pen" 키를 갖는다.
+    # 화살표 dash·DXF linetype은 Phase 6 M3(#3)로 별도. 기본(실선)은 저장 생략해도 무방하나
+    # 명시 저장이 더 단순·안전하다(로드는 하위호환으로 없으면 실선).
+    if "pen" in d:
+        d["style"] = int(it.pen().style().value)
     # [우리 확장] 선·화살표·닫힌도형(네모·원·심볼)에 붙은 라벨 — 본체 dict 안에 함께 직렬화.
     if isinstance(it, (_ArrowItem, _LineItem, _PolyArrowItem,
                        _SymbolItem, _RectItem, _EllipseItem)) and it.has_label():

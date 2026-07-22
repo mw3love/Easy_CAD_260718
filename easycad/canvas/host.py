@@ -22,13 +22,15 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
     QBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QDockWidget, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QCheckBox, QPlainTextEdit, QSizePolicy,
+    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
+    QSizePolicy, QColorDialog, QHBoxLayout,
 )
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
     _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
+    _MIN_FONT, _MAX_FONT,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
@@ -224,13 +226,6 @@ _TYPE_NAMES = {
     "_BadgeItem": "번호", "_PathItem": "펜", "_SymbolItem": "심볼",
     "_ImageItem": "이미지", "_TableItem": "표", "_TitleBlockItem": "표제란",
 }
-_STYLE_NAMES = {
-    Qt.PenStyle.SolidLine: "실선", Qt.PenStyle.DashLine: "점선",
-    Qt.PenStyle.DotLine: "점선(도트)", Qt.PenStyle.DashDotLine: "일점쇄선",
-    Qt.PenStyle.DashDotDotLine: "이점쇄선",
-}
-
-
 class _UndoEntry:
     """[Phase 6 M2] 되돌리기/다시 실행의 원자 단위 — per-item 연산 리스트 하나.
     연산(op)은 딱 3종의 튜플:
@@ -983,33 +978,104 @@ class CanvasWindow(QMainWindow):
         else:
             self.resizeDocks([dock], [self._SHAPES_DOCK_W], Qt.Orientation.Horizontal)
 
-    # ---- 속성 dock (M1: 값 표시만 — 편집은 M2에서 Undo 개편과 함께) -----------
+    # ---- 속성 dock (M2 #2: 편집 — 색·두께·선스타일·폰트를 push_undo_state 경로로) ----
+    _PEN_STYLE_ITEMS = [
+        (Qt.PenStyle.SolidLine, "실선"), (Qt.PenStyle.DashLine, "점선"),
+        (Qt.PenStyle.DotLine, "점선(도트)"), (Qt.PenStyle.DashDotLine, "일점쇄선"),
+        (Qt.PenStyle.DashDotDotLine, "이점쇄선"),
+    ]
+
     def _build_properties_dock(self):
         dock = QDockWidget("⋮⋮  속성", self)
         dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self._props_dock = dock
+        self._pf_updating = False   # 프로그램적 값 세팅 중엔 편집 시그널 무시(피드백 차단)
         panel = QWidget()
-        panel.setMinimumWidth(170)   # 값(hex 등)이 안 잘리는 바닥폭 — 이 아래로는 못 좁힘(슬랙 없음)
+        panel.setMinimumWidth(170)   # 값·컨트롤이 안 잘리는 바닥폭 — 이 아래로는 못 좁힘(슬랙 없음)
         form = QFormLayout(panel)
         form.setContentsMargins(10, 10, 10, 10); form.setSpacing(8)
+
         self._pf_type = QLabel("—")
-        self._pf_color = QLabel("—"); self._pf_color.setTextFormat(Qt.TextFormat.RichText)
-        self._pf_width = QLabel("—")
-        self._pf_style = QLabel("—")
-        self._pf_font = QLabel("—")
+
+        # 색 — 스와치 버튼(현재색 표시) → 클릭 시 QColorDialog.
+        self._pf_color = QToolButton()
+        self._pf_color.setFixedSize(QSize(48, 20))
+        self._pf_color.setToolTip("클릭: 색 선택")
+        self._pf_color.clicked.connect(self._edit_color)
+        self._pf_color_val = QLabel("—"); self._pf_color_val.setStyleSheet("color:#888;")
+        color_row = QWidget(); ch = QHBoxLayout(color_row)
+        ch.setContentsMargins(0, 0, 0, 0); ch.setSpacing(6)
+        ch.addWidget(self._pf_color); ch.addWidget(self._pf_color_val, 1)
+
+        # 두께 — 스핀박스(px).
+        self._pf_width = QDoubleSpinBox()
+        self._pf_width.setRange(0.5, 50.0); self._pf_width.setSingleStep(0.5)
+        self._pf_width.setDecimals(1); self._pf_width.setSuffix(" px")
+        self._pf_width.valueChanged.connect(self._edit_width)
+
+        # 선스타일 — 콤보(pen 기반 도형 전용; 화살표·DXF는 #3).
+        self._pf_style = QComboBox()
+        for st, name in self._PEN_STYLE_ITEMS:
+            self._pf_style.addItem(name, st)
+        self._pf_style.currentIndexChanged.connect(self._edit_style)
+
+        # 폰트 — 스핀박스(pt; 텍스트/라벨 전용).
+        self._pf_font = QSpinBox()
+        self._pf_font.setRange(_MIN_FONT, _MAX_FONT); self._pf_font.setSuffix(" pt")
+        self._pf_font.valueChanged.connect(self._edit_font)
+
         form.addRow("종류", self._pf_type)
-        form.addRow("색", self._pf_color)
+        form.addRow("색", color_row)
         form.addRow("두께", self._pf_width)
         form.addRow("선", self._pf_style)
         form.addRow("폰트", self._pf_font)
-        hint = QLabel("값 표시(읽기전용) — 편집은 곧(M2)")
-        hint.setStyleSheet("color:#888; font-size:11px;")
-        hint.setWordWrap(True)   # 줄바꿈 허용 → 이 안내문이 속성 dock 최소폭을 붙잡지 않게
-        form.addRow(hint)
+        self._pf_hint = QLabel("객체를 선택하면 속성을 편집할 수 있습니다.")
+        self._pf_hint.setStyleSheet("color:#888; font-size:11px;")
+        self._pf_hint.setWordWrap(True)   # 줄바꿈 허용 → 안내문이 dock 최소폭을 붙잡지 않게
+        form.addRow(self._pf_hint)
         dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
         self._scene.selectionChanged.connect(self._refresh_properties)
         self._refresh_properties()
+
+    # ---- 속성 편집 → push_undo_state (M2 #2) --------------------------------
+    def _edit_items(self, targets, fn, key=None):
+        """선택 대상 targets에 fn을 적용하고 하나의 undo 엔트리(state)로 저널에 싣는다.
+        key가 있으면 연속 편집(스핀박스 드래그)을 undo 1스텝으로 병합."""
+        if self._pf_updating or not targets:
+            return
+        snaps = [(it, it.capture_state()) for it in targets]
+        for it in targets:
+            fn(it)
+        self.push_undo_state(snaps, coalesce_key=key)
+        self._refresh_properties()
+
+    def _edit_color(self):
+        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_color")]
+        if not sel:
+            return
+        init = self._read_props(sel[0])["color"] or QColor("#000000")
+        col = QColorDialog.getColor(init, self, "색 선택")
+        if not col.isValid():
+            return
+        self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
+
+    def _edit_width(self, val):
+        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_width")]
+        self._edit_items(sel, lambda it: it.apply_width(float(val)),
+                         key=("width", tuple(sorted(id(it) for it in sel))))
+
+    def _edit_style(self, _idx):
+        style = self._pf_style.currentData()
+        sel = [it for it in self._scene.selectedItems() if hasattr(it, "pen")]
+        def apply(it):
+            p = it.pen(); p.setStyle(style); it.setPen(p)
+        self._edit_items(sel, apply)
+
+    def _edit_font(self, val):
+        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_font_size")]
+        self._edit_items(sel, lambda it: it.apply_font_size(int(val)),
+                         key=("font", tuple(sorted(id(it) for it in sel))))
 
     @staticmethod
     def _read_props(item) -> dict:
@@ -1040,40 +1106,61 @@ class CanvasWindow(QMainWindow):
             "width": width, "style": style, "font": font,
         }
 
-    @staticmethod
-    def _agg_num(vals, fmt) -> str:
-        """다중선택 수치 집계 — 모두 있고 같으면 값, 섞이면 '혼합', 없으면 '—'."""
-        present = [v for v in vals if v is not None]
-        if not present:
-            return "—"
-        if len(present) == len(vals) and (max(present) - min(present) < 0.05):
-            return fmt.format(present[0])
-        return "혼합"
+    def _swatch_css(self, color: QColor | None) -> str:
+        """스와치 버튼 배경 — 단색이면 그 색, 혼합/없음이면 체크무늬 느낌의 중립 표시."""
+        if color is None:
+            return "background:transparent; border:1px solid #888; border-radius:3px;"
+        return (f"background:{color.name()}; border:1px solid #888; border-radius:3px;")
 
     def _refresh_properties(self):
-        sel = self._scene.selectedItems()
-        if not sel:
-            for lb in (self._pf_type, self._pf_color, self._pf_width,
-                       self._pf_style, self._pf_font):
-                lb.setText("—")
-            return
-        props = [self._read_props(it) for it in sel]
-        types = {p["type"] for p in props}
-        self._pf_type.setText(next(iter(types)) if len(types) == 1
-                              else f"{len(sel)}개 · 혼합")
-        cols = [p["color"] for p in props if p["color"] is not None]
-        if cols and len(cols) == len(props) and len({c.name() for c in cols}) == 1:
-            n = cols[0].name()
-            self._pf_color.setText(f'<span style="color:{n}; font-size:15px">■</span> {n}')
-        else:
-            self._pf_color.setText("혼합" if cols else "—")
-        self._pf_width.setText(self._agg_num([p["width"] for p in props], "{:.1f} px"))
-        styles = [p["style"] for p in props if p["style"] is not None]
-        if styles and len(styles) == len(props) and len(set(styles)) == 1:
-            self._pf_style.setText(_STYLE_NAMES.get(styles[0], "실선"))
-        else:
-            self._pf_style.setText("혼합" if styles else "—")
-        self._pf_font.setText(self._agg_num([p["font"] for p in props], "{:.0f} pt"))
+        """선택에 맞춰 편집 컨트롤 값·활성 상태를 채운다. _pf_updating로 편집 시그널을 막아
+        프로그램적 세팅이 다시 편집 핸들러를 트리거하지 않게 한다(피드백 차단)."""
+        self._pf_updating = True
+        try:
+            sel = self._scene.selectedItems()
+            has = bool(sel)
+            for w in (self._pf_color, self._pf_width, self._pf_style, self._pf_font):
+                w.setEnabled(has)
+            if not has:
+                self._pf_type.setText("—")
+                self._pf_color_val.setText("—")
+                self._pf_color.setStyleSheet(self._swatch_css(None))
+                self._pf_hint.setText("객체를 선택하면 속성을 편집할 수 있습니다.")
+                return
+            props = [self._read_props(it) for it in sel]
+            types = {p["type"] for p in props}
+            self._pf_type.setText(next(iter(types)) if len(types) == 1
+                                  else f"{len(sel)}개 · 혼합")
+            self._pf_hint.setText("")
+
+            # 색 — 스와치 + hex(혼합이면 표시만).
+            cols = [p["color"] for p in props if p["color"] is not None]
+            uniform = cols and len(cols) == len(props) and len({c.name() for c in cols}) == 1
+            self._pf_color.setEnabled(bool(cols))
+            self._pf_color.setStyleSheet(self._swatch_css(cols[0] if uniform else None))
+            self._pf_color_val.setText(cols[0].name() if uniform
+                                       else ("혼합" if cols else "—"))
+
+            # 두께 — 균일하면 값, 아니면 대상 있음만 활성(값은 첫 대상).
+            widths = [p["width"] for p in props if p["width"] is not None]
+            self._pf_width.setEnabled(bool(widths))
+            if widths:
+                self._pf_width.setValue(widths[0])
+
+            # 선스타일 — pen 기반만. 대상 없으면 비활성.
+            styles = [p["style"] for p in props if p["style"] is not None]
+            self._pf_style.setEnabled(bool(styles))
+            if styles:
+                i = self._pf_style.findData(styles[0])
+                self._pf_style.setCurrentIndex(i if i >= 0 else 0)
+
+            # 폰트 — 텍스트/라벨만.
+            fonts = [p["font"] for p in props if p["font"] is not None]
+            self._pf_font.setEnabled(bool(fonts))
+            if fonts:
+                self._pf_font.setValue(int(round(fonts[0])))
+        finally:
+            self._pf_updating = False
 
     # ---- 지속 연결 리라우트 -------------------------------------------------
     def _on_scene_changed(self, region):
