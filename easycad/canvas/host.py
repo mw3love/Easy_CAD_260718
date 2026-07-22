@@ -16,17 +16,18 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
 from PyQt6.QtCore import Qt, QPointF, QRectF, QSize
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
+    QFont, QPolygonF, QPainterPath,
 )
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QHBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
+    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QDockWidget, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QCheckBox, QPlainTextEdit,
+    QDialogButtonBox, QSpinBox, QCheckBox, QPlainTextEdit, QSizePolicy,
 )
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem,
+    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
 )
@@ -66,6 +67,112 @@ def _border_attach(rect_scene: QRectF, toward: QPointF) -> QPointF:
 # 무한 캔버스: 아주 큰 sceneRect로 사실상 무한한 팬 범위 제공.
 _SCENE_HALF = 50000.0
 
+# [Phase 6 M1] 파일·보기 액션 아이콘 색(단색). 다크모드 도입 시 팔레트 기반으로 승격 예정.
+_ICON_COLOR = QColor("#39434f")
+
+
+def _act_icon(name: str) -> QIcon:
+    """[Phase 6 M1] 파일/삽입/보기 액션 아이콘 — QPainter 단색 라인 글리프.
+    좌표는 icon_proposal 아티팩트(24-단위 뷰박스)에서 그대로 포팅. 그리기 도구 아이콘은
+    코어 `_tool_icon`이 담당하고, 여기선 앱 레벨 액션(문서 없는 상단바 버튼)만 그린다."""
+    pm = QPixmap(24, 24)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    col = _ICON_COLOR
+    p.setPen(QPen(col, 1.7, Qt.PenStyle.SolidLine,
+                  Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+
+    def line(x1, y1, x2, y2):
+        p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+
+    def poly(pts, close=True):
+        pg = QPolygonF([QPointF(x, y) for x, y in pts])
+        p.drawPolygon(pg) if close else p.drawPolyline(pg)
+
+    if name == "new":
+        poly([(6.5, 3.5), (13, 3.5), (17.5, 8), (17.5, 20.5), (6.5, 20.5)])
+        poly([(13, 3.5), (13, 8), (17.5, 8)], close=False)
+        line(12, 12, 12, 17); line(9.5, 14.5, 14.5, 14.5)
+    elif name == "open":
+        poly([(3.5, 6.5), (9, 6.5), (11, 8.5), (20.5, 8.5), (20.5, 18), (3.5, 18)])
+    elif name == "save":
+        poly([(4.5, 4.5), (16.5, 4.5), (19.5, 7.5), (19.5, 19.5), (4.5, 19.5)])
+        poly([(7.5, 4.5), (7.5, 9), (15, 9), (15, 4.5)], close=False)
+        p.drawRect(QRectF(8, 13, 8, 6.5))
+    elif name == "pdf":
+        poly([(6, 3.5), (13.5, 3.5), (17.5, 7.5), (17.5, 20.5), (6, 20.5)])
+        poly([(13.5, 3.5), (13.5, 7.5), (17.5, 7.5)], close=False)
+        p.save()
+        p.setPen(QPen(col, 1.3, Qt.PenStyle.SolidLine,
+                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        line(8.5, 15.5, 8.5, 11.5); line(8.5, 11.5, 10.7, 11.5)   # 'P' 힌트
+        line(13, 15.5, 13, 11.5); line(15, 11.5, 15, 15.5)        # 'D' 힌트
+        p.restore()
+    elif name == "dxf_out":
+        poly([(6.5, 8), (6.5, 4.5), (15, 4.5), (18, 7.5), (18, 20.5),
+              (6.5, 20.5), (6.5, 16)], close=False)   # 왼쪽 변에 화살표 통과 gap
+        line(3, 12, 11.5, 12)
+        poly([(8.5, 9.5), (11.5, 12), (8.5, 14.5)], close=False)   # → 촉
+    elif name == "dxf_in":
+        poly([(17.5, 8), (17.5, 4.5), (9, 4.5), (6, 7.5), (6, 20.5),
+              (17.5, 20.5), (17.5, 16)], close=False)
+        line(21, 12, 12.5, 12)
+        poly([(15.5, 9.5), (12.5, 12), (15.5, 14.5)], close=False)  # ← 촉
+    elif name == "image":
+        p.drawRoundedRect(QRectF(4, 5, 16, 14), 2, 2)
+        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
+        p.drawEllipse(QPointF(9, 10), 1.7, 1.7); p.restore()
+        poly([(4, 16.5), (9.5, 12), (13, 15), (16, 12.5), (20, 16.5)], close=False)
+    elif name == "table":
+        p.drawRoundedRect(QRectF(4, 5, 16, 14), 1.5, 1.5)
+        line(4, 10, 20, 10); line(4, 14.5, 20, 14.5); line(11, 5, 11, 19)
+    elif name == "titleblock":
+        p.drawRoundedRect(QRectF(3.5, 5, 17, 14), 1, 1)
+        line(12, 14.5, 20, 14.5); line(16, 14.5, 16, 19)
+    elif name == "mermaid":
+        p.drawRoundedRect(QRectF(3.5, 4, 7.5, 5), 1.5, 1.5)
+        p.drawRoundedRect(QRectF(13, 15, 7.5, 5), 1.5, 1.5)
+        path = QPainterPath(QPointF(11, 6.5))
+        path.lineTo(15, 6.5); path.quadTo(17, 6.5, 17, 8.5); path.lineTo(17, 15)
+        p.drawPath(path)
+    elif name == "zoom_fit":
+        poly([(4, 8), (4, 4), (8, 4)], close=False)
+        poly([(16, 4), (20, 4), (20, 8)], close=False)
+        poly([(20, 16), (20, 20), (16, 20)], close=False)
+        poly([(8, 20), (4, 20), (4, 16)], close=False)
+    elif name == "zoom_100":
+        p.drawEllipse(QPointF(10.5, 10.5), 5, 5)
+        line(14.2, 14.2, 19.5, 19.5)
+    elif name == "snap":
+        path = QPainterPath(QPointF(6.5, 4.5))
+        path.lineTo(6.5, 11.5)
+        path.arcTo(QRectF(6.5, 6, 11, 11), 180, -180)
+        path.lineTo(17.5, 4.5)
+        p.drawPath(path)
+        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
+        p.drawRect(QRectF(5, 4, 3.3, 3.2)); p.drawRect(QRectF(15.7, 4, 3.3, 3.2))
+        p.restore()
+    elif name == "ortho":
+        poly([(6, 4), (6, 19), (20, 19)], close=False)
+        poly([(6, 15.5), (9.5, 15.5), (9.5, 19)], close=False)
+    elif name == "undo":
+        poly([(8, 7), (4.3, 10.5), (8, 14)], close=False)
+        path = QPainterPath(QPointF(4.3, 10.5))
+        path.lineTo(14, 10.5)
+        path.arcTo(QRectF(8.8, 10.5, 10.4, 10.4), 90, -180)
+        path.lineTo(9.5, 20.9)
+        p.drawPath(path)
+    elif name == "help":
+        p.drawEllipse(QPointF(12, 12), 8.3, 8.3)
+        f = QFont(); f.setBold(True); f.setPointSizeF(11)
+        p.save(); p.setFont(f); p.setPen(col)
+        p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "?")
+        p.restore()
+    p.end()
+    return QIcon(pm)
+
 
 class CanvasWindow(QMainWindow):
     def __init__(self):
@@ -102,103 +209,88 @@ class CanvasWindow(QMainWindow):
         self._view.centerOn(0, 0)
         self.setAcceptDrops(True)   # [Phase 4] 이미지 파일 드래그앤드롭 삽입
 
-        central = QWidget()
-        lay = QVBoxLayout(central)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        lay.addWidget(self._build_toolbar())
-        lay.addWidget(self._view, 1)
-        self.setCentralWidget(central)
+        # [Phase 6 M1] 메뉴(=액션)를 먼저 만들고 → 상단 QToolBar가 그 액션을 재사용(setDefaultAction).
+        # 뷰는 중앙 위젯 자체로(별도 QWidget 래퍼 불필요 — 툴바가 QToolBar 영역으로 이동).
         self._build_menu()
+        self.setCentralWidget(self._view)
+        self._build_toolbar()
         self._build_shapes_dock()
         self.set_tool("select")
 
     # ---- 메뉴 (파일 → 저장/열기/PDF) ----------------------------------------
+    def _make_action(self, text, icon, slot, shortcut=None, checkable=False):
+        """[Phase 6 M1] 메뉴·상단 툴바가 공유할 QAction 하나를 만든다(아이콘 포함).
+        상단 QToolBar는 이 액션을 setDefaultAction으로 재사용 → 상태(체크 등) 자동 동기화."""
+        a = QAction(text, self)
+        if icon:
+            a.setIcon(_act_icon(icon))
+        if shortcut:
+            a.setShortcut(QKeySequence(shortcut))
+        if checkable:
+            a.setCheckable(True)
+        a.triggered.connect(slot)
+        return a
+
     def _build_menu(self):
         self._doc_path = None
         m = self.menuBar().addMenu("파일(&F)")
 
-        a_new = QAction("새로 만들기", self)
-        a_new.setShortcut(QKeySequence.StandardKey.New)
-        a_new.triggered.connect(self._new_doc)
-        m.addAction(a_new)
-
-        a_open = QAction("열기…", self)
-        a_open.setShortcut(QKeySequence.StandardKey.Open)
-        a_open.triggered.connect(self._open_doc)
-        m.addAction(a_open)
-
-        a_save = QAction("저장…", self)
-        a_save.setShortcut(QKeySequence.StandardKey.Save)
-        a_save.triggered.connect(self._save_doc)
-        m.addAction(a_save)
-
+        self._act_new = self._make_action("새로 만들기", "new", self._new_doc,
+                                          QKeySequence.StandardKey.New)
+        self._act_open = self._make_action("열기…", "open", self._open_doc,
+                                           QKeySequence.StandardKey.Open)
+        self._act_save = self._make_action("저장…", "save", self._save_doc,
+                                           QKeySequence.StandardKey.Save)
+        for a in (self._act_new, self._act_open, self._act_save):
+            m.addAction(a)
         m.addSeparator()
 
-        a_full = QAction("PDF 내보내기 — 전체…", self)
-        a_full.setShortcut(QKeySequence("Ctrl+P"))
-        a_full.triggered.connect(lambda: self._export_pdf(selection_only=False))
-        m.addAction(a_full)
-        a_sel = QAction("PDF 내보내기 — 선택영역…", self)
-        a_sel.setShortcut(QKeySequence("Ctrl+Shift+P"))
-        a_sel.triggered.connect(lambda: self._export_pdf(selection_only=True))
-        m.addAction(a_sel)
-
-        a_dxf = QAction("DXF 내보내기…", self)      # Phase 3 — CAD 상호운용
-        a_dxf.setShortcut(QKeySequence("Ctrl+Shift+D"))
-        a_dxf.triggered.connect(self._export_dxf)
-        m.addAction(a_dxf)
-
-        a_dxf_in = QAction("DXF 가져오기…", self)    # Phase 3 후반 — 역방향
-        a_dxf_in.setShortcut(QKeySequence("Ctrl+Shift+I"))
-        a_dxf_in.triggered.connect(self._import_dxf)
-        m.addAction(a_dxf_in)
-
+        self._act_pdf = self._make_action("PDF 내보내기 — 전체…", "pdf",
+            lambda: self._export_pdf(selection_only=False), "Ctrl+P")
+        self._act_pdf_sel = self._make_action("PDF 내보내기 — 선택영역…", "pdf",
+            lambda: self._export_pdf(selection_only=True), "Ctrl+Shift+P")
+        self._act_dxf = self._make_action("DXF 내보내기…", "dxf_out",
+            self._export_dxf, "Ctrl+Shift+D")
+        self._act_dxf_in = self._make_action("DXF 가져오기…", "dxf_in",
+            self._import_dxf, "Ctrl+Shift+I")
+        for a in (self._act_pdf, self._act_pdf_sel, self._act_dxf, self._act_dxf_in):
+            m.addAction(a)
         m.addSeparator()
 
-        a_img = QAction("이미지 삽입…", self)          # Phase 4 — PNG/JPG 삽입
-        a_img.setShortcut(QKeySequence("Ctrl+Shift+M"))
-        a_img.triggered.connect(self._insert_image)
-        m.addAction(a_img)
+        self._act_img = self._make_action("이미지 삽입…", "image",
+            self._insert_image, "Ctrl+Shift+M")
+        self._act_tb = self._make_action("표제란 / 용지틀 삽입…", "titleblock",
+            self._insert_titleblock, "Ctrl+Shift+T")
+        self._act_tbl = self._make_action("표 삽입…", "table",
+            self._insert_table, "Ctrl+Shift+B")
+        self._act_mmd = self._make_action("Mermaid 가져오기…", "mermaid",
+            self._insert_mermaid, "Ctrl+Shift+G")
+        for a in (self._act_img, self._act_tb, self._act_tbl, self._act_mmd):
+            m.addAction(a)
 
-        a_tb = QAction("표제란 / 용지틀 삽입…", self)     # Phase 4 — title block / paper frame
-        a_tb.setShortcut(QKeySequence("Ctrl+Shift+T"))
-        a_tb.triggered.connect(self._insert_titleblock)
-        m.addAction(a_tb)
-
-        a_tbl = QAction("표 삽입…", self)                  # Phase 4 — NxM 균등 격자 표
-        a_tbl.setShortcut(QKeySequence("Ctrl+Shift+B"))
-        a_tbl.triggered.connect(self._insert_table)
-        m.addAction(a_tbl)
-
-        a_mmd = QAction("Mermaid 가져오기…", self)          # Phase 4 — 순서도 코드 → 도형
-        a_mmd.setShortcut(QKeySequence("Ctrl+Shift+G"))
-        a_mmd.triggered.connect(self._insert_mermaid)
-        m.addAction(a_mmd)
+        # 편집(상단 툴바 전용 — 메뉴엔 없던 undo를 액션으로. Ctrl+Z 키는 뷰가 처리하므로 단축키 미지정).
+        self._act_undo = self._make_action("되돌리기", "undo", self.undo)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
-        a_100 = QAction("100% (1:1)", self)
-        a_100.setShortcut(QKeySequence("Ctrl+0"))
-        a_100.triggered.connect(self._zoom_reset)
-        v.addAction(a_100)
-        a_fit = QAction("전체 맞춤", self)
-        a_fit.setShortcut(QKeySequence("Ctrl+9"))
-        a_fit.triggered.connect(self._zoom_fit)
-        v.addAction(a_fit)
+        self._act_zoom100 = self._make_action("100% (1:1)", "zoom_100",
+            self._zoom_reset, "Ctrl+0")
+        self._act_fit = self._make_action("전체 맞춤", "zoom_fit",
+            self._zoom_fit, "Ctrl+9")
+        v.addAction(self._act_zoom100)
+        v.addAction(self._act_fit)
         v.addSeparator()
-        self._act_snap = QAction("스냅 (o-snap)", self)
-        self._act_snap.setCheckable(True)
+        self._act_snap = self._make_action("스냅 (o-snap)", "snap",
+            self._toggle_snap, "F3", checkable=True)
         self._act_snap.setChecked(True)
-        self._act_snap.setShortcut(QKeySequence("F3"))
-        self._act_snap.triggered.connect(self._toggle_snap)
+        self._act_ortho = self._make_action("직교 제약 (Ortho)", "ortho",
+            self._toggle_ortho, "F8", checkable=True)
         v.addAction(self._act_snap)
-        self._act_ortho = QAction("직교 제약 (Ortho)", self)
-        self._act_ortho.setCheckable(True)
-        self._act_ortho.setChecked(False)
-        self._act_ortho.setShortcut(QKeySequence("F8"))
-        self._act_ortho.triggered.connect(self._toggle_ortho)
         v.addAction(self._act_ortho)
+        v.addSeparator()
+        self._act_help = self._make_action("단축키 도움말…", "help",
+            self._show_shortcuts, "F1")
+        v.addAction(self._act_help)
 
     # ---- 보기: 기준 zoom / 스냅 -------------------------------------------
     def _zoom_reset(self):
@@ -546,31 +638,75 @@ class CanvasWindow(QMainWindow):
             arr.ensure_label().setPlainText(edge.label)
         return arr
 
-    # ---- 툴바 (최소) --------------------------------------------------------
-    def _build_toolbar(self) -> QWidget:
-        bar = QWidget()
-        h = QHBoxLayout(bar)
-        h.setContentsMargins(6, 4, 6, 4)
-        h.setSpacing(4)
+    # ---- 상단 툴바 (QToolBar) -----------------------------------------------
+    # [Phase 6 M1] 텍스트 버튼 → 아이콘, 파일·보기 액션을 상단으로 이관, 긴 단축키 라벨은
+    # `?` 도움말로 분리. QToolBar를 쓰는 이유: 창을 좁히면 넘치는 버튼이 ≫ 오버플로우로
+    # 접혀 창 최소폭이 작아진다(사용자 요청 "축소 유연성"). 그리기 도구는 체크형 커스텀
+    # 버튼(set_tool 토글 동기화 유지 → `_tool_buttons`), 나머지는 공유 QAction.
+    def _build_toolbar(self):
+        tb = self.addToolBar("주 도구모음")
+        tb.setMovable(False)
+        tb.setIconSize(QSize(20, 20))
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+
+        # 파일 / 삽입
+        for a in (self._act_new, self._act_open, self._act_save):
+            tb.addAction(a)
+        tb.addSeparator()
+        for a in (self._act_pdf, self._act_dxf, self._act_dxf_in, self._act_img,
+                  self._act_tbl, self._act_tb, self._act_mmd):
+            tb.addAction(a)
+        tb.addSeparator()
+
+        # 그리기 도구(체크형) — 네모·원은 왼쪽 「도형」 팔레트로 이관(단축키 2·5는 유지).
         self._tool_buttons: dict[str, QToolButton] = {}
         for key, name, sc in _TOOLS:
-            # 네모·원(닫힌 도형)은 왼쪽 「도형」 팔레트로 이동 — 상단은 그리기 도구만(정리).
-            # 단축키(2·5)는 팔레트 버튼과 무관하게 계속 동작.
             if key in ("rect", "ellipse"):
                 continue
             btn = QToolButton()
-            btn.setText(f"{name}")
+            btn.setIcon(_tool_icon(key, self.current_color))
+            btn.setIconSize(QSize(20, 20))
             btn.setToolTip(f"{name} ({sc})")
             btn.setCheckable(True)
-            btn.setMinimumSize(QSize(48, 28))
             btn.clicked.connect(
                 lambda _c=False, k=key: self.set_tool(None if self.current_tool == k else k))
-            h.addWidget(btn)
+            tb.addWidget(btn)
             self._tool_buttons[key] = btn
-        h.addStretch(1)
-        h.addWidget(QLabel("휠=줌 · Shift+휠=두께/크기 · 가운데버튼 드래그=이동 · "
-                           "Ctrl+0=100% · Ctrl+9=전체맞춤 · F3=스냅 · F8=직교 · Del=삭제 · Ctrl+Z=되돌리기"))
-        return bar
+        tb.addSeparator()
+
+        # 편집 / 보기
+        for a in (self._act_undo, self._act_zoom100, self._act_fit,
+                  self._act_snap, self._act_ortho):
+            tb.addAction(a)
+
+        # 우측 정렬 스페이서 → 도움말.
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
+        tb.addAction(self._act_help)
+        self._toolbar = tb
+
+    def _show_shortcuts(self):
+        """[Phase 6 M1] 상단바에서 뺀 단축키 안내를 도움말 다이얼로그로."""
+        rows = [
+            ("휠", "확대·축소 (커서 기준)"),
+            ("Shift + 휠", "선 두께·도형 크기 조절"),
+            ("가운데버튼 드래그", "화면 이동(팬)"),
+            ("Ctrl+0 / Ctrl+9", "100%(1:1) / 전체 맞춤"),
+            ("F3 / F8", "스냅 / 직교 제약 토글"),
+            ("Del", "선택 객체 삭제"),
+            ("Ctrl+Z", "되돌리기"),
+            ("Ctrl+C / Ctrl+V", "복사 / 연속 붙여넣기"),
+            ("1·3·4·6·7·8·9", "선택·화살표·텍스트·선·펜·번호·직선화살"),
+            ("2 / 5", "네모 / 원"),
+        ]
+        body = "\n".join(f"{k:<20}{d}" for k, d in rows)
+        box = QMessageBox(self)
+        box.setWindowTitle("단축키 도움말")
+        box.setText("Easy CAD 단축키")
+        box.setInformativeText(body)
+        box.setIcon(QMessageBox.Icon.NoIcon)
+        box.exec()
 
     # ---- 도형 팔레트 (좌측 dock) — 기본(네모·원) + 순서도(심볼 6종) -----------
     @staticmethod

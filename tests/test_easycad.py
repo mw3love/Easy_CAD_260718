@@ -55,6 +55,35 @@ def test_host_construction():
     assert w._view.transform().m11() > m0
 
 
+def test_toolbar_icons_and_actions():
+    # [Phase 6 M1] 상단바 = QToolBar. 그리기 도구는 아이콘, 파일·보기 액션이 상단으로 이관되고
+    # 아이콘을 가진다. 단축키 안내 라벨은 도움말 액션으로 분리.
+    from easycad.canvas.host import _act_icon
+    w = CanvasWindow()
+    # 그리기 도구 7종 모두 아이콘 보유(텍스트 버튼 아님).
+    assert len(w._tool_buttons) == 7
+    for b in w._tool_buttons.values():
+        assert not b.icon().isNull()
+    # 파일/삽입/보기 액션이 아이콘을 가진다.
+    for a in (w._act_new, w._act_open, w._act_save, w._act_pdf, w._act_dxf,
+              w._act_dxf_in, w._act_img, w._act_tb, w._act_tbl, w._act_mmd,
+              w._act_undo, w._act_zoom100, w._act_fit, w._act_snap,
+              w._act_ortho, w._act_help):
+        assert not a.icon().isNull()
+    # 모든 액션 아이콘 이름이 렌더 가능(빈 아이콘 없음).
+    for nm in ("new", "open", "save", "pdf", "dxf_out", "dxf_in", "image",
+               "table", "titleblock", "mermaid", "zoom_fit", "zoom_100",
+               "snap", "ortho", "undo", "help"):
+        assert not _act_icon(nm).isNull()
+    # 상단 QToolBar가 실제로 존재하고 액션이 실려 있다.
+    assert w._toolbar.actions()
+    # 스냅/직교는 체크형, 스냅 기본 켜짐. 트리거 시 상태 반전이 owner에 반영.
+    assert w._act_snap.isCheckable() and w._act_snap.isChecked()
+    assert w.snap_enabled is True
+    w._act_snap.trigger()
+    assert w._act_snap.isChecked() is False and w.snap_enabled is False
+
+
 def test_shape_palette_arms_tool():
     # 팔레트 네모 버튼 클릭 → rect 도구 무장 + 버튼 체크 동기화. 단축키 경로도 유지.
     w = CanvasWindow()
