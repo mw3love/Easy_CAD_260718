@@ -144,6 +144,8 @@ def test_dock_areas_and_zoom_readout():
     # 버튼 고정 크기 — dock이 넓어도 커지거나 벌어지지 않는다(좌측 뭉침).
     b = w._shape_tool_buttons["rect"]
     assert b.minimumWidth() == b.maximumWidth() == 64
+    # 속성 dock은 값(hex)이 안 잘리는 최소폭 바닥을 가진다(슬랙 없이 그 아래로 못 좁힘).
+    assert w._props_dock.widget().minimumWidth() == 170
     # 줌 % 리드아웃.
     assert w._zoom_btn.text() == "100 %"
     w._on_wheel_zoom(120)

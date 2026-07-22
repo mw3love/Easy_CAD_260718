@@ -221,9 +221,10 @@ _STYLE_NAMES = {
 
 
 class CanvasWindow(QMainWindow):
-    _SHAPES_DOCK_W = 156    # 세로 dock 콤팩트 폭(버튼 2열 + 여백)
-    _SHAPES_DOCK_H = 140    # 가로 dock 콤팩트 높이(제목 + 라벨 + 버튼 1줄)
-    _PROPS_DOCK_W = 200     # 속성 dock 콤팩트 폭
+    # 콤팩트 목표는 콘텐츠 최소보다 작게 → Qt가 '진짜 최소'로 클램프(수동으로 더 못 줄이게).
+    _SHAPES_DOCK_W = 80     # 세로 dock → 버튼 2열 최소(≈144px)로 클램프
+    _SHAPES_DOCK_H = 80     # 가로 dock → 제목+라벨+버튼 1줄 최소로 클램프
+    _PROPS_DOCK_W = 120     # 속성 dock → 폼 최소로 클램프(안내문 줄바꿈 후 좁아짐)
 
     def __init__(self):
         super().__init__()
@@ -951,6 +952,7 @@ class CanvasWindow(QMainWindow):
         dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self._props_dock = dock
         panel = QWidget()
+        panel.setMinimumWidth(170)   # 값(hex 등)이 안 잘리는 바닥폭 — 이 아래로는 못 좁힘(슬랙 없음)
         form = QFormLayout(panel)
         form.setContentsMargins(10, 10, 10, 10); form.setSpacing(8)
         self._pf_type = QLabel("—")
@@ -965,6 +967,7 @@ class CanvasWindow(QMainWindow):
         form.addRow("폰트", self._pf_font)
         hint = QLabel("값 표시(읽기전용) — 편집은 곧(M2)")
         hint.setStyleSheet("color:#888; font-size:11px;")
+        hint.setWordWrap(True)   # 줄바꿈 허용 → 이 안내문이 속성 dock 최소폭을 붙잡지 않게
         form.addRow(hint)
         dock.setWidget(panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
