@@ -3943,6 +3943,54 @@ def _shape_ports(item):
     return [_nearest_border(item, item.mapToScene(cl)) for cl in cardinals]
 
 
+# ---- [Phase 6 M4-2b] 선·화살표를 스냅 대상으로 — 끝점끼리 + 끝점→몸통 -----------
+def _conn_polyline_scene(it):
+    """선/화살표 몸통을 잇는 씬 좌표 점열(스냅 근사용). 곡선 화살표는 샘플링."""
+    if isinstance(it, _LineItem):
+        ln = it.line()
+        return [it.mapToScene(ln.p1()), it.mapToScene(ln.p2())]
+    if isinstance(it, _PolyArrowItem):
+        return [it.mapToScene(p) for p in it._pts]
+    if isinstance(it, _ArrowItem):
+        return [it.mapToScene(it._point_at(i / 16.0)) for i in range(17)]
+    return []
+
+
+def _conn_endpoint_dirs(it):
+    """[(끝점_씬, 바깥 접선 단위), ...] — 끝점과 그 선을 잇는 바깥 방향(스냅 우선 대상)."""
+    pl = _conn_polyline_scene(it)
+    if len(pl) < 2:
+        return []
+
+    def unit(a, b):
+        dx, dy = a.x() - b.x(), a.y() - b.y()
+        L = math.hypot(dx, dy) or 1.0
+        return QPointF(dx / L, dy / L)
+    return [(pl[0], unit(pl[0], pl[1])), (pl[-1], unit(pl[-1], pl[-2]))]
+
+
+def _nearest_on_polyline(pl, scene_pt):
+    """점열 pl의 세그먼트 중 scene_pt 최근접점 → (점, 커서쪽 수직단위) 또는 (None, _)."""
+    best, bestd, bestn = None, None, QPointF(0.0, -1.0)
+    for a, b in zip(pl[:-1], pl[1:]):
+        dx, dy = b.x() - a.x(), b.y() - a.y()
+        L2 = dx * dx + dy * dy
+        if L2 < 1e-12:
+            q, nx, ny = a, 0.0, -1.0
+        else:
+            t = max(0.0, min(1.0, ((scene_pt.x() - a.x()) * dx + (scene_pt.y() - a.y()) * dy) / L2))
+            q = QPointF(a.x() + dx * t, a.y() + dy * t)
+            L = math.sqrt(L2)
+            nx, ny = -dy / L, dx / L
+        d = (scene_pt.x() - q.x()) ** 2 + (scene_pt.y() - q.y()) ** 2
+        if bestd is None or d < bestd:
+            vx, vy = scene_pt.x() - q.x(), scene_pt.y() - q.y()
+            if nx * vx + ny * vy < 0:   # 법선을 커서 쪽으로 향하게
+                nx, ny = -nx, -ny
+            bestd, best, bestn = d, q, QPointF(nx, ny)
+    return best, bestn
+
+
 # ---- [Stage1] Lucid식 직교 자동 라우팅(기본 엘보) -----------------------------
 def _dedup_pts(pts, eps=1e-6):
     """연속 중복점 + 공선(collinear) 중간점 제거. 정렬된 도형 사이의 퇴화 엘보를 직선으로 접는다."""
@@ -4659,7 +4707,10 @@ class _AnnotatorView(QGraphicsView):
         return QRectF(c.x() - sr.width() / 2, c.y() - sr.height() / 2, sr.width(), sr.height())
 
     def _qc_create(self, src, side, cursor_scene):
-        """복제 도형 + 연결 화살표 생성(양끝 바인딩). 한 undo로 둘 다 되돌림."""
+        """[2d] 네방향점 클릭=도형 복제+연결 화살표 / [M4-2] 드래그=화살표만.
+        cursor_scene가 있으면(드래그) 화살표만, None이면(클릭) 복제 도형+화살표."""
+        if cursor_scene is not None:
+            return self._qc_create_arrow_only(src, side, cursor_scene)
         sr = self._qc_src_scene_rect(src)
         center = self._qc_target_center(src, side, cursor_scene)
         dup = src.clone()
@@ -4683,14 +4734,40 @@ class _AnnotatorView(QGraphicsView):
         dup.setSelected(True)
         return dup, arrow
 
+    def _qc_create_arrow_only(self, src, side, cursor_scene):
+        """[M4-2] 네방향점 드래그 = 화살표만 생성(도형 복제 없이). 시작은 src의 side 포트에
+        바인딩, 끝은 커서 위치 — 그 자리에 다른 도형이 있으면 그 테두리에 스냅+바인딩(직교 엘보)."""
+        owner = self._owner
+        p_src = _edge_mid(self._qc_src_scene_rect(src), side)
+        arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+        arrow._style = getattr(owner, "current_style", arrow._style)   # sticky 선스타일
+        arrow.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                       | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        arrow.set_bound(0, src, src.mapFromScene(p_src))
+        snap = self._border_snap_at(self.mapFromScene(cursor_scene))
+        end = snap[0] if snap is not None else QPointF(cursor_scene)
+        arrow.set_points(p_src, end)
+        if snap is not None and snap[2] is not None and snap[2] is not src:
+            arrow.set_bound(1, snap[2], snap[2].mapFromScene(end))
+            arrow._auto_route = True
+            arrow.build_elbow()
+        self.scene().addItem(arrow)
+        self._owner.push_undo_add(arrow)
+        self.scene().clearSelection()
+        arrow.setSelected(True)
+        return arrow
+
     def _qc_paint_ghost(self, painter, src, side, cursor_scene):
-        """빠른 생성 고스트 — 복제 도형 점선 외곽 + 연결선(원본 side변 → 타깃 반대변)."""
-        tr = self._qc_target_rect(src, side, cursor_scene)
+        """빠른 생성 고스트 — 클릭(hover)=복제 도형+연결선 / [M4-2] 드래그=연결선만(화살표만 생성)."""
         pen = QPen(QColor(90, 150, 235), 1.5, Qt.PenStyle.DashLine)
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         p_src = _edge_mid(self._qc_src_scene_rect(src), side)
+        if cursor_scene is not None:
+            painter.drawLine(p_src, cursor_scene)   # 드래그 = 화살표만 예고
+            return
+        tr = self._qc_target_rect(src, side, cursor_scene)
         p_tgt = _edge_mid(tr, _QC_OPP[side])
         painter.drawLine(p_src, p_tgt)
         if isinstance(src, _EllipseItem):
@@ -4902,16 +4979,24 @@ class _AnnotatorView(QGraphicsView):
         return [it for it in self.scene().items()
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
 
-    def _border_snap_at(self, view_pos):
-        """커서 근처 도형에 스냅 → (snap_scene, exit_unit, shape) 또는 None.
-        [우리 확장] 포트 우선 + 연속 폴백: 커서가 어떤 포트(변 중점 접속점)의 _PORT_SNAP_PX
-        이내면 그 포트로 딱 붙고(깔끔), 아니면 기존처럼 외곽선 최근접점에 _BORDER_SNAP_PX로 스냅.
-        (shape는 지속 연결 바인딩용.) owner.snap_enabled가 False면 스냅 전체 off."""
+    def _conn_lines(self, exclude=None):
+        """[M4-2b] 스냅 대상 선·화살표 — 그리기 중(_temp)·클릭배치 중(_place)·exclude는 제외해
+        자기 자신에 스냅하지 않게 한다(자기 preview 정점에 붙어 조기 마무리되던 문제)."""
+        skip = (self._temp, getattr(self, "_place", None), exclude)
+        return [it for it in self.scene().items()
+                if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem)) and it not in skip]
+
+    def _border_snap_at(self, view_pos, exclude=None):
+        """커서 근처 도형/선/화살표에 스냅 → (snap_scene, exit_unit, shape) 또는 None.
+        [우리 확장] 포트/끝점 우선(_PORT_SNAP_PX) + 연속 폴백(_BORDER_SNAP_PX). 도형은 shape로
+        지속연결 바인딩, [M4-2b] 선·화살표(끝점·몸통)는 shape=None(기하 스냅만, 바인딩 없음).
+        exclude=자기 자신(끝점 재스냅 시 self 제외). owner.snap_enabled가 False면 스냅 전체 off."""
         if not getattr(self._owner, "snap_enabled", True):
             return None
         scene_pt = self.mapToScene(view_pos)
         shapes = self._conn_shapes()
-        # Pass 1: 포트 우선 — 포트 반경이 연속보다 살짝 넓어 먼저 끌린다.
+        lines = self._conn_lines(exclude)
+        # Pass 1: 이산 우선 — 도형 포트 + 선/화살표 끝점(반경이 연속보다 넓어 먼저 끌린다).
         bestp = None
         bestpd = self._PORT_SNAP_PX
         pexit = None
@@ -4921,9 +5006,14 @@ class _AnnotatorView(QGraphicsView):
                 d = self._view_dist(sp, view_pos)
                 if d <= bestpd:
                     bestpd, bestp, pexit, pshape = d, sp, n, sh
+        for cl in lines:
+            for ep, ed in _conn_endpoint_dirs(cl):
+                d = self._view_dist(ep, view_pos)
+                if d <= bestpd:
+                    bestpd, bestp, pexit, pshape = d, ep, ed, None   # 선/화살표=바인딩 없음
         if bestp is not None:
             return bestp, pexit, pshape
-        # Pass 2: 연속 외곽선 폴백(포트에서 먼 변 중간 등).
+        # Pass 2: 연속 폴백 — 도형 외곽선 + 선/화살표 몸통 최근접점.
         best = None
         bestd = self._BORDER_SNAP_PX
         bexit = None
@@ -4933,6 +5023,13 @@ class _AnnotatorView(QGraphicsView):
             d = self._view_dist(sp, view_pos)
             if d <= bestd:
                 bestd, best, bexit, bshape = d, sp, n, sh
+        for cl in lines:
+            q, qn = _nearest_on_polyline(_conn_polyline_scene(cl), scene_pt)
+            if q is None:
+                continue
+            d = self._view_dist(q, view_pos)
+            if d <= bestd:
+                bestd, best, bexit, bshape = d, q, qn, None
         if best is None:
             return None
         return best, bexit, bshape
@@ -5581,10 +5678,11 @@ class _AnnotatorView(QGraphicsView):
         지속 연결 바인딩(도형 이동 시 추종). o-snap(F3) 꺼짐이면 _border_snap_at이 None → 무바인딩."""
         for idx in (0, len(it._pts) - 1):
             vscene = it.mapToScene(it._pts[idx])
-            snap = self._border_snap_at(self.mapFromScene(vscene))
-            if snap is not None and snap[2] is not None:
-                it._set_endpoint(idx, it.mapFromScene(snap[0]))
-                it.set_bound(idx, snap[2], snap[2].mapFromScene(snap[0]))
+            snap = self._border_snap_at(self.mapFromScene(vscene), exclude=it)
+            if snap is not None:
+                it._set_endpoint(idx, it.mapFromScene(snap[0]))   # [M4-2b] 기하 스냅(선/화살표 끝점 포함)
+                if snap[2] is not None:
+                    it.set_bound(idx, snap[2], snap[2].mapFromScene(snap[0]))   # 도형만 지속 바인딩
         # [Stage1] 양끝이 모두 도형에 붙고 수동 waypoint가 없는(2정점) 직선화살은 자동 직교 엘보로 전환.
         # 수동 폴리라인(정점 3개↑)은 사용자 경로이므로 건드리지 않는다.
         if it._bind_start is not None and it._bind_end is not None and len(it._pts) == 2:

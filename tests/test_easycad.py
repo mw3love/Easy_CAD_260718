@@ -488,6 +488,46 @@ def test_rmb_context_menu_states():
     assert it.isSelected()
 
 
+def test_qc_drag_creates_arrow_only():
+    # [M4-2a] 네방향점 드래그(cursor_scene 있음)=화살표만 / 클릭(None)=도형복제+화살표.
+    w = CanvasWindow(); v = w._view
+    r = _mk_pen_rect(w, x=0, y=0, ww=80, hh=50); r.setSelected(True)
+    n0 = len([x for x in w._scene.items() if isinstance(x, _RectItem)])
+    d0 = len(w._undo)
+    arr = v._qc_create(r, "r", QPointF(300, 25))              # 드래그 = 화살표만
+    assert isinstance(arr, _PolyArrowItem)
+    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == n0   # 도형 안 늘어남
+    assert arr._bind_start is not None                       # 시작은 src에 바인딩
+    assert len(w._undo) == d0 + 1
+    w.undo(); assert arr not in w._scene.items()
+    r.setSelected(True)
+    dup, arr2 = v._qc_create(r, "r", None)                    # 클릭 = 도형복제 + 화살표
+    assert isinstance(dup, _RectItem) and isinstance(arr2, _PolyArrowItem)
+    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == n0 + 1
+
+
+def test_snap_to_line_and_arrow_endpoints():
+    # [M4-2b] 스냅 대상에 선·화살표(끝점 우선 + 몸통 폴백) 포함, 바인딩은 도형만(shape=None).
+    w = CanvasWindow(); v = w._view
+    ln = _LineItem(QLineF(100, 0, 300, 0)); ln.setPen(w.make_pen())
+    ln.setFlags(ln.GraphicsItemFlag.ItemIsSelectable | ln.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ln)
+    # 끝점 (300,0) 근처 → 그 끝점으로 스냅, shape=None(바인딩 없음)
+    snap = v._border_snap_at(v.mapFromScene(QPointF(302, 1)))
+    assert snap is not None and snap[2] is None
+    assert abs(snap[0].x() - 300) < 1.5 and abs(snap[0].y()) < 1.5
+    # 몸통 (200,0) 근처(끝점 아님) → 몸통 최근접점 스냅
+    snap2 = v._border_snap_at(v.mapFromScene(QPointF(200, 3)))
+    assert snap2 is not None and snap2[2] is None
+    assert abs(snap2[0].x() - 200) < 2 and abs(snap2[0].y()) < 2
+    # 자기 자신 제외 → 다른 대상 없으면 스냅 없음
+    assert v._border_snap_at(v.mapFromScene(QPointF(302, 1)), exclude=ln) is None
+    # 도형은 여전히 바인딩(shape 반환)
+    r = _mk_pen_rect(w, x=400, y=-25, ww=50, hh=50)
+    snr = v._border_snap_at(v.mapFromScene(QPointF(400, 0)))
+    assert snr is not None and snr[2] is r
+
+
 def test_floating_toolbar_edits_and_visibility():
     # [M3 #15] 플로팅 툴바 — 선택 유무로 표시 토글, 편집이 기존 undo 경로를 탄다.
     w = CanvasWindow()
@@ -2167,12 +2207,15 @@ def test_qc_create_default():
 
 
 def test_qc_create_drag_position():
-    # [2d] 드래그(커서 위치) — 복제 중심이 커서 씬좌표.
+    # [M4-2a] 드래그(커서 위치) = 화살표만 생성(도형 복제 없음), 시작은 src 바인딩·끝은 커서.
     w = CanvasWindow()
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
-    dup, _arrow = w._view._qc_create(a, "b", QPointF(250, 400))
-    dsr = dup.mapToScene(dup.rect()).boundingRect()
-    assert _close(dsr.center(), QPointF(250, 400))
+    n0 = len([x for x in w._scene.items() if isinstance(x, _RectItem)])
+    arrow = w._view._qc_create(a, "b", QPointF(250, 400))
+    assert isinstance(arrow, _PolyArrowItem)
+    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == n0   # 복제 없음
+    assert arrow._bind_start is a
+    assert _close(arrow.mapToScene(arrow._pts[-1]), QPointF(250, 400))            # 끝 = 커서
 
 
 def test_qc_dot_at_roundtrip():
