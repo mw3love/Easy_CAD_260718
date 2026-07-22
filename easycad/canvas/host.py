@@ -206,6 +206,20 @@ def _dark_palette() -> QPalette:
     return p
 
 
+# [Phase 6 M1] 속성 패널 표시용 — 아이템 클래스명 → 한글 종류, 펜 스타일 → 한글.
+_TYPE_NAMES = {
+    "_RectItem": "네모", "_EllipseItem": "원", "_LineItem": "선",
+    "_ArrowItem": "화살표", "_PolyArrowItem": "직선화살", "_TextItem": "텍스트",
+    "_BadgeItem": "번호", "_PathItem": "펜", "_SymbolItem": "심볼",
+    "_ImageItem": "이미지", "_TableItem": "표", "_TitleBlockItem": "표제란",
+}
+_STYLE_NAMES = {
+    Qt.PenStyle.SolidLine: "실선", Qt.PenStyle.DashLine: "점선",
+    Qt.PenStyle.DotLine: "점선(도트)", Qt.PenStyle.DashDotLine: "일점쇄선",
+    Qt.PenStyle.DashDotDotLine: "이점쇄선",
+}
+
+
 class CanvasWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -248,6 +262,7 @@ class CanvasWindow(QMainWindow):
         self.setCentralWidget(self._view)
         self._build_toolbar()
         self._build_shapes_dock()
+        self._build_properties_dock()
         self._build_statusbar()
         self.set_tool("select")
         self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
@@ -766,14 +781,14 @@ class CanvasWindow(QMainWindow):
         for k, b in getattr(self, "_sym_buttons", {}).items():
             b.setIcon(self._shape_icon(k))
         # dock 제목표시줄 = '잡아 옮기는 바'로 보이게(accent 밑줄 + 틴트 배경). 회색이라 안 보이던 문제.
-        dock = getattr(self, "_shapes_dock", None)
-        if dock is not None:
-            accent = "#54a9ff" if dark else "#1f7ae0"
-            title_bg = "#232f3d" if dark else "#e8eef5"
-            dock.setStyleSheet(
-                "QDockWidget { font-weight:600; }"
-                f"QDockWidget::title {{ background:{title_bg}; padding:5px 9px;"
-                f" text-align:left; border-bottom:2px solid {accent}; }}")
+        accent = "#54a9ff" if dark else "#1f7ae0"
+        title_bg = "#232f3d" if dark else "#e8eef5"
+        dock_qss = ("QDockWidget { font-weight:600; }"
+                    f"QDockWidget::title {{ background:{title_bg}; padding:5px 9px;"
+                    f" text-align:left; border-bottom:2px solid {accent}; }}")
+        for dock in (getattr(self, "_shapes_dock", None), getattr(self, "_props_dock", None)):
+            if dock is not None:
+                dock.setStyleSheet(dock_qss)
         if persist:
             QSettings("EasyCAD", "EasyCAD").setValue("dark", dark)
 
@@ -889,6 +904,96 @@ class CanvasWindow(QMainWindow):
                          Qt.DockWidgetArea.BottomDockWidgetArea)
         self._dock_box.setDirection(QBoxLayout.Direction.LeftToRight if horiz
                                     else QBoxLayout.Direction.TopToBottom)
+
+    # ---- 속성 dock (M1: 값 표시만 — 편집은 M2에서 Undo 개편과 함께) -----------
+    def _build_properties_dock(self):
+        dock = QDockWidget("⋮⋮  속성", self)
+        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self._props_dock = dock
+        panel = QWidget()
+        form = QFormLayout(panel)
+        form.setContentsMargins(10, 10, 10, 10); form.setSpacing(8)
+        self._pf_type = QLabel("—")
+        self._pf_color = QLabel("—"); self._pf_color.setTextFormat(Qt.TextFormat.RichText)
+        self._pf_width = QLabel("—")
+        self._pf_style = QLabel("—")
+        self._pf_font = QLabel("—")
+        form.addRow("종류", self._pf_type)
+        form.addRow("색", self._pf_color)
+        form.addRow("두께", self._pf_width)
+        form.addRow("선", self._pf_style)
+        form.addRow("폰트", self._pf_font)
+        hint = QLabel("값 표시(읽기전용) — 편집은 곧(M2)")
+        hint.setStyleSheet("color:#888; font-size:11px;")
+        form.addRow(hint)
+        dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        self._scene.selectionChanged.connect(self._refresh_properties)
+        self._refresh_properties()
+
+    @staticmethod
+    def _read_props(item) -> dict:
+        """아이템의 색·두께·선스타일·폰트를 duck-typing으로 읽는다(화살표=_color/_width,
+        도형=pen(), 텍스트=font()). 없는 값은 None."""
+        col = getattr(item, "_color", None)
+        if col is None and hasattr(item, "pen"):
+            try: col = item.pen().color()
+            except Exception: col = None
+        width = getattr(item, "_width", None)
+        if width is None and hasattr(item, "pen"):
+            try: width = item.pen().widthF()
+            except Exception: width = None
+        style = None
+        if hasattr(item, "pen"):
+            try: style = item.pen().style()
+            except Exception: style = None
+        font = None
+        if hasattr(item, "font"):
+            try:
+                fs = item.font().pointSizeF()
+                font = fs if fs and fs > 0 else None
+            except Exception:
+                font = None
+        return {
+            "type": _TYPE_NAMES.get(type(item).__name__, "객체"),
+            "color": QColor(col) if col is not None else None,
+            "width": width, "style": style, "font": font,
+        }
+
+    @staticmethod
+    def _agg_num(vals, fmt) -> str:
+        """다중선택 수치 집계 — 모두 있고 같으면 값, 섞이면 '혼합', 없으면 '—'."""
+        present = [v for v in vals if v is not None]
+        if not present:
+            return "—"
+        if len(present) == len(vals) and (max(present) - min(present) < 0.05):
+            return fmt.format(present[0])
+        return "혼합"
+
+    def _refresh_properties(self):
+        sel = self._scene.selectedItems()
+        if not sel:
+            for lb in (self._pf_type, self._pf_color, self._pf_width,
+                       self._pf_style, self._pf_font):
+                lb.setText("—")
+            return
+        props = [self._read_props(it) for it in sel]
+        types = {p["type"] for p in props}
+        self._pf_type.setText(next(iter(types)) if len(types) == 1
+                              else f"{len(sel)}개 · 혼합")
+        cols = [p["color"] for p in props if p["color"] is not None]
+        if cols and len(cols) == len(props) and len({c.name() for c in cols}) == 1:
+            n = cols[0].name()
+            self._pf_color.setText(f'<span style="color:{n}; font-size:15px">■</span> {n}')
+        else:
+            self._pf_color.setText("혼합" if cols else "—")
+        self._pf_width.setText(self._agg_num([p["width"] for p in props], "{:.1f} px"))
+        styles = [p["style"] for p in props if p["style"] is not None]
+        if styles and len(styles) == len(props) and len(set(styles)) == 1:
+            self._pf_style.setText(_STYLE_NAMES.get(styles[0], "실선"))
+        else:
+            self._pf_style.setText("혼합" if styles else "—")
+        self._pf_font.setText(self._agg_num([p["font"] for p in props], "{:.0f} pt"))
 
     # ---- 지속 연결 리라우트 -------------------------------------------------
     def _on_scene_changed(self, region):

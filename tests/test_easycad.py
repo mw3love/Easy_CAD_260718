@@ -140,6 +140,30 @@ def test_dock_areas_and_zoom_readout():
     assert w._zoom_btn.text() == "100 %"
 
 
+def test_properties_dock_readout():
+    # [Phase 6 M1] 속성 dock 읽기전용 표시 — 선택 없음/단일/다중(혼합) 집계.
+    from PyQt6.QtGui import QPen
+    w = CanvasWindow()
+    w._scene.clearSelection(); w._refresh_properties()
+    assert w._pf_type.text() == "—" and w._pf_width.text() == "—"
+    # 빨강 두께3 네모 단일 선택
+    pen = QPen(QColor("#ff0000")); pen.setWidthF(3.0)
+    r = _mk_rect(w._scene, pen, 0, 0, 100, 50)
+    r.setSelected(True); w._refresh_properties()
+    assert w._pf_type.text() == "네모"
+    assert "3.0 px" in w._pf_width.text()
+    assert "#ff0000" in w._pf_color.text()
+    assert w._pf_style.text() == "실선"
+    assert w._pf_font.text() == "—"          # 도형은 폰트 없음
+    # 색이 다른 네모 추가 선택 → 색 혼합, 두께는 동일 유지
+    pen2 = QPen(QColor("#00ff00")); pen2.setWidthF(3.0)
+    r2 = _mk_rect(w._scene, pen2, 200, 0, 100, 50)
+    r2.setSelected(True); w._refresh_properties()
+    assert w._pf_color.text() == "혼합"
+    assert "3.0 px" in w._pf_width.text()
+    assert w._pf_type.text() == "네모"        # 둘 다 네모 → 종류 유지
+
+
 def test_shape_palette_arms_tool():
     # 팔레트 네모 버튼 클릭 → rect 도구 무장 + 버튼 체크 동기화. 단축키 경로도 유지.
     w = CanvasWindow()
