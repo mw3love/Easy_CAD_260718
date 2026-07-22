@@ -882,6 +882,7 @@ class CanvasWindow(QMainWindow):
             ("Del", "선택 객체 삭제"),
             ("Ctrl+Z", "되돌리기"),
             ("Ctrl+C / Ctrl+V", "복사 / 연속 붙여넣기"),
+            ("Ctrl+D", "제자리 복제"),
             ("1·3·4·6·7·8·9", "선택·화살표·텍스트·선·펜·번호·직선화살"),
             ("2 / 5", "네모 / 원"),
         ]
@@ -1111,9 +1112,14 @@ class CanvasWindow(QMainWindow):
 
     def _edit_style(self, _idx):
         style = self._pf_style.currentData()
-        sel = [it for it in self._scene.selectedItems() if hasattr(it, "pen")]
+        # [M2 #3] pen 기반 도형 + 화살표(apply_style) 모두 대상.
+        sel = [it for it in self._scene.selectedItems()
+               if hasattr(it, "pen") or hasattr(it, "apply_style")]
         def apply(it):
-            p = it.pen(); p.setStyle(style); it.setPen(p)
+            if hasattr(it, "apply_style"):   # 화살표(_ArrowItem/_PolyArrowItem)
+                it.apply_style(style)
+            else:
+                p = it.pen(); p.setStyle(style); it.setPen(p)
         self._edit_items(sel, apply)
         if sel and style is not None:
             self.current_style = style   # [M2 #A] 다음 도형 기본 선스타일로(sticky)
@@ -1135,8 +1141,8 @@ class CanvasWindow(QMainWindow):
         if width is None and hasattr(item, "pen"):
             try: width = item.pen().widthF()
             except Exception: width = None
-        style = None
-        if hasattr(item, "pen"):
+        style = getattr(item, "_style", None)   # [M2 #3] 화살표 몸통 선스타일
+        if style is None and hasattr(item, "pen"):
             try: style = item.pen().style()
             except Exception: style = None
         font = None
@@ -1469,6 +1475,23 @@ class CanvasWindow(QMainWindow):
         for tmpl in self._clip:
             c = tmpl.clone()
             c.moveBy(off, off)
+            self._scene.addItem(c)
+            c.setSelected(True)
+            new_items.append(c)
+        if new_items:
+            self.push_undo_add_many(new_items)
+
+    # [M2 #3] Ctrl+D 제자리 복제 — 클립보드를 건드리지 않고 선택 객체를 오프셋해 복제.
+    # paste_selection과 동형이나 clip/paste_seq와 독립(복사 버퍼 오염 없음).
+    def duplicate_selection(self):
+        src = [it for it in self._scene.selectedItems() if hasattr(it, "clone")]
+        if not src:
+            return
+        self._scene.clearSelection()
+        new_items = []
+        for it in src:
+            c = it.clone()
+            c.moveBy(20.0, 20.0)
             self._scene.addItem(c)
             c.setSelected(True)
             new_items.append(c)

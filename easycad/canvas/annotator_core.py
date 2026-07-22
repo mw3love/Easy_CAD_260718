@@ -618,6 +618,8 @@ class _HandleResizeMixin:
             st["color"] = QColor(self._color)
         if hasattr(self, "_width"):
             st["width"] = self._width
+        if hasattr(self, "_style"):   # [M2 #3] 화살표 몸통 선스타일(pen 없는 화살표 전용)
+            st["style"] = self._style
         if hasattr(self, "setDefaultTextColor"):
             st["tcolor"] = QColor(self.defaultTextColor())
         if hasattr(self, "toPlainText"):
@@ -638,6 +640,8 @@ class _HandleResizeMixin:
             self.apply_color(st["color"])
         if "width" in st and hasattr(self, "apply_width"):
             self.apply_width(st["width"])
+        if "style" in st and hasattr(self, "apply_style"):   # [M2 #3] 화살표 선스타일
+            self.apply_style(st["style"])
         if "tcolor" in st and hasattr(self, "setDefaultTextColor"):
             self.setDefaultTextColor(st["tcolor"])
         if "font_pt" in st and hasattr(self, "apply_font_size"):
@@ -2262,6 +2266,7 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._bend_idx = 0     # 드래그 중인 bend 핸들(1·2, 0=없음)
         self._color = QColor(color)
         self._width = width
+        self._style = Qt.PenStyle.SolidLine   # [M2 #3] 몸통 선스타일(점선 등) — 화살촉은 항상 solid
         self._head_at_end = head_at_end
         self._bind1 = None     # 지속 연결: 끝점0이 묶인 도형(_RectItem/_EllipseItem) or None
         self._bind2 = None     # 끝점1이 묶인 도형 or None
@@ -2369,8 +2374,13 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._width = width
         self.update()
 
+    def apply_style(self, style):   # [M2 #3] 몸통 선스타일(점선 등)
+        self._style = style
+        self.update()
+
     def clone(self):
         c = _ArrowItem(QColor(self._color), self._width, self._head_at_end)
+        c._style = self._style
         c.set_points(QPointF(self._p1), QPointF(self._p2))
         if self._ctrl1 is not None:
             c._ctrl1 = QPointF(self._ctrl1)
@@ -2652,7 +2662,7 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             return  # 클릭만 한 0길이 직선 화살표는 머리도 그리지 않음(깜빡임 방지)
 
         size = self._head_size()
-        pen = QPen(self._color, self._width, Qt.PenStyle.SolidLine,
+        pen = QPen(self._color, self._width, self._style,
                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
 
         # [FigJam 갭] 라벨이 있으면 그 사각형만 클립으로 비워 선/곡선이 텍스트를 관통하지 않게 한다.
@@ -2849,6 +2859,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._pts = [QPointF(0, 0), QPointF(0, 0)]   # 정점 리스트(최소 2)
         self._color = QColor(color)
         self._width = width
+        self._style = Qt.PenStyle.SolidLine   # [M2 #3] 몸통 선스타일(점선 등) — 화살촉은 항상 solid
         self._head_at_end = head_at_end
         # [A3] 지속 연결 — 양 끝(시작=idx0, 끝=idx last)만 도형에 고정 부착(중간 waypoint 제외).
         # 곡선화살표와 같은 방식(도형 로컬좌표 부착점 + scene.changed 리라우트). waypoint 삽입·삭제로
@@ -3262,8 +3273,13 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._width = width
         self.update()
 
+    def apply_style(self, style):   # [M2 #3] 몸통 선스타일(점선 등)
+        self._style = style
+        self.update()
+
     def clone(self):
         c = _PolyArrowItem(QColor(self._color), self._width, self._head_at_end)
+        c._style = self._style
         c._pts = [QPointF(p) for p in self._pts]
         c._bind_start, c._bind_end = self._bind_start, self._bind_end   # [A3] 지속 연결 유지
         c._bind_start_pt = None if self._bind_start_pt is None else QPointF(self._bind_start_pt)
@@ -3493,7 +3509,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(self._color, self._width, Qt.PenStyle.SolidLine,
+        pen = QPen(self._color, self._width, self._style,
                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -6065,6 +6081,11 @@ class _AnnotatorView(QGraphicsView):
                 return
             if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_V:
                 self._owner.paste_selection()
+                return
+            # [M2 #3] Ctrl+D = 제자리 복제(오프셋). Easy CAD 호스트만 제공 → hasattr 가드.
+            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_D \
+                    and hasattr(self._owner, "duplicate_selection"):
+                self._owner.duplicate_selection()
                 return
             if key in self._SHORTCUTS and not (mods & (
                     Qt.KeyboardModifier.ControlModifier

@@ -186,9 +186,18 @@ QWidget→**QToolBar**로 승격: 그리기 도구 아이콘화(코어 `_tool_ic
 밑줄 제목, 상/하 dock이면 `_relayout_sections`로 버튼 한 줄로 눕힘) + **줌% 상태바**(클릭=100%) + 창
 제목 'Easy CAD'. **속성 dock(읽기전용)** — 선택 객체 종류·색(스와치)·두께·선스타일·폰트 값 표시(편집은
 M2). 패널은 콤팩트 기본폭(도형 144·속성 170px)으로 **진짜 최소 클램프**(슬랙 0)+버튼 고정크기 좌측뭉침.
-아이콘/UI 방향=icon_proposal 아티팩트. 커밋 `80f22fa`~`e8f3d45`. **M2(Undo 세분화+Redo)·M3(플로팅
-컨텍스트 툴바·우클릭 팬·팔레트 드래그앤드롭) 대기** — 상세 로드맵 `docs/EasyCAD_계획.md` §Phase 6.
-편집·색변경·점선·Ctrl+D·화살표2종통합은 M2(Undo 경로 위에 서야 undo 가능).
+아이콘/UI 방향=icon_proposal 아티팩트. 커밋 `80f22fa`~`e8f3d45`. **M3(플로팅 컨텍스트 툴바·우클릭
+팬·팔레트 드래그앤드롭) 대기** — 상세 로드맵 `docs/EasyCAD_계획.md` §Phase 6.
+  - **M2 #1** Undo 단일 스냅샷 저널(3-op)+Redo, **#2** 속성 dock 편집화(색·두께·선스타일·폰트) 완료(`77f9b58`~`9dbe9bb`).
+  - **M2 #3 화살표 점선 + DXF linetype + Ctrl+D 복제** 완료(자체렌더·스모크 5종·146종 전체 통과, 실조건 대기):
+    화살표(`_ArrowItem`/`_PolyArrowItem`)에 `_style` 신설(`_color`/`_width`와 대칭) → paint·`capture_state`/
+    `apply_state`·`.ecad`(하위호환 `_apply_arrow_style`)·속성 dock(`_edit_style`을 `apply_style`로 확장)·
+    clone까지 연결. **몸통만 점선, 화살촉은 항상 solid**(육안 확인 ✓). DXF는 Qt스타일↔linetype 매핑
+    (`DASHED`/`DOT`/`DASHDOT`/`DIVIDE`, export가 없으면 픽셀스케일 패턴으로 등록 → 버전 무관·외부 CAD 가시성).
+    **Ctrl+D**=제자리 복제(`duplicate_selection`, clone+오프셋+`push_undo_add_many`, 클립보드 미오염).
+    ⚠ 알려진 한계: 바인딩된 화살표 복제 시 사본이 원본 도형 참조(paste와 동일). DXF 점선 외부 CAD LTSCALE
+    미세조정은 사용자 몫. **M2 #4 화살표 2종(곡선/직선) 통합=보류 결정**(deep-interview: 데이터 모델
+    이질성 `_ctrl`좌표 vs 정점리스트+A*라우팅으로 1클래스 통합 시 분기지옥 → M3 이후 도구 진입점만 병합 검토).
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.

@@ -231,6 +231,87 @@ def test_props_style_edit_and_ecad_roundtrip():
     assert r2.pen().style() == Qt.PenStyle.DashLine
 
 
+def test_arrow_style_roundtrip():
+    # [M2 #3] 화살표(_ArrowItem·_PolyArrowItem) 몸통 선스타일이 .ecad 왕복에 보존된다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    ar = _ArrowItem(QColor("#ff0000"), 4, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 0)); ar.apply_style(Qt.PenStyle.DashLine)
+    sc.addItem(ar)
+    sar = _PolyArrowItem(QColor("#00aa00"), 4, True)
+    sar._pts = [QPointF(0, 50), QPointF(80, 50)]; sar.apply_style(Qt.PenStyle.DotLine)
+    sc.addItem(sar)
+    p = os.path.join(_TMP, "arrow_style_rt.ecad")
+    save_document(sc, p)
+    sc2 = QGraphicsScene(); load_document(sc2, p)
+    a2 = [x for x in sc2.items() if isinstance(x, _ArrowItem)][0]
+    s2 = [x for x in sc2.items() if isinstance(x, _PolyArrowItem)][0]
+    assert a2._style == Qt.PenStyle.DashLine
+    assert s2._style == Qt.PenStyle.DotLine
+
+
+def test_arrow_style_backcompat_defaults_solid():
+    # 옛 .ecad(style 키 없음) 로드 시 화살표는 기본 solid로 안전 복원.
+    from PyQt6.QtWidgets import QGraphicsScene
+    d = {"type": "arrow", "pos": [0, 0], "p1": [0, 0], "p2": [10, 0],
+         "ctrl1": None, "ctrl2": None, "color": "#ff000000", "width": 3, "head": True}
+    from easycad.fileio.document import dict_to_item
+    it = dict_to_item(d)
+    assert it._style == Qt.PenStyle.SolidLine
+
+
+def test_arrow_style_edit_and_undo():
+    # [M2 #3] 속성 dock 선스타일 콤보가 화살표에도 적용되고 undo/redo 된다.
+    w = CanvasWindow()
+    ar = _ArrowItem(QColor("#111111"), 3, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 0))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar); ar.setSelected(True)
+    w._refresh_properties()
+    assert w._pf_style.isEnabled()                 # 화살표도 선스타일 콤보 활성
+    di = w._pf_style.findData(Qt.PenStyle.DashLine)
+    w._pf_style.setCurrentIndex(di)                # currentIndexChanged → _edit_style
+    assert ar._style == Qt.PenStyle.DashLine
+    w.undo(); assert ar._style == Qt.PenStyle.SolidLine
+    w.redo(); assert ar._style == Qt.PenStyle.DashLine
+
+
+def test_dxf_arrow_linetype_roundtrip():
+    # [M2 #3] 화살표 점선이 DXF linetype으로 실려 export→import 왕복에 보존된다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from easycad.fileio.dxf_import import import_dxf
+    sc = QGraphicsScene()
+    sar = _PolyArrowItem(QColor("#ffff00ff"), 5, True)
+    sar._pts = [QPointF(0, 0), QPointF(120, 0)]; sar.apply_style(Qt.PenStyle.DashLine)
+    sc.addItem(sar)
+    ar = _ArrowItem(QColor("#ff00ff00"), 5, True)
+    ar.set_points(QPointF(0, 200), QPointF(120, 200)); ar.apply_style(Qt.PenStyle.DashDotLine)
+    sc.addItem(ar)
+    path = os.path.join(_TMP, "arrow_linetype.dxf")
+    assert export_dxf(sc, path)
+    sc2 = QGraphicsScene(); import_dxf(sc2, path)
+    s2 = [x for x in sc2.items() if isinstance(x, _PolyArrowItem)]
+    a2 = [x for x in sc2.items() if isinstance(x, _ArrowItem)]
+    assert s2 and s2[0]._style == Qt.PenStyle.DashLine
+    assert a2 and a2[0]._style == Qt.PenStyle.DashDotLine
+
+
+def test_duplicate_offset():
+    # [M2 #3] Ctrl+D 복제 — 개수 +1, (20,20) 오프셋, 클립보드 미오염, undo 1스텝.
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=10, y=10); it.setSelected(True)
+    n0 = len(w._scene.items()); d0 = len(w._undo)
+    w.duplicate_selection()
+    rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+    assert len(w._scene.items()) == n0 + 1 and len(rects) == 2
+    dup = [r for r in rects if r is not it][0]
+    assert abs(dup.pos().x() - (it.pos().x() + 20)) < 1e-6
+    assert abs(dup.pos().y() - (it.pos().y() + 20)) < 1e-6
+    assert dup.isSelected() and not it.isSelected()   # 사본만 선택
+    assert len(w._undo) == d0 + 1
+    w.undo(); assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == 1
+
+
 def test_shape_palette_arms_tool():
     # 팔레트 네모 버튼 클릭 → rect 도구 무장 + 버튼 체크 동기화. 단축키 경로도 유지.
     w = CanvasWindow()

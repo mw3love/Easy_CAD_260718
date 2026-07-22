@@ -21,7 +21,7 @@
     레이어 — 타입별 레이어(EC_RECT·EC_ARROW…)로 분리.
     단위 — 1 scene unit = 1 DXF drawing unit(mm 월드좌표 매핑은 후속 리팩터까지 보류).
 """
-from PyQt6.QtCore import QPointF
+from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QPainterPath
 from PyQt6.QtWidgets import QGraphicsTextItem
 
@@ -67,6 +67,41 @@ def _wx(entity, width):
     except Exception:  # noqa: BLE001 — 두께 부착 실패가 export를 막지 않게
         pass
     return entity
+
+
+# [M2 #3] Qt 선스타일 → DXF linetype. Solid는 CONTINUOUS(기본)라 매핑 생략(=미표기).
+_QT_TO_LTYPE = {
+    Qt.PenStyle.DashLine: "DASHED",
+    Qt.PenStyle.DotLine: "DOT",
+    Qt.PenStyle.DashDotLine: "DASHDOT",
+    Qt.PenStyle.DashDotDotLine: "DIVIDE",
+}
+# ezdxf 기본 테이블에 없을 수 있어(버전 무관 안전) 직접 등록할 패턴: [total, dash, -gap, ...].
+# total = 나머지 요소 절댓값 합. Easy CAD 좌표=픽셀 스케일(화살표 100+ 단위)이라 대시를
+# 픽셀급(8/4px)으로 잡아야 외부 CAD(AutoCAD)에서 실선처럼 뭉치지 않는다(기본 LTSCALE=1 기준).
+_LTYPE_PATTERNS = {
+    "DASHED":  ([12.0, 8.0, -4.0], "Dashed __ __ __ __"),
+    "DOT":     ([4.0, 0.0, -4.0], "Dotted . . . ."),
+    "DASHDOT": ([16.0, 8.0, -4.0, 0.0, -4.0], "Dash dot __ . __ ."),
+    "DIVIDE":  ([20.0, 8.0, -4.0, 0.0, -4.0, 0.0, -4.0], "Divide __ . . __ . ."),
+}
+
+
+def _ensure_linetypes(doc):
+    """export에 필요한 linetype이 doc에 없으면 패턴과 함께 등록."""
+    for name, (pattern, desc) in _LTYPE_PATTERNS.items():
+        if not doc.linetypes.has_entry(name):
+            doc.linetypes.add(name, pattern=pattern, description=desc)
+
+
+def _with_linetype(attrs: dict, style) -> dict:
+    """attrs 사본에 선스타일을 linetype으로 실어 반환(solid면 그대로). 화살촉엔 쓰지 않는다."""
+    lt = _QT_TO_LTYPE.get(style)
+    if lt is None:
+        return attrs
+    out = dict(attrs)
+    out["linetype"] = lt
+    return out
 
 
 def _unit(dx: float, dy: float):
@@ -136,15 +171,16 @@ def _export_line(msp, it):
 
 def _export_arrow(msp, it):
     attrs = _attrs(_LAYERS["arrow"], it._color)
+    body = _with_linetype(attrs, it._style)   # [M2 #3] 몸통만 점선, 화살촉은 solid(attrs)
     p1 = (it._p1.x(), it._p1.y())
     p2 = (it._p2.x(), it._p2.y())
     if it._ctrl1 is not None and it._ctrl2 is not None:
         # 3차 베지어 = 4점 클램프 B-스플라인(degree 3, open uniform 노트).
         ctrl = [_w(it, *p1), _w(it, it._ctrl1.x(), it._ctrl1.y()),
                 _w(it, it._ctrl2.x(), it._ctrl2.y()), _w(it, *p2)]
-        _wx(msp.add_open_spline(ctrl, degree=3, dxfattribs=attrs), it._width)
+        _wx(msp.add_open_spline(ctrl, degree=3, dxfattribs=body), it._width)
     else:
-        _wx(msp.add_line(_w(it, *p1), _w(it, *p2), dxfattribs=attrs), it._width)
+        _wx(msp.add_line(_w(it, *p1), _w(it, *p2), dxfattribs=body), it._width)
     if it._head_at_end:
         near = it._ctrl2 if it._ctrl2 is not None else it._p1
         _arrowhead(msp, _w(it, *p2), _w(it, near.x(), near.y()), it._width, attrs)
@@ -155,9 +191,10 @@ def _export_arrow(msp, it):
 
 def _export_sarrow(msp, it):
     attrs = _attrs(_LAYERS["sarrow"], it._color)
+    body = _with_linetype(attrs, it._style)   # [M2 #3] 몸통만 점선, 화살촉은 solid(attrs)
     pts = [_w(it, p.x(), p.y()) for p in it._pts]
     if len(pts) >= 2:
-        _wx(msp.add_lwpolyline(pts, close=False, dxfattribs=attrs), it._width)
+        _wx(msp.add_lwpolyline(pts, close=False, dxfattribs=body), it._width)
         if it._head_at_end:
             _arrowhead(msp, pts[-1], pts[-2], it._width, attrs)
         else:
@@ -220,6 +257,7 @@ def export_dxf(scene, path: str) -> bool:
     doc = ezdxf.new("R2010")             # true_color·MTEXT·SPLINE 지원 버전
     if not doc.appids.has_entry(_APPID):  # 펜 두께 XDATA용 AppID
         doc.appids.add(_APPID)
+    _ensure_linetypes(doc)                # [M2 #3] 점선 등 선스타일 linetype 등록
     for name in _LAYERS.values():
         doc.layers.add(name)
     msp = doc.modelspace()

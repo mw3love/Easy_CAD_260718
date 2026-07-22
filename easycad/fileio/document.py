@@ -66,6 +66,15 @@ def _mkbrush(d: dict) -> QBrush:
     return QBrush(QColor(fill)) if fill else QBrush(Qt.BrushStyle.NoBrush)
 
 
+def _apply_arrow_style(it, d: dict):
+    """[M2 #3] 화살표(_ArrowItem/_PolyArrowItem)에 몸통 선스타일 복원.
+    화살표는 pen()이 없어 _mkpen 경로를 못 타므로 _style을 직접 세팅한다.
+    하위호환: style 키가 없으면 기본(SolidLine) 유지."""
+    st = d.get("style")
+    if st is not None:
+        it._style = Qt.PenStyle(int(st))
+
+
 # ---- 삽입 이미지 base64 embed (단일 .ecad 이동에도 이미지가 안 깨지게) ----------
 def _pixmap_to_b64(pm: QPixmap) -> str:
     ba = QByteArray()
@@ -137,6 +146,7 @@ def item_to_dict(it) -> dict | None:
             ctrl1=None if it._ctrl1 is None else [it._ctrl1.x(), it._ctrl1.y()],
             ctrl2=None if it._ctrl2 is None else [it._ctrl2.x(), it._ctrl2.y()],
             color=_col(it._color), width=it._width, head=it._head_at_end,
+            style=int(it._style.value),   # [M2 #3] 몸통 선스타일(점선 등)
         )
     elif isinstance(it, _SymbolItem):
         r = it.rect()
@@ -159,6 +169,7 @@ def item_to_dict(it) -> dict | None:
     elif isinstance(it, _PolyArrowItem):
         d.update(type="sarrow", pts=[[p.x(), p.y()] for p in it._pts],
                  color=_col(it._color), width=it._width, head=it._head_at_end,
+                 style=int(it._style.value),   # [M2 #3] 몸통 선스타일(점선 등)
                  auto_route=it._auto_route,   # [Stage1] 직교 자동 라우팅 상태
                  route_hints=[[h.x(), h.y()] for h in it._route_hints])  # [경유지 힌트(2f)]
     elif isinstance(it, _LineItem):
@@ -217,6 +228,7 @@ def dict_to_item(d: dict):
         if d.get("ctrl1") is not None:
             it._ctrl1 = QPointF(*d["ctrl1"])
             it._ctrl2 = QPointF(*d["ctrl2"])
+        _apply_arrow_style(it, d)   # [M2 #3] 하위호환: 없으면 solid 유지
     elif t == "symbol":
         it = _SymbolItem(d.get("kind", "decision"), QRectF(*d["rect"]))
         it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
@@ -229,6 +241,7 @@ def dict_to_item(d: dict):
         it._pts = [QPointF(*xy) for xy in d["pts"]]
         it._auto_route = d.get("auto_route", False)   # [Stage1] 직교 자동 라우팅 상태
         it._route_hints = [QPointF(*xy) for xy in d.get("route_hints", [])]  # [경유지 힌트(2f)]
+        _apply_arrow_style(it, d)   # [M2 #3] 하위호환: 없으면 solid 유지
     elif t == "line":
         it = _LineItem(QLineF(*d["line"])); it.setPen(_mkpen(d))
     elif t == "path":

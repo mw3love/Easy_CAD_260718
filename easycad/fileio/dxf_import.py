@@ -61,6 +61,24 @@ def _width_of(e, default: float = 1.0) -> float:
     return default
 
 
+# [M2 #3] DXF linetype → Qt 선스타일 역매핑(export _QT_TO_LTYPE의 역). 나머지는 solid.
+_LTYPE_TO_QT = {
+    "DASHED": Qt.PenStyle.DashLine,
+    "DOT": Qt.PenStyle.DotLine,
+    "DASHDOT": Qt.PenStyle.DashDotLine,
+    "DIVIDE": Qt.PenStyle.DashDotDotLine,
+}
+
+
+def _style_of(e):
+    """엔티티의 linetype → Qt 선스타일. 표준/미지정이면 None(=기본 solid 유지)."""
+    try:
+        lt = e.dxf.linetype
+    except Exception:  # noqa: BLE001
+        return None
+    return _LTYPE_TO_QT.get(str(lt).upper()) if lt else None
+
+
 def _pen(e, width: float = None) -> QPen:
     if width is None:
         width = _width_of(e)
@@ -165,6 +183,9 @@ def _arrow_from_spline(e, head_at_end: bool):
     if len(cps) >= 4:
         it._ctrl1 = QPointF(*cps[1])
         it._ctrl2 = QPointF(*cps[2])
+    st = _style_of(e)               # [M2 #3] 몸통 선스타일 복원
+    if st is not None:
+        it._style = st
     return _flag(it)
 
 
@@ -173,12 +194,18 @@ def _arrow_from_line(e, head_at_end: bool):
     t = _uf(e.dxf.end.x, e.dxf.end.y)
     it = _ArrowItem(_color(e), _width_of(e, 2.0), head_at_end)
     it.set_points(QPointF(*s), QPointF(*t))
+    st = _style_of(e)               # [M2 #3] 몸통 선스타일 복원
+    if st is not None:
+        it._style = st
     return _flag(it)
 
 
 def _sarrow_item(pts, e, head_at_end: bool):
     it = _PolyArrowItem(_color(e), _width_of(e, 2.0), head_at_end)
     it._pts = [QPointF(x, y) for x, y in pts]
+    st = _style_of(e)               # [M2 #3] 몸통 선스타일 복원
+    if st is not None:
+        it._style = st
     return _flag(it)
 
 
