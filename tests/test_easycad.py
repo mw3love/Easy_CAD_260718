@@ -3085,6 +3085,93 @@ def test_new_doc_clears_undo_and_redo():
     assert not w._act_undo.isEnabled() and not w._act_redo.isEnabled()
 
 
+# ---------------------------------------------------------------------------
+# [Phase 6 M2] one-shot 도구 + pin + 우클릭 취소 + sticky 기본값 + 비활성 아이콘.
+# ---------------------------------------------------------------------------
+def test_oneshot_reverts_to_select():
+    w = CanvasWindow(); w.tool_pinned = False
+    w.set_tool("rect")
+    w.push_undo_add(_mk_pen_rect(w))
+    _app.processEvents()               # singleShot(0) 실행
+    assert w.current_tool == "select"
+
+
+def test_pin_keeps_tool_armed():
+    w = CanvasWindow(); w._toggle_pin(True)
+    assert w.tool_pinned is True
+    w.set_tool("rect")
+    w.push_undo_add(_mk_pen_rect(w))
+    _app.processEvents()
+    assert w.current_tool == "rect"    # pin ON → 무장 유지(연속 그리기)
+
+
+def test_oneshot_symbol_prefix_and_pen_exclusion():
+    w = CanvasWindow(); w.tool_pinned = False
+    w.set_tool("sym:decision")
+    w.push_undo_add(_mk_pen_rect(w)); _app.processEvents()
+    assert w.current_tool == "select"  # 심볼도 one-shot
+    w.set_tool("pen")
+    w.push_undo_add(_mk_pen_rect(w)); _app.processEvents()
+    assert w.current_tool == "pen"     # pen은 제외 → 유지
+
+
+def test_paste_does_not_disarm():
+    w = CanvasWindow(); w.tool_pinned = False; w.set_tool("select")
+    w.push_undo_add_many([_mk_pen_rect(w)])
+    _app.processEvents()
+    assert w.current_tool == "select"  # 붙여넣기는 select 모드라 one-shot에 안 걸림
+
+
+def test_right_click_cancels_and_disarms():
+    w = CanvasWindow(); v = w._view
+    w.set_tool("rect")
+    v._right_click_cancel()
+    assert w.current_tool == "select"                   # 무장 해제
+    # 진행 중 클릭 배치가 있으면 폐기 + 해제.
+    w.set_tool("sarrow")
+    it = _PolyArrowItem(QColor("#111111"), 2.0, True)
+    it.set_points(QPointF(0, 0), QPointF(0, 0)); w._scene.addItem(it)
+    v._place = it; v._place_tool = "sarrow"
+    v._right_click_cancel()
+    assert v._place is None and it.scene() is None       # 배치 폐기
+    assert w.current_tool == "select"
+
+
+def test_sticky_defaults_width_color_style():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, width=2.0, color="#111111"); it.setSelected(True)
+    w._edit_width(9.0)
+    assert abs(w.current_width - 9.0) < 1e-6
+    di = w._pf_style.findData(Qt.PenStyle.DashLine)
+    w._pf_style.setCurrentIndex(di)
+    assert w.current_style == Qt.PenStyle.DashLine
+    w._set_current_color(QColor("#00ff00"))
+    assert w.current_color.name() == "#00ff00"
+    pen = w.make_pen()                 # 다음 도형에 sticky 반영
+    assert abs(pen.widthF() - 9.0) < 1e-6
+    assert pen.style() == Qt.PenStyle.DashLine
+    assert pen.color().name() == "#00ff00"
+
+
+def test_shiftwheel_updates_default_width():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, width=2.0); it.setSelected(True)
+    w.adjust_item_property(it, +3)     # 2 → 5
+    assert abs(it.pen().widthF() - 5.0) < 1e-6
+    assert abs(w.current_width - 5.0) < 1e-6   # sticky 기본값 갱신
+
+
+def test_disabled_icon_has_dim_pixmap():
+    from easycad.canvas.host import _act_icon
+    from PyQt6.QtGui import QIcon
+    from PyQt6.QtCore import QSize
+    ic = _act_icon("undo")
+    norm = ic.pixmap(QSize(24, 24), QIcon.Mode.Normal)
+    dim = ic.pixmap(QSize(24, 24), QIcon.Mode.Disabled)
+    assert not dim.isNull()
+    assert norm.toImage() != dim.toImage()     # 흐림 사본이 원본과 다름
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

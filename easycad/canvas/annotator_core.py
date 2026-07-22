@@ -5104,14 +5104,17 @@ class _AnnotatorView(QGraphicsView):
             self._owner._win_drag_start(event.globalPosition().toPoint())
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             return
-        # [우리 확장] 클릭 배치 진행 중이면: 좌클릭=다음 점(2점도구 확정·sarrow 정점추가),
-        # 우클릭=마무리. (릴리스로 끝내지 않으므로 이 분기가 최우선 — 끝점/세그먼트 판정보다 앞선다.)
+        # [Phase 6 M2] 우클릭 = 취소/해제 — 진행 중 그리기(클릭배치·드래그)를 폐기하고
+        # 무장 도구를 선택모드로 되돌린다(그린 뒤 또 그려지는 오작동의 탈출구). 폴리라인 '완성'은
+        # 더블클릭·Enter가 담당하므로 우클릭을 취소에 온전히 내준다.
+        if event.button() == Qt.MouseButton.RightButton and self._owner.is_edit_mode():
+            self._right_click_cancel()
+            return
+        # [우리 확장] 클릭 배치 진행 중 좌클릭 = 다음 점(2점도구 확정·sarrow 정점추가).
+        # (릴리스로 끝내지 않으므로 이 분기가 최우선 — 끝점/세그먼트 판정보다 앞선다.)
         if self._place is not None:
             if event.button() == Qt.MouseButton.LeftButton:
                 self._place_click(event)
-                return
-            if event.button() == Qt.MouseButton.RightButton:
-                self._finish_place(event)
                 return
         # 뷰어 모드: 좌클릭 드래그 = 창 이동 (그리기·선택 안 함)
         if not self._owner.is_edit_mode():
@@ -5483,6 +5486,26 @@ class _AnnotatorView(QGraphicsView):
         if it is not None and it.scene() is not None:
             self.scene().removeItem(it)
             self.viewport().update()
+
+    def _cancel_drag_draw(self):
+        """[Phase 6 M2] 진행 중이던 드래그 그리기를 통째로 폐기(우클릭 취소용)."""
+        it = self._temp
+        self._drawing = False
+        self._temp = None
+        self._path = None
+        if it is not None and it.scene() is not None:
+            self.scene().removeItem(it)
+        self.viewport().update()
+
+    def _right_click_cancel(self):
+        """[Phase 6 M2] 우클릭 — 진행 중 그리기를 폐기하고 무장 도구를 선택모드로 되돌린다.
+        아무것도 진행 중이 아니고 이미 select면 아무 일도 하지 않는다(무해)."""
+        if self._place is not None:
+            self._cancel_place()
+        elif self._drawing:
+            self._cancel_drag_draw()
+        if self._owner.current_tool not in (None, "select"):
+            self._owner.set_tool("select")
 
     def _bind_poly_ends(self, it):
         """[A3] 직선화살표 확정 시 — 시작·끝 정점이 도형 테두리 근처면 그 지점으로 스냅하고

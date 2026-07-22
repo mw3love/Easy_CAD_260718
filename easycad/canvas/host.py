@@ -192,8 +192,24 @@ def _act_icon(name: str) -> QIcon:
         p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
         p.drawPath(moon.subtracted(cut))
         p.restore()
+    elif name == "pin":
+        # 압정(도구 고정) — 머리+핀. 체크 시 눌린 상태로 강조되어 무장 유지를 알린다.
+        p.save(); p.setBrush(col); p.setPen(QPen(col, 1.4))
+        head = QPainterPath()
+        head.addEllipse(QPointF(12, 9), 5.2, 5.2)
+        p.drawPath(head)
+        p.restore()
+        line(12, 14, 12, 20)
     p.end()
-    return QIcon(pm)
+    icon = QIcon(pm)
+    # [M2 #1] 비활성 상태 아이콘을 뚜렷하게 흐리게 — baked 단색 픽스맵은 Qt 기본 비활성
+    # 처리가 약해 사용자가 활성/비활성을 구분하기 어려웠다(되돌리기 버튼 피드백). 저알파 사본을
+    # Disabled 모드로 명시 등록해 확실히 흐려 보이게 한다.
+    dim = QPixmap(pm.size()); dim.fill(Qt.GlobalColor.transparent)
+    dp = QPainter(dim); dp.setOpacity(0.30); dp.drawPixmap(0, 0, pm); dp.end()
+    icon.addPixmap(dim, QIcon.Mode.Disabled, QIcon.State.Off)
+    icon.addPixmap(dim, QIcon.Mode.Disabled, QIcon.State.On)
+    return icon
 
 
 # [Phase 6 M1] 캔버스 배경 — 테마별. 다크는 CAD 관습대로 어두운 모델공간.
@@ -226,6 +242,12 @@ _TYPE_NAMES = {
     "_BadgeItem": "번호", "_PathItem": "펜", "_SymbolItem": "심볼",
     "_ImageItem": "이미지", "_TableItem": "표", "_TitleBlockItem": "표제란",
 }
+# [Phase 6 M2] one-shot 대상 도구 — 하나 그리면 자동으로 선택모드로 복귀(pin OFF일 때).
+# 심볼(sym:*)은 prefix로 함께 처리. pen(자유 연속선)은 스트로크마다 해제되면 방해라 제외 —
+# 연속으로 긋는 게 본질이므로 pin 없이도 무장 유지.
+_ONESHOT_TOOLS = frozenset({"rect", "ellipse", "line", "arrow", "sarrow", "text", "badge"})
+
+
 class _UndoEntry:
     """[Phase 6 M2] 되돌리기/다시 실행의 원자 단위 — per-item 연산 리스트 하나.
     연산(op)은 딱 3종의 튜플:
@@ -258,10 +280,14 @@ class CanvasWindow(QMainWindow):
         self.current_tool = "select"
         self.current_color = QColor(_DEFAULT_COLOR)
         self.current_width = _DEFAULT_WIDTH
+        self.current_style = Qt.PenStyle.SolidLine   # [M2] 새 도형 기본 선스타일(sticky)
         self.current_font_size = _DEFAULT_FONT
         self.current_badge_size = _DEFAULT_BADGE
         self.current_text_bg = None
         self.arrow_head_at_end = True
+        # [M2] 도구 고정(pin) — False면 도형 1개 그리면 자동으로 선택모드(one-shot),
+        # True면 도구가 계속 무장(연속 그리기). 상단 🔒 토글로 전환.
+        self.tool_pinned = False
         self.snap_enabled = True         # o-snap 토글(F3) — 도형 테두리 달라붙기 켜고 끄기
         self.ortho_enabled = False       # Ortho 토글(F8) — 그리기·정점드래그를 수평/수직(0/90°)로 제약
         self._bg_item = None            # 배경 이미지 없음(무한 캔버스)
@@ -356,6 +382,9 @@ class CanvasWindow(QMainWindow):
         # 편집(상단 툴바 전용 — 메뉴엔 없던 undo/redo를 액션으로. Ctrl+Z/Ctrl+Y 키는 뷰가 처리).
         self._act_undo = self._make_action("되돌리기", "undo", self.undo)
         self._act_redo = self._make_action("다시 실행", "redo", self.redo)
+        # [M2] 도구 고정 — 켜면 도형을 그려도 도구가 유지(연속 그리기), 끄면 one-shot(그리면 선택모드).
+        self._act_pin = self._make_action("도구 고정", "pin", self._toggle_pin, checkable=True)
+        self._act_pin.setToolTip("도구 고정 — 켜면 연속으로 그리기(끄면 하나 그린 뒤 선택모드)")
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
@@ -411,6 +440,11 @@ class CanvasWindow(QMainWindow):
         btn = getattr(self, "_zoom_btn", None)
         if btn is not None:
             btn.setText(f"{round(self._view.transform().m11() * 100)} %")
+
+    def _toggle_pin(self, checked: bool):
+        self.tool_pinned = checked
+        self.statusBar().showMessage(
+            "도구 고정 — 연속 그리기" if checked else "도구 고정 해제 — 하나 그리면 선택모드", 3000)
 
     def _toggle_snap(self, checked: bool):
         self.snap_enabled = checked
@@ -787,8 +821,8 @@ class CanvasWindow(QMainWindow):
         tb.addSeparator()
 
         # 편집 / 보기
-        for a in (self._act_undo, self._act_redo, self._act_zoom100, self._act_fit,
-                  self._act_snap, self._act_ortho):
+        for a in (self._act_undo, self._act_redo, self._act_pin, self._act_zoom100,
+                  self._act_fit, self._act_snap, self._act_ortho):
             tb.addAction(a)
         self._refresh_history_actions()   # undo/redo 버튼 초기 활성 상태(둘 다 비어 disabled)
 
@@ -1050,6 +1084,13 @@ class CanvasWindow(QMainWindow):
         self.push_undo_state(snaps, coalesce_key=key)
         self._refresh_properties()
 
+    def _set_current_color(self, color: QColor):
+        """[M2 #A] 현재 색을 갱신하고 상단 그리기 도구 아이콘을 그 색으로 다시 칠한다
+        (도구 아이콘은 draw-color라 테마와 무관 — 여기서만 갱신). 새 도형·화살표에 반영."""
+        self.current_color = QColor(color)
+        for key, b in getattr(self, "_tool_buttons", {}).items():
+            b.setIcon(_tool_icon(key, self.current_color))
+
     def _edit_color(self):
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_color")]
         if not sel:
@@ -1059,11 +1100,14 @@ class CanvasWindow(QMainWindow):
         if not col.isValid():
             return
         self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
+        self._set_current_color(col)   # [M2 #A] 다음 도형 기본 색으로(sticky)
 
     def _edit_width(self, val):
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_width")]
         self._edit_items(sel, lambda it: it.apply_width(float(val)),
                          key=("width", tuple(sorted(id(it) for it in sel))))
+        if sel:
+            self.current_width = float(val)   # [M2 #A] 다음 도형 기본 두께로(sticky)
 
     def _edit_style(self, _idx):
         style = self._pf_style.currentData()
@@ -1071,6 +1115,8 @@ class CanvasWindow(QMainWindow):
         def apply(it):
             p = it.pen(); p.setStyle(style); it.setPen(p)
         self._edit_items(sel, apply)
+        if sel and style is not None:
+            self.current_style = style   # [M2 #A] 다음 도형 기본 선스타일로(sticky)
 
     def _edit_font(self, val):
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_font_size")]
@@ -1203,6 +1249,7 @@ class CanvasWindow(QMainWindow):
     def make_pen(self) -> QPen:
         pen = QPen(QColor(self.current_color))
         pen.setWidthF(float(self.current_width))
+        pen.setStyle(self.current_style)   # [M2] sticky 선스타일 반영
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         return pen
@@ -1230,12 +1277,16 @@ class CanvasWindow(QMainWindow):
         # 연속 굴림은 (아이템별) coalesce_key로 undo 1스텝에 병합.
         before = item.capture_state()
         if isinstance(item, (_ArrowItem, _PolyArrowItem)):
-            item.apply_width(max(1, item._width + step))
+            new_w = max(1, item._width + step)
+            item.apply_width(new_w)
         elif hasattr(item, "pen"):
-            item.apply_width(max(1.0, item.pen().widthF() + step))
+            new_w = max(1.0, item.pen().widthF() + step)
+            item.apply_width(new_w)
         else:
             return
         self.push_undo_state([(item, before)], coalesce_key=("width", id(item)))
+        self.current_width = float(new_w)   # [M2 #A] 바꾼 두께를 다음 도형 기본값으로(sticky)
+        self._refresh_properties()          # [M2 #3] 속성 패널 값 실시간 반영
 
     # 줌 (커서 기준 — 뷰가 AnchorUnderMouse)
     def _on_wheel_zoom(self, dy: int):
@@ -1293,10 +1344,22 @@ class CanvasWindow(QMainWindow):
 
     def push_undo_add(self, item):
         self._push_entry([("create", item)])
+        self._maybe_oneshot_revert()
 
     def push_undo_add_many(self, items):
         """[2d] 여러 아이템(복제 도형+연결 화살표)을 한 번의 undo로 함께 제거."""
         self._push_entry([("create", it) for it in items])
+        self._maybe_oneshot_revert()
+
+    def _maybe_oneshot_revert(self):
+        """[M2] 도형을 하나 커밋한 뒤 — pin이 꺼져 있고 지금 도구가 one-shot 대상이면
+        선택모드로 되돌린다(그린 뒤 또 그려지는 오작동 차단). 진행 중 이벤트가 끝난 뒤
+        적용하도록 singleShot(0)로 지연(현재 그리기 핸들러가 도구를 더 참조할 수 있으므로).
+        붙여넣기·복제·빠른생성은 select 모드에서 일어나 여기 걸리지 않는다(가드)."""
+        tool = self.current_tool
+        armed = tool in _ONESHOT_TOOLS or (tool or "").startswith("sym:")
+        if armed and not self.tool_pinned:
+            QTimer.singleShot(0, lambda: self.set_tool("select"))
 
     def push_undo_delete(self, items):
         self._push_entry([("remove", it) for it in items])
