@@ -478,6 +478,43 @@ def test_rmb_context_menu_states():
     assert it.isSelected()
 
 
+def test_floating_toolbar_edits_and_visibility():
+    # [M3 #15] 플로팅 툴바 — 선택 유무로 표시 토글, 편집이 기존 undo 경로를 탄다.
+    w = CanvasWindow()
+    bar = w._float_bar
+    w._reposition_floating_toolbar()
+    assert bar.isHidden()                                  # 선택 없음 → 숨김
+    it = _mk_pen_rect(w, color="#111111"); it.setSelected(True)
+    w._reposition_floating_toolbar()
+    assert not bar.isHidden()                             # 선택 → 표시
+    assert w._float_dir_btn.isHidden()                    # 도형 → 방향 버튼 숨김
+    # 색 스와치 → apply_color + sticky + undo.
+    w._floating_set_color("#34C759")
+    assert it.pen().color().name().lower() == "#34c759"
+    assert w.current_color.name().lower() == "#34c759"
+    w.undo(); assert it.pen().color().name().lower() == "#111111"
+    # 선스타일 순환 → dash, undo.
+    w._floating_cycle_style()
+    assert it.pen().style() == Qt.PenStyle.DashLine
+    w.undo(); assert it.pen().style() == Qt.PenStyle.SolidLine
+
+
+def test_floating_toolbar_arrow_flip_undo():
+    # [M3 #15] 화살표 선택 시 방향 버튼 노출 + flip이 capture_state로 undo(코어 보강).
+    w = CanvasWindow()
+    ar = _PolyArrowItem(QColor("#111111"), 3.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 0))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar); ar.setSelected(True)
+    w._reposition_floating_toolbar()
+    assert not w._float_dir_btn.isHidden()               # 화살표 → 방향 버튼 노출
+    before = ar._head_at_end
+    st = ar.capture_state(); assert "head" in st          # 방향이 상태 스냅샷에 포함
+    w._floating_flip_arrows()
+    assert ar._head_at_end != before
+    w.undo(); assert ar._head_at_end == before            # 방향 토글이 되돌려진다
+
+
 def test_pdf_export():
     w = CanvasWindow()
     _mk_rect(w._scene, w.make_pen(), 0, 0, 120, 60)

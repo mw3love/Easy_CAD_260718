@@ -620,6 +620,8 @@ class _HandleResizeMixin:
             st["width"] = self._width
         if hasattr(self, "_style"):   # [M2 #3] 화살표 몸통 선스타일(pen 없는 화살표 전용)
             st["style"] = self._style
+        if hasattr(self, "_head_at_end") and hasattr(self, "set_head_at_end"):
+            st["head"] = self._head_at_end   # [M3 #15] 화살표 방향 — 토글을 undo 가능하게
         if hasattr(self, "setDefaultTextColor"):
             st["tcolor"] = QColor(self.defaultTextColor())
         if hasattr(self, "toPlainText"):
@@ -642,6 +644,8 @@ class _HandleResizeMixin:
             self.apply_width(st["width"])
         if "style" in st and hasattr(self, "apply_style"):   # [M2 #3] 화살표 선스타일
             self.apply_style(st["style"])
+        if "head" in st and hasattr(self, "set_head_at_end"):   # [M3 #15] 화살표 방향
+            self.set_head_at_end(st["head"])
         if "tcolor" in st and hasattr(self, "setDefaultTextColor"):
             self.setDefaultTextColor(st["tcolor"])
         if "font_pt" in st and hasattr(self, "apply_font_size"):
@@ -3276,6 +3280,14 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def apply_style(self, style):   # [M2 #3] 몸통 선스타일(점선 등)
         self._style = style
         self.update()
+
+    def set_head_at_end(self, value: bool):   # [Phase 6 M3 #15] 방향 토글(플로팅 툴바)
+        self.prepareGeometryChange()          # 화살촉이 반대 끝으로 → bbox 재계산
+        self._head_at_end = value
+        self.update()
+
+    def flip_head(self):
+        self.set_head_at_end(not self._head_at_end)
 
     def clone(self):
         c = _PolyArrowItem(QColor(self._color), self._width, self._head_at_end)

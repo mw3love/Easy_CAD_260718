@@ -23,14 +23,14 @@ from PyQt6.QtWidgets import (
     QBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QDockWidget, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
-    QSizePolicy, QColorDialog, QHBoxLayout, QMenu,
+    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
 )
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
     _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
-    _MIN_FONT, _MAX_FONT,
+    _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
@@ -366,6 +366,7 @@ class CanvasWindow(QMainWindow):
         self._build_toolbar()
         self._build_shapes_dock()
         self._build_properties_dock()
+        self._build_floating_toolbar()   # [Phase 6 M3 #15] 선택 위 플로팅 컨텍스트 툴바
         self._build_statusbar()
         self.set_tool("select")
         self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
@@ -1623,6 +1624,114 @@ class CanvasWindow(QMainWindow):
         menu = self._build_context_menu()
         if menu is not None:
             menu.exec(global_pos)
+
+    # ---- [Phase 6 M3 #15] 플로팅 컨텍스트 툴바 ------------------------------
+    # 선택 시 객체 바로 위에 뜨는 미니 툴바. 색·선스타일·복제·삭제·(화살표)방향 토글을
+    # 전부 속성 dock 편집 경로(#9)·host 메서드로 재사용해 undo가 일관되게 걸린다.
+    def _build_floating_toolbar(self):
+        bar = QFrame(self)
+        bar.setObjectName("floatBar")
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(6, 4, 6, 4); lay.setSpacing(4)
+        self._float_swatches = []
+        for hexs in _COLOR_PRESETS[:5]:   # 빨강·주황·노랑·초록·파랑
+            b = QToolButton(); b.setFixedSize(QSize(18, 18)); b.setToolTip(f"색 {hexs}")
+            b.setStyleSheet(f"background:{hexs}; border:1px solid #0006; border-radius:3px;")
+            b.clicked.connect(lambda _c=False, h=hexs: self._floating_set_color(h))
+            lay.addWidget(b); self._float_swatches.append(b)
+        more = QToolButton(); more.setText("⋯"); more.setFixedSize(QSize(20, 18))
+        more.setToolTip("색 더 보기"); more.clicked.connect(self._edit_color)
+        lay.addWidget(more)
+        self._float_style_btn = QToolButton(); self._float_style_btn.setText("┄")
+        self._float_style_btn.setFixedSize(QSize(24, 18))
+        self._float_style_btn.setToolTip("선스타일 순환(실선→파선→점선)")
+        self._float_style_btn.clicked.connect(self._floating_cycle_style)
+        lay.addWidget(self._float_style_btn)
+        self._float_dir_btn = QToolButton(); self._float_dir_btn.setText("⇄")
+        self._float_dir_btn.setFixedSize(QSize(22, 18))
+        self._float_dir_btn.setToolTip("화살표 방향 뒤집기")
+        self._float_dir_btn.clicked.connect(self._floating_flip_arrows)
+        lay.addWidget(self._float_dir_btn)
+        dup = QToolButton(); dup.setText("⧉"); dup.setFixedSize(QSize(22, 18))
+        dup.setToolTip("복제(Ctrl+D)"); dup.clicked.connect(self.duplicate_selection)
+        lay.addWidget(dup)
+        dele = QToolButton(); dele.setText("✕"); dele.setFixedSize(QSize(22, 18))
+        dele.setToolTip("삭제(Del)"); dele.clicked.connect(self.delete_selection)
+        lay.addWidget(dele)
+        bar.setStyleSheet("#floatBar { background:palette(window);"
+                          " border:1px solid palette(mid); border-radius:6px; }")
+        bar.setVisible(False)
+        self._float_bar = bar
+        # 따라다니기 — 선택 변경·팬/줌(스크롤바)·아이템 이동(scene.changed) 모두에 리포지션.
+        self._scene.selectionChanged.connect(self._reposition_floating_toolbar)
+        self._view.horizontalScrollBar().valueChanged.connect(self._reposition_floating_toolbar)
+        self._view.verticalScrollBar().valueChanged.connect(self._reposition_floating_toolbar)
+        self._scene.changed.connect(lambda *_: self._reposition_floating_toolbar())
+
+    def _floating_set_color(self, hexs):
+        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_color")]
+        if not sel:
+            return
+        col = QColor(hexs)
+        self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
+        self._set_current_color(col)   # sticky — 다음 도형 기본 색
+
+    def _floating_cycle_style(self):
+        order = [Qt.PenStyle.SolidLine, Qt.PenStyle.DashLine, Qt.PenStyle.DotLine]
+        sel = [it for it in self._scene.selectedItems()
+               if hasattr(it, "pen") or hasattr(it, "apply_style")]
+        if not sel:
+            return
+        cur = self._read_props(sel[0])["style"]
+        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else Qt.PenStyle.DashLine
+        def apply(it):
+            if hasattr(it, "apply_style"):
+                it.apply_style(nxt)
+            else:
+                p = it.pen(); p.setStyle(nxt); it.setPen(p)
+        self._edit_items(sel, apply)
+        self.current_style = nxt   # sticky
+
+    def _floating_flip_arrows(self):
+        arrows = [it for it in self._scene.selectedItems()
+                  if isinstance(it, (_ArrowItem, _PolyArrowItem))]
+        if not arrows:
+            return
+        self._edit_items(arrows, lambda it: it.flip_head())
+
+    def _reposition_floating_toolbar(self):
+        """선택 bbox 상단중앙 위에 배치(뷰 상단 침범 시 아래로 반전, 창 경계 클램프).
+        선택 없음/뷰어 모드면 숨긴다. 씬→뷰포트→host 좌표 변환은 _arrow_dir_btn 관례를 따른다."""
+        bar = getattr(self, "_float_bar", None)
+        if bar is None:
+            return
+        sel = self._scene.selectedItems()
+        if not self.is_edit_mode() or not sel:
+            bar.setVisible(False)
+            return
+        self._float_dir_btn.setVisible(
+            any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel))
+        bar.adjustSize()
+        w, h = bar.width(), bar.height()
+        r = QRectF()
+        for it in sel:
+            r = r.united(it.sceneBoundingRect())
+
+        def to_host(scene_pt):
+            vp = self._view.mapFromScene(scene_pt)
+            return self.mapFromGlobal(self._view.viewport().mapToGlobal(vp))
+        top = to_host(QPointF(r.center().x(), r.top()))
+        x = int(top.x() - w / 2)
+        y = int(top.y() - h - 10)                          # 기본: 선택 위쪽
+        view_top = self._view.mapTo(self, QPoint(0, 0)).y()
+        if y < view_top + 2:                               # 뷰 상단 침범 → 아래로 반전
+            bot = to_host(QPointF(r.center().x(), r.bottom()))
+            y = int(bot.y() + 10)
+        x = max(2, min(x, self.width() - w - 2))
+        y = max(2, min(y, self.height() - h - 2))
+        bar.move(x, y)
+        bar.setVisible(True)
+        bar.raise_()
 
 
 # ---------------------------------------------------------------------------
