@@ -414,6 +414,16 @@ def test_palette_drag_drop_creates_shape():
     assert isinstance(s, _SymbolItem) and s._kind == "decision"
     assert w._create_shape_at("bogus", QPointF(0, 0)) is None
 
+    # 뷰포트 이벤트 필터가 팔레트 드롭을 받아 생성(뷰가 가로채기 전 처리).
+    from PyQt6.QtGui import QDropEvent
+    from PyQt6.QtCore import QEvent
+    md2 = QMimeData(); md2.setData(_PALETTE_MIME, b"ellipse")
+    de = QDropEvent(QPointF(30, 40), Qt.DropAction.CopyAction, md2,
+                    Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QEvent.Type.Drop)
+    n1 = len([x for x in w._scene.items() if isinstance(x, _EllipseItem)])
+    assert w.eventFilter(w._view.viewport(), de) is True
+    assert len([x for x in w._scene.items() if isinstance(x, _EllipseItem)]) == n1 + 1
+
 
 def _rmb(v, etype, local, glob=None):
     # [M3 #16] 우클릭 마우스 이벤트 합성 — press/release=RightButton, move=RightButton held.

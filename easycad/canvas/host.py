@@ -13,7 +13,7 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
           push_undo_add/push_undo_delete/push_undo_move/undo/
           copy_selection/paste_selection
 """
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
     QFont, QPolygonF, QPainterPath, QPalette, QDrag,
@@ -363,6 +363,10 @@ class CanvasWindow(QMainWindow):
         self._dark = QSettings("EasyCAD", "EasyCAD").value("dark", True, type=bool)  # 다크 기본
         self._build_menu()
         self.setCentralWidget(self._view)
+        # [M3 #17] 팔레트 드롭이 캔버스 뷰 위에서 무시되던 문제 — 뷰(QGraphicsView)가 드래그를
+        # 먼저 가로채 우리 mime를 거부(금지 커서)하므로, 뷰포트에 이벤트 필터를 걸어 직접 받는다.
+        self._view.viewport().setAcceptDrops(True)
+        self._view.viewport().installEventFilter(self)
         self._build_toolbar()
         self._build_shapes_dock()
         self._build_properties_dock()
@@ -670,6 +674,23 @@ class CanvasWindow(QMainWindow):
         md = e.mimeData()
         if md.hasFormat(_PALETTE_MIME) or md.hasUrls():
             e.acceptProposedAction()
+
+    def eventFilter(self, obj, event):
+        # [M3 #17] 캔버스 뷰포트 위의 팔레트 드래그를 여기서 직접 처리(뷰가 가로채기 전에).
+        # 뷰포트 좌표 → mapToScene 로 놓은 자리에 도형 생성. 팔레트 mime가 아니면 통과.
+        if obj is self._view.viewport():
+            et = event.type()
+            if et in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+                if event.mimeData().hasFormat(_PALETTE_MIME):
+                    event.acceptProposedAction()
+                    return True
+            elif et == QEvent.Type.Drop and event.mimeData().hasFormat(_PALETTE_MIME):
+                tool_key = bytes(event.mimeData().data(_PALETTE_MIME)).decode("utf-8")
+                scene_pos = self._view.mapToScene(event.position().toPoint())
+                if self._create_shape_at(tool_key, scene_pos) is not None:
+                    event.acceptProposedAction()
+                return True
+        return super().eventFilter(obj, event)
 
     def dropEvent(self, e):
         md = e.mimeData()
