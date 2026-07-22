@@ -86,6 +86,9 @@ def _pen(e, width: float = None) -> QPen:
     p.setWidthF(width)
     p.setCapStyle(Qt.PenCapStyle.RoundCap)
     p.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    st = _style_of(e)               # [M2 #3] linetype → 선스타일(네모·선·원·심볼·펜 공통)
+    if st is not None:
+        p.setStyle(st)
     return p
 
 

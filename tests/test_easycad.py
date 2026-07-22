@@ -296,6 +296,43 @@ def test_dxf_arrow_linetype_roundtrip():
     assert a2 and a2[0]._style == Qt.PenStyle.DashDotLine
 
 
+def test_dxf_penshape_linetype_roundtrip():
+    # [M2 #3] pen 기반 도형(네모·선·원)의 점선도 DXF linetype으로 왕복 보존(버그: 이전엔 실선화).
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    from easycad.fileio.dxf_import import import_dxf
+    def dpen(style):
+        p = QPen(QColor("#ff0000")); p.setWidthF(2.0); p.setStyle(style); return p
+    sc = QGraphicsScene()
+    rect = _RectItem(QRectF(0, 0, 100, 60)); rect.setPen(dpen(Qt.PenStyle.DashLine))
+    rect.setBrush(QBrush(Qt.BrushStyle.NoBrush)); sc.addItem(rect)
+    line = _LineItem(QLineF(0, 200, 150, 260)); line.setPen(dpen(Qt.PenStyle.DotLine)); sc.addItem(line)
+    ell = _EllipseItem(QRectF(0, 400, 80, 80)); ell.setPen(dpen(Qt.PenStyle.DashDotLine))
+    ell.setBrush(QBrush(Qt.BrushStyle.NoBrush)); sc.addItem(ell)
+    path = os.path.join(_TMP, "penshape_linetype.dxf")
+    assert export_dxf(sc, path)
+    sc2 = QGraphicsScene(); import_dxf(sc2, path)
+    r2 = [x for x in sc2.items() if isinstance(x, _RectItem)][0]
+    l2 = [x for x in sc2.items() if isinstance(x, _LineItem)][0]
+    e2 = [x for x in sc2.items() if isinstance(x, _EllipseItem)][0]
+    assert r2.pen().style() == Qt.PenStyle.DashLine
+    assert l2.pen().style() == Qt.PenStyle.DotLine
+    assert e2.pen().style() == Qt.PenStyle.DashDotLine
+
+
+def test_arrow_sticky_style_on_draw():
+    # [M2 #3] 선스타일을 점선으로 바꾼 뒤 새로 그리는 화살표도 그 스타일로 시작(sticky).
+    # _begin_draw 초크포인트가 current_style을 스탬프한다(화살표는 make_pen 밖).
+    w = CanvasWindow()
+    w.current_style = Qt.PenStyle.DashLine
+    ar = _ArrowItem(w.current_color, w.current_width, True)
+    w._view._begin_draw(ar)
+    assert ar._style == Qt.PenStyle.DashLine
+    sar = _PolyArrowItem(w.current_color, w.current_width, True)
+    w._view._begin_draw(sar)
+    assert sar._style == Qt.PenStyle.DashLine
+
+
 def test_duplicate_offset():
     # [M2 #3] Ctrl+D 복제 — 개수 +1, (20,20) 오프셋, 클립보드 미오염, undo 1스텝.
     w = CanvasWindow()

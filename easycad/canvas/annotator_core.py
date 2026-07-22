@@ -4635,6 +4635,7 @@ class _AnnotatorView(QGraphicsView):
         p_dup = _edge_mid(self._qc_src_scene_rect(dup), opp)
         owner = self._owner
         arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+        arrow._style = getattr(owner, "current_style", arrow._style)   # [M2 #3] sticky 선스타일
         arrow.set_points(p_src, p_dup)
         arrow.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
                        | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
@@ -5342,6 +5343,10 @@ class _AnnotatorView(QGraphicsView):
             it.setSelected(True)
 
     def _begin_draw(self, item: QGraphicsItem):
+        # [M2 #3] 화살표는 pen()이 없어 make_pen의 sticky current_style을 못 받는다 →
+        # 그리기 시작 시 여기서 스탬프(pen 기반 도형은 make_pen이 이미 반영, hasattr로 no-op).
+        if hasattr(item, "_style"):
+            item._style = getattr(self._owner, "current_style", item._style)
         item.setZValue(1)
         self.scene().addItem(item)
         self._temp = item

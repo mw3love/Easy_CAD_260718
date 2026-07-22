@@ -124,7 +124,7 @@ def _arrowhead(msp, tip, near, width: float, attrs: dict):
 
 # ---- 아이템별 export -------------------------------------------------------
 def _export_symbol(msp, it):
-    attrs = _attrs(_LAYERS["symbol"], it.pen().color())
+    attrs = _with_linetype(_attrs(_LAYERS["symbol"], it.pen().color()), it.pen().style())
     for poly in it._sym_path().toSubpathPolygons():
         pts = [_w(it, p.x(), p.y()) for p in poly]
         if len(pts) < 2:
@@ -140,13 +140,13 @@ def _export_rect(msp, it):
     r = it.rect()
     pts = [_w(it, r.left(), r.top()), _w(it, r.right(), r.top()),
            _w(it, r.right(), r.bottom()), _w(it, r.left(), r.bottom())]
-    _wx(msp.add_lwpolyline(pts, close=True, dxfattribs=_attrs(_LAYERS["rect"], it.pen().color())),
-        it.pen().widthF())
+    attrs = _with_linetype(_attrs(_LAYERS["rect"], it.pen().color()), it.pen().style())
+    _wx(msp.add_lwpolyline(pts, close=True, dxfattribs=attrs), it.pen().widthF())
 
 
 def _export_ellipse(msp, it):
     r = it.rect()
-    attrs = _attrs(_LAYERS["ellipse"], it.pen().color())
+    attrs = _with_linetype(_attrs(_LAYERS["ellipse"], it.pen().color()), it.pen().style())
     cx, cy = _w(it, r.center().x(), r.center().y())
     # 로컬 반경축 끝점을 월드화 → 회전·비균일 스케일 흡수.
     ax = _w(it, r.center().x() + r.width() / 2.0, r.center().y())
@@ -165,8 +165,9 @@ def _export_ellipse(msp, it):
 
 def _export_line(msp, it):
     ln = it.line()
+    attrs = _with_linetype(_attrs(_LAYERS["line"], it.pen().color()), it.pen().style())
     _wx(msp.add_line(_w(it, ln.x1(), ln.y1()), _w(it, ln.x2(), ln.y2()),
-                     dxfattribs=_attrs(_LAYERS["line"], it.pen().color())), it.pen().widthF())
+                     dxfattribs=attrs), it.pen().widthF())
 
 
 def _export_arrow(msp, it):
@@ -202,7 +203,7 @@ def _export_sarrow(msp, it):
 
 
 def _export_path(msp, it):
-    attrs = _attrs(_LAYERS["path"], it.pen().color())
+    attrs = _with_linetype(_attrs(_LAYERS["path"], it.pen().color()), it.pen().style())
     path = it.path()
     ET = QPainterPath.ElementType
     i, n = 0, path.elementCount()
