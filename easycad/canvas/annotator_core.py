@@ -4524,6 +4524,10 @@ class _AnnotatorView(QGraphicsView):
         self._arrow_snap_exit = None # 그리는 화살표 시작이 테두리에 스냅됐으면 그 바깥 법선(이탈 접선), or None
         self._arrow_tip_snap = None  # 그리는 화살표 tip이 테두리에 스냅된 지점(씬 좌표) or None
         self._none_win_dragging = False  # 손 모드(도구 없음) 빈영역 좌드래그 = 창 이동 중
+        # [Phase 6 M3 #16] 유휴 우클릭 재정의 — 드래그=팬 / 제자리 탭=컨텍스트 메뉴.
+        # BUSY(무장·그리기 중)면 대신 취소(M2 탈출구). press 지점을 기록해 move/release로 분기한다.
+        self._rmb_press = None            # 유휴 우클릭 press 지점(view) — None이면 팬/메뉴 후보 아님
+        self._rmb_panning = False         # 임계 넘겨 팬이 시작됨
         # [우리 확장] 방향 감지 러버밴드(AutoCAD window/crossing) — Qt 기본 RubberBandDrag 대체.
         # 왼→오 = window(완전포함, 파란 실선) / 오→왼 = crossing(걸침, 초록 점선).
         self._rb_active = False           # 러버밴드 드래그 중
@@ -5121,11 +5125,16 @@ class _AnnotatorView(QGraphicsView):
             self._owner._win_drag_start(event.globalPosition().toPoint())
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             return
-        # [Phase 6 M2] 우클릭 = 취소/해제 — 진행 중 그리기(클릭배치·드래그)를 폐기하고
-        # 무장 도구를 선택모드로 되돌린다(그린 뒤 또 그려지는 오작동의 탈출구). 폴리라인 '완성'은
-        # 더블클릭·Enter가 담당하므로 우클릭을 취소에 온전히 내준다.
+        # [Phase 6 M3 #16] 우클릭 재정의(승인 설계) — 상태 분기:
+        #   BUSY(무장/그리기 중) → 취소(M2 탈출구 그대로, press 즉시) / 유휴(select·손, 진행중 없음)
+        #   → 드래그=캔버스 팬 · 제자리 탭=컨텍스트 메뉴. 유휴는 move/release로 팬/메뉴를 가른다.
+        # (M2에서 우클릭이 '취소'로 유효하던 경우와 BUSY를 정확히 일치시켜 그 탈출구를 보존한다.)
         if event.button() == Qt.MouseButton.RightButton and self._owner.is_edit_mode():
-            self._right_click_cancel()
+            if self._rmb_is_busy():
+                self._right_click_cancel()
+            else:
+                self._rmb_press = event.position().toPoint()
+                self._rmb_panning = False
             return
         # [우리 확장] 클릭 배치 진행 중 좌클릭 = 다음 점(2점도구 확정·sarrow 정점추가).
         # (릴리스로 끝내지 않으므로 이 분기가 최우선 — 끝점/세그먼트 판정보다 앞선다.)
@@ -5528,6 +5537,13 @@ class _AnnotatorView(QGraphicsView):
         if self._owner.current_tool not in (None, "select"):
             self._owner.set_tool("select")
 
+    def _rmb_is_busy(self) -> bool:
+        """[M3 #16] 우클릭이 '취소'여야 하는 상태인가 — 진행 중 배치/그리기 또는 무장된 그리기 도구.
+        M2가 실제로 취소하던 경우와 정확히 일치(그 외 유휴는 팬/메뉴로 넘긴다)."""
+        if self._place is not None or self._drawing:
+            return True
+        return self._owner.current_tool not in (None, "select")
+
     def _bind_poly_ends(self, it):
         """[A3] 직선화살표 확정 시 — 시작·끝 정점이 도형 테두리 근처면 그 지점으로 스냅하고
         지속 연결 바인딩(도형 이동 시 추종). o-snap(F3) 꺼짐이면 _border_snap_at이 None → 무바인딩."""
@@ -5744,6 +5760,15 @@ class _AnnotatorView(QGraphicsView):
         if event.buttons() & Qt.MouseButton.MiddleButton:
             self._owner._win_drag_move(event.globalPosition().toPoint())
             return
+        # [Phase 6 M3 #16] 유휴 우클릭 드래그 — 임계 넘으면 팬 시작/지속(가운데버튼 팬과 동일 메커니즘).
+        if (event.buttons() & Qt.MouseButton.RightButton) and self._rmb_press is not None:
+            if self._rmb_panning:
+                self._owner._win_drag_move(event.globalPosition().toPoint())
+            elif (event.position().toPoint() - self._rmb_press).manhattanLength() >= 6:
+                self._rmb_panning = True
+                self._owner._win_drag_start(event.globalPosition().toPoint())
+                self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
         if self._none_win_dragging:  # 손 모드 빈영역 좌드래그 = 창 이동
             self._owner._win_drag_move(event.globalPosition().toPoint())
             return
@@ -5834,6 +5859,17 @@ class _AnnotatorView(QGraphicsView):
         if event.button() == Qt.MouseButton.MiddleButton:
             self._owner._win_drag_end()
             self.viewport().unsetCursor()
+            return
+        # [Phase 6 M3 #16] 유휴 우클릭 종료 — 끌었으면 팬 종료, 제자리 탭이면 컨텍스트 메뉴.
+        if event.button() == Qt.MouseButton.RightButton and self._rmb_press is not None:
+            panned = self._rmb_panning
+            self._rmb_press = None
+            self._rmb_panning = False
+            if panned:
+                self._owner._win_drag_end()
+                self.viewport().unsetCursor()
+            elif hasattr(self._owner, "_show_context_menu"):
+                self._owner._show_context_menu(event.globalPosition().toPoint())
             return
         if self._none_win_dragging:  # 손 모드 창 이동 종료
             self._owner._win_drag_end()

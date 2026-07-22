@@ -415,6 +415,69 @@ def test_palette_drag_drop_creates_shape():
     assert w._create_shape_at("bogus", QPointF(0, 0)) is None
 
 
+def _rmb(v, etype, local, glob=None):
+    # [M3 #16] 우클릭 마우스 이벤트 합성 — press/release=RightButton, move=RightButton held.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    glob = glob if glob is not None else local
+    if etype == "press":
+        e = QMouseEvent(QEvent.Type.MouseButtonPress, local, glob,
+                        Qt.MouseButton.RightButton, Qt.MouseButton.RightButton,
+                        Qt.KeyboardModifier.NoModifier)
+        v.mousePressEvent(e)
+    elif etype == "move":
+        e = QMouseEvent(QEvent.Type.MouseMove, local, glob,
+                        Qt.MouseButton.NoButton, Qt.MouseButton.RightButton,
+                        Qt.KeyboardModifier.NoModifier)
+        v.mouseMoveEvent(e)
+    else:
+        e = QMouseEvent(QEvent.Type.MouseButtonRelease, local, glob,
+                        Qt.MouseButton.RightButton, Qt.MouseButton.NoButton,
+                        Qt.KeyboardModifier.NoModifier)
+        v.mouseReleaseEvent(e)
+
+
+def test_rmb_busy_cancel_vs_idle_pan():
+    # [M3 #16] 우클릭 상태 분기: BUSY(무장)=취소 / 유휴=드래그 팬(release로 메뉴/팬 분기).
+    w = CanvasWindow(); v = w._view
+    # BUSY: 그리기 도구 무장 → 우클릭 press = 취소(도구 select 복귀), 팬/메뉴 후보 아님.
+    w.set_tool("rect")
+    assert v._rmb_is_busy()
+    _rmb(v, "press", QPointF(100, 100))
+    assert w.current_tool == "select" and v._rmb_press is None
+    # IDLE: 우클릭 press → press 지점 기록(팬/메뉴 후보), 도구 유지.
+    assert not v._rmb_is_busy()
+    _rmb(v, "press", QPointF(100, 100))
+    assert v._rmb_press is not None and v._rmb_panning is False
+    # 임계(6px) 초과 드래그(로컬 이동) → 팬 시작.
+    _rmb(v, "move", QPointF(140, 140), QPointF(140, 140))
+    assert v._rmb_panning is True and w._pan_last is not None
+    # 릴리스(팬 후) → 상태 리셋(메뉴 안 뜸).
+    _rmb(v, "release", QPointF(140, 140), QPointF(140, 140))
+    assert v._rmb_press is None and v._rmb_panning is False
+
+
+def test_rmb_context_menu_states():
+    # [M3 #16] 컨텍스트 메뉴 구성 — 선택/클립보드 유무로 항목이 달라진다. 액션은 기존 편집 경로.
+    w = CanvasWindow()
+    labels = lambda: [a.text() for a in w._build_context_menu().actions() if not a.isSeparator()]
+    assert labels() == ["전체 선택\tCtrl+A"]                       # 빈 캔버스
+    it = _mk_pen_rect(w); it.setSelected(True)
+    assert labels()[:4] == ["복사\tCtrl+C", "잘라내기", "복제\tCtrl+D", "삭제\tDel"]
+    w.copy_selection()
+    assert "붙여넣기\tCtrl+V" in labels()                          # 클립 채우면 붙여넣기
+    # delete_selection·undo 왕복(메뉴 액션이 기존 undo 경로를 탄다).
+    w._scene.clearSelection(); it.setSelected(True)
+    n0 = len([x for x in w._scene.items() if isinstance(x, _RectItem)])
+    w.delete_selection()
+    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == n0 - 1
+    w.undo()
+    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == n0
+    # select_all → 선택 가능한 모든 아이템 선택.
+    w._scene.clearSelection(); w.select_all()
+    assert it.isSelected()
+
+
 def test_pdf_export():
     w = CanvasWindow()
     _mk_rect(w._scene, w.make_pen(), 0, 0, 120, 60)

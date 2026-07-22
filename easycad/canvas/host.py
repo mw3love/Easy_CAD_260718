@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QDockWidget, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
-    QSizePolicy, QColorDialog, QHBoxLayout,
+    QSizePolicy, QColorDialog, QHBoxLayout, QMenu,
 )
 
 from easycad.canvas.annotator_core import (
@@ -1577,6 +1577,52 @@ class CanvasWindow(QMainWindow):
             new_items.append(c)
         if new_items:
             self.push_undo_add_many(new_items)
+
+    # [Phase 6 M3 #16] 우클릭 컨텍스트 메뉴 — 유휴 우클릭 탭 시 뷰가 호출.
+    def delete_selection(self):
+        """선택 객체 삭제 + undo. 뷰의 Del 키 핸들러와 동일 동작(메뉴 재사용용)."""
+        sel = list(self._scene.selectedItems())
+        if not sel:
+            return
+        for it in sel:
+            self._scene.removeItem(it)
+        self.push_undo_delete(sel)
+
+    def select_all(self):
+        for it in self._scene.items():
+            if it.flags() & it.GraphicsItemFlag.ItemIsSelectable:
+                it.setSelected(True)
+
+    def _cut_selection(self):
+        self.copy_selection()
+        self.delete_selection()
+
+    def _build_context_menu(self):
+        """[M3 #16] 유휴 우클릭 탭 메뉴 구성 — 선택/클립보드 유무로 항목을 정한다.
+        전부 기존 편집 경로(copy/paste/duplicate/delete/select_all)를 재사용해 undo 일관.
+        exec는 _show_context_menu가 하고, 이 메서드는 구성만(스모크 테스트용 분리)."""
+        menu = QMenu(self)
+        has_sel = bool(self._scene.selectedItems())
+        has_clip = bool(getattr(self, "_clip", None))
+        if has_sel:
+            menu.addAction("복사\tCtrl+C", self.copy_selection)
+            menu.addAction("잘라내기", self._cut_selection)
+            menu.addAction("복제\tCtrl+D", self.duplicate_selection)
+            menu.addAction("삭제\tDel", self.delete_selection)
+        if has_clip:
+            if has_sel:
+                menu.addSeparator()
+            menu.addAction("붙여넣기\tCtrl+V", self.paste_selection)
+        if not has_sel:
+            if has_clip:
+                menu.addSeparator()
+            menu.addAction("전체 선택\tCtrl+A", self.select_all)
+        return menu if not menu.isEmpty() else None
+
+    def _show_context_menu(self, global_pos):
+        menu = self._build_context_menu()
+        if menu is not None:
+            menu.exec(global_pos)
 
 
 # ---------------------------------------------------------------------------
