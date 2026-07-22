@@ -164,6 +164,17 @@ def _act_icon(name: str) -> QIcon:
         path.arcTo(QRectF(8.8, 10.5, 10.4, 10.4), 90, -180)
         path.lineTo(9.5, 20.9)
         p.drawPath(path)
+    elif name == "redo":
+        # undo 글리프를 수평 반전(→ 오른쪽으로 굽는 화살표).
+        p.save()
+        p.translate(24, 0); p.scale(-1, 1)
+        poly([(8, 7), (4.3, 10.5), (8, 14)], close=False)
+        path = QPainterPath(QPointF(4.3, 10.5))
+        path.lineTo(14, 10.5)
+        path.arcTo(QRectF(8.8, 10.5, 10.4, 10.4), 90, -180)
+        path.lineTo(9.5, 20.9)
+        p.drawPath(path)
+        p.restore()
     elif name == "help":
         p.drawEllipse(QPointF(12, 12), 8.3, 8.3)
         f = QFont(); f.setBold(True); f.setPointSizeF(11)
@@ -220,6 +231,23 @@ _STYLE_NAMES = {
 }
 
 
+class _UndoEntry:
+    """[Phase 6 M2] 되돌리기/다시 실행의 원자 단위 — per-item 연산 리스트 하나.
+    연산(op)은 딱 3종의 튜플:
+      ("create", item)                        undo=씬에서 제거  / redo=씬에 추가
+      ("remove", item)                        undo=씬에 추가    / redo=제거
+      ("mut", item, sub, before, after)       undo=apply(before)/ redo=apply(after)
+        sub ∈ {"pos","xform","geom","state"} — 각 sub가 복원 전략을 고른다.
+    key: 연속 변이 병합용(같은 key면 직전 엔트리에 흡수, before 유지·after 갱신).
+    이 단일 저널이 기존 add/delete/move/xform/geom 5종을 흡수하고 redo를 대칭으로 얻는다."""
+
+    __slots__ = ("ops", "key")
+
+    def __init__(self, ops, key=None):
+        self.ops = ops
+        self.key = key
+
+
 class CanvasWindow(QMainWindow):
     # 콤팩트 목표는 콘텐츠 최소보다 작게 → Qt가 '진짜 최소'로 클램프(수동으로 더 못 줄이게).
     _SHAPES_DOCK_W = 80     # 세로 dock → 버튼 2열 최소(≈144px)로 클램프
@@ -243,7 +271,8 @@ class CanvasWindow(QMainWindow):
         self.ortho_enabled = False       # Ortho 토글(F8) — 그리기·정점드래그를 수평/수직(0/90°)로 제약
         self._bg_item = None            # 배경 이미지 없음(무한 캔버스)
         self._badge_n = 0
-        self._undo: list[tuple[str, list]] = []
+        self._undo: list[_UndoEntry] = []   # 저널(뒤로) — 최신이 끝
+        self._redo: list[_UndoEntry] = []   # 다시 실행(앞으로) — 새 변이 시 비워짐
         self._clip: list = []
         self._paste_seq = 0
         self._pan_last = None
@@ -329,8 +358,9 @@ class CanvasWindow(QMainWindow):
         for a in (self._act_img, self._act_tb, self._act_tbl, self._act_mmd):
             m.addAction(a)
 
-        # 편집(상단 툴바 전용 — 메뉴엔 없던 undo를 액션으로. Ctrl+Z 키는 뷰가 처리하므로 단축키 미지정).
+        # 편집(상단 툴바 전용 — 메뉴엔 없던 undo/redo를 액션으로. Ctrl+Z/Ctrl+Y 키는 뷰가 처리).
         self._act_undo = self._make_action("되돌리기", "undo", self.undo)
+        self._act_redo = self._make_action("다시 실행", "redo", self.redo)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
@@ -400,9 +430,15 @@ class CanvasWindow(QMainWindow):
     # ---- 저장 / 열기 --------------------------------------------------------
     _DOC_FILTER = "Easy CAD 문서 (*.ecad)"
 
+    def _reset_history(self):
+        """[M2] 문서 교체(새로/열기/가져오기) 시 undo·redo 스택을 함께 비운다."""
+        self._undo.clear()
+        self._redo.clear()
+        self._refresh_history_actions()
+
     def _new_doc(self):
         self._scene.clear()
-        self._undo.clear()
+        self._reset_history()
         self._clip.clear()
         self._badge_n = 0
         self._doc_path = None
@@ -416,7 +452,7 @@ class CanvasWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001 — 사용자에게 오류만 전달
             QMessageBox.warning(self, "열기 실패", str(e))
             return
-        self._undo.clear()
+        self._reset_history()
         self._doc_path = path
         # 번호 마커 카운터를 로드된 최대값 뒤로 재설정
         nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
@@ -485,7 +521,7 @@ class CanvasWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "DXF 가져오기", f"가져오기에 실패했습니다:\n{e}")
             return
-        self._undo.clear()
+        self._reset_history()
         nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
         self._badge_n = max(nums) if nums else 0
         self.statusBar().showMessage(f"가져오기 완료: {n}개 객체 — {path}", 5000)
@@ -756,9 +792,10 @@ class CanvasWindow(QMainWindow):
         tb.addSeparator()
 
         # 편집 / 보기
-        for a in (self._act_undo, self._act_zoom100, self._act_fit,
+        for a in (self._act_undo, self._act_redo, self._act_zoom100, self._act_fit,
                   self._act_snap, self._act_ortho):
             tb.addAction(a)
+        self._refresh_history_actions()   # undo/redo 버튼 초기 활성 상태(둘 다 비어 disabled)
 
         # 우측 정렬 스페이서 → 도움말.
         spacer = QWidget()
@@ -1102,10 +1139,16 @@ class CanvasWindow(QMainWindow):
         return self._badge_n
 
     def adjust_item_property(self, item, step: int):
+        # [M2] Shift+휠 두께 조절도 저널에 실어 되돌릴 수 있게 한다(이전엔 미추적).
+        # 연속 굴림은 (아이템별) coalesce_key로 undo 1스텝에 병합.
+        before = item.capture_state()
         if isinstance(item, (_ArrowItem, _PolyArrowItem)):
             item.apply_width(max(1, item._width + step))
         elif hasattr(item, "pen"):
             item.apply_width(max(1.0, item.pen().widthF() + step))
+        else:
+            return
+        self.push_undo_state([(item, before)], coalesce_key=("width", id(item)))
 
     # 줌 (커서 기준 — 뷰가 AnchorUnderMouse)
     def _on_wheel_zoom(self, dy: int):
@@ -1129,56 +1172,136 @@ class CanvasWindow(QMainWindow):
     def _win_drag_end(self):
         self._pan_last = None
 
-    # 되돌리기 (간단 스택)
+    # ---- 되돌리기 / 다시 실행 — 단일 스냅샷 저널(create/remove/mut 3-op) -------
+    # [Phase 6 M2] 기존 add/delete/move/xform/geom 5종을 _UndoEntry 하나로 흡수하고
+    # redo를 대칭으로 얻는다. push_undo_* 시그니처는 하위호환 유지(호출부 무변경) —
+    # 내부에서 저널 엔트리로 변환한다. 각 mut op는 before/after 스냅샷을 함께 담아
+    # undo=before·redo=after로 동일 로직에서 복원된다.
+    def _push_entry(self, ops, key=None):
+        """ops(연산 리스트)를 저널에 쌓는다. key가 직전 엔트리와 같으면 병합(연속 변이).
+        새 변이가 실리면 redo 스택은 무효화된다(표준 undo 시맨틱)."""
+        if not ops:
+            return
+        top = self._undo[-1] if self._undo else None
+        if key is not None and top is not None and top.key == key:
+            self._coalesce_into(top, ops)   # before 유지, after만 갱신
+        else:
+            self._undo.append(_UndoEntry(ops, key))
+        self._redo.clear()
+        self._refresh_history_actions()
+
+    @staticmethod
+    def _coalesce_into(entry, new_ops):
+        """연속 변이 병합 — 같은 아이템·같은 sub의 mut는 before를 유지한 채 after만 갱신
+        (예: Shift+휠 두께를 여러 번 굴려도 undo 1스텝). 그 외 op는 뒤에 덧붙인다."""
+        index = {(id(o[1]), o[2]): i for i, o in enumerate(entry.ops)
+                 if o[0] == "mut"}
+        for o in new_ops:
+            if o[0] == "mut" and (id(o[1]), o[2]) in index:
+                i = index[(id(o[1]), o[2])]
+                prev = entry.ops[i]
+                entry.ops[i] = ("mut", o[1], o[2], prev[3], o[4])  # before 유지·after 갱신
+            else:
+                entry.ops.append(o)
+
     def push_undo_add(self, item):
-        self._undo.append(("add", [item]))
+        self._push_entry([("create", item)])
 
     def push_undo_add_many(self, items):
         """[2d] 여러 아이템(복제 도형+연결 화살표)을 한 번의 undo로 함께 제거."""
-        self._undo.append(("add", list(items)))
+        self._push_entry([("create", it) for it in items])
 
     def push_undo_delete(self, items):
-        self._undo.append(("delete", list(items)))
+        self._push_entry([("remove", it) for it in items])
 
     def push_undo_move(self, pairs, coalesce_key=None):
-        self._undo.append(("move", [(it, QPointF(old)) for it, old in pairs]))
+        self._push_entry(
+            [("mut", it, "pos", QPointF(old), QPointF(it.pos())) for it, old in pairs],
+            key=coalesce_key)
 
     def push_undo_xform(self, snaps):
         """[우리 확장] 그룹 변형(회전·스케일) 되돌리기 — 변형 전 pos/rotation/scale/origin 스냅샷.
         push_undo_move가 위치만 복원하는 것과 달리 회전·스케일까지 통째로 되돌린다."""
-        self._undo.append(("xform", [
-            (it, QPointF(pos), rot, scale, QPointF(org)) for it, pos, rot, scale, org in snaps]))
+        self._push_entry([
+            ("mut", it, "xform", (QPointF(pos), rot, scale, QPointF(org)),
+             (QPointF(it.pos()), it.rotation(), it.scale(),
+              QPointF(it.transformOriginPoint())))
+            for it, pos, rot, scale, org in snaps])
 
     def push_undo_geom(self, snaps):
         """[Stage2] 기하 리베이크(비균일 스케일·미러) 되돌리기 — capture_geom 토큰 스냅샷.
         xform과 달리 기하 자체(rect/끝점/정점/패스)+바인딩까지 통째로 복원한다."""
-        self._undo.append(("geom", list(snaps)))
+        self._push_entry([
+            ("mut", it, "geom", before, it.capture_geom()) for it, before in snaps])
+
+    def push_undo_state(self, snaps, coalesce_key=None):
+        """[M2] 속성·라벨 변경(색·두께·선스타일·폰트·텍스트) — before=capture_state 스냅샷
+        (변경 전), after=현재. 저널의 'state' mut로 실려 되돌리기/다시 실행된다."""
+        self._push_entry(
+            [("mut", it, "state", before, it.capture_state()) for it, before in snaps],
+            key=coalesce_key)
+
+    def _apply_mut(self, it, sub, tok):
+        """mut op의 sub별 복원 — undo는 before, redo는 after 토큰을 그대로 넘긴다."""
+        if sub == "pos":
+            it.setPos(tok)
+        elif sub == "xform":
+            pos, rot, scale, org = tok
+            it.setTransformOriginPoint(org)
+            it.setRotation(rot)
+            it.setScale(scale)
+            it.setPos(pos)
+        elif sub == "geom":
+            # 기하+바인딩 통째 복원 — apply_geom만으로 일관 복원(reroute 불필요).
+            it.apply_geom(tok)
+        elif sub == "state":
+            it.apply_state(tok)
+
+    def _apply_entry(self, entry, redo):
+        for op in entry.ops:
+            kind = op[0]
+            if kind == "create":
+                it = op[1]
+                if redo:
+                    if it.scene() is None:
+                        self._scene.addItem(it)
+                elif it.scene() is not None:
+                    self._scene.removeItem(it)
+            elif kind == "remove":
+                it = op[1]
+                if redo:
+                    if it.scene() is not None:
+                        self._scene.removeItem(it)
+                elif it.scene() is None:
+                    self._scene.addItem(it)
+            elif kind == "mut":
+                _, it, sub, before, after = op
+                self._apply_mut(it, sub, after if redo else before)
 
     def undo(self):
         if not self._undo:
             return
-        kind, payload = self._undo.pop()
-        if kind == "add":
-            for it in payload:
-                if it.scene() is not None:
-                    self._scene.removeItem(it)
-        elif kind == "delete":
-            for it in payload:
-                self._scene.addItem(it)
-        elif kind == "move":
-            for it, old in payload:
-                it.setPos(old)
-        elif kind == "xform":
-            for it, pos, rot, scale, org in payload:
-                it.setTransformOriginPoint(org)
-                it.setRotation(rot)
-                it.setScale(scale)
-                it.setPos(pos)
-        elif kind == "geom":
-            # [Stage2] 기하+바인딩 통째 복원. 도형·바인딩 화살표를 모두 스냅샷에 담았으므로
-            # apply_geom만으로 일관 복원된다(reroute 불필요).
-            for it, tok in payload:
-                it.apply_geom(tok)
+        entry = self._undo.pop()
+        self._apply_entry(entry, redo=False)
+        self._redo.append(entry)
+        self._refresh_history_actions()
+
+    def redo(self):
+        if not self._redo:
+            return
+        entry = self._redo.pop()
+        self._apply_entry(entry, redo=True)
+        self._undo.append(entry)
+        self._refresh_history_actions()
+
+    def _refresh_history_actions(self):
+        """undo/redo 툴바 액션의 활성 상태를 스택 유무에 맞춘다(빈 스택=disabled)."""
+        act_u = getattr(self, "_act_undo", None)
+        act_r = getattr(self, "_act_redo", None)
+        if act_u is not None:
+            act_u.setEnabled(bool(self._undo))
+        if act_r is not None:
+            act_r.setEnabled(bool(self._redo))
 
     # 복사 / 연속 붙여넣기
     def copy_selection(self):
@@ -1200,7 +1323,7 @@ class CanvasWindow(QMainWindow):
             c.setSelected(True)
             new_items.append(c)
         if new_items:
-            self._undo.append(("add", new_items))
+            self.push_undo_add_many(new_items)
 
 
 # ---------------------------------------------------------------------------

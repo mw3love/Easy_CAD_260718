@@ -604,6 +604,51 @@ class _HandleResizeMixin:
         self._apply_binds(tok["binds"])
         self.update()
 
+    # [Easy CAD 확장 · Phase 6 M2] 속성 스냅샷 — undo 저널의 'state' mutate용.
+    # capture_geom(기하: pos/rot/scale/geom/binds)과 층이 다르다: 이건 '겉모습'
+    # (색·두께·선스타일·폰트·텍스트)만 담는다. 색·두께 변경이 저널에 실리지 않아
+    # 되돌려지지 않던 문제(M2 근본 원인)를 이 한 쌍이 받는다. 아이템 종류별 override
+    # 없이 duck-typing으로 흡수한다(rect/ellipse=pen, arrow=_color/_width, text=폰트/내용).
+    def capture_state(self) -> dict:
+        st: dict = {}
+        if hasattr(self, "pen"):
+            p = self.pen()
+            st["pen"] = (QColor(p.color()), p.widthF(), p.style())
+        if hasattr(self, "_color"):
+            st["color"] = QColor(self._color)
+        if hasattr(self, "_width"):
+            st["width"] = self._width
+        if hasattr(self, "setDefaultTextColor"):
+            st["tcolor"] = QColor(self.defaultTextColor())
+        if hasattr(self, "toPlainText"):
+            st["font_pt"] = getattr(self, "_base_pt", self.font().pointSize())
+            st["text"] = self.toPlainText()
+            st["bg"] = QColor(self._bg) if getattr(self, "_bg", None) is not None else None
+        return st
+
+    def apply_state(self, st: dict):
+        # 가능한 한 기존 setter(apply_color/apply_width/apply_font_size/set_bg)를 통해 복원해
+        # 각 아이템의 리프레시(prepareGeometryChange 등)를 그대로 태운다.
+        if "pen" in st:
+            col, w, style = st["pen"]
+            p = self.pen()
+            p.setColor(col); p.setWidthF(w); p.setStyle(style)
+            self.setPen(p)
+        if "color" in st and hasattr(self, "apply_color"):
+            self.apply_color(st["color"])
+        if "width" in st and hasattr(self, "apply_width"):
+            self.apply_width(st["width"])
+        if "tcolor" in st and hasattr(self, "setDefaultTextColor"):
+            self.setDefaultTextColor(st["tcolor"])
+        if "font_pt" in st and hasattr(self, "apply_font_size"):
+            self.apply_font_size(st["font_pt"])
+        if "text" in st and hasattr(self, "setPlainText") \
+                and self.toPlainText() != st["text"]:
+            self.setPlainText(st["text"])
+        if "bg" in st and hasattr(self, "set_bg"):
+            self.set_bg(st["bg"])
+        self.update()
+
     def _capture_geom_local(self):
         """타입별 기하 복사(하위 클래스 override)."""
         return None
@@ -6012,7 +6057,16 @@ class _AnnotatorView(QGraphicsView):
                     self._owner.push_undo_delete(selected)
                     return
             if key == Qt.Key.Key_Z and (mods & Qt.KeyboardModifier.ControlModifier):
-                self._owner.undo()
+                # Ctrl+Shift+Z = 다시 실행(redo), Ctrl+Z = 되돌리기. redo는 Easy CAD 호스트만
+                # 제공하므로 hasattr 가드(pasteflow 독립 owner엔 없음).
+                if (mods & Qt.KeyboardModifier.ShiftModifier) and hasattr(self._owner, "redo"):
+                    self._owner.redo()
+                else:
+                    self._owner.undo()
+                return
+            if key == Qt.Key.Key_Y and (mods & Qt.KeyboardModifier.ControlModifier) \
+                    and hasattr(self._owner, "redo"):
+                self._owner.redo()
                 return
         super().keyPressEvent(event)
 

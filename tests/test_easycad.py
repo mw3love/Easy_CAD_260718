@@ -67,13 +67,13 @@ def test_toolbar_icons_and_actions():
     # 파일/삽입/보기 액션이 아이콘을 가진다.
     for a in (w._act_new, w._act_open, w._act_save, w._act_pdf, w._act_dxf,
               w._act_dxf_in, w._act_img, w._act_tb, w._act_tbl, w._act_mmd,
-              w._act_undo, w._act_zoom100, w._act_fit, w._act_snap,
+              w._act_undo, w._act_redo, w._act_zoom100, w._act_fit, w._act_snap,
               w._act_ortho, w._act_help):
         assert not a.icon().isNull()
     # 모든 액션 아이콘 이름이 렌더 가능(빈 아이콘 없음).
     for nm in ("new", "open", "save", "pdf", "dxf_out", "dxf_in", "image",
                "table", "titleblock", "mermaid", "zoom_fit", "zoom_100",
-               "snap", "ortho", "undo", "help"):
+               "snap", "ortho", "undo", "redo", "help"):
         assert not _act_icon(nm).isNull()
     # 상단 QToolBar가 실제로 존재하고 액션이 실려 있다.
     assert w._toolbar.actions()
@@ -2920,6 +2920,116 @@ def test_sketch_arrow_outer_channel():
         assert False, "channel_x/y 동시 지정이 통과됨"
     except ValueError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# [Phase 6 M2] 되돌리기/다시 실행 — 단일 스냅샷 저널(create/remove/mut) + redo 대칭.
+# ---------------------------------------------------------------------------
+def _mk_pen_rect(w, x=0, y=0, ww=40, hh=30, width=2.0, color="#111111"):
+    from PyQt6.QtGui import QPen
+    it = _RectItem(QRectF(x, y, ww, hh))
+    it.setPen(QPen(QColor(color), width))
+    it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(it)
+    return it
+
+
+def test_undo_redo_add_delete():
+    # create/remove op: add 되돌림=제거, redo=재추가 / delete 되돌림=복귀, redo=제거.
+    w = CanvasWindow()
+    it = _mk_pen_rect(w)
+    w.push_undo_add(it)
+    assert it.scene() is not None
+    w.undo(); assert it.scene() is None
+    w.redo(); assert it.scene() is not None
+    w._scene.removeItem(it); w.push_undo_delete([it])
+    assert it.scene() is None
+    w.undo(); assert it.scene() is not None
+    w.redo(); assert it.scene() is None
+
+
+def test_undo_redo_move_xform_geom():
+    # 기존 5종 중 move/xform/geom(=mut의 pos/xform/geom sub)이 undo AND redo 왕복.
+    w = CanvasWindow()
+    it = _mk_pen_rect(w)
+    old = QPointF(it.pos()); it.setPos(QPointF(100, 50))
+    w.push_undo_move([(it, old)])
+    w.undo(); assert _close(it.pos(), old)
+    w.redo(); assert _close(it.pos(), QPointF(100, 50))
+
+    bx = (QPointF(it.pos()), it.rotation(), it.scale(), QPointF(it.transformOriginPoint()))
+    it.setRotation(30); it.setScale(1.5)
+    w.push_undo_xform([(it, bx[0], bx[1], bx[2], bx[3])])
+    w.undo(); assert abs(it.rotation()) < 1e-6 and abs(it.scale() - 1.0) < 1e-6
+    w.redo(); assert abs(it.rotation() - 30) < 1e-6 and abs(it.scale() - 1.5) < 1e-6
+
+    bg = it.capture_geom(); it.setRect(QRectF(0, 0, 80, 60))
+    w.push_undo_geom([(it, bg)])
+    w.undo(); assert abs(it.rect().width() - 40) < 1e-6
+    w.redo(); assert abs(it.rect().width() - 80) < 1e-6
+
+
+def test_undo_redo_state_color():
+    # 색 변경(이전엔 미추적)이 mut의 'state' sub로 되돌려진다 — M2 근본 목표.
+    w = CanvasWindow()
+    it = _mk_pen_rect(w)
+    before = it.capture_state()
+    it.apply_color(QColor("#ff0000"))
+    w.push_undo_state([(it, before)])
+    assert it.pen().color().name() == "#ff0000"
+    w.undo(); assert it.pen().color().name() == "#111111"
+    w.redo(); assert it.pen().color().name() == "#ff0000"
+
+
+def test_undo_redo_state_arrow_width():
+    # 화살표(_color/_width 속성 계열)의 capture_state/apply_state 분기 커버.
+    w = CanvasWindow()
+    ar = _ArrowItem(QColor("#111111"), 2.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(50, 0))
+    w._scene.addItem(ar)
+    before = ar.capture_state()
+    ar.apply_width(6.0)
+    w.push_undo_state([(ar, before)])
+    assert abs(ar._width - 6.0) < 1e-6
+    w.undo(); assert abs(ar._width - 2.0) < 1e-6
+    w.redo(); assert abs(ar._width - 6.0) < 1e-6
+
+
+def test_shiftwheel_width_coalesces_to_one_step():
+    # Shift+휠 두께 연속 조절 = undo 1스텝(before 유지·after 갱신).
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, width=2.0); it.setSelected(True)
+    d0 = len(w._undo)
+    w.adjust_item_property(it, +1)
+    w.adjust_item_property(it, +1)
+    w.adjust_item_property(it, +1)
+    assert len(w._undo) == d0 + 1
+    assert abs(it.pen().widthF() - 5.0) < 1e-6
+    w.undo(); assert abs(it.pen().widthF() - 2.0) < 1e-6   # 병합해도 최초 before 복원
+    w.redo(); assert abs(it.pen().widthF() - 5.0) < 1e-6
+
+
+def test_redo_invalidation_and_action_state():
+    # 되돌린 뒤 새 변이가 들어오면 redo 스택 무효화 + undo/redo 버튼 활성 상태 동기화.
+    w = CanvasWindow()
+    def add():
+        r = _mk_pen_rect(w); w.push_undo_add(r); return r
+    add()
+    assert w._act_undo.isEnabled() and not w._act_redo.isEnabled()
+    w.undo()
+    assert not w._act_undo.isEnabled() and w._act_redo.isEnabled()
+    add()                                   # 되돌린 상태에서 새 변이
+    assert len(w._redo) == 0
+    assert w._act_undo.isEnabled() and not w._act_redo.isEnabled()
+
+
+def test_new_doc_clears_undo_and_redo():
+    w = CanvasWindow()
+    r = _mk_pen_rect(w); w.push_undo_add(r)
+    w.undo()                                # redo에 1건
+    w._new_doc()
+    assert len(w._undo) == 0 and len(w._redo) == 0
+    assert not w._act_undo.isEnabled() and not w._act_redo.isEnabled()
 
 
 def _run_all():
