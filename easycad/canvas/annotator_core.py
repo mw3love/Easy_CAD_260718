@@ -2479,7 +2479,10 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             self._set_endpoint(idx, local_p)
             return
         shape = snapped[2]
-        self.set_bound(idx, shape, shape.mapFromScene(self.mapToScene(snapped[0])))
+        if shape is not None:   # [M4-2b] 도형이면 지속 바인딩, 선·화살표(shape=None)면 기하 스냅만
+            self.set_bound(idx, shape, shape.mapFromScene(self.mapToScene(snapped[0])))
+        else:
+            self.set_bound(idx, None)
         self._set_endpoint(idx, snapped[0])
         self._recompute_snap_curve(idx, snapped[1])
 
@@ -2960,7 +2963,10 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             self._set_endpoint(idx, local_p)
             return
         shape = snapped[2]
-        self.set_bound(idx, shape, shape.mapFromScene(self.mapToScene(snapped[0])))
+        if shape is not None:   # [M4-2b] 도형이면 지속 바인딩, 선·화살표(shape=None)면 기하 스냅만
+            self.set_bound(idx, shape, shape.mapFromScene(self.mapToScene(snapped[0])))
+        else:
+            self.set_bound(idx, None)
         self._set_endpoint(idx, snapped[0])
 
     def reroute(self, pin_pred=None) -> bool:
@@ -4744,7 +4750,7 @@ class _AnnotatorView(QGraphicsView):
         arrow.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
                        | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         arrow.set_bound(0, src, src.mapFromScene(p_src))
-        snap = self._border_snap_at(self.mapFromScene(cursor_scene))
+        snap = self._qc_snap_target(cursor_scene, src)
         end = snap[0] if snap is not None else QPointF(cursor_scene)
         arrow.set_points(p_src, end)
         if snap is not None and snap[2] is not None and snap[2] is not src:
@@ -4757,6 +4763,26 @@ class _AnnotatorView(QGraphicsView):
         arrow.setSelected(True)
         return arrow
 
+    def _qc_snap_target(self, cursor_scene, src):
+        """[M4-2] QC 드래그 끝점 스냅 → (scene_pt, exit_unit, shape) 또는 None.
+        테두리·포트 스냅(_border_snap_at) 우선, 없으면 커서가 다른 도형 '내부'면 그 도형 최근접
+        포트로 흡수 — 테두리 정밀 조준 없이 도형 위에 놓기만 하면 붙게 한다."""
+        snap = self._border_snap_at(self.mapFromScene(cursor_scene))
+        if snap is not None:
+            return snap
+        for sh in self._conn_shapes():   # 위(나중 그린 것)부터
+            if sh is src:
+                continue
+            # rect()로 판정 — 채움 없는 도형은 shape()가 외곽선만이라 contains가 내부를 못 잡는다.
+            if sh.rect().contains(sh.mapFromScene(cursor_scene)):
+                best, bestd = None, None
+                for sp, n in _shape_ports(sh):
+                    d = QLineF(sp, cursor_scene).length()
+                    if bestd is None or d < bestd:
+                        bestd, best = d, (sp, n, sh)
+                return best
+        return None
+
     def _qc_paint_ghost(self, painter, src, side, cursor_scene):
         """빠른 생성 고스트 — 클릭(hover)=복제 도형+연결선 / [M4-2] 드래그=연결선만(화살표만 생성)."""
         pen = QPen(QColor(90, 150, 235), 1.5, Qt.PenStyle.DashLine)
@@ -4765,7 +4791,11 @@ class _AnnotatorView(QGraphicsView):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         p_src = _edge_mid(self._qc_src_scene_rect(src), side)
         if cursor_scene is not None:
-            painter.drawLine(p_src, cursor_scene)   # 드래그 = 화살표만 예고
+            snap = self._qc_snap_target(cursor_scene, src)   # [M4-2] 드래그 중 스냅 예고
+            end = snap[0] if snap is not None else cursor_scene
+            painter.drawLine(p_src, end)                      # 드래그 = 화살표만 예고
+            if snap is not None:
+                self._draw_snap_marker(painter, end, self._view_scale())   # 붙을 지점 파란 점
             return
         tr = self._qc_target_rect(src, side, cursor_scene)
         p_tgt = _edge_mid(tr, _QC_OPP[side])
@@ -5071,9 +5101,9 @@ class _AnnotatorView(QGraphicsView):
         if snap is not None:
             tip, back = snap[0], snap[1]   # 타깃 바깥 법선 쪽에 ctrl2 → 수직 도착
         self._arrow_tip_snap = snap[0] if snap is not None else None
-        if snap is not None:   # 지속 연결: tip이 붙은 도형 + 그 지점(로컬 좌표) 고정
+        if snap is not None and snap[2] is not None:  # 지속 연결: tip이 붙은 도형 + 그 지점 고정
             it.set_bound(1, snap[2], snap[2].mapFromScene(snap[0]))
-        else:
+        else:   # [M4-2b] 선·화살표(snap[2]=None)면 tip 기하 스냅만, 바인딩 없음
             it.set_bound(1, None)
         start = self._start
         exit_dir = self._arrow_snap_exit
@@ -5355,7 +5385,8 @@ class _AnnotatorView(QGraphicsView):
                 self._start = snap[0]
                 self._arrow_snap_exit = snap[1]
                 self._arrow_tip_snap = None
-                it.set_bound(0, snap[2], snap[2].mapFromScene(snap[0]))  # 시작 고정 부착점
+                if snap[2] is not None:   # [M4-2b] 도형이면 시작 고정 부착점, 선·화살표면 기하 스냅만
+                    it.set_bound(0, snap[2], snap[2].mapFromScene(snap[0]))
                 it.set_points(self._start, self._start)
                 self._begin_draw(it)
                 return
@@ -5369,7 +5400,8 @@ class _AnnotatorView(QGraphicsView):
                 self._start = snap[0]
                 self._arrow_snap_exit = snap[1]   # 시작 마커
                 self._arrow_tip_snap = None
-                it.set_bound(0, snap[2], snap[2].mapFromScene(snap[0]))  # 시작 고정 부착점
+                if snap[2] is not None:   # [M4-2b] 도형이면 시작 고정 부착점, 선·화살표면 기하 스냅만
+                    it.set_bound(0, snap[2], snap[2].mapFromScene(snap[0]))
                 it.set_points(self._start, self._start)
                 self._begin_draw(it)
                 return

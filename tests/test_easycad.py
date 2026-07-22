@@ -595,6 +595,61 @@ def test_shape_swap_preserves_and_rebinds():
     assert labels[:2] == ["네모", "원"] and "판단" in labels
 
 
+def test_arrow_endpoint_drag_onto_line_no_crash():
+    # [M4-2b regression] 화살표 끝점을 다른 선 근처로 드래그하면 _border_snap_at이 shape=None을
+    # 돌려준다 → 예외 없이 기하 스냅만(바인딩 없음). 옛 크래시: NoneType.mapFromScene.
+    w = CanvasWindow()
+    ln = _LineItem(QLineF(100, 200, 400, 200)); ln.setPen(w.make_pen())
+    ln.setFlags(ln.GraphicsItemFlag.ItemIsSelectable | ln.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ln)
+    # 곡선 화살표(_ArrowItem) 끝점을 선 위(250,200)로 드래그.
+    arr = _ArrowItem(QColor("#111111"), 2, True)
+    arr.set_points(QPointF(100, 100), QPointF(250, 120))
+    arr.setFlags(arr.GraphicsItemFlag.ItemIsSelectable | arr.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(arr)
+    arr._move_endpoint_with_snap(1, arr.mapFromScene(QPointF(250, 200)))   # 예외 없어야
+    assert arr._bind2 is None                              # 선(shape=None)엔 바인딩 없음
+    assert abs(arr.mapToScene(arr._p2).y() - 200) < 2      # 끝점은 선 위로 기하 스냅
+    # 직선화살표(_PolyArrowItem)도 동일.
+    sar = _PolyArrowItem(QColor("#111111"), 2, True)
+    sar.set_points(QPointF(100, 300), QPointF(250, 320))
+    sar.setFlags(sar.GraphicsItemFlag.ItemIsSelectable | sar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sar)
+    sar._move_endpoint_with_snap(len(sar._pts) - 1, sar.mapFromScene(QPointF(250, 200)))
+    assert sar._bind_end is None
+
+
+def test_qc_drag_absorbs_onto_shape():
+    # [M4-2 fix] 드래그 끝점이 다른 도형 '내부'면 테두리 정밀 조준 없이 그 도형에 흡수·바인딩.
+    w = CanvasWindow(); v = w._view
+    r = _mk_pen_rect(w, x=0, y=0, ww=80, hh=50); r.setSelected(True)
+    tgt = _mk_pen_rect(w, x=400, y=-50, ww=160, hh=120)   # 큰 타깃
+    center = tgt.mapToScene(tgt.rect().center())          # 한가운데(테두리서 멀다)
+    arr = v._qc_create(r, "r", center)                    # 도형 한가운데에 드롭
+    assert isinstance(arr, _PolyArrowItem)
+    assert arr._bind_start is r and arr._bind_end is tgt  # 시작=src, 끝=흡수된 타깃
+
+
+def test_swap_to_asymmetric_keeps_arrow_on_outline():
+    # [M4-3 fix] 비대칭 도형(평행사변형)으로 교체 시 화살표 끝점이 옛 테두리 좌표에 남아 뜨지 않고
+    # new 실제 외곽선에 재투영된다(옛 버그: 원·심볼로 바꾸면 끝점이 도형에서 떨어짐).
+    w = CanvasWindow()
+    r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
+    arr = _PolyArrowItem(QColor("#111111"), 3, True)
+    arr.set_points(QPointF(200, 30), QPointF(100, 30))    # 끝점 = rect 우변 중점
+    arr.setFlags(arr.GraphicsItemFlag.ItemIsSelectable | arr.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(arr)
+    arr.set_bound(1, r, r.mapFromScene(QPointF(100, 30)))
+    r.setSelected(True)
+    w._swap_shape(r, "sym:data")                          # 평행사변형(우변 슬랜트)
+    new = [x for x in w._scene.items() if isinstance(x, _SymbolItem)][0]
+    assert arr._bind_end is new
+    ep = arr.mapToScene(arr._pts[-1])
+    q, _n = _nearest_border(new, ep)
+    gap = ((ep.x() - q.x()) ** 2 + (ep.y() - q.y()) ** 2) ** 0.5
+    assert gap < 1.0, gap                                 # 끝점이 new 외곽선 위(뜨지 않음)
+
+
 def test_pdf_export():
     w = CanvasWindow()
     _mk_rect(w._scene, w.make_pen(), 0, 0, 120, 60)

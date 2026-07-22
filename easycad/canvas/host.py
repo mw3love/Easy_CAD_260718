@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon,
+    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
@@ -1823,13 +1823,17 @@ class CanvasWindow(QMainWindow):
         return out
 
     def _rebind_arrow(self, arr, idx, new):
-        """화살표 끝점(idx)을 new 도형에 다시 바인딩 — 현재 끝점 씬 위치를 그대로 유지."""
+        """화살표 끝점(idx)을 new 도형에 다시 바인딩. [M4-3 fix] 옛 도형 테두리 위 좌표를 그대로
+        쓰면 원·평행사변형처럼 외곽선이 안쪽으로 든 도형에선 끝점이 떠 버린다 → new의 실제
+        외곽선에 투영한 뒤 reroute로 끌어붙인다."""
         if isinstance(arr, _ArrowItem):
             ep = arr._p1 if idx == 0 else arr._p2
         else:
             ep = arr._pts[0] if idx == 0 else arr._pts[-1]
         ep_scene = arr.mapToScene(ep)
-        arr.set_bound(idx, new, new.mapFromScene(ep_scene))
+        q_scene, _n = _nearest_border(new, ep_scene)   # new 외곽선 최근접점(회전·심볼 슬랜트 반영)
+        arr.set_bound(idx, new, new.mapFromScene(q_scene))
+        arr.reroute()   # 끝점을 new 외곽선 위로 즉시 이동(뜬 채로 남지 않게)
 
     def _swap_shape(self, item, target_kind):
         """[M4-3] 도형을 target_kind로 즉석 변환(크기·위치·라벨 유지). 연결 화살표는 new로
