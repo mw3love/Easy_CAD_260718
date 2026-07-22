@@ -13,13 +13,13 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
           push_undo_add/push_undo_delete/push_undo_move/undo/
           copy_selection/paste_selection
 """
-from PyQt6.QtCore import Qt, QPointF, QRectF, QSize
+from PyQt6.QtCore import Qt, QPointF, QRectF, QSize, QSettings
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QFont, QPolygonF, QPainterPath,
+    QFont, QPolygonF, QPainterPath, QPalette,
 )
 from PyQt6.QtWidgets import (
-    QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
+    QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
     QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QDockWidget, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QCheckBox, QPlainTextEdit, QSizePolicy,
@@ -170,8 +170,40 @@ def _act_icon(name: str) -> QIcon:
         p.save(); p.setFont(f); p.setPen(col)
         p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "?")
         p.restore()
+    elif name == "theme":
+        # 초승달 — 다크/라이트 토글.
+        moon = QPainterPath()
+        moon.addEllipse(QPointF(12, 12), 8.2, 8.2)
+        cut = QPainterPath()
+        cut.addEllipse(QPointF(15.5, 9.5), 7.2, 7.2)
+        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
+        p.drawPath(moon.subtracted(cut))
+        p.restore()
     p.end()
     return QIcon(pm)
+
+
+# [Phase 6 M1] 캔버스 배경 — 테마별. 다크는 CAD 관습대로 어두운 모델공간.
+_CANVAS_BG = {"dark": QColor("#1e2731"), "light": QColor("#ffffff")}
+_ICON_COLOR_THEME = {"dark": QColor("#cdd8e3"), "light": QColor("#39434f")}
+
+
+def _dark_palette() -> QPalette:
+    """다크 테마 팔레트(Fusion 스타일과 함께 쓰면 전 위젯에 안정 적용)."""
+    c = QColor
+    p = QPalette()
+    R = QPalette.ColorRole
+    p.setColor(R.Window, c("#171e26"));         p.setColor(R.WindowText, c("#cdd8e3"))
+    p.setColor(R.Base, c("#0e1319"));           p.setColor(R.AlternateBase, c("#1d2632"))
+    p.setColor(R.Text, c("#cdd8e3"));           p.setColor(R.PlaceholderText, c("#78889a"))
+    p.setColor(R.Button, c("#1d2632"));         p.setColor(R.ButtonText, c("#cdd8e3"))
+    p.setColor(R.ToolTipBase, c("#232f3d"));    p.setColor(R.ToolTipText, c("#cdd8e3"))
+    p.setColor(R.Highlight, c("#2f6dbf"));      p.setColor(R.HighlightedText, c("#ffffff"))
+    p.setColor(R.Link, c("#54a9ff"))
+    D = QPalette.ColorGroup.Disabled
+    p.setColor(D, R.Text, c("#5a6675"));        p.setColor(D, R.ButtonText, c("#5a6675"))
+    p.setColor(D, R.WindowText, c("#5a6675"))
+    return p
 
 
 class CanvasWindow(QMainWindow):
@@ -211,11 +243,13 @@ class CanvasWindow(QMainWindow):
 
         # [Phase 6 M1] 메뉴(=액션)를 먼저 만들고 → 상단 QToolBar가 그 액션을 재사용(setDefaultAction).
         # 뷰는 중앙 위젯 자체로(별도 QWidget 래퍼 불필요 — 툴바가 QToolBar 영역으로 이동).
+        self._dark = QSettings("EasyCAD", "EasyCAD").value("dark", True, type=bool)  # 다크 기본
         self._build_menu()
         self.setCentralWidget(self._view)
         self._build_toolbar()
         self._build_shapes_dock()
         self.set_tool("select")
+        self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
 
     # ---- 메뉴 (파일 → 저장/열기/PDF) ----------------------------------------
     def _make_action(self, text, icon, slot, shortcut=None, checkable=False):
@@ -224,6 +258,7 @@ class CanvasWindow(QMainWindow):
         a = QAction(text, self)
         if icon:
             a.setIcon(_act_icon(icon))
+            self._icon_actions.append((a, icon))   # 테마 전환 시 아이콘 재생성용 등록
         if shortcut:
             a.setShortcut(QKeySequence(shortcut))
         if checkable:
@@ -233,6 +268,7 @@ class CanvasWindow(QMainWindow):
 
     def _build_menu(self):
         self._doc_path = None
+        self._icon_actions: list[tuple[QAction, str]] = []   # (액션, 아이콘이름) — 테마 재생성용
         m = self.menuBar().addMenu("파일(&F)")
 
         self._act_new = self._make_action("새로 만들기", "new", self._new_doc,
@@ -288,6 +324,9 @@ class CanvasWindow(QMainWindow):
         v.addAction(self._act_snap)
         v.addAction(self._act_ortho)
         v.addSeparator()
+        self._act_theme = self._make_action("다크/라이트 전환", "theme",
+            self._toggle_theme, "Ctrl+Shift+L")
+        v.addAction(self._act_theme)
         self._act_help = self._make_action("단축키 도움말…", "help",
             self._show_shortcuts, "F1")
         v.addAction(self._act_help)
@@ -683,8 +722,37 @@ class CanvasWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
+        tb.addAction(self._act_theme)
         tb.addAction(self._act_help)
         self._toolbar = tb
+
+    # ---- 테마 (다크 기본 + 라이트 토글) -------------------------------------
+    def _apply_theme(self, dark: bool, persist: bool = False):
+        """[Phase 6 M1] 다크/라이트 일괄 적용 — 팔레트(Fusion)·캔버스 배경·아이콘 색.
+        아이콘은 baked QPixmap이라 테마색이 바뀌면 액션·팔레트 아이콘을 재생성한다.
+        persist=True일 때만 QSettings에 저장(테스트가 사용자 설정을 덮지 않도록 분리)."""
+        global _ICON_COLOR
+        self._dark = dark
+        key = "dark" if dark else "light"
+        _ICON_COLOR = QColor(_ICON_COLOR_THEME[key])
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyle("Fusion")   # 두 테마 모두 Fusion — 팔레트가 전 위젯에 안정 반영
+            app.setPalette(_dark_palette() if dark else app.style().standardPalette())
+        self._scene.setBackgroundBrush(QBrush(_CANVAS_BG[key]))
+        # 아이콘 재생성: 액션(중립색) + 팔레트/심볼(중립색). 그리기 도구는 draw-color라 무관.
+        for act, name in getattr(self, "_icon_actions", ()):
+            act.setIcon(_act_icon(name))
+        for k, b in getattr(self, "_shape_tool_buttons", {}).items():
+            b.setIcon(self._shape_icon(k))
+        for k, b in getattr(self, "_sym_buttons", {}).items():
+            b.setIcon(self._shape_icon(k))
+        if persist:
+            QSettings("EasyCAD", "EasyCAD").setValue("dark", dark)
+
+    def _toggle_theme(self):
+        self._apply_theme(not self._dark, persist=True)
+        self.statusBar().showMessage("다크 모드" if self._dark else "라이트 모드", 2500)
 
     def _show_shortcuts(self):
         """[Phase 6 M1] 상단바에서 뺀 단축키 안내를 도움말 다이얼로그로."""
@@ -717,7 +785,7 @@ class CanvasWindow(QMainWindow):
         pm.fill(Qt.GlobalColor.transparent)
         p = QPainter(pm)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor("#333333")); pen.setWidthF(1.6)
+        pen = QPen(QColor(_ICON_COLOR)); pen.setWidthF(1.6)   # 테마색(다크/라이트 적응)
         p.setPen(pen); p.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         m = 4
         r = QRectF(m, m, px - 2 * m, px - 2 * m)

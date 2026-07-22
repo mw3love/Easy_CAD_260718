@@ -84,6 +84,39 @@ def test_toolbar_icons_and_actions():
     assert w._act_snap.isChecked() is False and w.snap_enabled is False
 
 
+def test_dark_mode_toggle():
+    # [Phase 6 M1] 다크 기본 + 라이트 토글. 배경·아이콘·팔레트가 함께 바뀌고, PDF는 흰 배경 유지.
+    from easycad.canvas.host import _act_icon
+    w = CanvasWindow()
+    assert w._dark is True                                   # 다크 기본
+    assert w._scene.backgroundBrush().color().lightness() < 80   # 어두운 캔버스
+    theme_ic = _act_icon("theme"); assert not theme_ic.isNull()
+    # 라이트로 전환(테스트는 persist=False → 사용자 QSettings 미변경).
+    w._apply_theme(False)
+    assert w._dark is False
+    assert w._scene.backgroundBrush().color().lightness() > 200   # 밝은 캔버스
+    # 아이콘 재생성이 깨지지 않음(팔레트/액션).
+    for b in w._shape_tool_buttons.values():
+        assert not b.icon().isNull()
+    for a in (w._act_new, w._act_snap, w._act_theme):
+        assert not a.icon().isNull()
+    # 다크로 복귀
+    w._apply_theme(True)
+    assert w._scene.backgroundBrush().color().lightness() < 80
+
+
+def test_pdf_export_forces_white_bg():
+    # [Phase 6 M1] 다크 테마여도 PDF 배경은 흰색으로 강제되고, export 후 씬 배경은 복원된다.
+    w = CanvasWindow()
+    w._apply_theme(True)   # 다크(어두운 캔버스)
+    _mk_rect(w._scene, w.make_pen(), 0, 0, 120, 60)
+    before = w._scene.backgroundBrush().color().name()
+    p = os.path.join(_TMP, "dark_export.pdf")
+    assert export_pdf(w._scene, p, page="A4")
+    assert os.path.exists(p)
+    assert w._scene.backgroundBrush().color().name() == before   # 배경 복원됨
+
+
 def test_shape_palette_arms_tool():
     # 팔레트 네모 버튼 클릭 → rect 도구 무장 + 버튼 체크 동기화. 단축키 경로도 유지.
     w = CanvasWindow()

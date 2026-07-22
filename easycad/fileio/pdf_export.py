@@ -5,7 +5,7 @@
 용지 방향은 원본 종횡비로 자동(가로가 길면 Landscape).
 """
 from PyQt6.QtCore import Qt, QRectF, QMarginsF
-from PyQt6.QtGui import QPainter, QPageSize, QPageLayout
+from PyQt6.QtGui import QPainter, QPageSize, QPageLayout, QBrush, QColor
 from PyQt6.QtPrintSupport import QPrinter
 
 # 라벨 → QPageSize id
@@ -81,9 +81,13 @@ def export_pdf(scene, path: str, page: str = "A4",
     # 선택 상태 저장 후 해제(핸들 렌더 방지)
     saved = list(scene.selectedItems())
     scene.clearSelection()
+    # [Phase 6 M1] 다크 테마여도 인쇄물은 흰 종이 — 렌더 동안 배경을 흰색으로 강제 후 복원.
+    saved_bg = scene.backgroundBrush()
+    scene.setBackgroundBrush(QBrush(QColor("#ffffff")))
 
     painter = QPainter()
     if not painter.begin(printer):
+        scene.setBackgroundBrush(saved_bg)
         for it in saved:
             it.setSelected(True)
         return False
@@ -93,6 +97,7 @@ def export_pdf(scene, path: str, page: str = "A4",
         scene.render(painter, target, source, Qt.AspectRatioMode.KeepAspectRatio)
     finally:
         painter.end()
+        scene.setBackgroundBrush(saved_bg)
         for it in saved:
             it.setSelected(True)
     return True
