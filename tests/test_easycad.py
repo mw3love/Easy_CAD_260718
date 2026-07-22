@@ -387,6 +387,34 @@ def test_shape_palette_arms_tool():
     assert w._sym_buttons["decision"].isChecked()
 
 
+def test_palette_drag_drop_creates_shape():
+    # [M3 #17] 팔레트 버튼을 캔버스로 드래그앤드롭 → 놓은 위치 중심에 기본 크기 도형 생성.
+    from easycad.canvas.host import _PALETTE_MIME, _PaletteButton
+    from PyQt6.QtCore import QMimeData
+    w = CanvasWindow()
+    # 팔레트 버튼이 draggable(_PaletteButton)이며 tool_key를 싣는다(도형·심볼 모두).
+    assert isinstance(w._shape_tool_buttons["rect"], _PaletteButton)
+    assert w._shape_tool_buttons["rect"]._drag_tool_key == "rect"
+    assert isinstance(w._sym_buttons["decision"], _PaletteButton)
+    assert w._sym_buttons["decision"]._drag_tool_key == "sym:decision"
+    # QDrag가 싣는 mime 왕복(dropEvent 디코드 경로와 동일).
+    md = QMimeData(); md.setData(_PALETTE_MIME, "sym:decision".encode("utf-8"))
+    assert bytes(md.data(_PALETTE_MIME)).decode("utf-8") == "sym:decision"
+
+    # 생성: 드롭 지점이 도형 중심 + 선택 + undo 1스텝.
+    d0 = len(w._undo)
+    r = w._create_shape_at("rect", QPointF(200, 100))
+    assert isinstance(r, _RectItem) and r.isSelected()
+    assert _close(r.mapToScene(r.rect().center()), QPointF(200, 100))
+    assert len(w._undo) == d0 + 1
+    w.undo(); assert r not in w._scene.items()
+    # 원·심볼·미지원 키.
+    assert isinstance(w._create_shape_at("ellipse", QPointF(0, 0)), _EllipseItem)
+    s = w._create_shape_at("sym:decision", QPointF(0, 0))
+    assert isinstance(s, _SymbolItem) and s._kind == "decision"
+    assert w._create_shape_at("bogus", QPointF(0, 0)) is None
+
+
 def test_pdf_export():
     w = CanvasWindow()
     _mk_rect(w._scene, w.make_pen(), 0, 0, 120, 60)

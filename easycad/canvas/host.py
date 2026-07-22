@@ -13,10 +13,10 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
           push_undo_add/push_undo_delete/push_undo_move/undo/
           copy_selection/paste_selection
 """
-from PyQt6.QtCore import Qt, QPointF, QRectF, QSize, QSettings, QTimer
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QFont, QPolygonF, QPainterPath, QPalette,
+    QFont, QPolygonF, QPainterPath, QPalette, QDrag,
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
@@ -53,6 +53,54 @@ _MERMAID_SHAPE_ITEM = {
     "cylinder":      ("symbol", "database"),
     "circle":        ("ellipse", None),
 }
+
+
+# [Phase 6 M3 #17] 팔레트 드래그앤드롭 — 좌측 「도형·심볼」 버튼을 캔버스로 끌어 드롭.
+_PALETTE_MIME = "application/x-easycad-tool"      # QDrag가 실어 나르는 tool_key 포맷
+_PALETTE_DROP_WH = {"rect": (120.0, 72.0), "ellipse": (100.0, 100.0)}  # 기본 생성 크기
+_PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 크기
+
+
+class _PaletteButton(QToolButton):
+    """[Phase 6 M3 #17] 좌측 팔레트 버튼 — 클릭=도구 무장(기존 clicked 유지) /
+    임계(px)를 넘게 끌면 QDrag로 캔버스에 도형을 드롭 생성한다. 드래그 시엔 release가
+    버튼에 안 와 clicked가 발화하지 않으므로 무장되지 않는다(의도 — 드래그와 무장 분리)."""
+    _DRAG_THRESH = 6
+
+    def __init__(self, tool_key: str, parent=None):
+        super().__init__(parent)
+        self._drag_tool_key = tool_key
+        self._drag_press = None
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._drag_press = e.position().toPoint()
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if (self._drag_press is not None and (e.buttons() & Qt.MouseButton.LeftButton)
+                and (e.position().toPoint() - self._drag_press).manhattanLength()
+                >= self._DRAG_THRESH):
+            self._drag_press = None
+            self._start_palette_drag()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self._drag_press = None
+        super().mouseReleaseEvent(e)
+
+    def _start_palette_drag(self):
+        drag = QDrag(self)
+        md = QMimeData()
+        md.setData(_PALETTE_MIME, self._drag_tool_key.encode("utf-8"))
+        drag.setMimeData(md)
+        pm = self.icon().pixmap(QSize(30, 30))
+        if not pm.isNull():
+            drag.setPixmap(pm)
+            drag.setHotSpot(QPoint(pm.width() // 2, pm.height() // 2))
+        self.setDown(False)   # 드래그로 release를 못 받으니 눌림 상태 수동 해제
+        drag.exec(Qt.DropAction.CopyAction)
 
 
 def _border_attach(rect_scene: QRectF, toward: QPointF) -> QPointF:
@@ -587,19 +635,51 @@ class CanvasWindow(QMainWindow):
         self.set_tool("select")
         self.statusBar().showMessage(f"이미지 삽입: {w}×{h}px — {path}", 4000)
 
+    def _create_shape_at(self, tool_key: str, scene_pos: QPointF):
+        """[Phase 6 M3 #17] 팔레트에서 드롭한 도구를 scene_pos 중심에 기본 크기로 생성.
+        무장 후 드래그로 그리는 경로(_AnnotatorView.mousePressEvent)와 같은 아이템·펜·플래그를
+        써 이후 편집(리사이즈·회전·undo·저장)이 전부 동일하게 동작한다."""
+        if tool_key.startswith("sym:"):
+            w, h = _PALETTE_SYM_WH
+            it = _SymbolItem(tool_key[4:], QRectF(0.0, 0.0, w, h))
+        elif tool_key in _PALETTE_DROP_WH:
+            w, h = _PALETTE_DROP_WH[tool_key]
+            it = (_EllipseItem if tool_key == "ellipse" else _RectItem)(QRectF(0.0, 0.0, w, h))
+        else:
+            return None
+        it.setPen(self.make_pen())
+        it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        it.setPos(scene_pos.x() - w / 2.0, scene_pos.y() - h / 2.0)
+        it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
+        self._scene.addItem(it)
+        self._scene.clearSelection()
+        it.setSelected(True)
+        self.push_undo_add(it)
+        return it
+
     # 파일 탐색기에서 이미지를 캔버스로 끌어다 놓기 — QMainWindow가 드롭을 받는다(코어 뷰 무수정).
     def dragEnterEvent(self, e):
         md = e.mimeData()
-        if md.hasUrls() and any(u.toLocalFile().lower().endswith(self._IMG_EXTS)
-                                for u in md.urls()):
+        if md.hasFormat(_PALETTE_MIME) or (
+                md.hasUrls() and any(u.toLocalFile().lower().endswith(self._IMG_EXTS)
+                                     for u in md.urls())):
             e.acceptProposedAction()
 
     def dragMoveEvent(self, e):
-        if e.mimeData().hasUrls():
+        md = e.mimeData()
+        if md.hasFormat(_PALETTE_MIME) or md.hasUrls():
             e.acceptProposedAction()
 
     def dropEvent(self, e):
         md = e.mimeData()
+        # [M3 #17] 팔레트 도형 드롭 — 놓은 위치에 기본 크기로 생성.
+        if md.hasFormat(_PALETTE_MIME):
+            tool_key = bytes(md.data(_PALETTE_MIME)).decode("utf-8")
+            view_pt = self._view.mapFrom(self, e.position().toPoint())
+            scene_pos = self._view.mapToScene(view_pt)
+            if self._create_shape_at(tool_key, scene_pos) is not None:
+                e.acceptProposedAction()
+            return
         if not md.hasUrls():
             return
         view_pt = self._view.mapFrom(self, e.position().toPoint())
@@ -917,7 +997,7 @@ class CanvasWindow(QMainWindow):
         return QIcon(pm)
 
     def _palette_button(self, label: str, icon_kind: str, tooltip: str, tool_key: str) -> QToolButton:
-        btn = QToolButton()
+        btn = _PaletteButton(tool_key)   # [M3 #17] 클릭=무장 / 드래그=캔버스 드롭 생성
         btn.setText(label)
         btn.setIcon(self._shape_icon(icon_kind))
         btn.setIconSize(QSize(30, 30))
