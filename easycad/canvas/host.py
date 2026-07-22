@@ -1668,6 +1668,13 @@ class CanvasWindow(QMainWindow):
         self._float_style_btn.setToolTip("선스타일 순환(실선→파선→점선)")
         self._float_style_btn.clicked.connect(self._floating_cycle_style)
         lay.addWidget(self._float_style_btn)
+        # [M4-3] 도형 교체 — 단일 도형 선택 시만 노출, 드롭다운으로 대상 종류 선택.
+        self._float_swap_btn = QToolButton(); self._float_swap_btn.setText("⬗")
+        self._float_swap_btn.setFixedSize(QSize(22, 18))
+        self._float_swap_btn.setToolTip("도형 바꾸기(크기·연결 유지)")
+        self._float_swap_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._float_swap_btn.setMenu(self._build_swap_menu())
+        lay.addWidget(self._float_swap_btn)
         self._float_dir_btn = QToolButton(); self._float_dir_btn.setText("⇄")
         self._float_dir_btn.setFixedSize(QSize(22, 18))
         self._float_dir_btn.setToolTip("화살표 방향 뒤집기")
@@ -1732,6 +1739,9 @@ class CanvasWindow(QMainWindow):
             return
         self._float_dir_btn.setVisible(
             any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel))
+        # [M4-3] 도형 교체 버튼 — 단일 도형(네모·원·심볼)만 선택했을 때.
+        self._float_swap_btn.setVisible(
+            len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem)))
         bar.adjustSize()
         w, h = bar.width(), bar.height()
         r = QRectF()
@@ -1753,6 +1763,93 @@ class CanvasWindow(QMainWindow):
         bar.move(x, y)
         bar.setVisible(True)
         bar.raise_()
+
+    # ---- [Phase 6 M4-3] 도형 바로 바꾸기 -----------------------------------
+    def _build_swap_menu(self):
+        """도형 교체 대상 메뉴 — 네모·원 + 심볼 6종. 트리거 시 현재 단일 선택 도형을 변환."""
+        m = QMenu(self)
+        m.addAction("네모", lambda: self._swap_selected("rect"))
+        m.addAction("원", lambda: self._swap_selected("ellipse"))
+        m.addSeparator()
+        for kind, (label, _f) in _SYMBOL_KINDS.items():
+            m.addAction(label, lambda k=kind: self._swap_selected(f"sym:{k}"))
+        return m
+
+    def _swap_selected(self, target_kind):
+        sel = [it for it in self._scene.selectedItems()
+               if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
+        if len(sel) == 1:
+            self._swap_shape(sel[0], target_kind)
+
+    def _make_swapped(self, item, target_kind):
+        """item과 같은 rect·pos·회전·스케일·펜·라벨을 가진 target_kind 새 아이템(연결은 별도 이관)."""
+        rect = QRectF(item.rect())
+        if target_kind == "rect":
+            new = _RectItem(rect)
+        elif target_kind == "ellipse":
+            new = _EllipseItem(rect)
+        elif target_kind.startswith("sym:"):
+            new = _SymbolItem(target_kind[4:], rect)
+        else:
+            return None
+        new.setPen(QPen(item.pen()))
+        new.setBrush(item.brush())
+        new.setTransformOriginPoint(item.transformOriginPoint())
+        new.setRotation(item.rotation())
+        new.setScale(item.scale())
+        new.setPos(item.pos())
+        new.setFlags(new.GraphicsItemFlag.ItemIsMovable | new.GraphicsItemFlag.ItemIsSelectable)
+        if item.has_label() and item._label is not None:
+            txt = item._label.toPlainText()
+            if txt:
+                new.ensure_label().setPlainText(txt)
+                new._sync_label()
+        return new
+
+    def _arrows_bound_to(self, item):
+        """item에 지속 연결된 화살표 목록 → [(arrow, idx0/1), ...]. 곡선·직선 화살표 모두."""
+        out = []
+        for it in self._scene.items():
+            if isinstance(it, _ArrowItem):
+                if it._bind1 is item:
+                    out.append((it, 0))
+                if it._bind2 is item:
+                    out.append((it, 1))
+            elif isinstance(it, _PolyArrowItem):
+                if it._bind_start is item:
+                    out.append((it, 0))
+                if it._bind_end is item:
+                    out.append((it, 1))
+        return out
+
+    def _rebind_arrow(self, arr, idx, new):
+        """화살표 끝점(idx)을 new 도형에 다시 바인딩 — 현재 끝점 씬 위치를 그대로 유지."""
+        if isinstance(arr, _ArrowItem):
+            ep = arr._p1 if idx == 0 else arr._p2
+        else:
+            ep = arr._pts[0] if idx == 0 else arr._pts[-1]
+        ep_scene = arr.mapToScene(ep)
+        arr.set_bound(idx, new, new.mapFromScene(ep_scene))
+
+    def _swap_shape(self, item, target_kind):
+        """[M4-3] 도형을 target_kind로 즉석 변환(크기·위치·라벨 유지). 연결 화살표는 new로
+        재바인딩. remove(old)+create(new)+화살표 geom 변경을 하나의 undo 엔트리로 묶는다."""
+        new = self._make_swapped(item, target_kind)
+        if new is None:
+            return
+        befores = [(arr, idx, arr.capture_geom()) for arr, idx in self._arrows_bound_to(item)]
+        self._scene.removeItem(item)
+        self._scene.addItem(new)
+        ops = [("remove", item), ("create", new)]
+        for arr, idx, before in befores:
+            self._rebind_arrow(arr, idx, new)
+            arr.update()
+            ops.append(("mut", arr, "geom", before, arr.capture_geom()))
+        self._push_entry(ops)
+        self._scene.clearSelection()
+        new.setSelected(True)
+        self._refresh_properties()
+        self._reposition_floating_toolbar()
 
 
 # ---------------------------------------------------------------------------

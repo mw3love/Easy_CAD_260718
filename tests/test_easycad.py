@@ -565,6 +565,36 @@ def test_floating_toolbar_arrow_flip_undo():
     w.undo(); assert ar._head_at_end == before            # 방향 토글이 되돌려진다
 
 
+def test_shape_swap_preserves_and_rebinds():
+    # [M4-3] 도형 교체 — 종류 변환, 크기·라벨 유지, 연결 화살표 재바인딩, 단일 undo.
+    w = CanvasWindow()
+    r = _mk_pen_rect(w, x=0, y=0, ww=80, hh=50)
+    r.ensure_label().setPlainText("Box"); r._sync_label()
+    arr = _PolyArrowItem(QColor("#ff111111"), 3, True)
+    arr.set_points(QPointF(200, 25), QPointF(80, 25))
+    arr.setFlags(arr.GraphicsItemFlag.ItemIsSelectable | arr.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(arr)
+    arr.set_bound(1, r, r.mapFromScene(QPointF(80, 25)))
+    d0 = len(w._undo)
+    w._swap_shape(r, "ellipse")
+    ells = [x for x in w._scene.items() if isinstance(x, _EllipseItem)]
+    assert len(ells) == 1
+    new = ells[0]
+    assert r.scene() is None and new.scene() is not None
+    assert abs(new.rect().width() - 80) < 1e-6 and abs(new.rect().height() - 50) < 1e-6
+    assert new.has_label() and new._label.toPlainText() == "Box"
+    assert arr._bind_end is new                  # 화살표가 new로 재바인딩
+    assert len(w._undo) == d0 + 1                # 단일 undo 엔트리
+    w.undo()                                     # rect 복귀 + 화살표 재바인딩 원복
+    assert new.scene() is None and r.scene() is not None
+    assert arr._bind_end is r
+    r.setSelected(True); w._swap_shape(r, "sym:decision")
+    syms = [x for x in w._scene.items() if isinstance(x, _SymbolItem)]
+    assert len(syms) == 1 and syms[0]._kind == "decision"
+    labels = [a.text() for a in w._build_swap_menu().actions() if not a.isSeparator()]
+    assert labels[:2] == ["네모", "원"] and "판단" in labels
+
+
 def test_pdf_export():
     w = CanvasWindow()
     _mk_rect(w._scene, w.make_pen(), 0, 0, 120, 60)
