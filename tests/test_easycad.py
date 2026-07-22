@@ -320,6 +320,31 @@ def test_dxf_penshape_linetype_roundtrip():
     assert e2.pen().style() == Qt.PenStyle.DashDotLine
 
 
+def test_dxf_lineweight_for_external_cad():
+    # [M2 #3] export가 표준 lineweight를 병행 저장(외부 CAD 두께 표시) + $LWDISPLAY 켜짐.
+    # XDATA(1040) 무손실 왕복은 그대로 유지(우리 import는 여전히 정확한 px 복원).
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QPen
+    from easycad.fileio.dxf_import import import_dxf
+    from easycad.fileio.dxf_export import _px_to_lineweight
+    import ezdxf
+    assert _px_to_lineweight(3.0) == 30 and _px_to_lineweight(0.5) == 5
+    sc = QGraphicsScene()
+    rect = _RectItem(QRectF(0, 0, 100, 60))
+    p = QPen(QColor("#ff0000")); p.setWidthF(3.0); rect.setPen(p)
+    rect.setBrush(QBrush(Qt.BrushStyle.NoBrush)); sc.addItem(rect)
+    path = os.path.join(_TMP, "lineweight.dxf")
+    assert export_dxf(sc, path)
+    doc = ezdxf.readfile(path)
+    assert doc.header["$LWDISPLAY"] == 1
+    lws = [e.dxf.lineweight for e in doc.modelspace() if e.dxftype() == "LWPOLYLINE"]
+    assert 30 in lws, lws
+    # XDATA 왕복은 무손실 유지 — 우리 import가 정확히 3.0px 복원.
+    sc2 = QGraphicsScene(); import_dxf(sc2, path)
+    r2 = [x for x in sc2.items() if isinstance(x, _RectItem)][0]
+    assert abs(r2.pen().widthF() - 3.0) < 1e-6
+
+
 def test_arrow_sticky_style_on_draw():
     # [M2 #3] 선스타일을 점선으로 바꾼 뒤 새로 그리는 화살표도 그 스타일로 시작(sticky).
     # _begin_draw 초크포인트가 current_style을 스탬프한다(화살표는 make_pen 밖).

@@ -175,8 +175,11 @@ Mermaid 경유·DXF 대상 아님·손글씨 OCR 정확도 보장. 자체렌더 
 계단(꺾임)을 넣는다 → 해법은 노드를 격자 정렬(Mermaid BFS가 반듯한 이유와 동일). 이미지 읽을 때
 연결 도형의 중심 x(세로연결)·중심 y(가로연결)를 맞추도록 워크플로 문서에 지침 추가(마름모·원은
 극점이 중심축에만 있어 특히 중요). **Phase 5 이미지→도면 빌더 완료.**
-Phase 3(DXF)은 위 진행 상태 참조 — 내보내기·가져오기·펜 두께 왕복 완료. 후속: 외부 CAD 두께 렌더용
-`lineweight` 병행 저장, 구식 POLYLINE·ARC 등 외부 DXF 엔티티 흡수 확대.
+Phase 3(DXF)은 위 진행 상태 참조 — 내보내기·가져오기·펜 두께 왕복 완료. **외부 CAD 두께 렌더용
+`lineweight` 병행 저장 완료**(M2 #3 실조건 D서 AutoCAD가 XDATA 두께를 못 읽어 전부 얇게 렌더 →
+`_wx`가 XDATA(1040, 무손실 왕복)에 더해 표준 `lineweight`(px×10→유효 enum 스냅, 표시 전용)를
+병행 부착 + `$LWDISPLAY=1` 헤더로 선가중치 표시 ON. import는 XDATA 우선 유지=무손실). 후속: 구식
+POLYLINE·ARC 등 외부 DXF 엔티티 흡수 확대, 외부 DXF의 lineweight→px 역폴백(현재 미지원).
 
 **Phase 6(편집 경험 현대화 UI/UX) 진행 — M1 완료(2026-07-22, 실조건검증 ✓)** — 상단바를 커스텀
 QWidget→**QToolBar**로 승격: 그리기 도구 아이콘화(코어 `_tool_icon` 재사용) + 파일·삽입·보기 QAction

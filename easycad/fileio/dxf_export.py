@@ -60,11 +60,24 @@ def _attrs(layer: str, color) -> dict:
 _APPID = "EASYCAD"
 
 
+def _px_to_lineweight(width: float) -> int:
+    """펜 두께(px) → DXF 표준 lineweight(1/100mm) 중 가장 가까운 유효 enum 값.
+    외부 CAD(AutoCAD) '표시 전용' — 정밀 왕복은 XDATA(1040)가 담당한다. px×10 스케일
+    (3px→0.30mm)이라 AutoCAD에서 굵기가 시각적으로 구분되되 과하지 않게 잡는다."""
+    from ezdxf.lldxf.const import VALID_DXF_LINEWEIGHTS as _V
+    raw = float(width) * 10.0
+    return min(_V, key=lambda v: abs(v - raw))
+
+
 def _wx(entity, width):
-    """생성된 엔티티에 펜 두께를 XDATA로 부착 후 그대로 반환."""
+    """생성된 엔티티에 펜 두께를 부착: XDATA(1040, 무손실 왕복) + 표준 lineweight(외부 CAD 표시)."""
     try:
         entity.set_xdata(_APPID, [(1040, float(width))])
     except Exception:  # noqa: BLE001 — 두께 부착 실패가 export를 막지 않게
+        pass
+    try:
+        entity.dxf.lineweight = _px_to_lineweight(width)   # [M2 #3] AutoCAD 두께 표시
+    except Exception:  # noqa: BLE001
         pass
     return entity
 
@@ -256,6 +269,7 @@ def export_dxf(scene, path: str) -> bool:
     """
     import ezdxf
     doc = ezdxf.new("R2010")             # true_color·MTEXT·SPLINE 지원 버전
+    doc.header["$LWDISPLAY"] = 1          # [M2 #3] 선가중치 표시 ON — 없으면 AutoCAD가 두께 숨김
     if not doc.appids.has_entry(_APPID):  # 펜 두께 XDATA용 AppID
         doc.appids.add(_APPID)
     _ensure_linetypes(doc)                # [M2 #3] 점선 등 선스타일 linetype 등록
