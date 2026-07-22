@@ -125,10 +125,19 @@ def test_dock_areas_and_zoom_readout():
     for a in (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea,
               Qt.DockWidgetArea.TopDockWidgetArea, Qt.DockWidgetArea.BottomDockWidgetArea):
         assert bool(allowed & a)
+    # 순서도 섹션(6종): 세로 dock=2열(6번째=row2,col1) / 가로 dock=한 줄(6번째=row0,col5).
+    sym_grid, sym_btns = w._shape_sections[1]
+    last = sym_btns[-1]
+    def last_pos():
+        r, c, _rs, _cs = sym_grid.getItemPosition(sym_grid.indexOf(last))
+        return (r, c)
+    assert last_pos() == (2, 1)
     w._on_dock_moved(Qt.DockWidgetArea.TopDockWidgetArea)
     assert w._dock_box.direction() == QBoxLayout.Direction.LeftToRight
+    assert last_pos() == (0, 5)             # 가로 dock → 한 줄
     w._on_dock_moved(Qt.DockWidgetArea.LeftDockWidgetArea)
     assert w._dock_box.direction() == QBoxLayout.Direction.TopToBottom
+    assert last_pos() == (2, 1)             # 세로 복귀
     # 팔레트 버튼 키가 보존(테스트 계약).
     assert set(w._shape_tool_buttons) == {"rect", "ellipse"}
     assert len(w._sym_buttons) == 6

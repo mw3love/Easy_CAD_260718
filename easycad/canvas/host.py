@@ -860,19 +860,32 @@ class CanvasWindow(QMainWindow):
         return lbl
 
     def _make_shape_section(self, title, entries, store) -> QWidget:
-        """[Phase 6 M1] 팔레트 한 섹션(제목+2열 그리드)을 독립 위젯으로. 섹션을 위젯으로 감싸야
-        가로/세로 dock 전환 시 '제목 위 그리드' 구조를 유지한 채 섹션끼리만 좌우/상하로 흐른다."""
+        """[Phase 6 M1] 팔레트 한 섹션(제목+그리드)을 독립 위젯으로. 섹션을 위젯으로 감싸야
+        가로/세로 dock 전환 시 '제목 위 그리드' 구조를 유지한 채 섹션끼리 좌우/상하로 흐른다.
+        그리드 열 수는 _relayout_sections가 방향에 맞춰 정한다(세로=2열, 가로=한 줄)."""
         sec = QWidget()
         v = QVBoxLayout(sec)
         v.setContentsMargins(0, 0, 0, 0); v.setSpacing(4)
         v.addWidget(self._section_label(title))
         grid = QGridLayout(); grid.setSpacing(4)
-        for i, (label, icon_kind, tooltip, tool_key) in enumerate(entries):
+        btns = []
+        for label, icon_kind, tooltip, tool_key in entries:
             btn = self._palette_button(label, icon_kind, tooltip, tool_key)
-            grid.addWidget(btn, i // 2, i % 2)
             store[icon_kind] = btn   # 기본=rect/ellipse, 심볼=kind(=icon_kind)로 키
+            btns.append(btn)
         v.addLayout(grid)
+        self._shape_sections.append((grid, btns))
         return sec
+
+    def _relayout_sections(self, horiz: bool):
+        """[Phase 6 M1] 각 섹션 그리드 열 수를 dock 방향에 맞춘다 — 세로 dock=2열(정사각),
+        가로(상/하) dock=한 줄로 눕혀 위아래 폭을 최소화(사용자 요청: 가로 dock은 가로 길게)."""
+        for grid, btns in self._shape_sections:
+            for b in btns:
+                grid.removeWidget(b)
+            cols = len(btns) if horiz else 2
+            for i, b in enumerate(btns):
+                grid.addWidget(b, i // cols, i % cols)
 
     def _build_shapes_dock(self):
         dock = QDockWidget("⋮⋮  도형", self)     # 그립 글리프로 '잡아 옮기는 바'임을 표시
@@ -885,6 +898,7 @@ class CanvasWindow(QMainWindow):
 
         self._shape_tool_buttons: dict[str, QToolButton] = {}
         self._sym_buttons: dict[str, QToolButton] = {}
+        self._shape_sections: list = []   # (grid, buttons) — 방향 전환 시 재배치
         basic = self._make_shape_section("기본", [
             ("네모", "rect", "네모 — 클릭 후 캔버스에 드래그", "rect"),
             ("원", "ellipse", "원 — 클릭 후 캔버스에 드래그", "ellipse"),
@@ -894,16 +908,18 @@ class CanvasWindow(QMainWindow):
         syms = self._make_shape_section("순서도", sym_entries, self._sym_buttons)
 
         box.addWidget(basic); box.addWidget(syms); box.addStretch(1)
+        self._relayout_sections(horiz=False)   # 초기 좌측 dock = 세로(2열)
         dock.setWidget(panel)
         dock.dockLocationChanged.connect(self._on_dock_moved)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
 
     def _on_dock_moved(self, area):
-        """[Phase 6 M1] 상/하 dock이면 섹션을 가로로 흐르게(세로로 길어지지 않도록)."""
+        """[Phase 6 M1] 상/하 dock이면 섹션을 가로로 나란히 + 버튼도 한 줄로 눕혀 위아래 폭 최소화."""
         horiz = area in (Qt.DockWidgetArea.TopDockWidgetArea,
                          Qt.DockWidgetArea.BottomDockWidgetArea)
         self._dock_box.setDirection(QBoxLayout.Direction.LeftToRight if horiz
                                     else QBoxLayout.Direction.TopToBottom)
+        self._relayout_sections(horiz)
 
     # ---- 속성 dock (M1: 값 표시만 — 편집은 M2에서 Undo 개편과 함께) -----------
     def _build_properties_dock(self):
