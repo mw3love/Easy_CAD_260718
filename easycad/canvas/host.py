@@ -295,6 +295,22 @@ _TYPE_NAMES = {
 # 연속으로 긋는 게 본질이므로 pin 없이도 무장 유지.
 _ONESHOT_TOOLS = frozenset({"rect", "ellipse", "line", "arrow", "sarrow", "text", "badge"})
 
+# [화살표 통합] 사용자에게 화살표는 하나 — 종류(직선·곡선·직각)는 선택 후 미니툴바에서 고른다.
+# 내부적으로는 직선·곡선이 _ArrowItem(제어점 없음/있음), 직각이 _PolyArrowItem이라 그리기 도구만
+# 종류에 따라 갈라 쓴다(사용자에겐 안 보임). 클래스를 합치지 않은 이유는 CLAUDE.md 참조.
+_ARROW_KINDS = ("straight", "curved", "ortho")
+_ARROW_KIND_LABELS = (("straight", "직선"), ("curved", "곡선"), ("ortho", "직각"))
+_ARROW_KIND_TOOL = {"straight": "arrow", "curved": "arrow", "ortho": "sarrow"}
+
+
+def _arrow_kind_of(item):
+    """화살표 아이템의 현재 종류(straight/curved/ortho). 화살표가 아니면 None."""
+    if isinstance(item, _PolyArrowItem):
+        return "ortho" if item._is_ortho() else "straight"
+    if isinstance(item, _ArrowItem):
+        return "curved" if item._ctrl1 is not None else "straight"
+    return None
+
 
 class _UndoEntry:
     """[Phase 6 M2] 되돌리기/다시 실행의 원자 단위 — per-item 연산 리스트 하나.
@@ -333,6 +349,10 @@ class CanvasWindow(QMainWindow):
         self.current_badge_size = _DEFAULT_BADGE
         self.current_text_bg = None
         self.arrow_head_at_end = True
+        # [화살표 통합] 화살표는 상단 도구 1개. '어떤 종류로 그릴지'는 마지막에 고른 종류를 기억
+        # (sticky — 색·두께·선스타일과 같은 관례). 최초 기본은 곡선.
+        self.current_arrow_kind = "curved"          # straight | curved | ortho
+        self.current_curve_r = _PolyArrowItem._CORNER_R   # 직각 커넥터의 모서리 반경(sticky)
         # [M2] 도구 고정(pin) — False면 도형 1개 그리면 자동으로 선택모드(one-shot),
         # True면 도구가 계속 무장(연속 그리기). 상단 🔒 토글로 전환.
         self.tool_pinned = False
@@ -907,19 +927,27 @@ class CanvasWindow(QMainWindow):
         tb.addSeparator()
 
         # 그리기 도구(체크형) — 네모·원은 왼쪽 「도형」 팔레트로 이관(단축키 2·5는 유지).
+        # [화살표 통합] 직선화살(sarrow) 버튼 제거 — 화살표 버튼 하나가 종류(직선·곡선·직각)를
+        # 대표한다. 종류는 선택 후 미니툴바에서 고른다(단축키 9는 여전히 화살표 도구로 매핑).
         self._tool_buttons: dict[str, QToolButton] = {}
         for key, name, sc in _TOOLS:
-            if key in ("rect", "ellipse"):
+            if key in ("rect", "ellipse", "sarrow"):
                 continue
             btn = QToolButton()
             btn.setIcon(_tool_icon(key, self.current_color))
             btn.setIconSize(QSize(20, 20))
-            btn.setToolTip(f"{name} ({sc})")
+            tip = "화살표 (3 — 직선·곡선·직각, 그린 뒤 미니툴바에서 선택)" \
+                if key == "arrow" else f"{name} ({sc})"
+            btn.setToolTip(tip)
             btn.setCheckable(True)
-            btn.clicked.connect(
-                lambda _c=False, k=key: self.set_tool(None if self.current_tool == k else k))
+            if key == "arrow":   # [화살표 통합] 화살표는 종류→도구 변환 진입점을 탄다(토글 포함)
+                btn.clicked.connect(lambda _c=False: self.arm_arrow_tool())
+            else:
+                btn.clicked.connect(
+                    lambda _c=False, k=key: self.set_tool(None if self.current_tool == k else k))
             tb.addWidget(btn)
             self._tool_buttons[key] = btn
+        self._refresh_arrow_tool_button()   # [화살표 통합] 아이콘을 현재 종류에 맞춤
         tb.addSeparator()
 
         # 편집 / 보기
@@ -985,7 +1013,8 @@ class CanvasWindow(QMainWindow):
             ("Ctrl+Z", "되돌리기"),
             ("Ctrl+C / Ctrl+V", "복사 / 연속 붙여넣기"),
             ("Ctrl+D", "제자리 복제"),
-            ("1·3·4·6·7·8·9", "선택·화살표·텍스트·선·펜·번호·직선화살"),
+            ("1·3·4·6·7·8", "선택·화살표·텍스트·선·펜·번호"),
+            ("3", "화살표(그린 뒤 미니툴바서 직선·곡선·직각 선택)"),
             ("2 / 5", "네모 / 원"),
         ]
         body = "\n".join(f"{k:<20}{d}" for k, d in rows)
@@ -1187,12 +1216,30 @@ class CanvasWindow(QMainWindow):
         self.push_undo_state(snaps, coalesce_key=key)
         self._refresh_properties()
 
+    def arm_arrow_tool(self):
+        """[화살표 통합] 사용자가 '화살표'를 무장하는 단일 진입점(툴바 버튼·단축키 3·9).
+        현재 종류(sticky)가 내부 도구를 정한다 — 곡선·직선=arrow, 직각=sarrow. 이미 화살표가
+        무장돼 있으면 끈다(토글). set_tool은 리터럴로 남겨 두고(테스트·내부 호출이 정확히 그 도구를
+        받게) 이 메서드만 종류→도구 변환을 담당한다."""
+        if self.current_tool in ("arrow", "sarrow"):
+            self.set_tool(None)
+            return
+        self.set_tool(_ARROW_KIND_TOOL.get(self.current_arrow_kind, "arrow"))
+
+    def _refresh_arrow_tool_button(self):
+        """[화살표 통합] 툴바 화살표 아이콘을 현재 종류에 맞춘다 — 직각이면 직각 커넥터 아이콘."""
+        btn = getattr(self, "_tool_buttons", {}).get("arrow")
+        if btn is not None:
+            btn.setIcon(_tool_icon(_ARROW_KIND_TOOL.get(self.current_arrow_kind, "arrow"),
+                                   self.current_color))
+
     def _set_current_color(self, color: QColor):
         """[M2 #A] 현재 색을 갱신하고 상단 그리기 도구 아이콘을 그 색으로 다시 칠한다
         (도구 아이콘은 draw-color라 테마와 무관 — 여기서만 갱신). 새 도형·화살표에 반영."""
         self.current_color = QColor(color)
         for key, b in getattr(self, "_tool_buttons", {}).items():
             b.setIcon(_tool_icon(key, self.current_color))
+        self._refresh_arrow_tool_button()   # [화살표 통합] 화살표만 종류별 아이콘이라 덮어쓴다
 
     def _edit_color(self):
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_color")]
@@ -1369,7 +1416,8 @@ class CanvasWindow(QMainWindow):
             view._cancel_place()
         self.current_tool = key
         for k, b in self._tool_buttons.items():
-            b.setChecked(k == key)
+            # [화살표 통합] 화살표 버튼 1개가 내부 두 도구(arrow·sarrow)를 대표한다.
+            b.setChecked(k == key or (k == "arrow" and key == "sarrow"))
         # 왼쪽 「도형」 팔레트 버튼 동기화: 기본(네모·원)은 key 직접, 심볼은 sym:kind.
         for k, b in getattr(self, "_shape_tool_buttons", {}).items():
             b.setChecked(k == key)
@@ -1677,15 +1725,15 @@ class CanvasWindow(QMainWindow):
         self._float_swap_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._float_swap_btn.setMenu(self._build_swap_menu())
         lay.addWidget(self._float_swap_btn)
-        # [M4-4 #4] 라우팅 스타일 — 단일 직선화살표 선택 시만 노출(직선·직각·곡선 엘보).
+        # [화살표 통합] 화살표 종류 — 화살표(직선·곡선·직각) 단일 선택 시 노출. 상단 툴바가 아니라
+        # 여기서 종류를 고른다(선택 후 컨텍스트).
         self._float_routing_btn = QToolButton(); self._float_routing_btn.setText("⌐▾")
         self._float_routing_btn.setFixedSize(QSize(26, 18))
-        self._float_routing_btn.setToolTip("커넥터 라우팅(직선·직각·곡선)")
+        self._float_routing_btn.setToolTip("화살표 종류(직선·곡선·직각)")
         self._float_routing_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._float_routing_btn.setMenu(self._build_routing_menu())
         lay.addWidget(self._float_routing_btn)
-        # [M4-4 ⓑ] 곡선 반경 스테퍼 — 곡선 엘보 커넥터 단일 선택 시만 노출(Lucid의 곡선값 spinner).
-        # 0 = 직각(= 직각 엘보와 같은 그림)이라 라우팅 드롭다운과 자연스럽게 이어진다.
+        # [M4-4 ⓑ] 곡선 반경 스테퍼 — 직각 커넥터 단일 선택 시만 노출(각짐 정도, 0=완전 직각).
         self._float_radius = QSpinBox()
         self._float_radius.setRange(0, int(_PolyArrowItem._CURVE_R_MAX))
         self._float_radius.setSingleStep(2)
@@ -1752,35 +1800,101 @@ class CanvasWindow(QMainWindow):
         self._edit_items(arrows, lambda it: it.flip_head())
 
     def _build_routing_menu(self):
-        """[M4-4 #4] 커넥터 라우팅 스타일 메뉴 — 직선/직각/곡선(둥근 모서리)."""
+        """[화살표 통합] 화살표 종류 메뉴 — 직선·곡선·직각. 상단 툴바가 아니라 여기서 종류를
+        고른다(선택 후 컨텍스트). 세 항목 모두 누르는 즉시 눈에 보이는 변화가 있어야 한다."""
         m = QMenu(self)
-        m.addAction("직선", lambda: self._floating_set_routing("straight"))
-        m.addAction("직각 엘보", lambda: self._floating_set_routing("ortho"))
-        m.addAction("곡선 엘보", lambda: self._floating_set_routing("ortho_curved"))
+        for kind, label in _ARROW_KIND_LABELS:
+            m.addAction(label, lambda k=kind: self._floating_set_arrow_kind(k))
         return m
 
-    def _floating_set_routing(self, mode):
-        """[M4-4 #4] 선택된 직선화살표의 라우팅 스타일 전환 — _pts 재생성이라 geom undo로 커밋."""
-        sel = [it for it in self._scene.selectedItems() if isinstance(it, _PolyArrowItem)]
-        if not sel:
-            return
-        snaps = [(it, it.capture_geom()) for it in sel]
-        for it in sel:
-            it.set_routing(mode)
-        self.push_undo_geom(snaps)
-        self._reposition_floating_toolbar()   # [M4-4 ⓑ] 곡선일 때만 뜨는 반경 스테퍼 갱신
+    def _floating_set_arrow_kind(self, kind):
+        """[화살표 통합] 선택된 화살표를 kind로 바꾼다. 직선↔곡선은 같은 객체의 상태 변경이라
+        곡률을 기억하고, ↔직각은 클래스 교체(_swap_arrow)라 곡률·경유힌트가 초기화된다
+        (되돌리기로 복구). 고른 종류는 sticky — 다음에 그릴 화살표의 기본이 된다."""
+        sel = [it for it in self._scene.selectedItems()
+               if isinstance(it, (_ArrowItem, _PolyArrowItem))]
+        self.current_arrow_kind = kind
+        self._refresh_arrow_tool_button()
+        # [화살표 통합 · 핀 버그] 화살표 도구가 이미 무장 중(핀)이면 종류 변경을 무장에도 반영한다.
+        # 안 그러면 곡선(arrow)으로 무장된 채 종류만 직각으로 바꿔 다음 화살표가 옛 도구로 그려진다.
+        # 핀이 꺼져 있으면 그리기 후 선택모드로 빠져 다음 무장 때 arm_arrow_tool이 새 종류를 읽는다.
+        want = _ARROW_KIND_TOOL.get(kind, "arrow")
+        if self.current_tool in ("arrow", "sarrow") and self.current_tool != want:
+            self.set_tool(want)
+        for it in list(sel):
+            if _arrow_kind_of(it) == kind:
+                continue
+            if (kind == "ortho") != isinstance(it, _PolyArrowItem):
+                self._swap_arrow(it, kind)      # 클래스가 바뀜 — remove+create 단일 엔트리
+                continue
+            before = it.capture_geom()          # 같은 클래스 — 기하 변경 하나로 충분
+            if isinstance(it, _PolyArrowItem):
+                it.set_routing("ortho" if kind == "ortho" else "straight")
+            elif kind == "straight":
+                it.apply_straight()
+            else:
+                it.apply_curved()
+            self.push_undo_geom([(it, before)])
+        self._reposition_floating_toolbar()
         self._view.viewport().update()
 
+    def _make_swapped_arrow(self, item, kind):
+        """item과 같은 끝점·색·두께·선스타일·머리방향·라벨·연결을 가진 kind용 새 화살표."""
+        is_poly = isinstance(item, _PolyArrowItem)
+        p1 = item.mapToScene(item._pts[0] if is_poly else item._p1)
+        p2 = item.mapToScene(item._pts[-1] if is_poly else item._p2)
+        if kind == "ortho":
+            new = _PolyArrowItem(QColor(item._color), item._width, item._head_at_end)
+            new._curve_r = float(self.current_curve_r)   # 반경도 sticky
+        else:
+            new = _ArrowItem(QColor(item._color), item._width, item._head_at_end)
+        new._style = item._style
+        new.setZValue(item.zValue())
+        new.setFlags(new.GraphicsItemFlag.ItemIsMovable | new.GraphicsItemFlag.ItemIsSelectable)
+        new.set_points(p1, p2)
+        for idx, (sh, pt) in enumerate((
+                (item._bind_start, item._bind_start_pt) if is_poly else (item._bind1, item._bind1_pt),
+                (item._bind_end, item._bind_end_pt) if is_poly else (item._bind2, item._bind2_pt))):
+            if sh is not None and pt is not None:
+                new.set_bound(idx, sh, QPointF(pt))
+        if item.has_label() and item._label is not None:
+            txt = item._label.toPlainText()
+            if txt:
+                new.ensure_label().setPlainText(txt)
+        return new
+
+    def _swap_arrow(self, item, kind):
+        """[화살표 통합] 화살표를 다른 클래스로 교체(M4-3 도형 교체와 같은 패턴).
+        remove(old)+create(new)를 하나의 undo 엔트리로 묶어 한 번에 되돌린다."""
+        new = self._make_swapped_arrow(item, kind)
+        was_selected = item.isSelected()
+        self._scene.removeItem(item)
+        self._scene.addItem(new)
+        # ⚠ 라벨 정렬·경로 계산은 씬에 들어간 뒤에 해야 한다(씬 멤버십 가드로 no-op되는 함정).
+        if kind == "ortho":
+            new._auto_route = True
+            new._apply_routing()
+        elif kind == "curved":
+            new.apply_curved()
+        new._sync_label()
+        self._push_entry([("remove", item), ("create", new)])
+        if was_selected:
+            self._scene.clearSelection()
+            new.setSelected(True)
+        self._refresh_properties()
+        return new
+
     def _floating_set_radius(self, value: int):
-        """[M4-4 ⓑ] 선택된 곡선 커넥터의 모서리 반경(0=직각). 스테퍼 연속 조작은 undo 1스텝으로
+        """[M4-4 ⓑ] 선택된 직각 커넥터의 모서리 각짐(0=완전 직각). 스테퍼 연속 조작은 undo 1스텝으로
         병합한다(스핀박스 화살표를 여러 번 눌러도 되돌리기 한 번). 값 동기화(setValue)는
-        blockSignals로 되먹임을 막으므로 여기 오는 건 사용자 조작뿐이다."""
+        blockSignals로 되먹임을 막으므로 여기 오는 건 사용자 조작뿐이다. 바꾼 값은 sticky."""
         sel = [it for it in self._scene.selectedItems() if isinstance(it, _PolyArrowItem)]
         if not sel:
             return
         snaps = [(it, it.capture_geom()) for it in sel]
         for it in sel:
             it.set_corner_radius(value)
+        self.current_curve_r = float(value)   # 다음 직각 커넥터의 기본 각짐(sticky)
         self.push_undo_geom(snaps, coalesce_key=("curve_r", id(sel[0])))
         self._view.viewport().update()
 
@@ -1799,12 +1913,12 @@ class CanvasWindow(QMainWindow):
         # [M4-3] 도형 교체 버튼 — 단일 도형(네모·원·심볼)만 선택했을 때.
         self._float_swap_btn.setVisible(
             len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem)))
-        # [M4-4 #4] 라우팅 드롭다운 — 단일 직선화살표 선택 시만.
+        # [화살표 통합] 종류 드롭다운 — 단일 화살표(직선·곡선·직각) 선택 시.
         self._float_routing_btn.setVisible(
-            len(sel) == 1 and isinstance(sel[0], _PolyArrowItem))
-        # [M4-4 ⓑ] 반경 스테퍼 — 반경이 의미 있는 '곡선 엘보'일 때만(직선·직각엔 숨김).
+            len(sel) == 1 and isinstance(sel[0], (_ArrowItem, _PolyArrowItem)))
+        # [M4-4 ⓑ] 반경 스테퍼 — 직각 커넥터(각짐 조절 대상)일 때만. 직선·곡선 화살표엔 숨김.
         curved = (len(sel) == 1 and isinstance(sel[0], _PolyArrowItem)
-                  and sel[0]._routing == "ortho_curved")
+                  and sel[0]._is_ortho())
         self._float_radius.setVisible(curved)
         if curved:
             self._float_radius.blockSignals(True)   # 값 동기화가 편집 신호로 되돌아오지 않게

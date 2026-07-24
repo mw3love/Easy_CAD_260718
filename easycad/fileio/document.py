@@ -243,10 +243,13 @@ def dict_to_item(d: dict):
         it._pts = [QPointF(*xy) for xy in d["pts"]]
         it._auto_route = d.get("auto_route", False)   # [Stage1] 직교 자동 라우팅 상태
         # [M4-4] 라우팅 스타일 — 신규 필드. 옛 파일은 auto_route→ortho / 아니면 straight로 유추(무손실).
-        it._routing = d.get("routing", "ortho" if it._auto_route else "straight")
+        raw_routing = d.get("routing", "ortho" if it._auto_route else "straight")
+        # [M4-4 · 통합] 옛 3값(straight/ortho/ortho_curved) → 2값. 각짐/둥긂은 반경이 소유하므로
+        # ⚠ 옛 "ortho"(=직각 엘보)는 반경 0으로 읽어야 예전 그대로 각지게 렌더된다(기본값 10을 쓰면
+        # 옛 도면의 직각 커넥터가 전부 둥글어진다). 옛 "ortho_curved"는 기본 반경.
+        it._routing = "straight" if raw_routing == "straight" else "ortho"
         it._route_hints = [QPointF(*xy) for xy in d.get("route_hints", [])]  # [경유지 힌트(2f)]
-        # [M4-4 ⓑ] 곡선 반경 — 옛 파일은 기본값(_CORNER_R) 유지(하위호환).
-        it._curve_r = float(d.get("curve_r", it._curve_r))
+        it._curve_r = float(d.get("curve_r", 0.0 if raw_routing == "ortho" else it._CORNER_R))
         _apply_arrow_style(it, d)   # [M2 #3] 하위호환: 없으면 solid 유지
     elif t == "line":
         it = _LineItem(QLineF(*d["line"])); it.setPen(_mkpen(d))

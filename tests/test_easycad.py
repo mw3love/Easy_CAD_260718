@@ -42,9 +42,10 @@ def _mk_rect(scene, pen, x, y, w, h):
 
 def test_host_construction():
     w = CanvasWindow()
-    # 상단 툴바 = 그리기 도구 7종(네모·원은 왼쪽 「도형」 팔레트로 이관).
-    assert len(w._tool_buttons) == 7
-    assert "rect" not in w._tool_buttons and "ellipse" not in w._tool_buttons
+    # 상단 툴바 = 그리기 도구 6종(네모·원은 왼쪽 「도형」 팔레트, 직선화살은 화살표 1개로 통합).
+    assert len(w._tool_buttons) == 6
+    assert not ({"rect", "ellipse", "sarrow"} & set(w._tool_buttons))
+    assert "arrow" in w._tool_buttons                      # 화살표 버튼 하나가 직선·곡선·직각 대표
     # 왼쪽 팔레트: 기본(네모·원) + 순서도 6종.
     assert set(w._shape_tool_buttons) == {"rect", "ellipse"}
     assert len(w._sym_buttons) == 6
@@ -60,8 +61,8 @@ def test_toolbar_icons_and_actions():
     # 아이콘을 가진다. 단축키 안내 라벨은 도움말 액션으로 분리.
     from easycad.canvas.host import _act_icon
     w = CanvasWindow()
-    # 그리기 도구 7종 모두 아이콘 보유(텍스트 버튼 아님).
-    assert len(w._tool_buttons) == 7
+    # 그리기 도구 6종 모두 아이콘 보유(텍스트 버튼 아님).
+    assert len(w._tool_buttons) == 6
     for b in w._tool_buttons.values():
         assert not b.icon().isNull()
     # 파일/삽입/보기 액션이 아이콘을 가진다.
@@ -261,26 +262,42 @@ def test_arrow_style_backcompat_defaults_solid():
 
 
 def test_sarrow_routing_roundtrip():
-    # [M4-4] _routing(straight/ortho/ortho_curved)이 .ecad 왕복에 보존된다.
+    # [M4-4 · 통합] _routing(straight/ortho) + 반경이 .ecad 왕복에 보존된다(각짐/둥긂=반경 소유).
     from PyQt6.QtWidgets import QGraphicsScene
-    for mode in ("straight", "ortho", "ortho_curved"):
+    for mode, radius in (("straight", 0.0), ("ortho", 0.0), ("ortho", 10.0)):
         sc = QGraphicsScene()
         sar = _PolyArrowItem(QColor("#123456"), 3, True)
         sar._pts = [QPointF(0, 0), QPointF(80, 40)]
-        sar._routing = mode
+        sar._routing = mode; sar.set_corner_radius(radius)
         sc.addItem(sar)
-        p = os.path.join(_TMP, f"routing_{mode}.ecad")
+        p = os.path.join(_TMP, f"routing_{mode}_{radius:.0f}.ecad")
         save_document(sc, p)
         sc2 = QGraphicsScene(); load_document(sc2, p)
         s2 = [x for x in sc2.items() if isinstance(x, _PolyArrowItem)][0]
-        assert s2._routing == mode, mode
+        assert (s2._routing, s2._curve_r) == (mode, radius), (mode, radius)
+
+
+def test_sarrow_routing_legacy_three_values():
+    # [M4-4 · 통합] 옛 3값 .ecad 하위호환: "ortho"(옛 직각 엘보)는 반경 0으로 읽어야 예전처럼
+    # 각지게 그려진다(기본 반경으로 읽으면 옛 도면의 직각 커넥터가 전부 둥글어짐). "ortho_curved"는
+    # 반경 있는 직교로 흡수. set_routing도 옛 값을 별칭으로 받는다.
+    from easycad.fileio.document import dict_to_item
+    base = {"type": "sarrow", "pos": [0, 0], "pts": [[0, 0], [50, 0], [50, 30]],
+            "color": "#ff000000", "width": 3, "head": True}
+    sharp = dict_to_item({**base, "routing": "ortho"})            # 옛 직각(반경 키 없음)
+    assert (sharp._routing, sharp._curve_r) == ("ortho", 0.0)
+    curved = dict_to_item({**base, "routing": "ortho_curved"})    # 옛 곡선
+    assert (curved._routing, curved._curve_r) == ("ortho", _PolyArrowItem._CORNER_R)
+    it = _PolyArrowItem(QColor("#111111"), 3, True)
+    it.set_routing("ortho_curved")                                # 별칭 → ortho
+    assert it._routing == "ortho"
 
 
 def test_curve_radius_model():
     # [M4-4 ⓑ] 곡선 반경 — 0이면 원호가 사라져 직각(요소 수 감소), 상한은 클램프.
     sar = _PolyArrowItem(QColor("#111111"), 3, True)
     sar._pts = [QPointF(0, 0), QPointF(50, 0), QPointF(50, 40)]
-    sar._routing = "ortho_curved"
+    sar._routing = "ortho"
     n_curved = sar._rounded_polyline_path().elementCount()
     sar.set_corner_radius(0)
     assert sar._curve_r == 0.0
@@ -297,37 +314,71 @@ def test_curve_radius_roundtrip_and_backcompat():
     sc = QGraphicsScene()
     sar = _PolyArrowItem(QColor("#123456"), 3, True)
     sar._pts = [QPointF(0, 0), QPointF(80, 0), QPointF(80, 40)]
-    sar._routing = "ortho_curved"; sar.set_corner_radius(4)
+    sar._routing = "ortho"; sar.set_corner_radius(4)
     sc.addItem(sar)
     p = os.path.join(_TMP, "curve_r.ecad")
     save_document(sc, p)
     sc2 = QGraphicsScene(); load_document(sc2, p)
     assert [x for x in sc2.items() if isinstance(x, _PolyArrowItem)][0]._curve_r == 4.0
 
-    d = item_to_dict(sar); d.pop("curve_r")            # 옛 파일 흉내
-    assert dict_to_item(d)._curve_r == _PolyArrowItem._CORNER_R
+    d = item_to_dict(sar); d.pop("curve_r")            # 옛 파일 흉내(routing="ortho"=옛 직각)
+    assert dict_to_item(d)._curve_r == 0.0
 
 
 def test_floating_toolbar_curve_radius_stepper():
-    # [M4-4 ⓑ] 반경 스테퍼: 곡선 엘보 단일 선택 시만 노출, 값 변경이 반경에 반영되고 undo로 복원.
+    # [M4-4 ⓑ] 반경 스테퍼: 직교 커넥터 단일 선택 시 노출, 값 변경이 반경에 반영되고 undo로 복원.
     w = CanvasWindow()
     ar = _PolyArrowItem(QColor("#111111"), 3.0, True)
     ar.set_points(QPointF(0, 0), QPointF(100, 60))
     ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(ar); ar.setSelected(True)
-    w._floating_set_routing("ortho_curved")
+    w._floating_set_arrow_kind("ortho")         # 직각 커넥터 → 각짐(반경) 스테퍼 대상
     w._reposition_floating_toolbar()
     assert not w._float_radius.isHidden()
     # 키보드 포커스를 가져가면 Del·Ctrl+D(뷰 keyPressEvent 처리)가 캔버스로 안 간다 → NoFocus 고정.
     assert w._float_radius.focusPolicy() == Qt.FocusPolicy.NoFocus
+    poly = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)][0]
     assert w._float_radius.value() == int(_PolyArrowItem._CORNER_R)   # 현재 값 동기화
     w._float_radius.setValue(2)                                       # 사용자 조작
-    assert ar._curve_r == 2.0
+    assert poly._curve_r == 2.0 and w.current_curve_r == 2.0          # sticky 반영
     w.undo()
-    assert ar._curve_r == _PolyArrowItem._CORNER_R
-    # 직각·직선 라우팅에서는 반경이 의미 없어 숨긴다.
-    w._floating_set_routing("ortho")
+    assert poly._curve_r == _PolyArrowItem._CORNER_R
+    # 곡선 화살표에서는 각짐 조절이 없어 스테퍼를 숨긴다.
+    w._floating_set_arrow_kind("curved")
+    w._reposition_floating_toolbar()
     assert w._float_radius.isHidden()
+
+
+def test_arrow_kind_menu_labels():
+    # [화살표 통합] 종류 메뉴는 직선·곡선·직각 3개. 상단 툴바가 아니라 여기서 종류를 고른다.
+    w = CanvasWindow()
+    assert [a.text() for a in w._build_routing_menu().actions()] == ["직선", "곡선", "직각"]
+
+
+def test_straight_kind_flattens_on_draw():
+    # [화살표 통합] sticky 종류가 '직선'이면 도형에 스냅돼 자동 S자로 그려진 화살표라도 곧게 편다.
+    # '곡선'이면 자동 S자 그대로 둔다(그린 대로).
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)      # 우측 테두리 x=300, 중앙 y=30
+    view = w._view
+    press, release, _click, _move, drag_move, _d = _draw_helpers(view)
+
+    def draw_arrow_to_border():
+        press(QPointF(-50, 30)); drag_move(QPointF(295, 30)); release(QPointF(305, 30))
+        return [it for it in w._scene.items() if isinstance(it, _ArrowItem)]
+
+    w.current_arrow_kind = "curved"; w.set_tool("arrow")
+    a = draw_arrow_to_border()[-1]
+    assert a._ctrl1 is not None                            # 곡선 종류 → 자동 S자 유지
+
+    for it in list(w._scene.items()):
+        if isinstance(it, _ArrowItem):
+            w._scene.removeItem(it)
+    w.current_arrow_kind = "straight"; w.set_tool("arrow")
+    b = draw_arrow_to_border()[-1]
+    assert b._ctrl1 is None                                # 직선 종류 → 곧게 폄
 
 
 def test_sarrow_routing_backcompat():
@@ -733,21 +784,70 @@ def test_floating_toolbar_arrow_flip_undo():
     w.undo(); assert ar._head_at_end == before            # 방향 토글이 되돌려진다
 
 
-def test_floating_toolbar_routing_dropdown():
-    # [M4-4 #4] 단일 직선화살표 선택 시 라우팅 버튼 노출 + 스타일 전환이 geom undo로 되돌려진다.
+def test_floating_toolbar_arrow_kind_dropdown():
+    # [화살표 통합] 단일 화살표 선택 시 종류 드롭다운 노출. 직선↔곡선은 같은 객체(_ArrowItem)의
+    # 상태 변경(곡률 기억), ↔직각은 클래스 교체(_PolyArrowItem)이고 각각 단일 undo.
+    from easycad.canvas.host import _arrow_kind_of
     w = CanvasWindow()
-    ar = _PolyArrowItem(QColor("#111111"), 3.0, True)
+    ar = _ArrowItem(QColor("#111111"), 3.0, True)
     ar.set_points(QPointF(0, 0), QPointF(100, 60))
     ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(ar); ar.setSelected(True)
     w._reposition_floating_toolbar()
-    assert not w._float_routing_btn.isHidden()            # 직선화살표 → 라우팅 버튼 노출
-    w._floating_set_routing("ortho")
-    assert ar._routing == "ortho" and len(ar._pts) >= 3    # 직교로 재생성(대각→계단)
-    w._floating_set_routing("straight")
-    assert ar._routing == "straight" and len(ar._pts) == 2
-    w.undo()                                              # geom undo → 직전(ortho) 복원
-    assert ar._routing == "ortho"
+    assert not w._float_routing_btn.isHidden()            # 화살표 → 종류 버튼 노출
+    assert _arrow_kind_of(ar) == "straight"
+
+    w._floating_set_arrow_kind("curved")                  # 같은 객체 — 휜다
+    assert ar._ctrl1 is not None and _arrow_kind_of(ar) == "curved"
+    w.undo(); assert ar._ctrl1 is None                    # 곡률 되돌림
+
+    w._floating_set_arrow_kind("curved")
+    w._floating_set_arrow_kind("ortho")                   # 클래스 교체 → _PolyArrowItem
+    poly = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
+    assert len(poly) == 1 and _arrow_kind_of(poly[0]) == "ortho"
+    assert ar.scene() is None                             # 옛 곡선 화살표는 씬에서 빠짐
+    w.undo()                                              # 교체 되돌림 → 곡선 화살표 복귀
+    assert ar.scene() is not None and not [x for x in w._scene.items()
+                                           if isinstance(x, _PolyArrowItem)]
+
+
+def test_arrow_kind_sticky_and_tool_unified():
+    # [화살표 통합] 상단 툴바엔 화살표 1개(sarrow 버튼 없음). arm_arrow_tool이 종류→내부 도구를
+    # 정한다(곡선·직선=arrow, 직각=sarrow). set_tool은 리터럴로 남아 테스트·내부 호출이 그대로 받음.
+    w = CanvasWindow()
+    assert "sarrow" not in w._tool_buttons and "arrow" in w._tool_buttons
+    assert w.current_arrow_kind == "curved"               # 최초 기본 = 곡선
+    w.arm_arrow_tool()
+    assert w.current_tool == "arrow"                       # 곡선 → 내부 arrow 도구
+    assert w._tool_buttons["arrow"].isChecked()           # 화살표 버튼 하나가 둘을 대표
+    w.arm_arrow_tool()                                     # 다시 = 토글 해제
+    assert w.current_tool != "arrow"
+    w.current_arrow_kind = "ortho"
+    w.arm_arrow_tool()
+    assert w.current_tool == "sarrow"                     # 직각 → 내부 sarrow 도구
+    assert w._tool_buttons["arrow"].isChecked()           # 직각이어도 화살표 버튼이 켜짐
+
+
+def test_arrow_kind_change_rearms_pinned_tool():
+    # [화살표 통합 · 핀 버그] 화살표 도구가 무장된 상태(핀)에서 미니툴바로 종류를 바꾸면 무장도
+    # 새 종류에 맞게 재무장돼야 한다 — 안 그러면 다음에 그리는 화살표가 옛 종류로 나온다.
+    w = CanvasWindow()
+    ar = _ArrowItem(QColor("#111111"), 3.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 60))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar); ar.setSelected(True)
+    w.arm_arrow_tool()
+    assert w.current_tool == "arrow"                      # 곡선 무장
+    w._floating_set_arrow_kind("ortho")                   # 종류를 직각으로
+    assert w.current_tool == "sarrow"                     # 무장도 직각 도구로 따라감
+    w._floating_set_arrow_kind("curved")
+    assert w.current_tool == "arrow"                      # 다시 곡선 도구로
+    # 무장이 안 된 상태(선택 모드)에서는 종류만 바꾸고 도구는 건드리지 않는다.
+    w.set_tool("select")
+    poly = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
+    (poly[0] if poly else ar).setSelected(True)
+    w._floating_set_arrow_kind("straight")
+    assert w.current_tool == "select"                     # 도구는 그대로
 
 
 def test_shape_swap_preserves_and_rebinds():

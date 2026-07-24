@@ -2428,6 +2428,46 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self.update()
         self._sync_label()
 
+    # ---- [우리 확장 · 화살표 통합] 직선 ↔ 곡선 -------------------------------
+    # 「직선」과 「곡선」은 별개 종류가 아니라 이 한 객체의 두 상태다(제어점 없음/있음).
+    # 미니툴바의 종류 선택이 이 둘을 호출하고, 클래스가 바뀌는 건 「직각」뿐이다.
+    _BOW_FRAC = 0.22   # 자유 화살표를 곡선으로 만들 때 부풀리는 정도(선분 길이 대비)
+
+    def apply_straight(self):
+        """곧게 편다 — 제어점을 버린다(미니툴바 「직선」)."""
+        self.prepareGeometryChange()
+        self._ctrl1 = self._ctrl2 = None
+        self.update()
+        self._sync_label()
+
+    def apply_curved(self):
+        """휘게 한다(미니툴바 「곡선」). 끝점이 도형에 붙어 있으면 그 바깥 법선을 이탈·도착 접선으로
+        쓴 S자 — 그릴 때의 자동 S자와 같은 규칙(k=clamp(dist/2, 30, 200)). 양끝이 자유면 선분
+        수직으로 완만히 부풀린 활. 너무 짧으면(<8px) 곡선이 의미 없어 그대로 둔다."""
+        p1, p2 = self._p1, self._p2
+        dist = math.hypot(p2.x() - p1.x(), p2.y() - p1.y())
+        if dist < 8:
+            return
+        self.prepareGeometryChange()
+        ux, uy = (p2.x() - p1.x()) / dist, (p2.y() - p1.y()) / dist
+        n1 = None if self._bind1 is None else _nearest_border(self._bind1, self.mapToScene(p1))[1]
+        n2 = None if self._bind2 is None else _nearest_border(self._bind2, self.mapToScene(p2))[1]
+        if n1 is None and n2 is None:
+            off = dist * self._BOW_FRAC
+            nx, ny = -uy, ux
+            self._ctrl1 = QPointF(p1.x() + ux * dist / 3 + nx * off,
+                                  p1.y() + uy * dist / 3 + ny * off)
+            self._ctrl2 = QPointF(p2.x() - ux * dist / 3 + nx * off,
+                                  p2.y() - uy * dist / 3 + ny * off)
+        else:
+            k = max(30.0, min(dist * 0.5, 200.0))
+            ex, ey = (n1.x(), n1.y()) if n1 is not None else (ux, uy)
+            bx, by = (n2.x(), n2.y()) if n2 is not None else (-ex, -ey)
+            self._ctrl1 = QPointF(p1.x() + ex * k, p1.y() + ey * k)
+            self._ctrl2 = QPointF(p2.x() + bx * k, p2.y() + by * k)
+        self.update()
+        self._sync_label()
+
     def set_head_at_end(self, value: bool):
         self._head_at_end = value
         self.update()
@@ -2941,11 +2981,11 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._bind_end = None
         self._bind_start_pt = None   # 시작이 붙은 도형의 로컬 부착점
         self._bind_end_pt = None
-        # [M4-4 ③] 라우팅 스타일(#4 FigJam/Lucid 드롭다운). "ortho_curved"=둥근 모서리 엘보(기본 —
-        # Lucid식 곡선 커넥터), "ortho"=직각 엘보(반경 0), "straight"=2점 직선(대각 허용). 곡선·직각은
-        # 같은 직교 경로에 모서리 반경(_corner_radius, 0=직각)만 다른 통합 관계. 그리기·바인딩 시
+        # [M4-4 ③ · 통합] 라우팅 스타일 — "ortho"=직교 경로, "straight"=2점 직선(대각 허용) 둘뿐이다.
+        # 각짐/둥긂은 모드가 아니라 **모서리 반경(_curve_r, 0=직각)** 이 정한다 — 옛 "ortho_curved"는
+        # ortho+반경>0과 같은 그림이라 모드에서 흡수했다(직각 엘보 = 반경 0 프리셋). 그리기·바인딩 시
         # _apply_routing()이 이 스타일대로 _pts를 생성하고 paint가 반경대로 모서리를 둥글린다.
-        self._routing = "ortho_curved"
+        self._routing = "ortho"
         # [M4-4 ⓑ] 곡선 엘보 모서리 반경(px). 0=직각(ortho와 같은 그림), 기본 _CORNER_R.
         # 플로팅 툴바의 반경 스테퍼(host)가 이 값을 조절한다 — Lucid의 커넥터 곡선값 spinner.
         self._curve_r = float(self._CORNER_R)
@@ -3170,9 +3210,12 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     # ---- [M4-4] 라우팅 스타일(#4) — 통합 경로 생성 ------------------------------
     def set_routing(self, mode: str):
-        """[M4-4 #4] 라우팅 스타일 전환(straight/ortho/ortho_curved). 자동 경로를 다시 켜고
-        _apply_routing으로 즉시 재생성한다(세그먼트 수동편집 상태도 초기화)."""
-        if mode not in ("straight", "ortho", "ortho_curved"):
+        """[M4-4 #4] 라우팅 스타일 전환(straight/ortho). 자동 경로를 다시 켜고 _apply_routing으로
+        즉시 재생성한다(세그먼트 수동편집 상태도 초기화). 반경(_curve_r)은 건드리지 않는다 —
+        각짐/둥긂은 set_corner_radius의 몫. 옛 "ortho_curved"는 ortho 별칭으로 흡수(하위호환)."""
+        if mode == "ortho_curved":
+            mode = "ortho"
+        if mode not in ("straight", "ortho"):
             return
         self._routing = mode
         self._auto_route = True   # 스타일 전환 = 라우터가 다시 경로 소유
@@ -3182,11 +3225,11 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self.update()
 
     def _is_ortho(self) -> bool:
-        return self._routing in ("ortho", "ortho_curved")
+        return self._routing == "ortho"
 
     def _apply_routing(self) -> bool:
         """[M4-4] 현재 _routing에 맞춰 _pts를 재생성(양끝점은 유지, 중간만 라우터 소유). 변경 시 True.
-        · straight=2점 직선(대각 허용). · ortho/ortho_curved=직교 경로 — 양끝 바인딩이면 build_elbow
+        · straight=2점 직선(대각 허용). · ortho=직교 경로(각짐·둥긂 무관) — 양끝 바인딩이면 build_elbow
           (A* 회피·법선·정렬흡수), 아니면 자유 끝점 사이 단순 L/HVH 엘보(_ortho_elbow)."""
         end_idx = len(self._pts) - 1
         s = self.mapToScene(self._pts[0])
@@ -3625,9 +3668,9 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     _CURVE_R_MAX = 40.0   # [M4-4 ⓑ] 반경 스테퍼 상한(그 이상은 인접 변 절반 클램프에 먹혀 무의미)
 
     def _corner_radius(self) -> float:
-        """[M4-4 ③] 곡선 엘보 모서리 반경. ortho_curved면 조절값(_curve_r, 기본 _CORNER_R),
-        그 외(직각·직선)는 0(각짐). 반경 0 = 직각 — Lucid식 '곡선값 조절'의 통합 지점."""
-        if self._routing != "ortho_curved":
+        """[M4-4 ③ · 통합] 실제로 적용할 모서리 반경. 직교 경로면 조절값(_curve_r, 0=직각),
+        직선이면 0(둥글릴 모서리가 없다). 「직각 엘보」와 「곡선 엘보」를 가르는 유일한 값."""
+        if not self._is_ortho():
             return 0.0
         return getattr(self, "_curve_r", self._CORNER_R)
 
@@ -3639,7 +3682,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self.update()
 
     def _rounded_polyline_path(self) -> QPainterPath:
-        """[M4-4 #4] ortho_curved용 — 각 중간 정점의 모서리를 원호(quadTo)로 둥글린다.
+        """[M4-4 #4] 반경>0인 직교 경로용 — 각 중간 정점의 모서리를 원호(quadTo)로 둥글린다.
         반경은 인접 두 변 길이의 절반으로 클램프(짧은 변에서 겹치지 않게). paint 전용(히트테스트·
         직렬화·라벨갭 사각형은 직선 폴리라인 그대로 — 시각만 둥글게)."""
         pts = self._pts
@@ -3830,8 +3873,10 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        if self._routing == "ortho_curved":
-            # [M4-4] 둥근 모서리 — 세그먼트 클립 대신 QPainter 클립으로 라벨 갭을 낸다(원호 보존).
+        if self._corner_radius() > 0:
+            # [M4-4 · 통합] 분기 기준은 '모드'가 아니라 '반경'이다 — 반경 0이면 아래 폴리라인 경로로
+            # 내려가 옛 「직각 엘보」와 완전히 같은 코드로 그려진다(같은 그림을 두 코드로 그리던 중복 해소).
+            # 둥근 모서리 — 세그먼트 클립 대신 QPainter 클립으로 라벨 갭을 낸다(원호 보존).
             gap = self._label_gap_rect()
             if gap is not None:
                 painter.save()
@@ -4870,10 +4915,11 @@ class _GroupTransform:
 
 
 class _AnnotatorView(QGraphicsView):
+    # [화살표 통합] 화살표는 도구 하나 → 단축키도 3 하나. 9는 비운다(사용자가 후속 전면 조정 예정).
     _SHORTCUTS = {
         Qt.Key.Key_1: "select", Qt.Key.Key_2: "rect", Qt.Key.Key_3: "arrow",
         Qt.Key.Key_4: "text", Qt.Key.Key_5: "ellipse", Qt.Key.Key_6: "line",
-        Qt.Key.Key_7: "pen", Qt.Key.Key_8: "badge", Qt.Key.Key_9: "sarrow",
+        Qt.Key.Key_7: "pen", Qt.Key.Key_8: "badge",
     }
 
     def __init__(self, scene: QGraphicsScene, owner):
@@ -5804,6 +5850,9 @@ class _AnnotatorView(QGraphicsView):
         # 그리기 시작 시 여기서 스탬프(pen 기반 도형은 make_pen이 이미 반영, hasattr로 no-op).
         if hasattr(item, "_style"):
             item._style = getattr(self._owner, "current_style", item._style)
+        # [화살표 통합] 직교 커넥터의 모서리 반경도 같은 초크포인트에서 sticky 값을 스탬프한다.
+        if hasattr(item, "_curve_r"):
+            item._curve_r = float(getattr(self._owner, "current_curve_r", item._curve_r))
         item.setZValue(1)
         self.scene().addItem(item)
         self._temp = item
@@ -5939,6 +5988,7 @@ class _AnnotatorView(QGraphicsView):
         if valid:
             if isinstance(it, _PolyArrowItem):
                 self._bind_poly_ends(it)   # [A3] 끝점이 도형 테두리 근처면 스냅+바인딩
+            self._apply_arrow_kind_on_create(it)   # [화살표 통합] sticky 종류(직선이면 곧게)
             it.setFlags(
                 QGraphicsItem.GraphicsItemFlag.ItemIsMovable
                 | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
@@ -5952,6 +6002,14 @@ class _AnnotatorView(QGraphicsView):
         elif it.scene() is not None:
             self.scene().removeItem(it)   # 퇴화/정점 부족 → 폐기
         self.viewport().update()
+
+    def _apply_arrow_kind_on_create(self, item):
+        """[화살표 통합] 방금 그린 화살표에 현재 sticky 종류를 반영한다. 곡선 화살표(_ArrowItem)는
+        도형에 스냅되면 자동 S자로 그려지는데, 종류가 '직선'이면 그 곡률을 곧게 편다(직각은 애초에
+        sarrow 도구라 여기 안 옴). 종류가 '곡선'이면 그린 그대로(자동 S 또는 자유 직선) 둔다."""
+        if isinstance(item, _ArrowItem) and \
+                getattr(self._owner, "current_arrow_kind", "curved") == "straight":
+            item.apply_straight()
 
     def _cancel_place(self):
         """Esc/도구 전환 — 진행 중 배치를 통째로 폐기(있을 때만)."""
@@ -6396,6 +6454,7 @@ class _AnnotatorView(QGraphicsView):
             self._arrow_tip_snap = None
             if isinstance(item, _PolyArrowItem):
                 self._bind_poly_ends(item)   # [A3] 끝점이 도형 테두리 근처면 스냅+바인딩
+            self._apply_arrow_kind_on_create(item)   # [화살표 통합] sticky 종류(직선이면 곧게)
             item.setFlags(
                 QGraphicsItem.GraphicsItemFlag.ItemIsMovable
                 | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
@@ -6599,7 +6658,12 @@ class _AnnotatorView(QGraphicsView):
                     Qt.KeyboardModifier.ControlModifier
                     | Qt.KeyboardModifier.AltModifier
                     | Qt.KeyboardModifier.ShiftModifier)):
-                self._owner.set_tool(self._SHORTCUTS[key])
+                tool = self._SHORTCUTS[key]
+                # [화살표 통합] 화살표 단축키(3·9)는 종류→도구 변환 진입점을 탄다(도구는 하나).
+                if tool in ("arrow", "sarrow") and hasattr(self._owner, "arm_arrow_tool"):
+                    self._owner.arm_arrow_tool()
+                else:
+                    self._owner.set_tool(tool)
                 return
             if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
                 selected = list(self.scene().selectedItems())
