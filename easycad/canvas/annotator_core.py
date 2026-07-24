@@ -3195,7 +3195,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             # 엘보가 이미 안전하면 Stage1과 동일 결과 → 아래 무변경 가드가 되먹임 루프를 끊는다.
             mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
                                 avoid_segs=self._obstacle_arrow_segs(),
-                                cross_penalty=self._ARROW_CROSS_PENALTY)
+                                cross_penalty=self._ARROW_CROSS_PENALTY,
+                                conn_rects=self._connected_rects())
             new_scene = _dedup_pts([s] + mids + [e])
             new_local = [self.mapFromScene(p) for p in new_scene]
         if len(new_local) == len(self._pts) and all(
@@ -3238,10 +3239,18 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             new_local = [self.mapFromScene(s), self.mapFromScene(e)]
         elif self._bind_start is not None and self._bind_end is not None:
             return self.build_elbow()   # 바인딩 직교 — 기존 A* 라우팅 재사용
-        else:                            # 자유(미바인딩) 직교 — 단순 엘보
+        else:                            # 한쪽만 바인딩 / 완전 자유 직교
             ns = self._bound_normal_scene(0)
             ne = self._bound_normal_scene(end_idx)
-            mids = _ortho_elbow(s, e, ns, ne)
+            if self.has_binding():
+                # 한쪽만 붙어도 build_elbow과 같은 _route_ortho로 회피(재진입·장애물·화살표) — 그리기
+                # 라이브 미리보기(set_ortho_preview가 이 경로 위임)와 릴리스 결과를 일치시킨다.
+                mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
+                                    avoid_segs=self._obstacle_arrow_segs(),
+                                    cross_penalty=self._ARROW_CROSS_PENALTY,
+                                    conn_rects=self._connected_rects())
+            else:
+                mids = _ortho_elbow(s, e, ns, ne)   # 완전 자유(무바인딩) = 단순 엘보(기존 유지)
             new_scene = _dedup_pts([s] + mids + [e])
             new_local = [self.mapFromScene(p) for p in new_scene]
         if len(new_local) == len(self._pts) and all(
@@ -3395,7 +3404,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         for i in range(len(waypts) - 1):
             a, b = waypts[i], waypts[i + 1]
             mids = _route_ortho(a, b, norms[i], norms[i + 1], obst, self._ROUTE_CLEARANCE,
-                                avoid_segs=avoid_segs, cross_penalty=self._ARROW_CROSS_PENALTY)
+                                avoid_segs=avoid_segs, cross_penalty=self._ARROW_CROSS_PENALTY,
+                                conn_rects=self._connected_rects())
             for m in mids:
                 scene_pts.append(m)
                 flags.append(False)
@@ -3472,6 +3482,18 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                 out.append(it.mapRectToScene(it.rect()))
         return out
 
+    def _connected_rects(self):
+        """[M4-4 ⓐ] 양끝 바인딩 도형(출발/도착)의 scene bbox 리스트. _obstacle_rects가 회피에서
+        '제외'하는 바로 그 도형들이다 — 끝점이 이 도형 테두리 위라 통짜 팽창 장애물로 못 넣기
+        때문. 대신 _route_ortho가 '원본 rect로 재진입만 판정 + stub↔stub A*엔 팽창본을 장애물로'
+        쓰는 데 이 리스트를 받는다. 원(_EllipseItem)·심볼은 bbox 근사라 재진입 판정이 보수적:
+        실제 외곽선이 bbox 안으로 들어간 도형은 A* 시작 stub이 팽창 bbox 안이면 preferred 폴백."""
+        out = []
+        for sh in (self._bind_start, self._bind_end):
+            if isinstance(sh, (_RectItem, _EllipseItem, _SymbolItem)):
+                out.append(sh.mapRectToScene(sh.rect()))
+        return out
+
     # [경유지 힌트 — 2026-07-20 실측] 씬 단위 고정값(8.0)은 줌아웃 시 화면상 몇 px밖에 안 돼
     # 정밀 조작을 요구했다(사용자 피드백: "상당히 미세하게 해야 함"). _BORDER_SNAP_PX(14)와 같은
     # 관례로 화면 고정 px를 뷰 배율로 환산 — 줌과 무관하게 항상 같은 크기의 표적.
@@ -3527,6 +3549,21 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         """그리기용 — 2정점으로 초기화."""
         self.prepareGeometryChange()
         self._pts = [QPointF(p1), QPointF(p2)]
+        self.update()
+        self._sync_label()
+
+    def set_ortho_preview(self, s_scene: QPointF, e_scene: QPointF, tip_shape=None):
+        """[화살표 그리기 라이브 직각] 드래그 내내 '릴리스와 동일한' 직각 경로로 미리보기 — 단순
+        엘보(도형 관통)로 그리다 릴리스 순간에만 회피로 튀던 것을 없앤다. 끝점 2개로 둔 뒤 릴리스가
+        쓰는 바로 그 _apply_routing에 위임 → 미리보기==확정 보장(같은 코드).
+        tip_shape: 드래그 중 끝점이 스냅된 도형(있으면). 그 도형을 끝 연결로 '라이브 바인딩'해야 —
+        끝점이 그 테두리 위라 conn(재진입 회피)으로 처리돼 A* 도착노드가 유효하다. 미바인딩이면
+        hard 장애물의 팽창 안에 도착점이 들어가 A*가 실패→단순 엘보 폴백(=릴리스 전 관통 버그). 떨어지면 해제."""
+        self.prepareGeometryChange()
+        self._pts = [self.mapFromScene(s_scene), self.mapFromScene(e_scene)]
+        self.set_bound(len(self._pts) - 1, tip_shape,
+                       None if tip_shape is None else tip_shape.mapFromScene(e_scene))
+        self._apply_routing()   # 릴리스와 동일 라우터(변경 있으면 자체 update)
         self.update()
         self._sync_label()
 
@@ -4531,8 +4568,13 @@ def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6,
     return path[1:-1]
 
 
+# [M4-4 ⓐ] 연결 도형 우회 여유 배수(제3도형 clearance 대비). 실조건 피드백(2026-07-24): 배수 1이면
+# 선이 부착 도형 변에 바짝 붙어 답답 → 2로 벌려 숨통. 재진입 회피 케이스에만 적용(무회귀).
+_CONN_CLEAR_MULT = 3.0
+
+
 def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
-                 avoid_segs=(), cross_penalty=0.0):
+                 avoid_segs=(), cross_penalty=0.0, conn_rects=()):
     """[Stage2 승격] Stage1 엘보(_ortho_elbow)를 우선하되, 그 경로가 장애물을 관통하면
     Hanan 그리드 A*(_astar_ortho)로 우회로를 찾아 '중간 정점'을 반환.
       · 장애물 없음 또는 Stage1이 이미 안전(도형·화살표 모두) → Stage1 그대로(무변경·되먹임 없음).
@@ -4541,32 +4583,47 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
     obstacles: scene 좌표 사각형(양끝 바인딩 도형은 호출부에서 이미 제외). clearance만큼 팽창해 여유 확보.
     [Stage3] avoid_segs/cross_penalty: 도형은 hard(관통 금지), 다른 화살표는 soft(교차 최소화).
     preferred가 도형은 안전하나 화살표를 가로지르면 A* 우회를 시도하되, 교차를 실제로 줄일 때만
-    채택(개선 없으면 preferred 유지 → 불필요한 우회·되먹임 방지)."""
+    채택(개선 없으면 preferred 유지 → 불필요한 우회·되먹임 방지).
+    [M4-4 ⓐ] conn_rects: 양끝 '연결 도형' bbox(scene). 끝점이 이 도형 테두리 위라 통짜 팽창 장애물로
+    못 넣는다(deferred 함정) → '재진입'만 원본 rect로 판정(부착점 바깥 스텁 접촉은 통과), 재진입 시에만
+    stub↔stub A*에 팽창본을 장애물로 추가. 보수적: 재진입 안 하면 conn은 무시 = 기존 경로 완전 불변."""
     preferred = _ortho_elbow(s, e, ns, ne)
     infl = ([r.adjusted(-clearance, -clearance, clearance, clearance) for r in obstacles]
             if obstacles else [])
+    # [M4-4 ⓐ] 연결 도형: 원본 rect=재진입 판정용(부착부 접촉 배제), 팽창본=A* 장애물용.
+    # 여유는 제3도형(clearance)보다 넉넉하게(conn_clear) — 부착 도형 변에 선이 딱 붙어 지나가면
+    # 답답해 보인다(실조건 피드백 2026-07-24). 이탈/도착 스텁도 같은 거리로 밀어 격자선을 벌린다.
+    conn_clear = clearance * _CONN_CLEAR_MULT
+    conn_orig = list(conn_rects)
+    conn_infl = [r.adjusted(-conn_clear, -conn_clear, conn_clear, conn_clear) for r in conn_orig]
     pref_hits_shape = _path_hits_rects([s] + preferred + [e], infl) if infl else False
+    pref_reenters = _path_hits_rects([s] + preferred + [e], conn_orig) if conn_orig else False
     pref_cross = _count_seg_crossings([s] + preferred + [e], avoid_segs)
-    # preferred가 도형 안전 + 화살표 교차 없음 → 그대로(기존 무변경 보장).
-    if not pref_hits_shape and pref_cross == 0:
+    # preferred가 도형 안전 + 연결도형 재진입 없음 + 화살표 교차 없음 → 그대로(기존 무변경 보장).
+    if not pref_hits_shape and not pref_reenters and pref_cross == 0:
         return preferred
-    s2 = _normal_stub(s, ns, clearance)
-    e2 = _normal_stub(e, ne, clearance)
+    # [M4-4 ⓐ] 재진입할 때만 conn을 A* 장애물/검증에 편입 — 순수 제3도형 케이스는 기존과 완전 동일.
+    astar_obst = (infl + conn_infl) if pref_reenters else infl
+    check_rects = (infl + conn_orig) if pref_reenters else infl
+    # 스텁 거리: 재진입 회피 시 conn_clear만큼(팽창 격자 밖에 착지해 A* 시작노드 유효), 아니면 clearance.
+    push = conn_clear if pref_reenters else clearance
+    s2 = _normal_stub(s, ns, push)
+    e2 = _normal_stub(e, ne, push)
     # (1) 법선 스텁을 강제한 A*(수직 이탈/도착·바인딩 도형 회피) → (2) 스텁 없는 A*(스텁이
     #     막혔을 때 폴백). 각 후보는 s→...→e 전체 경로의 도형 관통을 최종 확인한 뒤에만 채택.
     attempts = [
         (s2, e2, ([] if s2 == s else [s2]), ([] if e2 == e else [e2])),
         (s, e, [], []),
     ]
-    if pref_hits_shape:
-        # 도형 관통 회피는 hard 요구 — 기존대로 첫 안전 후보 채택(화살표는 벌점으로 A*가 이미 최소화).
+    if pref_hits_shape or pref_reenters:
+        # 도형 관통·재진입 회피는 hard 요구 — 첫 안전 후보 채택(화살표는 벌점으로 A*가 이미 최소화).
         for a, b, pre, post in attempts:
-            interior = _astar_ortho(a, b, infl, clearance,
+            interior = _astar_ortho(a, b, astar_obst, clearance,
                                     avoid_segs=avoid_segs, cross_penalty=cross_penalty)
             if interior is None:
                 continue
             mids = pre + interior + post
-            if not _path_hits_rects([s] + mids + [e], infl):
+            if not _path_hits_rects([s] + mids + [e], check_rects):
                 return mids
         return preferred
     # preferred가 도형은 안전하나 화살표를 가로지름 — 두 시도를 모두 평가해 '교차를 가장 많이
@@ -5882,8 +5939,10 @@ class _AnnotatorView(QGraphicsView):
         if (snap is not None and snap[2] is not None
                 and self._view_dist(snap[0], self.mapFromScene(anchor_scene)) >= self._MIN_SNAP_SPAN_PX):
             self._arrow_tip_snap = snap[0]
+            self._arrow_tip_snap_shape = snap[2]   # [라이브 직각] tip 도형 — 미리보기 conn 바인딩용
             return snap[0]
         self._arrow_tip_snap = None
+        self._arrow_tip_snap_shape = None
         return ortho_p
 
     def _poly_place_point(self, event, item):
@@ -5907,10 +5966,16 @@ class _AnnotatorView(QGraphicsView):
                 and self._view_dist(snap[0], self.mapFromScene(anchor_scene)) < self._MIN_SNAP_SPAN_PX):
             snap = None
         self._arrow_tip_snap = snap[0] if snap is not None else None
+        self._arrow_tip_snap_shape = snap[2] if snap is not None else None   # [라이브 직각] tip 도형
         return snap[0] if snap is not None else None
 
     def _enter_click_place(self, item, tool):
         """드래그 없는 클릭 → 클릭 배치 모드 진입. item은 이미 시작점을 가진 상태(퇴화)."""
+        # [화살표 그리기 라이브 직각] 클릭(무드래그)인데 미리보기가 엘보로 늘어났으면 시작점 2개로
+        # 되돌려 클릭배치를 깨끗한 상태에서 시작(3점↑ 잔재가 수동 폴리라인으로 새지 않게).
+        if isinstance(item, _PolyArrowItem) and len(item._pts) > 2:
+            s = QPointF(item._pts[0])
+            item.set_points(s, s)
         self._place = item
         self._place_tool = tool
         self._snap_preview = None
@@ -6354,10 +6419,13 @@ class _AnnotatorView(QGraphicsView):
                 if getattr(self._owner, "ortho_enabled", False):
                     # F8: sp가 이미 ortho 처리됨 + 테두리 근처면 그 위로 스냅(축 보존)
                     tip = self._snap_ortho_to_border(sp, self._start)
-                    self._temp.set_points(self._start, tip)
                 else:
                     snapped = self._poly_border_snap_tip(event, self._start)   # [A3] 라이브 테두리 스냅
-                    self._temp.set_points(self._start, snapped if snapped is not None else sp)
+                    tip = snapped if snapped is not None else sp
+                # [화살표 그리기 라이브 직각] 드래그 내내 릴리스와 동일한 직각 회피 경로로 미리보기
+                # (관통→릴리스 튐 제거). tip이 도형에 스냅됐으면 그 도형을 라이브 바인딩해 conn 처리.
+                self._temp.set_ortho_preview(self._start, tip,
+                                             getattr(self, "_arrow_tip_snap_shape", None))
                 self.viewport().update()   # 스냅 마커 갱신
             elif tool == "pen" and self._path is not None:
                 self._path.lineTo(sp)
@@ -6453,6 +6521,11 @@ class _AnnotatorView(QGraphicsView):
             self._arrow_snap_exit = None
             self._arrow_tip_snap = None
             if isinstance(item, _PolyArrowItem):
+                # [화살표 그리기 라이브 직각] 드래그 미리보기로 늘어난 정점을 시작·끝 2점으로 되돌린다
+                # — _bind_poly_ends는 len==2일 때만 자동라우팅(build_elbow)하고 3점↑는 수동 폴리라인
+                #   으로 보존하기 때문. 되돌린 뒤 바인딩→A* 회피 경로로 정식 대체된다.
+                if len(item._pts) > 2:
+                    item.set_points(QPointF(item._pts[0]), QPointF(item._pts[-1]))
                 self._bind_poly_ends(item)   # [A3] 끝점이 도형 테두리 근처면 스냅+바인딩
             self._apply_arrow_kind_on_create(item)   # [화살표 통합] sticky 종류(직선이면 곧게)
             item.setFlags(

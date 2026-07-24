@@ -2006,6 +2006,86 @@ def test_sarrow_routes_around_obstacle():
     assert len(sp) == 4 and _close(sp[1], QPointF(200, 30)) and _close(sp[2], QPointF(200, 230)), sp
 
 
+def test_sarrow_avoids_reenter_connected_shape():
+    # [M4-4 ⓐ] 연결 도형 재진입 회피. A 우측(+x)에서 출발했는데 타깃 B가 왼쪽/아래라 preferred
+    # 엘보의 첫 세그먼트가 A 몸통으로 되돌아 들어가는(재진입) 배치 → 라우터가 A를 우회해야 한다.
+    from easycad.canvas.annotator_core import _path_hits_rects, _route_ortho
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)      # 우측 (100,30), 법선 +x
+    b = _mk_rect(w._scene, w.make_pen(), 20, 200, 100, 60)   # 상단 (70,200), 법선 -y (A의 왼쪽 아래)
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(100, 30), QPointF(70, 200))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, QPointF(100, 30)); sa.set_bound(1, b, QPointF(70, 200))
+    sa._auto_route = True
+
+    a_rect = a.mapRectToScene(a.rect())
+    b_rect = b.mapRectToScene(b.rect())
+    ns = sa._bound_normal_scene(0); ne = sa._bound_normal_scene(1)
+
+    # 전제 확인: 회피 없는 preferred 엘보는 실제로 A로 재진입한다(테스트가 유의미하려면).
+    from easycad.canvas.annotator_core import _ortho_elbow
+    s0, e0 = QPointF(100, 30), QPointF(70, 200)
+    pref = [s0] + _ortho_elbow(s0, e0, ns, ne) + [e0]
+    assert _path_hits_rects(pref, [a_rect]), ("preferred가 재진입 안 함 — 배치 재설계 필요", pref)
+
+    # 수정된 라우터: A를 우회해 재진입하지 않는다(부착부 정상 접촉은 stub 바깥이라 통과).
+    sa.build_elbow()
+    sp = [sa.mapToScene(p) for p in sa._pts]
+    assert _close(sp[0], QPointF(100, 30)) and _close(sp[-1], QPointF(70, 200)), sp
+    assert not _path_hits_rects(sp, [a_rect]), ("A 재진입", sp)
+    assert not _path_hits_rects(sp, [b_rect]), ("B 관통", sp)
+
+    # 보수성(무회귀) 확인: 재진입이 없던 깔끔한 배치는 preferred 그대로 — conn 무시.
+    #   A 우측(+x) → B 좌측(-x), 같은 y → 직선. conn_rects를 넘겨도 경로 불변이어야 한다.
+    s1, e1 = QPointF(100, 30), QPointF(300, 30)
+    m_no_conn = _route_ortho(s1, e1, QPointF(1, 0), QPointF(-1, 0), [], 12.0)
+    m_conn = _route_ortho(s1, e1, QPointF(1, 0), QPointF(-1, 0), [], 12.0,
+                          conn_rects=[a_rect, QRectF(300, 0, 100, 60)])
+    assert m_no_conn == m_conn, ("깔끔한 배치인데 conn 때문에 경로 바뀜(회귀)", m_no_conn, m_conn)
+
+
+def test_sarrow_live_ortho_preview():
+    # [화살표 그리기 라이브 직각] 드래그 미리보기가 직선이 아니라 직각 엘보를 만든다(첫 클릭부터 직각).
+    w = CanvasWindow()
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    w._scene.addItem(sa)
+    sa.set_points(QPointF(0, 0), QPointF(0, 0))
+    sa.set_ortho_preview(QPointF(0, 0), QPointF(200, 120))
+    sp = [sa.mapToScene(p) for p in sa._pts]
+    assert len(sp) >= 3, ("직선이 아니라 직각 엘보여야", sp)
+    for i in range(len(sp) - 1):     # 모든 세그먼트가 수평/수직(직각)
+        a, b = sp[i], sp[i + 1]
+        assert abs(a.x() - b.x()) < 1e-6 or abs(a.y() - b.y()) < 1e-6, ("대각 세그먼트", a, b)
+    assert _close(sp[0], QPointF(0, 0)) and _close(sp[-1], QPointF(200, 120)), sp
+    # 릴리스 정리 시뮬: 2점으로 되돌리면 build_elbow가 정상 자동라우팅(len==2 경로) 가능해야 한다.
+    sa.set_points(QPointF(sa._pts[0]), QPointF(sa._pts[-1]))
+    assert len(sa._pts) == 2, sa._pts
+
+
+def test_sarrow_live_preview_avoids_reenter():
+    # [화살표 그리기 라이브 직각] 드래그 미리보기(시작만 바인딩)가 이미 회피 경로 — 클릭 놓기 전에
+    # 도형을 관통했다가 릴리스에 튀지 않는다(preview==release). 사용자 실조건 피드백 2026-07-24.
+    from easycad.canvas.annotator_core import _path_hits_rects, _ortho_elbow
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)      # 우측 (100,30), 법선 +x
+    b = _mk_rect(w._scene, w.make_pen(), 20, 200, 100, 60)   # 타깃(왼쪽 아래) — 재진입 유발
+    prev = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    w._scene.addItem(prev)
+    prev.set_points(QPointF(100, 30), QPointF(100, 30))
+    prev.set_bound(0, a, QPointF(100, 30))                   # 드래그 상태 = 시작만 바인딩
+    ns = prev._bound_normal_scene(0)
+    # 전제: 단순 엘보라면 A를 관통(테스트 유의미성)
+    s0, e0 = QPointF(100, 30), QPointF(70, 200)
+    assert _path_hits_rects([s0] + _ortho_elbow(s0, e0, ns, None) + [e0],
+                            [a.mapRectToScene(a.rect())]), "단순 엘보가 재진입 안 함"
+    # 미리보기(커서=B 상단점, tip이 B에 스냅 → 라이브 바인딩)는 이미 A를 우회
+    prev.set_ortho_preview(s0, e0, b)
+    pv = [prev.mapToScene(p) for p in prev._pts]
+    assert not _path_hits_rects(pv, [a.mapRectToScene(a.rect())]), ("미리보기가 A 관통", pv)
+
+
 def _hint_arrow(w):
     """[경유지 힌트(2f)] 오프셋 배치 두 도형 + 자동라우팅 화살표(H-V-H, 중간정점 2개) 준비."""
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)       # 우측 (100,30), 법선 +x
