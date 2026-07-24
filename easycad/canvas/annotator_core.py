@@ -885,6 +885,22 @@ class _HandleResizeMixin:
                 return bool(getattr(owner, "ortho_enabled", False))
         return False
 
+    # ---- [우리 확장 · M4-4 ⓓ] 선택된 도형의 '내부 빈공간' 이동 -------------------
+    # 속 빈 도형은 테두리(_base_shape)만 클릭 영역이라 이동하려면 가는 선을 조준해야 했다.
+    # Lucid/FigJam은 선택된 도형이면 내부 아무 데나 끌어도 이동한다 → 선택 중일 때만 내부를
+    # 히트 영역에 얹는다. ⚠ 그리기 도구가 무장된 동안은 얹지 않는다 — 뷰의 _is_empty_area가
+    # shape()로 판정하므로, 얹으면 '도형 안에서 새 주석 그리기'(기존 설계)가 막힌다.
+    _INTERIOR_HIT_TOOLS = (None, "select")
+
+    def _interior_path(self):
+        """선택 시 클릭 영역에 더할 내부 채움 경로. 속 빈 네모·원·심볼만 override(기본 없음)."""
+        return None
+
+    def _interior_hit_active(self) -> bool:
+        if not self.isSelected():
+            return False
+        return self._owner_tool() in self._INTERIOR_HIT_TOOLS
+
     def _handle_active(self) -> bool:
         if not self.isSelected():
             return False
@@ -950,6 +966,11 @@ class _HandleResizeMixin:
     def shape(self):
         # 선택 시 핸들 영역을 클릭 영역에 포함 — 속 빈 도형도 핸들을 잡을 수 있게.
         base = self._base_shape()
+        # [우리 확장 · M4-4 ⓓ] 선택된 속 빈 도형은 '내부 빈공간'도 클릭 영역에 포함(Lucid/FigJam).
+        if self._interior_hit_active():
+            ip = self._interior_path()
+            if ip is not None:
+                base = base.united(ip)
         if self._uses_endpoints():
             if self._endpoint_active():
                 hp = QPainterPath()
@@ -1341,6 +1362,14 @@ class _RectItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
         stroker.setWidth(max(self.pen().widthF(), self._EDGE_HIT_MIN / self._scale_or_1()))
         return stroker.createStroke(path)
 
+    def _interior_path(self):
+        # [M4-4 ⓓ] 속 빈 네모의 내부(선택 중에만 shape()가 얹는다). 채움이 있으면 이미 포함.
+        if self.brush().style() != Qt.BrushStyle.NoBrush:
+            return None
+        p = QPainterPath()
+        p.addRect(self.rect())
+        return p
+
     def paint(self, painter, option, widget=None):
         self._paint_base_no_select(painter, option, widget)
         self._paint_handle(painter)
@@ -1398,6 +1427,14 @@ class _EllipseItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsEllipseItem):
         stroker = QPainterPathStroker()
         stroker.setWidth(max(self.pen().widthF(), self._EDGE_HIT_MIN / self._scale_or_1()))
         return stroker.createStroke(path)
+
+    def _interior_path(self):
+        # [M4-4 ⓓ] 속 빈 원의 내부(선택 중에만). 곡선 기하 그대로 — 외접 박스 아님.
+        if self.brush().style() != Qt.BrushStyle.NoBrush:
+            return None
+        p = QPainterPath()
+        p.addEllipse(self.rect())
+        return p
 
     def paint(self, painter, option, widget=None):
         # 네모와 달리 선택 표시를 곡선 따라가는 점선 타원으로 그린다(_paint_base_no_select의
@@ -1571,6 +1608,12 @@ class _SymbolItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
         stroker = QPainterPathStroker()
         stroker.setWidth(max(self.pen().widthF(), self._EDGE_HIT_MIN / self._scale_or_1()))
         return stroker.createStroke(path)
+
+    def _interior_path(self):
+        # [M4-4 ⓓ] 속 빈 심볼의 내부 — 외접 박스가 아니라 심볼 실제 외곽선 안쪽(마름모 등).
+        if self.brush().style() != Qt.BrushStyle.NoBrush:
+            return None
+        return self._sym_path()
 
     def paint(self, painter, option, widget=None):
         # 네모의 _paint_base_no_select(super().paint()가 사각을 그림) 대신 심볼 경로를 직접 그린다.
@@ -2903,6 +2946,9 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # 같은 직교 경로에 모서리 반경(_corner_radius, 0=직각)만 다른 통합 관계. 그리기·바인딩 시
         # _apply_routing()이 이 스타일대로 _pts를 생성하고 paint가 반경대로 모서리를 둥글린다.
         self._routing = "ortho_curved"
+        # [M4-4 ⓑ] 곡선 엘보 모서리 반경(px). 0=직각(ortho와 같은 그림), 기본 _CORNER_R.
+        # 플로팅 툴바의 반경 스테퍼(host)가 이 값을 조절한다 — Lucid의 커넥터 곡선값 spinner.
+        self._curve_r = float(self._CORNER_R)
         # [Stage1] Lucid식 직교 자동 라우팅. True면 중간 정점(_pts[1:-1])은 라우터 소유물 —
         # 양끝 부착점에서 매 reroute마다 엘보로 재계산된다. [M4-4] 세그먼트를 드래그하면 False로
         # 내려가 '수동 직교 폴리라인'이 된다(끝점만 follow, 내부는 사용자 소유).
@@ -3501,6 +3547,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         c._bind_start_pt = None if self._bind_start_pt is None else QPointF(self._bind_start_pt)
         c._bind_end_pt = None if self._bind_end_pt is None else QPointF(self._bind_end_pt)
         c._routing = self._routing   # [M4-4] 라우팅 스타일 유지
+        c._curve_r = self._curve_r   # [M4-4 ⓑ] 곡선 반경 유지
         c._auto_route = self._auto_route   # [Stage1] 자동 라우팅 상태 유지
         c._route_hints = [QPointF(p) for p in self._route_hints]   # [경유지 힌트] 유지
         c._label_t, c._label_off = self._label_t, self._label_off   # 라벨 위치(t·off) 유지
@@ -3510,7 +3557,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     # 수동 폴리라인으로 전환(_auto_route=False). undo 스냅샷은 원래 _auto_route·힌트를 복원한다.
     def _capture_geom_local(self):
         return ([QPointF(p) for p in self._pts], self._auto_route,
-                [QPointF(p) for p in self._route_hints], self._routing)
+                [QPointF(p) for p in self._route_hints], self._routing, self._curve_r)
 
     def _apply_geom_local(self, g):
         self.prepareGeometryChange()
@@ -3519,6 +3566,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._route_hints = [QPointF(p) for p in g[2]] if len(g) > 2 else []
         if len(g) > 3:
             self._routing = g[3]   # [M4-4] 라우팅 스타일 복원
+        if len(g) > 4:
+            self._curve_r = g[4]   # [M4-4 ⓑ] 곡선 반경 복원
         self._sync_label()
 
     def _capture_binds(self):
@@ -3573,6 +3622,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         return path
 
     _CORNER_R = 10.0   # [M4-4] 곡선 엘보 기본 모서리 반경(로컬 단위, 인접 변 절반으로 클램프)
+    _CURVE_R_MAX = 40.0   # [M4-4 ⓑ] 반경 스테퍼 상한(그 이상은 인접 변 절반 클램프에 먹혀 무의미)
 
     def _corner_radius(self) -> float:
         """[M4-4 ③] 곡선 엘보 모서리 반경. ortho_curved면 조절값(_curve_r, 기본 _CORNER_R),
@@ -3581,6 +3631,13 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             return 0.0
         return getattr(self, "_curve_r", self._CORNER_R)
 
+    def set_corner_radius(self, r: float):
+        """[M4-4 ⓑ] 곡선 엘보 반경 설정(0=직각, [0,_CURVE_R_MAX] 클램프). 시각만 바뀌고
+        _pts·히트테스트·직렬화 기하는 그대로 — paint의 _rounded_polyline_path만 달라진다."""
+        self.prepareGeometryChange()
+        self._curve_r = max(0.0, min(float(r), self._CURVE_R_MAX))
+        self.update()
+
     def _rounded_polyline_path(self) -> QPainterPath:
         """[M4-4 #4] ortho_curved용 — 각 중간 정점의 모서리를 원호(quadTo)로 둥글린다.
         반경은 인접 두 변 길이의 절반으로 클램프(짧은 변에서 겹치지 않게). paint 전용(히트테스트·
@@ -3588,7 +3645,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         pts = self._pts
         if len(pts) < 3:
             return QPainterPath(pts[0]) if len(pts) == 1 else self._segment_path(pts)
-        radius = self._corner_radius() or self._CORNER_R
+        radius = self._corner_radius()   # [M4-4 ⓑ] 0이면 아래 클램프에서 직각으로 떨어진다
         path = QPainterPath(pts[0])
         for i in range(1, len(pts) - 1):
             a, c, b = pts[i - 1], pts[i], pts[i + 1]

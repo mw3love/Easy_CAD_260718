@@ -276,6 +276,60 @@ def test_sarrow_routing_roundtrip():
         assert s2._routing == mode, mode
 
 
+def test_curve_radius_model():
+    # [M4-4 ⓑ] 곡선 반경 — 0이면 원호가 사라져 직각(요소 수 감소), 상한은 클램프.
+    sar = _PolyArrowItem(QColor("#111111"), 3, True)
+    sar._pts = [QPointF(0, 0), QPointF(50, 0), QPointF(50, 40)]
+    sar._routing = "ortho_curved"
+    n_curved = sar._rounded_polyline_path().elementCount()
+    sar.set_corner_radius(0)
+    assert sar._curve_r == 0.0
+    assert sar._rounded_polyline_path().elementCount() < n_curved   # 원호(quadTo) 없음 = 직각
+    sar.set_corner_radius(999)
+    assert sar._curve_r == _PolyArrowItem._CURVE_R_MAX               # 상한 클램프
+    assert sar.clone()._curve_r == _PolyArrowItem._CURVE_R_MAX       # 복제도 반경 유지
+
+
+def test_curve_radius_roundtrip_and_backcompat():
+    # [M4-4 ⓑ] 반경이 .ecad 왕복에 보존되고, 옛 파일(curve_r 키 없음)은 기본값으로 안전 복원.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from easycad.fileio.document import dict_to_item, item_to_dict
+    sc = QGraphicsScene()
+    sar = _PolyArrowItem(QColor("#123456"), 3, True)
+    sar._pts = [QPointF(0, 0), QPointF(80, 0), QPointF(80, 40)]
+    sar._routing = "ortho_curved"; sar.set_corner_radius(4)
+    sc.addItem(sar)
+    p = os.path.join(_TMP, "curve_r.ecad")
+    save_document(sc, p)
+    sc2 = QGraphicsScene(); load_document(sc2, p)
+    assert [x for x in sc2.items() if isinstance(x, _PolyArrowItem)][0]._curve_r == 4.0
+
+    d = item_to_dict(sar); d.pop("curve_r")            # 옛 파일 흉내
+    assert dict_to_item(d)._curve_r == _PolyArrowItem._CORNER_R
+
+
+def test_floating_toolbar_curve_radius_stepper():
+    # [M4-4 ⓑ] 반경 스테퍼: 곡선 엘보 단일 선택 시만 노출, 값 변경이 반경에 반영되고 undo로 복원.
+    w = CanvasWindow()
+    ar = _PolyArrowItem(QColor("#111111"), 3.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 60))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar); ar.setSelected(True)
+    w._floating_set_routing("ortho_curved")
+    w._reposition_floating_toolbar()
+    assert not w._float_radius.isHidden()
+    # 키보드 포커스를 가져가면 Del·Ctrl+D(뷰 keyPressEvent 처리)가 캔버스로 안 간다 → NoFocus 고정.
+    assert w._float_radius.focusPolicy() == Qt.FocusPolicy.NoFocus
+    assert w._float_radius.value() == int(_PolyArrowItem._CORNER_R)   # 현재 값 동기화
+    w._float_radius.setValue(2)                                       # 사용자 조작
+    assert ar._curve_r == 2.0
+    w.undo()
+    assert ar._curve_r == _PolyArrowItem._CORNER_R
+    # 직각·직선 라우팅에서는 반경이 의미 없어 숨긴다.
+    w._floating_set_routing("ortho")
+    assert w._float_radius.isHidden()
+
+
 def test_sarrow_routing_backcompat():
     # [M4-4] 옛 .ecad(routing 키 없음): auto_route→ortho / 없으면 straight로 유추(무손실).
     from easycad.fileio.document import dict_to_item
@@ -781,6 +835,53 @@ def test_swap_to_asymmetric_keeps_arrow_on_outline():
     assert gap < 1.0, gap                                 # 끝점이 new 외곽선 위(뜨지 않음)
 
 
+def test_selected_shape_interior_is_hit():
+    # [M4-4 ⓓ] 속 빈 도형은 선택 전엔 테두리만 히트(내부 통과), 선택 후엔 내부 빈공간도
+    # 히트 → 가는 테두리를 조준하지 않고 안쪽 아무 데나 끌어서 이동(Lucid/FigJam).
+    w = CanvasWindow(); w.set_tool("select")
+    r = _mk_pen_rect(w, x=0, y=0, ww=200, hh=120)
+    inner = r.rect().center()
+    assert not r.shape().contains(inner)      # 선택 전 = 통과
+    r.setSelected(True)
+    assert r.shape().contains(inner)          # 선택 후 = 이동 히트
+
+
+def test_interior_hit_off_while_drawing_tool_armed():
+    # [M4-4 ⓓ] 그리기 도구가 무장된 동안은 내부 히트를 끈다 — 뷰의 _is_empty_area가 shape()로
+    # 판정하므로, 켜 두면 '도형 안에서 새 화살표·네모 그리기'(기존 설계)가 막힌다.
+    w = CanvasWindow(); w.set_tool("select")
+    r = _mk_pen_rect(w, x=0, y=0, ww=200, hh=120); r.setSelected(True)
+    inner = r.rect().center()
+    assert r.shape().contains(inner)
+    for tool in ("rect", "ellipse", "arrow", "sarrow", "pen", "text"):
+        w.set_tool(tool)
+        assert not r.shape().contains(inner), tool
+    w.set_tool("select")
+    assert r.shape().contains(inner)
+
+
+def test_interior_hit_follows_real_outline():
+    # [M4-4 ⓓ] 내부 히트 영역은 외접 박스가 아니라 '실제 외곽선 안쪽' — 원은 곡선, 마름모는
+    # 마름모. (핸들 영역이 섞이지 않게 _interior_path를 직접 본다.)
+    from PyQt6.QtGui import QPen
+    w = CanvasWindow()
+    el = _EllipseItem(QRectF(0, 0, 200, 100))
+    el.setPen(QPen(QColor("#111111"), 2.0)); el.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    w._scene.addItem(el)
+    ip = el._interior_path()
+    assert ip.contains(QPointF(100, 50)) and not ip.contains(QPointF(2, 2))   # 모서리는 타원 밖
+
+    sym = _SymbolItem("decision", QRectF(0, 0, 200, 120))
+    sym.setPen(QPen(QColor("#111111"), 2.0)); sym.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    w._scene.addItem(sym)
+    sp = sym._interior_path()
+    assert sp.contains(QPointF(100, 60)) and not sp.contains(QPointF(4, 4))   # 마름모 밖
+
+    # 채움이 있는 도형은 이미 전체가 히트라 얹지 않는다(중복 방지).
+    el.setBrush(QBrush(QColor("#ffcc00")))
+    assert el._interior_path() is None
+
+
 def test_pdf_export():
     w = CanvasWindow()
     _mk_rect(w._scene, w.make_pen(), 0, 0, 120, 60)
@@ -1216,6 +1317,40 @@ def test_sarrow_segment_drag():
     # 정점 위(끝점) hover는 세그먼트 이동이 아니라 끝점 이동 우선 → None
     vtx = view.mapFromScene(QPointF(0, 0))
     assert view._segment_add_at(vtx) is None
+
+
+def test_interior_press_takes_move_branch_not_rubberband():
+    # [M4-4 ⓓ] 실제 press 경로: 선택된 속 빈 네모의 '내부'를 누르면 뷰가 러버밴드가 아니라
+    # 아이템 이동 분기(_snapshot_movable → super)로 간다. 선택 전 같은 자리는 러버밴드 그대로.
+    # ⚠ Qt의 아이템 grab(실제 이동)까지는 이 오프스크린 하네스에서 재현되지 않아(합성 이벤트가
+    #    씬으로 배달되지 않음) 뷰의 분기 선택까지만 검증한다 — 이동 자체는 실조건 몫.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    r = _mk_pen_rect(w, x=-100, y=-60, ww=200, hh=120)
+    view = w._view
+    inside = view.mapFromScene(QPointF(0, 0))          # 도형 한가운데(테두리서 멀다)
+
+    def press():
+        view.mousePressEvent(QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(inside), QPointF(inside),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+
+    # ⓐ 선택 전 — 내부는 여전히 빈 영역 → 러버밴드 선택 시작
+    assert view._is_empty_area(inside)
+    press()
+    assert view._rb_active
+    view.mouseReleaseEvent(QMouseEvent(
+        QEvent.Type.MouseButtonRelease, QPointF(inside), QPointF(inside),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+
+    # ⓑ 선택 후 — 같은 자리가 '아이템 위' → 이동 분기(러버밴드 아님)
+    r.setSelected(True)
+    view._move_active = False
+    assert not view._is_empty_area(inside)
+    press()
+    assert not view._rb_active and view._move_active
+    assert any(it is r for it, _p in view._move_snap)   # 이동 undo 스냅샷에 포함
 
 
 def test_ortho_constraint():

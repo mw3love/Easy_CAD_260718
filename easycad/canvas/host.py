@@ -1486,11 +1486,13 @@ class CanvasWindow(QMainWindow):
               QPointF(it.transformOriginPoint())))
             for it, pos, rot, scale, org in snaps])
 
-    def push_undo_geom(self, snaps):
+    def push_undo_geom(self, snaps, coalesce_key=None):
         """[Stage2] 기하 리베이크(비균일 스케일·미러) 되돌리기 — capture_geom 토큰 스냅샷.
-        xform과 달리 기하 자체(rect/끝점/정점/패스)+바인딩까지 통째로 복원한다."""
+        xform과 달리 기하 자체(rect/끝점/정점/패스)+바인딩까지 통째로 복원한다.
+        coalesce_key가 있으면 연속 조작(반경 스테퍼 등)을 undo 1스텝으로 병합한다."""
         self._push_entry([
-            ("mut", it, "geom", before, it.capture_geom()) for it, before in snaps])
+            ("mut", it, "geom", before, it.capture_geom()) for it, before in snaps],
+            key=coalesce_key)
 
     def push_undo_state(self, snaps, coalesce_key=None):
         """[M2] 속성·라벨 변경(색·두께·선스타일·폰트·텍스트) — before=capture_state 스냅샷
@@ -1682,6 +1684,21 @@ class CanvasWindow(QMainWindow):
         self._float_routing_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._float_routing_btn.setMenu(self._build_routing_menu())
         lay.addWidget(self._float_routing_btn)
+        # [M4-4 ⓑ] 곡선 반경 스테퍼 — 곡선 엘보 커넥터 단일 선택 시만 노출(Lucid의 곡선값 spinner).
+        # 0 = 직각(= 직각 엘보와 같은 그림)이라 라우팅 드롭다운과 자연스럽게 이어진다.
+        self._float_radius = QSpinBox()
+        self._float_radius.setRange(0, int(_PolyArrowItem._CURVE_R_MAX))
+        self._float_radius.setSingleStep(2)
+        self._float_radius.setSuffix("px")
+        self._float_radius.setKeyboardTracking(False)   # 타이핑 중 매 글자 커밋 방지
+        # ⚠ NoFocus 필수 — Del·Ctrl+D·도구 숫자키는 뷰의 keyPressEvent가 처리한다(윈도 QAction이
+        # 아님). 스핀박스가 키보드 포커스를 가져가면 반경을 만진 뒤 그 단축키들이 캔버스로 안 간다.
+        # 포커스 정책은 '키보드'만 막으므로 ▴▾ 클릭(길게 누르면 연속)은 그대로 동작한다.
+        self._float_radius.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._float_radius.setFixedSize(QSize(62, 20))
+        self._float_radius.setToolTip("곡선 반경(0=직각)")
+        self._float_radius.valueChanged.connect(self._floating_set_radius)
+        lay.addWidget(self._float_radius)
         self._float_dir_btn = QToolButton(); self._float_dir_btn.setText("⇄")
         self._float_dir_btn.setFixedSize(QSize(22, 18))
         self._float_dir_btn.setToolTip("화살표 방향 뒤집기")
@@ -1751,6 +1768,20 @@ class CanvasWindow(QMainWindow):
         for it in sel:
             it.set_routing(mode)
         self.push_undo_geom(snaps)
+        self._reposition_floating_toolbar()   # [M4-4 ⓑ] 곡선일 때만 뜨는 반경 스테퍼 갱신
+        self._view.viewport().update()
+
+    def _floating_set_radius(self, value: int):
+        """[M4-4 ⓑ] 선택된 곡선 커넥터의 모서리 반경(0=직각). 스테퍼 연속 조작은 undo 1스텝으로
+        병합한다(스핀박스 화살표를 여러 번 눌러도 되돌리기 한 번). 값 동기화(setValue)는
+        blockSignals로 되먹임을 막으므로 여기 오는 건 사용자 조작뿐이다."""
+        sel = [it for it in self._scene.selectedItems() if isinstance(it, _PolyArrowItem)]
+        if not sel:
+            return
+        snaps = [(it, it.capture_geom()) for it in sel]
+        for it in sel:
+            it.set_corner_radius(value)
+        self.push_undo_geom(snaps, coalesce_key=("curve_r", id(sel[0])))
         self._view.viewport().update()
 
     def _reposition_floating_toolbar(self):
@@ -1771,6 +1802,14 @@ class CanvasWindow(QMainWindow):
         # [M4-4 #4] 라우팅 드롭다운 — 단일 직선화살표 선택 시만.
         self._float_routing_btn.setVisible(
             len(sel) == 1 and isinstance(sel[0], _PolyArrowItem))
+        # [M4-4 ⓑ] 반경 스테퍼 — 반경이 의미 있는 '곡선 엘보'일 때만(직선·직각엔 숨김).
+        curved = (len(sel) == 1 and isinstance(sel[0], _PolyArrowItem)
+                  and sel[0]._routing == "ortho_curved")
+        self._float_radius.setVisible(curved)
+        if curved:
+            self._float_radius.blockSignals(True)   # 값 동기화가 편집 신호로 되돌아오지 않게
+            self._float_radius.setValue(int(round(sel[0]._curve_r)))
+            self._float_radius.blockSignals(False)
         bar.adjustSize()
         w, h = bar.width(), bar.height()
         r = QRectF()
