@@ -1593,6 +1593,7 @@ class CanvasWindow(QMainWindow):
         self._apply_entry(entry, redo=False)
         self._redo.append(entry)
         self._refresh_history_actions()
+        self._repaint_overlays()   # 되돌리기도 프로그램 이동 — 그룹 박스 잔상 방지
 
     def redo(self):
         if not self._redo:
@@ -1601,6 +1602,7 @@ class CanvasWindow(QMainWindow):
         self._apply_entry(entry, redo=True)
         self._undo.append(entry)
         self._refresh_history_actions()
+        self._repaint_overlays()   # 다시 실행도 마찬가지
 
     def _refresh_history_actions(self):
         """undo/redo 툴바 액션의 활성 상태를 스택 유무에 맞춘다(빈 스택=disabled)."""
@@ -1681,6 +1683,9 @@ class CanvasWindow(QMainWindow):
             menu.addAction("잘라내기", self._cut_selection)
             menu.addAction("복제\tCtrl+D", self.duplicate_selection)
             menu.addAction("삭제\tDel", self.delete_selection)
+        if len(self._align_targets()) >= 2:      # [M5] 여럿 선택 시만 정렬/분배 서브메뉴
+            menu.addSeparator()
+            menu.addMenu(self._build_align_menu("정렬 / 분배", parent=menu))
         if has_clip:
             if has_sel:
                 menu.addSeparator()
@@ -1747,6 +1752,13 @@ class CanvasWindow(QMainWindow):
         self._float_radius.setToolTip("곡선 반경(0=직각)")
         self._float_radius.valueChanged.connect(self._floating_set_radius)
         lay.addWidget(self._float_radius)
+        # [M5] 정렬/분배 — 2개 이상 정렬 대상이 선택됐을 때만 노출(단일 선택엔 의미 없음).
+        self._float_align_btn = QToolButton(); self._float_align_btn.setText("≡▾")
+        self._float_align_btn.setFixedSize(QSize(26, 18))
+        self._float_align_btn.setToolTip("정렬 / 균등 분배")
+        self._float_align_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._float_align_btn.setMenu(self._build_align_menu())
+        lay.addWidget(self._float_align_btn)
         self._float_dir_btn = QToolButton(); self._float_dir_btn.setText("⇄")
         self._float_dir_btn.setFixedSize(QSize(22, 18))
         self._float_dir_btn.setToolTip("화살표 방향 뒤집기")
@@ -1910,6 +1922,8 @@ class CanvasWindow(QMainWindow):
             return
         self._float_dir_btn.setVisible(
             any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel))
+        # [M5] 정렬/분배 — 맞출 상대가 있어야(대상 2개 이상) 뜬다.
+        self._float_align_btn.setVisible(len(self._align_targets()) >= 2)
         # [M4-3] 도형 교체 버튼 — 단일 도형(네모·원·심볼)만 선택했을 때.
         self._float_swap_btn.setVisible(
             len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem)))
@@ -2036,6 +2050,134 @@ class CanvasWindow(QMainWindow):
         new.setSelected(True)
         self._refresh_properties()
         self._reposition_floating_toolbar()
+
+    # ---- [Phase 6 M5] 정렬 / 분배 -------------------------------------------
+    # 계획서 §5 #4 흡수. 선택 bbox를 기준으로 붙이고(정렬), 양 끝을 고정한 채 사이 여백을
+    # 균등하게 편다(분배). 이동만 하므로 push_undo_move 하나로 되돌아간다.
+    # ⚠ 연결된 화살표는 대상이 아니다 — 도형이 움직이면 _on_scene_changed의 reroute가 끝점을
+    #   다시 도형에 붙이므로, 화살표까지 옮겨 봐야 그 이동이 곧 덮어써지고 bbox만 흐트러진다.
+    #   커넥터는 '정렬되는 것'이 아니라 '따라오는 것'.
+    _ALIGN_MODES = (
+        ("left",    "왼쪽 맞춤"),
+        ("hcenter", "가로 가운데"),
+        ("right",   "오른쪽 맞춤"),
+        ("top",     "위쪽 맞춤"),
+        ("vcenter", "세로 가운데"),
+        ("bottom",  "아래쪽 맞춤"),
+    )
+
+    def _align_targets(self):
+        """정렬·분배 대상 — 선택된 '움직일 수 있는' 최상위 아이템에서 연결 화살표와 용지틀을 뺀 것.
+        용지틀(_TitleBlockItem)은 내용이 아니라 종이 자체라 함께 밀리면 안 된다.
+        ⚠ 자식 아이템(라벨)은 제외 — 라벨도 selectable·movable이라 러버밴드에 딸려 들어오는데,
+          ⓐ 위치를 부모가 소유해(itemChange가 경로 위로 재투영) 옮겨도 되돌아오고
+          ⓑ moveBy 델타는 부모 좌표계라, 씬 좌표로 계산한 이동량이 회전된 부모에선 어긋난다."""
+        out = []
+        for it in self._scene.selectedItems():
+            if it.parentItem() is not None:
+                continue
+            if not (it.flags() & it.GraphicsItemFlag.ItemIsMovable):
+                continue
+            if isinstance(it, _TitleBlockItem):
+                continue
+            if isinstance(it, (_ArrowItem, _PolyArrowItem)) and it.has_binding():
+                continue
+            out.append(it)
+        return out
+
+    def _repaint_overlays(self):
+        """뷰 전체를 다시 칠한다. 프로그램이 아이템을 옮긴 뒤 반드시 필요 —
+        ⚠ 다중선택 그룹 박스·정렬 가이드는 아이템이 아니라 뷰의 drawForeground가 그리는데,
+        Qt는 '움직인 아이템의 boundingRect'만 무효화하므로 선택 bbox 가장자리에 그려진 옛
+        점선이 지워지지 않고 남는다(실조건 2026-07-26 사용자 화면에서 확인).
+        마우스 드래그로 옮길 땐 이어지는 이동 이벤트가 어차피 다시 칠해 드러나지 않는다."""
+        self._view.viewport().update()
+
+    @staticmethod
+    def _align_rect(it) -> QRectF:
+        """정렬 기준이 되는 '보이는 도형'의 씬 사각형.
+        ⚠ sceneBoundingRect()를 쓰면 안 된다 — 코어의 boundingRect()는 선택 핸들·회전 핸들·
+        빠른생성 도트 자리를 상시 예약하므로 도형마다 여백이 제각각이고(실측 26px vs 19.75px)
+        그만큼 어긋나게 정렬된다. _content_rect()가 획까지만 포함한 실제 내용 사각형."""
+        r = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
+        return it.mapToScene(r).boundingRect()   # 회전·스케일 반영
+
+    def align_selection(self, mode):
+        """선택 bbox의 해당 모서리(또는 중심)에 대상들을 맞춘다. 기준을 '먼저 고른 객체'가 아니라
+        bbox로 두는 것은 선택 순서가 Qt에서 보장되지 않기 때문(Figma·Lucid의 기본과 동일)."""
+        boxes = [(it, self._align_rect(it)) for it in self._align_targets()]
+        if len(boxes) < 2:
+            return
+        box = QRectF()
+        for _it, r in boxes:
+            box = box.united(r)
+        pairs = [(it, QPointF(it.pos())) for it, _r in boxes]
+        moved = False
+        for it, r in boxes:
+            dx = dy = 0.0
+            if mode == "left":
+                dx = box.left() - r.left()
+            elif mode == "right":
+                dx = box.right() - r.right()
+            elif mode == "hcenter":
+                dx = box.center().x() - r.center().x()
+            elif mode == "top":
+                dy = box.top() - r.top()
+            elif mode == "bottom":
+                dy = box.bottom() - r.bottom()
+            elif mode == "vcenter":
+                dy = box.center().y() - r.center().y()
+            if dx or dy:
+                it.moveBy(dx, dy)
+                moved = True
+        if moved:
+            self.push_undo_move(pairs)
+            self._reposition_floating_toolbar()
+            self._repaint_overlays()
+
+    def distribute_selection(self, axis):
+        """가로("x")/세로("y") 균등 분배 — 양 끝은 그대로 두고 사이 '여백'을 같게 편다.
+        중심 간격이 아니라 여백을 나누는 것은 크기가 제각각인 도형에서도 눈에 보이는 틈이
+        같아야 하기 때문. 3개 미만이면 나눌 사이가 없어 아무 일도 하지 않는다."""
+        targets = self._align_targets()
+        if len(targets) < 3:
+            return
+        horiz = (axis == "x")
+        boxes = sorted(((it, self._align_rect(it)) for it in targets),
+                       key=lambda p: p[1].left() if horiz else p[1].top())
+        first, last = boxes[0][1], boxes[-1][1]
+        span = (last.right() - first.left()) if horiz else (last.bottom() - first.top())
+        used = sum((r.width() if horiz else r.height()) for _it, r in boxes)
+        gap = (span - used) / (len(boxes) - 1)   # 겹쳐 있으면 음수 — 그래도 균등해진다
+        pairs = [(it, QPointF(it.pos())) for it, _r in boxes]
+        cur = first.left() if horiz else first.top()
+        prev = first.width() if horiz else first.height()
+        moved = False
+        for it, r in boxes[1:-1]:
+            cur += prev + gap
+            d = cur - (r.left() if horiz else r.top())
+            if d:
+                it.moveBy(d, 0.0) if horiz else it.moveBy(0.0, d)
+                moved = True
+            prev = r.width() if horiz else r.height()
+        if moved:
+            self.push_undo_move(pairs)
+            self._reposition_floating_toolbar()
+            self._repaint_overlays()
+
+    def _build_align_menu(self, title="", parent=None):
+        """정렬 6 + 분배 2 메뉴. 미니툴바 드롭다운과 우클릭 서브메뉴가 같은 메뉴를 쓴다.
+        우클릭 메뉴는 매번 새로 만들어지므로 parent를 그 메뉴로 줘서 함께 정리되게 한다."""
+        m = QMenu(title, parent or self)
+        for mode, label in self._ALIGN_MODES[:3]:
+            m.addAction(label, lambda md=mode: self.align_selection(md))
+        m.addSeparator()
+        for mode, label in self._ALIGN_MODES[3:]:
+            m.addAction(label, lambda md=mode: self.align_selection(md))
+        m.addSeparator()
+        m.addAction("가로 균등 분배", lambda: self.distribute_selection("x"))
+        m.addAction("세로 균등 분배", lambda: self.distribute_selection("y"))
+        return m
 
 
 # ---------------------------------------------------------------------------

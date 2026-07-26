@@ -20,7 +20,7 @@ from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _SYMBOL_KINDS,
     _nearest_border, _shape_ports, _axis_scale_fn, _mirror_fn,
-    _seg_cross_seg, _count_seg_crossings, _ConnectorLabel)
+    _seg_cross_seg, _count_seg_crossings, _ConnectorLabel, _shape_ports)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
 from easycad.fileio.dxf_export import export_dxf
@@ -4069,6 +4069,177 @@ def test_disabled_icon_has_dim_pixmap():
     dim = ic.pixmap(QSize(24, 24), QIcon.Mode.Disabled)
     assert not dim.isNull()
     assert norm.toImage() != dim.toImage()     # 흐림 사본이 원본과 다름
+
+
+def test_align_rect_ignores_selection_handles():
+    # [M5] 정렬 기준은 _content_rect(획까지) — 코어 boundingRect는 핸들·빠른생성 도트 자리를
+    # 상시 예약해 도형마다 여백이 달라(정렬이 그만큼 어긋난다) 기준으로 쓸 수 없다.
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30, width=0)
+    r = w._align_rect(it)
+    assert abs(r.left() - 0.0) < 1.5 and abs(r.width() - 40.0) < 3.0
+    assert it.sceneBoundingRect().width() > r.width() + 10     # 핸들 여백이 실제로 크다
+
+
+def test_align_selection_six_modes_and_undo():
+    # [M5] 정렬 — 선택 bbox의 모서리·중심에 맞춘다. 이동만이라 undo 1스텝으로 전부 복원.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30, width=0)
+    b = _mk_pen_rect(w, x=100, y=50, ww=60, hh=20, width=0)
+    for it in (a, b):
+        it.setSelected(True)
+    ar = w._align_rect
+    pos0 = [QPointF(it.pos()) for it in (a, b)]
+    edge = {"left": lambda r: r.left(), "right": lambda r: r.right(),
+            "hcenter": lambda r: r.center().x(), "top": lambda r: r.top(),
+            "bottom": lambda r: r.bottom(), "vcenter": lambda r: r.center().y()}
+    anchor = {"left": "left", "right": "right", "hcenter": "left",
+              "top": "top", "bottom": "bottom", "vcenter": "top"}
+    for mode, f in edge.items():
+        keep = f(ar(a)) if anchor[mode] in ("left", "top") else f(ar(b))
+        w.align_selection(mode)
+        assert abs(f(ar(a)) - f(ar(b))) < 0.5          # 둘이 같은 선에 섰다
+        # bbox 기준이므로 그 방향의 극단에 있던 쪽은 제자리(정렬선이 밖으로 밀리지 않는다).
+        if mode in ("left", "top"):
+            assert abs(f(ar(a)) - keep) < 0.5
+        elif mode in ("right", "bottom"):
+            assert abs(f(ar(b)) - keep) < 0.5
+        w.undo()
+        assert _close(a.pos(), pos0[0]) and _close(b.pos(), pos0[1])
+
+
+def test_distribute_selection_even_gaps():
+    # [M5] 분배 — 양 끝 고정, 사이 '여백'이 균등해진다(크기가 달라도 보이는 틈이 같게).
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=40, hh=20, width=0)
+    b = _mk_pen_rect(w, x=50, y=0, ww=20, hh=20, width=0)     # 치우쳐 있는 가운데
+    c = _mk_pen_rect(w, x=200, y=0, ww=40, hh=20, width=0)
+    for it in (a, b, c):
+        it.setSelected(True)
+    ar = w._align_rect
+    ends = (ar(a).left(), ar(c).right())
+    b_pos0 = QPointF(b.pos())
+    w.distribute_selection("x")
+    rs = sorted((ar(it) for it in (a, b, c)), key=lambda r: r.left())
+    g1 = rs[1].left() - rs[0].right()
+    g2 = rs[2].left() - rs[1].right()
+    assert abs(g1 - g2) < 0.5                                 # 여백 균등
+    assert abs(rs[0].left() - ends[0]) < 0.5                  # 양 끝은 그대로
+    assert abs(rs[2].right() - ends[1]) < 0.5
+    assert not _close(b.pos(), b_pos0)                        # 가운데는 실제로 움직였다
+    w.undo()
+    assert _close(b.pos(), b_pos0)                            # 되돌아옴
+
+    # 2개뿐이면 나눌 사이가 없어 no-op(undo 스택도 안 쌓임).
+    w._scene.clearSelection()
+    a.setSelected(True); b.setSelected(True)
+    n = len(w._undo)
+    w.distribute_selection("x")
+    assert len(w._undo) == n
+
+
+def test_align_targets_exclude_labels():
+    # [M5] 라벨(자식 아이템)은 대상에서 빠진다 — selectable·movable이라 러버밴드에 딸려 오지만
+    # 위치를 부모가 소유하고(재투영) moveBy 델타의 좌표계도 다르다.
+    w = CanvasWindow()
+    ar = _PolyArrowItem(QColor("#111111"), 2.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(200, 0))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    lb = ar.ensure_label(); lb.setPlainText("라벨"); ar._sync_label()
+    assert lb.flags() & lb.GraphicsItemFlag.ItemIsMovable      # 라벨도 movable(전제 확인)
+    it = _mk_pen_rect(w, x=300, y=40)
+    for x in (lb, ar, it):
+        x.setSelected(True)
+    # 바인딩 없는 화살표는 평범한 객체라 포함, 라벨만 빠진다.
+    assert set(map(id, w._align_targets())) == {id(ar), id(it)}
+
+
+def test_align_targets_exclude_connectors_and_frame():
+    # [M5] 대상 규칙 — 연결된 화살표는 reroute가 따라오므로 제외, 용지틀은 종이라 제외.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30, width=0)
+    b = _mk_pen_rect(w, x=200, y=90, ww=40, hh=30, width=0)
+    ar = _PolyArrowItem(QColor("#111111"), 2.0, True)
+    ar.set_points(QPointF(40, 15), QPointF(200, 105))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    ar.set_bound(0, a, a.mapFromScene(QPointF(40, 15)))
+    ar.set_bound(1, b, b.mapFromScene(QPointF(200, 105)))
+    tb = _TitleBlockItem("A4", "landscape")
+    tb.setFlags(tb.GraphicsItemFlag.ItemIsSelectable | tb.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tb)
+    for it in (a, b, ar, tb):
+        it.setSelected(True)
+    tgt = w._align_targets()
+    assert set(map(id, tgt)) == {id(a), id(b)}                # 화살표·용지틀 제외
+    tb_pos = QPointF(tb.pos())
+    w.align_selection("top")
+    assert abs(w._align_rect(a).top() - w._align_rect(b).top()) < 0.5
+    assert _close(tb.pos(), tb_pos)                           # 용지틀은 안 움직임
+    assert ar.has_binding()                                   # 연결은 유지(끝점은 reroute가 추종)
+
+
+def test_align_removes_connector_stair():
+    # [M5] 정렬의 실제 동기 — 축이 어긋난 두 도형을 잇는 직교 커넥터에는 기하적으로 계단이
+    # 생긴다(코어 Stage4는 8px 이내만 흡수). 세로 가운데 정렬하면 포트가 같은 y에 서서
+    # 계단이 사라지고 곧은 선이 된다.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=80, width=0)
+    b = _mk_pen_rect(w, x=300, y=40, ww=120, hh=80, width=0)   # 40px 어긋남 = 계단
+    e_a = _shape_ports(a)[1][0]                                # A의 E(오른쪽) 포트
+    w_b = _shape_ports(b)[3][0]                                # B의 W(왼쪽) 포트
+    ar = _PolyArrowItem(QColor("#111111"), 2.0, True)
+    ar.set_points(e_a, w_b)
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    ar.set_bound(0, a, a.mapFromScene(e_a))
+    ar.set_bound(1, b, b.mapFromScene(w_b))
+    ar._apply_routing()
+    ys = {round(ar.mapToScene(p).y(), 1) for p in ar._pts}
+    assert len(ys) > 1                                         # 정렬 전엔 계단(y가 여럿)
+    for it in (a, b):
+        it.setSelected(True)
+    w.align_selection("vcenter")
+    ar.reroute()
+    ys = {round(ar.mapToScene(p).y(), 1) for p in ar._pts}
+    assert len(ys) == 1                                        # 정렬 후엔 한 줄(계단 0)
+
+
+def test_align_repaints_group_overlay():
+    # [M5 실조건 fix] 그룹 선택 박스는 뷰의 drawForeground가 그려서, 프로그램이 아이템만 옮기면
+    # 옛 점선이 남는다(사용자 화면서 확인). 정렬·분배·undo 모두 뷰포트 전체 갱신을 걸어야 한다.
+    # 잔상 자체는 오프스크린서 재현 불가(render가 전면 재도색) → 갱신 호출 유무로 회귀를 막는다.
+    w = CanvasWindow()
+    calls = []
+    w._repaint_overlays = lambda: calls.append(1)
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=120, y=90)   # 치우친 가운데
+    c = _mk_pen_rect(w, x=400, y=30)
+    for it in (a, b, c):
+        it.setSelected(True)
+    w.align_selection("top");      assert len(calls) == 1
+    w.distribute_selection("x");   assert len(calls) == 2
+    w.undo();                      assert len(calls) == 3
+    w.redo();                      assert len(calls) == 4
+
+
+def test_align_entry_points_visibility():
+    # [M5] 진입점 2곳 — 미니툴바 드롭다운·우클릭 서브메뉴 모두 '대상 2개 이상'에서만 뜬다.
+    w = CanvasWindow()
+    labels = lambda: [a.text() for a in w._build_context_menu().actions() if not a.isSeparator()]
+    a = _mk_pen_rect(w, x=0, y=0); a.setSelected(True)
+    w._reposition_floating_toolbar()
+    assert w._float_align_btn.isHidden()                      # 1개 선택 → 숨김
+    assert "정렬 / 분배" not in labels()
+    b = _mk_pen_rect(w, x=100, y=60); b.setSelected(True)
+    w._reposition_floating_toolbar()
+    assert not w._float_align_btn.isHidden()                  # 2개 → 노출
+    assert "정렬 / 분배" in labels()
+    # 메뉴 구성 = 정렬 6 + 분배 2.
+    acts = [x.text() for x in w._build_align_menu().actions() if not x.isSeparator()]
+    assert acts == ["왼쪽 맞춤", "가로 가운데", "오른쪽 맞춤",
+                    "위쪽 맞춤", "세로 가운데", "아래쪽 맞춤",
+                    "가로 균등 분배", "세로 균등 분배"]
 
 
 def _run_all():
