@@ -20,7 +20,7 @@ from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _SYMBOL_KINDS,
     _nearest_border, _shape_ports, _axis_scale_fn, _mirror_fn,
-    _seg_cross_seg, _count_seg_crossings, _ConnectorLabel, _shape_ports)
+    _seg_cross_seg, _count_seg_crossings, _ConnectorLabel, _shape_ports, _RIDE_TOL)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
 from easycad.fileio.dxf_export import export_dxf
@@ -2255,10 +2255,9 @@ def test_seg_cross_seg():
     assert not _seg_cross_seg(P(0, 0), P(10, 0), P(5, 0), P(5, 5))
 
 
-def _mk_loopback_scene(w, penalty):
-    """[Stage3] 진단 축소판 — 세로 전진엣지 4개를 가로지르는 긴 수평 루프백.
-    penalty로 _ARROW_CROSS_PENALTY를 세팅하고 (rects, arrows)를 안정 라우팅해 반환."""
-    _PolyArrowItem._ARROW_CROSS_PENALTY = penalty
+def _mk_loopback_scene(w, with_edges=True):
+    """밀집 배치 축소판 — 세로 전진엣지 4개를 가로지르는 긴 수평 루프백.
+    with_edges=False면 루프백만 놓아 '다른 화살표가 없을 때'의 기준 경로를 얻는다."""
     sc = w._scene
     rects, arrows = [], []
 
@@ -2276,7 +2275,8 @@ def _mk_loopback_scene(w, penalty):
         top = _mk_rect(sc, w.make_pen(), x, -100, 60, 60)
         bot = _mk_rect(sc, w.make_pen(), x, 300, 60, 60)
         rects += [top, bot]
-        arrows.append(arrow(top, QPointF(x + 30, -40), bot, QPointF(x + 30, 300)))
+        if with_edges:
+            arrows.append(arrow(top, QPointF(x + 30, -40), bot, QPointF(x + 30, 300)))
     L = _mk_rect(sc, w.make_pen(), 0, 120, 60, 60)     # E 포트 (60,150)
     R = _mk_rect(sc, w.make_pen(), 500, 120, 60, 60)   # W 포트 (500,150)
     rects += [L, R]
@@ -2310,37 +2310,39 @@ def _arrow_cross_and_hits(rects, arrows):
     return cross, hits
 
 
-def test_sarrow_soft_avoids_arrows():
-    # [Stage3] 화살표-화살표 soft 회피 — 수평 루프백이 세로 전진엣지 4개를 관통하던 것을
-    #   벌점으로 우회시켜 교차를 없앤다. 도형 관통 0·멱등(되먹임 없음)·회귀(벌점0=원래대로) 동반 검증.
-    orig = _PolyArrowItem._ARROW_CROSS_PENALTY
-    try:
-        # (baseline) 벌점 0 → 루프백 직선 관통 = 4교차(기능 없을 때의 원래 동작)
-        w0 = CanvasWindow()
-        rects0, arrows0 = _mk_loopback_scene(w0, 0.0)
-        base_cross, base_hits = _arrow_cross_and_hits(rects0, arrows0)
-        assert base_cross == 4 and base_hits == 0, (base_cross, base_hits)
+def test_sarrow_route_independent_of_other_arrows():
+    # [Stage3 철회 — 실조건 2026-07-26] 경로는 '다른 화살표 집합'과 무관해야 한다. 사용자 요구:
+    #   ⓐ 같은 두 점을 이으면 선점 화살표가 있든 없든 늘 같은 경로 ⓑ 화살표를 지워도 남은 화살표가
+    #   제멋대로 재계산되지 않을 것(건드리지 않은 객체가 바뀌면 예측 가능성이 깨진다).
+    # 옛 Stage3 soft 회피는 정확히 그 반대를 했으므로 제거했고, 이 테스트가 그 계약을 못 박는다.
+    path = lambda sa: [(round(sa.mapToScene(p).x(), 3), round(sa.mapToScene(p).y(), 3))
+                       for p in sa._pts]
+    # (기준) 루프백 혼자 — 다른 화살표가 하나도 없는 상태의 경로
+    w0 = CanvasWindow()
+    _r0, arrows0 = _mk_loopback_scene(w0, with_edges=False)
+    solo = path(arrows0[-1])
 
-        # (after) 벌점 200 → 우회로 교차 제거, 도형 관통은 여전히 0
-        w1 = CanvasWindow()
-        rects1, arrows1 = _mk_loopback_scene(w1, orig)
-        aft_cross, aft_hits = _arrow_cross_and_hits(rects1, arrows1)
-        assert aft_cross < base_cross, (aft_cross, base_cross)
-        assert aft_cross == 0 and aft_hits == 0, (aft_cross, aft_hits)
+    # ⓐ 세로 전진엣지 4개가 가로지르고 있어도 루프백 경로는 기준과 같아야 한다.
+    w1 = CanvasWindow()
+    rects1, arrows1 = _mk_loopback_scene(w1, with_edges=True)
+    lb = arrows1[-1]
+    assert path(lb) == solo, ("선점 화살표가 경로를 바꿈", path(lb), solo)
+    # 도형 관통은 여전히 0(화살표 회피를 뺀 것이지 도형 회피를 뺀 게 아니다).
+    _cross, hits = _arrow_cross_and_hits(rects1, arrows1)
+    assert hits == 0, hits
+    # (멱등/되먹임 없음) 재라우팅은 전부 무변경
+    assert not any(sa.build_elbow() for sa in arrows1)
 
-        # (멱등/되먹임 없음) 안정 후 재라우팅은 전부 무변경
-        assert not any(sa.build_elbow() for sa in arrows1)
-
-        # (self 제외) 루프백의 회피 세그에 자기 자신 없음 — 다른 4개 화살표만
-        lb = arrows1[-1]
-        assert len(lb._obstacle_arrow_segs()) == 4
-    finally:
-        _PolyArrowItem._ARROW_CROSS_PENALTY = orig
+    # ⓑ 가로지르던 화살표를 지워도 루프백은 그대로 — 씬 변경 reroute가 경로를 건드리지 않는다.
+    victim = arrows1[0]
+    w1._scene.removeItem(victim)
+    w1._on_scene_changed(None)
+    assert path(lb) == solo, ("삭제가 남은 화살표 경로를 바꿈", path(lb), solo)
 
 
 def _route_vertical_pair(w, dx):
-    """[Stage4] 위/아래 박스를 세로연결 — 아래 박스 center-x를 dx만큼 어긋냄. 안정 라우팅 후
-    화살표 세그먼트(씬) 개수를 반환. dx≤_ALIGN_TOL이면 흡수로 직선(1개), 초과면 계단(3개)."""
+    """위/아래 박스를 세로연결 — 아래 박스 center-x를 dx만큼 어긋냄. 안정 라우팅 후
+    (화살표, 세그먼트 수)를 반환."""
     sc = w._scene
     top = _mk_rect(sc, w.make_pen(), 100, 0, 60, 40)          # S-port center-x = 130
     bot = _mk_rect(sc, w.make_pen(), 100 + dx, 200, 60, 40)   # N-port center-x = 130+dx
@@ -2354,61 +2356,46 @@ def _route_vertical_pair(w, dx):
     for _ in range(4):
         if not sa.build_elbow():
             break
-    return sa, len(sa._pts) - 1
+    return sa, len(sa._pts) - 1, top, bot
 
 
-def test_sarrow_absorbs_near_alignment():
-    # [Stage4] 연결 도형 중심축이 몇 px 어긋나면 직교 라우터가 넣던 미세 계단([A]·[B])을,
-    #   임계(_ALIGN_TOL=8px) 이하일 때 부착점을 공통 축으로 스냅해 직선으로 붕괴시킨다.
-    tol = _PolyArrowItem._ALIGN_TOL
-    # (정렬) dx=0 → 흡수 무관, 이미 직선 1세그.
-    sa0, n0 = _route_vertical_pair(CanvasWindow(), 0)
-    assert n0 == 1, n0
-    # (미세 어긋남) dx=1·6(≤8) → 흡수로 직선 1세그(계단 소멸), 멱등(재라우팅 무변경).
-    for dx in (1, 6):
-        sa, n = _route_vertical_pair(CanvasWindow(), dx)
-        assert n == 1, (dx, n)
-        assert not sa.build_elbow(), dx                 # 멱등 — 되먹임 없음
-    # (임계 초과) dx=12(>8) → 미변경, 계단 3세그(의도적 오프셋 보존).
-    sa2, n2 = _route_vertical_pair(CanvasWindow(), 12)
-    assert n2 == 3, n2
-    # (혼합 L자 미대상) 정렬 흡수는 같은 방향 포트에만 — L자(수평↔수직 혼합)는 안 건드림.
-    w = CanvasWindow(); sc = w._scene
-    a = _mk_rect(sc, w.make_pen(), 0, 0, 60, 40)             # E-port (60,20)
-    b = _mk_rect(sc, w.make_pen(), 200, 100, 60, 40)         # N-port (230,100)
-    sL = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
-    p0, p1 = QPointF(60, 20), QPointF(230, 100)
-    sL.set_points(p0, p1)
-    sL.setFlags(sL.GraphicsItemFlag.ItemIsSelectable | sL.GraphicsItemFlag.ItemIsMovable)
-    sc.addItem(sL)
-    sL.set_bound(0, a, a.mapFromScene(p0)); sL.set_bound(1, b, b.mapFromScene(p1))
-    sL._auto_route = True
-    sL.build_elbow()
-    assert len(sL._pts) - 1 == 2, len(sL._pts)              # L자(모서리 1개) 유지
-    assert tol == 8.0
-
-
-def test_sarrow_absorbs_decision_alignment():
-    # [Stage4] 마름모 E꼭짓점 → 박스 W변, 세로 6px 어긋남. 분리축 판정(가로연결→Y정렬)이라
-    #   대각 법선에 안 속고 흡수. 꼭짓점은 축 밖으로 못 나가므로 '움직일 수 있는 박스 변'만 옮긴다.
-    w = CanvasWindow(); sc = w._scene
-    dec = _SymbolItem("decision", QRectF(0, 0, 100, 80)); dec.setPen(w.make_pen())
-    dec.setBrush(QBrush(Qt.BrushStyle.NoBrush)); dec.setPos(QPointF(0, 0)); sc.addItem(dec)  # E꼭짓점 (100,40)
-    box = _mk_rect(sc, w.make_pen(), 200, 21, 100, 50)      # W변 중점 (200,46) — dy=6
+def test_bind_point_never_moved_by_router():
+    # [Stage4 철회 — 실조건 2026-07-26] 부착점은 사용자 데이터다. 옛 _absorb_near_alignment는
+    # 미세 계단을 없애려고 부착점을 테두리 따라 최대 8px 미끄러뜨렸고, 그 탓에 ⓐ 포트에 붙인
+    # 화살표가 도형 이동 시 중심점을 벗어나고 ⓑ 자유 부착점은 붙었다 떨어졌다 흔들렸다.
+    # 계약: 라우터는 부착점을 절대 옮기지 않는다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 150, 90)
+    b = _mk_rect(w._scene, w.make_pen(), 600, 0, 150, 90)
+    sp = _shape_ports(a)[1][0]; ep = _shape_ports(b)[3][0]      # A.E -> B.W
     sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
-    p0, p1 = QPointF(100, 40), QPointF(200, 46)
-    sa.set_points(p0, p1)
+    sa.set_points(sp, ep)
     sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
-    sc.addItem(sa)
-    sa.set_bound(0, dec, dec.mapFromScene(p0)); sa.set_bound(1, box, box.mapFromScene(p1))
-    sa._auto_route = True
-    for _ in range(4):
-        if not sa.build_elbow():
-            break
-    pts = [sa.mapToScene(p) for p in sa._pts]
-    assert len(pts) - 1 == 1, [(round(p.x()), round(p.y())) for p in pts]   # 직선(계단 소멸)
-    assert abs(pts[0].x() - 100) < 1e-6 and abs(pts[0].y() - 40) < 1e-6      # 꼭짓점 불변
-    assert abs(pts[-1].y() - 40) < 1e-6                                      # 박스 변만 y=40으로 이동
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, sp); sa.set_bound(1, b, ep)
+    sa._auto_route = True; sa.build_elbow()
+    bind0 = QPointF(sa._bind_pt(0))
+
+    # 옛 임계(8px) 안팎으로 도형을 옮겨 가며 재라우팅 — 부착점은 매번 그대로여야 한다.
+    for dy in (-9, -7, -4, -1, 0, 1, 4, 7, 9):
+        a.setPos(QPointF(0, dy)); w._on_scene_changed(None)
+        assert _close(sa._bind_pt(0), bind0), ("부착점이 이동함", dy, sa._bind_pt(0), bind0)
+        p0 = sa.mapToScene(sa._pts[0])
+        ports = [q for q, _n in _shape_ports(a)]
+        assert min((q - p0).manhattanLength() for q in ports) <= 0.5, ("포트 이탈", dy, p0)
+
+    # 임계 이하 어긋남은 이제 '계단'으로 남는다(부착점을 옮기지 않으므로) — 승인된 대가.
+    a.setPos(QPointF(0, 6)); w._on_scene_changed(None)
+    assert len(sa._pts) - 1 >= 3, [(p.x(), p.y()) for p in sa._pts]
+
+
+def test_router_still_straight_when_axes_aligned():
+    # 축이 실제로 맞으면(도형 정렬) 계단 없이 직선 1세그 — Stage4 없이도 성립.
+    sa, n, _t, _b = _route_vertical_pair(CanvasWindow(), 0)
+    assert n == 1, n
+    # 큰(의도적) 어긋남은 예전과 같이 계단 3세그.
+    _sa2, n2, _t2, _b2 = _route_vertical_pair(CanvasWindow(), 12)
+    assert n2 == 3, n2
 
 
 def _rot(p, c, deg):
@@ -4240,6 +4227,153 @@ def test_align_entry_points_visibility():
     assert acts == ["왼쪽 맞춤", "가로 가운데", "오른쪽 맞춤",
                     "위쪽 맞춤", "세로 가운데", "아래쪽 맞춤",
                     "가로 균등 분배", "세로 균등 분배"]
+
+
+def _mk_bound_sarrow(w, a, b, pa, pb):
+    """[M4-4 ⓐ 잔여] 두 도형의 포트(N=0·E=1·S=2·W=3)를 잇는 자동라우팅 직각 커넥터."""
+    sp = _shape_ports(a)[pa][0]
+    ep = _shape_ports(b)[pb][0]
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(sp, ep)
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, sp); sa.set_bound(1, b, ep)
+    sa._auto_route = True
+    sa.build_elbow()
+    return sa
+
+
+def _sarrow_defects(sa):
+    """(재진입 여부, 타기 길이) — 연결 도형 bbox 기준. 둘 다 0이어야 깨끗한 경로."""
+    from easycad.canvas.annotator_core import _path_hits_rects, _path_ride_len
+    pts = [sa.mapToScene(p) for p in sa._pts]
+    pairs = [(sh.mapRectToScene(sh.rect()), o)
+             for sh, o in ((sa._bind_start, "start"), (sa._bind_end, "end"))
+             if isinstance(sh, (_RectItem, _EllipseItem, _SymbolItem))]
+    ns = sa._bound_normal_scene(0); ne = sa._bound_normal_scene(len(sa._pts) - 1)
+    return (_path_hits_rects(pts, [r for r, _ in pairs]),
+            _path_ride_len(pts, pairs, ns, ne))
+
+
+def test_sarrow_does_not_ride_shared_edge():
+    # [M4-4 ⓐ 잔여] 나란히 놓인 두 박스의 N포트끼리 잇기. 옛 라우터는 두 윗변 위에 정확히 포개진
+    # 직선을 냈다(_seg_hits_rect가 테두리 접촉을 '안전'으로 통과시키므로 관통 검사엔 안 걸림).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), -300, 0, 100, 60)
+    sa = _mk_bound_sarrow(w, a, b, 0, 0)          # N → N
+    pts = [sa.mapToScene(p) for p in sa._pts]
+    assert _close(pts[0], QPointF(50, 0)) and _close(pts[-1], QPointF(-250, 0)), pts
+    reenter, ride = _sarrow_defects(sa)
+    assert not reenter and ride == 0, ("변 타기 잔존", ride, pts)
+    # 두 박스 '위'로 넘어가는 다리여야 한다(윗변보다 확실히 바깥).
+    assert min(p.y() for p in pts) < -_RIDE_TOL, pts
+
+
+def test_sarrow_no_reenter_when_conn_shapes_close():
+    # [M4-4 ⓐ 잔여] 두 연결 도형이 conn_clear(36px)보다 가까우면 한쪽 스텁이 반대쪽 팽창 사각형
+    # 안에 갇혀 A*가 실패 → 옛 코드는 preferred로 폴백했고 그 preferred가 곧 관통 경로였다.
+    from easycad.canvas.annotator_core import _ortho_elbow, _path_hits_rects
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), -160, -60, 100, 60)
+    sa = _mk_bound_sarrow(w, a, b, 1, 1)          # E → E (타깃이 서쪽)
+    s0, e0 = QPointF(100, 30), QPointF(-60, -30)
+    ns = sa._bound_normal_scene(0); ne = sa._bound_normal_scene(len(sa._pts) - 1)
+    # 전제: 회피 없는 preferred는 실제로 A를 관통한다(테스트가 유의미하려면).
+    pref = [s0] + _ortho_elbow(s0, e0, ns, ne) + [e0]
+    assert _path_hits_rects(pref, [a.mapRectToScene(a.rect())]), pref
+    pts = [sa.mapToScene(p) for p in sa._pts]
+    assert _close(pts[0], s0) and _close(pts[-1], e0), pts
+    reenter, ride = _sarrow_defects(sa)
+    assert not reenter, ("연결 도형 관통", pts)
+    assert ride == 0, ("변 타기", ride, pts)
+
+
+def test_route_ortho_clean_path_unchanged():
+    # [M4-4 ⓐ 잔여] 무회귀 불변식 — 결함 없는 배치는 preferred 그대로이고, conn_rects를 넘기든
+    # 말든 결과가 같아야 한다(사다리·점수화가 깨끗한 경로엔 개입하지 않음).
+    from easycad.canvas.annotator_core import _route_ortho, _ortho_elbow
+    s, e = QPointF(100, 30), QPointF(300, 30)     # E → W, 마주보고 같은 높이
+    ns, ne = QPointF(1, 0), QPointF(-1, 0)
+    pref = _ortho_elbow(s, e, ns, ne)
+    plain = _route_ortho(s, e, ns, ne, [], 12.0)
+    with_conn = _route_ortho(s, e, ns, ne, [], 12.0,
+                             conn_rects=(QRectF(0, 0, 100, 60), QRectF(300, 0, 100, 60)))
+    assert plain == pref and with_conn == pref, (plain, with_conn, pref)
+
+
+def test_route_ortho_ride_exemption_is_per_owner():
+    # [M4-4 ⓐ 잔여] 타기 면제는 '그 끝점이 붙은 도형'에만 준다 — 같은 세그먼트라도 *다른* 도형의
+    # 변을 타면 타기다. (이 구분이 없으면 '내 도형에서 수직 이탈 = 통째 면제'가 되어 상대 도형
+    # 변 타기를 통으로 놓친다 — 설계 검토서 실제로 걸린 구멍.)
+    from easycad.canvas.annotator_core import _path_ride_len
+    A = QRectF(0, 0, 100, 60)          # 출발 도형
+    B = QRectF(-50, -260, 100, 60)     # 도착 도형(아랫변 y=-200)
+    pts = [QPointF(0, 30), QPointF(0, -200)]   # A의 W포트에서 수직으로 올라가 B 아랫변에 도착
+    ns, ne = QPointF(-1, 0), QPointF(0, 1)
+    # 이 수직선은 A의 좌변(x=0) 위를 30px 탄다. 도착 끝점 면제(ne)가 A에까지 번지면 0이 된다.
+    assert _path_ride_len(pts, [(A, "start"), (B, "end")], ns, ne) == 30
+    # 반대로 자기 도형에서 법선대로 곧게 이탈하는 세그먼트는 면제 — 타기 0.
+    ok = [QPointF(100, 30), QPointF(136, 30)]
+    assert _path_ride_len(ok, [(A, "start")], QPointF(1, 0), None) == 0
+
+
+def test_sarrow_routing_is_idempotent():
+    # [M4-4 ⓐ 잔여] 되먹임 없음 — 라우터는 끝점·법선·장애물만 보고 결정하므로 재호출해도 같은
+    # 경로여야 한다(두 번째 build_elbow는 '변경 없음'=False). 사다리·점수화 도입 후에도 유지.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), -300, 0, 100, 60)
+    sa = _mk_bound_sarrow(w, a, b, 0, 0)
+    first = [sa.mapToScene(p) for p in sa._pts]
+    assert sa.build_elbow() is False, "재호출이 경로를 바꿈(되먹임 위험)"
+    again = [sa.mapToScene(p) for p in sa._pts]
+    assert all(_close(x, y) for x, y in zip(first, again)), (first, again)
+
+
+def test_connected_rects_is_endpoint_tuple():
+    # [M4-4 ⓐ 잔여] _connected_rects는 (start|None, end|None) 2-튜플 — 타기 면제가 어느 끝점의
+    # 도형인지 알아야 하기 때문. 한쪽만 도형에 붙은 커넥터는 그 자리가 None으로 남는다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(100, 30), QPointF(300, 30))
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, QPointF(100, 30))
+    rects = sa._connected_rects()
+    assert isinstance(rects, tuple) and len(rects) == 2, rects
+    assert rects[0] is not None and rects[1] is None, rects
+
+
+def test_border_snap_prefers_shape_port_over_arrow_endpoint():
+    # [실조건 2026-07-26] 포트에 이미 화살표가 붙어 있으면 그 끝점이 포트와 거리 0으로 동일해,
+    # 나중에 도는 선·화살표 루프가 `<=` 때문에 항상 이겼다 → ⓐ shape=None이라 지속 연결이 안
+    # 걸리고 ⓑ 이탈 법선이 상대 화살표 방향(정반대)으로 잡혔다. 동점은 도형이 이겨야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 150, 90)
+    b = _mk_rect(w._scene, w.make_pen(), 600, 0, 150, 90)
+    port_e, n_e = _shape_ports(a)[1]                  # A의 E 포트
+    view_pos = w._view.mapFromScene(port_e)
+    first = w._view._border_snap_at(view_pos)
+    assert first is not None and first[2] is a, first
+    assert _close(first[1], n_e), (first[1], n_e)     # 바깥 법선 = +x
+
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    ep = _shape_ports(b)[3][0]
+    sa.set_points(port_e, ep)
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, port_e); sa.set_bound(1, b, ep)
+    sa._auto_route = True; sa.build_elbow()
+
+    again = w._view._border_snap_at(view_pos)
+    assert again is not None and again[2] is a, ("포트를 화살표 끝점에 뺏김", again)
+    assert _close(again[1], n_e), ("이탈 법선이 뒤집힘", again[1], n_e)
+    # 포트에서 떨어진 화살표 몸통은 여전히 스냅 대상(M4-2b 회귀 아님).
+    mid = sa.mapToScene(sa._pts[len(sa._pts) // 2])
+    got = w._view._border_snap_at(w._view.mapFromScene(mid))
+    assert got is not None, "화살표 몸통 스냅이 죽음"
 
 
 def _run_all():

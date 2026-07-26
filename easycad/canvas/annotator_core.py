@@ -3023,8 +3023,13 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         return [0] if end == 0 else [0, end]
 
     _ROUTE_CLEARANCE = 12.0   # [Stage2] 라우팅이 장애물에서 유지할 여유(scene 단위)
-    _ARROW_CROSS_PENALTY = 200.0   # [Stage3] 다른 화살표를 가로지를 때 A* 간선에 더할 soft 벌점
-    _ALIGN_TOL = 8.0   # [Stage4] 근접정렬 흡수 임계(px) — 이하 어긋남만 흡수, 의도적 오프셋은 보존
+    # [Stage3 철회 — 실조건 2026-07-26] 화살표-화살표 soft 회피(_ARROW_CROSS_PENALTY·
+    # _obstacle_arrow_segs)를 뺐다. 라우터 입력에서 '다른 화살표'를 없애 **경로가 화살표 집합과
+    # 무관**해진다. 그래야 ⓐ 같은 포트를 이으면 선점 화살표 유무와 상관없이 늘 같은 경로가 나오고
+    # ⓑ 화살표를 지워도 남은 화살표가 제멋대로 재계산되지 않는다(사용자 의도 보존 > 자동 미화).
+    # 대가: 밀집 도면 교차 증가(login_flow.ecad 실측 3→7). 정리는 세그먼트 드래그·경유지 힌트·
+    # 정렬/분배 같은 수동 수단이 맡는다. _route_ortho/_astar_ortho의 avoid_segs·cross_penalty
+    # 인자는 남겨 뒀다(기본값 비활성) — 되살릴 땐 아래 라우팅 호출 3곳에 다시 넘기면 된다.
 
     # ---- [A3] 지속 연결(도형 테두리 부착) — 곡선화살표 인프라 재사용 --------
     def _connects_to_border(self):
@@ -3123,46 +3128,16 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             return None
         return n
 
-    def _absorb_near_alignment(self) -> bool:
-        """[Stage4] 양끝의 교차축 어긋남이 _ALIGN_TOL 이하면 부착점을 공통 축으로 스냅해 직교 라우터가
-        넣는 미세 계단([A]백엣지·[B]수렴부·decision 연결)을 직선으로 붕괴시킨다. 실제로 옮겼으면 True.
-        · 교차축 = 두 끝점의 '지배적 분리축'의 수직(가로연결 |dx|≥|dy|→Y정렬 / 세로연결→X정렬). 법선이
-          아니라 분리축으로 판정 — 마름모 꼭짓점의 대각 법선에 안 속는다(직전 실조건서 6px 계단 놓친 갭).
-        · 정렬 목표는 후보(상대 끝점 좌표 → 자기 좌표 → 중점) 중 두 부착점이 모두 도형 '테두리 위'에
-          남는 첫 값 — 꼭짓점은 축 밖으로 못 나가 자연히 '움직일 수 있는 쪽(박스 변)'만 옮긴다(폭 다른
-          E-E는 양쪽 다 테두리 밖이라 미적용 → build에서 폭 통일로 처리).
-        · 큰(의도적) 어긋남은 임계 밖이라 미변경, 스냅 후 어긋남=0이라 멱등(되먹임 없음)."""
-        end_idx = len(self._pts) - 1
-        s = self.mapToScene(self._pts[0])
-        e = self.mapToScene(self._pts[end_idx])
-        horizontal = abs(e.x() - s.x()) >= abs(e.y() - s.y())
-        c0 = s.y() if horizontal else s.x()
-        c1 = e.y() if horizontal else e.x()
-        if abs(c0 - c1) <= 1e-6 or abs(c0 - c1) > self._ALIGN_TOL:
-            return False
-        sh0, sh1 = self._bound(0), self._bound(end_idx)
-
-        def on_border(sh, sp):   # 이동한 부착점이 도형 테두리 위에 남는가(꼭짓점 이탈 방지)
-            if sh is None or sh.scene() is None:
-                return True
-            try:
-                bp, _ = _nearest_border(sh, sp)
-            except Exception:
-                return False
-            return (bp - sp).manhattanLength() <= 0.5
-
-        def at(p, target):
-            return QPointF(p.x(), target) if horizontal else QPointF(target, p.y())
-
-        for target in (c1, c0, (c0 + c1) / 2.0):
-            p0, p1 = at(s, target), at(e, target)
-            if on_border(sh0, p0) and on_border(sh1, p1):
-                for idx, sh, np in ((0, sh0, p0), (end_idx, sh1, p1)):
-                    if sh is not None:
-                        self.set_bound(idx, sh, sh.mapFromScene(np))
-                    self._set_endpoint(idx, self.mapFromScene(np))
-                return True
-        return False
+    # [Stage4 철회 — 실조건 2026-07-26] 옛 _absorb_near_alignment는 두 끝의 교차축 어긋남이
+    # _ALIGN_TOL(8px) 이하일 때 **부착점(bind_pt) 자체를 테두리 따라 미끄러뜨려** 미세 계단을
+    # 없앴다. 그 대가가 컸다(사용자 보고 3건, 측정으로 확정):
+    #   ⓐ 변 중심점(포트)에 붙였는데 도형을 옮기면 부착점이 최대 8px 밀려난다 — 네모 60·원 120·
+    #      평행사변형 80건/이동 55회. 사용자가 고른 연결점은 데이터인데 라우터가 덮어썼다.
+    #   ⓑ 포트가 아닌 자유 부착점은 드래그 중 붙었다 떨어졌다 하고 경로가 흔들린다(미끄러짐이
+    #      매 마우스 이동마다 방향을 바꾸므로).
+    # 계층이 틀렸다 — 8px 계단은 '그림'의 문제고 부착점은 '데이터'다. 그림 문제를 데이터를 고쳐
+    # 해결하면 안 된다. 계단이 거슬리면 M5 정렬/분배로 도형 축을 실제로 맞추는 게 정답이다.
+    # (부착점을 건드리지 않고 경로 쪽에서 계단을 흡수하는 안은 별도 과제로 남긴다.)
 
     def build_elbow(self) -> bool:
         """[Stage1] 현재 양끝점 + 부착 변 법선으로 직교 엘보를 계산해 _pts를 교체. 변경 있으면 True.
@@ -3178,10 +3153,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         e = self.mapToScene(self._pts[end_idx])
         if abs(s.x() - e.x()) < 1e-6 and abs(s.y() - e.y()) < 1e-6:
             return False
-        # [Stage4] 라우팅 전 근접정렬 흡수 — 미세 어긋남(≤_ALIGN_TOL)을 직선으로 붕괴. 옮겼으면 s·e 갱신.
-        if self._absorb_near_alignment():
-            s = self.mapToScene(self._pts[0])
-            e = self.mapToScene(self._pts[end_idx])
+        # [Stage4 철회] 부착점은 사용자 데이터 — 라우터가 옮기지 않는다(위 주석 참조).
         if self._route_hints:
             # [경유지 힌트(2f)] 힌트가 있으면 구간별 라우팅(내부적으로 Stage2/3 회피 동반).
             hint_scenes = [self._hint_to_scene(h) for h in self._route_hints]
@@ -3194,8 +3166,6 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             # [Stage2] 장애물(양끝 바인딩 도형 제외)을 피하는 직교 경로. 장애물이 없거나 Stage1
             # 엘보가 이미 안전하면 Stage1과 동일 결과 → 아래 무변경 가드가 되먹임 루프를 끊는다.
             mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
-                                avoid_segs=self._obstacle_arrow_segs(),
-                                cross_penalty=self._ARROW_CROSS_PENALTY,
                                 conn_rects=self._connected_rects())
             new_scene = _dedup_pts([s] + mids + [e])
             new_local = [self.mapFromScene(p) for p in new_scene]
@@ -3246,8 +3216,6 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                 # 한쪽만 붙어도 build_elbow과 같은 _route_ortho로 회피(재진입·장애물·화살표) — 그리기
                 # 라이브 미리보기(set_ortho_preview가 이 경로 위임)와 릴리스 결과를 일치시킨다.
                 mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
-                                    avoid_segs=self._obstacle_arrow_segs(),
-                                    cross_penalty=self._ARROW_CROSS_PENALTY,
                                     conn_rects=self._connected_rects())
             else:
                 mids = _ortho_elbow(s, e, ns, ne)   # 완전 자유(무바인딩) = 단순 엘보(기존 유지)
@@ -3395,8 +3363,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         e = self.mapToScene(self._pts[end_idx])
         ns = self._bound_normal_scene(0)
         ne = self._bound_normal_scene(end_idx)
-        obst = self._obstacle_rects()
-        avoid_segs = self._obstacle_arrow_segs()   # [Stage3] 힌트 구간에도 화살표 회피 동반
+        obst = self._obstacle_rects()   # [Stage3 철회] 화살표는 회피 대상 아님 — 도형만
         waypts = [s] + list(hint_scenes) + [e]
         norms = [ns] + [None] * len(hint_scenes) + [ne]
         scene_pts = [s]
@@ -3404,7 +3371,6 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         for i in range(len(waypts) - 1):
             a, b = waypts[i], waypts[i + 1]
             mids = _route_ortho(a, b, norms[i], norms[i + 1], obst, self._ROUTE_CLEARANCE,
-                                avoid_segs=avoid_segs, cross_penalty=self._ARROW_CROSS_PENALTY,
                                 conn_rects=self._connected_rects())
             for m in mids:
                 scene_pts.append(m)
@@ -3483,16 +3449,16 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         return out
 
     def _connected_rects(self):
-        """[M4-4 ⓐ] 양끝 바인딩 도형(출발/도착)의 scene bbox 리스트. _obstacle_rects가 회피에서
-        '제외'하는 바로 그 도형들이다 — 끝점이 이 도형 테두리 위라 통짜 팽창 장애물로 못 넣기
-        때문. 대신 _route_ortho가 '원본 rect로 재진입만 판정 + stub↔stub A*엔 팽창본을 장애물로'
-        쓰는 데 이 리스트를 받는다. 원(_EllipseItem)·심볼은 bbox 근사라 재진입 판정이 보수적:
-        실제 외곽선이 bbox 안으로 들어간 도형은 A* 시작 stub이 팽창 bbox 안이면 preferred 폴백."""
-        out = []
-        for sh in (self._bind_start, self._bind_end):
-            if isinstance(sh, (_RectItem, _EllipseItem, _SymbolItem)):
-                out.append(sh.mapRectToScene(sh.rect()))
-        return out
+        """[M4-4 ⓐ] 양끝 바인딩 도형(출발/도착)의 scene bbox를 **(start|None, end|None) 2-튜플**로.
+        _obstacle_rects가 회피에서 '제외'하는 바로 그 도형들이다 — 끝점이 이 도형 테두리 위라 통짜
+        팽창 장애물로 못 넣기 때문. 대신 _route_ortho가 '원본 rect로 재진입/타기 판정 + stub↔stub
+        A*엔 팽창본을 장애물로' 쓰는 데 이걸 받는다.
+        ⚠ 리스트가 아니라 2-튜플인 이유: 타기 면제는 '그 끝점이 붙은 도형'에만 줘야 해서 어느
+        rect가 출발/도착인지 알아야 한다(한쪽만 도형이면 그 자리는 None). 원·심볼은 bbox 근사라
+        판정이 보수적: 실제 외곽선이 bbox 안으로 든 도형은 스텁이 팽창 bbox 안이면 base 유지."""
+        return tuple(sh.mapRectToScene(sh.rect())
+                     if isinstance(sh, (_RectItem, _EllipseItem, _SymbolItem)) else None
+                     for sh in (self._bind_start, self._bind_end))
 
     # [경유지 힌트 — 2026-07-20 실측] 씬 단위 고정값(8.0)은 줌아웃 시 화면상 몇 px밖에 안 돼
     # 정밀 조작을 요구했다(사용자 피드백: "상당히 미세하게 해야 함"). _BORDER_SNAP_PX(14)와 같은
@@ -3505,22 +3471,6 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         if sc is not None and sc.views():
             view_s = sc.views()[0]._view_scale()
         return self._HINT_DROP_PX / max(view_s, 1e-6)
-
-    def _obstacle_arrow_segs(self):
-        """[Stage3] soft 회피용 — 다른 화살표(self 제외)의 렌더 폴리라인을 씬좌표 선분 리스트로.
-        _PolyArrowItem=엘보 전체 정점, _ArrowItem=양끝 코드(베지어는 직선 근사). 장애물이 아니라
-        비용에만 반영하므로 self의 현재 경로는 넣지 않는다(되먹임 방지). scene 없으면 빈 리스트."""
-        sc = self.scene()
-        if sc is None:
-            return []
-        segs = []
-        for it in sc.items():
-            if it is self or not isinstance(it, (_ArrowItem, _PolyArrowItem)):
-                continue
-            pts = [it.mapToScene(p) for p in it._endpoints()]
-            for i in range(len(pts) - 1):
-                segs.append((pts[i], pts[i + 1]))
-        return segs
 
     def _on_endpoint_drag_start(self, idx):
         # [경유지 힌트(2f)] 자동라우팅 중 '중간' 정점을 잡으면 freeze하지 않고 힌트 모드로 진입 —
@@ -4451,15 +4401,26 @@ def _path_hits_rects(pts, rects, eps=1e-6) -> bool:
     return False
 
 
-def _normal_stub(p: QPointF, n, d: float) -> QPointF:
+def _normal_stub(p: QPointF, n, d: float, clear_rect=None) -> QPointF:
     """부착 법선 n의 우세축으로 점 p를 d만큼 바깥으로 민 '스텁점'. n이 없으면 p 그대로.
     A* 라우팅 전 시작·끝에 강제해 ⓐ 테두리 수직 이탈/도착(미관) ⓑ 바인딩 도형을 가로지르지
-    않게(스텁이 이미 도형 밖 clearance 거리) 한다."""
+    않게(스텁이 이미 도형 밖 clearance 거리) 한다.
+
+    [B-lite — 실조건 2026-07-26] clear_rect(자기 연결 도형의 팽창 사각형)를 주면 스텁이 그
+    사각형을 **확실히 벗어날 때까지** 밀어낸다. ⚠ 이게 없으면 실제 외곽선이 bbox 안으로 들어간
+    도형(평행사변형·육각형·원)에서 부착점이 bbox 안쪽이라 d만큼 밀어도 여전히 팽창 안 → A*의
+    시작/도착 노드가 고립돼 경로를 못 찾고 base로 폴백 → 그 폴백이 곧 관통이다(평행사변형
+    E→W 이동 55회 중 105건 관통, 측정)."""
     if n is None:
         return p
-    if abs(n.x()) >= abs(n.y()):
-        return QPointF(p.x() + (d if n.x() >= 0 else -d), p.y())
-    return QPointF(p.x(), p.y() + (d if n.y() >= 0 else -d))
+    horiz = abs(n.x()) >= abs(n.y())
+    sign = 1.0 if (n.x() if horiz else n.y()) >= 0 else -1.0
+    if clear_rect is not None:
+        # 법선 방향으로 팽창 사각형을 빠져나오는 데 필요한 최소 거리(+여유 1px)
+        need = ((clear_rect.right() - p.x()) if sign > 0 else (p.x() - clear_rect.left())) if horiz \
+            else ((clear_rect.bottom() - p.y()) if sign > 0 else (p.y() - clear_rect.top()))
+        d = max(d, need + 1.0)
+    return QPointF(p.x() + sign * d, p.y()) if horiz else QPointF(p.x(), p.y() + sign * d)
 
 
 # ---- [Stage3] 화살표-화살표 soft 회피 — 세그먼트 교차 판정/집계 --------------------
@@ -4572,6 +4533,76 @@ def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6,
 # 선이 부착 도형 변에 바짝 붙어 답답 → 2로 벌려 숨통. 재진입 회피 케이스에만 적용(무회귀).
 _CONN_CLEAR_MULT = 3.0
 
+# [M4-4 ⓐ 잔여] '변 타기' 판정 — 경로가 도형을 관통하진 않지만 변 위에 포개져 테두리와 구분이
+# 안 되는 케이스. _seg_hits_rect가 테두리 접촉을 의도적으로 통과시키기 때문에(부착점이 관통으로
+# 잡히면 안 되므로) 관통 검사만으로는 안 걸린다.
+_RIDE_TOL = 4.0          # 변과 이 거리 이내로 나란하면 '탄다'
+_RIDE_MIN_OVERLAP = 4.0  # 겹치는 길이가 이보다 커야 유의미(모서리 스침 오탐 방지)
+
+
+def _seg_ride_len(a: QPointF, b: QPointF, r: QRectF, n_at=None) -> float:
+    """축정렬 선분 a-b가 사각형 r의 변과 나란히(거리 ≤ _RIDE_TOL) 겹치는 길이. 아니면 0.
+    n_at: 이 선분이 '자기가 붙은' 부착점에 접해 있으면 그 법선 — 법선 방향으로 곧게 이탈/도착하는
+    세그먼트는 정상이므로 면제한다(수직 이탈은 타기가 아니다)."""
+    if n_at is not None:
+        dx, dy = b.x() - a.x(), b.y() - a.y()
+        if abs(n_at.x()) >= abs(n_at.y()):
+            if abs(dy) <= 1e-6 and abs(dx) > 1e-6:
+                return 0.0            # 법선(수평) 방향으로 곧게 이탈 = 정상
+        elif abs(dx) <= 1e-6 and abs(dy) > 1e-6:
+            return 0.0                # 법선(수직) 방향으로 곧게 이탈 = 정상
+    if abs(a.y() - b.y()) <= 1e-6 and abs(a.x() - b.x()) > 1e-6:      # 수평
+        lo, hi = sorted((a.x(), b.x()))
+        ov = min(hi, r.right()) - max(lo, r.left())
+        if ov > _RIDE_MIN_OVERLAP and min(abs(a.y() - r.top()), abs(a.y() - r.bottom())) <= _RIDE_TOL:
+            return ov
+    elif abs(a.x() - b.x()) <= 1e-6 and abs(a.y() - b.y()) > 1e-6:    # 수직
+        lo, hi = sorted((a.y(), b.y()))
+        ov = min(hi, r.bottom()) - max(lo, r.top())
+        if ov > _RIDE_MIN_OVERLAP and min(abs(a.x() - r.left()), abs(a.x() - r.right())) <= _RIDE_TOL:
+            return ov
+    return 0.0
+
+
+def _path_ride_len(pts, conn_pairs, ns=None, ne=None) -> float:
+    """폴리라인이 연결 도형 변을 타는 총 길이. conn_pairs=[(rect, 'start'|'end'), ...].
+    ⚠ 면제는 '그 끝점이 붙어 있는 도형'에 대해서만 준다 — 같은 세그먼트라도 *다른* 도형의 변을
+    타면 그건 타기다(부착 세그먼트라는 이유로 통째 면제하면 상대 도형 변 타기를 놓친다)."""
+    pts = _dedup_pts(list(pts))
+    tot = 0.0
+    last = len(pts) - 2
+    for i in range(len(pts) - 1):
+        for r, owner in conn_pairs:
+            n_at = None
+            if i == 0 and owner == "start":
+                n_at = ns
+            elif i == last and owner == "end":
+                n_at = ne
+            tot += _seg_ride_len(pts[i], pts[i + 1], r, n_at)
+    return tot
+
+
+def _path_manhattan_len(pts) -> float:
+    return sum(abs(pts[i + 1].x() - pts[i].x()) + abs(pts[i + 1].y() - pts[i].y())
+               for i in range(len(pts) - 1))
+
+
+def _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, rung=0):
+    """경로 품질 점수 — 작을수록 좋다(사전식 비교).
+      (도형관통, 연결도형재진입, 타기길이, 화살표교차, 정점수, 여유칸, 총길이)
+    여유칸(rung)을 총길이보다 앞에 둬, 결함 없는 후보들 중에서는 '넉넉한 여유'를 고른다
+    (_CONN_CLEAR_MULT의 실조건 피드백 '변에 바짝 붙으면 답답' 유지)."""
+    full = _dedup_pts([s] + list(mids) + [e])
+    return (
+        1 if (infl and _path_hits_rects(full, infl)) else 0,
+        1 if (conn_orig and _path_hits_rects(full, conn_orig)) else 0,
+        round(_path_ride_len(full, conn_pairs, ns, ne), 1) if conn_pairs else 0.0,
+        _count_seg_crossings(full, avoid_segs),
+        len(full),
+        rung,
+        round(_path_manhattan_len(full), 1),
+    )
+
 
 def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
                  avoid_segs=(), cross_penalty=0.0, conn_rects=()):
@@ -4584,62 +4615,94 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
     [Stage3] avoid_segs/cross_penalty: 도형은 hard(관통 금지), 다른 화살표는 soft(교차 최소화).
     preferred가 도형은 안전하나 화살표를 가로지르면 A* 우회를 시도하되, 교차를 실제로 줄일 때만
     채택(개선 없으면 preferred 유지 → 불필요한 우회·되먹임 방지).
-    [M4-4 ⓐ] conn_rects: 양끝 '연결 도형' bbox(scene). 끝점이 이 도형 테두리 위라 통짜 팽창 장애물로
-    못 넣는다(deferred 함정) → '재진입'만 원본 rect로 판정(부착점 바깥 스텁 접촉은 통과), 재진입 시에만
-    stub↔stub A*에 팽창본을 장애물로 추가. 보수적: 재진입 안 하면 conn은 무시 = 기존 경로 완전 불변."""
+    [M4-4 ⓐ] conn_rects: 양끝 '연결 도형' bbox — **(start|None, end|None) 2-튜플**(끝점 소유권이
+    타기 면제 판정에 필요). 끝점이 이 도형 테두리 위라 통짜 팽창 장애물로 못 넣는다(deferred 함정)
+    → '재진입'만 원본 rect로 판정(부착점 바깥 스텁 접촉은 통과), 재진입 시에만 stub↔stub A*에
+    팽창본을 장애물로 추가.
+    [M4-4 ⓐ 잔여] 위 구조엔 두 구멍이 있었다(2026-07-26 전수 스윕 768케이스서 측정):
+      · 두 연결 도형이 conn_clear보다 가까우면 한쪽 스텁이 반대쪽 팽창 사각형 *안*에 갇혀 A*가
+        실패 → preferred 폴백 → 그 preferred가 곧 관통 경로(56/768 = 7.3%).
+      · 변 위에 정확히 얹힌 경로는 _seg_hits_rect가 통과시켜 '안전'으로 남는다(48/768 = 6.2%).
+    → 해법은 '오늘의 결과(base)를 먼저 계산하고, 추가 후보가 점수로 **엄격히 이길 때만** 교체'하는
+    단조 개선 구조 + 연결도형 clearance 사다리(conn_clear→clearance→1→0). 오늘 결과가 깨끗하면
+    후보를 만들지도 않으므로 경로·비용 모두 기존과 동일(무회귀)."""
     preferred = _ortho_elbow(s, e, ns, ne)
     infl = ([r.adjusted(-clearance, -clearance, clearance, clearance) for r in obstacles]
             if obstacles else [])
-    # [M4-4 ⓐ] 연결 도형: 원본 rect=재진입 판정용(부착부 접촉 배제), 팽창본=A* 장애물용.
-    # 여유는 제3도형(clearance)보다 넉넉하게(conn_clear) — 부착 도형 변에 선이 딱 붙어 지나가면
-    # 답답해 보인다(실조건 피드백 2026-07-24). 이탈/도착 스텁도 같은 거리로 밀어 격자선을 벌린다.
+    # [M4-4 ⓐ] 연결 도형: 원본 rect=재진입/타기 판정용, 팽창본=A* 장애물용. 여유는 제3도형
+    # (clearance)보다 넉넉하게(conn_clear) — 부착 도형 변에 선이 딱 붙어 지나가면 답답해 보인다
+    # (실조건 피드백 2026-07-24). 이탈/도착 스텁도 같은 거리로 밀어 격자선을 벌린다.
     conn_clear = clearance * _CONN_CLEAR_MULT
-    conn_orig = list(conn_rects)
+    conn_seq = tuple(conn_rects)[:2]
+    conn_orig = [r for r in conn_seq if r is not None]
+    conn_pairs = [(r, ("start", "end")[i]) for i, r in enumerate(conn_seq) if r is not None]
     conn_infl = [r.adjusted(-conn_clear, -conn_clear, conn_clear, conn_clear) for r in conn_orig]
-    pref_hits_shape = _path_hits_rects([s] + preferred + [e], infl) if infl else False
-    pref_reenters = _path_hits_rects([s] + preferred + [e], conn_orig) if conn_orig else False
-    pref_cross = _count_seg_crossings([s] + preferred + [e], avoid_segs)
-    # preferred가 도형 안전 + 연결도형 재진입 없음 + 화살표 교차 없음 → 그대로(기존 무변경 보장).
-    if not pref_hits_shape and not pref_reenters and pref_cross == 0:
+    pref_full = [s] + preferred + [e]
+    pref_hits_shape = _path_hits_rects(pref_full, infl) if infl else False
+    pref_reenters = _path_hits_rects(pref_full, conn_orig) if conn_orig else False
+    pref_rides = (_path_ride_len(pref_full, conn_pairs, ns, ne) > 0) if conn_pairs else False
+    pref_cross = _count_seg_crossings(pref_full, avoid_segs)
+    # preferred가 도형 안전 + 재진입·타기 없음 + 화살표 교차 없음 → 그대로(기존 무변경 보장).
+    if not pref_hits_shape and not pref_reenters and not pref_rides and pref_cross == 0:
         return preferred
-    # [M4-4 ⓐ] 재진입할 때만 conn을 A* 장애물/검증에 편입 — 순수 제3도형 케이스는 기존과 완전 동일.
-    astar_obst = (infl + conn_infl) if pref_reenters else infl
-    check_rects = (infl + conn_orig) if pref_reenters else infl
-    # 스텁 거리: 재진입 회피 시 conn_clear만큼(팽창 격자 밖에 착지해 A* 시작노드 유효), 아니면 clearance.
-    push = conn_clear if pref_reenters else clearance
-    s2 = _normal_stub(s, ns, push)
-    e2 = _normal_stub(e, ne, push)
-    # (1) 법선 스텁을 강제한 A*(수직 이탈/도착·바인딩 도형 회피) → (2) 스텁 없는 A*(스텁이
-    #     막혔을 때 폴백). 각 후보는 s→...→e 전체 경로의 도형 관통을 최종 확인한 뒤에만 채택.
-    attempts = [
-        (s2, e2, ([] if s2 == s else [s2]), ([] if e2 == e else [e2])),
-        (s, e, [], []),
-    ]
-    if pref_hits_shape or pref_reenters:
-        # 도형 관통·재진입 회피는 hard 요구 — 첫 안전 후보 채택(화살표는 벌점으로 A*가 이미 최소화).
-        for a, b, pre, post in attempts:
-            interior = _astar_ortho(a, b, astar_obst, clearance,
+
+    def _candidates(obst, push, cc=None):
+        """(1) 법선 스텁을 강제한 A*(수직 이탈/도착·바인딩 도형 회피) → (2) 스텁 없는 A*
+        (스텁이 막혔을 때 폴백). 경로를 못 찾은 시도는 건너뛴다.
+        [B-lite] cc가 있으면 각 끝의 스텁을 '자기 연결 도형의 팽창 사각형 밖'까지 밀어낸다 —
+        슬랜트·곡선 외곽선이라 부착점이 bbox 안쪽인 도형에서 A*가 출발조차 못 하던 것을 푼다."""
+        def own(i):
+            r = conn_seq[i] if i < len(conn_seq) else None
+            if r is None or cc is None:
+                return None
+            return r.adjusted(-cc, -cc, cc, cc)
+        s2 = _normal_stub(s, ns, push, own(0))
+        e2 = _normal_stub(e, ne, push, own(1))
+        for a, b, pre, post in ((s2, e2, [] if s2 == s else [s2], [] if e2 == e else [e2]),
+                                (s, e, [], [])):
+            interior = _astar_ortho(a, b, obst, clearance,
                                     avoid_segs=avoid_segs, cross_penalty=cross_penalty)
-            if interior is None:
-                continue
-            mids = pre + interior + post
+            if interior is not None:
+                yield pre + interior + post
+
+    # --- (1) base = 기존 알고리즘이 내던 결과 그대로 -----------------------------
+    base = preferred
+    if pref_hits_shape or pref_reenters:
+        # [M4-4 ⓐ] 재진입할 때만 conn을 A* 장애물/검증에 편입 — 순수 제3도형 케이스는 기존과 동일.
+        # 도형 관통·재진입 회피는 hard 요구 — 첫 안전 후보 채택(화살표는 벌점으로 A*가 이미 최소화).
+        astar_obst = (infl + conn_infl) if pref_reenters else infl
+        check_rects = (infl + conn_orig) if pref_reenters else infl
+        push = conn_clear if pref_reenters else clearance
+        for mids in _candidates(astar_obst, push):
             if not _path_hits_rects([s] + mids + [e], check_rects):
-                return mids
-        return preferred
-    # preferred가 도형은 안전하나 화살표를 가로지름 — 두 시도를 모두 평가해 '교차를 가장 많이
-    # 줄이는' 도형-안전 후보만 채택(개선 없으면 preferred 유지 → 불필요한 우회·되먹임 방지).
-    best, best_cross = preferred, pref_cross
-    for a, b, pre, post in attempts:
-        interior = _astar_ortho(a, b, infl, clearance,
-                                avoid_segs=avoid_segs, cross_penalty=cross_penalty)
-        if interior is None:
-            continue
-        mids = pre + interior + post
-        if _path_hits_rects([s] + mids + [e], infl):   # 도형 관통은 hard — 후보 기각
-            continue
-        c = _count_seg_crossings([s] + mids + [e], avoid_segs)
-        if c < best_cross:
-            best, best_cross = mids, c
+                base = mids
+                break
+    else:
+        # preferred가 도형은 안전하나 화살표를 가로지름 — 두 시도를 모두 평가해 '교차를 가장 많이
+        # 줄이는' 도형-안전 후보만 채택(개선 없으면 preferred 유지 → 불필요한 우회·되먹임 방지).
+        best_cross = pref_cross
+        for mids in _candidates(infl, clearance):
+            if _path_hits_rects([s] + mids + [e], infl):   # 도형 관통은 hard — 후보 기각
+                continue
+            c = _count_seg_crossings([s] + mids + [e], avoid_segs)
+            if c < best_cross:
+                base, best_cross = mids, c
+
+    base_score = _route_score(base, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs)
+    if base_score[0] == 0 and base_score[1] == 0 and base_score[2] == 0:
+        return base    # 관통·재진입·타기 없음 → 기존 결과 그대로(무회귀)
+
+    # --- (2) 연결도형 clearance 사다리 — base를 '엄격히 이기는' 후보만 교체 -------
+    # 넉넉한 여유부터 좁은 여유까지 훑되, 채택 기준은 점수뿐이라 오늘보다 나쁜 경로는 구조적으로
+    # 나올 수 없다(사다리가 전부 실패해도 base 유지). 0.0칸은 '팽창 없음' — 부착점이 팽창 사각형
+    # 안에 갇혀 A*가 아예 출발 못 하는 배치의 마지막 탈출구.
+    best, best_score = base, base_score
+    for rung, cc in enumerate((conn_clear, clearance, 1.0, 0.0)):
+        cinfl = [r.adjusted(-cc, -cc, cc, cc) for r in conn_orig]
+        for mids in _candidates(infl + cinfl, cc, cc):
+            sc = _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, rung)
+            if sc < best_score:
+                best, best_score = mids, sc
     return best
 
 
@@ -5440,7 +5503,12 @@ class _AnnotatorView(QGraphicsView):
         for cl in lines:
             for ep, ed in _conn_endpoint_dirs(cl):
                 d = self._view_dist(ep, view_pos)
-                if d <= bestpd:
+                # ⚠ 동점은 도형 포트가 이긴다(`<`, `<=` 아님) — 실조건 2026-07-26: 포트에 이미
+                # 화살표가 붙어 있으면 그 끝점이 포트와 **거리 0으로 동일**해 나중에 오는 이 루프가
+                # 항상 이겼다. 그 결과 ⓐ 바인딩이 None이 되어 지속 연결이 안 걸리고 ⓑ 이탈 법선이
+                # 상대 화살표 방향(정반대)으로 잡혀 같은 포트인데 경로가 달라졌다. 바인딩은 기하
+                # 스냅보다 정보량이 크므로 같은 거리면 도형을 택한다.
+                if d < bestpd:
                     bestpd, bestp, pexit, pshape = d, ep, ed, None   # 선/화살표=바인딩 없음
         if bestp is not None:
             return bestp, pexit, pshape
