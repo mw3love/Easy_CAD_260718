@@ -15,3 +15,8 @@ docs/reference/*.pdf
 
 # 오프스크린 스크린샷 산출물(tools/screenshot.py)
 tools/_shot*.png
+
+# 작업 도면·입력 사진 (사용자 산출물 — 로컬만 유지, 리포는 코드·문서만).
+# 리포 루트의 .ecad만 무시한다 — 의도적으로 넣는 테스트 픽스처(tests/**.ecad)는 살린다.
+/*.ecad
+/송출 도면/
