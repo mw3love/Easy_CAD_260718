@@ -4346,6 +4346,76 @@ def test_connected_rects_is_endpoint_tuple():
     assert rects[0] is not None and rects[1] is None, rects
 
 
+def test_ortho_drag_still_rebinds_endpoint():
+    # [실조건 2026-07-27] F8(직교 제약)로 끝점을 도형 위 비-포트 지점으로 재부착해도, mouseMoveEvent의
+    # 그 분기는 _move_endpoint_with_snap을 안 거쳐(축 제약이 테두리 스냅보다 우선) set_bound를 아예
+    # 호출하지 않았다 — 시각적으로는 붙어 보여도 지속 연결이 안 걸려 도형을 옮겨도 화살표가 그대로
+    # 남았다(사용자 보고). _rebind_at_fixed_point가 위치는 유지한 채 바인딩만 갱신해야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 150, 90)
+    b = _mk_rect(w._scene, w.make_pen(), 600, 0, 150, 90)
+    sp = _shape_ports(a)[1][0]; ep = _shape_ports(b)[3][0]
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(sp, ep)
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, sp); sa.set_bound(1, b, ep)
+    sa._auto_route = True; sa.build_elbow()
+
+    # 뗀다(빈 공간으로) — mouseMoveEvent의 일반 분기와 동일 경로.
+    sa._on_endpoint_drag_start(0)
+    sa._move_endpoint_with_snap(0, sa.mapFromScene(QPointF(300, 300)))
+    sa._on_endpoint_drag_end(0)
+    assert sa._bound(0) is None
+
+    # F8로 A의 변 위 '비-포트' 지점에 재부착 — mouseMoveEvent의 F8 분기를 그대로 재현.
+    sa._on_endpoint_drag_start(0)
+    target = sa._ortho_endpoint(0, sa.mapFromScene(QPointF(150, 20)))
+    sa._set_endpoint(0, target)
+    sa._rebind_at_fixed_point(0, target)
+    sa._on_endpoint_drag_end(0)
+    assert sa._bound(0) is a, ("F8 재부착이 바인딩을 안 걸음", sa._bound(0))
+    assert _close(sa.mapToScene(sa._pts[0]), sa.mapToScene(target)), "위치가 바뀜(축 제약 훼손)"
+
+    # 도형을 옮기면 이제 따라와야 한다.
+    before = sa.mapToScene(sa._pts[0])
+    a.setPos(QPointF(37, 41)); w._on_scene_changed(None)
+    after = sa.mapToScene(sa._pts[0])
+    assert (after - before).manhattanLength() > 10, ("도형 이동에 안 따라옴", before, after)
+
+
+def test_ortho_drag_endpoint_unbinds_away_from_shape():
+    # 위와 대칭 — F8로 도형에서 먼 자유 공간으로 옮기면 unbind돼야 한다(스텁 바인딩 잔존 방지).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 150, 90)
+    b = _mk_rect(w._scene, w.make_pen(), 600, 0, 150, 90)
+    sp = _shape_ports(a)[1][0]; ep = _shape_ports(b)[3][0]
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(sp, ep)
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, sp); sa.set_bound(1, b, ep)
+    sa._auto_route = True; sa.build_elbow()
+
+    sa._on_endpoint_drag_start(0)
+    target = sa._ortho_endpoint(0, sa.mapFromScene(QPointF(400, 400)))
+    sa._set_endpoint(0, target)
+    sa._rebind_at_fixed_point(0, target)
+    sa._on_endpoint_drag_end(0)
+    assert sa._bound(0) is None, "먼 지점인데 바인딩이 남음"
+
+
+def test_line_endpoint_ortho_drag_does_not_crash():
+    # _LineItem은 _connects_to_border()=False에 set_bound 자체가 없다 — 가드 없이 부르면
+    # AttributeError. Shift·F8 분기에서도 안전해야 한다.
+    w = CanvasWindow()
+    ln = _LineItem(0, 0, 150, 0)
+    ln.setPen(w.make_pen())
+    ln.setFlags(ln.GraphicsItemFlag.ItemIsSelectable | ln.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ln)
+    ln._rebind_at_fixed_point(0, QPointF(10, 10))   # 크래시 안 하면 통과
+
+
 def test_border_snap_prefers_shape_port_over_arrow_endpoint():
     # [실조건 2026-07-26] 포트에 이미 화살표가 붙어 있으면 그 끝점이 포트와 거리 0으로 동일해,
     # 나중에 도는 선·화살표 루프가 `<=` 때문에 항상 이겼다 → ⓐ shape=None이라 지속 연결이 안

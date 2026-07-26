@@ -536,6 +536,27 @@ class _HandleResizeMixin:
             local_p = snapped[0]
         self._set_endpoint(idx, local_p)
 
+    def _rebind_at_fixed_point(self, idx: int, local_p: QPointF):
+        """[실조건 2026-07-27] Shift(각도 스냅)·F8(직교 제약) 드래그 전용 — **위치는 건드리지 않고
+        바인딩만** 갱신한다. mouseMoveEvent의 그 두 분기는 `_move_endpoint_with_snap`을 거치지 않아
+        (의도적으로 테두리 스냅보다 축 제약을 우선시킴) `set_bound`를 아예 호출하지 않았다. 그 결과:
+          · 이미 뗀(unbound) 끝점을 그 두 모드로 도형 위에 시각적으로 올려도 바인딩이 안 걸려
+            도형을 옮겨도 화살표가 따라오지 않았다(사용자 보고 — 중심점 아닌 곳에 재부착).
+          · 이미 붙은 끝점을 축 제약으로 미세조정하면 옛 bind_pt(도형 로컬좌표)가 안 갱신돼,
+            다음 도형 이동 때 방금 조정한 위치가 아니라 그 **옛 위치로 되돌아갔다.**
+        `_endpoint_border_snap`으로 도형 판정만 재사용하고 반환된 좌표는 버린다(축 제약 위치 보존).
+        근처에 도형이 없으면 unbind — 스텁 바인딩이 남아 다음 이동 때 엉뚱한 곳으로 튀는 것 방지.
+        ⚠ `_LineItem`은 `_connects_to_border()`가 False이자 `set_bound` 자체가 없다(바인딩 미지원) —
+        `_endpoint_border_snap`과 같은 가드로 여기서 먼저 걸러야 AttributeError가 안 난다."""
+        if not self._connects_to_border():
+            return
+        snapped = self._endpoint_border_snap(local_p)
+        shape = snapped[2] if snapped is not None else None
+        if shape is not None:
+            self.set_bound(idx, shape, shape.mapFromScene(self.mapToScene(local_p)))
+        else:
+            self.set_bound(idx, None)
+
     def _on_endpoint_drag_start(self, idx: int):
         """[우리 확장] 정점 핸들 드래그가 '시작'될 때 호출(mousePress choke point). 기본 no-op.
         _PolyArrowItem이 override해 자동 직교 라우팅을 해제한다(수동 정점 조작 = 수동 경로)."""
@@ -1055,11 +1076,16 @@ class _HandleResizeMixin:
             self.prepareGeometryChange()  # 끝점이 boundingRect를 바꾼다
             p = event.pos()
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                # Shift = 각도 스냅(테두리 스냅과 상호배타)
-                self._set_endpoint(self._drag_endpoint, self._snap_endpoint(self._drag_endpoint, p))
+                # Shift = 각도 스냅(테두리 스냅과 상호배타) — 위치는 이 제약이 갖되, 바인딩은 갱신.
+                p2 = self._snap_endpoint(self._drag_endpoint, p)
+                self._set_endpoint(self._drag_endpoint, p2)
+                self._rebind_at_fixed_point(self._drag_endpoint, p2)
             elif self._owner_ortho():
-                # [우리 확장] F8 Ortho = 인접 정점 기준 0/90° 제약(테두리 스냅보다 우선)
-                self._set_endpoint(self._drag_endpoint, self._ortho_endpoint(self._drag_endpoint, p))
+                # [우리 확장] F8 Ortho = 인접 정점 기준 0/90° 제약(테두리 스냅보다 우선) — 동일하게
+                # 위치는 유지하고 바인딩만 재판정(실조건 2026-07-27: 안 하면 지속 연결이 안 걸림).
+                p2 = self._ortho_endpoint(self._drag_endpoint, p)
+                self._set_endpoint(self._drag_endpoint, p2)
+                self._rebind_at_fixed_point(self._drag_endpoint, p2)
             else:
                 # 근처 도형 테두리에 재스냅(뗐다 다시 붙이기). 화살표는 S자 곡선까지 복원.
                 self._move_endpoint_with_snap(self._drag_endpoint, p)
