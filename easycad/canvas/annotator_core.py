@@ -5310,6 +5310,7 @@ class _AnnotatorView(QGraphicsView):
         p_src = _edge_mid(self._qc_src_scene_rect(src), side)
         arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
         arrow._style = getattr(owner, "current_style", arrow._style)   # sticky 선스타일
+        arrow._curve_r = float(getattr(owner, "current_curve_r", arrow._curve_r))  # sticky 모서리 반경
         arrow.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
                        | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         arrow.set_bound(0, src, src.mapFromScene(p_src))

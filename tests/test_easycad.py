@@ -843,6 +843,17 @@ def test_qc_drag_free_end_still_makes_ortho_elbow():
         assert abs(p1.x() - p2.x()) < 1e-6 or abs(p1.y() - p2.y()) < 1e-6
 
 
+def test_qc_drag_arrow_uses_sticky_curve_radius():
+    # [편의기능] 미니툴바 곡선 반경 스테퍼로 바꾼 sticky 값(current_curve_r)이 네방향점 드래그
+    # 화살표에도 이어져야 한다(사용자 피드백 2026-07-27: "지속사용 하고 싶다는 뜻일 것").
+    # 종전엔 _qc_create_arrow_only가 _begin_draw를 안 거쳐 항상 클래스 기본 반경으로 고정됐다.
+    w = CanvasWindow(); v = w._view
+    w.current_curve_r = 2.0
+    r = _mk_pen_rect(w, x=0, y=0, ww=80, hh=50); r.setSelected(True)
+    arr = v._qc_create(r, "r", QPointF(300, 200))
+    assert arr._curve_r == 2.0
+
+
 def test_snap_to_line_and_arrow_endpoints():
     # [M4-2b] 스냅 대상에 선·화살표(끝점 우선 + 몸통 폴백) 포함, 바인딩은 도형만(shape=None).
     w = CanvasWindow(); v = w._view
