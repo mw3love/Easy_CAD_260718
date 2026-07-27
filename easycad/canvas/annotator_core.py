@@ -4764,13 +4764,15 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
                 base, best_cross = mids, c
 
     base_score = _route_score(base, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs)
-    if base_score[0] == 0 and base_score[1] == 0 and base_score[2] == 0:
-        return base    # 관통·재진입·타기 없음 → 기존 결과 그대로(무회귀)
 
     # --- (2) 연결도형 clearance 사다리 — base를 '엄격히 이기는' 후보만 교체 -------
     # 넉넉한 여유부터 좁은 여유까지 훑되, 채택 기준은 점수뿐이라 오늘보다 나쁜 경로는 구조적으로
     # 나올 수 없다(사다리가 전부 실패해도 base 유지). 0.0칸은 '팽창 없음' — 부착점이 팽창 사각형
     # 안에 갇혀 A*가 아예 출발 못 하는 배치의 마지막 탈출구.
+    # [혹 버그 수정 2026-07-27] base가 이미 결함 없음(관통·재진입·타기 0)이어도 여기서 조기
+    # 반환하지 않는다 — base는 conn_clear(가장 넉넉한 여유)로 A*가 처음 찾은 경로일 뿐이라 결함은
+    # 없어도 불필요하게 먼 우회('혹')일 수 있다(사다리가 그 우회를 줄여줄 기회조차 못 얻었던 게
+    # 근본원인). 사다리는 base보다 엄격히 나은 후보만 채택하는 단조개선이라 늘 실행해도 무해하다.
     best, best_score = base, base_score
     for rung, cc in enumerate((conn_clear, clearance, 1.0, 0.0)):
         cinfl = [r.adjusted(-cc, -cc, cc, cc) for r in conn_orig]
@@ -5347,6 +5349,25 @@ class _AnnotatorView(QGraphicsView):
                 return best
         return None
 
+    def _qc_route_context(self, src, target):
+        """[미리보기≠확정 버그 수정 2026-07-27] _qc_paint_ghost가 쓸 obstacles/conn_rects —
+        _PolyArrowItem._obstacle_rects·_connected_rects와 같은 판정을 화살표 없이 계산(고스트는
+        아직 실제 아이템이 아니므로). src·target 자신은 회피 대상에서 제외해야 릴리스 때
+        _qc_create_arrow_only가 만드는 실제 화살표와 같은 입력이 된다."""
+        sc = self.scene()
+        obstacles = []
+        if sc is not None:
+            for it in sc.items():
+                if it is src or it is target:
+                    continue
+                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem)):
+                    obstacles.append(it.mapRectToScene(it.rect()))
+
+        def _rect_of(sh):
+            return (sh.mapRectToScene(sh.rect())
+                    if isinstance(sh, (_RectItem, _EllipseItem, _SymbolItem)) else None)
+        return obstacles, (_rect_of(src), _rect_of(target))
+
     def _qc_paint_ghost(self, painter, src, side, cursor_scene):
         """빠른 생성 고스트 — 클릭(hover)=복제 도형+연결선 / [M4-2] 드래그=연결선만(화살표만 생성)."""
         pen = QPen(QColor(90, 150, 235), 1.5, Qt.PenStyle.DashLine)
@@ -5357,10 +5378,16 @@ class _AnnotatorView(QGraphicsView):
         if cursor_scene is not None:
             snap = self._qc_snap_target(cursor_scene, src)   # [M4-2] 드래그 중 스냅 예고
             end = snap[0] if snap is not None else cursor_scene
-            # [편의기능] 직각 엘보로 미리보기 — 종전엔 항상 직선이라 결과(직각)와 달라 보였다.
             ns = _QC_SIDE_NORMAL[side]
             ne = snap[1] if snap is not None else None
-            pts = [p_src] + _ortho_elbow(p_src, end, ns, ne) + [end]
+            target = snap[2] if snap is not None else None
+            # [미리보기≠확정 버그 수정 2026-07-27] 릴리스 시 _qc_create_arrow_only가 쓰는 것과
+            # 똑같은 _route_ortho로 미리보기 — 종전엔 _ortho_elbow(장애물·재진입 회피 없음)만 써서
+            # 릴리스 순간 경로가 갑자기 바뀌어 보였다(근접/재진입 배치에서 특히 두드러짐).
+            obstacles, conn_rects = self._qc_route_context(src, target)
+            mids = _route_ortho(p_src, end, ns, ne, obstacles, _PolyArrowItem._ROUTE_CLEARANCE,
+                                conn_rects=conn_rects)
+            pts = _dedup_pts([p_src] + mids + [end])
             for i in range(len(pts) - 1):
                 painter.drawLine(pts[i], pts[i + 1])
             if snap is not None:

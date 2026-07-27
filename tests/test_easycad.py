@@ -854,6 +854,42 @@ def test_qc_drag_arrow_uses_sticky_curve_radius():
     assert arr._curve_r == 2.0
 
 
+def test_qc_drag_ghost_matches_final_route():
+    # [미리보기≠확정 버그 수정 2026-07-27] 네방향점을 드래그해 다른 도형에 이을 때, 드래그 중
+    # 고스트 미리보기(_qc_paint_ghost)는 장애물·재진입 회피가 없는 _ortho_elbow만 썼는데,
+    # 릴리스가 실제로 만드는 화살표(_qc_create_arrow_only)는 build_elbow와 같은 _route_ortho를
+    # 써서 재진입/근접 배치에서 둘이 서로 다른 경로를 보였다(사용자 실조건 재현: 어긋나게 배치한
+    # 두 네모를 선택도구로 네방향점 드래그해 이을 때). 고스트도 같은 _route_ortho를 쓰도록
+    # _qc_route_context를 추가해 고쳤다 — 이 테스트는 그 계산 결과가 실제 결과와 일치하는지 확인.
+    from easycad.canvas.annotator_core import (
+        _edge_mid, _QC_SIDE_NORMAL, _route_ortho, _dedup_pts, _PolyArrowItem)
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    a = _mk_rect(w._scene, w.make_pen(), -290, -213, 181, 125)
+    b = _mk_rect(w._scene, w.make_pen(), 44, -56, 207, 120)
+    view = w._view
+    a.setSelected(True)
+    side = "b"
+    p_src = _edge_mid(view._qc_src_scene_rect(a), side)
+    cursor = QPointF(251, 4)   # b의 E 포트 — 재진입 회피가 실제로 갈리는 배치(혹 버그 재현과 동일)
+
+    snap = view._qc_snap_target(cursor, a)
+    end = snap[0] if snap is not None else cursor
+    ns = _QC_SIDE_NORMAL[side]
+    ne = snap[1] if snap is not None else None
+    target = snap[2] if snap is not None else None
+    obstacles, conn_rects = view._qc_route_context(a, target)
+    mids = _route_ortho(p_src, end, ns, ne, obstacles, _PolyArrowItem._ROUTE_CLEARANCE,
+                        conn_rects=conn_rects)
+    ghost_pts = _dedup_pts([p_src] + mids + [end])
+
+    arrow = view._qc_create_arrow_only(a, side, cursor)
+    final_pts = [arrow.mapToScene(p) for p in arrow._pts]
+
+    assert len(ghost_pts) == len(final_pts) and all(
+        _close(x, y) for x, y in zip(ghost_pts, final_pts)), \
+        ("고스트≠확정", ghost_pts, final_pts)
+
+
 def test_snap_to_line_and_arrow_endpoints():
     # [M4-2b] 스냅 대상에 선·화살표(끝점 우선 + 몸통 폴백) 포함, 바인딩은 도형만(shape=None).
     w = CanvasWindow(); v = w._view
@@ -4397,6 +4433,57 @@ def test_sarrow_does_not_ride_shared_edge():
     assert not reenter and ride == 0, ("변 타기 잔존", ride, pts)
     # 두 박스 '위'로 넘어가는 다리여야 한다(윗변보다 확실히 바깥).
     assert min(p.y() for p in pts) < -_RIDE_TOL, pts
+
+
+def test_sarrow_no_unnecessary_hump_on_reenter_fix():
+    # [혹 버그 수정 2026-07-27] 실도면(123.ecad) 재현 — 재진입 회피가 conn_clear(가장 넉넉한
+    # 여유)의 첫 A* 결과를 결함 없다는 이유만으로 즉시 채택해, 사다리가 더 짧은 경로를 찾을 기회를
+    # 못 얻었다. 왼쪽 박스 S포트 → 오른쪽 박스 E포트 연결이 (8,-52)→(8,-92)→(287,-92)→(287,4)
+    # 식으로 불필요하게 위로 솟았다가 내려오는 '혹'을 만들던 실제 배치.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), -290, -213, 181, 125)
+    b = _mk_rect(w._scene, w.make_pen(), 44, -56, 207, 120)
+    sa = _mk_bound_sarrow(w, a, b, 2, 1)          # S(a) -> E(b)
+    pts = [sa.mapToScene(p) for p in sa._pts]
+    reenter, ride = _sarrow_defects(sa)
+    assert not reenter, ("연결 도형 관통", pts)
+    assert ride == 0, ("변 타기", ride, pts)
+    # 혹 있는 옛 경로는 정점 7개(중간에 위로 솟았다 내려오는 왕복 2정점 추가) — 수정 후엔 단순
+    # Z자형 5개여야 한다(엘보 하나만 더 필요한 최소 경로).
+    assert len(pts) <= 5, ("정점 과다 — 혹 재발 의심", pts)
+    # 중간 정점(시작·끝 포트 제외)이 오른쪽 도형(top=-56) 위로 과도하게 높이 솟으면 혹이 남은 것.
+    assert min(p.y() for p in pts[1:-1]) > -80, ("불필요하게 높은 우회(혹)", pts)
+
+
+def test_sarrow_drag_preview_matches_release_no_hump():
+    # [혹 버그 수정 2026-07-27] 실제 press→drag→release 마우스 이벤트로 위 실도면 배치를 그대로
+    # 재연 — 드래그 중 라이브 미리보기와 릴리스 후 확정 경로가 완전히 같아야 한다(둘 다 같은
+    # _apply_routing에 위임하므로). 사용자가 "미리보기와 결과값이 다르다"고 보고했던 경로 —
+    # 조사 결과 원인은 build_elbow가 아니라 set_ortho_preview의 시작점 바인딩 누락이라 의심했으나,
+    # 실제 mousePressEvent는 도형 테두리 press 시 그 자리에서 바로 시작점을 바인딩해(다른 코드
+    # 경로) 그 가설은 틀렸음을 이 테스트로 확인 — _route_ortho 혹 수정 하나로 이미 preview==release.
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    a = _mk_rect(w._scene, w.make_pen(), -290, -213, 181, 125)
+    b = _mk_rect(w._scene, w.make_pen(), 44, -56, 207, 120)
+    view = w._view
+    press, release, click, move, drag_move, dbl = _draw_helpers(view)
+
+    sp = _shape_ports(a)[2][0]   # S(a)
+    ep = _shape_ports(b)[1][0]   # E(b)
+
+    press(sp)
+    drag_move(QPointF(ep.x() - 5, ep.y() - 5))   # 근처 통과
+    drag_move(ep)                                 # 포트 위 — 스냅+라이브 바인딩
+    live_pts = [view._temp.mapToScene(p) for p in view._temp._pts]
+    release(ep)
+
+    arrows = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(arrows) == 1, arrows
+    final_pts = [arrows[0].mapToScene(p) for p in arrows[0]._pts]
+
+    assert len(live_pts) == len(final_pts) and all(
+        _close(x, y) for x, y in zip(live_pts, final_pts)), \
+        ("미리보기≠확정", live_pts, final_pts)
 
 
 def test_sarrow_no_reenter_when_conn_shapes_close():
