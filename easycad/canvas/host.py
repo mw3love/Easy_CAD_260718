@@ -931,7 +931,8 @@ class CanvasWindow(QMainWindow):
 
         # 그리기 도구(체크형) — 네모·원은 왼쪽 「도형」 팔레트로 이관(단축키 2·5는 유지).
         # [화살표 통합] 직선화살(sarrow) 버튼 제거 — 화살표 버튼 하나가 종류(직선·곡선·직각)를
-        # 대표한다. 종류는 선택 후 미니툴바에서 고른다(단축키 9는 여전히 화살표 도구로 매핑).
+        # 대표한다. 그리기 전 기본 종류는 버튼 클릭(InstantPopup 메뉴)으로 고르고(즉시 그 종류로
+        # 무장), 그린 뒤 세부 조정(색·스타일·방향·반경)은 여전히 미니툴바에서(단축키 9는 화살표 도구 매핑 유지).
         self._tool_buttons: dict[str, QToolButton] = {}
         for key, name, sc in _TOOLS:
             if key in ("rect", "ellipse", "sarrow"):
@@ -939,12 +940,17 @@ class CanvasWindow(QMainWindow):
             btn = QToolButton()
             btn.setIcon(_tool_icon(key, self.current_color))
             btn.setIconSize(QSize(20, 20))
-            tip = "화살표 (3 — 직선·곡선·직각, 그린 뒤 미니툴바에서 선택)" \
+            tip = "화살표 (3 — 클릭으로 직선·곡선·직각 선택, 그린 뒤 미니툴바에서 재조정)" \
                 if key == "arrow" else f"{name} ({sc})"
             btn.setToolTip(tip)
             btn.setCheckable(True)
-            if key == "arrow":   # [화살표 통합] 화살표는 종류→도구 변환 진입점을 탄다(토글 포함)
-                btn.clicked.connect(lambda _c=False: self.arm_arrow_tool())
+            if key == "arrow":
+                # [화살표 통합] 버튼 전체가 종류 메뉴 트리거(InstantPopup) — 분할버튼의 좁은 ▾
+                # 영역은 아이콘 크기(20px)에서 조준하기 어렵다는 실사용 피드백으로 교체(2026-07-27).
+                # 클릭 한 번으로 마지막 종류를 바로 무장하고 싶으면 단축키 3(arm_arrow_tool 직결)을
+                # 쓴다 — 키보드 경로는 이 메뉴와 무관하게 그대로 살아있다.
+                btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+                btn.setMenu(self._build_arrow_kind_toolbar_menu())
             else:
                 btn.clicked.connect(
                     lambda _c=False, k=key: self.set_tool(None if self.current_tool == k else k))
@@ -1279,6 +1285,23 @@ class CanvasWindow(QMainWindow):
         if btn is not None:
             btn.setIcon(_tool_icon(_ARROW_KIND_TOOL.get(self.current_arrow_kind, "arrow"),
                                    self.current_color))
+
+    def _build_arrow_kind_toolbar_menu(self):
+        """[화살표 통합] 상단 툴바 화살표 버튼 클릭(InstantPopup) 시 뜨는 메뉴 — 그리기 *전*
+        기본 종류 선택. 미니툴바(_build_routing_menu)와 항목은 같지만 대상이 다르다: 여기는
+        선택된 화살표가 아니라 '다음에 그릴 화살표'를 정하므로 고르는 즉시 그 종류로 도구를 무장한다."""
+        m = QMenu(self)
+        for kind, label in _ARROW_KIND_LABELS:
+            m.addAction(label, lambda k=kind: self._toolbar_set_arrow_kind(k))
+        return m
+
+    def _toolbar_set_arrow_kind(self, kind):
+        """[화살표 통합] 툴바 메뉴에서 종류를 고르면 sticky 기본값을 갱신하고 곧바로 그
+        종류로 무장(그린 뒤 고르는 미니툴바 `_floating_set_arrow_kind`와 달리, 그리기 전
+        선택이라 무장 여부와 무관하게 항상 무장한다)."""
+        self.current_arrow_kind = kind
+        self._refresh_arrow_tool_button()
+        self.set_tool(_ARROW_KIND_TOOL.get(kind, "arrow"))
 
     def _set_current_color(self, color: QColor):
         """[M2 #A] 현재 색을 갱신하고 상단 그리기 도구 아이콘을 그 색으로 다시 칠한다
