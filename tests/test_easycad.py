@@ -612,6 +612,70 @@ def test_duplicate_offset():
     w.undo(); assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == 1
 
 
+def test_duplicate_rebinds_arrow_within_group():
+    # 함께 선택한 도형+화살표를 Ctrl+D로 복제하면, 사본 화살표는 사본 도형에 붙어야 한다
+    # (원본 도형 참조를 그대로 들고 있으면 원본을 옮길 때 사본 화살표가 딸려온다 — 버그).
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=300, y=20)
+    ar = _ArrowItem(QColor("#111111"), 3, True)
+    pa, pb = QPointF(40, 15), QPointF(0, 15)
+    ar.set_points(a.mapToScene(pa), b.mapToScene(pb))
+    ar.set_bound(0, a, pa); ar.set_bound(1, b, pb)
+    w._scene.addItem(ar)
+    a.setSelected(True); b.setSelected(True); ar.setSelected(True)
+    w.duplicate_selection()
+    rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+    arrows = [x for x in w._scene.items() if isinstance(x, _ArrowItem)]
+    assert len(rects) == 4 and len(arrows) == 2
+    new_ar = [x for x in arrows if x is not ar][0]
+    # _mk_pen_rect는 pos()가 아니라 rect() 로컬좌표에 x/y를 싣는다 — rect()로 원본 대응관계 식별.
+    new_a = [r for r in rects if r is not a and r.rect() == a.rect()][0]
+    new_b = [r for r in rects if r is not b and r.rect() == b.rect()][0]
+    assert new_ar._bind1 is new_a and new_ar._bind2 is new_b   # 사본끼리 재연결
+    assert ar._bind1 is a and ar._bind2 is b                   # 원본은 불변
+
+    # 대조군: 도형 없이 화살표만 복제하면 배치 밖 도형이라 원본 바인딩 유지(기존 동작 보존).
+    w2 = CanvasWindow()
+    a2 = _mk_pen_rect(w2, x=0, y=0); b2 = _mk_pen_rect(w2, x=300, y=20)
+    ar2 = _ArrowItem(QColor("#111111"), 3, True)
+    ar2.set_points(a2.mapToScene(pa), b2.mapToScene(pb))
+    ar2.set_bound(0, a2, pa); ar2.set_bound(1, b2, pb)
+    w2._scene.addItem(ar2)
+    ar2.setSelected(True)
+    w2.duplicate_selection()
+    new_ar2 = [x for x in w2._scene.items() if isinstance(x, _ArrowItem) and x is not ar2][0]
+    assert new_ar2._bind1 is a2 and new_ar2._bind2 is b2
+
+
+def test_copy_paste_rebinds_arrow_within_group():
+    # copy_selection + paste_selection도 동일 — 사본끼리 재연결(여러 번 붙여넣어도 매번 정확).
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=300, y=20)
+    ar = _ArrowItem(QColor("#111111"), 3, True)
+    pa, pb = QPointF(40, 15), QPointF(0, 15)
+    ar.set_points(a.mapToScene(pa), b.mapToScene(pb))
+    ar.set_bound(0, a, pa); ar.set_bound(1, b, pb)
+    w._scene.addItem(ar)
+    a.setSelected(True); b.setSelected(True); ar.setSelected(True)
+    w.copy_selection()
+    w.paste_selection()
+    rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+    arrows = [x for x in w._scene.items() if isinstance(x, _ArrowItem)]
+    assert len(rects) == 4 and len(arrows) == 2
+    new_ar = [x for x in arrows if x is not ar][0]
+    assert new_ar._bind1 in rects and new_ar._bind1 is not a
+    assert new_ar._bind2 in rects and new_ar._bind2 is not b
+    assert new_ar._bind1 is not new_ar._bind2
+
+    w.paste_selection()   # 두 번째 붙여넣기도 사본끼리 정확히 재연결되는지
+    arrows2 = [x for x in w._scene.items() if isinstance(x, _ArrowItem)]
+    assert len(arrows2) == 3
+    newest_ar = [x for x in arrows2 if x not in (ar, new_ar)][0]
+    rects2 = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+    assert newest_ar._bind1 in rects2 and newest_ar._bind2 in rects2
+    assert newest_ar._bind1 is not newest_ar._bind2
+
+
 def test_shape_palette_arms_tool():
     # 팔레트 네모 버튼 클릭 → rect 도구 무장 + 버튼 체크 동기화. 단축키 경로도 유지.
     w = CanvasWindow()
