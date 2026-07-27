@@ -5171,6 +5171,9 @@ class _AnnotatorView(QGraphicsView):
         # [우리 확장] 다중선택 그룹 변형(회전·스케일) — 2개 이상 선택 시 공통 bbox+핸들.
         self._group = _GroupTransform(self)
         self._group_dragging = False
+        # [편의기능] 다중선택 바운딩박스 안쪽 빈틈(실제 도형이 없는 자리) 드래그 — 전체 이동.
+        self._group_body_drag = False
+        self._group_body_anchor = None
         # [Stage2b] AutoCAD 정통 stretch — crossing 박스에 걸친 정점만 이동(명시적 S 모드).
         # crossing(또는 window) 러버밴드 선택 → S로 무장 → 기준점 클릭 → 도착 클릭. Esc=취소.
         self._last_sel_rect = None    # 마지막 러버밴드 씬 사각(crossing 박스 '기억')
@@ -5201,6 +5204,16 @@ class _AnnotatorView(QGraphicsView):
             if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
                 return False
         return True
+
+    def _group_body_area_at(self, view_pos) -> bool:
+        """[편의기능] 다중선택(그룹) 바운딩박스 안쪽 — 실제 도형이 없는 빈틈도 이동 영역으로
+        취급한다(Lucid/FigJam — 선택 박스 안 아무 데나 끌면 전체가 움직인다). 개별 도형의
+        속 빈 내부는 이미 _interior_hit_active가 채워 주지만, 서로 떨어진 도형들 '사이' 빈
+        공간은 어느 도형의 shape()에도 안 걸려 여전히 빈 영역으로 판정되던 것을 보완한다."""
+        if not self._group.available():
+            return False
+        b = self._group.bbox()
+        return b is not None and b.contains(self.mapToScene(view_pos))
 
     def _bend_handle_at(self, view_pos):
         """커서(view 좌표) 아래에 활성 bend 핸들이 있으면 그 화살표, 없으면 None.
@@ -6025,6 +6038,15 @@ class _AnnotatorView(QGraphicsView):
             # 빈 영역 드래그 = 방향 감지 러버밴드(window/crossing), 아이템 위 = 이동/선택.
             # 창 이동은 상단 코랄 드래그바로. (편집 모드 본문 pan은 제거)
             if self._is_empty_area(vpos):
+                # [편의기능] 다중선택 바운딩박스 안쪽 빈틈이면 러버밴드 대신 그룹 전체 이동으로
+                # 취급(Shift는 추가선택 의도이므로 기존 러버밴드 경로 그대로 둠). 실제 도형이
+                # 없어 Qt가 못 잡으므로 델타를 직접 계산해 선택 아이템들에 moveBy한다.
+                if self._group_body_area_at(vpos) and not (
+                        event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+                    self._snapshot_movable()
+                    self._group_body_drag = True
+                    self._group_body_anchor = self.mapToScene(vpos)
+                    return
                 # [우리 확장] Qt 기본 RubberBandDrag 대신 커스텀 밴드 시작(방향별 window/crossing).
                 self._rb_active = True
                 self._rb_origin = QPoint(vpos)
@@ -6543,6 +6565,8 @@ class _AnnotatorView(QGraphicsView):
             vp.setCursor(Qt.CursorShape.CrossCursor)         # 펜 — 주석 위에서도 항상 그리기
         elif not self._is_empty_area(view_pos):
             vp.setCursor(Qt.CursorShape.SizeAllCursor)       # 주석 위 — 선택/이동
+        elif self._group_body_area_at(view_pos):
+            vp.setCursor(Qt.CursorShape.SizeAllCursor)       # [편의기능] 그룹 바운딩박스 빈틈 — 이동
         elif tool is None:
             vp.setCursor(Qt.CursorShape.OpenHandCursor)      # 손 모드 빈 영역 — 창 이동
         elif tool == "select":
@@ -6580,6 +6604,17 @@ class _AnnotatorView(QGraphicsView):
         if self._group_dragging:  # [우리 확장] 그룹 변형 드래그 — 회전·스케일 실시간 적용
             self._group.update_to(self.mapToScene(event.position().toPoint()),
                                   bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+            self.viewport().update()
+            return
+        if self._group_body_drag:  # [편의기능] 그룹 바운딩박스 빈틈 드래그 — 선택 전체를 델타만큼 이동
+            scene_pt = self.mapToScene(event.position().toPoint())
+            delta = scene_pt - self._group_body_anchor
+            self._group_body_anchor = scene_pt
+            if delta.x() or delta.y():
+                for it in self.scene().selectedItems():
+                    if it.parentItem() is None and (
+                            it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable):
+                        it.moveBy(delta.x(), delta.y())
             self.viewport().update()
             return
         if self._qc_dragging:  # [2d] 빠른 생성 드래그 — 임계 넘게 끌면 커서 위치, 아니면 기본 배치
@@ -6704,6 +6739,11 @@ class _AnnotatorView(QGraphicsView):
         if self._group_dragging:  # [우리 확장] 그룹 변형 종료 — undo에 변형 트랜잭션 커밋
             self._group.end()
             self._group_dragging = False
+            self.viewport().update()
+            return
+        if self._group_body_drag:  # [편의기능] 그룹 바운딩박스 빈틈 드래그 종료 — 이동 undo 커밋
+            self._group_body_drag = False
+            self._commit_move()
             self.viewport().update()
             return
         if self._qc_dragging:  # [2d] 빠른 생성 종료 — 복제 도형 + 연결 화살표 생성

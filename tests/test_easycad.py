@@ -4802,6 +4802,57 @@ def test_no_duplicate_window_action_shortcuts():
     assert not dups, f"중복 단축키 발견: {dups}"
 
 
+def test_group_body_gap_drag_moves_selection():
+    # [편의기능] 다중선택 바운딩박스 안쪽인데 실제 도형이 없는 '빈틈'을 눌러 끌어도, 선택된
+    # 도형 전체가 함께 이동해야 한다(Lucid/FigJam). 종전엔 그 자리에 아이템이 없어 Qt가 못
+    # 잡고 러버밴드(재선택)로 오인됐다.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    view = w._view
+    a = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30)
+    b = _mk_pen_rect(w, x=300, y=20, ww=40, hh=30)
+    a.setSelected(True); b.setSelected(True)
+    bbox = view._group.bbox()
+    gap = QPointF(bbox.center().x(), bbox.center().y())   # 두 네모 사이 빈 공간(실제 도형 없음)
+    assert view._is_empty_area(view.mapFromScene(gap))    # 전제: 이 지점엔 진짜 아이템이 없다
+    assert view._group_body_area_at(view.mapFromScene(gap))  # 하지만 그룹 바운딩박스 안쪽이다
+
+    a0, b0 = QPointF(a.pos()), QPointF(b.pos())
+    u0 = len(w._undo)
+
+    def _ev(etype, scene_pt, buttons, mods=Qt.KeyboardModifier.NoModifier):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, Qt.MouseButton.LeftButton, buttons, mods)
+
+    NB = Qt.MouseButton.NoButton
+    L = Qt.MouseButton.LeftButton
+    view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, gap, L))
+    assert view._group_body_drag
+    moved_to = QPointF(gap.x() + 25, gap.y() + 15)
+    view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, moved_to, L))
+    view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, moved_to, NB))
+    assert not view._group_body_drag
+
+    assert _close(a.pos(), QPointF(a0.x() + 25, a0.y() + 15))
+    assert _close(b.pos(), QPointF(b0.x() + 25, b0.y() + 15))
+    assert len(w._undo) == u0 + 1
+    w.undo()
+    assert _close(a.pos(), a0) and _close(b.pos(), b0)
+
+
+def test_group_ungroup_shows_status_message():
+    # [편의기능] 그룹/그룹해제는 눈에 띄는 되돌림 없이 조용히 상태만 바뀌던 것 — 상태바 메시지로
+    # 즉시 인지 가능해야 한다.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True); b.setSelected(True)
+    w.group_selection()
+    assert "그룹" in w.statusBar().currentMessage()
+    w.ungroup_selection()
+    assert "해제" in w.statusBar().currentMessage()
+
+
 def test_group_lock_ecad_roundtrip():
     w = CanvasWindow()
     a = _mk_pen_rect(w, x=0, y=0)

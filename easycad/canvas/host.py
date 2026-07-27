@@ -1824,6 +1824,7 @@ class CanvasWindow(QMainWindow):
         for it in sel:
             it._group_id = gid
         self._push_entry([("mut", it, "group", old, gid) for it, old in snaps])
+        self.statusBar().showMessage(f"그룹 지정: {len(sel)}개 객체", 3000)
 
     def ungroup_selection(self):
         sel = self._edit_targets()
@@ -1835,6 +1836,7 @@ class CanvasWindow(QMainWindow):
         for it in members:
             it._group_id = None
         self._push_entry([("mut", it, "group", old, None) for it, old in snaps])
+        self.statusBar().showMessage(f"그룹 해제: {len(members)}개 객체", 3000)
 
     # ---- [편의기능] 객체 잠금 ---------------------------------------------
     def _set_item_lock_flags(self, it, locked: bool):
