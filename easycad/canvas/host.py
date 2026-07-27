@@ -67,10 +67,11 @@ class _PaletteButton(QToolButton):
     버튼에 안 와 clicked가 발화하지 않으므로 무장되지 않는다(의도 — 드래그와 무장 분리)."""
     _DRAG_THRESH = 6
 
-    def __init__(self, tool_key: str, parent=None):
+    def __init__(self, tool_key: str, parent=None, preview_fn=None):
         super().__init__(parent)
         self._drag_tool_key = tool_key
         self._drag_press = None
+        self._preview_fn = preview_fn   # [UX] 실물 미리보기 렌더 콜백(host._render_drag_preview)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
@@ -95,7 +96,9 @@ class _PaletteButton(QToolButton):
         md = QMimeData()
         md.setData(_PALETTE_MIME, self._drag_tool_key.encode("utf-8"))
         drag.setMimeData(md)
-        pm = self.icon().pixmap(QSize(30, 30))
+        pm = self._preview_fn(self._drag_tool_key) if self._preview_fn else None
+        if pm is None or pm.isNull():
+            pm = self.icon().pixmap(QSize(30, 30))   # 폴백 — 미리보기 렌더 불가 시 기존 아이콘
         if not pm.isNull():
             drag.setPixmap(pm)
             drag.setHotSpot(QPoint(pm.width() // 2, pm.height() // 2))
@@ -1047,8 +1050,52 @@ class CanvasWindow(QMainWindow):
         p.end()
         return QIcon(pm)
 
+    def _render_drag_preview(self, tool_key: str) -> QPixmap | None:
+        """[UX] 팔레트 드래그 픽스맵을 툴 아이콘 대신 실제 생성될 도형(현재 색·두께·비율)으로
+        렌더 — 드롭 전에도 크기·모양을 직관적으로 파악하게. 현재 줌 배율을 반영하되, 극단 줌에서
+        드래그 커서가 점이 되거나 거대해지지 않도록 최종 픽셀 크기를 클램프한다."""
+        if tool_key.startswith("sym:"):
+            kind = tool_key[4:]
+            if kind not in _SYMBOL_KINDS:
+                return None
+            w, h = _PALETTE_SYM_WH
+            path_fn = _SYMBOL_KINDS[kind][1]
+        elif tool_key in _PALETTE_DROP_WH:
+            kind = tool_key
+            w, h = _PALETTE_DROP_WH[tool_key]
+            path_fn = None
+        else:
+            return None
+        scale = self._view.transform().m11()
+        pw, ph = w * scale, h * scale
+        long_side = max(pw, ph)
+        if long_side < 24.0:
+            f = 24.0 / long_side
+            pw *= f; ph *= f
+        elif long_side > 220.0:
+            f = 220.0 / long_side
+            pw *= f; ph *= f
+        pw, ph = max(1, round(pw)), max(1, round(ph))
+        pen = self.make_pen()
+        margin = pen.widthF() / 2.0 + 2.0
+        pm = QPixmap(pw, ph)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(pen)
+        p.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        r = QRectF(margin, margin, max(1.0, pw - 2 * margin), max(1.0, ph - 2 * margin))
+        if kind == "rect":
+            p.drawRect(r)
+        elif kind == "ellipse":
+            p.drawEllipse(r)
+        else:
+            p.drawPath(path_fn(r))
+        p.end()
+        return pm
+
     def _palette_button(self, label: str, icon_kind: str, tooltip: str, tool_key: str) -> QToolButton:
-        btn = _PaletteButton(tool_key)   # [M3 #17] 클릭=무장 / 드래그=캔버스 드롭 생성
+        btn = _PaletteButton(tool_key, preview_fn=self._render_drag_preview)   # [M3 #17] 클릭=무장 / 드래그=캔버스 드롭 생성
         btn.setText(label)
         btn.setIcon(self._shape_icon(icon_kind))
         btn.setIconSize(QSize(30, 30))

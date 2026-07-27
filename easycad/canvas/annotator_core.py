@@ -5080,6 +5080,11 @@ class _AnnotatorView(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        # [UX] 무한캔버스 + %줌 상태바 조합에서 스크롤바는 항상 켜진 채(씬이 사실상 무한이라
+        # ScrollBarAsNeeded도 늘 표시됨)로 뜨는데 실제 이동은 손모드 드래그로 하므로 시각적 잡음만
+        # 됨. 팬은 스크롤바 값을 직접 조작해 구현돼 있어(_win_drag_move) 정책만 꺼도 기능엔 무관.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setMouseTracking(True)
         self._drawing = False
         self._temp: QGraphicsItem | None = None
