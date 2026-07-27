@@ -5616,7 +5616,11 @@ class _AnnotatorView(QGraphicsView):
         dist = math.hypot(tip.x() - start.x(), tip.y() - start.y())
         it.prepareGeometryChange()
         it._p2 = QPointF(tip)
-        if (exit_dir is None and back is None) or dist < 8:
+        # [화살표 통합] sticky 종류가 '직선'이면 라이브 미리보기도 곧게 — 안 그러면 드래그 중엔
+        # 자동 S자로 보이다가 릴리스(_apply_arrow_kind_on_create)에서만 펴져 미리보기와 결과가
+        # 어긋난다(2026-07-27 사용자 GUI 보고).
+        straight_kind = getattr(self._owner, "current_arrow_kind", "curved") == "straight"
+        if straight_kind or (exit_dir is None and back is None) or dist < 8:
             it._ctrl1 = it._ctrl2 = None   # 양끝 자유거나 너무 짧으면 직선
         else:
             k = max(30.0, min(dist * 0.5, 200.0))

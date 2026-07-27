@@ -381,6 +381,25 @@ def test_straight_kind_flattens_on_draw():
     assert b._ctrl1 is None                                # 직선 종류 → 곧게 폄
 
 
+def test_straight_kind_flattens_live_preview():
+    # [화살표 통합 · 버그] sticky 종류가 '직선'이면 릴리스 전 드래그 중 미리보기도 곧아야 한다.
+    # 종전엔 _update_arrow_draw가 종류를 안 보고 스냅 시 자동 S자를 그렸다가 릴리스에서만
+    # _apply_arrow_kind_on_create가 곧게 펴, 드래그 중엔 곡선 → 뗄 때 직선으로 바뀌어 보였다
+    # (2026-07-27 사용자 GUI 보고).
+    w = CanvasWindow(); w.show(); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)      # 우측 테두리 x=300, 중앙 y=30
+    view = w._view
+    press, release, _click, _move, drag_move, _d = _draw_helpers(view)
+
+    w.current_arrow_kind = "straight"; w.set_tool("arrow")
+    press(QPointF(-50, 30))
+    drag_move(QPointF(295, 30))   # 테두리 근처 — 자유였다면 자동 S자가 걸릴 지점
+    assert view._temp._ctrl1 is None and view._temp._ctrl2 is None   # 드래그 중에도 이미 직선
+    release(QPointF(305, 30))
+    a = [it for it in w._scene.items() if isinstance(it, _ArrowItem)][-1]
+    assert a._ctrl1 is None                                # 릴리스 후에도 그대로 직선
+
+
 def test_sarrow_routing_backcompat():
     # [M4-4] 옛 .ecad(routing 키 없음): auto_route→ortho / 없으면 straight로 유추(무손실).
     from easycad.fileio.document import dict_to_item
