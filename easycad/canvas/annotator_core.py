@@ -4871,6 +4871,9 @@ def _rebake_selection(geom_items, bound_info, fn):
 # ---------------------------------------------------------------------------
 _QC_OPP = {"r": "l", "l": "r", "t": "b", "b": "t"}
 _QC_GAP = 40.0   # 원본과 복제 사이 씬 간격(기본 배치)
+_QC_SIDE_NORMAL = {  # 각 변의 바깥 단위 법선(scene) — 직각 엘보 미리보기/생성 시 이탈 방향으로 씀.
+    "t": QPointF(0, -1), "r": QPointF(1, 0), "b": QPointF(0, 1), "l": QPointF(-1, 0),
+}
 
 
 def _edge_mid(r: QRectF, side: str) -> QPointF:
@@ -5300,7 +5303,9 @@ class _AnnotatorView(QGraphicsView):
 
     def _qc_create_arrow_only(self, src, side, cursor_scene):
         """[M4-2] 네방향점 드래그 = 화살표만 생성(도형 복제 없이). 시작은 src의 side 포트에
-        바인딩, 끝은 커서 위치 — 그 자리에 다른 도형이 있으면 그 테두리에 스냅+바인딩(직교 엘보)."""
+        바인딩, 끝은 커서 위치 — 그 자리에 다른 도형이 있으면 그 테두리에 스냅+바인딩.
+        [편의기능] 시작이 항상 바인딩되므로(has_binding) 자유 끝이어도 _apply_routing이 회피
+        경로 포함 직각 엘보를 만든다 — 종전엔 스냅 안 됐을 때만 직선으로 남았다(2026-07-27 피드백)."""
         owner = self._owner
         p_src = _edge_mid(self._qc_src_scene_rect(src), side)
         arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
@@ -5313,9 +5318,9 @@ class _AnnotatorView(QGraphicsView):
         arrow.set_points(p_src, end)
         if snap is not None and snap[2] is not None and snap[2] is not src:
             arrow.set_bound(1, snap[2], snap[2].mapFromScene(end))
-            arrow._auto_route = True
-            arrow.build_elbow()
+        arrow._auto_route = True   # 도형 이동 시에도 계속 엘보로 재계산(reroute가 이 값을 봄)
         self.scene().addItem(arrow)
+        arrow._apply_routing()
         self._owner.push_undo_add(arrow)
         self.scene().clearSelection()
         arrow.setSelected(True)
@@ -5351,7 +5356,12 @@ class _AnnotatorView(QGraphicsView):
         if cursor_scene is not None:
             snap = self._qc_snap_target(cursor_scene, src)   # [M4-2] 드래그 중 스냅 예고
             end = snap[0] if snap is not None else cursor_scene
-            painter.drawLine(p_src, end)                      # 드래그 = 화살표만 예고
+            # [편의기능] 직각 엘보로 미리보기 — 종전엔 항상 직선이라 결과(직각)와 달라 보였다.
+            ns = _QC_SIDE_NORMAL[side]
+            ne = snap[1] if snap is not None else None
+            pts = [p_src] + _ortho_elbow(p_src, end, ns, ne) + [end]
+            for i in range(len(pts) - 1):
+                painter.drawLine(pts[i], pts[i + 1])
             if snap is not None:
                 self._draw_snap_marker(painter, end, self._view_scale())   # 붙을 지점 파란 점
             return

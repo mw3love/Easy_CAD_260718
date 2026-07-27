@@ -827,6 +827,22 @@ def test_qc_drag_creates_arrow_only():
     assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == n0 + 1
 
 
+def test_qc_drag_free_end_still_makes_ortho_elbow():
+    # [편의기능] 네방향점 드래그로 화살표를 만들 때, 도착점이 다른 도형에 안 붙어도(자유 끝)
+    # 직각 엘보로 나와야 한다 — 종전엔 스냅 안 되면 시작-끝 2점 직선(대각선)으로 남았다
+    # (2026-07-27 사용자 피드백: "기본이 직선으로 나온다").
+    w = CanvasWindow(); v = w._view
+    r = _mk_pen_rect(w, x=0, y=0, ww=80, hh=50); r.setSelected(True)
+    # 대각선 방향 도착점(대각이면 직선과 엘보 차이가 뚜렷) — 우측 변에서 우측-아래로.
+    arr = v._qc_create(r, "r", QPointF(300, 200))
+    assert isinstance(arr, _PolyArrowItem)
+    assert arr._auto_route is True                    # 도형 이동해도 계속 엘보 재계산되도록
+    assert len(arr._pts) >= 3, "자유 끝인데도 2점 직선이면 버그(엘보가 안 생김)"
+    # 엘보의 모든 변은 축정렬(수평 또는 수직)이어야 한다(대각선 세그먼트가 있으면 실패).
+    for p1, p2 in zip(arr._pts[:-1], arr._pts[1:]):
+        assert abs(p1.x() - p2.x()) < 1e-6 or abs(p1.y() - p2.y()) < 1e-6
+
+
 def test_snap_to_line_and_arrow_endpoints():
     # [M4-2b] 스냅 대상에 선·화살표(끝점 우선 + 몸통 폴백) 포함, 바인딩은 도형만(shape=None).
     w = CanvasWindow(); v = w._view
