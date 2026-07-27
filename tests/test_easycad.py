@@ -4574,6 +4574,30 @@ def test_alt_drag_copy_noop_without_alt():
     assert len(w._scene.items()) == n0   # Alt 없으면 복제 없음
 
 
+def test_alt_drag_copy_rebinds_arrow_within_group():
+    # Alt+드래그 복제도 duplicate_selection/paste_selection과 동일한 배치내 재연결이 필요하다
+    # (같은 clone() 경유 버그 — 세 진입점 모두 remap_grouped_bindings를 거친다).
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=10, y=10, ww=40, hh=30)
+    b = _mk_pen_rect(w, x=300, y=20, ww=40, hh=30)
+    ar = _ArrowItem(QColor("#111111"), 3, True)
+    pa, pb = QPointF(40, 15), QPointF(0, 15)
+    ar.set_points(a.mapToScene(pa), b.mapToScene(pb))
+    ar.set_bound(0, a, pa); ar.set_bound(1, b, pb)
+    w._scene.addItem(ar)
+    a.setSelected(True); b.setSelected(True); ar.setSelected(True)
+    ev = _mods_event("press", w._view, a.mapToScene(QPointF(20, 15)), Qt.KeyboardModifier.AltModifier)
+    w._view._maybe_alt_drag_copy(ev)
+    rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+    arrows = [x for x in w._scene.items() if isinstance(x, _ArrowItem)]
+    assert len(rects) == 4 and len(arrows) == 2
+    new_ar = [x for x in arrows if x is not ar][0]
+    new_a = [r for r in rects if r is not a and r.rect() == a.rect()][0]
+    new_b = [r for r in rects if r is not b and r.rect() == b.rect()][0]
+    assert new_ar._bind1 is new_a and new_ar._bind2 is new_b   # 사본끼리 재연결
+    assert ar._bind1 is a and ar._bind2 is b                   # 원본은 불변
+
+
 def test_axis_lock_constrains_to_dominant_axis():
     # Shift+드래그 — 첫 유의미한 편차가 더 큰 축으로 고정, 반대 축 성분은 되돌린다.
     w = CanvasWindow()

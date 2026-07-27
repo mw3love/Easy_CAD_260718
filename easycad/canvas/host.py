@@ -34,6 +34,7 @@ from easycad.canvas.annotator_core import (
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
+    remap_grouped_bindings,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -315,25 +316,6 @@ def _arrow_kind_of(item):
     if isinstance(item, _ArrowItem):
         return "curved" if item._ctrl1 is not None else "straight"
     return None
-
-
-def _remap_grouped_bindings(pairs):
-    """복사/붙여넣기·Ctrl+D가 한 배치로 함께 만든 (원본, 새 아이템) 쌍 안에서, 화살표가
-    같은 배치 안의 도형에 바인딩돼 있었다면 그 도형의 사본으로 재연결한다. clone()은
-    _bind1/_bind2(또는 _bind_start/_bind_end)를 원본 참조 그대로 복사하므로(배치 밖 도형에
-    붙은 경우를 보존하기 위해 의도적), 배치 안에서 복제된 상대는 여기서 후처리로 갈아끼운다."""
-    remap = dict(pairs)
-    for new in remap.values():
-        if hasattr(new, "_bind1"):
-            if new._bind1 in remap:
-                new._bind1 = remap[new._bind1]
-            if new._bind2 in remap:
-                new._bind2 = remap[new._bind2]
-        elif hasattr(new, "_bind_start"):
-            if new._bind_start in remap:
-                new._bind_start = remap[new._bind_start]
-            if new._bind_end in remap:
-                new._bind_end = remap[new._bind_end]
 
 
 class _UndoEntry:
@@ -1736,7 +1718,7 @@ class CanvasWindow(QMainWindow):
             new_items.append(c)
         # clone()이 _bind1/_bind2 등을 원본 그대로 복사해 왔으므로(clip 세대를 거쳐도 불변),
         # 같이 복사된 도형끼리는 여기서 사본으로 재연결한다(배치 밖 도형 바인딩은 그대로 유지).
-        _remap_grouped_bindings(zip(self._clip_src, new_items))
+        remap_grouped_bindings(zip(self._clip_src, new_items))
         if new_items:
             self.push_undo_add_many(new_items)
 
@@ -1754,7 +1736,7 @@ class CanvasWindow(QMainWindow):
             self._scene.addItem(c)
             c.setSelected(True)
             new_items.append(c)
-        _remap_grouped_bindings(zip(src, new_items))
+        remap_grouped_bindings(zip(src, new_items))
         if new_items:
             self.push_undo_add_many(new_items)
 

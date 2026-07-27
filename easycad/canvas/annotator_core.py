@@ -3924,6 +3924,25 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._paint_endpoint_handles(painter)
 
 
+def remap_grouped_bindings(pairs):
+    """복사/붙여넣기·Ctrl+D·Alt-드래그 복제가 한 배치로 함께 만든 (원본, 새 아이템) 쌍 안에서,
+    화살표가 같은 배치 안의 도형에 바인딩돼 있었다면 그 도형의 사본으로 재연결한다. clone()은
+    _bind1/_bind2(또는 _bind_start/_bind_end)를 원본 참조 그대로 복사하므로(배치 밖 도형에
+    붙은 경우를 보존하기 위해 의도적), 배치 안에서 함께 복제된 상대는 여기서 후처리로 갈아끼운다."""
+    remap = dict(pairs)
+    for new in remap.values():
+        if hasattr(new, "_bind1"):
+            if new._bind1 in remap:
+                new._bind1 = remap[new._bind1]
+            if new._bind2 in remap:
+                new._bind2 = remap[new._bind2]
+        elif hasattr(new, "_bind_start"):
+            if new._bind_start in remap:
+                new._bind_start = remap[new._bind_start]
+            if new._bind_end in remap:
+                new._bind_end = remap[new._bind_end]
+
+
 class _BadgeItem(_HandleResizeMixin, QGraphicsItem):
     """원 배경 + 중앙 번호. 클릭 위치(pos)에 배치."""
 
@@ -5461,6 +5480,7 @@ class _AnnotatorView(QGraphicsView):
             c.setZValue(it.zValue())
             self.scene().addItem(c)
             clones.append(c)
+        remap_grouped_bindings(zip(src, clones))   # 배치 안에서 함께 복제된 도형끼리 재연결
         self.scene().clearSelection()
         for c in clones:
             c.setSelected(True)
