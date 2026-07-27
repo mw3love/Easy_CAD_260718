@@ -371,6 +371,41 @@ M2). 패널은 콤팩트 기본폭(도형 144·속성 170px)으로 **진짜 최�
     자동 S자 곡률을 계산한 게 원인(`_apply_arrow_kind_on_create`는 릴리스에만 관여). 드래그 중에도
     sticky 종류가 '직선'이면 즉시 곧게 그리도록 통일. 스모크 203→204종.
 
+**중간점검(기존 기능 점검) 2026-07-27 — 버그 6건 발견·수정, 실조건검증 대부분 ✓, 스모크 204→229종.**
+사용자 요청으로 "4대 영역(기존기능/코드정리/디자인/신규기능) 중 기존 기능 점검부터" 진행.
+정적 스캔 + 사용자 GUI 실사용 피드백 병행으로 발견:
+  - **복제/붙여넣기 계열 바인딩 유실 3건**(`89a855b`·`0253182`·`d507ca0`) — Ctrl+D·복사/붙여넣기·
+    Alt+드래그 세 진입점 전부에서 clone()이 `_bind1`/`_bind2`(화살표)·`_group_id`(그룹)를 원본
+    참조/값 그대로 복사해, 도형+화살표를 함께 복제하면 사본 화살표가 원본 도형에 남고, 그룹을
+    복제하면 사본이 그룹 해제됐다. `remap_grouped_bindings`·`regroup_duplicated_items`(둘 다
+    annotator_core.py, 세 진입점 공유)로 해결. 실조건검증 ✓.
+  - **Ctrl+Shift+G 단축키 충돌**(`399416e`) — Mermaid 가져오기 QAction과 뷰 raw keyPressEvent의
+    그룹 해제가 같은 단축키라 QAction(WindowShortcut)이 항상 이겨 그룹 해제가 죽은 코드였음
+    (오프스크린 테스트는 view.keyPressEvent 직접호출이라 이 우선순위를 우회해 못 잡았음). Mermaid를
+    Ctrl+Shift+F로 재배정 + `test_no_duplicate_window_action_shortcuts`(전역 QAction 단축키 중복
+    정적 검사)로 재발방지. 실조건검증 ✓.
+  - **다중선택 빈틈 드래그 이동 + 그룹 상태메시지**(`e15ff08`) — 사용자 피드백: 여러 도형 선택 시
+    바운딩박스 안이라도 실제 도형이 없는 빈틈은 이동 안 됨(Qt 히트테스트가 개별 도형 위만 잡음).
+    `_group_body_area_at`/`_group_body_drag`로 그룹 바운딩박스 전체를 이동 영역으로 확장(Shift+
+    드래그는 기존 러버밴드 그대로). 그룹/해제 시 상태바 메시지 추가(조용히 바뀌어 인지 어렵다는
+    피드백). 실조건검증 ✓.
+  - **빠른연결(네방향점 드래그) 화살표 직각 기본화 + sticky 반경**(`08796e5`·`86be836`) — 도형
+    변점을 다른 도형으로 드래그해 화살표를 만들 때 도착점이 정확히 안 붙으면(자유 끝) 2점 직선으로
+    영구히 남던 버그. `_qc_create_arrow_only`가 `_apply_routing()`에 위임하도록 수정(`_auto_route`
+    항상 True) + 미니툴바 곡선 반경 sticky 값(`current_curve_r`)도 `_begin_draw`와 동일하게 스탬프.
+    실조건검증 ✓(반경 유지 확인).
+  - **A* 라우터 불필요한 우회('혹') + QC 미리보기≠확정**(`12f807f`, 별도 세션에서 진행) — 사용자가
+    실사용 중 GUI 스크린샷으로 제보(도형 변 포트 연결 시 화살표가 위로 갔다 다시 내려오는 혹 발견).
+    두 가지 근본원인: ⓐ `_route_ortho`가 재진입회피 A*의 가장 넉넉한 clearance(conn_clear) 첫
+    결과를 결함없다는 이유만으로 조기채택해, 더 짧은 경로를 찾는 clearance 사다리(36→12→1→0px)가
+    실행될 기회를 못 얻었다 → 조기 반환 제거(사다리는 단조개선이라 무회귀). ⓑ QC 고스트 미리보기
+    (`_qc_paint_ghost`)가 장애물·재진입 회피 없는 `_ortho_elbow`만 써서 릴리스 시 실제 경로와
+    달랐다 → `_qc_route_context` 헬퍼로 고스트도 `_route_ortho` 사용(sarrow의 `set_ortho_preview`와
+    동일 패턴). Rejected: `set_ortho_preview`에 start_shape 바인딩 추가(다른 코드경로가 이미
+    처리 중이라 불필요 + 회귀 유발, QTest 재현으로 확인 후 폐기). Confidence high, Not-tested:
+    실제 물리 마우스(합성 이벤트로 대체), 사다리 상시화의 대규모 도면 성능.
+  - **재현 파일**: `C:\Users\7make\Desktop\123.ecad` 사용자 실도면 — 재현·회귀 스모크 근거.
+
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.
   ⚠ 전례: 지속연결 초안이 offscreen을 통과했으나 GUI에서 버그 발견(플로팅→고정 부착점으로 수정).
