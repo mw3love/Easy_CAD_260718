@@ -34,6 +34,10 @@ def _common(it) -> dict:
         "rotation": it.rotation(),
         "z": it.zValue(),
         "origin": [o.x(), o.y()],
+        # [편의기능] 잠금·그룹 — 기본값(미잠금·무그룹)이면 어차피 로드 시 getattr 기본과 같지만
+        # 명시 저장이 더 단순·안전하다(다른 pen/style 필드와 동일 관례).
+        "locked": getattr(it, "_locked", False),
+        "group_id": getattr(it, "_group_id", None),
     }
 
 
@@ -44,9 +48,15 @@ def _apply_common(it, d: dict):
     it.setScale(sc if sc else 1.0)
     it.setRotation(d.get("rotation", 0.0))
     it.setZValue(d.get("z", 0))
+    it._group_id = d.get("group_id")
+    locked = d.get("locked", False)
+    it._locked = locked
     it.setFlags(
         it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable
     )
+    if locked:   # [편의기능] 잠금 상태로 저장된 아이템은 로드 시에도 움직이지 않게
+        it.setFlag(it.GraphicsItemFlag.ItemIsMovable, False)
+        it.setFlag(it.GraphicsItemFlag.ItemIsSelectable, False)
     return it
 
 

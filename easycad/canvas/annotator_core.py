@@ -386,6 +386,11 @@ class _HandleResizeMixin:
     _HANDLE_MAX = 12.0   # 씬 단위 상한
     _EDGE_HIT_MIN = 8.0  # 속 빈 도형 테두리 클릭 최소 히트폭(씬 단위) — 얇은 선도 잡히게
 
+    # [편의기능] 잠금·그룹 — 클래스 기본값(인스턴스는 host의 토글/그룹 메서드가 설정).
+    # clone()은 이 필드를 모르므로 복제본은 항상 이 기본값(미잠금·무그룹)에서 시작한다.
+    _locked = False
+    _group_id = None
+
     def _stroke_width(self) -> float:
         """핸들 크기 기준이 되는 획 두께(로컬 단위). 없으면 0(→ 크기 비례 폴백)."""
         if hasattr(self, "_width"):   # _ArrowItem
@@ -5100,6 +5105,8 @@ class _AnnotatorView(QGraphicsView):
         self._start = QPointF()
         self._path: QPainterPath | None = None
         self._move_snap = None       # 드래그 이동 전 위치 스냅샷([(item, QPointF), ...]) — undo용
+        # [편의기능] Shift+드래그 축 고정 — "h"(수평만)/"v"(수직만)/None(미고정). press마다 리셋.
+        self._axis_lock = None
         # [2e] 스마트 정렬 가이드 — 단일 도형 이동 중 근처 도형과 모서리·중심 정렬 시 스냅+가상선.
         self._move_active = False    # 도형 드래그(이동/핸들) 진행 중(_snapshot_movable서 set)
         self._align_guides = []      # 그릴 가이드선 [("v", x, y0, y1) | ("h", y, x0, x1)]
@@ -5424,11 +5431,71 @@ class _AnnotatorView(QGraphicsView):
     def _snapshot_movable(self):
         """드래그 이동 전 이동 가능 아이템들의 위치를 기록(release에서 변경분만 undo에 커밋)."""
         self._move_active = True   # [2e] 도형 드래그 시작(이동/핸들) — 스마트 정렬 스냅 판정 활성
+        self._axis_lock = None     # [편의기능] Shift+드래그 축 고정 — 새 드래그마다 재판정
         self._move_snap = [
             (it, QPointF(it.pos())) for it in self.scene().items()
             if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable
             and not isinstance(it, _ConnectorLabel)   # 라벨 드래그는 t·off 소유라 위치-undo 스코프 밖
         ]
+
+    def _maybe_alt_drag_copy(self, event):
+        """[편의기능] Alt+드래그 시작 — 선택 항목을 제자리 복제하고 복제본을 선택한다.
+        복제본이 원본과 같은 자리·zValue에 놓여 Qt의 기본 히트테스트가 복제본을 잡으므로,
+        곧바로 이어지는 super().mousePressEvent()가 복제본을 자연스럽게 드래그한다
+        (Qt 내부 grabber를 직접 다루는 대신 '위에 새로 얹기'로 우회 — 더 견고함)."""
+        if not (event.modifiers() & Qt.KeyboardModifier.AltModifier):
+            return
+        vpos = event.position().toPoint()
+        top = self.items(vpos)
+        if not top:
+            return
+        sel = self.scene().selectedItems()
+        src = sel if top[0] in sel else [top[0]]
+        src = [it for it in src if hasattr(it, "clone") and it.parentItem() is None]
+        if not src:
+            return
+        clones = []
+        for it in src:
+            c = it.clone()
+            c.setPos(it.pos())
+            c.setZValue(it.zValue())
+            self.scene().addItem(c)
+            clones.append(c)
+        self.scene().clearSelection()
+        for c in clones:
+            c.setSelected(True)
+        if hasattr(self._owner, "push_undo_add_many"):
+            self._owner.push_undo_add_many(clones)
+
+    def _apply_axis_lock(self, event):
+        """[편의기능] Shift+드래그 — 첫 유의미한 편차 방향(수평/수직)으로 축을 고정해 그 축으로만
+        움직이게 한다(일러스트레이터·Figma 관행). 스마트 정렬 스냅보다 사용자 의도가 강하므로,
+        축이 고정된 동안은 mouseMoveEvent에서 스마트 스냅을 건너뛴다."""
+        if not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            self._axis_lock = None
+            return
+        snap = self._move_snap
+        if not snap:
+            return
+        # ⚠ _move_snap은 씬의 '이동 가능한 모든' 아이템을 담는다(선택 여부 무관) — snap[0]이
+        # 실제로 드래그 중인 아이템이라는 보장이 없다(도형이 2개 이상이면 대개 아니다).
+        # Qt 기본 드래그는 '선택된' movable 아이템들만 함께 옮기므로, 델타는 그중에서 재야 한다.
+        moving = [(it, old) for it, old in snap if it.scene() is not None and it.isSelected()]
+        if not moving:
+            return
+        it0, old0 = moving[0]
+        delta = it0.pos() - old0
+        if self._axis_lock is None:
+            thr = 3.0 / self._view_scale()
+            if abs(delta.x()) < thr and abs(delta.y()) < thr:
+                return   # 방향이 아직 불명확 — 다음 move에서 재판정
+            self._axis_lock = "h" if abs(delta.x()) >= abs(delta.y()) else "v"
+        if self._axis_lock == "h" and delta.y() != 0:
+            for it, old in moving:
+                it.setPos(QPointF(it.pos().x(), old.y()))
+        elif self._axis_lock == "v" and delta.x() != 0:
+            for it, old in moving:
+                it.setPos(QPointF(old.x(), it.pos().y()))
 
     def _apply_smart_snap(self):
         """[2e] 단일 도형 이동 중 — 근처 도형과 모서리(좌/우/상/하)·중심 정렬 시 스냅 + 가상선.
@@ -5911,6 +5978,7 @@ class _AnnotatorView(QGraphicsView):
                 self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
                 self._none_win_dragging = True
                 return
+            self._maybe_alt_drag_copy(event)   # [편의기능] Alt+드래그 = 제자리 복제 후 드래그
             self._snapshot_movable()   # 주석 드래그 이동을 undo로 되돌리기 위해
             return super().mousePressEvent(event)
         if tool == "select":
@@ -5927,12 +5995,14 @@ class _AnnotatorView(QGraphicsView):
                 self._apply_rubber_selection()
                 self.viewport().update()
                 return
+            self._maybe_alt_drag_copy(event)   # [편의기능] Alt+드래그 = 제자리 복제 후 드래그
             self._snapshot_movable()   # 아이템 드래그 이동을 undo로 되돌리기 위해
             return super().mousePressEvent(event)
 
         # 도형 도구는 기존 주석 위를 클릭하면 그리기 대신 선택/이동.
         # 단, 펜은 빽빽이 겹쳐 그리므로 항상 그린다(펜 선의 선택/이동은 V 도구로).
         if tool != "pen" and not self._is_empty_area(event.position().toPoint()):
+            self._maybe_alt_drag_copy(event)   # [편의기능] Alt+드래그 = 제자리 복제 후 드래그
             self._snapshot_movable()
             return super().mousePressEvent(event)
 
@@ -6543,7 +6613,11 @@ class _AnnotatorView(QGraphicsView):
         # [2e] 도형 이동 드래그 — Qt로 옮긴 뒤 스마트 정렬 스냅 + 가이드선.
         if self._move_active and (event.buttons() & Qt.MouseButton.LeftButton):
             super().mouseMoveEvent(event)
-            self._apply_smart_snap()
+            self._apply_axis_lock(event)   # [편의기능] Shift+드래그 축 고정 — 스냅보다 먼저(더 강한 제약)
+            if self._axis_lock is None:
+                self._apply_smart_snap()
+            else:
+                self._align_guides = []    # 축 고정 중엔 정렬 가이드선도 끔(서로 다른 제약 혼선 방지)
             self.viewport().update()
             return
         super().mouseMoveEvent(event)
@@ -6835,6 +6909,29 @@ class _AnnotatorView(QGraphicsView):
             if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_D \
                     and hasattr(self._owner, "duplicate_selection"):
                 self._owner.duplicate_selection()
+                return
+            # [편의기능] Ctrl+G=그룹, Ctrl+Shift+G=그룹 해제. Easy CAD 호스트만 제공 → hasattr 가드.
+            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_G \
+                    and hasattr(self._owner, "group_selection"):
+                if mods & Qt.KeyboardModifier.ShiftModifier:
+                    self._owner.ungroup_selection()
+                else:
+                    self._owner.group_selection()
+                return
+            # [편의기능] Ctrl+L = 선택 잠금 전환.
+            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_L \
+                    and not (mods & Qt.KeyboardModifier.ShiftModifier) \
+                    and hasattr(self._owner, "toggle_lock_selection"):
+                self._owner.toggle_lock_selection()
+                return
+            # [편의기능] Ctrl+] = 맨 앞으로, Ctrl+[ = 맨 뒤로.
+            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_BracketRight \
+                    and hasattr(self._owner, "bring_to_front"):
+                self._owner.bring_to_front()
+                return
+            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_BracketLeft \
+                    and hasattr(self._owner, "send_to_back"):
+                self._owner.send_to_back()
                 return
             if key in self._SHORTCUTS and not (mods & (
                     Qt.KeyboardModifier.ControlModifier

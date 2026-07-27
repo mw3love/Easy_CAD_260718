@@ -13,6 +13,8 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
           push_undo_add/push_undo_delete/push_undo_move/undo/
           copy_selection/paste_selection
 """
+import uuid
+
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
@@ -368,6 +370,7 @@ class CanvasWindow(QMainWindow):
         self._clip: list = []
         self._paste_seq = 0
         self._pan_last = None
+        self._group_sync_active = False   # [편의기능] 그룹 동반선택 재진입 가드
 
         # ---- 씬 / 뷰 ----
         self._scene = QGraphicsScene(self)
@@ -376,6 +379,8 @@ class CanvasWindow(QMainWindow):
         # 지속 연결: 도형/화살표가 움직이면 바인딩된 화살표 끝을 재계산(scene.changed 트리거).
         self._rerouting = False
         self._scene.changed.connect(self._on_scene_changed)
+        # [편의기능] 그룹 멤버 중 하나가 선택되면 같은 그룹 전체를 함께 선택.
+        self._scene.selectionChanged.connect(self._sync_group_selection)
         self._view = _AnnotatorView(self._scene, self)
         self._view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self._view.centerOn(0, 0)
@@ -1634,6 +1639,12 @@ class CanvasWindow(QMainWindow):
             it.apply_geom(tok)
         elif sub == "state":
             it.apply_state(tok)
+        elif sub == "z":
+            it.setZValue(tok)
+        elif sub == "group":
+            it._group_id = tok
+        elif sub == "lock":
+            self._set_item_lock_flags(it, tok)
 
     def _apply_entry(self, entry, redo):
         for op in entry.ops:
@@ -1741,6 +1752,112 @@ class CanvasWindow(QMainWindow):
         self.copy_selection()
         self.delete_selection()
 
+    # ---- [편의기능] Z-order / 그룹 / 잠금 — 공용 대상 헬퍼 --------------------
+    def _zorder_pool(self):
+        """Z-order·그룹·잠금 후보 전체 — 배경·용지틀 제외한 최상위 아이템."""
+        bg = getattr(self, "_bg_item", None)
+        return [it for it in self._scene.items()
+                if it.parentItem() is None and it is not bg
+                and not isinstance(it, _TitleBlockItem)]
+
+    def _edit_targets(self):
+        """위 후보 중 현재 선택된 것만."""
+        pool_ids = {id(it) for it in self._zorder_pool()}
+        return [it for it in self._scene.selectedItems() if id(it) in pool_ids]
+
+    # ---- [편의기능] Z-order(맨 앞으로/맨 뒤로 보내기) --------------------------
+    def bring_to_front(self):
+        sel = self._edit_targets()
+        if not sel:
+            return
+        top_z = max((it.zValue() for it in self._zorder_pool()), default=0.0)
+        snaps = [(it, it.zValue()) for it in sel]
+        for i, it in enumerate(sorted(sel, key=lambda x: x.zValue())):
+            it.setZValue(top_z + 1.0 + i)
+        self._push_entry([("mut", it, "z", old, it.zValue()) for it, old in snaps])
+
+    def send_to_back(self):
+        sel = self._edit_targets()
+        if not sel:
+            return
+        bottom_z = min((it.zValue() for it in self._zorder_pool()), default=0.0)
+        snaps = [(it, it.zValue()) for it in sel]
+        for i, it in enumerate(sorted(sel, key=lambda x: -x.zValue())):
+            it.setZValue(bottom_z - 1.0 - i)
+        self._push_entry([("mut", it, "z", old, it.zValue()) for it, old in snaps])
+
+    # ---- [편의기능] Group / Ungroup --------------------------------------
+    def _sync_group_selection(self):
+        """그룹 멤버 하나가 선택되면 같은 그룹 전체를 함께 선택(재진입 가드로 무한루프 방지)."""
+        if self._group_sync_active:
+            return
+        sel = self._scene.selectedItems()
+        gids = {getattr(it, "_group_id", None) for it in sel} - {None}
+        if not gids:
+            return
+        missing = [it for it in self._zorder_pool()
+                   if getattr(it, "_group_id", None) in gids and not it.isSelected()]
+        if not missing:
+            return
+        self._group_sync_active = True
+        try:
+            for it in missing:
+                it.setSelected(True)
+        finally:
+            self._group_sync_active = False
+
+    def group_selection(self):
+        sel = self._edit_targets()
+        if len(sel) < 2:
+            return
+        gid = uuid.uuid4().hex[:8]
+        snaps = [(it, getattr(it, "_group_id", None)) for it in sel]
+        for it in sel:
+            it._group_id = gid
+        self._push_entry([("mut", it, "group", old, gid) for it, old in snaps])
+
+    def ungroup_selection(self):
+        sel = self._edit_targets()
+        gids = {it._group_id for it in sel if getattr(it, "_group_id", None)}
+        if not gids:
+            return
+        members = [it for it in self._zorder_pool() if getattr(it, "_group_id", None) in gids]
+        snaps = [(it, it._group_id) for it in members]
+        for it in members:
+            it._group_id = None
+        self._push_entry([("mut", it, "group", old, None) for it, old in snaps])
+
+    # ---- [편의기능] 객체 잠금 ---------------------------------------------
+    def _set_item_lock_flags(self, it, locked: bool):
+        """잠금 = ItemIsMovable·ItemIsSelectable을 직접 꺼서 Qt가 클릭·드래그·러버밴드를
+        전부 자연히 걸러내게 한다(각 이벤트 핸들러에 별도 잠금 체크를 심을 필요가 없음)."""
+        it._locked = locked
+        it.setFlag(it.GraphicsItemFlag.ItemIsMovable, not locked)
+        it.setFlag(it.GraphicsItemFlag.ItemIsSelectable, not locked)
+        if locked:
+            it.setSelected(False)
+
+    def toggle_lock_selection(self):
+        """선택 중 하나라도 미잠금이면 전부 잠금, 전부 이미 잠겼으면 전부 해제(공통 토글 UX)."""
+        sel = self._edit_targets()
+        if not sel:
+            return
+        lock_to = any(not getattr(it, "_locked", False) for it in sel)
+        snaps = [(it, getattr(it, "_locked", False)) for it in sel]
+        for it in sel:
+            self._set_item_lock_flags(it, lock_to)
+        self._push_entry([("mut", it, "lock", old, lock_to) for it, old in snaps])
+
+    def unlock_all(self):
+        """잠긴 객체는 선택이 안 돼 개별 우클릭으로 못 푸므로, 빈 영역 메뉴에 두는 탈출구."""
+        locked = [it for it in self._zorder_pool() if getattr(it, "_locked", False)]
+        if not locked:
+            return
+        snaps = [(it, True) for it in locked]
+        for it in locked:
+            self._set_item_lock_flags(it, False)
+        self._push_entry([("mut", it, "lock", old, False) for it, old in snaps])
+
     def _build_context_menu(self):
         """[M3 #16] 유휴 우클릭 탭 메뉴 구성 — 선택/클립보드 유무로 항목을 정한다.
         전부 기존 편집 경로(copy/paste/duplicate/delete/select_all)를 재사용해 undo 일관.
@@ -1756,6 +1873,16 @@ class CanvasWindow(QMainWindow):
         if len(self._align_targets()) >= 2:      # [M5] 여럿 선택 시만 정렬/분배 서브메뉴
             menu.addSeparator()
             menu.addMenu(self._build_align_menu("정렬 / 분배", parent=menu))
+        targets = self._edit_targets()           # [편의기능] Z-order/그룹/잠금 대상
+        if targets:
+            menu.addSeparator()
+            menu.addAction("맨 앞으로 보내기\tCtrl+]", self.bring_to_front)
+            menu.addAction("맨 뒤로 보내기\tCtrl+[", self.send_to_back)
+            menu.addAction("잠금 전환\tCtrl+L", self.toggle_lock_selection)
+            if len(targets) >= 2:
+                menu.addAction("그룹\tCtrl+G", self.group_selection)
+            if any(getattr(it, "_group_id", None) for it in targets):
+                menu.addAction("그룹 해제\tCtrl+Shift+G", self.ungroup_selection)
         if has_clip:
             if has_sel:
                 menu.addSeparator()
@@ -1764,6 +1891,8 @@ class CanvasWindow(QMainWindow):
             if has_clip:
                 menu.addSeparator()
             menu.addAction("전체 선택\tCtrl+A", self.select_all)
+            if any(getattr(it, "_locked", False) for it in self._zorder_pool()):
+                menu.addAction("잠금 해제 (전체)", self.unlock_all)
         return menu if not menu.isEmpty() else None
 
     def _show_context_menu(self, global_pos):

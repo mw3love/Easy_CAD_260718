@@ -4465,6 +4465,236 @@ def test_border_snap_prefers_shape_port_over_arrow_endpoint():
     assert got is not None, "화살표 몸통 스냅이 죽음"
 
 
+# ---------------------------------------------------------------------------
+# [편의기능] Alt+드래그 복사 / Shift+드래그 축 고정 / Z-order / 그룹 / 잠금
+# ---------------------------------------------------------------------------
+def _mods_event(etype, view, scene_pt, modifiers):
+    """지정한 모디파이어를 실은 합성 마우스 이벤트(뷰 좌표로 변환해 생성)."""
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    vp = QPointF(view.mapFromScene(scene_pt))
+    if etype == "press":
+        return QMouseEvent(QEvent.Type.MouseButtonPress, vp, vp,
+                            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, modifiers)
+    return QMouseEvent(QEvent.Type.MouseMove, vp, vp,
+                        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, modifiers)
+
+
+def test_alt_drag_copy_clones_selection():
+    # Alt+press = 제자리 복제 + 복제본 선택(원본은 선택 해제). 이어지는 Qt 기본 드래그가
+    # 그 복제본을 옮기므로, 여기서는 뷰의 분기(복제·선택 전환·undo)까지만 검증한다
+    # (Qt 내부 grabber를 통한 실제 드래그 이동은 오프스크린서 재현 불가 — CLAUDE.md M4-3 전례).
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=10, y=10, ww=40, hh=30)
+    it.setSelected(True)
+    n0 = len(w._scene.items())
+    u0 = len(w._undo)
+    ev = _mods_event("press", w._view, QPointF(30, 25), Qt.KeyboardModifier.AltModifier)
+    w._view._maybe_alt_drag_copy(ev)
+    assert len(w._scene.items()) == n0 + 1
+    assert len(w._undo) == u0 + 1
+    clones = [x for x in w._scene.selectedItems() if x is not it]
+    assert len(clones) == 1, clones
+    clone = clones[0]
+    assert not it.isSelected()          # 원본은 선택 해제
+    assert _close(clone.pos(), it.pos())  # 제자리(오프셋 없음)
+
+
+def test_alt_drag_copy_noop_without_alt():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=10, y=10, ww=40, hh=30)
+    it.setSelected(True)
+    n0 = len(w._scene.items())
+    ev = _mods_event("press", w._view, QPointF(30, 25), Qt.KeyboardModifier.NoModifier)
+    w._view._maybe_alt_drag_copy(ev)
+    assert len(w._scene.items()) == n0   # Alt 없으면 복제 없음
+
+
+def test_axis_lock_constrains_to_dominant_axis():
+    # Shift+드래그 — 첫 유의미한 편차가 더 큰 축으로 고정, 반대 축 성분은 되돌린다.
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30)
+    it.setSelected(True)
+    view = w._view
+    view._snapshot_movable()
+    old = QPointF(it.pos())
+    it.setPos(QPointF(old.x() + 20, old.y() + 3))   # 수평이 지배적
+    ev = _mods_event("move", view, QPointF(0, 0), Qt.KeyboardModifier.ShiftModifier)
+    view._apply_axis_lock(ev)
+    assert view._axis_lock == "h"
+    assert _close(it.pos(), QPointF(old.x() + 20, old.y()))   # y는 원위치로 복원
+
+
+def test_axis_lock_with_multiple_scene_items():
+    # 회귀: _move_snap은 씬의 '모든' movable 아이템을 담는데(선택 무관), 델타를 스냅 리스트의
+    # 첫 아이템으로 재면 그게 드래그 중인 아이템이 아닐 때(도형 2개 이상이면 흔함) 축 고정이
+    # 영영 안 걸린다. 안 움직이는 other를 먼저 만들어 스냅 리스트 앞자리를 차지하게 한다.
+    # scene.items()는 동일 z에서 '나중에 추가된 것이 먼저'(맨 위) 순으로 나온다 — other를
+    # it보다 나중에 추가해야 _move_snap[0]을 차지해 회귀 시나리오가 재현된다.
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30)
+    other = _mk_pen_rect(w, x=500, y=500, ww=40, hh=30)   # 선택 안 됨 — 절대 안 움직임
+    other_pos0 = QPointF(other.pos())   # rect 좌표가 아니라 pos()(기본 0,0) 기준으로 비교
+    it.setSelected(True)
+    view = w._view
+    view._snapshot_movable()
+    assert view._move_snap[0][0] is other, "테스트 전제 붕괴: other가 스냅 리스트 첫 자리가 아님"
+    old = QPointF(it.pos())
+    it.setPos(QPointF(old.x() + 20, old.y() + 3))
+    ev = _mods_event("move", view, QPointF(0, 0), Qt.KeyboardModifier.ShiftModifier)
+    view._apply_axis_lock(ev)
+    assert view._axis_lock == "h", "다른 정지 아이템 때문에 축 고정이 발동 안 함(회귀)"
+    assert _close(it.pos(), QPointF(old.x() + 20, old.y()))
+    assert _close(other.pos(), other_pos0)   # other는 그대로(선택 안 됐으니 손대면 안 됨)
+
+
+def test_axis_lock_off_without_shift():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30)
+    it.setSelected(True)
+    view = w._view
+    view._snapshot_movable()
+    it.setPos(QPointF(20, 3))
+    ev = _mods_event("move", view, QPointF(0, 0), Qt.KeyboardModifier.NoModifier)
+    view._apply_axis_lock(ev)
+    assert view._axis_lock is None
+    assert _close(it.pos(), QPointF(20, 3))   # Shift 없으면 손대지 않음
+
+
+def test_bring_to_front_send_to_back():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0)
+    b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True)
+    w.bring_to_front()
+    assert a.zValue() > b.zValue()
+    w.undo()
+    assert a.zValue() == 0.0 and b.zValue() == 0.0
+    w.redo()
+    assert a.zValue() > b.zValue()
+    a.setSelected(False); b.setSelected(True)
+    w.send_to_back()
+    assert b.zValue() < a.zValue()
+
+
+def test_zorder_excludes_titleblock():
+    w = CanvasWindow()
+    tb = _TitleBlockItem("A4", "landscape")
+    w._scene.addItem(tb)
+    r = _mk_pen_rect(w, x=0, y=0)
+    tb.setSelected(True); r.setSelected(True)
+    assert tb not in w._edit_targets()
+    assert r in w._edit_targets()
+
+
+def test_group_ungroup_and_selection_sync():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0)
+    b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True); b.setSelected(True)
+    u0 = len(w._undo)
+    w.group_selection()
+    assert len(w._undo) == u0 + 1
+    assert a._group_id is not None and a._group_id == b._group_id
+    # 하나만 선택해도 selectionChanged를 통해 그룹 전체가 딸려온다.
+    w._scene.clearSelection()
+    a.setSelected(True)
+    assert b.isSelected(), "그룹 동반선택 실패"
+    w.ungroup_selection()
+    assert a._group_id is None and b._group_id is None
+    w.undo()
+    assert a._group_id is not None and a._group_id == b._group_id   # 그룹 해제 undo
+
+
+def test_group_requires_two_or_more():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0)
+    a.setSelected(True)
+    w.group_selection()
+    assert a._group_id is None   # 1개 선택은 그룹화하지 않음
+
+
+def test_lock_toggle_blocks_selection_and_move():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0)
+    it.setSelected(True)
+    w.toggle_lock_selection()
+    assert it._locked is True
+    assert not it.isSelected()
+    assert not (it.flags() & it.GraphicsItemFlag.ItemIsSelectable)
+    assert not (it.flags() & it.GraphicsItemFlag.ItemIsMovable)
+    # 잠긴 객체는 select_all로도 안 잡힌다.
+    w.select_all()
+    assert not it.isSelected()
+    w.unlock_all()
+    assert it._locked is False
+    assert it.flags() & it.GraphicsItemFlag.ItemIsSelectable
+    assert it.flags() & it.GraphicsItemFlag.ItemIsMovable
+
+
+def test_lock_toggle_undo():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0)
+    it.setSelected(True)
+    w.toggle_lock_selection()
+    assert it._locked is True
+    w.undo()
+    assert it._locked is False
+    assert it.flags() & it.GraphicsItemFlag.ItemIsSelectable
+
+
+def test_convenience_keyboard_shortcuts_dispatch():
+    # keyPressEvent 배선 자체(host 메서드 직접호출이 아니라 실제 단축키 경로)를 검증.
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtCore import QEvent
+    CTRL = Qt.KeyboardModifier.ControlModifier
+    CTRL_SHIFT = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    view = w._view
+    a = _mk_pen_rect(w, x=0, y=0)
+    b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True); b.setSelected(True)
+
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_G, CTRL))
+    assert a._group_id is not None and a._group_id == b._group_id   # Ctrl+G
+
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_G, CTRL_SHIFT))
+    assert a._group_id is None and b._group_id is None              # Ctrl+Shift+G
+
+    w._scene.clearSelection(); a.setSelected(True)
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_BracketRight, CTRL))
+    assert a.zValue() > b.zValue()                                  # Ctrl+]
+
+    w._scene.clearSelection(); a.setSelected(True)
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_BracketLeft, CTRL))
+    assert a.zValue() < b.zValue()                                  # Ctrl+[
+
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_L, CTRL))
+    assert a._locked is True                                        # Ctrl+L(선택은 a만)
+
+
+def test_group_lock_ecad_roundtrip():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0)
+    b = _mk_pen_rect(w, x=100, y=0)
+    c = _mk_pen_rect(w, x=200, y=0)   # 그룹과 무관한 별도 객체 — 잠금 대상
+    a.setSelected(True); b.setSelected(True)
+    w.group_selection()
+    w._scene.clearSelection()
+    c.setSelected(True)
+    w.toggle_lock_selection()   # c만 잠금(a·b를 선택하면 그룹 동반선택으로 둘 다 딸려온다)
+    path = os.path.join(_TMP, "group_lock.ecad")
+    save_document(w._scene, path)
+    w2 = CanvasWindow()
+    load_document(w2._scene, path)
+    items = [it for it in w2._scene.items() if hasattr(it, "_group_id")]
+    locked = [it for it in items if it._locked]
+    grouped = [it for it in items if it._group_id]
+    assert len(locked) == 1
+    assert len(grouped) == 2 and grouped[0]._group_id == grouped[1]._group_id
+    assert not (locked[0].flags() & locked[0].GraphicsItemFlag.ItemIsMovable)
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
