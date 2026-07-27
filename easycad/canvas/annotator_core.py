@@ -514,7 +514,13 @@ class _HandleResizeMixin:
     def _endpoint_border_snap(self, local_p: QPointF):
         """끝점 드래그 중 근처 네모/원 테두리에 스냅(생성 때와 동일 _border_snap_at 재사용).
         스냅되면 (로컬 최근접점, 바깥 법선 scene, shape), 아니면 None — 뗐다 다시 가져가도 붙는 경로.
-        (shape는 지속 연결 바인딩용 — 기존 인덱서 [0]/[1]과 호환.)"""
+        (shape는 지속 연결 바인딩용 — 기존 인덱서 [0]/[1]과 호환.)
+        [실조건 2026-07-27 · 재부착 추종 실패 근본원인] `_border_snap_at`은 `exclude`를 받아 자기
+        자신을 스냅 후보에서 뺄 수 있게 설계돼 있는데(그 함수 docstring: "exclude=자기 자신(끝점
+        재스냅 시 self 제외)") 여기서 안 넘겼다. 그 결과 이 아이템(화살표) 자신의 다른 세그먼트/
+        끝점이 M4-2b의 "선·화살표 몸통 스냅"(기하만, shape=None) 후보로 잡혀, 도형 테두리보다
+        먼저·더 가깝게 자기 몸에 스냅될 수 있었다 — 시각적으로는 도형 근처라 붙은 것처럼 보이지만
+        `set_bound(idx, None)`이 호출돼 바인딩이 전혀 안 걸린다(디버그 로그로 재현·확인)."""
         if not self._connects_to_border():
             return None
         sc = self.scene()
@@ -524,7 +530,7 @@ class _HandleResizeMixin:
         snap = getattr(view, "_border_snap_at", None)
         if snap is None:
             return None
-        res = snap(view.mapFromScene(self.mapToScene(local_p)))
+        res = snap(view.mapFromScene(self.mapToScene(local_p)), exclude=self)
         if res is None:
             return None
         return self.mapFromScene(res[0]), res[1], res[2]
