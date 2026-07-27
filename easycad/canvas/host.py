@@ -458,7 +458,7 @@ class CanvasWindow(QMainWindow):
         self._act_tbl = self._make_action("표 삽입…", "table",
             self._insert_table, "Ctrl+Shift+B")
         self._act_mmd = self._make_action("Mermaid 가져오기…", "mermaid",
-            self._insert_mermaid, "Ctrl+Shift+G")
+            self._insert_mermaid, "Ctrl+Shift+F")
         for a in (self._act_img, self._act_tb, self._act_tbl, self._act_mmd):
             m.addAction(a)
 

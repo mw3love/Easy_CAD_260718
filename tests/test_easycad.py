@@ -4780,6 +4780,28 @@ def test_convenience_keyboard_shortcuts_dispatch():
     assert a._locked is True                                        # Ctrl+L(선택은 a만)
 
 
+def test_no_duplicate_window_action_shortcuts():
+    # [실조건 버그] 위 테스트처럼 view.keyPressEvent를 직접 호출하면 Qt의 실제 단축키 라우팅을
+    # 건너뛰어, 상단바/메뉴 QAction에 같은 단축키가 이미 배정돼 있으면(WindowShortcut이 우선
+    # 가로채 뷰의 keyPressEvent 분기가 영영 발화 못 함) 오프스크린 스모크로는 안 잡힌다. 실제로
+    # Mermaid 가져오기(Ctrl+Shift+G)가 그룹 해제(Ctrl+Shift+G, 뷰 raw 핸들러)를 막고 있었다
+    # (Ctrl+Shift+F로 재배정해 해소). 이 불변조건으로 향후 재충돌을 정적으로 잡는다.
+    from PyQt6.QtGui import QAction
+    w = CanvasWindow()
+    seen = {}
+    dups = []
+    for a in w.findChildren(QAction):
+        ks = a.shortcut()
+        if ks.isEmpty():
+            continue
+        key = ks.toString()
+        if key in seen and seen[key] is not a:
+            dups.append((key, seen[key].text(), a.text()))
+        else:
+            seen[key] = a
+    assert not dups, f"중복 단축키 발견: {dups}"
+
+
 def test_group_lock_ecad_roundtrip():
     w = CanvasWindow()
     a = _mk_pen_rect(w, x=0, y=0)
