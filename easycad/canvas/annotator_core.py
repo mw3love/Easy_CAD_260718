@@ -36,7 +36,7 @@ from easycad.theme import (
     PEACH as _PEACH, GREEN as _GREEN,
 )
 
-_MIN_WIDTH, _MAX_WIDTH, _DEFAULT_WIDTH = 1, 40, 6
+_MIN_WIDTH, _MAX_WIDTH, _DEFAULT_WIDTH = 1, 40, 1
 _MIN_FONT, _MAX_FONT, _DEFAULT_FONT = 2, 200, 16  # 휠 축소 하한을 2pt로(그 이하는 크기조절 점)
 # 번호 마커 지름(px). 기본 30 = _BadgeItem._R(15) * 2, scale 1.0에 대응.
 _MIN_BADGE, _MAX_BADGE, _DEFAULT_BADGE = 12, 120, 30
