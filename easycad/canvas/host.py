@@ -927,12 +927,9 @@ class CanvasWindow(QMainWindow):
         tb.setIconSize(QSize(20, 20))
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        # 파일 / 삽입
+        # 파일 (내보내기·삽입 7종은 이미 「파일」 메뉴에 있어 상단바에서 제거 — 아이콘만으론
+        # 기능을 구분하기 어렵다는 사용자 피드백. 단축키(Ctrl+P, Ctrl+Shift+D 등)는 메뉴에서 그대로).
         for a in (self._act_new, self._act_open, self._act_save):
-            tb.addAction(a)
-        tb.addSeparator()
-        for a in (self._act_pdf, self._act_dxf, self._act_dxf_in, self._act_img,
-                  self._act_tbl, self._act_tb, self._act_mmd):
             tb.addAction(a)
         tb.addSeparator()
 
@@ -1912,8 +1909,12 @@ class CanvasWindow(QMainWindow):
             menu.exec(global_pos)
 
     # ---- [Phase 6 M3 #15] 플로팅 컨텍스트 툴바 ------------------------------
-    # 선택 시 객체 바로 위에 뜨는 미니 툴바. 색·선스타일·복제·삭제·(화살표)방향 토글을
-    # 전부 속성 dock 편집 경로(#9)·host 메서드로 재사용해 undo가 일관되게 걸린다.
+    # 선택 시 객체 바로 위에 뜨는 미니 툴바 — "겉모습(도구형식)"만 담는다: 색·선스타일·
+    # 도형바꾸기·화살표종류·곡선반경·방향뒤집기. 색·선스타일은 속성 dock 편집 경로(#9)·host
+    # 메서드로 재사용해 undo가 일관되게 걸린다.
+    # [디자인 재검토] 정렬/분배·복제·삭제는 우클릭 메뉴와 중복 노출이었던 것을 정리해 제거
+    # (Figma·Lucid·Excalidraw 관례 — 겉모습은 상시 패널, 액션은 우클릭). 단축키(Ctrl+D·Del)와
+    # 우클릭 메뉴(_build_context_menu)로 계속 접근 가능, 기능 손실 없음.
     def _build_floating_toolbar(self):
         bar = QFrame(self)
         bar.setObjectName("floatBar")
@@ -1962,24 +1963,11 @@ class CanvasWindow(QMainWindow):
         self._float_radius.setToolTip("곡선 반경(0=직각)")
         self._float_radius.valueChanged.connect(self._floating_set_radius)
         lay.addWidget(self._float_radius)
-        # [M5] 정렬/분배 — 2개 이상 정렬 대상이 선택됐을 때만 노출(단일 선택엔 의미 없음).
-        self._float_align_btn = QToolButton(); self._float_align_btn.setText("≡▾")
-        self._float_align_btn.setFixedSize(QSize(26, 18))
-        self._float_align_btn.setToolTip("정렬 / 균등 분배")
-        self._float_align_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._float_align_btn.setMenu(self._build_align_menu())
-        lay.addWidget(self._float_align_btn)
         self._float_dir_btn = QToolButton(); self._float_dir_btn.setText("⇄")
         self._float_dir_btn.setFixedSize(QSize(22, 18))
         self._float_dir_btn.setToolTip("화살표 방향 뒤집기")
         self._float_dir_btn.clicked.connect(self._floating_flip_arrows)
         lay.addWidget(self._float_dir_btn)
-        dup = QToolButton(); dup.setText("⧉"); dup.setFixedSize(QSize(22, 18))
-        dup.setToolTip("복제(Ctrl+D)"); dup.clicked.connect(self.duplicate_selection)
-        lay.addWidget(dup)
-        dele = QToolButton(); dele.setText("✕"); dele.setFixedSize(QSize(22, 18))
-        dele.setToolTip("삭제(Del)"); dele.clicked.connect(self.delete_selection)
-        lay.addWidget(dele)
         bar.setStyleSheet("#floatBar { background:palette(window);"
                           " border:1px solid palette(mid); border-radius:6px; }")
         bar.setVisible(False)
@@ -2132,8 +2120,6 @@ class CanvasWindow(QMainWindow):
             return
         self._float_dir_btn.setVisible(
             any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel))
-        # [M5] 정렬/분배 — 맞출 상대가 있어야(대상 2개 이상) 뜬다.
-        self._float_align_btn.setVisible(len(self._align_targets()) >= 2)
         # [M4-3] 도형 교체 버튼 — 단일 도형(네모·원·심볼)만 선택했을 때.
         self._float_swap_btn.setVisible(
             len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem)))

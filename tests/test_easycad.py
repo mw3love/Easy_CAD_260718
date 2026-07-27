@@ -4376,16 +4376,13 @@ def test_align_repaints_group_overlay():
 
 
 def test_align_entry_points_visibility():
-    # [M5] 진입점 2곳 — 미니툴바 드롭다운·우클릭 서브메뉴 모두 '대상 2개 이상'에서만 뜬다.
+    # [디자인 재검토] 정렬/분배는 플로팅 툴바에서 제거하고 우클릭 메뉴로 일원화(중복 제거) —
+    # 진입점은 우클릭 서브메뉴 1곳, '대상 2개 이상'에서만 뜬다.
     w = CanvasWindow()
     labels = lambda: [a.text() for a in w._build_context_menu().actions() if not a.isSeparator()]
     a = _mk_pen_rect(w, x=0, y=0); a.setSelected(True)
-    w._reposition_floating_toolbar()
-    assert w._float_align_btn.isHidden()                      # 1개 선택 → 숨김
     assert "정렬 / 분배" not in labels()
     b = _mk_pen_rect(w, x=100, y=60); b.setSelected(True)
-    w._reposition_floating_toolbar()
-    assert not w._float_align_btn.isHidden()                  # 2개 → 노출
     assert "정렬 / 분배" in labels()
     # 메뉴 구성 = 정렬 6 + 분배 2.
     acts = [x.text() for x in w._build_align_menu().actions() if not x.isSeparator()]
