@@ -612,6 +612,25 @@ def test_duplicate_offset():
     w.undo(); assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == 1
 
 
+def test_duplicate_regroups_copied_group_members():
+    # [편의기능] 그룹을 통째로 Ctrl+D 복제하면, clone()이 _group_id를 안 옮겨서 사본이
+    # 그룹 해제 상태가 되던 버그. 사본끼리는 원본과 다른 새 그룹id로 묶여야 한다
+    # (원본 gid를 그대로 쓰면 사본이 원본 그룹에 합류해 6개가 한 그룹이 되어 버린다).
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True); b.setSelected(True)
+    w.group_selection()
+    orig_gid = a._group_id
+    w.duplicate_selection()
+    rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+    assert len(rects) == 4
+    new_a = [r for r in rects if r is not a and r.rect() == a.rect()][0]
+    new_b = [r for r in rects if r is not b and r.rect() == b.rect()][0]
+    assert a._group_id == orig_gid and b._group_id == orig_gid          # 원본 불변
+    assert new_a._group_id is not None and new_a._group_id == new_b._group_id
+    assert new_a._group_id != orig_gid                                  # 원본 그룹과 분리된 새 그룹
+
+
 def test_duplicate_rebinds_arrow_within_group():
     # 함께 선택한 도형+화살표를 Ctrl+D로 복제하면, 사본 화살표는 사본 도형에 붙어야 한다
     # (원본 도형 참조를 그대로 들고 있으면 원본을 옮길 때 사본 화살표가 딸려온다 — 버그).

@@ -12,6 +12,7 @@ import io
 import math
 import struct
 import time
+import uuid
 
 from PyQt6.QtCore import (
     Qt, QPoint, QPointF, QRectF, QLineF, QSize, QBuffer, QIODevice, QTimer, QEvent,
@@ -3943,6 +3944,24 @@ def remap_grouped_bindings(pairs):
                 new._bind_end = remap[new._bind_end]
 
 
+def regroup_duplicated_items(pairs):
+    """복제된 아이템이 원본에서 같은 그룹에 속해 있었다면, 사본끼리 새 그룹id로 묶는다.
+    clone()은 _group_id를 복사하지 않아(원본 참조가 아니라 값이라 안전해 보이지만) 기본값
+    None으로 시작하므로, 그대로 두면 사본이 그룹 해제 상태가 된다. 원본 그룹id를 그대로
+    쓰면 사본이 원본 그룹에 합류해 버리므로(둘이 하나의 그룹으로 뭉침) 반드시 새 id를 쓴다."""
+    remap = dict(pairs)
+    by_gid = {}
+    for old, new in remap.items():
+        gid = getattr(old, "_group_id", None)
+        if gid is not None:
+            by_gid.setdefault(gid, []).append(new)
+    for members in by_gid.values():
+        if len(members) >= 2:
+            new_gid = uuid.uuid4().hex[:8]
+            for m in members:
+                m._group_id = new_gid
+
+
 class _BadgeItem(_HandleResizeMixin, QGraphicsItem):
     """원 배경 + 중앙 번호. 클릭 위치(pos)에 배치."""
 
@@ -5481,6 +5500,7 @@ class _AnnotatorView(QGraphicsView):
             self.scene().addItem(c)
             clones.append(c)
         remap_grouped_bindings(zip(src, clones))   # 배치 안에서 함께 복제된 도형끼리 재연결
+        regroup_duplicated_items(zip(src, clones)) # 그룹째 복제 시 사본도 새 그룹으로
         self.scene().clearSelection()
         for c in clones:
             c.setSelected(True)

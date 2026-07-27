@@ -34,7 +34,7 @@ from easycad.canvas.annotator_core import (
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings,
+    remap_grouped_bindings, regroup_duplicated_items,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -1719,6 +1719,7 @@ class CanvasWindow(QMainWindow):
         # clone()이 _bind1/_bind2 등을 원본 그대로 복사해 왔으므로(clip 세대를 거쳐도 불변),
         # 같이 복사된 도형끼리는 여기서 사본으로 재연결한다(배치 밖 도형 바인딩은 그대로 유지).
         remap_grouped_bindings(zip(self._clip_src, new_items))
+        regroup_duplicated_items(zip(self._clip_src, new_items))   # 그룹째 복사 시 사본도 새 그룹으로
         if new_items:
             self.push_undo_add_many(new_items)
 
@@ -1737,6 +1738,7 @@ class CanvasWindow(QMainWindow):
             c.setSelected(True)
             new_items.append(c)
         remap_grouped_bindings(zip(src, new_items))
+        regroup_duplicated_items(zip(src, new_items))   # 그룹째 복제 시 사본도 새 그룹으로
         if new_items:
             self.push_undo_add_many(new_items)
 
