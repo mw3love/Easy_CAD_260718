@@ -477,6 +477,7 @@ class CanvasWindow(QMainWindow):
         self._redo: list[_UndoEntry] = []   # 다시 실행(앞으로) — 새 변이 시 비워짐
         self._clip: list = []
         self._clip_src: list = []
+        self._style_clip: dict | None = None   # [신규기능] 스타일 복사(format painter) 클립
         self._paste_seq = 0
         self._pan_last = None
         self._group_sync_active = False   # [편의기능] 그룹 동반선택 재진입 가드
@@ -1563,6 +1564,66 @@ class CanvasWindow(QMainWindow):
             "width": width, "style": style, "font": font,
         }
 
+    # ---- 스타일 복사(format painter) — deep-interview 2026-07-28 -------------
+    def _capture_paint_style(self, item) -> dict:
+        """[스타일 복사] 서식만 캡처(텍스트 '내용'은 제외) — color/width/style/font는
+        속성 dock이 이미 쓰는 _read_props(pen 기반↔화살표 정규화)를 그대로 재사용(규칙 2
+        손안의 카드), tcolor·bg·head(화살표 방향)만 추가로 얹는다."""
+        st = dict(self._read_props(item))
+        if hasattr(item, "setDefaultTextColor"):
+            st["tcolor"] = QColor(item.defaultTextColor())
+        if hasattr(item, "toPlainText"):
+            st["bg"] = QColor(item._bg) if getattr(item, "_bg", None) is not None else None
+        if hasattr(item, "_head_at_end") and hasattr(item, "set_head_at_end"):
+            st["head"] = item._head_at_end
+        return st
+
+    def _apply_paint_style(self, item, st: dict):
+        """[스타일 복사] 타입이 달라도 항상 적용(deep-interview 확정) — 없는 속성은 조용히
+        건너뜀(hasattr 가드). 선스타일은 화살표(apply_style)/pen 기반을 갈라 _edit_style과
+        동일하게 처리."""
+        if st.get("color") is not None and hasattr(item, "apply_color"):
+            item.apply_color(QColor(st["color"]))
+        if st.get("width") is not None and hasattr(item, "apply_width"):
+            item.apply_width(float(st["width"]))
+        if st.get("style") is not None:
+            if hasattr(item, "apply_style"):
+                item.apply_style(st["style"])
+            elif hasattr(item, "pen"):
+                p = item.pen(); p.setStyle(st["style"]); item.setPen(p)
+        if st.get("font") is not None and hasattr(item, "apply_font_size"):
+            item.apply_font_size(int(st["font"]))
+        if "tcolor" in st and hasattr(item, "setDefaultTextColor"):
+            item.setDefaultTextColor(st["tcolor"])
+        if "bg" in st and hasattr(item, "set_bg"):
+            item.set_bg(st["bg"])
+        if "head" in st and hasattr(item, "set_head_at_end"):
+            item.set_head_at_end(st["head"])
+
+    def copy_style_from_selection(self):
+        sel = self._scene.selectedItems()
+        if len(sel) != 1:
+            self.statusBar().showMessage(
+                "스타일 복사 — 도형을 하나만 선택하세요" if sel else "스타일 복사 — 먼저 도형을 선택하세요",
+                2500)
+            return
+        self._style_clip = self._capture_paint_style(sel[0])
+        self.statusBar().showMessage("스타일 복사됨", 2000)
+
+    def paste_style_to_selection(self):
+        st = getattr(self, "_style_clip", None)
+        if st is None:
+            self.statusBar().showMessage("붙여넣을 스타일이 없습니다 — 먼저 스타일을 복사하세요", 2500)
+            return
+        sel = self._scene.selectedItems()
+        if not sel:
+            return
+        snaps = [(it, it.capture_state()) for it in sel]
+        for it in sel:
+            self._apply_paint_style(it, st)
+        self.push_undo_state(snaps)
+        self.statusBar().showMessage(f"스타일 붙여넣기 — {len(sel)}개", 2000)
+
     def _swatch_css(self, color: QColor | None) -> str:
         """스와치 버튼 배경 — 단색이면 그 색, 혼합/없음이면 체크무늬 느낌의 중립 표시."""
         if color is None:
@@ -2065,13 +2126,22 @@ class CanvasWindow(QMainWindow):
         전부 기존 편집 경로(copy/paste/duplicate/delete/select_all)를 재사용해 undo 일관.
         exec는 _show_context_menu가 하고, 이 메서드는 구성만(스모크 테스트용 분리)."""
         menu = QMenu(self)
-        has_sel = bool(self._scene.selectedItems())
+        sel = self._scene.selectedItems()
+        has_sel = bool(sel)
         has_clip = bool(getattr(self, "_clip", None))
         if has_sel:
             menu.addAction("복사\tCtrl+C", self.copy_selection)
             menu.addAction("잘라내기", self._cut_selection)
             menu.addAction("복제\tCtrl+D", self.duplicate_selection)
             menu.addAction("삭제\tDel", self.delete_selection)
+        # [신규기능 · 스타일 복사] 단일 선택=복사 진입점, 스타일 클립 있으면=붙여넣기 진입점.
+        has_style_clip = getattr(self, "_style_clip", None) is not None
+        if len(sel) == 1 or has_style_clip:
+            menu.addSeparator()
+            if len(sel) == 1:
+                menu.addAction("스타일 복사\tCtrl+Alt+C", self.copy_style_from_selection)
+            if has_sel and has_style_clip:
+                menu.addAction("스타일 붙여넣기\tCtrl+Alt+V", self.paste_style_to_selection)
         if len(self._align_targets()) >= 2:      # [M5] 여럿 선택 시만 정렬/분배 서브메뉴
             menu.addSeparator()
             menu.addMenu(self._build_align_menu("정렬 / 분배", parent=menu))

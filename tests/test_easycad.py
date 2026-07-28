@@ -5346,6 +5346,142 @@ def test_minimap_refresh_hooked_to_viewport_resize_not_just_window():
     w.close()
 
 
+def test_style_copy_paste_pen_to_pen():
+    # [스타일 복사] 색·두께·선스타일이 그대로 옮겨진다.
+    from PyQt6.QtGui import QPen
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, width=5.0, color="#ff0000")
+    a.setPen(QPen(QColor("#ff0000"), 5.0, Qt.PenStyle.DashLine))
+    a.setSelected(True)
+    w.copy_style_from_selection()
+    assert w._style_clip is not None
+    b = _mk_pen_rect(w, x=200, y=0, width=1.0, color="#000000")
+    w._scene.clearSelection(); b.setSelected(True)
+    w.paste_style_to_selection()
+    assert b.pen().color().name() == "#ff0000"
+    assert abs(b.pen().widthF() - 5.0) < 1e-6
+    assert b.pen().style() == Qt.PenStyle.DashLine
+    w.undo()
+    assert abs(b.pen().widthF() - 1.0) < 1e-6
+
+
+def test_style_copy_requires_single_selection():
+    # [스타일 복사] 0개·2개 이상 선택 시 클립을 만들지 않는다(상태바 안내만).
+    w = CanvasWindow()
+    w.copy_style_from_selection()
+    assert w._style_clip is None
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True); b.setSelected(True)
+    w.copy_style_from_selection()
+    assert w._style_clip is None
+
+
+def test_style_paste_without_clip_noop():
+    # [스타일 복사] 복사한 스타일이 없으면 붙여넣기는 조용히 무시(크래시·undo엔트리 없음).
+    w = CanvasWindow()
+    b = _mk_pen_rect(w, x=0, y=0, width=1.0); b.setSelected(True)
+    before = len(w._undo)
+    w.paste_style_to_selection()
+    assert len(w._undo) == before
+    assert abs(b.pen().widthF() - 1.0) < 1e-6
+
+
+def test_style_copy_paste_cross_type_rect_to_arrow():
+    # [스타일 복사] 타입이 달라도(네모→화살표) 색·두께·선스타일이 정규화돼 적용된다.
+    from PyQt6.QtGui import QPen
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0)
+    a.setPen(QPen(QColor("#00ff00"), 6.0, Qt.PenStyle.DotLine))
+    a.setSelected(True)
+    w.copy_style_from_selection()
+    ar = _ArrowItem(QColor("#111111"), 2, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 0))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    w._scene.clearSelection(); ar.setSelected(True)
+    w.paste_style_to_selection()
+    assert ar._color.name() == "#00ff00"
+    assert abs(ar._width - 6.0) < 1e-6
+    assert ar._style == Qt.PenStyle.DotLine
+
+
+def test_style_copy_excludes_text_content():
+    # [스타일 복사] 텍스트 '내용'은 대상에 안 옮겨간다(서식만) — deep-interview 확정.
+    a = _TextItem(QColor("#ff0000"))
+    a.setPlainText("Hello")
+    a.apply_font_size(30)
+    b = _TextItem(QColor("#000000"))
+    b.setPlainText("World")
+    w = CanvasWindow()
+    w._scene.addItem(a); w._scene.addItem(b)
+    a.setSelected(True)
+    w.copy_style_from_selection()
+    w._scene.clearSelection(); b.setSelected(True)
+    w.paste_style_to_selection()
+    assert b.toPlainText() == "World"          # 내용 불변
+    assert b.defaultTextColor().name() == "#ff0000"   # 서식은 옮겨감
+
+
+def test_style_copy_paste_multi_target_single_undo():
+    # [스타일 복사] 다중 대상 붙여넣기 — 전부 바뀌고 undo 한 번으로 전부 복원.
+    from PyQt6.QtGui import QPen
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, width=7.0, color="#ff0000")
+    a.setPen(QPen(QColor("#ff0000"), 7.0))
+    a.setSelected(True)
+    w.copy_style_from_selection()
+    b = _mk_pen_rect(w, x=100, y=0, width=1.0)
+    c = _mk_pen_rect(w, x=200, y=0, width=1.0)
+    w._scene.clearSelection(); b.setSelected(True); c.setSelected(True)
+    before_undo = len(w._undo)
+    w.paste_style_to_selection()
+    assert len(w._undo) == before_undo + 1     # 단일 undo 엔트리
+    assert abs(b.pen().widthF() - 7.0) < 1e-6 and abs(c.pen().widthF() - 7.0) < 1e-6
+    w.undo()
+    assert abs(b.pen().widthF() - 1.0) < 1e-6 and abs(c.pen().widthF() - 1.0) < 1e-6
+
+
+def test_style_shortcuts_ctrl_alt_dispatch():
+    # [단축키] Ctrl+Alt+C/V가 스타일 복사/붙여넣기로 배선되고, Alt 없는 평범한 Ctrl+C/V는
+    # 여전히 기존 아이템 복사/붙여넣기로 간다(회귀 방지 — Ctrl+C 체크를 Alt 제외로 수정했다).
+    from PyQt6.QtGui import QKeyEvent, QPen
+    from PyQt6.QtCore import QEvent
+    CTRL = Qt.KeyboardModifier.ControlModifier
+    CTRL_ALT = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    view = w._view
+    a = _mk_pen_rect(w, x=0, y=0, width=9.0)
+    a.setPen(QPen(QColor("#123456"), 9.0))
+    a.setSelected(True)
+
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_C, CTRL_ALT))
+    assert w._style_clip is not None                       # Ctrl+Alt+C
+
+    b = _mk_pen_rect(w, x=100, y=0, width=1.0)
+    w._scene.clearSelection(); b.setSelected(True)
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_V, CTRL_ALT))
+    assert abs(b.pen().widthF() - 9.0) < 1e-6               # Ctrl+Alt+V
+
+    assert not w._clip                                       # 전제: 아직 아이템 복사 안 함
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_C, CTRL))
+    assert w._clip                                           # 일반 Ctrl+C는 그대로 아이템 복사(회귀 없음)
+
+
+def test_context_menu_style_entries_visibility():
+    # [스타일 복사] 단일 선택=복사 진입점 노출, 클립 있고 선택 있으면=붙여넣기도 노출.
+    w = CanvasWindow()
+    labels = lambda: [act.text() for act in w._build_context_menu().actions() if not act.isSeparator()]
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True)
+    assert any(t.startswith("스타일 복사") for t in labels())
+    assert not any(t.startswith("스타일 붙여넣기") for t in labels())
+    w.copy_style_from_selection()
+    assert any(t.startswith("스타일 붙여넣기") for t in labels())
+    a.setSelected(True); b.setSelected(True)
+    assert not any(t.startswith("스타일 복사") for t in labels())   # 다중선택엔 복사 진입점 없음
+    assert any(t.startswith("스타일 붙여넣기") for t in labels())    # 붙여넣기는 다중선택도 가능
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

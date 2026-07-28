@@ -7024,10 +7024,22 @@ class _AnnotatorView(QGraphicsView):
                     if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
                         it.setSelected(True)
                 return
-            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_C:
+            # [신규기능] Ctrl+Alt+C/V = 스타일 복사/붙여넣기 — 일반 Ctrl+C/V(아이템 복사)보다
+            # 먼저 검사해야 한다(Alt를 함께 눌러도 아래 Ctrl+C 체크가 먼저 걸리면 항상 이김).
+            if (mods & Qt.KeyboardModifier.ControlModifier) and (mods & Qt.KeyboardModifier.AltModifier) \
+                    and key == Qt.Key.Key_C and hasattr(self._owner, "copy_style_from_selection"):
+                self._owner.copy_style_from_selection()
+                return
+            if (mods & Qt.KeyboardModifier.ControlModifier) and (mods & Qt.KeyboardModifier.AltModifier) \
+                    and key == Qt.Key.Key_V and hasattr(self._owner, "paste_style_to_selection"):
+                self._owner.paste_style_to_selection()
+                return
+            if (mods & Qt.KeyboardModifier.ControlModifier) and not (mods & Qt.KeyboardModifier.AltModifier) \
+                    and key == Qt.Key.Key_C:
                 self._owner.copy_selection()
                 return
-            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_V:
+            if (mods & Qt.KeyboardModifier.ControlModifier) and not (mods & Qt.KeyboardModifier.AltModifier) \
+                    and key == Qt.Key.Key_V:
                 self._owner.paste_selection()
                 return
             # [M2 #3] Ctrl+D = 제자리 복제(오프셋). Easy CAD 호스트만 제공 → hasattr 가드.
