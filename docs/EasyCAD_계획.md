@@ -236,10 +236,12 @@ Lucid/FigJam 캡처 + 사용자 요청 반영, deep-interview 4가지 확정(202
   정렬·분배·undo·redo에 연결. 이 잔상은 오프스크린 렌더로 재현 불가(전면 재도색) — 실조건서 발견.
 
 #### 후속 (Phase 6 이후 / 낮은 우선)
-레이어 패널 UI · 미니맵 · 스타일 복사(format painter) · 클립보드 이미지 붙여넣기(코드정리
-3순위 스캔에서 발견 — `annotator_core.py`의 `_to_png_full`/`_pixmap_from_data`가 이미
-clipboard_monitor 로직 기반으로 준비돼 있음, 현재 미사용) · 8포트(꼭짓점 추가) · 심볼 종류
-추가 · 개별 열폭 드래그 · 그리드/스냅투그리드.
+레이어 패널 UI · 미니맵 · 스타일 복사(format painter) · 8포트(꼭짓점 추가) · 심볼 종류 추가 ·
+개별 열폭 드래그 · 그리드/스냅투그리드.
+
+~~클립보드 이미지 붙여넣기~~ — **완료**(2026-07-28, `7baf69b`, 프록시검증 — `python run.py`
+실조건 확인 대기). `_to_png_full`/`_pixmap_from_data`(코드정리 3순위 스캔에서 발견한
+clipboard_monitor 이식 로직) 활용. 상세: CLAUDE.md 신규기능 항목.
 
 ## 5. 제안 추가 기능 (사용자 요청으로 검토 — 이 도메인에 특히 잘 맞는 것)
 

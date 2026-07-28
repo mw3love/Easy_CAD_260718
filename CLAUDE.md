@@ -450,6 +450,19 @@ Mermaid 7개 버튼 제거(이미 파일 메뉴에 있어 중복, 단축키 불�
     동일 로직"을 언급해 계획서 후속 항목 "클립보드 이미지 붙여넣기"(미구현)용 스캐폴딩일
     가능성이 높음. 스모크 229종 전 구간 통과.
 
+**신규기능 — 클립보드 이미지 붙여넣기 완료(2026-07-28, 커밋 `7baf69b`, 프록시검증)** — 위
+코드정리 3순위에서 찾은 `_pixmap_from_data`/`_to_png_full`을 실사용 경로에 연결. host.py에
+`_clipboard_pixmap()`(Qt `pixmap()`/`image()` 우선, raw 포맷만 `_pixmap_from_data` 폴백)
+신설 + `_insert_image_at`에서 `_insert_pixmap_at(pm, scene_pos, msg)`를 추출해 파일삽입·
+드래그드롭·클립보드 붙여넣기가 공유. `paste_selection()`은 내부 붙여넣기 버퍼가 비어 있을
+때만 시스템 클립보드 이미지로 폴백(Ctrl+V 하나 공유, 기존 Ctrl+C/Ctrl+D 동작 불변). 스모크
+231종(신규 2종 포함) 통과 + 자체렌더 스크린샷으로 배치·선택·종횡비 확인. 실조건(실제 OS
+클립보드로 스크린샷 붙여넣기)은 `python run.py`로 사용자 확인 대기.
+⚠ **새 발견**: `_EditorMixin`(annotator_core.py 최하단, ~600줄)이 어떤 클래스에서도
+상속되지 않는 완전 dead code로 보임 — host.py 자체 주석이 "무거운 `_EditorMixin`(이미지
+배경·스포이드·클립보드 아이콘 툴바) 대신 무한캔버스에 맞는 [CanvasWindow]를 새로 만들었다"고
+명시. 이번 범위 밖이라 삭제하지 않고 **코드정리 4순위 후보**로 남김.
+
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.
   ⚠ 전례: 지속연결 초안이 offscreen을 통과했으나 GUI에서 버그 발견(플로팅→고정 부착점으로 수정).
