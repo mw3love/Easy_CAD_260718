@@ -34,7 +34,7 @@ from easycad.canvas.annotator_core import (
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items,
+    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -107,6 +107,26 @@ class _PaletteButton(QToolButton):
             drag.setHotSpot(QPoint(pm.width() // 2, pm.height() // 2))
         self.setDown(False)   # 드래그로 release를 못 받으니 눌림 상태 수동 해제
         drag.exec(Qt.DropAction.CopyAction)
+
+
+def _clipboard_pixmap() -> QPixmap | None:
+    """[신규기능] 시스템 클립보드 이미지 → QPixmap. 표준 포맷(PNG 등)은 Qt가 pixmap()/
+    image()로 직접 해석하고, Qt가 못 알아보는 raw 포맷(예: 헤더 없는 CF_DIB)만
+    `_pixmap_from_data`(annotator_core, clipboard_monitor 이식 로직)로 폴백한다."""
+    cb = QApplication.clipboard()
+    pm = cb.pixmap()
+    if not pm.isNull():
+        return pm
+    img = cb.image()
+    if not img.isNull():
+        return QPixmap.fromImage(img)
+    md = cb.mimeData()
+    for fmt in md.formats():
+        if fmt.startswith("image/"):
+            pm2 = _pixmap_from_data(bytes(md.data(fmt)))
+            if pm2 is not None:
+                return pm2
+    return None
 
 
 def _border_attach(rect_scene: QRectF, toward: QPointF) -> QPointF:
@@ -656,6 +676,11 @@ class CanvasWindow(QMainWindow):
         if pm.isNull():
             QMessageBox.warning(self, "이미지 삽입", f"이미지를 열 수 없습니다:\n{path}")
             return
+        self._insert_pixmap_at(pm, scene_pos, f"이미지 삽입: {pm.width()}×{pm.height()}px — {path}")
+
+    def _insert_pixmap_at(self, pm: QPixmap, scene_pos: QPointF, status_msg: str):
+        """QPixmap을 scene_pos 중심에 삽입(긴 변 _IMG_LONG로 축소, 종횡비 유지) — 파일 경로
+        유무와 무관한 공통 경로(파일 삽입·드래그앤드롭·클립보드 붙여넣기가 공유)."""
         w, h = pm.width(), pm.height()
         s = min(1.0, self._IMG_LONG / max(w, h)) if max(w, h) > 0 else 1.0
         W, H = w * s, h * s
@@ -668,7 +693,7 @@ class CanvasWindow(QMainWindow):
         item.setSelected(True)
         self.push_undo_add(item)
         self.set_tool("select")
-        self.statusBar().showMessage(f"이미지 삽입: {w}×{h}px — {path}", 4000)
+        self.statusBar().showMessage(status_msg, 4000)
 
     def _create_shape_at(self, tool_key: str, scene_pos: QPointF):
         """[Phase 6 M3 #17] 팔레트에서 드롭한 도구를 scene_pos 중심에 기본 크기로 생성.
@@ -1024,7 +1049,7 @@ class CanvasWindow(QMainWindow):
             ("F3 / F8", "스냅 / 직교 제약 토글"),
             ("Del", "선택 객체 삭제"),
             ("Ctrl+Z", "되돌리기"),
-            ("Ctrl+C / Ctrl+V", "복사 / 연속 붙여넣기"),
+            ("Ctrl+C / Ctrl+V", "복사 / 연속 붙여넣기(버퍼 없으면 클립보드 이미지)"),
             ("Ctrl+D", "제자리 복제"),
             ("1·3·4·6·7·8", "선택·화살표·텍스트·선·펜·번호"),
             ("3", "화살표(그린 뒤 미니툴바서 직선·곡선·직각 선택)"),
@@ -1702,6 +1727,7 @@ class CanvasWindow(QMainWindow):
 
     def paste_selection(self):
         if not self._clip:
+            self._paste_clipboard_image()   # [신규기능] 내부 버퍼가 비면 시스템 클립보드 이미지로 폴백
             return
         self._paste_seq += 1
         off = 20.0 * self._paste_seq
@@ -1719,6 +1745,16 @@ class CanvasWindow(QMainWindow):
         regroup_duplicated_items(zip(self._clip_src, new_items))   # 그룹째 복사 시 사본도 새 그룹으로
         if new_items:
             self.push_undo_add_many(new_items)
+
+    # [신규기능] 클립보드 이미지 붙여넣기 — Ctrl+V 하나 공유. 내부 붙여넣기 버퍼(copy_selection)가
+    # 있으면 항상 그쪽이 우선(기존 동작 불변, 위 paste_selection 분기), 버퍼가 비어 있을 때만
+    # 시스템 클립보드의 이미지(스크린샷·다른 앱에서 복사한 그림)를 뷰 중앙에 삽입한다.
+    def _paste_clipboard_image(self):
+        pm = _clipboard_pixmap()
+        if pm is None or pm.isNull():
+            return
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        self._insert_pixmap_at(pm, center, f"클립보드 이미지 붙여넣기: {pm.width()}×{pm.height()}px")
 
     # [M2 #3] Ctrl+D 제자리 복제 — 클립보드를 건드리지 않고 선택 객체를 오프셋해 복제.
     # paste_selection과 동형이나 clip/paste_seq와 독립(복사 버퍼 오염 없음).

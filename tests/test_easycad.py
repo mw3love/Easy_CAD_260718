@@ -3572,6 +3572,43 @@ def test_image_insert_via_host():
     assert not [x for x in w._scene.items() if isinstance(x, _ImageItem)]
 
 
+def test_paste_clipboard_image_when_buffer_empty():
+    # [신규기능] 내부 붙여넣기 버퍼가 비어 있으면 Ctrl+V(paste_selection)가 시스템
+    # 클립보드 이미지를 뷰 중앙에 삽입한다.
+    w = CanvasWindow(); w.show()
+    assert not w._clip
+    _app.clipboard().setPixmap(_mk_pixmap(80, 40, "#aa3366"))
+    try:
+        w.paste_selection()
+        imgs = [x for x in w._scene.items() if isinstance(x, _ImageItem)]
+        assert len(imgs) == 1
+        assert imgs[0]._pixmap.width() == 80
+        assert imgs[0].isSelected()
+        w.undo()
+        assert not [x for x in w._scene.items() if isinstance(x, _ImageItem)]
+    finally:
+        _app.clipboard().clear()
+
+
+def test_paste_prefers_internal_clipboard_over_image():
+    # 내부 붙여넣기 버퍼(copy_selection)가 있으면 시스템 클립보드 이미지는 무시 —
+    # 기존 도형 복사/붙여넣기 동작이 이 신규기능으로 바뀌면 안 된다.
+    w = CanvasWindow(); w.show()
+    rect = _RectItem(QRectF(0, 0, 40, 20))
+    rect.setFlags(rect.GraphicsItemFlag.ItemIsSelectable | rect.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(rect)
+    rect.setSelected(True)
+    w.copy_selection()
+    _app.clipboard().setPixmap(_mk_pixmap(80, 40, "#336699"))
+    try:
+        w.paste_selection()
+        assert not [x for x in w._scene.items() if isinstance(x, _ImageItem)]
+        rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+        assert len(rects) == 2   # 원본 + 붙여넣기 사본
+    finally:
+        _app.clipboard().clear()
+
+
 def test_image_skipped_in_dxf():
     # 범위 결정: DXF 내보내기는 이미지 제외(외부참조 배제). 씬에 이미지가 있어도
     # 크래시 없이 건너뛰고, 다른 엔티티(네모)는 정상 export.
