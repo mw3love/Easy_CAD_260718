@@ -836,6 +836,12 @@ class CanvasWindow(QMainWindow):
         # 뷰포트 좌표 → mapToScene 로 놓은 자리에 도형 생성. 팔레트 mime가 아니면 통과.
         if obj is self._view.viewport():
             et = event.type()
+            if et == QEvent.Type.Resize:
+                # [미니맵 실조건 버그] dock 스플리터 드래그로 메인 뷰포트 크기가 바뀌면
+                # CanvasWindow.resizeEvent(창 자체 리사이즈)는 안 불려 미니맵 인디케이터가
+                # 갱신 안 됐다(사용자 GUI 확인 — 창 크기는 그대로인데 dock 배치만 바뀐 경우).
+                # 뷰포트 자체의 resize를 잡아야 원인 불문 항상 정확하다.
+                self._refresh_minimap()
             if et in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
                 if event.mimeData().hasFormat(_PALETTE_MIME):
                     event.acceptProposedAction()

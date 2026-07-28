@@ -5313,6 +5313,21 @@ def test_minimap_refit_empty_scene_noop():
     w._minimap._refit()
 
 
+def test_minimap_refresh_hooked_to_viewport_resize_not_just_window():
+    # [미니맵][실조건 버그] 사용자 GUI 확인: dock 스플리터를 드래그해 메인 뷰포트 크기가
+    # 바뀌면(창 자체 크기는 그대로) CanvasWindow.resizeEvent가 안 불려 인디케이터가 갱신
+    # 안 됐다. 원인 불문 항상 잡으려면 뷰포트 자체의 QResizeEvent를 잡아야 한다(eventFilter).
+    from PyQt6.QtGui import QResizeEvent
+    from PyQt6.QtCore import QSize
+    w = CanvasWindow(); w.resize(1200, 800); w.show()
+    calls = []
+    w._minimap.viewport().update = lambda *a, **k: calls.append(1)
+    ev = QResizeEvent(QSize(600, 800), QSize(872, 800))   # 창 resizeEvent 없이 뷰포트만 변경
+    w.eventFilter(w._view.viewport(), ev)
+    assert len(calls) >= 1
+    w.close()
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
