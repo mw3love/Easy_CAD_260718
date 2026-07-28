@@ -4498,7 +4498,9 @@ def _normal_stub(p: QPointF, n, d: float, clear_rect=None) -> QPointF:
     return QPointF(p.x() + sign * d, p.y()) if horiz else QPointF(p.x(), p.y() + sign * d)
 
 
-# ---- [Stage3] 화살표-화살표 soft 회피 — 세그먼트 교차 판정/집계 --------------------
+# ---- [Stage3 훅] 화살표-화살표 soft 회피용 세그먼트 교차 판정(avoid_segs/cross_penalty
+# 재도입 시 사용 — 집계 래퍼 _count_seg_crossings는 호출부 3곳이 전부 이 판정을 감싸기만
+# 하던 얇은 함수라 각 호출부에 인라인했다. 2026-07-28 코드정리) --------------------------
 def _seg_cross_seg(a: QPointF, b: QPointF, c: QPointF, d: QPointF, eps=1e-9) -> bool:
     """두 선분 a-b, c-d의 '내부'가 진짜로 가로지르면 True. 끝점 공유·공선 접촉은 비교차로
     본다(끝점을 공유하는 화살표들이 부착 도형 근처에서 만나는 것을 교차로 오판하지 않게).
@@ -4510,19 +4512,6 @@ def _seg_cross_seg(a: QPointF, b: QPointF, c: QPointF, d: QPointF, eps=1e-9) -> 
     ab_split = (o1 > eps and o2 < -eps) or (o1 < -eps and o2 > eps)
     cd_split = (o3 > eps and o4 < -eps) or (o3 < -eps and o4 > eps)
     return ab_split and cd_split
-
-
-def _count_seg_crossings(pts, segs) -> int:
-    """폴리라인 pts가 회피 세그먼트 segs를 가로지르는 총 횟수(soft 벌점·진단 공용)."""
-    if not segs:
-        return 0
-    n = 0
-    for i in range(len(pts) - 1):
-        a, b = pts[i], pts[i + 1]
-        for c, d in segs:
-            if _seg_cross_seg(a, b, c, d):
-                n += 1
-    return n
 
 
 def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6,
@@ -4668,11 +4657,14 @@ def _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, ru
     여유칸(rung)을 총길이보다 앞에 둬, 결함 없는 후보들 중에서는 '넉넉한 여유'를 고른다
     (_CONN_CLEAR_MULT의 실조건 피드백 '변에 바짝 붙으면 답답' 유지)."""
     full = _dedup_pts([s] + list(mids) + [e])
+    crossings = (sum(1 for i in range(len(full) - 1) for p, q in avoid_segs
+                      if _seg_cross_seg(full[i], full[i + 1], p, q))
+                 if avoid_segs else 0)
     return (
         1 if (infl and _path_hits_rects(full, infl)) else 0,
         1 if (conn_orig and _path_hits_rects(full, conn_orig)) else 0,
         round(_path_ride_len(full, conn_pairs, ns, ne), 1) if conn_pairs else 0.0,
-        _count_seg_crossings(full, avoid_segs),
+        crossings,
         len(full),
         rung,
         round(_path_manhattan_len(full), 1),
@@ -4712,11 +4704,17 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
     conn_orig = [r for r in conn_seq if r is not None]
     conn_pairs = [(r, ("start", "end")[i]) for i, r in enumerate(conn_seq) if r is not None]
     conn_infl = [r.adjusted(-conn_clear, -conn_clear, conn_clear, conn_clear) for r in conn_orig]
+
+    def _cross_count(pts):   # [Stage3 훅] avoid_segs 비면 0 — 재도입 시 활성화되는 집계
+        return (sum(1 for i in range(len(pts) - 1) for p, q in avoid_segs
+                     if _seg_cross_seg(pts[i], pts[i + 1], p, q))
+                if avoid_segs else 0)
+
     pref_full = [s] + preferred + [e]
     pref_hits_shape = _path_hits_rects(pref_full, infl) if infl else False
     pref_reenters = _path_hits_rects(pref_full, conn_orig) if conn_orig else False
     pref_rides = (_path_ride_len(pref_full, conn_pairs, ns, ne) > 0) if conn_pairs else False
-    pref_cross = _count_seg_crossings(pref_full, avoid_segs)
+    pref_cross = _cross_count(pref_full)
     # preferred가 도형 안전 + 재진입·타기 없음 + 화살표 교차 없음 → 그대로(기존 무변경 보장).
     if not pref_hits_shape and not pref_reenters and not pref_rides and pref_cross == 0:
         return preferred
@@ -4759,7 +4757,7 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
         for mids in _candidates(infl, clearance):
             if _path_hits_rects([s] + mids + [e], infl):   # 도형 관통은 hard — 후보 기각
                 continue
-            c = _count_seg_crossings([s] + mids + [e], avoid_segs)
+            c = _cross_count([s] + mids + [e])
             if c < best_cross:
                 base, best_cross = mids, c
 

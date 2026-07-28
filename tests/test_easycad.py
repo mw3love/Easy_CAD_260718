@@ -20,7 +20,7 @@ from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _SYMBOL_KINDS,
     _nearest_border, _shape_ports, _axis_scale_fn, _mirror_fn,
-    _seg_cross_seg, _count_seg_crossings, _ConnectorLabel, _shape_ports, _RIDE_TOL)
+    _seg_cross_seg, _ConnectorLabel, _shape_ports, _RIDE_TOL)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, item_to_dict
 from easycad.fileio.dxf_export import export_dxf
@@ -2462,7 +2462,7 @@ def _arrow_cross_and_hits(rects, arrows):
     for i in range(len(segs)):
         for j in range(i + 1, len(segs)):
             for a, b in segs[i]:
-                cross += _count_seg_crossings([a, b], segs[j])
+                cross += sum(1 for c, d in segs[j] if _seg_cross_seg(a, b, c, d))
     rr = [r.mapRectToScene(r.rect()) for r in rects]
     hits = 0
     for sa in arrows:
