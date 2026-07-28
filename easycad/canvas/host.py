@@ -2160,21 +2160,24 @@ class CanvasWindow(QMainWindow):
         # apply_color/apply_style이 hasattr 체크는 통과해도 시각적으로는 죽은 버튼이 된다.
         # 선택 전부가 이미지/표일 때만 숨긴다(하나라도 색이 실제로 반영되는 도형이 섞였으면 노출).
         show_color = any(not isinstance(it, (_ImageItem, _TableItem)) for it in sel)
+        # [M4-3] 도형 교체 — 단일 도형(네모·원·심볼)만. [화살표 통합] 종류 드롭다운 — 단일 화살표만.
+        show_swap = len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem))
+        show_routing = len(sel) == 1 and isinstance(sel[0], (_ArrowItem, _PolyArrowItem))
+        show_dir = any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel)
+        # [M4-4 ⓑ] 반경 스테퍼 — 직각 커넥터(각짐 조절 대상)일 때만.
+        curved = (len(sel) == 1 and isinstance(sel[0], _PolyArrowItem) and sel[0]._is_ortho())
+        if not (show_color or show_swap or show_routing or show_dir or curved):
+            # 버튼이 전부 숨겨지면 빈 프레임(배경+테두리)만 남아 작은 흔적으로 보인다 — 바
+            # 자체를 숨긴다(이미지·표 단독 선택 등, 실조건서 발견).
+            bar.setVisible(False)
+            return
         for b in self._float_swatches:
             b.setVisible(show_color)
         self._float_style_btn.setVisible(show_color)
         self._float_more_btn.setVisible(show_color)
-        self._float_dir_btn.setVisible(
-            any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel))
-        # [M4-3] 도형 교체 버튼 — 단일 도형(네모·원·심볼)만 선택했을 때.
-        self._float_swap_btn.setVisible(
-            len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem)))
-        # [화살표 통합] 종류 드롭다운 — 단일 화살표(직선·곡선·직각) 선택 시.
-        self._float_routing_btn.setVisible(
-            len(sel) == 1 and isinstance(sel[0], (_ArrowItem, _PolyArrowItem)))
-        # [M4-4 ⓑ] 반경 스테퍼 — 직각 커넥터(각짐 조절 대상)일 때만. 직선·곡선 화살표엔 숨김.
-        curved = (len(sel) == 1 and isinstance(sel[0], _PolyArrowItem)
-                  and sel[0]._is_ortho())
+        self._float_dir_btn.setVisible(show_dir)
+        self._float_swap_btn.setVisible(show_swap)
+        self._float_routing_btn.setVisible(show_routing)
         self._float_radius.setVisible(curved)
         if curved:
             self._float_radius.blockSignals(True)   # 값 동기화가 편집 신호로 되돌아오지 않게

@@ -935,28 +935,28 @@ def test_floating_toolbar_edits_and_visibility():
 
 def test_floating_toolbar_hides_color_for_image_and_table_only():
     # 이미지·표는 NoPen + 자체 고정 색이라 apply_color/apply_style이 시각 효과가 없다 —
-    # 선택 전부가 이미지/표뿐이면 색상 스와치·선스타일·"더 보기"를 숨긴다.
+    # 선택 전부가 이미지/표뿐이면 색상 스와치·선스타일·"더 보기"를 숨긴다. 다른 버튼(방향·
+    # 도형교체·라우팅·반경)도 전부 대상이 아니므로 이때는 바 전체가 숨는다(빈 프레임 흔적 방지 —
+    # 실조건서 발견: 버튼만 숨기니 배경+테두리만 남은 작은 사각형이 보였음).
     w = CanvasWindow()
     img = _ImageItem(_mk_pixmap(40, 20), QRectF(0, 0, 40, 20))
     img.setFlags(img.GraphicsItemFlag.ItemIsSelectable | img.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(img); img.setSelected(True)
     w._reposition_floating_toolbar()
-    assert not w._float_bar.isHidden()                     # 바 자체는 뜬다(다른 버튼은 몰라도)
-    assert w._float_style_btn.isHidden()
-    assert w._float_more_btn.isHidden()
-    assert all(b.isHidden() for b in w._float_swatches)
+    assert w._float_bar.isHidden()                         # 바 전체가 숨는다
 
     tbl = _TableItem(2, 2, QRectF(0, 100, 80, 40))
     tbl.setFlags(tbl.GraphicsItemFlag.ItemIsSelectable | tbl.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(tbl)
     w._scene.clearSelection(); tbl.setSelected(True)
     w._reposition_floating_toolbar()
-    assert w._float_style_btn.isHidden()
+    assert w._float_bar.isHidden()
 
-    # 이미지 + 네모 섞어 선택 — 네모 쪽은 색이 실제로 반영되므로 다시 노출.
+    # 이미지 + 네모 섞어 선택 — 네모 쪽은 색이 실제로 반영되므로 바와 스와치 모두 다시 노출.
     rect = _mk_pen_rect(w)
     img.setSelected(True); rect.setSelected(True)
     w._reposition_floating_toolbar()
+    assert not w._float_bar.isHidden()
     assert not w._float_style_btn.isHidden()
     assert not all(b.isHidden() for b in w._float_swatches)
 
