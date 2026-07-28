@@ -408,11 +408,14 @@ class _MinimapView(QGraphicsView):
         # 항상 잘못된 크기·위치로 그려졌다(폴링으로는 못 고치는 종류의 버그 — 매번 같은 잘못된
         # 값을 다시 그릴 뿐). 씬 좌표(visible)를 그대로 그리면 된다(변환 불필요).
         visible = self._indicator_scene_rect()
-        accent = QColor("#54a9ff" if getattr(self._owner, "_dark", True) else "#1f7ae0")
-        pen = QPen(accent, 2.0); pen.setCosmetic(True)
+        # [사용자 피드백] 처음엔 dock 제목줄 accent와 같은 블루(#54a9ff/#1f7ae0)+반투명 채움을
+        # 썼더니 ⓐ 채움이 미니맵 속 도형을 뿌옇게 가려 시인성이 나쁘고 ⓑ 상단 dock 제목줄 밑
+        # accent 선과 색이 같아 서로 다른 UI 요소인데 헷갈렸다. 채움을 없애 안쪽을 그대로 보이게
+        # 하고(테두리만), 테마·accent와 무관한 고정 시안(cyan)으로 바꿔 dock 장식과 확실히 구분.
+        indicator_color = QColor("#22d3ee")
+        pen = QPen(indicator_color, 2.2); pen.setCosmetic(True)
         painter.setPen(pen)
-        fill = QColor(accent); fill.setAlpha(35)
-        painter.setBrush(QBrush(fill))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(visible)
 
     def _navigate_to(self, view_pos):
@@ -1153,7 +1156,7 @@ class CanvasWindow(QMainWindow):
                 dock.setStyleSheet(dock_qss)
         minimap = getattr(self, "_minimap", None)
         if minimap is not None:
-            minimap.viewport().update()   # 인디케이터 색이 다크/라이트 accent를 따라가므로 재도색
+            minimap.viewport().update()   # 씬 배경색(다크/라이트)이 바뀌므로 재도색
         if persist:
             QSettings("EasyCAD", "EasyCAD").setValue("dark", dark)
 
