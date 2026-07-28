@@ -588,16 +588,27 @@ class _HandleResizeMixin:
         for i in self._handle_indices():
             painter.drawRect(self._endpoint_rect(i))
 
-    # 선택된 도형에 현재 색/두께 적용 — pen 기반(rect/ellipse/line/path) 공통 구현.
-    # arrow/badge/text는 pen이 없거나 색 보관 방식이 달라 각자 오버라이드한다.
+    # 선택된 도형에 현재 색/두께 적용. pen 기반(rect/ellipse/line/path)은 QPen에,
+    # arrow/badge는 `_color`/`_width` 필드에 저장 — 둘 다 여기서 분기(text는 색 보관 방식이
+    # 아예 달라 setDefaultTextColor로 완전히 오버라이드). (2026-07-28 코드정리: arrow·
+    # PolyArrow·badge 3곳에 byte-for-byte 동일하게 중복되던 `_color` 분기를 여기로 흡수 —
+    # apply_style은 host.py의 hasattr(it,"apply_style") 분기가 "화살표냐 아니냐"를 가르는
+    # 신호라 여기 흡수하면 pen 기반 도형의 점선 적용이 깨진다(의도적으로 남김).
     def apply_color(self, color):
-        if hasattr(self, "pen"):
+        if hasattr(self, "_color"):
+            self._color = QColor(color)
+            self.update()
+        elif hasattr(self, "pen"):
             pen = self.pen()
             pen.setColor(QColor(color))
             self.setPen(pen)
 
     def apply_width(self, width):
-        if hasattr(self, "pen"):
+        if hasattr(self, "_width"):
+            self.prepareGeometryChange()  # boundingRect가 _width에 의존
+            self._width = width
+            self.update()
+        elif hasattr(self, "pen"):
             pen = self.pen()
             pen.setWidthF(float(width))
             self.setPen(pen)
@@ -996,6 +1007,15 @@ class _HandleResizeMixin:
         if self.isSelected():
             _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
 
+    # 기본 paint — 베이스 + (선택 시) 획 따라가는 outline + 핸들. _paint_selection_outline은
+    # 각 도형이 override(선/패스는 획 형태, 네모·원·화살표 등은 자체 paint를 따로 둔다).
+    # _LineItem·_PathItem이 byte-for-byte 동일하게 중복 정의하던 것을 흡수(2026-07-28 코드정리).
+    def paint(self, painter, option, widget=None):
+        self._paint_base(painter, option, widget)
+        if self.isSelected():
+            self._paint_selection_outline(painter, self._scale_or_1())
+        self._paint_handle(painter)
+
     def shape(self):
         # 선택 시 핸들 영역을 클릭 영역에 포함 — 속 빈 도형도 핸들을 잡을 수 있게.
         base = self._base_shape()
@@ -1172,6 +1192,14 @@ def _draw_selection_ellipse(painter: QPainter, rect: QRectF, scale: float = 1.0)
     painter.setPen(QPen(QColor(_BLUE), 1.0 / (scale or 1.0), Qt.PenStyle.DashLine))
     painter.setBrush(Qt.BrushStyle.NoBrush)
     painter.drawEllipse(rect)
+
+
+def _font_px(painter, px: float, bold: bool = False):
+    # 표제란·표가 동일하게 쓰던 static helper — 픽셀 단위 폰트 크기 지정(2026-07-28 코드정리).
+    f = painter.font()
+    f.setPixelSize(max(1, int(round(px))))
+    f.setBold(bold)
+    painter.setFont(f)
 
 
 # ---------------------------------------------------------------------------
@@ -1781,12 +1809,6 @@ class _TitleBlockItem(QGraphicsRectItem):
         return path
 
     # ---- 렌더 ---------------------------------------------------------------
-    @staticmethod
-    def _font_px(painter, px: float, bold: bool = False):
-        f = painter.font()
-        f.setPixelSize(max(1, int(round(px))))
-        f.setBold(bold)
-        painter.setFont(f)
 
     def paint(self, painter, option, widget=None):
         r = self.rect()
@@ -1839,12 +1861,12 @@ class _TitleBlockItem(QGraphicsRectItem):
         pad = 1.2
         # 라벨(작게, 좌상단)
         painter.setPen(QPen(self._INK))
-        self._font_px(painter, 2.6)
+        _font_px(painter, 2.6)
         lbl_rect = cell.adjusted(pad, pad, -pad, -pad)
         painter.drawText(lbl_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), label)
         # 값(크게, 가운데)
         if value:
-            self._font_px(painter, 3.8)
+            _font_px(painter, 3.8)
             painter.drawText(cell, int(Qt.AlignmentFlag.AlignCenter), value)
 
 
@@ -1925,13 +1947,6 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
     def _content_rect(self) -> QRectF:
         return QRectF(self.rect())
 
-    @staticmethod
-    def _font_px(painter, px: float, bold: bool = False):
-        f = painter.font()
-        f.setPixelSize(max(1, int(round(px))))
-        f.setBold(bold)
-        painter.setFont(f)
-
     def paint(self, painter, option, widget=None):
         box = self.rect()
         cw = box.width() / self._cols
@@ -1952,7 +1967,7 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
                 txt = self._cells[r][c]
                 if not txt:
                     continue
-                self._font_px(painter, fs, bold=(self._header and r == 0))
+                _font_px(painter, fs, bold=(self._header and r == 0))
                 painter.setPen(QPen(self._INK))
                 painter.drawText(
                     self.cell_rect(r, c).adjusted(1.0, 1.0, -1.0, -1.0),
@@ -2124,12 +2139,6 @@ class _LineItem(_LabelMixin, _HandleResizeMixin, QGraphicsLineItem):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(outline.simplified())
 
-    def paint(self, painter, option, widget=None):
-        self._paint_base(painter, option, widget)
-        if self.isSelected():
-            self._paint_selection_outline(painter, self._scale_or_1())
-        self._paint_handle(painter)
-
 
 class _PathItem(_HandleResizeMixin, QGraphicsPathItem):
     def __init__(self, *args):
@@ -2219,12 +2228,6 @@ class _PathItem(_HandleResizeMixin, QGraphicsPathItem):
         painter.setPen(QPen(QColor(_BLUE), 1.0 / (scale or 1.0), Qt.PenStyle.DashLine))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(self._sel_outline)
-
-    def paint(self, painter, option, widget=None):
-        self._paint_base(painter, option, widget)
-        if self.isSelected():
-            self._paint_selection_outline(painter, self._scale_or_1())
-        self._paint_handle(painter)
 
 
 def _cubic_axis_extrema(p0: float, c1: float, c2: float, p3: float):
@@ -2434,15 +2437,6 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     def flip_head(self):
         self.set_head_at_end(not self._head_at_end)
-
-    def apply_color(self, color):
-        self._color = QColor(color)
-        self.update()
-
-    def apply_width(self, width):
-        self.prepareGeometryChange()  # boundingRect가 _width에 의존
-        self._width = width
-        self.update()
 
     def apply_style(self, style):   # [M2 #3] 몸통 선스타일(점선 등)
         self._style = style
@@ -3508,15 +3502,6 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         return True
 
     # ---- 색/두께 -------------------------------------------------------
-    def apply_color(self, color):
-        self._color = QColor(color)
-        self.update()
-
-    def apply_width(self, width):
-        self.prepareGeometryChange()
-        self._width = width
-        self.update()
-
     def apply_style(self, style):   # [M2 #3] 몸통 선스타일(점선 등)
         self._style = style
         self.update()
@@ -3907,10 +3892,6 @@ class _BadgeItem(_HandleResizeMixin, QGraphicsItem):
         p = QPainterPath()
         p.addEllipse(self._content_rect())
         return p
-
-    def apply_color(self, color):
-        self._color = QColor(color)
-        self.update()
 
     def clone(self):
         c = _BadgeItem(self._number, QColor(self._color))
