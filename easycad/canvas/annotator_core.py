@@ -5565,8 +5565,16 @@ class _AnnotatorView(QGraphicsView):
 
     def _apply_grid_snap_move(self, skip_x: bool, skip_y: bool):
         """[그리드 스냅] 단일 도형 이동 중 — 스마트정렬·축고정이 이미 자리를 정한 축은 skip_*로
-        건드리지 않고, 나머지 축만 위치(pos())를 격자 교차점으로 양자화한다. 우선순위는
-        축고정(Shift) > 스마트정렬(2e) > 격자스냅 순 — 호출부(mouseMoveEvent)가 skip_*로 강제."""
+        건드리지 않고, 나머지 축만 격자 교차점으로 양자화한다. 우선순위는 축고정(Shift) >
+        스마트정렬(2e) > 격자스냅 순 — 호출부(mouseMoveEvent)가 skip_*로 강제.
+        ⚠ pos()를 직접 스냅하면 안 된다 — 마우스 드래그로 그린 도형은 로컬 도형이 클릭 시점의
+        씬 좌표를 그대로 품고(`QRectF(sp, sp)`) pos()는 (0,0)에 남는 게 보통이라(실측: rect(300,
+        50,100,60), pos=(0,0)), pos()만 격자에 맞춰도 실제 화면 위치는 격자 밖일 수 있다.
+        ⚠ 아이템 좌표계 원점(로컬 (0,0))을 mapToScene해도 안 된다 — (0,0)은 pos()와 같아질 뿐
+        실제로 그려진 도형(로컬 rect)과 무관한 점이라 같은 함정을 이름만 바꿔 반복한다(1차 시도의
+        회귀 — 실측: rect(307,53,100,60)에서 mapToScene(0,0)이 그대로 (0,0)이라 스냅이 무효화됨).
+        `_apply_smart_snap`의 `srect()`와 동일하게 **콘텐츠 rect**(`_content_rect()`, 없으면
+        boundingRect)의 좌상단을 mapToScene한 실제 화면 기준점을 격자로 당기고 moveBy로 적용한다."""
         if not getattr(self._owner, "grid_enabled", True):
             return
         sel = [it for it in self.scene().selectedItems() if it.parentItem() is None]
@@ -5577,12 +5585,14 @@ class _AnnotatorView(QGraphicsView):
                 or getattr(it, "_box_resize", None) is not None
                 or getattr(it, "_drag_endpoint", None) is not None):
             return
-        pos = it.pos()
+        cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
+        anchor = it.mapToScene(cr.topLeft())
         sp = _GRID_SPACING
-        nx = round(pos.x() / sp) * sp if not skip_x else pos.x()
-        ny = round(pos.y() / sp) * sp if not skip_y else pos.y()
-        if nx != pos.x() or ny != pos.y():
-            it.setPos(nx, ny)
+        tx = round(anchor.x() / sp) * sp if not skip_x else anchor.x()
+        ty = round(anchor.y() / sp) * sp if not skip_y else anchor.y()
+        dx, dy = tx - anchor.x(), ty - anchor.y()
+        if dx or dy:
+            it.moveBy(dx, dy)
 
     def _commit_move(self):
         """release 시 실제로 위치가 바뀐 아이템만 이동 undo로 기록."""

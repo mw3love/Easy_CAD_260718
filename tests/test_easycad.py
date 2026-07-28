@@ -5082,21 +5082,30 @@ def test_grid_snap_scene_disabled_noop():
 
 
 def test_grid_snap_move_quantizes_position():
-    # [그리드] 단일 도형 이동 — 위치가 격자 교차점으로 양자화(항상, 임계값 없음).
+    # [그리드] 단일 도형 이동 — 콘텐츠 rect의 실제 씬 위치가 격자 교차점으로 양자화(항상,
+    # 임계값 없음). pos()가 아니라 mapToScene된 화면 기준점으로 검증 — pos() 자체는 아이템
+    # 로컬 원점(대개 (0,0))과 무관해 격자 정렬을 보장하지 않는다(회귀: 아래 anchor 테스트).
+    from easycad.canvas.annotator_core import _GRID_SPACING
     w = CanvasWindow()
     r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     r.setPos(QPointF(7, 13)); r.setSelected(True)
     w._view._apply_grid_snap_move(False, False)
-    assert r.pos() == QPointF(0, 20)
+    anchor = r.mapToScene(r._content_rect().topLeft())
+    assert abs(anchor.x() % _GRID_SPACING) < 1e-6
+    assert abs(anchor.y() % _GRID_SPACING) < 1e-6
 
 
 def test_grid_snap_move_respects_skip_axis():
     # [그리드] 스마트정렬/축고정이 이미 처리한 축은 skip_*로 건드리지 않는다(우선순위 위계).
+    from easycad.canvas.annotator_core import _GRID_SPACING
     w = CanvasWindow()
     r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     r.setPos(QPointF(7, 13)); r.setSelected(True)
-    w._view._apply_grid_snap_move(True, False)
-    assert r.pos() == QPointF(7, 20)
+    before = r.mapToScene(r._content_rect().topLeft())
+    w._view._apply_grid_snap_move(True, False)   # x축 skip
+    after = r.mapToScene(r._content_rect().topLeft())
+    assert abs(after.x() - before.x()) < 1e-6       # x축 불변
+    assert abs(after.y() % _GRID_SPACING) < 1e-6    # y축만 격자로
 
 
 def test_grid_snap_move_disabled_noop():
@@ -5106,6 +5115,24 @@ def test_grid_snap_move_disabled_noop():
     r.setPos(QPointF(7, 13)); r.setSelected(True)
     w._view._apply_grid_snap_move(False, False)
     assert r.pos() == QPointF(7, 13)
+
+
+def test_grid_snap_move_uses_scene_anchor_not_raw_pos():
+    # [그리드][회귀] 마우스로 그린 도형은 로컬 rect가 클릭 시점 씬 좌표를 그대로 품고(pos()는
+    # (0,0)에 남는 게 보통) — pos()만 격자에 맞추면 실제 화면 위치는 격자 밖일 수 있었다(1차 시도).
+    # 아이템 로컬 원점(0,0)을 mapToScene해도 같은 함정(그 점은 실제 그려진 도형과 무관, pos()와
+    # 동치일 뿐 — 2차 시도에서 발견). 콘텐츠 rect의 실제 화면 위치로 검증해야 한다.
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, w.make_pen(), 307, 53, 100, 60)   # 로컬 rect 원점 = (307,53), pos=(0,0)
+    r.setSelected(True)
+    assert r.pos() == QPointF(0, 0)   # 전제: pos()는 (0,0)에 남는다(실제 그리기 패턴과 동일)
+    before = r.mapToScene(r._content_rect().topLeft())
+    assert abs(before.x() % _GRID_SPACING) > 1e-6   # 전제: 시작 위치는 격자 밖(307%20=7)
+    w._view._apply_grid_snap_move(False, False)
+    anchor = r.mapToScene(r._content_rect().topLeft())
+    assert abs(anchor.x() % _GRID_SPACING) < 1e-6
+    assert abs(anchor.y() % _GRID_SPACING) < 1e-6
 
 
 def test_grid_snap_move_skips_multiselect():
