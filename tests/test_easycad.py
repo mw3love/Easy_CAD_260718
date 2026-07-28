@@ -5262,6 +5262,24 @@ def test_minimap_shares_scene_and_is_noninteractive():
     assert w.dockWidgetArea(w._minimap_dock) == Qt.DockWidgetArea.RightDockWidgetArea
 
 
+def test_minimap_indicator_is_scene_coords_not_double_transformed():
+    # [미니맵][실조건 버그 회귀] drawForeground의 painter는 이미 씬 좌표계로 매핑돼 있어
+    # (offscreen 프로브로 실측 확인) 인디케이터도 씬 좌표를 그대로 써야 한다. 예전엔
+    # mapFromScene으로 미니맵 '픽셀' 좌표로 한 번 더 바꾼 뒤 그 값을 그려 이중변환이었다 —
+    # 씬 원점에서 멀리 팬한 뒤(사용자 실사용과 동일 조건) 인디케이터 씬 사각형이 실제로
+    # 화면에 보이는 도형들을 포함해야 한다.
+    from easycad.canvas.annotator_core import _RectItem
+    w = CanvasWindow(); w.resize(1200, 800); w.show()
+    it1 = _RectItem(QRectF(1080, 760, 180, 105)); it1.setPen(w.make_pen()); w._scene.addItem(it1)
+    it2 = _RectItem(QRectF(1450, 885, 180, 120)); it2.setPen(w.make_pen()); w._scene.addItem(it2)
+    w._view.resetTransform()
+    w._view.centerOn(1300, 850)   # 원점에서 멀리 — 픽셀 스케일 값과 씬 좌표 값이 안 겹치는 영역
+    indicator = w._minimap._indicator_scene_rect()
+    items_bbox = w._scene.itemsBoundingRect()
+    assert indicator.contains(items_bbox), (indicator, items_bbox)
+    w.close()
+
+
 def test_minimap_click_navigates_main_view():
     # [미니맵] 클릭한 지점이 메인 뷰의 새 중심이 된다.
     from PyQt6.QtCore import QPoint

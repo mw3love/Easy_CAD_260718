@@ -392,17 +392,28 @@ class _MinimapView(QGraphicsView):
         self._refit()
         super().paintEvent(event)
 
+    def _indicator_scene_rect(self) -> QRectF:
+        """메인 뷰가 지금 보여주는 영역 — 씬 좌표. drawForeground에서 그대로 그릴 값이라
+        테스트가 이중변환 회귀(아래 주석)를 잡을 수 있도록 별도 메서드로 뺐다."""
+        main = self._owner._view
+        return main.mapToScene(main.viewport().rect()).boundingRect()
+
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
-        main = self._owner._view
-        visible = main.mapToScene(main.viewport().rect()).boundingRect()
-        view_rect = self.mapFromScene(visible).boundingRect()
+        # ⚠ [실조건 버그 근본원인] drawForeground의 painter는 Qt가 이미 "씬 좌표계"로 매핑해
+        # 넘겨준다(QGraphicsItem.paint()의 로컬 좌표계와 같은 설계) — 실측 확인(offscreen 프로브):
+        # drawForeground의 rect 인자가 뷰 픽셀(0..w)이 아니라 fitInView된 씬 범위 그대로였다.
+        # 이전 코드는 main의 가시 영역(씬 좌표)을 self.mapFromScene()으로 미니맵 '픽셀' 좌표로
+        # 또 변환한 뒤, 이미 씬 좌표계인 painter에 그 픽셀값을 그렸다 — 이중 변환이라 인디케이터가
+        # 항상 잘못된 크기·위치로 그려졌다(폴링으로는 못 고치는 종류의 버그 — 매번 같은 잘못된
+        # 값을 다시 그릴 뿐). 씬 좌표(visible)를 그대로 그리면 된다(변환 불필요).
+        visible = self._indicator_scene_rect()
         accent = QColor("#54a9ff" if getattr(self._owner, "_dark", True) else "#1f7ae0")
         pen = QPen(accent, 2.0); pen.setCosmetic(True)
         painter.setPen(pen)
         fill = QColor(accent); fill.setAlpha(35)
         painter.setBrush(QBrush(fill))
-        painter.drawRect(view_rect)
+        painter.drawRect(visible)
 
     def _navigate_to(self, view_pos):
         self._owner._view.centerOn(self.mapToScene(view_pos))
@@ -1417,6 +1428,17 @@ class CanvasWindow(QMainWindow):
 
         self._view.horizontalScrollBar().valueChanged.connect(self._refresh_minimap)
         self._view.verticalScrollBar().valueChanged.connect(self._refresh_minimap)
+        # [실조건 재현 후 접근 전환 — 규칙 11-b] 창 리사이즈·dock 스플리터 리사이즈·뷰포트
+        # 이벤트를 각각 정확히 잡으려던 두 차례 시도(커밋 16c7551계열·2bd6827)가 실사용에서도
+        # 여전히 어긋났다 — Qt의 dock 레이아웃 재계산 시점과 이벤트 발화 시점이 어긋날 수 있어
+        # (이 코드베이스에 이미 전례: `_compact_shapes_dock`이 같은 이유로 singleShot(0) 사용)
+        # 트리거를 더 정밀하게 좁히는 접근 자체가 계속 빈틈을 남긴다. 트리거를 놓치지 않으려
+        # 애쓰는 대신 **짧은 주기 폴링**으로 전환 — 미니맵은 도형 몇 개짜리 작은 뷰라 200ms마다
+        # 다시 그리는 비용이 무시할 수준이고, 어떤 이벤트를 놓치든 최대 200ms 안에 저절로 맞는다.
+        # 기존 이벤트 훅(줌·스크롤바·리사이즈)은 즉각 반응용으로 그대로 두고 이 타이머는 안전망.
+        self._minimap_timer = QTimer(self)
+        self._minimap_timer.timeout.connect(self._refresh_minimap)
+        self._minimap_timer.start(200)
 
     # ---- 속성 편집 → push_undo_state (M2 #2) --------------------------------
     def _edit_items(self, targets, fn, key=None):
