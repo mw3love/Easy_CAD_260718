@@ -361,11 +361,77 @@ class _UndoEntry:
         self.key = key
 
 
+class _MinimapView(QGraphicsView):
+    """[미니맵] 메인 뷰와 같은 QGraphicsScene을 공유하는 축소 뷰 — 별도 캐시·갱신 로직 없이
+    Qt가 내용 변경(아이템 추가·이동)을 모든 뷰에 자동 반영한다(같은 scene을 보는 다른
+    QGraphicsView라 scene.changed 훅이 따로 필요 없음 — 규칙 2 손안의 카드: Qt 멀티뷰가
+    이미 제공). 자체 상호작용은 끄고(setInteractive(False)) 클릭/드래그로 메인 뷰를 그
+    위치로 이동시키는 내비게이션만 한다. 페인트마다 itemsBoundingRect로 재-fit해 도면이
+    자라도 항상 전체가 보인다(도면 규모가 작아 매 페인트 재계산 비용이 무시할만함 — 캐시 불필요).
+    ⚠ 메인 뷰의 줌/팬/리사이즈는 scene.changed를 트리거하지 않아(순수 뷰 변환) 이 미니맵이
+    자동으로 못 알아챈다 — CanvasWindow가 그 세 지점에서 명시적으로 viewport().update()를 건다."""
+
+    def __init__(self, owner, scene):
+        super().__init__(scene)
+        self._owner = owner
+        self.setInteractive(False)   # 아이템 선택/드래그 차단 — 클릭은 내비게이션 전용
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.setMinimumHeight(120)
+
+    def _refit(self):
+        rect = self.scene().itemsBoundingRect()
+        if rect.isEmpty():
+            return
+        pad = max(rect.width(), rect.height()) * 0.06 + 12
+        self.fitInView(rect.adjusted(-pad, -pad, pad, pad), Qt.AspectRatioMode.KeepAspectRatio)
+
+    def paintEvent(self, event):
+        self._refit()
+        super().paintEvent(event)
+
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+        main = self._owner._view
+        visible = main.mapToScene(main.viewport().rect()).boundingRect()
+        view_rect = self.mapFromScene(visible).boundingRect()
+        accent = QColor("#54a9ff" if getattr(self._owner, "_dark", True) else "#1f7ae0")
+        pen = QPen(accent, 2.0); pen.setCosmetic(True)
+        painter.setPen(pen)
+        fill = QColor(accent); fill.setAlpha(35)
+        painter.setBrush(QBrush(fill))
+        painter.drawRect(view_rect)
+
+    def _navigate_to(self, view_pos):
+        self._owner._view.centerOn(self.mapToScene(view_pos))
+        self.viewport().update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._navigate_to(event.position().toPoint())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            self._navigate_to(event.position().toPoint())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def wheelEvent(self, event):
+        event.ignore()   # 미니맵 자체 줌 없음 — 항상 전체 맞춤 유지(메인 뷰 휠은 별도)
+
+
 class CanvasWindow(QMainWindow):
     # 콤팩트 목표는 콘텐츠 최소보다 작게 → Qt가 '진짜 최소'로 클램프(수동으로 더 못 줄이게).
     _SHAPES_DOCK_W = 80     # 세로 dock → 버튼 2열 최소(≈144px)로 클램프
     _SHAPES_DOCK_H = 80     # 가로 dock → 제목+라벨+버튼 1줄 최소로 클램프
     _PROPS_DOCK_W = 120     # 속성 dock → 폼 최소로 클램프(안내문 줄바꿈 후 좁아짐)
+    _MINIMAP_DOCK_H = 150   # 미니맵 dock 기본 높이
 
     def __init__(self):
         super().__init__()
@@ -427,6 +493,7 @@ class CanvasWindow(QMainWindow):
         self._build_toolbar()
         self._build_shapes_dock()
         self._build_properties_dock()
+        self._build_minimap_dock()       # [신규기능] 미니맵 — 무한캔버스 큰 도면 탐색
         self._build_floating_toolbar()   # [Phase 6 M3 #15] 선택 위 플로팅 컨텍스트 툴바
         self._build_statusbar()
         self.set_tool("select")
@@ -435,6 +502,7 @@ class CanvasWindow(QMainWindow):
         self.resizeDocks([self._shapes_dock, self._props_dock],
                          [self._SHAPES_DOCK_W, self._PROPS_DOCK_W],
                          Qt.Orientation.Horizontal)
+        self.resizeDocks([self._minimap_dock], [self._MINIMAP_DOCK_H], Qt.Orientation.Vertical)
 
     # ---- 메뉴 (파일 → 저장/열기/PDF) ----------------------------------------
     def _make_action(self, text, icon, slot, shortcut=None, checkable=False):
@@ -529,17 +597,27 @@ class CanvasWindow(QMainWindow):
         """기준 zoom = 100%(1:1). 무한캔버스에서 돌아올 홈."""
         self._view.resetTransform()
         self._update_zoom_label()
+        self._refresh_minimap()
 
     def _zoom_fit(self):
         rect = self._scene.itemsBoundingRect()
         if rect.isEmpty():
             self._view.resetTransform()
             self._update_zoom_label()
+            self._refresh_minimap()
             return
         pad = max(rect.width(), rect.height()) * 0.05 + 20
         self._view.fitInView(rect.adjusted(-pad, -pad, pad, pad),
                              Qt.AspectRatioMode.KeepAspectRatio)
         self._update_zoom_label()
+        self._refresh_minimap()
+
+    def _refresh_minimap(self):
+        """[미니맵] 메인 뷰포트 사각형 갱신 — scene.changed를 안 타는 순수 뷰 변환(줌·팬·
+        리사이즈) 시점마다 호출. 미니맵 dock 생성 전(초기화 중) 호출 대비 getattr 가드."""
+        minimap = getattr(self, "_minimap", None)
+        if minimap is not None:
+            minimap.viewport().update()
 
     # ---- 상태바 (줌 %) ------------------------------------------------------
     def _build_statusbar(self):
@@ -733,6 +811,12 @@ class CanvasWindow(QMainWindow):
         it.setSelected(True)
         self.push_undo_add(it)
         return it
+
+    def resizeEvent(self, e):
+        # [미니맵] 창 크기가 바뀌면 메인 뷰의 보이는 씬 영역도 바뀐다(스크롤·줌 변화가 없어도) —
+        # scene.changed를 안 타므로 명시적으로 미니맵 사각형을 갱신.
+        super().resizeEvent(e)
+        self._refresh_minimap()
 
     # 파일 탐색기에서 이미지를 캔버스로 끌어다 놓기 — QMainWindow가 드롭을 받는다(코어 뷰 무수정).
     def dragEnterEvent(self, e):
@@ -1046,9 +1130,13 @@ class CanvasWindow(QMainWindow):
         dock_qss = ("QDockWidget { font-weight:600; }"
                     f"QDockWidget::title {{ background:{title_bg}; padding:5px 9px;"
                     f" text-align:left; border-bottom:2px solid {accent}; }}")
-        for dock in (getattr(self, "_shapes_dock", None), getattr(self, "_props_dock", None)):
+        for dock in (getattr(self, "_shapes_dock", None), getattr(self, "_props_dock", None),
+                     getattr(self, "_minimap_dock", None)):
             if dock is not None:
                 dock.setStyleSheet(dock_qss)
+        minimap = getattr(self, "_minimap", None)
+        if minimap is not None:
+            minimap.viewport().update()   # 인디케이터 색이 다크/라이트 accent를 따라가므로 재도색
         if persist:
             QSettings("EasyCAD", "EasyCAD").setValue("dark", dark)
 
@@ -1303,6 +1391,26 @@ class CanvasWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
         self._scene.selectionChanged.connect(self._refresh_properties)
         self._refresh_properties()
+
+    # ---- 미니맵 dock (신규기능 — deep-interview 2026-07-28) ------------------
+    def _build_minimap_dock(self):
+        """메인과 같은 scene을 공유하는 축소 뷰 dock. 내용 갱신은 Qt가 자동(멀티뷰) —
+        여기선 메인 뷰의 줌/팬/리사이즈(scene.changed를 안 타는 순수 뷰 변환) 시점에만
+        명시적으로 미니맵을 다시 그리도록 훅을 건다.
+        ⚠ 함정: 처음엔 하단(Bottom, 창 전체 폭)에 얇게 뒀더니 뷰포트 종횡비가 극단(≈9:1)이라
+        `fitInView(KeepAspectRatio)`가 가로로 크게 레터박스돼 인디케이터 사각형이 실제보다
+        훨씬 작아 보였다(자체 스크린샷으로 발견) → 속성 dock 아래(우측 열, splitDockWidget)로
+        옮겨 폭을 좁고 세로로 긴 문서 비율에 가깝게 만들어 해결."""
+        dock = QDockWidget("⋮⋮  미니맵", self)
+        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self._minimap_dock = dock
+        self._minimap = _MinimapView(self, self._scene)
+        dock.setWidget(self._minimap)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        self.splitDockWidget(self._props_dock, dock, Qt.Orientation.Vertical)
+
+        self._view.horizontalScrollBar().valueChanged.connect(self._refresh_minimap)
+        self._view.verticalScrollBar().valueChanged.connect(self._refresh_minimap)
 
     # ---- 속성 편집 → push_undo_state (M2 #2) --------------------------------
     def _edit_items(self, targets, fn, key=None):
@@ -1566,6 +1674,7 @@ class CanvasWindow(QMainWindow):
         factor = 1.15 if dy > 0 else 1.0 / 1.15
         self._view.scale(factor, factor)
         self._update_zoom_label()
+        self._refresh_minimap()
 
     # 팬 (창 이동 대신 캔버스 스크롤)
     def _win_drag_start(self, gpos):

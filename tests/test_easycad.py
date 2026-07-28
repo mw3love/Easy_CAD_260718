@@ -5253,6 +5253,66 @@ def test_grid_background_hidden_when_too_dense_or_disabled():
     painter2.end()
 
 
+def test_minimap_shares_scene_and_is_noninteractive():
+    # [미니맵] 메인과 같은 QGraphicsScene을 공유(별도 캐시 없이 Qt 멀티뷰로 내용 자동반영) +
+    # 자체 아이템 선택/드래그는 꺼서(setInteractive) 클릭이 항상 내비게이션으로만 쓰이게 한다.
+    w = CanvasWindow()
+    assert w._minimap.scene() is w._scene
+    assert w._minimap.isInteractive() is False
+    assert w.dockWidgetArea(w._minimap_dock) == Qt.DockWidgetArea.RightDockWidgetArea
+
+
+def test_minimap_click_navigates_main_view():
+    # [미니맵] 클릭한 지점이 메인 뷰의 새 중심이 된다.
+    from PyQt6.QtCore import QPoint
+    w = CanvasWindow(); w.resize(1200, 800); w.show()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    before = w._view.mapToScene(w._view.viewport().rect().center())
+    tl = w._minimap.viewport().rect().topLeft()
+    target_view_pos = QPoint(tl.x() + 5, tl.y() + 5)
+    target_scene = w._minimap.mapToScene(target_view_pos)
+    w._minimap._navigate_to(target_view_pos)
+    after = w._view.mapToScene(w._view.viewport().rect().center())
+    assert _close(after, target_scene, eps=2.0)
+    assert not _close(after, before, eps=2.0)
+    w.close()
+
+
+def test_minimap_wheel_does_not_zoom():
+    # [미니맵] 자체 줌 없음 — 휠은 항상 무시(전체 맞춤 유지가 목적).
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtCore import QPointF as _QPF, QPoint as _QP
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    mm = w._minimap
+    before = mm.transform()
+    ev = QWheelEvent(_QPF(10, 10), _QPF(10, 10), _QP(0, 0), _QP(0, 120),
+                      Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                      Qt.ScrollPhase.NoScrollPhase, False)
+    mm.wheelEvent(ev)
+    assert mm.transform() == before
+
+
+def test_minimap_refresh_hooked_to_zoom_and_resize():
+    # [미니맵] scene.changed를 안 타는 순수 뷰 변환(줌·리사이즈)마다 명시적으로 갱신돼야 한다.
+    w = CanvasWindow(); w.resize(1200, 800); w.show()
+    calls = []
+    w._minimap.viewport().update = lambda *a, **k: calls.append(1)
+    w._on_wheel_zoom(120)
+    assert len(calls) >= 1
+    w._zoom_reset()
+    assert len(calls) >= 2
+    w._zoom_fit()
+    assert len(calls) >= 3
+    w.close()
+
+
+def test_minimap_refit_empty_scene_noop():
+    # [미니맵] 아이템 없는 씬에서도 예외 없이 완료(itemsBoundingRect가 빈 사각형).
+    w = CanvasWindow()
+    w._minimap._refit()
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
