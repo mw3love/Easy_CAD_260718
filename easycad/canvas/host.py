@@ -13,6 +13,7 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
           push_undo_add/push_undo_delete/push_undo_move/undo/
           copy_selection/paste_selection
 """
+import re
 import uuid
 
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
@@ -2145,6 +2146,9 @@ class CanvasWindow(QMainWindow):
         if len(self._align_targets()) >= 2:      # [M5] 여럿 선택 시만 정렬/분배 서브메뉴
             menu.addSeparator()
             menu.addMenu(self._build_align_menu("정렬 / 분배", parent=menu))
+        if len(self._arrow_targets()) >= 1:      # [신규기능] 화살표 선택 시만 채번 진입점
+            menu.addSeparator()
+            menu.addAction("케이블 번호 매기기...", self._prompt_cable_numbers)
         targets = self._edit_targets()           # [편의기능] Z-order/그룹/잠금 대상
         if targets:
             menu.addSeparator()
@@ -2558,6 +2562,49 @@ class CanvasWindow(QMainWindow):
             out.append(it)
         return out
 
+    # ---- [신규기능] 케이블 번호 자동채번 — deep-interview 2026-07-28 -----------
+    def _arrow_targets(self):
+        """채번 대상 — 선택 중 화살표(직선/곡선/직각 전부)만. 도형·표 등은 무시."""
+        return [it for it in self._scene.selectedItems()
+                if isinstance(it, (_ArrowItem, _PolyArrowItem))]
+
+    def apply_cable_numbers(self, prefix: str, start: int):
+        """선택된 화살표에 위치순(좌상단→우하단)으로 '{prefix}-{n}: ' 라벨을 매긴다.
+        기존 라벨 텍스트는 보존(뒤에 이어붙임), 재실행 시 같은 접두사의 옛 번호는 교체된다.
+        신규 라벨 생성(create)과 기존 라벨 수정(mut/state)을 한 undo 엔트리로 묶는다."""
+        targets = self._arrow_targets()
+        if not targets:
+            return
+        anchored = [(it, it.mapToScene(it._label_anchor())) for it in targets]
+        anchored.sort(key=lambda pair: (round(pair[1].y()), round(pair[1].x())))
+        targets = [it for it, _ in anchored]
+        # 현재 접두사의 옛 번호만 인식해 교체 — 접두사가 다르면(예: 이전 CABLE→이번 CAM)
+        # 옛 패턴은 매칭 안 되고 그대로 보존된 채 새 번호가 앞에 붙는다(의도된 동작).
+        num_re = re.compile(r"^" + re.escape(prefix) + r"-\d+:?\s*")
+        ops = []
+        for i, it in enumerate(targets, start=start):
+            is_new = not it._label_alive()
+            lbl = it.ensure_label()
+            before = None if is_new else lbl.capture_state()
+            old_text = lbl.toPlainText()
+            m = num_re.match(old_text)
+            rest = old_text[m.end():] if m else old_text
+            new_text = f"{prefix}-{i}: {rest}" if rest else f"{prefix}-{i}"
+            lbl.setPlainText(new_text)
+            if is_new:
+                ops.append(("create", lbl))
+            else:
+                ops.append(("mut", lbl, "state", before, lbl.capture_state()))
+        self._push_entry(ops)
+        self.statusBar().showMessage(f"케이블 번호 매김 — {len(targets)}개", 2000)
+
+    def _prompt_cable_numbers(self):
+        dlg = _CableNumberDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        prefix, start = dlg.result()
+        self.apply_cable_numbers(prefix, start)
+
     def _repaint_overlays(self):
         """뷰 전체를 다시 칠한다. 프로그램이 아이템을 옮긴 뒤 반드시 필요 —
         ⚠ 다중선택 그룹 박스·정렬 가이드는 아이템이 아니라 뷰의 drawForeground가 그리는데,
@@ -2748,6 +2795,30 @@ class _TableSizeDialog(QDialog):
 
     def result(self):
         return self._rows_sb.value(), self._cols_sb.value(), self._header_cb.isChecked()
+
+
+class _CableNumberDialog(QDialog):
+    """[신규기능] 케이블 번호 자동채번 — 접두사·시작번호를 고르는 작은 다이얼로그."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("케이블 번호 매기기")
+        form = QFormLayout(self)
+        self._prefix_le = QLineEdit("CABLE", self)
+        self._start_sb = QSpinBox(self)
+        self._start_sb.setRange(0, 99999)
+        self._start_sb.setValue(1)
+        form.addRow("접두사", self._prefix_le)
+        form.addRow("시작번호", self._start_sb)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        form.addRow(btns)
+
+    def result(self):
+        prefix = self._prefix_le.text().strip() or "CABLE"
+        return prefix, self._start_sb.value()
 
 
 class _MermaidDialog(QDialog):

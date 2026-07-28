@@ -5482,6 +5482,106 @@ def test_context_menu_style_entries_visibility():
     assert any(t.startswith("스타일 붙여넣기") for t in labels())    # 붙여넣기는 다중선택도 가능
 
 
+def _mk_arrow(w, x1, y1, x2, y2, color="#111111"):
+    ar = _ArrowItem(QColor(color), 2, True)
+    ar.set_points(QPointF(x1, y1), QPointF(x2, y2))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    return ar
+
+
+def test_cable_numbers_orders_by_position():
+    # [케이블 번호] 위치순(좌상단→우하단)으로 번호가 매겨진다 — 선택/그리기 순서 무관.
+    w = CanvasWindow()
+    bottom = _mk_arrow(w, 0, 200, 100, 200)   # 아래쪽에 먼저 생성
+    top = _mk_arrow(w, 0, 0, 100, 0)          # 위쪽은 나중에 생성
+    bottom.setSelected(True); top.setSelected(True)
+    w.apply_cable_numbers("CABLE", 1)
+    assert top._label.toPlainText() == "CABLE-1"
+    assert bottom._label.toPlainText() == "CABLE-2"
+
+
+def test_cable_numbers_works_on_polyarrow():
+    # [케이블 번호] 직각 커넥터(_PolyArrowItem)에도 동일하게 적용된다(직선 전용 아님).
+    w = CanvasWindow()
+    sar = _PolyArrowItem(QColor("#111111"), 3, True)
+    sar._pts = [QPointF(0, 0), QPointF(80, 0), QPointF(80, 40)]
+    sar.setFlags(sar.GraphicsItemFlag.ItemIsSelectable | sar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sar)
+    sar.setSelected(True)
+    w.apply_cable_numbers("CABLE", 1)
+    assert sar._label.toPlainText() == "CABLE-1"
+
+
+def test_cable_numbers_preserves_existing_label_text():
+    # [케이블 번호] 이미 라벨이 있으면 번호를 앞에 붙이고 기존 텍스트는 보존한다.
+    w = CanvasWindow()
+    a = _mk_arrow(w, 0, 0, 100, 0)
+    a.ensure_label().setPlainText("메인전원")
+    a.setSelected(True)
+    w.apply_cable_numbers("CABLE", 1)
+    assert a._label.toPlainText() == "CABLE-1: 메인전원"
+
+
+def test_cable_numbers_rerun_replaces_same_prefix():
+    # [케이블 번호] 같은 접두사로 재실행하면 옛 번호가 새 번호로 교체(누적 안 됨).
+    w = CanvasWindow()
+    a = _mk_arrow(w, 0, 0, 100, 0)
+    a.setSelected(True)
+    w.apply_cable_numbers("CABLE", 1)
+    assert a._label.toPlainText() == "CABLE-1"
+    w.apply_cable_numbers("CABLE", 5)
+    assert a._label.toPlainText() == "CABLE-5"
+
+
+def test_cable_numbers_different_prefix_appends():
+    # [케이블 번호] 접두사가 바뀌면 옛 번호 패턴은 못 알아보고 그대로 보존한 채 앞에 새로 붙는다.
+    w = CanvasWindow()
+    a = _mk_arrow(w, 0, 0, 100, 0)
+    a.setSelected(True)
+    w.apply_cable_numbers("CABLE", 1)
+    w.apply_cable_numbers("CAM", 1)
+    assert a._label.toPlainText() == "CAM-1: CABLE-1"
+
+
+def test_cable_numbers_undo_restores():
+    # [케이블 번호] 신규 라벨 생성은 undo로 사라지고, 기존 라벨 수정은 원문으로 복원 — 단일 undo.
+    w = CanvasWindow()
+    fresh = _mk_arrow(w, 0, 0, 100, 0)                  # 라벨 없음 → 새로 생성됨
+    existing = _mk_arrow(w, 0, 100, 100, 100)
+    existing.ensure_label().setPlainText("기존라벨")     # 라벨 있음 → 수정됨
+    fresh.setSelected(True); existing.setSelected(True)
+    before_undo = len(w._undo)
+    w.apply_cable_numbers("CABLE", 1)
+    assert len(w._undo) == before_undo + 1              # 단일 undo 엔트리
+    assert fresh._label_alive() and existing._label.toPlainText().startswith("CABLE-")
+    w.undo()
+    assert not fresh._label_alive()
+    assert existing._label.toPlainText() == "기존라벨"
+
+
+def test_arrow_targets_filters_non_arrows():
+    # [케이블 번호] 선택에 도형이 섞여 있어도 화살표만 대상이 된다.
+    w = CanvasWindow()
+    r = _mk_pen_rect(w, x=0, y=0)
+    a = _mk_arrow(w, 0, 100, 100, 100)
+    r.setSelected(True); a.setSelected(True)
+    targets = w._arrow_targets()
+    assert targets == [a]
+
+
+def test_context_menu_cable_number_entry_visibility():
+    # [케이블 번호] 화살표 선택 시만 우클릭 메뉴에 진입점이 뜬다(도형만 선택 시는 안 뜸).
+    w = CanvasWindow()
+    labels = lambda: [act.text() for act in w._build_context_menu().actions() if not act.isSeparator()]
+    r = _mk_pen_rect(w, x=0, y=0)
+    r.setSelected(True)
+    assert not any(t.startswith("케이블 번호") for t in labels())
+    a = _mk_arrow(w, 0, 100, 100, 100)
+    w._scene.clearSelection(); a.setSelected(True)
+    assert any(t.startswith("케이블 번호") for t in labels())
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
