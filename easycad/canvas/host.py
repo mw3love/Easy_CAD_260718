@@ -233,6 +233,12 @@ def _act_icon(name: str) -> QIcon:
     elif name == "ortho":
         poly([(6, 4), (6, 19), (20, 19)], close=False)
         poly([(6, 15.5), (9.5, 15.5), (9.5, 19)], close=False)
+    elif name == "grid":
+        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
+        for gx in (5.5, 12, 18.5):
+            for gy in (5.5, 12, 18.5):
+                p.drawEllipse(QPointF(gx, gy), 1.5, 1.5)
+        p.restore()
     elif name == "undo":
         poly([(8, 7), (4.3, 10.5), (8, 14)], close=False)
         path = QPainterPath(QPointF(4.3, 10.5))
@@ -384,6 +390,7 @@ class CanvasWindow(QMainWindow):
         self.tool_pinned = False
         self.snap_enabled = True         # o-snap 토글(F3) — 도형 테두리 달라붙기 켜고 끄기
         self.ortho_enabled = False       # Ortho 토글(F8) — 그리기·정점드래그를 수평/수직(0/90°)로 제약
+        self.grid_enabled = True         # [그리드] 표시+스냅 통합 토글(Shift+G) — 격자 표시·이동/리사이즈/생성 스냅
         self._bg_item = None            # 배경 이미지 없음(무한 캔버스)
         self._badge_n = 0
         self._undo: list[_UndoEntry] = []   # 저널(뒤로) — 최신이 끝
@@ -503,8 +510,12 @@ class CanvasWindow(QMainWindow):
         self._act_snap.setChecked(True)
         self._act_ortho = self._make_action("직교 제약 (Ortho)", "ortho",
             self._toggle_ortho, "F8", checkable=True)
+        self._act_grid = self._make_action("격자 (스냅투그리드)", "grid",
+            self._toggle_grid, "Shift+G", checkable=True)
+        self._act_grid.setChecked(True)
         v.addAction(self._act_snap)
         v.addAction(self._act_ortho)
+        v.addAction(self._act_grid)
         v.addSeparator()
         self._act_theme = self._make_action("다크/라이트 전환", "theme",
             self._toggle_theme, "Ctrl+Shift+L")
@@ -558,6 +569,12 @@ class CanvasWindow(QMainWindow):
         self.ortho_enabled = checked
         self.statusBar().showMessage(
             "Ortho 켜짐 — 수평/수직만" if checked else "Ortho 꺼짐 — 자유 각도", 3000)
+
+    def _toggle_grid(self, checked: bool):
+        self.grid_enabled = checked
+        self._view.viewport().update()   # 점 격자 즉시 표시/숨김
+        self.statusBar().showMessage(
+            "격자 켜짐 — 표시 + 스냅" if checked else "격자 꺼짐", 3000)
 
     # ---- 저장 / 열기 --------------------------------------------------------
     _DOC_FILTER = "Easy CAD 문서 (*.ecad)"
@@ -990,7 +1007,7 @@ class CanvasWindow(QMainWindow):
 
         # 편집 / 보기
         for a in (self._act_undo, self._act_redo, self._act_pin, self._act_zoom100,
-                  self._act_fit, self._act_snap, self._act_ortho):
+                  self._act_fit, self._act_snap, self._act_ortho, self._act_grid):
             tb.addAction(a)
         self._refresh_history_actions()   # undo/redo 버튼 초기 활성 상태(둘 다 비어 disabled)
 
@@ -1047,6 +1064,7 @@ class CanvasWindow(QMainWindow):
             ("가운데버튼 드래그", "화면 이동(팬)"),
             ("Ctrl+0 / Ctrl+9", "100%(1:1) / 전체 맞춤"),
             ("F3 / F8", "스냅 / 직교 제약 토글"),
+            ("Shift+G", "격자 표시/스냅투그리드 토글"),
             ("Del", "선택 객체 삭제"),
             ("Ctrl+Z", "되돌리기"),
             ("Ctrl+C / Ctrl+V", "복사 / 연속 붙여넣기(버퍼 없으면 클립보드 이미지)"),

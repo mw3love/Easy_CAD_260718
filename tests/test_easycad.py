@@ -1771,6 +1771,7 @@ def test_straight_arrow_click_draw_ortho():
 def test_hybrid_two_click_shapes():
     # 2점 도구(선·네모)를 투클릭으로: 클릭→이동→클릭 = 확정(드래그 안 해도 그려짐).
     w = CanvasWindow(); w.show(); w._zoom_reset()
+    w.grid_enabled = False   # [그리드] 이 테스트는 클릭 배치 좌표 자체를 검증 — 격자 스냅은 별도 테스트
     view = w._view
     _p, _r, click, move, _dm, _d = _draw_helpers(view)
 
@@ -2817,7 +2818,10 @@ def test_mirror_keeps_binding():
 
 
 def _box_drag(item, kind, key, lp, host):
-    """[2c] 박스 리사이즈 한 번 시뮬레이트(press→move→release) + geom undo 커밋."""
+    """[2c] 박스 리사이즈 한 번 시뮬레이트(press→move→release) + geom undo 커밋.
+    [그리드] 이 헬퍼는 순수 리사이즈 수학을 검증하는 용도라 격자 스냅(기본 켜짐)을 끈다 —
+    격자 자체 검증은 test_grid_snap_box_resize_* 가 별도로 담당한다."""
+    host.grid_enabled = False
     item._begin_box_geom()
     item._box_resize = (kind, key)
     item._apply_box_resize(lp)
@@ -3126,6 +3130,7 @@ def test_symbol_kinds_render_and_geom():
 def test_symbol_draw_via_tool():
     # M2: 심볼 도구 무장 → 캔버스 드래그 → 해당 kind의 _SymbolItem이 생성·선택된다.
     w = CanvasWindow(); w.show(); w.set_tool("sym:decision"); w._zoom_reset()
+    w.grid_enabled = False   # [그리드] 드래그 크기(140×90) 자체를 검증 — 격자 스냅은 별도 테스트
     view = w._view
     press, release, _click, _move, drag_move, _dbl = _draw_helpers(view)
     press(QPointF(0, 0)); drag_move(QPointF(140, 90)); release(QPointF(140, 90))
@@ -5049,6 +5054,176 @@ def test_group_lock_ecad_roundtrip():
     assert len(locked) == 1
     assert len(grouped) == 2 and grouped[0]._group_id == grouped[1]._group_id
     assert not (locked[0].flags() & locked[0].GraphicsItemFlag.ItemIsMovable)
+
+
+def test_grid_toggle_action():
+    # [그리드] 표시+스냅 통합 토글(Shift+G) — 기본 켜짐, 트리거 시 owner.grid_enabled에 반영.
+    from easycad.canvas.host import _act_icon
+    w = CanvasWindow()
+    assert w._act_grid.isCheckable() and w._act_grid.isChecked()
+    assert w.grid_enabled is True
+    assert not _act_icon("grid").isNull()
+    w._act_grid.trigger()
+    assert w._act_grid.isChecked() is False and w.grid_enabled is False
+
+
+def test_grid_snap_scene_quantizes():
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow()
+    p = w._view._grid_snap_scene(QPointF(7, 13))
+    assert p == QPointF(round(7 / _GRID_SPACING) * _GRID_SPACING,
+                         round(13 / _GRID_SPACING) * _GRID_SPACING)
+
+
+def test_grid_snap_scene_disabled_noop():
+    w = CanvasWindow()
+    w.grid_enabled = False
+    assert w._view._grid_snap_scene(QPointF(7, 13)) == QPointF(7, 13)
+
+
+def test_grid_snap_move_quantizes_position():
+    # [그리드] 단일 도형 이동 — 위치가 격자 교차점으로 양자화(항상, 임계값 없음).
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    r.setPos(QPointF(7, 13)); r.setSelected(True)
+    w._view._apply_grid_snap_move(False, False)
+    assert r.pos() == QPointF(0, 20)
+
+
+def test_grid_snap_move_respects_skip_axis():
+    # [그리드] 스마트정렬/축고정이 이미 처리한 축은 skip_*로 건드리지 않는다(우선순위 위계).
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    r.setPos(QPointF(7, 13)); r.setSelected(True)
+    w._view._apply_grid_snap_move(True, False)
+    assert r.pos() == QPointF(7, 20)
+
+
+def test_grid_snap_move_disabled_noop():
+    w = CanvasWindow()
+    w.grid_enabled = False
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    r.setPos(QPointF(7, 13)); r.setSelected(True)
+    w._view._apply_grid_snap_move(False, False)
+    assert r.pos() == QPointF(7, 13)
+
+
+def test_grid_snap_move_skips_multiselect():
+    # [그리드] 스마트정렬과 동일 관례 — 다중선택(그룹 변형 영역)엔 적용하지 않는다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b.setPos(QPointF(7, 13))
+    a.setSelected(True); b.setSelected(True)
+    w._view._apply_grid_snap_move(False, False)
+    assert b.pos() == QPointF(7, 13)
+
+
+def test_grid_snap_local_quantizes_unrotated():
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)   # pos=(0,0) → local==scene
+    snapped = r._grid_snap_local(QPointF(37, 51))
+    assert snapped == QPointF(round(37 / _GRID_SPACING) * _GRID_SPACING,
+                               round(51 / _GRID_SPACING) * _GRID_SPACING)
+
+
+def test_grid_snap_local_disabled_noop():
+    w = CanvasWindow()
+    w.grid_enabled = False
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    lp = QPointF(37, 51)
+    assert r._grid_snap_local(lp) == lp
+
+
+def test_grid_snap_box_resize_corner_lands_on_grid():
+    # [그리드] 코너 리사이즈 — 드래그한 코너가 격자 교차점에 정확히 놓인다(회전 0, key 무관).
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow()
+    for key in range(4):
+        r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+        r._begin_box_geom()
+        r._box_resize = ("corner", key)
+        r._apply_box_resize(QPointF(133, 77))   # 격자 밖 → (140, 80)로 스냅
+        pts = [r.rect().topLeft(), r.rect().topRight(),
+               r.rect().bottomLeft(), r.rect().bottomRight()]
+        assert any(_close(pt, QPointF(round(133 / _GRID_SPACING) * _GRID_SPACING,
+                                      round(77 / _GRID_SPACING) * _GRID_SPACING)) for pt in pts)
+
+
+def test_grid_snap_box_resize_edge_lands_on_grid():
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    r._begin_box_geom()
+    r._box_resize = ("edge", "r")
+    r._apply_box_resize(QPointF(133, 10))
+    assert abs(r.rect().right() - round(133 / _GRID_SPACING) * _GRID_SPACING) < 1e-6
+
+
+def test_grid_snap_shape_creation():
+    # [그리드] 네모를 격자 밖 지점으로 드래그해 그리면 결과 rect 모서리가 격자에 맞는다.
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow(); w.show(); w.set_tool("rect"); w._zoom_reset()
+    view = w._view
+    press, release, click, move, drag_move, dbl = _draw_helpers(view)
+    press(QPointF(3, 4))
+    drag_move(QPointF(97, 66))
+    release(QPointF(97, 66))
+    items = [it for it in w._scene.items() if isinstance(it, _RectItem)]
+    assert len(items) == 1
+    it = items[0]
+    tl = it.mapToScene(it.rect().topLeft())
+    br = it.mapToScene(it.rect().bottomRight())
+    for coord in (tl.x(), tl.y(), br.x(), br.y()):
+        assert abs(coord % _GRID_SPACING) < 1e-6 or abs(coord % _GRID_SPACING - _GRID_SPACING) < 1e-6
+    w.close()
+
+
+def test_grid_snap_excluded_for_arrow_tool():
+    # [그리드] 화살표류는 격자 스냅 대상에서 제외 — 테두리/포트 스냅이 항상 우선이어야 한다.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("arrow"); w._zoom_reset()
+    view = w._view
+    view._start = QPointF(3, 4)
+    NO = Qt.KeyboardModifier.NoModifier
+    vp = view.mapFromScene(QPointF(97, 61))
+    e = QMouseEvent(QEvent.Type.MouseMove, QPointF(vp), QPointF(vp),
+                     Qt.MouseButton.NoButton, Qt.MouseButton.NoButton, NO)
+    p = view._cur_point(e)
+    assert p == QPointF(97, 61)
+    w.close()
+
+
+def test_grid_background_paints_without_error_when_visible():
+    from PyQt6.QtGui import QPainter
+    w = CanvasWindow(); w._zoom_reset()
+    pm = QPixmap(200, 200); pm.fill()
+    painter = QPainter(pm)
+    w._view.drawBackground(painter, QRectF(0, 0, 200, 200))
+    painter.end()
+
+
+def test_grid_background_hidden_when_too_dense_or_disabled():
+    # [그리드] 너무 촘촘(줌아웃)하거나 토글 꺼짐이면 조기 반환 — 두 경로 모두 예외 없이 완료.
+    from easycad.canvas.annotator_core import _GRID_SPACING, _GRID_MIN_PX
+    from PyQt6.QtGui import QPainter
+    w = CanvasWindow()
+    view = w._view
+    scale = (_GRID_MIN_PX / _GRID_SPACING) * 0.5
+    view.resetTransform(); view.scale(scale, scale)
+    assert _GRID_SPACING * view._view_scale() < _GRID_MIN_PX
+    pm = QPixmap(200, 200); pm.fill()
+    painter = QPainter(pm)
+    view.drawBackground(painter, QRectF(-2000, -2000, 4000, 4000))
+    painter.end()
+
+    view.resetTransform()
+    w.grid_enabled = False
+    painter2 = QPainter(pm)
+    view.drawBackground(painter2, QRectF(0, 0, 200, 200))
+    painter2.end()
 
 
 def _run_all():

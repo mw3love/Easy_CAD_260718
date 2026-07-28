@@ -39,6 +39,15 @@ _MIN_FONT, _MAX_FONT, _DEFAULT_FONT = 2, 200, 16  # 휠 축소 하한을 2pt로(
 # 번호 마커 지름(px). 기본 30 = _BadgeItem._R(15) * 2, scale 1.0에 대응.
 _MIN_BADGE, _MAX_BADGE, _DEFAULT_BADGE = 12, 120, 30
 
+# [그리드/스냅투그리드] 씬 단위 고정 간격(줌에 비례해 화면 밀도가 변함 — CAD/Figma 관행).
+# 표시(점)와 스냅은 하나의 토글(Shift+G, owner.grid_enabled)로 묶여 있다. 너무 촘촘해지면
+# (_GRID_MIN_PX 미만) 자동으로 숨기고, 뷰 크기·줌 조합이 극단적이어도 프레임 랙이 없도록
+# 그릴 점 개수 상한(_GRID_MAX_DOTS)을 세이프가드로 둔다(둘 다 조용히 숨김 — 사용자 설정 아님).
+_GRID_SPACING = 20.0
+_GRID_MIN_PX = 4.0
+_GRID_MAX_DOTS = 6000
+_GRID_DOT_RGBA = (150, 150, 150, 115)
+
 
 def _clamp_int(v, lo, hi, default):
     """v를 int로 파싱해 [lo, hi]로 클램프. 파싱 실패(None·빈문자열 등)면 default."""
@@ -881,7 +890,23 @@ class _HandleResizeMixin:
         for arrow, idx, sh in (self._box_bound or []):
             arrow.reroute(pin_pred=lambda i: True)
 
+    def _grid_snap_local(self, lp: QPointF) -> QPointF:
+        """[그리드 스냅] 로컬 좌표를 씬 격자 교차점에 스냅 — mapToScene/mapFromScene로 아이템의
+        회전·스케일 변환을 그대로 통과시켜, 회전된 도형이라도 실제 씬 위치가 격자에 맞는다.
+        owner.grid_enabled가 False면 원본 그대로."""
+        sc = self.scene()
+        if sc is None or not sc.views():
+            return lp
+        owner = getattr(sc.views()[0], "_owner", None)
+        if owner is None or not getattr(owner, "grid_enabled", True):
+            return lp
+        scene_pt = self.mapToScene(lp)
+        sp = _GRID_SPACING
+        snapped = QPointF(round(scene_pt.x() / sp) * sp, round(scene_pt.y() / sp) * sp)
+        return self.mapFromScene(snapped)
+
     def _apply_box_resize(self, lp: QPointF):
+        lp = self._grid_snap_local(lp)   # [그리드 스냅] 코너/변 리사이즈 — 스마트정렬은 리사이즈 중 원래 꺼짐
         o = self._box_orig_rect
         kind, key = self._box_resize
         if kind == "corner":
@@ -5538,6 +5563,27 @@ class _AnnotatorView(QGraphicsView):
             self._align_guides.append(("h", by[2], min(nr.left(), o.left()),
                                        max(nr.right(), o.right())))
 
+    def _apply_grid_snap_move(self, skip_x: bool, skip_y: bool):
+        """[그리드 스냅] 단일 도형 이동 중 — 스마트정렬·축고정이 이미 자리를 정한 축은 skip_*로
+        건드리지 않고, 나머지 축만 위치(pos())를 격자 교차점으로 양자화한다. 우선순위는
+        축고정(Shift) > 스마트정렬(2e) > 격자스냅 순 — 호출부(mouseMoveEvent)가 skip_*로 강제."""
+        if not getattr(self._owner, "grid_enabled", True):
+            return
+        sel = [it for it in self.scene().selectedItems() if it.parentItem() is None]
+        if len(sel) != 1:
+            return
+        it = sel[0]
+        if (getattr(it, "_resizing", False) or getattr(it, "_rotating", False)
+                or getattr(it, "_box_resize", None) is not None
+                or getattr(it, "_drag_endpoint", None) is not None):
+            return
+        pos = it.pos()
+        sp = _GRID_SPACING
+        nx = round(pos.x() / sp) * sp if not skip_x else pos.x()
+        ny = round(pos.y() / sp) * sp if not skip_y else pos.y()
+        if nx != pos.x() or ny != pos.y():
+            it.setPos(nx, ny)
+
     def _commit_move(self):
         """release 시 실제로 위치가 바뀐 아이템만 이동 undo로 기록."""
         snap = self._move_snap
@@ -5724,6 +5770,37 @@ class _AnnotatorView(QGraphicsView):
             self.viewport().update()
         super().leaveEvent(event)
 
+    def drawBackground(self, painter, rect):
+        """[그리드/스냅투그리드] 점 격자 — 씬 단위 고정 간격, 화면 밀도가 너무 촘촘해지면
+        (줌아웃) 자동 숨김. 표시되는 rect(이미 화면에 보이는 영역)만 순회해 무한캔버스에서도
+        비용이 줌·팬과 무관하게 유계 — 그래도 극단적 조합을 대비해 점 개수 상한을 둔다."""
+        super().drawBackground(painter, rect)
+        if not getattr(self._owner, "grid_enabled", True):
+            return
+        s = self._view_scale()
+        sp = _GRID_SPACING
+        if sp * s < _GRID_MIN_PX:
+            return
+        x0 = math.floor(rect.left() / sp) * sp
+        y0 = math.floor(rect.top() / sp) * sp
+        cols = int((rect.right() - x0) / sp) + 2
+        rows = int((rect.bottom() - y0) / sp) + 2
+        if cols * rows > _GRID_MAX_DOTS:
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(*_GRID_DOT_RGBA)))
+        r = 1.1 / s
+        y = y0
+        for _ in range(rows):
+            x = x0
+            for _ in range(cols):
+                painter.drawEllipse(QPointF(x, y), r, r)
+                x += sp
+            y += sp
+        painter.restore()
+
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
         if not self._owner.is_edit_mode():
@@ -5832,7 +5909,18 @@ class _AnnotatorView(QGraphicsView):
         # (sarrow 멀티정점 클릭 배치는 _poly_apply_ortho가 별도 처리 — 여기선 드래그 2점만)
         if getattr(self._owner, "ortho_enabled", False) and tool in ("line", "arrow", "sarrow"):
             return self._constrain(self._start, sp, "ortho")
+        # [그리드 스냅] 새 도형 생성 드래그(네모·원·심볼·선)에만 — 화살표류는 제외(테두리/포트
+        # 스냅이 항상 우선이어야 하는 커넥터라 격자가 끼어들면 지속연결이 어긋난다).
+        if tool in ("rect", "ellipse", "line") or tool.startswith("sym:"):
+            return self._grid_snap_scene(sp)
         return sp
+
+    def _grid_snap_scene(self, pt: QPointF) -> QPointF:
+        """[그리드 스냅] 씬 좌표를 격자 교차점으로 양자화. owner.grid_enabled False면 그대로."""
+        if not getattr(self._owner, "grid_enabled", True):
+            return pt
+        sp = _GRID_SPACING
+        return QPointF(round(pt.x() / sp) * sp, round(pt.y() / sp) * sp)
 
     # ---- 그리기 ------------------------------------------------------------
     def mousePressEvent(self, event):
@@ -6005,6 +6093,10 @@ class _AnnotatorView(QGraphicsView):
             return super().mousePressEvent(event)
 
         sp = self.mapToScene(event.position().toPoint())
+        # [그리드 스냅] 생성 시작점도 이동 중(_cur_point)과 동일 대상(네모·원·심볼·선)에 맞춘다 —
+        # 안 하면 시작 모서리는 격자 밖에 남고 드래그로 옮긴 반대쪽 모서리만 격자에 맞아 어긋난다.
+        if tool in ("rect", "ellipse", "line") or tool.startswith("sym:"):
+            sp = self._grid_snap_scene(sp)
         self._start = sp
         owner = self._owner
         pen = owner.make_pen()
@@ -6627,8 +6719,15 @@ class _AnnotatorView(QGraphicsView):
             self._apply_axis_lock(event)   # [편의기능] Shift+드래그 축 고정 — 스냅보다 먼저(더 강한 제약)
             if self._axis_lock is None:
                 self._apply_smart_snap()
+                # [그리드 스냅] 스마트정렬이 이미 맞춘 축(가이드선 존재)은 건드리지 않고 나머지만.
+                skip_x = any(g[0] == "v" for g in self._align_guides)
+                skip_y = any(g[0] == "h" for g in self._align_guides)
             else:
                 self._align_guides = []    # 축 고정 중엔 정렬 가이드선도 끔(서로 다른 제약 혼선 방지)
+                # 축고정이 고정한 축은 old 값 그대로 유지돼야 하므로 격자스냅에서도 제외.
+                skip_x = self._axis_lock == "v"
+                skip_y = self._axis_lock == "h"
+            self._apply_grid_snap_move(skip_x, skip_y)
             self.viewport().update()
             return
         super().mouseMoveEvent(event)
