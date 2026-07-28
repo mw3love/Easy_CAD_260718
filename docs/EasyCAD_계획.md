@@ -239,9 +239,9 @@ Lucid/FigJam 캡처 + 사용자 요청 반영, deep-interview 4가지 확정(202
 레이어 패널 UI · 미니맵 · 스타일 복사(format painter) · 8포트(꼭짓점 추가) · 심볼 종류 추가 ·
 개별 열폭 드래그 · 그리드/스냅투그리드.
 
-~~클립보드 이미지 붙여넣기~~ — **완료**(2026-07-28, `7baf69b`, 프록시검증 — `python run.py`
-실조건 확인 대기). `_to_png_full`/`_pixmap_from_data`(코드정리 3순위 스캔에서 발견한
-clipboard_monitor 이식 로직) 활용. 상세: CLAUDE.md 신규기능 항목.
+~~클립보드 이미지 붙여넣기~~ — **완료**(2026-07-28, `7baf69b`, 실조건검증 ✓). `_to_png_full`/
+`_pixmap_from_data`(코드정리 3순위 스캔에서 발견한 clipboard_monitor 이식 로직) 활용.
+실조건서 발견된 플로팅 툴바 파생 버그는 `a1146ab`로 수정. 상세: CLAUDE.md 신규기능 항목.
 
 ## 5. 제안 추가 기능 (사용자 요청으로 검토 — 이 도메인에 특히 잘 맞는 것)
 

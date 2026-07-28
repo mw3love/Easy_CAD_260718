@@ -458,14 +458,18 @@ Mermaid 7개 버튼 제거(이미 파일 메뉴에 있어 중복, 단축키 불�
     고아(`QBuffer`/`QIODevice`/`time` import, 모듈 최상단 stale docstring)도 함께 정리.
     스모크 231종 전 구간 통과 + `CanvasWindow` 생성/표시 확인.
 
-**신규기능 — 클립보드 이미지 붙여넣기 완료(2026-07-28, 커밋 `7baf69b`, 프록시검증)** — 위
+**신규기능 — 클립보드 이미지 붙여넣기 완료(2026-07-28, 커밋 `7baf69b`, 실조건검증 ✓)** — 위
 코드정리 3순위에서 찾은 `_pixmap_from_data`/`_to_png_full`을 실사용 경로에 연결. host.py에
 `_clipboard_pixmap()`(Qt `pixmap()`/`image()` 우선, raw 포맷만 `_pixmap_from_data` 폴백)
 신설 + `_insert_image_at`에서 `_insert_pixmap_at(pm, scene_pos, msg)`를 추출해 파일삽입·
 드래그드롭·클립보드 붙여넣기가 공유. `paste_selection()`은 내부 붙여넣기 버퍼가 비어 있을
 때만 시스템 클립보드 이미지로 폴백(Ctrl+V 하나 공유, 기존 Ctrl+C/Ctrl+D 동작 불변). 스모크
-231종(신규 2종 포함) 통과 + 자체렌더 스크린샷으로 배치·선택·종횡비 확인. 실조건(실제 OS
-클립보드로 스크린샷 붙여넣기)은 `python run.py`로 사용자 확인 대기.
+231종(신규 2종 포함) 통과 + 자체렌더 스크린샷으로 배치·선택·종횡비 확인. **실조건검증 ✓**
+(2026-07-28, 사용자가 외부 스크린샷 도구로 캡처한 이미지를 `Ctrl+V`로 정상 붙여넣기 확인).
+⚠ 실조건에서 파생 버그 발견·수정(`a1146ab`) — 붙여넣은 이미지가 자동 선택되며 플로팅
+툴바가 뜨는데, 색상 스와치·선스타일 버튼이 `_ImageItem`/`_TableItem`(둘 다 NoPen + 자체
+고정 색)에도 노출돼 눌러도 시각 효과가 없었다. `_reposition_floating_toolbar`에 다른
+버튼들과 동일한 isinstance 기반 가시성 규칙 추가(선택 전부가 이미지/표일 때만 숨김).
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.
