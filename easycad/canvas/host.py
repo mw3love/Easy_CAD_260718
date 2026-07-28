@@ -1962,9 +1962,11 @@ class CanvasWindow(QMainWindow):
             b.setStyleSheet(f"background:{hexs}; border:1px solid #0006; border-radius:3px;")
             b.clicked.connect(lambda _c=False, h=hexs: self._floating_set_color(h))
             lay.addWidget(b); self._float_swatches.append(b)
-        more = QToolButton(); more.setText("⋯"); more.setFixedSize(QSize(20, 18))
-        more.setToolTip("색 더 보기"); more.clicked.connect(self._edit_color)
-        lay.addWidget(more)
+        self._float_more_btn = QToolButton(); self._float_more_btn.setText("⋯")
+        self._float_more_btn.setFixedSize(QSize(20, 18))
+        self._float_more_btn.setToolTip("색 더 보기")
+        self._float_more_btn.clicked.connect(self._edit_color)
+        lay.addWidget(self._float_more_btn)
         self._float_style_btn = QToolButton(); self._float_style_btn.setText("┄")
         self._float_style_btn.setFixedSize(QSize(24, 18))
         self._float_style_btn.setToolTip("선스타일 순환(실선→파선→점선)")
@@ -2154,6 +2156,14 @@ class CanvasWindow(QMainWindow):
         if not self.is_edit_mode() or not sel:
             bar.setVisible(False)
             return
+        # 색상 스와치·선스타일·"더 보기" — 이미지·표는 항상 NoPen + 자체 고정 색으로만 그려서
+        # apply_color/apply_style이 hasattr 체크는 통과해도 시각적으로는 죽은 버튼이 된다.
+        # 선택 전부가 이미지/표일 때만 숨긴다(하나라도 색이 실제로 반영되는 도형이 섞였으면 노출).
+        show_color = any(not isinstance(it, (_ImageItem, _TableItem)) for it in sel)
+        for b in self._float_swatches:
+            b.setVisible(show_color)
+        self._float_style_btn.setVisible(show_color)
+        self._float_more_btn.setVisible(show_color)
         self._float_dir_btn.setVisible(
             any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel))
         # [M4-3] 도형 교체 버튼 — 단일 도형(네모·원·심볼)만 선택했을 때.

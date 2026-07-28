@@ -933,6 +933,34 @@ def test_floating_toolbar_edits_and_visibility():
     w.undo(); assert it.pen().style() == Qt.PenStyle.SolidLine
 
 
+def test_floating_toolbar_hides_color_for_image_and_table_only():
+    # 이미지·표는 NoPen + 자체 고정 색이라 apply_color/apply_style이 시각 효과가 없다 —
+    # 선택 전부가 이미지/표뿐이면 색상 스와치·선스타일·"더 보기"를 숨긴다.
+    w = CanvasWindow()
+    img = _ImageItem(_mk_pixmap(40, 20), QRectF(0, 0, 40, 20))
+    img.setFlags(img.GraphicsItemFlag.ItemIsSelectable | img.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(img); img.setSelected(True)
+    w._reposition_floating_toolbar()
+    assert not w._float_bar.isHidden()                     # 바 자체는 뜬다(다른 버튼은 몰라도)
+    assert w._float_style_btn.isHidden()
+    assert w._float_more_btn.isHidden()
+    assert all(b.isHidden() for b in w._float_swatches)
+
+    tbl = _TableItem(2, 2, QRectF(0, 100, 80, 40))
+    tbl.setFlags(tbl.GraphicsItemFlag.ItemIsSelectable | tbl.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tbl)
+    w._scene.clearSelection(); tbl.setSelected(True)
+    w._reposition_floating_toolbar()
+    assert w._float_style_btn.isHidden()
+
+    # 이미지 + 네모 섞어 선택 — 네모 쪽은 색이 실제로 반영되므로 다시 노출.
+    rect = _mk_pen_rect(w)
+    img.setSelected(True); rect.setSelected(True)
+    w._reposition_floating_toolbar()
+    assert not w._float_style_btn.isHidden()
+    assert not all(b.isHidden() for b in w._float_swatches)
+
+
 def test_floating_toolbar_arrow_flip_undo():
     # [M3 #15] 화살표 선택 시 방향 버튼 노출 + flip이 capture_state로 undo(코어 보강).
     w = CanvasWindow()
