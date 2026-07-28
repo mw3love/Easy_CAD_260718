@@ -22,7 +22,7 @@ from easycad.canvas.annotator_core import (
     _nearest_border, _shape_ports, _axis_scale_fn, _mirror_fn,
     _seg_cross_seg, _ConnectorLabel, _shape_ports, _RIDE_TOL)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
-from easycad.fileio.document import save_document, load_document, item_to_dict
+from easycad.fileio.document import save_document, load_document, load_document_layers, item_to_dict
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.sketch_build import Sketch, _argb
 
@@ -5580,6 +5580,129 @@ def test_context_menu_cable_number_entry_visibility():
     a = _mk_arrow(w, 0, 100, 100, 100)
     w._scene.clearSelection(); a.setSelected(True)
     assert any(t.startswith("케이블 번호") for t in labels())
+
+
+def test_layers_default_layer_exists():
+    # [레이어] 새 창은 "기본" 레이어 1개로 시작.
+    w = CanvasWindow()
+    assert len(w._layers) == 1
+    assert w._layers[0]["id"] == "default"
+    assert w._layers[0]["name"] == "기본"
+
+
+def test_layer_add_rename_delete_moves_items_to_default():
+    # [레이어] 추가·이름변경 정상, 삭제하면 소속 아이템이 기본 레이어로 소급.
+    w = CanvasWindow()
+    layer = w.add_layer("배선")
+    assert len(w._layers) == 2 and layer["name"] == "배선"
+    w.rename_layer(layer["id"], "전원")
+    assert w._layer_by_id(layer["id"])["name"] == "전원"
+    r = _mk_pen_rect(w, x=0, y=0)
+    r._layer_id = layer["id"]
+    w.delete_layer(layer["id"])
+    assert len(w._layers) == 1
+    assert w._item_layer_id(r) == "default"
+
+
+def test_layer_delete_default_is_noop():
+    # [레이어] 기본 레이어는 삭제 불가(최소 1개 유지).
+    w = CanvasWindow()
+    w.delete_layer("default")
+    assert len(w._layers) == 1
+
+
+def test_move_selection_to_layer_single_undo():
+    # [레이어] 선택 이동은 단일 undo 엔트리, undo로 원래 레이어 복원.
+    w = CanvasWindow()
+    layer = w.add_layer("배선")
+    a = _mk_pen_rect(w, x=0, y=0)
+    b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True); b.setSelected(True)
+    before_undo = len(w._undo)
+    w.move_selection_to_layer(layer["id"])
+    assert len(w._undo) == before_undo + 1
+    assert w._item_layer_id(a) == layer["id"] and w._item_layer_id(b) == layer["id"]
+    w.undo()
+    assert w._item_layer_id(a) == "default" and w._item_layer_id(b) == "default"
+
+
+def test_layer_visibility_hides_only_that_layer():
+    # [레이어] 표시 끄면 그 레이어 아이템만 숨겨지고 다른 레이어는 그대로.
+    w = CanvasWindow()
+    layer = w.add_layer("배선")
+    a = _mk_pen_rect(w, x=0, y=0)
+    b = _mk_pen_rect(w, x=100, y=0)
+    b.setSelected(True)
+    w.move_selection_to_layer(layer["id"])
+    w.set_layer_visible(layer["id"], False)
+    assert b.isVisible() is False
+    assert a.isVisible() is True
+    w.set_layer_visible(layer["id"], True)
+    assert b.isVisible() is True
+
+
+def test_layer_lock_applies_to_member_items():
+    # [레이어] 잠금 토글 시 소속 아이템 전체가 개별 Ctrl+L과 같은 플래그로 잠긴다.
+    w = CanvasWindow()
+    layer = w.add_layer("배선")
+    a = _mk_pen_rect(w, x=0, y=0)
+    a.setSelected(True)
+    w.move_selection_to_layer(layer["id"])
+    w.set_layer_locked(layer["id"], True)
+    assert getattr(a, "_locked", False) is True
+    assert not (a.flags() & a.GraphicsItemFlag.ItemIsMovable)
+    w.set_layer_locked(layer["id"], False)
+    assert getattr(a, "_locked", False) is False
+
+
+def test_layer_roundtrip_ecad():
+    # [레이어] 저장/재열기 후 레이어 목록·아이템 소속·표시/잠금 상태가 복원된다.
+    w = CanvasWindow()
+    layer = w.add_layer("배선")
+    a = _mk_pen_rect(w, x=0, y=0)
+    a.setSelected(True)
+    w.move_selection_to_layer(layer["id"])
+    w.set_layer_locked(layer["id"], True)
+    path = os.path.join(_TMP, "layers_rt.ecad")
+    save_document(w._scene, path, layers=w._layers)
+    w2 = CanvasWindow()
+    n = load_document(w2._scene, path)
+    layers2 = load_document_layers(path)
+    w2._apply_loaded_layers(layers2)
+    assert n == 1
+    assert any(l["name"] == "배선" and l["locked"] for l in w2._layers)
+    it2 = [x for x in w2._scene.items() if isinstance(x, _RectItem)][0]
+    assert w2._item_layer_id(it2) == layer["id"]
+    assert getattr(it2, "_locked", False) is True
+
+
+def test_layer_roundtrip_legacy_ecad_no_layers_key():
+    # [레이어] 레이어 키 없는 옛 .ecad는 기본 레이어 하나로 안전 복원.
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=0, y=0)
+    path = os.path.join(_TMP, "layers_legacy.ecad")
+    save_document(w._scene, path)   # layers 인자 없이 저장 = 옛 파일 흉내
+    w2 = CanvasWindow()
+    load_document(w2._scene, path)
+    layers2 = load_document_layers(path)
+    assert layers2 is None
+    w2._apply_loaded_layers(layers2)
+    assert len(w2._layers) == 1 and w2._layers[0]["id"] == "default"
+
+
+def test_context_menu_layer_menu_lists_layers():
+    # [레이어] 우클릭 "레이어로 이동" 서브메뉴가 대상 있을 때만 뜨고 레이어 이름을 나열한다.
+    w = CanvasWindow()
+    w.add_layer("배선")
+    r = _mk_pen_rect(w, x=0, y=0)
+    menu = w._build_context_menu()
+    submenu_titles = [act.text() for act in menu.actions() if act.menu() is not None]
+    assert not any(t == "레이어로 이동" for t in submenu_titles)   # 선택 없으면 없음
+    r.setSelected(True)
+    menu2 = w._build_context_menu()
+    layer_action = next(act for act in menu2.actions() if act.text() == "레이어로 이동")
+    names = [a.text() for a in layer_action.menu().actions()]
+    assert "기본" in names and "배선" in names
 
 
 def _run_all():

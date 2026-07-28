@@ -38,6 +38,7 @@ def _common(it) -> dict:
         # 명시 저장이 더 단순·안전하다(다른 pen/style 필드와 동일 관례).
         "locked": getattr(it, "_locked", False),
         "group_id": getattr(it, "_group_id", None),
+        "layer_id": getattr(it, "_layer_id", None),   # [신규기능] 레이어 — None=기본 레이어
     }
 
 
@@ -49,6 +50,7 @@ def _apply_common(it, d: dict):
     it.setRotation(d.get("rotation", 0.0))
     it.setZValue(d.get("z", 0))
     it._group_id = d.get("group_id")
+    it._layer_id = d.get("layer_id")
     locked = d.get("locked", False)
     it._locked = locked
     it.setFlags(
@@ -278,7 +280,7 @@ def dict_to_item(d: dict):
 
 
 # ---- 파일 저장/열기 -------------------------------------------------------
-def save_document(scene, path: str):
+def save_document(scene, path: str, layers: list | None = None):
     # 아래→위(stacking) 순으로 저장해 열 때 순서·겹침이 보존되게 한다.
     # 자식 아이템(선/화살표에 부착된 라벨)은 부모 dict 안에 직렬화하므로 최상위에서 제외.
     serial = [(it, item_to_dict(it)) for it in reversed(scene.items())
@@ -301,12 +303,16 @@ def save_document(scene, path: str):
                     d[pkey] = None
     items = [d for _it, d in serial]
     doc = {"format": FORMAT, "version": VERSION, "items": items}
+    if layers is not None:   # [신규기능] 레이어 목록(이름·표시·잠금) — 문서 레벨 메타
+        doc["layers"] = layers
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
 
 
 def load_document(scene, path: str) -> int:
-    """path의 문서를 scene에 로드(기존 내용 지움). 로드한 객체 수 반환."""
+    """path의 문서를 scene에 로드(기존 내용 지움). 로드한 객체 수 반환.
+    레이어 목록은 반환값에 안 실음(기존 25+ 호출부의 `== n` 계약을 안 깨려고) —
+    필요하면 load_document_layers(path)를 별도 호출."""
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
     if doc.get("format") != FORMAT:
@@ -337,3 +343,11 @@ def load_document(scene, path: str) -> int:
                 it._label_off = d["label"].get("off", 0.0)
                 it._sync_label()
     return sum(1 for it in created if it is not None)
+
+
+def load_document_layers(path: str):
+    """[신규기능] .ecad의 문서 레벨 레이어 목록만 읽는다(이름·표시·잠금).
+    레이어 목록이 없는 옛 .ecad는 None(호출측이 기본 레이어로 리셋)."""
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    return doc.get("layers")
