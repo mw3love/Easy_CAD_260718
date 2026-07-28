@@ -418,6 +418,27 @@ M2). 패널은 콤팩트 기본폭(도형 144·속성 170px)으로 **진짜 최�
     실제 물리 마우스(합성 이벤트로 대체), 사다리 상시화의 대규모 도면 성능.
   - **재현 파일**: `C:\Users\7make\Desktop\123.ecad` 사용자 실도면 — 재현·회귀 스모크 근거.
 
+**디자인 개선 1차(상단바·플로팅 툴바 정리) 완료(2026-07-28, 커밋 `b9fa323`)** — 사용자
+인터뷰(아티팩트 시안 검토) 결과 반영. 상단바에서 PDF/DXF 내보내기·가져오기·이미지·표·표제란·
+Mermaid 7개 버튼 제거(이미 파일 메뉴에 있어 중복, 단축키 불변). 플로팅 컨텍스트 툴바는
+정렬/분배·복제·삭제를 빼고 겉모습 계열(색·스타일·도형바꾸기·화살표종류·반경·방향뒤집기)만
+남김 — Figma/Lucid/Excalidraw 관례대로 "스타일은 상시 패널, 액션은 우클릭"으로 역할 분담
+(세 액션은 우클릭 메뉴·Ctrl+D·Del로 계속 접근 가능, 기능 손실 없음). 실조건은 마우스 조작
+느낌만 미검증(배치는 오프스크린 확인).
+
+**코드정리 진행(2026-07-28)** — 정적 스캔 사전진단 기반 순수 리팩터링(시각·동작 변경 없음,
+스모크로만 검증, `python run.py` 실조건은 생략).
+  - **1순위** Stage3 잔재 dead code 정리(`cce126f`) — 화살표-화살표 soft 회피(Stage3,
+    2026-07-26 철회)의 얇은 집계 래퍼 `_count_seg_crossings`가 호출부 3곳(`_route_score`·
+    `_route_ortho` 2곳)을 감싸기만 할 뿐 다른 곳에 안 쓰여 각 호출부에 인라인. `avoid_segs`/
+    `cross_penalty` 재도입 훅은 보존(삭제 시 재도입 경로 소실).
+  - **2순위** rect 기반 도형 5클래스 기하 리베이크 중복 → 믹스인 추출(`c3a96b1`) —
+    `_RectItem`·`_EllipseItem`·`_SymbolItem`·`_ImageItem`·`_TableItem`이
+    `_capture_geom_local`·`_apply_geom_local`·`rebake_scene`·`_stretch_grips` 4메서드를
+    byte-for-byte 동일하게 중복 정의하던 것을 `_RectGeometryMixin`(`_HandleResizeMixin`과
+    도형 클래스 사이 MRO)으로 흡수. `rect()` 존재 전제라 비rect 기하(`_LineItem`·`_PathItem`·
+    `_ArrowItem`·`_PolyArrowItem`)는 대상 아님. 스모크 229종 전 구간 통과.
+
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.
   ⚠ 전례: 지속연결 초안이 offscreen을 통과했으나 GUI에서 버그 발견(플로팅→고정 부착점으로 수정).
