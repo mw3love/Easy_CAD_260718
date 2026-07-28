@@ -449,6 +449,14 @@ Mermaid 7개 버튼 제거(이미 파일 메뉴에 있어 중복, 단축키 불�
     `_to_png_full`(dead code로 보임)도 삭제하지 않음 — docstring이 "clipboard_monitor와
     동일 로직"을 언급해 계획서 후속 항목 "클립보드 이미지 붙여넣기"(미구현)용 스캐폴딩일
     가능성이 높음. 스모크 229종 전 구간 통과.
+  - **4순위** 미사용 `_EditorMixin` 잔재 ~700줄 삭제(`794aeab`) — annotator_core.py 최하단
+    "편집기 다이얼로그" 섹션(`_DragBar`·`_ColorPalettePopup`·`flatten_scene_to_png`·
+    `_EditorMixin`)이 pasteflow 원본 독립 스크린샷 편집기의 호스트 계약 구현으로, 이 프로젝트
+    어디서도 상속·호출되지 않음을 확인(`_AnnotatorView`가 `self._owner`에 기대하는 계약을
+    host.py의 `CanvasWindow`가 이미 독립적으로 전부 구현 — host.py 자체 주석이 "무거운
+    `_EditorMixin` 대신 무한캔버스에 맞는 CanvasWindow를 새로 만들었다"고 명시). 삭제가 만든
+    고아(`QBuffer`/`QIODevice`/`time` import, 모듈 최상단 stale docstring)도 함께 정리.
+    스모크 231종 전 구간 통과 + `CanvasWindow` 생성/표시 확인.
 
 **신규기능 — 클립보드 이미지 붙여넣기 완료(2026-07-28, 커밋 `7baf69b`, 프록시검증)** — 위
 코드정리 3순위에서 찾은 `_pixmap_from_data`/`_to_png_full`을 실사용 경로에 연결. host.py에
@@ -458,10 +466,6 @@ Mermaid 7개 버튼 제거(이미 파일 메뉴에 있어 중복, 단축키 불�
 때만 시스템 클립보드 이미지로 폴백(Ctrl+V 하나 공유, 기존 Ctrl+C/Ctrl+D 동작 불변). 스모크
 231종(신규 2종 포함) 통과 + 자체렌더 스크린샷으로 배치·선택·종횡비 확인. 실조건(실제 OS
 클립보드로 스크린샷 붙여넣기)은 `python run.py`로 사용자 확인 대기.
-⚠ **새 발견**: `_EditorMixin`(annotator_core.py 최하단, ~600줄)이 어떤 클래스에서도
-상속되지 않는 완전 dead code로 보임 — host.py 자체 주석이 "무거운 `_EditorMixin`(이미지
-배경·스포이드·클립보드 아이콘 툴바) 대신 무한캔버스에 맞는 [CanvasWindow]를 새로 만들었다"고
-명시. 이번 범위 밖이라 삭제하지 않고 **코드정리 4순위 후보**로 남김.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.
