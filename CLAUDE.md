@@ -438,6 +438,17 @@ Mermaid 7개 버튼 제거(이미 파일 메뉴에 있어 중복, 단축키 불�
     byte-for-byte 동일하게 중복 정의하던 것을 `_RectGeometryMixin`(`_HandleResizeMixin`과
     도형 클래스 사이 MRO)으로 흡수. `rect()` 존재 전제라 비rect 기하(`_LineItem`·`_PathItem`·
     `_ArrowItem`·`_PolyArrowItem`)는 대상 아님. 스모크 229종 전 구간 통과.
+  - **3순위** `apply_color`/`apply_width`·`paint()`·`_font_px` 중복 흡수(`02ffc73`) —
+    `_ArrowItem`·`_PolyArrowItem`·`_BadgeItem`의 `_color`/`_width` 분기를
+    `_HandleResizeMixin`의 기존 pen 분기 옆에 hasattr 분기로 추가(`_stroke_width`가 이미
+    쓰던 패턴과 동일). `_LineItem`·`_PathItem`의 동일한 paint() 오케스트레이션을 믹스인
+    기본 `paint()`로 승격. `_TitleBlockItem`·`_TableItem`의 `_font_px` 정적 헬퍼를 모듈
+    레벨 함수로 추출. `apply_style`은 의도적으로 제외 — host.py가
+    `hasattr(it,"apply_style")`로 "화살표냐 pen 기반 도형이냐"를 가르는 분기 신호로 써서,
+    믹스인에 기본 구현을 얹으면 pen 기반 도형의 점선 적용이 조용히 깨진다. `_pixmap_from_data`/
+    `_to_png_full`(dead code로 보임)도 삭제하지 않음 — docstring이 "clipboard_monitor와
+    동일 로직"을 언급해 계획서 후속 항목 "클립보드 이미지 붙여넣기"(미구현)용 스캐폴딩일
+    가능성이 높음. 스모크 229종 전 구간 통과.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.
