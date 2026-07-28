@@ -1356,19 +1356,12 @@ class _CenterLabelMixin(_LabelMixin):
             self._sync_label()
 
 
-class _RectItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
-    def __init__(self, *args):
-        super().__init__(*args)
-        self._init_resize()
-        self._init_label()
+class _RectGeometryMixin:
+    """rect 기반 도형(네모·원·심볼·이미지·표) 공용 [Stage2/2b] 기하 — 네 모서리를 씬변형 후
+    로컬 AABB로 setRect(회전=0면 정확). _HandleResizeMixin의 스칼라 폴백(_capture_geom_local 등
+    None/pass, _stretch_grips는 중심점 1개)을 rect 전용으로 override — 다섯 클래스가 byte-for-byte
+    동일하게 중복 정의하던 것을 여기로 흡수(2026-07-28 코드정리)."""
 
-    def clone(self):
-        c = _RectItem(QRectF(self.rect()))
-        c.setPen(QPen(self.pen()))
-        c.setBrush(QBrush(self.brush()))
-        return self._copy_common_to(c)
-
-    # [Stage2] 기하 리베이크 — 네 모서리를 씬변형 후 로컬 AABB로 setRect(회전=0면 정확).
     def _capture_geom_local(self):
         return QRectF(self.rect())
 
@@ -1384,10 +1377,23 @@ class _RectItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
         self.prepareGeometryChange()
         self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
 
-    def _stretch_grips(self):   # [Stage2b] 네모 grip = 네 모서리(걸친 모서리만 stretch 이동).
+    def _stretch_grips(self):   # [Stage2b] grip = 네 모서리(걸친 모서리만 stretch 이동).
         r = self.rect()
         return [self.mapToScene(c) for c in
                 (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
+
+
+class _RectItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self._init_resize()
+        self._init_label()
+
+    def clone(self):
+        c = _RectItem(QRectF(self.rect()))
+        c.setPen(QPen(self.pen()))
+        c.setBrush(QBrush(self.brush()))
+        return self._copy_common_to(c)
 
     def _base_shape(self):
         # 속 빈 네모(NoBrush)는 '테두리 링'만 클릭 영역으로 — 내부를 통과시켜 네모 안에서
@@ -1413,7 +1419,7 @@ class _RectItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
         self._paint_handle(painter)
 
 
-class _EllipseItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsEllipseItem):
+class _EllipseItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGraphicsEllipseItem):
     def __init__(self, *args):
         super().__init__(*args)
         self._init_resize()
@@ -1427,27 +1433,6 @@ class _EllipseItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsEllipseItem):
         c.setPen(QPen(self.pen()))
         c.setBrush(QBrush(self.brush()))
         return self._copy_common_to(c)
-
-    # [Stage2] 기하 리베이크 — 네모와 동일(로컬 AABB setRect).
-    def _capture_geom_local(self):
-        return QRectF(self.rect())
-
-    def _apply_geom_local(self, g):
-        self.setRect(g)
-
-    def rebake_scene(self, fn):
-        r = self.rect()
-        pts = [self._rebake_pt(fn, c) for c in
-               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
-        xs = [p.x() for p in pts]
-        ys = [p.y() for p in pts]
-        self.prepareGeometryChange()
-        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
-
-    def _stretch_grips(self):   # [Stage2b] 원 grip = 외접 사각 네 모서리(네모와 동일).
-        r = self.rect()
-        return [self.mapToScene(c) for c in
-                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
 
     def _content_rect(self):
         # _LineItem과 동일 사이클 방지: QGraphicsEllipseItem.boundingRect()는 펜 두께가
@@ -1572,7 +1557,7 @@ _SYMBOL_KINDS = {
 # (_LabelMixin·_CenterLabelMixin은 도형 클래스보다 앞서야 해서 _RectItem 위로 이동함)
 
 
-class _SymbolItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
+class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
     """순서도 심볼 — rect 기반이라 _RectItem과 동일한 리사이즈·회전·stretch·undo를
     물려받고, paint/shape만 kind별 경로(_SYMBOL_KINDS)로 그린다. 더블클릭 중앙 라벨은
     _CenterLabelMixin이 네모·원과 공유한다.
@@ -1616,27 +1601,6 @@ class _SymbolItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
         c.setBrush(QBrush(self.brush()))
         return self._copy_common_to(c)
 
-    # [Stage2] 기하 리베이크 — 네모·원과 동일(로컬 AABB setRect).
-    def _capture_geom_local(self):
-        return QRectF(self.rect())
-
-    def _apply_geom_local(self, g):
-        self.setRect(g)
-
-    def rebake_scene(self, fn):
-        r = self.rect()
-        pts = [self._rebake_pt(fn, c) for c in
-               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
-        xs = [p.x() for p in pts]
-        ys = [p.y() for p in pts]
-        self.prepareGeometryChange()
-        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
-
-    def _stretch_grips(self):   # [Stage2b] grip = 외접 사각 네 모서리(네모와 동일).
-        r = self.rect()
-        return [self.mapToScene(c) for c in
-                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
-
     def _base_shape(self):
         # 속 빈 심볼(NoBrush)은 외곽선만 클릭 영역으로(네모와 동일 — 안에서 화살표 시작 가능),
         # 채움이 있으면 심볼 전체가 클릭 영역.
@@ -1666,7 +1630,7 @@ class _SymbolItem(_CenterLabelMixin, _HandleResizeMixin, QGraphicsRectItem):
 # ---------------------------------------------------------------------------
 # [우리 확장 · Phase 4] 삽입 이미지 — PNG/JPG를 도면에 배치
 # ---------------------------------------------------------------------------
-class _ImageItem(_HandleResizeMixin, QGraphicsRectItem):
+class _ImageItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
     """삽입 이미지 — rect 기반이라 _RectItem·_SymbolItem과 동일한 리사이즈·회전·stretch·undo를
     그대로 물려받고, paint만 원본 픽스맵을 rect에 스케일해 그리도록 갈아끼운다.
     원본 픽스맵(_pixmap)을 전체 해상도로 보관 → 저장/재열기·PDF에도 화질 손실 없음(rect는 표시 크기).
@@ -1685,27 +1649,6 @@ class _ImageItem(_HandleResizeMixin, QGraphicsRectItem):
     def clone(self):
         c = _ImageItem(QPixmap(self._pixmap), QRectF(self.rect()))
         return self._copy_common_to(c)
-
-    # [Stage2] 기하 리베이크 — 네모·심볼과 동일(로컬 AABB setRect).
-    def _capture_geom_local(self):
-        return QRectF(self.rect())
-
-    def _apply_geom_local(self, g):
-        self.setRect(g)
-
-    def rebake_scene(self, fn):
-        r = self.rect()
-        pts = [self._rebake_pt(fn, c) for c in
-               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
-        xs = [p.x() for p in pts]
-        ys = [p.y() for p in pts]
-        self.prepareGeometryChange()
-        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
-
-    def _stretch_grips(self):   # [Stage2b] grip = 네 모서리(네모와 동일).
-        r = self.rect()
-        return [self.mapToScene(c) for c in
-                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
 
     def _content_rect(self) -> QRectF:
         return QRectF(self.rect())
@@ -1913,7 +1856,7 @@ class _TitleBlockItem(QGraphicsRectItem):
 # 균등 비례 격자(전체 리사이즈 시 모든 열·행이 같은 비율로 스케일 — 개별 열폭 조절은 후속 스코프).
 # 셀 텍스트는 2차원 리스트(_cells[r][c]). 셀 편집은 뷰가 인라인 QLineEdit(_CellEditor)로 처리.
 # 첫 행 헤더(_header=True면 굵게+옅은 배경). DXF 제외(isinstance 체인 밖), .ecad 직렬화.
-class _TableItem(_HandleResizeMixin, QGraphicsRectItem):
+class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
     """NxM 균등 격자 표. rect 기반 — _ImageItem과 동일한 자유 리사이즈(꼭짓점 2D·변 1축)를 상속.
     종횡비 고정은 하지 않는다(표는 임의 비율) — 기본 _constrain_box_rect(무변형)를 그대로 쓴다."""
 
@@ -1978,27 +1921,6 @@ class _TableItem(_HandleResizeMixin, QGraphicsRectItem):
         c = _TableItem(self._rows, self._cols, QRectF(self.rect()),
                        [row[:] for row in self._cells], self._header)
         return self._copy_common_to(c)
-
-    # [Stage2] rect 기반 리베이크·grip — _ImageItem과 동일(로컬 AABB setRect).
-    def _capture_geom_local(self):
-        return QRectF(self.rect())
-
-    def _apply_geom_local(self, g):
-        self.setRect(g)
-
-    def rebake_scene(self, fn):
-        r = self.rect()
-        pts = [self._rebake_pt(fn, cc) for cc in
-               (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
-        xs = [p.x() for p in pts]
-        ys = [p.y() for p in pts]
-        self.prepareGeometryChange()
-        self.setRect(QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys))))
-
-    def _stretch_grips(self):
-        r = self.rect()
-        return [self.mapToScene(cc) for cc in
-                (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
 
     def _content_rect(self) -> QRectF:
         return QRectF(self.rect())
