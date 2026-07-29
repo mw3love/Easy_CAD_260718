@@ -1392,7 +1392,7 @@ class CanvasWindow(QMainWindow):
         box.setIcon(QMessageBox.Icon.NoIcon)
         box.exec()
 
-    # ---- 도형 팔레트 (좌측 dock) — 기본(네모·원) + 순서도(심볼 6종) -----------
+    # ---- 도형 팔레트 (좌측 dock) — 기본(네모·원) + 순서도/결선도(심볼 14종) -----------
     @staticmethod
     def _shape_icon(kind: str, px: int = 30) -> QIcon:
         """팔레트 아이콘 — 캔버스 도형과 같은 모양으로 그린다. 심볼은 경로 팩토리,
@@ -2843,7 +2843,7 @@ class CanvasWindow(QMainWindow):
 
     # ---- [Phase 6 M4-3] 도형 바로 바꾸기 -----------------------------------
     def _build_swap_menu(self):
-        """도형 교체 대상 메뉴 — 네모·원 + 심볼 6종. 트리거 시 현재 단일 선택 도형을 변환."""
+        """도형 교체 대상 메뉴 — 네모·원 + 심볼 14종. 트리거 시 현재 단일 선택 도형을 변환."""
         m = QMenu(self)
         m.addAction("네모", lambda: self._swap_selected("rect"))
         m.addAction("원", lambda: self._swap_selected("ellipse"))

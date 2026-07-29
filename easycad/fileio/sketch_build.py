@@ -9,7 +9,7 @@ Claude(이 세션의 네이티브 vision)가 이미지를 보고 이 빌더를 �
   스키마를 직접 만든다. 그래서 어떤 환경에서도 Qt 없이 돌아간다. 스키마가 어긋나면 로드 시
   `document.load_document`가 즉시 실패하므로(FORMAT 불일치→ValueError) 드리프트는 스모크가 잡는다.
 - 좌표 = **이미지 픽셀 그대로**(캔버스 좌표). 사용자가 열어서 스케일·정리한다.
-- 재사용: 기존 아이템 어휘 그대로 — box(rect)·ellipse·symbol(순서도 6종)·arrow(sarrow,
+- 재사용: 기존 아이템 어휘 그대로 — box(rect)·ellipse·symbol(순서도 14종)·arrow(sarrow,
   지속연결 바인딩+직교 자동라우팅)·중앙/중점 라벨.
 
 사용 예:
@@ -34,7 +34,11 @@ _DEFAULT_WIDTH = 6.0         # 앱 _DEFAULT_WIDTH와 동일(사용자 손그림�
 _DEFAULT_FONT = 16
 
 # _SYMBOL_KINDS(annotator_core)와 동일한 순서도 심볼 어휘.
-_SYMBOL_KINDS = ("decision", "terminal", "data", "prep", "document", "database")
+_SYMBOL_KINDS = (
+    "decision", "terminal", "data", "prep", "document", "database",
+    "manual_input", "manual_op", "display", "delay",
+    "camera", "amplifier", "rack", "antenna",
+)
 
 
 def _argb(c: str) -> str:
@@ -129,7 +133,7 @@ class Sketch:
 
     def symbol(self, kind, x, y, w, h, label=None, *, color=_DEFAULT_COLOR,
                width=_DEFAULT_WIDTH, fill=None) -> Node:
-        """순서도 심볼(_SymbolItem). kind ∈ decision·terminal·data·prep·document·database."""
+        """순서도 심볼(_SymbolItem). kind는 _SYMBOL_KINDS 참조(가능한 값은 ValueError 메시지에 노출)."""
         if kind not in _SYMBOL_KINDS:
             raise ValueError(f"알 수 없는 심볼 kind: {kind!r} (가능: {', '.join(_SYMBOL_KINDS)})")
         return self._add_shape("symbol", x, y, w, h, label, color, width, fill,

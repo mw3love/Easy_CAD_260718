@@ -1593,14 +1593,139 @@ def _sym_database(r: QRectF) -> QPainterPath:      # 저장소 — 원기둥
     return p
 
 
+def _sym_manual_input(r: QRectF) -> QPainterPath:  # 수동입력 — 왼쪽이 낮은 사선 윗변
+    p = QPainterPath()
+    slant = r.height() * 0.22
+    p.moveTo(r.left(), r.top() + slant)
+    p.lineTo(r.right(), r.top())
+    p.lineTo(r.right(), r.bottom())
+    p.lineTo(r.left(), r.bottom())
+    p.closeSubpath()
+    return p
+
+
+def _sym_manual_op(r: QRectF) -> QPainterPath:     # 수동작업 — 역사다리꼴(아래가 좁음)
+    p = QPainterPath()
+    dx = r.width() * 0.18
+    p.moveTo(r.left(), r.top())
+    p.lineTo(r.right(), r.top())
+    p.lineTo(r.right() - dx, r.bottom())
+    p.lineTo(r.left() + dx, r.bottom())
+    p.closeSubpath()
+    return p
+
+
+def _sym_display(r: QRectF) -> QPainterPath:       # 화면출력 — 위아래 평평·우측 볼록·좌측 오목
+    # 스타디움(terminal)과 헷갈리지 않도록 좌우를 비대칭으로: 왼쪽은 안으로 파인 오목 곡선(quadTo
+    # 제어점이 도형 안쪽), 오른쪽만 화면 브라운관처럼 둥글게 볼록(cubicTo).
+    p = QPainterPath()
+    w, h = r.width(), r.height()
+    cy = r.center().y()
+    flat_x = r.left() + w * 0.6
+    p.moveTo(r.left(), r.top())
+    p.lineTo(flat_x, r.top())
+    p.cubicTo(r.left() + w * 0.86, r.top(),
+              r.right(), r.top() + h * 0.2,
+              r.right(), cy)
+    p.cubicTo(r.right(), r.bottom() - h * 0.2,
+              r.left() + w * 0.86, r.bottom(),
+              flat_x, r.bottom())
+    p.lineTo(r.left(), r.bottom())
+    p.quadTo(r.left() + w * 0.18, cy, r.left(), r.top())
+    p.closeSubpath()
+    return p
+
+
+def _sym_delay(r: QRectF) -> QPainterPath:         # 지연 — 오른쪽 반원(D자형)
+    p = QPainterPath()
+    w, h = r.width(), r.height()
+    straight_x = r.left() + w * 0.62
+    radius = h / 2.0
+    p.moveTo(r.left(), r.top())
+    p.lineTo(straight_x, r.top())
+    p.arcTo(QRectF(straight_x - radius, r.top(), 2 * radius, h), 90.0, -180.0)
+    p.lineTo(r.left(), r.bottom())
+    p.closeSubpath()
+    return p
+
+
+def _sym_camera(r: QRectF) -> QPainterPath:        # 카메라 — 몸통 + 렌즈 원 + 뷰파인더
+    p = QPainterPath()
+    w, h = r.width(), r.height()
+    body = QRectF(r.left(), r.top() + h * 0.22, w * 0.66, h * 0.66)
+    p.addRoundedRect(body, w * 0.03, w * 0.03)
+    lens_r = h * 0.30
+    lens_c = QPointF(r.left() + w * 0.72, r.top() + h * 0.55)
+    p.addEllipse(lens_c, lens_r, lens_r)
+    finder = QRectF(r.left() + w * 0.16, r.top(), w * 0.22, h * 0.22)
+    p.addRoundedRect(finder, w * 0.02, w * 0.02)
+    return p
+
+
+def _sym_amplifier(r: QRectF) -> QPainterPath:     # 증폭기 — 삼각형(신호방향) + 입출력 리드
+    p = QPainterPath()
+    w, h = r.width(), r.height()
+    tri_l = r.left() + w * 0.22
+    tri_r = r.left() + w * 0.78
+    cy = r.center().y()
+    p.moveTo(r.left(), cy)
+    p.lineTo(tri_l, cy)
+    p.moveTo(tri_l, r.top() + h * 0.12)
+    p.lineTo(tri_l, r.bottom() - h * 0.12)
+    p.lineTo(tri_r, cy)
+    p.closeSubpath()
+    p.moveTo(tri_r, cy)
+    p.lineTo(r.right(), cy)
+    return p
+
+
+def _sym_rack(r: QRectF) -> QPainterPath:          # 랙 — 슬롯 4단 캐비닛
+    p = QPainterPath()
+    w, h = r.width(), r.height()
+    body = QRectF(r.left() + w * 0.2, r.top(), w * 0.6, h)
+    p.addRect(body)
+    slots = 4
+    for i in range(1, slots):
+        y = r.top() + h * i / slots
+        p.moveTo(body.left(), y)
+        p.lineTo(body.right(), y)
+    return p
+
+
+def _sym_antenna(r: QRectF) -> QPainterPath:       # 안테나 — 마스트 + Y형 수신 암 + 기저부
+    p = QPainterPath()
+    w, h = r.width(), r.height()
+    cx = r.center().x()
+    top_y = r.top() + h * 0.1
+    node_r = min(w, h) * 0.06
+    p.addEllipse(QPointF(cx, top_y), node_r, node_r)
+    p.moveTo(cx, top_y)
+    p.lineTo(cx, r.bottom() - h * 0.12)
+    p.moveTo(cx, top_y)
+    p.lineTo(r.left() + w * 0.18, r.top() + h * 0.5)
+    p.moveTo(cx, top_y)
+    p.lineTo(r.right() - w * 0.18, r.top() + h * 0.5)
+    base = QRectF(cx - w * 0.16, r.bottom() - h * 0.12, w * 0.32, h * 0.08)
+    p.addRect(base)
+    return p
+
+
 # kind → (한글 라벨, 경로 팩토리). 팔레트·직렬화·그리기가 이 하나를 공유한다.
 _SYMBOL_KINDS = {
-    "decision": ("판단", _sym_decision),
-    "terminal": ("시작/끝", _sym_terminal),
-    "data":     ("입출력", _sym_data),
-    "prep":     ("준비", _sym_prep),
-    "document": ("문서", _sym_document),
-    "database": ("저장소", _sym_database),
+    "decision":    ("판단", _sym_decision),
+    "terminal":    ("시작/끝", _sym_terminal),
+    "data":        ("입출력", _sym_data),
+    "prep":        ("준비", _sym_prep),
+    "document":    ("문서", _sym_document),
+    "database":    ("저장소", _sym_database),
+    "manual_input": ("수동입력", _sym_manual_input),
+    "manual_op":   ("수동작업", _sym_manual_op),
+    "display":     ("화면출력", _sym_display),
+    "delay":       ("지연", _sym_delay),
+    "camera":      ("카메라", _sym_camera),
+    "amplifier":   ("증폭기", _sym_amplifier),
+    "rack":        ("랙", _sym_rack),
+    "antenna":     ("안테나", _sym_antenna),
 }
 
 
@@ -1623,12 +1748,18 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
         return _SYMBOL_KINDS[self._kind][1](self.rect())
 
     def _label_inset_ratio(self) -> float:
-        # kind별 내접 가용폭 — 마름모는 세로중앙 한 점에서만 최대폭이라 가장 좁게, 원기둥·문서 등
-        # 곡선 심볼은 중간, 상하 평행한 스타디움·평행사변형·육각형은 넉넉히.
+        # kind별 내접 가용폭 — 마름모는 세로중앙 한 점에서만 최대폭이라 가장 좁게, 원기둥·문서·
+        # 화면출력·지연 등 곡선 심볼은 중간, 상하 평행한 스타디움·평행사변형·육각형은 넉넉히.
+        # 카메라·증폭기·랙·안테나(도메인 픽토그램)는 속이 성긴 선화라 라벨이 그림과 겹치기
+        # 쉬워 보수적으로 좁게 잡음 — 실사용 스크린샷으로 재조정 여지 있음.
         if self._kind == "decision":
             return 0.6
-        if self._kind in ("database", "document"):
+        if self._kind in ("database", "document", "display", "delay"):
             return 0.72
+        if self._kind == "manual_op":
+            return 0.7
+        if self._kind in ("camera", "amplifier", "rack", "antenna"):
+            return 0.55
         return 0.78
 
     def _label_anchor(self) -> QPointF:

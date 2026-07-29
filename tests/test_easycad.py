@@ -46,9 +46,9 @@ def test_host_construction():
     assert len(w._tool_buttons) == 6
     assert not ({"rect", "ellipse", "sarrow"} & set(w._tool_buttons))
     assert "arrow" in w._tool_buttons                      # 화살표 버튼 하나가 직선·곡선·직각 대표
-    # 왼쪽 팔레트: 기본(네모·원) + 순서도 6종.
+    # 왼쪽 팔레트: 기본(네모·원) + 순서도/결선도 심볼 14종.
     assert set(w._shape_tool_buttons) == {"rect", "ellipse"}
-    assert len(w._sym_buttons) == 6
+    assert len(w._sym_buttons) == 14
     r = w._scene.sceneRect()
     assert r.width() > 90000 and r.height() > 90000
     m0 = w._view.transform().m11()
@@ -128,10 +128,10 @@ def test_floating_panels_and_zoom_readout():
     sym_grid, sym_btns = w._shape_sections[1]
     last = sym_btns[-1]
     r, c, _rs, _cs = sym_grid.getItemPosition(sym_grid.indexOf(last))
-    assert (r, c) == (2, 1)             # 순서도 6종, 2열 고정 → 마지막 버튼은 (row2, col1)
+    assert (r, c) == (6, 1)             # 순서도 14종, 2열 고정 → 마지막 버튼은 (row6, col1)
     # 팔레트 버튼 키가 보존(테스트 계약).
     assert set(w._shape_tool_buttons) == {"rect", "ellipse"}
-    assert len(w._sym_buttons) == 6
+    assert len(w._sym_buttons) == 14
     # 버튼 고정 크기 — 패널이 넓어져도 커지거나 벌어지지 않는다(좌측 뭉침).
     b = w._shape_tool_buttons["rect"]
     assert b.minimumWidth() == b.maximumWidth() == 64
@@ -3124,11 +3124,15 @@ def test_stretch_binding_follows_crossed_side():
 
 
 def test_symbol_kinds_render_and_geom():
-    # M1: 6종 심볼이 모두 경로를 만들고, rect 기반 기계(박스핸들·geom undo·clone)를 물려받는다.
+    # M1(+심볼 확장): 14종 심볼이 모두 경로를 만들고, rect 기반 기계(박스핸들·geom undo·clone)를 물려받는다.
     from PyQt6.QtWidgets import QGraphicsScene
     from PyQt6.QtGui import QPen
     sc = QGraphicsScene()
-    assert set(_SYMBOL_KINDS) == {"decision", "terminal", "data", "prep", "document", "database"}
+    assert set(_SYMBOL_KINDS) == {
+        "decision", "terminal", "data", "prep", "document", "database",
+        "manual_input", "manual_op", "display", "delay",
+        "camera", "amplifier", "rack", "antenna",
+    }
     for kind in _SYMBOL_KINDS:
         it = _SymbolItem(kind, QRectF(0, 0, 120, 80))
         it.setPen(QPen(QColor("#ff000000"))); it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
@@ -3410,6 +3414,43 @@ def test_dxf_export():
     # 타입별 레이어 분리 확인.
     layers = {e.dxf.layer for e in msp}
     assert {"EC_RECT", "EC_ARROW", "EC_SARROW", "EC_SYMBOL", "EC_TEXT"} <= layers, layers
+
+
+def test_new_symbol_kinds_export_dxf():
+    # 심볼 확장(표준 4 + 도메인 4)의 다중 서브패스 경로(열린 선·닫힌 도형 혼재 —
+    # 증폭기 리드선, 랙 슬롯선, 안테나 마스트/암 등)가 DXF export에서 예외 없이
+    # 폴리라인으로 떨어지는지 확인. 곡선(화면출력 cubicTo·지연 arcTo)도 flatten 검증.
+    import ezdxf
+    from PyQt6.QtGui import QPen
+    new_kinds = ("manual_input", "manual_op", "display", "delay",
+                 "camera", "amplifier", "rack", "antenna")
+    w = CanvasWindow(); w.show()
+    sc = w._scene
+    for i, kind in enumerate(new_kinds):
+        it = _SymbolItem(kind, QRectF(0, 0, 120, 72))
+        it.setPen(QPen(QColor("black"))); it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        it.setPos(QPointF(0, i * 100))
+        sc.addItem(it)
+    path = os.path.join(_TMP, "new_symbols.dxf")
+    assert export_dxf(sc, path)
+    doc = ezdxf.readfile(path)
+    msp = doc.modelspace()
+    poly_count = sum(1 for e in msp if e.dxftype() == "LWPOLYLINE")
+    assert poly_count >= len(new_kinds)   # 최소 심볼당 1개(다중 서브패스는 그 이상)
+
+
+def test_sketch_builder_accepts_new_symbol_kinds():
+    # sketch_build._SYMBOL_KINDS(Qt 비의존 복제본)가 annotator_core 확장과 어긋나지 않는지.
+    s = Sketch()
+    n1 = s.symbol("camera", 0, 0, 120, 72, "CAM-01")
+    n2 = s.symbol("rack", 200, 0, 120, 200, "랙")
+    s.arrow(n1, n2)
+    path = os.path.join(_TMP, "sketch_new_kinds.ecad")
+    assert s.save(path) == 3
+    w = CanvasWindow()
+    assert load_document(w._scene, path) == 3
+    kinds = {it._kind for it in w._scene.items() if isinstance(it, _SymbolItem)}
+    assert kinds == {"camera", "rack"}
 
 
 def _rect_world_corners(it):
