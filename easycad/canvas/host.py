@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem, QTabWidget,
+    QListWidget, QListWidgetItem,
 )
 
 from easycad.canvas.annotator_core import (
@@ -394,11 +394,29 @@ class _MinimapView(QGraphicsView):
         self._refit()
         super().paintEvent(event)
 
+    _INDICATOR_PX = 30   # [사용자 피드백 2026-07-29] 인디케이터 목표 픽셀 크기(폭 기준, 줌 무관 고정)
+
     def _indicator_scene_rect(self) -> QRectF:
         """메인 뷰가 지금 보여주는 영역 — 씬 좌표. drawForeground에서 그대로 그릴 값이라
         테스트가 이중변환 회귀(아래 주석)를 잡을 수 있도록 별도 메서드로 뺐다."""
         main = self._owner._view
         return main.mapToScene(main.viewport().rect()).boundingRect()
+
+    def _indicator_draw_rect(self) -> QRectF:
+        """[사용자 피드백 2026-07-29] 처음엔 실제 가시 영역 비율 그대로 그렸는데, 메인 뷰를
+        확대할수록 인디케이터가 작아져(≒ 화면에 보이는 씬 면적에 비례) 클릭으로 위치 잡기가
+        불편하다는 지적 — StarCraft류 게임 미니맵처럼 **종횡비는 유지하되 크기는 항상 고정**으로
+        바꾼다. 중심은 실제 가시 영역(`_indicator_scene_rect`)을 그대로 쓰고, 폭/높이만 미니맵
+        자체 배율(`self.transform()` — KeepAspectRatio라 m11==m22)의 역수로 고정 픽셀 크기를
+        씬 단위로 환산해 대체한다."""
+        visible = self._indicator_scene_rect()
+        scale = self.transform().m11() or 1.0
+        aspect = (visible.width() / visible.height()) if visible.height() else 1.0
+        w = self._INDICATOR_PX / scale
+        h = w / aspect if aspect else w
+        r = QRectF(0, 0, w, h)
+        r.moveCenter(visible.center())
+        return r
 
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
@@ -408,8 +426,8 @@ class _MinimapView(QGraphicsView):
         # 이전 코드는 main의 가시 영역(씬 좌표)을 self.mapFromScene()으로 미니맵 '픽셀' 좌표로
         # 또 변환한 뒤, 이미 씬 좌표계인 painter에 그 픽셀값을 그렸다 — 이중 변환이라 인디케이터가
         # 항상 잘못된 크기·위치로 그려졌다(폴링으로는 못 고치는 종류의 버그 — 매번 같은 잘못된
-        # 값을 다시 그릴 뿐). 씬 좌표(visible)를 그대로 그리면 된다(변환 불필요).
-        visible = self._indicator_scene_rect()
+        # 값을 다시 그릴 뿐). 씬 좌표를 그대로 그리면 된다(변환 불필요) — 단 크기는 아래처럼 고정.
+        visible = self._indicator_draw_rect()
         # [사용자 피드백] 처음엔 dock 제목줄 accent와 같은 블루(#54a9ff/#1f7ae0)+반투명 채움을
         # 썼더니 ⓐ 채움이 미니맵 속 도형을 뿌옇게 가려 시인성이 나쁘고 ⓑ 상단 dock 제목줄 밑
         # accent 선과 색이 같아 서로 다른 UI 요소인데 헷갈렸다. 채움을 없애 안쪽을 그대로 보이게
@@ -1491,14 +1509,32 @@ class CanvasWindow(QMainWindow):
             grid.setColumnStretch(cols, 1)
 
     def _build_left_panel(self):
-        """[캔버스-퍼스트] 도형 + 레이어를 탭 하나로 묶은 좌상단 플로팅 카드(옛 도형/레이어
-        dock의 tabifyDockWidget과 같은 관계를 QTabWidget으로 재현). 세로 2열 고정 — 옛 dock의
-        상/하 재도킹 시 가로 한 줄로 눕히던 반응형 로직(`_on_dock_moved`)은 패널이 더 이상
-        다른 위치로 옮겨지지 않으므로 대상이 없어져 제거."""
+        """[캔버스-퍼스트] 도형 + 레이어를 탭 하나로 묶은 좌상단 플로팅 카드.
+        [self-review 수정, 실사용 피드백 2026-07-29] 처음엔 `QTabWidget`으로 구현했는데,
+        내부 `QStackedLayout`의 sizeHint()가 **탭 전환과 무관하게 모든 페이지의 최대 크기**로
+        고정되는 Qt 기본 동작 때문에, 콘텐츠가 짧은 레이어 탭을 봐도 패널이 더 긴 도형 탭
+        크기(272×320) 그대로 남아 빈 공간이 생겼다(실측: 도형/레이어 두 탭 모두 274×348로
+        동일 — 레이어 페이지 자체 sizeHint는 268×95에 불과한데 반영이 안 됨). 대신 두 콘텐츠
+        위젯을 같은 `QVBoxLayout`에 넣고 `setVisible()`로 토글 — 일반 레이아웃은 숨긴 위젯을
+        sizeHint 계산에서 제외하므로(= `_FloatingPanel`의 접기 버튼과 같은 원리, 이미 검증됨)
+        보이는 쪽 크기로만 정확히 줄어든다."""
         panel = _FloatingPanel(self, "", "left")
         self._left_panel = panel
-        tabs = QTabWidget()
-        tabs.setDocumentMode(True)
+        container = QWidget()
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(0, 0, 0, 0); outer.setSpacing(0)
+
+        tab_row = QWidget()
+        tr = QHBoxLayout(tab_row)
+        tr.setContentsMargins(4, 4, 4, 0); tr.setSpacing(2)
+        self._left_tab_buttons: dict[str, QToolButton] = {}
+        for key, label in (("shapes", "도형"), ("layers", "레이어")):
+            b = QToolButton(); b.setText(label); b.setCheckable(True)
+            b.clicked.connect(lambda _c=False, k=key: self._switch_left_tab(k))
+            tr.addWidget(b)
+            self._left_tab_buttons[key] = b
+        tr.addStretch(1)
+        outer.addWidget(tab_row)
 
         shapes_page = QWidget()
         box = QVBoxLayout(shapes_page)
@@ -1515,7 +1551,8 @@ class CanvasWindow(QMainWindow):
         syms = self._make_shape_section("순서도", sym_entries, self._sym_buttons)
         box.addWidget(basic); box.addWidget(syms)
         self._relayout_sections(horiz=False)   # 항상 세로(2열) — 반응형 전환 없음
-        tabs.addTab(shapes_page, "도형")
+        outer.addWidget(shapes_page)
+        self._left_pages = {"shapes": shapes_page}
 
         layers_page = QWidget()
         v = QVBoxLayout(layers_page)
@@ -1528,10 +1565,28 @@ class CanvasWindow(QMainWindow):
         add_btn.setText("+ 레이어 추가")
         add_btn.clicked.connect(lambda: self.add_layer())
         v.addWidget(add_btn)
-        tabs.addTab(layers_page, "레이어")
+        outer.addWidget(layers_page)
+        self._left_pages["layers"] = layers_page
 
-        panel.set_content(tabs)
+        self._left_container = container
+        panel.set_content(container)
+        self._switch_left_tab("shapes")
         self._refresh_layers_panel()
+
+    def _switch_left_tab(self, key: str):
+        for k, page in self._left_pages.items():
+            page.setVisible(k == key)
+        for k, btn in self._left_tab_buttons.items():
+            btn.setChecked(k == key)
+        # [self-review 수정] setVisible() 직후 곧바로 adjustSize()를 부르면 레이아웃 무효화가
+        # 아직 반영되기 전이라 sizeHint()가 한 박자 stale해 패널이 이전(더 큰) 크기에 멈춰버렸다
+        # (실측: 도형→레이어→도형으로 돌아가도 레이어 탭 크기 그대로 남음). 레이아웃을 명시적으로
+        # activate()해 즉시 재계산시킨 뒤 adjustSize — `_compact_shapes_dock`가 겪었던 것과 같은
+        # 부류의 Qt 레이아웃 타이밍 함정이지만, 여긴 QTimer.singleShot 없이 activate()만으로 충분.
+        self._left_container.layout().activate()
+        self._left_panel.layout().activate()
+        self._left_panel.adjustSize()
+        self._reposition_panels()
 
     # ---- 속성 패널 (M2 #2: 편집 — 색·두께·선스타일·폰트를 push_undo_state 경로로) ----
     _PEN_STYLE_ITEMS = [
