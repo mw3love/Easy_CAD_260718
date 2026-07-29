@@ -34,7 +34,7 @@ from easycad.fileio.sketch_build import Sketch
 
 s = Sketch()
 # 도형 — 좌표·크기는 이미지 픽셀. label이면 도형 중앙에 텍스트.
-a = s.symbol("terminal", 200, 60, 200, 80, "시작")   # 순서도 심볼(6종)
+a = s.symbol("terminal", 200, 60, 200, 80, "시작")   # 순서도 심볼(14종 — 아래 심볼 kind 참조)
 b = s.symbol("decision", 230, 220, 150, 120, "조건?")
 c = s.box(520, 245, 200, 80, "처리")                 # 직사각형
 d = s.ellipse(230, 420, 150, 90, "끝")               # 타원/원
@@ -114,8 +114,10 @@ s.arrow(logout, login, from_side="E", to_side="E", channel_x=1180, label="아니
 
 ### 심볼·색
 
-- **심볼 kind:** `decision`(마름모)·`terminal`(스타디움)·`data`(평행사변형)·`prep`(육각형)·
-  `document`(문서)·`database`(원기둥).
+- **심볼 kind(14종):** 표준 6종 — `decision`(마름모)·`terminal`(스타디움)·`data`(평행사변형)·
+  `prep`(육각형)·`document`(문서)·`database`(원기둥). 표준 확장 4종 — `manual_input`(수동입력)·
+  `manual_op`(수동작업)·`display`(화면출력)·`delay`(지연). 방송/CCTV 결선도 픽토그램 4종 —
+  `camera`(카메라)·`amplifier`(증폭기)·`rack`(랙)·`antenna`(안테나).
 - **색·두께:** 선택 인자 `color=`(기본 검정 `#000000`)·`width=`(기본 6)·`fill=`(기본 없음).
   색은 `#RRGGBB`·`#AARRGGBB`(alpha 먼저)·`#RGB` 허용.
 - 반환된 `Node`를 `arrow(src, dst)`에 넘기면 빌더가 서로 마주보는 변 중점 포트를 골라 잇는다.
