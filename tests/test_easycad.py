@@ -150,6 +150,25 @@ def test_floating_panels_and_zoom_readout():
     assert w._zoom_btn.text() == "100 %"
 
 
+def test_left_panel_tab_switch_shrinks_to_content():
+    # [캔버스-퍼스트 레이아웃][실사용 피드백 2026-07-29] 처음엔 도형/레이어를 QTabWidget으로
+    # 묶었는데, 내부 QStackedLayout의 sizeHint()가 탭 전환과 무관하게 두 페이지 중 큰 쪽으로
+    # 고정되는 Qt 기본 동작 때문에 콘텐츠가 짧은 레이어 탭을 봐도 패널이 도형 탭 크기 그대로
+    # 남아 빈 공간이 생겼다. setVisible() 토글로 교체한 회귀 테스트 — 탭마다 실제로 크기가
+    # 줄고, 왔다갔다해도(레이아웃 무효화 타이밍 함정) 원래 크기로 정확히 복원돼야 한다.
+    # ⚠ show() 필수 — 창을 띄우지 않으면 Qt가 레이아웃 무효화를 다르게(더 늦게) 처리해
+    # adjustSize()가 stale한 값으로 멈춘다(실측: show() 없이는 레이어 탭도 도형 탭과 같은
+    # 크기로 안 줄어듦 — 실조건서는 항상 창이 떠 있어 이 경로를 안 탐).
+    w = CanvasWindow(); w.show()
+    shapes_size = w._left_panel.size()          # 기본 탭 = 도형(2열 심볼 그리드, 더 김)
+    w._switch_left_tab("layers")
+    layers_size = w._left_panel.size()
+    assert layers_size.height() < shapes_size.height()
+    w._switch_left_tab("shapes")
+    assert w._left_panel.size() == shapes_size   # 왕복 후에도 스턱 없이 원래 크기로 복원
+    w.close()
+
+
 def test_statusbar_proxy_is_floating_toast():
     # [캔버스-퍼스트 레이아웃] statusBar()는 이제 QMainWindow 실제 상태바가 아니라 하단중앙
     # 토스트 프록시 — 기존 20여 곳의 .showMessage() 호출부를 안 건드리고 그대로 동작해야 한다.
@@ -5268,6 +5287,22 @@ def test_minimap_shares_scene_and_is_noninteractive():
     assert w._minimap_panel.parent() is w
     assert w._minimap_panel.pos().x() > w._props_panel.pos().x() - 5   # 속성과 같은 우측 열
     assert w._minimap_panel.pos().y() > w._props_panel.pos().y()       # 속성 아래
+
+
+def test_minimap_indicator_fixed_pixel_size_regardless_of_zoom():
+    # [미니맵][사용자 피드백 2026-07-29] 인디케이터가 실제 가시 영역 비율대로 그려지면 메인 뷰를
+    # 확대할수록 박스가 작아져(게임 미니맵과 다르게 동작) 클릭으로 위치 잡기가 불편하다는 지적 —
+    # 종횡비는 유지하되 크기는 줌과 무관하게 고정(폭 _INDICATOR_PX 픽셀)이어야 한다.
+    from easycad.canvas.annotator_core import _RectItem
+    w = CanvasWindow(); w.resize(1200, 800); w.show()
+    w._scene.addItem(_RectItem(QRectF(0, 0, 100, 60)))
+    w._view.resetTransform(); w._view.centerOn(0, 0)
+    px_w_1x = w._minimap._indicator_draw_rect().width() * w._minimap.transform().m11()
+    w._view.scale(6.0, 6.0)
+    px_w_6x = w._minimap._indicator_draw_rect().width() * w._minimap.transform().m11()
+    assert abs(px_w_1x - px_w_6x) < 1.0
+    assert abs(px_w_1x - w._minimap._INDICATOR_PX) < 1.0
+    w.close()
 
 
 def test_minimap_indicator_is_scene_coords_not_double_transformed():
