@@ -3597,7 +3597,7 @@ def test_dxf_import_insert_block():
     # 평탄화(배치 변환 baked-in) + 2개 이상 나오면 group_id로 한 블록처럼 묶기.
     from PyQt6.QtWidgets import QGraphicsScene
     import ezdxf
-    from easycad.fileio.dxf_import import import_dxf
+    from easycad.fileio.dxf_import import import_dxf, _compute_import_scale
 
     doc = ezdxf.new()
     blk = doc.blocks.new(name="CAM")
@@ -3610,6 +3610,9 @@ def test_dxf_import_insert_block():
     path = os.path.join(_TMP, "insert_block.dxf")
     doc.saveas(path)
 
+    # [2026-07-29] 순수 외부 DXF라 자동 재스케일 대상 — 절대좌표 대신 그 배율로 검증한다.
+    expected_scale = _compute_import_scale(ezdxf.readfile(path).modelspace())
+
     sc = QGraphicsScene()
     n = import_dxf(sc, path)
     assert n == 5, n                              # 최상위 라인 1 + 블록 2개 × 엔티티 2개
@@ -3620,14 +3623,15 @@ def test_dxf_import_insert_block():
     assert len(groups) == 2                                  # 인스턴스별로 서로 다른 그룹
     for g in groups:
         assert sum(1 for x in gids if x == g) == 2           # 인스턴스당 2개(원+선)
-    # 스케일·회전이 없는 인스턴스(300,50) 원 반지름은 원본 그대로(5), Y-flip만 적용.
+    # 스케일·회전이 없는 인스턴스(300,50) 원 반지름은 원본(5)×재스케일 배율, Y-flip만 적용.
     circles = [it for it in items if isinstance(it, _EllipseItem)]
-    plain = [c for c in circles if abs(c.rect().width() / 2 - 5.0) < 1e-6]
+    plain = [c for c in circles if abs(c.rect().width() / 2 - 5.0 * expected_scale) < 1e-3]
     assert len(plain) == 1
     c = plain[0].mapToScene(plain[0].rect().center())
-    assert abs(c.x() - 300.0) < 1e-6 and abs(c.y() - (-50.0)) < 1e-6
-    # 스케일 2배 인스턴스(100,50)는 반지름이 2배(10)로 baked-in.
-    scaled = [c for c in circles if abs(c.rect().width() / 2 - 10.0) < 1e-6]
+    assert abs(c.x() - 300.0 * expected_scale) < 1e-3
+    assert abs(c.y() - (-50.0 * expected_scale)) < 1e-3
+    # 스케일 2배 인스턴스(100,50)는 반지름이 원본 대비 2배(10)×재스케일 배율로 baked-in.
+    scaled = [c for c in circles if abs(c.rect().width() / 2 - 10.0 * expected_scale) < 1e-3]
     assert len(scaled) == 1
 
 
@@ -3635,7 +3639,7 @@ def test_dxf_import_nested_insert():
     # 블록 안에 또 다른 블록 참조(중첩 INSERT) — 재귀 평탄화로 두 단계 모두 풀려야 한다.
     from PyQt6.QtWidgets import QGraphicsScene
     import ezdxf
-    from easycad.fileio.dxf_import import import_dxf
+    from easycad.fileio.dxf_import import import_dxf, _compute_import_scale
 
     doc = ezdxf.new()
     inner = doc.blocks.new(name="LENS")
@@ -3648,12 +3652,16 @@ def test_dxf_import_nested_insert():
     path = os.path.join(_TMP, "nested_insert.dxf")
     doc.saveas(path)
 
+    # [2026-07-29] 순수 외부 DXF라 자동 재스케일 대상 — 절대좌표 대신 그 배율로 검증한다.
+    expected_scale = _compute_import_scale(ezdxf.readfile(path).modelspace())
+
     sc = QGraphicsScene()
     n = import_dxf(sc, path)
     assert n == 2
     ell = [it for it in sc.items() if isinstance(it, _EllipseItem)][0]
     c = ell.mapToScene(ell.rect().center())
-    assert abs(c.x() - 3.0) < 1e-6 and abs(c.y() - 0.0) < 1e-6
+    assert abs(c.x() - 3.0 * expected_scale) < 1e-3
+    assert abs(c.y() - 0.0) < 1e-3
     gids = {getattr(it, "_group_id", None) for it in sc.items()}
     assert len(gids) == 1 and None not in gids               # 둘 다 같은(단일) 그룹
 

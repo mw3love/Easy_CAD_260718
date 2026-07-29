@@ -908,6 +908,9 @@ class CanvasWindow(QMainWindow):
         self._reset_history()
         nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
         self._badge_n = max(nums) if nums else 0
+        # [2026-07-29] 외부 DXF는 우리 앱과 원점·스케일이 무관해 가져온 직후 화면 밖이거나
+        # 100% 줌에서 너무 작게/크게 보일 수 있다 — 열기 직후 항상 전체 맞춤(Ctrl+9와 동일).
+        self._zoom_fit()
         self.statusBar().showMessage(f"가져오기 완료: {n}개 객체 — {path}", 5000)
 
     # ---- 이미지 삽입 (Phase 4) ---------------------------------------------

@@ -379,6 +379,25 @@ def _rotate_cursor() -> QCursor:
     return _ROTATE_CURSOR
 
 
+def _view_zoom_factor(item) -> float:
+    """[2026-07-29] 실사용 피드백 — 휠줌 시 선택박스·핸들 두께가 도면과 함께 커져서
+    화면상 부담스러워졌다. 원인: `_scale_or_1()`이 아이템 자체의 `.scale()`(보통 1.0)만
+    보고 뷰의 줌 배율은 무시해, 줌해도 화면 픽셀 크기가 그대로 늘어났다(선택박스만 예외적으로
+    작아 보이는 게 아니라 도형과 '똑같이' 커지는 게 문제). 해법: 이 아이템이 그려지는
+    '상호작용 가능한' 뷰(메인 캔버스 — 미니맵은 `setInteractive(False)`라 클릭·선택이
+    없어 제외)의 현재 줌 배율을 함께 곱해, `_EDGE_HIT_MIN`/핸들 크기 등 화면-px 기준
+    상수들이 줌과 무관하게 화면에서 항상 같은 크기로 보이게 한다(Figma·AutoCAD 관례).
+    뷰가 없으면(뷰 미부착 QGraphicsScene 단독 오프스크린 테스트 등) 1.0 — 기존 동작 그대로."""
+    sc = item.scene()
+    if sc is None:
+        return 1.0
+    for v in sc.views():
+        if v.isInteractive():
+            m = v.transform().m11()
+            return m if m else 1.0
+    return 1.0
+
+
 # ---------------------------------------------------------------------------
 # 크기조절 핸들 믹스인 — 선택 시 우하단 핸들 드래그로 균일 스케일
 # ---------------------------------------------------------------------------
@@ -747,7 +766,7 @@ class _HandleResizeMixin:
         return [self.mapToScene(self._content_rect().center())]
 
     def _scale_or_1(self) -> float:
-        s = self.scale()
+        s = self.scale() * _view_zoom_factor(self)
         return s if s else 1.0
 
     # 타이트 경계(선택박스·핸들 기준). 도형별로 override한다(기본은 Qt 기본 boundingRect).
@@ -1983,7 +2002,7 @@ class _TitleBlockItem(QGraphicsRectItem):
             _draw_selection_box(painter, r, self._scale_or_1())
 
     def _scale_or_1(self) -> float:
-        s = self.scale()
+        s = self.scale() * _view_zoom_factor(self)
         return s if s else 1.0
 
     def _paint_table(self, painter):

@@ -36,6 +36,46 @@ def _find_title_frame(scene):
     return None
 
 
+def _current_ink_color(it):
+    """[2026-07-29] apply_color가 있는 아이템의 현재 잉크색을 duck-typing으로 읽는다.
+    화살표/배지=`_color` 필드, 텍스트=defaultTextColor(), 나머지(도형·선)=pen().color()."""
+    col = getattr(it, "_color", None)
+    if col is not None:
+        return QColor(col)
+    if hasattr(it, "defaultTextColor"):
+        return it.defaultTextColor()
+    if hasattr(it, "pen"):
+        return it.pen().color()
+    return None
+
+
+def _is_near_white(c) -> bool:
+    return c is not None and c.red() >= 250 and c.green() >= 250 and c.blue() >= 250
+
+
+def _swap_white_to_black_for_print(scene):
+    """[2026-07-29 — 사용자 확정: 화면은 흰색, 종이는 검정] AutoCAD의 ACI 7(흰색) 인쇄 관례를
+    따른다. 다크 캔버스에선 흰 선·글자가 잘 보이지만, PDF는 항상 흰 종이라 그대로 두면 안 보이는
+    유령 선이 된다. 렌더 직전 흰색 계열 잉크색만 검정으로 바꾸고, (item, 원래색) 목록을 반환해
+    렌더 후 원복할 수 있게 한다. 대상은 `apply_color`가 있는 아이템(도형·선·화살표·배지·텍스트)
+    전부 — 타입 무관하게 흰색이면 바꾼다(화면-표시용 색과 인쇄용 색을 분리 관리하지 않으므로
+    되돌리기 전제로만 임시 변경)."""
+    swapped = []
+    for it in scene.items():
+        if not hasattr(it, "apply_color"):
+            continue
+        col = _current_ink_color(it)
+        if _is_near_white(col):
+            swapped.append((it, col))
+            it.apply_color(QColor("black"))
+    return swapped
+
+
+def _restore_swapped_colors(swapped):
+    for it, col in swapped:
+        it.apply_color(col)
+
+
 def export_pdf(scene, path: str, page: str = "A4",
                selection_only: bool = False, margin_mm: float = 10.0) -> bool:
     """scene을 path에 PDF로 저장. selection_only면 선택영역만. 성공 True.
@@ -84,10 +124,13 @@ def export_pdf(scene, path: str, page: str = "A4",
     # [Phase 6 M1] 다크 테마여도 인쇄물은 흰 종이 — 렌더 동안 배경을 흰색으로 강제 후 복원.
     saved_bg = scene.backgroundBrush()
     scene.setBackgroundBrush(QBrush(QColor("#ffffff")))
+    # [2026-07-29] 흰 잉크색(예: DXF ACI 7)은 흰 종이에 안 보이므로 인쇄 관례대로 검정 치환.
+    swapped_colors = _swap_white_to_black_for_print(scene)
 
     painter = QPainter()
     if not painter.begin(printer):
         scene.setBackgroundBrush(saved_bg)
+        _restore_swapped_colors(swapped_colors)
         for it in saved:
             it.setSelected(True)
         return False
@@ -98,6 +141,7 @@ def export_pdf(scene, path: str, page: str = "A4",
     finally:
         painter.end()
         scene.setBackgroundBrush(saved_bg)
+        _restore_swapped_colors(swapped_colors)
         for it in saved:
             it.setSelected(True)
     return True
