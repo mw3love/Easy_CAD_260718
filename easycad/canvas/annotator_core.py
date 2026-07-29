@@ -1144,24 +1144,39 @@ class _HandleResizeMixin:
                 return
         super().mousePressEvent(event)
 
+    def _resolve_drag_endpoint(self):
+        """press 시점에 캡처한 끝점 인덱스(0 또는 그때의 마지막 인덱스)를 '지금 프레임'의 실제
+        유효 인덱스로 보정. [실사용 크래시 2026-07-29] 끝점 드래그가 매 프레임 _apply_routing()
+        으로 경로 전체를 다시 계산하게 되면서(재부착 시 특히) _pts 길이 자체가 프레임마다
+        바뀔 수 있게 됐다 — press 시점 값을 그대로 쓰면 길이가 줄어든 다음 프레임에서
+        IndexError로 크래시한다(실사용자 보고: 화살표 머리를 다른 도형에 재부착하는 도중
+        드래그가 끊기고, 그 뒤 다시 클릭하면 프로그램이 꺼짐 — 끊긴 순간이 이 IndexError고,
+        `_drag_endpoint`가 None으로 정리되지 못한 채 남아 다음 클릭에서도 stale 인덱스로
+        재차 크래시했다). `_handle_indices()`는 항상 {0, 마지막}만 내놓으므로 "0이었나"만
+        기억하면 충분 — 0이 아니면 항상 '지금의' 마지막 인덱스로 재계산한다. `_endpoints()`를
+        쓰는 이유(self._pts 대신): `_ArrowItem`은 `_pts`가 아니라 `_p1`/`_p2`를 쓰므로, 두
+        클래스 모두에서 옳게 동작하려면 폴리모픽한 `_endpoints()`(길이 2 보장)를 봐야 한다."""
+        return 0 if self._drag_endpoint == 0 else len(self._endpoints()) - 1
+
     def mouseMoveEvent(self, event):
         if getattr(self, "_drag_endpoint", None) is not None:
             self.prepareGeometryChange()  # 끝점이 boundingRect를 바꾼다
+            idx = self._resolve_drag_endpoint()
             p = event.pos()
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 # Shift = 각도 스냅(테두리 스냅과 상호배타) — 위치는 이 제약이 갖되, 바인딩은 갱신.
-                p2 = self._snap_endpoint(self._drag_endpoint, p)
-                self._set_endpoint(self._drag_endpoint, p2)
-                self._rebind_at_fixed_point(self._drag_endpoint, p2)
+                p2 = self._snap_endpoint(idx, p)
+                self._set_endpoint(idx, p2)
+                self._rebind_at_fixed_point(idx, p2)
             elif self._owner_ortho():
                 # [우리 확장] F8 Ortho = 인접 정점 기준 0/90° 제약(테두리 스냅보다 우선) — 동일하게
                 # 위치는 유지하고 바인딩만 재판정(실조건 2026-07-27: 안 하면 지속 연결이 안 걸림).
-                p2 = self._ortho_endpoint(self._drag_endpoint, p)
-                self._set_endpoint(self._drag_endpoint, p2)
-                self._rebind_at_fixed_point(self._drag_endpoint, p2)
+                p2 = self._ortho_endpoint(idx, p)
+                self._set_endpoint(idx, p2)
+                self._rebind_at_fixed_point(idx, p2)
             else:
                 # 근처 도형 테두리에 재스냅(뗐다 다시 붙이기). 화살표는 S자 곡선까지 복원.
-                self._move_endpoint_with_snap(self._drag_endpoint, p)
+                self._move_endpoint_with_snap(idx, p)
             self.update()
             event.accept()
             return
@@ -1191,7 +1206,7 @@ class _HandleResizeMixin:
 
     def mouseReleaseEvent(self, event):
         if getattr(self, "_drag_endpoint", None) is not None:
-            idx = self._drag_endpoint
+            idx = self._resolve_drag_endpoint()   # 클리어 전에 '지금' 유효한 인덱스로 보정
             self._drag_endpoint = None
             self._on_endpoint_drag_end(idx)   # [경유지 힌트] 중간 정점 드래그 → 힌트 커밋(override)
             event.accept()
@@ -3187,19 +3202,35 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     def _move_endpoint_with_snap(self, idx, local_p):
         # 양 끝점만 테두리에 스냅·바인딩(중간 waypoint는 자유 이동). 멀리 끌면 unbind.
+        # [실사용 버그 2026-07-29 5차 — 재설계] 끝점 드래그를 '새로 그리기'와 동일하게 취급한다
+        # (deep-interview 확정 — 조금 전 정한 '스텁만 재정렬(다른 구간 보존)'을 뒤집음). 이유:
+        # 그 결정은 '무관한 변경'(다른 도형 삭제 등)에 손대지 않은 경로가 바뀌면 안 된다는
+        # 취지였는데, 지금은 사용자가 직접 이 화살표의 끝점을 옮기는 중이라 그 취지가 적용되지
+        # 않는다 — 오히려 새 화살표를 그릴 때 이미 라이브 A* 미리보기를 쓰면서 기존 화살표
+        # 끝점 이동만 다르게(마지막 관절만 patch) 다루는 게 일관성이 없다는 사용자 지적을 반영.
+        # 옛 중간 정점을 그대로 두고 그중 하나만 옮기면(스턱루프였던 이전 방식) 옛 목적지 기준
+        # 중간점들이 새 목적지와 무관해져 사선/우회가 남는다 — 아예 버리고 두 끝점만으로
+        # set_ortho_preview와 동일하게 _apply_routing()에 전부 위임하면 이 문제 자체가 없다.
         is_end = idx == 0 or idx == len(self._pts) - 1
+        other_idx = (len(self._pts) - 1) if idx == 0 else 0
+        other_pt = QPointF(self._pts[other_idx])
         snapped = self._endpoint_border_snap(local_p) if is_end else None
         if snapped is None:
             if is_end:
                 self.set_bound(idx, None)
-            self._set_endpoint(idx, local_p)
-            return
-        shape = snapped[2]
-        if shape is not None:   # [M4-2b] 도형이면 지속 바인딩, 선·화살표(shape=None)면 기하 스냅만
-            self.set_bound(idx, shape, shape.mapFromScene(self.mapToScene(snapped[0])))
+            target = local_p
         else:
-            self.set_bound(idx, None)
-        self._set_endpoint(idx, snapped[0])
+            shape = snapped[2]
+            if shape is not None:   # [M4-2b] 도형이면 지속 바인딩, 선·화살표(shape=None)면 기하 스냅만
+                self.set_bound(idx, shape, shape.mapFromScene(self.mapToScene(snapped[0])))
+            else:
+                self.set_bound(idx, None)
+            target = snapped[0]
+        if is_end and self._is_ortho():
+            self._pts = [target, other_pt] if idx == 0 else [other_pt, target]
+            self._apply_routing()
+        else:
+            self._set_endpoint(idx, local_p if snapped is None else snapped[0])
 
     def reroute(self, pin_pred=None) -> bool:
         """바인딩된 끝(시작·끝)을 도형의 고정 부착점(로컬→씬)으로 추종. 변경 있으면 True.
@@ -3546,6 +3577,9 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         그게 별개 힌트로 또 추가돼 드래그할수록 계단식으로 지저분해졌다(실측으로 발견). 여러 지점을
         경유해야 하면 그건 자동라우팅의 영역이 아니라 완전 수동 폴리라인(waypoint 삽입)의 몫이다."""
         if not self._hint_dragging:
+            # [실사용 버그 2026-07-29 5차] 힌트 드래그(중간 정점)가 아니면 끝점 드래그 —
+            # _move_endpoint_with_snap이 매 프레임 _apply_routing()으로 이미 전체 재계산해
+            # 두므로 여기선 추가로 할 일이 없다(새로 그리기와 동일하게 라이브==확정).
             return
         self._hint_dragging = False
         p_new = self.mapToScene(self._pts[idx])
@@ -3607,10 +3641,18 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             h = self._host()
             self._hint_undo = [(self, self.capture_geom())] if h is not None else None
             return
-        # [Stage1] 끝점 드래그 또는 이미 수동 → 자동 라우팅 해제(수동 폴리라인), 힌트 폐기.
         self._hint_dragging = False
-        self._auto_route = False
-        self._route_hints = []
+        if is_middle:
+            # [Stage1] 이미 수동인 중간 정점(waypoint) 드래그 — 그대로 수동 유지.
+            self._auto_route = False
+            self._route_hints = []
+        else:
+            # [실사용 버그 2026-07-29 5차] 끝점 드래그 = 새로 그리기와 동일 취급(deep-interview
+            # 확정) — auto_route를 끄지 않는다. _move_endpoint_with_snap이 매 프레임
+            # _apply_routing()으로 전체 재계산하고, 드래그가 끝난 뒤에도 이 화살표가 새로 그린
+            # 것처럼 계속 자동 재라우팅되길 기대하기 때문(도형이 나중에 움직여도 reroute가
+            # 계속 따라감). 옛 경유 힌트만 폐기(새 목적지와는 무관해짐).
+            self._route_hints = []
 
     def _endpoints(self):
         return self._pts
@@ -4397,9 +4439,51 @@ def _symbol_nearest(item, p):
     return best_q, QPointF(nx / L, ny / L)
 
 
+_CARDINAL_LOCAL_DIRS = (QPointF(0.0, -1.0), QPointF(1.0, 0.0), QPointF(0.0, 1.0), QPointF(-1.0, 0.0))
+
+
+def _axis_forced_local_normal(item, local_pt: QPointF, raw_n: QPointF) -> QPointF:
+    """[실사용 버그 수정 2026-07-29] local_pt가 도형의 N/E/S/W 변 중점 또는(사각형이면) 대각
+    꼭짓점과 겹치면 '의도된' 로컬 축 방향으로 법선을 강제하고, 그 외(연속 폴백 등 임의의 테두리
+    점)는 raw_n 그대로 반환한다.
+
+    근본 원인: 이 점들은 두 변이 만나는 진짜 꼭짓점(마름모의 N/E/S/W, 사각형의 대각 꼭짓점)이라
+    `_ellipse_nearest`/`_symbol_nearest`/`_rect_nearest`가 어느 변을 최근접으로 잡느냐에 따라
+    법선이 기울어지거나(마름모, 폭≠높이일수록 심함) 임의의 축으로 쏠린다(사각형, 탐색 순서상
+    항상 세로 변이 이겨 정사각형으로 테스트해도 4개 모두 '수평'으로 나옴 — 도형 비율과 무관한
+    코드 우연). N/E/S/W는 N/S=수직·E/W=수평으로, 사각형 대각 꼭짓점은 **가까운 변 기준**(가로가
+    세로보다 길면 수평, 세로가 더 길면 수직 — 정사각형처럼 정확히 같으면 수평)으로 강제한다.
+
+    [중요] `_nearest_border`에서 호출해야 `_shape_ports`(포트 목록)뿐 아니라 `_bound_normal_scene`
+    (build_elbow·reroute가 쓰는 실제 라우팅 법선 — 지속 바인딩된 부착점에서 매번 다시 계산)도
+    같이 고쳐진다. 처음엔 `_shape_ports`에만 넣었다가, 화살표를 그릴 때의 스냅 법선은 고쳐졌는데
+    도형이 나중에 움직여 reroute()가 재계산할 땐 여전히 옛(잘못된) 법선을 쓰는 걸 실측으로
+    발견 — 두 경로가 결국 같은 `_nearest_border`를 거치므로 여기 한 곳에 두면 자동으로 통일된다."""
+    r = item.rect()
+    cx, cy = r.center().x(), r.center().y()
+    eps = 1e-4 * max(r.width(), r.height(), 1.0)
+    cardinals = (QPointF(cx, r.top()), QPointF(r.right(), cy),
+                 QPointF(cx, r.bottom()), QPointF(r.left(), cy))
+    for i, c in enumerate(cardinals):
+        if abs(local_pt.x() - c.x()) < eps and abs(local_pt.y() - c.y()) < eps:
+            return _CARDINAL_LOCAL_DIRS[i]
+    if isinstance(item, _RectItem):
+        corners = (QPointF(r.left(), r.top()), QPointF(r.right(), r.top()),
+                   QPointF(r.right(), r.bottom()), QPointF(r.left(), r.bottom()))
+        for c in corners:
+            if abs(local_pt.x() - c.x()) < eps and abs(local_pt.y() - c.y()) < eps:
+                rect_horiz = r.width() >= r.height()
+                sx = 1.0 if c.x() > cx else -1.0
+                sy = 1.0 if c.y() > cy else -1.0
+                return QPointF(sx, 0.0) if rect_horiz else QPointF(0.0, sy)
+    return raw_n
+
+
 def _nearest_border(item, scene_pt):
     """네모/원/심볼 테두리에서 scene_pt 최근접점 → (snap_scene, outward_unit_scene).
-    회전·스케일은 아이템 변환으로 왕복 환산(바깥 법선도 씬 방향으로 변환)."""
+    회전·스케일은 아이템 변환으로 왕복 환산(바깥 법선도 씬 방향으로 변환).
+    [실사용 버그 수정 2026-07-29] N/E/S/W·사각형 대각 꼭짓점은 _axis_forced_local_normal로
+    법선 방향만 보정(위치는 그대로) — 상세 이유는 그 함수 docstring 참조."""
     p = item.mapFromScene(scene_pt)
     r = item.rect()
     if isinstance(item, _EllipseItem):
@@ -4408,6 +4492,7 @@ def _nearest_border(item, scene_pt):
         q, n = _symbol_nearest(item, p)
     else:
         q, n = _rect_nearest(r, p)
+    n = _axis_forced_local_normal(item, q, n)
     sp = item.mapToScene(q)
     nd = item.mapToScene(QPointF(q.x() + n.x(), q.y() + n.y())) - sp
     L = math.hypot(nd.x(), nd.y()) or 1.0
@@ -4415,15 +4500,25 @@ def _nearest_border(item, scene_pt):
 
 
 def _shape_ports(item):
-    """도형의 이산 접속점(포트) → [(scene_pt, 바깥법선), ...]. 변 중점 4개(N·E·S·W)를
-    _nearest_border로 '실제 외곽선'에 투영한다 — 네모·원은 변 중점 그대로, 심볼은 슬랜트 변
-    (평행사변형 등)이라 투영해야 붕 뜨지 않는다. 마름모는 4 꼭짓점이 그대로 N/E/S/W가 된다.
-    회전·스케일은 _nearest_border가 아이템 변환으로 왕복 환산."""
+    """도형의 이산 접속점(포트) → [(scene_pt, 바깥법선), ...]. 변 중점 4개(N·E·S·W) +
+    bbox 대각 꼭짓점 4개(NE·SE·SW·NW), 총 8개를 _nearest_border로 '실제 외곽선'에 투영한다 —
+    네모·원은 변 중점/대각 근사점 그대로, 심볼은 슬랜트 변(평행사변형 등)이라 투영해야 붕 뜨지
+    않는다. 마름모는 4 꼭짓점이 그대로 N/E/S/W가 되고(기존), 대각 4점은 역전 구조로 마름모의
+    4변 중점에 투영된다. 우선순위·시각 표현은 변/꼭짓점 구분 없이 균일(deep-interview 2026-07-29
+    확정 — 구현이 가장 작은 변경이라는 계획서 취지 유지, 사용 중 문제 있으면 후속 조정).
+    회전·스케일은 _nearest_border가 아이템 변환으로 왕복 환산. 법선 축 보정은 _nearest_border→
+    _axis_forced_local_normal이 담당(포트 목록·라우팅 양쪽에서 일관되도록 그쪽으로 이동)."""
     r = item.rect()
     cx, cy = r.center().x(), r.center().y()
-    cardinals = (QPointF(cx, r.top()), QPointF(r.right(), cy),
-                 QPointF(cx, r.bottom()), QPointF(r.left(), cy))
-    return [_nearest_border(item, item.mapToScene(cl)) for cl in cardinals]
+    pts = (QPointF(cx, r.top()), QPointF(r.right(), cy),
+           QPointF(cx, r.bottom()), QPointF(r.left(), cy),
+           QPointF(r.left(), r.top()), QPointF(r.right(), r.top()),
+           QPointF(r.right(), r.bottom()), QPointF(r.left(), r.bottom()))
+    out = []
+    for p in pts:
+        sp, n = _nearest_border(item, item.mapToScene(p))
+        out.append((sp, n))
+    return out
 
 
 # ---- [Phase 6 M4-2b] 선·화살표를 스냅 대상으로 — 끝점끼리 + 끝점→몸통 -----------
@@ -5271,6 +5366,17 @@ class _AnnotatorView(QGraphicsView):
         self._qc_side = None        # "t"/"r"/"b"/"l"
         self._qc_cursor = None      # 드래그 중 커서 씬좌표(복제 중심). None=기본 배치(클릭)
         self._qc_press_scene = None # 도트 press 지점(씬) — 클릭/드래그 판정 기준
+        # [8포트 select-hover] 선택 도구 + 미선택 도형 근처 hover → 8포트 드래그로 커넥터만 생성.
+        # qc-dot(선택된 도형·바깥 오프셋)과 별개 시스템 — 포트가 테두리 위라 클릭=선택과 자리가
+        # 겹쳐, press는 잠정 보류하고 release에서 드래그 여부로 커넥터/선택을 가른다(deep-interview
+        # 2026-07-29 확정).
+        self._hp_hover = None       # (item, port_pt, normal) — 유휴 hover(스냅 마커용) or None
+        self._hp_dragging = False
+        self._hp_src = None         # 원본 도형(미선택)
+        self._hp_port = None        # 시작 포트(씬)
+        self._hp_normal = None      # 시작 포트 바깥 법선(씬)
+        self._hp_cursor = None      # 드래그 중 커서(씬). None=드래그 임계 미달(release 시 평소 선택으로 폴백)
+        self._hp_press_scene = None # press 지점(씬) — 클릭/드래그 판정 기준
         # 선택이 바뀌면 그룹 오버레이(bbox·핸들)를 다시 그린다(개별 아이템 repaint와 별개).
         scene.selectionChanged.connect(self.viewport().update)
 
@@ -5906,27 +6012,97 @@ class _AnnotatorView(QGraphicsView):
         painter.drawEllipse(sp, base, base)
 
     def _draw_port_dots(self, painter, s):
-        """[우리 확장] 화살표 도구로 도형 근처에 가면 그 도형의 포트(변 중점 4점)를 속 빈 점으로
-        예고. 실제 스냅된 포트는 _draw_snap_marker(채운 파란 점)가 위에 덮어 강조한다."""
-        if not self._owner.is_edit_mode() or self._owner.current_tool not in ("arrow", "sarrow"):
+        """[우리 확장] 화살표 도구로 도형 근처에 가면 그 도형의 포트(8점)를 속 빈 점으로 예고.
+        실제 스냅된 포트는 _draw_snap_marker(채운 파란 점)가 위에 덮어 강조한다.
+        [8포트 select-hover 2026-07-29] select 도구에서도 동일하게 예고하되, 선택된 도형은
+        제외(리사이즈·회전 핸들과 자리가 겹침 — 그건 qc-dot(4방향점)이 담당)."""
+        tool = self._owner.current_tool
+        if not self._owner.is_edit_mode() or tool not in ("arrow", "sarrow", "select"):
             return
+        select_mode = tool == "select"
         scene_c = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
         margin = 30.0 / s
         r = 3.5 / s
         painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
         painter.setBrush(QBrush(QColor("white")))
         for sh in self._conn_shapes():
+            if select_mode and sh.isSelected():
+                continue
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_c):
                 continue
             for sp, _n in _shape_ports(sh):
                 painter.drawEllipse(sp, r, r)
 
+    def _hover_port_at(self, view_pos):
+        """[8포트 select-hover] 미선택 도형 근처 8포트 중 가장 가까운 것 → (shape, port_pt, normal)
+        or None. 선택된 도형은 제외(리사이즈·회전 핸들과 자리가 겹침 — qc-dot이 그 역할)."""
+        margin = 30.0 / self._view_scale()
+        scene_pt = self.mapToScene(view_pos)
+        best = None
+        bestd = self._PORT_SNAP_PX
+        for sh in self._conn_shapes():
+            if sh.isSelected():
+                continue
+            br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
+            if not br.contains(scene_pt):
+                continue
+            for sp, n in _shape_ports(sh):
+                d = self._view_dist(sp, view_pos)
+                if d <= bestd:
+                    bestd, best = d, (sh, sp, n)
+        return best
+
+    def _hp_paint_ghost(self, painter, src, port_pt, port_normal, cursor_scene):
+        """[8포트 select-hover] 드래그 중 커넥터 고스트 — _qc_paint_ghost의 드래그 분기(도형 복제
+        없이 화살표만)와 동일한 라우팅(_route_ortho)을 재사용하되, 시작점·법선은 side 문자열이
+        아니라 _shape_ports가 이미 계산해 둔 실제 8포트 좌표를 그대로 쓴다."""
+        pen = QPen(QColor(90, 150, 235), 1.5, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        snap = self._qc_snap_target(cursor_scene, src)
+        end = snap[0] if snap is not None else cursor_scene
+        ne = snap[1] if snap is not None else None
+        target = snap[2] if snap is not None else None
+        obstacles, conn_rects = self._qc_route_context(src, target)
+        mids = _route_ortho(port_pt, end, port_normal, ne, obstacles, _PolyArrowItem._ROUTE_CLEARANCE,
+                            conn_rects=conn_rects)
+        pts = _dedup_pts([port_pt] + mids + [end])
+        for i in range(len(pts) - 1):
+            painter.drawLine(pts[i], pts[i + 1])
+        if snap is not None:
+            self._draw_snap_marker(painter, end, self._view_scale())
+
+    def _hp_create_arrow(self, src, port_pt, cursor_scene):
+        """[8포트 select-hover] 미선택 도형의 포트에서 커넥터만 생성(도형 복제 없음) —
+        _qc_create_arrow_only와 동일한 종착 스냅·라우팅을 재사용."""
+        owner = self._owner
+        arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+        arrow._style = getattr(owner, "current_style", arrow._style)      # sticky 선스타일
+        arrow._curve_r = float(getattr(owner, "current_curve_r", arrow._curve_r))  # sticky 모서리 반경
+        arrow.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                       | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        arrow.set_bound(0, src, src.mapFromScene(port_pt))
+        snap = self._qc_snap_target(cursor_scene, src)
+        end = snap[0] if snap is not None else QPointF(cursor_scene)
+        arrow.set_points(port_pt, end)
+        if snap is not None and snap[2] is not None and snap[2] is not src:
+            arrow.set_bound(1, snap[2], snap[2].mapFromScene(end))
+        arrow._auto_route = True
+        self.scene().addItem(arrow)
+        arrow._apply_routing()
+        self._owner.push_undo_add(arrow)
+        self.scene().clearSelection()
+        arrow.setSelected(True)
+        return arrow
+
     def leaveEvent(self, event):
         # 커서가 뷰를 벗어나면 스냅·waypoint 예고 마커 정리(잔상 방지).
-        if self._snap_preview is not None or self._seg_add is not None:
+        if self._snap_preview is not None or self._seg_add is not None or self._hp_hover is not None:
             self._snap_preview = None
             self._seg_add = None
+            self._hp_hover = None
             self.viewport().update()
         super().leaveEvent(event)
 
@@ -5999,6 +6175,12 @@ class _AnnotatorView(QGraphicsView):
         elif self._qc_hover is not None and self._qc_hover[0].isSelected() \
                 and self._qc_hover[0].scene() is not None:
             self._qc_paint_ghost(painter, self._qc_hover[0], self._qc_hover[1], None)
+        # [8포트 select-hover] 드래그 중 커넥터 고스트 / 유휴 hover 강조 마커.
+        if self._hp_dragging and self._hp_src is not None and self._hp_cursor is not None:
+            self._hp_paint_ghost(painter, self._hp_src, self._hp_port, self._hp_normal, self._hp_cursor)
+        elif not self._hp_dragging and self._hp_hover is not None \
+                and self._hp_hover[0].scene() is not None:
+            self._draw_snap_marker(painter, self._hp_hover[1], s)
         # [2e] 스마트 정렬 가이드선 — 이동 중 정렬 맞은 축에 마젠타 실선.
         if self._align_guides:
             pen = QPen(QColor(230, 60, 160), 1.0)
@@ -6219,6 +6401,19 @@ class _AnnotatorView(QGraphicsView):
             self._snapshot_movable()   # 주석 드래그 이동을 undo로 되돌리기 위해
             return super().mousePressEvent(event)
         if tool == "select":
+            # [8포트 select-hover] 미선택 도형의 포트 근처 press — 드래그 여부는 release에서 가른다
+            # (포트가 테두리 위라 클릭=선택과 자리가 겹침, deep-interview 2026-07-29). Shift는
+            # 다중선택 토글 의도이므로 건드리지 않는다.
+            if event.button() == Qt.MouseButton.LeftButton and not (
+                    event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+                hp = self._hover_port_at(vpos)
+                if hp is not None:
+                    self._hp_src, self._hp_port, self._hp_normal = hp
+                    self._hp_dragging = True
+                    self._hp_cursor = None
+                    self._hp_press_scene = self.mapToScene(vpos)
+                    self._hp_hover = None
+                    return
             # 빈 영역 드래그 = 방향 감지 러버밴드(window/crossing), 아이템 위 = 이동/선택.
             # 창 이동은 상단 코랄 드래그바로. (편집 모드 본문 pan은 제거)
             if self._is_empty_area(vpos):
@@ -6812,6 +7007,13 @@ class _AnnotatorView(QGraphicsView):
                                       and QLineF(self._qc_press_scene, cur).length() > thr) else None
             self.viewport().update()
             return
+        if self._hp_dragging:  # [8포트 select-hover] 임계 넘게 끌면 커넥터 프리뷰, 아니면 보류(release=선택)
+            cur = self.mapToScene(event.position().toPoint())
+            thr = 8.0 / self._view_scale()
+            self._hp_cursor = cur if (self._hp_press_scene is not None
+                                      and QLineF(self._hp_press_scene, cur).length() > thr) else None
+            self.viewport().update()
+            return
         if self._stretch_active:  # [Stage2b] stretch 프리뷰 — 버튼 없이 이동해도 갱신(클릭-이동-클릭)
             self._stretch_apply(self.mapToScene(event.position().toPoint()))
             self.viewport().setCursor(Qt.CursorShape.CrossCursor)
@@ -6846,6 +7048,12 @@ class _AnnotatorView(QGraphicsView):
             self._qc_hover = self._qc_dot_at(event.position().toPoint())
             if prev_qc != self._qc_hover:
                 self.viewport().update()
+            # [8포트 select-hover] 유휴 hover 강조 마커 갱신(select 도구에서만).
+            if self._owner.current_tool == "select":
+                prev_hp = self._hp_hover
+                self._hp_hover = self._hover_port_at(event.position().toPoint())
+                if prev_hp != self._hp_hover:
+                    self.viewport().update()
             self._update_hover_cursor(event.position().toPoint())
         if self._drawing and self._temp is not None:
             tool = self._owner.current_tool
@@ -6949,6 +7157,20 @@ class _AnnotatorView(QGraphicsView):
             self._qc_hover = None
             if src is not None and src.scene() is not None:
                 self._qc_create(src, side, cur)   # cur=None이면 기본 배치(클릭)
+            self.viewport().update()
+            return
+        if self._hp_dragging:  # [8포트 select-hover] 종료 — 드래그했으면 커넥터, 아니면 평소 클릭-선택 폴백
+            src, port, cur = self._hp_src, self._hp_port, self._hp_cursor
+            self._hp_dragging = False
+            self._hp_src = self._hp_port = self._hp_normal = self._hp_cursor = None
+            self._hp_press_scene = None
+            if src is not None and src.scene() is not None:
+                if cur is not None:
+                    self._hp_create_arrow(src, port, cur)
+                else:
+                    # 실제로 끌지 않았으면 press가 가로챈 만큼 평소 클릭-선택을 여기서 재현한다.
+                    self.scene().clearSelection()
+                    src.setSelected(True)
             self.viewport().update()
             return
         # [우리 확장] 클릭 배치 진행 중이면 릴리스는 무시 — 점은 클릭(press)으로만 놓는다.

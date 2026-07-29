@@ -2074,8 +2074,10 @@ def test_sarrow_auto_elbow_route():
 
 
 def test_sarrow_manual_edit_disables_auto():
-    # [Stage1/2f] 끝점 드래그·waypoint 삽입/삭제 → 자동 해제·동결. 단 자동 중 '중간' 정점 드래그는
-    #   [경유지 힌트]로 바뀌어 해제하지 않는다(freeze 아님 — test_route_hint_*가 커밋 경로를 커버).
+    # [Stage1/2f, 2026-07-29 5차로 (1b) 갱신] waypoint 삽입/삭제 → 자동 해제. 자동 중 '중간'
+    # 정점 드래그는 [경유지 힌트]로 바뀌어 해제하지 않는다(freeze 아님 — test_route_hint_*가
+    # 커밋 경로를 커버). 끝점 드래그는 더는 auto_route를 끄지 않는다(새로 그리기와 동일 취급 —
+    # deep-interview로 옛 '수동 전환' 결정을 뒤집음, 아래 (1b) 참조).
     w = CanvasWindow()
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     b = _mk_rect(w._scene, w.make_pen(), 300, 200, 100, 60)
@@ -2091,23 +2093,180 @@ def test_sarrow_manual_edit_disables_auto():
     assert sa._auto_route is True and sa._hint_dragging is True
     sa._hint_dragging = False   # 정리(커밋 없이 종료)
 
-    # (1b) 끝점 드래그 시작은 수동 전환(auto_route off) → A* 전체 재계산은 안 하되,
-    # [M4-4 ⑦] 도형 이동 시 스텁(끝-이웃 변)만 직교로 유지(전부 대각화되던 옛 동작 수정).
+    # (1b) [실사용 버그 2026-07-29 5차] 끝점 드래그 시작도 auto_route를 끄지 않는다 — 새로
+    # 그린 화살표처럼, 도형이 나중에 움직여도 계속 전체가 자동으로 재라우팅돼야 한다.
     sa._on_endpoint_drag_start(0)
-    assert sa._auto_route is False
-    frozen1 = (round(sa._pts[1].x()), round(sa._pts[1].y()))
+    assert sa._auto_route is True
     b.setPos(QPointF(0, 100)); w._on_scene_changed(None)   # b(끝점 idx last) 이동
-    # a는 안 움직였으니 시작 쪽 중간정점(idx1)은 동결, 전체는 직교 유지
-    assert (round(sa._pts[1].x()), round(sa._pts[1].y())) == frozen1, "안 움직인 끝 쪽은 동결"
     assert all(abs(p1.x() - p2.x()) < 1e-6 or abs(p1.y() - p2.y()) < 1e-6
-               for p1, p2 in zip(sa._pts[:-1], sa._pts[1:])), "수동 직교도 이동 후 직교 유지"
+               for p1, p2 in zip(sa._pts[:-1], sa._pts[1:])), "자동 재라우팅 후에도 직교 유지"
 
-    # (2) waypoint 삽입도 해제 트리거
+    # (2) waypoint 삽입은 여전히 해제 트리거(수동 폴리라인 편집 — 끝점 드래그와 별개 기능)
     sa2 = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
     sa2.set_points(QPointF(0, 0), QPointF(400, 400)); w._scene.addItem(sa2)
     sa2._auto_route = True
     sa2.insert_vertex(0, QPointF(200, 0))
     assert sa2._auto_route is False
+
+
+def _assert_all_segments_axis_aligned(pts, msg):
+    for p1, p2 in zip(pts[:-1], pts[1:]):
+        assert abs(p1.x() - p2.x()) < 1e-6 or abs(p1.y() - p2.y()) < 1e-6, (msg, p1, p2)
+
+
+def test_polyarrow_endpoint_drag_recomputes_whole_path():
+    # [실사용 버그 2026-07-29 5차 — 재설계] 도형에 붙은 직각 화살표를 뗐다가 다른 경로에
+    # 붙이면 직각이 풀어지고 경로도 이상해진다는 사용자 지적(deep-interview 확정) — 끝점
+    # 드래그를 '새로 그리기'와 동일하게 취급해 전체 경로를 다시 계산해야 한다. 옛 '스텁만
+    # 재정렬(나머지 보존)' 결정(2026-07-29 3차)을 뒤집는다: 옛 목적지 기준 중간점을 그대로
+    # 두면 새 목적지와 무관해져 사선/우회가 남았다. 이제는 두 끝점만으로 매 프레임
+    # _apply_routing()에 전부 위임 — auto_route도 새로 그린 화살표처럼 True로 유지돼야
+    # 도형이 나중에 움직여도 계속 자동 재라우팅된다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 300, 200, 100, 60)
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(100, 30), QPointF(300, 230))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, QPointF(100, 30)); sa.set_bound(1, b, QPointF(300, 230))
+    sa._auto_route = True; sa.build_elbow()
+
+    sa._on_endpoint_drag_start(0)                       # 끝점 드래그 시작 — 새로 그리기 취급
+    assert sa._auto_route is True, "끝점 드래그도 새로 그린 화살표처럼 auto_route 유지돼야 함"
+    sa._move_endpoint_with_snap(0, QPointF(-40, -77))   # 완전히 다른 자유 위치로 재부착
+    sa._on_endpoint_drag_end(0)
+
+    _assert_all_segments_axis_aligned(sa._pts, "재부착 후 경로 전체가 직교여야 함")
+
+
+def test_polyarrow_endpoint_rebind_to_different_axis_port_stays_orthogonal():
+    # [실사용 버그 2026-07-29 2차] 왼쪽 변 중심(수평 포트) → 위쪽 변 중심(수직 포트)처럼
+    # 축이 다른 포트로 재부착해도, 전체 재계산 경로답게 처음부터 끝까지 직교여야 하고
+    # 새 포트의 실제 이탈 축(수직)과도 일치해야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 200, 120)
+    b = _mk_rect(w._scene, w.make_pen(), 500, -200, 100, 60)
+    w_port = _shape_ports(a)[3][0]   # W(왼쪽 변 중심, 수평 포트)
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 3, True)
+    sa.set_points(w_port, QPointF(550, -170))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, a.mapFromScene(w_port))
+    sa.set_bound(1, b, b.mapFromScene(QPointF(550, -170)))
+    sa._auto_route = True; sa.build_elbow()
+
+    sa._on_endpoint_drag_start(0)
+    n_port = _shape_ports(a)[0][0]   # N(위쪽 변 중심, 수직 포트) — 축이 다른 포트로 재부착
+    sa._move_endpoint_with_snap(0, sa.mapFromScene(n_port))
+    sa._on_endpoint_drag_end(0)
+
+    _assert_all_segments_axis_aligned(sa._pts, "재부착 후 경로가 직교여야 함")
+    p0, p1 = sa._pts[0], sa._pts[1]
+    assert abs(p0.x() - p1.x()) < 1e-6, \
+        ("N 포트는 수직 이탈이어야 하는데 변을 타는 경로가 됨", p0, p1)
+
+
+def test_resolve_drag_endpoint_survives_pts_length_change():
+    # [실사용 크래시 2026-07-29] 끝점 드래그가 매 프레임 _apply_routing()으로 경로 전체를
+    # 다시 계산하게 되면서 _pts 길이가 프레임 사이에 바뀔 수 있게 됐는데, 아이템의
+    # mousePressEvent가 press 시점에 캡처한 인덱스(_drag_endpoint)를 매 프레임 그대로 쓰면
+    # 길이가 줄어든 뒤 그 인덱스가 범위를 벗어나 IndexError로 프로그램이 죽었다(실사용자 보고:
+    # 화살표 머리를 다른 도형에 재부착하는 도중 드래그가 끊기고, 다음 클릭에서 프로그램 종료 —
+    # 끊긴 순간이 이 크래시였고 _drag_endpoint가 못 지워진 채 남아 다음 클릭도 죽였다).
+    # _resolve_drag_endpoint()가 "0이었나"만 기억해 매 프레임 실제 유효한 인덱스로 다시
+    # 계산해야 한다.
+    w = CanvasWindow()
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 3, True)
+    sa.set_points(QPointF(0, 0), QPointF(10, 10))
+    w._scene.addItem(sa)
+
+    sa._pts = [QPointF(0, 0), QPointF(1, 1), QPointF(2, 2), QPointF(3, 3)]
+    sa._drag_endpoint = 3   # press 시점에 캡처한 '그때의' 마지막 인덱스
+    assert sa._resolve_drag_endpoint() == 3
+
+    sa._pts = [QPointF(0, 0), QPointF(9, 9)]   # 다음 프레임에 재계산으로 2점으로 줄어듦
+    idx = sa._resolve_drag_endpoint()
+    assert idx == 1, ("길이 변화 후에도 옛 인덱스를 그대로 쓰면 안 됨", idx)
+    sa._pts[idx] = QPointF(99, 99)   # 옛 코드라면 idx=3이라 여기서 IndexError
+
+    sa._drag_endpoint = 0   # 시작점(꼬리) 쪽은 항상 0으로 안정적이어야 함
+    assert sa._resolve_drag_endpoint() == 0
+
+
+def test_polyarrow_multiframe_drag_through_opposite_side_stays_clean():
+    # [실사용 버그 2026-07-29 3차 → 5차 재설계] 매 프레임 스텁만 재정렬하던 시절엔 자유 위치
+    # 프레임들이 서로 결과를 덮어써 이웃점이 표류했다(도형 반대편을 스쳐 지나가는 것만으로도
+    # 재현). 이제는 매 프레임 _apply_routing()으로 두 끝점만 갖고 전부 다시 계산하므로,
+    # 다중 프레임 왕복 후 결과가 동일 지점으로 '직접' 드래그한 결과와 완전히 같아야 한다
+    # (경로 이력에 의존하지 않는 순수 함수가 됐는지 확인).
+    def build(w):
+        a = _mk_rect(w._scene, w.make_pen(), 0, 0, 200, 120)
+        b = _mk_rect(w._scene, w.make_pen(), 500, -200, 100, 60)
+        w_port = _shape_ports(a)[3][0]
+        sa = _PolyArrowItem(QColor("#ff0000ff"), 3, True)
+        sa.set_points(w_port, QPointF(550, -170))
+        sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+        w._scene.addItem(sa)
+        sa.set_bound(0, a, a.mapFromScene(w_port))
+        sa.set_bound(1, b, b.mapFromScene(QPointF(550, -170)))
+        sa._auto_route = True; sa.build_elbow()
+        return a, sa, w_port
+
+    def lerp(p0, p1, t):
+        return QPointF(p0.x() + (p1.x() - p0.x()) * t, p0.y() + (p1.y() - p0.y()) * t)
+
+    w1 = CanvasWindow()
+    a1, sa1, w_port1 = build(w1)
+    nw = _shape_ports(a1)[4][0]
+    e_port = _shape_ports(a1)[1][0]
+    sa1._on_endpoint_drag_start(0)
+    n = 20
+    for leg in ((w_port1, nw), (nw, e_port), (e_port, nw)):   # 원위치 -> 코너 -> 반대변 -> 코너
+        for i in range(1, n + 1):
+            p = lerp(leg[0], leg[1], i / n)
+            sa1._move_endpoint_with_snap(0, sa1.mapFromScene(p))
+    sa1._on_endpoint_drag_end(0)
+
+    w2 = CanvasWindow()
+    a2, sa2, _w_port2 = build(w2)
+    sa2._on_endpoint_drag_start(0)
+    sa2._move_endpoint_with_snap(0, sa2.mapFromScene(nw))   # 직접 한 번에 이동
+    sa2._on_endpoint_drag_end(0)
+
+    _assert_all_segments_axis_aligned(sa1._pts, "다중 프레임 왕복 후 경로가 직교여야 함")
+    assert len(sa1._pts) == len(sa2._pts) and all(
+        _close(x, y) for x, y in zip(sa1._pts, sa2._pts)), \
+        ("다중 프레임 왕복 결과가 직접 이동과 달라짐(경로 이력에 오염됨)", sa1._pts, sa2._pts)
+
+
+def test_diamond_auto_route_uses_axis_forced_normal():
+    # [실사용 버그 2026-07-29 — 근본원인 재확인] _shape_ports만 고치면 화살표를 새로 스냅해
+    # 그릴 때는 맞는데, build_elbow/reroute(자동 라우팅 — 가장 흔한 경로)는 _bound_normal_scene을
+    # 통해 매번 법선을 다시 계산하고 그건 _nearest_border를 직접 썼다. 보정을 _nearest_border
+    # 자체로 옮겨야 두 경로(포트 목록·실제 라우팅) 모두 일관되게 고쳐진다.
+    w = CanvasWindow()
+    dia = _SymbolItem("decision", QRectF(0, 0, 185, 106))
+    dia.setFlags(dia.GraphicsItemFlag.ItemIsSelectable | dia.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(dia)
+    r = _mk_rect(w._scene, w.make_pen(), 500, 0, 100, 60)
+    e_port = _shape_ports(dia)[1][0]   # 마름모 E 꼭짓점 — 좌우 꼭짓점이라 수평 이탈이어야 함
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 3, True)
+    sa.set_points(e_port, QPointF(500, 30))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, dia, dia.mapFromScene(e_port))
+    sa.set_bound(1, r, r.mapFromScene(QPointF(500, 30)))
+    sa._auto_route = True; sa.build_elbow()
+
+    n = sa._bound_normal_scene(0)
+    assert _close(n, QPointF(1.0, 0.0)), ("E 꼭짓점 법선이 수평이어야 함", n)
+    p0, p1 = sa._pts[0], sa._pts[1]
+    assert abs(p0.y() - p1.y()) < 1e-6, ("E 꼭짓점 첫 구간은 수평이어야 하는데 수직으로 나옴", p0, p1)
+
+    r.setPos(QPointF(0, 300)); sa.reroute()   # 도형 이동 후 reroute도 같은 보정을 써야 함
+    p0, p1 = sa._pts[0], sa._pts[1]
+    assert abs(p0.y() - p1.y()) < 1e-6, ("이동 후 reroute도 첫 구간이 수평이어야 함", p0, p1)
 
 
 def test_sarrow_draw_between_shapes_auto_routes():
@@ -3324,16 +3483,38 @@ def test_rect_label_roundtrip():
 
 
 def test_shape_ports_pure():
-    # M1: 포트 = 변 중점 4개(N/E/S/W)를 실제 외곽선에 투영. 네모=변 중점, 마름모=꼭짓점.
+    # M1: 포트 = 변 중점 4개(N/E/S/W) + bbox 대각 꼭짓점 4개(NE/SE/SW/NW), 총 8개를 실제
+    # 외곽선에 투영(2026-07-29 8포트 확장). 네모=변 중점+실제 꼭짓점, 마름모=꼭짓점(N/E/S/W)+
+    # 4변 중점(대각 꼭짓점의 역전 투영).
     r = _RectItem(QRectF(0, 0, 100, 60))
     got = sorted((round(p.x()), round(p.y())) for p, _n in _shape_ports(r))
-    assert got == sorted([(50, 0), (100, 30), (50, 60), (0, 30)]), got
+    assert got == sorted([(50, 0), (100, 30), (50, 60), (0, 30),
+                          (0, 0), (100, 0), (100, 60), (0, 60)]), got
     # 법선은 바깥(중심 반대). 중심 (50,30).
     for p, n in _shape_ports(r):
         assert (p.x() - 50) * n.x() + (p.y() - 30) * n.y() >= -1e-6, (p, n)
     sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))   # 마름모 꼭짓점 = N/E/S/W
     got2 = sorted((round(p.x()), round(p.y())) for p, _n in _shape_ports(sym))
-    assert got2 == sorted([(250, 0), (300, 30), (250, 60), (200, 30)]), got2
+    assert got2 == sorted([(250, 0), (300, 30), (250, 60), (200, 30),
+                           (213, 22), (287, 22), (287, 38), (213, 38)]), got2
+
+
+def test_diamond_cardinal_normals_are_axis_aligned():
+    # [실사용 버그 2026-07-29] 마름모 좌우 꼭짓점(E/W)이 폭≠높이(홀쭉하지 않은 비율)일 때
+    # _nearest_border의 변-기준 법선이 기울어져 라우터가 '수직'으로 오판, 좌우 꼭짓점인데
+    # 화살표가 위아래로 드나들었다. N/E/S/W 포트 법선은 위치는 그대로 두고 방향만 축정렬로
+    # 강제해야 한다(실제 신고된 185x106 비율로 재현).
+    sym = _SymbolItem("decision", QRectF(0, 0, 185, 106))
+    ports = _shape_ports(sym)
+    n_dirs = [(round(n.x(), 3), round(n.y(), 3)) for _p, n in ports[:4]]
+    assert n_dirs == [(0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)], n_dirs
+    for _p, n in ports[:4]:
+        horiz = abs(n.x()) >= abs(n.y())
+        assert horiz == (abs(n.x()) == 1.0), "N/E/S/W는 정확히 축정렬이어야 한다"
+    # 네모·원은 이미 축정렬이라 이 보정이 no-op이어야 한다(회귀 방지).
+    r = _RectItem(QRectF(0, 0, 185, 60))
+    r_dirs = [(round(n.x(), 3), round(n.y(), 3)) for _p, n in _shape_ports(r)[:4]]
+    assert r_dirs == [(0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)], r_dirs
 
 
 def test_port_priority_then_continuous_fallback():
@@ -3347,9 +3528,52 @@ def test_port_priority_then_continuous_fallback():
     # N 포트(250,0) 근처(253,3) → 포트로 스냅
     snap = view._border_snap_at(view.mapFromScene(QPointF(253, 3)))
     assert snap is not None and _close(snap[0], QPointF(250, 0)), snap
-    # 상-우 변 중점(275,15) — 꼭짓점서 ~29px라 포트 밖 → 연속 외곽선(그 점 그대로)
-    snap2 = view._border_snap_at(view.mapFromScene(QPointF(275, 15)))
-    assert snap2 is not None and _close(snap2[0], QPointF(275, 15), eps=2), snap2
+    # N-E 변 위, N 포트와 대각 꼭짓점 포트(286.76,22.06, 8포트 확장분) 사이 중간점(~21px씩) →
+    # 포트 밖(18px 반경 초과) → 연속 외곽선(그 점 그대로)
+    snap2 = view._border_snap_at(view.mapFromScene(QPointF(268.38, 11.03)))
+    assert snap2 is not None and _close(snap2[0], QPointF(268.38, 11.03), eps=2), snap2
+
+
+def test_hover_port_at_skips_selected_shape():
+    # [8포트 select-hover 2026-07-29] 선택 도구에서 포트 hover는 '미선택' 도형에만 반응한다
+    # (선택된 도형은 리사이즈·회전 핸들과 자리가 겹쳐 qc-dot이 담당).
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    view = w._view
+    r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
+    hit = view._hover_port_at(view.mapFromScene(QPointF(100, 30)))   # E 포트 근처
+    assert hit is not None and hit[0] is r and _close(hit[1], QPointF(100, 30))
+    r.setSelected(True)
+    assert view._hover_port_at(view.mapFromScene(QPointF(100, 30))) is None
+
+
+def test_select_tool_port_drag_creates_connector():
+    # [8포트 select-hover] 선택 도구에서 미선택 도형 포트를 드래그하면 도형 복제 없이 커넥터만
+    # 생성된다(qc-dot과 달리 선택 여부 무관 hover 기반, 클릭/드래그는 release에서 가른다).
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    view = w._view
+    r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
+    press, release, _c, _m, drag_move, _d = _draw_helpers(view)
+    n_rect0 = len([x for x in w._scene.items() if isinstance(x, _RectItem)])
+    press(QPointF(100, 30))                 # E 포트
+    drag_move(QPointF(260, 30))             # 임계 초과 — 커넥터 프리뷰로 전환
+    release(QPointF(260, 30))
+    arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
+    assert len(arrows) == 1, "포트 드래그로 커넥터가 생성돼야 한다"
+    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == n_rect0  # 복제 없음
+    assert arrows[0]._bind_start is r                                # 시작이 그 도형에 바인딩
+    assert not r.isSelected()                                        # 드래그였으므로 도형 선택 폴백 없음
+
+
+def test_select_tool_port_click_without_drag_selects_shape():
+    # [8포트 select-hover] 포트 위에서 드래그 없이 누르고 떼면(제자리 클릭) 평소처럼 그 도형을
+    # 선택한다 — 포트가 테두리 위라 press를 가로챈 대가로 release에서 선택 동작을 재현.
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    view = w._view
+    r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
+    press, release, _c, _m, _dm, _d = _draw_helpers(view)
+    press(QPointF(100, 30)); release(QPointF(100, 30))               # 제자리 클릭
+    assert r.isSelected()
+    assert len([x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]) == 0
 
 
 def test_arrow_binds_to_port_and_follows():
@@ -4792,8 +5016,14 @@ def test_ortho_drag_still_rebinds_endpoint():
     assert sa._bound(0) is None
 
     # F8로 A의 변 위 '비-포트' 지점에 재부착 — mouseMoveEvent의 F8 분기를 그대로 재현.
+    # [2026-07-29 갱신] _ortho_endpoint는 현재 이웃 정점(_pts[1]) 기준으로 축을 제약하는데,
+    # 끝점 드래그가 '새로 그리기'와 동일하게 매 프레임 전체 재계산되도록 바뀌면서(위 detach
+    # 단계에서 이미 A* 우회 경로가 생겨 이웃 정점 위치가 달라짐) 그 축 제약 결과가 도형 A와
+    # 무관한 곳으로 나올 수 있다 — 이 테스트가 검증하려는 건 그 축 제약 계산 자체가 아니라
+    # `_rebind_at_fixed_point`가 위치를 유지한 채 바인딩만 거는지이므로, 목표 지점을 직접
+    # 지정해 그 부분만 검증한다.
     sa._on_endpoint_drag_start(0)
-    target = sa._ortho_endpoint(0, sa.mapFromScene(QPointF(150, 20)))
+    target = sa.mapFromScene(QPointF(150, 20))   # A의 우측 변 위, 포트 아닌 지점
     sa._set_endpoint(0, target)
     sa._rebind_at_fixed_point(0, target)
     sa._on_endpoint_drag_end(0)
