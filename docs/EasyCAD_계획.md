@@ -74,7 +74,9 @@ pasteflow 편집기는 QGraphics 아이템을 사실상 모델로 쓰는 구조�
 - **문서모델 씨앗**(`.ecad` 직렬화, 각 아이템이 타입·기하 파라미터 보유) — 정식 리팩터 대신 재사용 방침대로.
 - `ezdxf` export **완료**(`3f4afde`): 우리 객체 → DXF, **베지어→SPLINE** 변환. 타입별 레이어(EC_*)·true_color·Y축 뒤집기.
 - `ezdxf` import **완료**(`dd31967`): LINE·LWPOLYLINE·CIRCLE·ELLIPSE·ARC·SPLINE·TEXT·MTEXT → 개별 객체.
-  레이어 힌트로 타입 판정·회전 흡수. 후속: 구식 POLYLINE·INSERT(BLOCK) 흡수.
+  레이어 힌트로 타입 판정·회전 흡수. 후속: 구식 POLYLINE 흡수.
+- ~~INSERT(BLOCK) 흡수~~ — **완료**(2026-07-29, 프록시검증 — 합성 DXF만, 실조건 대기). 외부 무료
+  DXF 심볼/블록 라이브러리 활용 목적. 상세: CLAUDE.md 신규기능 항목.
 - 펜 두께 왕복 **완료**(`262a904`): XDATA(EASYCAD/1040). 후속: AutoCAD 두께 렌더용 lineweight 병행.
 - **레이어** — 타입별 EC_* 레이어로 분리 export(패널 UI는 후속).
 - **검증(실조건) 완료 ✓** — 우리 DXF(`789.dxf`)를 **AutoCAD 2022**에서 열어 네모·타원·마름모·화살표·텍스트가

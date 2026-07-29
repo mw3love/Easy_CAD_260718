@@ -13,8 +13,21 @@ export가 레이어 이름(EC_RECT·EC_ARROW…)에 실어 둔 타입 힌트로 
     화살표 head 방향(_head_at_end)만 복원**(무시+방향복원).
   - 심볼 kind: export가 외곽선 폴리라인으로 평탄화해 소실 → **외곽선(_PathItem)으로만 복원**.
   - 지속연결 바인딩·자식 라벨: DXF에 개념 없음 → 왕복에서 소실(라벨은 독립 텍스트로 복원).
+
+INSERT/BLOCK 흡수 (2026-07-29 — 외부 무료 DXF 심볼/블록 라이브러리 활용용):
+  - 우리 export는 INSERT를 만들지 않으므로(모든 아이템을 개별 엔티티로 평탄화 export) 이건
+    순수히 **외부 DXF 폴백** 경로다. ezdxf의 `Insert.virtual_entities()`가 이미 배치 변환
+    (위치·스케일·회전, 중첩 INSERT 포함)을 다 해 주므로(규칙 2 손안의 카드 — 우리가 행렬을
+    직접 굴릴 필요 없음), 그 결과를 일반 엔티티처럼 기존 폴백 경로에 그대로 흘려보낸다.
+  - 한 INSERT에서 나온 아이템 2개 이상이면 `_group_id`로 묶어 하나처럼 선택·이동되게 한다
+    (`Ctrl+G` 그룹과 동일 메커니즘 재사용). 단, EC_* 레이어로 분류돼 지연 처리되는 화살표/배지/
+    펜 경로 버킷(arrow_shafts 등)까지는 그룹 태깅이 안 미친다 — 외부 블록이 그 레이어명을 쓸
+    가능성은 사실상 0이라 실사용 영향 없음(알려진 한계).
+  - MINSERT(배열형 다중삽입)·XCLIP 클리핑은 `virtual_entities()` 자체가 처리 안 함(ezdxf 문서화된
+    한계) → 첫 인스턴스만 반영. 변환 불가 엔티티는 조용히 skip(기존 손실 허용 정책과 일관).
 """
 import math
+import uuid
 
 from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF
 from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath
@@ -353,6 +366,23 @@ def _generic_item(e):
     return None
 
 
+def _expand_insert(e, depth: int = 0, max_depth: int = 6):
+    """INSERT를 재귀적으로 평탄화 — virtual_entities()가 이미 배치 변환(위치·스케일·회전)을
+    적용한 자식 엔티티를 내주므로, 우리는 그걸 일반 엔티티처럼 취급하면 된다. 자식이 또
+    INSERT(중첩 블록)면 depth 제한까지 재귀 전개. 순환·과도한 중첩 방어용 max_depth."""
+    if depth >= max_depth:
+        return
+    try:
+        children = list(e.virtual_entities())
+    except Exception:  # noqa: BLE001 — 변환 실패한 블록은 조용히 skip(손실 허용)
+        return
+    for child in children:
+        if child.dxftype() == "INSERT":
+            yield from _expand_insert(child, depth + 1, max_depth)
+        else:
+            yield child
+
+
 # ---- 진입점 ---------------------------------------------------------------
 def import_dxf(scene, path: str, *, clear: bool = True) -> int:
     """path의 DXF를 scene에 로드. 반환: 생성된 최상위 아이템 수.
@@ -374,7 +404,9 @@ def import_dxf(scene, path: str, *, clear: bool = True) -> int:
     path_segments = []
     built = []                 # 즉시 완성된 아이템
 
-    for e in msp:
+    def _ingest(e):
+        """단일 엔티티(top-level 또는 INSERT에서 평탄화된 자식) 분류·변환. built 등
+        바깥 스코프 누산 리스트에 closure로 append(INSERT 확장 시에도 재사용하기 위해 분리)."""
         layer = e.dxf.layer
         typ = _LAYER_TYPE.get(layer)
         dxft = e.dxftype()
@@ -418,6 +450,21 @@ def import_dxf(scene, path: str, *, clear: bool = True) -> int:
             item = _generic_item(e)
             if item is not None:
                 built.append(item)
+
+    for e in msp:
+        if e.dxftype() == "INSERT":
+            # [2026-07-29] 블록 참조 — virtual_entities()가 배치 변환을 이미 적용한
+            # 자식들을 일반 엔티티처럼 흘려보내고, 2개 이상 나오면 한 블록으로 그룹 태깅.
+            before = len(built)
+            for child in _expand_insert(e):
+                _ingest(child)
+            new_items = built[before:]
+            if len(new_items) >= 2:
+                gid = uuid.uuid4().hex[:8]
+                for it in new_items:
+                    it._group_id = gid
+        else:
+            _ingest(e)
 
     # 화살표(곡선/직선) — 화살촉 tip으로 head 방향 복원.
     for e in arrow_shafts:

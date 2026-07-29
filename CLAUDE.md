@@ -119,6 +119,15 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
   - 파일 메뉴: **DXF 내보내기 `Ctrl+Shift+D`** / **가져오기 `Ctrl+Shift+I`**(열기 시맨틱, 씬 대체).
   - **실조건검증 완료 ✓**(2026-07-20): 우리 DXF를 **AutoCAD 2022**에서 열어 도형·텍스트·화살표가 개별
     엔티티로 인식됨 확인 → 계획서의 Phase 3 완료 게이트 충족(Phase 3 종료). 왕복도 정상.
+  - **INSERT/BLOCK 흡수 완료**(2026-07-29, 프록시검증 — 합성 DXF만, 실조건 대기): 외부 무료 DXF
+    심볼/블록 라이브러리를 가져올 수 있게 `dxf_import.py`에 `_expand_insert()` 추가. 우리 export는
+    INSERT를 안 만들므로(전부 개별 엔티티로 평탄화) 순수히 외부 DXF 폴백 경로 — `ezdxf`의
+    `Insert.virtual_entities()`가 배치(위치·스케일·회전) 변환을 이미 적용해 주는 걸 활용해
+    (규칙 2 손안의 카드) 변환 행렬을 직접 굴리지 않고 기존 `_generic_item` 폴백에 그대로 흘려보냄.
+    중첩 INSERT는 재귀 평탄화(depth 상한 6). 한 블록에서 아이템 2개 이상 나오면 `_group_id`로
+    묶어 `Ctrl+G` 그룹과 동일하게 한 덩어리로 선택·이동(`.ecad` 왕복 확인). 알려진 한계(승인):
+    MINSERT(배열 다중삽입)·XCLIP 클리핑은 `virtual_entities()` 자체가 미지원이라 첫 인스턴스만
+    반영. 스모크 2종 추가(`test_dxf_import_insert_block`·`test_dxf_import_nested_insert`, 총 287).
 
 ## 다음 할 일 (우선순위)
 > 1·2·3번은 완료됨(2026-07-20 코드 대조로 문서 갱신). 남은 것은 4번 일부와 Phase 3 이후.
