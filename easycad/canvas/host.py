@@ -23,11 +23,11 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QBoxLayout, QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QDockWidget, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
+    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
+    QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem,
+    QListWidget, QListWidgetItem, QTabWidget,
 )
 
 from easycad.canvas.annotator_core import (
@@ -442,17 +442,124 @@ class _MinimapView(QGraphicsView):
         event.ignore()   # 미니맵 자체 줌 없음 — 항상 전체 맞춤 유지(메인 뷰 휠은 별도)
 
 
+class _FloatingPanel(QFrame):
+    """[캔버스-퍼스트 레이아웃] `QDockWidget` 대신 캔버스 위에 뜨는 콘텐츠-크기 카드.
+    Figma/Excalidraw처럼 패널이 콘텐츠만큼만 공간을 쓰고 나머지는 도면 영역으로 남는다
+    (deep-interview 2026-07-29: QMainWindow dock 영역은 콘텐츠 크기와 무관하게 칼럼 전체를
+    예약해 낭비 공간이 생기던 문제의 근본원인). 위치는 창 모서리에 고정(자유 드래그 재배치는
+    스코프 밖 — Figma류도 패널 위치는 고정이 관례), 대신 제목줄 ▾/▸ 로 접기/펴기.
+    포지셔닝 패턴은 이미 검증된 `_reposition_floating_toolbar`(M3 #15)를 그대로 따른다
+    (QFrame(host) 부모 + host 좌표계 move — 규칙 2 손안의 카드)."""
+
+    def __init__(self, host, title: str, collapse_key: str):
+        super().__init__(host)
+        self.setObjectName("floatPanel")
+        self._host = host
+        self._collapse_key = f"panel_collapsed_{collapse_key}"
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0); v.setSpacing(0)
+
+        head = QWidget(); head.setObjectName("floatPanelHead")
+        hl = QHBoxLayout(head)
+        hl.setContentsMargins(9, 4, 4, 4); hl.setSpacing(4)
+        self._title_lbl = QLabel(title)
+        hl.addWidget(self._title_lbl, 1)
+        self._collapse_btn = QToolButton()
+        self._collapse_btn.setAutoRaise(True)
+        self._collapse_btn.setFixedSize(QSize(18, 18))
+        self._collapse_btn.clicked.connect(self._toggle_collapsed)
+        hl.addWidget(self._collapse_btn)
+        v.addWidget(head)
+
+        self._body = QWidget()
+        self._body_layout = QVBoxLayout(self._body)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(self._body)
+
+        self._collapsed = False
+        want_collapsed = QSettings("EasyCAD", "EasyCAD").value(
+            self._collapse_key, False, type=bool)
+        if want_collapsed:
+            self._set_collapsed(True, persist=False)
+        else:
+            self._update_collapse_icon()
+
+    def set_content(self, widget: QWidget):
+        self._body_layout.addWidget(widget)
+
+    def _toggle_collapsed(self):
+        self._set_collapsed(not self._collapsed, persist=True)
+
+    def _set_collapsed(self, collapsed: bool, persist: bool):
+        self._collapsed = collapsed
+        self._body.setVisible(not collapsed)
+        self._update_collapse_icon()
+        if persist:
+            QSettings("EasyCAD", "EasyCAD").setValue(self._collapse_key, collapsed)
+        self.adjustSize()
+        self._host._reposition_panels()
+
+    def _update_collapse_icon(self):
+        self._collapse_btn.setText("▸" if self._collapsed else "▾")
+        self._collapse_btn.setToolTip("펼치기" if self._collapsed else "접기")
+
+
+class _ToastLabel(QLabel):
+    """[캔버스-퍼스트 레이아웃] `QStatusBar.showMessage()`를 대체하는 하단중앙 플로팅 토스트.
+    Figma/Excalidraw는 창 전체 폭을 가로지르는 상태바 행을 상시 예약하지 않는다 — 메시지가
+    있을 때만 캔버스 위에 잠깐 떠 있는 카드로 보여주고, 없으면 그 자리는 그대로 도면 영역."""
+
+    def __init__(self, host):
+        super().__init__(host)
+        self._host = host
+        self.setObjectName("toastLabel")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._current = ""
+        self.hide()
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._on_timeout)
+
+    def showMessage(self, text: str, timeout: int = 0):
+        self._timer.stop()
+        self._current = text or ""
+        if not text:
+            self.hide()
+            return
+        self.setText(text)
+        self.adjustSize()
+        self._host._reposition_toast()
+        self.show()
+        self.raise_()
+        if timeout and timeout > 0:
+            self._timer.start(timeout)
+
+    def _on_timeout(self):
+        self._current = ""
+        self.hide()
+
+    def currentMessage(self) -> str:
+        # QStatusBar 계약과 동일: 메시지가 있는 동안만 반환(만료·hide되면 빈 문자열).
+        # isVisible()에 의존하지 않는다 — 헤드리스 테스트는 최상위 창을 show()하지 않아
+        # 자식 위젯이 .show()를 호출해도 isVisible()이 항상 False로 읽힌다(Qt 가시성은
+        # 조상 체인 전체가 보여야 True).
+        return self._current
+
+    def addPermanentWidget(self, widget, stretch: int = 0):
+        pass   # [하위호환] 옛 QStatusBar API — 줌 배지는 이제 별도 플로팅 위젯이라 미사용
+
+
 class CanvasWindow(QMainWindow):
-    # 콤팩트 목표는 콘텐츠 최소보다 작게 → Qt가 '진짜 최소'로 클램프(수동으로 더 못 줄이게).
-    _SHAPES_DOCK_W = 80     # 세로 dock → 버튼 2열 최소(≈144px)로 클램프
-    _SHAPES_DOCK_H = 80     # 가로 dock → 제목+라벨+버튼 1줄 최소로 클램프
-    _PROPS_DOCK_W = 120     # 속성 dock → 폼 최소로 클램프(안내문 줄바꿈 후 좁아짐)
-    _MINIMAP_DOCK_H = 150   # 미니맵 dock 기본 높이
+    _PANEL_MARGIN = 10      # [캔버스-퍼스트] 플로팅 패널·줌배지·토스트와 창/뷰 경계 사이 여백(px)
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Easy CAD")
         self.resize(1200, 800)
+        # [캔버스-퍼스트] statusBar()를 QMainWindow 실제 상태바가 아니라 하단중앙 토스트로
+        # 프록시 — 창 전체 폭을 가로지르는 항상-보이는 행을 없앤다. 다른 초기화보다 먼저 만들어
+        # self.statusBar() 호출이 언제 와도 안전하게(20여 곳의 기존 .showMessage() 호출부는 무수정).
+        self._toast = _ToastLabel(self)
 
         # ---- 편집 상태 (owner 인터페이스) ----
         self.current_tool = "select"
@@ -514,19 +621,18 @@ class CanvasWindow(QMainWindow):
         self._view.viewport().setAcceptDrops(True)
         self._view.viewport().installEventFilter(self)
         self._build_toolbar()
-        self._build_shapes_dock()
-        self._build_properties_dock()
-        self._build_minimap_dock()       # [신규기능] 미니맵 — 무한캔버스 큰 도면 탐색
-        self._build_layers_dock()        # [신규기능] 레이어 패널
-        self._build_floating_toolbar()   # [Phase 6 M3 #15] 선택 위 플로팅 컨텍스트 툴바
-        self._build_statusbar()
+        # [캔버스-퍼스트 레이아웃, deep-interview 2026-07-29] 좌/우 QDockWidget(칼럼 전체를
+        # 콘텐츠 크기와 무관하게 예약해 낭비 공간을 만들던 근본원인)을 캔버스 위 플로팅
+        # 카드(`_FloatingPanel`)로 교체 — Figma/Excalidraw처럼 패널이 콘텐츠만큼만 쓰고
+        # 나머지는 도면 영역. 위치는 고정(자유 드래그 재배치는 스코프 밖), 대신 접기/펴기.
+        self._build_left_panel()          # 도형 + 레이어(탭), 좌상단
+        self._build_properties_panel()    # 속성, 우상단
+        self._build_minimap_panel()       # [신규기능] 미니맵 — 무한캔버스 큰 도면 탐색, 우상단(속성 아래)
+        self._build_floating_toolbar()    # [Phase 6 M3 #15] 선택 위 플로팅 컨텍스트 툴바
+        self._build_status_widgets()      # 줌 배지(우하단) + 토스트(하단중앙) — QStatusBar 대체
         self.set_tool("select")
         self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
-        # 패널 기본 폭을 콤팩트하게 — 처음 뜰 때 너무 넓어 수동 축소해야 했던 문제(사용자 피드백).
-        self.resizeDocks([self._shapes_dock, self._props_dock],
-                         [self._SHAPES_DOCK_W, self._PROPS_DOCK_W],
-                         Qt.Orientation.Horizontal)
-        self.resizeDocks([self._minimap_dock], [self._MINIMAP_DOCK_H], Qt.Orientation.Vertical)
+        self._reposition_panels()
 
     # ---- 메뉴 (파일 → 저장/열기/PDF) ----------------------------------------
     def _make_action(self, text, icon, slot, shortcut=None, checkable=False):
@@ -643,19 +749,25 @@ class CanvasWindow(QMainWindow):
         if minimap is not None:
             minimap.viewport().update()
 
-    # ---- 상태바 (줌 %) ------------------------------------------------------
-    def _build_statusbar(self):
-        self._zoom_btn = QToolButton()
+    # ---- 상태 위젯 (줌 배지 + 토스트) — [캔버스-퍼스트] QStatusBar 대체 ----------
+    def statusBar(self):
+        """QMainWindow의 실제 상태바 대신 하단중앙 토스트를 반환 — 기존 `.showMessage()`
+        호출부(20여 곳)를 안 건드리고 그대로 흘려보낸다."""
+        return self._toast
+
+    def _build_status_widgets(self):
+        self._zoom_btn = QToolButton(self)
+        self._zoom_btn.setObjectName("zoomBadge")
         self._zoom_btn.setText("100 %")
         self._zoom_btn.setAutoRaise(True)
         self._zoom_btn.setToolTip("클릭: 100%(1:1)로")
         self._zoom_btn.clicked.connect(self._zoom_reset)
-        self.statusBar().addPermanentWidget(self._zoom_btn)
 
     def _update_zoom_label(self):
         btn = getattr(self, "_zoom_btn", None)
         if btn is not None:
             btn.setText(f"{round(self._view.transform().m11() * 100)} %")
+            self._reposition_panels()
 
     def _toggle_pin(self, checked: bool):
         self.tool_pinned = checked
@@ -844,6 +956,52 @@ class CanvasWindow(QMainWindow):
         # scene.changed를 안 타므로 명시적으로 미니맵 사각형을 갱신.
         super().resizeEvent(e)
         self._refresh_minimap()
+        self._reposition_panels()
+
+    # ---- [캔버스-퍼스트] 플로팅 패널·줌배지·토스트 위치 계산 ------------------
+    def _reposition_panels(self):
+        """좌상단=도형/레이어, 우상단=속성, 그 아래=미니맵, 우하단=줌배지. 전부 `self._view`가
+        차지하는 실제 캔버스 영역(메뉴·상단툴바 아래) 기준 — `_reposition_floating_toolbar`와
+        같은 좌표 관례(`self._view.mapTo(self, ...)`)."""
+        panels = (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
+                  getattr(self, "_minimap_panel", None))
+        if any(p is None for p in panels):
+            return   # 초기화 중 조기 호출 가드
+        left_panel, props_panel, minimap_panel = panels
+        m = self._PANEL_MARGIN
+        vx, vy = self._view.mapTo(self, QPoint(0, 0)).x(), self._view.mapTo(self, QPoint(0, 0)).y()
+        vw, vh = self._view.width(), self._view.height()
+
+        left_panel.adjustSize()
+        left_panel.move(vx + m, vy + m)
+        left_panel.raise_()
+
+        props_panel.adjustSize()
+        props_panel.move(vx + vw - m - props_panel.width(), vy + m)
+        props_panel.raise_()
+
+        minimap_panel.adjustSize()
+        minimap_panel.move(vx + vw - m - minimap_panel.width(),
+                            vy + m + props_panel.height() + 8)
+        minimap_panel.raise_()
+
+        zoom_btn = getattr(self, "_zoom_btn", None)
+        if zoom_btn is not None:
+            zoom_btn.adjustSize()
+            zoom_btn.move(vx + vw - m - zoom_btn.width(), vy + vh - m - zoom_btn.height())
+            zoom_btn.raise_()
+        self._reposition_toast()
+
+    def _reposition_toast(self):
+        toast = getattr(self, "_toast", None)
+        if toast is None or not toast.isVisible():
+            return
+        m = self._PANEL_MARGIN
+        vpos = self._view.mapTo(self, QPoint(0, 0))
+        vx, vy, vw, vh = vpos.x(), vpos.y(), self._view.width(), self._view.height()
+        x = vx + (vw - toast.width()) // 2
+        y = vy + vh - m - toast.height()
+        toast.move(max(vx, x), y)
 
     # 파일 탐색기에서 이미지를 캔버스로 끌어다 놓기 — QMainWindow가 드롭을 받는다(코어 뷰 무수정).
     def dragEnterEvent(self, e):
@@ -1157,16 +1315,30 @@ class CanvasWindow(QMainWindow):
             b.setIcon(self._shape_icon(k))
         for k, b in getattr(self, "_sym_buttons", {}).items():
             b.setIcon(self._shape_icon(k))
-        # dock 제목표시줄 = '잡아 옮기는 바'로 보이게(accent 밑줄 + 틴트 배경). 회색이라 안 보이던 문제.
+        # [캔버스-퍼스트] 플로팅 패널 제목줄 = accent 밑줄 + 틴트 배경(옛 dock 제목표시줄과 같은
+        # '잡아 눈에 띄는 카드' 언어 유지, 자유 드래그는 없지만 접기 버튼이 있는 자리라 여전히
+        # 상호작용 영역으로 보여야 함).
         accent = "#54a9ff" if dark else "#1f7ae0"
         title_bg = "#232f3d" if dark else "#e8eef5"
-        dock_qss = ("QDockWidget { font-weight:600; }"
-                    f"QDockWidget::title {{ background:{title_bg}; padding:5px 9px;"
-                    f" text-align:left; border-bottom:2px solid {accent}; }}")
-        for dock in (getattr(self, "_shapes_dock", None), getattr(self, "_props_dock", None),
-                     getattr(self, "_minimap_dock", None)):
-            if dock is not None:
-                dock.setStyleSheet(dock_qss)
+        panel_qss = (
+            "#floatPanel { background:palette(window); border:1px solid palette(mid);"
+            " border-radius:6px; font-weight:600; }"
+            f"#floatPanelHead {{ background:{title_bg}; border-top-left-radius:5px;"
+            f" border-top-right-radius:5px; border-bottom:2px solid {accent}; }}")
+        for panel in (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
+                      getattr(self, "_minimap_panel", None)):
+            if panel is not None:
+                panel.setStyleSheet(panel_qss)
+        zoom_btn = getattr(self, "_zoom_btn", None)
+        if zoom_btn is not None:
+            zoom_btn.setStyleSheet(
+                "#zoomBadge { background:palette(window); border:1px solid palette(mid);"
+                " border-radius:6px; padding:3px 8px; }")
+        toast = getattr(self, "_toast", None)
+        if toast is not None:
+            toast.setStyleSheet(
+                f"#toastLabel {{ background:{title_bg}; border:1px solid {accent};"
+                " border-radius:6px; padding:4px 12px; }}")
         minimap = getattr(self, "_minimap", None)
         if minimap is not None:
             minimap.viewport().update()   # 씬 배경색(다크/라이트)이 바뀌므로 재도색
@@ -1288,9 +1460,7 @@ class CanvasWindow(QMainWindow):
         return lbl
 
     def _make_shape_section(self, title, entries, store) -> QWidget:
-        """[Phase 6 M1] 팔레트 한 섹션(제목+그리드)을 독립 위젯으로. 섹션을 위젯으로 감싸야
-        가로/세로 dock 전환 시 '제목 위 그리드' 구조를 유지한 채 섹션끼리 좌우/상하로 흐른다.
-        그리드 열 수는 _relayout_sections가 방향에 맞춰 정한다(세로=2열, 가로=한 줄)."""
+        """[Phase 6 M1] 팔레트 한 섹션(제목+그리드)을 독립 위젯으로."""
         sec = QWidget()
         v = QVBoxLayout(sec)
         v.setContentsMargins(0, 0, 0, 0); v.setSpacing(4)
@@ -1305,10 +1475,10 @@ class CanvasWindow(QMainWindow):
         self._shape_sections.append((grid, btns))
         return sec
 
-    def _relayout_sections(self, horiz: bool):
-        """[Phase 6 M1] 각 섹션 그리드 열 수를 dock 방향에 맞춘다 — 세로 dock=2열(정사각),
-        가로(상/하) dock=한 줄로 눕혀 위아래 폭을 최소화(사용자 요청: 가로 dock은 가로 길게).
-        여분 폭은 실제 열 뒤 빈 열이 흡수 → 버튼이 왼쪽으로 뭉쳐 벌어지지 않는다(사용자 피드백)."""
+    def _relayout_sections(self, horiz: bool = False):
+        """[캔버스-퍼스트] 각 섹션 그리드를 2열로 배치. `horiz` 인자는 옛 dock 상/하 재도킹 시
+        한 줄로 눕히던 반응형 레이아웃의 흔적(플로팅 패널은 위치 고정이라 대상 없음) — 항상
+        False로만 호출되지만, 초기 빌드 호출부(`_build_left_panel`)와의 계약을 그대로 둔다."""
         for grid, btns in self._shape_sections:
             for b in btns:
                 grid.removeWidget(b)
@@ -1320,18 +1490,22 @@ class CanvasWindow(QMainWindow):
                 grid.setColumnStretch(ci, 0)
             grid.setColumnStretch(cols, 1)
 
-    def _build_shapes_dock(self):
-        dock = QDockWidget("⋮⋮  도형", self)     # 그립 글리프로 '잡아 옮기는 바'임을 표시
-        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)   # 상/하/좌/우 전체
-        self._shapes_dock = dock
-        panel = QWidget()
-        box = QVBoxLayout(panel)
-        box.setContentsMargins(6, 6, 6, 6); box.setSpacing(10)
-        self._dock_box = box
+    def _build_left_panel(self):
+        """[캔버스-퍼스트] 도형 + 레이어를 탭 하나로 묶은 좌상단 플로팅 카드(옛 도형/레이어
+        dock의 tabifyDockWidget과 같은 관계를 QTabWidget으로 재현). 세로 2열 고정 — 옛 dock의
+        상/하 재도킹 시 가로 한 줄로 눕히던 반응형 로직(`_on_dock_moved`)은 패널이 더 이상
+        다른 위치로 옮겨지지 않으므로 대상이 없어져 제거."""
+        panel = _FloatingPanel(self, "", "left")
+        self._left_panel = panel
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
 
+        shapes_page = QWidget()
+        box = QVBoxLayout(shapes_page)
+        box.setContentsMargins(6, 6, 6, 6); box.setSpacing(10)
         self._shape_tool_buttons: dict[str, QToolButton] = {}
         self._sym_buttons: dict[str, QToolButton] = {}
-        self._shape_sections: list = []   # (grid, buttons) — 방향 전환 시 재배치
+        self._shape_sections: list = []   # (grid, buttons)
         basic = self._make_shape_section("기본", [
             ("네모", "rect", "네모 — 클릭 후 캔버스에 드래그", "rect"),
             ("원", "ellipse", "원 — 클릭 후 캔버스에 드래그", "ellipse"),
@@ -1339,47 +1513,40 @@ class CanvasWindow(QMainWindow):
         sym_entries = [(label, kind, f"{label} 심볼 — 클릭 후 캔버스에 드래그", f"sym:{kind}")
                        for kind, (label, _fn) in _SYMBOL_KINDS.items()]
         syms = self._make_shape_section("순서도", sym_entries, self._sym_buttons)
+        box.addWidget(basic); box.addWidget(syms)
+        self._relayout_sections(horiz=False)   # 항상 세로(2열) — 반응형 전환 없음
+        tabs.addTab(shapes_page, "도형")
 
-        box.addWidget(basic); box.addWidget(syms); box.addStretch(1)
-        self._relayout_sections(horiz=False)   # 초기 좌측 dock = 세로(2열)
-        dock.setWidget(panel)
-        dock.dockLocationChanged.connect(self._on_dock_moved)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        layers_page = QWidget()
+        v = QVBoxLayout(layers_page)
+        v.setContentsMargins(6, 6, 6, 6)
+        v.setSpacing(4)
+        self._layers_list = QListWidget()
+        self._layers_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        v.addWidget(self._layers_list)
+        add_btn = QToolButton()
+        add_btn.setText("+ 레이어 추가")
+        add_btn.clicked.connect(lambda: self.add_layer())
+        v.addWidget(add_btn)
+        tabs.addTab(layers_page, "레이어")
 
-    def _on_dock_moved(self, area):
-        """[Phase 6 M1] 상/하 dock이면 섹션을 가로로 나란히 + 버튼도 한 줄로 눕혀 위아래 폭 최소화."""
-        horiz = area in (Qt.DockWidgetArea.TopDockWidgetArea,
-                         Qt.DockWidgetArea.BottomDockWidgetArea)
-        self._dock_box.setDirection(QBoxLayout.Direction.LeftToRight if horiz
-                                    else QBoxLayout.Direction.TopToBottom)
-        self._relayout_sections(horiz)
-        # 재도킹 시 Qt가 콘텐츠 폭만큼 넓게 잡아 매번 수동 축소해야 했던 문제 → 콤팩트로 자동 조정.
-        # 드래그가 settle된 뒤 적용(singleShot 0).
-        QTimer.singleShot(0, lambda: self._compact_shapes_dock(horiz))
+        panel.set_content(tabs)
+        self._refresh_layers_panel()
 
-    def _compact_shapes_dock(self, horiz: bool):
-        """도형 dock을 콤팩트 크기로 — 세로 dock=좁은 폭, 가로 dock=낮은 높이."""
-        dock = self._shapes_dock
-        if horiz:
-            self.resizeDocks([dock], [self._SHAPES_DOCK_H], Qt.Orientation.Vertical)
-        else:
-            self.resizeDocks([dock], [self._SHAPES_DOCK_W], Qt.Orientation.Horizontal)
-
-    # ---- 속성 dock (M2 #2: 편집 — 색·두께·선스타일·폰트를 push_undo_state 경로로) ----
+    # ---- 속성 패널 (M2 #2: 편집 — 색·두께·선스타일·폰트를 push_undo_state 경로로) ----
     _PEN_STYLE_ITEMS = [
         (Qt.PenStyle.SolidLine, "실선"), (Qt.PenStyle.DashLine, "점선"),
         (Qt.PenStyle.DotLine, "점선(도트)"), (Qt.PenStyle.DashDotLine, "일점쇄선"),
         (Qt.PenStyle.DashDotDotLine, "이점쇄선"),
     ]
 
-    def _build_properties_dock(self):
-        dock = QDockWidget("⋮⋮  속성", self)
-        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        self._props_dock = dock
+    def _build_properties_panel(self):
+        panel = _FloatingPanel(self, "속성", "props")
+        self._props_panel = panel
         self._pf_updating = False   # 프로그램적 값 세팅 중엔 편집 시그널 무시(피드백 차단)
-        panel = QWidget()
-        panel.setMinimumWidth(170)   # 값·컨트롤이 안 잘리는 바닥폭 — 이 아래로는 못 좁힘(슬랙 없음)
-        form = QFormLayout(panel)
+        content = QWidget()
+        content.setMinimumWidth(170)   # 값·컨트롤이 안 잘리는 바닥폭 — 이 아래로는 못 좁힘(슬랙 없음)
+        form = QFormLayout(content)
         form.setContentsMargins(10, 10, 10, 10); form.setSpacing(8)
 
         self._pf_type = QLabel("—")
@@ -1418,36 +1585,32 @@ class CanvasWindow(QMainWindow):
         form.addRow("폰트", self._pf_font)
         self._pf_hint = QLabel("객체를 선택하면 속성을 편집할 수 있습니다.")
         self._pf_hint.setStyleSheet("color:#888; font-size:11px;")
-        self._pf_hint.setWordWrap(True)   # 줄바꿈 허용 → 안내문이 dock 최소폭을 붙잡지 않게
+        self._pf_hint.setWordWrap(True)   # 줄바꿈 허용 → 안내문이 패널 최소폭을 붙잡지 않게
         form.addRow(self._pf_hint)
-        dock.setWidget(panel)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        panel.set_content(content)
         self._scene.selectionChanged.connect(self._refresh_properties)
         self._refresh_properties()
 
-    # ---- 미니맵 dock (신규기능 — deep-interview 2026-07-28) ------------------
-    def _build_minimap_dock(self):
-        """메인과 같은 scene을 공유하는 축소 뷰 dock. 내용 갱신은 Qt가 자동(멀티뷰) —
-        여기선 메인 뷰의 줌/팬/리사이즈(scene.changed를 안 타는 순수 뷰 변환) 시점에만
-        명시적으로 미니맵을 다시 그리도록 훅을 건다.
-        ⚠ 함정: 처음엔 하단(Bottom, 창 전체 폭)에 얇게 뒀더니 뷰포트 종횡비가 극단(≈9:1)이라
-        `fitInView(KeepAspectRatio)`가 가로로 크게 레터박스돼 인디케이터 사각형이 실제보다
-        훨씬 작아 보였다(자체 스크린샷으로 발견) → 속성 dock 아래(우측 열, splitDockWidget)로
-        옮겨 폭을 좁고 세로로 긴 문서 비율에 가깝게 만들어 해결."""
-        dock = QDockWidget("⋮⋮  미니맵", self)
-        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        self._minimap_dock = dock
+    # ---- 미니맵 패널 (신규기능 — deep-interview 2026-07-28) ------------------
+    def _build_minimap_panel(self):
+        """메인과 같은 scene을 공유하는 축소 뷰. 내용 갱신은 Qt가 자동(멀티뷰) — 여기선 메인
+        뷰의 줌/팬/리사이즈(scene.changed를 안 타는 순수 뷰 변환) 시점에만 명시적으로 미니맵을
+        다시 그리도록 훅을 건다."""
+        panel = _FloatingPanel(self, "미니맵", "minimap")
+        self._minimap_panel = panel
         self._minimap = _MinimapView(self, self._scene)
-        dock.setWidget(self._minimap)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
-        self.splitDockWidget(self._props_dock, dock, Qt.Orientation.Vertical)
+        # [self-review 수정] 폭>높이(가로가 긴) 크기로 뒀더니 이 클래스 docstring이 이미 경고하는
+        # 함정(뷰포트가 가로로 넓으면 fitInView(KeepAspectRatio)가 레터박스돼 인디케이터가 작아
+        # 보임)을 다시 만들 위험이 있었다 — 옛 dock이 "좁고 세로로 긴" 비율로 고쳤던 근거와 반대.
+        # 속성 패널과 같은 폭(170)으로 좌우를 맞추고, 세로로 긴 비율을 유지한다.
+        self._minimap.setFixedSize(QSize(170, 220))
+        panel.set_content(self._minimap)
 
         self._view.horizontalScrollBar().valueChanged.connect(self._refresh_minimap)
         self._view.verticalScrollBar().valueChanged.connect(self._refresh_minimap)
         # [실조건 재현 후 접근 전환 — 규칙 11-b] 창 리사이즈·dock 스플리터 리사이즈·뷰포트
         # 이벤트를 각각 정확히 잡으려던 두 차례 시도(커밋 16c7551계열·2bd6827)가 실사용에서도
         # 여전히 어긋났다 — Qt의 dock 레이아웃 재계산 시점과 이벤트 발화 시점이 어긋날 수 있어
-        # (이 코드베이스에 이미 전례: `_compact_shapes_dock`이 같은 이유로 singleShot(0) 사용)
         # 트리거를 더 정밀하게 좁히는 접근 자체가 계속 빈틈을 남긴다. 트리거를 놓치지 않으려
         # 애쓰는 대신 **짧은 주기 폴링**으로 전환 — 미니맵은 도형 몇 개짜리 작은 뷰라 200ms마다
         # 다시 그리는 비용이 무시할 수준이고, 어떤 이벤트를 놓치든 최대 200ms 안에 저절로 맞는다.
@@ -1455,29 +1618,6 @@ class CanvasWindow(QMainWindow):
         self._minimap_timer = QTimer(self)
         self._minimap_timer.timeout.connect(self._refresh_minimap)
         self._minimap_timer.start(200)
-
-    # ---- [신규기능] 레이어 패널 — deep-interview 2026-07-28 --------------------
-    def _build_layers_dock(self):
-        """사용자 정의 이름 레이어 dock — 도형/속성 dock과 같은 그립+제목 언어.
-        표시(👁)·잠금(🔒)은 레이어 단위 토글, 우클릭으로 이름변경/삭제, 하단 + 로 추가."""
-        dock = QDockWidget("⋮⋮  레이어", self)
-        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
-        self._layers_dock = dock
-        panel = QWidget()
-        v = QVBoxLayout(panel)
-        v.setContentsMargins(6, 6, 6, 6)
-        v.setSpacing(4)
-        self._layers_list = QListWidget()
-        self._layers_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-        v.addWidget(self._layers_list)
-        add_btn = QToolButton()
-        add_btn.setText("+ 레이어 추가")
-        add_btn.clicked.connect(lambda: self.add_layer())
-        v.addWidget(add_btn)
-        dock.setWidget(panel)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
-        self.tabifyDockWidget(self._shapes_dock, dock)
-        self._refresh_layers_panel()
 
     def _item_layer_id(self, it) -> str:
         return getattr(it, "_layer_id", None) or "default"
@@ -1497,6 +1637,13 @@ class CanvasWindow(QMainWindow):
             item.setSizeHint(row.sizeHint())
             lst.addItem(item)
             lst.setItemWidget(item, row)
+        # [캔버스-퍼스트] QListWidget의 기본 sizeHint는 항목 수와 무관하게 넓은 고정값이라
+        # 플로팅 카드가 콘텐츠보다 훨씬 커진다 — 실제 행 높이 합으로 클램프해야 낭비 공간이
+        # 안 생긴다(옛 dock이 칼럼 전체를 예약해 항목 0개에도 창 높이만큼 비던 문제의 재발 방지).
+        total_h = sum(lst.sizeHintForRow(i) for i in range(lst.count())) + 2 * lst.frameWidth() + 4
+        lst.setFixedHeight(max(60, min(total_h, 320)))
+        if getattr(self, "_left_panel", None) is not None:
+            self._reposition_panels()
 
     def _make_layer_row(self, layer: dict) -> QWidget:
         row = QWidget()

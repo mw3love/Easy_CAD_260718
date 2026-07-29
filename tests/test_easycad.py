@@ -12,10 +12,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF
+from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF, QPoint
 from PyQt6.QtGui import QBrush, QColor, QPainterPath, QPixmap
 
-from easycad.canvas.host import CanvasWindow
+from easycad.canvas.host import CanvasWindow, _ToastLabel
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _SYMBOL_KINDS,
@@ -118,41 +118,46 @@ def test_pdf_export_forces_white_bg():
     assert w._scene.backgroundBrush().color().name() == before   # 배경 복원됨
 
 
-def test_dock_areas_and_zoom_readout():
-    # [Phase 6 M1] 도형 dock 4방향 허용 + 상/하 dock이면 섹션 가로 흐름 + 줌% 실시간 표시.
-    from PyQt6.QtWidgets import QBoxLayout
+def test_floating_panels_and_zoom_readout():
+    # [캔버스-퍼스트 레이아웃] 좌/우 QDockWidget → 콘텐츠 크기 플로팅 카드로 전환(deep-interview
+    # 2026-07-29) — 도형·레이어는 탭 하나, 위치는 고정(자유 드래그 재배치 없음), 섹션은 항상 2열.
     w = CanvasWindow()
-    allowed = w._shapes_dock.allowedAreas()
-    for a in (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea,
-              Qt.DockWidgetArea.TopDockWidgetArea, Qt.DockWidgetArea.BottomDockWidgetArea):
-        assert bool(allowed & a)
-    # 순서도 섹션(6종): 세로 dock=2열(6번째=row2,col1) / 가로 dock=한 줄(6번째=row0,col5).
+    assert w._left_panel.parent() is w
+    assert w._props_panel.parent() is w
+    assert w._minimap_panel.parent() is w
     sym_grid, sym_btns = w._shape_sections[1]
     last = sym_btns[-1]
-    def last_pos():
-        r, c, _rs, _cs = sym_grid.getItemPosition(sym_grid.indexOf(last))
-        return (r, c)
-    assert last_pos() == (2, 1)
-    w._on_dock_moved(Qt.DockWidgetArea.TopDockWidgetArea)
-    assert w._dock_box.direction() == QBoxLayout.Direction.LeftToRight
-    assert last_pos() == (0, 5)             # 가로 dock → 한 줄
-    w._on_dock_moved(Qt.DockWidgetArea.LeftDockWidgetArea)
-    assert w._dock_box.direction() == QBoxLayout.Direction.TopToBottom
-    assert last_pos() == (2, 1)             # 세로 복귀
+    r, c, _rs, _cs = sym_grid.getItemPosition(sym_grid.indexOf(last))
+    assert (r, c) == (2, 1)             # 순서도 6종, 2열 고정 → 마지막 버튼은 (row2, col1)
     # 팔레트 버튼 키가 보존(테스트 계약).
     assert set(w._shape_tool_buttons) == {"rect", "ellipse"}
     assert len(w._sym_buttons) == 6
-    # 버튼 고정 크기 — dock이 넓어도 커지거나 벌어지지 않는다(좌측 뭉침).
+    # 버튼 고정 크기 — 패널이 넓어져도 커지거나 벌어지지 않는다(좌측 뭉침).
     b = w._shape_tool_buttons["rect"]
     assert b.minimumWidth() == b.maximumWidth() == 64
-    # 속성 dock은 값(hex)이 안 잘리는 최소폭 바닥을 가진다(슬랙 없이 그 아래로 못 좁힘).
-    assert w._props_dock.widget().minimumWidth() == 170
-    # 줌 % 리드아웃.
+    # 속성 패널은 값(hex)이 안 잘리는 최소폭 바닥을 가진다(슬랙 없이 그 아래로 못 좁힘).
+    assert w._props_panel._body_layout.itemAt(0).widget().minimumWidth() == 170
+    # 패널은 창 리사이즈 후에도 뷰 영역 안쪽에 고정 위치(자유 드래그 없음의 반대증거).
+    w.resize(1400, 900)
+    w._reposition_panels()
+    assert w._left_panel.pos().x() >= w._view.mapTo(w, QPoint(0, 0)).x()
+    assert w._props_panel.pos().x() < w.width()
+    # 줌 % 리드아웃(줌 배지는 statusBar가 아니라 우하단 플로팅 위젯).
     assert w._zoom_btn.text() == "100 %"
     w._on_wheel_zoom(120)
     assert w._zoom_btn.text() != "100 %"
     w._zoom_reset()
     assert w._zoom_btn.text() == "100 %"
+
+
+def test_statusbar_proxy_is_floating_toast():
+    # [캔버스-퍼스트 레이아웃] statusBar()는 이제 QMainWindow 실제 상태바가 아니라 하단중앙
+    # 토스트 프록시 — 기존 20여 곳의 .showMessage() 호출부를 안 건드리고 그대로 동작해야 한다.
+    w = CanvasWindow()
+    assert isinstance(w.statusBar(), _ToastLabel)
+    w.statusBar().showMessage("테스트 메시지", 3000)
+    assert w.statusBar().currentMessage() == "테스트 메시지"
+    assert not w._toast.isHidden()   # isVisible()은 헤드리스에서 최상위 미표시로 항상 False
 
 
 def test_properties_dock_readout():
@@ -5259,7 +5264,10 @@ def test_minimap_shares_scene_and_is_noninteractive():
     w = CanvasWindow()
     assert w._minimap.scene() is w._scene
     assert w._minimap.isInteractive() is False
-    assert w.dockWidgetArea(w._minimap_dock) == Qt.DockWidgetArea.RightDockWidgetArea
+    # [캔버스-퍼스트 레이아웃] 우측 QDockWidget 대신 우상단(속성 아래) 플로팅 카드.
+    assert w._minimap_panel.parent() is w
+    assert w._minimap_panel.pos().x() > w._props_panel.pos().x() - 5   # 속성과 같은 우측 열
+    assert w._minimap_panel.pos().y() > w._props_panel.pos().y()       # 속성 아래
 
 
 def test_minimap_indicator_is_scene_coords_not_double_transformed():
