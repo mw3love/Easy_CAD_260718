@@ -65,14 +65,15 @@ def test_toolbar_icons_and_actions():
     assert len(w._tool_buttons) == 6
     for b in w._tool_buttons.values():
         assert not b.icon().isNull()
-    # 파일/삽입/보기 액션이 아이콘을 가진다.
-    for a in (w._act_new, w._act_open, w._act_save, w._act_pdf, w._act_dxf,
-              w._act_dxf_in, w._act_img, w._act_tb, w._act_tbl, w._act_mmd,
+    # 파일/삽입/보기 액션이 아이콘을 가진다. [신규기능] DXF는 열기/저장(Ctrl+O/S)에
+    # 통합돼 전용 액션(_act_dxf/_act_dxf_in)이 더 이상 없음(2026-07-29).
+    for a in (w._act_new, w._act_open, w._act_save, w._act_pdf,
+              w._act_img, w._act_tb, w._act_tbl, w._act_mmd,
               w._act_undo, w._act_redo, w._act_zoom100, w._act_fit, w._act_snap,
               w._act_ortho, w._act_help):
         assert not a.icon().isNull()
     # 모든 액션 아이콘 이름이 렌더 가능(빈 아이콘 없음).
-    for nm in ("new", "open", "save", "pdf", "dxf_out", "dxf_in", "image",
+    for nm in ("new", "open", "save", "pdf", "image",
                "table", "titleblock", "mermaid", "zoom_fit", "zoom_100",
                "snap", "ortho", "undo", "redo", "help"):
         assert not _act_icon(nm).isNull()
@@ -5861,6 +5862,116 @@ def test_context_menu_layer_menu_lists_layers():
     layer_action = next(act for act in menu2.actions() if act.text() == "레이어로 이동")
     names = [a.text() for a in layer_action.menu().actions()]
     assert "기본" in names and "배선" in names
+
+
+def test_do_open_save_ecad_roundtrip():
+    # [신규기능] DXF/.ecad 통합(2026-07-29) — 확장자 분기용 얇은 래퍼 _do_save_ecad/_do_open_ecad
+    # 가 여전히 save_document/load_document를 정확히 호출하는지(_doc_path 갱신 포함).
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=10, y=20)
+    path = os.path.join(_TMP, "do_ecad_rt.ecad")
+    w._do_save_ecad(path)
+    assert w._doc_path == path
+    assert os.path.exists(path)
+    w2 = CanvasWindow()
+    w2._do_open_ecad(path)
+    assert w2._doc_path == path
+    assert len([x for x in w2._scene.items() if isinstance(x, _RectItem)]) == 1
+
+
+def test_do_open_export_dxf_roundtrip_no_doc_path():
+    # [신규기능] DXF는 열기/저장 둘 다 _doc_path를 갱신하지 않는다(deep-interview 결정 —
+    # 통합 저장 다이얼로그의 기본 필터가 항상 .ecad로 뜨게 하기 위함).
+    # ⚠ _do_export_dxf 성공 경로가 QMessageBox.information("저장 완료")을 띄운다 —
+    # 헤드리스(offscreen)에서 실제 .exec()는 클릭할 사용자가 없어 영원히 블로킹되므로
+    # 반드시 모킹한다(실제로 이 모킹 없이 전체 스모크 스위트가 멈춘 사고 — 2026-07-29).
+    from PyQt6.QtWidgets import QMessageBox
+    orig_info, orig_warn = QMessageBox.information, QMessageBox.warning
+    QMessageBox.information = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
+    QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
+    try:
+        w = CanvasWindow()
+        _mk_pen_rect(w, x=5, y=5, ww=80, hh=40)
+        path = os.path.join(_TMP, "do_dxf_rt.dxf")
+        prior_doc_path = w._doc_path
+        w._do_export_dxf(path)
+        assert os.path.exists(path)
+        assert w._doc_path == prior_doc_path
+        w2 = CanvasWindow()
+        w2._do_open_dxf(path)
+        assert any(isinstance(x, _RectItem) for x in w2._scene.items())
+        assert w2._doc_path is None
+    finally:
+        QMessageBox.information, QMessageBox.warning = orig_info, orig_warn
+
+
+def test_save_doc_dispatches_by_extension():
+    # [신규기능] 옛 「DXF 내보내기」 전용 메뉴·단축키(Ctrl+Shift+D) 폐지 — 저장(Ctrl+S) 하나가
+    # 파일 다이얼로그에서 고른 확장자로 _do_save_ecad/_do_export_dxf에 분기하는지 확인.
+    from PyQt6.QtWidgets import QFileDialog
+    from PyQt6.QtCore import QSettings
+    QSettings("EasyCAD", "EasyCAD").setValue("dxf_save_warned", True)   # 손실 확인창 스킵(헤드리스)
+    w = CanvasWindow()
+    calls = []
+    w._do_save_ecad = lambda path: calls.append(("ecad", path))
+    w._do_export_dxf = lambda path: calls.append(("dxf", path))
+    orig = QFileDialog.getSaveFileName
+    try:
+        QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: ("out.ecad", ""))
+        w._save_doc()
+        QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: ("out.dxf", ""))
+        w._save_doc()
+        QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: ("out_noext", ""))
+        w._save_doc()   # 확장자 없이 저장 → .ecad 기본(deep-interview 결정) 적용 확인
+    finally:
+        QFileDialog.getSaveFileName = orig
+    assert calls == [("ecad", "out.ecad"), ("dxf", "out.dxf"), ("ecad", "out_noext.ecad")]
+
+
+def test_open_doc_dispatches_by_extension():
+    from PyQt6.QtWidgets import QFileDialog
+    from PyQt6.QtCore import QSettings
+    QSettings("EasyCAD", "EasyCAD").setValue("dxf_open_notified", True)   # 안내창 스킵(헤드리스)
+    w = CanvasWindow()
+    calls = []
+    w._do_open_ecad = lambda path: calls.append(("ecad", path))
+    w._do_open_dxf = lambda path: calls.append(("dxf", path))
+    orig = QFileDialog.getOpenFileName
+    try:
+        QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: ("in.ecad", ""))
+        w._open_doc()
+        QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: ("in.dxf", ""))
+        w._open_doc()
+    finally:
+        QFileDialog.getOpenFileName = orig
+    assert calls == [("ecad", "in.ecad"), ("dxf", "in.dxf")]
+
+
+def test_dxf_confirm_dialogs_show_once_via_qsettings():
+    # [신규기능] "다만 열기 했을때 한번 알림 창 띄우면 좋을듯" — 저장·열기 둘 다 앱 생애
+    # 처음 1회만 확인창을 띄우고, 이후는 QSettings 플래그로 조용히 통과한다.
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtWidgets import QMessageBox
+    settings = QSettings("EasyCAD", "EasyCAD")
+    settings.remove("dxf_save_warned")
+    settings.remove("dxf_open_notified")
+    w = CanvasWindow()
+    orig_warning, orig_info = QMessageBox.warning, QMessageBox.information
+    shown = []
+    try:
+        QMessageBox.warning = staticmethod(
+            lambda *a, **k: shown.append("warn") or QMessageBox.StandardButton.Ok)
+        QMessageBox.information = staticmethod(
+            lambda *a, **k: shown.append("info") or QMessageBox.StandardButton.Ok)
+        assert w._confirm_dxf_save_once() is True
+        assert w._confirm_dxf_save_once() is True   # 2번째부터는 창 없이 True
+        assert w._confirm_dxf_open_once() is True
+        assert w._confirm_dxf_open_once() is True
+    finally:
+        QMessageBox.warning, QMessageBox.information = orig_warning, orig_info
+    assert shown == ["warn", "info"]   # 각 종류 첫 호출에만 창이 뜸
+    assert settings.value("dxf_save_warned", False, type=bool) is True
+    assert settings.value("dxf_open_notified", False, type=bool) is True
 
 
 def _run_all():

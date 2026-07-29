@@ -690,6 +690,30 @@ stale한 크기에 멈추는 2차 함정도 있어 `layout().activate()`를 먼�
 경로를 안 탐) — 회귀 테스트에 `w.show()` 명시로 해결. 스모크 2종 추가(총 283).
 Rejected/Not-tested는 커밋 `616bcfb`·`d967835` 트레일러 참조.
 
+**신규기능 — DXF/.ecad 가져오기·내보내기 통합 완료(2026-07-29, 프록시검증 — offscreen 292종
+통과, 실조건 대기)** — 계획서 §8 로드맵 항목 2. deep-interview로 확정: 옛 「DXF 내보내기…」/
+「DXF 가져오기…」 전용 메뉴·단축키(`Ctrl+Shift+D`/`Ctrl+Shift+I`)를 완전 폐지(부분 병행 유지
+안 함), 열기(`Ctrl+O`)/저장(`Ctrl+S`) 하나가 파일 다이얼로그에서 고른 확장자로 분기
+(`_open_doc`/`_save_doc` → `_do_open_ecad`/`_do_open_dxf`, `_do_save_ecad`/`_do_export_dxf`).
+저장 다이얼로그 기본 필터는 DXF를 직전에 열었어도 항상 `.ecad`(무손실) 우선 — DXF 가져오기/
+내보내기는 `_doc_path`를 갱신하지 않는 기존 동작을 그대로 둬서 자연히 다음 저장이 `.ecad`로
+기본값이 되게 했다(별도 "직전 형식 기억" 로직 불필요). DXF 열기는 여전히 현재 씬을 통째로
+교체하는 '열기' 시맨틱(기존 `import_dxf` 그대로) — "기존 도면 위에 DXF 추가 삽입"하는 기능은
+프레임 챌린지로 스코프 밖 확정. **각 방향 앱 생애 처음 1회만** 안내창(QSettings 플래그
+`dxf_save_warned`/`dxf_open_notified`) — 저장은 손실 항목 경고(바인딩·라벨·심볼 kind·레이어
+소속은 저장 안 됨), 열기는 "현재 도면을 통째로 교체함 + 외부 CAD 도형 일부(INSERT 배열·
+클리핑)는 근사 변환될 수 있음"을 고지(사용자가 세션 중 "열기 때도 알림 있으면 좋겠다"고
+추가 요청해 저장 쪽과 대칭으로 구현). 아이콘 함수의 `dxf_out`/`dxf_in` 전용 글리프도 함께 제거.
+⚠ **개발 중 발견한 테스트 함정**: 새로 추가한 회귀 테스트가 `_do_export_dxf`의 성공 경로
+(`QMessageBox.information` "저장 완료")를 모킹 없이 직접 호출해, 헤드리스(offscreen) 환경에는
+클릭할 사용자가 없어 `.exec()`가 영원히 블로킹됐다 — 전체 스모크 스위트(280여 종)가 15분+
+조용히 멈춘 원인이었다(CPU는 계속 소모돼 "멈춘 게 아니라 느린 것"처럼 보여 진단이 늦어짐).
+모든 `QMessageBox` 경로를 모킹하도록 테스트를 고친 뒤 292종(신규 5종 포함) 전체 통과, 4분43초.
+스모크: `test_do_open_save_ecad_roundtrip`·`test_do_open_export_dxf_roundtrip_no_doc_path`·
+`test_save_doc_dispatches_by_extension`·`test_open_doc_dispatches_by_extension`·
+`test_dxf_confirm_dialogs_show_once_via_qsettings`. Not-tested: 실제 파일 다이얼로그 UI 흐름·
+안내창 문구의 실화면 가독성(`python run.py` 몫).
+
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.
   ⚠ 전례: 지속연결 초안이 offscreen을 통과했으나 GUI에서 버그 발견(플로팅→고정 부착점으로 수정).

@@ -188,16 +188,6 @@ def _act_icon(name: str) -> QIcon:
         line(8.5, 15.5, 8.5, 11.5); line(8.5, 11.5, 10.7, 11.5)   # 'P' 힌트
         line(13, 15.5, 13, 11.5); line(15, 11.5, 15, 15.5)        # 'D' 힌트
         p.restore()
-    elif name == "dxf_out":
-        poly([(6.5, 8), (6.5, 4.5), (15, 4.5), (18, 7.5), (18, 20.5),
-              (6.5, 20.5), (6.5, 16)], close=False)   # 왼쪽 변에 화살표 통과 gap
-        line(3, 12, 11.5, 12)
-        poly([(8.5, 9.5), (11.5, 12), (8.5, 14.5)], close=False)   # → 촉
-    elif name == "dxf_in":
-        poly([(17.5, 8), (17.5, 4.5), (9, 4.5), (6, 7.5), (6, 20.5),
-              (17.5, 20.5), (17.5, 16)], close=False)
-        line(21, 12, 12.5, 12)
-        poly([(15.5, 9.5), (12.5, 12), (15.5, 14.5)], close=False)  # ← 촉
     elif name == "image":
         p.drawRoundedRect(QRectF(4, 5, 16, 14), 2, 2)
         p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
@@ -686,11 +676,9 @@ class CanvasWindow(QMainWindow):
             lambda: self._export_pdf(selection_only=False), "Ctrl+P")
         self._act_pdf_sel = self._make_action("PDF 내보내기 — 선택영역…", "pdf",
             lambda: self._export_pdf(selection_only=True), "Ctrl+Shift+P")
-        self._act_dxf = self._make_action("DXF 내보내기…", "dxf_out",
-            self._export_dxf, "Ctrl+Shift+D")
-        self._act_dxf_in = self._make_action("DXF 가져오기…", "dxf_in",
-            self._import_dxf, "Ctrl+Shift+I")
-        for a in (self._act_pdf, self._act_pdf_sel, self._act_dxf, self._act_dxf_in):
+        # [신규기능] DXF 가져오기/내보내기 통합 — 옛 전용 메뉴·단축키(Ctrl+Shift+D/I)는
+        # 폐지하고 열기(Ctrl+O)/저장(Ctrl+S)이 확장자로 분기(아래 _open_doc/_save_doc).
+        for a in (self._act_pdf, self._act_pdf_sel):
             m.addAction(a)
         m.addSeparator()
 
@@ -809,7 +797,13 @@ class CanvasWindow(QMainWindow):
             "격자 켜짐 — 표시 + 스냅" if checked else "격자 꺼짐", 3000)
 
     # ---- 저장 / 열기 --------------------------------------------------------
-    _DOC_FILTER = "Easy CAD 문서 (*.ecad)"
+    # [신규기능] DXF/.ecad 통합(2026-07-29 deep-interview) — 옛 「DXF 내보내기/가져오기」
+    # 전용 메뉴·단축키(Ctrl+Shift+D/I)를 없애고, 열기(Ctrl+O)/저장(Ctrl+S) 하나가 고른
+    # 파일의 확장자로 분기한다. 저장 다이얼로그의 기본 필터는 DXF를 열었던 직후라도
+    # 항상 .ecad(무손실)가 먼저 뜨도록 유지 — DXF 가져오기/내보내기는 _doc_path를
+    # 갱신하지 않는다(기존 동작 그대로).
+    _DOC_FILTER = "Easy CAD 문서 (*.ecad);;DXF 파일 (*.dxf)"
+    _OPEN_FILTER = "지원 파일 (*.ecad *.dxf);;Easy CAD 문서 (*.ecad);;DXF 파일 (*.dxf)"
 
     def _reset_history(self):
         """[M2] 문서 교체(새로/열기/가져오기) 시 undo·redo 스택을 함께 비운다."""
@@ -826,9 +820,20 @@ class CanvasWindow(QMainWindow):
         self._reset_layers()
 
     def _open_doc(self):
-        path, _ = QFileDialog.getOpenFileName(self, "열기", "", self._DOC_FILTER)
+        """[통합] 확장자로 분기 — .dxf는 DXF 가져오기, 그 외는 .ecad 네이티브 열기.
+        둘 다 현재 씬을 통째로 교체(열기 시맨틱) — DXF를 기존 도면 위에 추가 삽입하는
+        기능은 스코프 밖(deep-interview 2026-07-29 확정)."""
+        path, _ = QFileDialog.getOpenFileName(self, "열기", "", self._OPEN_FILTER)
         if not path:
             return
+        if path.lower().endswith(".dxf"):
+            if not self._confirm_dxf_open_once():
+                return
+            self._do_open_dxf(path)
+        else:
+            self._do_open_ecad(path)
+
+    def _do_open_ecad(self, path: str):
         try:
             n = load_document(self._scene, path)
             layers = load_document_layers(path)
@@ -843,13 +848,52 @@ class CanvasWindow(QMainWindow):
         self._badge_n = max(nums) if nums else 0
         self.statusBar().showMessage(f"열기 완료: {n}개 객체 — {path}", 5000)
 
+    def _do_open_dxf(self, path: str):
+        try:
+            n = import_dxf(self._scene, path)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "DXF 열기", f"가져오기에 실패했습니다:\n{e}")
+            return
+        self._reset_history()
+        nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
+        self._badge_n = max(nums) if nums else 0
+        # [2026-07-29] 외부 DXF는 우리 앱과 원점·스케일이 무관해 가져온 직후 화면 밖이거나
+        # 100% 줌에서 너무 작게/크게 보일 수 있다 — 열기 직후 항상 전체 맞춤(Ctrl+9와 동일).
+        self._zoom_fit()
+        self.statusBar().showMessage(f"가져오기 완료: {n}개 객체 — {path}", 5000)
+
+    def _confirm_dxf_open_once(self) -> bool:
+        """[통합] DXF 열기 안내 — 앱 생애 처음 1회만(사용자 요청, QSettings 플래그).
+        현재 도면을 통째로 교체한다는 점 + 외부 CAD 도형은 근사 변환될 수 있음을 고지."""
+        settings = QSettings("EasyCAD", "EasyCAD")
+        if settings.value("dxf_open_notified", False, type=bool):
+            return True
+        settings.setValue("dxf_open_notified", True)
+        resp = QMessageBox.information(
+            self, "DXF 열기",
+            "DXF를 열면 현재 도면을 통째로 교체합니다(추가 삽입 아님).\n"
+            "외부 CAD에서 만든 도형 중 일부(INSERT 배열·클리핑 등)는 근사 변환될 수 있습니다.\n\n"
+            "계속 열까요?",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        return resp == QMessageBox.StandardButton.Ok
+
     def _save_doc(self):
+        """[통합] 저장 다이얼로그에서 고른 확장자로 분기 — 기본 필터는 항상 .ecad
+        (DXF를 방금 열었어도 마찬가지, deep-interview 2026-07-29 결정)."""
         path, _ = QFileDialog.getSaveFileName(
             self, "저장", self._doc_path or "", self._DOC_FILTER)
         if not path:
             return
-        if not path.lower().endswith(".ecad"):
-            path += ".ecad"
+        if path.lower().endswith(".dxf"):
+            if not self._confirm_dxf_save_once():
+                return
+            self._do_export_dxf(path)
+        else:
+            if not path.lower().endswith(".ecad"):
+                path += ".ecad"
+            self._do_save_ecad(path)
+
+    def _do_save_ecad(self, path: str):
         try:
             save_document(self._scene, path, layers=self._layers)
         except Exception as e:  # noqa: BLE001
@@ -857,6 +901,20 @@ class CanvasWindow(QMainWindow):
             return
         self._doc_path = path
         self.statusBar().showMessage(f"저장 완료: {path}", 5000)
+
+    def _confirm_dxf_save_once(self) -> bool:
+        """[통합] DXF 저장 손실 경고 — 앱 생애 처음 1회만(QSettings 플래그), 이후는 조용히 진행."""
+        settings = QSettings("EasyCAD", "EasyCAD")
+        if settings.value("dxf_save_warned", False, type=bool):
+            return True
+        settings.setValue("dxf_save_warned", True)
+        resp = QMessageBox.warning(
+            self, "DXF로 저장",
+            "DXF는 다른 CAD 프로그램과 호환되는 교환 포맷입니다.\n"
+            "화살표 지속연결·라벨 위치·심볼 종류·레이어 소속 등 Easy CAD 전용 정보는 "
+            "저장되지 않습니다(도형·텍스트·색상·두께·좌표는 보존).\n\n계속 저장할까요?",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        return resp == QMessageBox.StandardButton.Ok
 
     def _export_pdf(self, selection_only: bool):
         if selection_only and not self._scene.selectedItems():
@@ -879,39 +937,16 @@ class CanvasWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "PDF 내보내기", "저장에 실패했습니다.")
 
-    def _export_dxf(self):
+    def _do_export_dxf(self, path: str):
         if self._scene.itemsBoundingRect().isEmpty():
-            QMessageBox.information(self, "DXF 내보내기", "출력할 객체가 없습니다.")
+            QMessageBox.information(self, "DXF로 저장", "저장할 객체가 없습니다.")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "DXF로 저장", "", "DXF 파일 (*.dxf)")
-        if not path:
-            return
-        if not path.lower().endswith(".dxf"):
-            path += ".dxf"
         try:
             export_dxf(self._scene, path)
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "DXF 내보내기", f"저장에 실패했습니다:\n{e}")
+            QMessageBox.warning(self, "DXF로 저장", f"저장에 실패했습니다:\n{e}")
             return
-        QMessageBox.information(self, "DXF 내보내기", f"저장 완료:\n{path}")
-
-    def _import_dxf(self):
-        # 현재 씬을 대체하는 '열기' 시맨틱(import_dxf clear=True 기본).
-        path, _ = QFileDialog.getOpenFileName(self, "DXF 가져오기", "", "DXF 파일 (*.dxf)")
-        if not path:
-            return
-        try:
-            n = import_dxf(self._scene, path)
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "DXF 가져오기", f"가져오기에 실패했습니다:\n{e}")
-            return
-        self._reset_history()
-        nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
-        self._badge_n = max(nums) if nums else 0
-        # [2026-07-29] 외부 DXF는 우리 앱과 원점·스케일이 무관해 가져온 직후 화면 밖이거나
-        # 100% 줌에서 너무 작게/크게 보일 수 있다 — 열기 직후 항상 전체 맞춤(Ctrl+9와 동일).
-        self._zoom_fit()
-        self.statusBar().showMessage(f"가져오기 완료: {n}개 객체 — {path}", 5000)
+        QMessageBox.information(self, "DXF로 저장", f"저장 완료:\n{path}")
 
     # ---- 이미지 삽입 (Phase 4) ---------------------------------------------
     _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
@@ -1265,8 +1300,8 @@ class CanvasWindow(QMainWindow):
         tb.setIconSize(QSize(20, 20))
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        # 파일 (내보내기·삽입 7종은 이미 「파일」 메뉴에 있어 상단바에서 제거 — 아이콘만으론
-        # 기능을 구분하기 어렵다는 사용자 피드백. 단축키(Ctrl+P, Ctrl+Shift+D 등)는 메뉴에서 그대로).
+        # 파일 (내보내기·삽입 5종은 이미 「파일」 메뉴에 있어 상단바에서 제거 — 아이콘만으론
+        # 기능을 구분하기 어렵다는 사용자 피드백. 단축키(Ctrl+P 등)는 메뉴에서 그대로).
         for a in (self._act_new, self._act_open, self._act_save):
             tb.addAction(a)
         tb.addSeparator()
