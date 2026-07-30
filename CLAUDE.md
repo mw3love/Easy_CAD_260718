@@ -877,6 +877,42 @@ dirty 플래그를 걸어 캐시. ⓑ 더 큰 원인: `boundingRect()` 체인 �
 고정시간 조사 범위 밖. Not-tested: 실제 무거운 도면에서 `python run.py` 체감(합성 도면
 실측만).
 
+**다중선택 드래그·러버밴드 드래그 버벅임 근본원인 4건 수정 완료(2026-07-30, 커밋
+`2c60d2c`·`7dca493`, 실조건검증 ✓)** — 사용자 최우선순위 보고("몇십 개만 있어도 다중선택
+드래그가 버벅여 사용 불가", "이걸 해결 못하면 프로그램의 의미가 없다"). 위 휠줌 성능 스파이크와는
+별개 증상(아이템 '수'가 아니라 '드래그 자체'가 비쌈)이라 EnterPlanMode로 계획 승인 후(계획서
+`~/.claude/plans/precious-swimming-hoare.md`) cProfile로 새로 원인 확정.
+  - **①`host.py:_on_scene_changed`** — `scene.changed`가 주는 region(실제 변경 영역)을 무시하고
+    씬의 모든 바인딩 화살표를 매번 전부 reroute하던 것을, 화살표 자신의 (여유 있는) bbox가
+    region과 겹칠 때만 reroute하도록 필터링(바인딩 도형 이동·장애물 회피 재트리거 둘 다 화살표
+    자신의 bbox 기준으로 커버). `region=None`(테스트 등 명시적 강제 호출)은 기존처럼 전부 재검토.
+  - **②`_draw_port_dots`·`_hover_port_at`** — "select"(기본 도구)에서 매 페인트·매 마우스무브마다
+    `_conn_shapes()`로 씬 전체를 수동 순회하던 것을 Qt BSP 트리 공간 인덱스(`scene.items(rect)`,
+    신규 `_conn_shapes_near`)로 근처만 질의하도록 교체. 부수로 `_draw_port_dots`가 마진 안의
+    모든 겹친 도형을 전부 그리던 것도 '가장 가까운 하나만'으로 통일 — **Ctrl+D 반복 복제로 도형이
+    겹쳤을 때 포트 점이 잔뜩 뒤덮이던 클러터**(사용자 스크린샷으로 재현) 해소(실측: 클러스터 중심
+    겹침 7개→8점만, 수정 전이면 56점).
+  - **③`_HandleResizeMixin.boundingRect()`** — 박스형 도형의 `boundingRect()`가 선택 여부와
+    무관하게 항상 qc-dot+회전핸들 영역을 계산해 합집합하던 것을 선택 상태로 조건화(미선택=콘텐츠만).
+    `boundingRect()`는 Qt가 인덱싱·히트테스트·페인트마다 매우 자주 호출해 프로파일 tottime 상위
+    대부분을 차지했던 항목 — qc-dot·호버 히트테스트는 이미 `selectedItems()`만 검사해 안전 확인.
+    잔상 방지는 `ItemSelectedChange` 시 `prepareGeometryChange()`로 대체.
+  - ①②③ 실측(박스40+화살표39·10개선택·15프레임): 31.25→21.71ms/frame(~30%↓).
+  - **④ 러버밴드(드래그로 다중선택) — 사용자가 Lucid 스크린샷과 대조해 발견**: "Lucid는 드래그
+    중엔 각 객체 색만 바꾸고, 놓는 순간에만 정확한 상자를 잡는다"는 관찰이 정확했다.
+    `_apply_rubber_selection()`이 매 마우스무브 프레임마다 씬 전체 순회+`clearSelection()`+
+    `setSelected()` 캐스케이드를 걸었고, ③ 이후론 선택될 때마다 `prepareGeometryChange`까지
+    겹쳐 더 비쌌다. 드래그 '중'엔 신규 `_rb_preview_hits()`(Qt 공간 인덱스, boundingRect 기준
+    근사 — 미리보기라 정밀 판정 불필요)로 하이라이트만 표시하고 실제 `setSelected`는 안 걺,
+    release 시점에만 기존 정밀 로직(`_apply_rubber_selection`, 무변경) 1회로 확정. 실측
+    (200아이템·30프레임): 194.61→30.68ms/frame(**~84%↓, 6배 이상**) — 이번 세션 최대 개선폭.
+  - 스모크 308→312종(신규 6종: boundingRect 선택조건부·scene_changed region필터·hover_port_at
+    공간질의·러버밴드 통합테스트 등). **실조건검증 ✓**(2026-07-30, 사용자가 `python run.py`로
+    다중선택 드래그·러버밴드 드래그·Ctrl+D 클러터 해소 전부 확인, "훌륭하다").
+  - **후속 발견(미착수)**: 화살표가 훨씬 많은(200개) 시나리오를 추가 프로파일링하니 이번 4건과
+    별개로 **화살표 자신의 `boundingRect`/`_content_rect`/`_head_points` 체인**이 남은 병목으로
+    확인됨(다음 세션 후보 — 아직 원인만 특정, 계획 미수립).
+
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.
   ⚠ 전례: 지속연결 초안이 offscreen을 통과했으나 GUI에서 버그 발견(플로팅→고정 부착점으로 수정).
