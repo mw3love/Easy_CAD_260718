@@ -445,6 +445,15 @@ class _HandleResizeMixin:
         """핸들 한 변(로컬 단위) — 고정 크기(씬 단위)를 아이템 배율로 환산."""
         return self._HANDLE_PX / self._scale_or_1()
 
+    def itemChange(self, change, value):
+        """[성능 조사 2026-07-30] 선택 상태가 바뀌기 '직전'에 옛(핸들 포함) boundingRect를
+        Qt에 미리 무효화시켜, boundingRect()가 선택 여부로 크기를 바꿔도(아래) 잔상 없이
+        전환되게 한다 — prepareGeometryChange()가 '지금 boundingRect가 곧 달라진다'를 Qt에
+        알리는 표준 방법이라, 매 페인트마다 핸들 영역을 상시 예약해두는 것보다 싸다."""
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
+            self.prepareGeometryChange()
+        return super().itemChange(change, value)
+
     # ---- 잡기 판정(시각 점과 분리) --------------------------------------
     # 그려지는 점은 작게(_handle_px) 두되, '잡히는' 영역은 화면 고정 px로 넉넉히
     # — Figma·일러스트레이터식. 얇은 화살표의 bend/끝점 점이 화면상 5~12px라 커서를
@@ -790,6 +799,13 @@ class _HandleResizeMixin:
     # 위쪽뿐 아니라 좌우도 덮어야 함 — 얇은 도형(세로선 등)은 핸들 원이 content보다 가로로
     # 넓어 좌우로 삐져나오므로. 여유분은 scale 의존이라, 크기조절 중 mouseMove에서
     # prepareGeometryChange로 갱신한다.
+    # [성능 조사 2026-07-30] 박스 핸들(_box_handles) 분기만 선택 여부로 조건화한다 — 끝점형·
+    # 폴백 분기는 그대로 둔다(끝점은 항상 히트 대상이라 필요, 폴백은 이 세션의 실측 핫스팟이
+    # 아니었음). boundingRect()는 Qt가 인덱싱·히트테스트·페인트 판정마다 매우 자주 호출하는데,
+    # qc-dot 4개+회전핸들 영역 계산(그 안의 _handle_px→_view_zoom_factor 체인 포함)을 '선택
+    # 안 된' 도형까지 매번 하던 게 cProfile 실측으로 다중선택 드래그 비용의 가장 큰 비중을
+    # 차지했다. 미선택 도형은 핸들이 그려지지도 히트테스트되지도 않으므로 이 영역이 필요 없다
+    # — 선택 전환 시 잔상은 위 itemChange의 prepareGeometryChange()가 방지한다.
     def boundingRect(self) -> QRectF:
         pad = 3.0 / self._scale_or_1()
         if self._uses_endpoints():
@@ -800,6 +816,8 @@ class _HandleResizeMixin:
                 r = r.united(self._inflate_to_hit(self._endpoint_rect(i)))
             return r.adjusted(-pad, -pad, pad, pad)
         if self._box_handles():
+            if not self.isSelected():
+                return self._content_rect().adjusted(-pad, -pad, pad, pad)
             # 꼭짓점·변 핸들은 rect 경계서 half-handle 삐져나오고, 회전 핸들·빠른생성 도트는 바깥.
             h = self._handle_px()
             r = self._content_rect().united(self._box_rot_rect())
@@ -6134,13 +6152,26 @@ class _AnnotatorView(QGraphicsView):
         painter.setBrush(QBrush(QColor(_BLUE)))
         painter.drawEllipse(sp, base, base)
 
+    def _conn_shapes_near(self, scene_pt: QPointF, margin: float):
+        """[성능 조사 2026-07-30] scene.items(rect) 공간 인덱스(Qt BSP 트리)로 scene_pt 근방만
+        질의 — _conn_shapes()의 전체 스캔 대체. _draw_port_dots·_hover_port_at가 매 페인트·매
+        마우스무브마다 씬 전체를 수동 순회하던 게(cProfile 실측) 다중선택 드래그 버벅임과
+        무거운 도면 호버 클러터의 원인이었다. 반환은 근사 후보 목록 — 정밀 판정(마진 사각형
+        contains)은 호출부가 그대로 한다."""
+        rect = QRectF(scene_pt.x() - margin, scene_pt.y() - margin, margin * 2, margin * 2)
+        return [it for it in self.scene().items(rect)
+                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
+
     def _draw_port_dots(self, painter, s):
         """[우리 확장] 화살표 도구로 도형 근처에 가면 그 도형의 포트(8점)를 속 빈 점으로 예고.
         실제 스냅된 포트는 _draw_snap_marker(채운 파란 점)가 위에 덮어 강조한다 — [2026-07-30
         3차 재수정] 강조가 '커지는' 게 아니라 처음부터 같은 크기(반지름 5.0=_draw_snap_marker와
         동일)이고 hover는 색/테두리 반전으로만 표현하도록 이 예고점 반지름도 3.5→5.0으로 통일.
         [8포트 select-hover 2026-07-29] select 도구에서도 동일하게 예고하되, 선택된 도형은
-        제외(리사이즈·회전 핸들과 자리가 겹침 — 그건 qc-dot(4방향점)이 담당)."""
+        제외(리사이즈·회전 핸들과 자리가 겹침 — 그건 qc-dot(4방향점)이 담당).
+        [성능 조사 2026-07-30] 가장 가까운 도형 '하나'만 그린다(이전엔 마진 안의 모든 도형을
+        전부 그려, Ctrl+D로 겹쳐 복제한 도형들 위에서 호버하면 포트 점이 잔뜩 뒤덮이는 클러터가
+        났다 — _hover_port_at은 원래도 최근접 하나만 골랐으니 미리보기 쪽을 그와 맞췄다)."""
         tool = self._owner.current_tool
         if not self._owner.is_edit_mode() or tool not in ("arrow", "sarrow", "select"):
             return
@@ -6148,16 +6179,22 @@ class _AnnotatorView(QGraphicsView):
         scene_c = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
         margin = 30.0 / s
         r = 5.0 / s
-        painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
-        painter.setBrush(QBrush(QColor("white")))
-        for sh in self._conn_shapes():
+        best_sh, best_d = None, None
+        for sh in self._conn_shapes_near(scene_c, margin):
             if select_mode and sh.isSelected():
                 continue
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_c):
                 continue
-            for sp, _n in _shape_ports(sh):
-                painter.drawEllipse(sp, r, r)
+            d = QLineF(sh.sceneBoundingRect().center(), scene_c).length()
+            if best_d is None or d < best_d:
+                best_d, best_sh = d, sh
+        if best_sh is None:
+            return
+        painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
+        painter.setBrush(QBrush(QColor("white")))
+        for sp, _n in _shape_ports(best_sh):
+            painter.drawEllipse(sp, r, r)
 
     def _hover_port_at(self, view_pos):
         """[8포트 select-hover] 미선택 도형 근처 8포트 중 가장 가까운 것 → (shape, port_pt, normal)
@@ -6166,7 +6203,7 @@ class _AnnotatorView(QGraphicsView):
         scene_pt = self.mapToScene(view_pos)
         best = None
         bestd = self._PORT_SNAP_PX
-        for sh in self._conn_shapes():
+        for sh in self._conn_shapes_near(scene_pt, margin):
             if sh.isSelected():
                 continue
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)

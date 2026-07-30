@@ -3082,6 +3082,58 @@ def test_box_handles_gate():
     assert not b._box_handles()
 
 
+def test_bounding_rect_reserves_handle_space_only_when_selected():
+    # [성능 조사 2026-07-30] boundingRect()의 qc-dot·회전핸들 영역 예약을 선택 상태로
+    # 조건화 — 미선택 도형까지 매번 그 영역을 계산하던 게 cProfile 실측으로 다중선택 드래그
+    # 병목의 가장 큰 비중이었다. 미선택↔선택 전환 시 boundingRect가 잔상 없이(prepareGeometryChange)
+    # 정확히 커지고/줄어드는지 확인.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    unselected_w = a.boundingRect().width()
+    a.setSelected(True)
+    selected_w = a.boundingRect().width()
+    assert selected_w > unselected_w + 5   # 핸들 여백만큼 커짐
+    a.setSelected(False)
+    assert abs(a.boundingRect().width() - unselected_w) < 1e-6   # 원래 크기로 정확히 복귀
+
+
+def test_scene_changed_skips_unrelated_reroute():
+    # [성능 조사 2026-07-30] _on_scene_changed가 scene.changed의 region을 무시하고 씬의 모든
+    # 바인딩 화살표를 매번 reroute하던 게 다중선택 드래그 버벅임의 핵심 원인이었다 — 화살표
+    # 자신의 bbox와 겹치지 않는 먼 변경은 스킵되고, 실제로 바인딩 도형이 움직이면 여전히
+    # reroute되는지 확인.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0)
+    b = _mk_pen_rect(w, x=200, y=0)
+    ar = _PolyArrowItem(QColor("black"), 2, True)
+    pa, pb = a.mapToScene(a.rect().center()), b.mapToScene(b.rect().center())
+    ar.set_points(pa, pb)
+    w._scene.addItem(ar)
+    ar.set_bound(0, a, a.mapFromScene(pa))
+    ar.set_bound(1, b, b.mapFromScene(pb))
+    ar.reroute()
+    pts_before = list(ar._pts)
+    far_region = [QRectF(5000, 5000, 10, 10)]   # 화살표와 무관한 먼 곳의 변경
+    w._on_scene_changed(far_region)
+    assert ar._pts == pts_before
+    a.moveBy(50, 0)   # 실제로 바인딩 도형이 움직이면 그 영역 리포트 시 reroute돼야 함
+    w._on_scene_changed([a.sceneBoundingRect()])
+    assert ar._pts != pts_before
+
+
+def test_hover_port_at_spatial_query_picks_nearest_overlapping():
+    # [성능 조사 2026-07-30] _hover_port_at·_draw_port_dots가 _conn_shapes()(전체 스캔) 대신
+    # scene.items(rect) 공간 인덱스로 근처만 질의 — 겹친 도형(Ctrl+D 반복 복제 시나리오와 동일
+    # 조건)에서도 여전히 정확히 가장 가까운 도형 하나를 고르는지 확인.
+    w = CanvasWindow()
+    v = w._view
+    a = _mk_pen_rect(w, x=0, y=0, ww=50, hh=50)
+    _mk_pen_rect(w, x=200, y=200, ww=50, hh=50)   # 멀리 있는 무관한 도형(질의 범위 밖)
+    view_pos = v.mapFromScene(QPointF(25, 0))     # a의 N포트(25,0) 근처
+    res = v._hover_port_at(view_pos)
+    assert res is not None and res[0] is a
+
+
 def test_box_corner_resize():
     # [2c] 꼭짓점 = 2D 자유 리사이즈, 반대 꼭짓점 고정.
     w = CanvasWindow()
@@ -4803,10 +4855,14 @@ def test_disabled_icon_has_dim_pixmap():
 
 
 def test_align_rect_ignores_selection_handles():
-    # [M5] 정렬 기준은 _content_rect(획까지) — 코어 boundingRect는 핸들·빠른생성 도트 자리를
-    # 상시 예약해 도형마다 여백이 달라(정렬이 그만큼 어긋난다) 기준으로 쓸 수 없다.
+    # [M5] 정렬 기준은 _content_rect(획까지) — 코어 boundingRect는 (선택 시) 핸들·빠른생성
+    # 도트 자리를 예약해 도형마다 여백이 달라(정렬이 그만큼 어긋난다) 기준으로 쓸 수 없다.
+    # [성능 조사 2026-07-30] 핸들 여백 예약이 선택 상태 조건부로 바뀌어(boundingRect가
+    # 미선택 도형까지 매번 계산하던 비용 제거) — 정렬 대상은 실제로 항상 선택된 상태이므로
+    # 그 상태로 검증한다.
     w = CanvasWindow()
     it = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30, width=0)
+    it.setSelected(True)
     r = w._align_rect(it)
     assert abs(r.left() - 0.0) < 1.5 and abs(r.width() - 40.0) < 3.0
     assert it.sceneBoundingRect().width() > r.width() + 10     # 핸들 여백이 실제로 크다

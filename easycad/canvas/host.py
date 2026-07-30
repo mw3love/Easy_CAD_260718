@@ -2143,18 +2143,37 @@ class CanvasWindow(QMainWindow):
 
     # ---- 지속 연결 리라우트 -------------------------------------------------
     def _on_scene_changed(self, region):
+        """[성능 조사 2026-07-30] scene.changed가 넘겨주는 region(실제 변경 영역)을 무시하고
+        씬의 모든 바인딩 화살표를 매번 전부 reroute하던 게 다중선택 드래그 버벅임의 핵심
+        원인이었다(cProfile 실측: 박스 40+화살표 39짜리 작은 씬에서도 15프레임에 reroute 자체
+        69ms). region과 화살표 자신의 (여유 있는) bbox가 겹칠 때만 reroute — 바인딩 도형이
+        움직인 경우든, 무관한 장애물이 경로 근처로 들어와 A* 회피를 재트리거해야 하는 경우든
+        둘 다 화살표 자신의 bbox 기준으로 커버된다(바인딩 도형만 보면 장애물-회피 케이스를 놓침).
+        region=None은 필터 없이 전부 재검토(테스트 등에서 실제 시그널 없이 강제 호출할 때 쓰는
+        기존 관례 — 실제 scene.changed 시그널은 항상 리스트를 준다)."""
         if self._rerouting:
             return  # 재진입 가드 — reroute가 유발한 changed로 되돌아오지 않게
         if getattr(self._view, "_drawing", False):
             return  # 화살표 그리는 중엔 _update_arrow_draw가 tip을 주도 — 간섭 방지
         if getattr(self._view, "_place", None) is not None:
             return  # 클릭 배치 중엔 배치 로직이 끝점을 주도 — 간섭 방지
+        if region is None:
+            union = None
+        else:
+            union = QRectF()
+            for r in region:
+                union = union.united(r)
+            if union.isEmpty():
+                return
+        margin = _PolyArrowItem._ROUTE_CLEARANCE  # 기존 장애물-회피 여유와 동일 감도로 재사용
         self._rerouting = True
         try:
             for it in self._scene.items():
                 # 곡선화살표(_ArrowItem)·직선화살표(_PolyArrowItem) 모두 지속 연결 리라우트.
                 if isinstance(it, (_ArrowItem, _PolyArrowItem)) and it.has_binding():
-                    it.reroute(pin_pred=self._make_pin_pred(it))
+                    if union is None or it.sceneBoundingRect().adjusted(
+                            -margin, -margin, margin, margin).intersects(union):
+                        it.reroute(pin_pred=self._make_pin_pred(it))
         finally:
             self._rerouting = False
 
