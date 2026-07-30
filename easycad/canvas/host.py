@@ -579,8 +579,9 @@ class CanvasWindow(QMainWindow):
         self.current_text_bg = None
         self.arrow_head_at_end = True
         # [화살표 통합] 화살표는 상단 도구 1개. '어떤 종류로 그릴지'는 마지막에 고른 종류를 기억
-        # (sticky — 색·두께·선스타일과 같은 관례). 최초 기본은 곡선.
-        self.current_arrow_kind = "curved"          # straight | curved | ortho
+        # (sticky — 색·두께·선스타일과 같은 관례). 최초 기본은 직각(순서도 위주 사용 — 실사용
+        # 피드백 2026-07-30, 이전 기본은 곡선).
+        self.current_arrow_kind = "ortho"          # straight | curved | ortho
         self.current_curve_r = _PolyArrowItem._CORNER_R   # 직각 커넥터의 모서리 반경(sticky)
         # [M2] 도구 고정(pin) — False면 도형 1개 그리면 자동으로 선택모드(one-shot),
         # True면 도구가 계속 무장(연속 그리기). 상단 🔒 토글로 전환.

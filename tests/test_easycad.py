@@ -1034,16 +1034,16 @@ def test_arrow_kind_sticky_and_tool_unified():
     # 정한다(곡선·직선=arrow, 직각=sarrow). set_tool은 리터럴로 남아 테스트·내부 호출이 그대로 받음.
     w = CanvasWindow()
     assert "sarrow" not in w._tool_buttons and "arrow" in w._tool_buttons
-    assert w.current_arrow_kind == "curved"               # 최초 기본 = 곡선
+    assert w.current_arrow_kind == "ortho"                # [2026-07-30] 최초 기본 = 직각(순서도 위주)
     w.arm_arrow_tool()
-    assert w.current_tool == "arrow"                       # 곡선 → 내부 arrow 도구
+    assert w.current_tool == "sarrow"                      # 직각 → 내부 sarrow 도구
     assert w._tool_buttons["arrow"].isChecked()           # 화살표 버튼 하나가 둘을 대표
     w.arm_arrow_tool()                                     # 다시 = 토글 해제
-    assert w.current_tool != "arrow"
-    w.current_arrow_kind = "ortho"
+    assert w.current_tool != "sarrow"
+    w.current_arrow_kind = "curved"
     w.arm_arrow_tool()
-    assert w.current_tool == "sarrow"                     # 직각 → 내부 sarrow 도구
-    assert w._tool_buttons["arrow"].isChecked()           # 직각이어도 화살표 버튼이 켜짐
+    assert w.current_tool == "arrow"                       # 곡선 → 내부 arrow 도구
+    assert w._tool_buttons["arrow"].isChecked()           # 곡선이어도 화살표 버튼이 켜짐
 
 
 def test_arrow_kind_change_rearms_pinned_tool():
@@ -1054,6 +1054,7 @@ def test_arrow_kind_change_rearms_pinned_tool():
     ar.set_points(QPointF(0, 0), QPointF(100, 60))
     ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(ar); ar.setSelected(True)
+    w.current_arrow_kind = "curved"   # [2026-07-30] 기본값은 이제 직각 — 이 테스트는 곡선에서 시작
     w.arm_arrow_tool()
     assert w.current_tool == "arrow"                      # 곡선 무장
     w._floating_set_arrow_kind("ortho")                   # 종류를 직각으로
@@ -2218,7 +2219,9 @@ def test_polyarrow_multiframe_drag_through_opposite_side_stays_clean():
 
     w1 = CanvasWindow()
     a1, sa1, w_port1 = build(w1)
-    nw = _shape_ports(a1)[4][0]
+    # [2026-07-30] NW 꼭짓점은 더 이상 _shape_ports 목록에 없다(8→4 축소) — 예전 index 4와
+    # 동일한 점을 _nearest_border로 직접 투영(디아고날 스냅 자체는 연속 폴백으로 여전히 유효).
+    nw, _nw_n = _nearest_border(a1, a1.mapToScene(QPointF(a1.rect().left(), a1.rect().top())))
     e_port = _shape_ports(a1)[1][0]
     sa1._on_endpoint_drag_start(0)
     n = 20
@@ -2293,22 +2296,32 @@ def test_sarrow_draw_between_shapes_auto_routes():
 
 
 def test_route_ortho_pure():
-    # [Stage2] _route_ortho 순수함수 — 장애물 없으면 Stage1 그대로, 있으면 관통 없는 경로 선택.
-    from easycad.canvas.annotator_core import _route_ortho, _ortho_elbow, _path_hits_rects
+    # [Stage2 → 2026-07-30 stub-out 수정] _route_ortho 순수함수 — 장애물 없으면 '법선 스텁 +
+    # Stage1'(raw _ortho_elbow가 아니라, 변 타기 방지를 위해 먼저 스텁을 낸 뒤의 엘보) 그대로,
+    # 있으면 관통 없는 경로 선택.
+    from easycad.canvas.annotator_core import (
+        _route_ortho, _ortho_elbow, _path_hits_rects, _normal_stub)
     P = QPointF
     s, e = P(100, 30), P(300, 230)
     ns, ne = P(1, 0), P(-1, 0)   # 양끝 수평 → Stage1은 H-V-H(x=200)
-    # (1) 장애물 없음 → Stage1과 동일
-    assert _route_ortho(s, e, ns, ne, [], 12.0) == _ortho_elbow(s, e, ns, ne)
+    clearance = 12.0
+
+    def expected_clean():
+        s2 = _normal_stub(s, ns, clearance)
+        e2 = _normal_stub(e, ne, clearance)
+        return [s2] + _ortho_elbow(s2, e2, ns, ne) + [e2]
+
+    # (1) 장애물 없음 → 스텁+Stage1
+    assert _route_ortho(s, e, ns, ne, [], clearance) == expected_clean()
     # (2) 수직 채널(x=200) 위에 장애물 → 우회 경로가 그 사각형을 관통하지 않음
     obs = QRectF(180, 110, 40, 40)   # x180..220, y110..150 — 채널 x=200 가로막음
-    mids = _route_ortho(s, e, ns, ne, [obs], 12.0)
+    mids = _route_ortho(s, e, ns, ne, [obs], clearance)
     assert not _path_hits_rects([s] + mids + [e], [obs]), mids
-    # 우회는 Stage1과 달라야 함(관통했으므로 대체됨)
-    assert mids != _ortho_elbow(s, e, ns, ne)
-    # (3) 장애물이 경로에서 비켜 있으면(멀리) Stage1 유지
+    # 우회는 스텁+Stage1과 달라야 함(관통했으므로 대체됨)
+    assert mids != expected_clean()
+    # (3) 장애물이 경로에서 비켜 있으면(멀리) 스텁+Stage1 유지
     far = QRectF(1000, 1000, 40, 40)
-    assert _route_ortho(s, e, ns, ne, [far], 12.0) == _ortho_elbow(s, e, ns, ne)
+    assert _route_ortho(s, e, ns, ne, [far], clearance) == expected_clean()
 
 
 def test_route_ortho_astar_dense():
@@ -2415,13 +2428,24 @@ def test_sarrow_avoids_reenter_connected_shape():
     assert not _path_hits_rects(sp, [a_rect]), ("A 재진입", sp)
     assert not _path_hits_rects(sp, [b_rect]), ("B 관통", sp)
 
-    # 보수성(무회귀) 확인: 재진입이 없던 깔끔한 배치는 preferred 그대로 — conn 무시.
-    #   A 우측(+x) → B 좌측(-x), 같은 y → 직선. conn_rects를 넘겨도 경로 불변이어야 한다.
+    # 보수성(무회귀) 확인: 재진입이 없던 깔끔한 배치는 A* 우회가 안 낀다 — conn 유무는
+    # [2026-07-30 stub-out 수정] 이제 스텁 거리(own-rect 팽창 이스케이프 vs flat clearance)
+    # 만 바꾼다(경로가 통째로 달라지는 회귀가 아님 — 아래서 그 스텁 공식과 정확히 일치하는지 확인).
+    #   A 우측(+x) → B 좌측(-x), 같은 y → 직선.
+    from easycad.canvas.annotator_core import _normal_stub, _CONN_CLEAR_MULT
     s1, e1 = QPointF(100, 30), QPointF(300, 30)
-    m_no_conn = _route_ortho(s1, e1, QPointF(1, 0), QPointF(-1, 0), [], 12.0)
-    m_conn = _route_ortho(s1, e1, QPointF(1, 0), QPointF(-1, 0), [], 12.0,
-                          conn_rects=[a_rect, QRectF(300, 0, 100, 60)])
-    assert m_no_conn == m_conn, ("깔끔한 배치인데 conn 때문에 경로 바뀜(회귀)", m_no_conn, m_conn)
+    ns1, ne1 = QPointF(1, 0), QPointF(-1, 0)
+    m_no_conn = _route_ortho(s1, e1, ns1, ne1, [], 12.0)
+    s2 = _normal_stub(s1, ns1, 12.0)
+    e2 = _normal_stub(e1, ne1, 12.0)
+    assert m_no_conn == [s2] + _ortho_elbow(s2, e2, ns1, ne1) + [e2], m_no_conn
+
+    b2_rect = QRectF(300, 0, 100, 60)
+    m_conn = _route_ortho(s1, e1, ns1, ne1, [], 12.0, conn_rects=[a_rect, b2_rect])
+    cc = 12.0 * _CONN_CLEAR_MULT
+    s3 = _normal_stub(s1, ns1, cc, a_rect.adjusted(-cc, -cc, cc, cc))
+    e3 = _normal_stub(e1, ne1, cc, b2_rect.adjusted(-cc, -cc, cc, cc))
+    assert m_conn == [s3] + _ortho_elbow(s3, e3, ns1, ne1) + [e3], m_conn
 
 
 def test_sarrow_live_ortho_preview():
@@ -3079,16 +3103,17 @@ def test_box_resize_keeps_binding():
 
 
 def test_box_handle_cursor():
-    # [2c] 호버 커서 매핑 — 꼭짓점=대각, 변=가로/세로, 좌상단 회전.
+    # [2c→2026-07-30] 호버 커서 매핑 — 꼭짓점=대각, 좌상단 회전. 변 중점은 더 이상 이 함수의
+    # 대상이 아니다(qc-dot과 통합된 겸용 점이 되어 커서는 _update_hover_cursor의 _qc_dot_at
+    # 분기가 CrossCursor로 담당 — 리사이즈/커넥터 어느 쪽이 될지 press 전엔 모호하므로).
     w = CanvasWindow()
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
     corners = dict((i, r.center()) for i, r in a._box_corner_rects())
     assert a._box_handle_cursor(corners[0]) == Qt.CursorShape.SizeFDiagCursor   # TL ↖↘
     assert a._box_handle_cursor(corners[1]) == Qt.CursorShape.SizeBDiagCursor   # TR ↗↙
-    edges = dict((k, r.center()) for k, r in a._box_edge_rects())
-    assert a._box_handle_cursor(edges["r"]) == Qt.CursorShape.SizeHorCursor
-    assert a._box_handle_cursor(edges["t"]) == Qt.CursorShape.SizeVerCursor
     assert a._box_handle_cursor(a._box_rot_rect().center()) == "rotate"
+    edge_local = dict(a._qc_dot_rects())["r"].center()
+    assert a._box_handle_cursor(edge_local) is None, "변 중점은 더 이상 아이템 자체 커서를 안 준다"
 
 
 def test_qc_dots_geometry():
@@ -3144,6 +3169,52 @@ def test_qc_dot_at_roundtrip():
         w.set_tool(tool); a.setSelected(True)
         hit = v._qc_dot_at(view_pos)
         assert hit is not None and hit[0] is a and hit[1] == "r", tool
+
+
+def _qc_drag(view, scene_from, scene_to):
+    """겸용 변 점(qc-dot) press→move→release 시뮬레이트(실제 QMouseEvent 경유)."""
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, scene_from, L, L))
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, scene_to, NB, L))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, scene_to, L, NB))
+
+
+def test_edge_point_drag_along_axis_resizes():
+    # [2026-07-30 변핸들+qc-dot 통합] 겸용 점을 그 변의 축 방향(r=가로)으로 드래그하면
+    # 복제·화살표 생성 없이 1축 리사이즈만 일어나야 한다(수직 성분 0 → along 우세).
+    w = CanvasWindow(); w.grid_enabled = False
+    v = w._view
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    n_before = len(w._scene.items())
+    rd_scene = a.mapToScene(dict(a._qc_dot_rects())["r"].center())
+    _qc_drag(v, rd_scene, QPointF(rd_scene.x() + 60, rd_scene.y()))
+
+    assert a.rect().width() > 150, a.rect()          # 실제로 넓어짐
+    assert abs(a.rect().height() - 60) < 1e-6, a.rect()   # 세로는 불변(1축 리사이즈)
+    assert len(w._scene.items()) == n_before          # 복제·화살표 생성 없음
+    w.undo()
+    assert abs(a.rect().width() - 100) < 1e-6, "undo로 원복돼야 함"
+
+
+def test_edge_point_drag_perpendicular_creates_connector():
+    # [2026-07-30 변핸들+qc-dot 통합] 같은 점을 그 변에 수직 방향(r인데 세로)으로 드래그하면
+    # 리사이즈 대신 기존 qc 드래그(커넥터만 생성)로 이어져야 한다.
+    w = CanvasWindow(); w.grid_enabled = False
+    v = w._view
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    rd_scene = a.mapToScene(dict(a._qc_dot_rects())["r"].center())
+    _qc_drag(v, rd_scene, QPointF(rd_scene.x(), rd_scene.y() + 80))
+
+    assert abs(a.rect().width() - 100) < 1e-6, "수직 드래그는 리사이즈가 아니어야 함"
+    arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
+    assert len(arrows) == 1, arrows
+    assert arrows[0]._bind_start is a
 
 
 def _cleft(o):
@@ -3483,20 +3554,31 @@ def test_rect_label_roundtrip():
 
 
 def test_shape_ports_pure():
-    # M1: 포트 = 변 중점 4개(N/E/S/W) + bbox 대각 꼭짓점 4개(NE/SE/SW/NW), 총 8개를 실제
-    # 외곽선에 투영(2026-07-29 8포트 확장). 네모=변 중점+실제 꼭짓점, 마름모=꼭짓점(N/E/S/W)+
-    # 4변 중점(대각 꼭짓점의 역전 투영).
+    # M1: 포트 = 변 중점 4개(N/E/S/W), 실제 외곽선에 투영. [2026-07-30 실사용 피드백으로
+    # 4점 축소 — bbox 대각 꼭짓점(NE/SE/SW/NW)은 discrete 포트 목록에서 제외했다(호버·선택 시
+    # 점이 너무 많다는 Lucid 대조 피드백). 대각 부착 자체는 연속 폴백(_nearest_border)이
+    # 여전히 지원 — test_diagonal_corner_still_snaps_via_continuous_fallback 참조.
     r = _RectItem(QRectF(0, 0, 100, 60))
     got = sorted((round(p.x()), round(p.y())) for p, _n in _shape_ports(r))
-    assert got == sorted([(50, 0), (100, 30), (50, 60), (0, 30),
-                          (0, 0), (100, 0), (100, 60), (0, 60)]), got
+    assert got == sorted([(50, 0), (100, 30), (50, 60), (0, 30)]), got
     # 법선은 바깥(중심 반대). 중심 (50,30).
     for p, n in _shape_ports(r):
         assert (p.x() - 50) * n.x() + (p.y() - 30) * n.y() >= -1e-6, (p, n)
     sym = _SymbolItem("decision", QRectF(200, 0, 100, 60))   # 마름모 꼭짓점 = N/E/S/W
     got2 = sorted((round(p.x()), round(p.y())) for p, _n in _shape_ports(sym))
-    assert got2 == sorted([(250, 0), (300, 30), (250, 60), (200, 30),
-                           (213, 22), (287, 22), (287, 38), (213, 38)]), got2
+    assert got2 == sorted([(250, 0), (300, 30), (250, 60), (200, 30)]), got2
+
+
+def test_diagonal_corner_still_snaps_via_continuous_fallback():
+    # [2026-07-30] discrete 포트 목록은 4개로 줄었지만, 대각 꼭짓점 근처로 드래그하면 여전히
+    # 연속 폴백(_border_snap_at Pass 2 → _nearest_border)이 그 꼭짓점에 스냅해야 한다
+    # (축 강제 법선도 그대로 — _axis_forced_local_normal이 _nearest_border 쪽에 있어 무관).
+    w = CanvasWindow(); w.show(); w.set_tool("arrow"); w._zoom_reset()
+    view = w._view
+    r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
+    snap = view._border_snap_at(view.mapFromScene(QPointF(0, 0)))   # NW 꼭짓점 정확히
+    assert snap is not None and _close(snap[0], QPointF(0, 0)), snap
+    assert _close(snap[1], QPointF(-1.0, 0.0)) or _close(snap[1], QPointF(0.0, -1.0)), snap[1]
 
 
 def test_diamond_cardinal_normals_are_axis_aligned():
@@ -4937,17 +5019,33 @@ def test_sarrow_no_reenter_when_conn_shapes_close():
     assert ride == 0, ("변 타기", ride, pts)
 
 
-def test_route_ortho_clean_path_unchanged():
-    # [M4-4 ⓐ 잔여] 무회귀 불변식 — 결함 없는 배치는 preferred 그대로이고, conn_rects를 넘기든
-    # 말든 결과가 같아야 한다(사다리·점수화가 깨끗한 경로엔 개입하지 않음).
-    from easycad.canvas.annotator_core import _route_ortho, _ortho_elbow
+def test_route_ortho_clean_path_stub_then_elbow():
+    # [M4-4 ⓐ 잔여 → 2026-07-30 stub-out 수정] 결함 없는 배치도 이제 항상 법선 스텁을 먼저
+    # 낸다(변 타기 방지 — 실사용 피드백 2026-07-30). 이 테스트가 지키는 불변식은 '사다리·A*가
+    # 깨끗한 경로에 개입하지 않는다'는 원래 취지 그대로다 — 결과는 raw _ortho_elbow이 아니라
+    # '스텁 → 그 스텁점 사이 엘보'와 정확히 같아야 하고(추가 우회 없음), conn_rects 유무로는
+    # 스텁 거리만 달라진다(own-rect 팽창 이스케이프 vs flat clearance).
+    from easycad.canvas.annotator_core import (
+        _route_ortho, _ortho_elbow, _normal_stub, _CONN_CLEAR_MULT)
     s, e = QPointF(100, 30), QPointF(300, 30)     # E → W, 마주보고 같은 높이
     ns, ne = QPointF(1, 0), QPointF(-1, 0)
-    pref = _ortho_elbow(s, e, ns, ne)
-    plain = _route_ortho(s, e, ns, ne, [], 12.0)
-    with_conn = _route_ortho(s, e, ns, ne, [], 12.0,
-                             conn_rects=(QRectF(0, 0, 100, 60), QRectF(300, 0, 100, 60)))
-    assert plain == pref and with_conn == pref, (plain, with_conn, pref)
+    clearance = 12.0
+
+    plain = _route_ortho(s, e, ns, ne, [], clearance)
+    s_stub = _normal_stub(s, ns, clearance)
+    e_stub = _normal_stub(e, ne, clearance)
+    expect_plain = [s_stub] + _ortho_elbow(s_stub, e_stub, ns, ne) + [e_stub]
+    assert plain == expect_plain, (plain, expect_plain)
+
+    conn_clear = clearance * _CONN_CLEAR_MULT
+    A, B = QRectF(0, 0, 100, 60), QRectF(300, 0, 100, 60)
+    with_conn = _route_ortho(s, e, ns, ne, [], clearance, conn_rects=(A, B))
+    A_infl = A.adjusted(-conn_clear, -conn_clear, conn_clear, conn_clear)
+    B_infl = B.adjusted(-conn_clear, -conn_clear, conn_clear, conn_clear)
+    s_stub2 = _normal_stub(s, ns, conn_clear, A_infl)
+    e_stub2 = _normal_stub(e, ne, conn_clear, B_infl)
+    expect_conn = [s_stub2] + _ortho_elbow(s_stub2, e_stub2, ns, ne) + [e_stub2]
+    assert with_conn == expect_conn, (with_conn, expect_conn)
 
 
 def test_route_ortho_ride_exemption_is_per_owner():
