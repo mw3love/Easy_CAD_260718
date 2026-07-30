@@ -2111,20 +2111,27 @@ class _TitleBlockItem(QGraphicsRectItem):
 # 셀 텍스트는 2차원 리스트(_cells[r][c]). 셀 편집은 뷰가 인라인 QLineEdit(_CellEditor)로 처리.
 # 첫 행 헤더(_header=True면 굵게+옅은 배경). DXF 제외(isinstance 체인 밖), .ecad 직렬화.
 class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
-    """NxM 균등 격자 표. rect 기반 — _ImageItem과 동일한 자유 리사이즈(꼭짓점 2D·변 1축)를 상속.
-    종횡비 고정은 하지 않는다(표는 임의 비율) — 기본 _constrain_box_rect(무변형)를 그대로 쓴다."""
+    """NxM 표. rect 기반 — _ImageItem과 동일한 자유 리사이즈(꼭짓점 2D·변 1축)를 상속.
+    종횡비 고정은 하지 않는다(표는 임의 비율) — 기본 _constrain_box_rect(무변형)를 그대로 쓴다.
+    행은 균등 높이, 열은 개별 폭 조절 가능(_col_widths — 표 전체폭 대비 비율, deep-interview
+    2026-07-31: 행은 스코프 밖·표 전체폭 고정한 채 인접 열끼리 폭 교환·Excel/Word 관례)."""
 
     _LINE = QColor("#333333")
     _INK = QColor("#111111")
     _HEADER_FILL = QColor("#EEEEEE")
+    _MIN_COL_W = 10.0    # 월드 단위 — 드래그로 열이 이보다 좁아지지 않음(기본 셀폭 40의 1/4)
+    _COL_HIT_PX = 8.0    # 화면 px — 열 경계선 드래그 히트폭(_EDGE_HIT_MIN과 동일 관례)
 
     def __init__(self, rows: int, cols: int, rect: QRectF,
-                 cells: list | None = None, header: bool = True):
+                 cells: list | None = None, header: bool = True,
+                 col_widths: list | None = None):
         super().__init__(rect)
         self._rows = max(1, int(rows))
         self._cols = max(1, int(cols))
         self._header = bool(header)
         self._cells = self._norm_cells(cells)
+        self._col_widths = self._norm_col_widths(col_widths)
+        self._col_drag = None   # 드래그 중인 열 경계 인덱스(0..cols-2), None=드래그 아님
         self.setPen(QPen(Qt.PenStyle.NoPen))     # 격자·외곽은 paint가 직접 그림
         self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         self._init_resize()
@@ -2139,6 +2146,15 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
                     grid[r][c] = "" if row[c] is None else str(row[c])
         return grid
 
+    def _norm_col_widths(self, col_widths) -> list:
+        """[열폭 드래그] 열별 폭 비율(합=1.0)로 정규화 — 없거나 개수가 안 맞으면 균등폭."""
+        if col_widths and len(col_widths) == self._cols:
+            raw = [max(0.01, float(w)) for w in col_widths]
+            total = sum(raw)
+            if total > 0:
+                return [w / total for w in raw]
+        return [1.0 / self._cols] * self._cols
+
     # ---- 셀 접근(뷰 인라인 편집이 사용) --------------------------------------
     def dims(self) -> tuple[int, int]:
         return self._rows, self._cols
@@ -2152,36 +2168,108 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
             self.update()
 
     # ---- 셀 기하(로컬좌표) --------------------------------------------------
+    def _col_edges_local(self) -> list:
+        """[열폭 드래그] 열 경계선의 로컬 x좌표 목록(길이 cols+1) — _col_widths 비율을 표
+        폭에 적용한 누적합. 마지막은 부동소수 오차 방지로 box.right()에 고정."""
+        box = self.rect()
+        edges = [box.left()]
+        x = box.left()
+        for w in self._col_widths:
+            x += w * box.width()
+            edges.append(x)
+        edges[-1] = box.right()
+        return edges
+
     def cell_rect(self, r: int, c: int) -> QRectF:
         box = self.rect()
-        cw = box.width() / self._cols
+        edges = self._col_edges_local()
         ch = box.height() / self._rows
-        return QRectF(box.left() + c * cw, box.top() + r * ch, cw, ch)
+        return QRectF(edges[c], box.top() + r * ch, edges[c + 1] - edges[c], ch)
 
     def cell_at(self, local: QPointF):
         """로컬좌표 local이 속한 (r, c) — 격자 밖이면 None."""
         box = self.rect()
         if not box.contains(local):
             return None
-        cw = box.width() / self._cols
         ch = box.height() / self._rows
-        if cw <= 0 or ch <= 0:
+        if ch <= 0:
             return None
-        c = min(max(int((local.x() - box.left()) / cw), 0), self._cols - 1)
+        edges = self._col_edges_local()
+        c = self._cols - 1
+        for i in range(self._cols):
+            if local.x() < edges[i + 1]:
+                c = i
+                break
         r = min(max(int((local.y() - box.top()) / ch), 0), self._rows - 1)
         return (r, c)
 
+    # ---- [열폭 드래그] 내부 경계선 잡기·이동(2026-07-31) ---------------------
+    # 표 전체폭은 고정한 채 인접 열끼리 폭을 주고받는다(Excel/Word 관례) — 전체 크기 조절은
+    # 기존 _HandleResizeMixin 박스 리사이즈 핸들이 담당해 역할이 겹치지 않는다. 행 높이는
+    # 계속 균등(스코프 밖). 드래그는 뷰가 begin/drag/end 3단계로 진행(세그먼트 드래그와 동일 관례).
+    def _col_boundary_at(self, local: QPointF):
+        """local(로컬좌표) 근처에 내부 열 경계선이 있으면 그 인덱스(0..cols-2), 없으면 None.
+        선택된 표에서만 호출(뷰가 selectedItems()만 순회 — 박스 핸들과 동일 관례)."""
+        box = self.rect()
+        if self._cols < 2 or local.y() < box.top() or local.y() > box.bottom():
+            return None
+        tol = self._COL_HIT_PX / self._scale_or_1()
+        edges = self._col_edges_local()
+        best = None
+        for i in range(1, self._cols):
+            d = abs(local.x() - edges[i])
+            if d <= tol and (best is None or d < best[1]):
+                best = (i - 1, d)
+        return best[0] if best else None
+
+    def _begin_col_drag(self, boundary_idx: int):
+        self._col_drag = boundary_idx
+
+    def _drag_col_boundary_to(self, local_x: float):
+        """경계를 local_x로 이동 — 최소폭(_MIN_COL_W) 이하로는 안 좁아짐."""
+        idx = self._col_drag
+        if idx is None:
+            return
+        box = self.rect()
+        if box.width() <= 0:
+            return
+        edges = self._col_edges_local()
+        left_edge, right_edge = edges[idx], edges[idx + 2]
+        span = right_edge - left_edge
+        if span <= 0:
+            return
+        min_w = min(self._MIN_COL_W, span / 2.0)
+        new_edge = min(max(local_x, left_edge + min_w), right_edge - min_w)
+        self._col_widths[idx] = (new_edge - left_edge) / box.width()
+        self._col_widths[idx + 1] = (right_edge - new_edge) / box.width()
+        self.update()
+
+    def _end_col_drag(self):
+        self._col_drag = None
+
     def clone(self):
         c = _TableItem(self._rows, self._cols, QRectF(self.rect()),
-                       [row[:] for row in self._cells], self._header)
+                       [row[:] for row in self._cells], self._header,
+                       list(self._col_widths))
         return self._copy_common_to(c)
 
     def _content_rect(self) -> QRectF:
         return QRectF(self.rect())
 
+    # [열폭 드래그] geom undo에 col_widths도 함께 실어야 되돌리기가 폭까지 복원한다
+    # (_RectGeometryMixin 기본은 rect()만 담아 여기서 override).
+    def _capture_geom_local(self):
+        return (QRectF(self.rect()), list(self._col_widths))
+
+    def _apply_geom_local(self, g):
+        rect, widths = g
+        self.setRect(rect)
+        if len(widths) == self._cols:
+            self._col_widths = list(widths)
+
     def paint(self, painter, option, widget=None):
         box = self.rect()
-        cw = box.width() / self._cols
+        edges = self._col_edges_local()
         ch = box.height() / self._rows
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -2192,13 +2280,14 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
             painter.setBrush(QBrush(self._HEADER_FILL))
             painter.drawRect(QRectF(box.left(), box.top(), box.width(), ch))
             painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        # 셀 텍스트(폰트 크기는 셀 치수에 맞춰 축소)
-        fs = max(2.0, min(ch * 0.5, cw * 0.30))
+        # 셀 텍스트(폰트 크기는 셀 치수에 맞춰 축소 — 열마다 폭이 다를 수 있어 열별로 계산)
         for r in range(self._rows):
             for c in range(self._cols):
                 txt = self._cells[r][c]
                 if not txt:
                     continue
+                cw = edges[c + 1] - edges[c]
+                fs = max(2.0, min(ch * 0.5, cw * 0.30))
                 _font_px(painter, fs, bold=(self._header and r == 0))
                 painter.setPen(QPen(self._INK))
                 painter.drawText(
@@ -2206,8 +2295,7 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
                     int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap), txt)
         # 내부 격자선
         painter.setPen(QPen(self._LINE, 0.5))
-        for i in range(1, self._cols):
-            x = box.left() + i * cw
+        for x in edges[1:-1]:
             painter.drawLine(QPointF(x, box.top()), QPointF(x, box.bottom()))
         for j in range(1, self._rows):
             y = box.top() + j * ch
@@ -5448,6 +5536,10 @@ class _AnnotatorView(QGraphicsView):
         self._seg_add = None
         self._seg_drag = None   # [M4-4] 세그먼트 드래그 중인 sarrow(변 수직 이동)
         self._seg_undo = None
+        # [열폭 드래그 2026-07-31] 선택된 표의 내부 열 경계선 hover/드래그 상태.
+        self._table_col_add = None   # (item, boundary_idx) or None
+        self._table_col_drag = None  # 드래그 중인 _TableItem or None
+        self._table_col_undo = None
         # [우리 확장] 다중선택 그룹 변형(회전·스케일) — 2개 이상 선택 시 공통 bbox+핸들.
         self._group = _GroupTransform(self)
         self._group_dragging = False
@@ -5782,6 +5874,18 @@ class _AnnotatorView(QGraphicsView):
             if px <= 10.0 and (best is None or px < best[0]):
                 best = (px, it, seg[0], it.mapToScene(seg[1]))
         return None if best is None else (best[1], best[2], best[3])
+
+    def _table_col_boundary_at(self, view_pos):
+        """[열폭 드래그 2026-07-31] 커서가 선택된 표의 내부 열 경계선 근처면
+        (item, boundary_idx), 아니면 None. 박스 핸들과 동일하게 선택된 아이템만 순회."""
+        scene_pt = self.mapToScene(view_pos)
+        for it in self.scene().selectedItems():
+            if not isinstance(it, _TableItem):
+                continue
+            idx = it._col_boundary_at(it.mapFromScene(scene_pt))
+            if idx is not None:
+                return (it, idx)
+        return None
 
     # ---- [우리 확장] 방향 감지 러버밴드 (AutoCAD window/crossing) -----------
     def _rb_is_window(self) -> bool:
@@ -6288,6 +6392,7 @@ class _AnnotatorView(QGraphicsView):
             self._snap_preview = None
             self._seg_add = None
             self._hp_hover = None
+            self._table_col_add = None
             self.viewport().update()
         super().leaveEvent(event)
 
@@ -6536,6 +6641,16 @@ class _AnnotatorView(QGraphicsView):
             self._seg_undo = [(item, item.capture_geom())]   # 드래그 전 스냅샷(undo)
             item._begin_segment_drag(seg_idx)
             self._seg_drag = item
+            self.viewport().update()
+            return
+        # [열폭 드래그 2026-07-31] 선택된 표의 내부 열 경계선 press = 그 경계를 잡아 좌우로
+        # 이동(양옆 열끼리 폭 교환, 표 전체폭은 불변).
+        if self._table_col_add is not None and event.button() == Qt.MouseButton.LeftButton:
+            item, idx = self._table_col_add
+            self._table_col_add = None
+            self._table_col_undo = [(item, item.capture_geom())]   # 드래그 전 스냅샷(undo)
+            item._begin_col_drag(idx)
+            self._table_col_drag = item
             self.viewport().update()
             return
         # [우리 확장] 다중선택 그룹 변형 핸들(회전·스케일) press — 선택/이동보다 우선.
@@ -7123,6 +7238,9 @@ class _AnnotatorView(QGraphicsView):
         if box_h is not None:                                # [2c] 네모·원 박스 핸들
             vp.setCursor(_rotate_cursor() if box_h == "rotate" else box_h)
             return
+        if self._table_col_add is not None:   # [열폭 드래그] 표 내부 경계선 위 — 좌우 리사이즈 커서
+            vp.setCursor(Qt.CursorShape.SplitHCursor)
+            return
         if tool == "select" and self._hover_port_at(view_pos) is not None:
             # [실사용 피드백 2026-07-30] 미선택 도형의 포트 위 — 예전엔 아래 '주석 위=이동' 분기로
             # 떨어져 SizeAllCursor(이동 커서)로 보였다. 여기서 드래그는 이동이 아니라 커넥터 생성
@@ -7181,6 +7299,12 @@ class _AnnotatorView(QGraphicsView):
             return
         if self._seg_drag is not None:  # [M4-4] 세그먼트 드래그 — 변을 커서 위치로 수직 이동
             self._seg_drag._drag_segment_to(self.mapToScene(event.position().toPoint()))
+            self.viewport().update()
+            return
+        if self._table_col_drag is not None:  # [열폭 드래그] 경계를 커서 x로 이동
+            item = self._table_col_drag
+            local = item.mapFromScene(self.mapToScene(event.position().toPoint()))
+            item._drag_col_boundary_to(local.x())
             self.viewport().update()
             return
         if self._rb_active:  # [우리 확장] 방향 감지 러버밴드 — 드래그 중엔 저비용 미리보기만
@@ -7270,6 +7394,11 @@ class _AnnotatorView(QGraphicsView):
                     prev is not None and self._seg_add is not None
                     and prev[2] != self._seg_add[2]):
                 self.viewport().update()   # waypoint 예고 마커 갱신
+            # [열폭 드래그] 표 내부 경계선 hover 갱신.
+            prev_col = self._table_col_add
+            self._table_col_add = self._table_col_boundary_at(event.position().toPoint())
+            if (prev_col is None) != (self._table_col_add is None):
+                self.viewport().update()
             # [2d] 빠른 생성 도트 hover — 고스트 미리보기 갱신.
             prev_qc = self._qc_hover
             self._qc_hover = self._qc_dot_at(event.position().toPoint())
@@ -7365,6 +7494,15 @@ class _AnnotatorView(QGraphicsView):
             if self._seg_undo:
                 self._owner.push_undo_geom(self._seg_undo)
             self._seg_undo = None
+            self.viewport().update()
+            return
+        if self._table_col_drag is not None:  # [열폭 드래그] 종료 — undo 커밋
+            item = self._table_col_drag
+            self._table_col_drag = None
+            item._end_col_drag()
+            if self._table_col_undo:
+                self._owner.push_undo_geom(self._table_col_undo)
+            self._table_col_undo = None
             self.viewport().update()
             return
         if self._rb_active:  # [우리 확장] 러버밴드 종료 — 드래그 중엔 미리보기만이라 여기서

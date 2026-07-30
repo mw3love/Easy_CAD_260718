@@ -146,7 +146,8 @@ def item_to_dict(it) -> dict | None:
         r = it.rect()
         d.update(type="table", rows=it._rows, cols=it._cols, header=it._header,
                  rect=[r.x(), r.y(), r.width(), r.height()],
-                 cells=[row[:] for row in it._cells])
+                 cells=[row[:] for row in it._cells],
+                 col_widths=list(it._col_widths))
     elif isinstance(it, _ImageItem):
         r = it.rect()
         d.update(type="image", rect=[r.x(), r.y(), r.width(), r.height()],
@@ -233,7 +234,7 @@ def dict_to_item(d: dict):
                              d.get("fields"))
     elif t == "table":
         it = _TableItem(d.get("rows", 1), d.get("cols", 1), QRectF(*d["rect"]),
-                        d.get("cells"), d.get("header", True))
+                        d.get("cells"), d.get("header", True), d.get("col_widths"))
     elif t == "image":
         it = _ImageItem(_b64_to_pixmap(d["data"]), QRectF(*d["rect"]))
     elif t == "arrow":

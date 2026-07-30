@@ -164,6 +164,25 @@ tests/test_easycad.py       offscreen 회귀 스위트 (python tests/test_easyca
       크기 일정)로 전환. 스모크 287종 전체 통과(회귀 없음), 자체 스크린샷+사용자 실화면으로
       6건 전부 확인.
 
+**표 개별 열폭 드래그 완료(2026-07-31, 프록시검증 — 격리 테스트 11종 통과 + 자체 스크린샷,
+실조건 대기)** — `docs/EasyCAD_계획.md` §8 순서 6번. deep-interview로 확정: 행 높이는 계속
+균등(스코프 밖), 열 경계선 드래그는 **표 전체폭 고정한 채 인접 열끼리 폭을 주고받는**
+Excel/Word 관례(전체 크기 조절은 기존 `_HandleResizeMixin` 박스 리사이즈 핸들이 역할 분담),
+드래그 중 라이브 미리보기. 구현: `_TableItem._col_widths`(열별 폭 비율 리스트, 합=1.0 —
+표 폭에 곱해 `_col_edges_local()`로 경계 좌표 계산, `cell_rect`/`cell_at`/`paint`가 균등폭
+가정을 이 함수로 교체) + 뷰의 hover/press/drag/release 3단계(`_table_col_boundary_at`·
+`_begin_col_drag`·`_drag_col_boundary_to`·`_end_col_drag`, M4-4 세그먼트 드래그와 동일 관례) +
+`SplitHCursor`. 박스 리사이즈(전체 크기)는 손대지 않아도 열 비율이 자동으로 유지된다(경계
+좌표가 매번 `box.width()`에서 다시 계산되므로). 최소 열폭(`_MIN_COL_W`=10 월드단위) 클램프.
+`.ecad`에 `col_widths` 직렬화(하위호환 — 없거나 개수가 안 맞으면 균등폭으로 안전 로드),
+undo는 `_capture_geom_local`/`_apply_geom_local`을 override해 rect와 함께 묶어 복원(표 전체
+리사이즈 undo에도 자연히 포함). 스모크 11종 신규(총 316) + 자체 스크린샷으로 비균등 폭 렌더
+확인(헤더 배경·격자선·셀별 폰트 축소가 열마다 다른 폭을 정확히 반영). Not-tested: 실제 마우스
+드래그 감각(`python run.py` 몫). ⚠ 이 세션에서 전체 스모크 스위트가 `test_duplicate_offset`
+부근(약 62번째 테스트, 정렬순서 기준)에서 세그폴트로 완주 실패하는 것을 발견 — **이번 변경과
+무관**(수정 전 `master`에서도 동일하게 재현 확인, git bash·PowerShell 둘 다 같은 지점에서
+발생). 원인 미조사(범위 밖) — 표 관련 11종은 격리 실행으로 개별 통과 확인.
+
 ## 다음 할 일 (우선순위)
 > 1·2·3번은 완료됨(2026-07-20 코드 대조로 문서 갱신). 남은 것은 4번 일부와 Phase 3 이후.
 1. ~~좌/우 드래그 선택~~ — **완료**(`d4be731`, window/crossing).

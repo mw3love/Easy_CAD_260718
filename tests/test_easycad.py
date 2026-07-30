@@ -4444,6 +4444,96 @@ def test_table_pdf_export():
     assert os.path.getsize(out) > 0
 
 
+def test_table_col_boundary_at_and_drag():
+    # [열폭 드래그 2026-07-31] 경계 hover 판정 + 드래그로 폭 교환(표 전체폭 불변) + 최소폭 클램프.
+    t = _TableItem(2, 3, QRectF(0, 0, 120, 40))   # 열폭 40균등, 내부 경계 x=40, x=80
+    assert t._col_boundary_at(QPointF(40, 20)) == 0
+    assert t._col_boundary_at(QPointF(80, 20)) == 1
+    assert t._col_boundary_at(QPointF(60, 20)) is None       # 경계가 아닌 곳
+    assert t._col_boundary_at(QPointF(40, -5)) is None       # 세로 범위 밖
+
+    t._begin_col_drag(0)
+    t._drag_col_boundary_to(60.0)                 # 경계0을 x=60으로 이동
+    t._end_col_drag()
+    edges = t._col_edges_local()
+    assert abs(edges[1] - 60.0) < 1e-6
+    assert abs(edges[0]) < 1e-6 and abs(edges[-1] - 120.0) < 1e-6   # 표 전체폭 불변
+    assert abs(edges[2] - 80.0) < 1e-6            # 건드리지 않은 경계는 그대로
+
+    # 최소폭 클램프 — 화면 밖으로 끌어도 _MIN_COL_W 이하로는 안 좁아짐
+    t._begin_col_drag(0)
+    t._drag_col_boundary_to(-500.0)
+    t._end_col_drag()
+    edges2 = t._col_edges_local()
+    assert abs(edges2[1] - t._MIN_COL_W) < 1e-6
+
+
+def test_table_col_widths_roundtrip():
+    # 비균등 열폭이 .ecad 저장/로드에 보존되고, 옛 파일(col_widths 없음)은 균등폭으로 안전 로드.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from easycad.fileio.document import dict_to_item
+    w = CanvasWindow()
+    t = _TableItem(2, 3, QRectF(0, 0, 120, 40))
+    t._col_widths = [0.5, 0.3, 0.2]
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(t)
+    path = os.path.join(_TMP, "table_colw.ecad")
+    save_document(w._scene, path)
+    sc2 = QGraphicsScene()
+    assert load_document(sc2, path) == 1
+    got = [it for it in sc2.items() if isinstance(it, _TableItem)][0]
+    assert [round(x, 6) for x in got._col_widths] == [0.5, 0.3, 0.2]
+
+    d = item_to_dict(t); d.pop("col_widths")           # 옛 파일 흉내
+    old_item = dict_to_item(d)
+    assert all(abs(x - 1.0 / 3) < 1e-6 for x in old_item._col_widths)
+
+
+def test_table_clone_col_widths():
+    # 복제 시 열폭도 독립 복사(원본과 분리)되어야 함.
+    t = _TableItem(2, 2, QRectF(0, 0, 80, 40))
+    t._col_widths = [0.7, 0.3]
+    c = t.clone()
+    assert [round(x, 6) for x in c._col_widths] == [0.7, 0.3]
+    c._col_widths[0] = 0.9
+    assert t._col_widths[0] == 0.7
+
+
+def test_table_col_drag_view_integration():
+    # [열폭 드래그] hover 감지 → press·drag로 열폭 변경, 마우스 놓으면 undo 스냅샷 커밋.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    t = _TableItem(2, 3, QRectF(0, 0, 120, 40))   # 경계 x=40, 80
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(t); t.setSelected(True)
+    view = w._view
+
+    vp = view.mapFromScene(QPointF(40, 20))       # 경계0 hover
+    hit = view._table_col_boundary_at(vp)
+    assert hit is not None and hit[0] is t and hit[1] == 0
+
+    view._table_col_add = hit
+    view.mousePressEvent(QMouseEvent(
+        QEvent.Type.MouseButtonPress, QPointF(vp), QPointF(vp),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    assert view._table_col_drag is t
+    tgt = view.mapFromScene(QPointF(60, 20))      # 경계를 x=60으로 끌기
+    view.mouseMoveEvent(QMouseEvent(
+        QEvent.Type.MouseMove, QPointF(tgt), QPointF(tgt),
+        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    view.mouseReleaseEvent(QMouseEvent(
+        QEvent.Type.MouseButtonRelease, QPointF(tgt), QPointF(tgt),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+    assert view._table_col_drag is None
+    edges = t._col_edges_local()
+    assert abs(edges[1] - 60.0) < 1.0
+    assert abs(edges[-1] - 120.0) < 1e-6          # 표 전체폭 불변
+
+    w.undo()                                       # undo → 원래 균등폭 복원
+    assert abs(t._col_edges_local()[1] - 40.0) < 1e-6
+
+
 def test_symbol_label_optical_center():
     # 원기둥은 윗 타원을 피해 라벨을 rect 중심보다 아래(광학중심)로, 문서는 아래 물결을 피해
     # 살짝 위로. 상하 대칭 kind(마름모·스타디움 등)는 rect 중심 그대로.
