@@ -4449,6 +4449,33 @@ def _symbol_nearest(item, p):
     return best_q, QPointF(nx / L, ny / L)
 
 
+def _path_nearest(item, p):
+    """[외부 DXF 폴백/펜 도형] 임의 QPainterPath(_PathItem, item.rect() 없음)의 외곽선에서
+    점 p(로컬) 최근접점 + 바깥 단위 법선(로컬). _symbol_nearest와 동일한 폴리곤 평탄화
+    방식이나 기준 중심은 item.rect() 대신 path.boundingRect() 중심을 쓴다(임의 외곽선이라
+    변형된 사각형 개념이 없음)."""
+    path = item.path()
+    c = path.boundingRect().center()
+    best_q = None
+    best_seg = None
+    best_d = float("inf")
+    for poly in path.toSubpathPolygons():
+        for i in range(poly.count() - 1):
+            a, b = poly.at(i), poly.at(i + 1)
+            q = _seg_nearest(a, b, p)
+            d = (q.x() - p.x()) ** 2 + (q.y() - p.y()) ** 2
+            if d < best_d:
+                best_d, best_q, best_seg = d, q, (a, b)
+    if best_q is None:                       # 방어(빈 경로)
+        return p, QPointF(0.0, -1.0)
+    a, b = best_seg
+    nx, ny = -(b.y() - a.y()), (b.x() - a.x())   # 변에 수직
+    if (best_q.x() - c.x()) * nx + (best_q.y() - c.y()) * ny < 0:
+        nx, ny = -nx, -ny                        # 중심 반대(바깥)로 정렬
+    L = math.hypot(nx, ny) or 1.0
+    return best_q, QPointF(nx / L, ny / L)
+
+
 _CARDINAL_LOCAL_DIRS = (QPointF(0.0, -1.0), QPointF(1.0, 0.0), QPointF(0.0, 1.0), QPointF(-1.0, 0.0))
 
 
@@ -4490,19 +4517,25 @@ def _axis_forced_local_normal(item, local_pt: QPointF, raw_n: QPointF) -> QPoint
 
 
 def _nearest_border(item, scene_pt):
-    """네모/원/심볼 테두리에서 scene_pt 최근접점 → (snap_scene, outward_unit_scene).
-    회전·스케일은 아이템 변환으로 왕복 환산(바깥 법선도 씬 방향으로 변환).
+    """네모/원/심볼/(외부 DXF 폴백·펜)경로 테두리에서 scene_pt 최근접점 → (snap_scene,
+    outward_unit_scene). 회전·스케일은 아이템 변환으로 왕복 환산(바깥 법선도 씬 방향으로 변환).
     [실사용 버그 수정 2026-07-29] N/E/S/W·사각형 대각 꼭짓점은 _axis_forced_local_normal로
-    법선 방향만 보정(위치는 그대로) — 상세 이유는 그 함수 docstring 참조."""
+    법선 방향만 보정(위치는 그대로) — 상세 이유는 그 함수 docstring 참조.
+    [외부 도형 스냅 확장] _PathItem은 item.rect()가 없어(임의 QPainterPath) _axis_forced_local_
+    normal(내부에서 item.rect() 호출)을 건너뛴다 — discrete 포트가 없는 도형이라 축 보정 대상도
+    아니다(_shape_ports가 _PathItem을 다루지 않음, 연속 폴백에서만 쓰임)."""
     p = item.mapFromScene(scene_pt)
-    r = item.rect()
     if isinstance(item, _EllipseItem):
-        q, n = _ellipse_nearest(r, p)
+        q, n = _ellipse_nearest(item.rect(), p)
+        n = _axis_forced_local_normal(item, q, n)
     elif isinstance(item, _SymbolItem):
         q, n = _symbol_nearest(item, p)
+        n = _axis_forced_local_normal(item, q, n)
+    elif isinstance(item, _PathItem):
+        q, n = _path_nearest(item, p)
     else:
-        q, n = _rect_nearest(r, p)
-    n = _axis_forced_local_normal(item, q, n)
+        q, n = _rect_nearest(item.rect(), p)
+        n = _axis_forced_local_normal(item, q, n)
     sp = item.mapToScene(q)
     nd = item.mapToScene(QPointF(q.x() + n.x(), q.y() + n.y())) - sp
     L = math.hypot(nd.x(), nd.y()) or 1.0
@@ -5941,6 +5974,11 @@ class _AnnotatorView(QGraphicsView):
         return [it for it in self.scene().items()
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
 
+    def _conn_paths(self):
+        """[외부 DXF 폴백/펜] _PathItem — 연속 폴백(Pass 2)만 지원, 이산 포트는 없음(임의
+        외곽선이라 N/E/S/W 개념이 불분명 — 계획서 §8 항목 5 확정). 지속연결 바인딩은 지원."""
+        return [it for it in self.scene().items() if isinstance(it, _PathItem)]
+
     def _conn_lines(self, exclude=None):
         """[M4-2b] 스냅 대상 선·화살표 — 그리기 중(_temp)·클릭배치 중(_place)·exclude는 제외해
         자기 자신에 스냅하지 않게 한다(자기 preview 정점에 붙어 조기 마무리되던 문제)."""
@@ -5990,6 +6028,11 @@ class _AnnotatorView(QGraphicsView):
             d = self._view_dist(sp, view_pos)
             if d <= bestd:
                 bestd, best, bexit, bshape = d, sp, n, sh
+        for pit in self._conn_paths():
+            sp, n = _nearest_border(pit, scene_pt)
+            d = self._view_dist(sp, view_pos)
+            if d <= bestd:
+                bestd, best, bexit, bshape = d, sp, n, pit
         for cl in lines:
             q, qn = _nearest_on_polyline(_conn_polyline_scene(cl), scene_pt)
             if q is None:

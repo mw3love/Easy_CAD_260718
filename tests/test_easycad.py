@@ -937,6 +937,34 @@ def test_snap_to_line_and_arrow_endpoints():
     assert snr is not None and snr[2] is r
 
 
+def test_snap_to_external_path_item():
+    # [계획서 §8 항목5] 외부 DXF 폴백 도형(_PathItem, item.rect() 없음)도 화살표 스냅+지속연결
+    # 대상이어야 한다 — 기존엔 _conn_shapes()가 rect/ellipse/symbol만 인식해 안 잡혔음.
+    w = CanvasWindow(); v = w._view
+    pp = QPainterPath(QPointF(500, 500))
+    pp.lineTo(600, 500); pp.lineTo(600, 600); pp.lineTo(500, 600); pp.closeSubpath()
+    pit = _PathItem(pp); pit.setPen(w.make_pen())
+    pit.setFlags(pit.GraphicsItemFlag.ItemIsSelectable | pit.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(pit)
+    # 변 (550,500) 근처 → 그 변으로 연속 폴백 스냅 + 바인딩(shape=pit)
+    snap = v._border_snap_at(v.mapFromScene(QPointF(550, 502)))
+    assert snap is not None and snap[2] is pit
+    assert abs(snap[0].x() - 550) < 2 and abs(snap[0].y() - 500) < 2
+    assert abs(snap[1].y() - (-1.0)) < 1e-6   # 위쪽 변 → 바깥 법선 위(-y)
+
+    # 바인딩된 화살표가 도형 이동에 추종(reroute가 _nearest_border(_PathItem)를 재호출)
+    arrow = _PolyArrowItem(QColor("black"), 2, True)
+    arrow.set_points(QPointF(500, 300), QPointF(550, 500))
+    w._scene.addItem(arrow)
+    arrow.set_bound(1, pit, pit.mapFromScene(QPointF(550, 500)))
+    arrow.reroute()
+    before = arrow.mapToScene(arrow._pts[-1])
+    pit.moveBy(20, 0)
+    arrow.reroute()
+    after = arrow.mapToScene(arrow._pts[-1])
+    assert abs(after.x() - before.x() - 20) < 1e-6 and abs(after.y() - before.y()) < 1e-6
+
+
 def test_floating_toolbar_edits_and_visibility():
     # [M3 #15] 플로팅 툴바 — 선택 유무로 표시 토글, 편집이 기존 undo 경로를 탄다.
     w = CanvasWindow()
