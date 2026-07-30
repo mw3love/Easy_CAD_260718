@@ -405,10 +405,13 @@ def _view_zoom_factor(item) -> float:
 class _HandleResizeMixin:
     # 핸들(스케일 사각·회전 원·끝점 사각) 크기는 도형 획 두께와 무관하게 고정이다(2026-07-30
     # 사용자 피드백 — 하한/상한 두 값을 두느니 고정값 하나로 통일). 1차로 16, 2차로 10(스냅
-    # 마커 _draw_snap_marker 지름)을 썼으나 재피드백(2026-07-30 재수정)으로 여전히 크다는
-    # 지적 — 실제 기준은 미선택 도형 hover 시 뜨는 포트 예고점(_draw_port_dots, 반지름 3.5→
-    # 지름 7)이었다. 어느 핸들이 잡히는지는 hover 강조(흰 채움 반전, 아래 _hover_handle)로 알려준다.
-    _HANDLE_PX = 7.0    # 씬 단위 — 모든 핸들 공통 고정 크기(포트 예고점 지름과 동일)
+    # 마커 _draw_snap_marker 지름), 3차로 7(포트 예고점 _draw_port_dots 지름)을 썼으나 재피드백
+    # (2026-07-30 3차 재수정)으로 기준을 다시 뒤집었다 — "선택/비선택 둘 다"의 기본 크기를
+    # _draw_snap_marker(포트 하나에 정확히 호버했을 때 뜨는 그 강조점, 지름 10)로 맞추고,
+    # _draw_port_dots(주변 포트 전체 예고, 이제 이것과 지름 통일)를 3.5→5.0으로 함께 올렸다.
+    # 어느 핸들이 잡히는지는 hover 강조(흰 채움 반전, 아래 _hover_handle)로 알려준다 — 크기를
+    # 더 키우지 않는다(호버로 커지는 게 아니라 애초에 그 크기가 기본값).
+    _HANDLE_PX = 10.0   # 씬 단위 — 모든 핸들 공통 고정 크기(_draw_snap_marker 지름과 동일)
     _EDGE_HIT_MIN = 8.0  # 속 빈 도형 테두리 클릭 최소 히트폭(씬 단위) — 얇은 선도 잡히게
 
     # [편의기능] 잠금·그룹 — 클래스 기본값(인스턴스는 host의 토글/그룹 메서드가 설정).
@@ -5072,6 +5075,15 @@ _QC_SIDE_NORMAL = {  # 각 변의 바깥 단위 법선(scene) — 직각 엘보 
 }
 
 
+def _far_enough_for_self_loop(p: QPointF, q: QPointF, eps: float = 1.0) -> bool:
+    """[자기자신 연결 버그 수정 2026-07-30] 커넥터 시작점과 스냅된 종착점이 사실상 같은 점이면
+    False(드래그 시작 직후 같은 포트로 도로 스냅되는 퇴화 0-길이 케이스 — 기존 'snap 도형이
+    src면 무바인딩' 가드의 원래 의도). 그 외(같은 도형의 '다른' 포트로 진짜 자기연결을 의도한
+    경우)는 True — 라우터(_route_ortho)는 자기연결(conn_rects 양끝이 같은 rect)을 이미 올바르게
+    바깥으로 우회시키므로(검증됨), 더는 무바인딩으로 막을 이유가 없다."""
+    return (p.x() - q.x()) ** 2 + (p.y() - q.y()) ** 2 > eps * eps
+
+
 def _edge_mid(r: QRectF, side: str) -> QPointF:
     """씬 사각 r의 한 변(t/r/b/l) 중점."""
     if side == "r":
@@ -5106,7 +5118,7 @@ class _GroupTransform:
     A를 그룹 기준으로 옮기고(pos 조정) rotation/scale을 더하면 아이템 전체가 강체로 변형된다.
     (비유: 회전목마 — 각 말은 제자리서 돌면서(회전) 동시에 축을 중심으로 공전(pos)한다.)
     """
-    _HANDLE_PX = 7.0    # 화면 px — 모서리 사각 핸들 한 변(단일선택 _HandleResizeMixin과 통일)
+    _HANDLE_PX = 10.0   # 화면 px — 모서리 사각 핸들 한 변(단일선택 _HandleResizeMixin과 통일)
     _HIT_PX = 24.0      # 화면 px — 핸들 잡기 지름(줌 무관)
     _ROT_GAP_PX = 22.0  # 화면 px — bbox 위 회전 핸들 간격
 
@@ -5546,7 +5558,8 @@ class _AnnotatorView(QGraphicsView):
         snap = self._qc_snap_target(cursor_scene, src)
         end = snap[0] if snap is not None else QPointF(cursor_scene)
         arrow.set_points(p_src, end)
-        if snap is not None and snap[2] is not None and snap[2] is not src:
+        if snap is not None and snap[2] is not None and (
+                snap[2] is not src or _far_enough_for_self_loop(p_src, end)):
             arrow.set_bound(1, snap[2], snap[2].mapFromScene(end))
         arrow._auto_route = True   # 도형 이동 시에도 계속 엘보로 재계산(reroute가 이 값을 봄)
         self.scene().addItem(arrow)
@@ -6063,7 +6076,9 @@ class _AnnotatorView(QGraphicsView):
 
     def _draw_port_dots(self, painter, s):
         """[우리 확장] 화살표 도구로 도형 근처에 가면 그 도형의 포트(8점)를 속 빈 점으로 예고.
-        실제 스냅된 포트는 _draw_snap_marker(채운 파란 점)가 위에 덮어 강조한다.
+        실제 스냅된 포트는 _draw_snap_marker(채운 파란 점)가 위에 덮어 강조한다 — [2026-07-30
+        3차 재수정] 강조가 '커지는' 게 아니라 처음부터 같은 크기(반지름 5.0=_draw_snap_marker와
+        동일)이고 hover는 색/테두리 반전으로만 표현하도록 이 예고점 반지름도 3.5→5.0으로 통일.
         [8포트 select-hover 2026-07-29] select 도구에서도 동일하게 예고하되, 선택된 도형은
         제외(리사이즈·회전 핸들과 자리가 겹침 — 그건 qc-dot(4방향점)이 담당)."""
         tool = self._owner.current_tool
@@ -6072,7 +6087,7 @@ class _AnnotatorView(QGraphicsView):
         select_mode = tool == "select"
         scene_c = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
         margin = 30.0 / s
-        r = 3.5 / s
+        r = 5.0 / s
         painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
         painter.setBrush(QBrush(QColor("white")))
         for sh in self._conn_shapes():
@@ -6137,7 +6152,8 @@ class _AnnotatorView(QGraphicsView):
         snap = self._qc_snap_target(cursor_scene, src)
         end = snap[0] if snap is not None else QPointF(cursor_scene)
         arrow.set_points(port_pt, end)
-        if snap is not None and snap[2] is not None and snap[2] is not src:
+        if snap is not None and snap[2] is not None and (
+                snap[2] is not src or _far_enough_for_self_loop(port_pt, end)):
             arrow.set_bound(1, snap[2], snap[2].mapFromScene(end))
         arrow._auto_route = True
         self.scene().addItem(arrow)

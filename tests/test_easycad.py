@@ -3658,6 +3658,41 @@ def test_select_tool_port_click_without_drag_selects_shape():
     assert len([x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]) == 0
 
 
+def test_port_drag_self_loop_binds_and_avoids_corner_hug():
+    # [자기자신 연결 버그 수정 2026-07-30] 같은 도형의 서로 다른 두 포트를 커넥터로 이으면(자기
+    # 연결) 전에는 'snap 도형이 src면 무바인딩' 가드 때문에 도착 쪽이 안 붙어(ne=None) 법선
+    # 스텁이 안 생기고, 모서리를 그대로 파고드는 경로가 나왔다(사용자 실사용 스크린샷 제보).
+    # 라우터(_route_ortho) 자체는 자기연결(conn_rects 양끝이 같은 rect)을 이미 올바르게
+    # 바깥으로 우회시킨다는 걸 확인했으므로, 수정은 '충분히 먼' 자기연결이면 바인딩을 허용하는 것.
+    from easycad.canvas.annotator_core import _path_hits_rects
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    view = w._view
+    r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
+    press, release, _c, _m, drag_move, _d = _draw_helpers(view)
+    press(QPointF(100, 30))                 # E 포트(시작)
+    drag_move(QPointF(50, 60))              # S 포트 쪽으로 — 같은 도형, 충분히 먼 다른 포트
+    release(QPointF(50, 60))
+    arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
+    assert len(arrows) == 1
+    arr = arrows[0]
+    assert arr._bind_start is r and arr._bind_end is r, "자기연결도 양끝 다 바인딩돼야 한다"
+    pts = [arr.mapToScene(p) for p in arr._pts]
+    r_rect = r.mapRectToScene(r.rect())
+    assert not _path_hits_rects(pts, [r_rect]), ("경로가 자기 도형을 관통/재진입", pts)
+    # 시작 이탈 스텁은 수평(E 법선), 도착 진입 스텁은 수직(S 법선) — 모서리를 파고들지 않고
+    # 법선 방향으로 먼저 빠져나간 뒤 꺾여야 한다(둘 다 인접점과 좌표가 그대로 같으면 스텁 없음=버그).
+    assert abs(pts[0].y() - pts[1].y()) < 1e-6 and abs(pts[0].x() - pts[1].x()) > 1e-6
+    assert abs(pts[-1].x() - pts[-2].x()) < 1e-6 and abs(pts[-1].y() - pts[-2].y()) > 1e-6
+
+
+def test_port_drag_self_loop_near_start_stays_unbound():
+    # 회귀 방지 — 드래그 시작 직후 같은 포트로 도로 스냅되는 퇴화 케이스(0-길이 자기연결)는
+    # 여전히 무바인딩으로 남아야 한다(옛 가드가 원래 막으려던 경우, _far_enough_for_self_loop eps).
+    from easycad.canvas.annotator_core import _far_enough_for_self_loop
+    assert not _far_enough_for_self_loop(QPointF(100, 30), QPointF(100, 30.3))
+    assert _far_enough_for_self_loop(QPointF(100, 30), QPointF(50, 60))
+
+
 def test_arrow_binds_to_port_and_follows():
     # M4: 화살표를 포트 근처로 그리면 포트에 부착, 도형을 옮기면 포트 따라 이동.
     w = CanvasWindow(); w.show(); w.set_tool("arrow"); w._zoom_reset()
