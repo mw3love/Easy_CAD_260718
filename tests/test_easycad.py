@@ -1392,6 +1392,44 @@ def test_direction_rubber_band():
     view._rb_origin = view._rb_current = None
 
 
+def test_rubber_band_drag_defers_real_selection_to_release():
+    # [성능 조사 2026-07-30, Lucid 대조 사용자 피드백] 드래그 '중'엔 매 프레임 실제
+    # setSelected() 캐스케이드(_apply_rubber_selection) 대신 저비용 미리보기(_rb_preview)만
+    # 갱신하고, 실제 선택은 release 시점에 1회 확정한다 — 실측(200아이템,30프레임) 194.61ms
+    # /frame → 30.68ms/frame(약 84%↓). mousePressEvent→mouseMoveEvent(들)→mouseReleaseEvent
+    # 전체 경로로 검증(내부 메서드 직접 호출이 아니라 실제 이벤트 디스패치).
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    view = w._view
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 450, 0, 100, 60)
+
+    def mk(etype, pt, buttons_held=Qt.MouseButton.LeftButton):
+        btn = Qt.MouseButton.LeftButton if etype != QEvent.Type.MouseMove else Qt.MouseButton.NoButton
+        ptf = QPointF(pt)
+        return QMouseEvent(etype, ptf, ptf, btn, buttons_held, Qt.KeyboardModifier.NoModifier)
+
+    start = view.mapFromScene(QPointF(-10, -10))          # 빈 영역(방향: 왼→오 = window)
+    mid = view.mapFromScene(QPointF(200, 100))
+    end = view.mapFromScene(QPointF(600, 300))             # a, b 둘 다 완전포함하는 상자(b는 550까지)
+
+    view.mousePressEvent(mk(QEvent.Type.MouseButtonPress, start))
+    assert view._rb_active is True
+
+    view.mouseMoveEvent(mk(QEvent.Type.MouseMove, mid))
+    assert len(view._rb_preview) >= 1                      # 미리보기는 갱신됨
+    assert w._scene.selectedItems() == []                  # 실제 선택은 아직 안 바뀜(핵심)
+
+    view.mouseMoveEvent(mk(QEvent.Type.MouseMove, end))
+    assert set(view._rb_preview) == {a, b}
+    assert w._scene.selectedItems() == []                  # release 전까진 여전히 비어있음
+
+    view.mouseReleaseEvent(mk(QEvent.Type.MouseButtonRelease, end, Qt.MouseButton.NoButton))
+    assert set(w._scene.selectedItems()) == {a, b}          # release에서 정확히 확정
+    assert view._rb_active is False and view._rb_preview == set()
+
+
 def test_line_arrow_label():
     # 선/화살표 라벨: 자식으로 부착 → 본체 이동·끝점 이동 시 중점 추종, .ecad 왕복 보존.
     from PyQt6.QtWidgets import QGraphicsScene

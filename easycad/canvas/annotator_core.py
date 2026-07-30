@@ -5442,6 +5442,7 @@ class _AnnotatorView(QGraphicsView):
         self._rb_origin = None            # 시작점(view 좌표) — 방향 판정 기준
         self._rb_current = None           # 현재점(view 좌표)
         self._rb_base = []                # Shift 추가선택용 기존 선택 스냅샷
+        self._rb_preview = set()          # [성능 조사 2026-07-30] 드래그 중 미리보기 후보(실제 선택 아님)
         # [M4-4] 직선화살표 세그먼트 hover 시 (item, seg_idx, 씬 최근접점) or None.
         # ortho 라우팅 sarrow의 변 위(정점 아님)에 커서 → 클릭·드래그로 그 변을 수직 이동.
         self._seg_add = None
@@ -5790,6 +5791,27 @@ class _AnnotatorView(QGraphicsView):
     def _rb_scene_rect(self) -> QRectF:
         return QRectF(self.mapToScene(self._rb_origin),
                       self.mapToScene(self._rb_current)).normalized()
+
+    def _rb_preview_hits(self):
+        """[성능 조사 2026-07-30] 러버밴드 드래그 '중'에 쓰는 저비용 미리보기 후보 집합 —
+        실제 Qt 선택(setSelected)은 걸지 않는다(Lucid 대조 사용자 피드백: "드래그 중엔 각
+        객체 색만 바꾸고, 놓는 순간에만 정확한 상자를 잡는다"). _apply_rubber_selection이
+        매 마우스무브마다 씬 전체를 수동 순회 + clearSelection()+setSelected() 캐스케이드를
+        걸던 것 — 특히 setSelected()는 [수정 3] boundingRect() 선택조건부화 이후 선택될 때마다
+        prepareGeometryChange 유발까지 겹쳐 부하가 컸다. 여기선 Qt의 BSP 트리 공간 인덱스
+        (scene.items(rect, mode))로 근사(boundingRect 기준, _content_rect/_base_shape 정밀
+        판정은 생략 — 미리보기라 완전 정밀할 필요 없음)만 빠르게 구해 하이라이트 표시에 쓰고,
+        정확한 최종 선택은 release 시점 _apply_rubber_selection() 단 1회로 확정한다."""
+        if self._rb_origin is None or self._rb_current is None:
+            return set()
+        rect = self._rb_scene_rect()
+        window = self._rb_is_window()
+        mode = (Qt.ItemSelectionMode.ContainsItemBoundingRect if window
+                else Qt.ItemSelectionMode.IntersectsItemBoundingRect)
+        bg = getattr(self._owner, "_bg_item", None)
+        hits = {it for it in self.scene().items(rect, mode)
+                if it is not bg and (it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)}
+        return hits | set(self._rb_base)
 
     def _apply_rubber_selection(self):
         """드래그 방향으로 window/crossing을 정해 선택을 실시간 재계산.
@@ -6332,6 +6354,15 @@ class _AnnotatorView(QGraphicsView):
             painter.setPen(pen)
             painter.setBrush(QBrush(fill))
             painter.drawRect(rect)
+            # [성능 조사 2026-07-30] 드래그 중 실제 선택(setSelected) 대신 저비용 하이라이트만 —
+            # Lucid처럼 "닿은 객체 색만 바꾸고, 놓는 순간 정확히 확정"하는 느낌을 재현.
+            hl_pen = QPen(color, 2.0 / s)
+            hl_pen.setCosmetic(True)
+            painter.setPen(hl_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            for it in self._rb_preview:
+                cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
+                painter.drawRect(it.mapToScene(cr).boundingRect())
         # [2d] 빠른 생성 고스트 — 도트 hover(기본 배치) 또는 드래그(커서 위치)에 복제 도형+연결선 미리보기.
         # [2026-07-30 통합] 리사이즈로 확정된 드래그는 고스트를 안 그린다 — 아이템 자체가 이미
         # 실시간으로 리사이즈되는 중이라 복제 도형 미리보기를 겹쳐 보이면 오해를 준다.
@@ -7152,9 +7183,11 @@ class _AnnotatorView(QGraphicsView):
             self._seg_drag._drag_segment_to(self.mapToScene(event.position().toPoint()))
             self.viewport().update()
             return
-        if self._rb_active:  # [우리 확장] 방향 감지 러버밴드 — 드래그 중 실시간 선택
+        if self._rb_active:  # [우리 확장] 방향 감지 러버밴드 — 드래그 중엔 저비용 미리보기만
+            # [성능 조사 2026-07-30] 매 프레임 실제 setSelected() 캐스케이드(_apply_rubber_selection)
+            # 대신 _rb_preview_hits()의 저비용 근사만 — 실제 선택은 release에서 1회 확정.
             self._rb_current = event.position().toPoint()
-            self._apply_rubber_selection()
+            self._rb_preview = self._rb_preview_hits()
             self.viewport().update()
             return
         if self._group_dragging:  # [우리 확장] 그룹 변형 드래그 — 회전·스케일 실시간 적용
@@ -7334,13 +7367,15 @@ class _AnnotatorView(QGraphicsView):
             self._seg_undo = None
             self.viewport().update()
             return
-        if self._rb_active:  # [우리 확장] 러버밴드 종료 — 최종 선택은 이미 반영됨, 밴드만 지움
+        if self._rb_active:  # [우리 확장] 러버밴드 종료 — 드래그 중엔 미리보기만이라 여기서
+            # 정확한 최종 선택을 1회 확정한다(_apply_rubber_selection, 기존 정밀 로직 그대로).
             self._rb_current = event.position().toPoint()
             self._apply_rubber_selection()
             self._last_sel_rect = self._rb_scene_rect()   # [Stage2b] 박스 '기억'(S stretch용)
             self._rb_active = False
             self._rb_origin = self._rb_current = None
             self._rb_base = []
+            self._rb_preview = set()
             self.viewport().update()
             return
         if self._group_dragging:  # [우리 확장] 그룹 변형 종료 — undo에 변형 트랜잭션 커밋
