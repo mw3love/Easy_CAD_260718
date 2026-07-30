@@ -387,12 +387,29 @@ def _view_zoom_factor(item) -> float:
     '상호작용 가능한' 뷰(메인 캔버스 — 미니맵은 `setInteractive(False)`라 클릭·선택이
     없어 제외)의 현재 줌 배율을 함께 곱해, `_EDGE_HIT_MIN`/핸들 크기 등 화면-px 기준
     상수들이 줌과 무관하게 화면에서 항상 같은 크기로 보이게 한다(Figma·AutoCAD 관례).
-    뷰가 없으면(뷰 미부착 QGraphicsScene 단독 오프스크린 테스트 등) 1.0 — 기존 동작 그대로."""
+    뷰가 없으면(뷰 미부착 QGraphicsScene 단독 오프스크린 테스트 등) 1.0 — 기존 동작 그대로.
+
+    [성능 조사 스파이크 2026-07-30 실측] 이 함수는 boundingRect()(Qt가 트랜스폼 변경 시
+    아이템마다 여러 번 재조회)를 통해 간접 호출돼, 무거운 도면(~800개)에서 줌 20틱에
+    287,950회 호출됐다(cProfile 실측 — boundingRect 체인이 전체 줌 비용의 70%+ 차지).
+    `sc.views()` 순회+`isInteractive()` 필터링이 매번 반복되는 게 비용의 핵심 — 상호작용
+    가능한 뷰는 CanvasWindow 생애주기 동안 사실상 고정이므로(재부착 없음) 씬에 발견한 뷰를
+    캐시해 그 순회를 생략한다. `.transform().m11()`은 캐시하지 않고 매번 새로 읽어(줌 값 자체는
+    항상 최신 — staleness 없음), 캐시가 잘못돼도 최악의 경우 '뷰 재탐색'(느려질 뿐 틀리지 않음)."""
     sc = item.scene()
     if sc is None:
         return 1.0
+    cached = getattr(sc, "_interactive_view_cache", None)
+    if cached is not None:
+        try:
+            if cached.scene() is sc:
+                m = cached.transform().m11()
+                return m if m else 1.0
+        except RuntimeError:
+            pass   # 캐시된 뷰가 Qt 쪽에서 이미 삭제됨 — 아래 재탐색으로 폴백
     for v in sc.views():
         if v.isInteractive():
+            sc._interactive_view_cache = v
             m = v.transform().m11()
             return m if m else 1.0
     return 1.0

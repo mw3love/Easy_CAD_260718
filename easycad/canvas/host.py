@@ -358,10 +358,13 @@ class _MinimapView(QGraphicsView):
     Qt가 내용 변경(아이템 추가·이동)을 모든 뷰에 자동 반영한다(같은 scene을 보는 다른
     QGraphicsView라 scene.changed 훅이 따로 필요 없음 — 규칙 2 손안의 카드: Qt 멀티뷰가
     이미 제공). 자체 상호작용은 끄고(setInteractive(False)) 클릭/드래그로 메인 뷰를 그
-    위치로 이동시키는 내비게이션만 한다. 페인트마다 itemsBoundingRect로 재-fit해 도면이
-    자라도 항상 전체가 보인다(도면 규모가 작아 매 페인트 재계산 비용이 무시할만함 — 캐시 불필요).
-    ⚠ 메인 뷰의 줌/팬/리사이즈는 scene.changed를 트리거하지 않아(순수 뷰 변환) 이 미니맵이
-    자동으로 못 알아챈다 — CanvasWindow가 그 세 지점에서 명시적으로 viewport().update()를 건다."""
+    위치로 이동시키는 내비게이션만 한다.
+    [성능 조사 스파이크 2026-07-30 실측] 매 paintEvent마다 itemsBoundingRect()를 캐시 없이
+    재계산하던 게 무거운 도면(아이템 ~1600개)에서 71ms — 미니맵 paintEvent 전체는 98ms(60fps
+    프레임 예산의 약 6배). 휠줌·팬·리사이즈마다 _refresh_minimap()이 이 repaint를 예약해
+    무거운 도면에서 휠줌이 씹히는 원인으로 확인. scene.changed(아이템 추가·이동·삭제 시에만
+    발생 — 줌/팬 같은 순수 뷰 변환은 안 탐)로 dirty 플래그를 걸어 캐시, 실제 내용 변경 때만
+    재계산한다(O(n) 매 페인트 → 상각 O(1))."""
 
     def __init__(self, owner, scene):
         super().__init__(scene)
@@ -372,9 +375,18 @@ class _MinimapView(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setMinimumHeight(120)
+        self._bounds_cache = QRectF()
+        self._bounds_dirty = True
+        scene.changed.connect(self._mark_bounds_dirty)
+
+    def _mark_bounds_dirty(self, _regions=None):
+        self._bounds_dirty = True
 
     def _refit(self):
-        rect = self.scene().itemsBoundingRect()
+        if self._bounds_dirty:
+            self._bounds_cache = self.scene().itemsBoundingRect()
+            self._bounds_dirty = False
+        rect = self._bounds_cache
         if rect.isEmpty():
             return
         pad = max(rect.width(), rect.height()) * 0.06 + 12

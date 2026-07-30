@@ -5881,6 +5881,35 @@ def test_minimap_refit_empty_scene_noop():
     w._minimap._refit()
 
 
+def test_minimap_bounds_cached_and_invalidated_by_scene_change():
+    # [성능 조사 스파이크 2026-07-30] itemsBoundingRect()는 무거운 도면에서 비용이 커
+    # (실측 ~1600아이템에 71ms) 매 paintEvent마다 재계산하면 휠줌·팬마다 그 비용을 문다.
+    # scene.changed(콘텐츠 변경 시에만 발생 — 순수 뷰 변환인 줌/팬은 안 탐)로 dirty 플래그를
+    # 걸어 캐시해야 한다.
+    w = CanvasWindow()
+    mm = w._minimap
+    r1 = _mk_pen_rect(w, x=0, y=0, ww=50, hh=50)
+    # addItem()의 scene.changed 방출은 비동기(이벤트 루프에 제어가 돌아갈 때 발행)라, 아직
+    # 소비되기 전에 _refit()을 먼저 부르면 그 신호가 이후 processEvents()에서 뒤늦게 도착해
+    # 아래 '줌은 dirty 안 켠다' 검증을 오염시킨다 — 먼저 비우고 나서 _refit()으로 소비한다.
+    _app.processEvents()
+    mm._refit()
+    assert mm._bounds_dirty is False
+    cached = mm._bounds_cache
+    # 순수 뷰 변환(줌)은 scene.changed를 안 태우므로 dirty가 그대로 False 유지.
+    w._on_wheel_zoom(1)
+    _app.processEvents()
+    assert mm._bounds_dirty is False
+    # 아이템 이동(실제 콘텐츠 변경)은 scene.changed를 태워 dirty=True.
+    # [Qt] scene.changed는 비동기 시그널(이벤트 루프에 제어가 돌아갈 때 발행) — processEvents 필요.
+    r1.moveBy(500, 500)
+    _app.processEvents()
+    assert mm._bounds_dirty is True
+    mm._refit()
+    assert mm._bounds_dirty is False
+    assert mm._bounds_cache != cached   # 재계산돼 새 bbox 반영
+
+
 def test_minimap_refresh_hooked_to_viewport_resize_not_just_window():
     # [미니맵][실조건 버그] 사용자 GUI 확인: dock 스플리터를 드래그해 메인 뷰포트 크기가
     # 바뀌면(창 자체 크기는 그대로) CanvasWindow.resizeEvent가 안 불려 인디케이터가 갱신
