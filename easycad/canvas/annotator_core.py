@@ -403,13 +403,12 @@ def _view_zoom_factor(item) -> float:
 # ---------------------------------------------------------------------------
 
 class _HandleResizeMixin:
-    # 핸들(스케일 사각·회전 원·끝점 사각) 크기는 도형의 '획 두께'에 비례한다 — 얇은 선은
-    # 작은 핸들, 굵은 선은 큰 핸들. 씬 단위로 [MIN,MAX] 클램프(못 잡을 만큼 작지도, 거슬릴
-    # 만큼 크지도 않게). 획이 없는 도형(번호·텍스트)만 표시 크기 비례로 폴백한다.
-    _HANDLE_FRAC = 0.22        # (폴백) 작은 변 대비 핸들 비율 — 번호·텍스트용
-    _HANDLE_STROKE_FRAC = 1.4  # 획 두께 대비 핸들 비율 — 도형·선·화살표용
-    _HANDLE_MIN = 5.0    # 씬 단위 하한(항상 잡히게)
-    _HANDLE_MAX = 12.0   # 씬 단위 상한
+    # 핸들(스케일 사각·회전 원·끝점 사각) 크기는 도형 획 두께와 무관하게 고정이다(2026-07-30
+    # 사용자 피드백 — 하한/상한 두 값을 두느니 고정값 하나로 통일). 크기 기준은 사용자가
+    # "적당하다"고 지목한 기존 포트 hover 강조 마커(_draw_snap_marker, 반지름 5→지름 10)와
+    # 맞췄다(1차로 16을 썼다가 "너무 커졌다"는 재피드백으로 축소). 어느 핸들이 잡히는지는
+    # hover 강조(흰 채움 반전, 아래 _hover_handle)로 알려준다.
+    _HANDLE_PX = 10.0    # 씬 단위 — 모든 핸들 공통 고정 크기(포트 hover 마커 지름과 동일)
     _EDGE_HIT_MIN = 8.0  # 속 빈 도형 테두리 클릭 최소 히트폭(씬 단위) — 얇은 선도 잡히게
 
     # [편의기능] 잠금·그룹 — 클래스 기본값(인스턴스는 host의 토글/그룹 메서드가 설정).
@@ -417,26 +416,14 @@ class _HandleResizeMixin:
     _locked = False
     _group_id = None
 
-    def _stroke_width(self) -> float:
-        """핸들 크기 기준이 되는 획 두께(로컬 단위). 없으면 0(→ 크기 비례 폴백)."""
-        if hasattr(self, "_width"):   # _ArrowItem
-            return float(self._width)
-        if hasattr(self, "pen"):      # rect/ellipse/line/path
-            return float(self.pen().widthF())
-        return 0.0
+    # [호버 강조] 현재 커서 아래 있는 핸들 키(뷰가 매 프레임 갱신) — ("corner",i) / ("rot",None) /
+    # ("qc",side) / ("ep",i) / ("scale",None) / None. paint()가 이 키와 자신의 핸들을 비교해
+    # 그 점만 반전 강조(흰 채움+색 테두리)한다.
+    _hover_handle = None
 
     def _handle_px(self) -> float:
-        """핸들 한 변(로컬 단위). 획 두께에 비례 + [MIN,MAX] 클램프(획 없으면 크기 비례)."""
-        s = self._scale_or_1()
-        w = self._stroke_width()
-        if w > 0:
-            h_scene = max(self._HANDLE_MIN,
-                          min(w * s * self._HANDLE_STROKE_FRAC, self._HANDLE_MAX))
-            return h_scene / s
-        cr = self._content_rect()
-        scene_dim = min(cr.width(), cr.height()) * s  # 주석 작은 변(씬 단위)
-        h_scene = max(self._HANDLE_MIN, min(scene_dim * self._HANDLE_FRAC, self._HANDLE_MAX))
-        return h_scene / s
+        """핸들 한 변(로컬 단위) — 고정 크기(씬 단위)를 아이템 배율로 환산."""
+        return self._HANDLE_PX / self._scale_or_1()
 
     # ---- 잡기 판정(시각 점과 분리) --------------------------------------
     # 그려지는 점은 작게(_handle_px) 두되, '잡히는' 영역은 화면 고정 px로 넉넉히
@@ -608,9 +595,9 @@ class _HandleResizeMixin:
         if not self._endpoint_active():
             return
         s = self._scale_or_1()
-        painter.setPen(QPen(QColor("white"), 1.0 / s))
-        painter.setBrush(QBrush(QColor(_BLUE)))
+        hv = self._hover_handle
         for i in self._handle_indices():
+            self._set_handle_paint(painter, s, _BLUE, hv == ("ep", i))
             painter.drawRect(self._endpoint_rect(i))
 
     # 선택된 도형에 현재 색/두께 적용. pen 기반(rect/ellipse/line/path)은 QPen에,
@@ -993,6 +980,42 @@ class _HandleResizeMixin:
             return False
         return True
 
+    def _hover_handle_at(self, local_pt: QPointF):
+        """[호버 강조] local_pt(로컬 좌표) 아래 핸들 키, 없으면 None. 뷰가 매 프레임 호출해
+        _hover_handle에 저장 — 판정 rect는 기존 hit-test(_box_handle_cursor 등)와 동일 관례."""
+        if not self._handle_active():
+            return None
+        if self._uses_endpoints():
+            for i in self._handle_indices():
+                if self._inflate_to_hit(self._endpoint_rect(i)).contains(local_pt):
+                    return ("ep", i)
+            return None
+        if self._box_handles():
+            if self._box_rot_rect().contains(local_pt):
+                return ("rot", None)
+            for i, r in self._box_corner_rects():
+                if r.contains(local_pt):
+                    return ("corner", i)
+            for side, r in self._qc_dot_rects():
+                if r.contains(local_pt):
+                    return ("qc", side)
+            return None
+        if self._rot_handle_rect().contains(local_pt):
+            return ("rot", None)
+        if self._handle_local_rect().contains(local_pt):
+            return ("scale", None)
+        return None
+
+    def _set_handle_paint(self, painter: QPainter, s: float, base_color, hovered: bool):
+        """[호버 강조] 핸들 하나의 펜/브러시 세팅 — 평소=흰 테두리+색 채움, hover=색 테두리(굵게)+흰 채움
+        (반전 강조, Figma류 hover 관례)."""
+        if hovered:
+            painter.setPen(QPen(QColor(base_color), 2.2 / s))
+            painter.setBrush(QBrush(QColor("white")))
+        else:
+            painter.setPen(QPen(QColor("white"), 1.0 / s))
+            painter.setBrush(QBrush(QColor(base_color)))
+
     def _paint_handle(self, painter: QPainter):
         if self._uses_endpoints():
             self._paint_endpoint_handles(painter)
@@ -1000,32 +1023,29 @@ class _HandleResizeMixin:
         if not self._handle_active():
             return
         s = self._scale_or_1()
+        hv = self._hover_handle
         if self._box_handles():
             # [2c→2026-07-30] 꼭짓점 4 = 파란 사각(리사이즈 전용), 좌상단 회전 = 코랄 원.
-            painter.setPen(QPen(QColor("white"), 1.0 / s))
-            painter.setBrush(QBrush(QColor(_BLUE)))
-            for _i, r in self._box_corner_rects():
+            for i, r in self._box_corner_rects():
+                self._set_handle_paint(painter, s, _BLUE, hv == ("corner", i))
                 painter.drawRect(r)
             rh = self._handle_px() * 0.5
-            painter.setBrush(QBrush(QColor(_PEACH)))
+            self._set_handle_paint(painter, s, _PEACH, hv == ("rot", None))
             painter.drawEllipse(self._box_rot_center(), rh, rh)
             # [2d→2026-07-30 통합] 변 중점 겸용 점(리사이즈+커넥터) — 옅은 파란 원(흰 테두리).
             # 호버 시 뷰가 고스트 미리보기.
-            painter.setPen(QPen(QColor("white"), 1.0 / s))
-            painter.setBrush(QBrush(QColor(90, 150, 235)))
-            for _k, dr in self._qc_dot_rects():
+            for k, dr in self._qc_dot_rects():
+                self._set_handle_paint(painter, s, QColor(90, 150, 235), hv == ("qc", k))
                 painter.drawEllipse(dr)
             return
         # 회전 핸들 — 우상단 코너 안쪽 코랄 점(줄기 없음, 우하단 크기조절 점과 대칭)
         rc = self._rot_handle_center()
         rh = self._handle_px() * 0.5  # 반지름 — 지름이 크기조절 사각 변과 같게
-        painter.setPen(QPen(QColor("white"), 1.0 / s))
-        painter.setBrush(QBrush(QColor(_PEACH)))
+        self._set_handle_paint(painter, s, _PEACH, hv == ("rot", None))
         painter.drawEllipse(rc, rh, rh)
         # 크기조절 핸들 — 우하단 파란 사각
         r = self._handle_local_rect()
-        painter.setPen(QPen(QColor("white"), 1.0 / s))
-        painter.setBrush(QBrush(QColor(_BLUE)))
+        self._set_handle_paint(painter, s, _BLUE, hv == ("scale", None))
         painter.drawRect(r)
 
     def _paint_base(self, painter, option, widget):
@@ -5388,7 +5408,10 @@ class _AnnotatorView(QGraphicsView):
         self._hp_port = None        # 시작 포트(씬)
         self._hp_normal = None      # 시작 포트 바깥 법선(씬)
         self._hp_cursor = None      # 드래그 중 커서(씬). None=드래그 임계 미달(release 시 평소 선택으로 폴백)
-        self._hp_press_scene = None # press 지점(씬) — 클릭/드래그 판정 기준
+        self._hp_press_scene = None # press 지점(씬) — 형태 판정 기준
+        # [호버 강조 2026-07-30] 선택된 도형의 핸들(모서리·회전·qc-dot·끝점) 위 hover — (item, key)
+        # or None. 크기를 고정으로 통일하며 "이 점이 잡힌다"를 색 반전으로 대신 알려준다.
+        self._handle_hover = None
         # 선택이 바뀌면 그룹 오버레이(bbox·핸들)를 다시 그린다(개별 아이템 repaint와 별개).
         scene.selectionChanged.connect(self.viewport().update)
 
@@ -5432,6 +5455,19 @@ class _AnnotatorView(QGraphicsView):
             c = f(it.mapFromScene(scene_pt))
             if c is not None:
                 return c
+        return None
+
+    def _handle_hover_at(self, view_pos):
+        """[호버 강조] 커서가 선택된 아이템의 핸들 위면 (item, key), 없으면 None. 실제 하이라이트
+        적용은 mouseMoveEvent가 이 결과를 item._hover_handle에 반영 + update()한다."""
+        scene_pt = self.mapToScene(view_pos)
+        for it in self.scene().selectedItems():
+            f = getattr(it, "_hover_handle_at", None)
+            if f is None:
+                continue
+            key = f(it.mapFromScene(scene_pt))
+            if key is not None:
+                return (it, key)
         return None
 
     # ---- [2d] 빠른 생성(quick-create) ---------------------------------------
@@ -5784,6 +5820,8 @@ class _AnnotatorView(QGraphicsView):
         Qt가 커서로 옮긴 뒤 호출돼, 임계 내면 정렬 좌표로 살짝 당기고 가이드선을 기록한다.
         핸들 조작(리사이즈·회전·끝점) 중이거나 단일 선택이 아니면 건드리지 않는다."""
         self._align_guides = []
+        if not getattr(self._owner, "align_guides_enabled", True):
+            return   # [토글] 꺼져 있으면 스냅도 가이드선도 전부 스킵
         sel = [it for it in self.scene().selectedItems() if it.parentItem() is None]
         if len(sel) != 1:
             return
@@ -7091,6 +7129,16 @@ class _AnnotatorView(QGraphicsView):
             self._qc_hover = self._qc_dot_at(event.position().toPoint())
             if prev_qc != self._qc_hover:
                 self.viewport().update()
+            # [호버 강조 2026-07-30] 선택 핸들 위 hover — 그 점만 색 반전 강조.
+            prev_hh = self._handle_hover
+            self._handle_hover = self._handle_hover_at(event.position().toPoint())
+            if prev_hh != self._handle_hover:
+                if prev_hh is not None and prev_hh[0].scene() is not None:
+                    prev_hh[0]._hover_handle = None
+                    prev_hh[0].update()
+                if self._handle_hover is not None:
+                    self._handle_hover[0]._hover_handle = self._handle_hover[1]
+                    self._handle_hover[0].update()
             # [8포트 select-hover] 유휴 hover 강조 마커 갱신(select 도구에서만).
             if self._owner.current_tool == "select":
                 prev_hp = self._hp_hover

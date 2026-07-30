@@ -589,6 +589,7 @@ class CanvasWindow(QMainWindow):
         self.snap_enabled = True         # o-snap 토글(F3) — 도형 테두리 달라붙기 켜고 끄기
         self.ortho_enabled = False       # Ortho 토글(F8) — 그리기·정점드래그를 수평/수직(0/90°)로 제약
         self.grid_enabled = True         # [그리드] 표시+스냅 통합 토글(Shift+G) — 격자 표시·이동/리사이즈/생성 스냅
+        self.align_guides_enabled = True # [정렬 가이드선] 이동 중 스마트 정렬 스냅+보라 참고선 토글(Shift+A)
         self._bg_item = None            # 배경 이미지 없음(무한 캔버스)
         self._badge_n = 0
         self._undo: list[_UndoEntry] = []   # 저널(뒤로) — 최신이 끝
@@ -718,9 +719,13 @@ class CanvasWindow(QMainWindow):
         self._act_grid = self._make_action("격자 (스냅투그리드)", "grid",
             self._toggle_grid, "Shift+G", checkable=True)
         self._act_grid.setChecked(True)
+        self._act_align = self._make_action("정렬 가이드선", "align",
+            self._toggle_align_guides, "Shift+A", checkable=True)
+        self._act_align.setChecked(True)
         v.addAction(self._act_snap)
         v.addAction(self._act_ortho)
         v.addAction(self._act_grid)
+        v.addAction(self._act_align)
         v.addSeparator()
         self._act_theme = self._make_action("다크/라이트 전환", "theme",
             self._toggle_theme, "Ctrl+Shift+L")
@@ -796,6 +801,11 @@ class CanvasWindow(QMainWindow):
         self._view.viewport().update()   # 점 격자 즉시 표시/숨김
         self.statusBar().showMessage(
             "격자 켜짐 — 표시 + 스냅" if checked else "격자 꺼짐", 3000)
+
+    def _toggle_align_guides(self, checked: bool):
+        self.align_guides_enabled = checked
+        self.statusBar().showMessage(
+            "정렬 가이드선 켜짐" if checked else "정렬 가이드선 꺼짐 — 스마트 정렬 스냅도 함께 꺼짐", 3000)
 
     # ---- 저장 / 열기 --------------------------------------------------------
     # [신규기능] DXF/.ecad 통합(2026-07-29 deep-interview) — 옛 「DXF 내보내기/가져오기」
@@ -1415,6 +1425,7 @@ class CanvasWindow(QMainWindow):
             ("Ctrl+0 / Ctrl+9", "100%(1:1) / 전체 맞춤"),
             ("F3 / F8", "스냅 / 직교 제약 토글"),
             ("Shift+G", "격자 표시/스냅투그리드 토글"),
+            ("Shift+A", "정렬 가이드선(스마트 정렬 스냅) 토글"),
             ("Del", "선택 객체 삭제"),
             ("Ctrl+Z", "되돌리기"),
             ("Ctrl+C / Ctrl+V", "복사 / 연속 붙여넣기(버퍼 없으면 클립보드 이미지)"),
