@@ -831,6 +831,52 @@ Rejected/Not-tested는 커밋 `616bcfb`·`d967835` 트레일러 참조.
 사실상 죽은 코드였음 — 고정값이 더 단순하고 정직함. Not-tested: 실제 마우스로 hover 강조
 반응 속도·정렬 가이드선 토글 체감(`python run.py` 몫).
 
+**선택/호버 점 크기 최종 통일 + 자기연결 커넥터 모서리 파고들기 수정 완료(2026-07-30, 커밋
+`43b8312`·`158f16d`, 프록시검증 — 스모크 306종, 실조건 대기)** — 위 항목 이후 실사용
+재피드백으로 두 차례 더 조정. `_HANDLE_PX`가 10→7(포트 예고점 지름과 맞춤)→**10**(스냅
+마커 지름과 맞춤, 최종)으로 왕복 — 사용자가 "딱 좋다"고 지목한 기준점이 매번 달랐던 걸
+스크린샷 재확인으로 좁혀갔다. 최종 상태: 선택 핸들·포트 예고점(`_draw_port_dots` 반지름
+3.5→5.0)·hover 스냅 마커(`_draw_snap_marker`) **세 점 크기를 전부 지름 10으로 통일**.
+같은 화살표의 다른 포트끼리 잇는 자기연결 커넥터가 도착 쪽 무바인딩으로 남아 모서리를
+파고드는 버그도 수정 — `_qc_create_arrow_only`·`_hp_create_arrow`의 "snap 도형이 출발
+도형과 같으면 무바인딩" 가드가 진짜 의도한 자기연결까지 막던 것을, 충분히 먼(0-길이
+아닌) 자기연결이면 바인딩을 허용하도록 완화(`_far_enough_for_self_loop`). Rejected: 자기연결
+가드 완전 제거 | 드래그 시작 직후 같은 포트로 되돌아오는 0-길이 케이스까지 바인딩되면 퇴화
+커넥터가 남음. Not-tested: 실제 마우스 드래그 감각(포트 크기 체감, 자기연결 실화면 부착).
+
+**외부 DXF 폴백 도형(`_PathItem`)에 화살표 스냅+지속연결 활성화 완료(2026-07-30, 커밋
+`9075f8b`, 스모크 307종)** — 계획서 §8 "다음 순서" 5번, 2026-07-29 확정한 원인 해소.
+`_conn_shapes()`가 `_RectItem`/`_EllipseItem`/`_SymbolItem`만 인식해 DXF 가져오기의 외부
+도형 폴백(`_generic_item`/`_solid_item`/`_symbol_path_item`, 전부 `_PathItem`)이 화살표
+스냅·지속연결 대상에서 빠져 있었다. `_nearest_border`가 `item.rect()`를 전제해 임의
+`QPainterPath`인 `_PathItem`엔 못 쓰던 것을 `_path_nearest` 헬퍼(폴리곤 평탄화 후 최근접
+변 — `_symbol_nearest`와 동일 패턴)로 확장하고, `item.rect()`를 호출하는
+`_axis_forced_local_normal`은 `_PathItem`에 대해 건너뛰도록 분기. `_border_snap_at`의
+연속 폴백(Pass 2)에 `_conn_paths()` 추가 — discrete 포트(N/E/S/W)는 여전히 미지원(임의
+외곽선은 그 개념이 불분명하다는 계획서 결정 유지). Rejected: `_PathItem`을
+`_obstacle_rects()`/`_connected_rects()`의 A* 회피 대상에도 포함 | 계획서 스코프 밖(연속
+폴백 스냅만) — obstacle 판정은 bbox 근사 확장이 별도로 필요. Not-tested: 실제 외부 DXF
+도면을 가져온 뒤 `python run.py` 실조건(마우스 스냅 감각).
+
+**성능 조사 스파이크 완료(2026-07-30, 커밋 `dddafb2`, 스모크 308종)** — 계획서 §8 "다음
+순서" 4번(고정시간 조사). 합성 도면(box 800+arrow 799, ~1600아이템)으로 cProfile 프로파일링해
+두 O(n) 재계산 지점을 확인·수정. ⓐ `_MinimapView._refit()`이 매 `paintEvent`마다
+`scene.itemsBoundingRect()`를 캐시 없이 전체 순회로 재계산 — 실측 71ms(~1600개)·139ms
+(~3200개, 선형 확인), 휠줌·팬·리사이즈마다 예약돼 무거운 도면에서 휠줌이 씹히는 1차 원인.
+`scene.changed`(콘텐츠 변경 시에만 발생 — 줌/팬 같은 순수 뷰 변환은 안 탐, 실측 확인)로
+dirty 플래그를 걸어 캐시. ⓑ 더 큰 원인: `boundingRect()` 체인 — Qt가 뷰 트랜스폼 변경 시
+아이템마다 여러 번 재조회해, 합성 도면 줌 20틱에 `boundingRect()` 57,590회·그 안의
+`_view_zoom_factor()` 287,950회 호출(전체 줌 비용의 70%+, `scene.views()` 순회+
+`isInteractive()` 필터링이 매번 반복). 상호작용 가능한 뷰는 `CanvasWindow` 생애주기 동안
+고정이므로 씬에 뷰 참조를 캐시해 순회를 생략(줌 값 자체는 매번 새로 읽어 staleness 없음).
+리얼리스틱 벤치마크(각 틱마다 `processEvents`로 이벤트루프 개입) 173ms/tick→133ms/tick.
+**선택 점선 테두리는 무혐의 재확인**(2026-07-29 1차 추정대로 — 200개 선택 추가비용 21ms뿐,
+대부분은 선택과 무관한 기본 페인트 비용). 그리드(점 격자)는 100%줌에서 +37ms로 유의미하나
+이번 스코프에서 제외(사용자 확인, 별도 항목). Rejected: `boundingRect()` 호출 수 자체를
+줄이는 `QGraphicsItem.setCacheMode` 등 구조적 접근 | 렌더링·히트테스트 전반 영향이 커 이번
+고정시간 조사 범위 밖. Not-tested: 실제 무거운 도면에서 `python run.py` 체감(합성 도면
+실측만).
+
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.
   ⚠ 전례: 지속연결 초안이 offscreen을 통과했으나 GUI에서 버그 발견(플로팅→고정 부착점으로 수정).
