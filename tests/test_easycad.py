@@ -6578,6 +6578,134 @@ def test_dxf_confirm_dialogs_show_once_via_qsettings():
     assert settings.value("dxf_open_notified", False, type=bool) is True
 
 
+def test_shape_fill_apply_and_undo():
+    # [신규기능] 도형 채우기 — rect/ellipse/symbol만 apply_fill을 갖고, 선/화살표/텍스트는 없다.
+    w = CanvasWindow()
+    r = _mk_pen_rect(w)
+    e = _EllipseItem(QRectF(0, 0, 40, 30)); w._scene.addItem(e)
+    s = _SymbolItem("decision", QRectF(0, 0, 40, 30)); w._scene.addItem(s)
+    for it in (r, e, s):
+        assert hasattr(it, "apply_fill")
+        assert it.brush().style() == Qt.BrushStyle.NoBrush   # 기본 투명
+    ln = _LineItem(QLineF(0, 0, 10, 10)); w._scene.addItem(ln)
+    ar = _ArrowItem(QColor("#ff0000"), 2, True); w._scene.addItem(ar)
+    t = _TextItem(QColor("#000000")); w._scene.addItem(t)
+    for it in (ln, ar, t):
+        assert not hasattr(it, "apply_fill")
+
+    r.setSelected(True)
+    w._edit_items([r], lambda x: x.apply_fill(QColor("#ffcc00")))
+    assert r.brush().style() != Qt.BrushStyle.NoBrush
+    assert r.brush().color().name() == "#ffcc00"
+    w.undo()
+    assert r.brush().style() == Qt.BrushStyle.NoBrush   # 되돌리면 다시 투명
+    w.redo()
+    assert r.brush().color().name() == "#ffcc00"
+    # apply_fill(None) = 다시 투명으로.
+    r.apply_fill(None)
+    assert r.brush().style() == Qt.BrushStyle.NoBrush
+
+
+def test_shape_fill_ecad_roundtrip():
+    # [신규기능] .ecad는 이미 fill 필드를 왕복 지원(document.py 기존 코드) — UI만 신규였음을 확인.
+    from PyQt6.QtWidgets import QGraphicsScene
+    w = CanvasWindow()
+    r = _RectItem(QRectF(0, 0, 40, 30)); r.apply_fill(QColor("#11aa33")); w._scene.addItem(r)
+    e = _EllipseItem(QRectF(0, 0, 40, 30)); e.apply_fill(None); w._scene.addItem(e)  # 명시적 투명
+    s = _SymbolItem("decision", QRectF(0, 0, 40, 30))
+    s.apply_fill(QColor("#8000ffcc"))   # 알파 채널 포함(반투명)
+    w._scene.addItem(s)
+    p = os.path.join(_TMP, "fill_rt.ecad")
+    save_document(w._scene, p)
+    sc2 = QGraphicsScene(); load_document(sc2, p)
+    r2 = [x for x in sc2.items() if isinstance(x, _RectItem)][0]
+    e2 = [x for x in sc2.items() if isinstance(x, _EllipseItem)][0]
+    s2 = [x for x in sc2.items() if isinstance(x, _SymbolItem)][0]
+    assert r2.brush().color().name() == "#11aa33"
+    assert e2.brush().style() == Qt.BrushStyle.NoBrush
+    assert s2.brush().color().alpha() == 0x80
+
+
+def test_shape_fill_clone_and_interior_hit():
+    # 채움이 생기면 clone도 함께 옮기고, 클릭 판정(_base_shape)이 테두리 링 → 전체 내부로 바뀐다
+    # (기존 코드가 이미 brush().style()로 분기해 두던 부분 — 채움 자체가 없어 죽은 코드였음).
+    r = _RectItem(QRectF(0, 0, 100, 60))
+    from PyQt6.QtCore import QPointF as _P
+    assert not r.contains(_P(50, 30))   # 투명 — 정중앙은 클릭 영역 밖(테두리 링만)
+    r.apply_fill(QColor("#00aaff"))
+    assert r.contains(_P(50, 30))       # 채워지면 내부 전체가 클릭 영역
+    c = r.clone()
+    assert c.brush().color().name() == "#00aaff"
+
+
+def test_properties_panel_fill_row():
+    # 속성 dock 「채움」 행 — 단일선택 값 표시, 혼합 감지, 화살표만 선택 시 비활성.
+    from PyQt6.QtGui import QPen
+    w = CanvasWindow()
+    sel_flags = _RectItem.GraphicsItemFlag.ItemIsSelectable | _RectItem.GraphicsItemFlag.ItemIsMovable
+    r = _RectItem(QRectF(0, 0, 40, 30)); r.setPen(QPen(QColor("#000000"))); r.setFlags(sel_flags)
+    r.apply_fill(QColor("#ff00ff")); w._scene.addItem(r)
+    r.setSelected(True); w._refresh_properties()
+    assert w._pf_fill.isEnabled()
+    assert w._pf_fill_val.text() == "#ff00ff"
+
+    e = _EllipseItem(QRectF(100, 0, 40, 30)); e.setPen(QPen(QColor("#000000"))); e.setFlags(sel_flags)
+    w._scene.addItem(e)   # 채움 없음(투명) — 다른 값
+    e.setSelected(True); w._refresh_properties()
+    assert w._pf_fill_val.text() == "혼합"
+
+    w._scene.clearSelection()
+    ar = _ArrowItem(QColor("#ff0000"), 2, True); ar.setFlags(sel_flags)
+    ar.set_points(QPointF(0, 0), QPointF(50, 0)); w._scene.addItem(ar)
+    ar.setSelected(True); w._refresh_properties()
+    assert not w._pf_fill.isEnabled()   # 화살표는 채움 미지원
+
+
+def test_edit_fill_and_clear_fill_sticky():
+    # _edit_fill/_clear_fill이 undo 저널 + sticky current_fill 둘 다 갱신.
+    w = CanvasWindow()
+    r = _mk_pen_rect(w); r.setSelected(True)
+    from PyQt6.QtWidgets import QColorDialog
+    orig = QColorDialog.getColor
+    try:
+        QColorDialog.getColor = staticmethod(lambda *a, **k: QColor("#123456"))
+        w._edit_fill()
+    finally:
+        QColorDialog.getColor = orig
+    assert r.brush().color().name() == "#123456"
+    assert w.current_fill.name() == "#123456"
+    w.undo()
+    assert r.brush().style() == Qt.BrushStyle.NoBrush
+    w._clear_fill()   # 선택 유지된 상태에서 다시 투명으로(redo 상태 위에 새 편집)
+    assert w.current_fill is None
+
+
+def test_new_shape_uses_sticky_fill():
+    # make_brush()가 current_fill을 반영 — 새 도형 생성 경로(팔레트 드롭)에서 확인.
+    w = CanvasWindow()
+    assert w.make_brush().style() == Qt.BrushStyle.NoBrush   # 기본은 투명
+    w.current_fill = QColor("#00ff88")
+    it = w._create_shape_at("rect", QPointF(100, 100))
+    assert it.brush().color().name() == "#00ff88"
+
+
+def test_paint_style_copy_includes_fill():
+    # [스타일 복사] 채움도 서식의 일부로 옮겨진다 — has_fill 대상끼리만, 타입이 달라도 적용.
+    w = CanvasWindow()
+    sel_flags = _RectItem.GraphicsItemFlag.ItemIsSelectable | _RectItem.GraphicsItemFlag.ItemIsMovable
+    src = _RectItem(QRectF(0, 0, 40, 30)); src.setFlags(sel_flags)
+    src.apply_fill(QColor("#abcdef")); w._scene.addItem(src)
+    dst = _EllipseItem(QRectF(100, 0, 40, 30)); dst.setFlags(sel_flags); w._scene.addItem(dst)
+    src.setSelected(True)
+    w.copy_style_from_selection()
+    w._scene.clearSelection()
+    dst.setSelected(True)
+    w.paste_style_to_selection()
+    assert dst.brush().color().name() == "#abcdef"
+    w.undo()
+    assert dst.brush().style() == Qt.BrushStyle.NoBrush
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

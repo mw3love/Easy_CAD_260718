@@ -941,6 +941,23 @@ dirty 플래그를 걸어 캐시. ⓑ 더 큰 원인: `boundingRect()` 체인 �
     별개로 **화살표 자신의 `boundingRect`/`_content_rect`/`_head_points` 체인**이 남은 병목으로
     확인됨(다음 세션 후보 — 아직 원인만 특정, 계획 미수립).
 
+**도형 채우기(fill) 완료(2026-07-31, 프록시검증 — 스모크 323종 전체 통과, 실조건 대기,
+커밋 `d03fe5e`)** — 계획서 §8 항목7. deep-interview로 스코프 확정(DXF는 skip — 브러시를 아예
+안 읽는 구조라 무변경으로 자동 skip, PDF는 `scene.render()`가 그대로 그려 자동 반영) 후 코드
+조사 중 발견: `.ecad` 직렬화(`document.py`)·클릭 판정(`_base_shape`/`_interior_path`)·`clone`은
+pasteflow 유산으로 이미 브러시 기반이라 이미 완성돼 있었음(전부 무손실 왕복, 알파 채널까지) —
+실제로 빠진 건 UI뿐이었다. `apply_fill(color)`을 `_RectItem`/`_EllipseItem`/`_SymbolItem` 세
+클래스에 명시적으로 추가(믹스인 레벨엔 안 얹음 — 이미지·표도 같은 `_RectGeometryMixin`을 쓰지만
+`paint`가 brush를 안 그려, 믹스인에 얹으면 UI가 헛동작하는 "채움" 편집을 노출할 위험). `capture_state`/
+`apply_state`에 `fill` 편입해 undo/redo 대상, `_read_props`에 `has_fill`/`fill` 추가로 스타일
+복사(`Ctrl+Alt+C/V`)도 자동 편입. 속성 dock에 「채움」행(스와치 + "✕"투명 버튼) 신설, sticky
+`current_fill` + `make_brush()`(`make_pen`과 대칭)로 다음에 그릴 도형에도 이어짐(그리기 도구·
+팔레트 드롭 두 생성 경로 모두 반영, Mermaid 가져오기 노드는 의도적으로 제외 — 대량 생성에 편집기
+sticky 상태가 섞이면 어색함). 스모크 7종 추가(총 323, 전체 스위트 완주 — 과거 세션에 있던
+특정 지점 세그폴트 이번엔 재현 안 됨). 자체 스크린샷으로 사각형(채움 有/無)·마름모·타원이 스와치
+색 그대로 겹침 없이 렌더되는 것 확인. Not-tested: 실제 마우스로 색 다이얼로그·"✕"버튼 조작 감각
+(`python run.py` 몫).
+
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후 **실조건은 사용자에게 `python run.py` 요청**.
   ⚠ 전례: 지속연결 초안이 offscreen을 통과했으나 GUI에서 버그 발견(플로팅→고정 부착점으로 수정).

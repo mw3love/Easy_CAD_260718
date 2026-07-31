@@ -710,6 +710,9 @@ class _HandleResizeMixin:
             st["width"] = self._width
         if hasattr(self, "_style"):   # [M2 #3] 화살표 몸통 선스타일(pen 없는 화살표 전용)
             st["style"] = self._style
+        if hasattr(self, "apply_fill"):   # [신규기능] 도형 채우기 — rect/ellipse/symbol만
+            st["fill"] = (QColor(self.brush().color())
+                          if self.brush().style() != Qt.BrushStyle.NoBrush else None)
         if hasattr(self, "_head_at_end") and hasattr(self, "set_head_at_end"):
             st["head"] = self._head_at_end   # [M3 #15] 화살표 방향 — 토글을 undo 가능하게
         if hasattr(self, "setDefaultTextColor"):
@@ -734,6 +737,8 @@ class _HandleResizeMixin:
             self.apply_width(st["width"])
         if "style" in st and hasattr(self, "apply_style"):   # [M2 #3] 화살표 선스타일
             self.apply_style(st["style"])
+        if "fill" in st and hasattr(self, "apply_fill"):   # [신규기능] 도형 채우기
+            self.apply_fill(st["fill"])
         if "head" in st and hasattr(self, "set_head_at_end"):   # [M3 #15] 화살표 방향
             self.set_head_at_end(st["head"])
         if "tcolor" in st and hasattr(self, "setDefaultTextColor"):
@@ -1524,6 +1529,14 @@ class _RectItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGrap
         c.setBrush(QBrush(self.brush()))
         return self._copy_common_to(c)
 
+    def apply_fill(self, color):
+        """[신규기능 · 도형 채우기] color=None이면 투명(NoBrush), 아니면 그 색으로 채움.
+        rect/ellipse/symbol 세 클래스에만 명시적으로 둔다(이미지·표는 paint가 brush를 안 써서
+        무의미하므로 믹스인에 안 얹음)."""
+        self.prepareGeometryChange()   # 채움 유무가 _base_shape/_interior_path(클릭 영역)를 바꾼다
+        self.setBrush(QBrush(QColor(color)) if color is not None else QBrush(Qt.BrushStyle.NoBrush))
+        self.update()
+
     def _base_shape(self):
         # 속 빈 네모(NoBrush)는 '테두리 링'만 클릭 영역으로 — 내부를 통과시켜 네모 안에서
         # 다른 주석을 잡거나 새 도형(화살표 등)을 그릴 수 있게. 채움이 있으면 기본대로 전체.
@@ -1562,6 +1575,12 @@ class _EllipseItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QG
         c.setPen(QPen(self.pen()))
         c.setBrush(QBrush(self.brush()))
         return self._copy_common_to(c)
+
+    def apply_fill(self, color):
+        """[신규기능 · 도형 채우기] _RectItem.apply_fill과 동일 — 클래스별 명시 opt-in."""
+        self.prepareGeometryChange()
+        self.setBrush(QBrush(QColor(color)) if color is not None else QBrush(Qt.BrushStyle.NoBrush))
+        self.update()
 
     def _content_rect(self):
         # _LineItem과 동일 사이클 방지: QGraphicsEllipseItem.boundingRect()는 펜 두께가
@@ -1860,6 +1879,12 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
         c.setPen(QPen(self.pen()))
         c.setBrush(QBrush(self.brush()))
         return self._copy_common_to(c)
+
+    def apply_fill(self, color):
+        """[신규기능 · 도형 채우기] _RectItem.apply_fill과 동일 — 클래스별 명시 opt-in."""
+        self.prepareGeometryChange()
+        self.setBrush(QBrush(QColor(color)) if color is not None else QBrush(Qt.BrushStyle.NoBrush))
+        self.update()
 
     def _base_shape(self):
         # 속 빈 심볼(NoBrush)은 외곽선만 클릭 영역으로(네모와 동일 — 안에서 화살표 시작 가능),
@@ -6779,18 +6804,18 @@ class _AnnotatorView(QGraphicsView):
         if tool == "rect":
             it = _RectItem(QRectF(sp, sp))
             it.setPen(pen)
-            it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            it.setBrush(owner.make_brush())   # [신규기능] sticky 채움색(기본 투명)
             self._begin_draw(it)
         elif tool.startswith("sym:"):
             # [우리 확장] 심볼/스텐실 — 네모와 동일한 드래그 그리기(setRect 기반).
             it = _SymbolItem(tool[4:], QRectF(sp, sp))
             it.setPen(pen)
-            it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            it.setBrush(owner.make_brush())
             self._begin_draw(it)
         elif tool == "ellipse":
             it = _EllipseItem(QRectF(sp, sp))
             it.setPen(pen)
-            it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            it.setBrush(owner.make_brush())
             self._begin_draw(it)
         elif tool == "line":
             it = _LineItem(QLineF(sp, sp))

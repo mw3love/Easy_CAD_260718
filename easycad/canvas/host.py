@@ -589,6 +589,7 @@ class CanvasWindow(QMainWindow):
         self.current_font_size = _DEFAULT_FONT
         self.current_badge_size = _DEFAULT_BADGE
         self.current_text_bg = None
+        self.current_fill = None   # [신규기능] 도형 채우기 — sticky, 기본 투명(NoBrush)
         self.arrow_head_at_end = True
         # [화살표 통합] 화살표는 상단 도구 1개. '어떤 종류로 그릴지'는 마지막에 고른 종류를 기억
         # (sticky — 색·두께·선스타일과 같은 관례). 최초 기본은 직각(순서도 위주 사용 — 실사용
@@ -1021,7 +1022,7 @@ class CanvasWindow(QMainWindow):
         else:
             return None
         it.setPen(self.make_pen())
-        it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        it.setBrush(self.make_brush())   # [신규기능] sticky 채움색
         it.setPos(scene_pos.x() - w / 2.0, scene_pos.y() - h / 2.0)
         it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
         self._scene.addItem(it)
@@ -1678,6 +1679,22 @@ class CanvasWindow(QMainWindow):
         ch.setContentsMargins(0, 0, 0, 0); ch.setSpacing(6)
         ch.addWidget(self._pf_color); ch.addWidget(self._pf_color_val, 1)
 
+        # [신규기능] 채움 — 스와치(클릭=색 선택) + "✕"(투명으로). rect/ellipse/symbol 전용,
+        # 대상 없으면 행 자체를 비활성화(has_fill로 판정, _refresh_properties).
+        self._pf_fill = QToolButton()
+        self._pf_fill.setFixedSize(QSize(48, 20))
+        self._pf_fill.setToolTip("클릭: 채움색 선택")
+        self._pf_fill.clicked.connect(self._edit_fill)
+        self._pf_fill_none = QToolButton()
+        self._pf_fill_none.setText("✕")
+        self._pf_fill_none.setFixedSize(QSize(20, 20))
+        self._pf_fill_none.setToolTip("채움 없음(투명)")
+        self._pf_fill_none.clicked.connect(self._clear_fill)
+        self._pf_fill_val = QLabel("—"); self._pf_fill_val.setStyleSheet("color:#888;")
+        fill_row = QWidget(); fh = QHBoxLayout(fill_row)
+        fh.setContentsMargins(0, 0, 0, 0); fh.setSpacing(6)
+        fh.addWidget(self._pf_fill); fh.addWidget(self._pf_fill_none); fh.addWidget(self._pf_fill_val, 1)
+
         # 두께 — 스핀박스(px).
         self._pf_width = QDoubleSpinBox()
         self._pf_width.setRange(0.5, 50.0); self._pf_width.setSingleStep(0.5)
@@ -1697,6 +1714,7 @@ class CanvasWindow(QMainWindow):
 
         form.addRow("종류", self._pf_type)
         form.addRow("색", color_row)
+        form.addRow("채움", fill_row)
         form.addRow("두께", self._pf_width)
         form.addRow("선", self._pf_style)
         form.addRow("폰트", self._pf_font)
@@ -1970,6 +1988,29 @@ class CanvasWindow(QMainWindow):
         self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
         self._set_current_color(col)   # [M2 #A] 다음 도형 기본 색으로(sticky)
 
+    def _edit_fill(self):
+        """[신규기능] 채움색 선택 — 스와치 클릭. 알파 채널 허용(반투명 채움, .ecad가 이미
+        HexArgb로 왕복 지원 — document.py 무변경)."""
+        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_fill")]
+        if not sel:
+            return
+        init = self._read_props(sel[0])["fill"] or QColor("#ffffff")
+        col = QColorDialog.getColor(init, self, "채움색 선택",
+                                    QColorDialog.ColorDialogOption.ShowAlphaChannel)
+        if not col.isValid():
+            return
+        self._edit_items(sel, lambda it: it.apply_fill(QColor(col)))
+        self.current_fill = QColor(col)   # 다음 도형 기본 채움으로(sticky)
+
+    def _clear_fill(self):
+        """[신규기능] 채움을 투명으로(None) — 별도 버튼. QColorDialog는 '없음' 상태를
+        표현할 수 없어 스와치 클릭과 분리한 진입점이 필요했다."""
+        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_fill")]
+        if not sel:
+            return
+        self._edit_items(sel, lambda it: it.apply_fill(None))
+        self.current_fill = None
+
     def _edit_width(self, val):
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_width")]
         self._edit_items(sel, lambda it: it.apply_width(float(val)),
@@ -2019,10 +2060,22 @@ class CanvasWindow(QMainWindow):
                 font = fs if fs and fs > 0 else None
             except Exception:
                 font = None
+        # [신규기능] 채움색 — rect/ellipse/symbol만 지원(apply_fill 존재로 판정). fill=None은
+        # "지원하지만 지금 투명"이라 has_fill과 분리해야 한다(color/width처럼 항상 값이 있는
+        # 속성과 달리, 채움은 "이 항목이 채움 자체를 지원하는가"를 따로 알아야 함).
+        has_fill = hasattr(item, "apply_fill")
+        fill = None
+        if has_fill:
+            try:
+                fill = (QColor(item.brush().color())
+                       if item.brush().style() != Qt.BrushStyle.NoBrush else None)
+            except Exception:
+                fill = None
         return {
             "type": _TYPE_NAMES.get(type(item).__name__, "객체"),
             "color": QColor(col) if col is not None else None,
             "width": width, "style": style, "font": font,
+            "has_fill": has_fill, "fill": fill,
         }
 
     # ---- 스타일 복사(format painter) — deep-interview 2026-07-28 -------------
@@ -2054,6 +2107,10 @@ class CanvasWindow(QMainWindow):
                 p = item.pen(); p.setStyle(st["style"]); item.setPen(p)
         if st.get("font") is not None and hasattr(item, "apply_font_size"):
             item.apply_font_size(int(st["font"]))
+        # [신규기능] 채움 — "지원 대상일 때만" 옮긴다(has_fill로 판정). fill 값 자체는 None(투명)도
+        # 유효한 서식이라 color/width와 달리 None 체크 없이 그대로 적용.
+        if st.get("has_fill") and hasattr(item, "apply_fill"):
+            item.apply_fill(st.get("fill"))
         if "tcolor" in st and hasattr(item, "setDefaultTextColor"):
             item.setDefaultTextColor(st["tcolor"])
         if "bg" in st and hasattr(item, "set_bg"):
@@ -2104,6 +2161,10 @@ class CanvasWindow(QMainWindow):
                 self._pf_type.setText("—")
                 self._pf_color_val.setText("—")
                 self._pf_color.setStyleSheet(self._swatch_css(None))
+                self._pf_fill.setEnabled(False)
+                self._pf_fill_none.setEnabled(False)
+                self._pf_fill_val.setText("—")
+                self._pf_fill.setStyleSheet(self._swatch_css(None))
                 self._pf_hint.setText("객체를 선택하면 속성을 편집할 수 있습니다.")
                 return
             props = [self._read_props(it) for it in sel]
@@ -2119,6 +2180,28 @@ class CanvasWindow(QMainWindow):
             self._pf_color.setStyleSheet(self._swatch_css(cols[0] if uniform else None))
             self._pf_color_val.setText(cols[0].name() if uniform
                                        else ("혼합" if cols else "—"))
+
+            # [신규기능] 채움 — 지원 대상(has_fill)에서만 균일성 판정. None(투명)도 유효한 값이라
+            # color처럼 "값 있는 것만 필터"하면 안 되고, has_fill인 항목 전부를 모아야 한다.
+            fillable = [p["fill"] for p in props if p["has_fill"]]
+            has_fillable = bool(fillable)
+            self._pf_fill.setEnabled(has_fillable)
+            self._pf_fill_none.setEnabled(has_fillable)
+            if has_fillable:
+                names = {(f.name(QColor.NameFormat.HexArgb) if f is not None else None)
+                        for f in fillable}
+                uniform_fill = len(names) == 1
+                cur = fillable[0] if uniform_fill else None
+                self._pf_fill.setStyleSheet(self._swatch_css(cur))
+                if not uniform_fill:
+                    self._pf_fill_val.setText("혼합")
+                elif cur is None:
+                    self._pf_fill_val.setText("없음")
+                else:
+                    self._pf_fill_val.setText(cur.name())
+            else:
+                self._pf_fill.setStyleSheet(self._swatch_css(None))
+                self._pf_fill_val.setText("—")
 
             # 두께 — 균일하면 값, 아니면 대상 있음만 활성(값은 첫 대상).
             widths = [p["width"] for p in props if p["width"] is not None]
@@ -2205,6 +2288,13 @@ class CanvasWindow(QMainWindow):
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         return pen
+
+    def make_brush(self) -> QBrush:
+        """[신규기능] make_pen과 대칭 — 새 도형(rect/ellipse/symbol)의 sticky 채움색.
+        기본 None=투명(NoBrush), 지금까지의 동작 불변."""
+        if self.current_fill is None:
+            return QBrush(Qt.BrushStyle.NoBrush)
+        return QBrush(QColor(self.current_fill))
 
     def set_tool(self, key):
         # 도구를 바꾸면 진행 중이던 클릭 배치는 폐기(반쯤 그린 도형이 남지 않게).
