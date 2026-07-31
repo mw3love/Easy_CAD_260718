@@ -350,28 +350,27 @@ def test_curve_radius_roundtrip_and_backcompat():
     assert dict_to_item(d)._curve_r == 0.0
 
 
-def test_floating_toolbar_curve_radius_stepper():
-    # [M4-4 ⓑ] 반경 스테퍼: 직교 커넥터 단일 선택 시 노출, 값 변경이 반경에 반영되고 undo로 복원.
+def test_properties_panel_curve_radius_stepper():
+    # [M4-4 ⓑ → 미니패널 통합 2026-07-31] 반경 스테퍼: 직교 커넥터 단일 선택 시 노출, 값 변경이
+    # 반경에 반영되고 undo로 복원. 옛 선택-추종 플로팅 툴바에서 속성 dock 행으로 이관.
     w = CanvasWindow()
     ar = _PolyArrowItem(QColor("#111111"), 3.0, True)
     ar.set_points(QPointF(0, 0), QPointF(100, 60))
     ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(ar); ar.setSelected(True)
     w._floating_set_arrow_kind("ortho")         # 직각 커넥터 → 각짐(반경) 스테퍼 대상
-    w._reposition_floating_toolbar()
-    assert not w._float_radius.isHidden()
+    assert not w._pf_radius.isHidden()
     # 키보드 포커스를 가져가면 Del·Ctrl+D(뷰 keyPressEvent 처리)가 캔버스로 안 간다 → NoFocus 고정.
-    assert w._float_radius.focusPolicy() == Qt.FocusPolicy.NoFocus
+    assert w._pf_radius.focusPolicy() == Qt.FocusPolicy.NoFocus
     poly = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)][0]
-    assert w._float_radius.value() == int(_PolyArrowItem._CORNER_R)   # 현재 값 동기화
-    w._float_radius.setValue(2)                                       # 사용자 조작
+    assert w._pf_radius.value() == int(_PolyArrowItem._CORNER_R)   # 현재 값 동기화
+    w._pf_radius.setValue(2)                                       # 사용자 조작
     assert poly._curve_r == 2.0 and w.current_curve_r == 2.0          # sticky 반영
     w.undo()
     assert poly._curve_r == _PolyArrowItem._CORNER_R
     # 곡선 화살표에서는 각짐 조절이 없어 스테퍼를 숨긴다.
     w._floating_set_arrow_kind("curved")
-    w._reposition_floating_toolbar()
-    assert w._float_radius.isHidden()
+    assert w._pf_radius.isHidden()
 
 
 def test_arrow_kind_menu_labels():
@@ -965,64 +964,46 @@ def test_snap_to_external_path_item():
     assert abs(after.x() - before.x() - 20) < 1e-6 and abs(after.y() - before.y()) < 1e-6
 
 
-def test_floating_toolbar_edits_and_visibility():
-    # [M3 #15] 플로팅 툴바 — 선택 유무로 표시 토글, 편집이 기존 undo 경로를 탄다.
+def test_properties_panel_type_rows_hidden_without_selection():
+    # [미니패널 통합 2026-07-31] 선택이 없으면 도형바꾸기·화살표종류·반경·방향 4개 행은 전부
+    # 숨어야 한다(빈 dock에 죽은 버튼이 남지 않게) — 옛 플로팅 툴바의 "바 전체 숨김"과 동일 취지.
     w = CanvasWindow()
-    bar = w._float_bar
-    w._reposition_floating_toolbar()
-    assert bar.isHidden()                                  # 선택 없음 → 숨김
-    it = _mk_pen_rect(w, color="#111111"); it.setSelected(True)
-    w._reposition_floating_toolbar()
-    assert not bar.isHidden()                             # 선택 → 표시
-    assert w._float_dir_btn.isHidden()                    # 도형 → 방향 버튼 숨김
-    # 색 스와치 → apply_color + sticky + undo.
-    w._floating_set_color("#34C759")
-    assert it.pen().color().name().lower() == "#34c759"
-    assert w.current_color.name().lower() == "#34c759"
-    w.undo(); assert it.pen().color().name().lower() == "#111111"
-    # 선스타일 순환 → dash, undo.
-    w._floating_cycle_style()
-    assert it.pen().style() == Qt.PenStyle.DashLine
-    w.undo(); assert it.pen().style() == Qt.PenStyle.SolidLine
+    for widget in (w._pf_swap_btn, w._pf_routing_btn, w._pf_radius, w._pf_dir_btn):
+        assert widget.isHidden()
 
 
-def test_floating_toolbar_hides_color_for_image_and_table_only():
-    # 이미지·표는 NoPen + 자체 고정 색이라 apply_color/apply_style이 시각 효과가 없다 —
-    # 선택 전부가 이미지/표뿐이면 색상 스와치·선스타일·"더 보기"를 숨긴다. 다른 버튼(방향·
-    # 도형교체·라우팅·반경)도 전부 대상이 아니므로 이때는 바 전체가 숨는다(빈 프레임 흔적 방지 —
-    # 실조건서 발견: 버튼만 숨기니 배경+테두리만 남은 작은 사각형이 보였음).
-    w = CanvasWindow()
-    img = _ImageItem(_mk_pixmap(40, 20), QRectF(0, 0, 40, 20))
-    img.setFlags(img.GraphicsItemFlag.ItemIsSelectable | img.GraphicsItemFlag.ItemIsMovable)
-    w._scene.addItem(img); img.setSelected(True)
-    w._reposition_floating_toolbar()
-    assert w._float_bar.isHidden()                         # 바 전체가 숨는다
+def test_properties_panel_grows_when_row_count_increases():
+    # [2026-07-31, 실사용자 실기기 재현] 선택 종류가 바뀌어 노출 행 수가 늘어도(네모 7행→
+    # 화살표 9행) `_props_panel` 위젯 자체가 창 리사이즈 없이 그 크기에 맞춰 커져야 한다.
+    # 옛 버그: `_refresh_properties()`가 행 노출만 토글하고 패널을 안 키워, 창을 한 번도
+    # 리사이즈 안 한 앱 기본 크기에서 스핀박스("두께"·"폰트"·"반경")가 옛(더 좁은) 패널 크기에
+    # 짓눌려 13px까지 줄고 텍스트 디센더가 잘렸다(실기기 콘솔 로그로 원인 확정). 창을 한 번도
+    # 안 건드린 채로(=이 테스트처럼 CanvasWindow 생성 직후) 재현·검증해야 의미가 있다.
+    w = CanvasWindow(); w.show()
+    rect = _RectItem(QRectF(0, 0, 150, 90))
+    rect.setFlags(rect.GraphicsItemFlag.ItemIsSelectable | rect.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(rect); rect.setSelected(True)
+    rect_h = w._props_panel.height()
+    assert w._pf_width.geometry().height() >= 20   # 잘림 없는 정상 높이
 
-    tbl = _TableItem(2, 2, QRectF(0, 100, 80, 40))
-    tbl.setFlags(tbl.GraphicsItemFlag.ItemIsSelectable | tbl.GraphicsItemFlag.ItemIsMovable)
-    w._scene.addItem(tbl)
-    w._scene.clearSelection(); tbl.setSelected(True)
-    w._reposition_floating_toolbar()
-    assert w._float_bar.isHidden()
-
-    # 이미지 + 네모 섞어 선택 — 네모 쪽은 색이 실제로 반영되므로 바와 스와치 모두 다시 노출.
-    rect = _mk_pen_rect(w)
-    img.setSelected(True); rect.setSelected(True)
-    w._reposition_floating_toolbar()
-    assert not w._float_bar.isHidden()
-    assert not w._float_style_btn.isHidden()
-    assert not all(b.isHidden() for b in w._float_swatches)
+    w._scene.clearSelection()
+    ar = _PolyArrowItem(QColor("#111111"), 3.0, True)
+    ar.set_points(QPointF(-150, -155), QPointF(180, -170))
+    w._scene.addItem(ar); ar.setSelected(True)
+    arrow_h = w._props_panel.height()
+    assert arrow_h > rect_h   # 화살표는 행이 2개 더 많아 패널이 더 커야 한다
+    assert w._pf_width.geometry().height() >= 20   # 행이 늘어도 두께 행은 짓눌리지 않는다
 
 
-def test_floating_toolbar_arrow_flip_undo():
-    # [M3 #15] 화살표 선택 시 방향 버튼 노출 + flip이 capture_state로 undo(코어 보강).
+def test_properties_panel_arrow_flip_undo():
+    # [M3 #15 → 미니패널 통합 2026-07-31] 화살표 선택 시 속성 dock의 방향 행 노출 + flip이
+    # capture_state로 undo(코어 보강). 옛 선택-추종 플로팅 툴바에서 이관.
     w = CanvasWindow()
     ar = _PolyArrowItem(QColor("#111111"), 3.0, True)
     ar.set_points(QPointF(0, 0), QPointF(100, 0))
     ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(ar); ar.setSelected(True)
-    w._reposition_floating_toolbar()
-    assert not w._float_dir_btn.isHidden()               # 화살표 → 방향 버튼 노출
+    assert not w._pf_dir_btn.isHidden()               # 화살표 → 방향 행 노출
     before = ar._head_at_end
     st = ar.capture_state(); assert "head" in st          # 방향이 상태 스냅샷에 포함
     w._floating_flip_arrows()
@@ -1030,17 +1011,17 @@ def test_floating_toolbar_arrow_flip_undo():
     w.undo(); assert ar._head_at_end == before            # 방향 토글이 되돌려진다
 
 
-def test_floating_toolbar_arrow_kind_dropdown():
-    # [화살표 통합] 단일 화살표 선택 시 종류 드롭다운 노출. 직선↔곡선은 같은 객체(_ArrowItem)의
-    # 상태 변경(곡률 기억), ↔직각은 클래스 교체(_PolyArrowItem)이고 각각 단일 undo.
+def test_properties_panel_arrow_kind_dropdown():
+    # [화살표 통합 → 미니패널 통합 2026-07-31] 단일 화살표 선택 시 속성 dock에 종류 드롭다운
+    # 행 노출. 직선↔곡선은 같은 객체(_ArrowItem)의 상태 변경(곡률 기억), ↔직각은 클래스 교체
+    # (_PolyArrowItem)이고 각각 단일 undo.
     from easycad.canvas.host import _arrow_kind_of
     w = CanvasWindow()
     ar = _ArrowItem(QColor("#111111"), 3.0, True)
     ar.set_points(QPointF(0, 0), QPointF(100, 60))
     ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(ar); ar.setSelected(True)
-    w._reposition_floating_toolbar()
-    assert not w._float_routing_btn.isHidden()            # 화살표 → 종류 버튼 노출
+    assert not w._pf_routing_btn.isHidden()            # 화살표 → 종류 행 노출
     assert _arrow_kind_of(ar) == "straight"
 
     w._floating_set_arrow_kind("curved")                  # 같은 객체 — 휜다

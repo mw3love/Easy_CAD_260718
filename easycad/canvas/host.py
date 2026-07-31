@@ -468,7 +468,7 @@ class _FloatingPanel(QFrame):
     (deep-interview 2026-07-29: QMainWindow dock 영역은 콘텐츠 크기와 무관하게 칼럼 전체를
     예약해 낭비 공간이 생기던 문제의 근본원인). 위치는 창 모서리에 고정(자유 드래그 재배치는
     스코프 밖 — Figma류도 패널 위치는 고정이 관례), 대신 제목줄 ▾/▸ 로 접기/펴기.
-    포지셔닝 패턴은 이미 검증된 `_reposition_floating_toolbar`(M3 #15)를 그대로 따른다
+    포지셔닝 패턴은 선택 위 컨텍스트 툴바(M3 #15, 2026-07-31 폐지)가 쓰던 것을 그대로 따른다
     (QFrame(host) 부모 + host 좌표계 move — 규칙 2 손안의 카드)."""
 
     def __init__(self, host, title: str, collapse_key: str):
@@ -480,6 +480,7 @@ class _FloatingPanel(QFrame):
         v.setContentsMargins(0, 0, 0, 0); v.setSpacing(0)
 
         head = QWidget(); head.setObjectName("floatPanelHead")
+        self._head = head
         hl = QHBoxLayout(head)
         hl.setContentsMargins(9, 4, 4, 4); hl.setSpacing(4)
         self._title_lbl = QLabel(title)
@@ -503,6 +504,25 @@ class _FloatingPanel(QFrame):
             self._set_collapsed(True, persist=False)
         else:
             self._update_collapse_icon()
+
+    def paintEvent(self, event):
+        # [2026-07-31] 배경·테두리를 QSS(`#floatPanel {...}`) 대신 직접 그린다 — `setStyleSheet()`를
+        # 이 패널(본문 폼의 조상) 자체에 걸면 Qt가 body 하위 위젯 전부(스핀박스 포함, 그 위젯을
+        # 겨냥한 규칙이 없어도)를 QStyleSheetStyle로 강제 전환하는데, 이 프록시의 QSpinBox/
+        # QDoubleSpinBox sizeHint가 네이티브 Fusion보다 짧게 나와 텍스트 디센더가 잘리고, 그
+        # sizeHint로 계산되는 QFormLayout 행 간격도 실제 위젯 높이(setMinimumHeight로 강제한
+        # 값)보다 좁게 잡혀 다음 행과 겹치는 문제까지 있었다(스턱루프 규칙 11-b — 위젯 레벨
+        # 패치를 두 번 더 시도해도 같은 근본원인이라 계속 재발했다). 패널 자체엔 스타일시트를
+        # 아예 걸지 않아 body의 모든 자손이 순정 Fusion 계산을 그대로 쓰게 하고, 제목줄 강조는
+        # `_head`에만 스타일시트를 건다(head는 body의 조상이 아니라 형제라 body에 영향 없음).
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.setBrush(QBrush(self.palette().color(QPalette.ColorRole.Window)))
+        painter.setPen(QPen(self.palette().color(QPalette.ColorRole.Mid), 1))
+        painter.drawRoundedRect(rect, 6, 6)
+        painter.end()
+        super().paintEvent(event)
 
     def set_content(self, widget: QWidget):
         self._body_layout.addWidget(widget)
@@ -626,7 +646,7 @@ def _strip_color_dialog_left_column(dlg: QColorDialog):
 
 class _ColorGridPopup(QWidget):
     """Office류 색 선택 팝업 — 무채색+기본색 그리드(밝기 3단) + 최근 사용한 색(다른 색에서
-    고른 색, 최대 3개) + '다른 색…'(비-네이티브일 땐 왼쪽 열을 숨긴 QColorDialog) +
+    고른 색, 최대 3개) + '다른 색…'(왼쪽 열을 숨긴 비-네이티브 QColorDialog, 선·채움 공통) +
     (채움 전용) '없음'. 바깥을 클릭하면 자동으로 닫히는 Qt.Popup — 2026-07-28 코드정리에서
     삭제된 pasteflow 유산 `_ColorPalettePopup`과 동일한 패턴이다. 클릭 즉시 적용 + 팝업
     닫힘(확인 버튼 없음, 오피스 관례)."""
@@ -692,21 +712,17 @@ class _ColorGridPopup(QWidget):
         self.close()
 
     def _pick_other(self):
+        # [2026-07-31 통일] 예전엔 알파(반투명)가 필요한 채움만 비-네이티브 다이얼로그+왼쪽 열
+        # 숨김을 적용하고, 알파가 필요 없는 선/텍스트 색은 OS 네이티브 다이얼로그를 그대로 썼다
+        # — 네이티브는 창 자체가 OS가 그려서 내부 위젯을 숨길 방법이 없어 왼쪽 열이 그대로
+        # 보였다. 사용자 피드백(2026-07-31): 인터페이스가 서로 달라 보임 → 알파 유무와 무관하게
+        # 항상 비-네이티브 인스턴스를 만들어 왼쪽 열을 숨긴다(오른쪽 그라디언트+필드는 동일 재사용).
         parent = self._anchor_parent
         self.close()
-        if not self._show_alpha:
-            col = QColorDialog.getColor(self._initial or QColor("#000000"), parent, self._title)
-            if col.isValid():
-                if self._on_custom_picked:
-                    self._on_custom_picked(col)
-                self._on_pick(col)
-            return
-        # 알파(반투명) 지원이 필요하면 네이티브 다이얼로그가 안 돼(Qt가 자동으로 비-네이티브로
-        # 전환) 우리가 인스턴스를 직접 만들어 왼쪽 열을 숨긴다 — 오른쪽 그라디언트+필드는
-        # 그대로 재사용(요청①: 자체 피커 새로 개발할 필요 없이 있는 걸 다듬기만).
         dlg = QColorDialog(parent)
         dlg.setWindowTitle(self._title)
-        dlg.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
+        if self._show_alpha:
+            dlg.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
         dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
         dlg.setCurrentColor(self._initial or QColor("#ffffff"))
         dlg.adjustSize()
@@ -801,9 +817,8 @@ class CanvasWindow(QMainWindow):
         # 카드(`_FloatingPanel`)로 교체 — Figma/Excalidraw처럼 패널이 콘텐츠만큼만 쓰고
         # 나머지는 도면 영역. 위치는 고정(자유 드래그 재배치는 스코프 밖), 대신 접기/펴기.
         self._build_left_panel()          # 도형 + 레이어(탭), 좌상단
-        self._build_properties_panel()    # 속성, 우상단
+        self._build_properties_panel()    # 속성, 우상단(도형바꾸기·화살표종류·반경·방향도 여기 포함)
         self._build_minimap_panel()       # [신규기능] 미니맵 — 무한캔버스 큰 도면 탐색, 우상단(속성 아래)
-        self._build_floating_toolbar()    # [Phase 6 M3 #15] 선택 위 플로팅 컨텍스트 툴바
         self._build_status_widgets()      # 줌 배지(우하단) + 토스트(하단중앙) — QStatusBar 대체
         self.set_tool("select")
         self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
@@ -1193,8 +1208,7 @@ class CanvasWindow(QMainWindow):
     # ---- [캔버스-퍼스트] 플로팅 패널·줌배지·토스트 위치 계산 ------------------
     def _reposition_panels(self):
         """좌상단=도형/레이어, 우상단=속성, 그 아래=미니맵, 우하단=줌배지. 전부 `self._view`가
-        차지하는 실제 캔버스 영역(메뉴·상단툴바 아래) 기준 — `_reposition_floating_toolbar`와
-        같은 좌표 관례(`self._view.mapTo(self, ...)`)."""
+        차지하는 실제 캔버스 영역(메뉴·상단툴바 아래) 기준 — `self._view.mapTo(self, ...)` 좌표 관례."""
         panels = (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
                   getattr(self, "_minimap_panel", None))
         if any(p is None for p in panels):
@@ -1484,8 +1498,10 @@ class CanvasWindow(QMainWindow):
 
         # 그리기 도구(체크형) — 네모·원은 왼쪽 「도형」 팔레트로 이관(단축키 2·5는 유지).
         # [화살표 통합] 직선화살(sarrow) 버튼 제거 — 화살표 버튼 하나가 종류(직선·곡선·직각)를
-        # 대표한다. 그리기 전 기본 종류는 버튼 클릭(InstantPopup 메뉴)으로 고르고(즉시 그 종류로
-        # 무장), 그린 뒤 세부 조정(색·스타일·방향·반경)은 여전히 미니툴바에서(단축키 9는 화살표 도구 매핑 유지).
+        # 대표한다. [미니패널 통합, 2026-07-31] 상단바 클릭 시 종류를 고르는 메뉴(InstantPopup)는
+        # 폐지 — 클릭은 항상 현재 sticky 종류(기본 직각)로 바로 무장/해제하고, 종류 변경은 그린
+        # 뒤 속성 dock의 「화살표」 행에서 한다(사용자 피드백: 그리기 전 선택지가 하나 더 있는 게
+        # 번거로움, 이미 dock에 같은 메뉴가 있어 중복).
         self._tool_buttons: dict[str, QToolButton] = {}
         for key, name, sc in _TOOLS:
             if key in ("rect", "ellipse", "sarrow"):
@@ -1493,17 +1509,12 @@ class CanvasWindow(QMainWindow):
             btn = QToolButton()
             btn.setIcon(_tool_icon(key, self.current_color))
             btn.setIconSize(QSize(20, 20))
-            tip = "화살표 (3 — 클릭으로 직선·곡선·직각 선택, 그린 뒤 미니툴바에서 재조정)" \
+            tip = "화살표 (3 — 그린 뒤 속성 패널에서 종류 변경)" \
                 if key == "arrow" else f"{name} ({sc})"
             btn.setToolTip(tip)
             btn.setCheckable(True)
             if key == "arrow":
-                # [화살표 통합] 버튼 전체가 종류 메뉴 트리거(InstantPopup) — 분할버튼의 좁은 ▾
-                # 영역은 아이콘 크기(20px)에서 조준하기 어렵다는 실사용 피드백으로 교체(2026-07-27).
-                # 클릭 한 번으로 마지막 종류를 바로 무장하고 싶으면 단축키 3(arm_arrow_tool 직결)을
-                # 쓴다 — 키보드 경로는 이 메뉴와 무관하게 그대로 살아있다.
-                btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-                btn.setMenu(self._build_arrow_kind_toolbar_menu())
+                btn.clicked.connect(lambda _c=False: self.arm_arrow_tool())
             else:
                 btn.clicked.connect(
                     lambda _c=False, k=key: self.set_tool(None if self.current_tool == k else k))
@@ -1552,15 +1563,25 @@ class CanvasWindow(QMainWindow):
         # 상호작용 영역으로 보여야 함).
         accent = "#54a9ff" if dark else "#1f7ae0"
         title_bg = "#232f3d" if dark else "#e8eef5"
-        panel_qss = (
-            "#floatPanel { background:palette(window); border:1px solid palette(mid);"
-            " border-radius:6px; font-weight:600; }"
+        # ⚠ [2026-07-31, 스턱루프 규칙 11-b — 3차 접근 전환] 속성 dock의 QSpinBox/QDoubleSpinBox
+        # ("두께"·"폰트"·"반경")만 텍스트 디센더가 잘리는 버그 + (2차 시도인 setMinimumHeight
+        # 이후) 그 행이 다음 행과 겹치는 새 증상까지 — 둘 다 근본원인은 같았다: `panel.
+        # setStyleSheet(...)`를 패널(body의 조상)에 걸면 Qt가 body 하위 위젯 전부를
+        # QStyleSheetStyle로 강제 전환해 QAbstractSpinBox의 sizeHint가 네이티브 Fusion보다
+        # 짧게 나오고, QFormLayout 행 간격도 그 짧은 sizeHint로 계산돼 실제 위젯 높이
+        # (setMinimumHeight로 늘린 값)보다 좁아 다음 행과 겹쳤다. 위젯 레벨 패치(QSS padding→
+        # setMinimumHeight)를 두 번 거치고도 같은 자리에서 재발해 메커니즘을 바꿨다: 패널
+        # 자체엔 스타일시트를 아예 안 걸어(배경·테두리는 `_FloatingPanel.paintEvent`가 직접
+        # 그림) body 전체가 순정 Fusion 계산을 쓰게 하고, 제목줄 강조만 `_head`(body의 조상이
+        # 아니라 형제)에 스타일시트로 남긴다.
+        head_qss = (
             f"#floatPanelHead {{ background:{title_bg}; border-top-left-radius:5px;"
-            f" border-top-right-radius:5px; border-bottom:2px solid {accent}; }}")
+            f" border-top-right-radius:5px; border-bottom:2px solid {accent}; font-weight:600; }}")
         for panel in (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
                       getattr(self, "_minimap_panel", None)):
             if panel is not None:
-                panel.setStyleSheet(panel_qss)
+                panel._head.setStyleSheet(head_qss)
+                panel.update()
         zoom_btn = getattr(self, "_zoom_btn", None)
         if zoom_btn is not None:
             zoom_btn.setStyleSheet(
@@ -1570,7 +1591,7 @@ class CanvasWindow(QMainWindow):
         if toast is not None:
             toast.setStyleSheet(
                 f"#toastLabel {{ background:{title_bg}; border:1px solid {accent};"
-                " border-radius:6px; padding:4px 12px; }}")
+                " border-radius:6px; padding:4px 12px; }")
         minimap = getattr(self, "_minimap", None)
         if minimap is not None:
             minimap.viewport().update()   # 씬 배경색(다크/라이트)이 바뀌므로 재도색
@@ -1865,11 +1886,49 @@ class CanvasWindow(QMainWindow):
         form.addRow("두께", self._pf_width)
         form.addRow("선", self._pf_style)
         form.addRow("폰트", self._pf_font)
+
+        # [미니패널 통합, 2026-07-31] 선택 위를 따라다니던 플로팅 컨텍스트 툴바(M3 #15)를
+        # 폐지하고 그 안의 타입 전용 액션 4개를 여기로 이관 — 사용자 피드백: 우측 속성 dock과
+        # 겹치는 부분(색·선스타일)이 많아 따라다니는 패널이 방해로 느껴짐. 색·선스타일은 위 행이
+        # 이미 대신하고, 아래 4개는 dock에 없던 것들이라 새로 추가한다. 핸들러(_swap_selected·
+        # _floating_set_arrow_kind·_floating_set_radius·_floating_flip_arrows)는 플로팅 툴바가
+        # 쓰던 것을 그대로 재사용(로직 변경 없음), 행 노출만 옛 _reposition_floating_toolbar의
+        # show_swap/show_routing/curved/show_dir 판정을 그대로 옮겨 _refresh_properties가 담당.
+        self._pf_swap_btn = QToolButton(); self._pf_swap_btn.setText("⬗ 바꾸기")
+        self._pf_swap_btn.setToolTip("도형 바꾸기(크기·연결 유지)")
+        self._pf_swap_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._pf_swap_btn.setMenu(self._build_swap_menu())
+        form.addRow("도형", self._pf_swap_btn)
+
+        self._pf_routing_btn = QToolButton(); self._pf_routing_btn.setText("⌐▾ 종류")
+        self._pf_routing_btn.setToolTip("화살표 종류(직선·곡선·직각)")
+        self._pf_routing_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._pf_routing_btn.setMenu(self._build_routing_menu())
+        form.addRow("화살표", self._pf_routing_btn)
+
+        self._pf_radius = QSpinBox()
+        self._pf_radius.setRange(0, int(_PolyArrowItem._CURVE_R_MAX))
+        self._pf_radius.setSingleStep(2)
+        self._pf_radius.setSuffix(" px")
+        self._pf_radius.setKeyboardTracking(False)   # 타이핑 중 매 글자 커밋 방지
+        # ⚠ NoFocus 필수 — Del·Ctrl+D·도구 숫자키는 뷰의 keyPressEvent가 처리한다(윈도 QAction이
+        # 아님). 스핀박스가 포커스를 가져가면 반경을 만진 뒤 그 단축키들이 캔버스로 안 간다.
+        self._pf_radius.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._pf_radius.setToolTip("곡선 반경(0=직각)")
+        self._pf_radius.valueChanged.connect(self._floating_set_radius)
+        form.addRow("반경", self._pf_radius)
+
+        self._pf_dir_btn = QToolButton(); self._pf_dir_btn.setText("⇄ 뒤집기")
+        self._pf_dir_btn.setToolTip("화살표 방향 뒤집기")
+        self._pf_dir_btn.clicked.connect(self._floating_flip_arrows)
+        form.addRow("방향", self._pf_dir_btn)
+
         self._pf_hint = QLabel("객체를 선택하면 속성을 편집할 수 있습니다.")
         self._pf_hint.setStyleSheet("color:#888; font-size:11px;")
         self._pf_hint.setWordWrap(True)   # 줄바꿈 허용 → 안내문이 패널 최소폭을 붙잡지 않게
         form.addRow(self._pf_hint)
         panel.set_content(content)
+        self._props_form = form
         self._scene.selectionChanged.connect(self._refresh_properties)
         self._refresh_properties()
 
@@ -2099,23 +2158,6 @@ class CanvasWindow(QMainWindow):
             btn.setIcon(_tool_icon(_ARROW_KIND_TOOL.get(self.current_arrow_kind, "arrow"),
                                    self.current_color))
 
-    def _build_arrow_kind_toolbar_menu(self):
-        """[화살표 통합] 상단 툴바 화살표 버튼 클릭(InstantPopup) 시 뜨는 메뉴 — 그리기 *전*
-        기본 종류 선택. 미니툴바(_build_routing_menu)와 항목은 같지만 대상이 다르다: 여기는
-        선택된 화살표가 아니라 '다음에 그릴 화살표'를 정하므로 고르는 즉시 그 종류로 도구를 무장한다."""
-        m = QMenu(self)
-        for kind, label in _ARROW_KIND_LABELS:
-            m.addAction(label, lambda k=kind: self._toolbar_set_arrow_kind(k))
-        return m
-
-    def _toolbar_set_arrow_kind(self, kind):
-        """[화살표 통합] 툴바 메뉴에서 종류를 고르면 sticky 기본값을 갱신하고 곧바로 그
-        종류로 무장(그린 뒤 고르는 미니툴바 `_floating_set_arrow_kind`와 달리, 그리기 전
-        선택이라 무장 여부와 무관하게 항상 무장한다)."""
-        self.current_arrow_kind = kind
-        self._refresh_arrow_tool_button()
-        self.set_tool(_ARROW_KIND_TOOL.get(kind, "arrow"))
-
     def _set_current_color(self, color: QColor):
         """[M2 #A] 현재 색을 갱신하고 상단 그리기 도구 아이콘을 그 색으로 다시 칠한다
         (도구 아이콘은 draw-color라 테마와 무관 — 여기서만 갱신). 새 도형·화살표에 반영."""
@@ -2128,8 +2170,9 @@ class CanvasWindow(QMainWindow):
                                 show_alpha: bool, title: str, on_pick):
         """[신규기능 · 색 선택 UX 단순화] 스와치 클릭 시 무거운 QColorDialog 대신 먼저 이
         그리드 팝업(무채색+기본색 3단 + '다른 색…')을 anchor 아래에 띄운다. '다른 색…'을
-        고르면 그 안에서 기존 QColorDialog(네이티브 — Windows 기본이 이미 표준/사용자 지정
-        탭 구성)로 폴백한다."""
+        고르면 그 안에서 왼쪽 열(기본색 그리드)만 숨긴 QColorDialog로 폴백한다(선·채움 동일 UI,
+        2026-07-31 통일 — 이전엔 채움만 이렇게 하고 선 색은 OS 네이티브 다이얼로그를 그대로 써서
+        둘의 인터페이스가 달라 보였다)."""
         pop = _ColorGridPopup(self, initial, allow_none, show_alpha, title, on_pick,
                               recent=self._recent_colors, on_custom_picked=self._remember_recent_color)
         pop.adjustSize()
@@ -2349,6 +2392,8 @@ class CanvasWindow(QMainWindow):
                 self._pf_fill_val.setText("—")
                 self._pf_fill.setStyleSheet(self._swatch_css(None))
                 self._pf_hint.setText("객체를 선택하면 속성을 편집할 수 있습니다.")
+                for w in (self._pf_swap_btn, self._pf_routing_btn, self._pf_radius, self._pf_dir_btn):
+                    self._props_form.setRowVisible(w, False)
                 return
             props = [self._read_props(it) for it in sel]
             types = {p["type"] for p in props}
@@ -2403,6 +2448,33 @@ class CanvasWindow(QMainWindow):
             self._pf_font.setEnabled(bool(fonts))
             if fonts:
                 self._pf_font.setValue(int(round(fonts[0])))
+
+            # [미니패널 통합] 타입 전용 행 노출 — 옛 _reposition_floating_toolbar의 판정을 그대로.
+            show_swap = len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem))
+            show_routing = len(sel) == 1 and isinstance(sel[0], (_ArrowItem, _PolyArrowItem))
+            show_dir = any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel)
+            curved = (len(sel) == 1 and isinstance(sel[0], _PolyArrowItem) and sel[0]._is_ortho())
+            self._props_form.setRowVisible(self._pf_swap_btn, show_swap)
+            self._props_form.setRowVisible(self._pf_routing_btn, show_routing)
+            self._props_form.setRowVisible(self._pf_radius, curved)
+            self._props_form.setRowVisible(self._pf_dir_btn, show_dir)
+            # ⚠ [2026-07-31, 진짜 원인 확정 — 실기기에서 직접 반복 재현해 확인] 선택 종류가
+            # 바뀌어 행 개수가 달라져도(예: 네모 7행 → 화살표 9행) `_props_panel` 위젯 자체의
+            # 크기(`adjustSize()`로만 커짐)는 창 리사이즈 때만 호출되는 `_reposition_panels()`
+            # 에서만 갱신됐다 — `_refresh_properties()`는 행 노출만 토글하고 패널을 그 새 크기에
+            # 맞게 키우질 않아, 늘어난 행들이 옛 크기의 좁은 패널 안에 짓눌려 들어갔다(실측:
+            # 네모 선택 시 두께 행 21px, 화살표 선택 시 13px인데 패널 size()는 두 경우 완전히
+            # 동일 — 창을 리사이즈하면 그제야 `_reposition_panels()`가 불려 패널이 커지고
+            # 그 뒤로 유지되는 것과 정확히 일치). `layout().activate()`만으론 안 되고(내부 기하는
+            # 재계산해도 패널 위젯 자체의 바깥 크기는 안 늘어남), 선택이 바뀔 때마다 패널을
+            # 직접 다시 키워야 한다.
+            self._props_form.activate()
+            self._props_panel.adjustSize()
+            self._reposition_panels()
+            if curved:
+                self._pf_radius.blockSignals(True)   # 값 동기화가 편집 신호로 되돌아오지 않게
+                self._pf_radius.setValue(int(round(sel[0]._curve_r)))
+                self._pf_radius.blockSignals(False)
         finally:
             self._pf_updating = False
 
@@ -2934,101 +3006,9 @@ class CanvasWindow(QMainWindow):
             menu.exec(global_pos)
 
     # ---- [Phase 6 M3 #15] 플로팅 컨텍스트 툴바 ------------------------------
-    # 선택 시 객체 바로 위에 뜨는 미니 툴바 — "겉모습(도구형식)"만 담는다: 색·선스타일·
-    # 도형바꾸기·화살표종류·곡선반경·방향뒤집기. 색·선스타일은 속성 dock 편집 경로(#9)·host
-    # 메서드로 재사용해 undo가 일관되게 걸린다.
-    # [디자인 재검토] 정렬/분배·복제·삭제는 우클릭 메뉴와 중복 노출이었던 것을 정리해 제거
-    # (Figma·Lucid·Excalidraw 관례 — 겉모습은 상시 패널, 액션은 우클릭). 단축키(Ctrl+D·Del)와
-    # 우클릭 메뉴(_build_context_menu)로 계속 접근 가능, 기능 손실 없음.
-    def _build_floating_toolbar(self):
-        bar = QFrame(self)
-        bar.setObjectName("floatBar")
-        lay = QHBoxLayout(bar)
-        lay.setContentsMargins(6, 4, 6, 4); lay.setSpacing(4)
-        self._float_swatches = []
-        for hexs in _COLOR_PRESETS[:5]:   # 빨강·주황·노랑·초록·파랑
-            b = QToolButton(); b.setFixedSize(QSize(18, 18)); b.setToolTip(f"색 {hexs}")
-            b.setStyleSheet(f"background:{hexs}; border:1px solid #0006; border-radius:3px;")
-            b.clicked.connect(lambda _c=False, h=hexs: self._floating_set_color(h))
-            lay.addWidget(b); self._float_swatches.append(b)
-        self._float_more_btn = QToolButton(); self._float_more_btn.setText("⋯")
-        self._float_more_btn.setFixedSize(QSize(20, 18))
-        self._float_more_btn.setToolTip("색 더 보기")
-        self._float_more_btn.clicked.connect(self._edit_color)
-        lay.addWidget(self._float_more_btn)
-        self._float_style_btn = QToolButton(); self._float_style_btn.setText("┄")
-        self._float_style_btn.setFixedSize(QSize(24, 18))
-        self._float_style_btn.setToolTip("선스타일 순환(실선→파선→점선)")
-        self._float_style_btn.clicked.connect(self._floating_cycle_style)
-        lay.addWidget(self._float_style_btn)
-        # [M4-3] 도형 교체 — 단일 도형 선택 시만 노출, 드롭다운으로 대상 종류 선택.
-        self._float_swap_btn = QToolButton(); self._float_swap_btn.setText("⬗")
-        self._float_swap_btn.setFixedSize(QSize(22, 18))
-        self._float_swap_btn.setToolTip("도형 바꾸기(크기·연결 유지)")
-        self._float_swap_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._float_swap_btn.setMenu(self._build_swap_menu())
-        lay.addWidget(self._float_swap_btn)
-        # [화살표 통합] 화살표 종류 — 화살표(직선·곡선·직각) 단일 선택 시 노출. 상단 툴바가 아니라
-        # 여기서 종류를 고른다(선택 후 컨텍스트).
-        self._float_routing_btn = QToolButton(); self._float_routing_btn.setText("⌐▾")
-        self._float_routing_btn.setFixedSize(QSize(26, 18))
-        self._float_routing_btn.setToolTip("화살표 종류(직선·곡선·직각)")
-        self._float_routing_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._float_routing_btn.setMenu(self._build_routing_menu())
-        lay.addWidget(self._float_routing_btn)
-        # [M4-4 ⓑ] 곡선 반경 스테퍼 — 직각 커넥터 단일 선택 시만 노출(각짐 정도, 0=완전 직각).
-        self._float_radius = QSpinBox()
-        self._float_radius.setRange(0, int(_PolyArrowItem._CURVE_R_MAX))
-        self._float_radius.setSingleStep(2)
-        self._float_radius.setSuffix("px")
-        self._float_radius.setKeyboardTracking(False)   # 타이핑 중 매 글자 커밋 방지
-        # ⚠ NoFocus 필수 — Del·Ctrl+D·도구 숫자키는 뷰의 keyPressEvent가 처리한다(윈도 QAction이
-        # 아님). 스핀박스가 키보드 포커스를 가져가면 반경을 만진 뒤 그 단축키들이 캔버스로 안 간다.
-        # 포커스 정책은 '키보드'만 막으므로 ▴▾ 클릭(길게 누르면 연속)은 그대로 동작한다.
-        self._float_radius.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._float_radius.setFixedSize(QSize(62, 20))
-        self._float_radius.setToolTip("곡선 반경(0=직각)")
-        self._float_radius.valueChanged.connect(self._floating_set_radius)
-        lay.addWidget(self._float_radius)
-        self._float_dir_btn = QToolButton(); self._float_dir_btn.setText("⇄")
-        self._float_dir_btn.setFixedSize(QSize(22, 18))
-        self._float_dir_btn.setToolTip("화살표 방향 뒤집기")
-        self._float_dir_btn.clicked.connect(self._floating_flip_arrows)
-        lay.addWidget(self._float_dir_btn)
-        bar.setStyleSheet("#floatBar { background:palette(window);"
-                          " border:1px solid palette(mid); border-radius:6px; }")
-        bar.setVisible(False)
-        self._float_bar = bar
-        # 따라다니기 — 선택 변경·팬/줌(스크롤바)·아이템 이동(scene.changed) 모두에 리포지션.
-        self._scene.selectionChanged.connect(self._reposition_floating_toolbar)
-        self._view.horizontalScrollBar().valueChanged.connect(self._reposition_floating_toolbar)
-        self._view.verticalScrollBar().valueChanged.connect(self._reposition_floating_toolbar)
-        self._scene.changed.connect(lambda *_: self._reposition_floating_toolbar())
-
-    def _floating_set_color(self, hexs):
-        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_color")]
-        if not sel:
-            return
-        col = QColor(hexs)
-        self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
-        self._set_current_color(col)   # sticky — 다음 도형 기본 색
-
-    def _floating_cycle_style(self):
-        order = [Qt.PenStyle.SolidLine, Qt.PenStyle.DashLine, Qt.PenStyle.DotLine]
-        sel = [it for it in self._scene.selectedItems()
-               if hasattr(it, "pen") or hasattr(it, "apply_style")]
-        if not sel:
-            return
-        cur = self._read_props(sel[0])["style"]
-        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else Qt.PenStyle.DashLine
-        def apply(it):
-            if hasattr(it, "apply_style"):
-                it.apply_style(nxt)
-            else:
-                p = it.pen(); p.setStyle(nxt); it.setPen(p)
-        self._edit_items(sel, apply)
-        self.current_style = nxt   # sticky
-
+    # [미니패널 통합, 2026-07-31] 선택 위를 따라다니던 플로팅 컨텍스트 툴바를 폐지 — 색·선스타일은
+    # 속성 dock과 중복이었고 도형바꾸기·화살표종류·곡선반경·방향뒤집기 4개는 dock 폼에 행으로
+    # 이관(`_build_properties_panel`). 아래는 그 핸들러들(로직 변경 없이 재사용).
     def _floating_flip_arrows(self):
         arrows = [it for it in self._scene.selectedItems()
                   if isinstance(it, (_ArrowItem, _PolyArrowItem))]
@@ -3072,7 +3052,7 @@ class CanvasWindow(QMainWindow):
             else:
                 it.apply_curved()
             self.push_undo_geom([(it, before)])
-        self._reposition_floating_toolbar()
+        self._refresh_properties()
         self._view.viewport().update()
 
     def _make_swapped_arrow(self, item, kind):
@@ -3134,65 +3114,6 @@ class CanvasWindow(QMainWindow):
         self.current_curve_r = float(value)   # 다음 직각 커넥터의 기본 각짐(sticky)
         self.push_undo_geom(snaps, coalesce_key=("curve_r", id(sel[0])))
         self._view.viewport().update()
-
-    def _reposition_floating_toolbar(self):
-        """선택 bbox 상단중앙 위에 배치(뷰 상단 침범 시 아래로 반전, 창 경계 클램프).
-        선택 없음/뷰어 모드면 숨긴다. 씬→뷰포트→host 좌표 변환은 _arrow_dir_btn 관례를 따른다."""
-        bar = getattr(self, "_float_bar", None)
-        if bar is None:
-            return
-        sel = self._scene.selectedItems()
-        if not self.is_edit_mode() or not sel:
-            bar.setVisible(False)
-            return
-        # 색상 스와치·선스타일·"더 보기" — 이미지·표는 항상 NoPen + 자체 고정 색으로만 그려서
-        # apply_color/apply_style이 hasattr 체크는 통과해도 시각적으로는 죽은 버튼이 된다.
-        # 선택 전부가 이미지/표일 때만 숨긴다(하나라도 색이 실제로 반영되는 도형이 섞였으면 노출).
-        show_color = any(not isinstance(it, (_ImageItem, _TableItem)) for it in sel)
-        # [M4-3] 도형 교체 — 단일 도형(네모·원·심볼)만. [화살표 통합] 종류 드롭다운 — 단일 화살표만.
-        show_swap = len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem))
-        show_routing = len(sel) == 1 and isinstance(sel[0], (_ArrowItem, _PolyArrowItem))
-        show_dir = any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel)
-        # [M4-4 ⓑ] 반경 스테퍼 — 직각 커넥터(각짐 조절 대상)일 때만.
-        curved = (len(sel) == 1 and isinstance(sel[0], _PolyArrowItem) and sel[0]._is_ortho())
-        if not (show_color or show_swap or show_routing or show_dir or curved):
-            # 버튼이 전부 숨겨지면 빈 프레임(배경+테두리)만 남아 작은 흔적으로 보인다 — 바
-            # 자체를 숨긴다(이미지·표 단독 선택 등, 실조건서 발견).
-            bar.setVisible(False)
-            return
-        for b in self._float_swatches:
-            b.setVisible(show_color)
-        self._float_style_btn.setVisible(show_color)
-        self._float_more_btn.setVisible(show_color)
-        self._float_dir_btn.setVisible(show_dir)
-        self._float_swap_btn.setVisible(show_swap)
-        self._float_routing_btn.setVisible(show_routing)
-        self._float_radius.setVisible(curved)
-        if curved:
-            self._float_radius.blockSignals(True)   # 값 동기화가 편집 신호로 되돌아오지 않게
-            self._float_radius.setValue(int(round(sel[0]._curve_r)))
-            self._float_radius.blockSignals(False)
-        bar.adjustSize()
-        w, h = bar.width(), bar.height()
-        r = QRectF()
-        for it in sel:
-            r = r.united(it.sceneBoundingRect())
-
-        def to_host(scene_pt):
-            vp = self._view.mapFromScene(scene_pt)
-            return self.mapFromGlobal(self._view.viewport().mapToGlobal(vp))
-        top = to_host(QPointF(r.center().x(), r.top()))
-        x = int(top.x() - w / 2)
-        y = int(top.y() - h - 10)                          # 기본: 선택 위쪽
-        view_top = self._view.mapTo(self, QPoint(0, 0)).y()
-        if y < view_top + 2:                               # 뷰 상단 침범 → 아래로 반전
-            bot = to_host(QPointF(r.center().x(), r.bottom()))
-            y = int(bot.y() + 10)
-        x = max(2, min(x, self.width() - w - 2))
-        y = max(2, min(y, self.height() - h - 2))
-        bar.move(x, y)
-        bar.setVisible(True)
-        bar.raise_()
 
     # ---- [Phase 6 M4-3] 도형 바로 바꾸기 -----------------------------------
     def _build_swap_menu(self):
@@ -3283,7 +3204,6 @@ class CanvasWindow(QMainWindow):
         self._scene.clearSelection()
         new.setSelected(True)
         self._refresh_properties()
-        self._reposition_floating_toolbar()
 
     # ---- [Phase 6 M5] 정렬 / 분배 -------------------------------------------
     # 계획서 §5 #4 흡수. 선택 bbox를 기준으로 붙이고(정렬), 양 끝을 고정한 채 사이 여백을
@@ -3409,7 +3329,6 @@ class CanvasWindow(QMainWindow):
                 moved = True
         if moved:
             self.push_undo_move(pairs)
-            self._reposition_floating_toolbar()
             self._repaint_overlays()
 
     def distribute_selection(self, axis):
@@ -3439,7 +3358,6 @@ class CanvasWindow(QMainWindow):
             prev = r.width() if horiz else r.height()
         if moved:
             self.push_undo_move(pairs)
-            self._reposition_floating_toolbar()
             self._repaint_overlays()
 
     def _build_align_menu(self, title="", parent=None):
