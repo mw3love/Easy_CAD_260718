@@ -2119,6 +2119,8 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
     _LINE = QColor("#333333")
     _INK = QColor("#111111")
     _HEADER_FILL = QColor("#EEEEEE")
+    _BODY_FILL = QColor("#FFFFFF")   # [다크모드 대비] 잉크색이 고정(#111111)이라 배경도 고정 필요 —
+                                      # _TitleBlockItem과 동일 관례(항상 흰 종이 위 검정 잉크)
     _MIN_COL_W = 10.0    # 월드 단위 — 드래그로 열이 이보다 좁아지지 않음(기본 셀폭 40의 1/4)
     _COL_HIT_PX = 8.0    # 화면 px — 열 경계선 드래그 히트폭(_EDGE_HIT_MIN과 동일 관례)
 
@@ -2273,6 +2275,11 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
         ch = box.height() / self._rows
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        # 표 전체 배경(다크모드에서도 고정 잉크색이 보이도록 항상 흰색)
+        painter.setPen(QPen(Qt.PenStyle.NoPen))
+        painter.setBrush(QBrush(self._BODY_FILL))
+        painter.drawRect(box)
         painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         # 헤더 행 옅은 배경
         if self._header:
