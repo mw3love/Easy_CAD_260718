@@ -6699,17 +6699,25 @@ def test_edit_fill_and_clear_fill_sticky():
 
 def test_color_dialog_left_column_stripped_for_alpha():
     # [요청] Basic/Custom colors(우리 그리드와 중복)는 숨기고 오른쪽 그라디언트+필드만 남김
-    # — 위치·폭 기반 판정이 실제로 다이얼로그를 좁혀주는지 실측(라벨 텍스트 의존 없음).
-    from PyQt6.QtWidgets import QColorDialog
+    # — "Basic colors"/"Custom colors" 라벨 앵커 기반 판정(v2, 2026-07-31)이 실제로
+    # 다이얼로그를 좁혀주면서 오른쪽 그라디언트 사각형은 지우지 않는지 실측.
+    # (v1은 고정 좌표 임계값이라 실제 앱(Fusion 스타일+실제 폰트)에서 그라디언트 사각형까지
+    # 함께 지워버리는 회귀가 실사용자 스크린샷으로 발견됨 — 이 테스트가 그 재발을 막는다.)
+    from PyQt6.QtWidgets import QColorDialog, QFrame, QWidget
     from easycad.canvas.host import _strip_color_dialog_left_column
     dlg = QColorDialog()
     dlg.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
     dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
     dlg.adjustSize()
     before = dlg.width()
+    # 그라디언트 사각형은 dlg의 "직접" 자식 중 타입이 정확히 QFrame인 것(QLabel도 Qt
+    # 상속구조상 QFrame의 서브클래스라 isinstance만 쓰면 "&Basic colors" 라벨을 잘못
+    # 집는다 — 실측으로 발견, type(w) is QFrame으로 정확히 판정).
+    gradient = next(w for w in dlg.children() if type(w) is QFrame)
     _strip_color_dialog_left_column(dlg)
     dlg.adjustSize()
     assert dlg.width() < before - 200   # 왼쪽 열(≈254px)만큼 좁아짐
+    assert not gradient.isHidden()   # 핵심 회귀 방지 — 그라디언트는 절대 숨겨지면 안 됨
     # OK/Cancel 버튼줄(폭이 훨씬 넓음)은 실수로 숨겨지지 않아야 한다.
     # (isVisible()이 아니라 isHidden() — 다이얼로그를 show() 안 한 헤드리스 테스트에선
     # 조상 체인이 안 보여 isVisible()이 항상 False로 읽힌다, CLAUDE.md 기존 함정과 동일.)

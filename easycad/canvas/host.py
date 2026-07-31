@@ -594,13 +594,34 @@ def _strip_color_dialog_left_column(dlg: QColorDialog):
     이 위젯을 씀)의 왼쪽 열(Basic colors·Pick Screen Color·Custom colors·Add to Custom
     Colors)을 숨긴다 — 우리 그리드 팝업의 표준색·"최근 사용한 색"과 중복이라는 사용자
     피드백(2026-07-31)으로 제거하고, 오른쪽 그라디언트+슬라이더+RGB/16진수 입력만 남긴다.
-    QColorDialog는 이 구성을 끄는 공식 옵션이 없어 위젯 트리를 직접 순회 — 라벨 텍스트는
-    로캘에 따라 바뀔 수 있어 대신 위치·폭(왼쪽 열은 x<265, 폭<=260 — OK/Cancel 버튼줄은
-    폭이 훨씬 넓어 자동 제외됨, 실측 확인)으로 판정한다. 매칭이 어긋나도(Qt 버전 차이 등)
-    다이얼로그 자체는 정상 동작하고 그냥 옛 모양 그대로 보일 뿐이라 안전하다."""
+
+    ⚠ v1(고정 좌표 x<265·폭<=260)은 격리된 헤드리스 테스트에서만 맞았고 실제 앱(스타일
+    Fusion·실제 Windows 폰트)에서는 왼쪽 열 폭 자체가 헤드리스 실측과 달라 그라디언트
+    사각형·색상 슬라이더까지 함께 지워버렸다(실사용자 스크린샷으로 발견, 2026-07-31) —
+    폰트 메트릭에 따라 sizeHint가 달라지는 내부 레이아웃을 고정 픽셀로 가정한 게 원인.
+    v2는 절대 좌표 대신 "Basic colors"/"Custom colors" 라벨과 버튼(Qt 내부 고정 영문
+    문자열 — 이 앱은 Qt 자체 번역을 안 실어서 로캘과 무관하게 항상 이 텍스트)을 앵커로
+    찾고, 그 앵커들과 **같은 x, 같은 세로 범위**에 있는 이름 없는 위젯(실제 색상 그리드)만
+    같이 숨긴다 — 오른쪽 열은 구조적으로 다른 x를 쓰므로 폰트가 달라져도 안전하게 제외된다.
+    앵커 텍스트가 하나도 안 잡히면(Qt 버전 차이 등) 아무것도 숨기지 않는다 — 실패해도
+    다이얼로그 자체는 정상 동작하고 그냥 옛(복잡한) 모양 그대로 보일 뿐이라 안전하다."""
+    anchor_texts = {"&Basic colors", "&Custom colors", "&Pick Screen Color", "&Add to Custom Colors"}
+    anchors = [w for w in dlg.children()
+               if isinstance(w, QWidget) and getattr(w, "text", lambda: None)() in anchor_texts]
+    if len(anchors) < 4:
+        return
+    left_x = anchors[0].geometry().x()
+    y_top = min(w.geometry().y() for w in anchors)
+    y_bottom = max(w.geometry().y() + w.geometry().height() for w in anchors)
+    to_hide = list(anchors)
     for w in dlg.children():
-        if isinstance(w, QWidget) and w.geometry().x() < 265 and w.geometry().width() <= 260:
-            w.hide()
+        if not isinstance(w, QWidget) or w in to_hide:
+            continue
+        g = w.geometry()
+        if abs(g.x() - left_x) <= 2 and y_top - 4 <= g.y() <= y_bottom + 4:
+            to_hide.append(w)
+    for w in to_hide:
+        w.hide()
 
 
 class _ColorGridPopup(QWidget):
