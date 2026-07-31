@@ -569,6 +569,88 @@ class _ToastLabel(QLabel):
         pass   # [하위호환] 옛 QStatusBar API — 줌 배지는 이제 별도 플로팅 위젯이라 미사용
 
 
+# [신규기능 · 색 선택 UX 단순화] 그리드 팝업의 기본 색상 열 — 무채색 1열(흰/회/검, 밝기변환이
+# 아닌 고정 3값) + 기존 _COLOR_PRESETS 5색(빨강·주황·노랑·초록·파랑)에 보라·분홍 2색을 더해
+# 유채색 7열. Apple 시스템 색상 관례를 그대로 잇는다(기존 _COLOR_PRESETS와 같은 톤).
+_COLOR_GRID_HUES = _COLOR_PRESETS[:5] + ["#AF52DE", "#FF2D55"]
+_COLOR_GRID_GRAYS = ["#FFFFFF", "#9E9E9E", "#000000"]
+
+
+def _color_grid_columns() -> list[list[QColor]]:
+    """그리드 열 구성 — 무채색 1열(고정 3단) + 유채색 7열(밝게/기본/어둡게 3단,
+    QColor.lighter()/darker()로 생성 — 고정 팔레트 하드코딩 불필요)."""
+    cols = [[QColor(h) for h in _COLOR_GRID_GRAYS]]
+    for hexs in _COLOR_GRID_HUES:
+        base = QColor(hexs)
+        cols.append([base.lighter(150), base, base.darker(150)])
+    return cols
+
+
+class _ColorGridPopup(QWidget):
+    """Office류 색 선택 팝업 — 무채색+기본색 그리드(밝기 3단) + '다른 색…'(기존 네이티브
+    QColorDialog 재사용) + (채움 전용) '없음'. 바깥을 클릭하면 자동으로 닫히는 Qt.Popup —
+    2026-07-28 코드정리에서 삭제된 pasteflow 유산 `_ColorPalettePopup`과 동일한 패턴이다.
+    클릭 즉시 적용 + 팝업 닫힘(확인 버튼 없음, 오피스 관례)."""
+
+    _SW = 20   # 스와치 한 변(px)
+
+    def __init__(self, parent: QWidget, initial: QColor | None, allow_none: bool,
+                 show_alpha: bool, title: str, on_pick):
+        super().__init__(parent, Qt.WindowType.Popup)
+        self._initial = QColor(initial) if initial is not None else None
+        self._show_alpha = show_alpha
+        self._title = title
+        self._on_pick = on_pick
+        self._anchor_parent = parent
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setObjectName("colorGridPopup")
+        self.setStyleSheet(
+            "#colorGridPopup { background-color: palette(window);"
+            " border: 1px solid palette(mid); border-radius: 6px; }")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8); outer.setSpacing(6)
+
+        top = QHBoxLayout(); top.setSpacing(6)
+        if allow_none:   # [요청③] "없음"을 별도 외부 버튼이 아니라 팝업 안 항목으로
+            none_btn = QToolButton(); none_btn.setText("Ø")
+            none_btn.setToolTip("채움 없음")
+            none_btn.setFixedSize(QSize(26, 22))
+            none_btn.clicked.connect(lambda: self._pick(None))
+            top.addWidget(none_btn)
+        other_btn = QToolButton(); other_btn.setText("다른 색…")
+        other_btn.setToolTip("전체 색상표(네이티브 색 선택 창)")
+        other_btn.clicked.connect(self._pick_other)
+        top.addWidget(other_btn, 1)
+        outer.addLayout(top)
+
+        grid = QGridLayout(); grid.setSpacing(4)
+        for col_i, col in enumerate(_color_grid_columns()):
+            for row_i, color in enumerate(col):
+                b = QToolButton()
+                b.setFixedSize(QSize(self._SW, self._SW))
+                b.setToolTip(color.name())
+                b.setStyleSheet(
+                    f"background:{color.name()}; border:1px solid #0006; border-radius:3px;")
+                b.clicked.connect(lambda _c=False, c=QColor(color): self._pick(c))
+                grid.addWidget(b, row_i, col_i)
+        outer.addLayout(grid)
+
+    def _pick(self, color: QColor | None):
+        self._on_pick(color)
+        self.close()
+
+    def _pick_other(self):
+        parent = self._anchor_parent
+        self.close()
+        opts = (QColorDialog.ColorDialogOption.ShowAlphaChannel if self._show_alpha
+                else QColorDialog.ColorDialogOption(0))
+        col = QColorDialog.getColor(self._initial or QColor("#000000"), parent,
+                                    self._title, opts)
+        if col.isValid():
+            self._on_pick(col)
+
+
 class CanvasWindow(QMainWindow):
     _PANEL_MARGIN = 10      # [캔버스-퍼스트] 플로팅 패널·줌배지·토스트와 창/뷰 경계 사이 여백(px)
 
@@ -1679,21 +1761,16 @@ class CanvasWindow(QMainWindow):
         ch.setContentsMargins(0, 0, 0, 0); ch.setSpacing(6)
         ch.addWidget(self._pf_color); ch.addWidget(self._pf_color_val, 1)
 
-        # [신규기능] 채움 — 스와치(클릭=색 선택) + "✕"(투명으로). rect/ellipse/symbol 전용,
-        # 대상 없으면 행 자체를 비활성화(has_fill로 판정, _refresh_properties).
+        # [신규기능] 채움 — 스와치 하나(클릭=그리드 팝업, "없음"도 팝업 안 항목). rect/ellipse/
+        # symbol 전용, 대상 없으면 행 자체를 비활성화(has_fill로 판정, _refresh_properties).
         self._pf_fill = QToolButton()
         self._pf_fill.setFixedSize(QSize(48, 20))
         self._pf_fill.setToolTip("클릭: 채움색 선택")
         self._pf_fill.clicked.connect(self._edit_fill)
-        self._pf_fill_none = QToolButton()
-        self._pf_fill_none.setText("✕")
-        self._pf_fill_none.setFixedSize(QSize(20, 20))
-        self._pf_fill_none.setToolTip("채움 없음(투명)")
-        self._pf_fill_none.clicked.connect(self._clear_fill)
         self._pf_fill_val = QLabel("—"); self._pf_fill_val.setStyleSheet("color:#888;")
         fill_row = QWidget(); fh = QHBoxLayout(fill_row)
         fh.setContentsMargins(0, 0, 0, 0); fh.setSpacing(6)
-        fh.addWidget(self._pf_fill); fh.addWidget(self._pf_fill_none); fh.addWidget(self._pf_fill_val, 1)
+        fh.addWidget(self._pf_fill); fh.addWidget(self._pf_fill_val, 1)
 
         # 두께 — 스핀박스(px).
         self._pf_width = QDoubleSpinBox()
@@ -1977,34 +2054,53 @@ class CanvasWindow(QMainWindow):
             b.setIcon(_tool_icon(key, self.current_color))
         self._refresh_arrow_tool_button()   # [화살표 통합] 화살표만 종류별 아이콘이라 덮어쓴다
 
+    def _show_color_grid_popup(self, anchor: QWidget, initial, allow_none: bool,
+                                show_alpha: bool, title: str, on_pick):
+        """[신규기능 · 색 선택 UX 단순화] 스와치 클릭 시 무거운 QColorDialog 대신 먼저 이
+        그리드 팝업(무채색+기본색 3단 + '다른 색…')을 anchor 아래에 띄운다. '다른 색…'을
+        고르면 그 안에서 기존 QColorDialog(네이티브 — Windows 기본이 이미 표준/사용자 지정
+        탭 구성)로 폴백한다."""
+        pop = _ColorGridPopup(self, initial, allow_none, show_alpha, title, on_pick)
+        pop.adjustSize()
+        pop.move(anchor.mapToGlobal(QPoint(0, anchor.height() + 2)))
+        pop.show()
+        self._last_color_popup = pop   # 테스트 훅 — 실사용 흐름엔 영향 없음
+
     def _edit_color(self):
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_color")]
         if not sel:
             return
         init = self._read_props(sel[0])["color"] or QColor("#000000")
-        col = QColorDialog.getColor(init, self, "색 선택")
-        if not col.isValid():
-            return
-        self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
-        self._set_current_color(col)   # [M2 #A] 다음 도형 기본 색으로(sticky)
+        anchor = self.sender() if isinstance(self.sender(), QWidget) else self._pf_color
+
+        def on_pick(col):
+            if col is None:   # 선 색은 "없음" 미지원 — 팝업이 allow_none=False라 실제로 안 옴
+                return
+            self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
+            self._set_current_color(col)   # [M2 #A] 다음 도형 기본 색으로(sticky)
+
+        self._show_color_grid_popup(anchor, init, False, False, "색 선택", on_pick)
 
     def _edit_fill(self):
-        """[신규기능] 채움색 선택 — 스와치 클릭. 알파 채널 허용(반투명 채움, .ecad가 이미
-        HexArgb로 왕복 지원 — document.py 무변경)."""
+        """[신규기능] 채움색 선택 — 스와치 클릭. 그리드 팝업의 "다른 색…"은 알파 채널 허용
+        (반투명 채움, .ecad가 이미 HexArgb로 왕복 지원 — document.py 무변경)."""
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_fill")]
         if not sel:
             return
         init = self._read_props(sel[0])["fill"] or QColor("#ffffff")
-        col = QColorDialog.getColor(init, self, "채움색 선택",
-                                    QColorDialog.ColorDialogOption.ShowAlphaChannel)
-        if not col.isValid():
-            return
-        self._edit_items(sel, lambda it: it.apply_fill(QColor(col)))
-        self.current_fill = QColor(col)   # 다음 도형 기본 채움으로(sticky)
+
+        def on_pick(col):
+            if col is None:
+                self._clear_fill()
+                return
+            self._edit_items(sel, lambda it: it.apply_fill(QColor(col)))
+            self.current_fill = QColor(col)   # sticky
+
+        self._show_color_grid_popup(self._pf_fill, init, True, True, "채움색 선택", on_pick)
 
     def _clear_fill(self):
-        """[신규기능] 채움을 투명으로(None) — 별도 버튼. QColorDialog는 '없음' 상태를
-        표현할 수 없어 스와치 클릭과 분리한 진입점이 필요했다."""
+        """채움을 투명으로(None) — 그리드 팝업의 "없음" 항목이 호출(요청③: 별도 외부 버튼
+        대신 팝업 안 항목)."""
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_fill")]
         if not sel:
             return
@@ -2162,7 +2258,6 @@ class CanvasWindow(QMainWindow):
                 self._pf_color_val.setText("—")
                 self._pf_color.setStyleSheet(self._swatch_css(None))
                 self._pf_fill.setEnabled(False)
-                self._pf_fill_none.setEnabled(False)
                 self._pf_fill_val.setText("—")
                 self._pf_fill.setStyleSheet(self._swatch_css(None))
                 self._pf_hint.setText("객체를 선택하면 속성을 편집할 수 있습니다.")
@@ -2186,7 +2281,6 @@ class CanvasWindow(QMainWindow):
             fillable = [p["fill"] for p in props if p["has_fill"]]
             has_fillable = bool(fillable)
             self._pf_fill.setEnabled(has_fillable)
-            self._pf_fill_none.setEnabled(has_fillable)
             if has_fillable:
                 names = {(f.name(QColor.NameFormat.HexArgb) if f is not None else None)
                         for f in fillable}

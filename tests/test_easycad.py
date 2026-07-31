@@ -11,7 +11,7 @@ import tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QToolButton
 from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF, QPoint
 from PyQt6.QtGui import QBrush, QColor, QPainterPath, QPixmap
 
@@ -6662,7 +6662,8 @@ def test_properties_panel_fill_row():
 
 
 def test_edit_fill_and_clear_fill_sticky():
-    # _edit_fill/_clear_fill이 undo 저널 + sticky current_fill 둘 다 갱신.
+    # _edit_fill이 그리드 팝업을 띄우고, "다른 색…"(QColorDialog 폴백) 경로가 undo 저널 +
+    # sticky current_fill 둘 다 갱신. _clear_fill은 팝업 "없음" 항목이 호출하는 메서드.
     w = CanvasWindow()
     r = _mk_pen_rect(w); r.setSelected(True)
     from PyQt6.QtWidgets import QColorDialog
@@ -6670,6 +6671,7 @@ def test_edit_fill_and_clear_fill_sticky():
     try:
         QColorDialog.getColor = staticmethod(lambda *a, **k: QColor("#123456"))
         w._edit_fill()
+        w._last_color_popup._pick_other()   # "다른 색…" 클릭 시뮬레이션
     finally:
         QColorDialog.getColor = orig
     assert r.brush().color().name() == "#123456"
@@ -6677,6 +6679,43 @@ def test_edit_fill_and_clear_fill_sticky():
     w.undo()
     assert r.brush().style() == Qt.BrushStyle.NoBrush
     w._clear_fill()   # 선택 유지된 상태에서 다시 투명으로(redo 상태 위에 새 편집)
+    assert w.current_fill is None
+
+
+def test_color_grid_popup_fill_has_none_item_color_does_not():
+    # [요청③] "없음"은 채움 전용 — 팝업 안 항목으로만 존재, 선 색 팝업엔 안 뜬다.
+    w = CanvasWindow()
+    r = _mk_pen_rect(w); r.setSelected(True)
+    w._edit_fill()
+    fill_pop = w._last_color_popup
+    assert any(b.text() == "Ø" for b in fill_pop.findChildren(QToolButton))
+    w._edit_color()
+    color_pop = w._last_color_popup
+    assert not any(b.text() == "Ø" for b in color_pop.findChildren(QToolButton))
+
+
+def test_color_grid_popup_swatch_click_applies_immediately():
+    # 그리드 스와치를 누르면 다이얼로그 없이 그 자리에서 바로 적용된다(오피스 관례).
+    w = CanvasWindow()
+    r = _mk_pen_rect(w); r.setSelected(True)
+    w._edit_fill()
+    pop = w._last_color_popup
+    swatches = [b for b in pop.findChildren(QToolButton) if b.text() not in ("Ø", "다른 색…")]
+    assert len(swatches) == 8 * 3   # 무채색 1열 + 유채색 7열, 밝기 3단
+    swatches[0].click()
+    assert r.brush().color().name() == QColor("#FFFFFF").name()
+    assert w.current_fill.name() == QColor("#FFFFFF").name()
+
+
+def test_color_grid_popup_none_item_clears_fill():
+    w = CanvasWindow()
+    r = _mk_pen_rect(w); r.setSelected(True)
+    r.apply_fill(QColor("#123456"))
+    w._edit_fill()
+    pop = w._last_color_popup
+    none_btn = next(b for b in pop.findChildren(QToolButton) if b.text() == "Ø")
+    none_btn.click()
+    assert r.brush().style() == Qt.BrushStyle.NoBrush
     assert w.current_fill is None
 
 
