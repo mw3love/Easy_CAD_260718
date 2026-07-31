@@ -6661,25 +6661,61 @@ def test_properties_panel_fill_row():
     assert not w._pf_fill.isEnabled()   # 화살표는 채움 미지원
 
 
+def _mock_color_dialog_exec(picked: QColor):
+    """QColorDialog.exec()을 실제 모달 없이 '사용자가 picked를 고르고 확인' 상태로
+    흉내낸다 — done(Accepted) 후 selectedColor()가 그 색을 돌려주는 걸 실측 확인(2026-07-31)."""
+    from PyQt6.QtWidgets import QColorDialog, QDialog
+    def fake_exec(self):
+        self.setCurrentColor(picked)
+        self.done(QDialog.DialogCode.Accepted)
+        return QDialog.DialogCode.Accepted
+    return fake_exec
+
+
 def test_edit_fill_and_clear_fill_sticky():
-    # _edit_fill이 그리드 팝업을 띄우고, "다른 색…"(QColorDialog 폴백) 경로가 undo 저널 +
-    # sticky current_fill 둘 다 갱신. _clear_fill은 팝업 "없음" 항목이 호출하는 메서드.
+    # _edit_fill이 그리드 팝업을 띄우고, "다른 색…"(알파 지원 QColorDialog, 실제 exec는
+    # 모킹) 경로가 undo 저널 + sticky current_fill 둘 다 갱신. _clear_fill은 팝업 "없음"
+    # 항목이 호출하는 메서드.
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtWidgets import QColorDialog
+    QSettings("EasyCAD", "EasyCAD").remove("recent_colors")
     w = CanvasWindow()
     r = _mk_pen_rect(w); r.setSelected(True)
-    from PyQt6.QtWidgets import QColorDialog
-    orig = QColorDialog.getColor
+    orig_exec = QColorDialog.exec
     try:
-        QColorDialog.getColor = staticmethod(lambda *a, **k: QColor("#123456"))
+        QColorDialog.exec = _mock_color_dialog_exec(QColor("#123456"))
         w._edit_fill()
         w._last_color_popup._pick_other()   # "다른 색…" 클릭 시뮬레이션
     finally:
-        QColorDialog.getColor = orig
+        QColorDialog.exec = orig_exec
     assert r.brush().color().name() == "#123456"
     assert w.current_fill.name() == "#123456"
+    assert w._recent_colors[0].name() == "#123456"   # "다른 색"에서 고른 색은 최근색으로 기억
     w.undo()
     assert r.brush().style() == Qt.BrushStyle.NoBrush
     w._clear_fill()   # 선택 유지된 상태에서 다시 투명으로(redo 상태 위에 새 편집)
     assert w.current_fill is None
+
+
+def test_color_dialog_left_column_stripped_for_alpha():
+    # [요청] Basic/Custom colors(우리 그리드와 중복)는 숨기고 오른쪽 그라디언트+필드만 남김
+    # — 위치·폭 기반 판정이 실제로 다이얼로그를 좁혀주는지 실측(라벨 텍스트 의존 없음).
+    from PyQt6.QtWidgets import QColorDialog
+    from easycad.canvas.host import _strip_color_dialog_left_column
+    dlg = QColorDialog()
+    dlg.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
+    dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+    dlg.adjustSize()
+    before = dlg.width()
+    _strip_color_dialog_left_column(dlg)
+    dlg.adjustSize()
+    assert dlg.width() < before - 200   # 왼쪽 열(≈254px)만큼 좁아짐
+    # OK/Cancel 버튼줄(폭이 훨씬 넓음)은 실수로 숨겨지지 않아야 한다.
+    # (isVisible()이 아니라 isHidden() — 다이얼로그를 show() 안 한 헤드리스 테스트에선
+    # 조상 체인이 안 보여 isVisible()이 항상 False로 읽힌다, CLAUDE.md 기존 함정과 동일.)
+    from PyQt6.QtWidgets import QDialogButtonBox
+    bbox = dlg.findChild(QDialogButtonBox)
+    assert bbox is not None and not bbox.isHidden()
 
 
 def test_color_grid_popup_fill_has_none_item_color_does_not():
@@ -6696,15 +6732,17 @@ def test_color_grid_popup_fill_has_none_item_color_does_not():
 
 def test_color_grid_popup_swatch_click_applies_immediately():
     # 그리드 스와치를 누르면 다이얼로그 없이 그 자리에서 바로 적용된다(오피스 관례).
+    # 열 구성: 무채색 1 + 유채색 6 + 최근색 1 = 8열 x 3행. 각 열은 위→아래 표준→연한→어두움
+    # 순(2026-07-31 재배치) — 무채색 열의 "표준"은 회색.
     w = CanvasWindow()
     r = _mk_pen_rect(w); r.setSelected(True)
     w._edit_fill()
     pop = w._last_color_popup
     swatches = [b for b in pop.findChildren(QToolButton) if b.text() not in ("Ø", "다른 색…")]
-    assert len(swatches) == 8 * 3   # 무채색 1열 + 유채색 7열, 밝기 3단
-    swatches[0].click()
-    assert r.brush().color().name() == QColor("#FFFFFF").name()
-    assert w.current_fill.name() == QColor("#FFFFFF").name()
+    assert len(swatches) == 8 * 3
+    swatches[0].click()   # 무채색 열의 첫 행 = 표준(회색)
+    assert r.brush().color().name() == QColor("#9E9E9E").name()
+    assert w.current_fill.name() == QColor("#9E9E9E").name()
 
 
 def test_color_grid_popup_none_item_clears_fill():
@@ -6717,6 +6755,34 @@ def test_color_grid_popup_none_item_clears_fill():
     none_btn.click()
     assert r.brush().style() == Qt.BrushStyle.NoBrush
     assert w.current_fill is None
+
+
+def test_color_grid_popup_recent_column_shows_and_persists():
+    # "다른 색"에서 고른 색이 다음 팝업의 "최근 사용한 색" 열(맨 오른쪽, 위→최신)에 뜨고,
+    # QSettings로 재시작 후에도 유지된다(다크모드와 같은 sticky 관례).
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtWidgets import QColorDialog
+    QSettings("EasyCAD", "EasyCAD").remove("recent_colors")
+    w = CanvasWindow()
+    r = _mk_pen_rect(w); r.setSelected(True)
+    orig_exec = QColorDialog.exec
+    try:
+        QColorDialog.exec = _mock_color_dialog_exec(QColor("#abcdef"))
+        w._edit_fill()
+        w._last_color_popup._pick_other()
+    finally:
+        QColorDialog.exec = orig_exec
+
+    w._edit_fill()
+    pop = w._last_color_popup
+    swatches = [b for b in pop.findChildren(QToolButton) if b.text() not in ("Ø", "다른 색…")]
+    recent_col = swatches[-3:]   # 맨 오른쪽 열
+    assert recent_col[0].isEnabled() and recent_col[0].toolTip() == "#abcdef"
+    assert not recent_col[1].isEnabled()   # 아직 빈 슬롯(대시 테두리 플레이스홀더)
+
+    w2 = CanvasWindow()   # 새 창(=재시작 흉내)도 QSettings에서 그대로 불러온다
+    assert w2._recent_colors and w2._recent_colors[0].name() == "#abcdef"
+    QSettings("EasyCAD", "EasyCAD").remove("recent_colors")   # 다른 테스트 오염 방지
 
 
 def test_new_shape_uses_sticky_fill():

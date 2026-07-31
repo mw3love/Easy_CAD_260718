@@ -569,38 +569,58 @@ class _ToastLabel(QLabel):
         pass   # [하위호환] 옛 QStatusBar API — 줌 배지는 이제 별도 플로팅 위젯이라 미사용
 
 
-# [신규기능 · 색 선택 UX 단순화] 그리드 팝업의 기본 색상 열 — 무채색 1열(흰/회/검, 밝기변환이
-# 아닌 고정 3값) + 기존 _COLOR_PRESETS 5색(빨강·주황·노랑·초록·파랑)에 보라·분홍 2색을 더해
-# 유채색 7열. Apple 시스템 색상 관례를 그대로 잇는다(기존 _COLOR_PRESETS와 같은 톤).
-_COLOR_GRID_HUES = _COLOR_PRESETS[:5] + ["#AF52DE", "#FF2D55"]
-_COLOR_GRID_GRAYS = ["#FFFFFF", "#9E9E9E", "#000000"]
+# [신규기능 · 색 선택 UX 단순화] 그리드 팝업의 기본 색상 열 — 무채색 1열(흰/회/검, 고정 3값)
+# + 기존 _COLOR_PRESETS 5색(빨강·주황·노랑·초록·파랑)에 보라 1색을 더한 유채색 6열. 분홍은
+# 첫 열(빨강)과 밝기만 다른 사실상 중복이라 뺐다(2026-07-31 사용자 피드백 — 그 자리는 아래
+# "최근 사용한 색" 열로 대체). Apple 시스템 색상 관례를 그대로 잇는다(_COLOR_PRESETS와 동일 톤).
+_COLOR_GRID_HUES = _COLOR_PRESETS[:5] + ["#AF52DE"]
+_RECENT_COLOR_MAX = 3   # 그리드 한 열의 행 수와 맞춘 값 — 열 하나를 통째로 이 용도로 씀
 
 
 def _color_grid_columns() -> list[list[QColor]]:
-    """그리드 열 구성 — 무채색 1열(고정 3단) + 유채색 7열(밝게/기본/어둡게 3단,
-    QColor.lighter()/darker()로 생성 — 고정 팔레트 하드코딩 불필요)."""
-    cols = [[QColor(h) for h in _COLOR_GRID_GRAYS]]
+    """그리드 열 구성 — 무채색 1열 + 유채색 6열, 각 열은 위→아래 표준(기본)→연한색→어두운색
+    순(2026-07-31 사용자 피드백 — Office 테마색 그리드 관례). 밝기 변형은
+    QColor.lighter()/darker()로 생성(고정 팔레트 하드코딩 불필요). 무채색은 자연스러운
+    '표준' 색조가 없어 회색을 표준으로 두고 기존 흰/검 값을 그대로 연한/어두운 자리에 재사용."""
+    cols = [[QColor("#9E9E9E"), QColor("#FFFFFF"), QColor("#000000")]]
     for hexs in _COLOR_GRID_HUES:
         base = QColor(hexs)
-        cols.append([base.lighter(150), base, base.darker(150)])
+        cols.append([base, base.lighter(150), base.darker(150)])
     return cols
 
 
+def _strip_color_dialog_left_column(dlg: QColorDialog):
+    """[신규기능] 비-네이티브 QColorDialog(알파 채널 때문에 Qt가 자동으로 네이티브 대신
+    이 위젯을 씀)의 왼쪽 열(Basic colors·Pick Screen Color·Custom colors·Add to Custom
+    Colors)을 숨긴다 — 우리 그리드 팝업의 표준색·"최근 사용한 색"과 중복이라는 사용자
+    피드백(2026-07-31)으로 제거하고, 오른쪽 그라디언트+슬라이더+RGB/16진수 입력만 남긴다.
+    QColorDialog는 이 구성을 끄는 공식 옵션이 없어 위젯 트리를 직접 순회 — 라벨 텍스트는
+    로캘에 따라 바뀔 수 있어 대신 위치·폭(왼쪽 열은 x<265, 폭<=260 — OK/Cancel 버튼줄은
+    폭이 훨씬 넓어 자동 제외됨, 실측 확인)으로 판정한다. 매칭이 어긋나도(Qt 버전 차이 등)
+    다이얼로그 자체는 정상 동작하고 그냥 옛 모양 그대로 보일 뿐이라 안전하다."""
+    for w in dlg.children():
+        if isinstance(w, QWidget) and w.geometry().x() < 265 and w.geometry().width() <= 260:
+            w.hide()
+
+
 class _ColorGridPopup(QWidget):
-    """Office류 색 선택 팝업 — 무채색+기본색 그리드(밝기 3단) + '다른 색…'(기존 네이티브
-    QColorDialog 재사용) + (채움 전용) '없음'. 바깥을 클릭하면 자동으로 닫히는 Qt.Popup —
-    2026-07-28 코드정리에서 삭제된 pasteflow 유산 `_ColorPalettePopup`과 동일한 패턴이다.
-    클릭 즉시 적용 + 팝업 닫힘(확인 버튼 없음, 오피스 관례)."""
+    """Office류 색 선택 팝업 — 무채색+기본색 그리드(밝기 3단) + 최근 사용한 색(다른 색에서
+    고른 색, 최대 3개) + '다른 색…'(비-네이티브일 땐 왼쪽 열을 숨긴 QColorDialog) +
+    (채움 전용) '없음'. 바깥을 클릭하면 자동으로 닫히는 Qt.Popup — 2026-07-28 코드정리에서
+    삭제된 pasteflow 유산 `_ColorPalettePopup`과 동일한 패턴이다. 클릭 즉시 적용 + 팝업
+    닫힘(확인 버튼 없음, 오피스 관례)."""
 
     _SW = 20   # 스와치 한 변(px)
 
     def __init__(self, parent: QWidget, initial: QColor | None, allow_none: bool,
-                 show_alpha: bool, title: str, on_pick):
+                 show_alpha: bool, title: str, on_pick, recent: list[QColor] | None = None,
+                 on_custom_picked=None):
         super().__init__(parent, Qt.WindowType.Popup)
         self._initial = QColor(initial) if initial is not None else None
         self._show_alpha = show_alpha
         self._title = title
         self._on_pick = on_pick
+        self._on_custom_picked = on_custom_picked
         self._anchor_parent = parent
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("colorGridPopup")
@@ -619,20 +639,30 @@ class _ColorGridPopup(QWidget):
             none_btn.clicked.connect(lambda: self._pick(None))
             top.addWidget(none_btn)
         other_btn = QToolButton(); other_btn.setText("다른 색…")
-        other_btn.setToolTip("전체 색상표(네이티브 색 선택 창)")
+        other_btn.setToolTip("전체 색상표")
         other_btn.clicked.connect(self._pick_other)
         top.addWidget(other_btn, 1)
         outer.addLayout(top)
 
         grid = QGridLayout(); grid.setSpacing(4)
-        for col_i, col in enumerate(_color_grid_columns()):
+        columns = _color_grid_columns()
+        recent_col = list((recent or [])[:_RECENT_COLOR_MAX])
+        recent_col += [None] * (_RECENT_COLOR_MAX - len(recent_col))
+        columns.append(recent_col)
+        for col_i, col in enumerate(columns):
             for row_i, color in enumerate(col):
                 b = QToolButton()
                 b.setFixedSize(QSize(self._SW, self._SW))
-                b.setToolTip(color.name())
-                b.setStyleSheet(
-                    f"background:{color.name()}; border:1px solid #0006; border-radius:3px;")
-                b.clicked.connect(lambda _c=False, c=QColor(color): self._pick(c))
+                if color is None:
+                    b.setEnabled(False)
+                    b.setToolTip("다른 색에서 고른 색이 여기 표시됩니다")
+                    b.setStyleSheet(
+                        "background:transparent; border:1px dashed #666; border-radius:3px;")
+                else:
+                    b.setToolTip(color.name())
+                    b.setStyleSheet(
+                        f"background:{color.name()}; border:1px solid #0006; border-radius:3px;")
+                    b.clicked.connect(lambda _c=False, c=QColor(color): self._pick(c))
                 grid.addWidget(b, row_i, col_i)
         outer.addLayout(grid)
 
@@ -643,12 +673,30 @@ class _ColorGridPopup(QWidget):
     def _pick_other(self):
         parent = self._anchor_parent
         self.close()
-        opts = (QColorDialog.ColorDialogOption.ShowAlphaChannel if self._show_alpha
-                else QColorDialog.ColorDialogOption(0))
-        col = QColorDialog.getColor(self._initial or QColor("#000000"), parent,
-                                    self._title, opts)
-        if col.isValid():
-            self._on_pick(col)
+        if not self._show_alpha:
+            col = QColorDialog.getColor(self._initial or QColor("#000000"), parent, self._title)
+            if col.isValid():
+                if self._on_custom_picked:
+                    self._on_custom_picked(col)
+                self._on_pick(col)
+            return
+        # 알파(반투명) 지원이 필요하면 네이티브 다이얼로그가 안 돼(Qt가 자동으로 비-네이티브로
+        # 전환) 우리가 인스턴스를 직접 만들어 왼쪽 열을 숨긴다 — 오른쪽 그라디언트+필드는
+        # 그대로 재사용(요청①: 자체 피커 새로 개발할 필요 없이 있는 걸 다듬기만).
+        dlg = QColorDialog(parent)
+        dlg.setWindowTitle(self._title)
+        dlg.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
+        dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+        dlg.setCurrentColor(self._initial or QColor("#ffffff"))
+        dlg.adjustSize()
+        _strip_color_dialog_left_column(dlg)
+        dlg.adjustSize()
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            col = dlg.selectedColor()
+            if col.isValid():
+                if self._on_custom_picked:
+                    self._on_custom_picked(col)
+                self._on_pick(col)
 
 
 class CanvasWindow(QMainWindow):
@@ -672,6 +720,7 @@ class CanvasWindow(QMainWindow):
         self.current_badge_size = _DEFAULT_BADGE
         self.current_text_bg = None
         self.current_fill = None   # [신규기능] 도형 채우기 — sticky, 기본 투명(NoBrush)
+        self._recent_colors = self._load_recent_colors()   # [신규기능] 색 그리드 팝업 "최근 사용한 색"
         self.arrow_head_at_end = True
         # [화살표 통합] 화살표는 상단 도구 1개. '어떤 종류로 그릴지'는 마지막에 고른 종류를 기억
         # (sticky — 색·두께·선스타일과 같은 관례). 최초 기본은 직각(순서도 위주 사용 — 실사용
@@ -2060,11 +2109,29 @@ class CanvasWindow(QMainWindow):
         그리드 팝업(무채색+기본색 3단 + '다른 색…')을 anchor 아래에 띄운다. '다른 색…'을
         고르면 그 안에서 기존 QColorDialog(네이티브 — Windows 기본이 이미 표준/사용자 지정
         탭 구성)로 폴백한다."""
-        pop = _ColorGridPopup(self, initial, allow_none, show_alpha, title, on_pick)
+        pop = _ColorGridPopup(self, initial, allow_none, show_alpha, title, on_pick,
+                              recent=self._recent_colors, on_custom_picked=self._remember_recent_color)
         pop.adjustSize()
         pop.move(anchor.mapToGlobal(QPoint(0, anchor.height() + 2)))
         pop.show()
         self._last_color_popup = pop   # 테스트 훅 — 실사용 흐름엔 영향 없음
+
+    def _load_recent_colors(self) -> list[QColor]:
+        raw = QSettings("EasyCAD", "EasyCAD").value("recent_colors", [], type=list) or []
+        return [QColor(h) for h in raw if QColor(h).isValid()][:_RECENT_COLOR_MAX]
+
+    def _remember_recent_color(self, col: QColor):
+        """[신규기능] "다른 색…"에서 고른 색을 그리드 팝업의 "최근 사용한 색" 열에 남긴다
+        (그리드 스와치를 직접 클릭한 건 대상 아님 — 이미 항상 보이는 색이라 기억할 필요 없음).
+        QSettings에 영구 저장(다크모드 설정과 같은 관례) — 앱을 재시작해도 유지된다."""
+        col = QColor(col)
+        key = col.name(QColor.NameFormat.HexArgb)
+        self._recent_colors = [c for c in self._recent_colors
+                               if c.name(QColor.NameFormat.HexArgb) != key]
+        self._recent_colors.insert(0, col)
+        self._recent_colors = self._recent_colors[:_RECENT_COLOR_MAX]
+        QSettings("EasyCAD", "EasyCAD").setValue(
+            "recent_colors", [c.name(QColor.NameFormat.HexArgb) for c in self._recent_colors])
 
     def _edit_color(self):
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_color")]
