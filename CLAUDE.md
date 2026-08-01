@@ -1142,6 +1142,35 @@ Rejected: `_view_zoom_factor`가 캐시하는 뷰 객체뿐 아니라 조회한 
   - Not-tested(공통, 위 두 실조건검증 항목 제외): 나머지 항목의 실제 마우스 드래그·클릭 손맛
     (`python run.py` 몫 — 사용자가 이후 실사용 중 계속 확인하기로 함).
 
+**대량 선택 O(n²) selectionChanged 캐스케이드 제거 완료(2026-08-01, 커밋 `79aedb4`, 프록시+부분
+실조건 확인)** — 바로 위 항목의 "화살표 boundingRect 체인"과 별개로 발견한 선택 경로 자체의
+병목. paste_selection/duplicate_selection/select_all(호스트)·러버밴드 드래그 선택·Alt+드래그
+다중복제·Ctrl+A(뷰 키핸들러) 여섯 경로가 새/선택된 아이템마다 개별 `setSelected(True)`를 호출해,
+매번 `selectionChanged`→`_refresh_properties`가 그 시점까지 선택된 전체를 `_read_props`로 다시
+읽는 정확한 O(n²) 패턴이었다(cProfile 실측: 300개 붙여넣기에서 `_read_props` 45,150회 호출).
+`CanvasWindow._bulk_select()`로 `selectionChanged`의 두 슬롯(`_refresh_properties`·
+`_sync_group_selection`)을 루프 동안 끊고 끝에 한 번만 재계산하도록 통일. 실측(합성 300개 rect,
+offscreen): 붙여넣기 706.7ms→65.0ms(~11x)·화살표 포함 붙여넣기 1383.0ms→92.7ms(~15x)·Ctrl+D
+770.3ms→67.4ms(~11x)·드래그 선택 649.3ms→11.5ms(~56x). Rejected: `scene.blockSignals(True)`로
+시그널 전체 차단 | `changed` 시그널까지 막혀 화살표 지속연결 reroute가 배치 밖으로 새는 부작용
+위험 — 문제의 두 슬롯만 정밀 disconnect/reconnect. 실제(비-offscreen) 창에서 select_all/paste/
+러버밴드 선택 개수·렌더링 정상 확인. Not-tested: `python run.py` 실제 마우스 드래그로 300개+
+러버밴드/붙여넣기(API 레벨 재현+실측으로 대체, 손맛 자체는 미확인).
+
+**다중선택 그룹 크기조절 클릭순간 튐 버그 수정 완료(2026-08-01, 커밋 `9cf801d`, 프록시검증)** —
+사용자 실사용 보고: "우하단점으로 크기조절하면 클릭하는 순간 다른 크기로 확 변한 후 드래그에
+반응함, 도형 위치도 변하는 느낌". 근본원인: `_GroupTransform.begin()`이 균일 스케일(모서리)·
+1축 스케일(변 중점) 두 핸들 모두 스케일 비율(f)의 시작 기준 벡터를 실제 클릭점(`scene_pt`)이
+아니라 **이상적 핸들 위치**(bbox 모서리/변 중점 좌표, `hit[2]`/`hit[3]`)로 잡고 있었다. 핸들
+히트존이 24px 폭(반경 12px)이라 클릭이 그 이상적 지점에서 벗어나는 게 정상(항상 벗어남)인데,
+그 오프셋만큼 드래그 첫 프레임(=클릭 시점, 마우스가 아직 안 움직인 상태)부터 f≠1이 되어 크기·
+위치가 즉시 튀어 보였다 — 바로 위 회전 핸들은 이미 `scene_pt` 기준이라 이 문제가 없어 비교로
+확정. 두 분기 모두 `scene_pt` 기준으로 교체(`_GroupTransform.begin()`). 회귀 테스트 2종
+(`test_group_scale_no_jump_on_offset_click`·`test_group_nonuniform_scale_no_jump_on_offset_click`)
+추가 — 수정 전 코드로 먼저 실행해 실패(버그 재현)를 확인한 뒤 수정 적용, 통과 확인(스모크
+337→339종). Not-tested: 실제 마우스 드래그 손맛(합성 마우스 이벤트가 이 앱 창에선 씬에 전달
+안 됨 — 기존 문서화된 제약, `python run.py` 몫).
+
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
   규칙 11-d, 2026-07-31 개정) — 이 환경은 Bash가 사용자와 같은 대화형 데스크톱 세션이라
