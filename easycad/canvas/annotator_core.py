@@ -441,9 +441,12 @@ class _HandleResizeMixin:
     # 그 점만 반전 강조(흰 채움+색 테두리)한다.
     _hover_handle = None
 
-    def _handle_px(self) -> float:
-        """핸들 한 변(로컬 단위) — 고정 크기(씬 단위)를 아이템 배율로 환산."""
-        return self._HANDLE_PX / self._scale_or_1()
+    def _handle_px(self, scale: float | None = None) -> float:
+        """핸들 한 변(로컬 단위) — 고정 크기(씬 단위)를 아이템 배율로 환산.
+        [화살표 boundingRect 최적화 2026-08-01] scale을 이미 알면 넘겨 재계산 생략
+        (boundingRect가 정점마다 이 경로를 도는데 `_scale_or_1()` 자체가 view.transform()
+        Qt 호출이라 반복 비용이 큼 — cProfile 실측, 아래 boundingRect 주석 참조)."""
+        return self._HANDLE_PX / (scale if scale is not None else self._scale_or_1())
 
     def itemChange(self, change, value):
         """[성능 조사 2026-07-30] 선택 상태가 바뀌기 '직전'에 옛(핸들 포함) boundingRect를
@@ -460,18 +463,22 @@ class _HandleResizeMixin:
     # 정확히 맞춰야 손가락 커서가 되던 문제를 없앤다(hover·press·shape 모두 이 rect 사용).
     _HIT_MIN_PX = 24.0   # 화면 px — 핸들 잡기 최소 지름(줌 무관)
 
-    def _hit_pad_local(self) -> float:
-        """잡기 판정 반지름(로컬 단위). 화면 고정 px를 현재 뷰·아이템 배율로 환산."""
-        view_s = 1.0
-        sc = self.scene()
-        if sc is not None and sc.views():
-            view_s = sc.views()[0]._view_scale()
-        total = max(view_s * self._scale_or_1(), 1e-6)
+    def _hit_pad_local(self, scale: float | None = None, view_zoom: float | None = None) -> float:
+        """잡기 판정 반지름(로컬 단위). 화면 고정 px를 현재 뷰·아이템 배율로 환산.
+        [최적화 2026-08-01] `view_s`는 `sc.views()[0]._view_scale()`로 매번 뷰 목록을 새로
+        구성해 읽던 것을 `_view_zoom_factor()`(뷰 참조 캐시, 메인 인터랙티브 뷰만 대상 —
+        이 앱은 메인 뷰가 항상 `sc.views()[0]`이라 값은 동일, 성능 조사 2026-07-30에서
+        이미 검증된 캐시)로 교체 — 값 불변, 조회만 저렴해짐. scale·view_zoom 둘 다 호출부가
+        이미 알면 넘겨받아 재조회를 생략한다(boundingRect가 정점마다 이 경로를 돈다)."""
+        view_s = view_zoom if view_zoom is not None else _view_zoom_factor(self)
+        s = scale if scale is not None else self._scale_or_1()
+        total = max(view_s * s, 1e-6)
         return (self._HIT_MIN_PX / total) / 2.0
 
-    def _inflate_to_hit(self, rect: QRectF) -> QRectF:
+    def _inflate_to_hit(self, rect: QRectF, scale: float | None = None,
+                         view_zoom: float | None = None) -> QRectF:
         """핸들 시각 rect를 잡기 최소 지름까지 부풀린 판정용 rect(이미 크면 그대로)."""
-        grow = self._hit_pad_local() - rect.width() / 2.0
+        grow = self._hit_pad_local(scale, view_zoom) - rect.width() / 2.0
         if grow <= 0.0:
             return rect
         return rect.adjusted(-grow, -grow, grow, grow)
@@ -529,8 +536,8 @@ class _HandleResizeMixin:
         양끝(시작·끝)만 노출해 중간 정점 자유드래그로 직교가 깨지는 걸 막는다(중간은 세그먼트 드래그)."""
         return list(range(len(self._endpoints())))
 
-    def _endpoint_rect(self, idx: int) -> QRectF:
-        d = self._handle_px()
+    def _endpoint_rect(self, idx: int, scale: float | None = None) -> QRectF:
+        d = self._handle_px(scale)
         c = self._endpoints()[idx]
         return QRectF(c.x() - d / 2, c.y() - d / 2, d, d)
 
@@ -786,8 +793,11 @@ class _HandleResizeMixin:
             return [self.mapToScene(p) for p in self._endpoints()]
         return [self.mapToScene(self._content_rect().center())]
 
-    def _scale_or_1(self) -> float:
-        s = self.scale() * _view_zoom_factor(self)
+    def _scale_or_1(self, view_zoom: float | None = None) -> float:
+        # [화살표 boundingRect 최적화 2026-08-01] view_zoom을 이미 알면(호출부가 한 번만
+        # `_view_zoom_factor()`를 읽어 여러 곳에 재사용) 넘겨받아 재조회를 생략한다.
+        vz = view_zoom if view_zoom is not None else _view_zoom_factor(self)
+        s = self.scale() * vz
         return s if s else 1.0
 
     # 타이트 경계(선택박스·핸들 기준). 도형별로 override한다(기본은 Qt 기본 boundingRect).
@@ -812,19 +822,29 @@ class _HandleResizeMixin:
     # 차지했다. 미선택 도형은 핸들이 그려지지도 히트테스트되지도 않으므로 이 영역이 필요 없다
     # — 선택 전환 시 잔상은 위 itemChange의 prepareGeometryChange()가 방지한다.
     def boundingRect(self) -> QRectF:
-        pad = 3.0 / self._scale_or_1()
+        # [화살표 boundingRect 최적화 2026-08-01] `_view_zoom_factor()`/`_scale_or_1()`을 이
+        # 함수 전체에서 한 번씩만 읽어 아래로 넘긴다 — cProfile 실측(합성 화살표 200개
+        # 다중드래그): 정점마다 `_endpoint_rect`·`_inflate_to_hit`·`_scale_or_1`이 각각 새로
+        # `_view_zoom_factor()`(=view.transform().m11() 체인)를 불러 boundingRect 한 번에
+        # 5회 넘게 호출되던 게 최대 비용원이었다(값은 그 사이 안 바뀌므로 재계산은 순수
+        # 낭비). `_content_rect()`/`_head_points()`의 삼각함수 비용은 `_pts`에 의존하는 실제
+        # 기하 계산이라 이번엔 손대지 않음(캐시하려면 모든 변경 지점에 무효화 훅이 필요해 이
+        # CAD 앱에서 위험 대비 이득이 낮다고 판단).
+        vz = _view_zoom_factor(self)
+        s = self._scale_or_1(vz)
+        pad = 3.0 / s
         if self._uses_endpoints():
             r = self._content_rect()
             for i in range(len(self._endpoints())):
                 # 시각 rect가 아니라 '잡기' rect까지 예약해야 넉넉한 hit-shape가
                 # boundingRect 밖으로 나가 Qt에 컬링당하지 않는다.
-                r = r.united(self._inflate_to_hit(self._endpoint_rect(i)))
+                r = r.united(self._inflate_to_hit(self._endpoint_rect(i, s), s, vz))
             return r.adjusted(-pad, -pad, pad, pad)
         if self._box_handles():
             if not self.isSelected():
                 return self._content_rect().adjusted(-pad, -pad, pad, pad)
             # 꼭짓점·변 핸들은 rect 경계서 half-handle 삐져나오고, 회전 핸들·접속점은 바깥.
-            h = self._handle_px()
+            h = self._handle_px(s)
             cr = self._content_rect()
             # [하나의 시스템으로 통합 2026-08-01 — 실측 발견] 회전 핸들은 좌상단에만 있어 그대로
             # union하면 boundingRect 중심이 좌상단으로 쏠린다. 종전엔 접속점이 미연결일 때 훨씬
@@ -3614,10 +3634,10 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         return out
 
     def _view_scale_or_1(self) -> float:
-        sc = self.scene()
-        if sc is not None and sc.views():
-            return sc.views()[0]._view_scale()
-        return 1.0
+        # [최적화 2026-08-01] `sc.views()[0]._view_scale()`(매번 뷰 목록 재구성)를
+        # `_view_zoom_factor()`(뷰 참조 캐시)로 교체 — 이 앱은 메인 인터랙티브 뷰가 항상
+        # `sc.views()[0]`이라(미니맵은 나중에 추가되고 `isInteractive()`도 아님) 값은 동일.
+        return _view_zoom_factor(self)
 
     def _begin_segment_drag(self, seg_idx: int):
         """[M4-4] 세그먼트 드래그 시작 — 자동라우팅 해제(수동 직교)+경유힌트 폐기. 끝점(0·last)에
@@ -4188,11 +4208,16 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         return r.united(head_r.adjusted(-2, -2, 2, 2))
 
     def boundingRect(self) -> QRectF:
+        # [화살표 boundingRect 최적화 2026-08-01] `vz`/`s`를 한 번씩만 읽어 정점 루프에 넘긴다
+        # (`_HandleResizeMixin.boundingRect()`와 동일한 근거 — 위 주석 참조). `_view_scale_or_1()`도
+        # 이제 `_view_zoom_factor()`와 같은 값이라 이미 읽은 `vz`를 그대로 재사용한다.
+        vz = _view_zoom_factor(self)
+        s = self._scale_or_1(vz)
         r = self._content_rect()
         for i in range(len(self._pts)):
-            r = r.united(self._inflate_to_hit(self._endpoint_rect(i)))
+            r = r.united(self._inflate_to_hit(self._endpoint_rect(i, s), s, vz))
         # [M4-4] 세그먼트 알약 핸들도 boundingRect에 포함(paint 잔상 방지).
-        pad = (4.0 + self._SEG_HANDLE_PX) / max(self._scale_or_1() * self._view_scale_or_1(), 1e-6)
+        pad = (4.0 + self._SEG_HANDLE_PX) / max(s * vz, 1e-6)
         return r.adjusted(-pad, -pad, pad, pad)
 
     def _base_shape(self):
