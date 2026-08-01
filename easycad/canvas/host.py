@@ -1262,7 +1262,13 @@ class CanvasWindow(QMainWindow):
         props_panel.move(vx + vw - m - props_panel.width(), vy + m)
         props_panel.raise_()
 
-        target_w = props_panel.width()
+        # ⚠ 속성 패널이 접히면 폭이 헤더만큼 좁아지는데, 그 순간값을 그대로 따라가면 미니맵도
+        # 함께 쪼그라들어 "접기 버튼이 미니맵까지 반응한다"는 착시가 생긴다(2026-08-01 사용자
+        # 지적). 펼쳐졌을 때 폭만 캐시해 접힘 중엔 그 값을 유지 — 접기는 속성 패널 자기 자신만의
+        # 상태여야 한다.
+        if not props_panel._collapsed:
+            self._props_expanded_w = props_panel.width()
+        target_w = getattr(self, "_props_expanded_w", props_panel.width())
         target_h = round(target_w * 9 / 16)
         if self._minimap.width() != target_w or self._minimap.height() != target_h:
             self._minimap.setFixedSize(target_w, target_h)
