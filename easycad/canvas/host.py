@@ -818,7 +818,7 @@ class CanvasWindow(QMainWindow):
         # 나머지는 도면 영역. 위치는 고정(자유 드래그 재배치는 스코프 밖), 대신 접기/펴기.
         self._build_left_panel()          # 도형 + 레이어(탭), 좌상단
         self._build_properties_panel()    # 속성, 우상단(도형바꾸기·화살표종류·반경·방향도 여기 포함)
-        self._build_minimap_panel()       # [신규기능] 미니맵 — 무한캔버스 큰 도면 탐색, 우상단(속성 아래)
+        self._build_minimap_panel()       # [신규기능] 미니맵 — 무한캔버스 큰 도면 탐색, 우하단(줌배지 위)
         self._build_status_widgets()      # 줌 배지(우하단) + 토스트(하단중앙) — QStatusBar 대체
         self.set_tool("select")
         self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
@@ -1213,8 +1213,14 @@ class CanvasWindow(QMainWindow):
 
     # ---- [캔버스-퍼스트] 플로팅 패널·줌배지·토스트 위치 계산 ------------------
     def _reposition_panels(self):
-        """좌상단=도형/레이어, 우상단=속성, 그 아래=미니맵, 우하단=줌배지. 전부 `self._view`가
-        차지하는 실제 캔버스 영역(메뉴·상단툴바 아래) 기준 — `self._view.mapTo(self, ...)` 좌표 관례."""
+        """좌상단=도형/레이어, 우상단=속성(편집 클러스터). 우하단=줌배지+미니맵(탐색 클러스터,
+        미니맵이 줌배지 바로 위) — [2026-08-01 재배치] 미니맵을 속성 패널 아래(같은 우측 열)에
+        두던 것을, 미니맵 고정폭(228px)이 속성 패널의 콘텐츠 폭(~170px)과 안 맞아 튀어 보인다는
+        사용자 지적으로 옮겼다. 폭을 서로 맞추면 각 패널이 "자기 콘텐츠 크기만큼만 차지한다"는
+        기존 설계 원칙(2026-07-29 캔버스-퍼스트 결정)이 깨지므로, 대신 성격이 다른 두 클러스터
+        (편집=속성 / 탐색=줌%·전체맞춤·미니맵)를 서로 다른 모서리로 분리해 폭 불일치가 어색하지
+        않게 했다. 전부 `self._view`가 차지하는 실제 캔버스 영역(메뉴·상단툴바 아래) 기준 —
+        `self._view.mapTo(self, ...)` 좌표 관례."""
         panels = (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
                   getattr(self, "_minimap_panel", None))
         if any(p is None for p in panels):
@@ -1232,16 +1238,20 @@ class CanvasWindow(QMainWindow):
         props_panel.move(vx + vw - m - props_panel.width(), vy + m)
         props_panel.raise_()
 
-        minimap_panel.adjustSize()
-        minimap_panel.move(vx + vw - m - minimap_panel.width(),
-                            vy + m + props_panel.height() + 8)
-        minimap_panel.raise_()
-
+        # 줌배지를 먼저 배치해 그 높이를 알아야 미니맵을 그 바로 위에 쌓을 수 있다.
         zoom_btn = getattr(self, "_zoom_btn", None)
+        zoom_h = 0
         if zoom_btn is not None:
             zoom_btn.adjustSize()
             zoom_btn.move(vx + vw - m - zoom_btn.width(), vy + vh - m - zoom_btn.height())
             zoom_btn.raise_()
+            zoom_h = zoom_btn.height()
+
+        minimap_panel.adjustSize()
+        minimap_panel.move(vx + vw - m - minimap_panel.width(),
+                            vy + vh - m - zoom_h - 8 - minimap_panel.height())
+        minimap_panel.raise_()
+
         self._reposition_toast()
 
     def _reposition_toast(self):
