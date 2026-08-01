@@ -1403,11 +1403,14 @@ def _highlight_band(it, extra_width: float = 3.0) -> QPainterPath:
     return band.subtracted(centerline)
 
 
-def _paint_selection_highlight(painter: QPainter, it, scale: float = 1.0):
+def _paint_selection_highlight(painter: QPainter, it, scale: float = 1.0, band: QPainterPath | None = None):
     """[선택 표시 통일 2026-08-01] 개별 아이템 선택 강조의 공통 렌더 — 실제 외곽선에 바깥쪽만
     딱 맞는 실선(점선 아님). `_HandleResizeMixin._paint_selection_outline`이 기본으로 위임하고,
-    믹스인을 안 쓰는 소수 클래스(`_TitleBlockItem`)는 직접 호출한다."""
-    band = _highlight_band(it)
+    믹스인을 안 쓰는 소수 클래스(`_TitleBlockItem`)는 직접 호출한다.
+    [화살표 성능 2026-08-01] `band`를 이미 계산해 뒀으면(캐시) 그대로 받아 재사용 — 호출부가
+    `_highlight_band`(스트로크+불리언 subtract, 무거움)를 매 프레임 다시 돌리지 않게 한다."""
+    if band is None:
+        band = _highlight_band(it)
     pen = QPen(QColor(_BLUE), 1.0 / (scale or 1.0))
     painter.setPen(pen)
     fill = QColor(_BLUE); fill.setAlpha(110)
@@ -2755,6 +2758,7 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._head_at_end = head_at_end
         self._bind1 = None     # 지속 연결: 끝점0이 묶인 도형(_RectItem/_EllipseItem) or None
         self._bind2 = None     # 끝점1이 묶인 도형 or None
+        self._sel_band_cache = None  # [화살표 성능 2026-08-01] 선택 강조 밴드 캐시(아래 prepareGeometryChange가 무효화)
         self._bind1_pt = None  # 그 도형의 '로컬 좌표' 부착점(고정) — 도형 이동/스케일 시 mapToScene로 추종
         self._bind2_pt = None
         # [우리 확장] 라벨 위치 = 곡선 길이 정규화 t(0~1) + 수직 오프셋 off (sarrow와 동일 FigJam/Lucid).
@@ -3243,6 +3247,22 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     # [선택 표시 통일 2026-08-01] 커스텀 _paint_selection_outline 제거 — 믹스인 기본 구현이
     # _item_center_path(_ArrowItem 분기)로 동일한 결과를 낸다(중복 로직 흡수).
 
+    def prepareGeometryChange(self):
+        # [화살표 성능 2026-08-01] 선택 강조 밴드(_highlight_band, 스트로크+불리언 subtract)가
+        # 믹스인 기본 _paint_selection_outline에서 매 paint()마다 무캐시로 재계산되고 있었다 —
+        # 화살표는 이 클래스가 QGraphicsItem 직속(내장 setPen/setRect 같은 C++ 내부 경로가
+        # 없음)이라, 기하가 실제로 바뀌는 모든 지점이 이미 이 메서드를 직접 호출한다(끝점 드래그·
+        # 라우팅 재계산·화살촉 반전 등). 그 사실을 이용해 여기서 캐시만 무효화하면 idle 상태에서
+        # (다른 도형 hover·포트 점 등으로 인한) 잦은 viewport 갱신에도 재계산 없이 캐시를 그대로
+        # 쓴다 — 실제 기하 변경 시에만 다시 계산.
+        self._sel_band_cache = None
+        super().prepareGeometryChange()
+
+    def _paint_selection_outline(self, painter, scale):
+        if self._sel_band_cache is None:
+            self._sel_band_cache = _highlight_band(self)
+        _paint_selection_highlight(painter, self, scale, band=self._sel_band_cache)
+
     def _paint_handle(self, painter):
         # 크기조절·회전 핸들(믹스인) + 곡선용 bend 핸들 2개(곡선 t=1/3·2/3 지점의 초록 원).
         super()._paint_handle(painter)
@@ -3399,6 +3419,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # 드래그하면 _reproject_label이 t·off를 갱신하고, paint가 그 자리에 선 갭을 낸다.
         self._label_t = 0.5
         self._label_off = 0.0
+        self._sel_band_cache = None  # [화살표 성능 2026-08-01] 선택 강조 밴드 캐시(prepareGeometryChange가 무효화)
         self._init_resize()
         self._init_label()
         self.setFlags(
@@ -4262,6 +4283,18 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     # [선택 표시 통일 2026-08-01] 커스텀 _paint_selection_outline 제거 — 믹스인 기본 구현이
     # _item_center_path(_PolyArrowItem 분기, 반경 반영)로 동일한 결과를 낸다(중복 로직 흡수).
+
+    def prepareGeometryChange(self):
+        # [화살표 성능 2026-08-01] _ArrowItem과 동일한 이유·동일한 안전성(이 클래스도
+        # QGraphicsItem 직속이라 내장 setPen/setRect의 C++ 내부 경로가 없음 — _pts/_curve_r 등이
+        # 바뀌는 모든 지점(reroute·세그먼트 드래그·라우팅 전환)이 이미 이 메서드를 직접 호출한다).
+        self._sel_band_cache = None
+        super().prepareGeometryChange()
+
+    def _paint_selection_outline(self, painter, scale):
+        if self._sel_band_cache is None:
+            self._sel_band_cache = _highlight_band(self)
+        _paint_selection_highlight(painter, self, scale, band=self._sel_band_cache)
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -6416,9 +6449,16 @@ class _AnnotatorView(QGraphicsView):
         제외(리사이즈·회전 핸들과 자리가 겹침 — 그건 qc-dot(4방향점)이 담당).
         [성능 조사 2026-07-30] 가장 가까운 도형 '하나'만 그린다(이전엔 마진 안의 모든 도형을
         전부 그려, Ctrl+D로 겹쳐 복제한 도형들 위에서 호버하면 포트 점이 잔뜩 뒤덮이는 클러터가
-        났다 — _hover_port_at은 원래도 최근접 하나만 골랐으니 미리보기 쪽을 그와 맞췄다)."""
+        났다 — _hover_port_at은 원래도 최근접 하나만 골랐으니 미리보기 쪽을 그와 맞췄다).
+        [드래그 중 억제 2026-08-01] 도형 이동/변형 드래그 중엔 커서가 자연히 다른 도형 위를
+        지나가는데, 그때마다 그 도형에 예고점이 뜨는 게 방해된다는 사용자 피드백 — 커넥터를
+        만들 의도가 없는 상태이므로 다른 드래그 계열 상태와 동일하게 억제한다."""
         tool = self._owner.current_tool
         if not self._owner.is_edit_mode() or tool not in ("arrow", "sarrow", "select"):
+            return
+        if (self._move_active or self._group_dragging or self._group_body_drag
+                or self._stretch_active or self._seg_drag is not None
+                or self._table_col_drag is not None or self._rb_active):
             return
         select_mode = tool == "select"
         scene_c = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
