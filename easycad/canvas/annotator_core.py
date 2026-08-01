@@ -6570,13 +6570,18 @@ class _AnnotatorView(QGraphicsView):
             painter.drawRect(rect)
             # [성능 조사 2026-07-30] 드래그 중 실제 선택(setSelected) 대신 저비용 하이라이트만 —
             # Lucid처럼 "닿은 객체 색만 바꾸고, 놓는 순간 정확히 확정"하는 느낌을 재현.
+            # [Lucid식 실외곽선 강조 2026-08-01] 축정렬 bounding box 대신 _base_shape()(회전·
+            # 곡선까지 반영된 실제 클릭 외곽선, crossing 판정이 이미 쓰는 것과 동일)를 그대로
+            # 매핑해 그린다 — 회전된 도형이 더 이상 어긋난 사각형으로 안 보이고, 화살표/선처럼
+            # _base_shape가 얇은 스트로크 밴드인 아이템은 그 밴드 자체가 강조된다.
+            hl_fill = QColor(color); hl_fill.setAlpha(70)
             hl_pen = QPen(color, 2.0 / s)
             hl_pen.setCosmetic(True)
             painter.setPen(hl_pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setBrush(QBrush(hl_fill))
             for it in self._rb_preview:
-                cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
-                painter.drawRect(it.mapToScene(cr).boundingRect())
+                outline = it._base_shape() if hasattr(it, "_base_shape") else it.shape()
+                painter.drawPath(it.mapToScene(outline))
         # [하나의 시스템으로 통합 2026-08-01] 접속점 드래그 중 커넥터 고스트 / 유휴 hover 강조
         # 마커 — 선택 여부와 무관하게 한 경로(_hp_*)로 처리.
         if self._hp_dragging and self._hp_src is not None and self._hp_cursor is not None:
