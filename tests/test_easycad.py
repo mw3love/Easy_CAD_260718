@@ -1012,6 +1012,8 @@ def test_properties_panel_grows_when_row_count_increases():
     # 짓눌려 13px까지 줄고 텍스트 디센더가 잘렸다(실기기 콘솔 로그로 원인 확정). 창을 한 번도
     # 안 건드린 채로(=이 테스트처럼 CanvasWindow 생성 직후) 재현·검증해야 의미가 있다.
     w = CanvasWindow(); w.show()
+    empty_h = w._props_panel.height()   # 선택 없는 기본 크기(축소 회귀의 정답 기준)
+
     rect = _RectItem(QRectF(0, 0, 150, 90))
     rect.setFlags(rect.GraphicsItemFlag.ItemIsSelectable | rect.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(rect); rect.setSelected(True)
@@ -1025,6 +1027,13 @@ def test_properties_panel_grows_when_row_count_increases():
     arrow_h = w._props_panel.height()
     assert arrow_h > rect_h   # 화살표는 행이 2개 더 많아 패널이 더 커야 한다
     assert w._pf_width.geometry().height() >= 20   # 행이 늘어도 두께 행은 짓눌리지 않는다
+
+    # [2026-08-01, 실사용자 스크린샷 재현] 화살표(9행)를 본 뒤 선택을 해제하면, 그 큰 크기가
+    # 그대로 눌어붙어 빈 공간만 길게 남는 축소 방향 회귀가 있었다 — 반드시 선택 없는 기본
+    # 크기(`empty_h`)로 돌아가야 한다(직전 선택의 rect_h가 아니라 진짜 빈 상태 기준).
+    w._scene.clearSelection()
+    w._refresh_properties()
+    assert w._props_panel.height() <= empty_h + 2
 
 
 def test_properties_panel_arrow_flip_undo():

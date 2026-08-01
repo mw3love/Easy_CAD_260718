@@ -2442,6 +2442,22 @@ class CanvasWindow(QMainWindow):
             return "background:transparent; border:1px solid #888; border-radius:3px;"
         return (f"background:{color.name()}; border:1px solid #888; border-radius:3px;")
 
+    def _resize_props_panel(self):
+        """행 표시가 바뀐 뒤 `_props_panel`을 새 콘텐츠 크기로 맞춘다.
+        ⚠ [2026-08-01] `_props_form.activate()` 하나만으론 세로 길이가 가끔 줄지 않고 이전
+        선택(예: 화살표 9행)의 큰 크기로 눌어붙는 경우가 있었다(실측: offscreen에서 재현 —
+        `_props_form`은 `content` 위젯의 레이아웃이고, `content`는 `_props_panel._body`의
+        `_body_layout` 안에, 그 `_body`는 다시 `_props_panel` 자신의 최상위 레이아웃 안에
+        중첩돼 있는데, `setRowVisible()`이 만드는 크기변경 통지가 이 조상 레이아웃들에게는
+        Qt 이벤트루프가 처리하는 지연 포스트 이벤트로만 전달돼, 같은 시그널 핸들러 안에서
+        즉시 `adjustSize()`를 부르면 조상 레이아웃의 캐시가 아직 옛 값 그대로일 수 있었다).
+        중첩된 각 레이아웃을 안쪽부터 바깥쪽까지 전부 명시적으로 `activate()`해 이벤트루프
+        타이밍과 무관하게 항상 최신 크기로 즉시 반영한다."""
+        self._props_form.activate()
+        self._props_panel._body.layout().activate()
+        self._props_panel.layout().activate()
+        self._props_panel.adjustSize()
+
     def _refresh_properties(self):
         """선택에 맞춰 편집 컨트롤 값·활성 상태를 채운다. _pf_updating로 편집 시그널을 막아
         프로그램적 세팅이 다시 편집 핸들러를 트리거하지 않게 한다(피드백 차단)."""
@@ -2461,6 +2477,11 @@ class CanvasWindow(QMainWindow):
                 self._pf_hint.setText("객체를 선택하면 속성을 편집할 수 있습니다.")
                 for w in (self._pf_swap_btn, self._pf_routing_btn, self._pf_radius, self._pf_dir_btn):
                     self._props_form.setRowVisible(w, False)
+                # 아래 "선택 있음" 분기와 동일 — 행을 숨긴 뒤 패널을 그 크기로 다시 줄이지
+                # 않으면, 직전에 화살표 등 확장 행이 있던 선택에서 커진 패널 크기가 선택
+                # 해제 후에도 그대로 남아 빈 공간만 길게 남는다.
+                self._resize_props_panel()
+                self._reposition_panels()
                 return
             props = [self._read_props(it) for it in sel]
             types = {p["type"] for p in props}
@@ -2532,11 +2553,11 @@ class CanvasWindow(QMainWindow):
             # 맞게 키우질 않아, 늘어난 행들이 옛 크기의 좁은 패널 안에 짓눌려 들어갔다(실측:
             # 네모 선택 시 두께 행 21px, 화살표 선택 시 13px인데 패널 size()는 두 경우 완전히
             # 동일 — 창을 리사이즈하면 그제야 `_reposition_panels()`가 불려 패널이 커지고
-            # 그 뒤로 유지되는 것과 정확히 일치). `layout().activate()`만으론 안 되고(내부 기하는
-            # 재계산해도 패널 위젯 자체의 바깥 크기는 안 늘어남), 선택이 바뀔 때마다 패널을
-            # 직접 다시 키워야 한다.
-            self._props_form.activate()
-            self._props_panel.adjustSize()
+            # 그 뒤로 유지되는 것과 정확히 일치). [2026-08-01 갱신] 이 호출은 `_resize_props_panel()`
+            # 로 옮겼다 — 축소 방향(화살표→선택해제)에선 `_props_form.activate()`만으론 조상
+            # 레이아웃(`_body_layout`·패널 자체 레이아웃) 캐시가 안 갱신돼 큰 크기에 눌어붙는
+            # 별도 버그가 있었다(상세는 `_resize_props_panel` docstring).
+            self._resize_props_panel()
             self._reposition_panels()
             if curved:
                 self._pf_radius.blockSignals(True)   # 값 동기화가 편집 신호로 되돌아오지 않게
