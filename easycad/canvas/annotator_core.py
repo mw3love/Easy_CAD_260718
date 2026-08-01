@@ -1155,13 +1155,24 @@ class _HandleResizeMixin:
         super().paint(painter, opt, widget)
 
     def _paint_base_no_select(self, painter, option, widget):
-        # 베이스 + 타이트 선택박스(_content_rect에만). 네모·원이 사용한다.
+        # 베이스 + 선택 강조. 텍스트·(과거) 네모가 사용한다.
         self._paint_base(painter, option, widget)
         if self.isSelected():
-            _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
+            self._paint_selection_outline(painter, self._scale_or_1())
+
+    # [선택 표시 통일 2026-08-01] 그동안 타입마다 제각각이었다 — 네모·원은 _content_rect
+    # 기반 점선 박스(축정렬이라 회전·심볼류엔 안 맞음), 선/패스/화살표는 각자 커스텀
+    # _paint_selection_outline(고정 +8px 패딩 밴드, 실제보다 훨씬 굵게 감쌈). 다중선택 시
+    # 그룹 바운딩박스(_GroupTransform.paint, 동일 파란 점선)와도 스타일이 겹쳐 구분이 안 됐다
+    # (사용자 실측 지적: Lucid 대조 스크린샷). Lucid 관례로 통일: 그룹 박스는 그대로 두고,
+    # 개별 아이템은 실제 외곽선에 바깥쪽만 딱 맞는 실선(점선 아님) — 드래그 크로싱 미리보기
+    # 강조선(_item_center_path/_highlight_band)과 완전히 같은 계산을 재사용해 일관성을 보장한다.
+    # 이 기본 구현이 모든 서브클래스의 폴백이며, 개별 override는 전부 제거했다(중복 로직 흡수).
+    def _paint_selection_outline(self, painter, scale):
+        _paint_selection_highlight(painter, self, scale)
 
     # 기본 paint — 베이스 + (선택 시) 획 따라가는 outline + 핸들. _paint_selection_outline은
-    # 각 도형이 override(선/패스는 획 형태, 네모·원·화살표 등은 자체 paint를 따로 둔다).
+    # 위 기본 구현을 그대로 쓴다(과거엔 도형마다 override했으나 통일됨).
     # _LineItem·_PathItem이 byte-for-byte 동일하게 중복 정의하던 것을 흡수(2026-07-28 코드정리).
     def paint(self, painter, option, widget=None):
         self._paint_base(painter, option, widget)
@@ -1342,18 +1353,66 @@ class _HandleResizeMixin:
 # 그래픽스 아이템 (전부 믹스인으로 크기조절 지원)
 # ---------------------------------------------------------------------------
 
-def _draw_selection_box(painter: QPainter, rect: QRectF, scale: float = 1.0):
-    painter.setPen(QPen(QColor(_BLUE), 1.0 / (scale or 1.0), Qt.PenStyle.DashLine))
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawRect(rect)
+def _item_center_path(it) -> QPainterPath:
+    """[선택 표시 통일 2026-08-01] 아이템의 '패딩 없는' 로컬 원본 외곽선 — 개별 선택 강조와
+    드래그 크로싱 미리보기가 공유한다(원래 뷰의 `_rb_highlight_outline`이던 것을 자유함수로
+    승격해 아이템 자신의 paint()에서도 쓸 수 있게 함). 네모·원·심볼·패스·선은 각자 갖고 있는
+    원본 기하를, 화살표류(전용 기하 접근자 없음)는 몸통 곡선/꺾은선+화살촉 폴리곤을 직접
+    구성한다. 반경>0인 직각 화살표는 실제로 그려지는 둥근 버전을 쓴다."""
+    if isinstance(it, _SymbolItem):
+        return it._sym_path()
+    if isinstance(it, QGraphicsEllipseItem):
+        p = QPainterPath(); p.addEllipse(it.rect()); return p
+    if isinstance(it, QGraphicsRectItem):
+        p = QPainterPath(); p.addRect(it.rect()); return p
+    if isinstance(it, QGraphicsPathItem):
+        return it.path()
+    if isinstance(it, QGraphicsLineItem):
+        ln = it.line()
+        p = QPainterPath(); p.moveTo(ln.p1()); p.lineTo(ln.p2()); return p
+    if isinstance(it, _PolyArrowItem):
+        base = it._rounded_polyline_path() if it._corner_radius() > 0 else it._polyline_path()
+        p = QPainterPath(base)
+        p.addPolygon(QPolygonF(it._head_points()))
+        return p
+    if isinstance(it, _ArrowItem):
+        p = QPainterPath()
+        p.moveTo(it._p1)
+        if it._ctrl1 is None:
+            p.lineTo(it._p2)
+        else:
+            p.cubicTo(it._ctrl1, it._ctrl2, it._p2)
+        p.addPolygon(QPolygonF(it._head_points()))
+        return p
+    return it._base_shape() if hasattr(it, "_base_shape") else it.shape()
 
 
-def _draw_selection_ellipse(painter: QPainter, rect: QRectF, scale: float = 1.0):
-    # 원의 선택 표시는 네모 박스가 아니라 곡선을 따라가는 점선 타원(펜·획 밖을 살짝 감쌈).
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor(_BLUE), 1.0 / (scale or 1.0), Qt.PenStyle.DashLine))
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawEllipse(rect)
+def _highlight_band(it, extra_width: float = 3.0) -> QPainterPath:
+    """[선택 표시 통일 2026-08-01] 중심선을 도형 두께 비례 폭(pw+extra_width, 장면 단위)으로
+    스트로크해 띠를 만들고, `band.subtracted(centerline)`로 안쪽 절반을 깎아 바깥쪽만 남긴다
+    (Lucid 스타일). 네모·원·심볼처럼 centerline이 '닫힌'(채워진 영역이 있는) 경로면 안쪽이
+    실제로 깎이고, 선·화살표 몸통처럼 '열린'(면적 0) 경로는 뺄 것이 없어 대칭 띠가 그대로
+    유지된다 — 타입별 분기 없이 한 연산으로 둘 다 처리."""
+    centerline = _item_center_path(it)
+    pw = it.pen().widthF() if hasattr(it, "pen") else getattr(it, "_width", 1.0)
+    stroker = QPainterPathStroker()
+    stroker.setWidth(max(pw, 1.0) + extra_width)
+    stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
+    stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    band = stroker.createStroke(centerline).simplified()
+    return band.subtracted(centerline)
+
+
+def _paint_selection_highlight(painter: QPainter, it, scale: float = 1.0):
+    """[선택 표시 통일 2026-08-01] 개별 아이템 선택 강조의 공통 렌더 — 실제 외곽선에 바깥쪽만
+    딱 맞는 실선(점선 아님). `_HandleResizeMixin._paint_selection_outline`이 기본으로 위임하고,
+    믹스인을 안 쓰는 소수 클래스(`_TitleBlockItem`)는 직접 호출한다."""
+    band = _highlight_band(it)
+    pen = QPen(QColor(_BLUE), 1.0 / (scale or 1.0))
+    painter.setPen(pen)
+    fill = QColor(_BLUE); fill.setAlpha(110)
+    painter.setBrush(QBrush(fill))
+    painter.drawPath(band)
 
 
 def _font_px(painter, px: float, bold: bool = False):
@@ -1664,11 +1723,9 @@ class _EllipseItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QG
         return p
 
     def paint(self, painter, option, widget=None):
-        # 네모와 달리 선택 표시를 곡선 따라가는 점선 타원으로 그린다(_paint_base_no_select의
-        # 사각 박스 대신 _paint_base + 점선 타원).
         self._paint_base(painter, option, widget)
         if self.isSelected():
-            _draw_selection_ellipse(painter, self._content_rect(), self._scale_or_1())
+            self._paint_selection_outline(painter, self._scale_or_1())
         self._paint_handle(painter)
 
 
@@ -1964,7 +2021,7 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
         painter.setBrush(self.brush())
         painter.drawPath(self._sym_path())
         if self.isSelected():
-            _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
+            self._paint_selection_outline(painter, self._scale_or_1())
         self._paint_handle(painter)
 
 
@@ -2011,7 +2068,7 @@ class _ImageItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
     def paint(self, painter, option, widget=None):
         painter.drawPixmap(self.rect(), self._pixmap, QRectF(self._pixmap.rect()))
         if self.isSelected():
-            _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
+            self._paint_selection_outline(painter, self._scale_or_1())
         self._paint_handle(painter)
 
 
@@ -2140,7 +2197,7 @@ class _TitleBlockItem(QGraphicsRectItem):
         self._paint_table(painter)
         painter.restore()
         if self.isSelected():
-            _draw_selection_box(painter, r, self._scale_or_1())
+            _paint_selection_highlight(painter, self, self._scale_or_1())
 
     def _scale_or_1(self) -> float:
         s = self.scale() * _view_zoom_factor(self)
@@ -2393,7 +2450,7 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
         painter.drawRect(box)
         painter.restore()
         if self.isSelected():
-            _draw_selection_box(painter, box, self._scale_or_1())
+            self._paint_selection_outline(painter, self._scale_or_1())
         self._paint_handle(painter)
 
 
@@ -2533,19 +2590,8 @@ class _LineItem(_LabelMixin, _HandleResizeMixin, QGraphicsLineItem):
         pad = 5.0 / self._scale_or_1()
         return super().boundingRect().adjusted(-pad, -pad, pad, pad)
 
-    def _paint_selection_outline(self, painter, scale):
-        # 화살표와 동일하게 '선을 따라가는' 점선(네모 박스 아님). 획을 살짝 넓게 감싼다.
-        line = self.line()
-        body = QPainterPath()
-        body.moveTo(line.p1())
-        body.lineTo(line.p2())
-        stroker = QPainterPathStroker()
-        stroker.setWidth(self.pen().widthF() + 8)
-        stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
-        outline = stroker.createStroke(body)
-        painter.setPen(QPen(QColor(_BLUE), 1.0 / (scale or 1.0), Qt.PenStyle.DashLine))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(outline.simplified())
+    # [선택 표시 통일 2026-08-01] 커스텀 _paint_selection_outline 제거 — 믹스인 기본 구현이
+    # _item_center_path(QGraphicsLineItem 분기)로 동일한 결과를 낸다(중복 로직 흡수).
 
 
 class _PathItem(_HandleResizeMixin, QGraphicsPathItem):
@@ -2624,17 +2670,17 @@ class _PathItem(_HandleResizeMixin, QGraphicsPathItem):
         return super().boundingRect().adjusted(-pad, -pad, pad, pad)
 
     def _paint_selection_outline(self, painter, scale):
-        # 펜 획을 따라가는 점선(네모 박스 아님) — 획을 살짝 넓게 감싼다.
-        # 스트로크 생성·단순화는 무겁고 획·펜이 안 바뀌면 결과가 동일하므로 캐시해
-        # 이동(평행이동) 중 매 프레임 재계산을 피한다(버벅임 제거).
+        # [선택 표시 통일 2026-08-01] 실외곽선 바깥쪽만 강조(_highlight_band)로 바뀌었지만,
+        # 자유곡선(펜 그리기)은 점이 많아 스트로크+불리언 연산이 무겁고 획·펜이 안 바뀌면
+        # 결과가 동일하므로 캐시는 그대로 유지 — 이동(평행이동) 중 매 프레임 재계산을 피한다
+        # (버벅임 제거, 기존 최적화 보존). `_paint_selection_highlight`는 매번 새로 계산하므로
+        # 여기선 밴드만 캐시하고 그리기는 직접 한다.
         if self._sel_outline is None:
-            stroker = QPainterPathStroker()
-            stroker.setWidth(self.pen().widthF() + 8)
-            stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
-            stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            self._sel_outline = stroker.createStroke(self.path()).simplified()
-        painter.setPen(QPen(QColor(_BLUE), 1.0 / (scale or 1.0), Qt.PenStyle.DashLine))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
+            self._sel_outline = _highlight_band(self)
+        pen = QPen(QColor(_BLUE), 1.0 / (scale or 1.0))
+        painter.setPen(pen)
+        fill = QColor(_BLUE); fill.setAlpha(110)
+        painter.setBrush(QBrush(fill))
         painter.drawPath(self._sel_outline)
 
 
@@ -3194,23 +3240,8 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             self._paint_selection_outline(painter, self._scale_or_1())
         self._paint_handle(painter)
 
-    def _paint_selection_outline(self, painter, scale):
-        # 선택 표시를 네모가 아니라 '선을 따라가는' 점선으로 — 선+화살촉을 살짝 넓게 감싼 외곽선.
-        body = QPainterPath()
-        body.moveTo(self._p1)
-        if self._ctrl1 is None:
-            body.lineTo(self._p2)
-        else:
-            body.cubicTo(self._ctrl1, self._ctrl2, self._p2)
-        stroker = QPainterPathStroker()
-        stroker.setWidth(self._width + 8)   # 선보다 살짝 넓게 감싸 점선이 선 양옆을 훑게
-        stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
-        stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        outline = stroker.createStroke(body)
-        outline.addPolygon(QPolygonF(self._head_points()))
-        painter.setPen(QPen(QColor(_BLUE), 1.0 / (scale or 1.0), Qt.PenStyle.DashLine))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(outline.simplified())
+    # [선택 표시 통일 2026-08-01] 커스텀 _paint_selection_outline 제거 — 믹스인 기본 구현이
+    # _item_center_path(_ArrowItem 분기)로 동일한 결과를 낸다(중복 로직 흡수).
 
     def _paint_handle(self, painter):
         # 크기조절·회전 핸들(믹스인) + 곡선용 bend 핸들 2개(곡선 t=1/3·2/3 지점의 초록 원).
@@ -4229,15 +4260,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         shape.addPolygon(QPolygonF(self._head_points()))
         return shape
 
-    def _paint_selection_outline(self, painter, scale):
-        stroker = QPainterPathStroker()
-        stroker.setWidth(self._width + 8)
-        stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
-        stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        outline = stroker.createStroke(self._polyline_path())
-        painter.setPen(QPen(QColor(_BLUE), 1.0 / (scale or 1.0), Qt.PenStyle.DashLine))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(outline.simplified())
+    # [선택 표시 통일 2026-08-01] 커스텀 _paint_selection_outline 제거 — 믹스인 기본 구현이
+    # _item_center_path(_PolyArrowItem 분기, 반경 반영)로 동일한 결과를 낸다(중복 로직 흡수).
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -4350,7 +4374,7 @@ class _BadgeItem(_HandleResizeMixin, QGraphicsItem):
         painter.drawText(QRectF(-self._R, -self._R, 2 * self._R, 2 * self._R),
                          Qt.AlignmentFlag.AlignCenter, str(self._number))
         if self.isSelected():
-            _draw_selection_box(painter, self._content_rect(), self._scale_or_1())
+            self._paint_selection_outline(painter, self._scale_or_1())
         self._paint_handle(painter)
 
 
@@ -5977,6 +6001,10 @@ class _AnnotatorView(QGraphicsView):
         return QRectF(self.mapToScene(self._rb_origin),
                       self.mapToScene(self._rb_current)).normalized()
 
+    # [선택 표시 통일 2026-08-01] 옛 `_rb_highlight_outline` 메서드는 모듈 레벨 `_item_center_path`
+    # 로 승격됐다 — 개별 선택 강조(paint())와 완전히 같은 계산을 공유하기 위함. 아래 두 호출부
+    # (`_rb_preview_hits`·`drawForeground`)는 `_item_center_path(it)`를 직접 쓴다.
+
     def _rb_preview_hits(self):
         """[성능 조사 2026-07-30] 러버밴드 드래그 '중'에 쓰는 저비용 미리보기 후보 집합 —
         실제 Qt 선택(setSelected)은 걸지 않는다(Lucid 대조 사용자 피드백: "드래그 중엔 각
@@ -5996,6 +6024,16 @@ class _AnnotatorView(QGraphicsView):
         bg = getattr(self._owner, "_bg_item", None)
         hits = {it for it in self.scene().items(rect, mode)
                 if it is not bg and (it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)}
+        if not window:
+            # [실외곽선 정밀화 2026-08-01] boundingRect는 축정렬 사각형이라, 대각/꺾인 화살표는
+            # 빈 모서리 공간까지 포함한다 — 그 빈 공간만 스쳐도 broad-phase가 후보로 잡아,
+            # 사용자 눈엔 "화살표를 안 건드렸는데 걸린다"로 보였다(실제로는 눈에 안 보이는
+            # bbox와 걸친 것). broad-phase가 이미 후보를 크게 추려놨으므로, 여기서
+            # _item_center_path()(스트로커 없는 가벼운 실기하)으로 한 번 더 정밀 교차
+            # 검사해 진짜 걸친 것만 남긴다 — 후보 수가 적어 narrow-phase 비용은 작다.
+            sel_path = QPainterPath(); sel_path.addRect(rect)
+            hits = {it for it in hits
+                    if it.mapToScene(_item_center_path(it)).intersects(sel_path)}
         return hits | set(self._rb_base)
 
     def _apply_rubber_selection(self):
@@ -6570,18 +6608,28 @@ class _AnnotatorView(QGraphicsView):
             painter.drawRect(rect)
             # [성능 조사 2026-07-30] 드래그 중 실제 선택(setSelected) 대신 저비용 하이라이트만 —
             # Lucid처럼 "닿은 객체 색만 바꾸고, 놓는 순간 정확히 확정"하는 느낌을 재현.
-            # [Lucid식 실외곽선 강조 2026-08-01] 축정렬 bounding box 대신 _base_shape()(회전·
-            # 곡선까지 반영된 실제 클릭 외곽선, crossing 판정이 이미 쓰는 것과 동일)를 그대로
-            # 매핑해 그린다 — 회전된 도형이 더 이상 어긋난 사각형으로 안 보이고, 화살표/선처럼
-            # _base_shape가 얇은 스트로크 밴드인 아이템은 그 밴드 자체가 강조된다.
-            hl_fill = QColor(color); hl_fill.setAlpha(70)
-            hl_pen = QPen(color, 2.0 / s)
-            hl_pen.setCosmetic(True)
-            painter.setPen(hl_pen)
-            painter.setBrush(QBrush(hl_fill))
+            # [강조선 위치·굵기 재설계 2026-08-01, 3차] 앞선 두 시도(패딩 제거 → 얇아짐, cosmetic
+            # 폭 수정)는 전부 '중심선 위에 딱 겹쳐 그리기'를 유지한 채였다. 사용자가 Lucid와
+            # 대조해 지목한 진짜 차이는 위치 자체 — 우리는 테두리 "중심"에 겹쳐 그려서 (a) 도형
+            # 자체 선(보통 1px)과 정확히 겹쳐 안티에일리어싱이 섞여 옅어 보이고 (b) 줌이 커지면
+            # 도형 자체 선은 장면(scene) 단위라 함께 굵어지는데 강조선만 화면(device) 고정폭이라
+            # 상대적으로 더 얇아 보였다. Lucid는 테두리 "바깥"에 갭을 두고 감싼다 — 그러면 도형
+            # 자체 선과 겹칠 일이 없어 항상 또렷하고, 갭·굵기를 장면 단위로 잡으면 줌에 비례해
+            # 커져 도형과 시각적 비중이 항상 맞는다. 이 앱이 이미 같은 패턴을 쓰고 있다(손안의
+            # 카드) — 평소 단일 선택 표시(`_content_rect`)가 `pen.widthF()/2 + 여유` 만큼 장면
+            # 단위로 부풀린 사각을 그린다. 그 관례를 그대로 확장: `_highlight_band()`(모듈
+            # 레벨 — 개별 선택 강조 `_paint_selection_highlight`와 완전히 같은 함수, 2026-08-01
+            # 통일)가 패딩 없는 중심선을 도형 자체 펜 두께에 비례한 폭으로 스트로크해 '띠'로
+            # 만들고, 바깥쪽만 남기고 안쪽은 깎는다(Lucid 스타일) — _base_shape()의 옛 8px+
+            # 고정 패딩과 달리 폭이 도형 두께에 비례해 계산되므로 얇은 선엔 얇게, 굵은 선엔
+            # 그만큼 굵게 뜨고, 안쪽 절반이 도형 내부와 겹쳐 낭비되지 않는다.
+            edge_pen = QPen(color, 1.0)
+            edge_pen.setCosmetic(True)
+            painter.setPen(edge_pen)
+            fill2 = QColor(color); fill2.setAlpha(90)
+            painter.setBrush(QBrush(fill2))
             for it in self._rb_preview:
-                outline = it._base_shape() if hasattr(it, "_base_shape") else it.shape()
-                painter.drawPath(it.mapToScene(outline))
+                painter.drawPath(it.mapToScene(_highlight_band(it)))
         # [하나의 시스템으로 통합 2026-08-01] 접속점 드래그 중 커넥터 고스트 / 유휴 hover 강조
         # 마커 — 선택 여부와 무관하게 한 경로(_hp_*)로 처리.
         if self._hp_dragging and self._hp_src is not None and self._hp_cursor is not None:
