@@ -3219,15 +3219,17 @@ def test_box_handle_cursor():
 
 
 def test_qc_dots_geometry():
-    # [2d] 선택된 네모는 상하좌우 외부 도트 4개(테두리 바깥).
+    # [하나의 시스템으로 통합 2026-08-01, Lucid 대조] 선택된 네모의 상하좌우 접속점은 이제
+    # 항상 테두리 위(hover-port와 동일 위치) — 미연결이라고 바깥으로 뜨는 gap은 없앴다.
     w = CanvasWindow()
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
     dots = dict((k, r) for k, r in a._qc_dot_rects())
     assert set(dots) == {"t", "r", "b", "l"}
-    assert dots["r"].center().x() > a.rect().right()      # 우측 도트는 우변 바깥
-    assert dots["l"].center().x() < a.rect().left()
-    assert dots["t"].center().y() < a.rect().top()
-    assert dots["b"].center().y() > a.rect().bottom()
+    br = a.rect()
+    assert _close(dots["r"].center(), QPointF(br.right(), br.center().y()))
+    assert _close(dots["l"].center(), QPointF(br.left(), br.center().y()))
+    assert _close(dots["t"].center(), QPointF(br.center().x(), br.top()))
+    assert _close(dots["b"].center(), QPointF(br.center().x(), br.bottom()))
 
 
 def test_qc_create_default():

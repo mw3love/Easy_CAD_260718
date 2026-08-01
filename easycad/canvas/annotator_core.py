@@ -441,12 +441,6 @@ class _HandleResizeMixin:
     # 그 점만 반전 강조(흰 채움+색 테두리)한다.
     _hover_handle = None
 
-    # [qc-dot 테두리 수렴 캐시] `_qc_has_connection()`의 씬 전체 화살표 스캔 결과 — None이면
-    # '아직 미계산'. `boundingRect()`가 선택된 도형에서 `_qc_dot_rects()`를 매우 자주 호출하므로
-    # (2026-07-30 성능조사에서 실측된 핫스팟) 매 호출마다 다시 스캔하면 그 문제를 재도입한다.
-    # itemChange의 ItemSelectedChange에서 무효화 — 선택될 때마다 한 번만 새로 계산.
-    _qc_connected_cache = None
-
     def _handle_px(self) -> float:
         """핸들 한 변(로컬 단위) — 고정 크기(씬 단위)를 아이템 배율로 환산."""
         return self._HANDLE_PX / self._scale_or_1()
@@ -458,7 +452,6 @@ class _HandleResizeMixin:
         알리는 표준 방법이라, 매 페인트마다 핸들 영역을 상시 예약해두는 것보다 싸다."""
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
             self.prepareGeometryChange()
-            self._qc_connected_cache = None   # 선택될 때마다 qc-dot 연결 상태를 새로 계산
         return super().itemChange(change, value)
 
     # ---- 잡기 판정(시각 점과 분리) --------------------------------------
@@ -830,9 +823,18 @@ class _HandleResizeMixin:
         if self._box_handles():
             if not self.isSelected():
                 return self._content_rect().adjusted(-pad, -pad, pad, pad)
-            # 꼭짓점·변 핸들은 rect 경계서 half-handle 삐져나오고, 회전 핸들·빠른생성 도트는 바깥.
+            # 꼭짓점·변 핸들은 rect 경계서 half-handle 삐져나오고, 회전 핸들·접속점은 바깥.
             h = self._handle_px()
-            r = self._content_rect().united(self._box_rot_rect())
+            cr = self._content_rect()
+            # [하나의 시스템으로 통합 2026-08-01 — 실측 발견] 회전 핸들은 좌상단에만 있어 그대로
+            # union하면 boundingRect 중심이 좌상단으로 쏠린다. 종전엔 접속점이 미연결일 때 훨씬
+            # 크게(gap) 떠 있어 이 쏠림을 우연히 덮었지만(4방향 모두 회전 핸들보다 멀리 나가
+            # 있었음), 접속점이 항상 테두리에 붙는 지금은 그 우연한 상쇄가 사라져 실제로 드러난다
+            # (image 삽입 중심좌표 테스트로 발견). 회전 핸들이 튀어나온 만큼을 네 변에 똑같이 줘서
+            # 대칭을 유지한다.
+            rot_r = self._box_rot_rect()
+            extra = max(cr.left() - rot_r.left(), cr.top() - rot_r.top(), 0.0)
+            r = cr.adjusted(-extra, -extra, extra, extra)
             for _k, dr in self._qc_dot_rects():
                 r = r.united(dr)
             return r.adjusted(-h, -h, h, h)
@@ -877,17 +879,10 @@ class _HandleResizeMixin:
         c = self._box_rot_center()
         return QRectF(c.x() - d / 2, c.y() - d / 2, d, d)
 
-    # [qc-dot 테두리 수렴 2026-08-01, Lucid 대조] 아래 두 헬퍼는 `_qc_dot_rects()`가 4점
-    # 전부를 offset(허공) 대신 테두리 위에 그리도록 판정한다 — 하나라도 연결됐거나
-    # (_qc_has_connection) 지금 드래그로 만드는 중이면(_qc_dragging_now) **네 점 모두** 한꺼번에
-    # 전환(Lucid 실측: 드래그 시작 순간 4점이 동시에 변 중점 점으로 바뀜, 드래그한 변만 바뀌지
-    # 않음 — 사용자가 스크린샷으로 지적). 계속 허공에 떠 있으면 "저 점에 붙이면 되나" 하는
-    # 착각을 유발한다는 게 애초 동기이므로, 하나라도 실제 연결이 생긴 순간 이 도형은 더 이상
-    # "빈 도형"이 아니라는 신호를 네 점 전체로 준다.
     def _qc_dragging_now(self) -> bool:
-        """뷰가 지금 이 도형에서 qc-dot 드래그 중이면 True. 라이브 드래그 중에도(바인딩이
-        실제로 생기기 전인 릴리스 이전부터) 네 점을 테두리로 수렴시켜, 드래그 내내 '떠 있는
-        dot에 화살표를 붙여야 하나' 착각이 보이지 않게 한다."""
+        """뷰가 지금 이 도형에서 커넥터 점 드래그 중이면 True — `_paint_handle`이 드래그 동안
+        무관한 핸들(모서리 리사이즈·회전)을 감춰 어수선함을 줄이는 데 쓴다(2026-08-01, Lucid
+        대조). [하나의 시스템으로 통합 2026-08-01] 상태 필드가 `_hp_*`로 합쳐져 그쪽을 본다."""
         sc = self.scene()
         if sc is None:
             return False
@@ -901,52 +896,28 @@ class _HandleResizeMixin:
         if v is None:
             return False
         try:
-            return getattr(v, "_qc_dragging", False) and v._qc_src is self
+            return getattr(v, "_hp_dragging", False) and v._hp_src is self
         except RuntimeError:
             return False
 
-    def _qc_has_connection(self) -> bool:
-        """부착점이 변 중점에 근접한 화살표가 하나라도 있으면 True(Lucid 대조 2026-08-01).
-        결과는 `_qc_connected_cache`에 캐시 — `boundingRect()`가 선택된 도형에서 이 경로를
-        매우 자주 부르므로(2026-07-30 성능조사 핫스팟) 매번 씬 전체를 스캔하면 안 된다.
-        캐시는 itemChange의 ItemSelectedChange에서 무효화된다."""
-        if self._qc_connected_cache is not None:
-            return self._qc_connected_cache
-        sc = self.scene()
-        if sc is None:
-            return False
-        br = self.rect()
-        mids = (QPointF(br.center().x(), br.top()), QPointF(br.right(), br.center().y()),
-                QPointF(br.center().x(), br.bottom()), QPointF(br.left(), br.center().y()))
-        tol = self._handle_px() * 1.2
-        found = False
-        for arrow, idx, _sh in _collect_bound_arrows(sc, [self]):
-            p = arrow._bind_pt(idx)
-            if p is None:
-                continue
-            if any(QLineF(p, m).length() <= tol for m in mids):
-                found = True
-                break
-        self._qc_connected_cache = found
-        return found
-
-    # [2d, 2026-08-01 화살표 전용으로 되돌림] 상하좌우 테두리서 바깥으로 살짝 뗀 빠른 생성 점.
-    # 클릭=도형 복제+화살표, 드래그=화살표만 생성. 2026-07-30에 변 리사이즈(1축)와 통합했었으나,
-    # 점이 이미 리사이즈 축 방향으로 offset돼 있어 바깥으로 당기는 자연스러운 동작이 항상
-    # 리사이즈로 판정되는 문제가 실사용에서 드러나 되돌림(사용자 확인 2026-08-01). 단일축
-    # 리사이즈는 이 점에서 지원 안 함 — 꼭짓점(_box_corner_rects)의 대각 리사이즈로 대체.
+    # [하나의 시스템으로 통합 2026-08-01, Lucid 대조] 상하좌우 접속점 — 항상 테두리 위
+    # (`_shape_ports`와 동일한 점, 심볼도 실제 외곽선에 투영됨). 종전엔 미연결 상태의 선택된
+    # 도형만 테두리 밖으로 살짝 띄웠는데(gap), 그러면 도형을 선택하는 순간 점이 밖으로 튀어
+    # hover 상태(항상 테두리 위)와 위치가 달라지는 비일관성이 있었다(Lucid는 선택 여부와
+    # 무관하게 항상 같은 자리) — 사용자 지적으로 gap을 완전히 없앴다. 클릭=도형 복제+화살표,
+    # 드래그=화살표(대상 없으면 도형도 생성). 2026-07-30엔 이 점을 변 리사이즈(1축)와도
+    # 통합했었으나, "바깥으로 쭉 당기는" 자연스러운 동작이 항상 리사이즈로 판정되는 문제가
+    # 실사용에서 드러나 되돌림(사용자 확인 2026-08-01) — 단일축 리사이즈는 여기서 지원 안
+    # 하고 모서리(`_box_corner_rects`)의 대각 리사이즈로만 지원한다.
     def _qc_dot_rects(self):
-        br = self.rect()
         h = self._handle_px()
         d = h * 0.9
-        # 하나라도 연결됐거나 지금 드래그 중이면 네 점 전부 테두리(gap 0)로 수렴 — 일부만
-        # 수렴하면 "왜 이 점만 다르지"라는 또 다른 착각을 만든다(사용자 지적, Lucid는 전부 동시 전환).
-        gap = 0.0 if (self._qc_has_connection() or self._qc_dragging_now()) else h * 2.5
-        pos = [("t", QPointF(br.center().x(), br.top() - gap)),
-               ("r", QPointF(br.right() + gap, br.center().y())),
-               ("b", QPointF(br.center().x(), br.bottom() + gap)),
-               ("l", QPointF(br.left() - gap, br.center().y()))]
-        return [(k, QRectF(p.x() - d / 2, p.y() - d / 2, d, d)) for k, p in pos]
+        sides = ("t", "r", "b", "l")   # _shape_ports와 동일 순서(상·우·하·좌)
+        out = []
+        for k, (sp, _n) in zip(sides, _shape_ports(self)):
+            p = self.mapFromScene(sp)
+            out.append((k, QRectF(p.x() - d / 2, p.y() - d / 2, d, d)))
+        return out
 
     def _box_handle_cursor(self, local_pt: QPointF):
         """local_pt가 어느 박스 핸들 위인지 → 커서('rotate' or Qt.CursorShape), 없으면 None."""
@@ -5664,22 +5635,17 @@ class _AnnotatorView(QGraphicsView):
         self._stretch_binds = None    # _collect_bound_arrows 결과(부착점 추종)
         self._stretch_snap = None     # 기하 스냅샷([(item, capture_geom), ...]) — 원복·undo
         self._stretch_grip_pts = []   # 걸친 grip 하이라이트 점(씬)
-        # [2d] 빠른 생성 — 선택된 네모·원의 외부 도트 hover/drag 상태.
-        self._qc_hover = None       # (item, side) — 도트 위 hover(고스트 미리보기) or None
-        self._qc_dragging = False
-        self._qc_src = None         # 원본 도형
-        self._qc_side = None        # "t"/"r"/"b"/"l"
-        self._qc_cursor = None      # 드래그 중 커서 씬좌표(복제 중심). None=기본 배치(클릭)
-        self._qc_press_scene = None # 도트 press 지점(씬) — 클릭/드래그 판정 기준
-        # [2026-08-01 되돌림] 2026-07-30에 이 점을 변 리사이즈 핸들과 통합했으나, 점이 테두리에서
+        # [2026-08-01 되돌림] 2026-07-30에 qc-dot을 변 리사이즈 핸들과 통합했으나, 점이 테두리에서
         # 이미 리사이즈 축 방향으로 offset돼 있어 "바깥으로 쭉 당기는" 가장 자연스러운 동작이 항상
         # 리사이즈로 판정되는 문제가 실사용에서 드러나(화살표가 안 나오고 도형만 늘어남) 화살표
         # 전용으로 되돌림(사용자 확인 2026-08-01). 단일축 리사이즈는 이 점에서 더 이상 지원 안 함
         # (모서리 대각 핸들은 그대로 유지).
-        # [8포트 select-hover] 선택 도구 + 미선택 도형 근처 hover → 8포트 드래그로 커넥터만 생성.
-        # qc-dot(선택된 도형·바깥 오프셋)과 별개 시스템 — 포트가 테두리 위라 클릭=선택과 자리가
-        # 겹쳐, press는 잠정 보류하고 release에서 드래그 여부로 커넥터/선택을 가른다(deep-interview
-        # 2026-07-29 확정).
+        # [하나의 시스템으로 통합 2026-08-01, Lucid 대조] qc-dot(선택된 도형)·hover-port(미선택
+        # 도형) 드래그 상태 필드를 이 하나로 합쳤다 — 둘 다 이제 같은 점(_shape_ports, 항상 테두리
+        # 위)·같은 클릭/드래그 생성 로직을 쓰므로 "선택된 도형이냐 아니냐"는 **어느 도구에서
+        # 잡히느냐**(qc-dot 쪽은 어느 도구에서든, hover-port 쪽은 select 도구에서만 — 그리기 도구
+        # 사용 중 다른 도형 테두리 근처를 클릭했을 때 그리기를 방해하지 않기 위한 기존의 의도적
+        # 구분)만 남기고 상태·생성 경로는 하나로 합친다(_connect_port_at이 그 진입점).
         self._hp_hover = None       # (item, port_pt, normal) — 유휴 hover(스냅 마커용) or None
         self._hp_dragging = False
         self._hp_src = None         # 원본 도형(미선택)
@@ -5774,11 +5740,6 @@ class _AnnotatorView(QGraphicsView):
         if cursor_scene is not None:
             return QPointF(cursor_scene)
         return sr.center() + _qc_default_delta(sr, side)
-
-    def _qc_target_rect(self, src, side, cursor_scene) -> QRectF:
-        sr = self._qc_src_scene_rect(src)
-        c = self._qc_target_center(src, side, cursor_scene)
-        return QRectF(c.x() - sr.width() / 2, c.y() - sr.height() / 2, sr.width(), sr.height())
 
     def _qc_create(self, src, side, cursor_scene):
         """[2d] 네방향점 클릭=도형 복제+연결 화살표 / [M4-2] 드래그=화살표만.
@@ -5879,10 +5840,10 @@ class _AnnotatorView(QGraphicsView):
         return None
 
     def _qc_route_context(self, src, target):
-        """[미리보기≠확정 버그 수정 2026-07-27] _qc_paint_ghost가 쓸 obstacles/conn_rects —
+        """[미리보기≠확정 버그 수정 2026-07-27] _hp_paint_ghost가 쓸 obstacles/conn_rects —
         _PolyArrowItem._obstacle_rects·_connected_rects와 같은 판정을 화살표 없이 계산(고스트는
         아직 실제 아이템이 아니므로). src·target 자신은 회피 대상에서 제외해야 릴리스 때
-        _qc_create_arrow_only가 만드는 실제 화살표와 같은 입력이 된다."""
+        _hp_create_arrow가 만드는 실제 화살표와 같은 입력이 된다."""
         sc = self.scene()
         obstacles = []
         if sc is not None:
@@ -5896,42 +5857,6 @@ class _AnnotatorView(QGraphicsView):
             return (sh.mapRectToScene(sh.rect())
                     if isinstance(sh, (_RectItem, _EllipseItem, _SymbolItem)) else None)
         return obstacles, (_rect_of(src), _rect_of(target))
-
-    def _qc_paint_ghost(self, painter, src, side, cursor_scene):
-        """빠른 생성 고스트 — 클릭(hover)=복제 도형+연결선 / [M4-2] 드래그=연결선만.
-        [우선순위 정정 2026-08-01] 빈 캔버스 드롭 시 새 도형이 실제로 생기긴 하지만(아래
-        _qc_create_arrow_only), 드래그 중엔 화살표(연결선)가 우선이라 도형 미리보기를 보이지
-        않는다 — 커서를 따라 박스가 움직이면 '도형을 옮기는' 조작처럼 읽힌다는 사용자 피드백."""
-        pen = QPen(QColor(90, 150, 235), 1.5, Qt.PenStyle.DashLine)
-        pen.setCosmetic(True)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        p_src = _edge_mid(self._qc_src_scene_rect(src), side)
-        if cursor_scene is not None:
-            snap = self._qc_snap_target(cursor_scene, src)   # [M4-2] 드래그 중 스냅 예고
-            end = snap[0] if snap is not None else cursor_scene
-            ns = _QC_SIDE_NORMAL[side]
-            ne = snap[1] if snap is not None else None
-            target = snap[2] if snap is not None else None
-            # [미리보기≠확정 버그 수정 2026-07-27] 릴리스 시 _qc_create_arrow_only가 쓰는 것과
-            # 똑같은 _route_ortho로 미리보기 — 종전엔 _ortho_elbow(장애물·재진입 회피 없음)만 써서
-            # 릴리스 순간 경로가 갑자기 바뀌어 보였다(근접/재진입 배치에서 특히 두드러짐).
-            obstacles, conn_rects = self._qc_route_context(src, target)
-            mids = _route_ortho(p_src, end, ns, ne, obstacles, _PolyArrowItem._ROUTE_CLEARANCE,
-                                conn_rects=conn_rects)
-            pts = _dedup_pts([p_src] + mids + [end])
-            for i in range(len(pts) - 1):
-                painter.drawLine(pts[i], pts[i + 1])
-            if snap is not None:
-                self._draw_snap_marker(painter, end, self._view_scale())   # 붙을 지점 파란 점
-            return
-        tr = self._qc_target_rect(src, side, cursor_scene)
-        p_tgt = _edge_mid(tr, _QC_OPP[side])
-        painter.drawLine(p_src, p_tgt)
-        if isinstance(src, _EllipseItem):
-            painter.drawEllipse(tr)
-        else:
-            painter.drawRect(tr)
 
     def _rot_handle_at(self, view_pos) -> bool:
         """커서가 '선택된' 도형의 회전 점 안이면 True — hover 회전 커서 판정용."""
@@ -6453,9 +6378,24 @@ class _AnnotatorView(QGraphicsView):
         for sp, _n in _shape_ports(best_sh):
             painter.drawEllipse(sp, r, r)
 
+    def _connect_port_at(self, view_pos):
+        """[하나의 시스템으로 통합 2026-08-01, Lucid 대조] 선택된 도형의 접속점 →
+        (shape, port_pt, normal) or None. `_qc_dot_at`(선택된 도형 대상, 어느 도구에서든 작동)의
+        rect 판정을 그대로 재사용하되 `_shape_ports`로 실제 scene 점+법선을 함께 돌려줘
+        `_hover_port_at`과 동일한 반환 계약으로 맞춘다 — 이 계약 하나로 press/move/release/paint가
+        선택 여부와 무관하게 한 경로(`_hp_*` 상태 필드)를 탄다."""
+        hit = self._qc_dot_at(view_pos)
+        if hit is None:
+            return None
+        item, side = hit
+        idx = {"t": 0, "r": 1, "b": 2, "l": 3}[side]
+        sp, n = _shape_ports(item)[idx]
+        return (item, sp, n)
+
     def _hover_port_at(self, view_pos):
-        """[8포트 select-hover] 미선택 도형 근처 8포트 중 가장 가까운 것 → (shape, port_pt, normal)
-        or None. 선택된 도형은 제외(리사이즈·회전 핸들과 자리가 겹침 — qc-dot이 그 역할)."""
+        """[8포트 select-hover] 미선택 도형 근처 접속점 중 가장 가까운 것 → (shape, port_pt, normal)
+        or None. 선택된 도형은 제외 — `_connect_port_at`가 이미 그 경로를 처리해(mousePressEvent
+        상단에서 어느 도구든 우선 검사), 여기서 또 잡으면 렌더가 중복된다."""
         margin = 30.0 / self._view_scale()
         scene_pt = self.mapToScene(view_pos)
         best = None
@@ -6473,11 +6413,10 @@ class _AnnotatorView(QGraphicsView):
         return best
 
     def _hp_paint_ghost(self, painter, src, port_pt, port_normal, cursor_scene):
-        """[8포트 select-hover] 드래그 중 커넥터 고스트 — _qc_paint_ghost의 드래그 분기(도형 복제
-        없이 화살표만)와 동일한 라우팅(_route_ortho)을 재사용하되, 시작점·법선은 side 문자열이
-        아니라 _shape_ports가 이미 계산해 둔 실제 8포트 좌표를 그대로 쓴다.
-        [우선순위 정정 2026-08-01] 빈 캔버스 드롭 시 새 도형이 실제로 생기긴 하지만(아래
-        _hp_create_arrow), 드래그 중엔 화살표가 우선이라 도형 미리보기는 보이지 않는다."""
+        """[하나의 시스템으로 통합 2026-08-01] 접속점 드래그 중 커넥터 고스트 — 선택 여부와
+        무관하게(qc-dot·hover-port 공통) 이 하나로 그린다. [우선순위 정정] 빈 캔버스 드롭 시
+        새 도형이 실제로 생기긴 하지만(아래 _hp_create_arrow), 드래그 중엔 화살표가 우선이라
+        도형 미리보기는 보이지 않는다."""
         pen = QPen(QColor(90, 150, 235), 1.5, Qt.PenStyle.DashLine)
         pen.setCosmetic(True)
         painter.setPen(pen)
@@ -6496,10 +6435,10 @@ class _AnnotatorView(QGraphicsView):
             self._draw_snap_marker(painter, end, self._view_scale())
 
     def _hp_create_arrow(self, src, port_pt, cursor_scene):
-        """[8포트 select-hover] 미선택 도형의 포트에서 커넥터만 생성(도형 복제 없음) —
-        _qc_create_arrow_only와 동일한 종착 스냅·라우팅을 재사용.
-        [① 빈 캔버스 드롭 2026-08-01] 스냅 대상 없으면 qc-dot 드래그와 동일하게 원본과 같은
-        도형을 커서 위치에 생성해 바인딩(_qc_spawn_dup 공유)."""
+        """[하나의 시스템으로 통합 2026-08-01] 도형(선택 여부 무관)의 접속점에서 드래그 종료 —
+        스냅 대상 있으면 커넥터만(도형 복제 없음), 없으면(빈 캔버스) 원본과 같은 도형을 커서
+        위치에 만들어 함께 바인딩(_qc_spawn_dup 공유). _qc_create_arrow_only와 종착 스냅·
+        라우팅 로직을 공유 — 그쪽은 side 문자 기반 API로 테스트·기존 호출부용으로 남겨둔다."""
         owner = self._owner
         arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
         arrow._style = getattr(owner, "current_style", arrow._style)      # sticky 선스타일
@@ -6613,13 +6552,8 @@ class _AnnotatorView(QGraphicsView):
             for it in self._rb_preview:
                 cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
                 painter.drawRect(it.mapToScene(cr).boundingRect())
-        # [2d] 빠른 생성 고스트 — 도트 hover(기본 배치) 또는 드래그(커서 위치)에 복제 도형+연결선 미리보기.
-        if self._qc_dragging and self._qc_src is not None:
-            self._qc_paint_ghost(painter, self._qc_src, self._qc_side, self._qc_cursor)
-        elif self._qc_hover is not None and self._qc_hover[0].isSelected() \
-                and self._qc_hover[0].scene() is not None:
-            self._qc_paint_ghost(painter, self._qc_hover[0], self._qc_hover[1], None)
-        # [8포트 select-hover] 드래그 중 커넥터 고스트 / 유휴 hover 강조 마커.
+        # [하나의 시스템으로 통합 2026-08-01] 접속점 드래그 중 커넥터 고스트 / 유휴 hover 강조
+        # 마커 — 선택 여부와 무관하게 한 경로(_hp_*)로 처리.
         if self._hp_dragging and self._hp_src is not None and self._hp_cursor is not None:
             self._hp_paint_ghost(painter, self._hp_src, self._hp_port, self._hp_normal, self._hp_cursor)
         elif not self._hp_dragging and self._hp_hover is not None \
@@ -6803,15 +6737,18 @@ class _AnnotatorView(QGraphicsView):
                 self._group.begin(hit, self.mapToScene(vpos))
                 self._group_dragging = True
                 return
-        # [2d] 빠른 생성 점 press(이동/선택보다 우선) — 클릭=복제+화살표, 드래그=화살표만.
+        # [하나의 시스템으로 통합 2026-08-01, Lucid 대조] 접속점 press(이동/선택보다 우선) —
+        # 클릭=복제+화살표, 드래그=화살표(대상 없으면 도형도 생성). 선택된 도형은 어느
+        # 도구에서든 잡힌다(그린 직후 도구 전환 없이 바로 체이닝하기 위한 기존 의도 유지) —
+        # 여기서 못 잡으면 아래 tool=="select" 분기가 미선택 도형의 hover-port를 마저 검사한다.
         if event.button() == Qt.MouseButton.LeftButton:
-            dot = self._qc_dot_at(vpos)
-            if dot is not None:
-                self._qc_src, self._qc_side = dot
-                self._qc_dragging = True
-                self._qc_cursor = None   # 릴리스까지 이동(임계 초과) 없으면 기본 배치
-                self._qc_press_scene = self.mapToScene(vpos)
-                self._qc_hover = None
+            hit = self._connect_port_at(vpos)
+            if hit is not None:
+                self._hp_src, self._hp_port, self._hp_normal = hit
+                self._hp_dragging = True
+                self._hp_cursor = None   # 릴리스까지 이동(임계 초과) 없으면 즉시 생성(클릭)
+                self._hp_press_scene = self.mapToScene(vpos)
+                self._hp_hover = None
                 return
         tool = self._owner.current_tool
         # 화살표 도구 + 도형 테두리 근처 press → 테두리에 스냅된 곡선 화살표 시작(도형 선택/이동보다 우선).
@@ -7161,7 +7098,7 @@ class _AnnotatorView(QGraphicsView):
         self._place_tool = None
         self._arrow_snap_exit = None
         self._arrow_tip_snap = None
-        self._qc_hover = None   # [2d] 도구 전환 시 빠른 생성 고스트도 지움
+        self._hp_hover = None   # 도구 전환 시 접속점 고스트도 지움
         if it is not None and it.scene() is not None:
             self.scene().removeItem(it)
             self.viewport().update()
@@ -7372,7 +7309,7 @@ class _AnnotatorView(QGraphicsView):
                 else:
                     vp.setCursor(Qt.CursorShape.SizeFDiagCursor)
                 return
-        if self._qc_dot_at(view_pos) is not None:            # [2d] 빠른 생성 도트(=커넥터 포인트)
+        if self._qc_dot_at(view_pos) is not None:            # 선택된 도형의 접속점(어느 도구에서든)
             vp.setCursor(Qt.CursorShape.CrossCursor)         # [실사용 피드백 2026-07-30] 이동 커서와
             return                                            # 구분되게 커넥터 의도를 십자선으로 표시
         box_h = self._box_handle_at(view_pos)
@@ -7471,15 +7408,7 @@ class _AnnotatorView(QGraphicsView):
                         it.moveBy(delta.x(), delta.y())
             self.viewport().update()
             return
-        if self._qc_dragging:  # [2d] 빠른 생성 점 드래그 — 화살표만
-            cur = self.mapToScene(event.position().toPoint())
-            thr = 8.0 / self._view_scale()
-            moved = (self._qc_press_scene is not None
-                     and QLineF(self._qc_press_scene, cur).length() > thr)
-            self._qc_cursor = cur if moved else None
-            self.viewport().update()
-            return
-        if self._hp_dragging:  # [8포트 select-hover] 임계 넘게 끌면 커넥터 프리뷰, 아니면 보류(release=선택)
+        if self._hp_dragging:  # [하나의 시스템으로 통합] 임계 넘게 끌면 커넥터 프리뷰, 아니면 보류(release=클릭)
             cur = self.mapToScene(event.position().toPoint())
             thr = 8.0 / self._view_scale()
             self._hp_cursor = cur if (self._hp_press_scene is not None
@@ -7520,11 +7449,6 @@ class _AnnotatorView(QGraphicsView):
             self._table_col_add = self._table_col_boundary_at(event.position().toPoint())
             if (prev_col is None) != (self._table_col_add is None):
                 self.viewport().update()
-            # [2d] 빠른 생성 도트 hover — 고스트 미리보기 갱신.
-            prev_qc = self._qc_hover
-            self._qc_hover = self._qc_dot_at(event.position().toPoint())
-            if prev_qc != self._qc_hover:
-                self.viewport().update()
             # [호버 강조 2026-07-30] 선택 핸들 위 hover — 그 점만 색 반전 강조.
             prev_hh = self._handle_hover
             self._handle_hover = self._handle_hover_at(event.position().toPoint())
@@ -7535,12 +7459,16 @@ class _AnnotatorView(QGraphicsView):
                 if self._handle_hover is not None:
                     self._handle_hover[0]._hover_handle = self._handle_hover[1]
                     self._handle_hover[0].update()
-            # [8포트 select-hover] 유휴 hover 강조 마커 갱신(select 도구에서만).
-            if self._owner.current_tool == "select":
-                prev_hp = self._hp_hover
-                self._hp_hover = self._hover_port_at(event.position().toPoint())
-                if prev_hp != self._hp_hover:
-                    self.viewport().update()
+            # [하나의 시스템으로 통합 2026-08-01] 접속점 유휴 hover — 선택된 도형은 어느
+            # 도구에서든, 미선택 도형은 select 도구에서만(그리기 방해 방지) 검사해 하나의
+            # _hp_hover로 합친다(고스트 미리보기·스냅 마커 모두 이걸 본다).
+            prev_hp = self._hp_hover
+            hp = self._connect_port_at(event.position().toPoint())
+            if hp is None and self._owner.current_tool == "select":
+                hp = self._hover_port_at(event.position().toPoint())
+            self._hp_hover = hp
+            if prev_hp != self._hp_hover:
+                self.viewport().update()
             self._update_hover_cursor(event.position().toPoint())
         if self._drawing and self._temp is not None:
             tool = self._owner.current_tool
@@ -7647,17 +7575,7 @@ class _AnnotatorView(QGraphicsView):
             self._commit_move()
             self.viewport().update()
             return
-        if self._qc_dragging:  # [2d] 빠른 생성 점 종료
-            src, side, cur = self._qc_src, self._qc_side, self._qc_cursor
-            self._qc_dragging = False
-            self._qc_src = self._qc_side = self._qc_cursor = None
-            self._qc_press_scene = None
-            self._qc_hover = None
-            if src is not None and src.scene() is not None:
-                self._qc_create(src, side, cur)   # cur=None이면 기본 배치(클릭)
-            self.viewport().update()
-            return
-        if self._hp_dragging:  # [8포트 select-hover] 종료 — 드래그했으면 커넥터, 클릭이면 즉시 생성
+        if self._hp_dragging:  # [하나의 시스템으로 통합] 종료 — 드래그했으면 커넥터, 클릭이면 즉시 생성
             src, port, nrm, cur = self._hp_src, self._hp_port, self._hp_normal, self._hp_cursor
             self._hp_dragging = False
             self._hp_src = self._hp_port = self._hp_normal = self._hp_cursor = None
@@ -7666,9 +7584,9 @@ class _AnnotatorView(QGraphicsView):
                 if cur is not None:
                     self._hp_create_arrow(src, port, cur)
                 else:
-                    # [④ 즉시 생성 2026-08-01, Lucid 대조] 실제로 끌지 않았으면(클릭) qc-dot
-                    # 클릭과 동일하게 즉시 도형 복제+화살표를 만든다 — 종전엔 여기서 그냥
-                    # 선택만 하고 qc-dot이 뜬 뒤 한 번 더 눌러야 새 도형이 생겼다(사용자 피드백:
+                    # [④ 즉시 생성 2026-08-01, Lucid 대조] 실제로 끌지 않았으면(클릭) 선택 여부와
+                    # 무관하게 즉시 도형 복제+화살표를 만든다 — 종전엔 미선택 도형에서 그냥
+                    # 선택만 하고 접속점이 뜬 뒤 한 번 더 눌러야 새 도형이 생겼다(사용자 피드백:
                     # "4분면 점에서 바로 생겨야 맞을듯").
                     side = _side_from_normal(nrm) if nrm is not None else "r"
                     self._qc_create(src, side, None)
