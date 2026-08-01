@@ -441,6 +441,12 @@ class _HandleResizeMixin:
     # 그 점만 반전 강조(흰 채움+색 테두리)한다.
     _hover_handle = None
 
+    # [qc-dot 테두리 수렴 캐시] `_qc_has_connection()`의 씬 전체 화살표 스캔 결과 — None이면
+    # '아직 미계산'. `boundingRect()`가 선택된 도형에서 `_qc_dot_rects()`를 매우 자주 호출하므로
+    # (2026-07-30 성능조사에서 실측된 핫스팟) 매 호출마다 다시 스캔하면 그 문제를 재도입한다.
+    # itemChange의 ItemSelectedChange에서 무효화 — 선택될 때마다 한 번만 새로 계산.
+    _qc_connected_cache = None
+
     def _handle_px(self) -> float:
         """핸들 한 변(로컬 단위) — 고정 크기(씬 단위)를 아이템 배율로 환산."""
         return self._HANDLE_PX / self._scale_or_1()
@@ -452,6 +458,7 @@ class _HandleResizeMixin:
         알리는 표준 방법이라, 매 페인트마다 핸들 영역을 상시 예약해두는 것보다 싸다."""
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
             self.prepareGeometryChange()
+            self._qc_connected_cache = None   # 선택될 때마다 qc-dot 연결 상태를 새로 계산
         return super().itemChange(change, value)
 
     # ---- 잡기 판정(시각 점과 분리) --------------------------------------
@@ -870,17 +877,71 @@ class _HandleResizeMixin:
         c = self._box_rot_center()
         return QRectF(c.x() - d / 2, c.y() - d / 2, d, d)
 
-    # [2d→2026-07-30 통합] 변 중점 겸용 점 — 상하좌우 테두리서 바깥으로 살짝 뗀 점 하나가
-    # 리사이즈(1축)와 커넥터 생성을 모두 담당한다(Lucid 대조 실사용 피드백 — 예전엔 테두리 위
-    # 리사이즈 사각 핸들과 그 바깥 qc-dot이 따로 있어 한 변에 점이 2개였다). 클릭=도형 복제+화살표,
-    # 드래그 중 그 변의 축(예: 'r'이면 가로) 성분이 우세하면 리사이즈, 수직 성분이 우세하면 화살표만
-    # — 판단·드래그 진행은 뷰가 담당(_qc_dot_at 이후 mouseMoveEvent에서 결정, _apply_box_resize는
-    # 기존 리사이즈 수학을 그대로 재사용). 꼭짓점(_box_corner_rects)은 여전히 리사이즈 전용.
+    # [qc-dot 테두리 수렴 2026-08-01, Lucid 대조] 아래 두 헬퍼는 `_qc_dot_rects()`가 4점
+    # 전부를 offset(허공) 대신 테두리 위에 그리도록 판정한다 — 하나라도 연결됐거나
+    # (_qc_has_connection) 지금 드래그로 만드는 중이면(_qc_dragging_now) **네 점 모두** 한꺼번에
+    # 전환(Lucid 실측: 드래그 시작 순간 4점이 동시에 변 중점 점으로 바뀜, 드래그한 변만 바뀌지
+    # 않음 — 사용자가 스크린샷으로 지적). 계속 허공에 떠 있으면 "저 점에 붙이면 되나" 하는
+    # 착각을 유발한다는 게 애초 동기이므로, 하나라도 실제 연결이 생긴 순간 이 도형은 더 이상
+    # "빈 도형"이 아니라는 신호를 네 점 전체로 준다.
+    def _qc_dragging_now(self) -> bool:
+        """뷰가 지금 이 도형에서 qc-dot 드래그 중이면 True. 라이브 드래그 중에도(바인딩이
+        실제로 생기기 전인 릴리스 이전부터) 네 점을 테두리로 수렴시켜, 드래그 내내 '떠 있는
+        dot에 화살표를 붙여야 하나' 착각이 보이지 않게 한다."""
+        sc = self.scene()
+        if sc is None:
+            return False
+        v = getattr(sc, "_interactive_view_cache", None)
+        if v is None:
+            for vv in sc.views():
+                if vv.isInteractive():
+                    v = vv
+                    sc._interactive_view_cache = v
+                    break
+        if v is None:
+            return False
+        try:
+            return getattr(v, "_qc_dragging", False) and v._qc_src is self
+        except RuntimeError:
+            return False
+
+    def _qc_has_connection(self) -> bool:
+        """부착점이 변 중점에 근접한 화살표가 하나라도 있으면 True(Lucid 대조 2026-08-01).
+        결과는 `_qc_connected_cache`에 캐시 — `boundingRect()`가 선택된 도형에서 이 경로를
+        매우 자주 부르므로(2026-07-30 성능조사 핫스팟) 매번 씬 전체를 스캔하면 안 된다.
+        캐시는 itemChange의 ItemSelectedChange에서 무효화된다."""
+        if self._qc_connected_cache is not None:
+            return self._qc_connected_cache
+        sc = self.scene()
+        if sc is None:
+            return False
+        br = self.rect()
+        mids = (QPointF(br.center().x(), br.top()), QPointF(br.right(), br.center().y()),
+                QPointF(br.center().x(), br.bottom()), QPointF(br.left(), br.center().y()))
+        tol = self._handle_px() * 1.2
+        found = False
+        for arrow, idx, _sh in _collect_bound_arrows(sc, [self]):
+            p = arrow._bind_pt(idx)
+            if p is None:
+                continue
+            if any(QLineF(p, m).length() <= tol for m in mids):
+                found = True
+                break
+        self._qc_connected_cache = found
+        return found
+
+    # [2d, 2026-08-01 화살표 전용으로 되돌림] 상하좌우 테두리서 바깥으로 살짝 뗀 빠른 생성 점.
+    # 클릭=도형 복제+화살표, 드래그=화살표만 생성. 2026-07-30에 변 리사이즈(1축)와 통합했었으나,
+    # 점이 이미 리사이즈 축 방향으로 offset돼 있어 바깥으로 당기는 자연스러운 동작이 항상
+    # 리사이즈로 판정되는 문제가 실사용에서 드러나 되돌림(사용자 확인 2026-08-01). 단일축
+    # 리사이즈는 이 점에서 지원 안 함 — 꼭짓점(_box_corner_rects)의 대각 리사이즈로 대체.
     def _qc_dot_rects(self):
         br = self.rect()
         h = self._handle_px()
-        gap = h * 2.5
         d = h * 0.9
+        # 하나라도 연결됐거나 지금 드래그 중이면 네 점 전부 테두리(gap 0)로 수렴 — 일부만
+        # 수렴하면 "왜 이 점만 다르지"라는 또 다른 착각을 만든다(사용자 지적, Lucid는 전부 동시 전환).
+        gap = 0.0 if (self._qc_has_connection() or self._qc_dragging_now()) else h * 2.5
         pos = [("t", QPointF(br.center().x(), br.top() - gap)),
                ("r", QPointF(br.right() + gap, br.center().y())),
                ("b", QPointF(br.center().x(), br.bottom() + gap)),
@@ -897,9 +958,8 @@ class _HandleResizeMixin:
             if r.contains(local_pt):   # TL·BR = ↖↘, TR·BL = ↗↙
                 return (Qt.CursorShape.SizeFDiagCursor if i in (0, 2)
                         else Qt.CursorShape.SizeBDiagCursor)
-        # [2026-07-30 변핸들+qc-dot 통합] 변 중점은 더 이상 별도 사각 핸들이 아니라 qc-dot과
-        # 합쳐진 겸용 점(_qc_dot_rects) — 그 커서는 _update_hover_cursor의 _qc_dot_at 분기가
-        # CrossCursor로 담당한다(리사이즈/커넥터 어느 쪽이 될지 press 전엔 모호하므로).
+        # 변 중점은 별도 사각 핸들이 아니라 화살표 전용 빠른 생성 점(_qc_dot_rects)이 담당 —
+        # 그 커서는 _update_hover_cursor의 _qc_dot_at 분기가 CrossCursor로 처리한다.
         return None
 
     def _host(self):
@@ -1068,13 +1128,18 @@ class _HandleResizeMixin:
         s = self._scale_or_1()
         hv = self._hover_handle
         if self._box_handles():
-            # [2c→2026-07-30] 꼭짓점 4 = 파란 사각(리사이즈 전용), 좌상단 회전 = 코랄 원.
-            for i, r in self._box_corner_rects():
-                self._set_handle_paint(painter, s, _BLUE, hv == ("corner", i))
-                painter.drawRect(r)
-            rh = self._handle_px() * 0.5
-            self._set_handle_paint(painter, s, _PEACH, hv == ("rot", None))
-            painter.drawEllipse(self._box_rot_center(), rh, rh)
+            # [qc-dot 드래그 중 단순화 2026-08-01, Lucid 대조] 커넥터를 뽑는 동안은 꼭짓점
+            # 리사이즈 사각·회전 점을 감추고 변 중점 점 4개만 남긴다 — 지금 하려는 동작(커넥터
+            # 생성)과 무관한 핸들이 같이 떠 있으면 어수선하다는 사용자 지적. 드래그가 끝나면
+            # (release) 다시 전부 보인다 — 이건 이 순간의 동작 힌트일 뿐 영구 상태가 아니다.
+            if not self._qc_dragging_now():
+                # [2c→2026-07-30] 꼭짓점 4 = 파란 사각(리사이즈 전용), 좌상단 회전 = 코랄 원.
+                for i, r in self._box_corner_rects():
+                    self._set_handle_paint(painter, s, _BLUE, hv == ("corner", i))
+                    painter.drawRect(r)
+                rh = self._handle_px() * 0.5
+                self._set_handle_paint(painter, s, _PEACH, hv == ("rot", None))
+                painter.drawEllipse(self._box_rot_center(), rh, rh)
             # [2d→2026-07-30 통합] 변 중점 겸용 점(리사이즈+커넥터) — 옅은 파란 원(흰 테두리).
             # 호버 시 뷰가 고스트 미리보기.
             for k, dr in self._qc_dot_rects():
@@ -5597,12 +5662,11 @@ class _AnnotatorView(QGraphicsView):
         self._qc_side = None        # "t"/"r"/"b"/"l"
         self._qc_cursor = None      # 드래그 중 커서 씬좌표(복제 중심). None=기본 배치(클릭)
         self._qc_press_scene = None # 도트 press 지점(씬) — 클릭/드래그 판정 기준
-        # [2026-07-30 변핸들+qc-dot 통합] 변 중점이 리사이즈·커넥터 겸용이 되면서, 임계를 처음
-        # 넘는 순간 드래그 방향(그 변의 축 성분 vs 수직 성분)으로 딱 한 번 결정한다.
-        # _qc_pending=아직 미결정, _qc_resize_item=리사이즈로 확정되면 그 아이템(아니면 None,
-        # 커넥터 쪽으로 확정된 것 — 기존 _qc_cursor 흐름 그대로).
-        self._qc_pending = False
-        self._qc_resize_item = None
+        # [2026-08-01 되돌림] 2026-07-30에 이 점을 변 리사이즈 핸들과 통합했으나, 점이 테두리에서
+        # 이미 리사이즈 축 방향으로 offset돼 있어 "바깥으로 쭉 당기는" 가장 자연스러운 동작이 항상
+        # 리사이즈로 판정되는 문제가 실사용에서 드러나(화살표가 안 나오고 도형만 늘어남) 화살표
+        # 전용으로 되돌림(사용자 확인 2026-08-01). 단일축 리사이즈는 이 점에서 더 이상 지원 안 함
+        # (모서리 대각 핸들은 그대로 유지).
         # [8포트 select-hover] 선택 도구 + 미선택 도형 근처 hover → 8포트 드래그로 커넥터만 생성.
         # qc-dot(선택된 도형·바깥 오프셋)과 별개 시스템 — 포트가 테두리 위라 클릭=선택과 자리가
         # 겹쳐, press는 잠정 보류하고 release에서 드래그 여부로 커넥터/선택을 가른다(deep-interview
@@ -6501,9 +6565,7 @@ class _AnnotatorView(QGraphicsView):
                 cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
                 painter.drawRect(it.mapToScene(cr).boundingRect())
         # [2d] 빠른 생성 고스트 — 도트 hover(기본 배치) 또는 드래그(커서 위치)에 복제 도형+연결선 미리보기.
-        # [2026-07-30 통합] 리사이즈로 확정된 드래그는 고스트를 안 그린다 — 아이템 자체가 이미
-        # 실시간으로 리사이즈되는 중이라 복제 도형 미리보기를 겹쳐 보이면 오해를 준다.
-        if self._qc_dragging and self._qc_src is not None and self._qc_resize_item is None:
+        if self._qc_dragging and self._qc_src is not None:
             self._qc_paint_ghost(painter, self._qc_src, self._qc_side, self._qc_cursor)
         elif self._qc_hover is not None and self._qc_hover[0].isSelected() \
                 and self._qc_hover[0].scene() is not None:
@@ -6692,14 +6754,12 @@ class _AnnotatorView(QGraphicsView):
                 self._group.begin(hit, self.mapToScene(vpos))
                 self._group_dragging = True
                 return
-        # [2d→2026-07-30 통합] 변핸들+qc-dot 겸용 점 press → 방향 결정은 첫 이동에서(이동/선택보다 우선).
+        # [2d] 빠른 생성 점 press(이동/선택보다 우선) — 클릭=복제+화살표, 드래그=화살표만.
         if event.button() == Qt.MouseButton.LeftButton:
             dot = self._qc_dot_at(vpos)
             if dot is not None:
                 self._qc_src, self._qc_side = dot
                 self._qc_dragging = True
-                self._qc_pending = True    # [통합] 리사이즈/커넥터 미결정 — 첫 임계 초과 이동에서 결정
-                self._qc_resize_item = None
                 self._qc_cursor = None   # 릴리스까지 이동(임계 초과) 없으면 기본 배치
                 self._qc_press_scene = self.mapToScene(vpos)
                 self._qc_hover = None
@@ -7362,31 +7422,11 @@ class _AnnotatorView(QGraphicsView):
                         it.moveBy(delta.x(), delta.y())
             self.viewport().update()
             return
-        if self._qc_dragging:  # [2d→2026-07-30 통합] 변핸들+qc-dot 겸용 드래그
+        if self._qc_dragging:  # [2d] 빠른 생성 점 드래그 — 화살표만
             cur = self.mapToScene(event.position().toPoint())
-            if self._qc_resize_item is not None:   # 이미 리사이즈로 확정 — 축 성분만 반영
-                item = self._qc_resize_item
-                item._apply_box_resize(item.mapFromScene(cur))
-                self.viewport().update()
-                return
             thr = 8.0 / self._view_scale()
             moved = (self._qc_press_scene is not None
                      and QLineF(self._qc_press_scene, cur).length() > thr)
-            if moved and self._qc_pending:
-                # [변핸들+qc-dot 통합] 임계를 처음 넘는 순간 딱 한 번 방향으로 가른다 — 그 변의
-                # 축 성분(along, 예: l/r이면 가로)이 수직 성분(perp)보다 크면 리사이즈, 아니면
-                # 기존 qc 드래그(커넥터만 생성)로 이어간다.
-                src, side = self._qc_src, self._qc_side
-                d = src.mapFromScene(cur) - src.mapFromScene(self._qc_press_scene)
-                along, perp = (d.x(), d.y()) if side in ("l", "r") else (d.y(), d.x())
-                self._qc_pending = False
-                if abs(along) >= abs(perp):
-                    self._qc_resize_item = src
-                    src._box_resize = ("edge", side)
-                    src._begin_box_geom()
-                    src._apply_box_resize(src.mapFromScene(cur))
-                    self.viewport().update()
-                    return
             self._qc_cursor = cur if moved else None
             self.viewport().update()
             return
@@ -7558,27 +7598,13 @@ class _AnnotatorView(QGraphicsView):
             self._commit_move()
             self.viewport().update()
             return
-        if self._qc_dragging:  # [2d→2026-07-30 통합] 변핸들+qc-dot 겸용 종료
+        if self._qc_dragging:  # [2d] 빠른 생성 점 종료
             src, side, cur = self._qc_src, self._qc_side, self._qc_cursor
-            resize_item = self._qc_resize_item
             self._qc_dragging = False
-            self._qc_pending = False
-            self._qc_resize_item = None
             self._qc_src = self._qc_side = self._qc_cursor = None
             self._qc_press_scene = None
             self._qc_hover = None
-            if resize_item is not None:
-                # [통합] 리사이즈로 확정된 드래그 — 아이템 자체 mouseReleaseEvent와 동일한
-                # geom undo 커밋(그 코드가 press를 못 받았으니 여기서 대신 마무리).
-                resize_item._box_resize = None
-                snap = resize_item._box_snap
-                resize_item._box_snap = None
-                resize_item._box_bound = None
-                resize_item._box_orig_rect = None
-                h = resize_item._host()
-                if snap and h is not None:
-                    h.push_undo_geom(snap)
-            elif src is not None and src.scene() is not None:
+            if src is not None and src.scene() is not None:
                 self._qc_create(src, side, cur)   # cur=None이면 기본 배치(클릭)
             self.viewport().update()
             return

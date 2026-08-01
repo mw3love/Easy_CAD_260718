@@ -3284,26 +3284,25 @@ def _qc_drag(view, scene_from, scene_to):
     view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, scene_to, L, NB))
 
 
-def test_edge_point_drag_along_axis_resizes():
-    # [2026-07-30 변핸들+qc-dot 통합] 겸용 점을 그 변의 축 방향(r=가로)으로 드래그하면
-    # 복제·화살표 생성 없이 1축 리사이즈만 일어나야 한다(수직 성분 0 → along 우세).
+def test_edge_point_drag_along_axis_creates_connector():
+    # [2026-08-01 화살표 전용으로 되돌림] 겸용 점을 2026-07-30~31엔 그 변의 축 방향(r=가로)
+    # 드래그로 1축 리사이즈했었으나, 이 방향이 "바깥으로 쭉 당기는" 가장 자연스러운 화살표
+    # 생성 동작과 겹쳐 실사용에서 도형이 늘어나는 오판정으로 드러나 되돌림(사용자 확인). 이제
+    # 축 방향으로 당겨도 리사이즈가 아니라 화살표만 생성돼야 한다.
     w = CanvasWindow(); w.grid_enabled = False
     v = w._view
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
-    n_before = len(w._scene.items())
     rd_scene = a.mapToScene(dict(a._qc_dot_rects())["r"].center())
     _qc_drag(v, rd_scene, QPointF(rd_scene.x() + 60, rd_scene.y()))
 
-    assert a.rect().width() > 150, a.rect()          # 실제로 넓어짐
-    assert abs(a.rect().height() - 60) < 1e-6, a.rect()   # 세로는 불변(1축 리사이즈)
-    assert len(w._scene.items()) == n_before          # 복제·화살표 생성 없음
-    w.undo()
-    assert abs(a.rect().width() - 100) < 1e-6, "undo로 원복돼야 함"
+    assert abs(a.rect().width() - 100) < 1e-6, "축 방향 드래그도 리사이즈가 아니어야 함"
+    arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
+    assert len(arrows) == 1, arrows
+    assert arrows[0]._bind_start is a
 
 
 def test_edge_point_drag_perpendicular_creates_connector():
-    # [2026-07-30 변핸들+qc-dot 통합] 같은 점을 그 변에 수직 방향(r인데 세로)으로 드래그하면
-    # 리사이즈 대신 기존 qc 드래그(커넥터만 생성)로 이어져야 한다.
+    # 같은 점을 그 변에 수직 방향(r인데 세로)으로 드래그해도 커넥터만 생성돼야 한다.
     w = CanvasWindow(); w.grid_enabled = False
     v = w._view
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
@@ -3314,6 +3313,54 @@ def test_edge_point_drag_perpendicular_creates_connector():
     arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
     assert len(arrows) == 1, arrows
     assert arrows[0]._bind_start is a
+
+
+def test_qc_dot_collapses_to_border_when_connected():
+    # [2026-08-01, Lucid 대조] 연결이 하나라도 생기면 재선택 시 qc-dot **네 점 전부**가 허공에
+    # 뜬 offset 위치가 아니라 테두리(변 중점) 위에 그려져야 한다 — 일부만 수렴하면 "왜 이
+    # 점만 다르지"라는 또 다른 착각을 만든다는 사용자 지적(Lucid는 전부 동시 전환).
+    w = CanvasWindow(); w.grid_enabled = False
+    v = w._view
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    rd_scene = a.mapToScene(dict(a._qc_dot_rects())["r"].center())
+    _qc_drag(v, rd_scene, QPointF(rd_scene.x() + 40, rd_scene.y() + 80))   # r쪽 화살표만 생성
+
+    w._scene.clearSelection()
+    a.setSelected(True)   # 릴리스로 화살표에 넘어간 선택을 되돌림(재선택 시나리오)
+    dots = dict(a._qc_dot_rects())
+    br = a.rect()
+    expect = {"t": QPointF(br.center().x(), br.top()), "r": QPointF(br.right(), br.center().y()),
+              "b": QPointF(br.center().x(), br.bottom()), "l": QPointF(br.left(), br.center().y())}
+    for k, m in expect.items():
+        assert _close(dots[k].center(), m), f"연결이 하나라도 있으면 {k}도 테두리 위여야 함"
+
+
+def test_qc_dot_collapses_during_live_drag():
+    # [2026-08-01] 릴리스 전(바인딩이 아직 안 생긴) 드래그 도중에도 네 점 전부 즉시 테두리로
+    # 수렴해야 한다 — 고스트 미리보기 시작점(_edge_mid)과 시각적으로 어긋나지 않기 위함 +
+    # Lucid처럼 드래그한 변만이 아니라 전체가 동시에 전환.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.grid_enabled = False
+    v = w._view
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    t_scene = a.mapToScene(dict(a._qc_dot_rects())["t"].center())
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(v.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    v.mousePressEvent(ev(QEvent.Type.MouseButtonPress, t_scene, L, L))
+    v.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(t_scene.x(), t_scene.y() - 80), NB, L))
+
+    dots = dict(a._qc_dot_rects())
+    br = a.rect()
+    expect = {"t": QPointF(br.center().x(), br.top()), "r": QPointF(br.right(), br.center().y()),
+              "b": QPointF(br.center().x(), br.bottom()), "l": QPointF(br.left(), br.center().y())}
+    for k, m in expect.items():
+        assert _close(dots[k].center(), m), f"드래그 중엔 {k}도 즉시 테두리로 수렴해야 함"
+    v.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease,
+                           QPointF(t_scene.x(), t_scene.y() - 80), L, NB))
 
 
 def _cleft(o):
