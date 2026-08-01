@@ -143,12 +143,41 @@ def test_floating_panels_and_zoom_readout():
     w._reposition_panels()
     assert w._left_panel.pos().x() >= w._view.mapTo(w, QPoint(0, 0)).x()
     assert w._props_panel.pos().x() < w.width()
-    # 줌 % 리드아웃(줌 배지는 statusBar가 아니라 우하단 플로팅 위젯).
-    assert w._zoom_btn.text() == "100 %"
+    # 줌 % 리드아웃 — 독립 배지가 아니라 미니맵 패널 제목에 "미니맵 (100%)"로 표기된다
+    # (2026-08-01, 사용자 요청 — 제목 클릭이 곧 100%+정중앙 이동, test_zoom_title_click_recenters).
+    assert w._minimap_panel._title_lbl.text() == "미니맵 (100%)"
     w._on_wheel_zoom(120)
-    assert w._zoom_btn.text() != "100 %"
+    assert w._minimap_panel._title_lbl.text() != "미니맵 (100%)"
     w._zoom_reset()
-    assert w._zoom_btn.text() == "100 %"
+    assert w._minimap_panel._title_lbl.text() == "미니맵 (100%)"
+
+
+def test_zoom_title_click_recenters():
+    # [2026-08-01, 사용자 요청] "%를 누르면 100%+정중앙 이동" — 배율만 리셋되고 스크롤 위치는
+    # 그대로 남아 콘텐츠가 화면 밖일 수 있던 문제(사용자 재현 보고) 수정의 회귀 방지.
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 2000, 2000, 100, 60)   # 원점에서 먼 콘텐츠
+    w._view.scale(2.5, 2.5)
+    w._view.centerOn(0, 0)   # 콘텐츠에서 멀리 팬
+    w._zoom_reset()
+    assert abs(w._view.transform().m11() - 1.0) < 1e-6
+    center_scene = w._view.mapToScene(w._view.viewport().rect().center())
+    rect_center = w._scene.itemsBoundingRect().center()
+    assert abs(center_scene.x() - rect_center.x()) < 2.0
+    assert abs(center_scene.y() - rect_center.y()) < 2.0
+
+    # 제목 클릭 배관(_FloatingPanel.set_title_click) 자체도 확인 — 실제 마우스 없이 이벤트필터
+    # 경로만 재현(다른 패널의 제목엔 영향 없어야 함도 함께 확인).
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    calls = []
+    w._minimap_panel.set_title_click(lambda: calls.append(1))
+    ev = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(0, 0), QPointF(0, 0),
+                     Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                     Qt.KeyboardModifier.NoModifier)
+    assert w._minimap_panel.eventFilter(w._minimap_panel._title_lbl, ev) is True
+    assert calls == [1]
+    assert w._props_panel.eventFilter(w._props_panel._title_lbl, ev) is False   # 다른 패널은 비클릭
 
 
 def test_left_panel_tab_switch_shrinks_to_content():

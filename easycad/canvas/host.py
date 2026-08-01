@@ -527,6 +527,21 @@ class _FloatingPanel(QFrame):
     def set_content(self, widget: QWidget):
         self._body_layout.addWidget(widget)
 
+    def set_title_click(self, handler):
+        """[줌 배지 통합 2026-08-01, 사용자 요청] 제목 텍스트를 클릭 가능하게 만든다(커서 변경
+        + 클릭 시 handler 호출) — 기본은 비클릭이라 다른 패널(도형·속성)엔 영향 없음, 필요한
+        패널만 명시적으로 호출한다(미니맵: 제목에 표기된 줌%를 클릭하면 100%+정중앙 이동)."""
+        self._title_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._title_click = handler
+        self._title_lbl.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj is self._title_lbl and event.type() == QEvent.Type.MouseButtonPress \
+                and getattr(self, "_title_click", None) is not None:
+            self._title_click()
+            return True
+        return super().eventFilter(obj, event)
+
     def _toggle_collapsed(self):
         self._set_collapsed(not self._collapsed, persist=True)
 
@@ -818,10 +833,7 @@ class CanvasWindow(QMainWindow):
         # 나머지는 도면 영역. 위치는 고정(자유 드래그 재배치는 스코프 밖), 대신 접기/펴기.
         self._build_left_panel()          # 도형 + 레이어(탭), 좌상단
         self._build_properties_panel()    # 속성, 우상단(도형바꾸기·화살표종류·반경·방향도 여기 포함)
-        # [줌 배지 통합 2026-08-01] 줌 배지를 미니맵 패널 안(하단 푸터)에 넣으므로, 미니맵 패널을
-        # 짓기 전에 배지 위젯 자체는 먼저 만들어 둬야 한다(토스트는 미니맵과 무관해 순서 무영향).
-        self._build_status_widgets()      # 줌 배지(미니맵 하단 푸터로 편입) + 토스트(하단중앙)
-        self._build_minimap_panel()       # [신규기능] 미니맵 — 무한캔버스 큰 도면 탐색, 우하단
+        self._build_minimap_panel()       # [신규기능] 미니맵 — 우하단, 제목에 줌%까지 표기(클릭 가능)
         self.set_tool("select")
         self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
         self._reposition_panels()
@@ -918,8 +930,15 @@ class CanvasWindow(QMainWindow):
 
     # ---- 보기: 기준 zoom / 스냅 -------------------------------------------
     def _zoom_reset(self):
-        """기준 zoom = 100%(1:1). 무한캔버스에서 돌아올 홈."""
+        """기준 zoom = 100%(1:1) + 콘텐츠 정중앙으로 이동 — 무한캔버스에서 돌아올 홈.
+        [2026-08-01, 사용자 요청] 배율만 리셋하면 스크롤 위치는 그대로 남아 콘텐츠가 화면
+        밖일 수 있다는 지적으로, `_zoom_fit`과 같은 기준(itemsBoundingRect 중심)으로 재센터링을
+        더했다. `_zoom_fit`과의 차이는 배율 — 이건 항상 정확히 100%로 고정, 전체가 화면에
+        들어오도록 줌아웃하지 않는다(목적이 다름: 전체맞춤=조망, 이건=정확한 배율의 홈 위치)."""
         self._view.resetTransform()
+        rect = self._scene.itemsBoundingRect()
+        if not rect.isEmpty():
+            self._view.centerOn(rect.center())
         self._update_zoom_label()
         self._refresh_minimap()
 
@@ -949,29 +968,28 @@ class CanvasWindow(QMainWindow):
         if minimap is not None:
             minimap.viewport().update()
 
-    # ---- 상태 위젯 (줌 배지 + 토스트) — [캔버스-퍼스트] QStatusBar 대체 ----------
+    # ---- 상태 위젯 (토스트) — [캔버스-퍼스트] QStatusBar 대체 ----------------
     def statusBar(self):
         """QMainWindow의 실제 상태바 대신 하단중앙 토스트를 반환 — 기존 `.showMessage()`
         호출부(20여 곳)를 안 건드리고 그대로 흘려보낸다."""
         return self._toast
 
-    def _build_status_widgets(self):
-        # [줌 배지 통합 2026-08-01, 사용자 요청] 예전엔 독립 플로팅 위젯으로 미니맵 바로 아래
-        # 따로 떠 있었다 — 미니맵 패널 안(하단 푸터 행)으로 편입해 "탐색" 정보(지도+배율)를
-        # 한 카드로 묶는다. `_build_minimap_panel()`이 이 위젯을 `panel.set_content()`로
-        # 패널 body에 얹는 순간 부모가 그리로 바뀌므로, 여기서는 위젯만 만들어 둔다.
-        self._zoom_btn = QToolButton(self)
-        self._zoom_btn.setObjectName("zoomBadge")
-        self._zoom_btn.setText("100 %")
-        self._zoom_btn.setAutoRaise(True)
-        self._zoom_btn.setToolTip("클릭: 100%(1:1)로")
-        self._zoom_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._zoom_btn.clicked.connect(self._zoom_reset)
-
     def _update_zoom_label(self):
-        btn = getattr(self, "_zoom_btn", None)
-        if btn is not None:
-            btn.setText(f"{round(self._view.transform().m11() * 100)} %")
+        # [줌 배지 통합 2026-08-01, 사용자 요청] 독립 배지 위젯 대신 미니맵 패널 제목에
+        # "미니맵 (100%)"로 직접 표기 — 제목 자체가 클릭 가능(`set_title_click`,
+        # `_build_minimap_panel`에서 연결)해 클릭하면 `_zoom_reset`(100%+정중앙 이동)이 뜬다.
+        # 휠줌은 배율에 상한이 없어(극단적으로 계속 굴리면 세 자리를 넘는 %도 가능) 긴 텍스트가
+        # 제목줄(전체맞춤·접기 버튼과 폭을 나눠 씀)을 밀어 패널이 속성 패널 폭보다 넓어질 수
+        # 있다 — 헤더에 남는 여유폭만큼만 표시하고 넘치면 말줄임(가운데 %가 아니라 끝 정보가
+        # 덜 중요하므로 ElideRight)으로 자른다.
+        panel = getattr(self, "_minimap_panel", None)
+        if panel is not None:
+            pct = round(self._view.transform().m11() * 100)
+            full = f"미니맵 ({pct}%)"
+            avail_w = max(40, (self._props_panel.width() or 228) - 57)  # 57≈전체맞춤+접기 버튼·여백
+            elided = panel._title_lbl.fontMetrics().elidedText(
+                full, Qt.TextElideMode.ElideRight, avail_w)
+            panel._title_lbl.setText(elided)
             self._reposition_panels()
 
     def _toggle_pin(self, checked: bool):
@@ -1218,16 +1236,15 @@ class CanvasWindow(QMainWindow):
         self._refresh_minimap()
         self._reposition_panels()
 
-    # ---- [캔버스-퍼스트] 플로팅 패널·줌배지·토스트 위치 계산 ------------------
+    # ---- [캔버스-퍼스트] 플로팅 패널·토스트 위치 계산 -------------------------
     def _reposition_panels(self):
         """좌상단=도형/레이어, 우상단=속성(편집 클러스터). 우하단=미니맵(탐색 클러스터 — 지도 +
-        하단 푸터의 줌% 배지, 한 카드). [2026-08-01 폭 통일] 미니맵 폭을 속성 패널 폭에 맞춰
-        매 호출마다 동기화 — 두 패널이 나란히 있을 때 폭이 어긋나 튀어 보이던 문제(사용자 지적)를
-        "미니맵이 속성 폭을 따라간다"로 해소. 선택 상태에 따라 속성 패널 폭이 미세하게 바뀌어도
-        계속 맞음. 줌 배지는 더 이상 독립 플로팅 위젯이 아니라 미니맵 패널 body에 얹힌 자식이라
-        (`_build_minimap_panel`) 여기서 따로 위치를 계산하지 않는다 — `minimap_panel.adjustSize()`가
-        내부 레이아웃까지 포함해 자동으로 계산한다. 전부 `self._view`가 차지하는 실제 캔버스
-        영역(메뉴·상단툴바 아래) 기준 — `self._view.mapTo(self, ...)` 좌표 관례."""
+        제목에 표기된 줌%, 한 카드 — 줌 배지는 독립 위젯이 아니라 미니맵 패널 제목 자체다,
+        `_build_minimap_panel`/`_update_zoom_label` 참조). [2026-08-01 폭 통일] 미니맵 폭을
+        속성 패널 폭에 맞춰 매 호출마다 동기화 — 두 패널이 나란히 있을 때 폭이 어긋나 튀어
+        보이던 문제(사용자 지적)를 "미니맵이 속성 폭을 따라간다"로 해소. 선택 상태에 따라 속성
+        패널 폭이 미세하게 바뀌어도 계속 맞음. 전부 `self._view`가 차지하는 실제 캔버스 영역
+        (메뉴·상단툴바 아래) 기준 — `self._view.mapTo(self, ...)` 좌표 관례."""
         panels = (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
                   getattr(self, "_minimap_panel", None))
         if any(p is None for p in panels):
@@ -1604,14 +1621,6 @@ class CanvasWindow(QMainWindow):
             if panel is not None:
                 panel._head.setStyleSheet(head_qss)
                 panel.update()
-        zoom_btn = getattr(self, "_zoom_btn", None)
-        if zoom_btn is not None:
-            # [줌 배지 통합 2026-08-01] 독립 카드였을 때의 사방 테두리+둥근모서리를, 이제 미니맵
-            # 패널 body에 얹힌 푸터 행이라 위쪽 구분선 하나로 단순화 — 카드 안에 또 카드가 겹쳐
-            # 보이는 걸 피한다(둥근 모서리는 패널 자체 바깥쪽 하나로 충분).
-            zoom_btn.setStyleSheet(
-                "#zoomBadge { background:palette(window); border:none;"
-                f" border-top:1px solid {'#3d4b5c' if dark else '#c9d3dc'}; padding:3px 8px; }}")
         # [그룹 구분 디자인 2026-08-01, 사용자 요청] 기본 QToolBar 구분선은 Fusion에서 거의
         # 안 보일 정도로 옅다 — 파일(새로 만들기~저장) / 도구(선택~핀) / 편집·보기(되돌리기~격자)
         # 3그룹이 한눈에 갈리도록 구분선을 굵고 여백 있게 강조.
@@ -1970,8 +1979,14 @@ class CanvasWindow(QMainWindow):
         """메인과 같은 scene을 공유하는 축소 뷰. 내용 갱신은 Qt가 자동(멀티뷰) — 여기선 메인
         뷰의 줌/팬/리사이즈(scene.changed를 안 타는 순수 뷰 변환) 시점에만 명시적으로 미니맵을
         다시 그리도록 훅을 건다."""
-        panel = _FloatingPanel(self, "미니맵", "minimap")
+        panel = _FloatingPanel(self, "미니맵 (100%)", "minimap")
         self._minimap_panel = panel
+        # [줌 배지 통합 2026-08-01, 사용자 요청 2차] 처음엔 독립 배지 → 미니맵 하단 푸터 행으로
+        # 옮겼다가, "숫자를 '미니맵(50%)'처럼 제목에 표기하고 그 %를 클릭하면 100%+정중앙
+        # 이동"이라는 후속 요청으로 한 번 더 바뀌었다 — 별도 배지 위젯 없이 제목 자체가 표기와
+        # 클릭을 겸한다(`set_title_click`). 지도 위 오버레이로 그리지 않는 이유는 그대로다:
+        # 2026-07-28 미니맵 인디케이터 이중변환 사고 같은 좌표계 버그를 또 만들 여지를 피한다.
+        panel.set_title_click(self._zoom_reset)
         # [사용자 요청 2026-08-01] 전체 맞춤(Ctrl+9)을 상단바에서 빼고 여기로 이관 — 공간
         # 개요라는 같은 맥락(미니맵도 "전체가 어디 있나"를 보여주는 도구). 기존 `_act_fit`을
         # 그대로 재사용해(아이콘·툴팁·단축키 동기화 유지) 제목과 접기버튼 사이에 끼운다.
@@ -1992,13 +2007,6 @@ class CanvasWindow(QMainWindow):
         w0 = self._props_panel.width() or 228
         self._minimap.setFixedSize(QSize(w0, round(w0 * 9 / 16)))
         panel.set_content(self._minimap)
-        # [줌 배지 통합 2026-08-01, 사용자 요청] "미니맵 안에 100% 배율도 같이 표기" — 지도 위에
-        # 겹쳐 그리는 오버레이 대신, 미니맵 바로 아래 얇은 푸터 행으로 패널 안에 편입한다(Qt
-        # 레이아웃만으로 처리돼 `drawForeground` 오버레이 좌표계 버그— 2026-07-28 미니맵
-        # 인디케이터 이중변환 사고 — 를 재발시킬 여지가 없음). 위치를 "지도 아래"로 고른 이유:
-        # 헤더(제목+전체맞춤)는 이미 다른 역할이 차 있고, 지도 위에 겹치면 도면을 가림 —
-        # 지도 다음 줄이 "지금 보는 배율"이라는 의미로도 자연스럽다.
-        panel.set_content(self._zoom_btn)
 
         self._view.horizontalScrollBar().valueChanged.connect(self._refresh_minimap)
         self._view.verticalScrollBar().valueChanged.connect(self._refresh_minimap)
