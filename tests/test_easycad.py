@@ -3566,6 +3566,117 @@ def test_smart_align_no_snap_beyond_threshold():
     assert abs(_cleft(b) - before) < 1e-6 and v._align_guides == []
 
 
+def test_smart_align_shows_all_tied_roles():
+    # [2e] 같은 높이 도형끼리는 상/중/하가 "얼마나 가까운가"가 수학적으로 완전히 같아진다(실사용
+    # 재현으로 확인 — 같은 크기 도형끼리는 항상 정확히 동률). 승자를 하나만 골라 보여주면 같은
+    # 크기 도형끼리는 그 하나만 영원히 뜨고 나머지 역할은 절대 못 보게 되므로, 동률인 역할
+    # 전부(상·중심·하)를 가이드선으로 함께 보여줘야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    v = w._view
+    b.setPos(QPointF(300, 0)); b.setSelected(True)        # x는 임계 밖(정렬 무관), y는 완전 동률
+    ar = a.mapToScene(a._content_rect()).boundingRect()
+    v._apply_smart_snap()
+    h_guides = sorted(g[1] for g in v._align_guides if g[0] == "h")
+    expect = sorted([ar.top(), ar.center().y(), ar.bottom()])
+    assert len(h_guides) == 3
+    for got, exp in zip(h_guides, expect):
+        assert abs(got - exp) < 1e-6
+
+
+def test_smart_align_center_priority_is_per_shape_only():
+    # [2e] 실사용 재현 버그 — 중심 우선 동률 처리를 전역으로 비교했더니, 전혀 무관한 다른 도형(c)의
+    # 중심이 "우연히" 근접 동률 범위(tie_eps)에 걸리는 것만으로 진짜 의도한 변 정렬(a와 b의 왼쪽)을
+    # 가로챘다. 중심 우선은 반드시 같은 상대 도형끼리 비교할 때만 적용해야 하고, 다른 도형과는
+    # 순수 최소거리로 비교해야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 140, 80)      # 진짜 정렬 대상: 왼쪽 변
+    b = _mk_rect(w._scene, w.make_pen(), 0, 3000, 100, 60)   # 이동시킬 도형(y는 a와 무관한 위치)
+    v = w._view
+    b.setPos(QPointF(2, 0)); b.setSelected(True)             # 왼쪽 변 오차 2px(임계 내, 진짜 의도한 매칭)
+    bcx = b.mapToScene(b._content_rect()).boundingRect().center().x()
+    decoy_cx = bcx - 3.0   # b 왼쪽매칭 오차(2px)보다 살짝 큰 3px — tie_eps(1.5px) 범위 안에서 "근접"
+    c = _mk_rect(w._scene, w.make_pen(), decoy_cx - 50, 9000, 100, 100)   # 완전히 무관한 위치의 디코이
+    v._apply_smart_snap()
+    v_guides = [g for g in v._align_guides if g[0] == "v"]
+    assert len(v_guides) == 1
+    assert abs(v_guides[0][1] - _cleft(a)) < 1e-6   # a의 왼쪽 변이 승자 — 디코이 c의 중심이 아님
+
+
+def test_smart_align_no_meaningless_cross_role_match():
+    # [2e] 「내 좌변 = 상대 중심」처럼 기하적으로 의미 없는 교차 조합은 아무리 가까워도(여기선
+    # 정확히 0) 매칭하지 않는다 — 원래 과발화의 원인이던 4개 조합. 반대로 「마주보는 변」
+    # (좌-우/상-하)은 별개로 허용되므로, 이 테스트는 그쪽도 임계 밖이 되도록 배치한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)     # left=0 center=50 right=100
+    b = _mk_rect(w._scene, w.make_pen(), 50, 300, 30, 30)   # left=50 → a의 '중심'과 정확히 일치
+    v = w._view
+    b.setSelected(True)
+    before = _cleft(b)
+    v._apply_smart_snap()
+    # b.left(50)=a.center(50)만 일치 — 좌-좌(50)·중심-중심(15)·우-우(20)·마주보는 변(50/98)은 전부
+    # 임계(10) 밖이고, y축도 300 이상 떨어져 어떤 조합도 안 맞는다.
+    assert abs(_cleft(b) - before) < 1e-6 and v._align_guides == []
+
+
+def _ctop(o):
+    return o.mapToScene(o._content_rect()).boundingRect().top()
+
+
+def _cbottom(o):
+    return o.mapToScene(o._content_rect()).boundingRect().bottom()
+
+
+def test_smart_align_adjacent_edge_snap():
+    # [2e] 마주보는 변(A 아랫변=B 윗변) 인접 매칭 — 좌우(교차축) 범위가 겹칠 때만 허용.
+    # B를 A 바로 아래, 임계 내로 살짝 띄워 놓으면 B의 윗변이 A의 아랫변에 붙어야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    v = w._view
+    thr = 6.0 / v._view_scale()
+    a_bottom = _cbottom(a)   # content_rect가 펜 폭만큼 바깥으로 패딩되므로(60이 아닌 60.5) 직접 측정
+    b.setPos(QPointF(0, 60 + thr * 0.5)); b.setSelected(True)   # x범위 동일(겹침) + 윗변이 근접
+    v._apply_smart_snap()
+    assert abs(_ctop(b) - a_bottom) < 1e-6                    # A 아랫변에 딱 붙음
+    assert any(g[0] == "h" and abs(g[1] - a_bottom) < 1e-6 for g in v._align_guides)
+
+
+def test_smart_align_adjacent_edge_snap_with_near_perp_gap():
+    # [2e] 실사용 재현(2026-08-01) — 대각선으로 접근하면 주 축(y) 간격은 이미 임계 내인데 교차축(x)
+    # 범위가 "아직 안 겹쳐서"(여유 0의 겹침 게이트) 인접 매칭이 안 뜨는 게 "완전히 붙여야만 뜬다"는
+    # 체감으로 이어졌다. 교차축이 겹치진 않지만 그 간격도 임계(thr) 이내면 인접 후보를 허용해야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    v = w._view
+    thr = 6.0 / v._view_scale()
+    a_bottom = _cbottom(a)
+    # x범위: a=[0,100] 근방, b를 오른쪽으로 thr*0.5만큼만 띄워 겹치지 않되 아주 가깝게.
+    b.setPos(QPointF(100 + thr * 0.5, 60 + thr * 0.5)); b.setSelected(True)
+    v._apply_smart_snap()
+    assert abs(_ctop(b) - a_bottom) < 1e-6
+    assert any(g[0] == "h" and abs(g[1] - a_bottom) < 1e-6 for g in v._align_guides)
+
+
+def test_smart_align_adjacent_edge_snap_when_far_apart_perpendicular():
+    # [2e] 실사용 로그로 확정한 진짜 원인(2026-08-01) — 마주보는 변 매칭에 "교차축이 겹쳐야 한다"는
+    # 게이트를 걸어 두면, 두 도형이 나란히 멀리 떨어진 채 내 윗변과 상대 아랫변이 아무리 정확히
+    # 맞아도(로그에선 0.00까지 일치) 후보에 오르지도 못했다. 실제 로그:
+    #   `x_gate=False ... adj_top_bottom=4.00 → by=None`
+    # 게이트 없이, 교차축으로 멀리 떨어져 있어도 마주보는 변이 임계 내면 붙고 가이드가 떠야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    v = w._view
+    a_bottom = _cbottom(a)
+    b.setPos(QPointF(500, 63)); b.setSelected(True)   # x로 400유닛 떨어짐 + 윗변만 임계 내
+    v._apply_smart_snap()
+    assert abs(_ctop(b) - a_bottom) < 1e-6                       # 상대 아랫변에 붙음
+    assert any(g[0] == "h" and abs(g[1] - a_bottom) < 1e-6 for g in v._align_guides)
+
+
 def test_smart_align_skips_multiselect():
     # [2e] 2개 이상 선택 시엔 스마트 정렬 스냅을 적용하지 않는다(그룹 변형 영역).
     w = CanvasWindow()

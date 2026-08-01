@@ -6268,32 +6268,88 @@ class _AnnotatorView(QGraphicsView):
         if not others:
             return
         nr = srect(it)
-        thr = 6.0 / self._view_scale()
-        bx = by = None   # (absdiff, delta, snap_coord, other_rect)
+        # 실사용 재현(2026-08-01, 로그 확인) — 6화면px는 게이트·로직 자체는 정상 작동했지만
+        # (로그상 인접 스냅이 수십 프레임·수십 유닛 구간에서 계속 유지됨을 확인) 실제 손 드래그
+        # 속도로는 그 폭(화면에서 2mm 미만)을 그냥 지나쳐 버려 "닿기 직전까진 전혀 반응 없다가
+        # 닿는 순간 나타난다"는 체감으로 이어졌다. 로직이 아니라 문턱 자체가 좁았던 것 — 10px로
+        # 넉넉히 늘린다(과발화 원인이었던 교차조합·전역 tie 도용은 이미 별도로 막아 뒀으므로,
+        # 문턱만 넓혀도 그 문제들이 재발하진 않는다).
+        thr = 10.0 / self._view_scale()
+        # 동률(같은 크기 도형끼리는 좌/중심/우 또는 상/중심/하의 "얼마나 가까운가"가 수학적으로
+        # 완전히 같아짐) 시 승자를 하나만 골라 보여주면, 같은 크기 도형끼리는 그 하나(예: 중심)만
+        # 영원히 뜨고 나머지 역할은 절대 못 본다 — 실사용 로그로 확인(2026-08-01): 같은 크기
+        # 도형끼리는 항상 좌/중심/우 거리가 소수점까지 정확히 일치했다. 그래서 "승자 하나"가 아니라
+        # **동률인 역할을 전부** 가이드선으로 보여준다(Figma·Lucid도 여러 정렬이 동시에 맞으면
+        # 선을 여러 개 함께 보여준다). 이동량(dx/dy)은 동률 후보끼리 델타가 같아 아무거나 써도
+        # 결과가 같지만, 가이드선은 역할마다 그리는 좌표(그 변·중심의 실제 위치)가 달라 하나만
+        # 고르면 정보가 사라진다.
+        tie_eps = 1.5 / self._view_scale()
+
+        def pick_local(cands):
+            """임계 내 후보 중 최솟값과, 그와 근접 동률인 역할 전부를 (ad,d,coord,role) 리스트로
+            반환(표시용). 리스트[0]이 가장 가까운 진짜 승자 — 스냅 이동량은 이것만 쓴다."""
+            scored = [(abs(other_val - my_val), other_val - my_val, other_val, role)
+                      for my_val, other_val, role in cands]
+            scored = [c for c in scored if c[0] <= thr]
+            if not scored:
+                return None
+            scored.sort(key=lambda c: c[0])
+            best_ad = scored[0][0]
+            return [c for c in scored if c[0] <= best_ad + tie_eps]
+
+        bx_winners = by_winners = None   # [(ad,d,coord,role), ...] — 최적 상대 도형 기준 전체 동률
+        bx_orr = by_orr = None
+
         for orr in others:
-            for myx in (nr.left(), nr.center().x(), nr.right()):
-                for ox in (orr.left(), orr.center().x(), orr.right()):
-                    d = ox - myx
-                    if abs(d) <= thr and (bx is None or abs(d) < bx[0]):
-                        bx = (abs(d), d, ox, orr)
-            for myy in (nr.top(), nr.center().y(), nr.bottom()):
-                for oy in (orr.top(), orr.center().y(), orr.bottom()):
-                    d = oy - myy
-                    if abs(d) <= thr and (by is None or abs(d) < by[0]):
-                        by = (abs(d), d, oy, orr)
-        dx = bx[1] if bx else 0.0
-        dy = by[1] if by else 0.0
+            # 후보는 축당 5개 — 같은 역할 3개(좌-좌/중심-중심/우-우, 상-상/중심-중심/하-하)와
+            # **마주보는 변** 2개(내 우변=상대 좌변, 내 좌변=상대 우변 / 내 아랫변=상대 윗변,
+            # 내 윗변=상대 아랫변). 배제하는 것은 「좌-중심」·「중심-우」처럼 기하적으로 의미
+            # 없는 교차 조합뿐이다(원래 과발화의 원인은 그 4개였다).
+            # ⚠ 마주보는 변에 "교차축이 겹칠 때만"이라는 게이트를 걸면 안 된다 — 실사용 로그로
+            # 확정(2026-08-01): 두 도형이 가로로 134유닛 떨어져 나란히 있고 내 윗변이 상대
+            # 아랫변과 4유닛(임계 6 이내)까지 맞았는데도, x범위가 안 겹친다는 이유로 후보에
+            # 오르지도 못했다(로그 `x_gate=False ... adj_top_bottom=4.00 → by=None`). 심지어
+            # 두 변이 정확히 0으로 일치한 프레임도 같은 이유로 무시됐다. "붙여야만 뜬다"는
+            # 증상의 정체가 이 게이트였고(붙어야 교차축이 겹쳐 게이트가 열림), 게이트를 thr만큼
+            # 넓히는 완화로는 수십~수백 유닛 떨어진 이 케이스를 못 살린다. 같은 역할 매칭에는
+            # 애초에 이런 게이트가 없다는 점에서도 인접에만 거는 것은 비대칭이었다.
+            x_cands = [(nr.left(), orr.left(), "left"),
+                       (nr.center().x(), orr.center().x(), "center"),
+                       (nr.right(), orr.right(), "right"),
+                       (nr.right(), orr.left(), "adj"),
+                       (nr.left(), orr.right(), "adj")]
+            y_cands = [(nr.top(), orr.top(), "top"),
+                       (nr.center().y(), orr.center().y(), "center"),
+                       (nr.bottom(), orr.bottom(), "bottom"),
+                       (nr.bottom(), orr.top(), "adj"),
+                       (nr.top(), orr.bottom(), "adj")]
+            local_x = pick_local(x_cands)
+            if local_x is not None and (bx_winners is None or local_x[0][0] < bx_winners[0][0]):
+                bx_winners, bx_orr = local_x, orr
+            local_y = pick_local(y_cands)
+            if local_y is not None and (by_winners is None or local_y[0][0] < by_winners[0][0]):
+                by_winners, by_orr = local_y, orr
+        dx = bx_winners[0][1] if bx_winners else 0.0
+        dy = by_winners[0][1] if by_winners else 0.0
         if dx or dy:
             it.moveBy(dx, dy)
             nr = srect(it)
-        if bx:
-            o = bx[3]
-            self._align_guides.append(("v", bx[2], min(nr.top(), o.top()),
-                                       max(nr.bottom(), o.bottom())))
-        if by:
-            o = by[3]
-            self._align_guides.append(("h", by[2], min(nr.left(), o.left()),
-                                       max(nr.right(), o.right())))
+        if bx_winners:
+            o = bx_orr
+            y0, y1 = min(nr.top(), o.top()), max(nr.bottom(), o.bottom())
+            seen = set()
+            for _ad, _d, coord, _role in bx_winners:
+                if coord not in seen:
+                    seen.add(coord)
+                    self._align_guides.append(("v", coord, y0, y1))
+        if by_winners:
+            o = by_orr
+            x0, x1 = min(nr.left(), o.left()), max(nr.right(), o.right())
+            seen = set()
+            for _ad, _d, coord, _role in by_winners:
+                if coord not in seen:
+                    seen.add(coord)
+                    self._align_guides.append(("h", coord, x0, x1))
 
     def _apply_grid_snap_move(self, skip_x: bool, skip_y: bool):
         """[그리드 스냅] 단일 도형 이동 중 — 스마트정렬·축고정이 이미 자리를 정한 축은 skip_*로
@@ -6769,16 +6825,23 @@ class _AnnotatorView(QGraphicsView):
         elif not self._hp_dragging and self._hp_hover is not None \
                 and self._hp_hover[0].scene() is not None:
             self._draw_snap_marker(painter, self._hp_hover[1], s)
-        # [2e] 스마트 정렬 가이드선 — 이동 중 정렬 맞은 축에 마젠타 실선.
+        # [2e] 스마트 정렬 가이드선 — 이동 중 정렬 맞은 축에 마젠타 실선. 인접(맞닿음) 매칭은
+        # 정의상 가이드 좌표가 도형 자신의 테두리(선택 파란 테두리 등)와 정확히 겹쳐, 색이 섞여
+        # 거의 안 보이는 문제가 실사용에서 발견됨(GIF 프레임 픽셀 분석으로 확인 — 로직·렌더링
+        # 자체는 정상, 다른 UI 색과 겹쳐 묻히는 것만 문제). 검정 헤일로를 먼저 깔아 어떤 배경
+        # 색과 겹쳐도 마젠타가 도드라지게 한다(Figma류 가이드선 관례).
         if self._align_guides:
-            pen = QPen(QColor(230, 60, 160), 1.0)
-            pen.setCosmetic(True)
-            painter.setPen(pen)
-            for g in self._align_guides:
-                if g[0] == "v":
-                    painter.drawLine(QPointF(g[1], g[2]), QPointF(g[1], g[3]))
-                else:
-                    painter.drawLine(QPointF(g[2], g[1]), QPointF(g[3], g[1]))
+            halo = QPen(QColor(0, 0, 0, 180), 3.0)
+            halo.setCosmetic(True)
+            core = QPen(QColor(230, 60, 160), 1.5)
+            core.setCosmetic(True)
+            for pen in (halo, core):
+                painter.setPen(pen)
+                for g in self._align_guides:
+                    if g[0] == "v":
+                        painter.drawLine(QPointF(g[1], g[2]), QPointF(g[1], g[3]))
+                    else:
+                        painter.drawLine(QPointF(g[2], g[1]), QPointF(g[3], g[1]))
         # [M4-4] 세그먼트 핸들은 아이템(_paint_segment_handles)이 직접 그린다 — 여기선 마커 없음.
         # [우리 확장] 다중선택 그룹 변형 오버레이 — 공통 bbox + 모서리(스케일)·상단(회전) 핸들.
         # stretch 진행 중엔 그리지 않는다(두 오버레이 겹침 방지 — 그때 조작은 stretch가 소유).
