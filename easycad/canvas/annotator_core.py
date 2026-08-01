@@ -5600,8 +5600,11 @@ class _GroupTransform:
         if hit[0] == "scale_axis":
             self._axis = hit[1]
             self._anchor_val = hit[2]
-            hp = hit[3]
-            self._axis_start = (hp.x() if self._axis == "x" else hp.y()) - self._anchor_val
+            # [버그수정 2026-08-01] 이상적 변 중점(hit[3])이 아니라 실제 클릭점(scene_pt) 기준으로
+            # 시작 벡터를 잡는다 — 핸들 히트존이 24px 폭이라 클릭이 중점에서 벗어나면(항상 벗어남)
+            # f가 드래그 시작 즉시 1이 아니게 되어 클릭 순간 크기가 튀어 보였다.
+            cur = scene_pt.x() if self._axis == "x" else scene_pt.y()
+            self._axis_start = cur - self._anchor_val
             self._begin_geom()
             return
         # 회전·균일 스케일(Stage1) — pos/rot/scale/origin 스냅샷.
@@ -5613,8 +5616,10 @@ class _GroupTransform:
                 scene_pt.y() - self._center.y(), scene_pt.x() - self._center.x()))
         else:
             self._anchor = hit[1]
-            self._start_dx = hit[2].x() - self._anchor.x()
-            self._start_dy = hit[2].y() - self._anchor.y()
+            # [버그수정 2026-08-01] 위 scale_axis와 동일 — 이상적 모서리(hit[2])가 아니라 실제
+            # 클릭점(scene_pt) 기준 시작 벡터라야 f=1로 시작해 드래그 첫 프레임에 튀지 않는다.
+            self._start_dx = scene_pt.x() - self._anchor.x()
+            self._start_dy = scene_pt.y() - self._anchor.y()
 
     def _begin_geom(self):
         """[Stage2] 기하 리베이크용 스냅샷 — 선택 아이템 + 부착점 바뀌는 화살표까지."""

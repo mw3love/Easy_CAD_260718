@@ -3045,6 +3045,29 @@ def test_group_scale():
     assert abs(a.scale() - 1.0) < 1e-6 and _close(a.mapToScene(a._content_rect().center()), pa0)
 
 
+def test_group_scale_no_jump_on_offset_click():
+    # [버그수정 2026-08-01] 핸들 히트존은 24px 폭이라 클릭이 이상적 모서리에서 몇 px 벗어나는 게
+    # 보통인데, 예전엔 시작 벡터를 이상적 모서리(hit[2]) 기준으로 잡아 그 오프셋만큼 드래그
+    # 첫 프레임(=클릭 시점, 아직 마우스 안 움직임)에 이미 크기·위치가 확 튀었다. 지금은 실제
+    # 클릭점 기준이라 같은 지점에서 첫 update_to를 불러도 f=1(불변)이어야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); b.setPos(QPointF(300, 200))
+    a.setSelected(True); b.setSelected(True)
+    g = w._view._group
+    bb = g.bbox()
+    anchor, corner = bb.topLeft(), bb.bottomRight()
+    off_click = QPointF(corner.x() + 8, corner.y() - 5)   # 히트존 안쪽이지만 이상적 모서리는 아님
+    pa0 = a.mapToScene(a._content_rect().center())
+    pb0 = b.mapToScene(b._content_rect().center())
+    g.begin(("scale", anchor, corner), off_click)
+    g.update_to(off_click)   # 마우스가 아직 움직이지 않은 첫 프레임
+    assert abs(a.scale() - 1.0) < 1e-6 and abs(b.scale() - 1.0) < 1e-6
+    assert _close(a.mapToScene(a._content_rect().center()), pa0)
+    assert _close(b.mapToScene(b._content_rect().center()), pb0)
+    g.end()
+
+
 def test_group_rotate_keeps_binding():
     # [Stage1] 바인딩 화살표+양끝 도형을 함께 그룹 회전 → 화살표가 강체로 따라가 부착 유지.
     w = CanvasWindow()
@@ -3130,6 +3153,25 @@ def test_group_nonuniform_scale():
     assert abs(a.rect().height() - ha0) < 1e-6   # y축은 불변(1축)
     w.undo()
     assert abs(a.rect().width() - wa0) < 1e-6 and abs(b.rect().width() - wb0) < 1e-6
+
+
+def test_group_nonuniform_scale_no_jump_on_offset_click():
+    # [버그수정 2026-08-01] 위 uniform 스케일과 동일한 부류의 버그가 변 중점(1축) 핸들에도 있었다
+    # (이상적 중점 hit[3] 기준 시작 벡터) — 오프셋 클릭이어도 같은 지점의 첫 update_to는 f=1이어야 함.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); b.setPos(QPointF(200, 0))
+    a.setSelected(True); b.setSelected(True)
+    g = w._view._group
+    bb = g.bbox()
+    right_pt, axis, anchor_val = g._edges(bb)[1]   # 우측 변
+    hit = g.handle_at(right_pt)
+    off_click = QPointF(right_pt.x() + 7, right_pt.y() + 3)   # 히트존 안쪽, 이상적 중점은 아님
+    wa0, wb0 = a.rect().width(), b.rect().width()
+    g.begin(hit, off_click)
+    g.update_to(off_click)
+    assert abs(a.rect().width() - wa0) < 1e-6 and abs(b.rect().width() - wb0) < 1e-6
+    g.end()
 
 
 def test_group_nonuniform_scale_keeps_binding():
