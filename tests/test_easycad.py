@@ -748,6 +748,71 @@ def test_copy_paste_rebinds_arrow_within_group():
     assert newest_ar._bind1 is not newest_ar._bind2
 
 
+def test_bulk_select_avoids_quadratic_property_refresh():
+    # [성능조사 2026-08-01] paste_selection/duplicate_selection/select_all이 새 아이템마다
+    # setSelected(True)를 개별 호출하면 selectionChanged→_refresh_properties가 매번 그 시점까지
+    # 선택된 전체를 다시 읽어 O(n²)가 됐다(cProfile 실측: 300개 붙여넣기서 _read_props
+    # 45,150회 = 1+2+...+300). _bulk_select로 시그널을 묶어 마지막에 한 번만 갱신되는지 확인
+    # (호출 횟수를 n과 무관한 상수로 단언 — 회귀 시 n에 비례해 폭증).
+    calls = []
+    orig = CanvasWindow._refresh_properties
+    def wrapped(self):
+        calls.append(1)
+        return orig(self)
+    CanvasWindow._refresh_properties = wrapped
+    try:
+        w = CanvasWindow()   # __init__이 selectionChanged를 wrapped 바인딩으로 연결
+        items = [_mk_pen_rect(w, x=i * 60, y=0) for i in range(60)]
+        calls.clear()
+        w._bulk_select(items)
+    finally:
+        CanvasWindow._refresh_properties = orig
+    assert len(calls) <= 2, calls   # n=60에 비례하면 60+회가 됐을 것
+    assert all(it.isSelected() for it in items)
+
+
+def test_paste_many_items_all_selected_and_fast_path():
+    # 대량 붙여넣기 후에도 전부 선택 상태가 되는지(=_bulk_select가 개별 setSelected와
+    # 동일한 최종 결과를 내는지) — 성능 최적화가 정확성을 깨지 않았는지의 핵심 확인.
+    w = CanvasWindow()
+    src = [_mk_pen_rect(w, x=i * 60, y=0) for i in range(50)]
+    for it in src:
+        it.setSelected(True)
+    w.copy_selection()
+    w.paste_selection()
+    rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+    assert len(rects) == 100
+    new_items = [r for r in rects if r not in src]
+    assert len(new_items) == 50
+    assert all(it.isSelected() for it in new_items)
+    assert not any(it.isSelected() for it in src)   # 원본은 선택 해제(기존 동작 불변)
+
+
+def test_rubber_band_bulk_select_still_syncs_groups():
+    # [성능조사 2026-08-01] _apply_rubber_selection도 같은 O(n²) 패턴을 owner._bulk_select로
+    # 옮겼다 — 드래그가 그룹 멤버 중 하나만 걸쳐도 _sync_group_selection이 여전히 그룹 전체를
+    # 딸려오는지(배치 최적화가 이 기능을 깨지 않았는지) 확인.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=500, y=0)
+    a.setSelected(True); b.setSelected(True)
+    w.group_selection()
+    view = w._view
+    view._rb_base = []
+    # a만 걸치는 작은 창(window) 선택 — b는 범위 밖.
+    view._rb_scene_rect = lambda: QRectF(-10, -10, 60, 50)
+    view._rb_is_window = lambda: True
+    view._rb_origin = QPointF(0, 0); view._rb_current = QPointF(1, 1)
+    view._apply_rubber_selection()
+    assert a.isSelected() and b.isSelected()   # 그룹 동반선택으로 b도 딸려옴
+
+
+def test_select_all_bulk_selects_everything():
+    w = CanvasWindow()
+    items = [_mk_pen_rect(w, x=i * 60, y=0) for i in range(30)]
+    w.select_all()
+    assert all(it.isSelected() for it in items)
+
+
 def test_shape_palette_arms_tool():
     # 팔레트 네모 버튼 클릭 → rect 도구 무장 + 버튼 체크 동기화. 단축키 경로도 유지.
     w = CanvasWindow()

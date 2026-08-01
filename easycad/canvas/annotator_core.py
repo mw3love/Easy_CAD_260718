@@ -6140,9 +6140,7 @@ class _AnnotatorView(QGraphicsView):
         sel_path.addRect(rect)
         bg = getattr(self._owner, "_bg_item", None)
         self.scene().clearSelection()
-        for it in self._rb_base:            # Shift 추가선택: 기존 선택 유지
-            if it.scene() is not None:
-                it.setSelected(True)
+        to_select = [it for it in self._rb_base if it.scene() is not None]   # Shift 추가선택: 기존 선택 유지
         for it in self.scene().items():
             if it is bg:
                 continue
@@ -6160,7 +6158,11 @@ class _AnnotatorView(QGraphicsView):
                 outline = it._base_shape() if hasattr(it, "_base_shape") else it.shape()
                 hit = it.mapToScene(outline).intersects(sel_path)
             if hit:
-                it.setSelected(True)
+                to_select.append(it)
+        # [성능 조사 2026-08-01] 개별 setSelected() 루프는 매 호출마다 selectionChanged를 쏴
+        # _refresh_properties가 그 시점까지 선택된 전체를 다시 읽어 O(n²)가 된다(paste와 동일
+        # 근본원인, cProfile로 확인). owner의 공용 배치 선택 헬퍼로 한 번에 커밋.
+        self._owner._bulk_select(to_select)
 
     def _snapshot_movable(self):
         """드래그 이동 전 이동 가능 아이템들의 위치를 기록(release에서 변경분만 undo에 커밋)."""
@@ -6198,8 +6200,9 @@ class _AnnotatorView(QGraphicsView):
         remap_grouped_bindings(zip(src, clones))   # 배치 안에서 함께 복제된 도형끼리 재연결
         regroup_duplicated_items(zip(src, clones)) # 그룹째 복제 시 사본도 새 그룹으로
         self.scene().clearSelection()
-        for c in clones:
-            c.setSelected(True)
+        # [성능조사 2026-08-01] paste/duplicate/rubber-band와 동일한 O(n²) 함정 — 다중선택
+        # Alt+드래그 복제 시 개별 setSelected 대신 owner의 배치 선택 헬퍼로 한 번에.
+        self._owner._bulk_select(clones)
         if hasattr(self._owner, "push_undo_add_many"):
             self._owner.push_undo_add_many(clones)
 
@@ -8013,9 +8016,10 @@ class _AnnotatorView(QGraphicsView):
                 self._stretch_arm_now()   # [Stage2b] 러버밴드 선택 후 S = stretch 무장
                 return
             if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_A:
-                for it in self.scene().items():
-                    if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
-                        it.setSelected(True)
+                # [성능조사 2026-08-01] 개별 setSelected 루프는 O(n²) — owner._bulk_select로 일괄.
+                self._owner._bulk_select([
+                    it for it in self.scene().items()
+                    if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable])
                 return
             # [신규기능] Ctrl+Alt+C/V = 스타일 복사/붙여넣기 — 일반 Ctrl+C/V(아이템 복사)보다
             # 먼저 검사해야 한다(Alt를 함께 눌러도 아래 Ctrl+C 체크가 먼저 걸리면 항상 이김).

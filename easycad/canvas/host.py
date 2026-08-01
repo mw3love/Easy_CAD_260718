@@ -2873,12 +2873,12 @@ class CanvasWindow(QMainWindow):
             c = tmpl.clone()
             c.moveBy(off, off)
             self._scene.addItem(c)
-            c.setSelected(True)
             new_items.append(c)
         # clone()이 _bind1/_bind2 등을 원본 그대로 복사해 왔으므로(clip 세대를 거쳐도 불변),
         # 같이 복사된 도형끼리는 여기서 사본으로 재연결한다(배치 밖 도형 바인딩은 그대로 유지).
         remap_grouped_bindings(zip(self._clip_src, new_items))
         regroup_duplicated_items(zip(self._clip_src, new_items))   # 그룹째 복사 시 사본도 새 그룹으로
+        self._bulk_select(new_items)   # [성능] 개별 setSelected 대신 한 번에 — O(n²) 회피
         if new_items:
             self.push_undo_add_many(new_items)
 
@@ -2904,10 +2904,10 @@ class CanvasWindow(QMainWindow):
             c = it.clone()
             c.moveBy(20.0, 20.0)
             self._scene.addItem(c)
-            c.setSelected(True)
             new_items.append(c)
         remap_grouped_bindings(zip(src, new_items))
         regroup_duplicated_items(zip(src, new_items))   # 그룹째 복제 시 사본도 새 그룹으로
+        self._bulk_select(new_items)   # [성능] 개별 setSelected 대신 한 번에 — O(n²) 회피
         if new_items:
             self.push_undo_add_many(new_items)
 
@@ -2922,9 +2922,8 @@ class CanvasWindow(QMainWindow):
         self.push_undo_delete(sel)
 
     def select_all(self):
-        for it in self._scene.items():
-            if it.flags() & it.GraphicsItemFlag.ItemIsSelectable:
-                it.setSelected(True)
+        self._bulk_select([it for it in self._scene.items()
+                           if it.flags() & it.GraphicsItemFlag.ItemIsSelectable])
 
     def _cut_selection(self):
         self.copy_selection()
@@ -2963,6 +2962,28 @@ class CanvasWindow(QMainWindow):
         for i, it in enumerate(sorted(sel, key=lambda x: -x.zValue())):
             it.setZValue(bottom_z - 1.0 - i)
         self._push_entry([("mut", it, "z", old, it.zValue()) for it, old in snaps])
+
+    # ---- [성능] 대량 선택 공용 헬퍼 ------------------------------------------
+    def _bulk_select(self, items):
+        """[성능조사 2026-08-01] 여러 아이템을 한 번에 선택 — 개별 setSelected(True) 루프는
+        매 호출마다 selectionChanged(→_refresh_properties가 그 시점까지 선택된 전체를
+        _read_props로 재계산)가 발화해 n개 선택이 O(n²)이 된다(cProfile 실측: 300개
+        붙여넣기에서 _read_props 45,150회 = 1+2+...+300 — 선택이 늘어날수록 매번 처음부터
+        다시 읽은 흔적). paste_selection/duplicate_selection/select_all이 공유 — 시그널을
+        루프 동안 끊고 끝나면 한 번만 재계산."""
+        if not items:
+            return
+        sig = self._scene.selectionChanged
+        sig.disconnect(self._refresh_properties)
+        sig.disconnect(self._sync_group_selection)
+        try:
+            for it in items:
+                it.setSelected(True)
+        finally:
+            sig.connect(self._sync_group_selection)
+            sig.connect(self._refresh_properties)
+        self._sync_group_selection()
+        self._refresh_properties()
 
     # ---- [편의기능] Group / Ungroup --------------------------------------
     def _sync_group_selection(self):
