@@ -719,8 +719,8 @@ stale한 크기에 멈추는 2차 함정도 있어 `layout().activate()`를 먼�
 경로를 안 탐) — 회귀 테스트에 `w.show()` 명시로 해결. 스모크 2종 추가(총 283).
 Rejected/Not-tested는 커밋 `616bcfb`·`d967835` 트레일러 참조.
 
-**신규기능 — DXF/.ecad 가져오기·내보내기 통합 완료(2026-07-29, 프록시검증 — offscreen 292종
-통과, 실조건 대기)** — 계획서 §8 로드맵 항목 2. deep-interview로 확정: 옛 「DXF 내보내기…」/
+**신규기능 — DXF/.ecad 가져오기·내보내기 통합 완료(2026-07-29, 실조건검증 ✓ 2026-08-01)** —
+계획서 §8 로드맵 항목 2. deep-interview로 확정: 옛 「DXF 내보내기…」/
 「DXF 가져오기…」 전용 메뉴·단축키(`Ctrl+Shift+D`/`Ctrl+Shift+I`)를 완전 폐지(부분 병행 유지
 안 함), 열기(`Ctrl+O`)/저장(`Ctrl+S`) 하나가 파일 다이얼로그에서 고른 확장자로 분기
 (`_open_doc`/`_save_doc` → `_do_open_ecad`/`_do_open_dxf`, `_do_save_ecad`/`_do_export_dxf`).
@@ -740,8 +740,15 @@ Rejected/Not-tested는 커밋 `616bcfb`·`d967835` 트레일러 참조.
 모든 `QMessageBox` 경로를 모킹하도록 테스트를 고친 뒤 292종(신규 5종 포함) 전체 통과, 4분43초.
 스모크: `test_do_open_save_ecad_roundtrip`·`test_do_open_export_dxf_roundtrip_no_doc_path`·
 `test_save_doc_dispatches_by_extension`·`test_open_doc_dispatches_by_extension`·
-`test_dxf_confirm_dialogs_show_once_via_qsettings`. Not-tested: 실제 파일 다이얼로그 UI 흐름·
-안내창 문구의 실화면 가독성(`python run.py` 몫).
+`test_dxf_confirm_dialogs_show_once_via_qsettings`.
+**실조건검증 ✓**(2026-08-01) — 오프스크린이 아닌 실제 창에서(Bash가 사용자와 같은 대화형
+데스크톱 세션이라는 규칙 11-d 활용, `QFileDialog`만 모킹·`QMessageBox`는 실제로 띄워 `QTimer`
+감시로 스크린샷 후 실제 버튼 위젯 `click()`) 저장 손실 경고·저장 완료·열기 안내 3개 안내창을
+전부 화면에 띄워 캡처, 한글 문구가 정상 렌더(두부글자 없음)됨을 확인. 사각형·화살표·한글
+텍스트("한글 라벨 테스트 결선도")를 `.dxf`로 저장→다른 창에서 다시 열어 3개 객체·한글 라벨이
+그대로 복원되는 것도 스크린샷으로 확인(`_do_save_ecad`/`_do_export_dxf`/`_do_open_dxf`/
+확장자 생략 시 `.ecad` 자동 보완 전부 실동작). 재현 스크립트는 세션 scratchpad(휘발성)에만
+존재 — 재사용 필요 시 위 스모크 5종의 로직을 실제 창으로 재구성하면 됨.
 
 **신규기능 — 8포트 확장 + 커넥터 라우팅 방향·안정성 대수술 완료(2026-07-29, 실조건검증 ✓,
 스모크 301종)** — 계획서 §8 로드맵 항목 3("8포트"). deep-interview로 확정한 8포트 자체는
