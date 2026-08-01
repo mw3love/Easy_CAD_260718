@@ -833,16 +833,19 @@ def test_rmb_context_menu_states():
     assert it.isSelected()
 
 
-def test_qc_drag_creates_arrow_only():
-    # [M4-2a] 네방향점 드래그(cursor_scene 있음)=화살표만 / 클릭(None)=도형복제+화살표.
+def test_qc_drag_creates_arrow_only_onto_existing_shape():
+    # [M4-2a] 네방향점 드래그해 스냅 대상(다른 도형)에 이으면 = 화살표만(추가 복제 없음) /
+    # 클릭(None) = 도형복제+화살표. [① 빈 캔버스 드롭 2026-08-01] 스냅 대상이 없는 진짜 빈
+    # 캔버스로의 드래그는 더 이상 이 분기가 아니다 — test_qc_create_drag_position이 검증.
     w = CanvasWindow(); v = w._view
     r = _mk_pen_rect(w, x=0, y=0, ww=80, hh=50); r.setSelected(True)
+    tgt = _mk_pen_rect(w, x=300, y=0, ww=80, hh=50)
     n0 = len([x for x in w._scene.items() if isinstance(x, _RectItem)])
     d0 = len(w._undo)
-    arr = v._qc_create(r, "r", QPointF(300, 25))              # 드래그 = 화살표만
+    arr = v._qc_create(r, "r", tgt.mapToScene(tgt.rect().center()))   # 드래그 → 기존 도형에 흡수
     assert isinstance(arr, _PolyArrowItem)
     assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == n0   # 도형 안 늘어남
-    assert arr._bind_start is not None                       # 시작은 src에 바인딩
+    assert arr._bind_start is r and arr._bind_end is tgt
     assert len(w._undo) == d0 + 1
     w.undo(); assert arr not in w._scene.items()
     r.setSelected(True)
@@ -3246,15 +3249,20 @@ def test_qc_create_default():
 
 
 def test_qc_create_drag_position():
-    # [M4-2a] 드래그(커서 위치) = 화살표만 생성(도형 복제 없음), 시작은 src 바인딩·끝은 커서.
+    # [① 빈 캔버스 드롭 2026-08-01, Lucid 대조] 드래그(스냅 대상 없는 빈 캔버스) = 더 이상
+    # 바인딩 없는 자유 끝을 남기지 않고, 원본과 같은 도형을 커서 위치에 만들어 양끝 바인딩.
     w = CanvasWindow()
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
     n0 = len([x for x in w._scene.items() if isinstance(x, _RectItem)])
     arrow = w._view._qc_create(a, "b", QPointF(250, 400))
     assert isinstance(arrow, _PolyArrowItem)
-    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == n0   # 복제 없음
+    rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+    assert len(rects) == n0 + 1                        # 새 도형 생성됨(더 이상 복제 없음이 아님)
+    dup = [x for x in rects if x is not a][0]
     assert arrow._bind_start is a
-    assert _close(arrow.mapToScene(arrow._pts[-1]), QPointF(250, 400))            # 끝 = 커서
+    assert arrow._bind_end is dup                       # 끝도 새 도형에 바인딩(자유 끝 아님)
+    dr = dup.mapToScene(dup.rect()).boundingRect()
+    assert _close(dr.center(), QPointF(250, 400))        # 새 도형 중심 = 커서
 
 
 def test_qc_dot_at_roundtrip():
@@ -3775,33 +3783,68 @@ def test_hover_port_at_skips_selected_shape():
 
 
 def test_select_tool_port_drag_creates_connector():
-    # [8포트 select-hover] 선택 도구에서 미선택 도형 포트를 드래그하면 도형 복제 없이 커넥터만
-    # 생성된다(qc-dot과 달리 선택 여부 무관 hover 기반, 클릭/드래그는 release에서 가른다).
+    # [8포트 select-hover] 선택 도구에서 미선택 도형 포트를 드래그해 다른 도형에 이으면 도형
+    # 복제 없이 커넥터만 생성된다(qc-dot과 달리 선택 여부 무관 hover 기반, 클릭/드래그는
+    # release에서 가른다). [① 빈 캔버스 드롭 2026-08-01] 스냅 대상 없는 빈 캔버스 드래그는
+    # test_select_tool_port_drag_into_empty_space_creates_shape가 따로 검증(새 도형 생성).
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    view = w._view
+    r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
+    tgt = _mk_pen_rect(w, x=260, y=0, ww=100, hh=60)
+    tgt_center = tgt.mapToScene(tgt.rect().center())
+    press, release, _c, _m, drag_move, _d = _draw_helpers(view)
+    n_rect0 = len([x for x in w._scene.items() if isinstance(x, _RectItem)])
+    press(QPointF(100, 30))                 # E 포트
+    drag_move(tgt_center)                   # 임계 초과 — 커넥터 프리뷰로 전환(기존 도형 내부)
+    release(tgt_center)
+    arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
+    assert len(arrows) == 1, "포트 드래그로 커넥터가 생성돼야 한다"
+    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == n_rect0  # 복제 없음
+    assert arrows[0]._bind_start is r                                # 시작이 그 도형에 바인딩
+    assert arrows[0]._bind_end is tgt                                # 끝도 기존 도형에 바인딩
+    assert not r.isSelected()                                        # 드래그였으므로 도형 선택 폴백 없음
+
+
+def test_select_tool_port_drag_into_empty_space_creates_shape():
+    # [① 빈 캔버스 드롭 2026-08-01, Lucid 대조] 스냅 대상 없는 빈 캔버스로 포트를 드래그하면
+    # 바인딩 없는 화살표를 남기지 않고 원본과 같은 도형을 그 자리에 만들어 함께 바인딩한다
+    # (qc-dot 드래그의 test_qc_create_drag_position과 동일 계약, hover-port 경로도 동일하게).
     w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
     view = w._view
     r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
     press, release, _c, _m, drag_move, _d = _draw_helpers(view)
     n_rect0 = len([x for x in w._scene.items() if isinstance(x, _RectItem)])
     press(QPointF(100, 30))                 # E 포트
-    drag_move(QPointF(260, 30))             # 임계 초과 — 커넥터 프리뷰로 전환
-    release(QPointF(260, 30))
+    drag_move(QPointF(400, 200))            # 빈 캔버스
+    release(QPointF(400, 200))
     arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
-    assert len(arrows) == 1, "포트 드래그로 커넥터가 생성돼야 한다"
-    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == n_rect0  # 복제 없음
-    assert arrows[0]._bind_start is r                                # 시작이 그 도형에 바인딩
-    assert not r.isSelected()                                        # 드래그였으므로 도형 선택 폴백 없음
+    rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+    assert len(arrows) == 1
+    assert len(rects) == n_rect0 + 1                                 # 새 도형 생성됨
+    dup = [x for x in rects if x is not r][0]
+    assert arrows[0]._bind_start is r and arrows[0]._bind_end is dup
+    dr = dup.mapToScene(dup.rect()).boundingRect()
+    assert _close(dr.center(), QPointF(400, 200))                    # 새 도형 중심 = 커서
 
 
-def test_select_tool_port_click_without_drag_selects_shape():
-    # [8포트 select-hover] 포트 위에서 드래그 없이 누르고 떼면(제자리 클릭) 평소처럼 그 도형을
-    # 선택한다 — 포트가 테두리 위라 press를 가로챈 대가로 release에서 선택 동작을 재현.
+def test_select_tool_port_click_without_drag_creates_shape():
+    # [④ 즉시 생성 2026-08-01, Lucid 대조] 포트 위에서 드래그 없이 누르고 떼면(제자리 클릭)
+    # qc-dot 클릭과 동일하게 즉시 도형 복제+화살표가 생긴다 — 종전엔 그 도형을 선택만 하고
+    # qc-dot이 뜬 뒤 한 번 더 눌러야 새 도형이 생겼다(사용자 피드백: "4분면 점에서 바로
+    # 생겨야 맞을듯 — 선택으로 동작한 뒤 qc-dot이 생긴 뒤에야 신규 도형 생기네").
     w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
     view = w._view
     r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
     press, release, _c, _m, _dm, _d = _draw_helpers(view)
-    press(QPointF(100, 30)); release(QPointF(100, 30))               # 제자리 클릭
-    assert r.isSelected()
-    assert len([x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]) == 0
+    n0 = len([x for x in w._scene.items() if isinstance(x, _RectItem)])
+    press(QPointF(100, 30)); release(QPointF(100, 30))               # 제자리 클릭(E 포트)
+    rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+    arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
+    assert len(rects) == n0 + 1
+    assert len(arrows) == 1
+    dup = [x for x in rects if x is not r][0]
+    assert arrows[0]._bind_start is r and arrows[0]._bind_end is dup
+    assert dup.isSelected() and not r.isSelected()   # qc-dot 클릭과 동일하게 새 도형이 선택됨
 
 
 def test_port_drag_self_loop_binds_and_avoids_corner_hug():
