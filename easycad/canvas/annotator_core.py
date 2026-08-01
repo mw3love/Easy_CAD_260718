@@ -1387,12 +1387,71 @@ def _item_center_path(it) -> QPainterPath:
     return it._base_shape() if hasattr(it, "_base_shape") else it.shape()
 
 
+def _expand_polygon(poly: QPolygonF, pad: float) -> QPolygonF:
+    """[화살표 찌그러짐 수정 2026-08-01] 각 꼭짓점을 다각형 중심에서 바깥으로 `pad`만큼 밀어낸
+    확대 다각형(모서리는 원본과 평행하지 않지만, 삼각형처럼 꼭짓점이 적은 볼록 다각형에서는
+    '살짝 커진 같은 모양'으로 충분히 읽힌다) — 뾰족한 꼭짓점을 그대로 유지한다(라운딩 없음)."""
+    pts = list(poly)
+    if not pts:
+        return poly
+    cx = sum(p.x() for p in pts) / len(pts)
+    cy = sum(p.y() for p in pts) / len(pts)
+    out = []
+    for p in pts:
+        dx, dy = p.x() - cx, p.y() - cy
+        d = math.hypot(dx, dy) or 1.0
+        out.append(QPointF(p.x() + dx / d * pad, p.y() + dy / d * pad))
+    return QPolygonF(out)
+
+
+def _arrow_body_path(it) -> QPainterPath:
+    """[화살표 찌그러짐 수정 2026-08-01] `_item_center_path`의 화살표 분기에서 화살촉 폴리곤을
+    뺀 몸통(선/꺾은선)만 — 아래 `_highlight_band`가 몸통과 화살촉을 서로 다른 방식으로
+    강조하기 위해 필요."""
+    if isinstance(it, _PolyArrowItem):
+        return it._rounded_polyline_path() if it._corner_radius() > 0 else it._polyline_path()
+    p = QPainterPath()
+    p.moveTo(it._p1)
+    if it._ctrl1 is None:
+        p.lineTo(it._p2)
+    else:
+        p.cubicTo(it._ctrl1, it._ctrl2, it._p2)
+    return p
+
+
 def _highlight_band(it, extra_width: float = 3.0) -> QPainterPath:
     """[선택 표시 통일 2026-08-01] 중심선을 도형 두께 비례 폭(pw+extra_width, 장면 단위)으로
     스트로크해 띠를 만들고, `band.subtracted(centerline)`로 안쪽 절반을 깎아 바깥쪽만 남긴다
     (Lucid 스타일). 네모·원·심볼처럼 centerline이 '닫힌'(채워진 영역이 있는) 경로면 안쪽이
     실제로 깎이고, 선·화살표 몸통처럼 '열린'(면적 0) 경로는 뺄 것이 없어 대칭 띠가 그대로
-    유지된다 — 타입별 분기 없이 한 연산으로 둘 다 처리."""
+    유지된다 — 타입별 분기 없이 한 연산으로 둘 다 처리.
+    [화살표 찌그러짐 수정 2026-08-01, 실조건서 발견] 화살표(_ArrowItem/_PolyArrowItem)는 몸통과
+    별개로 처리한다 — 화살촉(닫힌 삼각형)까지 몸통과 한 경로로 묶어 `QPainterPathStroker`로
+    스트로크하면, RoundJoin이 삼각형의 뾰족한 꼭짓점(특히 tip)을 뭉툭한 혹으로 뭉개 실제
+    화살촉과 어긋난 '찌그러진' 실루엣이 됐다(1차 수정에서 union만 추가했을 때 사용자가
+    `python run.py` 스크린샷으로 지적). 해법: 몸통만 기존 방식대로 스트로크하고, 화살촉은
+    스트로크 대신 `_expand_polygon`(꼭짓점을 중심에서 바깥으로 밀어냄, 라운딩 없음)으로 살짝
+    키운 다각형을 그대로 union — 원래 화살촉과 같은 뾰족한 모양을 유지한 채 강조만 더한다.
+    [찌그러짐 2차 수정 2026-08-01, 사용자 확대 재확인] 위 수정 후에도 tip이 여전히 뭉툭해
+    보였다 — 몸통 경로가 tip까지 그대로 이어져, 그 끝의 RoundCap(반지름 (pw+extra)/2)이
+    화살촉의 얇은 꼭짓점 폭보다 넓어 삼각형 옆으로 반원이 삐져나왔다(union으로도 안 가려짐).
+    tip을 중심으로 그 반지름만큼의 원을 몸통 밴드에서 파내(subtract) 캡을 제거 — 그 자리는
+    이미 확대된 화살촉이 덮으므로 시각적 손실 없이 삐져나온 반원만 사라진다."""
+    if isinstance(it, (_ArrowItem, _PolyArrowItem)):
+        pw = getattr(it, "_width", 1.0)
+        band_w = max(pw, 1.0) + extra_width
+        stroker = QPainterPathStroker()
+        stroker.setWidth(band_w)
+        stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
+        stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        body_band = stroker.createStroke(_arrow_body_path(it)).simplified()
+        tip, _ang = it._tip_and_angle()
+        cap_cut = QPainterPath()
+        cap_cut.addEllipse(tip, band_w / 2.0 + 1.0, band_w / 2.0 + 1.0)
+        body_band = body_band.subtracted(cap_cut)
+        head = QPainterPath()
+        head.addPolygon(_expand_polygon(QPolygonF(it._head_points()), extra_width))
+        return body_band.united(head.simplified())
     centerline = _item_center_path(it)
     pw = it.pen().widthF() if hasattr(it, "pen") else getattr(it, "_width", 1.0)
     stroker = QPainterPathStroker()
@@ -6534,8 +6593,33 @@ class _AnnotatorView(QGraphicsView):
         pts = _dedup_pts([port_pt] + mids + [end])
         for i in range(len(pts) - 1):
             painter.drawLine(pts[i], pts[i + 1])
+        if len(pts) >= 2:
+            self._draw_ghost_arrowhead(painter, pts[-2], pts[-1])
         if snap is not None:
             self._draw_snap_marker(painter, end, self._view_scale())
+
+    def _draw_ghost_arrowhead(self, painter, tail: QPointF, tip: QPointF):
+        """[UX 2026-08-01] qc-dot/hover-port 커넥터 고스트에 화살촉 미리보기 추가 — 기존엔
+        몸통 선만 그려 실제 생성 결과(_hp_create_arrow, 항상 화살촉 있음)와 미리보기가
+        달라 보였다(사용자 지적: Lucid는 드래그 중에도 화살촉까지 미리보인다)."""
+        if tail == tip:
+            return
+        ang = math.atan2(tip.y() - tail.y(), tip.x() - tail.x())
+        size = max(getattr(self._owner, "current_width", 1.0) * 2.5, 7.0)
+        a1, a2 = ang + math.radians(150), ang - math.radians(150)
+        head = QPolygonF([
+            tip,
+            QPointF(tip.x() + size * math.cos(a1), tip.y() + size * math.sin(a1)),
+            QPointF(tip.x() + size * math.cos(a2), tip.y() + size * math.sin(a2)),
+        ])
+        painter.save()
+        pen = painter.pen()
+        pen.setStyle(Qt.PenStyle.SolidLine)
+        painter.setPen(pen)
+        fill = QColor(pen.color()); fill.setAlpha(160)
+        painter.setBrush(QBrush(fill))
+        painter.drawPolygon(head)
+        painter.restore()
 
     def _hp_create_arrow(self, src, port_pt, cursor_scene):
         """[하나의 시스템으로 통합 2026-08-01] 도형(선택 여부 무관)의 접속점에서 드래그 종료 —
