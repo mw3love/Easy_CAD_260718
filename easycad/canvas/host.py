@@ -922,9 +922,15 @@ class CanvasWindow(QMainWindow):
         self._refresh_minimap()
 
     def _zoom_fit(self):
+        # ⚠ [버그 수정 2026-08-01] 도형 boundingRect()의 핸들/히트 패딩은 고정 화면px를
+        # `_view_zoom_factor()`(현재 뷰 줌)로 나눠 씬 단위로 환산한다 — 즉 itemsBoundingRect()의
+        # 크기 자체가 "지금 줌이 얼마인가"에 달려 있다. 이 함수가 매번 그 줌을 바꾸면 다음 호출의
+        # 측정값도 함께 바뀌어, 반복해서 눌러도 값이 수렴하지 않고 계속 바뀌는 것처럼 보였다
+        # (사용자 재현 보고). 측정 전 항상 1:1로 리셋해 매번 같은 기준에서 재도록 고정하면
+        # 반복 호출 결과가 항상 동일해진다(멱등).
+        self._view.resetTransform()
         rect = self._scene.itemsBoundingRect()
         if rect.isEmpty():
-            self._view.resetTransform()
             self._update_zoom_label()
             self._refresh_minimap()
             return
@@ -1521,11 +1527,14 @@ class CanvasWindow(QMainWindow):
             tb.addWidget(btn)
             self._tool_buttons[key] = btn
         self._refresh_arrow_tool_button()   # [화살표 통합] 아이콘을 현재 종류에 맞춤
+        # [그룹 재정리 2026-08-01, 사용자 요청] 핀은 "무엇으로 그리는가"에 붙는 도구 옵션이라
+        # 그리기 도구 묶음(선택~도형류) 끝으로 옮긴다 — 다음 그룹(되돌리기 이하)과 분리.
+        tb.addAction(self._act_pin)
         tb.addSeparator()
 
-        # 편집 / 보기
-        for a in (self._act_undo, self._act_redo, self._act_pin, self._act_zoom100,
-                  self._act_fit, self._act_snap, self._act_ortho, self._act_grid):
+        # 편집 / 보기. [100%·전체맞춤 제거 2026-08-01] 휠줌으로 충분히 빠르고(사용자 판단),
+        # 전체맞춤은 미니맵 패널 헤더로 이관(공간적 개요라는 같은 맥락) — 메뉴·단축키(Ctrl+0/9)는 유지.
+        for a in (self._act_undo, self._act_redo, self._act_snap, self._act_ortho, self._act_grid):
             tb.addAction(a)
         self._refresh_history_actions()   # undo/redo 버튼 초기 활성 상태(둘 다 비어 disabled)
 
@@ -1587,6 +1596,14 @@ class CanvasWindow(QMainWindow):
             zoom_btn.setStyleSheet(
                 "#zoomBadge { background:palette(window); border:1px solid palette(mid);"
                 " border-radius:6px; padding:3px 8px; }")
+        # [그룹 구분 디자인 2026-08-01, 사용자 요청] 기본 QToolBar 구분선은 Fusion에서 거의
+        # 안 보일 정도로 옅다 — 파일(새로 만들기~저장) / 도구(선택~핀) / 편집·보기(되돌리기~격자)
+        # 3그룹이 한눈에 갈리도록 구분선을 굵고 여백 있게 강조.
+        toolbar = getattr(self, "_toolbar", None)
+        if toolbar is not None:
+            sep_color = "#3d4b5c" if dark else "#c9d3dc"
+            toolbar.setStyleSheet(
+                f"QToolBar::separator {{ background:{sep_color}; width:1px; margin:6px 9px; }}")
         toast = getattr(self, "_toast", None)
         if toast is not None:
             toast.setStyleSheet(
@@ -1939,12 +1956,22 @@ class CanvasWindow(QMainWindow):
         다시 그리도록 훅을 건다."""
         panel = _FloatingPanel(self, "미니맵", "minimap")
         self._minimap_panel = panel
+        # [사용자 요청 2026-08-01] 전체 맞춤(Ctrl+9)을 상단바에서 빼고 여기로 이관 — 공간
+        # 개요라는 같은 맥락(미니맵도 "전체가 어디 있나"를 보여주는 도구). 기존 `_act_fit`을
+        # 그대로 재사용해(아이콘·툴팁·단축키 동기화 유지) 제목과 접기버튼 사이에 끼운다.
+        fit_btn = QToolButton()
+        fit_btn.setDefaultAction(self._act_fit)
+        fit_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        fit_btn.setAutoRaise(True)
+        fit_btn.setFixedSize(QSize(18, 18))
+        fit_btn.setIconSize(QSize(14, 14))
+        panel._head.layout().insertWidget(1, fit_btn)
         self._minimap = _MinimapView(self, self._scene)
-        # [self-review 수정] 폭>높이(가로가 긴) 크기로 뒀더니 이 클래스 docstring이 이미 경고하는
-        # 함정(뷰포트가 가로로 넓으면 fitInView(KeepAspectRatio)가 레터박스돼 인디케이터가 작아
-        # 보임)을 다시 만들 위험이 있었다 — 옛 dock이 "좁고 세로로 긴" 비율로 고쳤던 근거와 반대.
-        # 속성 패널과 같은 폭(170)으로 좌우를 맞추고, 세로로 긴 비율을 유지한다.
-        self._minimap.setFixedSize(QSize(170, 220))
+        # [자체확인: 렌더/실행 불가 — 실제 모니터가 없는 헤드리스 환경이라 "체감"은 못 보고
+        # 비율 수치만 확인] 옛 170×220(세로긴형)은 인디케이터 자체 크기 버그를 피하려던 시절의
+        # 타협이었다(_INDICATOR_PX 고정px 전환 이후로는 그 버그가 이미 해소돼 더는 근거가 아님).
+        # 사용자 요청대로 실제 작업 화면(1920×1080, 16:9)과 같은 가로 비율로 맞춘다.
+        self._minimap.setFixedSize(QSize(228, 128))   # 228/128 ≈ 1.78 ≈ 16:9
         panel.set_content(self._minimap)
 
         self._view.horizontalScrollBar().valueChanged.connect(self._refresh_minimap)

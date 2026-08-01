@@ -1338,6 +1338,23 @@ def test_view_controls():
     assert w._view.transform().m11() > 0
 
 
+def test_zoom_fit_idempotent():
+    # ⚠ [버그 수정 회귀 2026-08-01] 도형 boundingRect()의 핸들/히트 패딩은 현재 뷰 줌으로 나눠
+    # 씬 단위로 환산된다(_view_zoom_factor) — 리셋 없이 그대로 itemsBoundingRect()를 재면 그
+    # 측정값 자체가 직전 줌에 의존해, 전체맞춤을 눌러도 결과가 계속 바뀌었다(사용자 재현 보고).
+    # 반복 호출은 항상 같은 결과여야 한다(멱등) — 극단적 줌에서 시작해도 마찬가지.
+    w = CanvasWindow(); w.resize(900, 700); w.show()
+    _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    w._view.scale(7.0, 7.0)
+    w._zoom_fit()
+    t1 = w._view.transform()
+    w._zoom_fit()
+    t2 = w._view.transform()
+    assert abs(t1.m11() - t2.m11()) < 1e-9
+    assert abs(t1.dx() - t2.dx()) < 1e-6
+    assert abs(t1.dy() - t2.dy()) < 1e-6
+
+
 def test_direction_rubber_band():
     # 방향 감지 러버밴드: 왼→오=window(완전포함), 오→왼=crossing(걸침), Shift=추가선택.
     w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
@@ -6049,7 +6066,11 @@ def test_minimap_shares_scene_and_is_noninteractive():
     assert w._minimap.isInteractive() is False
     # [캔버스-퍼스트 레이아웃] 우측 QDockWidget 대신 우상단(속성 아래) 플로팅 카드.
     assert w._minimap_panel.parent() is w
-    assert w._minimap_panel.pos().x() > w._props_panel.pos().x() - 5   # 속성과 같은 우측 열
+    # [2026-08-01] 미니맵을 16:9로 넓혀 폭이 속성 패널과 달라졌다 — 둘 다 우측 정렬이므로
+    # 왼쪽 x가 아니라 오른쪽 가장자리(x+width)가 같은 열임을 확인한다.
+    mm_right = w._minimap_panel.pos().x() + w._minimap_panel.width()
+    props_right = w._props_panel.pos().x() + w._props_panel.width()
+    assert abs(mm_right - props_right) < 5   # 속성과 같은 우측 열
     assert w._minimap_panel.pos().y() > w._props_panel.pos().y()       # 속성 아래
 
 
