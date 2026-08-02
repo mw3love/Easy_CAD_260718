@@ -31,6 +31,7 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
+from easycad.canvas.host_widgets import _current_icon_color
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
@@ -90,7 +91,8 @@ class _StyleMixin:
         """[화살표 통합] 툴바 화살표 아이콘을 현재 종류에 맞춘다 — 직각이면 직각 커넥터 아이콘."""
         btn = getattr(self, "_tool_buttons", {}).get("arrow")
         if btn is not None:
-            btn.setIcon(_tool_icon(_ARROW_KIND_TOOL.get(self.current_arrow_kind, "arrow")))
+            btn.setIcon(_tool_icon(_ARROW_KIND_TOOL.get(self.current_arrow_kind, "arrow"),
+                                   _current_icon_color()))
 
 
     def _set_current_color(self, color: QColor):

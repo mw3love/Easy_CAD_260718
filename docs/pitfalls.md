@@ -81,6 +81,15 @@
   건 비대칭이 원인. 게이트 완화(+여유)가 아니라 **제거**가 정답이었다. (`2026-08.md` 스마트
   정렬 가이드)
 
+## 렌더링(QPainter/QIcon/오프스크린)
+- 오프스크린 플랫폼 플러그인(`QT_QPA_PLATFORM=offscreen`)에서 `QPainter`의
+  `CompositionMode_SourceIn`/`DestinationIn`으로 SVG 아이콘을 런타임 재칠하면, 짧은 시간에
+  CanvasWindow를 수십 개 생성하는 스모크 테스트에서 재현 가능한 네이티브 세그폴트가 났다 —
+  QPixmap↔QImage 전환·premultiplied 포맷 전환 등 4가지 변형을 다 시도해도 재현됐고, 캐싱으로
+  호출 빈도를 줄여도 재현됨(호출 "횟수"가 원인이 아니었음). 해법: 합성모드를 아예 안 쓰고
+  `QImage.setPixelColor()` 픽셀 루프로 RGB만 교체 — 상세와 시도한 변형 전부는 wiki
+  `easycad-svg아이콘재칠-QPainter합성모드-세그폴트.md` 참조. (`2026-08.md` 아이콘 색 중립화)
+
 ## 검증 방법론
 - 오프스크린(headless) 통과는 "해결"이 아니다 — 지속연결 초안이 offscreen은 통과했지만 실제
   GUI에서 버그가 났다(플로팅→고정 부착점으로 재설계). 전역 규칙 11-c "정직한 상태표기" 참조.

@@ -249,9 +249,14 @@ Lucid/FigJam 캡처 + 사용자 요청 반영, deep-interview 4가지 확정(202
   듀오톤 스타일(A2, save만 반전한 S2) 확정 후, 나머지 14종(새로 만들기·열기·선·펜·번호·
   직각화살·핀·되돌리기·다시실행·스냅·직교·격자·테마토글·도움말)까지 같은 규칙으로 새로 그려
   `easycad/resources/icons/*.svg` 18개로 저장하고 `_tool_icon()`/`_act_icon()`을 QPainter
-  코드 드로잉 → SVG 래스터화(`_svg_icon()`, QSvgRenderer)로 전환. 색은 다크/라이트 공통
-  코랄(#da7756) 고정(사용자 확정). 메뉴 전용 8종(pdf/image/table/titleblock/mermaid/
-  zoom_fit/zoom_100/align)은 스코프 밖이라 기존 QPainter 코드 유지. 스모크 345종 통과.
+  코드 드로잉 → SVG 래스터화(`_svg_icon()`, QSvgRenderer)로 전환. 메뉴 전용 8종(pdf/image/
+  table/titleblock/mermaid/zoom_fit/zoom_100/align)은 스코프 밖이라 기존 QPainter 코드 유지.
+  **색은 최종적으로 코랄 고정이 아니라 도형 팔레트와 같은 테마 적응 중립색으로 확정**(같은
+  날 4~5차 재피드백 — 코랄이 화면 전체에 흔해 "진짜 활성 상태(checked)" 신호력이 떨어진다는
+  지적, hover도 코랄→테마별 중립 회색/검정 전환, checked는 순간 활성(그리기 도구·핀·직교,
+  강함)/상시 ON 가능(스냅·격자, 여림) 2단계로 분리). ⚠ 재칠 구현 중 `QPainter` 합성모드
+  (`CompositionMode_SourceIn`)가 스모크 테스트에서 재현 가능한 네이티브 세그폴트를 일으켜
+  픽셀 루프 방식으로 교체·해결(`docs/pitfalls.md` "렌더링" 항목). 스모크 345종 통과.
   상세: `~/.claude/design-system/projects/easy-cad.md`.
 
 #### 후속 (Phase 6 이후 / 낮은 우선)

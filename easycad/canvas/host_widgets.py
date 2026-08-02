@@ -146,13 +146,31 @@ _SVG_ACT_ICON_NAMES = frozenset({
 })
 
 
+_ACT_ICON_CACHE: dict[tuple[str, str], QIcon] = {}
+
+
 def _act_icon(name: str) -> QIcon:
     """[Phase 6 M1] 파일/삽입/보기 액션 아이콘. 상단바 노출 11종(`_SVG_ACT_ICON_NAMES`)은
-    2026-08-02부터 코랄 듀오톤 SVG(`easycad/resources/icons/`)를 래스터화 — 나머지(메뉴 전용)는
-    기존 QPainter 단색 라인 글리프 그대로(좌표는 icon_proposal 아티팩트에서 포팅)."""
+    2026-08-02부터 SVG(`easycad/resources/icons/`)를 래스터화 — 나머지(메뉴 전용)는 기존
+    QPainter 단색 라인 글리프 그대로(좌표는 icon_proposal 아티팩트에서 포팅). [같은 날 4차
+    피드백] SVG 11종도 도형 팔레트와 같은 테마 적응 중립색(`_ICON_COLOR`)으로 재칠 — 아이콘
+    색은 이제 상단바 전체가 중립, "활성 상태"만 버튼 배경 코랄 틴트가 담당한다.
+
+    결과를 (이름, 현재 색) 키로 캐시한다 — 이전엔 매 호출마다 픽스맵을 새로 만들었는데,
+    `_apply_theme()`가 매 CanvasWindow 생성·매 테마 전환마다 `_icon_actions` 전부(약 18개)에
+    대해 이 함수를 다시 부른다. 불필요한 재작업을 없애 성능상 이득(디버깅 중 실측: 스모크
+    전체 실행에서 `_svg_icon_pixmap` 호출이 캐시 없이도 36회로 이미 작았다 — 세그폴트의
+    실제 원인은 호출 횟수가 아니라 `_svg_icon_pixmap` 내부의 재칠 방식이었다, 그쪽 함정
+    주석 참조. 이 캐시는 그 수정과 별개로 유효한 성능 개선이라 남겨둠)."""
+    key = (name, _ICON_COLOR.name())
+    cached = _ACT_ICON_CACHE.get(key)
+    if cached is not None:
+        return cached
     if name in _SVG_ACT_ICON_NAMES:
-        pm = _svg_icon_pixmap(name, 24)
-        return _finish_act_icon(pm)
+        pm = _svg_icon_pixmap(name, 24, color=_ICON_COLOR)
+        icon = _finish_act_icon(pm)
+        _ACT_ICON_CACHE[key] = icon
+        return icon
     pm = QPixmap(24, 24)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
@@ -204,7 +222,9 @@ def _act_icon(name: str) -> QIcon:
         p.drawEllipse(QPointF(10.5, 10.5), 5, 5)
         line(14.2, 14.2, 19.5, 19.5)
     p.end()
-    return _finish_act_icon(pm)
+    icon = _finish_act_icon(pm)
+    _ACT_ICON_CACHE[key] = icon
+    return icon
 
 
 def _finish_act_icon(pm: QPixmap) -> QIcon:
@@ -223,6 +243,25 @@ def _finish_act_icon(pm: QPixmap) -> QIcon:
 # [Phase 6 M1] 캔버스 배경 — 테마별. 다크는 CAD 관습대로 어두운 모델공간.
 _CANVAS_BG = {"dark": QColor("#1e2731"), "light": QColor("#ffffff")}
 _ICON_COLOR_THEME = {"dark": QColor("#cdd8e3"), "light": QColor("#39434f")}
+
+
+def _set_icon_color(dark: bool) -> QColor:
+    """[2026-08-02 버그 수정] 전역 아이콘 중립색을 테마에 맞게 갱신하는 유일한 통로.
+    예전엔 `host_ui.py`의 `_apply_theme`가 `global _ICON_COLOR; _ICON_COLOR = ...`로 직접
+    재바인딩했는데, 이는 `from host_widgets import _ICON_COLOR`로 이름을 가져간 host_ui.py
+    **자신의** 로컬 사본만 바꿀 뿐이다(파이썬의 `from import`는 import 시점 스냅샷이라 원본
+    모듈의 재바인딩이 반영 안 됨) — 이 모듈(host_widgets) 자신의 `_ICON_COLOR`는 그대로 남아,
+    여기서 그 이름을 직접 참조하는 `_act_icon()`의 메뉴 전용 아이콘(pdf/image/table 등)이
+    테마 전환 후에도 항상 초기값(라이트 톤)으로 그려지고 있었다(실측 확인). 이제 이 함수로만
+    갱신하고, 읽을 땐 `_current_icon_color()`를 쓴다 — 두 모듈(host_ui.py/host_style.py) 모두
+    이 getter를 호출 시점에 매번 실행해 항상 최신값을 받는다."""
+    global _ICON_COLOR
+    _ICON_COLOR = QColor(_ICON_COLOR_THEME["dark" if dark else "light"])
+    return _ICON_COLOR
+
+
+def _current_icon_color() -> QColor:
+    return _ICON_COLOR
 
 
 def _dark_palette() -> QPalette:

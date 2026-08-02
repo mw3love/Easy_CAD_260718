@@ -134,10 +134,15 @@ def _pixmap_from_data(data: bytes) -> QPixmap | None:
 
 
 # ---------------------------------------------------------------------------
-# 아이콘 (SVG 래스터화 — 2026-08-02 디자인 베이크오프 2라운드: 코랄 듀오톤(#da7756) 통일
-# 스타일로 전환. 예전 "그리기도구는 현재 그리기색 반영" 관례는 사용자가 실사용 안 한다고
-# 확인돼 폐기 — 이제 테마·색 무관하게 전 아이콘이 같은 고정 코랄이다(색은 SVG 파일에
-# 직접 인코딩, 런타임 재칠 없음). SVG는 easycad/resources/icons/<name>.svg.
+# 아이콘 (SVG 래스터화 — 2026-08-02 디자인 베이크오프 2라운드: 코랄 듀오톤 외곽선+포인트
+# 채움 스타일 확정, SVG는 easycad/resources/icons/<name>.svg에 저장. [같은 날 4차 피드백]
+# 상단바 전체가 코랄이면 "진짜 활성 상태"(checked)의 신호력이 떨어진다는 지적으로, 아이콘
+# 색은 도형 팔레트와 같은 테마 적응 중립색으로 다시 바꿨다 — SVG 파일 자체는 여전히 코랄로
+# 그려져 있지만(모양=외곽선+포인트 채움 구조는 색과 무관하게 유지), 렌더 시 `color` 인자를
+# 주면 픽셀 루프로 그 색 하나로 통째로 재칠한다(파일을 두 벌 관리하거나 SVG 안에 currentColor를
+# 쓰는 대신, 이미 있는 파일을 그대로 두고 픽스맵 단계에서 재칠 — 듀오톤의 "외곽선/채움 비중
+# 차이"는 알파(선폭·불투명도)로 이미 표현돼 있어 단색으로 재칠해도 형태 구분은 그대로 남는다.
+# QPainter 합성모드 대신 픽셀 루프를 쓰는 이유는 `_svg_icon_pixmap`의 함정 주석 참조).
 # ---------------------------------------------------------------------------
 
 def _icons_dir() -> Path:
@@ -148,29 +153,52 @@ def _icons_dir() -> Path:
     return base / "resources" / "icons"
 
 
-def _svg_icon_pixmap(name: str, size: int = 22) -> QPixmap:
+def _svg_icon_pixmap(name: str, size: int = 22, color: QColor | None = None) -> QPixmap:
     """resources/icons/<name>.svg를 size×size로 래스터화한 QPixmap(캐시 없음 — 호출부가
-    비활성 상태용 흐린 사본 등을 더 만들 수 있어 QIcon 캐시(`_svg_icon`)와 분리)."""
+    비활성 상태용 흐린 사본 등을 더 만들 수 있어 QIcon 캐시(`_svg_icon`)와 분리).
+    `color`를 주면 SVG 파일 자체의 색(코랄)과 무관하게 그 색 하나로 재칠(형태는 알파로 유지).
+
+    ⚠ [2026-08-02 세그폴트 수정, 스턱루프 규칙 11-b] 재칠은 픽셀 루프로 한다(QPainter
+    합성모드 금지) — `python tests/test_easycad.py` 전체 실행(짧은 시간에 CanvasWindow
+    수십 개 생성) 중 재현 가능한 네이티브 세그폴트를 만났다. 5회 반복 재현 스크립트로
+    이분탐색한 결과, 원인은 재칠 "여부"나 "빈도"가 아니라 **QPainter의 합성모드
+    (CompositionMode_SourceIn/DestinationIn) 자체**였다 — QPixmap 2장 방식, QImage
+    한 장으로 축소, premultiplied↔non-premultiplied 포맷 전환까지 4가지 변형을 각각
+    5회씩 테스트했지만 전부 재현됐고(색을 고정 단일값으로 캐시 다양성을 없애도 재현 —
+    "캐시된 픽스맵 개수" 가설도 기각), **합성모드를 아예 안 쓰고 `QImage.setPixelColor`
+    픽셀 루프로 바꾼 버전만 5/5 통과**했다. 즉 이 환경(오프스크린 플랫폼 플러그인)에서
+    `QPainter` 합성모드가 반복적인 SVG 렌더와 얽힐 때 불안정한 것으로 보인다(정확한
+    Qt/PyQt6 내부 원인은 확인 못 함 — `Not-tested`). 아이콘이 22~24px라 픽셀 루프
+    비용은 무시 가능(호출 자체도 `_svg_icon`/`_act_icon` 캐시로 사실상 1회성)."""
     renderer = QSvgRenderer(str(_icons_dir() / f"{name}.svg"))
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
+    img = QImage(size, size, QImage.Format.Format_ARGB32)
+    img.fill(Qt.GlobalColor.transparent)
+    p = QPainter(img)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     renderer.render(p)
     p.end()
-    return pm
+    if color is not None:
+        c = QColor(color)
+        r, g, b = c.red(), c.green(), c.blue()
+        for y in range(size):
+            for x in range(size):
+                a = img.pixelColor(x, y).alpha()
+                if a:
+                    img.setPixelColor(x, y, QColor(r, g, b, a))
+    return QPixmap.fromImage(img)
 
 
-_SVG_ICON_CACHE: dict[tuple[str, int], QIcon] = {}
+_SVG_ICON_CACHE: dict[tuple, QIcon] = {}
 
 
-def _svg_icon(name: str, size: int = 22) -> QIcon:
-    """resources/icons/<name>.svg를 size×size로 래스터화해 QIcon으로(결과 캐시)."""
-    key = (name, size)
+def _svg_icon(name: str, size: int = 22, color: QColor | None = None) -> QIcon:
+    """resources/icons/<name>.svg를 size×size(+선택적 재칠 색)로 래스터화해 QIcon으로(결과
+    캐시 — 캐시 키에 색을 포함해 테마별로 별도 캐시된다)."""
+    key = (name, size, QColor(color).name() if color is not None else None)
     icon = _SVG_ICON_CACHE.get(key)
     if icon is not None:
         return icon
-    icon = QIcon(_svg_icon_pixmap(name, size))
+    icon = QIcon(_svg_icon_pixmap(name, size, color))
     _SVG_ICON_CACHE[key] = icon
     return icon
 
@@ -179,8 +207,8 @@ def _svg_icon(name: str, size: int = 22) -> QIcon:
 _TOOL_ICON_NAMES = frozenset({"select", "arrow", "text", "line", "pen", "badge", "sarrow"})
 
 
-def _tool_icon(tool: str) -> QIcon:
-    return _svg_icon(tool, 22)
+def _tool_icon(tool: str, color: QColor | None = None) -> QIcon:
+    return _svg_icon(tool, 22, color)
 
 
 def _arrow_dir_icon(head_at_end: bool) -> QIcon:

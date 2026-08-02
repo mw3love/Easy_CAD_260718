@@ -39,7 +39,7 @@ from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
 from easycad.canvas.host_widgets import (
-    _ICON_COLOR, _CANVAS_BG, _ICON_COLOR_THEME,
+    _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
 )
 
@@ -360,7 +360,7 @@ class _UIBuildMixin:
             if key in ("rect", "ellipse", "sarrow"):
                 continue
             btn = QToolButton()
-            btn.setIcon(_tool_icon(key))
+            btn.setIcon(_tool_icon(key, _current_icon_color()))
             btn.setIconSize(QSize(20, 20))
             tip = "화살표 (3 — 그린 뒤 속성 패널에서 종류 변경)" \
                 if key == "arrow" else f"{name} ({sc})"
@@ -399,10 +399,9 @@ class _UIBuildMixin:
         """[Phase 6 M1] 다크/라이트 일괄 적용 — 팔레트(Fusion)·캔버스 배경·아이콘 색.
         아이콘은 baked QPixmap이라 테마색이 바뀌면 액션·팔레트 아이콘을 재생성한다.
         persist=True일 때만 QSettings에 저장(테스트가 사용자 설정을 덮지 않도록 분리)."""
-        global _ICON_COLOR
         self._dark = dark
         key = "dark" if dark else "light"
-        _ICON_COLOR = QColor(_ICON_COLOR_THEME[key])
+        _set_icon_color(dark)   # host_widgets._ICON_COLOR 갱신(host_widgets._act_icon()이 읽는 실제 전역)
         app = QApplication.instance()
         if app is not None:
             app.setStyle("Fusion")   # 두 테마 모두 Fusion — 팔레트가 전 위젯에 안정 반영
@@ -413,15 +412,19 @@ class _UIBuildMixin:
             # 고정 색 팔레트(`_light_palette()`)로 OS 설정과 무관하게 만들어 해결.
             app.setPalette(_dark_palette() if dark else _light_palette())
         self._scene.setBackgroundBrush(QBrush(_CANVAS_BG[key]))
-        # 아이콘 재생성: 액션(메뉴 전용 8종만 실제로 테마색 바뀜, SVG 11종은 캐시 히트라 사실상
-        # no-op) + 팔레트/심볼(중립색, 테마 적응). 상단 그리기 도구 버튼은 코랄 고정 SVG라
-        # 이 루프와 무관(재생성 불필요).
+        # 아이콘 재생성: 액션(파일/보기 26종 전부 — SVG 11종·QPainter 8종 모두 이제 중립색이라
+        # 테마 전환마다 실제로 재칠됨) + 팔레트/심볼(중립색) + 상단 그리기 도구 6종(2026-08-02
+        # 4차 피드백으로 코랄 고정 → 중립색 전환, 이제 테마 전환 시 재생성 필요) + 화살표
+        # 종류별 아이콘(별도 헬퍼가 종류를 함께 챙김).
         for act, name in getattr(self, "_icon_actions", ()):
             act.setIcon(_act_icon(name))
         for k, b in getattr(self, "_shape_tool_buttons", {}).items():
             b.setIcon(self._shape_icon(k))
         for k, b in getattr(self, "_sym_buttons", {}).items():
             b.setIcon(self._shape_icon(k))
+        for k, b in getattr(self, "_tool_buttons", {}).items():
+            b.setIcon(_tool_icon(k, _current_icon_color()))
+        self._refresh_arrow_tool_button()
         # [캔버스-퍼스트] 플로팅 패널 제목줄 = accent 밑줄 + 틴트 배경(옛 dock 제목표시줄과 같은
         # '잡아 눈에 띄는 카드' 언어 유지, 자유 드래그는 없지만 접기 버튼이 있는 자리라 여전히
         # 상호작용 영역으로 보여야 함).
@@ -472,16 +475,21 @@ class _UIBuildMixin:
         # (rgba(0,0,0,18))— 밝은 배경 위에 흰 틴트를 얹으면 안 보이므로 방향을 테마별로 뒤집는다.
         # pressed는 여전히 코랄 진하게(클릭 확정 피드백은 또렷해야 하므로 건드리지 않음).
         hover_bg = "rgba(255,255,255,22)" if dark else "rgba(0,0,0,18)"
-        # ⚠ 상위 위젯(self·패널 body)에 걸면 안 됨 — `_props_panel`의 QFormLayout이 이
-        # QToolButton들(_pf_color 등)과 QAbstractSpinBox(_pf_width 등)를 같은 body 아래 형제로
-        # 두고 있어서, 조상에 스타일시트를 걸면 QStyleSheetStyle 강제전환으로 스핀박스 sizeHint가
-        # 짧아져 행이 겹친다(2026-07-31 스턱루프와 같은 함정, CLAUDE.md 참조). 그래서 스핀박스가
-        # 없는 컨테이너(툴바)는 컨테이너 단위로, 스핀박스와 형제인 버튼들은 위젯 각각에 직접 건다.
+        # [2026-08-02 5차 피드백] "상시 켜짐"(스냅·격자, 기본값 ON)은 옅은 틴트(35)를 유지하되,
+        # "순간적으로 켜지는" 것(그리기 도구 무장·핀·직교)은 클릭 순간(pressed)의 진한 코랄을
+        # 뗀 뒤에도 고정색으로 유지해 달라는 요청 — objectName 선택자로 두 그룹을 나눈다.
+        # `QToolButton#toolStrongCheck:checked`는 CSS 명시도(objectName 선택자 > 타입 선택자)로
+        # 일반 `QToolButton:checked` 규칙을 이긴다 — 같은 스타일시트 문자열 안에서 셀렉터
+        # 명시도로 가르는 방식이라(각 버튼에 별도 stylesheet를 걸어 조상↔자손 캐스케이드에
+        # 기대는 방식보다) 결과가 항상 결정적이다. 이 objectName은 아래에서 대상 위젯에만 부여.
+        strong_checked_bg = "rgba(218,119,86,150)"
         btn_qss = (
             "QToolButton { border:1px solid transparent; border-radius:6px; padding:3px; }"
             "QToolButton:checked { background:rgba(218,119,86,35); }"
+            f"QToolButton#toolStrongCheck:checked {{ background:{strong_checked_bg};"
+            " border-color:#da7756; }"
             f"QToolButton:hover {{ background:{hover_bg}; }}"
-            "QToolButton:pressed { background:rgba(218,119,86,150); border-color:#da7756; }"
+            f"QToolButton:pressed {{ background:{strong_checked_bg}; border-color:#da7756; }}"
         )
         toolbar = getattr(self, "_toolbar", None)
         if toolbar is not None:
@@ -489,6 +497,16 @@ class _UIBuildMixin:
             toolbar.setStyleSheet(
                 f"QToolBar::separator {{ background:{sep_color}; width:1px; margin:6px 9px; }}"
                 + btn_qss)
+            # 순간적 활성 그룹: 그리기 도구 6종(선택/화살표/텍스트/선/펜/번호) + 핀 + 직교.
+            # 스냅·격자는 objectName을 안 줘서 위 일반 규칙(옅은 35)에 그대로 남는다.
+            _strong_check_widgets = list(getattr(self, "_tool_buttons", {}).values())
+            for act_name in ("_act_pin", "_act_ortho"):
+                act = getattr(self, act_name, None)
+                w = toolbar.widgetForAction(act) if act is not None else None
+                if w is not None:
+                    _strong_check_widgets.append(w)
+            for w in _strong_check_widgets:
+                w.setObjectName("toolStrongCheck")
         _accent_btns = (
             list(getattr(self, "_shape_tool_buttons", {}).values())
             + list(getattr(self, "_sym_buttons", {}).values())
@@ -554,7 +572,7 @@ class _UIBuildMixin:
         pm.fill(Qt.GlobalColor.transparent)
         p = QPainter(pm)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor(_ICON_COLOR)); pen.setWidthF(1.6)   # 테마색(다크/라이트 적응)
+        pen = QPen(_current_icon_color()); pen.setWidthF(1.6)   # 테마색(다크/라이트 적응)
         p.setPen(pen); p.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         m = 4
         r = QRectF(m, m, px - 2 * m, px - 2 * m)
