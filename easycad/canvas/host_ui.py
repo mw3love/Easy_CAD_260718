@@ -462,11 +462,16 @@ class _UIBuildMixin:
         # 테두리가 적절하지만, 상시 상태엔 옅은 배경 틴트가 덜 튀면서도 "켜짐"을 계속 알린다 —
         # 사용자 선택(대안 1): checked는 테두리 없이 옅은 배경 틴트만(alpha 35).
         # [2026-08-02 3차 피드백] checked가 무테두리가 되니 이번엔 hover만 테두리가 남아 오히려
-        # 더 튀었다 — hover도 테두리 없이 checked보다 옅은 틴트(alpha 25)로 낮춤. 완전히
-        # 없애지 않은 이유: 아이콘 전용 툴바라 hover가 유일한 즉각 피드백(툴팁은 딜레이가 있음)
-        # — 다만 hover는 커서가 그 자리에 있는 동안·한 번에 하나만 켜지는 순간적 상태라 checked
-        # 만큼 튈 걱정은 없어 옅은 틴트 정도는 유지. pressed는 여전히 진하게(클릭 확정 피드백은
-        # 또렷해야 하므로 건드리지 않음).
+        # 더 튀었다 — hover도 테두리 없이 옅은 틴트로 낮춤(완전히 없애지 않은 이유: 아이콘 전용
+        # 툴바라 hover가 유일한 즉각 피드백, 툴팁은 딜레이가 있음).
+        # [2026-08-02 4차 피드백] hover까지 코랄이면 이미 아이콘·checked·구분선이 전부 코랄인
+        # 화면에서 코랄이 흔해져 "진짜 선택됨"(checked)의 신호력이 떨어진다는 지적 — hover는
+        # 의미 없는 발견용 신호(커서가 지나갈 뿐)라 **중립 회색 틴트**로 바꾸고, checked는 실제
+        # "지금 활성 상태"라는 의미가 있으니 코랄을 그대로 유지(사용자 확인). 다크는 배경을
+        # 밝히는 흰색 계열(rgba(255,255,255,22)), 라이트는 반대로 어둡히는 검정 계열
+        # (rgba(0,0,0,18))— 밝은 배경 위에 흰 틴트를 얹으면 안 보이므로 방향을 테마별로 뒤집는다.
+        # pressed는 여전히 코랄 진하게(클릭 확정 피드백은 또렷해야 하므로 건드리지 않음).
+        hover_bg = "rgba(255,255,255,22)" if dark else "rgba(0,0,0,18)"
         # ⚠ 상위 위젯(self·패널 body)에 걸면 안 됨 — `_props_panel`의 QFormLayout이 이
         # QToolButton들(_pf_color 등)과 QAbstractSpinBox(_pf_width 등)를 같은 body 아래 형제로
         # 두고 있어서, 조상에 스타일시트를 걸면 QStyleSheetStyle 강제전환으로 스핀박스 sizeHint가
@@ -475,7 +480,7 @@ class _UIBuildMixin:
         btn_qss = (
             "QToolButton { border:1px solid transparent; border-radius:6px; padding:3px; }"
             "QToolButton:checked { background:rgba(218,119,86,35); }"
-            "QToolButton:hover { background:rgba(218,119,86,25); }"
+            f"QToolButton:hover {{ background:{hover_bg}; }}"
             "QToolButton:pressed { background:rgba(218,119,86,150); border-color:#da7756; }"
         )
         toolbar = getattr(self, "_toolbar", None)
