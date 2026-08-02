@@ -1,0 +1,1103 @@
+"""정밀 편집(축고정/정렬가이드/그리드스냅)·화살표 프리뷰
+
+tests/test_easycad.py 2026-08-02 분할분. 실행: python tests/test_easycad.py (전체) 또는 pytest test_part5_precision_edit.py.
+"""
+from _shared import *  # noqa: F401,F403
+
+
+def test_shiftwheel_width_coalesces_to_one_step():
+    # Shift+휠 두께 연속 조절 = undo 1스텝(before 유지·after 갱신).
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, width=2.0); it.setSelected(True)
+    d0 = len(w._undo)
+    w.adjust_item_property(it, +1)
+    w.adjust_item_property(it, +1)
+    w.adjust_item_property(it, +1)
+    assert len(w._undo) == d0 + 1
+    assert abs(it.pen().widthF() - 5.0) < 1e-6
+    w.undo(); assert abs(it.pen().widthF() - 2.0) < 1e-6   # 병합해도 최초 before 복원
+    w.redo(); assert abs(it.pen().widthF() - 5.0) < 1e-6
+
+
+
+
+def test_redo_invalidation_and_action_state():
+    # 되돌린 뒤 새 변이가 들어오면 redo 스택 무효화 + undo/redo 버튼 활성 상태 동기화.
+    w = CanvasWindow()
+    def add():
+        r = _mk_pen_rect(w); w.push_undo_add(r); return r
+    add()
+    assert w._act_undo.isEnabled() and not w._act_redo.isEnabled()
+    w.undo()
+    assert not w._act_undo.isEnabled() and w._act_redo.isEnabled()
+    add()                                   # 되돌린 상태에서 새 변이
+    assert len(w._redo) == 0
+    assert w._act_undo.isEnabled() and not w._act_redo.isEnabled()
+
+
+
+
+def test_new_doc_clears_undo_and_redo():
+    w = CanvasWindow()
+    r = _mk_pen_rect(w); w.push_undo_add(r)
+    w.undo()                                # redo에 1건
+    w._new_doc()
+    assert len(w._undo) == 0 and len(w._redo) == 0
+    assert not w._act_undo.isEnabled() and not w._act_redo.isEnabled()
+
+
+# ---------------------------------------------------------------------------
+# [Phase 6 M2] one-shot 도구 + pin + 우클릭 취소 + sticky 기본값 + 비활성 아이콘.
+# ---------------------------------------------------------------------------
+
+
+def test_oneshot_reverts_to_select():
+    w = CanvasWindow(); w.tool_pinned = False
+    w.set_tool("rect")
+    w.push_undo_add(_mk_pen_rect(w))
+    _app.processEvents()               # singleShot(0) 실행
+    assert w.current_tool == "select"
+
+
+
+
+def test_pin_keeps_tool_armed():
+    w = CanvasWindow(); w._toggle_pin(True)
+    assert w.tool_pinned is True
+    w.set_tool("rect")
+    w.push_undo_add(_mk_pen_rect(w))
+    _app.processEvents()
+    assert w.current_tool == "rect"    # pin ON → 무장 유지(연속 그리기)
+
+
+
+
+def test_oneshot_symbol_prefix_and_pen_exclusion():
+    w = CanvasWindow(); w.tool_pinned = False
+    w.set_tool("sym:decision")
+    w.push_undo_add(_mk_pen_rect(w)); _app.processEvents()
+    assert w.current_tool == "select"  # 심볼도 one-shot
+    w.set_tool("pen")
+    w.push_undo_add(_mk_pen_rect(w)); _app.processEvents()
+    assert w.current_tool == "pen"     # pen은 제외 → 유지
+
+
+
+
+def test_paste_does_not_disarm():
+    w = CanvasWindow(); w.tool_pinned = False; w.set_tool("select")
+    w.push_undo_add_many([_mk_pen_rect(w)])
+    _app.processEvents()
+    assert w.current_tool == "select"  # 붙여넣기는 select 모드라 one-shot에 안 걸림
+
+
+
+
+def test_right_click_cancels_and_disarms():
+    w = CanvasWindow(); v = w._view
+    w.set_tool("rect")
+    v._right_click_cancel()
+    assert w.current_tool == "select"                   # 무장 해제
+    # 진행 중 클릭 배치가 있으면 폐기 + 해제.
+    w.set_tool("sarrow")
+    it = _PolyArrowItem(QColor("#111111"), 2.0, True)
+    it.set_points(QPointF(0, 0), QPointF(0, 0)); w._scene.addItem(it)
+    v._place = it; v._place_tool = "sarrow"
+    v._right_click_cancel()
+    assert v._place is None and it.scene() is None       # 배치 폐기
+    assert w.current_tool == "select"
+
+
+
+
+def test_sticky_defaults_width_color_style():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, width=2.0, color="#111111"); it.setSelected(True)
+    w._edit_width(9.0)
+    assert abs(w.current_width - 9.0) < 1e-6
+    di = w._pf_style.findData(Qt.PenStyle.DashLine)
+    w._pf_style.setCurrentIndex(di)
+    assert w.current_style == Qt.PenStyle.DashLine
+    w._set_current_color(QColor("#00ff00"))
+    assert w.current_color.name() == "#00ff00"
+    pen = w.make_pen()                 # 다음 도형에 sticky 반영
+    assert abs(pen.widthF() - 9.0) < 1e-6
+    assert pen.style() == Qt.PenStyle.DashLine
+    assert pen.color().name() == "#00ff00"
+
+
+
+
+def test_shiftwheel_updates_default_width():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, width=2.0); it.setSelected(True)
+    w.adjust_item_property(it, +3)     # 2 → 5
+    assert abs(it.pen().widthF() - 5.0) < 1e-6
+    assert abs(w.current_width - 5.0) < 1e-6   # sticky 기본값 갱신
+
+
+
+
+def test_disabled_icon_has_dim_pixmap():
+    from easycad.canvas.host_widgets import _act_icon
+    from PyQt6.QtGui import QIcon
+    from PyQt6.QtCore import QSize
+    ic = _act_icon("undo")
+    norm = ic.pixmap(QSize(24, 24), QIcon.Mode.Normal)
+    dim = ic.pixmap(QSize(24, 24), QIcon.Mode.Disabled)
+    assert not dim.isNull()
+    assert norm.toImage() != dim.toImage()     # 흐림 사본이 원본과 다름
+
+
+
+
+def test_align_rect_ignores_selection_handles():
+    # [M5] 정렬 기준은 _content_rect(획까지) — 코어 boundingRect는 (선택 시) 핸들·빠른생성
+    # 도트 자리를 예약해 도형마다 여백이 달라(정렬이 그만큼 어긋난다) 기준으로 쓸 수 없다.
+    # [성능 조사 2026-07-30] 핸들 여백 예약이 선택 상태 조건부로 바뀌어(boundingRect가
+    # 미선택 도형까지 매번 계산하던 비용 제거) — 정렬 대상은 실제로 항상 선택된 상태이므로
+    # 그 상태로 검증한다.
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30, width=0)
+    it.setSelected(True)
+    r = w._align_rect(it)
+    assert abs(r.left() - 0.0) < 1.5 and abs(r.width() - 40.0) < 3.0
+    assert it.sceneBoundingRect().width() > r.width() + 10     # 핸들 여백이 실제로 크다
+
+
+
+
+def test_align_selection_six_modes_and_undo():
+    # [M5] 정렬 — 선택 bbox의 모서리·중심에 맞춘다. 이동만이라 undo 1스텝으로 전부 복원.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30, width=0)
+    b = _mk_pen_rect(w, x=100, y=50, ww=60, hh=20, width=0)
+    for it in (a, b):
+        it.setSelected(True)
+    ar = w._align_rect
+    pos0 = [QPointF(it.pos()) for it in (a, b)]
+    edge = {"left": lambda r: r.left(), "right": lambda r: r.right(),
+            "hcenter": lambda r: r.center().x(), "top": lambda r: r.top(),
+            "bottom": lambda r: r.bottom(), "vcenter": lambda r: r.center().y()}
+    anchor = {"left": "left", "right": "right", "hcenter": "left",
+              "top": "top", "bottom": "bottom", "vcenter": "top"}
+    for mode, f in edge.items():
+        keep = f(ar(a)) if anchor[mode] in ("left", "top") else f(ar(b))
+        w.align_selection(mode)
+        assert abs(f(ar(a)) - f(ar(b))) < 0.5          # 둘이 같은 선에 섰다
+        # bbox 기준이므로 그 방향의 극단에 있던 쪽은 제자리(정렬선이 밖으로 밀리지 않는다).
+        if mode in ("left", "top"):
+            assert abs(f(ar(a)) - keep) < 0.5
+        elif mode in ("right", "bottom"):
+            assert abs(f(ar(b)) - keep) < 0.5
+        w.undo()
+        assert _close(a.pos(), pos0[0]) and _close(b.pos(), pos0[1])
+
+
+
+
+def test_distribute_selection_even_gaps():
+    # [M5] 분배 — 양 끝 고정, 사이 '여백'이 균등해진다(크기가 달라도 보이는 틈이 같게).
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=40, hh=20, width=0)
+    b = _mk_pen_rect(w, x=50, y=0, ww=20, hh=20, width=0)     # 치우쳐 있는 가운데
+    c = _mk_pen_rect(w, x=200, y=0, ww=40, hh=20, width=0)
+    for it in (a, b, c):
+        it.setSelected(True)
+    ar = w._align_rect
+    ends = (ar(a).left(), ar(c).right())
+    b_pos0 = QPointF(b.pos())
+    w.distribute_selection("x")
+    rs = sorted((ar(it) for it in (a, b, c)), key=lambda r: r.left())
+    g1 = rs[1].left() - rs[0].right()
+    g2 = rs[2].left() - rs[1].right()
+    assert abs(g1 - g2) < 0.5                                 # 여백 균등
+    assert abs(rs[0].left() - ends[0]) < 0.5                  # 양 끝은 그대로
+    assert abs(rs[2].right() - ends[1]) < 0.5
+    assert not _close(b.pos(), b_pos0)                        # 가운데는 실제로 움직였다
+    w.undo()
+    assert _close(b.pos(), b_pos0)                            # 되돌아옴
+
+    # 2개뿐이면 나눌 사이가 없어 no-op(undo 스택도 안 쌓임).
+    w._scene.clearSelection()
+    a.setSelected(True); b.setSelected(True)
+    n = len(w._undo)
+    w.distribute_selection("x")
+    assert len(w._undo) == n
+
+
+
+
+def test_align_targets_exclude_labels():
+    # [M5] 라벨(자식 아이템)은 대상에서 빠진다 — selectable·movable이라 러버밴드에 딸려 오지만
+    # 위치를 부모가 소유하고(재투영) moveBy 델타의 좌표계도 다르다.
+    w = CanvasWindow()
+    ar = _PolyArrowItem(QColor("#111111"), 2.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(200, 0))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    lb = ar.ensure_label(); lb.setPlainText("라벨"); ar._sync_label()
+    assert lb.flags() & lb.GraphicsItemFlag.ItemIsMovable      # 라벨도 movable(전제 확인)
+    it = _mk_pen_rect(w, x=300, y=40)
+    for x in (lb, ar, it):
+        x.setSelected(True)
+    # 바인딩 없는 화살표는 평범한 객체라 포함, 라벨만 빠진다.
+    assert set(map(id, w._align_targets())) == {id(ar), id(it)}
+
+
+
+
+def test_align_targets_exclude_connectors_and_frame():
+    # [M5] 대상 규칙 — 연결된 화살표는 reroute가 따라오므로 제외, 용지틀은 종이라 제외.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30, width=0)
+    b = _mk_pen_rect(w, x=200, y=90, ww=40, hh=30, width=0)
+    ar = _PolyArrowItem(QColor("#111111"), 2.0, True)
+    ar.set_points(QPointF(40, 15), QPointF(200, 105))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    ar.set_bound(0, a, a.mapFromScene(QPointF(40, 15)))
+    ar.set_bound(1, b, b.mapFromScene(QPointF(200, 105)))
+    tb = _TitleBlockItem("A4", "landscape")
+    tb.setFlags(tb.GraphicsItemFlag.ItemIsSelectable | tb.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tb)
+    for it in (a, b, ar, tb):
+        it.setSelected(True)
+    tgt = w._align_targets()
+    assert set(map(id, tgt)) == {id(a), id(b)}                # 화살표·용지틀 제외
+    tb_pos = QPointF(tb.pos())
+    w.align_selection("top")
+    assert abs(w._align_rect(a).top() - w._align_rect(b).top()) < 0.5
+    assert _close(tb.pos(), tb_pos)                           # 용지틀은 안 움직임
+    assert ar.has_binding()                                   # 연결은 유지(끝점은 reroute가 추종)
+
+
+
+
+def test_align_removes_connector_stair():
+    # [M5] 정렬의 실제 동기 — 축이 어긋난 두 도형을 잇는 직교 커넥터에는 기하적으로 계단이
+    # 생긴다(코어 Stage4는 8px 이내만 흡수). 세로 가운데 정렬하면 포트가 같은 y에 서서
+    # 계단이 사라지고 곧은 선이 된다.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=80, width=0)
+    b = _mk_pen_rect(w, x=300, y=40, ww=120, hh=80, width=0)   # 40px 어긋남 = 계단
+    e_a = _shape_ports(a)[1][0]                                # A의 E(오른쪽) 포트
+    w_b = _shape_ports(b)[3][0]                                # B의 W(왼쪽) 포트
+    ar = _PolyArrowItem(QColor("#111111"), 2.0, True)
+    ar.set_points(e_a, w_b)
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    ar.set_bound(0, a, a.mapFromScene(e_a))
+    ar.set_bound(1, b, b.mapFromScene(w_b))
+    ar._apply_routing()
+    ys = {round(ar.mapToScene(p).y(), 1) for p in ar._pts}
+    assert len(ys) > 1                                         # 정렬 전엔 계단(y가 여럿)
+    for it in (a, b):
+        it.setSelected(True)
+    w.align_selection("vcenter")
+    ar.reroute()
+    ys = {round(ar.mapToScene(p).y(), 1) for p in ar._pts}
+    assert len(ys) == 1                                        # 정렬 후엔 한 줄(계단 0)
+
+
+
+
+def test_align_repaints_group_overlay():
+    # [M5 실조건 fix] 그룹 선택 박스는 뷰의 drawForeground가 그려서, 프로그램이 아이템만 옮기면
+    # 옛 점선이 남는다(사용자 화면서 확인). 정렬·분배·undo 모두 뷰포트 전체 갱신을 걸어야 한다.
+    # 잔상 자체는 오프스크린서 재현 불가(render가 전면 재도색) → 갱신 호출 유무로 회귀를 막는다.
+    w = CanvasWindow()
+    calls = []
+    w._repaint_overlays = lambda: calls.append(1)
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=120, y=90)   # 치우친 가운데
+    c = _mk_pen_rect(w, x=400, y=30)
+    for it in (a, b, c):
+        it.setSelected(True)
+    w.align_selection("top");      assert len(calls) == 1
+    w.distribute_selection("x");   assert len(calls) == 2
+    w.undo();                      assert len(calls) == 3
+    w.redo();                      assert len(calls) == 4
+
+
+
+
+def test_align_entry_points_visibility():
+    # [디자인 재검토] 정렬/분배는 플로팅 툴바에서 제거하고 우클릭 메뉴로 일원화(중복 제거) —
+    # 진입점은 우클릭 서브메뉴 1곳, '대상 2개 이상'에서만 뜬다.
+    w = CanvasWindow()
+    labels = lambda: [a.text() for a in w._build_context_menu().actions() if not a.isSeparator()]
+    a = _mk_pen_rect(w, x=0, y=0); a.setSelected(True)
+    assert "정렬 / 분배" not in labels()
+    b = _mk_pen_rect(w, x=100, y=60); b.setSelected(True)
+    assert "정렬 / 분배" in labels()
+    # 메뉴 구성 = 정렬 6 + 분배 2.
+    acts = [x.text() for x in w._build_align_menu().actions() if not x.isSeparator()]
+    assert acts == ["왼쪽 맞춤", "가로 가운데", "오른쪽 맞춤",
+                    "위쪽 맞춤", "세로 가운데", "아래쪽 맞춤",
+                    "가로 균등 분배", "세로 균등 분배"]
+
+
+
+
+def test_sarrow_does_not_ride_shared_edge():
+    # [M4-4 ⓐ 잔여] 나란히 놓인 두 박스의 N포트끼리 잇기. 옛 라우터는 두 윗변 위에 정확히 포개진
+    # 직선을 냈다(_seg_hits_rect가 테두리 접촉을 '안전'으로 통과시키므로 관통 검사엔 안 걸림).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), -300, 0, 100, 60)
+    sa = _mk_bound_sarrow(w, a, b, 0, 0)          # N → N
+    pts = [sa.mapToScene(p) for p in sa._pts]
+    assert _close(pts[0], QPointF(50, 0)) and _close(pts[-1], QPointF(-250, 0)), pts
+    reenter, ride = _sarrow_defects(sa)
+    assert not reenter and ride == 0, ("변 타기 잔존", ride, pts)
+    # 두 박스 '위'로 넘어가는 다리여야 한다(윗변보다 확실히 바깥).
+    assert min(p.y() for p in pts) < -_RIDE_TOL, pts
+
+
+
+
+def test_sarrow_no_unnecessary_hump_on_reenter_fix():
+    # [혹 버그 수정 2026-07-27] 실도면(123.ecad) 재현 — 재진입 회피가 conn_clear(가장 넉넉한
+    # 여유)의 첫 A* 결과를 결함 없다는 이유만으로 즉시 채택해, 사다리가 더 짧은 경로를 찾을 기회를
+    # 못 얻었다. 왼쪽 박스 S포트 → 오른쪽 박스 E포트 연결이 (8,-52)→(8,-92)→(287,-92)→(287,4)
+    # 식으로 불필요하게 위로 솟았다가 내려오는 '혹'을 만들던 실제 배치.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), -290, -213, 181, 125)
+    b = _mk_rect(w._scene, w.make_pen(), 44, -56, 207, 120)
+    sa = _mk_bound_sarrow(w, a, b, 2, 1)          # S(a) -> E(b)
+    pts = [sa.mapToScene(p) for p in sa._pts]
+    reenter, ride = _sarrow_defects(sa)
+    assert not reenter, ("연결 도형 관통", pts)
+    assert ride == 0, ("변 타기", ride, pts)
+    # 혹 있는 옛 경로는 정점 7개(중간에 위로 솟았다 내려오는 왕복 2정점 추가) — 수정 후엔 단순
+    # Z자형 5개여야 한다(엘보 하나만 더 필요한 최소 경로).
+    assert len(pts) <= 5, ("정점 과다 — 혹 재발 의심", pts)
+    # 중간 정점(시작·끝 포트 제외)이 오른쪽 도형(top=-56) 위로 과도하게 높이 솟으면 혹이 남은 것.
+    assert min(p.y() for p in pts[1:-1]) > -80, ("불필요하게 높은 우회(혹)", pts)
+
+
+
+
+def test_sarrow_drag_preview_matches_release_no_hump():
+    # [혹 버그 수정 2026-07-27] 실제 press→drag→release 마우스 이벤트로 위 실도면 배치를 그대로
+    # 재연 — 드래그 중 라이브 미리보기와 릴리스 후 확정 경로가 완전히 같아야 한다(둘 다 같은
+    # _apply_routing에 위임하므로). 사용자가 "미리보기와 결과값이 다르다"고 보고했던 경로 —
+    # 조사 결과 원인은 build_elbow가 아니라 set_ortho_preview의 시작점 바인딩 누락이라 의심했으나,
+    # 실제 mousePressEvent는 도형 테두리 press 시 그 자리에서 바로 시작점을 바인딩해(다른 코드
+    # 경로) 그 가설은 틀렸음을 이 테스트로 확인 — _route_ortho 혹 수정 하나로 이미 preview==release.
+    w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()
+    a = _mk_rect(w._scene, w.make_pen(), -290, -213, 181, 125)
+    b = _mk_rect(w._scene, w.make_pen(), 44, -56, 207, 120)
+    view = w._view
+    press, release, click, move, drag_move, dbl = _draw_helpers(view)
+
+    sp = _shape_ports(a)[2][0]   # S(a)
+    ep = _shape_ports(b)[1][0]   # E(b)
+
+    press(sp)
+    drag_move(QPointF(ep.x() - 5, ep.y() - 5))   # 근처 통과
+    drag_move(ep)                                 # 포트 위 — 스냅+라이브 바인딩
+    live_pts = [view._temp.mapToScene(p) for p in view._temp._pts]
+    release(ep)
+
+    arrows = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(arrows) == 1, arrows
+    final_pts = [arrows[0].mapToScene(p) for p in arrows[0]._pts]
+
+    assert len(live_pts) == len(final_pts) and all(
+        _close(x, y) for x, y in zip(live_pts, final_pts)), \
+        ("미리보기≠확정", live_pts, final_pts)
+
+
+
+
+def test_sarrow_no_reenter_when_conn_shapes_close():
+    # [M4-4 ⓐ 잔여] 두 연결 도형이 conn_clear(36px)보다 가까우면 한쪽 스텁이 반대쪽 팽창 사각형
+    # 안에 갇혀 A*가 실패 → 옛 코드는 preferred로 폴백했고 그 preferred가 곧 관통 경로였다.
+    from easycad.canvas.annotator_core import _ortho_elbow, _path_hits_rects
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), -160, -60, 100, 60)
+    sa = _mk_bound_sarrow(w, a, b, 1, 1)          # E → E (타깃이 서쪽)
+    s0, e0 = QPointF(100, 30), QPointF(-60, -30)
+    ns = sa._bound_normal_scene(0); ne = sa._bound_normal_scene(len(sa._pts) - 1)
+    # 전제: 회피 없는 preferred는 실제로 A를 관통한다(테스트가 유의미하려면).
+    pref = [s0] + _ortho_elbow(s0, e0, ns, ne) + [e0]
+    assert _path_hits_rects(pref, [a.mapRectToScene(a.rect())]), pref
+    pts = [sa.mapToScene(p) for p in sa._pts]
+    assert _close(pts[0], s0) and _close(pts[-1], e0), pts
+    reenter, ride = _sarrow_defects(sa)
+    assert not reenter, ("연결 도형 관통", pts)
+    assert ride == 0, ("변 타기", ride, pts)
+
+
+
+
+def test_route_ortho_clean_path_stub_then_elbow():
+    # [M4-4 ⓐ 잔여 → 2026-07-30 stub-out 수정] 결함 없는 배치도 이제 항상 법선 스텁을 먼저
+    # 낸다(변 타기 방지 — 실사용 피드백 2026-07-30). 이 테스트가 지키는 불변식은 '사다리·A*가
+    # 깨끗한 경로에 개입하지 않는다'는 원래 취지 그대로다 — 결과는 raw _ortho_elbow이 아니라
+    # '스텁 → 그 스텁점 사이 엘보'와 정확히 같아야 하고(추가 우회 없음), conn_rects 유무로는
+    # 스텁 거리만 달라진다(own-rect 팽창 이스케이프 vs flat clearance).
+    from easycad.canvas.annotator_core import (
+        _route_ortho, _ortho_elbow, _normal_stub, _CONN_CLEAR_MULT)
+    s, e = QPointF(100, 30), QPointF(300, 30)     # E → W, 마주보고 같은 높이
+    ns, ne = QPointF(1, 0), QPointF(-1, 0)
+    clearance = 12.0
+
+    plain = _route_ortho(s, e, ns, ne, [], clearance)
+    s_stub = _normal_stub(s, ns, clearance)
+    e_stub = _normal_stub(e, ne, clearance)
+    expect_plain = [s_stub] + _ortho_elbow(s_stub, e_stub, ns, ne) + [e_stub]
+    assert plain == expect_plain, (plain, expect_plain)
+
+    conn_clear = clearance * _CONN_CLEAR_MULT
+    A, B = QRectF(0, 0, 100, 60), QRectF(300, 0, 100, 60)
+    with_conn = _route_ortho(s, e, ns, ne, [], clearance, conn_rects=(A, B))
+    A_infl = A.adjusted(-conn_clear, -conn_clear, conn_clear, conn_clear)
+    B_infl = B.adjusted(-conn_clear, -conn_clear, conn_clear, conn_clear)
+    s_stub2 = _normal_stub(s, ns, conn_clear, A_infl)
+    e_stub2 = _normal_stub(e, ne, conn_clear, B_infl)
+    expect_conn = [s_stub2] + _ortho_elbow(s_stub2, e_stub2, ns, ne) + [e_stub2]
+    assert with_conn == expect_conn, (with_conn, expect_conn)
+
+
+
+
+def test_route_ortho_ride_exemption_is_per_owner():
+    # [M4-4 ⓐ 잔여] 타기 면제는 '그 끝점이 붙은 도형'에만 준다 — 같은 세그먼트라도 *다른* 도형의
+    # 변을 타면 타기다. (이 구분이 없으면 '내 도형에서 수직 이탈 = 통째 면제'가 되어 상대 도형
+    # 변 타기를 통으로 놓친다 — 설계 검토서 실제로 걸린 구멍.)
+    from easycad.canvas.annotator_core import _path_ride_len
+    A = QRectF(0, 0, 100, 60)          # 출발 도형
+    B = QRectF(-50, -260, 100, 60)     # 도착 도형(아랫변 y=-200)
+    pts = [QPointF(0, 30), QPointF(0, -200)]   # A의 W포트에서 수직으로 올라가 B 아랫변에 도착
+    ns, ne = QPointF(-1, 0), QPointF(0, 1)
+    # 이 수직선은 A의 좌변(x=0) 위를 30px 탄다. 도착 끝점 면제(ne)가 A에까지 번지면 0이 된다.
+    assert _path_ride_len(pts, [(A, "start"), (B, "end")], ns, ne) == 30
+    # 반대로 자기 도형에서 법선대로 곧게 이탈하는 세그먼트는 면제 — 타기 0.
+    ok = [QPointF(100, 30), QPointF(136, 30)]
+    assert _path_ride_len(ok, [(A, "start")], QPointF(1, 0), None) == 0
+
+
+
+
+def test_sarrow_routing_is_idempotent():
+    # [M4-4 ⓐ 잔여] 되먹임 없음 — 라우터는 끝점·법선·장애물만 보고 결정하므로 재호출해도 같은
+    # 경로여야 한다(두 번째 build_elbow는 '변경 없음'=False). 사다리·점수화 도입 후에도 유지.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), -300, 0, 100, 60)
+    sa = _mk_bound_sarrow(w, a, b, 0, 0)
+    first = [sa.mapToScene(p) for p in sa._pts]
+    assert sa.build_elbow() is False, "재호출이 경로를 바꿈(되먹임 위험)"
+    again = [sa.mapToScene(p) for p in sa._pts]
+    assert all(_close(x, y) for x, y in zip(first, again)), (first, again)
+
+
+
+
+def test_connected_rects_is_endpoint_tuple():
+    # [M4-4 ⓐ 잔여] _connected_rects는 (start|None, end|None) 2-튜플 — 타기 면제가 어느 끝점의
+    # 도형인지 알아야 하기 때문. 한쪽만 도형에 붙은 커넥터는 그 자리가 None으로 남는다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(100, 30), QPointF(300, 30))
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, QPointF(100, 30))
+    rects = sa._connected_rects()
+    assert isinstance(rects, tuple) and len(rects) == 2, rects
+    assert rects[0] is not None and rects[1] is None, rects
+
+
+
+
+def test_ortho_drag_still_rebinds_endpoint():
+    # [실조건 2026-07-27] F8(직교 제약)로 끝점을 도형 위 비-포트 지점으로 재부착해도, mouseMoveEvent의
+    # 그 분기는 _move_endpoint_with_snap을 안 거쳐(축 제약이 테두리 스냅보다 우선) set_bound를 아예
+    # 호출하지 않았다 — 시각적으로는 붙어 보여도 지속 연결이 안 걸려 도형을 옮겨도 화살표가 그대로
+    # 남았다(사용자 보고). _rebind_at_fixed_point가 위치는 유지한 채 바인딩만 갱신해야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 150, 90)
+    b = _mk_rect(w._scene, w.make_pen(), 600, 0, 150, 90)
+    sp = _shape_ports(a)[1][0]; ep = _shape_ports(b)[3][0]
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(sp, ep)
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, sp); sa.set_bound(1, b, ep)
+    sa._auto_route = True; sa.build_elbow()
+
+    # 뗀다(빈 공간으로) — mouseMoveEvent의 일반 분기와 동일 경로.
+    sa._on_endpoint_drag_start(0)
+    sa._move_endpoint_with_snap(0, sa.mapFromScene(QPointF(300, 300)))
+    sa._on_endpoint_drag_end(0)
+    assert sa._bound(0) is None
+
+    # F8로 A의 변 위 '비-포트' 지점에 재부착 — mouseMoveEvent의 F8 분기를 그대로 재현.
+    # [2026-07-29 갱신] _ortho_endpoint는 현재 이웃 정점(_pts[1]) 기준으로 축을 제약하는데,
+    # 끝점 드래그가 '새로 그리기'와 동일하게 매 프레임 전체 재계산되도록 바뀌면서(위 detach
+    # 단계에서 이미 A* 우회 경로가 생겨 이웃 정점 위치가 달라짐) 그 축 제약 결과가 도형 A와
+    # 무관한 곳으로 나올 수 있다 — 이 테스트가 검증하려는 건 그 축 제약 계산 자체가 아니라
+    # `_rebind_at_fixed_point`가 위치를 유지한 채 바인딩만 거는지이므로, 목표 지점을 직접
+    # 지정해 그 부분만 검증한다.
+    sa._on_endpoint_drag_start(0)
+    target = sa.mapFromScene(QPointF(150, 20))   # A의 우측 변 위, 포트 아닌 지점
+    sa._set_endpoint(0, target)
+    sa._rebind_at_fixed_point(0, target)
+    sa._on_endpoint_drag_end(0)
+    assert sa._bound(0) is a, ("F8 재부착이 바인딩을 안 걸음", sa._bound(0))
+    assert _close(sa.mapToScene(sa._pts[0]), sa.mapToScene(target)), "위치가 바뀜(축 제약 훼손)"
+
+    # 도형을 옮기면 이제 따라와야 한다.
+    before = sa.mapToScene(sa._pts[0])
+    a.setPos(QPointF(37, 41)); w._on_scene_changed(None)
+    after = sa.mapToScene(sa._pts[0])
+    assert (after - before).manhattanLength() > 10, ("도형 이동에 안 따라옴", before, after)
+
+
+
+
+def test_ortho_drag_endpoint_unbinds_away_from_shape():
+    # 위와 대칭 — F8로 도형에서 먼 자유 공간으로 옮기면 unbind돼야 한다(스텁 바인딩 잔존 방지).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 150, 90)
+    b = _mk_rect(w._scene, w.make_pen(), 600, 0, 150, 90)
+    sp = _shape_ports(a)[1][0]; ep = _shape_ports(b)[3][0]
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(sp, ep)
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, sp); sa.set_bound(1, b, ep)
+    sa._auto_route = True; sa.build_elbow()
+
+    sa._on_endpoint_drag_start(0)
+    target = sa._ortho_endpoint(0, sa.mapFromScene(QPointF(400, 400)))
+    sa._set_endpoint(0, target)
+    sa._rebind_at_fixed_point(0, target)
+    sa._on_endpoint_drag_end(0)
+    assert sa._bound(0) is None, "먼 지점인데 바인딩이 남음"
+
+
+
+
+def test_line_endpoint_ortho_drag_does_not_crash():
+    # _LineItem은 _connects_to_border()=False에 set_bound 자체가 없다 — 가드 없이 부르면
+    # AttributeError. Shift·F8 분기에서도 안전해야 한다.
+    w = CanvasWindow()
+    ln = _LineItem(0, 0, 150, 0)
+    ln.setPen(w.make_pen())
+    ln.setFlags(ln.GraphicsItemFlag.ItemIsSelectable | ln.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ln)
+    ln._rebind_at_fixed_point(0, QPointF(10, 10))   # 크래시 안 하면 통과
+
+
+
+
+def test_border_snap_prefers_shape_port_over_arrow_endpoint():
+    # [실조건 2026-07-26] 포트에 이미 화살표가 붙어 있으면 그 끝점이 포트와 거리 0으로 동일해,
+    # 나중에 도는 선·화살표 루프가 `<=` 때문에 항상 이겼다 → ⓐ shape=None이라 지속 연결이 안
+    # 걸리고 ⓑ 이탈 법선이 상대 화살표 방향(정반대)으로 잡혔다. 동점은 도형이 이겨야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 150, 90)
+    b = _mk_rect(w._scene, w.make_pen(), 600, 0, 150, 90)
+    port_e, n_e = _shape_ports(a)[1]                  # A의 E 포트
+    view_pos = w._view.mapFromScene(port_e)
+    first = w._view._border_snap_at(view_pos)
+    assert first is not None and first[2] is a, first
+    assert _close(first[1], n_e), (first[1], n_e)     # 바깥 법선 = +x
+
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    ep = _shape_ports(b)[3][0]
+    sa.set_points(port_e, ep)
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, port_e); sa.set_bound(1, b, ep)
+    sa._auto_route = True; sa.build_elbow()
+
+    again = w._view._border_snap_at(view_pos)
+    assert again is not None and again[2] is a, ("포트를 화살표 끝점에 뺏김", again)
+    assert _close(again[1], n_e), ("이탈 법선이 뒤집힘", again[1], n_e)
+    # 포트에서 떨어진 화살표 몸통은 여전히 스냅 대상(M4-2b 회귀 아님).
+    mid = sa.mapToScene(sa._pts[len(sa._pts) // 2])
+    got = w._view._border_snap_at(w._view.mapFromScene(mid))
+    assert got is not None, "화살표 몸통 스냅이 죽음"
+
+
+# ---------------------------------------------------------------------------
+# [편의기능] Alt+드래그 복사 / Shift+드래그 축 고정 / Z-order / 그룹 / 잠금
+# ---------------------------------------------------------------------------
+
+
+def test_alt_drag_copy_clones_selection():
+    # Alt+press = 제자리 복제 + 복제본 선택(원본은 선택 해제). 이어지는 Qt 기본 드래그가
+    # 그 복제본을 옮기므로, 여기서는 뷰의 분기(복제·선택 전환·undo)까지만 검증한다
+    # (Qt 내부 grabber를 통한 실제 드래그 이동은 오프스크린서 재현 불가 — CLAUDE.md M4-3 전례).
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=10, y=10, ww=40, hh=30)
+    it.setSelected(True)
+    n0 = len(w._scene.items())
+    u0 = len(w._undo)
+    ev = _mods_event("press", w._view, QPointF(30, 25), Qt.KeyboardModifier.AltModifier)
+    w._view._maybe_alt_drag_copy(ev)
+    assert len(w._scene.items()) == n0 + 1
+    assert len(w._undo) == u0 + 1
+    clones = [x for x in w._scene.selectedItems() if x is not it]
+    assert len(clones) == 1, clones
+    clone = clones[0]
+    assert not it.isSelected()          # 원본은 선택 해제
+    assert _close(clone.pos(), it.pos())  # 제자리(오프셋 없음)
+
+
+
+
+def test_alt_drag_copy_noop_without_alt():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=10, y=10, ww=40, hh=30)
+    it.setSelected(True)
+    n0 = len(w._scene.items())
+    ev = _mods_event("press", w._view, QPointF(30, 25), Qt.KeyboardModifier.NoModifier)
+    w._view._maybe_alt_drag_copy(ev)
+    assert len(w._scene.items()) == n0   # Alt 없으면 복제 없음
+
+
+
+
+def test_alt_drag_copy_rebinds_arrow_within_group():
+    # Alt+드래그 복제도 duplicate_selection/paste_selection과 동일한 배치내 재연결이 필요하다
+    # (같은 clone() 경유 버그 — 세 진입점 모두 remap_grouped_bindings를 거친다).
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=10, y=10, ww=40, hh=30)
+    b = _mk_pen_rect(w, x=300, y=20, ww=40, hh=30)
+    ar = _ArrowItem(QColor("#111111"), 3, True)
+    pa, pb = QPointF(40, 15), QPointF(0, 15)
+    ar.set_points(a.mapToScene(pa), b.mapToScene(pb))
+    ar.set_bound(0, a, pa); ar.set_bound(1, b, pb)
+    w._scene.addItem(ar)
+    a.setSelected(True); b.setSelected(True); ar.setSelected(True)
+    ev = _mods_event("press", w._view, a.mapToScene(QPointF(20, 15)), Qt.KeyboardModifier.AltModifier)
+    w._view._maybe_alt_drag_copy(ev)
+    rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
+    arrows = [x for x in w._scene.items() if isinstance(x, _ArrowItem)]
+    assert len(rects) == 4 and len(arrows) == 2
+    new_ar = [x for x in arrows if x is not ar][0]
+    new_a = [r for r in rects if r is not a and r.rect() == a.rect()][0]
+    new_b = [r for r in rects if r is not b and r.rect() == b.rect()][0]
+    assert new_ar._bind1 is new_a and new_ar._bind2 is new_b   # 사본끼리 재연결
+    assert ar._bind1 is a and ar._bind2 is b                   # 원본은 불변
+
+
+
+
+def test_axis_lock_constrains_to_dominant_axis():
+    # Shift+드래그 — 첫 유의미한 편차가 더 큰 축으로 고정, 반대 축 성분은 되돌린다.
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30)
+    it.setSelected(True)
+    view = w._view
+    view._snapshot_movable()
+    old = QPointF(it.pos())
+    it.setPos(QPointF(old.x() + 20, old.y() + 3))   # 수평이 지배적
+    ev = _mods_event("move", view, QPointF(0, 0), Qt.KeyboardModifier.ShiftModifier)
+    view._apply_axis_lock(ev)
+    assert view._axis_lock == "h"
+    assert _close(it.pos(), QPointF(old.x() + 20, old.y()))   # y는 원위치로 복원
+
+
+
+
+def test_axis_lock_with_multiple_scene_items():
+    # 회귀: _move_snap은 씬의 '모든' movable 아이템을 담는데(선택 무관), 델타를 스냅 리스트의
+    # 첫 아이템으로 재면 그게 드래그 중인 아이템이 아닐 때(도형 2개 이상이면 흔함) 축 고정이
+    # 영영 안 걸린다. 안 움직이는 other를 먼저 만들어 스냅 리스트 앞자리를 차지하게 한다.
+    # scene.items()는 동일 z에서 '나중에 추가된 것이 먼저'(맨 위) 순으로 나온다 — other를
+    # it보다 나중에 추가해야 _move_snap[0]을 차지해 회귀 시나리오가 재현된다.
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30)
+    other = _mk_pen_rect(w, x=500, y=500, ww=40, hh=30)   # 선택 안 됨 — 절대 안 움직임
+    other_pos0 = QPointF(other.pos())   # rect 좌표가 아니라 pos()(기본 0,0) 기준으로 비교
+    it.setSelected(True)
+    view = w._view
+    view._snapshot_movable()
+    assert view._move_snap[0][0] is other, "테스트 전제 붕괴: other가 스냅 리스트 첫 자리가 아님"
+    old = QPointF(it.pos())
+    it.setPos(QPointF(old.x() + 20, old.y() + 3))
+    ev = _mods_event("move", view, QPointF(0, 0), Qt.KeyboardModifier.ShiftModifier)
+    view._apply_axis_lock(ev)
+    assert view._axis_lock == "h", "다른 정지 아이템 때문에 축 고정이 발동 안 함(회귀)"
+    assert _close(it.pos(), QPointF(old.x() + 20, old.y()))
+    assert _close(other.pos(), other_pos0)   # other는 그대로(선택 안 됐으니 손대면 안 됨)
+
+
+
+
+def test_axis_lock_off_without_shift():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30)
+    it.setSelected(True)
+    view = w._view
+    view._snapshot_movable()
+    it.setPos(QPointF(20, 3))
+    ev = _mods_event("move", view, QPointF(0, 0), Qt.KeyboardModifier.NoModifier)
+    view._apply_axis_lock(ev)
+    assert view._axis_lock is None
+    assert _close(it.pos(), QPointF(20, 3))   # Shift 없으면 손대지 않음
+
+
+
+
+def test_bring_to_front_send_to_back():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0)
+    b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True)
+    w.bring_to_front()
+    assert a.zValue() > b.zValue()
+    w.undo()
+    assert a.zValue() == 0.0 and b.zValue() == 0.0
+    w.redo()
+    assert a.zValue() > b.zValue()
+    a.setSelected(False); b.setSelected(True)
+    w.send_to_back()
+    assert b.zValue() < a.zValue()
+
+
+
+
+def test_zorder_excludes_titleblock():
+    w = CanvasWindow()
+    tb = _TitleBlockItem("A4", "landscape")
+    w._scene.addItem(tb)
+    r = _mk_pen_rect(w, x=0, y=0)
+    tb.setSelected(True); r.setSelected(True)
+    assert tb not in w._edit_targets()
+    assert r in w._edit_targets()
+
+
+
+
+def test_group_ungroup_and_selection_sync():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0)
+    b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True); b.setSelected(True)
+    u0 = len(w._undo)
+    w.group_selection()
+    assert len(w._undo) == u0 + 1
+    assert a._group_id is not None and a._group_id == b._group_id
+    # 하나만 선택해도 selectionChanged를 통해 그룹 전체가 딸려온다.
+    w._scene.clearSelection()
+    a.setSelected(True)
+    assert b.isSelected(), "그룹 동반선택 실패"
+    w.ungroup_selection()
+    assert a._group_id is None and b._group_id is None
+    w.undo()
+    assert a._group_id is not None and a._group_id == b._group_id   # 그룹 해제 undo
+
+
+
+
+def test_group_requires_two_or_more():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0)
+    a.setSelected(True)
+    w.group_selection()
+    assert a._group_id is None   # 1개 선택은 그룹화하지 않음
+
+
+
+
+def test_lock_toggle_blocks_selection_and_move():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0)
+    it.setSelected(True)
+    w.toggle_lock_selection()
+    assert it._locked is True
+    assert not it.isSelected()
+    assert not (it.flags() & it.GraphicsItemFlag.ItemIsSelectable)
+    assert not (it.flags() & it.GraphicsItemFlag.ItemIsMovable)
+    # 잠긴 객체는 select_all로도 안 잡힌다.
+    w.select_all()
+    assert not it.isSelected()
+    w.unlock_all()
+    assert it._locked is False
+    assert it.flags() & it.GraphicsItemFlag.ItemIsSelectable
+    assert it.flags() & it.GraphicsItemFlag.ItemIsMovable
+
+
+
+
+def test_lock_toggle_undo():
+    w = CanvasWindow()
+    it = _mk_pen_rect(w, x=0, y=0)
+    it.setSelected(True)
+    w.toggle_lock_selection()
+    assert it._locked is True
+    w.undo()
+    assert it._locked is False
+    assert it.flags() & it.GraphicsItemFlag.ItemIsSelectable
+
+
+
+
+def test_convenience_keyboard_shortcuts_dispatch():
+    # keyPressEvent 배선 자체(host 메서드 직접호출이 아니라 실제 단축키 경로)를 검증.
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtCore import QEvent
+    CTRL = Qt.KeyboardModifier.ControlModifier
+    CTRL_SHIFT = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    view = w._view
+    a = _mk_pen_rect(w, x=0, y=0)
+    b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True); b.setSelected(True)
+
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_G, CTRL))
+    assert a._group_id is not None and a._group_id == b._group_id   # Ctrl+G
+
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_G, CTRL_SHIFT))
+    assert a._group_id is None and b._group_id is None              # Ctrl+Shift+G
+
+    w._scene.clearSelection(); a.setSelected(True)
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_BracketRight, CTRL))
+    assert a.zValue() > b.zValue()                                  # Ctrl+]
+
+    w._scene.clearSelection(); a.setSelected(True)
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_BracketLeft, CTRL))
+    assert a.zValue() < b.zValue()                                  # Ctrl+[
+
+    view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_L, CTRL))
+    assert a._locked is True                                        # Ctrl+L(선택은 a만)
+
+
+
+
+def test_no_duplicate_window_action_shortcuts():
+    # [실조건 버그] 위 테스트처럼 view.keyPressEvent를 직접 호출하면 Qt의 실제 단축키 라우팅을
+    # 건너뛰어, 상단바/메뉴 QAction에 같은 단축키가 이미 배정돼 있으면(WindowShortcut이 우선
+    # 가로채 뷰의 keyPressEvent 분기가 영영 발화 못 함) 오프스크린 스모크로는 안 잡힌다. 실제로
+    # Mermaid 가져오기(Ctrl+Shift+G)가 그룹 해제(Ctrl+Shift+G, 뷰 raw 핸들러)를 막고 있었다
+    # (Ctrl+Shift+F로 재배정해 해소). 이 불변조건으로 향후 재충돌을 정적으로 잡는다.
+    from PyQt6.QtGui import QAction
+    w = CanvasWindow()
+    seen = {}
+    dups = []
+    for a in w.findChildren(QAction):
+        ks = a.shortcut()
+        if ks.isEmpty():
+            continue
+        key = ks.toString()
+        if key in seen and seen[key] is not a:
+            dups.append((key, seen[key].text(), a.text()))
+        else:
+            seen[key] = a
+    assert not dups, f"중복 단축키 발견: {dups}"
+
+
+
+
+def test_group_body_gap_drag_moves_selection():
+    # [편의기능] 다중선택 바운딩박스 안쪽인데 실제 도형이 없는 '빈틈'을 눌러 끌어도, 선택된
+    # 도형 전체가 함께 이동해야 한다(Lucid/FigJam). 종전엔 그 자리에 아이템이 없어 Qt가 못
+    # 잡고 러버밴드(재선택)로 오인됐다.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    view = w._view
+    a = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30)
+    b = _mk_pen_rect(w, x=300, y=20, ww=40, hh=30)
+    a.setSelected(True); b.setSelected(True)
+    bbox = view._group.bbox()
+    gap = QPointF(bbox.center().x(), bbox.center().y())   # 두 네모 사이 빈 공간(실제 도형 없음)
+    assert view._is_empty_area(view.mapFromScene(gap))    # 전제: 이 지점엔 진짜 아이템이 없다
+    assert view._group_body_area_at(view.mapFromScene(gap))  # 하지만 그룹 바운딩박스 안쪽이다
+
+    a0, b0 = QPointF(a.pos()), QPointF(b.pos())
+    u0 = len(w._undo)
+
+    def _ev(etype, scene_pt, buttons, mods=Qt.KeyboardModifier.NoModifier):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, Qt.MouseButton.LeftButton, buttons, mods)
+
+    NB = Qt.MouseButton.NoButton
+    L = Qt.MouseButton.LeftButton
+    view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, gap, L))
+    assert view._group_body_drag
+    moved_to = QPointF(gap.x() + 25, gap.y() + 15)
+    view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, moved_to, L))
+    view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, moved_to, NB))
+    assert not view._group_body_drag
+
+    assert _close(a.pos(), QPointF(a0.x() + 25, a0.y() + 15))
+    assert _close(b.pos(), QPointF(b0.x() + 25, b0.y() + 15))
+    assert len(w._undo) == u0 + 1
+    w.undo()
+    assert _close(a.pos(), a0) and _close(b.pos(), b0)
+
+
+
+
+def test_group_ungroup_shows_status_message():
+    # [편의기능] 그룹/그룹해제는 눈에 띄는 되돌림 없이 조용히 상태만 바뀌던 것 — 상태바 메시지로
+    # 즉시 인지 가능해야 한다.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=100, y=0)
+    a.setSelected(True); b.setSelected(True)
+    w.group_selection()
+    assert "그룹" in w.statusBar().currentMessage()
+    w.ungroup_selection()
+    assert "해제" in w.statusBar().currentMessage()
+
+
+
+
+def test_group_lock_ecad_roundtrip():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0)
+    b = _mk_pen_rect(w, x=100, y=0)
+    c = _mk_pen_rect(w, x=200, y=0)   # 그룹과 무관한 별도 객체 — 잠금 대상
+    a.setSelected(True); b.setSelected(True)
+    w.group_selection()
+    w._scene.clearSelection()
+    c.setSelected(True)
+    w.toggle_lock_selection()   # c만 잠금(a·b를 선택하면 그룹 동반선택으로 둘 다 딸려온다)
+    path = os.path.join(_TMP, "group_lock.ecad")
+    save_document(w._scene, path)
+    w2 = CanvasWindow()
+    load_document(w2._scene, path)
+    items = [it for it in w2._scene.items() if hasattr(it, "_group_id")]
+    locked = [it for it in items if it._locked]
+    grouped = [it for it in items if it._group_id]
+    assert len(locked) == 1
+    assert len(grouped) == 2 and grouped[0]._group_id == grouped[1]._group_id
+    assert not (locked[0].flags() & locked[0].GraphicsItemFlag.ItemIsMovable)
+
+
+
+
+def test_grid_toggle_action():
+    # [그리드] 표시+스냅 통합 토글(Shift+G) — 기본 켜짐, 트리거 시 owner.grid_enabled에 반영.
+    from easycad.canvas.host_widgets import _act_icon
+    w = CanvasWindow()
+    assert w._act_grid.isCheckable() and w._act_grid.isChecked()
+    assert w.grid_enabled is True
+    assert not _act_icon("grid").isNull()
+    w._act_grid.trigger()
+    assert w._act_grid.isChecked() is False and w.grid_enabled is False
+
+
+
+
+def test_grid_snap_scene_quantizes():
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow()
+    p = w._view._grid_snap_scene(QPointF(7, 13))
+    assert p == QPointF(round(7 / _GRID_SPACING) * _GRID_SPACING,
+                         round(13 / _GRID_SPACING) * _GRID_SPACING)
+
+
+
+
+def test_grid_snap_scene_disabled_noop():
+    w = CanvasWindow()
+    w.grid_enabled = False
+    assert w._view._grid_snap_scene(QPointF(7, 13)) == QPointF(7, 13)
+
+
+
+
+def test_grid_snap_move_quantizes_position():
+    # [그리드] 단일 도형 이동 — 콘텐츠 rect의 실제 씬 위치가 격자 교차점으로 양자화(항상,
+    # 임계값 없음). pos()가 아니라 mapToScene된 화면 기준점으로 검증 — pos() 자체는 아이템
+    # 로컬 원점(대개 (0,0))과 무관해 격자 정렬을 보장하지 않는다(회귀: 아래 anchor 테스트).
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    r.setPos(QPointF(7, 13)); r.setSelected(True)
+    w._view._apply_grid_snap_move(False, False)
+    anchor = r.mapToScene(r._content_rect().topLeft())
+    assert abs(anchor.x() % _GRID_SPACING) < 1e-6
+    assert abs(anchor.y() % _GRID_SPACING) < 1e-6
+
+
+
+
+def test_grid_snap_move_respects_skip_axis():
+    # [그리드] 스마트정렬/축고정이 이미 처리한 축은 skip_*로 건드리지 않는다(우선순위 위계).
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    r.setPos(QPointF(7, 13)); r.setSelected(True)
+    before = r.mapToScene(r._content_rect().topLeft())
+    w._view._apply_grid_snap_move(True, False)   # x축 skip
+    after = r.mapToScene(r._content_rect().topLeft())
+    assert abs(after.x() - before.x()) < 1e-6       # x축 불변
+    assert abs(after.y() % _GRID_SPACING) < 1e-6    # y축만 격자로
+
+
+
+
+def test_grid_snap_move_disabled_noop():
+    w = CanvasWindow()
+    w.grid_enabled = False
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    r.setPos(QPointF(7, 13)); r.setSelected(True)
+    w._view._apply_grid_snap_move(False, False)
+    assert r.pos() == QPointF(7, 13)
+
+
+
+
+def test_grid_snap_move_uses_scene_anchor_not_raw_pos():
+    # [그리드][회귀] 마우스로 그린 도형은 로컬 rect가 클릭 시점 씬 좌표를 그대로 품고(pos()는
+    # (0,0)에 남는 게 보통) — pos()만 격자에 맞추면 실제 화면 위치는 격자 밖일 수 있었다(1차 시도).
+    # 아이템 로컬 원점(0,0)을 mapToScene해도 같은 함정(그 점은 실제 그려진 도형과 무관, pos()와
+    # 동치일 뿐 — 2차 시도에서 발견). 콘텐츠 rect의 실제 화면 위치로 검증해야 한다.
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, w.make_pen(), 307, 53, 100, 60)   # 로컬 rect 원점 = (307,53), pos=(0,0)
+    r.setSelected(True)
+    assert r.pos() == QPointF(0, 0)   # 전제: pos()는 (0,0)에 남는다(실제 그리기 패턴과 동일)
+    before = r.mapToScene(r._content_rect().topLeft())
+    assert abs(before.x() % _GRID_SPACING) > 1e-6   # 전제: 시작 위치는 격자 밖(307%20=7)
+    w._view._apply_grid_snap_move(False, False)
+    anchor = r.mapToScene(r._content_rect().topLeft())
+    assert abs(anchor.x() % _GRID_SPACING) < 1e-6
+    assert abs(anchor.y() % _GRID_SPACING) < 1e-6
+
+
+
+
+def test_grid_snap_move_skips_multiselect():
+    # [그리드] 스마트정렬과 동일 관례 — 다중선택(그룹 변형 영역)엔 적용하지 않는다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b.setPos(QPointF(7, 13))
+    a.setSelected(True); b.setSelected(True)
+    w._view._apply_grid_snap_move(False, False)
+    assert b.pos() == QPointF(7, 13)
+
+
+
+
+def test_grid_snap_local_quantizes_unrotated():
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)   # pos=(0,0) → local==scene
+    snapped = r._grid_snap_local(QPointF(37, 51))
+    assert snapped == QPointF(round(37 / _GRID_SPACING) * _GRID_SPACING,
+                               round(51 / _GRID_SPACING) * _GRID_SPACING)
+
+
+
+
+def test_grid_snap_local_disabled_noop():
+    w = CanvasWindow()
+    w.grid_enabled = False
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    lp = QPointF(37, 51)
+    assert r._grid_snap_local(lp) == lp
+
+

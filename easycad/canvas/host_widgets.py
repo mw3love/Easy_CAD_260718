@@ -1,0 +1,739 @@
+"""CanvasWindow과 무관한 독립 위젯·헬퍼 — 팔레트 버튼/미니맵 뷰/플로팅 패널/토스트/
+색상 그리드 팝업 및 이들이 쓰는 아이콘·팔레트·다크테마·타입명 상수.
+
+2026-08-02 host.py(3635줄) 분할분. CanvasWindow의 믹스인들(host_ui.py 등)이 이 모듈을
+가져다 쓰고, host.py 자신도 __init__에서 일부(_ToastLabel/_UndoEntry/_SCENE_HALF)를 쓴다.
+순환 임포트를 피하려고 이 파일은 host.py나 믹스인 쪽을 임포트하지 않는 잎(leaf) 모듈이다.
+"""
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
+from PyQt6.QtGui import (
+    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
+    QFont, QPolygonF, QPainterPath, QPalette, QDrag,
+)
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
+    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
+    QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
+    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
+    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
+    QListWidget, QListWidgetItem,
+)
+
+from easycad.canvas.annotator_core import (
+    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
+    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
+    _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
+    _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
+    _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
+    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+)
+from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
+from easycad.fileio.dxf_export import export_dxf
+from easycad.fileio.dxf_import import import_dxf
+from easycad.fileio.document import save_document, load_document, load_document_layers
+from easycad.fileio.mermaid_import import (
+    parse_mermaid, layout_positions, MermaidError,
+)
+
+
+_MERMAID_SHAPE_ITEM = {
+    "rect":          ("rect", None),
+    "rounded":       ("rect", None),
+    "stadium":       ("symbol", "terminal"),
+    "rhombus":       ("symbol", "decision"),
+    "hexagon":       ("symbol", "prep"),
+    "parallelogram": ("symbol", "data"),
+    "cylinder":      ("symbol", "database"),
+    "circle":        ("ellipse", None),
+}
+
+
+# [Phase 6 M3 #17] 팔레트 드래그앤드롭 — 좌측 「도형·심볼」 버튼을 캔버스로 끌어 드롭.
+_PALETTE_MIME = "application/x-easycad-tool"      # QDrag가 실어 나르는 tool_key 포맷
+_PALETTE_DROP_WH = {"rect": (120.0, 72.0), "ellipse": (100.0, 100.0)}  # 기본 생성 크기
+_PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 크기
+
+
+class _PaletteButton(QToolButton):
+    """[Phase 6 M3 #17] 좌측 팔레트 버튼 — 클릭=도구 무장(기존 clicked 유지) /
+    임계(px)를 넘게 끌면 QDrag로 캔버스에 도형을 드롭 생성한다. 드래그 시엔 release가
+    버튼에 안 와 clicked가 발화하지 않으므로 무장되지 않는다(의도 — 드래그와 무장 분리)."""
+    _DRAG_THRESH = 6
+
+    def __init__(self, tool_key: str, parent=None, preview_fn=None):
+        super().__init__(parent)
+        self._drag_tool_key = tool_key
+        self._drag_press = None
+        self._preview_fn = preview_fn   # [UX] 실물 미리보기 렌더 콜백(host._render_drag_preview)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._drag_press = e.position().toPoint()
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if (self._drag_press is not None and (e.buttons() & Qt.MouseButton.LeftButton)
+                and (e.position().toPoint() - self._drag_press).manhattanLength()
+                >= self._DRAG_THRESH):
+            self._drag_press = None
+            self._start_palette_drag()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self._drag_press = None
+        super().mouseReleaseEvent(e)
+
+    def _start_palette_drag(self):
+        drag = QDrag(self)
+        md = QMimeData()
+        md.setData(_PALETTE_MIME, self._drag_tool_key.encode("utf-8"))
+        drag.setMimeData(md)
+        pm = self._preview_fn(self._drag_tool_key) if self._preview_fn else None
+        if pm is None or pm.isNull():
+            pm = self.icon().pixmap(QSize(30, 30))   # 폴백 — 미리보기 렌더 불가 시 기존 아이콘
+        if not pm.isNull():
+            drag.setPixmap(pm)
+            drag.setHotSpot(QPoint(pm.width() // 2, pm.height() // 2))
+        self.setDown(False)   # 드래그로 release를 못 받으니 눌림 상태 수동 해제
+        drag.exec(Qt.DropAction.CopyAction)
+
+
+def _clipboard_pixmap() -> QPixmap | None:
+    """[신규기능] 시스템 클립보드 이미지 → QPixmap. 표준 포맷(PNG 등)은 Qt가 pixmap()/
+    image()로 직접 해석하고, Qt가 못 알아보는 raw 포맷(예: 헤더 없는 CF_DIB)만
+    `_pixmap_from_data`(annotator_core, clipboard_monitor 이식 로직)로 폴백한다."""
+    cb = QApplication.clipboard()
+    pm = cb.pixmap()
+    if not pm.isNull():
+        return pm
+    img = cb.image()
+    if not img.isNull():
+        return QPixmap.fromImage(img)
+    md = cb.mimeData()
+    for fmt in md.formats():
+        if fmt.startswith("image/"):
+            pm2 = _pixmap_from_data(bytes(md.data(fmt)))
+            if pm2 is not None:
+                return pm2
+    return None
+
+
+def _border_attach(rect_scene: QRectF, toward: QPointF) -> QPointF:
+    """rect(scene)의 변 중점 중 toward 방향에 면한 점 — 화살표 부착점. 회전 없는 import
+    도형이라 외접 사각형 변 중점으로 충분(_PolyArrowItem이 이후 직교 라우팅으로 다듬음)."""
+    c = rect_scene.center()
+    dx, dy = toward.x() - c.x(), toward.y() - c.y()
+    if abs(dx) >= abs(dy):
+        x = rect_scene.right() if dx >= 0 else rect_scene.left()
+        return QPointF(x, c.y())
+    y = rect_scene.bottom() if dy >= 0 else rect_scene.top()
+    return QPointF(c.x(), y)
+
+# 무한 캔버스: 아주 큰 sceneRect로 사실상 무한한 팬 범위 제공.
+_SCENE_HALF = 50000.0
+
+# [Phase 6 M1] 파일·보기 액션 아이콘 색(단색). 다크모드 도입 시 팔레트 기반으로 승격 예정.
+_ICON_COLOR = QColor("#39434f")
+
+
+def _act_icon(name: str) -> QIcon:
+    """[Phase 6 M1] 파일/삽입/보기 액션 아이콘 — QPainter 단색 라인 글리프.
+    좌표는 icon_proposal 아티팩트(24-단위 뷰박스)에서 그대로 포팅. 그리기 도구 아이콘은
+    코어 `_tool_icon`이 담당하고, 여기선 앱 레벨 액션(문서 없는 상단바 버튼)만 그린다."""
+    pm = QPixmap(24, 24)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    col = _ICON_COLOR
+    p.setPen(QPen(col, 1.7, Qt.PenStyle.SolidLine,
+                  Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+
+    def line(x1, y1, x2, y2):
+        p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+
+    def poly(pts, close=True):
+        pg = QPolygonF([QPointF(x, y) for x, y in pts])
+        p.drawPolygon(pg) if close else p.drawPolyline(pg)
+
+    if name == "new":
+        poly([(6.5, 3.5), (13, 3.5), (17.5, 8), (17.5, 20.5), (6.5, 20.5)])
+        poly([(13, 3.5), (13, 8), (17.5, 8)], close=False)
+        line(12, 12, 12, 17); line(9.5, 14.5, 14.5, 14.5)
+    elif name == "open":
+        poly([(3.5, 6.5), (9, 6.5), (11, 8.5), (20.5, 8.5), (20.5, 18), (3.5, 18)])
+    elif name == "save":
+        poly([(4.5, 4.5), (16.5, 4.5), (19.5, 7.5), (19.5, 19.5), (4.5, 19.5)])
+        poly([(7.5, 4.5), (7.5, 9), (15, 9), (15, 4.5)], close=False)
+        p.drawRect(QRectF(8, 13, 8, 6.5))
+    elif name == "pdf":
+        poly([(6, 3.5), (13.5, 3.5), (17.5, 7.5), (17.5, 20.5), (6, 20.5)])
+        poly([(13.5, 3.5), (13.5, 7.5), (17.5, 7.5)], close=False)
+        p.save()
+        p.setPen(QPen(col, 1.3, Qt.PenStyle.SolidLine,
+                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        line(8.5, 15.5, 8.5, 11.5); line(8.5, 11.5, 10.7, 11.5)   # 'P' 힌트
+        line(13, 15.5, 13, 11.5); line(15, 11.5, 15, 15.5)        # 'D' 힌트
+        p.restore()
+    elif name == "image":
+        p.drawRoundedRect(QRectF(4, 5, 16, 14), 2, 2)
+        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
+        p.drawEllipse(QPointF(9, 10), 1.7, 1.7); p.restore()
+        poly([(4, 16.5), (9.5, 12), (13, 15), (16, 12.5), (20, 16.5)], close=False)
+    elif name == "table":
+        p.drawRoundedRect(QRectF(4, 5, 16, 14), 1.5, 1.5)
+        line(4, 10, 20, 10); line(4, 14.5, 20, 14.5); line(11, 5, 11, 19)
+    elif name == "titleblock":
+        p.drawRoundedRect(QRectF(3.5, 5, 17, 14), 1, 1)
+        line(12, 14.5, 20, 14.5); line(16, 14.5, 16, 19)
+    elif name == "mermaid":
+        p.drawRoundedRect(QRectF(3.5, 4, 7.5, 5), 1.5, 1.5)
+        p.drawRoundedRect(QRectF(13, 15, 7.5, 5), 1.5, 1.5)
+        path = QPainterPath(QPointF(11, 6.5))
+        path.lineTo(15, 6.5); path.quadTo(17, 6.5, 17, 8.5); path.lineTo(17, 15)
+        p.drawPath(path)
+    elif name == "zoom_fit":
+        poly([(4, 8), (4, 4), (8, 4)], close=False)
+        poly([(16, 4), (20, 4), (20, 8)], close=False)
+        poly([(20, 16), (20, 20), (16, 20)], close=False)
+        poly([(8, 20), (4, 20), (4, 16)], close=False)
+    elif name == "zoom_100":
+        p.drawEllipse(QPointF(10.5, 10.5), 5, 5)
+        line(14.2, 14.2, 19.5, 19.5)
+    elif name == "snap":
+        path = QPainterPath(QPointF(6.5, 4.5))
+        path.lineTo(6.5, 11.5)
+        path.arcTo(QRectF(6.5, 6, 11, 11), 180, -180)
+        path.lineTo(17.5, 4.5)
+        p.drawPath(path)
+        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
+        p.drawRect(QRectF(5, 4, 3.3, 3.2)); p.drawRect(QRectF(15.7, 4, 3.3, 3.2))
+        p.restore()
+    elif name == "ortho":
+        poly([(6, 4), (6, 19), (20, 19)], close=False)
+        poly([(6, 15.5), (9.5, 15.5), (9.5, 19)], close=False)
+    elif name == "grid":
+        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
+        for gx in (5.5, 12, 18.5):
+            for gy in (5.5, 12, 18.5):
+                p.drawEllipse(QPointF(gx, gy), 1.5, 1.5)
+        p.restore()
+    elif name == "undo":
+        poly([(8, 7), (4.3, 10.5), (8, 14)], close=False)
+        path = QPainterPath(QPointF(4.3, 10.5))
+        path.lineTo(14, 10.5)
+        path.arcTo(QRectF(8.8, 10.5, 10.4, 10.4), 90, -180)
+        path.lineTo(9.5, 20.9)
+        p.drawPath(path)
+    elif name == "redo":
+        # undo 글리프를 수평 반전(→ 오른쪽으로 굽는 화살표).
+        p.save()
+        p.translate(24, 0); p.scale(-1, 1)
+        poly([(8, 7), (4.3, 10.5), (8, 14)], close=False)
+        path = QPainterPath(QPointF(4.3, 10.5))
+        path.lineTo(14, 10.5)
+        path.arcTo(QRectF(8.8, 10.5, 10.4, 10.4), 90, -180)
+        path.lineTo(9.5, 20.9)
+        p.drawPath(path)
+        p.restore()
+    elif name == "help":
+        p.drawEllipse(QPointF(12, 12), 8.3, 8.3)
+        f = QFont(); f.setBold(True); f.setPointSizeF(11)
+        p.save(); p.setFont(f); p.setPen(col)
+        p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "?")
+        p.restore()
+    elif name == "theme":
+        # 초승달 — 다크/라이트 토글.
+        moon = QPainterPath()
+        moon.addEllipse(QPointF(12, 12), 8.2, 8.2)
+        cut = QPainterPath()
+        cut.addEllipse(QPointF(15.5, 9.5), 7.2, 7.2)
+        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
+        p.drawPath(moon.subtracted(cut))
+        p.restore()
+    elif name == "pin":
+        # 압정(도구 고정) — 머리+핀. 체크 시 눌린 상태로 강조되어 무장 유지를 알린다.
+        p.save(); p.setBrush(col); p.setPen(QPen(col, 1.4))
+        head = QPainterPath()
+        head.addEllipse(QPointF(12, 9), 5.2, 5.2)
+        p.drawPath(head)
+        p.restore()
+        line(12, 14, 12, 20)
+    p.end()
+    icon = QIcon(pm)
+    # [M2 #1] 비활성 상태 아이콘을 뚜렷하게 흐리게 — baked 단색 픽스맵은 Qt 기본 비활성
+    # 처리가 약해 사용자가 활성/비활성을 구분하기 어려웠다(되돌리기 버튼 피드백). 저알파 사본을
+    # Disabled 모드로 명시 등록해 확실히 흐려 보이게 한다.
+    dim = QPixmap(pm.size()); dim.fill(Qt.GlobalColor.transparent)
+    dp = QPainter(dim); dp.setOpacity(0.30); dp.drawPixmap(0, 0, pm); dp.end()
+    icon.addPixmap(dim, QIcon.Mode.Disabled, QIcon.State.Off)
+    icon.addPixmap(dim, QIcon.Mode.Disabled, QIcon.State.On)
+    return icon
+
+
+# [Phase 6 M1] 캔버스 배경 — 테마별. 다크는 CAD 관습대로 어두운 모델공간.
+_CANVAS_BG = {"dark": QColor("#1e2731"), "light": QColor("#ffffff")}
+_ICON_COLOR_THEME = {"dark": QColor("#cdd8e3"), "light": QColor("#39434f")}
+
+
+def _dark_palette() -> QPalette:
+    """다크 테마 팔레트(Fusion 스타일과 함께 쓰면 전 위젯에 안정 적용)."""
+    c = QColor
+    p = QPalette()
+    R = QPalette.ColorRole
+    p.setColor(R.Window, c("#171e26"));         p.setColor(R.WindowText, c("#cdd8e3"))
+    p.setColor(R.Base, c("#0e1319"));           p.setColor(R.AlternateBase, c("#1d2632"))
+    p.setColor(R.Text, c("#cdd8e3"));           p.setColor(R.PlaceholderText, c("#78889a"))
+    p.setColor(R.Button, c("#1d2632"));         p.setColor(R.ButtonText, c("#cdd8e3"))
+    p.setColor(R.ToolTipBase, c("#232f3d"));    p.setColor(R.ToolTipText, c("#cdd8e3"))
+    p.setColor(R.Highlight, c("#2f6dbf"));      p.setColor(R.HighlightedText, c("#ffffff"))
+    p.setColor(R.Link, c("#54a9ff"))
+    D = QPalette.ColorGroup.Disabled
+    p.setColor(D, R.Text, c("#5a6675"));        p.setColor(D, R.ButtonText, c("#5a6675"))
+    p.setColor(D, R.WindowText, c("#5a6675"))
+    return p
+
+
+# [Phase 6 M1] 속성 패널 표시용 — 아이템 클래스명 → 한글 종류, 펜 스타일 → 한글.
+_TYPE_NAMES = {
+    "_RectItem": "네모", "_EllipseItem": "원", "_LineItem": "선",
+    "_ArrowItem": "화살표", "_PolyArrowItem": "직선화살", "_TextItem": "텍스트",
+    "_BadgeItem": "번호", "_PathItem": "펜", "_SymbolItem": "심볼",
+    "_ImageItem": "이미지", "_TableItem": "표", "_TitleBlockItem": "표제란",
+}
+# [Phase 6 M2] one-shot 대상 도구 — 하나 그리면 자동으로 선택모드로 복귀(pin OFF일 때).
+# 심볼(sym:*)은 prefix로 함께 처리. pen(자유 연속선)은 스트로크마다 해제되면 방해라 제외 —
+# 연속으로 긋는 게 본질이므로 pin 없이도 무장 유지.
+_ONESHOT_TOOLS = frozenset({"rect", "ellipse", "line", "arrow", "sarrow", "text", "badge"})
+
+# [화살표 통합] 사용자에게 화살표는 하나 — 종류(직선·곡선·직각)는 선택 후 미니툴바에서 고른다.
+# 내부적으로는 직선·곡선이 _ArrowItem(제어점 없음/있음), 직각이 _PolyArrowItem이라 그리기 도구만
+# 종류에 따라 갈라 쓴다(사용자에겐 안 보임). 클래스를 합치지 않은 이유는 CLAUDE.md 참조.
+_ARROW_KINDS = ("straight", "curved", "ortho")
+_ARROW_KIND_LABELS = (("straight", "직선"), ("curved", "곡선"), ("ortho", "직각"))
+_ARROW_KIND_TOOL = {"straight": "arrow", "curved": "arrow", "ortho": "sarrow"}
+
+
+def _arrow_kind_of(item):
+    """화살표 아이템의 현재 종류(straight/curved/ortho). 화살표가 아니면 None."""
+    if isinstance(item, _PolyArrowItem):
+        return "ortho" if item._is_ortho() else "straight"
+    if isinstance(item, _ArrowItem):
+        return "curved" if item._ctrl1 is not None else "straight"
+    return None
+
+
+class _UndoEntry:
+    """[Phase 6 M2] 되돌리기/다시 실행의 원자 단위 — per-item 연산 리스트 하나.
+    연산(op)은 딱 3종의 튜플:
+      ("create", item)                        undo=씬에서 제거  / redo=씬에 추가
+      ("remove", item)                        undo=씬에 추가    / redo=제거
+      ("mut", item, sub, before, after)       undo=apply(before)/ redo=apply(after)
+        sub ∈ {"pos","xform","geom","state"} — 각 sub가 복원 전략을 고른다.
+    key: 연속 변이 병합용(같은 key면 직전 엔트리에 흡수, before 유지·after 갱신).
+    이 단일 저널이 기존 add/delete/move/xform/geom 5종을 흡수하고 redo를 대칭으로 얻는다."""
+
+    __slots__ = ("ops", "key")
+
+    def __init__(self, ops, key=None):
+        self.ops = ops
+        self.key = key
+
+
+class _MinimapView(QGraphicsView):
+    """[미니맵] 메인 뷰와 같은 QGraphicsScene을 공유하는 축소 뷰 — 별도 캐시·갱신 로직 없이
+    Qt가 내용 변경(아이템 추가·이동)을 모든 뷰에 자동 반영한다(같은 scene을 보는 다른
+    QGraphicsView라 scene.changed 훅이 따로 필요 없음 — 규칙 2 손안의 카드: Qt 멀티뷰가
+    이미 제공). 자체 상호작용은 끄고(setInteractive(False)) 클릭/드래그로 메인 뷰를 그
+    위치로 이동시키는 내비게이션만 한다.
+    [성능 조사 스파이크 2026-07-30 실측] 매 paintEvent마다 itemsBoundingRect()를 캐시 없이
+    재계산하던 게 무거운 도면(아이템 ~1600개)에서 71ms — 미니맵 paintEvent 전체는 98ms(60fps
+    프레임 예산의 약 6배). 휠줌·팬·리사이즈마다 _refresh_minimap()이 이 repaint를 예약해
+    무거운 도면에서 휠줌이 씹히는 원인으로 확인. scene.changed(아이템 추가·이동·삭제 시에만
+    발생 — 줌/팬 같은 순수 뷰 변환은 안 탐)로 dirty 플래그를 걸어 캐시, 실제 내용 변경 때만
+    재계산한다(O(n) 매 페인트 → 상각 O(1))."""
+
+    def __init__(self, owner, scene):
+        super().__init__(scene)
+        self._owner = owner
+        self.setInteractive(False)   # 아이템 선택/드래그 차단 — 클릭은 내비게이션 전용
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.setMinimumHeight(120)
+        self._bounds_cache = QRectF()
+        self._bounds_dirty = True
+        scene.changed.connect(self._mark_bounds_dirty)
+
+    def _mark_bounds_dirty(self, _regions=None):
+        self._bounds_dirty = True
+
+    def _refit(self):
+        if self._bounds_dirty:
+            self._bounds_cache = self.scene().itemsBoundingRect()
+            self._bounds_dirty = False
+        rect = self._bounds_cache
+        if rect.isEmpty():
+            return
+        pad = max(rect.width(), rect.height()) * 0.06 + 12
+        self.fitInView(rect.adjusted(-pad, -pad, pad, pad), Qt.AspectRatioMode.KeepAspectRatio)
+
+    def paintEvent(self, event):
+        self._refit()
+        super().paintEvent(event)
+
+    _INDICATOR_PX = 30   # [사용자 피드백 2026-07-29] 인디케이터 목표 픽셀 크기(폭 기준, 줌 무관 고정)
+
+    def _indicator_scene_rect(self) -> QRectF:
+        """메인 뷰가 지금 보여주는 영역 — 씬 좌표. drawForeground에서 그대로 그릴 값이라
+        테스트가 이중변환 회귀(아래 주석)를 잡을 수 있도록 별도 메서드로 뺐다."""
+        main = self._owner._view
+        return main.mapToScene(main.viewport().rect()).boundingRect()
+
+    def _indicator_draw_rect(self) -> QRectF:
+        """[사용자 피드백 2026-07-29] 처음엔 실제 가시 영역 비율 그대로 그렸는데, 메인 뷰를
+        확대할수록 인디케이터가 작아져(≒ 화면에 보이는 씬 면적에 비례) 클릭으로 위치 잡기가
+        불편하다는 지적 — StarCraft류 게임 미니맵처럼 **종횡비는 유지하되 크기는 항상 고정**으로
+        바꾼다. 중심은 실제 가시 영역(`_indicator_scene_rect`)을 그대로 쓰고, 폭/높이만 미니맵
+        자체 배율(`self.transform()` — KeepAspectRatio라 m11==m22)의 역수로 고정 픽셀 크기를
+        씬 단위로 환산해 대체한다."""
+        visible = self._indicator_scene_rect()
+        scale = self.transform().m11() or 1.0
+        aspect = (visible.width() / visible.height()) if visible.height() else 1.0
+        w = self._INDICATOR_PX / scale
+        h = w / aspect if aspect else w
+        r = QRectF(0, 0, w, h)
+        r.moveCenter(visible.center())
+        return r
+
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+        # ⚠ [실조건 버그 근본원인] drawForeground의 painter는 Qt가 이미 "씬 좌표계"로 매핑해
+        # 넘겨준다(QGraphicsItem.paint()의 로컬 좌표계와 같은 설계) — 실측 확인(offscreen 프로브):
+        # drawForeground의 rect 인자가 뷰 픽셀(0..w)이 아니라 fitInView된 씬 범위 그대로였다.
+        # 이전 코드는 main의 가시 영역(씬 좌표)을 self.mapFromScene()으로 미니맵 '픽셀' 좌표로
+        # 또 변환한 뒤, 이미 씬 좌표계인 painter에 그 픽셀값을 그렸다 — 이중 변환이라 인디케이터가
+        # 항상 잘못된 크기·위치로 그려졌다(폴링으로는 못 고치는 종류의 버그 — 매번 같은 잘못된
+        # 값을 다시 그릴 뿐). 씬 좌표를 그대로 그리면 된다(변환 불필요) — 단 크기는 아래처럼 고정.
+        visible = self._indicator_draw_rect()
+        # [사용자 피드백] 처음엔 dock 제목줄 accent와 같은 블루(#54a9ff/#1f7ae0)+반투명 채움을
+        # 썼더니 ⓐ 채움이 미니맵 속 도형을 뿌옇게 가려 시인성이 나쁘고 ⓑ 상단 dock 제목줄 밑
+        # accent 선과 색이 같아 서로 다른 UI 요소인데 헷갈렸다. 채움을 없애 안쪽을 그대로 보이게
+        # 하고(테두리만), 테마·accent와 무관한 고정 시안(cyan)으로 바꿔 dock 장식과 확실히 구분.
+        indicator_color = QColor("#22d3ee")
+        pen = QPen(indicator_color, 2.2); pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(visible)
+
+    def _navigate_to(self, view_pos):
+        self._owner._view.centerOn(self.mapToScene(view_pos))
+        self.viewport().update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._navigate_to(event.position().toPoint())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            self._navigate_to(event.position().toPoint())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def wheelEvent(self, event):
+        event.ignore()   # 미니맵 자체 줌 없음 — 항상 전체 맞춤 유지(메인 뷰 휠은 별도)
+
+
+class _FloatingPanel(QFrame):
+    """[캔버스-퍼스트 레이아웃] `QDockWidget` 대신 캔버스 위에 뜨는 콘텐츠-크기 카드.
+    Figma/Excalidraw처럼 패널이 콘텐츠만큼만 공간을 쓰고 나머지는 도면 영역으로 남는다
+    (deep-interview 2026-07-29: QMainWindow dock 영역은 콘텐츠 크기와 무관하게 칼럼 전체를
+    예약해 낭비 공간이 생기던 문제의 근본원인). 위치는 창 모서리에 고정(자유 드래그 재배치는
+    스코프 밖 — Figma류도 패널 위치는 고정이 관례), 대신 제목줄 ▾/▸ 로 접기/펴기.
+    포지셔닝 패턴은 선택 위 컨텍스트 툴바(M3 #15, 2026-07-31 폐지)가 쓰던 것을 그대로 따른다
+    (QFrame(host) 부모 + host 좌표계 move — 규칙 2 손안의 카드)."""
+
+    def __init__(self, host, title: str, collapse_key: str):
+        super().__init__(host)
+        self.setObjectName("floatPanel")
+        self._host = host
+        self._collapse_key = f"panel_collapsed_{collapse_key}"
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0); v.setSpacing(0)
+
+        head = QWidget(); head.setObjectName("floatPanelHead")
+        self._head = head
+        hl = QHBoxLayout(head)
+        hl.setContentsMargins(9, 4, 4, 4); hl.setSpacing(4)
+        self._title_lbl = QLabel(title)
+        hl.addWidget(self._title_lbl, 1)
+        self._collapse_btn = QToolButton()
+        self._collapse_btn.setAutoRaise(True)
+        self._collapse_btn.setFixedSize(QSize(18, 18))
+        self._collapse_btn.clicked.connect(self._toggle_collapsed)
+        hl.addWidget(self._collapse_btn)
+        v.addWidget(head)
+
+        self._body = QWidget()
+        self._body_layout = QVBoxLayout(self._body)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(self._body)
+
+        self._collapsed = False
+        want_collapsed = QSettings("EasyCAD", "EasyCAD").value(
+            self._collapse_key, False, type=bool)
+        if want_collapsed:
+            self._set_collapsed(True, persist=False)
+        else:
+            self._update_collapse_icon()
+
+    def paintEvent(self, event):
+        # [2026-07-31] 배경·테두리를 QSS(`#floatPanel {...}`) 대신 직접 그린다 — `setStyleSheet()`를
+        # 이 패널(본문 폼의 조상) 자체에 걸면 Qt가 body 하위 위젯 전부(스핀박스 포함, 그 위젯을
+        # 겨냥한 규칙이 없어도)를 QStyleSheetStyle로 강제 전환하는데, 이 프록시의 QSpinBox/
+        # QDoubleSpinBox sizeHint가 네이티브 Fusion보다 짧게 나와 텍스트 디센더가 잘리고, 그
+        # sizeHint로 계산되는 QFormLayout 행 간격도 실제 위젯 높이(setMinimumHeight로 강제한
+        # 값)보다 좁게 잡혀 다음 행과 겹치는 문제까지 있었다(스턱루프 규칙 11-b — 위젯 레벨
+        # 패치를 두 번 더 시도해도 같은 근본원인이라 계속 재발했다). 패널 자체엔 스타일시트를
+        # 아예 걸지 않아 body의 모든 자손이 순정 Fusion 계산을 그대로 쓰게 하고, 제목줄 강조는
+        # `_head`에만 스타일시트를 건다(head는 body의 조상이 아니라 형제라 body에 영향 없음).
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.setBrush(QBrush(self.palette().color(QPalette.ColorRole.Window)))
+        painter.setPen(QPen(self.palette().color(QPalette.ColorRole.Mid), 1))
+        painter.drawRoundedRect(rect, 6, 6)
+        painter.end()
+        super().paintEvent(event)
+
+    def set_content(self, widget: QWidget):
+        self._body_layout.addWidget(widget)
+
+    def set_title_click(self, handler):
+        """[줌 배지 통합 2026-08-01, 사용자 요청] 제목 텍스트를 클릭 가능하게 만든다(커서 변경
+        + 클릭 시 handler 호출) — 기본은 비클릭이라 다른 패널(도형·속성)엔 영향 없음, 필요한
+        패널만 명시적으로 호출한다(미니맵: 제목에 표기된 줌%를 클릭하면 100%+정중앙 이동)."""
+        self._title_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._title_click = handler
+        self._title_lbl.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj is self._title_lbl and event.type() == QEvent.Type.MouseButtonPress \
+                and getattr(self, "_title_click", None) is not None:
+            self._title_click()
+            return True
+        return super().eventFilter(obj, event)
+
+    def _toggle_collapsed(self):
+        self._set_collapsed(not self._collapsed, persist=True)
+
+    def _set_collapsed(self, collapsed: bool, persist: bool):
+        self._collapsed = collapsed
+        self._body.setVisible(not collapsed)
+        self._update_collapse_icon()
+        if persist:
+            QSettings("EasyCAD", "EasyCAD").setValue(self._collapse_key, collapsed)
+        self.adjustSize()
+        self._host._reposition_panels()
+
+    def _update_collapse_icon(self):
+        self._collapse_btn.setText("▸" if self._collapsed else "▾")
+        self._collapse_btn.setToolTip("펼치기" if self._collapsed else "접기")
+
+
+class _ToastLabel(QLabel):
+    """[캔버스-퍼스트 레이아웃] `QStatusBar.showMessage()`를 대체하는 하단중앙 플로팅 토스트.
+    Figma/Excalidraw는 창 전체 폭을 가로지르는 상태바 행을 상시 예약하지 않는다 — 메시지가
+    있을 때만 캔버스 위에 잠깐 떠 있는 카드로 보여주고, 없으면 그 자리는 그대로 도면 영역."""
+
+    def __init__(self, host):
+        super().__init__(host)
+        self._host = host
+        self.setObjectName("toastLabel")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._current = ""
+        self.hide()
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._on_timeout)
+
+    def showMessage(self, text: str, timeout: int = 0):
+        self._timer.stop()
+        self._current = text or ""
+        if not text:
+            self.hide()
+            return
+        self.setText(text)
+        self.adjustSize()
+        self._host._reposition_toast()
+        self.show()
+        self.raise_()
+        if timeout and timeout > 0:
+            self._timer.start(timeout)
+
+    def _on_timeout(self):
+        self._current = ""
+        self.hide()
+
+    def currentMessage(self) -> str:
+        # QStatusBar 계약과 동일: 메시지가 있는 동안만 반환(만료·hide되면 빈 문자열).
+        # isVisible()에 의존하지 않는다 — 헤드리스 테스트는 최상위 창을 show()하지 않아
+        # 자식 위젯이 .show()를 호출해도 isVisible()이 항상 False로 읽힌다(Qt 가시성은
+        # 조상 체인 전체가 보여야 True).
+        return self._current
+
+    def addPermanentWidget(self, widget, stretch: int = 0):
+        pass   # [하위호환] 옛 QStatusBar API — 줌 배지는 이제 별도 플로팅 위젯이라 미사용
+
+
+# [신규기능 · 색 선택 UX 단순화] 그리드 팝업의 기본 색상 열 — 무채색 1열(흰/회/검, 고정 3값)
+# + 기존 _COLOR_PRESETS 5색(빨강·주황·노랑·초록·파랑)에 보라 1색을 더한 유채색 6열. 분홍은
+# 첫 열(빨강)과 밝기만 다른 사실상 중복이라 뺐다(2026-07-31 사용자 피드백 — 그 자리는 아래
+# "최근 사용한 색" 열로 대체). Apple 시스템 색상 관례를 그대로 잇는다(_COLOR_PRESETS와 동일 톤).
+_COLOR_GRID_HUES = _COLOR_PRESETS[:5] + ["#AF52DE"]
+_RECENT_COLOR_MAX = 3   # 그리드 한 열의 행 수와 맞춘 값 — 열 하나를 통째로 이 용도로 씀
+
+
+def _color_grid_columns() -> list[list[QColor]]:
+    """그리드 열 구성 — 무채색 1열 + 유채색 6열, 각 열은 위→아래 표준(기본)→연한색→어두운색
+    순(2026-07-31 사용자 피드백 — Office 테마색 그리드 관례). 밝기 변형은
+    QColor.lighter()/darker()로 생성(고정 팔레트 하드코딩 불필요). 무채색은 자연스러운
+    '표준' 색조가 없어 회색을 표준으로 두고 기존 흰/검 값을 그대로 연한/어두운 자리에 재사용."""
+    cols = [[QColor("#9E9E9E"), QColor("#FFFFFF"), QColor("#000000")]]
+    for hexs in _COLOR_GRID_HUES:
+        base = QColor(hexs)
+        cols.append([base, base.lighter(150), base.darker(150)])
+    return cols
+
+
+def _strip_color_dialog_left_column(dlg: QColorDialog):
+    """[신규기능] 비-네이티브 QColorDialog(알파 채널 때문에 Qt가 자동으로 네이티브 대신
+    이 위젯을 씀)의 왼쪽 열(Basic colors·Pick Screen Color·Custom colors·Add to Custom
+    Colors)을 숨긴다 — 우리 그리드 팝업의 표준색·"최근 사용한 색"과 중복이라는 사용자
+    피드백(2026-07-31)으로 제거하고, 오른쪽 그라디언트+슬라이더+RGB/16진수 입력만 남긴다.
+
+    ⚠ v1(고정 좌표 x<265·폭<=260)은 격리된 헤드리스 테스트에서만 맞았고 실제 앱(스타일
+    Fusion·실제 Windows 폰트)에서는 왼쪽 열 폭 자체가 헤드리스 실측과 달라 그라디언트
+    사각형·색상 슬라이더까지 함께 지워버렸다(실사용자 스크린샷으로 발견, 2026-07-31) —
+    폰트 메트릭에 따라 sizeHint가 달라지는 내부 레이아웃을 고정 픽셀로 가정한 게 원인.
+    v2는 절대 좌표 대신 "Basic colors"/"Custom colors" 라벨과 버튼(Qt 내부 고정 영문
+    문자열 — 이 앱은 Qt 자체 번역을 안 실어서 로캘과 무관하게 항상 이 텍스트)을 앵커로
+    찾고, 그 앵커들과 **같은 x, 같은 세로 범위**에 있는 이름 없는 위젯(실제 색상 그리드)만
+    같이 숨긴다 — 오른쪽 열은 구조적으로 다른 x를 쓰므로 폰트가 달라져도 안전하게 제외된다.
+    앵커 텍스트가 하나도 안 잡히면(Qt 버전 차이 등) 아무것도 숨기지 않는다 — 실패해도
+    다이얼로그 자체는 정상 동작하고 그냥 옛(복잡한) 모양 그대로 보일 뿐이라 안전하다."""
+    anchor_texts = {"&Basic colors", "&Custom colors", "&Pick Screen Color", "&Add to Custom Colors"}
+    anchors = [w for w in dlg.children()
+               if isinstance(w, QWidget) and getattr(w, "text", lambda: None)() in anchor_texts]
+    if len(anchors) < 4:
+        return
+    left_x = anchors[0].geometry().x()
+    y_top = min(w.geometry().y() for w in anchors)
+    y_bottom = max(w.geometry().y() + w.geometry().height() for w in anchors)
+    to_hide = list(anchors)
+    for w in dlg.children():
+        if not isinstance(w, QWidget) or w in to_hide:
+            continue
+        g = w.geometry()
+        if abs(g.x() - left_x) <= 2 and y_top - 4 <= g.y() <= y_bottom + 4:
+            to_hide.append(w)
+    for w in to_hide:
+        w.hide()
+
+
+class _ColorGridPopup(QWidget):
+    """Office류 색 선택 팝업 — 무채색+기본색 그리드(밝기 3단) + 최근 사용한 색(다른 색에서
+    고른 색, 최대 3개) + '다른 색…'(왼쪽 열을 숨긴 비-네이티브 QColorDialog, 선·채움 공통) +
+    (채움 전용) '없음'. 바깥을 클릭하면 자동으로 닫히는 Qt.Popup — 2026-07-28 코드정리에서
+    삭제된 pasteflow 유산 `_ColorPalettePopup`과 동일한 패턴이다. 클릭 즉시 적용 + 팝업
+    닫힘(확인 버튼 없음, 오피스 관례)."""
+
+    _SW = 20   # 스와치 한 변(px)
+
+    def __init__(self, parent: QWidget, initial: QColor | None, allow_none: bool,
+                 show_alpha: bool, title: str, on_pick, recent: list[QColor] | None = None,
+                 on_custom_picked=None):
+        super().__init__(parent, Qt.WindowType.Popup)
+        self._initial = QColor(initial) if initial is not None else None
+        self._show_alpha = show_alpha
+        self._title = title
+        self._on_pick = on_pick
+        self._on_custom_picked = on_custom_picked
+        self._anchor_parent = parent
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setObjectName("colorGridPopup")
+        self.setStyleSheet(
+            "#colorGridPopup { background-color: palette(window);"
+            " border: 1px solid palette(mid); border-radius: 6px; }")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8); outer.setSpacing(6)
+
+        top = QHBoxLayout(); top.setSpacing(6)
+        if allow_none:   # [요청③] "없음"을 별도 외부 버튼이 아니라 팝업 안 항목으로
+            none_btn = QToolButton(); none_btn.setText("Ø")
+            none_btn.setToolTip("채움 없음")
+            none_btn.setFixedSize(QSize(26, 22))
+            none_btn.clicked.connect(lambda: self._pick(None))
+            top.addWidget(none_btn)
+        other_btn = QToolButton(); other_btn.setText("다른 색…")
+        other_btn.setToolTip("전체 색상표")
+        other_btn.clicked.connect(self._pick_other)
+        top.addWidget(other_btn, 1)
+        outer.addLayout(top)
+
+        grid = QGridLayout(); grid.setSpacing(4)
+        columns = _color_grid_columns()
+        recent_col = list((recent or [])[:_RECENT_COLOR_MAX])
+        recent_col += [None] * (_RECENT_COLOR_MAX - len(recent_col))
+        columns.append(recent_col)
+        for col_i, col in enumerate(columns):
+            for row_i, color in enumerate(col):
+                b = QToolButton()
+                b.setFixedSize(QSize(self._SW, self._SW))
+                if color is None:
+                    b.setEnabled(False)
+                    b.setToolTip("다른 색에서 고른 색이 여기 표시됩니다")
+                    b.setStyleSheet(
+                        "background:transparent; border:1px dashed #666; border-radius:3px;")
+                else:
+                    b.setToolTip(color.name())
+                    b.setStyleSheet(
+                        f"background:{color.name()}; border:1px solid #0006; border-radius:3px;")
+                    b.clicked.connect(lambda _c=False, c=QColor(color): self._pick(c))
+                grid.addWidget(b, row_i, col_i)
+        outer.addLayout(grid)
+
+    def _pick(self, color: QColor | None):
+        self._on_pick(color)
+        self.close()
+
+    def _pick_other(self):
+        # [2026-07-31 통일] 예전엔 알파(반투명)가 필요한 채움만 비-네이티브 다이얼로그+왼쪽 열
+        # 숨김을 적용하고, 알파가 필요 없는 선/텍스트 색은 OS 네이티브 다이얼로그를 그대로 썼다
+        # — 네이티브는 창 자체가 OS가 그려서 내부 위젯을 숨길 방법이 없어 왼쪽 열이 그대로
+        # 보였다. 사용자 피드백(2026-07-31): 인터페이스가 서로 달라 보임 → 알파 유무와 무관하게
+        # 항상 비-네이티브 인스턴스를 만들어 왼쪽 열을 숨긴다(오른쪽 그라디언트+필드는 동일 재사용).
+        parent = self._anchor_parent
+        self.close()
+        dlg = QColorDialog(parent)
+        dlg.setWindowTitle(self._title)
+        if self._show_alpha:
+            dlg.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
+        dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+        dlg.setCurrentColor(self._initial or QColor("#ffffff"))
+        dlg.adjustSize()
+        _strip_color_dialog_left_column(dlg)
+        dlg.adjustSize()
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            col = dlg.selectedColor()
+            if col.isValid():
+                if self._on_custom_picked:
+                    self._on_custom_picked(col)
+                self._on_pick(col)
