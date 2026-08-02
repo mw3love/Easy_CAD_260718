@@ -460,8 +460,13 @@ class _UIBuildMixin:
         # 좌측 「도형」 탭처럼 **기본값이 ON이라 상시 켜져 있는 토글**이 코랄 테두리 박스로
         # 계속 떠 있어 "항상 튀어 보인다"는 지적. 순간적으로 켜지는 것(그리기 도구 무장·핀)엔
         # 테두리가 적절하지만, 상시 상태엔 옅은 배경 틴트가 덜 튀면서도 "켜짐"을 계속 알린다 —
-        # 사용자 선택(대안 1): checked는 테두리 없이 옅은 배경 틴트만(alpha 35), hover/pressed는
-        # 여전히 진하게(순간 피드백은 그대로 또렷해야 하므로 건드리지 않음).
+        # 사용자 선택(대안 1): checked는 테두리 없이 옅은 배경 틴트만(alpha 35).
+        # [2026-08-02 3차 피드백] checked가 무테두리가 되니 이번엔 hover만 테두리가 남아 오히려
+        # 더 튀었다 — hover도 테두리 없이 checked보다 옅은 틴트(alpha 25)로 낮춤. 완전히
+        # 없애지 않은 이유: 아이콘 전용 툴바라 hover가 유일한 즉각 피드백(툴팁은 딜레이가 있음)
+        # — 다만 hover는 커서가 그 자리에 있는 동안·한 번에 하나만 켜지는 순간적 상태라 checked
+        # 만큼 튈 걱정은 없어 옅은 틴트 정도는 유지. pressed는 여전히 진하게(클릭 확정 피드백은
+        # 또렷해야 하므로 건드리지 않음).
         # ⚠ 상위 위젯(self·패널 body)에 걸면 안 됨 — `_props_panel`의 QFormLayout이 이
         # QToolButton들(_pf_color 등)과 QAbstractSpinBox(_pf_width 등)를 같은 body 아래 형제로
         # 두고 있어서, 조상에 스타일시트를 걸면 QStyleSheetStyle 강제전환으로 스핀박스 sizeHint가
@@ -470,7 +475,7 @@ class _UIBuildMixin:
         btn_qss = (
             "QToolButton { border:1px solid transparent; border-radius:6px; padding:3px; }"
             "QToolButton:checked { background:rgba(218,119,86,35); }"
-            "QToolButton:hover { background:rgba(218,119,86,40); border-color:#da7756; }"
+            "QToolButton:hover { background:rgba(218,119,86,25); }"
             "QToolButton:pressed { background:rgba(218,119,86,150); border-color:#da7756; }"
         )
         toolbar = getattr(self, "_toolbar", None)
