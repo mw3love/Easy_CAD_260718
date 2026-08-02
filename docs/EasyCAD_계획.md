@@ -237,6 +237,18 @@ Lucid/FigJam 캡처 + 사용자 요청 반영, deep-interview 4가지 확정(202
   이동 시 옛 점선이 남는다(Qt는 움직인 아이템 bbox만 무효화) → `_repaint_overlays()`를
   정렬·분배·undo·redo에 연결. 이 잔상은 오프스크린 렌더로 재현 불가(전면 재도색) — 실조건서 발견.
 
+#### M6 — 디자인 베이크오프(색·아이콘) — **진행 중 (2026-08-02 시작)**
+기능은 Phase 0~6 M1~M5로 거의 완료 — 이 단계는 시각 스타일 자체를 다시 다듬는다. 새 스킬
+`design-bakeoff`(전역)로 Claude 라이브 CSS/SVG + jbnu-gateway 이미지 시안을 한 Artifact에서
+비교해 좁혀가는 절차를 도입, 결정은 `~/.claude/design-system/projects/easy-cad.md`에 누적.
+
+- **1라운드(버튼 색·상태) — 완료(커밋 `6e8dc2e`)**: 머티리얼(elevation) 스타일 + 코랄
+  accent(`#da7756`, Claude 브랜드톤) 확정, hover/checked/pressed QSS 코드 반영까지 끝남.
+  상세: `docs/history/2026-08.md` "UI 디자인 베이크오프 1라운드" 항목.
+- **2라운드(상단바 아이콘 판별성) — 시안 확정, 코드 반영 미착수**: 대표 4종(선택·화살표·텍스트·
+  저장) 듀오톤 스타일(A2, save만 반전한 S2) 확정. 남은 것: 나머지 11개 아이콘에 같은 규칙 적용
+  + `core_constants.py`의 `_tool_icon()`을 SVG 로드 방식으로 전환하는 코드 반영(별도 세션).
+
 #### 후속 (Phase 6 이후 / 낮은 우선)
 개별 열폭 드래그.
 
