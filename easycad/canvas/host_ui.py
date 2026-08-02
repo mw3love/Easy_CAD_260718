@@ -40,7 +40,7 @@ from easycad.fileio.mermaid_import import (
 )
 from easycad.canvas.host_widgets import (
     _ICON_COLOR, _CANVAS_BG, _ICON_COLOR_THEME,
-    _act_icon, _dark_palette, _FloatingPanel, _PaletteButton, _MinimapView,
+    _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -320,8 +320,13 @@ class _UIBuildMixin:
 
 
     def _reposition_toast(self):
+        # [2026-08-02 버그 수정] `isVisible()` 가드가 있으면 `showMessage()`가 `.show()` 전에
+        # 이 메서드를 부를 때(당시엔 아직 hide() 상태) 조용히 건너뛰어 토스트가 기본 위치(좌상단)에
+        # 남았다 — 이후 창 리사이즈로 다시 불릴 때(그땐 이미 보이는 상태)만 하단중앙으로 옮겨가서
+        # "처음엔 좌상단, 몇 번 쓰면 하단중앙"으로 보였다(사용자 재현 보고). 가시성과 무관하게
+        # 항상 재배치하면(숨겨진 토스트를 옮겨도 부작용 없음) 호출 순서에 안전해진다.
         toast = getattr(self, "_toast", None)
-        if toast is None or not toast.isVisible():
+        if toast is None:
             return
         m = self._PANEL_MARGIN
         vpos = self._view.mapTo(self, QPoint(0, 0))
@@ -401,7 +406,12 @@ class _UIBuildMixin:
         app = QApplication.instance()
         if app is not None:
             app.setStyle("Fusion")   # 두 테마 모두 Fusion — 팔레트가 전 위젯에 안정 반영
-            app.setPalette(_dark_palette() if dark else app.style().standardPalette())
+            # [2026-08-02 버그 수정] 예전엔 라이트에 `app.style().standardPalette()`를 썼는데,
+            # 이 Qt6/Windows 조합은 OS 다크모드를 따라 Fusion "표준" 팔레트 자체가 다크로
+            # 나온다(`styleHints().colorScheme()`가 Dark) — 라이트 토글이 캔버스만 하얘지고
+            # 패널·버튼·제목/토스트 텍스트는 다크 색 그대로 남아 안 보이던 원인. `_dark_palette()`처럼
+            # 고정 색 팔레트(`_light_palette()`)로 OS 설정과 무관하게 만들어 해결.
+            app.setPalette(_dark_palette() if dark else _light_palette())
         self._scene.setBackgroundBrush(QBrush(_CANVAS_BG[key]))
         # 아이콘 재생성: 액션(메뉴 전용 8종만 실제로 테마색 바뀜, SVG 11종은 캐시 히트라 사실상
         # no-op) + 팔레트/심볼(중립색, 테마 적응). 상단 그리기 도구 버튼은 코랄 고정 SVG라
@@ -415,8 +425,10 @@ class _UIBuildMixin:
         # [캔버스-퍼스트] 플로팅 패널 제목줄 = accent 밑줄 + 틴트 배경(옛 dock 제목표시줄과 같은
         # '잡아 눈에 띄는 카드' 언어 유지, 자유 드래그는 없지만 접기 버튼이 있는 자리라 여전히
         # 상호작용 영역으로 보여야 함).
-        # [디자인 베이크오프 2026-08-02] 다크 accent를 코랄(Claude 브랜드톤)로 교체(라이트는 스코프 밖, 기존 유지).
-        accent = "#da7756" if dark else "#1f7ae0"
+        # [디자인 베이크오프 2026-08-02] accent는 코랄(Claude 브랜드톤) 고정, 다크/라이트 공통 —
+        # 아이콘이 이미 양쪽 다 코랄로 확정돼(2라운드) 라이트만 블루로 남겨두면 아이콘·강조선
+        # 색이 어긋난다(예전엔 "라이트는 스코프 밖"으로 블루 유지했던 결정을 여기서 통일).
+        accent = "#da7756"
         title_bg = "#232f3d" if dark else "#e8eef5"
         # ⚠ [2026-07-31, 스턱루프 규칙 11-b — 3차 접근 전환] 속성 dock의 QSpinBox/QDoubleSpinBox
         # ("두께"·"폰트"·"반경")만 텍스트 디센더가 잘리는 버그 + (2차 시도인 setMinimumHeight
@@ -440,9 +452,16 @@ class _UIBuildMixin:
         # [그룹 구분 디자인 2026-08-01, 사용자 요청] 기본 QToolBar 구분선은 Fusion에서 거의
         # 안 보일 정도로 옅다 — 파일(새로 만들기~저장) / 도구(선택~핀) / 편집·보기(되돌리기~격자)
         # 3그룹이 한눈에 갈리도록 구분선을 굵고 여백 있게 강조.
-        # [디자인 베이크오프 2026-08-02] 버튼 상태(hover/checked/pressed) 코랄 강조 — 다크만.
-        # Qt QSS는 box-shadow가 없어 Material 참고시안의 그림자는 배경 틴트 강도로 근사한다
-        # (호버<checked<pressed 순으로 진하게).
+        # [디자인 베이크오프 2026-08-02] 버튼 상태(hover/checked/pressed) 코랄 강조 — 다크/라이트
+        # 공통(예전엔 다크 전용이었는데, 라이트 팔레트 버그 수정과 함께 라이트도 켬 — 아이콘이
+        # 이미 양쪽 다 코랄이라 강조도 맞춰야 자연스럽다). Qt QSS는 box-shadow가 없어 Material
+        # 참고시안의 그림자는 배경 틴트 강도로 근사한다(호버<pressed 순으로 진하게).
+        # [2026-08-02 사용자 재피드백] "테두리만" 버전(직전 커밋)도 여전히 과했다 — 스냅·격자·
+        # 좌측 「도형」 탭처럼 **기본값이 ON이라 상시 켜져 있는 토글**이 코랄 테두리 박스로
+        # 계속 떠 있어 "항상 튀어 보인다"는 지적. 순간적으로 켜지는 것(그리기 도구 무장·핀)엔
+        # 테두리가 적절하지만, 상시 상태엔 옅은 배경 틴트가 덜 튀면서도 "켜짐"을 계속 알린다 —
+        # 사용자 선택(대안 1): checked는 테두리 없이 옅은 배경 틴트만(alpha 35), hover/pressed는
+        # 여전히 진하게(순간 피드백은 그대로 또렷해야 하므로 건드리지 않음).
         # ⚠ 상위 위젯(self·패널 body)에 걸면 안 됨 — `_props_panel`의 QFormLayout이 이
         # QToolButton들(_pf_color 등)과 QAbstractSpinBox(_pf_width 등)를 같은 body 아래 형제로
         # 두고 있어서, 조상에 스타일시트를 걸면 QStyleSheetStyle 강제전환으로 스핀박스 sizeHint가
@@ -450,10 +469,10 @@ class _UIBuildMixin:
         # 없는 컨테이너(툴바)는 컨테이너 단위로, 스핀박스와 형제인 버튼들은 위젯 각각에 직접 건다.
         btn_qss = (
             "QToolButton { border:1px solid transparent; border-radius:6px; padding:3px; }"
+            "QToolButton:checked { background:rgba(218,119,86,35); }"
             "QToolButton:hover { background:rgba(218,119,86,40); border-color:#da7756; }"
-            "QToolButton:checked { background:rgba(218,119,86,90); border-color:#da7756; }"
             "QToolButton:pressed { background:rgba(218,119,86,150); border-color:#da7756; }"
-        ) if dark else ""
+        )
         toolbar = getattr(self, "_toolbar", None)
         if toolbar is not None:
             sep_color = "#3d4b5c" if dark else "#c9d3dc"

@@ -244,6 +244,31 @@ def _dark_palette() -> QPalette:
     return p
 
 
+def _light_palette() -> QPalette:
+    """라이트 테마 팔레트. [2026-08-02, 사용자 재현·버그 발견] 예전엔 `app.style().
+    standardPalette()`(Fusion 기본값)를 그대로 썼는데, 이 PyQt6(6.10.2)/Windows 조합에서
+    `styleHints().colorScheme()`가 OS 다크모드를 따라가 Fusion의 "표준" 팔레트 자체가
+    다크(`Window #323232`)로 나왔다 — 라이트 토글이 캔버스 배경만 하얗게 바꾸고 패널
+    본문·버튼·제목 텍스트·토스트 텍스트는 전부 다크 팔레트 색 그대로 남아 안 보이던 원인.
+    다크 팔레트처럼 고정 색으로 명시해 OS 설정과 무관하게 만든다."""
+    c = QColor
+    p = QPalette()
+    R = QPalette.ColorRole
+    p.setColor(R.Window, c("#eef1f4"));         p.setColor(R.WindowText, c("#232a33"))
+    p.setColor(R.Base, c("#ffffff"));           p.setColor(R.AlternateBase, c("#f4f6f8"))
+    p.setColor(R.Text, c("#232a33"));           p.setColor(R.PlaceholderText, c("#8a94a0"))
+    p.setColor(R.Button, c("#e5e9ed"));         p.setColor(R.ButtonText, c("#232a33"))
+    p.setColor(R.ToolTipBase, c("#fffef2"));    p.setColor(R.ToolTipText, c("#232a33"))
+    # [디자인 베이크오프 2026-08-02] 아이콘·버튼 accent가 다크/라이트 공통 코랄로 확정된 것과
+    # 맞춰 팔레트 accent도 통일(예전엔 라이트만 블루 #1f7ae0 — 스코프 밖으로 남겨뒀던 것).
+    p.setColor(R.Highlight, c("#da7756"));      p.setColor(R.HighlightedText, c("#ffffff"))
+    p.setColor(R.Link, c("#da7756"))
+    D = QPalette.ColorGroup.Disabled
+    p.setColor(D, R.Text, c("#a3acb6"));        p.setColor(D, R.ButtonText, c("#a3acb6"))
+    p.setColor(D, R.WindowText, c("#a3acb6"))
+    return p
+
+
 # [Phase 6 M1] 속성 패널 표시용 — 아이템 클래스명 → 한글 종류, 펜 스타일 → 한글.
 _TYPE_NAMES = {
     "_RectItem": "네모", "_EllipseItem": "원", "_LineItem": "선",
@@ -520,7 +545,7 @@ class _ToastLabel(QLabel):
             return
         self.setText(text)
         self.adjustSize()
-        self._host._reposition_toast()
+        self._host._reposition_toast()   # _reposition_toast는 이제 가시성과 무관하게 항상 동작
         self.show()
         self.raise_()
         if timeout and timeout > 0:
