@@ -8,7 +8,7 @@
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QFont, QPolygonF, QPainterPath, QPalette, QDrag,
+    QPolygonF, QPainterPath, QPalette, QDrag,
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
@@ -26,6 +26,7 @@ from easycad.canvas.annotator_core import (
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    _svg_icon_pixmap,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -137,10 +138,21 @@ _SCENE_HALF = 50000.0
 _ICON_COLOR = QColor("#39434f")
 
 
+# [디자인 베이크오프 2라운드, 2026-08-02] 코랄 듀오톤 SVG로 새로 그린 액션 이름 —
+# 상단 QToolBar에 실제로 노출되는 것들. 메뉴 전용(pdf/image/table/titleblock/mermaid/
+# zoom_fit/zoom_100/align)은 이번 라운드 스코프 밖이라 아래 QPainter 코드를 그대로 유지.
+_SVG_ACT_ICON_NAMES = frozenset({
+    "new", "open", "save", "undo", "redo", "snap", "ortho", "grid", "theme", "help", "pin",
+})
+
+
 def _act_icon(name: str) -> QIcon:
-    """[Phase 6 M1] 파일/삽입/보기 액션 아이콘 — QPainter 단색 라인 글리프.
-    좌표는 icon_proposal 아티팩트(24-단위 뷰박스)에서 그대로 포팅. 그리기 도구 아이콘은
-    코어 `_tool_icon`이 담당하고, 여기선 앱 레벨 액션(문서 없는 상단바 버튼)만 그린다."""
+    """[Phase 6 M1] 파일/삽입/보기 액션 아이콘. 상단바 노출 11종(`_SVG_ACT_ICON_NAMES`)은
+    2026-08-02부터 코랄 듀오톤 SVG(`easycad/resources/icons/`)를 래스터화 — 나머지(메뉴 전용)는
+    기존 QPainter 단색 라인 글리프 그대로(좌표는 icon_proposal 아티팩트에서 포팅)."""
+    if name in _SVG_ACT_ICON_NAMES:
+        pm = _svg_icon_pixmap(name, 24)
+        return _finish_act_icon(pm)
     pm = QPixmap(24, 24)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
@@ -157,17 +169,7 @@ def _act_icon(name: str) -> QIcon:
         pg = QPolygonF([QPointF(x, y) for x, y in pts])
         p.drawPolygon(pg) if close else p.drawPolyline(pg)
 
-    if name == "new":
-        poly([(6.5, 3.5), (13, 3.5), (17.5, 8), (17.5, 20.5), (6.5, 20.5)])
-        poly([(13, 3.5), (13, 8), (17.5, 8)], close=False)
-        line(12, 12, 12, 17); line(9.5, 14.5, 14.5, 14.5)
-    elif name == "open":
-        poly([(3.5, 6.5), (9, 6.5), (11, 8.5), (20.5, 8.5), (20.5, 18), (3.5, 18)])
-    elif name == "save":
-        poly([(4.5, 4.5), (16.5, 4.5), (19.5, 7.5), (19.5, 19.5), (4.5, 19.5)])
-        poly([(7.5, 4.5), (7.5, 9), (15, 9), (15, 4.5)], close=False)
-        p.drawRect(QRectF(8, 13, 8, 6.5))
-    elif name == "pdf":
+    if name == "pdf":
         poly([(6, 3.5), (13.5, 3.5), (17.5, 7.5), (17.5, 20.5), (6, 20.5)])
         poly([(13.5, 3.5), (13.5, 7.5), (17.5, 7.5)], close=False)
         p.save()
@@ -201,70 +203,16 @@ def _act_icon(name: str) -> QIcon:
     elif name == "zoom_100":
         p.drawEllipse(QPointF(10.5, 10.5), 5, 5)
         line(14.2, 14.2, 19.5, 19.5)
-    elif name == "snap":
-        path = QPainterPath(QPointF(6.5, 4.5))
-        path.lineTo(6.5, 11.5)
-        path.arcTo(QRectF(6.5, 6, 11, 11), 180, -180)
-        path.lineTo(17.5, 4.5)
-        p.drawPath(path)
-        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
-        p.drawRect(QRectF(5, 4, 3.3, 3.2)); p.drawRect(QRectF(15.7, 4, 3.3, 3.2))
-        p.restore()
-    elif name == "ortho":
-        poly([(6, 4), (6, 19), (20, 19)], close=False)
-        poly([(6, 15.5), (9.5, 15.5), (9.5, 19)], close=False)
-    elif name == "grid":
-        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
-        for gx in (5.5, 12, 18.5):
-            for gy in (5.5, 12, 18.5):
-                p.drawEllipse(QPointF(gx, gy), 1.5, 1.5)
-        p.restore()
-    elif name == "undo":
-        poly([(8, 7), (4.3, 10.5), (8, 14)], close=False)
-        path = QPainterPath(QPointF(4.3, 10.5))
-        path.lineTo(14, 10.5)
-        path.arcTo(QRectF(8.8, 10.5, 10.4, 10.4), 90, -180)
-        path.lineTo(9.5, 20.9)
-        p.drawPath(path)
-    elif name == "redo":
-        # undo 글리프를 수평 반전(→ 오른쪽으로 굽는 화살표).
-        p.save()
-        p.translate(24, 0); p.scale(-1, 1)
-        poly([(8, 7), (4.3, 10.5), (8, 14)], close=False)
-        path = QPainterPath(QPointF(4.3, 10.5))
-        path.lineTo(14, 10.5)
-        path.arcTo(QRectF(8.8, 10.5, 10.4, 10.4), 90, -180)
-        path.lineTo(9.5, 20.9)
-        p.drawPath(path)
-        p.restore()
-    elif name == "help":
-        p.drawEllipse(QPointF(12, 12), 8.3, 8.3)
-        f = QFont(); f.setBold(True); f.setPointSizeF(11)
-        p.save(); p.setFont(f); p.setPen(col)
-        p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "?")
-        p.restore()
-    elif name == "theme":
-        # 초승달 — 다크/라이트 토글.
-        moon = QPainterPath()
-        moon.addEllipse(QPointF(12, 12), 8.2, 8.2)
-        cut = QPainterPath()
-        cut.addEllipse(QPointF(15.5, 9.5), 7.2, 7.2)
-        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
-        p.drawPath(moon.subtracted(cut))
-        p.restore()
-    elif name == "pin":
-        # 압정(도구 고정) — 머리+핀. 체크 시 눌린 상태로 강조되어 무장 유지를 알린다.
-        p.save(); p.setBrush(col); p.setPen(QPen(col, 1.4))
-        head = QPainterPath()
-        head.addEllipse(QPointF(12, 9), 5.2, 5.2)
-        p.drawPath(head)
-        p.restore()
-        line(12, 14, 12, 20)
     p.end()
+    return _finish_act_icon(pm)
+
+
+def _finish_act_icon(pm: QPixmap) -> QIcon:
+    """공통 마무리 — 래스터화된 픽스맵(QPainter 그림 또는 SVG 래스터)을 QIcon으로 감싼다.
+    [M2 #1] 비활성 상태 아이콘을 뚜렷하게 흐리게 — baked 단색 픽스맵은 Qt 기본 비활성
+    처리가 약해 사용자가 활성/비활성을 구분하기 어려웠다(되돌리기 버튼 피드백). 저알파 사본을
+    Disabled 모드로 명시 등록해 확실히 흐려 보이게 한다."""
     icon = QIcon(pm)
-    # [M2 #1] 비활성 상태 아이콘을 뚜렷하게 흐리게 — baked 단색 픽스맵은 Qt 기본 비활성
-    # 처리가 약해 사용자가 활성/비활성을 구분하기 어려웠다(되돌리기 버튼 피드백). 저알파 사본을
-    # Disabled 모드로 명시 등록해 확실히 흐려 보이게 한다.
     dim = QPixmap(pm.size()); dim.fill(Qt.GlobalColor.transparent)
     dp = QPainter(dim); dp.setOpacity(0.30); dp.drawPixmap(0, 0, pm); dp.end()
     icon.addPixmap(dim, QIcon.Mode.Disabled, QIcon.State.Off)

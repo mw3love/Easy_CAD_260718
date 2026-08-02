@@ -355,7 +355,7 @@ class _UIBuildMixin:
             if key in ("rect", "ellipse", "sarrow"):
                 continue
             btn = QToolButton()
-            btn.setIcon(_tool_icon(key, self.current_color))
+            btn.setIcon(_tool_icon(key))
             btn.setIconSize(QSize(20, 20))
             tip = "화살표 (3 — 그린 뒤 속성 패널에서 종류 변경)" \
                 if key == "arrow" else f"{name} ({sc})"
@@ -403,7 +403,9 @@ class _UIBuildMixin:
             app.setStyle("Fusion")   # 두 테마 모두 Fusion — 팔레트가 전 위젯에 안정 반영
             app.setPalette(_dark_palette() if dark else app.style().standardPalette())
         self._scene.setBackgroundBrush(QBrush(_CANVAS_BG[key]))
-        # 아이콘 재생성: 액션(중립색) + 팔레트/심볼(중립색). 그리기 도구는 draw-color라 무관.
+        # 아이콘 재생성: 액션(메뉴 전용 8종만 실제로 테마색 바뀜, SVG 11종은 캐시 히트라 사실상
+        # no-op) + 팔레트/심볼(중립색, 테마 적응). 상단 그리기 도구 버튼은 코랄 고정 SVG라
+        # 이 루프와 무관(재생성 불필요).
         for act, name in getattr(self, "_icon_actions", ()):
             act.setIcon(_act_icon(name))
         for k, b in getattr(self, "_shape_tool_buttons", {}).items():

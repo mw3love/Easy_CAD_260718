@@ -245,9 +245,14 @@ Lucid/FigJam 캡처 + 사용자 요청 반영, deep-interview 4가지 확정(202
 - **1라운드(버튼 색·상태) — 완료(커밋 `6e8dc2e`)**: 머티리얼(elevation) 스타일 + 코랄
   accent(`#da7756`, Claude 브랜드톤) 확정, hover/checked/pressed QSS 코드 반영까지 끝남.
   상세: `docs/history/2026-08.md` "UI 디자인 베이크오프 1라운드" 항목.
-- **2라운드(상단바 아이콘 판별성) — 시안 확정, 코드 반영 미착수**: 대표 4종(선택·화살표·텍스트·
-  저장) 듀오톤 스타일(A2, save만 반전한 S2) 확정. 남은 것: 나머지 11개 아이콘에 같은 규칙 적용
-  + `core_constants.py`의 `_tool_icon()`을 SVG 로드 방식으로 전환하는 코드 반영(별도 세션).
+- **2라운드(상단바 아이콘 판별성) — 완료(코드 반영까지)**: 대표 4종(선택·화살표·텍스트·저장)
+  듀오톤 스타일(A2, save만 반전한 S2) 확정 후, 나머지 14종(새로 만들기·열기·선·펜·번호·
+  직각화살·핀·되돌리기·다시실행·스냅·직교·격자·테마토글·도움말)까지 같은 규칙으로 새로 그려
+  `easycad/resources/icons/*.svg` 18개로 저장하고 `_tool_icon()`/`_act_icon()`을 QPainter
+  코드 드로잉 → SVG 래스터화(`_svg_icon()`, QSvgRenderer)로 전환. 색은 다크/라이트 공통
+  코랄(#da7756) 고정(사용자 확정). 메뉴 전용 8종(pdf/image/table/titleblock/mermaid/
+  zoom_fit/zoom_100/align)은 스코프 밖이라 기존 QPainter 코드 유지. 스모크 345종 통과.
+  상세: `~/.claude/design-system/projects/easy-cad.md`.
 
 #### 후속 (Phase 6 이후 / 낮은 우선)
 개별 열폭 드래그.

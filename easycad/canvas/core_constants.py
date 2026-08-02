@@ -7,7 +7,9 @@ import heapq
 import io
 import math
 import struct
+import sys
 import uuid
+from pathlib import Path
 
 from PyQt6.QtCore import (
     Qt, QPoint, QPointF, QRectF, QLineF, QSize, QTimer, QEvent,
@@ -18,6 +20,7 @@ from PyQt6.QtGui import (
     QPainterPathStroker, QPolygonF, QFont, QFontMetricsF, QIcon, QCursor,
     QConicalGradient,
 )
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
     QWidget, QGraphicsScene, QGraphicsView, QGraphicsRectItem,
     QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsPathItem,
@@ -69,8 +72,6 @@ _ICON_DARK = "#3a3a3a"
 
 # 그리기 도구가 만드는 도형(릴리스 시 너무 작으면 폐기 대상)
 _SHAPE_TOOLS = ("rect", "ellipse", "line", "arrow", "sarrow")
-# 현재 색으로 아이콘을 칠하는 도구(나머지는 중립색)
-_DRAW_TOOLS = ("rect", "ellipse", "line", "arrow", "sarrow", "pen", "text", "badge")
 
 # 텍스트 배경 선택지: 투명 / 흰 / 회 / 검 / 반투명 검 (자막·스티커 느낌). 스와치로 직접 선택.
 _TEXT_BG_OPTIONS = [
@@ -133,124 +134,53 @@ def _pixmap_from_data(data: bytes) -> QPixmap | None:
 
 
 # ---------------------------------------------------------------------------
-# 아이콘 (QPainter로 그린 도형 — 그리기 도구는 현재 색, 나머지는 중립색)
+# 아이콘 (SVG 래스터화 — 2026-08-02 디자인 베이크오프 2라운드: 코랄 듀오톤(#da7756) 통일
+# 스타일로 전환. 예전 "그리기도구는 현재 그리기색 반영" 관례는 사용자가 실사용 안 한다고
+# 확인돼 폐기 — 이제 테마·색 무관하게 전 아이콘이 같은 고정 코랄이다(색은 SVG 파일에
+# 직접 인코딩, 런타임 재칠 없음). SVG는 easycad/resources/icons/<name>.svg.
 # ---------------------------------------------------------------------------
 
-def _tool_icon(tool: str, color=None, neutral_override=None) -> QIcon:
-    # neutral_override: 중립색을 바꿔야 할 때(예: 밝은 제목바 위 어두운 닫기 X).
-    neutral = QColor(neutral_override) if neutral_override is not None else QColor(_TEXT)
-    col = QColor(color) if (color is not None and tool in _DRAW_TOOLS) else neutral
-    pm = QPixmap(22, 22)
+def _icons_dir() -> Path:
+    """resources/icons 폴더 경로 — 개발 실행과 (미래) PyInstaller 프리즌 빌드 양쪽 대응.
+    현재 이 프로젝트는 PyInstaller로 패키징하지 않는다(스펙 파일 없음) — sys._MEIPASS
+    분기는 나중에 패키징이 붙을 때를 위한 최소 대비일 뿐, 지금은 else 경로만 실제로 탄다."""
+    base = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(__file__).resolve().parents[1]
+    return base / "resources" / "icons"
+
+
+def _svg_icon_pixmap(name: str, size: int = 22) -> QPixmap:
+    """resources/icons/<name>.svg를 size×size로 래스터화한 QPixmap(캐시 없음 — 호출부가
+    비활성 상태용 흐린 사본 등을 더 만들 수 있어 QIcon 캐시(`_svg_icon`)와 분리)."""
+    renderer = QSvgRenderer(str(_icons_dir() / f"{name}.svg"))
+    pm = QPixmap(size, size)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(QPen(col, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-    p.setBrush(Qt.BrushStyle.NoBrush)
-
-    if tool == "select":
-        poly = QPolygonF([
-            QPointF(4, 3), QPointF(4, 18), QPointF(8, 14),
-            QPointF(11, 20), QPointF(13, 19), QPointF(10, 13), QPointF(15, 13),
-        ])
-        p.setBrush(neutral)
-        p.setPen(QPen(neutral, 1))
-        p.drawPolygon(poly)
-    elif tool == "rect":
-        p.drawRect(4, 5, 14, 12)
-    elif tool == "ellipse":
-        p.drawEllipse(4, 4, 14, 14)
-    elif tool == "line":
-        p.drawLine(4, 18, 18, 4)
-    elif tool == "arrow":
-        p.drawLine(4, 18, 14, 8)
-        p.setBrush(col)
-        p.setPen(QPen(col, 1))
-        p.drawPolygon(QPolygonF([QPointF(18, 4), QPointF(11, 7), QPointF(15, 11)]))
-    elif tool == "sarrow":
-        # 꺾은선(직선 폴리라인) + 위 향한 촉 — 곡선 화살표와 구분되는 엘보 형태
-        p.drawPolyline(QPolygonF([QPointF(4, 18), QPointF(13, 18), QPointF(13, 9)]))
-        p.setBrush(col)
-        p.setPen(QPen(col, 1))
-        p.drawPolygon(QPolygonF([QPointF(13, 3), QPointF(10, 9), QPointF(16, 9)]))
-    elif tool == "pen":
-        path = QPainterPath(QPointF(4, 16))
-        path.cubicTo(8, 5, 14, 21, 18, 7)
-        p.drawPath(path)
-    elif tool == "text":
-        f = QFont()
-        f.setBold(True)
-        f.setPointSize(12)
-        p.setFont(f)
-        p.setPen(col)
-        p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "T")
-    elif tool == "badge":
-        p.setBrush(col)
-        p.setPen(QPen(col, 1))
-        p.drawEllipse(3, 3, 16, 16)
-        f = QFont()
-        f.setBold(True)
-        f.setPointSize(9)
-        p.setFont(f)
-        p.setPen(QColor(_BG))
-        p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "1")
-    elif tool == "eyedrop":
-        # 드로퍼(스포이드) — 외곽선 캡(bulb) + 대각 몸통 + 좌하단 뾰족 끝(끝점만 작은 채움)
-        p.setPen(QPen(neutral, 1.6, Qt.PenStyle.SolidLine,
-                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(12, 2, 8, 8, 3, 3)            # 캡(bulb) — 외곽선만
-        p.setPen(QPen(neutral, 2.2, Qt.PenStyle.SolidLine,
-                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        p.drawLine(14, 9, 7, 16)                         # 대각 몸통
-        p.setBrush(neutral)                              # 촉(끝점)만 작게 채움
-        p.setPen(QPen(neutral, 1))
-        p.drawPolygon(QPolygonF([
-            QPointF(8, 14), QPointF(4, 18), QPointF(9, 15)]))
-    elif tool == "undo":
-        # 반시계 곡선 화살표
-        p.setPen(QPen(neutral, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        path = QPainterPath()
-        path.arcMoveTo(QRectF(5, 5, 13, 13), 150)
-        path.arcTo(QRectF(5, 5, 13, 13), 150, -250)
-        p.drawPath(path)
-        p.setBrush(neutral)
-        p.setPen(QPen(neutral, 1))
-        p.drawPolygon(QPolygonF([QPointF(5, 6), QPointF(10, 7), QPointF(7, 12)]))
-    elif tool == "copy":
-        # 겹친 두 문서 — 외곽선만(채움 없음). 뒤 문서는 보이는 가장자리(상단·좌측)만
-        # 앞 문서 외곽선까지 이어 그려, 채움 없이도 '뒤에 겹친' 느낌을 낸다.
-        p.setPen(QPen(neutral, 1.6, Qt.PenStyle.SolidLine,
-                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(8, 7, 10, 12, 2, 2)            # 앞 문서(완전한 외곽선)
-        back = QPainterPath()                            # 뒤 문서의 보이는 가장자리
-        back.moveTo(14, 7)
-        back.lineTo(14, 5)
-        back.quadTo(14, 4, 13, 4)
-        back.lineTo(6, 4)
-        back.quadTo(5, 4, 5, 5)
-        back.lineTo(5, 14)
-        back.quadTo(5, 15, 6, 15)
-        back.lineTo(8, 15)
-        p.drawPath(back)
-    elif tool == "save":
-        # 플로피 디스크
-        p.setPen(QPen(neutral, 1.6, Qt.PenStyle.SolidLine,
-                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(4, 4, 14, 14, 1, 1)            # 본체
-        p.setBrush(neutral)
-        p.setPen(QPen(neutral, 1))
-        p.drawRect(8, 4, 5, 4)                           # 상단 셔터
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(neutral, 1.4))
-        p.drawRect(7, 12, 8, 5)                          # 하단 라벨
-    elif tool == "close":
-        p.setPen(QPen(neutral, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        p.drawLine(6, 6, 16, 16)
-        p.drawLine(16, 6, 6, 16)
+    renderer.render(p)
     p.end()
-    return QIcon(pm)
+    return pm
+
+
+_SVG_ICON_CACHE: dict[tuple[str, int], QIcon] = {}
+
+
+def _svg_icon(name: str, size: int = 22) -> QIcon:
+    """resources/icons/<name>.svg를 size×size로 래스터화해 QIcon으로(결과 캐시)."""
+    key = (name, size)
+    icon = _SVG_ICON_CACHE.get(key)
+    if icon is not None:
+        return icon
+    icon = QIcon(_svg_icon_pixmap(name, size))
+    _SVG_ICON_CACHE[key] = icon
+    return icon
+
+
+# _tool_icon이 실제로 받는 도구 이름 전부(상단 툴바 6종 + 화살표 종류전환용 sarrow).
+_TOOL_ICON_NAMES = frozenset({"select", "arrow", "text", "line", "pen", "badge", "sarrow"})
+
+
+def _tool_icon(tool: str) -> QIcon:
+    return _svg_icon(tool, 22)
 
 
 def _arrow_dir_icon(head_at_end: bool) -> QIcon:

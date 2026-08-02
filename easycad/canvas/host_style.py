@@ -90,17 +90,14 @@ class _StyleMixin:
         """[화살표 통합] 툴바 화살표 아이콘을 현재 종류에 맞춘다 — 직각이면 직각 커넥터 아이콘."""
         btn = getattr(self, "_tool_buttons", {}).get("arrow")
         if btn is not None:
-            btn.setIcon(_tool_icon(_ARROW_KIND_TOOL.get(self.current_arrow_kind, "arrow"),
-                                   self.current_color))
+            btn.setIcon(_tool_icon(_ARROW_KIND_TOOL.get(self.current_arrow_kind, "arrow")))
 
 
     def _set_current_color(self, color: QColor):
-        """[M2 #A] 현재 색을 갱신하고 상단 그리기 도구 아이콘을 그 색으로 다시 칠한다
-        (도구 아이콘은 draw-color라 테마와 무관 — 여기서만 갱신). 새 도형·화살표에 반영."""
+        """[M2 #A] 현재 색을 갱신, 새 도형·화살표에 반영. [2026-08-02] 상단 도구 아이콘은
+        디자인 베이크오프 2라운드로 코랄 고정 스타일이 돼 더 이상 draw-color를 반영하지
+        않는다 — 예전엔 여기서 아이콘을 다시 칠했지만 이제 그 루프는 불필요."""
         self.current_color = QColor(color)
-        for key, b in getattr(self, "_tool_buttons", {}).items():
-            b.setIcon(_tool_icon(key, self.current_color))
-        self._refresh_arrow_tool_button()   # [화살표 통합] 화살표만 종류별 아이콘이라 덮어쓴다
 
 
     def _show_color_grid_popup(self, anchor: QWidget, initial, allow_none: bool,
