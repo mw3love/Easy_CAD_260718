@@ -413,7 +413,8 @@ class _UIBuildMixin:
         # [캔버스-퍼스트] 플로팅 패널 제목줄 = accent 밑줄 + 틴트 배경(옛 dock 제목표시줄과 같은
         # '잡아 눈에 띄는 카드' 언어 유지, 자유 드래그는 없지만 접기 버튼이 있는 자리라 여전히
         # 상호작용 영역으로 보여야 함).
-        accent = "#54a9ff" if dark else "#1f7ae0"
+        # [디자인 베이크오프 2026-08-02] 다크 accent를 코랄(Claude 브랜드톤)로 교체(라이트는 스코프 밖, 기존 유지).
+        accent = "#da7756" if dark else "#1f7ae0"
         title_bg = "#232f3d" if dark else "#e8eef5"
         # ⚠ [2026-07-31, 스턱루프 규칙 11-b — 3차 접근 전환] 속성 dock의 QSpinBox/QDoubleSpinBox
         # ("두께"·"폰트"·"반경")만 텍스트 디센더가 잘리는 버그 + (2차 시도인 setMinimumHeight
@@ -437,11 +438,37 @@ class _UIBuildMixin:
         # [그룹 구분 디자인 2026-08-01, 사용자 요청] 기본 QToolBar 구분선은 Fusion에서 거의
         # 안 보일 정도로 옅다 — 파일(새로 만들기~저장) / 도구(선택~핀) / 편집·보기(되돌리기~격자)
         # 3그룹이 한눈에 갈리도록 구분선을 굵고 여백 있게 강조.
+        # [디자인 베이크오프 2026-08-02] 버튼 상태(hover/checked/pressed) 코랄 강조 — 다크만.
+        # Qt QSS는 box-shadow가 없어 Material 참고시안의 그림자는 배경 틴트 강도로 근사한다
+        # (호버<checked<pressed 순으로 진하게).
+        # ⚠ 상위 위젯(self·패널 body)에 걸면 안 됨 — `_props_panel`의 QFormLayout이 이
+        # QToolButton들(_pf_color 등)과 QAbstractSpinBox(_pf_width 등)를 같은 body 아래 형제로
+        # 두고 있어서, 조상에 스타일시트를 걸면 QStyleSheetStyle 강제전환으로 스핀박스 sizeHint가
+        # 짧아져 행이 겹친다(2026-07-31 스턱루프와 같은 함정, CLAUDE.md 참조). 그래서 스핀박스가
+        # 없는 컨테이너(툴바)는 컨테이너 단위로, 스핀박스와 형제인 버튼들은 위젯 각각에 직접 건다.
+        btn_qss = (
+            "QToolButton { border:1px solid transparent; border-radius:6px; padding:3px; }"
+            "QToolButton:hover { background:rgba(218,119,86,40); border-color:#da7756; }"
+            "QToolButton:checked { background:rgba(218,119,86,90); border-color:#da7756; }"
+            "QToolButton:pressed { background:rgba(218,119,86,150); border-color:#da7756; }"
+        ) if dark else ""
         toolbar = getattr(self, "_toolbar", None)
         if toolbar is not None:
             sep_color = "#3d4b5c" if dark else "#c9d3dc"
             toolbar.setStyleSheet(
-                f"QToolBar::separator {{ background:{sep_color}; width:1px; margin:6px 9px; }}")
+                f"QToolBar::separator {{ background:{sep_color}; width:1px; margin:6px 9px; }}"
+                + btn_qss)
+        _accent_btns = (
+            list(getattr(self, "_shape_tool_buttons", {}).values())
+            + list(getattr(self, "_sym_buttons", {}).values())
+            + list(getattr(self, "_left_tab_buttons", {}).values())
+        )
+        for name in ("_pf_color", "_pf_fill", "_pf_swap_btn", "_pf_routing_btn", "_pf_dir_btn"):
+            b = getattr(self, name, None)
+            if b is not None:
+                _accent_btns.append(b)
+        for b in _accent_btns:
+            b.setStyleSheet(btn_qss)
         toast = getattr(self, "_toast", None)
         if toast is not None:
             toast.setStyleSheet(

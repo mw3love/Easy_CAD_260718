@@ -287,8 +287,9 @@ def _dark_palette() -> QPalette:
     p.setColor(R.Text, c("#cdd8e3"));           p.setColor(R.PlaceholderText, c("#78889a"))
     p.setColor(R.Button, c("#1d2632"));         p.setColor(R.ButtonText, c("#cdd8e3"))
     p.setColor(R.ToolTipBase, c("#232f3d"));    p.setColor(R.ToolTipText, c("#cdd8e3"))
-    p.setColor(R.Highlight, c("#2f6dbf"));      p.setColor(R.HighlightedText, c("#ffffff"))
-    p.setColor(R.Link, c("#54a9ff"))
+    # [디자인 베이크오프 2026-08-02] accent를 블루(#54a9ff/#2f6dbf)에서 코랄(Claude 브랜드톤)로 교체.
+    p.setColor(R.Highlight, c("#a8583a"));      p.setColor(R.HighlightedText, c("#ffffff"))
+    p.setColor(R.Link, c("#da7756"))
     D = QPalette.ColorGroup.Disabled
     p.setColor(D, R.Text, c("#5a6675"));        p.setColor(D, R.ButtonText, c("#5a6675"))
     p.setColor(D, R.WindowText, c("#5a6675"))
