@@ -1327,6 +1327,27 @@ def test_port_attaches_to_rect_border_and_snaps():
     assert _close(center, QPointF(60, 0), eps=0.1)   # 테두리 위로 정확히 스냅(y=0)
 
 
+def test_dragging_attached_port_keeps_it_snapped_to_host_border():
+    # [실사용 버그 수정 2026-08-03] 사용자 리포트: 포트를 옮길 때 테두리에 SNAP이 안 됨.
+    # 드래그 중(setPos 제안값) 테두리 밖 아무 좌표를 줘도 itemChange가 즉시 최근접 테두리
+    # 점으로 되돌려야 한다 — 코너를 넘어가면 인접한 변으로 자연스럽게 전환.
+    w = CanvasWindow()
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    port = w._create_port_at("port_rect", QPointF(60, 0))
+
+    port.setPos(QPointF(150, 500))   # 테두리에서 한참 벗어난 좌표
+    c = port.mapToScene(port.rect().center())
+    assert abs(c.y() - 100) < 0.5   # 가장 가까운 아래쪽 변으로 스냅
+
+    port.setPos(QPointF(-50, 30))   # 왼쪽 바깥
+    c = port.mapToScene(port.rect().center())
+    assert abs(c.x() - 0) < 0.5     # 왼쪽 변으로 스냅
+
+    port.setPos(QPointF(199, -5))   # 우상단 코너 근처 → 다른 변(우측)으로 자연스럽게 전환
+    c = port.mapToScene(port.rect().center())
+    assert abs(c.x() - 200) < 0.5
+
+
 def test_port_does_not_attach_to_non_triangle_symbol():
     # 사각형+삼각형만 호스트 대상 — 마름모(판단) 등 다른 심볼 근처엔 부착되지 않는다.
     w = CanvasWindow()
@@ -1400,7 +1421,33 @@ def test_shape_ports_includes_attached_port_and_connector_can_start_there():
     _qc_drag(w._view, port_center, QPointF(450, 330))
     arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
     assert len(arrows) == before + 1
-    assert arrows[-1]._bind_start is dev
+    # [실사용 버그 수정 2026-08-03] 커넥터는 호스트가 아니라 포트 자신에 바인딩돼야 한다 —
+    # 그래야 포트를 나중에 옮겼을 때 커넥터가 (호스트의 고정된 옛 자리가 아니라) 포트를
+    # 따라간다. 아래 test_connector_follows_port_when_port_moves가 그 동작 자체를 검증.
+    assert arrows[-1]._bind_start is port
+
+
+def test_connector_follows_port_when_port_moves():
+    # [실사용 버그 수정 2026-08-03] 사용자 실조건 리포트: 포트를 옮기면 화살표가 포트를
+    # 안 따라가고 장비 테두리의 옛 자리에 그대로 남았다 — 원인은 커넥터가 host에(고정
+    # local_pt로) 바인딩됐기 때문. 포트 자신에 바인딩되면 포트가 움직인 뒤 reroute()가
+    # 새 위치를 정확히 반영해야 한다.
+    w = CanvasWindow(); w.grid_enabled = False
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    _mk_pen_rect(w, x=400, y=300, ww=100, hh=60)
+    port = w._create_port_at("port_rect", QPointF(60, 0))
+    port_center = port.mapToScene(port.rect().center())
+    w._scene.clearSelection(); w.set_tool("select")
+    _qc_drag(w._view, port_center, QPointF(450, 330))
+    arrow = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)][-1]
+    assert _close(QPointF(arrow.mapToScene(arrow._pts[0])), port_center, eps=1.0)
+
+    port.setPos(port.pos().x() + 60, port.pos().y())   # 포트를 다른 자리로 이동
+    arrow.reroute()
+    new_center = port.mapToScene(port.rect().center())
+    assert not _close(new_center, port_center, eps=1.0)   # 실제로 옮겨졌는지 확인(전제)
+    assert _close(QPointF(arrow.mapToScene(arrow._pts[0])), new_center, eps=1.0), \
+        "커넥터 시작점이 옮긴 포트를 따라가야 한다"
 
 
 def test_build_trimmed_border_path_has_gap_at_port():
@@ -1470,5 +1517,50 @@ def test_dxf_export_trims_border_segments_with_ports():
     # port_rect 자신도 작은 닫힌 LWPOLYLINE 1개로 나감(총 LWPOLYLINE 2개).
     assert len(lines) == 5
     assert len(polys) == 2 and all(len(p) == 4 for p in polys)
+
+
+# ---- [실사용 버그 수정 2026-08-03] 포트 실조건 테스트에서 발견된 3건 ---------------------
+
+def test_shift_corner_resize_keeps_aspect_ratio():
+    # Shift 없이 코너를 끌면 자유 변형(기존 동작), Shift를 누르면 리사이즈 시작 시점의
+    # 종횡비를 유지해야 한다 — 포트를 포함한 모든 rect 기반 도형에 공통.
+    free = _RectItem(QRectF(0, 0, 100, 50))
+    free._begin_box_geom()
+    free._box_resize = ("corner", 2)   # BR, 대각 고정점=TL
+    free._apply_box_resize(QPointF(100, 100), shift=False)
+    assert abs(free.rect().width() - 100) < 1e-6 and abs(free.rect().height() - 100) < 1e-6
+
+    locked = _RectItem(QRectF(0, 0, 100, 50))   # 종횡비 2:1
+    locked._begin_box_geom()
+    locked._box_resize = ("corner", 2)
+    locked._apply_box_resize(QPointF(100, 100), shift=True)
+    r = locked.rect()
+    assert abs(r.width() / r.height() - 2.0) < 1e-6
+
+    port = _RectItem(QRectF(0, 0, 18, 36))   # 종횡비 1:2 — 포트도 동일하게 적용되는지
+    port._begin_box_geom()
+    port._box_resize = ("corner", 2)
+    port._apply_box_resize(QPointF(50, 50), shift=True)
+    rp = port.rect()
+    assert abs(rp.width() / rp.height() - 0.5) < 1e-6
+
+
+def test_selected_port_hover_marker_does_not_duplicate_on_itself():
+    # [실사용 버그 수정] 포트가 선택되면 자기 자신의 리사이즈 핸들이 뜨는데, 같은 자리에
+    # 호스트의 "여기서 커넥터를 뽑을 수 있다" 미리보기까지 겹쳐 핸들이 뭉쳐 보였다(사용자
+    # 스크린샷 — 가운데 정체불명의 점). 선택된 포트 자리는 호버 미리보기에서 제외해야 한다.
+    w = CanvasWindow(); w.set_tool("select")
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    port = w._create_port_at("port_rect", QPointF(60, 0))
+    port2 = w._create_port_at("port_circle", QPointF(140, 0))
+    w._scene.clearSelection()
+
+    v1 = w._view.mapFromScene(QPointF(60, 0))
+    assert w._view._hover_port_at(v1) is not None   # 미선택 상태에선 정상 노출
+
+    port.setSelected(True)
+    assert w._view._hover_port_at(v1) is None        # 선택된 포트 자리는 미리보기 제외
+    v2 = w._view.mapFromScene(QPointF(140, 0))
+    assert w._view._hover_port_at(v2) is not None    # 다른(미선택) 포트는 회귀 없이 정상
 
 

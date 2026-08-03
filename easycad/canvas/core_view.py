@@ -938,7 +938,7 @@ class _AnnotatorView(QGraphicsView):
             return
         painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
         painter.setBrush(QBrush(QColor("white")))
-        for sp, _n in _shape_ports(best_sh):
+        for sp, _n in _shape_ports_for_preview(best_sh):
             painter.drawEllipse(sp, r, r)
 
     def _connect_port_at(self, view_pos):
@@ -969,7 +969,7 @@ class _AnnotatorView(QGraphicsView):
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_pt):
                 continue
-            for sp, n in _shape_ports(sh):
+            for sp, n in _shape_ports_for_preview(sh):
                 d = self._view_dist(sp, view_pos)
                 if d <= bestd:
                     bestd, best = d, (sh, sp, n)
@@ -1354,7 +1354,9 @@ class _AnnotatorView(QGraphicsView):
         if event.button() == Qt.MouseButton.LeftButton:
             hit = self._connect_port_at(vpos)
             if hit is not None:
-                self._hp_src, self._hp_port, self._hp_normal = hit
+                src, port_pt, nrm = hit
+                self._hp_src = _port_owner_at(src, port_pt)   # [실사용 버그 수정] 포트면 포트에 바인딩
+                self._hp_port, self._hp_normal = port_pt, nrm
                 self._hp_dragging = True
                 self._hp_cursor = None   # 릴리스까지 이동(임계 초과) 없으면 즉시 생성(클릭)
                 self._hp_press_scene = self.mapToScene(vpos)
@@ -1409,7 +1411,9 @@ class _AnnotatorView(QGraphicsView):
                     event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
                 hp = self._hover_port_at(vpos)
                 if hp is not None:
-                    self._hp_src, self._hp_port, self._hp_normal = hp
+                    src, port_pt, nrm = hp
+                    self._hp_src = _port_owner_at(src, port_pt)   # [실사용 버그 수정] 포트면 포트에 바인딩
+                    self._hp_port, self._hp_normal = port_pt, nrm
                     self._hp_dragging = True
                     self._hp_cursor = None
                     self._hp_press_scene = self.mapToScene(vpos)

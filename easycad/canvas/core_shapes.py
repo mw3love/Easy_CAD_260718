@@ -76,6 +76,14 @@ class _HandleResizeMixin:
         알리는 표준 방법이라, 매 페인트마다 핸들 영역을 상시 예약해두는 것보다 싸다."""
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
             self.prepareGeometryChange()
+        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+            # [실사용 버그 수정 2026-08-03] 포트를 드래그하는 동안 호스트 테두리에 계속
+            # 달라붙어 있어야 한다("SNAP이 중요"하다는 사용자 지적) — 지금까지는 놓는
+            # 순간의 위치로만 (fx,fy)를 계산해, 드래그 중엔 테두리를 벗어나 아무 데나
+            # 놓을 수 있었다. 제안된 새 위치를 즉시 호스트 테두리 최근접점으로 되돌린다.
+            host = getattr(self, "_port_host", None)
+            if host is not None:
+                return _snap_port_pos_to_host_border(self, host, value)
         elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
             # [신규기능 §8-12] 포트를 직접 드래그해 옮기면 새 위치를 (fx,fy)로 다시 저장하고
             # (호스트 리사이즈 때 이 새 상대위치를 유지) 호스트를 다시 그려 trim 자리를 갱신.
@@ -627,7 +635,7 @@ class _HandleResizeMixin:
         snapped = QPointF(round(scene_pt.x() / sp) * sp, round(scene_pt.y() / sp) * sp)
         return self.mapFromScene(snapped)
 
-    def _apply_box_resize(self, lp: QPointF):
+    def _apply_box_resize(self, lp: QPointF, shift: bool = False):
         lp = self._grid_snap_local(lp)   # [그리드 스냅] 코너/변 리사이즈 — 스마트정렬은 리사이즈 중 원래 꺼짐
         o = self._box_orig_rect
         kind, key = self._box_resize
@@ -648,12 +656,25 @@ class _HandleResizeMixin:
         MIN = 3.0
         if new.width() < MIN or new.height() < MIN:
             new = QRectF(new.x(), new.y(), max(new.width(), MIN), max(new.height(), MIN))
-        new = self._constrain_box_rect(new, kind, key)
+        new = self._constrain_box_rect(new, kind, key, shift)
         self._set_box_rect(new)
 
-    def _constrain_box_rect(self, new: QRectF, kind: str, key) -> QRectF:
-        """박스 리사이즈 결과 rect 후처리 훅(기본 무변경). _ImageItem이 종횡비 고정에 override."""
-        return new
+    def _constrain_box_rect(self, new: QRectF, kind: str, key, shift: bool = False) -> QRectF:
+        """박스 리사이즈 결과 rect 후처리 훅. [실사용 요청 2026-08-03] 기본은 Shift를 누른 채
+        꼭짓점을 끌 때만(변 리사이즈는 원래 늘림 의도라 제외) 리사이즈 시작 시점의 종횡비를
+        유지 — 포트를 포함한 모든 도형(사각형·원·삼각형 등)에 공통 적용. _ImageItem은 사진
+        왜곡 방지를 위해 Shift 여부와 무관하게 항상 고정(override, 기존 동작 그대로 유지)."""
+        if not shift or kind != "corner":
+            return new
+        o = self._box_orig_rect
+        oh = o.height() if abs(o.height()) > 1e-6 else 1.0
+        asp = o.width() / oh
+        opp = [o.bottomRight(), o.bottomLeft(), o.topLeft(), o.topRight()][key]
+        w = max(new.width(), new.height() * asp)
+        h = w / asp
+        sx = 1.0 if key in (1, 2) else -1.0   # TR·BR = 오른쪽, TL·BL = 왼쪽
+        sy = 1.0 if key in (2, 3) else -1.0   # BR·BL = 아래,   TL·TR = 위
+        return QRectF(opp, QPointF(opp.x() + sx * w, opp.y() + sy * h)).normalized()
 
     def _owner_tool(self):
         """현재 활성 도구를 뷰→owner 경로로 조회(없으면 None)."""
@@ -926,7 +947,8 @@ class _HandleResizeMixin:
             event.accept()
             return
         if self._box_resize is not None:   # [2c] 네모·원 자유 리사이즈(setRect)
-            self._apply_box_resize(event.pos())
+            shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            self._apply_box_resize(event.pos(), shift)   # [실사용 요청] Shift=종횡비 유지(코너만)
             event.accept()
             return
         if getattr(self, "_rotating", False):
@@ -1704,9 +1726,9 @@ class _ImageItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
     def _content_rect(self) -> QRectF:
         return QRectF(self.rect())
 
-    def _constrain_box_rect(self, new: QRectF, kind: str, key) -> QRectF:
-        # 꼭짓점 드래그는 원본 종횡비를 유지(사진 왜곡 방지). 대각 고정점(opp) 기준으로,
-        # 폭·높이 중 더 많이 자란 쪽에 비율을 맞춰 사각형을 다시 세운다.
+    def _constrain_box_rect(self, new: QRectF, kind: str, key, shift: bool = False) -> QRectF:
+        # 꼭짓점 드래그는 원본 종횡비를 유지(사진 왜곡 방지, Shift 여부 무관 — 항상 고정).
+        # 대각 고정점(opp) 기준으로, 폭·높이 중 더 많이 자란 쪽에 비율을 맞춰 사각형을 다시 세운다.
         if kind != "corner":
             return new
         o = self._box_orig_rect
@@ -4524,6 +4546,18 @@ def _reposition_port_from_frac(port):
     port.setPos(cx - pr.width() / 2.0, cy - pr.height() / 2.0)
 
 
+def _snap_port_pos_to_host_border(port, host, proposed_pos: QPointF) -> QPointF:
+    """[실사용 버그 수정 2026-08-03] 포트를 드래그하는 동안(ItemPositionChange, 확정 전)
+    제안된 새 위치를 호스트 테두리 위 최근접점으로 즉시 되돌린다 — 포트가 항상 테두리에
+    붙어서 슬라이드하는 느낌을 준다(코너를 넘어 다른 변으로도 자연스럽게 넘어간다,
+    `_nearest_border`가 호스트 전체 외곽선 기준이라 변 경계에 갇히지 않음)."""
+    pr = port.rect()
+    half = QPointF(pr.width() / 2.0, pr.height() / 2.0)
+    center_scene = host.mapToScene(proposed_pos + half)
+    sp, _n = _nearest_border(host, center_scene)
+    return host.mapFromScene(sp) - half
+
+
 def _update_port_frac_from_pos(port, host):
     """[신규기능 §8-12] 포트를 사용자가 직접 드래그한 뒤(itemChange) 새 위치를 (fx, fy)로
     역산해 저장 — `_reposition_port_from_frac`의 역방향. 호스트 rect가 나중에 바뀌어도
@@ -4570,6 +4604,22 @@ def _detach_port_from_host(port):
     if ports and port in ports:
         ports.remove(port)
         host.update()   # 포트가 빠졌으니 trim 자리도 다시 이어 그려야 함.
+
+
+def _port_owner_at(host, scene_pt, eps: float = 1.0):
+    """[실사용 버그 수정 2026-08-03] scene_pt가 host에 부착된 포트 중 하나의 중심과 거의
+    일치하면 그 **포트 자신**을, 아니면 host를 그대로 반환한다.
+
+    포트에서 커넥터를 뽑을 때 `set_bound(idx, shape, local_pt)`의 shape 인자가 지금까지
+    항상 host였다 — local_pt는 host 좌표계의 '고정된 점'이라, 포트를 나중에 옮겨도
+    커넥터는 host의 그 자리에 그대로 남아 마치 "화살표가 도형 변에 눌어붙는" 것처럼
+    보였다(사용자 실조건 리포트). shape을 포트 자신으로 바꾸면 local_pt가 포트의 로컬
+    중심이 되어, 포트가 움직일 때마다 `mapToScene`이 항상 포트의 현재 위치를 돌려준다."""
+    for port in getattr(host, "_ports", None) or []:
+        c = port.mapToScene(port.rect().center())
+        if math.hypot(c.x() - scene_pt.x(), c.y() - scene_pt.y()) < eps:
+            return port
+    return host
 
 
 def _host_outline_local_polygon(host) -> list:
@@ -4699,6 +4749,23 @@ def _shape_ports(item):
     for port in getattr(item, "_ports", None) or []:
         center_scene = port.mapToScene(port.rect().center())
         sp, n = _nearest_border(item, center_scene)
+        out.append((sp, n))
+    return out
+
+
+def _shape_ports_for_preview(item):
+    """[실사용 버그 수정 2026-08-03] `_shape_ports(item)`에서 **선택된 포트**의 위치만 뺀
+    목록 — 호버 미리보기/스냅(`_hover_port_at`·`_draw_port_dots`) 전용. 포트가 선택되면
+    그 포트 자신의 리사이즈 핸들이 같은 자리에 이미 떠 있어, 호스트의 접속점 미리보기까지
+    겹치면 (사용자 리포트) 핸들 여러 개가 한 점에 뭉쳐 조작이 안 되는 것처럼 보였다."""
+    selected_centers = [p.mapToScene(p.rect().center())
+                        for p in (getattr(item, "_ports", None) or []) if p.isSelected()]
+    if not selected_centers:
+        return _shape_ports(item)
+    out = []
+    for sp, n in _shape_ports(item):
+        if any(math.hypot(sp.x() - c.x(), sp.y() - c.y()) < 1.0 for c in selected_centers):
+            continue
         out.append((sp, n))
     return out
 
