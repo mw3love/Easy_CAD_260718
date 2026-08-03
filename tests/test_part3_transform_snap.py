@@ -963,14 +963,14 @@ def test_stretch_binding_follows_crossed_side():
 
 
 def test_symbol_kinds_render_and_geom():
-    # M1(+심볼 확장): 14종 심볼이 모두 경로를 만들고, rect 기반 기계(박스핸들·geom undo·clone)를 물려받는다.
+    # M1(+심볼 확장): 10종 심볼이 모두 경로를 만들고, rect 기반 기계(박스핸들·geom undo·clone)를 물려받는다.
+    # (도메인 픽토그램 4종 카메라/증폭기/랙/안테나는 2026-08-03 사용빈도·디자인 피드백으로 제거됨.)
     from PyQt6.QtWidgets import QGraphicsScene
     from PyQt6.QtGui import QPen
     sc = QGraphicsScene()
     assert set(_SYMBOL_KINDS) == {
         "decision", "terminal", "data", "prep", "document", "database",
         "manual_input", "manual_op", "display", "delay",
-        "camera", "amplifier", "rack", "antenna",
     }
     for kind in _SYMBOL_KINDS:
         it = _SymbolItem(kind, QRectF(0, 0, 120, 80))

@@ -1543,68 +1543,10 @@ def _sym_delay(r: QRectF) -> QPainterPath:         # 지연 — 오른쪽 반원
     return p
 
 
-def _sym_camera(r: QRectF) -> QPainterPath:        # 카메라 — 몸통 + 렌즈 원 + 뷰파인더
-    p = QPainterPath()
-    w, h = r.width(), r.height()
-    body = QRectF(r.left(), r.top() + h * 0.22, w * 0.66, h * 0.66)
-    p.addRoundedRect(body, w * 0.03, w * 0.03)
-    lens_r = h * 0.30
-    lens_c = QPointF(r.left() + w * 0.72, r.top() + h * 0.55)
-    p.addEllipse(lens_c, lens_r, lens_r)
-    finder = QRectF(r.left() + w * 0.16, r.top(), w * 0.22, h * 0.22)
-    p.addRoundedRect(finder, w * 0.02, w * 0.02)
-    return p
-
-
-def _sym_amplifier(r: QRectF) -> QPainterPath:     # 증폭기 — 삼각형(신호방향) + 입출력 리드
-    p = QPainterPath()
-    w, h = r.width(), r.height()
-    tri_l = r.left() + w * 0.22
-    tri_r = r.left() + w * 0.78
-    cy = r.center().y()
-    p.moveTo(r.left(), cy)
-    p.lineTo(tri_l, cy)
-    p.moveTo(tri_l, r.top() + h * 0.12)
-    p.lineTo(tri_l, r.bottom() - h * 0.12)
-    p.lineTo(tri_r, cy)
-    p.closeSubpath()
-    p.moveTo(tri_r, cy)
-    p.lineTo(r.right(), cy)
-    return p
-
-
-def _sym_rack(r: QRectF) -> QPainterPath:          # 랙 — 슬롯 4단 캐비닛
-    p = QPainterPath()
-    w, h = r.width(), r.height()
-    body = QRectF(r.left() + w * 0.2, r.top(), w * 0.6, h)
-    p.addRect(body)
-    slots = 4
-    for i in range(1, slots):
-        y = r.top() + h * i / slots
-        p.moveTo(body.left(), y)
-        p.lineTo(body.right(), y)
-    return p
-
-
-def _sym_antenna(r: QRectF) -> QPainterPath:       # 안테나 — 마스트 + Y형 수신 암 + 기저부
-    p = QPainterPath()
-    w, h = r.width(), r.height()
-    cx = r.center().x()
-    top_y = r.top() + h * 0.1
-    node_r = min(w, h) * 0.06
-    p.addEllipse(QPointF(cx, top_y), node_r, node_r)
-    p.moveTo(cx, top_y)
-    p.lineTo(cx, r.bottom() - h * 0.12)
-    p.moveTo(cx, top_y)
-    p.lineTo(r.left() + w * 0.18, r.top() + h * 0.5)
-    p.moveTo(cx, top_y)
-    p.lineTo(r.right() - w * 0.18, r.top() + h * 0.5)
-    base = QRectF(cx - w * 0.16, r.bottom() - h * 0.12, w * 0.32, h * 0.08)
-    p.addRect(base)
-    return p
-
-
 # kind → (한글 라벨, 경로 팩토리). 팔레트·직렬화·그리기가 이 하나를 공유한다.
+# [2026-08-03] 카메라·증폭기·랙·안테나(도메인 픽토그램 4종)는 사용 빈도가 낮고 디자인
+# 완성도도 떨어진다는 피드백으로 제거(구 .ecad 파일에 남아 있어도 _SymbolItem.__init__이
+# 미지원 kind를 "decision"으로 폴백하므로 로드는 깨지지 않는다).
 _SYMBOL_KINDS = {
     "decision":    ("판단", _sym_decision),
     "terminal":    ("시작/끝", _sym_terminal),
@@ -1616,10 +1558,6 @@ _SYMBOL_KINDS = {
     "manual_op":   ("수동작업", _sym_manual_op),
     "display":     ("화면출력", _sym_display),
     "delay":       ("지연", _sym_delay),
-    "camera":      ("카메라", _sym_camera),
-    "amplifier":   ("증폭기", _sym_amplifier),
-    "rack":        ("랙", _sym_rack),
-    "antenna":     ("안테나", _sym_antenna),
 }
 
 
@@ -1644,16 +1582,12 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
     def _label_inset_ratio(self) -> float:
         # kind별 내접 가용폭 — 마름모는 세로중앙 한 점에서만 최대폭이라 가장 좁게, 원기둥·문서·
         # 화면출력·지연 등 곡선 심볼은 중간, 상하 평행한 스타디움·평행사변형·육각형은 넉넉히.
-        # 카메라·증폭기·랙·안테나(도메인 픽토그램)는 속이 성긴 선화라 라벨이 그림과 겹치기
-        # 쉬워 보수적으로 좁게 잡음 — 실사용 스크린샷으로 재조정 여지 있음.
         if self._kind == "decision":
             return 0.6
         if self._kind in ("database", "document", "display", "delay"):
             return 0.72
         if self._kind == "manual_op":
             return 0.7
-        if self._kind in ("camera", "amplifier", "rack", "antenna"):
-            return 0.55
         return 0.78
 
     def _label_anchor(self) -> QPointF:
@@ -1796,9 +1730,21 @@ class _TitleBlockItem(QGraphicsRectItem):
     _M = 10.0        # 용지 가장자리 → 도면 테두리 여백(mm)
     _TB_W = 180.0    # 표제란 표 폭(mm)
     _TB_H = 33.0     # 표제란 표 높이(mm)
-    _PAPER_FILL = QColor("#FFFFFF")
-    _LINE = QColor("#333333")
-    _INK = QColor("#111111")
+    # [2026-08-03] 실제 캐드 관례로 변경 — 흰 종이를 흉내낸 배경 채움은 없애고 외곽 테두리
+    # 선 + 우하단 표만 그린다(사용자 피드백: "이미지처럼 보이는 흰 배경 위에 작성" 대신
+    # "외곽 틀 + 우하단 정보, 그게 다"). 선·잉크색은 테마에 맞춰 골라 다크 캔버스에서도
+    # 보이게 한다(_view_is_dark) — PDF 인쇄 시엔 그 함수가 자동으로 라이트 판정을 내려
+    # 기존 흑백 인쇄 관례(_LINE_LIGHT/_INK_LIGHT)를 그대로 쓴다.
+    _LINE_LIGHT = QColor("#333333")
+    _LINE_DARK = QColor("#cdd8e3")
+    _INK_LIGHT = QColor("#111111")
+    _INK_DARK = QColor("#cdd8e3")
+
+    def _line_color(self) -> QColor:
+        return self._LINE_DARK if _view_is_dark(self) else self._LINE_LIGHT
+
+    def _ink_color(self) -> QColor:
+        return self._INK_DARK if _view_is_dark(self) else self._INK_LIGHT
 
     def __init__(self, size: str = "A2", orient: str = "landscape", fields: dict | None = None):
         super().__init__()
@@ -1865,16 +1811,16 @@ class _TitleBlockItem(QGraphicsRectItem):
 
     def paint(self, painter, option, widget=None):
         r = self.rect()
+        line = self._line_color()
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        # 용지 바탕(흰 시트) + 용지 경계선
-        painter.setBrush(QBrush(self._PAPER_FILL))
-        painter.setPen(QPen(self._LINE, 0.5))
+        # 용지 경계선(채움 없음 — 캐드 관례대로 외곽 테두리만)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(line, 0.5))
         painter.drawRect(r)
         # 도면 테두리(안쪽, 굵게)
         inner = r.adjusted(self._M, self._M, -self._M, -self._M)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(self._LINE, 1.2))
+        painter.setPen(QPen(line, 1.2))
         painter.drawRect(inner)
         # 표제란 표
         self._paint_table(painter)
@@ -1888,10 +1834,11 @@ class _TitleBlockItem(QGraphicsRectItem):
 
     def _paint_table(self, painter):
         tb = self._tb_rect()
-        painter.setBrush(QBrush(self._PAPER_FILL))
-        painter.setPen(QPen(self._LINE, 1.2))
+        line = self._line_color()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(line, 1.2))
         painter.drawRect(tb)
-        painter.setPen(QPen(self._LINE, 0.5))
+        painter.setPen(QPen(line, 0.5))
         h_weight = sum(rw for rw, _ in _TB_ROWS)
         y = tb.top()
         for ri, (rw, cells) in enumerate(_TB_ROWS):
@@ -1904,7 +1851,7 @@ class _TitleBlockItem(QGraphicsRectItem):
                 cwid = tb.width() * (cw / c_weight)
                 cell = QRectF(x, y, cwid, rh)
                 if ci > 0:  # 열 구분선
-                    painter.setPen(QPen(self._LINE, 0.5))
+                    painter.setPen(QPen(line, 0.5))
                     painter.drawLine(QPointF(x, y), QPointF(x, y + rh))
                 self._paint_cell(painter, cell, label, self._fields.get(key, ""))
                 x += cwid
@@ -1912,8 +1859,9 @@ class _TitleBlockItem(QGraphicsRectItem):
 
     def _paint_cell(self, painter, cell: QRectF, label: str, value: str):
         pad = 1.2
+        ink = self._ink_color()
         # 라벨(작게, 좌상단)
-        painter.setPen(QPen(self._INK))
+        painter.setPen(QPen(ink))
         _font_px(painter, 2.6)
         lbl_rect = cell.adjusted(pad, pad, -pad, -pad)
         painter.drawText(lbl_rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop), label)
@@ -1937,13 +1885,20 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
     행은 균등 높이, 열은 개별 폭 조절 가능(_col_widths — 표 전체폭 대비 비율, deep-interview
     2026-07-31: 행은 스코프 밖·표 전체폭 고정한 채 인접 열끼리 폭 교환·Excel/Word 관례)."""
 
-    _LINE = QColor("#333333")
-    _INK = QColor("#111111")
-    _HEADER_FILL = QColor("#EEEEEE")
-    _BODY_FILL = QColor("#FFFFFF")   # [다크모드 대비] 잉크색이 고정(#111111)이라 배경도 고정 필요 —
-                                      # _TitleBlockItem과 동일 관례(항상 흰 종이 위 검정 잉크)
+    # [2026-08-03] _TitleBlockItem과 동일하게 흰 배경 채움을 없애고 테마 적응 선·잉크색으로
+    # 전환 — 캐드 표 관례(채움 없이 격자선 + 헤더행은 굵게만으로 구분).
+    _LINE_LIGHT = QColor("#333333")
+    _LINE_DARK = QColor("#cdd8e3")
+    _INK_LIGHT = QColor("#111111")
+    _INK_DARK = QColor("#cdd8e3")
     _MIN_COL_W = 10.0    # 월드 단위 — 드래그로 열이 이보다 좁아지지 않음(기본 셀폭 40의 1/4)
     _COL_HIT_PX = 8.0    # 화면 px — 열 경계선 드래그 히트폭(_EDGE_HIT_MIN과 동일 관례)
+
+    def _line_color(self) -> QColor:
+        return self._LINE_DARK if _view_is_dark(self) else self._LINE_LIGHT
+
+    def _ink_color(self) -> QColor:
+        return self._INK_DARK if _view_is_dark(self) else self._INK_LIGHT
 
     def __init__(self, rows: int, cols: int, rect: QRectF,
                  cells: list | None = None, header: bool = True,
@@ -2094,21 +2049,13 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
         box = self.rect()
         edges = self._col_edges_local()
         ch = box.height() / self._rows
+        line = self._line_color()
+        ink = self._ink_color()
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        # 표 전체 배경(다크모드에서도 고정 잉크색이 보이도록 항상 흰색)
-        painter.setPen(QPen(Qt.PenStyle.NoPen))
-        painter.setBrush(QBrush(self._BODY_FILL))
-        painter.drawRect(box)
-        painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        # 헤더 행 옅은 배경
-        if self._header:
-            painter.setPen(QPen(Qt.PenStyle.NoPen))
-            painter.setBrush(QBrush(self._HEADER_FILL))
-            painter.drawRect(QRectF(box.left(), box.top(), box.width(), ch))
-            painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        # 셀 텍스트(폰트 크기는 셀 치수에 맞춰 축소 — 열마다 폭이 다를 수 있어 열별로 계산)
+        # 셀 텍스트(폰트 크기는 셀 치수에 맞춰 축소 — 열마다 폭이 다를 수 있어 열별로 계산).
+        # 헤더행은 채움 대신 굵은 글씨로만 구분(캐드 표 관례 — 채움 없음).
         for r in range(self._rows):
             for c in range(self._cols):
                 txt = self._cells[r][c]
@@ -2117,19 +2064,23 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
                 cw = edges[c + 1] - edges[c]
                 fs = max(2.0, min(ch * 0.5, cw * 0.30))
                 _font_px(painter, fs, bold=(self._header and r == 0))
-                painter.setPen(QPen(self._INK))
+                painter.setPen(QPen(ink))
                 painter.drawText(
                     self.cell_rect(r, c).adjusted(1.0, 1.0, -1.0, -1.0),
                     int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap), txt)
         # 내부 격자선
-        painter.setPen(QPen(self._LINE, 0.5))
+        painter.setPen(QPen(line, 0.5))
         for x in edges[1:-1]:
             painter.drawLine(QPointF(x, box.top()), QPointF(x, box.bottom()))
         for j in range(1, self._rows):
             y = box.top() + j * ch
             painter.drawLine(QPointF(box.left(), y), QPointF(box.right(), y))
+        # 헤더행 구분선(첫 행 아래, 본문보다 굵게)
+        if self._header and self._rows > 1:
+            painter.setPen(QPen(line, 1.0))
+            painter.drawLine(QPointF(box.left(), box.top() + ch), QPointF(box.right(), box.top() + ch))
         # 외곽선
-        painter.setPen(QPen(self._LINE, 1.0))
+        painter.setPen(QPen(line, 1.0))
         painter.drawRect(box)
         painter.restore()
         if self.isSelected():

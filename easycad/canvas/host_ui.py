@@ -581,6 +581,14 @@ class _UIBuildMixin:
             p.drawRect(r)
         elif kind == "ellipse":
             p.drawEllipse(r)
+        elif kind == "terminal":
+            # [2026-08-03 버그 수정] 스타디움(양끝 둥근 알약형)이 정사각형 캔버스에 그려지면
+            # 반지름이 min(w,h)/2 = w/2가 되어 완전한 원이 되고, "원"(ellipse) 아이콘과 똑같이
+            # 보였다(사용자 발견). 실제 캔버스 도형은 이미 가로가 긴 비율로 생성되므로(host_ui.py
+            # _PALETTE_SYM_WH = 120x72) 아이콘도 세로를 눌러 같은 비율로 맞춘다.
+            oblong = QRectF(r.left(), r.center().y() - r.height() * 0.3,
+                             r.width(), r.height() * 0.6)
+            p.drawPath(_SYMBOL_KINDS[kind][1](oblong))
         else:
             p.drawPath(_SYMBOL_KINDS[kind][1](r))
         p.end()

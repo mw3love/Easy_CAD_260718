@@ -238,13 +238,13 @@ def test_dxf_export():
 
 
 def test_new_symbol_kinds_export_dxf():
-    # 심볼 확장(표준 4 + 도메인 4)의 다중 서브패스 경로(열린 선·닫힌 도형 혼재 —
-    # 증폭기 리드선, 랙 슬롯선, 안테나 마스트/암 등)가 DXF export에서 예외 없이
-    # 폴리라인으로 떨어지는지 확인. 곡선(화면출력 cubicTo·지연 arcTo)도 flatten 검증.
+    # 심볼 확장(표준 4종: manual_input/manual_op/display/delay)의 다중 서브패스 경로가
+    # DXF export에서 예외 없이 폴리라인으로 떨어지는지 확인. 곡선(화면출력 cubicTo·지연
+    # arcTo)도 flatten 검증. (도메인 픽토그램 4종 카메라/증폭기/랙/안테나는 2026-08-03
+    # 사용빈도·디자인 피드백으로 제거됨 — docs/history/2026-08.md 참조.)
     import ezdxf
     from PyQt6.QtGui import QPen
-    new_kinds = ("manual_input", "manual_op", "display", "delay",
-                 "camera", "amplifier", "rack", "antenna")
+    new_kinds = ("manual_input", "manual_op", "display", "delay")
     w = CanvasWindow(); w.show()
     sc = w._scene
     for i, kind in enumerate(new_kinds):
@@ -265,15 +265,15 @@ def test_new_symbol_kinds_export_dxf():
 def test_sketch_builder_accepts_new_symbol_kinds():
     # sketch_build._SYMBOL_KINDS(Qt 비의존 복제본)가 annotator_core 확장과 어긋나지 않는지.
     s = Sketch()
-    n1 = s.symbol("camera", 0, 0, 120, 72, "CAM-01")
-    n2 = s.symbol("rack", 200, 0, 120, 200, "랙")
+    n1 = s.symbol("manual_input", 0, 0, 120, 72, "IN-01")
+    n2 = s.symbol("display", 200, 0, 120, 200, "출력")
     s.arrow(n1, n2)
     path = os.path.join(_TMP, "sketch_new_kinds.ecad")
     assert s.save(path) == 3
     w = CanvasWindow()
     assert load_document(w._scene, path) == 3
     kinds = {it._kind for it in w._scene.items() if isinstance(it, _SymbolItem)}
-    assert kinds == {"camera", "rack"}
+    assert kinds == {"manual_input", "display"}
 
 
 

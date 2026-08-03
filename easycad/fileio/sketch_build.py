@@ -37,7 +37,6 @@ _DEFAULT_FONT = 16
 _SYMBOL_KINDS = (
     "decision", "terminal", "data", "prep", "document", "database",
     "manual_input", "manual_op", "display", "delay",
-    "camera", "amplifier", "rack", "antenna",
 )
 
 
