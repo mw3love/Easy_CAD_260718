@@ -4647,6 +4647,24 @@ def _axis_forced_local_normal(item, local_pt: QPointF, raw_n: QPointF) -> QPoint
     return raw_n
 
 
+def _shape_interior_contains(item, scene_pt):
+    """[2026-08-04 연속 호버 §8 항목16] item의 실제 기하 외곽선(클릭 히트밴드가 아니라) 기준
+    scene_pt가 내부인지. `shape()`/`_base_shape()`는 잡기 쉽도록 부풀린 히트 영역(속 빈 도형의
+    `_EDGE_HIT_MIN` 등)이라 테두리 두께 중심을 가르는 판정에는 못 쓴다 — 바로 바깥도 항상
+    '안쪽'으로 잘못 판정된다(실측 확인). select 도구 연속 호버 커서 분기(안쪽=이동/바깥쪽=
+    커넥터, `_update_hover_cursor`) 전용."""
+    p = item.mapFromScene(scene_pt)
+    if isinstance(item, _EllipseItem):
+        path = QPainterPath()
+        path.addEllipse(item.rect())
+        return path.contains(p)
+    if isinstance(item, _PathItem):
+        return item.path().contains(p)
+    if isinstance(item, _SymbolItem):
+        return item._sym_path().contains(p)
+    return item.rect().contains(p)
+
+
 def _nearest_border(item, scene_pt):
     """네모/원/심볼/(외부 DXF 폴백·펜)경로 테두리에서 scene_pt 최근접점 → (snap_scene,
     outward_unit_scene). 회전·스케일은 아이템 변환으로 왕복 환산(바깥 법선도 씬 방향으로 변환).

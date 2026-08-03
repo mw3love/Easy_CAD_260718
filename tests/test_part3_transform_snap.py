@@ -471,6 +471,69 @@ def test_hover_port_at_spatial_query_picks_nearest_overlapping():
 
 
 
+def test_hover_port_at_continuous_fallback_on_arbitrary_border_point():
+    # [연속 호버 §8 항목16, 2026-08-04 deep-interview] 고정 4점(N/E/S/W) 근처가 아닌 테두리
+    # 임의 위치도 Pass 2(연속 폴백)로 잡혀야 한다 — is_discrete=False로 구분.
+    w = CanvasWindow()
+    v = w._view
+    a = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)   # 상변 중점은 x=100
+    off_center = v.mapFromScene(QPointF(40, 0))     # 상변 위, 중점에서 먼 임의 지점
+    res = v._hover_port_at(off_center)
+    assert res is not None and res[0] is a and _close(res[1], QPointF(40, 0)) and res[3] is False
+
+    midpoint = v.mapFromScene(QPointF(100, 0))       # 기존 이산 포트는 그대로 우선(Pass 1)
+    res2 = v._hover_port_at(midpoint)
+    assert res2 is not None and res2[3] is True
+
+
+def test_hover_port_at_continuous_fallback_includes_path_item():
+    # [연속 호버 §8 항목16] DXF 폴백 도형(_PathItem)은 이산 포트가 없어 예전엔 select-hover
+    # 대상에서 통째로 빠졌다 — Pass 2 연속 폴백에는 포함되어야 한다(화살표 그리기 스냅과 동일
+    # 범위로 통일, deep-interview로 확정).
+    w = CanvasWindow()
+    v = w._view
+    path = QPainterPath()
+    path.moveTo(0, 0); path.lineTo(100, 0); path.lineTo(100, 60); path.lineTo(0, 60)
+    path.closeSubpath()
+    pit = _PathItem(path)
+    pit.setPen(w.make_pen())
+    w._scene.addItem(pit)
+    res = v._hover_port_at(v.mapFromScene(QPointF(50, 0)))
+    assert res is not None and res[0] is pit and res[3] is False
+
+
+def test_hover_port_at_continuous_fallback_excludes_selected_port_position():
+    # [연속 호버 §8 항목16 회귀] Pass 1은 선택된 포트의 위치를 예고에서 제외한다
+    # (_shape_ports_for_preview) — 연속 폴백(Pass 2)이 같은 자리를 그냥 다시 잡아버리면 이
+    # 예외가 무력화된다(구현 중 실측으로 발견, test_selected_port_hover_marker_does_not_
+    # duplicate_on_itself가 이 회귀를 처음 잡음).
+    w = CanvasWindow()
+    port = w._create_port_at("port_rect", QPointF(60, 0))
+    w._scene.clearSelection()
+    v1 = w._view.mapFromScene(QPointF(60, 0))
+    assert w._view._hover_port_at(v1) is not None
+    port.setSelected(True)
+    assert w._view._hover_port_at(v1) is None
+
+
+def test_update_hover_cursor_splits_inside_outside_on_continuous_border():
+    # [연속 호버 §8 항목16, deep-interview] Pass 2(연속 폴백)는 테두리 두께 중심 기준으로
+    # 커서를 가른다 — 바깥쪽=커넥터 생성(CrossCursor), 안쪽=이동(SizeAllCursor). Pass 1(이산
+    # 4점)은 기존대로 항상 CrossCursor(이 테스트 범위 밖, test_hover_port_at_skips_selected_
+    # shape 등 기존 테스트가 커버).
+    w = CanvasWindow(); w.set_tool("select")
+    v = w._view
+    _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)   # 상변 중점(100,0)에서 먼 x=40 지점 사용
+
+    v._update_hover_cursor(v.mapFromScene(QPointF(40, -2)))   # 테두리 바로 바깥
+    assert v.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+
+    v._update_hover_cursor(v.mapFromScene(QPointF(40, 10)))   # 테두리 안쪽(도형 내부)
+    assert v.viewport().cursor().shape() == Qt.CursorShape.SizeAllCursor
+
+
+
+
 def test_box_corner_resize():
     # [2c] 꼭짓점 = 2D 자유 리사이즈, 반대 꼭짓점 고정.
     w = CanvasWindow()

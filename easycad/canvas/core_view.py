@@ -909,10 +909,13 @@ class _AnnotatorView(QGraphicsView):
         질의 — _conn_shapes()의 전체 스캔 대체. _draw_port_dots·_hover_port_at가 매 페인트·매
         마우스무브마다 씬 전체를 수동 순회하던 게(cProfile 실측) 다중선택 드래그 버벅임과
         무거운 도면 호버 클러터의 원인이었다. 반환은 근사 후보 목록 — 정밀 판정(마진 사각형
-        contains)은 호출부가 그대로 한다."""
+        contains)은 호출부가 그대로 한다.
+        [2026-08-04 연속 호버 §8 항목16] _PathItem(DXF 폴백 도형)도 후보에 포함 — 이산 포트가
+        없어 Pass 1(discrete)에선 호출부가 스킵하지만, Pass 2(연속 폴백)는 _nearest_border가
+        이미 _PathItem을 지원하므로 대상에 넣어 화살표-그리기 스냅과 동작을 통일한다."""
         rect = QRectF(scene_pt.x() - margin, scene_pt.y() - margin, margin * 2, margin * 2)
         return [it for it in self.scene().items(rect)
-                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
+                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PathItem))]
 
     def _port_dot_target(self, scene_c):
         """[2026-08-03 분리 — _draw_port_dots·mouseMoveEvent 공용] 지금 예고점을 그릴 도형
@@ -956,7 +959,12 @@ class _AnnotatorView(QGraphicsView):
         떨어져 뜨는 지금은 그 둘이 서로 다른 자리에 보여 "점이 중복으로 생긴다"는 실사용
         지적을 받았다. 그 별도 마커를 없애고, 대신 지금 targeted(= `_hp_hover`가 가리키는)
         점 자신을 반전 스타일로 강조한다 — 선택된 qc-dot이 `_hover_handle`로 자신을 강조하는
-        것과 같은 패턴."""
+        것과 같은 패턴.
+        [2026-08-04 연속 호버 §8 항목16, deep-interview] `_hp_hover`가 이제 이산 4점과 무관한
+        테두리 임의 위치(Pass 2 연속 폴백, `_hover_port_at`)일 수 있다 — 그 경우 아래 고정 4점
+        루프의 어느 것과도 안 맞아 강조점이 안 뜨므로, 루프 뒤에서 한 번 더 확인해 그 정확한
+        위치에 별도 강조점을 그린다. `_PathItem`(DXF 폴백 도형)은 이산 포트 자체가 없으므로
+        고정 4점 루프를 건너뛰고 이 연속 강조점만 그린다."""
         scene_c = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
         best_sh = self._port_dot_target(scene_c)
         if best_sh is None:
@@ -966,16 +974,26 @@ class _AnnotatorView(QGraphicsView):
         # [2026-08-03] 선택 시 qc-dot(_qc_dot_rects)과 같은 gap 규칙 — 선택 여부로 점 위치가
         # 바뀌는 비일관성을 만들지 않는다(둘 다 `_HANDLE_GAP_FACTOR` 공유).
         gap = best_sh._handle_px() * best_sh._HANDLE_GAP_FACTOR
-        for sp, n in _shape_ports_for_preview(best_sh):
-            p = QPointF(sp.x() + n.x() * gap, sp.y() + n.y() * gap)
-            targeted = (hp is not None and hp[0] is best_sh
-                        and abs(hp[1].x() - sp.x()) < 0.5 and abs(hp[1].y() - sp.y()) < 0.5)
-            if targeted:
-                painter.setPen(QPen(QColor("white"), 1.5 / s))
-                painter.setBrush(QBrush(QColor(_BLUE)))
-            else:
-                painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
-                painter.setBrush(QBrush(QColor("white")))
+        targeted_pt = hp[1] if (hp is not None and hp[0] is best_sh) else None
+        matched = False
+        if not isinstance(best_sh, _PathItem):
+            for sp, n in _shape_ports_for_preview(best_sh):
+                p = QPointF(sp.x() + n.x() * gap, sp.y() + n.y() * gap)
+                targeted = (targeted_pt is not None
+                            and abs(targeted_pt.x() - sp.x()) < 0.5 and abs(targeted_pt.y() - sp.y()) < 0.5)
+                if targeted:
+                    matched = True
+                    painter.setPen(QPen(QColor("white"), 1.5 / s))
+                    painter.setBrush(QBrush(QColor(_BLUE)))
+                else:
+                    painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
+                    painter.setBrush(QBrush(QColor("white")))
+                painter.drawEllipse(p, r, r)
+        if targeted_pt is not None and not matched:
+            n = hp[2]
+            p = QPointF(targeted_pt.x() + n.x() * gap, targeted_pt.y() + n.y() * gap)
+            painter.setPen(QPen(QColor("white"), 1.5 / s))
+            painter.setBrush(QBrush(QColor(_BLUE)))
             painter.drawEllipse(p, r, r)
 
     def _draw_segment_preview_pill(self, painter, s):
@@ -1016,15 +1034,21 @@ class _AnnotatorView(QGraphicsView):
         return (item, sp, n)
 
     def _hover_port_at(self, view_pos):
-        """[8포트 select-hover] 미선택 도형 근처 접속점 중 가장 가까운 것 → (shape, port_pt, normal)
+        """[8포트 select-hover] 미선택 도형 근처 접속점 → (shape, port_pt, normal, is_discrete)
         or None. 선택된 도형은 제외 — `_connect_port_at`가 이미 그 경로를 처리해(mousePressEvent
-        상단에서 어느 도구든 우선 검사), 여기서 또 잡으면 렌더가 중복된다."""
+        상단에서 어느 도구든 우선 검사), 여기서 또 잡으면 렌더가 중복된다.
+        [2026-08-04 연속 호버 §8 항목16, deep-interview] Pass 1(이산 4포트, _PORT_SNAP_PX)이
+        없으면 Pass 2(테두리 임의 위치 최근접점, _BORDER_SNAP_PX)로 폴백 — `_border_snap_at`의
+        화살표-그리기 2단 우선순위(이산 우선, 연속 폴백)와 동일 패턴. Pass 2는 이산 포트가 없는
+        _PathItem(DXF 폴백 도형)도 포함한다. `is_discrete`는 호출부(커서 분기)가 Pass 1/2를
+        구분해, Pass 1은 항상 커넥터 커서·Pass 2는 테두리 안쪽/바깥쪽으로 커서를 가르는 데 쓴다."""
         margin = 30.0 / self._view_scale()
         scene_pt = self.mapToScene(view_pos)
+        near = [sh for sh in self._conn_shapes_near(scene_pt, margin) if not sh.isSelected()]
         best = None
         bestd = self._PORT_SNAP_PX
-        for sh in self._conn_shapes_near(scene_pt, margin):
-            if sh.isSelected():
+        for sh in near:
+            if isinstance(sh, _PathItem):
                 continue
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_pt):
@@ -1033,7 +1057,23 @@ class _AnnotatorView(QGraphicsView):
                 d = self._view_dist(sp, view_pos)
                 if d <= bestd:
                     bestd, best = d, (sh, sp, n)
-        return best
+        if best is not None:
+            return (*best, True)
+        best2 = None
+        bestd2 = self._BORDER_SNAP_PX
+        for sh in near:
+            sp, n = _nearest_border(sh, scene_pt)
+            # [2026-08-04] 선택된 포트의 위치는 연속 폴백에서도 제외 — Pass 1이 discrete 4점에서
+            # 이미 이 규칙을 지킨다(_shape_ports_for_preview, "선택된 포트의 리사이즈 핸들과
+            # 겹침 방지"), 연속 투영점이 우연히 그 자리와 같아도 예외가 아니다.
+            selected_centers = [p.mapToScene(p.rect().center())
+                                 for p in (getattr(sh, "_ports", None) or []) if p.isSelected()]
+            if any(math.hypot(sp.x() - c.x(), sp.y() - c.y()) < 1.0 for c in selected_centers):
+                continue
+            d = self._view_dist(sp, view_pos)
+            if d <= bestd2:
+                bestd2, best2 = d, (sh, sp, n)
+        return (*best2, False) if best2 is not None else None
 
     def _hp_paint_ghost(self, painter, src, port_pt, port_normal, cursor_scene):
         """[하나의 시스템으로 통합 2026-08-01] 접속점 드래그 중 커넥터 고스트 — 선택 여부와
@@ -1484,7 +1524,7 @@ class _AnnotatorView(QGraphicsView):
                     event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
                 hp = self._hover_port_at(vpos)
                 if hp is not None:
-                    src, port_pt, nrm = hp
+                    src, port_pt, nrm, _is_discrete = hp
                     self._hp_src = _port_owner_at(src, port_pt)   # [실사용 버그 수정] 포트면 포트에 바인딩
                     self._hp_port, self._hp_normal = port_pt, nrm
                     self._hp_dragging = True
@@ -2015,12 +2055,22 @@ class _AnnotatorView(QGraphicsView):
         if self._table_col_add is not None:   # [열폭 드래그] 표 내부 경계선 위 — 좌우 리사이즈 커서
             vp.setCursor(Qt.CursorShape.SplitHCursor)
             return
-        if tool == "select" and self._hover_port_at(view_pos) is not None:
-            # [실사용 피드백 2026-07-30] 미선택 도형의 포트 위 — 예전엔 아래 '주석 위=이동' 분기로
-            # 떨어져 SizeAllCursor(이동 커서)로 보였다. 여기서 드래그는 이동이 아니라 커넥터 생성
-            # (_hp_create_arrow)이므로 십자선으로 구분한다.
-            vp.setCursor(Qt.CursorShape.CrossCursor)
-            return
+        if tool == "select":
+            hp = self._hover_port_at(view_pos)
+            if hp is not None:
+                # [실사용 피드백 2026-07-30] 미선택 도형의 포트 위 — 예전엔 아래 '주석 위=이동'
+                # 분기로 떨어져 SizeAllCursor(이동 커서)로 보였다. 여기서 드래그는 이동이 아니라
+                # 커넥터 생성(_hp_create_arrow)이므로 십자선으로 구분한다.
+                # [2026-08-04 연속 호버 §8 항목16, deep-interview] Pass 1(이산 4포트)은 항상
+                # 커넥터 커서. Pass 2(테두리 임의 위치 연속 폴백)만 테두리 두께 중심으로 안쪽/
+                # 바깥쪽을 갈라, 안쪽이면 이 분기를 건너뛰어 아래 '주석 위=이동' 분기
+                # (SizeAllCursor)로 자연히 떨어지게 한다. `sh.contains()`(Qt shape())는 잡기
+                # 쉽도록 부풀린 히트 영역이라 못 쓰고(실측 확인), 실제 기하 외곽선 기준인
+                # `_shape_interior_contains`를 쓴다.
+                sh, _pt, _n, is_discrete = hp
+                if is_discrete or not _shape_interior_contains(sh, self.mapToScene(view_pos)):
+                    vp.setCursor(Qt.CursorShape.CrossCursor)
+                    return
         if self._bend_handle_at(view_pos) is not None:
             vp.setCursor(Qt.CursorShape.PointingHandCursor)  # 곡선 조절 손잡이(이동과 구분)
         elif self._over_selected_endpoint(view_pos):
