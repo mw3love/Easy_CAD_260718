@@ -1291,3 +1291,184 @@ def test_undo_redo_state_arrow_width():
     w.redo(); assert abs(ar._width - 6.0) < 1e-6
 
 
+
+
+# ---- [신규기능 §8-12] 포트-테두리 trim 워크플로우 -------------------------------
+
+def test_triangle_symbol_kind_basic():
+    # 삼각형은 새 클래스가 아니라 기존 심볼 시스템(_SYMBOL_KINDS) 재사용 — 팔레트·직렬화·
+    # DXF export가 다른 9종과 동일 코드로 공짜로 따라오는지 최소 확인.
+    assert "triangle" in _SYMBOL_KINDS
+    tri = _SymbolItem("triangle", QRectF(0, 0, 160, 120))
+    assert tri._sym_path().elementCount() > 0
+    assert not tri.boundingRect().isEmpty()
+
+
+def test_triangle_dxf_export_is_3vertex_polygon():
+    w = CanvasWindow()
+    tri = _SymbolItem("triangle", QRectF(0, 0, 160, 120))
+    tri.setPen(w.make_pen()); tri.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    w._scene.addItem(tri)
+    out = os.path.join(_TMP, "triangle.dxf")
+    assert export_dxf(w._scene, out) is not False
+    import ezdxf
+    doc = ezdxf.readfile(out)
+    polys = list(doc.modelspace().query("LWPOLYLINE"))
+    assert len(polys) == 1 and len(polys[0]) == 3
+
+
+def test_port_attaches_to_rect_border_and_snaps():
+    w = CanvasWindow()
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    port = w._create_port_at("port_rect", QPointF(60, 2))   # 위쪽 변 근처(중점 아님)
+    assert port.parentItem() is dev
+    assert port in dev._ports
+    center = port.mapToScene(port.rect().center())
+    assert _close(center, QPointF(60, 0), eps=0.1)   # 테두리 위로 정확히 스냅(y=0)
+
+
+def test_port_does_not_attach_to_non_triangle_symbol():
+    # 사각형+삼각형만 호스트 대상 — 마름모(판단) 등 다른 심볼 근처엔 부착되지 않는다.
+    w = CanvasWindow()
+    dec = _SymbolItem("decision", QRectF(0, 0, 160, 100))
+    dec.setPen(w.make_pen()); dec.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    dec.setFlags(dec.GraphicsItemFlag.ItemIsSelectable | dec.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(dec)
+    port = w._create_port_at("port_rect", QPointF(80, 2))
+    assert port.parentItem() is not dec
+
+
+def test_port_follows_host_resize_proportionally():
+    w = CanvasWindow()
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    port = w._create_port_at("port_rect", QPointF(60, 0))   # fx=0.3
+    dev.setRect(QRectF(0, 0, 400, 100))   # 폭 2배
+    center = port.mapToScene(port.rect().center())
+    assert _close(center, QPointF(120, 0), eps=0.1)   # 0.3 * 400 = 120
+
+
+def test_port_move_updates_frac_and_undo_redo_restore_it():
+    w = CanvasWindow()
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    port = w._create_port_at("port_rect", QPointF(60, 0))
+    orig_frac = port._port_frac
+    before = QPointF(port.pos())
+    port.setPos(port.pos().x() + 40, port.pos().y())
+    w.push_undo_move([(port, before)])
+    assert abs(port._port_frac[0] - orig_frac[0]) > 1e-6   # 옮긴 뒤엔 frac도 바뀜
+    w.undo()
+    assert abs(port._port_frac[0] - orig_frac[0]) < 1e-9
+    w.redo()
+    assert abs(port._port_frac[0] - orig_frac[0]) > 1e-6
+
+
+def test_port_delete_updates_host_ports_list_and_undo_restores():
+    w = CanvasWindow()
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    port = w._create_port_at("port_rect", QPointF(60, 0))
+    w._scene.clearSelection(); port.setSelected(True)
+    w.delete_selection()
+    assert port.scene() is None and port not in dev._ports
+    w.undo()
+    assert port.scene() is w._scene and port in dev._ports and port.parentItem() is dev
+
+
+def test_host_delete_cascades_port_and_undo_restores():
+    w = CanvasWindow()
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    port = w._create_port_at("port_rect", QPointF(60, 0))
+    w._scene.clearSelection(); dev.setSelected(True)
+    w.delete_selection()
+    assert dev.scene() is None and port.scene() is None
+    assert port.parentItem() is dev   # Qt가 캐스케이드 제거 중엔 부모 링크를 안 끊음(실측)
+    w.undo()
+    assert dev.scene() is w._scene and port.scene() is w._scene
+    assert port.parentItem() is dev
+
+
+def test_shape_ports_includes_attached_port_and_connector_can_start_there():
+    w = CanvasWindow(); w.grid_enabled = False
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    target = _mk_pen_rect(w, x=400, y=300, ww=100, hh=60)
+    port = w._create_port_at("port_rect", QPointF(60, 0))
+    port_center = port.mapToScene(port.rect().center())
+    ports = _shape_ports(dev)
+    assert any(_close(p, port_center, eps=0.01) for p, _n in ports)
+
+    w._scene.clearSelection(); w.set_tool("select")
+    before = len([x for x in w._scene.items() if isinstance(x, _PolyArrowItem)])
+    _qc_drag(w._view, port_center, QPointF(450, 330))
+    arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
+    assert len(arrows) == before + 1
+    assert arrows[-1]._bind_start is dev
+
+
+def test_build_trimmed_border_path_has_gap_at_port():
+    dev = _RectItem(QRectF(0, 0, 200, 100))
+    port = _RectItem(QRectF(0, 0, 18, 18))
+    _attach_port_to_host(port, dev, QPointF(60, 0))
+    path = build_trimmed_border_path(dev)
+    # 포트 없는 변(우·하·좌)은 각 1세그먼트, 포트 걸친 위쪽 변만 2세그먼트 → 총 elementCount 10.
+    assert path.elementCount() == 10
+
+
+def test_build_trimmed_border_path_no_ports_is_unused_by_paint_but_still_correct():
+    # 포트 없는 도형은 애초에 _ports가 비어 build_trimmed_border_path를 호출할 일이 없지만
+    # (화면은 _paint_port_cover_if_needed 쪽 트릭을 씀), 함수 자체는 빈 _ports에도 안전해야
+    # DXF export(_export_rect)가 무조건 안전하게 호출할 수 있다.
+    dev = _RectItem(QRectF(0, 0, 200, 100))
+    path = build_trimmed_border_path(dev)
+    assert path.elementCount() == 8   # 4변 × (moveTo+lineTo), 끊김 없음
+
+
+def test_ecad_roundtrip_preserves_ports_on_rect_and_triangle():
+    w = CanvasWindow()
+    dev = _mk_pen_rect(w, x=50, y=60, ww=200, hh=100)
+    w._create_port_at("port_rect", QPointF(50 + 60, 60))
+    tri = _SymbolItem("triangle", QRectF(0, 0, 180, 130))
+    tri.setPen(w.make_pen()); tri.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    tri.setFlags(tri.GraphicsItemFlag.ItemIsSelectable | tri.GraphicsItemFlag.ItemIsMovable)
+    tri.setPos(400, 60)
+    w._scene.addItem(tri)
+    tri_port = w._create_port_at("port_circle", QPointF(400 + 90, 60 + 130))
+    tri_port_scene = tri_port.mapToScene(tri_port.rect().center())
+
+    path = os.path.join(_TMP, "ports.ecad")
+    save_document(w._scene, path)
+    w2 = CanvasWindow()
+    n = load_document(w2._scene, path)
+    assert n == 2   # 포트는 최상위 아이템이 아니므로(라벨과 동일 취급) 개수에 안 잡힘
+
+    dev2 = next(it for it in w2._scene.items()
+                if isinstance(it, _RectItem) and not hasattr(it, "_port_host"))
+    assert len(dev2._ports) == 1
+    p2 = dev2._ports[0]
+    assert p2.parentItem() is dev2 and p2.scene() is w2._scene
+    assert _close(p2.mapToScene(p2.rect().center()), QPointF(110, 60), eps=0.01)
+
+    tri2 = next(it for it in w2._scene.items()
+                if isinstance(it, _SymbolItem) and it._kind == "triangle")
+    assert len(tri2._ports) == 1
+    tp2 = tri2._ports[0]
+    assert _close(tp2.mapToScene(tp2.rect().center()), tri_port_scene, eps=0.01)
+
+
+def test_dxf_export_trims_border_segments_with_ports():
+    w = CanvasWindow()
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    w._create_port_at("port_rect", QPointF(60, 0))
+    plain = _mk_pen_rect(w, x=400, y=0, ww=100, hh=60)   # 포트 없는 회귀 확인용
+
+    out = os.path.join(_TMP, "trim.dxf")
+    assert export_dxf(w._scene, out) is not False
+    import ezdxf
+    doc = ezdxf.readfile(out)
+    msp = doc.modelspace()
+    lines = list(msp.query("LINE"))
+    polys = list(msp.query("LWPOLYLINE"))
+    # dev: 끊긴 위쪽 변 2개(LINE) + 나머지 3변(LINE) = 5 LINE. plain: 닫힌 4점 LWPOLYLINE 1개.
+    # port_rect 자신도 작은 닫힌 LWPOLYLINE 1개로 나감(총 LWPOLYLINE 2개).
+    assert len(lines) == 5
+    assert len(polys) == 2 and all(len(p) == 4 for p in polys)
+
+

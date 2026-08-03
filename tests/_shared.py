@@ -22,7 +22,9 @@ from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _SYMBOL_KINDS,
     _nearest_border, _shape_ports, _axis_scale_fn, _mirror_fn,
-    _seg_cross_seg, _ConnectorLabel, _shape_ports, _RIDE_TOL)
+    _seg_cross_seg, _ConnectorLabel, _shape_ports, _RIDE_TOL,
+    _attach_port_to_host, _detach_port_from_host, build_trimmed_border_path,
+    _reposition_port_from_frac)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect
 from easycad.fileio.document import save_document, load_document, load_document_layers, item_to_dict
 from easycad.fileio.dxf_export import export_dxf

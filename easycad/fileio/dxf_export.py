@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import QGraphicsTextItem
 
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _SymbolItem,
+    _PolyArrowItem, _SymbolItem, build_trimmed_border_path,
 )
 
 # 타입 → DXF 레이어. AutoCAD에서 켜고/끄기·색 일괄관리가 쉽도록 분리.
@@ -136,8 +136,28 @@ def _arrowhead(msp, tip, near, width: float, attrs: dict):
 
 
 # ---- 아이템별 export -------------------------------------------------------
+def _export_trimmed_border(msp, it, attrs):
+    """[신규기능 §8-12] 부착된 포트가 걸친 구간만큼 실제로 끊어서 내보낸다 — 앱 화면은
+    시각적 우회(포트가 배경색으로 덮어 그림, core_shapes.py `_paint_port_cover_if_needed`
+    참조)를 쓰지만, DXF는 QPainter를 안 거치므로 진짜 분절 데이터(`build_trimmed_border_path`)
+    를 그대로 LINE 엔티티 여러 개로 내보낸다 — AutoCAD에서 열어도 실제로 끊겨 있다."""
+    path = build_trimmed_border_path(it)
+    ET = QPainterPath.ElementType
+    cur = None
+    for i in range(path.elementCount()):
+        e = path.elementAt(i)
+        if e.type == ET.MoveToElement:
+            cur = (e.x, e.y)
+        elif e.type == ET.LineToElement and cur is not None:
+            _wx(msp.add_line(_w(it, *cur), _w(it, e.x, e.y), dxfattribs=attrs), it.pen().widthF())
+            cur = (e.x, e.y)
+
+
 def _export_symbol(msp, it):
     attrs = _with_linetype(_attrs(_LAYERS["symbol"], it.pen().color()), it.pen().style())
+    if getattr(it, "_ports", None):
+        _export_trimmed_border(msp, it, attrs)
+        return
     for poly in it._sym_path().toSubpathPolygons():
         pts = [_w(it, p.x(), p.y()) for p in poly]
         if len(pts) < 2:
@@ -150,10 +170,13 @@ def _export_symbol(msp, it):
 
 
 def _export_rect(msp, it):
+    attrs = _with_linetype(_attrs(_LAYERS["rect"], it.pen().color()), it.pen().style())
+    if getattr(it, "_ports", None):
+        _export_trimmed_border(msp, it, attrs)
+        return
     r = it.rect()
     pts = [_w(it, r.left(), r.top()), _w(it, r.right(), r.top()),
            _w(it, r.right(), r.bottom()), _w(it, r.left(), r.bottom())]
-    attrs = _with_linetype(_attrs(_LAYERS["rect"], it.pen().color()), it.pen().style())
     _wx(msp.add_lwpolyline(pts, close=True, dxfattribs=attrs), it.pen().widthF())
 
 

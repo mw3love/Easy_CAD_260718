@@ -15,6 +15,7 @@ from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPixmap
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem,
+    _reposition_port_from_frac,
 )
 
 FORMAT = "easycad-doc"
@@ -60,6 +61,40 @@ def _apply_common(it, d: dict):
         it.setFlag(it.GraphicsItemFlag.ItemIsMovable, False)
         it.setFlag(it.GraphicsItemFlag.ItemIsSelectable, False)
     return it
+
+
+# ---- [신규기능 §8-12] 포트(장비 테두리에 부착된 자식 사각/원) 직렬화 -----------
+# 최상위 아이템 목록에는 안 실린다(Qt 자식이라 라벨과 동일하게 부모 dict 안에 중첩) —
+# save_document()의 "parentItem() is None" 필터가 이미 포트를 최상위에서 자동 제외한다.
+def _port_to_dict(port) -> dict:
+    r = port.rect()
+    return {
+        "shape": "circle" if isinstance(port, _EllipseItem) else "rect",
+        "size": [r.width(), r.height()],
+        "pen": _col(port.pen().color()), "width": port.pen().widthF(),
+        "fill": None if port.brush().style() == Qt.BrushStyle.NoBrush
+        else _col(port.brush().color()),
+        "frac": list(getattr(port, "_port_frac", (0.5, 0.0))),
+    }
+
+
+def _port_from_dict(pd: dict, host):
+    w, h = pd.get("size", [18.0, 18.0])
+    cls = _EllipseItem if pd.get("shape") == "circle" else _RectItem
+    port = cls(QRectF(0.0, 0.0, w, h))
+    port.setPen(_mkpen(pd))
+    port.setBrush(_mkbrush(pd))
+    port.setFlags(port.GraphicsItemFlag.ItemIsMovable | port.GraphicsItemFlag.ItemIsSelectable
+                  | port.GraphicsItemFlag.ItemSendsGeometryChanges)
+    port.setParentItem(host)
+    port._port_host = host
+    port._port_frac = tuple(pd.get("frac", [0.5, 0.0]))
+    ports = getattr(host, "_ports", None)
+    if ports is None:
+        ports = host._ports = []
+    ports.append(port)
+    _reposition_port_from_frac(port)
+    return port
 
 
 def _mkpen(d: dict) -> QPen:
@@ -224,6 +259,9 @@ def item_to_dict(it) -> dict | None:
         if isinstance(it, (_ArrowItem, _PolyArrowItem)):
             d["label"]["t"] = it._label_t
             d["label"]["off"] = it._label_off
+    # [신규기능 §8-12] 부착된 포트 — 라벨과 동일하게 부모 dict 안에 중첩 직렬화.
+    if getattr(it, "_ports", None):
+        d["ports"] = [_port_to_dict(p) for p in it._ports]
     return d
 
 
@@ -277,7 +315,10 @@ def dict_to_item(d: dict):
         it = _BadgeItem(d["number"], QColor(d["color"]))
     else:
         return None
-    return _apply_common(it, d)
+    it = _apply_common(it, d)
+    for pd in d.get("ports", []):
+        _port_from_dict(pd, it)
+    return it
 
 
 # ---- 파일 저장/열기 -------------------------------------------------------
