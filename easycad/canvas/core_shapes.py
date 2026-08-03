@@ -493,6 +493,10 @@ class _HandleResizeMixin:
             r = cr.adjusted(-extra, -extra, extra, extra)
             for _k, dr in self._qc_dot_rects():
                 r = r.united(dr)
+            # [2026-08-03] 꼭짓점 핸들도 이제 바깥으로 띄우므로(_box_corner_rects) 실제 위치를
+            # union — 아래 마지막 `h` 패딩만 믿지 않고 기하 그대로 반영해 안전하게 맞춘다.
+            for _i, cr_rect in self._box_corner_rects():
+                r = r.united(cr_rect)
             return r.adjusted(-h, -h, h, h)
         return self._content_rect().united(self._rot_handle_rect().adjusted(-pad, -pad, pad, pad))
 
@@ -519,11 +523,29 @@ class _HandleResizeMixin:
     def _box_handles(self) -> bool:
         return hasattr(self, "setRect") and not self._uses_endpoints()
 
+    # [Lucid 대조 2026-08-03 재도입] 꼭짓점·변 핸들 모두 테두리에 딱 붙지 않고 바깥으로
+    # 살짝 띄운다 — "핸들이 도형 자체가 아니라 별도 컨트롤"이라는 시각적 구분(사용자 실사용
+    # 지적: 지금은 핸들이 도형 안쪽에 있는 것처럼 보임). 2026-08-01엔 qc-dot만 이 gap을 쓰다가
+    # "선택 순간 미연결 qc-dot만 튀어나와 hover 상태와 달라지는 비일관성"으로 완전히 없앤 적이
+    # 있다 — 이번엔 그 실수를 반복하지 않도록 **선택 상태(qc-dot·꼭짓점)와 미선택 hover
+    # 미리보기(`_draw_port_dots`) 양쪽에 동일한 gap 규칙**을 적용해 선택 여부와 무관하게 같은
+    # 자리에 뜨게 한다(연결 여부에 따른 테두리 수렴 특례는 되살리지 않음 — 문제였던 비일관성만
+    # 없으면 필요 없는 복잡도라 판단).
+    _HANDLE_GAP_FACTOR = 0.6
+
     def _box_corner_rects(self):
         br = self.rect()
         h = self._handle_px()
+        gap = h * self._HANDLE_GAP_FACTOR
+        cx, cy = br.center().x(), br.center().y()
         pts = [br.topLeft(), br.topRight(), br.bottomRight(), br.bottomLeft()]  # 0TL 1TR 2BR 3BL
-        return [(i, QRectF(p.x() - h / 2, p.y() - h / 2, h, h)) for i, p in enumerate(pts)]
+        out = []
+        for i, p in enumerate(pts):
+            sx = gap if p.x() > cx else -gap
+            sy = gap if p.y() > cy else -gap
+            q = QPointF(p.x() + sx, p.y() + sy)
+            out.append((i, QRectF(q.x() - h / 2, q.y() - h / 2, h, h)))
+        return out
 
     def _box_rot_center(self) -> QPointF:
         br = self.rect()
@@ -556,24 +578,56 @@ class _HandleResizeMixin:
         except RuntimeError:
             return False
 
-    # [하나의 시스템으로 통합 2026-08-01, Lucid 대조] 상하좌우 접속점 — 항상 테두리 위
-    # (`_shape_ports`와 동일한 점, 심볼도 실제 외곽선에 투영됨). 종전엔 미연결 상태의 선택된
-    # 도형만 테두리 밖으로 살짝 띄웠는데(gap), 그러면 도형을 선택하는 순간 점이 밖으로 튀어
-    # hover 상태(항상 테두리 위)와 위치가 달라지는 비일관성이 있었다(Lucid는 선택 여부와
-    # 무관하게 항상 같은 자리) — 사용자 지적으로 gap을 완전히 없앴다. 클릭=도형 복제+화살표,
-    # 드래그=화살표(대상 없으면 도형도 생성). 2026-07-30엔 이 점을 변 리사이즈(1축)와도
-    # 통합했었으나, "바깥으로 쭉 당기는" 자연스러운 동작이 항상 리사이즈로 판정되는 문제가
-    # 실사용에서 드러나 되돌림(사용자 확인 2026-08-01) — 단일축 리사이즈는 여기서 지원 안
-    # 하고 모서리(`_box_corner_rects`)의 대각 리사이즈로만 지원한다.
+    # [하나의 시스템으로 통합 2026-08-01 → 2026-08-03 재도입] 상하좌우 접속점. 2026-08-01엔
+    # 항상 테두리 위(gap 없음)로 통일했었다 — 종전엔 미연결 상태의 선택된 도형만 gap을 줘서
+    # 선택 순간 점이 튀는 비일관성이 있었기 때문. 이번엔 gap을 없애는 대신, 선택·미선택
+    # (`_draw_port_dots`) 양쪽에 **동일한 `_HANDLE_GAP_FACTOR`**를 적용해 비일관성 없이
+    # 되살린다(위 `_box_corner_rects` 주석 참조). 클릭=도형 복제+화살표, 드래그=화살표(대상
+    # 없으면 도형도 생성). 2026-07-30엔 이 점을 변 리사이즈(1축)와도 통합했었으나, "바깥으로
+    # 쭉 당기는" 자연스러운 동작이 항상 리사이즈로 판정되는 문제가 실사용에서 드러나 되돌림
+    # (사용자 확인 2026-08-01) — 단일축 리사이즈는 이 점 자체가 아니라 변 나머지 구간
+    # (`_box_edge_side`)이 담당한다.
     def _qc_dot_rects(self):
         h = self._handle_px()
         d = h * 0.9
+        gap = h * self._HANDLE_GAP_FACTOR
         sides = ("t", "r", "b", "l")   # _shape_ports와 동일 순서(상·우·하·좌)
         out = []
-        for k, (sp, _n) in zip(sides, _shape_ports(self)):
-            p = self.mapFromScene(sp)
+        for k, (sp, n) in zip(sides, _shape_ports(self)):
+            sp_out = QPointF(sp.x() + n.x() * gap, sp.y() + n.y() * gap)
+            p = self.mapFromScene(sp_out)
             out.append((k, QRectF(p.x() - d / 2, p.y() - d / 2, d, d)))
         return out
+
+    def _box_edge_side(self, local_pt: QPointF):
+        """local_pt가 (모서리·qc-dot과 안 겹치는) 테두리 변 위 리사이즈 대역이면 그 변
+        ('t'/'r'/'b'/'l'), 아니면 None. [2026-08-03 실사용 지적, Lucid 대조] 변 전체를 잡아
+        단일축 리사이즈할 수 있어야 하는데, 변 중점(qc-dot)은 화살표 전용이라 그 점 자체와는
+        겹치지 않아야 한다 — 통합 흐름(`_update_hover_cursor`·뷰의 mousePressEvent)에선 qc-dot
+        쪽이 이 검사보다 먼저 걸러지지만, 이 함수가 독립적으로도(단위 테스트 등) qc-dot 자리에
+        대해 안전하도록 여기서도 명시적으로 제외한다."""
+        if not (self._box_handles() and self._handle_active()):
+            return None
+        for _i, r in self._box_corner_rects():
+            if r.contains(local_pt):
+                return None
+        for _k, dr in self._qc_dot_rects():
+            if dr.contains(local_pt):
+                return None
+        r = self.rect()
+        tol = max(self._EDGE_HIT_MIN, self._handle_px() * 0.5) / 2.0
+        x, y = local_pt.x(), local_pt.y()
+        if not (r.left() - tol <= x <= r.right() + tol and r.top() - tol <= y <= r.bottom() + tol):
+            return None
+        if abs(y - r.top()) <= tol and r.left() <= x <= r.right():
+            return "t"
+        if abs(y - r.bottom()) <= tol and r.left() <= x <= r.right():
+            return "b"
+        if abs(x - r.left()) <= tol and r.top() <= y <= r.bottom():
+            return "l"
+        if abs(x - r.right()) <= tol and r.top() <= y <= r.bottom():
+            return "r"
+        return None
 
     def _box_handle_cursor(self, local_pt: QPointF):
         """local_pt가 어느 박스 핸들 위인지 → 커서('rotate' or Qt.CursorShape), 없으면 None."""
@@ -585,8 +639,11 @@ class _HandleResizeMixin:
             if r.contains(local_pt):   # TL·BR = ↖↘, TR·BL = ↗↙
                 return (Qt.CursorShape.SizeFDiagCursor if i in (0, 2)
                         else Qt.CursorShape.SizeBDiagCursor)
-        # 변 중점은 별도 사각 핸들이 아니라 화살표 전용 빠른 생성 점(_qc_dot_rects)이 담당 —
-        # 그 커서는 _update_hover_cursor의 _qc_dot_at 분기가 CrossCursor로 처리한다.
+        # 변 중점(qc-dot) 자체는 화살표 전용 빠른 생성 점 — 그 커서는 _update_hover_cursor의
+        # _qc_dot_at 분기가 CrossCursor로 먼저 처리한다(이 함수엔 도달 안 함).
+        side = self._box_edge_side(local_pt)
+        if side is not None:
+            return Qt.CursorShape.SizeVerCursor if side in ("t", "b") else Qt.CursorShape.SizeHorCursor
         return None
 
     def _host(self):
@@ -703,19 +760,24 @@ class _HandleResizeMixin:
                 return bool(getattr(owner, "ortho_enabled", False))
         return False
 
-    # ---- [우리 확장 · M4-4 ⓓ] 선택된 도형의 '내부 빈공간' 이동 -------------------
-    # 속 빈 도형은 테두리(_base_shape)만 클릭 영역이라 이동하려면 가는 선을 조준해야 했다.
-    # Lucid/FigJam은 선택된 도형이면 내부 아무 데나 끌어도 이동한다 → 선택 중일 때만 내부를
-    # 히트 영역에 얹는다. ⚠ 그리기 도구가 무장된 동안은 얹지 않는다 — 뷰의 _is_empty_area가
-    # shape()로 판정하므로, 얹으면 '도형 안에서 새 주석 그리기'(기존 설계)가 막힌다.
+    # ---- [우리 확장 · M4-4 ⓓ] 도형의 '내부 빈공간' 클릭·이동 --------------------
+    # 속 빈 도형은 테두리(_base_shape)만 클릭 영역이라 선택·이동하려면 가는 선을 조준해야
+    # 했다. Lucid/FigJam은 선택 여부와 무관하게 내부 아무 데나 클릭·끌어도 선택/이동된다
+    # (2026-08-03 실사용 지적 — 선택 중에만 얹던 것을 미선택으로 확장). ⚠ 그리기 도구가
+    # 무장된 동안은 얹지 않는다 — 뷰의 _is_empty_area가 shape()로 판정하므로, 얹으면
+    # '도형 안에서 새 주석 그리기'(기존 설계)가 막힌다. 이 게이트는 도구 하나로 충분하다.
     _INTERIOR_HIT_TOOLS = (None, "select")
 
     def _interior_path(self):
-        """선택 시 클릭 영역에 더할 내부 채움 경로. 속 빈 네모·원·심볼만 override(기본 없음)."""
+        """클릭 영역에 더할 내부 채움 경로. 속 빈 네모·원·심볼만 override(기본 없음)."""
         return None
 
     def _interior_hit_active(self) -> bool:
-        if not self.isSelected():
+        # 뷰(창)에 물린 적 없는 아이템은 "현재 도구"라는 개념 자체가 없다 — _owner_tool()이
+        # 그 경우도 None을 돌려주는데, 이걸 '손 도구(None)'와 같은 값으로 오인하면 씬 밖
+        # 임시 아이템(예: fill 단위 테스트)까지 내부 히트가 켜져 버린다.
+        sc = self.scene()
+        if sc is None or not sc.views():
             return False
         return self._owner_tool() in self._INTERIOR_HIT_TOOLS
 
@@ -894,8 +956,18 @@ class _HandleResizeMixin:
                     self._begin_box_geom()
                     event.accept()
                     return
-            # [2026-07-30] 변 중점은 더 이상 여기서 안 잡는다 — qc-dot과 합쳐진 겸용 점이라
-            # 뷰가 press를 먼저 가로채(_qc_dot_at) 드래그 방향으로 리사이즈/커넥터를 가른다.
+            # [2026-07-30] 변 중점(qc-dot 그 자체)은 더 이상 여기서 안 잡는다 — 뷰가 press를
+            # 먼저 가로채(_qc_dot_at) 화살표 전용으로 처리한다(축 방향으로 당겨도 리사이즈
+            # 아님, 2026-08-01 확정). [2026-08-03 실사용 지적] 그 점 '주변'(모서리·qc-dot과
+            # 안 겹치는 변 나머지 구간)은 아직 아무 핸들도 없어 Lucid처럼 변 전체를 잡아
+            # 단일축 리사이즈할 수 없었다 — `_apply_box_resize`의 "edge" 분기는 이미 있었지만
+            # (과거 qc-dot 겸용 시절의 유산) 그걸 발동시킬 자리가 없었다. 여기서 새로 연결한다.
+            side = self._box_edge_side(lp)
+            if side is not None:
+                self._box_resize = ("edge", side)
+                self._begin_box_geom()
+                event.accept()
+                return
             super().mousePressEvent(event)
             return
         if self._handle_active():
@@ -1121,12 +1193,52 @@ def _highlight_band(it, extra_width: float = 3.0) -> QPainterPath:
     return band.subtracted(centerline)
 
 
+def _selection_is_solo(it) -> bool:
+    """[Lucid 대조 2026-08-03] 이 아이템이 지금 유일하게 선택된 아이템인지(다중선택 중 하나가
+    아닌지). 씬이 없으면(테스트 등 고립 아이템) True로 취급 — 그런 맥락에선 항상 단일선택
+    스타일을 기본으로 본다."""
+    sc = it.scene()
+    if sc is None:
+        return True
+    return len(sc.selectedItems()) <= 1
+
+
+def _paint_selection_centerline(painter: QPainter, it, scale: float = 1.0, path: QPainterPath | None = None):
+    """[Lucid 대조 2026-08-03] 단일선택·화살표 전용 강조 — 바깥에 밴드를 두르는 대신 실제
+    외곽선 중심에 얇은 선 하나. 다중선택(그룹 중 하나)일 때의 굵은 바깥 밴드보다 가늘어서
+    "이것만 선택됨"이 한눈에 구분되고(사용자 실사용 지적: Lucid 대조), 화살표는 선택 개수와
+    무관하게 항상 이 스타일이다 — 화살표 같은 '열린'(면적 0) 경로는 밴드가 안쪽을 깎아도
+    중심선과 차이가 거의 없어 밴드를 쓸 이유가 없다.
+    [실사용 지적 2026-08-03] 화살표는 `_item_center_path`가 아니라 `_arrow_body_path`를 쓴다 —
+    전자는 화살촉을 '닫힌 다각형'으로 별도 추가해(밴드 계산엔 필요) 얇은 선으로 스트로크하면
+    화살촉 윤곽을 따라 또 하나의 선이 겹쳐 보였다(꼬리~머리 한 가닥이어야 하는데 두 겹으로
+    보임). `_arrow_body_path`는 몸통이 이미 tip(머리 끝점)까지 이어져 있어 화살촉 윤곽 없이
+    꼬리부터 머리까지 선 하나로 끝난다(Lucid와 동일)."""
+    if path is None:
+        if isinstance(it, (_ArrowItem, _PolyArrowItem)):
+            path = _arrow_body_path(it)
+        else:
+            path = _item_center_path(it)
+    pen = QPen(QColor(_BLUE), 1.6 / (scale or 1.0))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawPath(path)
+
+
 def _paint_selection_highlight(painter: QPainter, it, scale: float = 1.0, band: QPainterPath | None = None):
-    """[선택 표시 통일 2026-08-01] 개별 아이템 선택 강조의 공통 렌더 — 실제 외곽선에 바깥쪽만
-    딱 맞는 실선(점선 아님). `_HandleResizeMixin._paint_selection_outline`이 기본으로 위임하고,
-    믹스인을 안 쓰는 소수 클래스(`_TitleBlockItem`)는 직접 호출한다.
-    [화살표 성능 2026-08-01] `band`를 이미 계산해 뒀으면(캐시) 그대로 받아 재사용 — 호출부가
-    `_highlight_band`(스트로크+불리언 subtract, 무거움)를 매 프레임 다시 돌리지 않게 한다."""
+    """[선택 표시 통일 2026-08-01 → 2026-08-03 Lucid 대조 갈래] 개별 아이템 선택 강조의 공통
+    렌더. 화살표거나 단일선택이면 얇은 중심선(`_paint_selection_centerline`), 다중선택 중인
+    도형(닫힌 도형만 해당)이면 기존 바깥 밴드 — 실제 외곽선에 바깥쪽만 딱 맞는 실선(점선
+    아님). `_HandleResizeMixin._paint_selection_outline`이 기본으로 위임하고, 믹스인을 안 쓰는
+    소수 클래스(`_TitleBlockItem`)는 직접 호출한다.
+    [화살표 성능 2026-08-01] `band`를 이미 계산해 뒀으면(캐시) 그대로 받아 재사용 — 밴드를
+    실제로 그릴 때만 의미가 있다(화살표는 이제 밴드 자체를 안 쓰므로 이 인자가 무시된다)."""
+    is_connector = isinstance(it, (_ArrowItem, _PolyArrowItem))
+    if is_connector or _selection_is_solo(it):
+        _paint_selection_centerline(painter, it, scale)
+        return
     if band is None:
         band = _highlight_band(it)
     pen = QPen(QColor(_BLUE), 1.0 / (scale or 1.0))
@@ -2371,11 +2483,13 @@ class _PathItem(_HandleResizeMixin, QGraphicsPathItem):
         return super().boundingRect().adjusted(-pad, -pad, pad, pad)
 
     def _paint_selection_outline(self, painter, scale):
-        # [선택 표시 통일 2026-08-01] 실외곽선 바깥쪽만 강조(_highlight_band)로 바뀌었지만,
-        # 자유곡선(펜 그리기)은 점이 많아 스트로크+불리언 연산이 무겁고 획·펜이 안 바뀌면
-        # 결과가 동일하므로 캐시는 그대로 유지 — 이동(평행이동) 중 매 프레임 재계산을 피한다
-        # (버벅임 제거, 기존 최적화 보존). `_paint_selection_highlight`는 매번 새로 계산하므로
-        # 여기선 밴드만 캐시하고 그리기는 직접 한다.
+        # [선택 표시 통일 2026-08-01 → 2026-08-03 Lucid 대조] 단일선택이면 얇은 중심선(가벼운
+        # 연산 — 밴드 캐시 자체가 필요 없다). 다중선택 중 하나면 기존 바깥 밴드 — 자유곡선은
+        # 점이 많아 스트로크+불리언 연산이 무겁고 획·펜이 안 바뀌면 결과가 동일하므로 그 경우만
+        # 캐시를 유지한다(이동 중 매 프레임 재계산 회피, 기존 최적화 보존).
+        if _selection_is_solo(self):
+            _paint_selection_centerline(painter, self, scale)
+            return
         if self._sel_outline is None:
             self._sel_outline = _highlight_band(self)
         pen = QPen(QColor(_BLUE), 1.0 / (scale or 1.0))
@@ -2456,7 +2570,6 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._head_at_end = head_at_end
         self._bind1 = None     # 지속 연결: 끝점0이 묶인 도형(_RectItem/_EllipseItem) or None
         self._bind2 = None     # 끝점1이 묶인 도형 or None
-        self._sel_band_cache = None  # [화살표 성능 2026-08-01] 선택 강조 밴드 캐시(아래 prepareGeometryChange가 무효화)
         self._bind1_pt = None  # 그 도형의 '로컬 좌표' 부착점(고정) — 도형 이동/스케일 시 mapToScene로 추종
         self._bind2_pt = None
         # [우리 확장] 라벨 위치 = 곡선 길이 정규화 t(0~1) + 수직 오프셋 off (sarrow와 동일 FigJam/Lucid).
@@ -2942,24 +3055,11 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             self._paint_selection_outline(painter, self._scale_or_1())
         self._paint_handle(painter)
 
-    # [선택 표시 통일 2026-08-01] 커스텀 _paint_selection_outline 제거 — 믹스인 기본 구현이
-    # _item_center_path(_ArrowItem 분기)로 동일한 결과를 낸다(중복 로직 흡수).
-
-    def prepareGeometryChange(self):
-        # [화살표 성능 2026-08-01] 선택 강조 밴드(_highlight_band, 스트로크+불리언 subtract)가
-        # 믹스인 기본 _paint_selection_outline에서 매 paint()마다 무캐시로 재계산되고 있었다 —
-        # 화살표는 이 클래스가 QGraphicsItem 직속(내장 setPen/setRect 같은 C++ 내부 경로가
-        # 없음)이라, 기하가 실제로 바뀌는 모든 지점이 이미 이 메서드를 직접 호출한다(끝점 드래그·
-        # 라우팅 재계산·화살촉 반전 등). 그 사실을 이용해 여기서 캐시만 무효화하면 idle 상태에서
-        # (다른 도형 hover·포트 점 등으로 인한) 잦은 viewport 갱신에도 재계산 없이 캐시를 그대로
-        # 쓴다 — 실제 기하 변경 시에만 다시 계산.
-        self._sel_band_cache = None
-        super().prepareGeometryChange()
-
-    def _paint_selection_outline(self, painter, scale):
-        if self._sel_band_cache is None:
-            self._sel_band_cache = _highlight_band(self)
-        _paint_selection_highlight(painter, self, scale, band=self._sel_band_cache)
+    # [선택 표시 통일 2026-08-01 → 2026-08-03 Lucid 대조] 커스텀 _paint_selection_outline·
+    # 밴드 캐시(_sel_band_cache) 제거 — 화살표는 이제 선택 개수와 무관하게 항상 얇은 중심선
+    # (`_paint_selection_centerline`, `_item_center_path`만 있으면 되는 가벼운 연산)이라
+    # 밴드(스트로크+불리언 subtract, 무거움)를 아예 계산하지 않는다. 믹스인 기본
+    # `_paint_selection_outline`이 `_paint_selection_highlight`로 위임하면 그걸로 충분.
 
     def _paint_handle(self, painter):
         # 크기조절·회전 핸들(믹스인) + 곡선용 bend 핸들 2개(곡선 t=1/3·2/3 지점의 초록 원).
@@ -3117,7 +3217,6 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # 드래그하면 _reproject_label이 t·off를 갱신하고, paint가 그 자리에 선 갭을 낸다.
         self._label_t = 0.5
         self._label_off = 0.0
-        self._sel_band_cache = None  # [화살표 성능 2026-08-01] 선택 강조 밴드 캐시(prepareGeometryChange가 무효화)
         self._init_resize()
         self._init_label()
         self.setFlags(
@@ -3382,6 +3481,45 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             mid = QPointF((a.x() + b.x()) / 2.0, (a.y() + b.y()) / 2.0)
             out.append((i, mid, abs(b.y() - a.y()) <= abs(b.x() - a.x())))
         return out
+
+    def _point_on_segment_pill(self, seg_idx: int, local_pt: QPointF) -> bool:
+        """local_pt(그 변 위 최근접 투영점, 로컬)가 고정 알약(_segment_handles의 중점, 반경
+        _SEG_HANDLE_PX) 안이면 True — [2026-08-03 Lucid 대조] press 시 변 전체 이동
+        (`_begin_segment_drag`)과 부분 분할 이동(`_begin_subdivide_drag`)을 가르는 기준."""
+        handles = dict((i, (mid, horiz)) for i, mid, horiz in self._segment_handles())
+        h = handles.get(seg_idx)
+        if h is None:
+            return False
+        mid, horizontal = h
+        half = self._SEG_HANDLE_PX / max(self._scale_or_1(), 1e-6)
+        d = abs(local_pt.x() - mid.x()) if horizontal else abs(local_pt.y() - mid.y())
+        return d <= half
+
+    def _begin_subdivide_drag(self, seg_idx: int, near_local: QPointF):
+        """[2026-08-03 Lucid 대조, rf 계정 Lucid 문서에서 직접 재현 확인] 알약이 아닌 위치를
+        끌면 그 변의 고정 알약 자리(중점)에 새 정점을 끼워 둘로 나누고, 클릭 지점에 더 가까운
+        쪽 절반만 `_begin_segment_drag`로 이동시킨다 — 원래 알약 자리는 그대로 고정 정점(앵커)
+        으로 남아야 "중심(원래 알약)과 가까운 끝점 사이만" 꺾이고 반대쪽은 그대로 유지된다.
+        ⚠ mid를 한 번만 끼우고 그 자리를 바로 `_begin_segment_drag`에 넘기면, 그 함수가
+        '진짜 끝점(0·마지막 인덱스)'만 보호하므로 중간에 낀 mid는 그냥 이동 대상 세그먼트의
+        한쪽 끝으로 취급돼 앵커 없이 같이 끌려간다(1차 구현에서 실측 발견) — mid를 앵커용
+        사본과 이동용 사본으로 '두 벌' 끼워, 이동은 사본 쪽만 겪게 한다."""
+        handles = dict((i, (mid, horiz)) for i, mid, horiz in self._segment_handles())
+        mid, horizontal = handles[seg_idx]
+        self.prepareGeometryChange()
+        a, b = self._pts[seg_idx], self._pts[seg_idx + 1]
+        axis = (lambda q: q.x()) if horizontal else (lambda q: q.y())
+        near_a = abs(axis(near_local) - axis(a)) <= abs(axis(near_local) - axis(b))
+        if near_a:
+            # a쪽만 이동: [a, mid_이동용] 세그먼트를 끌고, [mid_앵커, b]는 그대로 둔다.
+            self._pts.insert(seg_idx + 1, QPointF(mid))   # 이동용 사본
+            self._pts.insert(seg_idx + 2, QPointF(mid))   # 고정 앵커
+            self._begin_segment_drag(seg_idx)
+        else:
+            # b쪽만 이동: [a, mid_앵커]는 그대로, [mid_이동용, b] 세그먼트를 끈다.
+            self._pts.insert(seg_idx + 1, QPointF(mid))   # 고정 앵커
+            self._pts.insert(seg_idx + 2, QPointF(mid))   # 이동용 사본
+            self._begin_segment_drag(seg_idx + 2)
 
     def _begin_segment_drag(self, seg_idx: int):
         """[M4-4] 세그먼트 드래그 시작 — 자동라우팅 해제(수동 직교)+경유힌트 폐기. 끝점(0·last)에
@@ -3792,11 +3930,40 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._curve_r = max(0.0, min(float(r), self._CURVE_R_MAX))
         self.update()
 
-    def _rounded_polyline_path(self) -> QPainterPath:
+    def _trimmed_body_pts(self):
+        """[실사용 지적 2026-08-03] 화살촉 시작 지점 이후로는 몸통을 그리지 않도록 tip 쪽
+        마지막 구간을 `_head_size()*0.85`만큼 뒤로 당긴 점열 — `_ArrowItem.paint()`가 직선·곡선
+        양쪽에서 이미 하던 트림을 여기(_PolyArrowItem)에도 맞춘다. 화살촉이 tip에서 폭 0으로
+        좁아지는데 몸통은 tip까지 고정 폭이라, 안 자르면 화살촉이 시작되는 어깨 양옆으로 몸통
+        폭이 계단처럼 삐져나와 보였다(Lucid 대조 스크린샷으로 확인). 히트테스트(`_polyline_path`
+        가 쓰는 `self._pts`)·직렬화는 원본 그대로 — 이건 paint 전용 시각 트림."""
+        pts = list(self._pts)
+        if len(pts) < 2:
+            return pts
+        size = self._head_size() * 0.85
+        if self._head_at_end:
+            a, b = pts[-2], pts[-1]
+        else:
+            a, b = pts[1], pts[0]
+        seg_len = math.hypot(b.x() - a.x(), b.y() - a.y())
+        if seg_len <= 1e-6:
+            return pts
+        t = max(0.0, 1.0 - size / seg_len)
+        trimmed = QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
+        if self._head_at_end:
+            pts[-1] = trimmed
+        else:
+            pts[0] = trimmed
+        return pts
+
+    def _rounded_polyline_path(self, pts=None) -> QPainterPath:
         """[M4-4 #4] 반경>0인 직교 경로용 — 각 중간 정점의 모서리를 원호(quadTo)로 둥글린다.
         반경은 인접 두 변 길이의 절반으로 클램프(짧은 변에서 겹치지 않게). paint 전용(히트테스트·
-        직렬화·라벨갭 사각형은 직선 폴리라인 그대로 — 시각만 둥글게)."""
-        pts = self._pts
+        직렬화·라벨갭 사각형은 직선 폴리라인 그대로 — 시각만 둥글게).
+        pts=None이면 `self._pts`(원본), paint()가 화살촉 트림을 적용할 땐 `_trimmed_body_pts()`를
+        넘긴다 — 마지막 구간 길이만 짧아지므로 중간 모서리 라운딩 계산(la·lb)은 그대로다."""
+        if pts is None:
+            pts = self._pts
         if len(pts) < 3:
             return QPainterPath(pts[0]) if len(pts) == 1 else self._segment_path(pts)
         radius = self._corner_radius()   # [M4-4 ⓑ] 0이면 아래 클램프에서 직각으로 떨어진다
@@ -3830,10 +3997,12 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         return QRectF(pos.x() + br.x() - pad, pos.y() + br.y() - pad,
                      br.width() + 2 * pad, br.height() + 2 * pad)
 
-    def _visible_polyline_path(self) -> QPainterPath:
+    def _visible_polyline_path(self, pts=None) -> QPainterPath:
         """[우리 확장 · FigJam 갭] 라벨 사각형과 겹치는 폴리라인 구간만 빼고 그린 경로.
-        히트테스트(_base_shape)·선택외곽선·직렬화는 전체 폴리라인을 그대로 쓴다 — 시각 갭만."""
-        pts = self._pts
+        히트테스트(_base_shape)·선택외곽선·직렬화는 전체 폴리라인을 그대로 쓴다 — 시각 갭만.
+        pts=None이면 `self._pts`, paint()는 화살촉 트림된 `_trimmed_body_pts()`를 넘긴다."""
+        if pts is None:
+            pts = self._pts
         rect = self._label_gap_rect()
         if rect is None:
             return self._segment_path(pts)
@@ -3972,20 +4141,9 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         shape.addPolygon(QPolygonF(self._head_points()))
         return shape
 
-    # [선택 표시 통일 2026-08-01] 커스텀 _paint_selection_outline 제거 — 믹스인 기본 구현이
-    # _item_center_path(_PolyArrowItem 분기, 반경 반영)로 동일한 결과를 낸다(중복 로직 흡수).
-
-    def prepareGeometryChange(self):
-        # [화살표 성능 2026-08-01] _ArrowItem과 동일한 이유·동일한 안전성(이 클래스도
-        # QGraphicsItem 직속이라 내장 setPen/setRect의 C++ 내부 경로가 없음 — _pts/_curve_r 등이
-        # 바뀌는 모든 지점(reroute·세그먼트 드래그·라우팅 전환)이 이미 이 메서드를 직접 호출한다).
-        self._sel_band_cache = None
-        super().prepareGeometryChange()
-
-    def _paint_selection_outline(self, painter, scale):
-        if self._sel_band_cache is None:
-            self._sel_band_cache = _highlight_band(self)
-        _paint_selection_highlight(painter, self, scale, band=self._sel_band_cache)
+    # [선택 표시 통일 2026-08-01 → 2026-08-03 Lucid 대조] 커스텀 _paint_selection_outline·
+    # 밴드 캐시(_sel_band_cache) 제거 — _ArrowItem과 동일한 이유(화살표는 이제 항상 얇은
+    # 중심선이라 밴드 자체를 계산할 필요가 없다).
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -4005,13 +4163,22 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                 hole = QPainterPath()
                 hole.addRect(gap)
                 painter.setClipPath(clip.subtracted(hole))
-                painter.drawPath(self._rounded_polyline_path())
+                painter.drawPath(self._rounded_polyline_path(self._trimmed_body_pts()))
                 painter.restore()
             else:
-                painter.drawPath(self._rounded_polyline_path())
+                painter.drawPath(self._rounded_polyline_path(self._trimmed_body_pts()))
         else:
-            painter.drawPath(self._visible_polyline_path())   # [FigJam 갭] 라벨 자리에서 선 끊음
-        painter.setPen(QPen(self._color, 1))
+            # [FigJam 갭] 라벨 자리에서 선 끊음 + [실사용 지적] 화살촉 시작 지점까지만 몸통
+            painter.drawPath(self._visible_polyline_path(self._trimmed_body_pts()))
+        # [실사용 버그 2026-08-03] 화살촉 펜에 joinStyle을 반드시 명시한다 — QPen의 기본
+        # joinStyle은 **BevelJoin**이라, 지정하지 않으면 화살촉 삼각형의 예각(30°) 어깨 두
+        # 곳이 45°로 잘려 나간다(모따기). 펜 폭이 1로 고정이라 깎임 크기도 ~0.5 씬단위
+        # 고정 → 100% 줌에선 안티에일리어싱에 묻혀 안 보이고 고배율(사용자 실측 2863%)에서만
+        # 드러나, "직각 화살표만 머리 양쪽이 깎인다"는 보고를 3라운드 동안 재현 못 했다.
+        # `_ArrowItem`(곡선·직선)은 처음부터 RoundJoin을 명시해 두어 멀쩡했던 것 — 그쪽과
+        # 완전히 같은 펜으로 맞춘다.
+        painter.setPen(QPen(self._color, 1, Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         painter.setBrush(QBrush(self._color))
         painter.drawPolygon(QPolygonF(self._head_points()))
         if self.isSelected():

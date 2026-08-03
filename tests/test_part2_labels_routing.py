@@ -99,14 +99,16 @@ def test_swap_to_asymmetric_keeps_arrow_on_outline():
 
 
 def test_selected_shape_interior_is_hit():
-    # [M4-4 ⓓ] 속 빈 도형은 선택 전엔 테두리만 히트(내부 통과), 선택 후엔 내부 빈공간도
-    # 히트 → 가는 테두리를 조준하지 않고 안쪽 아무 데나 끌어서 이동(Lucid/FigJam).
+    # [M4-4 ⓓ → 2026-08-03 실사용 지적으로 미선택까지 확장] select 도구에선 속 빈 도형도
+    # 선택 여부와 무관하게 내부 빈공간이 히트 → 가는 테두리를 조준하지 않고 안쪽 아무 데나
+    # 클릭·끌어서 선택·이동(Lucid/FigJam). 그리기 도구가 무장된 동안만 내부가 통과된다
+    # (test_interior_hit_off_while_drawing_tool_armed 참조).
     w = CanvasWindow(); w.set_tool("select")
     r = _mk_pen_rect(w, x=0, y=0, ww=200, hh=120)
     inner = r.rect().center()
-    assert not r.shape().contains(inner)      # 선택 전 = 통과
+    assert r.shape().contains(inner)          # 선택 전에도 이동/선택 히트
     r.setSelected(True)
-    assert r.shape().contains(inner)          # 선택 후 = 이동 히트
+    assert r.shape().contains(inner)          # 선택 후에도 그대로
 
 
 
@@ -677,9 +679,51 @@ def test_sarrow_segment_drag():
 
 
 
+def test_segment_off_pill_drag_subdivides_near_half_only():
+    # [2026-08-03 Lucid 대조, rf 계정 Lucid 문서에서 실제 재현 확인] 고정 알약(변 중점)이 아닌
+    # 위치를 끌면 그 알약 자리에 새 정점이 생겨 변이 둘로 나뉘고, 클릭 지점에 더 가까운 쪽
+    # 절반만 꺾인다 — 알약 반대쪽(먼 쪽)은 그대로 유지된다.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(0, 0), QPointF(100, 100))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa); sa.setSelected(True)
+    sa._auto_route = False
+    sa._pts = [QPointF(0, 0), QPointF(100, 0), QPointF(100, 100)]
+    sa.prepareGeometryChange()
+    view = w._view
+
+    # segment 0: (0,0)->(100,0), pill at (50,0). Hover near the (0,0) end, off the pill.
+    vp = view.mapFromScene(QPointF(20, 0))
+    hit = view._segment_add_at(vp)
+    assert hit is not None and hit[0] is sa and hit[1] == 0 and hit[3] is False, "off-pill"
+
+    view._seg_add = hit
+    view.mousePressEvent(QMouseEvent(
+        QEvent.Type.MouseButtonPress, QPointF(vp), QPointF(vp),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    tgt = view.mapFromScene(QPointF(20, -30))
+    view.mouseMoveEvent(QMouseEvent(
+        QEvent.Type.MouseMove, QPointF(tgt), QPointF(tgt),
+        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+    view.mouseReleaseEvent(QMouseEvent(
+        QEvent.Type.MouseButtonRelease, QPointF(tgt), QPointF(tgt),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
+
+    # 원래 알약 자리(50,0)는 그대로 고정 정점으로 남고, 그 뒤(코너~끝점)는 완전히 그대로.
+    assert any(abs(p.x() - 50) < 1 and abs(p.y()) < 1 for p in sa._pts), "원래 알약 자리 보존"
+    assert sa._pts[-2] == QPointF(100, 0) and sa._pts[-1] == QPointF(100, 100), "먼 쪽 그대로"
+    # 가까운 쪽(0,0 근처)만 y=-30으로 꺾임 — 새 지그재그가 생겼다.
+    assert any(abs(p.y() + 30) < 1 for p in sa._pts), "가까운 쪽만 이동"
+    assert sa._pts[0] == QPointF(0, 0), "먼 원래 끝점 좌표 유지(고정)"
+
+
 def test_interior_press_takes_move_branch_not_rubberband():
-    # [M4-4 ⓓ] 실제 press 경로: 선택된 속 빈 네모의 '내부'를 누르면 뷰가 러버밴드가 아니라
-    # 아이템 이동 분기(_snapshot_movable → super)로 간다. 선택 전 같은 자리는 러버밴드 그대로.
+    # [M4-4 ⓓ → 2026-08-03 실사용 지적으로 미선택까지 확장] 실제 press 경로: 속 빈 네모의
+    # '내부'를 누르면 선택 여부와 무관하게 뷰가 러버밴드가 아니라 아이템 선택/이동 분기
+    # (_snapshot_movable → super)로 간다 — Lucid/FigJam처럼 내부 클릭만으로 선택까지 된다.
     # ⚠ Qt의 아이템 grab(실제 이동)까지는 이 오프스크린 하네스에서 재현되지 않아(합성 이벤트가
     #    씬으로 배달되지 않음) 뷰의 분기 선택까지만 검증한다 — 이동 자체는 실조건 몫.
     from PyQt6.QtGui import QMouseEvent
@@ -694,15 +738,16 @@ def test_interior_press_takes_move_branch_not_rubberband():
             QEvent.Type.MouseButtonPress, QPointF(inside), QPointF(inside),
             Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
 
-    # ⓐ 선택 전 — 내부는 여전히 빈 영역 → 러버밴드 선택 시작
-    assert view._is_empty_area(inside)
+    # ⓐ 선택 전 — 내부가 이미 '아이템 위' → 클릭만으로 바로 선택+이동 분기(러버밴드 아님)
+    assert not view._is_empty_area(inside)
     press()
-    assert view._rb_active
+    assert not view._rb_active and view._move_active
+    assert any(it is r for it, _p in view._move_snap)   # 이동 undo 스냅샷에 포함
     view.mouseReleaseEvent(QMouseEvent(
         QEvent.Type.MouseButtonRelease, QPointF(inside), QPointF(inside),
         Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier))
 
-    # ⓑ 선택 후 — 같은 자리가 '아이템 위' → 이동 분기(러버밴드 아님)
+    # ⓑ 선택 후 — 같은 자리가 여전히 '아이템 위' → 이동 분기 그대로
     r.setSelected(True)
     view._move_active = False
     assert not view._is_empty_area(inside)

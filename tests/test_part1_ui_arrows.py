@@ -1246,3 +1246,57 @@ def test_arrow_kind_change_rearms_pinned_tool():
     assert w.current_tool == "select"                     # 도구는 그대로
 
 
+
+
+
+
+def test_arrowhead_shoulders_not_beveled():
+    # [실사용 버그 2026-08-03] 화살촉 삼각형의 예각 어깨가 45°로 깎이던 회귀 방지.
+    # 원인은 QPen의 **기본 joinStyle이 BevelJoin**이라는 것 — `_PolyArrowItem.paint()`가
+    # 화살촉 펜에 joinStyle을 명시하지 않아 어깨가 모따기됐다(`_ArrowItem`은 처음부터
+    # RoundJoin을 명시해 두어 멀쩡했고, 그래서 "직각 화살표만 깎인다"로 보고됐다).
+    # 화살촉 펜 폭이 1로 고정이라 깎임 크기도 ~0.5 씬단위 고정 → 100% 줌에선 안티에일리어싱에
+    # 묻혀 안 보이고 고배율(사용자 실측 2863%)에서만 드러난다. 눈으로 3라운드 동안 못 잡은
+    # 종류의 버그라 '실제 렌더 픽셀'로 못 박는다: 어깨 꼭짓점에서 바깥으로 0.4 떨어진 점이
+    # 칠해져 있어야 한다(RoundJoin이면 반지름 0.5 원으로 덮이고, BevelJoin이면 잘려 배경색).
+    import math
+    from PyQt6.QtWidgets import QGraphicsScene
+    from PyQt6.QtGui import QImage, QPainter
+
+    SCALE, SX, SY, SPAN = 20, -6.0, -9.0, 12.0
+    px = int(SPAN * SCALE)
+
+    def shoulders_filled(item):
+        """실제 paint() 경로(scene.render)로 그린 뒤 양쪽 어깨 바깥 점의 채움 여부."""
+        sc = QGraphicsScene()
+        sc.addItem(item)
+        img = QImage(px, px, QImage.Format.Format_ARGB32)
+        img.fill(QColor("white"))
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        sc.render(p, QRectF(0, 0, px, px), QRectF(SX, SY, SPAN, SPAN))
+        p.end()
+        tip, bl, br = item._head_points()
+        cx = (tip.x() + bl.x() + br.x()) / 3.0
+        cy = (tip.y() + bl.y() + br.y()) / 3.0
+        out = []
+        for v in (bl, br):                       # 양쪽 어깨 모두
+            dx, dy = v.x() - cx, v.y() - cy
+            L = math.hypot(dx, dy) or 1.0
+            probe_x = v.x() + dx / L * 0.4
+            probe_y = v.y() + dy / L * 0.4
+            ix = int(round((probe_x - SX) * SCALE))
+            iy = int(round((probe_y - SY) * SCALE))
+            c = QColor(img.pixel(ix, iy))
+            out.append(c.red() > 200 and c.green() < 120 and c.blue() < 120)
+        return out
+
+    ortho = _PolyArrowItem(QColor("#ff0000"), 1.0, True)
+    ortho._pts = [QPointF(0, -40), QPointF(0, 0)]
+    ortho._auto_route = False
+    ortho.prepareGeometryChange()
+    assert all(shoulders_filled(ortho)), "직각 화살촉 어깨가 깎였다(joinStyle 미지정 회귀)"
+
+    curved = _ArrowItem(QColor("#ff0000"), 1.0, True)
+    curved.set_points(QPointF(0, -40), QPointF(0, 0))
+    assert all(shoulders_filled(curved)), "곡선 화살촉 어깨가 깎였다"

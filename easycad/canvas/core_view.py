@@ -130,6 +130,12 @@ class _AnnotatorView(QGraphicsView):
         # 사용 중 다른 도형 테두리 근처를 클릭했을 때 그리기를 방해하지 않기 위한 기존의 의도적
         # 구분)만 남기고 상태·생성 경로는 하나로 합친다(_connect_port_at이 그 진입점).
         self._hp_hover = None       # (item, port_pt, normal) — 유휴 hover(스냅 마커용) or None
+        self._port_dot_shape = None  # [2026-08-03 잔상/불규칙 표시 수정] _draw_port_dots가 그릴
+        # 대상(미선택 도형 하나) — mouseMoveEvent가 이 값이 바뀔 때만 update()를 부르던 게 아니라
+        # _hp_hover(포트 정밀 스냅, 훨씬 좁은 반경) 변화에만 반응해 왔다. 두 판정 반경이 달라
+        # "포트 예고점이 뜨는 넓은 영역"에 들어가도 정밀 스냅 반경에 닿기 전엔 다시 그려지지
+        # 않았고(뜸이 늦음), 반대로 넓은 영역을 벗어나도 정밀 반경 상태가 그대로면 다시 그려지지
+        # 않아(잔상) 이전 프레임 점이 남았다 — 실사용 보고(불규칙·잔상)의 원인.
         self._hp_dragging = False
         self._hp_src = None         # 원본 도형(미선택)
         self._hp_port = None        # 시작 포트(씬)
@@ -391,9 +397,13 @@ class _AnnotatorView(QGraphicsView):
         return self._selected_endpoint_item(view_pos) is not None
 
     def _segment_add_at(self, view_pos):
-        """[M4-4] 선택된 직선화살표(ortho 라우팅)의 '세그먼트 위'(정점 핸들 아님)에 커서가 있으면
-        (item, seg_idx, 씬 최근접점), 아니면 None. 정점 위는 이동(끝점 드래그)이 우선한다.
-        press·drag 시 그 변을 수직 이동한다(straight 라우팅은 세그먼트 드래그 없음)."""
+        """[M4-4 → 2026-08-03 Lucid 대조] 선택된 직선화살표(ortho 라우팅)의 '세그먼트 위'(정점
+        핸들 아님)에 커서가 있으면 (item, seg_idx, 씬 최근접점, on_pill), 아니면 None. 정점 위는
+        이동(끝점 드래그)이 우선한다. `on_pill`=True면 그 변의 고정 알약(_segment_handles) 위 —
+        press 시 변 전체를 수직 이동(`_begin_segment_drag`, 기존 동작). False면 알약이 아닌
+        나머지 구간 — press 시 알약 자리에 새 정점을 끼워 나눈 뒤 가까운 쪽 절반만 이동
+        (`_begin_subdivide_drag`, Lucid 실측: 알약 없는 위치를 끌면 그 자리에 새 알약이 생기고
+        중심 알약~가까운 끝점 사이만 꺾인다 — 사용자 rf 계정 Lucid 문서에서 직접 재현·확인)."""
         if self._selected_endpoint_item(view_pos) is not None:
             return None   # 정점 핸들 위 = 이동 우선
         top = self.items(view_pos)
@@ -411,8 +421,12 @@ class _AnnotatorView(QGraphicsView):
                 continue
             px = seg[2] * total * it._scale_or_1()   # 화면 px 거리
             if px <= 10.0 and (best is None or px < best[0]):
-                best = (px, it, seg[0], it.mapToScene(seg[1]))
-        return None if best is None else (best[1], best[2], best[3])
+                best = (px, it, seg[0], seg[1])
+        if best is None:
+            return None
+        _px, it, seg_idx, proj_local = best
+        on_pill = it._point_on_segment_pill(seg_idx, proj_local)
+        return (it, seg_idx, it.mapToScene(proj_local), on_pill)
 
     def _table_col_boundary_at(self, view_pos):
         """[열폭 드래그 2026-07-31] 커서가 선택된 표의 내부 열 경계선 근처면
@@ -900,30 +914,21 @@ class _AnnotatorView(QGraphicsView):
         return [it for it in self.scene().items(rect)
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
 
-    def _draw_port_dots(self, painter, s):
-        """[우리 확장] 화살표 도구로 도형 근처에 가면 그 도형의 포트(8점)를 속 빈 점으로 예고.
-        실제 스냅된 포트는 _draw_snap_marker(채운 파란 점)가 위에 덮어 강조한다 — [2026-07-30
-        3차 재수정] 강조가 '커지는' 게 아니라 처음부터 같은 크기(반지름 5.0=_draw_snap_marker와
-        동일)이고 hover는 색/테두리 반전으로만 표현하도록 이 예고점 반지름도 3.5→5.0으로 통일.
-        [8포트 select-hover 2026-07-29] select 도구에서도 동일하게 예고하되, 선택된 도형은
-        제외(리사이즈·회전 핸들과 자리가 겹침 — 그건 qc-dot(4방향점)이 담당).
-        [성능 조사 2026-07-30] 가장 가까운 도형 '하나'만 그린다(이전엔 마진 안의 모든 도형을
-        전부 그려, Ctrl+D로 겹쳐 복제한 도형들 위에서 호버하면 포트 점이 잔뜩 뒤덮이는 클러터가
-        났다 — _hover_port_at은 원래도 최근접 하나만 골랐으니 미리보기 쪽을 그와 맞췄다).
-        [드래그 중 억제 2026-08-01] 도형 이동/변형 드래그 중엔 커서가 자연히 다른 도형 위를
-        지나가는데, 그때마다 그 도형에 예고점이 뜨는 게 방해된다는 사용자 피드백 — 커넥터를
-        만들 의도가 없는 상태이므로 다른 드래그 계열 상태와 동일하게 억제한다."""
+    def _port_dot_target(self, scene_c):
+        """[2026-08-03 분리 — _draw_port_dots·mouseMoveEvent 공용] 지금 예고점을 그릴 도형
+        하나(가장 가까운 미선택 도형) or None. 페인트와 '다시 그려야 하는가' 판정이 서로 다른
+        기준을 쓰면(과거 버그: 페인트는 이 넓은 margin, 갱신 트리거는 훨씬 좁은 _hp_hover 스냅
+        반경) 판정 따로 반영 따로 놀아 예고점이 늦게 뜨거나(반경 진입해도 안 그려짐) 잔상으로
+        남는다(반경 이탈해도 안 지워짐) — 실사용 보고. 하나의 함수로 통일해 이 어긋남을 없앤다."""
         tool = self._owner.current_tool
         if not self._owner.is_edit_mode() or tool not in ("arrow", "sarrow", "select"):
-            return
+            return None
         if (self._move_active or self._group_dragging or self._group_body_drag
                 or self._stretch_active or self._seg_drag is not None
                 or self._table_col_drag is not None or self._rb_active):
-            return
+            return None
         select_mode = tool == "select"
-        scene_c = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
-        margin = 30.0 / s
-        r = 5.0 / s
+        margin = 30.0 / self._view_scale()
         best_sh, best_d = None, None
         for sh in self._conn_shapes_near(scene_c, margin):
             if select_mode and sh.isSelected():
@@ -934,12 +939,67 @@ class _AnnotatorView(QGraphicsView):
             d = QLineF(sh.sceneBoundingRect().center(), scene_c).length()
             if best_d is None or d < best_d:
                 best_d, best_sh = d, sh
+        return best_sh
+
+    def _draw_port_dots(self, painter, s):
+        """[우리 확장] 화살표 도구로 도형 근처에 가면 그 도형의 포트(8점)를 속 빈 점으로 예고.
+        [8포트 select-hover 2026-07-29] select 도구에서도 동일하게 예고하되, 선택된 도형은
+        제외(리사이즈·회전 핸들과 자리가 겹침 — 그건 qc-dot(4방향점)이 담당).
+        [성능 조사 2026-07-30] 가장 가까운 도형 '하나'만 그린다(이전엔 마진 안의 모든 도형을
+        전부 그려, Ctrl+D로 겹쳐 복제한 도형들 위에서 호버하면 포트 점이 잔뜩 뒤덮이는 클러터가
+        났다 — _hover_port_at은 원래도 최근접 하나만 골랐으니 미리보기 쪽을 그와 맞췄다).
+        [드래그 중 억제 2026-08-01] 도형 이동/변형 드래그 중엔 커서가 자연히 다른 도형 위를
+        지나가는데, 그때마다 그 도형에 예고점이 뜨는 게 방해된다는 사용자 피드백 — 커넥터를
+        만들 의도가 없는 상태이므로 다른 드래그 계열 상태와 동일하게 억제한다.
+        [2026-08-03 중복 제거] 예전엔 이 예고점과 별개로 drawForeground가 `_hp_hover` 위치에
+        `_draw_snap_marker`(테두리 위 채운 점)를 하나 더 그렸다 — 예고점이 테두리 밖으로
+        떨어져 뜨는 지금은 그 둘이 서로 다른 자리에 보여 "점이 중복으로 생긴다"는 실사용
+        지적을 받았다. 그 별도 마커를 없애고, 대신 지금 targeted(= `_hp_hover`가 가리키는)
+        점 자신을 반전 스타일로 강조한다 — 선택된 qc-dot이 `_hover_handle`로 자신을 강조하는
+        것과 같은 패턴."""
+        scene_c = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
+        best_sh = self._port_dot_target(scene_c)
         if best_sh is None:
             return
+        r = 5.0 / s
+        hp = self._hp_hover
+        # [2026-08-03] 선택 시 qc-dot(_qc_dot_rects)과 같은 gap 규칙 — 선택 여부로 점 위치가
+        # 바뀌는 비일관성을 만들지 않는다(둘 다 `_HANDLE_GAP_FACTOR` 공유).
+        gap = best_sh._handle_px() * best_sh._HANDLE_GAP_FACTOR
+        for sp, n in _shape_ports_for_preview(best_sh):
+            p = QPointF(sp.x() + n.x() * gap, sp.y() + n.y() * gap)
+            targeted = (hp is not None and hp[0] is best_sh
+                        and abs(hp[1].x() - sp.x()) < 0.5 and abs(hp[1].y() - sp.y()) < 0.5)
+            if targeted:
+                painter.setPen(QPen(QColor("white"), 1.5 / s))
+                painter.setBrush(QBrush(QColor(_BLUE)))
+            else:
+                painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
+                painter.setBrush(QBrush(QColor("white")))
+            painter.drawEllipse(p, r, r)
+
+    def _draw_segment_preview_pill(self, painter, s):
+        """[2026-08-03 Lucid 대조, rf 계정 Lucid 문서에서 직접 재현 확인] 선택된 직교 화살표의
+        변 위, 고정 알약이 아닌 위치를 호버하면 그 지점에 속 빈(hollow) 알약을 미리보기로
+        그린다 — 실제 알약(_paint_segment_handles, 항상 칠해진 파랑)과 시각적으로 구분되고,
+        여기를 눌러 끌면 그 자리에 새 정점이 생긴다(`_begin_subdivide_drag`). 드래그 중엔
+        그리지 않는다(그 사이 실제 지오메트리가 바뀌어 자리가 안 맞음)."""
+        sa = self._seg_add
+        if sa is None or self._seg_drag is not None:
+            return
+        item, seg_idx, scene_pt, on_pill = sa
+        if on_pill:
+            return
+        horizontal = item._segment_orientation(seg_idx)
+        half = item._SEG_HANDLE_PX / max(s, 1e-6)
+        thick = 3.5 / max(s, 1e-6)
+        if horizontal:
+            r = QRectF(scene_pt.x() - half, scene_pt.y() - thick, 2 * half, 2 * thick)
+        else:
+            r = QRectF(scene_pt.x() - thick, scene_pt.y() - half, 2 * thick, 2 * half)
         painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
         painter.setBrush(QBrush(QColor("white")))
-        for sp, _n in _shape_ports_for_preview(best_sh):
-            painter.drawEllipse(sp, r, r)
+        painter.drawRoundedRect(r, thick, thick)
 
     def _connect_port_at(self, view_pos):
         """[하나의 시스템으로 통합 2026-08-01, Lucid 대조] 선택된 도형의 접속점 →
@@ -1016,6 +1076,10 @@ class _AnnotatorView(QGraphicsView):
         painter.save()
         pen = painter.pen()
         pen.setStyle(Qt.PenStyle.SolidLine)
+        # [실사용 버그 2026-08-03] 실제 화살촉(`_PolyArrowItem.paint`)과 같은 이유로 joinStyle
+        # 명시 — 기본 BevelJoin이면 어깨가 깎여 미리보기와 생성 결과가 달라 보인다(이 고스트의
+        # 존재 이유가 "미리보기 = 결과"이므로 렌더 규칙도 같이 맞춘다).
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         fill = QColor(pen.color()); fill.setAlpha(160)
         painter.setBrush(QBrush(fill))
@@ -1060,10 +1124,12 @@ class _AnnotatorView(QGraphicsView):
 
     def leaveEvent(self, event):
         # 커서가 뷰를 벗어나면 스냅·waypoint 예고 마커 정리(잔상 방지).
-        if self._snap_preview is not None or self._seg_add is not None or self._hp_hover is not None:
+        if (self._snap_preview is not None or self._seg_add is not None or self._hp_hover is not None
+                or self._port_dot_shape is not None):
             self._snap_preview = None
             self._seg_add = None
             self._hp_hover = None
+            self._port_dot_shape = None
             self._table_col_add = None
             self.viewport().update()
         super().leaveEvent(event)
@@ -1107,6 +1173,7 @@ class _AnnotatorView(QGraphicsView):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         # [우리 확장] 화살표 도구로 도형 근처면 포트 점 예고(스냅 마커보다 먼저 그려 아래 깔림).
         self._draw_port_dots(painter, s)
+        self._draw_segment_preview_pill(painter, s)
         # 그리는 중(드래그)이거나 클릭 배치 중이면 스냅된 시작·tip에 마커(곡선·직선화살 공통).
         drawing = (self._drawing and self._temp is not None) or (self._place is not None)
         if drawing:
@@ -1155,13 +1222,14 @@ class _AnnotatorView(QGraphicsView):
             painter.setBrush(QBrush(fill2))
             for it in self._rb_preview:
                 painter.drawPath(it.mapToScene(_highlight_band(it)))
-        # [하나의 시스템으로 통합 2026-08-01] 접속점 드래그 중 커넥터 고스트 / 유휴 hover 강조
-        # 마커 — 선택 여부와 무관하게 한 경로(_hp_*)로 처리.
+        # [하나의 시스템으로 통합 2026-08-01] 접속점 드래그 중 커넥터 고스트 — 선택 여부와
+        # 무관하게 한 경로(_hp_*)로 처리. [2026-08-03 중복 제거] 유휴 hover 강조는 더 이상
+        # 여기서 테두리 위에 별도 마커를 그리지 않는다 — 선택된 도형은 이미 `_hover_handle`
+        # 경로가 qc-dot 자신을(오프셋 위치 그대로) 강조하고, 미선택 도형은 `_draw_port_dots`가
+        # 대상 점 자신을 강조한다(아래) — 실사용 지적: 오프셋 점이 이미 있는데 테두리 위에
+        # 점이 "또" 생겨 중복으로 보였다.
         if self._hp_dragging and self._hp_src is not None and self._hp_cursor is not None:
             self._hp_paint_ghost(painter, self._hp_src, self._hp_port, self._hp_normal, self._hp_cursor)
-        elif not self._hp_dragging and self._hp_hover is not None \
-                and self._hp_hover[0].scene() is not None:
-            self._draw_snap_marker(painter, self._hp_hover[1], s)
         # [2e] 스마트 정렬 가이드선 — 이동 중 정렬 맞은 축에 마젠타 실선. 인접(맞닿음) 매칭은
         # 정의상 가이드 좌표가 도형 자신의 테두리(선택 파란 테두리 등)와 정확히 겹쳐, 색이 섞여
         # 거의 안 보이는 문제가 실사용에서 발견됨(GIF 프레임 픽셀 분석으로 확인 — 로직·렌더링
@@ -1321,12 +1389,17 @@ class _AnnotatorView(QGraphicsView):
             super().mousePressEvent(event)
             grab.setZValue(old_z)
             return
-        # [M4-4] 직선화살표 세그먼트 위 press(정점 아님) = 그 변을 잡아 수직 이동(세그먼트 드래그).
+        # [M4-4 → 2026-08-03] 직선화살표 세그먼트 위 press(정점 아님). 알약 위면 변 전체를
+        # 수직 이동(기존), 알약이 아닌 위치면 그 자리에 새 정점을 끼워 가까운 쪽 절반만 이동
+        # (Lucid 대조, _segment_add_at 참조).
         if self._seg_add is not None and event.button() == Qt.MouseButton.LeftButton:
-            item, seg_idx, _scene_pt = self._seg_add
+            item, seg_idx, scene_pt, on_pill = self._seg_add
             self._seg_add = None
             self._seg_undo = [(item, item.capture_geom())]   # 드래그 전 스냅샷(undo)
-            item._begin_segment_drag(seg_idx)
+            if on_pill:
+                item._begin_segment_drag(seg_idx)
+            else:
+                item._begin_subdivide_drag(seg_idx, item.mapFromScene(scene_pt))
             self._seg_drag = item
             self.viewport().update()
             return
@@ -1721,6 +1794,7 @@ class _AnnotatorView(QGraphicsView):
         self._arrow_snap_exit = None
         self._arrow_tip_snap = None
         self._hp_hover = None   # 도구 전환 시 접속점 고스트도 지움
+        self._port_dot_shape = None
         if it is not None and it.scene() is not None:
             self.scene().removeItem(it)
             self.viewport().update()
@@ -2090,6 +2164,12 @@ class _AnnotatorView(QGraphicsView):
                 hp = self._hover_port_at(event.position().toPoint())
             self._hp_hover = hp
             if prev_hp != self._hp_hover:
+                self.viewport().update()
+            # [2026-08-03] 포트 예고점(넓은 margin 판정)은 _hp_hover(좁은 스냅 반경)와 갱신
+            # 시점이 달라 위 update()만으로는 늦게 뜨거나 잔상이 남았다 — 별도로 변화 감지.
+            prev_pd = self._port_dot_shape
+            self._port_dot_shape = self._port_dot_target(self.mapToScene(event.position().toPoint()))
+            if prev_pd is not self._port_dot_shape:
                 self.viewport().update()
             self._update_hover_cursor(event.position().toPoint())
         if self._drawing and self._temp is not None:

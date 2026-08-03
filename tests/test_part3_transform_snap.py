@@ -542,17 +542,21 @@ def test_box_handle_cursor():
 
 
 def test_qc_dots_geometry():
-    # [하나의 시스템으로 통합 2026-08-01, Lucid 대조] 선택된 네모의 상하좌우 접속점은 이제
-    # 항상 테두리 위(hover-port와 동일 위치) — 미연결이라고 바깥으로 뜨는 gap은 없앴다.
+    # [하나의 시스템으로 통합 2026-08-01 → 2026-08-03 재도입] 선택된 네모의 상하좌우 접속점은
+    # 테두리에서 `_HANDLE_GAP_FACTOR`만큼 바깥으로 띄운 자리다 — "핸들이 도형 안쪽에 있는
+    # 것처럼 보인다"는 실사용 지적으로 되살렸다(2026-08-01엔 선택 여부에 따라 gap 유무가
+    # 갈리는 비일관성 때문에 없앴었는데, 이번엔 hover-port 미리보기도 같은 gap을 써서 그
+    # 비일관성 자체를 없앴다 — test_qc_dot_at_roundtrip·test_hover_port_at_* 참조).
     w = CanvasWindow()
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
     dots = dict((k, r) for k, r in a._qc_dot_rects())
     assert set(dots) == {"t", "r", "b", "l"}
     br = a.rect()
-    assert _close(dots["r"].center(), QPointF(br.right(), br.center().y()))
-    assert _close(dots["l"].center(), QPointF(br.left(), br.center().y()))
-    assert _close(dots["t"].center(), QPointF(br.center().x(), br.top()))
-    assert _close(dots["b"].center(), QPointF(br.center().x(), br.bottom()))
+    gap = a._handle_px() * a._HANDLE_GAP_FACTOR
+    assert _close(dots["r"].center(), QPointF(br.right() + gap, br.center().y()))
+    assert _close(dots["l"].center(), QPointF(br.left() - gap, br.center().y()))
+    assert _close(dots["t"].center(), QPointF(br.center().x(), br.top() - gap))
+    assert _close(dots["b"].center(), QPointF(br.center().x(), br.bottom() + gap))
 
 
 
@@ -646,38 +650,40 @@ def test_edge_point_drag_perpendicular_creates_connector():
 
 
 
-def test_qc_dot_collapses_to_border_when_connected():
-    # [2026-08-01, Lucid 대조] 연결이 하나라도 생기면 재선택 시 qc-dot **네 점 전부**가 허공에
-    # 뜬 offset 위치가 아니라 테두리(변 중점) 위에 그려져야 한다 — 일부만 수렴하면 "왜 이
-    # 점만 다르지"라는 또 다른 착각을 만든다는 사용자 지적(Lucid는 전부 동시 전환).
+def test_qc_dot_position_stable_when_connected():
+    # [2026-08-01 → 2026-08-03 단순화] 예전엔 연결이 하나라도 생기면 재선택 시 qc-dot 네 점이
+    # gap 없이 테두리로 "수렴"해야 했다(선택 상태에서만 gap이 있던 시절, 연결 여부로 또 다른
+    # 비일관성이 생기지 않도록). 이제 gap은 선택 여부·연결 여부와 무관하게 항상 동일하므로
+    # (hover-port 미리보기도 같은 gap) 이 특례 자체가 필요 없다 — 연결 전후로 점 위치가
+    # 그대로인지만 확인한다.
     w = CanvasWindow(); w.grid_enabled = False
     v = w._view
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
-    rd_scene = a.mapToScene(dict(a._qc_dot_rects())["r"].center())
+    before = dict(a._qc_dot_rects())
+    rd_scene = a.mapToScene(before["r"].center())
     _qc_drag(v, rd_scene, QPointF(rd_scene.x() + 40, rd_scene.y() + 80))   # r쪽 화살표만 생성
 
     w._scene.clearSelection()
     a.setSelected(True)   # 릴리스로 화살표에 넘어간 선택을 되돌림(재선택 시나리오)
     dots = dict(a._qc_dot_rects())
-    br = a.rect()
-    expect = {"t": QPointF(br.center().x(), br.top()), "r": QPointF(br.right(), br.center().y()),
-              "b": QPointF(br.center().x(), br.bottom()), "l": QPointF(br.left(), br.center().y())}
-    for k, m in expect.items():
-        assert _close(dots[k].center(), m), f"연결이 하나라도 있으면 {k}도 테두리 위여야 함"
+    for k in ("t", "r", "b", "l"):
+        assert _close(dots[k].center(), before[k].center()), \
+            f"연결 여부와 무관하게 {k}는 같은 자리여야 함"
 
 
 
 
-def test_qc_dot_collapses_during_live_drag():
-    # [2026-08-01] 릴리스 전(바인딩이 아직 안 생긴) 드래그 도중에도 네 점 전부 즉시 테두리로
-    # 수렴해야 한다 — 고스트 미리보기 시작점(_edge_mid)과 시각적으로 어긋나지 않기 위함 +
-    # Lucid처럼 드래그한 변만이 아니라 전체가 동시에 전환.
+def test_qc_dot_position_stable_during_live_drag():
+    # [2026-08-01 → 2026-08-03 단순화] 예전엔 드래그 도중 네 점이 테두리로 수렴해야 했다(위
+    # 테스트와 동일 취지). gap이 상시 동일해진 지금은 드래그 중에도 점 위치가 그대로여야 한다
+    # (드래그 대상 자신을 포함해 — 자기 자신이 사라지거나 옮겨가면 안 됨).
     from PyQt6.QtGui import QMouseEvent
     from PyQt6.QtCore import QEvent
     w = CanvasWindow(); w.grid_enabled = False
     v = w._view
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
-    t_scene = a.mapToScene(dict(a._qc_dot_rects())["t"].center())
+    before = dict(a._qc_dot_rects())
+    t_scene = a.mapToScene(before["t"].center())
 
     def ev(etype, scene_pt, btn, btns):
         vp = QPointF(v.mapFromScene(scene_pt))
@@ -687,11 +693,9 @@ def test_qc_dot_collapses_during_live_drag():
     v.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(t_scene.x(), t_scene.y() - 80), NB, L))
 
     dots = dict(a._qc_dot_rects())
-    br = a.rect()
-    expect = {"t": QPointF(br.center().x(), br.top()), "r": QPointF(br.right(), br.center().y()),
-              "b": QPointF(br.center().x(), br.bottom()), "l": QPointF(br.left(), br.center().y())}
-    for k, m in expect.items():
-        assert _close(dots[k].center(), m), f"드래그 중엔 {k}도 즉시 테두리로 수렴해야 함"
+    for k, m_rect in before.items():
+        m = m_rect.center()
+        assert _close(dots[k].center(), m), f"드래그 중에도 {k}는 같은 자리여야 함"
     v.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease,
                            QPointF(t_scene.x(), t_scene.y() - 80), L, NB))
 
