@@ -3363,7 +3363,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         긴 변만(끝점 핸들과 겹치지 않게). straight 라우팅은 세그먼트 드래그 없음(빈 목록)."""
         if not self._is_ortho():
             return []
-        s = self._scale_or_1() * self._view_scale_or_1()
+        s = self._scale_or_1()
         min_local = self._SEG_MIN_PX / max(s, 1e-6)
         out = []
         for i in range(len(self._pts) - 1):
@@ -3373,12 +3373,6 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             mid = QPointF((a.x() + b.x()) / 2.0, (a.y() + b.y()) / 2.0)
             out.append((i, mid, abs(b.y() - a.y()) <= abs(b.x() - a.x())))
         return out
-
-    def _view_scale_or_1(self) -> float:
-        # [최적화 2026-08-01] `sc.views()[0]._view_scale()`(매번 뷰 목록 재구성)를
-        # `_view_zoom_factor()`(뷰 참조 캐시)로 교체 — 이 앱은 메인 인터랙티브 뷰가 항상
-        # `sc.views()[0]`이라(미니맵은 나중에 추가되고 `isInteractive()`도 아님) 값은 동일.
-        return _view_zoom_factor(self)
 
     def _begin_segment_drag(self, seg_idx: int):
         """[M4-4] 세그먼트 드래그 시작 — 자동라우팅 해제(수동 직교)+경유힌트 폐기. 끝점(0·last)에
@@ -3406,7 +3400,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         p = self.mapFromScene(scene_p)
         # [M4-4 ①b] 일직선 스냅 — 변을 끌 때 그 좌표가 양끝점·이웃 정점의 축과 가까우면 착 붙여
         # 완벽한 직선/정렬을 쉽게 만든다. 끝점과 나란해지면 U가 직선으로 붕괴.
-        snap_px = 7.0 / max(self._scale_or_1() * self._view_scale_or_1(), 1e-6)
+        snap_px = 7.0 / max(self._scale_or_1(), 1e-6)
         axis = (lambda q: q.y()) if horizontal else (lambda q: q.x())
         cand = [axis(self._pts[0]), axis(self._pts[-1])]
         if lo - 1 >= 0:
@@ -3447,7 +3441,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         handles = self._segment_handles()
         if not handles:
             return
-        s = self._scale_or_1() * self._view_scale_or_1()
+        s = self._scale_or_1()
         half = self._SEG_HANDLE_PX / max(s, 1e-6)
         thick = 3.5 / max(s, 1e-6)   # 얇게 고정 → 길쭉한 알약(끝점 사각과 확실히 구별)
         painter.setPen(QPen(QColor("white"), 1.0 / self._scale_or_1()))
@@ -3950,15 +3944,14 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     def boundingRect(self) -> QRectF:
         # [화살표 boundingRect 최적화 2026-08-01] `vz`/`s`를 한 번씩만 읽어 정점 루프에 넘긴다
-        # (`_HandleResizeMixin.boundingRect()`와 동일한 근거 — 위 주석 참조). `_view_scale_or_1()`도
-        # 이제 `_view_zoom_factor()`와 같은 값이라 이미 읽은 `vz`를 그대로 재사용한다.
+        # (`_HandleResizeMixin.boundingRect()`와 동일한 근거 — 위 주석 참조).
         vz = _view_zoom_factor(self)
         s = self._scale_or_1(vz)
         r = self._content_rect()
         for i in range(len(self._pts)):
             r = r.united(self._inflate_to_hit(self._endpoint_rect(i, s), s, vz))
         # [M4-4] 세그먼트 알약 핸들도 boundingRect에 포함(paint 잔상 방지).
-        pad = (4.0 + self._SEG_HANDLE_PX) / max(s * vz, 1e-6)
+        pad = (4.0 + self._SEG_HANDLE_PX) / max(s, 1e-6)
         return r.adjusted(-pad, -pad, pad, pad)
 
     def _base_shape(self):
@@ -4525,7 +4518,12 @@ def _paint_port_cover_if_needed(item, painter):
     bg = scene.backgroundBrush() if scene is not None else QBrush(QColor("#ffffff"))
     if bg.style() == Qt.BrushStyle.NoBrush:
         bg = QBrush(QColor("#ffffff"))
-    pad = host.pen().widthF() / 2.0 + 1.0
+    # [실사용 버그 수정 2026-08-03] "+1.0" 안티에일리어싱 여유분은 씬 단위 상수라 확대할수록
+    # 화면에서 그대로 커져(줌 8배면 8px), 포트가 테두리에서 눈에 띄게 떨어져 보였다(사용자
+    # 실조건 리포트) — 화면 항상 ~1px로 고정되도록 `item._scale_or_1()`로 나눈다. pen 폭의
+    # 절반은 그대로 씬 단위로 둔다(호스트 테두리 굵기 자체가 줌과 함께 커지므로 이 부분은
+    # 같이 커져야 늘 테두리를 완전히 덮는다).
+    pad = host.pen().widthF() / 2.0 + 1.0 / max(item._scale_or_1(), 1e-6)
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(bg)
     painter.drawRect(item.rect().adjusted(-pad, -pad, pad, pad))
