@@ -963,14 +963,16 @@ def test_stretch_binding_follows_crossed_side():
 
 
 def test_symbol_kinds_render_and_geom():
-    # M1(+심볼 확장): 10종 심볼이 모두 경로를 만들고, rect 기반 기계(박스핸들·geom undo·clone)를 물려받는다.
-    # (도메인 픽토그램 4종 카메라/증폭기/랙/안테나는 2026-08-03 사용빈도·디자인 피드백으로 제거됨.)
+    # M1(+심볼 확장): 11종 심볼이 모두 경로를 만들고, rect 기반 기계(박스핸들·geom undo·clone)를 물려받는다.
+    # (도메인 픽토그램 4종 카메라/증폭기/랙/안테나는 2026-08-03 사용빈도·디자인 피드백으로 제거됨.
+    #  triangle은 [신규기능 §8-12] 포트-테두리 trim 워크플로우의 장비 도형으로 추가 — 팔레트
+    #  UI상으론 "기본" 섹션에 노출되지만 내부 구현은 _SYMBOL_KINDS 재사용.)
     from PyQt6.QtWidgets import QGraphicsScene
     from PyQt6.QtGui import QPen
     sc = QGraphicsScene()
     assert set(_SYMBOL_KINDS) == {
         "decision", "terminal", "data", "prep", "document", "database",
-        "manual_input", "manual_op", "display", "delay",
+        "manual_input", "manual_op", "display", "delay", "triangle",
     }
     for kind in _SYMBOL_KINDS:
         it = _SymbolItem(kind, QRectF(0, 0, 120, 80))

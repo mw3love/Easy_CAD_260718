@@ -76,6 +76,13 @@ class _HandleResizeMixin:
         알리는 표준 방법이라, 매 페인트마다 핸들 영역을 상시 예약해두는 것보다 싸다."""
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
             self.prepareGeometryChange()
+        elif change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            # [신규기능 §8-12] 포트를 직접 드래그해 옮기면 새 위치를 (fx,fy)로 다시 저장하고
+            # (호스트 리사이즈 때 이 새 상대위치를 유지) 호스트를 다시 그려 trim 자리를 갱신.
+            host = getattr(self, "_port_host", None)
+            if host is not None:
+                _update_port_frac_from_pos(self, host)
+                host.update()
         return super().itemChange(change, value)
 
     # ---- 잡기 판정(시각 점과 분리) --------------------------------------
@@ -1286,6 +1293,18 @@ class _CenterLabelMixin(_LabelMixin):
         super().setRect(*args)
         if self._label_alive():
             self._sync_label()
+        self._sync_ports()
+
+    def _sync_ports(self):
+        """[신규기능 §8-12] 이 도형에 부착된 포트(작은 사각/원 자식)를 rect 변경 후 재배치.
+        포트는 부착 시점의 '테두리 위 상대 위치'를 (fx, fy)(rect 폭·높이 대비 비율)로
+        저장해 두므로, rect가 커지거나 작아져도 같은 상대 위치(변 중점·꼭짓점 등)를 유지한다
+        — 사각형·삼각형(경로가 rect의 선형 함수인 심볼) 둘 다에서 성립."""
+        ports = getattr(self, "_ports", None)
+        if not ports:
+            return
+        for port in ports:
+            _reposition_port_from_frac(port)
 
 
 class _RectGeometryMixin:
@@ -1355,6 +1374,7 @@ class _RectItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGrap
         return p
 
     def paint(self, painter, option, widget=None):
+        _paint_port_cover_if_needed(self, painter)
         self._paint_base_no_select(painter, option, widget)
         self._paint_handle(painter)
 
@@ -1406,6 +1426,7 @@ class _EllipseItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QG
         return p
 
     def paint(self, painter, option, widget=None):
+        _paint_port_cover_if_needed(self, painter)
         self._paint_base(painter, option, widget)
         if self.isSelected():
             self._paint_selection_outline(painter, self._scale_or_1())
@@ -1543,6 +1564,15 @@ def _sym_delay(r: QRectF) -> QPainterPath:         # 지연 — 오른쪽 반원
     return p
 
 
+def _sym_triangle(r: QRectF) -> QPainterPath:      # [신규기능 §8-12] 삼각형 — 분배기 등 장비 도형
+    p = QPainterPath()
+    p.moveTo(r.center().x(), r.top())
+    p.lineTo(r.right(), r.bottom())
+    p.lineTo(r.left(), r.bottom())
+    p.closeSubpath()
+    return p
+
+
 # kind → (한글 라벨, 경로 팩토리). 팔레트·직렬화·그리기가 이 하나를 공유한다.
 # [2026-08-03] 카메라·증폭기·랙·안테나(도메인 픽토그램 4종)는 사용 빈도가 낮고 디자인
 # 완성도도 떨어진다는 피드백으로 제거(구 .ecad 파일에 남아 있어도 _SymbolItem.__init__이
@@ -1558,6 +1588,7 @@ _SYMBOL_KINDS = {
     "manual_op":   ("수동작업", _sym_manual_op),
     "display":     ("화면출력", _sym_display),
     "delay":       ("지연", _sym_delay),
+    "triangle":    ("삼각형", _sym_triangle),
 }
 
 
@@ -1582,6 +1613,8 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
     def _label_inset_ratio(self) -> float:
         # kind별 내접 가용폭 — 마름모는 세로중앙 한 점에서만 최대폭이라 가장 좁게, 원기둥·문서·
         # 화면출력·지연 등 곡선 심볼은 중간, 상하 평행한 스타디움·평행사변형·육각형은 넉넉히.
+        if self._kind == "triangle":
+            return 0.35   # 꼭짓점이 위라 세로중앙에서도 밑변 절반 폭뿐 — 마름모보다 더 좁게
         if self._kind == "decision":
             return 0.6
         if self._kind in ("database", "document", "display", "delay"):
@@ -1602,6 +1635,9 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
             return QPointF(c.x(), c.y() + e * 0.7)
         if self._kind == "document":
             return QPointF(c.x(), c.y() - r.height() * 0.06)
+        if self._kind == "triangle":
+            # 삼각형 무게중심(꼭짓점 위 기준)은 밑변에서 1/3 지점 — bbox 중심(1/2)보다 아래.
+            return QPointF(c.x(), c.y() + r.height() / 6.0)
         return c
 
     def clone(self):
@@ -4446,6 +4482,196 @@ def _nearest_border(item, scene_pt):
     return sp, QPointF(nd.x() / L, nd.y() / L)
 
 
+def _paint_port_cover_if_needed(item, painter):
+    """[신규기능 §8-12] `item`이 포트(호스트에 부착됨)면, 자기 자신을 그리기 *전에* 호스트
+    테두리 위 자기 영역을 캔버스 배경색으로 먼저 덮어 그린다 — 그 위에 포트 자신의 모습이
+    다시 그려지므로 결과적으로 "테두리가 포트 자리만큼 끊겨 있다"는 시각효과를 낸다.
+
+    ⚠ [스턱루프 2026-08-03] 원래 계획은 호스트(장비) 쪽 `paint()`에서 `QPainterPath`를
+    분절해 직접 끊어 그리는 것이었다 — 경로 자체는 정확했고(요소 10개, 포트 위치의 간격
+    확인됨) `item.paint()`를 직접 호출하면 제대로 끊겨 그려졌지만, **`QGraphicsScene.render()`/
+    `view.grab()`(Qt 자식 아이템이 있는 경우에만)로 그리면 간격이 사라지고 원래의 닫힌
+    테두리가 그대로 나왔다** — 자식이 없으면 재현되지 않음(여러 겹 재현 스크립트로 확인,
+    정확한 Qt/PyQt 내부 원인은 특정 못 함). 포트는 자식이 없으므로(자기 자신은 트리의
+    말단) 이 문제를 피해간다 — 그래서 "누가 끊어 그리는가"를 호스트에서 포트로 옮겼다.
+    DXF 내보내기는 이 렌더링 경로와 무관하게 별도로 세그먼트 데이터를 직접 쓰므로
+    (fileio/dxf_export.py) 영향받지 않는다 — 화면 표시만의 우회."""
+    host = getattr(item, "_port_host", None)
+    if host is None:
+        return
+    scene = item.scene()
+    bg = scene.backgroundBrush() if scene is not None else QBrush(QColor("#ffffff"))
+    if bg.style() == Qt.BrushStyle.NoBrush:
+        bg = QBrush(QColor("#ffffff"))
+    pad = host.pen().widthF() / 2.0 + 1.0
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(bg)
+    painter.drawRect(item.rect().adjusted(-pad, -pad, pad, pad))
+
+
+def _reposition_port_from_frac(port):
+    """[신규기능 §8-12] 포트를 부착 당시 저장해 둔 (fx, fy)(호스트 rect 폭·높이 대비 비율)로
+    재배치 — 호스트가 리사이즈될 때(`_sync_ports`) 및 undo/redo로 재부착될 때 공통 사용."""
+    host = getattr(port, "_port_host", None)
+    frac = getattr(port, "_port_frac", None)
+    if host is None or frac is None:
+        return
+    r = host.rect()
+    fx, fy = frac
+    cx = r.left() + fx * max(r.width(), 1e-6)
+    cy = r.top() + fy * max(r.height(), 1e-6)
+    pr = port.rect()
+    port.setPos(cx - pr.width() / 2.0, cy - pr.height() / 2.0)
+
+
+def _update_port_frac_from_pos(port, host):
+    """[신규기능 §8-12] 포트를 사용자가 직접 드래그한 뒤(itemChange) 새 위치를 (fx, fy)로
+    역산해 저장 — `_reposition_port_from_frac`의 역방향. 호스트 rect가 나중에 바뀌어도
+    지금 사용자가 옮긴 상대위치를 그대로 유지하기 위함."""
+    r = host.rect()
+    pr = port.rect()
+    center = port.pos() + QPointF(pr.width() / 2.0, pr.height() / 2.0)
+    fx = (center.x() - r.left()) / max(r.width(), 1e-6)
+    fy = (center.y() - r.top()) / max(r.height(), 1e-6)
+    port._port_frac = (fx, fy)
+
+
+def _attach_port_to_host(port, host, scene_pt):
+    """[신규기능 §8-12] 포트를 호스트 장비(사각형/삼각형 등)의 테두리 위 scene_pt 최근접점에
+    부착 — 실제 Qt 부모-자식(`setParentItem`)으로 만들어 호스트 이동·회전·스케일을 공짜로
+    따라가게 하고, rect 대비 상대위치(fx, fy)를 저장해 리사이즈 시에도 같은 테두리 위치를
+    유지한다(`_reposition_port_from_frac`). 호스트의 `_ports` 리스트에도 등록한다(trim
+    렌더링·커넥터 연동이 이 목록을 참조)."""
+    sp, _n = _nearest_border(host, scene_pt)
+    local = host.mapFromScene(sp)
+    r = host.rect()
+    fx = (local.x() - r.left()) / max(r.width(), 1e-6)
+    fy = (local.y() - r.top()) / max(r.height(), 1e-6)
+    port.setParentItem(host)
+    port._port_host = host
+    port._port_frac = (fx, fy)
+    ports = getattr(host, "_ports", None)
+    if ports is None:
+        ports = host._ports = []
+    if port not in ports:
+        ports.append(port)
+    _reposition_port_from_frac(port)
+    host.update()   # [버그수정] rect·pos는 안 바뀌므로 Qt가 자동으로 재도장하지 않는다 — 직접 요청.
+
+
+def _detach_port_from_host(port):
+    """[신규기능 §8-12] 포트를 호스트의 `_ports` 목록에서 제거(삭제·undo 경로 공용).
+    Qt parentItem 자체는 건드리지 않는다 — scene.removeItem()이 호출되는 경로에서
+    호출부가 그 전후 처리를 맡는다(host_undo.py 참조)."""
+    host = getattr(port, "_port_host", None)
+    if host is None:
+        return
+    ports = getattr(host, "_ports", None)
+    if ports and port in ports:
+        ports.remove(port)
+        host.update()   # 포트가 빠졌으니 trim 자리도 다시 이어 그려야 함.
+
+
+def _host_outline_local_polygon(host) -> list:
+    """[신규기능 §8-12] 호스트의 로컬 외곽선 정점(닫힌 폴리곤, 마지막=첫점 중복 없이).
+    사각형은 네 모서리, 삼각형 등 심볼은 `_sym_path()`를 평탄화 — 트림 계산이 두 종류
+    도형에서 같은 코드로 동작하게 한다(둘 다 rect의 선형 함수라 정점만 다르면 됨)."""
+    if isinstance(host, _SymbolItem):
+        polys = host._sym_path().toSubpathPolygons()
+        if not polys:
+            return []
+        poly = polys[0]
+        pts = [poly.at(i) for i in range(poly.count())]
+        if len(pts) >= 2 and _close_pt(pts[0], pts[-1]):
+            pts.pop()
+        return pts
+    r = host.rect()
+    return [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
+
+
+def _close_pt(a: QPointF, b: QPointF, eps: float = 1e-6) -> bool:
+    return abs(a.x() - b.x()) < eps and abs(a.y() - b.y()) < eps
+
+
+def _seg_param_and_perp(a: QPointF, b: QPointF, p: QPointF):
+    """점 p를 선분 a→b(무한직선 기준)에 투영 — (t, 수선거리). t는 a=0, b=1 파라미터(클램프 없음)."""
+    dx, dy = b.x() - a.x(), b.y() - a.y()
+    L2 = dx * dx + dy * dy
+    if L2 < 1e-9:
+        return 0.0, math.hypot(p.x() - a.x(), p.y() - a.y())
+    t = ((p.x() - a.x()) * dx + (p.y() - a.y()) * dy) / L2
+    px, py = a.x() + t * dx, a.y() + t * dy
+    return t, math.hypot(p.x() - px, p.y() - py)
+
+
+def _port_edge_gap(poly: list, port):
+    """포트가 호스트 외곽선(poly, 로컬좌표)의 어느 변에 걸쳐 있는지 찾아 (edge_index, t0, t1)
+    반환(못 찾으면 None) — 포트 중심에서 가장 가까운 변을 고르고, 포트 폭/높이를 그 변
+    방향으로 투영해 걸친 구간을 근사한다(축정렬 변은 정확, 대각/사선 변은 근사)."""
+    n = len(poly)
+    if n < 2:
+        return None
+    pr = port.rect()
+    center_local = port.mapToParent(pr.center())
+    half_w, half_h = pr.width() / 2.0, pr.height() / 2.0
+    best = None
+    for i in range(n):
+        a, b = poly[i], poly[(i + 1) % n]
+        t_c, perp = _seg_param_and_perp(a, b, center_local)
+        if perp > max(half_w, half_h) + 4.0:   # 변에서 너무 멀면(여유 4씬단위) 이 변 아님
+            continue
+        dx, dy = b.x() - a.x(), b.y() - a.y()
+        edge_len = math.hypot(dx, dy) or 1.0
+        ux, uy = dx / edge_len, dy / edge_len
+        half_along = abs(half_w * ux) + abs(half_h * uy)
+        half_t = half_along / edge_len
+        t0, t1 = max(0.0, t_c - half_t), min(1.0, t_c + half_t)
+        if best is None or perp < best[3]:
+            best = (i, t0, t1, perp)
+    return None if best is None else best[:3]
+
+
+def build_trimmed_border_path(host) -> QPainterPath:
+    """[신규기능 §8-12] 호스트 외곽선에서 부착된 포트가 걸친 구간만큼 실제로 끊은 경로 —
+    닫힌 하나의 subpath가 아니라 남은 조각마다 별도 subpath(moveTo/lineTo)로 그린다.
+    포트가 없으면(또는 못 찾으면) 원래 외곽선과 동일(끊김 없음)."""
+    poly = _host_outline_local_polygon(host)
+    n = len(poly)
+    path = QPainterPath()
+    if n < 2:
+        return path
+    ports = getattr(host, "_ports", None) or []
+    gaps_by_edge: dict = {}
+    for port in ports:
+        hit = _port_edge_gap(poly, port)
+        if hit is None:
+            continue
+        i, t0, t1 = hit
+        gaps_by_edge.setdefault(i, []).append((t0, t1))
+    for i in range(n):
+        a, b = poly[i], poly[(i + 1) % n]
+        gaps = sorted(gaps_by_edge.get(i, []))
+        merged = []
+        for t0, t1 in gaps:
+            if merged and t0 <= merged[-1][1] + 1e-6:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], t1))
+            else:
+                merged.append((t0, t1))
+        cursor = 0.0
+        for t0, t1 in merged:
+            if t0 > cursor + 1e-6:
+                p0 = QPointF(a.x() + (b.x() - a.x()) * cursor, a.y() + (b.y() - a.y()) * cursor)
+                p1 = QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0)
+                path.moveTo(p0)
+                path.lineTo(p1)
+            cursor = max(cursor, t1)
+        if cursor < 1.0 - 1e-6:
+            p0 = QPointF(a.x() + (b.x() - a.x()) * cursor, a.y() + (b.y() - a.y()) * cursor)
+            path.moveTo(p0)
+            path.lineTo(b)
+    return path
+
+
 def _shape_ports(item):
     """도형의 이산 접속점(포트) → [(scene_pt, 바깥법선), ...]. 변 중점 4개(N·E·S·W)를
     _nearest_border로 '실제 외곽선'에 투영한다 — 네모·원은 변 중점 그대로, 심볼은 슬랜트 변
@@ -4466,6 +4692,13 @@ def _shape_ports(item):
     out = []
     for p in pts:
         sp, n = _nearest_border(item, item.mapToScene(p))
+        out.append((sp, n))
+    # [신규기능 §8-12] 부착된 포트도 접속점으로 노출 — 커넥터가 실제 포트 중심에서 뻗어
+    # 나가도록(사용자가 팔레트로 배치한 포트가 곧 "진짜" 접속 지점). 기본 N/E/S/W와
+    # 별개로 추가되므로 기존 8포트 시스템을 건드리지 않는다.
+    for port in getattr(item, "_ports", None) or []:
+        center_scene = port.mapToScene(port.rect().center())
+        sp, n = _nearest_border(item, center_scene)
         out.append((sp, n))
     return out
 

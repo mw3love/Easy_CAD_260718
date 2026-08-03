@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
     _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
+    _reposition_port_from_frac,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
@@ -187,6 +188,33 @@ class _UndoMixin:
                 self._refresh_layers_panel()
 
 
+    def _reattach_port_if_needed(self, it):
+        """[신규기능 §8-12] `scene.addItem()`은 Qt parentItem을 None으로 초기화한다(실측
+        확인) — 포트(장비의 Qt 자식)를 undo/redo로 되살릴 때마다 원래 호스트에 다시
+        `setParentItem`하고 상대위치(fx,fy)로 재배치 + 호스트의 `_ports` 목록에도 재등록한다."""
+        host = getattr(it, "_port_host", None)
+        if host is None:
+            return
+        it.setParentItem(host)
+        _reposition_port_from_frac(it)
+        ports = getattr(host, "_ports", None)
+        if ports is None:
+            ports = host._ports = []
+        if it not in ports:
+            ports.append(it)
+        host.update()   # rect·pos는 안 바뀌므로 Qt가 자동으로 재도장하지 않는다.
+
+    def _detach_port_if_needed(self, it):
+        """포트를 씬에서 제거하기 전, 호스트의 `_ports` 목록에서 먼저 빼둔다(trim 렌더링이
+        더 이상 존재하지 않는 포트를 참조하지 않도록)."""
+        host = getattr(it, "_port_host", None)
+        if host is None:
+            return
+        ports = getattr(host, "_ports", None)
+        if ports and it in ports:
+            ports.remove(it)
+            host.update()
+
     def _apply_entry(self, entry, redo):
         for op in entry.ops:
             kind = op[0]
@@ -195,15 +223,19 @@ class _UndoMixin:
                 if redo:
                     if it.scene() is None:
                         self._scene.addItem(it)
+                        self._reattach_port_if_needed(it)
                 elif it.scene() is not None:
+                    self._detach_port_if_needed(it)
                     self._scene.removeItem(it)
             elif kind == "remove":
                 it = op[1]
                 if redo:
                     if it.scene() is not None:
+                        self._detach_port_if_needed(it)
                         self._scene.removeItem(it)
                 elif it.scene() is None:
                     self._scene.addItem(it)
+                    self._reattach_port_if_needed(it)
             elif kind == "mut":
                 _, it, sub, before, after = op
                 self._apply_mut(it, sub, after if redo else before)

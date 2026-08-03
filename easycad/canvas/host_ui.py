@@ -60,7 +60,10 @@ _MERMAID_SHAPE_ITEM = {
 
 # [Phase 6 M3 #17] 팔레트 드래그앤드롭 — 좌측 「도형·심볼」 버튼을 캔버스로 끌어 드롭.
 _PALETTE_MIME = "application/x-easycad-tool"      # QDrag가 실어 나르는 tool_key 포맷
-_PALETTE_DROP_WH = {"rect": (120.0, 72.0), "ellipse": (100.0, 100.0)}  # 기본 생성 크기
+_PALETTE_DROP_WH = {
+    "rect": (120.0, 72.0), "ellipse": (100.0, 100.0),
+    "port_rect": (18.0, 18.0), "port_circle": (18.0, 18.0),   # [신규기능 §8-12] 포트 기본 크기
+}
 _PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 크기
 
 
@@ -581,6 +584,11 @@ class _UIBuildMixin:
             p.drawRect(r)
         elif kind == "ellipse":
             p.drawEllipse(r)
+        elif kind in ("port_rect", "port_circle"):
+            # [신규기능 §8-12] 포트 — 기본 도형보다 작게 그려 "장비에 붙는 부속"임을 암시.
+            small = r.adjusted(r.width() * 0.28, r.height() * 0.28,
+                                -r.width() * 0.28, -r.height() * 0.28)
+            p.drawRect(small) if kind == "port_rect" else p.drawEllipse(small)
         elif kind == "terminal":
             # [2026-08-03 버그 수정] 스타디움(양끝 둥근 알약형)이 정사각형 캔버스에 그려지면
             # 반지름이 min(w,h)/2 = w/2가 되어 완전한 원이 되고, "원"(ellipse) 아이콘과 똑같이
@@ -633,6 +641,10 @@ class _UIBuildMixin:
         if kind == "rect":
             p.drawRect(r)
         elif kind == "ellipse":
+            p.drawEllipse(r)
+        elif kind == "port_rect":
+            p.drawRect(r)
+        elif kind == "port_circle":
             p.drawEllipse(r)
         else:
             p.drawPath(path_fn(r))
@@ -771,9 +783,14 @@ class _UIBuildMixin:
         basic = self._make_shape_section("기본", [
             ("네모", "rect", "네모 — 클릭 후 캔버스에 드래그", "rect"),
             ("원", "ellipse", "원 — 클릭 후 캔버스에 드래그", "ellipse"),
+            ("삼각형", "triangle", "삼각형 — 클릭 후 캔버스에 드래그", "sym:triangle"),
+            ("포트□", "port_rect", "포트(사각형) — 사각형·삼각형 테두리 근처로 드래그하면 자동 부착",
+             "port_rect"),
+            ("포트○", "port_circle", "포트(원형) — 사각형·삼각형 테두리 근처로 드래그하면 자동 부착",
+             "port_circle"),
         ], self._shape_tool_buttons)
         sym_entries = [(label, kind, f"{label} 심볼 — 클릭 후 캔버스에 드래그", f"sym:{kind}")
-                       for kind, (label, _fn) in _SYMBOL_KINDS.items()]
+                       for kind, (label, _fn) in _SYMBOL_KINDS.items() if kind != "triangle"]
         syms = self._make_shape_section("순서도", sym_entries, self._sym_buttons)
         self._custom_sym_buttons: dict[str, QToolButton] = {}   # [신규기능 §8-8] set_tool 체크상태 동기화용
         custom = self._make_shape_section("내 심볼", [], self._custom_sym_buttons)   # 버튼은 refresh가 채움

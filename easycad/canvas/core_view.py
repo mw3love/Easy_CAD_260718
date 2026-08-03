@@ -1531,6 +1531,9 @@ class _AnnotatorView(QGraphicsView):
             owner.push_undo_add(it)
             self.scene().clearSelection()
             it.setSelected(True)
+        elif tool in ("port_rect", "port_circle"):
+            # [신규기능 §8-12] 포트는 badge/text처럼 단발 클릭 배치 — 드래그로 그리지 않는다.
+            owner._create_port_at(tool, sp)
 
     def _begin_draw(self, item: QGraphicsItem):
         # [M2 #3] 화살표는 pen()이 없어 make_pen의 sticky current_style을 못 받는다 →
@@ -2492,6 +2495,7 @@ class _AnnotatorView(QGraphicsView):
                 selected = list(self.scene().selectedItems())
                 if selected:
                     for it in selected:
+                        _detach_port_from_host(it)   # [신규기능 §8-12] 호스트의 _ports 목록도 정리
                         self.scene().removeItem(it)
                     self._owner.push_undo_delete(selected)
                     return

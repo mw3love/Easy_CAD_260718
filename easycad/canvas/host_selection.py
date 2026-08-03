@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
     _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
+    _detach_port_from_host,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
@@ -165,6 +166,7 @@ class _SelectionMixin:
         if not sel:
             return
         for it in sel:
+            _detach_port_from_host(it)   # [신규기능 §8-12] 호스트의 _ports 목록도 정리
             self._scene.removeItem(it)
         self.push_undo_delete(sel)
 

@@ -30,6 +30,12 @@
 - `QMessageBox`(또는 임의 모달)를 모킹 없이 테스트에서 직접 호출하면 헤드리스 환경엔 누를
   사용자가 없어 `.exec()`가 영원히 블로킹 — 스위트 전체가 "멈춘 게 아니라 조용히 도는" 상태로
   보인다. 모든 모달 경로는 테스트에서 모킹 필수. (`2026-07.md` DXF/.ecad 통합)
+- `QGraphicsItem`에 Qt 자식(`setParentItem`)이 하나라도 있으면, `paint()`에서 분절된
+  `QPainterPath`(moveTo/lineTo로 gap 있는)를 그려도 `QGraphicsScene.render()`/
+  `QGraphicsView.grab()` 경로에서는 그 gap이 사라지고 닫힌 도형으로 보인다 — `item.paint()`를
+  직접 호출하면 정상 렌더되므로 데이터·분기 자체는 문제 없음. 자식이 없는 말단 아이템 쪽에서
+  같은 시각효과를 내는 식으로 우회. (`2026-08.md` 포트-테두리 trim, 위키
+  `easycad-qgraphicsitem-자식있는아이템-paint-gap-무시.md`)
 
 ## 좌표계·변환
 - `drawForeground`의 painter는 Qt가 이미 **씬 좌표계**로 매핑해 넘긴다 — 여기에 다시

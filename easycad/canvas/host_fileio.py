@@ -9,7 +9,9 @@ from __future__ import annotations
 import re
 import uuid
 
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
+from PyQt6.QtCore import (
+    Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent, QLineF,
+)
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
     QFont, QPolygonF, QPainterPath, QPalette, QDrag,
@@ -26,6 +28,7 @@ from PyQt6.QtWidgets import (
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
     _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
+    _attach_port_to_host,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
@@ -61,8 +64,12 @@ _MERMAID_SHAPE_ITEM = {
 
 # [Phase 6 M3 #17] 팔레트 드래그앤드롭 — 좌측 「도형·심볼」 버튼을 캔버스로 끌어 드롭.
 _PALETTE_MIME = "application/x-easycad-tool"      # QDrag가 실어 나르는 tool_key 포맷
-_PALETTE_DROP_WH = {"rect": (120.0, 72.0), "ellipse": (100.0, 100.0)}  # 기본 생성 크기
+_PALETTE_DROP_WH = {
+    "rect": (120.0, 72.0), "ellipse": (100.0, 100.0),
+    "port_rect": (18.0, 18.0), "port_circle": (18.0, 18.0),   # [신규기능 §8-12] 포트 기본 크기
+}
 _PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 크기
+_PORT_ATTACH_MARGIN = 60.0   # [신규기능 §8-12] 포트 드롭/클릭 지점에서 호스트 장비를 찾는 반경(씬 단위)
 
 
 
@@ -261,6 +268,8 @@ class _FileIOMixin:
         써 이후 편집(리사이즈·회전·undo·저장)이 전부 동일하게 동작한다."""
         if tool_key.startswith("customsym:"):
             return self._create_custom_symbol_at(tool_key[len("customsym:"):], scene_pos)
+        if tool_key in ("port_rect", "port_circle"):
+            return self._create_port_at(tool_key, scene_pos)
         if tool_key.startswith("sym:"):
             w, h = _PALETTE_SYM_WH
             it = _SymbolItem(tool_key[4:], QRectF(0.0, 0.0, w, h))
@@ -274,6 +283,43 @@ class _FileIOMixin:
         it.setPos(scene_pos.x() - w / 2.0, scene_pos.y() - h / 2.0)
         it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
         self._scene.addItem(it)
+        self._scene.clearSelection()
+        it.setSelected(True)
+        self.push_undo_add(it)
+        return it
+
+
+    def _create_port_at(self, tool_key: str, scene_pos: QPointF):
+        """[신규기능 §8-12] 포트(작은 사각/원)를 scene_pos 근처 장비(사각형/삼각형) 테두리에
+        부착 — 드래그앤드롭·클릭배치 두 경로가 공유. 근처에 유효한 장비가 없으면 자유 도형으로
+        배치(나중에 손으로 옮겨 붙일 수 있음)."""
+        w, h = _PALETTE_DROP_WH[tool_key]
+        it = (_EllipseItem if tool_key == "port_circle" else _RectItem)(QRectF(0.0, 0.0, w, h))
+        it.setPen(self.make_pen())
+        it.setBrush(self.make_brush())
+        # ItemSendsGeometryChanges: 포트를 드래그로 옮기면 itemChange(ItemPositionHasChanged)가
+        # 발화해 (fx,fy) 갱신 + 호스트 재그리기(trim 자리 갱신)를 트리거한다.
+        it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable
+                    | it.GraphicsItemFlag.ItemSendsGeometryChanges)
+
+        host, best_d = None, None
+        for cand in self._view._conn_shapes_near(scene_pos, _PORT_ATTACH_MARGIN):
+            if getattr(cand, "_port_host", None) is not None:
+                continue   # 포트는 다른 포트의 호스트가 될 수 없음
+            is_device = isinstance(cand, _RectItem) or (
+                isinstance(cand, _SymbolItem) and cand._kind == "triangle")
+            if not is_device:
+                continue
+            sp, _n = _nearest_border(cand, scene_pos)
+            d = QLineF(sp, scene_pos).length()
+            if d <= _PORT_ATTACH_MARGIN and (best_d is None or d < best_d):
+                best_d, host = d, cand
+
+        self._scene.addItem(it)
+        if host is not None:
+            _attach_port_to_host(it, host, scene_pos)
+        else:
+            it.setPos(scene_pos.x() - w / 2.0, scene_pos.y() - h / 2.0)
         self._scene.clearSelection()
         it.setSelected(True)
         self.push_undo_add(it)
