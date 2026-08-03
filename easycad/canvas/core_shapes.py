@@ -623,7 +623,11 @@ class _HandleResizeMixin:
     def _grid_snap_local(self, lp: QPointF) -> QPointF:
         """[그리드 스냅] 로컬 좌표를 씬 격자 교차점에 스냅 — mapToScene/mapFromScene로 아이템의
         회전·스케일 변환을 그대로 통과시켜, 회전된 도형이라도 실제 씬 위치가 격자에 맞는다.
-        owner.grid_enabled가 False면 원본 그대로."""
+        owner.grid_enabled가 False면 원본 그대로.
+        [실사용 요청 2026-08-03] 포트(호스트에 부착된 작은 사각/원)는 제외 — 포트 크기가 보통
+        그리드 간격과 비슷하거나 작아, 격자에 맞추면 한 칸 단위로만 뛰어 미세조정이 안 됐다."""
+        if getattr(self, "_port_host", None) is not None:
+            return lp
         sc = self.scene()
         if sc is None or not sc.views():
             return lp
@@ -663,8 +667,13 @@ class _HandleResizeMixin:
         """박스 리사이즈 결과 rect 후처리 훅. [실사용 요청 2026-08-03] 기본은 Shift를 누른 채
         꼭짓점을 끌 때만(변 리사이즈는 원래 늘림 의도라 제외) 리사이즈 시작 시점의 종횡비를
         유지 — 포트를 포함한 모든 도형(사각형·원·삼각형 등)에 공통 적용. _ImageItem은 사진
-        왜곡 방지를 위해 Shift 여부와 무관하게 항상 고정(override, 기존 동작 그대로 유지)."""
-        if not shift or kind != "corner":
+        왜곡 방지를 위해 Shift 여부와 무관하게 항상 고정(override, 기존 동작 그대로 유지).
+        [실사용 요청 2026-08-03 2차] 포트는 이 기본을 뒤집는다 — 꼭짓점 핸들이 기본값으로
+        비율유지이고, Shift를 누르면 오히려 잠금을 풀어 자유 리사이즈한다(변 핸들은 원래부터
+        축별 개별 조정이라 그대로 둠 — kind!="corner"는 항상 통과). `shift == is_port`일 때만
+        건너뛰므로 XOR 관계: 일반 도형은 shift일 때만 잠금, 포트는 shift가 아닐 때만 잠금."""
+        is_port = getattr(self, "_port_host", None) is not None
+        if kind != "corner" or shift == is_port:
             return new
         o = self._box_orig_rect
         oh = o.height() if abs(o.height()) > 1e-6 else 1.0

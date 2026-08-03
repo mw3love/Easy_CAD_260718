@@ -1545,6 +1545,57 @@ def test_shift_corner_resize_keeps_aspect_ratio():
     assert abs(rp.width() / rp.height() - 0.5) < 1e-6
 
 
+def test_port_resize_ignores_grid_snap():
+    # [실사용 요청 2026-08-03 2차] 포트는 보통 그리드 간격(20)과 비슷하거나 작아, 리사이즈가
+    # 그리드에 맞춰지면 한 칸 단위로만 뛰어 미세조정이 안 됐다 — 포트만 그리드 스냅 제외.
+    from easycad.canvas.annotator_core import _GRID_SPACING
+    w = CanvasWindow(); w.grid_enabled = True
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    port = w._create_port_at("port_rect", QPointF(60, 0))
+    off_grid = QPointF(37.3, 41.7)   # 20의 배수가 아닌 임의 좌표
+    assert port._grid_snap_local(off_grid) == off_grid   # 통과(스냅 없음)
+
+    # 대조군: 포트가 아닌 일반 도형은 여전히 그리드에 맞는다(회귀 방지).
+    assert dev._grid_snap_local(off_grid) != off_grid
+    snapped = dev._grid_snap_local(off_grid)
+    assert abs(snapped.x() % _GRID_SPACING) < 1e-6 and abs(snapped.y() % _GRID_SPACING) < 1e-6
+
+
+def test_port_corner_resize_defaults_to_aspect_lock_shift_frees_it():
+    # [실사용 요청 2026-08-03 2차] 포트는 일반 도형과 기본값이 반대다 — 꼭짓점 핸들이
+    # Shift 없이도 기본으로 비율을 유지하고(정사각형 포트가 늘 정사각형으로), Shift를
+    # 누르면 오히려 잠금을 풀어 자유 변형한다. 변 핸들은 여전히 항상 자유(축별 개별 조정).
+    w = CanvasWindow(); w.grid_enabled = False
+    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    port = w._create_port_at("port_rect", QPointF(60, 0))   # 18x18 정사각형 시작
+    assert abs(port.rect().width() - port.rect().height()) < 1e-6
+
+    port._begin_box_geom()
+    port._box_resize = ("corner", 2)
+    port._apply_box_resize(port.mapFromScene(QPointF(port.pos().x() + 18, port.pos().y() + 60)),
+                            shift=False)   # Shift 없이 세로만 길게 끌어도
+    r = port.rect()
+    assert abs(r.width() - r.height()) < 1e-6, "포트는 Shift 없이도 비율유지가 기본이어야 한다"
+
+    port2 = w._create_port_at("port_rect", QPointF(140, 0))
+    port2._begin_box_geom()
+    port2._box_resize = ("corner", 2)
+    port2._apply_box_resize(
+        port2.mapFromScene(QPointF(port2.pos().x() + 18, port2.pos().y() + 60)), shift=True)
+    r2 = port2.rect()
+    assert abs(r2.width() - 18) < 1e-6 and abs(r2.height() - 60) < 1e-6, \
+        "포트는 Shift를 누르면 비율잠금이 풀려야 한다"
+
+    # 변 핸들은 포트든 아니든 항상 자유(축별 개별 조정) — 회귀 방지.
+    port3 = w._create_port_at("port_rect", QPointF(180, 0))
+    port3._begin_box_geom()
+    port3._box_resize = ("edge", "b")
+    port3._apply_box_resize(
+        port3.mapFromScene(QPointF(port3.pos().x(), port3.pos().y() + 60)), shift=False)
+    r3 = port3.rect()
+    assert abs(r3.width() - 18) < 1e-6 and abs(r3.height() - 60) < 1e-6
+
+
 def test_selected_port_hover_marker_does_not_duplicate_on_itself():
     # [실사용 버그 수정] 포트가 선택되면 자기 자신의 리사이즈 핸들이 뜨는데, 같은 자리에
     # 호스트의 "여기서 커넥터를 뽑을 수 있다" 미리보기까지 겹쳐 핸들이 뭉쳐 보였다(사용자
