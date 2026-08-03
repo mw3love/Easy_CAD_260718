@@ -1451,12 +1451,17 @@ class _AnnotatorView(QGraphicsView):
         sp = self.mapToScene(event.position().toPoint())
         # [그리드 스냅] 생성 시작점도 이동 중(_cur_point)과 동일 대상(네모·원·심볼·선)에 맞춘다 —
         # 안 하면 시작 모서리는 격자 밖에 남고 드래그로 옮긴 반대쪽 모서리만 격자에 맞아 어긋난다.
-        if tool in ("rect", "ellipse", "line") or tool.startswith("sym:"):
+        if tool in ("rect", "ellipse", "line") or tool.startswith(("sym:", "customsym:")):
             sp = self._grid_snap_scene(sp)
         self._start = sp
         owner = self._owner
         pen = owner.make_pen()
 
+        if tool.startswith("customsym:"):
+            # [신규기능 §8-8] 커스텀 심볼은 그룹이라 rect처럼 드래그로 그릴 수 없다 —
+            # sym:*와 달리 클릭 즉시 원본 비율 그대로 배치(text/badge와 같은 단발 배치).
+            owner._create_shape_at(tool, sp)
+            return
         if tool == "rect":
             it = _RectItem(QRectF(sp, sp))
             it.setPen(pen)

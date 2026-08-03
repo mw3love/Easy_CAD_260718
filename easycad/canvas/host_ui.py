@@ -34,7 +34,8 @@ from easycad.canvas.annotator_core import (
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
-from easycad.fileio.document import save_document, load_document, load_document_layers
+from easycad.fileio.document import save_document, load_document, load_document_layers, _b64_to_pixmap
+from easycad.fileio import symbol_library
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
@@ -631,10 +632,12 @@ class _UIBuildMixin:
         return pm
 
 
-    def _palette_button(self, label: str, icon_kind: str, tooltip: str, tool_key: str) -> QToolButton:
+    def _palette_button(self, label: str, icon_kind, tooltip: str, tool_key: str) -> QToolButton:
+        """icon_kind는 보통 _SYMBOL_KINDS 키 문자열이지만, 커스텀 심볼(§8-8)처럼 미리 만든
+        QIcon(썸네일)을 직접 넘길 수도 있다."""
         btn = _PaletteButton(tool_key, preview_fn=self._render_drag_preview)   # [M3 #17] 클릭=무장 / 드래그=캔버스 드롭 생성
         btn.setText(label)
-        btn.setIcon(self._shape_icon(icon_kind))
+        btn.setIcon(icon_kind if isinstance(icon_kind, QIcon) else self._shape_icon(icon_kind))
         btn.setIconSize(QSize(30, 30))
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         btn.setToolTip(tooltip)
@@ -686,6 +689,43 @@ class _UIBuildMixin:
             grid.setColumnStretch(cols, 1)
 
 
+    def _refresh_custom_symbol_section(self):
+        """[신규기능 §8-8] '내 심볼' 섹션을 라이브러리 파일 기준으로 다시 그린다 —
+        등록/삭제 직후 호출. 빈 슬롯이 나오지 않도록 라이브러리가 비면 섹션 자체를 숨긴다."""
+        grid, old_btns = self._shape_sections[self._custom_sym_idx]
+        for b in old_btns:
+            grid.removeWidget(b)
+            b.deleteLater()
+        entries = symbol_library.load_library()
+        self._custom_sym_buttons = {}
+        btns = []
+        for entry in entries:
+            icon = QIcon(_b64_to_pixmap(entry["thumb"]))
+            sid = entry["id"]
+            key = f"customsym:{sid}"
+            btn = self._palette_button(entry["name"][:6], icon, entry["name"], key)
+            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            btn.customContextMenuRequested.connect(
+                lambda _pos, sid=sid: self._delete_custom_symbol_prompt(sid))
+            self._custom_sym_buttons[sid] = btn
+            btns.append(btn)
+        self._shape_sections[self._custom_sym_idx] = (grid, btns)
+        self._custom_sym_section.setVisible(bool(entries))
+        self._relayout_sections(horiz=False)
+
+
+    def _delete_custom_symbol_prompt(self, sym_id: str):
+        """[신규기능 §8-8] 팔레트 버튼 우클릭 → 확인 후 라이브러리에서 삭제(캔버스에 이미
+        놓인 사본은 독립 아이템이라 영향 없음 — 라이브러리는 '찍어내는 틀'일 뿐)."""
+        entry = next((e for e in symbol_library.load_library() if e.get("id") == sym_id), None)
+        name = entry["name"] if entry else sym_id
+        ret = QMessageBox.question(
+            self, "팔레트에서 삭제", f"'{name}' 심볼을 팔레트에서 삭제할까요?")
+        if ret == QMessageBox.StandardButton.Yes:
+            symbol_library.delete_symbol(sym_id)
+            self._refresh_custom_symbol_section()
+
+
     def _build_left_panel(self):
         """[캔버스-퍼스트] 도형 + 레이어를 탭 하나로 묶은 좌상단 플로팅 카드.
         [self-review 수정, 실사용 피드백 2026-07-29] 처음엔 `QTabWidget`으로 구현했는데,
@@ -727,8 +767,13 @@ class _UIBuildMixin:
         sym_entries = [(label, kind, f"{label} 심볼 — 클릭 후 캔버스에 드래그", f"sym:{kind}")
                        for kind, (label, _fn) in _SYMBOL_KINDS.items()]
         syms = self._make_shape_section("순서도", sym_entries, self._sym_buttons)
-        box.addWidget(basic); box.addWidget(syms)
+        self._custom_sym_buttons: dict[str, QToolButton] = {}   # [신규기능 §8-8] set_tool 체크상태 동기화용
+        custom = self._make_shape_section("내 심볼", [], self._custom_sym_buttons)   # 버튼은 refresh가 채움
+        self._custom_sym_idx = len(self._shape_sections) - 1
+        self._custom_sym_section = custom
+        box.addWidget(basic); box.addWidget(syms); box.addWidget(custom)
         self._relayout_sections(horiz=False)   # 항상 세로(2열) — 반응형 전환 없음
+        self._refresh_custom_symbol_section()
         outer.addWidget(shapes_page)
         self._left_pages = {"shapes": shapes_page}
 

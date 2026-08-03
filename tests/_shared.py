@@ -6,6 +6,9 @@
 import os
 import sys
 import tempfile
+import uuid
+from contextlib import contextmanager
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -316,6 +319,16 @@ def _mk_arrow(w, x1, y1, x2, y2, color="#111111"):
     ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(ar)
     return ar
+
+
+@contextmanager
+def _isolated_symbol_library():
+    """[§8-8] symbol_library가 실제 사용자 AppData가 아니라 격리된 임시 파일에 읽고 쓰게
+    한다 — 테스트가 실제 팔레트 라이브러리를 오염시키지 않도록."""
+    from easycad.fileio import symbol_library
+    path = os.path.join(_TMP, f"symlib_{uuid.uuid4().hex}.json")
+    with patch.object(symbol_library, "_library_path", return_value=path):
+        yield
 
 
 def _mock_color_dialog_exec(picked: QColor):

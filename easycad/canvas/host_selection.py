@@ -34,7 +34,11 @@ from easycad.canvas.annotator_core import (
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
-from easycad.fileio.document import save_document, load_document, load_document_layers
+from easycad.fileio.document import (
+    save_document, load_document, load_document_layers,
+    item_to_dict, dict_to_item, _pixmap_to_b64,
+)
+from easycad.fileio import symbol_library
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
@@ -60,6 +64,37 @@ _PALETTE_DROP_WH = {"rect": (120.0, 72.0), "ellipse": (100.0, 100.0)}  # 기본 
 _PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 크기
 
 
+def _group_scene_rect(items) -> QRectF:
+    """아이템 목록의 '보이는 도형' 기준 합집합 씬 사각형(§8-8 커스텀 심볼 등록/배치 공용).
+    sceneBoundingRect()는 핸들·빠른생성 도트 여백이 도형마다 달라 기준으로 못 쓴다
+    (M5 align_rect와 동일한 이유, `_content_rect` 우선)."""
+    def _rect(it):
+        r = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
+        return it.mapToScene(r).boundingRect()
+    box = _rect(items[0])
+    for it in items[1:]:
+        box = box.united(_rect(it))
+    return box
+
+
+def _render_symbol_thumbnail(items, box: QRectF, size: int = 64) -> str:
+    """items(아직 scene 미소속인 임시 인스턴스)를 정사각 PNG로 렌더해 base64로 반환.
+    등록 직후 한 번만 쓰는 저해상도 팔레트 아이콘이라 임시 QGraphicsScene을 그때그때 만든다."""
+    scene = QGraphicsScene()
+    for it in items:
+        scene.addItem(it)
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    margin = 4.0
+    avail = size - 2 * margin
+    scale = min(avail / box.width(), avail / box.height()) if box.width() > 0 and box.height() > 0 else 1.0
+    w, h = box.width() * scale, box.height() * scale
+    target = QRectF(margin + (avail - w) / 2, margin + (avail - h) / 2, w, h)
+    scene.render(p, target, box)
+    p.end()
+    return _pixmap_to_b64(pm)
 
 
 class _SelectionMixin:
@@ -249,6 +284,34 @@ class _SelectionMixin:
             it._group_id = None
         self._push_entry([("mut", it, "group", old, None) for it, old in snaps])
         self.statusBar().showMessage(f"그룹 해제: {len(members)}개 객체", 3000)
+
+    # ---- [신규기능 §8-8] 커스텀 심볼 팔레트 등록 ------------------------------
+
+    def register_selection_as_symbol(self):
+        """선택(주로 DXF에서 가져온 심볼)을 앱 전역 팔레트에 등록해 다른 도면에서도 재사용.
+        위치는 그대로 보존하되 화살표의 지속연결 바인딩은 저장하지 않는다(모듈 docstring 참조)."""
+        targets = self._edit_targets()
+        if not targets:
+            return
+        dicts = [d for d in (item_to_dict(it) for it in targets) if d is not None]
+        if not dicts:
+            QMessageBox.information(self, "팔레트에 등록", "이 항목은 등록할 수 없습니다.")
+            return
+        name, ok = QInputDialog.getText(self, "팔레트에 등록", "심볼 이름:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        tmp = [it for it in (dict_to_item(d) for d in dicts) if it is not None]
+        if not tmp:
+            return
+        box = _group_scene_rect(tmp)
+        for d in dicts:
+            d["pos"][0] -= box.left()
+            d["pos"][1] -= box.top()
+        thumb = _render_symbol_thumbnail(tmp, box)
+        symbol_library.add_symbol(name, dicts, thumb)
+        self._refresh_custom_symbol_section()
+        self.statusBar().showMessage(f"팔레트에 등록: {name}", 3000)
 
     # ---- [편의기능] 객체 잠금 ---------------------------------------------
 

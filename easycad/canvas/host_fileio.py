@@ -34,11 +34,13 @@ from easycad.canvas.annotator_core import (
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
-from easycad.fileio.document import save_document, load_document, load_document_layers
+from easycad.fileio.document import save_document, load_document, load_document_layers, dict_to_item
+from easycad.fileio import symbol_library
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
 from easycad.canvas.host_widgets import _border_attach
+from easycad.canvas.host_selection import _group_scene_rect
 from easycad.canvas.host_dialogs import (
     _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _MermaidDialog,
 )
@@ -257,6 +259,8 @@ class _FileIOMixin:
         """[Phase 6 M3 #17] 팔레트에서 드롭한 도구를 scene_pos 중심에 기본 크기로 생성.
         무장 후 드래그로 그리는 경로(_AnnotatorView.mousePressEvent)와 같은 아이템·펜·플래그를
         써 이후 편집(리사이즈·회전·undo·저장)이 전부 동일하게 동작한다."""
+        if tool_key.startswith("customsym:"):
+            return self._create_custom_symbol_at(tool_key[len("customsym:"):], scene_pos)
         if tool_key.startswith("sym:"):
             w, h = _PALETTE_SYM_WH
             it = _SymbolItem(tool_key[4:], QRectF(0.0, 0.0, w, h))
@@ -274,6 +278,30 @@ class _FileIOMixin:
         it.setSelected(True)
         self.push_undo_add(it)
         return it
+
+
+    def _create_custom_symbol_at(self, sym_id: str, scene_pos: QPointF):
+        """[신규기능 §8-8] 팔레트에 등록해 둔 커스텀 심볼(그룹)을 scene_pos에 재구성.
+        단일 아이템이 아니라 그룹이라 위 분기와 별도 경로 — bbox 좌상단을 scene_pos에 맞춘다."""
+        entry = next((e for e in symbol_library.load_library() if e.get("id") == sym_id), None)
+        if entry is None:
+            return None
+        items = [it for it in (dict_to_item(d) for d in entry.get("items", [])) if it is not None]
+        if not items:
+            return None
+        box = _group_scene_rect(items)
+        dx, dy = scene_pos.x() - box.left(), scene_pos.y() - box.top()
+        for it in items:
+            it.moveBy(dx, dy)
+            self._scene.addItem(it)
+        if len(items) >= 2:
+            gid = uuid.uuid4().hex[:8]
+            for it in items:
+                it._group_id = gid
+        self._scene.clearSelection()
+        self._bulk_select(items)
+        self.push_undo_add_many(items)
+        return items[0]
 
 
     def dragEnterEvent(self, e):

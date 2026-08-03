@@ -117,7 +117,7 @@ class _UndoMixin:
         적용하도록 singleShot(0)로 지연(현재 그리기 핸들러가 도구를 더 참조할 수 있으므로).
         붙여넣기·복제·빠른생성은 select 모드에서 일어나 여기 걸리지 않는다(가드)."""
         tool = self.current_tool
-        armed = tool in _ONESHOT_TOOLS or (tool or "").startswith("sym:")
+        armed = tool in _ONESHOT_TOOLS or (tool or "").startswith(("sym:", "customsym:"))
         if armed and not self.tool_pinned:
             QTimer.singleShot(0, lambda: self.set_tool("select"))
 

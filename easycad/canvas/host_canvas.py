@@ -155,6 +155,8 @@ class _CanvasMixin:
             b.setChecked(k == key)
         for k, b in getattr(self, "_sym_buttons", {}).items():
             b.setChecked(f"sym:{k}" == key)
+        for k, b in getattr(self, "_custom_sym_buttons", {}).items():   # [신규기능 §8-8]
+            b.setChecked(f"customsym:{k}" == key)
 
 
     def next_badge_number(self) -> int:

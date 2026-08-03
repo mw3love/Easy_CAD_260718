@@ -102,6 +102,7 @@ class _ContextMixin:
             if any(getattr(it, "_group_id", None) for it in targets):
                 menu.addAction("그룹 해제\tCtrl+Shift+G", self.ungroup_selection)
             menu.addMenu(self._build_layer_menu("레이어로 이동", parent=menu))  # [신규기능]
+            menu.addAction("팔레트에 등록...", self.register_selection_as_symbol)  # [신규기능 §8-8]
         if has_clip:
             if has_sel:
                 menu.addSeparator()
