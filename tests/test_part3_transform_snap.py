@@ -645,20 +645,20 @@ def test_qc_create_default():
 
 
 def test_qc_create_drag_position():
-    # [① 빈 캔버스 드롭 2026-08-01, Lucid 대조] 드래그(스냅 대상 없는 빈 캔버스) = 더 이상
-    # 바인딩 없는 자유 끝을 남기지 않고, 원본과 같은 도형을 커서 위치에 만들어 양끝 바인딩.
+    # [① 빈 캔버스 드롭 2026-08-01 → 2026-08-04 4차 갱신, 실사용 결정] 도형 종류를 가리지 않고
+    # "클릭=복제(_qc_create의 클릭 경로) / 드래그=화살표만"으로 규칙을 통일했다 — 포트만의
+    # 특례 없이 포트가 원하는 동작(드래그해도 장비 안 생김)을 저절로 만족시키기 위함. 드래그
+    # (스냅 대상 없는 빈 캔버스)는 이제 도형을 만들지 않고 끝이 비어있는(미결) 화살표만 남긴다.
     w = CanvasWindow()
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
     n0 = len([x for x in w._scene.items() if isinstance(x, _RectItem)])
     arrow = w._view._qc_create(a, "b", QPointF(250, 400))
     assert isinstance(arrow, _PolyArrowItem)
     rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
-    assert len(rects) == n0 + 1                        # 새 도형 생성됨(더 이상 복제 없음이 아님)
-    dup = [x for x in rects if x is not a][0]
+    assert len(rects) == n0                             # 새 도형 없음
     assert arrow._bind_start is a
-    assert arrow._bind_end is dup                       # 끝도 새 도형에 바인딩(자유 끝 아님)
-    dr = dup.mapToScene(dup.rect()).boundingRect()
-    assert _close(dr.center(), QPointF(250, 400))        # 새 도형 중심 = 커서
+    assert arrow._bind_end is None                       # 끝은 비어있음(미결)
+    assert _close(QPointF(arrow.mapToScene(arrow._pts[-1])), QPointF(250, 400))
 
 
 
@@ -761,6 +761,36 @@ def test_qc_dot_position_stable_during_live_drag():
         assert _close(dots[k].center(), m), f"드래그 중에도 {k}는 같은 자리여야 함"
     v.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease,
                            QPointF(t_scene.x(), t_scene.y() - 80), L, NB))
+
+
+def test_qc_drag_axis_snaps_near_exit_normal():
+    # [실사용 지적 2026-08-04] 직교 출구(수평/수직)에서 조금만 벗어나도 라우터가 짧은 꺾임을
+    # 넣어 똑바로 그리기가 어려웠다 — 시작점의 출구 축에서 스냅 반경(10px, 뷰) 안이면 그 축
+    # 위로 당겨 한 번에 일직선이 되도록 한다. 반경 밖이면 스냅하지 않고 자유롭게 그려진다.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.grid_enabled = False
+    v = w._view
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    e_rect = dict(a._qc_dot_rects())["r"]   # 수평 출구(법선 +x)
+    start = a.mapToScene(e_rect.center())
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(v.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    v.mousePressEvent(ev(QEvent.Type.MouseButtonPress, start, L, L))
+
+    near = QPointF(start.x() + 300, start.y() + 4)     # 스냅 반경 안
+    v.mouseMoveEvent(ev(QEvent.Type.MouseMove, near, NB, L))
+    assert v._hp_cursor is not None and abs(v._hp_cursor.y() - start.y()) < 1e-6, \
+        "스냅 반경 안이면 시작점 y로 당겨져야 함"
+
+    far = QPointF(start.x() + 300, start.y() + 40)     # 스냅 반경 밖
+    v.mouseMoveEvent(ev(QEvent.Type.MouseMove, far, NB, L))
+    assert v._hp_cursor is not None and _close(v._hp_cursor, far), \
+        "스냅 반경 밖이면 커서 그대로여야 함"
+    v.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, far, L, NB))
 
 
 

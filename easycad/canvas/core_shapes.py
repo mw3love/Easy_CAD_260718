@@ -588,6 +588,10 @@ class _HandleResizeMixin:
     # (사용자 확인 2026-08-01) — 단일축 리사이즈는 이 점 자체가 아니라 변 나머지 구간
     # (`_box_edge_side`)이 담당한다.
     def _qc_dot_rects(self):
+        # [2026-08-04, 3차 수정] 포트도 선택 여부와 무관하게 자신의 4변 접속점을 유지한다
+        # (실사용 요구: 드래그해서 화살표를 뽑는 용도로 항상 있어야 함) — 여기서 걸러내지
+        # 않는다. 대신 "빈 캔버스에 놓으면 새 도형이 함께 생기는" 결과만 포트일 때 억제한다
+        # (`_hp_create_arrow`/`_qc_create` 참조) — 포트는 화살표만 남기고 장비 복제는 없다.
         h = self._handle_px()
         d = h * 0.9
         gap = h * self._HANDLE_GAP_FACTOR
@@ -5073,13 +5077,13 @@ def _shape_ports(item):
     for p in pts:
         sp, n = _nearest_border(item, item.mapToScene(p))
         out.append((sp, n))
-    # [신규기능 §8-12] 부착된 포트도 접속점으로 노출 — 커넥터가 실제 포트 중심에서 뻗어
-    # 나가도록(사용자가 팔레트로 배치한 포트가 곧 "진짜" 접속 지점). 기본 N/E/S/W와
-    # 별개로 추가되므로 기존 8포트 시스템을 건드리지 않는다.
-    for port in getattr(item, "_ports", None) or []:
-        center_scene = port.mapToScene(port.rect().center())
-        sp, n = _nearest_border(item, center_scene)
-        out.append((sp, n))
+    # [신규기능 §8-12 → 2026-08-04 3차 수정으로 제거] 예전엔 부착된 포트의 중심을 호스트의
+    # 접속점 목록에도 중복으로 넣었다. 지금은 포트 자신이 (선택 여부와 무관하게) 독립적으로
+    # 4변 접속점을 제공하므로(_hover_port_at·_qc_dot_at이 포트를 후보로 직접 스캔) 이 중복이
+    # 오히려 문제였다 — 포트 정중앙이 호스트의 이 점(거리 0)과 정확히 겹쳐, 커서가 정중앙 부근을
+    # 살짝만 움직여도 "호스트의 중앙점"과 "포트 자신의 4변점" 사이에서 최근접 판정이 뒤집혀
+    # 예고점이 깜빡였다(실사용 리포트). 포트 정중앙이 하나의 반응 지점으로 남는 것 자체가
+    # "중앙은 무반응이어야 한다"는 요구와도 어긋나 통째로 없앤다.
     return out
 
 

@@ -84,9 +84,9 @@ def test_select_tool_port_drag_creates_connector():
 
 
 def test_select_tool_port_drag_into_empty_space_creates_shape():
-    # [① 빈 캔버스 드롭 2026-08-01, Lucid 대조] 스냅 대상 없는 빈 캔버스로 포트를 드래그하면
-    # 바인딩 없는 화살표를 남기지 않고 원본과 같은 도형을 그 자리에 만들어 함께 바인딩한다
-    # (qc-dot 드래그의 test_qc_create_drag_position과 동일 계약, hover-port 경로도 동일하게).
+    # [① 빈 캔버스 드롭 2026-08-01 → 2026-08-04 4차 갱신, 실사용 결정] 스냅 대상 없는 빈
+    # 캔버스로 접속점을 드래그하면(도형 종류 무관) 이제 도형을 만들지 않고 끝이 비어있는
+    # (미결) 화살표만 남긴다 — "드래그=화살표만"으로 규칙 통일(포트 예외 없이).
     w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
     view = w._view
     r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
@@ -98,11 +98,9 @@ def test_select_tool_port_drag_into_empty_space_creates_shape():
     arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
     rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
     assert len(arrows) == 1
-    assert len(rects) == n_rect0 + 1                                 # 새 도형 생성됨
-    dup = [x for x in rects if x is not r][0]
-    assert arrows[0]._bind_start is r and arrows[0]._bind_end is dup
-    dr = dup.mapToScene(dup.rect()).boundingRect()
-    assert _close(dr.center(), QPointF(400, 200))                    # 새 도형 중심 = 커서
+    assert len(rects) == n_rect0                                     # 새 도형 없음
+    assert arrows[0]._bind_start is r and arrows[0]._bind_end is None
+    assert _close(QPointF(arrows[0].mapToScene(arrows[0]._pts[-1])), QPointF(400, 200))
 
 
 
@@ -1408,17 +1406,21 @@ def test_host_delete_cascades_port_and_undo_restores():
 
 
 def test_shape_ports_includes_attached_port_and_connector_can_start_there():
+    # [2026-08-04, 3차 수정] 포트의 접속점은 더 이상 호스트의 `_shape_ports`에 중복 노출되지
+    # 않는다 — 포트 정중앙이 반드시 죽은 지대여야 하는데, 호스트가 그 자리(거리 0)를 접속점으로
+    # 계속 들고 있으면 정중앙이 다시 살아난다(실사용 리포트: 깜빡임의 원인이기도 했다). 대신
+    # 포트 자신이 (선택 여부 무관하게) 4변 접속점을 직접 제공하므로 그중 하나(E)에서 드래그한다.
     w = CanvasWindow(); w.grid_enabled = False
     dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
     target = _mk_pen_rect(w, x=400, y=300, ww=100, hh=60)
     port = w._create_port_at("port_rect", QPointF(60, 0))
     port_center = port.mapToScene(port.rect().center())
-    ports = _shape_ports(dev)
-    assert any(_close(p, port_center, eps=0.01) for p, _n in ports)
+    assert not any(_close(p, port_center, eps=0.01) for p, _n in _shape_ports(dev))
+    port_edge, _n = _shape_ports(port)[1]   # N,E,S,W 순서 — 인덱스1=E
 
     w._scene.clearSelection(); w.set_tool("select")
     before = len([x for x in w._scene.items() if isinstance(x, _PolyArrowItem)])
-    _qc_drag(w._view, port_center, QPointF(450, 330))
+    _qc_drag(w._view, port_edge, QPointF(450, 330))
     arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
     assert len(arrows) == before + 1
     # [실사용 버그 수정 2026-08-03] 커넥터는 호스트가 아니라 포트 자신에 바인딩돼야 한다 —
@@ -1432,22 +1434,71 @@ def test_connector_follows_port_when_port_moves():
     # 안 따라가고 장비 테두리의 옛 자리에 그대로 남았다 — 원인은 커넥터가 host에(고정
     # local_pt로) 바인딩됐기 때문. 포트 자신에 바인딩되면 포트가 움직인 뒤 reroute()가
     # 새 위치를 정확히 반영해야 한다.
+    # [2026-08-04, 3차 수정] 포트 정중앙은 죽은 지대라 드래그 시작점을 포트의 E 변 접속점으로
+    # 바꿨다(위 테스트와 동일 이유).
     w = CanvasWindow(); w.grid_enabled = False
     dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
     _mk_pen_rect(w, x=400, y=300, ww=100, hh=60)
     port = w._create_port_at("port_rect", QPointF(60, 0))
-    port_center = port.mapToScene(port.rect().center())
+    port_edge, _n = _shape_ports(port)[1]
     w._scene.clearSelection(); w.set_tool("select")
-    _qc_drag(w._view, port_center, QPointF(450, 330))
+    _qc_drag(w._view, port_edge, QPointF(450, 330))
     arrow = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)][-1]
-    assert _close(QPointF(arrow.mapToScene(arrow._pts[0])), port_center, eps=1.0)
+    assert _close(QPointF(arrow.mapToScene(arrow._pts[0])), port_edge, eps=1.0)
 
     port.setPos(port.pos().x() + 60, port.pos().y())   # 포트를 다른 자리로 이동
     arrow.reroute()
-    new_center = port.mapToScene(port.rect().center())
-    assert not _close(new_center, port_center, eps=1.0)   # 실제로 옮겨졌는지 확인(전제)
-    assert _close(QPointF(arrow.mapToScene(arrow._pts[0])), new_center, eps=1.0), \
+    new_edge, _n = _shape_ports(port)[1]
+    assert not _close(new_edge, port_edge, eps=1.0)   # 실제로 옮겨졌는지 확인(전제)
+    assert _close(QPointF(arrow.mapToScene(arrow._pts[0])), new_edge, eps=1.0), \
         "커넥터 시작점이 옮긴 포트를 따라가야 한다"
+
+
+def test_port_participates_normally_in_hover_and_qc_systems():
+    # [실사용 버그 수정 2026-08-04, 4차 — 최종 설계] 3차에서 포트 전용 "정중앙 죽은 지대"
+    # 코드를 여러 곳에 심었으나, 실사용 중 포트 근처 호버가 여전히 호스트의 동서남북 미리보기를
+    # 잘못 띄우는 새 버그가 나왔다(원인: `_draw_port_dots`가 쓰는 `_port_dot_target`은 포트를
+    # 후보에서 뺐더니 그다음으로 가까운 호스트를 대신 골랐다). 실사용 결정으로 포트를 다시
+    # "완전히 평범한 도형"으로 되돌리고(전용 예외 코드 전부 제거), 대신 "드래그는 항상
+    # 화살표만"이라는 규칙을 도형 전체에 공통 적용해 포트가 원하는 동작을 특례 없이 얻는다
+    # (아래 테스트가 그 규칙을 검증). 포트 정중앙이 `_port_dot_target`에서 안 잡히는 건 포트가
+    # 호스트 테두리 위에 정확히 얹혀 있어 `_shape_interior_contains`(경계 포함)가 호스트도
+    # "내부"로 판정하는 기존 로직의 자연스러운 부작용이지, 포트 전용 특례가 아니다.
+    w = CanvasWindow(); w.grid_enabled = False
+    _mk_pen_rect(w, x=0, y=0, ww=200, hh=120)
+    port = w._create_port_at("port_circle", QPointF(0, 35))
+    w._scene.clearSelection()   # 생성 직후 자동선택 상태를 벗어나 실사용 호버 시나리오로
+
+    port_edge, _n = _shape_ports(port)[1]   # N,E,S,W 순서 — 인덱스1=E
+    hp = w._view._hover_port_at(w._view.mapFromScene(port_edge))
+    assert hp is not None
+    sh, sp, _n2, is_discrete = hp
+    assert sh is port and is_discrete
+    assert _close(sp, port_edge, eps=0.01)
+
+
+def test_qc_drag_never_spawns_device_click_still_does_port_and_normal_shape():
+    # [실사용 결정 2026-08-04, 4차] "큐닷을 클릭하면 도형 복제, 드래그하면 화살표만"이라는
+    # 규칙을 포트에 국한하지 않고 전 도형 공통으로 통일했다 — 포트도 이 규칙 하나로 원하는
+    # 동작(드래그해도 장비 안 생김)을 특례 코드 없이 만족한다. 포트·일반 도형 둘 다 확인.
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=200, hh=120)
+    port = w._create_port_at("port_circle", QPointF(0, 35))
+    w._scene.clearSelection()
+
+    for src in (port, host):
+        # 드래그(빈 캔버스) — 새 도형 없음, 끝이 비어있는 화살표.
+        n0 = len(w._scene.items())
+        edge_pt = _shape_ports(src)[1][0]
+        arrow = w._view._hp_create_arrow(src, edge_pt, QPointF(900, 900))
+        assert len(w._scene.items()) == n0 + 1
+        assert arrow._bind_end is None
+
+        # 클릭(드래그 없음) — 도형 복제 + 화살표(포트든 일반 도형이든 동일).
+        n1 = len(w._scene.items())
+        dup, arrow2 = w._view._qc_create(src, "r", None)
+        assert len(w._scene.items()) == n1 + 2   # 복제 도형 + 화살표
+        assert arrow2._bind_start is src and arrow2._bind_end is dup
 
 
 def test_build_trimmed_border_path_has_gap_at_port():
@@ -1597,21 +1648,28 @@ def test_port_corner_resize_defaults_to_aspect_lock_shift_frees_it():
 
 
 def test_selected_port_hover_marker_does_not_duplicate_on_itself():
-    # [실사용 버그 수정] 포트가 선택되면 자기 자신의 리사이즈 핸들이 뜨는데, 같은 자리에
-    # 호스트의 "여기서 커넥터를 뽑을 수 있다" 미리보기까지 겹쳐 핸들이 뭉쳐 보였다(사용자
-    # 스크린샷 — 가운데 정체불명의 점). 선택된 포트 자리는 호버 미리보기에서 제외해야 한다.
+    # [실사용 버그 수정, 2026-08-04 3차 갱신] 원래는 "호스트가 노출한 포트-중앙 접속점"과
+    # "선택된 포트 자신의 리사이즈 핸들"이 겹쳐 핸들이 뭉쳐 보이던 버그를 막는 테스트였다.
+    # 3차 수정으로 호스트가 더 이상 포트 위치를 접속점으로 중복 노출하지 않으므로(포트 정중앙은
+    # 항상 죽은 지대) 원래 충돌 자체가 구조적으로 사라졌다 — 이제 포트 자신의 4변 접속점이 그
+    # 역할을 하므로, 한 포트를 선택해도 다른(미선택) 포트의 호버가 정상 작동하는지로 갱신한다.
+    # [2026-08-04 4차] E(오른쪽) 점은 호스트의 상단 테두리 위이기도 해(포트가 그 위에 얹혀
+    # 있으므로) 포트 선택 후에도 Pass 2 연속 폴백이 "호스트 테두리의 한 점"으로 다시 주울 수
+    # 있다 — 이건 포트와 무관한 호스트 자체의 연속 호버 기능이라 회귀가 아니다. 포트가 자기
+    # 소유인 게 명확한 N(바깥쪽) 점으로 검증한다.
     w = CanvasWindow(); w.set_tool("select")
-    dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
     port = w._create_port_at("port_rect", QPointF(60, 0))
     port2 = w._create_port_at("port_circle", QPointF(140, 0))
     w._scene.clearSelection()
 
-    v1 = w._view.mapFromScene(QPointF(60, 0))
-    assert w._view._hover_port_at(v1) is not None   # 미선택 상태에선 정상 노출
+    n1, _n = _shape_ports(port)[0]
+    assert w._view._hover_port_at(w._view.mapFromScene(n1)) is not None   # 미선택 상태에선 정상 노출
 
     port.setSelected(True)
-    assert w._view._hover_port_at(v1) is None        # 선택된 포트 자리는 미리보기 제외
-    v2 = w._view.mapFromScene(QPointF(140, 0))
-    assert w._view._hover_port_at(v2) is not None    # 다른(미선택) 포트는 회귀 없이 정상
+    # 선택된 도형은 _hover_port_at 대상에서 제외(_connect_port_at가 대신 처리) — 회귀 없음.
+    assert w._view._hover_port_at(w._view.mapFromScene(n1)) is None
+    n2, _n = _shape_ports(port2)[0]
+    assert w._view._hover_port_at(w._view.mapFromScene(n2)) is not None   # 다른(미선택) 포트는 정상
 
 

@@ -236,7 +236,10 @@ class _AnnotatorView(QGraphicsView):
 
     def _qc_create(self, src, side, cursor_scene):
         """[2d] 네방향점 클릭=도형 복제+연결 화살표 / [M4-2] 드래그=화살표만.
-        cursor_scene가 있으면(드래그) 화살표만, None이면(클릭) 복제 도형+화살표."""
+        cursor_scene가 있으면(드래그) 화살표만, None이면(클릭) 복제 도형+화살표.
+        [2026-08-04, 4차 — 포트도 예외 없이 동일] 포트(호스트에 부착된 작은 도형)도 다른
+        도형과 똑같이 클릭=복제. 포트별 특례 대신 "드래그는 항상 화살표만"이라는 규칙을
+        전 도형 공통으로 두어(`_hp_create_arrow` 참조) 포트가 원하는 동작을 특례 없이 얻는다."""
         if cursor_scene is not None:
             return self._qc_create_arrow_only(src, side, cursor_scene)
         sr = self._qc_src_scene_rect(src)
@@ -262,24 +265,13 @@ class _AnnotatorView(QGraphicsView):
         dup.setSelected(True)
         return dup, arrow
 
-    def _qc_spawn_dup(self, src, cursor_scene):
-        """[① 빈 캔버스 드롭 2026-08-01] qc-dot·hover-port 드래그가 스냅 대상 없이(빈 캔버스)
-        끝나면 호출 — 원본과 같은 도형을 커서 위치(=새 도형 중심)에 복제해 씬에 추가만 하고
-        반환한다. 바인딩·undo 등록은 호출부(_qc_create_arrow_only/_hp_create_arrow) 책임."""
-        sr = self._qc_src_scene_rect(src)
-        dup = src.clone()
-        self.scene().addItem(dup)
-        dup.setPos(src.pos() + (QPointF(cursor_scene) - sr.center()))
-        return dup
-
     def _qc_create_arrow_only(self, src, side, cursor_scene):
-        """[M4-2] 네방향점 드래그 = 화살표만 생성(도형 복제 없이). 시작은 src의 side 포트에
-        바인딩, 끝은 커서 위치 — 그 자리에 다른 도형이 있으면 그 테두리에 스냅+바인딩.
+        """[M4-2 → 2026-08-04 4차 갱신] 네방향점 드래그 = 화살표만 생성(도형 복제 없이). 시작은
+        src의 side 포트에 바인딩, 끝은 커서 위치 — 그 자리에 다른 도형이 있으면 그 테두리에
+        스냅+바인딩. 스냅 대상이 없으면(빈 캔버스) 끝이 비어있는(미결) 화살표로 남는다 —
+        도형 복제는 클릭 경로(`_qc_create`)만의 몫이다(실사용 결정: 드래그=항상 화살표만).
         [편의기능] 시작이 항상 바인딩되므로(has_binding) 자유 끝이어도 _apply_routing이 회피
-        경로 포함 직각 엘보를 만든다 — 종전엔 스냅 안 됐을 때만 직선으로 남았다(2026-07-27 피드백).
-        [① 빈 캔버스 드롭 2026-08-01, Lucid 대조] 스냅 대상이 전혀 없으면(빈 캔버스) 바인딩
-        없는 화살표를 남기지 않고, 원본과 같은 도형을 커서 위치에 만들어 함께 바인딩한다 —
-        클릭 경로(_qc_create)가 이미 하던 도형 생성을 드래그에도 확장."""
+        경로 포함 직각 엘보를 만든다 — 종전엔 스냅 안 됐을 때만 직선으로 남았다(2026-07-27 피드백)."""
         owner = self._owner
         p_src = _edge_mid(self._qc_src_scene_rect(src), side)
         arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
@@ -289,27 +281,17 @@ class _AnnotatorView(QGraphicsView):
                        | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         arrow.set_bound(0, src, src.mapFromScene(p_src))
         snap = self._qc_snap_target(cursor_scene, src)
-        dup = None
-        if snap is not None:
-            end = snap[0]
-        else:
-            dup = self._qc_spawn_dup(src, cursor_scene)
-            end, _n = _nearest_border(dup, p_src)
+        end = snap[0] if snap is not None else cursor_scene
         arrow.set_points(p_src, end)
-        if dup is not None:
-            arrow.set_bound(1, dup, dup.mapFromScene(end))
-        elif snap is not None and snap[2] is not None and (
+        if snap is not None and snap[2] is not None and (
                 snap[2] is not src or _far_enough_for_self_loop(p_src, end)):
             arrow.set_bound(1, snap[2], snap[2].mapFromScene(end))
         arrow._auto_route = True   # 도형 이동 시에도 계속 엘보로 재계산(reroute가 이 값을 봄)
         self.scene().addItem(arrow)
         arrow._apply_routing()
-        if dup is not None:
-            self._owner.push_undo_add_many([dup, arrow])
-        else:
-            self._owner.push_undo_add(arrow)
+        self._owner.push_undo_add(arrow)
         self.scene().clearSelection()
-        (dup if dup is not None else arrow).setSelected(True)
+        arrow.setSelected(True)
         return arrow
 
     def _qc_snap_target(self, cursor_scene, src):
@@ -916,7 +898,12 @@ class _AnnotatorView(QGraphicsView):
         contains)은 호출부가 그대로 한다.
         [2026-08-04 연속 호버 §8 항목16] _PathItem(DXF 폴백 도형)도 후보에 포함 — 이산 포트가
         없어 Pass 1(discrete)에선 호출부가 스킵하지만, Pass 2(연속 폴백)는 _nearest_border가
-        이미 _PathItem을 지원하므로 대상에 넣어 화살표-그리기 스냅과 동작을 통일한다."""
+        이미 _PathItem을 지원하므로 대상에 넣어 화살표-그리기 스냅과 동작을 통일한다.
+        [2026-08-04, 3차 수정] 포트를 여기서 걸러내지 않는다 — 포트도 이 후보 목록을 타는
+        `_hover_port_at`(미선택 4점)·`_qc_dot_at`을 통해 자신의 4변 접속점을 항상 제공해야
+        하기 때문(실사용 요구: 선택 여부 무관하게 4변 중심점은 살아있어야 함). 포트를
+        "장비 전체"처럼 취급해 중심을 눌러도 반응하는 문제는 이 함수가 아니라
+        `_port_dot_target`(장비 하나를 통째로 미리보기하는 별도 시스템) 쪽에서만 걸러낸다."""
         rect = QRectF(scene_pt.x() - margin, scene_pt.y() - margin, margin * 2, margin * 2)
         return [it for it in self.scene().items(rect)
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PathItem))]
@@ -1094,10 +1081,12 @@ class _AnnotatorView(QGraphicsView):
 
     def _hp_paint_ghost(self, painter, src, port_pt, port_normal, cursor_scene):
         """[하나의 시스템으로 통합 2026-08-01] 접속점 드래그 중 커넥터 고스트 — 선택 여부와
-        무관하게(qc-dot·hover-port 공통) 이 하나로 그린다. [우선순위 정정] 빈 캔버스 드롭 시
-        새 도형이 실제로 생기긴 하지만(아래 _hp_create_arrow), 드래그 중엔 화살표가 우선이라
-        도형 미리보기는 보이지 않는다."""
-        pen = QPen(QColor(90, 150, 235), 1.5, Qt.PenStyle.DashLine)
+        무관하게(qc-dot·hover-port 공통) 이 하나로 그린다. 빈 캔버스에 드롭해도(아래
+        _hp_create_arrow) 화살표만 생기므로(2026-08-04 4차) 도형 미리보기 자체가 없다 —
+        이 함수는 처음부터 화살표 몸통·화살촉만 그린다.
+        [2026-08-04 실사용 지적] 점선은 시인성이 떨어진다 — 실제 생성 결과(항상 실선)와
+        동일하게 실선으로 미리보인다."""
+        pen = QPen(QColor(90, 150, 235), 1.5, Qt.PenStyle.SolidLine)
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -1150,7 +1139,9 @@ class _AnnotatorView(QGraphicsView):
         에만 그려져, 누르기 전까지는 작은 점 하나(`_draw_port_dots`)만 보였다 — 참고 이미지는
         누르지 않은 상태에서도 점선 고스트 사각형+화살표가 보이길 기대한다.
         배치는 `_qc_target_center(src, side, None)`(= 클릭 시 기본 델타)를 그대로 재사용해
-        "미리보기 = 실제 결과"를 보장한다(고스트 시스템 전체의 기존 관례)."""
+        "미리보기 = 실제 결과"를 보장한다(고스트 시스템 전체의 기존 관례). 포트도 예외 없이
+        같은 미리보기를 받는다 — 클릭=복제는 포트에도 그대로 적용되는 규칙이라(2026-08-04
+        4차) 이 전제가 깨지지 않는다."""
         side = _side_from_normal(nrm)
         sr = self._qc_src_scene_rect(src)
         center = self._qc_target_center(src, side, None)
@@ -1165,10 +1156,15 @@ class _AnnotatorView(QGraphicsView):
         self._draw_ghost_arrowhead(painter, port_pt, p_dup)
 
     def _hp_create_arrow(self, src, port_pt, cursor_scene):
-        """[하나의 시스템으로 통합 2026-08-01] 도형(선택 여부 무관)의 접속점에서 드래그 종료 —
-        스냅 대상 있으면 커넥터만(도형 복제 없음), 없으면(빈 캔버스) 원본과 같은 도형을 커서
-        위치에 만들어 함께 바인딩(_qc_spawn_dup 공유). _qc_create_arrow_only와 종착 스냅·
-        라우팅 로직을 공유 — 그쪽은 side 문자 기반 API로 테스트·기존 호출부용으로 남겨둔다."""
+        """[하나의 시스템으로 통합 2026-08-01 → 2026-08-04 4차 갱신] 도형(선택 여부 무관)의
+        접속점에서 드래그 종료 — 스냅 대상 있으면 커넥터만, 없으면(빈 캔버스) 끝이 비어있는
+        (미결) 화살표만 남긴다. _qc_create_arrow_only와 종착 스냅·라우팅 로직을 공유 — 그쪽은
+        side 문자 기반 API로 테스트·기존 호출부용으로 남겨둔다.
+        [2026-08-04 4차 — 실사용 결정] 예전엔 빈 캔버스에 놓으면 원본과 같은 도형을 복제해
+        같이 바인딩했다(`_qc_spawn_dup`) — 포트에 이 규칙이 적용되면 "포트는 화살표만"이라는
+        요구와 충돌해 여러 특례가 필요했다. 도형 종류를 가리지 않고 "클릭=복제(`_qc_create`,
+        안 바뀜) / 드래그=화살표만(여기)"으로 규칙 자체를 통일해, 포트만의 예외 코드 없이
+        포트가 원하는 동작(드래그=화살표만)을 저절로 만족시킨다(실사용 제안)."""
         owner = self._owner
         arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
         arrow._style = getattr(owner, "current_style", arrow._style)      # sticky 선스타일
@@ -1177,27 +1173,17 @@ class _AnnotatorView(QGraphicsView):
                        | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         arrow.set_bound(0, src, src.mapFromScene(port_pt))
         snap = self._qc_snap_target(cursor_scene, src)
-        dup = None
-        if snap is not None:
-            end = snap[0]
-        else:
-            dup = self._qc_spawn_dup(src, cursor_scene)
-            end, _n = _nearest_border(dup, port_pt)
+        end = snap[0] if snap is not None else cursor_scene
         arrow.set_points(port_pt, end)
-        if dup is not None:
-            arrow.set_bound(1, dup, dup.mapFromScene(end))
-        elif snap is not None and snap[2] is not None and (
+        if snap is not None and snap[2] is not None and (
                 snap[2] is not src or _far_enough_for_self_loop(port_pt, end)):
             arrow.set_bound(1, snap[2], snap[2].mapFromScene(end))
         arrow._auto_route = True
         self.scene().addItem(arrow)
         arrow._apply_routing()
-        if dup is not None:
-            self._owner.push_undo_add_many([dup, arrow])
-        else:
-            self._owner.push_undo_add(arrow)
+        self._owner.push_undo_add(arrow)
         self.scene().clearSelection()
-        (dup if dup is not None else arrow).setSelected(True)
+        arrow.setSelected(True)
         return arrow
 
     def leaveEvent(self, event):
@@ -2210,6 +2196,18 @@ class _AnnotatorView(QGraphicsView):
             return
         if self._hp_dragging:  # [하나의 시스템으로 통합] 임계 넘게 끌면 커넥터 프리뷰, 아니면 보류(release=클릭)
             cur = self.mapToScene(event.position().toPoint())
+            # [2026-08-04 실사용 지적] 출구 법선 축(수평/수직)에서 조금만 벗어나도 직교 라우터가
+            # 꺾임(짧은 지그재그)을 넣어 똑바로 그리려 해도 한 번에 안 됐다 — 시작점에서 그 축
+            # 방향으로 충분히 가까우면(스냅 반경 안) 그 축 위로 당겨 한 번에 일직선이 되게 한다.
+            if self._hp_port is not None and self._hp_normal is not None:
+                snap_px = 10.0 / self._view_scale()
+                n = self._hp_normal
+                if abs(n.x()) >= abs(n.y()):   # 수평 출구 — 커서 y를 시작점 y에 맞춘다
+                    if abs(cur.y() - self._hp_port.y()) <= snap_px:
+                        cur = QPointF(cur.x(), self._hp_port.y())
+                else:                          # 수직 출구 — 커서 x를 시작점 x에 맞춘다
+                    if abs(cur.x() - self._hp_port.x()) <= snap_px:
+                        cur = QPointF(self._hp_port.x(), cur.y())
             thr = 8.0 / self._view_scale()
             self._hp_cursor = cur if (self._hp_press_scene is not None
                                       and QLineF(self._hp_press_scene, cur).length() > thr) else None
