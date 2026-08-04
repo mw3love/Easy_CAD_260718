@@ -11,11 +11,11 @@ def test_host_construction():
     assert len(w._tool_buttons) == 6
     assert not ({"rect", "ellipse", "sarrow"} & set(w._tool_buttons))
     assert "arrow" in w._tool_buttons                      # 화살표 버튼 하나가 직선·곡선·직각 대표
-    # 왼쪽 팔레트: 기본(네모·원·삼각형·포트 2종[신규기능 §8-12]) + 순서도/결선도 심볼 18종
-    # (2026-08-04: 안테나 7종 mw_side~mesh_hollow + 번개 표식 1종 추가 — §8 항목13).
+    # 왼쪽 팔레트: 기본(네모·원·삼각형·포트 2종[신규기능 §8-12]) + 내 심볼(SVG 가져오기).
+    # (2026-08-04: "순서도" 섹션 18종 제거 — 파라메트릭 심볼 전략 폐기, SVG import로 전환).
     assert set(w._shape_tool_buttons) == {
         "rect", "ellipse", "triangle", "port_rect", "port_circle"}
-    assert len(w._sym_buttons) == 18
+    assert not hasattr(w, "_sym_buttons")
     r = w._scene.sceneRect()
     assert r.width() > 90000 and r.height() > 90000
     m0 = w._view.transform().m11()
@@ -101,16 +101,15 @@ def test_floating_panels_and_zoom_readout():
     assert w._left_panel.parent() is w
     assert w._props_panel.parent() is w
     assert w._minimap_panel.parent() is w
-    sym_grid, sym_btns = w._shape_sections[1]
-    last = sym_btns[-1]
-    r, c, _rs, _cs = sym_grid.getItemPosition(sym_grid.indexOf(last))
-    # 순서도 18종(2026-08-04: 안테나 7종 mw_side~mesh_hollow + 번개 표식 1종 — §8 항목13), 2열 고정
-    # → 마지막 버튼은 (row8, col1).
-    assert (r, c) == (8, 1)
+    basic_grid, basic_btns = w._shape_sections[0]
+    last = basic_btns[-1]
+    r, c, _rs, _cs = basic_grid.getItemPosition(basic_grid.indexOf(last))
+    # 기본 5종(네모·원·삼각형·포트 2종), 2열 고정 → 마지막 버튼은 (row2, col0).
+    assert (r, c) == (2, 0)
     # 팔레트 버튼 키가 보존(테스트 계약). [신규기능 §8-12] 삼각형·포트 2종 추가(순서도 섹션 아닌 기본).
     assert set(w._shape_tool_buttons) == {
         "rect", "ellipse", "triangle", "port_rect", "port_circle"}
-    assert len(w._sym_buttons) == 18
+    assert not hasattr(w, "_sym_buttons")
     # 버튼 고정 크기 — 패널이 넓어져도 커지거나 벌어지지 않는다(좌측 뭉침).
     b = w._shape_tool_buttons["rect"]
     assert b.minimumWidth() == b.maximumWidth() == 64
@@ -874,10 +873,10 @@ def test_shape_palette_arms_tool():
     assert w.current_tool == "rect" and w._shape_tool_buttons["rect"].isChecked()
     w.set_tool("select")
     assert not w._shape_tool_buttons["rect"].isChecked()
-    # 심볼 무장 시 기본 버튼은 해제 유지
+    # 심볼 무장(팔레트 버튼은 없어졌지만 백엔드 도구는 유지 — Mermaid 가져오기 등에서 사용)
+    # 시에도 기본 버튼은 해제 유지.
     w.set_tool("sym:decision")
     assert not w._shape_tool_buttons["rect"].isChecked()
-    assert w._sym_buttons["decision"].isChecked()
 
 
 
@@ -887,11 +886,10 @@ def test_palette_drag_drop_creates_shape():
     from easycad.canvas.host_widgets import _PALETTE_MIME, _PaletteButton
     from PyQt6.QtCore import QMimeData
     w = CanvasWindow()
-    # 팔레트 버튼이 draggable(_PaletteButton)이며 tool_key를 싣는다(도형·심볼 모두).
+    # 팔레트 버튼이 draggable(_PaletteButton)이며 tool_key를 싣는다.
     assert isinstance(w._shape_tool_buttons["rect"], _PaletteButton)
     assert w._shape_tool_buttons["rect"]._drag_tool_key == "rect"
-    assert isinstance(w._sym_buttons["decision"], _PaletteButton)
-    assert w._sym_buttons["decision"]._drag_tool_key == "sym:decision"
+    # 심볼 팔레트 버튼은 없어졌지만, 백엔드 도구(sym:*)는 유지 — mime 왕복은 도구 키만 검증.
     # QDrag가 싣는 mime 왕복(dropEvent 디코드 경로와 동일).
     md = QMimeData(); md.setData(_PALETTE_MIME, "sym:decision".encode("utf-8"))
     assert bytes(md.data(_PALETTE_MIME)).decode("utf-8") == "sym:decision"

@@ -569,7 +569,7 @@ class _UIBuildMixin:
         box.setIcon(QMessageBox.Icon.NoIcon)
         box.exec()
 
-    # ---- 도형 팔레트 (좌측 dock) — 기본(네모·원) + 순서도/결선도(심볼 14종) -----------
+    # ---- 도형 팔레트 (좌측 dock) — 기본(네모·원) + 내 심볼(SVG 가져오기) --------------
     @staticmethod
 
     @staticmethod
@@ -788,7 +788,6 @@ class _UIBuildMixin:
         box = QVBoxLayout(shapes_page)
         box.setContentsMargins(6, 6, 6, 6); box.setSpacing(10)
         self._shape_tool_buttons: dict[str, QToolButton] = {}
-        self._sym_buttons: dict[str, QToolButton] = {}
         self._shape_sections: list = []   # (grid, buttons)
         basic = self._make_shape_section("기본", [
             ("네모", "rect", "네모 — 클릭 후 캔버스에 드래그", "rect"),
@@ -799,14 +798,11 @@ class _UIBuildMixin:
             ("포트○", "port_circle", "포트(원형) — 사각형·삼각형 테두리 근처로 드래그하면 자동 부착",
              "port_circle"),
         ], self._shape_tool_buttons)
-        sym_entries = [(label, kind, f"{label} 심볼 — 클릭 후 캔버스에 드래그", f"sym:{kind}")
-                       for kind, (label, _fn) in _SYMBOL_KINDS.items() if kind != "triangle"]
-        syms = self._make_shape_section("순서도", sym_entries, self._sym_buttons)
         self._custom_sym_buttons: dict[str, QToolButton] = {}   # [신규기능 §8-8] set_tool 체크상태 동기화용
         custom = self._make_shape_section("내 심볼", [], self._custom_sym_buttons)   # 버튼은 refresh가 채움
         self._custom_sym_idx = len(self._shape_sections) - 1
         self._custom_sym_section = custom
-        box.addWidget(basic); box.addWidget(syms); box.addWidget(custom)
+        box.addWidget(basic); box.addWidget(custom)
         self._relayout_sections(horiz=False)   # 항상 세로(2열) — 반응형 전환 없음
         self._refresh_custom_symbol_section()
         outer.addWidget(shapes_page)

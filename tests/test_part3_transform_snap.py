@@ -1082,10 +1082,9 @@ def test_symbol_draw_via_tool():
     r = s.mapRectToScene(s.rect())
     assert abs(r.width() - 140) < 2 and abs(r.height() - 90) < 2
     assert s.isSelected()
-    # 팔레트 버튼 무장 상태가 set_tool과 동기화됐는지
-    assert w._sym_buttons["decision"].isChecked()
-    w.set_tool("select")
-    assert not w._sym_buttons["decision"].isChecked()
+    # [2026-08-04] "순서도" 팔레트 섹션 제거 — sym:* 도구는 백엔드에 남아 여전히 무장·생성되지만
+    # 동기화할 팔레트 버튼이 없다.
+    assert not hasattr(w, "_sym_buttons")
 
 
 
