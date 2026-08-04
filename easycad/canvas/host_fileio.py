@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
+    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon, _nearest_border,
     _attach_port_to_host,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
@@ -37,6 +37,7 @@ from easycad.canvas.annotator_core import (
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
+from easycad.fileio.svg_import import parse_svg_items
 from easycad.fileio.document import save_document, load_document, load_document_layers, dict_to_item
 from easycad.fileio import symbol_library
 from easycad.fileio.mermaid_import import (
@@ -262,6 +263,51 @@ class _FileIOMixin:
         self.push_undo_add(item)
         self.set_tool("select")
         self.statusBar().showMessage(status_msg, 4000)
+
+    # ---- SVG 가져오기 (2026-08-04, §8 항목8 확장) ---------------------------
+    # 실사용 동기: 순서도 도형 대신 직접 그리거나 AI로 만든 SVG 아이콘을 "팔레트에 등록"
+    # 흐름에 태워 왼쪽 커스텀 심볼 팔레트에 쌓아가는 방식으로 전환(내장 파라메트릭 심볼
+    # 대신 — 안테나 심볼 실사용 피드백 참조). 래스터(이미지 삽입)와 달리 실제 지오메트리로
+    # 들여오므로 다른 손그림 도형과 동일하게 리사이즈·펜 두께·색이 편집된다.
+    _SVG_LONG = 160.0   # 삽입 시 긴 변 기본 크기(씬 단위) — 기본 네모(150×90)와 비슷한 눈대중
+
+    def _insert_svg(self):
+        path, _ = QFileDialog.getOpenFileName(self, "SVG 가져오기", "", "SVG (*.svg)")
+        if not path:
+            return
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        self._insert_svg_at(path, center)
+
+    def _insert_svg_at(self, path: str, scene_pos: QPointF):
+        """path의 SVG를 scene_pos를 중심으로 삽입(긴 변 _SVG_LONG로 축소, 종횡비 유지).
+        여러 도형이 나오면 하나처럼 선택·이동되게 `_group_id`로 묶는다(DXF INSERT 흡수와
+        동일 메커니즘, host_fileio 상단 dxf_import 주석 참조)."""
+        try:
+            items, _vb = parse_svg_items(path, self._SVG_LONG, scene_pos)
+        except Exception as e:  # noqa: BLE001 — 외부 파일 파싱, 원인 다양(구조 손상 등)
+            QMessageBox.warning(self, "SVG 가져오기", f"SVG를 읽을 수 없습니다:\n{e}")
+            return
+        if not items:
+            QMessageBox.information(self, "SVG 가져오기", "가져올 도형이 없습니다.")
+            return
+        pen = self.make_pen()
+        gid = uuid.uuid4().hex[:8] if len(items) > 1 else None
+        self._scene.clearSelection()
+        for it in items:
+            if isinstance(it, _TextItem):
+                pass   # 텍스트는 원본 색 유지(라벨류라 잉크색 통일 대상 아님)
+            else:
+                it.setPen(QPen(pen))
+                if hasattr(it, "setBrush"):
+                    it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
+            if gid is not None:
+                it._group_id = gid
+            self._scene.addItem(it)
+            it.setSelected(True)
+        self.push_undo_add_many(items)
+        self.set_tool("select")
+        self.statusBar().showMessage(f"SVG 가져오기: 도형 {len(items)}개 — {path}", 4000)
 
 
     def _create_shape_at(self, tool_key: str, scene_pos: QPointF):
