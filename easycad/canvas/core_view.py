@@ -939,6 +939,13 @@ class _AnnotatorView(QGraphicsView):
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_c):
                 continue
+            # [실사용 지적 2026-08-04] select 도구에서 커서가 도형 실제 내부로 들어가면 예고점도
+            # 사라져야 한다 — `_update_hover_cursor`가 이미 같은 기준(`_shape_interior_contains`,
+            # 부풀린 히트 영역이 아니라 진짜 테두리 중심선)으로 커서를 크로스헤어→이동으로 바꾸는데,
+            # 이 함수는 그 기준 없이 넓은 margin(30px, 안쪽도 포함)만 봐서 커서와 예고점이
+            # 서로 다른 경계에서 어긋났다(안쪽 깊이 30px까지도 점이 안 사라짐).
+            if select_mode and _shape_interior_contains(sh, scene_c):
+                continue
             d = QLineF(sh.sceneBoundingRect().center(), scene_c).length()
             if best_d is None or d < best_d:
                 best_d, best_sh = d, sh
@@ -1132,6 +1139,27 @@ class _AnnotatorView(QGraphicsView):
         painter.drawPolygon(head)
         painter.restore()
 
+    def _draw_hp_hover_preview(self, painter, src, port_pt, nrm):
+        """[실사용 요청 2026-08-04, 참고 이미지 재현] 4방향 접속점을 드래그 없이 그냥 hover만
+        해도, 클릭 시 실제로 생길 결과(도형 복제+연결 화살표, `_qc_create`의 클릭 경로와 동일
+        기본 배치)를 미리 보여준다. 종전엔 이 미리보기가 `_hp_dragging`(실제로 눌러서 끄는 중)
+        에만 그려져, 누르기 전까지는 작은 점 하나(`_draw_port_dots`)만 보였다 — 참고 이미지는
+        누르지 않은 상태에서도 점선 고스트 사각형+화살표가 보이길 기대한다.
+        배치는 `_qc_target_center(src, side, None)`(= 클릭 시 기본 델타)를 그대로 재사용해
+        "미리보기 = 실제 결과"를 보장한다(고스트 시스템 전체의 기존 관례)."""
+        side = _side_from_normal(nrm)
+        sr = self._qc_src_scene_rect(src)
+        center = self._qc_target_center(src, side, None)
+        target_rect = sr.translated(center - sr.center())
+        pen = QPen(QColor(90, 150, 235), 1.3, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(target_rect)
+        p_dup = _edge_mid(target_rect, _QC_OPP[side])
+        painter.drawLine(port_pt, p_dup)
+        self._draw_ghost_arrowhead(painter, port_pt, p_dup)
+
     def _hp_create_arrow(self, src, port_pt, cursor_scene):
         """[하나의 시스템으로 통합 2026-08-01] 도형(선택 여부 무관)의 접속점에서 드래그 종료 —
         스냅 대상 있으면 커넥터만(도형 복제 없음), 없으면(빈 캔버스) 원본과 같은 도형을 커서
@@ -1276,6 +1304,14 @@ class _AnnotatorView(QGraphicsView):
         # 점이 "또" 생겨 중복으로 보였다.
         if self._hp_dragging and self._hp_src is not None and self._hp_cursor is not None:
             self._hp_paint_ghost(painter, self._hp_src, self._hp_port, self._hp_normal, self._hp_cursor)
+        # [실사용 요청 2026-08-04] 누르지 않고 4방향 접속점만 hover해도 위 고스트를 미리 보여준다.
+        # `_hp_hover`는 선택 도형(`_connect_port_at`, 3-tuple, 항상 discrete)·미선택 도형
+        # (`_hover_port_at`, 4-tuple, `is_discrete` 포함) 두 경로가 공유하는 필드 — 연속 폴백
+        # (Pass 2, is_discrete=False)은 접속점이 아니라 테두리 임의 위치이므로 제외한다.
+        elif self._hp_hover is not None and len(self._hp_hover) in (3, 4) and (
+                len(self._hp_hover) == 3 or self._hp_hover[3]):
+            hh_src, hh_port, hh_nrm = self._hp_hover[0], self._hp_hover[1], self._hp_hover[2]
+            self._draw_hp_hover_preview(painter, hh_src, hh_port, hh_nrm)
         # [2e] 스마트 정렬 가이드선 — 이동 중 정렬 맞은 축에 마젠타 실선. 인접(맞닿음) 매칭은
         # 정의상 가이드 좌표가 도형 자신의 테두리(선택 파란 테두리 등)와 정확히 겹쳐, 색이 섞여
         # 거의 안 보이는 문제가 실사용에서 발견됨(GIF 프레임 픽셀 분석으로 확인 — 로직·렌더링
@@ -1526,10 +1562,14 @@ class _AnnotatorView(QGraphicsView):
             # [8포트 select-hover] 미선택 도형의 포트 근처 press — 드래그 여부는 release에서 가른다
             # (포트가 테두리 위라 클릭=선택과 자리가 겹침, deep-interview 2026-07-29). Shift는
             # 다중선택 토글 의도이므로 건드리지 않는다.
+            # [실사용 버그 수정 2026-08-04] `is_discrete=False`(Pass 2 연속 폴백, §8 항목16)는
+            # 여기서 걸러낸다 — 그 경우는 테두리 임의 위치일 뿐 접속점이 아니므로, 클릭 시
+            # 커넥터 생성이 아니라 아래 일반 선택/드래그 경로로 흘려보내야 한다("네 변 중심점
+            # 이외 클릭은 객체 선택으로 반응해야 함" 실사용 지적).
             if event.button() == Qt.MouseButton.LeftButton and not (
                     event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
                 hp = self._hover_port_at(vpos)
-                if hp is not None:
+                if hp is not None and hp[3]:
                     src, port_pt, nrm, _is_discrete = hp
                     self._hp_src = _port_owner_at(src, port_pt)   # [실사용 버그 수정] 포트면 포트에 바인딩
                     self._hp_port, self._hp_normal = port_pt, nrm
