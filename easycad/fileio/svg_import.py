@@ -5,17 +5,21 @@
 
 색은 일부러 안 읽는다(텍스트 제외) — 원본 stroke/fill을 따라가면 다크 캔버스에서 안 보이거나
 앱의 잉크색 관례(테마 적응)와 어긋난다. 좌표(geometry)만 가져오고 펜은 항상 호출부
-(host_fileio._insert_svg_at)가 현재 그리기색으로 입힌다 — 그래야 어떤 SVG를 넣어도 다른
+(host_fileio._insert_svgs_at)가 현재 그리기색으로 입힌다 — 그래야 어떤 SVG를 넣어도 다른
 손그림 도형과 시각적으로 통일된다. 배치 스케일·이동(sx/sy/dx/dy)은 DXF import의 `_uf()`와
 같은 패턴 — 좌표를 읽는 시점에 바로 적용해, 나중에 아이템 종류별 재베이크 API 차이에
 기대지 않는다.
 
 지원 요소: <line>·<rect>·<circle>·<ellipse>·<polyline>·<polygon>·<text>(색만)·
-<path>(M/L/H/V/Q/C/A/Z, 대소문자=절대/상대 — A는 SVG 표준 끝점→중심 매개변수 변환 후
-3차 베지어로 근사). 미지원(스코프 밖 — 실사용 세트가 transform 없는 평평한 구조라
-우선순위 낮음): <g transform=…>·중첩 변환·<use>·스무스(S/T)·그라디언트/클립·flag가 붙어
-쓰인 arc(예 "01" 한 토큰)는 공백/쉼표로 분리된 경우만 지원. 못 읽는 요소는 그 하나만
-건너뛰고 나머지는 계속 변환한다(전부 실패 대신 부분 성공)."""
+<path>(M/L/H/V/Q/C/S/T/A/Z, 대소문자=절대/상대 — A는 SVG 표준 끝점→중심 매개변수 변환 후
+3차 베지어로 근사, S/T는 반사 제어점 계산까지 구현). 미지원(스코프 밖 — 실사용 세트가
+transform 없는 평평한 구조라 우선순위 낮음, 2026-08-04 실제 Lucid export로 확인):
+<g transform=…>·중첩 변환·<use>+<defs>(Lucid가 텍스트를 벡터 글리프로 내보낼 때 씀)·
+그라디언트/클립·flag가 공백/쉼표 없이 붙어 쓰인 arc(예 "01" 한 토큰). 이런 요소는 조용히
+건너뛰고 나머지는 계속 변환한다(전부 실패 대신 부분 성공) — 단 인식 못 하는 path 커맨드
+문자를 만나면 토큰화 자체가 깨지지 않도록 그 지점까지만 쓰고 서브패스를 끊는다(과거
+버그: 인식 못 하는 글자가 토큰 목록에서 통째로 사라져 이후 좌표가 밀리며 훨씬 뒤에서
+엉뚱한 ValueError로 터졌다 — 실제 Lucid 파일의 "S" 커맨드로 재현·수정)."""
 import math
 import re
 import xml.etree.ElementTree as ET
@@ -28,7 +32,7 @@ from easycad.canvas.annotator_core import (
 )
 
 _NS = "{http://www.w3.org/2000/svg}"
-_PATH_TOKEN_RE = re.compile(r"([MmLlHhVvCcQqAaZz])|(-?\d*\.?\d+(?:[eE][-+]?\d+)?)")
+_PATH_TOKEN_RE = re.compile(r"([MmLlHhVvCcSsQqTtAaZz])|(-?\d*\.?\d+(?:[eE][-+]?\d+)?)")
 
 
 def _f(s, default=0.0):
@@ -113,11 +117,16 @@ def _arc_to_beziers(x0, y0, rx, ry, phi_deg, large_arc, sweep, x, y):
 
 
 def _parse_path_d(d: str, sx: float, sy: float, dx: float, dy: float) -> QPainterPath:
-    """SVG path 'd' 문자열 → QPainterPath, 좌표는 (x*sx+dx, y*sy+dy)로 즉시 배치 변환해 담는다."""
+    """SVG path 'd' 문자열 → QPainterPath, 좌표는 (x*sx+dx, y*sy+dy)로 즉시 배치 변환해 담는다.
+    S/T(스무스 곡선)의 반사 제어점은 원본(비스케일) 좌표계에서 계산한 뒤 put()으로 배치한다
+    — 직전 명령이 같은 계열(C/S 또는 Q/T)일 때만 반사, 아니면 현재점을 제어점으로 쓴다
+    (SVG 1.1 스펙 §8.3.6/§8.3.7)."""
     path = QPainterPath()
     toks = [g[0] or g[1] for g in _PATH_TOKEN_RE.findall(d)]
     i, n = 0, len(toks)
     cx = cy = start_x = start_y = 0.0
+    last_c2 = None   # 직전 C/S의 두 번째 제어점(원본 좌표) — S 반사용
+    last_q1 = None   # 직전 Q/T의 제어점(원본 좌표) — T 반사용
     cmd = None
 
     def nextf():
@@ -136,6 +145,10 @@ def _parse_path_d(d: str, sx: float, sy: float, dx: float, dy: float) -> QPainte
             break
         c = cmd.upper()
         rel = cmd.islower()
+        if c != "S":
+            last_c2 = None   # 계열이 끊기면 다음 S는 반사 없이 현재점 기준
+        if c != "T":
+            last_q1 = None
         if c == "M":
             x, y = nextf(), nextf()
             if rel:
@@ -168,12 +181,30 @@ def _parse_path_d(d: str, sx: float, sy: float, dx: float, dy: float) -> QPainte
                 x1 += cx; y1 += cy; x += cx; y += cy
             path.quadTo(*put(x1, y1), *put(x, y))
             cx, cy = x, y
+            last_q1 = (x1, y1)
+        elif c == "T":
+            x, y = nextf(), nextf()
+            if rel:
+                x += cx; y += cy
+            x1, y1 = (2 * cx - last_q1[0], 2 * cy - last_q1[1]) if last_q1 else (cx, cy)
+            path.quadTo(*put(x1, y1), *put(x, y))
+            cx, cy = x, y
+            last_q1 = (x1, y1)
         elif c == "C":
             x1, y1, x2, y2, x, y = (nextf() for _ in range(6))
             if rel:
                 x1 += cx; y1 += cy; x2 += cx; y2 += cy; x += cx; y += cy
             path.cubicTo(*put(x1, y1), *put(x2, y2), *put(x, y))
             cx, cy = x, y
+            last_c2 = (x2, y2)
+        elif c == "S":
+            x2, y2, x, y = nextf(), nextf(), nextf(), nextf()
+            if rel:
+                x2 += cx; y2 += cy; x += cx; y += cy
+            x1, y1 = (2 * cx - last_c2[0], 2 * cy - last_c2[1]) if last_c2 else (cx, cy)
+            path.cubicTo(*put(x1, y1), *put(x2, y2), *put(x, y))
+            cx, cy = x, y
+            last_c2 = (x2, y2)
         elif c == "A":
             rx, ry, rot = nextf(), nextf(), nextf()
             large_arc, sweep = nextf(), nextf()
@@ -187,7 +218,7 @@ def _parse_path_d(d: str, sx: float, sy: float, dx: float, dy: float) -> QPainte
             path.closeSubpath()
             cx, cy = start_x, start_y
         else:
-            break   # 미지원 커맨드(S/T) — 이 서브패스는 여기서 멈추고 지금까지만 사용
+            break   # 미지원 커맨드 — 이 서브패스는 여기서 멈추고 지금까지만 사용(전부 실패 대신 부분 성공)
     return path
 
 
@@ -201,7 +232,7 @@ def parse_svg_items(path: str, long_side: float | None = None, center=None):
     `long_side`(씬 단위)가 되도록 축소하고 그 중심이 `center`(QPointF, 씬 좌표)에 오도록
     배치까지 좌표를 읽는 시점에 끝마친다(DXF import `_uf()`와 동일 패턴) — 둘 다 None이면
     변환 없이 원본 SVG 좌표 그대로(단위 테스트·좌표 확인용). 펜·플래그는 호출부
-    (host_fileio._insert_svg_at)가 마저 채운다. viewBox는 원본 좌표계 참고용으로 그대로
+    (host_fileio._insert_svgs_at)가 마저 채운다. viewBox는 원본 좌표계 참고용으로 그대로
     반환한다(반환값 자체는 이미 배치가 끝난 좌표라 호출부가 다시 옮기지 않는다)."""
     root = ET.parse(path).getroot()
     vb = _parse_viewbox(root)

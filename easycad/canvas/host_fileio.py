@@ -272,42 +272,57 @@ class _FileIOMixin:
     _SVG_LONG = 160.0   # 삽입 시 긴 변 기본 크기(씬 단위) — 기본 네모(150×90)와 비슷한 눈대중
 
     def _insert_svg(self):
-        path, _ = QFileDialog.getOpenFileName(self, "SVG 가져오기", "", "SVG (*.svg)")
-        if not path:
+        # [실사용 요청 2026-08-04] 여러 파일 한 번에 — getOpenFileName(단수)이던 것을
+        # getOpenFileNames(복수)로. 아이콘 세트를 통째로 가져오는 게 보통이라 하나씩
+        # 반복하는 게 불편하다는 지적.
+        paths, _ = QFileDialog.getOpenFileNames(self, "SVG 가져오기", "", "SVG (*.svg)")
+        if not paths:
             return
         center = self._view.mapToScene(self._view.viewport().rect().center())
-        self._insert_svg_at(path, center)
+        self._insert_svgs_at(paths, center)
 
-    def _insert_svg_at(self, path: str, scene_pos: QPointF):
-        """path의 SVG를 scene_pos를 중심으로 삽입(긴 변 _SVG_LONG로 축소, 종횡비 유지).
-        여러 도형이 나오면 하나처럼 선택·이동되게 `_group_id`로 묶는다(DXF INSERT 흡수와
-        동일 메커니즘, host_fileio 상단 dxf_import 주석 참조)."""
-        try:
-            items, _vb = parse_svg_items(path, self._SVG_LONG, scene_pos)
-        except Exception as e:  # noqa: BLE001 — 외부 파일 파싱, 원인 다양(구조 손상 등)
-            QMessageBox.warning(self, "SVG 가져오기", f"SVG를 읽을 수 없습니다:\n{e}")
-            return
-        if not items:
+    def _insert_svgs_at(self, paths: list[str], scene_pos: QPointF):
+        """여러 SVG를 scene_pos부터 가로로 나란히 삽입(파일당 _SVG_LONG 간격) — 한 번의
+        undo로 묶는다. 실패한 파일은 경고만 띄우고 나머지는 계속 가져온다(부분 성공)."""
+        all_items = []
+        failed = []
+        step = self._SVG_LONG + 20.0
+        start_x = scene_pos.x() - step * (len(paths) - 1) / 2.0
+        self._scene.clearSelection()
+        pen = self.make_pen()
+        for i, path in enumerate(paths):
+            pos = QPointF(start_x + step * i, scene_pos.y())
+            try:
+                items, _vb = parse_svg_items(path, self._SVG_LONG, pos)
+            except Exception as e:  # noqa: BLE001 — 외부 파일 파싱, 원인 다양(구조 손상 등)
+                failed.append((path, e))
+                continue
+            # [실사용 요청 2026-08-04] 도형끼리 자동 그룹 안 함 — 종전엔 DXF INSERT 흡수와
+            # 같은 방식으로 `_group_id`를 묶어 하나처럼 선택되게 했는데, SVG 아이콘은 DXF
+            # 블록과 달리 "손실 없이 이미 쪼개진 낱개 도형"이라 처음부터 개별 선택·이동이
+            # 가능해야 한다는 지적("일부만 선택해도 전체가 선택되네") — 나중에 묶고 싶으면
+            # 기존 Ctrl+G로 하면 된다.
+            for it in items:
+                if not isinstance(it, _TextItem):
+                    it.setPen(QPen(pen))
+                    if hasattr(it, "setBrush"):
+                        it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+                it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
+                self._scene.addItem(it)
+                it.setSelected(True)
+            all_items.extend(items)
+        if all_items:
+            self.push_undo_add_many(all_items)
+            self.set_tool("select")
+        msg = f"SVG 가져오기: 파일 {len(paths) - len(failed)}개, 도형 {len(all_items)}개"
+        if failed:
+            names = "\n".join(f"{p} — {e}" for p, e in failed)
+            QMessageBox.warning(self, "SVG 가져오기",
+                                f"{len(failed)}개 파일을 읽지 못했습니다:\n{names}")
+        elif not all_items:
             QMessageBox.information(self, "SVG 가져오기", "가져올 도형이 없습니다.")
             return
-        pen = self.make_pen()
-        gid = uuid.uuid4().hex[:8] if len(items) > 1 else None
-        self._scene.clearSelection()
-        for it in items:
-            if isinstance(it, _TextItem):
-                pass   # 텍스트는 원본 색 유지(라벨류라 잉크색 통일 대상 아님)
-            else:
-                it.setPen(QPen(pen))
-                if hasattr(it, "setBrush"):
-                    it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-            it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
-            if gid is not None:
-                it._group_id = gid
-            self._scene.addItem(it)
-            it.setSelected(True)
-        self.push_undo_add_many(items)
-        self.set_tool("select")
-        self.statusBar().showMessage(f"SVG 가져오기: 도형 {len(items)}개 — {path}", 4000)
+        self.statusBar().showMessage(msg, 4000)
 
 
     def _create_shape_at(self, tool_key: str, scene_pos: QPointF):
