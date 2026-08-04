@@ -1716,10 +1716,111 @@ def _sym_triangle(r: QRectF) -> QPainterPath:      # [신규기능 §8-12] 삼�
     return p
 
 
+# ---------------------------------------------------------------------------
+# [신규기능 §8-13] 안테나 심볼 7종 — 모악산 송신소 실물 사진 대조 후 확정(deep-interview +
+# artifact 시안 비교, 2026-08-04). 좌표는 사용자 확인을 거친 0~100 정규화 SVG 시안을 그대로
+# 옮긴 것이라 `_n()` 헬퍼로 rect에 매핑한다(감사·재조정 시 시안과 나란히 비교하기 위함).
+def _n(r: QRectF, x: float, y: float) -> QPointF:
+    return QPointF(r.left() + x / 100.0 * r.width(), r.top() + y / 100.0 * r.height())
+
+
+def _sym_mw_side(r: QRectF) -> QPainterPath:       # MW 파라볼릭(측면) — 겹친 원 2개로 두께감
+    p = QPainterPath()
+    s = min(r.width(), r.height()) / 100.0
+    p.addEllipse(_n(r, 42, 50), 30 * s, 30 * s)
+    p.addEllipse(_n(r, 60, 50), 26 * s, 26 * s)
+    return p
+
+
+def _sym_mw_front(r: QRectF) -> QPainterPath:      # MW 파라볼릭(정면) — 테두리 이중선으로 두께감
+    p = QPainterPath()
+    s = min(r.width(), r.height()) / 100.0
+    c = _n(r, 50, 50)
+    p.addEllipse(c, 32 * s, 32 * s)
+    p.addEllipse(c, 28 * s, 28 * s)
+    return p
+
+
+def _sym_cp_dipole(r: QRectF) -> QPainterPath:     # CP 다이폴 — 사각 프레임 + 프레임 밖으로 나온 십자
+    p = QPainterPath()
+    p.addRect(QRectF(_n(r, 24, 24), _n(r, 76, 76)))
+    p.moveTo(_n(r, 50, 12)); p.lineTo(_n(r, 50, 88))
+    p.moveTo(_n(r, 12, 50)); p.lineTo(_n(r, 88, 50))
+    return p
+
+
+def _sym_cp_ring(r: QRectF) -> QPainterPath:       # CP RING — 가스통형(사각 몸통 + 완만한 노즈콘)
+    p = QPainterPath()
+    p.moveTo(_n(r, 30, 72))
+    p.lineTo(_n(r, 30, 50))
+    p.quadTo(_n(r, 27, 37), _n(r, 50, 27))
+    p.quadTo(_n(r, 73, 37), _n(r, 70, 50))
+    p.lineTo(_n(r, 70, 72))
+    p.closeSubpath()
+    return p
+
+
+def _sym_dtv(r: QRectF) -> QPainterPath:           # DTV — 세로 패널(이중 테두리 베젤 + 모서리 사선)
+    p = QPainterPath()
+    p.addRect(QRectF(_n(r, 34, 8), _n(r, 66, 92)))
+    p.addRect(QRectF(_n(r, 39, 13), _n(r, 61, 87)))
+    p.moveTo(_n(r, 34, 8)); p.lineTo(_n(r, 39, 13))
+    p.moveTo(_n(r, 66, 8)); p.lineTo(_n(r, 61, 13))
+    p.moveTo(_n(r, 34, 92)); p.lineTo(_n(r, 39, 87))
+    p.moveTo(_n(r, 66, 92)); p.lineTo(_n(r, 61, 87))
+    return p
+
+
+def _mesh_grid_path(r: QRectF) -> QPainterPath:    # MESH 공용 — 외곽원 + 대각격자 + 십자선(중앙점 제외)
+    p = QPainterPath()
+    s = min(r.width(), r.height()) / 100.0
+    p.addEllipse(_n(r, 50, 50), 32 * s, 32 * s)
+    for x1, y1, x2, y2 in ((22, 26, 74, 78), (18, 44, 56, 82), (44, 18, 82, 56),
+                           (78, 26, 26, 78), (82, 44, 44, 82), (56, 18, 18, 56)):
+        p.moveTo(_n(r, x1, y1)); p.lineTo(_n(r, x2, y2))
+    p.moveTo(_n(r, 18, 50)); p.lineTo(_n(r, 82, 50))
+    p.moveTo(_n(r, 50, 18)); p.lineTo(_n(r, 50, 82))
+    return p
+
+
+def _sym_mesh_hollow(r: QRectF) -> QPainterPath:   # MESH 파라볼릭(윤곽) — 중앙 급전부를 빈 원으로
+    p = _mesh_grid_path(r)
+    s = min(r.width(), r.height()) / 100.0
+    p.addEllipse(_n(r, 50, 50), 6 * s, 6 * s)
+    return p
+
+
+def _sym_mesh_filled(r: QRectF) -> QPainterPath:   # MESH 파라볼릭(채움) — 중앙 원은 paint()가 강제로 검게 채움
+    return _mesh_grid_path(r)
+
+
+def _mesh_center_dot_rect(r: QRectF) -> QRectF:    # mesh_filled 전용 — 강제 채움 원의 사각형(paint()에서 사용)
+    s = min(r.width(), r.height()) / 100.0
+    c = _n(r, 50, 50)
+    rad = 6 * s
+    return QRectF(c.x() - rad, c.y() - rad, 2 * rad, 2 * rad)
+
+
+def _sym_lightning(r: QRectF) -> QPainterPath:     # 번개 표식 — 안테나 레이돔 로고 등, 다른 심볼 위에 얹어 쓰는 작은 데칼
+    # Feather "zap" 아이콘의 검증된 폴리곤(0~24 box)을 0~100으로 스케일 이식 — 자체 zigzag를
+    # 새로 설계하지 않고 이미 널리 쓰이는 번개 실루엣을 그대로 가져온 것.
+    pts = [(13, 2), (3, 14), (12, 14), (11, 22), (21, 10), (12, 10)]
+    p = QPainterPath()
+    x0, y0 = pts[0]
+    p.moveTo(_n(r, x0 / 24 * 100, y0 / 24 * 100))
+    for x, y in pts[1:]:
+        p.lineTo(_n(r, x / 24 * 100, y / 24 * 100))
+    p.closeSubpath()
+    return p
+
+
 # kind → (한글 라벨, 경로 팩토리). 팔레트·직렬화·그리기가 이 하나를 공유한다.
 # [2026-08-03] 카메라·증폭기·랙·안테나(도메인 픽토그램 4종)는 사용 빈도가 낮고 디자인
 # 완성도도 떨어진다는 피드백으로 제거(구 .ecad 파일에 남아 있어도 _SymbolItem.__init__이
 # 미지원 kind를 "decision"으로 폴백하므로 로드는 깨지지 않는다).
+# [2026-08-04] 위 제거된 "안테나" 1종을 실물 사진 기반 7종(mw_side~mesh_hollow)으로 재도입
+# — 디자인 완성도 문제였던 옛 픽토그램과 달리 deep-interview + artifact 시안 비교로 확정.
+# 번개 표식(lightning)은 안테나 전용이 아니라 다른 심볼 위에 겹쳐 쓰는 범용 작은 데칼.
 _SYMBOL_KINDS = {
     "decision":    ("판단", _sym_decision),
     "terminal":    ("시작/끝", _sym_terminal),
@@ -1732,6 +1833,14 @@ _SYMBOL_KINDS = {
     "display":     ("화면출력", _sym_display),
     "delay":       ("지연", _sym_delay),
     "triangle":    ("삼각형", _sym_triangle),
+    "mw_side":     ("MW 파라볼릭(측면)", _sym_mw_side),
+    "mw_front":    ("MW 파라볼릭(정면)", _sym_mw_front),
+    "cp_dipole":   ("CP 다이폴", _sym_cp_dipole),
+    "cp_ring":     ("CP RING", _sym_cp_ring),
+    "dtv":         ("DTV", _sym_dtv),
+    "mesh_filled": ("MESH 파라볼릭(채움)", _sym_mesh_filled),
+    "mesh_hollow": ("MESH 파라볼릭(윤곽)", _sym_mesh_hollow),
+    "lightning":   ("번개 표식", _sym_lightning),
 }
 
 
@@ -1764,6 +1873,14 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
             return 0.72
         if self._kind == "manual_op":
             return 0.7
+        if self._kind in ("mw_side", "mw_front", "mesh_filled", "mesh_hollow"):
+            return 0.55   # 원 반지름 32/100 — 실제 지름 비는 0.64, 여유를 두어 원 밖으로 안 나가게
+        if self._kind == "cp_ring":
+            return 0.4    # 몸통 폭 30~70 구간(0.4)만 안전 — 노즈콘 위쪽은 그보다 더 좁음
+        if self._kind == "dtv":
+            return 0.2    # 세로로 매우 좁은 패널 — 라벨은 대부분 줄바꿈됨을 전제
+        if self._kind == "lightning":
+            return 0.3    # 번개 허리(x 12.5~87.5 중 45.8~54.2)가 세로중앙에서 가장 좁음
         return 0.78
 
     def _label_anchor(self) -> QPointF:
@@ -1816,6 +1933,12 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
         painter.setPen(self.pen())
         painter.setBrush(self.brush())
         painter.drawPath(self._sym_path())
+        if self._kind == "mesh_filled":
+            # [§8-13] 중앙 급전부는 사용자의 채움색과 무관하게 항상 검게 — kind 식별용
+            # 고정 디테일이라 apply_fill로 바뀌는 self.brush()에 기대지 않고 따로 그린다.
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor("black")))
+            painter.drawEllipse(_mesh_center_dot_rect(self.rect()))
         if self.isSelected():
             self._paint_selection_outline(painter, self._scale_or_1())
         self._paint_handle(painter)

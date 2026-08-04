@@ -11,11 +11,11 @@ def test_host_construction():
     assert len(w._tool_buttons) == 6
     assert not ({"rect", "ellipse", "sarrow"} & set(w._tool_buttons))
     assert "arrow" in w._tool_buttons                      # 화살표 버튼 하나가 직선·곡선·직각 대표
-    # 왼쪽 팔레트: 기본(네모·원·삼각형·포트 2종[신규기능 §8-12]) + 순서도/결선도 심볼 10종
-    # (2026-08-03: 도메인 픽토그램 4종 카메라/증폭기/랙/안테나 제거).
+    # 왼쪽 팔레트: 기본(네모·원·삼각형·포트 2종[신규기능 §8-12]) + 순서도/결선도 심볼 18종
+    # (2026-08-04: 안테나 7종 mw_side~mesh_hollow + 번개 표식 1종 추가 — §8 항목13).
     assert set(w._shape_tool_buttons) == {
         "rect", "ellipse", "triangle", "port_rect", "port_circle"}
-    assert len(w._sym_buttons) == 10
+    assert len(w._sym_buttons) == 18
     r = w._scene.sceneRect()
     assert r.width() > 90000 and r.height() > 90000
     m0 = w._view.transform().m11()
@@ -104,13 +104,13 @@ def test_floating_panels_and_zoom_readout():
     sym_grid, sym_btns = w._shape_sections[1]
     last = sym_btns[-1]
     r, c, _rs, _cs = sym_grid.getItemPosition(sym_grid.indexOf(last))
-    # 순서도 10종(2026-08-03: 도메인 픽토그램 4종 카메라/증폭기/랙/안테나 제거), 2열 고정
-    # → 마지막 버튼은 (row4, col1).
-    assert (r, c) == (4, 1)
+    # 순서도 18종(2026-08-04: 안테나 7종 mw_side~mesh_hollow + 번개 표식 1종 — §8 항목13), 2열 고정
+    # → 마지막 버튼은 (row8, col1).
+    assert (r, c) == (8, 1)
     # 팔레트 버튼 키가 보존(테스트 계약). [신규기능 §8-12] 삼각형·포트 2종 추가(순서도 섹션 아닌 기본).
     assert set(w._shape_tool_buttons) == {
         "rect", "ellipse", "triangle", "port_rect", "port_circle"}
-    assert len(w._sym_buttons) == 10
+    assert len(w._sym_buttons) == 18
     # 버튼 고정 크기 — 패널이 넓어져도 커지거나 벌어지지 않는다(좌측 뭉침).
     b = w._shape_tool_buttons["rect"]
     assert b.minimumWidth() == b.maximumWidth() == 64

@@ -597,6 +597,12 @@ class _UIBuildMixin:
             oblong = QRectF(r.left(), r.center().y() - r.height() * 0.3,
                              r.width(), r.height() * 0.6)
             p.drawPath(_SYMBOL_KINDS[kind][1](oblong))
+        elif kind == "dtv":
+            # [§8-13] DTV는 세로로 매우 좁은 패널(0~100 좌표계 32:84)이라 정사각 아이콘 박스에
+            # 그대로 그리면 옆으로 퍼져 보인다 — terminal과 반대 방향으로 폭만 좁혀 비율을 살린다.
+            tall = QRectF(r.center().x() - r.width() * 0.22, r.top(),
+                          r.width() * 0.44, r.height())
+            p.drawPath(_SYMBOL_KINDS[kind][1](tall))
         else:
             p.drawPath(_SYMBOL_KINDS[kind][1](r))
         p.end()
