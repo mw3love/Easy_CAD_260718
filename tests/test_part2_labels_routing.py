@@ -717,6 +717,24 @@ def test_segment_off_pill_drag_subdivides_near_half_only():
     assert sa._pts[-2] == QPointF(100, 0) and sa._pts[-1] == QPointF(100, 100), "먼 쪽 그대로"
     # 가까운 쪽(0,0 근처)만 y=-30으로 꺾임 — 새 지그재그가 생겼다.
     assert any(abs(p.y() + 30) < 1 for p in sa._pts), "가까운 쪽만 이동"
+
+
+def test_segment_subdivide_preview_fixed_not_cursor_tracking():
+    # [2026-08-04 버그수정] 미리보기 알약은 커서를 따라가지 않고, 커서가 있는 절반(A~M 또는
+    # M~B)의 자체 중점에 고정된다 — 실제 삽입이 항상 고정 알약(M) 자리에서 일어나는 것과 위치가
+    # 일치해야 한다(사용자 실측: 예전엔 알약이 몸통선을 따라 미끄러지듯 보여 오해를 줬다).
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(0, 0), QPointF(100, 0))   # 세그먼트0, M=(50,0)
+
+    # A쪽(0~50) 절반 어디를 호버하든 미리보기는 A~M 중점(25,0)에 고정.
+    q1 = sa._segment_subdivide_preview_point(0, QPointF(5, 0))
+    q2 = sa._segment_subdivide_preview_point(0, QPointF(45, 0))
+    assert abs(q1.x() - 25) < 1e-6 and q1 == q2, "A쪽 절반은 항상 같은 고정 위치"
+
+    # B쪽(50~100) 절반 어디를 호버하든 미리보기는 M~B 중점(75,0)에 고정.
+    q3 = sa._segment_subdivide_preview_point(0, QPointF(55, 0))
+    q4 = sa._segment_subdivide_preview_point(0, QPointF(95, 0))
+    assert abs(q3.x() - 75) < 1e-6 and q3 == q4, "B쪽 절반은 항상 같은 고정 위치"
     assert sa._pts[0] == QPointF(0, 0), "먼 원래 끝점 좌표 유지(고정)"
 
 

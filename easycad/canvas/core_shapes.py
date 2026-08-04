@@ -3495,6 +3495,21 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         d = abs(local_pt.x() - mid.x()) if horizontal else abs(local_pt.y() - mid.y())
         return d <= half
 
+    def _segment_subdivide_preview_point(self, seg_idx: int, local_pt: QPointF) -> QPointF:
+        """[2026-08-04 버그수정] 부분꺾임 미리보기 알약의 '고정' 위치 — local_pt(커서 투영점)가
+        고정 알약(A~B 중점 M)의 어느 절반에 있는지만 보고, 그 절반 자체의 중점(A~M 또는 M~B)을
+        반환한다. 커서를 계속 따라다니지 않고 절반이 바뀔 때만 위치가 바뀜 — press 시 실제
+        삽입 지점(`_begin_subdivide_drag`가 항상 M에 끼움)과 그 다음 레벨에 새로 뜰 알약 자리가
+        일치하도록. near_a 판정은 `_begin_subdivide_drag`와 동일 기준(A·B까지 거리 비교)."""
+        a, b = self._pts[seg_idx], self._pts[seg_idx + 1]
+        mid = QPointF((a.x() + b.x()) / 2.0, (a.y() + b.y()) / 2.0)
+        horizontal = self._segment_orientation(seg_idx)
+        axis = (lambda q: q.x()) if horizontal else (lambda q: q.y())
+        near_a = abs(axis(local_pt) - axis(a)) <= abs(axis(local_pt) - axis(b))
+        if near_a:
+            return QPointF((a.x() + mid.x()) / 2.0, (a.y() + mid.y()) / 2.0)
+        return QPointF((mid.x() + b.x()) / 2.0, (mid.y() + b.y()) / 2.0)
+
     def _begin_subdivide_drag(self, seg_idx: int, near_local: QPointF):
         """[2026-08-03 Lucid 대조, rf 계정 Lucid 문서에서 직접 재현 확인] 알약이 아닌 위치를
         끌면 그 변의 고정 알약 자리(중점)에 새 정점을 끼워 둘로 나누고, 클릭 지점에 더 가까운

@@ -997,17 +997,23 @@ class _AnnotatorView(QGraphicsView):
             painter.drawEllipse(p, r, r)
 
     def _draw_segment_preview_pill(self, painter, s):
-        """[2026-08-03 Lucid 대조, rf 계정 Lucid 문서에서 직접 재현 확인] 선택된 직교 화살표의
-        변 위, 고정 알약이 아닌 위치를 호버하면 그 지점에 속 빈(hollow) 알약을 미리보기로
-        그린다 — 실제 알약(_paint_segment_handles, 항상 칠해진 파랑)과 시각적으로 구분되고,
-        여기를 눌러 끌면 그 자리에 새 정점이 생긴다(`_begin_subdivide_drag`). 드래그 중엔
-        그리지 않는다(그 사이 실제 지오메트리가 바뀌어 자리가 안 맞음)."""
+        """[2026-08-03 Lucid 대조, rf 계정 Lucid 문서에서 직접 재현 확인 / 2026-08-04 위치 고정
+        버그수정] 선택된 직교 화살표의 변 위, 고정 알약이 아닌 위치를 호버하면 속 빈(hollow)
+        알약을 미리보기로 그린다 — 실제 알약(_paint_segment_handles, 항상 칠해진 파랑)과
+        시각적으로 구분되고, 여기를 눌러 끌면 그 자리에 새 정점이 생긴다(`_begin_subdivide_drag`).
+        위치는 커서를 따라다니지 않는다 — 고정 알약을 기준으로 커서가 있는 절반의 자체 중점에만
+        찍힌다(`_segment_subdivide_preview_point`). 실제 삽입은 항상 고정 알약 자리(M)에서
+        일어나므로, 커서 위치를 그대로 보여주면 "여기에 생긴다"는 오해를 준다(사용자 실측 버그
+        — 알약이 마우스를 따라 몸통선을 미끄러지는 것처럼 보임). 드래그 중엔 그리지 않는다
+        (그 사이 실제 지오메트리가 바뀌어 자리가 안 맞음)."""
         sa = self._seg_add
         if sa is None or self._seg_drag is not None:
             return
         item, seg_idx, scene_pt, on_pill = sa
         if on_pill:
             return
+        q_local = item._segment_subdivide_preview_point(seg_idx, item.mapFromScene(scene_pt))
+        scene_pt = item.mapToScene(q_local)
         horizontal = item._segment_orientation(seg_idx)
         half = item._SEG_HANDLE_PX / max(s, 1e-6)
         thick = 3.5 / max(s, 1e-6)
