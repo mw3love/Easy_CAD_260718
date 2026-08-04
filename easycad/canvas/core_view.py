@@ -142,6 +142,10 @@ class _AnnotatorView(QGraphicsView):
         self._hp_normal = None      # 시작 포트 바깥 법선(씬)
         self._hp_cursor = None      # 드래그 중 커서(씬). None=드래그 임계 미달(release 시 평소 선택으로 폴백)
         self._hp_press_scene = None # press 지점(씬) — 형태 판정 기준
+        # [실사용 버그 수정 2026-08-04] press 시점의 이산(discrete=4점)/연속(Pass2) 구분을 release
+        # 까지 들고 간다 — 드래그(커넥터 생성)는 둘 다 동일해야 하지만(테두리 어디서든 끌면
+        # 커넥터), 드래그 안 한 클릭의 결과는 갈린다: 이산=즉시 도형복제+화살표, 연속=그냥 선택.
+        self._hp_is_discrete = True
         # [호버 강조 2026-07-30] 선택된 도형의 핸들(모서리·회전·qc-dot·끝점) 위 hover — (item, key)
         # or None. 크기를 고정으로 통일하며 "이 점이 잡힌다"를 색 반전으로 대신 알려준다.
         self._handle_hover = None
@@ -1513,6 +1517,7 @@ class _AnnotatorView(QGraphicsView):
                 self._hp_src = _port_owner_at(src, port_pt)   # [실사용 버그 수정] 포트면 포트에 바인딩
                 self._hp_port, self._hp_normal = port_pt, nrm
                 self._hp_dragging = True
+                self._hp_is_discrete = True   # 선택된 도형의 qc-dot은 정의상 항상 이산 4점
                 self._hp_cursor = None   # 릴리스까지 이동(임계 초과) 없으면 즉시 생성(클릭)
                 self._hp_press_scene = self.mapToScene(vpos)
                 self._hp_hover = None
@@ -1562,18 +1567,21 @@ class _AnnotatorView(QGraphicsView):
             # [8포트 select-hover] 미선택 도형의 포트 근처 press — 드래그 여부는 release에서 가른다
             # (포트가 테두리 위라 클릭=선택과 자리가 겹침, deep-interview 2026-07-29). Shift는
             # 다중선택 토글 의도이므로 건드리지 않는다.
-            # [실사용 버그 수정 2026-08-04] `is_discrete=False`(Pass 2 연속 폴백, §8 항목16)는
-            # 여기서 걸러낸다 — 그 경우는 테두리 임의 위치일 뿐 접속점이 아니므로, 클릭 시
-            # 커넥터 생성이 아니라 아래 일반 선택/드래그 경로로 흘려보내야 한다("네 변 중심점
-            # 이외 클릭은 객체 선택으로 반응해야 함" 실사용 지적).
+            # [실사용 버그 수정 2026-08-04, 2차] `is_discrete=False`(Pass 2 연속 폴백, §8 항목16)도
+            # press는 여전히 여기서 잡는다 — 테두리 어디서든 드래그하면 커넥터가 시작돼야 하기
+            # 때문(1차 수정에서 여기를 통째로 건너뛰게 했더니 연속 위치 드래그로 화살표를 못
+            # 그리는 회귀가 남 — 실사용 지적: "드래그하면 화살표로 작동해야하는데 안됨"). 다만
+            # "드래그 안 하고 그냥 클릭"의 결과는 이산/연속이 갈라야 한다 — 그건 release에서
+            # `_hp_is_discrete`로 분기(이산=즉시 도형복제+화살표, 연속=그냥 선택).
             if event.button() == Qt.MouseButton.LeftButton and not (
                     event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
                 hp = self._hover_port_at(vpos)
-                if hp is not None and hp[3]:
-                    src, port_pt, nrm, _is_discrete = hp
+                if hp is not None:
+                    src, port_pt, nrm, is_discrete = hp
                     self._hp_src = _port_owner_at(src, port_pt)   # [실사용 버그 수정] 포트면 포트에 바인딩
                     self._hp_port, self._hp_normal = port_pt, nrm
                     self._hp_dragging = True
+                    self._hp_is_discrete = is_discrete
                     self._hp_cursor = None
                     self._hp_press_scene = self.mapToScene(vpos)
                     self._hp_hover = None
@@ -2375,19 +2383,27 @@ class _AnnotatorView(QGraphicsView):
             return
         if self._hp_dragging:  # [하나의 시스템으로 통합] 종료 — 드래그했으면 커넥터, 클릭이면 즉시 생성
             src, port, nrm, cur = self._hp_src, self._hp_port, self._hp_normal, self._hp_cursor
+            is_discrete = self._hp_is_discrete
             self._hp_dragging = False
             self._hp_src = self._hp_port = self._hp_normal = self._hp_cursor = None
             self._hp_press_scene = None
+            self._hp_is_discrete = True
             if src is not None and src.scene() is not None:
                 if cur is not None:
                     self._hp_create_arrow(src, port, cur)
-                else:
+                elif is_discrete:
                     # [④ 즉시 생성 2026-08-01, Lucid 대조] 실제로 끌지 않았으면(클릭) 선택 여부와
                     # 무관하게 즉시 도형 복제+화살표를 만든다 — 종전엔 미선택 도형에서 그냥
                     # 선택만 하고 접속점이 뜬 뒤 한 번 더 눌러야 새 도형이 생겼다(사용자 피드백:
-                    # "4분면 점에서 바로 생겨야 맞을듯").
+                    # "4분면 점에서 바로 생겨야 맞을듯"). 이산(4점)에서만 — 연속은 아래로.
                     side = _side_from_normal(nrm) if nrm is not None else "r"
                     self._qc_create(src, side, None)
+                else:
+                    # [실사용 버그 수정 2026-08-04, 2차] 연속 폴백(테두리 임의 위치)에서 끌지 않은
+                    # 클릭은 커넥터·복제 둘 다 아니라 그냥 선택 — press에서 여기를 가로챘으므로
+                    # Qt 기본 클릭-선택이 못 돌았다, 그 자리에서 우리가 대신 선택해 준다.
+                    self.scene().clearSelection()
+                    src.setSelected(True)
             self.viewport().update()
             return
         # [우리 확장] 클릭 배치 진행 중이면 릴리스는 무시 — 점은 클릭(press)으로만 놓는다.
