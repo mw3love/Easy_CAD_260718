@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>Easy CAD 웹 프로토타입 — 포트/커넥터</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="status" data-shape-count="2" data-arrow-count="0" data-hovered-port="none">
+    shapes: <span id="shape-count">2</span> / arrows: <span id="arrow-count">0</span>
+  </div>
+  <svg id="canvas" viewBox="0 0 800 500" width="800" height="500">
+    <defs>
+      <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#333" />
+      </marker>
+    </defs>
+    <g class="shapes"></g>
+    <g class="arrows"></g>
+    <g class="drag-preview"></g>
+  </svg>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
