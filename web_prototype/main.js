@@ -14,6 +14,9 @@ const HOVER_RADIUS = 16;
 const DRAG_THRESHOLD = 6;
 const DUPLICATE_OFFSET = 190;
 const SNAP_RADIUS = 20;
+// 드래그 중 "이 화살표를 재계산해야 하나" 판단용 여유폭 — 이동한 도형의 bbox와 화살표
+// 경로의 bbox가 이 거리 안으로 근접하면 무관한 화살표라도 재계산 대상에 포함한다.
+const REROUTE_MARGIN = 40;
 
 // 포트 8종: key, 사각형 기준 상대 위치(비율), 바깥쪽 방향(정규화), 그리드 라우팅용 축정렬 방향
 const PORT_DEFS = [
@@ -228,13 +231,15 @@ function onPointerMove(evt) {
   if (bodyDragState) {
     const dx = pt.x - bodyDragState.startSvg.x;
     const dy = pt.y - bodyDragState.startSvg.y;
+    const movedIds = [];
     for (const [id, startPos] of bodyDragState.startPositions) {
       const s = shapes.get(id);
       s.x = startPos.x + dx;
       s.y = startPos.y + dy;
       layoutShapePorts(s);
+      movedIds.push(id);
     }
-    rerouteAllArrows();
+    rerouteAffectedArrows(movedIds);
     return;
   }
 
@@ -312,13 +317,57 @@ function resolveEndpoint(ref) {
   return { shape, def, point: portWorldPos(shape, def) };
 }
 
-// 이동한 도형이 화살표의 연결 당사자가 아니어도 다른 화살표 경로의 장애물이 될 수 있어(예:
-// 무관한 도형이 기존 경로 위로 옮겨짐) 매 이동마다 전체 화살표를 재계산한다 — 프로토타입
-// 규모(도형 수십 개 이하)에서는 pointermove마다 다시 계산해도 비용이 무시할 만하다.
 function rerouteAllArrows() {
   for (const path of arrowsGroup.querySelectorAll('.arrow')) {
     const source = resolveEndpoint(path.getAttribute('data-from'));
     const target = resolveEndpoint(path.getAttribute('data-to'));
+    path.setAttribute('d', pathD(computeRoute(source, target)));
+  }
+}
+
+function pathBBox(pathEl) {
+  const nums = pathEl.getAttribute('d').replace(/[ML]/g, ' ').trim().split(/\s+/).map(Number);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < nums.length; i += 2) {
+    minX = Math.min(minX, nums[i]);
+    maxX = Math.max(maxX, nums[i]);
+    minY = Math.min(minY, nums[i + 1]);
+    maxY = Math.max(maxY, nums[i + 1]);
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function bboxesNear(a, b, margin) {
+  return (
+    a.x - margin < b.x + b.width && a.x + a.width + margin > b.x &&
+    a.y - margin < b.y + b.height && a.y + a.height + margin > b.y
+  );
+}
+
+// 이동한 도형이 화살표의 연결 당사자가 아니어도 다른 화살표 경로의 장애물이 될 수 있어(예:
+// 무관한 도형이 기존 경로 위로 옮겨짐) 원칙적으로는 전체 재계산이 정확하다. 하지만 도형·화살표
+// 수십 개 규모(스트레스 테스트로 실측: 17도형·22화살표에서 프레임당 평균 21.8ms, 60fps 예산
+// 초과)에서는 매 pointermove마다 전체를 다시 계산하면 버벅인다 — 드래그 중엔 "연결된 화살표
+// + 이동한 도형 근처를 지나던 화살표"만 재계산해 비용을 줄이고, 드래그가 끝나는 순간(onPointerUp)
+// rerouteAllArrows로 한 번 더 전체 재계산해 정확성을 보장한다.
+function rerouteAffectedArrows(movedShapeIds) {
+  const movedBoxes = movedShapeIds.map((id) => {
+    const s = shapes.get(id);
+    return { x: s.x, y: s.y, width: s.w, height: s.h };
+  });
+  for (const path of arrowsGroup.querySelectorAll('.arrow')) {
+    const from = path.getAttribute('data-from');
+    const to = path.getAttribute('data-to');
+    const fromId = from.split(':')[0];
+    const toId = to.split(':')[0];
+    let affected = movedShapeIds.includes(fromId) || movedShapeIds.includes(toId);
+    if (!affected) {
+      const pbb = pathBBox(path);
+      affected = movedBoxes.some((bb) => bboxesNear(pbb, bb, REROUTE_MARGIN));
+    }
+    if (!affected) continue;
+    const source = resolveEndpoint(from);
+    const target = resolveEndpoint(to);
     path.setAttribute('d', pathD(computeRoute(source, target)));
   }
 }
@@ -374,6 +423,9 @@ function duplicateShape(source) {
 
 function onPointerUp(evt) {
   if (bodyDragState) {
+    // 드래그 중엔 rerouteAffectedArrows(휴리스틱)로 비용을 줄였으니, 놓는 순간엔 전체
+    // 재계산으로 한 번 더 정확성을 보장한다(놓친 원거리 상호작용이 있어도 최종 상태는 항상 맞음).
+    rerouteAllArrows();
     bodyDragState = null;
     return;
   }
