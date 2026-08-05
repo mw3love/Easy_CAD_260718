@@ -4,6 +4,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const svg = document.getElementById('canvas');
 const shapesGroup = svg.querySelector('.shapes');
 const arrowsGroup = svg.querySelector('.arrows');
+const selectionGroup = svg.querySelector('.selection');
 const previewGroup = svg.querySelector('.drag-preview');
 const statusEl = document.getElementById('status');
 const shapeCountEl = document.getElementById('shape-count');
@@ -139,16 +140,64 @@ function showAllPortsFaint() {
   }
 }
 
-let bodyDragState = null; // { shape, startSvg, startShapePos }
+let selectedIds = new Set();
+
+function normalizedRect(a, b) {
+  return {
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    width: Math.abs(b.x - a.x),
+    height: Math.abs(b.y - a.y),
+  };
+}
+
+function rectsIntersect(a, b) {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+function setSelection(ids) {
+  const next = new Set(ids);
+  for (const id of selectedIds) {
+    if (!next.has(id)) shapes.get(id)?.el.classList.remove('selected');
+  }
+  for (const id of next) {
+    shapes.get(id)?.el.classList.add('selected');
+  }
+  selectedIds = next;
+  statusEl.setAttribute('data-selected-count', String(selectedIds.size));
+}
+
+function toggleSelection(id) {
+  const next = new Set(selectedIds);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  setSelection(next);
+}
+
+let bodyDragState = null; // { startSvg, startPositions: Map(id -> {x,y}) }
+let selectionDragState = null; // { startSvg, rectEl, additive }
 
 function onPointerDownBody(evt) {
   const shapeId = evt.target.parentElement.getAttribute('data-id');
-  const shape = shapes.get(shapeId);
-  bodyDragState = {
-    shape,
-    startSvg: svgPoint(evt.clientX, evt.clientY),
-    startShapePos: { x: shape.x, y: shape.y },
-  };
+
+  if (evt.shiftKey) {
+    toggleSelection(shapeId);
+    evt.preventDefault();
+    return;
+  }
+
+  // 이미 다중선택된 도형을 다시 누르면 선택을 유지한 채 그룹 전체를 드래그,
+  // 그 외엔 단일 선택으로 교체 — Lucid류 캔버스의 표준 동작.
+  if (!selectedIds.has(shapeId)) {
+    setSelection([shapeId]);
+  }
+
+  const startPositions = new Map();
+  for (const id of selectedIds) {
+    const s = shapes.get(id);
+    startPositions.set(id, { x: s.x, y: s.y });
+  }
+  bodyDragState = { startSvg: svgPoint(evt.clientX, evt.clientY), startPositions };
   evt.preventDefault();
 }
 
@@ -179,10 +228,22 @@ function onPointerMove(evt) {
   if (bodyDragState) {
     const dx = pt.x - bodyDragState.startSvg.x;
     const dy = pt.y - bodyDragState.startSvg.y;
-    bodyDragState.shape.x = bodyDragState.startShapePos.x + dx;
-    bodyDragState.shape.y = bodyDragState.startShapePos.y + dy;
-    layoutShapePorts(bodyDragState.shape);
-    rerouteArrowsForShape(bodyDragState.shape.id);
+    for (const [id, startPos] of bodyDragState.startPositions) {
+      const s = shapes.get(id);
+      s.x = startPos.x + dx;
+      s.y = startPos.y + dy;
+      layoutShapePorts(s);
+    }
+    rerouteAllArrows();
+    return;
+  }
+
+  if (selectionDragState) {
+    const rect = normalizedRect(selectionDragState.startSvg, pt);
+    selectionDragState.rectEl.setAttribute('x', rect.x);
+    selectionDragState.rectEl.setAttribute('y', rect.y);
+    selectionDragState.rectEl.setAttribute('width', rect.width);
+    selectionDragState.rectEl.setAttribute('height', rect.height);
     return;
   }
 
@@ -251,17 +312,56 @@ function resolveEndpoint(ref) {
   return { shape, def, point: portWorldPos(shape, def) };
 }
 
-function rerouteArrowsForShape(shapeId) {
-  const prefix = `${shapeId}:`;
+// 이동한 도형이 화살표의 연결 당사자가 아니어도 다른 화살표 경로의 장애물이 될 수 있어(예:
+// 무관한 도형이 기존 경로 위로 옮겨짐) 매 이동마다 전체 화살표를 재계산한다 — 프로토타입
+// 규모(도형 수십 개 이하)에서는 pointermove마다 다시 계산해도 비용이 무시할 만하다.
+function rerouteAllArrows() {
   for (const path of arrowsGroup.querySelectorAll('.arrow')) {
-    const from = path.getAttribute('data-from');
-    const to = path.getAttribute('data-to');
-    if (!from.startsWith(prefix) && !to.startsWith(prefix)) continue;
-    const source = resolveEndpoint(from);
-    const target = resolveEndpoint(to);
+    const source = resolveEndpoint(path.getAttribute('data-from'));
+    const target = resolveEndpoint(path.getAttribute('data-to'));
     path.setAttribute('d', pathD(computeRoute(source, target)));
   }
 }
+
+function removeShape(id) {
+  const shape = shapes.get(id);
+  if (!shape) return;
+  shape.el.remove();
+  shapes.delete(id);
+  const prefix = `${id}:`;
+  for (const path of [...arrowsGroup.querySelectorAll('.arrow')]) {
+    if (path.getAttribute('data-from').startsWith(prefix) || path.getAttribute('data-to').startsWith(prefix)) {
+      path.remove();
+    }
+  }
+}
+
+function deleteSelection() {
+  if (selectedIds.size === 0) return;
+  for (const id of selectedIds) removeShape(id);
+  setSelection([]);
+  updateCounts();
+}
+
+function cancelInteractions() {
+  if (dragState?.previewEl) dragState.previewEl.remove();
+  dragState = null;
+  if (selectionDragState) selectionDragState.rectEl.remove();
+  selectionDragState = null;
+  bodyDragState = null;
+  setHover(null);
+  setSelection([]);
+}
+
+window.addEventListener('keydown', (evt) => {
+  if (evt.key === 'Delete' || evt.key === 'Backspace') {
+    if (selectedIds.size === 0) return;
+    evt.preventDefault();
+    deleteSelection();
+  } else if (evt.key === 'Escape') {
+    cancelInteractions();
+  }
+});
 
 function duplicateShape(source) {
   const orig = source.shape;
@@ -277,6 +377,19 @@ function onPointerUp(evt) {
     bodyDragState = null;
     return;
   }
+
+  if (selectionDragState) {
+    const pt = svgPoint(evt.clientX, evt.clientY);
+    const rect = normalizedRect(selectionDragState.startSvg, pt);
+    const hitIds = [...shapes.values()]
+      .filter((s) => rectsIntersect(rect, { x: s.x, y: s.y, width: s.w, height: s.h }))
+      .map((s) => s.id);
+    setSelection(selectionDragState.additive ? [...selectedIds, ...hitIds] : hitIds);
+    selectionDragState.rectEl.remove();
+    selectionDragState = null;
+    return;
+  }
+
   if (!dragState) return;
 
   if (!dragState.moved) {
@@ -303,11 +416,26 @@ svg.addEventListener('pointerdown', (evt) => {
     onPointerDownPort(evt);
   } else if (evt.target.classList.contains('body')) {
     onPointerDownBody(evt);
+  } else if (evt.target === svg) {
+    const rectEl = document.createElementNS(SVG_NS, 'rect');
+    rectEl.setAttribute('class', 'selection-box');
+    selectionGroup.appendChild(rectEl);
+    selectionDragState = { startSvg: svgPoint(evt.clientX, evt.clientY), rectEl, additive: evt.shiftKey };
   }
+});
+
+svg.addEventListener('dblclick', (evt) => {
+  if (evt.target !== svg) return;
+  const pt = svgPoint(evt.clientX, evt.clientY);
+  const id = nextShapeId();
+  addShape(id, pt.x - 70, pt.y - 45, 140, 90);
+  showAllPortsFaint();
+  updateCounts();
 });
 
 // 초기 도형 2개 — 대각선 배치라 직교 라우팅이 실제로 꺾이는지 확인 가능
 addShape(nextShapeId(), 80, 80, 140, 90);
 addShape(nextShapeId(), 480, 300, 140, 90);
 showAllPortsFaint();
+setSelection([]);
 updateCounts();

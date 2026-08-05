@@ -67,6 +67,22 @@ const offGridOrthogonal = offGridPath.every((p, i) => {
 });
 assert(offGridOrthogonal, '그리드 비정렬 포트 좌표에서도 모든 세그먼트가 축정렬이다');
 
+// bounds 밖 좌표라 A*가 경로를 못 찾는 경우(대규모 스트레스 테스트에서 발견) — 폴백도 축정렬 유지
+const outOfBoundsPath = routeOrthogonal(
+  { x: 1168, y: 947 },
+  { x: 1, y: 0 },
+  { x: 618, y: 247 },
+  { x: -1, y: 0 },
+  [],
+  bounds
+);
+const outOfBoundsOrthogonal = outOfBoundsPath.every((p, i) => {
+  if (i === 0) return true;
+  const prev = outOfBoundsPath[i - 1];
+  return p.x === prev.x || p.y === prev.y;
+});
+assert(outOfBoundsOrthogonal, '경로탐색 실패(폴백) 시에도 모든 세그먼트가 축정렬이다');
+
 if (failures > 0) {
   console.error(`${failures}개 실패`);
   process.exitCode = 1;

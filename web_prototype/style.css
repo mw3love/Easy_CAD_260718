@@ -24,6 +24,19 @@ svg#canvas {
   cursor: move;
 }
 
+.shape.selected rect.body {
+  stroke: #ff7a59;
+  stroke-width: 2.5;
+  stroke-dasharray: 4 3;
+}
+
+.selection-box {
+  fill: rgba(59, 110, 165, 0.12);
+  stroke: #3b6ea5;
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+}
+
 .port {
   fill: #ffffff;
   stroke: #3b6ea5;

@@ -105,8 +105,10 @@ export function routeOrthogonal(start, startDir, end, endDir, obstacles, bounds,
     }
   }
 
+  // 경로를 못 찾아도(예: start/end가 bounds 밖) 다른 반환 경로와 동일하게 축정렬을 보장한다 —
+  // 그대로 반환하면 startExit-endExit 구간이 대각선이 되어 장애물을 그대로 관통할 수 있다.
   if (!found) {
-    return [start, startExit, endExit, end];
+    return simplifyCollinear(fixOrthogonal([start, startExit, endExit, end]));
   }
 
   const cellsPath = [];

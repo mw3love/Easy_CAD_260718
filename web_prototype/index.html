@@ -6,8 +6,9 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="status" data-shape-count="2" data-arrow-count="0" data-hovered-port="none">
+  <div id="status" data-shape-count="2" data-arrow-count="0" data-hovered-port="none" data-selected-count="0">
     shapes: <span id="shape-count">2</span> / arrows: <span id="arrow-count">0</span>
+    (더블클릭으로 도형 추가, 빈 캔버스 드래그로 다중선택)
   </div>
   <svg id="canvas" viewBox="0 0 800 500" width="800" height="500">
     <defs>
@@ -17,6 +18,7 @@
     </defs>
     <g class="shapes"></g>
     <g class="arrows"></g>
+    <g class="selection"></g>
     <g class="drag-preview"></g>
   </svg>
   <script type="module" src="main.js"></script>
