@@ -572,6 +572,28 @@ function selectAllShapes() {
   setSelection([...shapes.keys()]);
 }
 
+// 방향키 미세이동 — Python core_view.py의 화살표키 이동(기본 10px, Shift 또는 Ctrl 누르면
+// 1px)과 동일 동작. Python은 같은 선택의 연속 nudge를 한 undo로 합치지만(coalesce), 웹은
+// 이 프로토타입 전체가 "누른 만큼 엔트리가 쌓이는" 방식(드래그도 시작~끝 1건뿐)이라 여기도
+// 그대로 — 키 한 번=undo 한 건으로 일관.
+const NUDGE_STEP = 10;
+const NUDGE_STEP_FINE = 1;
+
+function nudgeSelection(dx, dy) {
+  if (selectedIds.size === 0) return;
+  const moves = [];
+  for (const id of selectedIds) {
+    const s = shapes.get(id);
+    const before = { x: s.x, y: s.y };
+    s.x += dx;
+    s.y += dy;
+    layoutShapePorts(s);
+    moves.push({ id, before, after: { x: s.x, y: s.y } });
+  }
+  rerouteAllArrows();
+  pushEntry({ type: 'move', moves });
+}
+
 let bodyDragState = null; // { startSvg, startPositions: Map(id -> {x,y}) }
 let selectionDragState = null; // { startSvg, rectEl, additive }
 let resizeDragState = null; // { shapeId, kind: 'N'|'E'|'S'|'W'|'NW'|'NE'|'SE'|'SW', startRect }
@@ -1146,6 +1168,15 @@ window.addEventListener('keydown', (evt) => {
   } else if (evt.key === '0' && !evt.ctrlKey && !evt.metaKey) {
     evt.preventDefault();
     resetView();
+  } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(evt.key)) {
+    if (selectedIds.size === 0) return;
+    evt.preventDefault();
+    const step = (evt.shiftKey || evt.ctrlKey || evt.metaKey) ? NUDGE_STEP_FINE : NUDGE_STEP;
+    const delta = {
+      ArrowLeft: [-step, 0], ArrowRight: [step, 0],
+      ArrowUp: [0, -step], ArrowDown: [0, step],
+    }[evt.key];
+    nudgeSelection(delta[0], delta[1]);
   }
 });
 
