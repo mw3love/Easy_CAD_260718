@@ -37,6 +37,15 @@ body {
   color: #fff;
 }
 
+.toolbar-sep {
+  display: inline-block;
+  width: 1px;
+  height: 18px;
+  margin: 0 6px;
+  background: #ccc;
+  vertical-align: middle;
+}
+
 #grid-bg {
   display: none;
   /* 클릭이 항상 밑에 깔린 svg 배경으로 통과해야 더블클릭 도형생성·마퀴선택이 안 깨진다. */
@@ -67,6 +76,25 @@ svg#canvas {
 }
 
 .shape.selected rect.body {
+  stroke: #ff7a59;
+  stroke-width: 2.5;
+  stroke-dasharray: 4 3;
+}
+
+.shape rect.body.body-hidden {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all; /* fill:transparent 만으론 히트테스트가 빠지므로 이동·선택은 그대로 여기서 받는다 */
+}
+
+.visual-ellipse, .visual-diamond {
+  fill: #eaf1fb;
+  stroke: #3b6ea5;
+  stroke-width: 1.5;
+  pointer-events: none; /* 실제 클릭은 밑에 깔린 body-hidden 사각형이 받는다 */
+}
+
+.shape.selected .visual-ellipse, .shape.selected .visual-diamond {
   stroke: #ff7a59;
   stroke-width: 2.5;
   stroke-dasharray: 4 3;

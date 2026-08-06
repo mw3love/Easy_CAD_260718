@@ -13,11 +13,16 @@
     <button id="undo-btn" type="button" disabled>되돌리기</button>
     <button id="redo-btn" type="button" disabled>다시실행</button>
     <button id="grid-btn" type="button" class="toggled">격자(G)</button>
+    <span class="toolbar-sep"></span>
+    <button id="kind-rect-btn" type="button" class="toggled" data-kind="rect">사각형</button>
+    <button id="kind-ellipse-btn" type="button" data-kind="ellipse">타원</button>
+    <button id="kind-diamond-btn" type="button" data-kind="diamond">마름모</button>
   </div>
-  <div id="status" data-shape-count="2" data-arrow-count="0" data-hovered-port="none" data-selected-count="0" data-undo-count="0" data-redo-count="0" data-zoom="1.000" data-view-x="0.0" data-view-y="0.0" data-grid-enabled="true">
+  <div id="status" data-shape-count="2" data-arrow-count="0" data-hovered-port="none" data-selected-count="0" data-undo-count="0" data-redo-count="0" data-zoom="1.000" data-view-x="0.0" data-view-y="0.0" data-grid-enabled="true" data-next-kind="rect">
     shapes: <span id="shape-count">2</span> / arrows: <span id="arrow-count">0</span>
-    (더블클릭으로 도형 추가, 빈 캔버스 드래그로 다중선택, Ctrl+Z/Ctrl+Shift+Z로 되돌리기/다시실행,
-    휠로 확대/축소, 휠버튼 드래그로 캔버스 이동, G로 격자·스냅 토글)
+    (더블클릭으로 도형 추가 — 사각형/타원/마름모 버튼으로 종류 선택, 빈 캔버스 드래그로 다중선택,
+    Ctrl+Z/Ctrl+Shift+Z로 되돌리기/다시실행, 휠로 확대/축소, 휠버튼 드래그로 캔버스 이동,
+    G로 격자·스냅 토글)
   </div>
   <svg id="canvas" viewBox="0 0 800 500" width="800" height="500">
     <defs>

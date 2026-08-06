@@ -16,6 +16,7 @@ const undoBtn = document.getElementById('undo-btn');
 const redoBtn = document.getElementById('redo-btn');
 const gridBtn = document.getElementById('grid-btn');
 const gridBg = document.getElementById('grid-bg');
+const kindBtns = [...document.querySelectorAll('#toolbar button[data-kind]')];
 
 const DOC_VERSION = 1;
 
@@ -120,6 +121,17 @@ function toggleGrid() {
   setGridEnabled(!gridEnabled);
 }
 
+// ---- 도형 종류 — 다음 더블클릭 생성에 쓸 종류를 툴바 버튼으로 고른다(라디오형, 하나만 활성).
+let currentShapeKind = 'rect';
+
+function setCurrentShapeKind(kind) {
+  currentShapeKind = kind;
+  for (const btn of kindBtns) {
+    btn.classList.toggle('toggled', btn.getAttribute('data-kind') === kind);
+  }
+  statusEl.setAttribute('data-next-kind', kind);
+}
+
 // 포트 4종(N/E/S/W) — Python이 2026-07-30 실사용 피드백으로 대각(NE/SE/SW/NW)을 상시표시
 // 목록에서 뺀 것과 동일하게 맞춤(`_shape_ports` 주석 참조). key, 사각형 기준 상대 위치(비율),
 // 바깥쪽 방향(정규화), 그리드 라우팅용 축정렬 방향.
@@ -165,19 +177,35 @@ function portWorldPos(shape, portDef) {
   return { x: shape.x + shape.w * portDef.rx, y: shape.y + shape.h * portDef.ry };
 }
 
-function addShape(id, x, y, w, h, label = '') {
+function addShape(id, x, y, w, h, label = '', kind = 'rect') {
   const g = document.createElementNS(SVG_NS, 'g');
   g.setAttribute('class', 'shape');
   g.setAttribute('data-id', id);
 
+  // 히트/이동/리사이즈 앵커는 도형 종류와 무관하게 항상 이 사각형(bounding box) 하나다 —
+  // 사각형이 아닌 종류는 이 사각형을 투명화(`.body-hidden`, CSS `pointer-events:all`로
+  // 클릭은 여전히 받음)하고 실제 모양은 별도 `visualEl`(타원/마름모)로 그 위에 그린다.
+  // 포트 위치(N/E/S/W = bbox 변 중점)는 타원·마름모 둘 다 실제 외곽선과 정확히 일치한다
+  // (타원은 bbox 변 중점이 곧 타원 접점, 마름모는 bbox 변 중점이 곧 꼭짓점).
   const rect = document.createElementNS(SVG_NS, 'rect');
-  rect.setAttribute('class', 'body');
+  rect.setAttribute('class', kind === 'rect' ? 'body' : 'body body-hidden');
   rect.setAttribute('x', x);
   rect.setAttribute('y', y);
   rect.setAttribute('width', w);
   rect.setAttribute('height', h);
   rect.setAttribute('rx', 4);
   g.appendChild(rect);
+
+  let visualEl = null;
+  if (kind === 'ellipse') {
+    visualEl = document.createElementNS(SVG_NS, 'ellipse');
+    visualEl.setAttribute('class', 'visual-ellipse');
+    g.appendChild(visualEl);
+  } else if (kind === 'diamond') {
+    visualEl = document.createElementNS(SVG_NS, 'polygon');
+    visualEl.setAttribute('class', 'visual-diamond');
+    g.appendChild(visualEl);
+  }
 
   // 리사이즈 핸들 — 선택된 도형 하나뿐일 때만 CSS(.resizable)로 보이고 히트테스트된다
   // (setSelection이 토글). 변(edge) 4개=그 변만 단축 리사이즈, 모서리(corner) 4개=자유
@@ -221,7 +249,7 @@ function addShape(id, x, y, w, h, label = '') {
   }
 
   shapesGroup.appendChild(g);
-  const shape = { id, x, y, w, h, label, el: g, rectEl: rect, labelEl, ports, edges, corners };
+  const shape = { id, x, y, w, h, label, kind, el: g, rectEl: rect, visualEl, labelEl, ports, edges, corners };
   shapes.set(id, shape);
   layoutShapePorts(shape);
   return shape;
@@ -234,6 +262,19 @@ function layoutShapePorts(shape) {
   shape.rectEl.setAttribute('height', shape.h);
   shape.labelEl.setAttribute('x', shape.x + shape.w / 2);
   shape.labelEl.setAttribute('y', shape.y + shape.h / 2);
+  if (shape.kind === 'ellipse') {
+    shape.visualEl.setAttribute('cx', shape.x + shape.w / 2);
+    shape.visualEl.setAttribute('cy', shape.y + shape.h / 2);
+    shape.visualEl.setAttribute('rx', shape.w / 2);
+    shape.visualEl.setAttribute('ry', shape.h / 2);
+  } else if (shape.kind === 'diamond') {
+    const cx = shape.x + shape.w / 2, cy = shape.y + shape.h / 2;
+    const pts = [
+      `${cx},${shape.y}`, `${shape.x + shape.w},${cy}`,
+      `${cx},${shape.y + shape.h}`, `${shape.x},${cy}`,
+    ].join(' ');
+    shape.visualEl.setAttribute('points', pts);
+  }
   for (const def of PORT_DEFS) {
     const p = portDisplayPos(shape, def);
     const c = shape.ports.get(def.key);
@@ -772,7 +813,7 @@ function applyEntry(entry, isRedo) {
     rerouteAllArrows();
   } else if (entry.type === 'createShapes') {
     if (isRedo) {
-      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label);
+      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label, sd.kind);
     } else {
       for (const sd of entry.shapes) removeShape(sd.id);
     }
@@ -781,7 +822,7 @@ function applyEntry(entry, isRedo) {
     if (isRedo) {
       for (const sd of entry.shapes) removeShape(sd.id);
     } else {
-      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label);
+      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label, sd.kind);
       for (const a of entry.arrows) {
         const source = resolveEndpoint(a.from);
         const target = resolveEndpoint(a.to);
@@ -837,7 +878,7 @@ function removeArrowByRef(from, to) {
 
 function shapeSnapshot(id) {
   const s = shapes.get(id);
-  return { id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label };
+  return { id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label, kind: s.kind };
 }
 
 function deleteSelection() {
@@ -896,7 +937,7 @@ function duplicateShape(source) {
   const nx = orig.x + source.def.nx * DUPLICATE_OFFSET;
   const ny = orig.y + source.def.ny * DUPLICATE_OFFSET;
   const id = nextShapeId();
-  addShape(id, nx, ny, orig.w, orig.h, orig.label);
+  addShape(id, nx, ny, orig.w, orig.h, orig.label, orig.kind);
   updateCounts();
   pushEntry({ type: 'createShapes', shapes: [shapeSnapshot(id)] });
 }
@@ -969,7 +1010,7 @@ function onPointerUp(evt) {
 function serializeDocument() {
   return {
     version: DOC_VERSION,
-    shapes: [...shapes.values()].map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label })),
+    shapes: [...shapes.values()].map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label, kind: s.kind })),
     arrows: [...arrowsGroup.querySelectorAll('.arrow')].map((path) => ({
       from: path.getAttribute('data-from'),
       to: path.getAttribute('data-to'),
@@ -988,7 +1029,7 @@ function applyDocument(data) {
   clearDocument();
   shapeSeq = 0;
   for (const s of data.shapes ?? []) {
-    addShape(s.id, s.x, s.y, s.w, s.h, s.label ?? '');
+    addShape(s.id, s.x, s.y, s.w, s.h, s.label ?? '', s.kind ?? 'rect');
     const n = Number(String(s.id).replace('shape-', ''));
     if (Number.isFinite(n) && n > shapeSeq) shapeSeq = n;
   }
@@ -1040,6 +1081,9 @@ loadInput.addEventListener('change', () => {
 undoBtn.addEventListener('click', undo);
 redoBtn.addEventListener('click', redo);
 gridBtn.addEventListener('click', toggleGrid);
+for (const btn of kindBtns) {
+  btn.addEventListener('click', () => setCurrentShapeKind(btn.getAttribute('data-kind')));
+}
 
 // playwright 자동검증용 디버그 훅 — 파일 다운로드 인터셉트 없이 직렬화/역직렬화 결과를
 // 직접 조회하기 위함(실제 저장/열기 버튼 동작과는 무관, 산출물 코드에 영향 없음).
@@ -1078,7 +1122,7 @@ svg.addEventListener('dblclick', (evt) => {
   const pt = svgPoint(evt.clientX, evt.clientY);
   const topLeft = gridSnap({ x: pt.x - 70, y: pt.y - 45 });
   const id = nextShapeId();
-  addShape(id, topLeft.x, topLeft.y, 140, 90);
+  addShape(id, topLeft.x, topLeft.y, 140, 90, '', currentShapeKind);
   showAllPortsFaint();
   updateCounts();
   pushEntry({ type: 'createShapes', shapes: [shapeSnapshot(id)] });
