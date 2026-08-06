@@ -17,6 +17,8 @@ const redoBtn = document.getElementById('redo-btn');
 const gridBtn = document.getElementById('grid-btn');
 const gridBg = document.getElementById('grid-bg');
 const kindBtns = [...document.querySelectorAll('#toolbar button[data-kind]')];
+const fillSwatches = [...document.querySelectorAll('#fill-swatches .swatch[data-color]')];
+const fillResetBtn = document.getElementById('fill-reset-btn');
 
 const DOC_VERSION = 1;
 
@@ -177,7 +179,7 @@ function portWorldPos(shape, portDef) {
   return { x: shape.x + shape.w * portDef.rx, y: shape.y + shape.h * portDef.ry };
 }
 
-function addShape(id, x, y, w, h, label = '', kind = 'rect') {
+function addShape(id, x, y, w, h, label = '', kind = 'rect', fill = null) {
   const g = document.createElementNS(SVG_NS, 'g');
   g.setAttribute('class', 'shape');
   g.setAttribute('data-id', id);
@@ -249,10 +251,39 @@ function addShape(id, x, y, w, h, label = '', kind = 'rect') {
   }
 
   shapesGroup.appendChild(g);
-  const shape = { id, x, y, w, h, label, kind, el: g, rectEl: rect, visualEl, labelEl, ports, edges, corners };
+  const shape = { id, x, y, w, h, label, kind, fill: null, el: g, rectEl: rect, visualEl, labelEl, ports, edges, corners };
   shapes.set(id, shape);
   layoutShapePorts(shape);
+  if (fill) applyShapeFill(shape, fill);
   return shape;
+}
+
+// 채움색 대상 엘리먼트 — 사각형은 rect.body 자신, 타원·마름모는 그 위에 얹힌 visualEl
+// (rect.body는 그 경우 투명 히트박스라 색을 칠해도 안 보인다).
+function fillTarget(shape) {
+  return shape.kind === 'rect' ? shape.rectEl : shape.visualEl;
+}
+
+// 인라인 style로 세팅 — CSS 클래스 규칙(.shape rect.body { fill: ... })보다 우선순위가 높아야
+// 커스텀 색이 기본색을 실제로 덮어쓴다(속성 fill="..."만으론 클래스 규칙에 밀림).
+function applyShapeFill(shape, color) {
+  shape.fill = color;
+  fillTarget(shape).style.fill = color || '';
+}
+
+// 선택된 도형들에 채움색을 적용 — Python `_edit_color`처럼 선택 대상에 작용(리사이즈와 달리
+// 다중선택도 허용: 여러 도형을 한 번에 같은 색으로 칠하는 건 자연스러운 조작이라 제약 없음).
+function applyFillToSelection(color) {
+  if (selectedIds.size === 0) return;
+  const fills = [];
+  for (const id of selectedIds) {
+    const shape = shapes.get(id);
+    const before = shape.fill;
+    if (before === color) continue;
+    fills.push({ id, before, after: color });
+    applyShapeFill(shape, color);
+  }
+  if (fills.length) pushEntry({ type: 'fill', fills });
 }
 
 function layoutShapePorts(shape) {
@@ -813,7 +844,7 @@ function applyEntry(entry, isRedo) {
     rerouteAllArrows();
   } else if (entry.type === 'createShapes') {
     if (isRedo) {
-      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label, sd.kind);
+      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label, sd.kind, sd.fill);
     } else {
       for (const sd of entry.shapes) removeShape(sd.id);
     }
@@ -822,7 +853,7 @@ function applyEntry(entry, isRedo) {
     if (isRedo) {
       for (const sd of entry.shapes) removeShape(sd.id);
     } else {
-      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label, sd.kind);
+      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label, sd.kind, sd.fill);
       for (const a of entry.arrows) {
         const source = resolveEndpoint(a.from);
         const target = resolveEndpoint(a.to);
@@ -846,6 +877,10 @@ function applyEntry(entry, isRedo) {
     shape.x = r.x; shape.y = r.y; shape.w = r.w; shape.h = r.h;
     layoutShapePorts(shape);
     rerouteAllArrows();
+  } else if (entry.type === 'fill') {
+    for (const f of entry.fills) {
+      applyShapeFill(shapes.get(f.id), isRedo ? f.after : f.before);
+    }
   }
   setSelection([]);
   updateCounts();
@@ -878,7 +913,7 @@ function removeArrowByRef(from, to) {
 
 function shapeSnapshot(id) {
   const s = shapes.get(id);
-  return { id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label, kind: s.kind };
+  return { id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label, kind: s.kind, fill: s.fill };
 }
 
 function deleteSelection() {
@@ -937,7 +972,7 @@ function duplicateShape(source) {
   const nx = orig.x + source.def.nx * DUPLICATE_OFFSET;
   const ny = orig.y + source.def.ny * DUPLICATE_OFFSET;
   const id = nextShapeId();
-  addShape(id, nx, ny, orig.w, orig.h, orig.label, orig.kind);
+  addShape(id, nx, ny, orig.w, orig.h, orig.label, orig.kind, orig.fill);
   updateCounts();
   pushEntry({ type: 'createShapes', shapes: [shapeSnapshot(id)] });
 }
@@ -1010,7 +1045,7 @@ function onPointerUp(evt) {
 function serializeDocument() {
   return {
     version: DOC_VERSION,
-    shapes: [...shapes.values()].map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label, kind: s.kind })),
+    shapes: [...shapes.values()].map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label, kind: s.kind, fill: s.fill })),
     arrows: [...arrowsGroup.querySelectorAll('.arrow')].map((path) => ({
       from: path.getAttribute('data-from'),
       to: path.getAttribute('data-to'),
@@ -1029,7 +1064,7 @@ function applyDocument(data) {
   clearDocument();
   shapeSeq = 0;
   for (const s of data.shapes ?? []) {
-    addShape(s.id, s.x, s.y, s.w, s.h, s.label ?? '', s.kind ?? 'rect');
+    addShape(s.id, s.x, s.y, s.w, s.h, s.label ?? '', s.kind ?? 'rect', s.fill ?? null);
     const n = Number(String(s.id).replace('shape-', ''));
     if (Number.isFinite(n) && n > shapeSeq) shapeSeq = n;
   }
@@ -1084,6 +1119,10 @@ gridBtn.addEventListener('click', toggleGrid);
 for (const btn of kindBtns) {
   btn.addEventListener('click', () => setCurrentShapeKind(btn.getAttribute('data-kind')));
 }
+for (const btn of fillSwatches) {
+  btn.addEventListener('click', () => applyFillToSelection(btn.getAttribute('data-color')));
+}
+fillResetBtn.addEventListener('click', () => applyFillToSelection(null));
 
 // playwright 자동검증용 디버그 훅 — 파일 다운로드 인터셉트 없이 직렬화/역직렬화 결과를
 // 직접 조회하기 위함(실제 저장/열기 버튼 동작과는 무관, 산출물 코드에 영향 없음).

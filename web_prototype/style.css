@@ -46,6 +46,26 @@ body {
   vertical-align: middle;
 }
 
+.swatch {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin-right: 4px;
+  border: 1.5px solid #999;
+  border-radius: 3px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.swatch:hover {
+  border-color: #333;
+}
+
+.swatch-reset {
+  background: repeating-linear-gradient(45deg, #fff, #fff 3px, #e33 3px, #e33 4px);
+}
+
 #grid-bg {
   display: none;
   /* 클릭이 항상 밑에 깔린 svg 배경으로 통과해야 더블클릭 도형생성·마퀴선택이 안 깨진다. */
