@@ -17,6 +17,10 @@ const redoBtn = document.getElementById('redo-btn');
 
 const DOC_VERSION = 1;
 
+// HOVER_RADIUS·SNAP_RADIUS는 "화면 픽셀" 기준(아래 hoverRadiusWorld/snapRadiusWorld로 매 호출
+// 시 현재 줌에 맞는 월드좌표 반경으로 환산) — Python core_view.py가 `10.0 / self._view_scale()`
+// 식으로 화면 픽셀 히트반경을 줌 무관하게 유지하는 것과 같은 패턴(줌아웃 시 포트가 안 작아
+// 보이게, 줌인 시 반경이 과하게 안 커지게).
 const HOVER_RADIUS = 16;
 const DRAG_THRESHOLD = 6;
 const DUPLICATE_OFFSET = 190;
@@ -24,6 +28,73 @@ const SNAP_RADIUS = 20;
 // 드래그 중 "이 화살표를 재계산해야 하나" 판단용 여유폭 — 이동한 도형의 bbox와 화살표
 // 경로의 bbox가 이 거리 안으로 근접하면 무관한 화살표라도 재계산 대상에 포함한다.
 const REROUTE_MARGIN = 40;
+
+// ---- 팬/줌 — SVG viewBox를 직접 조작(무한캔버스). Python은 QGraphicsView.scale()+스크롤바를
+// 쓰지만 웹은 그 대응물이 viewBox — width/height를 줄이면 확대, x/y를 옮기면 이동이다.
+// svgPoint()가 매번 getScreenCTM()으로 화면↔월드 변환을 다시 계산하므로, 기존의 호버·드래그·
+// 선택영역 로직은 viewBox가 바뀌어도 손댈 필요 없이 그대로 맞는다.
+const BASE_VIEW = { w: 800, h: 500 };
+const ZOOM_MIN = 0.15;
+const ZOOM_MAX = 6;
+const ZOOM_STEP = 1.15; // Python _on_wheel_zoom과 동일 배율
+let viewBox = { x: 0, y: 0, w: BASE_VIEW.w, h: BASE_VIEW.h };
+
+function applyViewBox() {
+  svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+  statusEl.setAttribute('data-zoom', (BASE_VIEW.w / viewBox.w).toFixed(3));
+  statusEl.setAttribute('data-view-x', viewBox.x.toFixed(1));
+  statusEl.setAttribute('data-view-y', viewBox.y.toFixed(1));
+}
+
+// 화면 px당 월드 단위 배율 — 줌 무관 히트반경 계산에 쓴다.
+function currentScale() {
+  const rect = svg.getBoundingClientRect();
+  return rect.width / viewBox.w;
+}
+
+function hoverRadiusWorld() {
+  return HOVER_RADIUS / currentScale();
+}
+
+function snapRadiusWorld() {
+  return SNAP_RADIUS / currentScale();
+}
+
+function zoomAt(clientX, clientY, factor) {
+  const newScale = (BASE_VIEW.w / viewBox.w) * factor;
+  if (newScale < ZOOM_MIN || newScale > ZOOM_MAX) return;
+  const before = svgPoint(clientX, clientY);
+  viewBox.w /= factor;
+  viewBox.h /= factor;
+  applyViewBox();
+  const after = svgPoint(clientX, clientY);
+  viewBox.x += before.x - after.x;
+  viewBox.y += before.y - after.y;
+  applyViewBox();
+}
+
+function onWheel(evt) {
+  evt.preventDefault();
+  zoomAt(evt.clientX, evt.clientY, evt.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+}
+
+let panState = null; // { startClient: {x,y}, startViewBox: {x,y}, worldPerPx }
+
+function startPan(clientX, clientY) {
+  panState = {
+    startClient: { x: clientX, y: clientY },
+    startViewBox: { x: viewBox.x, y: viewBox.y },
+    worldPerPx: viewBox.w / svg.getBoundingClientRect().width,
+  };
+}
+
+function movePan(clientX, clientY) {
+  const dx = clientX - panState.startClient.x;
+  const dy = clientY - panState.startClient.y;
+  viewBox.x = panState.startViewBox.x - dx * panState.worldPerPx;
+  viewBox.y = panState.startViewBox.y - dy * panState.worldPerPx;
+  applyViewBox();
+}
 
 // 포트 8종: key, 사각형 기준 상대 위치(비율), 바깥쪽 방향(정규화), 그리드 라우팅용 축정렬 방향
 const PORT_DEFS = [
@@ -233,6 +304,11 @@ function onPointerDownPort(evt) {
 }
 
 function onPointerMove(evt) {
+  if (panState) {
+    movePan(evt.clientX, evt.clientY);
+    return;
+  }
+
   const pt = svgPoint(evt.clientX, evt.clientY);
 
   if (bodyDragState) {
@@ -275,14 +351,37 @@ function onPointerMove(evt) {
     if (dragState.moved) {
       const d = `M ${dragState.source.point.x} ${dragState.source.point.y} L ${pt.x} ${pt.y}`;
       dragState.previewEl.setAttribute('d', d);
-      const target = findNearestPort(pt, dragState.source.shape.id, SNAP_RADIUS);
+      const target = findNearestPort(pt, dragState.source.shape.id, snapRadiusWorld());
       setHover(target);
     }
     return;
   }
 
-  const near = findNearestPort(pt, null, HOVER_RADIUS);
+  const near = findNearestPort(pt, null, hoverRadiusWorld());
   setHover(near);
+}
+
+// A* 탐색을 제한할 영역 — 현재 도형 전체의 bounding box + 여유(장애물 우회 경로가 밖으로
+// 나갈 수 있으므로). 무한캔버스 이전엔 캔버스 크기(800x500) 고정값으로 충분했지만, 팬/줌
+// 도입 후 도형이 그 밖 어디에나 있을 수 있어 고정값이면 원점에서 먼 도형끼리는 탐색 실패→
+// 대각선 폴백(routeOrthogonal의 !found 분기)이 잦아진다.
+const ROUTE_BOUNDS_PADDING = 80;
+
+function worldBounds() {
+  if (shapes.size === 0) return { x: 0, y: 0, width: BASE_VIEW.w, height: BASE_VIEW.h };
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of shapes.values()) {
+    minX = Math.min(minX, s.x);
+    minY = Math.min(minY, s.y);
+    maxX = Math.max(maxX, s.x + s.w);
+    maxY = Math.max(maxY, s.y + s.h);
+  }
+  return {
+    x: minX - ROUTE_BOUNDS_PADDING,
+    y: minY - ROUTE_BOUNDS_PADDING,
+    width: (maxX - minX) + ROUTE_BOUNDS_PADDING * 2,
+    height: (maxY - minY) + ROUTE_BOUNDS_PADDING * 2,
+  };
 }
 
 function computeRoute(source, target) {
@@ -293,10 +392,9 @@ function computeRoute(source, target) {
   obstacles.push({ x: source.shape.x, y: source.shape.y, width: source.shape.w, height: source.shape.h });
   obstacles.push({ x: target.shape.x, y: target.shape.y, width: target.shape.w, height: target.shape.h });
 
-  const bounds = { x: 0, y: 0, width: 800, height: 500 };
   const startDir = { x: source.def.gx, y: source.def.gy };
   const endDir = { x: target.def.gx, y: target.def.gy };
-  return routeOrthogonal(source.point, startDir, target.point, endDir, obstacles, bounds);
+  return routeOrthogonal(source.point, startDir, target.point, endDir, obstacles, worldBounds());
 }
 
 function pathD(points) {
@@ -550,6 +648,11 @@ function duplicateShape(source) {
 }
 
 function onPointerUp(evt) {
+  if (panState) {
+    panState = null;
+    return;
+  }
+
   if (bodyDragState) {
     // 드래그 중엔 rerouteAffectedArrows(휴리스틱)로 비용을 줄였으니, 놓는 순간엔 전체
     // 재계산으로 한 번 더 정확성을 보장한다(놓친 원거리 상호작용이 있어도 최종 상태는 항상 맞음).
@@ -586,7 +689,7 @@ function onPointerUp(evt) {
   } else {
     // 드래그 = 화살표(유효한 목표 포트에 드롭했을 때만)
     const pt = svgPoint(evt.clientX, evt.clientY);
-    const target = findNearestPort(pt, dragState.source.shape.id, SNAP_RADIUS);
+    const target = findNearestPort(pt, dragState.source.shape.id, snapRadiusWorld());
     if (target) {
       finalizeArrow(dragState.source, target);
     }
@@ -673,7 +776,14 @@ window.__easycadDebug = { serializeDocument, applyDocument, undo, redo };
 
 svg.addEventListener('pointermove', onPointerMove);
 window.addEventListener('pointerup', onPointerUp);
+svg.addEventListener('wheel', onWheel, { passive: false });
 svg.addEventListener('pointerdown', (evt) => {
+  // 휠(가운데) 버튼 드래그 = 캔버스 이동 — Python core_view.py의 미들버튼 팬과 동일 관례.
+  if (evt.button === 1) {
+    evt.preventDefault();
+    startPan(evt.clientX, evt.clientY);
+    return;
+  }
   if (evt.target.classList.contains('port')) {
     onPointerDownPort(evt);
   } else if (evt.target.classList.contains('body')) {
@@ -702,3 +812,4 @@ addShape(nextShapeId(), 480, 300, 140, 90);
 showAllPortsFaint();
 setSelection([]);
 updateCounts();
+applyViewBox();
