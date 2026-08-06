@@ -19,6 +19,8 @@ const gridBg = document.getElementById('grid-bg');
 const kindBtns = [...document.querySelectorAll('#toolbar button[data-kind]')];
 const fillSwatches = [...document.querySelectorAll('#fill-swatches .swatch[data-color]')];
 const fillResetBtn = document.getElementById('fill-reset-btn');
+const fillCustomBtn = document.getElementById('fill-custom-btn');
+const fillCustomInput = document.getElementById('fill-custom-input');
 
 const DOC_VERSION = 1;
 
@@ -1277,6 +1279,37 @@ for (const btn of fillSwatches) {
   btn.addEventListener('click', () => applyFillToSelection(btn.getAttribute('data-color')));
 }
 fillResetBtn.addEventListener('click', () => applyFillToSelection(null));
+
+// "다른 색…" — 팔레트 6색 밖의 임의 색은 HTML 네이티브 <input type="color">로 대응(Python의
+// QColorDialog와 같은 역할). 네이티브 피커는 드래그 중 계속 'input'을 쏘므로 그동안은
+// 되돌리기 스택에 안 쌓는 실시간 프리뷰만 하고, 피커를 닫아 최종값이 확정되는 'change' 때
+// 시작색 대비 변경분을 한 번에 커밋한다(스와치 클릭 1번=undo 1건과 동일한 단위 유지).
+let customColorBefore = null; // Map(id -> before)
+
+fillCustomBtn.addEventListener('click', () => {
+  if (selectedIds.size === 0) return;
+  customColorBefore = new Map([...selectedIds].map((id) => [id, shapes.get(id).fill]));
+  const firstFill = shapes.get([...selectedIds][0]).fill;
+  fillCustomInput.value = firstFill || '#ffffff';
+  fillCustomInput.click();
+});
+
+fillCustomInput.addEventListener('input', () => {
+  if (!customColorBefore) return;
+  for (const id of customColorBefore.keys()) applyShapeFill(shapes.get(id), fillCustomInput.value);
+});
+
+fillCustomInput.addEventListener('change', () => {
+  if (!customColorBefore) return;
+  const after = fillCustomInput.value;
+  const fills = [];
+  for (const [id, before] of customColorBefore) {
+    if (before === after) continue;
+    fills.push({ id, before, after });
+  }
+  customColorBefore = null;
+  if (fills.length) pushEntry({ type: 'fill', fills });
+});
 
 // playwright 자동검증용 디버그 훅 — 파일 다운로드 인터셉트 없이 직렬화/역직렬화 결과를
 // 직접 조회하기 위함(실제 저장/열기 버튼 동작과는 무관, 산출물 코드에 영향 없음).

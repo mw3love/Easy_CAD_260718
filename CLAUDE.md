@@ -155,12 +155,16 @@ docs/
   위치는 경로 호길이 중점에 수평/수직 구간별 9px 오프셋(직교 라우팅 전제, Python의 드래그
   재투영 오프셋은 범위 밖), `setArrowPoints`가 재라우팅마다 라벨 위치도 함께 갱신해 도형이
   움직여도 라벨이 따라감. `label` 필드를 직렬화·cascade복원(`deleteShapes`)·개별삭제복원
-  (`deleteArrow`) 전부에 관통, 새 undo 엔트리 `arrowLabel`. 다음 방향 미정(커스텀 색
-  다이얼로그 후보).
+  (`deleteArrow`) 전부에 관통, 새 undo 엔트리 `arrowLabel`. 14차(같은 날): 커스텀 색
+  다이얼로그("다른 색…") — Python `QColorDialog`를 HTML 네이티브 `<input type="color">`로
+  대응, 드래그 중 `input` 이벤트는 undo 없는 실시간 프리뷰만 하고 피커가 닫히는 `change`
+  때 시작색 대비 최종값을 1회만 커밋(기존 `fill` undo 엔트리 재사용, 스와치 클릭과 같은
+  단위 유지). 네이티브 다이얼로그 자체가 열리고 닫히는 상호작용은 헤드리스 자동화 불가
+  영역이라 그 앞뒤 로직(캡처→프리뷰→커밋)만 실이벤트로 검증. 다음 방향 미정.
   로컬로 보려면
   `web_prototype/`에서 `python -m http.server 8791` 후 `localhost:8791/index.html`.
   경위·근거는 `docs/history/2026-08.md` "웹 전환 실험" 항목들(2026-08-05 두 건 + 2026-08-06
-  열 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
+  열한 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
