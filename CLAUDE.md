@@ -117,10 +117,14 @@ docs/
   SVG `viewBox` 직접 조작으로 휠=커서고정 줌/휠버튼드래그=팬 구현(Python `core_view.py` 관례
   그대로: 배율 1.15, 화면px 히트반경을 줌으로 나눠 무관하게 유지), A* 라우팅 탐색범위가
   800×500으로 하드코딩돼 원점에서 먼 도형끼리는 못 잇던 버그를 도형 bounding box 기반
-  동적범위로 함께 수정. 다음 방향 미정. 로컬로 보려면
+  동적범위로 함께 수정. 7차(같은 날): 도형 라벨(텍스트) — 더블클릭 시 도형 위에 정확히
+  겹치는 플로팅 `<input>`(HTML)으로 인라인 편집(SVG `<text>` contenteditable은 IME 호환성이
+  나빠 회피), Enter=커밋/Escape=취소/blur=커밋, 편집 중 Delete/Backspace가 캔버스 단축키로
+  새는 것을 사전에 막는 가드 추가, undo/redo(`label` 엔트리)·복제·저장불러오기 전부 라벨 관통
+  확인. 다음 방향 미정. 로컬로 보려면
   `web_prototype/`에서 `python -m http.server 8791` 후 `localhost:8791/index.html`.
   경위·근거는 `docs/history/2026-08.md` "웹 전환 실험" 항목들(2026-08-05 두 건 + 2026-08-06
-  세 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
+  네 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

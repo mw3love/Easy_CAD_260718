@@ -57,6 +57,29 @@ svg#canvas {
   stroke-dasharray: 4 3;
 }
 
+.shape text.label {
+  font-family: inherit;
+  font-size: 13px;
+  fill: #223;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+}
+
+.label-edit-input {
+  position: fixed;
+  box-sizing: border-box;
+  height: 24px;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: center;
+  border: 1.5px solid #ff7a59;
+  border-radius: 3px;
+  padding: 0 2px;
+  z-index: 1000;
+}
+
 .selection-box {
   fill: rgba(59, 110, 165, 0.12);
   stroke: #3b6ea5;

@@ -127,7 +127,7 @@ function portWorldPos(shape, portDef) {
   return { x: shape.x + shape.w * portDef.rx, y: shape.y + shape.h * portDef.ry };
 }
 
-function addShape(id, x, y, w, h) {
+function addShape(id, x, y, w, h, label = '') {
   const g = document.createElementNS(SVG_NS, 'g');
   g.setAttribute('class', 'shape');
   g.setAttribute('data-id', id);
@@ -141,6 +141,14 @@ function addShape(id, x, y, w, h) {
   rect.setAttribute('rx', 4);
   g.appendChild(rect);
 
+  // 라벨 텍스트 — pointer-events:none(style.css)으로 클릭이 항상 아래 rect.body로 통과하게
+  // 해서, 도형 위 어디를 눌러도(텍스트 위여도) 기존 선택/드래그 판정(evt.target.classList
+  // .contains('body'))이 그대로 맞는다. 더블클릭만 별도로 텍스트 편집을 시작(아래 dblclick).
+  const labelEl = document.createElementNS(SVG_NS, 'text');
+  labelEl.setAttribute('class', 'label');
+  labelEl.textContent = label;
+  g.appendChild(labelEl);
+
   const ports = new Map();
   for (const def of PORT_DEFS) {
     const c = document.createElementNS(SVG_NS, 'circle');
@@ -153,7 +161,7 @@ function addShape(id, x, y, w, h) {
   }
 
   shapesGroup.appendChild(g);
-  const shape = { id, x, y, w, h, el: g, rectEl: rect, ports };
+  const shape = { id, x, y, w, h, label, el: g, rectEl: rect, labelEl, ports };
   shapes.set(id, shape);
   layoutShapePorts(shape);
   return shape;
@@ -164,12 +172,81 @@ function layoutShapePorts(shape) {
   shape.rectEl.setAttribute('y', shape.y);
   shape.rectEl.setAttribute('width', shape.w);
   shape.rectEl.setAttribute('height', shape.h);
+  shape.labelEl.setAttribute('x', shape.x + shape.w / 2);
+  shape.labelEl.setAttribute('y', shape.y + shape.h / 2);
   for (const def of PORT_DEFS) {
     const p = portWorldPos(shape, def);
     const c = shape.ports.get(def.key);
     c.setAttribute('cx', p.x);
     c.setAttribute('cy', p.y);
   }
+}
+
+function setShapeLabel(shapeId, text) {
+  const shape = shapes.get(shapeId);
+  shape.label = text;
+  shape.labelEl.textContent = text;
+}
+
+// 도형의 월드 사각형을 현재 팬/줌 기준 실제 화면(client) 좌표로 — 인라인 편집 <input>을
+// 도형 위에 정확히 겹쳐 놓기 위함(getScreenCTM이 viewBox 변화를 항상 반영하므로 팬/줌 중에도 맞음).
+function shapeScreenRect(shape) {
+  const ctm = svg.getScreenCTM();
+  const tl = svg.createSVGPoint();
+  tl.x = shape.x; tl.y = shape.y;
+  const p1 = tl.matrixTransform(ctm);
+  const br = svg.createSVGPoint();
+  br.x = shape.x + shape.w; br.y = shape.y + shape.h;
+  const p2 = br.matrixTransform(ctm);
+  return { left: p1.x, top: p1.y, width: p2.x - p1.x, height: p2.y - p1.y };
+}
+
+let labelEditState = null; // { shapeId, inputEl, before }
+
+function beginLabelEdit(shapeId) {
+  if (labelEditState) commitLabelEdit();
+  const shape = shapes.get(shapeId);
+  const rect = shapeScreenRect(shape);
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'label-edit-input';
+  input.value = shape.label || '';
+  input.style.left = `${rect.left}px`;
+  input.style.top = `${rect.top + rect.height / 2 - 12}px`;
+  input.style.width = `${Math.max(rect.width, 40)}px`;
+  document.body.appendChild(input);
+  labelEditState = { shapeId, inputEl: input, before: shape.label || '' };
+  input.addEventListener('keydown', (evt) => {
+    if (evt.key === 'Enter') {
+      evt.preventDefault();
+      commitLabelEdit();
+    } else if (evt.key === 'Escape') {
+      evt.preventDefault();
+      cancelLabelEdit();
+    }
+  });
+  input.addEventListener('blur', () => commitLabelEdit());
+  input.focus();
+  input.select();
+}
+
+function commitLabelEdit() {
+  if (!labelEditState) return;
+  const { shapeId, inputEl, before } = labelEditState;
+  const after = inputEl.value;
+  labelEditState = null;
+  inputEl.remove();
+  if (after !== before) {
+    setShapeLabel(shapeId, after);
+    pushEntry({ type: 'label', id: shapeId, before, after });
+  }
+}
+
+function cancelLabelEdit() {
+  if (!labelEditState) return;
+  const { inputEl } = labelEditState;
+  labelEditState = null;
+  inputEl.remove();
 }
 
 function updateCounts() {
@@ -535,7 +612,7 @@ function applyEntry(entry, isRedo) {
     rerouteAllArrows();
   } else if (entry.type === 'createShapes') {
     if (isRedo) {
-      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h);
+      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label);
     } else {
       for (const sd of entry.shapes) removeShape(sd.id);
     }
@@ -544,7 +621,7 @@ function applyEntry(entry, isRedo) {
     if (isRedo) {
       for (const sd of entry.shapes) removeShape(sd.id);
     } else {
-      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h);
+      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label);
       for (const a of entry.arrows) {
         const source = resolveEndpoint(a.from);
         const target = resolveEndpoint(a.to);
@@ -560,6 +637,8 @@ function applyEntry(entry, isRedo) {
     } else {
       removeArrowByRef(entry.from, entry.to);
     }
+  } else if (entry.type === 'label') {
+    setShapeLabel(entry.id, isRedo ? entry.after : entry.before);
   }
   setSelection([]);
   updateCounts();
@@ -592,7 +671,7 @@ function removeArrowByRef(from, to) {
 
 function shapeSnapshot(id) {
   const s = shapes.get(id);
-  return { id: s.id, x: s.x, y: s.y, w: s.w, h: s.h };
+  return { id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label };
 }
 
 function deleteSelection() {
@@ -616,11 +695,16 @@ function cancelInteractions() {
   if (selectionDragState) selectionDragState.rectEl.remove();
   selectionDragState = null;
   bodyDragState = null;
+  cancelLabelEdit();
   setHover(null);
   setSelection([]);
 }
 
 window.addEventListener('keydown', (evt) => {
+  // 라벨 편집 <input>에 포커스가 있는 동안엔 캔버스 단축키(Delete=도형삭제 등)를 죽인다 —
+  // 아니면 라벨 텍스트를 백스페이스로 지우다가 선택된 도형이 통째로 삭제되는 사고가 난다.
+  // Escape/Enter는 beginLabelEdit이 입력창에 단 자체 핸들러가 이미 처리(evt.preventDefault).
+  if (evt.target.tagName === 'INPUT') return;
   if (evt.key === 'Delete' || evt.key === 'Backspace') {
     if (selectedIds.size === 0) return;
     evt.preventDefault();
@@ -642,7 +726,7 @@ function duplicateShape(source) {
   const nx = orig.x + source.def.nx * DUPLICATE_OFFSET;
   const ny = orig.y + source.def.ny * DUPLICATE_OFFSET;
   const id = nextShapeId();
-  addShape(id, nx, ny, orig.w, orig.h);
+  addShape(id, nx, ny, orig.w, orig.h, orig.label);
   updateCounts();
   pushEntry({ type: 'createShapes', shapes: [shapeSnapshot(id)] });
 }
@@ -703,7 +787,7 @@ function onPointerUp(evt) {
 function serializeDocument() {
   return {
     version: DOC_VERSION,
-    shapes: [...shapes.values()].map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h })),
+    shapes: [...shapes.values()].map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label })),
     arrows: [...arrowsGroup.querySelectorAll('.arrow')].map((path) => ({
       from: path.getAttribute('data-from'),
       to: path.getAttribute('data-to'),
@@ -722,7 +806,7 @@ function applyDocument(data) {
   clearDocument();
   shapeSeq = 0;
   for (const s of data.shapes ?? []) {
-    addShape(s.id, s.x, s.y, s.w, s.h);
+    addShape(s.id, s.x, s.y, s.w, s.h, s.label ?? '');
     const n = Number(String(s.id).replace('shape-', ''));
     if (Number.isFinite(n) && n > shapeSeq) shapeSeq = n;
   }
@@ -797,6 +881,10 @@ svg.addEventListener('pointerdown', (evt) => {
 });
 
 svg.addEventListener('dblclick', (evt) => {
+  if (evt.target.classList.contains('body')) {
+    beginLabelEdit(evt.target.parentElement.getAttribute('data-id'));
+    return;
+  }
   if (evt.target !== svg) return;
   const pt = svgPoint(evt.clientX, evt.clientY);
   const id = nextShapeId();
