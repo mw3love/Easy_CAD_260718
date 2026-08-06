@@ -21,6 +21,9 @@ const fillSwatches = [...document.querySelectorAll('#fill-swatches .swatch[data-
 const fillResetBtn = document.getElementById('fill-reset-btn');
 const fillCustomBtn = document.getElementById('fill-custom-btn');
 const fillCustomInput = document.getElementById('fill-custom-input');
+const lineStyleBtns = [...document.querySelectorAll('.line-style-btn[data-line-style]')];
+const rotationValueEl = document.getElementById('rotation-value');
+const rotationResetBtn = document.getElementById('rotation-reset-btn');
 
 const DOC_VERSION = 1;
 
@@ -202,10 +205,19 @@ function portWorldPos(shape, portDef) {
   return { x: shape.x + shape.w * portDef.rx, y: shape.y + shape.h * portDef.ry };
 }
 
-function addShape(id, x, y, w, h, label = '', kind = 'rect', fill = null) {
+function addShape(id, x, y, w, h, label = '', kind = 'rect', fill = null, rotation = 0, lineStyle = 'solid') {
   const g = document.createElementNS(SVG_NS, 'g');
   g.setAttribute('class', 'shape');
   g.setAttribute('data-id', id);
+
+  // 회전 근사(v1, deep-interview 확정) — 시각 요소(테두리·채움·라벨)만 이 안쪽 그룹의
+  // `transform="rotate(...)"`로 실제로 돈다. 포트·리사이즈·회전핸들 자체의 위치는 계속
+  // 회전 전 bbox(N/E/S/W) 기준을 그대로 쓴다 — 화살표 재라우팅 없이 회전만 가능해지고,
+  // 큰 각도에서 포트가 시각 테두리에서 살짝 벗어나 보이는 것은 감수한 근사(부정확도는
+  // 후속 과제로 남김, 이번 라운드는 정밀 추적 범위 밖으로 deep-interview에서 확정).
+  const rotateGroup = document.createElementNS(SVG_NS, 'g');
+  rotateGroup.setAttribute('class', 'visual-rotate');
+  g.appendChild(rotateGroup);
 
   // 히트/이동/리사이즈 앵커는 도형 종류와 무관하게 항상 이 사각형(bounding box) 하나다 —
   // 사각형이 아닌 종류는 이 사각형을 투명화(`.body-hidden`, CSS `pointer-events:all`로
@@ -219,17 +231,17 @@ function addShape(id, x, y, w, h, label = '', kind = 'rect', fill = null) {
   rect.setAttribute('width', w);
   rect.setAttribute('height', h);
   rect.setAttribute('rx', 4);
-  g.appendChild(rect);
+  rotateGroup.appendChild(rect);
 
   let visualEl = null;
   if (kind === 'ellipse') {
     visualEl = document.createElementNS(SVG_NS, 'ellipse');
     visualEl.setAttribute('class', 'visual-ellipse');
-    g.appendChild(visualEl);
+    rotateGroup.appendChild(visualEl);
   } else if (kind === 'diamond') {
     visualEl = document.createElementNS(SVG_NS, 'polygon');
     visualEl.setAttribute('class', 'visual-diamond');
-    g.appendChild(visualEl);
+    rotateGroup.appendChild(visualEl);
   }
 
   // 리사이즈 핸들 — 선택된 도형 하나뿐일 때만 CSS(.resizable)로 보이고 히트테스트된다
@@ -255,12 +267,13 @@ function addShape(id, x, y, w, h, label = '', kind = 'rect', fill = null) {
   }
 
   // 라벨 텍스트 — pointer-events:none(style.css)으로 클릭이 항상 아래 rect.body로 통과하게
-  // 해서, 도형 위 어디를 눌러도(텍스트 위여도) 기존 선택/드래그 판정(evt.target.classList
-  // .contains('body'))이 그대로 맞는다. 더블클릭만 별도로 텍스트 편집을 시작(아래 dblclick).
+  // 해서, 도형 위 어디를 눌러도(텍스트 위여도) 기존 선택/드래그 판정(evt.target.closest
+  // ('.shape'))이 그대로 맞는다. 더블클릭만 별도로 텍스트 편집을 시작(아래 dblclick).
+  // 회전 그룹 안에 둬 도형과 함께 돈다.
   const labelEl = document.createElementNS(SVG_NS, 'text');
   labelEl.setAttribute('class', 'label');
   labelEl.textContent = label;
-  g.appendChild(labelEl);
+  rotateGroup.appendChild(labelEl);
 
   const ports = new Map();
   for (const def of PORT_DEFS) {
@@ -273,11 +286,28 @@ function addShape(id, x, y, w, h, label = '', kind = 'rect', fill = null) {
     ports.set(def.key, c);
   }
 
+  // 회전 핸들 — 단일 선택시에만 보이는 줄기(stem)+손잡이(circle), 위치는 근사 방침대로
+  // 회전 전 bbox 상단 중앙 기준 고정(portGapWorld 등과 같은 이유로 화면px 고정은 이번 범위
+  // 밖 — CORNER_SIZE 주석과 같은 Not-tested).
+  const rotateStemEl = document.createElementNS(SVG_NS, 'line');
+  rotateStemEl.setAttribute('class', 'rotate-handle-stem');
+  g.appendChild(rotateStemEl);
+  const rotateHandleEl = document.createElementNS(SVG_NS, 'circle');
+  rotateHandleEl.setAttribute('class', 'rotate-handle');
+  rotateHandleEl.setAttribute('data-shape', id);
+  rotateHandleEl.setAttribute('r', 5);
+  g.appendChild(rotateHandleEl);
+
   shapesGroup.appendChild(g);
-  const shape = { id, x, y, w, h, label, kind, fill: null, el: g, rectEl: rect, visualEl, labelEl, ports, edges, corners };
+  const shape = {
+    id, x, y, w, h, label, kind, fill: null, rotation, lineStyle,
+    el: g, rectEl: rect, visualEl, labelEl, rotateGroupEl: rotateGroup,
+    rotateStemEl, rotateHandleEl, ports, edges, corners,
+  };
   shapes.set(id, shape);
   layoutShapePorts(shape);
   if (fill) applyShapeFill(shape, fill);
+  if (lineStyle && lineStyle !== 'solid') applyShapeLineStyle(shape, lineStyle);
   return shape;
 }
 
@@ -309,6 +339,30 @@ function applyFillToSelection(color) {
   if (fills.length) pushEntry({ type: 'fill', fills });
 }
 
+// 선 스타일 — Python M2 #10(점선 지원)의 웹 대응. 채움과 같은 대상 엘리먼트(fillTarget)의
+// stroke-dasharray를 인라인으로 세팅한다. 화살표는 이번 스코프 밖(deep-interview 확정 —
+// 도형 속성패널 범위만, 기존 채움색과 동일한 "도형 선택 대상만" 관례 유지).
+const LINE_DASH = { solid: '', dashed: '8 4', dotted: '2 3' };
+
+function applyShapeLineStyle(shape, style) {
+  shape.lineStyle = style;
+  fillTarget(shape).style.strokeDasharray = LINE_DASH[style] ?? '';
+}
+
+function applyLineStyleToSelection(style) {
+  if (selectedIds.size === 0) return;
+  const items = [];
+  for (const id of selectedIds) {
+    const shape = shapes.get(id);
+    const before = shape.lineStyle;
+    if (before === style) continue;
+    items.push({ id, before, after: style });
+    applyShapeLineStyle(shape, style);
+  }
+  if (items.length) pushEntry({ type: 'lineStyle', items });
+  updatePropertiesPanel();
+}
+
 function layoutShapePorts(shape) {
   shape.rectEl.setAttribute('x', shape.x);
   shape.rectEl.setAttribute('y', shape.y);
@@ -336,6 +390,27 @@ function layoutShapePorts(shape) {
     c.setAttribute('cy', p.y);
   }
   layoutResizeHandles(shape);
+  layoutRotateHandle(shape);
+  const cx = shape.x + shape.w / 2;
+  const cy = shape.y + shape.h / 2;
+  shape.rotateGroupEl.setAttribute('transform', shape.rotation ? `rotate(${shape.rotation} ${cx} ${cy})` : '');
+}
+
+// 회전 핸들 — 근사 방침대로 회전 전 bbox 상단 중앙 기준 고정 오프셋(회전각과 무관하게
+// 항상 "위"를 가리킨다 — 포트·리사이즈 핸들과 같은 근사, 드래그 시작점만 잡으면 되므로
+// 상호작용에는 지장 없음).
+const ROTATE_HANDLE_OFFSET = 24;
+
+function layoutRotateHandle(shape) {
+  const cx = shape.x + shape.w / 2;
+  const topY = shape.y;
+  const handleY = topY - ROTATE_HANDLE_OFFSET;
+  shape.rotateStemEl.setAttribute('x1', cx);
+  shape.rotateStemEl.setAttribute('y1', topY);
+  shape.rotateStemEl.setAttribute('x2', cx);
+  shape.rotateStemEl.setAttribute('y2', handleY);
+  shape.rotateHandleEl.setAttribute('cx', cx);
+  shape.rotateHandleEl.setAttribute('cy', handleY);
 }
 
 const CORNER_SIZE = 10; // 월드 단위 고정(줌 무관 스케일링은 이번 범위 밖 — Not-tested 기록)
@@ -559,6 +634,24 @@ function setSelection(ids) {
   }
   selectedIds = next;
   statusEl.setAttribute('data-selected-count', String(selectedIds.size));
+  updatePropertiesPanel();
+}
+
+// 속성 패널 갱신 — 회전 표시는 단일 선택만(핸들도 단일 선택에서만 뜨는 것과 동일 규칙),
+// 선 스타일 토글은 첫 선택 도형 기준으로 표시(다중선택 시 "혼합" 세분화는 스코프 밖).
+function updatePropertiesPanel() {
+  if (selectedIds.size === 1) {
+    const shape = shapes.get([...selectedIds][0]);
+    const deg = Math.round(shape.rotation || 0);
+    rotationValueEl.textContent = `${deg}°`;
+  } else {
+    rotationValueEl.textContent = '—';
+  }
+  const first = selectedIds.size > 0 ? shapes.get([...selectedIds][0]) : null;
+  const activeStyle = first ? first.lineStyle : 'solid';
+  for (const btn of lineStyleBtns) {
+    btn.classList.toggle('toggled', btn.getAttribute('data-line-style') === activeStyle);
+  }
 }
 
 function toggleSelection(id) {
@@ -632,6 +725,7 @@ function mirrorSelection(axis) {
 let bodyDragState = null; // { startSvg, startPositions: Map(id -> {x,y}) }
 let selectionDragState = null; // { startSvg, rectEl, additive }
 let resizeDragState = null; // { shapeId, kind: 'N'|'E'|'S'|'W'|'NW'|'NE'|'SE'|'SW', startRect }
+let rotateDragState = null; // { shapeId, cx, cy, startRotation }
 
 // Python core_shapes.py의 _grid_snap_local과 같은 역할 — 코너/변 리사이즈 중 이동하는 축의
 // 절대좌표를 격자에 스냅한다(gridSnap은 {x,y} 점 전용이라 스칼라 하나만 필요한 여기엔 안 맞음).
@@ -657,7 +751,7 @@ function computeResize(startRect, kind, cursorPt) {
 }
 
 function onPointerDownBody(evt) {
-  const shapeId = evt.target.parentElement.getAttribute('data-id');
+  const shapeId = evt.target.closest('.shape').getAttribute('data-id');
 
   if (evt.shiftKey) {
     toggleSelection(shapeId);
@@ -710,6 +804,21 @@ function onPointerDownResize(evt) {
   evt.preventDefault();
 }
 
+// 회전 드래그 — 중심(cx,cy) 기준 커서 각도를 그대로 rotation(도)으로 쓴다. 0도 = 핸들이
+// 위(N)를 가리키는 상태가 되도록 atan2 결과에 +90을 더함(atan2는 동쪽=0도 기준이라).
+function onPointerDownRotateHandle(evt) {
+  const shapeId = evt.target.getAttribute('data-shape');
+  const shape = shapes.get(shapeId);
+  const cx = shape.x + shape.w / 2;
+  const cy = shape.y + shape.h / 2;
+  rotateDragState = { shapeId, cx, cy, startRotation: shape.rotation || 0 };
+  evt.preventDefault();
+}
+
+function angleFromCenter(cx, cy, pt) {
+  return Math.atan2(pt.y - cy, pt.x - cx) * (180 / Math.PI) + 90;
+}
+
 function onPointerMove(evt) {
   if (panState) {
     movePan(evt.clientX, evt.clientY);
@@ -717,6 +826,14 @@ function onPointerMove(evt) {
   }
 
   const pt = svgPoint(evt.clientX, evt.clientY);
+
+  if (rotateDragState) {
+    const shape = shapes.get(rotateDragState.shapeId);
+    shape.rotation = angleFromCenter(rotateDragState.cx, rotateDragState.cy, pt);
+    layoutShapePorts(shape);
+    updatePropertiesPanel();
+    return;
+  }
 
   if (resizeDragState) {
     const shape = shapes.get(resizeDragState.shapeId);
@@ -1056,7 +1173,7 @@ function applyEntry(entry, isRedo) {
     rerouteAllArrows();
   } else if (entry.type === 'createShapes') {
     if (isRedo) {
-      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label, sd.kind, sd.fill);
+      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label, sd.kind, sd.fill, sd.rotation, sd.lineStyle);
     } else {
       for (const sd of entry.shapes) removeShape(sd.id);
     }
@@ -1065,7 +1182,7 @@ function applyEntry(entry, isRedo) {
     if (isRedo) {
       for (const sd of entry.shapes) removeShape(sd.id);
     } else {
-      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label, sd.kind, sd.fill);
+      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h, sd.label, sd.kind, sd.fill, sd.rotation, sd.lineStyle);
       for (const a of entry.arrows) {
         const source = resolveEndpoint(a.from);
         const target = resolveEndpoint(a.to);
@@ -1104,6 +1221,16 @@ function applyEntry(entry, isRedo) {
   } else if (entry.type === 'arrowLabel') {
     const g = arrowsGroup.querySelector(`.arrow[data-id="${entry.id}"]`);
     if (g) setArrowLabelText(g, isRedo ? entry.after : entry.before);
+  } else if (entry.type === 'rotate') {
+    for (const it of entry.items) {
+      const s = shapes.get(it.id);
+      s.rotation = isRedo ? it.after : it.before;
+      layoutShapePorts(s);
+    }
+  } else if (entry.type === 'lineStyle') {
+    for (const it of entry.items) {
+      applyShapeLineStyle(shapes.get(it.id), isRedo ? it.after : it.before);
+    }
   }
   setSelection([]);
   updateCounts();
@@ -1136,7 +1263,7 @@ function removeArrowByRef(from, to) {
 
 function shapeSnapshot(id) {
   const s = shapes.get(id);
-  return { id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label, kind: s.kind, fill: s.fill };
+  return { id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label, kind: s.kind, fill: s.fill, rotation: s.rotation, lineStyle: s.lineStyle };
 }
 
 function deleteSelection() {
@@ -1182,6 +1309,7 @@ function cancelInteractions() {
   selectionDragState = null;
   bodyDragState = null;
   resizeDragState = null;
+  rotateDragState = null;
   cancelLabelEdit();
   setHover(null);
   setArrowSelection(null);
@@ -1248,7 +1376,7 @@ function duplicateShape(source) {
   const nx = orig.x + source.def.nx * DUPLICATE_OFFSET;
   const ny = orig.y + source.def.ny * DUPLICATE_OFFSET;
   const id = nextShapeId();
-  addShape(id, nx, ny, orig.w, orig.h, orig.label, orig.kind, orig.fill);
+  addShape(id, nx, ny, orig.w, orig.h, orig.label, orig.kind, orig.fill, orig.rotation, orig.lineStyle);
   updateCounts();
   pushEntry({ type: 'createShapes', shapes: [shapeSnapshot(id)] });
 }
@@ -1256,6 +1384,15 @@ function duplicateShape(source) {
 function onPointerUp(evt) {
   if (panState) {
     panState = null;
+    return;
+  }
+
+  if (rotateDragState) {
+    const shape = shapes.get(rotateDragState.shapeId);
+    const before = rotateDragState.startRotation;
+    const after = shape.rotation;
+    rotateDragState = null;
+    if (before !== after) pushEntry({ type: 'rotate', items: [{ id: shape.id, before, after }] });
     return;
   }
 
@@ -1321,7 +1458,7 @@ function onPointerUp(evt) {
 function serializeDocument() {
   return {
     version: DOC_VERSION,
-    shapes: [...shapes.values()].map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label, kind: s.kind, fill: s.fill })),
+    shapes: [...shapes.values()].map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label, kind: s.kind, fill: s.fill, rotation: s.rotation, lineStyle: s.lineStyle })),
     arrows: [...arrowsGroup.querySelectorAll('.arrow')].map((g) => ({
       from: g.getAttribute('data-from'),
       to: g.getAttribute('data-to'),
@@ -1342,7 +1479,7 @@ function applyDocument(data) {
   shapeSeq = 0;
   arrowSeq = 0;
   for (const s of data.shapes ?? []) {
-    addShape(s.id, s.x, s.y, s.w, s.h, s.label ?? '', s.kind ?? 'rect', s.fill ?? null);
+    addShape(s.id, s.x, s.y, s.w, s.h, s.label ?? '', s.kind ?? 'rect', s.fill ?? null, s.rotation ?? 0, s.lineStyle ?? 'solid');
     const n = Number(String(s.id).replace('shape-', ''));
     if (Number.isFinite(n) && n > shapeSeq) shapeSeq = n;
   }
@@ -1401,6 +1538,23 @@ for (const btn of fillSwatches) {
   btn.addEventListener('click', () => applyFillToSelection(btn.getAttribute('data-color')));
 }
 fillResetBtn.addEventListener('click', () => applyFillToSelection(null));
+for (const btn of lineStyleBtns) {
+  btn.addEventListener('click', () => applyLineStyleToSelection(btn.getAttribute('data-line-style')));
+}
+rotationResetBtn.addEventListener('click', () => {
+  if (selectedIds.size === 0) return;
+  const items = [];
+  for (const id of selectedIds) {
+    const shape = shapes.get(id);
+    const before = shape.rotation || 0;
+    if (before === 0) continue;
+    shape.rotation = 0;
+    layoutShapePorts(shape);
+    items.push({ id, before, after: 0 });
+  }
+  if (items.length) pushEntry({ type: 'rotate', items });
+  updatePropertiesPanel();
+});
 
 // "다른 색…" — 팔레트 6색 밖의 임의 색은 HTML 네이티브 <input type="color">로 대응(Python의
 // QColorDialog와 같은 역할). 네이티브 피커는 드래그 중 계속 'input'을 쏘므로 그동안은
@@ -1454,6 +1608,8 @@ svg.addEventListener('pointerdown', (evt) => {
     evt.preventDefault();
   } else if (evt.target.classList.contains('port')) {
     onPointerDownPort(evt);
+  } else if (evt.target.classList.contains('rotate-handle')) {
+    onPointerDownRotateHandle(evt);
   } else if (evt.target.classList.contains('edge-resize') || evt.target.classList.contains('corner-resize')) {
     onPointerDownResize(evt);
   } else if (evt.target.classList.contains('body')) {
@@ -1472,7 +1628,7 @@ svg.addEventListener('dblclick', (evt) => {
     return;
   }
   if (evt.target.classList.contains('body')) {
-    beginLabelEdit(evt.target.parentElement.getAttribute('data-id'));
+    beginLabelEdit(evt.target.closest('.shape').getAttribute('data-id'));
     return;
   }
   if (evt.target !== svg) return;

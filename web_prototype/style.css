@@ -229,3 +229,102 @@ svg#canvas {
   stroke-width: 1.6;
   stroke-dasharray: 4 3;
 }
+
+.rotate-handle-stem {
+  stroke: #3b6ea5;
+  stroke-width: 1;
+  display: none;
+}
+
+.rotate-handle {
+  fill: #ffffff;
+  stroke: #3b6ea5;
+  stroke-width: 1.5;
+  r: 5;
+  cursor: grab;
+  display: none;
+}
+
+.shape.resizable .rotate-handle-stem,
+.shape.resizable .rotate-handle {
+  display: block;
+}
+
+#properties-panel {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 168px;
+  padding: 10px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fafafa;
+  font-family: inherit;
+  font-size: 13px;
+  color: #333;
+}
+
+.prop-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.prop-section {
+  margin-bottom: 10px;
+}
+
+.prop-section:last-child {
+  margin-bottom: 0;
+}
+
+.prop-label {
+  font-size: 12px;
+  color: #777;
+  margin-bottom: 4px;
+}
+
+.line-style-btn {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  margin-right: 4px;
+  border: 1px solid #3b6ea5;
+  border-radius: 4px;
+  background: #eaf1fb;
+  color: #3b6ea5;
+  cursor: pointer;
+}
+
+.line-style-btn:hover {
+  background: #d9e6f7;
+}
+
+.line-style-btn.toggled {
+  background: #3b6ea5;
+  color: #fff;
+}
+
+#rotation-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#rotation-value {
+  font-variant-numeric: tabular-nums;
+}
+
+#rotation-reset-btn {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid #999;
+  border-radius: 4px;
+  background: #fff;
+  color: #555;
+  cursor: pointer;
+}
+
+#rotation-reset-btn:hover {
+  background: #eee;
+}
