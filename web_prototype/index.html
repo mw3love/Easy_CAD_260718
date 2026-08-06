@@ -12,18 +12,23 @@
     <input id="load-input" type="file" accept="application/json" hidden />
     <button id="undo-btn" type="button" disabled>되돌리기</button>
     <button id="redo-btn" type="button" disabled>다시실행</button>
+    <button id="grid-btn" type="button" class="toggled">격자(G)</button>
   </div>
-  <div id="status" data-shape-count="2" data-arrow-count="0" data-hovered-port="none" data-selected-count="0" data-undo-count="0" data-redo-count="0" data-zoom="1.000" data-view-x="0.0" data-view-y="0.0">
+  <div id="status" data-shape-count="2" data-arrow-count="0" data-hovered-port="none" data-selected-count="0" data-undo-count="0" data-redo-count="0" data-zoom="1.000" data-view-x="0.0" data-view-y="0.0" data-grid-enabled="true">
     shapes: <span id="shape-count">2</span> / arrows: <span id="arrow-count">0</span>
     (더블클릭으로 도형 추가, 빈 캔버스 드래그로 다중선택, Ctrl+Z/Ctrl+Shift+Z로 되돌리기/다시실행,
-    휠로 확대/축소, 휠버튼 드래그로 캔버스 이동)
+    휠로 확대/축소, 휠버튼 드래그로 캔버스 이동, G로 격자·스냅 토글)
   </div>
   <svg id="canvas" viewBox="0 0 800 500" width="800" height="500">
     <defs>
       <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
         <path d="M0,0 L10,5 L0,10 z" fill="#333" />
       </marker>
+      <pattern id="grid-pattern" width="20" height="20" patternUnits="userSpaceOnUse">
+        <circle cx="0" cy="0" r="1.2" fill="#c7c7c7" />
+      </pattern>
     </defs>
+    <rect id="grid-bg" x="-100000" y="-100000" width="200000" height="200000" fill="url(#grid-pattern)" />
     <g class="shapes"></g>
     <g class="arrows"></g>
     <g class="selection"></g>

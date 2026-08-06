@@ -121,10 +121,15 @@ docs/
   겹치는 플로팅 `<input>`(HTML)으로 인라인 편집(SVG `<text>` contenteditable은 IME 호환성이
   나빠 회피), Enter=커밋/Escape=취소/blur=커밋, 편집 중 Delete/Backspace가 캔버스 단축키로
   새는 것을 사전에 막는 가드 추가, undo/redo(`label` 엔트리)·복제·저장불러오기 전부 라벨 관통
-  확인. 다음 방향 미정. 로컬로 보려면
+  확인. 8차(같은 날): 그리드/스냅투그리드 — SVG `<pattern>` 점격자를 캔버스 전체를 덮는
+  `<rect>`에 채워 표시(팬/줌 중 `viewBox` 변화를 그대로 따라가 별도 갱신 불필요), `G`키+버튼
+  토글, 단일 도형 드래그·더블클릭 신규생성 좌표에만 20단위 스냅(Python처럼 다중선택 그룹드래그
+  는 제외). 구현 중 자체 발견: 격자 `<rect>`가 기본 pointer-events로 클릭을 가로채 빈캔버스
+  더블클릭·마퀴선택을 깰 뻔한 문제를 검증 전 `pointer-events:none`으로 선제 수정. 다음 방향
+  미정. 로컬로 보려면
   `web_prototype/`에서 `python -m http.server 8791` 후 `localhost:8791/index.html`.
   경위·근거는 `docs/history/2026-08.md` "웹 전환 실험" 항목들(2026-08-05 두 건 + 2026-08-06
-  네 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
+  다섯 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

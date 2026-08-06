@@ -14,6 +14,8 @@ const loadBtn = document.getElementById('load-btn');
 const loadInput = document.getElementById('load-input');
 const undoBtn = document.getElementById('undo-btn');
 const redoBtn = document.getElementById('redo-btn');
+const gridBtn = document.getElementById('grid-btn');
+const gridBg = document.getElementById('grid-bg');
 
 const DOC_VERSION = 1;
 
@@ -94,6 +96,28 @@ function movePan(clientX, clientY) {
   viewBox.x = panState.startViewBox.x - dx * panState.worldPerPx;
   viewBox.y = panState.startViewBox.y - dy * panState.worldPerPx;
   applyViewBox();
+}
+
+// ---- 그리드/스냅 — 표시(점)와 스냅이 토글 하나로 묶여 있음(Python core_constants.py 주석과
+// 동일 설계). `<pattern>`이 SVG 표준 타일링이라 팬/줌 중 별도 갱신 로직 없이 항상 맞는다.
+const GRID_SPACING = 20;
+let gridEnabled = true;
+
+function gridSnap(pt) {
+  if (!gridEnabled) return pt;
+  const sp = GRID_SPACING;
+  return { x: Math.round(pt.x / sp) * sp, y: Math.round(pt.y / sp) * sp };
+}
+
+function setGridEnabled(next) {
+  gridEnabled = next;
+  gridBg.classList.toggle('visible', gridEnabled);
+  gridBtn.classList.toggle('toggled', gridEnabled);
+  statusEl.setAttribute('data-grid-enabled', String(gridEnabled));
+}
+
+function toggleGrid() {
+  setGridEnabled(!gridEnabled);
 }
 
 // 포트 8종: key, 사각형 기준 상대 위치(비율), 바깥쪽 방향(정규화), 그리드 라우팅용 축정렬 방향
@@ -391,11 +415,21 @@ function onPointerMove(evt) {
   if (bodyDragState) {
     const dx = pt.x - bodyDragState.startSvg.x;
     const dy = pt.y - bodyDragState.startSvg.y;
+    // 그리드 스냅은 Python core_view.py의 _apply_grid_snap_move와 동일하게 단일 도형
+    // 이동에만 적용한다(다중선택 그룹드래그는 상대 배치가 흐트러지므로 스냅 제외).
+    const snapSingle = gridEnabled && bodyDragState.startPositions.size === 1;
     const movedIds = [];
     for (const [id, startPos] of bodyDragState.startPositions) {
       const s = shapes.get(id);
-      s.x = startPos.x + dx;
-      s.y = startPos.y + dy;
+      let nx = startPos.x + dx;
+      let ny = startPos.y + dy;
+      if (snapSingle) {
+        const snapped = gridSnap({ x: nx, y: ny });
+        nx = snapped.x;
+        ny = snapped.y;
+      }
+      s.x = nx;
+      s.y = ny;
       layoutShapePorts(s);
       movedIds.push(id);
     }
@@ -718,6 +752,9 @@ window.addEventListener('keydown', (evt) => {
     (evt.key.toLowerCase() === 'y' || (evt.key.toLowerCase() === 'z' && evt.shiftKey))) {
     evt.preventDefault();
     redo();
+  } else if (evt.key.toLowerCase() === 'g' && !evt.ctrlKey && !evt.metaKey && !evt.altKey) {
+    evt.preventDefault();
+    toggleGrid();
   }
 });
 
@@ -853,6 +890,7 @@ loadInput.addEventListener('change', () => {
 });
 undoBtn.addEventListener('click', undo);
 redoBtn.addEventListener('click', redo);
+gridBtn.addEventListener('click', toggleGrid);
 
 // playwright 자동검증용 디버그 훅 — 파일 다운로드 인터셉트 없이 직렬화/역직렬화 결과를
 // 직접 조회하기 위함(실제 저장/열기 버튼 동작과는 무관, 산출물 코드에 영향 없음).
@@ -887,8 +925,9 @@ svg.addEventListener('dblclick', (evt) => {
   }
   if (evt.target !== svg) return;
   const pt = svgPoint(evt.clientX, evt.clientY);
+  const topLeft = gridSnap({ x: pt.x - 70, y: pt.y - 45 });
   const id = nextShapeId();
-  addShape(id, pt.x - 70, pt.y - 45, 140, 90);
+  addShape(id, topLeft.x, topLeft.y, 140, 90);
   showAllPortsFaint();
   updateCounts();
   pushEntry({ type: 'createShapes', shapes: [shapeSnapshot(id)] });
@@ -901,3 +940,4 @@ showAllPortsFaint();
 setSelection([]);
 updateCounts();
 applyViewBox();
+setGridEnabled(gridEnabled);

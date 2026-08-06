@@ -32,6 +32,21 @@ body {
   cursor: default;
 }
 
+#toolbar button.toggled {
+  background: #3b6ea5;
+  color: #fff;
+}
+
+#grid-bg {
+  display: none;
+  /* 클릭이 항상 밑에 깔린 svg 배경으로 통과해야 더블클릭 도형생성·마퀴선택이 안 깨진다. */
+  pointer-events: none;
+}
+
+#grid-bg.visible {
+  display: block;
+}
+
 #status {
   margin-bottom: 8px;
   font-size: 13px;
