@@ -193,11 +193,24 @@ svg#canvas {
   r: 6;
 }
 
-.arrow {
+.arrow-line {
   fill: none;
   stroke: #333;
   stroke-width: 1.6;
   marker-end: url(#arrowhead);
+  pointer-events: none; /* 클릭은 겹쳐진 arrow-hit가 받는다 */
+}
+
+.arrow-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  cursor: pointer;
+}
+
+.arrow.selected .arrow-line {
+  stroke: #ff7a59;
+  stroke-width: 2.4;
 }
 
 .drag-preview-line {

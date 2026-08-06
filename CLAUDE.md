@@ -144,11 +144,17 @@ docs/
   도형 채움색 — Python `_COLOR_PRESETS` 6색 스와치+리셋 버튼, 선택 도형(다중 허용)의 채움에
   적용. Python은 이 팔레트를 선(stroke) 색에 쓰지만, 웹은 선택 강조가 테두리색 교체 방식이라
   선 색에 커스텀 색을 얹으면 "선택됨"과 "이 색"이 같은 채널(테두리)에서 충돌 — 채움색으로
-  분리해 회피(선택 코랄 테두리+커스텀 채움색이 항상 공존 가능함을 실측 확인). 다음 방향 미정.
+  분리해 회피(선택 코랄 테두리+커스텀 채움색이 항상 공존 가능함을 실측 확인). 12차(같은 날):
+  화살표 개별 선택+삭제 — 화살표를 `<path>` 단일 엘리먼트에서 `<g>`(보이는 선 `arrow-line` +
+  겹치는 넓은 투명 히트영역 `arrow-hit`)로 구조 변경, 고유 id로 포트쌍이 같은 화살표가
+  여럿이어도 정확히 하나만 지목, 도형선택(`selectedIds`)과 화살표선택(`selectedArrowId`)을
+  상호배타로 분리(`setSelection`이 항상 먼저 화살표선택을 지움), `deleteArrow` undo 엔트리
+  추가. Python `_ArrowItem`이 `ItemIsSelectable`로 이미 되던 기본 조작(화살표만 골라 지우기)이
+  웹엔 없던 격차를 메움. 다음 방향 미정(화살표 라벨·커스텀 색 다이얼로그 후보).
   로컬로 보려면
   `web_prototype/`에서 `python -m http.server 8791` 후 `localhost:8791/index.html`.
   경위·근거는 `docs/history/2026-08.md` "웹 전환 실험" 항목들(2026-08-05 두 건 + 2026-08-06
-  여덟 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
+  아홉 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

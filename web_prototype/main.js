@@ -168,6 +168,15 @@ function nextShapeId() {
   return `shape-${shapeSeq}`;
 }
 
+// 화살표 id — 선택·삭제 대상을 from/to 문자열이 아니라 이걸로 특정한다(동일 포트 쌍을 잇는
+// 화살표가 둘 이상 있어도 정확히 하나만 지목 가능).
+let arrowSeq = 0;
+
+function nextArrowId() {
+  arrowSeq += 1;
+  return `arrow-${arrowSeq}`;
+}
+
 function svgPoint(clientX, clientY) {
   const pt = svg.createSVGPoint();
   pt.x = clientX;
@@ -464,6 +473,18 @@ function showAllPortsFaint() {
 }
 
 let selectedIds = new Set();
+let selectedArrowId = null; // 화살표는 그룹드래그·리사이즈 대상이 아니라 도형 선택과 별개로 단일 선택만 취급.
+
+function setArrowSelection(id) {
+  if (selectedArrowId && selectedArrowId !== id) {
+    arrowsGroup.querySelector(`.arrow[data-id="${selectedArrowId}"]`)?.classList.remove('selected');
+  }
+  selectedArrowId = id;
+  if (selectedArrowId) {
+    arrowsGroup.querySelector(`.arrow[data-id="${selectedArrowId}"]`)?.classList.add('selected');
+  }
+  statusEl.setAttribute('data-selected-arrow', selectedArrowId ?? 'none');
+}
 
 function normalizedRect(a, b) {
   return {
@@ -479,6 +500,7 @@ function rectsIntersect(a, b) {
 }
 
 function setSelection(ids) {
+  setArrowSelection(null); // 도형 선택과 화살표 선택은 상호배타(둘 다 활성인 상태를 만들지 않음).
   const next = new Set(ids);
   for (const id of selectedIds) {
     if (!next.has(id)) {
@@ -705,14 +727,32 @@ function pathD(points) {
   return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
 }
 
+// 화살표는 <g class="arrow"> 안에 보이는 얇은 선(arrow-line)과 그 위에 겹치는 넓은 투명
+// 히트영역(arrow-hit)을 함께 둔다 — 실제 선폭(1.6)만으로는 클릭 판정이 너무 좁아 선택이
+// 안 되기 때문(포트처럼 화면px 고정 반경을 쓰지 않고 월드단위 고정폭으로 단순화, 줌 배율별
+// 정확도는 Not-tested).
 function appendArrow(fromRef, toRef, points) {
-  const path = document.createElementNS(SVG_NS, 'path');
-  path.setAttribute('class', 'arrow');
-  path.setAttribute('data-from', fromRef);
-  path.setAttribute('data-to', toRef);
-  path.setAttribute('d', pathD(points));
-  arrowsGroup.appendChild(path);
-  return path;
+  const id = nextArrowId();
+  const g = document.createElementNS(SVG_NS, 'g');
+  g.setAttribute('class', 'arrow');
+  g.setAttribute('data-id', id);
+  g.setAttribute('data-from', fromRef);
+  g.setAttribute('data-to', toRef);
+  const hit = document.createElementNS(SVG_NS, 'path');
+  hit.setAttribute('class', 'arrow-hit');
+  const line = document.createElementNS(SVG_NS, 'path');
+  line.setAttribute('class', 'arrow-line');
+  g.appendChild(hit);
+  g.appendChild(line);
+  setArrowPoints(g, points);
+  arrowsGroup.appendChild(g);
+  return g;
+}
+
+function setArrowPoints(arrowEl, points) {
+  const d = pathD(points);
+  arrowEl.querySelector('.arrow-hit').setAttribute('d', d);
+  arrowEl.querySelector('.arrow-line').setAttribute('d', d);
 }
 
 function finalizeArrow(source, target) {
@@ -738,15 +778,16 @@ function resolveEndpoint(ref) {
 }
 
 function rerouteAllArrows() {
-  for (const path of arrowsGroup.querySelectorAll('.arrow')) {
-    const source = resolveEndpoint(path.getAttribute('data-from'));
-    const target = resolveEndpoint(path.getAttribute('data-to'));
-    path.setAttribute('d', pathD(computeRoute(source, target)));
+  for (const g of arrowsGroup.querySelectorAll('.arrow')) {
+    const source = resolveEndpoint(g.getAttribute('data-from'));
+    const target = resolveEndpoint(g.getAttribute('data-to'));
+    setArrowPoints(g, computeRoute(source, target));
   }
 }
 
-function pathBBox(pathEl) {
-  const nums = pathEl.getAttribute('d').replace(/[ML]/g, ' ').trim().split(/\s+/).map(Number);
+function pathBBox(arrowEl) {
+  const d = arrowEl.querySelector('.arrow-line').getAttribute('d');
+  const nums = d.replace(/[ML]/g, ' ').trim().split(/\s+/).map(Number);
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (let i = 0; i < nums.length; i += 2) {
     minX = Math.min(minX, nums[i]);
@@ -775,20 +816,20 @@ function rerouteAffectedArrows(movedShapeIds) {
     const s = shapes.get(id);
     return { x: s.x, y: s.y, width: s.w, height: s.h };
   });
-  for (const path of arrowsGroup.querySelectorAll('.arrow')) {
-    const from = path.getAttribute('data-from');
-    const to = path.getAttribute('data-to');
+  for (const g of arrowsGroup.querySelectorAll('.arrow')) {
+    const from = g.getAttribute('data-from');
+    const to = g.getAttribute('data-to');
     const fromId = from.split(':')[0];
     const toId = to.split(':')[0];
     let affected = movedShapeIds.includes(fromId) || movedShapeIds.includes(toId);
     if (!affected) {
-      const pbb = pathBBox(path);
+      const pbb = pathBBox(g);
       affected = movedBoxes.some((bb) => bboxesNear(pbb, bb, REROUTE_MARGIN));
     }
     if (!affected) continue;
     const source = resolveEndpoint(from);
     const target = resolveEndpoint(to);
-    path.setAttribute('d', pathD(computeRoute(source, target)));
+    setArrowPoints(g, computeRoute(source, target));
   }
 }
 
@@ -881,6 +922,14 @@ function applyEntry(entry, isRedo) {
     for (const f of entry.fills) {
       applyShapeFill(shapes.get(f.id), isRedo ? f.after : f.before);
     }
+  } else if (entry.type === 'deleteArrow') {
+    if (isRedo) {
+      removeArrowByRef(entry.from, entry.to);
+    } else {
+      const source = resolveEndpoint(entry.from);
+      const target = resolveEndpoint(entry.to);
+      appendArrow(entry.from, entry.to, computeRoute(source, target));
+    }
   }
   setSelection([]);
   updateCounts();
@@ -931,6 +980,22 @@ function deleteSelection() {
   pushEntry({ type: 'deleteShapes', shapes: shapeSnaps, arrows: arrowSnaps });
 }
 
+// 개별 화살표 삭제 — removeShape의 도형 cascade 삭제와는 별개 경로(포트/도형은 그대로 두고
+// 화살표 하나만 없앤다). undo는 같은 from/to로 새로 appendArrow해 되살린다(id는 재생성돼도
+// 무방 — 화살표를 참조하는 다른 데이터가 없음).
+function deleteSelectedArrow() {
+  const id = selectedArrowId;
+  if (!id) return;
+  const g = arrowsGroup.querySelector(`.arrow[data-id="${id}"]`);
+  if (!g) return;
+  const from = g.getAttribute('data-from');
+  const to = g.getAttribute('data-to');
+  g.remove();
+  setArrowSelection(null);
+  updateCounts();
+  pushEntry({ type: 'deleteArrow', from, to });
+}
+
 function cancelInteractions() {
   if (dragState?.previewEl) dragState.previewEl.remove();
   dragState = null;
@@ -940,6 +1005,7 @@ function cancelInteractions() {
   resizeDragState = null;
   cancelLabelEdit();
   setHover(null);
+  setArrowSelection(null);
   setSelection([]);
 }
 
@@ -949,9 +1015,13 @@ window.addEventListener('keydown', (evt) => {
   // Escape/Enter는 beginLabelEdit이 입력창에 단 자체 핸들러가 이미 처리(evt.preventDefault).
   if (evt.target.tagName === 'INPUT') return;
   if (evt.key === 'Delete' || evt.key === 'Backspace') {
-    if (selectedIds.size === 0) return;
-    evt.preventDefault();
-    deleteSelection();
+    if (selectedArrowId) {
+      evt.preventDefault();
+      deleteSelectedArrow();
+    } else if (selectedIds.size > 0) {
+      evt.preventDefault();
+      deleteSelection();
+    }
   } else if (evt.key === 'Escape') {
     cancelInteractions();
   } else if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === 'z' && !evt.shiftKey) {
@@ -1063,6 +1133,7 @@ function clearDocument() {
 function applyDocument(data) {
   clearDocument();
   shapeSeq = 0;
+  arrowSeq = 0;
   for (const s of data.shapes ?? []) {
     addShape(s.id, s.x, s.y, s.w, s.h, s.label ?? '', s.kind ?? 'rect', s.fill ?? null);
     const n = Number(String(s.id).replace('shape-', ''));
@@ -1138,7 +1209,12 @@ svg.addEventListener('pointerdown', (evt) => {
     startPan(evt.clientX, evt.clientY);
     return;
   }
-  if (evt.target.classList.contains('port')) {
+  if (evt.target.classList.contains('arrow-hit')) {
+    const id = evt.target.parentElement.getAttribute('data-id');
+    setSelection([]);
+    setArrowSelection(id);
+    evt.preventDefault();
+  } else if (evt.target.classList.contains('port')) {
     onPointerDownPort(evt);
   } else if (evt.target.classList.contains('edge-resize') || evt.target.classList.contains('corner-resize')) {
     onPointerDownResize(evt);
