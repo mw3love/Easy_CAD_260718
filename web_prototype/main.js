@@ -120,17 +120,31 @@ function toggleGrid() {
   setGridEnabled(!gridEnabled);
 }
 
-// 포트 8종: key, 사각형 기준 상대 위치(비율), 바깥쪽 방향(정규화), 그리드 라우팅용 축정렬 방향
+// 포트 4종(N/E/S/W) — Python이 2026-07-30 실사용 피드백으로 대각(NE/SE/SW/NW)을 상시표시
+// 목록에서 뺀 것과 동일하게 맞춤(`_shape_ports` 주석 참조). key, 사각형 기준 상대 위치(비율),
+// 바깥쪽 방향(정규화), 그리드 라우팅용 축정렬 방향.
 const PORT_DEFS = [
   { key: 'N', rx: 0.5, ry: 0, nx: 0, ny: -1, gx: 0, gy: -1 },
-  { key: 'NE', rx: 1, ry: 0, nx: 0.7071, ny: -0.7071, gx: 1, gy: 0 },
   { key: 'E', rx: 1, ry: 0.5, nx: 1, ny: 0, gx: 1, gy: 0 },
-  { key: 'SE', rx: 1, ry: 1, nx: 0.7071, ny: 0.7071, gx: 1, gy: 0 },
   { key: 'S', rx: 0.5, ry: 1, nx: 0, ny: 1, gx: 0, gy: 1 },
-  { key: 'SW', rx: 0, ry: 1, nx: -0.7071, ny: 0.7071, gx: -1, gy: 0 },
   { key: 'W', rx: 0, ry: 0.5, nx: -1, ny: 0, gx: -1, gy: 0 },
-  { key: 'NW', rx: 0, ry: 0, nx: -0.7071, ny: -0.7071, gx: -1, gy: 0 },
 ];
+
+// 포트 원(점)은 테두리에서 살짝 띄워 바깥쪽에 그린다(Python의 gap — `_draw_port_dots`가
+// `best_sh._handle_px() * HANDLE_GAP_FACTOR`로 같은 간격을 리사이즈 핸들과 공유). 화면px
+// 고정이라 줌 무관하게 같은 간격으로 보인다. 연결 앵커(라우팅 시작/끝점)는 이 뜬 점이 아니라
+// 실제 테두리 위 점(portWorldPos)을 그대로 쓴다 — 뜬 점은 순수 표시·히트테스트 편의용.
+const PORT_GAP_PX = 8;
+
+function portGapWorld() {
+  return PORT_GAP_PX / currentScale();
+}
+
+function portDisplayPos(shape, portDef) {
+  const anchor = portWorldPos(shape, portDef);
+  const gap = portGapWorld();
+  return { x: anchor.x + portDef.nx * gap, y: anchor.y + portDef.ny * gap };
+}
 
 let shapeSeq = 0;
 const shapes = new Map(); // id -> { x, y, w, h, el, ports: Map(key -> circleEl) }
@@ -165,6 +179,28 @@ function addShape(id, x, y, w, h, label = '') {
   rect.setAttribute('rx', 4);
   g.appendChild(rect);
 
+  // 리사이즈 핸들 — 선택된 도형 하나뿐일 때만 CSS(.resizable)로 보이고 히트테스트된다
+  // (setSelection이 토글). 변(edge) 4개=그 변만 단축 리사이즈, 모서리(corner) 4개=자유
+  // 리사이즈. body보다 뒤(위)에 둬서 테두리 근처 클릭이 이동 대신 리사이즈로 먼저 잡히게 한다.
+  const edges = {};
+  for (const key of ['N', 'E', 'S', 'W']) {
+    const r = document.createElementNS(SVG_NS, 'rect');
+    r.setAttribute('class', `edge-resize edge-${key.toLowerCase()}`);
+    r.setAttribute('data-resize-edge', key);
+    r.setAttribute('data-shape', id);
+    g.appendChild(r);
+    edges[key] = r;
+  }
+  const corners = {};
+  for (const key of ['NW', 'NE', 'SE', 'SW']) {
+    const r = document.createElementNS(SVG_NS, 'rect');
+    r.setAttribute('class', `corner-resize corner-${key.toLowerCase()}`);
+    r.setAttribute('data-resize-corner', key);
+    r.setAttribute('data-shape', id);
+    g.appendChild(r);
+    corners[key] = r;
+  }
+
   // 라벨 텍스트 — pointer-events:none(style.css)으로 클릭이 항상 아래 rect.body로 통과하게
   // 해서, 도형 위 어디를 눌러도(텍스트 위여도) 기존 선택/드래그 판정(evt.target.classList
   // .contains('body'))이 그대로 맞는다. 더블클릭만 별도로 텍스트 편집을 시작(아래 dblclick).
@@ -185,7 +221,7 @@ function addShape(id, x, y, w, h, label = '') {
   }
 
   shapesGroup.appendChild(g);
-  const shape = { id, x, y, w, h, label, el: g, rectEl: rect, labelEl, ports };
+  const shape = { id, x, y, w, h, label, el: g, rectEl: rect, labelEl, ports, edges, corners };
   shapes.set(id, shape);
   layoutShapePorts(shape);
   return shape;
@@ -199,11 +235,43 @@ function layoutShapePorts(shape) {
   shape.labelEl.setAttribute('x', shape.x + shape.w / 2);
   shape.labelEl.setAttribute('y', shape.y + shape.h / 2);
   for (const def of PORT_DEFS) {
-    const p = portWorldPos(shape, def);
+    const p = portDisplayPos(shape, def);
     const c = shape.ports.get(def.key);
     c.setAttribute('cx', p.x);
     c.setAttribute('cy', p.y);
   }
+  layoutResizeHandles(shape);
+}
+
+const CORNER_SIZE = 10; // 월드 단위 고정(줌 무관 스케일링은 이번 범위 밖 — Not-tested 기록)
+const EDGE_BAND = 8;
+
+function layoutResizeHandles(shape) {
+  const { x, y, w, h } = shape;
+  const half = CORNER_SIZE / 2;
+  const bandHalf = EDGE_BAND / 2;
+  const cornerPts = {
+    NW: { x, y }, NE: { x: x + w, y }, SE: { x: x + w, y: y + h }, SW: { x, y: y + h },
+  };
+  for (const key of ['NW', 'NE', 'SE', 'SW']) {
+    const p = cornerPts[key];
+    const r = shape.corners[key];
+    r.setAttribute('x', p.x - half);
+    r.setAttribute('y', p.y - half);
+    r.setAttribute('width', CORNER_SIZE);
+    r.setAttribute('height', CORNER_SIZE);
+  }
+  const innerW = Math.max(0, w - CORNER_SIZE);
+  const innerH = Math.max(0, h - CORNER_SIZE);
+  const en = shape.edges.N, es = shape.edges.S, ee = shape.edges.E, ew = shape.edges.W;
+  en.setAttribute('x', x + half); en.setAttribute('y', y - bandHalf);
+  en.setAttribute('width', innerW); en.setAttribute('height', EDGE_BAND);
+  es.setAttribute('x', x + half); es.setAttribute('y', y + h - bandHalf);
+  es.setAttribute('width', innerW); es.setAttribute('height', EDGE_BAND);
+  ee.setAttribute('x', x + w - bandHalf); ee.setAttribute('y', y + half);
+  ee.setAttribute('width', EDGE_BAND); ee.setAttribute('height', innerH);
+  ew.setAttribute('x', x - bandHalf); ew.setAttribute('y', y + half);
+  ew.setAttribute('width', EDGE_BAND); ew.setAttribute('height', innerH);
 }
 
 function setShapeLabel(shapeId, text) {
@@ -288,11 +356,12 @@ function findNearestPort(pt, excludeShapeId, radius = HOVER_RADIUS) {
   for (const shape of shapes.values()) {
     if (shape.id === excludeShapeId) continue;
     for (const def of PORT_DEFS) {
-      const p = portWorldPos(shape, def);
-      const d = Math.hypot(p.x - pt.x, p.y - pt.y);
+      // 거리 판정은 눈에 보이는 위치(뜬 점)로 — 연결 앵커(point)는 테두리 그대로 유지.
+      const disp = portDisplayPos(shape, def);
+      const d = Math.hypot(disp.x - pt.x, disp.y - pt.y);
       if (d < bestDist) {
         bestDist = d;
-        best = { shape, def, point: p };
+        best = { shape, def, point: portWorldPos(shape, def), displayPoint: disp };
       }
     }
   }
@@ -340,10 +409,17 @@ function rectsIntersect(a, b) {
 function setSelection(ids) {
   const next = new Set(ids);
   for (const id of selectedIds) {
-    if (!next.has(id)) shapes.get(id)?.el.classList.remove('selected');
+    if (!next.has(id)) {
+      const el = shapes.get(id)?.el;
+      el?.classList.remove('selected');
+      el?.classList.remove('resizable');
+    }
   }
+  // 리사이즈 핸들은 단일 선택일 때만 보임(Python도 다중선택 그룹은 리사이즈 대상이 아님).
   for (const id of next) {
-    shapes.get(id)?.el.classList.add('selected');
+    const el = shapes.get(id)?.el;
+    el?.classList.add('selected');
+    el?.classList.toggle('resizable', next.size === 1);
   }
   selectedIds = next;
   statusEl.setAttribute('data-selected-count', String(selectedIds.size));
@@ -358,6 +434,30 @@ function toggleSelection(id) {
 
 let bodyDragState = null; // { startSvg, startPositions: Map(id -> {x,y}) }
 let selectionDragState = null; // { startSvg, rectEl, additive }
+let resizeDragState = null; // { shapeId, kind: 'N'|'E'|'S'|'W'|'NW'|'NE'|'SE'|'SW', startRect }
+
+// Python core_shapes.py의 _grid_snap_local과 같은 역할 — 코너/변 리사이즈 중 이동하는 축의
+// 절대좌표를 격자에 스냅한다(gridSnap은 {x,y} 점 전용이라 스칼라 하나만 필요한 여기엔 안 맞음).
+function gridSnapScalar(v) {
+  return gridEnabled ? Math.round(v / GRID_SPACING) * GRID_SPACING : v;
+}
+
+const MIN_SHAPE_W = 40;
+const MIN_SHAPE_H = 30;
+
+// kind의 각 방향 문자(N/E/S/W)가 뜻하는 변만 움직이고 반대쪽 변은 고정한다 — 변(edge) 리사이즈는
+// 문자 하나(예: 'N'), 모서리(corner) 자유 리사이즈는 두 문자(예: 'NW')라 자연히 축 2개가 함께 움직인다.
+function computeResize(startRect, kind, cursorPt) {
+  const { x, y, w, h } = startRect;
+  const right = x + w;
+  const bottom = y + h;
+  let newX = x, newY = y, newRight = right, newBottom = bottom;
+  if (kind.includes('N')) newY = Math.min(gridSnapScalar(cursorPt.y), bottom - MIN_SHAPE_H);
+  if (kind.includes('S')) newBottom = Math.max(gridSnapScalar(cursorPt.y), y + MIN_SHAPE_H);
+  if (kind.includes('W')) newX = Math.min(gridSnapScalar(cursorPt.x), right - MIN_SHAPE_W);
+  if (kind.includes('E')) newRight = Math.max(gridSnapScalar(cursorPt.x), x + MIN_SHAPE_W);
+  return { x: newX, y: newY, w: newRight - newX, h: newBottom - newY };
+}
 
 function onPointerDownBody(evt) {
   const shapeId = evt.target.parentElement.getAttribute('data-id');
@@ -400,7 +500,16 @@ function onPointerDownPort(evt) {
   const shape = shapes.get(shapeId);
   const def = PORT_DEFS.find((d) => d.key === portKey);
   const point = portWorldPos(shape, def);
-  startDrag({ shape, def, point }, evt.clientX, evt.clientY);
+  const displayPoint = portDisplayPos(shape, def);
+  startDrag({ shape, def, point, displayPoint }, evt.clientX, evt.clientY);
+  evt.preventDefault();
+}
+
+function onPointerDownResize(evt) {
+  const shapeId = evt.target.getAttribute('data-shape');
+  const shape = shapes.get(shapeId);
+  const kind = evt.target.getAttribute('data-resize-edge') || evt.target.getAttribute('data-resize-corner');
+  resizeDragState = { shapeId, kind, startRect: { x: shape.x, y: shape.y, w: shape.w, h: shape.h } };
   evt.preventDefault();
 }
 
@@ -411,6 +520,18 @@ function onPointerMove(evt) {
   }
 
   const pt = svgPoint(evt.clientX, evt.clientY);
+
+  if (resizeDragState) {
+    const shape = shapes.get(resizeDragState.shapeId);
+    const next = computeResize(resizeDragState.startRect, resizeDragState.kind, pt);
+    shape.x = next.x;
+    shape.y = next.y;
+    shape.w = next.w;
+    shape.h = next.h;
+    layoutShapePorts(shape);
+    rerouteAffectedArrows([resizeDragState.shapeId]);
+    return;
+  }
 
   if (bodyDragState) {
     const dx = pt.x - bodyDragState.startSvg.x;
@@ -460,7 +581,7 @@ function onPointerMove(evt) {
     }
 
     if (dragState.moved) {
-      const d = `M ${dragState.source.point.x} ${dragState.source.point.y} L ${pt.x} ${pt.y}`;
+      const d = `M ${dragState.source.displayPoint.x} ${dragState.source.displayPoint.y} L ${pt.x} ${pt.y}`;
       dragState.previewEl.setAttribute('d', d);
       const target = findNearestPort(pt, dragState.source.shape.id, snapRadiusWorld());
       setHover(target);
@@ -532,6 +653,11 @@ function finalizeArrow(source, target) {
 
 // 포트 참조 문자열("shape-1:E")을 현재 도형 상태 기준 실좌표로 되돌린다 — 도형이 이동해도
 // 화살표가 고정 포트를 계속 따라가게(플로팅 아님) 하기 위한 재계산 기준점.
+function isResolvableEndpoint(ref) {
+  const [shapeId, portKey] = ref.split(':');
+  return shapes.has(shapeId) && PORT_DEFS.some((d) => d.key === portKey);
+}
+
 function resolveEndpoint(ref) {
   const [shapeId, portKey] = ref.split(':');
   const shape = shapes.get(shapeId);
@@ -673,6 +799,12 @@ function applyEntry(entry, isRedo) {
     }
   } else if (entry.type === 'label') {
     setShapeLabel(entry.id, isRedo ? entry.after : entry.before);
+  } else if (entry.type === 'resize') {
+    const shape = shapes.get(entry.shapeId);
+    const r = isRedo ? entry.after : entry.before;
+    shape.x = r.x; shape.y = r.y; shape.w = r.w; shape.h = r.h;
+    layoutShapePorts(shape);
+    rerouteAllArrows();
   }
   setSelection([]);
   updateCounts();
@@ -729,6 +861,7 @@ function cancelInteractions() {
   if (selectionDragState) selectionDragState.rectEl.remove();
   selectionDragState = null;
   bodyDragState = null;
+  resizeDragState = null;
   cancelLabelEdit();
   setHover(null);
   setSelection([]);
@@ -771,6 +904,18 @@ function duplicateShape(source) {
 function onPointerUp(evt) {
   if (panState) {
     panState = null;
+    return;
+  }
+
+  if (resizeDragState) {
+    rerouteAllArrows();
+    const shape = shapes.get(resizeDragState.shapeId);
+    const before = resizeDragState.startRect;
+    const after = { x: shape.x, y: shape.y, w: shape.w, h: shape.h };
+    if (before.x !== after.x || before.y !== after.y || before.w !== after.w || before.h !== after.h) {
+      pushEntry({ type: 'resize', shapeId: resizeDragState.shapeId, before, after });
+    }
+    resizeDragState = null;
     return;
   }
 
@@ -848,6 +993,10 @@ function applyDocument(data) {
     if (Number.isFinite(n) && n > shapeSeq) shapeSeq = n;
   }
   for (const a of data.arrows ?? []) {
+    // 포트를 4종(N/E/S/W)으로 줄이기 전(NE/SE/SW/NW 포함 8포트) 저장된 옛 문서를 열면 그
+    // 대각 포트 참조가 더 이상 PORT_DEFS에 없다 — 조용히 건너뛰고 나머지 도형·화살표는
+    // 그대로 로드한다(문서 전체가 깨지는 것보다 일부 화살표만 빠지는 쪽이 낫다).
+    if (!isResolvableEndpoint(a.from) || !isResolvableEndpoint(a.to)) continue;
     const source = resolveEndpoint(a.from);
     const target = resolveEndpoint(a.to);
     appendArrow(a.from, a.to, computeRoute(source, target));
@@ -908,6 +1057,8 @@ svg.addEventListener('pointerdown', (evt) => {
   }
   if (evt.target.classList.contains('port')) {
     onPointerDownPort(evt);
+  } else if (evt.target.classList.contains('edge-resize') || evt.target.classList.contains('corner-resize')) {
+    onPointerDownResize(evt);
   } else if (evt.target.classList.contains('body')) {
     onPointerDownBody(evt);
   } else if (evt.target === svg) {

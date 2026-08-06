@@ -72,6 +72,29 @@ svg#canvas {
   stroke-dasharray: 4 3;
 }
 
+.edge-resize, .corner-resize {
+  display: none;
+}
+
+.shape.resizable .edge-resize {
+  display: block;
+  fill: transparent;
+  pointer-events: all; /* fill:transparent 만으론 SVG 기본 히트테스트에서 빠짐 */
+}
+
+.shape.resizable .corner-resize {
+  display: block;
+  fill: #ffffff;
+  stroke: #3b6ea5;
+  stroke-width: 1.5;
+  pointer-events: all;
+}
+
+.edge-n, .edge-s { cursor: ns-resize; }
+.edge-e, .edge-w { cursor: ew-resize; }
+.corner-nw, .corner-se { cursor: nwse-resize; }
+.corner-ne, .corner-sw { cursor: nesw-resize; }
+
 .shape text.label {
   font-family: inherit;
   font-size: 13px;
