@@ -166,11 +166,15 @@ docs/
   자체조사해 선정). 16차(같은 날): 방향키 도형 미세이동(nudge) — 기본 10px, Shift/Ctrl 시
   1px, 기존 `move` undo 구조 재사용(Python의 연속입력 undo 병합은 이 프로토타입 undo 설계
   전제와 안 맞아 의도적으로 생략 — 여기 undo는 애초에 "시작~끝 1건"이지 "연속값 억제"가
-  아님). 다음 방향 미정.
+  아님). 17차(같은 날): Shift+H/V 도형 반전(mirror) — 공통 bbox 중심 기준 좌우/상하 반사를
+  `move`와 같은 undo 엔트리로 표현(도형이 전부 자기bbox 대칭이라 위치만 옮기면 충분, Python의
+  `_mirror_fn`+리베이크 구조는 불필요). 구현 중 자체 발견: 단일 선택 반전은 자기 중심 기준이라
+  좌표가 그대로인 진짜 no-op인데, 이 경우 빈 `move` 엔트리를 쌓지 않도록 가드 추가(기존
+  드래그 커밋과 같은 패턴). 다음 방향 미정.
   로컬로 보려면
   `web_prototype/`에서 `python -m http.server 8791` 후 `localhost:8791/index.html`.
   경위·근거는 `docs/history/2026-08.md` "웹 전환 실험" 항목들(2026-08-05 두 건 + 2026-08-06
-  열세 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
+  열네 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

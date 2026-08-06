@@ -594,6 +594,41 @@ function nudgeSelection(dx, dy) {
   pushEntry({ type: 'move', moves });
 }
 
+// 반전(mirror) — Python core_view.py의 mirror_selection과 같은 의미: 선택 전체의 공통
+// bbox 중심을 기준으로 좌우('x')/상하('y') 반사. 우리 도형(사각형·타원·마름모)은 전부 자기
+// bbox 안에서 좌우·상하 대칭이라 각 도형 자신은 기하 변형 없이 "공통 중심 기준 반대편으로
+// 위치만 이동"하면 충분하다(폭/높이 불변) — 그래서 move와 동일한 undo 엔트리로 표현된다.
+function mirrorSelection(axis) {
+  if (selectedIds.size === 0) return;
+  const sel = [...selectedIds].map((id) => shapes.get(id));
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of sel) {
+    minX = Math.min(minX, s.x);
+    minY = Math.min(minY, s.y);
+    maxX = Math.max(maxX, s.x + s.w);
+    maxY = Math.max(maxY, s.y + s.h);
+  }
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const moves = [];
+  for (const s of sel) {
+    const before = { x: s.x, y: s.y };
+    if (axis === 'x') {
+      s.x = 2 * cx - s.x - s.w;
+    } else {
+      s.y = 2 * cy - s.y - s.h;
+    }
+    layoutShapePorts(s);
+    // 선택이 1개뿐이면 자기 중심 기준 반사라 위치가 그대로인 진짜 no-op(도형이 상하좌우
+    // 대칭이라 기하도 안 바뀜) — undo 스택에 빈 엔트리를 남기지 않는다.
+    if (s.x !== before.x || s.y !== before.y) {
+      moves.push({ id: s.id, before, after: { x: s.x, y: s.y } });
+    }
+  }
+  rerouteAllArrows();
+  if (moves.length) pushEntry({ type: 'move', moves });
+}
+
 let bodyDragState = null; // { startSvg, startPositions: Map(id -> {x,y}) }
 let selectionDragState = null; // { startSvg, rectEl, additive }
 let resizeDragState = null; // { shapeId, kind: 'N'|'E'|'S'|'W'|'NW'|'NE'|'SE'|'SW', startRect }
@@ -1177,6 +1212,12 @@ window.addEventListener('keydown', (evt) => {
       ArrowUp: [0, -step], ArrowDown: [0, step],
     }[evt.key];
     nudgeSelection(delta[0], delta[1]);
+  } else if (evt.shiftKey && !evt.ctrlKey && !evt.metaKey && evt.key.toLowerCase() === 'h') {
+    evt.preventDefault();
+    mirrorSelection('x');
+  } else if (evt.shiftKey && !evt.ctrlKey && !evt.metaKey && evt.key.toLowerCase() === 'v') {
+    evt.preventDefault();
+    mirrorSelection('y');
   }
 });
 
