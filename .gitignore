@@ -20,3 +20,6 @@ tools/_shot*.png
 # 리포 루트의 .ecad만 무시한다 — 의도적으로 넣는 테스트 픽스처(tests/**.ecad)는 살린다.
 /*.ecad
 /송출 도면/
+
+# Claude Code 로컬 세션 상태(머신별 설정·락파일, 리포에 공유할 내용 아님)
+/.claude/
