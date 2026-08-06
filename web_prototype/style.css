@@ -213,6 +213,16 @@ svg#canvas {
   stroke-width: 2.4;
 }
 
+.arrow-label {
+  font-family: inherit;
+  font-size: 12px;
+  fill: #333;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+}
+
 .drag-preview-line {
   fill: none;
   stroke: #ff7a59;

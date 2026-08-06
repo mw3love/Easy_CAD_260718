@@ -374,21 +374,17 @@ function shapeScreenRect(shape) {
   return { left: p1.x, top: p1.y, width: p2.x - p1.x, height: p2.y - p1.y };
 }
 
-let labelEditState = null; // { shapeId, inputEl, before }
+let labelEditState = null; // { kind: 'shape'|'arrow', id, inputEl, before }
 
-function beginLabelEdit(shapeId) {
-  if (labelEditState) commitLabelEdit();
-  const shape = shapes.get(shapeId);
-  const rect = shapeScreenRect(shape);
+function createLabelInput(left, top, width, value) {
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'label-edit-input';
-  input.value = shape.label || '';
-  input.style.left = `${rect.left}px`;
-  input.style.top = `${rect.top + rect.height / 2 - 12}px`;
-  input.style.width = `${Math.max(rect.width, 40)}px`;
+  input.value = value;
+  input.style.left = `${left}px`;
+  input.style.top = `${top}px`;
+  input.style.width = `${width}px`;
   document.body.appendChild(input);
-  labelEditState = { shapeId, inputEl: input, before: shape.label || '' };
   input.addEventListener('keydown', (evt) => {
     if (evt.key === 'Enter') {
       evt.preventDefault();
@@ -401,17 +397,49 @@ function beginLabelEdit(shapeId) {
   input.addEventListener('blur', () => commitLabelEdit());
   input.focus();
   input.select();
+  return input;
+}
+
+function beginLabelEdit(shapeId) {
+  if (labelEditState) commitLabelEdit();
+  const shape = shapes.get(shapeId);
+  const rect = shapeScreenRect(shape);
+  const before = shape.label || '';
+  const input = createLabelInput(rect.left, rect.top + rect.height / 2 - 12, Math.max(rect.width, 40), before);
+  labelEditState = { kind: 'shape', id: shapeId, inputEl: input, before };
+}
+
+// 화살표 라벨 편집 — 위치는 도형처럼 사각형이 아니라 라우팅 경로 위 한 점(arrowLabelAnchor)
+// 이라, 그 점을 화면좌표로 변환해 인라인 입력창을 그 점 중심에 고정폭으로 띄운다.
+function beginArrowLabelEdit(arrowId) {
+  if (labelEditState) commitLabelEdit();
+  const g = arrowsGroup.querySelector(`.arrow[data-id="${arrowId}"]`);
+  const labelEl = g.querySelector('.arrow-label');
+  const before = labelEl.textContent || '';
+  const ctm = svg.getScreenCTM();
+  const pt = svg.createSVGPoint();
+  pt.x = parseFloat(labelEl.getAttribute('x'));
+  pt.y = parseFloat(labelEl.getAttribute('y'));
+  const screen = pt.matrixTransform(ctm);
+  const width = 90;
+  const input = createLabelInput(screen.x - width / 2, screen.y - 12, width, before);
+  labelEditState = { kind: 'arrow', id: arrowId, inputEl: input, before };
 }
 
 function commitLabelEdit() {
   if (!labelEditState) return;
-  const { shapeId, inputEl, before } = labelEditState;
+  const { kind, id, inputEl, before } = labelEditState;
   const after = inputEl.value;
   labelEditState = null;
   inputEl.remove();
-  if (after !== before) {
-    setShapeLabel(shapeId, after);
-    pushEntry({ type: 'label', id: shapeId, before, after });
+  if (after === before) return;
+  if (kind === 'shape') {
+    setShapeLabel(id, after);
+    pushEntry({ type: 'label', id, before, after });
+  } else {
+    const g = arrowsGroup.querySelector(`.arrow[data-id="${id}"]`);
+    if (g) setArrowLabelText(g, after);
+    pushEntry({ type: 'arrowLabel', id, before, after });
   }
 }
 
@@ -727,11 +755,45 @@ function pathD(points) {
   return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
 }
 
+// 라벨 붙일 자리 — 전체 경로의 호 길이 중점(Python _label_anchor의 t=0.5와 동일 개념,
+// 단 드래그 가능한 오프셋은 이번 범위 밖이라 고정 오프셋만). 직교 라우팅이라 모든 구간이
+// 축정렬이므로 수평 구간이면 위로, 수직 구간이면 오른쪽으로 고정폭만큼 띄운다.
+const ARROW_LABEL_OFFSET = 9;
+
+function arrowLabelAnchor(points) {
+  if (points.length < 2) return points[0] ?? { x: 0, y: 0 };
+  const segs = [];
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i].x - points[i - 1].x;
+    const dy = points[i].y - points[i - 1].y;
+    const len = Math.hypot(dx, dy);
+    segs.push({ dx, dy, len });
+    total += len;
+  }
+  let remain = total / 2;
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
+    if (remain <= seg.len || i === segs.length - 1) {
+      const t = seg.len === 0 ? 0 : Math.min(1, remain / seg.len);
+      const a = points[i], b = points[i + 1];
+      const midX = a.x + (b.x - a.x) * t;
+      const midY = a.y + (b.y - a.y) * t;
+      const horizontal = Math.abs(seg.dy) < Math.abs(seg.dx);
+      const nx = horizontal ? 0 : 1;
+      const ny = horizontal ? -1 : 0;
+      return { x: midX + nx * ARROW_LABEL_OFFSET, y: midY + ny * ARROW_LABEL_OFFSET };
+    }
+    remain -= seg.len;
+  }
+  return points[Math.floor(points.length / 2)];
+}
+
 // 화살표는 <g class="arrow"> 안에 보이는 얇은 선(arrow-line)과 그 위에 겹치는 넓은 투명
-// 히트영역(arrow-hit)을 함께 둔다 — 실제 선폭(1.6)만으로는 클릭 판정이 너무 좁아 선택이
-// 안 되기 때문(포트처럼 화면px 고정 반경을 쓰지 않고 월드단위 고정폭으로 단순화, 줌 배율별
-// 정확도는 Not-tested).
-function appendArrow(fromRef, toRef, points) {
+// 히트영역(arrow-hit) + 라벨 텍스트(arrow-label)를 함께 둔다 — 실제 선폭(1.6)만으로는 클릭
+// 판정이 너무 좁아 선택이 안 되기 때문(포트처럼 화면px 고정 반경을 쓰지 않고 월드단위
+// 고정폭으로 단순화, 줌 배율별 정확도는 Not-tested).
+function appendArrow(fromRef, toRef, points, label = '') {
   const id = nextArrowId();
   const g = document.createElementNS(SVG_NS, 'g');
   g.setAttribute('class', 'arrow');
@@ -742,8 +804,12 @@ function appendArrow(fromRef, toRef, points) {
   hit.setAttribute('class', 'arrow-hit');
   const line = document.createElementNS(SVG_NS, 'path');
   line.setAttribute('class', 'arrow-line');
+  const labelEl = document.createElementNS(SVG_NS, 'text');
+  labelEl.setAttribute('class', 'arrow-label');
+  labelEl.textContent = label;
   g.appendChild(hit);
   g.appendChild(line);
+  g.appendChild(labelEl);
   setArrowPoints(g, points);
   arrowsGroup.appendChild(g);
   return g;
@@ -753,6 +819,14 @@ function setArrowPoints(arrowEl, points) {
   const d = pathD(points);
   arrowEl.querySelector('.arrow-hit').setAttribute('d', d);
   arrowEl.querySelector('.arrow-line').setAttribute('d', d);
+  const anchor = arrowLabelAnchor(points);
+  const labelEl = arrowEl.querySelector('.arrow-label');
+  labelEl.setAttribute('x', anchor.x);
+  labelEl.setAttribute('y', anchor.y);
+}
+
+function setArrowLabelText(arrowEl, text) {
+  arrowEl.querySelector('.arrow-label').textContent = text;
 }
 
 function finalizeArrow(source, target) {
@@ -898,7 +972,7 @@ function applyEntry(entry, isRedo) {
       for (const a of entry.arrows) {
         const source = resolveEndpoint(a.from);
         const target = resolveEndpoint(a.to);
-        appendArrow(a.from, a.to, computeRoute(source, target));
+        appendArrow(a.from, a.to, computeRoute(source, target), a.label ?? '');
       }
     }
     showAllPortsFaint();
@@ -928,8 +1002,11 @@ function applyEntry(entry, isRedo) {
     } else {
       const source = resolveEndpoint(entry.from);
       const target = resolveEndpoint(entry.to);
-      appendArrow(entry.from, entry.to, computeRoute(source, target));
+      appendArrow(entry.from, entry.to, computeRoute(source, target), entry.label ?? '');
     }
+  } else if (entry.type === 'arrowLabel') {
+    const g = arrowsGroup.querySelector(`.arrow[data-id="${entry.id}"]`);
+    if (g) setArrowLabelText(g, isRedo ? entry.after : entry.before);
   }
   setSelection([]);
   updateCounts();
@@ -971,9 +1048,13 @@ function deleteSelection() {
   const shapeSnaps = ids.map(shapeSnapshot);
   const idSet = new Set(ids);
   const arrowSnaps = [...arrowsGroup.querySelectorAll('.arrow')]
-    .filter((path) => idSet.has(path.getAttribute('data-from').split(':')[0]) ||
-      idSet.has(path.getAttribute('data-to').split(':')[0]))
-    .map((path) => ({ from: path.getAttribute('data-from'), to: path.getAttribute('data-to') }));
+    .filter((g) => idSet.has(g.getAttribute('data-from').split(':')[0]) ||
+      idSet.has(g.getAttribute('data-to').split(':')[0]))
+    .map((g) => ({
+      from: g.getAttribute('data-from'),
+      to: g.getAttribute('data-to'),
+      label: g.querySelector('.arrow-label').textContent || '',
+    }));
   for (const id of ids) removeShape(id);
   setSelection([]);
   updateCounts();
@@ -990,10 +1071,11 @@ function deleteSelectedArrow() {
   if (!g) return;
   const from = g.getAttribute('data-from');
   const to = g.getAttribute('data-to');
+  const label = g.querySelector('.arrow-label').textContent || '';
   g.remove();
   setArrowSelection(null);
   updateCounts();
-  pushEntry({ type: 'deleteArrow', from, to });
+  pushEntry({ type: 'deleteArrow', from, to, label });
 }
 
 function cancelInteractions() {
@@ -1116,9 +1198,10 @@ function serializeDocument() {
   return {
     version: DOC_VERSION,
     shapes: [...shapes.values()].map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h, label: s.label, kind: s.kind, fill: s.fill })),
-    arrows: [...arrowsGroup.querySelectorAll('.arrow')].map((path) => ({
-      from: path.getAttribute('data-from'),
-      to: path.getAttribute('data-to'),
+    arrows: [...arrowsGroup.querySelectorAll('.arrow')].map((g) => ({
+      from: g.getAttribute('data-from'),
+      to: g.getAttribute('data-to'),
+      label: g.querySelector('.arrow-label').textContent || '',
     })),
   };
 }
@@ -1146,7 +1229,7 @@ function applyDocument(data) {
     if (!isResolvableEndpoint(a.from) || !isResolvableEndpoint(a.to)) continue;
     const source = resolveEndpoint(a.from);
     const target = resolveEndpoint(a.to);
-    appendArrow(a.from, a.to, computeRoute(source, target));
+    appendArrow(a.from, a.to, computeRoute(source, target), a.label ?? '');
   }
   showAllPortsFaint();
   updateCounts();
@@ -1229,6 +1312,10 @@ svg.addEventListener('pointerdown', (evt) => {
 });
 
 svg.addEventListener('dblclick', (evt) => {
+  if (evt.target.classList.contains('arrow-hit')) {
+    beginArrowLabelEdit(evt.target.parentElement.getAttribute('data-id'));
+    return;
+  }
   if (evt.target.classList.contains('body')) {
     beginLabelEdit(evt.target.parentElement.getAttribute('data-id'));
     return;

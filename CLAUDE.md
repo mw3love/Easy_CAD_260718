@@ -150,11 +150,17 @@ docs/
   여럿이어도 정확히 하나만 지목, 도형선택(`selectedIds`)과 화살표선택(`selectedArrowId`)을
   상호배타로 분리(`setSelection`이 항상 먼저 화살표선택을 지움), `deleteArrow` undo 엔트리
   추가. Python `_ArrowItem`이 `ItemIsSelectable`로 이미 되던 기본 조작(화살표만 골라 지우기)이
-  웹엔 없던 격차를 메움. 다음 방향 미정(화살표 라벨·커스텀 색 다이얼로그 후보).
+  웹엔 없던 격차를 메움. 13차(같은 날): 화살표 라벨(더블클릭 인라인 편집) — 도형 라벨의
+  `beginLabelEdit`/`commitLabelEdit`을 `kind: 'shape'|'arrow'`로 일반화해 재사용, 라벨
+  위치는 경로 호길이 중점에 수평/수직 구간별 9px 오프셋(직교 라우팅 전제, Python의 드래그
+  재투영 오프셋은 범위 밖), `setArrowPoints`가 재라우팅마다 라벨 위치도 함께 갱신해 도형이
+  움직여도 라벨이 따라감. `label` 필드를 직렬화·cascade복원(`deleteShapes`)·개별삭제복원
+  (`deleteArrow`) 전부에 관통, 새 undo 엔트리 `arrowLabel`. 다음 방향 미정(커스텀 색
+  다이얼로그 후보).
   로컬로 보려면
   `web_prototype/`에서 `python -m http.server 8791` 후 `localhost:8791/index.html`.
   경위·근거는 `docs/history/2026-08.md` "웹 전환 실험" 항목들(2026-08-05 두 건 + 2026-08-06
-  아홉 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
+  열 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
