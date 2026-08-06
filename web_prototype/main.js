@@ -85,6 +85,18 @@ function onWheel(evt) {
   zoomAt(evt.clientX, evt.clientY, evt.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
 }
 
+// 키보드 줌(+/-) — 마우스 위치가 없으니 캔버스 화면 중심을 기준점으로 삼는다(마우스 휠
+// 줌의 zoomAt과 동일 로직, 커서 좌표만 뷰포트 중심으로 대체).
+function zoomAtViewCenter(factor) {
+  const rect = svg.getBoundingClientRect();
+  zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor);
+}
+
+function resetView() {
+  viewBox = { x: 0, y: 0, w: BASE_VIEW.w, h: BASE_VIEW.h };
+  applyViewBox();
+}
+
 let panState = null; // { startClient: {x,y}, startViewBox: {x,y}, worldPerPx }
 
 function startPan(clientX, clientY) {
@@ -554,6 +566,10 @@ function toggleSelection(id) {
   if (next.has(id)) next.delete(id);
   else next.add(id);
   setSelection(next);
+}
+
+function selectAllShapes() {
+  setSelection([...shapes.keys()]);
 }
 
 let bodyDragState = null; // { startSvg, startPositions: Map(id -> {x,y}) }
@@ -1118,6 +1134,18 @@ window.addEventListener('keydown', (evt) => {
   } else if (evt.key.toLowerCase() === 'g' && !evt.ctrlKey && !evt.metaKey && !evt.altKey) {
     evt.preventDefault();
     toggleGrid();
+  } else if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === 'a') {
+    evt.preventDefault();
+    selectAllShapes();
+  } else if (evt.key === '+' || evt.key === '=') {
+    evt.preventDefault();
+    zoomAtViewCenter(ZOOM_STEP);
+  } else if (evt.key === '-' || evt.key === '_') {
+    evt.preventDefault();
+    zoomAtViewCenter(1 / ZOOM_STEP);
+  } else if (evt.key === '0' && !evt.ctrlKey && !evt.metaKey) {
+    evt.preventDefault();
+    resetView();
   }
 });
 
