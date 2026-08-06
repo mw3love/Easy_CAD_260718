@@ -10,10 +10,12 @@
     <button id="save-btn" type="button">저장</button>
     <button id="load-btn" type="button">열기</button>
     <input id="load-input" type="file" accept="application/json" hidden />
+    <button id="undo-btn" type="button" disabled>되돌리기</button>
+    <button id="redo-btn" type="button" disabled>다시실행</button>
   </div>
-  <div id="status" data-shape-count="2" data-arrow-count="0" data-hovered-port="none" data-selected-count="0">
+  <div id="status" data-shape-count="2" data-arrow-count="0" data-hovered-port="none" data-selected-count="0" data-undo-count="0" data-redo-count="0">
     shapes: <span id="shape-count">2</span> / arrows: <span id="arrow-count">0</span>
-    (더블클릭으로 도형 추가, 빈 캔버스 드래그로 다중선택)
+    (더블클릭으로 도형 추가, 빈 캔버스 드래그로 다중선택, Ctrl+Z/Ctrl+Shift+Z로 되돌리기/다시실행)
   </div>
   <svg id="canvas" viewBox="0 0 800 500" width="800" height="500">
     <defs>

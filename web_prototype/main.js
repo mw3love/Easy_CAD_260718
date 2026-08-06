@@ -12,6 +12,8 @@ const arrowCountEl = document.getElementById('arrow-count');
 const saveBtn = document.getElementById('save-btn');
 const loadBtn = document.getElementById('load-btn');
 const loadInput = document.getElementById('load-input');
+const undoBtn = document.getElementById('undo-btn');
+const redoBtn = document.getElementById('redo-btn');
 
 const DOC_VERSION = 1;
 
@@ -316,6 +318,7 @@ function finalizeArrow(source, target) {
   const toRef = `${target.shape.id}:${target.def.key}`;
   appendArrow(fromRef, toRef, computeRoute(source, target));
   updateCounts();
+  pushEntry({ type: 'createArrow', from: fromRef, to: toRef });
 }
 
 // 포트 참조 문자열("shape-1:E")을 현재 도형 상태 기준 실좌표로 되돌린다 — 도형이 이동해도
@@ -395,11 +398,118 @@ function removeShape(id) {
   }
 }
 
-function deleteSelection() {
-  if (selectedIds.size === 0) return;
-  for (const id of selectedIds) removeShape(id);
+// Undo/Redo 저널 — Python 쪽 host_undo.py의 "ops 배열 + before/after 스냅샷" 구조를
+// 웹 데이터모델(shapes Map + 화살표 DOM 엘리먼트)에 맞게 새로 설계했다. 연속 드래그는
+// Python처럼 매 이동마다 병합(coalesce)하지 않고, 애초에 pointerdown 시점 시작좌표 대
+// pointerup 시점 최종좌표 딱 1회 비교해 엔트리 1개만 쌓는다(중간 이동은 저널에 안 남음).
+let undoStack = [];
+let redoStack = [];
+
+function updateHistoryButtons() {
+  undoBtn.disabled = undoStack.length === 0;
+  redoBtn.disabled = redoStack.length === 0;
+  statusEl.setAttribute('data-undo-count', String(undoStack.length));
+  statusEl.setAttribute('data-redo-count', String(redoStack.length));
+}
+
+function pushEntry(entry) {
+  undoStack.push(entry);
+  redoStack.length = 0;
+  updateHistoryButtons();
+}
+
+function resetHistory() {
+  undoStack = [];
+  redoStack = [];
+  updateHistoryButtons();
+}
+
+// entry 하나를 적용한다. isRedo=false면 되돌리기(before로), true면 다시실행(after로).
+function applyEntry(entry, isRedo) {
+  if (entry.type === 'move') {
+    for (const m of entry.moves) {
+      const s = shapes.get(m.id);
+      const pos = isRedo ? m.after : m.before;
+      s.x = pos.x;
+      s.y = pos.y;
+      layoutShapePorts(s);
+    }
+    rerouteAllArrows();
+  } else if (entry.type === 'createShapes') {
+    if (isRedo) {
+      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h);
+    } else {
+      for (const sd of entry.shapes) removeShape(sd.id);
+    }
+    showAllPortsFaint();
+  } else if (entry.type === 'deleteShapes') {
+    if (isRedo) {
+      for (const sd of entry.shapes) removeShape(sd.id);
+    } else {
+      for (const sd of entry.shapes) addShape(sd.id, sd.x, sd.y, sd.w, sd.h);
+      for (const a of entry.arrows) {
+        const source = resolveEndpoint(a.from);
+        const target = resolveEndpoint(a.to);
+        appendArrow(a.from, a.to, computeRoute(source, target));
+      }
+    }
+    showAllPortsFaint();
+  } else if (entry.type === 'createArrow') {
+    if (isRedo) {
+      const source = resolveEndpoint(entry.from);
+      const target = resolveEndpoint(entry.to);
+      appendArrow(entry.from, entry.to, computeRoute(source, target));
+    } else {
+      removeArrowByRef(entry.from, entry.to);
+    }
+  }
   setSelection([]);
   updateCounts();
+}
+
+function undo() {
+  if (!undoStack.length) return;
+  const entry = undoStack.pop();
+  applyEntry(entry, false);
+  redoStack.push(entry);
+  updateHistoryButtons();
+}
+
+function redo() {
+  if (!redoStack.length) return;
+  const entry = redoStack.pop();
+  applyEntry(entry, true);
+  undoStack.push(entry);
+  updateHistoryButtons();
+}
+
+function removeArrowByRef(from, to) {
+  for (const path of arrowsGroup.querySelectorAll('.arrow')) {
+    if (path.getAttribute('data-from') === from && path.getAttribute('data-to') === to) {
+      path.remove();
+      return;
+    }
+  }
+}
+
+function shapeSnapshot(id) {
+  const s = shapes.get(id);
+  return { id: s.id, x: s.x, y: s.y, w: s.w, h: s.h };
+}
+
+function deleteSelection() {
+  if (selectedIds.size === 0) return;
+  const ids = [...selectedIds];
+  const shapeSnaps = ids.map(shapeSnapshot);
+  const idSet = new Set(ids);
+  const arrowSnaps = [...arrowsGroup.querySelectorAll('.arrow')]
+    .filter((path) => idSet.has(path.getAttribute('data-from').split(':')[0]) ||
+      idSet.has(path.getAttribute('data-to').split(':')[0]))
+    .map((path) => ({ from: path.getAttribute('data-from'), to: path.getAttribute('data-to') }));
+  for (const id of ids) removeShape(id);
+  setSelection([]);
+  updateCounts();
+  pushEntry({ type: 'deleteShapes', shapes: shapeSnaps, arrows: arrowSnaps });
 }
 
 function cancelInteractions() {
@@ -419,6 +529,13 @@ window.addEventListener('keydown', (evt) => {
     deleteSelection();
   } else if (evt.key === 'Escape') {
     cancelInteractions();
+  } else if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === 'z' && !evt.shiftKey) {
+    evt.preventDefault();
+    undo();
+  } else if ((evt.ctrlKey || evt.metaKey) &&
+    (evt.key.toLowerCase() === 'y' || (evt.key.toLowerCase() === 'z' && evt.shiftKey))) {
+    evt.preventDefault();
+    redo();
   }
 });
 
@@ -429,6 +546,7 @@ function duplicateShape(source) {
   const id = nextShapeId();
   addShape(id, nx, ny, orig.w, orig.h);
   updateCounts();
+  pushEntry({ type: 'createShapes', shapes: [shapeSnapshot(id)] });
 }
 
 function onPointerUp(evt) {
@@ -436,6 +554,14 @@ function onPointerUp(evt) {
     // 드래그 중엔 rerouteAffectedArrows(휴리스틱)로 비용을 줄였으니, 놓는 순간엔 전체
     // 재계산으로 한 번 더 정확성을 보장한다(놓친 원거리 상호작용이 있어도 최종 상태는 항상 맞음).
     rerouteAllArrows();
+    const moves = [];
+    for (const [id, before] of bodyDragState.startPositions) {
+      const s = shapes.get(id);
+      if (s.x !== before.x || s.y !== before.y) {
+        moves.push({ id, before, after: { x: s.x, y: s.y } });
+      }
+    }
+    if (moves.length) pushEntry({ type: 'move', moves });
     bodyDragState = null;
     return;
   }
@@ -504,6 +630,7 @@ function applyDocument(data) {
   }
   showAllPortsFaint();
   updateCounts();
+  resetHistory();
 }
 
 function saveDocument() {
@@ -537,10 +664,12 @@ loadInput.addEventListener('change', () => {
   if (file) loadDocumentFromFile(file);
   loadInput.value = '';
 });
+undoBtn.addEventListener('click', undo);
+redoBtn.addEventListener('click', redo);
 
 // playwright 자동검증용 디버그 훅 — 파일 다운로드 인터셉트 없이 직렬화/역직렬화 결과를
 // 직접 조회하기 위함(실제 저장/열기 버튼 동작과는 무관, 산출물 코드에 영향 없음).
-window.__easycadDebug = { serializeDocument, applyDocument };
+window.__easycadDebug = { serializeDocument, applyDocument, undo, redo };
 
 svg.addEventListener('pointermove', onPointerMove);
 window.addEventListener('pointerup', onPointerUp);
@@ -564,6 +693,7 @@ svg.addEventListener('dblclick', (evt) => {
   addShape(id, pt.x - 70, pt.y - 45, 140, 90);
   showAllPortsFaint();
   updateCounts();
+  pushEntry({ type: 'createShapes', shapes: [shapeSnapshot(id)] });
 });
 
 // 초기 도형 2개 — 대각선 배치라 직교 라우팅이 실제로 꺾이는지 확인 가능

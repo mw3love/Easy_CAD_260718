@@ -110,10 +110,12 @@ docs/
   화살표 규모에서 2.15ms/frame(10배)로 재측정 확인. 추천 방향은 전면 재작성이 아니라 하이브리드(DXF/PDF는 기존
   Python 유지, 캔버스/인터랙션만 웹). 4차(2026-08-06): 저장/불러오기(파일 다운로드/업로드, JSON —
   도형+화살표 포트참조 직렬화, 깨진 파일 업로드해도 기존 문서 보존) 실클릭+실파일 왕복으로
-  검증 완료. 다음 방향 미정. 로컬로 보려면 `web_prototype/`에서
-  `python -m http.server 8791` 후 `localhost:8791/index.html`.
-  경위·근거는 `docs/history/2026-08.md` "웹 전환 실험" 항목들(2026-08-05 두 건 + 2026-08-06),
-  pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
+  검증 완료. 5차(같은 날): undo/redo — 저널 엔트리 4종(이동/도형생성/도형삭제(연결화살표
+  cascade 복원)/화살표생성), Python `host_undo.py`와 다른 데이터모델에 맞게 새로 설계, 툴바
+  버튼+`Ctrl+Z`/`Ctrl+Shift+Z` 단축키까지 실이벤트로 검증 완료. 다음 방향 미정. 로컬로 보려면
+  `web_prototype/`에서 `python -m http.server 8791` 후 `localhost:8791/index.html`.
+  경위·근거는 `docs/history/2026-08.md` "웹 전환 실험" 항목들(2026-08-05 두 건 + 2026-08-06
+  두 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

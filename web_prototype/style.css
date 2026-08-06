@@ -25,6 +25,13 @@ body {
   background: #d9e6f7;
 }
 
+#toolbar button:disabled {
+  border-color: #ccc;
+  background: #f0f0f0;
+  color: #999;
+  cursor: default;
+}
+
 #status {
   margin-bottom: 8px;
   font-size: 13px;
