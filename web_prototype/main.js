@@ -676,7 +676,7 @@ function onPointerDownBody(evt) {
     const s = shapes.get(id);
     startPositions.set(id, { x: s.x, y: s.y });
   }
-  bodyDragState = { startSvg: svgPoint(evt.clientX, evt.clientY), startPositions };
+  bodyDragState = { startSvg: svgPoint(evt.clientX, evt.clientY), startPositions, axisLock: null };
   evt.preventDefault();
 }
 
@@ -731,8 +731,24 @@ function onPointerMove(evt) {
   }
 
   if (bodyDragState) {
-    const dx = pt.x - bodyDragState.startSvg.x;
-    const dy = pt.y - bodyDragState.startSvg.y;
+    let dx = pt.x - bodyDragState.startSvg.x;
+    let dy = pt.y - bodyDragState.startSvg.y;
+    // Shift+드래그 축 고정 — Python core_view.py의 _apply_axis_lock과 동일 관례(일러스트
+    // 레이터·Figma식): 첫 유의미한 편차(화면 3px 상당)의 방향으로 축을 고정해 그 후로는
+    // 반대 축 이동을 0으로 죽인다. 우리 모델은 전체 선택에 같은 delta를 적용하는 구조라
+    // Python처럼 아이템별 snapshot 없이 dx/dy 자체를 고정하면 그대로 전체에 반영된다.
+    if (evt.shiftKey) {
+      if (!bodyDragState.axisLock) {
+        const thr = 3 / currentScale();
+        if (Math.abs(dx) >= thr || Math.abs(dy) >= thr) {
+          bodyDragState.axisLock = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
+        }
+      }
+      if (bodyDragState.axisLock === 'h') dy = 0;
+      else if (bodyDragState.axisLock === 'v') dx = 0;
+    } else {
+      bodyDragState.axisLock = null;
+    }
     // 그리드 스냅은 Python core_view.py의 _apply_grid_snap_move와 동일하게 단일 도형
     // 이동에만 적용한다(다중선택 그룹드래그는 상대 배치가 흐트러지므로 스냅 제외).
     const snapSingle = gridEnabled && bodyDragState.startPositions.size === 1;
@@ -741,7 +757,13 @@ function onPointerMove(evt) {
       const s = shapes.get(id);
       let nx = startPos.x + dx;
       let ny = startPos.y + dy;
-      if (snapSingle) {
+      // 축 고정 중엔 고정된 축을 그리드 스냅이 되돌려 흔들면 안 된다(고정=시작값과 절대
+      // 동일이 불변식) — 고정 안 된 축만 스냅한다.
+      if (snapSingle && bodyDragState.axisLock === 'h') {
+        nx = gridSnapScalar(nx);
+      } else if (snapSingle && bodyDragState.axisLock === 'v') {
+        ny = gridSnapScalar(ny);
+      } else if (snapSingle) {
         const snapped = gridSnap({ x: nx, y: ny });
         nx = snapped.x;
         ny = snapped.y;
