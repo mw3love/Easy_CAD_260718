@@ -5,6 +5,26 @@ body {
   background: #f5f5f5;
 }
 
+#toolbar {
+  margin-bottom: 8px;
+}
+
+#toolbar button {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 4px 12px;
+  margin-right: 6px;
+  border: 1px solid #3b6ea5;
+  border-radius: 4px;
+  background: #eaf1fb;
+  color: #3b6ea5;
+  cursor: pointer;
+}
+
+#toolbar button:hover {
+  background: #d9e6f7;
+}
+
 #status {
   margin-bottom: 8px;
   font-size: 13px;

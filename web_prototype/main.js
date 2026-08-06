@@ -9,6 +9,11 @@ const previewGroup = svg.querySelector('.drag-preview');
 const statusEl = document.getElementById('status');
 const shapeCountEl = document.getElementById('shape-count');
 const arrowCountEl = document.getElementById('arrow-count');
+const saveBtn = document.getElementById('save-btn');
+const loadBtn = document.getElementById('load-btn');
+const loadInput = document.getElementById('load-input');
+
+const DOC_VERSION = 1;
 
 const HOVER_RADIUS = 16;
 const DRAG_THRESHOLD = 6;
@@ -296,15 +301,20 @@ function pathD(points) {
   return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
 }
 
-function finalizeArrow(source, target) {
-  const points = computeRoute(source, target);
-
+function appendArrow(fromRef, toRef, points) {
   const path = document.createElementNS(SVG_NS, 'path');
   path.setAttribute('class', 'arrow');
-  path.setAttribute('data-from', `${source.shape.id}:${source.def.key}`);
-  path.setAttribute('data-to', `${target.shape.id}:${target.def.key}`);
+  path.setAttribute('data-from', fromRef);
+  path.setAttribute('data-to', toRef);
   path.setAttribute('d', pathD(points));
   arrowsGroup.appendChild(path);
+  return path;
+}
+
+function finalizeArrow(source, target) {
+  const fromRef = `${source.shape.id}:${source.def.key}`;
+  const toRef = `${target.shape.id}:${target.def.key}`;
+  appendArrow(fromRef, toRef, computeRoute(source, target));
   updateCounts();
 }
 
@@ -460,6 +470,77 @@ function onPointerUp(evt) {
   setHover(null);
   dragState = null;
 }
+
+function serializeDocument() {
+  return {
+    version: DOC_VERSION,
+    shapes: [...shapes.values()].map((s) => ({ id: s.id, x: s.x, y: s.y, w: s.w, h: s.h })),
+    arrows: [...arrowsGroup.querySelectorAll('.arrow')].map((path) => ({
+      from: path.getAttribute('data-from'),
+      to: path.getAttribute('data-to'),
+    })),
+  };
+}
+
+function clearDocument() {
+  for (const shape of shapes.values()) shape.el.remove();
+  shapes.clear();
+  arrowsGroup.replaceChildren();
+  cancelInteractions();
+}
+
+function applyDocument(data) {
+  clearDocument();
+  shapeSeq = 0;
+  for (const s of data.shapes ?? []) {
+    addShape(s.id, s.x, s.y, s.w, s.h);
+    const n = Number(String(s.id).replace('shape-', ''));
+    if (Number.isFinite(n) && n > shapeSeq) shapeSeq = n;
+  }
+  for (const a of data.arrows ?? []) {
+    const source = resolveEndpoint(a.from);
+    const target = resolveEndpoint(a.to);
+    appendArrow(a.from, a.to, computeRoute(source, target));
+  }
+  showAllPortsFaint();
+  updateCounts();
+}
+
+function saveDocument() {
+  const json = JSON.stringify(serializeDocument(), null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'easycad-web.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function loadDocumentFromFile(file) {
+  const text = await file.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    statusEl.setAttribute('data-load-error', 'invalid-json');
+    return;
+  }
+  statusEl.removeAttribute('data-load-error');
+  applyDocument(data);
+}
+
+saveBtn.addEventListener('click', saveDocument);
+loadBtn.addEventListener('click', () => loadInput.click());
+loadInput.addEventListener('change', () => {
+  const file = loadInput.files[0];
+  if (file) loadDocumentFromFile(file);
+  loadInput.value = '';
+});
+
+// playwright 자동검증용 디버그 훅 — 파일 다운로드 인터셉트 없이 직렬화/역직렬화 결과를
+// 직접 조회하기 위함(실제 저장/열기 버튼 동작과는 무관, 산출물 코드에 영향 없음).
+window.__easycadDebug = { serializeDocument, applyDocument };
 
 svg.addEventListener('pointermove', onPointerMove);
 window.addEventListener('pointerup', onPointerUp);
