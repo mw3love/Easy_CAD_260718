@@ -100,14 +100,12 @@ class _UIBuildMixin:
             m.addAction(a)
         m.addSeparator()
 
-        self._act_pdf = self._make_action("PDF 내보내기 — 전체…", "pdf",
-            lambda: self._export_pdf(selection_only=False), "Ctrl+P")
-        self._act_pdf_sel = self._make_action("PDF 내보내기 — 선택영역…", "pdf",
-            lambda: self._export_pdf(selection_only=True), "Ctrl+Shift+P")
+        # [§8 항목14, 2026-08-07] 옛 "전체"/"선택영역" 별도 메뉴 2개를 1개로 통합 —
+        # 전체/선택 선택지는 _PdfExportDialog 안의 라디오로 이동(옵션+라이브 미리보기).
+        self._act_pdf = self._make_action("PDF 내보내기…", "pdf", self._export_pdf, "Ctrl+P")
         # [신규기능] DXF 가져오기/내보내기 통합 — 옛 전용 메뉴·단축키(Ctrl+Shift+D/I)는
         # 폐지하고 열기(Ctrl+O)/저장(Ctrl+S)이 확장자로 분기(아래 _open_doc/_save_doc).
-        for a in (self._act_pdf, self._act_pdf_sel):
-            m.addAction(a)
+        m.addAction(self._act_pdf)
         m.addSeparator()
 
         self._act_img = self._make_action("이미지 삽입…", "image",

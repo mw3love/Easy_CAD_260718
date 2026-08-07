@@ -18,7 +18,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
+    QToolButton, QLabel, QFileDialog, QMessageBox,
     QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
@@ -34,7 +34,7 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
-from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
+from easycad.fileio.pdf_export import export_pdf
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.svg_import import parse_svg_items
@@ -46,7 +46,7 @@ from easycad.fileio.mermaid_import import (
 from easycad.canvas.host_widgets import _border_attach
 from easycad.canvas.host_selection import _group_scene_rect
 from easycad.canvas.host_dialogs import (
-    _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _MermaidDialog,
+    _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _MermaidDialog, _PdfExportDialog,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -191,23 +191,21 @@ class _FileIOMixin:
         return resp == QMessageBox.StandardButton.Ok
 
 
-    def _export_pdf(self, selection_only: bool):
-        if selection_only and not self._scene.selectedItems():
-            QMessageBox.information(self, "PDF 내보내기", "선택된 객체가 없습니다.")
-            return
+    def _export_pdf(self):
         if self._scene.itemsBoundingRect().isEmpty():
             QMessageBox.information(self, "PDF 내보내기", "출력할 객체가 없습니다.")
             return
-        pages = list(PAGE_SIZES.keys())
-        page, ok = QInputDialog.getItem(self, "용지 크기", "용지:", pages, 0, False)
-        if not ok:
+        dlg = _PdfExportDialog(self, self._scene, bool(self._scene.selectedItems()))
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
+        opts = dlg.result_options()
         path, _ = QFileDialog.getSaveFileName(self, "PDF로 저장", "", "PDF 파일 (*.pdf)")
         if not path:
             return
         if not path.lower().endswith(".pdf"):
             path += ".pdf"
-        if export_pdf(self._scene, path, page=page, selection_only=selection_only):
+        if export_pdf(self._scene, path, page=opts["page"], selection_only=opts["selection_only"],
+                      orientation=opts["orientation"]):
             QMessageBox.information(self, "PDF 내보내기", f"저장 완료:\n{path}")
         else:
             QMessageBox.warning(self, "PDF 내보내기", "저장에 실패했습니다.")

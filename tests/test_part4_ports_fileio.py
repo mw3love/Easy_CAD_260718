@@ -1108,6 +1108,87 @@ def test_mermaid_pdf_export():
     assert os.path.getsize(out) > 0
 
 
+def test_pdf_menu_action_merged_no_selection_variant():
+    # [§8 항목14, 2026-08-07] "전체"/"선택영역" 별도 메뉴 2개 → 1개(_act_pdf)로 통합,
+    # 선택지는 _PdfExportDialog 안 라디오로 이동 — 옛 _act_pdf_sel 액션은 더 이상 없다.
+    w = CanvasWindow()
+    assert not w._act_pdf.icon().isNull()
+    assert not hasattr(w, "_act_pdf_sel")
+
+
+def test_pdf_export_dialog_no_selection_disables_selection_radio():
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=0, y=0, ww=50, hh=50)
+    dlg = _PdfExportDialog(None, w._scene, has_selection=False)
+    assert dlg._rb_all.isChecked()
+    assert not dlg._rb_sel.isEnabled()
+    opts = dlg.result_options()
+    assert opts == {"selection_only": False, "page": "A4", "orientation": "landscape"}
+
+
+def test_pdf_export_dialog_locks_paper_controls_to_title_frame():
+    # 표제란이 있고 "전체 도면"이면 용지크기/방향 컨트롤이 잠기고 프레임 값을 반영한다
+    # (프레임이 이미 용지 선택을 대신함 — 사용자 확인 2026-08-07).
+    w = CanvasWindow()
+    frame = _TitleBlockItem(size="A2", orient="portrait")
+    w._scene.addItem(frame)
+    _mk_pen_rect(w, x=10, y=10, ww=30, hh=30)
+    dlg = _PdfExportDialog(None, w._scene, has_selection=False)
+    assert not dlg._size_cb.isEnabled()
+    assert not dlg._orient_cb.isEnabled()
+    assert dlg._size_cb.currentData() == "A2"
+    assert dlg._orient_cb.currentData() == "portrait"
+    # 다이얼로그를 실제로 show()하지 않아 isVisible()은 항상 False(최상위가 안 떠서) —
+    # setVisible() 호출 여부만 보는 isHidden()으로 확인.
+    assert not dlg._frame_note.isHidden()
+    # "선택 영역"으로 바꾸면 프레임이 적용되지 않으므로(export_pdf와 동일 규칙) 다시 풀린다.
+    dlg._rb_sel.setEnabled(True)
+    dlg._rb_sel.setChecked(True)
+    assert dlg._size_cb.isEnabled()
+    assert dlg._orient_cb.isEnabled()
+    assert dlg._frame_note.isHidden()
+
+
+def test_pdf_export_dialog_live_preview_updates_and_empty_shows_none():
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=0, y=0, ww=50, hh=50)
+    dlg = _PdfExportDialog(None, w._scene, has_selection=False)
+    assert dlg._preview.pixmap() is not None and not dlg._preview.pixmap().isNull()
+    # 선택 없이 "선택 영역"은 비활성화라 실제로 못 고르지만, 내부 미리보기 갱신 로직 자체는
+    # render_preview(selection_only=True)가 None을 반환하는 경우 안내 문구로 대체하는지 확인.
+    dlg._rb_sel.setEnabled(True)
+    dlg._rb_sel.setChecked(True)
+    assert dlg._preview.pixmap().isNull()
+    assert dlg._preview.text() == "출력할 내용이 없습니다."
+
+
+def test_render_preview_orientation_manual_override_matches_export_pdf():
+    # 라이브 미리보기가 export_pdf와 같은 geometry(_resolve_geometry)를 쓰므로, 미리보기의
+    # 가로/세로 비율만 보고도 실제 PDF 방향을 신뢰할 수 있다는 전제를 확인.
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=0, y=0, ww=50, hh=50)
+    px_land = render_preview(w._scene, page="A4", orientation="landscape")
+    px_port = render_preview(w._scene, page="A4", orientation="portrait")
+    assert px_land is not None and px_port is not None
+    assert px_land.width() > px_land.height()
+    assert px_port.height() > px_port.width()
+    out_land = os.path.join(_TMP, "orient_landscape.pdf")
+    out_port = os.path.join(_TMP, "orient_portrait.pdf")
+    assert export_pdf(w._scene, out_land, page="A4", orientation="landscape") is True
+    assert export_pdf(w._scene, out_port, page="A4", orientation="portrait") is True
+    assert os.path.getsize(out_land) > 0 and os.path.getsize(out_port) > 0
+
+
+def test_render_preview_title_frame_ignores_manual_orientation():
+    # 프레임이 있으면(전체 출력) orientation 인자를 무시하고 프레임 방향을 따른다.
+    w = CanvasWindow()
+    frame = _TitleBlockItem(size="A3", orient="portrait")
+    w._scene.addItem(frame)
+    px = render_preview(w._scene, page="A4", selection_only=False, orientation="landscape")
+    assert px is not None
+    assert px.height() > px.width()  # 프레임이 portrait이므로 orientation="landscape" 무시
+
+
 
 
 def test_sketch_argb_normalizes_color():

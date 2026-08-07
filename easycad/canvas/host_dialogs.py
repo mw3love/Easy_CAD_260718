@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem,
+    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
 )
 
 from easycad.canvas.annotator_core import (
@@ -27,7 +27,7 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
-from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
+from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, render_preview, _find_title_frame
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.document import save_document, load_document, load_document_layers
@@ -103,6 +103,103 @@ class _TitleBlockDialog(QDialog):
 
     def result_fields(self):
         return {k: ed.text() for k, ed in self._edits.items()}
+
+
+class _PdfExportDialog(QDialog):
+    """[§8 항목14, 2026-08-07] PDF 내보내기 — 옛 "전체"/"선택영역" 별도 메뉴 2개를 이 다이얼로그
+    하나로 통합. 전체/선택 라디오·용지크기·방향을 고르면 그 즉시 라이브 미리보기가 다시 렌더된다
+    (deep-interview 확정 — 왕복 다이얼로그 대신 옵션·미리보기를 한 화면에). 씬에 표제란/용지틀이
+    있고 "전체 도면"을 고른 상태면 그 프레임이 이미 용지 크기·방향을 정해둔 것이라 용지크기·방향
+    컨트롤을 잠그고 프레임 값을 그대로 반영한다(프레임은 크롭 경계+출력 페이지 크기를 정하는
+    것일 뿐 내부 도형의 실척 mm을 보장하지 않는다는 걸 사용자와 코드로 확인 후 결정 — 다른
+    크기를 원하면 프레임 자체를 다시 만듦, 기존 UX와 일관)."""
+
+    def __init__(self, parent, scene, has_selection: bool):
+        super().__init__(parent)
+        self.setWindowTitle("PDF 내보내기")
+        self._scene = scene
+        self._frame = _find_title_frame(scene)
+
+        opts = QVBoxLayout()
+        self._rb_all = QRadioButton("전체 도면")
+        self._rb_sel = QRadioButton("선택 영역")
+        self._rb_sel.setEnabled(has_selection)
+        self._rb_all.setChecked(True)
+        grp = QButtonGroup(self)
+        grp.addButton(self._rb_all)
+        grp.addButton(self._rb_sel)
+        opts.addWidget(self._rb_all)
+        opts.addWidget(self._rb_sel)
+
+        form = QFormLayout()
+        self._size_cb, self._orient_cb = _build_paper_combos(self, "A4", "landscape")
+        form.addRow("용지 크기", self._size_cb)
+        form.addRow("방향", self._orient_cb)
+        opts.addLayout(form)
+        self._frame_note = QLabel("표제란 용지 설정을 따름", self)
+        self._frame_note.setVisible(False)
+        opts.addWidget(self._frame_note)
+        opts.addStretch(1)
+
+        self._preview = QLabel(self)
+        self._preview.setMinimumSize(320, 320)
+        self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview.setFrameShape(QFrame.Shape.StyledPanel)
+
+        row = QHBoxLayout()
+        row.addLayout(opts)
+        row.addWidget(self._preview, 1)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText("PDF로 저장…")
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+
+        root = QVBoxLayout(self)
+        root.addLayout(row)
+        root.addWidget(btns)
+
+        self._rb_all.toggled.connect(self._refresh)
+        self._size_cb.currentIndexChanged.connect(self._refresh)
+        self._orient_cb.currentIndexChanged.connect(self._refresh)
+        self._refresh()
+
+    def _selection_only(self) -> bool:
+        return self._rb_sel.isChecked()
+
+    def _frame_active(self) -> bool:
+        return (not self._selection_only()) and self._frame is not None
+
+    def _refresh(self):
+        active = self._frame_active()
+        self._size_cb.setEnabled(not active)
+        self._orient_cb.setEnabled(not active)
+        self._frame_note.setVisible(active)
+        if active:
+            idx = self._size_cb.findData(self._frame._size)
+            if idx >= 0:
+                self._size_cb.setCurrentIndex(idx)
+            oidx = self._orient_cb.findData(self._frame._orient)
+            if oidx >= 0:
+                self._orient_cb.setCurrentIndex(oidx)
+        pixmap = render_preview(
+            self._scene, page=self._size_cb.currentData(),
+            selection_only=self._selection_only(), orientation=self._orient_cb.currentData(),
+        )
+        if pixmap is None:
+            self._preview.setPixmap(QPixmap())
+            self._preview.setText("출력할 내용이 없습니다.")
+        else:
+            self._preview.setText("")
+            self._preview.setPixmap(pixmap)
+
+    def result_options(self) -> dict:
+        return {
+            "selection_only": self._selection_only(),
+            "page": self._size_cb.currentData(),
+            "orientation": self._orient_cb.currentData(),
+        }
 
 
 class _TableSizeDialog(QDialog):
