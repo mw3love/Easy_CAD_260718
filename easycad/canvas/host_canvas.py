@@ -67,10 +67,20 @@ class _CanvasMixin:
         실제로 지오메트리(이동/리사이즈/생성/삭제)가 바뀐 아이템들의 rect 합집합만 반환한다.
         `sceneBoundingRect()`가 아니라 `_content_rect()`(선택 시 핸들 여백 미포함)를 씬좌표로
         매핑해 비교하므로, 클릭으로 선택 상태만 바뀌어 boundingRect가 핸들 여백만큼 커지는 것은
-        '변경 없음'으로 정확히 걸러진다(아래 `_on_scene_changed` 버그의 근본 원인)."""
+        '변경 없음'으로 정확히 걸러진다(아래 `_on_scene_changed` 버그의 근본 원인).
+
+        [성능수정 2026-08-08] 화살표(`_ArrowItem`/`_PolyArrowItem`)는 애초에 이 스냅샷에서
+        제외한다 — `_obstacle_rects()`(도형만 반환, 2026-07-26 "화살표-화살표 soft 회피 철회"
+        결정)와 `set_bound()` 실사용(도형만 바인딩 대상, "도형만 지속 바인딩")이 이미 "화살표는
+        다른 화살표의 라우팅에 절대 영향을 못 준다"를 보장하므로, 화살표 자신의 지오메트리
+        변경을 여기서 집계해 봐야 다른 화살표를 트리거할 이유가 없다(트리거해도 입력이 그대로라
+        결과가 항상 동일 — 순수 낭비). 세그먼트 알약 드래그처럼 화살표 자신의 pts가 매 프레임
+        바뀌는 상호작용에서 이 낭비가 밀집 도면 기준 reroute 캐스케이드 1회 초 단위로 커졌다."""
         changed = None
         current = set()
         for it in self._scene.items():
+            if isinstance(it, (_ArrowItem, _PolyArrowItem)):
+                continue
             current.add(it)
             cr = getattr(it, "_content_rect", None)
             rect = it.mapRectToScene(cr()) if cr is not None else it.sceneBoundingRect()

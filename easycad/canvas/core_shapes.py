@@ -5267,7 +5267,30 @@ def _seg_cross_seg(a: QPointF, b: QPointF, c: QPointF, d: QPointF, eps=1e-9) -> 
     return ab_split and cd_split
 
 
+# [성능최적화 2026-08-08, 1차 시도(회랑+실패시 전체 재시도)는 역효과라 되돌림 — 라우팅 사다리가
+# '이 조합은 원래 못 찾음'을 정상 결과로 기대하며 여러 조합을 던지는 구조라, None이 나올 때마다
+# 전체로 재시도하면 실패가 예정된 호출마다 비용이 2배가 됐다(실측: 도형드래그 중앙값 146ms→
+# 447ms, 최악 4.1초). 실측으로 확인한 사실: 이 문서에서 None은 회랑이 좁아서가 아니라 그 특정
+# 시도(스텁 조합)가 애초에 기하학적으로 안 풀려서였다 — 장애물 18개 전부로 돌려도 여전히 None.
+# 즉 회랑 축소가 성공/실패 여부 자체를 바꾸지 않는다(실측: 3~5개로 줄인 시도와 16~18개 그대로인
+# 시도가 같은 케이스에서 둘 다 None). 그래서 2차는 재시도 안전망 없이 회랑만 적용 — 대신 별도
+# 스크립트로 회랑 적용 전/후 kbs_1tv_test.ecad 실도면 전체 화살표의 최종 경로가 정확히 같은지
+# 직접 대조해 안전함을 확인했다(완전성 위반 0건).
+_CORRIDOR_PAD_MIN = 400.0     # 최소 여유(scene 단위) — 재시도가 없으므로 넉넉하게 잡아 안전마진 확보
+_CORRIDOR_PAD_CLEARANCE_MULT = 15.0
+
+
 def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6,
+                 avoid_segs=(), cross_penalty=0.0):
+    pad = max(_CORRIDOR_PAD_MIN, clearance * _CORRIDOR_PAD_CLEARANCE_MULT)
+    lo_x, hi_x = (start.x(), goal.x()) if start.x() <= goal.x() else (goal.x(), start.x())
+    lo_y, hi_y = (start.y(), goal.y()) if start.y() <= goal.y() else (goal.y(), start.y())
+    corridor = QRectF(lo_x - pad, lo_y - pad, (hi_x - lo_x) + 2 * pad, (hi_y - lo_y) + 2 * pad)
+    local = [r for r in infl if r.intersects(corridor)]
+    return _astar_ortho_grid(start, goal, local, clearance, eps, avoid_segs, cross_penalty)
+
+
+def _astar_ortho_grid(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6,
                  avoid_segs=(), cross_penalty=0.0):
     """[Stage2 승격] Hanan 그리드 위의 직교 A*. 팽창 장애물(infl)을 관통하지 않는 최단 직각
     경로의 '중간 정점'을 반환(없으면 None). 후보 스캔과 달리 임의 밀집 배치에서도 경로가
@@ -5292,10 +5315,20 @@ def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6,
     sx, sy = xi[start.x()], yi[start.y()]
     gx, gy = xi[goal.x()], yi[goal.y()]
 
+    # [성능최적화 2026-08-08] edge_ok가 매 grid 간선마다 obstacle 전부(infl, O(장애물 수))를
+    # 순회하던 게 병목이었다(밀집 도면에서 드래그 중 reroute 1회에 수 초) — 각 grid 행/열에
+    # '실제로 걸칠 수 있는' obstacle만 미리 걸러둔다. 필터 임계값이 _seg_hits_rect의 조기
+    # return 조건(수평: r.top()+eps < y < r.bottom()-eps, 수직: 대칭)과 정확히 같아서, 걸러진
+    # obstacle은 어차피 _seg_hits_rect가 False를 반환했을 것들뿐 — edge_ok 최종 판정은 100%
+    # 동일하다(순수 사전필터, 경로 결과 무회귀).
+    row_obst = [[r for r in infl if r.top() + eps < y < r.bottom() - eps] for y in ys]
+    col_obst = [[r for r in infl if r.left() + eps < x < r.right() - eps] for x in xs]
+
     def edge_ok(ax, ay, bx, by):
         a = QPointF(xs[ax], ys[ay])
         b = QPointF(xs[bx], ys[by])
-        return not any(_seg_hits_rect(a, b, r, eps) for r in infl)
+        cands = row_obst[ay] if ay == by else col_obst[ax]
+        return not any(_seg_hits_rect(a, b, r, eps) for r in cands)
 
     turn_cost = clearance * 0.5
 
