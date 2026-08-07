@@ -1296,12 +1296,22 @@ class _LabelMixin:
         if not self._label_alive():
             lbl = self._make_label()
             lbl.setParentItem(self)
-            # 부착 전용(선택·편집·삭제 가능). 화살표(sarrow) 라벨은 _ConnectorLabel이라 드래그로
-            # 경로 위를 슬라이드하도록 Movable도 켠다(FigJam/Lucid) — itemChange가 경로에 재투영.
-            flags = QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            # 부착 전용(편집·삭제는 가능, 단독 선택은 종류별로 갈림). 화살표(sarrow) 라벨은
+            # _ConnectorLabel이라 드래그로 경로 위를 슬라이드하도록 선택+이동을 켠다(FigJam/Lucid)
+            # — itemChange가 경로에 재투영.
+            # [UX개선 2026-08-08] 도형 중앙 라벨(비-커넥터)은 플래그를 아예 안 준다 — Qt는
+            # ItemIsSelectable/Movable이 둘 다 없는 아이템의 mousePressEvent를 기본적으로
+            # ignore()해 그 아래(부모 도형)로 전파한다. 그래서 라벨 위를 한 번 클릭하면 라벨이
+            # 아니라 도형 자체가 선택돼(실사용 피드백: "네모 안 텍스트가 별도로 선택될 필요가
+            # 있나"), Lucid류처럼 "안은 이동 커서, 더블클릭해야 텍스트 편집"이 된다.
+            # mouseDoubleClickEvent는 플래그와 무관하게 항상 hit-test로 이 라벨에 그대로 오므로
+            # 더블클릭 진입은 그대로 동작(텍스트 편집 중엔 QGraphicsTextItem 내부 처리가 담당,
+            # ItemIsSelectable과 무관).
+            flags = QGraphicsItem.GraphicsItemFlag(0)
             if isinstance(lbl, _ConnectorLabel):
                 # Movable=드래그, SendsGeometryChanges=itemChange(ItemPositionChange) 발화(경로 재투영에 필수).
-                flags |= (QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                flags = (QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+                          | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
                           | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
             lbl.setFlags(flags)
             lbl.document().contentsChanged.connect(self._sync_label)  # 타이핑 중 중앙 유지
