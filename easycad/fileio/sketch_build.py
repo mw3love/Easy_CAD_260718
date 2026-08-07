@@ -29,9 +29,15 @@ import json
 FORMAT = "easycad-doc"
 VERSION = 1
 
-_DEFAULT_COLOR = "#000000"   # 복원 도면 기본은 검정(앱 기본 빨강과 다름 — 도면엔 검정이 자연스러움)
 _DEFAULT_WIDTH = 6.0         # 앱 _DEFAULT_WIDTH와 동일(사용자 손그림과 두께 일관)
 _DEFAULT_FONT = 16
+# [2026-08-07 수정] 예전엔 검정 고정("도면엔 검정이 자연스러움" — 흰 종이 가정)이었으나,
+# 이 앱의 실제 기본 캔버스는 다크 테마(host_widgets._CANVAS_BG["dark"]=#1e2731)라 검정
+# 잉크가 저대비로 거의 안 보였다(실사용 스크린샷으로 발견). Sketch(dark=)로 어느 테마를
+# 가정할지 명시해 그에 맞는 기본 잉크색을 고른다 — 기본값 True는 이 앱을 처음 설치했을 때의
+# 실제 기본 테마와 일치(CanvasWindow() 신규 생성 시 다크임을 직접 확인).
+_INK_ON_DARK = "#FFFFFF"
+_INK_ON_LIGHT = "#000000"
 
 # _SYMBOL_KINDS(annotator_core)와 동일한 순서도 심볼 어휘.
 _SYMBOL_KINDS = (
@@ -92,8 +98,12 @@ class Node:
 class Sketch:
     """이미지 초안을 도형으로 조립하는 헤드리스 빌더. save()로 `.ecad`를 쓴다."""
 
-    def __init__(self):
+    def __init__(self, *, dark: bool = True):
+        """dark=True(기본)면 잉크 기본색을 흰색으로(이 앱의 실제 기본 캔버스가 다크),
+        False면 검정(라이트 테마 사용자·인쇄물 대조용)으로 고른다. 개별 도형의 color=를
+        명시하면 이 기본값과 무관하게 그 값을 쓴다."""
         self._items = []   # 생성 순서 = items 배열 순서 = 바인딩 인덱스 기준
+        self._default_color = _INK_ON_DARK if dark else _INK_ON_LIGHT
 
     # ---- 공통 -------------------------------------------------------------
     def _common(self):
@@ -120,28 +130,29 @@ class Sketch:
         return node
 
     # ---- 도형 -------------------------------------------------------------
-    def box(self, x, y, w, h, label=None, *, color=_DEFAULT_COLOR,
+    def box(self, x, y, w, h, label=None, *, color=None,
             width=_DEFAULT_WIDTH, fill=None) -> Node:
-        """직사각형(_RectItem). label이면 정중앙에 텍스트."""
-        return self._add_shape("rect", x, y, w, h, label, color, width, fill)
+        """직사각형(_RectItem). label이면 정중앙에 텍스트. color 생략 시 Sketch(dark=) 기본색."""
+        return self._add_shape("rect", x, y, w, h, label, color or self._default_color, width, fill)
 
-    def ellipse(self, x, y, w, h, label=None, *, color=_DEFAULT_COLOR,
+    def ellipse(self, x, y, w, h, label=None, *, color=None,
                 width=_DEFAULT_WIDTH, fill=None) -> Node:
-        """타원/원(_EllipseItem)."""
-        return self._add_shape("ellipse", x, y, w, h, label, color, width, fill)
+        """타원/원(_EllipseItem). color 생략 시 Sketch(dark=) 기본색."""
+        return self._add_shape("ellipse", x, y, w, h, label, color or self._default_color, width, fill)
 
-    def symbol(self, kind, x, y, w, h, label=None, *, color=_DEFAULT_COLOR,
+    def symbol(self, kind, x, y, w, h, label=None, *, color=None,
                width=_DEFAULT_WIDTH, fill=None) -> Node:
-        """순서도 심볼(_SymbolItem). kind는 _SYMBOL_KINDS 참조(가능한 값은 ValueError 메시지에 노출)."""
+        """순서도 심볼(_SymbolItem). kind는 _SYMBOL_KINDS 참조(가능한 값은 ValueError 메시지에 노출).
+        color 생략 시 Sketch(dark=) 기본색."""
         if kind not in _SYMBOL_KINDS:
             raise ValueError(f"알 수 없는 심볼 kind: {kind!r} (가능: {', '.join(_SYMBOL_KINDS)})")
-        return self._add_shape("symbol", x, y, w, h, label, color, width, fill,
+        return self._add_shape("symbol", x, y, w, h, label, color or self._default_color, width, fill,
                                extra={"kind": kind})
 
-    def text(self, x, y, s, *, color=_DEFAULT_COLOR, font=_DEFAULT_FONT) -> None:
-        """자유 텍스트(_TextItem) — 제목·주석 등 도형에 안 붙는 글자."""
+    def text(self, x, y, s, *, color=None, font=_DEFAULT_FONT) -> None:
+        """자유 텍스트(_TextItem) — 제목·주석 등 도형에 안 붙는 글자. color 생략 시 Sketch(dark=) 기본색."""
         d = self._common()
-        d.update(type="text", text=s, color=_argb(color), font=int(font), bg=None)
+        d.update(type="text", text=s, color=_argb(color or self._default_color), font=int(font), bg=None)
         # 텍스트는 pos로 배치(rect 기반 아님).
         d["pos"] = [float(x), float(y)]
         self._items.append(d)
@@ -149,7 +160,7 @@ class Sketch:
     # ---- 화살표 -----------------------------------------------------------
     def arrow(self, src: Node, dst: Node, label=None, *, head=True,
               from_side=None, to_side=None, channel_x=None, channel_y=None,
-              color=_DEFAULT_COLOR, width=_DEFAULT_WIDTH) -> None:
+              color=None, width=_DEFAULT_WIDTH) -> None:
         """src→dst 직선 화살표(_PolyArrowItem). 양 끝을 도형 변 중점 포트에 **지속연결**하고
         auto_route=True로 둬, 앱이 열릴 때 씬 신호로 직교 엘보를 자동 재계산한다(도형을 옮기면 추종).
         label이면 화살표 중점 위쪽에 텍스트.
@@ -166,6 +177,7 @@ class Sketch:
         채널을 주면 auto_route=False(도형 이동 시 끝점만 추종, 채널 경로는 고정)."""
         if channel_x is not None and channel_y is not None:
             raise ValueError("channel_x와 channel_y는 동시에 줄 수 없다(둘 중 하나)")
+        color = color or self._default_color
         p1 = src.port(from_side) if from_side else src._port_facing(dst.cx, dst.cy)
         p2 = dst.port(to_side) if to_side else dst._port_facing(src.cx, src.cy)
         if channel_x is not None:
