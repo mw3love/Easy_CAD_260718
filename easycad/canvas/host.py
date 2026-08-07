@@ -127,6 +127,10 @@ class CanvasWindow(
         self._scene.setBackgroundBrush(QBrush(QColor("#ffffff")))
         # 지속 연결: 도형/화살표가 움직이면 바인딩된 화살표 끝을 재계산(scene.changed 트리거).
         self._rerouting = False
+        # [성능수정 2026-08-07] item → 마지막으로 관측한 '타이트'(선택 핸들 제외) scene 좌표
+        # rect. 실제 지오메트리 변경과 선택강조 리페인트를 구분하는 데 쓴다(host_canvas.py
+        # `_on_scene_changed` 참조).
+        self._geom_snapshot: dict = {}
         self._scene.changed.connect(self._on_scene_changed)
         # [편의기능] 그룹 멤버 중 하나가 선택되면 같은 그룹 전체를 함께 선택.
         self._scene.selectionChanged.connect(self._sync_group_selection)

@@ -92,6 +92,11 @@ def main():
     load_document(w._scene, doc_path)
     w.show()
     app.processEvents()
+    # [성능수정 2026-08-07] load_document 직후 예약된 scene.changed(바인딩 정규화 reroute의
+    # 지연 신호)가 두 번째 processEvents 틱에야 전달된다 — 실사용에서는 마우스 클릭이 도착하기
+    # 훨씬 전에 이미 소진되는 1회성 정착 신호라, 클릭 자체가 유발하는 비용만 측정하려면 이걸
+    # 먼저 흘려보내야 한다(안 하면 클릭 1회차 프로파일에 정착 비용이 섞여 과대계상됨).
+    app.processEvents()
 
     rects = [it for it in w._scene.items() if isinstance(it, _RectItem)]
     print(f"items={n} rects={len(rects)}")

@@ -62,6 +62,28 @@ _PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 
 
 
 class _CanvasMixin:
+    def _sync_geom_snapshot(self) -> QRectF | None:
+        """[성능수정 2026-08-07] `self._geom_snapshot`(item→직전 타이트 rect)과 현재 씬을 비교해
+        실제로 지오메트리(이동/리사이즈/생성/삭제)가 바뀐 아이템들의 rect 합집합만 반환한다.
+        `sceneBoundingRect()`가 아니라 `_content_rect()`(선택 시 핸들 여백 미포함)를 씬좌표로
+        매핑해 비교하므로, 클릭으로 선택 상태만 바뀌어 boundingRect가 핸들 여백만큼 커지는 것은
+        '변경 없음'으로 정확히 걸러진다(아래 `_on_scene_changed` 버그의 근본 원인)."""
+        changed = None
+        current = set()
+        for it in self._scene.items():
+            current.add(it)
+            cr = getattr(it, "_content_rect", None)
+            rect = it.mapRectToScene(cr()) if cr is not None else it.sceneBoundingRect()
+            prev = self._geom_snapshot.get(it)
+            if prev is None or prev != rect:
+                self._geom_snapshot[it] = QRectF(rect)
+                delta = rect if prev is None else prev.united(rect)
+                changed = delta if changed is None else changed.united(delta)
+        for it in [k for k in self._geom_snapshot if k not in current]:
+            delta = self._geom_snapshot.pop(it)
+            changed = delta if changed is None else changed.united(delta)
+        return changed
+
     def _on_scene_changed(self, region):
         """[성능 조사 2026-07-30] scene.changed가 넘겨주는 region(실제 변경 영역)을 무시하고
         씬의 모든 바인딩 화살표를 매번 전부 reroute하던 게 다중선택 드래그 버벅임의 핵심
@@ -70,13 +92,22 @@ class _CanvasMixin:
         움직인 경우든, 무관한 장애물이 경로 근처로 들어와 A* 회피를 재트리거해야 하는 경우든
         둘 다 화살표 자신의 bbox 기준으로 커버된다(바인딩 도형만 보면 장애물-회피 케이스를 놓침).
         region=None은 필터 없이 전부 재검토(테스트 등에서 실제 시그널 없이 강제 호출할 때 쓰는
-        기존 관례 — 실제 scene.changed 시그널은 항상 리스트를 준다)."""
+        기존 관례 — 실제 scene.changed 시그널은 항상 리스트를 준다).
+
+        [성능수정 2026-08-07] 위 region은 '리페인트가 일어난 영역'일 뿐이라 실제 지오메트리
+        변경과 선택강조(핸들 표시) 리페인트를 구분 못 했다 — 화살표가 캔버스 전역에 넓게 뻗은
+        밀집 도면에서는 도형 하나를 선택만 해도(이동 없음) 그 리페인트 region이 거의 모든
+        화살표 bbox와 겹쳐 전체 재라우팅이 돌았다(KBS 실도면 재현: 클릭 5회 → reroute 39회 →
+        56초, `tools/profile_reroute.py`). region 대신 `_sync_geom_snapshot()`이 계산한 '실제로
+        움직인 아이템들의 rect 합집합'으로 화살표 겹침을 판정해, 순수 선택 클릭은 아예 reroute를
+        건너뛴다. region=None(테스트 강제호출)은 기존처럼 무조건 전체 재검토로 유지."""
         if self._rerouting:
             return  # 재진입 가드 — reroute가 유발한 changed로 되돌아오지 않게
         if getattr(self._view, "_drawing", False):
             return  # 화살표 그리는 중엔 _update_arrow_draw가 tip을 주도 — 간섭 방지
         if getattr(self._view, "_place", None) is not None:
             return  # 클릭 배치 중엔 배치 로직이 끝점을 주도 — 간섭 방지
+        geom_changed = self._sync_geom_snapshot()
         if region is None:
             union = None
         else:
@@ -85,6 +116,9 @@ class _CanvasMixin:
                 union = union.united(r)
             if union.isEmpty():
                 return
+            if geom_changed is None:
+                return  # 실제 지오메트리 변경 없음(순수 선택 등 리페인트만) — reroute 불필요
+            union = geom_changed
         margin = _PolyArrowItem._ROUTE_CLEARANCE  # 기존 장애물-회피 여유와 동일 감도로 재사용
         self._rerouting = True
         try:
