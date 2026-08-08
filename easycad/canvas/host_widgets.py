@@ -355,53 +355,120 @@ class _UndoEntry:
 
 
 class _MinimapView(QGraphicsView):
-    """[미니맵] 메인 뷰와 같은 QGraphicsScene을 공유하는 축소 뷰 — 별도 캐시·갱신 로직 없이
-    Qt가 내용 변경(아이템 추가·이동)을 모든 뷰에 자동 반영한다(같은 scene을 보는 다른
-    QGraphicsView라 scene.changed 훅이 따로 필요 없음 — 규칙 2 손안의 카드: Qt 멀티뷰가
-    이미 제공). 자체 상호작용은 끄고(setInteractive(False)) 클릭/드래그로 메인 뷰를 그
-    위치로 이동시키는 내비게이션만 한다.
+    """[미니맵] 메인 뷰와 같은 QGraphicsScene을 공유하는 축소 뷰. 자체 상호작용은 끄고
+    (setInteractive(False)) 클릭/드래그로 메인 뷰를 그 위치로 이동시키는 내비게이션만 한다.
     [성능 조사 스파이크 2026-07-30 실측] 매 paintEvent마다 itemsBoundingRect()를 캐시 없이
-    재계산하던 게 무거운 도면(아이템 ~1600개)에서 71ms — 미니맵 paintEvent 전체는 98ms(60fps
-    프레임 예산의 약 6배). 휠줌·팬·리사이즈마다 _refresh_minimap()이 이 repaint를 예약해
-    무거운 도면에서 휠줌이 씹히는 원인으로 확인. scene.changed(아이템 추가·이동·삭제 시에만
-    발생 — 줌/팬 같은 순수 뷰 변환은 안 탐)로 dirty 플래그를 걸어 캐시, 실제 내용 변경 때만
-    재계산한다(O(n) 매 페인트 → 상각 O(1))."""
+    재계산하던 게 무거운 도면(아이템 ~1600개)에서 71ms — dirty 플래그(`_bounds_dirty`)로
+    캐시해 O(n) 매 페인트 → 상각 O(1)로 줄였다(`_refit`/`_mark_bounds_dirty`는 이 스파이크의
+    유산, 아래 스냅샷 전환 이후에도 그대로 유지 — 관련 테스트 8종이 이 계약을 직접 검증한다).
+
+    [성능 최적화 2026-08-08] 위 캐시로도 여전히 무거웠던 진짜 원인은 itemsBoundingRect()가
+    아니라 **"같은 씬을 보는 QGraphicsView라 Qt가 scene.changed마다 이 뷰도 자동 repaint
+    스케줄링한다"는 구조 자체** — `super().paintEvent()`가 매번 아이템 ~1600개를 축소 배율로
+    다시 페인트했다(tools/perf_bench.py 실측: 드래그 127ms/frame 중 75%, 선택 클릭 178ms 중
+    82%가 미니맵 몫 — 화면 5% 면적 위젯이 프레임 비용 대부분을 먹었다). 해법: 미니맵을
+    '씬을 매 프레임 직접 그리는 뷰'에서 '저해상도 QPixmap 스냅샷을 blit만 하는 뷰'로 바꾼다.
+    실제 씬 렌더(`scene().render()`)는 `_rebuild_pixmap()` 한 곳에서만 일어나고, 그 호출은
+    내용이 실제로 바뀐 뒤 150ms 디바운스로 최대 1회만 실행된다(`_rebuild_timer`) — 드래그
+    한 프레임 한 프레임마다가 아니라 "잠깐 멈췄을 때 한 번"으로 상각. 트레이드오프: 드래그
+    도중엔 미니맵 그림이 최대 150ms 지연된다(인디케이터 사각형은 별도 경로라 즉시 따라감) —
+    Figma/Lucid도 쓰는 절충이고, deep-interview에서 사용자 승인 받음(2026-08-08).
+    `fitInView`가 세팅하는 `self.transform()`(mapToScene/mapFromScene의 기반)은
+    `_rebuild_pixmap()` 안에서만 갱신되므로, 순수 인디케이터 갱신(메인 뷰 줌·팬)은 그 transform을
+    그대로 재사용 — 미니맵 자신의 배율은 메인 뷰 줌과 무관하므로 정확하다."""
+
+    _REBUILD_DEBOUNCE_MS = 150
 
     def __init__(self, owner, scene):
         super().__init__(scene)
         self._owner = owner
         self.setInteractive(False)   # 아이템 선택/드래그 차단 — 클릭은 내비게이션 전용
-        self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setMinimumHeight(120)
         self._bounds_cache = QRectF()
         self._bounds_dirty = True
+        self._pixmap_cache: QPixmap | None = None
+        self._rebuild_timer = QTimer(self)
+        self._rebuild_timer.setSingleShot(True)
+        self._rebuild_timer.setInterval(self._REBUILD_DEBOUNCE_MS)
+        self._rebuild_timer.timeout.connect(self._rebuild_pixmap)
         scene.changed.connect(self._mark_bounds_dirty)
 
     def _mark_bounds_dirty(self, _regions=None):
         self._bounds_dirty = True
+        self._rebuild_timer.start()   # 재시작 — 변경이 몰리는 동안은 계속 미룸(디바운스)
+
+    def _padded_bounds(self) -> QRectF:
+        rect = self._bounds_cache
+        if rect.isEmpty():
+            return QRectF()
+        pad = max(rect.width(), rect.height()) * 0.06 + 12
+        return rect.adjusted(-pad, -pad, pad, pad)
 
     def _refit(self):
         if self._bounds_dirty:
             self._bounds_cache = self.scene().itemsBoundingRect()
             self._bounds_dirty = False
-        rect = self._bounds_cache
-        if rect.isEmpty():
+        padded = self._padded_bounds()
+        if padded.isEmpty():
             return
-        pad = max(rect.width(), rect.height()) * 0.06 + 12
-        self.fitInView(rect.adjusted(-pad, -pad, pad, pad), Qt.AspectRatioMode.KeepAspectRatio)
+        self.fitInView(padded, Qt.AspectRatioMode.KeepAspectRatio)
+
+    def _rebuild_pixmap(self):
+        """실제로 씬을 그리는 유일한 지점 — 위 클래스 docstring 참조. `scene().render()`는
+        `tools/perf_bench.py`가 측정하는 '뷰 렌더' 시나리오와 같은 API라 비용 성격이 동일하고,
+        다른 점은 오직 '매 프레임'이 아니라 '디바운스당 최대 1회' 불린다는 것뿐이다.
+
+        [실사용 버그 수정 2026-08-08, 2차] `KeepAspectRatio`로 맞추면 콘텐츠 bbox 종횡비가
+        미니맵 위젯(16:9)과 다를 때 레터박스(위아래 또는 좌우 여백)가 생긴다. `QGraphicsScene.
+        render()`는 target 인자를 '이 사각형 전체에 맞춰라'로 받지, `fitInView()`처럼 안에서
+        알아서 center하지 않는다(실측 확인: target을 pm 전체로 주면 스케일된 콘텐츠가 좌측/
+        상단에 붙어 반대쪽에만 배경색 여백이 몰림). 그래서 대상 사각형을 직접 계산해 pm
+        중앙에 배치한다 — 원본이 `super().paintEvent()`(내부적으로 `fitInView`가 세팅한 변환을
+        그대로 씀 → 자동 center)로 얻던 것과 같은 그림. 배경 채움색은 `self.scene().
+        backgroundBrush()`(host_ui.py `_apply_theme`가 테마 전환마다 갱신하는 실제 캔버스
+        배경 — `QPalette` 추측이 아니라 원본이 보여주던 값과 정확히 같은 소스, 실측 픽셀
+        #1e2731로 일치 확인) — 사용자가 실제 창에서 "미니맵에 검정 부분"으로 발견한 원인
+        (이전엔 투명이라 부모 패널의 다른 색/미초기화 픽셀이 비쳤다)을 없애고, 라이트/다크
+        테마 전환에도 자동으로 맞는 색을 쓴다."""
+        self._refit()
+        padded = self._padded_bounds()
+        vp = self.viewport().size()
+        if padded.isEmpty() or vp.isEmpty():
+            self._pixmap_cache = None
+            return
+        pm = QPixmap(vp)
+        pm.fill(self.scene().backgroundBrush().color())
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        sw, sh = padded.width(), padded.height()
+        scale = min(vp.width() / sw, vp.height() / sh) if sw > 0 and sh > 0 else 1.0
+        draw_w, draw_h = sw * scale, sh * scale
+        target = QRectF((vp.width() - draw_w) / 2.0, (vp.height() - draw_h) / 2.0, draw_w, draw_h)
+        self.scene().render(painter, target, padded, Qt.AspectRatioMode.KeepAspectRatio)
+        painter.end()
+        self._pixmap_cache = pm
+        self.viewport().update()
 
     def paintEvent(self, event):
-        self._refit()
-        super().paintEvent(event)
+        # 캐시가 없거나(최초 페인트) 위젯 크기가 바뀌었으면(리사이즈) 이번만 동기 재생성 —
+        # 그 외엔 blit + 인디케이터만(아이템 페인트 없음, 이게 이번 최적화의 핵심).
+        if self._pixmap_cache is None or self._pixmap_cache.size() != self.viewport().size():
+            self._rebuild_pixmap()
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)   # 인디케이터 테두리용
+        if self._pixmap_cache is not None:
+            painter.drawPixmap(0, 0, self._pixmap_cache)
+        self._paint_indicator(painter)
+        painter.end()
 
     _INDICATOR_PX = 30   # [사용자 피드백 2026-07-29] 인디케이터 목표 픽셀 크기(폭 기준, 줌 무관 고정)
 
     def _indicator_scene_rect(self) -> QRectF:
-        """메인 뷰가 지금 보여주는 영역 — 씬 좌표. drawForeground에서 그대로 그릴 값이라
-        테스트가 이중변환 회귀(아래 주석)를 잡을 수 있도록 별도 메서드로 뺐다."""
+        """메인 뷰가 지금 보여주는 영역 — 씬 좌표. `_paint_indicator`가 그대로 그릴 값이라
+        테스트가 이중변환 회귀(그 메서드 주석 참조)를 잡을 수 있도록 별도 메서드로 뺐다."""
         main = self._owner._view
         return main.mapToScene(main.viewport().rect()).boundingRect()
 
@@ -421,16 +488,16 @@ class _MinimapView(QGraphicsView):
         r.moveCenter(visible.center())
         return r
 
-    def drawForeground(self, painter, rect):
-        super().drawForeground(painter, rect)
-        # ⚠ [실조건 버그 근본원인] drawForeground의 painter는 Qt가 이미 "씬 좌표계"로 매핑해
-        # 넘겨준다(QGraphicsItem.paint()의 로컬 좌표계와 같은 설계) — 실측 확인(offscreen 프로브):
-        # drawForeground의 rect 인자가 뷰 픽셀(0..w)이 아니라 fitInView된 씬 범위 그대로였다.
-        # 이전 코드는 main의 가시 영역(씬 좌표)을 self.mapFromScene()으로 미니맵 '픽셀' 좌표로
-        # 또 변환한 뒤, 이미 씬 좌표계인 painter에 그 픽셀값을 그렸다 — 이중 변환이라 인디케이터가
-        # 항상 잘못된 크기·위치로 그려졌다(폴링으로는 못 고치는 종류의 버그 — 매번 같은 잘못된
-        # 값을 다시 그릴 뿐). 씬 좌표를 그대로 그리면 된다(변환 불필요) — 단 크기는 아래처럼 고정.
+    def _paint_indicator(self, painter):
+        """[성능 최적화 2026-08-08] 예전엔 `drawForeground`(Qt가 씬 좌표계로 painter를 미리
+        매핑해 호출)였는데, `paintEvent`가 더 이상 `super().paintEvent()`를 안 타 Qt가
+        `drawForeground`를 자동 호출하지 않는다 — 그래서 이 뷰 자신이 직접 부르는 일반
+        메서드로 바꾸고, painter는 뷰포트 픽셀 좌표계(변환 없음)이므로 `mapFromScene`으로
+        직접 매핑한다(옛 이중변환 버그 — 위 클래스 docstring — 는 씬좌표 painter에 픽셀좌표를
+        그린 것이 원인이었지, 그 반대(픽셀좌표 painter에 씬좌표를 그리는 지금 이 실수)와는
+        다르다 — 헷갈리지 않도록 명시)."""
         visible = self._indicator_draw_rect()
+        view_rect = self.mapFromScene(visible).boundingRect()
         # [사용자 피드백] 처음엔 dock 제목줄 accent와 같은 블루(#54a9ff/#1f7ae0)+반투명 채움을
         # 썼더니 ⓐ 채움이 미니맵 속 도형을 뿌옇게 가려 시인성이 나쁘고 ⓑ 상단 dock 제목줄 밑
         # accent 선과 색이 같아 서로 다른 UI 요소인데 헷갈렸다. 채움을 없애 안쪽을 그대로 보이게
@@ -439,7 +506,7 @@ class _MinimapView(QGraphicsView):
         pen = QPen(indicator_color, 2.2); pen.setCosmetic(True)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(visible)
+        painter.drawRect(view_rect)
 
     def _navigate_to(self, view_pos):
         self._owner._view.centerOn(self.mapToScene(view_pos))

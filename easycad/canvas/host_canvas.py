@@ -77,6 +77,7 @@ class _CanvasMixin:
         결과가 항상 동일 — 순수 낭비). 세그먼트 알약 드래그처럼 화살표 자신의 pts가 매 프레임
         바뀌는 상호작용에서 이 낭비가 밀집 도면 기준 reroute 캐스케이드 1회 초 단위로 커졌다."""
         changed = None
+        changed_n = 0   # [성능 최적화 2026-08-08] 아래 _on_scene_changed 주석 참조
         current = set()
         for it in self._scene.items():
             if isinstance(it, (_ArrowItem, _PolyArrowItem)):
@@ -89,9 +90,12 @@ class _CanvasMixin:
                 self._geom_snapshot[it] = QRectF(rect)
                 delta = rect if prev is None else prev.united(rect)
                 changed = delta if changed is None else changed.united(delta)
+                changed_n += 1
         for it in [k for k in self._geom_snapshot if k not in current]:
             delta = self._geom_snapshot.pop(it)
             changed = delta if changed is None else changed.united(delta)
+            changed_n += 1
+        self._last_geom_change_count = changed_n
         return changed
 
     def _on_scene_changed(self, region):
@@ -132,7 +136,33 @@ class _CanvasMixin:
         margin = _PolyArrowItem._ROUTE_CLEARANCE  # 기존 장애물-회피 여유와 동일 감도로 재사용
         self._rerouting = True
         try:
-            for it in self._scene.items():
+            # [성능 최적화 2026-08-08] `self._scene.items()`(전체 ~1600개) 순회 대신 Qt의 BSP
+            # 트리 공간 인덱스로 후보를 좁힌다 — `_rb_preview_hits()`(core_view.py)가 이미 같은
+            # 목적으로 쓰는 검증된 패턴(규칙 2 손안의 카드: Qt가 이미 제공)을 재사용. 정확성
+            # 근거: 아래 조건은 원래도 "화살표 bbox를 margin만큼 부풀려 union과 겹치는가"였다 —
+            # 대칭 패딩 AABB 교차는 "A를 부풀려 B와 겹침"과 "B를 부풀려 A와 겹침"이 동치이므로,
+            # union을 margin만큼 부풀린 사각형으로 `scene.items(rect, Intersects...)`를 쿼리하면
+            # 원래 조건을 만족할 수 있는 아이템 전부(그 이상은 아무것도 놓치지 않음)를 후보로
+            # 얻는다. 그 후보만 아래에서 기존과 동일한 정밀 조건으로 재확인하므로 결과 집합은
+            # 불변 — 인덱스 정확성은 `prepareGeometryChange()`가 보장(Stage2 캐싱 도입 시 전수
+            # 확인한 것과 같은 계약).
+            #
+            # [실측 되돌림 — 다건 변경엔 전체스캔이 더 빠름] 처음엔 union이 있으면 항상 공간
+            # 쿼리를 썼는데, 20개 도형 동시 드래그로 재측정하니 오히려 20.2→26.7ms로 악화됐다
+            # (cProfile 확인: BSP `items(rect,mode)` 자체의 트리순회+리스트생성 오버헤드가, 변경
+            # 영역이 넓어 후보를 별로 못 줄이는 경우엔 순수 `items()` 전체스캔보다 비쌌다 — 도형
+            # 1개 드래그에선 반대로 8.2→5.9ms로 확실히 이겼다). 그래서 "이번 사이클에 실제로
+            # 바뀐 아이템 수"(`_last_geom_change_count`, 위 `_sync_geom_snapshot`)가 적을 때만
+            # 공간 쿼리를 쓴다 — 바뀐 아이템이 적으면 union도 좁아 공간 쿼리가 확실히 이기고,
+            # 많으면(다중선택 드래그) 검증된 전체스캔으로 안전하게 폴백한다.
+            _FEW_CHANGED = 4   # 실측 경계(1건=승, 20건=패)에서 넉넉히 보수적으로 잡은 값
+            if union is None or self._last_geom_change_count > _FEW_CHANGED:
+                candidates = self._scene.items()   # 강제 전체 재검토 / 다건 변경 — 검증된 경로
+            else:
+                query_rect = union.adjusted(-margin, -margin, margin, margin)
+                candidates = self._scene.items(
+                    query_rect, Qt.ItemSelectionMode.IntersectsItemBoundingRect)
+            for it in candidates:
                 # 곡선화살표(_ArrowItem)·직선화살표(_PolyArrowItem) 모두 지속 연결 리라우트.
                 if isinstance(it, (_ArrowItem, _PolyArrowItem)) and it.has_binding():
                     if union is None or it.sceneBoundingRect().adjusted(

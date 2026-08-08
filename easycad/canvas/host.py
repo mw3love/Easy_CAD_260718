@@ -131,6 +131,10 @@ class CanvasWindow(
         # rect. 실제 지오메트리 변경과 선택강조 리페인트를 구분하는 데 쓴다(host_canvas.py
         # `_on_scene_changed` 참조).
         self._geom_snapshot: dict = {}
+        # [성능 최적화 2026-08-08] 직전 `_sync_geom_snapshot()` 호출에서 실제로 바뀐 아이템
+        # 수 — `_on_scene_changed`가 공간쿼리/전체스캔 중 무엇을 쓸지 가르는 신호(그 함수 주석
+        # 참조). 항상 `_sync_geom_snapshot()`이 먼저 갱신하지만, 초기값도 명시해 둔다.
+        self._last_geom_change_count = 0
         self._scene.changed.connect(self._on_scene_changed)
         # [편의기능] 그룹 멤버 중 하나가 선택되면 같은 그룹 전체를 함께 선택.
         self._scene.selectionChanged.connect(self._sync_group_selection)

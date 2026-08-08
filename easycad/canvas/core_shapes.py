@@ -3354,12 +3354,35 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # 드래그하면 _reproject_label이 t·off를 갱신하고, paint가 그 자리에 선 갭을 낸다.
         self._label_t = 0.5
         self._label_off = 0.0
+        # [성능 최적화 2026-08-08] `_content_rect`/`boundingRect` 메모이즈용 버전 카운터 —
+        # 아래 `prepareGeometryChange()` 재정의 주석 참조. 2026-08-01엔 "무효화 지점을 전부
+        # 놓치지 않을 자신이 없다"며 이 캐시를 명시적으로 보류했었다(`docs/history/2026-08.md`
+        # "화살표 boundingRect 최적화" 항목) — 이번엔 그 우려를 해소할 근거가 있어 재검토했다:
+        # `_pts`/`_width`/`_curve_r`/`_head_at_end`를 바꾸는 15개 지점 전부(끝점 드래그·세그먼트
+        # 드래그·경유지 힌트·리베이크·apply_width 등)와 선택 상태 변경(`_HandleResizeMixin.
+        # itemChange`)이 이미 `self.prepareGeometryChange()`를 호출한다 — Qt 자신이 "이 시점
+        # 이후 boundingRect가 달라질 수 있다"를 요구하는 표준 계약이라 이미 다 지켜지고 있었다.
+        # 즉 새 무효화 훅을 15곳에 추가하는 게 아니라, **이미 완비된 단일 지점**(prepareGeometryChange
+        # 자신)에 올라타 캐시를 무효화한다 — 지점을 하나라도 놓치면 그 자체로 오늘도 이미
+        # 버그(Qt 공간 인덱스가 stale)였을 것이므로, 이 캐시가 새로 만드는 위험은 없다.
+        self._geom_version = 0
+        self._content_rect_cache = None   # (version, QRectF) | None
+        self._bounds_rect_cache = None    # (version, view_zoom, QRectF) | None — zoom도 키에 포함
         self._init_resize()
         self._init_label()
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
             | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
         )
+
+    def prepareGeometryChange(self):
+        # [성능 최적화 2026-08-08] 위 __init__ 주석 참조 — 이 메서드는 이미 모든 기하 변경
+        # 지점에서 호출되고 있었다(재정의 전 grep으로 15곳 전수 확인). 그 호출을 그대로 캐시
+        # 무효화 신호로 재사용한다(줌 변화는 scene.changed를 안 타므로 여기 대신 boundingRect가
+        # 직접 vz를 캐시 키에 넣어 비교 — `docs/pitfalls.md` "scene.changed는 순수 뷰 트랜스폼을
+        # 안 탄다" 참조).
+        self._geom_version += 1
+        super().prepareGeometryChange()
 
     # ---- 정점 = 끝점 핸들(재사용) --------------------------------------
     def _uses_endpoints(self):
@@ -4261,6 +4284,12 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     # ---- 경계/외형 -----------------------------------------------------
     def _content_rect(self) -> QRectF:
+        # [성능 최적화 2026-08-08] `_pts`/`_width`/`_head_at_end`에만 의존(줌 무관) — 위 __init__/
+        # prepareGeometryChange 주석 참조. 무거운 도면(~1600개)에서 boundingRect 체인 중 가장
+        # 비싼 부분이었다(정점 min/max + `_head_points()` 삼각함수, cProfile 실측 tottime 1위).
+        cache = self._content_rect_cache
+        if cache is not None and cache[0] == self._geom_version:
+            return cache[1]
         xs = [p.x() for p in self._pts]
         ys = [p.y() for p in self._pts]
         r = QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
@@ -4270,19 +4299,30 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         hx = [p.x() for p in hp]
         hy = [p.y() for p in hp]
         head_r = QRectF(QPointF(min(hx), min(hy)), QPointF(max(hx), max(hy)))
-        return r.united(head_r.adjusted(-2, -2, 2, 2))
+        result = r.united(head_r.adjusted(-2, -2, 2, 2))
+        self._content_rect_cache = (self._geom_version, result)
+        return result
 
     def boundingRect(self) -> QRectF:
         # [화살표 boundingRect 최적화 2026-08-01] `vz`/`s`를 한 번씩만 읽어 정점 루프에 넘긴다
         # (`_HandleResizeMixin.boundingRect()`와 동일한 근거 — 위 주석 참조).
+        # [성능 최적화 2026-08-08] 정점 루프 자체도 (geom 버전, vz) 키로 캐시 — `_view_zoom_factor`
+        # 조회는 이미 저렴하므로(뷰 캐시, 위 2026-08-01 최적화) 매번 다시 읽고 '바뀌었는지'만
+        # 비교한다(줌은 scene.changed를 안 타 prepareGeometryChange가 못 잡음 — 그래서 여기서
+        # 직접 비교). 안 바뀌었으면 union 루프·삼각함수 전부 건너뛴다.
         vz = _view_zoom_factor(self)
+        cache = self._bounds_rect_cache
+        if cache is not None and cache[0] == self._geom_version and cache[1] == vz:
+            return cache[2]
         s = self._scale_or_1(vz)
         r = self._content_rect()
         for i in range(len(self._pts)):
             r = r.united(self._inflate_to_hit(self._endpoint_rect(i, s), s, vz))
         # [M4-4] 세그먼트 알약 핸들도 boundingRect에 포함(paint 잔상 방지).
         pad = (4.0 + self._SEG_HANDLE_PX) / max(s, 1e-6)
-        return r.adjusted(-pad, -pad, pad, pad)
+        result = r.adjusted(-pad, -pad, pad, pad)
+        self._bounds_rect_cache = (self._geom_version, vz, result)
+        return result
 
     def _base_shape(self):
         stroker = QPainterPathStroker()
