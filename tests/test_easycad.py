@@ -24,8 +24,9 @@ import test_part4_ports_fileio as _p4
 import test_part5_precision_edit as _p5
 import test_part6_grid_minimap_layers as _p6
 import test_part7_symbol_library as _p7
+import test_part8_trim_kernel as _p8
 
-_PARTS = [_p1, _p2, _p3, _p4, _p5, _p6, _p7]
+_PARTS = [_p1, _p2, _p3, _p4, _p5, _p6, _p7, _p8]
 
 
 def _run_all():

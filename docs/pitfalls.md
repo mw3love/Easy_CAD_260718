@@ -48,6 +48,11 @@
   `test_true_segmented_border_survives_scene_render_and_grab`
   (`tests/test_part4_ports_fileio.py`)이 지킨다. 기존 포트 trim의 덮어그리기 우회
   (`_paint_port_cover_if_needed`)는 아직 그대로이며 §8 항목17 7단계에서 흡수 예정.
+  **2026-08-10 추가 확인**: 오프스크린 스파이크뿐 아니라 `QT_QPA_PLATFORM` 없는 실제 창
+  (`w.grab()`, 플랫폼 플러그인 `windows` 확인)과 `export_pdf()`가 만든 진짜 `.pdf` 파일을
+  PyMuPDF로 래스터화한 이미지 양쪽에서도 간격이 육안·픽셀 스캔으로 확인됨 — 다른 렌더 경로
+  (실제 플랫폼 페인트 엔진·실제 QPrinter PDF 백엔드)에서도 재확인됐지만 원인 자체는 여전히
+  미상.
   (`2026-08.md` 포트-테두리 trim, 위키
   `easycad-qgraphicsitem-자식있는아이템-paint-gap-무시.md` — 위키도 갱신 필요)
 

@@ -5455,6 +5455,71 @@ def _seg_cross_seg(a: QPointF, b: QPointF, c: QPointF, d: QPointF, eps=1e-9) -> 
     return ab_split and cd_split
 
 
+# ---- [§8 항목17 1단계] TRIM/EXTEND 기하 커널 — 좌표계 무관 순수함수 --------------------
+# 위 _seg_cross_seg는 A* 라우팅 핫패스(간선마다 avoid_segs 전체와 대조)라 불린만 반환해
+# 나눗셈을 피한다 — 그 성능 특성을 지키기 위해 아래 함수들과 통합하지 않고 분리해 둔다.
+# 이 함수들은 "어느 좌표계인지" 모른 채 받은 점 그대로 계산한다 — 회전된 도형을 다룰 때는
+# 호출부가 host.mapFromScene()으로 대상 기하를 host의 로컬좌표로 옮겨 넘긴다(2026-08-10
+# deep-interview 확정). 기존 _host_outline_local_polygon·_port_edge_gap·cut 저장형식(변
+# 인덱스+t, 로컬 비율)이 이미 이 패턴이라 Qt의 mapToScene/mapFromScene이 회전·스케일을
+# 자동 반영해주므로 회전 특례 코드가 필요 없다.
+def _seg_seg_intersection(a: QPointF, b: QPointF, c: QPointF, d: QPointF, eps=1e-9):
+    """두 선분 a-b, c-d가 만나면 교차 '점'을(둘 다 [0,1] 파라미터 범위, 끝점 포함) 반환,
+    평행·비교차면 None. _seg_cross_seg와 달리 끝점 접촉도 교차로 인정한다(TRIM 문지르기·
+    EXTEND는 "정확히 끝점에서 만남"도 유효한 절단/연장 지점이라 배제할 이유가 없다 —
+    _seg_cross_seg가 끝점을 제외하는 이유(화살표-도형 접촉 오판 방지)는 이 용도엔 해당 없음).
+    Cramer 공식(선분을 a+t*(b-a), c+u*(d-c)로 매개화해 연립)."""
+    dx1, dy1 = b.x() - a.x(), b.y() - a.y()
+    dx2, dy2 = d.x() - c.x(), d.y() - c.y()
+    denom = dx1 * dy2 - dy1 * dx2
+    if abs(denom) < eps:
+        return None
+    t = ((c.x() - a.x()) * dy2 - (c.y() - a.y()) * dx2) / denom
+    u = (dy1 * (c.x() - a.x()) - dx1 * (c.y() - a.y())) / denom
+    if -eps <= t <= 1.0 + eps and -eps <= u <= 1.0 + eps:
+        return QPointF(a.x() + t * dx1, a.y() + t * dy1)
+    return None
+
+
+def _seg_circle_intersections(p1: QPointF, p2: QPointF, center: QPointF, radius: float,
+                              eps=1e-9) -> list:
+    """선분 p1-p2와 원(center, radius)의 교차점(선분 위에 있는 것만, 0~2개) — 접선(tangent)은
+    1개로 dedupe. 선분을 p1+t*(p2-p1)로 매개화한 이차방정식 |p1+t*d - center|=radius."""
+    dx, dy = p2.x() - p1.x(), p2.y() - p1.y()
+    fx, fy = p1.x() - center.x(), p1.y() - center.y()
+    a = dx * dx + dy * dy
+    if a < eps:
+        return []
+    b = 2.0 * (fx * dx + fy * dy)
+    c = fx * fx + fy * fy - radius * radius
+    disc = b * b - 4.0 * a * c
+    if disc < 0.0:
+        return []
+    sq = math.sqrt(disc)
+    out = []
+    for t in ((-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)):
+        if -eps <= t <= 1.0 + eps:
+            tc = min(1.0, max(0.0, t))
+            pt = QPointF(p1.x() + tc * dx, p1.y() + tc * dy)
+            if not out or QLineF(out[-1], pt).length() > eps:
+                out.append(pt)
+    return out
+
+
+def _seg_ellipse_intersections(p1: QPointF, p2: QPointF, rect: QRectF, eps=1e-9) -> list:
+    """선분 p1-p2와 타원(rect로 정의된 축정렬 타원 — `_EllipseItem.rect()`와 같은 꼴)의
+    교차점. rx=rect.width()/2, ry=rect.height()/2로 스케일 역변환해 단위원 문제로 환원한
+    뒤 `_seg_circle_intersections`를 재사용하고 다시 스케일해 되돌린다(계획서 §8 항목17
+    1단계). rect 자체가 이미 축정렬(EllipseItem 정의상 회전 없음)이므로 host가 회전돼
+    있어도 호출부가 p1/p2/rect를 host 로컬좌표로 넘기면 그대로 맞는다."""
+    cx, cy = rect.center().x(), rect.center().y()
+    rx, ry = max(rect.width() / 2.0, eps), max(rect.height() / 2.0, eps)
+    up1 = QPointF((p1.x() - cx) / rx, (p1.y() - cy) / ry)
+    up2 = QPointF((p2.x() - cx) / rx, (p2.y() - cy) / ry)
+    upts = _seg_circle_intersections(up1, up2, QPointF(0.0, 0.0), 1.0, eps)
+    return [QPointF(u.x() * rx + cx, u.y() * ry + cy) for u in upts]
+
+
 # [성능최적화 2026-08-08, 1차 시도(회랑+실패시 전체 재시도)는 역효과라 되돌림 — 라우팅 사다리가
 # '이 조합은 원래 못 찾음'을 정상 결과로 기대하며 여러 조합을 던지는 구조라, None이 나올 때마다
 # 전체로 재시도하면 실패가 예정된 호출마다 비용이 2배가 됐다(실측: 도형드래그 중앙값 146ms→
