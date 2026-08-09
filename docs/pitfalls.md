@@ -185,6 +185,17 @@
   펜을 만들 땐 capStyle·joinStyle을 항상 명시할 것. wiki
   `easycad-qpen-기본joinstyle-예각폴리곤-모따기.md` 참조. (`2026-08.md` Lucid 대조 UX 시리즈)
 
+- `QGraphicsItem.setCacheMode(DeviceCoordinateCache/ItemCoordinateCache)`는 "작은 아이템이
+  아주 많은" 밀집 도면(1600개)에서 **직관과 반대로 렌더를 크게 느리게 만든다** — render_fit
+  실측: 캐시 없음 78ms → DeviceCoordinateCache 165ms(2.1배 악화, 캐시 워밍 후에도 동일)
+  → ItemCoordinateCache 700ms(9배 악화). 아이템 하나하나가 화면에서 몇 픽셀에 불과하면
+  아이템별 QPixmap 캐시 생성·관리·합성 오버헤드가 원래의 벡터 drawPath 비용보다 커진다(캐시는
+  "적은 수의 무거운 아이템"에 맞는 최적화이지 "많은 수의 가벼운 아이템"엔 역효과). 픽셀 지문도
+  당연히 깨진다(3px 샘플 그리드에서 378개 픽셀 차이). 이 축은 재시도하지 말 것 — 대신
+  `_geom_version` 키 메모이즈(이미 `_content_rect`/`boundingRect`/`_head_points`/
+  `_trimmed_body_pts`에 적용, 2026-08-08~09)처럼 "Qt 캐시 기능"이 아니라 "우리 쪽 파이썬
+  재계산을 건너뛰는" 방향이 이 도면 규모엔 맞는 축이다. (`2026-08.md` §8 항목0 4단계)
+
 ## 검증 방법론
 - 오프스크린(headless) 통과는 "해결"이 아니다 — 지속연결 초안이 offscreen은 통과했지만 실제
   GUI에서 버그가 났다(플로팅→고정 부착점으로 재설계). 전역 규칙 11-c "정직한 상태표기" 참조.

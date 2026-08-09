@@ -3368,6 +3368,14 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._geom_version = 0
         self._content_rect_cache = None   # (version, QRectF) | None
         self._bounds_rect_cache = None    # (version, view_zoom, QRectF) | None — zoom도 키에 포함
+        # [성능 최적화 2026-08-09, 4단계] `_head_points()`/`_trimmed_body_pts()`도 같은 계약
+        # (`_pts`/`_width`/`_head_at_end`에만 의존, 줌 무관)이라 같은 `_geom_version` 키로
+        # 메모이즈한다 — `_content_rect()`는 이미 이렇게 캐시돼 있었지만 `paint()`는 매 렌더마다
+        # 이 둘을 직접 다시 불러 삼각함수·hypot를 반복했다(프로파일 실측: render_fit 시나리오에서
+        # _PolyArrowItem.paint가 전체 cumtime의 46%, 그중 _head_points 7.6%/_trimmed_body_pts
+        # 5.4%). "정적 화면을 여러 프레임 다시 그림"(뷰 렌더·줌·팬)에서 반복 계산을 없앤다.
+        self._head_pts_cache = None       # (version, [QPointF x3]) | None
+        self._trimmed_pts_cache = None    # (version, [QPointF...]) | None
         self._init_resize()
         self._init_label()
         self.setFlags(
@@ -4069,14 +4077,20 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         return max(self._width * 2.5, 7.0)
 
     def _head_points(self):
+        # [성능 최적화 2026-08-09] __init__ 주석 참조 — `_geom_version` 키 캐시.
+        cache = self._head_pts_cache
+        if cache is not None and cache[0] == self._geom_version:
+            return cache[1]
         tip, ang = self._tip_and_angle()
         size = self._head_size()
         a1, a2 = ang + math.radians(150), ang - math.radians(150)
-        return [
+        result = [
             QPointF(tip),
             QPointF(tip.x() + size * math.cos(a1), tip.y() + size * math.sin(a1)),
             QPointF(tip.x() + size * math.cos(a2), tip.y() + size * math.sin(a2)),
         ]
+        self._head_pts_cache = (self._geom_version, result)
+        return result
 
     def _polyline_path(self) -> QPainterPath:
         return self._segment_path(self._pts)
@@ -4111,24 +4125,28 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         양쪽에서 이미 하던 트림을 여기(_PolyArrowItem)에도 맞춘다. 화살촉이 tip에서 폭 0으로
         좁아지는데 몸통은 tip까지 고정 폭이라, 안 자르면 화살촉이 시작되는 어깨 양옆으로 몸통
         폭이 계단처럼 삐져나와 보였다(Lucid 대조 스크린샷으로 확인). 히트테스트(`_polyline_path`
-        가 쓰는 `self._pts`)·직렬화는 원본 그대로 — 이건 paint 전용 시각 트림."""
+        가 쓰는 `self._pts`)·직렬화는 원본 그대로 — 이건 paint 전용 시각 트림.
+
+        [성능 최적화 2026-08-09] `_head_points()`와 같은 계약 — `_geom_version` 키 캐시."""
+        cache = self._trimmed_pts_cache
+        if cache is not None and cache[0] == self._geom_version:
+            return cache[1]
         pts = list(self._pts)
-        if len(pts) < 2:
-            return pts
-        size = self._head_size() * 0.85
-        if self._head_at_end:
-            a, b = pts[-2], pts[-1]
-        else:
-            a, b = pts[1], pts[0]
-        seg_len = math.hypot(b.x() - a.x(), b.y() - a.y())
-        if seg_len <= 1e-6:
-            return pts
-        t = max(0.0, 1.0 - size / seg_len)
-        trimmed = QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
-        if self._head_at_end:
-            pts[-1] = trimmed
-        else:
-            pts[0] = trimmed
+        if len(pts) >= 2:
+            size = self._head_size() * 0.85
+            if self._head_at_end:
+                a, b = pts[-2], pts[-1]
+            else:
+                a, b = pts[1], pts[0]
+            seg_len = math.hypot(b.x() - a.x(), b.y() - a.y())
+            if seg_len > 1e-6:
+                t = max(0.0, 1.0 - size / seg_len)
+                trimmed = QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
+                if self._head_at_end:
+                    pts[-1] = trimmed
+                else:
+                    pts[0] = trimmed
+        self._trimmed_pts_cache = (self._geom_version, pts)
         return pts
 
     def _rounded_polyline_path(self, pts=None) -> QPainterPath:
