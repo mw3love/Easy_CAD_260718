@@ -3417,8 +3417,22 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # 무효화 신호로 재사용한다(줌 변화는 scene.changed를 안 타므로 여기 대신 boundingRect가
         # 직접 vz를 캐시 키에 넣어 비교 — `docs/pitfalls.md` "scene.changed는 순수 뷰 트랜스폼을
         # 안 탄다" 참조).
-        self._geom_version += 1
+        # [실사용 버그 2026-08-09, 화살촉 찌그러짐] `super().prepareGeometryChange()`는 Qt
+        # 내부적으로 scene 공간인덱스의 '옛 영역'을 무효화하려고 **이 호출 시점의** `boundingRect()`
+        # (→ `_content_rect()` → `_head_points()`)를 동기 호출한다(계측으로 확인: build_elbow()
+        # 중 `self._pts`가 아직 옛 2점 상태일 때 `boundingRect()`가 실제로 불림). 예전 순서
+        # (버전 증가 → super() 호출)에선 이 동기 호출이 '이미 증가된 새 버전' 번호로 옛 `_pts`
+        # 기준 머리 삼각형을 캐시에 박아버렸다 — 호출부는 관례대로 `prepareGeometryChange()`
+        # 직후 `self._pts = new_val`로 진짜 새 기하를 대입하지만, 캐시는 이미 "새 버전"으로
+        # 도장을 찍어 그 뒤로 다시는 무효화되지 않는다(다음 기하 변경 때 또 한 버전 밀려 반복).
+        # 결과: 화살표를 옮기면(끝점 재스냅·라우팅 재계산 등 `_pts` 교체가 있는 모든 경로) 머리
+        # 삼각형이 매번 '한 세대 전' 각도로 그려져 몸통과 어긋난 비대칭 모양이 됐다(실사용 스샷
+        # 재현). 해법은 순서를 뒤집는 것뿐이다 — super() 호출(및 그 안의 동기 boundingRect())을
+        # **옛 버전 번호가 아직 살아있는 동안** 먼저 끝내고, 그다음에 버전을 올린다. 그러면 이
+        # 동기 호출로 캐시되는 값은 '옛 버전' 딱지가 붙어, 이어지는 `self._pts` 교체 후 다음
+        # `_head_points()` 호출이 버전 불일치로 정상 재계산된다.
         super().prepareGeometryChange()
+        self._geom_version += 1
 
     # ---- 정점 = 끝점 핸들(재사용) --------------------------------------
     def _uses_endpoints(self):
