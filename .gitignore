@@ -28,3 +28,6 @@ tools/_perf_*.json
 
 # Claude Code 로컬 세션 상태(머신별 설정·락파일, 리포에 공유할 내용 아님)
 /.claude/
+
+# 작업용 SVG 산출물(용도 미상 — 리포는 코드·문서만, 사용자 산출물은 로컬만 유지)
+/broadcast_svg_set/
