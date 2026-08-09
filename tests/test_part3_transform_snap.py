@@ -602,6 +602,26 @@ def test_box_handle_cursor():
     assert a._box_handle_cursor(edge_local) is None, "변 중점은 더 이상 아이템 자체 커서를 안 준다"
 
 
+def test_box_edge_side_band_stays_screen_fixed_at_high_zoom():
+    # [실사용 버그 수정 2026-08-09] `_box_edge_side`의 tol이 `_EDGE_HIT_MIN`(8.0, 씬 단위)을
+    # `_scale_or_1()`로 나누지 않고 그대로 썼다 — 다른 세 호출부(_base_shape 스트로크 폭)는
+    # 전부 나누는데 여기만 빠져, 고배율 줌에서 변 안쪽·바깥쪽 리사이즈 밴드가 줌에 비례해
+    # 커졌다(2164% 줌에서 화면 86px, 사용자 스크린샷: 테두리에 닿지도 않았는데 리사이즈 커서).
+    w = CanvasWindow(); w.show()
+    it = _RectItem(QRectF(0, 0, 18, 18)); it.setPen(w.make_pen())
+    it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(it); it.setSelected(True)
+    w._view.scale(21.64, 21.64)   # 사용자 미니맵 배율(2164%) 재현
+
+    # 왼쪽 변에서 로컬 3.65(≈화면 79px) — 버그 당시엔 이 지점도 SizeHorCursor를 냈다.
+    far_outside = it._box_handle_cursor(QPointF(-3.65, 9))
+    far_inside = it._box_handle_cursor(QPointF(3.65, 9))
+    assert far_outside is None, f"테두리에서 화면 79px 떨어졌는데 리사이즈 커서: {far_outside}"
+    assert far_inside is None, f"테두리에서 화면 79px 떨어졌는데 리사이즈 커서: {far_inside}"
+
+    # 변 바로 근처(화면 ~2px)는 여전히 잡혀야 한다(과잉 축소 방지).
+    near = it._box_handle_cursor(QPointF(0.09, 9))
+    assert near == Qt.CursorShape.SizeHorCursor
 
 
 def test_qc_dots_geometry():

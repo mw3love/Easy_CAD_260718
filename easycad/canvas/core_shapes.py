@@ -619,7 +619,13 @@ class _HandleResizeMixin:
             if dr.contains(local_pt):
                 return None
         r = self.rect()
-        tol = max(self._EDGE_HIT_MIN, self._handle_px() * 0.5) / 2.0
+        # [실사용 버그 수정 2026-08-09] `_EDGE_HIT_MIN`은 다른 세 호출부(1522·1574·1936줄,
+        # 속 빈 도형 클릭 스트로크 폭)에서 전부 `/ self._scale_or_1()`로 화면 고정 px로
+        # 환산해 쓰는데, 여기만 그 나눗셈이 빠져 있었다 — 고배율 줌에서 `_EDGE_HIT_MIN`(8.0)
+        # 이 그대로 로컬 단위 tol이 되어, 화면상 밴드 폭이 줌에 비례해 커졌다(2164% 줌에서
+        # 변 안쪽·바깥쪽 86px까지 리사이즈 커서, 사용자 스크린샷으로 실측). 나머지 세 곳과
+        # 같은 관례로 맞춘다 — 이제 화면상 약 4px로 줌 무관 고정.
+        tol = max(self._EDGE_HIT_MIN / self._scale_or_1(), self._handle_px() * 0.5) / 2.0
         x, y = local_pt.x(), local_pt.y()
         if not (r.left() - tol <= x <= r.right() + tol and r.top() - tol <= y <= r.bottom() + tol):
             return None
