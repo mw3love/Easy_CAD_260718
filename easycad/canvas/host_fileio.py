@@ -10,7 +10,7 @@ import re
 import uuid
 
 from PyQt6.QtCore import (
-    Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent, QLineF,
+    Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent,
 )
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
@@ -27,8 +27,8 @@ from PyQt6.QtWidgets import (
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon, _nearest_border,
-    _attach_port_to_host,
+    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon,
+    _attach_port_to_host, _find_port_host_near,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
@@ -66,11 +66,17 @@ _MERMAID_SHAPE_ITEM = {
 # [Phase 6 M3 #17] 팔레트 드래그앤드롭 — 좌측 「도형·심볼」 버튼을 캔버스로 끌어 드롭.
 _PALETTE_MIME = "application/x-easycad-tool"      # QDrag가 실어 나르는 tool_key 포맷
 _PALETTE_DROP_WH = {
-    "rect": (120.0, 72.0), "ellipse": (100.0, 100.0),
-    "port_rect": (18.0, 18.0), "port_circle": (18.0, 18.0),   # [신규기능 §8-12] 포트 기본 크기
+    # 사각형 기본 120×120(정사각) — 2026-08-09 deep-interview: "포트가 붙는 한 변 기준으로
+    # 포트 10개 폭"이라는 사용자 어림값(포트 변 12 × 10)을 그대로 채택, 가로세로 비대칭일
+    # 이유가 없어 정사각으로(구 120×72).
+    "rect": (120.0, 120.0), "ellipse": (100.0, 100.0),
+    "port_rect": (12.0, 12.0), "port_circle": (12.0, 12.0),   # 포트 기본 크기 — 2026-08-09
+    # deep-interview: 실도면 대조로 텍스트 라벨보다 작은 절대 고정 크기(구 18→12)로 축소.
 }
-_PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 크기
-_PORT_ATTACH_MARGIN = 60.0   # [신규기능 §8-12] 포트 드롭/클릭 지점에서 호스트 장비를 찾는 반경(씬 단위)
+_PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 크기 (삼각형은 예외 — 아래 참조)
+# [신규기능, 2026-08-09 deep-interview] 삼각형은 정삼각형 기본을 원해 정사각 박스 전용 —
+# _sym_triangle()이 min(w,h) 기준으로 정삼각형을 그리므로 정사각형을 주면 여백 없이 꽉 찬다.
+_PALETTE_TRIANGLE_WH = (90.0, 90.0)
 
 
 
@@ -332,8 +338,9 @@ class _FileIOMixin:
         if tool_key in ("port_rect", "port_circle"):
             return self._create_port_at(tool_key, scene_pos)
         if tool_key.startswith("sym:"):
-            w, h = _PALETTE_SYM_WH
-            it = _SymbolItem(tool_key[4:], QRectF(0.0, 0.0, w, h))
+            kind = tool_key[4:]
+            w, h = _PALETTE_TRIANGLE_WH if kind == "triangle" else _PALETTE_SYM_WH
+            it = _SymbolItem(kind, QRectF(0.0, 0.0, w, h))
         elif tool_key in _PALETTE_DROP_WH:
             w, h = _PALETTE_DROP_WH[tool_key]
             it = (_EllipseItem if tool_key == "ellipse" else _RectItem)(QRectF(0.0, 0.0, w, h))
@@ -363,18 +370,9 @@ class _FileIOMixin:
         it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable
                     | it.GraphicsItemFlag.ItemSendsGeometryChanges)
 
-        host, best_d = None, None
-        for cand in self._view._conn_shapes_near(scene_pos, _PORT_ATTACH_MARGIN):
-            if getattr(cand, "_port_host", None) is not None:
-                continue   # 포트는 다른 포트의 호스트가 될 수 없음
-            is_device = isinstance(cand, _RectItem) or (
-                isinstance(cand, _SymbolItem) and cand._kind == "triangle")
-            if not is_device:
-                continue
-            sp, _n = _nearest_border(cand, scene_pos)
-            d = QLineF(sp, scene_pos).length()
-            if d <= _PORT_ATTACH_MARGIN and (best_d is None or d < best_d):
-                best_d, host = d, cand
+        # [2026-08-09] 호스트 탐색 로직을 `_find_port_host_near`로 통합 — Alt+드래그 복제
+        # 재부착(core_view.py `_maybe_alt_drag_copy`)과 공유해 판정이 두 곳에서 어긋나지 않게.
+        host = _find_port_host_near(self._view, scene_pos)
 
         self._scene.addItem(it)
         if host is not None:

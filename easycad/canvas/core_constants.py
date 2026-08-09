@@ -41,6 +41,11 @@ _MIN_FONT, _MAX_FONT, _DEFAULT_FONT = 2, 200, 16  # 휠 축소 하한을 2pt로(
 # 번호 마커 지름(px). 기본 30 = _BadgeItem._R(15) * 2, scale 1.0에 대응.
 _MIN_BADGE, _MAX_BADGE, _DEFAULT_BADGE = 12, 120, 30
 
+# [신규기능 §8-12] 포트 드롭/클릭 지점에서 호스트 장비를 찾는 반경(씬 단위). 원래 host_fileio.py
+# 안에 있었으나 core_view.py(클릭=이동/생성 분기)도 같은 값이 필요해져(2026-08-09) 공유
+# leaf 모듈로 이동 — 값 자체는 변경 없음, 두 곳이 값을 어긋나게 따로 들고 있지 않도록.
+_PORT_ATTACH_MARGIN = 60.0
+
 # [그리드/스냅투그리드] 씬 단위 고정 간격(줌에 비례해 화면 밀도가 변함 — CAD/Figma 관행).
 # 표시(점)와 스냅은 하나의 토글(Shift+G, owner.grid_enabled)로 묶여 있다. 너무 촘촘해지면
 # (_GRID_MIN_PX 미만) 자동으로 숨기고, 뷰 크기·줌 조합이 극단적이어도 프레임 랙이 없도록

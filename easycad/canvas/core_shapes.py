@@ -1727,11 +1727,26 @@ def _sym_delay(r: QRectF) -> QPainterPath:         # 지연 — 오른쪽 반원
     return p
 
 
+def _tri_rect(r: QRectF) -> QRectF:
+    # [신규기능, 2026-08-09 2차] 삼각형은 항상 정삼각형이어야 한다는 실사용 피드백 —
+    # 마름모 등 다른 심볼과 달리 바운딩박스 r을 그대로 늘여 쓰지 않고 min(w,h) 기준
+    # 정삼각형을 r 중앙에 내접시킨다(MW 파라볼릭 등 다른 대칭 심볼과 같은 관례,
+    # `_sym_mw_side`의 `s = min(w,h)/100` 패턴 참조). r이 정사각이면 여백 없이 꽉 찬다.
+    s = min(r.width(), r.height())
+    h = s
+    w = s * 0.8660254037844387   # sqrt(3)/2 — 정삼각형 높이 대비 폭(밑변→꼭짓점 거리)
+    c = r.center()
+    return QRectF(c.x() - w / 2.0, c.y() - h / 2.0, w, h)
+
+
 def _sym_triangle(r: QRectF) -> QPainterPath:      # [신규기능 §8-12] 삼각형 — 분배기 등 장비 도형
+    # 2026-08-09 deep-interview: 실도면(HDA-3951 증폭기 등) 대조로 꼭짓점이 오른쪽(신호
+    # 흐름 방향)을 향하는 형태가 기본으로 확정 — 평평한 변(왼쪽, 입력)·꼭짓점(오른쪽, 출력).
+    tr = _tri_rect(r)
     p = QPainterPath()
-    p.moveTo(r.center().x(), r.top())
-    p.lineTo(r.right(), r.bottom())
-    p.lineTo(r.left(), r.bottom())
+    p.moveTo(tr.left(), tr.top())
+    p.lineTo(tr.left(), tr.bottom())
+    p.lineTo(tr.right(), tr.center().y())
     p.closeSubpath()
     return p
 
@@ -1886,7 +1901,11 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
         # kind별 내접 가용폭 — 마름모는 세로중앙 한 점에서만 최대폭이라 가장 좁게, 원기둥·문서·
         # 화면출력·지연 등 곡선 심볼은 중간, 상하 평행한 스타디움·평행사변형·육각형은 넉넉히.
         if self._kind == "triangle":
-            return 0.35   # 꼭짓점이 위라 세로중앙에서도 밑변 절반 폭뿐 — 마름모보다 더 좁게
+            # 2026-08-09 2차: 꼭짓점이 오른쪽이라 라벨 앵커가 놓인 세로중앙 행이 오히려
+            # 삼각형에서 가장 넓은 행(마름모와 같은 사정) — 다만 정삼각형이 정사각 박스
+            # 안에 내접해 실제 폭이 박스 폭의 0.87배뿐이라 마름모(0.6)보다 낮게 잡는다.
+            return 0.5
+
         if self._kind == "decision":
             return 0.6
         if self._kind in ("database", "document", "display", "delay"):
@@ -1916,8 +1935,11 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
         if self._kind == "document":
             return QPointF(c.x(), c.y() - r.height() * 0.06)
         if self._kind == "triangle":
-            # 삼각형 무게중심(꼭짓점 위 기준)은 밑변에서 1/3 지점 — bbox 중심(1/2)보다 아래.
-            return QPointF(c.x(), c.y() + r.height() / 6.0)
+            # 2026-08-09 2차: 꼭짓점이 오른쪽(정삼각형)으로 바뀌어 무게중심도 재계산 —
+            # 상하 대칭이라 세로는 bbox 중심과 같고(_tri_rect도 r 중앙 정렬), 가로는
+            # 평평한 변(왼쪽)에서 1/3 지점(꼭짓점 쪽으로 치우침)이 실제 삼각형 무게중심.
+            tr = _tri_rect(r)
+            return QPointF(tr.left() + tr.width() / 3.0, tr.center().y())
         return c
 
     def clone(self):
@@ -5056,6 +5078,27 @@ def _attach_port_to_host(port, host, scene_pt):
         ports.append(port)
     _reposition_port_from_frac(port)
     host.update()   # [버그수정] rect·pos는 안 바뀌므로 Qt가 자동으로 재도장하지 않는다 — 직접 요청.
+
+
+def _find_port_host_near(view, scene_pt: QPointF):
+    """[신규기능 §8-12] scene_pt 근방에서 포트가 부착 가능한 유효 호스트(사각형/삼각형,
+    포트 자신은 호스트가 될 수 없음)를 찾아 반환 — 없으면 None(자유 도형으로 남김).
+    새 포트 배치(`host_fileio._create_port_at`)와 Alt+드래그 복제 재부착
+    (`core_view._maybe_alt_drag_copy`) 양쪽이 공유해 "포트가 어디에 붙는가" 판정을
+    한 곳에서만 유지한다(중복이면 둘이 어긋날 위험)."""
+    host, best_d = None, None
+    for cand in view._conn_shapes_near(scene_pt, _PORT_ATTACH_MARGIN):
+        if getattr(cand, "_port_host", None) is not None:
+            continue   # 포트는 다른 포트의 호스트가 될 수 없음
+        is_device = isinstance(cand, _RectItem) or (
+            isinstance(cand, _SymbolItem) and cand._kind == "triangle")
+        if not is_device:
+            continue
+        sp, _n = _nearest_border(cand, scene_pt)
+        d = QLineF(sp, scene_pt).length()
+        if d <= _PORT_ATTACH_MARGIN and (best_d is None or d < best_d):
+            best_d, host = d, cand
+    return host
 
 
 def _detach_port_from_host(port):

@@ -1736,7 +1736,7 @@ def test_port_corner_resize_defaults_to_aspect_lock_shift_frees_it():
     # 누르면 오히려 잠금을 풀어 자유 변형한다. 변 핸들은 여전히 항상 자유(축별 개별 조정).
     w = CanvasWindow(); w.grid_enabled = False
     dev = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
-    port = w._create_port_at("port_rect", QPointF(60, 0))   # 18x18 정사각형 시작
+    port = w._create_port_at("port_rect", QPointF(60, 0))   # 12x12 정사각형 시작
     assert abs(port.rect().width() - port.rect().height()) < 1e-6
 
     port._begin_box_geom()
@@ -1762,7 +1762,7 @@ def test_port_corner_resize_defaults_to_aspect_lock_shift_frees_it():
     port3._apply_box_resize(
         port3.mapFromScene(QPointF(port3.pos().x(), port3.pos().y() + 60)), shift=False)
     r3 = port3.rect()
-    assert abs(r3.width() - 18) < 1e-6 and abs(r3.height() - 60) < 1e-6
+    assert abs(r3.width() - 12) < 1e-6 and abs(r3.height() - 60) < 1e-6
 
 
 def test_selected_port_hover_marker_does_not_duplicate_on_itself():
@@ -1789,5 +1789,91 @@ def test_selected_port_hover_marker_does_not_duplicate_on_itself():
     assert w._view._hover_port_at(w._view.mapFromScene(n1)) is None
     n2, _n = _shape_ports(port2)[0]
     assert w._view._hover_port_at(w._view.mapFromScene(n2)) is not None   # 다른(미선택) 포트는 정상
+
+
+def _mk_moved_rect(w, x, y, ww, hh):
+    # [2026-08-09] _mk_pen_rect는 좌표를 rect() 자체에 굽는다(pos()는 (0,0) 유지) — 실제 사용자
+    # 도형은 드래그 이동 시 setPos()가 바뀐다. 포트의 "호스트 기준 로컬좌표 vs 씬좌표" 버그는
+    # 후자가 아니면 재현되지 않으므로(pos()==(0,0)이면 로컬==씬이라 우연히 안 걸림), 이 헬퍼로
+    # 명시적으로 setPos해 실제 시나리오를 재현한다.
+    it = _RectItem(QRectF(0, 0, ww, hh))
+    it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+    it.setPos(QPointF(x, y))
+    w._scene.addItem(it)
+    return it
+
+
+def test_qc_create_click_duplicate_on_attached_port_lands_near_host():
+    # [실사용 버그 수정 2026-08-09] 호스트가 setPos()로 씬 원점에서 먼 곳(500,500)에 있을 때,
+    # 부착된 포트의 큐닷을 "클릭"(cursor_scene=None)하면 예전엔 dup.setPos(src.pos()+델타)가
+    # src.pos()(호스트 기준 로컬좌표, 원점 근처인 (54,-6) 수준)를 씬좌표처럼 오인해 dup이 씬
+    # 원점 근처로 튀었다(사용자 스크린샷 — 포트 옆이 아니라 화면 밖 엉뚱한 자리에 화살표로만
+    # 이어짐). _mk_pen_rect는 좌표를 rect()에 굽고 pos()는 (0,0)이라 이 버그가 재현되지
+    # 않으므로(로컬==씬이 우연히 성립) 반드시 setPos 기반 헬퍼를 쓴다.
+    w = CanvasWindow(); w.set_tool("select")
+    _mk_moved_rect(w, 500, 500, 200, 100)
+    port = w._create_port_at("port_rect", QPointF(560, 500))   # 상단 변 위
+    side = "t"
+    dup, arrow = w._view._qc_create(port, side, None)
+    # 호스트·포트가 (500,500) 근방이므로 정상이라면 dup도 그 근방이어야 한다(원점 근처면 버그).
+    host_center = QPointF(600, 550)
+    assert QLineF(dup.sceneBoundingRect().center(), host_center).length() < 300, (
+        "복제 포트가 호스트에서 너무 멀리 떨어짐(원점쪽으로 튀는 옛 버그)",
+        dup.sceneBoundingRect().center())
+    assert QLineF(dup.sceneBoundingRect().center(), QPointF(0, 0)).length() > 300
+
+
+def test_alt_press_on_unselected_port_bypasses_hover_port_hijack_and_duplicates():
+    # [실사용 버그 수정 2026-08-09] 미선택 포트를 Alt+드래그하면 예전엔 `_hover_port_at`이
+    # Alt 여부와 무관하게 먼저 press를 가로채 "화살표 뽑기"로 귀결됐다(_maybe_alt_drag_copy에
+    # 도달 못 함 — 사용자 스크린샷 재현). Alt가 이 큐닷 체계보다 우선해야 한다.
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    port = w._create_port_at("port_rect", QPointF(60, 0))
+    w._scene.clearSelection()
+    n0 = len(w._scene.items())
+    port_scene_pt = port.mapToScene(port.rect().center())
+    ev = _mods_event("press", w._view, port_scene_pt, Qt.KeyboardModifier.AltModifier)
+    w._view.mousePressEvent(ev)
+    assert w._view._hp_dragging is False, "Alt+press가 여전히 화살표-뽑기 경로로 새고 있음"
+    assert len(w._scene.items()) == n0 + 1, "Alt+press가 포트를 복제하지 않음"
+
+
+def test_alt_drag_copy_on_selected_port_stays_free_until_release_then_reattaches():
+    # [2026-08-09 2차, 실사용 재현] press 시점에 곧바로 setParentItem으로 재부착했더니, 곧이어
+    # 실행되는 super().mousePressEvent()의 Qt 내부 드래그-그랩과 충돌해 실제 드래그가 먹지
+    # 않는 버그가 발견됐다(합성 press+move로 이동량 0 확인). 그래서 지금은 press 시점엔
+    # 최상위(부모 없음) 클론으로만 두고(_pending_port_reattach에 등록), 드래그가 끝나는
+    # mouseReleaseEvent에서 최종 위치 근방 호스트를 찾아 그제서야 부착한다.
+    w = CanvasWindow(); w.set_tool("select")
+    host = _mk_moved_rect(w, 500, 500, 200, 100)   # setPos 기반 — 위 헬퍼 주석 참조
+    port = w._create_port_at("port_rect", QPointF(560, 500))
+    port.setSelected(True)
+    n0 = len(w._scene.items())
+    press_pt = port.mapToScene(port.rect().center())
+    ev = _mods_event("press", w._view, press_pt, Qt.KeyboardModifier.AltModifier)
+    w._view._maybe_alt_drag_copy(ev)
+    assert len(w._scene.items()) == n0 + 1
+    clones = [x for x in w._scene.selectedItems() if x is not port]
+    assert len(clones) == 1, clones
+    clone = clones[0]
+    # press 직후: 아직 최상위(부모 없음)인 평범한 클론이어야 Qt 기본 드래그가 정상 동작한다.
+    assert clone.parentItem() is None
+    assert clone in w._view._pending_port_reattach
+    assert _close(clone.scenePos(), port.scenePos())
+
+    # release(드래그 없이 제자리) — 이제 최종 위치 근방에서 호스트를 찾아 부착해야 한다.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    vp = QPointF(w._view.mapFromScene(press_pt))
+    release_ev = QMouseEvent(QEvent.Type.MouseButtonRelease, vp, vp,
+                              Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+                              Qt.KeyboardModifier.AltModifier)
+    w._view.mouseReleaseEvent(release_ev)
+    assert w._view._pending_port_reattach == []
+    assert clone.parentItem() is host
+    assert getattr(clone, "_port_host", None) is host
+    assert _close(clone.scenePos() + QPointF(clone.rect().width() / 2, clone.rect().height() / 2),
+                  port.scenePos() + QPointF(port.rect().width() / 2, port.rect().height() / 2))
 
 

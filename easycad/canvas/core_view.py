@@ -75,6 +75,10 @@ class _AnnotatorView(QGraphicsView):
         # [2e] 스마트 정렬 가이드 — 단일 도형 이동 중 근처 도형과 모서리·중심 정렬 시 스냅+가상선.
         self._move_active = False    # 도형 드래그(이동/핸들) 진행 중(_snapshot_movable서 set)
         self._align_guides = []      # 그릴 가이드선 [("v", x, y0, y1) | ("h", y, x0, x1)]
+        # [2026-08-09 2차] Alt+드래그로 복제한 포트 중, 드래그가 끝나면(mouseReleaseEvent)
+        # 호스트 재부착을 시도해야 할 것들 — press 시점엔 아직 최상위(부모 없음) 클론이다
+        # (_maybe_alt_drag_copy 주석 참조).
+        self._pending_port_reattach = []
         # 테두리 스냅(화살표 도구 전용) — 도형 테두리 어디든 최근접점에 붙음
         self._snap_preview = None    # 화살표 도구 유휴 시 커서 근처 테두리 최근접점(마커 표시), 씬 좌표 or None
         self._arrow_snap_exit = None # 그리는 화살표 시작이 테두리에 스냅됐으면 그 바깥 법선(이탈 접선), or None
@@ -242,11 +246,16 @@ class _AnnotatorView(QGraphicsView):
         전 도형 공통으로 두어(`_hp_create_arrow` 참조) 포트가 원하는 동작을 특례 없이 얻는다."""
         if cursor_scene is not None:
             return self._qc_create_arrow_only(src, side, cursor_scene)
-        sr = self._qc_src_scene_rect(src)
         center = self._qc_target_center(src, side, cursor_scene)
         dup = src.clone()
         self.scene().addItem(dup)
-        dup.setPos(src.pos() + (center - sr.center()))   # 복제 중심 = 목표 중심
+        # [실사용 버그 수정 2026-08-09] src가 호스트에 부착된 포트면 src.pos()는 호스트 기준
+        # 로컬좌표라, 예전처럼 여기에 씬좌표 델타를 더하면 dup이 씬 원점 근처로 튀었다(사용자
+        # 스크린샷 — 포트 옆에 나와야 할 복제가 화면 밖 엉뚱한 자리에 화살표로만 이어짐). dup은
+        # 항상 최상위(부모 없음)이므로 목표 중심(center, 씬좌표)에서 dup 자신의 로컬 rect
+        # 중심만큼만 되돌리면 부모 유무와 무관하게 항상 맞다(회전 없는 일반 도형에서는 기존 계산
+        # src.pos()+(center-sr.center())과 수학적으로 동일 — sr.center()==src.pos()+rect().center()).
+        dup.setPos(center - dup.rect().center())   # 복제 중심 = 목표 중심
         # 연결 화살표 — 원본 side 변 중점 → 복제 반대 변 중점(양끝 도형 바인딩).
         opp = _QC_OPP[side]
         p_src = _edge_mid(self._qc_src_scene_rect(src), side)
@@ -529,15 +538,33 @@ class _AnnotatorView(QGraphicsView):
             return
         sel = self.scene().selectedItems()
         src = sel if top[0] in sel else [top[0]]
-        src = [it for it in src if hasattr(it, "clone") and it.parentItem() is None]
+        # [실사용 지적 2026-08-09] 포트는 호스트의 진짜 Qt 자식(parentItem)이라 예전엔 이 필터에
+        # 걸려 Alt+드래그 복제가 아예 동작하지 않았다(그냥 원본이 이동함) — 포트만 예외로 허용.
+        src = [it for it in src if hasattr(it, "clone") and (
+            it.parentItem() is None or getattr(it, "_port_host", None) is not None)]
         if not src:
             return
         clones = []
         for it in src:
             c = it.clone()
-            c.setPos(it.pos())
-            c.setZValue(it.zValue())
-            self.scene().addItem(c)
+            host = getattr(it, "_port_host", None)
+            if host is not None:
+                # [2026-08-09 2차, 실사용 재현] press 시점에 곧바로 setParentItem으로 재부착했더니
+                # 곧이어 실행되는 super().mousePressEvent()의 Qt 내부 드래그-그랩 판정과 충돌해
+                # 실제 드래그가 전혀 먹지 않는 문제가 발견됐다(합성 이벤트로 이동량 0 확인 — 이미
+                # 부착된 기존 포트를 그냥 드래그하는 경우는 애초에 제스처 도중 재부착이 없어서
+                # 멀쩡했던 것과 대비된다). 그래서 지금은 아직 부착하지 않고 평범한 최상위
+                # 클론으로 두어(검증된 일반 Alt+드래그 경로 그대로) Qt가 정상적으로 그랩·이동하게
+                # 하고, 드래그가 끝나는 mouseReleaseEvent에서 최종 위치 근방 호스트를 찾아 부착한다.
+                # it.pos()는 호스트 기준 로컬좌표라 여기선 mapToScene 기반 scenePos()를 쓴다.
+                c.setPos(it.scenePos())
+                c.setZValue(it.zValue())
+                self.scene().addItem(c)
+                self._pending_port_reattach.append(c)
+            else:
+                c.setPos(it.pos())
+                c.setZValue(it.zValue())
+                self.scene().addItem(c)
             clones.append(c)
         remap_grouped_bindings(zip(src, clones))   # 배치 안에서 함께 복제된 도형끼리 재연결
         regroup_duplicated_items(zip(src, clones)) # 그룹째 복제 시 사본도 새 그룹으로
@@ -1594,8 +1621,13 @@ class _AnnotatorView(QGraphicsView):
             # 그리는 회귀가 남 — 실사용 지적: "드래그하면 화살표로 작동해야하는데 안됨"). 다만
             # "드래그 안 하고 그냥 클릭"의 결과는 이산/연속이 갈라야 한다 — 그건 release에서
             # `_hp_is_discrete`로 분기(이산=즉시 도형복제+화살표, 연속=그냥 선택).
+            # [실사용 버그 수정 2026-08-09] Alt는 이 큐닷 체계보다 우선한다 — 안 그러면 미선택
+            # 도형(포트 포함)을 Alt+드래그해도 항상 여기서 먼저 가로채 "화살표 뽑기"가 되고,
+            # 아래 `_maybe_alt_drag_copy`(Alt+드래그=제자리 복제)까지 도달하지 못한다. 포트만의
+            # 예외가 아니라 Alt 자체를 전 도형 공통으로 우선시켜 특례를 늘리지 않는다.
             if event.button() == Qt.MouseButton.LeftButton and not (
-                    event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+                    event.modifiers() & (Qt.KeyboardModifier.ShiftModifier
+                                          | Qt.KeyboardModifier.AltModifier)):
                 hp = self._hover_port_at(vpos)
                 if hp is not None:
                     src, port_pt, nrm, is_discrete = hp
@@ -1635,7 +1667,20 @@ class _AnnotatorView(QGraphicsView):
 
         # 도형 도구는 기존 주석 위를 클릭하면 그리기 대신 선택/이동.
         # 단, 펜은 빽빽이 겹쳐 그리므로 항상 그린다(펜 선의 선택/이동은 V 도구로).
-        if tool != "pen" and not self._is_empty_area(event.position().toPoint()):
+        # [실사용 지적 2026-08-09] 포트 도구는 예외 — 유효한 호스트(사각형/삼각형) 테두리
+        # 근처는 Qt 히트테스트가 그 호스트를 잡아 is_empty_area가 False가 되더라도 포트
+        # 생성을 시도한다. 안 그러면 "테두리에 정확히 클릭할수록"(=예고점이 뜨는 정확한
+        # 자리일수록) 오히려 이동커서로 걸려 생성이 막히는 역설이 생긴다. 호스트가 아닌
+        # 다른 항목(기존 포트·화살표 등) 위 클릭은 여전히 선택/이동으로 남긴다.
+        near_port_host = False
+        if tool in ("port_rect", "port_circle"):
+            probe = self.mapToScene(event.position().toPoint())
+            near_port_host = any(
+                (isinstance(cand, _RectItem)
+                 or (isinstance(cand, _SymbolItem) and cand._kind == "triangle"))
+                and getattr(cand, "_port_host", None) is None
+                for cand in self._conn_shapes_near(probe, _PORT_ATTACH_MARGIN))
+        if tool != "pen" and not self._is_empty_area(event.position().toPoint()) and not near_port_host:
             self._maybe_alt_drag_copy(event)   # [편의기능] Alt+드래그 = 제자리 복제 후 드래그
             self._snapshot_movable()
             return super().mousePressEvent(event)
@@ -2497,7 +2542,22 @@ class _AnnotatorView(QGraphicsView):
             if tool != "pen":
                 item.setSelected(True)
             return
-        self._commit_move()   # 드래그 이동이 있었으면 undo에 기록
+        self._commit_move()   # 드래그 이동이 있었으면 undo에 기록 — 재부착(아래) 전에 반드시 먼저:
+        # _commit_move는 press 시점 스냅샷(당시엔 미부착=씬좌표)과 지금 pos()를 비교하므로,
+        # 재부착으로 pos()의 의미가 호스트 로컬좌표로 바뀌기 전에 비교가 끝나야 한다.
+        if self._pending_port_reattach:
+            # [실사용 버그 수정 2026-08-09 2차] Alt+드래그로 복제한 포트는 press 시점엔 부착하지
+            # 않고(아래 _maybe_alt_drag_copy 주석 참조) 여기 드래그가 끝난 뒤에야 최종 위치
+            # 근방에서 호스트를 다시 찾아 부착한다 — 없으면 자유 도형으로 남긴다(포트 최초
+            # 생성과 동일한 폴백, `_create_port_at`).
+            for c in self._pending_port_reattach:
+                if c.scene() is None:
+                    continue
+                center = c.mapToScene(c.rect().center())
+                host = _find_port_host_near(self, center)
+                if host is not None:
+                    _attach_port_to_host(c, host, center)
+            self._pending_port_reattach = []
         if self._move_active or self._align_guides:   # [2e] 스마트 정렬 상태 정리
             self._move_active = False
             self._align_guides = []
