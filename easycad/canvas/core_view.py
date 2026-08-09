@@ -733,6 +733,13 @@ class _AnnotatorView(QGraphicsView):
     # ---- 테두리 스냅 (화살표 도구가 네모/원 테두리에서 시작·도착하면 붙음) ----
     _BORDER_SNAP_PX = 14.0  # 커서~테두리 최근접점이 이 픽셀 이내면 스냅(시작·tip 공통, 뷰 픽셀)
     _PORT_SNAP_PX = 18.0    # 포트(변 중점 접속점) 우선 스냅 반경 — 연속보다 넓어 먼저 끌린다(뷰 픽셀)
+    # [2026-08-09] 위 스냅 반경(잡히는 범위)과 별개로, 커서 모양을 가르는 "체감" 반경 — 이걸 더
+    # 좁게 둬야 포트처럼 몸통 자체가 스냅 반경보다 작은 도형에서 몸통 전체가 CrossCursor로
+    # 뒤덮이지 않는다(`_update_hover_cursor` 참조). 실제 포트 기본 크기가 18×18(scene 단위,
+    # `_PALETTE_DROP_WH`)이라 절반(9)보다 확실히 작아야 몸통 대부분이 이동 커서로 남는다 —
+    # `_draw_port_dots`가 그리는 예고점 반지름(5.0)과 같은 값을 재사용(이미 "포트 점의 시각적
+    # 크기"로 검증된 값이라 새 매직넘버를 만들지 않는다).
+    _PORT_CURSOR_PX = 5.0
 
     def _view_scale(self) -> float:
         m = self.transform().m11()
@@ -923,23 +930,29 @@ class _AnnotatorView(QGraphicsView):
             return None
         select_mode = tool == "select"
         margin = 30.0 / self._view_scale()
+        near = self._conn_shapes_near(scene_c, margin)
+        # [실사용 지적 2026-08-09, 2차] 자기 몸통 안(select_mode 기존 규칙)뿐 아니라, 겹쳐 있는
+        # *다른* 도형의 몸통 안일 때도 예고점이 뜨면 안 된다 — 선택·미선택을 가리지 않는다
+        # (겹치는 도형이 아직 선택 전인 포트여도 재현됨). 이 목록은 "차지된" 도형 전부이고,
+        # 아래 루프의 자기-내부 skip과 합쳐 최종적으로 "살아남은 후보가 이 목록에 없으면
+        # (=자기 몸통 밖의 남의 도형이 대신 뽑힌 것) 억제"로 판정한다 — 그래야 포트 정중앙처럼
+        # 자기 자신이 죽은 지대가 되는 기존 동작(안 뜸)은 그대로 두고, 포트 몸통의 다른 지점에서
+        # 뒤쪽 호스트가 엉뚱하게 뽑히는 새 버그만 골라 막는다.
+        occluders = [sh for sh in near if _shape_interior_contains(sh, scene_c)] if select_mode else []
         best_sh, best_d = None, None
-        for sh in self._conn_shapes_near(scene_c, margin):
-            if select_mode and sh.isSelected():
+        for sh in near:
+            if sh.isSelected():
                 continue
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_c):
                 continue
-            # [실사용 지적 2026-08-04] select 도구에서 커서가 도형 실제 내부로 들어가면 예고점도
-            # 사라져야 한다 — `_update_hover_cursor`가 이미 같은 기준(`_shape_interior_contains`,
-            # 부풀린 히트 영역이 아니라 진짜 테두리 중심선)으로 커서를 크로스헤어→이동으로 바꾸는데,
-            # 이 함수는 그 기준 없이 넓은 margin(30px, 안쪽도 포함)만 봐서 커서와 예고점이
-            # 서로 다른 경계에서 어긋났다(안쪽 깊이 30px까지도 점이 안 사라짐).
-            if select_mode and _shape_interior_contains(sh, scene_c):
+            if select_mode and sh in occluders:
                 continue
             d = QLineF(sh.sceneBoundingRect().center(), scene_c).length()
             if best_d is None or d < best_d:
                 best_d, best_sh = d, sh
+        if best_sh is not None and occluders:
+            return None
         return best_sh
 
     def _draw_port_dots(self, painter, s):
@@ -1048,7 +1061,19 @@ class _AnnotatorView(QGraphicsView):
         구분해, Pass 1은 항상 커넥터 커서·Pass 2는 테두리 안쪽/바깥쪽으로 커서를 가르는 데 쓴다."""
         margin = 30.0 / self._view_scale()
         scene_pt = self.mapToScene(view_pos)
-        near = [sh for sh in self._conn_shapes_near(scene_pt, margin) if not sh.isSelected()]
+        all_near = self._conn_shapes_near(scene_pt, margin)
+        # [실사용 지적 2026-08-09] 커서가 "선택된" 도형(예: 포트로 쓰는 원)의 실제 몸통 안에
+        # 있으면, 그 밑에 겹친 다른 도형의 접속점도 잡히면 안 된다. 선택된 도형은 아래 `near`에서
+        # 통째로 후보 제외되기 때문에(그 도형 자신의 처리는 `_connect_port_at`가 별도로 함),
+        # 이 배제로 생긴 빈자리를 겹쳐 있던 다른(미선택) 도형이 대신 차지해버리는 게 문제다.
+        # [주의] 이 판정은 "선택된 도형"에만 건다 — 미선택 도형끼리는 아래 두 Pass 모두 순수
+        # 거리경쟁(elimination 없음)이라 자기 것이 항상 더 가까워 자연히 이긴다. 반대로 여기를
+        # "겹치면 무조건" 식으로 넓히면, 포트 자신의 접속점(도형 경계선 위의 점이라 그 도형의
+        # 엄밀한 '내부' 판정 자체가 항상 거짓이 되기 쉬움)까지 오탐으로 막아
+        # `test_port_participates_normally_in_hover_and_qc_systems`가 깨진다(실측 확인).
+        if any(sh.isSelected() and _shape_interior_contains(sh, scene_pt) for sh in all_near):
+            return None
+        near = [sh for sh in all_near if not sh.isSelected()]
         best = None
         bestd = self._PORT_SNAP_PX
         for sh in near:
@@ -2101,14 +2126,26 @@ class _AnnotatorView(QGraphicsView):
                 # [실사용 피드백 2026-07-30] 미선택 도형의 포트 위 — 예전엔 아래 '주석 위=이동'
                 # 분기로 떨어져 SizeAllCursor(이동 커서)로 보였다. 여기서 드래그는 이동이 아니라
                 # 커넥터 생성(_hp_create_arrow)이므로 십자선으로 구분한다.
-                # [2026-08-04 연속 호버 §8 항목16, deep-interview] Pass 1(이산 4포트)은 항상
-                # 커넥터 커서. Pass 2(테두리 임의 위치 연속 폴백)만 테두리 두께 중심으로 안쪽/
-                # 바깥쪽을 갈라, 안쪽이면 이 분기를 건너뛰어 아래 '주석 위=이동' 분기
-                # (SizeAllCursor)로 자연히 떨어지게 한다. `sh.contains()`(Qt shape())는 잡기
+                # [2026-08-04 연속 호버 §8 항목16] Pass 2(테두리 임의 위치 연속 폴백)는 테두리
+                # 두께 중심으로 안쪽/바깥쪽을 갈라, 안쪽이면 이 분기를 건너뛰어 아래 '주석 위=이동'
+                # 분기(SizeAllCursor)로 자연히 떨어지게 한다. `sh.contains()`(Qt shape())는 잡기
                 # 쉽도록 부풀린 히트 영역이라 못 쓰고(실측 확인), 실제 기하 외곽선 기준인
                 # `_shape_interior_contains`를 쓴다.
-                sh, _pt, _n, is_discrete = hp
-                if is_discrete or not _shape_interior_contains(sh, self.mapToScene(view_pos)):
+                # [실사용 지적 2026-08-09] Pass 1(이산 4점)은 예전엔 무조건 CrossCursor였다 — 큰
+                # 도형은 이산 포트가 테두리 위라 사실상 "테두리 근처=Cross, 몸통 깊숙=Move"와
+                # 결과가 같아 티가 안 났지만, 포트처럼 몸통 자체가 스냅 반경(`_PORT_SNAP_PX`)보다
+                # 작은 도형은 몸통 전체가 "이산 포트 근처"가 되어 계속 CrossCursor로 뒤덮였다.
+                # `_shape_interior_contains`로 똑같이 안/밖만 가르면(한 차례 시도 후 되돌림)
+                # 그 함수의 기본(rect) 분기가 경계 포함(inclusive)이라 이산 포트 정확히 그 자리
+                # (원래 늘 Cross여야 할 자리)까지 Move로 뒤집혀 모든 도형의 접속점에서 커넥터
+                # 신호 자체가 사라지는 더 큰 회귀였다(실측 확인). 그래서 "스냅에 잡히는 범위"
+                # (`_PORT_SNAP_PX`, 넉넉해야 정확히 조준 안 해도 잡힘)와 "커서를 Cross로 보일
+                # 범위"(`_PORT_CURSOR_PX`, 훨씬 좁음)를 분리한다 — 접속점 바로 근처(좁은 반경)는
+                # 여전히 Cross, 그보다 안쪽으로 들어가면(포트처럼 작은 도형에서만 의미 있는 차이)
+                # 일반 도형과 같은 Move로 자연히 떨어진다.
+                sh, sp, _n, is_discrete = hp
+                near_point = is_discrete and self._view_dist(sp, view_pos) <= self._PORT_CURSOR_PX
+                if near_point or not _shape_interior_contains(sh, self.mapToScene(view_pos)):
                     vp.setCursor(Qt.CursorShape.CrossCursor)
                     return
         if self._bend_handle_at(view_pos) is not None:
