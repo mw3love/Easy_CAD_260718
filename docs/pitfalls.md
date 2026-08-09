@@ -30,12 +30,26 @@
 - `QMessageBox`(또는 임의 모달)를 모킹 없이 테스트에서 직접 호출하면 헤드리스 환경엔 누를
   사용자가 없어 `.exec()`가 영원히 블로킹 — 스위트 전체가 "멈춘 게 아니라 조용히 도는" 상태로
   보인다. 모든 모달 경로는 테스트에서 모킹 필수. (`2026-07.md` DXF/.ecad 통합)
-- `QGraphicsItem`에 Qt 자식(`setParentItem`)이 하나라도 있으면, `paint()`에서 분절된
+- `QGraphicsItem.prepareGeometryChange()`는 **`super()` 호출 안에서 `boundingRect()`를 동기로
+  다시 부른다**(scene 공간인덱스 갱신용, 문서화 안 된 내부 동작 — 계측으로 확인). 그래서
+  "버전 번호를 올린 뒤 super()"로 쓰면 *아직 옛 기하인데 이미 새 버전 번호*인 창이 열려,
+  그 순간 계산된 값이 새 버전 캐시에 박히고 **이후 진짜 데이터 교체가 일어나도 영원히 무효화
+  안 된다**(캐시 키가 이미 "최신"). `_geom_version` 같은 버전키 메모이즈를 쓸 땐 반드시
+  **super() 먼저, 버전 증가는 그다음**. (`2026-08.md` 화살촉 한 세대 지연 캐싱 버그)
+- ~~`QGraphicsItem`에 Qt 자식(`setParentItem`)이 하나라도 있으면, `paint()`에서 분절된
   `QPainterPath`(moveTo/lineTo로 gap 있는)를 그려도 `QGraphicsScene.render()`/
-  `QGraphicsView.grab()` 경로에서는 그 gap이 사라지고 닫힌 도형으로 보인다 — `item.paint()`를
-  직접 호출하면 정상 렌더되므로 데이터·분기 자체는 문제 없음. 자식이 없는 말단 아이템 쪽에서
-  같은 시각효과를 내는 식으로 우회. (`2026-08.md` 포트-테두리 trim, 위키
-  `easycad-qgraphicsitem-자식있는아이템-paint-gap-무시.md`)
+  `QGraphicsView.grab()` 경로에서는 그 gap이 사라지고 닫힌 도형으로 보인다~~ — **2026-08-09
+  재현 안 됨**. §8 항목17(TRIM/EXTEND) 계획이 이 성질에 걸려 있어 실제 `_RectItem.paint`를
+  분절 렌더로 런타임 교체해 라벨(자식) 유무 × 채움 유무 × 선택 유무 8조건 × 두 렌더 경로를
+  픽셀 검사한 결과 **8/8 통과**(Qt 6.10.0 / PyQt 6.10.2). 즉 지금은 자식이 있어도 진짜 분절
+  렌더가 두 경로 모두에서 살아남는다 — 새 코드는 배경색 덮어그리기로 우회할 이유가 없다.
+  ⚠ 단 **2026-08-03 당시의 실패를 재현하지도 못했으므로 왜 지금 되는지는 미확인**이다. 이
+  성질이 되돌아가면 TRIM이 "화면은 잘렸는데 PDF는 안 잘림"으로 깨지므로 회귀 테스트
+  `test_true_segmented_border_survives_scene_render_and_grab`
+  (`tests/test_part4_ports_fileio.py`)이 지킨다. 기존 포트 trim의 덮어그리기 우회
+  (`_paint_port_cover_if_needed`)는 아직 그대로이며 §8 항목17 7단계에서 흡수 예정.
+  (`2026-08.md` 포트-테두리 trim, 위키
+  `easycad-qgraphicsitem-자식있는아이템-paint-gap-무시.md` — 위키도 갱신 필요)
 
 ## 좌표계·변환
 - `drawForeground`의 painter는 Qt가 이미 **씬 좌표계**로 매핑해 넘긴다 — 여기에 다시
