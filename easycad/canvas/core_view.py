@@ -1194,29 +1194,6 @@ class _AnnotatorView(QGraphicsView):
         painter.drawPolygon(head)
         painter.restore()
 
-    def _draw_hp_hover_preview(self, painter, src, port_pt, nrm):
-        """[실사용 요청 2026-08-04, 참고 이미지 재현] 4방향 접속점을 드래그 없이 그냥 hover만
-        해도, 클릭 시 실제로 생길 결과(도형 복제+연결 화살표, `_qc_create`의 클릭 경로와 동일
-        기본 배치)를 미리 보여준다. 종전엔 이 미리보기가 `_hp_dragging`(실제로 눌러서 끄는 중)
-        에만 그려져, 누르기 전까지는 작은 점 하나(`_draw_port_dots`)만 보였다 — 참고 이미지는
-        누르지 않은 상태에서도 점선 고스트 사각형+화살표가 보이길 기대한다.
-        배치는 `_qc_target_center(src, side, None)`(= 클릭 시 기본 델타)를 그대로 재사용해
-        "미리보기 = 실제 결과"를 보장한다(고스트 시스템 전체의 기존 관례). 포트도 예외 없이
-        같은 미리보기를 받는다 — 클릭=복제는 포트에도 그대로 적용되는 규칙이라(2026-08-04
-        4차) 이 전제가 깨지지 않는다."""
-        side = _side_from_normal(nrm)
-        sr = self._qc_src_scene_rect(src)
-        center = self._qc_target_center(src, side, None)
-        target_rect = sr.translated(center - sr.center())
-        pen = QPen(QColor(90, 150, 235), 1.3, Qt.PenStyle.DashLine)
-        pen.setCosmetic(True)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(target_rect)
-        p_dup = _edge_mid(target_rect, _QC_OPP[side])
-        painter.drawLine(port_pt, p_dup)
-        self._draw_ghost_arrowhead(painter, port_pt, p_dup)
-
     def _hp_create_arrow(self, src, port_pt, cursor_scene):
         """[하나의 시스템으로 통합 2026-08-01 → 2026-08-04 4차 갱신] 도형(선택 여부 무관)의
         접속점에서 드래그 종료 — 스냅 대상 있으면 커넥터만, 없으면(빈 캔버스) 끝이 비어있는
@@ -1356,14 +1333,9 @@ class _AnnotatorView(QGraphicsView):
         # 점이 "또" 생겨 중복으로 보였다.
         if self._hp_dragging and self._hp_src is not None and self._hp_cursor is not None:
             self._hp_paint_ghost(painter, self._hp_src, self._hp_port, self._hp_normal, self._hp_cursor)
-        # [실사용 요청 2026-08-04] 누르지 않고 4방향 접속점만 hover해도 위 고스트를 미리 보여준다.
-        # `_hp_hover`는 선택 도형(`_connect_port_at`, 3-tuple, 항상 discrete)·미선택 도형
-        # (`_hover_port_at`, 4-tuple, `is_discrete` 포함) 두 경로가 공유하는 필드 — 연속 폴백
-        # (Pass 2, is_discrete=False)은 접속점이 아니라 테두리 임의 위치이므로 제외한다.
-        elif self._hp_hover is not None and len(self._hp_hover) in (3, 4) and (
-                len(self._hp_hover) == 3 or self._hp_hover[3]):
-            hh_src, hh_port, hh_nrm = self._hp_hover[0], self._hp_hover[1], self._hp_hover[2]
-            self._draw_hp_hover_preview(painter, hh_src, hh_port, hh_nrm)
+        # [실사용 요청 2026-08-09, 5차] 누르지 않고 접속점만 hover했을 때의 점선 고스트
+        # 사각형+화살표 미리보기(`_draw_hp_hover_preview`)는 "다른 작업 중 방해된다"는
+        # 피드백으로 폐지 — 이제 hover는 `_draw_port_dots`의 점 강조(아래)까지만 반응한다.
         # [2e] 스마트 정렬 가이드선 — 이동 중 정렬 맞은 축에 마젠타 실선. 인접(맞닿음) 매칭은
         # 정의상 가이드 좌표가 도형 자신의 테두리(선택 파란 테두리 등)와 정확히 겹쳐, 색이 섞여
         # 거의 안 보이는 문제가 실사용에서 발견됨(GIF 프레임 픽셀 분석으로 확인 — 로직·렌더링
@@ -2471,9 +2443,8 @@ class _AnnotatorView(QGraphicsView):
             self._commit_move()
             self.viewport().update()
             return
-        if self._hp_dragging:  # [하나의 시스템으로 통합] 종료 — 드래그했으면 커넥터, 클릭이면 즉시 생성
-            src, port, nrm, cur = self._hp_src, self._hp_port, self._hp_normal, self._hp_cursor
-            is_discrete = self._hp_is_discrete
+        if self._hp_dragging:  # [하나의 시스템으로 통합] 종료 — 드래그했으면 커넥터, 클릭이면 선택만
+            src, port, cur = self._hp_src, self._hp_port, self._hp_cursor
             self._hp_dragging = False
             self._hp_src = self._hp_port = self._hp_normal = self._hp_cursor = None
             self._hp_press_scene = None
@@ -2481,17 +2452,13 @@ class _AnnotatorView(QGraphicsView):
             if src is not None and src.scene() is not None:
                 if cur is not None:
                     self._hp_create_arrow(src, port, cur)
-                elif is_discrete:
-                    # [④ 즉시 생성 2026-08-01, Lucid 대조] 실제로 끌지 않았으면(클릭) 선택 여부와
-                    # 무관하게 즉시 도형 복제+화살표를 만든다 — 종전엔 미선택 도형에서 그냥
-                    # 선택만 하고 접속점이 뜬 뒤 한 번 더 눌러야 새 도형이 생겼다(사용자 피드백:
-                    # "4분면 점에서 바로 생겨야 맞을듯"). 이산(4점)에서만 — 연속은 아래로.
-                    side = _side_from_normal(nrm) if nrm is not None else "r"
-                    self._qc_create(src, side, None)
                 else:
-                    # [실사용 버그 수정 2026-08-04, 2차] 연속 폴백(테두리 임의 위치)에서 끌지 않은
-                    # 클릭은 커넥터·복제 둘 다 아니라 그냥 선택 — press에서 여기를 가로챘으므로
-                    # Qt 기본 클릭-선택이 못 돌았다, 그 자리에서 우리가 대신 선택해 준다.
+                    # [실사용 요청 2026-08-09, 5차 — 클릭=복제 폐지] 접속점을 실제로 끌지
+                    # 않았으면(제자리 클릭) 이산·연속 구분 없이 그냥 선택만 한다 — 예전엔
+                    # 이산(4점) 클릭이 도형 복제+화살표를 즉시 만들었으나, 실사용 중 의도치
+                    # 않은 복제가 방해된다는 피드백으로 폐지(드래그=화살표만은 그대로 유지).
+                    # press에서 이 경로가 가로챘으므로 Qt 기본 클릭-선택이 못 돌았다, 그
+                    # 자리에서 우리가 대신 선택해 준다.
                     self.scene().clearSelection()
                     src.setSelected(True)
             self.viewport().update()

@@ -105,11 +105,11 @@ def test_select_tool_port_drag_into_empty_space_creates_shape():
 
 
 
-def test_select_tool_port_click_without_drag_creates_shape():
-    # [④ 즉시 생성 2026-08-01, Lucid 대조] 포트 위에서 드래그 없이 누르고 떼면(제자리 클릭)
-    # qc-dot 클릭과 동일하게 즉시 도형 복제+화살표가 생긴다 — 종전엔 그 도형을 선택만 하고
-    # qc-dot이 뜬 뒤 한 번 더 눌러야 새 도형이 생겼다(사용자 피드백: "4분면 점에서 바로
-    # 생겨야 맞을듯 — 선택으로 동작한 뒤 qc-dot이 생긴 뒤에야 신규 도형 생기네").
+def test_select_tool_port_click_without_drag_just_selects():
+    # [실사용 요청 2026-08-09, 5차 — 클릭=복제 폐지] 포트(접속점) 위에서 드래그 없이 누르고
+    # 떼면(제자리 클릭) 예전엔 즉시 도형 복제+화살표가 생겼으나, 의도치 않은 복제가 다른
+    # 작업을 방해한다는 피드백으로 폐지 — 이제는 그 도형을 선택만 한다(드래그하면 여전히
+    # 화살표만 생성, 아래 test_select_tool_port_drag_creates_connector가 검증).
     w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
     view = w._view
     r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
@@ -118,11 +118,9 @@ def test_select_tool_port_click_without_drag_creates_shape():
     press(QPointF(100, 30)); release(QPointF(100, 30))               # 제자리 클릭(E 포트)
     rects = [x for x in w._scene.items() if isinstance(x, _RectItem)]
     arrows = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)]
-    assert len(rects) == n0 + 1
-    assert len(arrows) == 1
-    dup = [x for x in rects if x is not r][0]
-    assert arrows[0]._bind_start is r and arrows[0]._bind_end is dup
-    assert dup.isSelected() and not r.isSelected()   # qc-dot 클릭과 동일하게 새 도형이 선택됨
+    assert len(rects) == n0, "제자리 클릭이 도형을 복제하면 안 됨"
+    assert len(arrows) == 0, "제자리 클릭이 화살표를 만들면 안 됨"
+    assert r.isSelected()
 
 
 

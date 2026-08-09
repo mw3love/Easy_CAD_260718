@@ -5853,15 +5853,6 @@ _QC_SIDE_NORMAL = {  # 각 변의 바깥 단위 법선(scene) — 직각 엘보 
 }
 
 
-def _side_from_normal(n: QPointF) -> str:
-    """[④ 즉시 생성 2026-08-01] 8포트 법선(scene 단위벡터, N/E/S/W는 축정렬로 강제돼 있음
-    — _axis_forced_local_normal 참조) → qc-dot 스타일 side 문자. 미선택 도형의 4분면 점을
-    '클릭'했을 때 _qc_create(측면 문자 기반)를 그대로 재사용하기 위한 변환."""
-    if abs(n.x()) >= abs(n.y()):
-        return "r" if n.x() >= 0 else "l"
-    return "b" if n.y() >= 0 else "t"
-
-
 def _far_enough_for_self_loop(p: QPointF, q: QPointF, eps: float = 1.0) -> bool:
     """[자기자신 연결 버그 수정 2026-07-30] 커넥터 시작점과 스냅된 종착점이 사실상 같은 점이면
     False(드래그 시작 직후 같은 포트로 도로 스냅되는 퇴화 0-길이 케이스 — 기존 'snap 도형이
