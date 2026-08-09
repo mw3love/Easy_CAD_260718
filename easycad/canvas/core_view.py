@@ -1007,8 +1007,13 @@ class _AnnotatorView(QGraphicsView):
         테두리 임의 위치(Pass 2 연속 폴백, `_hover_port_at`)일 수 있다 — 그 경우 아래 고정 4점
         루프의 어느 것과도 안 맞아 강조점이 안 뜨므로, 루프 뒤에서 한 번 더 확인해 그 정확한
         위치에 별도 강조점을 그린다. `_PathItem`(DXF 폴백 도형)은 이산 포트 자체가 없으므로
-        고정 4점 루프를 건너뛰고 이 연속 강조점만 그린다."""
-        scene_c = self.mapToScene(self.mapFromGlobal(QCursor.pos()))
+        고정 4점 루프를 건너뛰고 이 연속 강조점만 그린다.
+        [실사용 요청 2026-08-09] 선택된 화살표의 끝점 핸들(재부착 대상) 위를 호버할 땐 대상 점
+        하나만 남기고 나머지 변의 예고점은 그리지 않는다 — 이 경우는 새 커넥터를 뽑는 상황이
+        아니라 이미 있는 연결을 다른 자리로 옮기는 상황이라, 4점 전부를 보여주는 게 "이 도형에
+        새로 연결 가능"이라는 원래 의미와 어긋나고 시각적으로도 산만하다."""
+        view_pos = self.mapFromGlobal(QCursor.pos())
+        scene_c = self.mapToScene(view_pos)
         best_sh = self._port_dot_target(scene_c)
         if best_sh is None:
             return
@@ -1018,12 +1023,15 @@ class _AnnotatorView(QGraphicsView):
         # 바뀌는 비일관성을 만들지 않는다(둘 다 `_HANDLE_GAP_FACTOR` 공유).
         gap = best_sh._handle_px() * best_sh._HANDLE_GAP_FACTOR
         targeted_pt = hp[1] if (hp is not None and hp[0] is best_sh) else None
+        reattach_hover = self._over_selected_endpoint(view_pos)
         matched = False
         if not isinstance(best_sh, _PathItem):
             for sp, n in _shape_ports_for_preview(best_sh):
-                p = QPointF(sp.x() + n.x() * gap, sp.y() + n.y() * gap)
                 targeted = (targeted_pt is not None
                             and abs(targeted_pt.x() - sp.x()) < 0.5 and abs(targeted_pt.y() - sp.y()) < 0.5)
+                if reattach_hover and not targeted:
+                    continue
+                p = QPointF(sp.x() + n.x() * gap, sp.y() + n.y() * gap)
                 if targeted:
                     matched = True
                     painter.setPen(QPen(QColor("white"), 1.5 / s))
@@ -2146,6 +2154,12 @@ class _AnnotatorView(QGraphicsView):
             return
         if self._table_col_add is not None:   # [열폭 드래그] 표 내부 경계선 위 — 좌우 리사이즈 커서
             vp.setCursor(Qt.CursorShape.SplitHCursor)
+            return
+        if self._over_selected_endpoint(view_pos):
+            # [실사용 요청 2026-08-09] 선택된 화살표의 끝점 핸들(도형에 붙은 접속점 자리) 위 —
+            # 아래 hover_port_at 분기가 같은 자리를 "새 커넥터 시작"(Cross)으로 먼저 잡아채면
+            # 재부착 의도(끝점 핸들=이동/재스냅)가 가려진다. 여기서 먼저 판정해 우선한다.
+            vp.setCursor(Qt.CursorShape.PointingHandCursor)
             return
         if tool == "select":
             hp = self._hover_port_at(view_pos)
