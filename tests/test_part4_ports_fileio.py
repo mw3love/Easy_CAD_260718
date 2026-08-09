@@ -1875,3 +1875,91 @@ def test_alt_drag_copy_on_selected_port_stays_free_until_release_then_reattaches
                   port.scenePos() + QPointF(port.rect().width() / 2, port.rect().height() / 2))
 
 
+
+def test_true_segmented_border_survives_scene_render_and_grab():
+    # [§8 항목17 게이트 2026-08-09] TRIM/EXTEND 계획 전체가 이 성질에 걸려 있다.
+    #
+    # 2026-08-03 항목12(포트 trim) 때, 호스트 paint()에서 테두리를 진짜로 끊어 그리면
+    # QGraphicsScene.render()/view.grab()에서 간격이 사라져(Qt 자식 아이템이 있을 때만)
+    # 배경색 덮어그리기로 우회했었다(_paint_port_cover_if_needed docstring 참조).
+    # 라벨은 _LabelMixin이 setParentItem으로 다는 '자식'이라 라벨 있는 도형은 전부 그
+    # 조건이고, scene.render()는 PDF 내보내기·선택영역 복사·미니맵이 쓴다 — 재발하면
+    # "화면은 잘렸는데 PDF는 안 잘림"이 된다.
+    #
+    # 계획 확정 스파이크에서 Qt 6.10/PyQt 6.10은 전 조건 통과했다. 그 성질이 유지되는지
+    # (Qt 업그레이드 등으로 되돌아가지 않는지) 여기서 지킨다. _RectItem.paint는 이 테스트
+    # 안에서만 바꿔치기하고 finally로 반드시 되돌린다.
+    from PyQt6.QtGui import QImage, QPainter, QPen
+    from PyQt6.QtWidgets import QGraphicsScene, QGraphicsView
+
+    R = QRectF(0, 0, 200, 120)
+    GAP_Y0, GAP_Y1 = 40.0, 80.0            # 오른쪽 변에서 비울 구간(로컬 y)
+
+    def segmented_paint(self, painter, option, widget=None):
+        r = self.rect()
+        if self.brush().style() != Qt.BrushStyle.NoBrush:
+            painter.setPen(Qt.PenStyle.NoPen); painter.setBrush(self.brush())
+            painter.drawRect(r)            # 채움은 닫힌 영역 그대로
+        path = QPainterPath()
+        path.moveTo(r.topRight()); path.lineTo(r.topLeft())
+        path.lineTo(r.bottomLeft()); path.lineTo(r.bottomRight())
+        path.lineTo(QPointF(r.right(), GAP_Y1))
+        path.moveTo(QPointF(r.right(), GAP_Y0))    # 간격 건너뜀
+        path.lineTo(r.topRight())
+        painter.setPen(QPen(self.pen())); painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+    def _build(with_label, with_fill, selected):
+        scene = QGraphicsScene()
+        scene.setSceneRect(-20, -20, 240, 160)
+        scene.setBackgroundBrush(QColor("white"))
+        it = _RectItem(QRectF(R))
+        it.setPen(QPen(QColor("black"), 3))
+        it.setBrush(QBrush(QColor("#cfe8ff")) if with_fill else QBrush(Qt.BrushStyle.NoBrush))
+        scene.addItem(it)
+        if with_label:
+            it.ensure_label().setPlainText("EQUIP")   # setParentItem — Qt 자식 생성
+        if selected:
+            it.setFlag(it.GraphicsItemFlag.ItemIsSelectable, True); it.setSelected(True)
+        return scene
+
+    def _darkest(img, px, py):
+        d = 255
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                c = QColor(img.pixel(px + dx, py + dy))
+                d = min(d, (c.red() + c.green() + c.blue()) // 3)
+        return d
+
+    orig_paint = _RectItem.paint
+    _RectItem.paint = segmented_paint
+    try:
+        for with_label in (False, True):
+            for with_fill in (False, True):
+                for selected in (False, True):
+                    cond = f"label={with_label} fill={with_fill} sel={selected}"
+                    # ⓐ scene.render() — PDF 내보내기·선택영역 복사·미니맵이 쓰는 경로
+                    img = QImage(240, 160, QImage.Format.Format_RGB32)
+                    img.fill(QColor("white"))
+                    p = QPainter(img)
+                    _build(with_label, with_fill, selected).render(
+                        p, QRectF(0, 0, 240, 160), QRectF(-20, -20, 240, 160))
+                    p.end()
+                    # 씬(200,60)=간격 한가운데 → 이미지(220,80). 테두리(검정 3px)가 남았으면
+                    # 평균이 100 밑으로 떨어진다. 채움색(#cfe8ff)만 남는 건 정상.
+                    assert _darkest(img, 220, 80) > 150, f"scene.render 간격 소실: {cond}"
+
+                    # ⓑ view.grab() — tools/screenshot.py가 쓰는 경로
+                    view = QGraphicsView(_build(with_label, with_fill, selected))
+                    view.setFrameStyle(0); view.resize(240, 160)
+                    view.setSceneRect(QRectF(-20, -20, 240, 160))
+                    view.fitInView(QRectF(-20, -20, 240, 160),
+                                   Qt.AspectRatioMode.IgnoreAspectRatio)
+                    view.show()
+                    QApplication.processEvents()
+                    gimg = view.grab().toImage()
+                    sx, sy = gimg.width() / 240.0, gimg.height() / 160.0
+                    assert _darkest(gimg, int(220 * sx), int(80 * sy)) > 150, \
+                        f"view.grab 간격 소실: {cond}"
+    finally:
+        _RectItem.paint = orig_paint
