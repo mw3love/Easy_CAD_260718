@@ -804,7 +804,12 @@ class _AnnotatorView(QGraphicsView):
         bexit = None
         bshape = None
         for sh in shapes:
-            sp, n = _nearest_border(sh, scene_pt)
+            # [실사용 버그 2026-08-09] 부착 포트에 가려 화면에 없는 테두리 구간은 스냅 대상에서
+            # 뺀다 — 종전엔 포트 몸통 한가운데서도 그 뒤 호스트 테두리에 화살표가 붙었다(실측).
+            hit = _nearest_border_visible(sh, scene_pt)
+            if hit is None:
+                continue
+            sp, n = hit
             d = self._view_dist(sp, view_pos)
             if d <= bestd:
                 bestd, best, bexit, bshape = d, sp, n, sh
@@ -1091,7 +1096,12 @@ class _AnnotatorView(QGraphicsView):
         best2 = None
         bestd2 = self._BORDER_SNAP_PX
         for sh in near:
-            sp, n = _nearest_border(sh, scene_pt)
+            # [실사용 버그 2026-08-09] 부착 포트에 가려 화면에 없는 테두리 구간은 호버 대상에서
+            # 뺀다 — 이게 "포트 몸통 한가운데인데 뒤쪽 호스트 테두리 때문에 십자 커서"의 원인.
+            hit = _nearest_border_visible(sh, scene_pt)
+            if hit is None:
+                continue
+            sp, n = hit
             # [2026-08-04] 선택된 포트의 위치는 연속 폴백에서도 제외 — Pass 1이 discrete 4점에서
             # 이미 이 규칙을 지킨다(_shape_ports_for_preview, "선택된 포트의 리사이즈 핸들과
             # 겹침 방지"), 연속 투영점이 우연히 그 자리와 같아도 예외가 아니다.

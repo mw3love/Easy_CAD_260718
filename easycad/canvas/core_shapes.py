@@ -4901,6 +4901,63 @@ def _nearest_border(item, scene_pt):
     return sp, QPointF(nd.x() / L, nd.y() / L)
 
 
+def _port_covers_border_pt(host, local_pt) -> bool:
+    """[실사용 버그 2026-08-09] host의 로컬 좌표 `local_pt`가 부착 포트에 가려 **화면에 안
+    그려지는** 외곽선 구간에 있으면 True.
+
+    포트 트림은 진짜 기하 분절이 아니라 배경색으로 덮어 그리는 시각효과라
+    (`_paint_port_cover_if_needed`, 2026-08-03 Qt 버그 우회) 히트/스냅 기하는 온전한 사각형
+    그대로였다 — 그래서 포트 몸통 한가운데서도 호스트 테두리가 스냅·호버에 잡혔다. 판정을
+    `build_trimmed_border_path`와 **같은** 두 함수(`_host_outline_local_polygon`·
+    `_port_edge_gap`)로 하여 "그려지는 선"의 정의를 한 벌로 유지한다."""
+    ports = getattr(host, "_ports", None)
+    if not ports:
+        return False                      # 포트 없는 도형은 비용 0 — 즉시 통과
+    # [성능] 이 함수는 호버·스냅 핫패스(마우스무브마다 근처 도형 수만큼)에 있다. 아래
+    # `_port_edge_gap`은 포트마다 변 4개에 투영을 돌려 비싸므로(포트 8개 실측 +165us/call,
+    # 7.2배), 먼 포트는 중심거리 한 번으로 먼저 쳐낸다. 가려지는 구간은 포트가 변에 투영된
+    # 범위 안이라 언제나 포트 중심에서 반대각선 거리 이내 — 여유를 더해도 판정이 안 바뀐다.
+    near_ports = []
+    for port in ports:
+        pr = port.rect()
+        c = port.mapToParent(pr.center())
+        reach = math.hypot(pr.width(), pr.height()) / 2.0 + 5.0
+        if abs(c.x() - local_pt.x()) <= reach and abs(c.y() - local_pt.y()) <= reach:
+            near_ports.append(port)
+    if not near_ports:
+        return False
+    poly = _host_outline_local_polygon(host)
+    n = len(poly)
+    if n < 2:
+        return False
+    for port in near_ports:
+        hit = _port_edge_gap(poly, port)
+        if hit is None:
+            continue
+        i, t0, t1 = hit
+        a, b = poly[i], poly[(i + 1) % n]
+        t, perp = _seg_param_and_perp(a, b, local_pt)
+        # perp 허용치: 인자로 오는 건 이미 외곽선 위의 점이라 이론상 0이다. 변끼리는 도형
+        # 크기만큼 떨어져 있어 넉넉히 잡아도 옆 변으로 샐 일이 없다(부동소수 잡음만 흡수).
+        if perp <= 0.5 and t0 - 1e-9 <= t <= t1 + 1e-9:
+            return True
+    return False
+
+
+def _nearest_border_visible(item, scene_pt):
+    """[실사용 버그 2026-08-09] `_nearest_border`와 같되, 최근접점이 부착 포트에 가려 화면에
+    없는 구간이면 None — "스냅되는 곳 == 선이 그려진 곳"을 맞춘다.
+
+    `_nearest_border` 자체는 건드리지 않는다. 그쪽은 포트를 호스트 테두리에 **부착**하고
+    드래그로 슬라이드시키는 데도 쓰이는데(`_attach_port_to_host`·
+    `_snap_port_pos_to_host_border`), 거기서 트림을 반영하면 포트가 제 자리(자기가 만든
+    구간)에서 밀려나기 때문이다. 그래서 호버·스냅 호출부만 이 변형을 opt-in 한다."""
+    sp, n = _nearest_border(item, scene_pt)
+    if _port_covers_border_pt(item, item.mapFromScene(sp)):
+        return None
+    return sp, n
+
+
 def _paint_port_cover_if_needed(item, painter):
     """[신규기능 §8-12] `item`이 포트(호스트에 부착됨)면, 자기 자신을 그리기 *전에* 호스트
     테두리 위 자기 영역을 캔버스 배경색으로 먼저 덮어 그린다 — 그 위에 포트 자신의 모습이

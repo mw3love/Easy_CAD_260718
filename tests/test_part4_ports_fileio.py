@@ -1558,6 +1558,43 @@ def test_port_participates_normally_in_hover_and_qc_systems():
     assert _close(sp, port_edge, eps=0.01)
 
 
+def test_port_trimmed_host_border_is_not_snappable_or_hoverable():
+    # [실사용 버그 수정 2026-08-09] 포트 트림은 진짜 기하 분절이 아니라 배경색으로 덮어 그리는
+    # 시각효과라(`_paint_port_cover_if_needed`, 2026-08-03 Qt 버그 우회) 히트/스냅 기하는 온전한
+    # 사각형 그대로였다 — 그래서 포트 몸통 한가운데인데도 ⓐ 커서가 십자선(커넥터)으로 뜨고
+    # ⓑ 화살표가 "화면에 그려지지도 않은" 호스트 테두리 조각에 붙었다(사용자 스크린샷 3회 보고).
+    # 사용자 표현: "포트 안쪽까지 뒤쪽 네모 테두리 snap이 고려될 필요 없다".
+    # 판정을 `build_trimmed_border_path`와 같은 소스(_host_outline_local_polygon/_port_edge_gap)
+    # 로 통일해 "스냅되는 곳 == 선이 그려진 곳"을 맞춘다.
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)
+    port = w._create_port_at("port_rect", QPointF(0, 260))
+    w._scene.clearSelection()
+    pc = port.mapToScene(port.rect().center())
+
+    # ⓐ 트림된 구간(포트가 덮은 자리)은 호스트 테두리로 안 잡힌다.
+    assert _nearest_border_visible(host, pc) is None
+    # 원본 `_nearest_border`는 그대로여야 한다 — 포트 부착·드래그가 이걸 쓰기 때문
+    # (`_attach_port_to_host`/`_snap_port_pos_to_host_border`). 트림을 반영하면 포트가
+    # 자기가 만든 구간에서 밀려난다.
+    assert _close(_nearest_border(host, pc)[0], pc, eps=0.01)
+
+    # ⓑ 트림 안 된 정상 테두리는 계속 잡혀야 한다(과잉 차단 방지).
+    normal_pt = QPointF(0, 100)
+    hit = _nearest_border_visible(host, normal_pt)
+    assert hit is not None and _close(hit[0], normal_pt, eps=0.01)
+
+    # ⓒ 화살표 도구 스냅이 트림 구간에서 호스트에 붙지 않는다(포트 자신엔 붙어도 됨).
+    w.set_tool("arrow")
+    snap = w._view._border_snap_at(w._view.mapFromScene(pc))
+    assert snap is None or snap[2] is not host
+
+    # ⓓ 호버도 마찬가지 — 포트 몸통에서 호스트가 호버 대상이 되면 안 된다.
+    w.set_tool("select")
+    hp = w._view._hover_port_at(w._view.mapFromScene(pc))
+    assert hp is None or hp[0] is not host
+
+
 def test_qc_drag_never_spawns_device_click_still_does_port_and_normal_shape():
     # [실사용 결정 2026-08-04, 4차] "큐닷을 클릭하면 도형 복제, 드래그하면 화살표만"이라는
     # 규칙을 포트에 국한하지 않고 전 도형 공통으로 통일했다 — 포트도 이 규칙 하나로 원하는
