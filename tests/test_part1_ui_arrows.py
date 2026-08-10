@@ -13,10 +13,11 @@ def test_host_construction():
     assert not ({"rect", "ellipse", "sarrow"} & set(w._tool_buttons))
     assert "arrow" in w._tool_buttons                      # 화살표 버튼 하나가 직선·곡선·직각 대표
     assert "trim" in w._tool_buttons
-    # 왼쪽 팔레트: 기본(네모·원·삼각형·포트 2종[신규기능 §8-12]) + 내 심볼(SVG 가져오기).
-    # (2026-08-04: "순서도" 섹션 18종 제거 — 파라메트릭 심볼 전략 폐기, SVG import로 전환).
-    assert set(w._shape_tool_buttons) == {
-        "rect", "ellipse", "triangle", "port_rect", "port_circle"}
+    # 왼쪽 팔레트: 기본(네모·원·삼각형) + 내 심볼(SVG 가져오기).
+    # (2026-08-04: "순서도" 섹션 18종 제거 — 파라메트릭 심볼 전략 폐기, SVG import로 전환.
+    # 2026-08-10 §8 항목17 7단계: 포트□/포트○ 제거 — TRIM이 겹친 도형 자르기로 대체,
+    # 백엔드(_create_port_at 등)는 유지해 기존 .ecad는 그대로 열림.)
+    assert set(w._shape_tool_buttons) == {"rect", "ellipse", "triangle"}
     assert not hasattr(w, "_sym_buttons")
     r = w._scene.sceneRect()
     assert r.width() > 90000 and r.height() > 90000
@@ -106,11 +107,11 @@ def test_floating_panels_and_zoom_readout():
     basic_grid, basic_btns = w._shape_sections[0]
     last = basic_btns[-1]
     r, c, _rs, _cs = basic_grid.getItemPosition(basic_grid.indexOf(last))
-    # 기본 5종(네모·원·삼각형·포트 2종), 2열 고정 → 마지막 버튼은 (row2, col0).
-    assert (r, c) == (2, 0)
-    # 팔레트 버튼 키가 보존(테스트 계약). [신규기능 §8-12] 삼각형·포트 2종 추가(순서도 섹션 아닌 기본).
-    assert set(w._shape_tool_buttons) == {
-        "rect", "ellipse", "triangle", "port_rect", "port_circle"}
+    # 기본 3종(네모·원·삼각형, 2026-08-10 §8 항목17 7단계로 포트 2종 제거), 2열 고정 →
+    # 마지막 버튼은 (row1, col0).
+    assert (r, c) == (1, 0)
+    # 팔레트 버튼 키가 보존(테스트 계약).
+    assert set(w._shape_tool_buttons) == {"rect", "ellipse", "triangle"}
     assert not hasattr(w, "_sym_buttons")
     # 버튼 고정 크기 — 패널이 넓어져도 커지거나 벌어지지 않는다(좌측 뭉침).
     b = w._shape_tool_buttons["rect"]

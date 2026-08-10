@@ -27,6 +27,11 @@ QPointF/QRectF만으로 검증한다 — 렌더(간격이 실제로 화면·PDF�
 `_export_ellipse`도 함께), TRIM(닫힌/열린 도형)·EXTEND 전부 Ctrl+Z/Y로 되돌리기/다시실행
 되는지(문지르기 드래그 전체가 undo 1스텝으로 뭉치는지 포함)를 검증한다.
 
+7단계(2026-08-10, §8 항목17 마지막 단계) — 포트 팔레트 제거 + 포트 렌더를 옛 배경색
+덮어그리기(`_paint_port_cover_if_needed`, 폐지)에서 cut과 같은 `_paint_filled_trimmed_
+border` 경로로 통일. `_SymbolItem`은 이 함수 호출 자체가 없어 포트가 있어도 시각적으로
+전혀 안 잘리던 별개의 잠재 버그였다 — 이번에 같이 고쳐졌는지 픽셀로 확인한다.
+
 tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easycad.py (전체) 또는
 pytest test_part8_trim_kernel.py.
 """
@@ -1062,3 +1067,59 @@ def test_undo_redo_extend():
     assert abs(line.line().p2().x() - 100.0) < 1e-6
     w.redo()
     assert abs(line.line().p2().x() - 300.0) < 1e-6
+
+
+# ---- 7단계: 포트 렌더를 cut 경로로 통일 -----------------------------------------------------
+
+def test_port_palette_buttons_removed_but_backend_intact():
+    # [§8 항목17 7단계] 팔레트 UI만 없앤다 — 2026-08-04 순서도 섹션 제거와 같은 패턴.
+    w = CanvasWindow()
+    assert "port_rect" not in w._shape_tool_buttons
+    assert "port_circle" not in w._shape_tool_buttons
+    # 백엔드는 그대로 — 기존 .ecad(포트 포함)가 열려야 하므로 프로그램적 생성은 여전히 동작.
+    host = _mk_pen_rect(w, x=0, y=0, ww=200, hh=100)
+    port = w._create_port_at("port_rect", QPointF(60, 0))
+    assert port.scene() is w._scene
+    assert getattr(port, "_port_host", None) is host
+
+
+def test_real_paint_renders_gap_for_port_only_rect_and_symbol_without_cuts():
+    """[§8 항목17 7단계] `_cuts`가 하나도 없고 포트만 부착된 경우도 진짜 분절 렌더를 타야
+    한다 — 이전엔 _RectItem이 옛 배경색 덮어그리기를, _SymbolItem은 그 호출조차 없어 아예
+    안 잘렸다(둘 다 이 테스트가 없으면 회귀를 못 잡는 잠재 버그였다)."""
+    from PyQt6.QtGui import QImage, QPainter, QPen
+    from PyQt6.QtWidgets import QGraphicsScene
+
+    def darkest(img, px, py):
+        d = 255
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                c = QColor(img.pixel(px + dx, py + dy))
+                d = min(d, (c.red() + c.green() + c.blue()) // 3)
+        return d
+
+    def check(item, sample_edge):
+        poly = _host_outline_local_polygon(item)
+        a, b = poly[sample_edge], poly[(sample_edge + 1) % len(poly)]
+        gap_pt_local = QPointF((a.x() + b.x()) / 2.0, (a.y() + b.y()) / 2.0)
+
+        scene = QGraphicsScene()
+        scene.setSceneRect(-20, -20, 240, 160)
+        scene.setBackgroundBrush(QColor("white"))
+        item.setPen(QPen(QColor("black"), 3))
+        scene.addItem(item)
+        port = _RectItem(QRectF(0, 0, 18, 18))
+        _attach_port_to_host(port, item, item.mapToScene(gap_pt_local))
+        assert getattr(item, "_cuts", None) in (None, [])   # 이 테스트는 cut 없이 포트만
+
+        img = QImage(240, 160, QImage.Format.Format_RGB32)
+        img.fill(QColor("white"))
+        p = QPainter(img)
+        scene.render(p, QRectF(0, 0, 240, 160), QRectF(-20, -20, 240, 160))
+        p.end()
+        gap_pt_scene = item.mapToScene(gap_pt_local)
+        px, py = int(gap_pt_scene.x() + 20), int(gap_pt_scene.y() + 20)
+        assert darkest(img, px, py) > 150, f"{type(item).__name__} 포트 자리에 테두리가 남음"
+
+    check(_RectItem(QRectF(0, 0, 200, 120)), 0)
+    check(_SymbolItem("triangle", QRectF(0, 0, 160, 120)), 0)

@@ -794,14 +794,14 @@ class _UIBuildMixin:
         box.setContentsMargins(6, 6, 6, 6); box.setSpacing(10)
         self._shape_tool_buttons: dict[str, QToolButton] = {}
         self._shape_sections: list = []   # (grid, buttons)
+        # [§8 항목17 7단계, 2026-08-10] 포트□/포트○ 팔레트 버튼 제거 — TRIM 도구가 일반
+        # 사각형/원을 겹쳐 놓고 자르는 워크플로로 대체(계획서 확정, 2026-08-04 순서도 섹션
+        # 제거와 같은 패턴: 백엔드(`_create_port_at`/`_ports`/직렬화/DXF)는 그대로 둬 기존
+        # `.ecad`(포트 포함)가 그대로 열리고 렌더·회귀 안전).
         basic = self._make_shape_section("기본", [
             ("네모", "rect", "네모 — 클릭 후 캔버스에 드래그", "rect"),
             ("원", "ellipse", "원 — 클릭 후 캔버스에 드래그", "ellipse"),
             ("삼각형", "triangle", "삼각형 — 클릭 후 캔버스에 드래그", "sym:triangle"),
-            ("포트□", "port_rect", "포트(사각형) — 사각형·삼각형 테두리 근처로 드래그하면 자동 부착",
-             "port_rect"),
-            ("포트○", "port_circle", "포트(원형) — 사각형·삼각형 테두리 근처로 드래그하면 자동 부착",
-             "port_circle"),
         ], self._shape_tool_buttons)
         self._custom_sym_buttons: dict[str, QToolButton] = {}   # [신규기능 §8-8] set_tool 체크상태 동기화용
         custom = self._make_shape_section("내 심볼", [], self._custom_sym_buttons)   # 버튼은 refresh가 채움

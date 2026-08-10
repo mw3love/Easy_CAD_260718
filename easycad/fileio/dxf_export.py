@@ -137,10 +137,9 @@ def _arrowhead(msp, tip, near, width: float, attrs: dict):
 
 # ---- 아이템별 export -------------------------------------------------------
 def _export_trimmed_border(msp, it, attrs):
-    """[신규기능 §8-12] 부착된 포트가 걸친 구간만큼 실제로 끊어서 내보낸다 — 앱 화면은
-    시각적 우회(포트가 배경색으로 덮어 그림, core_shapes.py `_paint_port_cover_if_needed`
-    참조)를 쓰지만, DXF는 QPainter를 안 거치므로 진짜 분절 데이터(`build_trimmed_border_path`)
-    를 그대로 LINE 엔티티 여러 개로 내보낸다 — AutoCAD에서 열어도 실제로 끊겨 있다."""
+    """[신규기능 §8-12, §8 항목17 7단계부터 앱 화면도 같은 경로] 부착된 포트/TRIM cut이 걸친
+    구간만큼 실제로 끊어서 내보낸다 — 진짜 분절 데이터(`build_trimmed_border_path`)를 그대로
+    LINE 엔티티 여러 개로 내보내므로 AutoCAD에서 열어도 실제로 끊겨 있다."""
     path = build_trimmed_border_path(it)
     ET = QPainterPath.ElementType
     cur = None

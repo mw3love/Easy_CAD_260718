@@ -1545,8 +1545,10 @@ class _RectItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGrap
         return p
 
     def paint(self, painter, option, widget=None):
-        _paint_port_cover_if_needed(self, painter)
-        if getattr(self, "_cuts", None):
+        # [§8 항목17 7단계, 2026-08-10] 포트도 TRIM cut과 같은 렌더 경로(_paint_filled_
+        # trimmed_border, build_trimmed_border_path가 _ports·_cuts 둘 다 이미 병합해 읽음)를
+        # 탄다 — 옛 _paint_port_cover_if_needed(배경색 덮어그리기)는 폐지.
+        if getattr(self, "_ports", None) or getattr(self, "_cuts", None):
             _paint_filled_trimmed_border(self, painter)
             if self.isSelected():
                 self._paint_selection_outline(painter, self._scale_or_1())
@@ -1608,8 +1610,9 @@ class _EllipseItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QG
         return p
 
     def paint(self, painter, option, widget=None):
-        _paint_port_cover_if_needed(self, painter)
-        if getattr(self, "_cuts", None):
+        # [§8 항목17 7단계] _RectItem과 같은 이유로 포트도 이 경로를 탄다(옛 배경색 덮어
+        # 그리기 폐지).
+        if getattr(self, "_ports", None) or getattr(self, "_cuts", None):
             _paint_filled_trimmed_border(self, painter)
         else:
             self._paint_base(painter, option, widget)
@@ -1998,7 +2001,10 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
 
     def paint(self, painter, option, widget=None):
         # 네모의 _paint_base_no_select(super().paint()가 사각을 그림) 대신 심볼 경로를 직접 그린다.
-        if getattr(self, "_cuts", None):
+        # [§8 항목17 7단계] 이전엔 이 게이트가 `_cuts`만 봐서 삼각형 등에 붙은 포트가 있어도
+        # 시각적으로 전혀 안 잘렸다(_RectItem/_EllipseItem과 달리 옛 배경색 덮어그리기 호출조차
+        # 없었던 별개의 잠재 버그) — `_ports`도 함께 본다.
+        if getattr(self, "_ports", None) or getattr(self, "_cuts", None):
             _paint_filled_trimmed_border(self, painter)
         else:
             painter.setPen(self.pen())
@@ -4977,13 +4983,15 @@ def _border_pt_in_gap(host, local_pt) -> bool:
     host의 로컬 좌표 `local_pt`가 부착 포트 또는 TRIM cut(`host._cuts`)에 가려 **화면에 안
     그려지는** 외곽선 구간에 있으면 True.
 
-    포트 트림은 진짜 기하 분절이 아니라 배경색으로 덮어 그리는 시각효과라
-    (`_paint_port_cover_if_needed`, 2026-08-03 Qt 버그 우회) 히트/스냅 기하는 온전한 사각형
-    그대로였다 — 그래서 포트 몸통 한가운데서도 호스트 테두리가 스냅·호버에 잡혔다. 판정을
+    [실사용 버그 2026-08-09 당시 배경] 그때는 포트 트림이 진짜 기하 분절이 아니라 배경색으로
+    덮어 그리는 시각효과였어서(`_paint_port_cover_if_needed`, 2026-08-03 Qt 버그 우회) 히트/
+    스냅 기하는 온전한 사각형 그대로였다 — 포트 몸통 한가운데서도 호스트 테두리가 스냅·
+    호버에 잡히는 원인이었다. [§8 항목17 7단계, 2026-08-10] 그 우회는 폐지되고 포트도 이제
+    `build_trimmed_border_path`로 진짜 분절 렌더를 쓰지만, 이 함수의 판정 로직(호버·스냅이
+    "그려지는 선"과 같은 정의를 쓰게 하는 것)은 렌더 방식과 무관하게 여전히 필요하다 —
     `build_trimmed_border_path`와 **같은** 소스(`_host_outline_local_polygon`·`_port_edge_gap`·
-    `host._cuts`)로 하여 "그려지는 선"의 정의를 한 벌로 유지한다 — cut도 포트와 똑같이
-    렌더에서 끊긴 곳은 호버·스냅에서도 안 잡혀야 한다(TRIM으로 자른 자리에 화살표가 붙는
-    것을 막는 게 3단계의 목적)."""
+    `host._cuts`)로 판정해 "스냅되는 곳 == 선이 그려진 곳"을 유지한다(TRIM으로 자른 자리에
+    화살표가 붙는 것을 막는 게 3단계의 목적)."""
     ports = getattr(host, "_ports", None) or []
     cuts = getattr(host, "_cuts", None) or []
     if not ports and not cuts:
@@ -5039,38 +5047,6 @@ def _nearest_border_visible(item, scene_pt):
     if _border_pt_in_gap(item, item.mapFromScene(sp)):
         return None
     return sp, n
-
-
-def _paint_port_cover_if_needed(item, painter):
-    """[신규기능 §8-12] `item`이 포트(호스트에 부착됨)면, 자기 자신을 그리기 *전에* 호스트
-    테두리 위 자기 영역을 캔버스 배경색으로 먼저 덮어 그린다 — 그 위에 포트 자신의 모습이
-    다시 그려지므로 결과적으로 "테두리가 포트 자리만큼 끊겨 있다"는 시각효과를 낸다.
-
-    ⚠ [스턱루프 2026-08-03] 원래 계획은 호스트(장비) 쪽 `paint()`에서 `QPainterPath`를
-    분절해 직접 끊어 그리는 것이었다 — 경로 자체는 정확했고(요소 10개, 포트 위치의 간격
-    확인됨) `item.paint()`를 직접 호출하면 제대로 끊겨 그려졌지만, **`QGraphicsScene.render()`/
-    `view.grab()`(Qt 자식 아이템이 있는 경우에만)로 그리면 간격이 사라지고 원래의 닫힌
-    테두리가 그대로 나왔다** — 자식이 없으면 재현되지 않음(여러 겹 재현 스크립트로 확인,
-    정확한 Qt/PyQt 내부 원인은 특정 못 함). 포트는 자식이 없으므로(자기 자신은 트리의
-    말단) 이 문제를 피해간다 — 그래서 "누가 끊어 그리는가"를 호스트에서 포트로 옮겼다.
-    DXF 내보내기는 이 렌더링 경로와 무관하게 별도로 세그먼트 데이터를 직접 쓰므로
-    (fileio/dxf_export.py) 영향받지 않는다 — 화면 표시만의 우회."""
-    host = getattr(item, "_port_host", None)
-    if host is None:
-        return
-    scene = item.scene()
-    bg = scene.backgroundBrush() if scene is not None else QBrush(QColor("#ffffff"))
-    if bg.style() == Qt.BrushStyle.NoBrush:
-        bg = QBrush(QColor("#ffffff"))
-    # [실사용 버그 수정 2026-08-03] "+1.0" 안티에일리어싱 여유분은 씬 단위 상수라 확대할수록
-    # 화면에서 그대로 커져(줌 8배면 8px), 포트가 테두리에서 눈에 띄게 떨어져 보였다(사용자
-    # 실조건 리포트) — 화면 항상 ~1px로 고정되도록 `item._scale_or_1()`로 나눈다. pen 폭의
-    # 절반은 그대로 씬 단위로 둔다(호스트 테두리 굵기 자체가 줌과 함께 커지므로 이 부분은
-    # 같이 커져야 늘 테두리를 완전히 덮는다).
-    pad = host.pen().widthF() / 2.0 + 1.0 / max(item._scale_or_1(), 1e-6)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(bg)
-    painter.drawRect(item.rect().adjusted(-pad, -pad, pad, pad))
 
 
 def _reposition_port_from_frac(port):
