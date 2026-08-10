@@ -201,12 +201,25 @@ docs/
   접촉도 유효)·`_seg_circle_intersections`(접선 dedupe)·`_seg_ellipse_intersections`(단위원
   환원) 3종을 `core_shapes.py`에 추가(`_seg_cross_seg`는 A* 핫패스 성능 유지 위해 분리),
   `_host_outline_local_polygon` 재사용. 신규 pytest 13종(`tests/test_part8_trim_kernel.py`).
-  **다음 순서**: 2단계(cut 구간 모델+렌더 통합, `build_trimmed_border_path` 포트 전용→일반형
-  확장). 요지: 포트 도형을 일반 도형+TRIM으로 대체, 닫힌 도형은 비파괴 cut 구간·열린 도형만
-  진짜 분절, 문지르기 조작, 원/타원 포함·베지어 제외, EXTEND는 선 끝점만. 밀집 도면 성능은
-  이전 세션에서 폐기 확정한 AA/LOD 축을 빼면 마무리(LOD 재착수는 별도 deep-interview 필요) +
-  기존 "다음 순서"·"큰 설계 필요" 목록(메뉴 전용 아이콘 8종 SVG화 등) — `docs/EasyCAD_계획.md`
-  §8 참조.
+  요지: 포트 도형을 일반 도형+TRIM으로 대체, 닫힌 도형은 비파괴 cut 구간·열린 도형만
+  진짜 분절, 문지르기 조작, 원/타원 포함·베지어 제외, EXTEND는 선 끝점만.
+- **§8 항목17 2단계(cut 구간 모델 + 렌더 통합) 완료**(2026-08-10, 스모크 413종) — 착수 전
+  열린 질문 ⓑ(타원 cut 파라미터)를 선택창으로 확정: 폴리곤 근사(정확도보다 기존 변+t 포맷·
+  코드 단일화 우선, 사용자 선택) — `_host_outline_local_polygon`에 타원 분기 추가(`QPainterPath.
+  addEllipse().toSubpathPolygons()`, 심볼과 `_flatten_closed_path_to_polygon` 헬퍼로 코드
+  공유). `build_trimmed_border_path`를 포트 전용에서 `host._cuts`(변 인덱스+t0+t1,
+  `_add_border_cut`) 일반형으로 확장 — 포트와 같은 gap 병합 로직을 타서 포트 없이 cut만으로도
+  gap이 생긴다. `_RectItem`/`_EllipseItem`/`_SymbolItem.paint()`가 `_cuts` 있을 때
+  `_paint_filled_trimmed_border`(채움은 `_fill_path()`로 닫힌 영역 그대로, 테두리만 진짜
+  분절)로 갈아탐 — 1단계가 테스트 안 monkeypatch로만 확인했던 렌더 게이트를 실제 프로덕션
+  코드로 승격. 부수 발견: 이전엔 타원이 이 폴리곤 함수에서 사각형 네 꼭짓점으로 잘못 취급되던
+  잠재 버그(원형 포트 trim이 애초에 부정확했을 원인)도 같이 드러나 고쳐짐. 신규 pytest 7종
+  (`tests/test_part8_trim_kernel.py`, resize 후 자국 추종 수치 검증 + 회전(40°) 호스트에서도
+  cut gap이 제 위치에 뜨는지 픽셀 검증 포함), 자체 스크린샷으로 사각·타원·삼각형 3종 모두
+  채움 비파괴+테두리 실분절 렌더 육안 확인. **다음 순서**: 3단계
+  (히트·스냅 반영, `_nearest_border_visible` cut 일반형 확장). 밀집 도면 성능은 이전 세션에서
+  폐기 확정한 AA/LOD 축을 빼면 마무리(LOD 재착수는 별도 deep-interview 필요) + 기존 "다음
+  순서"·"큰 설계 필요" 목록(메뉴 전용 아이콘 8종 SVG화 등) — `docs/EasyCAD_계획.md` §8 참조.
 - **웹 트랙 병행개발(2026-08-05 시작 → 2026-08-06 일단 중단, Python 집중으로 전환)** —
   `web_prototype/`(이 리포 하위, PyQt 본체와 별개 코드, `easycad/`는 안 건드림)는 Python(PyQt)
   앱과 **둘 다 끝까지 만드는** 목표 자체는 유지하되(§8 항목10), 사용자가 2026-08-06 하루

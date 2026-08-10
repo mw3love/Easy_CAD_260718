@@ -1496,6 +1496,14 @@ class _RectGeometryMixin:
         return [self.mapToScene(c) for c in
                 (r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft())]
 
+    def _fill_path(self) -> QPainterPath:
+        # [§8 항목17 2단계] cut 렌더(_paint_filled_trimmed_border)가 채움에 쓰는 닫힌 경로 —
+        # 기본은 사각형. 타원·심볼은 자기 실제 외곽선으로 override(마름모 등에 뜬 채움이
+        # bbox까지 번지지 않게).
+        p = QPainterPath()
+        p.addRect(self.rect())
+        return p
+
 
 class _RectItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
     def __init__(self, *args):
@@ -1538,7 +1546,12 @@ class _RectItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGrap
 
     def paint(self, painter, option, widget=None):
         _paint_port_cover_if_needed(self, painter)
-        self._paint_base_no_select(painter, option, widget)
+        if getattr(self, "_cuts", None):
+            _paint_filled_trimmed_border(self, painter)
+            if self.isSelected():
+                self._paint_selection_outline(painter, self._scale_or_1())
+        else:
+            self._paint_base_no_select(painter, option, widget)
         self._paint_handle(painter)
 
 
@@ -1588,9 +1601,18 @@ class _EllipseItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QG
         p.addEllipse(self.rect())
         return p
 
+    def _fill_path(self) -> QPainterPath:
+        # [§8 항목17 2단계] _RectGeometryMixin 기본(사각형) override — 채움이 실제 타원 모양.
+        p = QPainterPath()
+        p.addEllipse(self.rect())
+        return p
+
     def paint(self, painter, option, widget=None):
         _paint_port_cover_if_needed(self, painter)
-        self._paint_base(painter, option, widget)
+        if getattr(self, "_cuts", None):
+            _paint_filled_trimmed_border(self, painter)
+        else:
+            self._paint_base(painter, option, widget)
         if self.isSelected():
             self._paint_selection_outline(painter, self._scale_or_1())
         self._paint_handle(painter)
@@ -1970,11 +1992,18 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
             return None
         return self._sym_path()
 
+    def _fill_path(self) -> QPainterPath:
+        # [§8 항목17 2단계] _RectGeometryMixin 기본(사각형) override — 심볼 실제 외곽선.
+        return self._sym_path()
+
     def paint(self, painter, option, widget=None):
         # 네모의 _paint_base_no_select(super().paint()가 사각을 그림) 대신 심볼 경로를 직접 그린다.
-        painter.setPen(self.pen())
-        painter.setBrush(self.brush())
-        painter.drawPath(self._sym_path())
+        if getattr(self, "_cuts", None):
+            _paint_filled_trimmed_border(self, painter)
+        else:
+            painter.setPen(self.pen())
+            painter.setBrush(self.brush())
+            painter.drawPath(self._sym_path())
         if self._kind == "mesh_filled":
             # [§8-13] 중앙 급전부는 사용자의 채움색과 무관하게 항상 검게 — kind 식별용
             # 고정 디테일이라 apply_fill로 바뀌는 self.brush()에 기대지 않고 따로 그린다.
@@ -5144,19 +5173,36 @@ def _port_owner_at(host, scene_pt, eps: float = 1.0):
     return host
 
 
+def _flatten_closed_path_to_polygon(path: QPainterPath) -> list:
+    """닫힌 QPainterPath → 정점 리스트(마지막=첫점 중복 없이). `_host_outline_local_polygon`의
+    심볼·타원 분기가 공유한다(둘 다 곡선/복합경로를 평탄화해 같은 폴리곤 꼴로 맞추는 절차라
+    2026-08-10 §8 항목17 2단계에서 중복 제거)."""
+    polys = path.toSubpathPolygons()
+    if not polys:
+        return []
+    poly = polys[0]
+    pts = [poly.at(i) for i in range(poly.count())]
+    if len(pts) >= 2 and _close_pt(pts[0], pts[-1]):
+        pts.pop()
+    return pts
+
+
 def _host_outline_local_polygon(host) -> list:
-    """[신규기능 §8-12] 호스트의 로컬 외곽선 정점(닫힌 폴리곤, 마지막=첫점 중복 없이).
-    사각형은 네 모서리, 삼각형 등 심볼은 `_sym_path()`를 평탄화 — 트림 계산이 두 종류
-    도형에서 같은 코드로 동작하게 한다(둘 다 rect의 선형 함수라 정점만 다르면 됨)."""
+    """[신규기능 §8-12, 2026-08-10 §8 항목17 2단계에서 타원 추가] 호스트의 로컬 외곽선 정점
+    (닫힌 폴리곤, 마지막=첫점 중복 없이). 사각형은 네 모서리, 삼각형 등 심볼·타원은 곡선을
+    평탄화 — 트림 계산이 세 종류 도형에서 같은 코드(변 인덱스+t)로 동작하게 한다.
+
+    [타원 cut 파라미터 방식 선택 2026-08-10] 각도 구간(theta0, theta1)이 수학적으로는 더
+    정확하지만 build_trimmed_border_path·_port_edge_gap이 도형 종류별로 갈라져야 했다 —
+    여기서는 폴리곤 근사로 통일해 기존 (변 인덱스, t0, t1) 포맷·렌더 코드를 그대로 재사용한다
+    (사용자 선택, "정확도보다 코드 단일화"). 세그먼트 수는 Qt 기본 평탄화 오차(로컬좌표 기준
+    고정값)에 맡긴다 — 도형 크기가 커지면 세그먼트도 늘어 시각적 매끄러움이 유지된다."""
     if isinstance(host, _SymbolItem):
-        polys = host._sym_path().toSubpathPolygons()
-        if not polys:
-            return []
-        poly = polys[0]
-        pts = [poly.at(i) for i in range(poly.count())]
-        if len(pts) >= 2 and _close_pt(pts[0], pts[-1]):
-            pts.pop()
-        return pts
+        return _flatten_closed_path_to_polygon(host._sym_path())
+    if isinstance(host, _EllipseItem):
+        path = QPainterPath()
+        path.addEllipse(host.rect())
+        return _flatten_closed_path_to_polygon(path)
     r = host.rect()
     return [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
 
@@ -5203,10 +5249,24 @@ def _port_edge_gap(poly: list, port):
     return None if best is None else best[:3]
 
 
+def _add_border_cut(host, edge_index: int, t0: float, t1: float) -> None:
+    """[신규기능 §8 항목17 2단계] host에 cut 구간 하나를 추가(변 인덱스, 변 내 비율 t0<t1) —
+    `_port_edge_gap` 반환형과 같은 꼴이라 build_trimmed_border_path의 gap 병합 코드를 포트와
+    공유한다. 겹침 병합은 여기서 안 하고 build_trimmed_border_path가 렌더할 때마다 한다(포트도
+    이미 그렇게 함 — 저장은 원본 그대로, 병합은 그리는 시점 1곳). TRIM 도구(4단계)가 문지르기로
+    호출할 지점이자, 지금은 2단계 검증(렌더 통합)을 위해 직접 호출한다."""
+    cuts = getattr(host, "_cuts", None)
+    if cuts is None:
+        cuts = host._cuts = []
+    cuts.append((edge_index, t0, t1))
+    host.update()
+
+
 def build_trimmed_border_path(host) -> QPainterPath:
-    """[신규기능 §8-12] 호스트 외곽선에서 부착된 포트가 걸친 구간만큼 실제로 끊은 경로 —
-    닫힌 하나의 subpath가 아니라 남은 조각마다 별도 subpath(moveTo/lineTo)로 그린다.
-    포트가 없으면(또는 못 찾으면) 원래 외곽선과 동일(끊김 없음)."""
+    """[신규기능 §8-12, 2026-08-10 §8 항목17 2단계에서 cut 구간 일반형으로 확장] 호스트
+    외곽선에서 부착된 포트가 걸친 구간 + `host._cuts`(TRIM으로 잘라낸 일반 구간)를 합쳐
+    실제로 끊은 경로 — 닫힌 하나의 subpath가 아니라 남은 조각마다 별도 subpath(moveTo/lineTo)로
+    그린다. 포트도 cut도 없으면 원래 외곽선과 동일(끊김 없음)."""
     poly = _host_outline_local_polygon(host)
     n = len(poly)
     path = QPainterPath()
@@ -5220,6 +5280,9 @@ def build_trimmed_border_path(host) -> QPainterPath:
             continue
         i, t0, t1 = hit
         gaps_by_edge.setdefault(i, []).append((t0, t1))
+    for edge_i, t0, t1 in getattr(host, "_cuts", None) or []:
+        if 0 <= edge_i < n:
+            gaps_by_edge.setdefault(edge_i, []).append((t0, t1))
     for i in range(n):
         a, b = poly[i], poly[(i + 1) % n]
         gaps = sorted(gaps_by_edge.get(i, []))
@@ -5242,6 +5305,24 @@ def build_trimmed_border_path(host) -> QPainterPath:
             path.moveTo(p0)
             path.lineTo(b)
     return path
+
+
+def _paint_filled_trimmed_border(item, painter) -> None:
+    """[신규기능 §8 항목17 2단계] `item._cuts`가 있는 도형의 채움+테두리를 실제 분절 경로로
+    그린다 — item.paint()가 평소의 super().paint()/drawRect·drawEllipse·drawPath(sym) 대신
+    이 함수로 갈아탄다. 채움은 데이터모델대로 닫힌 영역 그대로(비파괴, `item._fill_path()`),
+    테두리만 build_trimmed_border_path로 cut 구간만큼 진짜로 끊어 그린다(1단계 렌더 게이트
+    스파이크의 segmented_paint와 같은 두 단계 구조 — 그때는 테스트 안의 임시 함수였던 것을
+    여기서 실제 코드로 승격)."""
+    if item.brush().style() != Qt.BrushStyle.NoBrush:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(item.brush())
+        painter.drawPath(item._fill_path())
+    pen = item.pen()
+    if pen.style() != Qt.PenStyle.NoPen:
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(build_trimmed_border_path(item))
 
 
 def _shape_ports(item):

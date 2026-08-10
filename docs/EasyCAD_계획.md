@@ -638,9 +638,20 @@ Phase 0~6 로드맵과 §5 제안기능이 전부 완료된 뒤, 실사용자 DX
        박아 `tools/screenshot.py`·PDF 내보내기로 간격 확인. 동시에 교차 계산 순수함수 추가:
        선분-선분 교차**점**(지금 `_seg_cross_seg`는 불린만 반환), 선분-원/타원(타원은 스케일
        역변환으로 원 문제로 환원). *검증: 수치 pytest + 렌더 픽셀*
-    2. **cut 구간 모델 + 렌더 통합** — `build_trimmed_border_path`를 포트 전용에서 cut 구간
-       일반형으로 확장, 외곽선은 기존 `_host_outline_local_polygon` 재사용. 채움은 닫힌 영역
-       그대로. *검증: 스크린샷 + 리사이즈 후 자국 추종 확인*
+    2. ~~**cut 구간 모델 + 렌더 통합**~~ — **완료(2026-08-10)**. `build_trimmed_border_path`를
+       포트 전용에서 `host._cuts`(변 인덱스+t0+t1, `_add_border_cut`로 추가) 일반형으로 확장 —
+       포트 gap과 같은 `gaps_by_edge` 병합 로직을 공유해 포트 없이도 cut만으로 gap이 생긴다.
+       `_RectItem`/`_EllipseItem`/`_SymbolItem.paint()`가 `_cuts` 존재 시 `_paint_filled_
+       trimmed_border`(채움은 `_fill_path()`로 닫힌 영역 그대로, 테두리만 `build_trimmed_
+       border_path`)로 갈아탄다 — 1단계 렌더 게이트 스파이크(테스트 안 monkeypatch)를 실제
+       프로덕션 코드로 승격. 열린 질문 ⓑ(타원 cut 파라미터)를 선택창으로 확정: 폴리곤 근사
+       (`_host_outline_local_polygon`에 타원 분기 추가 — `QPainterPath.addEllipse().
+       toSubpathPolygons()`, 심볼과 같은 `_flatten_closed_path_to_polygon` 헬퍼로 통합) —
+       이전엔 타원이 이 함수에서 사각형 네 꼭짓점으로 잘못 취급되던 잠재 버그도 같이 드러나
+       고쳐짐. 신규 pytest 7종(`tests/test_part8_trim_kernel.py`, resize 후 자국 추종 수치
+       검증 + 회전 호스트 렌더 픽셀 검증 포함), 스모크 406→413종. *검증: 실제 paint()
+       오프스크린 렌더 픽셀 검사(pytest, 회전 도형 포함) + 자체 스크린샷(사각·타원·삼각형
+       3종, 채움 비파괴 확인) + 리사이즈 후 비율 추종 수치 검증*
     3. **히트·스냅 반영** — `_nearest_border_visible`(2026-08-09 포트용)을 cut 구간 일반형으로
        확장. *검증: `docs/pitfalls.md` "검증 방법론"의 커서 지도 격자 스캔*
     4. **TRIM 도구 UI** — 툴바 도구 + 호버 예고 + 클릭/드래그. 후보 도형 스캔은 반드시 기존
@@ -658,8 +669,10 @@ Phase 0~6 로드맵과 §5 제안기능이 전부 완료된 뒤, 실사용자 DX
     (`host.mapFromScene`)해서 넘긴다 — 기존 `_host_outline_local_polygon`/`_port_edge_gap`/
     cut 저장형식(변 인덱스+t)이 이미 이 패턴이라 Qt의 mapToScene/mapFromScene이 회전·스케일을
     자동 반영해줘서 회전 특례 코드가 불필요(회귀 테스트로 실제 30° 회전 도형에서 확인).
-    ⓑ 타원 cut 파라미터를 각도로 둘지 폴리곤 근사로 둘지(정확도 vs 코드 단일화, 2단계)
-    ⓒ `_shape_ports` 4변 접속점이 잘린 구간에 걸릴 때 화살표를 그리로 붙일지 뺄지.
+    ~~ⓑ 타원 cut 파라미터를 각도로 둘지 폴리곤 근사로 둘지~~ **2단계에서 결정(2026-08-10,
+    선택창)**: 폴리곤 근사 — 정확도보다 기존 코드(변 인덱스+t 포맷·`build_trimmed_border_path`)
+    와의 단일화를 우선(사용자 선택). ⓒ `_shape_ports` 4변 접속점이 잘린 구간에 걸릴 때 화살표를
+    그리로 붙일지 뺄지 — 3단계(히트·스냅 반영) 착수 시 재검토.
 
 ## 9. 검증 철학
 
