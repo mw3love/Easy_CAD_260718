@@ -1288,3 +1288,35 @@ def test_cut_handle_drag_no_undo_entry_when_unchanged():
     before = list(r._cuts)
     r._commit_cut_drag_undo(before)   # 값 변화 없음
     assert len(w._undo) == 0
+
+
+# ---------------------------------------------------------------------------
+# [신규기능 2026-08-10, 실사용 지적] 같은 변에 겹치거나 맞닿은 cut을 저장 시점에 즉시 병합
+# — 안 그러면 TRIM을 반복할수록 `_cuts`가 계속 불어나 자국 경계 핸들(마름모)이 실제 눈에
+# 보이는 자국 수보다 훨씬 많이 뜬다("점들이 많아질수록 지저분해진다"는 지적).
+# ---------------------------------------------------------------------------
+
+def test_merge_cuts_list_combines_overlapping_same_edge():
+    merged = _merge_cuts_list([(3, 0.1, 0.4), (3, 0.35, 0.6)])
+    assert merged == [(3, 0.1, 0.6)]
+
+
+def test_merge_cuts_list_combines_touching_same_edge():
+    # 맞닿기만 해도(겹침 없이 정확히 이어짐) 하나로 합친다 — 렌더 병합과 같은 관례.
+    merged = _merge_cuts_list([(3, 0.1, 0.4), (3, 0.4, 0.6)])
+    assert merged == [(3, 0.1, 0.6)]
+
+
+def test_merge_cuts_list_keeps_separate_gaps_and_edges_apart():
+    merged = sorted(_merge_cuts_list([(3, 0.1, 0.2), (3, 0.8, 0.9), (0, 0.1, 0.2)]))
+    assert merged == sorted([(3, 0.1, 0.2), (3, 0.8, 0.9), (0, 0.1, 0.2)])
+
+
+def test_add_border_cut_auto_merges_repeated_overlapping_trims():
+    # [핵심 시나리오] 같은 변에 겹치게 TRIM을 두 번 하면(실사용에서 문지르기로 흔히 발생)
+    # `_cuts`엔 자국 하나만 남아야 하고, 그래야 자국 경계 핸들도 2개(양 끝)만 뜬다.
+    r = _RectItem(QRectF(0, 0, 100, 100))
+    _add_border_cut(r, 3, 0.2, 0.5)
+    _add_border_cut(r, 3, 0.45, 0.8)   # 첫 자국과 겹침
+    assert r._cuts == [(3, 0.2, 0.8)]
+    assert len(r._cut_handle_rects()) == 2   # 자국 1개 = 핸들 2개(t0/t1)

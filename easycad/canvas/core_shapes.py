@@ -5384,16 +5384,42 @@ def _port_edge_gap(poly: list, port):
     return None if best is None else best[:3]
 
 
+def _merge_cuts_list(cuts: list) -> list:
+    """[신규기능 2026-08-10] 같은 변(edge_index) 위에서 겹치거나 맞닿은 cut을 하나로 합친다 —
+    `build_trimmed_border_path`가 렌더할 때 쓰는 것과 같은 병합 규칙(t0 오름차순 정렬 후 인접/
+    겹침 흡수)을 저장 시점에도 적용한다. 실사용 지적: TRIM을 같은 자리에 여러 번 하면(문지르기
+    드래그로 살짝씩 겹치게 자르는 등) `_cuts`가 시각적으로는 자국 하나인데 리스트엔 계속
+    쌓여서, 자국 경계 핸들(마름모)이 실제 눈에 보이는 자국 수보다 훨씬 많이 뜨는 문제가 있었다
+    — 여기서 미리 합쳐 두면 핸들 개수가 "진짜 보이는 자국 수"만큼만 늘어난다."""
+    by_edge: dict = {}
+    for edge_i, t0, t1 in cuts:
+        by_edge.setdefault(edge_i, []).append((t0, t1))
+    out = []
+    for edge_i, ranges in by_edge.items():
+        ranges.sort()
+        merged = []
+        for t0, t1 in ranges:
+            if merged and t0 <= merged[-1][1] + 1e-6:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], t1))
+            else:
+                merged.append((t0, t1))
+        out.extend((edge_i, t0, t1) for t0, t1 in merged)
+    return out
+
+
 def _add_border_cut(host, edge_index: int, t0: float, t1: float) -> None:
     """[신규기능 §8 항목17 2단계] host에 cut 구간 하나를 추가(변 인덱스, 변 내 비율 t0<t1) —
     `_port_edge_gap` 반환형과 같은 꼴이라 build_trimmed_border_path의 gap 병합 코드를 포트와
-    공유한다. 겹침 병합은 여기서 안 하고 build_trimmed_border_path가 렌더할 때마다 한다(포트도
-    이미 그렇게 함 — 저장은 원본 그대로, 병합은 그리는 시점 1곳). TRIM 도구(4단계)가 문지르기로
-    호출할 지점이자, 지금은 2단계 검증(렌더 통합)을 위해 직접 호출한다."""
+    공유한다. TRIM 도구(4단계)가 문지르기로 호출할 지점.
+    [2026-08-10 후속] 추가 직후 `_merge_cuts_list`로 같은 변 위 겹치는/맞닿은 cut을 즉시
+    합친다 — 렌더 시 병합(`build_trimmed_border_path`, 여전히 유지: 포트처럼 별도 목록에서
+    오는 gap까지 함께 병합해야 하는 렌더 전용 사정이 있어 저장 병합만으론 부족)과 별개로,
+    저장 리스트 자체를 부풀리지 않아야 자국 경계 핸들 개수가 실제 자국 수와 일치한다."""
     cuts = getattr(host, "_cuts", None)
     if cuts is None:
         cuts = host._cuts = []
     cuts.append((edge_index, t0, t1))
+    host._cuts = _merge_cuts_list(cuts)
     host.update()
 
 
