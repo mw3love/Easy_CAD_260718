@@ -888,10 +888,11 @@ def test_smart_align_center_priority_is_per_shape_only():
 
 
 
-def test_smart_align_no_meaningless_cross_role_match():
-    # [2e] 「내 좌변 = 상대 중심」처럼 기하적으로 의미 없는 교차 조합은 아무리 가까워도(여기선
-    # 정확히 0) 매칭하지 않는다 — 원래 과발화의 원인이던 4개 조합. 반대로 「마주보는 변」
-    # (좌-우/상-하)은 별개로 허용되므로, 이 테스트는 그쪽도 임계 밖이 되도록 배치한다.
+def test_smart_align_cross_role_mid_edge_match_snaps():
+    # [2e → 2026-08-10 재추가] 「내 좌변 = 상대 중심」처럼 한쪽만 중심(중간점)인 교차 조합은
+    # 2026-08-01에 "과발화 원인"으로 빠졌었으나, 실사용(포트의 변중심을 다른 도형의 밋밋한
+    # 테두리에 붙이는 워크플로)에서 꼭 필요함이 확인돼 "mid-edge" 역할로 재추가됐다 — 이 테스트는
+    # 이제 반대로 "이 조합이 실제로 스냅된다"를 검증한다(과거엔 정반대를 검증했음).
     w = CanvasWindow()
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)     # left=0 center=50 right=100
     b = _mk_rect(w._scene, w.make_pen(), 50, 300, 30, 30)   # left=50 → a의 '중심'과 정확히 일치
@@ -899,9 +900,12 @@ def test_smart_align_no_meaningless_cross_role_match():
     b.setSelected(True)
     before = _cleft(b)
     v._apply_smart_snap()
-    # b.left(50)=a.center(50)만 일치 — 좌-좌(50)·중심-중심(15)·우-우(20)·마주보는 변(50/98)은 전부
-    # 임계(10) 밖이고, y축도 300 이상 떨어져 어떤 조합도 안 맞는다.
-    assert abs(_cleft(b) - before) < 1e-6 and v._align_guides == []
+    # b.left(50)=a.center(50)가 거의 정확히 일치(ad=0, 다른 후보는 전부 임계 밖) — 움직여도
+    # 미세하고(펜폭 절반 이하 — `_content_rect()`가 펜폭만큼 패딩된 기존 별개 이슈, 이 테스트
+    # 범위 밖), mid-edge 가이드선(x≈50)은 떠야 한다. y축은 300 이상 떨어져 무관.
+    assert abs(_cleft(b) - before) < 1.0
+    v_guides = [g for g in v._align_guides if g[0] == "v"]
+    assert len(v_guides) == 1 and abs(v_guides[0][1] - 50.0) < 1.0
 
 
 

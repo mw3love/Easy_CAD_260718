@@ -5276,6 +5276,35 @@ def _add_border_cut(host, edge_index: int, t0: float, t1: float) -> None:
     host.update()
 
 
+def _restore_cut_candidate(host, scene_pt: QPointF):
+    """[신규기능 §8 항목17 후속, 2026-08-10] EXTEND(Shift)가 열린 도형의 끝점뿐 아니라 닫힌
+    도형의 TRIM 자국도 되돌릴 수 있게 하는 대칭 기능 — host의 `_cuts` 중 scene_pt에 가장 가까운
+    자국 하나를 (cut_tuple, 로컬 최근접점, 로컬 거리)로 반환(자국이 없으면 None). 자국은 렌더 시
+    "안 보이는" 구간이라 `_nearest_border_visible`로는 못 찾는다 — 전체 외곽선(포트 유무 무관)에
+    투영해 t를 그 cut의 [t0,t1] 범위로 클램프한다(문지르기 커밋의 edge/t 포맷과 대칭)."""
+    cuts = getattr(host, "_cuts", None) or []
+    if not cuts:
+        return None
+    poly = _host_outline_local_polygon(host)
+    n = len(poly)
+    if n < 2:
+        return None
+    local_pt = host.mapFromScene(scene_pt)
+    best = None
+    for cut in cuts:
+        edge_i, t0, t1 = cut
+        if not (0 <= edge_i < n):
+            continue
+        a, b = poly[edge_i], poly[(edge_i + 1) % n]
+        t, _perp = _seg_param_and_perp(a, b, local_pt)
+        tc = max(t0, min(t1, t))
+        px, py = a.x() + (b.x() - a.x()) * tc, a.y() + (b.y() - a.y()) * tc
+        d = math.hypot(local_pt.x() - px, local_pt.y() - py)
+        if best is None or d < best[2]:
+            best = (cut, QPointF(px, py), d)
+    return best
+
+
 def build_trimmed_border_path(host) -> QPainterPath:
     """[신규기능 §8-12, 2026-08-10 §8 항목17 2단계에서 cut 구간 일반형으로 확장] 호스트
     외곽선에서 부착된 포트가 걸친 구간 + `host._cuts`(TRIM으로 잘라낸 일반 구간)를 합쳐

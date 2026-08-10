@@ -1069,6 +1069,72 @@ def test_undo_redo_extend():
     assert abs(line.line().p2().x() - 300.0) < 1e-6
 
 
+def test_extend_shift_click_restores_closed_shape_cut():
+    # [실사용 확장 2026-08-10] EXTEND의 짝 기능 — 열린 도형에 늘일 끝점이 없으면, 닫힌 도형의
+    # TRIM 자국(host._cuts)을 Shift+클릭으로 복구한다("네모 테두리를 지운 걸 되돌리고 싶다"는
+    # 실사용 요청). 자국은 렌더에 안 보이는 구간이라 호버가 그 자리를 찾아내는지부터 검증.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    SHIFT = Qt.KeyboardModifier.ShiftModifier
+
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)
+    _add_border_cut(host, 0, 0.2, 0.4)   # 위쪽 변 x=120~240 구간 자국
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns, mods=Qt.KeyboardModifier.NoModifier):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, mods)
+
+    target = QPointF(180, 0)   # 자국 한가운데 — 렌더에는 안 보이지만 호버가 찾아야 한다
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, target, NB, NB, SHIFT))
+    tp = view._trim_preview
+    assert tp is not None and tp[0] == "restore" and tp[2] == (0, 0.2, 0.4)
+
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, target, L, L, SHIFT))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, target, L, NB, SHIFT))
+    assert host._cuts == []
+
+    w.undo()
+    assert host._cuts == [(0, 0.2, 0.4)]
+    w.redo()
+    assert host._cuts == []
+
+
+def test_extend_not_hijacked_by_selected_endpoint_handle():
+    # [실사용 버그 수정 2026-08-10] EXTEND 대상 선이 선택된 상태(흔함 — 방금 자른 직후라
+    # 이미 선택돼 있음)면, 그 끝점의 드래그 핸들이 화면상 정확히 EXTEND를 눌러야 할 그
+    # 자리를 뒤덮어 Shift+클릭이 핸들 드래그로 새 버렸다(qc-dot·더블클릭 라벨편집과 같은
+    # 종류의 "도구 무관 조기반환" 함정 — `docs/pitfalls.md` "상호작용 설계" 참조).
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtWidgets import QGraphicsItem
+    from PyQt6.QtCore import QEvent
+    L = Qt.MouseButton.LeftButton
+    SHIFT = Qt.KeyboardModifier.ShiftModifier
+
+    w = CanvasWindow(); w.grid_enabled = False
+    target = _mk_pen_rect(w, x=300, y=0, ww=100, hh=100)
+    line = _LineItem(QLineF(-200, 50, 100, 50))
+    line.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                  | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+    w._scene.addItem(line)
+    line.setSelected(True)   # 끝점 핸들이 화면에 표시된 상태
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns, mods=Qt.KeyboardModifier.NoModifier):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, mods)
+
+    pt = QPointF(100, 50)   # 선의 끝점 — 선택된 핸들이 정확히 겹치는 자리
+    assert view._selected_endpoint_item(view.mapFromScene(pt)) is not None  # 핸들이 실제로 있음(전제 확인)
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, pt, L, L, SHIFT))
+    assert abs(line.line().p2().x() - 300.0) < 1e-6   # 핸들 드래그가 아니라 EXTEND가 처리했음
+
+
 # ---- 7단계: 포트 렌더를 cut 경로로 통일 -----------------------------------------------------
 
 def test_port_palette_buttons_removed_but_backend_intact():

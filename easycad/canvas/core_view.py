@@ -36,6 +36,19 @@ from easycad.theme import (
 from easycad.canvas.core_constants import *  # noqa: F401,F403
 from easycad.canvas.core_shapes import *  # noqa: F401,F403
 
+# [임시 진단 로그 2026-08-10, 재투입] EXTEND 실사용 재현 원인 찾기용 — 사용자 요청 전엔 제거 금지.
+_DBG_LOG_PATH = r"C:\Users\minwoo\Desktop\PasteFlow\easycad_debug.log"
+
+
+def _dbg(msg: str) -> None:
+    try:
+        import datetime
+        with open(_DBG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} {msg}\n")
+    except Exception:
+        pass
+
+
 class _AnnotatorView(QGraphicsView):
     # [화살표 통합] 화살표는 도구 하나 → 단축키도 3 하나. 9는 비운다(사용자가 후속 전면 조정 예정).
     _SHORTCUTS = {
@@ -692,10 +705,9 @@ class _AnnotatorView(QGraphicsView):
         bx_orr = by_orr = None
 
         for orr in others:
-            # 후보는 축당 5개 — 같은 역할 3개(좌-좌/중심-중심/우-우, 상-상/중심-중심/하-하)와
+            # 후보는 축당 9개 — 같은 역할 3개(좌-좌/중심-중심/우-우, 상-상/중심-중심/하-하) +
             # **마주보는 변** 2개(내 우변=상대 좌변, 내 좌변=상대 우변 / 내 아랫변=상대 윗변,
-            # 내 윗변=상대 아랫변). 배제하는 것은 「좌-중심」·「중심-우」처럼 기하적으로 의미
-            # 없는 교차 조합뿐이다(원래 과발화의 원인은 그 4개였다).
+            # 내 윗변=상대 아랫변) + **중심-변 교차** 4개(2026-08-10 재추가, 아래 참조).
             # ⚠ 마주보는 변에 "교차축이 겹칠 때만"이라는 게이트를 걸면 안 된다 — 실사용 로그로
             # 확정(2026-08-01): 두 도형이 가로로 134유닛 떨어져 나란히 있고 내 윗변이 상대
             # 아랫변과 4유닛(임계 6 이내)까지 맞았는데도, x범위가 안 겹친다는 이유로 후보에
@@ -704,16 +716,32 @@ class _AnnotatorView(QGraphicsView):
             # 증상의 정체가 이 게이트였고(붙어야 교차축이 겹쳐 게이트가 열림), 게이트를 thr만큼
             # 넓히는 완화로는 수십~수백 유닛 떨어진 이 케이스를 못 살린다. 같은 역할 매칭에는
             # 애초에 이런 게이트가 없다는 점에서도 인접에만 거는 것은 비대칭이었다.
+            # [2026-08-10 재추가] 「중심-변」 교차 조합(내 중심=상대 좌/우, 내 좌/우=상대 중심)은
+            # 2026-08-01에 "과발화 원인"으로 빠졌었다 — 그런데 실사용 로그로 확인(2026-08-10):
+            # "중간점끼리는 잘 붙는데 한쪽만 중간점일 때 안 붙는다"가 정확히 이 빠진 조합이다
+            # (포트의 변중심을 다른 도형의 밋밋한 테두리에 붙이는 것처럼, 상대가 대칭이 아니면
+            # 그 도형 자신의 중심이 아니라 변에 맞춰야 하는 경우가 실사용에서 흔함). 과발화는
+            # 동률 후보 전부를 가이드선으로 보여주는 현재 방식(위 주석)이 이미 흡수하므로
+            # (승자 하나만 몰래 고르지 않고 동시에 다 보여줌), 재추가해도 그때와 같은 문제가
+            # 재발하지 않음을 실사용 로그(mid-edge 역할이 정상적으로 뜨고 붙음)로 재확인했다.
             x_cands = [(nr.left(), orr.left(), "left"),
                        (nr.center().x(), orr.center().x(), "center"),
                        (nr.right(), orr.right(), "right"),
                        (nr.right(), orr.left(), "adj"),
-                       (nr.left(), orr.right(), "adj")]
+                       (nr.left(), orr.right(), "adj"),
+                       (nr.center().x(), orr.left(), "mid-edge"),
+                       (nr.center().x(), orr.right(), "mid-edge"),
+                       (nr.left(), orr.center().x(), "mid-edge"),
+                       (nr.right(), orr.center().x(), "mid-edge")]
             y_cands = [(nr.top(), orr.top(), "top"),
                        (nr.center().y(), orr.center().y(), "center"),
                        (nr.bottom(), orr.bottom(), "bottom"),
                        (nr.bottom(), orr.top(), "adj"),
-                       (nr.top(), orr.bottom(), "adj")]
+                       (nr.top(), orr.bottom(), "adj"),
+                       (nr.center().y(), orr.top(), "mid-edge"),
+                       (nr.center().y(), orr.bottom(), "mid-edge"),
+                       (nr.top(), orr.center().y(), "mid-edge"),
+                       (nr.bottom(), orr.center().y(), "mid-edge")]
             local_x = pick_local(x_cands)
             if local_x is not None and (bx_winners is None or local_x[0][0] < bx_winners[0][0]):
                 bx_winners, bx_orr = local_x, orr
@@ -862,11 +890,28 @@ class _AnnotatorView(QGraphicsView):
                     d = self._view_dist(cand.mapToScene(p), view_pos)
                     if d <= self._BORDER_SNAP_PX and (best_dist is None or d < best_dist):
                         best_dist, best_host = d, cand
-            if best_host is None:
+            if best_host is not None:
+                cutters = [c for c in (self._conn_shapes() + self._conn_lines()) if c is not best_host]
+                res = _extend_candidate(best_host, scene_pt, cutters)
+                return ("extend", best_host, *res) if res is not None else None
+            # [실사용 확장 2026-08-10] 열린 도형(선)에 늘일 끝점이 없으면, 닫힌 도형의 TRIM
+            # 자국(host._cuts) 복구로 폴백한다 — "네모 테두리를 TRIM으로 지운 걸 EXTEND로
+            # 되돌리고 싶다"는 실사용 요청(EXTEND의 짝 기능, 선=늘이기/닫힌도형=복구). 자국은
+            # 렌더에 안 보이는 구간이라 여기서만 전체 외곽선(포트/자국 무관)에 투영해 찾는다.
+            best_cut_host, best_cut, best_cut_dist = None, None, None
+            for cand in candidates:
+                if not isinstance(cand, (_RectItem, _EllipseItem, _SymbolItem)):
+                    continue
+                hit = _restore_cut_candidate(cand, scene_pt)
+                if hit is None:
+                    continue
+                cut, local_pt, _local_d = hit
+                d = self._view_dist(cand.mapToScene(local_pt), view_pos)
+                if d <= self._BORDER_SNAP_PX and (best_cut_dist is None or d < best_cut_dist):
+                    best_cut_dist, best_cut_host, best_cut = d, cand, cut
+            if best_cut_host is None:
                 return None
-            cutters = [c for c in (self._conn_shapes() + self._conn_lines()) if c is not best_host]
-            res = _extend_candidate(best_host, scene_pt, cutters)
-            return ("extend", best_host, *res) if res is not None else None
+            return ("restore", best_cut_host, best_cut)
         best_host, best_dist = None, None
         for cand in candidates:
             if isinstance(cand, (_RectItem, _EllipseItem, _SymbolItem)):
@@ -1100,12 +1145,26 @@ class _AnnotatorView(QGraphicsView):
         if self._trim_preview is None:
             return
         kind = self._trim_preview[0]
-        pen = QPen(QColor("#ff3b30"), 2.4)
+        # [실사용 확장 2026-08-10] restore(닫힌 도형 자국 복구)·extend(열린 도형 늘이기)는 둘 다
+        # "생기는/돌아오는" 예고라 초록, TRIM(closed/open, 지워질 예고)만 빨강 — 사용자 지적:
+        # 같은 Shift+EXTEND인데 restore만 초록이고 extend가 TRIM과 같은 빨강이라 헷갈렸다.
+        pen = QPen(QColor("#34c759" if kind in ("restore", "extend") else "#ff3b30"), 2.4)
         pen.setCosmetic(True)
         pen.setStyle(Qt.PenStyle.DashLine)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
-        if kind == "closed":
+        if kind == "restore":
+            _tag, host, cut = self._trim_preview
+            edge_i, t0, t1 = cut
+            poly = _host_outline_local_polygon(host)
+            n = len(poly)
+            if not (0 <= edge_i < n):
+                return
+            a, b = poly[edge_i], poly[(edge_i + 1) % n]
+            p0 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0))
+            p1 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t1, a.y() + (b.y() - a.y()) * t1))
+            painter.drawLine(p0, p1)
+        elif kind == "closed":
             _tag, host, edge_i, t0, t1 = self._trim_preview
             poly = _host_outline_local_polygon(host)
             n = len(poly)
@@ -1670,6 +1729,8 @@ class _AnnotatorView(QGraphicsView):
         if event.button() != Qt.MouseButton.LeftButton:
             return super().mousePressEvent(event)
         self._press_scene = self.mapToScene(event.position().toPoint())   # 실제 클릭 지점(스냅 전)
+        _dbg(f"PRESS tool={self._owner.current_tool!r} shift={bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)} "
+             f"scene=({self._press_scene.x():.1f},{self._press_scene.y():.1f}) sel={len(self.scene().selectedItems())}")
         # [Stage2b] stretch 진행 — 활성(기준점 이미 찍음) 클릭=도착점 확정, 무장 클릭=기준점. 최우선.
         if self._stretch_active:
             self._stretch_apply(self._press_scene)
@@ -1691,11 +1752,16 @@ class _AnnotatorView(QGraphicsView):
         # Z-order 배달로는 아래 도형이 press를 가로챈다 → 그 아이템을 잠깐 최상단으로 올려 Qt가
         # 그 아이템에 press를 배달(=grab)하게 한 뒤 Z를 즉시 복원한다(grab은 Z와 무관하게 유지).
         # 끝점 우선은 "새 연결 화살표 생성"(arrow 도구)보다도 앞서야 겹칠 때 새 화살표가 안 생긴다.
+        # [실사용 버그 수정 2026-08-10] TRIM 도구에서는 예외 — EXTEND 대상인 선의 끝점이 선택된
+        # 상태면(흔한 경우, 방금 잘라낸 선이라 이미 선택돼 있음) 그 끝점 핸들이 화면상 정확히
+        # EXTEND를 눌러야 할 그 자리를 뒤덮어, Shift+클릭이 늘이기 대신 핸들 드래그로 새 버렸다
+        # (qc-dot·더블클릭 라벨편집과 같은 종류의 함정 — TRIM 도구 중엔 이 셋 다 의미가 없다).
         vpos = event.position().toPoint()
         # 커서 맨 위가 화살표 라벨이면 라벨 드래그 우선(끝점·bend 핸들보다) — 라벨이 핸들과 겹칠 때 대비.
         _top = self.items(vpos)
         _on_label = bool(_top) and isinstance(_top[0], _ConnectorLabel)
-        grab = None if _on_label else (self._selected_endpoint_item(vpos) or self._bend_handle_at(vpos))
+        grab = None if (_on_label or self._owner.current_tool == "trim") \
+            else (self._selected_endpoint_item(vpos) or self._bend_handle_at(vpos))
         if grab is not None:
             if self._snap_preview is not None:
                 # 끝점/핸들 드래그 시작 → 유휴 테두리 스냅 예고 마커를 즉시 제거(드래그 중엔
@@ -1742,7 +1808,11 @@ class _AnnotatorView(QGraphicsView):
         # 클릭=복제+화살표, 드래그=화살표(대상 없으면 도형도 생성). 선택된 도형은 어느
         # 도구에서든 잡힌다(그린 직후 도구 전환 없이 바로 체이닝하기 위한 기존 의도 유지) —
         # 여기서 못 잡으면 아래 tool=="select" 분기가 미선택 도형의 hover-port를 마저 검사한다.
-        if event.button() == Qt.MouseButton.LeftButton:
+        # [실사용 버그 수정 2026-08-10] TRIM 도구에서는 예외 — 끊어진 선을 포트에 다시 이어붙이는
+        # EXTEND의 목표 지점이 그 포트의 qc-dot과 가까운 경우가 흔한데(원래 붙어있던 자리이므로),
+        # 여기서 먼저 잡아버리면 새 커넥터 드래그 대기 상태(`_hp_dragging`)로 빠져 TRIM/EXTEND
+        # 분기 자체에 도달하지 못한다 — 그 도구를 쓰는 중엔 접속점-복제 의도가 있을 수 없다.
+        if event.button() == Qt.MouseButton.LeftButton and self._owner.current_tool != "trim":
             hit = self._connect_port_at(vpos)
             if hit is not None:
                 src, port_pt, nrm = hit
@@ -1796,11 +1866,21 @@ class _AnnotatorView(QGraphicsView):
             extend = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
             if extend:
                 preview = self._trim_preview_at(event.position().toPoint(), extend=True)
-                if preview is not None:
+                _dbg(f"  -> extend preview={preview!r}")
+                if preview is not None and preview[0] == "extend":
                     _tag, host, idx, new_pt = preview
                     before_geom = host.capture_geom()
                     apply_extend(host, idx, new_pt)
                     self._owner.push_undo_open_trim(host, before_geom)   # 1회성 — 코얼레스 없음
+                    _dbg(f"  -> extend 커밋 완료 new_pt=({new_pt.x():.1f},{new_pt.y():.1f})")
+                elif preview is not None and preview[0] == "restore":
+                    # [실사용 확장 2026-08-10] 닫힌 도형 TRIM 자국 복구 — EXTEND의 짝 기능.
+                    _tag, host, cut = preview
+                    before_cuts = list(getattr(host, "_cuts", None) or [])
+                    host._cuts.remove(cut)
+                    host.update()
+                    self._owner.push_undo_cut(host, before_cuts)   # 1회성 — 코얼레스 없음
+                    _dbg(f"  -> restore 커밋 완료 cut={cut!r}")
                 self._trim_preview = None
                 self.viewport().update()
                 return
@@ -2636,6 +2716,9 @@ class _AnnotatorView(QGraphicsView):
                                        extend=bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
                 if self._owner.current_tool == "trim" else None)
             if prev_tp != self._trim_preview:
+                if self._owner.current_tool == "trim":
+                    sp = self.mapToScene(event.position().toPoint())
+                    _dbg(f"HOVER trim scene=({sp.x():.1f},{sp.y():.1f}) preview={self._trim_preview!r}")
                 self.viewport().update()
             self._update_hover_cursor(event.position().toPoint())
         if self._drawing and self._temp is not None:
@@ -2894,6 +2977,18 @@ class _AnnotatorView(QGraphicsView):
         lbl.setTextCursor(cur)
 
     def mouseDoubleClickEvent(self, event):
+        # [실사용 버그 수정 2026-08-10] TRIM 도구 중 같은 자리를 빠르게 두 번 누르면(예: EXTEND
+        # 재시도) Qt가 두 번째 클릭을 mousePressEvent가 아니라 이 더블클릭 핸들러로 보낸다 —
+        # 아래의 라벨편집·표 셀편집 등 다른 더블클릭 특례가 그 클릭을 가로채면 TRIM/EXTEND
+        # 분기 자체에 도달 못 한다. TRIM 도구를 쓰는 중엔 그 특례들이 의미가 없으므로, 이
+        # 이벤트를 평범한 press로 취급해 그대로 mousePressEvent에 위임한다(같은 QMouseEvent가
+        # position·button·modifiers를 그대로 담고 있어 안전하게 재사용 가능).
+        if (self._owner.is_edit_mode() and self._owner.current_tool == "trim"
+                and event.button() == Qt.MouseButton.LeftButton):
+            _dbg("DBLCLICK trim -> mousePressEvent로 위임")
+            self.mousePressEvent(event)
+            event.accept()
+            return
         # 뷰어 모드: 더블클릭 = 닫기 (편집 모드는 텍스트 재편집 등 기본 동작 유지)
         if not self._owner.is_edit_mode():
             if event.button() == Qt.MouseButton.LeftButton:
@@ -2921,6 +3016,7 @@ class _AnnotatorView(QGraphicsView):
                 event.accept()
                 return
         # [우리 확장] 선/화살표 더블클릭 = 라벨 달기/편집(위에 다른 선택형이 없을 때만).
+        # TRIM 도구는 위에서 이미 mousePressEvent로 위임돼 여기 도달하지 않는다.
         if event.button() == Qt.MouseButton.LeftButton:
             target = self._labelable_at(event.position().toPoint())
             if target is not None:
