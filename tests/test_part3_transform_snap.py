@@ -1449,20 +1449,34 @@ def test_shape_ports_triangle_uses_true_edge_midpoints():
 
 
 def test_box_corner_rects_triangle_at_real_vertices():
-    # [회귀 방지 2026-08-10, 후속 수정 포함] 실사용 지적 — 꼭짓점 사각 핸들이 바운딩박스
-    # 모서리라 삼각형의 실제 꼭짓점과 떨어져 보였다. 뒤쪽 두 꼭짓점(TL·BL)은 핸들 위치를
-    # 실제 꼭짓점(+기존 핸들 간격)으로 옮겼는지 검증. 앞쪽 꼭짓점(TR·BR)은 처음엔 둘 다
-    # 거기 두었다가, 이미 그 자리에 있는 qc-dot과 마커 두 개가 겹쳐 보인다는 후속 지적으로
-    # 아예 뺐다 — qc-dot이 전담(리사이즈는 TL·BL 두 핸들 어느 쪽을 끌어도 가능해 능력 손실 없음).
+    # [회귀 방지 2026-08-10, 여러 차례 후속 수정 포함] 실사용 지적 — 꼭짓점 사각 핸들이
+    # 바운딩박스 모서리라 삼각형의 실제 꼭짓점과 떨어져 보였다. 뒤쪽 두 꼭짓점(TL·BL)은 핸들
+    # 위치를 실제 꼭짓점(+기존 핸들 간격)으로 옮겼는지 검증. 앞쪽 꼭짓점(TR·BR)은 한때 아예
+    # 뺐다가(qc-dot과 겹쳐 보인다는 지적), "오른쪽에서 잡고 크기 조절"이 안 되는 손실이 더
+    # 크다는 사용자 판단(2026-08-10)으로 되살렸다 — 대신 그 자리의 qc-dot을 뺀다
+    # (`test_qc_dot_rects_triangle_apex_yields_to_resize_handle` 참조).
     tri = _SymbolItem("triangle", QRectF(0, 0, 200, 140))
     tr = _tri_rect(tri.rect())
+    apex = QPointF(tr.right(), tr.center().y())
     rects = dict(tri._box_corner_rects())
     gap = tri._handle_px() * tri._HANDLE_GAP_FACTOR
-    assert set(rects.keys()) == {0, 3}   # 앞쪽 꼭짓점(1·2)은 더 이상 핸들로 안 뜬다
+    assert set(rects.keys()) == {0, 1, 2, 3}
     assert abs(rects[0].center().x() - (tr.left() - gap)) < 1e-6   # TL: 뒤쪽 위 꼭짓점, 바깥(-x)으로 gap
     assert abs(rects[0].center().y() - (tr.top() - gap)) < 1e-6
     assert abs(rects[3].center().x() - (tr.left() - gap)) < 1e-6   # BL: 뒤쪽 아래 꼭짓점
     assert abs(rects[3].center().y() - (tr.bottom() + gap)) < 1e-6
+    assert rects[1].center() == rects[2].center()                  # TR·BR = 같은 앞쪽 꼭짓점
+    assert abs(rects[1].center().x() - (apex.x() + gap)) < 1e-6
+
+
+def test_qc_dot_rects_triangle_apex_yields_to_resize_handle():
+    # [신규기능 2026-08-10] 삼각형 앞쪽 꼭짓점은 리사이즈 핸들이 전담 — qc-dot 목록에선
+    # "r"(동쪽)만 빠지고 나머지(t·b·l)는 그대로. `_shape_ports` 자체(다른 도형이 여기로
+    # 붙는 라우팅)는 안 건드린다 — 이 도형 선택 시 핸들 표시만 정리.
+    tri = _SymbolItem("triangle", QRectF(0, 0, 200, 140))
+    qc = dict(tri._qc_dot_rects())
+    assert set(qc.keys()) == {"t", "b", "l"}
+    assert len(_shape_ports(tri)) == 4   # 라우팅용 포트 개수는 그대로(r 포함)
 
 
 

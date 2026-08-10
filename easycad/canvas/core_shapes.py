@@ -548,22 +548,20 @@ class _HandleResizeMixin:
         # 떨어져 보인다"는 지적). 리사이즈 동작(각 인덱스가 무엇을 드래그하는가 — 대각 고정점
         # 기준 setRect)은 그대로 두고, 핸들을 그리고 클릭을 받는 위치만 실제 꼭짓점으로 옮긴다
         # (WYSIWYG).
-        # [후속 2026-08-10] TR(1)·BR(2)을 처음엔 둘 다 앞쪽 꼭짓점에 겹쳐 뒀는데, 그 자리엔
-        # 이미 qc-dot("r" 접속점, `_shape_ports`도 이번에 같은 꼭짓점으로 고침)이 있어서
-        # 사각·원 마커 두 개가 서로 다른 방향(사각은 bbox 중심 기준, 원은 변 법선 기준)으로
-        # 살짝씩 떨어져 뜨는 게 오히려 더 지저분해 보였다("둘 중 하나만 있어야 할 듯"). 앞쪽
-        # 꼭짓점은 qc-dot(연결점 역할이 이 앱의 핵심 상호작용이라 더 중요)에게 전담시키고
-        # 여기서는 뺀다 — 리사이즈 자체는 뒤쪽 두 꼭짓점(TL·BL) 어느 쪽을 끌어도 가로·세로
-        # 모두 조절되므로(대각 드래그) 능력 손실은 없다.
-        skip: set = set()
+        # [후속 2026-08-10 → 재후속] TR(1)·BR(2)을 앞쪽 꼭짓점에 겹쳐 두면 qc-dot("r" 접속점)과
+        # 마커 두 개가 서로 다른 방향으로 살짝씩 떨어져 지저분해 보여, 한때 이 자리에서 리사이즈
+        # 핸들을 완전히 뺐었다. 그런데 그러면 "오른쪽에서 잡고 크기 조절"하는 제스처 자체가
+        # 사라지는 실사용 손실이 있었다 — 사용자 판단(2026-08-10): 리사이즈를 우선하고, 접속은
+        # 삼각형의 세 변 자체(연속 테두리 스냅)가 이미 담당하므로 이 꼭짓점에 굳이 별도 qc-dot이
+        # 없어도 된다. 그래서 리사이즈 핸들을 되살리고, 대신 `_qc_dot_rects`에서 이 자리(east)의
+        # qc-dot을 뺀다(`_shape_ports`·연속 스냅은 안 건드림 — 다른 도형이 이 꼭짓점에 붙는
+        # 능력은 그대로, 이 도형 "자신"의 선택 시 핸들 표시만 하나로 정리).
         if isinstance(self, _SymbolItem) and self._kind == "triangle":
             tr = _tri_rect(br)
-            pts = [tr.topLeft(), None, None, tr.bottomLeft()]
-            skip = {1, 2}
+            apex = QPointF(tr.right(), tr.center().y())
+            pts = [tr.topLeft(), apex, apex, tr.bottomLeft()]
         out = []
         for i, p in enumerate(pts):
-            if i in skip:
-                continue
             sx = gap if p.x() > cx else -gap
             sy = gap if p.y() > cy else -gap
             q = QPointF(p.x() + sx, p.y() + sy)
@@ -619,8 +617,16 @@ class _HandleResizeMixin:
         d = h * 0.9
         gap = h * self._HANDLE_GAP_FACTOR
         sides = ("t", "r", "b", "l")   # _shape_ports와 동일 순서(상·우·하·좌)
+        # [2026-08-10] 삼각형의 "r"(동쪽=앞쪽 꼭짓점) qc-dot은 뺀다 — 사용자 판단: 그 자리는
+        # 리사이즈 핸들이 우선하고(위 `_box_corner_rects`), 접속은 삼각형의 세 변 자체(연속
+        # 테두리 스냅)가 이미 담당하니 이 꼭짓점 전용 점이 따로 없어도 된다. `_shape_ports`
+        # 자체(다른 도형이 여기로 붙는 라우팅/스냅)는 안 건드린다 — 이 도형 "자신"의 선택 시
+        # 핸들 목록에서만 뺀다.
+        skip_side = "r" if (isinstance(self, _SymbolItem) and self._kind == "triangle") else None
         out = []
         for k, (sp, n) in zip(sides, _shape_ports(self)):
+            if k == skip_side:
+                continue
             sp_out = QPointF(sp.x() + n.x() * gap, sp.y() + n.y() * gap)
             p = self.mapFromScene(sp_out)
             out.append((k, QRectF(p.x() - d / 2, p.y() - d / 2, d, d)))
@@ -639,7 +645,11 @@ class _HandleResizeMixin:
         n = len(poly)
         if n < 2:
             return []
-        h = self._handle_px() * 0.8
+        # [2026-08-10 후속] 크기를 0.8배(다른 핸들보다 작음)에서 다른 핸들과 같은 표준 크기로
+        # 키웠다 — 사용자 요청("마름모 점 크기를 다른 점만큼 키우던지, 일단 키워보고"). 테두리
+        # 바깥으로 띄우는 건(다른 핸들처럼) 아직 보류 — 지금은 정확한 위치(패딩 없음)가 오히려
+        # 장점이라는 사용자 관찰(2026-08-10)이 있어, 별도 결정 전까진 위치는 그대로 둔다.
+        h = self._handle_px()
         out = []
         for ci, (edge_i, t0, t1) in enumerate(cuts):
             if not (0 <= edge_i < n):
