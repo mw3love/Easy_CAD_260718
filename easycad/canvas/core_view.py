@@ -154,11 +154,16 @@ class _AnnotatorView(QGraphicsView):
         # [호버 강조 2026-07-30] 선택된 도형의 핸들(모서리·회전·qc-dot·끝점) 위 hover — (item, key)
         # or None. 크기를 고정으로 통일하며 "이 점이 잡힌다"를 색 반전으로 대신 알려준다.
         self._handle_hover = None
-        # [§8 항목17 4~5단계, 2026-08-10] TRIM/EXTEND 도구 — 문지르기(Quick Trim) 상태.
-        self._trim_preview = None    # 태그된 튜플("closed"/"open"/"extend", ...) or None
-        self._trim_dragging = False  # press 이후 계속 문지르는 중(TRIM만 — EXTEND는 1회성)
+        # [§8 항목17 4~5단계, 2026-08-10] TRIM/EXTEND 도구 상태.
+        self._trim_preview = None    # 태그된 튜플("closed"/"open"/"extend", ...) or None — 유휴 hover(비드래그) 전용
+        self._trim_dragging = False  # press 이후 드래그 중(TRIM만 — EXTEND는 1회성)
         self._trim_seen: set = set()  # 이번 드래그에서 이미 커밋한 키 — 중복 방지
-        self._trim_undo_key = None   # [6단계] 이번 드래그의 undo coalesce 키(문지르기 전체=1스텝)
+        self._trim_undo_key = None   # [6단계] 이번 드래그의 undo coalesce 키(전체=1스텝)
+        # [실사용 재설계 2026-08-10, Fence] "문지르기"(커서가 테두리에 붙어 있어야만 잡힘)
+        # 대신 press~release 사이 실제로 지나간 구간을 seg-seg 교차로 훑는 펜스 방식 —
+        # 커서가 테두리 위에 있을 필요 없음(고전 AutoCAD Fence 관례, 사용자 확정 설계).
+        self._trim_fence_last = None   # 마지막으로 처리한 씬좌표(다음 프레임과 잇는 구간의 시작)
+        self._trim_fence_pts: list = []  # 드래그 궤적(렌더용 — 지나간 자취를 점선으로 표시)
         # 선택이 바뀌면 그룹 오버레이(bbox·핸들)를 다시 그린다(개별 아이템 repaint와 별개).
         scene.selectionChanged.connect(self.viewport().update)
 
@@ -629,7 +634,22 @@ class _AnnotatorView(QGraphicsView):
             return
         bg = getattr(self._owner, "_bg_item", None)
 
-        def srect(o):   # 보이는 외형(_content_rect) 기준 씬 사각 — 핸들·도트 여유 제외.
+        def srect(o):   # 보이는 외형 기준 씬 사각 — 핸들·도트 여유 제외.
+            # [실사용 버그 수정 2026-08-10] 선/곡선화살표/타원/DXF패스의 `_content_rect()`는
+            # 재귀 방지·hit-test 여유로 펜폭/2+1(또는 +2)만큼 부풀린 값이라(core_shapes.py 각
+            # 클래스 주석 참조), 이 정렬 스냅에 그대로 쓰면 "닿았다"고 이동시켜도 실제 선과
+            # 1~수 유닛 간극이 남는다(실측: 펜폭 1.0 → 1.5유닛 간극, 고배율 확대 시 스냅
+            # 문턱보다 커져 아예 안 붙는 것처럼 보임). 이 넷은 실제 기하(끝점/정점/patch)
+            # bbox를 대신 쓴다 — 패딩 없는 진짜 시각적 경계.
+            if isinstance(o, (_LineItem, _PolyArrowItem, _ArrowItem)):
+                pts = _conn_polyline_scene(o)
+                if pts:
+                    xs = [p.x() for p in pts]; ys = [p.y() for p in pts]
+                    return QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
+            if isinstance(o, _EllipseItem):
+                return o.mapToScene(o.rect()).boundingRect()
+            if isinstance(o, _PathItem):
+                return o.mapToScene(o.path().boundingRect()).boundingRect()
             cr = o._content_rect() if hasattr(o, "_content_rect") else o.boundingRect()
             return o.mapToScene(cr).boundingRect()
 
@@ -868,6 +888,60 @@ class _AnnotatorView(QGraphicsView):
         seg = _trim_candidate_open_segment(best_host, scene_pt, others)
         return ("open", best_host, *seg) if seg is not None else None
 
+    def _fence_crossings(self, p0: QPointF, p1: QPointF):
+        """[Fence 재설계 2026-08-10] TRIM 드래그 한 프레임 구간(p0→p1, 씬좌표)이 실제로
+        지나간 대상을 [(host, 교차점_씬), ...]로 돌려준다 — 커서가 테두리 위에 있을
+        필요가 없다는 게 문지르기와의 핵심 차이(사용자 확정 설계, 고전 AutoCAD Fence
+        관례). 후보는 구간의 바운딩박스 + 마진으로 공간질의(BSP, 2026-08-08 전체스캔
+        성능 함정 회피)하고, 각 후보의 변(`_item_local_edges` — 닫힌/열린 도형 공통)을
+        구간과 선분-선분 교차(`_seg_seg_intersection`)로 검사한다. 한 프레임에 여러
+        대상을 동시에 지나갈 수 있어 리스트로 전부 반환(호출부가 순서대로 커밋)."""
+        margin = _PORT_ATTACH_MARGIN
+        rect = QRectF(p0, p1).normalized().adjusted(-margin, -margin, margin, margin)
+        candidates = [it for it in self.scene().items(rect)
+                      if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem,
+                                          _LineItem, _PolyArrowItem))]
+        out = []
+        for host in candidates:
+            # [실사용 재현] 닫힌 도형(포트로 흔히 쓰는 작은 사각형 등)은 이 구간의 시작·끝점이
+            # 그 도형 '안'에서 시작/끝나면(예: 문지르는 대상 선 위가 아니라 포트 몸통 안에서
+            # press) 후보에서 뺀다 — 안 그러면 "선을 자르려고 포트를 관통해 지나가는" 흔한
+            # 동작에서 포트 자신의 테두리까지 같이 잘려나가는 오탐이 생긴다(재현: 포트 안쪽에서
+            # press한 뒤 그 포트를 가로질러 드래그하면 포트 오른쪽 변이 반으로 잘림).
+            if isinstance(host, (_RectItem, _EllipseItem, _SymbolItem)) and (
+                    _shape_interior_contains(host, p0) or _shape_interior_contains(host, p1)):
+                continue
+            for a, b in _item_local_edges(host):
+                p = _seg_seg_intersection(p0, p1, host.mapToScene(a), host.mapToScene(b))
+                if p is not None:
+                    out.append((host, p))
+        return out
+
+    def _try_commit_trim(self, kind: str, host, seg) -> None:
+        """[Fence 재설계 2026-08-10] 이미 계산된 (kind, host, seg) 하나를 실제로 커밋 — 문지르기
+        시절의 press/move 커밋 코드(닫힌=cut 구간 추가, 열린=분리+undo)를 그대로 흡수해
+        펜스-교차/along-the-border 두 경로가 공유한다(중복 제거). `_trim_seen`으로 같은
+        구간 재커밋을 막는다."""
+        if kind == "closed":
+            edge_i, t0, t1 = seg
+            key = ("closed", id(host), edge_i, round(t0, 6), round(t1, 6))
+            if key in self._trim_seen:
+                return
+            before_cuts = list(getattr(host, "_cuts", None) or [])
+            _add_border_cut(host, edge_i, t0, t1)
+            self._owner.push_undo_cut(host, before_cuts, coalesce_key=self._trim_undo_key)
+            self._trim_seen.add(key)
+        else:
+            lo, hi = seg
+            key = ("open", id(host), lo, hi)
+            if key in self._trim_seen:
+                return
+            before_geom = host.capture_geom()
+            clone = apply_open_item_trim(host, lo, hi)
+            self._owner.push_undo_open_trim(host, before_geom, clone,
+                                             coalesce_key=self._trim_undo_key)
+            self._trim_seen.add(key)
+
     def _border_snap_at(self, view_pos, exclude=None):
         """커서 근처 도형/선/화살표에 스냅 → (snap_scene, exit_unit, shape) 또는 None.
         [우리 확장] 포트/끝점 우선(_PORT_SNAP_PX) + 연속 폴백(_BORDER_SNAP_PX). 도형은 shape로
@@ -1005,6 +1079,19 @@ class _AnnotatorView(QGraphicsView):
         painter.setPen(QPen(QColor("white"), 1.5 / s))
         painter.setBrush(QBrush(QColor(_BLUE)))
         painter.drawEllipse(sp, base, base)
+
+    def _draw_trim_fence(self, painter, s):
+        """[Fence 재설계 2026-08-10] TRIM 드래그 중 지나간 궤적을 빨간 점선으로 — 사용자가
+        묘사한 "클릭하면 점선 직선이 생기면서" 그 자체(고전 AutoCAD Fence 관례). 지나간
+        자취를 그대로 잇는 폴리라인이라, 실제 드래그가 곡선이면 곡선으로도 보인다."""
+        if not self._trim_dragging or len(self._trim_fence_pts) < 2:
+            return
+        pen = QPen(QColor("#ff3b30"), 1.4)
+        pen.setCosmetic(True)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        for a, b in zip(self._trim_fence_pts[:-1], self._trim_fence_pts[1:]):
+            painter.drawLine(a, b)
 
     def _draw_trim_preview(self, painter, s):
         """[§8 항목17 4~5단계] TRIM 도구 호버 예고 — 잘릴(또는 EXTEND는 늘어날) 구간을 빨간
@@ -1401,6 +1488,7 @@ class _AnnotatorView(QGraphicsView):
         self._draw_port_dots(painter, s)
         self._draw_segment_preview_pill(painter, s)
         self._draw_trim_preview(painter, s)
+        self._draw_trim_fence(painter, s)
         # 그리는 중(드래그)이거나 클릭 배치 중이면 스냅된 시작·tip에 마커(곡선·직선화살 공통).
         drawing = (self._drawing and self._temp is not None) or (self._place is not None)
         if drawing:
@@ -1697,46 +1785,43 @@ class _AnnotatorView(QGraphicsView):
                 it.set_points(self._start, self._start)
                 self._begin_draw(it)
                 return
-        # [§8 항목17 4~5단계] TRIM 도구 — 예고 중인 구간이 있으면 1회 확정(문지르기 시작).
+        # [§8 항목17 4단계 → 2026-08-10 Fence 재설계] TRIM 도구 press.
         # 도형 선택/이동 분기(아래)보다 먼저 가로챈다 — 안 그러면 테두리를 정확히 누를수록
         # (예고점이 뜨는 바로 그 자리) 오히려 선택/이동으로 걸리는 역설이 생긴다(2026-08-09
         # 포트 배치 때 확인한 것과 같은 함정, `near_port_host` 특례 참조).
-        # [5단계] Shift=EXTEND 전환은 여기서 press 시점 modifiers로 새로 계산한다(마지막 hover
-        # 이후 마우스를 안 움직이고 Shift만 누른 채 바로 클릭하면 `self._trim_preview`가 아직
-        # 옛(비-Shift) 상태라 stale해질 수 있어 — hover는 mouseMoveEvent에서만 갱신되고
-        # keyPressEvent는 훅하지 않았다). EXTEND는 한 지점 늘이기라 문지르기(드래그 계속)로
-        # 안 넘어간다.
+        # [5단계] Shift=EXTEND는 여기서 press 시점 modifiers로 새로 계산한다(마지막 hover 이후
+        # 마우스를 안 움직이고 Shift만 누른 채 바로 클릭하면 `self._trim_preview`가 아직 옛
+        # (비-Shift) 상태라 stale해질 수 있어). EXTEND는 한 지점 늘이기라 펜스로 안 넘어간다.
         if tool == "trim":
             extend = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-            preview = self._trim_preview_at(event.position().toPoint(), extend=extend)
-            if preview is not None:
-                kind = preview[0]
-                # [§8 항목17 6단계] 이번 드래그(문지르기) 전체를 undo 1스텝으로 묶는 키 —
-                # push_undo_move의 coalesce_key와 같은 패턴, 새 press마다 새 object()라
-                # 이전 드래그와 안 섞인다.
-                self._trim_undo_key = object()
-                if kind == "closed":
-                    _tag, host, edge_i, t0, t1 = preview
-                    before_cuts = list(getattr(host, "_cuts", None) or [])
-                    _add_border_cut(host, edge_i, t0, t1)
-                    self._owner.push_undo_cut(host, before_cuts, coalesce_key=self._trim_undo_key)
-                    self._trim_seen = {("closed", id(host), edge_i, round(t0, 6), round(t1, 6))}
-                    self._trim_dragging = True
-                elif kind == "open":
-                    _tag, host, lo, hi = preview
-                    before_geom = host.capture_geom()
-                    clone = apply_open_item_trim(host, lo, hi)
-                    self._owner.push_undo_open_trim(host, before_geom, clone,
-                                                     coalesce_key=self._trim_undo_key)
-                    self._trim_seen = {("open", id(host), lo, hi)}
-                    self._trim_dragging = True
-                elif kind == "extend":
+            if extend:
+                preview = self._trim_preview_at(event.position().toPoint(), extend=True)
+                if preview is not None:
                     _tag, host, idx, new_pt = preview
                     before_geom = host.capture_geom()
                     apply_extend(host, idx, new_pt)
                     self._owner.push_undo_open_trim(host, before_geom)   # 1회성 — 코얼레스 없음
                 self._trim_preview = None
                 self.viewport().update()
+                return
+            # [실사용 재설계 2026-08-10] "문지르기"(커서가 테두리에 붙어 있어야만 잡힘) 대신
+            # press~release 사이 실제로 지나간 구간을 훑는 펜스로 전환(사용자 확정 설계) —
+            # 커서가 테두리 위에 있을 필요가 없다. press 지점에서 정확히 테두리를 눌렀으면
+            # (기존처럼) 그 자리를 즉시 1회 커밋하고, 이후 드래그는 mouseMoveEvent의
+            # `_fence_crossings`가 이어받는다. 드래그 전체(press의 1회 커밋 포함)를
+            # `_trim_undo_key` 하나로 코얼레스(push_undo_move와 같은 패턴).
+            self._trim_undo_key = object()
+            self._trim_seen = set()
+            press_scene = self.mapToScene(event.position().toPoint())
+            preview = self._trim_preview_at(event.position().toPoint())
+            if preview is not None:
+                kind, host, *seg = preview
+                self._try_commit_trim(kind, host, tuple(seg))
+            self._trim_fence_last = press_scene
+            self._trim_fence_pts = [press_scene]
+            self._trim_dragging = True
+            self._trim_preview = None
+            self.viewport().update()
             return
         if tool is None:
             # 손 모드: 빈 영역 좌드래그 = 창 이동, 주석 위 = 단일 선택/이동(하이브리드).
@@ -2408,32 +2493,34 @@ class _AnnotatorView(QGraphicsView):
             item._drag_col_boundary_to(local.x())
             self.viewport().update()
             return
-        if self._trim_dragging:  # [§8 항목17 4~5단계] 문지르기 — 지나가는 구간을 계속 커밋
-            # [5단계] 드래그 중엔 항상 TRIM(닫힌/열린 도형 모두)만 — EXTEND는 한 지점 늘이기라
-            # 문지르기 대상이 아니다(press에서만 발동, 아래 mousePressEvent 참조).
-            preview = self._trim_preview_at(event.position().toPoint())
-            if preview is not None:
-                kind = preview[0]
-                if kind == "closed":
-                    _tag, host, edge_i, t0, t1 = preview
-                    key = ("closed", id(host), edge_i, round(t0, 6), round(t1, 6))
-                    if key not in self._trim_seen:
-                        before_cuts = list(getattr(host, "_cuts", None) or [])
-                        _add_border_cut(host, edge_i, t0, t1)
-                        self._owner.push_undo_cut(host, before_cuts,
-                                                   coalesce_key=self._trim_undo_key)
-                        self._trim_seen.add(key)
-                elif kind == "open":
-                    _tag, host, lo, hi = preview
-                    key = ("open", id(host), lo, hi)
-                    if key not in self._trim_seen:
-                        before_geom = host.capture_geom()
-                        clone = apply_open_item_trim(host, lo, hi)
-                        self._owner.push_undo_open_trim(host, before_geom, clone,
-                                                         coalesce_key=self._trim_undo_key)
-                        self._trim_seen.add(key)
-            # [5단계] 커밋이 host 기하를 바꿀 수 있어(open) 다음 프레임에 새로 계산될 때까지
-            # 잠깐이라도 stale preview를 들고 있지 않게 비운다(인덱스 범위 밖 참조 방지).
+        if self._trim_dragging:  # [Fence 재설계 2026-08-10] press~현재 구간이 지나간 대상 커밋
+            # EXTEND는 한 지점 늘이기라 펜스 대상이 아니다(press에서만 발동, extend는 mouseMoveEvent에
+            # 진입 자체를 안 함 — 위 mousePressEvent가 extend일 땐 _trim_dragging을 안 켠다).
+            cur = self.mapToScene(event.position().toPoint())
+            prev = self._trim_fence_last
+            if prev is not None and (cur - prev).manhattanLength() > 1e-9:
+                for host, cross_pt in self._fence_crossings(prev, cur):
+                    others = [c for c in self._trim_candidates_near(cross_pt, _PORT_ATTACH_MARGIN)
+                              if c is not host]
+                    if isinstance(host, (_RectItem, _EllipseItem, _SymbolItem)):
+                        seg = _trim_candidate_segment(host, cross_pt, others)
+                        if seg is not None:
+                            self._try_commit_trim("closed", host, seg)
+                    else:
+                        seg = _trim_candidate_open_segment(host, cross_pt, others)
+                        if seg is not None:
+                            self._try_commit_trim("open", host, seg)
+                # [along-the-border 보완] 자르려는 대상 테두리를 따라 그대로 겹쳐 드래그하면
+                # (평행/공선) 위 교차 판정으로는 못 잡는다 — 평행한 두 선분은 '교차점'이 없어
+                # `_seg_seg_intersection`이 None을 돌려준다. "선을 따라 드래그해서 그 선 자체를
+                # 지운다"는 가장 흔한 사용 패턴이라, 지금 커서 위치 기준 옛 문지르기 판정
+                # (`_trim_preview_at`)을 병행해 이 케이스를 보완한다.
+                preview = self._trim_preview_at(event.position().toPoint())
+                if preview is not None and preview[0] != "extend":
+                    kind, host, *seg = preview
+                    self._try_commit_trim(kind, host, tuple(seg))
+            self._trim_fence_last = cur
+            self._trim_fence_pts.append(cur)
             self._trim_preview = None
             self.viewport().update()
             return
@@ -2617,10 +2704,12 @@ class _AnnotatorView(QGraphicsView):
             self._none_win_dragging = False
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
             return
-        if self._trim_dragging:  # [§8 항목17 4단계] 문지르기 종료
+        if self._trim_dragging:  # [Fence 재설계 2026-08-10] 펜스 종료
             self._trim_dragging = False
             self._trim_seen = set()
             self._trim_undo_key = None   # [6단계] 다음 드래그는 새 coalesce 키로
+            self._trim_fence_last = None
+            self._trim_fence_pts = []
             self.viewport().update()
             return
         if self._seg_drag is not None:  # [M4-4] 세그먼트 드래그 종료 — 정점 정리 + undo 커밋
