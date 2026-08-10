@@ -1189,3 +1189,27 @@ def test_real_paint_renders_gap_for_port_only_rect_and_symbol_without_cuts():
 
     check(_RectItem(QRectF(0, 0, 200, 120)), 0)
     check(_SymbolItem("triangle", QRectF(0, 0, 160, 120)), 0)
+
+
+def test_selection_center_path_respects_cuts():
+    # [신규기능 2026-08-10] 실사용 지적 — 잘린(TRIM) 도형을 선택하면 강조선(단일 중심선·
+    # 다중 밴드 공용)이 실제 렌더(`build_trimmed_border_path`)가 아니라 안 잘린 원본 경로를
+    # 그려서, 선택하는 순간 지워진 부분이 "유령처럼" 다시 보였다. `_item_center_path`가 cut/
+    # 포트 있는 도형에선 렌더와 같은 경로를 쓰도록 통일했는지 검증(닫힌 하나의 subpath가
+    # 아니라 남은 조각마다 별도 subpath로 끊겨야 한다 — 실제 렌더와 subpath 개수가 같아야 함).
+    r = _RectItem(QRectF(0, 0, 100, 100))
+    r._cuts = [(3, 0.3, 0.7)]
+    center = _item_center_path(r)
+    rendered = build_trimmed_border_path(r)
+    assert len(center.toSubpathPolygons()) == len(rendered.toSubpathPolygons()) == 5
+
+    # cut·포트가 없으면 예전처럼 안 잘린 닫힌 사각형 하나 그대로(회귀 없음).
+    r2 = _RectItem(QRectF(0, 0, 50, 50))
+    assert len(_item_center_path(r2).toSubpathPolygons()) == 1
+
+    tri = _SymbolItem("triangle", QRectF(0, 0, 160, 120))
+    tri._cuts = [(0, 0.2, 0.5)]
+    tri_center = _item_center_path(tri)
+    tri_rendered = build_trimmed_border_path(tri)
+    assert len(tri_center.toSubpathPolygons()) == len(tri_rendered.toSubpathPolygons())
+    assert len(tri_center.toSubpathPolygons()) > 1   # 잘려서 열린 조각이어야(닫힌 1개가 아님)

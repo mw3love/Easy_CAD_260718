@@ -1099,7 +1099,16 @@ def _item_center_path(it) -> QPainterPath:
     드래그 크로싱 미리보기가 공유한다(원래 뷰의 `_rb_highlight_outline`이던 것을 자유함수로
     승격해 아이템 자신의 paint()에서도 쓸 수 있게 함). 네모·원·심볼·패스·선은 각자 갖고 있는
     원본 기하를, 화살표류(전용 기하 접근자 없음)는 몸통 곡선/꺾은선+화살촉 폴리곤을 직접
-    구성한다. 반경>0인 직각 화살표는 실제로 그려지는 둥근 버전을 쓴다."""
+    구성한다. 반경>0인 직각 화살표는 실제로 그려지는 둥근 버전을 쓴다.
+
+    [실사용 지적 2026-08-10] 포트·cut이 있는 도형은 실제 렌더(`paint()`)가 이미
+    `build_trimmed_border_path`(잘린 진짜 윤곽)를 쓰는데, 이 함수는 그걸 몰라 항상 안 잘린
+    원본 경로를 돌려줬다 — 그 결과 선택할 때마다 이미 지워진 부분이 선택 강조선(단일 중심선·
+    다중 밴드 둘 다 이 함수를 공유)에서 "유령처럼" 다시 나타나 보였다. 렌더와 같은 함수로
+    통일해 선택 강조도 실제로 남아있는 부분만 따라가게 한다."""
+    if isinstance(it, (_SymbolItem, QGraphicsEllipseItem, QGraphicsRectItem)) and \
+            (getattr(it, "_ports", None) or getattr(it, "_cuts", None)):
+        return build_trimmed_border_path(it)
     if isinstance(it, _SymbolItem):
         return it._sym_path()
     if isinstance(it, QGraphicsEllipseItem):
