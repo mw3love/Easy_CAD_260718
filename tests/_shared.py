@@ -28,7 +28,8 @@ from easycad.canvas.annotator_core import (
     _seg_ellipse_intersections, _host_outline_local_polygon, _add_border_cut,
     _border_pt_in_gap, _shape_ports_visible, _trim_candidate_segment,
     _open_item_local_pts, _item_local_edges, _trim_candidate_open_segment,
-    _extend_candidate, _ray_seg_intersection, apply_open_item_trim, apply_extend, _tri_rect)
+    _extend_candidate, _ray_seg_intersection, apply_open_item_trim, apply_extend, _tri_rect,
+    _tight_scene_bbox)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect, render_preview
 from easycad.canvas.host_dialogs import _PdfExportDialog
 from easycad.fileio.document import save_document, load_document, load_document_layers, item_to_dict
@@ -249,18 +250,12 @@ def _qc_drag(view, scene_from, scene_to):
 
 
 def _snap_scene_rect(o):
-    # [2026-08-10] `_apply_smart_snap`의 `srect()`와 동일 기준 — 사각형·심볼은 패딩 없는
-    # 실제 외곽선(`_host_outline_local_polygon`), 그 외 타입은 `_content_rect()` 폴백.
-    # 예전엔 이 헬퍼들이 `_content_rect()`(펜폭/2 패딩)를 그대로 썼는데, 그건 딱 그 스냅
-    # 구현이 쓰던 값이라 "정답"처럼 보였을 뿐 실제 테두리 위치는 아니었다(펜폭 1.0 →
-    # 0.5유닛 어긋남, 4354% 줌에서 실사용으로 드러남).
-    if isinstance(o, (_RectItem, _EllipseItem, _SymbolItem)):
-        poly = _host_outline_local_polygon(o)
-        if poly:
-            pts = [o.mapToScene(p) for p in poly]
-            xs = [p.x() for p in pts]; ys = [p.y() for p in pts]
-            return QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
-    return o.mapToScene(o._content_rect()).boundingRect()
+    # [2026-08-10] `_apply_smart_snap`의 `srect()`/`_GroupTransform.bbox()`와 동일 기준 —
+    # 사각형·심볼·타원은 `_tight_scene_bbox`(패딩 없는 실제 외곽선), 그 외 타입은
+    # `_content_rect()` 폴백. 예전엔 이 헬퍼들이 `_content_rect()`(펜폭/2 패딩)를 그대로
+    # 썼는데, 그건 딱 그 스냅 구현이 쓰던 값이라 "정답"처럼 보였을 뿐 실제 테두리 위치는
+    # 아니었다(펜폭 1.0 → 0.5유닛 어긋남, 4354% 줌에서 실사용으로 드러남).
+    return _tight_scene_bbox(o) or o.mapToScene(o._content_rect()).boundingRect()
 
 
 def _cleft(o):

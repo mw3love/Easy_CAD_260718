@@ -142,6 +142,25 @@ def test_group_transform_availability():
 
 
 
+def test_group_bbox_hugs_triangle_real_edge_not_padded_bbox():
+    # [회귀 방지 2026-08-10] 실사용 재현 — 삼각형이 낀 다중선택에서 그룹 점선 테두리의 왼쪽
+    # 변이 삼각형의 실제 뒤쪽 변(back edge)보다 바깥에 떠 보였다. 원인은 `_GroupTransform.
+    # bbox()`가 `_content_rect()`(패딩된 자기 bbox)를 썼기 때문 — `_apply_smart_snap.srect()`
+    # 와 같은 병(`_tight_scene_bbox` 주석 참조)이라 같은 헬퍼로 통일해 고쳤다.
+    w = CanvasWindow()
+    tri = _SymbolItem("triangle", QRectF(0, 0, 140, 100))   # 폭>높이 → 뒤쪽 변에 x-패딩 생김
+    tri.setPen(w.make_pen()); tri.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    tri.setFlags(tri.GraphicsItemFlag.ItemIsSelectable | tri.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tri)
+    rect = _mk_rect(w._scene, w.make_pen(), 100, 0, 100, 100)
+    tri.setSelected(True); rect.setSelected(True)
+    back_x = _tri_rect(tri.rect()).left()   # tri.pos()는 (0,0)이라 로컬=씬
+    g = w._view._group
+    assert abs(g.bbox().left() - back_x) < 1e-6
+
+
+
+
 def test_group_rotate():
     # [Stage1] 그룹 중심 기준 90° 회전 — 각 아이템의 씬 중심이 그룹 중심 둘레로 회전.
     w = CanvasWindow()

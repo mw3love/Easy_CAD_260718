@@ -5195,6 +5195,24 @@ def _host_outline_local_polygon(host) -> list:
     return [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
 
 
+def _tight_scene_bbox(item) -> QRectF | None:
+    """[2026-08-10] `_RectItem`/`_EllipseItem`/`_SymbolItem`의 패딩 없는 실제 외곽선 씬
+    바운딩박스 — `_host_outline_local_polygon`(TRIM 커널) 재사용. 이 도형들은 `_content_rect()`
+    를 override 안 해 `_HandleResizeMixin` 기본값(Qt `boundingRect()`, 펜폭/2 패딩)을 그대로
+    쓰는데, 스마트 정렬 스냅(`core_view._apply_smart_snap`)과 다중선택 그룹 오버레이
+    (`_GroupTransform.bbox`)가 둘 다 이 패딩 없는 값이 필요해 여기 한 곳으로 모았다 — 흩어져
+    있으면(실제로 한 번 그랬다) 한쪽만 고치고 다른 쪽을 놓치는 재발이 반복된다. 해당 없는
+    타입은 None(호출부가 `_content_rect()` 등으로 폴백)."""
+    if not isinstance(item, (_RectItem, _EllipseItem, _SymbolItem)):
+        return None
+    poly = _host_outline_local_polygon(item)
+    if not poly:
+        return None
+    pts = [item.mapToScene(p) for p in poly]
+    xs = [p.x() for p in pts]; ys = [p.y() for p in pts]
+    return QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
+
+
 def _open_item_local_pts(item) -> list:
     """[§8 항목17 5단계] 열린 도형(_LineItem/_PolyArrowItem)의 로컬좌표 정점열 — TRIM/EXTEND가
     도형 종류 무관하게 세그먼트 체인으로 다루는 공통 인터페이스(`_conn_polyline_scene`의 로컬판,
@@ -6406,7 +6424,11 @@ class _GroupTransform:
             return None
         r = None
         for it in its:
-            br = it.mapToScene(it._content_rect()).boundingRect()
+            # [실사용 버그 수정 2026-08-10] 삼각형처럼 bbox와 실제 외곽선이 다른 도형은
+            # `_content_rect()`(패딩된 자기 bbox)를 쓰면 그룹 점선 테두리가 실제 변보다
+            # 바깥으로 떠 보였다(`_apply_smart_snap.srect()`와 같은 병, `_tight_scene_bbox`
+            # 주석 참조) — 재사용해 통일.
+            br = _tight_scene_bbox(it) or it.mapToScene(it._content_rect()).boundingRect()
             r = br if r is None else r.united(br)
         return r
 

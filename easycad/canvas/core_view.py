@@ -696,15 +696,11 @@ class _AnnotatorView(QGraphicsView):
             # 0.5유닛) 위 4종처럼 "아예 안 붙는" 정도는 아니었지만, 고배율에선 또렷이 보이는
             # 오차였다 — 실사용 재현(2026-08-10, 4354% 줌): 사각형 A에 정확히 붙였다고 여긴
             # 사각형 B의 중심점이 화면상 A의 테두리 선 자체가 아니라 그 0.5유닛 바깥(패딩된
-            # bbox 값)에 얹혀, "테두리 오른쪽에 배치된" 것처럼 보였다. `_host_outline_local_
-            # polygon`(TRIM 커널, §8 항목17)이 이미 두 도형의 패딩 없는 실제 외곽선 정점을
-            # 주므로 그대로 재사용 — 정점 스냅 후보(`_real_snap_vertices_local`, 아래)와도
-            # 이제 같은 기준이라 더는 서로 어긋난 유사-중복 후보를 만들지 않는다.
-            if isinstance(o, (_RectItem, _SymbolItem)):
-                pts = [o.mapToScene(p) for p in _host_outline_local_polygon(o)]
-                if pts:
-                    xs = [p.x() for p in pts]; ys = [p.y() for p in pts]
-                    return QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
+            # bbox 값)에 얹혀, "테두리 오른쪽에 배치된" 것처럼 보였다. `_tight_scene_bbox`
+            # (core_shapes.py — `_GroupTransform.bbox`도 같은 이유로 이걸 쓴다)로 통일.
+            tb = _tight_scene_bbox(o)
+            if tb is not None:
+                return tb
             cr = o._content_rect() if hasattr(o, "_content_rect") else o.boundingRect()
             return o.mapToScene(cr).boundingRect()
 
