@@ -1075,6 +1075,22 @@ def test_line_tool_snaps_to_border_on_press_start():
     assert not hasattr(lines[0], "_bound")   # _LineItem은 지속연결 바인딩 개념 자체가 없음(좌표 스냅만)
 
 
+def test_line_tool_idle_hover_shows_snap_preview_and_cross_cursor():
+    # [실사용 지적 2026-08-10, 직전 커밋 후속] "선을 선택하고 도형에 가면 화살표처럼 예고점이
+    # 안 보임. 이동커서만 보임" — `_update_snap_preview`/`_update_hover_cursor`가 그리기
+    # *전*(유휴 hover) 예고를 arrow·sarrow로만 국한해서, line은 테두리 좌표 스냅(직전 커밋)이
+    # 있어도 그리기 시작 전엔 아무 신호가 없었다. 두 곳 다 "line"을 추가해야 한다.
+    w = CanvasWindow(); w.show(); w.set_tool("line"); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)      # 우측 테두리 x=300, 중앙 y=30
+    view = w._view
+    _p, _r, _c, move, _dm, _d = _draw_helpers(view)
+
+    move(QPointF(305, 30))   # 그리기 시작 전, 도형 근처로 그냥 hover
+    assert view._snap_preview is not None and _close(view._snap_preview, QPointF(300, 30))
+    view._update_hover_cursor(view.mapFromScene(QPointF(305, 30)))
+    assert view.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+
+
 
 
 def test_sarrow_click_near_border_no_tiny_arrow():

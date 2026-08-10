@@ -1133,13 +1133,16 @@ class _AnnotatorView(QGraphicsView):
         return best, bexit, bshape
 
     def _update_snap_preview(self, view_pos):
-        """화살표 도구 유휴 시 커서 근처 테두리 최근접점을 마커로 예고(스냅 발동 가능 표시)."""
+        """화살표·선 도구 유휴 시 커서 근처 테두리 최근접점을 마커로 예고(스냅 발동 가능 표시).
+        [실사용 지적 2026-08-10] "line"이 빠져 있었다 — _LineItem은 바인딩이 없을 뿐 테두리
+        좌표 스냅 자체는 이미 지원하는데(직전 커밋), 그리기 전 유휴 예고 마커만 화살표류로
+        국한돼 있어 "선은 도형에 가도 예고점이 안 보인다"는 체감으로 이어졌다."""
         prev = self._snap_preview
         new = None
         # 커서가 이미 선택된 화살표의 끝점/곡선 핸들 위면(= 이동·재스냅 모드, 손가락 커서)
         # '새 화살표 시작' 예고 마커를 띄우지 않는다 — 끝점이 도형 테두리에 붙어 있어
         # 생성-스냅점과 겹칠 때 큰 파란 점이 손가락 커서와 함께 남던 문제 방지.
-        if (self._owner.is_edit_mode() and self._owner.current_tool in ("arrow", "sarrow")
+        if (self._owner.is_edit_mode() and self._owner.current_tool in ("arrow", "sarrow", "line")
                 and not self._drawing
                 and self._selected_endpoint_item(view_pos) is None
                 and self._bend_handle_at(view_pos) is None):
@@ -2623,8 +2626,8 @@ class _AnnotatorView(QGraphicsView):
             vp.setCursor(Qt.CursorShape.IBeamCursor)         # 편집 중 텍스트 내부 — 캐럿
         elif edit_text == "move":
             vp.setCursor(Qt.CursorShape.SizeAllCursor)       # 편집 중 텍스트 테두리 — 이동
-        elif tool in ("arrow", "sarrow") and self._snap_preview is not None:
-            vp.setCursor(Qt.CursorShape.CrossCursor)          # 테두리 스냅 — 화살표 시작(도형 위여도)
+        elif tool in ("arrow", "sarrow", "line") and self._snap_preview is not None:
+            vp.setCursor(Qt.CursorShape.CrossCursor)          # 테두리 스냅 — 화살표·선 시작(도형 위여도)
         elif tool == "pen":
             vp.setCursor(Qt.CursorShape.CrossCursor)         # 펜 — 주석 위에서도 항상 그리기
         elif tool == "trim":
