@@ -5323,6 +5323,91 @@ def _restore_cut_candidate(host, scene_pt: QPointF):
     return best
 
 
+def _edge_point_line_eq(a: QPointF, b: QPointF, p: QPointF):
+    """도형이 (dx,dy)만큼 강체 이동했을 때 "변 a→b가 점 p를 지난다"는 제약을 dx·dy에 대한
+    선형방정식 A*dx + B*dy = C 계수로 반환 — 유도: 변 방향 u=b-a는 이동으로 안 변하므로,
+    (p - (a+d))가 u와 평행 ⟺ cross(p-a-d, u)=0 ⟺ u.y*dx - u.x*dy = cross(p-a, u)."""
+    ux, uy = b.x() - a.x(), b.y() - a.y()
+    qx, qy = p.x() - a.x(), p.y() - a.y()
+    return uy, -ux, qx * uy - qy * ux   # A, B, C
+
+
+def _solve_two_edge_point_translation(edge0, p0: QPointF, edge1, p1: QPointF):
+    """[신규기능 2026-08-10, §8 항목17 후속] "변0이 점0을, 변1이 점1을 동시에 지나야 한다"는
+    두 선형 제약을 연립해 유일한 강체 이동량 (dx,dy)을 역산 — 두 변이 (거의) 평행이면 해가
+    무한하거나 없어 None. 축별로 dx·dy를 독립적으로 고르는 `_apply_smart_snap`의 일반 스냅과
+    달리, TRIM이 애초에 이 두 교차점에서 cut을 만들었으므로 두 변이 다시 정확히 그 두 점을
+    지나도록 풀면 도형이 원래 겹쳤던 자리로 정확히 복원된다(대각선이라도 무관 — 방향이
+    고정된 강체이동이라 이 두 제약이 dx·dy를 완전히 결정)."""
+    a0, b0 = edge0
+    a1, b1 = edge1
+    A0, B0, C0 = _edge_point_line_eq(a0, b0, p0)
+    A1, B1, C1 = _edge_point_line_eq(a1, b1, p1)
+    det = A0 * B1 - A1 * B0
+    if abs(det) < 1e-9:
+        return None   # 두 변이 (거의) 평행 — 유일해 없음
+    dx = (C0 * B1 - C1 * B0) / det
+    dy = (A0 * C1 - A1 * C0) / det
+    return dx, dy
+
+
+def _best_edge_for_point(scene_edges: list, p: QPointF, thr: float, slack: float = 0.08):
+    """scene_edges(씬좌표 (a,b) 목록) 중 p에 가장 가까운 변을 (인덱스, 수선거리)로 반환 —
+    변의 [−slack, 1+slack] 구간(살짝 벗어난 것도 허용) 안에 투영점이 있고 수선거리가 thr
+    이내인 것만 후보. 없으면 None."""
+    best = None
+    for i, (a, b) in enumerate(scene_edges):
+        t, perp = _seg_param_and_perp(a, b, p)
+        if -slack <= t <= 1.0 + slack and perp <= thr:
+            if best is None or perp < best[1]:
+                best = (i, perp)
+    return best
+
+
+def cut_restore_snap_delta(it, other_items: list, thr: float):
+    """[신규기능 2026-08-10, §8 항목17 후속] '자국 복구' 스냅 — 드래그 중인 `it`의 변 두 개가
+    다른 도형의 `_cuts` 경계 두 점(원래 TRIM이 교차로 만들어낸 바로 그 점들)을 동시에 지나도록
+    강체 이동량을 역산해 돌려준다. 삼각형처럼 대각선 변이 사각형 테두리 "중간"(꼭짓점이 아닌
+    임의 지점)을 지나며 만든 cut도 다룬다 — `_apply_smart_snap`의 일반 스냅(정점만, 축별
+    독립)이 원리적으로 못 잡는 자리다(설계 논의 참조). 매칭 실패 시 None."""
+    edges = _item_local_edges(it)
+    if not edges:
+        return None
+    scene_edges = [(it.mapToScene(a), it.mapToScene(b)) for a, b in edges]
+
+    best = None   # (score, dx, dy)
+    for other in other_items:
+        cuts = getattr(other, "_cuts", None) or []
+        if not cuts:
+            continue
+        poly = _host_outline_local_polygon(other)
+        n = len(poly)
+        for edge_i, t0, t1 in cuts:
+            if not (0 <= edge_i < n):
+                continue
+            a, b = poly[edge_i], poly[(edge_i + 1) % n]
+            p0 = other.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0))
+            p1 = other.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t1, a.y() + (b.y() - a.y()) * t1))
+            m0 = _best_edge_for_point(scene_edges, p0, thr)
+            m1 = _best_edge_for_point(scene_edges, p1, thr)
+            if m0 is None or m1 is None:
+                continue
+            i0, perp0 = m0
+            i1, perp1 = m1
+            sol = _solve_two_edge_point_translation(scene_edges[i0], p0, scene_edges[i1], p1)
+            if sol is None:
+                continue
+            dx, dy = sol
+            if math.hypot(dx, dy) > thr * 5.0:   # 안전밸브 — 거의 평행에 가까운 변이 만드는 폭주 해 배제
+                continue
+            score = perp0 + perp1
+            if best is None or score < best[0]:
+                best = (score, dx, dy)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
 def build_trimmed_border_path(host) -> QPainterPath:
     """[신규기능 §8-12, 2026-08-10 §8 항목17 2단계에서 cut 구간 일반형으로 확장] 호스트
     외곽선에서 부착된 포트가 걸친 구간 + `host._cuts`(TRIM으로 잘라낸 일반 구간)를 합쳐

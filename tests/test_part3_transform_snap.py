@@ -1441,3 +1441,88 @@ def test_diagonal_corner_still_snaps_via_continuous_fallback():
     assert _close(snap[1], QPointF(-1.0, 0.0)) or _close(snap[1], QPointF(0.0, -1.0)), snap[1]
 
 
+
+
+# ---------------------------------------------------------------------------
+# [신규기능 2026-08-10, §8 항목17 후속] '자국 복구' 스냅 — TRIM이 도형 대각선 변으로 만든
+# cut 경계 두 점에, 다시 그 변 두 개가 정확히 지나도록 강체이동을 역산(cut_restore_snap_delta).
+# 대각선 변이 사각형 테두리 "중간"(꼭짓점 아닌 임의 지점)을 지나며 만든 cut은 위 정점 스냅
+# (`_real_snap_vertices_local`)이 원리적으로 못 잡는 케이스라 별도 함수로 뺐다.
+# ---------------------------------------------------------------------------
+
+def _tri_flat(w):
+    tri = _SymbolItem("triangle", QRectF(0, 0, 90, 90))   # 정사각 박스 → 뒤쪽 변 x-패딩 없음
+    tri.setPen(w.make_pen()); tri.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    tri.setFlags(tri.GraphicsItemFlag.ItemIsSelectable | tri.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tri)
+    return tri
+
+
+def _make_apex_poke_cut(rect, tri, orig_pos: QPointF):
+    """삼각형을 orig_pos에 두었을 때 꼭짓점만 rect 왼쪽 변(x=0) 안으로 들어가도록 겹친 상태를
+    만들고, 그 두 대각선 변이 rect 왼쪽 변을 가로지르는 교차점으로 실제 cut을 등록한다(TRIM
+    도구를 흉내— 계산은 직접, `_add_border_cut` 포맷과 동일)."""
+    tri.setPos(orig_pos)
+    tr = _tri_rect(tri.rect())
+    apex = tri.mapToScene(QPointF(tr.right(), tr.center().y()))
+    bt = tri.mapToScene(QPointF(tr.left(), tr.top()))
+    bb = tri.mapToScene(QPointF(tr.left(), tr.bottom()))
+
+    def cross_x0(p1, p2):
+        t = (0.0 - p1.x()) / (p2.x() - p1.x())
+        return QPointF(0.0, p1.y() + t * (p2.y() - p1.y()))
+
+    c_top, c_bot = cross_x0(bt, apex), cross_x0(bb, apex)
+    poly = [rect.rect().topLeft(), rect.rect().topRight(),
+            rect.rect().bottomRight(), rect.rect().bottomLeft()]
+    a, b = poly[3], poly[0]   # 왼쪽 변(BL→TL) — rect.pos()가 (0,0)이라 로컬=씬
+    t0 = (c_top.y() - a.y()) / (b.y() - a.y())
+    t1 = (c_bot.y() - a.y()) / (b.y() - a.y())
+    rect._cuts = [(3, min(t0, t1), max(t0, t1))]
+
+
+def test_cut_restore_snap_diagonal_edges_return_exactly():
+    # [신규기능] 핵심 시나리오 — 삼각형 꼭짓점만 사각형에 살짝 겹쳐 cut을 만든 뒤, 삼각형을
+    # 멀리 뗐다가 원래 자리 "근처"(정확히는 아님)로 되돌리면, 대각선 변 두 개가 원래 교차점을
+    # 다시 정확히 지나도록 스냅돼 원래 자리로 완전히 복원돼야 한다.
+    w = CanvasWindow()
+    rect = _mk_rect(w._scene, w.make_pen(), 0, 0, 200, 200)
+    tri = _tri_flat(w)
+    orig_pos = QPointF(-45, 50)   # 뒤쪽 변은 rect 밖(x<0), 꼭짓점만 rect 안으로
+    _make_apex_poke_cut(rect, tri, orig_pos)
+
+    tri.setPos(QPointF(500, 500))                       # 멀리 뗀다
+    tri.setPos(QPointF(orig_pos.x() + 2.0, orig_pos.y() - 1.5))   # 근처(정확히는 아님)로 복귀
+    tri.setSelected(True)
+    w._view._apply_smart_snap()
+    assert abs(tri.pos().x() - orig_pos.x()) < 1e-6
+    assert abs(tri.pos().y() - orig_pos.y()) < 1e-6
+
+
+def test_cut_restore_snap_does_not_fire_when_far_away():
+    # [회귀 방지] 삼각형이 cut 경계점 근처가 전혀 아니면(임계 밖) 이 스냅이 조용히 통과해야
+    # 한다 — 아무 도형이나 cut 근처에 있단 이유만으로 원치 않게 순간이동하면 안 된다.
+    w = CanvasWindow()
+    rect = _mk_rect(w._scene, w.make_pen(), 0, 0, 200, 200)
+    tri = _tri_flat(w)
+    orig_pos = QPointF(-45, 50)
+    _make_apex_poke_cut(rect, tri, orig_pos)
+
+    far_pos = QPointF(orig_pos.x() + 500, orig_pos.y() + 500)
+    tri.setPos(far_pos)
+    tri.setSelected(True)
+    w._view._apply_smart_snap()
+    assert abs(tri.pos().x() - far_pos.x()) < 1e-3   # 살짝 다른 축 정렬은 몰라도 순간이동은 없음
+    assert abs(tri.pos().y() - far_pos.y()) < 1e-3
+
+
+def test_cut_restore_snap_ignored_when_other_has_no_cuts():
+    # [회귀 방지] cut이 아예 없는 평범한 사각형 근처에서는 이 스냅 경로가 관여하지 않고
+    # (None을 돌려주고) 일반 스냅으로 넘어가야 한다 — 크래시·오동작 없음만 확인.
+    w = CanvasWindow()
+    rect = _mk_rect(w._scene, w.make_pen(), 0, 0, 200, 200)
+    tri = _tri_flat(w)
+    tri.setPos(QPointF(-45, 50)); tri.setSelected(True)
+    w._view._apply_smart_snap()   # 예외 없이 통과하면 충분(어떤 이동이든 정상 범위)
+
+
