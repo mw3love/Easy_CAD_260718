@@ -426,9 +426,9 @@ class _UIBuildMixin:
             app.setPalette(_dark_palette() if dark else _light_palette())
         self._scene.setBackgroundBrush(QBrush(_CANVAS_BG[key]))
         # 아이콘 재생성: 액션(파일/보기 26종 전부 — SVG 11종·QPainter 8종 모두 이제 중립색이라
-        # 테마 전환마다 실제로 재칠됨) + 팔레트/심볼(중립색) + 상단 그리기 도구 6종(2026-08-02
-        # 4차 피드백으로 코랄 고정 → 중립색 전환, 이제 테마 전환 시 재생성 필요) + 화살표
-        # 종류별 아이콘(별도 헬퍼가 종류를 함께 챙김).
+        # 테마 전환마다 실제로 재칠됨) + 팔레트/심볼(중립색) + 상단 그리기 도구 7종(2026-08-02
+        # 4차 피드백으로 코랄 고정 → 중립색 전환, 이제 테마 전환 시 재생성 필요 — 2026-08-10
+        # TRIM 추가로 6→7종) + 화살표 종류별 아이콘(별도 헬퍼가 종류를 함께 챙김).
         for act, name in getattr(self, "_icon_actions", ()):
             act.setIcon(_act_icon(name))
         for k, b in getattr(self, "_shape_tool_buttons", {}).items():

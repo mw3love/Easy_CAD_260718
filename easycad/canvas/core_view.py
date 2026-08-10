@@ -42,6 +42,7 @@ class _AnnotatorView(QGraphicsView):
         Qt.Key.Key_1: "select", Qt.Key.Key_2: "rect", Qt.Key.Key_3: "arrow",
         Qt.Key.Key_4: "text", Qt.Key.Key_5: "ellipse", Qt.Key.Key_6: "line",
         Qt.Key.Key_7: "pen", Qt.Key.Key_8: "badge",
+        Qt.Key.Key_T: "trim",   # [§8 항목17 4단계] 숫자 1~9가 다 차 letter 단축키(AutoCAD TR 관례)
     }
 
     def __init__(self, scene: QGraphicsScene, owner):
@@ -153,6 +154,10 @@ class _AnnotatorView(QGraphicsView):
         # [호버 강조 2026-07-30] 선택된 도형의 핸들(모서리·회전·qc-dot·끝점) 위 hover — (item, key)
         # or None. 크기를 고정으로 통일하며 "이 점이 잡힌다"를 색 반전으로 대신 알려준다.
         self._handle_hover = None
+        # [§8 항목17 4단계, 2026-08-10] TRIM 도구 — 문지르기(Quick Trim) 상태.
+        self._trim_preview = None    # (host, edge_index, t0, t1) or None — 지금 예고 중인 구간
+        self._trim_dragging = False  # press 이후 계속 문지르는 중
+        self._trim_seen: set = set()  # 이번 드래그에서 이미 커밋한 (host_id, edge, t0, t1) — 중복 방지
         # 선택이 바뀌면 그룹 오버레이(bbox·핸들)를 다시 그린다(개별 아이템 repaint와 별개).
         scene.selectionChanged.connect(self.viewport().update)
 
@@ -794,6 +799,32 @@ class _AnnotatorView(QGraphicsView):
         return [it for it in self.scene().items()
                 if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem)) and it not in skip]
 
+    def _trim_preview_at(self, view_pos):
+        """[§8 항목17 4단계, 2026-08-10] TRIM 도구 호버 — 커서 근처 닫힌 도형(사각·타원·심볼,
+        `_PathItem`은 계획서 스코프 밖이라 제외) 테두리에서 다른 도형과의 교차로 갈리는 구간을
+        찾는다. 반환: (host, edge_index, t0, t1) 또는 None. BSP 공간쿼리(`_conn_shapes_near`)
+        1회로 target 선정과 cutter 후보를 겸해 재사용(2026-08-08 전체스캔 성능 함정 회피,
+        `_find_port_host_near`와 같은 반경 `_PORT_ATTACH_MARGIN` — 겹쳐 놓고 자르는 워크플로가
+        포트 부착과 같은 "근접" 감각이라 값도 공유)."""
+        scene_pt = self.mapToScene(view_pos)
+        candidates = [c for c in self._conn_shapes_near(scene_pt, _PORT_ATTACH_MARGIN)
+                      if isinstance(c, (_RectItem, _EllipseItem, _SymbolItem))]
+        if not candidates:
+            return None
+        best_host, best_dist = None, None
+        for cand in candidates:
+            hit = _nearest_border_visible(cand, scene_pt)
+            if hit is None:
+                continue
+            d = self._view_dist(hit[0], view_pos)
+            if d <= self._BORDER_SNAP_PX and (best_dist is None or d < best_dist):
+                best_dist, best_host = d, cand
+        if best_host is None:
+            return None
+        others = [c for c in candidates if c is not best_host]
+        seg = _trim_candidate_segment(best_host, scene_pt, others)
+        return (best_host, *seg) if seg is not None else None
+
     def _border_snap_at(self, view_pos, exclude=None):
         """커서 근처 도형/선/화살표에 스냅 → (snap_scene, exit_unit, shape) 또는 None.
         [우리 확장] 포트/끝점 우선(_PORT_SNAP_PX) + 연속 폴백(_BORDER_SNAP_PX). 도형은 shape로
@@ -931,6 +962,27 @@ class _AnnotatorView(QGraphicsView):
         painter.setPen(QPen(QColor("white"), 1.5 / s))
         painter.setBrush(QBrush(QColor(_BLUE)))
         painter.drawEllipse(sp, base, base)
+
+    def _draw_trim_preview(self, painter, s):
+        """[§8 항목17 4단계] TRIM 도구 호버 예고 — 잘릴 구간을 빨간 점선으로(계획서 "조작"
+        원문: "호버하면 지워질 구간을 빨간 점선으로 예고"). cosmetic 펜이라 줌과 무관하게
+        화면 굵기가 고정(러버밴드 크로싱 점선과 같은 관례, drawForeground 상단 참조)."""
+        if self._trim_preview is None:
+            return
+        host, edge_i, t0, t1 = self._trim_preview
+        poly = _host_outline_local_polygon(host)
+        n = len(poly)
+        if not (0 <= edge_i < n):
+            return
+        a, b = poly[edge_i], poly[(edge_i + 1) % n]
+        p0 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0))
+        p1 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t1, a.y() + (b.y() - a.y()) * t1))
+        pen = QPen(QColor("#ff3b30"), 2.4)
+        pen.setCosmetic(True)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(p0, p1)
 
     def _conn_shapes_near(self, scene_pt: QPointF, margin: float):
         """[성능 조사 2026-07-30] scene.items(rect) 공간 인덱스(Qt BSP 트리)로 scene_pt 근방만
@@ -1288,6 +1340,7 @@ class _AnnotatorView(QGraphicsView):
         # [우리 확장] 화살표 도구로 도형 근처면 포트 점 예고(스냅 마커보다 먼저 그려 아래 깔림).
         self._draw_port_dots(painter, s)
         self._draw_segment_preview_pill(painter, s)
+        self._draw_trim_preview(painter, s)
         # 그리는 중(드래그)이거나 클릭 배치 중이면 스냅된 시작·tip에 마커(곡선·직선화살 공통).
         drawing = (self._drawing and self._temp is not None) or (self._place is not None)
         if drawing:
@@ -1584,6 +1637,18 @@ class _AnnotatorView(QGraphicsView):
                 it.set_points(self._start, self._start)
                 self._begin_draw(it)
                 return
+        # [§8 항목17 4단계] TRIM 도구 — 예고 중인 구간이 있으면 1회 확정(문지르기 시작).
+        # 도형 선택/이동 분기(아래)보다 먼저 가로챈다 — 안 그러면 테두리를 정확히 누를수록
+        # (예고점이 뜨는 바로 그 자리) 오히려 선택/이동으로 걸리는 역설이 생긴다(2026-08-09
+        # 포트 배치 때 확인한 것과 같은 함정, `near_port_host` 특례 참조).
+        if tool == "trim":
+            if self._trim_preview is not None:
+                host, edge_i, t0, t1 = self._trim_preview
+                _add_border_cut(host, edge_i, t0, t1)
+                self._trim_seen = {(id(host), edge_i, round(t0, 6), round(t1, 6))}
+                self._trim_dragging = True
+                self.viewport().update()
+            return
         if tool is None:
             # 손 모드: 빈 영역 좌드래그 = 창 이동, 주석 위 = 단일 선택/이동(하이브리드).
             if self._is_empty_area(event.position().toPoint()):
@@ -2213,6 +2278,8 @@ class _AnnotatorView(QGraphicsView):
             vp.setCursor(Qt.CursorShape.CrossCursor)          # 테두리 스냅 — 화살표 시작(도형 위여도)
         elif tool == "pen":
             vp.setCursor(Qt.CursorShape.CrossCursor)         # 펜 — 주석 위에서도 항상 그리기
+        elif tool == "trim":
+            vp.setCursor(Qt.CursorShape.CrossCursor)         # [§8 항목17 4단계] 문지르기 — 도형 위에서도 항상 십자(펜과 동일 이유)
         elif not self._is_empty_area(view_pos):
             vp.setCursor(Qt.CursorShape.SizeAllCursor)       # 주석 위 — 선택/이동
         elif self._group_body_area_at(view_pos):
@@ -2250,6 +2317,16 @@ class _AnnotatorView(QGraphicsView):
             item = self._table_col_drag
             local = item.mapFromScene(self.mapToScene(event.position().toPoint()))
             item._drag_col_boundary_to(local.x())
+            self.viewport().update()
+            return
+        if self._trim_dragging:  # [§8 항목17 4단계] 문지르기 — 지나가는 구간을 계속 커밋
+            self._trim_preview = self._trim_preview_at(event.position().toPoint())
+            if self._trim_preview is not None:
+                host, edge_i, t0, t1 = self._trim_preview
+                key = (id(host), edge_i, round(t0, 6), round(t1, 6))
+                if key not in self._trim_seen:
+                    _add_border_cut(host, edge_i, t0, t1)
+                    self._trim_seen.add(key)
             self.viewport().update()
             return
         if self._rb_active:  # [우리 확장] 방향 감지 러버밴드 — 드래그 중엔 저비용 미리보기만
@@ -2354,6 +2431,12 @@ class _AnnotatorView(QGraphicsView):
             self._port_dot_shape = self._port_dot_target(self.mapToScene(event.position().toPoint()))
             if prev_pd is not self._port_dot_shape:
                 self.viewport().update()
+            # [§8 항목17 4단계] TRIM 도구 호버 예고 — 다른 도구에선 항상 비운다(잔상 방지).
+            prev_tp = self._trim_preview
+            self._trim_preview = (self._trim_preview_at(event.position().toPoint())
+                                   if self._owner.current_tool == "trim" else None)
+            if prev_tp != self._trim_preview:
+                self.viewport().update()
             self._update_hover_cursor(event.position().toPoint())
         if self._drawing and self._temp is not None:
             tool = self._owner.current_tool
@@ -2420,6 +2503,11 @@ class _AnnotatorView(QGraphicsView):
             self._owner._win_drag_end()
             self._none_win_dragging = False
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+            return
+        if self._trim_dragging:  # [§8 항목17 4단계] 문지르기 종료
+            self._trim_dragging = False
+            self._trim_seen = set()
+            self.viewport().update()
             return
         if self._seg_drag is not None:  # [M4-4] 세그먼트 드래그 종료 — 정점 정리 + undo 커밋
             item = self._seg_drag

@@ -5337,6 +5337,65 @@ def _paint_filled_trimmed_border(item, painter) -> None:
         painter.drawPath(build_trimmed_border_path(item))
 
 
+def _trim_candidate_segment(host, scene_pt, other_shapes):
+    """[신규기능 §8 항목17 4단계] TRIM(문지르기) 호버·커밋이 공유하는 핵심 계산 — host 테두리
+    위 `scene_pt` 근처 변에서, `other_shapes`(cutter 후보)와의 교차점으로 갈리는 구간
+    (edge_index, t0, t1)을 찾는다. cutter가 그 변에 하나도 안 걸리면 None(자를 게 없음 —
+    "포트 대체 워크플로"처럼 실제 교차가 있어야 하는 툴 스코프, 빈 변 통째 삭제는 대상 아님).
+
+    구현은 2단계 결정("타원도 폴리곤 근사로 통일")을 그대로 재사용한다 — host와 cutter 둘 다
+    `_host_outline_local_polygon`으로 폴리곤화하면 원·타원 cutter도 특례 없이 `_seg_seg_
+    intersection`(선분-선분) 하나로 처리된다(선분-원/타원 전용 커널은 이 경로에선 불필요 —
+    5단계 EXTEND처럼 진짜 곡선 정밀도가 필요한 다른 용도를 위해 남겨둔다). cutter 폴리곤은
+    `other.mapToScene`→`host.mapFromScene` 왕복으로 host 로컬좌표로 옮겨(1단계 결정: 커널은
+    좌표계 무관, 호출부가 항상 대상 host 로컬좌표로 변환) 회전·스케일이 달라도 그대로 맞는다."""
+    hit = _nearest_border_visible(host, scene_pt)
+    if hit is None:
+        return None
+    local_pt = host.mapFromScene(hit[0])
+    poly = _host_outline_local_polygon(host)
+    n = len(poly)
+    if n < 2:
+        return None
+    best_edge, best_t, best_perp = None, None, None
+    for i in range(n):
+        a, b = poly[i], poly[(i + 1) % n]
+        t, perp = _seg_param_and_perp(a, b, local_pt)
+        if -1e-6 <= t <= 1.0 + 1e-6 and (best_perp is None or perp < best_perp):
+            best_edge, best_t, best_perp = i, max(0.0, min(1.0, t)), perp
+    if best_edge is None:
+        return None
+    a, b = poly[best_edge], poly[(best_edge + 1) % n]
+    ts = [0.0, 1.0]
+    for other in other_shapes:
+        if other is host or isinstance(other, _PathItem):
+            continue
+        opoly = _host_outline_local_polygon(other)
+        m = len(opoly)
+        if m < 2:
+            continue
+        opoly_h = [host.mapFromScene(other.mapToScene(p)) for p in opoly]
+        for j in range(m):
+            c, d = opoly_h[j], opoly_h[(j + 1) % m]
+            p = _seg_seg_intersection(a, b, c, d)
+            if p is None:
+                continue
+            t, _perp = _seg_param_and_perp(a, b, p)
+            if -1e-6 <= t <= 1.0 + 1e-6:
+                ts.append(max(0.0, min(1.0, t)))
+    ts = sorted(set(round(t, 9) for t in ts))
+    if len(ts) <= 2:
+        return None   # 이 변에 걸친 cutter가 없음 — 자를 게 없다
+    lo, hi = 0.0, 1.0
+    for k in range(len(ts) - 1):
+        if ts[k] - 1e-6 <= best_t <= ts[k + 1] + 1e-6:
+            lo, hi = ts[k], ts[k + 1]
+            break
+    if hi - lo < 1e-6:
+        return None
+    return best_edge, lo, hi
+
+
 def _shape_ports(item):
     """도형의 이산 접속점(포트) → [(scene_pt, 바깥법선), ...]. 변 중점 4개(N·E·S·W)를
     _nearest_border로 '실제 외곽선'에 투영한다 — 네모·원은 변 중점 그대로, 심볼은 슬랜트 변

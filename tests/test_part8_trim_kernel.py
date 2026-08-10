@@ -11,6 +11,12 @@ QPointF/QRectF만으로 검증한다 — 렌더(간격이 실제로 화면·PDF�
 로만 확인했지만, 여기서부터는 진짜 `_RectItem`/`_EllipseItem`/`_SymbolItem.paint()`가
 `_cuts`가 있을 때 실제로 갈아타는 코드 경로(`_paint_filled_trimmed_border`)를 검증한다.
 
+3단계(2026-08-10) — 히트·스냅(`_border_pt_in_gap`/`_shape_ports_visible`)이 cut 구간을
+호버·스냅에서 인식하는지 검증(연속 폴백 + 이산 4점 둘 다).
+
+4단계(2026-08-10) — TRIM 도구 UI(문지르기). 순수 기하 계산(`_trim_candidate_segment`)과
+`_AnnotatorView`를 실제로 띄운 press/move/release 종단 시나리오를 함께 검증한다.
+
 tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easycad.py (전체) 또는
 pytest test_part8_trim_kernel.py.
 """
@@ -349,3 +355,173 @@ def test_cut_border_gap_does_not_punch_through_fill():
     c = QColor(img.pixel(120, 80))   # 도형 내부 중앙 부근 — 흰 배경이 아니라 채움색이어야 함
     assert (c.red(), c.green(), c.blue()) == (0xcf, 0xe8, 0xff), \
         "cut이 테두리를 넘어 채움까지 뚫음(비파괴 데이터모델 위반)"
+
+
+# ---- 4단계: TRIM 도구(문지르기) — 기하 계산 -----------------------------------------------
+
+def test_trim_candidate_segment_finds_gap_between_two_crossings():
+    # 계획서 "포트 대체 워크플로": 네모(host) 위에 작은 네모(cutter)를 겹쳐 놓고 그 교차 구간을
+    # 자른다. cutter가 host 위쪽 변(y=0, x 0~600)을 x=280~320에서 가로지른다.
+    host = _RectItem(QRectF(0, 0, 600, 400))
+    cutter = _RectItem(QRectF(280, -20, 40, 40))
+    seg = _trim_candidate_segment(host, QPointF(300, 0), [cutter])
+    assert seg is not None
+    edge_i, t0, t1 = seg
+    assert edge_i == 0
+    assert abs(t0 - 280.0 / 600.0) < 1e-6
+    assert abs(t1 - 320.0 / 600.0) < 1e-6
+
+
+def test_trim_candidate_segment_none_without_cutter():
+    # cutter가 하나도 걸치지 않으면 "자를 게 없음"(빈 구간 통짜 삭제는 스코프 밖).
+    host = _RectItem(QRectF(0, 0, 600, 400))
+    assert _trim_candidate_segment(host, QPointF(300, 0), []) is None
+
+
+def test_trim_candidate_segment_clamps_to_edge_end_when_cutter_extends_past_corner():
+    # cutter가 host 오른쪽 모서리 밖까지 뻗치면(교차점이 변 하나뿐) 그쪽 경계는 변의 끝(t=1)까지.
+    host = _RectItem(QRectF(0, 0, 600, 400))
+    cutter = _RectItem(QRectF(580, -20, 70, 40))   # x=580~650, host 밖으로 뻗침
+    seg = _trim_candidate_segment(host, QPointF(595, 0), [cutter])
+    assert seg is not None
+    edge_i, t0, t1 = seg
+    assert edge_i == 0
+    assert abs(t0 - 580.0 / 600.0) < 1e-6
+    assert abs(t1 - 1.0) < 1e-6
+
+
+def test_trim_candidate_segment_handles_ellipse_cutter_via_polygon_approx():
+    # [2단계 결정 재사용 확인] 원/타원 cutter도 특례 없이 폴리곤 근사로 처리된다 — 전용
+    # 선분-원 커널(_seg_circle_intersections)을 안 써도 이 경로에서 동작해야 한다.
+    host = _RectItem(QRectF(0, 0, 600, 400))
+    cutter = _EllipseItem(QRectF(270, -30, 60, 60))   # 중심(300,0), 반지름 30
+    seg = _trim_candidate_segment(host, QPointF(300, 0), [cutter])
+    assert seg is not None
+    edge_i, t0, t1 = seg
+    assert edge_i == 0
+    assert abs(t0 - 270.0 / 600.0) < 0.01
+    assert abs(t1 - 330.0 / 600.0) < 0.01
+
+
+def test_trim_candidate_segment_pathitem_cutter_ignored():
+    # DXF 베지어 폴백(_PathItem)은 계획서 도형 범위 밖 — cutter 후보에서 조용히 제외된다.
+    host = _RectItem(QRectF(0, 0, 600, 400))
+    path = QPainterPath()
+    path.addRect(QRectF(280, -20, 40, 40))
+    cutter = _PathItem(path)
+    assert _trim_candidate_segment(host, QPointF(300, 0), [cutter]) is None
+
+
+# ---- 4단계: TRIM 도구(문지르기) — 실제 뷰 종단 시나리오 -----------------------------------
+
+def test_trim_tool_click_commits_cut_and_drag_continues_rubbing():
+    """[§8 항목17 4단계] 실제 `_AnnotatorView`에 press/move/release를 흘려 TRIM 도구 전체
+    파이프라인(호버 예고 → 클릭 확정 → 드래그로 다음 교차 구간까지 문지르기 → release 종료)을
+    검증한다. host 위쪽 변에 겹친 cutter 2개를 두고, 첫 번째는 클릭으로, 두 번째는 드래그로
+    커밋되는지 확인 — "클릭=복제/드래그=화살표"류 다른 상호작용과 안 겹치는지도 함께 본다."""
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)
+    _mk_pen_rect(w, x=80, y=-20, ww=40, hh=40)     # cutter1, x=80~120
+    _mk_pen_rect(w, x=480, y=-20, ww=40, hh=40)    # cutter2, x=480~520
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+
+    # 실사용 흐름대로: hover(move, 버튼 없음) → 예고가 뜬다.
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(100, 0), NB, NB))
+    assert view._trim_preview is not None
+    tp_host, tp_edge, tp_t0, tp_t1 = view._trim_preview
+    assert tp_host is host and tp_edge == 0
+    assert abs(tp_t0 - 80.0 / 600.0) < 1e-6 and abs(tp_t1 - 120.0 / 600.0) < 1e-6
+
+    # 클릭 1회 = 확정.
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(100, 0), L, L))
+    assert getattr(host, "_cuts", None) == [(0, tp_t0, tp_t1)]
+    assert view._trim_dragging is True
+
+    # 드래그로 두 번째 교차 지점까지 이동 — 문지르기로 이어서 커밋.
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(500, 0), NB, L))
+    assert len(host._cuts) == 2
+    edge_i2, t0_2, t1_2 = host._cuts[1]
+    assert edge_i2 == 0
+    assert abs(t0_2 - 480.0 / 600.0) < 1e-6 and abs(t1_2 - 520.0 / 600.0) < 1e-6
+
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(500, 0), L, NB))
+    assert view._trim_dragging is False
+    assert view._trim_seen == set()
+    assert len(host._cuts) == 2   # release가 새 cut을 추가하지 않음
+
+
+def test_trim_tool_does_not_move_or_select_shapes():
+    # TRIM 도구가 켜진 동안은 클릭해도 도형 선택/이동이 일어나지 않는다(다른 도구와 혼선 방지).
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+
+    # cutter 없이 호스트 몸통 안쪽을 클릭 — 자를 게 없으니 아무 일도 없어야 하고, 선택도 안 된다.
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(300, 200), L, L))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(300, 200), L, NB))
+    assert not host.isSelected()
+    assert getattr(host, "_cuts", None) in (None, [])
+
+
+def test_trim_preview_renders_red_dashed_gap_pixel():
+    """[§8 항목17 4단계 렌더] 계획서 "조작" 원문: 호버하면 지워질 구간을 빨간 점선으로 예고.
+    실제 `drawForeground`(scene.render 경유)에서 그 구간 픽셀이 빨갛게 나오는지 확인."""
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QGraphicsView
+    NB = Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)
+    _mk_pen_rect(w, x=280, y=-20, ww=40, hh=40)   # cutter, x=280~320
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+    # [함정] view는 CanvasWindow 레이아웃의 자식이라 view.resize()가 show() 후 레이아웃에
+    # 덮어써진다 — 창을 먼저 리사이즈·표시해 레이아웃을 안정시킨 뒤에야 실제 view 크기가
+    # 확정된다(실측: resize(700,500) 요청해도 show() 후 900×644로 되돌아감).
+    w.resize(900, 700)
+    w.show()
+    QApplication.processEvents()
+    QApplication.processEvents()
+    view.setSceneRect(QRectF(-50, -50, 700, 500))
+    view.fitInView(QRectF(-50, -50, 700, 500), Qt.AspectRatioMode.KeepAspectRatio)
+    QApplication.processEvents()
+
+    vp = QPointF(view.mapFromScene(QPointF(300, 0)))
+    view.mouseMoveEvent(QMouseEvent(QEvent.Type.MouseMove, vp, vp, NB, NB,
+                                     Qt.KeyboardModifier.NoModifier))
+    assert view._trim_preview is not None
+
+    QApplication.processEvents()
+    img = view.grab().toImage()
+    dpr = img.width() / view.width()   # 오프스크린 플랫폼 배율 흡수(실측 1.0이지만 안전하게)
+    px, py = int(vp.x() * dpr), int(vp.y() * dpr)
+    reddest = None
+    for dx in range(-4, 5):
+        for dy in range(-2, 3):
+            c = QColor(img.pixel(px + dx, py + dy))
+            if reddest is None or c.red() - c.green() > reddest[0] - reddest[1]:
+                reddest = (c.red(), c.green(), c.blue())
+    assert reddest is not None and reddest[0] > 180 and reddest[0] - reddest[1] > 60, \
+        f"TRIM 예고 구간에서 빨간 점선을 못 찾음: {reddest}"

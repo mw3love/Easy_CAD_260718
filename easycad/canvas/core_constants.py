@@ -92,6 +92,9 @@ _TOOLS = [
     ("select", "선택", "1"), ("rect", "네모", "2"), ("arrow", "화살표", "3"),
     ("text", "텍스트", "4"), ("ellipse", "원", "5"), ("line", "선", "6"),
     ("pen", "펜", "7"), ("badge", "번호", "8"), ("sarrow", "직선화살", "9"),
+    # [§8 항목17 4단계, 2026-08-10] TRIM(문지르기) — 숫자 1~9는 이미 다 찼고(9는 비움) 새
+    # 도구라 letter 단축키. AutoCAD 관례(TR)와 겹치는 첫 글자 T, 비어 있는 키(2026-08-10 확인).
+    ("trim", "자르기", "T"),
 ]
 
 
@@ -208,8 +211,8 @@ def _svg_icon(name: str, size: int = 22, color: QColor | None = None) -> QIcon:
     return icon
 
 
-# _tool_icon이 실제로 받는 도구 이름 전부(상단 툴바 6종 + 화살표 종류전환용 sarrow).
-_TOOL_ICON_NAMES = frozenset({"select", "arrow", "text", "line", "pen", "badge", "sarrow"})
+# _tool_icon이 실제로 받는 도구 이름 전부(상단 툴바 7종 + 화살표 종류전환용 sarrow).
+_TOOL_ICON_NAMES = frozenset({"select", "arrow", "text", "line", "pen", "badge", "sarrow", "trim"})
 
 
 def _tool_icon(tool: str, color: QColor | None = None) -> QIcon:

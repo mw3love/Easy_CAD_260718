@@ -7,10 +7,12 @@ from _shared import *  # noqa: F401,F403
 
 def test_host_construction():
     w = CanvasWindow()
-    # 상단 툴바 = 그리기 도구 6종(네모·원은 왼쪽 「도형」 팔레트, 직선화살은 화살표 1개로 통합).
-    assert len(w._tool_buttons) == 6
+    # 상단 툴바 = 그리기 도구 7종(네모·원은 왼쪽 「도형」 팔레트, 직선화살은 화살표 1개로 통합,
+    # 2026-08-10 §8 항목17 4단계로 TRIM 추가 6→7).
+    assert len(w._tool_buttons) == 7
     assert not ({"rect", "ellipse", "sarrow"} & set(w._tool_buttons))
     assert "arrow" in w._tool_buttons                      # 화살표 버튼 하나가 직선·곡선·직각 대표
+    assert "trim" in w._tool_buttons
     # 왼쪽 팔레트: 기본(네모·원·삼각형·포트 2종[신규기능 §8-12]) + 내 심볼(SVG 가져오기).
     # (2026-08-04: "순서도" 섹션 18종 제거 — 파라메트릭 심볼 전략 폐기, SVG import로 전환).
     assert set(w._shape_tool_buttons) == {
@@ -30,8 +32,8 @@ def test_toolbar_icons_and_actions():
     # 아이콘을 가진다. 단축키 안내 라벨은 도움말 액션으로 분리.
     from easycad.canvas.host_widgets import _act_icon
     w = CanvasWindow()
-    # 그리기 도구 6종 모두 아이콘 보유(텍스트 버튼 아님).
-    assert len(w._tool_buttons) == 6
+    # 그리기 도구 7종 모두 아이콘 보유(텍스트 버튼 아님, 2026-08-10 TRIM 추가 6→7).
+    assert len(w._tool_buttons) == 7
     for b in w._tool_buttons.values():
         assert not b.icon().isNull()
     # 파일/삽입/보기 액션이 아이콘을 가진다. [신규기능] DXF는 열기/저장(Ctrl+O/S)에
