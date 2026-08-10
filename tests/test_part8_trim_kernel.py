@@ -290,6 +290,43 @@ def test_real_paint_renders_cut_gap_on_rotated_host():
     assert darkest(img, px, py) > 150, "회전된 호스트에서 cut gap이 제 위치에 안 뜸"
 
 
+def test_cut_trimmed_host_border_is_not_snappable_or_hoverable():
+    # [§8 항목17 3단계, 2026-08-10] 포트 트림(2026-08-09,
+    # tests/test_part4_ports_fileio.py::test_port_trimmed_host_border_is_not_snappable_or_hoverable)
+    # 과 같은 원칙을 TRIM cut에도 적용 — "스냅되는 곳 == 선이 그려진 곳"을 이산 4점(N/E/S/W)·
+    # 연속 폴백 양쪽에서 유지한다. 사각형 위쪽 변 정중앙은 정확히 discrete N 포인트와 같은
+    # 자리라, 연속 폴백(_nearest_border_visible)만 고치고 이산 경로(_shape_ports_visible)를
+    # 빼먹으면 이 케이스가 그대로 새는 함정이 있다 — 실제로 1차 구현에서 이 사실을 발견해
+    # `_border_snap_at`/`_qc_snap_target`의 원래 `_shape_ports(sh)` 호출도 함께 고쳤다.
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)   # 위쪽 변 정중앙(N) = (300, 0)
+    w._scene.clearSelection()
+    _add_border_cut(host, 0, 0.25, 0.75)   # 위쪽 변 x=150~450 — N(300,0) 포함
+    gap_pt = host.mapToScene(QPointF(300, 0))
+
+    # ⓐ 연속 폴백: cut 구간은 호스트 테두리로 안 잡힌다. 원본 _nearest_border는 그대로여야
+    # 한다(포트 부착·드래그가 이걸 쓰기 때문).
+    assert _nearest_border_visible(host, gap_pt) is None
+    assert _close(_nearest_border(host, gap_pt)[0], gap_pt, eps=0.01)
+
+    # ⓑ 이산 4점: N이 마침 cut 안에 있으므로 스냅 후보 목록에서 빠져야 한다(E/S/W는 그대로).
+    visible_pts = [sp for sp, _n in _shape_ports_visible(host)]
+    assert not any(_close(p, gap_pt, eps=0.01) for p in visible_pts), \
+        "cut에 걸친 discrete N 포인트가 그대로 스냅 후보에 남음"
+    assert len(visible_pts) == 3
+
+    # ⓒ cut 안 된 정상 테두리는 계속 잡혀야 한다(과잉 차단 방지).
+    normal_pt = QPointF(0, 100)
+    hit = _nearest_border_visible(host, normal_pt)
+    assert hit is not None and _close(hit[0], normal_pt, eps=0.01)
+
+    # ⓓ 화살표 도구 실제 스냅(_border_snap_at, 이산+연속 둘 다 거침) — cut 구간에서 호스트에
+    # 안 붙는다.
+    w.set_tool("arrow")
+    snap = w._view._border_snap_at(w._view.mapFromScene(gap_pt))
+    assert snap is None or snap[2] is not host
+
+
 def test_cut_border_gap_does_not_punch_through_fill():
     # [데이터모델 확정 사항] 닫힌 도형은 비파괴 — cut은 테두리 선만 끊고 채움은 그대로.
     from PyQt6.QtGui import QImage, QPainter, QPen

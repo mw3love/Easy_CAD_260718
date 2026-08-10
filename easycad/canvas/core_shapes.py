@@ -4972,22 +4972,40 @@ def _nearest_border(item, scene_pt):
     return sp, QPointF(nd.x() / L, nd.y() / L)
 
 
-def _port_covers_border_pt(host, local_pt) -> bool:
-    """[실사용 버그 2026-08-09] host의 로컬 좌표 `local_pt`가 부착 포트에 가려 **화면에 안
+def _border_pt_in_gap(host, local_pt) -> bool:
+    """[실사용 버그 2026-08-09, 2026-08-10 §8 항목17 3단계에서 cut 구간 일반형으로 확장]
+    host의 로컬 좌표 `local_pt`가 부착 포트 또는 TRIM cut(`host._cuts`)에 가려 **화면에 안
     그려지는** 외곽선 구간에 있으면 True.
 
     포트 트림은 진짜 기하 분절이 아니라 배경색으로 덮어 그리는 시각효과라
     (`_paint_port_cover_if_needed`, 2026-08-03 Qt 버그 우회) 히트/스냅 기하는 온전한 사각형
     그대로였다 — 그래서 포트 몸통 한가운데서도 호스트 테두리가 스냅·호버에 잡혔다. 판정을
-    `build_trimmed_border_path`와 **같은** 두 함수(`_host_outline_local_polygon`·
-    `_port_edge_gap`)로 하여 "그려지는 선"의 정의를 한 벌로 유지한다."""
-    ports = getattr(host, "_ports", None)
-    if not ports:
-        return False                      # 포트 없는 도형은 비용 0 — 즉시 통과
-    # [성능] 이 함수는 호버·스냅 핫패스(마우스무브마다 근처 도형 수만큼)에 있다. 아래
-    # `_port_edge_gap`은 포트마다 변 4개에 투영을 돌려 비싸므로(포트 8개 실측 +165us/call,
-    # 7.2배), 먼 포트는 중심거리 한 번으로 먼저 쳐낸다. 가려지는 구간은 포트가 변에 투영된
-    # 범위 안이라 언제나 포트 중심에서 반대각선 거리 이내 — 여유를 더해도 판정이 안 바뀐다.
+    `build_trimmed_border_path`와 **같은** 소스(`_host_outline_local_polygon`·`_port_edge_gap`·
+    `host._cuts`)로 하여 "그려지는 선"의 정의를 한 벌로 유지한다 — cut도 포트와 똑같이
+    렌더에서 끊긴 곳은 호버·스냅에서도 안 잡혀야 한다(TRIM으로 자른 자리에 화살표가 붙는
+    것을 막는 게 3단계의 목적)."""
+    ports = getattr(host, "_ports", None) or []
+    cuts = getattr(host, "_cuts", None) or []
+    if not ports and not cuts:
+        return False                      # 포트도 cut도 없는 도형은 비용 0 — 즉시 통과
+    poly = _host_outline_local_polygon(host)
+    n = len(poly)
+    if n < 2:
+        return False
+
+    def _pt_in_edge_range(edge_i: int, t0: float, t1: float) -> bool:
+        a, b = poly[edge_i], poly[(edge_i + 1) % n]
+        t, perp = _seg_param_and_perp(a, b, local_pt)
+        # perp 허용치: 인자로 오는 건 이미 외곽선 위의 점이라 이론상 0이다. 변끼리는 도형
+        # 크기만큼 떨어져 있어 넉넉히 잡아도 옆 변으로 샐 일이 없다(부동소수 잡음만 흡수).
+        return perp <= 0.5 and t0 - 1e-9 <= t <= t1 + 1e-9
+
+    # [성능] 이 함수는 호버·스냅 핫패스(마우스무브마다 근처 도형 수만큼)에 있다. `_port_edge_
+    # gap`은 포트마다 변 4개에 투영을 돌려 비싸므로(포트 8개 실측 +165us/call, 7.2배), 먼
+    # 포트는 중심거리 한 번으로 먼저 쳐낸다. 가려지는 구간은 포트가 변에 투영된 범위 안이라
+    # 언제나 포트 중심에서 반대각선 거리 이내 — 여유를 더해도 판정이 안 바뀐다. cut은 이
+    # 사전필터가 필요 없다 — 자기 변 인덱스를 이미 알고 있어(`host._cuts`에 직접 저장)
+    # 어느 변인지 찾는 계산 자체가 없다.
     near_ports = []
     for port in ports:
         pr = port.rect()
@@ -4995,36 +5013,30 @@ def _port_covers_border_pt(host, local_pt) -> bool:
         reach = math.hypot(pr.width(), pr.height()) / 2.0 + 5.0
         if abs(c.x() - local_pt.x()) <= reach and abs(c.y() - local_pt.y()) <= reach:
             near_ports.append(port)
-    if not near_ports:
-        return False
-    poly = _host_outline_local_polygon(host)
-    n = len(poly)
-    if n < 2:
-        return False
     for port in near_ports:
         hit = _port_edge_gap(poly, port)
         if hit is None:
             continue
         i, t0, t1 = hit
-        a, b = poly[i], poly[(i + 1) % n]
-        t, perp = _seg_param_and_perp(a, b, local_pt)
-        # perp 허용치: 인자로 오는 건 이미 외곽선 위의 점이라 이론상 0이다. 변끼리는 도형
-        # 크기만큼 떨어져 있어 넉넉히 잡아도 옆 변으로 샐 일이 없다(부동소수 잡음만 흡수).
-        if perp <= 0.5 and t0 - 1e-9 <= t <= t1 + 1e-9:
+        if _pt_in_edge_range(i, t0, t1):
+            return True
+    for edge_i, t0, t1 in cuts:
+        if 0 <= edge_i < n and _pt_in_edge_range(edge_i, t0, t1):
             return True
     return False
 
 
 def _nearest_border_visible(item, scene_pt):
-    """[실사용 버그 2026-08-09] `_nearest_border`와 같되, 최근접점이 부착 포트에 가려 화면에
-    없는 구간이면 None — "스냅되는 곳 == 선이 그려진 곳"을 맞춘다.
+    """[실사용 버그 2026-08-09, 2026-08-10 §8 항목17 3단계에서 cut 구간까지 확장]
+    `_nearest_border`와 같되, 최근접점이 부착 포트 또는 TRIM cut에 가려 화면에 없는 구간이면
+    None — "스냅되는 곳 == 선이 그려진 곳"을 맞춘다.
 
     `_nearest_border` 자체는 건드리지 않는다. 그쪽은 포트를 호스트 테두리에 **부착**하고
     드래그로 슬라이드시키는 데도 쓰이는데(`_attach_port_to_host`·
     `_snap_port_pos_to_host_border`), 거기서 트림을 반영하면 포트가 제 자리(자기가 만든
     구간)에서 밀려나기 때문이다. 그래서 호버·스냅 호출부만 이 변형을 opt-in 한다."""
     sp, n = _nearest_border(item, scene_pt)
-    if _port_covers_border_pt(item, item.mapFromScene(sp)):
+    if _border_pt_in_gap(item, item.mapFromScene(sp)):
         return None
     return sp, n
 
@@ -5356,17 +5368,31 @@ def _shape_ports(item):
     return out
 
 
+def _shape_ports_visible(item):
+    """[§8 항목17 3단계, 2026-08-10] `_shape_ports(item)`에서 포트 또는 TRIM cut에 가려
+    화면에 안 그려지는 접속점만 뺀 목록 — **다른** 도형에 스냅/호버할 때 쓴다
+    (`_border_snap_at` Pass1·`_qc_snap_target` 도형-내부 흡수·`_shape_ports_for_preview`).
+    연속 폴백(`_nearest_border_visible`)이 이미 지키는 "스냅되는 곳 == 선이 그려진 곳" 원칙을
+    이산 4점에도 적용한다. [스코프] 선택된 도형 자신의 qc-dot 드래그 핸들(`_qc_dot_rects`)은
+    별도 민감 영역(클릭=선택/드래그=화살표 규칙이 얽힘)이라 여기서 안 건드린다 — TRIM 도구가
+    실제로 붙는 4단계에서 재검토."""
+    return [(sp, n) for sp, n in _shape_ports(item)
+            if not _border_pt_in_gap(item, item.mapFromScene(sp))]
+
+
 def _shape_ports_for_preview(item):
-    """[실사용 버그 수정 2026-08-03] `_shape_ports(item)`에서 **선택된 포트**의 위치만 뺀
-    목록 — 호버 미리보기/스냅(`_hover_port_at`·`_draw_port_dots`) 전용. 포트가 선택되면
-    그 포트 자신의 리사이즈 핸들이 같은 자리에 이미 떠 있어, 호스트의 접속점 미리보기까지
-    겹치면 (사용자 리포트) 핸들 여러 개가 한 점에 뭉쳐 조작이 안 되는 것처럼 보였다."""
+    """[실사용 버그 수정 2026-08-03, 2026-08-10 §8 항목17 3단계에서 cut 인식 추가]
+    `_shape_ports_visible(item)`에서 **선택된 포트**의 위치만 뺀 목록 — 호버 미리보기/스냅
+    (`_hover_port_at`·`_draw_port_dots`) 전용. 포트가 선택되면 그 포트 자신의 리사이즈
+    핸들이 같은 자리에 이미 떠 있어, 호스트의 접속점 미리보기까지 겹치면 (사용자 리포트)
+    핸들 여러 개가 한 점에 뭉쳐 조작이 안 되는 것처럼 보였다."""
     selected_centers = [p.mapToScene(p.rect().center())
                         for p in (getattr(item, "_ports", None) or []) if p.isSelected()]
+    visible = _shape_ports_visible(item)
     if not selected_centers:
-        return _shape_ports(item)
+        return visible
     out = []
-    for sp, n in _shape_ports(item):
+    for sp, n in visible:
         if any(math.hypot(sp.x() - c.x(), sp.y() - c.y()) < 1.0 for c in selected_centers):
             continue
         out.append((sp, n))

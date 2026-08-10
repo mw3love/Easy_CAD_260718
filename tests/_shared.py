@@ -25,7 +25,8 @@ from easycad.canvas.annotator_core import (
     _seg_cross_seg, _ConnectorLabel, _shape_ports, _RIDE_TOL,
     _attach_port_to_host, _detach_port_from_host, build_trimmed_border_path,
     _reposition_port_from_frac, _seg_seg_intersection, _seg_circle_intersections,
-    _seg_ellipse_intersections, _host_outline_local_polygon, _add_border_cut)
+    _seg_ellipse_intersections, _host_outline_local_polygon, _add_border_cut,
+    _border_pt_in_gap, _shape_ports_visible)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect, render_preview
 from easycad.canvas.host_dialogs import _PdfExportDialog
 from easycad.fileio.document import save_document, load_document, load_document_layers, item_to_dict

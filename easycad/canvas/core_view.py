@@ -316,7 +316,8 @@ class _AnnotatorView(QGraphicsView):
             # rect()로 판정 — 채움 없는 도형은 shape()가 외곽선만이라 contains가 내부를 못 잡는다.
             if sh.rect().contains(sh.mapFromScene(cursor_scene)):
                 best, bestd = None, None
-                for sp, n in _shape_ports(sh):
+                # [§8 항목17 3단계] 포트/cut에 가려 안 보이는 접속점으로는 안 흡수한다.
+                for sp, n in _shape_ports_visible(sh):
                     d = QLineF(sp, cursor_scene).length()
                     if bestd is None or d < bestd:
                         bestd, best = d, (sp, n, sh)
@@ -809,7 +810,9 @@ class _AnnotatorView(QGraphicsView):
         pexit = None
         pshape = None
         for sh in shapes:
-            for sp, n in _shape_ports(sh):
+            # [§8 항목17 3단계] 포트/cut에 가려 안 보이는 접속점은 이산 스냅 대상에서도 뺀다 —
+            # Pass 2(연속 폴백, _nearest_border_visible)가 이미 지키는 원칙을 이산 4점에도 통일.
+            for sp, n in _shape_ports_visible(sh):
                 d = self._view_dist(sp, view_pos)
                 if d <= bestpd:
                     bestpd, bestp, pexit, pshape = d, sp, n, sh
