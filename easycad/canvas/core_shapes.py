@@ -547,16 +547,23 @@ class _HandleResizeMixin:
         # 패딩되고, 앞쪽 꼭짓점 하나에는 TR·BR 두 모서리가 대응돼 어느 쪽도 안 맞는다("꼭짓점과
         # 떨어져 보인다"는 지적). 리사이즈 동작(각 인덱스가 무엇을 드래그하는가 — 대각 고정점
         # 기준 setRect)은 그대로 두고, 핸들을 그리고 클릭을 받는 위치만 실제 꼭짓점으로 옮긴다
-        # (WYSIWYG). 꼭짓점은 TR(1)·BR(2) 두 인덱스가 겹치는데, `_hover_handle_at`·
-        # `mousePressEvent`가 인덱스 오름차순으로 먼저 걸리는 것을 채택하는 기존 순회 방식이라
-        # 항상 TR(우하단 고정 앵커)로 반응한다 — 대각 방향만 다를 뿐 "꼭짓점을 끌어 리사이즈"라는
-        # 결과 자체는 동일해 실사용에 지장 없다.
+        # (WYSIWYG).
+        # [후속 2026-08-10] TR(1)·BR(2)을 처음엔 둘 다 앞쪽 꼭짓점에 겹쳐 뒀는데, 그 자리엔
+        # 이미 qc-dot("r" 접속점, `_shape_ports`도 이번에 같은 꼭짓점으로 고침)이 있어서
+        # 사각·원 마커 두 개가 서로 다른 방향(사각은 bbox 중심 기준, 원은 변 법선 기준)으로
+        # 살짝씩 떨어져 뜨는 게 오히려 더 지저분해 보였다("둘 중 하나만 있어야 할 듯"). 앞쪽
+        # 꼭짓점은 qc-dot(연결점 역할이 이 앱의 핵심 상호작용이라 더 중요)에게 전담시키고
+        # 여기서는 뺀다 — 리사이즈 자체는 뒤쪽 두 꼭짓점(TL·BL) 어느 쪽을 끌어도 가로·세로
+        # 모두 조절되므로(대각 드래그) 능력 손실은 없다.
+        skip: set = set()
         if isinstance(self, _SymbolItem) and self._kind == "triangle":
             tr = _tri_rect(br)
-            apex = QPointF(tr.right(), tr.center().y())
-            pts = [tr.topLeft(), apex, apex, tr.bottomLeft()]
+            pts = [tr.topLeft(), None, None, tr.bottomLeft()]
+            skip = {1, 2}
         out = []
         for i, p in enumerate(pts):
+            if i in skip:
+                continue
             sx = gap if p.x() > cx else -gap
             sy = gap if p.y() > cy else -gap
             q = QPointF(p.x() + sx, p.y() + sy)
