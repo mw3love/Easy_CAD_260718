@@ -49,6 +49,33 @@ def _dbg(msg: str) -> None:
         pass
 
 
+# [신규기능 2026-08-10] 스마트 정렬 스냅 — 실제 윤곽 정점 후보. TRIM 커널(§8 항목17)이 만든
+# `_host_outline_local_polygon`/`_open_item_local_pts`(변 인덱스+t 계산용으로 이미 검증된 함수)를
+# 그대로 재사용해, 삼각형처럼 bbox와 실제 외곽선이 다른 도형도 "실제 꼭짓점"끼리 스냅되게 한다.
+# ⚠ `_RectItem`은 뺀다 — 처음엔 "bbox와 값이 같으니 중복만 되고 무해하다"고 가정했지만 틀렸다:
+# `_apply_smart_snap.srect()`가 쓰는 `_content_rect()`(핸들 히트테스트용, 여기 손 안 댐)는
+# `_RectItem`이 따로 override 안 해 `_HandleResizeMixin` 기본값(Qt `boundingRect()`, 펜폭/2만큼
+# 패딩)을 그대로 쓴다 — 반면 `_host_outline_local_polygon`은 패딩 없는 `rect()` 그대로라, 같은
+# 사각형인데 bbox 후보(-0.5)와 정점 후보(0.0)가 0.5유닛 어긋난 "거의 같은데 다른" 후보 두 개를
+# 만들어 동률 판정(dedup은 좌표값 기준)이 깨졌다(실사용 아님, `test_smart_align_center_priority_
+# is_per_shape_only` 회귀로 발견). `_content_rect()`를 여기서 고치면 핸들·hit-test 등 무관한
+# 다른 용도까지 건드리는 과잉 수정이라, 대신 정점 후보를 만드는 이 함수에서 사각형을 제외해
+# 원인을 국소화했다. 곡선 심볼·타원은 평탄화 정점이 수십 개로 불어날 수 있어(안테나 등) 상한을
+# 넘으면 빈 리스트로 폴백.
+_SNAP_VERTEX_CAP = 12
+
+
+def _real_snap_vertices_local(item) -> list:
+    """실제 도형 정점(로컬좌표) — 스냅 후보용. `_RectItem`·상한 초과·미지원 타입은 빈 리스트."""
+    if isinstance(item, (_EllipseItem, _SymbolItem)):
+        poly = _host_outline_local_polygon(item)
+    elif isinstance(item, (_LineItem, _PolyArrowItem)):
+        poly = _open_item_local_pts(item)
+    else:
+        return []
+    return poly if 0 < len(poly) <= _SNAP_VERTEX_CAP else []
+
+
 class _AnnotatorView(QGraphicsView):
     # [화살표 통합] 화살표는 도구 하나 → 단축키도 3 하나. 9는 비운다(사용자가 후속 전면 조정 예정).
     _SHORTCUTS = {
@@ -666,12 +693,24 @@ class _AnnotatorView(QGraphicsView):
             cr = o._content_rect() if hasattr(o, "_content_rect") else o.boundingRect()
             return o.mapToScene(cr).boundingRect()
 
-        others = [srect(o) for o in self.scene().items()
-                  if o is not it and o is not bg and o.parentItem() is None
-                  and (o.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)]
-        if not others:
+        other_items = [o for o in self.scene().items()
+                       if o is not it and o is not bg and o.parentItem() is None
+                       and (o.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)]
+        if not other_items:
             return
         nr = srect(it)
+        # [신규기능 2026-08-10] 실제 정점(꼭짓점) 후보 — bbox만으론 삼각형처럼 bbox와 실제
+        # 외곽선이 다른 도형의 대각선 변이 스냅 후보에 아예 안 잡히던 한계(실사용 지적)를 푼다.
+        # `_real_snap_vertices_local`이 `_RectItem`·정점상한 초과 도형엔 빈 리스트를 줘, 기존
+        # 9-후보 bbox 경로와 겹치지 않는다(중복 후보로 인한 성능 낭비 방지).
+        my_verts = [it.mapToScene(p) for p in _real_snap_vertices_local(it)]
+        # 정점은 항상 "상대의 기존 bbox 대표값(left/center/right, top/center/bottom)"과만
+        # 비교한다 — 상대도 자기 정점을 따로 만들어 서로 vertex×vertex로 비교하면, 사각형처럼
+        # 같은 도형이 "패딩된 bbox 후보"와 "패딩 없는 정점 후보" 둘 다 갖는 조합에서 0.5유닛
+        # 어긋난 유사-중복 후보가 생겨 동률 판정이 깨진다(바로 위 `_real_snap_vertices_local`
+        # 주석 참조 — 처음 구현에서 이 문제로 회귀가 났었다). 상대 쪽은 항상 기존 orr 대표값만
+        # 쓰면 이 문제가 아예 생기지 않는다(rect-rect는 my_verts가 비어 후보 자체가 안 생김 →
+        # 완전히 기존 동작 그대로).
         # 실사용 재현(2026-08-01, 로그 확인) — 6화면px는 게이트·로직 자체는 정상 작동했지만
         # (로그상 인접 스냅이 수십 프레임·수십 유닛 구간에서 계속 유지됨을 확인) 실제 손 드래그
         # 속도로는 그 폭(화면에서 2mm 미만)을 그냥 지나쳐 버려 "닿기 직전까진 전혀 반응 없다가
@@ -704,7 +743,11 @@ class _AnnotatorView(QGraphicsView):
         bx_winners = by_winners = None   # [(ad,d,coord,role), ...] — 최적 상대 도형 기준 전체 동률
         bx_orr = by_orr = None
 
-        for orr in others:
+        for other_item in other_items:
+            orr = srect(other_item)
+            other_verts = [other_item.mapToScene(p) for p in _real_snap_vertices_local(other_item)]
+            # ⚠ other_verts는 orr(패딩된 bbox)이 아니라 "상대" 쪽 정점(있으면)일 뿐 — 아래에서
+            # my_verts와 직접 짝짓지 않고 항상 nr의 대표값과만 비교한다(바로 위 주석 참조).
             # 후보는 축당 9개 — 같은 역할 3개(좌-좌/중심-중심/우-우, 상-상/중심-중심/하-하) +
             # **마주보는 변** 2개(내 우변=상대 좌변, 내 좌변=상대 우변 / 내 아랫변=상대 윗변,
             # 내 윗변=상대 아랫변) + **중심-변 교차** 4개(2026-08-10 재추가, 아래 참조).
@@ -742,6 +785,22 @@ class _AnnotatorView(QGraphicsView):
                        (nr.center().y(), orr.bottom(), "mid-edge"),
                        (nr.top(), orr.center().y(), "mid-edge"),
                        (nr.bottom(), orr.center().y(), "mid-edge")]
+            # [신규기능] 정점-bbox대표값 조합 — 기존과 같은 축별 독립비교 구조를 그대로 따른다.
+            # 대각선 변은 두 끝점이 각각 후보가 되므로, "변 전체"가 아니라 "변의 양 끝"이 축마다
+            # 걸리는 셈이지만 실사용 목표(삼각형 꼭짓점이 사각형 변에 붙는 것)엔 충분하고, 완전한
+            # 점-대각선 투영 스냅(끝점 아닌 변 중간)은 축별 독립비교 구조와 근본적으로 안 맞아
+            # 이번 범위에서 뺐다. my↔other를 서로의 "정점"끼리 직접 짝짓지 않는 이유는 위
+            # `other_verts` 주석 참조(패딩 불일치로 회귀가 났던 자리).
+            for mv in my_verts:
+                x_cands += [(mv.x(), orr.left(), "vertex"), (mv.x(), orr.right(), "vertex"),
+                            (mv.x(), orr.center().x(), "vertex")]
+                y_cands += [(mv.y(), orr.top(), "vertex"), (mv.y(), orr.bottom(), "vertex"),
+                            (mv.y(), orr.center().y(), "vertex")]
+            for ov in other_verts:
+                x_cands += [(nr.left(), ov.x(), "vertex"), (nr.right(), ov.x(), "vertex"),
+                            (nr.center().x(), ov.x(), "vertex")]
+                y_cands += [(nr.top(), ov.y(), "vertex"), (nr.bottom(), ov.y(), "vertex"),
+                            (nr.center().y(), ov.y(), "vertex")]
             local_x = pick_local(x_cands)
             if local_x is not None and (bx_winners is None or local_x[0][0] < bx_winners[0][0]):
                 bx_winners, bx_orr = local_x, orr

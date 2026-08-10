@@ -965,6 +965,74 @@ def test_smart_align_adjacent_edge_snap_when_far_apart_perpendicular():
 
 
 
+def test_smart_align_triangle_vertex_snaps_to_rect_edge():
+    # [신규기능 2026-08-10] 실사용 지적 — 삼각형 bbox가 정사각이 아니면(폭≠높이) 정삼각형이
+    # bbox 안쪽에 내접해(`_tri_rect`) 뒤쪽 변(꼭짓점 2개)이 bbox 왼쪽 변보다 안쪽에 있다. 예전
+    # bbox 전용 스마트 스냅은 이 "실제 뒤쪽 변" 위치를 몰라 삼각형이 사각형에 딱 붙지 않았다 —
+    # 실제 윤곽 정점(`_real_snap_vertices_local`)을 후보에 추가해 해결.
+    w = CanvasWindow()
+    rect = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    tri = _SymbolItem("triangle", QRectF(0, 0, 160, 90))   # 폭>높이 → 뒤쪽 변에 x-패딩 생김
+    tri.setPen(w.make_pen()); tri.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    tri.setFlags(tri.GraphicsItemFlag.ItemIsSelectable | tri.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tri)
+    v = w._view
+    thr = 6.0 / v._view_scale()
+    back_x_local = _tri_rect(tri.rect()).left()
+    rect_right_padded = _cright(rect)   # 기존 bbox 스냅 관례(펜폭 패딩)와 동일 기준
+    target_x = rect_right_padded - back_x_local + thr * 0.3   # 임계 내로 살짝 어긋나게
+    tri.setPos(QPointF(target_x, 200)); tri.setSelected(True)
+    before = tri.mapToScene(QPointF(back_x_local, 0)).x()
+    assert abs(before - rect_right_padded) > 1e-6   # 스냅 전엔 안 맞음
+    v._apply_smart_snap()
+    after = tri.mapToScene(QPointF(back_x_local, 0)).x()
+    assert abs(after - rect_right_padded) < 1e-6     # 삼각형의 실제 뒤쪽 변이 사각형 변에 붙음
+    assert any(g[0] == "v" for g in v._align_guides)
+
+
+
+
+def test_smart_align_rect_snaps_toward_stationary_triangle_vertex():
+    # [신규기능 2026-08-10] 위 테스트의 반대 방향 — 삼각형이 고정돼 있고 사각형을 옮길 때도
+    # 똑같이 붙어야 한다(`_apply_smart_snap`이 방향 대칭이 되도록 nr·orr 양쪽에 정점 후보를 넣음).
+    w = CanvasWindow()
+    tri = _SymbolItem("triangle", QRectF(0, 0, 160, 90))
+    tri.setPen(w.make_pen()); tri.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    tri.setFlags(tri.GraphicsItemFlag.ItemIsSelectable | tri.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tri)
+    rect = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    v = w._view
+    thr = 6.0 / v._view_scale()
+    back_x_scene = _tri_rect(tri.rect()).left()   # tri.pos()는 (0,0)이라 로컬=씬
+    target_rx = back_x_scene - 100 + thr * 0.3
+    rect.setPos(QPointF(target_rx, 200)); rect.setSelected(True)
+    v._apply_smart_snap()
+    rect_right_after = _cright(rect)
+    assert abs(rect_right_after - back_x_scene) < 1e-6
+
+
+
+
+def test_smart_align_rect_rect_still_single_guide_no_vertex_dup():
+    # [회귀 방지] 정점 후보 도입 전엔 `_RectItem` 자신도 후보를 만들었다가, 같은 사각형인데
+    # 패딩된 bbox 후보(-0.5)와 패딩 없는 정점 후보(0.0)가 0.5유닛 어긋난 유사-중복을 만들어
+    # `test_smart_align_center_priority_is_per_shape_only`가 깨졌던 적이 있다(원인 분석은
+    # `_real_snap_vertices_local` 주석 참조) — `_RectItem`은 정점 후보에서 빠져야 한다.
+    # (폭이 다른 두 사각형을 써서 좌/중심/우가 우연히 동률로 함께 뜨는 것과 구분한다 —
+    # 그건 `test_smart_align_shows_all_tied_roles`가 이미 다루는 정상 동작이다.)
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 140, 80)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    v = w._view
+    thr = 6.0 / v._view_scale()
+    b.setPos(QPointF(thr * 0.5, 300)); b.setSelected(True)
+    v._apply_smart_snap()
+    v_guides = [g for g in v._align_guides if g[0] == "v"]
+    assert len(v_guides) == 1   # 정점 후보가 겹쳐 두 개로 쪼개지지 않아야 함
+
+
+
+
 def test_smart_align_skips_multiselect():
     # [2e] 2개 이상 선택 시엔 스마트 정렬 스냅을 적용하지 않는다(그룹 변형 영역).
     w = CanvasWindow()

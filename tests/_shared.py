@@ -28,7 +28,7 @@ from easycad.canvas.annotator_core import (
     _seg_ellipse_intersections, _host_outline_local_polygon, _add_border_cut,
     _border_pt_in_gap, _shape_ports_visible, _trim_candidate_segment,
     _open_item_local_pts, _item_local_edges, _trim_candidate_open_segment,
-    _extend_candidate, _ray_seg_intersection, apply_open_item_trim, apply_extend)
+    _extend_candidate, _ray_seg_intersection, apply_open_item_trim, apply_extend, _tri_rect)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect, render_preview
 from easycad.canvas.host_dialogs import _PdfExportDialog
 from easycad.fileio.document import save_document, load_document, load_document_layers, item_to_dict
@@ -258,6 +258,10 @@ def _ctop(o):
 
 def _cbottom(o):
     return o.mapToScene(o._content_rect()).boundingRect().bottom()
+
+
+def _cright(o):
+    return o.mapToScene(o._content_rect()).boundingRect().right()
 
 
 def _rect_world_corners(it):
