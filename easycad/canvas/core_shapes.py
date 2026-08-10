@@ -537,29 +537,20 @@ class _HandleResizeMixin:
     _HANDLE_GAP_FACTOR = 0.6
 
     def _box_corner_rects(self):
+        # [2026-08-10, 여러 차례 시행착오 끝에 원복] 삼각형 전용 특례(꼭짓점 핸들을 실제
+        # 정점으로 옮기고, 앞쪽 꼭짓점은 TR·BR을 겹치거나 빼는 등)를 여러 번 시도했었다 —
+        # 근본 원인이 "정삼각형으로 내접(`_tri_rect`)시키느라 생기는 패딩"이었음을 뒤늦게
+        # 파악해 `_sym_triangle` 자체가 이제 bbox를 그대로 채우도록(Lucid 대조) 고쳤다. 그
+        # 결과 뒤쪽 두 꼭짓점(TL·BL)은 이 함수를 손대지 않아도 이미 bbox 모서리와 정확히
+        # 일치하고, 앞쪽 꼭짓점(TR·BR 자리)은 Lucid의 "안 쓰이는 모서리 두 개"와 같은 처지가
+        # 된다 — 실제 꼭짓점은 그 대신 변 중점 접속점(east qc-dot, `_shape_ports`가 정확히
+        # 계산)이 담당한다. 그래서 이 함수는 다른 도형(네모·원)과 동일한 순수 bbox 공식으로
+        # 되돌아간다 — 특례 코드 없음.
         br = self.rect()
         h = self._handle_px()
         gap = h * self._HANDLE_GAP_FACTOR
         cx, cy = br.center().x(), br.center().y()
         pts = [br.topLeft(), br.topRight(), br.bottomRight(), br.bottomLeft()]  # 0TL 1TR 2BR 3BL
-        # [실사용 지적 2026-08-10] 삼각형은 바운딩박스 네 모서리가 실제 꼭짓점 3개와 안 맞는다
-        # — 정삼각형으로 내접시키며(`_tri_rect`) 뒤쪽 두 꼭짓점은 박스 왼쪽 변보다 안쪽으로
-        # 패딩되고, 앞쪽 꼭짓점 하나에는 TR·BR 두 모서리가 대응돼 어느 쪽도 안 맞는다("꼭짓점과
-        # 떨어져 보인다"는 지적). 리사이즈 동작(각 인덱스가 무엇을 드래그하는가 — 대각 고정점
-        # 기준 setRect)은 그대로 두고, 핸들을 그리고 클릭을 받는 위치만 실제 꼭짓점으로 옮긴다
-        # (WYSIWYG).
-        # [후속 2026-08-10 → 재후속] TR(1)·BR(2)을 앞쪽 꼭짓점에 겹쳐 두면 qc-dot("r" 접속점)과
-        # 마커 두 개가 서로 다른 방향으로 살짝씩 떨어져 지저분해 보여, 한때 이 자리에서 리사이즈
-        # 핸들을 완전히 뺐었다. 그런데 그러면 "오른쪽에서 잡고 크기 조절"하는 제스처 자체가
-        # 사라지는 실사용 손실이 있었다 — 사용자 판단(2026-08-10): 리사이즈를 우선하고, 접속은
-        # 삼각형의 세 변 자체(연속 테두리 스냅)가 이미 담당하므로 이 꼭짓점에 굳이 별도 qc-dot이
-        # 없어도 된다. 그래서 리사이즈 핸들을 되살리고, 대신 `_qc_dot_rects`에서 이 자리(east)의
-        # qc-dot을 뺀다(`_shape_ports`·연속 스냅은 안 건드림 — 다른 도형이 이 꼭짓점에 붙는
-        # 능력은 그대로, 이 도형 "자신"의 선택 시 핸들 표시만 하나로 정리).
-        if isinstance(self, _SymbolItem) and self._kind == "triangle":
-            tr = _tri_rect(br)
-            apex = QPointF(tr.right(), tr.center().y())
-            pts = [tr.topLeft(), apex, apex, tr.bottomLeft()]
         out = []
         for i, p in enumerate(pts):
             sx = gap if p.x() > cx else -gap
@@ -617,16 +608,13 @@ class _HandleResizeMixin:
         d = h * 0.9
         gap = h * self._HANDLE_GAP_FACTOR
         sides = ("t", "r", "b", "l")   # _shape_ports와 동일 순서(상·우·하·좌)
-        # [2026-08-10] 삼각형의 "r"(동쪽=앞쪽 꼭짓점) qc-dot은 뺀다 — 사용자 판단: 그 자리는
-        # 리사이즈 핸들이 우선하고(위 `_box_corner_rects`), 접속은 삼각형의 세 변 자체(연속
-        # 테두리 스냅)가 이미 담당하니 이 꼭짓점 전용 점이 따로 없어도 된다. `_shape_ports`
-        # 자체(다른 도형이 여기로 붙는 라우팅/스냅)는 안 건드린다 — 이 도형 "자신"의 선택 시
-        # 핸들 목록에서만 뺀다.
-        skip_side = "r" if (isinstance(self, _SymbolItem) and self._kind == "triangle") else None
+        # [2026-08-10 → 후속 원복] 한때 삼각형의 "r"(동쪽=앞쪽 꼭짓점) qc-dot을 리사이즈
+        # 핸들과 자리가 겹친다는 이유로 뺐었다 — `_sym_triangle`이 이제 bbox를 그대로 채우면서
+        # (Lucid 대조) 앞쪽 꼭짓점의 리사이즈 핸들(TR·BR)은 bbox 모서리(=변 중심이 아닌 자리)에
+        # 남고 qc-dot "r"은 실제 꼭짓점(=변 중심)에 남아 서로 다른 자리가 됐다 — 더 이상 겹치지
+        # 않으므로 특례 없이 되돌린다.
         out = []
         for k, (sp, n) in zip(sides, _shape_ports(self)):
-            if k == skip_side:
-                continue
             sp_out = QPointF(sp.x() + n.x() * gap, sp.y() + n.y() * gap)
             p = self.mapFromScene(sp_out)
             out.append((k, QRectF(p.x() - d / 2, p.y() - d / 2, d, d)))
@@ -1885,26 +1873,22 @@ def _sym_delay(r: QRectF) -> QPainterPath:         # 지연 — 오른쪽 반원
     return p
 
 
-def _tri_rect(r: QRectF) -> QRectF:
-    # [신규기능, 2026-08-09 2차] 삼각형은 항상 정삼각형이어야 한다는 실사용 피드백 —
-    # 마름모 등 다른 심볼과 달리 바운딩박스 r을 그대로 늘여 쓰지 않고 min(w,h) 기준
-    # 정삼각형을 r 중앙에 내접시킨다(MW 파라볼릭 등 다른 대칭 심볼과 같은 관례,
-    # `_sym_mw_side`의 `s = min(w,h)/100` 패턴 참조). r이 정사각이면 여백 없이 꽉 찬다.
-    s = min(r.width(), r.height())
-    h = s
-    w = s * 0.8660254037844387   # sqrt(3)/2 — 정삼각형 높이 대비 폭(밑변→꼭짓점 거리)
-    c = r.center()
-    return QRectF(c.x() - w / 2.0, c.y() - h / 2.0, w, h)
-
-
 def _sym_triangle(r: QRectF) -> QPainterPath:      # [신규기능 §8-12] 삼각형 — 분배기 등 장비 도형
     # 2026-08-09 deep-interview: 실도면(HDA-3951 증폭기 등) 대조로 꼭짓점이 오른쪽(신호
     # 흐름 방향)을 향하는 형태가 기본으로 확정 — 평평한 변(왼쪽, 입력)·꼭짓점(오른쪽, 출력).
-    tr = _tri_rect(r)
+    # [2026-08-10 후속] 정삼각형으로 내접(`_tri_rect`)시키던 걸 버리고 bbox r을 그대로 채운다 —
+    # Lucid 대조(실사용 지적): 정삼각형 유지는 필연적으로 한 축에 패딩을 만들어(비정사각
+    # bbox에서), 리사이즈 핸들·qc-dot·TRIM 자국 핸들이 전부 실제 꼭짓점/변과 어긋나는
+    # 근본 원인이었다. bbox를 그대로 채우면 뒤쪽 두 꼭짓점(TL·BL)이 항상 정확히 bbox 모서리와
+    # 일치해 그 두 핸들은 특례 코드 없이 저절로 맞는다(Lucid의 "위 두 꼭짓점=bbox 모서리"와
+    # 같은 구조, 우리는 90도 돌아간 배치라 왼쪽 두 모서리). "최대한 정삼각형에 가깝게"는
+    # 기본 생성 크기(`_PALETTE_TRIANGLE_WH`)를 정삼각형 비율로 맞추는 쪽에서 담당 — 그
+    # 비율 그대로 두면 이 함수가 실제로 정삼각형을 그린다(리사이즈하면 다른 도형처럼 늘어남,
+    # 원을 늘이면 타원이 되는 것과 같은 통상적 동작).
     p = QPainterPath()
-    p.moveTo(tr.left(), tr.top())
-    p.lineTo(tr.left(), tr.bottom())
-    p.lineTo(tr.right(), tr.center().y())
+    p.moveTo(r.left(), r.top())
+    p.lineTo(r.left(), r.bottom())
+    p.lineTo(r.right(), r.center().y())
     p.closeSubpath()
     return p
 
@@ -2093,11 +2077,11 @@ class _SymbolItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGr
         if self._kind == "document":
             return QPointF(c.x(), c.y() - r.height() * 0.06)
         if self._kind == "triangle":
-            # 2026-08-09 2차: 꼭짓점이 오른쪽(정삼각형)으로 바뀌어 무게중심도 재계산 —
-            # 상하 대칭이라 세로는 bbox 중심과 같고(_tri_rect도 r 중앙 정렬), 가로는
-            # 평평한 변(왼쪽)에서 1/3 지점(꼭짓점 쪽으로 치우침)이 실제 삼각형 무게중심.
-            tr = _tri_rect(r)
-            return QPointF(tr.left() + tr.width() / 3.0, tr.center().y())
+            # 2026-08-09 2차: 꼭짓점이 오른쪽으로 바뀌어 무게중심도 재계산 — 상하 대칭이라
+            # 세로는 bbox 중심과 같고, 가로는 평평한 변(왼쪽)에서 1/3 지점(꼭짓점 쪽으로
+            # 치우침)이 실제 삼각형 무게중심. [2026-08-10 후속] `_sym_triangle`이 이제
+            # `_tri_rect` 없이 bbox r을 그대로 채우므로(Lucid 대조) 여기도 r을 직접 쓴다.
+            return QPointF(r.left() + r.width() / 3.0, r.center().y())
         return c
 
     def clone(self):
@@ -5899,9 +5883,12 @@ def _shape_ports(item):
         # 세 변의 진짜 중점(t·b·l)과 꼭짓점(r)을 직접 좌표로 준다 — 이미 테두리 위의 정확한
         # 점이라 아래 `_nearest_border`에 넣어도 그대로 되돌아오고, 회전·법선 보정
         # (`_axis_forced_local_normal`)은 다른 도형과 같은 파이프라인을 그대로 탄다.
-        tr = _tri_rect(r)
-        tl, bl = QPointF(tr.left(), tr.top()), QPointF(tr.left(), tr.bottom())
-        apex = QPointF(tr.right(), tr.center().y())
+        # [2026-08-10 후속] `_tri_rect` 내접을 버리고(Lucid 대조) bbox r을 직접 쓴다 —
+        # l·r은 이제 아래 일반 공식과 값이 같아지지만(뒤쪽 변·꼭짓점이 bbox 모서리/변중심과
+        # 정확히 일치), t·b는 여전히 대각선 변이라 일반 공식(박스 중심에서 내린 점)과 다르므로
+        # 네 점 다 명시적으로 유지한다.
+        tl, bl = QPointF(r.left(), r.top()), QPointF(r.left(), r.bottom())
+        apex = QPointF(r.right(), cy)
         pts = (QPointF((apex.x() + tl.x()) / 2.0, (apex.y() + tl.y()) / 2.0),   # t=위쪽 대각변 중점
                apex,                                                             # r=꼭짓점
                QPointF((bl.x() + apex.x()) / 2.0, (bl.y() + apex.y()) / 2.0),    # b=아래쪽 대각변 중점

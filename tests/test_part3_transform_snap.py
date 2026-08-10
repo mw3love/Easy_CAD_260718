@@ -143,18 +143,20 @@ def test_group_transform_availability():
 
 
 def test_group_bbox_hugs_triangle_real_edge_not_padded_bbox():
-    # [회귀 방지 2026-08-10] 실사용 재현 — 삼각형이 낀 다중선택에서 그룹 점선 테두리의 왼쪽
-    # 변이 삼각형의 실제 뒤쪽 변(back edge)보다 바깥에 떠 보였다. 원인은 `_GroupTransform.
-    # bbox()`가 `_content_rect()`(패딩된 자기 bbox)를 썼기 때문 — `_apply_smart_snap.srect()`
-    # 와 같은 병(`_tight_scene_bbox` 주석 참조)이라 같은 헬퍼로 통일해 고쳤다.
+    # [회귀 방지 2026-08-10, 후속(정삼각형 내접 폐기) 반영] 실사용 재현 — 삼각형이 낀
+    # 다중선택에서 그룹 점선 테두리의 왼쪽 변이 삼각형의 실제 뒤쪽 변(back edge)보다 바깥에
+    # 떠 보였다. 원인은 `_GroupTransform.bbox()`가 `_content_rect()`(패딩된 자기 bbox)를
+    # 썼기 때문 — `_tight_scene_bbox`로 통일해 고쳤다. `_sym_triangle`이 이제 `_tri_rect`
+    # 내접 없이 bbox를 그대로 채우므로(Lucid 대조), 여기서 기대하는 "실제 뒤쪽 변"도 그냥
+    # bbox 왼쪽(=tri.rect().left())과 같다.
     w = CanvasWindow()
-    tri = _SymbolItem("triangle", QRectF(0, 0, 140, 100))   # 폭>높이 → 뒤쪽 변에 x-패딩 생김
+    tri = _SymbolItem("triangle", QRectF(0, 0, 140, 100))
     tri.setPen(w.make_pen()); tri.setBrush(QBrush(Qt.BrushStyle.NoBrush))
     tri.setFlags(tri.GraphicsItemFlag.ItemIsSelectable | tri.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(tri)
     rect = _mk_rect(w._scene, w.make_pen(), 100, 0, 100, 100)
     tri.setSelected(True); rect.setSelected(True)
-    back_x = _tri_rect(tri.rect()).left()   # tri.pos()는 (0,0)이라 로컬=씬
+    back_x = tri.rect().left()   # tri.pos()는 (0,0)이라 로컬=씬
     g = w._view._group
     assert abs(g.bbox().left() - back_x) < 1e-6
 
@@ -985,19 +987,20 @@ def test_smart_align_adjacent_edge_snap_when_far_apart_perpendicular():
 
 
 def test_smart_align_triangle_vertex_snaps_to_rect_edge():
-    # [신규기능 2026-08-10] 실사용 지적 — 삼각형 bbox가 정사각이 아니면(폭≠높이) 정삼각형이
-    # bbox 안쪽에 내접해(`_tri_rect`) 뒤쪽 변(꼭짓점 2개)이 bbox 왼쪽 변보다 안쪽에 있다. 예전
-    # bbox 전용 스마트 스냅은 이 "실제 뒤쪽 변" 위치를 몰라 삼각형이 사각형에 딱 붙지 않았다 —
-    # 실제 윤곽 정점(`_real_snap_vertices_local`)을 후보에 추가해 해결.
+    # [신규기능 2026-08-10, 후속(정삼각형 내접 폐기) 반영] 실사용 지적 — 예전엔 삼각형이
+    # 정삼각형으로 내접(`_tri_rect`)해 bbox와 실제 외곽선이 달랐다. `_sym_triangle`이 이제
+    # bbox를 그대로 채우므로(Lucid 대조) "실제 뒤쪽 변" == bbox 왼쪽 그 자체지만, 이 테스트가
+    # 검증하는 실제 윤곽 정점 스냅(`_real_snap_vertices_local`) 경로 자체는 여전히 유효하다
+    # (다른 kind·회전된 도형 등에서 bbox≠실제 외곽선인 경우를 계속 커버).
     w = CanvasWindow()
     rect = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
-    tri = _SymbolItem("triangle", QRectF(0, 0, 160, 90))   # 폭>높이 → 뒤쪽 변에 x-패딩 생김
+    tri = _SymbolItem("triangle", QRectF(0, 0, 160, 90))
     tri.setPen(w.make_pen()); tri.setBrush(QBrush(Qt.BrushStyle.NoBrush))
     tri.setFlags(tri.GraphicsItemFlag.ItemIsSelectable | tri.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(tri)
     v = w._view
     thr = 6.0 / v._view_scale()
-    back_x_local = _tri_rect(tri.rect()).left()
+    back_x_local = tri.rect().left()
     rect_right = _cright(rect)   # 패딩 없는 실제 테두리 값 — `_apply_smart_snap.srect()`와 동일 기준
     target_x = rect_right - back_x_local + thr * 0.3   # 임계 내로 살짝 어긋나게
     tri.setPos(QPointF(target_x, 200)); tri.setSelected(True)
@@ -1022,7 +1025,7 @@ def test_smart_align_rect_snaps_toward_stationary_triangle_vertex():
     rect = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     v = w._view
     thr = 6.0 / v._view_scale()
-    back_x_scene = _tri_rect(tri.rect()).left()   # tri.pos()는 (0,0)이라 로컬=씬
+    back_x_scene = tri.rect().left()   # tri.pos()는 (0,0)이라 로컬=씬
     target_rx = back_x_scene - 100 + thr * 0.3
     rect.setPos(QPointF(target_rx, 200)); rect.setSelected(True)
     v._apply_smart_snap()
@@ -1428,19 +1431,20 @@ def test_shape_ports_pure():
 
 
 def test_shape_ports_triangle_uses_true_edge_midpoints():
-    # [회귀 방지 2026-08-10] 실사용 지적 — 일반 로직(bbox N/E/S/W 투영)은 삼각형의 사선 변에서
-    # "그 변의 진짜 중점"이 아니라 "박스 중심에서 내린 최근접점"을 줘 어긋났다(뒤쪽 축정렬
-    # 변만 우연히 맞음). 폭≠높이인 비정사각 박스로 확실히 검증(정사각이면 어긋남이 작아
-    # 착시로 우연히 맞아 보일 수 있음).
-    tri = _SymbolItem("triangle", QRectF(0, 0, 200, 140))
-    tr = _tri_rect(tri.rect())
-    tl, bl = QPointF(tr.left(), tr.top()), QPointF(tr.left(), tr.bottom())
-    apex = QPointF(tr.right(), tr.center().y())
+    # [회귀 방지 2026-08-10, 후속(정삼각형 내접 폐기) 반영] 실사용 지적 — 일반 로직(bbox
+    # N/E/S/W 투영)은 삼각형의 사선 변에서 "그 변의 진짜 중점"이 아니라 "박스 중심에서 내린
+    # 최근접점"을 줘 어긋났다. `_sym_triangle`이 이제 `_tri_rect` 내접 없이 bbox를 그대로
+    # 채우므로(Lucid 대조), 여기 기대값도 bbox `r`을 직접 쓴다 — 뒤쪽 변(l)·꼭짓점(r)은 bbox
+    # 모서리/변중심과 정확히 같아지고, 대각선 변(t·b)만 여전히 어긋나 특례가 필요하다.
+    r = QRectF(0, 0, 200, 140)
+    tri = _SymbolItem("triangle", r)
+    tl, bl = QPointF(r.left(), r.top()), QPointF(r.left(), r.bottom())
+    apex = QPointF(r.right(), r.center().y())
     expect = {
         "t": QPointF((apex.x() + tl.x()) / 2.0, (apex.y() + tl.y()) / 2.0),
         "r": apex,
         "b": QPointF((bl.x() + apex.x()) / 2.0, (bl.y() + apex.y()) / 2.0),
-        "l": QPointF(tl.x(), tr.center().y()),
+        "l": QPointF(tl.x(), r.center().y()),
     }
     got = dict(zip("trbl", _shape_ports(tri)))
     for k, exp in expect.items():
@@ -1448,35 +1452,38 @@ def test_shape_ports_triangle_uses_true_edge_midpoints():
         assert abs(sp.x() - exp.x()) < 1e-6 and abs(sp.y() - exp.y()) < 1e-6, (k, sp, exp)
 
 
-def test_box_corner_rects_triangle_at_real_vertices():
-    # [회귀 방지 2026-08-10, 여러 차례 후속 수정 포함] 실사용 지적 — 꼭짓점 사각 핸들이
-    # 바운딩박스 모서리라 삼각형의 실제 꼭짓점과 떨어져 보였다. 뒤쪽 두 꼭짓점(TL·BL)은 핸들
-    # 위치를 실제 꼭짓점(+기존 핸들 간격)으로 옮겼는지 검증. 앞쪽 꼭짓점(TR·BR)은 한때 아예
-    # 뺐다가(qc-dot과 겹쳐 보인다는 지적), "오른쪽에서 잡고 크기 조절"이 안 되는 손실이 더
-    # 크다는 사용자 판단(2026-08-10)으로 되살렸다 — 대신 그 자리의 qc-dot을 뺀다
-    # (`test_qc_dot_rects_triangle_apex_yields_to_resize_handle` 참조).
+def test_sym_triangle_fills_bbox_no_padding():
+    # [신규기능 2026-08-10] 정삼각형 내접(`_tri_rect`)을 버리고 bbox를 그대로 채우는지 확인 —
+    # 근본 원인 제거(Lucid 대조): 리사이즈 핸들·qc-dot·TRIM 자국 핸들이 전부 실제 꼭짓점/변과
+    # 어긋나던 문제가 전부 "정삼각형으로 내접시키며 생기는 패딩" 하나에서 비롯됐었다.
+    r = QRectF(0, 0, 200, 140)
+    tri = _SymbolItem("triangle", r)
+    poly = _host_outline_local_polygon(tri)
+    pts = {(round(p.x(), 6), round(p.y(), 6)) for p in poly}
+    assert pts == {(0.0, 0.0), (0.0, 140.0), (200.0, 70.0)}   # bbox 세 모서리(TL·BL·우변중심)
+
+
+def test_box_corner_rects_triangle_is_plain_bbox():
+    # [회귀 방지 2026-08-10, 근본 수정 반영] 삼각형 전용 특례를 여러 번 시도하다, `_sym_triangle`
+    # 자체를 bbox-채움으로 바꾸면서 특례가 통째로 불필요해졌다. 뒤쪽 두 꼭짓점(TL·BL)은 bbox
+    # 모서리와 이미 정확히 같아 특례 없이도 맞고, 앞쪽 꼭짓점(TR·BR 자리)은 Lucid의 "안 쓰이는
+    # 모서리"와 같은 처지 — 실제 꼭짓점은 qc-dot(east)이 담당(아래 테스트).
     tri = _SymbolItem("triangle", QRectF(0, 0, 200, 140))
-    tr = _tri_rect(tri.rect())
-    apex = QPointF(tr.right(), tr.center().y())
-    rects = dict(tri._box_corner_rects())
-    gap = tri._handle_px() * tri._HANDLE_GAP_FACTOR
-    assert set(rects.keys()) == {0, 1, 2, 3}
-    assert abs(rects[0].center().x() - (tr.left() - gap)) < 1e-6   # TL: 뒤쪽 위 꼭짓점, 바깥(-x)으로 gap
-    assert abs(rects[0].center().y() - (tr.top() - gap)) < 1e-6
-    assert abs(rects[3].center().x() - (tr.left() - gap)) < 1e-6   # BL: 뒤쪽 아래 꼭짓점
-    assert abs(rects[3].center().y() - (tr.bottom() + gap)) < 1e-6
-    assert rects[1].center() == rects[2].center()                  # TR·BR = 같은 앞쪽 꼭짓점
-    assert abs(rects[1].center().x() - (apex.x() + gap)) < 1e-6
+    rect_item = _RectItem(QRectF(0, 0, 200, 140))   # 같은 bbox의 사각형과 완전히 같은 공식이어야 함
+    assert dict(tri._box_corner_rects()) == dict(rect_item._box_corner_rects())
 
 
-def test_qc_dot_rects_triangle_apex_yields_to_resize_handle():
-    # [신규기능 2026-08-10] 삼각형 앞쪽 꼭짓점은 리사이즈 핸들이 전담 — qc-dot 목록에선
-    # "r"(동쪽)만 빠지고 나머지(t·b·l)는 그대로. `_shape_ports` 자체(다른 도형이 여기로
-    # 붙는 라우팅)는 안 건드린다 — 이 도형 선택 시 핸들 표시만 정리.
+def test_qc_dot_rects_triangle_has_all_four_no_overlap_with_corners():
+    # [신규기능 2026-08-10, 최종] `_sym_triangle`이 bbox를 그대로 채우면서 앞쪽 꼭짓점의
+    # 리사이즈 핸들(TR·BR, bbox 모서리)과 qc-dot("r", 변 중심=실제 꼭짓점)이 서로 다른 자리가
+    # 됐다 — 더 이상 겹치지 않으므로 특례 없이 4개 다 보인다.
     tri = _SymbolItem("triangle", QRectF(0, 0, 200, 140))
     qc = dict(tri._qc_dot_rects())
-    assert set(qc.keys()) == {"t", "b", "l"}
-    assert len(_shape_ports(tri)) == 4   # 라우팅용 포트 개수는 그대로(r 포함)
+    corners = dict(tri._box_corner_rects())
+    assert set(qc.keys()) == {"t", "r", "b", "l"}
+    for ck, cr in corners.items():
+        for qk, qr in qc.items():
+            assert (cr.center() - qr.center()).manhattanLength() > 1.0, (ck, qk)
 
 
 
@@ -1515,7 +1522,7 @@ def _make_apex_poke_cut(rect, tri, orig_pos: QPointF):
     만들고, 그 두 대각선 변이 rect 왼쪽 변을 가로지르는 교차점으로 실제 cut을 등록한다(TRIM
     도구를 흉내— 계산은 직접, `_add_border_cut` 포맷과 동일)."""
     tri.setPos(orig_pos)
-    tr = _tri_rect(tri.rect())
+    tr = tri.rect()   # [2026-08-10 후속] _sym_triangle이 이제 _tri_rect 없이 bbox를 그대로 채움
     apex = tri.mapToScene(QPointF(tr.right(), tr.center().y()))
     bt = tri.mapToScene(QPointF(tr.left(), tr.top()))
     bb = tri.mapToScene(QPointF(tr.left(), tr.bottom()))
