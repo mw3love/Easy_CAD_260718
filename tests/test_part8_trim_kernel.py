@@ -1213,3 +1213,78 @@ def test_selection_center_path_respects_cuts():
     tri_rendered = build_trimmed_border_path(tri)
     assert len(tri_center.toSubpathPolygons()) == len(tri_rendered.toSubpathPolygons())
     assert len(tri_center.toSubpathPolygons()) > 1   # 잘려서 열린 조각이어야(닫힌 1개가 아님)
+
+
+# ---------------------------------------------------------------------------
+# [신규기능 2026-08-10, 실사용 제안] TRIM 자국(_cuts) 경계 핸들 — 선택 시 표시되고 드래그로
+# 그 경계(t0/t1)를 조절할 수 있다. 라이브 드래그는 이 하네스가 신뢰성 있게 합성 못 하는 걸로
+# 이미 확인돼 있어(2026-08-09, `docs/pitfalls.md` 참조), `_box_resize`가 쓰는 기존 관례대로
+# 드래그 상태 필드를 직접 설정하고 apply 메서드를 직접 호출하는 방식으로 검증한다.
+# ---------------------------------------------------------------------------
+
+def test_cut_handle_rects_at_t0_t1():
+    r = _RectItem(QRectF(0, 0, 100, 100))
+    r._cuts = [(3, 0.3, 0.7)]   # 왼쪽 변(BL→TL): t0=0.3→y=70, t1=0.7→y=30
+    rects = dict(r._cut_handle_rects())
+    assert set(rects.keys()) == {(0, "t0"), (0, "t1")}
+    assert abs(rects[(0, "t0")].center().y() - 70.0) < 1e-6
+    assert abs(rects[(0, "t1")].center().y() - 30.0) < 1e-6
+    assert abs(rects[(0, "t0")].center().x()) < 1e-6   # 왼쪽 변이라 x=0
+
+
+def test_cut_handle_rects_empty_without_cuts():
+    r = _RectItem(QRectF(0, 0, 100, 100))
+    assert r._cut_handle_rects() == []
+
+
+def test_cut_handle_drag_adjusts_t0_along_edge():
+    r = _RectItem(QRectF(0, 0, 100, 100))
+    r._cuts = [(3, 0.3, 0.7)]
+    r._cut_drag = (0, "t0")
+    r._apply_cut_drag(QPointF(0, 50))   # y=50 → t=0.5 (70에서 50으로)
+    assert abs(r._cuts[0][1] - 0.5) < 1e-6
+    assert abs(r._cuts[0][2] - 0.7) < 1e-6   # 반대쪽(t1)은 안 바뀜
+
+
+def test_cut_handle_drag_t0_cannot_cross_t1():
+    # [회귀 방지] t0를 t1 너머로 끌어도 최소 간격을 두고 클램프돼야지(음수 폭 cut 방지),
+    # 그냥 반대편을 통과해버리면 안 된다.
+    r = _RectItem(QRectF(0, 0, 100, 100))
+    r._cuts = [(3, 0.3, 0.7)]
+    r._cut_drag = (0, "t0")
+    r._apply_cut_drag(QPointF(0, 10))   # t1(0.7)보다 훨씬 위(t≈0.9 방향)로 끌기
+    edge_i, t0, t1 = r._cuts[0]
+    assert t0 < t1
+
+
+def test_cut_handle_drag_undo_redo_roundtrip():
+    # [신규기능] 실제 CanvasWindow의 undo 저널과 연동 — 드래그 커밋이 push_undo_cut을 타고
+    # Ctrl+Z/Ctrl+Shift+Z로 정확히 왕복해야 한다.
+    w = CanvasWindow()
+    r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
+    r._cuts = [(3, 0.3, 0.7)]
+    before = list(r._cuts)
+
+    r._cut_drag = (0, "t0")
+    r._cut_drag_before = list(before)
+    r._apply_cut_drag(QPointF(0, 50))
+    assert abs(r._cuts[0][1] - 0.5) < 1e-6
+    r._commit_cut_drag_undo(r._cut_drag_before)
+    r._cut_drag = None
+    r._cut_drag_before = None
+
+    w.undo()
+    assert list(r._cuts) == before
+    w.redo()
+    assert abs(r._cuts[0][1] - 0.5) < 1e-6
+
+
+def test_cut_handle_drag_no_undo_entry_when_unchanged():
+    # [회귀 방지] 드래그했지만 결과적으로 값이 안 바뀌었으면(예: 시작점 그대로 놓음) undo
+    # 엔트리를 쌓지 않는다 — 다른 좌표 이동(push_undo_move)의 no-op 가드와 같은 관례.
+    w = CanvasWindow()
+    r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
+    r._cuts = [(3, 0.3, 0.7)]
+    before = list(r._cuts)
+    r._commit_cut_drag_undo(before)   # 값 변화 없음
+    assert len(w._undo) == 0

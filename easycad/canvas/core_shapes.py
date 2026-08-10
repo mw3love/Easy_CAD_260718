@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 from easycad.theme import (
     BASE as _BG, SURFACE0 as _SURFACE0, SURFACE1 as _BORDER,
     SURFACE2 as _SURFACE2, TEXT as _TEXT, BLUE as _BLUE, SUBTEXT0 as _SUBTEXT,
-    PEACH as _PEACH, GREEN as _GREEN,
+    PEACH as _PEACH, GREEN as _GREEN, RED as _RED,
 )
 
 
@@ -132,6 +132,9 @@ class _HandleResizeMixin:
         self._box_orig_rect = None  # 드래그 시작 시 rect()(원본 기준 — 누적 방지)
         self._box_snap = None       # [(item, capture_geom()), ...] — geom undo
         self._box_bound = None      # _collect_bound_arrows 결과(부착점 상대유지)
+        # [신규기능 2026-08-10] TRIM 자국(_cuts) 경계 핸들 드래그 상태
+        self._cut_drag = None       # None | (cut_index, "t0"|"t1")
+        self._cut_drag_before = None   # 드래그 시작 시 _cuts 스냅샷(undo)
 
     # ---- 끝점(양끝 이동) 모드 -------------------------------------------
     # 선·화살표처럼 '2점으로 완전히 결정되는' 도형은 회전+균일스케일 핸들 대신
@@ -603,6 +606,60 @@ class _HandleResizeMixin:
             out.append((k, QRectF(p.x() - d / 2, p.y() - d / 2, d, d)))
         return out
 
+    def _cut_handle_rects(self):
+        """[신규기능 2026-08-10] TRIM 자국(`_cuts`) 경계 두 점(t0/t1)마다 핸들 하나(로컬좌표) —
+        실사용 제안: "잘린 부분의 끝점도 선택점으로 표기해서 거기서 추가 조절을 할 수 있어야
+        하지 않나"(눈에 보이는 건 다 만질 수 있다는 이 앱의 기존 관례와 일관). 선택된 도형에만
+        뜬다(`_handle_active()` 게이트는 호출부 `_paint_handle`/`_hover_handle_at`이 이미 검사).
+        cut이 없는 도형·타입은 빈 리스트(변화 없음)."""
+        cuts = getattr(self, "_cuts", None)
+        if not cuts:
+            return []
+        poly = _host_outline_local_polygon(self)
+        n = len(poly)
+        if n < 2:
+            return []
+        h = self._handle_px() * 0.8
+        out = []
+        for ci, (edge_i, t0, t1) in enumerate(cuts):
+            if not (0 <= edge_i < n):
+                continue
+            a, b = poly[edge_i], poly[(edge_i + 1) % n]
+            for which, t in (("t0", t0), ("t1", t1)):
+                p = QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
+                out.append(((ci, which), QRectF(p.x() - h / 2, p.y() - h / 2, h, h)))
+        return out
+
+    def _apply_cut_drag(self, local_pt: QPointF):
+        """[신규기능 2026-08-10] `_cut_drag`(cut_index, "t0"/"t1")가 가리키는 경계를 그 변을
+        따라 `local_pt`의 투영 위치로 옮긴다 — 자기 자신의 반대쪽 경계(t1 또는 t0)를 넘어가지
+        않도록 최소 간격(MIN_GAP)만 클램프한다(다른 cut과의 겹침은 `build_trimmed_border_path`
+        가 렌더 시점에 이미 병합하므로 여기서 막을 필요 없음, §8 항목17 2단계 관례)."""
+        ci, which = self._cut_drag
+        cuts = getattr(self, "_cuts", None) or []
+        if not (0 <= ci < len(cuts)):
+            return
+        poly = _host_outline_local_polygon(self)
+        n = len(poly)
+        edge_i, t0, t1 = cuts[ci]
+        if not (0 <= edge_i < n):
+            return
+        a, b = poly[edge_i], poly[(edge_i + 1) % n]
+        t, _perp = _seg_param_and_perp(a, b, local_pt)
+        MIN_GAP = 0.01
+        if which == "t0":
+            t0 = max(0.0, min(t, t1 - MIN_GAP))
+        else:
+            t1 = min(1.0, max(t, t0 + MIN_GAP))
+        cuts[ci] = (edge_i, t0, t1)
+        self.update()
+
+    def _commit_cut_drag_undo(self, before_cuts):
+        h = self._host()
+        after = list(getattr(self, "_cuts", None) or [])
+        if h is not None and before_cuts != after:
+            h.push_undo_cut(self, before_cuts)
+
     def _box_edge_side(self, local_pt: QPointF):
         """local_pt가 (모서리·qc-dot과 안 겹치는) 테두리 변 위 리사이즈 대역이면 그 변
         ('t'/'r'/'b'/'l'), 아니면 None. [2026-08-03 실사용 지적, Lucid 대조] 변 전체를 잡아
@@ -649,6 +706,11 @@ class _HandleResizeMixin:
             if r.contains(local_pt):   # TL·BR = ↖↘, TR·BL = ↗↙
                 return (Qt.CursorShape.SizeFDiagCursor if i in (0, 2)
                         else Qt.CursorShape.SizeBDiagCursor)
+        # [신규기능 2026-08-10] TRIM 자국 경계 핸들 — 변 리사이즈 커서(아래)보다 먼저 검사
+        # (mousePressEvent와 같은 우선순위). 이동/재스냅 성격이라 끝점 핸들과 같은 커서.
+        for _key, r in self._cut_handle_rects():
+            if r.contains(local_pt):
+                return Qt.CursorShape.PointingHandCursor
         # 변 중점(qc-dot) 자체는 화살표 전용 빠른 생성 점 — 그 커서는 _update_hover_cursor의
         # _qc_dot_at 분기가 CrossCursor로 먼저 처리한다(이 함수엔 도달 안 함).
         side = self._box_edge_side(local_pt)
@@ -823,6 +885,9 @@ class _HandleResizeMixin:
             for side, r in self._qc_dot_rects():
                 if r.contains(local_pt):
                     return ("qc", side)
+            for key, r in self._cut_handle_rects():
+                if self._inflate_to_hit(r).contains(local_pt):
+                    return ("cut", key)
             return None
         if self._rot_handle_rect().contains(local_pt):
             return ("rot", None)
@@ -866,6 +931,15 @@ class _HandleResizeMixin:
             for k, dr in self._qc_dot_rects():
                 self._set_handle_paint(painter, s, QColor(90, 150, 235), hv == ("qc", k))
                 painter.drawEllipse(dr)
+            # [신규기능 2026-08-10] TRIM 자국 경계 핸들 — 마름모(다이아몬드)로 사각(리사이즈)·
+            # 원(qc-dot)과 확실히 구별하고, 색은 TRIM 미리보기(빨강 점선)와 같은 계열(_RED)로
+            # "이건 잘린 자국과 관련된 점"이라는 의미를 잇는다.
+            for key, cr in self._cut_handle_rects():
+                self._set_handle_paint(painter, s, _RED, hv == ("cut", key))
+                c = cr.center(); hw = cr.width() / 2.0
+                diamond = QPolygonF([QPointF(c.x(), c.y() - hw), QPointF(c.x() + hw, c.y()),
+                                     QPointF(c.x(), c.y() + hw), QPointF(c.x() - hw, c.y())])
+                painter.drawPolygon(diamond)
             return
         # 회전 핸들 — 우상단 코너 안쪽 코랄 점(줄기 없음, 우하단 크기조절 점과 대칭)
         rc = self._rot_handle_center()
@@ -966,6 +1040,14 @@ class _HandleResizeMixin:
                     self._begin_box_geom()
                     event.accept()
                     return
+            # [신규기능 2026-08-10] TRIM 자국 경계 핸들 — 변 리사이즈(아래 `_box_edge_side`)보다
+            # 먼저 검사해야 한다(같은 변 위에 있어서 안 그러면 변 드래그가 먼저 가로챈다).
+            for key, r in self._cut_handle_rects():
+                if r.contains(lp):
+                    self._cut_drag = key
+                    self._cut_drag_before = list(self._cuts)
+                    event.accept()
+                    return
             # [2026-07-30] 변 중점(qc-dot 그 자체)은 더 이상 여기서 안 잡는다 — 뷰가 press를
             # 먼저 가로채(_qc_dot_at) 화살표 전용으로 처리한다(축 방향으로 당겨도 리사이즈
             # 아님, 2026-08-01 확정). [2026-08-03 실사용 지적] 그 점 '주변'(모서리·qc-dot과
@@ -1016,6 +1098,10 @@ class _HandleResizeMixin:
         return 0 if self._drag_endpoint == 0 else len(self._endpoints()) - 1
 
     def mouseMoveEvent(self, event):
+        if getattr(self, "_cut_drag", None) is not None:
+            self._apply_cut_drag(event.pos())
+            event.accept()
+            return
         if getattr(self, "_drag_endpoint", None) is not None:
             self.prepareGeometryChange()  # 끝점이 boundingRect를 바꾼다
             idx = self._resolve_drag_endpoint()
@@ -1063,6 +1149,14 @@ class _HandleResizeMixin:
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if getattr(self, "_cut_drag", None) is not None:
+            self._cut_drag = None
+            before = self._cut_drag_before
+            self._cut_drag_before = None
+            if before is not None:
+                self._commit_cut_drag_undo(before)
+            event.accept()
+            return
         if getattr(self, "_drag_endpoint", None) is not None:
             idx = self._resolve_drag_endpoint()   # 클리어 전에 '지금' 유효한 인덱스로 보정
             self._drag_endpoint = None
