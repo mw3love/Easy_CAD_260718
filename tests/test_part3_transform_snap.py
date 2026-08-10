@@ -856,7 +856,7 @@ def test_smart_align_shows_all_tied_roles():
     b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     v = w._view
     b.setPos(QPointF(300, 0)); b.setSelected(True)        # x는 임계 밖(정렬 무관), y는 완전 동률
-    ar = a.mapToScene(a._content_rect()).boundingRect()
+    ar = _snap_scene_rect(a)   # `_apply_smart_snap.srect()`와 동일 기준(패딩 없음)
     v._apply_smart_snap()
     h_guides = sorted(g[1] for g in v._align_guides if g[0] == "h")
     expect = sorted([ar.top(), ar.center().y(), ar.bottom()])
@@ -900,12 +900,12 @@ def test_smart_align_cross_role_mid_edge_match_snaps():
     b.setSelected(True)
     before = _cleft(b)
     v._apply_smart_snap()
-    # b.left(50)=a.center(50)가 거의 정확히 일치(ad=0, 다른 후보는 전부 임계 밖) — 움직여도
-    # 미세하고(펜폭 절반 이하 — `_content_rect()`가 펜폭만큼 패딩된 기존 별개 이슈, 이 테스트
-    # 범위 밖), mid-edge 가이드선(x≈50)은 떠야 한다. y축은 300 이상 떨어져 무관.
-    assert abs(_cleft(b) - before) < 1.0
+    # b.left(50)=a.center(50)가 정확히 일치(ad=0, 다른 후보는 전부 임계 밖) — 패딩 없는 실제
+    # 기준(`_snap_scene_rect`, 2026-08-10 후속 수정)이라 움직임도 정확히 0이어야 한다. mid-edge
+    # 가이드선(x=50)은 떠야 한다. y축은 300 이상 떨어져 무관.
+    assert abs(_cleft(b) - before) < 1e-6
     v_guides = [g for g in v._align_guides if g[0] == "v"]
-    assert len(v_guides) == 1 and abs(v_guides[0][1] - 50.0) < 1.0
+    assert len(v_guides) == 1 and abs(v_guides[0][1] - 50.0) < 1e-6
 
 
 
@@ -918,7 +918,7 @@ def test_smart_align_adjacent_edge_snap():
     b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     v = w._view
     thr = 6.0 / v._view_scale()
-    a_bottom = _cbottom(a)   # content_rect가 펜 폭만큼 바깥으로 패딩되므로(60이 아닌 60.5) 직접 측정
+    a_bottom = _cbottom(a)   # 패딩 없는 실제 테두리 값(60) — `_snap_scene_rect` 참조
     b.setPos(QPointF(0, 60 + thr * 0.5)); b.setSelected(True)   # x범위 동일(겹침) + 윗변이 근접
     v._apply_smart_snap()
     assert abs(_ctop(b) - a_bottom) < 1e-6                    # A 아랫변에 딱 붙음
@@ -979,14 +979,14 @@ def test_smart_align_triangle_vertex_snaps_to_rect_edge():
     v = w._view
     thr = 6.0 / v._view_scale()
     back_x_local = _tri_rect(tri.rect()).left()
-    rect_right_padded = _cright(rect)   # 기존 bbox 스냅 관례(펜폭 패딩)와 동일 기준
-    target_x = rect_right_padded - back_x_local + thr * 0.3   # 임계 내로 살짝 어긋나게
+    rect_right = _cright(rect)   # 패딩 없는 실제 테두리 값 — `_apply_smart_snap.srect()`와 동일 기준
+    target_x = rect_right - back_x_local + thr * 0.3   # 임계 내로 살짝 어긋나게
     tri.setPos(QPointF(target_x, 200)); tri.setSelected(True)
     before = tri.mapToScene(QPointF(back_x_local, 0)).x()
-    assert abs(before - rect_right_padded) > 1e-6   # 스냅 전엔 안 맞음
+    assert abs(before - rect_right) > 1e-6   # 스냅 전엔 안 맞음
     v._apply_smart_snap()
     after = tri.mapToScene(QPointF(back_x_local, 0)).x()
-    assert abs(after - rect_right_padded) < 1e-6     # 삼각형의 실제 뒤쪽 변이 사각형 변에 붙음
+    assert abs(after - rect_right) < 1e-6     # 삼각형의 실제 뒤쪽 변이 사각형 변에 딱 붙음(패딩 없이)
     assert any(g[0] == "v" for g in v._align_guides)
 
 
@@ -1014,10 +1014,12 @@ def test_smart_align_rect_snaps_toward_stationary_triangle_vertex():
 
 
 def test_smart_align_rect_rect_still_single_guide_no_vertex_dup():
-    # [회귀 방지] 정점 후보 도입 전엔 `_RectItem` 자신도 후보를 만들었다가, 같은 사각형인데
-    # 패딩된 bbox 후보(-0.5)와 패딩 없는 정점 후보(0.0)가 0.5유닛 어긋난 유사-중복을 만들어
-    # `test_smart_align_center_priority_is_per_shape_only`가 깨졌던 적이 있다(원인 분석은
-    # `_real_snap_vertices_local` 주석 참조) — `_RectItem`은 정점 후보에서 빠져야 한다.
+    # [회귀 방지] `_RectItem`을 정점 후보에 포함시킨 1차 시도에서, `srect()`(그때는 `_content_
+    # rect()`, 펜폭/2 패딩)와 정점 후보(패딩 없는 `rect()`)가 서로 다른 기준이라 같은 사각형인데
+    # 0.5유닛 어긋난 유사-중복 후보가 생겨 동률 판정이 깨졌었다(`test_smart_align_center_
+    # priority_is_per_shape_only` 회귀). 지금은 `srect()`도 `_host_outline_local_polygon`으로
+    # 통일해 두 경로가 항상 같은 값을 내므로(위 `srect`/`_real_snap_vertices_local` 주석 참조)
+    # `_RectItem`이 정점 후보에 있어도 중복이 생기지 않는다 — 그걸 계속 지키는 회귀 가드.
     # (폭이 다른 두 사각형을 써서 좌/중심/우가 우연히 동률로 함께 뜨는 것과 구분한다 —
     # 그건 `test_smart_align_shows_all_tied_roles`가 이미 다루는 정상 동작이다.)
     w = CanvasWindow()
@@ -1029,6 +1031,24 @@ def test_smart_align_rect_rect_still_single_guide_no_vertex_dup():
     v._apply_smart_snap()
     v_guides = [g for g in v._align_guides if g[0] == "v"]
     assert len(v_guides) == 1   # 정점 후보가 겹쳐 두 개로 쪼개지지 않아야 함
+
+
+
+
+def test_smart_align_rect_center_lands_exactly_on_other_rect_edge_no_padding():
+    # [회귀 방지 2026-08-10] 실사용 재현(4354% 줌) — 사각형 B의 중심을 사각형 A의 변에 붙였다고
+    # 여겼는데, 화면상 B의 중심점이 A의 실제 테두리 선이 아니라 그 0.5유닛(펜폭/2) 바깥에 얹혀
+    # "테두리 오른쪽에 있다"고 보였다. `srect()`가 그때까지 `_content_rect()`(패딩 있음)를 쓰던
+    # 게 원인 — 이제 패딩 없는 실제 테두리를 기준으로 정확히 0 오차로 붙어야 한다.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)      # right=100(패딩 없이)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 40, 40)       # center.x = pos.x + 20
+    v = w._view
+    thr = 6.0 / v._view_scale()
+    b.setPos(QPointF(100 - 20 + thr * 0.4, 300)); b.setSelected(True)   # 중심이 A의 우변 근처
+    v._apply_smart_snap()
+    b_center_x = b.mapToScene(b.rect()).boundingRect().center().x()
+    assert abs(b_center_x - 100.0) < 1e-6   # 정확히 A의 실제 우변(100)에 붙어야지 100.5가 아니다
 
 
 

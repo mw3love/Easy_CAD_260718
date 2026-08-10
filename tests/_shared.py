@@ -248,20 +248,35 @@ def _qc_drag(view, scene_from, scene_to):
     view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, scene_to, L, NB))
 
 
+def _snap_scene_rect(o):
+    # [2026-08-10] `_apply_smart_snap`의 `srect()`와 동일 기준 — 사각형·심볼은 패딩 없는
+    # 실제 외곽선(`_host_outline_local_polygon`), 그 외 타입은 `_content_rect()` 폴백.
+    # 예전엔 이 헬퍼들이 `_content_rect()`(펜폭/2 패딩)를 그대로 썼는데, 그건 딱 그 스냅
+    # 구현이 쓰던 값이라 "정답"처럼 보였을 뿐 실제 테두리 위치는 아니었다(펜폭 1.0 →
+    # 0.5유닛 어긋남, 4354% 줌에서 실사용으로 드러남).
+    if isinstance(o, (_RectItem, _EllipseItem, _SymbolItem)):
+        poly = _host_outline_local_polygon(o)
+        if poly:
+            pts = [o.mapToScene(p) for p in poly]
+            xs = [p.x() for p in pts]; ys = [p.y() for p in pts]
+            return QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
+    return o.mapToScene(o._content_rect()).boundingRect()
+
+
 def _cleft(o):
-    return o.mapToScene(o._content_rect()).boundingRect().left()
+    return _snap_scene_rect(o).left()
 
 
 def _ctop(o):
-    return o.mapToScene(o._content_rect()).boundingRect().top()
+    return _snap_scene_rect(o).top()
 
 
 def _cbottom(o):
-    return o.mapToScene(o._content_rect()).boundingRect().bottom()
+    return _snap_scene_rect(o).bottom()
 
 
 def _cright(o):
-    return o.mapToScene(o._content_rect()).boundingRect().right()
+    return _snap_scene_rect(o).right()
 
 
 def _rect_world_corners(it):
