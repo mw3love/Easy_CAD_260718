@@ -1427,6 +1427,45 @@ def test_shape_ports_pure():
     assert got2 == sorted([(250, 0), (300, 30), (250, 60), (200, 30)]), got2
 
 
+def test_shape_ports_triangle_uses_true_edge_midpoints():
+    # [회귀 방지 2026-08-10] 실사용 지적 — 일반 로직(bbox N/E/S/W 투영)은 삼각형의 사선 변에서
+    # "그 변의 진짜 중점"이 아니라 "박스 중심에서 내린 최근접점"을 줘 어긋났다(뒤쪽 축정렬
+    # 변만 우연히 맞음). 폭≠높이인 비정사각 박스로 확실히 검증(정사각이면 어긋남이 작아
+    # 착시로 우연히 맞아 보일 수 있음).
+    tri = _SymbolItem("triangle", QRectF(0, 0, 200, 140))
+    tr = _tri_rect(tri.rect())
+    tl, bl = QPointF(tr.left(), tr.top()), QPointF(tr.left(), tr.bottom())
+    apex = QPointF(tr.right(), tr.center().y())
+    expect = {
+        "t": QPointF((apex.x() + tl.x()) / 2.0, (apex.y() + tl.y()) / 2.0),
+        "r": apex,
+        "b": QPointF((bl.x() + apex.x()) / 2.0, (bl.y() + apex.y()) / 2.0),
+        "l": QPointF(tl.x(), tr.center().y()),
+    }
+    got = dict(zip("trbl", _shape_ports(tri)))
+    for k, exp in expect.items():
+        sp, _n = got[k]
+        assert abs(sp.x() - exp.x()) < 1e-6 and abs(sp.y() - exp.y()) < 1e-6, (k, sp, exp)
+
+
+def test_box_corner_rects_triangle_at_real_vertices():
+    # [회귀 방지 2026-08-10] 실사용 지적 — 꼭짓점 사각 핸들이 바운딩박스 모서리라 삼각형의
+    # 실제 꼭짓점과 떨어져 보였다("왼쪽 꼭짓점 두 개는 꼭짓점과 떨어져 있고 반대편은 중심에
+    # 안 맞음"). 리사이즈 로직은 그대로 두고 핸들 위치만 실제 꼭짓점(+기존 핸들 간격)으로
+    # 이동했는지 검증 — 앞쪽 꼭짓점은 TR·BR 두 인덱스가 같은 자리에 겹친다.
+    tri = _SymbolItem("triangle", QRectF(0, 0, 200, 140))
+    tr = _tri_rect(tri.rect())
+    apex = QPointF(tr.right(), tr.center().y())
+    rects = dict(tri._box_corner_rects())
+    gap = tri._handle_px() * tri._HANDLE_GAP_FACTOR
+    assert abs(rects[0].center().x() - (tr.left() - gap)) < 1e-6   # TL: 뒤쪽 위 꼭짓점, 바깥(-x)으로 gap
+    assert abs(rects[0].center().y() - (tr.top() - gap)) < 1e-6
+    assert abs(rects[3].center().x() - (tr.left() - gap)) < 1e-6   # BL: 뒤쪽 아래 꼭짓점
+    assert abs(rects[3].center().y() - (tr.bottom() + gap)) < 1e-6
+    assert rects[1].center() == rects[2].center()                 # TR·BR = 같은 앞쪽 꼭짓점
+    assert abs(rects[1].center().x() - (apex.x() + gap)) < 1e-6
+
+
 
 
 def test_diagonal_corner_still_snaps_via_continuous_fallback():

@@ -542,6 +542,19 @@ class _HandleResizeMixin:
         gap = h * self._HANDLE_GAP_FACTOR
         cx, cy = br.center().x(), br.center().y()
         pts = [br.topLeft(), br.topRight(), br.bottomRight(), br.bottomLeft()]  # 0TL 1TR 2BR 3BL
+        # [실사용 지적 2026-08-10] 삼각형은 바운딩박스 네 모서리가 실제 꼭짓점 3개와 안 맞는다
+        # — 정삼각형으로 내접시키며(`_tri_rect`) 뒤쪽 두 꼭짓점은 박스 왼쪽 변보다 안쪽으로
+        # 패딩되고, 앞쪽 꼭짓점 하나에는 TR·BR 두 모서리가 대응돼 어느 쪽도 안 맞는다("꼭짓점과
+        # 떨어져 보인다"는 지적). 리사이즈 동작(각 인덱스가 무엇을 드래그하는가 — 대각 고정점
+        # 기준 setRect)은 그대로 두고, 핸들을 그리고 클릭을 받는 위치만 실제 꼭짓점으로 옮긴다
+        # (WYSIWYG). 꼭짓점은 TR(1)·BR(2) 두 인덱스가 겹치는데, `_hover_handle_at`·
+        # `mousePressEvent`가 인덱스 오름차순으로 먼저 걸리는 것을 채택하는 기존 순회 방식이라
+        # 항상 TR(우하단 고정 앵커)로 반응한다 — 대각 방향만 다를 뿐 "꼭짓점을 끌어 리사이즈"라는
+        # 결과 자체는 동일해 실사용에 지장 없다.
+        if isinstance(self, _SymbolItem) and self._kind == "triangle":
+            tr = _tri_rect(br)
+            apex = QPointF(tr.right(), tr.center().y())
+            pts = [tr.topLeft(), apex, apex, tr.bottomLeft()]
         out = []
         for i, p in enumerate(pts):
             sx = gap if p.x() > cx else -gap
@@ -5862,8 +5875,23 @@ def _shape_ports(item):
     줄어드는 건 '포트 우선순위·상시 표시 점 개수'뿐, 대각 부착 능력 자체는 그대로다."""
     r = item.rect()
     cx, cy = r.center().x(), r.center().y()
-    pts = (QPointF(cx, r.top()), QPointF(r.right(), cy),
-           QPointF(cx, r.bottom()), QPointF(r.left(), cy))
+    if isinstance(item, _SymbolItem) and item._kind == "triangle":
+        # [실사용 지적 2026-08-10] 일반 로직(바운딩박스 N/E/S/W를 투영)은 뒤쪽 변(축정렬)만
+        # 우연히 맞고, 위·아래 대각선 변에서는 "그 변의 중점"이 아니라 "박스 중심에서 내린
+        # 최근접점"이 나와 어긋났다(실측: 진짜 중점 (188,94.5) vs 기존 결과 (150,66)). 삼각형은
+        # 세 변의 진짜 중점(t·b·l)과 꼭짓점(r)을 직접 좌표로 준다 — 이미 테두리 위의 정확한
+        # 점이라 아래 `_nearest_border`에 넣어도 그대로 되돌아오고, 회전·법선 보정
+        # (`_axis_forced_local_normal`)은 다른 도형과 같은 파이프라인을 그대로 탄다.
+        tr = _tri_rect(r)
+        tl, bl = QPointF(tr.left(), tr.top()), QPointF(tr.left(), tr.bottom())
+        apex = QPointF(tr.right(), tr.center().y())
+        pts = (QPointF((apex.x() + tl.x()) / 2.0, (apex.y() + tl.y()) / 2.0),   # t=위쪽 대각변 중점
+               apex,                                                             # r=꼭짓점
+               QPointF((bl.x() + apex.x()) / 2.0, (bl.y() + apex.y()) / 2.0),    # b=아래쪽 대각변 중점
+               QPointF(tl.x(), cy))                                              # l=뒤쪽 변 중점
+    else:
+        pts = (QPointF(cx, r.top()), QPointF(r.right(), cy),
+               QPointF(cx, r.bottom()), QPointF(r.left(), cy))
     out = []
     for p in pts:
         sp, n = _nearest_border(item, item.mapToScene(p))
