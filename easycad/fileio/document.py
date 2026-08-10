@@ -262,6 +262,10 @@ def item_to_dict(it) -> dict | None:
     # [신규기능 §8-12] 부착된 포트 — 라벨과 동일하게 부모 dict 안에 중첩 직렬화.
     if getattr(it, "_ports", None):
         d["ports"] = [_port_to_dict(p) for p in it._ports]
+    # [§8 항목17 6단계] TRIM cut 구간(닫힌 도형: 사각·원·심볼) — (변 인덱스, t0, t1) 그대로
+    # JSON 배열로. 없으면(하위호환) 키 자체를 생략 — 로드 시 getattr 기본(None)과 동일.
+    if getattr(it, "_cuts", None):
+        d["cuts"] = [[edge_i, t0, t1] for edge_i, t0, t1 in it._cuts]
     return d
 
 
@@ -318,6 +322,11 @@ def dict_to_item(d: dict):
     it = _apply_common(it, d)
     for pd in d.get("ports", []):
         _port_from_dict(pd, it)
+    # [§8 항목17 6단계] TRIM cut 구간 복원 — _add_border_cut을 안 쓰고 직접 대입한다(그
+    # 함수는 host.update()까지 호출하는데 이 시점엔 아직 씬에 안 들어가 있을 수 있어 불필요).
+    cuts = d.get("cuts")
+    if cuts:
+        it._cuts = [(c[0], c[1], c[2]) for c in cuts]
     return it
 
 

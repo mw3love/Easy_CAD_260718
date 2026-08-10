@@ -158,6 +158,7 @@ class _AnnotatorView(QGraphicsView):
         self._trim_preview = None    # 태그된 튜플("closed"/"open"/"extend", ...) or None
         self._trim_dragging = False  # press 이후 계속 문지르는 중(TRIM만 — EXTEND는 1회성)
         self._trim_seen: set = set()  # 이번 드래그에서 이미 커밋한 키 — 중복 방지
+        self._trim_undo_key = None   # [6단계] 이번 드래그의 undo coalesce 키(문지르기 전체=1스텝)
         # 선택이 바뀌면 그룹 오버레이(bbox·핸들)를 다시 그린다(개별 아이템 repaint와 별개).
         scene.selectionChanged.connect(self.viewport().update)
 
@@ -1710,19 +1711,30 @@ class _AnnotatorView(QGraphicsView):
             preview = self._trim_preview_at(event.position().toPoint(), extend=extend)
             if preview is not None:
                 kind = preview[0]
+                # [§8 항목17 6단계] 이번 드래그(문지르기) 전체를 undo 1스텝으로 묶는 키 —
+                # push_undo_move의 coalesce_key와 같은 패턴, 새 press마다 새 object()라
+                # 이전 드래그와 안 섞인다.
+                self._trim_undo_key = object()
                 if kind == "closed":
                     _tag, host, edge_i, t0, t1 = preview
+                    before_cuts = list(getattr(host, "_cuts", None) or [])
                     _add_border_cut(host, edge_i, t0, t1)
+                    self._owner.push_undo_cut(host, before_cuts, coalesce_key=self._trim_undo_key)
                     self._trim_seen = {("closed", id(host), edge_i, round(t0, 6), round(t1, 6))}
                     self._trim_dragging = True
                 elif kind == "open":
                     _tag, host, lo, hi = preview
-                    apply_open_item_trim(host, lo, hi)
+                    before_geom = host.capture_geom()
+                    clone = apply_open_item_trim(host, lo, hi)
+                    self._owner.push_undo_open_trim(host, before_geom, clone,
+                                                     coalesce_key=self._trim_undo_key)
                     self._trim_seen = {("open", id(host), lo, hi)}
                     self._trim_dragging = True
                 elif kind == "extend":
                     _tag, host, idx, new_pt = preview
+                    before_geom = host.capture_geom()
                     apply_extend(host, idx, new_pt)
+                    self._owner.push_undo_open_trim(host, before_geom)   # 1회성 — 코얼레스 없음
                 self._trim_preview = None
                 self.viewport().update()
             return
@@ -2406,13 +2418,19 @@ class _AnnotatorView(QGraphicsView):
                     _tag, host, edge_i, t0, t1 = preview
                     key = ("closed", id(host), edge_i, round(t0, 6), round(t1, 6))
                     if key not in self._trim_seen:
+                        before_cuts = list(getattr(host, "_cuts", None) or [])
                         _add_border_cut(host, edge_i, t0, t1)
+                        self._owner.push_undo_cut(host, before_cuts,
+                                                   coalesce_key=self._trim_undo_key)
                         self._trim_seen.add(key)
                 elif kind == "open":
                     _tag, host, lo, hi = preview
                     key = ("open", id(host), lo, hi)
                     if key not in self._trim_seen:
-                        apply_open_item_trim(host, lo, hi)
+                        before_geom = host.capture_geom()
+                        clone = apply_open_item_trim(host, lo, hi)
+                        self._owner.push_undo_open_trim(host, before_geom, clone,
+                                                         coalesce_key=self._trim_undo_key)
                         self._trim_seen.add(key)
             # [5단계] 커밋이 host 기하를 바꿀 수 있어(open) 다음 프레임에 새로 계산될 때까지
             # 잠깐이라도 stale preview를 들고 있지 않게 비운다(인덱스 범위 밖 참조 방지).
@@ -2602,6 +2620,7 @@ class _AnnotatorView(QGraphicsView):
         if self._trim_dragging:  # [§8 항목17 4단계] 문지르기 종료
             self._trim_dragging = False
             self._trim_seen = set()
+            self._trim_undo_key = None   # [6단계] 다음 드래그는 새 coalesce 키로
             self.viewport().update()
             return
         if self._seg_drag is not None:  # [M4-4] 세그먼트 드래그 종료 — 정점 정리 + undo 커밋

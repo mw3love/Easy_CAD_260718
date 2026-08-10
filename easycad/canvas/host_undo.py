@@ -160,6 +160,32 @@ class _UndoMixin:
             key=coalesce_key)
 
 
+    def push_undo_cut(self, host, before_cuts, coalesce_key=None):
+        """[§8 항목17 6단계] 닫힌 도형 TRIM(cut 구간 추가) 되돌리기 — `host._cuts`는
+        `capture_geom()`이 안 건드리는 별도 속성이라(리사이즈 등 기존 geom mut과 개념이
+        다름 — cut은 리사이즈로 안 지워져야 하므로) `group`(`_group_id`)과 같은 전용
+        `mut` sub("cuts")를 하나 더 둔다. coalesce_key를 문지르기 드래그 세션과 공유하면
+        `_coalesce_into`가 같은 host의 연속 cut을 "드래그 시작 전 before" 하나로 병합해
+        Ctrl+Z 한 번에 그 드래그 전체가 되돌아간다(`push_undo_move`와 같은 패턴)."""
+        self._push_entry(
+            [("mut", host, "cuts", list(before_cuts),
+              list(getattr(host, "_cuts", None) or []))],
+            key=coalesce_key)
+
+
+    def push_undo_open_trim(self, host, before_geom, clone=None, coalesce_key=None):
+        """[§8 항목17 6단계] 열린 도형(_LineItem/_PolyArrowItem) TRIM 분리·EXTEND 되돌리기 —
+        host 기하(+바인딩, 이미 `capture_geom()`/`apply_geom()`이 pts·auto_route·바인딩까지
+        전부 포괄) mut 스냅샷과, 분리로 새로 생긴 clone(있으면)의 `create`를 한 엔트리로
+        묶는다(그룹 복제가 여러 아이템을 한 undo로 묶는 `push_undo_add_many`와 같은 다중 op
+        패턴) — Ctrl+Z 한 번에 host 복원 + clone 제거가 함께 일어난다. EXTEND는 clone이
+        없으므로 host mut 하나짜리 엔트리가 된다."""
+        ops = [("mut", host, "geom", before_geom, host.capture_geom())]
+        if clone is not None:
+            ops.append(("create", clone))
+        self._push_entry(ops, key=coalesce_key)
+
+
     def _apply_mut(self, it, sub, tok):
         """mut op의 sub별 복원 — undo는 before, redo는 after 토큰을 그대로 넘긴다."""
         if sub == "pos":
@@ -179,6 +205,9 @@ class _UndoMixin:
             it.setZValue(tok)
         elif sub == "group":
             it._group_id = tok
+        elif sub == "cuts":
+            it._cuts = list(tok)
+            it.update()
         elif sub == "lock":
             self._set_item_lock_flags(it, tok)
         elif sub == "layer":

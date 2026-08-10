@@ -262,10 +262,23 @@ docs/
   로 바꿔 **닫힌 도형이 열린 도형(선)을 커터로 받는 것도 공짜로 가능**해짐(계획서 원문
   "임의 두 도형/선의 교차"). 신규 pytest 16종, 스모크 422→438종. 자체 스크린샷(오프스크린+
   실제 창 둘 다)으로 TRIM 빨간 점선 예고·3조각 연쇄 분리·EXTEND 예고·연장 후 렌더 육안 확인.
-  **다음 순서**: 6단계(직렬화·DXF·undo — 지금은 TRIM cut이 undo 저널에 안 걸림, 계획서에
-  6단계로 명시), 7단계(포트 팔레트를 TRIM으로 흡수). 밀집 도면 성능은 이전 세션에서 폐기
-  확정한 AA/LOD 축을 빼면 마무리(LOD 재착수는 별도 deep-interview 필요) + 기존 "다음 순서"·
-  "큰 설계 필요" 목록(메뉴 전용 아이콘 8종 SVG화 등) — `docs/EasyCAD_계획.md` §8 참조.
+- **§8 항목17 6단계(직렬화·DXF·undo) 완료**(2026-08-10, 스모크 447종) — `.ecad`는
+  `item_to_dict`/`dict_to_item`에 `cuts` 필드 추가(포트와 같은 관례, 없으면 키 생략 —
+  하위호환). DXF는 `_export_trimmed_border` 게이트를 `_ports` 단독 판정에서 `_ports or
+  _cuts`로 확장(`_export_rect`/`_export_symbol`) + `_export_ellipse`에 그 분기가 아예
+  없던 잠재 버그(원형 포트/cut이 DXF에서 이제껏 하나도 안 잘려 나갔음)를 같은 김에 수정.
+  undo는 `group`(`_group_id`)과 같은 전용 `mut` sub(`"cuts"`, `push_undo_cut`)를 닫힌
+  도형용으로 신설했지만, **열린 도형 TRIM/EXTEND는 새 sub가 필요 없었다** — 기존
+  `capture_geom()`/`apply_geom()`이 이미 pts·라우팅·바인딩까지 통째로 포괄해 host 쪽은
+  그대로 재사용, 분리로 새로 생기는 clone은 `push_undo_add_many`와 같은 "여러 op 한
+  엔트리" 패턴(`push_undo_open_trim`)만 얹었다. 문지르기 드래그 전체가 undo 1스텝으로
+  뭉치는 것도 `push_undo_move`가 이미 쓰던 `coalesce_key`(`object()` 세션 키) 패턴 재사용
+  뿐 — 서로 다른 host의 mut을 한 엔트리에 순서대로 누적하는 기존 `_coalesce_into` 동작이
+  다중 조각 연쇄 분리에도 그대로 맞아떨어짐(pytest로 실제 undo/redo 왕복 수치 확인). 신규
+  pytest 9종, 스모크 438→447종. **다음 순서**: 7단계(포트 팔레트를 TRIM으로 흡수, §8
+  항목17의 마지막 단계). 밀집 도면 성능은 이전 세션에서 폐기 확정한 AA/LOD 축을 빼면
+  마무리(LOD 재착수는 별도 deep-interview 필요) + 기존 "다음 순서"·"큰 설계 필요" 목록
+  (메뉴 전용 아이콘 8종 SVG화 등) — `docs/EasyCAD_계획.md` §8 참조.
 - **웹 트랙 병행개발(2026-08-05 시작 → 2026-08-06 일단 중단, Python 집중으로 전환)** —
   `web_prototype/`(이 리포 하위, PyQt 본체와 별개 코드, `easycad/`는 안 건드림)는 Python(PyQt)
   앱과 **둘 다 끝까지 만드는** 목표 자체는 유지하되(§8 항목10), 사용자가 2026-08-06 하루

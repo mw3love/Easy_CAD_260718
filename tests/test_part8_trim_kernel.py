@@ -22,9 +22,16 @@ QPointF/QRectF만으로 검증한다 — 렌더(간격이 실제로 화면·PDF�
 `apply_extend`)의 아이템 변형(분리·바인딩·라벨), `_AnnotatorView` 종단 시나리오(Shift=EXTEND
 전환 포함)를 함께 검증한다.
 
+6단계(2026-08-10) — 직렬화(.ecad)·DXF·undo. `host._cuts`의 `.ecad` JSON 왕복, DXF 내보내기
+게이트가 포트뿐 아니라 cut만 있어도 진짜 분절로 나가는지(+ 이전엔 분기 자체가 없던
+`_export_ellipse`도 함께), TRIM(닫힌/열린 도형)·EXTEND 전부 Ctrl+Z/Y로 되돌리기/다시실행
+되는지(문지르기 드래그 전체가 undo 1스텝으로 뭉치는지 포함)를 검증한다.
+
 tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easycad.py (전체) 또는
 pytest test_part8_trim_kernel.py.
 """
+import json
+
 from _shared import *  # noqa: F401,F403
 from PyQt6.QtWidgets import QGraphicsScene
 
@@ -791,3 +798,267 @@ def test_extend_tool_shift_click_extends_line_endpoint_via_view():
 
     assert abs(line.line().p2().x() - 300.0) < 1e-6
     assert view._trim_dragging is False   # EXTEND는 1회성 — 문지르기로 안 넘어감
+
+
+# ---- 6단계: 직렬화(.ecad) 왕복 -------------------------------------------------------------
+
+def test_ecad_roundtrip_preserves_cuts_on_rect():
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    host = _RectItem(QRectF(0, 0, 200, 100))
+    host.setPen(QPen(QColor("black"), 2))
+    sc.addItem(host)
+    _add_border_cut(host, 0, 0.25, 0.75)
+    path = os.path.join(_TMP, "cuts_roundtrip.ecad")
+    save_document(sc, path)
+
+    sc2 = QGraphicsScene()
+    load_document(sc2, path)
+    loaded = [it for it in sc2.items() if isinstance(it, _RectItem)]
+    assert len(loaded) == 1
+    assert loaded[0]._cuts == [(0, 0.25, 0.75)]
+
+
+def test_ecad_roundtrip_without_cuts_omits_key_and_stays_none():
+    # 하위호환 — cut이 없는 기존 문서는 "cuts" 키 자체가 없고, 로드해도 _cuts는 None(빈 목록
+    # 강제 생성 안 함, build_trimmed_border_path 등은 이미 `or []` 폴백으로 처리).
+    from PyQt6.QtGui import QPen
+    sc = QGraphicsScene()
+    host = _RectItem(QRectF(0, 0, 200, 100))
+    host.setPen(QPen(QColor("black"), 2))
+    sc.addItem(host)
+    path = os.path.join(_TMP, "no_cuts_roundtrip.ecad")
+    save_document(sc, path)
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    assert "cuts" not in doc["items"][0]
+
+    sc2 = QGraphicsScene()
+    load_document(sc2, path)
+    loaded = [it for it in sc2.items() if isinstance(it, _RectItem)]
+    assert getattr(loaded[0], "_cuts", None) is None
+
+
+# ---- 6단계: DXF 내보내기가 cut을 반영하는지 -------------------------------------------------
+
+def test_dxf_export_reflects_cut_only_rect_without_ports():
+    # [§8 항목17 6단계] 이전엔 _export_rect가 `_ports` 유무만 보고 진짜 분절로 갈아탔다 —
+    # 포트 없이 TRIM cut만 있는(항목17이 만든 새 워크플로) 사각형은 안 잘린 채로 나갔었다.
+    w = CanvasWindow()
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)
+    _add_border_cut(host, 0, 0.25, 0.75)
+    _mk_pen_rect(w, x=400, y=0, ww=100, hh=60)   # cut 없는 회귀 확인용
+
+    out = os.path.join(_TMP, "cut_only.dxf")
+    assert export_dxf(w._scene, out) is not False
+    import ezdxf
+    doc = ezdxf.readfile(out)
+    msp = doc.modelspace()
+    lines = list(msp.query("LINE"))
+    polys = list(msp.query("LWPOLYLINE"))
+    # host: 끊긴 위쪽 변 2조각 + 나머지 3변 = 5 LINE. 두 번째 rect: 닫힌 4점 LWPOLYLINE 1개.
+    assert len(lines) == 5
+    assert len(polys) == 1 and len(polys[0]) == 4
+
+
+def test_dxf_export_reflects_cut_only_ellipse_as_lines():
+    # [§8 항목17 6단계] _export_ellipse는 애초에 포트/cut 분기가 없어 원형 포트조차 DXF에서
+    # 안 잘린 CIRCLE/ELLIPSE로 나가던 잠재 버그였다 — rect/symbol과 같은 관례로 통일.
+    w = CanvasWindow()
+    ell = _EllipseItem(QRectF(0, 0, 200, 100))
+    ell.setPen(w.make_pen())
+    ell.setFlags(ell.GraphicsItemFlag.ItemIsSelectable | ell.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ell)
+    n = len(_host_outline_local_polygon(ell))
+    arc = max(4, n // 6)   # 픽셀·엔티티 검사에 넉넉한 호 하나(2단계 테스트와 같은 관례)
+    for i in range(arc):
+        _add_border_cut(ell, i, 0.0, 1.0)
+
+    out = os.path.join(_TMP, "cut_ellipse.dxf")
+    assert export_dxf(w._scene, out) is not False
+    import ezdxf
+    doc = ezdxf.readfile(out)
+    types = [e.dxftype() for e in doc.modelspace()]
+    assert "LINE" in types
+    assert "CIRCLE" not in types and "ELLIPSE" not in types
+
+
+# ---- 6단계: undo/redo -----------------------------------------------------------------------
+
+def test_undo_redo_closed_shape_trim_cut():
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)
+    _mk_pen_rect(w, x=280, y=-20, ww=40, hh=40)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(300, 0), NB, NB))
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(300, 0), L, L))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(300, 0), L, NB))
+
+    def cuts_close(cuts, want):
+        return len(cuts) == len(want) and all(
+            c[0] == w0 and abs(c[1] - t0) < 1e-6 and abs(c[2] - t1) < 1e-6
+            for c, (w0, t0, t1) in zip(cuts, want))
+
+    want = [(0, 280.0 / 600.0, 320.0 / 600.0)]
+    assert cuts_close(host._cuts, want)
+
+    w.undo()
+    assert getattr(host, "_cuts", None) in (None, [])
+    w.redo()
+    assert cuts_close(host._cuts, want)
+
+
+def test_undo_coalesces_whole_rubbing_drag_into_one_step():
+    # [핵심 검증] 드래그 한 번(press+move+move...+release)으로 커밋한 cut 여러 개가
+    # Ctrl+Z 한 번에 전부 원복돼야 한다 — push_undo_move의 coalesce_key 패턴을 재사용.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)
+    _mk_pen_rect(w, x=80, y=-20, ww=40, hh=40)
+    _mk_pen_rect(w, x=480, y=-20, ww=40, hh=40)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(100, 0), NB, NB))
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(100, 0), L, L))
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(500, 0), NB, L))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(500, 0), L, NB))
+    assert len(host._cuts) == 2
+
+    w.undo()
+    assert getattr(host, "_cuts", None) in (None, [])
+    w.redo()
+    assert len(host._cuts) == 2
+
+
+def test_undo_redo_open_line_trim_split_restores_and_removes_clone():
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    line = _LineItem(QLineF(0, 0, 600, 0))
+    w._scene.addItem(line)
+    _mk_pen_rect(w, x=280, y=-20, ww=40, hh=40)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(300, 0), NB, NB))
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(300, 0), L, L))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(300, 0), L, NB))
+    assert len([it for it in w._scene.items() if isinstance(it, _LineItem)]) == 2
+
+    w.undo()
+    remaining = [it for it in w._scene.items() if isinstance(it, _LineItem)]
+    assert len(remaining) == 1
+    assert _close(remaining[0].line().p1(), QPointF(0, 0))
+    assert _close(remaining[0].line().p2(), QPointF(600, 0))
+
+    w.redo()
+    lines_after_redo = [it for it in w._scene.items() if isinstance(it, _LineItem)]
+    assert len(lines_after_redo) == 2
+    endpoints = sorted((round(it.line().p1().x()), round(it.line().p2().x()))
+                        for it in lines_after_redo)
+    assert endpoints == [(0, 280), (320, 600)]
+
+
+def test_undo_redo_open_polyarrow_trim_split_preserves_bindings():
+    # [핵심 검증] capture_geom()/apply_geom()이 _PolyArrowItem의 pts뿐 아니라 바인딩까지
+    # 이미 포괄하므로(4단계 조사) 별도 "바인딩 전용" undo 코드 없이도 분리 전후 바인딩이
+    # 정확히 왕복하는지 실제 뷰 시나리오로 확인한다.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    a = _mk_pen_rect(w, x=-100, y=-50, ww=60, hh=40)
+    b = _mk_pen_rect(w, x=600, y=-50, ww=60, hh=40)
+    sa = _PolyArrowItem(QColor("#111111"), 2, True)
+    sa._pts = [QPointF(0, 0), QPointF(600, 0)]
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, QPointF(30, 20))
+    sa.set_bound(1, b, QPointF(30, 20))
+    _mk_pen_rect(w, x=280, y=-20, ww=40, hh=40)   # cutter
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(300, 0), NB, NB))
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(300, 0), L, L))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(300, 0), L, NB))
+
+    polys = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(polys) == 2
+    clone = next(p for p in polys if p is not sa)
+    assert sa._bind_start is a and sa._bind_end is None
+    assert clone._bind_start is None and clone._bind_end is b
+
+    w.undo()
+    polys_after_undo = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(polys_after_undo) == 1
+    assert sa._bind_start is a and sa._bind_end is b   # 원래 양끝 부착 복원
+
+    w.redo()
+    polys_after_redo = [it for it in w._scene.items() if isinstance(it, _PolyArrowItem)]
+    assert len(polys_after_redo) == 2
+    clone2 = next(p for p in polys_after_redo if p is not sa)
+    assert sa._bind_start is a and sa._bind_end is None
+    assert clone2._bind_start is None and clone2._bind_end is b
+
+
+def test_undo_redo_extend():
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    SHIFT = Qt.KeyboardModifier.ShiftModifier
+
+    w = CanvasWindow(); w.grid_enabled = False
+    line = _LineItem(QLineF(0, 0, 100, 0))
+    w._scene.addItem(line)
+    _mk_pen_rect(w, x=300, y=-50, ww=40, hh=100)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns, mods=Qt.KeyboardModifier.NoModifier):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, mods)
+
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(100, 0), NB, NB, SHIFT))
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(100, 0), L, L, SHIFT))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(100, 0), L, NB, SHIFT))
+    assert abs(line.line().p2().x() - 300.0) < 1e-6
+
+    w.undo()
+    assert abs(line.line().p2().x() - 100.0) < 1e-6
+    w.redo()
+    assert abs(line.line().p2().x() - 300.0) < 1e-6

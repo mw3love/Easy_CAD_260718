@@ -155,7 +155,9 @@ def _export_trimmed_border(msp, it, attrs):
 
 def _export_symbol(msp, it):
     attrs = _with_linetype(_attrs(_LAYERS["symbol"], it.pen().color()), it.pen().style())
-    if getattr(it, "_ports", None):
+    # [§8 항목17 6단계] 포트뿐 아니라 TRIM cut(`_cuts`)도 있으면 진짜 분절로 내보낸다 —
+    # 둘 다 build_trimmed_border_path가 이미 같은 gaps_by_edge로 합쳐서 처리함(2단계).
+    if getattr(it, "_ports", None) or getattr(it, "_cuts", None):
         _export_trimmed_border(msp, it, attrs)
         return
     for poly in it._sym_path().toSubpathPolygons():
@@ -171,7 +173,7 @@ def _export_symbol(msp, it):
 
 def _export_rect(msp, it):
     attrs = _with_linetype(_attrs(_LAYERS["rect"], it.pen().color()), it.pen().style())
-    if getattr(it, "_ports", None):
+    if getattr(it, "_ports", None) or getattr(it, "_cuts", None):
         _export_trimmed_border(msp, it, attrs)
         return
     r = it.rect()
@@ -183,6 +185,13 @@ def _export_rect(msp, it):
 def _export_ellipse(msp, it):
     r = it.rect()
     attrs = _with_linetype(_attrs(_LAYERS["ellipse"], it.pen().color()), it.pen().style())
+    # [§8 항목17 6단계] rect/symbol과 달리 이 함수는 원래 포트/cut 분기가 아예 없었다(선분-원
+    # 전용 add_circle/add_ellipse 엔티티라 gap을 뚫을 방법이 없었기 때문) — 있으면
+    # _export_trimmed_border의 폴리곤 근사(2단계 결정, 원/타원 cut을 이미 폴리곤으로 다룸)로
+    # LINE 다발로 대체 내보낸다. 원형 포트 DXF 내보내기가 이제껏 안 잘려 나가던 잠재 버그였다.
+    if getattr(it, "_ports", None) or getattr(it, "_cuts", None):
+        _export_trimmed_border(msp, it, attrs)
+        return
     cx, cy = _w(it, r.center().x(), r.center().y())
     # 로컬 반경축 끝점을 월드화 → 회전·비균일 스케일 흡수.
     ax = _w(it, r.center().x() + r.width() / 2.0, r.center().y())

@@ -712,9 +712,25 @@ Phase 0~6 로드맵과 §5 제안기능이 전부 완료된 뒤, 실사용자 DX
        `_AnnotatorView` 종단 시나리오(호버→클릭 분리, 드래그 문지르기로 3조각까지 연쇄 분리,
        Shift=EXTEND 전환) + 오프스크린·실제 창(오프스크린 아님) 스크린샷 육안 확인(빨간 점선
        예고 2종·분리 후 렌더·연장 후 렌더)*
-    6. **직렬화·DXF·undo** — `.ecad`에 `cuts` 필드(없으면 빈 목록 — 하위호환), DXF는 이미 진짜
-       분절을 쓰는 `_export_trimmed_border` 일반화, undo는 group과 같은 `mut` 스냅샷.
-       *검증: 왕복 + ezdxf 재읽기*
+    6. ~~**직렬화·DXF·undo**~~ — **완료(2026-08-10)**. `.ecad`는 `item_to_dict`/`dict_to_item`에
+       `cuts` 필드 추가(포트와 같은 관례, 없으면 키 자체 생략 — 하위호환). DXF는
+       `_export_trimmed_border`(이미 진짜 분절을 씀)로 갈아타는 게이트를 `_ports` 유무 단독
+       판정에서 `_ports or _cuts`로 확장(`_export_rect`/`_export_symbol`) + `_export_ellipse`
+       에 그 분기 자체가 아예 없던 잠재 버그를 같은 김에 수정(원형 포트/cut이 이제껏 DXF에서
+       하나도 안 잘려 나갔었다). undo는 계획대로 `group`(`_group_id`)과 같은 전용 `mut` sub
+       (`"cuts"`, `push_undo_cut`)를 신설했지만, **열린 도형 TRIM/EXTEND는 새 sub가 필요
+       없었다** — 조사해보니 `capture_geom()`/`apply_geom()`이 이미 pts·라우팅 상태·바인딩
+       까지 통째로 포괄해(4단계 이전부터 존재하던 기존 인프라) host 쪽은 그대로 재사용되고,
+       분리로 새로 생기는 clone은 기존 `push_undo_add_many`와 같은 "여러 op를 한 엔트리로"
+       패턴(`push_undo_open_trim`)만 얹으면 됐다. 문지르기 드래그 전체가 undo 1스텝으로
+       뭉치는 것도 새 코드 없이 기존 `coalesce_key`(`push_undo_move`가 이미 쓰던 것과 같은
+       `object()` 세션 키 패턴)만 재사용해 해결 — `_coalesce_into`가 서로 다른 host의 mut들을
+       한 엔트리에 순서대로 누적하는 기존 동작이, 다중 조각으로 이어지는 연쇄 분리에도 손대지
+       않고 그대로 맞아떨어졌다(pytest로 실제 undo→redo 왕복 수치까지 확인, 손트레이스로
+       먼저 검증 후 코드로 재확인). 신규 pytest 9종(.ecad 왕복 2 + DXF 게이트 2 + undo/redo
+       5 — 닫힌 cut 단건·문지르기 코얼레스·열린 분리(바인딩 포함)·EXTEND), 스모크 438→447종.
+       *검증: 실제 파일 왕복(JSON 재읽기 + `ezdxf.readfile` 재읽기) + `CanvasWindow.undo()/
+       redo()`로 실제 되돌리기·다시실행 수치 확인*
     7. **포트 흡수** — 포트 팔레트 2개 숨김 + `_paint_port_cover_if_needed`(배경 덮어그리기)를
        cut 구간 렌더로 대체. *검증: KBS 실도면 `.ecad` 열어 회귀 확인*
 
