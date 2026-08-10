@@ -5219,6 +5219,32 @@ def _host_outline_local_polygon(host) -> list:
     return [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
 
 
+def _open_item_local_pts(item) -> list:
+    """[§8 항목17 5단계] 열린 도형(_LineItem/_PolyArrowItem)의 로컬좌표 정점열 — TRIM/EXTEND가
+    도형 종류 무관하게 세그먼트 체인으로 다루는 공통 인터페이스(`_conn_polyline_scene`의 로컬판,
+    그쪽은 스냅용 씬좌표라 별도 유지). 그 외 타입은 빈 리스트(커터로 기여 없음)."""
+    if isinstance(item, _LineItem):
+        ln = item.line()
+        return [ln.p1(), ln.p2()]
+    if isinstance(item, _PolyArrowItem):
+        return list(item._pts)
+    return []
+
+
+def _item_local_edges(item) -> list:
+    """[§8 항목17 5단계] 항목의 변(선분) 목록, item 로컬좌표 — 닫힌 도형(사각·타원·심볼)은
+    폐곡선(마지막→첫 변 포함), 열린 도형(선·직선화살)은 안 닫는다. TRIM 커터 순회를 도형
+    종류 무관하게 만든다(이전엔 `_trim_candidate_segment`가 `_host_outline_local_polygon`만
+    가정해 열린 도형을 커터로 쓰면 크래시했다 — host.rect() 미존재). 인식 못 하는 타입(화살표
+    곡선·`_PathItem` 등)은 빈 리스트를 돌려줘 그냥 기여 없는 커터로 취급된다."""
+    if isinstance(item, (_RectItem, _EllipseItem, _SymbolItem)):
+        poly = _host_outline_local_polygon(item)
+        n = len(poly)
+        return [(poly[i], poly[(i + 1) % n]) for i in range(n)]
+    pts = _open_item_local_pts(item)
+    return [(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
+
+
 def _close_pt(a: QPointF, b: QPointF, eps: float = 1e-6) -> bool:
     return abs(a.x() - b.x()) < eps and abs(a.y() - b.y()) < eps
 
@@ -5370,14 +5396,13 @@ def _trim_candidate_segment(host, scene_pt, other_shapes):
     for other in other_shapes:
         if other is host or isinstance(other, _PathItem):
             continue
-        opoly = _host_outline_local_polygon(other)
-        m = len(opoly)
-        if m < 2:
-            continue
-        opoly_h = [host.mapFromScene(other.mapToScene(p)) for p in opoly]
-        for j in range(m):
-            c, d = opoly_h[j], opoly_h[(j + 1) % m]
-            p = _seg_seg_intersection(a, b, c, d)
+        # [§8 항목17 5단계] 이전엔 `_host_outline_local_polygon(other)`만 가정해 열린 도형
+        # (선·직선화살)을 커터로 넘기면 크래시했다 — `_item_local_edges`로 일반화해 임의 두
+        # 도형/선의 교차(계획서 원문)를 실제로 허용한다.
+        for c, d in _item_local_edges(other):
+            c_h = host.mapFromScene(other.mapToScene(c))
+            d_h = host.mapFromScene(other.mapToScene(d))
+            p = _seg_seg_intersection(a, b, c_h, d_h)
             if p is None:
                 continue
             t, _perp = _seg_param_and_perp(a, b, p)
@@ -5394,6 +5419,195 @@ def _trim_candidate_segment(host, scene_pt, other_shapes):
     if hi - lo < 1e-6:
         return None
     return best_edge, lo, hi
+
+
+def _open_item_bracket_points(pts: list, lo: tuple, hi: tuple):
+    """[§8 항목17 5단계] `_trim_candidate_open_segment`가 반환하는 (seg, t) 마크 lo/hi를
+    실제 로컬좌표 점으로 변환(host 로컬, pts=`_open_item_local_pts(host)`)."""
+    def pt_at(mark):
+        seg, t = mark
+        a, b = pts[seg], pts[seg + 1]
+        return QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
+    return pt_at(lo), pt_at(hi)
+
+
+def _trim_candidate_open_segment(host, scene_pt, other_shapes):
+    """[§8 항목17 5단계] TRIM(문지르기)이 **열린 도형**(host: _LineItem/_PolyArrowItem) 위에서
+    호출하는 버전 — `_trim_candidate_segment`(닫힌 도형, 변 하나 안에서만 자름)와 달리 host
+    자신이 여러 변으로 이루어진 사슬이라 지울 구간이 변 하나를 넘어설 수 있다(예: 꺾인
+    폴리라인의 두 교차점 사이에 꼭짓점이 끼어 있는 경우 — 그 꼭짓점째로 지워진다). 그래서
+    구간을 (seg_index, t) 마크 2개로 표현한다: 전체 경로를 변 index + 변 내 t로 정렬한 전역
+    순서(비교키 = seg+t)가 성립하므로 닫힌 도형의 "변 인덱스+t" 포맷을 그대로 확장한 것뿐이다.
+    반환: ((seg_lo, t_lo), (seg_hi, t_hi)) 또는 None(이 지점에 걸친 cutter가 없음)."""
+    pts = _open_item_local_pts(host)
+    n = len(pts)
+    if n < 2:
+        return None
+    local_pt = host.mapFromScene(scene_pt)
+    best_seg, best_t, best_d = None, None, None
+    for i in range(n - 1):
+        a, b = pts[i], pts[i + 1]
+        t, _perp = _seg_param_and_perp(a, b, local_pt)
+        tc = max(0.0, min(1.0, t))
+        px, py = a.x() + (b.x() - a.x()) * tc, a.y() + (b.y() - a.y()) * tc
+        d = math.hypot(local_pt.x() - px, local_pt.y() - py)
+        if best_d is None or d < best_d:
+            best_seg, best_t, best_d = i, tc, d
+    if best_seg is None:
+        return None
+    marks = [(0, 0.0), (n - 2, 1.0)]
+    for other in other_shapes:
+        if other is host or isinstance(other, _PathItem):
+            continue
+        edges = _item_local_edges(other)
+        if not edges:
+            continue
+        oedges_h = [(host.mapFromScene(other.mapToScene(c)),
+                     host.mapFromScene(other.mapToScene(d))) for c, d in edges]
+        for i in range(n - 1):
+            a, b = pts[i], pts[i + 1]
+            for c, d in oedges_h:
+                p = _seg_seg_intersection(a, b, c, d)
+                if p is None:
+                    continue
+                t, _perp = _seg_param_and_perp(a, b, p)
+                if -1e-6 <= t <= 1.0 + 1e-6:
+                    marks.append((i, max(0.0, min(1.0, t))))
+
+    def key(m):
+        return m[0] + m[1]
+
+    marks = sorted(set((i, round(t, 9)) for i, t in marks), key=key)
+    if len(marks) <= 2:
+        return None   # 이 경로에 걸친 cutter가 없음 — 자를 게 없다
+    cursor_key = best_seg + best_t
+    lo, hi = marks[0], marks[-1]
+    for k in range(len(marks) - 1):
+        if key(marks[k]) - 1e-6 <= cursor_key <= key(marks[k + 1]) + 1e-6:
+            lo, hi = marks[k], marks[k + 1]
+            break
+    if key(hi) - key(lo) < 1e-6:
+        return None
+    return lo, hi
+
+
+def apply_open_item_trim(host, lo: tuple, hi: tuple):
+    """[§8 항목17 5단계] TRIM 커밋 — 열린 도형(host)에서 (lo, hi) 구간을 지운다. 닫힌 도형의
+    `_add_border_cut`(비파괴 gap 목록)과 달리 host 자체가 진짜로 줄어들거나(한쪽만 남음)
+    둘로 갈린다(계획서 원문 "조각 분리 시 아이템 복제"): 자국이 경로 중간이면 host는 앞쪽
+    조각으로 줄어들고 뒤쪽 조각은 새 아이템으로 복제해 씬에 추가해 반환한다(없으면 None).
+    양끝 경계에 닿은 자르기(경로 시작/끝을 포함)는 복제 없이 host 하나가 짧아지기만 한다 —
+    적어도 한 조각은 항상 남는다(호출부가 이미 걸친 cutter 존재를 확인했으므로 전체 삭제는
+    일어나지 않는다).
+
+    바인딩(`_PolyArrowItem`만 해당)은 잘려나간 쪽 끝만 해제 — 남은 끝(원래 시작/끝 그대로인
+    조각)은 원래 부착을 유지한다. 라벨은 host 자신(앞쪽 조각)은 원래 라벨을 그대로 들고
+    가고, 복제된 뒤쪽 조각은 라벨을 새로 시작한다(`clone()`이 라벨을 복사하지 않는 기존
+    관례를 그대로 따름 — 같은 텍스트가 두 조각에 중복 표시되는 것을 피한다)."""
+    pts = _open_item_local_pts(host)
+    lo_seg, lo_t = lo
+    hi_seg, hi_t = hi
+    lo_pt, hi_pt = _open_item_bracket_points(pts, lo, hi)
+    before_pts = pts[:lo_seg + 1] + ([] if lo_t <= 1e-9 else [lo_pt])
+    after_pts = ([] if hi_t >= 1.0 - 1e-9 else [hi_pt]) + pts[hi_seg + 1:]
+    has_before = len(before_pts) >= 2
+    has_after = len(after_pts) >= 2
+    is_poly = isinstance(host, _PolyArrowItem)
+
+    def geom_for(new_pts):
+        if is_poly:
+            return (new_pts, False, [], host._routing, host._curve_r)
+        return QLineF(new_pts[0], new_pts[-1])
+
+    clone = None
+    if has_after and has_before:
+        orig_bind_end = (host._bind_end, host._bind_end_pt) if is_poly else None
+        clone = host.clone()
+        clone._apply_geom_local(geom_for(after_pts))
+        if is_poly:
+            clone.set_bound(0, None)
+            if orig_bind_end is not None:
+                clone._bind_end, clone._bind_end_pt = orig_bind_end
+        host._apply_geom_local(geom_for(before_pts))
+        if is_poly:
+            host.set_bound(len(host._pts) - 1, None)
+        host.scene().addItem(clone)
+    elif has_before:
+        host._apply_geom_local(geom_for(before_pts))
+        if is_poly:
+            host.set_bound(len(host._pts) - 1, None)
+    elif has_after:
+        host._apply_geom_local(geom_for(after_pts))
+        if is_poly:
+            host.set_bound(0, None)
+    host.update()
+    return clone
+
+
+def _ray_seg_intersection(origin: QPointF, direction: QPointF, a: QPointF, b: QPointF):
+    """[§8 항목17 5단계] origin에서 direction(길이 무관) 방향으로 뻗는 반직선과 선분 a-b의
+    교차점 — EXTEND가 끝점 연장선 앞쪽에서 처음 만나는 경계를 찾는 데 쓴다. 선분-선분 교차
+    (`_seg_seg_intersection`)와 달리 한쪽이 유한 구간이 아니라 반직선(t>0만 유효, 뒤쪽/제자리
+    교차는 "늘이기"가 아니므로 배제)."""
+    dx, dy = direction.x(), direction.y()
+    ex, ey = b.x() - a.x(), b.y() - a.y()
+    denom = dx * ey - dy * ex
+    if abs(denom) < 1e-12:
+        return None
+    ax, ay = a.x() - origin.x(), a.y() - origin.y()
+    t = (ax * ey - ay * ex) / denom
+    s = (t * dy - ay) / ey if abs(ey) > 1e-12 else (t * dx - ax) / ex
+    if t <= 1e-6 or s < -1e-6 or s > 1.0 + 1e-6:
+        return None
+    return QPointF(origin.x() + t * dx, origin.y() + t * dy)
+
+
+def _extend_candidate(host, scene_pt, other_shapes):
+    """[§8 항목17 5단계] EXTEND — host(_LineItem/_PolyArrowItem)의 더 가까운 끝점을, 그 끝
+    세그먼트 방향의 연장선과 other_shapes 변의 첫 교차점까지 늘인다(닫힌 도형은 늘일 끝점이
+    없어 대상 밖 — 계획서 확정). 반환: (endpoint_idx, new_local_pt) 또는 None(연장선 위에
+    걸리는 경계가 없음)."""
+    pts = _open_item_local_pts(host)
+    n = len(pts)
+    if n < 2:
+        return None
+    local_pt = host.mapFromScene(scene_pt)
+    d_start = math.hypot(local_pt.x() - pts[0].x(), local_pt.y() - pts[0].y())
+    d_end = math.hypot(local_pt.x() - pts[-1].x(), local_pt.y() - pts[-1].y())
+    if d_start <= d_end:
+        idx, origin, neighbor = 0, pts[0], pts[1]
+    else:
+        idx, origin, neighbor = n - 1, pts[-1], pts[-2]
+    direction = QPointF(origin.x() - neighbor.x(), origin.y() - neighbor.y())
+    if abs(direction.x()) < 1e-9 and abs(direction.y()) < 1e-9:
+        return None
+    best_pt, best_t = None, None
+    for other in other_shapes:
+        if other is host or isinstance(other, _PathItem):
+            continue
+        for a, b in _item_local_edges(other):
+            a_h = host.mapFromScene(other.mapToScene(a))
+            b_h = host.mapFromScene(other.mapToScene(b))
+            p = _ray_seg_intersection(origin, direction, a_h, b_h)
+            if p is None:
+                continue
+            t = math.hypot(p.x() - origin.x(), p.y() - origin.y())
+            if best_t is None or t < best_t:
+                best_t, best_pt = t, p
+    return None if best_pt is None else (idx, best_pt)
+
+
+def apply_extend(host, idx: int, new_pt: QPointF) -> None:
+    """[§8 항목17 5단계] EXTEND 커밋 — host의 끝점 idx를 new_pt로 늘인다. `_set_endpoint`
+    (끝점 드래그가 이미 쓰는 것과 같은 메서드)를 재사용해 라벨 재배치(`_sync_label`)까지
+    공짜로 따라온다. 자동 라우팅 중이던 화살표는 수동 모드로 내려 라우터가 방금 늘인 끝점을
+    되돌리지 않게 한다(세그먼트 드래그 후 수동 전환과 같은 패턴)."""
+    host._set_endpoint(idx, new_pt)
+    if isinstance(host, _PolyArrowItem):
+        host._auto_route = False
+        host._route_hints = []
+        host.set_bound(idx, None)
+    host.update()
 
 
 def _shape_ports(item):

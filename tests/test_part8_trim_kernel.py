@@ -17,10 +17,16 @@ QPointF/QRectF만으로 검증한다 — 렌더(간격이 실제로 화면·PDF�
 4단계(2026-08-10) — TRIM 도구 UI(문지르기). 순수 기하 계산(`_trim_candidate_segment`)과
 `_AnnotatorView`를 실제로 띄운 press/move/release 종단 시나리오를 함께 검증한다.
 
+5단계(2026-08-10) — 열린 도형(_LineItem/_PolyArrowItem) 분절 + EXTEND. 순수 기하 계산
+(`_trim_candidate_open_segment`/`_extend_candidate`), 커밋 함수(`apply_open_item_trim`/
+`apply_extend`)의 아이템 변형(분리·바인딩·라벨), `_AnnotatorView` 종단 시나리오(Shift=EXTEND
+전환 포함)를 함께 검증한다.
+
 tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easycad.py (전체) 또는
 pytest test_part8_trim_kernel.py.
 """
 from _shared import *  # noqa: F401,F403
+from PyQt6.QtWidgets import QGraphicsScene
 
 
 def test_seg_seg_intersection_crossing_point():
@@ -436,9 +442,12 @@ def test_trim_tool_click_commits_cut_and_drag_continues_rubbing():
         return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
 
     # 실사용 흐름대로: hover(move, 버튼 없음) → 예고가 뜬다.
+    # [§8 항목17 5단계] _trim_preview 포맷이 ("closed"/"open"/"extend", ...) 태그 튜플로
+    # 바뀌었다(열린 도형·EXTEND 지원 추가) — 닫힌 도형은 "closed" 태그 + 기존 4개 필드.
     view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(100, 0), NB, NB))
     assert view._trim_preview is not None
-    tp_host, tp_edge, tp_t0, tp_t1 = view._trim_preview
+    tp_kind, tp_host, tp_edge, tp_t0, tp_t1 = view._trim_preview
+    assert tp_kind == "closed"
     assert tp_host is host and tp_edge == 0
     assert abs(tp_t0 - 80.0 / 600.0) < 1e-6 and abs(tp_t1 - 120.0 / 600.0) < 1e-6
 
@@ -525,3 +534,260 @@ def test_trim_preview_renders_red_dashed_gap_pixel():
                 reddest = (c.red(), c.green(), c.blue())
     assert reddest is not None and reddest[0] > 180 and reddest[0] - reddest[1] > 60, \
         f"TRIM 예고 구간에서 빨간 점선을 못 찾음: {reddest}"
+
+
+# ---- 5단계: 열린 도형 분절 + EXTEND — 순수 기하 계산 ----------------------------------------
+
+def test_trim_candidate_open_segment_line_crossed_by_rect_middle():
+    line = _LineItem(QLineF(0, 0, 600, 0))
+    cutter = _RectItem(QRectF(280, -20, 40, 40))
+    seg = _trim_candidate_open_segment(line, QPointF(300, 0), [cutter])
+    assert seg is not None
+    lo, hi = seg
+    assert lo[0] == 0 and hi[0] == 0
+    assert abs(lo[1] - 280.0 / 600.0) < 1e-6
+    assert abs(hi[1] - 320.0 / 600.0) < 1e-6
+
+
+def test_trim_candidate_open_segment_none_without_cutter():
+    line = _LineItem(QLineF(0, 0, 600, 0))
+    assert _trim_candidate_open_segment(line, QPointF(300, 0), []) is None
+
+
+def test_trim_candidate_open_segment_spans_vertex_across_two_segments():
+    # L자 폴리라인: (0,0)->(300,0)->(300,300). 커터 2개가 각각 다른 세그먼트(0·1)에 걸쳐
+    # 두 교차점 사이(첫 세그먼트 뒷부분 + 꼭짓점 + 둘째 세그먼트 앞부분)가 한 구간으로
+    # 지워져야 한다 — 닫힌 도형의 "변 하나 안에서만" 가정을 못 쓰는 이유가 이것.
+    poly = _PolyArrowItem(QColor("#111111"), 2, True)
+    poly._pts = [QPointF(0, 0), QPointF(300, 0), QPointF(300, 300)]
+    cutter1 = _RectItem(QRectF(80, -20, 40, 40))    # 세그먼트0(y=0) x=80~120 가로지름
+    cutter2 = _RectItem(QRectF(280, 80, 40, 40))    # 세그먼트1(x=300) y=80~120 가로지름
+    seg = _trim_candidate_open_segment(poly, QPointF(300, 0), [cutter1, cutter2])
+    assert seg is not None
+    lo, hi = seg
+    assert lo[0] == 0 and hi[0] == 1, "자를 구간이 세그먼트 경계(꼭짓점)를 넘어가야 함"
+    assert abs(lo[1] - 120.0 / 300.0) < 1e-6
+    assert abs(hi[1] - 80.0 / 300.0) < 1e-6
+
+
+def test_extend_candidate_line_extends_to_rect_edge():
+    line = _LineItem(QLineF(0, 0, 100, 0))
+    wall = _RectItem(QRectF(300, -50, 40, 100))   # x=300~340
+    res = _extend_candidate(line, QPointF(100, 0), [wall])
+    assert res is not None
+    idx, pt = res
+    assert idx == 1   # 끝점(idx 1) 쪽이 커서에 더 가까움
+    assert abs(pt.x() - 300.0) < 1e-6 and abs(pt.y() - 0.0) < 1e-6
+
+
+def test_extend_candidate_none_when_nothing_ahead():
+    line = _LineItem(QLineF(0, 0, 100, 0))
+    assert _extend_candidate(line, QPointF(100, 0), []) is None
+
+
+def test_extend_candidate_picks_nearer_endpoint():
+    line = _LineItem(QLineF(0, 0, 100, 0))
+    wall = _RectItem(QRectF(-300, -50, 40, 100))   # x=-300~-260, 시작점(idx 0)쪽으로 늘어남
+    res = _extend_candidate(line, QPointF(0, 0), [wall])
+    assert res is not None
+    idx, pt = res
+    assert idx == 0
+    assert abs(pt.x() - (-260.0)) < 1e-6
+
+
+# ---- 5단계: 열린 도형 TRIM/EXTEND 커밋 — 실제 아이템 변형 ------------------------------------
+
+def test_apply_open_item_trim_interior_bracket_splits_line_into_two_items():
+    scene = QGraphicsScene()
+    host = _LineItem(QLineF(0, 0, 600, 0))
+    scene.addItem(host)
+    lo, hi = (0, 280.0 / 600.0), (0, 320.0 / 600.0)
+    clone = apply_open_item_trim(host, lo, hi)
+    assert clone is not None and clone.scene() is scene
+    assert _close(host.line().p1(), QPointF(0, 0)) and _close(host.line().p2(), QPointF(280, 0))
+    assert _close(clone.line().p1(), QPointF(320, 0)) and _close(clone.line().p2(), QPointF(600, 0))
+
+
+def test_apply_open_item_trim_touching_start_boundary_shortens_without_clone():
+    scene = QGraphicsScene()
+    host = _LineItem(QLineF(0, 0, 600, 0))
+    scene.addItem(host)
+    clone = apply_open_item_trim(host, (0, 0.0), (0, 320.0 / 600.0))
+    assert clone is None
+    assert _close(host.line().p1(), QPointF(320, 0)) and _close(host.line().p2(), QPointF(600, 0))
+
+
+def test_apply_open_item_trim_touching_end_boundary_shortens_without_clone():
+    scene = QGraphicsScene()
+    host = _LineItem(QLineF(0, 0, 600, 0))
+    scene.addItem(host)
+    clone = apply_open_item_trim(host, (0, 280.0 / 600.0), (0, 1.0))
+    assert clone is None
+    assert _close(host.line().p1(), QPointF(0, 0)) and _close(host.line().p2(), QPointF(280, 0))
+
+
+def test_apply_open_item_trim_preserves_bindings_on_split_polyarrow():
+    # [바인딩 정책] 앞쪽 조각(host 자신)은 원래 시작 부착 유지 + 새 끝은 해제.
+    # 뒤쪽 조각(복제본)은 원래 끝 부착 유지 + 새 시작은 해제.
+    scene = QGraphicsScene()
+    a = _RectItem(QRectF(-100, -50, 60, 40))
+    b = _RectItem(QRectF(600, -50, 60, 40))
+    scene.addItem(a); scene.addItem(b)
+    host = _PolyArrowItem(QColor("#111111"), 2, True)
+    host._pts = [QPointF(0, 0), QPointF(600, 0)]
+    host.set_bound(0, a, QPointF(30, 20))
+    host.set_bound(1, b, QPointF(30, 20))
+    scene.addItem(host)
+    clone = apply_open_item_trim(host, (0, 280.0 / 600.0), (0, 320.0 / 600.0))
+    assert clone is not None
+    assert host._bind_start is a and host._bind_end is None
+    assert clone._bind_start is None and clone._bind_end is b
+
+
+def test_apply_open_item_trim_before_piece_keeps_label_after_piece_starts_empty():
+    # [라벨 정책, 5단계 설계 결정] host(앞쪽 조각)는 원래 라벨을 그대로 들고 가고, 복제된
+    # 뒤쪽 조각은 라벨 없이 새로 시작한다(clone()이 라벨을 복사하지 않는 기존 관례 재사용) —
+    # 같은 텍스트가 두 조각에 중복 표시되는 것을 피하는 선택.
+    scene = QGraphicsScene()
+    host = _LineItem(QLineF(0, 0, 600, 0))
+    scene.addItem(host)
+    host.ensure_label().setPlainText("배선1")
+    clone = apply_open_item_trim(host, (0, 280.0 / 600.0), (0, 320.0 / 600.0))
+    assert clone is not None
+    assert host.has_label() and host._label.toPlainText() == "배선1"
+    assert not clone.has_label()
+
+
+def test_apply_extend_moves_endpoint_and_disables_auto_route():
+    scene = QGraphicsScene()
+    a = _RectItem(QRectF(0, -20, 60, 40))
+    scene.addItem(a)
+    host = _PolyArrowItem(QColor("#111111"), 2, True)
+    host._pts = [QPointF(60, 0), QPointF(200, 0)]
+    host.set_bound(0, a, QPointF(60, 20))
+    host._auto_route = True
+    scene.addItem(host)
+    apply_extend(host, 0, QPointF(10, 0))
+    assert _close(host._pts[0], QPointF(10, 0))
+    assert host._auto_route is False
+    assert host._bind_start is None
+
+
+# ---- 5단계: 실제 뷰 종단 시나리오(TRIM 열린 도형 분절 + Shift=EXTEND) ------------------------
+
+def test_trim_tool_click_splits_open_line_into_two_items_via_view():
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    line = _LineItem(QLineF(0, 0, 600, 0))
+    w._scene.addItem(line)
+    _mk_pen_rect(w, x=280, y=-20, ww=40, hh=40)   # cutter, x=280~320
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(300, 0), NB, NB))
+    assert view._trim_preview is not None and view._trim_preview[0] == "open"
+
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(300, 0), L, L))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(300, 0), L, NB))
+
+    lines = [it for it in w._scene.items() if isinstance(it, _LineItem)]
+    assert len(lines) == 2
+    endpoints = sorted((round(it.line().p1().x()), round(it.line().p2().x())) for it in lines)
+    assert endpoints == [(0, 280), (320, 600)]
+
+
+def test_trim_tool_drag_rubbing_splits_open_line_at_multiple_crossings():
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    line = _LineItem(QLineF(0, 0, 600, 0))
+    w._scene.addItem(line)
+    _mk_pen_rect(w, x=80, y=-20, ww=40, hh=40)     # cutter1, x=80~120
+    _mk_pen_rect(w, x=480, y=-20, ww=40, hh=40)    # cutter2, x=480~520
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(100, 0), NB, NB))
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(100, 0), L, L))
+    assert view._trim_dragging is True
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(500, 0), NB, L))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(500, 0), L, NB))
+
+    lines = sorted(
+        (round(it.line().p1().x()), round(it.line().p2().x()))
+        for it in w._scene.items() if isinstance(it, _LineItem))
+    assert lines == [(0, 80), (120, 480), (520, 600)]
+
+
+def test_trim_tool_open_host_does_not_move_or_select():
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    line = _LineItem(QLineF(0, 0, 600, 0))
+    line.setFlags(line.GraphicsItemFlag.ItemIsSelectable | line.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(line)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+
+    # cutter 없이 몸통 위를 클릭 — 자를 게 없으니 아무 일도 없어야 하고, 선택도 안 된다.
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(300, 0), L, L))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(300, 0), L, NB))
+    assert not line.isSelected()
+    assert _close(line.line().p1(), QPointF(0, 0)) and _close(line.line().p2(), QPointF(600, 0))
+
+
+def test_extend_tool_shift_click_extends_line_endpoint_via_view():
+    """[§8 항목17 5단계] EXTEND — Shift+클릭으로 끝점을 벽까지 늘인다. 실사용 시나리오대로
+    마지막 hover 이후 마우스를 안 움직이고 Shift만 누른 채 바로 클릭하는 경로까지 확인한다
+    (press가 stale hover 미리보기가 아니라 press 시점 modifiers로 다시 계산하는지)."""
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    SHIFT = Qt.KeyboardModifier.ShiftModifier
+
+    w = CanvasWindow(); w.grid_enabled = False
+    line = _LineItem(QLineF(0, 0, 100, 0))
+    w._scene.addItem(line)
+    _mk_pen_rect(w, x=300, y=-50, ww=40, hh=100)   # wall, x=300~340
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns, mods=Qt.KeyboardModifier.NoModifier):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, mods)
+
+    # Shift 없이 hover하면 TRIM(자를 게 없어 None) — EXTEND로 새지 않는다.
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(100, 0), NB, NB))
+    assert view._trim_preview is None
+
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(100, 0), NB, NB, SHIFT))
+    assert view._trim_preview is not None and view._trim_preview[0] == "extend"
+
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(100, 0), L, L, SHIFT))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(100, 0), L, NB, SHIFT))
+
+    assert abs(line.line().p2().x() - 300.0) < 1e-6
+    assert view._trim_dragging is False   # EXTEND는 1회성 — 문지르기로 안 넘어감

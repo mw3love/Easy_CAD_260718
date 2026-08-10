@@ -154,10 +154,10 @@ class _AnnotatorView(QGraphicsView):
         # [호버 강조 2026-07-30] 선택된 도형의 핸들(모서리·회전·qc-dot·끝점) 위 hover — (item, key)
         # or None. 크기를 고정으로 통일하며 "이 점이 잡힌다"를 색 반전으로 대신 알려준다.
         self._handle_hover = None
-        # [§8 항목17 4단계, 2026-08-10] TRIM 도구 — 문지르기(Quick Trim) 상태.
-        self._trim_preview = None    # (host, edge_index, t0, t1) or None — 지금 예고 중인 구간
-        self._trim_dragging = False  # press 이후 계속 문지르는 중
-        self._trim_seen: set = set()  # 이번 드래그에서 이미 커밋한 (host_id, edge, t0, t1) — 중복 방지
+        # [§8 항목17 4~5단계, 2026-08-10] TRIM/EXTEND 도구 — 문지르기(Quick Trim) 상태.
+        self._trim_preview = None    # 태그된 튜플("closed"/"open"/"extend", ...) or None
+        self._trim_dragging = False  # press 이후 계속 문지르는 중(TRIM만 — EXTEND는 1회성)
+        self._trim_seen: set = set()  # 이번 드래그에서 이미 커밋한 키 — 중복 방지
         # 선택이 바뀌면 그룹 오버레이(bbox·핸들)를 다시 그린다(개별 아이템 repaint와 별개).
         scene.selectionChanged.connect(self.viewport().update)
 
@@ -799,31 +799,73 @@ class _AnnotatorView(QGraphicsView):
         return [it for it in self.scene().items()
                 if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem)) and it not in skip]
 
-    def _trim_preview_at(self, view_pos):
-        """[§8 항목17 4단계, 2026-08-10] TRIM 도구 호버 — 커서 근처 닫힌 도형(사각·타원·심볼,
-        `_PathItem`은 계획서 스코프 밖이라 제외) 테두리에서 다른 도형과의 교차로 갈리는 구간을
-        찾는다. 반환: (host, edge_index, t0, t1) 또는 None. BSP 공간쿼리(`_conn_shapes_near`)
-        1회로 target 선정과 cutter 후보를 겸해 재사용(2026-08-08 전체스캔 성능 함정 회피,
-        `_find_port_host_near`와 같은 반경 `_PORT_ATTACH_MARGIN` — 겹쳐 놓고 자르는 워크플로가
-        포트 부착과 같은 "근접" 감각이라 값도 공유)."""
+    def _trim_candidates_near(self, scene_pt: QPointF, margin: float):
+        """[§8 항목17 5단계] TRIM 도구 전용 후보 — 닫힌 도형(_RectItem/_EllipseItem/_SymbolItem)
+        + 열린 도형(_LineItem/_PolyArrowItem, 계획서 스코프 확정: 곡선 `_ArrowItem`·DXF
+        `_PathItem`은 제외). 기존 `_conn_shapes_near`(포트·호버 공용)를 그대로 넓히지 않고 TRIM
+        전용 함수를 새로 둔다 — 그쪽 호출부 다수가 "닫힌 도형만"을 전제하고 있어 범위를 넓히면
+        영향이 번진다(surgical 원칙)."""
+        rect = QRectF(scene_pt.x() - margin, scene_pt.y() - margin, margin * 2, margin * 2)
+        return [it for it in self.scene().items(rect)
+                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _LineItem, _PolyArrowItem))]
+
+    def _trim_preview_at(self, view_pos, extend=False):
+        """[§8 항목17 4~5단계] TRIM(및 Shift=EXTEND) 도구 호버 — 커서 근처 도형에서 자를(또는
+        늘일) 구간을 찾는다. 반환 형태는 host 종류·모드별로 태그된 튜플:
+        ("closed", host, edge_i, t0, t1) — 닫힌 도형(4단계 그대로, 비파괴 cut 구간).
+        ("open", host, lo, hi) — 열린 도형(선·직선화살), (seg,t) 마크 2개로 자를 구간을 표현.
+        ("extend", host, idx, new_pt) — Shift, 열린 도형의 끝점 idx를 new_pt로 늘임.
+        None — 자를/늘일 게 없음. BSP 공간쿼리(`_trim_candidates_near`) 1회로 target 선정과
+        cutter 후보를 겸해 재사용(2026-08-08 전체스캔 성능 함정 회피, `_find_port_host_near`와
+        같은 반경 `_PORT_ATTACH_MARGIN` — 겹쳐 놓고 자르는 워크플로가 포트 부착과 같은 "근접"
+        감각이라 값도 공유)."""
         scene_pt = self.mapToScene(view_pos)
-        candidates = [c for c in self._conn_shapes_near(scene_pt, _PORT_ATTACH_MARGIN)
-                      if isinstance(c, (_RectItem, _EllipseItem, _SymbolItem))]
+        candidates = self._trim_candidates_near(scene_pt, _PORT_ATTACH_MARGIN)
         if not candidates:
             return None
+        if extend:
+            # [§8 항목17 5단계] EXTEND는 "선 위 아무 곳"이 아니라 끝점 근처에서만 발동한다
+            # (문지르기와 달리 커서에 가까운 임의 지점을 늘이면 의도치 않게 먼 끝점이 튀어나갈
+            # 수 있어 — AutoCAD도 끝점 쪽을 집어야 늘어난다). 커터 탐색은 근접 후보로 좁히지
+            # 않고 씬 전체(닫힌 도형+선/직선화살)를 본다 — 연장 목표가 커서 margin 밖 멀리 있을
+            # 수 있어 TRIM의 국소 반경 가정이 안 맞는다(EXTEND는 드문 명시적 조작이라 전체스캔
+            # 비용을 감수).
+            best_host, best_dist = None, None
+            for cand in candidates:
+                if not isinstance(cand, (_LineItem, _PolyArrowItem)):
+                    continue
+                pts = _open_item_local_pts(cand)
+                if len(pts) < 2:
+                    continue
+                for p in (pts[0], pts[-1]):
+                    d = self._view_dist(cand.mapToScene(p), view_pos)
+                    if d <= self._BORDER_SNAP_PX and (best_dist is None or d < best_dist):
+                        best_dist, best_host = d, cand
+            if best_host is None:
+                return None
+            cutters = [c for c in (self._conn_shapes() + self._conn_lines()) if c is not best_host]
+            res = _extend_candidate(best_host, scene_pt, cutters)
+            return ("extend", best_host, *res) if res is not None else None
         best_host, best_dist = None, None
         for cand in candidates:
-            hit = _nearest_border_visible(cand, scene_pt)
-            if hit is None:
+            if isinstance(cand, (_RectItem, _EllipseItem, _SymbolItem)):
+                hit = _nearest_border_visible(cand, scene_pt)
+                pt = hit[0] if hit is not None else None
+            else:
+                pt, _n = _nearest_on_polyline(_conn_polyline_scene(cand), scene_pt)
+            if pt is None:
                 continue
-            d = self._view_dist(hit[0], view_pos)
+            d = self._view_dist(pt, view_pos)
             if d <= self._BORDER_SNAP_PX and (best_dist is None or d < best_dist):
                 best_dist, best_host = d, cand
         if best_host is None:
             return None
         others = [c for c in candidates if c is not best_host]
-        seg = _trim_candidate_segment(best_host, scene_pt, others)
-        return (best_host, *seg) if seg is not None else None
+        if isinstance(best_host, (_RectItem, _EllipseItem, _SymbolItem)):
+            seg = _trim_candidate_segment(best_host, scene_pt, others)
+            return ("closed", best_host, *seg) if seg is not None else None
+        seg = _trim_candidate_open_segment(best_host, scene_pt, others)
+        return ("open", best_host, *seg) if seg is not None else None
 
     def _border_snap_at(self, view_pos, exclude=None):
         """커서 근처 도형/선/화살표에 스냅 → (snap_scene, exit_unit, shape) 또는 None.
@@ -964,25 +1006,42 @@ class _AnnotatorView(QGraphicsView):
         painter.drawEllipse(sp, base, base)
 
     def _draw_trim_preview(self, painter, s):
-        """[§8 항목17 4단계] TRIM 도구 호버 예고 — 잘릴 구간을 빨간 점선으로(계획서 "조작"
-        원문: "호버하면 지워질 구간을 빨간 점선으로 예고"). cosmetic 펜이라 줌과 무관하게
-        화면 굵기가 고정(러버밴드 크로싱 점선과 같은 관례, drawForeground 상단 참조)."""
+        """[§8 항목17 4~5단계] TRIM 도구 호버 예고 — 잘릴(또는 EXTEND는 늘어날) 구간을 빨간
+        점선으로(계획서 "조작" 원문: "호버하면 지워질 구간을 빨간 점선으로 예고"). cosmetic
+        펜이라 줌과 무관하게 화면 굵기가 고정(러버밴드 크로싱 점선과 같은 관례)."""
         if self._trim_preview is None:
             return
-        host, edge_i, t0, t1 = self._trim_preview
-        poly = _host_outline_local_polygon(host)
-        n = len(poly)
-        if not (0 <= edge_i < n):
-            return
-        a, b = poly[edge_i], poly[(edge_i + 1) % n]
-        p0 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0))
-        p1 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t1, a.y() + (b.y() - a.y()) * t1))
+        kind = self._trim_preview[0]
         pen = QPen(QColor("#ff3b30"), 2.4)
         pen.setCosmetic(True)
         pen.setStyle(Qt.PenStyle.DashLine)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
-        painter.drawLine(p0, p1)
+        if kind == "closed":
+            _tag, host, edge_i, t0, t1 = self._trim_preview
+            poly = _host_outline_local_polygon(host)
+            n = len(poly)
+            if not (0 <= edge_i < n):
+                return
+            a, b = poly[edge_i], poly[(edge_i + 1) % n]
+            p0 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0))
+            p1 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t1, a.y() + (b.y() - a.y()) * t1))
+            painter.drawLine(p0, p1)
+        elif kind == "open":
+            _tag, host, lo, hi = self._trim_preview
+            pts = _open_item_local_pts(host)
+            if len(pts) < 2:
+                return
+            p0, p1 = _open_item_bracket_points(pts, lo, hi)
+            chain = [p0] + pts[lo[0] + 1:hi[0] + 1] + [p1]
+            for a, b in zip(chain[:-1], chain[1:]):
+                painter.drawLine(host.mapToScene(a), host.mapToScene(b))
+        elif kind == "extend":
+            _tag, host, idx, new_pt = self._trim_preview
+            pts = _open_item_local_pts(host)
+            if not (0 <= idx < len(pts)):
+                return
+            painter.drawLine(host.mapToScene(pts[idx]), host.mapToScene(new_pt))
 
     def _conn_shapes_near(self, scene_pt: QPointF, margin: float):
         """[성능 조사 2026-07-30] scene.items(rect) 공간 인덱스(Qt BSP 트리)로 scene_pt 근방만
@@ -1637,16 +1696,34 @@ class _AnnotatorView(QGraphicsView):
                 it.set_points(self._start, self._start)
                 self._begin_draw(it)
                 return
-        # [§8 항목17 4단계] TRIM 도구 — 예고 중인 구간이 있으면 1회 확정(문지르기 시작).
+        # [§8 항목17 4~5단계] TRIM 도구 — 예고 중인 구간이 있으면 1회 확정(문지르기 시작).
         # 도형 선택/이동 분기(아래)보다 먼저 가로챈다 — 안 그러면 테두리를 정확히 누를수록
         # (예고점이 뜨는 바로 그 자리) 오히려 선택/이동으로 걸리는 역설이 생긴다(2026-08-09
         # 포트 배치 때 확인한 것과 같은 함정, `near_port_host` 특례 참조).
+        # [5단계] Shift=EXTEND 전환은 여기서 press 시점 modifiers로 새로 계산한다(마지막 hover
+        # 이후 마우스를 안 움직이고 Shift만 누른 채 바로 클릭하면 `self._trim_preview`가 아직
+        # 옛(비-Shift) 상태라 stale해질 수 있어 — hover는 mouseMoveEvent에서만 갱신되고
+        # keyPressEvent는 훅하지 않았다). EXTEND는 한 지점 늘이기라 문지르기(드래그 계속)로
+        # 안 넘어간다.
         if tool == "trim":
-            if self._trim_preview is not None:
-                host, edge_i, t0, t1 = self._trim_preview
-                _add_border_cut(host, edge_i, t0, t1)
-                self._trim_seen = {(id(host), edge_i, round(t0, 6), round(t1, 6))}
-                self._trim_dragging = True
+            extend = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            preview = self._trim_preview_at(event.position().toPoint(), extend=extend)
+            if preview is not None:
+                kind = preview[0]
+                if kind == "closed":
+                    _tag, host, edge_i, t0, t1 = preview
+                    _add_border_cut(host, edge_i, t0, t1)
+                    self._trim_seen = {("closed", id(host), edge_i, round(t0, 6), round(t1, 6))}
+                    self._trim_dragging = True
+                elif kind == "open":
+                    _tag, host, lo, hi = preview
+                    apply_open_item_trim(host, lo, hi)
+                    self._trim_seen = {("open", id(host), lo, hi)}
+                    self._trim_dragging = True
+                elif kind == "extend":
+                    _tag, host, idx, new_pt = preview
+                    apply_extend(host, idx, new_pt)
+                self._trim_preview = None
                 self.viewport().update()
             return
         if tool is None:
@@ -2319,14 +2396,27 @@ class _AnnotatorView(QGraphicsView):
             item._drag_col_boundary_to(local.x())
             self.viewport().update()
             return
-        if self._trim_dragging:  # [§8 항목17 4단계] 문지르기 — 지나가는 구간을 계속 커밋
-            self._trim_preview = self._trim_preview_at(event.position().toPoint())
-            if self._trim_preview is not None:
-                host, edge_i, t0, t1 = self._trim_preview
-                key = (id(host), edge_i, round(t0, 6), round(t1, 6))
-                if key not in self._trim_seen:
-                    _add_border_cut(host, edge_i, t0, t1)
-                    self._trim_seen.add(key)
+        if self._trim_dragging:  # [§8 항목17 4~5단계] 문지르기 — 지나가는 구간을 계속 커밋
+            # [5단계] 드래그 중엔 항상 TRIM(닫힌/열린 도형 모두)만 — EXTEND는 한 지점 늘이기라
+            # 문지르기 대상이 아니다(press에서만 발동, 아래 mousePressEvent 참조).
+            preview = self._trim_preview_at(event.position().toPoint())
+            if preview is not None:
+                kind = preview[0]
+                if kind == "closed":
+                    _tag, host, edge_i, t0, t1 = preview
+                    key = ("closed", id(host), edge_i, round(t0, 6), round(t1, 6))
+                    if key not in self._trim_seen:
+                        _add_border_cut(host, edge_i, t0, t1)
+                        self._trim_seen.add(key)
+                elif kind == "open":
+                    _tag, host, lo, hi = preview
+                    key = ("open", id(host), lo, hi)
+                    if key not in self._trim_seen:
+                        apply_open_item_trim(host, lo, hi)
+                        self._trim_seen.add(key)
+            # [5단계] 커밋이 host 기하를 바꿀 수 있어(open) 다음 프레임에 새로 계산될 때까지
+            # 잠깐이라도 stale preview를 들고 있지 않게 비운다(인덱스 범위 밖 참조 방지).
+            self._trim_preview = None
             self.viewport().update()
             return
         if self._rb_active:  # [우리 확장] 방향 감지 러버밴드 — 드래그 중엔 저비용 미리보기만
@@ -2431,10 +2521,15 @@ class _AnnotatorView(QGraphicsView):
             self._port_dot_shape = self._port_dot_target(self.mapToScene(event.position().toPoint()))
             if prev_pd is not self._port_dot_shape:
                 self.viewport().update()
-            # [§8 항목17 4단계] TRIM 도구 호버 예고 — 다른 도구에선 항상 비운다(잔상 방지).
+            # [§8 항목17 4~5단계] TRIM 도구 호버 예고 — 다른 도구에선 항상 비운다(잔상 방지).
+            # Shift=EXTEND 미리보기 전환(마우스가 움직여야 갱신 — Shift 단독 토글은 다음 이동
+            # 프레임까지 미리보기가 한 박자 늦을 수 있다, 실제 커밋은 press 시점에 다시 계산해
+            # 항상 정확함— 위 mousePressEvent 참조).
             prev_tp = self._trim_preview
-            self._trim_preview = (self._trim_preview_at(event.position().toPoint())
-                                   if self._owner.current_tool == "trim" else None)
+            self._trim_preview = (
+                self._trim_preview_at(event.position().toPoint(),
+                                       extend=bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+                if self._owner.current_tool == "trim" else None)
             if prev_tp != self._trim_preview:
                 self.viewport().update()
             self._update_hover_cursor(event.position().toPoint())
