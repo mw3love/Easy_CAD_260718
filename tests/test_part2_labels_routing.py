@@ -1045,6 +1045,38 @@ def test_arrow_border_start_gestures():
 
 
 
+def test_line_tool_snaps_to_border_on_drag():
+    # [실사용 지적 2026-08-10] "화살표는 되는데 선은 안 됨" — _LineItem은 지속연결 바인딩
+    # (set_bound)이 없는 단순 도형이라 그동안 _border_snap_at 검사 자체를 안 탔다. 좌표
+    # 스냅(바인딩 없이)만이라도 화살표·직선화살과 동등해야 한다.
+    w = CanvasWindow(); w.show(); w.set_tool("line"); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)      # 우측 테두리 x=300, 중앙 y=30
+    view = w._view
+    press, release, click, move, drag_move, _d = _draw_helpers(view)
+
+    press(QPointF(0, 30)); drag_move(QPointF(305, 30))
+    assert view._arrow_tip_snap is not None and _close(view._arrow_tip_snap, QPointF(300, 30))
+    release(QPointF(305, 30))
+    lines = [it for it in w._scene.items() if isinstance(it, _LineItem)]
+    assert len(lines) == 1
+    assert _close(lines[0].line().p2(), QPointF(300, 30))
+
+
+def test_line_tool_snaps_to_border_on_press_start():
+    w = CanvasWindow(); w.show(); w.set_tool("line"); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)
+    view = w._view
+    press, release, click, move, drag_move, _d = _draw_helpers(view)
+
+    press(QPointF(305, 30)); drag_move(QPointF(500, 30)); release(QPointF(500, 30))
+    lines = [it for it in w._scene.items() if isinstance(it, _LineItem)]
+    assert len(lines) == 1
+    assert _close(lines[0].line().p1(), QPointF(300, 30))   # 시작이 테두리 스냅
+    assert not hasattr(lines[0], "_bound")   # _LineItem은 지속연결 바인딩 개념 자체가 없음(좌표 스냅만)
+
+
+
+
 def test_sarrow_click_near_border_no_tiny_arrow():
     # [버그] 테두리 근처 '가만히 클릭'은 시작 스냅 점프를 드래그로 오인해 극소 화살표를 만들면 안 됨.
     w = CanvasWindow(); w.show(); w.set_tool("sarrow"); w._zoom_reset()

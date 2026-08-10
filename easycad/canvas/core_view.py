@@ -2098,6 +2098,17 @@ class _AnnotatorView(QGraphicsView):
             it.setBrush(owner.make_brush())
             self._begin_draw(it)
         elif tool == "line":
+            # [실사용 지적 2026-08-10] 화살표/직선화살은 시작점이 도형 테두리 근처면 스냅되는데
+            # 선(_LineItem)만 빠져 있었다 — _LineItem은 지속연결 바인딩(set_bound)이 없는
+            # 단순 기하 도형이라 그동안 이 검사 자체를 안 탔던 것. 바인딩은 필요 없지만(그런
+            # 개념이 없는 타입), 좌표만 테두리에 딱 맞춰주는 건 다른 도구와 동등해야 한다.
+            lsnap = self._border_snap_at(event.position().toPoint())
+            if lsnap is not None:
+                sp = self._start = lsnap[0]
+                self._arrow_snap_exit = lsnap[1]   # drawForeground 시작 마커(화살표/직선화살과 공유)
+            else:
+                self._arrow_snap_exit = None
+            self._arrow_tip_snap = None
             it = _LineItem(QLineF(sp, sp))
             it.setPen(pen)
             self._begin_draw(it)
@@ -2249,7 +2260,11 @@ class _AnnotatorView(QGraphicsView):
         if tool in ("rect", "ellipse") or tool.startswith("sym:"):
             item.setRect(QRectF(self._start, sp).normalized())
         elif tool == "line":
-            item.setLine(QLineF(self._start, sp))
+            # [실사용 지적 2026-08-10] 클릭 배치 모드(드래그 없이 두 번 클릭)에서도 드래그와
+            # 동일하게 끝점 테두리 스냅.
+            lsnap = self._border_snap_at(event.position().toPoint())
+            self._arrow_tip_snap = lsnap[0] if lsnap is not None else None
+            item.setLine(QLineF(self._start, lsnap[0] if lsnap is not None else sp))
         self.viewport().update()
 
     def _place_click(self, event):
@@ -2810,7 +2825,13 @@ class _AnnotatorView(QGraphicsView):
             if tool in ("rect", "ellipse") or tool.startswith("sym:"):
                 self._temp.setRect(QRectF(self._start, sp).normalized())
             elif tool == "line":
-                self._temp.setLine(QLineF(self._start, sp))
+                # [실사용 지적 2026-08-10] 시작점과 마찬가지로 끝점(드래그 중 커서)도 도형 테두리
+                # 근처면 스냅 — sarrow의 `_poly_border_snap_tip`과 같은 목적, 선은 더 단순해
+                # `_border_snap_at`을 직접 쓴다(바인딩 없음, 좌표만).
+                lsnap = self._border_snap_at(event.position().toPoint())
+                self._arrow_tip_snap = lsnap[0] if lsnap is not None else None
+                tip = lsnap[0] if lsnap is not None else sp
+                self._temp.setLine(QLineF(self._start, tip))
             elif tool == "sarrow":
                 if getattr(self._owner, "ortho_enabled", False):
                     # F8: sp가 이미 ortho 처리됨 + 테두리 근처면 그 위로 스냅(축 보존)
