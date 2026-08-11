@@ -13,16 +13,9 @@
   P1 개괄  전체 이미지 1회(기본 gemini) → 대략 shapes/edges/unknown.
            항목 수가 `tile_threshold` 이하면 여기서 끝(밀집도 낮은 도면).
   P2 타일  P1 shapes 밀도로 격자 타일을 만들어(`compute_tiles`) 구획별 크롭 ×N을
-           확대(zoom)해 재전송(기본 claude — 세부가 더 산다, `docs/ai_image_import.md`
-           실측). ⚠ 2026-08-11 실도면(KBS 계통도) 실행에서 자동 계산된 타일 6개 중
-           4개가 claude에서도 여전히 시간초과로 gemini에 폴백했다 — 설계 문서가 측정한
-           "구획 크롭"은 사람이 수동으로 고른 작은 크롭(360×160)이었는데, `compute_tiles`
-           기본값(`max_shapes_per_tile=8`)이 만드는 자동 타일은 그보다 훨씬 커서(줌
-           후 최대 변 ~2000px) claude 타임아웃 여유가 더 적다. 폴백 자체는 정상 동작
-           했지만(파이프라인이 죽지 않고 계속 진행) "claude로 세부를 더 얻는다"는 이득이
-           타일이 클수록 줄어든다 — 더 촘촘한 타일(작은 max_shapes_per_tile)이 이
-           이득을 살리는 다음 튜닝 지점.
-           좌표는 크롭 좌표계로 나오므로 `restore_item_coords`로 원본 좌표계 복원.
+           확대(zoom)해 재전송(기본 gpt-5.4-mini — 2026-08-11 동일 크롭 4모델 실측
+           비교로 확정, 아래 "모델 선택" 참조). 좌표는 크롭 좌표계로 나오므로
+           `restore_item_coords`로 원본 좌표계 복원.
   P3 병합  타일 간 겹침으로 중복된 shape를 IoU로 합치고(`dedupe_shapes`) 그 과정에서
            edges의 참조도 같이 재매핑 — 이게 "타일 경계를 넘는 연결 잇기"의 실제 구현이다
            (겹치는 오버랩 구간에 걸친 도형이 최소 한 타일엔 온전히 잡힌다는 전제, 문서화된
@@ -32,6 +25,22 @@
 unknown 항목은 P4(에셋 패스, 스코프 밖)가 아직 없으므로 전부 "[미확인] 설명" 라벨의
 플레이스홀더 박스로 남는다(설계 문서의 "실패하면 통짜 상자로 남기고 목록에 표시" 폴백을
 지금 단계 전체에 적용한 것).
+
+**모델 선택(2026-08-11, 실사용 비용 피드백 후 재측정)** — 애초 `claude-sonnet-5`를
+P2 기본으로 뒀던 건 인식 세부도만 보고 정한 결정이라 비용을 안 봤다. 실사용 중
+크레딧 소모가 과하다는 지적을 받고 같은 크롭(360×160) 1장으로 4모델을 직접 비교:
+
+| 모델 | 크레딧 | 소요 | shapes | edges |
+|---|---|---|---|---|
+| gemini-3.6-flash | 9.53 | 11.8s | 9 | 10 |
+| claude-sonnet-5 | 56.92 | 32.3s | 13 | 12 |
+| claude-haiku-4-5 | 5.97 | 14.1s | 15 | 9 |
+| **gpt-5.4-mini** | **3.08** | **4.9s** | **13** | **12** |
+
+`gpt-5.4-mini`가 `claude-sonnet-5`와 shapes·edges가 완전히 같으면서 비용은 1/18,
+속도는 1/6이라 P2 기본을 이걸로 교체했다. `claude-haiku-4-5`도 유력한 대안(shapes
+최다)이라 드롭다운엔 그대로 남아 있다 — 사용자가 직접 골라 쓸 수 있다.
+⚠ 표본 1개짜리 비교라 밀집 도면·다른 도면 스타일에서 순위가 바뀔 수 있다.
 """
 import math
 import re
@@ -345,7 +354,7 @@ def build_sketch(shapes: list[dict], edges: list[dict], unknown: list[dict], *, 
 # ── 파이프라인 오케스트레이션 ─────────────────────────────────────────────────
 
 def build_from_image(image_path: str, out_path: str, *, api_key: str = "", note: str = "",
-                      overview_model: str = gw.DEFAULT_MODEL, tile_model: str = "claude-sonnet-5",
+                      overview_model: str = gw.DEFAULT_MODEL, tile_model: str = "gpt-5.4-mini",
                       tile_threshold: int = 15, max_shapes_per_tile: int = 8, zoom: int = 3,
                       dark: bool = True, verbose: bool = True, on_progress=None) -> dict:
     """P1~P3 전체 파이프라인. `.ecad`를 `out_path`에 저장하고 요약 dict를 반환한다.

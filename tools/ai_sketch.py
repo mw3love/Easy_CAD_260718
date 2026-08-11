@@ -35,7 +35,7 @@ def main():
     ap.add_argument("out", nargs="?", default="", help="생략 시 이미지와 같은 이름의 .ecad")
     ap.add_argument("--note", default="", help="보충 설명(도면 종류 등)")
     ap.add_argument("--overview-model", default=gw.DEFAULT_MODEL)
-    ap.add_argument("--tile-model", default="claude-sonnet-5")
+    ap.add_argument("--tile-model", default="gpt-5.4-mini")
     ap.add_argument("--tile-threshold", type=int, default=15,
                     help="P1 항목 수가 이 값 이하면 타일링 생략")
     ap.add_argument("--max-shapes-per-tile", type=int, default=8)

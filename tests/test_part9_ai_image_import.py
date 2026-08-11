@@ -24,6 +24,7 @@ pytest test_part9_ai_image_import.py.
 import json
 import os
 
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox
 
 from _shared import *  # noqa: F401,F403
@@ -392,11 +393,31 @@ def test_ai_worker_run_emits_finished_ok_on_success():
 
     fake_summary = {"shapes": 1, "edges": 0, "unknown": 0, "tiles": 0,
                     "overview_model": "mock", "path": worker._out_path}
-    with patch("easycad.ai.sketch_pipeline.build_from_image", return_value=fake_summary):
+    # 크레딧 조회는 실호출이라(gw.get_credit_balance) 테스트에서 반드시 차단 — 실패해도
+    # finished_ok 자체는 그대로 나가야 한다(본 결과에 영향 없는 부가정보라는 설계 확인).
+    with patch("easycad.ai.sketch_pipeline.build_from_image", return_value=fake_summary), \
+         patch("easycad.ai.gateway.get_credit_balance", side_effect=RuntimeError("네트워크 없음")):
         worker.run()
 
     assert recorded.get("ok") == fake_summary
+    assert "credit_remaining" not in recorded["ok"]
     assert "err" not in recorded
+
+
+def test_ai_worker_run_attaches_credit_balance_when_available():
+    worker = hai._AISketchWorker("img.png", os.path.join(_TMP, f"w_{uuid.uuid4().hex}.ecad"), "")
+    recorded = {}
+    worker.finished_ok.connect(lambda summary: recorded.setdefault("ok", summary))
+
+    fake_summary = {"shapes": 1, "edges": 0, "unknown": 0, "tiles": 0,
+                    "overview_model": "mock", "path": worker._out_path}
+    with patch("easycad.ai.sketch_pipeline.build_from_image", return_value=fake_summary), \
+         patch("easycad.ai.gateway.resolve_api_key", return_value="key"), \
+         patch("easycad.ai.gateway.get_credit_balance", return_value=(4085.66, 5000.0)):
+        worker.run()
+
+    assert recorded["ok"]["credit_remaining"] == 4085.66
+    assert recorded["ok"]["credit_quota"] == 5000.0
 
 
 def test_ai_worker_run_emits_finished_err_on_exception():
@@ -463,7 +484,7 @@ def test_import_ai_image_inserts_result_and_registers_one_undo_step():
         "image_path": lambda self: "dummy.png",
         "note": lambda self: "",
         "overview_model": lambda self: "gemini-3.6-flash",
-        "tile_model": lambda self: "claude-sonnet-5",
+        "tile_model": lambda self: "gpt-5.4-mini",
         "cleanup_temp_image": lambda self: None,
     })()
     prog_instance = type("_P", (), {
@@ -506,13 +527,13 @@ def test_ai_image_import_dialog_ok_enabled_after_browse():
 def test_ai_image_import_dialog_populate_models_uses_live_list_and_marks_default():
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.gw.list_models",
-               return_value=["gemini-3.6-flash", "claude-sonnet-5", "gpt-5.6-mini"]):
+               return_value=["gemini-3.6-flash", "gpt-5.4-mini", "claude-sonnet-5"]):
         dlg = _AIImageImportDialog()
     assert dlg.overview_model() == "gemini-3.6-flash"
-    assert dlg.tile_model() == "claude-sonnet-5"
+    assert dlg.tile_model() == "gpt-5.4-mini"
     idx = dlg._overview_combo.findData("gemini-3.6-flash")
     assert "추천" in dlg._overview_combo.itemText(idx)
-    assert dlg._overview_combo.findData("gpt-5.6-mini") >= 0   # 전체 목록이 그대로 노출됨
+    assert dlg._overview_combo.findData("claude-sonnet-5") >= 0   # 전체 목록이 그대로 노출됨
 
 
 def test_ai_image_import_dialog_populate_models_falls_back_when_list_fails():
@@ -520,7 +541,7 @@ def test_ai_image_import_dialog_populate_models_falls_back_when_list_fails():
          patch("easycad.canvas.host_dialogs.gw.list_models", side_effect=RuntimeError("no network")):
         dlg = _AIImageImportDialog()
     assert dlg.overview_model() == "gemini-3.6-flash"
-    assert dlg.tile_model() == "claude-sonnet-5"
+    assert dlg.tile_model() == "gpt-5.4-mini"
 
 
 def test_ai_image_import_dialog_paste_from_clipboard_sets_path():
@@ -537,6 +558,49 @@ def test_ai_image_import_dialog_paste_from_clipboard_sets_path():
     assert os.path.exists(saved_path)
     dlg.cleanup_temp_image()
     assert not os.path.exists(saved_path)
+
+
+def test_ai_image_import_dialog_ctrl_v_works_when_path_edit_focused():
+    """실사용 버그(2026-08-11): 드래그드롭은 되는데 Ctrl+V는 안 됨 — 포커스가 있는
+    QLineEdit이 표준 붙여넣기 키를 자기 keyPressEvent에서 먼저 처리·accept()해버려
+    다이얼로그 레벨 keyPressEvent가 이벤트를 못 받던 게 원인. eventFilter로 고침
+    (path_edit·note_edit에 직접 설치 — 포커스 위젯 자신에게 걸어야 먼저 가로챈다)."""
+    from PyQt6.QtGui import QKeyEvent
+    with patch.object(_AIImageImportDialog, "_populate_models", lambda self: None):
+        dlg = _AIImageImportDialog()
+    pm = _mk_pixmap(40, 20)
+    fake_md = type("_MD", (), {"hasUrls": lambda self: False, "hasImage": lambda self: True})()
+    with patch.object(QApplication.clipboard(), "mimeData", return_value=fake_md), \
+         patch("easycad.canvas.host_dialogs._clipboard_pixmap", return_value=pm):
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+        handled = dlg.eventFilter(dlg._path_edit, ev)
+    assert handled is True
+    assert dlg.image_path()
+
+
+def test_ai_image_import_dialog_note_edit_ctrl_v_falls_through_for_plain_text():
+    """note_edit는 진짜 텍스트 입력창이라, 클립보드에 이미지가 없으면(보통의 텍스트
+    붙여넣기) 가로채지 않고 위젯 기본 동작에 맡겨야 한다."""
+    from PyQt6.QtGui import QKeyEvent
+    with patch.object(_AIImageImportDialog, "_populate_models", lambda self: None):
+        dlg = _AIImageImportDialog()
+    fake_md = type("_MD", (), {"hasUrls": lambda self: False, "hasImage": lambda self: False})()
+    with patch.object(QApplication.clipboard(), "mimeData", return_value=fake_md):
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+        handled = dlg.eventFilter(dlg._note_edit, ev)
+    assert handled is False
+    assert dlg.image_path() == ""
+
+
+def test_ai_image_import_dialog_sets_thumbnail_on_image_selected():
+    with patch.object(_AIImageImportDialog, "_populate_models", lambda self: None):
+        dlg = _AIImageImportDialog()
+    assert dlg._thumb_label.pixmap() is None or dlg._thumb_label.pixmap().isNull()
+    real_path = os.path.join(_TMP, f"thumb_{uuid.uuid4().hex}.png")
+    _mk_pixmap(80, 40).save(real_path)
+    dlg._set_image_path(real_path)
+    assert dlg._thumb_label.pixmap() is not None
+    assert not dlg._thumb_label.pixmap().isNull()
 
 
 def test_ai_image_import_dialog_drop_file_sets_path():

@@ -305,7 +305,8 @@ class _AIImageImportDialog(QDialog):
     _IMAGE_FILTER = "이미지 (*.png *.jpg *.jpeg *.bmp *.webp)"
     _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
     _OVERVIEW_DEFAULT = gw.DEFAULT_MODEL       # P1 개괄 — 실측 기본(전체 이미지 완주)
-    _TILE_DEFAULT = "claude-sonnet-5"          # P2 타일 — 실측 기본(크롭 세부 인식)
+    _TILE_DEFAULT = "gpt-5.4-mini"             # P2 타일 — 2026-08-11 4모델 실측 비교로 확정
+                                                # (claude-sonnet-5와 shapes·edges 동일, 비용 1/18)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -327,10 +328,28 @@ class _AIImageImportDialog(QDialog):
         row.addWidget(browse)
         lay.addLayout(row)
 
+        # [실사용 피드백 2026-08-11] 이미지니까 어떤 걸 골랐는지 눈으로 바로 확인되면 좋겠다는
+        # 요청 — 선택/붙여넣기/드롭 직후 작은 썸네일을 보여준다.
+        self._thumb_label = QLabel(self)
+        self._thumb_label.setFixedSize(160, 100)
+        self._thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._thumb_label.setStyleSheet("border: 1px solid palette(mid);")
+        self._thumb_label.setText("(미리보기 없음)")
+        lay.addWidget(self._thumb_label, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        # Ctrl+V가 안 먹던 실사용 버그(2026-08-11) — QDialog.keyPressEvent를 오버라이드해도
+        # 포커스가 있는 자식 위젯(QLineEdit/QPlainTextEdit)이 표준 붙여넣기 키를 자기
+        # keyPressEvent 안에서 먼저 처리·accept()해버려 부모까지 이벤트가 올라오지 않는다
+        # (Qt의 흔한 함정 — 다이얼로그 레벨 keyPressEvent는 포커스 위젯이 그 키를 명시적으로
+        # 안 쓸 때만 도달한다). 포커스를 받을 수 있는 위젯에 이벤트 필터를 직접 걸어야
+        # 실제로 가로채진다.
+        self._path_edit.installEventFilter(self)
+
         lay.addWidget(QLabel("보충설명(도면 종류 등, 생략 가능):"))
         self._note_edit = QPlainTextEdit(self)
         self._note_edit.setPlaceholderText("예: 방송 송신소 계통도, 굵은 실선만 실제 연결선")
         self._note_edit.setMaximumHeight(70)
+        self._note_edit.installEventFilter(self)
         lay.addWidget(self._note_edit)
 
         model_grid = QGridLayout()
@@ -392,6 +411,15 @@ class _AIImageImportDialog(QDialog):
     def _set_image_path(self, path: str):
         self._path_edit.setText(path)
         self._btns.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(path))
+        pm = QPixmap(path)
+        if pm.isNull():
+            self._thumb_label.setText("(미리보기 없음)")
+            self._thumb_label.setPixmap(QPixmap())
+        else:
+            self._thumb_label.setText("")
+            self._thumb_label.setPixmap(pm.scaled(
+                self._thumb_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
 
     def _save_temp_image(self, pm: QPixmap) -> str:
         fd, path = tempfile.mkstemp(suffix=".png", prefix="ai_sketch_paste_")
@@ -424,11 +452,19 @@ class _AIImageImportDialog(QDialog):
                 self._set_image_path(self._save_temp_image(QPixmap.fromImage(img)))
                 e.acceptProposedAction()
 
-    def keyPressEvent(self, e):
-        if e.matches(QKeySequence.StandardKey.Paste):
-            self._paste_from_clipboard()
-            return
-        super().keyPressEvent(e)
+    def eventFilter(self, obj, event):
+        if (event.type() == QEvent.Type.KeyPress and event.matches(QKeySequence.StandardKey.Paste)
+                and obj in (self._path_edit, self._note_edit)):
+            md = QApplication.clipboard().mimeData()
+            has_image = md.hasImage() or (md.hasUrls() and any(
+                u.toLocalFile().lower().endswith(self._IMG_EXTS) for u in md.urls()))
+            # path_edit는 읽기전용이라 텍스트 붙여넣기가 의미 없어 항상 가로챈다.
+            # note_edit는 진짜 텍스트 입력창이므로, 클립보드에 이미지가 있을 때만 가로채고
+            # 아니면(보통의 텍스트 붙여넣기) 위젯의 기본 동작에 그대로 맡긴다.
+            if obj is self._path_edit or has_image:
+                self._paste_from_clipboard()
+                return True
+        return super().eventFilter(obj, event)
 
     def _paste_from_clipboard(self):
         md = QApplication.clipboard().mimeData()

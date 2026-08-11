@@ -42,6 +42,7 @@ class _AISketchWorker(QThread):
 
     def run(self):
         from easycad.ai.sketch_pipeline import build_from_image
+        from easycad.ai import gateway as gw
         kw = {}
         if self._overview_model:
             kw["overview_model"] = self._overview_model
@@ -52,6 +53,16 @@ class _AISketchWorker(QThread):
                 self._image_path, self._out_path, note=self._note,
                 verbose=False, on_progress=self.progress.emit, **kw,
             )
+            # [실사용 피드백 2026-08-11] 크레딧 잔액 표시 — 실패해도 본 결과(도형 삽입)에는
+            # 영향 없어야 하므로 조용히 무시. 워커 스레드에서 호출(GUI 블로킹 방지 — 이미
+            # 네트워크 호출을 하는 스레드라 하나 더 얹는 게 자연스럽다).
+            try:
+                key = gw.resolve_api_key()
+                remaining, quota = gw.get_credit_balance(key)
+                summary["credit_remaining"] = remaining
+                summary["credit_quota"] = quota
+            except Exception:
+                pass
             self.finished_ok.emit(summary)
         except Exception as e:
             self.finished_err.emit(str(e))
@@ -105,9 +116,13 @@ class _AIImportMixin:
             self._scene.clearSelection()
             for it in added:
                 it.setSelected(True)
+            credit_note = ""
+            if "credit_remaining" in summary:
+                credit_note = (f" · 크레딧 잔여 {summary['credit_remaining']:.0f}/"
+                               f"{summary['credit_quota']:.0f}")
             self.statusBar().showMessage(
                 f"AI 이미지→도면: 도형 {summary['shapes']} · 연결선 {summary['edges']} · "
-                f"미확인 {summary['unknown']}건(타일 {summary['tiles']}개) — "
+                f"미확인 {summary['unknown']}건(타일 {summary['tiles']}개){credit_note} — "
                 "미확인 항목은 텍스트만 있는 상자로 표시됩니다", 10000)
             self._ai_worker = None
 
