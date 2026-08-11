@@ -1307,13 +1307,13 @@ class _AnnotatorView(QGraphicsView):
         select_mode = tool == "select"
         margin = 30.0 / self._view_scale()
         near = self._conn_shapes_near(scene_c, margin)
-        # [실사용 지적 2026-08-09, 2차] 자기 몸통 안(select_mode 기존 규칙)뿐 아니라, 겹쳐 있는
-        # *다른* 도형의 몸통 안일 때도 예고점이 뜨면 안 된다 — 선택·미선택을 가리지 않는다
-        # (겹치는 도형이 아직 선택 전인 포트여도 재현됨). 이 목록은 "차지된" 도형 전부이고,
-        # 아래 루프의 자기-내부 skip과 합쳐 최종적으로 "살아남은 후보가 이 목록에 없으면
-        # (=자기 몸통 밖의 남의 도형이 대신 뽑힌 것) 억제"로 판정한다 — 그래야 포트 정중앙처럼
-        # 자기 자신이 죽은 지대가 되는 기존 동작(안 뜸)은 그대로 두고, 포트 몸통의 다른 지점에서
-        # 뒤쪽 호스트가 엉뚱하게 뽑히는 새 버그만 골라 막는다.
+        # [실사용 지적 2026-08-09, 2차] 겹쳐 있는 *다른* 도형의 몸통 안일 때 예고점이 뜨면
+        # 안 된다 — 선택·미선택을 가리지 않는다(겹치는 도형이 아직 선택 전인 포트여도 재현됨).
+        # [실사용 지적 2026-08-11] 그런데 이 억제를 "자기 자신"에도 걸면(2026-08-09 원래 구현)
+        # 겹침이 전혀 없는 평범한 도형조차 자기 몸통 한가운데를 호버할 땐 예고점이 영영 안
+        # 뜨는 부작용이 생긴다 — Lucid 대조로 확정: 도형 몸통 안쪽은 "이동 커서 + 테두리
+        # 호버와 동일한 예고점"이어야 한다(이동 가능함과 커넥터 시작점을 보여주는 건 별개).
+        # 그래서 sh 자신은 occluder에서 제외하고, *다른* 도형이 이 지점을 점유할 때만 억제한다.
         occluders = [sh for sh in near if _shape_interior_contains(sh, scene_c)] if select_mode else []
         best_sh, best_d = None, None
         for sh in near:
@@ -1322,12 +1322,12 @@ class _AnnotatorView(QGraphicsView):
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_c):
                 continue
-            if select_mode and sh in occluders:
+            if select_mode and any(o is not sh for o in occluders):
                 continue
             d = QLineF(sh.sceneBoundingRect().center(), scene_c).length()
             if best_d is None or d < best_d:
                 best_d, best_sh = d, sh
-        if best_sh is not None and occluders:
+        if best_sh is not None and any(o is not best_sh for o in occluders):
             return None
         return best_sh
 

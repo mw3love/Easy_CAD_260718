@@ -156,7 +156,7 @@ class _UIBuildMixin:
             self._toggle_ortho, "F8", checkable=True)
         self._act_grid = self._make_action("격자 (스냅투그리드)", "grid",
             self._toggle_grid, "Shift+G", checkable=True)
-        self._act_grid.setChecked(True)
+        self._act_grid.setChecked(False)
         self._act_align = self._make_action("정렬 가이드선", "align",
             self._toggle_align_guides, "Shift+A", checkable=True)
         self._act_align.setChecked(True)

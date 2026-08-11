@@ -977,14 +977,14 @@ def test_group_lock_ecad_roundtrip():
 
 
 def test_grid_toggle_action():
-    # [그리드] 표시+스냅 통합 토글(Shift+G) — 기본 켜짐, 트리거 시 owner.grid_enabled에 반영.
+    # [그리드] 표시+스냅 통합 토글(Shift+G) — 기본 꺼짐(2026-08-11), 트리거 시 owner.grid_enabled에 반영.
     from easycad.canvas.host_widgets import _act_icon
     w = CanvasWindow()
-    assert w._act_grid.isCheckable() and w._act_grid.isChecked()
-    assert w.grid_enabled is True
+    assert w._act_grid.isCheckable() and not w._act_grid.isChecked()
+    assert w.grid_enabled is False
     assert not _act_icon("grid").isNull()
     w._act_grid.trigger()
-    assert w._act_grid.isChecked() is False and w.grid_enabled is False
+    assert w._act_grid.isChecked() is True and w.grid_enabled is True
 
 
 
@@ -992,6 +992,7 @@ def test_grid_toggle_action():
 def test_grid_snap_scene_quantizes():
     from easycad.canvas.annotator_core import _GRID_SPACING
     w = CanvasWindow()
+    w.grid_enabled = True   # 기본값은 off(2026-08-11)이므로 이 테스트는 켠 상태를 명시
     p = w._view._grid_snap_scene(QPointF(7, 13))
     assert p == QPointF(round(7 / _GRID_SPACING) * _GRID_SPACING,
                          round(13 / _GRID_SPACING) * _GRID_SPACING)
@@ -1013,6 +1014,7 @@ def test_grid_snap_move_quantizes_position():
     # 로컬 원점(대개 (0,0))과 무관해 격자 정렬을 보장하지 않는다(회귀: 아래 anchor 테스트).
     from easycad.canvas.annotator_core import _GRID_SPACING
     w = CanvasWindow()
+    w.grid_enabled = True   # 기본값은 off(2026-08-11)이므로 이 테스트는 켠 상태를 명시
     r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     r.setPos(QPointF(7, 13)); r.setSelected(True)
     w._view._apply_grid_snap_move(False, False)
@@ -1027,6 +1029,7 @@ def test_grid_snap_move_respects_skip_axis():
     # [그리드] 스마트정렬/축고정이 이미 처리한 축은 skip_*로 건드리지 않는다(우선순위 위계).
     from easycad.canvas.annotator_core import _GRID_SPACING
     w = CanvasWindow()
+    w.grid_enabled = True   # 기본값은 off(2026-08-11)이므로 이 테스트는 켠 상태를 명시
     r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     r.setPos(QPointF(7, 13)); r.setSelected(True)
     before = r.mapToScene(r._content_rect().topLeft())
@@ -1056,6 +1059,7 @@ def test_grid_snap_move_uses_scene_anchor_not_raw_pos():
     # 동치일 뿐 — 2차 시도에서 발견). 콘텐츠 rect의 실제 화면 위치로 검증해야 한다.
     from easycad.canvas.annotator_core import _GRID_SPACING
     w = CanvasWindow()
+    w.grid_enabled = True   # 기본값은 off(2026-08-11)이므로 이 테스트는 켠 상태를 명시
     r = _mk_rect(w._scene, w.make_pen(), 307, 53, 100, 60)   # 로컬 rect 원점 = (307,53), pos=(0,0)
     r.setSelected(True)
     assert r.pos() == QPointF(0, 0)   # 전제: pos()는 (0,0)에 남는다(실제 그리기 패턴과 동일)
@@ -1085,6 +1089,7 @@ def test_grid_snap_move_skips_multiselect():
 def test_grid_snap_local_quantizes_unrotated():
     from easycad.canvas.annotator_core import _GRID_SPACING
     w = CanvasWindow()
+    w.grid_enabled = True   # 기본값은 off(2026-08-11)이므로 이 테스트는 켠 상태를 명시
     r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)   # pos=(0,0) → local==scene
     snapped = r._grid_snap_local(QPointF(37, 51))
     assert snapped == QPointF(round(37 / _GRID_SPACING) * _GRID_SPACING,

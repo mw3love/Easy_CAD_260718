@@ -9,6 +9,7 @@ def test_grid_snap_box_resize_corner_lands_on_grid():
     # [그리드] 코너 리사이즈 — 드래그한 코너가 격자 교차점에 정확히 놓인다(회전 0, key 무관).
     from easycad.canvas.annotator_core import _GRID_SPACING
     w = CanvasWindow()
+    w.grid_enabled = True   # 기본값은 off(2026-08-11)이므로 이 테스트는 켠 상태를 명시
     for key in range(4):
         r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
         r._begin_box_geom()
@@ -25,6 +26,7 @@ def test_grid_snap_box_resize_corner_lands_on_grid():
 def test_grid_snap_box_resize_edge_lands_on_grid():
     from easycad.canvas.annotator_core import _GRID_SPACING
     w = CanvasWindow()
+    w.grid_enabled = True   # 기본값은 off(2026-08-11)이므로 이 테스트는 켠 상태를 명시
     r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     r._begin_box_geom()
     r._box_resize = ("edge", "r")
@@ -37,7 +39,7 @@ def test_grid_snap_box_resize_edge_lands_on_grid():
 def test_grid_snap_shape_creation():
     # [그리드] 네모를 격자 밖 지점으로 드래그해 그리면 결과 rect 모서리가 격자에 맞는다.
     from easycad.canvas.annotator_core import _GRID_SPACING
-    w = CanvasWindow(); w.show(); w.set_tool("rect"); w._zoom_reset()
+    w = CanvasWindow(); w.grid_enabled = True; w.show(); w.set_tool("rect"); w._zoom_reset()
     view = w._view
     press, release, click, move, drag_move, dbl = _draw_helpers(view)
     press(QPointF(3, 4))

@@ -102,7 +102,7 @@ class CanvasWindow(
         self.tool_pinned = False
         self.snap_enabled = True         # o-snap 토글(F3) — 도형 테두리 달라붙기 켜고 끄기
         self.ortho_enabled = False       # Ortho 토글(F8) — 그리기·정점드래그를 수평/수직(0/90°)로 제약
-        self.grid_enabled = True         # [그리드] 표시+스냅 통합 토글(Shift+G) — 격자 표시·이동/리사이즈/생성 스냅
+        self.grid_enabled = False        # [그리드] 표시+스냅 통합 토글(Shift+G) — 격자 표시·이동/리사이즈/생성 스냅. 기본 off(2026-08-11)
         self.align_guides_enabled = True # [정렬 가이드선] 이동 중 스마트 정렬 스냅+보라 참고선 토글(Shift+A)
         self._bg_item = None            # 배경 이미지 없음(무한 캔버스)
         self._badge_n = 0
