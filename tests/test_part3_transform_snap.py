@@ -663,21 +663,37 @@ def test_box_edge_resize_hit_matches_cursor_band():
 
 
 def test_qc_dots_geometry():
-    # [하나의 시스템으로 통합 2026-08-01 → 2026-08-03 재도입] 선택된 네모의 상하좌우 접속점은
-    # 테두리에서 `_HANDLE_GAP_FACTOR`만큼 바깥으로 띄운 자리다 — "핸들이 도형 안쪽에 있는
-    # 것처럼 보인다"는 실사용 지적으로 되살렸다(2026-08-01엔 선택 여부에 따라 gap 유무가
-    # 갈리는 비일관성 때문에 없앴었는데, 이번엔 hover-port 미리보기도 같은 gap을 써서 그
-    # 비일관성 자체를 없앴다 — test_qc_dot_at_roundtrip·test_hover_port_at_* 참조).
+    # [하나의 시스템으로 통합 2026-08-01 → 2026-08-03 재도입 → 2026-08-11 전용 gap 분리]
+    # 선택된 네모의 상하좌우 접속점은 테두리에서 `_qc_dot_gap()`만큼 바깥으로 띄운 자리다 —
+    # "핸들이 도형 안쪽에 있는 것처럼 보인다"는 실사용 지적으로 되살렸다(2026-08-01엔 선택
+    # 여부에 따라 gap 유무가 갈리는 비일관성 때문에 없앴었는데, hover-port 미리보기도 같은
+    # gap을 써서 그 비일관성 자체를 없앴다 — test_qc_dot_at_roundtrip·test_hover_port_at_*
+    # 참조). 2026-08-11엔 이 gap이 리사이즈 핸들과 겹치던 문제로 전용 상수로 분리됐다
+    # (`test_box_edge_resize_hit_matches_cursor_band` 참조).
     w = CanvasWindow()
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
     dots = dict((k, r) for k, r in a._qc_dot_rects())
     assert set(dots) == {"t", "r", "b", "l"}
     br = a.rect()
-    gap = a._handle_px() * a._HANDLE_GAP_FACTOR
+    gap = a._qc_dot_gap()
     assert _close(dots["r"].center(), QPointF(br.right() + gap, br.center().y()))
     assert _close(dots["l"].center(), QPointF(br.left() - gap, br.center().y()))
     assert _close(dots["t"].center(), QPointF(br.center().x(), br.top() - gap))
     assert _close(dots["b"].center(), QPointF(br.center().x(), br.bottom() + gap))
+
+
+def test_box_corner_rects_flush_with_border():
+    # [실사용 지적 2026-08-11, Figma/Lucid 스크린샷 실측] 모서리 리사이즈 핸들은 더 이상
+    # 테두리 밖으로 띄우지 않는다 — 두 레퍼런스 다 리사이즈 핸들이 테두리 위(오프셋 0)에
+    # 있고, 커넥터 점(qc-dot)만 훨씬 멀리 떨어져 있다(위 `test_qc_dots_geometry` 참조).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    corners = dict(a._box_corner_rects())
+    br = a.rect()
+    assert _close(corners[0].center(), br.topLeft())
+    assert _close(corners[1].center(), br.topRight())
+    assert _close(corners[2].center(), br.bottomRight())
+    assert _close(corners[3].center(), br.bottomLeft())
 
 
 

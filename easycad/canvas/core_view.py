@@ -1376,9 +1376,17 @@ class _AnnotatorView(QGraphicsView):
             return
         r = 5.0 / s
         hp = self._hp_hover
-        # [2026-08-03] 선택 시 qc-dot(_qc_dot_rects)과 같은 gap 규칙 — 선택 여부로 점 위치가
-        # 바뀌는 비일관성을 만들지 않는다(둘 다 `_HANDLE_GAP_FACTOR` 공유).
-        gap = best_sh._handle_px() * best_sh._HANDLE_GAP_FACTOR
+        # [2026-08-03 → 2026-08-11 gap 분리 → 같은 날 재분리] 한때 이 예고점이 선택 시
+        # qc-dot(`_qc_dot_rects`)과 같은 gap을 공유했다 — 2026-08-01의 "선택 순간 점이
+        # 튀는 비일관성" 버그를 막기 위해서였다. 하지만 실사용 지적(Lucid 대조): 이 점은
+        # "여기서 연결을 시작할 수 있다"는 테두리 위 경계 표식이라 미선택 상태에선 테두리에
+        # 딱 붙어야 의미가 산다 — qc-dot은 반대로 선택 후 "잡아 끄는 인터랙티브 핸들"이라
+        # 리사이즈 밴드와 안 겹치게 멀리 떨어져야 한다(2026-08-11 앞 항목). 두 역할이 서로
+        # 달라 위치도 달라야 한다고 판단해 gap을 다시 분리(오프셋 0, 테두리 위) — 도형을
+        # 선택하는 순간 점이 테두리→qc-dot 자리로 튀는 현상이 재발할 수 있음을 알고 있는
+        # 트레이드오프다(사용자 명시적 요청으로 감수, 2026-08-01 버그와 동일 계열 — 재발
+        # 시 이 주석을 먼저 볼 것).
+        gap = 0.0
         targeted_pt = hp[1] if (hp is not None and hp[0] is best_sh) else None
         reattach_hover = self._over_selected_endpoint(view_pos)
         matched = False

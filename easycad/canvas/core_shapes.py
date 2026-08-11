@@ -51,6 +51,15 @@ class _HandleResizeMixin:
     # 더 키우지 않는다(호버로 커지는 게 아니라 애초에 그 크기가 기본값).
     _HANDLE_PX = 10.0   # 씬 단위 — 모든 핸들 공통 고정 크기(_draw_snap_marker 지름과 동일)
     _EDGE_HIT_MIN = 8.0  # 속 빈 도형 테두리 클릭 최소 히트폭(씬 단위) — 얇은 선도 잡히게
+    # [실사용 지적 2026-08-11, Figma/Lucid 스크린샷 실측 재도입] 리사이즈 핸들(모서리·변)은
+    # 두 레퍼런스 다 테두리 위에 딱 붙어 있고, 커넥터 점만 그보다 훨씬 멀리(약 20~25px) 떨어져
+    # 있다 — "테두리 근처=리사이즈, 그보다 바깥=커넥터"로 영역 자체가 갈라져 있어 겹치지 않는다.
+    # 이전엔 모서리 핸들과 큐닷이 같은 `_HANDLE_GAP_FACTOR`(6px)를 공유해 리사이즈 밴드(±4px)와
+    # 큐닷이 겹쳤다 — 모서리는 테두리 위(오프셋 0)로 되돌리고, 큐닷만 이 전용 상수로 분리한다.
+    _QC_DOT_GAP_PX = 24.0   # 씬 단위 — 큐닷 전용 오프셋(리사이즈 핸들과 공유하지 않음)
+
+    def _qc_dot_gap(self) -> float:
+        return self._QC_DOT_GAP_PX / self._scale_or_1()
 
     # [편의기능] 잠금·그룹 — 클래스 기본값(인스턴스는 host의 토글/그룹 메서드가 설정).
     # clone()은 이 필드를 모르므로 복제본은 항상 이 기본값(미잠금·무그룹)에서 시작한다.
@@ -526,15 +535,17 @@ class _HandleResizeMixin:
     def _box_handles(self) -> bool:
         return hasattr(self, "setRect") and not self._uses_endpoints()
 
-    # [Lucid 대조 2026-08-03 재도입] 꼭짓점·변 핸들 모두 테두리에 딱 붙지 않고 바깥으로
-    # 살짝 띄운다 — "핸들이 도형 자체가 아니라 별도 컨트롤"이라는 시각적 구분(사용자 실사용
-    # 지적: 지금은 핸들이 도형 안쪽에 있는 것처럼 보임). 2026-08-01엔 qc-dot만 이 gap을 쓰다가
-    # "선택 순간 미연결 qc-dot만 튀어나와 hover 상태와 달라지는 비일관성"으로 완전히 없앤 적이
-    # 있다 — 이번엔 그 실수를 반복하지 않도록 **선택 상태(qc-dot·꼭짓점)와 미선택 hover
-    # 미리보기(`_draw_port_dots`) 양쪽에 동일한 gap 규칙**을 적용해 선택 여부와 무관하게 같은
-    # 자리에 뜨게 한다(연결 여부에 따른 테두리 수렴 특례는 되살리지 않음 — 문제였던 비일관성만
-    # 없으면 필요 없는 복잡도라 판단).
-    _HANDLE_GAP_FACTOR = 0.6
+    # [Lucid 대조 2026-08-03 재도입 → 2026-08-11 모서리만 원복] 한때 꼭짓점·변 핸들과
+    # qc-dot이 같은 gap(`_HANDLE_GAP_FACTOR`, 6px)을 공유해 테두리 밖으로 함께 떠 있었다 —
+    # "핸들이 도형 자체가 아니라 별도 컨트롤"이라는 시각적 구분이 목적이었는데, 그 결과 qc-dot이
+    # 변 리사이즈 밴드(`_box_edge_side`, ±4px)와 겹쳐 "변 중앙을 잡으면 리사이즈 대신 커넥터로
+    # 새는" 실사용 혼동이 났다. Figma/Lucid 스크린샷 실측 결과 두 레퍼런스 다 리사이즈 핸들은
+    # 테두리 위(오프셋 0)에 있고 커넥터 점만 훨씬 멀리(약 20~25px) 떨어져 있어, 시각적 구분은
+    # 핸들 색(파란 사각 `_BLUE`, 아래 `_paint_handle`)으로 이미 충분하다고 판단 — 모서리는
+    # 오프셋을 없애 테두리에 딱 붙이고(레퍼런스와 일치), qc-dot은 `_qc_dot_gap()`(24px, 위
+    # `_QC_DOT_GAP_PX`)으로 완전히 분리했다. qc-dot의 "선택 순간 점이 튀는" 비일관성 방지
+    # 규칙(선택·미선택 호버 양쪽에 동일 gap 함수 공유)은 그대로 유지 — 모서리 오프셋과는
+    # 원래도 무관한 별개 버그였다.
 
     def _box_corner_rects(self):
         # [2026-08-10, 여러 차례 시행착오 끝에 원복] 삼각형 전용 특례(꼭짓점 핸들을 실제
@@ -548,16 +559,8 @@ class _HandleResizeMixin:
         # 되돌아간다 — 특례 코드 없음.
         br = self.rect()
         h = self._handle_px()
-        gap = h * self._HANDLE_GAP_FACTOR
-        cx, cy = br.center().x(), br.center().y()
         pts = [br.topLeft(), br.topRight(), br.bottomRight(), br.bottomLeft()]  # 0TL 1TR 2BR 3BL
-        out = []
-        for i, p in enumerate(pts):
-            sx = gap if p.x() > cx else -gap
-            sy = gap if p.y() > cy else -gap
-            q = QPointF(p.x() + sx, p.y() + sy)
-            out.append((i, QRectF(q.x() - h / 2, q.y() - h / 2, h, h)))
-        return out
+        return [(i, QRectF(p.x() - h / 2, p.y() - h / 2, h, h)) for i, p in enumerate(pts)]
 
     def _box_rot_center(self) -> QPointF:
         br = self.rect()
@@ -590,15 +593,18 @@ class _HandleResizeMixin:
         except RuntimeError:
             return False
 
-    # [하나의 시스템으로 통합 2026-08-01 → 2026-08-03 재도입] 상하좌우 접속점. 2026-08-01엔
-    # 항상 테두리 위(gap 없음)로 통일했었다 — 종전엔 미연결 상태의 선택된 도형만 gap을 줘서
-    # 선택 순간 점이 튀는 비일관성이 있었기 때문. 이번엔 gap을 없애는 대신, 선택·미선택
-    # (`_draw_port_dots`) 양쪽에 **동일한 `_HANDLE_GAP_FACTOR`**를 적용해 비일관성 없이
-    # 되살린다(위 `_box_corner_rects` 주석 참조). 클릭=도형 복제+화살표, 드래그=화살표(대상
-    # 없으면 도형도 생성). 2026-07-30엔 이 점을 변 리사이즈(1축)와도 통합했었으나, "바깥으로
-    # 쭉 당기는" 자연스러운 동작이 항상 리사이즈로 판정되는 문제가 실사용에서 드러나 되돌림
-    # (사용자 확인 2026-08-01) — 단일축 리사이즈는 이 점 자체가 아니라 변 나머지 구간
-    # (`_box_edge_side`)이 담당한다.
+    # [하나의 시스템으로 통합 2026-08-01 → 2026-08-03 재도입 → 2026-08-11 전용 gap 분리]
+    # 상하좌우 접속점. 2026-08-01엔 항상 테두리 위(gap 없음)로 통일했었다 — 종전엔 미연결
+    # 상태의 선택된 도형만 gap을 줘서 선택 순간 점이 튀는 비일관성이 있었기 때문. 2026-08-03엔
+    # 선택·미선택(`_draw_port_dots`) 양쪽에 동일한 gap을 적용해 비일관성 없이 되살렸는데, 당시
+    # 리사이즈 핸들과 같은 계수(`_HANDLE_GAP_FACTOR`, 6px)를 썼다가 변 리사이즈 밴드와 겹치는
+    # 문제가 실사용에서 드러났다(위 `_box_corner_rects` 주석 참조) — 이제 `_qc_dot_gap()`
+    # (24px) 전용 함수로 분리하되, "선택·미선택 양쪽에 동일 gap"이라는 비일관성 방지 원칙 자체는
+    # 그대로 유지한다(`core_view.py`의 `_draw_port_dots`도 같은 함수를 쓴다). 클릭=도형 복제+
+    # 화살표, 드래그=화살표(대상 없으면 도형도 생성). 2026-07-30엔 이 점을 변 리사이즈(1축)와도
+    # 통합했었으나, "바깥으로 쭉 당기는" 자연스러운 동작이 항상 리사이즈로 판정되는 문제가
+    # 실사용에서 드러나 되돌림(사용자 확인 2026-08-01) — 단일축 리사이즈는 이 점 자체가 아니라
+    # 변 나머지 구간(`_box_edge_side`)이 담당한다.
     def _qc_dot_rects(self):
         # [2026-08-04, 3차 수정] 포트도 선택 여부와 무관하게 자신의 4변 접속점을 유지한다
         # (실사용 요구: 드래그해서 화살표를 뽑는 용도로 항상 있어야 함) — 여기서 걸러내지
@@ -606,7 +612,7 @@ class _HandleResizeMixin:
         # (`_hp_create_arrow`/`_qc_create` 참조) — 포트는 화살표만 남기고 장비 복제는 없다.
         h = self._handle_px()
         d = h * 0.9
-        gap = h * self._HANDLE_GAP_FACTOR
+        gap = self._qc_dot_gap()
         sides = ("t", "r", "b", "l")   # _shape_ports와 동일 순서(상·우·하·좌)
         # [2026-08-10 → 후속 원복] 한때 삼각형의 "r"(동쪽=앞쪽 꼭짓점) qc-dot을 리사이즈
         # 핸들과 자리가 겹친다는 이유로 뺐었다 — `_sym_triangle`이 이제 bbox를 그대로 채우면서
