@@ -9,7 +9,15 @@
   P1 개괄  전체 이미지 1회(기본 gemini) → 대략 shapes/edges/unknown.
            항목 수가 `--tile-threshold` 이하면 여기서 끝(밀집도 낮은 도면).
   P2 타일  P1 shapes 밀도로 격자 타일을 만들어(`compute_tiles`) 구획별 크롭 ×N을
-           확대(zoom)해 재전송(기본 claude — 크롭이라 타임아웃 없이 세부가 산다).
+           확대(zoom)해 재전송(기본 claude — 세부가 더 산다, `docs/ai_image_import.md`
+           실측). ⚠ 2026-08-11 실도면(KBS 계통도) 실행에서 자동 계산된 타일 6개 중
+           4개가 claude에서도 여전히 시간초과로 gemini에 폴백했다 — 설계 문서가 측정한
+           "구획 크롭"은 사람이 수동으로 고른 작은 크롭(360×160)이었는데, `compute_tiles`
+           기본값(`max_shapes_per_tile=8`)이 만드는 자동 타일은 그보다 훨씬 커서(줌
+           후 최대 변 ~2000px) claude 타임아웃 여유가 더 적다. 폴백 자체는 정상 동작
+           했지만(파이프라인이 죽지 않고 계속 진행) "claude로 세부를 더 얻는다"는 이득이
+           타일이 클수록 줄어든다 — 더 촘촘한 타일(작은 `max_shapes_per_tile`)이 이
+           이득을 살리는 다음 튜닝 지점.
            좌표는 크롭 좌표계로 나오므로 `restore_item_coords`로 원본 좌표계 복원.
   P3 병합  타일 간 겹침으로 중복된 shape를 IoU로 합치고(`dedupe_shapes`) 그 과정에서
            edges의 참조도 같이 재매핑 — 이게 "타일 경계를 넘는 연결 잇기"의 실제 구현이다
@@ -407,7 +415,19 @@ def build_from_image(image_path: str, out_path: str, *, api_key: str = "", note:
     return summary
 
 
+def _fix_console_encoding():
+    """Windows 한국어 로캘(cp949)에서 stdout이 UTF-8이 아니면 한글 진행 로그가 콘솔에서
+    깨진다(2026-08-11 실도면 검증 중 실측 — 파일 저장은 `sketch_build.save()`가 항상
+    `encoding="utf-8"`을 명시해 영향 없음, 콘솔 표시만의 문제)."""
+    if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def main():
+    _fix_console_encoding()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("image")
     ap.add_argument("out", nargs="?", default="", help="생략 시 이미지와 같은 이름의 .ecad")

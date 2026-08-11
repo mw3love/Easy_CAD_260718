@@ -87,14 +87,24 @@
 
 ## 단계 계획 (각 단계 검증 기준)
 
-**A. 게이트웨이 클라이언트** — `easycad/ai/gateway.py` 신설.
+**A. 게이트웨이 클라이언트** — `easycad/ai/gateway.py` 신설. **완료(2026-08-11)**.
 `Paste_flow/pasteflow/ocr_engine.py` 패턴 이식(base_url 정규화·모델 폴백·크레딧 조회·
-오류 분류 `fail`/`retry`/`weak`). 키는 QSettings + 환경변수 폴백.
-→ 검증: 모델 목록 조회 + 이미지 1장 왕복 + 크레딧 잔액 표시.
+오류 분류). 키는 QSettings + 환경변수 폴백. 폴백 트리거는 원본(`model_not_found`)에
+`timeout`을 추가 — 이 게이트웨이의 실패 모드가 모델 부재가 아니라 밀집 도면 504이므로.
+→ 검증(실호출, 2026-08-11): 모델 목록 79종 조회·크레딧 잔액(4085.66/5000.0)·이미지
+왕복("42" 정확히 읽음) 전부 정상.
 
-**B. 헤드리스 파이프라인** — `tools/ai_sketch.py`. P1~P3 + `Sketch` 변환.
-→ 검증: `docs/reference/image (1).png` 기준 shapes/edges 개수와 라벨 정확도,
-`tools/screenshot.py`로 렌더 육안 확인. 위 실측값(전체 39 vs 크롭 13)이 baseline.
+**B. 헤드리스 파이프라인** — `tools/ai_sketch.py`. P1~P3 + `Sketch` 변환. **완료(2026-08-11)**.
+→ 검증: pytest 21종(mock, 좌표복원·타일격자·중복제거·축스냅 등 순수로직)
++ `docs/reference/image (1).png`(KBS 1TV 실도면) 실행 — P1 gemini 36.5초
+shapes=29·edges=21·unknown=8(임계 초과로 타일링 6개), P3 최종 shapes=128·edges=131·
+unknown=22. 위 baseline(전체 39 vs 크롭 13)의 "타일링하면 뚜렷이 많아져야 성공" 기준을
+3배 이상으로 충족. `tools/screenshot.py --doc` 렌더 육안 확인 — 다중 TX 체인 토폴로지·
+"모악산 On-Air Receiver"·"STL 주 (1701.750MHz, 5W)" 등 실제 도메인 라벨 정확 추출 확인.
+⚠ 자동 타일링(`compute_tiles`)이 만든 타일이 이 실측(360×160 수동 크롭)보다 커서 claude가
+6개 중 4개는 여전히 타임아웃 — 폴백은 정상 동작했으나 claude 세부 이득이 줄어듦(다음 튜닝
+지점, `docs/pitfalls.md` "AI 게이트웨이 호출" 참조). 상세 경위: `docs/history/2026-08.md`
+"§8 항목18 AI 이미지→도면 — A+B단계".
 
 **C. 앱 통합** — 입력창(이미지 + 텍스트), 백그라운드 스레드, 진행 표시,
 결과 삽입은 undo 1스텝, **원본을 반투명 언더레이로 남겨 대조**(이미지 붙여넣기 재사용).
