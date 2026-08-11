@@ -1,28 +1,38 @@
-"""§8 항목18(AI 이미지→도면, 앱 내장) A+B단계.
+"""§8 항목18(AI 이미지→도면, 앱 내장) A+B+C단계.
 
 A단계 — `easycad/ai/gateway.py`: 오류 분류(model_not_found/timeout/quota/server_busy)·
 폴백 선택·JSON 파싱 등 순수 로직만 검증한다(실제 게이트웨이 호출은 여기서 하지 않음 —
 그건 `tools/ai_probe.py` 수동 실행 몫, `docs/ai_image_import.md` 실측 참조).
 
-B단계 — `tools/ai_sketch.py`: P1(개괄)~P3(병합·정규화) 파이프라인. 게이트웨이 호출은
-전부 mock — 실호출 검증은 별도(수동 `tools/ai_sketch.py` 실행). 좌표 복원(P2 크롭
-좌표계 → 원본 좌표계, `restore_item_coords`)이 가장 틀리기 쉬운 지점이라 전용 테스트를
-둔다(순서: zoom으로 나눈 뒤 크롭 오프셋을 더한다 — 반대로 하면 오프셋 자체가 zoom배
-되어 크게 어긋난다).
+B단계 — `easycad/ai/sketch_pipeline.py`(2026-08-11 `tools/ai_sketch.py`에서 이동 — C단계
+앱 통합이 같은 파이프라인을 가져다 쓰려면 `tools/`가 아니라 `easycad/`에 있어야 했다):
+P1(개괄)~P3(병합·정규화) 파이프라인. 게이트웨이 호출은 전부 mock — 실호출 검증은 별도
+(수동 `tools/ai_sketch.py` 실행). 좌표 복원(P2 크롭 좌표계 → 원본 좌표계,
+`restore_item_coords`)이 가장 틀리기 쉬운 지점이라 전용 테스트를 둔다(순서: zoom으로
+나눈 뒤 크롭 오프셋을 더한다 — 반대로 하면 오프셋 자체가 zoom배 되어 크게 어긋난다).
+
+C단계 — `easycad/canvas/host_ai.py`(2026-08-11, 이 코드베이스 첫 `QThread` 사용): 입력
+다이얼로그(`host_dialogs._AIImageImportDialog`)·백그라운드 워커(`_AISketchWorker`)·
+결과 삽입(`document.insert_items`, `load_document`처럼 씬을 지우지 않는 버전)·undo 통합
+(`push_undo_add_many`, Mermaid 가져오기와 동일 관례). 워커는 `start()`을 동기 호출로
+치환해 실제 스레드 없이 신호 배선만 검증(타이밍 불확실성 회피) — 진짜 스레드 동시성
+자체는 Qt가 보장하는 부분이라 이 테스트의 관심사가 아니다.
 
 tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easycad.py (전체) 또는
 pytest test_part9_ai_image_import.py.
 """
 import json
 import os
-import sys
+
+from PyQt6.QtWidgets import QDialog, QDialogButtonBox
 
 from _shared import *  # noqa: F401,F403
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
-import ai_sketch as ais  # noqa: E402
 from easycad.ai import gateway as gw  # noqa: E402
-from easycad.fileio.document import load_document  # noqa: E402
+from easycad.ai import sketch_pipeline as ais  # noqa: E402
+from easycad.canvas import host_ai as hai  # noqa: E402
+from easycad.canvas.host_dialogs import _AIImageImportDialog  # noqa: E402
+from easycad.fileio.document import load_document, insert_items  # noqa: E402
 
 
 # ── A단계: gateway.py 오류 분류·폴백·파싱 ────────────────────────────────────
@@ -329,3 +339,159 @@ def test_build_from_image_tiles_and_restores_coords_when_over_threshold():
     n_loaded = load_document(w._scene, str(out))
     assert n_loaded == len(doc["items"])
     w.deleteLater()
+
+
+# ── C단계: document.insert_items — 씬을 지우지 않는 삽입 ────────────────────
+
+def test_insert_items_preserves_existing_scene_content():
+    w = CanvasWindow()
+    existing = _mk_rect(w._scene, w.make_pen(), 0, 0, 40, 40)
+
+    sk = Sketch(dark=True)
+    a = sk.box(100, 100, 80, 40, "A")
+    b = sk.box(300, 100, 80, 40, "B")
+    sk.arrow(a, b, label="e")
+    doc = sk.to_dict()
+
+    added = insert_items(w._scene, doc["items"])
+    assert len(added) == 3   # box·box·arrow(라벨은 자식이라 최상위 목록에 안 잡힘)
+    assert existing.scene() is w._scene   # 기존 아이템이 지워지지 않았다
+    top_level = [it for it in w._scene.items() if it.parentItem() is None]
+    assert existing in top_level
+    for it in added:
+        assert it in top_level
+    w.deleteLater()
+
+
+def test_insert_items_resolves_bindings_within_new_island():
+    """새로 삽입되는 아이템끼리의 bind1/bind2 인덱스가 기존 씬 아이템과 충돌하지 않고
+    올바르게 자기들끼리만 재연결되는지 — 기존 씬에 이미 아이템이 있는 상태에서 검증."""
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 0, 0, 40, 40)   # 인덱스 오프셋 교란용 기존 아이템
+
+    sk = Sketch(dark=True)
+    a = sk.box(100, 100, 80, 40, "A")
+    b = sk.box(300, 100, 80, 40, "B")
+    sk.arrow(a, b)
+    added = insert_items(w._scene, sk.to_dict()["items"])
+
+    arrow = next(it for it in added if isinstance(it, _PolyArrowItem))
+    boxes = [it for it in added if it is not arrow]
+    assert arrow._bound(0) in boxes
+    assert arrow._bound(len(arrow._pts) - 1) in boxes
+    w.deleteLater()
+
+
+# ── C단계: host_ai — 백그라운드 워커·삽입·undo 통합 ──────────────────────────
+
+def test_ai_worker_run_emits_finished_ok_on_success():
+    recorded = {}
+    worker = hai._AISketchWorker("img.png", os.path.join(_TMP, f"w_{uuid.uuid4().hex}.ecad"), "")
+    worker.finished_ok.connect(lambda summary: recorded.setdefault("ok", summary))
+    worker.finished_err.connect(lambda msg: recorded.setdefault("err", msg))
+
+    fake_summary = {"shapes": 1, "edges": 0, "unknown": 0, "tiles": 0,
+                    "overview_model": "mock", "path": worker._out_path}
+    with patch("easycad.ai.sketch_pipeline.build_from_image", return_value=fake_summary):
+        worker.run()
+
+    assert recorded.get("ok") == fake_summary
+    assert "err" not in recorded
+
+
+def test_ai_worker_run_emits_finished_err_on_exception():
+    recorded = {}
+    worker = hai._AISketchWorker("img.png", os.path.join(_TMP, f"w_{uuid.uuid4().hex}.ecad"), "")
+    worker.finished_ok.connect(lambda summary: recorded.setdefault("ok", summary))
+    worker.finished_err.connect(lambda msg: recorded.setdefault("err", msg))
+
+    with patch("easycad.ai.sketch_pipeline.build_from_image",
+              side_effect=RuntimeError("게이트웨이 실패")):
+        worker.run()
+
+    assert "ok" not in recorded
+    assert "게이트웨이 실패" in recorded.get("err", "")
+
+
+def test_offset_ai_items_to_view_center_moves_bbox_and_keeps_arrow_attached():
+    w = CanvasWindow()
+    sk = Sketch(dark=True)
+    a = sk.box(1000, 1000, 80, 40, "A")
+    b = sk.box(1300, 1000, 80, 40, "B")
+    sk.arrow(a, b)
+    added = insert_items(w._scene, sk.to_dict()["items"])
+
+    w._offset_ai_items_to_view_center(added)
+
+    bbox = None
+    for it in added:
+        r = it.sceneBoundingRect()
+        bbox = r if bbox is None else bbox.united(r)
+    center = w._view.mapToScene(w._view.viewport().rect().center())
+    assert _close(bbox.center(), center, eps=2.0)
+
+    arrow = next(it for it in added if isinstance(it, _PolyArrowItem))
+    boxes = [it for it in added if it is not arrow]
+    start_box, end_box = arrow._bound(0), arrow._bound(len(arrow._pts) - 1)
+    assert start_box in boxes and end_box in boxes
+    # build_elbow 후에도 화살표 양끝이 부착된 도형의 경계 근처에 남아 있는지(재라우팅 확인).
+    pts = [arrow.mapToScene(p) for p in arrow._pts]
+    start_rect = start_box.mapRectToScene(start_box.rect())
+    end_rect = end_box.mapRectToScene(end_box.rect())
+    assert start_rect.adjusted(-2, -2, 2, 2).contains(pts[0])
+    assert end_rect.adjusted(-2, -2, 2, 2).contains(pts[-1])
+    w.deleteLater()
+
+
+def test_import_ai_image_inserts_result_and_registers_one_undo_step():
+    """다이얼로그·진행창·워커 스레드를 전부 동기 mock으로 대체해 `_import_ai_image()`의
+    배선(입력→백그라운드 실행→결과 삽입→undo 등록) 전체를 종단 검증한다."""
+    w = CanvasWindow()
+    existing = _mk_rect(w._scene, w.make_pen(), 0, 0, 40, 40)
+
+    def fake_run(self):
+        sk = Sketch(dark=True)
+        a = sk.box(100, 100, 80, 40, "A")
+        b = sk.box(300, 100, 80, 40, "B")
+        sk.arrow(a, b, label="e")
+        sk.save(self._out_path)
+        self.finished_ok.emit({"shapes": 2, "edges": 1, "unknown": 0, "tiles": 0,
+                               "overview_model": "mock", "path": self._out_path})
+
+    dlg_instance = type("_D", (), {
+        "exec": lambda self: QDialog.DialogCode.Accepted,
+        "image_path": lambda self: "dummy.png",
+        "note": lambda self: "",
+    })()
+    prog_instance = type("_P", (), {
+        "exec": lambda self: None,
+        "accept": lambda self: None,
+        "reject": lambda self: None,
+        "append": lambda self, msg: None,
+    })()
+
+    with patch.object(hai._AISketchWorker, "run", fake_run), \
+         patch.object(hai._AISketchWorker, "start", lambda self: self.run()), \
+         patch.object(hai, "_AIImageImportDialog", return_value=dlg_instance), \
+         patch.object(hai, "_AISketchProgressDialog", return_value=prog_instance):
+        w._import_ai_image()
+
+    top_level = [it for it in w._scene.items() if it.parentItem() is None]
+    assert existing in top_level
+    assert len(top_level) == 4   # 기존 1 + 박스2 + 화살표1
+
+    w.undo()
+    top_level_after_undo = [it for it in w._scene.items() if it.parentItem() is None]
+    assert top_level_after_undo == [existing]   # 삽입 전체가 undo 1스텝
+    w.deleteLater()
+
+
+def test_ai_image_import_dialog_ok_enabled_after_browse():
+    dlg = _AIImageImportDialog()
+    ok_btn = dlg._btns.button(QDialogButtonBox.StandardButton.Ok)
+    assert not ok_btn.isEnabled()
+    with patch("easycad.canvas.host_dialogs.QFileDialog.getOpenFileName",
+              return_value=("picked.png", "")):
+        dlg._browse()
+    assert ok_btn.isEnabled()
+    assert dlg.image_path() == "picked.png"

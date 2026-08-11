@@ -372,9 +372,24 @@ docs/
   Receiver" 등 도메인 라벨 정확 추출)까지 마침. 부수 발견 둘: 자동 타일링이 만든 타일이
   수동 실측 크기보다 커 claude가 6개 중 4개는 여전히 타임아웃(폴백은 정상 동작, 다음 튜닝
   지점), Windows 한국어 로캘(cp949)에서 콘솔 한글 출력이 깨져(파일 자체는 UTF-8로 정상)
-  `_fix_console_encoding()` 추가. C단계(앱 통합)·D단계(에셋 패스)는 스코프 밖. 상세:
+  `_fix_console_encoding()` 추가. D단계(에셋 패스)는 스코프 밖. 상세:
   `docs/history/2026-08.md` "§8 항목18 AI 이미지→도면 — A+B단계", 함정 2건은
   `docs/pitfalls.md` "AI 게이트웨이 호출"·"검증 방법론".
+- **§8 항목18 C단계(앱 통합) 구현·실제 창 검증 완료**(2026-08-11, 같은 날 후속, 스모크
+  393→510종) — 사용자가 "빠른 테스트"를 위해 입력창까지 요청, 취소·원본 언더레이 대조는
+  스코프 축소로 제외. 파이프라인을 `tools/ai_sketch.py`에서 `easycad/ai/sketch_pipeline.py`로
+  이동(앱이 `tools/`에 의존하면 방향이 꼬임), `document.insert_items()` 신설(`load_document`의
+  3-pass 로직을 씬을 안 지우는 버전으로 공유), 이 코드베이스 첫 `QThread`
+  (`host_ai._AISketchWorker` — 게이트웨이 왕복이 몇 분이라 GUI 스레드 블로킹 방지, 씬 조작은
+  전부 완료 콜백에서 메인 스레드가 함), 입력·진행 다이얼로그(`host_dialogs.py`), 메뉴
+  "AI 이미지→도면…"(Ctrl+Shift+A). 삽입 후 뷰 중심으로 오프셋 + `build_elbow()` 명시
+  재라우팅(Mermaid 가져오기와 동일 관례), `push_undo_add_many`로 undo 1스텝. 신규 pytest
+  8종(mock) + **실제 창(오프스크린 아님) + 실제 게이트웨이 호출** 종단 검증(파일 선택
+  다이얼로그만 monkeypatch) — shapes 13·edges 10 정상 삽입(기존 도형 보존), undo 1회로
+  정상 복원, 스크린샷 육안 확인. 부수로 게이트웨이 키를 secrets 파일(`~/.claude/.secrets/
+  easycad-gateway.key`, `jbnu-gateway` 스킬과 동일 관례이나 다른 계정)에서도 읽게 확장 —
+  `!` 프리픽스 셸 문법 실수로 키가 대화에 노출된 사고의 재발 방지. 상세:
+  `docs/history/2026-08.md` "§8 항목18 C단계".
 - **웹 트랙 병행개발(2026-08-05 시작 → 2026-08-06 일단 중단, Python 집중으로 전환)** —
   `web_prototype/`(이 리포 하위, PyQt 본체와 별개 코드, `easycad/`는 안 건드림)는 Python(PyQt)
   앱과 **둘 다 끝까지 만드는** 목표 자체는 유지하되(§8 항목10), 사용자가 2026-08-06 하루

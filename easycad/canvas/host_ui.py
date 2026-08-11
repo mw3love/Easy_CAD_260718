@@ -130,7 +130,12 @@ class _UIBuildMixin:
         # 들여와 "팔레트에 등록"(§8-8)에 태우는 용도(안테나 심볼 실사용 피드백 대체).
         self._act_svg = self._make_action("SVG 가져오기…", "image",
             self._insert_svg, "Ctrl+Shift+V")
-        for a in (self._act_img, self._act_tb, self._act_tbl, self._act_mmd, self._act_svg):
+        # [§8 항목18 C단계] AI 이미지→도면 — 게이트웨이 왕복이 몇 분 걸리므로 별도
+        # QThread(host_ai._AISketchWorker)로 실행, 완료되면 undo 1스텝으로 삽입.
+        self._act_ai_sketch = self._make_action("AI 이미지→도면…", "image",
+            self._import_ai_image, "Ctrl+Shift+A")
+        for a in (self._act_img, self._act_tb, self._act_tbl, self._act_mmd, self._act_svg,
+                 self._act_ai_sketch):
             m.addAction(a)
 
         # 편집(상단 툴바 전용 — 메뉴엔 없던 undo/redo를 액션으로. Ctrl+Z/Ctrl+Y 키는 뷰가 처리).

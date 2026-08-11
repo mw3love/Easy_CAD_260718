@@ -282,3 +282,78 @@ class _MermaidDialog(QDialog):
 
     def text(self):
         return self._edit.toPlainText()
+
+
+# ---------------------------------------------------------------------------
+# [§8 항목18 C단계] AI 이미지→도면 입력창 — 이미지 파일 + 보충설명 텍스트.
+# ---------------------------------------------------------------------------
+class _AIImageImportDialog(QDialog):
+    """이미지 파일 선택 + 보충설명(도면 종류 등) 입력. 확인 버튼은 이미지를 고르기 전엔
+    비활성 — 파이프라인은 몇 분 걸리므로 빈 경로로 시작해 사용자를 헷갈리게 하지 않는다."""
+
+    _IMAGE_FILTER = "이미지 (*.png *.jpg *.jpeg *.bmp *.webp)"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("AI 이미지→도면")
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("도면 이미지를 골라주세요 — 편집 가능한 도형으로 변환합니다:"))
+
+        row = QHBoxLayout()
+        self._path_edit = QLineEdit(self)
+        self._path_edit.setReadOnly(True)
+        self._path_edit.setPlaceholderText("이미지 파일을 선택하세요…")
+        row.addWidget(self._path_edit)
+        browse = QToolButton(self)
+        browse.setText("찾아보기…")
+        browse.clicked.connect(self._browse)
+        row.addWidget(browse)
+        lay.addLayout(row)
+
+        lay.addWidget(QLabel("보충설명(도면 종류 등, 생략 가능):"))
+        self._note_edit = QPlainTextEdit(self)
+        self._note_edit.setPlaceholderText("예: 방송 송신소 계통도, 굵은 실선만 실제 연결선")
+        self._note_edit.setMaximumHeight(70)
+        lay.addWidget(self._note_edit)
+
+        lay.addWidget(QLabel("⚠ 밀집 도면은 여러 번 나눠 인식해 수 분 걸릴 수 있습니다."))
+
+        self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                      | QDialogButtonBox.StandardButton.Cancel, self)
+        self._btns.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
+        self._btns.accepted.connect(self.accept)
+        self._btns.rejected.connect(self.reject)
+        lay.addWidget(self._btns)
+
+    def _browse(self):
+        path, _ = QFileDialog.getOpenFileName(self, "이미지 선택", "", self._IMAGE_FILTER)
+        if path:
+            self._path_edit.setText(path)
+            self._btns.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
+
+    def image_path(self) -> str:
+        return self._path_edit.text()
+
+    def note(self) -> str:
+        return self._note_edit.toPlainText().strip()
+
+
+class _AISketchProgressDialog(QDialog):
+    """AI 이미지→도면 처리 중 진행 로그만 보여주는 모달. 닫기(X) 버튼을 없앴다 —
+    진행 중인 게이트웨이 호출을 안전하게 중단할 방법이 없어 취소는 이번 라운드
+    스코프 밖(`host_ai.py` 참조), 닫기를 허용하면 "취소됐다"는 착각을 줄 수 있다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("AI 이미지→도면 — 처리 중")
+        self.setModal(True)
+        self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("도면을 분석하는 중입니다 — 밀집 도면은 수 분 걸릴 수 있습니다."))
+        self._log = QPlainTextEdit(self)
+        self._log.setReadOnly(True)
+        self._log.setMinimumSize(QSize(440, 220))
+        lay.addWidget(self._log)
+
+    def append(self, msg: str):
+        self._log.appendPlainText(msg)

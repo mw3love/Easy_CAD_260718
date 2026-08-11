@@ -360,17 +360,15 @@ def save_document(scene, path: str, layers: list | None = None):
         json.dump(doc, f, ensure_ascii=False, indent=1)
 
 
-def load_document(scene, path: str) -> int:
-    """path의 문서를 scene에 로드(기존 내용 지움). 로드한 객체 수 반환.
-    레이어 목록은 반환값에 안 실음(기존 25+ 호출부의 `== n` 계약을 안 깨려고) —
-    필요하면 load_document_layers(path)를 별도 호출."""
-    with open(path, encoding="utf-8") as f:
-        doc = json.load(f)
-    if doc.get("format") != FORMAT:
-        raise ValueError("Easy CAD 문서가 아닙니다.")
-    scene.clear()
-    items = doc.get("items", [])
-    # 1-pass: 아이템 생성. 2-pass: 인덱스로 바인딩 재연결.
+def insert_items(scene, items: list[dict]) -> list:
+    """`items`(item dict 목록, `bind1`/`bind2`는 **이 목록 안에서의 인덱스**)를 기존
+    씬에 그대로 추가한다 — `scene.clear()`를 하지 않는다는 점만 `load_document`와 다르고
+    생성→바인딩 재연결→라벨 복원 3-pass 로직은 동일(둘이 공유하도록 여기로 추출,
+    2026-08-11 §8 항목18 C단계 — AI 이미지→도면 결과를 기존 문서에 "삽입"하려면
+    `load_document`의 `scene.clear()`가 걸림돌이었다).
+
+    반환은 실제로 생성된 아이템 리스트(None 필터링됨) — 호출자가 `push_undo_add_many()`
+    등으로 undo에 등록하거나 배치를 옮기는 데 쓴다."""
     created = [dict_to_item(d) for d in items]
     for it in created:
         if it is not None:
@@ -393,7 +391,29 @@ def load_document(scene, path: str) -> int:
                 it._label_t = d["label"].get("t", 0.5)
                 it._label_off = d["label"].get("off", 0.0)
                 it._sync_label()
-    return sum(1 for it in created if it is not None)
+    return [it for it in created if it is not None]
+
+
+def load_document(scene, path: str) -> int:
+    """path의 문서를 scene에 로드(기존 내용 지움). 로드한 객체 수 반환.
+    레이어 목록은 반환값에 안 실음(기존 25+ 호출부의 `== n` 계약을 안 깨려고) —
+    필요하면 load_document_layers(path)를 별도 호출."""
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    if doc.get("format") != FORMAT:
+        raise ValueError("Easy CAD 문서가 아닙니다.")
+    scene.clear()
+    return len(insert_items(scene, doc.get("items", [])))
+
+
+def load_document_items(path: str) -> list[dict]:
+    """`.ecad` 파일을 읽어 item dict 목록만 반환(씬 조작 없음) — `insert_items()`와
+    짝지어 "삽입" 용도로 쓴다(파일을 열지 않고 현재 씬에 추가할 때)."""
+    with open(path, encoding="utf-8") as f:
+        doc = json.load(f)
+    if doc.get("format") != FORMAT:
+        raise ValueError("Easy CAD 문서가 아닙니다.")
+    return doc.get("items", [])
 
 
 def load_document_layers(path: str):
