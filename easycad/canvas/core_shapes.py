@@ -3160,10 +3160,12 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def has_binding(self) -> bool:
         return self._bind1 is not None or self._bind2 is not None
 
-    def reroute(self, pin_pred=None) -> bool:
+    def reroute(self, pin_pred=None, *, fast=False) -> bool:
         """바인딩된 끝점을 '도형의 고정 부착점'(로컬→씬)으로 추종. 변경 있었으면 True.
         곡선은 재계산하지 않는다 — _set_endpoint가 제어점을 delta로 끌고 가 사용자가 그린 곡선을 보존.
-        pin_pred(idx)가 False면 재고정 안 함(강체). 무변경이면 geometry 미변경으로 되먹임 루프 차단."""
+        pin_pred(idx)가 False면 재고정 안 함(강체). 무변경이면 geometry 미변경으로 되먹임 루프 차단.
+        `fast`는 받기만 하고 무시한다 — 곡선은 애초에 A* 재라우팅을 안 하므로 (`_PolyArrowItem.
+        reroute`와 호출부(`host_canvas._on_scene_changed`)를 공유하기 위한 시그니처 정합 목적)."""
         if not self.has_binding():
             return False
         changed = False
@@ -3693,10 +3695,14 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         else:
             self._set_endpoint(idx, local_p if snapped is None else snapped[0])
 
-    def reroute(self, pin_pred=None) -> bool:
+    def reroute(self, pin_pred=None, *, fast=False) -> bool:
         """바인딩된 끝(시작·끝)을 도형의 고정 부착점(로컬→씬)으로 추종. 변경 있으면 True.
         pin_pred(idx)=False면 재고정 안 함(강체). 무변경이면 되먹임 루프 차단.
-        [Stage1] 자동 라우팅(_auto_route)이고 양끝 모두 바인딩이면 끝점 추종 후 직교 엘보를 재계산."""
+        [Stage1] 자동 라우팅(_auto_route)이고 양끝 모두 바인딩이면 끝점 추종 후 직교 엘보를 재계산.
+        [성능 최적화 2026-08-11] `fast=True`면 `_apply_routing`/`_route_ortho`에 그대로
+        전달돼 클리어런스 폴리시 탐색을 건너뛴다(정확성 무영향) — 호출부(`host_canvas.
+        _on_scene_changed`)가 한 프레임에 reroute가 몰리는 상황(그룹 드래그)이라고 판단할
+        때만 켠다."""
         if not self.has_binding():
             return False
         changed = False
@@ -3726,7 +3732,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # (_apply_routing이 양끝 바인딩=A*, 한쪽=단순 엘보로 분기). 수동 세그먼트 편집(auto_route
         # False)은 끝점만 추종(사용자 경로 보존).
         if self._auto_route and self.has_binding():
-            if self._apply_routing():
+            if self._apply_routing(fast=fast):
                 changed = True
         if changed:
             self.prepareGeometryChange()
@@ -3757,11 +3763,14 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     # 해결하면 안 된다. 계단이 거슬리면 M5 정렬/분배로 도형 축을 실제로 맞추는 게 정답이다.
     # (부착점을 건드리지 않고 경로 쪽에서 계단을 흡수하는 안은 별도 과제로 남긴다.)
 
-    def build_elbow(self) -> bool:
+    def build_elbow(self, *, fast=False) -> bool:
         """[Stage1] 현재 양끝점 + 부착 변 법선으로 직교 엘보를 계산해 _pts를 교체. 변경 있으면 True.
         _pts[0]/_pts[-1](끝점)은 유지하고 중간 정점만 라우터가 생성한다.
         [경유지 힌트(2f)] _route_hints가 있으면 '출발→힌트…→도착'을 구간별로 A* 라우팅해
-        힌트를 반드시 지나가되 각 구간은 계속 장애물을 자동 회피한다."""
+        힌트를 반드시 지나가되 각 구간은 계속 장애물을 자동 회피한다.
+        [성능 최적화 2026-08-11] `fast=True`는 `_route_ortho`의 클리어런스 사다리(폴리시
+        탐색)를 건너뛰라는 신호를 그대로 전달한다 — 정확성엔 영향 없음(`_route_ortho`
+        docstring 참조), 기본 False."""
         if self._bind_start is None or self._bind_end is None:
             return False
         if self._hint_dragging:
@@ -3775,7 +3784,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         if self._route_hints:
             # [경유지 힌트(2f)] 힌트가 있으면 구간별 라우팅(내부적으로 Stage2/3 회피 동반).
             hint_scenes = [self._hint_to_scene(h) for h in self._route_hints]
-            scene_pts, flags = self._route_with_hints(hint_scenes)
+            scene_pts, flags = self._route_with_hints(hint_scenes, fast=fast)
             merged, _mflag = self._dedup_hint(scene_pts, flags)
             new_local = [self.mapFromScene(p) for p in merged]
         else:
@@ -3784,7 +3793,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             # [Stage2] 장애물(양끝 바인딩 도형 제외)을 피하는 직교 경로. 장애물이 없거나 Stage1
             # 엘보가 이미 안전하면 Stage1과 동일 결과 → 아래 무변경 가드가 되먹임 루프를 끊는다.
             mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
-                                conn_rects=self._connected_rects())
+                                conn_rects=self._connected_rects(), fast=fast)
             new_scene = _dedup_pts([s] + mids + [e])
             new_local = [self.mapFromScene(p) for p in new_scene]
         if len(new_local) == len(self._pts) and all(
@@ -3816,17 +3825,19 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def _is_ortho(self) -> bool:
         return self._routing == "ortho"
 
-    def _apply_routing(self) -> bool:
+    def _apply_routing(self, *, fast=False) -> bool:
         """[M4-4] 현재 _routing에 맞춰 _pts를 재생성(양끝점은 유지, 중간만 라우터 소유). 변경 시 True.
         · straight=2점 직선(대각 허용). · ortho=직교 경로(각짐·둥긂 무관) — 양끝 바인딩이면 build_elbow
-          (A* 회피·법선·정렬흡수), 아니면 자유 끝점 사이 단순 L/HVH 엘보(_ortho_elbow)."""
+          (A* 회피·법선·정렬흡수), 아니면 자유 끝점 사이 단순 L/HVH 엘보(_ortho_elbow).
+        [성능 최적화 2026-08-11] `fast`는 `build_elbow`/`_route_ortho`로 그대로 전달(정확성
+        무영향, `_route_ortho` docstring 참조)."""
         end_idx = len(self._pts) - 1
         s = self.mapToScene(self._pts[0])
         e = self.mapToScene(self._pts[end_idx])
         if self._routing == "straight":
             new_local = [self.mapFromScene(s), self.mapFromScene(e)]
         elif self._bind_start is not None and self._bind_end is not None:
-            return self.build_elbow()   # 바인딩 직교 — 기존 A* 라우팅 재사용
+            return self.build_elbow(fast=fast)   # 바인딩 직교 — 기존 A* 라우팅 재사용
         else:                            # 한쪽만 바인딩 / 완전 자유 직교
             ns = self._bound_normal_scene(0)
             ne = self._bound_normal_scene(end_idx)
@@ -3834,7 +3845,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                 # 한쪽만 붙어도 build_elbow과 같은 _route_ortho로 회피(재진입·장애물·화살표) — 그리기
                 # 라이브 미리보기(set_ortho_preview가 이 경로 위임)와 릴리스 결과를 일치시킨다.
                 mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
-                                    conn_rects=self._connected_rects())
+                                    conn_rects=self._connected_rects(), fast=fast)
             else:
                 mids = _ortho_elbow(s, e, ns, ne)   # 완전 자유(무바인딩) = 단순 엘보(기존 유지)
             new_scene = _dedup_pts([s] + mids + [e])
@@ -4021,7 +4032,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         m = self._hint_midpoint_scene()
         return QPointF(ps.x() - m.x(), ps.y() - m.y())
 
-    def _route_with_hints(self, hint_scenes):
+    def _route_with_hints(self, hint_scenes, *, fast=False):
         """출발 s → 힌트들 → 도착 e를 구간별로 _route_ortho해 이어붙인 (scene 정점, hint 플래그).
         진짜 양끝만 테두리 법선 구속, 힌트점은 자유 통과. flags[i]=True면 그 정점이 힌트."""
         end_idx = len(self._pts) - 1
@@ -4037,7 +4048,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         for i in range(len(waypts) - 1):
             a, b = waypts[i], waypts[i + 1]
             mids = _route_ortho(a, b, norms[i], norms[i + 1], obst, self._ROUTE_CLEARANCE,
-                                conn_rects=self._connected_rects())
+                                conn_rects=self._connected_rects(), fast=fast)
             for m in mids:
                 scene_pts.append(m)
                 flags.append(False)
@@ -6389,7 +6400,7 @@ def _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, ru
 
 
 def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
-                 avoid_segs=(), cross_penalty=0.0, conn_rects=()):
+                 avoid_segs=(), cross_penalty=0.0, conn_rects=(), fast=False):
     """[Stage2 승격] Stage1 엘보(_ortho_elbow)를 우선하되, 그 경로가 장애물을 관통하면
     Hanan 그리드 A*(_astar_ortho)로 우회로를 찾아 '중간 정점'을 반환.
       · 장애물 없음 또는 Stage1이 이미 안전(도형·화살표 모두) → Stage1 그대로(무변경·되먹임 없음).
@@ -6409,7 +6420,20 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
       · 변 위에 정확히 얹힌 경로는 _seg_hits_rect가 통과시켜 '안전'으로 남는다(48/768 = 6.2%).
     → 해법은 '오늘의 결과(base)를 먼저 계산하고, 추가 후보가 점수로 **엄격히 이길 때만** 교체'하는
     단조 개선 구조 + 연결도형 clearance 사다리(conn_clear→clearance→1→0). 오늘 결과가 깨끗하면
-    후보를 만들지도 않으므로 경로·비용 모두 기존과 동일(무회귀)."""
+    후보를 만들지도 않으므로 경로·비용 모두 기존과 동일(무회귀).
+
+    [성능 최적화 2026-08-11] `fast=True`면 **base가 이미 결함 없을 때만** 클리어런스 사다리
+    (아래 "혹 감소" 폴리시 탐색)를 건너뛰고 base를 그대로 반환한다 — 사다리는 base가 결함
+    없어도 매번 무조건 추가 A* 탐색(최대 4단×2회)을 도는데, 그 비용이 "화면당 1개 화살표"에선
+    무해했지만 그룹 드래그처럼 한 프레임에 reroute가 수십 번 겹치면 지배적 비용이 됐다(실측:
+    20개 그룹 드래그 675ms, 시간의 96%가 A*). ⚠ base가 아직 결함 있는 경우(밀집 장애물에서
+    넉넉한 초기 클리어런스로 후보를 못 찾은 경우)는 `fast`여도 사다리를 그대로 돈다 — 사다리의
+    좁은 rung들이 그 경우엔 "폴리시"가 아니라 "유일한 탈출구"일 수 있다는 게 코드 구조상
+    이론적으로 가능해 보였다(실측 재현은 못 함, 아래 판정 조건 코드 주석 참조 — 코리도 패딩이
+    넉넉해 실사용 규모에서 드문 것으로 추정). 이 체크는 이미 계산된 값 재사용이라 추가 비용이
+    없어, 실증은 못 했어도 방어적으로 남겨뒀다. 기본값 False(기존 동작 무변경) — 호출부가
+    "이번엔 배선 폭주 상황"이라고 판단할 때만(`host_canvas._on_scene_changed`, 다건 변경 시)
+    명시적으로 켠다."""
     infl = ([r.adjusted(-clearance, -clearance, clearance, clearance) for r in obstacles]
             if obstacles else [])
     # [M4-4 ⓐ] 연결 도형: 원본 rect=재진입/타기 판정용, 팽창본=A* 장애물용. 여유는 제3도형
@@ -6504,7 +6528,27 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
     # [혹 버그 수정 2026-07-27] base가 이미 결함 없음(관통·재진입·타기 0)이어도 여기서 조기
     # 반환하지 않는다 — base는 conn_clear(가장 넉넉한 여유)로 A*가 처음 찾은 경로일 뿐이라 결함은
     # 없어도 불필요하게 먼 우회('혹')일 수 있다(사다리가 그 우회를 줄여줄 기회조차 못 얻었던 게
-    # 근본원인). 사다리는 base보다 엄격히 나은 후보만 채택하는 단조개선이라 늘 실행해도 무해하다.
+    # 근본원인). 사다리는 base보다 엄격히 나은 후보만 채택하는 단조개선이라 **정확성 기준으로는**
+    # 늘 실행해도 무해하다 — 단 이 "무해"는 성능 무해를 뜻하지 않는다(위 docstring "성능 최적화
+    # 2026-08-11" 참조).
+    #
+    # [2026-08-11 방어적 강화 — 코드 정독으로 찾은 이론적 허점, 실측 재현은 못 함] 처음엔
+    # `if fast: return base`로 사다리 전체를 무조건 건너뛰었다. `base`는 "결함 없음"이 아니라
+    # "conn_clear(가장 넉넉한 클리어런스)로 첫 유효 후보를 찾으려 *시도*한 결과"일 뿐이므로,
+    # 그 시도가 전부 실패하면(밀집 장애물) base가 여전히 preferred(관통하는 원본)로 남을 수
+    # 있다는 게 코드 구조상 이론적으로 가능해 보였다 — 이 경우 사다리의 더 좁은 rung
+    # (clearance→1.0→0.0)이 유일한 탈출구다("부착점이 팽창 사각형 안에 갇혀 A*가 아예 출발
+    # 못 하는 배치의 마지막 탈출구", 바로 위 주석). ⚠ 실제 그룹 드래그(38개 화살표, 8프레임)
+    # 로 검증해봤을 땐 이 시나리오를 못 만났다 — A* 코리도 패딩(`_CORRIDOR_PAD_MIN`=400
+    # 이상)이 매우 넉넉해 실사용 도면 규모에서 conn_clear 시도가 완전히 막히는 경우가
+    # 드문 것으로 보인다(처음 "회귀 재현"이라 여겼던 5건은 검증 스크립트가 관통 판정에
+    # `boundingRect()`(펜폭 패딩 포함)를 써서 생긴 오탐이었고, `_obstacle_rects()`와 같은
+    # 원본 `.rect()`로 다시 재니 수정 전/후 모두 0건이었다). 그래도 이 체크는 이미 계산된
+    # `base_score`를 재사용해 **추가 비용이 0**이므로, 실증은 못 했어도 이론적 허점을 막아두는
+    # 쪽을 택했다 — `base_score`의 앞 네 항목(관통·재진입·타기·교차, `_route_score` 정의
+    # 참조)이 전부 0일 때만(=base가 실제로 결함 없을 때만) 사다리를 건너뛴다.
+    if fast and base_score[0] == 0 and base_score[1] == 0 and base_score[2] == 0 and base_score[3] == 0:
+        return base
     best, best_score = base, base_score
     for rung, cc in enumerate((conn_clear, clearance, 1.0, 0.0)):
         cinfl = [r.adjusted(-cc, -cc, cc, cc) for r in conn_orig]

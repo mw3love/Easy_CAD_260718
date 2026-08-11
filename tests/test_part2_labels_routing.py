@@ -1517,6 +1517,45 @@ def test_route_ortho_astar_dense():
 
 
 
+def test_route_ortho_fast_skips_ladder_when_base_already_clean():
+    """[성능 최적화 2026-08-11] fast=True는 base(첫 유효 후보)가 이미 결함 없을 때만
+    클리어런스 사다리("혹 감소" 폴리시 탐색)를 건너뛴다 — 사다리가 어차피 base보다 나은
+    후보를 못 찾는 상황이므로 fast=True/False 결과가 완전히 같아야 한다(단순 조기 반환이라
+    다른 경로가 나오면 회귀)."""
+    from easycad.canvas.annotator_core import _route_ortho
+    P = QPointF
+    s, e = P(0, 0), P(300, 0)
+    ns, ne = P(1, 0), P(-1, 0)
+    obs = [QRectF(80, -50, 40, 60), QRectF(160, -10, 40, 60), QRectF(240, -50, 40, 60)]
+    slow = _route_ortho(s, e, ns, ne, obs, 12.0)
+    fast = _route_ortho(s, e, ns, ne, obs, 12.0, fast=True)
+    assert fast == slow, (fast, slow)
+
+
+def test_route_ortho_fast_never_returns_a_hitting_base():
+    """[성능 최적화 2026-08-11] fast=True 경로가 관통하는 base를 그대로 반환하지 않는지
+    회귀 방지(방어적 체크, `_route_ortho`의 "2026-08-11 방어적 강화" 주석 참조). ⚠ 이
+    구체적 장애물 배치가 "base가 conn_clear 첫 시도에서 이미 결함 없이 확정되는" 흔한
+    경로와 "첫 시도가 전부 실패해 사다리의 좁은 rung까지 가야 하는" 드문 경로 중 어느 쪽을
+    타는지는 확인 안 됨(A* 코리도 패딩이 400+ 단위로 넉넉해, 후자를 합성 장애물로 안정적으로
+    재현하지 못했다 — 실제 그룹 드래그 재현도 마찬가지). 그래도 어느 경로를 타든 "fast=True
+    결과가 실제 장애물을 관통하면 안 된다"는 불변조건 자체는 항상 성립해야 하므로, 이 밀집
+    배치로 그 불변조건만 고정해 둔다."""
+    from easycad.canvas.annotator_core import _route_ortho, _path_hits_rects
+    P = QPointF
+    s, e = P(0, 0), P(300, 0)
+    ns, ne = P(1, 0), P(-1, 0)
+    obs = [QRectF(80, -50, 30, 55), QRectF(150, -5, 30, 55), QRectF(220, -50, 30, 55)]
+    infl = [r.adjusted(-12.0, -12.0, 12.0, 12.0) for r in obs]
+
+    fast_mids = _route_ortho(s, e, ns, ne, obs, 12.0, fast=True)
+    full = [s] + fast_mids + [e]
+    assert not _path_hits_rects(full, infl), (fast_mids, "fast=True가 관통 경로를 반환함")
+    assert not _path_hits_rects(full, obs), fast_mids
+
+
+
+
 def test_sarrow_routes_around_obstacle():
     # [Stage2] 양끝 도형 사이 세 번째 도형이 경로를 가로막으면 우회 라우팅 / 장애물 이동 시 재라우팅 /
     #          양끝 바인딩 도형은 장애물에서 제외.

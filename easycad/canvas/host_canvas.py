@@ -156,18 +156,25 @@ class _CanvasMixin:
             # 공간 쿼리를 쓴다 — 바뀐 아이템이 적으면 union도 좁아 공간 쿼리가 확실히 이기고,
             # 많으면(다중선택 드래그) 검증된 전체스캔으로 안전하게 폴백한다.
             _FEW_CHANGED = 4   # 실측 경계(1건=승, 20건=패)에서 넉넉히 보수적으로 잡은 값
-            if union is None or self._last_geom_change_count > _FEW_CHANGED:
+            many_changed = union is None or self._last_geom_change_count > _FEW_CHANGED
+            if many_changed:
                 candidates = self._scene.items()   # 강제 전체 재검토 / 다건 변경 — 검증된 경로
             else:
                 query_rect = union.adjusted(-margin, -margin, margin, margin)
                 candidates = self._scene.items(
                     query_rect, Qt.ItemSelectionMode.IntersectsItemBoundingRect)
+            # [성능 최적화 2026-08-11] 다건 변경(그룹 드래그 등)일 때만 fast=True — `_route_ortho`의
+            # 클리어런스 폴리시 탐색(경로가 이미 결함 없어도 "더 예쁜 우회로"를 찾는 추가 A* 탐색,
+            # 최대 4단×2회)을 건너뛴다. 정확성엔 영향 없다(그 탐색은 항상 "결함 없는 base"가 이미
+            # 확정된 뒤의 미관 개선일 뿐). `_last_geom_change_count`가 이미 "공간쿼리 vs 전체스캔"을
+            # 가르는 데 검증된 신호라 그대로 재사용(실측: 20개 그룹 드래그 프레임당 A*가 시간의
+            # 96%를 먹던 것 중 상당수가 이 불필요한 폴리시 탐색이었다).
             for it in candidates:
                 # 곡선화살표(_ArrowItem)·직선화살표(_PolyArrowItem) 모두 지속 연결 리라우트.
                 if isinstance(it, (_ArrowItem, _PolyArrowItem)) and it.has_binding():
                     if union is None or it.sceneBoundingRect().adjusted(
                             -margin, -margin, margin, margin).intersects(union):
-                        it.reroute(pin_pred=self._make_pin_pred(it))
+                        it.reroute(pin_pred=self._make_pin_pred(it), fast=many_changed)
         finally:
             self._rerouting = False
 
