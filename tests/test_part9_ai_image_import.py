@@ -251,15 +251,97 @@ def test_dedupe_shapes_does_not_merge_same_label_when_spatially_separate():
     assert len(kept) == 2
 
 
-def test_axis_snap_aligns_close_edges_but_not_far_ones():
+# ── P4: 관계 기반 배치(2026-08-11) ───────────────────────────────────────────
+
+def _rects_overlap(a, b):
+    ax0, ay0, ax1, ay1 = a["x"], a["y"], a["x"] + a["w"], a["y"] + a["h"]
+    bx0, by0, bx1, by1 = b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]
+    return not (ax1 <= bx0 or bx1 <= ax0 or ay1 <= by0 or by1 <= ay0)
+
+
+def test_layout_graph_eliminates_overlap_from_pathologically_bad_raw_coords():
+    """실사용 KBS 도면 재현 — vision 모델의 좌표 추정 오차로 원래 좌표가 서로 크게
+    겹쳐 있어도(A*의 재시도 폭주로 916ms/frame까지 느려진 근본 원인), layout_graph 이후엔
+    겹침이 원리적으로 0이어야 한다(격자 셀 크기를 최대 도형 크기로 잡으므로)."""
     shapes = [
-        {"x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0},
-        {"x": 3.0, "y": 200.0, "w": 100.0, "h": 50.0},   # x=3, 왼쪽 0과 tol(6) 이내 → 스냅
-        {"x": 500.0, "y": 400.0, "w": 100.0, "h": 50.0},  # 멀리 있어 스냅 안 됨
+        {"id": "a", "kind": "box", "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0, "label": "A"},
+        {"id": "b", "kind": "box", "x": 50.0, "y": 50.0, "w": 100.0, "h": 50.0, "label": "B"},
+        {"id": "c", "kind": "box", "x": 50.0, "y": 50.0, "w": 100.0, "h": 50.0, "label": "C"},
     ]
-    out = ais.axis_snap(shapes, tol=6.0)
-    assert out[0]["x"] == out[1]["x"]  # 가까운 왼쪽 변끼리 합쳐짐
-    assert out[2]["x"] == 500.0        # 먼 도형은 그대로
+    edges = [{"from": "a", "to": "b", "label": ""}, {"from": "a", "to": "c", "label": ""}]
+    unknown = [{"x": 1000.0, "y": 1000.0, "w": 40.0, "h": 40.0, "desc": "미확인"}]
+
+    new_shapes, new_edges, new_unknown = ais.layout_graph(shapes, edges, unknown)
+    all_items = new_shapes + new_unknown
+    for i in range(len(all_items)):
+        for j in range(i + 1, len(all_items)):
+            assert not _rects_overlap(all_items[i], all_items[j]), \
+                (all_items[i]["label"], all_items[j].get("label") or all_items[j].get("desc"))
+    assert new_edges == edges   # 두 끝 다 유효한 id라 그대로 채택
+
+
+def test_layout_graph_preserves_original_shape_sizes():
+    shapes = [{"id": "a", "kind": "box", "x": 0.0, "y": 0.0, "w": 77.0, "h": 33.0, "label": "A"},
+              {"id": "b", "kind": "ellipse", "x": 0.0, "y": 0.0, "w": 55.0, "h": 90.0, "label": "B"}]
+    new_shapes, _, _ = ais.layout_graph(shapes, [{"from": "a", "to": "b", "label": ""}])
+    sizes = {s["id"]: (s["w"], s["h"]) for s in new_shapes}
+    assert sizes["a"] == (77.0, 33.0)
+    assert sizes["b"] == (55.0, 90.0)
+    kinds = {s["id"]: s["kind"] for s in new_shapes}
+    assert kinds == {"a": "box", "b": "ellipse"}   # kind는 layout_graph가 안 건드림
+
+
+def test_layout_graph_drops_edges_referencing_deduped_or_unknown_ids():
+    shapes = [{"id": "a", "kind": "box", "x": 0.0, "y": 0.0, "w": 10.0, "h": 10.0, "label": "A"}]
+    edges = [{"from": "a", "to": "ghost", "label": ""}, {"from": "a", "to": "a", "label": ""}]
+    _, new_edges, _ = ais.layout_graph(shapes, edges)
+    assert new_edges == []   # 존재하지 않는 id, 자기순환 둘 다 제거
+
+
+def test_layout_graph_places_isolated_shapes_and_unknown_without_crash():
+    """관계(edge)가 하나도 없어도(전부 고립) 죽지 않고 배치돼야 한다 — PIC-FM처럼 P3.5
+    보완 전에는 화살표가 0개인 경우가 실제로 있었다."""
+    shapes = [{"id": f"s{i}", "kind": "box", "x": float(i * 5), "y": 0.0, "w": 20.0, "h": 20.0,
+              "label": f"L{i}"} for i in range(6)]
+    new_shapes, new_edges, _ = ais.layout_graph(shapes, [])
+    assert len(new_shapes) == 6
+    assert new_edges == []
+    for i in range(len(new_shapes)):
+        for j in range(i + 1, len(new_shapes)):
+            assert not _rects_overlap(new_shapes[i], new_shapes[j])
+
+
+def test_layout_graph_empty_input_returns_empty():
+    assert ais.layout_graph([], []) == ([], [], [])
+
+
+def test_infer_direction_uses_bbox_aspect_ratio():
+    wide = [{"x": 0.0, "y": 0.0}, {"x": 1000.0, "y": 10.0}]   # 가로로 넓게 퍼짐
+    tall = [{"x": 0.0, "y": 0.0}, {"x": 10.0, "y": 1000.0}]   # 세로로 넓게 퍼짐
+    assert ais._infer_direction(wide) == "LR"
+    assert ais._infer_direction(tall) == "TD"
+    assert ais._infer_direction([]) == "TD"   # 빈 입력 폴백
+
+
+def test_build_from_manual_json_output_has_no_overlap_even_with_bad_coords():
+    """수동 모드도 같은 layout_graph를 타므로, 사람이 붙여넣은 JSON의 좌표가 겹쳐도
+    최종 결과는 겹치지 않아야 한다."""
+    payload = json.dumps({
+        "shapes": [
+            {"id": "a", "kind": "box", "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0, "label": "A"},
+            {"id": "b", "kind": "box", "x": 10.0, "y": 10.0, "w": 100.0, "h": 50.0, "label": "B"},
+        ],
+        "edges": [{"from": "a", "to": "b", "label": ""}],
+        "unknown": [],
+    })
+    out = os.path.join(_TMP, f"manual_overlap_{uuid.uuid4().hex}.ecad")
+    ais.build_from_manual_json(payload, out)
+    with open(out, encoding="utf-8") as f:
+        doc = json.load(f)
+    rects = [it["rect"] for it in doc["items"] if it["type"] == "rect"]
+    assert len(rects) == 2
+    a, b = ({"x": r[0], "y": r[1], "w": r[2], "h": r[3]} for r in rects)
+    assert not _rects_overlap(a, b)
 
 
 def test_clean_label_collapses_whitespace_and_strips():
@@ -371,14 +453,16 @@ def test_build_from_image_tiles_and_restores_coords_when_over_threshold():
     rects = [it for it in doc["items"] if it["type"] == "rect"]
     ellipses = [it for it in doc["items"] if it["type"] == "ellipse"]
     assert len(ellipses) == 1
-    # 왼쪽 타일 shape: x=30/3+0=10, y=60/3+0=20, w=30, h=10
-    left_shape = next(it for it in rects if abs(it["rect"][0] - 10.0) < 1e-6)
-    assert left_shape["rect"] == [10.0, 20.0, 30.0, 10.0]
-    # 오른쪽 타일 ellipse: x=60/3+200=220, y=90/3+0=30, w=20, h=20
-    assert ellipses[0]["rect"] == [220.0, 30.0, 20.0, 20.0]
-    # unknown(오른쪽 타일): x=300/3+200=300, y=300/3+0=100, w=10, h=10
+    # 최종 좌표는 이제 layout_graph()가 관계 기반으로 재배치하므로 restore_item_coords의
+    # 정확한 산출값(크롭 오프셋+zoom 복원)은 여기서 검증 안 함 — 그건
+    # test_restore_item_coords_divides_by_zoom_then_adds_offset의 몫. 여기서는 크기가
+    # 원래 감지된 값 그대로 보존됐는지만 확인(w/h는 layout_graph가 안 건드림,
+    # x/30(왼쪽 타일 zoom 3)=30/3=10, 오른쪽 ellipse w=60/3=20 h=60/3=20).
+    left_shape = next(it for it in rects if it["rect"][2] == 30.0)  # w=30
+    assert left_shape["rect"][3] == 10.0  # h=10
+    assert ellipses[0]["rect"][2:] == [20.0, 20.0]
     unk = next(it for it in rects if it["label"]["text"].startswith("[미확인]"))
-    assert unk["rect"] == [300.0, 100.0, 10.0, 10.0]
+    assert unk["rect"][2:] == [10.0, 10.0]
 
     # 실제 앱 문서 로더로도 정상 로드되는지 확인(회귀 방지 — 스키마 드리프트는 즉시 실패).
     w = CanvasWindow()

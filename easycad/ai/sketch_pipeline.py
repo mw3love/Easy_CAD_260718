@@ -19,8 +19,8 @@
   P3 병합  타일 간 겹침으로 중복된 shape를 IoU로 합치고(`dedupe_shapes`) 그 과정에서
            edges의 참조도 같이 재매핑 — 이게 "타일 경계를 넘는 연결 잇기"의 실제 구현이다
            (겹치는 오버랩 구간에 걸친 도형이 최소 한 타일엔 온전히 잡힌다는 전제, 문서화된
-           한계: 두 타일 모두에 걸치지 않는 아주 긴 연결선은 못 잇는다). 이어서 근접 변
-           좌표를 스냅(`axis_snap`)하고 라벨 공백을 정리(`clean_label`).
+           한계: 두 타일 모두에 걸치지 않는 아주 긴 연결선은 못 잇는다). 라벨 공백을
+           정리한다(`clean_label`).
 
 unknown 항목은 P4(에셋 패스, 스코프 밖)가 아직 없으므로 전부 "[미확인] 설명" 라벨의
 플레이스홀더 박스로 남는다(설계 문서의 "실패하면 통짜 상자로 남기고 목록에 표시" 폴백을
@@ -57,7 +57,28 @@ P2 기본으로 뒀던 건 인식 세부도만 보고 정한 결정이라 비용
 속도는 1/6이라 P2 기본을 이걸로 교체했다. `claude-haiku-4-5`도 유력한 대안(shapes
 최다)이라 드롭다운엔 그대로 남아 있다 — 사용자가 직접 골라 쓸 수 있다.
 ⚠ 표본 1개짜리 비교라 밀집 도면·다른 도면 스타일에서 순위가 바뀔 수 있다.
-"""
+
+**P3.75 관계 기반 배치(2026-08-11, 좌표 신뢰 배치를 완전히 대체)** — P4(에셋 패스)와
+이름이 겹치지 않도록 P3(병합)·P3.5(연결선 보완) 다음 자리로 번호를 매겼다. 중복박스·연결선 보완
+(P3.5)까지 고쳐도 실사용 결과가 여전히 "지저분해서 못 쓴다"는 재보고를 받고 재진단한
+결과, 근본 원인은 두 수정과 별개로 "vision 모델의 절대 픽셀 좌표 추정 자체가 부정확
+하다"는 것이었다(실측: 같은 실물을 두 번 인식해도 좌표가 몇~수십 px씩 어긋남) — 그
+부정확한 좌표를 그대로 믿고 배치하면 도형이 겹치고, 겹친 더미 사이로 자동 배선(A*)이
+못 지나가 성능까지 파국적으로 나빠진다(실측: 20개 그룹 드래그 916ms — 도형 수는 1600개
+짜리 문서보다 훨씬 적은데도 60fps 예산의 55배, 원인은 순전히 밀집·중첩된 장애물 사이
+경로를 못 찾아 재시도 캐스케이드가 반복 발동했기 때문). 두 증상(지저분함·버벅임)이 같은
+뿌리였던 것.
+
+그래서 좌표를 정밀 배치 근거로 쓰는 걸 완전히 그만두고(사용자 확정, 2026-08-11 — 좌표
+기반 경로를 옵션으로 남기지 않고 전면 교체), P1~P3.5가 여전히 그대로 뽑아주는 관계
+정보(shapes+edges)만으로 `layout_graph()`가 새로 배치한다 — Mermaid 가져오기가 이미
+검증해 쓰는 `layout_positions()`(그래프 BFS 레벨 기반, 같은 레벨은 자동으로 안 겹치게
+나란히)를 그대로 재사용한다(규칙 2 손안의 카드: 새 레이아웃 알고리즘을 새로 만들지
+않음). 원본의 대략적인 흐름 방향(좌→우 vs 위→아래)은 "약하게"만 남긴다(사용자 확정) —
+rough 좌표의 bbox 가로세로 비율로 전체 방향을 추정하고, 같은 레벨 안에서의 순서도 rough
+좌표로 정렬해 원본과 비슷한 느낌은 유지하되 정밀 위치는 신뢰하지 않는다. 좌표 스냅
+(`axis_snap`, 이제 폐기)이 하던 일도 이 새 배치가 원리적으로 대체한다 — 격자 배치라
+애초에 스냅할 미세 오차가 안 생긴다."""
 import math
 import re
 
@@ -380,49 +401,113 @@ def dedupe_shapes(shapes: list[dict], edges: list[dict], *,
     return kept, new_edges
 
 
-def axis_snap(shapes: list[dict], *, tol: float = 6.0) -> list[dict]:
-    """근접한 변 좌표(좌/우/상/하 각각)를 tol 이내면 같은 값으로 스냅 — "축 정렬" 하이브리드
-    전략의 실제 구현. 타일 이음매의 미세한 좌표 오차(±수 px)를 정렬된 것처럼 보정한다.
-    좌/우/상/하를 독립적으로 클러스터링하므로 클러스터 tol이 도형 폭보다 커지지 않는 한
-    다른 도형과 잘못 합쳐지지 않는다(기본 6px은 밀집 도면에서도 안전한 보수적 값)."""
-    if not shapes:
-        return []
-
-    def cluster(values: list[float]) -> dict[int, float]:
-        order = sorted(range(len(values)), key=lambda i: values[i])
-        groups = [[order[0]]]
-        for i in order[1:]:
-            if values[i] - values[groups[-1][-1]] <= tol:
-                groups[-1].append(i)
-            else:
-                groups.append([i])
-        mapping = {}
-        for g in groups:
-            avg = sum(values[i] for i in g) / len(g)
-            for i in g:
-                mapping[i] = avg
-        return mapping
-
-    lefts = [s["x"] for s in shapes]
-    rights = [s["x"] + s["w"] for s in shapes]
-    tops = [s["y"] for s in shapes]
-    bottoms = [s["y"] + s["h"] for s in shapes]
-    lm, rm, tm, bm = cluster(lefts), cluster(rights), cluster(tops), cluster(bottoms)
-
-    out = []
-    for i, s in enumerate(shapes):
-        s2 = dict(s)
-        new_left, new_right = lm[i], rm[i]
-        new_top, new_bottom = tm[i], bm[i]
-        s2["x"], s2["w"] = new_left, max(1.0, new_right - new_left)
-        s2["y"], s2["h"] = new_top, max(1.0, new_bottom - new_top)
-        out.append(s2)
-    return out
-
 
 def clean_label(label: str) -> str:
     """라벨 정리 — 연속 공백/줄바꿈을 한 칸으로, 앞뒤 공백 제거."""
     return re.sub(r"\s+", " ", (label or "")).strip()
+
+
+# ── 관계 기반 배치(2026-08-11, 실사용 피드백으로 좌표 신뢰 배치를 완전히 대체) ─────
+#
+# 배경: vision 모델의 절대 픽셀 좌표 추정은 본질적으로 부정확하다(실측: 같은 실물을
+# 두 번 인식해도 좌표가 몇~수십 px씩 어긋남). 그 부정확한 좌표를 그대로 믿고 배치하면
+# 도형이 겹치고(중복 제거로도 근본 해결 안 됨), 그 겹친 도형 더미 사이로 자동 배선
+# (A*)이 못 지나가 성능까지 파국적으로 나빠진다(실측: 20개 그룹 드래그가 916ms —
+# 겹친 장애물 사이 경로를 못 찾아 8~10회 재시도 캐스케이드가 반복 발동).
+#
+# 해법: 좌표를 "정밀 배치 근거"로 쓰는 걸 완전히 그만두고, "무엇이 무엇과 연결되는가"
+# (shapes+edges, P1~P3.5가 여전히 그대로 뽑아주는 값)만 가지고 Mermaid 가져오기가 이미
+# 검증해 쓰는 `layout_positions()`(그래프 BFS 레벨 기반, 같은 레벨은 겹치지 않게 나란히)
+# 로 새로 배치한다(규칙 2 손안의 카드 — 새 레이아웃 알고리즘을 새로 안 만들고 기존
+# 검증된 걸 그대로 재사용). 좌표는 완전히 안 버리는 게 아니라 "약하게" 남는다(사용자
+# 확정, 2026-08-11) — 전체 흐름 방향(왼→오 vs 위→아래)을 rough 좌표의 가로세로 퍼짐으로
+# 추정하고, 같은 레벨 안에서의 순서도 rough 좌표로 정렬해 원본과 비슷한 느낌을 남긴다.
+def _infer_direction(shapes: list[dict]) -> str:
+    """rough 좌표(dedup 후, 아직 안 버린 상태)의 bbox 가로세로 비율로 전체 흐름 방향을
+    약하게 추정한다 — 가로로 넓게 퍼져 있으면 좌→우(LR), 세로로 넓으면 위→아래(TD)."""
+    if not shapes:
+        return "TD"
+    xs = [s["x"] for s in shapes]
+    ys = [s["y"] for s in shapes]
+    w = max(xs) - min(xs) if xs else 0.0
+    h = max(ys) - min(ys) if ys else 0.0
+    return "LR" if w >= h else "TD"
+
+
+def _layout_order_key(direction: str):
+    """같은 레벨 안 순서를 rough 좌표로 결정 — LR/RL이면 x 우선(가로 흐름), 아니면 y 우선."""
+    if direction in ("LR", "RL"):
+        return lambda s: (s["x"], s["y"])
+    return lambda s: (s["y"], s["x"])
+
+
+def layout_graph(shapes: list[dict], edges: list[dict], unknown: list[dict] | None = None, *,
+                  direction: str | None = None) -> tuple[list[dict], list[dict], list[dict]]:
+    """좌표를 버리고 관계(shapes+edges)만으로 겹침 없는 새 배치를 계산한다.
+    `unknown` 항목도 (관계가 없으니) 고립 노드로 같은 그래프에 포함해 함께 배치한다
+    (`_levels`가 진입 간선 없는 노드를 자동으로 루트 레벨에 놓아 처리해 준다).
+
+    셀 크기(`node_w`/`node_h`)는 모든 도형 중 가장 큰 크기 + 여백으로 잡아, 어떤 도형도
+    자기 셀을 벗어나지 않게 한다(그래서 겹침이 원리적으로 불가능) — 각 도형은 자기 셀
+    중앙에 원래 감지된 크기 그대로 배치한다(크기 자체는 신뢰 — 부정확한 건 절대 위치뿐).
+
+    edges는 두 끝이 실제 존재하는 id를 참조할 때만 채택(`complete_edges`와 같은 방어적
+    검증 관례)."""
+    unknown = unknown or []
+    _UNK_PREFIX = "__ai_unknown_"
+    unk_nodes = [{"id": f"{_UNK_PREFIX}{i}", "label": u.get("desc", ""),
+                 "x": float(u.get("x", 0.0)), "y": float(u.get("y", 0.0)),
+                 "w": max(1.0, float(u.get("w", 40.0))), "h": max(1.0, float(u.get("h", 40.0)))}
+                for i, u in enumerate(unknown)]
+    all_nodes = list(shapes) + unk_nodes
+    if not all_nodes:
+        return shapes, edges, unknown
+
+    from easycad.fileio.mermaid_import import MGraph, MNode, MEdge, layout_positions
+
+    direction = direction or _infer_direction(all_nodes)
+    ordered = sorted(all_nodes, key=_layout_order_key(direction))
+    graph = MGraph(direction=direction)
+    for s in ordered:
+        graph.nodes[s["id"]] = MNode(s["id"], "rect", s.get("label", ""))
+    valid_edges = []
+    for e in edges:
+        f, t = e.get("from"), e.get("to")
+        if f in graph.nodes and t in graph.nodes and f != t:
+            graph.edges.append(MEdge(f, t, e.get("label", "")))
+            valid_edges.append(e)
+
+    cell_w = max((s["w"] for s in all_nodes), default=120.0) + 40.0
+    cell_h = max((s["h"] for s in all_nodes), default=60.0) + 40.0
+    pos = layout_positions(graph, node_w=cell_w, node_h=cell_h)
+
+    def _place(items, size_key_w, size_key_h):
+        out = []
+        for it in items:
+            if it["id"] not in pos:
+                out.append(it)
+                continue
+            cx, cy = pos[it["id"]]
+            it2 = dict(it)
+            it2["x"] = cx + (cell_w - it[size_key_w]) / 2.0
+            it2["y"] = cy + (cell_h - it[size_key_h]) / 2.0
+            out.append(it2)
+        return out
+
+    new_shapes = _place(shapes, "w", "h")
+    new_unknown = []
+    for i, u in enumerate(unknown):
+        nid = f"{_UNK_PREFIX}{i}"
+        uw, uh = max(1.0, float(u.get("w", 40.0))), max(1.0, float(u.get("h", 40.0)))
+        if nid not in pos:
+            new_unknown.append(u)
+            continue
+        cx, cy = pos[nid]
+        u2 = dict(u)
+        u2["x"] = cx + (cell_w - uw) / 2.0
+        u2["y"] = cy + (cell_h - uh) / 2.0
+        new_unknown.append(u2)
+    return new_shapes, valid_edges, new_unknown
 
 
 # ── Sketch 변환 ──────────────────────────────────────────────────────────────
@@ -572,7 +657,7 @@ def build_from_image(image_path: str, out_path: str, *, api_key: str = "", note:
             except Exception as e:
                 _log(f"[P3.5 연결선 보완] 실패(건너뜀): {e}")
 
-    shapes = axis_snap(shapes)
+    shapes, edges, unknown = layout_graph(shapes, edges, unknown)
 
     sk = build_sketch(shapes, edges, unknown, dark=dark)
     sk.save(out_path)
@@ -586,8 +671,10 @@ def build_from_image(image_path: str, out_path: str, *, api_key: str = "", note:
 def build_from_manual_json(text: str, out_path: str, *, dark: bool = True) -> dict:
     """수동 붙여넣기 모드 — 사용자가 `manual_prompt()`를 다른 AI 챗에 붙여넣어 받은 JSON
     응답(`text`)을 그대로 `.ecad`로 변환한다. 게이트웨이 호출이 전혀 없다(API 크레딧
-    무사용). P1 단일 패스 결과로만 취급 — `axis_snap`/`dedupe_shapes`는 여러 타일을
-    잇는 용도라 여기선 의미가 없어 건너뛴다(단일 응답이라 타일 경계 자체가 없음).
+    무사용). P1 단일 패스 결과로만 취급 — `dedupe_shapes`는 여러 타일을 잇는 용도라
+    여기선 의미가 없어 건너뛴다(단일 응답이라 타일 경계 자체가 없음). 좌표는 다른 경로와
+    동일하게 `layout_graph`로 관계 기반 재배치한다 — 수동 모드도 결국 AI가 찍은 좌표를
+    받는 거라 같은 부정확성 위험을 그대로 안고 있다.
 
     `text`가 유효한 JSON이 아니면 `json.JSONDecodeError`가 그대로 올라간다 — 호출자
     (`host_ai.py`)가 잡아 사용자에게 보여준다."""
@@ -595,6 +682,7 @@ def build_from_manual_json(text: str, out_path: str, *, dark: bool = True) -> di
     shapes = data.get("shapes", [])
     edges = data.get("edges", [])
     unknown = data.get("unknown", [])
+    shapes, edges, unknown = layout_graph(shapes, edges, unknown)
     sk = build_sketch(shapes, edges, unknown, dark=dark)
     sk.save(out_path)
     return {"shapes": len(shapes), "edges": len(edges), "unknown": len(unknown),
