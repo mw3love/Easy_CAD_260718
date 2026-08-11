@@ -26,6 +26,22 @@ unknown 항목은 P4(에셋 패스, 스코프 밖)가 아직 없으므로 전부
 플레이스홀더 박스로 남는다(설계 문서의 "실패하면 통짜 상자로 남기고 목록에 표시" 폴백을
 지금 단계 전체에 적용한 것).
 
+**P3.5 연결선 보완(2026-08-11, 실사용 피드백으로 신설)** — 타일링 자체의 구조적 한계로
+"두 도형이 서로 다른 타일에서 각각 인식돼 그 사이 실제 연결선이 통째로 누락"되는 문제가
+실측으로 확인됐다(KBS 실도면에서 실제 도형 27개 중 11개가 화살표를 하나도 못 얻음, 특히
+도면 중앙의 핵심 블록 "PIC-FM"). 타일 오버랩 패딩만으로는 도면 전체를 가로지르는 긴
+연결선을 못 잡는다(설계 문서에 이미 문서화된 한계) — 타일이 클수록 세부 인식이 나빠지고
+(다른 함정, `docs/pitfalls.md` 참조), 작을수록 긴 선을 놓친다는 트레이드오프라 타일 크기
+조정만으론 근본 해결이 안 된다.
+
+그래서 P3(병합) 직후 **전체 원본 이미지 + 이미 병합된 shapes 목록(id·라벨·좌표)**을 다시
+모델에 보내 "이 도형들 사이에 실제로 그려진 선만 찾아라"고 묻는 새 패스를 추가했다
+(`complete_edges`). 스키마를 `edges`만 있는 좁은 형태로 만들어(`EDGE_SCHEMA`,
+`additionalProperties: False`) 모델이 새 도형을 만들 구조적 여지 자체를 없앴고, 프롬프트에
+"실제로 그려진 선만"(2026-07-21부터 이어진 환각방지 원칙)을 그대로 유지, 반환된 edges는
+`from`/`to`가 실제 존재하는 shape id일 때만 채택한다(방어적 검증). 타일링이 트리거된
+경우에만 실행(단일 P1 패스는 이미 전체 이미지를 봐서 이 문제 자체가 없음).
+
 **모델 선택(2026-08-11, 실사용 비용 피드백 후 재측정)** — 애초 `claude-sonnet-5`를
 P2 기본으로 뒀던 건 인식 세부도만 보고 정한 결정이라 비용을 안 봤다. 실사용 중
 크레딧 소모가 과하다는 지적을 받고 같은 크롭(360×160) 1장으로 4모델을 직접 비교:
@@ -98,6 +114,28 @@ SKETCH_SCHEMA = {
     },
 }
 
+# P3.5 연결선 보완 전용 스키마 — edges만 있다(additionalProperties: False로 새 shapes/
+# unknown을 만들 구조적 여지 자체를 없앤다, "P3.5 연결선 보완" 절 참조).
+EDGE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["edges"],
+    "properties": {
+        "edges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["from", "to", "label"],
+                "properties": {
+                    "from": {"type": "string"}, "to": {"type": "string"},
+                    "label": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
 # ⚠ "실제로 그려진 연결선만"은 반드시 유지 — 2026-07-21 실조건 함정(`image_to_ecad.md`):
 # 모델이 "이 흐름이면 여기로 돌아가야 논리적"이라며 원본에 없는 화살표를 만들어낸다.
 _BASE_RULES = """규칙:
@@ -120,6 +158,24 @@ def _tile_prompt(w: int, h: int, note: str = "") -> str:
     return (f"이 이미지는 어떤 도면의 한 구획을 확대한 크롭이다. 편집 가능한 CAD 도형으로 복원하려 한다.\n"
             f"좌표는 **이 크롭 이미지 자체의 픽셀 좌표**(원본 전체 이미지 좌표 아님). "
             f"원점은 좌상단. 이 크롭 이미지 크기: {w}x{h}\n{extra}\n{_BASE_RULES}")
+
+
+def _edge_completion_prompt(shapes: list[dict], w: int, h: int, note: str = "") -> str:
+    """P3.5 연결선 보완 프롬프트 — 이미 인식된 도형 목록을 id·라벨·좌표로 나열해 모델이
+    "이 도형들 사이 실제 선"만 찾도록 좁힌다. 새 도형을 만들 여지는 스키마(`EDGE_SCHEMA`,
+    edges만 존재)로 구조적으로 차단하고, 프롬프트로도 명시(이중 안전장치)."""
+    extra = f"\n참고: {note}\n" if note else ""
+    listing = "\n".join(
+        f"- id={s['id']}: {s.get('label', '') or '(라벨없음)'} (대략 위치 x={s['x']:.0f}, y={s['y']:.0f})"
+        for s in shapes)
+    return (f"이 이미지는 도면(계통도/블록 다이어그램)이다. 이미지 크기: {w}x{h}\n{extra}\n"
+            f"아래는 이미 인식된 도형 목록이다(id·라벨·대략 위치로 이미지 안에서 실제 위치를 찾아라):\n"
+            f"{listing}\n\n"
+            f"규칙:\n"
+            f"- 위 도형들 **사이에 실제로 그려진 연결선(선/화살표)만** 찾아 edges로 출력하라.\n"
+            f"- 논리적으로 있어야 할 것 같다고 없는 선을 추가하지 말 것.\n"
+            f"- from/to는 반드시 위 목록의 id를 그대로 사용하라(새 id·새 도형을 만들지 말 것).\n"
+            f"- 위 목록에 없는 도형·요소는 무시하라 — 오직 나열된 도형 사이의 연결선만 찾는다.")
 
 
 # ── 수동 붙여넣기 모드(2026-08-11, §8 항목18 C단계 후속) ─────────────────────
@@ -263,8 +319,27 @@ def _iou(a: dict, b: dict) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def dedupe_shapes(shapes: list[dict], edges: list[dict], *, iou_thresh: float = 0.5) -> tuple[list[dict], list[dict]]:
-    """겹치는 타일에서 같은 도형이 중복 인식된 것을 IoU로 합친다(같은 kind + IoU≥임계).
+def _label_key(s: dict) -> str:
+    """라벨 비교용 정규화 키 — 공백을 전부 제거하고 소문자화. 같은 실물을 서로 다른
+    타일에서 두 번 읽었을 때 OCR이 쉼표 뒤 공백 유무처럼 사소하게 다르게 뽑는 경우
+    (실측: '6950,6990MHz' vs '6950, 6990MHz')를 같은 라벨로 취급하기 위함."""
+    return re.sub(r"\s+", "", s.get("label", "") or "").lower()
+
+
+def dedupe_shapes(shapes: list[dict], edges: list[dict], *,
+                   iou_thresh: float = 0.4, label_iou_floor: float = 0.05) -> tuple[list[dict], list[dict]]:
+    """겹치는 타일에서 같은 도형이 중복 인식된 것을 합친다(같은 kind가 전제).
+    두 가지 병합 신호를 OR로 판정한다:
+      ⓐ 순수 겹침(IoU) ≥ `iou_thresh` — 라벨이 달라도 기하가 거의 같으면 병합.
+      ⓑ 라벨이 사실상 같은 텍스트(`_label_key` 일치) AND IoU ≥ `label_iou_floor` — 같은
+         실물을 서로 다른 타일이 서로 다른 정밀도로 감지해 겹침이 낮게 나온 경우(실측:
+         'STL-TX MT PLATINUM 1.701.75GHz' 두 번 감지, IoU 0.12)를 라벨 신호로 보강.
+    ⓑ만으로는 위험하다 — "PIC-FM"이 그 안의 "Audio(A)"를 감싸는 것처럼 **라벨이 다른
+    진짜 별개 구성요소**가 겹칠 수 있어(실측 IoU 0.11~0.35), 라벨이 같을 때만 낮은
+    바닥값을 적용한다. 같은 실측 도면에서 라벨이 같은 서로 다른 실물(예: TX-A/TX-B
+    양쪽의 "SYT-5K")은 공간적으로 떨어져 있어 IoU가 0에 가까우므로 `label_iou_floor`
+    (기본 0.05)에 못 미쳐 안전하게 병합되지 않는다.
+
     먼저 나온 쪽을 canonical로 남기고, edges의 from/to를 canonical id로 재매핑 — 이게
     "타일 경계를 넘는 연결 잇기"의 실제 구현이다: 경계에 걸친 도형이 오버랩 패딩 덕에
     최소 한 타일엔 온전히 잡히고, 그 도형을 참조하는 edge는 원래 자기 타일 id로 남아
@@ -272,9 +347,14 @@ def dedupe_shapes(shapes: list[dict], edges: list[dict], *, iou_thresh: float = 
     kept: list[dict] = []
     id_remap: dict[str, str] = {}
     for s in shapes:
+        s_label = _label_key(s)
         match = None
         for k in kept:
-            if s.get("kind") == k.get("kind") and _iou(s, k) >= iou_thresh:
+            if s.get("kind") != k.get("kind"):
+                continue
+            v = _iou(s, k)
+            same_label = s_label and s_label == _label_key(k)
+            if v >= iou_thresh or (same_label and v >= label_iou_floor):
                 match = k
                 break
         if match is not None:
@@ -383,11 +463,50 @@ def build_sketch(shapes: list[dict], edges: list[dict], unknown: list[dict], *, 
     return s
 
 
+# ── P3.5: 연결선 보완 ─────────────────────────────────────────────────────────
+
+def complete_edges(api_key: str, img, shapes: list[dict], *, note: str = "",
+                    model: str = gw.DEFAULT_MODEL) -> list[dict]:
+    """전체 이미지 + 병합된 shapes 목록을 다시 모델에 보내 "이 도형들 사이 실제 연결선"만
+    찾는다("P3.5 연결선 보완" 절 참조). 반환은 후보 edges — `from`/`to`가 `shapes`에 실제
+    존재하는 id일 때만 채택하고(모델이 지시를 어기고 새 id를 만들 가능성에 대한 방어),
+    자기순환(`from==to`)은 제거한다. 호출자가 기존 edges와의 중복 제거를 담당한다."""
+    if not shapes:
+        return []
+    prompt = _edge_completion_prompt(shapes, img.width, img.height, note)
+    res = gw.call_with_fallback(api_key, img, prompt, model=model, schema=EDGE_SCHEMA)
+    data = gw.parse_json(res.content)
+    valid_ids = {s["id"] for s in shapes}
+    out = []
+    for e in data.get("edges", []):
+        f, t = e.get("from"), e.get("to")
+        if f in valid_ids and t in valid_ids and f != t:
+            out.append({"from": f, "to": t, "label": e.get("label", "")})
+    return out
+
+
+def _merge_completed_edges(edges: list[dict], candidates: list[dict]) -> list[dict]:
+    """`edges`에 `candidates`를 중복 없이 추가. 같은 두 도형 사이 선은 방향과 무관하게
+    같은 물리적 연결로 본다(from,to)==(to,from) — 보완 패스가 같은 선을 반대 방향으로
+    다시 읽어올 가능성이 실제 신호 역방향 존재 가능성보다 흔하다는 판단."""
+    seen = {frozenset((e["from"], e["to"])) for e in edges}
+    added = []
+    for e in candidates:
+        key = frozenset((e["from"], e["to"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        edges.append(e)
+        added.append(e)
+    return added
+
+
 # ── 파이프라인 오케스트레이션 ─────────────────────────────────────────────────
 
 def build_from_image(image_path: str, out_path: str, *, api_key: str = "", note: str = "",
                       overview_model: str = gw.DEFAULT_MODEL, tile_model: str = "gpt-5.4-mini",
                       tile_threshold: int = 15, max_shapes_per_tile: int = 8, zoom: int = 3,
+                      complete_missing_edges: bool = True, edge_model: str = "",
                       dark: bool = True, verbose: bool = True, on_progress=None) -> dict:
     """P1~P3 전체 파이프라인. `.ecad`를 `out_path`에 저장하고 요약 dict를 반환한다.
 
@@ -443,6 +562,15 @@ def build_from_image(image_path: str, out_path: str, *, api_key: str = "", note:
         shapes, edges = dedupe_shapes(all_shapes, all_edges)
         unknown = all_unknown
         tiles_used = len(tiles)
+
+        if complete_missing_edges:
+            try:
+                em = edge_model or overview_model
+                candidates = complete_edges(api_key, img, shapes, note=note, model=em)
+                added = _merge_completed_edges(edges, candidates)
+                _log(f"[P3.5 연결선 보완] {em} 신규 edges={len(added)}")
+            except Exception as e:
+                _log(f"[P3.5 연결선 보완] 실패(건너뜀): {e}")
 
     shapes = axis_snap(shapes)
 

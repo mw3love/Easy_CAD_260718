@@ -209,6 +209,48 @@ def test_dedupe_shapes_remaps_edge_endpoints_to_canonical_id():
     assert ne == [{"from": "a", "to": "b", "label": "간다"}]
 
 
+def test_dedupe_shapes_merges_same_label_low_overlap_from_real_diagram():
+    """실사용 KBS 도면(ee.ecad) 재현 — 'STL-TX MT PLATINUM 1.701.75GHz'가 서로 다른
+    타일에서 다른 정밀도로 두 번 감지돼 IoU가 겨우 0.12까지 떨어진 실제 사례. 순수
+    IoU 임계값(0.4)만으로는 못 잡고, 라벨이 같을 때만 적용되는 낮은 바닥값(0.05)이
+    잡아야 한다."""
+    a = {"id": "a", "kind": "box", "x": 2830.0, "y": 598.0, "w": 285.5, "h": 325.0,
+         "label": "STL-TX MT PLATINUM 1.701.75GHz"}
+    b = {"id": "b", "kind": "box", "x": 2842.0, "y": 868.0, "w": 255.5, "h": 168.0,
+         "label": "STL-TX MT PLATINUM 1.701.75GHz"}
+    kept, _ = ais.dedupe_shapes([a, b], [])
+    assert len(kept) == 1
+
+
+def test_dedupe_shapes_merges_whitespace_differing_label_via_iou():
+    """실사용 사례 — 같은 실물을 두 타일이 각각 다른 쉼표 뒤 공백으로 OCR한 경우
+    ('6950,6990MHz' vs '6950, 6990MHz'). IoU 0.48(순수 기하 임계값 0.4 이상)로 잡힘."""
+    a = {"id": "a", "kind": "box", "x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0,
+         "label": "노고향 M/W EK-MFR/2 6950,6990MHz"}
+    b = {"id": "b", "kind": "box", "x": 5.0, "y": 5.0, "w": 100.0, "h": 50.0,
+         "label": "노고향 M/W EK-MFR/2 6950, 6990MHz"}
+    kept, _ = ais.dedupe_shapes([a, b], [])
+    assert len(kept) == 1
+
+
+def test_dedupe_shapes_does_not_merge_legitimate_nested_different_labels():
+    """"PIC-FM"이 그 안의 "Audio(A)"를 감싸는 것처럼 라벨이 다른 진짜 별개 구성요소는
+    겹쳐도(실측 IoU 0.11~0.35) 합치면 안 된다 — 라벨 신호는 라벨이 같을 때만 쓴다."""
+    outer = {"id": "outer", "kind": "box", "x": 0.0, "y": 0.0, "w": 200.0, "h": 200.0, "label": "PIC-FM"}
+    inner = {"id": "inner", "kind": "box", "x": 50.0, "y": 50.0, "w": 100.0, "h": 100.0, "label": "Audio(A)"}
+    kept, _ = ais.dedupe_shapes([outer, inner], [])
+    assert len(kept) == 2
+
+
+def test_dedupe_shapes_does_not_merge_same_label_when_spatially_separate():
+    """같은 라벨이라도 공간적으로 멀리 떨어져 있으면(IoU≈0, 예: TX-A/TX-B 양쪽의
+    "SYT-5K") 별개 실물로 보존해야 한다 — label_iou_floor가 이 경우를 걸러낸다."""
+    a = {"id": "a", "kind": "box", "x": 0.0, "y": 0.0, "w": 50.0, "h": 30.0, "label": "SYT-5K"}
+    b = {"id": "b", "kind": "box", "x": 1000.0, "y": 1000.0, "w": 50.0, "h": 30.0, "label": "SYT-5K"}
+    kept, _ = ais.dedupe_shapes([a, b], [])
+    assert len(kept) == 2
+
+
 def test_axis_snap_aligns_close_edges_but_not_far_ones():
     shapes = [
         {"x": 0.0, "y": 0.0, "w": 100.0, "h": 50.0},
@@ -314,7 +356,10 @@ def test_build_from_image_tiles_and_restores_coords_when_over_threshold():
     out = os.path.join(_TMP, f"ai_dense_out_{uuid.uuid4().hex}.ecad")
     with patch.object(ais, "compute_tiles", lambda *a, **k: fixed_tiles), \
          patch.object(ais.gw, "call_with_fallback", fake_call):
-        summary = ais.build_from_image(img_path, out, tile_threshold=5, zoom=3, verbose=False)
+        # complete_missing_edges=False — 이 테스트는 좌표 복원을 검증하는 게 목적이라
+        # P3.5 연결선 보완(별도 테스트 참조)까지 mock하면 관심사가 흐려진다.
+        summary = ais.build_from_image(img_path, out, tile_threshold=5, zoom=3, verbose=False,
+                                       complete_missing_edges=False)
 
     assert calls["n"] == 3  # P1 + 타일 2개
     assert summary["tiles"] == 2
@@ -340,6 +385,147 @@ def test_build_from_image_tiles_and_restores_coords_when_over_threshold():
     n_loaded = load_document(w._scene, str(out))
     assert n_loaded == len(doc["items"])
     w.deleteLater()
+
+
+# ── P3.5: 연결선 보완(2026-08-11) ────────────────────────────────────────────
+
+def test_edge_completion_prompt_lists_shape_ids_and_labels():
+    shapes = [{"id": "a", "label": "PIC-FM", "x": 10.0, "y": 20.0},
+              {"id": "b", "label": "SYT-5K", "x": 300.0, "y": 20.0}]
+    text = ais._edge_completion_prompt(shapes, 500, 300, "테스트")
+    assert "id=a" in text and "PIC-FM" in text
+    assert "id=b" in text and "SYT-5K" in text
+    assert "테스트" in text
+    assert "실제로 그려진" in text
+
+
+def test_complete_edges_filters_unknown_ids_and_self_loops():
+    shapes = [{"id": "a", "label": "A", "x": 0.0, "y": 0.0},
+              {"id": "b", "label": "B", "x": 100.0, "y": 0.0}]
+    payload = json.dumps({"edges": [
+        {"from": "a", "to": "b", "label": ""},          # 유효
+        {"from": "a", "to": "ghost", "label": ""},       # 존재하지 않는 id — 버려야 함
+        {"from": "b", "to": "b", "label": ""},           # 자기순환 — 버려야 함
+    ]})
+
+    def fake_call(api_key, image, prompt, *, model, schema=None, **kw):
+        return gw.VisionResult(payload, model, None, 0.5)
+
+    from PIL import Image
+    fake_img = Image.new("RGB", (500, 300), "white")
+    with patch.object(ais.gw, "call_with_fallback", fake_call):
+        out = ais.complete_edges("key", fake_img, shapes)
+    assert out == [{"from": "a", "to": "b", "label": ""}]
+
+
+def test_complete_edges_empty_shapes_skips_call():
+    from PIL import Image
+    fake_img = Image.new("RGB", (500, 300), "white")
+    calls = {"n": 0}
+
+    def fake_call(*a, **k):
+        calls["n"] += 1
+        return gw.VisionResult('{"edges":[]}', "m", None, 0.1)
+
+    with patch.object(ais.gw, "call_with_fallback", fake_call):
+        out = ais.complete_edges("key", fake_img, [])
+    assert out == []
+    assert calls["n"] == 0
+
+
+def test_merge_completed_edges_dedupes_regardless_of_direction():
+    edges = [{"from": "a", "to": "b", "label": "기존"}]
+    candidates = [
+        {"from": "b", "to": "a", "label": "역방향 중복"},   # 같은 물리적 연결(방향만 반대) — 버려야 함
+        {"from": "b", "to": "c", "label": "새 연결"},       # 진짜 신규
+    ]
+    added = ais._merge_completed_edges(edges, candidates)
+    assert added == [{"from": "b", "to": "c", "label": "새 연결"}]
+    assert len(edges) == 2
+    assert edges[0]["label"] == "기존"   # 기존 edge는 그대로 유지(덮어쓰지 않음)
+
+
+def test_build_from_image_tiled_path_runs_edge_completion_and_adds_edges():
+    """§8 항목18 실사용 피드백(2026-08-11) — 실도면에서 타일 경계 때문에 도형은 맞게
+    인식됐지만 그 사이 선이 통째로 누락되는 문제(KBS 실측: 실제 도형 27개 중 11개가
+    화살표 0개, 특히 중앙 핵심 블록 "PIC-FM")를 재현·검증. 타일링된 경로에서 P3.5가
+    실제로 호출되어 edges를 보강하는지 종단 확인."""
+    from PIL import Image
+    img_path = os.path.join(_TMP, f"ai_edgefix_{uuid.uuid4().hex}.png")
+    Image.new("RGB", (400, 200), "white").save(img_path)
+
+    p1_shapes = [{"id": f"s{i}", "kind": "box", "x": float(i), "y": float(i), "w": 10.0, "h": 10.0,
+                  "label": f"L{i}"} for i in range(20)]
+    p1_json = json.dumps({"shapes": p1_shapes, "edges": [], "unknown": []})
+    fixed_tiles = [(0.0, 0.0, 200.0, 200.0), (200.0, 0.0, 200.0, 200.0)]
+    # 두 타일이 서로 다른 도형만 인식 — 이 둘을 잇는 edge는 애초에 어느 타일에서도
+    # 안 나온다(실제 KBS 사례와 동일 패턴, PIC-FM처럼 타일 경계에 걸친 도형 사이 연결).
+    tile_json = [
+        json.dumps({"shapes": [{"id": "left", "kind": "box", "x": 30.0, "y": 60.0, "w": 90.0, "h": 30.0,
+                                "label": "PIC-FM"}], "edges": [], "unknown": []}),
+        json.dumps({"shapes": [{"id": "right", "kind": "box", "x": 30.0, "y": 60.0, "w": 90.0, "h": 30.0,
+                                "label": "SYT-5K"}], "edges": [], "unknown": []}),
+    ]
+    edge_completion_json = json.dumps({"edges": [
+        {"from": "t0_left", "to": "t1_right", "label": ""}]})   # namespace_tile_result 접두어 반영
+
+    calls = {"n": 0}
+
+    def fake_call(api_key, image, prompt, *, model, schema=None, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return gw.VisionResult(p1_json, model, None, 0.5)
+        if calls["n"] <= 3:
+            return gw.VisionResult(tile_json[calls["n"] - 2], model, None, 0.5)
+        return gw.VisionResult(edge_completion_json, model, None, 0.5)   # P3.5 호출
+
+    out = os.path.join(_TMP, f"ai_edgefix_out_{uuid.uuid4().hex}.ecad")
+    with patch.object(ais, "compute_tiles", lambda *a, **k: fixed_tiles), \
+         patch.object(ais.gw, "call_with_fallback", fake_call):
+        summary = ais.build_from_image(img_path, out, tile_threshold=5, zoom=3, verbose=False)
+
+    assert calls["n"] == 4   # P1 + 타일 2개 + P3.5 연결선 보완 1회
+    assert summary["shapes"] == 2
+    assert summary["edges"] == 1   # 타일 단독으로는 0개였을 edge가 P3.5로 보강됨
+
+    with open(out, encoding="utf-8") as f:
+        doc = json.load(f)
+    arrows = [it for it in doc["items"] if it["type"] == "sarrow"]
+    assert len(arrows) == 1
+
+
+def test_build_from_image_edge_completion_failure_does_not_break_pipeline():
+    """P3.5 호출이 실패해도(네트워크 오류 등) 파이프라인 전체가 죽지 않고 P3까지의
+    결과로 계속 진행해야 한다(설계 문서의 "P4 실패해도 P3까지는 쓸 수 있다"와 같은
+    폴백 철학을 P3.5에도 적용)."""
+    from PIL import Image
+    img_path = os.path.join(_TMP, f"ai_edgefail_{uuid.uuid4().hex}.png")
+    Image.new("RGB", (400, 200), "white").save(img_path)
+
+    p1_shapes = [{"id": f"s{i}", "kind": "box", "x": float(i), "y": float(i), "w": 10.0, "h": 10.0,
+                  "label": f"L{i}"} for i in range(20)]
+    p1_json = json.dumps({"shapes": p1_shapes, "edges": [], "unknown": []})
+    fixed_tiles = [(0.0, 0.0, 200.0, 200.0)]
+    tile_json = json.dumps({"shapes": [{"id": "a", "kind": "box", "x": 0.0, "y": 0.0, "w": 10.0, "h": 10.0,
+                                        "label": "A"}], "edges": [], "unknown": []})
+
+    calls = {"n": 0}
+
+    def fake_call(api_key, image, prompt, *, model, schema=None, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return gw.VisionResult(p1_json, model, None, 0.5)
+        if calls["n"] == 2:
+            return gw.VisionResult(tile_json, model, None, 0.5)
+        raise RuntimeError("네트워크 오류(P3.5 실패 시뮬레이션)")
+
+    out = os.path.join(_TMP, f"ai_edgefail_out_{uuid.uuid4().hex}.ecad")
+    with patch.object(ais, "compute_tiles", lambda *a, **k: fixed_tiles), \
+         patch.object(ais.gw, "call_with_fallback", fake_call):
+        summary = ais.build_from_image(img_path, out, tile_threshold=5, zoom=3, verbose=False)
+
+    assert summary["shapes"] == 1   # P3.5가 실패해도 P3 결과는 그대로 저장됨
+    assert os.path.exists(out)
 
 
 # ── C단계: document.insert_items — 씬을 지우지 않는 삽입 ────────────────────

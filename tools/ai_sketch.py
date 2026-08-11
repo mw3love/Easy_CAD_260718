@@ -40,6 +40,9 @@ def main():
                     help="P1 항목 수가 이 값 이하면 타일링 생략")
     ap.add_argument("--max-shapes-per-tile", type=int, default=8)
     ap.add_argument("--zoom", type=int, default=3)
+    ap.add_argument("--no-edge-completion", action="store_true",
+                    help="P3.5 연결선 보완 패스 생략(타일 경계를 넘는 연결선 손실을 감수하고 호출 1회 절약)")
+    ap.add_argument("--edge-model", default="", help="P3.5 연결선 보완에 쓸 모델(생략 시 --overview-model과 동일)")
     ap.add_argument("--light", action="store_true", help="라이트 테마 잉크색(기본은 다크)")
     args = ap.parse_args()
 
@@ -47,6 +50,7 @@ def main():
     build_from_image(args.image, out, note=args.note, overview_model=args.overview_model,
                      tile_model=args.tile_model, tile_threshold=args.tile_threshold,
                      max_shapes_per_tile=args.max_shapes_per_tile, zoom=args.zoom,
+                     complete_missing_edges=not args.no_edge_completion, edge_model=args.edge_model,
                      dark=not args.light)
 
 
