@@ -31,18 +31,26 @@ class _AISketchWorker(QThread):
     finished_ok = pyqtSignal(dict)
     finished_err = pyqtSignal(str)
 
-    def __init__(self, image_path: str, out_path: str, note: str, parent=None):
+    def __init__(self, image_path: str, out_path: str, note: str, *,
+                overview_model: str = "", tile_model: str = "", parent=None):
         super().__init__(parent)
         self._image_path = image_path
         self._out_path = out_path
         self._note = note
+        self._overview_model = overview_model
+        self._tile_model = tile_model
 
     def run(self):
         from easycad.ai.sketch_pipeline import build_from_image
+        kw = {}
+        if self._overview_model:
+            kw["overview_model"] = self._overview_model
+        if self._tile_model:
+            kw["tile_model"] = self._tile_model
         try:
             summary = build_from_image(
                 self._image_path, self._out_path, note=self._note,
-                verbose=False, on_progress=self.progress.emit,
+                verbose=False, on_progress=self.progress.emit, **kw,
             )
             self.finished_ok.emit(summary)
         except Exception as e:
@@ -55,26 +63,32 @@ class _AIImportMixin:
     def _import_ai_image(self):
         dlg = _AIImageImportDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
+            dlg.cleanup_temp_image()   # Ctrl+V/드롭으로 만든 임시 파일을 취소해도 남기지 않음
             return
         image_path = dlg.image_path()
         note = dlg.note()
+        overview_model = dlg.overview_model()
+        tile_model = dlg.tile_model()
         if not image_path:
+            dlg.cleanup_temp_image()
             return
 
         out_fd, out_path = tempfile.mkstemp(suffix=".ecad", prefix="ai_sketch_")
         os.close(out_fd)
 
         progress = _AISketchProgressDialog(self)
-        worker = _AISketchWorker(image_path, out_path, note, self)
+        worker = _AISketchWorker(image_path, out_path, note,
+                                 overview_model=overview_model, tile_model=tile_model, parent=self)
         # progress/worker를 self에 붙여 GC가 실행 도중 회수하지 않게 한다(Qt 부모 없는
         # QThread는 파이썬 참조가 사라지면 실행 중이라도 소멸자가 불릴 위험이 있다).
         self._ai_worker = worker
 
-        def _cleanup_file():
+        def _cleanup_files():
             try:
                 os.remove(out_path)
             except OSError:
                 pass
+            dlg.cleanup_temp_image()
 
         def _on_ok(summary):
             progress.accept()
@@ -82,7 +96,7 @@ class _AIImportMixin:
                 items = load_document_items(out_path)
                 added = insert_items(self._scene, items)
             finally:
-                _cleanup_file()
+                _cleanup_files()
             if not added:
                 QMessageBox.information(self, "AI 이미지→도면", "인식된 도형이 없습니다.")
                 return
@@ -99,7 +113,7 @@ class _AIImportMixin:
 
         def _on_err(msg):
             progress.reject()
-            _cleanup_file()
+            _cleanup_files()
             QMessageBox.warning(self, "AI 이미지→도면", f"실패: {msg}")
             self._ai_worker = None
 

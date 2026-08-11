@@ -5,9 +5,13 @@
 다이얼로그 클래스를 가져다 쓴다. 순환 임포트를 피하려고 host.py·믹스인을 임포트하지 않는
 잎(leaf) 모듈이다.
 """
+import os
+import re
+import tempfile
+
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
+    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter, QImage,
     QFont, QPolygonF, QPainterPath, QPalette, QDrag,
 )
 from PyQt6.QtWidgets import (
@@ -16,7 +20,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
+    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup, QProgressBar,
 )
 
 from easycad.canvas.annotator_core import (
@@ -27,6 +31,7 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
+from easycad.canvas.host_widgets import _clipboard_pixmap
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, render_preview, _find_title_frame
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
@@ -34,6 +39,7 @@ from easycad.fileio.document import save_document, load_document, load_document_
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
+from easycad.ai import gateway as gw
 
 
 # ---------------------------------------------------------------------------
@@ -288,21 +294,32 @@ class _MermaidDialog(QDialog):
 # [§8 항목18 C단계] AI 이미지→도면 입력창 — 이미지 파일 + 보충설명 텍스트.
 # ---------------------------------------------------------------------------
 class _AIImageImportDialog(QDialog):
-    """이미지 파일 선택 + 보충설명(도면 종류 등) 입력. 확인 버튼은 이미지를 고르기 전엔
-    비활성 — 파이프라인은 몇 분 걸리므로 빈 경로로 시작해 사용자를 헷갈리게 하지 않는다."""
+    """이미지 선택(찾아보기·드래그드롭·Ctrl+V 전부 가능) + 보충설명 + 모델 선택.
+    확인 버튼은 이미지를 고르기 전엔 비활성 — 파이프라인은 몇 분 걸리므로 빈 경로로
+    시작해 사용자를 헷갈리게 하지 않는다.
+
+    ⚠ 드래그드롭·Ctrl+V는 이 다이얼로그가 열려 있을 때만 받는다 — 캔버스 자체의 드롭·
+    붙여넣기(기존 "그림으로 삽입" 동작, `host_fileio.py`/`host_selection.py`)와 겹치면
+    안 되므로 건드리지 않고, 이 다이얼로그의 이벤트만 오버라이드했다(2026-08-11)."""
 
     _IMAGE_FILTER = "이미지 (*.png *.jpg *.jpeg *.bmp *.webp)"
+    _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
+    _OVERVIEW_DEFAULT = gw.DEFAULT_MODEL       # P1 개괄 — 실측 기본(전체 이미지 완주)
+    _TILE_DEFAULT = "claude-sonnet-5"          # P2 타일 — 실측 기본(크롭 세부 인식)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("AI 이미지→도면")
+        self.setAcceptDrops(True)
+        self._temp_image_path = None   # Ctrl+V/이미지데이터 드롭으로 만든 임시 PNG(정리 대상)
+
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("도면 이미지를 골라주세요 — 편집 가능한 도형으로 변환합니다:"))
+        lay.addWidget(QLabel("도면 이미지를 골라주세요(찾아보기 · 드래그드롭 · Ctrl+V 전부 가능):"))
 
         row = QHBoxLayout()
         self._path_edit = QLineEdit(self)
         self._path_edit.setReadOnly(True)
-        self._path_edit.setPlaceholderText("이미지 파일을 선택하세요…")
+        self._path_edit.setPlaceholderText("이미지를 여기로 끌어놓거나 Ctrl+V로 붙여넣어도 됩니다…")
         row.addWidget(self._path_edit)
         browse = QToolButton(self)
         browse.setText("찾아보기…")
@@ -316,6 +333,16 @@ class _AIImageImportDialog(QDialog):
         self._note_edit.setMaximumHeight(70)
         lay.addWidget(self._note_edit)
 
+        model_grid = QGridLayout()
+        model_grid.addWidget(QLabel("개요 모델(P1, 전체 훑기):"), 0, 0)
+        self._overview_combo = QComboBox(self)
+        model_grid.addWidget(self._overview_combo, 0, 1)
+        model_grid.addWidget(QLabel("세부 모델(P2, 구획 확대):"), 1, 0)
+        self._tile_combo = QComboBox(self)
+        model_grid.addWidget(self._tile_combo, 1, 1)
+        lay.addLayout(model_grid)
+        self._populate_models()
+
         lay.addWidget(QLabel("⚠ 밀집 도면은 여러 번 나눠 인식해 수 분 걸릴 수 있습니다."))
 
         self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
@@ -325,11 +352,95 @@ class _AIImageImportDialog(QDialog):
         self._btns.rejected.connect(self.reject)
         lay.addWidget(self._btns)
 
+    # ---- 모델 목록 ----------------------------------------------------------
+
+    def _populate_models(self):
+        """게이트웨이 `/models`를 실호출해 전체 목록을 채우고 실측 기본값을 "(추천)"으로
+        표시·사전선택한다. 짧은 timeout(8초)로 호출 — 이 메서드는 다이얼로그 `__init__`
+        안에서 동기 호출되므로(별도 스레드를 안 씀 — 보통 1초 내외라 그 정도 지연은
+        감수할 만하다는 판단), 네트워크가 죽어 있을 때 기본 600초 타임아웃을 그대로
+        물려받으면 다이얼로그 자체가 못 뜬다. 조회 실패 시 기본값 둘만으로 조용히 폴백."""
+        models: list[str] = []
+        try:
+            key = gw.resolve_api_key()
+            if key:
+                models = gw.list_models(key, timeout=8.0)
+        except Exception:
+            models = []
+        pool = sorted(set(models) | {self._OVERVIEW_DEFAULT, self._TILE_DEFAULT})
+        for combo, default in ((self._overview_combo, self._OVERVIEW_DEFAULT),
+                               (self._tile_combo, self._TILE_DEFAULT)):
+            combo.clear()
+            for m in pool:
+                combo.addItem(f"{m} (추천)" if m == default else m, m)
+            idx = combo.findData(default)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def overview_model(self) -> str:
+        return self._overview_combo.currentData() or self._OVERVIEW_DEFAULT
+
+    def tile_model(self) -> str:
+        return self._tile_combo.currentData() or self._TILE_DEFAULT
+
+    # ---- 이미지 입력(찾아보기·드래그드롭·Ctrl+V) ------------------------------
+
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(self, "이미지 선택", "", self._IMAGE_FILTER)
         if path:
-            self._path_edit.setText(path)
-            self._btns.button(QDialogButtonBox.StandardButton.Ok).setEnabled(True)
+            self._set_image_path(path)
+
+    def _set_image_path(self, path: str):
+        self._path_edit.setText(path)
+        self._btns.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(path))
+
+    def _save_temp_image(self, pm: QPixmap) -> str:
+        fd, path = tempfile.mkstemp(suffix=".png", prefix="ai_sketch_paste_")
+        os.close(fd)
+        pm.save(path, "PNG")
+        self._temp_image_path = path
+        return path
+
+    def dragEnterEvent(self, e):
+        md = e.mimeData()
+        if md.hasImage() or (md.hasUrls() and any(
+                u.toLocalFile().lower().endswith(self._IMG_EXTS) for u in md.urls())):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        self.dragEnterEvent(e)
+
+    def dropEvent(self, e):
+        md = e.mimeData()
+        if md.hasUrls():
+            for u in md.urls():
+                p = u.toLocalFile()
+                if p.lower().endswith(self._IMG_EXTS):
+                    self._set_image_path(p)
+                    e.acceptProposedAction()
+                    return
+        if md.hasImage():
+            img = md.imageData()
+            if isinstance(img, QImage) and not img.isNull():
+                self._set_image_path(self._save_temp_image(QPixmap.fromImage(img)))
+                e.acceptProposedAction()
+
+    def keyPressEvent(self, e):
+        if e.matches(QKeySequence.StandardKey.Paste):
+            self._paste_from_clipboard()
+            return
+        super().keyPressEvent(e)
+
+    def _paste_from_clipboard(self):
+        md = QApplication.clipboard().mimeData()
+        if md.hasUrls():
+            for u in md.urls():
+                p = u.toLocalFile()
+                if p and p.lower().endswith(self._IMG_EXTS):
+                    self._set_image_path(p)
+                    return
+        pm = _clipboard_pixmap()
+        if pm is not None and not pm.isNull():
+            self._set_image_path(self._save_temp_image(pm))
 
     def image_path(self) -> str:
         return self._path_edit.text()
@@ -337,11 +448,28 @@ class _AIImageImportDialog(QDialog):
     def note(self) -> str:
         return self._note_edit.toPlainText().strip()
 
+    def cleanup_temp_image(self):
+        """Ctrl+V/이미지데이터 드롭으로 만든 임시 파일 정리 — 호출자가 파이프라인이
+        이미지를 다 읽은 뒤(또는 다이얼로그가 취소된 뒤) 명시적으로 부른다."""
+        if self._temp_image_path:
+            try:
+                os.remove(self._temp_image_path)
+            except OSError:
+                pass
+            self._temp_image_path = None
+
 
 class _AISketchProgressDialog(QDialog):
-    """AI 이미지→도면 처리 중 진행 로그만 보여주는 모달. 닫기(X) 버튼을 없앴다 —
+    """AI 이미지→도면 처리 중 진행 상태를 보여주는 모달. 닫기(X) 버튼을 없앴다 —
     진행 중인 게이트웨이 호출을 안전하게 중단할 방법이 없어 취소는 이번 라운드
-    스코프 밖(`host_ai.py` 참조), 닫기를 허용하면 "취소됐다"는 착각을 줄 수 있다."""
+    스코프 밖(`host_ai.py` 참조), 닫기를 허용하면 "취소됐다"는 착각을 줄 수 있다.
+
+    진행 막대는 P2 타일 단계에서만 결정형(N개 중 몇 번째)이다 — P1은 몇 초 걸릴지
+    호출 전엔 알 수 없어 무한 로딩으로 둔다(정확한 ETA는 실측상 호출별 편차가
+    15~56초로 커서 신빙성 있게 못 낸다, `docs/ai_image_import.md` 참조 — 대신 경과
+    시간만 보여준다)."""
+
+    _TILE_RE = re.compile(r"\[P2 타일 (\d+)/(\d+)\]")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -350,10 +478,51 @@ class _AISketchProgressDialog(QDialog):
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
         lay = QVBoxLayout(self)
         lay.addWidget(QLabel("도면을 분석하는 중입니다 — 밀집 도면은 수 분 걸릴 수 있습니다."))
+
+        status_row = QHBoxLayout()
+        self._status_label = QLabel("준비 중…", self)
+        status_row.addWidget(self._status_label, 1)
+        self._elapsed_label = QLabel("경과: 0:00", self)
+        status_row.addWidget(self._elapsed_label)
+        lay.addLayout(status_row)
+
+        self._progress = QProgressBar(self)
+        self._progress.setRange(0, 0)   # 시작은 무한 로딩(P1)
+        lay.addWidget(self._progress)
+
         self._log = QPlainTextEdit(self)
         self._log.setReadOnly(True)
         self._log.setMinimumSize(QSize(440, 220))
         lay.addWidget(self._log)
 
+        self._elapsed_sec = 0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick_elapsed)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._elapsed_sec = 0
+        self._elapsed_label.setText("경과: 0:00")
+        self._timer.start(1000)
+
+    def _tick_elapsed(self):
+        self._elapsed_sec += 1
+        m, s = divmod(self._elapsed_sec, 60)
+        self._elapsed_label.setText(f"경과: {m}:{s:02d}")
+
     def append(self, msg: str):
         self._log.appendPlainText(msg)
+        self._status_label.setText(msg)
+        m = self._TILE_RE.search(msg)
+        if m:
+            i, n = int(m.group(1)) + 1, int(m.group(2))   # 완료 개수 느낌으로 1-based 표시
+            self._progress.setRange(0, n)
+            self._progress.setValue(i)
+
+    def accept(self):
+        self._timer.stop()
+        super().accept()
+
+    def reject(self):
+        self._timer.stop()
+        super().reject()

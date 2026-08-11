@@ -128,11 +128,16 @@ def _client(api_key: str, base_url: str = BASE_URL, timeout: float = 600.0):
     return client
 
 
-def list_models(api_key: str, base_url: str = BASE_URL) -> list[str]:
+def list_models(api_key: str, base_url: str = BASE_URL, timeout: float = 600.0) -> list[str]:
     """게이트웨이의 `/models`에서 사용 가능한 모델 ID 목록. 필터 없이 전부 반환
-    (ocr_engine.list_gemini_models과 동일 관례 — 어떤 모델이 실제로 되는지는 실호출로 안다)."""
+    (ocr_engine.list_gemini_models과 동일 관례 — 어떤 모델이 실제로 되는지는 실호출로 안다).
+
+    `timeout`은 vision 호출(`call_vision`)의 기본값(600s)과 별개로 짧게 줄 수 있다 —
+    C단계 다이얼로그가 열릴 때 모델 목록을 동기 호출로 채우는데(`host_dialogs.
+    _AIImageImportDialog._populate_models`), 네트워크가 죽어 있으면 기본 600초를
+    그대로 물려받아 다이얼로그 자체가 못 뜬다."""
     try:
-        resp = _client(api_key, base_url).models.list()
+        resp = _client(api_key, base_url, timeout=timeout).models.list()
     except Exception as e:
         raise RuntimeError(f"게이트웨이 모델 조회 실패: {e}") from e
     return sorted({m.id for m in resp.data})

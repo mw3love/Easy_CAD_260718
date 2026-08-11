@@ -31,7 +31,7 @@ from _shared import *  # noqa: F401,F403
 from easycad.ai import gateway as gw  # noqa: E402
 from easycad.ai import sketch_pipeline as ais  # noqa: E402
 from easycad.canvas import host_ai as hai  # noqa: E402
-from easycad.canvas.host_dialogs import _AIImageImportDialog  # noqa: E402
+from easycad.canvas.host_dialogs import _AIImageImportDialog, _AISketchProgressDialog  # noqa: E402
 from easycad.fileio.document import load_document, insert_items  # noqa: E402
 
 
@@ -462,6 +462,9 @@ def test_import_ai_image_inserts_result_and_registers_one_undo_step():
         "exec": lambda self: QDialog.DialogCode.Accepted,
         "image_path": lambda self: "dummy.png",
         "note": lambda self: "",
+        "overview_model": lambda self: "gemini-3.6-flash",
+        "tile_model": lambda self: "claude-sonnet-5",
+        "cleanup_temp_image": lambda self: None,
     })()
     prog_instance = type("_P", (), {
         "exec": lambda self: None,
@@ -487,7 +490,10 @@ def test_import_ai_image_inserts_result_and_registers_one_undo_step():
 
 
 def test_ai_image_import_dialog_ok_enabled_after_browse():
-    dlg = _AIImageImportDialog()
+    # _populate_models()는 게이트웨이를 실호출한다 — 테스트는 네트워크 무의존이어야 하므로
+    # 여기선 항상 mock(모델 목록 관련 별도 테스트는 아래 참조).
+    with patch.object(_AIImageImportDialog, "_populate_models", lambda self: None):
+        dlg = _AIImageImportDialog()
     ok_btn = dlg._btns.button(QDialogButtonBox.StandardButton.Ok)
     assert not ok_btn.isEnabled()
     with patch("easycad.canvas.host_dialogs.QFileDialog.getOpenFileName",
@@ -495,3 +501,69 @@ def test_ai_image_import_dialog_ok_enabled_after_browse():
         dlg._browse()
     assert ok_btn.isEnabled()
     assert dlg.image_path() == "picked.png"
+
+
+def test_ai_image_import_dialog_populate_models_uses_live_list_and_marks_default():
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.gw.list_models",
+               return_value=["gemini-3.6-flash", "claude-sonnet-5", "gpt-5.6-mini"]):
+        dlg = _AIImageImportDialog()
+    assert dlg.overview_model() == "gemini-3.6-flash"
+    assert dlg.tile_model() == "claude-sonnet-5"
+    idx = dlg._overview_combo.findData("gemini-3.6-flash")
+    assert "추천" in dlg._overview_combo.itemText(idx)
+    assert dlg._overview_combo.findData("gpt-5.6-mini") >= 0   # 전체 목록이 그대로 노출됨
+
+
+def test_ai_image_import_dialog_populate_models_falls_back_when_list_fails():
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.gw.list_models", side_effect=RuntimeError("no network")):
+        dlg = _AIImageImportDialog()
+    assert dlg.overview_model() == "gemini-3.6-flash"
+    assert dlg.tile_model() == "claude-sonnet-5"
+
+
+def test_ai_image_import_dialog_paste_from_clipboard_sets_path():
+    with patch.object(_AIImageImportDialog, "_populate_models", lambda self: None):
+        dlg = _AIImageImportDialog()
+    pm = _mk_pixmap(40, 20)
+    fake_md = type("_MD", (), {"hasUrls": lambda self: False})()
+    with patch.object(QApplication.clipboard(), "mimeData", return_value=fake_md), \
+         patch("easycad.canvas.host_dialogs._clipboard_pixmap", return_value=pm):
+        dlg._paste_from_clipboard()
+    assert dlg.image_path()
+    saved_path = dlg._temp_image_path
+    assert saved_path is not None
+    assert os.path.exists(saved_path)
+    dlg.cleanup_temp_image()
+    assert not os.path.exists(saved_path)
+
+
+def test_ai_image_import_dialog_drop_file_sets_path():
+    from PyQt6.QtCore import QUrl
+    with patch.object(_AIImageImportDialog, "_populate_models", lambda self: None):
+        dlg = _AIImageImportDialog()
+    fake_url = QUrl.fromLocalFile(os.path.join(_TMP, "dropped.png"))
+    fake_md = type("_MD", (), {
+        "hasUrls": lambda self: True,
+        "urls": lambda self: [fake_url],
+        "hasImage": lambda self: False,
+    })()
+    fake_event = type("_E", (), {
+        "mimeData": lambda self: fake_md,
+        "acceptProposedAction": lambda self: None,
+    })()
+    dlg.dropEvent(fake_event)
+    assert dlg.image_path().lower().endswith("dropped.png")
+
+
+def test_progress_dialog_parses_tile_progress_and_updates_status():
+    dlg = _AISketchProgressDialog()
+    dlg.append("[P1 개괄] gemini-3.6-flash (10.0s) shapes=20 edges=10 unknown=2")
+    assert dlg._progress.minimum() == 0 and dlg._progress.maximum() == 0   # 여전히 무한로딩
+    dlg.append("[P2 타일 0/3] claude-sonnet-5 (5.0s) shapes=5 edges=3")
+    assert dlg._progress.maximum() == 3
+    assert dlg._progress.value() == 1
+    dlg.append("[P2 타일 2/3] claude-sonnet-5 (5.0s) shapes=5 edges=3")
+    assert dlg._progress.value() == 3
+    assert "타일 2/3" in dlg._status_label.text()
