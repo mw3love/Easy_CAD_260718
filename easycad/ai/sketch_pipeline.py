@@ -122,6 +122,38 @@ def _tile_prompt(w: int, h: int, note: str = "") -> str:
             f"원점은 좌상단. 이 크롭 이미지 크기: {w}x{h}\n{extra}\n{_BASE_RULES}")
 
 
+# ── 수동 붙여넣기 모드(2026-08-11, §8 항목18 C단계 후속) ─────────────────────
+# 게이트웨이 API 대신 사용자가 원하는 AI 챗(Claude Code·claude.ai·chatgpt.com 등,
+# 별도 정액제/구독 — 이 프로젝트가 쓰는 kairos 계정 크레딧과 무관)에 이미지+프롬프트를
+# 직접 붙여넣고 받은 JSON 응답을 그대로 붙여넣는 경로. `json_schema` 구조화 출력은
+# API 전용 기능이라 이 경로엔 없으므로, 프롬프트 텍스트 자체에 정확한 JSON 형식을
+# 예시까지 박아 둔다 — 그래야 임의의 챗 UI에서도 같은 스키마로 답이 온다. P1(전체
+# 1패스) 결과로만 취급하고 P2(타일)·P3(병합)는 거치지 않는다 — 붙여넣기 자체가 반복
+# 수작업이라 자동 타일링까지 손으로 반복하긴 비현실적이라는 사용자 확인(2026-08-11).
+_MANUAL_JSON_FORMAT = """
+**출력 형식**: 다른 설명 없이 아래와 똑같은 구조의 JSON 하나만 출력하라(```json 코드블록으로
+감싸도 되고 안 감싸도 됨):
+
+{
+ "shapes": [{"id": "s1", "kind": "box", "x": 120, "y": 80, "w": 200, "h": 90, "label": "1TV 송신기"}],
+ "edges":  [{"from": "s1", "to": "s2", "label": ""}],
+ "unknown": [{"x": 400, "y": 300, "w": 60, "h": 60, "desc": "원형 스위치"}]
+}
+
+- kind는 "box"·"ellipse"·"decision"(마름모 판단)·"terminal"(타원 시작/끝) 중 하나만.
+- id는 shapes 배열 안에서만 서로 다르면 된다(문자열, 형식 자유).
+- edges의 from/to는 반드시 shapes의 id를 그대로 참조.
+- 이미지에 shapes/edges/unknown이 없으면 그 배열은 빈 배열([])로.
+"""
+
+
+def manual_prompt(w: int, h: int, note: str = "") -> str:
+    """수동 모드용 프롬프트 — `_overview_prompt`와 같은 지시문에 JSON 출력 형식을
+    명시적으로 덧붙인다(API 모드는 `response_format=json_schema`로 형식을 강제하지만,
+    수동 모드는 임의의 채팅 UI를 거치므로 프롬프트 텍스트가 유일한 강제 수단)."""
+    return _overview_prompt(w, h, note) + _MANUAL_JSON_FORMAT
+
+
 # ── P2: 타일 격자 계산 ───────────────────────────────────────────────────────
 
 def compute_tiles(items: list[dict], img_w: int, img_h: int, *,
@@ -421,3 +453,21 @@ def build_from_image(image_path: str, out_path: str, *, api_key: str = "", note:
     _log(f"[P3 완료] shapes={len(shapes)} edges={len(edges)} unknown={len(unknown)} "
          f"tiles={tiles_used} → {out_path}")
     return summary
+
+
+def build_from_manual_json(text: str, out_path: str, *, dark: bool = True) -> dict:
+    """수동 붙여넣기 모드 — 사용자가 `manual_prompt()`를 다른 AI 챗에 붙여넣어 받은 JSON
+    응답(`text`)을 그대로 `.ecad`로 변환한다. 게이트웨이 호출이 전혀 없다(API 크레딧
+    무사용). P1 단일 패스 결과로만 취급 — `axis_snap`/`dedupe_shapes`는 여러 타일을
+    잇는 용도라 여기선 의미가 없어 건너뛴다(단일 응답이라 타일 경계 자체가 없음).
+
+    `text`가 유효한 JSON이 아니면 `json.JSONDecodeError`가 그대로 올라간다 — 호출자
+    (`host_ai.py`)가 잡아 사용자에게 보여준다."""
+    data = gw.parse_json(text)
+    shapes = data.get("shapes", [])
+    edges = data.get("edges", [])
+    unknown = data.get("unknown", [])
+    sk = build_sketch(shapes, edges, unknown, dark=dark)
+    sk.save(out_path)
+    return {"shapes": len(shapes), "edges": len(edges), "unknown": len(unknown),
+            "tiles": 0, "overview_model": "manual", "path": out_path}

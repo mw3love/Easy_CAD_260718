@@ -486,6 +486,7 @@ def test_import_ai_image_inserts_result_and_registers_one_undo_step():
         "overview_model": lambda self: "gemini-3.6-flash",
         "tile_model": lambda self: "gpt-5.4-mini",
         "cleanup_temp_image": lambda self: None,
+        "is_manual_mode": lambda self: False,
     })()
     prog_instance = type("_P", (), {
         "exec": lambda self: None,
@@ -631,3 +632,119 @@ def test_progress_dialog_parses_tile_progress_and_updates_status():
     dlg.append("[P2 타일 2/3] claude-sonnet-5 (5.0s) shapes=5 edges=3")
     assert dlg._progress.value() == 3
     assert "타일 2/3" in dlg._status_label.text()
+
+
+# ── 수동 붙여넣기 모드(2026-08-11) ───────────────────────────────────────────
+
+def test_manual_prompt_includes_json_format_instructions():
+    text = ais.manual_prompt(360, 160, "테스트 도면")
+    assert "360x160" in text
+    assert "테스트 도면" in text
+    assert '"shapes"' in text and '"edges"' in text and '"unknown"' in text
+
+
+def test_build_from_manual_json_skips_gateway_and_builds_sketch():
+    payload = json.dumps({
+        "shapes": [{"id": "s1", "kind": "box", "x": 0.0, "y": 0.0, "w": 50.0, "h": 30.0, "label": "A"},
+                   {"id": "s2", "kind": "decision", "x": 200.0, "y": 0.0, "w": 60.0, "h": 60.0, "label": "B"}],
+        "edges": [{"from": "s1", "to": "s2", "label": "예"}],
+        "unknown": [{"x": 400.0, "y": 0.0, "w": 30.0, "h": 30.0, "desc": "모름"}],
+    })
+    out = os.path.join(_TMP, f"manual_{uuid.uuid4().hex}.ecad")
+    summary = ais.build_from_manual_json(payload, out)
+    assert summary == {"shapes": 2, "edges": 1, "unknown": 1, "tiles": 0,
+                       "overview_model": "manual", "path": out}
+    with open(out, encoding="utf-8") as f:
+        doc = json.load(f)
+    assert len(doc["items"]) == 4   # box + symbol + sarrow + unknown placeholder box
+
+
+def test_build_from_manual_json_raises_on_invalid_json():
+    out = os.path.join(_TMP, f"manual_bad_{uuid.uuid4().hex}.ecad")
+    try:
+        ais.build_from_manual_json("이건 JSON이 아님", out)
+        assert False, "should have raised"
+    except Exception:
+        pass
+    assert not os.path.exists(out)
+
+
+def test_ai_image_import_dialog_manual_toggle_swaps_visible_groups():
+    with patch.object(_AIImageImportDialog, "_populate_models", lambda self: None):
+        dlg = _AIImageImportDialog()
+    assert not dlg._auto_group.isHidden()
+    assert dlg._manual_group.isHidden()
+    dlg._manual_check.setChecked(True)
+    assert dlg._auto_group.isHidden()
+    assert not dlg._manual_group.isHidden()
+    assert dlg.is_manual_mode()
+
+
+def test_ai_image_import_dialog_manual_accept_rejects_empty_and_invalid_json():
+    with patch.object(_AIImageImportDialog, "_populate_models", lambda self: None):
+        dlg = _AIImageImportDialog()
+    dlg._manual_check.setChecked(True)
+    dlg._set_image_path("dummy.png")
+
+    with patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn:
+        dlg._on_accept_clicked()   # 빈 JSON
+    assert warn.called
+    assert dlg.result() != QDialog.DialogCode.Accepted
+
+    dlg._manual_json_edit.setPlainText("이건 JSON이 아님")
+    with patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn:
+        dlg._on_accept_clicked()   # 깨진 JSON
+    assert warn.called
+    assert dlg.result() != QDialog.DialogCode.Accepted
+
+    dlg._manual_json_edit.setPlainText('{"shapes":[],"edges":[],"unknown":[]}')
+    dlg._on_accept_clicked()
+    assert dlg.result() == QDialog.DialogCode.Accepted
+
+
+def test_ai_image_import_dialog_copy_manual_prompt_sets_clipboard():
+    with patch.object(_AIImageImportDialog, "_populate_models", lambda self: None):
+        dlg = _AIImageImportDialog()
+    real_path = os.path.join(_TMP, f"copy_{uuid.uuid4().hex}.png")
+    _mk_pixmap(120, 80).save(real_path)
+    dlg._set_image_path(real_path)
+    with patch("easycad.canvas.host_dialogs.QMessageBox.information"):
+        dlg._copy_manual_prompt()
+    clip_text = QApplication.clipboard().text()
+    assert "120x80" in clip_text
+    assert '"shapes"' in clip_text
+
+
+def test_import_ai_manual_mode_inserts_without_worker_thread():
+    """수동모드는 QThread를 아예 안 띄운다 — _AISketchWorker.start가 호출되지 않는지까지
+    확인(호출됐다면 게이트웨이를 실제로 부르려 시도했다는 뜻이라 이 테스트의 핵심)."""
+    w = CanvasWindow()
+    existing = _mk_rect(w._scene, w.make_pen(), 0, 0, 40, 40)
+
+    payload = json.dumps({
+        "shapes": [{"id": "s1", "kind": "box", "x": 100.0, "y": 100.0, "w": 80.0, "h": 40.0, "label": "A"},
+                   {"id": "s2", "kind": "box", "x": 300.0, "y": 100.0, "w": 80.0, "h": 40.0, "label": "B"}],
+        "edges": [{"from": "s1", "to": "s2", "label": ""}],
+        "unknown": [],
+    })
+    dlg_instance = type("_D", (), {
+        "exec": lambda self: QDialog.DialogCode.Accepted,
+        "image_path": lambda self: "dummy.png",
+        "note": lambda self: "",
+        "cleanup_temp_image": lambda self: None,
+        "is_manual_mode": lambda self: True,
+        "manual_json": lambda self: payload,
+    })()
+
+    with patch.object(hai._AISketchWorker, "start") as worker_start, \
+         patch.object(hai, "_AIImageImportDialog", return_value=dlg_instance):
+        w._import_ai_image()
+
+    assert not worker_start.called
+    top_level = [it for it in w._scene.items() if it.parentItem() is None]
+    assert existing in top_level
+    assert len(top_level) == 4   # 기존 1 + 박스2 + 화살표1
+
+    w.undo()
+    assert [it for it in w._scene.items() if it.parentItem() is None] == [existing]
+    w.deleteLater()

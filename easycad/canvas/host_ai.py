@@ -78,8 +78,6 @@ class _AIImportMixin:
             return
         image_path = dlg.image_path()
         note = dlg.note()
-        overview_model = dlg.overview_model()
-        tile_model = dlg.tile_model()
         if not image_path:
             dlg.cleanup_temp_image()
             return
@@ -87,6 +85,14 @@ class _AIImportMixin:
         out_fd, out_path = tempfile.mkstemp(suffix=".ecad", prefix="ai_sketch_")
         os.close(out_fd)
 
+        if dlg.is_manual_mode():
+            # [실사용 피드백 2026-08-11] 수동 붙여넣기 모드 — 별도 정액제 AI 챗을 거치므로
+            # 게이트웨이 호출 자체가 없다. 백그라운드 스레드도 불필요(로컬 JSON 파싱뿐).
+            self._finish_ai_manual(dlg, out_path)
+            return
+
+        overview_model = dlg.overview_model()
+        tile_model = dlg.tile_model()
         progress = _AISketchProgressDialog(self)
         worker = _AISketchWorker(image_path, out_path, note,
                                  overview_model=overview_model, tile_model=tile_model, parent=self)
@@ -94,41 +100,14 @@ class _AIImportMixin:
         # QThread는 파이썬 참조가 사라지면 실행 중이라도 소멸자가 불릴 위험이 있다).
         self._ai_worker = worker
 
-        def _cleanup_files():
-            try:
-                os.remove(out_path)
-            except OSError:
-                pass
-            dlg.cleanup_temp_image()
-
         def _on_ok(summary):
             progress.accept()
-            try:
-                items = load_document_items(out_path)
-                added = insert_items(self._scene, items)
-            finally:
-                _cleanup_files()
-            if not added:
-                QMessageBox.information(self, "AI 이미지→도면", "인식된 도형이 없습니다.")
-                return
-            self._offset_ai_items_to_view_center(added)
-            self.push_undo_add_many(added)
-            self._scene.clearSelection()
-            for it in added:
-                it.setSelected(True)
-            credit_note = ""
-            if "credit_remaining" in summary:
-                credit_note = (f" · 크레딧 잔여 {summary['credit_remaining']:.0f}/"
-                               f"{summary['credit_quota']:.0f}")
-            self.statusBar().showMessage(
-                f"AI 이미지→도면: 도형 {summary['shapes']} · 연결선 {summary['edges']} · "
-                f"미확인 {summary['unknown']}건(타일 {summary['tiles']}개){credit_note} — "
-                "미확인 항목은 텍스트만 있는 상자로 표시됩니다", 10000)
+            self._finish_ai_insert(out_path, dlg, summary)
             self._ai_worker = None
 
         def _on_err(msg):
             progress.reject()
-            _cleanup_files()
+            self._cleanup_ai_files(out_path, dlg)
             QMessageBox.warning(self, "AI 이미지→도면", f"실패: {msg}")
             self._ai_worker = None
 
@@ -137,6 +116,49 @@ class _AIImportMixin:
         worker.finished_err.connect(_on_err)
         worker.start()
         progress.exec()
+
+    def _finish_ai_manual(self, dlg, out_path):
+        from easycad.ai.sketch_pipeline import build_from_manual_json
+        try:
+            summary = build_from_manual_json(dlg.manual_json(), out_path)
+        except Exception as e:
+            self._cleanup_ai_files(out_path, dlg)
+            QMessageBox.warning(self, "AI 이미지→도면", f"JSON 처리 실패: {e}")
+            return
+        self._finish_ai_insert(out_path, dlg, summary, mode_label="(수동)")
+
+    def _cleanup_ai_files(self, out_path, dlg):
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+        dlg.cleanup_temp_image()
+
+    def _finish_ai_insert(self, out_path, dlg, summary, *, mode_label=""):
+        """auto/manual 공통 완료 처리 — 결과 `.ecad` 로드→씬 삽입→뷰 중심 오프셋→undo
+        1스텝→선택→상태바 메시지. `summary`는 `build_from_image`/`build_from_manual_json`
+        양쪽이 같은 키(shapes/edges/unknown/tiles, credit_*는 auto만)로 반환한다."""
+        try:
+            items = load_document_items(out_path)
+            added = insert_items(self._scene, items)
+        finally:
+            self._cleanup_ai_files(out_path, dlg)
+        if not added:
+            QMessageBox.information(self, "AI 이미지→도면", "인식된 도형이 없습니다.")
+            return
+        self._offset_ai_items_to_view_center(added)
+        self.push_undo_add_many(added)
+        self._scene.clearSelection()
+        for it in added:
+            it.setSelected(True)
+        credit_note = ""
+        if "credit_remaining" in summary:
+            credit_note = (f" · 크레딧 잔여 {summary['credit_remaining']:.0f}/"
+                           f"{summary['credit_quota']:.0f}")
+        self.statusBar().showMessage(
+            f"AI 이미지→도면{mode_label}: 도형 {summary['shapes']} · 연결선 {summary['edges']} · "
+            f"미확인 {summary['unknown']}건(타일 {summary['tiles']}개){credit_note} — "
+            "미확인 항목은 텍스트만 있는 상자로 표시됩니다", 10000)
 
     def _offset_ai_items_to_view_center(self, items):
         """삽입된 항목들의 결합 bbox 중심을 현재 뷰 중심으로 옮긴다(Mermaid 가져오기

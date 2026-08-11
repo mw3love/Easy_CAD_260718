@@ -352,6 +352,18 @@ class _AIImageImportDialog(QDialog):
         self._note_edit.installEventFilter(self)
         lay.addWidget(self._note_edit)
 
+        # [실사용 피드백 2026-08-11] 수동 붙여넣기 모드 — API 크레딧 대신 사용자가 원하는
+        # AI 챗(Claude Code·claude.ai·chatgpt.com 등, 이 프로젝트가 쓰는 kairos 계정
+        # 크레딧과 무관한 별도 정액제/구독)에 이미지+프롬프트를 직접 붙여넣고 받은 JSON을
+        # 붙여넣는 경로. `sketch_pipeline.manual_prompt`/`build_from_manual_json` 참조.
+        self._manual_check = QCheckBox(
+            "수동 모드(다른 AI 챗에 직접 붙여넣기 — API 크레딧 안 씀)", self)
+        self._manual_check.toggled.connect(self._on_manual_toggled)
+        lay.addWidget(self._manual_check)
+
+        self._auto_group = QWidget(self)
+        auto_lay = QVBoxLayout(self._auto_group)
+        auto_lay.setContentsMargins(0, 0, 0, 0)
         model_grid = QGridLayout()
         model_grid.addWidget(QLabel("개요 모델(P1, 전체 훑기):"), 0, 0)
         self._overview_combo = QComboBox(self)
@@ -359,17 +371,75 @@ class _AIImageImportDialog(QDialog):
         model_grid.addWidget(QLabel("세부 모델(P2, 구획 확대):"), 1, 0)
         self._tile_combo = QComboBox(self)
         model_grid.addWidget(self._tile_combo, 1, 1)
-        lay.addLayout(model_grid)
+        auto_lay.addLayout(model_grid)
+        auto_lay.addWidget(QLabel("⚠ 밀집 도면은 여러 번 나눠 인식해 수 분 걸릴 수 있습니다."))
+        lay.addWidget(self._auto_group)
         self._populate_models()
 
-        lay.addWidget(QLabel("⚠ 밀집 도면은 여러 번 나눠 인식해 수 분 걸릴 수 있습니다."))
+        self._manual_group = QWidget(self)
+        manual_lay = QVBoxLayout(self._manual_group)
+        manual_lay.setContentsMargins(0, 0, 0, 0)
+        copy_btn = QToolButton(self)
+        copy_btn.setText("프롬프트 복사")
+        copy_btn.clicked.connect(self._copy_manual_prompt)
+        manual_lay.addWidget(copy_btn)
+        manual_lay.addWidget(QLabel(
+            "이미지와 함께 위 프롬프트를 원하는 AI 챗에 붙여넣고, 받은 JSON 응답을 "
+            "그대로 아래에 붙여넣으세요:"))
+        self._manual_json_edit = QPlainTextEdit(self)
+        self._manual_json_edit.setPlaceholderText('{"shapes": [...], "edges": [...], "unknown": [...]}')
+        self._manual_json_edit.setMinimumHeight(120)
+        manual_lay.addWidget(self._manual_json_edit)
+        lay.addWidget(self._manual_group)
+        self._manual_group.setVisible(False)
 
         self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                       | QDialogButtonBox.StandardButton.Cancel, self)
         self._btns.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
-        self._btns.accepted.connect(self.accept)
+        self._btns.accepted.connect(self._on_accept_clicked)
         self._btns.rejected.connect(self.reject)
         lay.addWidget(self._btns)
+
+    # ---- 수동/자동 모드 전환 --------------------------------------------------
+
+    def _on_manual_toggled(self, checked: bool):
+        self._auto_group.setVisible(not checked)
+        self._manual_group.setVisible(checked)
+
+    def is_manual_mode(self) -> bool:
+        return self._manual_check.isChecked()
+
+    def manual_json(self) -> str:
+        return self._manual_json_edit.toPlainText().strip()
+
+    def _copy_manual_prompt(self):
+        path = self.image_path()
+        if not path:
+            QMessageBox.information(self, "AI 이미지→도면", "먼저 이미지를 선택하세요.")
+            return
+        pm = QPixmap(path)
+        if pm.isNull():
+            QMessageBox.warning(self, "AI 이미지→도면", "이미지를 읽을 수 없습니다.")
+            return
+        from easycad.ai.sketch_pipeline import manual_prompt
+        QApplication.clipboard().setText(manual_prompt(pm.width(), pm.height(), self.note()))
+        QMessageBox.information(
+            self, "AI 이미지→도면",
+            "프롬프트를 클립보드에 복사했습니다.\n"
+            "이미지와 함께 AI 챗에 붙여넣고, 받은 JSON을 아래 칸에 붙여넣어 주세요.")
+
+    def _on_accept_clicked(self):
+        if self.is_manual_mode():
+            text = self.manual_json()
+            if not text:
+                QMessageBox.warning(self, "AI 이미지→도면", "붙여넣은 JSON이 비어 있습니다.")
+                return
+            try:
+                gw.parse_json(text)
+            except Exception as e:
+                QMessageBox.warning(self, "AI 이미지→도면", f"JSON을 읽을 수 없습니다: {e}")
+                return
+        self.accept()
 
     # ---- 모델 목록 ----------------------------------------------------------
 
