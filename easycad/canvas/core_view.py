@@ -1286,10 +1286,17 @@ class _AnnotatorView(QGraphicsView):
         `_hover_port_at`(미선택 4점)·`_qc_dot_at`을 통해 자신의 4변 접속점을 항상 제공해야
         하기 때문(실사용 요구: 선택 여부 무관하게 4변 중심점은 살아있어야 함). 포트를
         "장비 전체"처럼 취급해 중심을 눌러도 반응하는 문제는 이 함수가 아니라
-        `_port_dot_target`(장비 하나를 통째로 미리보기하는 별도 시스템) 쪽에서만 걸러낸다."""
+        `_port_dot_target`(장비 하나를 통째로 미리보기하는 별도 시스템) 쪽에서만 걸러낸다.
+        [실사용 버그 수정 2026-08-11] `_ImageItem`(붙여넣은 이미지)도 후보에 포함 — 접속점을
+        제공하는 도형은 아니지만, 이 목록이 곧 "occluder 후보"이기도 하다(_port_dot_target·
+        _hover_port_at의 occluders 계산). 빠져 있으면 이미지가 화면 맨 위에 그려져도 그
+        존재 자체가 완전히 무시돼, 뒤에 깔린 도형의 예고점·포트 히트테스트가 이미지를
+        투명한 유리처럼 뚫고 그대로 반응했다(호버 예고점 잔상 + 이미지 드래그가 뒤 도형의
+        커넥터 뽑기로 새는 버그). 포트 후보로는 여전히 제외해야 하므로 호출부(두 함수)가
+        각자의 후보 루프에서 `isinstance(sh, _ImageItem)`을 걸러낸다."""
         rect = QRectF(scene_pt.x() - margin, scene_pt.y() - margin, margin * 2, margin * 2)
         return [it for it in self.scene().items(rect)
-                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PathItem))]
+                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PathItem, _ImageItem))]
 
     def _port_dot_target(self, scene_c):
         """[2026-08-03 분리 — _draw_port_dots·mouseMoveEvent 공용] 지금 예고점을 그릴 도형
@@ -1317,6 +1324,12 @@ class _AnnotatorView(QGraphicsView):
         occluders = [sh for sh in near if _shape_interior_contains(sh, scene_c)] if select_mode else []
         best_sh, best_d = None, None
         for sh in near:
+            # [실사용 버그 수정 2026-08-11] 이미지는 occluder 후보일 뿐 접속점을 제공하는
+            # 도형이 아니다 — 여기서 걸러야 위 occluders 계산(이미지가 다른 도형을 가리는
+            # 판정)엔 그대로 참여하면서, 이미지 자신이 best_sh(예고점을 그릴 대상)가 되는
+            # 건 막는다.
+            if isinstance(sh, _ImageItem):
+                continue
             if sh.isSelected():
                 continue
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
@@ -1458,10 +1471,30 @@ class _AnnotatorView(QGraphicsView):
         if any(sh.isSelected() and _shape_interior_contains(sh, scene_pt) for sh in all_near):
             return None
         near = [sh for sh in all_near if not sh.isSelected()]
+        # [실사용 버그 수정 2026-08-11] 커서가 실제로 놓인 지점(scene_pt)에서 Qt 화면 스택
+        # 맨 위 아이템을 확인 — 그게 이번 후보(sh)도, sh의 포트↔호스트 가족(부모-자식 체인)도
+        # 아니면 sh는 뭔가 다른 것(전형적으로 붙여넣은 이미지)에 시각적으로 가려진 것이므로
+        # 후보에서 뺀다. 위 "선택 도형" 배제와 달리 이건 순수 화면 스택 순서(z·삽입순서) 기준
+        # 이라 `_shape_interior_contains`처럼 "포트가 호스트 테두리 위라 호스트도 내부로 오판"
+        # 하는 함정이 없다 — 포트는 호스트의 Qt 자식(`setParentItem`)이라 같은 지점에서 항상
+        # 자식(포트)이 topmost로 반환되고, `_related` 체크로 그 관계도 무해화한다
+        # (`test_port_participates_normally_in_hover_and_qc_systems` 무회귀 확인).
+        def _related(a, b):
+            n = b
+            while n is not None:
+                if n is a:
+                    return True
+                n = n.parentItem()
+            return False
+        topmost = self.scene().itemAt(scene_pt, self.transform())
+
+        def _occluded(sh):
+            return (topmost is not None and not _related(topmost, sh) and not _related(sh, topmost))
+
         best = None
         bestd = self._PORT_SNAP_PX
         for sh in near:
-            if isinstance(sh, _PathItem):
+            if isinstance(sh, (_PathItem, _ImageItem)) or _occluded(sh):
                 continue
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_pt):
@@ -1475,6 +1508,8 @@ class _AnnotatorView(QGraphicsView):
         best2 = None
         bestd2 = self._BORDER_SNAP_PX
         for sh in near:
+            if isinstance(sh, _ImageItem) or _occluded(sh):
+                continue
             # [실사용 버그 2026-08-09] 부착 포트에 가려 화면에 없는 테두리 구간은 호버 대상에서
             # 뺀다 — 이게 "포트 몸통 한가운데인데 뒤쪽 호스트 테두리 때문에 십자 커서"의 원인.
             hit = _nearest_border_visible(sh, scene_pt)

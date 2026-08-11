@@ -1556,6 +1556,35 @@ def test_port_participates_normally_in_hover_and_qc_systems():
     assert _close(sp, port_edge, eps=0.01)
 
 
+def test_image_pasted_on_top_occludes_shape_hover_and_port_dragging():
+    # [실사용 버그 수정 2026-08-11] 클립보드로 붙인 이미지가 도형 위에 겹치면, 화면엔 이미지가
+    # 위에 있는데도 호버 예고점·포트 드래그가 뒤에 깔린 도형을 그대로 뚫고 반응했다 — 원인은
+    # `_conn_shapes_near`가 `_ImageItem`을 후보 목록에서 통째로 빼버려, 이 occlusion 판정
+    # 시스템 앞에서 이미지가 아예 "존재하지 않는" 취급이었던 것(host_fileio._insert_pixmap_at과
+    # 동일하게 zValue는 건드리지 않고 rect보다 나중에 addItem해 실제 붙여넣기 경로를 재현).
+    w = CanvasWindow(); w.grid_enabled = False; w.set_tool("select")
+    rect = _mk_pen_rect(w, x=0, y=0, ww=200, hh=120)
+    w._scene.clearSelection()
+    port_edge, _n = _shape_ports(rect)[1]   # E(동쪽 변 중점)
+
+    # 대조군 — 이미지가 없으면 뒤(사실상 유일한) 도형의 호버·포트가 정상 반응해야 한다.
+    assert w._view._port_dot_target(port_edge) is rect
+    hp = w._view._hover_port_at(w._view.mapFromScene(port_edge))
+    assert hp is not None and hp[0] is rect
+
+    # 이미지를 그 자리 위에 덮어 붙인다.
+    img = _ImageItem(_mk_pixmap(80, 80), QRectF(0, 0, 80, 80))
+    img.setPos(port_edge.x() - 40, port_edge.y() - 40)
+    img.setFlags(img.GraphicsItemFlag.ItemIsMovable | img.GraphicsItemFlag.ItemIsSelectable)
+    w._scene.addItem(img)
+
+    # 이미지가 가린 지금은 뒤 도형이 호버 예고점·포트 드래그(=press 하이재킹) 어느 쪽에도
+    # 반응하면 안 된다 — 반응하면 "이미지를 끌었는데 뒤 도형에 화살표가 생긴다" 버그 그대로.
+    assert w._view._port_dot_target(port_edge) is None
+    hp2 = w._view._hover_port_at(w._view.mapFromScene(port_edge))
+    assert hp2 is None
+
+
 def test_port_trimmed_host_border_is_not_snappable_or_hoverable():
     # [실사용 버그 수정 2026-08-09] 포트 트림은 진짜 기하 분절이 아니라 배경색으로 덮어 그리는
     # 시각효과라(`_paint_port_cover_if_needed`, 2026-08-03 Qt 버그 우회) 히트/스냅 기하는 온전한
