@@ -9,8 +9,16 @@ retry/weak) 패턴을 이식했다. 설계·실측 근거는 `docs/ai_image_impo
 임포트해 이 모듈의 나머지(모델 조회·크레딧·vision 호출)는 순수 파이썬 헤드리스 도구
 (`tools/ai_sketch.py`)에서 Qt 애플리케이션 없이도 그대로 쓸 수 있다.
 
-키 해석 순서(`resolve_api_key`): 명시 인자 > QSettings("EasyCAD","EasyCAD")["ai_gateway_key"]
-> 환경변수 `EASYCAD_GW_KEY`.
+키 해석 순서(`resolve_api_key`): 명시 인자 > `~/.claude/.secrets/easycad-gateway.key`(첫 줄)
+> QSettings("EasyCAD","EasyCAD")["ai_gateway_key"] > 환경변수 `EASYCAD_GW_KEY`.
+
+**secrets 파일 관례는 `jbnu-gateway` 스킬(`~/.claude/skills/jbnu-gateway/scripts/_gw.py`)과
+동일하게 맞췄다** — 단 계정이 다르다(jbnu-gateway.key=학교 계정, easycad-gateway.key=이
+프로젝트가 쓰는 회사(kairos) 계정, 2026-08-11 확인). 파일은 `.gitignore`되는
+`~/.claude/.secrets/` 아래라 대화·git 어디에도 키가 남지 않는다 — 이 규칙을 2026-08-11에
+도입한 이유는 그 전에 `!` 프리픽스로 사용자가 직접 타이핑하다 셸 문법 실수로 키가 대화
+로그에 그대로 노출된 사고 때문(`docs/pitfalls.md` 참조 없음, 재발 방지 목적으로 파일
+경로 자체를 1순위로 승격).
 
 ⚠ 함정(`docs/pitfalls.md` 참조, 재확인 없이 우회하지 말 것):
 - `urllib`로 이 게이트웨이를 호출하면 SSL 인증서 검증 실패(self-signed in chain).
@@ -27,10 +35,12 @@ import io
 import json
 import os
 import time
+from pathlib import Path
 from typing import Literal, NamedTuple, Optional
 
 BASE_URL = "https://factchat.mindlogic-kr-api.com/v1/gateway"
 KEY_ENV = "EASYCAD_GW_KEY"
+SECRETS_FILE = Path.home() / ".claude" / ".secrets" / "easycad-gateway.key"
 
 # 게이트웨이가 reasoning(thinking) 토큰을 같은 max_tokens 예산에서 차감한다(ocr_engine.py와
 # 동일 실측 근거) — 작게 잡으면 thinking 모델에서 본문이 잘린다.
@@ -58,8 +68,20 @@ def _normalize_base_url(base_url: str) -> str:
     return url
 
 
+def _read_secrets_file() -> str:
+    """`SECRETS_FILE` 첫(비어있지 않은) 줄에서 키를 읽는다 — `jbnu-gateway` 스킬의
+    `_gw.py`와 동일한 파일 관례(경로만 이 프로젝트 전용)."""
+    try:
+        for line in SECRETS_FILE.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                return line.strip()
+    except OSError:
+        pass
+    return ""
+
+
 def resolve_api_key(explicit: str = "") -> str:
-    """키 해석: 명시 인자 > QSettings("EasyCAD","EasyCAD")["ai_gateway_key"] > 환경변수.
+    """키 해석: 명시 인자 > `SECRETS_FILE` 첫 줄 > QSettings["ai_gateway_key"] > 환경변수.
 
     QSettings 접근은 여기서만 지연 임포트한다 — Qt 애플리케이션 인스턴스 없이도
     QSettings 값 읽기는 가능하지만(플랫폼 레지스트리/INI 직접 접근), 이 모듈의 나머지
@@ -67,6 +89,9 @@ def resolve_api_key(explicit: str = "") -> str:
     """
     if explicit:
         return explicit.strip()
+    from_file = _read_secrets_file()
+    if from_file:
+        return from_file
     try:
         from PyQt6.QtCore import QSettings
         stored = QSettings("EasyCAD", "EasyCAD").value("ai_gateway_key", "", type=str)

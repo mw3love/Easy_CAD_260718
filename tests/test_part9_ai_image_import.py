@@ -86,6 +86,23 @@ def test_gateway_resolve_api_key_prefers_explicit():
     assert gw.resolve_api_key("explicit-key") == "explicit-key"
 
 
+def test_gateway_resolve_api_key_reads_secrets_file_before_env():
+    """`jbnu-gateway` 스킬과 동일한 secrets 파일 관례(2026-08-11 도입) — 첫 줄을 읽고,
+    파일이 없으면 조용히 다음 소스(QSettings→환경변수)로 넘어간다."""
+    secrets_path = os.path.join(_TMP, f"secrets_{uuid.uuid4().hex}.key")
+    with open(secrets_path, "w", encoding="utf-8") as f:
+        f.write("\nfile-key-value\n")  # 첫 줄이 빈 줄이어도 첫 "비어있지 않은" 줄을 읽음
+    with patch.object(gw, "SECRETS_FILE", __import__("pathlib").Path(secrets_path)):
+        assert gw.resolve_api_key() == "file-key-value"
+
+
+def test_gateway_resolve_api_key_falls_back_when_secrets_file_missing():
+    missing = os.path.join(_TMP, f"missing_{uuid.uuid4().hex}.key")
+    with patch.object(gw, "SECRETS_FILE", __import__("pathlib").Path(missing)), \
+         patch.dict(os.environ, {gw.KEY_ENV: "env-key-value"}):
+        assert gw.resolve_api_key() == "env-key-value"
+
+
 # ── B단계: 좌표 복원(P2→P3) ──────────────────────────────────────────────────
 
 def test_restore_item_coords_divides_by_zoom_then_adds_offset():
