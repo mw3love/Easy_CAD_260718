@@ -678,6 +678,27 @@ class _HandleResizeMixin:
         if h is not None and before_cuts != after:
             h.push_undo_cut(self, before_cuts)
 
+    def _box_edge_tol(self) -> float:
+        """`_box_edge_side`/`_box_edge_band_rects`가 공유하는 변 리사이즈 대역 반폭(로컬 단위,
+        화면상 약 4px로 줌 무관 고정) — 하나만 고치면 커서 판정과 클릭 히트영역이 항상 같이
+        움직이게 분리."""
+        return max(self._EDGE_HIT_MIN / self._scale_or_1(), self._handle_px() * 0.5) / 2.0
+
+    def _box_edge_band_rects(self):
+        """[실사용 버그 수정 2026-08-11] `_box_edge_side`가 리사이즈 커서로 인식하는 변 대역과
+        똑같은 4개 밴드(로컬좌표) — `shape()`에 포함시켜야 그 자리를 실제로 클릭했을 때도
+        리사이즈가 발동한다. 이전엔 `shape()`가 모서리 핸들·회전 핸들만 포함하고 이 밴드는
+        빠져 있어, 커서는 리사이즈로 바뀌는데 테두리 바깥쪽(밴드의 바깥 절반)을 클릭하면 Qt가
+        이 도형을 히트로 안 잡아 캔버스 빈 공간을 누른 것처럼 새던 버그(선택 해제 등)."""
+        r = self.rect()
+        tol = self._box_edge_tol()
+        return [
+            QRectF(r.left() - tol, r.top() - tol, r.width() + 2 * tol, 2 * tol),
+            QRectF(r.left() - tol, r.bottom() - tol, r.width() + 2 * tol, 2 * tol),
+            QRectF(r.left() - tol, r.top() - tol, 2 * tol, r.height() + 2 * tol),
+            QRectF(r.right() - tol, r.top() - tol, 2 * tol, r.height() + 2 * tol),
+        ]
+
     def _box_edge_side(self, local_pt: QPointF):
         """local_pt가 (모서리·qc-dot과 안 겹치는) 테두리 변 위 리사이즈 대역이면 그 변
         ('t'/'r'/'b'/'l'), 아니면 None. [2026-08-03 실사용 지적, Lucid 대조] 변 전체를 잡아
@@ -700,7 +721,7 @@ class _HandleResizeMixin:
         # 이 그대로 로컬 단위 tol이 되어, 화면상 밴드 폭이 줌에 비례해 커졌다(2164% 줌에서
         # 변 안쪽·바깥쪽 86px까지 리사이즈 커서, 사용자 스크린샷으로 실측). 나머지 세 곳과
         # 같은 관례로 맞춘다 — 이제 화면상 약 4px로 줌 무관 고정.
-        tol = max(self._EDGE_HIT_MIN / self._scale_or_1(), self._handle_px() * 0.5) / 2.0
+        tol = self._box_edge_tol()
         x, y = local_pt.x(), local_pt.y()
         if not (r.left() - tol <= x <= r.right() + tol and r.top() - tol <= y <= r.bottom() + tol):
             return None
@@ -1023,6 +1044,8 @@ class _HandleResizeMixin:
                 for _i, r in self._box_corner_rects():
                     hp.addRect(r)
                 hp.addEllipse(self._box_rot_rect())
+                for band in self._box_edge_band_rects():
+                    hp.addRect(band)
             else:
                 hp.addRect(self._handle_local_rect())
                 hp.addEllipse(self._rot_handle_rect())

@@ -645,6 +645,23 @@ def test_box_edge_side_band_stays_screen_fixed_at_high_zoom():
     assert near == Qt.CursorShape.SizeHorCursor
 
 
+def test_box_edge_resize_hit_matches_cursor_band():
+    # [실사용 버그 수정 2026-08-11] 커서는 리사이즈로 바뀌는데(변 tol 밴드 안) `shape()`가
+    # 그 밴드의 바깥 절반을 포함 안 해, 테두리 바로 바깥쪽을 클릭하면 Qt가 이 도형을 히트로
+    # 못 잡고 빈 캔버스를 누른 것처럼 새던 버그(선택 해제 등) — 사용자 실사용 지적.
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    r = a.rect()
+    tol = a._box_edge_tol()
+    y = r.top() + r.height() * 0.2   # 모서리(코너 핸들)·변 중점(qc-dot)과 안 겹치는 위치
+    outside = QPointF(r.right() + tol * 0.5, y)
+    inside = QPointF(r.right() - tol * 0.5, y)
+    assert a._box_handle_cursor(outside) == Qt.CursorShape.SizeHorCursor
+    assert a._box_handle_cursor(inside) == Qt.CursorShape.SizeHorCursor
+    assert a.shape().contains(outside), "커서는 리사이즈인데 히트영역엔 없음(바깥쪽)"
+    assert a.shape().contains(inside), "커서는 리사이즈인데 히트영역엔 없음(안쪽)"
+
+
 def test_qc_dots_geometry():
     # [하나의 시스템으로 통합 2026-08-01 → 2026-08-03 재도입] 선택된 네모의 상하좌우 접속점은
     # 테두리에서 `_HANDLE_GAP_FACTOR`만큼 바깥으로 띄운 자리다 — "핸들이 도형 안쪽에 있는
