@@ -118,7 +118,7 @@ def test_floating_panels_and_zoom_readout():
     assert set(w._sym_buttons) == {"decision", "terminal", "data", "prep", "database"}
     # 버튼 고정 크기 — 패널이 넓어져도 커지거나 벌어지지 않는다(좌측 뭉침).
     b = w._shape_tool_buttons["rect"]
-    assert b.minimumWidth() == b.maximumWidth() == 58
+    assert b.minimumWidth() == b.maximumWidth() == 48
     # 속성 패널은 값(hex)이 안 잘리는 최소폭 바닥을 가진다(슬랙 없이 그 아래로 못 좁힘).
     assert w._props_panel._body_layout.itemAt(0).widget().minimumWidth() == 170
     # 패널은 창 리사이즈 후에도 뷰 영역 안쪽에 고정 위치(자유 드래그 없음의 반대증거).
@@ -175,13 +175,11 @@ def test_left_panel_accordion_collapse_expand_resizes_panel():
     # 같은 클래스, `_relayout_left_panel`이 같은 activate()→adjustSize() 해법을 재사용).
     # ⚠ show() 필수 — 창을 띄우지 않으면 Qt가 레이아웃 무효화를 다르게(더 늦게) 처리해
     # adjustSize()가 stale한 값으로 멈춘다.
-    w = CanvasWindow(); w.show()
     # ⚠ [실측] `_layers_list`(QListWidget, 커스텀 행 위젯)의 `sizeHintForRow()`는 show() 직후
-    # 첫 `.height()` 접근 전까지 실제보다 큰 값을 낸다(레이아웃 문제와 무관 — 이 테스트가 만든
-    # 게 아니라 `_refresh_layers_panel`이 이미 갖고 있던 특성, 좌측 패널 왕복 비교로 처음
-    # 드러남). 왕복 비교 기준선을 잡기 전에 한 번 읽어 안정화시킨다.
-    _ = w._layers_list.height()
-    w._relayout_left_panel()
+    # 첫 `.height()` 접근 전까지 실제보다 큰 값을 낸다(이 테스트가 만든 게 아니라
+    # `_refresh_layers_panel`이 이미 갖고 있던 특성) — `CanvasWindow.showEvent`가 이제 이
+    # settle을 자동으로 해준다(2026-08-12, 좌측 패널 왕복 비교로 처음 드러나 소스에 고정).
+    w = CanvasWindow(); w.show()
     collapsed_size = w._left_panel.size()        # 순서도 섹션은 기본 접힘 시작
     flow_section = w._left_accordion_sections["flowchart"]
     assert flow_section._collapsed

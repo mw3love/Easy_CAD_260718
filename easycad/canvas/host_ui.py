@@ -82,9 +82,12 @@ _PALETTE_TRIANGLE_WH = (77.94, 90.0)
 # [같은 날 후속] 3열로도 아이콘 사이 여백이 넓다는 재피드백 — 버튼 폭을 더 줄이고(74→58)
 # 4열로 늘려 같은 폭 안에서 더 촘촘하게(간격은 버튼 내부 여백이 대부분이라 버튼 자체를
 # 줄이는 쪽이 grid spacing을 줄이는 것보다 효과적).
-_PALETTE_ICON_PX = 22
-_PALETTE_BTN_SIZE = QSize(58, 46)
+# [같은 날 3차 후속] 패널 자체를 속성/미니맵 패널(218px)과 비슷한 폭으로 줄이자는 요청 —
+# 버튼·아이콘·폰트를 한 번 더 줄이고(58→48, 22→18, 폰트 -2pt), 4열은 유지.
+_PALETTE_ICON_PX = 18
+_PALETTE_BTN_SIZE = QSize(48, 40)
 _PALETTE_COLS = 4
+_PALETTE_FONT_SHRINK = 2   # pt만큼 기본 폰트에서 뺀다
 
 
 
@@ -312,6 +315,19 @@ class _UIBuildMixin:
         super().resizeEvent(e)
         self._refresh_minimap()
         self._reposition_panels()
+
+
+    def showEvent(self, e):
+        # [2026-08-12] `_layers_list`(QListWidget)의 `sizeHintForRow()`/geometry는 위젯이
+        # 실제로 show() 되기 전까지는 `.height()`를 직접 읽어도 settle 안 되는 Qt 내부 지연
+        # 계산이라(오프스크린·실제 창 둘 다 재현), `_build_left_panel()` 생성 시점(창이 아직
+        # 안 뜬 상태) 계산은 `setMaximumWidth(200)` 같은 제약을 반영 못 하고 더 넓은 값으로
+        # 남는다 — 처음 뜬 직후 한 번 더 읽어 재계산해야 좌측 패널이 처음부터 목표 폭으로
+        # 뜬다(안 하면 사용자가 뭔가 다른 상호작용을 해 우연히 relayout이 다시 불릴 때까지
+        # 창이 잘못된(더 넓은) 크기로 보임).
+        super().showEvent(e)
+        _ = self._layers_list.height()
+        self._relayout_left_panel()
 
     # ---- [캔버스-퍼스트] 플로팅 패널·토스트 위치 계산 -------------------------
 
@@ -715,6 +731,10 @@ class _UIBuildMixin:
         btn.setToolTip(tooltip)
         btn.setCheckable(True)
         btn.setFixedSize(_PALETTE_BTN_SIZE)   # 고정 크기 — dock이 넓어도 버튼이 커지거나 벌어지지 않게
+        # [2026-08-12 3차 피드백] 라벨 폰트도 축소 — QFont로(추후 _apply_theme가 setStyleSheet로
+        # checked/hover 배경색을 다시 씌워도 폰트는 별도 채널이라 안 덮임, 스타일시트로 넣으면
+        # 그 재적용에 지워질 것).
+        f = btn.font(); f.setPointSize(max(1, f.pointSize() - _PALETTE_FONT_SHRINK)); btn.setFont(f)
         btn.clicked.connect(
             lambda _c=False, k=tool_key: self.set_tool(None if self.current_tool == k else k))
         return btn
@@ -731,7 +751,7 @@ class _UIBuildMixin:
     def _make_shape_grid(self, entries, store) -> QGridLayout:
         """[캔버스-퍼스트] 팔레트 버튼 grid 하나 — 아코디언 섹션 바디에 직접 얹는다(제목은
         섹션 헤더가 이미 표시하므로 옛 `_make_shape_section`처럼 내부 라벨을 또 넣지 않음)."""
-        grid = QGridLayout(); grid.setSpacing(4)
+        grid = QGridLayout(); grid.setSpacing(2)   # [2026-08-12 3차] 4→2, 패널 폭 축소에 맞춤
         btns = []
         for label, icon_kind, tooltip, tool_key in entries:
             btn = self._palette_button(label, icon_kind, tooltip, tool_key)
@@ -789,7 +809,7 @@ class _UIBuildMixin:
                     lambda _c=False, n=folder_name: self._delete_symbol_folder_prompt(n))
                 head.addWidget(del_btn)
             zv.addLayout(head)
-            grid = QGridLayout(); grid.setSpacing(4)
+            grid = QGridLayout(); grid.setSpacing(2)   # [2026-08-12 3차] 4→2
             btns = []
             for entry in entries:
                 if entry.get("folder") != folder_name:
@@ -865,7 +885,7 @@ class _UIBuildMixin:
         self._left_panel = panel
         container = QWidget()
         outer = QVBoxLayout(container)
-        outer.setContentsMargins(4, 4, 4, 4); outer.setSpacing(2)
+        outer.setContentsMargins(3, 3, 3, 3); outer.setSpacing(2)   # [2026-08-12 3차] 4→3
         self._left_container = container   # _refresh_custom_symbol_section이 아래에서 바로 씀
         panel.set_content(container)
 

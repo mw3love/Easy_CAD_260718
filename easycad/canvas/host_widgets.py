@@ -667,7 +667,9 @@ class _AccordionSection(QWidget):
 
         self.body = QWidget()
         self.body_layout = QVBoxLayout(self.body)
-        self.body_layout.setContentsMargins(4, 2, 4, 6); self.body_layout.setSpacing(6)
+        # [2026-08-12 3차 피드백] 좌우 여백 축소(4→2) — 패널 폭을 속성/미니맵 패널(218px)에
+        # 맞추기 위한 축소 시리즈의 일부.
+        self.body_layout.setContentsMargins(2, 2, 2, 4); self.body_layout.setSpacing(4)
         v.addWidget(self.body)
 
         self._collapsed = QSettings("EasyCAD", "EasyCAD").value(
