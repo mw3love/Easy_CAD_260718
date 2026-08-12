@@ -227,26 +227,34 @@ def test_generate_mermaid_uses_text_prompt_when_no_image():
 
 # ── _MermaidDialog: AI 보조 생성 ─────────────────────────────────────────────
 
-def test_mermaid_dialog_populate_models_groups_by_family_with_separator():
-    """gpt/gemini를 구분선으로 명확히 나누고(실사용 요청), 추천 모델엔 금색 별
-    아이콘을 붙인다(텍스트 라벨 "(추천1)"/"(추천2)"는 그대로 유지)."""
+def _find_radio(dlg, model_id):
+    for btn in dlg._model_group.buttons():
+        if btn.property("model_id") == model_id:
+            return btn
+    return None
+
+
+def test_mermaid_dialog_populate_models_splits_into_parallel_columns():
+    """gpt/gemini를 2열 병렬 패널로 명확히 나누고(디자인 베이크오프 라운드 2, "G4처럼
+    병렬로" 반영), 추천 모델엔 금색 별 아이콘을 붙인다(텍스트 라벨 "(추천1)"/"(추천2)"도
+    함께 유지)."""
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.gw.list_text_models",
                return_value=["gpt-5.4-mini", "gpt-5.4-nano", "gemini-3.6-flash"]):
         dlg = _MermaidDialog()
     assert dlg.model() == gw.TEXT_RECOMMEND_1
-    idx1 = dlg._model_combo.findData(gw.TEXT_RECOMMEND_1)
-    idx2 = dlg._model_combo.findData(gw.TEXT_RECOMMEND_2)
-    assert "추천1" in dlg._model_combo.itemText(idx1)
-    assert "추천2" in dlg._model_combo.itemText(idx2)
-    assert not dlg._model_combo.itemIcon(idx1).isNull()
-    assert not dlg._model_combo.itemIcon(idx2).isNull()
-    idx3 = dlg._model_combo.findData("gpt-5.4-nano")
-    assert dlg._model_combo.itemIcon(idx3).isNull()   # 비추천 항목엔 배지 없음(구별)
-    # gemini 그룹(1개) + 구분선(1) + gpt 그룹(2개) = 4행.
-    assert dlg._model_combo.count() == 4
-    # claude는 애초에 list_text_models가 걸러주므로 드롭다운에 아예 없어야 함(방어적 확인).
-    assert dlg._model_combo.findData("claude-sonnet-5") == -1
+    rb1 = _find_radio(dlg, gw.TEXT_RECOMMEND_1)
+    rb2 = _find_radio(dlg, gw.TEXT_RECOMMEND_2)
+    assert "추천1" in rb1.text()
+    assert "추천2" in rb2.text()
+    assert not rb1.icon().isNull()
+    assert not rb2.icon().isNull()
+    rb3 = _find_radio(dlg, "gpt-5.4-nano")
+    assert rb3.icon().isNull()   # 비추천 항목엔 배지 없음(구별)
+    assert dlg._gemini_col.count() == 1   # gemini-3.6-flash만
+    assert dlg._gpt_col.count() == 2      # gpt-5.4-mini·gpt-5.4-nano
+    # claude는 애초에 list_text_models가 걸러주므로 패널에 아예 없어야 함(방어적 확인).
+    assert _find_radio(dlg, "claude-sonnet-5") is None
 
 
 def test_mermaid_dialog_populate_models_falls_back_when_list_fails():
@@ -255,7 +263,33 @@ def test_mermaid_dialog_populate_models_falls_back_when_list_fails():
                side_effect=RuntimeError("no network")):
         dlg = _MermaidDialog()
     assert dlg.model() == gw.TEXT_RECOMMEND_1
-    assert dlg._model_combo.count() == 3   # 추천1(gemini 1) + 구분선 + 추천2(gpt 1)
+    assert dlg._gemini_col.count() == 1   # 추천2(gemini)만 남음
+    assert dlg._gpt_col.count() == 1      # 추천1(gpt)만 남음
+
+
+def test_mermaid_dialog_model_panel_toggle_expands_and_collapses():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    assert dlg._model_body.isHidden()
+    assert dlg._model_chevron.text() == "▸"
+    dlg._toggle_model_panel()
+    assert not dlg._model_body.isHidden()
+    assert dlg._model_chevron.text() == "▾"
+    dlg._toggle_model_panel()
+    assert dlg._model_body.isHidden()
+    assert dlg._model_chevron.text() == "▸"
+
+
+def test_mermaid_dialog_selecting_radio_updates_summary_and_model():
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.gw.list_text_models",
+               return_value=["gpt-5.4-mini", "gemini-3.6-flash", "gemini-2.0-flash"]):
+        dlg = _MermaidDialog()
+    other = _find_radio(dlg, "gemini-2.0-flash")
+    other.setChecked(True)
+    assert dlg.model() == "gemini-2.0-flash"
+    assert "gemini-2.0-flash" in dlg._model_summary.text()
+    assert "★" not in dlg._model_summary.text()   # 비추천 모델 선택 시 별 접두어 없음
 
 
 def test_mermaid_dialog_single_box_ai_button_fills_in_place_and_stays_editable():
@@ -551,7 +585,7 @@ def test_mermaid_dialog_refresh_button_reloads_model_list():
                return_value=["gpt-5.4-mini", "gpt-6.0-new", "gemini-3.6-flash"]) as new_list:
         dlg._refresh_btn.click()
     assert new_list.called
-    assert dlg._model_combo.findData("gpt-6.0-new") >= 0
+    assert _find_radio(dlg, "gpt-6.0-new") is not None
 
 
 def test_mermaid_dialog_populate_models_uses_resolved_base_url():
