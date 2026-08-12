@@ -101,7 +101,8 @@ def test_pdf_export_forces_white_bg():
 def test_floating_panels_and_zoom_readout():
     # [캔버스-퍼스트 레이아웃] 좌/우 QDockWidget → 콘텐츠 크기 플로팅 카드로 전환(deep-interview
     # 2026-07-29) — 좌측은 2026-08-12에 탭 2개에서 아코디언 4섹션(기본도형/순서도/내 심볼/레이어)
-    # 으로 개편, 위치는 고정(자유 드래그 재배치 없음), 도형 그리드 섹션은 항상 2열.
+    # 으로 개편, 위치는 고정(자유 드래그 재배치 없음), 도형 그리드 섹션은 항상 3열(같은 날 후속
+    # 피드백 — 2열은 패널 폭의 절반이 빈 공간으로 남아 밀도를 높임).
     w = CanvasWindow()
     assert w._left_panel.parent() is w
     assert w._props_panel.parent() is w
@@ -109,15 +110,15 @@ def test_floating_panels_and_zoom_readout():
     basic_grid, basic_btns = w._shape_sections[0]
     last = basic_btns[-1]
     r, c, _rs, _cs = basic_grid.getItemPosition(basic_grid.indexOf(last))
-    # 기본 3종(네모·원·삼각형, 2026-08-10 §8 항목17 7단계로 포트 2종 제거), 2열 고정 →
-    # 마지막 버튼은 (row1, col0).
-    assert (r, c) == (1, 0)
+    # 기본 3종(네모·원·삼각형, 2026-08-10 §8 항목17 7단계로 포트 2종 제거), 3열 고정 →
+    # 마지막 버튼은 (row0, col2).
+    assert (r, c) == (0, 2)
     # 팔레트 버튼 키가 보존(테스트 계약).
     assert set(w._shape_tool_buttons) == {"rect", "ellipse", "triangle"}
     assert set(w._sym_buttons) == {"decision", "terminal", "data", "prep", "database"}
     # 버튼 고정 크기 — 패널이 넓어져도 커지거나 벌어지지 않는다(좌측 뭉침).
     b = w._shape_tool_buttons["rect"]
-    assert b.minimumWidth() == b.maximumWidth() == 64
+    assert b.minimumWidth() == b.maximumWidth() == 74
     # 속성 패널은 값(hex)이 안 잘리는 최소폭 바닥을 가진다(슬랙 없이 그 아래로 못 좁힘).
     assert w._props_panel._body_layout.itemAt(0).widget().minimumWidth() == 170
     # 패널은 창 리사이즈 후에도 뷰 영역 안쪽에 고정 위치(자유 드래그 없음의 반대증거).

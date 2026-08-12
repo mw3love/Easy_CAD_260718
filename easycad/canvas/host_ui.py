@@ -77,6 +77,12 @@ _PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 
 # 깨지는 게 정상(원을 늘이면 타원 되는 것과 같음) — 기본 생성 시점만 정삼각형 보장.
 _PALETTE_TRIANGLE_WH = (77.94, 90.0)
 
+# [2026-08-12, 사용자 스크린샷 피드백 — Lucid 대비 버튼이 크고 2열 고정이라 패널 폭의 절반이
+# 빈 공간] 아이콘+라벨은 유지하되(사용자 선택) 버튼·아이콘을 줄이고 3열로 늘려 밀도를 높인다.
+_PALETTE_ICON_PX = 22
+_PALETTE_BTN_SIZE = QSize(74, 50)
+_PALETTE_COLS = 3
+
 
 
 
@@ -700,12 +706,12 @@ class _UIBuildMixin:
         QIcon(썸네일)을 직접 넘길 수도 있다."""
         btn = _PaletteButton(tool_key, preview_fn=self._render_drag_preview)   # [M3 #17] 클릭=무장 / 드래그=캔버스 드롭 생성
         btn.setText(label)
-        btn.setIcon(icon_kind if isinstance(icon_kind, QIcon) else self._shape_icon(icon_kind))
-        btn.setIconSize(QSize(30, 30))
+        btn.setIcon(icon_kind if isinstance(icon_kind, QIcon) else self._shape_icon(icon_kind, px=_PALETTE_ICON_PX))
+        btn.setIconSize(QSize(_PALETTE_ICON_PX, _PALETTE_ICON_PX))
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         btn.setToolTip(tooltip)
         btn.setCheckable(True)
-        btn.setFixedSize(QSize(64, 56))   # 고정 크기 — dock이 넓어도 버튼이 커지거나 벌어지지 않게
+        btn.setFixedSize(_PALETTE_BTN_SIZE)   # 고정 크기 — dock이 넓어도 버튼이 커지거나 벌어지지 않게
         btn.clicked.connect(
             lambda _c=False, k=tool_key: self.set_tool(None if self.current_tool == k else k))
         return btn
@@ -733,13 +739,14 @@ class _UIBuildMixin:
 
 
     def _relayout_sections(self, horiz: bool = False):
-        """[캔버스-퍼스트] 각 섹션 그리드를 2열로 배치. `horiz` 인자는 옛 dock 상/하 재도킹 시
+        """[캔버스-퍼스트] 각 섹션 그리드를 `_PALETTE_COLS`열로 배치(2026-08-12, 옛 2열 고정 —
+        패널 폭의 절반이 빈 공간으로 남던 문제 수정). `horiz` 인자는 옛 dock 상/하 재도킹 시
         한 줄로 눕히던 반응형 레이아웃의 흔적(플로팅 패널은 위치 고정이라 대상 없음) — 항상
         False로만 호출되지만, 초기 빌드 호출부(`_build_left_panel`)와의 계약을 그대로 둔다."""
         for grid, btns in self._shape_sections:
             for b in btns:
                 grid.removeWidget(b)
-            cols = len(btns) if horiz else 2
+            cols = len(btns) if horiz else _PALETTE_COLS
             for i, b in enumerate(btns):
                 grid.addWidget(b, i // cols, i % cols)
             # 스트레치 초기화 후 실제 열 다음 빈 열에만 1 → 넓어져도 버튼은 좌측 정렬 유지.
@@ -794,8 +801,8 @@ class _UIBuildMixin:
                 self._custom_sym_buttons[sid] = btn
                 btns.append(btn)
             for i, b in enumerate(btns):
-                grid.addWidget(b, i // 2, i % 2)
-            grid.setColumnStretch(2, 1)
+                grid.addWidget(b, i // _PALETTE_COLS, i % _PALETTE_COLS)
+            grid.setColumnStretch(_PALETTE_COLS, 1)
             zv.addLayout(grid)
             body.layout().addWidget(zone)
 
