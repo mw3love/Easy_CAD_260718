@@ -6,7 +6,6 @@
 잎(leaf) 모듈이다.
 """
 import io
-import math
 import os
 
 from PyQt6.QtCore import (
@@ -14,7 +13,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter, QImage,
-    QFont, QPolygonF, QPainterPath, QPalette, QTextCursor,
+    QFont, QPainterPath, QPalette, QTextCursor, QStandardItemModel, QStandardItem,
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
@@ -263,86 +262,48 @@ class _CableNumberDialog(QDialog):
         return prefix, self._start_sb.value()
 
 
-def _recommend_star_icon(size: int = 14) -> QIcon:
-    """모델 드롭다운의 "추천" 배지 — 금색 별. 코랄(#da7756)은 이 앱에서 버튼 상태(체크·
-    호버) 전용 색이라(M6 디자인 베이크오프 관례) 배지에 재사용하면 의미가 겹친다 —
-    "추천/즐겨찾기"의 흔한 관용색인 금색으로 분리."""
-    cached = _RECOMMEND_STAR_CACHE.get(size)
-    if cached is not None:
-        return cached
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(QColor("#f5b942"))
-    cx, cy, r_out, r_in = size / 2, size / 2, size * 0.48, size * 0.19
-    pts = []
-    for i in range(10):
-        ang = math.pi / 2 + i * math.pi / 5
-        r = r_out if i % 2 == 0 else r_in
-        pts.append(QPointF(cx + r * math.cos(ang), cy - r * math.sin(ang)))
-    p.drawPolygon(QPolygonF(pts))
-    p.end()
-    icon = QIcon(pm)
-    _RECOMMEND_STAR_CACHE[size] = icon
-    return icon
-
-
-_RECOMMEND_STAR_CACHE: dict[int, QIcon] = {}
-
-
-class _ClickableRow(QWidget):
-    """헤더 행 전체가 클릭 가능(모델 패널 접기/펴기) — 자식 버튼(새로고침) 클릭은 Qt가
-    자식 위젯에 먼저 전달하므로 자동으로 분리된다(부모까지 안 올라옴)."""
-
-    def __init__(self, on_click, parent=None):
-        super().__init__(parent)
-        self._on_click = on_click
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self._on_click()
-        super().mousePressEvent(e)
 
 
 class _MermaidDialog(QDialog):
-    """Mermaid flowchart 입력창 — 설명 텍스트/이미지와 Mermaid 코드를 한 칸에서 같이 받는다.
+    """Mermaid flowchart 입력창 — 프롬프트(AI 지시)와 Mermaid 코드를 별개 칸으로 받는다.
 
-    §8 항목18(AI 이미지→도면) 후속(2026-08-12) — 처음엔 프롬프트 칸과 Mermaid 칸을
-    분리했었으나(AI가 실수로 편집 중인 내용을 덮어쓸 위험 때문), 실사용 결과 그 위험보다
-    "칸 하나에서 타이핑도 붙여넣기도 다 되고, 키보드만으로 바로 변환"이 훨씬 중요하다는
-    피드백으로 단일 칸으로 되돌렸다. 대신 AI 생성 결과 반영은 `setPlainText()`(되돌리기
-    스택을 초기화함) 대신 `QTextCursor` 전체선택+치환으로 해 Ctrl+Z로 원래 입력을 복구할
-    수 있게 안전망을 남겼다. Ctrl+Enter(칸 안에서)로 마우스 없이 바로 AI 생성 트리거.
+    §8 항목18(AI 이미지→도면) 후속(2026-08-12) — 하루 사이 이 축을 두 번 오갔다: 처음엔
+    2칸 → "AI가 편집 중인 내용을 덮어쓸 위험보다 한 칸이 편하다"는 피드백으로 1칸 →
+    "텍스트 입력과 Mermaid 코드가 헷갈린다(둘 다 같은 칸이라 AI 버튼을 눌러야만 하는 게
+    안 보임)"는 재피드백으로 다시 2칸으로 복귀. 이번엔 각 칸이 서로 다른 Enter 의미를
+    가져 원래의 "덮어쓸 위험" 우려도 없다 — `_prompt_edit`(위, 짧음)는 Enter로 AI 생성을
+    트리거하고 Shift+Enter만 줄바꿈(참고 이미지의 다른 AI 입력창 관례를 그대로 채용),
+    `_edit`(아래, 넉넉함)는 평범한 멀티라인 코드 편집기라 Enter가 항상 줄바꿈이다 — 두
+    칸의 역할이 다르므로 실수로 서로를 덮어쓸 상황 자체가 구조적으로 없다. `_edit`은
+    AI 생성 결과가 채워지는 곳이자 동시에 사용자가 직접 타이핑·붙여넣기도 가능한 최종
+    Mermaid 코드 칸(OK를 누르면 이 칸의 내용이 실제로 가져와진다, `text()` 참조) —
+    "1번 칸 없이 바로 2번 칸에 Mermaid를 쓰는" 경로도 그대로 지원된다.
 
     이미지 입력도 받는다(찾아보기·드래그드롭·Ctrl+V, 옛 `_AIImageImportDialog`와 같은
-    3경로). 이미지가 첨부되면 텍스트 칸은 "보충 설명(선택)"으로 격하되고
+    3경로). 이미지가 첨부되면 프롬프트 칸은 "보충 설명(선택)"으로 격하되고
     (`text_to_mermaid.generate_mermaid`의 `image` 인자), 좌표 없는 Mermaid 출력이라 옛
     파이프라인처럼 타일링·좌표 복원이 전혀 필요 없다 — 단일 vision 호출뿐.
     ⚠ 모델 목록은 텍스트 전용 목록(`list_text_models`)을 그대로 재사용한다 — 이
     게이트웨이에서 어떤 gpt/gemini 항목이 실제로 이미지 입력을 받는지는 실키로 확인 못
     했다(Not-tested, 실사용 중 특정 모델이 이미지를 거부하면 다른 모델로 바꿔 재시도).
 
-    **디자인 베이크오프 라운드 2(2026-08-12) 반영** — 첨부·생성 버튼을 입력칸 테두리
-    안쪽에 내장(사용자 피드백: "생성 버튼이 입력칸과 종속되게 느껴지길 원함"). Qt는 HTML
-    처럼 textarea 안에 진짜 겹쳐 그리는 게 아니라, `_edit`의 자식 위젯으로 버튼을 만들고
-    `setViewportMargins()`로 텍스트 뷰포트 자체를 줄여 그 여백에 버튼을 놓는 방식(텍스트가
-    스크롤돼도 버튼 밑을 지나가지 않도록 진짜 공간을 예약 — CSS padding 방식보다 안전).
-    모델 선택은 "접으면 요약 한 줄(G2 스타일) / 펼치면 gemini·gpt 2열 병렬 패널(G4 스타일)"
-    하나로 합쳤다 — `_model_header`(클릭 시 토글) + `_model_body`(두 열, 라디오버튼)."""
+    **디자인 3차 정리(2026-08-12)** — 다른 AI 입력창 참고 이미지를 기준으로 정리:
+    설정 버튼은 우상단 단독으로, 안내문은 불릿 목록, 첨부는 "+" 아이콘, 모델은 추천
+    배지 없는 평범한 드롭다운(gemini·gpt 그룹 헤더만 구분). 새로고침은 더 이상 이 창에
+    없다 — "API 키를 만지는 곳(설정 창)에서 함께 해야 한다"는 지적으로
+    `_AIGatewaySettingsDialog` 쪽으로 옮겼다(그쪽에서 gpt/gemini 개수와 크레딧까지 함께
+    확인 가능)."""
 
-    _SAMPLE = ("예: 날씨를 예보하는 워크플로우\n\n"
-               "또는 Mermaid 코드를 직접 붙여넣어도 됩니다:\n"
-               "flowchart TD\n"
+    _SAMPLE = ("flowchart TD\n"
                "    A[시작] --> B{조건?}\n"
                "    B -->|예| C[처리]\n"
                "    B -->|아니오| D([종료])\n"
                "    C --> D")
+    _HINT = ("• Enter — AI로 Mermaid 생성 (Shift+Enter는 줄바꿈)\n"
+             "• 드래그·Ctrl+V — 이미지 첨부\n"
+             "• 아래 칸에 Mermaid 코드를 직접 입력·붙여넣기도 가능")
 
     _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
-    _EMBED_MARGIN = 10
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -352,32 +313,38 @@ class _MermaidDialog(QDialog):
         self._attached_image_name = ""
         lay = QVBoxLayout(self)
 
-        # [2026-08-12 피드백] 첨부(회색)·AI생성(코랄) 두 버튼이 입력칸 안에 같이 있으니
-        # 색이 달라 "같은 창의 한 툴바"로 안 읽혔다(사용자: "서로 다른 색이라 같은 칸인 줄
-        # 몰랐다") — 첨부는 라벨 줄로 빼 완전히 분리하고, 입력칸 안에는 AI 버튼 하나만
-        # 남겨 그 영역 전체가 "코랄=AI 생성"이라는 단일 색 의미로 읽히게 한다.
-        label_row = QHBoxLayout()
-        label_row.addWidget(QLabel("설명을 입력하거나 Mermaid 코드를 직접 붙여넣으세요"
-                             "(드래그드롭·Ctrl+V로 이미지 첨부 가능):"), 1)
+        # [2026-08-12 3차] 설정은 이 창의 어느 특정 행에 종속된 기능이 아니라 창 전체의
+        # 환경설정이라 우상단 단독 배치(참고 이미지 관례).
+        top_row = QHBoxLayout()
+        top_row.addStretch(1)
+        self._settings_btn = QToolButton(self)
+        self._settings_btn.setIcon(_act_icon("settings"))
+        self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·모델 새로고침·크레딧 확인)")
+        self._settings_btn.clicked.connect(self._open_gateway_settings)
+        top_row.addWidget(self._settings_btn)
+        lay.addLayout(top_row)
+
+        hint = QLabel(self._HINT, self)
+        hint.setStyleSheet("color:#8a8a8a;")
+        lay.addWidget(hint)
+
+        # ---- 1번 칸: AI 프롬프트(짧음) + 첨부("+") + AI 생성(코랄) ------------------
+        prompt_row = QHBoxLayout()
+        self._prompt_edit = QPlainTextEdit(self)
+        self._prompt_edit.setPlaceholderText("예: 날씨를 예보하는 워크플로우")
+        self._prompt_edit.setFixedHeight(64)
+        self._prompt_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self._prompt_edit.setAcceptDrops(False)   # 드롭을 이 다이얼로그(dropEvent)로 넘김
+        self._prompt_edit.installEventFilter(self)   # Enter 생성·Ctrl+V 이미지 첨부
+        prompt_row.addWidget(self._prompt_edit, 1)
+
         self._attach_btn = QToolButton(self)
-        self._attach_btn.setIcon(_act_icon("attach"))
+        self._attach_btn.setText("+")   # [2026-08-12 3차] 클립 아이콘 → "+"(참고 이미지 관례)
         self._attach_btn.setToolTip("이미지 첨부(드래그드롭·Ctrl+V도 가능)")
         self._attach_btn.clicked.connect(self._browse_image)
-        label_row.addWidget(self._attach_btn)
-        lay.addLayout(label_row)
+        prompt_row.addWidget(self._attach_btn)
 
-        self._edit = QPlainTextEdit(self)
-        self._edit.setPlaceholderText(self._SAMPLE)
-        self._edit.setMinimumSize(QSize(460, 280))
-        self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self._edit.setAcceptDrops(False)   # 드롭을 이 다이얼로그(dropEvent)로 넘김
-        self._edit.installEventFilter(self)   # Ctrl+Enter·이미지 붙여넣기·리사이즈 재배치
-        # AI 생성 버튼이 앉을 공간을 텍스트 뷰포트 자체에서 예약(패딩이 아니라 진짜
-        # 레이아웃 여백이라 스크롤해도 버튼 밑으로 글자가 절대 지나가지 않는다).
-        self._edit.setViewportMargins(0, 0, 0, 44)
-        lay.addWidget(self._edit)
-
-        self._ai_btn = QToolButton(self._edit)
+        self._ai_btn = QToolButton(self)
         # [self-review 2026-08-12] _svg_icon()만 쓰면 QIcon.Mode.Disabled 변형이 없어
         # setEnabled(False) 중에도(생성 진행 중) 아이콘이 그대로 진하게 남는다 — 실제
         # 창에서 활성/비활성 스크린샷을 비교해 발견(육안으로 구분 불가였음). 다른 상단바
@@ -393,15 +360,16 @@ class _MermaidDialog(QDialog):
         gen_icon.addPixmap(gen_dim, QIcon.Mode.Disabled, QIcon.State.Off)
         self._ai_btn.setIcon(gen_icon)
         self._ai_btn.setIconSize(QSize(18, 18))
-        self._ai_btn.setToolTip("AI로 생성 (Ctrl+Enter)")
+        self._ai_btn.setToolTip("AI로 생성 (Enter)")
         self._ai_btn.clicked.connect(self._on_ai_clicked)
         self._ai_btn.setStyleSheet(
-            "QToolButton { background: #da7756; border: none; border-radius: 7px; }"
+            "QToolButton { background: #da7756; border: none; border-radius: 7px; padding: 6px; }"
             "QToolButton:hover { background: #e08a6c; }"
             "QToolButton:pressed { background: #c2673f; }"
             "QToolButton:disabled { background: #6b5148; }"   # 채도 낮춘 비활성 코랄
         )
-        self._reposition_embedded_buttons()
+        prompt_row.addWidget(self._ai_btn)
+        lay.addLayout(prompt_row)
 
         image_row = QHBoxLayout()
         self._image_thumb = QLabel(self)
@@ -420,49 +388,20 @@ class _MermaidDialog(QDialog):
         self._image_row_widget.setVisible(False)
         lay.addWidget(self._image_row_widget)
 
-        # ---- 모델 선택: 접이식(요약 한 줄) / 펼침(gemini·gpt 2열 병렬) ----------
-        self._model_frame = QFrame(self)
-        self._model_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        frame_lay = QVBoxLayout(self._model_frame)
-        frame_lay.setContentsMargins(0, 0, 0, 0)
-        frame_lay.setSpacing(0)
+        # ---- 2번 칸: Mermaid 코드(넉넉함) — AI 결과가 채워지거나 직접 타이핑/붙여넣기 ----
+        lay.addWidget(QLabel("Mermaid 코드:", self))
+        self._edit = QPlainTextEdit(self)
+        self._edit.setPlaceholderText(self._SAMPLE)
+        self._edit.setMinimumSize(QSize(460, 260))
+        self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        lay.addWidget(self._edit)
 
-        self._model_header = _ClickableRow(self._toggle_model_panel, self._model_frame)
-        header_lay = QHBoxLayout(self._model_header)
-        header_lay.setContentsMargins(10, 8, 8, 8)
-        self._model_chevron = QLabel("▸", self._model_header)
-        header_lay.addWidget(self._model_chevron)
-        self._model_summary = QLabel("", self._model_header)
-        header_lay.addWidget(self._model_summary, 1)
-        # [2026-08-12 재피드백] 게이트웨이 설정(주소·키·연결테스트)이 한때 상단 메뉴/툴바로
-        # 나갔었는데(상시 노출 목적), 실사용 결과 "Mermaid 창 안에 있어야 한다"(예전 방식)로
-        # 되돌림 — CanvasWindow의 메뉴·툴바 액션은 제거하고 여기 버튼 하나로 흡수.
-        self._settings_btn = QToolButton(self._model_header)
-        self._settings_btn.setIcon(_act_icon("settings"))
-        self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키)")
-        self._settings_btn.clicked.connect(self._open_gateway_settings)
-        header_lay.addWidget(self._settings_btn)
-        # [실사용 피드백 2026-08-12] 새 모델이 수시로 나오므로 다이얼로그를 다시 열지
-        # 않고도 목록을 즉석에서 다시 불러올 수 있어야 한다는 요청.
-        self._refresh_btn = QToolButton(self._model_header)
-        self._refresh_btn.setIcon(_act_icon("refresh"))
-        self._refresh_btn.setToolTip("모델 목록 새로고침")
-        self._refresh_btn.clicked.connect(self._populate_models)
-        header_lay.addWidget(self._refresh_btn)
-        frame_lay.addWidget(self._model_header)
-
-        self._model_body = QWidget(self._model_frame)
-        body_lay = QHBoxLayout(self._model_body)
-        body_lay.setContentsMargins(10, 8, 10, 10)
-        self._gemini_col = QVBoxLayout()
-        self._gpt_col = QVBoxLayout()
-        body_lay.addLayout(self._gemini_col)
-        body_lay.addLayout(self._gpt_col)
-        self._model_body.setVisible(False)
-        frame_lay.addWidget(self._model_body)
-
-        self._model_group = QButtonGroup(self)
-        lay.addWidget(self._model_frame)
+        # ---- 모델 선택: 평범한 드롭다운(gemini/gpt 그룹 헤더, 추천 배지 없음) ----------
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("모델:", self))
+        self._model_combo = QComboBox(self)
+        model_row.addWidget(self._model_combo, 1)
+        lay.addLayout(model_row)
         self._populate_models()
 
         self._credit_label = QLabel("", self)   # AI 생성 성공 후에만 채움(크레딧 잔액, 부가정보)
@@ -478,11 +417,10 @@ class _MermaidDialog(QDialog):
         return self._edit.toPlainText()
 
     def eventFilter(self, obj, event):
-        if obj is self._edit and event.type() == QEvent.Type.Resize:
-            self._reposition_embedded_buttons()
-        if obj is self._edit and event.type() == QEvent.Type.KeyPress:
-            if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                    and event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+        if obj is self._prompt_edit and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    return False   # Shift+Enter는 기본 동작(줄바꿈)에 맡김
                 self._on_ai_clicked()
                 return True
             if event.matches(QKeySequence.StandardKey.Paste):
@@ -493,15 +431,6 @@ class _MermaidDialog(QDialog):
                     return True
                 # 클립보드에 이미지가 없으면(보통의 텍스트 붙여넣기) 위젯 기본 동작에 맡긴다.
         return super().eventFilter(obj, event)
-
-    def _reposition_embedded_buttons(self):
-        """`_edit`(QPlainTextEdit) 자식으로 얹은 AI생성 버튼을 우하단 여백에 배치(첨부는
-        2026-08-12부터 라벨 줄로 분리돼 더 이상 여기서 다루지 않음). `eventFilter`의
-        Resize 이벤트가 다이얼로그 크기 변경 때마다 재호출한다."""
-        m = self._EMBED_MARGIN
-        er = self._edit.rect()
-        self._ai_btn.move(er.width() - self._ai_btn.sizeHint().width() - m,
-                          er.height() - self._ai_btn.sizeHint().height() - m)
 
     # ---- 이미지 첨부(찾아보기·드래그드롭·Ctrl+V) --------------------------------
 
@@ -572,38 +501,21 @@ class _MermaidDialog(QDialog):
                 self._set_attached_qimage(img, "드롭한 이미지")
                 e.acceptProposedAction()
 
-    # ---- 모델 선택(접이식 병렬 패널) --------------------------------------------
+    # ---- 모델 선택(드롭다운) ----------------------------------------------------
 
     def _open_gateway_settings(self):
-        """[2026-08-12] `_AIGatewaySettingsDialog`(주소·키·연결테스트, 클래스 자체는 무변경)를
-        이 Mermaid 창의 자식 모달로 연다 — 예전(CanvasWindow 상위 메뉴/툴바로 옮기기 전)
-        방식으로 되돌림. 주소/키가 바뀌었을 수 있으니 닫힌 뒤 모델 목록을 다시 불러온다."""
+        """`_AIGatewaySettingsDialog`(주소·키·모델 새로고침·크레딧 확인)를 이 Mermaid 창의
+        자식 모달로 연다. 주소/키/모델 목록이 바뀌었을 수 있으니 닫힌 뒤 드롭다운을
+        다시 채운다."""
         if _AIGatewaySettingsDialog(self).exec() == QDialog.DialogCode.Accepted:
             self._populate_models()
 
-    def _toggle_model_panel(self):
-        opening = self._model_body.isHidden()
-        self._model_body.setVisible(opening)
-        self._model_chevron.setText("▾" if opening else "▸")
-
-    def _clear_model_columns(self):
-        for btn in list(self._model_group.buttons()):
-            self._model_group.removeButton(btn)
-            btn.deleteLater()
-        for col in (self._gemini_col, self._gpt_col):
-            while col.count():
-                item = col.takeAt(0)
-                w = item.widget()
-                if w is not None:
-                    w.deleteLater()
-
     def _populate_models(self):
-        """게이트웨이 `/models`를 실호출해 gpt·gemini 계열 **전체**를 채우고(`list_text_models`
-        — 필터만 걸 뿐 개수 제한은 없다), gemini·gpt를 2열 병렬 패널(`_gemini_col`/
-        `_gpt_col`)로 나눠 보여준다(디자인 베이크오프 라운드 2, "G4처럼 병렬로" 반영).
-        계열별 가성비 최선 하나씩(`gateway.TEXT_RECOMMEND_1/2`)에는 금색 별 아이콘
-        (`_recommend_star_icon`)을 붙인다. 조회 실패(키 없음·네트워크 오류) 시 추천
-        둘만으로 조용히 폴백. "새로고침" 버튼이 이 메서드를 그대로 재호출한다."""
+        """게이트웨이 `/models`를 실호출해(옛 코드와 동일한 지점 — 별도 캐시 계층은 안 둔다,
+        `_AIGatewaySettingsDialog`의 새로고침도 자기 몫의 확인용으로 독립 호출) gemini·gpt
+        그룹 헤더가 있는 평범한 드롭다운으로 채운다. 추천 배지·설명은 뺐다(재피드백: "추천
+        설명은 빼자") — 그룹 구분만 명확히 남긴다. 헤더 행은 `QStandardItem.setEnabled(False)`
+        로 선택 불가. 조회 실패(키 없음·네트워크 오류) 시 추천 둘만으로 조용히 폴백."""
         models: list[str] = []
         try:
             key = gw.resolve_api_key()
@@ -616,57 +528,45 @@ class _MermaidDialog(QDialog):
         gemini_models = sorted(m for m in pool if "gemini" in m.lower())
         gpt_models = sorted(m for m in pool if "gpt" in m.lower())
 
-        self._clear_model_columns()
-        star = _recommend_star_icon()
+        std_model = QStandardItemModel(self._model_combo)
 
-        def add_column(layout, group_models):
+        def add_group(label, group_models):
+            header = QStandardItem(label)
+            header.setEnabled(False)
+            f = header.font(); f.setBold(True); header.setFont(f)
+            std_model.appendRow(header)
             for m in group_models:
-                suffix = " (추천1)" if m == r1 else (" (추천2)" if m == r2 else "")
-                rb = QRadioButton(f"{m}{suffix}", self._model_body)
-                rb.setProperty("model_id", m)
-                if m in (r1, r2):
-                    rb.setIcon(star)
-                rb.toggled.connect(lambda checked: self._update_model_summary() if checked else None)
-                layout.addWidget(rb)
-                self._model_group.addButton(rb)
-                if m == r1:
-                    rb.setChecked(True)
+                it = QStandardItem(m)
+                it.setData(m, Qt.ItemDataRole.UserRole)
+                std_model.appendRow(it)
 
-        add_column(self._gemini_col, gemini_models)
-        add_column(self._gpt_col, gpt_models)
-        if self._model_group.checkedButton() is None:
-            first = self._model_group.buttons()[0] if self._model_group.buttons() else None
-            if first is not None:
-                first.setChecked(True)
-        self._update_model_summary()
+        add_group("Gemini", gemini_models)
+        add_group("GPT", gpt_models)
+        self._model_combo.setModel(std_model)
 
-    def _update_model_summary(self):
-        checked = self._model_group.checkedButton()
-        if checked is None:
-            self._model_summary.setText("(모델 없음)")
-            return
-        prefix = "★ " if not checked.icon().isNull() else ""
-        self._model_summary.setText(f"{prefix}{checked.text()}")
+        default_row = next(
+            (i for i in range(std_model.rowCount())
+             if std_model.item(i).data(Qt.ItemDataRole.UserRole) == r1), -1)
+        self._model_combo.setCurrentIndex(default_row if default_row >= 0 else
+                                          (1 if std_model.rowCount() > 1 else -1))
 
     def model(self) -> str:
-        checked = self._model_group.checkedButton()
-        if checked is not None:
-            return checked.property("model_id") or gw.TEXT_RECOMMEND_1
-        return gw.TEXT_RECOMMEND_1
+        idx = self._model_combo.currentIndex()
+        data = self._model_combo.itemData(idx, Qt.ItemDataRole.UserRole) if idx >= 0 else None
+        return data or gw.TEXT_RECOMMEND_1
 
     def _on_ai_clicked(self):
-        desc = self._edit.toPlainText().strip()
+        desc = self._prompt_edit.toPlainText().strip()
         image = self._attached_image
         if not desc and image is None:
             QMessageBox.information(self, "Mermaid 가져오기",
-                                    "먼저 설명을 입력하거나 Mermaid 코드를 붙여넣거나, "
-                                    "이미지를 첨부하세요.")
+                                    "먼저 설명을 입력하거나 이미지를 첨부하세요.")
             return
         key = gw.resolve_api_key()
         if not key:
             QMessageBox.warning(self, "Mermaid 가져오기",
                                 "게이트웨이 API 키가 없습니다. "
-                                "상단 툴바의 'AI 게이트웨이 설정'에서 입력해 주세요.")
+                                "우상단 설정 버튼에서 입력해 주세요.")
             return
         base_url = gw.resolve_base_url()
         self._ai_btn.setEnabled(False)
@@ -681,9 +581,9 @@ class _MermaidDialog(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
             self._ai_btn.setEnabled(True)
-        # [단일 입력칸 통합 시 안전망] setPlainText()는 되돌리기 스택을 초기화해버려
-        # 입력한 원문을 잃는다 — QTextCursor 전체선택+치환은 이 칸 자체의 undo 스택에
-        # 남아 Ctrl+Z로 AI 생성 전 내용(오타로 잘못 눌렀을 때 등)을 복구할 수 있다.
+        # [2칸 분리 후에도 유지] setPlainText()는 되돌리기 스택을 초기화해버려 이전에 손으로
+        # 고친 코드를 잃는다 — QTextCursor 전체선택+치환은 `_edit`의 undo 스택에 남아
+        # Ctrl+Z로 AI 생성 전 코드를 복구할 수 있다.
         cursor = self._edit.textCursor()
         cursor.select(QTextCursor.SelectionType.Document)
         cursor.insertText(text)
@@ -697,8 +597,10 @@ class _MermaidDialog(QDialog):
 
 
 class _AIGatewaySettingsDialog(QDialog):
-    """AI 게이트웨이 연결 설정 — 게이트웨이 주소 + API 키를 앱 안에서 직접 입력·저장·
-    테스트한다(2026-08-12, 실사용 요청).
+    """AI 게이트웨이 연결 설정 — 게이트웨이 주소·API 키 입력·저장에 더해 모델 목록
+    새로고침·크레딧 확인까지 한곳에서(2026-08-12 3차, 재피드백 — "새로고침은 API 설정
+    있는 쪽에서 해야 할 듯"·"크레딧 확인도 같이 하면 좋을듯", 참고 이미지의 Mindlogic
+    Gateway 설정 패널 구성을 따름).
 
     이전엔 secrets 파일(`~/.claude/.secrets/easycad-gateway.key`)이나 환경변수로만 키를
     넣을 수 있어 앱만 켜서 쓰는 사용자에겐 진입장벽이었다. OK를 눌러야 QSettings에
@@ -706,10 +608,9 @@ class _AIGatewaySettingsDialog(QDialog):
     secrets 파일보다 아래이므로, secrets 파일이 이미 있으면 이 창에서 바꿔도 secrets
     파일 쪽이 계속 우선한다(의도된 동작 — 파일 관례가 더 안전한 소스).
 
-    [실사용 피드백 2026-08-12] 진입점이 한때 CanvasWindow 상단 메뉴/툴바(항상 노출)로
-    나갔다가, 재피드백으로 다시 `_MermaidDialog._open_gateway_settings`(모델 목록 헤더의
-    설정 버튼)로 돌아왔다 — Mermaid 가져오기를 열 때만 필요한 설정이라 그 창 밖에 있으면
-    맥락이 끊긴다는 지적. 이 클래스 자체는 두 진입점 어느 쪽이든 무변경으로 재사용 가능."""
+    진입점은 `_MermaidDialog._open_gateway_settings`(우상단 설정 버튼, 2026-08-12 3차 —
+    한때 CanvasWindow 상단 메뉴/툴바로 나갔다가 되돌아온 뒤 다시 자리를 옮긴 것) 하나뿐
+    이지만, 클래스 자체는 어느 부모에서 열든 무관하게 재사용 가능."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -728,15 +629,28 @@ class _AIGatewaySettingsDialog(QDialog):
         self._key_edit.setText(gw.resolve_api_key())
         lay.addWidget(self._key_edit)
 
-        test_row = QHBoxLayout()
-        self._test_btn = QToolButton(self)
-        self._test_btn.setIcon(_act_icon("connect"))
-        self._test_btn.setToolTip("연결 테스트")
-        self._test_btn.clicked.connect(self._on_test_clicked)
-        test_row.addWidget(self._test_btn)
-        self._test_label = QLabel("", self)
-        test_row.addWidget(self._test_label, 1)
-        lay.addLayout(test_row)
+        # [2026-08-12 3차] 옛 "연결 테스트"(모델 개수만 확인)를 "모델 새로고침"으로
+        # 확장 — `_MermaidDialog`의 드롭다운이 실제로 쓸 gpt/gemini 개수를 그대로 보여줘
+        # 사용자가 요청한 "gpt N개, gemini N개 호출 성공" 형식을 만족시키면서, 별도
+        # 새로고침 버튼을 두 곳에 중복으로 두지 않는다(연결 확인 겸용).
+        refresh_row = QHBoxLayout()
+        self._refresh_btn = QToolButton(self)
+        self._refresh_btn.setIcon(_act_icon("refresh"))
+        self._refresh_btn.setToolTip("모델 목록 새로고침(연결 확인 겸용)")
+        self._refresh_btn.clicked.connect(self._on_refresh_clicked)
+        refresh_row.addWidget(self._refresh_btn)
+        self._refresh_label = QLabel("", self)
+        refresh_row.addWidget(self._refresh_label, 1)
+        lay.addLayout(refresh_row)
+
+        credit_row = QHBoxLayout()
+        self._credit_btn = QToolButton(self)
+        self._credit_btn.setText("크레딧 확인")
+        self._credit_btn.clicked.connect(self._on_credit_clicked)
+        credit_row.addWidget(self._credit_btn)
+        self._credit_label = QLabel("", self)
+        credit_row.addWidget(self._credit_label, 1)
+        lay.addLayout(credit_row)
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                 | QDialogButtonBox.StandardButton.Cancel, self)
@@ -750,22 +664,41 @@ class _AIGatewaySettingsDialog(QDialog):
     def api_key(self) -> str:
         return self._key_edit.text().strip()
 
-    def _on_test_clicked(self):
+    def _on_refresh_clicked(self):
         key = self.api_key()
         if not key:
-            self._test_label.setText("API 키를 입력하세요.")
+            self._refresh_label.setText("API 키를 입력하세요.")
             return
-        self._test_btn.setEnabled(False)
+        self._refresh_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            models = gw.list_models(key, self.base_url(), timeout=10.0)
+            models = gw.list_text_models(key, self.base_url(), timeout=10.0)
         except Exception as e:
-            self._test_label.setText(f"실패: {e}")
+            self._refresh_label.setText(f"실패: {e}")
             return
         finally:
             QApplication.restoreOverrideCursor()
-            self._test_btn.setEnabled(True)
-        self._test_label.setText(f"연결 성공 — 모델 {len(models)}개 확인")
+            self._refresh_btn.setEnabled(True)
+        n_gpt = sum(1 for m in models if "gpt" in m.lower())
+        n_gemini = sum(1 for m in models if "gemini" in m.lower())
+        self._refresh_label.setText(f"gpt {n_gpt}개, gemini {n_gemini}개 호출 성공")
+
+    def _on_credit_clicked(self):
+        key = self.api_key()
+        if not key:
+            self._credit_label.setText("API 키를 입력하세요.")
+            return
+        self._credit_btn.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            remaining, quota = gw.get_credit_balance(key, self.base_url())
+        except Exception as e:
+            self._credit_label.setText(f"크레딧 확인 실패: {e}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._credit_btn.setEnabled(True)
+        self._credit_label.setText(f"✓ 크레딧 {remaining:.0f}/{quota:.0f} 사용")
 
     def _on_accept(self):
         gw.store_base_url(self.base_url())
