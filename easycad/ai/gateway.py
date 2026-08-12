@@ -1,13 +1,16 @@
-"""AI 게이트웨이 클라이언트 — 이미지→도면(§8 항목18) A단계.
+"""AI 게이트웨이 클라이언트 — 텍스트 설명→Mermaid 생성(§8 항목18 후속).
 
-`tools/ai_probe.py`(2026-08-11 실측)의 실호출 코드가 출발점이고, 형제 프로젝트
-`Paste_flow/pasteflow/ocr_engine.py`의 모델 폴백(`_call_with_fallback`)·오류 분류(fail/
-retry/weak) 패턴을 이식했다. 설계·실측 근거는 `docs/ai_image_import.md`, 함정은
-`docs/pitfalls.md`의 "AI 게이트웨이 호출(이미지→도면)" 절 참조.
+형제 프로젝트 `Paste_flow/pasteflow/ocr_engine.py`의 모델 폴백(`_call_with_fallback`)·
+오류 분류(fail/retry/weak) 패턴을 이식했다. 설계 근거는 `docs/ai_image_import.md`(옛
+이미지 경로, 2026-08-12 폐기), 함정은 `docs/pitfalls.md`의 "AI 게이트웨이 호출" 절 참조.
+
+2026-08-12: 이미지 입력 경로(vision 호출·타일링 파이프라인)를 완전히 폐기하면서 이
+모듈에서도 vision 전용 함수(`call_vision`/`call_with_fallback`/`parse_json` 등)를
+정리했다 — 지금은 텍스트 전용 호출(`call_text`/`call_text_with_fallback`)만 남는다.
 
 **PyQt 비의존.** `resolve_api_key()`만 QSettings를 쓰는데, 그마저도 함수 안에서 지연
-임포트해 이 모듈의 나머지(모델 조회·크레딧·vision 호출)는 순수 파이썬 헤드리스 도구
-(`tools/ai_sketch.py`)에서 Qt 애플리케이션 없이도 그대로 쓸 수 있다.
+임포트해 이 모듈의 나머지(모델 조회·크레딧·텍스트 호출)는 순수 파이썬에서 Qt 애플리케이션
+없이도 그대로 쓸 수 있다.
 
 키 해석 순서(`resolve_api_key`): 명시 인자 > `~/.claude/.secrets/easycad-gateway.key`(첫 줄)
 > QSettings("EasyCAD","EasyCAD")["ai_gateway_key"] > 환경변수 `EASYCAD_GW_KEY`.
@@ -23,16 +26,9 @@ retry/weak) 패턴을 이식했다. 설계·실측 근거는 `docs/ai_image_impo
 ⚠ 함정(`docs/pitfalls.md` 참조, 재확인 없이 우회하지 말 것):
 - `urllib`로 이 게이트웨이를 호출하면 SSL 인증서 검증 실패(self-signed in chain).
   `openai` SDK·`httpx`(둘 다 certifi 기본 신뢰)만 쓴다 — 이 모듈은 표준 urllib을 쓰지 않는다.
-- `claude-*` 계열은 밀집 도면 **전체 이미지**에서 504 Gateway Timeout(축소해도 동일).
-  구획 크롭(줌인)에서는 정상 — `call_with_fallback`이 504도 모델없음과 같은 폴백 트리거로
-  다룬다(ocr_engine 원본은 model_not_found만 다뤘으나, 이 게이트웨이의 실제 실패 모드가
-  타임아웃이라 그 트리거를 넓혔다).
 """
 from __future__ import annotations
 
-import base64
-import io
-import json
 import os
 import time
 from pathlib import Path
@@ -46,10 +42,12 @@ SECRETS_FILE = Path.home() / ".claude" / ".secrets" / "easycad-gateway.key"
 # 동일 실측 근거) — 작게 잡으면 thinking 모델에서 본문이 잘린다.
 DEFAULT_MAX_TOKENS = 16384
 
-# 실측(`docs/ai_image_import.md` "실측" 표, 2026-08-11) 기반 기본 모델.
-# gemini 계열만 밀집 도면 전체 이미지를 완주한다 — 범용 기본값.
-DEFAULT_MODEL = "gemini-3.6-flash"
-FALLBACK_CHAIN = (DEFAULT_MODEL, "gemini-2.0-flash")
+# 텍스트 전용 기본값(§8 항목18 후속, 2026-08-12 — Mermaid 가져오기 통합, 이미지 경로 폐기).
+# gpt/gemini 두 계열만 노출(사용자 확정 — claude 제외), 계열별 가성비 최선 1곳씩 추천.
+# ⚠ 아래 값은 위 vision 4모델 비교(docs/ai_image_import.md, gpt-5.4-mini 최저비용·최속)를
+# 텍스트 전용 호출에 유추 적용한 것 — 텍스트 전용 실측은 API 키가 있어야 가능해 아직 없다.
+TEXT_RECOMMEND_1 = "gpt-5.4-mini"       # gpt 계열
+TEXT_RECOMMEND_2 = "gemini-3.6-flash"   # gemini 계열
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -132,15 +130,23 @@ def list_models(api_key: str, base_url: str = BASE_URL, timeout: float = 600.0) 
     """게이트웨이의 `/models`에서 사용 가능한 모델 ID 목록. 필터 없이 전부 반환
     (ocr_engine.list_gemini_models과 동일 관례 — 어떤 모델이 실제로 되는지는 실호출로 안다).
 
-    `timeout`은 vision 호출(`call_vision`)의 기본값(600s)과 별개로 짧게 줄 수 있다 —
-    C단계 다이얼로그가 열릴 때 모델 목록을 동기 호출로 채우는데(`host_dialogs.
-    _AIImageImportDialog._populate_models`), 네트워크가 죽어 있으면 기본 600초를
-    그대로 물려받아 다이얼로그 자체가 못 뜬다."""
+    `timeout`은 기본값(600s)과 별개로 짧게 줄 수 있다 — `list_text_models`가 이걸
+    호출부(`host_dialogs._MermaidDialog._populate_models`)의 동기 호출 제약에 맞춰
+    짧은 timeout(8s)으로 넘긴다. 네트워크가 죽어 있으면 기본 600초를 그대로 물려받아
+    다이얼로그 자체가 못 뜨는 걸 막기 위함."""
     try:
         resp = _client(api_key, base_url, timeout=timeout).models.list()
     except Exception as e:
         raise RuntimeError(f"게이트웨이 모델 조회 실패: {e}") from e
     return sorted({m.id for m in resp.data})
+
+
+def list_text_models(api_key: str, base_url: str = BASE_URL, timeout: float = 8.0) -> list[str]:
+    """`list_models`를 gpt·gemini 계열로만 걸러 반환 — 텍스트 전용 드롭다운용(사용자 확정,
+    claude 계열은 제외). 짧은 기본 timeout은 `_MermaidDialog._populate_models`와 같은
+    이유(다이얼로그 생성이 동기 호출이라 네트워크가 죽어 있으면 다이얼로그 자체가 못 뜬다)."""
+    models = list_models(api_key, base_url, timeout=timeout)
+    return sorted(m for m in models if "gpt" in m.lower() or "gemini" in m.lower())
 
 
 def get_credit_balance(api_key: str, base_url: str = BASE_URL) -> tuple[float, float]:
@@ -211,7 +217,7 @@ def classify_error(exc: Exception) -> ErrorClass:
     return "other"
 
 
-def select_fallback_model(failed_model: str, chain: tuple = FALLBACK_CHAIN) -> Optional[str]:
+def select_fallback_model(failed_model: str, chain: tuple = ()) -> Optional[str]:
     """실패 모델이 아닌 사슬의 첫 항목. 남은 후보가 없으면 None."""
     for candidate in chain:
         if candidate != failed_model:
@@ -219,10 +225,10 @@ def select_fallback_model(failed_model: str, chain: tuple = FALLBACK_CHAIN) -> O
     return None
 
 
-class VisionResult(NamedTuple):
-    """`call_with_fallback`의 반환값.
+class GatewayResult(NamedTuple):
+    """`call_text_with_fallback`의 반환값.
 
-    - content         : 모델 응답 본문 문자열(파싱은 호출자가 `parse_json` 등으로).
+    - content         : 모델 응답 본문 문자열.
     - model_used       : 실제로 응답을 만든 모델(폴백 발생 시 폴백 모델).
     - fallback_from    : 원래 시도했다가 실패한 모델(폴백 없으면 None).
     - elapsed          : 성공한 호출의 소요 초.
@@ -233,71 +239,41 @@ class VisionResult(NamedTuple):
     elapsed: float
 
 
-def _b64_png(img) -> str:
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.standard_b64encode(buf.getvalue()).decode()
-
-
-def call_vision(client, model: str, img, prompt: str, *,
-                 schema: Optional[dict] = None, schema_name: str = "drawing",
-                 max_tokens: int = DEFAULT_MAX_TOKENS) -> tuple[str, float]:
-    """단일 vision 호출(폴백 없음). 반환 (본문 문자열, 소요초).
-
-    `schema`를 주면 `json_schema` structured output(strict)을 쓴다 — 2026-08-11 실측으로
-    이 게이트웨이에서 통함을 확인(`docs/ai_image_import.md`).
-    """
-    kw = {}
-    if schema is not None:
-        kw["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {"name": schema_name, "schema": schema, "strict": True},
-        }
+def call_text(client, model: str, prompt: str, *,
+              max_tokens: int = DEFAULT_MAX_TOKENS) -> tuple[str, float]:
+    """이미지 없는 순수 텍스트 호출(단일, 폴백 없음). 반환 (본문 문자열, 소요초)."""
     t0 = time.time()
     resp = client.chat.completions.create(
         model=model, max_tokens=max_tokens,
-        messages=[{"role": "user", "content": [
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_b64_png(img)}"}},
-            {"type": "text", "text": prompt},
-        ]}],
-        **kw,
+        messages=[{"role": "user", "content": prompt}],
     )
     return (resp.choices[0].message.content or ""), time.time() - t0
 
 
-def call_with_fallback(api_key: str, img, prompt: str, *,
-                        model: str = DEFAULT_MODEL, fallback_chain: tuple = FALLBACK_CHAIN,
-                        base_url: str = BASE_URL, schema: Optional[dict] = None,
-                        schema_name: str = "drawing", max_tokens: int = DEFAULT_MAX_TOKENS,
-                        timeout: float = 600.0) -> VisionResult:
-    """`call_vision`을 실행하고, `model_not_found`/`timeout`이면 `fallback_chain`의 다음
+def call_text_with_fallback(api_key: str, prompt: str, *, model: str,
+                             fallback_chain: tuple = (), base_url: str = BASE_URL,
+                             max_tokens: int = DEFAULT_MAX_TOKENS,
+                             timeout: float = 60.0) -> GatewayResult:
+    """`call_text`를 실행하고, `model_not_found`/`timeout`이면 `fallback_chain`의 다음
     모델로 1회 재시도한다(`quota`/`server_busy`/`other`는 그대로 던짐 — 조용히 갈아타면
-    실패를 성공으로 오인하게 된다, ocr_engine의 프로브 분리 원칙과 동일)."""
+    실패를 성공으로 오인하게 된다, ocr_engine의 프로브 분리 원칙과 동일). 이미지가 없어
+    밀집 도면 vision 호출 같은 504 위험이 낮으므로 기본 timeout을 짧게(60s) 잡는다.
+    `fallback_chain`이 비어 있으면(기본값) 실패 시 그대로 예외를 올린다 — 텍스트 전용
+    모델은 사용자가 드롭다운에서 직접 골라 쓰므로 정해진 폴백 사슬을 강제할 이유가 없다."""
     client = _client(api_key, base_url, timeout=timeout)
 
     def _try(m: str) -> tuple[str, float]:
-        return call_vision(client, m, img, prompt, schema=schema, schema_name=schema_name,
-                           max_tokens=max_tokens)
+        return call_text(client, m, prompt, max_tokens=max_tokens)
 
     try:
         content, dt = _try(model)
-        return VisionResult(content, model, None, dt)
+        return GatewayResult(content, model, None, dt)
     except Exception as exc:
         cls = classify_error(exc)
-        if cls not in ("model_not_found", "timeout"):
+        if cls not in ("model_not_found", "timeout") or not fallback_chain:
             raise
         fallback = select_fallback_model(model, fallback_chain)
         if not fallback:
             raise
         content, dt = _try(fallback)
-        return VisionResult(content, fallback, model, dt)
-
-
-def parse_json(raw: str) -> dict:
-    """모델 응답에서 JSON을 꺼낸다. 스키마를 안 쓴 폴백 경로는 ```json 펜스가 섞여 나온다."""
-    txt = raw.strip()
-    if txt.startswith("```"):
-        txt = txt.split("```")[1]
-        if txt[:4].lower().startswith("json"):
-            txt = txt[txt.find("\n"):]
-    return json.loads(txt)
+        return GatewayResult(content, fallback, model, dt)

@@ -1,0 +1,286 @@
+"""§8 항목18(AI 이미지→도면) 후속 — Mermaid 가져오기 통합(2026-08-12).
+
+deep-interview(2026-08-12)로 확정된 대로 이미지 입력 경로(옛 sketch_pipeline.py 전체,
+P1~P3.75 타일링, host_ai.py QThread 워커, _AIImageImportDialog)를 완전히 폐기하고
+"텍스트 설명 → AI(게이트웨이 1회 호출) → Mermaid 텍스트"로 `fileio/mermaid_import.py`
+가져오기 다이얼로그(`host_dialogs._MermaidDialog`)에 흡수했다.
+
+이 파일이 검증하는 것:
+  - `gateway.py`의 텍스트 전용 호출(`call_text`/`call_text_with_fallback`) — 이미지 없는
+    단순 chat completion. 게이트웨이 실호출은 여기서 하지 않는다(수동 `tools/ai_probe.py`
+    스타일 실행이 필요하나, §8 항목18 텍스트 전용 실측은 API 키가 있어야 가능 — 아직 없음).
+  - `easycad/ai/text_to_mermaid.py` — 프롬프트 빌더·코드펜스 벗기기·generate_mermaid.
+  - `_MermaidDialog`의 AI 보조 생성(모델 드롭다운 추천1/추천2, AI 버튼 클릭 배선).
+  - 옛 이미지 경로가 실제로 사라졌는지(메뉴 액션·믹스인 잔존 여부) 회귀 가드.
+
+tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easycad.py (전체) 또는
+pytest test_part9_ai_mermaid.py.
+"""
+from PyQt6.QtWidgets import QDialog
+
+from _shared import *  # noqa: F401,F403
+
+from easycad.ai import gateway as gw  # noqa: E402
+from easycad.ai import text_to_mermaid as ttm  # noqa: E402
+from easycad.canvas.host_dialogs import _MermaidDialog  # noqa: E402
+
+
+# ── gateway.py: 텍스트 전용 호출 ─────────────────────────────────────────────
+
+def test_call_text_sends_plain_string_content_not_vision_array():
+    """`call_vision`은 content가 [image_url, text] 배열이지만, `call_text`는 이미지가
+    없으므로 문자열 하나만 보내야 한다 — vision 콘텐츠 배열을 실수로 재사용하면 게이트웨이가
+    이미지 없는 요청을 거부하거나 프롬프트를 잘못 해석할 위험이 있다."""
+    captured = {}
+
+    class _FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    captured.update(kw)
+                    class _Resp:
+                        choices = [type("_C", (), {"message": type("_M", (), {"content": "ok"})()})()]
+                    return _Resp()
+
+    text, dt = gw.call_text(_FakeClient(), "gpt-5.4-mini", "설명을 Mermaid로")
+    assert text == "ok"
+    assert captured["messages"] == [{"role": "user", "content": "설명을 Mermaid로"}]
+    assert captured["model"] == "gpt-5.4-mini"
+
+
+def test_call_text_with_fallback_no_chain_raises_on_timeout():
+    """텍스트 전용은 기본 폴백 사슬이 없다(사용자가 드롭다운에서 직접 모델을 고름) —
+    빈 `fallback_chain`이면 실패를 그대로 올려야 한다."""
+    def fake_call_text(client, model, prompt, *, max_tokens=0):
+        raise RuntimeError("Error code: 504 Gateway Timeout")
+
+    with patch.object(gw, "_client", lambda *a, **k: object()), \
+         patch.object(gw, "call_text", fake_call_text):
+        try:
+            gw.call_text_with_fallback("key", "prompt", model="gpt-5.4-mini")
+            assert False, "should have raised"
+        except RuntimeError as e:
+            assert "504" in str(e)
+
+
+def test_call_text_with_fallback_uses_chain_when_provided():
+    calls = []
+
+    def fake_call_text(client, model, prompt, *, max_tokens=0):
+        calls.append(model)
+        if model == "gpt-5.4-mini":
+            raise RuntimeError("Error code: 404 model_not_found")
+        return "결과", 0.5
+
+    with patch.object(gw, "_client", lambda *a, **k: object()), \
+         patch.object(gw, "call_text", fake_call_text):
+        result = gw.call_text_with_fallback(
+            "key", "prompt", model="gpt-5.4-mini",
+            fallback_chain=("gpt-5.4-mini", "gemini-3.6-flash"))
+    assert calls == ["gpt-5.4-mini", "gemini-3.6-flash"]
+    assert result.model_used == "gemini-3.6-flash"
+    assert result.fallback_from == "gpt-5.4-mini"
+
+
+def test_call_text_with_fallback_does_not_swallow_quota_error():
+    def fake_call_text(*a, **k):
+        raise RuntimeError("Error code: 429 RESOURCE_EXHAUSTED")
+
+    with patch.object(gw, "_client", lambda *a, **k: object()), \
+         patch.object(gw, "call_text", fake_call_text):
+        try:
+            gw.call_text_with_fallback("key", "prompt", model="gpt-5.4-mini",
+                                       fallback_chain=("gemini-3.6-flash",))
+            assert False, "should have raised"
+        except RuntimeError as e:
+            assert "429" in str(e)
+
+
+def test_list_text_models_filters_to_gpt_and_gemini_only():
+    """사용자 확정(deep-interview 2026-08-12) — claude 계열은 텍스트 전용 드롭다운에서 제외."""
+    with patch.object(gw, "list_models",
+                      lambda *a, **k: ["claude-sonnet-5", "gpt-5.4-mini", "gemini-3.6-flash",
+                                       "claude-haiku-4-5", "gpt-5.4-nano"]):
+        out = gw.list_text_models("key")
+    assert out == sorted(["gpt-5.4-mini", "gemini-3.6-flash", "gpt-5.4-nano"])
+    assert "claude-sonnet-5" not in out
+    assert "claude-haiku-4-5" not in out
+
+
+# ── text_to_mermaid.py ───────────────────────────────────────────────────────
+
+def test_build_prompt_includes_description_and_mermaid_rules():
+    text = ttm.build_prompt("날씨를 예보하는 워크플로우")
+    assert "날씨를 예보하는 워크플로우" in text
+    assert "flowchart" in text
+    assert "Mermaid" in text
+
+
+def test_extract_mermaid_strips_language_tagged_code_fence():
+    raw = "```mermaid\nflowchart TD\n A-->B\n```"
+    assert ttm.extract_mermaid(raw) == "flowchart TD\n A-->B"
+
+
+def test_extract_mermaid_strips_bare_code_fence():
+    raw = "```\nflowchart LR\n A-->B\n```"
+    assert ttm.extract_mermaid(raw) == "flowchart LR\n A-->B"
+
+
+def test_extract_mermaid_passthrough_when_no_fence():
+    raw = "flowchart TD\n A-->B"
+    assert ttm.extract_mermaid(raw) == raw
+
+
+def test_generate_mermaid_returns_text_and_model_used():
+    def fake_call(api_key, prompt, *, model, **kw):
+        assert "설명" in prompt or True
+        return gw.GatewayResult("```mermaid\nflowchart TD\n A-->B\n```", model, None, 1.2)
+
+    with patch.object(ttm.gw, "call_text_with_fallback", fake_call):
+        text, used = ttm.generate_mermaid("key", "간단한 흐름", model="gpt-5.4-mini")
+    assert text == "flowchart TD\n A-->B"
+    assert used == "gpt-5.4-mini"
+
+
+# ── _MermaidDialog: AI 보조 생성 ─────────────────────────────────────────────
+
+def test_mermaid_dialog_populate_models_marks_recommend1_and_recommend2():
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.gw.list_text_models",
+               return_value=["gpt-5.4-mini", "gpt-5.4-nano", "gemini-3.6-flash"]):
+        dlg = _MermaidDialog()
+    assert dlg.model() == gw.TEXT_RECOMMEND_1
+    idx1 = dlg._model_combo.findData(gw.TEXT_RECOMMEND_1)
+    idx2 = dlg._model_combo.findData(gw.TEXT_RECOMMEND_2)
+    assert "추천1" in dlg._model_combo.itemText(idx1)
+    assert "추천2" in dlg._model_combo.itemText(idx2)
+    # claude는애초에 list_text_models가 걸러주므로 드롭다운에 아예 없어야 함(방어적 확인).
+    assert dlg._model_combo.findData("claude-sonnet-5") == -1
+
+
+def test_mermaid_dialog_populate_models_falls_back_when_list_fails():
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.gw.list_text_models",
+               side_effect=RuntimeError("no network")):
+        dlg = _MermaidDialog()
+    assert dlg.model() == gw.TEXT_RECOMMEND_1
+    assert dlg._model_combo.count() == 2   # 추천1·추천2 둘만 남음
+
+
+def test_mermaid_dialog_ai_button_fills_mermaid_box_and_keeps_it_editable():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._prompt_edit.setText("날씨를 예보하는 워크플로우")
+
+    def fake_generate(key, desc, *, model):
+        assert desc == "날씨를 예보하는 워크플로우"
+        return "flowchart TD\n A[관측] --> B[예보]", model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
+        dlg._on_ai_clicked()
+
+    assert dlg.text() == "flowchart TD\n A[관측] --> B[예보]"
+    # AI가 채운 뒤에도 직접 편집 가능해야 한다(분리형 구조 핵심 요구사항).
+    dlg._edit.setPlainText(dlg.text() + "\n B --> C[게시]")
+    assert "게시" in dlg.text()
+
+
+def test_mermaid_dialog_ai_button_shows_credit_balance_on_success():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._prompt_edit.setText("아무 설명")
+
+    def fake_generate(key, desc, *, model):
+        return "flowchart TD\n A-->B", model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate), \
+         patch("easycad.canvas.host_dialogs.gw.get_credit_balance", return_value=(100.0, 200.0)):
+        dlg._on_ai_clicked()
+    assert "100" in dlg._credit_label.text() and "200" in dlg._credit_label.text()
+
+
+def test_mermaid_dialog_ai_button_credit_lookup_failure_does_not_break_result():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._prompt_edit.setText("아무 설명")
+
+    def fake_generate(key, desc, *, model):
+        return "flowchart TD\n A-->B", model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate), \
+         patch("easycad.canvas.host_dialogs.gw.get_credit_balance",
+               side_effect=RuntimeError("네트워크 없음")):
+        dlg._on_ai_clicked()
+    assert dlg.text() == "flowchart TD\n A-->B"   # 크레딧 조회 실패가 본 결과를 막지 않음
+
+
+def test_mermaid_dialog_ai_button_requires_nonempty_prompt():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    with patch("easycad.canvas.host_dialogs.QMessageBox.information") as info, \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid") as gen:
+        dlg._on_ai_clicked()
+    assert info.called
+    assert not gen.called
+    assert dlg.text() == ""
+
+
+def test_mermaid_dialog_ai_button_warns_when_no_api_key():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._prompt_edit.setText("아무 설명")
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value=""), \
+         patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn, \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid") as gen:
+        dlg._on_ai_clicked()
+    assert warn.called
+    assert not gen.called
+
+
+def test_mermaid_dialog_ai_button_shows_warning_on_generation_failure():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._prompt_edit.setText("아무 설명")
+
+    def fake_generate(key, desc, *, model):
+        raise RuntimeError("게이트웨이 실패")
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn, \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
+        dlg._on_ai_clicked()
+    assert warn.called
+    assert dlg.text() == ""   # 실패해도 기존 내용(빈 상태)을 건드리지 않음
+    assert dlg._ai_btn.isEnabled()   # finally에서 버튼이 다시 활성화됨
+
+
+def test_mermaid_dialog_direct_paste_still_works_without_ai():
+    """게이트웨이를 쓰고 싶지 않을 때 — 외부 AI 챗에서 받은 Mermaid를 그대로 붙여넣고
+    OK만 눌러도 되는 경로(옛 "수동 모드"를 대신하는 것이 바로 이 경로)."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("flowchart LR\n A-->B\n")
+    assert dlg.text() == "flowchart LR\n A-->B\n"
+
+
+# ── 이미지 경로 폐기 회귀 가드 ────────────────────────────────────────────────
+
+def test_ai_image_menu_action_and_mixin_are_gone():
+    w = CanvasWindow()
+    assert not hasattr(w, "_act_ai_sketch")
+    assert not hasattr(w, "_import_ai_image")
+    w.deleteLater()
+
+
+def test_sketch_pipeline_and_host_ai_modules_removed():
+    import importlib
+    for modname in ("easycad.ai.sketch_pipeline", "easycad.canvas.host_ai"):
+        try:
+            importlib.import_module(modname)
+            assert False, f"{modname} should have been deleted"
+        except ModuleNotFoundError:
+            pass

@@ -5,14 +5,10 @@
 다이얼로그 클래스를 가져다 쓴다. 순환 임포트를 피하려고 host.py·믹스인을 임포트하지 않는
 잎(leaf) 모듈이다.
 """
-import os
-import re
-import tempfile
-
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter, QImage,
-    QFont, QPolygonF, QPainterPath, QPalette, QDrag,
+    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
+    QFont, QPolygonF, QPainterPath, QPalette,
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
@@ -20,7 +16,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup, QProgressBar,
+    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
 )
 
 from easycad.canvas.annotator_core import (
@@ -261,7 +257,14 @@ class _CableNumberDialog(QDialog):
 
 
 class _MermaidDialog(QDialog):
-    """Mermaid flowchart 코드를 붙여넣는 입력창(붙여넣기 다이얼로그 — deep-interview 확정)."""
+    """Mermaid flowchart 입력창 — 직접 타이핑/붙여넣기, 또는 AI 보조 생성.
+
+    §8 항목18(AI 이미지→도면) 후속(2026-08-12, deep-interview로 확정) — 이미지 입력
+    경로를 완전히 폐기하고 이 다이얼로그에 흡수했다. 분리형 구조: 위 프롬프트 칸은
+    선택 입력이고, OK가 실제로 쓰는 건 항상 아래 Mermaid 칸 — AI 버튼은 그 칸을
+    채워줄 뿐이라 직접 편집·붙여넣기 경로는 그대로 살아 있다(게이트웨이를 쓰고 싶지
+    않을 때 외부 AI 챗에서 Mermaid를 받아 그대로 붙여넣으면 되므로, 옛 "수동 붙여넣기
+    모드" 체크박스는 이 구조 자체가 대신해 삭제했다)."""
 
     _SAMPLE = ("flowchart TD\n"
                "    A[시작] --> B{조건?}\n"
@@ -273,7 +276,24 @@ class _MermaidDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Mermaid 가져오기")
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("Mermaid flowchart 코드를 붙여넣으세요 "
+
+        lay.addWidget(QLabel("AI로 만들기(선택) — 원하는 도면을 설명하면 아래 칸을 채워줍니다:"))
+        prompt_row = QHBoxLayout()
+        self._prompt_edit = QLineEdit(self)
+        self._prompt_edit.setPlaceholderText("예: 날씨를 예보하는 워크플로우")
+        prompt_row.addWidget(self._prompt_edit, 1)
+        self._model_combo = QComboBox(self)
+        prompt_row.addWidget(self._model_combo)
+        self._ai_btn = QToolButton(self)
+        self._ai_btn.setText("AI로 생성")
+        self._ai_btn.clicked.connect(self._on_ai_clicked)
+        prompt_row.addWidget(self._ai_btn)
+        lay.addLayout(prompt_row)
+        self._populate_models()
+        self._credit_label = QLabel("", self)   # AI 생성 성공 후에만 채움(크레딧 잔액, 부가정보)
+        lay.addWidget(self._credit_label)
+
+        lay.addWidget(QLabel("Mermaid flowchart 코드(직접 입력/붙여넣기도 가능) "
                              "(flowchart TD/LR … · 노드 모양·화살표·라벨 지원):"))
         self._edit = QPlainTextEdit(self)
         self._edit.setPlaceholderText(self._SAMPLE)
@@ -289,346 +309,65 @@ class _MermaidDialog(QDialog):
     def text(self):
         return self._edit.toPlainText()
 
-
-# ---------------------------------------------------------------------------
-# [§8 항목18 C단계] AI 이미지→도면 입력창 — 이미지 파일 + 보충설명 텍스트.
-# ---------------------------------------------------------------------------
-class _AIImageImportDialog(QDialog):
-    """이미지 선택(찾아보기·드래그드롭·Ctrl+V 전부 가능) + 보충설명 + 모델 선택.
-    확인 버튼은 이미지를 고르기 전엔 비활성 — 파이프라인은 몇 분 걸리므로 빈 경로로
-    시작해 사용자를 헷갈리게 하지 않는다.
-
-    ⚠ 드래그드롭·Ctrl+V는 이 다이얼로그가 열려 있을 때만 받는다 — 캔버스 자체의 드롭·
-    붙여넣기(기존 "그림으로 삽입" 동작, `host_fileio.py`/`host_selection.py`)와 겹치면
-    안 되므로 건드리지 않고, 이 다이얼로그의 이벤트만 오버라이드했다(2026-08-11)."""
-
-    _IMAGE_FILTER = "이미지 (*.png *.jpg *.jpeg *.bmp *.webp)"
-    _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
-    _OVERVIEW_DEFAULT = gw.DEFAULT_MODEL       # P1 개괄 — 실측 기본(전체 이미지 완주)
-    _TILE_DEFAULT = "gpt-5.4-mini"             # P2 타일 — 2026-08-11 4모델 실측 비교로 확정
-                                                # (claude-sonnet-5와 shapes·edges 동일, 비용 1/18)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("AI 이미지→도면")
-        self.setAcceptDrops(True)
-        self._temp_image_path = None   # Ctrl+V/이미지데이터 드롭으로 만든 임시 PNG(정리 대상)
-
-        lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("도면 이미지를 골라주세요(찾아보기 · 드래그드롭 · Ctrl+V 전부 가능):"))
-
-        row = QHBoxLayout()
-        self._path_edit = QLineEdit(self)
-        self._path_edit.setReadOnly(True)
-        self._path_edit.setPlaceholderText("이미지를 여기로 끌어놓거나 Ctrl+V로 붙여넣어도 됩니다…")
-        row.addWidget(self._path_edit)
-        browse = QToolButton(self)
-        browse.setText("찾아보기…")
-        browse.clicked.connect(self._browse)
-        row.addWidget(browse)
-        lay.addLayout(row)
-
-        # [실사용 피드백 2026-08-11] 이미지니까 어떤 걸 골랐는지 눈으로 바로 확인되면 좋겠다는
-        # 요청 — 선택/붙여넣기/드롭 직후 작은 썸네일을 보여준다.
-        self._thumb_label = QLabel(self)
-        self._thumb_label.setFixedSize(160, 100)
-        self._thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._thumb_label.setStyleSheet("border: 1px solid palette(mid);")
-        self._thumb_label.setText("(미리보기 없음)")
-        lay.addWidget(self._thumb_label, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-        # Ctrl+V가 안 먹던 실사용 버그(2026-08-11) — QDialog.keyPressEvent를 오버라이드해도
-        # 포커스가 있는 자식 위젯(QLineEdit/QPlainTextEdit)이 표준 붙여넣기 키를 자기
-        # keyPressEvent 안에서 먼저 처리·accept()해버려 부모까지 이벤트가 올라오지 않는다
-        # (Qt의 흔한 함정 — 다이얼로그 레벨 keyPressEvent는 포커스 위젯이 그 키를 명시적으로
-        # 안 쓸 때만 도달한다). 포커스를 받을 수 있는 위젯에 이벤트 필터를 직접 걸어야
-        # 실제로 가로채진다.
-        self._path_edit.installEventFilter(self)
-
-        lay.addWidget(QLabel("보충설명(도면 종류 등, 생략 가능):"))
-        self._note_edit = QPlainTextEdit(self)
-        self._note_edit.setPlaceholderText("예: 방송 송신소 계통도, 굵은 실선만 실제 연결선")
-        self._note_edit.setMaximumHeight(70)
-        self._note_edit.installEventFilter(self)
-        lay.addWidget(self._note_edit)
-
-        # [실사용 피드백 2026-08-11] 수동 붙여넣기 모드 — API 크레딧 대신 사용자가 원하는
-        # AI 챗(Claude Code·claude.ai·chatgpt.com 등, 이 프로젝트가 쓰는 kairos 계정
-        # 크레딧과 무관한 별도 정액제/구독)에 이미지+프롬프트를 직접 붙여넣고 받은 JSON을
-        # 붙여넣는 경로. `sketch_pipeline.manual_prompt`/`build_from_manual_json` 참조.
-        self._manual_check = QCheckBox(
-            "수동 모드(다른 AI 챗에 직접 붙여넣기 — API 크레딧 안 씀)", self)
-        self._manual_check.toggled.connect(self._on_manual_toggled)
-        lay.addWidget(self._manual_check)
-
-        self._auto_group = QWidget(self)
-        auto_lay = QVBoxLayout(self._auto_group)
-        auto_lay.setContentsMargins(0, 0, 0, 0)
-        model_grid = QGridLayout()
-        model_grid.addWidget(QLabel("개요 모델(P1, 전체 훑기):"), 0, 0)
-        self._overview_combo = QComboBox(self)
-        model_grid.addWidget(self._overview_combo, 0, 1)
-        model_grid.addWidget(QLabel("세부 모델(P2, 구획 확대):"), 1, 0)
-        self._tile_combo = QComboBox(self)
-        model_grid.addWidget(self._tile_combo, 1, 1)
-        auto_lay.addLayout(model_grid)
-        auto_lay.addWidget(QLabel("⚠ 밀집 도면은 여러 번 나눠 인식해 수 분 걸릴 수 있습니다."))
-        lay.addWidget(self._auto_group)
-        self._populate_models()
-
-        self._manual_group = QWidget(self)
-        manual_lay = QVBoxLayout(self._manual_group)
-        manual_lay.setContentsMargins(0, 0, 0, 0)
-        copy_btn = QToolButton(self)
-        copy_btn.setText("프롬프트 복사")
-        copy_btn.clicked.connect(self._copy_manual_prompt)
-        manual_lay.addWidget(copy_btn)
-        manual_lay.addWidget(QLabel(
-            "이미지와 함께 위 프롬프트를 원하는 AI 챗에 붙여넣고, 받은 JSON 응답을 "
-            "그대로 아래에 붙여넣으세요:"))
-        self._manual_json_edit = QPlainTextEdit(self)
-        self._manual_json_edit.setPlaceholderText('{"shapes": [...], "edges": [...], "unknown": [...]}')
-        self._manual_json_edit.setMinimumHeight(120)
-        manual_lay.addWidget(self._manual_json_edit)
-        lay.addWidget(self._manual_group)
-        self._manual_group.setVisible(False)
-
-        self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
-                                      | QDialogButtonBox.StandardButton.Cancel, self)
-        self._btns.button(QDialogButtonBox.StandardButton.Ok).setEnabled(False)
-        self._btns.accepted.connect(self._on_accept_clicked)
-        self._btns.rejected.connect(self.reject)
-        lay.addWidget(self._btns)
-
-    # ---- 수동/자동 모드 전환 --------------------------------------------------
-
-    def _on_manual_toggled(self, checked: bool):
-        self._auto_group.setVisible(not checked)
-        self._manual_group.setVisible(checked)
-
-    def is_manual_mode(self) -> bool:
-        return self._manual_check.isChecked()
-
-    def manual_json(self) -> str:
-        return self._manual_json_edit.toPlainText().strip()
-
-    def _copy_manual_prompt(self):
-        path = self.image_path()
-        if not path:
-            QMessageBox.information(self, "AI 이미지→도면", "먼저 이미지를 선택하세요.")
-            return
-        pm = QPixmap(path)
-        if pm.isNull():
-            QMessageBox.warning(self, "AI 이미지→도면", "이미지를 읽을 수 없습니다.")
-            return
-        from easycad.ai.sketch_pipeline import manual_prompt
-        QApplication.clipboard().setText(manual_prompt(pm.width(), pm.height(), self.note()))
-        QMessageBox.information(
-            self, "AI 이미지→도면",
-            "프롬프트를 클립보드에 복사했습니다.\n"
-            "이미지와 함께 AI 챗에 붙여넣고, 받은 JSON을 아래 칸에 붙여넣어 주세요.")
-
-    def _on_accept_clicked(self):
-        if self.is_manual_mode():
-            text = self.manual_json()
-            if not text:
-                QMessageBox.warning(self, "AI 이미지→도면", "붙여넣은 JSON이 비어 있습니다.")
-                return
-            try:
-                gw.parse_json(text)
-            except Exception as e:
-                QMessageBox.warning(self, "AI 이미지→도면", f"JSON을 읽을 수 없습니다: {e}")
-                return
-        self.accept()
-
-    # ---- 모델 목록 ----------------------------------------------------------
+    # ---- AI 보조 생성 ---------------------------------------------------------
 
     def _populate_models(self):
-        """게이트웨이 `/models`를 실호출해 전체 목록을 채우고 실측 기본값을 "(추천)"으로
-        표시·사전선택한다. 짧은 timeout(8초)로 호출 — 이 메서드는 다이얼로그 `__init__`
-        안에서 동기 호출되므로(별도 스레드를 안 씀 — 보통 1초 내외라 그 정도 지연은
-        감수할 만하다는 판단), 네트워크가 죽어 있을 때 기본 600초 타임아웃을 그대로
-        물려받으면 다이얼로그 자체가 못 뜬다. 조회 실패 시 기본값 둘만으로 조용히 폴백."""
+        """게이트웨이 `/models`를 실호출해 gpt·gemini 계열만 채우고(`list_text_models`),
+        가성비 최선 둘을 "(추천1)"/"(추천2)"로 표시·기본 선택(추천1)한다 — 실측 근거는
+        `gateway.TEXT_RECOMMEND_1/2` 주석 참조. 조회 실패(키 없음·네트워크 오류) 시
+        추천 둘만으로 조용히 폴백(`_AIImageImportDialog._populate_models`와 동일 관례)."""
         models: list[str] = []
         try:
             key = gw.resolve_api_key()
             if key:
-                models = gw.list_models(key, timeout=8.0)
+                models = gw.list_text_models(key, timeout=8.0)
         except Exception:
             models = []
-        pool = sorted(set(models) | {self._OVERVIEW_DEFAULT, self._TILE_DEFAULT})
-        for combo, default in ((self._overview_combo, self._OVERVIEW_DEFAULT),
-                               (self._tile_combo, self._TILE_DEFAULT)):
-            combo.clear()
-            for m in pool:
-                combo.addItem(f"{m} (추천)" if m == default else m, m)
-            idx = combo.findData(default)
-            combo.setCurrentIndex(idx if idx >= 0 else 0)
+        r1, r2 = gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2
+        pool = sorted(set(models) | {r1, r2})
+        self._model_combo.clear()
+        for m in pool:
+            if m == r1:
+                label = f"{m} (추천1)"
+            elif m == r2:
+                label = f"{m} (추천2)"
+            else:
+                label = m
+            self._model_combo.addItem(label, m)
+        idx = self._model_combo.findData(r1)
+        self._model_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
-    def overview_model(self) -> str:
-        return self._overview_combo.currentData() or self._OVERVIEW_DEFAULT
+    def model(self) -> str:
+        return self._model_combo.currentData() or gw.TEXT_RECOMMEND_1
 
-    def tile_model(self) -> str:
-        return self._tile_combo.currentData() or self._TILE_DEFAULT
+    def _on_ai_clicked(self):
+        desc = self._prompt_edit.text().strip()
+        if not desc:
+            QMessageBox.information(self, "Mermaid 가져오기", "먼저 설명을 입력하세요.")
+            return
+        key = gw.resolve_api_key()
+        if not key:
+            QMessageBox.warning(self, "Mermaid 가져오기",
+                                "게이트웨이 API 키가 없습니다. "
+                                "~/.claude/.secrets/easycad-gateway.key에 키를 넣어 주세요.")
+            return
+        self._ai_btn.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            from easycad.ai.text_to_mermaid import generate_mermaid
+            text, used = generate_mermaid(key, desc, model=self.model())
+        except Exception as e:
+            QMessageBox.warning(self, "Mermaid 가져오기", f"생성 실패: {e}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._ai_btn.setEnabled(True)
+        self._edit.setPlainText(text)
+        # [실사용 피드백 계승, §8 항목18 C단계] 크레딧 잔액 표시 — 실패해도 본 결과
+        # (Mermaid 채우기)에는 영향 없어야 하므로 조용히 무시.
+        try:
+            remaining, quota = gw.get_credit_balance(key)
+            self._credit_label.setText(f"{used} · 크레딧 잔여 {remaining:.0f}/{quota:.0f}")
+        except Exception:
+            self._credit_label.setText(used)
 
-    # ---- 이미지 입력(찾아보기·드래그드롭·Ctrl+V) ------------------------------
-
-    def _browse(self):
-        path, _ = QFileDialog.getOpenFileName(self, "이미지 선택", "", self._IMAGE_FILTER)
-        if path:
-            self._set_image_path(path)
-
-    def _set_image_path(self, path: str):
-        self._path_edit.setText(path)
-        self._btns.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(path))
-        pm = QPixmap(path)
-        if pm.isNull():
-            self._thumb_label.setText("(미리보기 없음)")
-            self._thumb_label.setPixmap(QPixmap())
-        else:
-            self._thumb_label.setText("")
-            self._thumb_label.setPixmap(pm.scaled(
-                self._thumb_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation))
-
-    def _save_temp_image(self, pm: QPixmap) -> str:
-        fd, path = tempfile.mkstemp(suffix=".png", prefix="ai_sketch_paste_")
-        os.close(fd)
-        pm.save(path, "PNG")
-        self._temp_image_path = path
-        return path
-
-    def dragEnterEvent(self, e):
-        md = e.mimeData()
-        if md.hasImage() or (md.hasUrls() and any(
-                u.toLocalFile().lower().endswith(self._IMG_EXTS) for u in md.urls())):
-            e.acceptProposedAction()
-
-    def dragMoveEvent(self, e):
-        self.dragEnterEvent(e)
-
-    def dropEvent(self, e):
-        md = e.mimeData()
-        if md.hasUrls():
-            for u in md.urls():
-                p = u.toLocalFile()
-                if p.lower().endswith(self._IMG_EXTS):
-                    self._set_image_path(p)
-                    e.acceptProposedAction()
-                    return
-        if md.hasImage():
-            img = md.imageData()
-            if isinstance(img, QImage) and not img.isNull():
-                self._set_image_path(self._save_temp_image(QPixmap.fromImage(img)))
-                e.acceptProposedAction()
-
-    def eventFilter(self, obj, event):
-        if (event.type() == QEvent.Type.KeyPress and event.matches(QKeySequence.StandardKey.Paste)
-                and obj in (self._path_edit, self._note_edit)):
-            md = QApplication.clipboard().mimeData()
-            has_image = md.hasImage() or (md.hasUrls() and any(
-                u.toLocalFile().lower().endswith(self._IMG_EXTS) for u in md.urls()))
-            # path_edit는 읽기전용이라 텍스트 붙여넣기가 의미 없어 항상 가로챈다.
-            # note_edit는 진짜 텍스트 입력창이므로, 클립보드에 이미지가 있을 때만 가로채고
-            # 아니면(보통의 텍스트 붙여넣기) 위젯의 기본 동작에 그대로 맡긴다.
-            if obj is self._path_edit or has_image:
-                self._paste_from_clipboard()
-                return True
-        return super().eventFilter(obj, event)
-
-    def _paste_from_clipboard(self):
-        md = QApplication.clipboard().mimeData()
-        if md.hasUrls():
-            for u in md.urls():
-                p = u.toLocalFile()
-                if p and p.lower().endswith(self._IMG_EXTS):
-                    self._set_image_path(p)
-                    return
-        pm = _clipboard_pixmap()
-        if pm is not None and not pm.isNull():
-            self._set_image_path(self._save_temp_image(pm))
-
-    def image_path(self) -> str:
-        return self._path_edit.text()
-
-    def note(self) -> str:
-        return self._note_edit.toPlainText().strip()
-
-    def cleanup_temp_image(self):
-        """Ctrl+V/이미지데이터 드롭으로 만든 임시 파일 정리 — 호출자가 파이프라인이
-        이미지를 다 읽은 뒤(또는 다이얼로그가 취소된 뒤) 명시적으로 부른다."""
-        if self._temp_image_path:
-            try:
-                os.remove(self._temp_image_path)
-            except OSError:
-                pass
-            self._temp_image_path = None
-
-
-class _AISketchProgressDialog(QDialog):
-    """AI 이미지→도면 처리 중 진행 상태를 보여주는 모달. 닫기(X) 버튼을 없앴다 —
-    진행 중인 게이트웨이 호출을 안전하게 중단할 방법이 없어 취소는 이번 라운드
-    스코프 밖(`host_ai.py` 참조), 닫기를 허용하면 "취소됐다"는 착각을 줄 수 있다.
-
-    진행 막대는 P2 타일 단계에서만 결정형(N개 중 몇 번째)이다 — P1은 몇 초 걸릴지
-    호출 전엔 알 수 없어 무한 로딩으로 둔다(정확한 ETA는 실측상 호출별 편차가
-    15~56초로 커서 신빙성 있게 못 낸다, `docs/ai_image_import.md` 참조 — 대신 경과
-    시간만 보여준다)."""
-
-    _TILE_RE = re.compile(r"\[P2 타일 (\d+)/(\d+)\]")
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("AI 이미지→도면 — 처리 중")
-        self.setModal(True)
-        self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
-        lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("도면을 분석하는 중입니다 — 밀집 도면은 수 분 걸릴 수 있습니다."))
-
-        status_row = QHBoxLayout()
-        self._status_label = QLabel("준비 중…", self)
-        status_row.addWidget(self._status_label, 1)
-        self._elapsed_label = QLabel("경과: 0:00", self)
-        status_row.addWidget(self._elapsed_label)
-        lay.addLayout(status_row)
-
-        self._progress = QProgressBar(self)
-        self._progress.setRange(0, 0)   # 시작은 무한 로딩(P1)
-        lay.addWidget(self._progress)
-
-        self._log = QPlainTextEdit(self)
-        self._log.setReadOnly(True)
-        self._log.setMinimumSize(QSize(440, 220))
-        lay.addWidget(self._log)
-
-        self._elapsed_sec = 0
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._tick_elapsed)
-
-    def showEvent(self, e):
-        super().showEvent(e)
-        self._elapsed_sec = 0
-        self._elapsed_label.setText("경과: 0:00")
-        self._timer.start(1000)
-
-    def _tick_elapsed(self):
-        self._elapsed_sec += 1
-        m, s = divmod(self._elapsed_sec, 60)
-        self._elapsed_label.setText(f"경과: {m}:{s:02d}")
-
-    def append(self, msg: str):
-        self._log.appendPlainText(msg)
-        self._status_label.setText(msg)
-        m = self._TILE_RE.search(msg)
-        if m:
-            i, n = int(m.group(1)) + 1, int(m.group(2))   # 완료 개수 느낌으로 1-based 표시
-            self._progress.setRange(0, n)
-            self._progress.setValue(i)
-
-    def accept(self):
-        self._timer.stop()
-        super().accept()
-
-    def reject(self):
-        self._timer.stop()
-        super().reject()

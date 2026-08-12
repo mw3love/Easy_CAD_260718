@@ -406,16 +406,6 @@ def load_document(scene, path: str) -> int:
     return len(insert_items(scene, doc.get("items", [])))
 
 
-def load_document_items(path: str) -> list[dict]:
-    """`.ecad` 파일을 읽어 item dict 목록만 반환(씬 조작 없음) — `insert_items()`와
-    짝지어 "삽입" 용도로 쓴다(파일을 열지 않고 현재 씬에 추가할 때)."""
-    with open(path, encoding="utf-8") as f:
-        doc = json.load(f)
-    if doc.get("format") != FORMAT:
-        raise ValueError("Easy CAD 문서가 아닙니다.")
-    return doc.get("items", [])
-
-
 def load_document_layers(path: str):
     """[신규기능] .ecad의 문서 레벨 레이어 목록만 읽는다(이름·표시·잠금).
     레이어 목록이 없는 옛 .ecad는 None(호출측이 기본 레이어로 리셋)."""
