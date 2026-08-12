@@ -14,7 +14,7 @@ P1~P3.75 타일링, host_ai.py QThread 워커, _AIImageImportDialog)를 완전�
     `_edit` 최종 Mermaid 코드), 모델 드롭다운(gemini/gpt 그룹 헤더, 추천 배지 없음),
     우상단 게이트웨이 설정 버튼.
   - `_AIGatewaySettingsDialog`(2026-08-12) — 게이트웨이 주소·API 키 입력·저장에 더해
-    모델 새로고침(gpt/gemini 개수 보고)·크레딧 확인까지.
+    "연결 테스트"(모델 gpt/gemini 개수 + 크레딧 잔여를 한 번에) 버튼까지.
   - 옛 이미지 경로가 실제로 사라졌는지(메뉴 액션·믹스인 잔존 여부) 회귀 가드.
 
 tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easycad.py (전체) 또는
@@ -353,9 +353,13 @@ def test_mermaid_dialog_shift_enter_in_prompt_inserts_newline_not_ai():
     assert calls["n"] == 0
 
 
-def test_mermaid_dialog_ai_button_shows_credit_balance_on_success():
+def test_mermaid_dialog_has_no_credit_label():
+    """2026-08-12 4차, 디자인 시안 합의 — 크레딧 표시는 이 창에서 제거하고
+    `_AIGatewaySettingsDialog`의 "연결 테스트" 한 곳으로 통합했다(중복 표시 제거).
+    회귀 가드: `_on_ai_clicked`가 더 이상 `get_credit_balance`를 호출하지 않아야 한다."""
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
+    assert not hasattr(dlg, "_credit_label")
     dlg._prompt_edit.setPlainText("아무 설명")
 
     def fake_generate(key, desc, *, model, **kw):
@@ -363,25 +367,10 @@ def test_mermaid_dialog_ai_button_shows_credit_balance_on_success():
 
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate), \
-         patch("easycad.canvas.host_dialogs.gw.get_credit_balance", return_value=(100.0, 200.0)):
+         patch("easycad.canvas.host_dialogs.gw.get_credit_balance") as get_credit:
         dlg._on_ai_clicked()
-    assert "100" in dlg._credit_label.text() and "200" in dlg._credit_label.text()
-
-
-def test_mermaid_dialog_ai_button_credit_lookup_failure_does_not_break_result():
-    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
-        dlg = _MermaidDialog()
-    dlg._prompt_edit.setPlainText("아무 설명")
-
-    def fake_generate(key, desc, *, model, **kw):
-        return "flowchart TD\n A-->B", model
-
-    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
-         patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate), \
-         patch("easycad.canvas.host_dialogs.gw.get_credit_balance",
-               side_effect=RuntimeError("네트워크 없음")):
-        dlg._on_ai_clicked()
-    assert dlg.text() == "flowchart TD\n A-->B"   # 크레딧 조회 실패가 본 결과를 막지 않음
+    assert dlg.text() == "flowchart TD\n A-->B"
+    assert not get_credit.called
 
 
 def test_mermaid_dialog_ai_button_requires_nonempty_box():
@@ -439,7 +428,7 @@ def test_mermaid_dialog_direct_paste_still_works_without_ai():
 def test_mermaid_dialog_browse_image_attaches_and_shows_thumbnail():
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
-    assert dlg._image_row_widget.isHidden()
+    assert dlg._image_chip.isHidden()
 
     real_path = os.path.join(_TMP, f"attach_{uuid.uuid4().hex}.png")
     _mk_pixmap(60, 40).save(real_path)
@@ -448,7 +437,7 @@ def test_mermaid_dialog_browse_image_attaches_and_shows_thumbnail():
         dlg._browse_image()
     assert dlg._attached_image is not None
     assert dlg._attached_image_name == os.path.basename(real_path)
-    assert not dlg._image_row_widget.isHidden()
+    assert not dlg._image_chip.isHidden()
     assert not dlg._image_thumb.pixmap().isNull()
 
 
@@ -463,7 +452,7 @@ def test_mermaid_dialog_clear_image_hides_row_and_resets_state():
     dlg._clear_image()
     assert dlg._attached_image is None
     assert dlg._attached_image_name == ""
-    assert dlg._image_row_widget.isHidden()
+    assert dlg._image_chip.isHidden()
 
 
 def test_mermaid_dialog_drop_image_file_attaches():
@@ -670,68 +659,60 @@ def test_gateway_settings_dialog_prefills_default_url_when_nothing_stored():
     assert dlg.api_key() == ""
 
 
-def test_gateway_settings_dialog_refresh_reports_split_counts():
-    """[2026-08-12 3차] 옛 "연결 테스트"(모델 개수만)를 "새로고침"으로 확장 —
-    `_MermaidDialog` 드롭다운이 실제로 쓸 gpt/gemini 개수를 나눠 보고한다(재피드백:
-    "새로고침 후 gpt n개, gemini n개 호출 성공 같은 메시지 보여줘")."""
+def test_gateway_settings_dialog_test_reports_models_and_credit():
+    """[2026-08-12 4차, 디자인 시안 합의] 옛 "새로고침"+"크레딧 확인" 두 버튼을 "연결
+    테스트" 하나로 통합 — 클릭 한 번으로 모델 gpt/gemini 개수와 크레딧 잔여를 함께
+    보고한다. 크레딧은 "잔여" 문구로(남은 양임을 명확히, 옛 "…사용" 표기 폐기)."""
     dlg = _AIGatewaySettingsDialog()
     dlg._key_edit.setText("some-key")
     with patch("easycad.canvas.host_dialogs.gw.list_text_models",
-              return_value=["gpt-5.4-mini", "gpt-5.4-nano", "gemini-3.6-flash"]):
-        dlg._on_refresh_clicked()
-    assert "gpt 2개" in dlg._refresh_label.text()
-    assert "gemini 1개" in dlg._refresh_label.text()
-    assert dlg._refresh_btn.isEnabled()
+              return_value=["gpt-5.4-mini", "gpt-5.4-nano", "gemini-3.6-flash"]), \
+         patch("easycad.canvas.host_dialogs.gw.get_credit_balance",
+              return_value=(380.0, 1000.0)):
+        dlg._on_test_clicked()
+    text = dlg._test_result_label.text()
+    assert "GPT 2개" in text
+    assert "Gemini 1개" in text
+    assert "잔여" in text
+    assert "380" in text and "1000" in text
+    assert dlg._test_btn.isEnabled()
 
 
-def test_gateway_settings_dialog_refresh_reports_failure():
+def test_gateway_settings_dialog_test_reports_model_failure_but_still_checks_credit():
+    """모델·크레딧 조회는 서로 독립 — 하나가 실패해도 다른 하나는 계속 시도한다."""
     dlg = _AIGatewaySettingsDialog()
     dlg._key_edit.setText("bad-key")
     with patch("easycad.canvas.host_dialogs.gw.list_text_models",
-              side_effect=RuntimeError("401 Unauthorized")):
-        dlg._on_refresh_clicked()
-    assert "실패" in dlg._refresh_label.text()
-    assert "401" in dlg._refresh_label.text()
+              side_effect=RuntimeError("401 Unauthorized")), \
+         patch("easycad.canvas.host_dialogs.gw.get_credit_balance",
+              return_value=(5.0, 10.0)):
+        dlg._on_test_clicked()
+    text = dlg._test_result_label.text()
+    assert "모델 조회 실패" in text
+    assert "401" in text
+    assert "잔여 5" in text   # 모델 조회가 실패해도 크레딧 확인은 그대로 성공
 
 
-def test_gateway_settings_dialog_refresh_requires_key():
+def test_gateway_settings_dialog_test_reports_credit_failure():
+    dlg = _AIGatewaySettingsDialog()
+    dlg._key_edit.setText("some-key")
+    with patch("easycad.canvas.host_dialogs.gw.list_text_models",
+              return_value=["gpt-5.4-mini"]), \
+         patch("easycad.canvas.host_dialogs.gw.get_credit_balance",
+              side_effect=RuntimeError("network down")):
+        dlg._on_test_clicked()
+    assert "크레딧 확인 실패" in dlg._test_result_label.text()
+
+
+def test_gateway_settings_dialog_test_requires_key():
     _clear_gateway_settings()   # 남은 키가 있으면 필드가 미리 채워져 이 테스트가 무의미해짐
     dlg = _AIGatewaySettingsDialog()
-    with patch("easycad.canvas.host_dialogs.gw.list_text_models") as list_text_models:
-        dlg._on_refresh_clicked()
+    with patch("easycad.canvas.host_dialogs.gw.list_text_models") as list_text_models, \
+         patch("easycad.canvas.host_dialogs.gw.get_credit_balance") as get_credit:
+        dlg._on_test_clicked()
     assert not list_text_models.called
-    assert "키를 입력" in dlg._refresh_label.text()
-
-
-def test_gateway_settings_dialog_credit_check_shows_balance():
-    """[2026-08-12 3차] "크레딧 확인도 같이 하면 좋을듯" 피드백 — 참고 이미지(Mindlogic
-    Gateway 설정)의 사용량 확인 구성을 그대로 채용."""
-    dlg = _AIGatewaySettingsDialog()
-    dlg._key_edit.setText("some-key")
-    with patch("easycad.canvas.host_dialogs.gw.get_credit_balance",
-              return_value=(1704513.0, 10000.0)):
-        dlg._on_credit_clicked()
-    assert "1704513" in dlg._credit_label.text()
-    assert "10000" in dlg._credit_label.text()
-    assert dlg._credit_btn.isEnabled()
-
-
-def test_gateway_settings_dialog_credit_check_requires_key():
-    _clear_gateway_settings()
-    dlg = _AIGatewaySettingsDialog()
-    with patch("easycad.canvas.host_dialogs.gw.get_credit_balance") as get_credit:
-        dlg._on_credit_clicked()
     assert not get_credit.called
-    assert "키를 입력" in dlg._credit_label.text()
-
-
-def test_gateway_settings_dialog_credit_check_reports_failure():
-    dlg = _AIGatewaySettingsDialog()
-    dlg._key_edit.setText("bad-key")
-    with patch("easycad.canvas.host_dialogs.gw.get_credit_balance",
-              side_effect=RuntimeError("network down")):
-        dlg._on_credit_clicked()
-    assert "실패" in dlg._credit_label.text()
+    assert "키를 입력" in dlg._test_result_label.text()
 
 
 def test_gateway_settings_dialog_accept_persists_url_and_key():

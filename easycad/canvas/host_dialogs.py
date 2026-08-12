@@ -14,6 +14,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter, QImage,
     QFont, QPainterPath, QPalette, QTextCursor, QStandardItemModel, QStandardItem,
+    QFontMetrics,
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
@@ -33,7 +34,7 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
-from easycad.canvas.host_widgets import _clipboard_pixmap, _act_icon
+from easycad.canvas.host_widgets import _clipboard_pixmap, _act_icon, _ACCENT_CORAL
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, render_preview, _find_title_frame
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
@@ -328,28 +329,93 @@ class _MermaidDialog(QDialog):
         hint.setStyleSheet("color:#8a8a8a;")
         lay.addWidget(hint)
 
-        # ---- 1번 칸: AI 프롬프트(짧음) + 첨부("+") + AI 생성(코랄) ------------------
-        prompt_row = QHBoxLayout()
-        self._prompt_edit = QPlainTextEdit(self)
+        # ---- 입력 카드: 텍스트 입력(위) + 첨부·생성 툴바(아래) — 2026-08-12 4차, 디자인
+        # 시안 합의로 버튼을 입력칸 옆이 아니라 아래 툴바로. 다크 테마에서도 입력칸만
+        # 흰색 고정해 코드 편집기(어두운 배경)와 대비되게 한다(라이트 테마는 원래도 밝아
+        # 변화 없음) — "여기 입력하세요" 신호를 항상 뚜렷하게 유지하려는 의도.
+        dark = bool(getattr(self.parent(), "_dark", True))
+
+        prompt_frame = QFrame(self)
+        prompt_frame.setObjectName("promptCard")
+        prompt_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        prompt_frame.setStyleSheet(
+            "QFrame#promptCard { border:1px solid rgba(128,128,128,90); border-radius:8px; "
+            f"background:{'#ffffff' if dark else 'palette(base)'}; }}"
+        )
+        prompt_frame_lay = QVBoxLayout(prompt_frame)
+        prompt_frame_lay.setContentsMargins(0, 0, 0, 0)
+        prompt_frame_lay.setSpacing(0)
+
+        self._prompt_edit = QPlainTextEdit(prompt_frame)
         self._prompt_edit.setPlaceholderText("예: 날씨를 예보하는 워크플로우")
         self._prompt_edit.setFixedHeight(64)
         self._prompt_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self._prompt_edit.setFrameShape(QFrame.Shape.NoFrame)   # 테두리는 카드가 그림
         self._prompt_edit.setAcceptDrops(False)   # 드롭을 이 다이얼로그(dropEvent)로 넘김
         self._prompt_edit.installEventFilter(self)   # Enter 생성·Ctrl+V 이미지 첨부
-        prompt_row.addWidget(self._prompt_edit, 1)
+        self._prompt_edit.setStyleSheet(
+            "QPlainTextEdit { background:transparent; " +
+            ("color:#241a15; }" if dark else "}")
+        )
+        prompt_frame_lay.addWidget(self._prompt_edit)
 
-        self._attach_btn = QToolButton(self)
-        self._attach_btn.setText("+")   # [2026-08-12 3차] 클립 아이콘 → "+"(참고 이미지 관례)
+        toolbar_widget = QWidget(prompt_frame)
+        toolbar_widget.setObjectName("promptToolbar")
+        toolbar_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        toolbar_widget.setStyleSheet(
+            "QWidget#promptToolbar { background:palette(button); "
+            "border-top:1px solid rgba(128,128,128,90); "
+            "border-bottom-left-radius:8px; border-bottom-right-radius:8px; }"
+        )
+        toolbar_lay = QHBoxLayout(toolbar_widget)
+        toolbar_lay.setContentsMargins(8, 6, 8, 6)
+        toolbar_lay.setSpacing(8)
+
+        self._attach_btn = QToolButton(toolbar_widget)
+        self._attach_btn.setIcon(_act_icon("attach"))
+        self._attach_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._attach_btn.setText("이미지 첨부")
         self._attach_btn.setToolTip("이미지 첨부(드래그드롭·Ctrl+V도 가능)")
         self._attach_btn.clicked.connect(self._browse_image)
-        prompt_row.addWidget(self._attach_btn)
+        toolbar_lay.addWidget(self._attach_btn)
 
-        self._ai_btn = QToolButton(self)
-        # [self-review 2026-08-12] _svg_icon()만 쓰면 QIcon.Mode.Disabled 변형이 없어
+        # 컴팩트 이미지 칩(첨부 시에만 노출) — 옛 전체폭 행 대신 툴바 안 작은 pill로
+        # (2026-08-12 4차, "이미지첨부 자리에 썸네일만 작게" 피드백).
+        self._image_chip = QWidget(toolbar_widget)
+        self._image_chip.setObjectName("imageChip")
+        self._image_chip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._image_chip.setStyleSheet(
+            "QWidget#imageChip { background:palette(alternate-base); "
+            "border:1px solid rgba(128,128,128,90); border-radius:11px; }"
+        )
+        chip_lay = QHBoxLayout(self._image_chip)
+        chip_lay.setContentsMargins(3, 2, 4, 2)
+        chip_lay.setSpacing(4)
+        self._image_thumb = QLabel(self._image_chip)
+        self._image_thumb.setFixedSize(20, 20)
+        self._image_thumb.setScaledContents(True)
+        chip_lay.addWidget(self._image_thumb)
+        self._image_name_label = QLabel("", self._image_chip)
+        self._image_name_label.setStyleSheet("font-size:11px;")
+        self._image_name_label.setMaximumWidth(140)
+        chip_lay.addWidget(self._image_name_label)
+        self._image_clear_btn = QToolButton(self._image_chip)
+        self._image_clear_btn.setText("✕")
+        self._image_clear_btn.setToolTip("이미지 제거")
+        self._image_clear_btn.setFixedSize(16, 16)
+        self._image_clear_btn.clicked.connect(self._clear_image)
+        chip_lay.addWidget(self._image_clear_btn)
+        self._image_chip.setVisible(False)
+        toolbar_lay.addWidget(self._image_chip)
+
+        toolbar_lay.addStretch(1)
+
+        self._ai_btn = QToolButton(toolbar_widget)
+        # [self-review 2026-08-12] _svg_icon_pixmap()만 쓰면 QIcon.Mode.Disabled 변형이 없어
         # setEnabled(False) 중에도(생성 진행 중) 아이콘이 그대로 진하게 남는다 — 실제
         # 창에서 활성/비활성 스크린샷을 비교해 발견(육안으로 구분 불가였음). 다른 상단바
         # 아이콘들이 쓰는 `_finish_act_icon`의 35% 알파 흐림 관례를 그대로 재현.
-        gen_pm = _svg_icon_pixmap("generate", 20, QColor("#1b120d"))
+        gen_pm = _svg_icon_pixmap("generate", 18, QColor("#1b120d"))
         gen_icon = QIcon(gen_pm)
         gen_dim = QPixmap(gen_pm.size())
         gen_dim.fill(Qt.GlobalColor.transparent)
@@ -359,34 +425,37 @@ class _MermaidDialog(QDialog):
         _dp.end()
         gen_icon.addPixmap(gen_dim, QIcon.Mode.Disabled, QIcon.State.Off)
         self._ai_btn.setIcon(gen_icon)
-        self._ai_btn.setIconSize(QSize(18, 18))
+        self._ai_btn.setIconSize(QSize(16, 16))
+        self._ai_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._ai_btn.setText("AI로 생성")
         self._ai_btn.setToolTip("AI로 생성 (Enter)")
         self._ai_btn.clicked.connect(self._on_ai_clicked)
         self._ai_btn.setStyleSheet(
-            "QToolButton { background: #da7756; border: none; border-radius: 7px; padding: 6px; }"
+            "QToolButton { background: #da7756; border: none; border-radius: 7px; "
+            "padding: 6px 12px; color: #1b120d; font-weight:600; }"
             "QToolButton:hover { background: #e08a6c; }"
             "QToolButton:pressed { background: #c2673f; }"
             "QToolButton:disabled { background: #6b5148; }"   # 채도 낮춘 비활성 코랄
         )
-        prompt_row.addWidget(self._ai_btn)
-        lay.addLayout(prompt_row)
+        toolbar_lay.addWidget(self._ai_btn)
 
-        image_row = QHBoxLayout()
-        self._image_thumb = QLabel(self)
-        self._image_thumb.setFixedSize(40, 40)
-        self._image_thumb.setScaledContents(True)
-        image_row.addWidget(self._image_thumb)
-        self._image_name_label = QLabel("", self)
-        image_row.addWidget(self._image_name_label, 1)
-        self._image_clear_btn = QToolButton(self)
-        self._image_clear_btn.setText("✕")
-        self._image_clear_btn.setToolTip("이미지 제거")
-        self._image_clear_btn.clicked.connect(self._clear_image)
-        image_row.addWidget(self._image_clear_btn)
-        self._image_row_widget = QWidget(self)
-        self._image_row_widget.setLayout(image_row)
-        self._image_row_widget.setVisible(False)
-        lay.addWidget(self._image_row_widget)
+        prompt_frame_lay.addWidget(toolbar_widget)
+        lay.addWidget(prompt_frame)
+
+        # ---- 입력→코드 커넥터(원+↓) — 순서도 커넥터 느낌으로 "이 입력이 아래 코드로
+        # 바뀐다"를 시각화(2026-08-12 4차, 디자인 시안 합의). ---------------------------
+        connector_row = QHBoxLayout()
+        connector_row.addStretch(1)
+        connector_dot = QLabel("↓", self)
+        connector_dot.setFixedSize(24, 24)
+        connector_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        connector_dot.setStyleSheet(
+            f"QLabel {{ border:1.5px solid {_ACCENT_CORAL}; border-radius:12px; "
+            f"color:{_ACCENT_CORAL}; font-weight:700; background:palette(base); }}"
+        )
+        connector_row.addWidget(connector_dot)
+        connector_row.addStretch(1)
+        lay.addLayout(connector_row)
 
         # ---- 2번 칸: Mermaid 코드(넉넉함) — AI 결과가 채워지거나 직접 타이핑/붙여넣기 ----
         lay.addWidget(QLabel("Mermaid 코드:", self))
@@ -396,16 +465,18 @@ class _MermaidDialog(QDialog):
         self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         lay.addWidget(self._edit)
 
-        # ---- 모델 선택: 평범한 드롭다운(gemini/gpt 그룹 헤더, 추천 배지 없음) ----------
+        # ---- 모델 선택: 평범한 드롭다운(gemini/gpt 그룹 헤더, 추천 배지 없음) + 새로고침 ---
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("모델:", self))
         self._model_combo = QComboBox(self)
         model_row.addWidget(self._model_combo, 1)
+        self._model_refresh_btn = QToolButton(self)
+        self._model_refresh_btn.setIcon(_act_icon("refresh"))
+        self._model_refresh_btn.setToolTip("모델 목록 새로고침")
+        self._model_refresh_btn.clicked.connect(self._populate_models)
+        model_row.addWidget(self._model_refresh_btn)
         lay.addLayout(model_row)
         self._populate_models()
-
-        self._credit_label = QLabel("", self)   # AI 생성 성공 후에만 채움(크레딧 잔액, 부가정보)
-        lay.addWidget(self._credit_label)
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                 | QDialogButtonBox.StandardButton.Cancel, self)
@@ -468,14 +539,19 @@ class _MermaidDialog(QDialog):
         pm = QPixmap()
         pm.loadFromData(buf.getvalue())
         self._image_thumb.setPixmap(pm)
-        self._image_name_label.setText(name)
-        self._image_row_widget.setVisible(True)
+        # 칩 폭이 좁아졌으니(2026-08-12 4차, 컴팩트 칩) 긴 파일명은 가운데 생략 — 전체
+        # 이름은 툴팁으로.
+        fm = QFontMetrics(self._image_name_label.font())
+        self._image_name_label.setText(
+            fm.elidedText(name, Qt.TextElideMode.ElideMiddle, 130))
+        self._image_name_label.setToolTip(name)
+        self._image_chip.setVisible(True)
 
     def _clear_image(self):
         self._attached_image = None
         self._attached_image_name = ""
         self._image_thumb.clear()
-        self._image_row_widget.setVisible(False)
+        self._image_chip.setVisible(False)
 
     def dragEnterEvent(self, e):
         md = e.mimeData()
@@ -573,8 +649,8 @@ class _MermaidDialog(QDialog):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             from easycad.ai.text_to_mermaid import generate_mermaid
-            text, used = generate_mermaid(key, desc, model=self.model(), base_url=base_url,
-                                          image=image)
+            text, _used = generate_mermaid(key, desc, model=self.model(), base_url=base_url,
+                                           image=image)
         except Exception as e:
             QMessageBox.warning(self, "Mermaid 가져오기", f"생성 실패: {e}")
             return
@@ -587,13 +663,8 @@ class _MermaidDialog(QDialog):
         cursor = self._edit.textCursor()
         cursor.select(QTextCursor.SelectionType.Document)
         cursor.insertText(text)
-        # [실사용 피드백 계승, §8 항목18 C단계] 크레딧 잔액 표시 — 실패해도 본 결과
-        # (Mermaid 채우기)에는 영향 없어야 하므로 조용히 무시.
-        try:
-            remaining, quota = gw.get_credit_balance(key, base_url)
-            self._credit_label.setText(f"{used} · 크레딧 잔여 {remaining:.0f}/{quota:.0f}")
-        except Exception:
-            self._credit_label.setText(used)
+        # [2026-08-12 4차, 디자인 시안 합의] 크레딧 잔액 표시는 이 창에서 제거하고
+        # `_AIGatewaySettingsDialog`의 "연결 테스트" 한 곳으로 통합했다(중복 표시 제거).
 
 
 class _AIGatewaySettingsDialog(QDialog):
@@ -629,28 +700,23 @@ class _AIGatewaySettingsDialog(QDialog):
         self._key_edit.setText(gw.resolve_api_key())
         lay.addWidget(self._key_edit)
 
-        # [2026-08-12 3차] 옛 "연결 테스트"(모델 개수만 확인)를 "모델 새로고침"으로
-        # 확장 — `_MermaidDialog`의 드롭다운이 실제로 쓸 gpt/gemini 개수를 그대로 보여줘
-        # 사용자가 요청한 "gpt N개, gemini N개 호출 성공" 형식을 만족시키면서, 별도
-        # 새로고침 버튼을 두 곳에 중복으로 두지 않는다(연결 확인 겸용).
-        refresh_row = QHBoxLayout()
-        self._refresh_btn = QToolButton(self)
-        self._refresh_btn.setIcon(_act_icon("refresh"))
-        self._refresh_btn.setToolTip("모델 목록 새로고침(연결 확인 겸용)")
-        self._refresh_btn.clicked.connect(self._on_refresh_clicked)
-        refresh_row.addWidget(self._refresh_btn)
-        self._refresh_label = QLabel("", self)
-        refresh_row.addWidget(self._refresh_label, 1)
-        lay.addLayout(refresh_row)
+        # [2026-08-12 4차, 디자인 시안 합의] 옛 "모델 새로고침"+"크레딧 확인" 두 버튼을
+        # "연결 테스트" 하나로 통합 — 클릭 한 번으로 모델 목록·크레딧 잔여를 함께 확인해
+        # 두 번 누를 필요가 없다. 결과는 두 줄로 표시.
+        test_row = QHBoxLayout()
+        self._test_btn = QToolButton(self)
+        self._test_btn.setIcon(_act_icon("refresh"))
+        self._test_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._test_btn.setText("연결 테스트")
+        self._test_btn.setToolTip("모델 목록 새로고침 + 크레딧 확인")
+        self._test_btn.clicked.connect(self._on_test_clicked)
+        test_row.addWidget(self._test_btn)
+        test_row.addStretch(1)
+        lay.addLayout(test_row)
 
-        credit_row = QHBoxLayout()
-        self._credit_btn = QToolButton(self)
-        self._credit_btn.setText("크레딧 확인")
-        self._credit_btn.clicked.connect(self._on_credit_clicked)
-        credit_row.addWidget(self._credit_btn)
-        self._credit_label = QLabel("", self)
-        credit_row.addWidget(self._credit_label, 1)
-        lay.addLayout(credit_row)
+        self._test_result_label = QLabel("", self)
+        self._test_result_label.setWordWrap(True)
+        lay.addWidget(self._test_result_label)
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                 | QDialogButtonBox.StandardButton.Cancel, self)
@@ -664,41 +730,35 @@ class _AIGatewaySettingsDialog(QDialog):
     def api_key(self) -> str:
         return self._key_edit.text().strip()
 
-    def _on_refresh_clicked(self):
+    def _on_test_clicked(self):
+        """모델 목록·크레딧 잔여를 한 번에 확인(2026-08-12 4차, 두 버튼 통합). 모델·크레딧
+        조회는 서로 독립이라 하나가 실패해도 다른 하나는 계속 시도해 각자 결과를 보여준다.
+        크레딧은 "잔여" 문구로 남은 양임을 명확히 한다(Mermaid 창이 예전에 쓰던 표기와
+        같은 어순, 옛 설정창의 "…사용"은 헷갈린다는 피드백으로 폐기)."""
         key = self.api_key()
         if not key:
-            self._refresh_label.setText("API 키를 입력하세요.")
+            self._test_result_label.setText("API 키를 입력하세요.")
             return
-        self._refresh_btn.setEnabled(False)
+        self._test_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            models = gw.list_text_models(key, self.base_url(), timeout=10.0)
-        except Exception as e:
-            self._refresh_label.setText(f"실패: {e}")
-            return
+            lines = []
+            try:
+                models = gw.list_text_models(key, self.base_url(), timeout=10.0)
+                n_gpt = sum(1 for m in models if "gpt" in m.lower())
+                n_gemini = sum(1 for m in models if "gemini" in m.lower())
+                lines.append(f"Gemini {n_gemini}개 · GPT {n_gpt}개 응답")
+            except Exception as e:
+                lines.append(f"모델 조회 실패: {e}")
+            try:
+                remaining, quota = gw.get_credit_balance(key, self.base_url())
+                lines.append(f"크레딧 잔여 {remaining:.0f} / {quota:.0f}")
+            except Exception as e:
+                lines.append(f"크레딧 확인 실패: {e}")
+            self._test_result_label.setText("\n".join(lines))
         finally:
             QApplication.restoreOverrideCursor()
-            self._refresh_btn.setEnabled(True)
-        n_gpt = sum(1 for m in models if "gpt" in m.lower())
-        n_gemini = sum(1 for m in models if "gemini" in m.lower())
-        self._refresh_label.setText(f"gpt {n_gpt}개, gemini {n_gemini}개 호출 성공")
-
-    def _on_credit_clicked(self):
-        key = self.api_key()
-        if not key:
-            self._credit_label.setText("API 키를 입력하세요.")
-            return
-        self._credit_btn.setEnabled(False)
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            remaining, quota = gw.get_credit_balance(key, self.base_url())
-        except Exception as e:
-            self._credit_label.setText(f"크레딧 확인 실패: {e}")
-            return
-        finally:
-            QApplication.restoreOverrideCursor()
-            self._credit_btn.setEnabled(True)
-        self._credit_label.setText(f"✓ 크레딧 {remaining:.0f}/{quota:.0f} 사용")
+            self._test_btn.setEnabled(True)
 
     def _on_accept(self):
         gw.store_base_url(self.base_url())
