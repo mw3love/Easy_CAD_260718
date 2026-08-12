@@ -42,7 +42,7 @@ from easycad.fileio.mermaid_import import (
 from easycad.canvas.host_widgets import (
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
-    _AccordionSection, _SymbolFolderDropZone,
+    _AccordionSection, _SymbolFolderDropZone, _ACCENT_CORAL,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -79,9 +79,12 @@ _PALETTE_TRIANGLE_WH = (77.94, 90.0)
 
 # [2026-08-12, 사용자 스크린샷 피드백 — Lucid 대비 버튼이 크고 2열 고정이라 패널 폭의 절반이
 # 빈 공간] 아이콘+라벨은 유지하되(사용자 선택) 버튼·아이콘을 줄이고 3열로 늘려 밀도를 높인다.
+# [같은 날 후속] 3열로도 아이콘 사이 여백이 넓다는 재피드백 — 버튼 폭을 더 줄이고(74→58)
+# 4열로 늘려 같은 폭 안에서 더 촘촘하게(간격은 버튼 내부 여백이 대부분이라 버튼 자체를
+# 줄이는 쪽이 grid spacing을 줄이는 것보다 효과적).
 _PALETTE_ICON_PX = 22
-_PALETTE_BTN_SIZE = QSize(74, 50)
-_PALETTE_COLS = 3
+_PALETTE_BTN_SIZE = QSize(58, 46)
+_PALETTE_COLS = 4
 
 
 
@@ -901,7 +904,9 @@ class _UIBuildMixin:
         custom_section = _AccordionSection(self, "내 심볼", "customsym", default_collapsed=True)
         add_folder_btn = QToolButton()
         add_folder_btn.setText("+"); add_folder_btn.setAutoRaise(True)
-        add_folder_btn.setFixedSize(QSize(18, 18))
+        add_folder_btn.setFixedSize(QSize(22, 22))   # [2026-08-12 피드백] 18→22, 눈에 띄게
+        add_folder_btn.setStyleSheet(
+            f"QToolButton {{ color: {_ACCENT_CORAL}; font-weight:700; font-size:15px; }}")
         add_folder_btn.setToolTip("새 폴더")
         add_folder_btn.clicked.connect(self._prompt_create_symbol_folder)
         custom_section.header_layout.insertWidget(1, add_folder_btn)   # 제목과 접기버튼 사이

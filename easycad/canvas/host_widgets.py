@@ -137,6 +137,11 @@ _SCENE_HALF = 50000.0
 # [Phase 6 M1] 파일·보기 액션 아이콘 색(단색). 다크모드 도입 시 팔레트 기반으로 승격 예정.
 _ICON_COLOR = QColor("#39434f")
 
+# [디자인 베이크오프 2026-08-02] 코랄(Claude 브랜드톤) — 다크/라이트 공통 고정 accent.
+# 여러 파일에서 "#da7756" 리터럴로 이미 반복 중이지만(host_ui.py `_apply_theme` 등),
+# 접기 화살표·"+" 버튼처럼 테마 전환 로직 밖에서 한 번만 칠하는 곳은 이 상수를 쓴다.
+_ACCENT_CORAL = "#da7756"
+
 
 # [디자인 베이크오프 2라운드, 2026-08-02] 코랄 듀오톤 SVG로 새로 그린 액션 이름 —
 # 상단 QToolBar에 실제로 노출되는 것들. 메뉴 전용(pdf/image/table/titleblock/mermaid/
@@ -558,6 +563,7 @@ class _FloatingPanel(QFrame):
         self._collapse_btn = QToolButton()
         self._collapse_btn.setAutoRaise(True)
         self._collapse_btn.setFixedSize(QSize(18, 18))
+        self._collapse_btn.setStyleSheet(f"color: {_ACCENT_CORAL};")   # [2026-08-12 피드백]
         self._collapse_btn.clicked.connect(self._toggle_collapsed)
         hl.addWidget(self._collapse_btn)
         v.addWidget(head)
@@ -654,6 +660,7 @@ class _AccordionSection(QWidget):
         self._collapse_btn = QToolButton()
         self._collapse_btn.setAutoRaise(True)
         self._collapse_btn.setFixedSize(QSize(18, 18))
+        self._collapse_btn.setStyleSheet(f"color: {_ACCENT_CORAL};")   # [2026-08-12 피드백]
         self._collapse_btn.clicked.connect(self._toggle)
         hl.addWidget(self._collapse_btn)
         v.addWidget(head)
