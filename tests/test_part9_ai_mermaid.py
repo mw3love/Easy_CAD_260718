@@ -605,20 +605,20 @@ def test_mermaid_dialog_populate_models_uses_resolved_base_url():
     assert captured["base_url"] == "https://custom.example.com/v1/gateway"
 
 
-# ── 게이트웨이 설정 진입점 — 상단 메뉴/툴바로 이동(2026-08-12) ────────────────
-# 옛 _MermaidDialog._settings_btn/_on_settings_clicked는 삭제됐다 — "버튼 안으로
-# 하지 말고 상위로 상시 노출해달라"는 실사용 요청으로 CanvasWindow 메뉴+툴바 액션으로
-# 옮겼다(host_ui.py._open_ai_gateway_settings).
+# ── 게이트웨이 설정 진입점 — 상단 메뉴/툴바로 나갔다가 재피드백으로 Mermaid 창 안으로
+# 복귀(2026-08-12, 같은 날 두 번) — "Mermaid 가져오기를 열 때만 필요한 설정인데 상위에
+# 있으면 맥락이 끊긴다"는 지적. CanvasWindow에는 더 이상 액션 자체가 없다(회귀 가드는
+# 아래 test_ai_gateway_settings_action_removed_from_menu_and_toolbar).
 
-def test_ai_gateway_settings_action_exists_on_menu_and_toolbar():
+def test_ai_gateway_settings_action_removed_from_menu_and_toolbar():
     w = CanvasWindow()
-    assert hasattr(w, "_act_ai_gw_settings")
-    assert w._act_ai_gw_settings in w._toolbar.actions()
+    assert not hasattr(w, "_act_ai_gw_settings")
+    assert not hasattr(w, "_open_ai_gateway_settings")
     w.deleteLater()
 
 
-def test_open_ai_gateway_settings_opens_dialog():
-    w = CanvasWindow()
+def test_mermaid_dialog_settings_button_opens_dialog_and_refreshes_models():
+    d = _MermaidDialog()
     opened = {}
 
     class _FakeDlg:
@@ -629,11 +629,30 @@ def test_open_ai_gateway_settings_opens_dialog():
             opened["exec"] = True
             return QDialog.DialogCode.Accepted
 
-    with patch("easycad.canvas.host_dialogs._AIGatewaySettingsDialog", _FakeDlg):
-        w._open_ai_gateway_settings()
+    with patch("easycad.canvas.host_dialogs._AIGatewaySettingsDialog", _FakeDlg), \
+         patch.object(d, "_populate_models") as mock_refresh:
+        d._settings_btn.click()
     assert opened.get("exec") is True
-    assert opened.get("parent") is w
-    w.deleteLater()
+    assert opened.get("parent") is d
+    mock_refresh.assert_called_once()   # 주소/키가 바뀌었을 수 있어 목록 재조회
+    d.deleteLater()
+
+
+def test_mermaid_dialog_settings_button_cancelled_skips_refresh():
+    d = _MermaidDialog()
+
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Rejected
+
+    with patch("easycad.canvas.host_dialogs._AIGatewaySettingsDialog", _FakeDlg), \
+         patch.object(d, "_populate_models") as mock_refresh:
+        d._settings_btn.click()
+    mock_refresh.assert_not_called()
+    d.deleteLater()
 
 
 # ── gateway.py: 게이트웨이 주소 저장/해석 ────────────────────────────────────

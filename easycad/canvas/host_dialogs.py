@@ -352,23 +352,31 @@ class _MermaidDialog(QDialog):
         self._attached_image_name = ""
         lay = QVBoxLayout(self)
 
-        lay.addWidget(QLabel("설명을 입력하거나 Mermaid 코드를 직접 붙여넣으세요"
-                             "(이미지 첨부·드래그드롭·Ctrl+V도 가능):"))
+        # [2026-08-12 피드백] 첨부(회색)·AI생성(코랄) 두 버튼이 입력칸 안에 같이 있으니
+        # 색이 달라 "같은 창의 한 툴바"로 안 읽혔다(사용자: "서로 다른 색이라 같은 칸인 줄
+        # 몰랐다") — 첨부는 라벨 줄로 빼 완전히 분리하고, 입력칸 안에는 AI 버튼 하나만
+        # 남겨 그 영역 전체가 "코랄=AI 생성"이라는 단일 색 의미로 읽히게 한다.
+        label_row = QHBoxLayout()
+        label_row.addWidget(QLabel("설명을 입력하거나 Mermaid 코드를 직접 붙여넣으세요"
+                             "(드래그드롭·Ctrl+V로 이미지 첨부 가능):"), 1)
+        self._attach_btn = QToolButton(self)
+        self._attach_btn.setIcon(_act_icon("attach"))
+        self._attach_btn.setToolTip("이미지 첨부(드래그드롭·Ctrl+V도 가능)")
+        self._attach_btn.clicked.connect(self._browse_image)
+        label_row.addWidget(self._attach_btn)
+        lay.addLayout(label_row)
+
         self._edit = QPlainTextEdit(self)
         self._edit.setPlaceholderText(self._SAMPLE)
         self._edit.setMinimumSize(QSize(460, 280))
         self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._edit.setAcceptDrops(False)   # 드롭을 이 다이얼로그(dropEvent)로 넘김
         self._edit.installEventFilter(self)   # Ctrl+Enter·이미지 붙여넣기·리사이즈 재배치
-        # 첨부·생성 버튼이 앉을 공간을 텍스트 뷰포트 자체에서 예약(패딩이 아니라 진짜
+        # AI 생성 버튼이 앉을 공간을 텍스트 뷰포트 자체에서 예약(패딩이 아니라 진짜
         # 레이아웃 여백이라 스크롤해도 버튼 밑으로 글자가 절대 지나가지 않는다).
         self._edit.setViewportMargins(0, 0, 0, 44)
         lay.addWidget(self._edit)
 
-        self._attach_btn = QToolButton(self._edit)
-        self._attach_btn.setIcon(_act_icon("attach"))
-        self._attach_btn.setToolTip("이미지 첨부(드래그드롭·Ctrl+V도 가능)")
-        self._attach_btn.clicked.connect(self._browse_image)
         self._ai_btn = QToolButton(self._edit)
         # [self-review 2026-08-12] _svg_icon()만 쓰면 QIcon.Mode.Disabled 변형이 없어
         # setEnabled(False) 중에도(생성 진행 중) 아이콘이 그대로 진하게 남는다 — 실제
@@ -426,6 +434,14 @@ class _MermaidDialog(QDialog):
         header_lay.addWidget(self._model_chevron)
         self._model_summary = QLabel("", self._model_header)
         header_lay.addWidget(self._model_summary, 1)
+        # [2026-08-12 재피드백] 게이트웨이 설정(주소·키·연결테스트)이 한때 상단 메뉴/툴바로
+        # 나갔었는데(상시 노출 목적), 실사용 결과 "Mermaid 창 안에 있어야 한다"(예전 방식)로
+        # 되돌림 — CanvasWindow의 메뉴·툴바 액션은 제거하고 여기 버튼 하나로 흡수.
+        self._settings_btn = QToolButton(self._model_header)
+        self._settings_btn.setIcon(_act_icon("settings"))
+        self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키)")
+        self._settings_btn.clicked.connect(self._open_gateway_settings)
+        header_lay.addWidget(self._settings_btn)
         # [실사용 피드백 2026-08-12] 새 모델이 수시로 나오므로 다이얼로그를 다시 열지
         # 않고도 목록을 즉석에서 다시 불러올 수 있어야 한다는 요청.
         self._refresh_btn = QToolButton(self._model_header)
@@ -479,11 +495,11 @@ class _MermaidDialog(QDialog):
         return super().eventFilter(obj, event)
 
     def _reposition_embedded_buttons(self):
-        """`_edit`(QPlainTextEdit) 자식으로 얹은 첨부·생성 버튼을 우하단 여백에 배치.
-        `eventFilter`의 Resize 이벤트가 다이얼로그 크기 변경 때마다 재호출한다."""
+        """`_edit`(QPlainTextEdit) 자식으로 얹은 AI생성 버튼을 우하단 여백에 배치(첨부는
+        2026-08-12부터 라벨 줄로 분리돼 더 이상 여기서 다루지 않음). `eventFilter`의
+        Resize 이벤트가 다이얼로그 크기 변경 때마다 재호출한다."""
         m = self._EMBED_MARGIN
         er = self._edit.rect()
-        self._attach_btn.move(m, er.height() - self._attach_btn.sizeHint().height() - m)
         self._ai_btn.move(er.width() - self._ai_btn.sizeHint().width() - m,
                           er.height() - self._ai_btn.sizeHint().height() - m)
 
@@ -557,6 +573,13 @@ class _MermaidDialog(QDialog):
                 e.acceptProposedAction()
 
     # ---- 모델 선택(접이식 병렬 패널) --------------------------------------------
+
+    def _open_gateway_settings(self):
+        """[2026-08-12] `_AIGatewaySettingsDialog`(주소·키·연결테스트, 클래스 자체는 무변경)를
+        이 Mermaid 창의 자식 모달로 연다 — 예전(CanvasWindow 상위 메뉴/툴바로 옮기기 전)
+        방식으로 되돌림. 주소/키가 바뀌었을 수 있으니 닫힌 뒤 모델 목록을 다시 불러온다."""
+        if _AIGatewaySettingsDialog(self).exec() == QDialog.DialogCode.Accepted:
+            self._populate_models()
 
     def _toggle_model_panel(self):
         opening = self._model_body.isHidden()
@@ -683,9 +706,10 @@ class _AIGatewaySettingsDialog(QDialog):
     secrets 파일보다 아래이므로, secrets 파일이 이미 있으면 이 창에서 바꿔도 secrets
     파일 쪽이 계속 우선한다(의도된 동작 — 파일 관례가 더 안전한 소스).
 
-    [실사용 피드백 2026-08-12] 이 다이얼로그를 여는 진입점은 더 이상 Mermaid 가져오기
-    다이얼로그 안쪽 버튼이 아니다 — CanvasWindow 상단 툴바(항상 노출)로 옮겼다
-    (`host_ui.py._open_ai_gateway_settings`). 이 클래스 자체는 무변경."""
+    [실사용 피드백 2026-08-12] 진입점이 한때 CanvasWindow 상단 메뉴/툴바(항상 노출)로
+    나갔다가, 재피드백으로 다시 `_MermaidDialog._open_gateway_settings`(모델 목록 헤더의
+    설정 버튼)로 돌아왔다 — Mermaid 가져오기를 열 때만 필요한 설정이라 그 창 밖에 있으면
+    맥락이 끊긴다는 지적. 이 클래스 자체는 두 진입점 어느 쪽이든 무변경으로 재사용 가능."""
 
     def __init__(self, parent=None):
         super().__init__(parent)

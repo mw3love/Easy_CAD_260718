@@ -85,9 +85,12 @@ _PALETTE_TRIANGLE_WH = (77.94, 90.0)
 # [같은 날 3차 후속] 패널 자체를 속성/미니맵 패널(218px)과 비슷한 폭으로 줄이자는 요청 —
 # 버튼·아이콘·폰트를 한 번 더 줄이고(58→48, 22→18, 폰트 -2pt), 4열은 유지.
 _PALETTE_ICON_PX = 18
-_PALETTE_BTN_SIZE = QSize(48, 40)
 _PALETTE_COLS = 4
 _PALETTE_FONT_SHRINK = 1   # pt만큼 기본 폰트에서 뺀다 — [2026-08-12 5차] 2→1, 너무 작다는 피드백
+# [2026-08-12 6차] 폰트를 키운 뒤 버튼 높이(40)가 실제 sizeHint(48)보다 작아 라벨 아래가
+# 잘렸다 — 고정 크기가 자연 sizeHint 밑으로 내려가면 항상 이 클래스 버그가 재발하므로,
+# 폭만 고정하고 높이는 버튼이 실제로 요구하는 sizeHint를 그대로 쓴다(아래 _palette_button).
+_PALETTE_BTN_WIDTH = 48
 
 
 
@@ -117,9 +120,16 @@ class _UIBuildMixin:
                                           QKeySequence.StandardKey.New)
         self._act_open = self._make_action("열기…", "open", self._open_doc,
                                            QKeySequence.StandardKey.Open)
+        # [2026-08-12 재피드백] "이미지 삽입"을 "열기" 바로 아래로 — 열기와 마찬가지로
+        # "외부 파일을 이 문서로 가져온다"는 성격이 같다는 사용자 지적. 같은 재피드백으로
+        # SVG 가져오기와도 파일선택창을 통합(§8-8용 벡터 vs 참고용 래스터는 내부에서
+        # 확장자로 갈라 각자의 기존 경로(`_insert_image_at`/`_insert_svgs_at`)로 보낸다 —
+        # 열기(Ctrl+O)가 .ecad/.dxf를 확장자로 가르는 것과 같은 패턴).
+        self._act_img = self._make_action("이미지/SVG 삽입…", "image",
+            self._insert_image_or_svg, "Ctrl+Shift+M")
         self._act_save = self._make_action("저장…", "save", self._save_doc,
                                            QKeySequence.StandardKey.Save)
-        for a in (self._act_new, self._act_open, self._act_save):
+        for a in (self._act_new, self._act_open, self._act_img, self._act_save):
             m.addAction(a)
         m.addSeparator()
 
@@ -129,10 +139,13 @@ class _UIBuildMixin:
         # [신규기능] DXF 가져오기/내보내기 통합 — 옛 전용 메뉴·단축키(Ctrl+Shift+D/I)는
         # 폐지하고 열기(Ctrl+O)/저장(Ctrl+S)이 확장자로 분기(아래 _open_doc/_save_doc).
         m.addAction(self._act_pdf)
-        m.addSeparator()
 
-        self._act_img = self._make_action("이미지 삽입…", "image",
-            self._insert_image, "Ctrl+Shift+M")
+        # [2026-08-12 재피드백] "파일" 메뉴가 파일 I/O(새로만들기·열기·저장·내보내기)와
+        # 문서에 콘텐츠를 끼워넣는 "삽입" 계열(표제란·표·Mermaid)이 섞여 있어 분리 —
+        # 새 "삽입(&I)" 메뉴로 옮긴다. AI 게이트웨이 설정은 여기에도 안 남고 Mermaid
+        # 가져오기 창 안으로 되돌아갔다(`host_dialogs._MermaidDialog._open_gateway_settings`,
+        # 예전 방식 — 상위 메뉴/툴바 상시노출은 실사용 결과 되돌림).
+        i = self.menuBar().addMenu("삽입(&I)")
         self._act_tb = self._make_action("표제란 / 용지틀 삽입…", "titleblock",
             self._insert_titleblock, "Ctrl+Shift+T")
         self._act_tbl = self._make_action("표 삽입…", "table",
@@ -142,17 +155,8 @@ class _UIBuildMixin:
         # 폐기하기로 하며 이 메뉴로 통합됐다(_MermaidDialog 안 프롬프트칸+AI버튼 참조).
         self._act_mmd = self._make_action("Mermaid 가져오기…", "mermaid",
             self._insert_mermaid, "Ctrl+Shift+F")
-        # [신규기능 2026-08-04] SVG 가져오기 — 손그림/AI로 만든 아이콘을 네이티브 벡터로
-        # 들여와 "팔레트에 등록"(§8-8)에 태우는 용도(안테나 심볼 실사용 피드백 대체).
-        self._act_svg = self._make_action("SVG 가져오기…", "image",
-            self._insert_svg, "Ctrl+Shift+V")
-        # [실사용 피드백 2026-08-12] 게이트웨이 설정은 Mermaid 다이얼로그 안 버튼이 아니라
-        # 상위(메뉴+상단 툴바)에 상시 노출 — Mermaid 가져오기를 열지 않고도 키를 넣을 수 있게.
-        self._act_ai_gw_settings = self._make_action(
-            "AI 게이트웨이 설정…", "settings", self._open_ai_gateway_settings)
-        for a in (self._act_img, self._act_tb, self._act_tbl, self._act_mmd, self._act_svg,
-                 self._act_ai_gw_settings):
-            m.addAction(a)
+        for a in (self._act_tb, self._act_tbl, self._act_mmd):
+            i.addAction(a)
 
         # 편집(상단 툴바 전용 — 메뉴엔 없던 undo/redo를 액션으로. Ctrl+Z/Ctrl+Y 키는 뷰가 처리).
         self._act_undo = self._make_action("되돌리기", "undo", self.undo)
@@ -267,12 +271,6 @@ class _UIBuildMixin:
         self.tool_pinned = checked
         self.statusBar().showMessage(
             "도구 고정 — 연속 그리기" if checked else "도구 고정 해제 — 하나 그리면 선택모드", 3000)
-
-    def _open_ai_gateway_settings(self):
-        """AI 게이트웨이 주소·API 키 설정창(2026-08-12, 실사용 요청) — Mermaid 가져오기를
-        열지 않고도 상단 메뉴/툴바에서 바로 접근 가능."""
-        from easycad.canvas.host_dialogs import _AIGatewaySettingsDialog
-        _AIGatewaySettingsDialog(self).exec()
 
 
     def _toggle_snap(self, checked: bool):
@@ -445,9 +443,6 @@ class _UIBuildMixin:
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
-        # [실사용 피드백 2026-08-12] "상위로 상시 노출" 요청 — Mermaid 다이얼로그 안 버튼
-        # 대신 항상 보이는 상단바 아이콘으로.
-        tb.addAction(self._act_ai_gw_settings)
         tb.addAction(self._act_theme)
         tb.addAction(self._act_help)
         self._toolbar = tb
@@ -730,11 +725,15 @@ class _UIBuildMixin:
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         btn.setToolTip(tooltip)
         btn.setCheckable(True)
-        btn.setFixedSize(_PALETTE_BTN_SIZE)   # 고정 크기 — dock이 넓어도 버튼이 커지거나 벌어지지 않게
         # [2026-08-12 3차 피드백] 라벨 폰트도 축소 — QFont로(추후 _apply_theme가 setStyleSheet로
         # checked/hover 배경색을 다시 씌워도 폰트는 별도 채널이라 안 덮임, 스타일시트로 넣으면
-        # 그 재적용에 지워질 것).
+        # 그 재적용에 지워질 것). 높이 계산보다 먼저 적용해야 아래 sizeHint가 이 폰트를 반영한다.
         f = btn.font(); f.setPointSize(max(1, f.pointSize() - _PALETTE_FONT_SHRINK)); btn.setFont(f)
+        # [2026-08-12 6차] 폭만 고정하고 높이는 sizeHint를 그대로 — 폰트를 키운 뒤 고정 높이가
+        # sizeHint보다 낮아 라벨 아래가 잘렸다(실사용 스크린샷). 폭을 고정폭으로 강제한 채
+        # sizeHint를 물으면 Qt가 그 폭 기준으로 줄바꿈까지 반영한 진짜 필요 높이를 돌려준다.
+        btn.setFixedWidth(_PALETTE_BTN_WIDTH)
+        btn.setFixedHeight(btn.sizeHint().height())
         btn.clicked.connect(
             lambda _c=False, k=tool_key: self.set_tool(None if self.current_tool == k else k))
         return btn

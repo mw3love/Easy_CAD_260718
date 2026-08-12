@@ -236,13 +236,26 @@ class _FileIOMixin:
     _IMG_LONG = 400.0   # 삽입 시 긴 변 기본 크기(씬 단위) — 대형 사진이 캔버스를 뒤덮지 않게
 
 
-    def _insert_image(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "이미지 삽입", "", "이미지 (*.png *.jpg *.jpeg *.bmp *.gif)")
-        if not path:
+    def _insert_image_or_svg(self):
+        """[2026-08-12 재피드백] "이미지 삽입"과 "SVG 가져오기"의 파일선택창을 하나로 통합 —
+        결과물(래스터 참고이미지 vs 실제 벡터 도형)은 서로 다르지만, 열기(Ctrl+O)가
+        .ecad/.dxf를 확장자로 갈라 처리하는 것과 같은 패턴으로 확장자만 보고 기존 경로
+        (`_insert_image_at`/`_insert_svgs_at`, 둘 다 무변경)로 나눠 보낸다."""
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "이미지/SVG 삽입", "",
+            "이미지·SVG (*.png *.jpg *.jpeg *.bmp *.gif *.svg);;"
+            "이미지 (*.png *.jpg *.jpeg *.bmp *.gif);;SVG (*.svg)")
+        if not paths:
             return
         center = self._view.mapToScene(self._view.viewport().rect().center())
-        self._insert_image_at(path, center)
+        svg_paths = [p for p in paths if p.lower().endswith(".svg")]
+        img_paths = [p for p in paths if not p.lower().endswith(".svg")]
+        if svg_paths:
+            self._insert_svgs_at(svg_paths, center)
+        for i, p in enumerate(img_paths):
+            # 여러 장이면 살짝 어긋나게 배치(겹침 방지) — SVG처럼 가로 일렬은 사진엔
+            # 과함(세로로 긴 사진도 흔함), 대각선 계단식이면 전부 조금씩은 드러난다.
+            self._insert_image_at(p, center + QPointF(i * 40.0, i * 40.0))
 
 
     def _insert_image_at(self, path: str, scene_pos: QPointF):
@@ -277,16 +290,6 @@ class _FileIOMixin:
     # 대신 — 안테나 심볼 실사용 피드백 참조). 래스터(이미지 삽입)와 달리 실제 지오메트리로
     # 들여오므로 다른 손그림 도형과 동일하게 리사이즈·펜 두께·색이 편집된다.
     _SVG_LONG = 160.0   # 삽입 시 긴 변 기본 크기(씬 단위) — 기본 네모(150×90)와 비슷한 눈대중
-
-    def _insert_svg(self):
-        # [실사용 요청 2026-08-04] 여러 파일 한 번에 — getOpenFileName(단수)이던 것을
-        # getOpenFileNames(복수)로. 아이콘 세트를 통째로 가져오는 게 보통이라 하나씩
-        # 반복하는 게 불편하다는 지적.
-        paths, _ = QFileDialog.getOpenFileNames(self, "SVG 가져오기", "", "SVG (*.svg)")
-        if not paths:
-            return
-        center = self._view.mapToScene(self._view.viewport().rect().center())
-        self._insert_svgs_at(paths, center)
 
     def _insert_svgs_at(self, paths: list[str], scene_pos: QPointF):
         """여러 SVG를 scene_pos부터 가로로 나란히 삽입(파일당 _SVG_LONG 간격) — 한 번의
