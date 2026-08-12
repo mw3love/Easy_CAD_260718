@@ -284,14 +284,30 @@ class _MermaidDialog(QDialog):
         prompt_row.addWidget(self._prompt_edit, 1)
         self._model_combo = QComboBox(self)
         prompt_row.addWidget(self._model_combo)
+        # [실사용 피드백 2026-08-12] 새 모델이 수시로 나오므로 다이얼로그를 다시 열지
+        # 않고도 목록을 즉석에서 다시 불러올 수 있어야 한다는 요청 — __init__이 이미
+        # 한 번 부르는 _populate_models를 그대로 재호출.
+        self._refresh_btn = QToolButton(self)
+        self._refresh_btn.setText("새로고침")
+        self._refresh_btn.clicked.connect(self._populate_models)
+        prompt_row.addWidget(self._refresh_btn)
         self._ai_btn = QToolButton(self)
         self._ai_btn.setText("AI로 생성")
         self._ai_btn.clicked.connect(self._on_ai_clicked)
         prompt_row.addWidget(self._ai_btn)
         lay.addLayout(prompt_row)
         self._populate_models()
+
+        status_row = QHBoxLayout()
         self._credit_label = QLabel("", self)   # AI 생성 성공 후에만 채움(크레딧 잔액, 부가정보)
-        lay.addWidget(self._credit_label)
+        status_row.addWidget(self._credit_label, 1)
+        # [실사용 피드백 2026-08-12] 게이트웨이 주소·API 키를 secrets 파일/환경변수 없이도
+        # 앱 안에서 직접 입력·저장·테스트할 수 있어야 한다는 요청.
+        self._settings_btn = QToolButton(self)
+        self._settings_btn.setText("게이트웨이 설정…")
+        self._settings_btn.clicked.connect(self._on_settings_clicked)
+        status_row.addWidget(self._settings_btn)
+        lay.addLayout(status_row)
 
         lay.addWidget(QLabel("Mermaid flowchart 코드(직접 입력/붙여넣기도 가능) "
                              "(flowchart TD/LR … · 노드 모양·화살표·라벨 지원):"))
@@ -312,15 +328,16 @@ class _MermaidDialog(QDialog):
     # ---- AI 보조 생성 ---------------------------------------------------------
 
     def _populate_models(self):
-        """게이트웨이 `/models`를 실호출해 gpt·gemini 계열만 채우고(`list_text_models`),
-        가성비 최선 둘을 "(추천1)"/"(추천2)"로 표시·기본 선택(추천1)한다 — 실측 근거는
-        `gateway.TEXT_RECOMMEND_1/2` 주석 참조. 조회 실패(키 없음·네트워크 오류) 시
-        추천 둘만으로 조용히 폴백(`_AIImageImportDialog._populate_models`와 동일 관례)."""
+        """게이트웨이 `/models`를 실호출해 gpt·gemini 계열 **전체**를 채우고(`list_text_models`
+        — 필터만 걸 뿐 개수 제한은 없다), 그중 가성비 최선 둘을 "(추천1)"/"(추천2)"로
+        표시·기본 선택(추천1)한다 — 실측 근거는 `gateway.TEXT_RECOMMEND_1/2` 주석 참조.
+        조회 실패(키 없음·네트워크 오류) 시 추천 둘만으로 조용히 폴백. "새로고침" 버튼이
+        이 메서드를 그대로 재호출해 언제든 최신 모델 목록을 다시 불러올 수 있다."""
         models: list[str] = []
         try:
             key = gw.resolve_api_key()
             if key:
-                models = gw.list_text_models(key, timeout=8.0)
+                models = gw.list_text_models(key, gw.resolve_base_url(), timeout=8.0)
         except Exception:
             models = []
         r1, r2 = gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2
@@ -340,6 +357,11 @@ class _MermaidDialog(QDialog):
     def model(self) -> str:
         return self._model_combo.currentData() or gw.TEXT_RECOMMEND_1
 
+    def _on_settings_clicked(self):
+        dlg = _AIGatewaySettingsDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._populate_models()   # 키/주소가 바뀌었을 수 있으므로 즉시 재조회
+
     def _on_ai_clicked(self):
         desc = self._prompt_edit.text().strip()
         if not desc:
@@ -349,13 +371,14 @@ class _MermaidDialog(QDialog):
         if not key:
             QMessageBox.warning(self, "Mermaid 가져오기",
                                 "게이트웨이 API 키가 없습니다. "
-                                "~/.claude/.secrets/easycad-gateway.key에 키를 넣어 주세요.")
+                                "아래 '게이트웨이 설정…'에서 입력해 주세요.")
             return
+        base_url = gw.resolve_base_url()
         self._ai_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             from easycad.ai.text_to_mermaid import generate_mermaid
-            text, used = generate_mermaid(key, desc, model=self.model())
+            text, used = generate_mermaid(key, desc, model=self.model(), base_url=base_url)
         except Exception as e:
             QMessageBox.warning(self, "Mermaid 가져오기", f"생성 실패: {e}")
             return
@@ -366,8 +389,79 @@ class _MermaidDialog(QDialog):
         # [실사용 피드백 계승, §8 항목18 C단계] 크레딧 잔액 표시 — 실패해도 본 결과
         # (Mermaid 채우기)에는 영향 없어야 하므로 조용히 무시.
         try:
-            remaining, quota = gw.get_credit_balance(key)
+            remaining, quota = gw.get_credit_balance(key, base_url)
             self._credit_label.setText(f"{used} · 크레딧 잔여 {remaining:.0f}/{quota:.0f}")
         except Exception:
             self._credit_label.setText(used)
+
+
+class _AIGatewaySettingsDialog(QDialog):
+    """AI 게이트웨이 연결 설정 — 게이트웨이 주소 + API 키를 앱 안에서 직접 입력·저장·
+    테스트한다(2026-08-12, 실사용 요청).
+
+    이전엔 secrets 파일(`~/.claude/.secrets/easycad-gateway.key`)이나 환경변수로만 키를
+    넣을 수 있어 앱만 켜서 쓰는 사용자에겐 진입장벽이었다. OK를 눌러야 QSettings에
+    저장된다(Cancel은 변경 폐기) — `resolve_api_key`의 우선순위 사슬에서 QSettings는
+    secrets 파일보다 아래이므로, secrets 파일이 이미 있으면 이 창에서 바꿔도 secrets
+    파일 쪽이 계속 우선한다(의도된 동작 — 파일 관례가 더 안전한 소스)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("AI 게이트웨이 설정")
+        self.setMinimumWidth(420)   # 기본 주소 전문(50자)이 스크롤 없이 한눈에 보이게
+        lay = QVBoxLayout(self)
+
+        lay.addWidget(QLabel("게이트웨이 주소:"))
+        self._url_edit = QLineEdit(self)
+        self._url_edit.setText(gw.resolve_base_url())   # 저장값 없으면 gw.BASE_URL 기본값이 그대로 채워짐
+        lay.addWidget(self._url_edit)
+
+        lay.addWidget(QLabel("API 키:"))
+        self._key_edit = QLineEdit(self)
+        self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._key_edit.setText(gw.resolve_api_key())
+        lay.addWidget(self._key_edit)
+
+        test_row = QHBoxLayout()
+        self._test_btn = QToolButton(self)
+        self._test_btn.setText("연결 테스트")
+        self._test_btn.clicked.connect(self._on_test_clicked)
+        test_row.addWidget(self._test_btn)
+        self._test_label = QLabel("", self)
+        test_row.addWidget(self._test_label, 1)
+        lay.addLayout(test_row)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.accepted.connect(self._on_accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+    def base_url(self) -> str:
+        return self._url_edit.text().strip() or gw.BASE_URL
+
+    def api_key(self) -> str:
+        return self._key_edit.text().strip()
+
+    def _on_test_clicked(self):
+        key = self.api_key()
+        if not key:
+            self._test_label.setText("API 키를 입력하세요.")
+            return
+        self._test_btn.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            models = gw.list_models(key, self.base_url(), timeout=10.0)
+        except Exception as e:
+            self._test_label.setText(f"실패: {e}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._test_btn.setEnabled(True)
+        self._test_label.setText(f"연결 성공 — 모델 {len(models)}개 확인")
+
+    def _on_accept(self):
+        gw.store_base_url(self.base_url())
+        gw.store_api_key(self.api_key())
+        self.accept()
 

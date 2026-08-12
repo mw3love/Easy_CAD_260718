@@ -10,19 +10,31 @@ P1~P3.75 타일링, host_ai.py QThread 워커, _AIImageImportDialog)를 완전�
     단순 chat completion. 게이트웨이 실호출은 여기서 하지 않는다(수동 `tools/ai_probe.py`
     스타일 실행이 필요하나, §8 항목18 텍스트 전용 실측은 API 키가 있어야 가능 — 아직 없음).
   - `easycad/ai/text_to_mermaid.py` — 프롬프트 빌더·코드펜스 벗기기·generate_mermaid.
-  - `_MermaidDialog`의 AI 보조 생성(모델 드롭다운 추천1/추천2, AI 버튼 클릭 배선).
+  - `_MermaidDialog`의 AI 보조 생성(모델 드롭다운 추천1/추천2, AI 버튼 클릭 배선,
+    새로고침 버튼, 게이트웨이 설정 버튼).
+  - `_AIGatewaySettingsDialog`(2026-08-12 실사용 요청) — 게이트웨이 주소·API 키를 앱
+    안에서 직접 입력·저장·연결테스트.
   - 옛 이미지 경로가 실제로 사라졌는지(메뉴 액션·믹스인 잔존 여부) 회귀 가드.
 
 tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easycad.py (전체) 또는
 pytest test_part9_ai_mermaid.py.
 """
+from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QDialog
 
 from _shared import *  # noqa: F401,F403
 
 from easycad.ai import gateway as gw  # noqa: E402
 from easycad.ai import text_to_mermaid as ttm  # noqa: E402
-from easycad.canvas.host_dialogs import _MermaidDialog  # noqa: E402
+from easycad.canvas.host_dialogs import _MermaidDialog, _AIGatewaySettingsDialog  # noqa: E402
+
+
+def _clear_gateway_settings():
+    """`store_api_key`/`store_base_url` 테스트가 실사용자 QSettings를 건드리므로
+    (기존 dark모드·recent_colors 테스트와 동일 관례), 매번 명시적으로 지워 오염 방지."""
+    s = QSettings("EasyCAD", "EasyCAD")
+    s.remove("ai_gateway_key")
+    s.remove("ai_gateway_base_url")
 
 
 # ── gateway.py: 텍스트 전용 호출 ─────────────────────────────────────────────
@@ -173,7 +185,7 @@ def test_mermaid_dialog_ai_button_fills_mermaid_box_and_keeps_it_editable():
         dlg = _MermaidDialog()
     dlg._prompt_edit.setText("날씨를 예보하는 워크플로우")
 
-    def fake_generate(key, desc, *, model):
+    def fake_generate(key, desc, *, model, **kw):
         assert desc == "날씨를 예보하는 워크플로우"
         return "flowchart TD\n A[관측] --> B[예보]", model
 
@@ -192,7 +204,7 @@ def test_mermaid_dialog_ai_button_shows_credit_balance_on_success():
         dlg = _MermaidDialog()
     dlg._prompt_edit.setText("아무 설명")
 
-    def fake_generate(key, desc, *, model):
+    def fake_generate(key, desc, *, model, **kw):
         return "flowchart TD\n A-->B", model
 
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
@@ -207,7 +219,7 @@ def test_mermaid_dialog_ai_button_credit_lookup_failure_does_not_break_result():
         dlg = _MermaidDialog()
     dlg._prompt_edit.setText("아무 설명")
 
-    def fake_generate(key, desc, *, model):
+    def fake_generate(key, desc, *, model, **kw):
         return "flowchart TD\n A-->B", model
 
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
@@ -246,7 +258,7 @@ def test_mermaid_dialog_ai_button_shows_warning_on_generation_failure():
         dlg = _MermaidDialog()
     dlg._prompt_edit.setText("아무 설명")
 
-    def fake_generate(key, desc, *, model):
+    def fake_generate(key, desc, *, model, **kw):
         raise RuntimeError("게이트웨이 실패")
 
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
@@ -265,6 +277,151 @@ def test_mermaid_dialog_direct_paste_still_works_without_ai():
         dlg = _MermaidDialog()
     dlg._edit.setPlainText("flowchart LR\n A-->B\n")
     assert dlg.text() == "flowchart LR\n A-->B\n"
+
+
+def test_mermaid_dialog_refresh_button_reloads_model_list():
+    """새로고침 버튼 = _populate_models 재호출 — 새 모델이 나오면 다이얼로그를 다시
+    열지 않고도 목록을 갱신할 수 있어야 한다는 실사용 요청."""
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.gw.list_text_models",
+               return_value=["gpt-5.4-mini", "gemini-3.6-flash"]):
+        dlg = _MermaidDialog()
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.gw.list_text_models",
+               return_value=["gpt-5.4-mini", "gpt-6.0-new", "gemini-3.6-flash"]) as new_list:
+        dlg._refresh_btn.click()
+    assert new_list.called
+    assert dlg._model_combo.findData("gpt-6.0-new") >= 0
+
+
+def test_mermaid_dialog_populate_models_uses_resolved_base_url():
+    """모델 조회가 하드코딩 BASE_URL이 아니라 resolve_base_url()(설정창에서 바꾼 값
+    포함)을 쓰는지 — 커스텀 게이트웨이 주소를 저장했으면 그 주소로 조회해야 한다."""
+    captured = {}
+
+    def fake_list_text_models(key, base_url, timeout=8.0):
+        captured["base_url"] = base_url
+        return ["gpt-5.4-mini"]
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.gw.resolve_base_url",
+               return_value="https://custom.example.com/v1/gateway"), \
+         patch("easycad.canvas.host_dialogs.gw.list_text_models", fake_list_text_models):
+        _MermaidDialog()
+    assert captured["base_url"] == "https://custom.example.com/v1/gateway"
+
+
+def test_mermaid_dialog_settings_button_reloads_models_on_accept():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    calls = {"n": 0}
+    dlg._populate_models = lambda: calls.__setitem__("n", calls["n"] + 1)
+
+    fake_settings = type("_S", (), {"exec": lambda self: QDialog.DialogCode.Accepted})()
+    with patch("easycad.canvas.host_dialogs._AIGatewaySettingsDialog", return_value=fake_settings):
+        dlg._on_settings_clicked()
+    assert calls["n"] == 1
+
+
+def test_mermaid_dialog_settings_button_skips_reload_on_cancel():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    calls = {"n": 0}
+    dlg._populate_models = lambda: calls.__setitem__("n", calls["n"] + 1)
+
+    fake_settings = type("_S", (), {"exec": lambda self: QDialog.DialogCode.Rejected})()
+    with patch("easycad.canvas.host_dialogs._AIGatewaySettingsDialog", return_value=fake_settings):
+        dlg._on_settings_clicked()
+    assert calls["n"] == 0
+
+
+# ── gateway.py: 게이트웨이 주소 저장/해석 ────────────────────────────────────
+
+def test_resolve_base_url_defaults_to_constant_when_nothing_stored():
+    _clear_gateway_settings()
+    assert gw.resolve_base_url() == gw.BASE_URL
+    assert gw.BASE_URL == "https://factchat.mindlogic-kr-api.com/v1/gateway"
+
+
+def test_store_base_url_then_resolve_reads_it_back():
+    _clear_gateway_settings()
+    try:
+        gw.store_base_url("https://custom.example.com/v1/gateway")
+        assert gw.resolve_base_url() == "https://custom.example.com/v1/gateway"
+    finally:
+        _clear_gateway_settings()
+
+
+def test_resolve_base_url_prefers_explicit_over_stored():
+    _clear_gateway_settings()
+    try:
+        gw.store_base_url("https://stored.example.com")
+        assert gw.resolve_base_url("https://explicit.example.com") == "https://explicit.example.com"
+    finally:
+        _clear_gateway_settings()
+
+
+# ── _AIGatewaySettingsDialog ─────────────────────────────────────────────────
+
+def test_gateway_settings_dialog_prefills_default_url_when_nothing_stored():
+    _clear_gateway_settings()
+    dlg = _AIGatewaySettingsDialog()
+    assert dlg.base_url() == "https://factchat.mindlogic-kr-api.com/v1/gateway"
+    assert dlg.api_key() == ""
+
+
+def test_gateway_settings_dialog_test_connection_reports_model_count():
+    dlg = _AIGatewaySettingsDialog()
+    dlg._key_edit.setText("some-key")
+    with patch("easycad.canvas.host_dialogs.gw.list_models",
+              return_value=["gpt-5.4-mini", "gemini-3.6-flash", "claude-sonnet-5"]):
+        dlg._on_test_clicked()
+    assert "3" in dlg._test_label.text()
+    assert dlg._test_btn.isEnabled()
+
+
+def test_gateway_settings_dialog_test_connection_reports_failure():
+    dlg = _AIGatewaySettingsDialog()
+    dlg._key_edit.setText("bad-key")
+    with patch("easycad.canvas.host_dialogs.gw.list_models",
+              side_effect=RuntimeError("401 Unauthorized")):
+        dlg._on_test_clicked()
+    assert "실패" in dlg._test_label.text()
+    assert "401" in dlg._test_label.text()
+
+
+def test_gateway_settings_dialog_test_connection_requires_key():
+    _clear_gateway_settings()   # 남은 키가 있으면 필드가 미리 채워져 이 테스트가 무의미해짐
+    dlg = _AIGatewaySettingsDialog()
+    with patch("easycad.canvas.host_dialogs.gw.list_models") as list_models:
+        dlg._on_test_clicked()
+    assert not list_models.called
+    assert "키를 입력" in dlg._test_label.text()
+
+
+def test_gateway_settings_dialog_accept_persists_url_and_key():
+    _clear_gateway_settings()
+    try:
+        dlg = _AIGatewaySettingsDialog()
+        dlg._url_edit.setText("https://custom.example.com/v1/gateway")
+        dlg._key_edit.setText("my-secret-key")
+        dlg._on_accept()
+        assert gw.resolve_base_url() == "https://custom.example.com/v1/gateway"
+        assert gw.resolve_api_key() == "my-secret-key"
+        assert dlg.result() == QDialog.DialogCode.Accepted
+    finally:
+        _clear_gateway_settings()
+
+
+def test_gateway_settings_dialog_cancel_does_not_persist():
+    _clear_gateway_settings()
+    try:
+        dlg = _AIGatewaySettingsDialog()
+        dlg._url_edit.setText("https://should-not-be-saved.example.com")
+        dlg.reject()
+        assert gw.resolve_base_url() == gw.BASE_URL
+    finally:
+        _clear_gateway_settings()
 
 
 # ── 이미지 경로 폐기 회귀 가드 ────────────────────────────────────────────────

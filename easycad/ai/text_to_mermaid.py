@@ -42,9 +42,10 @@ def extract_mermaid(raw: str) -> str:
     return txt
 
 
-def generate_mermaid(api_key: str, description: str, *, model: str) -> tuple[str, str]:
+def generate_mermaid(api_key: str, description: str, *, model: str,
+                      base_url: str = gw.BASE_URL) -> tuple[str, str]:
     """설명 텍스트 → (Mermaid 텍스트, 실제 사용된 모델). 실패 시 예외를 그대로 올린다
     (호출자가 다이얼로그에서 메시지로 보여준다)."""
     prompt = build_prompt(description)
-    res = gw.call_text_with_fallback(api_key, prompt, model=model)
+    res = gw.call_text_with_fallback(api_key, prompt, model=model, base_url=base_url)
     return extract_mermaid(res.content), res.model_used

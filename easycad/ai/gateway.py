@@ -106,6 +106,28 @@ def store_api_key(key: str) -> None:
     QSettings("EasyCAD", "EasyCAD").setValue("ai_gateway_key", key.strip())
 
 
+def resolve_base_url(explicit: str = "") -> str:
+    """게이트웨이 주소 해석: 명시 인자 > QSettings["ai_gateway_base_url"] > 기본값(BASE_URL).
+    `resolve_api_key`와 달리 secrets 파일 단계가 없다 — 주소는 비밀이 아니라 파일로
+    분리할 이유가 없고, `_AIGatewaySettingsDialog`에서 직접 입력·저장하는 용도다."""
+    if explicit:
+        return explicit.strip()
+    try:
+        from PyQt6.QtCore import QSettings
+        stored = QSettings("EasyCAD", "EasyCAD").value("ai_gateway_base_url", "", type=str)
+        if stored:
+            return stored.strip()
+    except Exception:
+        pass
+    return BASE_URL
+
+
+def store_base_url(url: str) -> None:
+    """설정창에서 게이트웨이 주소를 저장할 때 쓸 대칭 함수 — QSettings에 영구 저장."""
+    from PyQt6.QtCore import QSettings
+    QSettings("EasyCAD", "EasyCAD").setValue("ai_gateway_base_url", url.strip())
+
+
 # ── OpenAI 호환 클라이언트 캐시(ocr_engine._get_client와 동일 관례: 커넥션 풀 재사용) ──
 _client_cache: dict[tuple[str, str, float], object] = {}
 
