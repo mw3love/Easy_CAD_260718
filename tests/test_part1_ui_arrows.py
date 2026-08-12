@@ -13,12 +13,13 @@ def test_host_construction():
     assert not ({"rect", "ellipse", "sarrow"} & set(w._tool_buttons))
     assert "arrow" in w._tool_buttons                      # 화살표 버튼 하나가 직선·곡선·직각 대표
     assert "trim" in w._tool_buttons
-    # 왼쪽 팔레트: 기본(네모·원·삼각형) + 내 심볼(SVG 가져오기).
-    # (2026-08-04: "순서도" 섹션 18종 제거 — 파라메트릭 심볼 전략 폐기, SVG import로 전환.
+    # 왼쪽 팔레트: 기본도형(네모·원·삼각형) + 순서도(5종) + 내 심볼(폴더) + 레이어, 아코디언.
+    # (2026-08-04: 옛 "순서도" 섹션 18종 제거(파라메트릭 심볼 전략 폐기) → 2026-08-12 좌측
+    # 패널 아코디언 개편에서 Mermaid 문법이 직접 매핑하는 5종만 재추가.
     # 2026-08-10 §8 항목17 7단계: 포트□/포트○ 제거 — TRIM이 겹친 도형 자르기로 대체,
     # 백엔드(_create_port_at 등)는 유지해 기존 .ecad는 그대로 열림.)
     assert set(w._shape_tool_buttons) == {"rect", "ellipse", "triangle"}
-    assert not hasattr(w, "_sym_buttons")
+    assert set(w._sym_buttons) == {"decision", "terminal", "data", "prep", "database"}
     r = w._scene.sceneRect()
     assert r.width() > 90000 and r.height() > 90000
     m0 = w._view.transform().m11()
@@ -99,7 +100,8 @@ def test_pdf_export_forces_white_bg():
 
 def test_floating_panels_and_zoom_readout():
     # [캔버스-퍼스트 레이아웃] 좌/우 QDockWidget → 콘텐츠 크기 플로팅 카드로 전환(deep-interview
-    # 2026-07-29) — 도형·레이어는 탭 하나, 위치는 고정(자유 드래그 재배치 없음), 섹션은 항상 2열.
+    # 2026-07-29) — 좌측은 2026-08-12에 탭 2개에서 아코디언 4섹션(기본도형/순서도/내 심볼/레이어)
+    # 으로 개편, 위치는 고정(자유 드래그 재배치 없음), 도형 그리드 섹션은 항상 2열.
     w = CanvasWindow()
     assert w._left_panel.parent() is w
     assert w._props_panel.parent() is w
@@ -112,7 +114,7 @@ def test_floating_panels_and_zoom_readout():
     assert (r, c) == (1, 0)
     # 팔레트 버튼 키가 보존(테스트 계약).
     assert set(w._shape_tool_buttons) == {"rect", "ellipse", "triangle"}
-    assert not hasattr(w, "_sym_buttons")
+    assert set(w._sym_buttons) == {"decision", "terminal", "data", "prep", "database"}
     # 버튼 고정 크기 — 패널이 넓어져도 커지거나 벌어지지 않는다(좌측 뭉침).
     b = w._shape_tool_buttons["rect"]
     assert b.minimumWidth() == b.maximumWidth() == 64
@@ -164,22 +166,30 @@ def test_zoom_title_click_recenters():
 
 
 
-def test_left_panel_tab_switch_shrinks_to_content():
-    # [캔버스-퍼스트 레이아웃][실사용 피드백 2026-07-29] 처음엔 도형/레이어를 QTabWidget으로
-    # 묶었는데, 내부 QStackedLayout의 sizeHint()가 탭 전환과 무관하게 두 페이지 중 큰 쪽으로
-    # 고정되는 Qt 기본 동작 때문에 콘텐츠가 짧은 레이어 탭을 봐도 패널이 도형 탭 크기 그대로
-    # 남아 빈 공간이 생겼다. setVisible() 토글로 교체한 회귀 테스트 — 탭마다 실제로 크기가
-    # 줄고, 왔다갔다해도(레이아웃 무효화 타이밍 함정) 원래 크기로 정확히 복원돼야 한다.
+def test_left_panel_accordion_collapse_expand_resizes_panel():
+    # [캔버스-퍼스트 레이아웃][좌측 패널 아코디언 개편, 2026-08-12] 옛 도형/레이어 탭
+    # (QTabWidget → setVisible 토글로 교체했던 2026-07-29 수정)을 아코디언 4섹션으로 대체.
+    # 이 회귀 테스트도 같은 계약을 확인한다 — 접힌 섹션을 펼치면 패널이 커지고, 다시 접으면
+    # 스턱 없이 원래 크기로 정확히 복원돼야 한다(옛 탭 전환의 레이아웃 무효화 타이밍 함정과
+    # 같은 클래스, `_relayout_left_panel`이 같은 activate()→adjustSize() 해법을 재사용).
     # ⚠ show() 필수 — 창을 띄우지 않으면 Qt가 레이아웃 무효화를 다르게(더 늦게) 처리해
-    # adjustSize()가 stale한 값으로 멈춘다(실측: show() 없이는 레이어 탭도 도형 탭과 같은
-    # 크기로 안 줄어듦 — 실조건서는 항상 창이 떠 있어 이 경로를 안 탐).
+    # adjustSize()가 stale한 값으로 멈춘다.
     w = CanvasWindow(); w.show()
-    shapes_size = w._left_panel.size()          # 기본 탭 = 도형(2열 심볼 그리드, 더 김)
-    w._switch_left_tab("layers")
-    layers_size = w._left_panel.size()
-    assert layers_size.height() < shapes_size.height()
-    w._switch_left_tab("shapes")
-    assert w._left_panel.size() == shapes_size   # 왕복 후에도 스턱 없이 원래 크기로 복원
+    # ⚠ [실측] `_layers_list`(QListWidget, 커스텀 행 위젯)의 `sizeHintForRow()`는 show() 직후
+    # 첫 `.height()` 접근 전까지 실제보다 큰 값을 낸다(레이아웃 문제와 무관 — 이 테스트가 만든
+    # 게 아니라 `_refresh_layers_panel`이 이미 갖고 있던 특성, 좌측 패널 왕복 비교로 처음
+    # 드러남). 왕복 비교 기준선을 잡기 전에 한 번 읽어 안정화시킨다.
+    _ = w._layers_list.height()
+    w._relayout_left_panel()
+    collapsed_size = w._left_panel.size()        # 순서도 섹션은 기본 접힘 시작
+    flow_section = w._left_accordion_sections["flowchart"]
+    assert flow_section._collapsed
+    flow_section._toggle()                       # 펼치기
+    assert not flow_section._collapsed
+    expanded_size = w._left_panel.size()
+    assert expanded_size.height() > collapsed_size.height()
+    flow_section._toggle()                        # 다시 접기
+    assert w._left_panel.size() == collapsed_size   # 왕복 후에도 스턱 없이 원래 크기로 복원
     w.close()
 
 

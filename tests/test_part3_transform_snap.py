@@ -1279,9 +1279,9 @@ def test_symbol_draw_via_tool():
     r = s.mapRectToScene(s.rect())
     assert abs(r.width() - 140) < 2 and abs(r.height() - 90) < 2
     assert s.isSelected()
-    # [2026-08-04] "순서도" 팔레트 섹션 제거 — sym:* 도구는 백엔드에 남아 여전히 무장·생성되지만
-    # 동기화할 팔레트 버튼이 없다.
-    assert not hasattr(w, "_sym_buttons")
+    # [2026-08-04] "순서도" 팔레트 섹션 제거 → [2026-08-12] 좌측 패널 아코디언 개편에서
+    # Mermaid 문법이 직접 매핑하는 5종만 재추가 — 도구 무장 시 해당 팔레트 버튼도 checked된다.
+    assert w._sym_buttons["decision"].isChecked()
 
 
 

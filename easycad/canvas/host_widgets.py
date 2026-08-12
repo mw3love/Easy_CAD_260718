@@ -629,6 +629,86 @@ class _FloatingPanel(QFrame):
         self._collapse_btn.setToolTip("펼치기" if self._collapsed else "접기")
 
 
+class _AccordionSection(QWidget):
+    """[좌측 패널 아코디언 개편, 2026-08-12] `_FloatingPanel` 하나 안에 여러 개 쌓이는 접이식
+    섹션 — ▾/▸ 규약·QSettings 영속화는 `_FloatingPanel`과 동일하게 따르되, 배경/테두리를
+    직접 그리지 않는다(패널 자체가 이미 카드 배경을 그리므로 중첩 배경이 필요 없음, 그리고
+    2026-07-31 주석의 스타일시트→QFormLayout 간격 오염 함정을 다시 밟지 않기 위해 컨테이너에
+    스타일시트를 아예 안 건다). `header_layout`을 공개해 `_FloatingPanel`의 미니맵 fit_btn과
+    같은 패턴으로 제목 옆에 버튼(예: 내 심볼의 "+")을 끼워 넣을 수 있게 한다."""
+
+    def __init__(self, host, title: str, collapse_key: str, default_collapsed: bool):
+        super().__init__()
+        self._host = host
+        self._collapse_key = f"accordion_collapsed_{collapse_key}"
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0); v.setSpacing(0)
+
+        head = QWidget()
+        hl = QHBoxLayout(head)
+        hl.setContentsMargins(2, 4, 2, 2); hl.setSpacing(4)
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet("font-weight:600;")
+        hl.addWidget(title_lbl, 1)
+        self.header_layout = hl   # 확장 지점 — insertWidget(1, ...)으로 제목과 접기버튼 사이에 삽입
+        self._collapse_btn = QToolButton()
+        self._collapse_btn.setAutoRaise(True)
+        self._collapse_btn.setFixedSize(QSize(18, 18))
+        self._collapse_btn.clicked.connect(self._toggle)
+        hl.addWidget(self._collapse_btn)
+        v.addWidget(head)
+
+        self.body = QWidget()
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(4, 2, 4, 6); self.body_layout.setSpacing(6)
+        v.addWidget(self.body)
+
+        self._collapsed = QSettings("EasyCAD", "EasyCAD").value(
+            self._collapse_key, default_collapsed, type=bool)
+        self.body.setVisible(not self._collapsed)
+        self._update_icon()
+
+    def _toggle(self):
+        self._collapsed = not self._collapsed
+        self.body.setVisible(not self._collapsed)
+        self._update_icon()
+        QSettings("EasyCAD", "EasyCAD").setValue(self._collapse_key, self._collapsed)
+        self._host._relayout_left_panel()
+
+    def _update_icon(self):
+        self._collapse_btn.setText("▸" if self._collapsed else "▾")
+        self._collapse_btn.setToolTip("펼치기" if self._collapsed else "접기")
+
+
+class _SymbolFolderDropZone(QWidget):
+    """[신규기능, 2026-08-12] '내 심볼' 폴더 그룹 — 커스텀 심볼 팔레트 버튼(`_PaletteButton`)을
+    이 위로 드래그해 놓으면 이 폴더로 옮긴다. `_PaletteButton._start_palette_drag`가 이미
+    보내는 `_PALETTE_MIME`(tool_key="customsym:<id>")를 그대로 받아 재사용 — 새 드래그 소스가
+    필요 없다. folder=None은 미분류(최상단) 영역."""
+
+    def __init__(self, folder: str | None, on_drop):
+        super().__init__()
+        self.setAcceptDrops(True)
+        self._folder = folder
+        self._on_drop = on_drop
+
+    def dragEnterEvent(self, e):
+        md = e.mimeData()
+        if md.hasFormat(_PALETTE_MIME) and bytes(
+                md.data(_PALETTE_MIME)).decode("utf-8").startswith("customsym:"):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        self.dragEnterEvent(e)
+
+    def dropEvent(self, e):
+        md = e.mimeData()
+        tool_key = bytes(md.data(_PALETTE_MIME)).decode("utf-8")
+        sym_id = tool_key[len("customsym:"):]
+        e.acceptProposedAction()
+        self._on_drop(sym_id, self._folder)
+
+
 class _ToastLabel(QLabel):
     """[캔버스-퍼스트 레이아웃] `QStatusBar.showMessage()`를 대체하는 하단중앙 플로팅 토스트.
     Figma/Excalidraw는 창 전체 폭을 가로지르는 상태바 행을 상시 예약하지 않는다 — 메시지가

@@ -7,6 +7,11 @@ deep-interview 2026-08-03 확정 스코프: 등록 대상=현재 선택 전부(1
 한정 아님) · 썸네일=실제 렌더 캡처 · 관리 기능=등록+삭제(이름변경은 스코프 밖).
 화살표의 지속연결 바인딩은 저장하지 않는다 — DXF 가져오기 산출물은 애초에 좌표만
 있는 라인·경로라 바인딩이 없고, 위치 자체는 그대로 보존되므로 시각적 손실이 없다.
+
+[신규기능, 2026-08-12 좌측 패널 아코디언 개편] 폴더 지원 추가 — 심볼 항목에 "folder" 필드
+(없거나 None=미분류), 폴더 자체는 별도 목록(빈 폴더도 드롭 대상으로 남아야 하므로 심볼
+필드만으론 존재를 못 담음). 관리 기능은 심볼과 같은 관례로 생성+삭제만(이름변경 스코프 밖).
+폴더 삭제 시 소속 심볼은 미분류로 소급(심볼 자체는 보존).
 """
 import json
 import os
@@ -23,31 +28,78 @@ def _library_path() -> str:
     return os.path.join(d, _FILE_NAME)
 
 
-def load_library() -> list[dict]:
+def _load_raw() -> dict:
     path = _library_path()
     if not os.path.exists(path):
-        return []
+        return {"folders": [], "symbols": []}
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
-        return []
-    return data.get("symbols", []) if isinstance(data, dict) else []
+        return {"folders": [], "symbols": []}
+    if not isinstance(data, dict):
+        return {"folders": [], "symbols": []}
+    return {"folders": data.get("folders", []), "symbols": data.get("symbols", [])}
 
 
-def _save(entries: list[dict]):
+def _save_raw(data: dict):
     with open(_library_path(), "w", encoding="utf-8") as f:
-        json.dump({"symbols": entries}, f, ensure_ascii=False)
+        json.dump(data, f, ensure_ascii=False)
 
 
-def add_symbol(name: str, item_dicts: list[dict], thumb_b64: str) -> dict:
-    """새 항목을 등록하고 그 항목(id 포함)을 반환."""
-    entries = load_library()
-    entry = {"id": uuid.uuid4().hex[:8], "name": name, "thumb": thumb_b64, "items": item_dicts}
-    entries.append(entry)
-    _save(entries)
+def load_library() -> list[dict]:
+    return _load_raw()["symbols"]
+
+
+def load_folders() -> list[str]:
+    return _load_raw()["folders"]
+
+
+def create_folder(name: str):
+    name = name.strip()
+    if not name:
+        return
+    data = _load_raw()
+    if name not in data["folders"]:
+        data["folders"].append(name)
+        _save_raw(data)
+
+
+def delete_folder(name: str):
+    """폴더를 지우고, 소속 심볼은 미분류(folder=None)로 되돌린다(심볼 자체는 삭제하지 않음)."""
+    data = _load_raw()
+    if name not in data["folders"]:
+        return
+    data["folders"].remove(name)
+    for e in data["symbols"]:
+        if e.get("folder") == name:
+            e["folder"] = None
+    _save_raw(data)
+
+
+def add_symbol(name: str, item_dicts: list[dict], thumb_b64: str, folder: str | None = None) -> dict:
+    """새 항목을 등록하고 그 항목(id 포함)을 반환. folder 생략 시 미분류."""
+    data = _load_raw()
+    entry = {"id": uuid.uuid4().hex[:8], "name": name, "thumb": thumb_b64, "items": item_dicts,
+              "folder": folder}
+    data["symbols"].append(entry)
+    _save_raw(data)
     return entry
 
 
 def delete_symbol(symbol_id: str):
-    _save([e for e in load_library() if e.get("id") != symbol_id])
+    data = _load_raw()
+    data["symbols"] = [e for e in data["symbols"] if e.get("id") != symbol_id]
+    _save_raw(data)
+
+
+def move_symbol(symbol_id: str, folder: str | None):
+    """심볼을 다른 폴더(또는 미분류=None)로 옮긴다 — 좌측 패널 드래그앤드롭이 호출."""
+    data = _load_raw()
+    for e in data["symbols"]:
+        if e.get("id") == symbol_id:
+            e["folder"] = folder
+            break
+    else:
+        return
+    _save_raw(data)

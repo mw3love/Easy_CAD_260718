@@ -42,6 +42,7 @@ from easycad.fileio.mermaid_import import (
 from easycad.canvas.host_widgets import (
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
+    _AccordionSection, _SymbolFolderDropZone,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -437,7 +438,15 @@ class _UIBuildMixin:
         _set_icon_color(dark)   # host_widgets._ICON_COLOR 갱신(host_widgets._act_icon()이 읽는 실제 전역)
         app = QApplication.instance()
         if app is not None:
-            app.setStyle("Fusion")   # 두 테마 모두 Fusion — 팔레트가 전 위젯에 안정 반영
+            # [2026-08-12] 이미 Fusion이면 재적용하지 않는다 — `setStyle()`은 그 순간 살아있는
+            # 위젯 전부를 새 스타일로 재polish하는 무거운 전역 연산이고, 매 `CanvasWindow()`
+            # 생성마다(테마 무관하게) 무조건 호출되고 있었다. 평소엔 안 보이다가, 왼쪽 패널
+            # 아코디언 개편으로 창당 위젯 수가 늘고 나서 스모크 스위트(수백 개 창을 닫지 않고
+            # 누적 생성)의 후반부에서 Windows access violation으로 재현됨 — `faulthandler`로
+            # 잡은 크래시 지점이 정확히 이 줄이었다(중복 호출 자체가 원인, 아코디언 코드는
+            # 무관 — 그저 위젯 수를 늘려 기존에 잠재해 있던 재현 조건을 앞당겼을 뿐).
+            if app.style().objectName().lower() != "fusion":
+                app.setStyle("Fusion")   # 두 테마 모두 Fusion — 팔레트가 전 위젯에 안정 반영
             # [2026-08-02 버그 수정] 예전엔 라이트에 `app.style().standardPalette()`를 썼는데,
             # 이 Qt6/Windows 조합은 OS 다크모드를 따라 Fusion "표준" 팔레트 자체가 다크로
             # 나온다(`styleHints().colorScheme()`가 Dark) — 라이트 토글이 캔버스만 하얘지고
@@ -543,7 +552,6 @@ class _UIBuildMixin:
         _accent_btns = (
             list(getattr(self, "_shape_tool_buttons", {}).values())
             + list(getattr(self, "_sym_buttons", {}).values())
-            + list(getattr(self, "_left_tab_buttons", {}).values())
         )
         for name in ("_pf_color", "_pf_fill", "_pf_swap_btn", "_pf_routing_btn", "_pf_dir_btn"):
             b = getattr(self, name, None)
@@ -711,21 +719,17 @@ class _UIBuildMixin:
         return lbl
 
 
-    def _make_shape_section(self, title, entries, store) -> QWidget:
-        """[Phase 6 M1] 팔레트 한 섹션(제목+그리드)을 독립 위젯으로."""
-        sec = QWidget()
-        v = QVBoxLayout(sec)
-        v.setContentsMargins(0, 0, 0, 0); v.setSpacing(4)
-        v.addWidget(self._section_label(title))
+    def _make_shape_grid(self, entries, store) -> QGridLayout:
+        """[캔버스-퍼스트] 팔레트 버튼 grid 하나 — 아코디언 섹션 바디에 직접 얹는다(제목은
+        섹션 헤더가 이미 표시하므로 옛 `_make_shape_section`처럼 내부 라벨을 또 넣지 않음)."""
         grid = QGridLayout(); grid.setSpacing(4)
         btns = []
         for label, icon_kind, tooltip, tool_key in entries:
             btn = self._palette_button(label, icon_kind, tooltip, tool_key)
             store[icon_kind] = btn   # 기본=rect/ellipse, 심볼=kind(=icon_kind)로 키
             btns.append(btn)
-        v.addLayout(grid)
         self._shape_sections.append((grid, btns))
-        return sec
+        return grid
 
 
     def _relayout_sections(self, horiz: bool = False):
@@ -745,28 +749,60 @@ class _UIBuildMixin:
 
 
     def _refresh_custom_symbol_section(self):
-        """[신규기능 §8-8] '내 심볼' 섹션을 라이브러리 파일 기준으로 다시 그린다 —
-        등록/삭제 직후 호출. 빈 슬롯이 나오지 않도록 라이브러리가 비면 섹션 자체를 숨긴다."""
-        grid, old_btns = self._shape_sections[self._custom_sym_idx]
-        for b in old_btns:
-            grid.removeWidget(b)
-            b.deleteLater()
+        """[신규기능 §8-8, 폴더 지원 2026-08-12] '내 심볼' 섹션을 라이브러리 파일(심볼+폴더)
+        기준으로 다시 그린다 — 등록/삭제/폴더 생성·삭제·이동 직후 호출. 폴더마다 독립
+        `_SymbolFolderDropZone`(드롭하면 그 폴더로 이동) + 그 안에 2열 버튼 그리드. 미분류는
+        항상 최상단에 고정(삭제 불가), 빈 폴더도 드롭 대상으로 남아야 하므로 숨기지 않는다."""
+        body = self._custom_sym_body
+        while body.layout().count():
+            item = body.layout().takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
         entries = symbol_library.load_library()
-        self._custom_sym_buttons = {}
-        btns = []
-        for entry in entries:
-            icon = QIcon(_b64_to_pixmap(entry["thumb"]))
-            sid = entry["id"]
-            key = f"customsym:{sid}"
-            btn = self._palette_button(entry["name"][:6], icon, entry["name"], key)
-            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            btn.customContextMenuRequested.connect(
-                lambda _pos, sid=sid: self._delete_custom_symbol_prompt(sid))
-            self._custom_sym_buttons[sid] = btn
-            btns.append(btn)
-        self._shape_sections[self._custom_sym_idx] = (grid, btns)
-        self._custom_sym_section.setVisible(bool(entries))
-        self._relayout_sections(horiz=False)
+        folders = symbol_library.load_folders()
+        self._custom_sym_buttons: dict[str, QToolButton] = {}
+
+        def add_group(folder_name, title, deletable):
+            zone = _SymbolFolderDropZone(folder_name, self._move_custom_symbol)
+            zv = QVBoxLayout(zone)
+            zv.setContentsMargins(2, 2, 2, 2); zv.setSpacing(2)
+            head = QHBoxLayout()
+            head.addWidget(self._section_label(title), 1)
+            if deletable:
+                del_btn = QToolButton()
+                del_btn.setText("×"); del_btn.setAutoRaise(True)
+                del_btn.setFixedSize(QSize(16, 16))
+                del_btn.setToolTip(f"'{folder_name}' 폴더 삭제")
+                del_btn.clicked.connect(
+                    lambda _c=False, n=folder_name: self._delete_symbol_folder_prompt(n))
+                head.addWidget(del_btn)
+            zv.addLayout(head)
+            grid = QGridLayout(); grid.setSpacing(4)
+            btns = []
+            for entry in entries:
+                if entry.get("folder") != folder_name:
+                    continue
+                icon = QIcon(_b64_to_pixmap(entry["thumb"]))
+                sid = entry["id"]
+                key = f"customsym:{sid}"
+                btn = self._palette_button(entry["name"][:6], icon, entry["name"], key)
+                btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                btn.customContextMenuRequested.connect(
+                    lambda _pos, sid=sid: self._delete_custom_symbol_prompt(sid))
+                self._custom_sym_buttons[sid] = btn
+                btns.append(btn)
+            for i, b in enumerate(btns):
+                grid.addWidget(b, i // 2, i % 2)
+            grid.setColumnStretch(2, 1)
+            zv.addLayout(grid)
+            body.layout().addWidget(zone)
+
+        add_group(None, "미분류", deletable=False)
+        for name in folders:
+            add_group(name, name, deletable=True)
+        self._relayout_left_panel()
 
 
     def _delete_custom_symbol_prompt(self, sym_id: str):
@@ -781,89 +817,131 @@ class _UIBuildMixin:
             self._refresh_custom_symbol_section()
 
 
+    def _move_custom_symbol(self, sym_id: str, folder: str | None):
+        """[신규기능, 2026-08-12] `_SymbolFolderDropZone.dropEvent` 콜백 — 심볼을 드롭된
+        폴더(또는 미분류=None)로 옮기고 다시 그린다."""
+        symbol_library.move_symbol(sym_id, folder)
+        self._refresh_custom_symbol_section()
+
+
+    def _prompt_create_symbol_folder(self):
+        """[신규기능, 2026-08-12] '내 심볼' 섹션 헤더의 "+" 버튼 — 새 폴더 생성(이름변경은
+        스코프 밖, 기존 심볼 등록 관례와 동일)."""
+        name, ok = QInputDialog.getText(self, "새 폴더", "폴더 이름:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        symbol_library.create_folder(name)
+        self._refresh_custom_symbol_section()
+
+
+    def _delete_symbol_folder_prompt(self, name: str):
+        """[신규기능, 2026-08-12] 폴더 그룹 헤더의 "×" 버튼 → 확인 후 폴더만 삭제, 소속
+        심볼은 미분류로 소급(심볼 자체는 보존 — `symbol_library.delete_folder` 참조)."""
+        ret = QMessageBox.question(
+            self, "폴더 삭제", f"'{name}' 폴더를 삭제할까요? 안의 심볼은 미분류로 이동합니다.")
+        if ret == QMessageBox.StandardButton.Yes:
+            symbol_library.delete_folder(name)
+            self._refresh_custom_symbol_section()
+
+
     def _build_left_panel(self):
-        """[캔버스-퍼스트] 도형 + 레이어를 탭 하나로 묶은 좌상단 플로팅 카드.
-        [self-review 수정, 실사용 피드백 2026-07-29] 처음엔 `QTabWidget`으로 구현했는데,
-        내부 `QStackedLayout`의 sizeHint()가 **탭 전환과 무관하게 모든 페이지의 최대 크기**로
-        고정되는 Qt 기본 동작 때문에, 콘텐츠가 짧은 레이어 탭을 봐도 패널이 더 긴 도형 탭
-        크기(272×320) 그대로 남아 빈 공간이 생겼다(실측: 도형/레이어 두 탭 모두 274×348로
-        동일 — 레이어 페이지 자체 sizeHint는 268×95에 불과한데 반영이 안 됨). 대신 두 콘텐츠
-        위젯을 같은 `QVBoxLayout`에 넣고 `setVisible()`로 토글 — 일반 레이아웃은 숨긴 위젯을
-        sizeHint 계산에서 제외하므로(= `_FloatingPanel`의 접기 버튼과 같은 원리, 이미 검증됨)
-        보이는 쪽 크기로만 정확히 줄어든다."""
+        """[캔버스-퍼스트][좌측 패널 아코디언 개편, 2026-08-12] 기본도형/순서도/내 심볼/레이어
+        4섹션을 `_AccordionSection`으로 쌓은 좌상단 플로팅 카드(deep-interview 확정 스코프 —
+        옛 도형/레이어 탭 2개를 대체). 탭 전환 특유의 "숨긴 페이지가 sizeHint에서 안 빠지는"
+        문제(2026-07-29, `_switch_left_tab`이 겪던 QTabWidget 함정)는 애초에 탭이 아니라
+        섹션마다 독립 `setVisible()`이라 같은 함정을 밟지 않는다(검증된 메커니즘 재사용)."""
         panel = _FloatingPanel(self, "", "left")
         self._left_panel = panel
         container = QWidget()
         outer = QVBoxLayout(container)
-        outer.setContentsMargins(0, 0, 0, 0); outer.setSpacing(0)
+        outer.setContentsMargins(4, 4, 4, 4); outer.setSpacing(2)
+        self._left_container = container   # _refresh_custom_symbol_section이 아래에서 바로 씀
+        panel.set_content(container)
 
-        tab_row = QWidget()
-        tr = QHBoxLayout(tab_row)
-        tr.setContentsMargins(4, 4, 4, 0); tr.setSpacing(2)
-        self._left_tab_buttons: dict[str, QToolButton] = {}
-        for key, label in (("shapes", "도형"), ("layers", "레이어")):
-            b = QToolButton(); b.setText(label); b.setCheckable(True)
-            b.clicked.connect(lambda _c=False, k=key: self._switch_left_tab(k))
-            tr.addWidget(b)
-            self._left_tab_buttons[key] = b
-        tr.addStretch(1)
-        outer.addWidget(tab_row)
-
-        shapes_page = QWidget()
-        box = QVBoxLayout(shapes_page)
-        box.setContentsMargins(6, 6, 6, 6); box.setSpacing(10)
         self._shape_tool_buttons: dict[str, QToolButton] = {}
-        self._shape_sections: list = []   # (grid, buttons)
+        self._sym_buttons: dict[str, QToolButton] = {}
+        self._shape_sections: list = []   # (grid, buttons) — 기본도형·순서도
+
+        # ---- 기본도형 (펼침 시작) ----
         # [§8 항목17 7단계, 2026-08-10] 포트□/포트○ 팔레트 버튼 제거 — TRIM 도구가 일반
-        # 사각형/원을 겹쳐 놓고 자르는 워크플로로 대체(계획서 확정, 2026-08-04 순서도 섹션
-        # 제거와 같은 패턴: 백엔드(`_create_port_at`/`_ports`/직렬화/DXF)는 그대로 둬 기존
-        # `.ecad`(포트 포함)가 그대로 열리고 렌더·회귀 안전).
-        basic = self._make_shape_section("기본", [
+        # 사각형/원을 겹쳐 놓고 자르는 워크플로로 대체(백엔드는 그대로 둬 기존 `.ecad` 안전).
+        basic_section = _AccordionSection(self, "기본도형", "basic", default_collapsed=False)
+        basic_grid = self._make_shape_grid([
             ("네모", "rect", "네모 — 클릭 후 캔버스에 드래그", "rect"),
             ("원", "ellipse", "원 — 클릭 후 캔버스에 드래그", "ellipse"),
             ("삼각형", "triangle", "삼각형 — 클릭 후 캔버스에 드래그", "sym:triangle"),
         ], self._shape_tool_buttons)
-        self._custom_sym_buttons: dict[str, QToolButton] = {}   # [신규기능 §8-8] set_tool 체크상태 동기화용
-        custom = self._make_shape_section("내 심볼", [], self._custom_sym_buttons)   # 버튼은 refresh가 채움
-        self._custom_sym_idx = len(self._shape_sections) - 1
-        self._custom_sym_section = custom
-        box.addWidget(basic); box.addWidget(custom)
-        self._relayout_sections(horiz=False)   # 항상 세로(2열) — 반응형 전환 없음
-        self._refresh_custom_symbol_section()
-        outer.addWidget(shapes_page)
-        self._left_pages = {"shapes": shapes_page}
+        basic_section.body_layout.addLayout(basic_grid)
+        outer.addWidget(basic_section)
 
-        layers_page = QWidget()
-        v = QVBoxLayout(layers_page)
-        v.setContentsMargins(6, 6, 6, 6)
-        v.setSpacing(4)
+        # ---- 순서도 (접힘 시작 — 2026-08-04에 UI에서 뺐던 것을 Mermaid 문법이 직접 매핑하는
+        # 5종만 재추가, deep-interview 2026-08-12 확정. rect/circle은 기본도형에 이미 있어 제외).
+        flow_section = _AccordionSection(self, "순서도", "flowchart", default_collapsed=True)
+        flow_grid = self._make_shape_grid([
+            ("판단", "decision", "판단 — 클릭 후 캔버스에 드래그", "sym:decision"),
+            ("시작/끝", "terminal", "시작/끝 — 클릭 후 캔버스에 드래그", "sym:terminal"),
+            ("입출력", "data", "입출력 — 클릭 후 캔버스에 드래그", "sym:data"),
+            ("준비", "prep", "준비 — 클릭 후 캔버스에 드래그", "sym:prep"),
+            ("저장소", "database", "저장소 — 클릭 후 캔버스에 드래그", "sym:database"),
+        ], self._sym_buttons)
+        flow_section.body_layout.addLayout(flow_grid)
+        outer.addWidget(flow_section)
+
+        self._relayout_sections(horiz=False)   # 항상 세로(2열) — 반응형 전환 없음
+
+        # ---- 내 심볼 (접힘 시작, 폴더 지원) ----
+        custom_section = _AccordionSection(self, "내 심볼", "customsym", default_collapsed=True)
+        add_folder_btn = QToolButton()
+        add_folder_btn.setText("+"); add_folder_btn.setAutoRaise(True)
+        add_folder_btn.setFixedSize(QSize(18, 18))
+        add_folder_btn.setToolTip("새 폴더")
+        add_folder_btn.clicked.connect(self._prompt_create_symbol_folder)
+        custom_section.header_layout.insertWidget(1, add_folder_btn)   # 제목과 접기버튼 사이
+        custom_section.body_layout.setSpacing(8)
+        self._custom_sym_section = custom_section
+        self._custom_sym_body = custom_section.body
+        self._custom_sym_buttons: dict[str, QToolButton] = {}   # set_tool 체크상태 동기화용
+        outer.addWidget(custom_section)
+        self._refresh_custom_symbol_section()
+
+        # ---- 레이어 (펼침 시작) ----
+        layers_section = _AccordionSection(self, "레이어", "layers", default_collapsed=False)
         self._layers_list = QListWidget()
         self._layers_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-        v.addWidget(self._layers_list)
-        add_btn = QToolButton()
-        add_btn.setText("+ 레이어 추가")
-        add_btn.clicked.connect(lambda: self.add_layer())
-        v.addWidget(add_btn)
-        outer.addWidget(layers_page)
-        self._left_pages["layers"] = layers_page
+        layers_section.body_layout.addWidget(self._layers_list)
+        add_layer_btn = QToolButton()
+        add_layer_btn.setText("+ 레이어 추가")
+        add_layer_btn.clicked.connect(lambda: self.add_layer())
+        layers_section.body_layout.addWidget(add_layer_btn)
+        outer.addWidget(layers_section)
 
-        self._left_container = container
-        panel.set_content(container)
-        self._switch_left_tab("shapes")
+        self._left_accordion_sections = {
+            "basic": basic_section, "flowchart": flow_section,
+            "customsym": custom_section, "layers": layers_section,
+        }
+        self._relayout_left_panel()
         self._refresh_layers_panel()
 
 
-    def _switch_left_tab(self, key: str):
-        for k, page in self._left_pages.items():
-            page.setVisible(k == key)
-        for k, btn in self._left_tab_buttons.items():
-            btn.setChecked(k == key)
-        # [self-review 수정] setVisible() 직후 곧바로 adjustSize()를 부르면 레이아웃 무효화가
-        # 아직 반영되기 전이라 sizeHint()가 한 박자 stale해 패널이 이전(더 큰) 크기에 멈춰버렸다
-        # (실측: 도형→레이어→도형으로 돌아가도 레이어 탭 크기 그대로 남음). 레이아웃을 명시적으로
-        # activate()해 즉시 재계산시킨 뒤 adjustSize — `_compact_shapes_dock`가 겪었던 것과 같은
-        # 부류의 Qt 레이아웃 타이밍 함정이지만, 여긴 QTimer.singleShot 없이 activate()만으로 충분.
+    def _relayout_left_panel(self):
+        """왼쪽 패널 아코디언 섹션 접기/펴기·내용 변경 후 즉시 크기 재계산. 옛 `_switch_left_tab`은
+        `container.layout().activate()` 한 번으로 충분했다 — 숨긴 페이지가 `container`의 직접
+        자식이라 hide 시 Qt가 그 레이아웃만 동기적으로 무효화해준다. 아코디언은 숨는 위젯
+        (`section.body`)이 `container`의 손자(`section`의 자식)라 한 단계 더 중첩됐는데, Qt의
+        `QLayout::invalidate()`는 "레이아웃의 부모가 레이아웃인 동안만" 상위로 전파하고
+        (`addLayout()`으로 중첩된 경우), 위젯 경계(`section` → `container`)를 넘는 전파는
+        비동기 `LayoutRequest` 이벤트로만 일어난다 — 그래서 이 동기 호출 시점엔 아직 `outer`·
+        `panel._body_layout`·`panel.layout()` 세 겹 모두 옛 sizeHint를 캐시한 채다. 각 위젯
+        경계마다 명시적으로 `invalidate()`를 걸어 캐시를 비워야 그다음 `activate()`가 섹션들의
+        *지금* sizeHint를 다시 읽는다(실측: 이걸 생략하면 접었다 펴도 패널이 펼친 크기에 고정됨)."""
+        for section in getattr(self, "_left_accordion_sections", {}).values():
+            section.layout().invalidate()
+        self._left_container.layout().invalidate()
         self._left_container.layout().activate()
+        self._left_panel._body_layout.invalidate()
+        self._left_panel._body_layout.activate()
+        self._left_panel.layout().invalidate()
         self._left_panel.layout().activate()
         self._left_panel.adjustSize()
         self._reposition_panels()
