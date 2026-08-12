@@ -144,7 +144,7 @@ _ICON_COLOR = QColor("#39434f")
 _SVG_ACT_ICON_NAMES = frozenset({
     "new", "open", "save", "undo", "redo", "snap", "ortho", "grid", "theme", "help", "pin",
     # [§8 항목18 후속, 2026-08-12] AI 게이트웨이 설정·Mermaid 다이얼로그 아이콘화 요청으로 추가.
-    "refresh", "settings", "generate", "connect",
+    "refresh", "settings", "generate", "connect", "attach",
 })
 
 

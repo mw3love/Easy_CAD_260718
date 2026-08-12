@@ -5,11 +5,15 @@
 다이얼로그 클래스를 가져다 쓴다. 순환 임포트를 피하려고 host.py·믹스인을 임포트하지 않는
 잎(leaf) 모듈이다.
 """
+import io
 import math
+import os
 
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QEvent
+from PyQt6.QtCore import (
+    Qt, QPoint, QPointF, QRectF, QSize, QSettings, QEvent, QBuffer, QIODevice, QByteArray,
+)
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
+    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter, QImage,
     QFont, QPolygonF, QPainterPath, QPalette, QTextCursor,
 )
 from PyQt6.QtWidgets import (
@@ -288,14 +292,23 @@ _RECOMMEND_STAR_CACHE: dict[int, QIcon] = {}
 
 
 class _MermaidDialog(QDialog):
-    """Mermaid flowchart 입력창 — 설명 텍스트와 Mermaid 코드를 한 칸에서 같이 받는다.
+    """Mermaid flowchart 입력창 — 설명 텍스트/이미지와 Mermaid 코드를 한 칸에서 같이 받는다.
 
     §8 항목18(AI 이미지→도면) 후속(2026-08-12) — 처음엔 프롬프트 칸과 Mermaid 칸을
     분리했었으나(AI가 실수로 편집 중인 내용을 덮어쓸 위험 때문), 실사용 결과 그 위험보다
     "칸 하나에서 타이핑도 붙여넣기도 다 되고, 키보드만으로 바로 변환"이 훨씬 중요하다는
     피드백으로 단일 칸으로 되돌렸다. 대신 AI 생성 결과 반영은 `setPlainText()`(되돌리기
     스택을 초기화함) 대신 `QTextCursor` 전체선택+치환으로 해 Ctrl+Z로 원래 입력을 복구할
-    수 있게 안전망을 남겼다. Ctrl+Enter(칸 안에서)로 마우스 없이 바로 AI 생성 트리거."""
+    수 있게 안전망을 남겼다. Ctrl+Enter(칸 안에서)로 마우스 없이 바로 AI 생성 트리거.
+
+    같은 날 후속 — 이미지 입력도 다시 받는다(찾아보기·드래그드롭·Ctrl+V, 옛
+    `_AIImageImportDialog`와 같은 3경로). 이미지가 첨부되면 텍스트 칸은 "보충 설명(선택)"
+    으로 격하되고(`text_to_mermaid.generate_mermaid`의 `image` 인자), 좌표 없는 Mermaid
+    출력이라 옛 파이프라인처럼 타일링·좌표 복원이 전혀 필요 없다 — 단일 vision 호출뿐.
+    ⚠ 모델 드롭다운은 텍스트 전용 목록(`list_text_models`)을 그대로 재사용한다 — 이
+    게이트웨이에서 어떤 gpt/gemini 항목이 실제로 이미지 입력을 받는지는 실키로 확인 못
+    했다(Not-tested, 실사용 중 특정 모델이 이미지를 거부하면 드롭다운에서 다른 모델로
+    바꿔 재시도)."""
 
     _SAMPLE = ("예: 날씨를 예보하는 워크플로우\n\n"
                "또는 Mermaid 코드를 직접 붙여넣어도 됩니다:\n"
@@ -305,20 +318,49 @@ class _MermaidDialog(QDialog):
                "    B -->|아니오| D([종료])\n"
                "    C --> D")
 
+    _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Mermaid 가져오기")
+        self.setAcceptDrops(True)
+        self._attached_image = None       # PIL.Image.Image | None
+        self._attached_image_name = ""
         lay = QVBoxLayout(self)
 
-        lay.addWidget(QLabel("설명을 입력하거나 Mermaid 코드를 직접 붙여넣으세요:"))
+        lay.addWidget(QLabel("설명을 입력하거나 Mermaid 코드를 직접 붙여넣으세요"
+                             "(이미지 첨부·드래그드롭·Ctrl+V도 가능):"))
         self._edit = QPlainTextEdit(self)
         self._edit.setPlaceholderText(self._SAMPLE)
         self._edit.setMinimumSize(QSize(460, 280))
         self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self._edit.installEventFilter(self)   # Ctrl+Enter → AI 생성
+        self._edit.setAcceptDrops(False)   # 드롭을 이 다이얼로그(dropEvent)로 넘김
+        self._edit.installEventFilter(self)   # Ctrl+Enter → AI 생성, 이미지 붙여넣기 가로채기
         lay.addWidget(self._edit)
 
+        image_row = QHBoxLayout()
+        self._image_thumb = QLabel(self)
+        self._image_thumb.setFixedSize(40, 40)
+        self._image_thumb.setScaledContents(True)
+        image_row.addWidget(self._image_thumb)
+        self._image_name_label = QLabel("", self)
+        image_row.addWidget(self._image_name_label, 1)
+        self._image_clear_btn = QToolButton(self)
+        self._image_clear_btn.setText("✕")
+        self._image_clear_btn.setToolTip("이미지 제거")
+        self._image_clear_btn.clicked.connect(self._clear_image)
+        image_row.addWidget(self._image_clear_btn)
+        self._image_row_widget = QWidget(self)
+        self._image_row_widget.setLayout(image_row)
+        self._image_row_widget.setVisible(False)
+        lay.addWidget(self._image_row_widget)
+
         control_row = QHBoxLayout()
+        self._attach_btn = QToolButton(self)
+        self._attach_btn.setIcon(_act_icon("attach"))
+        self._attach_btn.setToolTip("이미지 첨부(드래그드롭·Ctrl+V도 가능)")
+        self._attach_btn.clicked.connect(self._browse_image)
+        control_row.addWidget(self._attach_btn)
         self._model_combo = QComboBox(self)
         control_row.addWidget(self._model_combo, 1)
         # [실사용 피드백 2026-08-12] 새 모델이 수시로 나오므로 다이얼로그를 다시 열지
@@ -349,12 +391,88 @@ class _MermaidDialog(QDialog):
         return self._edit.toPlainText()
 
     def eventFilter(self, obj, event):
-        if (obj is self._edit and event.type() == QEvent.Type.KeyPress
-                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                and event.modifiers() & Qt.KeyboardModifier.ControlModifier):
-            self._on_ai_clicked()
-            return True
+        if obj is self._edit and event.type() == QEvent.Type.KeyPress:
+            if (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                    and event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+                self._on_ai_clicked()
+                return True
+            if event.matches(QKeySequence.StandardKey.Paste):
+                md = QApplication.clipboard().mimeData()
+                img = md.imageData() if md.hasImage() else None
+                if isinstance(img, QImage) and not img.isNull():
+                    self._set_attached_qimage(img, "붙여넣은 이미지")
+                    return True
+                # 클립보드에 이미지가 없으면(보통의 텍스트 붙여넣기) 위젯 기본 동작에 맡긴다.
         return super().eventFilter(obj, event)
+
+    # ---- 이미지 첨부(찾아보기·드래그드롭·Ctrl+V) --------------------------------
+
+    def _browse_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "이미지 선택", "", "이미지 (*.png *.jpg *.jpeg *.bmp *.webp *.gif)")
+        if path:
+            self._load_image_path(path)
+
+    def _load_image_path(self, path: str):
+        from PIL import Image
+        try:
+            img = Image.open(path).convert("RGB")
+        except Exception as e:
+            QMessageBox.warning(self, "Mermaid 가져오기", f"이미지를 읽을 수 없습니다: {e}")
+            return
+        self._set_attached_image(img, os.path.basename(path))
+
+    def _set_attached_qimage(self, qimg: QImage, name: str):
+        """붙여넣기/드롭으로 받은 QImage → PIL Image 변환(임시파일 없이 메모리에서만
+        처리 — 옛 `_AIImageImportDialog`의 temp 파일+정리 관례를 이번엔 안 씀)."""
+        from PIL import Image
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        qimg.save(buf, "PNG")
+        pil_img = Image.open(io.BytesIO(bytes(ba.data()))).convert("RGB")
+        self._set_attached_image(pil_img, name)
+
+    def _set_attached_image(self, pil_img, name: str):
+        self._attached_image = pil_img
+        self._attached_image_name = name
+        buf = io.BytesIO()
+        pil_img.save(buf, format="PNG")
+        pm = QPixmap()
+        pm.loadFromData(buf.getvalue())
+        self._image_thumb.setPixmap(pm)
+        self._image_name_label.setText(name)
+        self._image_row_widget.setVisible(True)
+
+    def _clear_image(self):
+        self._attached_image = None
+        self._attached_image_name = ""
+        self._image_thumb.clear()
+        self._image_row_widget.setVisible(False)
+
+    def dragEnterEvent(self, e):
+        md = e.mimeData()
+        if md.hasImage() or (md.hasUrls() and any(
+                u.toLocalFile().lower().endswith(self._IMG_EXTS) for u in md.urls())):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        self.dragEnterEvent(e)
+
+    def dropEvent(self, e):
+        md = e.mimeData()
+        if md.hasUrls():
+            for u in md.urls():
+                p = u.toLocalFile()
+                if p.lower().endswith(self._IMG_EXTS):
+                    self._load_image_path(p)
+                    e.acceptProposedAction()
+                    return
+        if md.hasImage():
+            img = md.imageData()
+            if isinstance(img, QImage) and not img.isNull():
+                self._set_attached_qimage(img, "드롭한 이미지")
+                e.acceptProposedAction()
 
     # ---- AI 보조 생성 ---------------------------------------------------------
 
@@ -395,9 +513,11 @@ class _MermaidDialog(QDialog):
 
     def _on_ai_clicked(self):
         desc = self._edit.toPlainText().strip()
-        if not desc:
+        image = self._attached_image
+        if not desc and image is None:
             QMessageBox.information(self, "Mermaid 가져오기",
-                                    "먼저 설명을 입력하거나 Mermaid 코드를 붙여넣으세요.")
+                                    "먼저 설명을 입력하거나 Mermaid 코드를 붙여넣거나, "
+                                    "이미지를 첨부하세요.")
             return
         key = gw.resolve_api_key()
         if not key:
@@ -410,7 +530,8 @@ class _MermaidDialog(QDialog):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             from easycad.ai.text_to_mermaid import generate_mermaid
-            text, used = generate_mermaid(key, desc, model=self.model(), base_url=base_url)
+            text, used = generate_mermaid(key, desc, model=self.model(), base_url=base_url,
+                                          image=image)
         except Exception as e:
             QMessageBox.warning(self, "Mermaid 가져오기", f"생성 실패: {e}")
             return

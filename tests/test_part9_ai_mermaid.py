@@ -64,7 +64,7 @@ def test_call_text_sends_plain_string_content_not_vision_array():
 def test_call_text_with_fallback_no_chain_raises_on_timeout():
     """텍스트 전용은 기본 폴백 사슬이 없다(사용자가 드롭다운에서 직접 모델을 고름) —
     빈 `fallback_chain`이면 실패를 그대로 올려야 한다."""
-    def fake_call_text(client, model, prompt, *, max_tokens=0):
+    def fake_call_text(client, model, prompt, *, image=None, max_tokens=0):
         raise RuntimeError("Error code: 504 Gateway Timeout")
 
     with patch.object(gw, "_client", lambda *a, **k: object()), \
@@ -79,7 +79,7 @@ def test_call_text_with_fallback_no_chain_raises_on_timeout():
 def test_call_text_with_fallback_uses_chain_when_provided():
     calls = []
 
-    def fake_call_text(client, model, prompt, *, max_tokens=0):
+    def fake_call_text(client, model, prompt, *, image=None, max_tokens=0):
         calls.append(model)
         if model == "gpt-5.4-mini":
             raise RuntimeError("Error code: 404 model_not_found")
@@ -107,6 +107,31 @@ def test_call_text_with_fallback_does_not_swallow_quota_error():
             assert False, "should have raised"
         except RuntimeError as e:
             assert "429" in str(e)
+
+
+def test_call_text_sends_vision_content_array_when_image_given():
+    """`image`가 주어지면 문자열 대신 [image_url, text] 콘텐츠 배열을 보내야 한다."""
+    from PIL import Image
+    captured = {}
+
+    class _FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    captured.update(kw)
+                    class _Resp:
+                        choices = [type("_C", (), {"message": type("_M", (), {"content": "ok"})()})()]
+                    return _Resp()
+
+    img = Image.new("RGB", (10, 10), "white")
+    text, dt = gw.call_text(_FakeClient(), "gemini-3.6-flash", "이미지를 Mermaid로", image=img)
+    assert text == "ok"
+    content = captured["messages"][0]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "image_url"
+    assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert content[1] == {"type": "text", "text": "이미지를 Mermaid로"}
 
 
 def test_list_text_models_filters_to_gpt_and_gemini_only():
@@ -153,6 +178,51 @@ def test_generate_mermaid_returns_text_and_model_used():
         text, used = ttm.generate_mermaid("key", "간단한 흐름", model="gpt-5.4-mini")
     assert text == "flowchart TD\n A-->B"
     assert used == "gpt-5.4-mini"
+
+
+def test_build_image_prompt_includes_note_and_no_hallucination_rule():
+    text = ttm.build_image_prompt("방송 송신소 계통도")
+    assert "방송 송신소 계통도" in text
+    assert "실제로 그려진" in text   # 2026-07-21 환각 함정 재확인 규칙 계승
+
+
+def test_build_image_prompt_omits_note_line_when_empty():
+    text = ttm.build_image_prompt("")
+    assert "참고" not in text
+
+
+def test_generate_mermaid_uses_image_prompt_and_longer_timeout_when_image_given():
+    from PIL import Image
+    captured = {}
+
+    def fake_call(api_key, prompt, *, model, image=None, base_url=None, timeout=None):
+        captured["prompt"] = prompt
+        captured["image"] = image
+        captured["timeout"] = timeout
+        return gw.GatewayResult("flowchart TD\n A-->B", model, None, 1.0)
+
+    img = Image.new("RGB", (10, 10), "white")
+    with patch.object(ttm.gw, "call_text_with_fallback", fake_call):
+        text, used = ttm.generate_mermaid("key", "보충설명", model="gpt-5.4-mini", image=img)
+    assert text == "flowchart TD\n A-->B"
+    assert captured["image"] is img
+    assert "보충설명" in captured["prompt"]
+    assert "실제로 그려진" in captured["prompt"]
+    assert captured["timeout"] == 120.0   # 텍스트 전용 기본(60s)보다 넉넉하게
+
+
+def test_generate_mermaid_uses_text_prompt_when_no_image():
+    captured = {}
+
+    def fake_call(api_key, prompt, *, model, image=None, base_url=None, timeout=None):
+        captured["prompt"] = prompt
+        captured["timeout"] = timeout
+        return gw.GatewayResult("flowchart TD\n A-->B", model, None, 1.0)
+
+    with patch.object(ttm.gw, "call_text_with_fallback", fake_call):
+        ttm.generate_mermaid("key", "간단한 흐름", model="gpt-5.4-mini")
+    assert "flowchart" in captured["prompt"]
+    assert captured["timeout"] == 60.0
 
 
 # ── _MermaidDialog: AI 보조 생성 ─────────────────────────────────────────────
@@ -333,6 +403,140 @@ def test_mermaid_dialog_direct_paste_still_works_without_ai():
         dlg = _MermaidDialog()
     dlg._edit.setPlainText("flowchart LR\n A-->B\n")
     assert dlg.text() == "flowchart LR\n A-->B\n"
+
+
+# ── _MermaidDialog: 이미지 첨부(2026-08-12, 이미지 입력 재추가) ─────────────────
+
+def test_mermaid_dialog_browse_image_attaches_and_shows_thumbnail():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    assert dlg._image_row_widget.isHidden()
+
+    real_path = os.path.join(_TMP, f"attach_{uuid.uuid4().hex}.png")
+    _mk_pixmap(60, 40).save(real_path)
+    with patch("easycad.canvas.host_dialogs.QFileDialog.getOpenFileName",
+              return_value=(real_path, "")):
+        dlg._browse_image()
+    assert dlg._attached_image is not None
+    assert dlg._attached_image_name == os.path.basename(real_path)
+    assert not dlg._image_row_widget.isHidden()
+    assert not dlg._image_thumb.pixmap().isNull()
+
+
+def test_mermaid_dialog_clear_image_hides_row_and_resets_state():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    real_path = os.path.join(_TMP, f"attach_{uuid.uuid4().hex}.png")
+    _mk_pixmap(40, 40).save(real_path)
+    dlg._load_image_path(real_path)
+    assert dlg._attached_image is not None
+
+    dlg._clear_image()
+    assert dlg._attached_image is None
+    assert dlg._attached_image_name == ""
+    assert dlg._image_row_widget.isHidden()
+
+
+def test_mermaid_dialog_drop_image_file_attaches():
+    from PyQt6.QtCore import QUrl
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    real_path = os.path.join(_TMP, f"drop_{uuid.uuid4().hex}.png")
+    _mk_pixmap(50, 30).save(real_path)
+    fake_url = QUrl.fromLocalFile(real_path)
+    fake_md = type("_MD", (), {
+        "hasUrls": lambda self: True,
+        "urls": lambda self: [fake_url],
+        "hasImage": lambda self: False,
+    })()
+    fake_event = type("_E", (), {
+        "mimeData": lambda self: fake_md,
+        "acceptProposedAction": lambda self: None,
+    })()
+    dlg.dropEvent(fake_event)
+    assert dlg._attached_image is not None
+    assert dlg._attached_image_name == os.path.basename(real_path)
+
+
+def test_mermaid_dialog_drop_raw_image_data_attaches():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    pm = _mk_pixmap(40, 20)
+    fake_md = type("_MD", (), {
+        "hasUrls": lambda self: False,
+        "hasImage": lambda self: True,
+        "imageData": lambda self: pm.toImage(),
+    })()
+    fake_event = type("_E", (), {
+        "mimeData": lambda self: fake_md,
+        "acceptProposedAction": lambda self: None,
+    })()
+    dlg.dropEvent(fake_event)
+    assert dlg._attached_image is not None
+    assert dlg._attached_image_name == "드롭한 이미지"
+
+
+def test_mermaid_dialog_ctrl_v_with_clipboard_image_attaches_not_pastes_text():
+    """클립보드에 이미지가 있으면(옛 이미지 다이얼로그와 동일 관례) Ctrl+V가 텍스트
+    붙여넣기 대신 이미지 첨부로 가로채져야 한다."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    pm = _mk_pixmap(40, 20)
+    fake_md = type("_MD", (), {"hasImage": lambda self: True, "imageData": lambda self: pm.toImage()})()
+    from PyQt6.QtGui import QKeyEvent
+    with patch.object(QApplication.clipboard(), "mimeData", return_value=fake_md):
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+        handled = dlg.eventFilter(dlg._edit, ev)
+    assert handled is True
+    assert dlg._attached_image is not None
+    assert dlg._attached_image_name == "붙여넣은 이미지"
+
+
+def test_mermaid_dialog_ctrl_v_with_plain_text_clipboard_falls_through():
+    """클립보드에 이미지가 없으면(보통의 텍스트 붙여넣기) 위젯 기본 동작에 맡겨야 한다."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    fake_md = type("_MD", (), {"hasImage": lambda self: False})()
+    from PyQt6.QtGui import QKeyEvent
+    with patch.object(QApplication.clipboard(), "mimeData", return_value=fake_md):
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+        handled = dlg.eventFilter(dlg._edit, ev)
+    assert handled is False
+    assert dlg._attached_image is None
+
+
+def test_mermaid_dialog_ai_click_with_image_and_no_text_still_generates():
+    """이미지 경로는 텍스트 전용 경로와 달리 설명이 필수가 아니다."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    real_path = os.path.join(_TMP, f"attach_{uuid.uuid4().hex}.png")
+    _mk_pixmap(40, 20).save(real_path)
+    dlg._load_image_path(real_path)
+
+    captured = {}
+
+    def fake_generate(key, desc, *, model, image=None, base_url=None):
+        captured["desc"] = desc
+        captured["image"] = image
+        return "flowchart TD\n A-->B", model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
+        dlg._on_ai_clicked()
+
+    assert captured["desc"] == ""
+    assert captured["image"] is not None
+    assert dlg.text() == "flowchart TD\n A-->B"
+
+
+def test_mermaid_dialog_ai_click_requires_text_or_image():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    with patch("easycad.canvas.host_dialogs.QMessageBox.information") as info, \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid") as gen:
+        dlg._on_ai_clicked()
+    assert info.called
+    assert not gen.called
 
 
 def test_mermaid_dialog_refresh_button_reloads_model_list():

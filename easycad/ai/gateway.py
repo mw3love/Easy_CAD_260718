@@ -1,16 +1,19 @@
-"""AI 게이트웨이 클라이언트 — 텍스트 설명→Mermaid 생성(§8 항목18 후속).
+"""AI 게이트웨이 클라이언트 — 텍스트/이미지 설명→Mermaid 생성(§8 항목18 후속).
 
 형제 프로젝트 `Paste_flow/pasteflow/ocr_engine.py`의 모델 폴백(`_call_with_fallback`)·
 오류 분류(fail/retry/weak) 패턴을 이식했다. 설계 근거는 `docs/ai_image_import.md`(옛
-이미지 경로, 2026-08-12 폐기), 함정은 `docs/pitfalls.md`의 "AI 게이트웨이 호출" 절 참조.
+이미지→JSON 경로, 2026-08-12 폐기), 함정은 `docs/pitfalls.md`의 "AI 게이트웨이 호출" 절.
 
-2026-08-12: 이미지 입력 경로(vision 호출·타일링 파이프라인)를 완전히 폐기하면서 이
-모듈에서도 vision 전용 함수(`call_vision`/`call_with_fallback`/`parse_json` 등)를
-정리했다 — 지금은 텍스트 전용 호출(`call_text`/`call_text_with_fallback`)만 남는다.
+2026-08-12: 이미지→**좌표 보존 JSON** 경로(vision 호출·P1~P3.75 타일링 파이프라인)는
+완전히 폐기했다(`parse_json`도 함께 삭제) — 그 복잡성은 전부 "원본 배치를 정밀하게
+지켜야 한다"는 요구에서 왔는데, Mermaid는 애초에 좌표가 없는 관계형 DSL이라 그 요구
+자체가 없다. 같은 날 후속으로 이미지→**Mermaid 텍스트** 입력을 다시 받았다(`call_text`/
+`call_text_with_fallback`이 이제 선택적 `image` 인자를 받는다) — 단일 호출, 타일링
+없음, 좌표 없음이라 옛 파이프라인과는 다른 훨씬 가벼운 경로다.
 
 **PyQt 비의존.** `resolve_api_key()`만 QSettings를 쓰는데, 그마저도 함수 안에서 지연
-임포트해 이 모듈의 나머지(모델 조회·크레딧·텍스트 호출)는 순수 파이썬에서 Qt 애플리케이션
-없이도 그대로 쓸 수 있다.
+임포트해 이 모듈의 나머지(모델 조회·크레딧·텍스트/이미지 호출)는 순수 파이썬에서 Qt
+애플리케이션 없이도 그대로 쓸 수 있다.
 
 키 해석 순서(`resolve_api_key`): 명시 인자 > `~/.claude/.secrets/easycad-gateway.key`(첫 줄)
 > QSettings("EasyCAD","EasyCAD")["ai_gateway_key"] > 환경변수 `EASYCAD_GW_KEY`.
@@ -29,6 +32,8 @@
 """
 from __future__ import annotations
 
+import base64
+import io
 import os
 import time
 from pathlib import Path
@@ -261,31 +266,48 @@ class GatewayResult(NamedTuple):
     elapsed: float
 
 
-def call_text(client, model: str, prompt: str, *,
+def _b64_png(img) -> str:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.standard_b64encode(buf.getvalue()).decode()
+
+
+def call_text(client, model: str, prompt: str, *, image=None,
               max_tokens: int = DEFAULT_MAX_TOKENS) -> tuple[str, float]:
-    """이미지 없는 순수 텍스트 호출(단일, 폴백 없음). 반환 (본문 문자열, 소요초)."""
+    """텍스트 전용 또는 이미지+텍스트 호출(단일, 폴백 없음). `image`(PIL Image)를 주면
+    vision 콘텐츠 배열로, 안 주면 문자열 하나만 보낸다(이름은 `call_text`로 남겨둔다 —
+    text_to_mermaid.py 등 기존 호출부가 이 이름을 그대로 쓴다). 반환 (본문 문자열, 소요초)."""
+    if image is not None:
+        content = [
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_b64_png(image)}"}},
+            {"type": "text", "text": prompt},
+        ]
+    else:
+        content = prompt
     t0 = time.time()
     resp = client.chat.completions.create(
         model=model, max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role": "user", "content": content}],
     )
     return (resp.choices[0].message.content or ""), time.time() - t0
 
 
-def call_text_with_fallback(api_key: str, prompt: str, *, model: str,
+def call_text_with_fallback(api_key: str, prompt: str, *, model: str, image=None,
                              fallback_chain: tuple = (), base_url: str = BASE_URL,
                              max_tokens: int = DEFAULT_MAX_TOKENS,
                              timeout: float = 60.0) -> GatewayResult:
     """`call_text`를 실행하고, `model_not_found`/`timeout`이면 `fallback_chain`의 다음
     모델로 1회 재시도한다(`quota`/`server_busy`/`other`는 그대로 던짐 — 조용히 갈아타면
-    실패를 성공으로 오인하게 된다, ocr_engine의 프로브 분리 원칙과 동일). 이미지가 없어
-    밀집 도면 vision 호출 같은 504 위험이 낮으므로 기본 timeout을 짧게(60s) 잡는다.
-    `fallback_chain`이 비어 있으면(기본값) 실패 시 그대로 예외를 올린다 — 텍스트 전용
-    모델은 사용자가 드롭다운에서 직접 골라 쓰므로 정해진 폴백 사슬을 강제할 이유가 없다."""
+    실패를 성공으로 오인하게 된다, ocr_engine의 프로브 분리 원칙과 동일). 기본 timeout은
+    짧게(60s) 잡는다 — `image`가 있으면 호출부(`text_to_mermaid.generate_mermaid`)가 더
+    넉넉한 값을 넘긴다(단일 이미지 1장이라 옛 밀집 타일링 파이프라인만큼 오래 걸리진
+    않지만, 순수 텍스트보다는 여유가 필요). `fallback_chain`이 비어 있으면(기본값) 실패
+    시 그대로 예외를 올린다 — 모델은 사용자가 드롭다운에서 직접 골라 쓰므로 정해진
+    폴백 사슬을 강제할 이유가 없다."""
     client = _client(api_key, base_url, timeout=timeout)
 
     def _try(m: str) -> tuple[str, float]:
-        return call_text(client, m, prompt, max_tokens=max_tokens)
+        return call_text(client, m, prompt, image=image, max_tokens=max_tokens)
 
     try:
         content, dt = _try(model)
