@@ -133,7 +133,12 @@ class _UIBuildMixin:
         # 들여와 "팔레트에 등록"(§8-8)에 태우는 용도(안테나 심볼 실사용 피드백 대체).
         self._act_svg = self._make_action("SVG 가져오기…", "image",
             self._insert_svg, "Ctrl+Shift+V")
-        for a in (self._act_img, self._act_tb, self._act_tbl, self._act_mmd, self._act_svg):
+        # [실사용 피드백 2026-08-12] 게이트웨이 설정은 Mermaid 다이얼로그 안 버튼이 아니라
+        # 상위(메뉴+상단 툴바)에 상시 노출 — Mermaid 가져오기를 열지 않고도 키를 넣을 수 있게.
+        self._act_ai_gw_settings = self._make_action(
+            "AI 게이트웨이 설정…", "settings", self._open_ai_gateway_settings)
+        for a in (self._act_img, self._act_tb, self._act_tbl, self._act_mmd, self._act_svg,
+                 self._act_ai_gw_settings):
             m.addAction(a)
 
         # 편집(상단 툴바 전용 — 메뉴엔 없던 undo/redo를 액션으로. Ctrl+Z/Ctrl+Y 키는 뷰가 처리).
@@ -249,6 +254,12 @@ class _UIBuildMixin:
         self.tool_pinned = checked
         self.statusBar().showMessage(
             "도구 고정 — 연속 그리기" if checked else "도구 고정 해제 — 하나 그리면 선택모드", 3000)
+
+    def _open_ai_gateway_settings(self):
+        """AI 게이트웨이 주소·API 키 설정창(2026-08-12, 실사용 요청) — Mermaid 가져오기를
+        열지 않고도 상단 메뉴/툴바에서 바로 접근 가능."""
+        from easycad.canvas.host_dialogs import _AIGatewaySettingsDialog
+        _AIGatewaySettingsDialog(self).exec()
 
 
     def _toggle_snap(self, checked: bool):
@@ -404,10 +415,13 @@ class _UIBuildMixin:
             tb.addAction(a)
         self._refresh_history_actions()   # undo/redo 버튼 초기 활성 상태(둘 다 비어 disabled)
 
-        # 우측 정렬 스페이서 → 도움말.
+        # 우측 정렬 스페이서 → 게이트웨이 설정 → 테마 → 도움말.
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
+        # [실사용 피드백 2026-08-12] "상위로 상시 노출" 요청 — Mermaid 다이얼로그 안 버튼
+        # 대신 항상 보이는 상단바 아이콘으로.
+        tb.addAction(self._act_ai_gw_settings)
         tb.addAction(self._act_theme)
         tb.addAction(self._act_help)
         self._toolbar = tb

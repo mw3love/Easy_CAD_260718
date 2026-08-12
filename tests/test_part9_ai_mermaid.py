@@ -19,7 +19,7 @@ P1~P3.75 타일링, host_ai.py QThread 워커, _AIImageImportDialog)를 완전�
 tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easycad.py (전체) 또는
 pytest test_part9_ai_mermaid.py.
 """
-from PyQt6.QtCore import QSettings
+from PyQt6.QtCore import QSettings, QEvent
 from PyQt6.QtWidgets import QDialog
 
 from _shared import *  # noqa: F401,F403
@@ -157,7 +157,9 @@ def test_generate_mermaid_returns_text_and_model_used():
 
 # ── _MermaidDialog: AI 보조 생성 ─────────────────────────────────────────────
 
-def test_mermaid_dialog_populate_models_marks_recommend1_and_recommend2():
+def test_mermaid_dialog_populate_models_groups_by_family_with_separator():
+    """gpt/gemini를 구분선으로 명확히 나누고(실사용 요청), 추천 모델엔 금색 별
+    아이콘을 붙인다(텍스트 라벨 "(추천1)"/"(추천2)"는 그대로 유지)."""
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.gw.list_text_models",
                return_value=["gpt-5.4-mini", "gpt-5.4-nano", "gemini-3.6-flash"]):
@@ -167,7 +169,13 @@ def test_mermaid_dialog_populate_models_marks_recommend1_and_recommend2():
     idx2 = dlg._model_combo.findData(gw.TEXT_RECOMMEND_2)
     assert "추천1" in dlg._model_combo.itemText(idx1)
     assert "추천2" in dlg._model_combo.itemText(idx2)
-    # claude는애초에 list_text_models가 걸러주므로 드롭다운에 아예 없어야 함(방어적 확인).
+    assert not dlg._model_combo.itemIcon(idx1).isNull()
+    assert not dlg._model_combo.itemIcon(idx2).isNull()
+    idx3 = dlg._model_combo.findData("gpt-5.4-nano")
+    assert dlg._model_combo.itemIcon(idx3).isNull()   # 비추천 항목엔 배지 없음(구별)
+    # gemini 그룹(1개) + 구분선(1) + gpt 그룹(2개) = 4행.
+    assert dlg._model_combo.count() == 4
+    # claude는 애초에 list_text_models가 걸러주므로 드롭다운에 아예 없어야 함(방어적 확인).
     assert dlg._model_combo.findData("claude-sonnet-5") == -1
 
 
@@ -177,13 +185,15 @@ def test_mermaid_dialog_populate_models_falls_back_when_list_fails():
                side_effect=RuntimeError("no network")):
         dlg = _MermaidDialog()
     assert dlg.model() == gw.TEXT_RECOMMEND_1
-    assert dlg._model_combo.count() == 2   # 추천1·추천2 둘만 남음
+    assert dlg._model_combo.count() == 3   # 추천1(gemini 1) + 구분선 + 추천2(gpt 1)
 
 
-def test_mermaid_dialog_ai_button_fills_mermaid_box_and_keeps_it_editable():
+def test_mermaid_dialog_single_box_ai_button_fills_in_place_and_stays_editable():
+    """단일 입력칸 — 설명을 그 칸에 직접 입력하고, AI 생성 후에도 같은 칸에서 계속
+    편집 가능해야 한다(실사용 피드백으로 분리형 → 단일칸으로 되돌림)."""
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
-    dlg._prompt_edit.setText("날씨를 예보하는 워크플로우")
+    dlg._edit.setPlainText("날씨를 예보하는 워크플로우")
 
     def fake_generate(key, desc, *, model, **kw):
         assert desc == "날씨를 예보하는 워크플로우"
@@ -194,15 +204,61 @@ def test_mermaid_dialog_ai_button_fills_mermaid_box_and_keeps_it_editable():
         dlg._on_ai_clicked()
 
     assert dlg.text() == "flowchart TD\n A[관측] --> B[예보]"
-    # AI가 채운 뒤에도 직접 편집 가능해야 한다(분리형 구조 핵심 요구사항).
     dlg._edit.setPlainText(dlg.text() + "\n B --> C[게시]")
     assert "게시" in dlg.text()
+
+
+def test_mermaid_dialog_ai_fill_is_undoable_via_ctrl_z():
+    """setPlainText() 대신 QTextCursor 치환을 써서, AI가 채운 결과를 Ctrl+Z(칸 자체의
+    undo 스택)로 원래 입력했던 설명으로 복구할 수 있어야 한다(단일칸 통합의 안전망)."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("날씨를 예보하는 워크플로우")
+
+    def fake_generate(key, desc, *, model, **kw):
+        return "flowchart TD\n A-->B", model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
+        dlg._on_ai_clicked()
+    assert dlg.text() == "flowchart TD\n A-->B"
+    dlg._edit.undo()
+    assert dlg.text() == "날씨를 예보하는 워크플로우"
+
+
+def test_mermaid_dialog_ctrl_enter_triggers_ai_generation():
+    """Ctrl+Enter로 마우스 없이 바로 변환(실사용 요청) — _edit에 설치된 eventFilter가
+    가로채 AI 생성을 트리거하고 이벤트를 소비한다(기본 줄바꿈 삽입 방지)."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    calls = {"n": 0}
+    dlg._on_ai_clicked = lambda: calls.__setitem__("n", calls["n"] + 1)
+
+    from PyQt6.QtGui import QKeyEvent
+    ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    handled = dlg.eventFilter(dlg._edit, ev)
+    assert handled is True
+    assert calls["n"] == 1
+
+
+def test_mermaid_dialog_plain_enter_without_ctrl_does_not_trigger_ai():
+    """일반 Enter는 줄바꿈(Mermaid 여러 줄 입력용)이지 AI 트리거가 아니어야 한다."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    calls = {"n": 0}
+    dlg._on_ai_clicked = lambda: calls.__setitem__("n", calls["n"] + 1)
+
+    from PyQt6.QtGui import QKeyEvent
+    ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
+    handled = dlg.eventFilter(dlg._edit, ev)
+    assert handled is False
+    assert calls["n"] == 0
 
 
 def test_mermaid_dialog_ai_button_shows_credit_balance_on_success():
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
-    dlg._prompt_edit.setText("아무 설명")
+    dlg._edit.setPlainText("아무 설명")
 
     def fake_generate(key, desc, *, model, **kw):
         return "flowchart TD\n A-->B", model
@@ -217,7 +273,7 @@ def test_mermaid_dialog_ai_button_shows_credit_balance_on_success():
 def test_mermaid_dialog_ai_button_credit_lookup_failure_does_not_break_result():
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
-    dlg._prompt_edit.setText("아무 설명")
+    dlg._edit.setPlainText("아무 설명")
 
     def fake_generate(key, desc, *, model, **kw):
         return "flowchart TD\n A-->B", model
@@ -230,7 +286,7 @@ def test_mermaid_dialog_ai_button_credit_lookup_failure_does_not_break_result():
     assert dlg.text() == "flowchart TD\n A-->B"   # 크레딧 조회 실패가 본 결과를 막지 않음
 
 
-def test_mermaid_dialog_ai_button_requires_nonempty_prompt():
+def test_mermaid_dialog_ai_button_requires_nonempty_box():
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
     with patch("easycad.canvas.host_dialogs.QMessageBox.information") as info, \
@@ -244,7 +300,7 @@ def test_mermaid_dialog_ai_button_requires_nonempty_prompt():
 def test_mermaid_dialog_ai_button_warns_when_no_api_key():
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
-    dlg._prompt_edit.setText("아무 설명")
+    dlg._edit.setPlainText("아무 설명")
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value=""), \
          patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn, \
          patch("easycad.ai.text_to_mermaid.generate_mermaid") as gen:
@@ -256,7 +312,7 @@ def test_mermaid_dialog_ai_button_warns_when_no_api_key():
 def test_mermaid_dialog_ai_button_shows_warning_on_generation_failure():
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
-    dlg._prompt_edit.setText("아무 설명")
+    dlg._edit.setPlainText("아무 설명")
 
     def fake_generate(key, desc, *, model, **kw):
         raise RuntimeError("게이트웨이 실패")
@@ -266,7 +322,7 @@ def test_mermaid_dialog_ai_button_shows_warning_on_generation_failure():
          patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
         dlg._on_ai_clicked()
     assert warn.called
-    assert dlg.text() == ""   # 실패해도 기존 내용(빈 상태)을 건드리지 않음
+    assert dlg.text() == "아무 설명"   # 실패해도 기존 입력을 지우지 않음
     assert dlg._ai_btn.isEnabled()   # finally에서 버튼이 다시 활성화됨
 
 
@@ -311,28 +367,35 @@ def test_mermaid_dialog_populate_models_uses_resolved_base_url():
     assert captured["base_url"] == "https://custom.example.com/v1/gateway"
 
 
-def test_mermaid_dialog_settings_button_reloads_models_on_accept():
-    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
-        dlg = _MermaidDialog()
-    calls = {"n": 0}
-    dlg._populate_models = lambda: calls.__setitem__("n", calls["n"] + 1)
+# ── 게이트웨이 설정 진입점 — 상단 메뉴/툴바로 이동(2026-08-12) ────────────────
+# 옛 _MermaidDialog._settings_btn/_on_settings_clicked는 삭제됐다 — "버튼 안으로
+# 하지 말고 상위로 상시 노출해달라"는 실사용 요청으로 CanvasWindow 메뉴+툴바 액션으로
+# 옮겼다(host_ui.py._open_ai_gateway_settings).
 
-    fake_settings = type("_S", (), {"exec": lambda self: QDialog.DialogCode.Accepted})()
-    with patch("easycad.canvas.host_dialogs._AIGatewaySettingsDialog", return_value=fake_settings):
-        dlg._on_settings_clicked()
-    assert calls["n"] == 1
+def test_ai_gateway_settings_action_exists_on_menu_and_toolbar():
+    w = CanvasWindow()
+    assert hasattr(w, "_act_ai_gw_settings")
+    assert w._act_ai_gw_settings in w._toolbar.actions()
+    w.deleteLater()
 
 
-def test_mermaid_dialog_settings_button_skips_reload_on_cancel():
-    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
-        dlg = _MermaidDialog()
-    calls = {"n": 0}
-    dlg._populate_models = lambda: calls.__setitem__("n", calls["n"] + 1)
+def test_open_ai_gateway_settings_opens_dialog():
+    w = CanvasWindow()
+    opened = {}
 
-    fake_settings = type("_S", (), {"exec": lambda self: QDialog.DialogCode.Rejected})()
-    with patch("easycad.canvas.host_dialogs._AIGatewaySettingsDialog", return_value=fake_settings):
-        dlg._on_settings_clicked()
-    assert calls["n"] == 0
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            opened["parent"] = parent
+
+        def exec(self):
+            opened["exec"] = True
+            return QDialog.DialogCode.Accepted
+
+    with patch("easycad.canvas.host_dialogs._AIGatewaySettingsDialog", _FakeDlg):
+        w._open_ai_gateway_settings()
+    assert opened.get("exec") is True
+    assert opened.get("parent") is w
+    w.deleteLater()
 
 
 # ── gateway.py: 게이트웨이 주소 저장/해석 ────────────────────────────────────

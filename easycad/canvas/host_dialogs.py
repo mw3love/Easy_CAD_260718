@@ -5,10 +5,12 @@
 다이얼로그 클래스를 가져다 쓴다. 순환 임포트를 피하려고 host.py·믹스인을 임포트하지 않는
 잎(leaf) 모듈이다.
 """
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings
+import math
+
+from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QEvent
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QFont, QPolygonF, QPainterPath, QPalette,
+    QFont, QPolygonF, QPainterPath, QPalette, QTextCursor,
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
@@ -27,7 +29,7 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
-from easycad.canvas.host_widgets import _clipboard_pixmap
+from easycad.canvas.host_widgets import _clipboard_pixmap, _act_icon
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, render_preview, _find_title_frame
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
@@ -256,17 +258,48 @@ class _CableNumberDialog(QDialog):
         return prefix, self._start_sb.value()
 
 
+def _recommend_star_icon(size: int = 14) -> QIcon:
+    """모델 드롭다운의 "추천" 배지 — 금색 별. 코랄(#da7756)은 이 앱에서 버튼 상태(체크·
+    호버) 전용 색이라(M6 디자인 베이크오프 관례) 배지에 재사용하면 의미가 겹친다 —
+    "추천/즐겨찾기"의 흔한 관용색인 금색으로 분리."""
+    cached = _RECOMMEND_STAR_CACHE.get(size)
+    if cached is not None:
+        return cached
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor("#f5b942"))
+    cx, cy, r_out, r_in = size / 2, size / 2, size * 0.48, size * 0.19
+    pts = []
+    for i in range(10):
+        ang = math.pi / 2 + i * math.pi / 5
+        r = r_out if i % 2 == 0 else r_in
+        pts.append(QPointF(cx + r * math.cos(ang), cy - r * math.sin(ang)))
+    p.drawPolygon(QPolygonF(pts))
+    p.end()
+    icon = QIcon(pm)
+    _RECOMMEND_STAR_CACHE[size] = icon
+    return icon
+
+
+_RECOMMEND_STAR_CACHE: dict[int, QIcon] = {}
+
+
 class _MermaidDialog(QDialog):
-    """Mermaid flowchart 입력창 — 직접 타이핑/붙여넣기, 또는 AI 보조 생성.
+    """Mermaid flowchart 입력창 — 설명 텍스트와 Mermaid 코드를 한 칸에서 같이 받는다.
 
-    §8 항목18(AI 이미지→도면) 후속(2026-08-12, deep-interview로 확정) — 이미지 입력
-    경로를 완전히 폐기하고 이 다이얼로그에 흡수했다. 분리형 구조: 위 프롬프트 칸은
-    선택 입력이고, OK가 실제로 쓰는 건 항상 아래 Mermaid 칸 — AI 버튼은 그 칸을
-    채워줄 뿐이라 직접 편집·붙여넣기 경로는 그대로 살아 있다(게이트웨이를 쓰고 싶지
-    않을 때 외부 AI 챗에서 Mermaid를 받아 그대로 붙여넣으면 되므로, 옛 "수동 붙여넣기
-    모드" 체크박스는 이 구조 자체가 대신해 삭제했다)."""
+    §8 항목18(AI 이미지→도면) 후속(2026-08-12) — 처음엔 프롬프트 칸과 Mermaid 칸을
+    분리했었으나(AI가 실수로 편집 중인 내용을 덮어쓸 위험 때문), 실사용 결과 그 위험보다
+    "칸 하나에서 타이핑도 붙여넣기도 다 되고, 키보드만으로 바로 변환"이 훨씬 중요하다는
+    피드백으로 단일 칸으로 되돌렸다. 대신 AI 생성 결과 반영은 `setPlainText()`(되돌리기
+    스택을 초기화함) 대신 `QTextCursor` 전체선택+치환으로 해 Ctrl+Z로 원래 입력을 복구할
+    수 있게 안전망을 남겼다. Ctrl+Enter(칸 안에서)로 마우스 없이 바로 AI 생성 트리거."""
 
-    _SAMPLE = ("flowchart TD\n"
+    _SAMPLE = ("예: 날씨를 예보하는 워크플로우\n\n"
+               "또는 Mermaid 코드를 직접 붙여넣어도 됩니다:\n"
+               "flowchart TD\n"
                "    A[시작] --> B{조건?}\n"
                "    B -->|예| C[처리]\n"
                "    B -->|아니오| D([종료])\n"
@@ -277,45 +310,35 @@ class _MermaidDialog(QDialog):
         self.setWindowTitle("Mermaid 가져오기")
         lay = QVBoxLayout(self)
 
-        lay.addWidget(QLabel("AI로 만들기(선택) — 원하는 도면을 설명하면 아래 칸을 채워줍니다:"))
-        prompt_row = QHBoxLayout()
-        self._prompt_edit = QLineEdit(self)
-        self._prompt_edit.setPlaceholderText("예: 날씨를 예보하는 워크플로우")
-        prompt_row.addWidget(self._prompt_edit, 1)
-        self._model_combo = QComboBox(self)
-        prompt_row.addWidget(self._model_combo)
-        # [실사용 피드백 2026-08-12] 새 모델이 수시로 나오므로 다이얼로그를 다시 열지
-        # 않고도 목록을 즉석에서 다시 불러올 수 있어야 한다는 요청 — __init__이 이미
-        # 한 번 부르는 _populate_models를 그대로 재호출.
-        self._refresh_btn = QToolButton(self)
-        self._refresh_btn.setText("새로고침")
-        self._refresh_btn.clicked.connect(self._populate_models)
-        prompt_row.addWidget(self._refresh_btn)
-        self._ai_btn = QToolButton(self)
-        self._ai_btn.setText("AI로 생성")
-        self._ai_btn.clicked.connect(self._on_ai_clicked)
-        prompt_row.addWidget(self._ai_btn)
-        lay.addLayout(prompt_row)
-        self._populate_models()
-
-        status_row = QHBoxLayout()
-        self._credit_label = QLabel("", self)   # AI 생성 성공 후에만 채움(크레딧 잔액, 부가정보)
-        status_row.addWidget(self._credit_label, 1)
-        # [실사용 피드백 2026-08-12] 게이트웨이 주소·API 키를 secrets 파일/환경변수 없이도
-        # 앱 안에서 직접 입력·저장·테스트할 수 있어야 한다는 요청.
-        self._settings_btn = QToolButton(self)
-        self._settings_btn.setText("게이트웨이 설정…")
-        self._settings_btn.clicked.connect(self._on_settings_clicked)
-        status_row.addWidget(self._settings_btn)
-        lay.addLayout(status_row)
-
-        lay.addWidget(QLabel("Mermaid flowchart 코드(직접 입력/붙여넣기도 가능) "
-                             "(flowchart TD/LR … · 노드 모양·화살표·라벨 지원):"))
+        lay.addWidget(QLabel("설명을 입력하거나 Mermaid 코드를 직접 붙여넣으세요:"))
         self._edit = QPlainTextEdit(self)
         self._edit.setPlaceholderText(self._SAMPLE)
         self._edit.setMinimumSize(QSize(460, 280))
         self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._edit.installEventFilter(self)   # Ctrl+Enter → AI 생성
         lay.addWidget(self._edit)
+
+        control_row = QHBoxLayout()
+        self._model_combo = QComboBox(self)
+        control_row.addWidget(self._model_combo, 1)
+        # [실사용 피드백 2026-08-12] 새 모델이 수시로 나오므로 다이얼로그를 다시 열지
+        # 않고도 목록을 즉석에서 다시 불러올 수 있어야 한다는 요청.
+        self._refresh_btn = QToolButton(self)
+        self._refresh_btn.setIcon(_act_icon("refresh"))
+        self._refresh_btn.setToolTip("모델 목록 새로고침")
+        self._refresh_btn.clicked.connect(self._populate_models)
+        control_row.addWidget(self._refresh_btn)
+        self._ai_btn = QToolButton(self)
+        self._ai_btn.setIcon(_act_icon("generate"))
+        self._ai_btn.setToolTip("AI로 생성 (Ctrl+Enter)")
+        self._ai_btn.clicked.connect(self._on_ai_clicked)
+        control_row.addWidget(self._ai_btn)
+        lay.addLayout(control_row)
+        self._populate_models()
+
+        self._credit_label = QLabel("", self)   # AI 생성 성공 후에만 채움(크레딧 잔액, 부가정보)
+        lay.addWidget(self._credit_label)
+
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                 | QDialogButtonBox.StandardButton.Cancel, self)
         btns.accepted.connect(self.accept)
@@ -325,14 +348,22 @@ class _MermaidDialog(QDialog):
     def text(self):
         return self._edit.toPlainText()
 
+    def eventFilter(self, obj, event):
+        if (obj is self._edit and event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            self._on_ai_clicked()
+            return True
+        return super().eventFilter(obj, event)
+
     # ---- AI 보조 생성 ---------------------------------------------------------
 
     def _populate_models(self):
         """게이트웨이 `/models`를 실호출해 gpt·gemini 계열 **전체**를 채우고(`list_text_models`
-        — 필터만 걸 뿐 개수 제한은 없다), 그중 가성비 최선 둘을 "(추천1)"/"(추천2)"로
-        표시·기본 선택(추천1)한다 — 실측 근거는 `gateway.TEXT_RECOMMEND_1/2` 주석 참조.
-        조회 실패(키 없음·네트워크 오류) 시 추천 둘만으로 조용히 폴백. "새로고침" 버튼이
-        이 메서드를 그대로 재호출해 언제든 최신 모델 목록을 다시 불러올 수 있다."""
+        — 필터만 걸 뿐 개수 제한은 없다), gemini/gpt 계열을 구분선(`insertSeparator`)으로
+        묶어서 보여준다. 계열별 가성비 최선 하나씩(`gateway.TEXT_RECOMMEND_1/2`)에는 금색
+        별 아이콘(`_recommend_star_icon`)을 붙인다. 조회 실패(키 없음·네트워크 오류) 시
+        추천 둘만으로 조용히 폴백. "새로고침" 버튼이 이 메서드를 그대로 재호출한다."""
         models: list[str] = []
         try:
             key = gw.resolve_api_key()
@@ -342,36 +373,37 @@ class _MermaidDialog(QDialog):
             models = []
         r1, r2 = gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2
         pool = sorted(set(models) | {r1, r2})
+        gemini_models = sorted(m for m in pool if "gemini" in m.lower())
+        gpt_models = sorted(m for m in pool if "gpt" in m.lower())
+        other_models = sorted(m for m in pool if m not in gemini_models and m not in gpt_models)
+
         self._model_combo.clear()
-        for m in pool:
-            if m == r1:
-                label = f"{m} (추천1)"
-            elif m == r2:
-                label = f"{m} (추천2)"
-            else:
-                label = m
-            self._model_combo.addItem(label, m)
+        star = _recommend_star_icon()
+        groups = [g for g in (gemini_models, gpt_models, other_models) if g]
+        for gi, group in enumerate(groups):
+            if gi > 0:
+                self._model_combo.insertSeparator(self._model_combo.count())
+            for m in group:
+                icon = star if m in (r1, r2) else QIcon()
+                suffix = " (추천1)" if m == r1 else (" (추천2)" if m == r2 else "")
+                self._model_combo.addItem(icon, f"{m}{suffix}", m)
         idx = self._model_combo.findData(r1)
         self._model_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
     def model(self) -> str:
         return self._model_combo.currentData() or gw.TEXT_RECOMMEND_1
 
-    def _on_settings_clicked(self):
-        dlg = _AIGatewaySettingsDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._populate_models()   # 키/주소가 바뀌었을 수 있으므로 즉시 재조회
-
     def _on_ai_clicked(self):
-        desc = self._prompt_edit.text().strip()
+        desc = self._edit.toPlainText().strip()
         if not desc:
-            QMessageBox.information(self, "Mermaid 가져오기", "먼저 설명을 입력하세요.")
+            QMessageBox.information(self, "Mermaid 가져오기",
+                                    "먼저 설명을 입력하거나 Mermaid 코드를 붙여넣으세요.")
             return
         key = gw.resolve_api_key()
         if not key:
             QMessageBox.warning(self, "Mermaid 가져오기",
                                 "게이트웨이 API 키가 없습니다. "
-                                "아래 '게이트웨이 설정…'에서 입력해 주세요.")
+                                "상단 툴바의 'AI 게이트웨이 설정'에서 입력해 주세요.")
             return
         base_url = gw.resolve_base_url()
         self._ai_btn.setEnabled(False)
@@ -385,7 +417,12 @@ class _MermaidDialog(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
             self._ai_btn.setEnabled(True)
-        self._edit.setPlainText(text)
+        # [단일 입력칸 통합 시 안전망] setPlainText()는 되돌리기 스택을 초기화해버려
+        # 입력한 원문을 잃는다 — QTextCursor 전체선택+치환은 이 칸 자체의 undo 스택에
+        # 남아 Ctrl+Z로 AI 생성 전 내용(오타로 잘못 눌렀을 때 등)을 복구할 수 있다.
+        cursor = self._edit.textCursor()
+        cursor.select(QTextCursor.SelectionType.Document)
+        cursor.insertText(text)
         # [실사용 피드백 계승, §8 항목18 C단계] 크레딧 잔액 표시 — 실패해도 본 결과
         # (Mermaid 채우기)에는 영향 없어야 하므로 조용히 무시.
         try:
@@ -403,7 +440,11 @@ class _AIGatewaySettingsDialog(QDialog):
     넣을 수 있어 앱만 켜서 쓰는 사용자에겐 진입장벽이었다. OK를 눌러야 QSettings에
     저장된다(Cancel은 변경 폐기) — `resolve_api_key`의 우선순위 사슬에서 QSettings는
     secrets 파일보다 아래이므로, secrets 파일이 이미 있으면 이 창에서 바꿔도 secrets
-    파일 쪽이 계속 우선한다(의도된 동작 — 파일 관례가 더 안전한 소스)."""
+    파일 쪽이 계속 우선한다(의도된 동작 — 파일 관례가 더 안전한 소스).
+
+    [실사용 피드백 2026-08-12] 이 다이얼로그를 여는 진입점은 더 이상 Mermaid 가져오기
+    다이얼로그 안쪽 버튼이 아니다 — CanvasWindow 상단 툴바(항상 노출)로 옮겼다
+    (`host_ui.py._open_ai_gateway_settings`). 이 클래스 자체는 무변경."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -424,7 +465,8 @@ class _AIGatewaySettingsDialog(QDialog):
 
         test_row = QHBoxLayout()
         self._test_btn = QToolButton(self)
-        self._test_btn.setText("연결 테스트")
+        self._test_btn.setIcon(_act_icon("connect"))
+        self._test_btn.setToolTip("연결 테스트")
         self._test_btn.clicked.connect(self._on_test_clicked)
         test_row.addWidget(self._test_btn)
         self._test_label = QLabel("", self)
