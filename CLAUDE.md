@@ -38,7 +38,11 @@ easycad/
 │   ├── host_ui.py / host_fileio.py / host_layers.py / host_style.py / host_undo.py /
 │   │   host_selection.py / host_context.py / host_canvas.py   CanvasWindow 믹스인(역할별)
 │   ├── host_widgets.py     독립 위젯(팔레트버튼·미니맵뷰·플로팅패널·토스트·색상팝업) + 공유 상수
-│   └── host_dialogs.py     입력 다이얼로그(용지·표제란·표·케이블채번·Mermaid)
+│   └── host_dialogs.py     입력 다이얼로그(용지·표제란·표·케이블채번·Mermaid·AI 게이트웨이 설정)
+├── ai/
+│   ├── gateway.py          AI 게이트웨이(Mindlogic) 클라이언트 — 키/주소 저장·모델 목록·크레딧
+│   │                       조회·텍스트 호출(폴백 포함)
+│   └── text_to_mermaid.py  프롬프트 빌더·코드펜스 벗기기·generate_mermaid (§8 항목18)
 ├── fileio/
 │   ├── pdf_export.py       PDF 출력(A4~A1, 전체/선택영역)
 │   ├── document.py         .ecad(JSON) 저장/열기 — 문서모델 씨앗(DXF 매핑 기반)
@@ -50,7 +54,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~6_*.py       테마별 회귀 스모크 378종(개별 pytest 실행 가능)
+└── test_part1~9_*.py       테마별 회귀 스모크 542종(개별 pytest 실행 가능)
 docs/
 ├── EasyCAD_계획.md          로드맵·§8 다음 순서·큰 설계 필요 항목
 ├── history/2026-07.md 등    월별 상세 진행 기록(완료 사항의 경위·근거)
@@ -599,6 +603,22 @@ docs/
   `web_prototype/`에서 `python -m http.server 8791` 후 `localhost:8791/index.html`.
   경위·근거는 `docs/history/2026-08.md` "웹 전환 실험" 항목들(2026-08-05 두 건 + 2026-08-06
   열여섯 건), pitfalls는 `docs/pitfalls.md` "라우팅(A*/직교 엘보)" 참조.
+- **왼쪽 패널 탭→아코디언 개편 + Mermaid 다이얼로그 재작업(2026-08-12)** — 좌측 팔레트를
+  옛 탭 2개(도형/레이어)에서 아코디언 4섹션(기본도형/순서도/내 심볼/레이어)으로 개편,
+  "내 심볼"에 폴더(생성·삭제·드래그이동) 신설. 착수 직후 전체 스모크에서 재현된 Windows
+  세그폴트(`app.setStyle("Fusion")` 중복 호출 — 창당 위젯 수 증가가 기존 잠재 재현조건을
+  앞당김, `faulthandler`로 원인 특정)를 고친 뒤, 실사용 스크린샷 피드백을 5차례 받아 팔레트
+  버튼 크기·열 수·폰트·패널 폭을 반복 조정(최종: 4열·48px 버튼·패널 폭 속성/미니맵 패널과
+  통일 — QListWidget의 숨은 고정 sizeHint가 진짜 병목이었음, `CanvasWindow.showEvent` 신설
+  로 해결). 파일 메뉴를 파일 I/O와 "삽입(&I)"(표제란·표·Mermaid)로 분리 + 이미지/SVG 삽입
+  파일선택창 통합. Mermaid 다이얼로그는 프롬프트/코드 1칸 통합 → 재피드백으로 다시 2칸
+  분리(참고 이미지의 "Enter=실행/Shift+Enter=줄바꿈" 관례로 이전 2칸 시절의 "AI가 편집
+  중인 내용을 덮어쓸 위험"이 구조적으로 재발 안 함), 모델 선택을 2열 병렬 라디오 패널에서
+  평범한 드롭다운(gemini/gpt 그룹 헤더)으로, AI 게이트웨이 설정 진입점을 상단 메뉴/툴바
+  ↔ Mermaid 창 내부 사이에서 재피드백 따라 되돌림(최종: Mermaid 창 우상단 버튼, 새로고침·
+  크레딧 확인은 게이트웨이 설정 창 쪽으로). 스모크 534→542종. 경위·근거는
+  `docs/history/2026-08.md` 이 날짜의 연속 항목들(총 8차), 함정은 `docs/pitfalls.md`
+  "Qt 시그널·이벤트 발화 조건"·"렌더링" 절 참조.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
