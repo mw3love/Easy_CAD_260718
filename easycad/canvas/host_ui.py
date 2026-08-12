@@ -87,7 +87,7 @@ _PALETTE_TRIANGLE_WH = (77.94, 90.0)
 _PALETTE_ICON_PX = 18
 _PALETTE_BTN_SIZE = QSize(48, 40)
 _PALETTE_COLS = 4
-_PALETTE_FONT_SHRINK = 2   # pt만큼 기본 폰트에서 뺀다
+_PALETTE_FONT_SHRINK = 1   # pt만큼 기본 폰트에서 뺀다 — [2026-08-12 5차] 2→1, 너무 작다는 피드백
 
 
 
