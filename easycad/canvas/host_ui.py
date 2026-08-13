@@ -42,7 +42,7 @@ from easycad.fileio.mermaid_import import (
 from easycad.canvas.host_widgets import (
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
-    _AccordionSection, _SymbolFolderDropZone, _ACCENT_CORAL,
+    _AccordionSection, _SymbolFolderDropZone, _ACCENT_CORAL, _apply_native_titlebar_scheme,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -624,6 +624,10 @@ class _UIBuildMixin:
         minimap = getattr(self, "_minimap", None)
         if minimap is not None:
             minimap.viewport().update()   # 씬 배경색(다크/라이트)이 바뀌므로 재도색
+        # [2026-08-13 피드백] 프로그램 최상단(OS) 타이틀바가 흰색으로 튄다 — QPalette로는
+        # 못 닿는 네이티브 창 프레임이라 Qt 앱 전역 색상 스킴으로 반영(메인 창은 물론, 이후
+        # 열리는 모든 다이얼로그의 OS 타이틀바까지 자동 적용 — `_apply_native_titlebar_scheme` 참조).
+        _apply_native_titlebar_scheme(dark)
         if persist:
             QSettings("EasyCAD", "EasyCAD").setValue("dark", dark)
 
@@ -917,7 +921,10 @@ class _UIBuildMixin:
         옛 도형/레이어 탭 2개를 대체). 탭 전환 특유의 "숨긴 페이지가 sizeHint에서 안 빠지는"
         문제(2026-07-29, `_switch_left_tab`이 겪던 QTabWidget 함정)는 애초에 탭이 아니라
         섹션마다 독립 `setVisible()`이라 같은 함정을 밟지 않는다(검증된 메커니즘 재사용)."""
-        panel = _FloatingPanel(self, "", "left")
+        # [2026-08-13 피드백] 빈 제목이라 패널 최상단바에 아무 표시가 없던 것 — 속성/미니맵
+        # 패널처럼 짧은 명사 하나로("도형", 내부엔 도형 팔레트+레이어가 함께 있지만 팔레트가
+        # 주 콘텐츠).
+        panel = _FloatingPanel(self, "도형", "left")
         self._left_panel = panel
         container = QWidget()
         outer = QVBoxLayout(container)

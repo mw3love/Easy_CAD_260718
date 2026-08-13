@@ -8,7 +8,7 @@
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QPolygonF, QPainterPath, QPalette, QDrag,
+    QPolygonF, QPainterPath, QPalette, QDrag, QFont,
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
@@ -313,6 +313,27 @@ def _light_palette() -> QPalette:
     p.setColor(D, R.Text, c("#a3acb6"));        p.setColor(D, R.ButtonText, c("#a3acb6"))
     p.setColor(D, R.WindowText, c("#a3acb6"))
     return p
+
+
+def _apply_native_titlebar_scheme(dark: bool) -> None:
+    """[2026-08-13 피드백] Windows 네이티브 창 프레임(OS 타이틀바)은 `QPalette`가 못 닿는
+    영역이라, 클라이언트 영역을 다크로 칠해도 타이틀바만 흰색으로 튄다. ctypes로 DWM
+    (`DWMWA_USE_IMMERSIVE_DARK_MODE`/`DWMWA_CAPTION_COLOR`)을 직접 찔러본 시도 3종은 전부
+    HRESULT 성공을 반환하고도 실제 창에서 시각 변화가 없었다(이 환경의 원격 화면 캡처가
+    DWM 합성 효과를 못 잡는 것으로 추정 — 검증 자체가 이 환경에서 막힘). 대신 Qt 6.5+가
+    제공하는 앱 전역 `styleHints().colorScheme()`을 쓴다 — 이건 Qt 자신이 내부적으로 같은
+    DWM API를 호출해 신규·기존 창(다이얼로그 포함) 전체에 자동 반영하므로, 창마다 개별
+    ctypes 호출을 걸 필요가 없다(macOS·구버전 Qt·Windows 10 구버전에서도 안전하게 무시됨).
+    호출 시점: `_apply_theme`가 항상 다이얼로그 생성보다 먼저 실행되므로(앱 초기화 시
+    1회 + 테마 토글마다) 여기 한 곳만 갱신하면 충분."""
+    app = QApplication.instance()
+    if app is None:
+        return
+    try:
+        app.styleHints().setColorScheme(
+            Qt.ColorScheme.Dark if dark else Qt.ColorScheme.Light)
+    except Exception:
+        pass
 
 
 # [Phase 6 M1] 속성 패널 표시용 — 아이템 클래스명 → 한글 종류, 펜 스타일 → 한글.
@@ -660,8 +681,12 @@ class _AccordionSection(QWidget):
         head = QWidget()
         hl = QHBoxLayout(head)
         hl.setContentsMargins(2, 4, 2, 2); hl.setSpacing(4)
+        # [2026-08-13 버그 수정] 색을 안 정한 `setStyleSheet()`는 QLabel을 QStyleSheetStyle로
+        # 전환해 앱 다크 팔레트(WindowText)를 안 따르고 검정으로 렌더됐다(다크 배경에 검정
+        # 글자로 거의 안 보이던 원인) — 폰트는 스타일시트 대신 QFont로 걸어 팔레트 색 상속을
+        # 그대로 유지한다.
         title_lbl = QLabel(title)
-        title_lbl.setStyleSheet("font-weight:600;")
+        f = title_lbl.font(); f.setWeight(QFont.Weight.DemiBold); title_lbl.setFont(f)
         hl.addWidget(title_lbl, 1)
         self.header_layout = hl   # 확장 지점 — insertWidget(1, ...)으로 제목과 접기버튼 사이에 삽입
         self._collapse_btn = QToolButton()
