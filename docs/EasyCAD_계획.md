@@ -386,9 +386,16 @@ boundingRect()` → `_qc_dot_rects()` → `_shape_ports()` → `_nearest_border(
 값을 매 호출 직접 비교하는 캐시)을 구현·반영. 스모크 543종 전원 통과(신규 회귀 없음),
 실제 창 재실측으로 `drag_all`(200개) 121.81ms(x7.3 초과)→34.84ms(x2.1 초과, 3.5배),
 `drag_multi`(20개) 18.61ms(x1.1 초과)→9.97ms(예산 내)까지 검증 완료. 신규 벤치마크
-(`perf_bench.py --only drag_all`)·프로파일러(`profile_group_drag.py`)도 신설. 남은
-x2.1 초과분은 `_sync_geom_snapshot()` 씬 전체 순회(다음 후보)와 실제 `paint()` 비용
-쪽으로 넘어감 — 상세 전문: `docs/perf_group_drag_200.md`.
+(`perf_bench.py --only drag_all`)·프로파일러(`profile_group_drag.py`)도 신설.
+
+**같은 날 후속 재확인** — 남은 x2.1 초과분의 원인을 이어서 프로파일했다. `_sync_geom_
+snapshot()` 씬 전체 순회는 실측 재확인 결과 전체비용의 4%뿐이라 후보에서 **제외
+확정**. 진짜 남은 비용(~70%)은 `_paint_selection_highlight`의 `_highlight_band()`
+(스트로크+`simplified()`+`subtracted()`) 매 paint() 재계산 — 같은 값비교 캐시로 시도
+했으나 **전체 pytest 스위트에서 비결정적 네이티브 크래시**(exit 127, faulthandler로도
+트레이스백 없음, 대조실험으로 원인이 이 변경임은 확인했으나 근본원인은 미상)를 유발해
+되돌렸다(커밋 안 됨, 코드는 이전 상태 그대로). 상세 전문·다음 시도 참고사항:
+`docs/perf_group_drag_200.md`.
 
 ~~1. **미니맵 시인성 개선**~~ — **완료**(2026-07-28, 실조건검증 ✓). 반투명 파란 채움 제거
    (테두리만) + 테마·accent와 무관한 고정 시안(`#22d3ee`)으로 교체. 상세: CLAUDE.md "미니맵
