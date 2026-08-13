@@ -752,6 +752,39 @@ def test_qc_dot_at_roundtrip():
 
 
 
+def test_qc_dot_hidden_and_unclickable_while_hovering_other_shape():
+    # [신규기능 2026-08-13, Lucid 대조] 도형이 선택된 상태에서 다른(미선택) 도형을 호버하면
+    # 이 도형의 큐닷은 감춰지고(시각) 클릭도 안 잡혀야(히트) 한다 — 그래야 호버 중인 도형의
+    # 포트점을 그대로 클릭/드래그할 수 있다(오프셋된 큐닷이 가로막지 않음).
+    w = CanvasWindow(); w.grid_enabled = False
+    v = w._view
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60); a.setSelected(True)
+    b = _mk_rect(w._scene, w.make_pen(), 300, 0, 100, 60)   # 멀리 떨어진 미선택 도형
+    _press, _release, _click, move, _drag_move, _dbl = _draw_helpers(v)
+
+    rd_scene = a.mapToScene(dict(a._qc_dot_rects())["r"].center())
+    view_pos = v.mapFromScene(rd_scene)
+
+    # 아무 도형도 호버 안 한 상태 — 큐닷은 그대로 살아있어야 한다(기존 동작 무회귀).
+    move(QPointF(-1000, -1000))
+    assert not a._qc_dots_hover_suppressed()
+    assert v._qc_dot_at(view_pos) is not None
+
+    # b(다른 미선택 도형)를 호버하면 a의 큐닷은 시각·히트테스트 둘 다 억제된다.
+    move(b.sceneBoundingRect().center())
+    assert v._port_dot_shape is b
+    assert a._qc_dots_hover_suppressed()
+    assert v._qc_dot_at(view_pos) is None
+
+    # b 호버를 벗어나면 다시 살아난다.
+    move(QPointF(-1000, -1000))
+    assert v._port_dot_shape is None
+    assert not a._qc_dots_hover_suppressed()
+    assert v._qc_dot_at(view_pos) is not None
+
+
+
+
 def test_edge_point_drag_along_axis_creates_connector():
     # [2026-08-01 화살표 전용으로 되돌림] 겸용 점을 2026-07-30~31엔 그 변의 축 방향(r=가로)
     # 드래그로 1축 리사이즈했었으나, 이 방향이 "바깥으로 쭉 당기는" 가장 자연스러운 화살표
@@ -1616,5 +1649,31 @@ def test_cut_restore_snap_ignored_when_other_has_no_cuts():
     tri = _tri_flat(w)
     tri.setPos(QPointF(-45, 50)); tri.setSelected(True)
     w._view._apply_smart_snap()   # 예외 없이 통과하면 충분(어떤 이동이든 정상 범위)
+
+
+def test_cut_restore_snap_survives_grid_snap_when_grid_enabled():
+    # [실사용 버그 수정 2026-08-13] `grid_enabled=True`일 때, 자국 복구 스냅이 정확히 맞춘
+    # 위치를 뒤이어 도는 격자 스냅(`_apply_grid_snap_move`)이 다시 어긋내던 회귀 — 실제 드래그
+    # 경로(press→move→release, mouseMoveEvent 전체)로 재현·확인. 격자 기본값은 꺼짐(2026-08-11)
+    # 이라 평소엔 안 드러나지만 켜면 재현된다(수정 전 실측: dx=5.5, dy=9.5 드리프트).
+    w = CanvasWindow(); w.grid_enabled = True
+    v = w._view
+    rect = _mk_rect(w._scene, w.make_pen(), 0, 0, 200, 200)
+    tri = _tri_flat(w)
+    orig_pos = QPointF(-45, 50)
+    _make_apex_poke_cut(rect, tri, orig_pos)
+
+    tri.setPos(QPointF(500, 500))
+    tri.setPos(QPointF(orig_pos.x() + 2.0, orig_pos.y() - 1.5))   # 근처(정확히는 아님)로 복귀
+    tri.setSelected(True)
+
+    press, release, _click, _move, drag_move, _dbl = _draw_helpers(v)
+    center_scene = tri.mapToScene(tri.rect().center())
+    press(center_scene)
+    drag_move(center_scene)
+    release(center_scene)
+
+    assert abs(tri.pos().x() - orig_pos.x()) < 1e-6
+    assert abs(tri.pos().y() - orig_pos.y()) < 1e-6
 
 

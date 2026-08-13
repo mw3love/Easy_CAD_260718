@@ -605,6 +605,18 @@ class _HandleResizeMixin:
     # 통합했었으나, "바깥으로 쭉 당기는" 자연스러운 동작이 항상 리사이즈로 판정되는 문제가
     # 실사용에서 드러나 되돌림(사용자 확인 2026-08-01) — 단일축 리사이즈는 이 점 자체가 아니라
     # 변 나머지 구간(`_box_edge_side`)이 담당한다.
+    def _qc_dots_hover_suppressed(self) -> bool:
+        """[신규기능 2026-08-13, Lucid 대조] 이 도형이 선택된 채로 다른(미선택) 도형을 호버
+        중이면 True — 그 상태에선 이 도형의 큐닷을 숨긴다. 오프셋된 큐닷이 호버 중인 다른
+        도형의 포트점 위/근처에 겹쳐 있으면, 그 포트점에서 화살표를 뽑아 이 도형에 붙이려 할 때
+        오프셋 점을 지나쳐야 해서 헷갈린다는 실사용 지적(선택된 도형 자신을 호버할 땐 억제 안 됨
+        — `_port_dot_shape`는 항상 미선택 도형만 담으므로 자연히 구분된다)."""
+        sc = self.scene()
+        if sc is None or not sc.views():
+            return False
+        target = getattr(sc.views()[0], "_port_dot_shape", None)
+        return target is not None and target is not self
+
     def _qc_dot_rects(self):
         # [2026-08-04, 3차 수정] 포트도 선택 여부와 무관하게 자신의 4변 접속점을 유지한다
         # (실사용 요구: 드래그해서 화살표를 뽑는 용도로 항상 있어야 함) — 여기서 걸러내지
@@ -927,9 +939,10 @@ class _HandleResizeMixin:
             for i, r in self._box_corner_rects():
                 if r.contains(local_pt):
                     return ("corner", i)
-            for side, r in self._qc_dot_rects():
-                if r.contains(local_pt):
-                    return ("qc", side)
+            if not self._qc_dots_hover_suppressed():
+                for side, r in self._qc_dot_rects():
+                    if r.contains(local_pt):
+                        return ("qc", side)
             for key, r in self._cut_handle_rects():
                 if self._inflate_to_hit(r).contains(local_pt):
                     return ("cut", key)
@@ -973,9 +986,11 @@ class _HandleResizeMixin:
                 painter.drawEllipse(self._box_rot_center(), rh, rh)
             # [2d→2026-07-30 통합] 변 중점 겸용 점(리사이즈+커넥터) — 옅은 파란 원(흰 테두리).
             # 호버 시 뷰가 고스트 미리보기.
-            for k, dr in self._qc_dot_rects():
-                self._set_handle_paint(painter, s, QColor(90, 150, 235), hv == ("qc", k))
-                painter.drawEllipse(dr)
+            # [신규기능 2026-08-13] 다른 도형을 호버 중이면 감춘다(_qc_dots_hover_suppressed).
+            if not self._qc_dots_hover_suppressed():
+                for k, dr in self._qc_dot_rects():
+                    self._set_handle_paint(painter, s, QColor(90, 150, 235), hv == ("qc", k))
+                    painter.drawEllipse(dr)
             # [신규기능 2026-08-10] TRIM 자국 경계 핸들 — 마름모(다이아몬드)로 사각(리사이즈)·
             # 원(qc-dot)과 확실히 구별하고, 색은 TRIM 미리보기(빨강 점선)와 같은 계열(_RED)로
             # "이건 잘린 자국과 관련된 점"이라는 의미를 잇는다.

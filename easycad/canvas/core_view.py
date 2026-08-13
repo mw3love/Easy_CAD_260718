@@ -116,6 +116,13 @@ class _AnnotatorView(QGraphicsView):
         # [2e] 스마트 정렬 가이드 — 단일 도형 이동 중 근처 도형과 모서리·중심 정렬 시 스냅+가상선.
         self._move_active = False    # 도형 드래그(이동/핸들) 진행 중(_snapshot_movable서 set)
         self._align_guides = []      # 그릴 가이드선 [("v", x, y0, y1) | ("h", y, x0, x1)]
+        # [실사용 버그 수정 2026-08-13] TRIM 자국 복구 스냅(cut_restore_snap_delta)이 이번
+        # 프레임에 dx·dy를 정확히 확정했는지 — True면 mouseMoveEvent가 뒤이어 돌리는 격자
+        # 스냅을 두 축 다 건너뛴다. 정렬 가이드선(_align_guides)과 달리 이 스냅은 시각적으로
+        # 그릴 선이 없어(강체이동 역산 1회성) 그 리스트만으론 "두 축 다 이미 확정됐다"는 신호를
+        # 전달할 수 없었다 — 격자가 켜져 있으면(2026-08-11부터 기본은 꺼짐) 정확히 맞춘 위치를
+        # 뒤이은 격자 스냅이 다시 어긋냈다(실측 재현: dx=5.5, dy=9.5 드리프트).
+        self._cut_restore_snapped = False
         # [2026-08-09 2차] Alt+드래그로 복제한 포트 중, 드래그가 끝나면(mouseReleaseEvent)
         # 호스트 재부착을 시도해야 할 것들 — press 시점엔 아직 최상위(부모 없음) 클론이다
         # (_maybe_alt_drag_copy 주석 참조).
@@ -265,12 +272,17 @@ class _AnnotatorView(QGraphicsView):
     # ---- [2d] 빠른 생성(quick-create) ---------------------------------------
     def _qc_dot_at(self, view_pos):
         """커서가 선택된 네모·원의 외부 도트 위면 (item, side), 아니면 None.
-        [2d] 핸들과 동일하게 '어느 도구에서든' 작동 — 그린 직후 도구 전환 없이 빠른 생성."""
+        [2d] 핸들과 동일하게 '어느 도구에서든' 작동 — 그린 직후 도구 전환 없이 빠른 생성.
+        [신규기능 2026-08-13] 다른(미선택) 도형을 호버 중이면 그 도형의 큐닷은 히트테스트에서도
+        빠진다(`_qc_dots_hover_suppressed`) — 보이지 않는 점이 클릭까지 가로채면 호버 중인
+        도형의 포트점을 못 누르는 모순이 생긴다."""
         scene_pt = self.mapToScene(view_pos)
         for it in self.scene().selectedItems():
             if getattr(it, "_box_handles", None) is None or not it._box_handles():
                 continue
             if not it._handle_active():
+                continue
+            if it._qc_dots_hover_suppressed():
                 continue
             lp = it.mapFromScene(scene_pt)
             for side, dr in it._qc_dot_rects():
@@ -662,6 +674,7 @@ class _AnnotatorView(QGraphicsView):
         Qt가 커서로 옮긴 뒤 호출돼, 임계 내면 정렬 좌표로 살짝 당기고 가이드선을 기록한다.
         핸들 조작(리사이즈·회전·끝점) 중이거나 단일 선택이 아니면 건드리지 않는다."""
         self._align_guides = []
+        self._cut_restore_snapped = False
         if not getattr(self._owner, "align_guides_enabled", True):
             return   # [토글] 꺼져 있으면 스냅도 가이드선도 전부 스킵
         sel = [it for it in self.scene().selectedItems() if it.parentItem() is None]
@@ -704,18 +717,7 @@ class _AnnotatorView(QGraphicsView):
             cr = o._content_rect() if hasattr(o, "_content_rect") else o.boundingRect()
             return o.mapToScene(cr).boundingRect()
 
-        other_items = [o for o in self.scene().items()
-                       if o is not it and o is not bg and o.parentItem() is None
-                       and (o.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)]
-        if not other_items:
-            return
         nr = srect(it)
-        # [신규기능 2026-08-10] 실제 정점(꼭짓점) 후보 — bbox만으론 삼각형처럼 bbox와 실제
-        # 외곽선이 다른 도형의 대각선 변이 스냅 후보에 아예 안 잡히던 한계(실사용 지적)를 푼다.
-        # `srect()`가 이제 `_RectItem`/`_SymbolItem`도 이 함수와 같은 패딩 없는 기준을 쓰므로
-        # (위 `srect` 정의 참조), my↔other 정점을 서로 직접 짝지어도(vertex×vertex) 더 이상
-        # 유사-중복 후보가 생기지 않는다.
-        my_verts = [it.mapToScene(p) for p in _real_snap_vertices_local(it)]
         # 실사용 재현(2026-08-01, 로그 확인) — 6화면px는 게이트·로직 자체는 정상 작동했지만
         # (로그상 인접 스냅이 수십 프레임·수십 유닛 구간에서 계속 유지됨을 확인) 실제 손 드래그
         # 속도로는 그 폭(화면에서 2mm 미만)을 그냥 지나쳐 버려 "닿기 직전까진 전혀 반응 없다가
@@ -723,6 +725,39 @@ class _AnnotatorView(QGraphicsView):
         # 넉넉히 늘린다(과발화 원인이었던 교차조합·전역 tie 도용은 이미 별도로 막아 뒀으므로,
         # 문턱만 넓혀도 그 문제들이 재발하진 않는다).
         thr = 10.0 / self._view_scale()
+        # [성능 조사 2026-08-13] 이전엔 `self.scene().items()`(전체 씬)를 매 마우스무브 프레임마다
+        # 스캔해 실측 200개=15.8ms·800개=56ms·1600개=120ms(60fps 예산 16.67ms 초과)로 밀집
+        # 도면에서 O(n) 병목이었다. ⚠ 1차 시도(내 bbox를 thr로 부풀린 사각 하나로만 질의)는
+        # 회귀였다 — 이 스냅은 X·Y를 **축별 독립**으로 비교해(2026-08-01 결정: "두 도형이 세로로
+        # 수백 유닛 떨어져 있어도 가로 변끼리는 맞을 수 있다"), 한쪽 축만 맞는 아득히 먼 후보도
+        # 정상 케이스다(위 `test_smart_align_adjacent_edge_snap_when_far_apart_perpendicular`류).
+        # 2D 사각 하나로 질의하면 이 축별 매칭을 다시 게이트로 막아버린다(9개 회귀 테스트로 실측
+        # 확인). 대신 **가로 띠**(내 y범위±thr, x는 전 구간)와 **세로 띠**(내 x범위±thr, y는 전
+        # 구간) 둘로 나눠 질의해 합집합을 취한다 — "어느 한 축이라도 thr 이내"라는 실제 매칭
+        # 조건과 정확히 대응하면서도, 두 축 다 먼(스캔 대상 대부분) 도형은 여전히 걸러낸다.
+        _BIG = 1.0e7
+        x_strip = QRectF(nr.left() - thr, -_BIG, nr.width() + 2 * thr, 2 * _BIG)
+        y_strip = QRectF(-_BIG, nr.top() - thr, 2 * _BIG, nr.height() + 2 * thr)
+        # ⚠ `items(rect)` 기본 모드는 `IntersectsItemShape` — 속 빈(테두리만 있는) 도형은
+        # 내부를 스치기만 하면 안 걸린다(실측으로 발견). 정렬 후보는 "가깝다"의 기준이 실제
+        # 그려진 모양이 아니라 bbox이므로 `IntersectsItemBoundingRect`를 명시한다.
+        mode = Qt.ItemSelectionMode.IntersectsItemBoundingRect
+        cand = {}
+        for o in self.scene().items(x_strip, mode):
+            cand[id(o)] = o
+        for o in self.scene().items(y_strip, mode):
+            cand[id(o)] = o
+        other_items = [o for o in cand.values()
+                       if o is not it and o is not bg and o.parentItem() is None
+                       and (o.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)]
+        if not other_items:
+            return
+        # [신규기능 2026-08-10] 실제 정점(꼭짓점) 후보 — bbox만으론 삼각형처럼 bbox와 실제
+        # 외곽선이 다른 도형의 대각선 변이 스냅 후보에 아예 안 잡히던 한계(실사용 지적)를 푼다.
+        # `srect()`가 이제 `_RectItem`/`_SymbolItem`도 이 함수와 같은 패딩 없는 기준을 쓰므로
+        # (위 `srect` 정의 참조), my↔other 정점을 서로 직접 짝지어도(vertex×vertex) 더 이상
+        # 유사-중복 후보가 생기지 않는다.
+        my_verts = [it.mapToScene(p) for p in _real_snap_vertices_local(it)]
         # [신규기능 2026-08-10, §8 항목17 후속] 자국 복구 스냅 — 일반 정점 스냅(위)보다 먼저
         # 시도한다. TRIM으로 지운 자국의 경계 두 점에 이 도형의 변 두 개가 다시 정확히 지나도록
         # 강체이동을 역산하는, 축별 독립비교로는 원리적으로 못 푸는 케이스(대각선 변이 사각형
@@ -734,6 +769,7 @@ class _AnnotatorView(QGraphicsView):
             if dx or dy:
                 it.moveBy(dx, dy)
             self._align_guides = []
+            self._cut_restore_snapped = True
             return
         # 동률(같은 크기 도형끼리는 좌/중심/우 또는 상/중심/하의 "얼마나 가까운가"가 수학적으로
         # 완전히 같아짐) 시 승자를 하나만 골라 보여주면, 같은 크기 도형끼리는 그 하나(예: 중심)만
@@ -2900,9 +2936,15 @@ class _AnnotatorView(QGraphicsView):
             self._apply_axis_lock(event)   # [편의기능] Shift+드래그 축 고정 — 스냅보다 먼저(더 강한 제약)
             if self._axis_lock is None:
                 self._apply_smart_snap()
-                # [그리드 스냅] 스마트정렬이 이미 맞춘 축(가이드선 존재)은 건드리지 않고 나머지만.
-                skip_x = any(g[0] == "v" for g in self._align_guides)
-                skip_y = any(g[0] == "h" for g in self._align_guides)
+                if self._cut_restore_snapped:
+                    # [실사용 버그 수정 2026-08-13] TRIM 자국 복구 스냅은 가이드선을 안 그리지만
+                    # (강체이동 역산 1회성) 두 축 다 이미 정확히 확정한 것 — 격자 스냅이 뒤이어
+                    # 그 정확한 위치를 다시 어긋내지 않도록 둘 다 건너뛴다.
+                    skip_x = skip_y = True
+                else:
+                    # [그리드 스냅] 스마트정렬이 이미 맞춘 축(가이드선 존재)은 건드리지 않고 나머지만.
+                    skip_x = any(g[0] == "v" for g in self._align_guides)
+                    skip_y = any(g[0] == "h" for g in self._align_guides)
             else:
                 self._align_guides = []    # 축 고정 중엔 정렬 가이드선도 끔(서로 다른 제약 혼선 방지)
                 # 축고정이 고정한 축은 old 값 그대로 유지돼야 하므로 격자스냅에서도 제외.
