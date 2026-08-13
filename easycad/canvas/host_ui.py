@@ -408,18 +408,35 @@ class _UIBuildMixin:
         tb.setIconSize(QSize(20, 20))
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        # 파일 (내보내기·삽입 5종은 이미 「파일」 메뉴에 있어 상단바에서 제거 — 아이콘만으론
-        # 기능을 구분하기 어렵다는 사용자 피드백. 단축키(Ctrl+P 등)는 메뉴에서 그대로).
-        for a in (self._act_new, self._act_open, self._act_save):
+        # [2026-08-13 재개편, 사용자 요청 "모든 메뉴 항목을 상단바에도"] 옛 결정(내보내기·삽입
+        # 계열은 아이콘만으론 구분 어려워 상단바에서 제거)을 뒤집는다 — 각 액션 생성 시 이미
+        # 붙은 툴팁으로 구분을 보완하고, 메뉴별 그룹을 구분선으로 나눠 정리한다. 순서는
+        # File→Edit→Insert→(그리기 도구)→View — 편집(&E) 메뉴를 메뉴관례로 재확정한
+        # 2026-08-13 결정과 동일한 순서. 그리기 도구는 메뉴가 없는 캔버스 전용 묶음이라
+        # Insert 다음, View 앞에 그대로 둔다.
+
+        # 파일(&F)
+        for a in (self._act_new, self._act_open, self._act_save, self._act_pdf):
             tb.addAction(a)
         tb.addSeparator()
 
-        # 그리기 도구(체크형) — 네모·원은 왼쪽 「도형」 팔레트로 이관(단축키 2·5는 유지).
-        # [화살표 통합] 직선화살(sarrow) 버튼 제거 — 화살표 버튼 하나가 종류(직선·곡선·직각)를
-        # 대표한다. [미니패널 통합, 2026-07-31] 상단바 클릭 시 종류를 고르는 메뉴(InstantPopup)는
-        # 폐지 — 클릭은 항상 현재 sticky 종류(기본 직각)로 바로 무장/해제하고, 종류 변경은 그린
-        # 뒤 속성 dock의 「화살표」 행에서 한다(사용자 피드백: 그리기 전 선택지가 하나 더 있는 게
-        # 번거로움, 이미 dock에 같은 메뉴가 있어 중복).
+        # 편집(&E)
+        for a in (self._act_undo, self._act_redo, self._act_pin):
+            tb.addAction(a)
+        self._refresh_history_actions()   # undo/redo 버튼 초기 활성 상태(둘 다 비어 disabled)
+        tb.addSeparator()
+
+        # 삽입(&I)
+        for a in (self._act_tb, self._act_tbl, self._act_img, self._act_mmd):
+            tb.addAction(a)
+        tb.addSeparator()
+
+        # 그리기 도구(체크형, 메뉴 없음 — 캔버스 전용) — 네모·원은 왼쪽 「도형」 팔레트로
+        # 이관(단축키 2·5는 유지). [화살표 통합] 직선화살(sarrow) 버튼 제거 — 화살표 버튼
+        # 하나가 종류(직선·곡선·직각)를 대표한다. [미니패널 통합, 2026-07-31] 상단바 클릭 시
+        # 종류를 고르는 메뉴(InstantPopup)는 폐지 — 클릭은 항상 현재 sticky 종류(기본 직각)로
+        # 바로 무장/해제하고, 종류 변경은 그린 뒤 속성 dock의 「화살표」 행에서 한다(사용자
+        # 피드백: 그리기 전 선택지가 하나 더 있는 게 번거로움, 이미 dock에 같은 메뉴가 있어 중복).
         self._tool_buttons: dict[str, QToolButton] = {}
         for key, name, sc in _TOOLS:
             if key in ("rect", "ellipse", "sarrow"):
@@ -439,18 +456,17 @@ class _UIBuildMixin:
             tb.addWidget(btn)
             self._tool_buttons[key] = btn
         self._refresh_arrow_tool_button()   # [화살표 통합] 아이콘을 현재 종류에 맞춤
-        # [그룹 재정리 2026-08-01, 사용자 요청] 핀은 "무엇으로 그리는가"에 붙는 도구 옵션이라
-        # 그리기 도구 묶음(선택~도형류) 끝으로 옮긴다 — 다음 그룹(되돌리기 이하)과 분리.
-        tb.addAction(self._act_pin)
         tb.addSeparator()
 
-        # 편집 / 보기. [100%·전체맞춤 제거 2026-08-01] 휠줌으로 충분히 빠르고(사용자 판단),
-        # 전체맞춤은 미니맵 패널 헤더로 이관(공간적 개요라는 같은 맥락) — 메뉴·단축키(Ctrl+0/9)는 유지.
-        for a in (self._act_undo, self._act_redo, self._act_snap, self._act_ortho, self._act_grid):
+        # 보기(&V) — 메뉴 자체의 내부 구분(줌 / 스냅·정렬 토글 / 테마·도움말)을 그대로 반영.
+        for a in (self._act_zoom100, self._act_fit):
             tb.addAction(a)
-        self._refresh_history_actions()   # undo/redo 버튼 초기 활성 상태(둘 다 비어 disabled)
+        tb.addSeparator()
+        for a in (self._act_snap, self._act_ortho, self._act_grid, self._act_align):
+            tb.addAction(a)
+        tb.addSeparator()
 
-        # 우측 정렬 스페이서 → 게이트웨이 설정 → 테마 → 도움말.
+        # 우측 정렬 스페이서 → 테마 → 도움말 (여백이 있을 때만 밀어냄 — 좁은 창에서는 그냥 이어짐).
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
