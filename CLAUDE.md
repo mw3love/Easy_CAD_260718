@@ -54,7 +54,10 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~9_*.py       테마별 회귀 스모크 542종(개별 pytest 실행 가능)
+└── test_part1~9_*.py       테마별 회귀 스모크 543종(개별 pytest 실행 가능)
+tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
+│                          (성능 실측·cProfile), screenshot.py(레이아웃 자체검증),
+│                          ai_probe.py(게이트웨이 실측)
 docs/
 ├── EasyCAD_계획.md          로드맵·§8 다음 순서·큰 설계 필요 항목
 ├── history/2026-07.md 등    월별 상세 진행 기록(완료 사항의 경위·근거)
