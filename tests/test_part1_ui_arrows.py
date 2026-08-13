@@ -179,17 +179,25 @@ def test_left_panel_accordion_collapse_expand_resizes_panel():
     # 첫 `.height()` 접근 전까지 실제보다 큰 값을 낸다(이 테스트가 만든 게 아니라
     # `_refresh_layers_panel`이 이미 갖고 있던 특성) — `CanvasWindow.showEvent`가 이제 이
     # settle을 자동으로 해준다(2026-08-12, 좌측 패널 왕복 비교로 처음 드러나 소스에 고정).
+    # [2026-08-13] 옛 "flowchart" 섹션은 기본도형에 병합되어 사라졌다 — "layers"(레이어)로
+    # 같은 계약을 확인한다("customsym"은 폴더 드롭존 등 동적 콘텐츠라 접기 왕복 시 sizeHint가
+    # 자체적으로 안정되지 않아 대상에서 제외 — 실측 확인, `layers`는 정확히 원복됨).
+    # 기본값은 펼침 시작(default_collapsed=False)이라 QSettings로 접힘 시작을 강제한다(다른
+    # accordion 테스트와 같은 관례 — 실사용 QSettings에 이미 다른 상태가 저장돼 있을 수 있음).
+    from PyQt6.QtCore import QSettings
+    QSettings("EasyCAD", "EasyCAD").setValue("accordion_collapsed_layers", True)
     w = CanvasWindow(); w.show()
-    collapsed_size = w._left_panel.size()        # 순서도 섹션은 기본 접힘 시작
-    flow_section = w._left_accordion_sections["flowchart"]
-    assert flow_section._collapsed
-    flow_section._toggle()                       # 펼치기
-    assert not flow_section._collapsed
+    collapsed_size = w._left_panel.size()
+    layers_section = w._left_accordion_sections["layers"]
+    assert layers_section._collapsed
+    layers_section._toggle()                       # 펼치기
+    assert not layers_section._collapsed
     expanded_size = w._left_panel.size()
     assert expanded_size.height() > collapsed_size.height()
-    flow_section._toggle()                        # 다시 접기
+    layers_section._toggle()                        # 다시 접기
     assert w._left_panel.size() == collapsed_size   # 왕복 후에도 스턱 없이 원래 크기로 복원
     w.close()
+    QSettings("EasyCAD", "EasyCAD").remove("accordion_collapsed_layers")
 
 
 

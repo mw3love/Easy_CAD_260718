@@ -593,7 +593,10 @@ class _UIBuildMixin:
         toolbar = getattr(self, "_toolbar", None)
         if toolbar is not None:
             sep_color = "#3d4b5c" if dark else "#c9d3dc"
+            # [2026-08-13 피드백] 패널 헤더의 코랄 하단선(위 head_qss)과 같은 언어를 상단
+            # 툴바에도 — "이 아래부터 캔버스"를 앱 전체 크롬에 통일.
             toolbar.setStyleSheet(
+                f"QToolBar {{ border:none; border-bottom:2px solid {accent}; }}"
                 f"QToolBar::separator {{ background:{sep_color}; width:1px; margin:6px 9px; }}"
                 + btn_qss)
             # 순간적 활성 그룹: 그리기 도구 6종(선택/화살표/텍스트/선/펜/번호) + 핀 + 직교.
@@ -916,11 +919,12 @@ class _UIBuildMixin:
 
 
     def _build_left_panel(self):
-        """[캔버스-퍼스트][좌측 패널 아코디언 개편, 2026-08-12] 기본도형/순서도/내 심볼/레이어
-        4섹션을 `_AccordionSection`으로 쌓은 좌상단 플로팅 카드(deep-interview 확정 스코프 —
-        옛 도형/레이어 탭 2개를 대체). 탭 전환 특유의 "숨긴 페이지가 sizeHint에서 안 빠지는"
-        문제(2026-07-29, `_switch_left_tab`이 겪던 QTabWidget 함정)는 애초에 탭이 아니라
-        섹션마다 독립 `setVisible()`이라 같은 함정을 밟지 않는다(검증된 메커니즘 재사용)."""
+        """[캔버스-퍼스트][좌측 패널 아코디언 개편, 2026-08-12 → 2026-08-13 3섹션으로 병합]
+        기본도형(순서도 5종 포함)/내 심볼/레이어 3섹션을 `_AccordionSection`으로 쌓은 좌상단
+        플로팅 카드(deep-interview 확정 스코프 — 옛 도형/레이어 탭 2개를 대체). 탭 전환
+        특유의 "숨긴 페이지가 sizeHint에서 안 빠지는" 문제(2026-07-29, `_switch_left_tab`이
+        겪던 QTabWidget 함정)는 애초에 탭이 아니라 섹션마다 독립 `setVisible()`이라 같은
+        함정을 밟지 않는다(검증된 메커니즘 재사용)."""
         # [2026-08-13 피드백] 빈 제목이라 패널 최상단바에 아무 표시가 없던 것 — 속성/미니맵
         # 패널처럼 짧은 명사 하나로("도형", 내부엔 도형 팔레트+레이어가 함께 있지만 팔레트가
         # 주 콘텐츠).
@@ -937,6 +941,10 @@ class _UIBuildMixin:
         self._shape_sections: list = []   # (grid, buttons) — 기본도형·순서도
 
         # ---- 기본도형 (펼침 시작) ----
+        # [2026-08-13 피드백] 옛 "기본도형"(네모·원·삼각형)과 "순서도"(판단·시작/끝·입출력·
+        # 준비·저장소) 두 아코디언 섹션을 하나로 병합 — 순서도 5종도 mermaid 기준으로는
+        # 각자 고유 shape 이름(decision/terminal 등)일 뿐 "기본"과 상위 카테고리로 묶이진
+        # 않지만, 접힌 별도 헤더로 나눌 만큼 이질적이지도 않다는 판단(사용자 확인).
         # [§8 항목17 7단계, 2026-08-10] 포트□/포트○ 팔레트 버튼 제거 — TRIM 도구가 일반
         # 사각형/원을 겹쳐 놓고 자르는 워크플로로 대체(백엔드는 그대로 둬 기존 `.ecad` 안전).
         basic_section = _AccordionSection(self, "기본도형", "basic", default_collapsed=False)
@@ -946,11 +954,10 @@ class _UIBuildMixin:
             ("삼각형", "triangle", "삼각형 — 클릭 후 캔버스에 드래그", "sym:triangle"),
         ], self._shape_tool_buttons)
         basic_section.body_layout.addLayout(basic_grid)
-        outer.addWidget(basic_section)
-
-        # ---- 순서도 (접힘 시작 — 2026-08-04에 UI에서 뺐던 것을 Mermaid 문법이 직접 매핑하는
-        # 5종만 재추가, deep-interview 2026-08-12 확정. rect/circle은 기본도형에 이미 있어 제외).
-        flow_section = _AccordionSection(self, "순서도", "flowchart", default_collapsed=True)
+        # 옛 "순서도" 그리드(2026-08-04에 UI에서 뺐던 것을 mermaid 문법이 직접 매핑하는 5종만
+        # 재추가, deep-interview 2026-08-12 확정) — 별도 헤더 없이 같은 섹션 바디에 이어 붙인다.
+        # `_sym_buttons` 딕셔너리 분리(기본 도구 vs 심볼)는 `set_tool` 체크상태 동기화가
+        # 여전히 참조하므로 그대로 유지(host_canvas.py `set_tool` 참조).
         flow_grid = self._make_shape_grid([
             ("판단", "decision", "판단 — 클릭 후 캔버스에 드래그", "sym:decision"),
             ("시작/끝", "terminal", "시작/끝 — 클릭 후 캔버스에 드래그", "sym:terminal"),
@@ -958,8 +965,8 @@ class _UIBuildMixin:
             ("준비", "prep", "준비 — 클릭 후 캔버스에 드래그", "sym:prep"),
             ("저장소", "database", "저장소 — 클릭 후 캔버스에 드래그", "sym:database"),
         ], self._sym_buttons)
-        flow_section.body_layout.addLayout(flow_grid)
-        outer.addWidget(flow_section)
+        basic_section.body_layout.addLayout(flow_grid)
+        outer.addWidget(basic_section)
 
         self._relayout_sections(horiz=False)   # 항상 세로(2열) — 반응형 전환 없음
 
@@ -992,7 +999,7 @@ class _UIBuildMixin:
         outer.addWidget(layers_section)
 
         self._left_accordion_sections = {
-            "basic": basic_section, "flowchart": flow_section,
+            "basic": basic_section,
             "customsym": custom_section, "layers": layers_section,
         }
         self._relayout_left_panel()
