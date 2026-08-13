@@ -350,12 +350,15 @@ class _MermaidDialog(QDialog):
         # [2026-08-13 5차] 옛 상단 3줄 안내(Enter·드래그/Ctrl+V·코드칸 직접입력)를 각자
         # 쓰이는 자리로 흩었다(피드백: "맨위 세줄 설명은 각자 위치로") — Enter 힌트는
         # 입력칸 아래 캡션(카드 안), 드래그/Ctrl+V는 첨부 버튼 툴팁, 직접입력 안내는
-        # Mermaid 코드 라벨로. 상단이 비며 설정 버튼만 혼자 남던 것도 함께 해결 — 버튼을
-        # 입력카드-코드칸 사이 커넥터 줄로 옮겨 남는 여백을 쓴다(아래 connector_row).
+        # Mermaid 코드 라벨로. 상단이 비며 설정 버튼만 혼자 남던 것도 함께 해결. [6차]
+        # 설정 버튼은 그 뒤 다시 옮겨 지금은 아래 모델 행(model_row) 맨 오른쪽에 있다.
         # ---- 입력 카드: 텍스트 입력(위) + 첨부·생성 툴바(아래) — 2026-08-12 4차, 디자인
         # 시안 합의로 버튼을 입력칸 옆이 아니라 아래 툴바로. 다크 테마에서도 입력칸만
-        # 흰색 고정해 코드 편집기(어두운 배경)와 대비되게 한다(라이트 테마는 원래도 밝아
+        # 밝게 고정해 코드 편집기(어두운 배경)와 대비되게 한다(라이트 테마는 원래도 밝아
         # 변화 없음) — "여기 입력하세요" 신호를 항상 뚜렷하게 유지하려는 의도.
+        # [2026-08-13 6차] 순백(#ffffff)이 어두운 배경 사이에서 너무 눈부시다는 피드백으로
+        # 톤을 살짝 낮췄다(#e7e0d6, 따뜻한 아이보리) — 아래 Mermaid 코드칸(어두운 배경)과의
+        # 대비는 유지하면서 시선을 덜 자극하게.
         dark = bool(getattr(self.parent(), "_dark", True))
 
         prompt_frame = QFrame(self)
@@ -363,7 +366,7 @@ class _MermaidDialog(QDialog):
         prompt_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         prompt_frame.setStyleSheet(
             "QFrame#promptCard { border:1px solid rgba(128,128,128,90); border-radius:8px; "
-            f"background:{'#ffffff' if dark else 'palette(base)'}; }}"
+            f"background:{'#e7e0d6' if dark else 'palette(base)'}; }}"
         )
         prompt_frame_lay = QVBoxLayout(prompt_frame)
         prompt_frame_lay.setContentsMargins(0, 0, 0, 0)
@@ -469,27 +472,39 @@ class _MermaidDialog(QDialog):
         prompt_frame_lay.addWidget(toolbar_widget)
         lay.addWidget(prompt_frame)
 
-        # ---- 입력→코드 커넥터 — 순서도 커넥터 느낌으로 "이 입력이 아래 코드로 바뀐다"를
-        # 시각화(2026-08-12 4차, 디자인 시안 합의). [2026-08-13 5차] 원 테두리를 없애고
-        # 화살표만 키움(시인성 피드백) + 상단 힌트 제거로 혼자 남은 설정 버튼을 이 줄의
-        # 여백(입력카드~코드칸 사이)으로 옮김. 오른쪽에 설정 버튼과 같은 크기의 투명
-        # 스페이서를 둬 화살표가 좌우 정중앙에 오도록 균형을 맞춘다.
-        connector_row = QHBoxLayout()
+        # ---- 모델 선택: 평범한 드롭다운(gemini/gpt 그룹 헤더, 추천 배지 없음) + 새로고침 +
+        # 설정. [2026-08-13 6차] 옛 위치(코드칸 아래)에서 입력카드 바로 아래(화살표 꼬리
+        # 위)로 옮기고, 커넥터 줄에 혼자 있던 설정 버튼도 이 행 맨 오른쪽(새로고침 옆)으로
+        # 합쳐 "AI 생성에 관련된 것들"을 한 자리에 모았다(피드백: "설정버튼도 모델 드랍다운
+        # 오른쪽으로").
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("모델:", self))
+        self._model_combo = QComboBox(self)
+        model_row.addWidget(self._model_combo, 1)
+        self._model_refresh_btn = QToolButton(self)
+        self._model_refresh_btn.setIcon(_act_icon("refresh"))
+        self._model_refresh_btn.setToolTip("모델 목록 새로고침")
+        self._model_refresh_btn.clicked.connect(self._populate_models)
+        model_row.addWidget(self._model_refresh_btn)
         self._settings_btn = QToolButton(self)
-        self._settings_btn.setFixedSize(28, 28)
         self._settings_btn.setIcon(_act_icon("settings"))
         self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·모델 새로고침·크레딧 확인)")
         self._settings_btn.clicked.connect(self._open_gateway_settings)
-        connector_row.addWidget(self._settings_btn)
+        model_row.addWidget(self._settings_btn)
+        lay.addLayout(model_row)
+        self._populate_models()
+
+        # ---- 입력→코드 커넥터 — 순서도 커넥터 느낌으로 "이 입력이 아래 코드로 바뀐다"를
+        # 시각화(2026-08-12 4차, 디자인 시안 합의). [2026-08-13 5차] 원 테두리를 없애고
+        # 화살표만 키움(시인성 피드백). [2026-08-13 6차] 설정 버튼이 위 모델 행으로 옮겨가
+        # 이 줄은 다시 화살표 하나만 — 좌우 스트레치로 중앙 정렬.
+        connector_row = QHBoxLayout()
         connector_row.addStretch(1)
         arrow_label = QLabel(self)
         arrow_label.setPixmap(_handdrawn_down_arrow_pixmap(QColor(_ACCENT_CORAL)))
         arrow_label.setFixedSize(30, 46)
         connector_row.addWidget(arrow_label)
         connector_row.addStretch(1)
-        settings_spacer = QWidget(self)
-        settings_spacer.setFixedSize(28, 28)
-        connector_row.addWidget(settings_spacer)
         lay.addLayout(connector_row)
 
         # ---- 2번 칸: Mermaid 코드(넉넉함) — AI 결과가 채워지거나 직접 타이핑/붙여넣기 ----
@@ -501,19 +516,6 @@ class _MermaidDialog(QDialog):
         self._edit.setMinimumSize(QSize(460, 260))
         self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         lay.addWidget(self._edit)
-
-        # ---- 모델 선택: 평범한 드롭다운(gemini/gpt 그룹 헤더, 추천 배지 없음) + 새로고침 ---
-        model_row = QHBoxLayout()
-        model_row.addWidget(QLabel("모델:", self))
-        self._model_combo = QComboBox(self)
-        model_row.addWidget(self._model_combo, 1)
-        self._model_refresh_btn = QToolButton(self)
-        self._model_refresh_btn.setIcon(_act_icon("refresh"))
-        self._model_refresh_btn.setToolTip("모델 목록 새로고침")
-        self._model_refresh_btn.clicked.connect(self._populate_models)
-        model_row.addWidget(self._model_refresh_btn)
-        lay.addLayout(model_row)
-        self._populate_models()
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                 | QDialogButtonBox.StandardButton.Cancel, self)
