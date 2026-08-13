@@ -265,6 +265,43 @@ class _CableNumberDialog(QDialog):
 
 
 
+# [2026-08-13 5차] "AI로 생성" 버튼의 코랄 강조를 OK 버튼에도 그대로 씌운다(피드백: "OK버튼도
+# AI로 생성처럼 코랄색으로") — QToolButton·QPushButton 선택자를 함께 둬 두 버튼이 같은
+# 문자열을 공유한다(중복 리터럴 방지).
+_CORAL_BTN_QSS = (
+    "QToolButton, QPushButton { background: #da7756; border: none; border-radius: 7px; "
+    "padding: 6px 12px; color: #1b120d; font-weight:600; }"
+    "QToolButton:hover, QPushButton:hover { background: #e08a6c; }"
+    "QToolButton:pressed, QPushButton:pressed { background: #c2673f; }"
+    "QToolButton:disabled, QPushButton:disabled { background: #6b5148; }"   # 채도 낮춘 비활성 코랄
+)
+
+
+def _handdrawn_down_arrow_pixmap(color: QColor, w: int = 30, h: int = 46) -> QPixmap:
+    """입력→코드 커넥터용 화살표(2026-08-13 5차, 피드백: "원 안 화살표는 시인성이 낮다,
+    원 없이 화살표만 크게, 손글씨 느낌이면 좋겠다") — 완만한 S자 곡선 몸통 + 열린 쉐브런
+    화살촉. `_svg_icon_pixmap`의 정사각 캔버스 전제와 안 맞아(세로가 긴 화살표) 그 파이프라인
+    대신 `_arrow_dir_icon`과 같은 관례(one-off는 QPainter 직접 드로잉)를 따른다."""
+    pm = QPixmap(w, h)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(QPen(color, 3.0, Qt.PenStyle.SolidLine,
+                  Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    cx = w / 2
+    top_y, head_y = 3.0, h - 13.0
+    shaft = QPainterPath(QPointF(cx - 2, top_y))
+    shaft.cubicTo(QPointF(cx + 6, top_y + (head_y - top_y) * 0.35),
+                  QPointF(cx - 6, top_y + (head_y - top_y) * 0.65),
+                  QPointF(cx + 1, head_y))
+    p.drawPath(shaft)
+    tip = QPointF(cx + 1, h - 3.0)
+    p.drawLine(QPointF(cx - 8, head_y - 1), tip)
+    p.drawLine(QPointF(cx + 10, head_y - 1), tip)
+    p.end()
+    return pm
+
+
 class _MermaidDialog(QDialog):
     """Mermaid flowchart 입력창 — 프롬프트(AI 지시)와 Mermaid 코드를 별개 칸으로 받는다.
 
@@ -300,10 +337,6 @@ class _MermaidDialog(QDialog):
                "    B -->|예| C[처리]\n"
                "    B -->|아니오| D([종료])\n"
                "    C --> D")
-    _HINT = ("• Enter — AI로 Mermaid 생성 (Shift+Enter는 줄바꿈)\n"
-             "• 드래그·Ctrl+V — 이미지 첨부\n"
-             "• 아래 칸에 Mermaid 코드를 직접 입력·붙여넣기도 가능")
-
     _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
 
     def __init__(self, parent=None):
@@ -314,21 +347,11 @@ class _MermaidDialog(QDialog):
         self._attached_image_name = ""
         lay = QVBoxLayout(self)
 
-        # [2026-08-12 3차] 설정은 이 창의 어느 특정 행에 종속된 기능이 아니라 창 전체의
-        # 환경설정이라 우상단 단독 배치(참고 이미지 관례).
-        top_row = QHBoxLayout()
-        top_row.addStretch(1)
-        self._settings_btn = QToolButton(self)
-        self._settings_btn.setIcon(_act_icon("settings"))
-        self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·모델 새로고침·크레딧 확인)")
-        self._settings_btn.clicked.connect(self._open_gateway_settings)
-        top_row.addWidget(self._settings_btn)
-        lay.addLayout(top_row)
-
-        hint = QLabel(self._HINT, self)
-        hint.setStyleSheet("color:#8a8a8a;")
-        lay.addWidget(hint)
-
+        # [2026-08-13 5차] 옛 상단 3줄 안내(Enter·드래그/Ctrl+V·코드칸 직접입력)를 각자
+        # 쓰이는 자리로 흩었다(피드백: "맨위 세줄 설명은 각자 위치로") — Enter 힌트는
+        # 입력칸 아래 캡션(카드 안), 드래그/Ctrl+V는 첨부 버튼 툴팁, 직접입력 안내는
+        # Mermaid 코드 라벨로. 상단이 비며 설정 버튼만 혼자 남던 것도 함께 해결 — 버튼을
+        # 입력카드-코드칸 사이 커넥터 줄로 옮겨 남는 여백을 쓴다(아래 connector_row).
         # ---- 입력 카드: 텍스트 입력(위) + 첨부·생성 툴바(아래) — 2026-08-12 4차, 디자인
         # 시안 합의로 버튼을 입력칸 옆이 아니라 아래 툴바로. 다크 테마에서도 입력칸만
         # 흰색 고정해 코드 편집기(어두운 배경)와 대비되게 한다(라이트 테마는 원래도 밝아
@@ -359,6 +382,14 @@ class _MermaidDialog(QDialog):
         )
         prompt_frame_lay.addWidget(self._prompt_edit)
 
+        # [2026-08-13 5차] 옛 상단 힌트 1번째 줄("Enter — AI로 생성")을 입력칸 안(카드 하단,
+        # 툴바 위)의 작은 캡션으로 흡수 — 입력 중엔 눈에 거슬리지 않게 우측 정렬·저채도.
+        enter_hint = QLabel("Enter 생성 · Shift+Enter 줄바꿈", prompt_frame)
+        enter_hint.setAlignment(Qt.AlignmentFlag.AlignRight)
+        enter_hint.setStyleSheet("color:#8a8a8a; font-size:11px; background:transparent; "
+                                  "padding:0 8px 3px 0;")
+        prompt_frame_lay.addWidget(enter_hint)
+
         toolbar_widget = QWidget(prompt_frame)
         toolbar_widget.setObjectName("promptToolbar")
         toolbar_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -375,7 +406,9 @@ class _MermaidDialog(QDialog):
         self._attach_btn.setIcon(_act_icon("attach"))
         self._attach_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._attach_btn.setText("이미지 첨부")
-        self._attach_btn.setToolTip("이미지 첨부(드래그드롭·Ctrl+V도 가능)")
+        # [2026-08-13 5차] 옛 상단 힌트 2번째 줄(드래그·Ctrl+V)을 이 버튼 툴팁으로 흡수 —
+        # Qt 툴팁은 HTML을 주면 자동으로 리치텍스트 처리해 불릿(<br>·)이 그대로 렌더된다.
+        self._attach_btn.setToolTip("이미지 첨부<br>· 드래그 앤 드롭<br>· Ctrl+V 붙여넣기")
         self._attach_btn.clicked.connect(self._browse_image)
         toolbar_lay.addWidget(self._attach_btn)
 
@@ -430,35 +463,39 @@ class _MermaidDialog(QDialog):
         self._ai_btn.setText("AI로 생성")
         self._ai_btn.setToolTip("AI로 생성 (Enter)")
         self._ai_btn.clicked.connect(self._on_ai_clicked)
-        self._ai_btn.setStyleSheet(
-            "QToolButton { background: #da7756; border: none; border-radius: 7px; "
-            "padding: 6px 12px; color: #1b120d; font-weight:600; }"
-            "QToolButton:hover { background: #e08a6c; }"
-            "QToolButton:pressed { background: #c2673f; }"
-            "QToolButton:disabled { background: #6b5148; }"   # 채도 낮춘 비활성 코랄
-        )
+        self._ai_btn.setStyleSheet(_CORAL_BTN_QSS)
         toolbar_lay.addWidget(self._ai_btn)
 
         prompt_frame_lay.addWidget(toolbar_widget)
         lay.addWidget(prompt_frame)
 
-        # ---- 입력→코드 커넥터(원+↓) — 순서도 커넥터 느낌으로 "이 입력이 아래 코드로
-        # 바뀐다"를 시각화(2026-08-12 4차, 디자인 시안 합의). ---------------------------
+        # ---- 입력→코드 커넥터 — 순서도 커넥터 느낌으로 "이 입력이 아래 코드로 바뀐다"를
+        # 시각화(2026-08-12 4차, 디자인 시안 합의). [2026-08-13 5차] 원 테두리를 없애고
+        # 화살표만 키움(시인성 피드백) + 상단 힌트 제거로 혼자 남은 설정 버튼을 이 줄의
+        # 여백(입력카드~코드칸 사이)으로 옮김. 오른쪽에 설정 버튼과 같은 크기의 투명
+        # 스페이서를 둬 화살표가 좌우 정중앙에 오도록 균형을 맞춘다.
         connector_row = QHBoxLayout()
+        self._settings_btn = QToolButton(self)
+        self._settings_btn.setFixedSize(28, 28)
+        self._settings_btn.setIcon(_act_icon("settings"))
+        self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·모델 새로고침·크레딧 확인)")
+        self._settings_btn.clicked.connect(self._open_gateway_settings)
+        connector_row.addWidget(self._settings_btn)
         connector_row.addStretch(1)
-        connector_dot = QLabel("↓", self)
-        connector_dot.setFixedSize(24, 24)
-        connector_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        connector_dot.setStyleSheet(
-            f"QLabel {{ border:1.5px solid {_ACCENT_CORAL}; border-radius:12px; "
-            f"color:{_ACCENT_CORAL}; font-weight:700; background:palette(base); }}"
-        )
-        connector_row.addWidget(connector_dot)
+        arrow_label = QLabel(self)
+        arrow_label.setPixmap(_handdrawn_down_arrow_pixmap(QColor(_ACCENT_CORAL)))
+        arrow_label.setFixedSize(30, 46)
+        connector_row.addWidget(arrow_label)
         connector_row.addStretch(1)
+        settings_spacer = QWidget(self)
+        settings_spacer.setFixedSize(28, 28)
+        connector_row.addWidget(settings_spacer)
         lay.addLayout(connector_row)
 
         # ---- 2번 칸: Mermaid 코드(넉넉함) — AI 결과가 채워지거나 직접 타이핑/붙여넣기 ----
-        lay.addWidget(QLabel("Mermaid 코드:", self))
+        # [2026-08-13 5차] 옛 상단 힌트 3번째 줄("아래 칸에 직접 입력·붙여넣기 가능")을
+        # 라벨에 흡수.
+        lay.addWidget(QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능):", self))
         self._edit = QPlainTextEdit(self)
         self._edit.setPlaceholderText(self._SAMPLE)
         self._edit.setMinimumSize(QSize(460, 260))
@@ -482,6 +519,7 @@ class _MermaidDialog(QDialog):
                                 | QDialogButtonBox.StandardButton.Cancel, self)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
+        btns.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(_CORAL_BTN_QSS)
         lay.addWidget(btns)
 
     def text(self):
