@@ -120,16 +120,9 @@ class _UIBuildMixin:
                                           QKeySequence.StandardKey.New)
         self._act_open = self._make_action("열기…", "open", self._open_doc,
                                            QKeySequence.StandardKey.Open)
-        # [2026-08-12 재피드백] "이미지 삽입"을 "열기" 바로 아래로 — 열기와 마찬가지로
-        # "외부 파일을 이 문서로 가져온다"는 성격이 같다는 사용자 지적. 같은 재피드백으로
-        # SVG 가져오기와도 파일선택창을 통합(§8-8용 벡터 vs 참고용 래스터는 내부에서
-        # 확장자로 갈라 각자의 기존 경로(`_insert_image_at`/`_insert_svgs_at`)로 보낸다 —
-        # 열기(Ctrl+O)가 .ecad/.dxf를 확장자로 가르는 것과 같은 패턴).
-        self._act_img = self._make_action("이미지/SVG 삽입…", "image",
-            self._insert_image_or_svg, "Ctrl+Shift+M")
         self._act_save = self._make_action("저장…", "save", self._save_doc,
                                            QKeySequence.StandardKey.Save)
-        for a in (self._act_new, self._act_open, self._act_img, self._act_save):
+        for a in (self._act_new, self._act_open, self._act_save):
             m.addAction(a)
         m.addSeparator()
 
@@ -139,6 +132,21 @@ class _UIBuildMixin:
         # [신규기능] DXF 가져오기/내보내기 통합 — 옛 전용 메뉴·단축키(Ctrl+Shift+D/I)는
         # 폐지하고 열기(Ctrl+O)/저장(Ctrl+S)이 확장자로 분기(아래 _open_doc/_save_doc).
         m.addAction(self._act_pdf)
+
+        # 편집(상단 툴바와 액션 공유. Ctrl+Z/Ctrl+Y 키는 여전히 뷰가 직접 처리하므로 QAction엔
+        # 단축키를 안 건다 — 여기에 같은 단축키를 걸면 Qt 전역 단축키가 뷰의 keyPressEvent보다
+        # 먼저 가로챌 수 있어 이중 실행 위험이 생긴다(무해해 보여도 검증 안 된 변경, 규칙 8).
+        # [2026-08-13 재피드백] 예전엔 이 셋이 툴바 전용으로 의도돼 있었으나("메뉴엔 없던
+        # undo/redo"), 표준 메뉴 관례(File→Edit→Insert→View)를 따라 "편집(&E)" 메뉴로도
+        # 노출하기로 재확정.
+        self._act_undo = self._make_action("되돌리기", "undo", self.undo)
+        self._act_redo = self._make_action("다시 실행", "redo", self.redo)
+        # [M2] 도구 고정 — 켜면 도형을 그려도 도구가 유지(연속 그리기), 끄면 one-shot(그리면 선택모드).
+        self._act_pin = self._make_action("도구 고정", "pin", self._toggle_pin, checkable=True)
+        self._act_pin.setToolTip("도구 고정 — 켜면 연속으로 그리기(끄면 하나 그린 뒤 선택모드)")
+        e = self.menuBar().addMenu("편집(&E)")
+        for a in (self._act_undo, self._act_redo, self._act_pin):
+            e.addAction(a)
 
         # [2026-08-12 재피드백] "파일" 메뉴가 파일 I/O(새로만들기·열기·저장·내보내기)와
         # 문서에 콘텐츠를 끼워넣는 "삽입" 계열(표제란·표·Mermaid)이 섞여 있어 분리 —
@@ -150,20 +158,23 @@ class _UIBuildMixin:
             self._insert_titleblock, "Ctrl+Shift+T")
         self._act_tbl = self._make_action("표 삽입…", "table",
             self._insert_table, "Ctrl+Shift+B")
+        for a in (self._act_tb, self._act_tbl):
+            i.addAction(a)
+        i.addSeparator()   # [2026-08-13] 위 2개(문서 내장 요소) vs 아래 2개(외부 소스 가져오기) 구분
+        # [2026-08-13 재피드백] "파일" 메뉴에 있던 이미지/SVG 삽입을 여기로 이동 — 열기와
+        # 같은 "파일선택창" 성격이라기보다, Mermaid처럼 "외부 소스를 도면으로 가져온다"는
+        # 성격이 더 가깝다는 재검토로 Mermaid와 같은 그룹에 둔다(§8-8용 벡터 vs 참고용
+        # 래스터는 내부에서 확장자로 갈라 각자의 기존 경로로 보낸다 — 로직 무변경, 메뉴
+        # 위치만 이동).
+        self._act_img = self._make_action("이미지/SVG 삽입…", "image",
+            self._insert_image_or_svg, "Ctrl+Shift+M")
         # [§8 항목18 후속, 2026-08-12] "Mermaid 가져오기"가 AI 보조 생성까지 흡수 —
         # 옛 "AI 이미지→도면…"(이미지 입력, Ctrl+Shift+A)은 실사용 결과 이미지 경로를
         # 폐기하기로 하며 이 메뉴로 통합됐다(_MermaidDialog 안 프롬프트칸+AI버튼 참조).
         self._act_mmd = self._make_action("Mermaid 가져오기…", "mermaid",
             self._insert_mermaid, "Ctrl+Shift+F")
-        for a in (self._act_tb, self._act_tbl, self._act_mmd):
+        for a in (self._act_img, self._act_mmd):
             i.addAction(a)
-
-        # 편집(상단 툴바 전용 — 메뉴엔 없던 undo/redo를 액션으로. Ctrl+Z/Ctrl+Y 키는 뷰가 처리).
-        self._act_undo = self._make_action("되돌리기", "undo", self.undo)
-        self._act_redo = self._make_action("다시 실행", "redo", self.redo)
-        # [M2] 도구 고정 — 켜면 도형을 그려도 도구가 유지(연속 그리기), 끄면 one-shot(그리면 선택모드).
-        self._act_pin = self._make_action("도구 고정", "pin", self._toggle_pin, checkable=True)
-        self._act_pin.setToolTip("도구 고정 — 켜면 연속으로 그리기(끄면 하나 그린 뒤 선택모드)")
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
@@ -486,6 +497,16 @@ class _UIBuildMixin:
             b.setIcon(self._shape_icon(k))
         for k, b in getattr(self, "_tool_buttons", {}).items():
             b.setIcon(_tool_icon(k, _current_icon_color()))
+        # [2026-08-13 피드백] 패널 접기 화살표(코랄→중립색 전환)도 아이콘과 같은 전역색을
+        # 쓰므로 테마 전환마다 재도색 — `_apply_theme`가 호출되는 시점(위 386~388줄)엔
+        # `_build_left_panel`/`_build_properties_panel`/`_build_minimap_panel`이 이미 끝나
+        # 있어(host.py __init__ 순서) 항상 존재함이 보장된다.
+        for panel in (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
+                      getattr(self, "_minimap_panel", None)):
+            if panel is not None:
+                panel._refresh_collapse_color()
+        for section in getattr(self, "_left_accordion_sections", {}).values():
+            section._refresh_collapse_color()
         self._refresh_arrow_tool_button()
         # [캔버스-퍼스트] 플로팅 패널 제목줄 = accent 밑줄 + 틴트 배경(옛 dock 제목표시줄과 같은
         # '잡아 눈에 띄는 카드' 언어 유지, 자유 드래그는 없지만 접기 버튼이 있는 자리라 여전히

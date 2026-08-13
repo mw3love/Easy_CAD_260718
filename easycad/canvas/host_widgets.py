@@ -562,8 +562,8 @@ class _FloatingPanel(QFrame):
         hl.addWidget(self._title_lbl, 1)
         self._collapse_btn = QToolButton()
         self._collapse_btn.setAutoRaise(True)
-        self._collapse_btn.setFixedSize(QSize(18, 18))
-        self._collapse_btn.setStyleSheet(f"color: {_ACCENT_CORAL};")   # [2026-08-12 피드백]
+        self._collapse_btn.setFixedSize(QSize(21, 21))   # [2026-08-13 피드백] 18→21
+        self._refresh_collapse_color()   # [2026-08-13 피드백] 코랄(눈에 띔) → 테마 적응 중립색
         self._collapse_btn.clicked.connect(self._toggle_collapsed)
         hl.addWidget(self._collapse_btn)
         v.addWidget(head)
@@ -634,6 +634,13 @@ class _FloatingPanel(QFrame):
         self._collapse_btn.setText("▸" if self._collapsed else "▾")
         self._collapse_btn.setToolTip("펼치기" if self._collapsed else "접기")
 
+    def _refresh_collapse_color(self):
+        """[2026-08-13 피드백] 접기 화살표를 상단바 아이콘과 같은 테마 적응 중립색(`_ICON_COLOR`)
+        으로 — 코랄은 "활성 상태" 전용 accent라는 기존 원칙(host_ui.py 아이콘 재칠 주석 참조)에
+        맞춰, 테마 전환 시(`CanvasWindow._apply_theme`) 다시 호출돼야 갱신된다."""
+        self._collapse_btn.setStyleSheet(
+            f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
+
 
 class _AccordionSection(QWidget):
     """[좌측 패널 아코디언 개편, 2026-08-12] `_FloatingPanel` 하나 안에 여러 개 쌓이는 접이식
@@ -659,8 +666,8 @@ class _AccordionSection(QWidget):
         self.header_layout = hl   # 확장 지점 — insertWidget(1, ...)으로 제목과 접기버튼 사이에 삽입
         self._collapse_btn = QToolButton()
         self._collapse_btn.setAutoRaise(True)
-        self._collapse_btn.setFixedSize(QSize(18, 18))
-        self._collapse_btn.setStyleSheet(f"color: {_ACCENT_CORAL};")   # [2026-08-12 피드백]
+        self._collapse_btn.setFixedSize(QSize(21, 21))   # [2026-08-13 피드백] 18→21
+        self._refresh_collapse_color()   # [2026-08-13 피드백] 코랄(눈에 띔) → 테마 적응 중립색
         self._collapse_btn.clicked.connect(self._toggle)
         hl.addWidget(self._collapse_btn)
         v.addWidget(head)
@@ -687,6 +694,12 @@ class _AccordionSection(QWidget):
     def _update_icon(self):
         self._collapse_btn.setText("▸" if self._collapsed else "▾")
         self._collapse_btn.setToolTip("펼치기" if self._collapsed else "접기")
+
+    def _refresh_collapse_color(self):
+        """[2026-08-13 피드백] `_FloatingPanel._refresh_collapse_color`와 동일 — 접기 화살표를
+        코랄에서 테마 적응 중립색으로."""
+        self._collapse_btn.setStyleSheet(
+            f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
 
 
 class _SymbolFolderDropZone(QWidget):
