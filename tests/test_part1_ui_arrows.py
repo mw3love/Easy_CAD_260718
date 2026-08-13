@@ -575,6 +575,63 @@ def test_sarrow_manual_ortho_stays_ortho_on_move():
 
 
 
+def test_reroute_rigid_translate_skips_astar_when_both_ends_selected():
+    # [성능 최적화 2026-08-13] 양끝 도형이 둘 다 선택돼 같은 델타로 함께 움직이면(다중선택
+    # 그룹 드래그), reroute()가 build_elbow(A*)를 다시 안 돌리고 _pts를 그 델타만큼
+    # 평행이동만 해야 한다 — 결과 기하는 일반 경로(build_elbow)와 동일해야 함.
+    from PyQt6.QtWidgets import QGraphicsScene, QGraphicsItem
+    from unittest.mock import patch
+    sc = QGraphicsScene()
+    sel_flags = QGraphicsItem.GraphicsItemFlag.ItemIsMovable | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+    a = _RectItem(QRectF(0, 0, 80, 50)); a.setPos(QPointF(0, 0)); a.setFlags(sel_flags); sc.addItem(a)
+    b = _RectItem(QRectF(0, 0, 80, 50)); b.setPos(QPointF(300, 20)); b.setFlags(sel_flags); sc.addItem(b)
+    it = _PolyArrowItem(QColor("#111111"), 3, True)
+    pa, pb = QPointF(80, 25), QPointF(0, 25)
+    it.set_points(a.mapToScene(pa), b.mapToScene(pb))
+    it.set_bound(0, a, pa); it.set_bound(1, b, pb)
+    it._routing = "ortho"; it._auto_route = True
+    sc.addItem(it); it.build_elbow()
+    pts_before = list(it._pts)
+
+    a.setSelected(True); b.setSelected(True)
+    a.setPos(a.pos() + QPointF(15, 7)); b.setPos(b.pos() + QPointF(15, 7))
+    with patch.object(_PolyArrowItem, "build_elbow", autospec=True) as mock_elbow:
+        changed = it.reroute()
+    assert changed
+    assert mock_elbow.call_count == 0                     # A* 재탐색 없이 끝남
+    expect = [QPointF(p.x() + 15, p.y() + 7) for p in pts_before]
+    assert all(abs(p1.x() - p2.x()) < 1e-6 and abs(p1.y() - p2.y()) < 1e-6
+               for p1, p2 in zip(it._pts, expect))         # 순수 평행이동과 일치
+
+
+def test_reroute_falls_back_to_astar_when_only_one_end_selected():
+    # 한쪽만 선택(마퀴가 한쪽만 잡거나 독립 이동)돼 델타가 다르면 안전하게 기존 경로(끝점 추종
+    # + build_elbow 재계산)로 폴백해야 한다 — 강체 지름길을 잘못 타면 안 됨.
+    from PyQt6.QtWidgets import QGraphicsScene, QGraphicsItem
+    sc = QGraphicsScene()
+    sel_flags = QGraphicsItem.GraphicsItemFlag.ItemIsMovable | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+    a = _RectItem(QRectF(0, 0, 80, 50)); a.setPos(QPointF(0, 0)); a.setFlags(sel_flags); sc.addItem(a)
+    b = _RectItem(QRectF(0, 0, 80, 50)); b.setPos(QPointF(300, 20)); b.setFlags(sel_flags); sc.addItem(b)
+    it = _PolyArrowItem(QColor("#111111"), 3, True)
+    pa, pb = QPointF(80, 25), QPointF(0, 25)
+    it.set_points(a.mapToScene(pa), b.mapToScene(pb))
+    it.set_bound(0, a, pa); it.set_bound(1, b, pb)
+    it._routing = "ortho"; it._auto_route = True
+    sc.addItem(it); it.build_elbow()
+
+    a.setSelected(True)   # b는 미선택
+    a.setPos(a.pos() + QPointF(15, 7))
+    it.reroute()
+    # 시작점은 a의 새 부착점을 정확히 추종(강체 평행이동이 아니라 재추적 경로여야 함).
+    start_scene = it.mapToScene(it._pts[0])
+    assert abs(start_scene.x() - a.mapToScene(pa).x()) < 1e-6
+    assert abs(start_scene.y() - a.mapToScene(pa).y()) < 1e-6
+    # 끝점은 b(안 움직임)를 그대로 추종.
+    end_scene = it.mapToScene(it._pts[-1])
+    assert abs(end_scene.x() - b.mapToScene(pb).x()) < 1e-6
+    assert abs(end_scene.y() - b.mapToScene(pb).y()) < 1e-6
+
+
 def test_sarrow_segment_drag_snaps_straight():
     # [M4-4 ①b] 세그먼트 드래그가 끝점 축에 가까우면 착 붙어 완벽한 직선이 된다.
     it = _PolyArrowItem(QColor("#111111"), 3, True)

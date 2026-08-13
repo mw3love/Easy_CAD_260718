@@ -48,6 +48,18 @@
   그 순간 계산된 값이 새 버전 캐시에 박히고 **이후 진짜 데이터 교체가 일어나도 영원히 무효화
   안 된다**(캐시 키가 이미 "최신"). `_geom_version` 같은 버전키 메모이즈를 쓸 땐 반드시
   **super() 먼저, 버전 증가는 그다음**. (`2026-08.md` 화살촉 한 세대 지연 캐싱 버그)
+- `QGraphicsItem.prepareGeometryChange()`는 Qt C++에서 **virtual이 아니다** — Python에서
+  오버라이드해도 이 코드베이스의 파이썬 메서드가 `self.prepareGeometryChange()`를 명시적으로
+  호출할 때만 그 오버라이드가 걸린다. `QGraphicsRectItem.setRect()`/`QGraphicsTextItem.
+  setFont()`/`setPlainText()` 같은 **Qt 네이티브 메서드가 내부적으로 부르는
+  prepareGeometryChange는 이 오버라이드를 안 탄다** — `_geom_version` 버전키가 그 경로에서
+  안 올라가 캐시가 조용히 stale해진다. `_PolyArrowItem`의 `_geom_version` 캐시(2026-08-08/09)가
+  안전했던 건 그 클래스의 기하 변경이 전부 이 코드베이스 자체 파이썬 메서드(`_set_endpoint`
+  등)를 거쳐서였다 — **네이티브 setRect()/setFont() 같은 Qt 자체 API로 기하가 바뀌는 클래스에
+  같은 캐시 패턴을 그대로 옮기면 이 함정을 밟는다**. `_HandleResizeMixin`(도형 공용, `setRect()`
+  보유) 확장 시도에서 실측(`_TextItem._fit_label_to_shape`의 `setFont()` 폰트축소 후에도 옛
+  boundingRect가 캐시에 남아 라벨이 중앙에서 11~32유닛 어긋남, `test_sketch_build_roundtrip`
+  스모크로 즉시 포착) 후 되돌림. (`2026-08.md` 다중선택 그룹드래그 성능 — 큐닷 캐시 시도·되돌림)
 - ~~`QGraphicsItem`에 Qt 자식(`setParentItem`)이 하나라도 있으면, `paint()`에서 분절된
   `QPainterPath`(moveTo/lineTo로 gap 있는)를 그려도 `QGraphicsScene.render()`/
   `QGraphicsView.grab()` 경로에서는 그 gap이 사라지고 닫힌 도형으로 보인다~~ — **2026-08-09

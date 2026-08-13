@@ -478,6 +478,16 @@ class _HandleResizeMixin:
         # 낭비). `_content_rect()`/`_head_points()`의 삼각함수 비용은 `_pts`에 의존하는 실제
         # 기하 계산이라 이번엔 손대지 않음(캐시하려면 모든 변경 지점에 무효화 훅이 필요해 이
         # CAD 앱에서 위험 대비 이득이 낮다고 판단).
+        # [성능 최적화 2026-08-13, 시도했다 되돌림] `_PolyArrowItem`의 `_geom_version` 캐시를
+        # 이 믹스인에도 확장해봤으나(cProfile상 291개 선택 드래그에서 qc-dot/모서리핸들 반복
+        # 재계산이 컸음), `prepareGeometryChange()`는 Qt C++에서 virtual이 아니라 `setRect()`/
+        # `setFont()`/`setPlainText()` 같은 **Qt 자체 네이티브 호출**이 내부적으로 부르는
+        # prepareGeometryChange는 이 Python 오버라이드를 안 타 `_geom_version`이 안 올라간다
+        # (`_PolyArrowItem`은 기하 변경이 전부 이 코드베이스의 파이썬 메서드를 거쳐 안전했지만,
+        # 이 믹스인은 `_TextItem.setFont()` 등 네이티브 경로가 있어 전제가 다름). 실측 회귀로
+        # 확인(`test_sketch_build_roundtrip` — 라벨 폰트 축소(`_fit_label_to_shape`의 setFont)
+        # 후에도 옛(축소 전) boundingRect가 캐시에 남아 라벨이 중앙에서 11~32유닛 어긋남). 위
+        # 2026-08-01 결정("무효화 훅이 여기저기 필요해 위험 대비 이득이 낮다")이 옳았다 — 되돌림.
         vz = _view_zoom_factor(self)
         s = self._scale_or_1(vz)
         pad = 3.0 / s
@@ -3717,9 +3727,36 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         [성능 최적화 2026-08-11] `fast=True`면 `_apply_routing`/`_route_ortho`에 그대로
         전달돼 클리어런스 폴리시 탐색을 건너뛴다(정확성 무영향) — 호출부(`host_canvas.
         _on_scene_changed`)가 한 프레임에 reroute가 몰리는 상황(그룹 드래그)이라고 판단할
-        때만 켠다."""
+        때만 켠다.
+        [성능 최적화 2026-08-13] 양끝 도형이 둘 다 선택돼 정확히 같은 델타로 함께 움직이는
+        중이면(다중선택 그룹 드래그, 화살표 자신은 미선택) 경로의 상대 기하가 그대로 보존되므로
+        A* 재탐색 없이 `_pts` 전체를 그 델타만큼 평행이동만 한다 — 결과는 아래 일반 경로가
+        내놓는 것과 동일하되 비용은 O(정점 수). cProfile 실측(도형 350·화살표 168·291개
+        선택 드래그): reroute당 A* 재계산 840→280회, 프레임당 2677→1198ms(2.2배). `pin_pred`가
+        이미 다른 강체 판정(화살표 자신도 선택돼 Qt가 직접 옮기는 경우)을 내린 끝점은 건드리지
+        않는다 — 그 경로는 화살표 자신의 setPos가 이미 위치를 옮겨둔 별개 메커니즘이라 여기서
+        또 손대면 이중 이동이 된다."""
         if not self.has_binding():
             return False
+        end_idx = len(self._pts) - 1
+        if pin_pred is None or (pin_pred(0) and pin_pred(end_idx)):
+            sh0, sh1 = self._bound(0), self._bound(end_idx)
+            pt0, pt1 = self._bind_pt(0), self._bind_pt(end_idx)
+            if (sh0 is not None and sh1 is not None and pt0 is not None and pt1 is not None
+                    and sh0.scene() is not None and sh1.scene() is not None
+                    and sh0.isSelected() and sh1.isSelected()):
+                t0 = self.mapFromScene(sh0.mapToScene(pt0))
+                t1 = self.mapFromScene(sh1.mapToScene(pt1))
+                d0 = t0 - self._pts[0]
+                d1 = t1 - self._pts[end_idx]
+                if abs(d0.x() - d1.x()) <= 1e-6 and abs(d0.y() - d1.y()) <= 1e-6:
+                    if abs(d0.x()) > 1e-6 or abs(d0.y()) > 1e-6:
+                        self._pts = [QPointF(p.x() + d0.x(), p.y() + d0.y()) for p in self._pts]
+                        self.prepareGeometryChange()
+                        self.update()
+                        self._sync_label()
+                        return True
+                    return False
         changed = False
         manual_ortho = self._is_ortho() and not self._auto_route and len(self._pts) >= 3
         for idx in (0, len(self._pts) - 1):
