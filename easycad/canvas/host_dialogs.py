@@ -51,14 +51,21 @@ from easycad.ai import gateway as gw
 _ORIENTS = [("landscape", "가로"), ("portrait", "세로")]
 
 
+_ROUNDED_COMBO_QSS = "QComboBox { border-radius:6px; }"
+
+
 def _build_paper_combos(dlg, size: str, orient: str):
-    """용지 크기·방향 콤보 2개를 만들어 (size_combo, orient_combo)로 반환."""
+    """용지 크기·방향 콤보 2개를 만들어 (size_combo, orient_combo)로 반환.
+    [2026-08-13 피드백] 각진 모서리 → 리프 위젯 각각에 개별 스타일시트(스핀박스가 없는
+    폼이라 `docs/pitfalls.md`의 조상 스타일시트 함정과 무관, 위험 없음)."""
     size_cb = QComboBox(dlg)
+    size_cb.setStyleSheet(_ROUNDED_COMBO_QSS)
     for k in PAPER_SIZES_MM:
         size_cb.addItem(k, k)
     idx = size_cb.findData(size)
     size_cb.setCurrentIndex(idx if idx >= 0 else 0)
     orient_cb = QComboBox(dlg)
+    orient_cb.setStyleSheet(_ROUNDED_COMBO_QSS)
     for key, label in _ORIENTS:
         orient_cb.addItem(label, key)
     oidx = orient_cb.findData(orient)
@@ -153,7 +160,10 @@ class _PdfExportDialog(QDialog):
         self._preview = QLabel(self)
         self._preview.setMinimumSize(320, 320)
         self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview.setFrameShape(QFrame.Shape.StyledPanel)
+        # [2026-08-13 피드백] 각진 모서리 → 네이티브 `StyledPanel` 대신 다른 카드들과 같은
+        # 6px 라운드 테두리를 직접 그림(리프 위젯 단독 스타일시트, 위험 없음).
+        self._preview.setStyleSheet(
+            "border:1px solid palette(mid); border-radius:6px;")
 
         row = QHBoxLayout()
         row.addLayout(opts)
@@ -480,6 +490,7 @@ class _MermaidDialog(QDialog):
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("모델:", self))
         self._model_combo = QComboBox(self)
+        self._model_combo.setStyleSheet(_ROUNDED_COMBO_QSS)   # [2026-08-13] 각진 모서리 → 둥글게
         model_row.addWidget(self._model_combo, 1)
         self._model_refresh_btn = QToolButton(self)
         self._model_refresh_btn.setIcon(_act_icon("refresh"))

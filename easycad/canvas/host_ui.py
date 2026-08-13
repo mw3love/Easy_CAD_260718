@@ -991,6 +991,11 @@ class _UIBuildMixin:
         layers_section = _AccordionSection(self, "레이어", "layers", default_collapsed=False)
         self._layers_list = QListWidget()
         self._layers_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        # [2026-08-13 시도했다 되돌림] `border-radius`를 걸어봤으나 `QAbstractScrollArea`
+        # 계열은 뷰포트가 별도 자식 위젯이라 배경이 프레임 모서리에 클리핑되지 않음 —
+        # 실측 결과 위쪽만 둥글고 아래쪽은 그대로 각진 채(뷰포트 배경이 그 밑을 사각으로
+        # 채움) 일관성 없이 보여 원상복구. 제대로 하려면 커스텀 paintEvent로 클립 리전을
+        # 그려야 해 이번 저위험 범위 밖으로 미룸.
         layers_section.body_layout.addWidget(self._layers_list)
         add_layer_btn = QToolButton()
         add_layer_btn.setText("+ 레이어 추가")
