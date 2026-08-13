@@ -56,6 +56,7 @@ SCENARIOS = {
     "select":      ("도형 선택 클릭",          True),
     "drag":        ("도형 1개 드래그",         True),
     "drag_multi":  ("20개 그룹 드래그",        True),
+    "drag_all":    ("전체 선택 그룹 드래그",    True),
     "zoom":        ("휠 줌 1틱",               True),
     "pan":         ("팬 1프레임",              True),
     "render":      ("뷰 렌더(현재 줌)",        True),
@@ -151,6 +152,22 @@ class Bench:
                 r.setPos(r.pos() + QPointF(2, 1))
             self._tick()
         self._time("drag_multi", 10, one)
+        self.win._scene.clearSelection()
+        self._tick()
+
+    def scn_drag_all(self):
+        """[성능조사 2026-08-13] drag_multi(20개 고정)는 200개+ 선택 규모를 재현하지 못한다 —
+        문서에 있는 도형 전부를 선택해 한 번에 옮겨, 선택 개수 자체가 큰 시나리오를 잡는다."""
+        rects = self._rects()
+        self.win._scene.clearSelection()
+        for r in rects:
+            r.setSelected(True)
+        self._tick()
+        def one(i):
+            for r in rects:
+                r.setPos(r.pos() + QPointF(2, 1))
+            self._tick()
+        self._time("drag_all", 10, one)
         self.win._scene.clearSelection()
         self._tick()
 
@@ -281,6 +298,7 @@ def main():
     if want("select"):      b.scn_select()
     if want("drag"):        b.scn_drag()
     if want("drag_multi"):  b.scn_drag_multi()
+    if want("drag_all"):    b.scn_drag_all()
     if want("zoom"):        b.scn_zoom()
     if want("pan"):         b.scn_pan()
     if want("render"):      b.scn_render()
