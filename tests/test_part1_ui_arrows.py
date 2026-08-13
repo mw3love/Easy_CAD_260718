@@ -100,9 +100,10 @@ def test_pdf_export_forces_white_bg():
 
 def test_floating_panels_and_zoom_readout():
     # [캔버스-퍼스트 레이아웃] 좌/우 QDockWidget → 콘텐츠 크기 플로팅 카드로 전환(deep-interview
-    # 2026-07-29) — 좌측은 2026-08-12에 탭 2개에서 아코디언 4섹션(기본도형/순서도/내 심볼/레이어)
-    # 으로 개편, 위치는 고정(자유 드래그 재배치 없음), 도형 그리드 섹션은 항상 3열(같은 날 후속
-    # 피드백 — 2열은 패널 폭의 절반이 빈 공간으로 남아 밀도를 높임).
+    # 2026-07-29) — 좌측은 2026-08-12에 탭 2개에서 아코디언 섹션으로 개편(2026-08-13에 기본도형·
+    # 순서도를 다시 하나로 병합해 지금은 기본도형/내 심볼/레이어 3섹션), 위치는 고정(자유 드래그
+    # 재배치 없음), 도형 그리드는 항상 4열 고정(`_PALETTE_COLS`, 2026-08-12 후속 피드백 — 2열은
+    # 패널 폭의 절반이 빈 공간으로 남아 밀도를 높임).
     w = CanvasWindow()
     assert w._left_panel.parent() is w
     assert w._props_panel.parent() is w
@@ -110,9 +111,9 @@ def test_floating_panels_and_zoom_readout():
     basic_grid, basic_btns = w._shape_sections[0]
     last = basic_btns[-1]
     r, c, _rs, _cs = basic_grid.getItemPosition(basic_grid.indexOf(last))
-    # 기본 3종(네모·원·삼각형, 2026-08-10 §8 항목17 7단계로 포트 2종 제거), 4열 고정 →
-    # 마지막 버튼은 (row0, col2).
-    assert (r, c) == (0, 2)
+    # [2026-08-13] 기본도형(네모·원·삼각형)+순서도(판단·시작/끝·입출력·준비·저장소) 8종이
+    # 이제 한 그리드(4열 고정)에 고르게 줄바꿈된다 — 마지막 버튼(저장소, 8번째)은 (row1, col3).
+    assert (r, c) == (1, 3)
     # 팔레트 버튼 키가 보존(테스트 계약).
     assert set(w._shape_tool_buttons) == {"rect", "ellipse", "triangle"}
     assert set(w._sym_buttons) == {"decision", "terminal", "data", "prep", "database"}

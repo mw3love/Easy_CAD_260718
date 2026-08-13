@@ -791,12 +791,16 @@ class _UIBuildMixin:
         return lbl
 
 
-    def _make_shape_grid(self, entries, store) -> QGridLayout:
+    def _make_shape_grid(self, entries) -> QGridLayout:
         """[캔버스-퍼스트] 팔레트 버튼 grid 하나 — 아코디언 섹션 바디에 직접 얹는다(제목은
-        섹션 헤더가 이미 표시하므로 옛 `_make_shape_section`처럼 내부 라벨을 또 넣지 않음)."""
+        섹션 헤더가 이미 표시하므로 옛 `_make_shape_section`처럼 내부 라벨을 또 넣지 않음).
+        [2026-08-13 피드백] entries마다 저장할 dict를 함께 받는다(기본도형·순서도가 예전엔
+        별개 그리드라 3+5로 줄이 안 맞았음 — 8개를 한 그리드에 넣어야 4열×2줄로 고르게
+        줄바꿈되면서, "판단"이 자연스레 4번째(첫 줄)로 온다. dict 분리 자체는 `set_tool`
+        체크상태 동기화가 참조하므로 유지)."""
         grid = QGridLayout(); grid.setSpacing(2)   # [2026-08-12 3차] 4→2, 패널 폭 축소에 맞춤
         btns = []
-        for label, icon_kind, tooltip, tool_key in entries:
+        for label, icon_kind, tooltip, tool_key, store in entries:
             btn = self._palette_button(label, icon_kind, tooltip, tool_key)
             store[icon_kind] = btn   # 기본=rect/ellipse, 심볼=kind(=icon_kind)로 키
             btns.append(btn)
@@ -945,27 +949,26 @@ class _UIBuildMixin:
         # 준비·저장소) 두 아코디언 섹션을 하나로 병합 — 순서도 5종도 mermaid 기준으로는
         # 각자 고유 shape 이름(decision/terminal 등)일 뿐 "기본"과 상위 카테고리로 묶이진
         # 않지만, 접힌 별도 헤더로 나눌 만큼 이질적이지도 않다는 판단(사용자 확인).
+        # [2026-08-13 재피드백] 두 그리드를 따로 만들면 3개+5개로 줄이 안 맞아(3/4/1) 어색
+        # 하다는 지적 — 하나의 그리드에 8개를 다 넣어 4열×2줄로 고르게 줄바꿈하고, 사용
+        # 빈도가 높은 "판단"을 순서상 4번째(첫 줄 마지막 칸)로 옮겨 올렸다.
         # [§8 항목17 7단계, 2026-08-10] 포트□/포트○ 팔레트 버튼 제거 — TRIM 도구가 일반
         # 사각형/원을 겹쳐 놓고 자르는 워크플로로 대체(백엔드는 그대로 둬 기존 `.ecad` 안전).
+        # `_shape_tool_buttons`/`_sym_buttons` 딕셔너리 분리(기본 도구 vs 심볼)는 `set_tool`
+        # 체크상태 동기화가 참조하므로 그대로 유지(host_canvas.py `set_tool` 참조) — 한 그리드
+        # 안에서도 항목별로 다른 dict에 저장 가능하도록 `_make_shape_grid`를 확장했다.
         basic_section = _AccordionSection(self, "기본도형", "basic", default_collapsed=False)
         basic_grid = self._make_shape_grid([
-            ("네모", "rect", "네모 — 클릭 후 캔버스에 드래그", "rect"),
-            ("원", "ellipse", "원 — 클릭 후 캔버스에 드래그", "ellipse"),
-            ("삼각형", "triangle", "삼각형 — 클릭 후 캔버스에 드래그", "sym:triangle"),
-        ], self._shape_tool_buttons)
+            ("네모", "rect", "네모 — 클릭 후 캔버스에 드래그", "rect", self._shape_tool_buttons),
+            ("원", "ellipse", "원 — 클릭 후 캔버스에 드래그", "ellipse", self._shape_tool_buttons),
+            ("삼각형", "triangle", "삼각형 — 클릭 후 캔버스에 드래그", "sym:triangle", self._shape_tool_buttons),
+            ("판단", "decision", "판단 — 클릭 후 캔버스에 드래그", "sym:decision", self._sym_buttons),
+            ("시작/끝", "terminal", "시작/끝 — 클릭 후 캔버스에 드래그", "sym:terminal", self._sym_buttons),
+            ("입출력", "data", "입출력 — 클릭 후 캔버스에 드래그", "sym:data", self._sym_buttons),
+            ("준비", "prep", "준비 — 클릭 후 캔버스에 드래그", "sym:prep", self._sym_buttons),
+            ("저장소", "database", "저장소 — 클릭 후 캔버스에 드래그", "sym:database", self._sym_buttons),
+        ])
         basic_section.body_layout.addLayout(basic_grid)
-        # 옛 "순서도" 그리드(2026-08-04에 UI에서 뺐던 것을 mermaid 문법이 직접 매핑하는 5종만
-        # 재추가, deep-interview 2026-08-12 확정) — 별도 헤더 없이 같은 섹션 바디에 이어 붙인다.
-        # `_sym_buttons` 딕셔너리 분리(기본 도구 vs 심볼)는 `set_tool` 체크상태 동기화가
-        # 여전히 참조하므로 그대로 유지(host_canvas.py `set_tool` 참조).
-        flow_grid = self._make_shape_grid([
-            ("판단", "decision", "판단 — 클릭 후 캔버스에 드래그", "sym:decision"),
-            ("시작/끝", "terminal", "시작/끝 — 클릭 후 캔버스에 드래그", "sym:terminal"),
-            ("입출력", "data", "입출력 — 클릭 후 캔버스에 드래그", "sym:data"),
-            ("준비", "prep", "준비 — 클릭 후 캔버스에 드래그", "sym:prep"),
-            ("저장소", "database", "저장소 — 클릭 후 캔버스에 드래그", "sym:database"),
-        ], self._sym_buttons)
-        basic_section.body_layout.addLayout(flow_grid)
         outer.addWidget(basic_section)
 
         self._relayout_sections(horiz=False)   # 항상 세로(2열) — 반응형 전환 없음
