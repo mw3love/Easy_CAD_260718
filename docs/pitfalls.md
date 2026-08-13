@@ -60,6 +60,18 @@
   보유) 확장 시도에서 실측(`_TextItem._fit_label_to_shape`의 `setFont()` 폰트축소 후에도 옛
   boundingRect가 캐시에 남아 라벨이 중앙에서 11~32유닛 어긋남, `test_sketch_build_roundtrip`
   스모크로 즉시 포착) 후 되돌림. (`2026-08.md` 다중선택 그룹드래그 성능 — 큐닷 캐시 시도·되돌림)
+- **위 함정을 피하는 대안(같은 날 재시도·성공)**: `prepareGeometryChange()` 무효화 훅에
+  의존하는 대신, `boundingRect()`가 어차피 매번 계산하는 저비용 값(`_content_rect()`·
+  `scale`·`handle_px`)을 캐시 **키**로 직접 비교해 미스일 때만 비싼 부분(`_qc_dot_rects()`
+  등)을 재계산한다 — "이벤트가 와야 무효화"가 아니라 "매번 직접 확인"이라 네이티브
+  `setFont()`/`setRect()` 경로가 캐시를 우회할 수 없다(그 호출들이 만든 새 값을 다음
+  호출이 그대로 다시 읽으므로). 다중선택 그룹드래그(200개) 실측 121.81ms→34.84ms(3.5배),
+  스모크 543종(이전에 걸렸던 `test_sketch_build_roundtrip` 포함) 무회귀. **교훈**: 이
+  코드베이스에서 native Qt 호출이 섞인 클래스는 "이벤트/시그널 기반 무효화"보다 "매 호출
+  값-비교 캐시"가 구조적으로 더 안전하다 — 전자는 무효화 훅이 안 걸리는 경로가 있으면
+  그대로 stale해지지만, 후자는 훅이 필요 없어 그 실패 모드 자체가 없다.
+  (`docs/perf_group_drag_200.md` "구현 결과", `2026-08.md` "§8 항목0 후속 — 200개+
+  그룹드래그")
 - ~~`QGraphicsItem`에 Qt 자식(`setParentItem`)이 하나라도 있으면, `paint()`에서 분절된
   `QPainterPath`(moveTo/lineTo로 gap 있는)를 그려도 `QGraphicsScene.render()`/
   `QGraphicsView.grab()` 경로에서는 그 gap이 사라지고 닫힌 도형으로 보인다~~ — **2026-08-09

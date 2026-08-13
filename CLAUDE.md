@@ -628,6 +628,22 @@ docs/
   제거하고 `_AIGatewaySettingsDialog`의 "모델 새로고침"+"크레딧 확인" 두 버튼을 "연결
   테스트" 하나로 통합(크레딧은 "잔여" 표기로 통일). 실제 창 라이트·다크 스크린샷 육안
   확인 완료. 상세: `docs/history/2026-08.md` 같은 제목.
+- **§8 항목0 후속 — 200개+ 그룹드래그 성능 조사·구현 완료(2026-08-13)** — 사용자 보고
+  ("200개 이상 동시이동 시 심한 버벅임")를 실측 문서(`200.ecad`, 도형 200·화살표 0)로
+  확인, 같은 날 앞선 커밋(`43b2a3c`, 화살표 강체-평행이동 최적화)과는 별개로 60fps 예산
+  x7.3 초과였다. cProfile로 병목을 `_HandleResizeMixin.boundingRect()`→`_qc_dot_rects()`
+  →`_shape_ports()`→`_nearest_border()` 체인(전체비용 86%)까지 좁히고, 같은 날 이미
+  시도·실패했던 `_geom_version`+`prepareGeometryChange` 캐시(non-virtual이라 `setFont()`
+  같은 네이티브 호출이 무효화를 놓치는 함정)를 피하는 대안 — 이벤트 무효화 없이
+  `content_rect()`/`scale`/`handle_px` 값을 매 호출 직접 비교하는 캐시 — 를 구현·반영.
+  스모크 543종 전원 통과(이전 시도가 걸렸던 `test_sketch_build_roundtrip` 포함, 신규
+  회귀 없음), 실제 창 재실측으로 `drag_all`(200개) 121.81ms(x7.3 초과)→34.84ms(x2.1
+  초과, 3.5배), `drag_multi`(20개) 18.61ms(x1.1 초과)→9.97ms(예산 내) 검증 완료. 신규
+  벤치마크(`perf_bench.py --only drag_all`)·프로파일러(`profile_group_drag.py`)도 신설.
+  남은 x2.1 초과분은 `_sync_geom_snapshot()` 씬 전체 순회(다음 후보, 씬≠선택 규모
+  별도 문서로 재확인 필요)와 실제 `paint()` 비용 쪽으로 넘어감. 상세:
+  `docs/perf_group_drag_200.md`(원안+구현결과), `docs/history/2026-08.md` 같은 제목,
+  함정(실패→성공 대안) `docs/pitfalls.md` "Qt 시그널·이벤트 발화 조건".
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

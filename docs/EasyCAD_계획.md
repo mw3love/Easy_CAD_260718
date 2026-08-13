@@ -375,15 +375,20 @@ Phase 0~6 로드맵과 §5 제안기능이 전부 완료된 뒤, 실사용자 DX
 최악 1002ms→273ms(3.7배) — 밀집 클러스터 근처는 개선폭이 작아 완전 해결은 아님. 상세:
 `docs/history/2026-08.md` "도형 드래그 잔여 지연 — 회랑 사전필터로 추가 개선" 참조.
 
-**항목0 후속 — 200개+ 그룹드래그 성능 조사 계획(2026-08-13, 계획만 — 구현 대기)**:
+**항목0 후속 — 200개+ 그룹드래그 성능 조사·구현 완료(2026-08-13)**:
 사용자 보고("200개 이상 동시이동 시 심한 버벅임")를 실측 문서(`200.ecad`, 도형 200·
 화살표 0)로 확인 — 같은 날 앞선 커밋(`43b2a3c`, 화살표 강체-평행이동 최적화)이 푼
-문제와는 별개로 여전히 60fps 예산 x7.3 초과. cProfile로 병목을 `_HandleResizeMixin.
+문제와는 별개로 60fps 예산 x7.3 초과였다. cProfile로 병목을 `_HandleResizeMixin.
 boundingRect()` → `_qc_dot_rects()` → `_shape_ports()` → `_nearest_border()` 체인
-(전체 비용의 86%)까지 좁혔고, 같은 날 이미 시도·실패한 캐싱 접근(`_geom_version`+
-`prepareGeometryChange`, non-virtual 함정)을 피하는 대안 메커니즘(값 비교 캐시)까지
-제안해뒀다. 신규 벤치마크(`perf_bench.py --only drag_all`)·프로파일러
-(`profile_group_drag.py`)도 신설. 상세 전문: `docs/perf_group_drag_200.md`.
+(전체 비용의 86%)까지 좁히고, 같은 날 이미 시도·실패했던 캐싱 접근(`_geom_version`+
+`prepareGeometryChange`, non-virtual이라 `setFont()` 같은 네이티브 호출이 무효화를
+놓치는 함정)을 피하는 대안(이벤트 무효화 없이 `content_rect()`/`scale`/`handle_px`
+값을 매 호출 직접 비교하는 캐시)을 구현·반영. 스모크 543종 전원 통과(신규 회귀 없음),
+실제 창 재실측으로 `drag_all`(200개) 121.81ms(x7.3 초과)→34.84ms(x2.1 초과, 3.5배),
+`drag_multi`(20개) 18.61ms(x1.1 초과)→9.97ms(예산 내)까지 검증 완료. 신규 벤치마크
+(`perf_bench.py --only drag_all`)·프로파일러(`profile_group_drag.py`)도 신설. 남은
+x2.1 초과분은 `_sync_geom_snapshot()` 씬 전체 순회(다음 후보)와 실제 `paint()` 비용
+쪽으로 넘어감 — 상세 전문: `docs/perf_group_drag_200.md`.
 
 ~~1. **미니맵 시인성 개선**~~ — **완료**(2026-07-28, 실조건검증 ✓). 반투명 파란 채움 제거
    (테두리만) + 테마·accent와 무관한 고정 시안(`#22d3ee`)으로 교체. 상세: CLAUDE.md "미니맵

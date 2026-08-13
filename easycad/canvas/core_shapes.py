@@ -66,6 +66,11 @@ class _HandleResizeMixin:
     _locked = False
     _group_id = None
 
+    # [성능 조사 2026-08-13] boundingRect()의 값 비교 캐시(선택된 도형의 qc-dot/모서리핸들
+    # union 스킵용) — 클래스 기본값 None이면 최초 호출에서 항상 미스(안전한 콜드스타트).
+    _bbox_cache_key = None
+    _bbox_cache_rect = None
+
     # [호버 강조] 현재 커서 아래 있는 핸들 키(뷰가 매 프레임 갱신) — ("corner",i) / ("rot",None) /
     # ("qc",side) / ("ep",i) / ("scale",None) / None. paint()가 이 키와 자신의 핸들을 비교해
     # 그 점만 반전 강조(흰 채움+색 테두리)한다.
@@ -504,6 +509,29 @@ class _HandleResizeMixin:
             # 꼭짓점·변 핸들은 rect 경계서 half-handle 삐져나오고, 회전 핸들·접속점은 바깥.
             h = self._handle_px(s)
             cr = self._content_rect()
+            # [성능 조사 2026-08-13, §8 항목0 후속] 이 분기(선택된 도형)는 다중선택 그룹드래그
+            # 200개+에서 cProfile 실측상 프레임 비용의 86%를 차지했다 — `_qc_dot_rects()`가
+            # 내부적으로 `_shape_ports`→`_nearest_border`→`_axis_forced_local_normal` 기하
+            # 검색을 매 boundingRect() 호출마다(Qt가 인덱싱·히트테스트·페인트마다 부름) 처음부터
+            # 다시 돈다. 순수 위치이동(그룹 드래그 = setPos만 바뀜)에서는 로컬 좌표인 이 결과가
+            # 프레임마다 수학적으로 동일한데도 매번 재계산되고 있었다(`docs/perf_group_drag_200.md`
+            # 실측 근거).
+            #
+            # [실패했던 접근 — 재시도 금지] 같은 날 앞서 `_geom_version`+`prepareGeometryChange()`
+            # 버전키 캐시(`_PolyArrowItem`이 쓰는 패턴)를 이 믹스인에 확장했다가 되돌렸다 —
+            # `prepareGeometryChange()`는 Qt에서 non-virtual이라, `_TextItem.setFont()` 같은
+            # **네이티브** 호출이 내부적으로 부르는 prepareGeometryChange는 이 오버라이드를 안 타
+            # 버전이 안 올라가고 캐시가 stale해졌다(`test_sketch_build_roundtrip` 회귀로 발견,
+            # `docs/pitfalls.md` "Qt 시그널·이벤트 발화 조건" 참조).
+            #
+            # 여기서는 이벤트/시그널 무효화를 아예 안 쓴다 — 대신 이미 매 호출 계산해야 하는 저비용
+            # 값(`cr`·`s`·`h`, 아래)을 캐시 키로 직접 비교한다. `_content_rect()`는 `_TextItem`의
+            # 경우 `super().boundingRect()`(Qt 네이티브 텍스트 레이아웃)로 귀결돼 setFont() 직후
+            # 항상 최신값이므로, 이 비교 자체가 native 경로를 우회할 수 없다(무효화를 "받는" 게
+            # 아니라 매번 직접 "확인"하므로 구조적으로 stale이 불가능).
+            key = (cr.x(), cr.y(), cr.width(), cr.height(), s, h)
+            if self._bbox_cache_key == key:
+                return self._bbox_cache_rect
             # [하나의 시스템으로 통합 2026-08-01 — 실측 발견] 회전 핸들은 좌상단에만 있어 그대로
             # union하면 boundingRect 중심이 좌상단으로 쏠린다. 종전엔 접속점이 미연결일 때 훨씬
             # 크게(gap) 떠 있어 이 쏠림을 우연히 덮었지만(4방향 모두 회전 핸들보다 멀리 나가
@@ -519,7 +547,10 @@ class _HandleResizeMixin:
             # union — 아래 마지막 `h` 패딩만 믿지 않고 기하 그대로 반영해 안전하게 맞춘다.
             for _i, cr_rect in self._box_corner_rects():
                 r = r.united(cr_rect)
-            return r.adjusted(-h, -h, h, h)
+            result = r.adjusted(-h, -h, h, h)
+            self._bbox_cache_key = key
+            self._bbox_cache_rect = result
+            return result
         return self._content_rect().united(self._rot_handle_rect().adjusted(-pad, -pad, pad, pad))
 
     def _handle_local_rect(self) -> QRectF:
