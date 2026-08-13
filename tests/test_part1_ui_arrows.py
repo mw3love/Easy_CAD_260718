@@ -228,7 +228,7 @@ def test_properties_dock_readout():
     pen = QPen(QColor("#ff0000")); pen.setWidthF(3.0)
     r = _mk_rect(w._scene, pen, 0, 0, 100, 50)
     r.setSelected(True); w._refresh_properties()
-    assert w._pf_type.text() == "네모"
+    assert w._pf_type.text() == "사각형"
     assert abs(w._pf_width.value() - 3.0) < 1e-6
     assert w._pf_color_val.text() == "#ff0000"
     assert w._pf_style.currentData() == Qt.PenStyle.SolidLine
@@ -240,7 +240,7 @@ def test_properties_dock_readout():
     r2.setSelected(True); w._refresh_properties()
     assert w._pf_color_val.text() == "혼합"
     assert abs(w._pf_width.value() - 3.0) < 1e-6
-    assert w._pf_type.text() == "네모"        # 둘 다 네모 → 종류 유지
+    assert w._pf_type.text() == "사각형"        # 둘 다 사각형 → 종류 유지
 
 
 

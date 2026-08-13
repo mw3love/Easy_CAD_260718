@@ -32,7 +32,7 @@ def test_shape_swap_preserves_and_rebinds():
     syms = [x for x in w._scene.items() if isinstance(x, _SymbolItem)]
     assert len(syms) == 1 and syms[0]._kind == "decision"
     labels = [a.text() for a in w._build_swap_menu().actions() if not a.isSeparator()]
-    assert labels[:2] == ["네모", "원"] and "판단" in labels
+    assert labels[:2] == ["사각형", "원"] and "판단" in labels
 
 
 

@@ -242,7 +242,7 @@ class _ContextMixin:
     def _build_swap_menu(self):
         """도형 교체 대상 메뉴 — 네모·원 + 심볼 14종. 트리거 시 현재 단일 선택 도형을 변환."""
         m = QMenu(self)
-        m.addAction("네모", lambda: self._swap_selected("rect"))
+        m.addAction("사각형", lambda: self._swap_selected("rect"))
         m.addAction("원", lambda: self._swap_selected("ellipse"))
         m.addSeparator()
         for kind, (label, _f) in _SYMBOL_KINDS.items():

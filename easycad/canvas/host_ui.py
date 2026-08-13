@@ -656,7 +656,7 @@ class _UIBuildMixin:
             ("Ctrl+D", "제자리 복제"),
             ("1·3·4·6·7·8", "선택·화살표·텍스트·선·펜·번호"),
             ("3", "화살표(그린 뒤 미니툴바서 직선·곡선·직각 선택)"),
-            ("2 / 5", "네모 / 원"),
+            ("2 / 5", "사각형 / 원"),
         ]
         body = "\n".join(f"{k:<20}{d}" for k, d in rows)
         box = QMessageBox(self)
@@ -959,7 +959,7 @@ class _UIBuildMixin:
         # 안에서도 항목별로 다른 dict에 저장 가능하도록 `_make_shape_grid`를 확장했다.
         basic_section = _AccordionSection(self, "기본도형", "basic", default_collapsed=False)
         basic_grid = self._make_shape_grid([
-            ("네모", "rect", "네모 — 클릭 후 캔버스에 드래그", "rect", self._shape_tool_buttons),
+            ("사각형", "rect", "사각형 — 클릭 후 캔버스에 드래그", "rect", self._shape_tool_buttons),
             ("원", "ellipse", "원 — 클릭 후 캔버스에 드래그", "ellipse", self._shape_tool_buttons),
             ("삼각형", "triangle", "삼각형 — 클릭 후 캔버스에 드래그", "sym:triangle", self._shape_tool_buttons),
             ("판단", "decision", "판단 — 클릭 후 캔버스에 드래그", "sym:decision", self._sym_buttons),

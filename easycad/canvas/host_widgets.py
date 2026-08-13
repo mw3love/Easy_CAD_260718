@@ -338,7 +338,7 @@ def _apply_native_titlebar_scheme(dark: bool) -> None:
 
 # [Phase 6 M1] 속성 패널 표시용 — 아이템 클래스명 → 한글 종류, 펜 스타일 → 한글.
 _TYPE_NAMES = {
-    "_RectItem": "네모", "_EllipseItem": "원", "_LineItem": "선",
+    "_RectItem": "사각형", "_EllipseItem": "원", "_LineItem": "선",
     "_ArrowItem": "화살표", "_PolyArrowItem": "직선화살", "_TextItem": "텍스트",
     "_BadgeItem": "번호", "_PathItem": "펜", "_SymbolItem": "심볼",
     "_ImageItem": "이미지", "_TableItem": "표", "_TitleBlockItem": "표제란",
