@@ -1556,6 +1556,27 @@ def test_route_ortho_fast_never_returns_a_hitting_base():
 
 
 
+def test_route_ortho_obstacle_flush_against_connected_shape_no_penetration():
+    """[§8 항목19 F1 수정, 2026-08-14] 제3자 장애물이 연결 도형(시작쪽) 바로 옆에 밀착하면
+    스텁 이탈점이 그 장애물의 팽창 사각형 안에 갇혀(반대편은 도형 자신의 몸통이라 격자선이
+    없음) 클리어런스 사다리 4단이 전부 실패하고 관통 preferred로 폴백하던 버그
+    (`docs/route_review_2026-08.md` 3단계 F1, 실제 KBS 도면에도 동일 메커니즘으로 존재
+    확인). 간격을 0~10유닛(1차 트랩)·30유닛(반대쪽 도형 쪽 2차 트랩)으로 스윕해 둘 다
+    더 이상 관통하지 않는지 확인한다."""
+    from easycad.canvas.annotator_core import _route_ortho, _path_hits_rects
+    P = QPointF
+    s, e = P(-1940, -1970), P(-1880, -1970)
+    ns, ne = P(1.0, 0.0), P(-1.0, 0.0)
+    a_rect = QRectF(-2000, -2000, 60, 60)
+    b_rect = QRectF(-1880, -2000, 60, 60)
+    for gap in (0.0, 5.0, 10.0, 30.0):
+        wall = QRectF(-1940 + gap, -2300, 20, 660)
+        mids = _route_ortho(s, e, ns, ne, [wall], 12.0, conn_rects=(a_rect, b_rect))
+        full = [s] + mids + [e]
+        assert not _path_hits_rects(full, [wall]), (gap, mids, "관통 발생")
+        assert _close(full[0], s) and _close(full[-1], e), (gap, full)
+
+
 def test_sarrow_routes_around_obstacle():
     # [Stage2] 양끝 도형 사이 세 번째 도형이 경로를 가로막으면 우회 라우팅 / 장애물 이동 시 재라우팅 /
     #          양끝 바인딩 도형은 장애물에서 제외.

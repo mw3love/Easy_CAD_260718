@@ -6639,6 +6639,25 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
             sc = _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, rung)
             if sc < best_score:
                 best, best_score = mids, sc
+
+    # [§8 항목19 F1 수정, 2026-08-14] 최후 수단 — 위 사다리를 다 돌아도 여전히 제3자 도형을
+    # 관통하면(best_score[0] != 0), 이 경우에 한해서만 제3자 장애물을 clearance로 안 부풀린
+    # **원본 경계**로 다시 시도한다. 근본원인: 장애물이 연결 도형에 밀착하면 스텁 이탈점이
+    # 부풀린 장애물 사각형 안쪽에 갇혀(도형 자신은 obstacle 목록에 없어 반대편 격자선이 아예
+    # 없다) A*가 매 사다리 rung에서 전부 실패하고 관통 preferred로 폴백한다(재현·근본원인:
+    # `docs/route_review_2026-08.md` 3단계 F1). 부풀리지 않은 원본 경계라면 시작/끝점이 그
+    # 경계에 딱 붙어 있을 뿐 "안"은 아니라서(`_seg_hits_rect`의 접촉=통과 규약) A*가 격자
+    # 노드를 하나 얻어 우회를 찾을 수 있다. 대가로 이 최후수단 경로는 그 장애물과의 안전
+    # 여백(clearance)이 없다 — 그래도 "정말로 관통"보다는 낫다는 판단(자주 발동하면 미관
+    # 재검토 여지, `docs/route_review_2026-08.md` 6단계 "미해결로 남긴 것" 참조). 안전
+    # 여백판정(infl)이 아니라 원본(obstacles) 기준으로만 관통 여부를 재확인해 채택한다 —
+    # 이미 결함 없는 정상 케이스는 best_score[0]==0이라 이 블록에 아예 진입하지 않는다(무회귀).
+    if best_score[0] != 0 and obstacles:
+        for mids in _candidates(obstacles, 0.0, 0.0):
+            full = _dedup_pts([s] + mids + [e])
+            if not _path_hits_rects(full, obstacles):
+                best = mids
+                break
     return best
 
 
