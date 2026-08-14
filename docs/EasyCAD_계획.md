@@ -817,9 +817,12 @@ AskUserQuestion으로 확정 후 이 항목을 등록.
     전환. 회귀테스트 1종 추가, 스모크 543→544종. F2 구현 중 자체 회귀(리스트 컴프리헨션
     조건절에서 루프불변 함수를 매 원소마다 재계산)를 cProfile 호출수 대조로 직접 발견·즉시
     수정 — 교훈은 `docs/pitfalls.md` "라우팅" 절에 기록).
-    전문·재현·수치: `docs/route_review_2026-08.md`, 경위: `docs/history/2026-08.md`
-    "§8 항목19 화살표 라우팅 전수 점검". **다음 순서**: F3~F7(중·낮음 우선순위, 착수 여부
-    미정) — 급하지 않음.
+    F5(else 분기 죽은 로직에 `elif avoid_segs:` 게이트)·F6(`@staticmethod` 중복 제거)·
+    F7(`turn_cost` 계수 근거 주석 추가)도 이어서 정리 완료(같은 날, 저위험 확인 후 사용자
+    승인). 전문·재현·수치: `docs/route_review_2026-08.md`, 경위: `docs/history/2026-08.md`
+    "§8 항목19 화살표 라우팅 전수 점검". **§8 항목19 전체 종료.** **다음 순서**: F3(사다리
+    반복호출 최적화)·F4(`_obstacle_rects()` BSP화)만 남음 — 둘 다 새 스트레스 픽스처·
+    핫패스 리팩터가 필요해 다음 세션으로 유보(사용자 확인).
     - **범위(전부로 확정)**: 경로탐색 커널(`_route_ortho`/`_astar_ortho*`/`_route_score`/
       `_ortho_elbow`, `core_shapes.py` ~6100~6660줄) + 히트테스트/스냅(`_nearest_border*`/
       `_shape_ports*`/`_border_pt_in_gap` 등, ~5000~6100줄) + TRIM/EXTEND와 라우팅이

@@ -6333,6 +6333,11 @@ def _astar_ortho_grid(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6,
     노드는 이 선들의 교점, 간선은 인접 노드 사이 축정렬 선분(_seg_hits_rect로 관통 검사).
     회전 벌점(clearance*0.5)으로 엘보 수를 최소화해 경로를 깔끔하게. 상태에 진행축을 넣어
     벌점을 정확히 계산(Manhattan 휴리스틱은 벌점을 무시 → admissible).
+    [§8 항목19 F7, 2026-08-14] 계수 `0.5`는 값 자체의 도출 근거(다른 배수 대비 실측 비교
+    등)가 history에 남아있지 않다 — "회전 1회 = clearance 절반 거리만큼 손해"로 잡아
+    직진 대비 우회 유인을 약하게 주는 정도의 튜닝값으로 추정. 바꿀 필요가 생기면 감(느낌)
+    조정이 아니라 3단계(`docs/route_review_2026-08.md`)처럼 실제 배치를 렌더해 비교하며
+    실측 기반으로 재조정할 것.
 
     [Stage3] avoid_segs(다른 화살표 세그먼트, 씬좌표)는 hard 장애물이 아니라 soft다:
     간선이 그걸 가로지르면 cross_penalty를 g에 가산(교차 최소화). 우회 레인은 도형 팽창 모서리
@@ -6607,9 +6612,15 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
             if not _path_hits_rects([s] + mids + [e], check_rects):
                 base = mids
                 break
-    else:
+    elif avoid_segs:
         # preferred가 도형은 안전하나 화살표를 가로지름 — 두 시도를 모두 평가해 '교차를 가장 많이
         # 줄이는' 도형-안전 후보만 채택(개선 없으면 preferred 유지 → 불필요한 우회·되먹임 방지).
+        # [§8 항목19 F5 수정, 2026-08-14] avoid_segs가 비면(Stage3 비활성 — 현재 모든 호출부가
+        # 그러함) 이 분기는 pref_rides=True일 때만 진입하는데(pref_cross는 항상 0), `c <
+        # best_cross`가 `0 < 0`으로 구조적으로 거짓이라 base를 절대 못 바꾸면서 A*만 최대
+        # 2회 낭비했다(pref_rides는 아래 클리어런스 사다리가 conn_pairs 기반 ride_len
+        # 판정으로 이미 해소함 — 무회귀). Stage3 재도입 시(avoid_segs 비지 않음) 이 탐색이
+        # 다시 필요해지므로 로직 자체는 그대로 두고 게이트만 추가.
         best_cross = pref_cross
         for mids in _candidates(infl, clearance):
             if _path_hits_rects([s] + mids + [e], infl):   # 도형 관통은 hard — 후보 기각

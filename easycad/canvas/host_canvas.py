@@ -179,8 +179,6 @@ class _CanvasMixin:
             self._rerouting = False
 
     @staticmethod
-
-    @staticmethod
     def _make_pin_pred(arrow):
         # 끝점 idx를 도형에 재고정할지: 붙은 도형과 화살표가 '같은 선택'으로 함께 움직이면
         # 강체(재고정 안 함), 아니면 붙은 채 늘림. → 사용자 합의 규칙.
