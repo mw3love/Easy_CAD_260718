@@ -91,6 +91,14 @@
   미상.
   (`2026-08.md` 포트-테두리 trim, 위키
   `easycad-qgraphicsitem-자식있는아이템-paint-gap-무시.md` — 위키도 갱신 필요)
+- **헤드리스 진단/벤치마크 스크립트를 함수로 감싸면 `QGraphicsScene`/`QGraphicsItem`이 함수
+  반환 후 조용히 죽는다** — `CanvasWindow()`를 만드는 로컬 함수 안에서 `app = QApplication.
+  instance() or QApplication([])`처럼 `QApplication`을 **지역변수로만** 잡으면, 함수가
+  반환된 뒤 그 참조가 사라지는 순간부터 `scene.items()` 등 호출이 "wrapped C/C++ object of
+  type QGraphicsScene has been deleted"로 죽는다(창·아이템을 리스트로 붙잡아 둬도 안 고쳐짐
+  — 진짜 원인은 QApplication 쪽). 해법: `QApplication`을 모듈 전역에 한 번만 만들어 스크립트
+  끝까지 참조 유지. (`docs/route_review_2026-08.md` §8 항목19 4단계, `tools/
+  profile_obstacle_scan.py` 작성 중 발견)
 
 ## 좌표계·변환
 - `drawForeground`의 painter는 Qt가 이미 **씬 좌표계**로 매핑해 넘긴다 — 여기에 다시
@@ -336,6 +344,15 @@
   돌아가는 화살표 경로 위로 무관한 도형이 옮겨지는 극단적 케이스는 드래그 도중엔 놓칠 수
   있음(드롭 시점엔 항상 correct) — 실사용에서 체감되면 재검토. (`2026-08.md` 웹 전환 실험 —
   인터랙션 스트레스테스트)
+- **[미수정, §8 항목19 3단계 발견] 제3자 장애물이 연결 도형에 밀착하면 A*가 관통 경로를
+  조용히 채택한다** — 장애물이 시작/끝 도형 중 하나와 거의 맞닿아 있으면, 스텁 이탈점이
+  그 장애물의 팽창 사각형 **안**에 갇힌다(반대 방향엔 도형 자신의 몸통이 있어 격자에 그쪽
+  좌표가 아예 없음 — 도형 자신은 라우팅 obstacle 목록에서 제외되기 때문). 클리어런스 사다리
+  4단×스텁유무 2가지 전부 `None`을 반환해 최초의 관통 경로로 폴백한다. 간격을 스윕해 확인한
+  발동구간: 0~10유닛(관통)·13~20유닛(정상 우회)·30유닛(반대쪽 도형이 가까워져 다시 관통) —
+  "장애물 크기"가 아니라 "장애물이 두 연결 도형 중 하나와 너무 가깝다"가 조건. 리포에 있는
+  실제 KBS 도면(`kbs_1tv_test.ecad`)에도 경미한 형태로 이미 1건 존재 확인. 재현·수치·스크린샷:
+  `docs/route_review_2026-08.md` 3단계.
 
 ## 렌더링(QPainter/QIcon/오프스크린)
 - 오프스크린 플랫폼 플러그인(`QT_QPA_PLATFORM=offscreen`)에서 `QPainter`의
