@@ -6305,12 +6305,20 @@ _CORRIDOR_PAD_MIN = 400.0     # 최소 여유(scene 단위) — 재시도가 없
 _CORRIDOR_PAD_CLEARANCE_MULT = 15.0
 
 
+def _corridor_rect(a: QPointF, b: QPointF, clearance: float) -> QRectF:
+    """[§8 항목19 F2 수정, 2026-08-14] a-b bbox를 `_CORRIDOR_PAD_MIN`/`_CORRIDOR_PAD_CLEARANCE_
+    MULT`만큼 부풀린 회랑 사각형 — `_astar_ortho`가 매 호출마다 인라인으로 계산하던 것을
+    추출(동작 변화 없음). `_route_ortho`가 `_route_score`/후보평가에 넘길 장애물 목록을 미리
+    이걸로 걸러 두는 데도 재사용한다(아래 F2 참조)."""
+    pad = max(_CORRIDOR_PAD_MIN, clearance * _CORRIDOR_PAD_CLEARANCE_MULT)
+    lo_x, hi_x = (a.x(), b.x()) if a.x() <= b.x() else (b.x(), a.x())
+    lo_y, hi_y = (a.y(), b.y()) if a.y() <= b.y() else (b.y(), a.y())
+    return QRectF(lo_x - pad, lo_y - pad, (hi_x - lo_x) + 2 * pad, (hi_y - lo_y) + 2 * pad)
+
+
 def _astar_ortho(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6,
                  avoid_segs=(), cross_penalty=0.0):
-    pad = max(_CORRIDOR_PAD_MIN, clearance * _CORRIDOR_PAD_CLEARANCE_MULT)
-    lo_x, hi_x = (start.x(), goal.x()) if start.x() <= goal.x() else (goal.x(), start.x())
-    lo_y, hi_y = (start.y(), goal.y()) if start.y() <= goal.y() else (goal.y(), start.y())
-    corridor = QRectF(lo_x - pad, lo_y - pad, (hi_x - lo_x) + 2 * pad, (hi_y - lo_y) + 2 * pad)
+    corridor = _corridor_rect(start, goal, clearance)
     local = [r for r in infl if r.intersects(corridor)]
     return _astar_ortho_grid(start, goal, local, clearance, eps, avoid_segs, cross_penalty)
 
@@ -6519,6 +6527,14 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
     명시적으로 켠다."""
     infl = ([r.adjusted(-clearance, -clearance, clearance, clearance) for r in obstacles]
             if obstacles else [])
+    # [§8 항목19 F2 수정, 2026-08-14] 회랑 밖 장애물까지 infl에 그대로 들고 있으면, 뒤에서
+    # 후보마다 도는 `_route_score`/`_path_hits_rects`가 경로와 무관한 먼 장애물까지 매번
+    # 전부 훑는다(cProfile 실측: 프레임 비용의 47%가 이 반복 호출, `docs/route_review_2026-08.md`
+    # 4단계 F3). `_astar_ortho`도 내부적으로 같은 회랑(`_corridor_rect`)으로 한 번 더 걸러
+    # 안전하므로(그 필터가 이미 "완전성 손실 없음"을 보장한 것과 동일한 계산 — 여기서 먼저
+    # 걸러도 A* 결과는 그대로) 매 후보 평가마다 반복하던 필터링을 함수당 1회로 당긴다.
+    _corr = _corridor_rect(s, e, clearance)
+    infl = [r for r in infl if r.intersects(_corr)]
     # [M4-4 ⓐ] 연결 도형: 원본 rect=재진입/타기 판정용, 팽창본=A* 장애물용. 여유는 제3도형
     # (clearance)보다 넉넉하게(conn_clear) — 부착 도형 변에 선이 딱 붙어 지나가면 답답해 보인다
     # (실조건 피드백 2026-07-24). 이탈/도착 스텁도 같은 거리로 밀어 격자선을 벌린다.
