@@ -209,7 +209,9 @@ class _FileIOMixin:
             "DWG를 열려면 무료 프로그램 'ODA File Converter'가 필요합니다.\n"
             "다운로드: https://www.opendesign.com/guestfiles/oda_file_converter\n\n"
             "이미 설치했다면 '찾아보기'로 실행 파일(ODAFileConverter.exe) 위치를 "
-            "직접 지정할 수 있습니다.")
+            "직접 지정할 수 있습니다.\n\n"
+            "다른 CAD 프로그램이 있다면 그 프로그램에서 DXF로 저장한 뒤 그 파일을 "
+            "여는 것도 방법입니다(DXF는 별도 프로그램 없이 바로 열립니다).")
         browse_btn = box.addButton("찾아보기...", QMessageBox.ButtonRole.ActionRole)
         box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
         box.exec()
