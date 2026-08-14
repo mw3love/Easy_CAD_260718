@@ -4199,7 +4199,24 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     def _obstacle_rects(self):
         """[Stage2] 라우팅이 피해야 할 장애물 사각형(scene, 축정렬 bbox). 양끝 바인딩 도형
-        (출발/도착)은 제외. 원은 외접 사각형으로 근사(보수적). scene이 없으면 빈 리스트."""
+        (출발/도착)은 제외. 원은 외접 사각형으로 근사(보수적). scene이 없으면 빈 리스트.
+
+        [§8 항목19 F4 시도·되돌림, 2026-08-14] `scene.items()` 전체스캔을 코리도 사각형으로
+        `scene.items(rect, IntersectsItemBoundingRect)` BSP 공간쿼리로 좁히는 시도를 했으나
+        실측으로 역효과임을 확인해 되돌렸다. 원인: 이 프로젝트의 `boundingRect()` 구현들이
+        가볍지 않다(2026-08-13 "200개+ 그룹드래그" 조사 — `_HandleResizeMixin.boundingRect()`
+        →`_qc_dot_rects()`→`_shape_ports()`→`_nearest_border()` 체인이 전체비용 86%였을 정도).
+        Qt의 rect 쿼리는 BSP 트리가 좁혀준 후보들의 `boundingRect()`를 하나하나 계산해 교차를
+        재확인하는데, 그 계산 자체가 `scene.items()`가 하는 '포인터 리스트 그대로 반환'보다
+        비쌌다 — cProfile 실측(`route_ladder_stress.ecad`, 부분선택 드래그): BSP `items()`
+        호출 자체가 전체 비용의 43%(1.333초/3.105초)까지 치솟았고, `profile_obstacle_scan.py`
+        (51→2051 아이템)에서도 `build_elbow`가 오히려 0.63→3.59ms(느려짐 전)에서 1.56→
+        12.74ms로 후퇴했다. 근본원인: `_CORRIDOR_PAD_MIN`(400, 최소 여유)이 실사용 규모의
+        도면 대부분을 이미 통째로 덮어(코리도가 좁혀주는 후보가 거의 없음) 쿼리 자체의
+        오버헤드만 순수 추가됐다 — `_on_scene_changed`(host_canvas.py)가 "다건 변경(넓은
+        영역)엔 전체스캔이 더 빠르다"고 이미 기록해 둔 것과 같은 함정(2026-08-08)이지만,
+        거긴 그 조건을 가늠할 '변경 개수' 신호가 있어 조건부로 전환할 수 있었던 반면 여긴
+        화살표 1개 호출마다인 데다 코리도가 항상 이렇게 넓어 조건부 전환의 여지가 없었다."""
         sc = self.scene()
         if sc is None:
             return []
@@ -6160,31 +6177,67 @@ def _ortho_elbow(s: QPointF, e: QPointF, ns, ne):
 
 
 # ---- [Stage2] 직교 라우팅 장애물 회피 — 충돌 없는 후보 엘보 선택 -------------------
-def _seg_hits_rect(a: QPointF, b: QPointF, r: QRectF, eps=1e-6) -> bool:
-    """축정렬 선분 a-b가 사각형 r의 '속'을 지나는가(테두리 접촉은 통과로 봄).
-    엘보 세그먼트는 전부 수평/수직이라 축별로 판정. 대각선(엘보에선 미발생)은 bbox 겹침으로 보수 판정."""
-    if abs(a.y() - b.y()) <= eps:          # 수평
-        y = a.y()
+# [§8 항목19 F3 성능수정, 2026-08-14] `_seg_hits_rect(a, b, r)`은 같은 세그먼트(a, b)를 여러
+# 사각형과 반복 대조하는 호출부(`_path_hits_rects`의 rects 루프, `_astar_ortho_grid.edge_ok`의
+# 후보 obstacle 루프)에서 매 사각형마다 a.y()/b.x() 등 QPointF 접근과 축판정·정렬을 처음부터
+# 다시 했다 — 그 값들은 세그먼트 하나에 대해 전부 루프불변(loop-invariant)인데도 매번
+# 재계산된 것(F2가 `_corridor_rect`에서 잡은 것과 같은 계열의 낭비, 다만 여긴 컴프리헨션이
+# 아니라 함수 재호출이 원인). 새 스트레스 픽스처(`tools/route_ladder_stress.py`, 사다리가
+# preferred 관통으로 실제 도는 배치)로 cProfile 확인: 부분선택 드래그(20/48) 10프레임에서
+# `_seg_hits_rect` 단독 133,851회 호출·tottime 0.755초(전체 3.165초의 24%) — 세그먼트당 1회만
+# 계산하면 되는 값을 사각형 개수만큼 반복한 게 그대로 비용이었다. `_seg_probe`로 세그먼트의
+# 축판정 결과를 1회 추출해 `_probe_hits_rect`(사각형만 받는 저비용 판정)에 반복 전달하도록
+# 분리 — 수학 자체는 원래 `_seg_hits_rect`와 동일(순수 리팩터, 결과 무변경).
+def _seg_probe(a: QPointF, b: QPointF, eps=1e-6):
+    """세그먼트 a-b를 여러 사각형과 대조하기 전 1회만 계산해 두는 축판정 결과.
+    반환: (0, y, x0, x1)=수평(y 고정, x구간) / (1, x, y0, y1)=수직(x 고정, y구간) /
+    (2, x0, x1, y0, y1)=대각선(엘보에선 미발생, 방어적 bbox 폴백)."""
+    ay, by = a.y(), b.y()
+    if abs(ay - by) <= eps:
+        ax, bx = a.x(), b.x()
+        x0, x1 = (ax, bx) if ax <= bx else (bx, ax)
+        return (0, ay, x0, x1)
+    ax, bx = a.x(), b.x()
+    if abs(ax - bx) <= eps:
+        y0, y1 = (ay, by) if ay <= by else (by, ay)
+        return (1, ax, y0, y1)
+    x0, x1 = (ax, bx) if ax <= bx else (bx, ax)
+    y0, y1 = (ay, by) if ay <= by else (by, ay)
+    return (2, x0, x1, y0, y1)
+
+
+def _probe_hits_rect(probe, r: QRectF, eps=1e-6) -> bool:
+    """`_seg_probe`가 뽑은 세그먼트 축판정 결과로 사각형 r의 '속'을 지나는지 판정
+    (테두리 접촉은 통과로 봄) — `_seg_hits_rect`와 동일 수학, a/b 재접근 없음."""
+    kind = probe[0]
+    if kind == 0:
+        _, y, x0, x1 = probe
         if y <= r.top() + eps or y >= r.bottom() - eps:
             return False
-        x0, x1 = (a.x(), b.x()) if a.x() <= b.x() else (b.x(), a.x())
         return x1 > r.left() + eps and x0 < r.right() - eps
-    if abs(a.x() - b.x()) <= eps:          # 수직
-        x = a.x()
+    if kind == 1:
+        _, x, y0, y1 = probe
         if x <= r.left() + eps or x >= r.right() - eps:
             return False
-        y0, y1 = (a.y(), b.y()) if a.y() <= b.y() else (b.y(), a.y())
         return y1 > r.top() + eps and y0 < r.bottom() - eps
-    x0, x1 = (a.x(), b.x()) if a.x() <= b.x() else (b.x(), a.x())
-    y0, y1 = (a.y(), b.y()) if a.y() <= b.y() else (b.y(), a.y())
+    _, x0, x1, y0, y1 = probe
     return x1 > r.left() and x0 < r.right() and y1 > r.top() and y0 < r.bottom()
+
+
+def _seg_hits_rect(a: QPointF, b: QPointF, r: QRectF, eps=1e-6) -> bool:
+    """축정렬 선분 a-b가 사각형 r의 '속'을 지나는가(테두리 접촉은 통과로 봄).
+    엘보 세그먼트는 전부 수평/수직이라 축별로 판정. 대각선(엘보에선 미발생)은 bbox 겹침으로 보수 판정.
+    단발 호출용 — 같은 a·b를 여러 r과 반복 대조할 땐 `_seg_probe`+`_probe_hits_rect`를 직접 써서
+    루프불변 계산을 세그먼트당 1회로 줄인다(아래 `_path_hits_rects` 참조)."""
+    return _probe_hits_rect(_seg_probe(a, b, eps), r, eps)
 
 
 def _path_hits_rects(pts, rects, eps=1e-6) -> bool:
     """정점 리스트 pts로 이루어진 폴리라인이 사각형들 중 하나라도 관통하면 True."""
     for i in range(len(pts) - 1):
+        probe = _seg_probe(pts[i], pts[i + 1], eps)
         for r in rects:
-            if _seg_hits_rect(pts[i], pts[i + 1], r, eps):
+            if _probe_hits_rect(probe, r, eps):
                 return True
     return False
 
@@ -6362,11 +6415,23 @@ def _astar_ortho_grid(start: QPointF, goal: QPointF, infl, clearance, eps=1e-6,
     row_obst = [[r for r in infl if r.top() + eps < y < r.bottom() - eps] for y in ys]
     col_obst = [[r for r in infl if r.left() + eps < x < r.right() - eps] for x in xs]
 
+    # [§8 항목19 F3 성능수정, 2026-08-14] 예전엔 매 간선마다 QPointF a·b를 새로 만들어
+    # `_seg_hits_rect`에 넘겼다 — 그 안에서 다시 축판정+정렬을 candidate 개수만큼 반복했다.
+    # 그리드 간선은 애초에 ay==by(수평) 아니면 ax==bx(수직)로 축이 이미 확정돼 있으므로(방금
+    # cands를 고르는 데 쓴 바로 그 조건), QPointF 생성·`_seg_probe`의 abs()판정 없이 축판정
+    # 결과를 직접 구성해 `_probe_hits_rect`에 넘긴다(위 `_path_hits_rects`와 동일 패턴).
     def edge_ok(ax, ay, bx, by):
-        a = QPointF(xs[ax], ys[ay])
-        b = QPointF(xs[bx], ys[by])
-        cands = row_obst[ay] if ay == by else col_obst[ax]
-        return not any(_seg_hits_rect(a, b, r, eps) for r in cands)
+        if ay == by:
+            xa, xb = xs[ax], xs[bx]
+            x0, x1 = (xa, xb) if xa <= xb else (xb, xa)
+            probe = (0, ys[ay], x0, x1)
+            cands = row_obst[ay]
+        else:
+            ya, yb = ys[ay], ys[by]
+            y0, y1 = (ya, yb) if ya <= yb else (yb, ya)
+            probe = (1, xs[ax], y0, y1)
+            cands = col_obst[ax]
+        return not any(_probe_hits_rect(probe, r, eps) for r in cands)
 
     turn_cost = clearance * 0.5
 

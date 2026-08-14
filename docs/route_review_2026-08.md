@@ -303,3 +303,58 @@ drag_multi 12.81ms(예산 내 전환). F1 정확성(관통 0건) 회귀 없음 �
 검증: 스모크 544종(개수 변화 없음) 전원 통과, F1 정확성(관통 0건) route_stress·KBS 양쪽
 재확인(F5가 같은 함수를 건드려 회귀 가능성이 있었음). F5·F6은 순수 no-op/정리라 성능·
 결과 측정 불필요. §8 항목19는 이것으로 완전히 종료 — F3·F4만 다음 세션 후보로 남음.
+
+## 9단계 — F3 실제 수정 완료 + F4 시도·되돌림(2026-08-14, 다음 세션 후속)
+
+**픽스처부터 새로 필요했다**: `route_stress.ecad`(격자 메시)는 7단계 진단대로 사다리(A*)가
+실제로 안 돈다. `tools/route_ladder_stress.py` 신설 — 1차(대각선 코너-대-코너 연결)는
+인접 4칸 사이 빈 공간만 지나가 관통 0건(폐기), 2차(한 칸 건너뛰기, 중심-대-중심 직선이
+사이 도형 한복판을 관통)로 성공(ratio 최대 1.48, 관통 0건 유지 — A*가 정상적으로 우회를
+만듦).
+
+**진단**: cProfile(부분선택 20/48 드래그, 10프레임) — `_seg_hits_rect` 133,851회,
+tottime 0.755초(전체 3.165초의 24%). `_path_hits_rects`의 rects 루프와
+`_astar_ortho_grid.edge_ok`의 candidate 루프 둘 다 **같은 세그먼트를 여러 사각형과
+반복 대조하면서 a.y()/b.x() 등 QPointF 접근·축판정·정렬을 사각형마다 재계산**하고
+있었다 — 세그먼트 하나에 대해 루프불변인 계산인데도(F2가 `_corridor_rect`에서 잡은 것과
+같은 계열, 이번엔 컴프리헨션이 아니라 함수 재호출이 원인).
+
+**수정**: `_seg_probe(a,b,eps)`(세그먼트 축판정 결과 1회 추출) + `_probe_hits_rect(probe,r,eps)`
+(사각형만 받는 저비용 판정)로 분리. `_path_hits_rects`·`edge_ok`가 세그먼트당 1회만
+`_seg_probe`를 호출하고 사각형 루프는 `_probe_hits_rect`만 반복. `edge_ok`는 그리드
+간선이 이미 ay==by/ax==bx로 축이 확정돼 있어(cands를 고르는 조건과 동일) QPointF 생성
+자체도 생략하고 probe를 직접 구성. `_seg_hits_rect(a,b,r,eps)`는 `_seg_probe`+
+`_probe_hits_rect`의 조합으로 재정의(단발 호출 동작 무변경, 순수 리팩터).
+
+**검증**: F1 정확성(관통 0건, `route_ladder_stress`·`route_stress`·`kbs_1tv_test` 3개
+픽스처 전부) 재확인, 스모크 544종(개수 변화 없음) 전원 통과. 성능: cProfile 3.165→
+2.077초(34%), 벽시계(git stash 대조, 3회 반복) 평균 ~113ms→~84ms/frame(노이즈 있음,
+방향은 일관). `route_stress.ecad`의 기존 `drag_multi` 시나리오도 부수 개선(F3가 잡은
+`edge_ok`/`_path_hits_rects` 경로는 사다리 전용이 아니라 `pref_hits_shape`/`pref_reenters`
+사전체크에도 쓰여 47.01ms→29.16ms).
+
+**F4는 시도했으나 실측으로 역효과 확인 후 되돌림**: `_obstacle_rects()`의 `scene.items()`
+전체스캔을 코리도 사각형으로 `scene.items(rect, IntersectsItemBoundingRect)` BSP 쿼리로
+좁히는 안(`_on_scene_changed`가 2026-08-08에 쓴 패턴, 호출부 3곳(`build_elbow`·
+`_apply_routing`·`_route_with_hints`)에 코리도 전달까지 구현)을 실제로 구현했으나:
+- `tools/profile_obstacle_scan.py`(51→2051 아이템): `build_elbow`가 수정 전 0.63→
+  3.59ms에서 수정 후 1.56→12.74ms로 **후퇴**(3배 이상 느려짐).
+- `route_ladder_stress.ecad` 부분선택 드래그도 F3만 있을 때(68~113ms/frame)보다
+  느려짐(150~204ms/frame).
+- cProfile로 원인 특정: `{built-in method items}`(BSP 쿼리 자체) 호출이 전체 비용의
+  43%(1.333초/3.105초)까지 치솟았다. Qt의 `items(rect, mode)`는 BSP 트리가 좁힌 후보
+  전부의 `boundingRect()`를 계산해 교차를 재확인하는데, 이 프로젝트의 `boundingRect()`
+  구현이 가볍지 않다(2026-08-13 "200개+ 그룹드래그" 조사에서 이미 확인된 사실 — `_qc_dot_
+  rects()`→`_shape_ports()`→`_nearest_border()` 체인이 전체비용 86%였을 정도). `_CORRIDOR_
+  PAD_MIN`(400, 최소 여유)이 실사용 규모 도면 대부분을 이미 통째로 덮어 후보를 거의 못
+  줄이면서 쿼리 오버헤드만 순수 추가된 것.
+- `_on_scene_changed`가 "다건 변경(넓은 영역)엔 전체스캔이 더 빠르다"고 이미 기록해 둔
+  것(2026-08-08)과 같은 함정 계열이지만, 거긴 조건부 전환 신호("이번 사이클에 실제로
+  바뀐 아이템 수")가 있어 좁을 때만 쓸 수 있었던 반면, `_obstacle_rects()`는 화살표 1개
+  호출마다인 데다 코리도가 항상 이렇게 넓어 조건부 전환의 여지 자체가 없었다.
+- 3개 호출부와 `_obstacle_rects()` 자체를 전부 되돌리고, docstring에 "시도·되돌림"
+  근거를 남겼다(재시도 방지, 1단계 표와 같은 관례).
+
+**§8 항목19(화살표 라우팅 전수 점검) 최종 종료** — F1~F7 전부 처리 완료(F3 수정,
+F4 시도·기각 확정). 상세 경위 `docs/history/2026-08.md` "§8 항목19 F3 실제 수정 완료
++ F4 시도·되돌림", 함정 기록 `docs/pitfalls.md` "라우팅(A*/직교 엘보)".

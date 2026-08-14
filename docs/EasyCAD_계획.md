@@ -820,9 +820,14 @@ AskUserQuestion으로 확정 후 이 항목을 등록.
     F5(else 분기 죽은 로직에 `elif avoid_segs:` 게이트)·F6(`@staticmethod` 중복 제거)·
     F7(`turn_cost` 계수 근거 주석 추가)도 이어서 정리 완료(같은 날, 저위험 확인 후 사용자
     승인). 전문·재현·수치: `docs/route_review_2026-08.md`, 경위: `docs/history/2026-08.md`
-    "§8 항목19 화살표 라우팅 전수 점검". **§8 항목19 전체 종료.** **다음 순서**: F3(사다리
-    반복호출 최적화)·F4(`_obstacle_rects()` BSP화)만 남음 — 둘 다 새 스트레스 픽스처·
-    핫패스 리팩터가 필요해 다음 세션으로 유보(사용자 확인).
+    "§8 항목19 화살표 라우팅 전수 점검". ~~F3 사다리(A*)의 `_seg_hits_rect` 반복호출~~ —
+    새 스트레스 픽스처(`tools/route_ladder_stress.py`, 사다리가 실제로 도는 배치)로
+    cProfile 확인(133,851회·tottime 24%), `_seg_probe`+`_probe_hits_rect`로 세그먼트당
+    루프불변 계산을 1회로 줄여 cProfile 34%·벽시계 ~26% 개선(2026-08-14). F4
+    (`_obstacle_rects()` BSP화)는 실제 구현·실측했으나 **역효과 확인 후 되돌림** —
+    `boundingRect()` 계산 비용이 BSP 쿼리 자체를 전체스캔보다 비싸게 만들었다(교훈은
+    `docs/pitfalls.md` "라우팅" 절). **§8 항목19(화살표 라우팅 전수 점검) 최종 종료**
+    (F1~F7 전부 처리). 전문: `docs/route_review_2026-08.md` 9단계.
     - **범위(전부로 확정)**: 경로탐색 커널(`_route_ortho`/`_astar_ortho*`/`_route_score`/
       `_ortho_elbow`, `core_shapes.py` ~6100~6660줄) + 히트테스트/스냅(`_nearest_border*`/
       `_shape_ports*`/`_border_pt_in_gap` 등, ~5000~6100줄) + TRIM/EXTEND와 라우팅이
