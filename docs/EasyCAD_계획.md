@@ -886,8 +886,7 @@ AskUserQuestion으로 확정 후 이 항목을 등록.
 gpt/gemini 위주). AskUserQuestion으로 진입점·화살표 처리·모델선택·단계구분을 먼저
 확정한 뒤 A단계(게이트웨이 실측)부터 착수.
 
-20. **AI SVG 에셋 생성** — **A단계(게이트웨이 실측) 완료(2026-08-14)**, B단계(앱 UI
-    통합)는 다음 라운드.
+20. **AI SVG 에셋 생성** — **A단계(게이트웨이 실측)·B단계(앱 UI 통합) 완료(2026-08-14)**.
     - **확정 스코프**: 진입점 2곳 공유(메뉴로 새 삽입 + 우클릭으로 기존 도형 대체).
       대체 시 화살표는 자동 재연결하지 않음 — 코드 조사로 `delete_selection()`이
       이미 "도형만 지우면 화살표가 그 자리에 얼어붙는다"(`sh.scene() is not None`
@@ -910,9 +909,25 @@ gpt/gemini 위주). AskUserQuestion으로 진입점·화살표 처리·모델선
       1건(gpt의 "안테나")은 인식은 되나 모호한 사선 형태. 자체 검증 스크립트의 첫 시도가
       `QBrush(0)`(NoBrush 아닌 GlobalColor 0으로 오해석)로 전부 검은 덩어리로 렌더돼
       한 번 더 고쳐 확인(진단 스크립트 실수, 프로덕션 코드와 무관).
-    - **다음 순서(B단계)**: 후보 미리보기 렌더링(QSvgRenderer 썸네일), 모델 실패 시
-      표시(Mermaid 패턴 재사용 예상), 대체 시 옛 도형 bbox 리스케일 여부 — 착수 시
-      다시 확정.
+    - **B단계 구현·검증 완료(2026-08-14, 같은 세션 후속)**: deep-interview로 열린 질문
+      3건 확정 — 진행 표시는 동기 호출+`WaitCursor`(옛 QThread 워커는 §8 항목18에서
+      이미 폐기되고 Mermaid AI 보조도 동기로 정리된 뒤라 그 판단 계승), 후보 미리보기는
+      가로 카드 나열, 대체 시 리스케일은 대체 도형 바운딩박스 긴 변 기준(SVG 자체
+      종횡비 유지). `easycad/ai/text_to_svg.py`(신규, A단계 프롬프트를 승격 —
+      `tools/svg_asset_probe.py`는 이걸 재사용하는 얇은 CLI로 정리) + `svg_import.py`에
+      `parse_svg_string`(문자열 입력, 공통 `_parse_svg_root`로 `parse_svg_items`와
+      동작 통일) + `host_dialogs._SvgAssetDialog`(체크박스 다중선택→후보 카드→클릭
+      선택) + `host_fileio._insert_ai_svg_asset`(메뉴 삽입)·`host_context.
+      _generate_svg_replace`(우클릭 대체, remove+create 단일 undo, 화살표 미재연결).
+      **후보 미리보기는 원본 SVG를 QSvgRenderer로 그대로 렌더하지 않는다** — 프롬프트가
+      색 생략을 허용해 SVG 기본값(stroke:none/fill:black)으로 렌더하면 선-아트가
+      안 보이거나 검은 덩어리가 될 위험(A단계가 겪은 함정과 같은 종류)이 있어, 실제
+      삽입과 동일한 파서+펜으로 임시 씬에 렌더한다(`_render_svg_candidate_pixmap`).
+      신규 pytest 29종 + 스모크 537→566종. **실조건검증**: 실제 창(오프스크린 아님)에서
+      다이얼로그·삽입·대체 3경로를 전부 스크린샷으로 육안 확인(후보 카드가 선-아트로
+      깨끗이 렌더됨, 삽입/대체 결과가 현재 그리기색으로 올바르게 나옴) — 단 **API 키가
+      이 세션에 없어 실제 게이트웨이 호출 자체는 미검증**(`generate_svg`만 몽키패치,
+      A단계는 별도 세션의 키로 검증됨). 실키 검증은 다음 세션 과제.
 
 ## 9. 검증 철학
 

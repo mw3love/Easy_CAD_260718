@@ -37,7 +37,7 @@ from easycad.canvas.annotator_core import (
 from easycad.fileio.pdf_export import export_pdf
 from easycad.fileio.dxf_export import export_dxf, export_dwg
 from easycad.fileio.dxf_import import import_dxf
-from easycad.fileio.svg_import import parse_svg_items
+from easycad.fileio.svg_import import parse_svg_items, parse_svg_string
 from easycad.fileio.document import save_document, load_document, load_document_layers, dict_to_item
 from easycad.fileio import symbol_library
 from easycad.fileio.mermaid_import import (
@@ -47,6 +47,7 @@ from easycad.canvas.host_widgets import _border_attach
 from easycad.canvas.host_selection import _group_scene_rect
 from easycad.canvas.host_dialogs import (
     _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _MermaidDialog, _PdfExportDialog,
+    _SvgAssetDialog,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -445,6 +446,52 @@ class _FileIOMixin:
             QMessageBox.information(self, "SVG 가져오기", "가져올 도형이 없습니다.")
             return
         self.statusBar().showMessage(msg, 4000)
+
+    # ---- AI SVG 에셋 생성 (§8 항목20 B단계, 2026-08-14) ----------------------
+    # 위 SVG 가져오기(파일)와 소스만 다르다 — AI 게이트웨이 응답 문자열을 파일 없이
+    # 바로 파싱(`parse_svg_string`)해 같은 펜 관례(텍스트 제외 현재 그리기색, NoBrush)로
+    # 아이템을 만든다. 씬 추가·undo는 호출부(삽입 vs 대체)가 각자 처리 — 대체 경로
+    # (`host_context._generate_svg_replace`)는 remove+create를 한 undo 엔트리로 묶어야
+    # 해서 이 헬퍼는 아이템만 만들고 씬에는 안 넣는다.
+
+    def _svg_text_to_items(self, svg_text: str, long_side: float, center: QPointF):
+        """AI가 생성한 SVG 문자열 → 우리 네이티브 아이템 리스트(펜·플래그 적용, 씬 미추가)."""
+        items, _vb = parse_svg_string(svg_text, long_side, center)
+        pen = self.make_pen()
+        for it in items:
+            if not isinstance(it, _TextItem):
+                it.setPen(QPen(pen))
+                if hasattr(it, "setBrush"):
+                    it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
+        return items
+
+    def _insert_ai_svg_asset(self):
+        """메뉴 진입점(삽입(&I) 메뉴 「AI SVG 에셋 생성…」) — 뷰 중심에 새로 삽입.
+        우클릭 「SVG로 생성」(기존 도형 대체)은 `host_context._generate_svg_replace`가
+        같은 `_SvgAssetDialog`를 공유하되 별도 undo 경로를 쓴다."""
+        dlg = _SvgAssetDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        svg_text = dlg.selected_svg()
+        if not svg_text:
+            return
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        try:
+            items = self._svg_text_to_items(svg_text, self._SVG_LONG, center)
+        except Exception as e:  # noqa: BLE001 — AI 응답 파싱 실패(구조 손상 등)
+            QMessageBox.warning(self, "AI SVG 에셋 생성", f"가져오기 실패: {e}")
+            return
+        if not items:
+            QMessageBox.information(self, "AI SVG 에셋 생성", "가져올 도형이 없습니다.")
+            return
+        self._scene.clearSelection()
+        for it in items:
+            self._scene.addItem(it)
+            it.setSelected(True)
+        self.push_undo_add_many(items)
+        self.set_tool("select")
+        self.statusBar().showMessage(f"AI SVG 에셋 삽입: 도형 {len(items)}개", 4000)
 
 
     def _create_shape_at(self, tool_key: str, scene_pos: QPointF):

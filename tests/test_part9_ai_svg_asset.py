@@ -1,0 +1,466 @@
+"""§8 항목20 AI SVG 에셋 생성 — B단계(앱 UI 통합, 2026-08-14).
+
+deep-interview(2026-08-14)로 확정된 대로: 진입점 2곳(삽입 메뉴로 새로 삽입 + 우클릭으로
+기존 도형 대체)이 `_SvgAssetDialog` 하나를 공유, 모델은 gpt/gemini 체크박스(모델당
+후보 1개), 진행 표시는 동기 호출+WaitCursor(옛 QThread 워커는 이미 §8 항목18에서
+폐기됨), 대체 시 새 SVG 크기는 대체 도형 바운딩박스 긴 변 기준(SVG 자체 종횡비 유지),
+화살표는 재연결하지 않음(`delete_selection()`이 이미 제공하는 "제자리에 얼어붙는다"
+동작과 같은 결과).
+
+이 파일이 검증하는 것:
+  - `easycad/ai/text_to_svg.py` — 프롬프트 빌더·코드펜스 벗기기·generate_svg.
+  - `easycad/fileio/svg_import.py` — `parse_svg_string`(문자열 입력, `parse_svg_items`와
+    동일 동작).
+  - `_SvgAssetDialog` — 체크박스 다중선택 순차 호출, 부분 실패 시 성공한 후보만 표시,
+    후보 카드 클릭 선택, 빈 프롬프트/모델 없음/키 없음 가드.
+  - `host_fileio._insert_ai_svg_asset` — 삽입 경로(undo 1스텝).
+  - `host_context._generate_svg_replace` — 대체 경로(remove+create 단일 undo, 화살표
+    미재연결, 대체 도형 bbox 긴 변 기준 리스케일).
+  - 메뉴/툴바/컨텍스트메뉴 배선.
+
+실행: python tests/test_easycad.py (전체) 또는 pytest test_part9_ai_svg_asset.py.
+"""
+from PyQt6.QtCore import QRectF, QPointF
+from PyQt6.QtWidgets import QDialog
+
+from _shared import *  # noqa: F401,F403
+
+from easycad.ai import gateway as gw  # noqa: E402
+from easycad.ai import text_to_svg as tts  # noqa: E402
+from easycad.fileio.svg_import import parse_svg_items, parse_svg_string  # noqa: E402
+from easycad.canvas.host_dialogs import _SvgAssetDialog, _SvgCandidateCard  # noqa: E402
+
+_SAMPLE_SVG = ('<svg viewBox="0 0 100 100">'
+              '<line x1="10" y1="10" x2="90" y2="90"/>'
+              '<rect x="20" y="20" width="30" height="30"/>'
+              '</svg>')
+
+
+# ── text_to_svg.py ───────────────────────────────────────────────────────────
+
+def test_build_prompt_includes_subject_and_parser_rules():
+    text = tts.build_prompt("BNC 커넥터 아이콘")
+    assert "BNC 커넥터 아이콘" in text
+    assert "viewBox" in text
+    assert "<g>" in text   # 미지원 요소 금지 규칙
+
+
+def test_extract_svg_strips_language_tagged_code_fence():
+    raw = "```svg\n<svg viewBox=\"0 0 10 10\"></svg>\n```"
+    assert tts.extract_svg(raw) == '<svg viewBox="0 0 10 10"></svg>'
+
+
+def test_extract_svg_strips_bare_code_fence():
+    raw = "```\n<svg viewBox=\"0 0 10 10\"></svg>\n```"
+    assert tts.extract_svg(raw) == '<svg viewBox="0 0 10 10"></svg>'
+
+
+def test_extract_svg_passthrough_when_no_fence():
+    raw = '<svg viewBox="0 0 10 10"></svg>'
+    assert tts.extract_svg(raw) == raw
+
+
+def test_generate_svg_returns_text_and_model_used():
+    def fake_call(api_key, prompt, *, model, **kw):
+        assert "안테나" in prompt
+        return gw.GatewayResult("```svg\n<svg viewBox=\"0 0 10 10\"></svg>\n```",
+                                model, None, 1.2)
+
+    with patch.object(tts.gw, "call_text_with_fallback", fake_call):
+        text, used = tts.generate_svg("key", "안테나 아이콘", model="gpt-5.4-mini")
+    assert text == '<svg viewBox="0 0 10 10"></svg>'
+    assert used == "gpt-5.4-mini"
+
+
+# ── svg_import.py: parse_svg_string ──────────────────────────────────────────
+
+def test_parse_svg_string_matches_parse_svg_items_for_same_content():
+    """문자열 입력이 파일 입력과 동일한 결과를 내야 한다(공통 `_parse_svg_root` 재사용)."""
+    path = os.path.join(_TMP, f"probe_{uuid.uuid4().hex}.svg")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(_SAMPLE_SVG)
+    items_file, vb_file = parse_svg_items(path)
+    items_str, vb_str = parse_svg_string(_SAMPLE_SVG)
+    assert len(items_file) == len(items_str) == 2
+    assert vb_file == vb_str
+
+
+def test_parse_svg_string_applies_long_side_and_center():
+    center = QPointF(500.0, 300.0)
+    items, vb = parse_svg_string(_SAMPLE_SVG, 40.0, center)
+    line = items[0]
+    scene_len = max(abs(line.line().dx()), abs(line.line().dy()))
+    assert scene_len <= 40.0 + 1e-6
+
+
+def test_parse_svg_string_raises_on_malformed_xml():
+    try:
+        parse_svg_string("<svg><line x1='0'></svg-broken")
+        assert False, "should have raised"
+    except Exception:
+        pass
+
+
+# ── _SvgAssetDialog ───────────────────────────────────────────────────────────
+
+def test_svg_asset_dialog_both_models_checked_by_default():
+    dlg = _SvgAssetDialog()
+    assert dlg._gpt_check.isChecked()
+    assert dlg._gemini_check.isChecked()
+    assert dlg._checked_models() == [gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2]
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_requires_nonempty_subject():
+    dlg = _SvgAssetDialog()
+    with patch("easycad.canvas.host_dialogs.QMessageBox.information") as info, \
+         patch("easycad.canvas.host_dialogs.generate_svg") as gen:
+        dlg._on_generate_clicked()
+    assert info.called
+    assert not gen.called
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_requires_api_key():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("안테나 아이콘")
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value=""), \
+         patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn, \
+         patch("easycad.canvas.host_dialogs.generate_svg") as gen:
+        dlg._on_generate_clicked()
+    assert warn.called
+    assert not gen.called
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_requires_at_least_one_model_checked():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("안테나 아이콘")
+    dlg._gpt_check.setChecked(False)
+    dlg._gemini_check.setChecked(False)
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.QMessageBox.information") as info, \
+         patch("easycad.canvas.host_dialogs.generate_svg") as gen:
+        dlg._on_generate_clicked()
+    assert info.called
+    assert not gen.called
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_generates_one_candidate_per_checked_model():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+    calls = []
+
+    def fake_generate(key, subject, *, model, **kw):
+        calls.append(model)
+        return _SAMPLE_SVG, model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
+        dlg._on_generate_clicked()
+    assert calls == [gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2]
+    assert len(dlg._candidates) == 2
+    assert dlg._selected_card is not None   # 첫 성공 후보 기본 선택
+    assert dlg._ok_btn.isEnabled()
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_partial_failure_keeps_successful_candidates():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+
+    def fake_generate(key, subject, *, model, **kw):
+        if model == gw.TEXT_RECOMMEND_1:
+            raise RuntimeError("504 timeout")
+        return _SAMPLE_SVG, model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate), \
+         patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn:
+        dlg._on_generate_clicked()
+    assert warn.called   # 실패 사실은 알림
+    assert len(dlg._candidates) == 1
+    assert dlg._candidates[0][2] == gw.TEXT_RECOMMEND_2
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_all_models_fail_shows_no_candidates():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+
+    def fake_generate(key, subject, *, model, **kw):
+        raise RuntimeError("network down")
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate), \
+         patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn:
+        dlg._on_generate_clicked()
+    assert warn.called
+    assert dlg._candidates == []
+    assert not dlg._ok_btn.isEnabled()
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_clicking_card_switches_selection():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+
+    def fake_generate(key, subject, *, model, **kw):
+        return _SAMPLE_SVG, model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
+        dlg._on_generate_clicked()
+    first_card, _svg, first_model = dlg._candidates[0]
+    second_card, _svg2, second_model = dlg._candidates[1]
+    assert dlg._selected_card is first_card
+    dlg._pick_card(second_card)
+    assert dlg._selected_card is second_card
+    assert dlg.selected_svg() == _SAMPLE_SVG
+    assert not first_card._selected
+    assert second_card._selected
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_enter_in_prompt_triggers_generate():
+    """`returnPressed`는 실제 Qt 시그널 연결(`connect(self._on_generate_clicked)`)이라
+    연결 시점의 바운드 메서드를 그대로 붙잡는다 — 인스턴스 속성을 나중에 람다로 덮어써도
+    이미 연결된 시그널은 원본 메서드를 계속 호출한다(Mermaid의 동일 테스트는 이 문제가
+    없는 `eventFilter` 직접호출 방식이라 다르다). 그래서 여기선 진짜 경로를 타되
+    API 키를 비워 네트워크 호출 직전에 멈추게 하고, 그 경고가 떴는지로 Enter가 실제로
+    `_on_generate_clicked`를 트리거했는지 확인한다."""
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("아무 프롬프트")
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value=""), \
+         patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn, \
+         patch("easycad.canvas.host_dialogs.generate_svg") as gen:
+        dlg._prompt_edit.returnPressed.emit()
+    assert warn.called
+    assert not gen.called
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_regenerate_clears_old_candidates():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+
+    def fake_generate(key, subject, *, model, **kw):
+        return _SAMPLE_SVG, model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
+        dlg._on_generate_clicked()
+        first_batch = list(dlg._candidates)
+        dlg._on_generate_clicked()
+    assert len(dlg._candidates) == 2   # 누적되지 않고 새로 교체
+    for card, *_r in first_batch:
+        assert card not in [c for c, *_r2 in dlg._candidates]
+    dlg.deleteLater()
+
+
+# ── host_fileio._insert_ai_svg_asset (삽입 경로) ──────────────────────────────
+
+def test_insert_ai_svg_asset_adds_items_as_single_undo_step():
+    w = CanvasWindow()
+    before = len(w._scene.items())
+
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_svg(self):
+            return _SAMPLE_SVG
+
+    with patch("easycad.canvas.host_fileio._SvgAssetDialog", _FakeDlg):
+        w._insert_ai_svg_asset()
+    after = len(w._scene.items())
+    assert after == before + 2   # line + rect
+    w.undo()
+    assert len(w._scene.items()) == before
+    w.redo()
+    assert len(w._scene.items()) == before + 2
+    w.deleteLater()
+
+
+def test_insert_ai_svg_asset_cancel_does_nothing():
+    w = CanvasWindow()
+    before = len(w._scene.items())
+
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Rejected
+
+        def selected_svg(self):
+            return ""
+
+    with patch("easycad.canvas.host_fileio._SvgAssetDialog", _FakeDlg):
+        w._insert_ai_svg_asset()
+    assert len(w._scene.items()) == before
+    w.deleteLater()
+
+
+# ── host_context._generate_svg_replace (대체 경로) ────────────────────────────
+
+def test_generate_svg_replace_swaps_shape_bbox_long_side_and_center():
+    """새 SVG의 긴 변이 대체 도형 bbox 긴 변과 같아야 하고, 중심 위치도 유지돼야 한다."""
+    w = CanvasWindow()
+    rect = _mk_pen_rect(w, x=100, y=100, ww=200, hh=80)   # bbox 200×80, 긴변 200, 중심(200,140)
+
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_svg(self):
+            return _SAMPLE_SVG   # 원본 viewBox 100×100(정사각) — 긴 변 기준으로만 스케일
+
+    with patch("easycad.canvas.host_context._SvgAssetDialog", _FakeDlg):
+        w._generate_svg_replace(rect)
+
+    assert rect.scene() is None   # 옛 도형은 씬에서 빠짐
+    new_items = [it for it in w._scene.items()
+                if isinstance(it, _LineItem) or isinstance(it, _RectItem)]
+    assert len(new_items) >= 1
+    combined = QRectF()
+    for it in new_items:
+        combined = combined.united(it.mapToScene(it.boundingRect()).boundingRect()) \
+            if not combined.isNull() else it.mapToScene(it.boundingRect()).boundingRect()
+    assert abs(max(combined.width(), combined.height()) - 200.0) < 5.0
+    assert abs(combined.center().x() - 200.0) < 5.0
+    assert abs(combined.center().y() - 140.0) < 5.0
+    w.deleteLater()
+
+
+def test_generate_svg_replace_is_single_undo_step():
+    w = CanvasWindow()
+    rect = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
+    before = len(w._scene.items())
+
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_svg(self):
+            return _SAMPLE_SVG
+
+    with patch("easycad.canvas.host_context._SvgAssetDialog", _FakeDlg):
+        w._generate_svg_replace(rect)
+    assert len(w._scene.items()) == before + 2 - 1   # -1(제거된 rect) +2(신규)
+
+    w.undo()
+    assert rect.scene() is w._scene
+    assert len(w._scene.items()) == before
+
+    w.redo()
+    assert rect.scene() is None
+    assert len(w._scene.items()) == before + 1
+    w.deleteLater()
+
+
+def test_generate_svg_replace_leaves_bound_arrow_frozen_not_rebound():
+    """계획서 확정 스코프 — 화살표는 자동 재연결하지 않는다. `delete_selection()`이 이미
+    제공하는 "도형만 지우면 화살표가 sh.scene() is not None 가드에 걸려 제자리에
+    얼어붙는다"는 동작과 같은 결과가 나야 한다(별도 언바인드 구현이 없어도)."""
+    w = CanvasWindow()
+    rect = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
+    other = _mk_pen_rect(w, x=300, y=0, ww=100, hh=100)
+    arrow = _mk_bound_sarrow(w, rect, other, 1, 3)   # rect의 E포트 → other의 W포트
+    before_pts = [arrow.mapToScene(p) for p in arrow._pts]
+
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_svg(self):
+            return _SAMPLE_SVG
+
+    with patch("easycad.canvas.host_context._SvgAssetDialog", _FakeDlg):
+        w._generate_svg_replace(rect)
+
+    assert arrow._bind_start is rect   # 재바인딩 안 됨(옛 도형을 계속 가리킴)
+    after_pts = [arrow.mapToScene(p) for p in arrow._pts]
+    assert [(p.x(), p.y()) for p in before_pts] == [(p.x(), p.y()) for p in after_pts]
+    w.deleteLater()
+
+
+def test_generate_svg_replace_cancel_keeps_original_shape():
+    w = CanvasWindow()
+    rect = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
+
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Rejected
+
+        def selected_svg(self):
+            return ""
+
+    with patch("easycad.canvas.host_context._SvgAssetDialog", _FakeDlg):
+        w._generate_svg_replace(rect)
+    assert rect.scene() is w._scene
+    w.deleteLater()
+
+
+# ── 메뉴/툴바/컨텍스트메뉴 배선 ─────────────────────────────────────────────────
+
+def test_ai_svg_menu_action_exists_with_shortcut():
+    w = CanvasWindow()
+    assert hasattr(w, "_act_ai_svg")
+    assert w._act_ai_svg.shortcut().toString() == "Ctrl+Shift+A"
+    w.deleteLater()
+
+
+def test_ai_svg_action_is_on_toolbar():
+    """2026-08-13 재개편(모든 삽입 메뉴 항목을 상단 툴바에도) 관례를 그대로 따른다."""
+    w = CanvasWindow()
+    assert w._act_ai_svg in w._toolbar.actions()
+    w.deleteLater()
+
+
+def test_context_menu_offers_svg_generate_for_single_rect_selection():
+    w = CanvasWindow()
+    rect = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
+    rect.setSelected(True)
+    menu = w._build_context_menu()
+    texts = [a.text() for a in menu.actions()]
+    assert any("SVG로 생성" in t for t in texts)
+    w.deleteLater()
+
+
+def test_context_menu_omits_svg_generate_for_multi_selection():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
+    b = _mk_pen_rect(w, x=200, y=0, ww=100, hh=100)
+    a.setSelected(True)
+    b.setSelected(True)
+    menu = w._build_context_menu()
+    texts = [act.text() for act in menu.actions()]
+    assert not any("SVG로 생성" in t for t in texts)
+    w.deleteLater()
+
+
+def test_context_menu_omits_svg_generate_for_arrow_selection():
+    w = CanvasWindow()
+    ar = _mk_arrow(w, 0, 0, 100, 100)
+    ar.setSelected(True)
+    menu = w._build_context_menu()
+    texts = [act.text() for act in menu.actions()]
+    assert not any("SVG로 생성" in t for t in texts)
+    w.deleteLater()

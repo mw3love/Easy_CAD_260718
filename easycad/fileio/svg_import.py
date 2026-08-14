@@ -228,13 +228,26 @@ def _parse_points(s: str):
 
 
 def parse_svg_items(path: str, long_side: float | None = None, center=None):
-    """SVG 파일 → (아이템 리스트, viewBox). `long_side`/`center`를 주면 viewBox의 긴 변이
-    `long_side`(씬 단위)가 되도록 축소하고 그 중심이 `center`(QPointF, 씬 좌표)에 오도록
-    배치까지 좌표를 읽는 시점에 끝마친다(DXF import `_uf()`와 동일 패턴) — 둘 다 None이면
-    변환 없이 원본 SVG 좌표 그대로(단위 테스트·좌표 확인용). 펜·플래그는 호출부
-    (host_fileio._insert_svgs_at)가 마저 채운다. viewBox는 원본 좌표계 참고용으로 그대로
-    반환한다(반환값 자체는 이미 배치가 끝난 좌표라 호출부가 다시 옮기지 않는다)."""
+    """SVG 파일 → (아이템 리스트, viewBox). 나머지는 `_parse_svg_root` 참조."""
     root = ET.parse(path).getroot()
+    return _parse_svg_root(root, long_side, center)
+
+
+def parse_svg_string(text: str, long_side: float | None = None, center=None):
+    """SVG 문자열(파일 없이 메모리 상의 텍스트, 예: AI 게이트웨이 응답) → (아이템 리스트,
+    viewBox) — §8 항목20 B단계, `parse_svg_items`와 동일 동작을 `ET.fromstring`으로."""
+    root = ET.fromstring(text)
+    return _parse_svg_root(root, long_side, center)
+
+
+def _parse_svg_root(root, long_side: float | None, center):
+    """`parse_svg_items`/`parse_svg_string` 공통 본문. `long_side`/`center`를 주면 viewBox의
+    긴 변이 `long_side`(씬 단위)가 되도록 축소하고 그 중심이 `center`(QPointF, 씬 좌표)에
+    오도록 배치까지 좌표를 읽는 시점에 끝마친다(DXF import `_uf()`와 동일 패턴) — 둘 다
+    None이면 변환 없이 원본 SVG 좌표 그대로(단위 테스트·좌표 확인용). 펜·플래그는 호출부
+    (host_fileio._insert_svgs_at/_svg_text_to_items)가 마저 채운다. viewBox는 원본
+    좌표계 참고용으로 그대로 반환한다(반환값 자체는 이미 배치가 끝난 좌표라 호출부가
+    다시 옮기지 않는다)."""
     vb = _parse_viewbox(root)
     if long_side is not None and center is not None and max(vb.width(), vb.height()) > 0:
         s = long_side / max(vb.width(), vb.height())

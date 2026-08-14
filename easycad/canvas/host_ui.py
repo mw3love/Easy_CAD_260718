@@ -173,7 +173,11 @@ class _UIBuildMixin:
         # 폐기하기로 하며 이 메뉴로 통합됐다(_MermaidDialog 안 프롬프트칸+AI버튼 참조).
         self._act_mmd = self._make_action("Mermaid 가져오기…", "mermaid",
             self._insert_mermaid, "Ctrl+Shift+F")
-        for a in (self._act_img, self._act_mmd):
+        # [§8 항목20 B단계, 2026-08-14] AI SVG 에셋 생성 — 옛 "AI 이미지→도면…"이 쓰던
+        # Ctrl+Shift+A는 그 기능 폐기(위 주석 참조)로 비어 있던 것을 재사용.
+        self._act_ai_svg = self._make_action("AI SVG 에셋 생성…", "generate",
+            self._insert_ai_svg_asset, "Ctrl+Shift+A")
+        for a in (self._act_img, self._act_mmd, self._act_ai_svg):
             i.addAction(a)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
@@ -428,7 +432,7 @@ class _UIBuildMixin:
         tb.addSeparator()
 
         # 삽입(&I)
-        for a in (self._act_tb, self._act_tbl, self._act_img, self._act_mmd):
+        for a in (self._act_tb, self._act_tbl, self._act_img, self._act_mmd, self._act_ai_svg):
             tb.addAction(a)
         tb.addSeparator()
 

@@ -24,17 +24,18 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
     QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
 )
+from PyQt6.QtSvg import QSvgRenderer
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _svg_icon, _svg_icon_pixmap,
-    _nearest_border,
+    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon, _svg_icon,
+    _svg_icon_pixmap, _nearest_border,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
-from easycad.canvas.host_widgets import _clipboard_pixmap, _act_icon, _ACCENT_CORAL
+from easycad.canvas.host_widgets import _clipboard_pixmap, _act_icon, _ACCENT_CORAL, _ICON_COLOR
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, render_preview, _list_title_frames
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
@@ -42,7 +43,9 @@ from easycad.fileio.document import save_document, load_document, load_document_
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
+from easycad.fileio.svg_import import parse_svg_string
 from easycad.ai import gateway as gw
+from easycad.ai.text_to_svg import generate_svg
 
 
 # ---------------------------------------------------------------------------
@@ -851,4 +854,231 @@ class _AIGatewaySettingsDialog(QDialog):
         gw.store_base_url(self.base_url())
         gw.store_api_key(self.api_key())
         self.accept()
+
+
+# ---------------------------------------------------------------------------
+# [§8 항목20 B단계, 2026-08-14] AI SVG 에셋 생성 — 텍스트 설명 → gpt/gemini 후보 → 클릭
+# 선택 → 삽입(신규) 또는 도형 대체. Mermaid 다이얼로그와 통합하지 않고 별도 다이얼로그
+# (계획서 확정 — 소비처가 다름: Mermaid는 캔버스 전체 레이아웃 대체, SVG는 도형 1개
+# 생성/대체). 코랄 버튼 QSS 등 스타일만 그쪽 관례를 재사용.
+# ---------------------------------------------------------------------------
+
+def _render_svg_candidate_pixmap(svg_text: str, size: int) -> QPixmap | None:
+    """후보 미리보기 렌더 — 원본 SVG를 그대로 QSvgRenderer로 그리지 않고, 실제 삽입 때와
+    동일한 파서(`parse_svg_string`)로 아이템을 만들어 임시 씬에 얹은 뒤 우리 펜(중립
+    잉크색·NoBrush)으로 렌더한다. 프롬프트가 "색은 지정 안 해도 됨"을 허용하는데(
+    `svg_import.py`가 원래 색을 애초에 무시하는 설계 — 항상 앱이 다시 칠함), 원본 SVG를
+    그대로 QSvgRenderer로 렌더하면 SVG 기본값(stroke:none)상 선-아트가 통째로 안 보이거나
+    반대로 닫힌 도형은 기본 fill:black 검은 덩어리로 나올 수 있다 — A단계 실측 때 진단
+    스크립트가 실제로 겪은 함정과 같은 종류(`docs/history/2026-08.md` "§8 항목20" 참조).
+    미리보기와 실제 삽입 결과가 달라지면 신뢰할 수 없으므로 항상 같은 경로로 렌더한다.
+    파싱 실패·빈 결과면 None(호출부가 "미리보기 실패" 표시)."""
+    try:
+        items, vb = parse_svg_string(svg_text)
+    except Exception:
+        return None
+    if not items:
+        return None
+    scene = QGraphicsScene()
+    pen = QPen(_ICON_COLOR, 1.5)
+    for it in items:
+        if not isinstance(it, _TextItem):
+            it.setPen(pen)
+            if hasattr(it, "setBrush"):
+                it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        scene.addItem(it)
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    margin = 6.0
+    target = QRectF(margin, margin, size - 2 * margin, size - 2 * margin)
+    source = scene.itemsBoundingRect()
+    if source.width() > 0 and source.height() > 0:
+        scene.render(p, target, source, Qt.AspectRatioMode.KeepAspectRatio)
+    p.end()
+    return pm
+
+
+class _SvgCandidateCard(QFrame):
+    """후보 1개 카드 — 썸네일 + 모델명, 클릭하면 부모(`_SvgAssetDialog._pick_card`)에
+    선택을 알린다(단일 선택, 코랄 테두리로 표시)."""
+
+    def __init__(self, model_label: str, svg_text: str, pixmap: QPixmap | None,
+                on_pick, parent=None):
+        super().__init__(parent)
+        self._svg_text = svg_text
+        self._on_pick = on_pick
+        self._selected = False
+        self.setFixedSize(120, 140)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(6, 6, 6, 6)
+        thumb = QLabel(self)
+        thumb.setFixedSize(100, 100)
+        thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if pixmap is not None:
+            thumb.setPixmap(pixmap)
+        else:
+            thumb.setText("(미리보기 실패)")
+            thumb.setWordWrap(True)
+        lay.addWidget(thumb)
+        name = QLabel(model_label, self)
+        name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        name.setStyleSheet("font-size:11px;")
+        lay.addWidget(name)
+        self._apply_style()
+
+    def svg_text(self) -> str:
+        return self._svg_text
+
+    def set_selected(self, selected: bool):
+        self._selected = selected
+        self._apply_style()
+
+    def _apply_style(self):
+        border = _ACCENT_CORAL if self._selected else "rgba(128,128,128,90)"
+        width = 2 if self._selected else 1
+        self.setStyleSheet(
+            f"QFrame {{ border:{width}px solid {border}; border-radius:8px; }}")
+
+    def mousePressEvent(self, e):
+        self._on_pick(self)
+        super().mousePressEvent(e)
+
+
+class _SvgAssetDialog(QDialog):
+    """AI SVG 에셋 생성 — 대상 설명 한 줄 + gpt/gemini 체크박스(모델당 후보 1개, 2026-08-14
+    deep-interview 확정) + 생성 버튼 + 후보 카드 가로 나열(클릭 선택) + OK/Cancel. 진입점
+    2곳(메뉴 삽입·우클릭 대체)이 이 다이얼로그를 그대로 공유한다 — 호출부가 `selected_svg()`
+    결과를 각자의 방식(새로 삽입 vs 기존 도형 대체)으로 소비.
+
+    진행 표시는 동기 호출 + `WaitCursor`(2026-08-14 deep-interview 확정) — 이 기능
+    착수 시점엔 이미 프로젝트가 옛 QThread 워커(`host_ai.py._AISketchWorker`, §8 항목18
+    C단계)를 폐기하고 Mermaid AI 보조 생성도 `_MermaidDialog._on_ai_clicked`처럼 동기
+    호출로 정리한 뒤였다(2026-08-12) — 그 판단을 그대로 계승. 체크한 모델을 순차 호출
+    하므로 최악(gpt+gemini 둘 다, gemini 20~28초)엔 그만큼 블로킹되지만, 이 다이얼로그
+    자체가 모달이라 별도 진행률 UI 없이 대기 커서만으로 충분하다고 판단."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("AI SVG 에셋 생성")
+        self.setMinimumWidth(440)
+        self._candidates: list[tuple[_SvgCandidateCard, str, str]] = []
+        self._selected_card: _SvgCandidateCard | None = None
+        lay = QVBoxLayout(self)
+
+        lay.addWidget(QLabel("생성할 대상(예: BNC 커넥터 아이콘):", self))
+        self._prompt_edit = QLineEdit(self)
+        self._prompt_edit.setPlaceholderText("예: 야기 안테나 아이콘")
+        self._prompt_edit.returnPressed.connect(self._on_generate_clicked)
+        lay.addWidget(self._prompt_edit)
+
+        model_row = QHBoxLayout()
+        self._gpt_check = QCheckBox(f"GPT ({gw.TEXT_RECOMMEND_1})", self)
+        self._gpt_check.setChecked(True)
+        self._gemini_check = QCheckBox(f"Gemini ({gw.TEXT_RECOMMEND_2})", self)
+        self._gemini_check.setChecked(True)
+        model_row.addWidget(self._gpt_check)
+        model_row.addWidget(self._gemini_check)
+        model_row.addStretch(1)
+        self._gen_btn = QToolButton(self)
+        self._gen_btn.setIcon(_act_icon("generate"))
+        self._gen_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._gen_btn.setText("생성")
+        self._gen_btn.setToolTip("생성 (Enter)")
+        self._gen_btn.clicked.connect(self._on_generate_clicked)
+        self._gen_btn.setStyleSheet(_CORAL_BTN_QSS)
+        model_row.addWidget(self._gen_btn)
+        lay.addLayout(model_row)
+
+        self._candidates_row = QHBoxLayout()
+        self._candidates_row.addStretch(1)
+        lay.addLayout(self._candidates_row)
+
+        self._hint_label = QLabel("후보를 클릭해 선택하세요.", self)
+        self._hint_label.setStyleSheet("color:#8a8a8a; font-size:11px;")
+        self._hint_label.setVisible(False)
+        lay.addWidget(self._hint_label)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        self._ok_btn = btns.button(QDialogButtonBox.StandardButton.Ok)
+        self._ok_btn.setEnabled(False)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+    def selected_svg(self) -> str:
+        return self._selected_card.svg_text() if self._selected_card else ""
+
+    def _checked_models(self) -> list[str]:
+        out = []
+        if self._gpt_check.isChecked():
+            out.append(gw.TEXT_RECOMMEND_1)
+        if self._gemini_check.isChecked():
+            out.append(gw.TEXT_RECOMMEND_2)
+        return out
+
+    def _on_generate_clicked(self):
+        subject = self._prompt_edit.text().strip()
+        if not subject:
+            QMessageBox.information(self, "AI SVG 에셋 생성", "생성할 대상을 입력하세요.")
+            return
+        models = self._checked_models()
+        if not models:
+            QMessageBox.information(self, "AI SVG 에셋 생성", "모델을 하나 이상 체크하세요.")
+            return
+        key = gw.resolve_api_key()
+        if not key:
+            QMessageBox.warning(self, "AI SVG 에셋 생성",
+                                "게이트웨이 API 키가 없습니다. 먼저 설정해 주세요.")
+            return
+        base_url = gw.resolve_base_url()
+        self._clear_candidates()
+        self._gen_btn.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        errors = []
+        try:
+            for model in models:
+                try:
+                    svg_text, used = generate_svg(key, subject, model=model, base_url=base_url)
+                except Exception as e:  # noqa: BLE001 — 모델별 개별 실패, 나머지는 계속 시도
+                    errors.append(f"{model}: {e}")
+                    continue
+                self._add_candidate(used, svg_text)
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._gen_btn.setEnabled(True)
+        if errors and not self._candidates:
+            QMessageBox.warning(self, "AI SVG 에셋 생성",
+                                "생성에 실패했습니다:\n" + "\n".join(errors))
+        elif errors:
+            QMessageBox.warning(self, "AI SVG 에셋 생성",
+                                "일부 모델이 실패했습니다(성공한 후보만 표시):\n"
+                                + "\n".join(errors))
+        if self._candidates:
+            self._hint_label.setVisible(True)
+            self._pick_card(self._candidates[0][0])   # 첫 성공 후보를 기본 선택
+
+    def _clear_candidates(self):
+        for card, _svg, _model in self._candidates:
+            card.setParent(None)
+            card.deleteLater()
+        self._candidates = []
+        self._selected_card = None
+        self._ok_btn.setEnabled(False)
+        self._hint_label.setVisible(False)
+
+    def _add_candidate(self, model_used: str, svg_text: str):
+        pm = _render_svg_candidate_pixmap(svg_text, 100)
+        card = _SvgCandidateCard(model_used, svg_text, pm, self._pick_card, self)
+        self._candidates_row.insertWidget(self._candidates_row.count() - 1, card)
+        self._candidates.append((card, svg_text, model_used))
+
+    def _pick_card(self, card: _SvgCandidateCard):
+        for c, _svg, _model in self._candidates:
+            c.set_selected(c is card)
+        self._selected_card = card
+        self._ok_btn.setEnabled(True)
 

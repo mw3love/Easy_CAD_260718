@@ -26,6 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from easycad.ai import gateway as gw
+# [B단계, 2026-08-14 후속] 프롬프트 빌더·코드펜스 벗기기는 이제 easycad/ai/text_to_svg.py로
+# 승격됐다(앱 UI가 실제로 쓰는 모듈) — 이 스크립트는 그걸 재사용해 실측용 얇은 CLI로 남는다.
+from easycad.ai.text_to_svg import build_prompt, extract_svg
 
 # KBS 방송 송신소 계통도에서 실제로 쓰일 법한 아이콘들 — 이 프로젝트의 심볼 팔레트
 # 도메인(안테나·증폭기·랙 등, docs/history/2026-08.md "심볼 종류 추가" 참조)과 맞춤.
@@ -35,40 +38,6 @@ DEFAULT_PROMPTS = [
     "압력/전력 게이지(미터) 아이콘",
     "송신기 랙 장비 아이콘",
 ]
-
-# svg_import.py가 실제로 지원/미지원하는 것을 그대로 프롬프트 규칙으로 옮김(모듈 docstring
-# 13~22줄 참조) — "모델이 예쁘게 그릴 수 있는가"가 아니라 "우리 파서가 받을 수 있는가".
-_SVG_PROMPT_TEMPLATE = """다음 대상을 나타내는 간단한 선(line-art) 아이콘을 SVG로 그려라.
-
-대상: {subject}
-
-규칙(반드시 지킬 것 — 이 SVG는 전용 파서로 다시 읽어들여 편집 가능한 도형으로 변환된다):
-- 루트 <svg>에 viewBox="0 0 W H" 속성을 반드시 넣을 것(W·H는 100 내외 정수 권장).
-- 오직 이 요소만 쓸 것: <line> <rect> <circle> <ellipse> <polyline> <polygon> <path> <text>.
-  <g>, transform 속성, <use>, <defs>, 그라디언트, 클립패스, 이미지 임베드는 절대 쓰지 말 것
-  (전부 이동/회전 없이 절대좌표로, 최상위 요소로만 평평하게 나열).
-- <path>의 d 속성은 M/L/H/V/Q/C/S/T/A/Z 명령만 쓰고, A(호) 명령의 large-arc-flag·
-  sweep-flag는 반드시 공백이나 쉼표로 다른 숫자와 구분할 것(예: "0 1" — "01"처럼 붙여 쓰지 말 것).
-- 채움(fill)·선(stroke) 색은 지정하지 않아도 된다(가져온 뒤 앱이 다시 칠한다).
-- 다른 설명 없이 SVG 코드만 출력하라(```svg 코드블록으로 감싸도 되고 안 감싸도 됨).
-"""
-
-
-def build_prompt(subject: str) -> str:
-    return _SVG_PROMPT_TEMPLATE.format(subject=subject)
-
-
-def extract_svg(raw: str) -> str:
-    """모델 응답에서 SVG 텍스트만 꺼낸다 — text_to_mermaid.extract_mermaid와 동일 패턴
-    (```svg 코드펜스가 섞여 나오면 벗긴다)."""
-    txt = raw.strip()
-    if txt.startswith("```"):
-        lines = txt.split("\n")
-        lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        txt = "\n".join(lines).strip()
-    return txt
 
 
 def try_parse(svg_text: str):

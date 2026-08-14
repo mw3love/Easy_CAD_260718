@@ -39,7 +39,7 @@ from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
 from easycad.canvas.host_widgets import _ARROW_KIND_LABELS, _ARROW_KIND_TOOL, _arrow_kind_of
-from easycad.canvas.host_dialogs import _CableNumberDialog
+from easycad.canvas.host_dialogs import _CableNumberDialog, _SvgAssetDialog
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
@@ -83,6 +83,11 @@ class _ContextMixin:
             menu.addSeparator()
             if len(sel) == 1:
                 menu.addAction("스타일 복사\tCtrl+Alt+C", self.copy_style_from_selection)
+                # [§8 항목20 B단계] AI SVG 대체 — 도형 바꾸기(_build_swap_menu)와 같은
+                # 대상 타입(사각형/원/심볼)만 허용. 화살표·라벨·표·용지틀은 "대체"라는
+                # 개념 자체가 안 맞아 제외.
+                if isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem)):
+                    menu.addAction("SVG로 생성...", lambda it=sel[0]: self._generate_svg_replace(it))
             if has_sel and has_style_clip:
                 menu.addAction("스타일 붙여넣기\tCtrl+Alt+V", self.paste_style_to_selection)
         if len(self._align_targets()) >= 2:      # [M5] 여럿 선택 시만 정렬/분배 서브메뉴
@@ -331,6 +336,44 @@ class _ContextMixin:
         self._push_entry(ops)
         self._scene.clearSelection()
         new.setSelected(True)
+        self._refresh_properties()
+
+
+    def _generate_svg_replace(self, item):
+        """[§8 항목20 B단계] 선택 도형을 AI SVG로 대체 — 대체 도형 바운딩박스 긴 변 기준
+        리스케일(SVG 자체 종횡비는 유지, 2026-08-14 deep-interview 확정), 중심 위치 유지.
+        연결 화살표는 `_swap_shape`와 달리 재바인딩하지 않는다 — 계획서 확정 스코프:
+        `delete_selection()`이 이미 "도형만 지우면 화살표가 `sh.scene() is not None`
+        가드에 걸려 그 자리에 얼어붙는다"는 동작을 공짜로 제공하므로, 여기선 단순
+        remove+create만 하나의 undo 엔트리로 묶으면 같은 결과가 난다(별도 언바인드 불필요).
+        `item.rect()` 기반 bbox 계산은 `_make_swapped`와 동일 관례 — `sceneBoundingRect()`
+        대신 쓰는 이유는 그쪽이 펜 두께만큼 부풀려진 값이라 실제 도형 크기가 아니기
+        때문(`docs/pitfalls.md` "좌표계·변환" 참조)."""
+        rect_scene = item.mapToScene(QRectF(item.rect())).boundingRect()
+        long_side = max(rect_scene.width(), rect_scene.height())
+        center = rect_scene.center()
+        dlg = _SvgAssetDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        svg_text = dlg.selected_svg()
+        if not svg_text:
+            return
+        try:
+            new_items = self._svg_text_to_items(svg_text, long_side, center)
+        except Exception as e:  # noqa: BLE001 — AI 응답 파싱 실패(구조 손상 등)
+            QMessageBox.warning(self, "SVG로 생성", f"생성 실패: {e}")
+            return
+        if not new_items:
+            QMessageBox.information(self, "SVG로 생성", "가져올 도형이 없습니다.")
+            return
+        self._scene.removeItem(item)
+        for it in new_items:
+            self._scene.addItem(it)
+        ops = [("remove", item)] + [("create", it) for it in new_items]
+        self._push_entry(ops)
+        self._scene.clearSelection()
+        for it in new_items:
+            it.setSelected(True)
         self._refresh_properties()
 
     # ---- [Phase 6 M5] 정렬 / 분배 -------------------------------------------
