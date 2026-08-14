@@ -314,8 +314,7 @@ class _UIBuildMixin:
     # 파일의 확장자로 분기한다. 저장 다이얼로그의 기본 필터는 DXF를 열었던 직후라도
     # 항상 .ecad(무손실)가 먼저 뜨도록 유지 — DXF 가져오기/내보내기는 _doc_path를
     # 갱신하지 않는다(기존 동작 그대로).
-    _DOC_FILTER = "Easy CAD 문서 (*.ecad);;DXF 파일 (*.dxf)"
-    # [§8 DWG 자동변환, 2026-08-14] .dwg는 저장 대상 아님(내보내기는 DXF만) — 열기 필터에만 추가.
+    _DOC_FILTER = "Easy CAD 문서 (*.ecad);;DXF 파일 (*.dxf);;DWG 파일 (*.dwg)"
     _OPEN_FILTER = ("지원 파일 (*.ecad *.dxf *.dwg);;Easy CAD 문서 (*.ecad);;"
                     "DXF 파일 (*.dxf);;DWG 파일 (*.dwg)")
 

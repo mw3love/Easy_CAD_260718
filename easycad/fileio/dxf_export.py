@@ -293,11 +293,10 @@ def _export_badge(msp, it):
     mtext.dxf.attachment_point = 5       # middle-center
 
 
-def export_dxf(scene, path: str) -> bool:
-    """scene의 모든 아이템을 DXF로 저장. 성공 시 True.
-
-    라벨(_TextItem 자식)은 EC_LABEL 레이어, 독립 텍스트는 EC_TEXT 레이어로 구분한다.
-    """
+def _build_dxf_doc(scene):
+    """scene → ezdxf.Drawing(저장 전 상태). export_dxf/export_dwg가 공유한다.
+    [§8 DWG 자동변환 후속, 2026-08-14] DWG 내보내기가 필요해지며 저장 직전까지의 변환
+    로직을 추출 — 도형→엔티티 매핑 자체는 한 글자도 안 바뀜(순수 리팩터)."""
     import ezdxf
     doc = ezdxf.new("R2010")             # true_color·MTEXT·SPLINE 지원 버전
     doc.header["$LWDISPLAY"] = 1          # [M2 #3] 선가중치 표시 ON — 없으면 AutoCAD가 두께 숨김
@@ -335,5 +334,30 @@ def export_dxf(scene, path: str) -> bool:
         except Exception:  # noqa: BLE001 — 한 객체 실패가 전체 export를 막지 않게.
             continue
 
+    return doc
+
+
+def export_dxf(scene, path: str) -> bool:
+    """scene의 모든 아이템을 DXF로 저장. 성공 시 True.
+
+    라벨(_TextItem 자식)은 EC_LABEL 레이어, 독립 텍스트는 EC_TEXT 레이어로 구분한다.
+    """
+    doc = _build_dxf_doc(scene)
     doc.saveas(path)
+    return True
+
+
+def export_dwg(scene, path: str) -> bool:
+    """[§8 DWG 자동변환 후속, 2026-08-14] scene을 DWG로 저장. 성공 시 True.
+
+    가져오기(`dxf_import._load_ezdxf_doc`)와 대칭 — `ezdxf.addons.odafc`가 이미 내장한
+    `export_dwg()`를 재사용한다(내부적으로 임시 DXF를 거쳐 ODA File Converter로 변환, 새
+    의존성 없음). 미설치 시 `odafc.ODAFCNotInstalledError` — 호출부(`host_fileio`)가
+    가져오기와 같은 안내+경로지정 UI로 처리한다. `replace=True`는 저장 다이얼로그가 이미
+    OS 네이티브 "덮어쓸까요?" 확인을 거친 뒤라(기존 `export_dxf`의 `doc.saveas()`도 조용히
+    덮어쓰는 것과 동일한 기대) 여기서 또 막을 이유가 없어서다.
+    """
+    from ezdxf.addons import odafc
+    doc = _build_dxf_doc(scene)
+    odafc.export_dwg(doc, path, replace=True)
     return True

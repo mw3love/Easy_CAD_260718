@@ -35,7 +35,7 @@ from easycad.canvas.annotator_core import (
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
 from easycad.fileio.pdf_export import export_pdf
-from easycad.fileio.dxf_export import export_dxf
+from easycad.fileio.dxf_export import export_dxf, export_dwg
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.svg_import import parse_svg_items
 from easycad.fileio.document import save_document, load_document, load_document_layers, dict_to_item
@@ -228,15 +228,19 @@ class _FileIOMixin:
 
     def _save_doc(self):
         """[통합] 저장 다이얼로그에서 고른 확장자로 분기 — 기본 필터는 항상 .ecad
-        (DXF를 방금 열었어도 마찬가지, deep-interview 2026-07-29 결정)."""
+        (DXF/DWG를 방금 열었어도 마찬가지, deep-interview 2026-07-29 결정).
+        [§8 DWG 자동변환 후속, 2026-08-14] .dwg도 .dxf와 같은 손실 경고를 거쳐 내보낸다."""
         path, _ = QFileDialog.getSaveFileName(
             self, "저장", self._doc_path or "", self._DOC_FILTER)
         if not path:
             return
-        if path.lower().endswith(".dxf"):
+        if path.lower().endswith((".dxf", ".dwg")):
             if not self._confirm_dxf_save_once():
                 return
-            self._do_export_dxf(path)
+            if path.lower().endswith(".dwg"):
+                self._do_export_dwg(path)
+            else:
+                self._do_export_dxf(path)
         else:
             if not path.lower().endswith(".ecad"):
                 path += ".ecad"
@@ -254,14 +258,16 @@ class _FileIOMixin:
 
 
     def _confirm_dxf_save_once(self) -> bool:
-        """[통합] DXF 저장 손실 경고 — 앱 생애 처음 1회만(QSettings 플래그), 이후는 조용히 진행."""
+        """[통합] DXF/DWG 저장 손실 경고 — 앱 생애 처음 1회만(QSettings 플래그), 이후는
+        조용히 진행. [§8 DWG 자동변환 후속, 2026-08-14] DWG도 내부적으로 DXF를 거쳐
+        나가므로(dxf_export.export_dwg) 손실 범위가 동일 — 같은 안내·같은 플래그 공유."""
         settings = QSettings("EasyCAD", "EasyCAD")
         if settings.value("dxf_save_warned", False, type=bool):
             return True
         settings.setValue("dxf_save_warned", True)
         resp = QMessageBox.warning(
-            self, "DXF로 저장",
-            "DXF는 다른 CAD 프로그램과 호환되는 교환 포맷입니다.\n"
+            self, "DXF/DWG로 저장",
+            "DXF·DWG는 다른 CAD 프로그램과 호환되는 교환 포맷입니다.\n"
             "화살표 지속연결·라벨 위치·심볼 종류·레이어 소속·포트 부착 관계 등 Easy CAD "
             "전용 정보는 저장되지 않습니다(도형·텍스트·색상·두께·좌표는 보존 — 포트가 "
             "만든 테두리 끊김도 실제 선분으로는 보존되지만, 다시 열면 개별 선·도형일 뿐 "
@@ -300,6 +306,42 @@ class _FileIOMixin:
             QMessageBox.warning(self, "DXF로 저장", f"저장에 실패했습니다:\n{e}")
             return
         QMessageBox.information(self, "DXF로 저장", f"저장 완료:\n{path}")
+
+
+    def _do_export_dwg(self, path: str):
+        """[§8 DWG 자동변환 후속, 2026-08-14] DWG로 저장 — `_do_open_dxf`의 ODAFC 미설치
+        처리(안내+경로지정 후 1회 재시도)와 같은 구조. 코드 공유 대신 이미 검증된
+        `_do_open_dxf`를 안 건드리는 쪽을 택했다(§8 항목9 구현 관례 그대로)."""
+        if self._scene.itemsBoundingRect().isEmpty():
+            QMessageBox.information(self, "DWG로 저장", "저장할 객체가 없습니다.")
+            return
+        try:
+            self._export_dwg_waited(path)
+        except Exception as e:  # noqa: BLE001
+            if self._is_odafc_missing(e):
+                if not self._prompt_odafc_missing():
+                    return
+                try:
+                    self._export_dwg_waited(path)
+                except Exception as e2:  # noqa: BLE001
+                    QMessageBox.warning(self, "DWG로 저장", f"저장에 실패했습니다:\n{e2}")
+                    return
+            else:
+                QMessageBox.warning(self, "DWG로 저장", f"저장에 실패했습니다:\n{e}")
+                return
+        QMessageBox.information(self, "DWG로 저장", f"저장 완료:\n{path}")
+
+
+    def _export_dwg_waited(self, path: str):
+        """[§8 DWG 자동변환 후속] export_dwg 얇은 래퍼 — 대기 커서+상태바(외부 프로세스
+        호출이라 몇 초 걸릴 수 있음, `_import_dxf_waited`와 동일 관례)."""
+        self.statusBar().showMessage("DWG 변환 중… (ODA File Converter)")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            export_dwg(self._scene, path)
+        finally:
+            QApplication.restoreOverrideCursor()
 
     # ---- 이미지 삽입 (Phase 4) ---------------------------------------------
     _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".gif")

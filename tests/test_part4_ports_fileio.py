@@ -233,6 +233,40 @@ def test_dxf_export():
 
 
 
+def test_dwg_export_routes_through_odafc_export_dwg():
+    # [§8 DWG 자동변환 후속, 2026-08-14] export_dwg가 _build_dxf_doc(export_dxf와 공유)로
+    # 만든 doc을 odafc.export_dwg에 그대로 넘기는지 확인 — 실제 ODA File Converter는 테스트
+    # 환경에 없으므로 odafc.export_dwg 자체를 모킹(dispatch·doc 내용만 검증, 외부 프로세스
+    # 호출은 검증 범위 밖).
+    from PyQt6.QtGui import QPen
+    from ezdxf.addons import odafc
+    from easycad.fileio.dxf_export import export_dwg
+
+    w = CanvasWindow()
+    sc = w._scene
+    rect = _RectItem(QRectF(0, 0, 100, 60))
+    rect.setPen(QPen(QColor("red"))); rect.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+    sc.addItem(rect)
+
+    calls = []
+    orig_export_dwg = odafc.export_dwg
+
+    def fake_export_dwg(doc, path, *a, **k):
+        calls.append((path, k.get("replace")))
+        kinds = {e.dxftype() for e in doc.modelspace()}
+        assert "LWPOLYLINE" in kinds   # rect가 doc에 실제로 들어있는지(공유 로직 확인)
+
+    odafc.export_dwg = fake_export_dwg
+    try:
+        out_path = os.path.join(_TMP, "export_dwg_target.dwg")
+        assert export_dwg(sc, out_path) is True
+    finally:
+        odafc.export_dwg = orig_export_dwg
+    assert calls == [(out_path, True)]   # replace=True로 호출됨
+
+
+
+
 def test_new_symbol_kinds_export_dxf():
     # 심볼 확장(표준 4종: manual_input/manual_op/display/delay)의 다중 서브패스 경로가
     # DXF export에서 예외 없이 폴리라인으로 떨어지는지 확인. 곡선(화면출력 cubicTo·지연

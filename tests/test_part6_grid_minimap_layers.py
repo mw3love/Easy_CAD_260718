@@ -720,7 +720,8 @@ def test_do_open_export_dxf_roundtrip_no_doc_path():
 
 def test_save_doc_dispatches_by_extension():
     # [신규기능] 옛 「DXF 내보내기」 전용 메뉴·단축키(Ctrl+Shift+D) 폐지 — 저장(Ctrl+S) 하나가
-    # 파일 다이얼로그에서 고른 확장자로 _do_save_ecad/_do_export_dxf에 분기하는지 확인.
+    # 파일 다이얼로그에서 고른 확장자로 _do_save_ecad/_do_export_dxf/_do_export_dwg에
+    # 분기하는지 확인(.dwg는 §8 DWG 자동변환 후속, 2026-08-14).
     from PyQt6.QtWidgets import QFileDialog
     from PyQt6.QtCore import QSettings
     QSettings("EasyCAD", "EasyCAD").setValue("dxf_save_warned", True)   # 손실 확인창 스킵(헤드리스)
@@ -728,17 +729,29 @@ def test_save_doc_dispatches_by_extension():
     calls = []
     w._do_save_ecad = lambda path: calls.append(("ecad", path))
     w._do_export_dxf = lambda path: calls.append(("dxf", path))
+    w._do_export_dwg = lambda path: calls.append(("dwg", path))
     orig = QFileDialog.getSaveFileName
     try:
         QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: ("out.ecad", ""))
         w._save_doc()
         QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: ("out.dxf", ""))
         w._save_doc()
+        QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: ("out.dwg", ""))
+        w._save_doc()
         QFileDialog.getSaveFileName = staticmethod(lambda *a, **k: ("out_noext", ""))
         w._save_doc()   # 확장자 없이 저장 → .ecad 기본(deep-interview 결정) 적용 확인
     finally:
         QFileDialog.getSaveFileName = orig
-    assert calls == [("ecad", "out.ecad"), ("dxf", "out.dxf"), ("ecad", "out_noext.ecad")]
+    assert calls == [("ecad", "out.ecad"), ("dxf", "out.dxf"), ("dwg", "out.dwg"),
+                     ("ecad", "out_noext.ecad")]
+
+
+
+
+def test_doc_filter_includes_dwg():
+    # [§8 DWG 자동변환 후속, 2026-08-14] 저장 다이얼로그 필터에도 .dwg가 노출돼야 함.
+    w = CanvasWindow()
+    assert "*.dwg" in w._DOC_FILTER
 
 
 
@@ -965,6 +978,112 @@ def test_prompt_odafc_missing_browse_cancel_dialog_returns_false():
     finally:
         QMessageBox.exec, QMessageBox.clickedButton = orig_exec, orig_clicked
         QFileDialog.getOpenFileName = orig_open
+
+
+
+
+def test_do_export_dwg_retries_after_odafc_missing_prompt_accepted():
+    # [§8 DWG 자동변환 후속, 2026-08-14] 내보내기도 가져오기와 같은 재시도 구조 —
+    # export_dwg는 host_fileio 모듈 전역으로 패치(그 모듈이 부르는 이름).
+    # ⚠ 성공 경로는 QMessageBox.information("저장 완료")을 띄운다 — 헤드리스에서 실제
+    # .exec()는 영원히 블로킹되므로 반드시 모킹(2026-07-29 사고, `_shared` 관례 재사용).
+    import easycad.canvas.host_fileio as hf
+    from PyQt6.QtWidgets import QMessageBox
+    from ezdxf.addons.odafc import ODAFCNotInstalledError
+    orig_export_dwg = hf.export_dwg
+    orig_info = QMessageBox.information
+    calls = []
+
+    def fake_export_dwg(scene, path):
+        calls.append(path)
+        if len(calls) == 1:
+            raise ODAFCNotInstalledError("not installed")
+        return True
+
+    hf.export_dwg = fake_export_dwg
+    QMessageBox.information = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=0, y=0, ww=50, hh=30)   # 빈 씬 가드에 안 걸리게
+    w._prompt_odafc_missing = lambda: True
+    try:
+        w._do_export_dwg("out.dwg")
+    finally:
+        hf.export_dwg = orig_export_dwg
+        QMessageBox.information = orig_info
+    assert calls == ["out.dwg", "out.dwg"]   # 안내 후 1회 재시도
+
+
+
+
+def test_do_export_dwg_no_retry_when_prompt_declined():
+    import easycad.canvas.host_fileio as hf
+    from ezdxf.addons.odafc import ODAFCNotInstalledError
+    orig_export_dwg = hf.export_dwg
+    calls = []
+
+    def fake_export_dwg(scene, path):
+        calls.append(path)
+        raise ODAFCNotInstalledError("not installed")
+
+    hf.export_dwg = fake_export_dwg
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=0, y=0, ww=50, hh=30)
+    w._prompt_odafc_missing = lambda: False
+    try:
+        w._do_export_dwg("out.dwg")
+    finally:
+        hf.export_dwg = orig_export_dwg
+    assert calls == ["out.dwg"]   # 재시도 없음
+
+
+
+
+def test_do_export_dwg_empty_scene_shows_info_without_export_call():
+    # ⚠ 빈 씬 가드도 QMessageBox.information("저장할 객체가 없습니다")을 띄운다 — 모킹 필요.
+    import easycad.canvas.host_fileio as hf
+    from PyQt6.QtWidgets import QMessageBox
+    orig_export_dwg = hf.export_dwg
+    orig_info = QMessageBox.information
+    calls = []
+    hf.export_dwg = lambda scene, path: calls.append(path)
+    QMessageBox.information = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
+    w = CanvasWindow()   # 빈 씬
+    try:
+        w._do_export_dwg("out.dwg")
+    finally:
+        hf.export_dwg = orig_export_dwg
+        QMessageBox.information = orig_info
+    assert calls == []   # 빈 씬이면 export_dwg 자체를 호출 안 함(기존 DXF와 동일 가드)
+
+
+
+
+def test_do_export_dwg_generic_failure_shows_dwg_titled_warning():
+    # [§8 DWG 자동변환 후속] ODAFC 미설치가 아닌 일반 실패는 안내 없이 "DWG로 저장" 제목의
+    # 경고로 바로 새야 한다.
+    import easycad.canvas.host_fileio as hf
+    from PyQt6.QtWidgets import QMessageBox
+    orig_export_dwg = hf.export_dwg
+    orig_warning = QMessageBox.warning
+    titles = []
+
+    def fake_export_dwg(scene, path):
+        raise RuntimeError("disk full")
+
+    def fake_warning(parent, title, text):
+        titles.append(title)
+        return QMessageBox.StandardButton.Ok
+
+    hf.export_dwg = fake_export_dwg
+    QMessageBox.warning = staticmethod(fake_warning)
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=0, y=0, ww=50, hh=30)
+    try:
+        w._do_export_dwg("out.dwg")
+    finally:
+        hf.export_dwg = orig_export_dwg
+        QMessageBox.warning = orig_warning
+    assert titles == ["DWG로 저장"]
 
 
 
