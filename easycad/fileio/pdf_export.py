@@ -32,12 +32,28 @@ def _selection_rect(scene) -> QRectF:
 
 
 def _find_title_frame(scene):
-    """[Phase 4] 씬에 표제란/용지틀이 있으면 그 아이템(없으면 None). 순환 임포트 방지 위해 지연 임포트."""
+    """[Phase 4] 씬에 표제란/용지틀이 있으면 그 아이템(없으면 None). 순환 임포트 방지 위해 지연 임포트.
+    [다중 페이지 지원, 2026-08-14] 프레임이 여러 개면 `scene.items()` 순서상 맨 앞의 것 —
+    호출부가 특정 프레임을 명시하지 않은 기존 호출(`export_pdf`/`render_preview`를 `frame`
+    인자 없이 부르는 테스트·스크립트 등)의 하위호환용. 새 다중 프레임 UI(`_PdfExportDialog`)는
+    `_list_title_frames`로 고른 프레임을 `frame=` 인자로 명시해 이 폴백을 안 탄다."""
     from easycad.canvas.annotator_core import _TitleBlockItem
     for it in scene.items():
         if isinstance(it, _TitleBlockItem):
             return it
     return None
+
+
+def _list_title_frames(scene):
+    """[다중 페이지 지원, 2026-08-14] 씬의 모든 표제란/용지틀을 도면번호순으로 반환
+    (도면번호가 비어있으면 뒤로 — deep-interview 확정, 알파벳순이라 대소문자·숫자 혼용
+    표기는 사용자가 일관된 번호 규칙을 쓴다는 전제). 동률(둘 다 빈 번호 등)은 `scene.items()`
+    순서를 그대로 유지(안정 정렬). PDF 다이얼로그의 프레임 선택 드롭다운이 쓴다."""
+    from easycad.canvas.annotator_core import _TitleBlockItem
+    frames = [it for it in scene.items() if isinstance(it, _TitleBlockItem)]
+    frames.sort(key=lambda fr: (fr._fields.get("number", "").strip() == "",
+                                fr._fields.get("number", "").strip()))
+    return frames
 
 
 def _current_ink_color(it):
@@ -81,14 +97,20 @@ def _restore_swapped_colors(swapped):
 
 
 def _resolve_geometry(scene, page: str, selection_only: bool, margin_mm: float,
-                      orientation: str | None):
+                      orientation: str | None, frame=None):
     """(source, page, landscape, margin_mm) 계산. 출력 대상이 없으면 None.
 
     표제란/용지틀이 있고 전체 출력이면 그 프레임 경계·크기·방향이 항상 우선(`orientation`
     무시 — 프레임이 이미 '이 용지로 낸다'는 결정을 대신하므로, §8 항목14 deep-interview
     2026-08-07 확정). 그 외에는 `orientation`이 주어지면 그대로, 없으면 원본 종횡비로 자동.
-    """
-    frame = None if selection_only else _find_title_frame(scene)
+
+    [다중 페이지 지원, 2026-08-14] `frame`을 명시하면 그 프레임을 그대로 쓴다(씬에 프레임이
+    여러 개일 때 `_PdfExportDialog`가 사용자가 고른 걸 넘긴다). 생략(None)하면 기존처럼
+    `_find_title_frame`(첫 번째 프레임) 자동탐지로 폴백 — 기존 호출부(테스트 등) 무변경."""
+    if not selection_only:
+        frame = frame if frame is not None else _find_title_frame(scene)
+    else:
+        frame = None
     if frame is not None:
         # 용지 프레임 기준: 정확한 용지 경계를 페이지 전체에 맞춤(패드·여백 없음, 종횡비 일치).
         source = frame.mapRectToScene(frame.rect())
@@ -130,15 +152,17 @@ def _paint_scene(scene, painter: QPainter, target: QRectF, source: QRectF):
 
 
 def export_pdf(scene, path: str, page: str = "A4", selection_only: bool = False,
-               margin_mm: float = 10.0, orientation: str | None = None) -> bool:
+               margin_mm: float = 10.0, orientation: str | None = None, frame=None) -> bool:
     """scene을 path에 PDF로 저장. selection_only면 선택영역만. 성공 True.
 
     [Phase 4] 전체 출력이고 씬에 표제란/용지틀이 있으면 그 '용지 경계'를 출력 대상으로
     자동 전환한다(용지 크기·방향도 프레임을 따름). 프레임이 없으면 기존 itemsBoundingRect fit.
     `orientation`("landscape"/"portrait"/None)으로 방향을 수동 지정할 수 있다(프레임 적용 시 무시).
     렌더 전 선택을 잠시 해제해 파란 핸들/점선이 PDF에 찍히지 않게 하고, 끝나면 복원한다.
+    [다중 페이지 지원, 2026-08-14] `frame`으로 여러 프레임 중 하나를 명시할 수 있다(생략 시
+    씬의 첫 프레임 자동탐지, 기존 동작 무변경).
     """
-    geo = _resolve_geometry(scene, page, selection_only, margin_mm, orientation)
+    geo = _resolve_geometry(scene, page, selection_only, margin_mm, orientation, frame)
     if geo is None:
         return False
     source, page, landscape, margin_mm = geo
@@ -170,10 +194,11 @@ def export_pdf(scene, path: str, page: str = "A4", selection_only: bool = False,
 
 def render_preview(scene, page: str = "A4", selection_only: bool = False,
                    margin_mm: float = 10.0, orientation: str | None = None,
-                   max_px: int = 420) -> QPixmap | None:
+                   max_px: int = 420, frame=None) -> QPixmap | None:
     """[§8 항목14] `export_pdf`와 같은 geometry(`_resolve_geometry`)로 미리보기 QPixmap을 렌더.
-    출력 대상이 없으면 None(호출부가 안내 문구로 대체 표시)."""
-    geo = _resolve_geometry(scene, page, selection_only, margin_mm, orientation)
+    출력 대상이 없으면 None(호출부가 안내 문구로 대체 표시).
+    [다중 페이지 지원, 2026-08-14] `frame` — `export_pdf`와 동일(생략 시 자동탐지)."""
+    geo = _resolve_geometry(scene, page, selection_only, margin_mm, orientation, frame)
     if geo is None:
         return None
     source, page, landscape, margin_mm = geo

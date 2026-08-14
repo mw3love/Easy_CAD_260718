@@ -35,7 +35,7 @@ from easycad.canvas.annotator_core import (
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
 from easycad.canvas.host_widgets import _clipboard_pixmap, _act_icon, _ACCENT_CORAL
-from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, render_preview, _find_title_frame
+from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, render_preview, _list_title_frames
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.document import save_document, load_document, load_document_layers
@@ -121,6 +121,18 @@ class _TitleBlockDialog(QDialog):
         return {k: ed.text() for k, ed in self._edits.items()}
 
 
+def _frame_label(frame, fallback_idx: int) -> str:
+    """[다중 페이지 지원, 2026-08-14] PDF 프레임 드롭다운 표시 문구 — "도면번호 - 도면명"
+    (deep-interview 확정). 한쪽만 있으면 있는 쪽만, 둘 다 비면 정렬 후 순번으로 폴백."""
+    num = frame._fields.get("number", "").strip()
+    title = frame._fields.get("title", "").strip()
+    if num and title:
+        return f"{num} - {title}"
+    if num or title:
+        return num or title
+    return f"(이름 없음 #{fallback_idx})"
+
+
 class _PdfExportDialog(QDialog):
     """[§8 항목14, 2026-08-07] PDF 내보내기 — 옛 "전체"/"선택영역" 별도 메뉴 2개를 이 다이얼로그
     하나로 통합. 전체/선택 라디오·용지크기·방향을 고르면 그 즉시 라이브 미리보기가 다시 렌더된다
@@ -128,13 +140,18 @@ class _PdfExportDialog(QDialog):
     있고 "전체 도면"을 고른 상태면 그 프레임이 이미 용지 크기·방향을 정해둔 것이라 용지크기·방향
     컨트롤을 잠그고 프레임 값을 그대로 반영한다(프레임은 크롭 경계+출력 페이지 크기를 정하는
     것일 뿐 내부 도형의 실척 mm을 보장하지 않는다는 걸 사용자와 코드로 확인 후 결정 — 다른
-    크기를 원하면 프레임 자체를 다시 만듦, 기존 UX와 일관)."""
+    크기를 원하면 프레임 자체를 다시 만듦, 기존 UX와 일관).
+
+    [다중 페이지 지원, 2026-08-14] 씬에 프레임이 2개 이상이면 "전체 도면" 옆에 드롭다운이
+    자동으로 나타나 어느 프레임을 낼지 고른다(deep-interview 확정 — 새 라디오 옵션 대신
+    기존 "전체 도면"의 자연스러운 확장). 프레임이 0~1개면 지금까지와 완전히 동일(드롭다운
+    자체가 안 뜸, 무회귀)."""
 
     def __init__(self, parent, scene, has_selection: bool):
         super().__init__(parent)
         self.setWindowTitle("PDF 내보내기")
         self._scene = scene
-        self._frame = _find_title_frame(scene)
+        self._frames = _list_title_frames(scene)
 
         opts = QVBoxLayout()
         self._rb_all = QRadioButton("전체 도면")
@@ -155,6 +172,11 @@ class _PdfExportDialog(QDialog):
         self._frame_note = QLabel("표제란 용지 설정을 따름", self)
         self._frame_note.setVisible(False)
         opts.addWidget(self._frame_note)
+        self._frame_cb = QComboBox(self)   # [다중 페이지] 프레임 2개 이상일 때만 보임(아래 _refresh)
+        for i, fr in enumerate(self._frames):
+            self._frame_cb.addItem(_frame_label(fr, i + 1), fr)
+        self._frame_cb.setVisible(False)
+        opts.addWidget(self._frame_cb)
         opts.addStretch(1)
 
         self._preview = QLabel(self)
@@ -182,29 +204,42 @@ class _PdfExportDialog(QDialog):
         self._rb_all.toggled.connect(self._refresh)
         self._size_cb.currentIndexChanged.connect(self._refresh)
         self._orient_cb.currentIndexChanged.connect(self._refresh)
+        self._frame_cb.currentIndexChanged.connect(self._refresh)   # [다중 페이지]
         self._refresh()
 
     def _selection_only(self) -> bool:
         return self._rb_sel.isChecked()
 
+    def _current_frame(self):
+        """[다중 페이지 지원, 2026-08-14] 프레임 0개=None, 1개=그것, 2개+=드롭다운이 고른 것."""
+        if not self._frames:
+            return None
+        if len(self._frames) == 1:
+            return self._frames[0]
+        return self._frame_cb.currentData()
+
     def _frame_active(self) -> bool:
-        return (not self._selection_only()) and self._frame is not None
+        return (not self._selection_only()) and self._current_frame() is not None
 
     def _refresh(self):
-        active = self._frame_active()
+        frame = self._current_frame()
+        active = (not self._selection_only()) and frame is not None
         self._size_cb.setEnabled(not active)
         self._orient_cb.setEnabled(not active)
         self._frame_note.setVisible(active)
+        # [다중 페이지] 드롭다운은 "전체 도면"이고 프레임이 2개 이상일 때만 노출.
+        self._frame_cb.setVisible(len(self._frames) >= 2 and not self._selection_only())
         if active:
-            idx = self._size_cb.findData(self._frame._size)
+            idx = self._size_cb.findData(frame._size)
             if idx >= 0:
                 self._size_cb.setCurrentIndex(idx)
-            oidx = self._orient_cb.findData(self._frame._orient)
+            oidx = self._orient_cb.findData(frame._orient)
             if oidx >= 0:
                 self._orient_cb.setCurrentIndex(oidx)
         pixmap = render_preview(
             self._scene, page=self._size_cb.currentData(),
             selection_only=self._selection_only(), orientation=self._orient_cb.currentData(),
+            frame=frame if not self._selection_only() else None,
         )
         if pixmap is None:
             self._preview.setPixmap(QPixmap())
@@ -218,6 +253,7 @@ class _PdfExportDialog(QDialog):
             "selection_only": self._selection_only(),
             "page": self._size_cb.currentData(),
             "orientation": self._orient_cb.currentData(),
+            "frame": self._current_frame() if not self._selection_only() else None,
         }
 
 

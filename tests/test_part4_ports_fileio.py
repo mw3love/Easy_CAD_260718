@@ -781,6 +781,123 @@ def test_titleblock_drives_pdf_page():
 
 
 
+def test_insert_titleblock_no_longer_blocks_second_frame():
+    # [다중 페이지 지원, 2026-08-14] 예전엔 이미 하나 있으면 삽입을 거부했으나, 여러 용지틀을
+    # 두고 PDF에서 고르는 워크플로를 위해 그 가드를 없앴다 — 메뉴로 두 번째도 자유롭게 삽입.
+    from PyQt6.QtWidgets import QDialog
+    from easycad.canvas.host_dialogs import _PaperSizeDialog
+    w = CanvasWindow()
+    orig_exec = _PaperSizeDialog.exec
+    _PaperSizeDialog.exec = lambda self: QDialog.DialogCode.Accepted
+    try:
+        w._insert_titleblock()
+        w._insert_titleblock()
+    finally:
+        _PaperSizeDialog.exec = orig_exec
+    frames = [it for it in w._scene.items() if isinstance(it, _TitleBlockItem)]
+    assert len(frames) == 2
+
+
+
+
+def test_list_title_frames_sorts_by_number_empty_last():
+    # [다중 페이지 지원, 2026-08-14] 도면번호순, 빈 번호는 뒤로. 빈 번호끼리의 상대순서는
+    # `scene.items()`의 동률(z값 동일) 순서에 달려 있어(Qt 내부 규약, 우리 계약 아님) 검증
+    # 대상에서 뺀다 — "번호 있는 것만 정확히 정렬됐는가"·"번호 없는 건 전부 뒤로 갔는가"만 확인.
+    from easycad.fileio.pdf_export import _list_title_frames
+    w = CanvasWindow()
+    tb_b = _TitleBlockItem("A3", "landscape", fields={"number": "B-002"})
+    tb_empty1 = _TitleBlockItem("A3", "landscape")
+    tb_a = _TitleBlockItem("A3", "landscape", fields={"number": "A-001"})
+    tb_empty2 = _TitleBlockItem("A3", "landscape")
+    for tb in (tb_b, tb_empty1, tb_a, tb_empty2):
+        w._scene.addItem(tb)
+    ordered = _list_title_frames(w._scene)
+    assert ordered[:2] == [tb_a, tb_b]                       # 번호 있는 것끼리는 정확히 정렬
+    assert set(ordered[2:]) == {tb_empty1, tb_empty2}         # 번호 없는 건 전부 뒤로
+
+
+
+
+def test_frame_label_formats():
+    # [다중 페이지 지원, 2026-08-14] 도면번호·도면명 조합/한쪽만/둘 다 없음 3가지.
+    from easycad.canvas.host_dialogs import _frame_label
+    both = _TitleBlockItem("A2", "landscape", fields={"number": "A-101", "title": "1층 평면도"})
+    only_num = _TitleBlockItem("A2", "landscape", fields={"number": "A-102"})
+    neither = _TitleBlockItem("A2", "landscape")
+    assert _frame_label(both, 1) == "A-101 - 1층 평면도"
+    assert _frame_label(only_num, 1) == "A-102"
+    assert _frame_label(neither, 3) == "(이름 없음 #3)"
+
+
+
+
+def test_pdf_export_dialog_hides_frame_dropdown_with_one_or_zero_frames():
+    # [다중 페이지 지원, 2026-08-14] 무회귀 확인 — 프레임 0개·1개는 드롭다운 자체가 안 뜬다.
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=0, y=0, ww=50, hh=50)
+    dlg0 = _PdfExportDialog(None, w._scene, has_selection=False)
+    assert dlg0._frame_cb.isHidden()
+
+    tb = _TitleBlockItem("A2", "landscape", fields={"number": "A-1"})
+    w._scene.addItem(tb)
+    dlg1 = _PdfExportDialog(None, w._scene, has_selection=False)
+    assert dlg1._frame_cb.isHidden()
+    assert dlg1.result_options()["frame"] is tb
+
+
+
+
+def test_pdf_export_dialog_shows_frame_dropdown_and_switches_geometry():
+    # [다중 페이지 지원, 2026-08-14] 프레임 2개면 드롭다운이 뜨고, 고른 프레임에 따라
+    # 용지 크기/방향/미리보기·result_options()의 frame이 정확히 바뀐다.
+    w = CanvasWindow()
+    tb1 = _TitleBlockItem("A3", "portrait", fields={"number": "A-1"})
+    tb1.setPos(QPointF(0, 0))
+    tb2 = _TitleBlockItem("A4", "landscape", fields={"number": "B-2"})
+    tb2.setPos(QPointF(2000, 0))   # 겹치지 않게 충분히 떨어뜨림
+    w._scene.addItem(tb1)
+    w._scene.addItem(tb2)
+    dlg = _PdfExportDialog(None, w._scene, has_selection=False)
+    assert not dlg._frame_cb.isHidden()
+    assert dlg._frame_cb.count() == 2
+    # 정렬 순서(A-1 먼저)대로 기본 선택 = tb1 → A3 portrait 반영.
+    assert dlg._frame_cb.currentData() is tb1
+    assert dlg._size_cb.currentData() == "A3"
+    assert dlg._orient_cb.currentData() == "portrait"
+    assert dlg.result_options()["frame"] is tb1
+
+    dlg._frame_cb.setCurrentIndex(1)   # tb2(B-2, A4 landscape)로 전환
+    assert dlg._frame_cb.currentData() is tb2
+    assert dlg._size_cb.currentData() == "A4"
+    assert dlg._orient_cb.currentData() == "landscape"
+    assert dlg.result_options()["frame"] is tb2
+
+
+
+
+def test_export_pdf_and_render_preview_honor_explicit_frame_over_scene_order():
+    # [다중 페이지 지원, 2026-08-14] frame= 인자가 있으면 scene.items() 순서(첫 프레임 자동탐지)
+    # 대신 그 프레임을 정확히 쓴다 — export_pdf/render_preview 둘 다.
+    w = CanvasWindow()
+    tb_first = _TitleBlockItem("A4", "landscape", fields={"number": "A-1"})   # scene 순서상 첫 번째
+    tb_first.setPos(QPointF(0, 0))
+    tb_second = _TitleBlockItem("A2", "portrait", fields={"number": "B-2"})
+    tb_second.setPos(QPointF(2000, 0))
+    w._scene.addItem(tb_first)
+    w._scene.addItem(tb_second)
+
+    px = render_preview(w._scene, page="A4", orientation="landscape", frame=tb_second)
+    assert px is not None
+    assert px.height() > px.width()   # tb_second는 portrait — 명시한 frame이 우선함
+
+    out = os.path.join(_TMP, "explicit_frame.pdf")
+    assert export_pdf(w._scene, out, page="A4", frame=tb_second) is True
+    assert os.path.getsize(out) > 0
+
+
+
+
 def test_titleblock_shape_is_clickthrough():
     # 용지 내부는 히트영역에서 제외(shape 통과) → 그 위에 도형을 그리거나 잡을 수 있다.
     # 표제란 표 영역과 용지 테두리 밴드만 히트영역.
@@ -1217,7 +1334,8 @@ def test_pdf_export_dialog_no_selection_disables_selection_radio():
     assert dlg._rb_all.isChecked()
     assert not dlg._rb_sel.isEnabled()
     opts = dlg.result_options()
-    assert opts == {"selection_only": False, "page": "A4", "orientation": "landscape"}
+    assert opts == {"selection_only": False, "page": "A4", "orientation": "landscape",
+                    "frame": None}
 
 
 def test_pdf_export_dialog_locks_paper_controls_to_title_frame():

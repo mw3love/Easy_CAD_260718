@@ -290,7 +290,7 @@ class _FileIOMixin:
         if not path.lower().endswith(".pdf"):
             path += ".pdf"
         if export_pdf(self._scene, path, page=opts["page"], selection_only=opts["selection_only"],
-                      orientation=opts["orientation"]):
+                      orientation=opts["orientation"], frame=opts.get("frame")):
             QMessageBox.information(self, "PDF 내보내기", f"저장 완료:\n{path}")
         else:
             QMessageBox.warning(self, "PDF 내보내기", "저장에 실패했습니다.")
@@ -592,15 +592,10 @@ class _FileIOMixin:
     # ---- 표제란 / 용지틀 (Phase 4) ------------------------------------------
 
     def _insert_titleblock(self):
-        """용지 크기·방향을 고르고 표제란 프레임을 삽입. 프레임은 뷰 중앙 근처에 좌상단 배치."""
-        existing = self._find_titleblock()
-        if existing is not None:
-            QMessageBox.information(
-                self, "표제란", "이미 표제란/용지틀이 있습니다.\n"
-                "더블클릭해 내용을 편집하거나, 지운 뒤 다시 삽입하세요.")
-            self._scene.clearSelection()
-            existing.setSelected(True)
-            return
+        """용지 크기·방향을 고르고 표제란 프레임을 삽입. 프레임은 뷰 중앙 근처에 좌상단 배치.
+        [다중 페이지 지원, 2026-08-14] 예전엔 씬에 이미 하나 있으면 거부했으나(단일 프레임
+        전제), 여러 용지틀을 두고 PDF 내보내기에서 고르는 워크플로를 지원하며 그 가드를
+        제거했다(deep-interview 확정 — 메뉴로도 자유롭게 추가 삽입, Alt+드래그 복제와 동등)."""
         dlg = _PaperSizeDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -631,12 +626,6 @@ class _FileIOMixin:
         item.set_fields(dlg.result_fields())
         self.statusBar().showMessage("표제란 갱신됨", 3000)
 
-
-    def _find_titleblock(self):
-        for it in self._scene.items():
-            if isinstance(it, _TitleBlockItem):
-                return it
-        return None
 
     # ---- 표(table) 삽입 (Phase 4) -------------------------------------------
     _CELL_W, _CELL_H = 40.0, 14.0   # 삽입 시 셀 기본 치수(mm 월드좌표)
