@@ -757,9 +757,20 @@ def test_open_doc_dispatches_by_extension():
         w._open_doc()
         QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: ("in.dxf", ""))
         w._open_doc()
+        # [§8 DWG 자동변환, 2026-08-14] .dwg도 .dxf와 같은 _do_open_dxf로 분기해야 함.
+        QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: ("in.dwg", ""))
+        w._open_doc()
     finally:
         QFileDialog.getOpenFileName = orig
-    assert calls == [("ecad", "in.ecad"), ("dxf", "in.dxf")]
+    assert calls == [("ecad", "in.ecad"), ("dxf", "in.dxf"), ("dxf", "in.dwg")]
+
+
+
+
+def test_open_filter_includes_dwg():
+    # [§8 DWG 자동변환, 2026-08-14] 열기 다이얼로그 필터에 .dwg가 노출돼야 함.
+    w = CanvasWindow()
+    assert "*.dwg" in w._OPEN_FILTER
 
 
 
@@ -789,6 +800,171 @@ def test_dxf_confirm_dialogs_show_once_via_qsettings():
     assert shown == ["warn", "info"]   # 각 종류 첫 호출에만 창이 뜸
     assert settings.value("dxf_save_warned", False, type=bool) is True
     assert settings.value("dxf_open_notified", False, type=bool) is True
+
+
+
+
+def test_is_odafc_missing_classifies_exception():
+    # [§8 DWG 자동변환, 2026-08-14] ODA File Converter 미설치 예외만 True — 다른 실패는 False
+    # (일반 실패 메시지 경로로 새게 하기 위한 분류).
+    from ezdxf.addons.odafc import ODAFCNotInstalledError
+    assert CanvasWindow._is_odafc_missing(ODAFCNotInstalledError("x")) is True
+    assert CanvasWindow._is_odafc_missing(RuntimeError("other")) is False
+
+
+
+
+def test_do_open_dxf_dwg_retries_after_odafc_missing_prompt_accepted():
+    # [§8 DWG 자동변환] 1차 시도가 ODAFCNotInstalledError → 안내(모킹, True 반환=경로 지정함)
+    # → 2차 재시도. import_dxf는 host_fileio 모듈 전역으로 패치(그 모듈이 부르는 이름).
+    import easycad.canvas.host_fileio as hf
+    from ezdxf.addons.odafc import ODAFCNotInstalledError
+    orig_import_dxf = hf.import_dxf
+    calls = []
+
+    def fake_import_dxf(scene, path):
+        calls.append(path)
+        if len(calls) == 1:
+            raise ODAFCNotInstalledError("not installed")
+        return 0
+
+    hf.import_dxf = fake_import_dxf
+    w = CanvasWindow()
+    w._prompt_odafc_missing = lambda: True
+    try:
+        w._do_open_dxf("missing.dwg")
+    finally:
+        hf.import_dxf = orig_import_dxf
+    assert calls == ["missing.dwg", "missing.dwg"]   # 안내 후 1회 재시도
+
+
+
+
+def test_do_open_dxf_dwg_no_retry_when_prompt_declined():
+    # [§8 DWG 자동변환] 안내창에서 취소(False)하면 재시도 없이 조용히 끝난다.
+    import easycad.canvas.host_fileio as hf
+    from ezdxf.addons.odafc import ODAFCNotInstalledError
+    orig_import_dxf = hf.import_dxf
+    calls = []
+
+    def fake_import_dxf(scene, path):
+        calls.append(path)
+        raise ODAFCNotInstalledError("not installed")
+
+    hf.import_dxf = fake_import_dxf
+    w = CanvasWindow()
+    w._prompt_odafc_missing = lambda: False
+    try:
+        w._do_open_dxf("missing.dwg")
+    finally:
+        hf.import_dxf = orig_import_dxf
+    assert calls == ["missing.dwg"]   # 재시도 없음
+
+
+
+
+def test_do_open_dxf_dwg_generic_failure_shows_dwg_titled_warning():
+    # [§8 DWG 자동변환] ODAFC 미설치가 아닌 일반 실패(손상 파일 등)는 안내 없이 바로
+    # "DWG 열기" 제목의 경고(― .dxf였다면 "DXF 열기")로 새야 한다.
+    import easycad.canvas.host_fileio as hf
+    from PyQt6.QtWidgets import QMessageBox
+    orig_import_dxf = hf.import_dxf
+    orig_warning = QMessageBox.warning
+    titles = []
+
+    def fake_import_dxf(scene, path):
+        raise RuntimeError("corrupt")
+
+    def fake_warning(parent, title, text):
+        titles.append(title)
+        return QMessageBox.StandardButton.Ok
+
+    hf.import_dxf = fake_import_dxf
+    QMessageBox.warning = staticmethod(fake_warning)
+    w = CanvasWindow()
+    try:
+        w._do_open_dxf("broken.dwg")
+        w._do_open_dxf("broken.dxf")
+    finally:
+        hf.import_dxf = orig_import_dxf
+        QMessageBox.warning = orig_warning
+    assert titles == ["DWG 열기", "DXF 열기"]
+
+
+
+
+def _fake_clicked_button_by_text(self, needle: str):
+    """[§8 DWG 자동변환 테스트 헬퍼] `_prompt_odafc_missing`이 실제로 만든 버튼들
+    (`self.buttons()`, addButton은 안 건드림 — 진짜 QPushButton) 중 텍스트에 needle이 들어간
+    걸 '클릭된 버튼'으로 흉내. addButton 자체를 몽키패치하면 QMessageBox 클래스 전역
+    슬롯을 건드려 테스트 간 복원이 불안정했다(실측 발견 — 다음 테스트에서 TypeError로
+    재현) — exec/clickedButton 둘만 패치하는 쪽이 훨씬 안전하다."""
+    for b in self.buttons():
+        if needle in b.text():
+            return b
+    return None
+
+
+def test_prompt_odafc_missing_cancel_returns_false():
+    # [§8 DWG 자동변환] 「찾아보기」가 아닌 다른 버튼(취소)을 누르면 False — 재시도 안 함.
+    from PyQt6.QtWidgets import QMessageBox
+    orig_exec, orig_clicked = QMessageBox.exec, QMessageBox.clickedButton
+    QMessageBox.exec = lambda self: None
+    QMessageBox.clickedButton = lambda self: _fake_clicked_button_by_text(self, "취소")
+    w = CanvasWindow()
+    try:
+        assert w._prompt_odafc_missing() is False
+    finally:
+        QMessageBox.exec, QMessageBox.clickedButton = orig_exec, orig_clicked
+
+
+
+
+def test_prompt_odafc_missing_browse_saves_path_to_settings():
+    # [§8 DWG 자동변환] 「찾아보기」로 exe를 고르면 QSettings에 영구 저장 + True 반환.
+    from PyQt6.QtWidgets import QMessageBox, QFileDialog
+    from PyQt6.QtCore import QSettings
+    orig_exec, orig_clicked = QMessageBox.exec, QMessageBox.clickedButton
+    orig_open = QFileDialog.getOpenFileName
+
+    QMessageBox.exec = lambda self: None
+    QMessageBox.clickedButton = lambda self: _fake_clicked_button_by_text(self, "찾아보기")
+    exe_path = r"C:\tools\ODAFileConverter.exe"
+    QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (exe_path, ""))
+
+    settings = QSettings("EasyCAD", "EasyCAD")
+    had_prior = settings.contains("odafc_exe_path")
+    prior = settings.value("odafc_exe_path", "", type=str)
+    w = CanvasWindow()
+    try:
+        assert w._prompt_odafc_missing() is True
+        assert settings.value("odafc_exe_path", "", type=str) == exe_path
+    finally:
+        QMessageBox.exec, QMessageBox.clickedButton = orig_exec, orig_clicked
+        QFileDialog.getOpenFileName = orig_open
+        if had_prior:
+            settings.setValue("odafc_exe_path", prior)
+        else:
+            settings.remove("odafc_exe_path")
+
+
+
+
+def test_prompt_odafc_missing_browse_cancel_dialog_returns_false():
+    # [§8 DWG 자동변환] 「찾아보기」를 눌렀지만 파일 선택 창에서 취소하면 False(경로 미저장).
+    from PyQt6.QtWidgets import QMessageBox, QFileDialog
+    orig_exec, orig_clicked = QMessageBox.exec, QMessageBox.clickedButton
+    orig_open = QFileDialog.getOpenFileName
+
+    QMessageBox.exec = lambda self: None
+    QMessageBox.clickedButton = lambda self: _fake_clicked_button_by_text(self, "찾아보기")
+    QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: ("", ""))   # 취소
+    w = CanvasWindow()
+    try:
+        assert w._prompt_odafc_missing() is False
+    finally:
+        QMessageBox.exec, QMessageBox.clickedButton = orig_exec, orig_clicked
+        QFileDialog.getOpenFileName = orig_open
 
 
 

@@ -519,8 +519,19 @@ snapshot()` 씬 전체 순회는 실측 재확인 결과 전체비용의 4%뿐�
 
 ### 큰 설계 필요 — 시작 시 deep-interview 필수
 
-9. **DWG 자동변환 열기** — 위 §7 클립보드 항목에서 이미 언급된 ODA File Converter(외부 무료
-   프로그램) 의존 경로. 사용자 PC에 별도 설치가 필요한 점을 수용할지부터 재확인 필요.
+~~9. **DWG 자동변환 열기**~~ — **완료(2026-08-14)**. 착수 전 재검토(regla 2 손안의 카드)로
+   난이도가 예전 클립보드 케이스보다 훨씬 낮음을 확인: 이미 쓰는 `ezdxf`(1.4.4)가 ODA File
+   Converter 연동 애드온(`ezdxf.addons.odafc`)을 내장하고 있어 새 pip 의존성 없이 `odafc.
+   readfile(path)` 한 줄로 DWG→ezdxf.Drawing 변환이 끝난다(사용자는 무료 실행파일만 별도
+   설치). 열기 필터에 `*.dwg` 추가, `dxf_import.py`에 `_load_ezdxf_doc`(확장자 분기)+
+   `_apply_stored_odafc_path`(사용자가 지정한 exe 경로를 QSettings에서 읽어 ezdxf.options에
+   반영) 신설, `host_fileio.py`에 ODAFCNotInstalledError 전용 처리(`_prompt_odafc_missing` —
+   다운로드 링크 안내 + 「찾아보기」로 exe 직접 지정 후 1회 재시도, 대기 커서). 신규 pytest
+   10종(dispatch·미설치 분류·재시도/미재시도·안내창 취소/찾아보기 흐름), 스모크 544→554종.
+   구현 중 자체 발견: `QMessageBox.addButton` 자체를 몽키패치하면 다음 테스트로 오염이 번져
+   `clickedButton()`만 패치하는 방식으로 교체(교훈 `docs/pitfalls.md` "검증 방법론" 참조).
+   실제 ODA File Converter 미설치 상태(이 PC에서 실측 확인)에서 "설치 안내" 분기가 실제로
+   타는 것까지 확인. 실제 .dwg 파일로 전체 왕복(변환 성공 케이스)은 사용자 실도면 확인 대기.
 10. **다중 도면 지원**(탭 또는 새 창) — `CanvasWindow`가 단일 씬을 전제하는 구조라 탭이든
     다중 프로세스든 아키텍처에 영향. 탭 방식(단일 프로세스, 클립보드·설정 공유 쉬움) vs 새
     프로세스(구현 단순, 프로세스 간 공유 없음) 트레이드오프를 시작 시 논의.

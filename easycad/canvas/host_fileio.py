@@ -95,13 +95,13 @@ class _FileIOMixin:
 
 
     def _open_doc(self):
-        """[통합] 확장자로 분기 — .dxf는 DXF 가져오기, 그 외는 .ecad 네이티브 열기.
-        둘 다 현재 씬을 통째로 교체(열기 시맨틱) — DXF를 기존 도면 위에 추가 삽입하는
-        기능은 스코프 밖(deep-interview 2026-07-29 확정)."""
+        """[통합] 확장자로 분기 — .dxf/.dwg는 DXF 가져오기(DWG는 ODA File Converter로 먼저
+        변환, §8 2026-08-14), 그 외는 .ecad 네이티브 열기. 셋 다 현재 씬을 통째로 교체(열기
+        시맨틱) — 기존 도면 위에 추가 삽입하는 기능은 스코프 밖(deep-interview 2026-07-29 확정)."""
         path, _ = QFileDialog.getOpenFileName(self, "열기", "", self._OPEN_FILTER)
         if not path:
             return
-        if path.lower().endswith(".dxf"):
+        if path.lower().endswith((".dxf", ".dwg")):
             if not self._confirm_dxf_open_once():
                 return
             self._do_open_dxf(path)
@@ -126,11 +126,25 @@ class _FileIOMixin:
 
 
     def _do_open_dxf(self, path: str):
+        """.dxf/.dwg 공통 진입점. .dwg는 ODA File Converter 미설치 시 안내+경로지정 후
+        1회 재시도(§8 DWG 자동변환, 2026-08-14). DWG 변환은 외부 프로세스 호출이라 몇 초
+        걸릴 수 있어 대기 커서를 띄운다."""
+        is_dwg = path.lower().endswith(".dwg")
         try:
-            n = import_dxf(self._scene, path)
+            n = self._import_dxf_waited(path, is_dwg)
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "DXF 열기", f"가져오기에 실패했습니다:\n{e}")
-            return
+            if is_dwg and self._is_odafc_missing(e):
+                if not self._prompt_odafc_missing():
+                    return
+                try:
+                    n = self._import_dxf_waited(path, is_dwg)
+                except Exception as e2:  # noqa: BLE001
+                    QMessageBox.warning(self, "DWG 열기", f"가져오기에 실패했습니다:\n{e2}")
+                    return
+            else:
+                title = "DWG 열기" if is_dwg else "DXF 열기"
+                QMessageBox.warning(self, title, f"가져오기에 실패했습니다:\n{e}")
+                return
         self._reset_history()
         nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
         self._badge_n = max(nums) if nums else 0
@@ -141,19 +155,73 @@ class _FileIOMixin:
 
 
     def _confirm_dxf_open_once(self) -> bool:
-        """[통합] DXF 열기 안내 — 앱 생애 처음 1회만(사용자 요청, QSettings 플래그).
-        현재 도면을 통째로 교체한다는 점 + 외부 CAD 도형은 근사 변환될 수 있음을 고지."""
+        """[통합] DXF/DWG 열기 안내 — 앱 생애 처음 1회만(사용자 요청, QSettings 플래그).
+        현재 도면을 통째로 교체한다는 점 + 외부 CAD 도형은 근사 변환될 수 있음을 고지.
+        [§8 DWG 자동변환, 2026-08-14] DWG는 내부적으로 DXF로 변환된 뒤 같은 경로를 타므로
+        같은 안내·같은 1회성 플래그를 공유한다(별개 문구로 나눌 만큼 의미가 다르지 않음)."""
         settings = QSettings("EasyCAD", "EasyCAD")
         if settings.value("dxf_open_notified", False, type=bool):
             return True
         settings.setValue("dxf_open_notified", True)
         resp = QMessageBox.information(
-            self, "DXF 열기",
-            "DXF를 열면 현재 도면을 통째로 교체합니다(추가 삽입 아님).\n"
+            self, "DXF/DWG 열기",
+            "DXF·DWG를 열면 현재 도면을 통째로 교체합니다(추가 삽입 아님).\n"
             "외부 CAD에서 만든 도형 중 일부(INSERT 배열·클리핑 등)는 근사 변환될 수 있습니다.\n\n"
             "계속 열까요?",
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
         return resp == QMessageBox.StandardButton.Ok
+
+
+    def _import_dxf_waited(self, path: str, is_dwg: bool) -> int:
+        """[§8 DWG 자동변환] import_dxf 얇은 래퍼 — .dwg일 때만 대기 커서+상태바 문구를
+        띄운다(ODA File Converter가 외부 프로세스라 큰 파일은 수 초 걸릴 수 있음, .dxf는
+        기존과 동일하게 즉시 진행)."""
+        if not is_dwg:
+            return import_dxf(self._scene, path)
+        self.statusBar().showMessage("DWG 변환 중… (ODA File Converter)")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            return import_dxf(self._scene, path)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+
+    @staticmethod
+    def _is_odafc_missing(e: Exception) -> bool:
+        """DWG→DXF 변환에 필요한 ODA File Converter가 안 깔려 있어서 난 예외인지 판별.
+        [§8 DWG 자동변환] 지연 임포트 — odafc 모듈은 .dwg를 열 때만 필요하다(규칙 8, 무관한
+        경로에 새 임포트를 얹지 않음)."""
+        from ezdxf.addons.odafc import ODAFCNotInstalledError
+        return isinstance(e, ODAFCNotInstalledError)
+
+
+    def _prompt_odafc_missing(self) -> bool:
+        """[§8 DWG 자동변환, 2026-08-14] ODA File Converter 미설치 안내 — 다운로드 링크 +
+        「찾아보기」로 실행 파일 직접 지정. 지정한 경로는 QSettings에 영구 저장해 다음
+        실행부터도 자동 반영(매 .dwg 열기 전 `dxf_import._apply_stored_odafc_path`가 읽음).
+        반환 True면 호출부가 변환을 1회 재시도한다."""
+        box = QMessageBox(self)
+        box.setWindowTitle("DWG 열기")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText("ODA File Converter를 찾을 수 없습니다.")
+        box.setInformativeText(
+            "DWG를 열려면 무료 프로그램 'ODA File Converter'가 필요합니다.\n"
+            "다운로드: https://www.opendesign.com/guestfiles/oda_file_converter\n\n"
+            "이미 설치했다면 '찾아보기'로 실행 파일(ODAFileConverter.exe) 위치를 "
+            "직접 지정할 수 있습니다.")
+        browse_btn = box.addButton("찾아보기...", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is not browse_btn:
+            return False
+        exe, _ = QFileDialog.getOpenFileName(
+            self, "ODAFileConverter 실행 파일 위치 지정", "",
+            "실행 파일 (*.exe);;모든 파일 (*)")
+        if not exe:
+            return False
+        QSettings("EasyCAD", "EasyCAD").setValue("odafc_exe_path", exe)
+        return True
 
 
     def _save_doc(self):

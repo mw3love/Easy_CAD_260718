@@ -563,14 +563,43 @@ def _expand_insert(e, depth: int = 0, max_depth: int = 6):
             yield child
 
 
+# ---- DWG 자동변환(§8, 2026-08-14) ------------------------------------------
+# ezdxf가 내장한 odafc 애드온(`ezdxf.addons.odafc`)이 이미 ODA File Converter 실행파일을
+# 감싸 DWG→임시 DXF→ezdxf.Drawing까지 해 준다(규칙 2 손안의 카드 — 새 pip 의존성 불필요,
+# 사용자가 ODA File Converter만 별도 설치하면 됨, 무료·계정 불필요). 아래는 그 애드온을
+# 부르는 얇은 래퍼뿐 — 변환된 뒤의 `doc`은 일반 DXF와 완전히 동일하게 취급된다.
+def _apply_stored_odafc_path():
+    """사용자가 이전에 「찾아보기」로 직접 지정한 ODAFileConverter 실행파일 경로가 있으면
+    (표준 설치 경로 자동탐색 실패 대비, `host_fileio._prompt_odafc_missing`이 저장)
+    ezdxf.options에 반영 — 매 .dwg 열기 직전 호출(가벼움, 파일 I/O 없이 QSettings 읽기뿐)."""
+    from PyQt6.QtCore import QSettings
+    stored = QSettings("EasyCAD", "EasyCAD").value("odafc_exe_path", "", type=str)
+    if not stored:
+        return
+    import platform
+    import ezdxf
+    key = "win_exec_path" if platform.system() == "Windows" else "unix_exec_path"
+    ezdxf.options.set("odafc-addon", key, stored)
+
+
+def _load_ezdxf_doc(path: str):
+    """path 확장자로 분기해 ezdxf.Drawing을 얻는다. .dwg는 ODA File Converter 경유
+    (미설치 시 `odafc.ODAFCNotInstalledError` — 호출부가 안내+경로지정 UI로 처리)."""
+    import ezdxf
+    if str(path).lower().endswith(".dwg"):
+        _apply_stored_odafc_path()
+        from ezdxf.addons import odafc
+        return odafc.readfile(path)
+    return ezdxf.readfile(path)
+
+
 # ---- 진입점 ---------------------------------------------------------------
 def import_dxf(scene, path: str, *, clear: bool = True) -> int:
-    """path의 DXF를 scene에 로드. 반환: 생성된 최상위 아이템 수.
+    """path의 DXF/DWG를 scene에 로드. 반환: 생성된 최상위 아이템 수.
 
     clear=True면 기존 씬을 지우고 대체(파일 '열기' 시맨틱). False면 현재 씬에 추가(병합).
     """
-    import ezdxf
-    doc = ezdxf.readfile(path)
+    doc = _load_ezdxf_doc(path)
     msp = doc.modelspace()
     if clear:
         scene.clear()

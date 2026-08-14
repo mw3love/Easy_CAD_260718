@@ -486,6 +486,68 @@ def test_dxf_import_nested_insert():
     assert len(gids) == 1 and None not in gids               # 둘 다 같은(단일) 그룹
 
 
+
+
+def test_dwg_extension_routes_through_odafc_readfile():
+    # [§8 DWG 자동변환, 2026-08-14] .dwg 경로면 ezdxf.readfile 대신 odafc.readfile을 타야
+    # 한다 — 실제 ODA File Converter는 테스트 환경에 없으므로 odafc.readfile 자체를 모킹해
+    # "변환 결과"를 대신 돌려주고, 정확히 그 경로로 호출됐는지만 검증한다(dispatch 로직만
+    # 대상 — 외부 프로세스 호출은 검증 범위 밖).
+    from PyQt6.QtWidgets import QGraphicsScene
+    import ezdxf
+    from ezdxf.addons import odafc
+    from easycad.fileio.dxf_import import import_dxf
+
+    doc = ezdxf.new("R2010")
+    doc.modelspace().add_line((0, 0), (100, 0))
+    dxf_path = os.path.join(_TMP, "dwg_source.dxf")
+    doc.saveas(dxf_path)
+
+    calls = []
+    orig_readfile = odafc.readfile
+
+    def fake_readfile(path, *a, **k):
+        calls.append(path)
+        return ezdxf.readfile(dxf_path)   # 변환 "결과"를 흉내(존재하지 않는 .dwg라도 무방)
+
+    odafc.readfile = fake_readfile
+    try:
+        sc = QGraphicsScene()
+        n = import_dxf(sc, "source.dwg")
+    finally:
+        odafc.readfile = orig_readfile
+
+    assert calls == ["source.dwg"]        # odafc 경로로, 정확한 원본 경로로 호출됨
+    assert n >= 1
+    assert any(isinstance(it, _LineItem) for it in sc.items())
+
+
+
+
+def test_apply_stored_odafc_path_sets_ezdxf_option():
+    # [§8 DWG 자동변환] 사용자가 「찾아보기」로 지정해 QSettings에 저장해 둔 경로가 있으면
+    # 매 .dwg 열기 전 ezdxf.options에 반영돼야 한다(표준 설치 경로 자동탐색 실패 대비).
+    from PyQt6.QtCore import QSettings
+    import ezdxf
+    from easycad.fileio.dxf_import import _apply_stored_odafc_path
+
+    settings = QSettings("EasyCAD", "EasyCAD")
+    had_prior = settings.contains("odafc_exe_path")
+    prior_setting = settings.value("odafc_exe_path", "", type=str)
+    prior_option = ezdxf.options.get("odafc-addon", "win_exec_path")
+    custom_path = r"C:\custom\ODAFileConverter.exe"
+    try:
+        settings.setValue("odafc_exe_path", custom_path)
+        _apply_stored_odafc_path()
+        assert ezdxf.options.get("odafc-addon", "win_exec_path") == custom_path
+    finally:
+        if had_prior:
+            settings.setValue("odafc_exe_path", prior_setting)
+        else:
+            settings.remove("odafc_exe_path")
+        ezdxf.options.set("odafc-addon", "win_exec_path", prior_option)
+
+
 # ---- Phase 4: 이미지 삽입 ---------------------------------------------------
 
 
