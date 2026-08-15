@@ -1367,7 +1367,7 @@ def _arrow_body_path(it) -> QPainterPath:
 
 
 def _highlight_band_fast(it, extra_width: float = 3.0) -> QPainterPath | None:
-    """[성능수정 2026-08-15, perf_lab/REPORT_multiselect_perf.md 병목 B/C] `_highlight_band`의
+    """[성능수정 2026-08-15, docs/perf_report_multiselect.md 병목 B/C] `_highlight_band`의
     사각형·원 경로는 `QPainterPathStroker.createStroke().simplified().subtracted()`(폴리곤
     불리언 연산, 도형당 수십µs — 다중선택·러버밴드 드래그에서 프레임당 선택개수만큼 반복돼
     누적)로 계산하지만, 결과 모양 자체는 순수 산술로 동일하게 만들 수 있다: RoundJoin 스트로크가
@@ -1465,7 +1465,7 @@ def _selection_is_solo(it) -> bool:
     """[Lucid 대조 2026-08-03] 이 아이템이 지금 유일하게 선택된 아이템인지(다중선택 중 하나가
     아닌지). 씬이 없으면(테스트 등 고립 아이템) True로 취급 — 그런 맥락에선 항상 단일선택
     스타일을 기본으로 본다.
-    [성능수정 2026-08-15, perf_lab/REPORT_multiselect_perf.md 병목 A] `scene().selectedItems()`
+    [성능수정 2026-08-15, docs/perf_report_multiselect.md 병목 A] `scene().selectedItems()`
     는 Qt C++이 매 호출마다 선택된 아이템 전체 리스트를 새로 만들어 반환한다(O(선택수)) — 이게
     선택된 N개 각각의 paint()에서 불려 프레임당 O(N²)이 되던 게 다중선택 드래그 버벅임의
     핵심 원인이었다(실측: 200개 선택 시 10프레임에 selectedItems() 4192회, 115ms). `CanvasWindow`

@@ -247,7 +247,7 @@ class _SelectionMixin:
     # ---- [성능수정 2026-08-15] 선택 개수 캐시 -----------------------------
 
     def _sync_selection_count_cache(self):
-        """[perf_lab/REPORT_multiselect_perf.md 병목 A] `selectionChanged`가 발화할 때만
+        """[docs/perf_report_multiselect.md 병목 A] `selectionChanged`가 발화할 때만
         `scene._sel_count_cache`를 갱신 — `_selection_is_solo`(core_shapes.py)가 paint마다
         `scene().selectedItems()`(O(N))를 직접 부르던 것을 O(1) 읽기로 대체하기 위한 캐시.
         `_bulk_select`가 이 시그널을 다른 두 슬롯과 함께 묶어 대량선택 중엔 끄고 끝나면 1회만
