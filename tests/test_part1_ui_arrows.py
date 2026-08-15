@@ -1465,3 +1465,64 @@ def test_highlight_band_fast_falls_back_for_ports_and_cuts():
 
     r._cuts = [(0, 0.3, 0.6)]        # 위쪽 변 일부가 잘린 상태
     assert _highlight_band_fast(r) is None, "cut이 있는데도 고속경로를 탔다"
+
+
+# --- 드래그 중 장식 숨김(성능계획 2-C(b), 2026-08-15) -----------------------
+
+def test_drag_decor_suppressed_only_when_dragging_and_multi():
+    """억제 조건은 「드래그 중 + 다중선택」 둘 다. 도형 하나만 끌 때 라벨이 사라지면
+    눈에 띄게 거슬리는데 정작 비용은 거의 없으므로(움직인 것만 리페인트), 이득이 있는
+    곳에서만 품질을 내준다."""
+    from easycad.canvas.core_shapes import _drag_decor_suppressed
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=300, y=200, ww=120, hh=72)
+    a.boundingRect()          # _interactive_view_cache 준비(_view_zoom_factor가 채움)
+
+    a.setSelected(True); b.setSelected(True)
+    assert _drag_decor_suppressed(a) is False, "드래그 중이 아닌데 장식을 숨겼다"
+
+    w._view._move_active = True
+    assert _drag_decor_suppressed(a) is True, "다중선택 드래그인데 장식을 안 숨겼다"
+
+    b.setSelected(False)      # 단일선택 드래그
+    assert _drag_decor_suppressed(a) is False, "단일 드래그인데 라벨을 숨겼다"
+
+    b.setSelected(True)
+    w._view._move_active = False
+    assert _drag_decor_suppressed(a) is False, "드래그가 끝났는데 계속 숨긴다"
+
+
+def test_labels_and_band_not_painted_during_multi_drag():
+    """실제 렌더로 확인 — 다중선택 드래그 중엔 라벨 글자가 화면에 안 나온다."""
+    from PyQt6.QtGui import QImage, QPainter
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=200, hh=120)
+    b = _mk_pen_rect(w, x=400, y=300, ww=200, hh=120)
+    a.ensure_label().setPlainText("LABEL")     # 헤드리스 폰트에서도 나오는 ASCII
+    a._sync_label()
+    a.boundingRect()
+    a.setSelected(True); b.setSelected(True)
+
+    src = a._label.sceneBoundingRect()
+
+    bg = w._scene.backgroundBrush().color().rgb()
+
+    def ink():
+        """배경색과 다른 픽셀 수 = 실제로 그려진 것(글자·선). ⚠ '알파가 있는 픽셀'로 세면
+        씬 배경이 불투명하게 깔려 전 픽셀이 걸리므로 아무것도 측정하지 못한다(실제로 겪음)."""
+        img = QImage(120, 60, QImage.Format.Format_ARGB32)
+        img.fill(0)
+        p = QPainter(img)
+        w._scene.render(p, QRectF(0, 0, 120, 60), src)
+        p.end()
+        return sum(1 for y in range(60) for x in range(120)
+                   if (img.pixel(x, y) & 0xFFFFFF) != (bg & 0xFFFFFF))
+
+    w._view._move_active = False
+    idle = ink()
+    w._view._move_active = True
+    dragging = ink()
+
+    assert idle > 0, "유휴 상태에서 라벨이 아예 안 그려졌다(테스트 전제 실패)"
+    assert dragging < idle, f"드래그 중에도 장식이 그대로 그려진다(유휴 {idle} / 드래그 {dragging})"

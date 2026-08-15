@@ -3174,6 +3174,11 @@ class _AnnotatorView(QGraphicsView):
         flush = getattr(self._owner, "flush_deferred_reroute", None)
         if flush is not None:
             flush()
+        # [성능계획 2-C(b)] 드래그 중 숨겼던 장식(라벨·선택 밴드)을 확실히 되살린다.
+        # 억제 판정 자체는 매 paint마다 뷰에 직접 묻는 무상태 방식이라 stale이 없지만,
+        # **다시 그릴 계기**는 있어야 한다 — 마지막 프레임 이후 아무 변화가 없으면 Qt가
+        # 리페인트를 안 보내 숨겨진 채로 남는다.
+        self.viewport().update()
 
     def _labelable_at(self, view_pos):
         """[우리 확장] 커서 아래 '맨 위 선택가능 아이템'이 선/화살표면 그 아이템, 아니면 None.

@@ -1504,6 +1504,36 @@ def _selection_is_solo(it) -> bool:
     return len(sc.selectedItems()) <= 1
 
 
+def _drag_decor_suppressed(it) -> bool:
+    """[성능계획 2-C(b), 2026-08-15] 지금 이 아이템의 **장식**(라벨·선택 밴드)을 그리지 말아야
+    하는가 — 「드래그 중 + 다중선택」일 때만 참.
+
+    결정 ⓐ(`docs/perf_plan_500_1000.md`): 누르고 있는 동안은 화면 품질을 과감히 낮추고 손을
+    떼는 순간 정확히 복원한다. 1000개 전체선택 드래그 프로파일에서 라벨 페인트와 선택 밴드가
+    각각 프레임당 1,000회씩 돌고 있었다.
+
+    **다중선택 조건을 함께 거는 이유**: 도형 하나만 끌 때 그 라벨이 사라지면 눈에 띄게
+    거슬리는데, 정작 비용은 거의 없다(움직인 것만 리페인트되므로). 비용이 실제로 터지는 건
+    많은 아이템이 함께 움직이는 경우뿐이라, 이득이 있는 곳에서만 품질을 내준다.
+
+    뷰는 `_interactive_view_cache`(`_view_zoom_factor`가 이미 관리하는 캐시)로 얻는다 —
+    `scene().views()`는 호출마다 리스트를 새로 만들어 paint 핫패스에 두면 안 된다(이 세션에서
+    `selectedItems()`로 같은 함정을 두 번 밟았다). 상태를 따로 저장하지 않고 매번 뷰에 직접
+    물어보므로 stale이 구조적으로 불가능하다(드래그가 끝나면 다음 프레임에 바로 복원)."""
+    sc = it.scene()
+    if sc is None:
+        return False
+    if (getattr(sc, "_sel_top_count_cache", 0) or 0) < 2:
+        return False
+    v = getattr(sc, "_interactive_view_cache", None)
+    if v is None:
+        return False
+    try:
+        return bool(v.is_drag_session())
+    except (RuntimeError, AttributeError):
+        return False   # 뷰가 이미 삭제됐거나 이 뷰 종류엔 없는 개념 — 평소대로 그린다
+
+
 def _paint_selection_centerline(painter: QPainter, it, scale: float = 1.0, path: QPainterPath | None = None):
     """[Lucid 대조 2026-08-03] 단일선택·화살표 전용 강조 — 바깥에 밴드를 두르는 대신 실제
     외곽선 중심에 얇은 선 하나. 다중선택(그룹 중 하나)일 때의 굵은 바깥 밴드보다 가늘어서
@@ -1536,6 +1566,10 @@ def _paint_selection_highlight(painter: QPainter, it, scale: float = 1.0, band: 
     소수 클래스(`_TitleBlockItem`)는 직접 호출한다.
     [화살표 성능 2026-08-01] `band`를 이미 계산해 뒀으면(캐시) 그대로 받아 재사용 — 밴드를
     실제로 그릴 때만 의미가 있다(화살표는 이제 밴드 자체를 안 쓰므로 이 인자가 무시된다)."""
+    # [성능계획 2-C(b)] 드래그 중 다중선택이면 개별 강조를 생략한다 — 어차피 그룹 변형
+    # 오버레이(_GroupTransform)가 바운딩박스를 그려 "무엇이 선택됐나"는 계속 보인다.
+    if _drag_decor_suppressed(it):
+        return
     is_connector = isinstance(it, (_ArrowItem, _PolyArrowItem))
     if is_connector or _selection_is_solo(it):
         _paint_selection_centerline(painter, it, scale)
@@ -4987,6 +5021,11 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         super().keyPressEvent(event)
 
     def paint(self, painter, option, widget=None):
+        # [성능계획 2-C(b), 2026-08-15] 도형·화살표에 붙은 **라벨**(자식 텍스트)은 드래그 중
+        # 다중선택이면 그리지 않는다 — 1000개 전체선택 드래그에서 프레임당 1,000회 페인트되던
+        # 자리다. 독립 텍스트 아이템(부모 없음)은 장식이 아니라 내용이므로 그대로 그린다.
+        if self.parentItem() is not None and _drag_decor_suppressed(self):
+            return
         if self._bg is not None:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)
