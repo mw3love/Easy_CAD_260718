@@ -145,6 +145,11 @@ class CanvasWindow(
         # 대체 — 시작값을 미리 채워 첫 selectionChanged 전에도 캐시가 존재하게 한다.
         self._scene._sel_count_cache = 0
         self._scene._sel_top_count_cache = 0   # 최상위(자식 제외) 선택 수 — `_group_active`용
+        # [성능계획 2-H, 2026-08-15] 그룹 오버레이 캐시(_GroupTransform._cache_key)의
+        # 무효화 도장. 선택이 바뀌면 _sel_version, 아이템 기하가 바뀌면 _geom_version이
+        # 오른다 — 그 둘이 그룹 bbox를 바꿀 수 있는 경우의 전부다.
+        self._sel_version = 0
+        self._geom_version = 0
         self._scene.selectionChanged.connect(self._sync_selection_count_cache)
         # [편의기능] 그룹 멤버 중 하나가 선택되면 같은 그룹 전체를 함께 선택.
         self._scene.selectionChanged.connect(self._sync_group_selection)

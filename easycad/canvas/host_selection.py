@@ -258,6 +258,7 @@ class _SelectionMixin:
         마우스를 한 번 움직일 때마다 `selectedItems()`가 1,260회 호출돼 호버 하나에 157ms가
         들었다(1000개 선택 실측). 두 캐시를 한 슬롯에서 갱신해 무효화 지점을 하나로 유지한다."""
         sel = self._scene.selectedItems()
+        self._sel_version = getattr(self, "_sel_version", 0) + 1   # [2-H] 그룹 캐시 무효화
         prev_top = getattr(self._scene, "_sel_top_count_cache", 0)
         top = sum(1 for it in sel if it.parentItem() is None)
         self._scene._sel_count_cache = len(sel)

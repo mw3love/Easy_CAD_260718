@@ -1894,3 +1894,63 @@ def test_deferred_reroute_flushed_on_early_return_release():
 
     v.mouseReleaseEvent(_release_event(v))
     assert not w._deferred_arrows, "조기 return 경로에서 미뤄둔 재라우팅이 복원되지 않았다"
+
+
+# --- 그룹 오버레이 bbox 캐시 무효화(성능계획 2-H, 2026-08-15) ----------------
+# 호버할 때마다 선택된 전체를 훑어 그룹 bbox를 처음부터 계산하던 것을 캐시했다
+# (1000개 선택 시 호버 1회에 _tight_scene_bbox 2,000회 = 19.1ms). 이 레포는 stale 캐시로
+# 여러 번 데였으므로, 결과를 바꿀 수 있는 모든 경로에서 무효화되는지 못 박는다.
+
+def test_group_bbox_cache_invalidates_on_move():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=400, y=300, ww=120, hh=72)
+    a.setSelected(True); b.setSelected(True)
+
+    first = QRectF(w._view._group.bbox())
+    assert w._view._group.bbox() == first          # 캐시 히트 경로
+    b.setPos(b.pos() + QPointF(200, 150))
+    w._on_scene_changed(None)                      # 기하 변경 신호
+    assert w._view._group.bbox() != first, "도형을 옮겼는데 그룹 bbox가 옛 값이다"
+
+
+def test_group_bbox_cache_invalidates_on_selection_change():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=400, y=300, ww=120, hh=72)
+    c = _mk_pen_rect(w, x=900, y=700, ww=120, hh=72)
+    a.setSelected(True); b.setSelected(True)
+
+    first = QRectF(w._view._group.bbox())
+    c.setSelected(True)                            # 선택 추가(개수도 내용도 변함)
+    assert w._view._group.bbox() != first, "선택이 바뀌었는데 그룹 bbox가 옛 값이다"
+
+    grown = QRectF(w._view._group.bbox())
+    c.setSelected(False)
+    assert w._view._group.bbox() != grown, "선택 해제 후에도 그룹 bbox가 옛 값이다"
+
+
+def test_group_bbox_cache_invalidates_on_resize():
+    """이동이 아니라 크기 변경도 잡아야 한다(같은 위치, 다른 bbox)."""
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=400, y=300, ww=120, hh=72)
+    a.setSelected(True); b.setSelected(True)
+
+    first = QRectF(w._view._group.bbox())
+    b.setRect(QRectF(0, 0, 400, 400))              # 제자리에서 크게
+    w._on_scene_changed(None)
+    assert w._view._group.bbox() != first, "리사이즈했는데 그룹 bbox가 옛 값이다"
+
+
+def test_group_items_cache_invalidates_on_selection_change():
+    """`items()`도 같은 캐시를 타므로 함께 확인 — 여기가 stale하면 available()이 틀린다."""
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=400, y=300, ww=120, hh=72)
+    a.setSelected(True)
+    assert len(w._view._group.items()) == 1
+    b.setSelected(True)
+    assert len(w._view._group.items()) == 2, "선택이 늘었는데 items()가 옛 목록이다"
+    a.setSelected(False); b.setSelected(False)
+    assert w._view._group.items() == [], "선택 해제 후에도 items()가 남아 있다"

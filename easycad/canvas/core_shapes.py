@@ -7063,6 +7063,42 @@ class _GroupTransform:
         self._geom_snap = None     # [(item, capture_geom()), ...] — 원복·undo
         self._geom_items = None    # 기하 리베이크 대상(선택 아이템)
         self._bound_info = None    # _collect_bound_arrows 결과
+        # [성능계획 2-H, 2026-08-15] items()/bbox() 캐시 — 아래 `_cache_key` 주석 참조.
+        self._cache_stamp = None
+        self._cached_items = None
+        self._cached_bbox = None
+
+    def _cache_key(self):
+        """`items()`/`bbox()` 캐시의 유효성 도장.
+
+        이 둘은 마우스를 **움직이기만 해도** 여러 번 불린다(`_update_hover_cursor`가
+        `available()`→`items()`, `handle_at()`→`bbox()`를 부르고 `drawForeground`도 부른다).
+        1000개 선택 상태에서 실측하니 호버 1회에 `_tight_scene_bbox`가 2,000회 돌아
+        19.1ms(호버 총 44.3ms의 43%)를 먹고 있었다 — 선택도 기하도 안 바뀌었는데 매번
+        처음부터 다시 계산한 것이다.
+
+        ⚠ 이 레포는 stale 캐시로 여러 번 데였으므로(`docs/pitfalls.md`) 무효화 신호를
+        **결과를 바꿀 수 있는 것 전부**로 잡는다. 그룹 bbox = 선택된 최상위 아이템들의 타이트
+        bbox 합집합이므로, 바뀌는 경우는 정확히 둘뿐이다:
+          · 선택이 바뀜        → `CanvasWindow._sel_version` (selectionChanged에서 증가)
+          · 아이템 기하가 바뀜 → `CanvasWindow._geom_version` (`_sync_geom_snapshot`이 실제
+                                 변경을 감지했을 때만 증가 — scene.changed를 타고 들어온다)
+        둘 중 하나라도 없으면(독립 씬 등) 캐시를 아예 쓰지 않는다(None 반환 → 항상 재계산)."""
+        owner = getattr(self._view, "_owner", None)
+        sv = getattr(owner, "_sel_version", None)
+        gv = getattr(owner, "_geom_version", None)
+        if sv is None or gv is None:
+            return None
+        return (sv, gv)
+
+    def _cache_ok(self):
+        key = self._cache_key()
+        if key is None or key != self._cache_stamp:
+            self._cache_stamp = key
+            self._cached_items = None
+            self._cached_bbox = None
+            return False
+        return True
 
     def _scene(self):
         return self._view.scene()
@@ -7071,11 +7107,17 @@ class _GroupTransform:
         return self._view._view_scale()
 
     def items(self):
+        ok = self._cache_ok()
+        if ok and self._cached_items is not None:
+            return self._cached_items
         sc = self._scene()
         if sc is None:
             return []
-        return [it for it in sc.selectedItems()
-                if it.parentItem() is None and isinstance(it, _HandleResizeMixin)]
+        got = [it for it in sc.selectedItems()
+               if it.parentItem() is None and isinstance(it, _HandleResizeMixin)]
+        if ok or self._cache_key() is not None:
+            self._cached_items = got
+        return got
 
     def available(self) -> bool:
         """그룹 오버레이 표시·조작 조건 — 최상위 2개 이상 선택 & select/손 도구."""
@@ -7084,6 +7126,9 @@ class _GroupTransform:
         return getattr(self._view._owner, "current_tool", None) in ("select", None)
 
     def bbox(self) -> QRectF | None:
+        ok = self._cache_ok()
+        if ok and self._cached_bbox is not None:
+            return QRectF(self._cached_bbox)
         its = self.items()
         if len(its) < 2:
             return None
@@ -7095,6 +7140,8 @@ class _GroupTransform:
             # 주석 참조) — 재사용해 통일.
             br = _tight_scene_bbox(it) or it.mapToScene(it._content_rect()).boundingRect()
             r = br if r is None else r.united(br)
+        if r is not None and self._cache_key() is not None:
+            self._cached_bbox = QRectF(r)
         return r
 
     # ---- 핸들 기하(씬 좌표) --------------------------------------------------

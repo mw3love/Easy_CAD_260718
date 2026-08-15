@@ -124,6 +124,9 @@ class _CanvasMixin:
             changed_n += 1
             uniform = False                      # 삭제 = 장애물 구성이 바뀜
         self._last_geom_change_count = changed_n
+        if changed_n:
+            # [2-H] 실제 기하 변경이 있을 때만 — 그룹 오버레이 캐시 무효화 도장.
+            self._geom_version = getattr(self, "_geom_version", 0) + 1
         # [성능수정 2026-08-15] **씬의 도형이 하나도 빠짐없이 같은 델타로 평행이동**했는가.
         # 그렇다면 도형끼리의 상대 기하가 완전히 그대로이므로 어떤 화살표의 최적 경로도
         # 바뀔 수 없다 — `_on_scene_changed`가 라우팅 자체를 통째로 건너뛴다.
