@@ -206,3 +206,19 @@ cr.height(), s, h)` 비교 후 미스일 때만 `_qc_dot_rects()`/`_box_corner_r
 Rejected: `_paint_selection_highlight`의 `_highlight_band()`에 값비교 캐시 적용 |
 전체 pytest 스위트에서 비결정적 네이티브 크래시(exit 127, faulthandler로도 트레이스백
 없음) 유발 — 원인 미상, 되돌림
+
+### ✅ 2026-08-15 — 이 막다른 길은 「캐시하지 않는」 방향으로 뚫렸다
+
+위 "다음에 다시 시도한다면"의 조사 항목들은 **더 이상 필요 없다.** 같은 병목을 캐시가
+아니라 **함수 자체를 싸게 만드는 것**으로 해결했기 때문이다(커밋 `de71498`) —
+`QPainterPathStroker.createStroke().simplified().subtracted()`로 계산하던 사각형·원 밴드를
+`addRoundedRect(반지름=band_w/2)`/`addEllipse` + OddEvenFill 산술 경로로 대체하고, 조건
+미달이면 기존 정확한 경로로 폴백한다. `QPainterPath`를 아이템 속성으로 장기 보관하지
+않으므로 크래시 이력과 구조적으로 무관하다. 실측 200개 50.06→40.06ms, 500개
+119.88→97.22ms.
+
+⚠ 다만 **`QPainterPath` 값비교 캐시 자체는 여전히 재시도 금지**로 남긴다(원인 미상 크래시
+이력이 해소된 것은 아니고, 우회했을 뿐이다). 1차 구현이 시각 회귀를 냈던 것도 함께 기억할
+것 — `_SymbolItem`이 `QGraphicsRectItem` 하위라 `isinstance` 판정이 심볼까지 삼켜 실제 모양
+대신 사각형 밴드를 그렸다. 타입으로 경로를 가를 땐 **화이트리스트**(모르는 타입은 정확한
+경로로 폴백)를 쓴다. 후속 라운드는 `docs/perf_plan_500_1000.md`.
