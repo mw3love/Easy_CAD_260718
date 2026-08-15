@@ -3335,6 +3335,10 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def has_binding(self) -> bool:
         return self._bind1 is not None or self._bind2 is not None
 
+    def bound_shapes(self):
+        """[2026-08-15] `_PolyArrowItem.bound_shapes`와 같은 계약 — 필드 이름만 다르다."""
+        return (self._bind1, self._bind2)
+
     def reroute(self, pin_pred=None, *, fast=False, defer_route=False) -> bool:
         """바인딩된 끝점을 '도형의 고정 부착점'(로컬→씬)으로 추종. 변경 있었으면 True.
         곡선은 재계산하지 않는다 — _set_endpoint가 제어점을 delta로 끌고 가 사용자가 그린 곡선을 보존.
@@ -3838,6 +3842,13 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     def has_binding(self) -> bool:
         return self._bind_start is not None or self._bind_end is not None
+
+    def bound_shapes(self):
+        """[2026-08-15] 이 화살표가 실제로 '붙어 있는' 도형들 — 재라우팅 트리거가
+        "움직인 도형에 연결된 화살표만"을 가리기 위해 쓴다(`host_canvas._on_scene_changed`).
+        두 화살표 클래스가 바인딩 필드 이름이 달라(_bind1/_bind2 vs _bind_start/_bind_end)
+        호출부가 분기하지 않도록 공통 접근자를 둔다."""
+        return (self._bind_start, self._bind_end)
 
     def _move_endpoint_with_snap(self, idx, local_p):
         # 양 끝점만 테두리에 스냅·바인딩(중간 waypoint는 자유 이동). 멀리 끌면 unbind.

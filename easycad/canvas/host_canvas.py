@@ -88,6 +88,7 @@ class _CanvasMixin:
         # 것들이 전부 '같은 델타의 평행이동'인가(크기·회전 변화가 섞이면 즉시 탈락).
         uniform = True
         shift = None
+        moved = set()      # 이번 사이클에 실제로 기하가 바뀐 도형들(재라우팅 트리거용)
         arrow_pos = {}
         for it in self._scene.items():
             if isinstance(it, (_ArrowItem, _PolyArrowItem)):
@@ -106,6 +107,7 @@ class _CanvasMixin:
                 delta = rect if prev is None else prev.united(rect)
                 changed = delta if changed is None else changed.united(delta)
                 changed_n += 1
+                moved.add(it)
                 if uniform:
                     if prev is None or abs(prev.width() - rect.width()) > 1e-6 \
                             or abs(prev.height() - rect.height()) > 1e-6:
@@ -143,6 +145,7 @@ class _CanvasMixin:
                     moved_with.add(a)
         self._uniform_moved_arrows = moved_with
         self._arrow_pos_snapshot = arrow_pos
+        self._moved_items = moved
         return changed
 
     def _on_scene_changed(self, region):
@@ -226,6 +229,7 @@ class _CanvasMixin:
             defer = bool(view is not None and view.is_drag_session())
             uniform = getattr(self, "_uniform_translation", False)
             moved_with = getattr(self, "_uniform_moved_arrows", ()) or ()
+            moved = getattr(self, "_moved_items", None)
             for it in candidates:
                 # 곡선화살표(_ArrowItem)·직선화살표(_PolyArrowItem) 모두 지속 연결 리라우트.
                 if isinstance(it, (_ArrowItem, _PolyArrowItem)) and it.has_binding():
@@ -234,18 +238,30 @@ class _CanvasMixin:
                         # 상대 기하가 완전히 그대로라 최적 경로가 바뀔 수 없다. 재계산도,
                         # 나중에 갚을 빚(deferred)도 없다. (Ctrl+A 드래그가 이 경우.)
                         continue
-                    if union is None or it.sceneBoundingRect().adjusted(
-                            -margin, -margin, margin, margin).intersects(union):
-                        it.reroute(pin_pred=self._make_pin_pred(it), fast=many_changed,
-                                   defer_route=defer)
-                        if defer:
-                            self._deferred_arrows.add(it)
-                            # ⚠ fast 판단은 **미루는 이 시점의 것을 기억**해 둔다. flush 때
-                            # `_last_geom_change_count`를 다시 읽으면 안 된다 — 릴리스 직전
-                            # 마지막 scene.changed가 보통 '변경 0건'(리페인트만)이라 그 값이
-                            # 0으로 덮이고, 그러면 fast=False가 돼 클리어런스 사다리를 전부
-                            # 돌아 릴리스가 2417→3775ms로 오히려 악화된다(실측).
-                            self._deferred_fast = many_changed
+                    # [설계 변경 2026-08-15 — 「낙장불입」] **움직인 도형에 실제로 붙어 있는**
+                    # 화살표만 다시 그린다. 예전엔 "경로 bbox가 변경영역과 겹치면" 전부
+                    # 다시 그렸는데(무관한 장애물이 끼어들면 알아서 비켜가게 하려던 의도),
+                    # 실측하니 도형 1개를 옮길 때 재계산 13개 중 11개(85%)가 그 도형과
+                    # 아무 관계도 없는 화살표였다(5개 이동 80%, 30개 이동 52%).
+                    # 비용도 비용이지만 동작 자체가 이상했다 — 도형 하나를 옮겼는데 화면
+                    # 반대편의 무관한 화살표가 제멋대로 모양이 바뀐다. Lucid·Figma·draw.io는
+                    # 전부 "끝점이 움직인 커넥터만" 다시 그린다(사용자 확인 2026-08-15).
+                    # 대가: 도형을 화살표 위로 끌어다 놓아도 화살표가 비켜가지 않고 그대로
+                    # 지나간다 — 그 화살표를 직접 건드리기 전까지. 의도된 트레이드오프다.
+                    if union is not None and moved is not None:
+                        s0, s1 = it.bound_shapes()
+                        if s0 not in moved and s1 not in moved:
+                            continue
+                    it.reroute(pin_pred=self._make_pin_pred(it), fast=many_changed,
+                               defer_route=defer)
+                    if defer:
+                        self._deferred_arrows.add(it)
+                        # ⚠ fast 판단은 **미루는 이 시점의 것을 기억**해 둔다. flush 때
+                        # `_last_geom_change_count`를 다시 읽으면 안 된다 — 릴리스 직전
+                        # 마지막 scene.changed가 보통 '변경 0건'(리페인트만)이라 그 값이
+                        # 0으로 덮이고, 그러면 fast=False가 돼 클리어런스 사다리를 전부
+                        # 돌아 릴리스가 2417→3775ms로 오히려 악화된다(실측).
+                        self._deferred_fast = many_changed
         finally:
             self._rerouting = False
 

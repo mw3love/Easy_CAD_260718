@@ -1993,3 +1993,45 @@ def test_arrow_stays_orthogonal_during_drag():
     w._view._move_active = False
     w.flush_deferred_reroute()
     assert diagonal_segments(arrow._pts) == [], "놓은 뒤에도 비직각이 남았다"
+
+
+def test_only_connected_arrows_reroute_not_bystanders():
+    """[설계 변경 2026-08-15 「낙장불입」] 움직인 도형에 **붙어 있는** 화살표만 다시 그린다.
+
+    예전엔 "경로 bbox가 변경영역과 겹치면" 전부 다시 그렸다(무관한 장애물이 끼어들면 알아서
+    비켜가게 하려던 의도). 실측하니 도형 1개 이동에 재계산 13개 중 11개(85%)가 그 도형과
+    아무 관계 없는 화살표였고, 동작도 이상했다 — 도형 하나를 옮겼는데 화면 반대편 화살표가
+    제멋대로 모양이 바뀐다.
+
+    ⚠ 결과(경로 좌표)가 아니라 **재계산 대상 집합**을 직접 검사한다. 좌표로 재면 우연히
+    같은 경로가 나올 때 통과해버려 판정이 무디다(실제로 옛 코드에서도 통과했다)."""
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=500, y=0, ww=120, hh=72)
+    c = _mk_pen_rect(w, x=0, y=400, ww=120, hh=72)
+    d = _mk_pen_rect(w, x=500, y=400, ww=120, hh=72)
+
+    def connect(src, dst):
+        ar = _PolyArrowItem(QColor("#333333"), 2.0, True)
+        sp = src.sceneBoundingRect().center()
+        dp = dst.sceneBoundingRect().center()
+        ar._pts = [sp, dp]
+        ar._auto_route = True
+        w._scene.addItem(ar)
+        ar.set_bound(0, src, src.mapFromScene(sp))
+        ar.set_bound(len(ar._pts) - 1, dst, dst.mapFromScene(dp))
+        return ar
+
+    mine = connect(a, b)          # 움직일 도형(a)에 붙은 화살표
+    bystander = connect(c, d)     # a와 무관하지만 a가 지나갈 자리에 있는 화살표
+    w._on_scene_changed(None)
+
+    # 드래그 세션으로 재계산 대상을 `_deferred_arrows`에 모이게 한다(트리거 관찰용).
+    a.setSelected(True)
+    w._view._move_active = True
+    w._deferred_arrows = set()
+    a.setPos(a.pos() + QPointF(120, 380))     # bystander 경로를 가로지르도록 크게 이동
+    w._on_scene_changed([a.sceneBoundingRect()])
+
+    assert mine in w._deferred_arrows, "연결된 화살표가 재계산 대상에서 빠졌다"
+    assert bystander not in w._deferred_arrows,         "무관한 화살표까지 재계산 대상에 들어갔다(낙장불입 위반)"
