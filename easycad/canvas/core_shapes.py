@@ -1366,12 +1366,61 @@ def _arrow_body_path(it) -> QPainterPath:
     return p
 
 
+def _highlight_band_fast(it, extra_width: float = 3.0) -> QPainterPath | None:
+    """[성능수정 2026-08-15, perf_lab/REPORT_multiselect_perf.md 병목 B/C] `_highlight_band`의
+    사각형·원 경로는 `QPainterPathStroker.createStroke().simplified().subtracted()`(폴리곤
+    불리언 연산, 도형당 수십µs — 다중선택·러버밴드 드래그에서 프레임당 선택개수만큼 반복돼
+    누적)로 계산하지만, 결과 모양 자체는 순수 산술로 동일하게 만들 수 있다: RoundJoin 스트로크가
+    사각형 모서리에 만드는 바깥쪽 둥근 부분은 반지름 band_w/2인 원호와 수학적으로 같으므로
+    `addRoundedRect`(사각형)·`addEllipse`(타원) 표준 프리미티브로 대체 — 안쪽은 원본 경계
+    그대로, 바깥쪽만 band_w/2 부풀린 뒤 `OddEvenFill`로 안쪽을 구멍으로 남긴다(불리언 연산 0회).
+    포트·TRIM cut이 있으면(실제 외곽선이 단순 사각형/타원이 아님) 이 근사가 안 맞아 None을
+    돌려주고, 호출자(`_highlight_band`)가 기존 정확한 방식으로 폴백한다.
+
+    ⚠ **판정은 `isinstance`가 아니라 정확한 타입 화이트리스트다.** `_SymbolItem`(삼각형·마름모·
+    원통·안테나 등 전부)이 `QGraphicsRectItem`을 **상속**하므로 `isinstance` 판정을 쓰면 심볼이
+    이 경로로 새서 실제 모양 대신 사각형 밴드가 그려진다 — 이 커밋의 1차 구현이 정확히 그
+    버그를 냈고, 오프스크린 렌더 대조로 잡았다(사각형·타원만 렌더해 본 자체검증은 못 잡았다).
+    `_item_center_path`가 `_SymbolItem`을 `QGraphicsRectItem`보다 **먼저** 검사하는 것도 같은
+    이유다. 블랙리스트(`and not isinstance(it, _SymbolItem)`)로 고치면 앞으로 추가되는 하위
+    클래스가 같은 함정을 조용히 다시 밟으므로, 실제로 픽셀 대조까지 마친 두 타입만 화이트리스트에
+    둔다 — 모르는 타입은 항상 정확한 기존 경로로 폴백(fail-safe). 나머지 사각형류
+    (`_ImageItem`/`_TableItem`/`_TitleBlockItem`)는 문서당 몇 개뿐이라 성능 기여가 없어
+    일부러 제외했다."""
+    if type(it) is not _RectItem and type(it) is not _EllipseItem:
+        return None
+    if getattr(it, "_ports", None) or getattr(it, "_cuts", None):
+        return None
+    half = (max(it.pen().widthF(), 1.0) + extra_width) / 2.0
+    r = it.rect()
+    path = QPainterPath()
+    path.setFillRule(Qt.FillRule.OddEvenFill)
+    if type(it) is _RectItem:
+        # 사각형은 근사가 아니라 완전히 동일하다(픽셀 diff 0 확인) — 바깥 모서리의 RoundJoin
+        # 원호 반지름이 정확히 half이고 안쪽은 원본 사각형 그대로다.
+        path.addRoundedRect(r.adjusted(-half, -half, half, half), half, half)
+        path.addRect(r)
+    else:
+        # ⚠ 타원만은 진짜 '근사'다 — 타원을 half만큼 바깥으로 오프셋한 곡선은 (원과 달리)
+        # 타원이 아니다. 실측(면적 대칭차 기준): 원·보통 비율은 측정 노이즈 수준(~0.2%),
+        # 400x40+펜2도 1.1%지만, 극단적으로 납작한 타원(400x20+펜10 = 5.2%,
+        # 600x12+펜12 = 8.8%)에선 눈에 띌 수 있다. 밴드 반폭이 단축의 15%를 넘으면
+        # 그 구간으로 보고 정확한 기존 경로로 폴백한다(비교 1회, 비용 0).
+        if half > 0.15 * max(min(r.width(), r.height()), 1e-9):
+            return None
+        path.addEllipse(r.adjusted(-half, -half, half, half))
+        path.addEllipse(r)
+    return path
+
+
 def _highlight_band(it, extra_width: float = 3.0) -> QPainterPath:
     """[선택 표시 통일 2026-08-01] 중심선을 도형 두께 비례 폭(pw+extra_width, 장면 단위)으로
     스트로크해 띠를 만들고, `band.subtracted(centerline)`로 안쪽 절반을 깎아 바깥쪽만 남긴다
     (Lucid 스타일). 네모·원·심볼처럼 centerline이 '닫힌'(채워진 영역이 있는) 경로면 안쪽이
     실제로 깎이고, 선·화살표 몸통처럼 '열린'(면적 0) 경로는 뺄 것이 없어 대칭 띠가 그대로
     유지된다 — 타입별 분기 없이 한 연산으로 둘 다 처리.
+    [성능수정 2026-08-15] 먼저 `_highlight_band_fast`(불리언 연산 없는 산술 경로)를 시도 —
+    성공하면(사각형·원, 포트/cut 없음) 그대로 반환, 실패하면(None) 아래 기존 방식으로 폴백.
     [화살표 찌그러짐 수정 2026-08-01, 실조건서 발견] 화살표(_ArrowItem/_PolyArrowItem)는 몸통과
     별개로 처리한다 — 화살촉(닫힌 삼각형)까지 몸통과 한 경로로 묶어 `QPainterPathStroker`로
     스트로크하면, RoundJoin이 삼각형의 뾰족한 꼭짓점(특히 tip)을 뭉툭한 혹으로 뭉개 실제
@@ -1384,6 +1433,9 @@ def _highlight_band(it, extra_width: float = 3.0) -> QPainterPath:
     화살촉의 얇은 꼭짓점 폭보다 넓어 삼각형 옆으로 반원이 삐져나왔다(union으로도 안 가려짐).
     tip을 중심으로 그 반지름만큼의 원을 몸통 밴드에서 파내(subtract) 캡을 제거 — 그 자리는
     이미 확대된 화살촉이 덮으므로 시각적 손실 없이 삐져나온 반원만 사라진다."""
+    fast = _highlight_band_fast(it, extra_width)
+    if fast is not None:
+        return fast
     if isinstance(it, (_ArrowItem, _PolyArrowItem)):
         pw = getattr(it, "_width", 1.0)
         band_w = max(pw, 1.0) + extra_width

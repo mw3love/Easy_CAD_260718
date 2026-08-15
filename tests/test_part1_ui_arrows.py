@@ -1376,3 +1376,92 @@ def test_arrowhead_shoulders_not_beveled():
     curved = _ArrowItem(QColor("#ff0000"), 1.0, True)
     curved.set_points(QPointF(0, -40), QPointF(0, 0))
     assert all(shoulders_filled(curved)), "곡선 화살촉 어깨가 깎였다"
+
+
+# --- 다중선택 강조 밴드 고속경로(2026-08-15 성능수정) 회귀 -------------------
+# `_highlight_band_fast`가 스트로크+불리언 연산을 산술 프리미티브로 대체하는데, 이 경로에
+# 잘못된 도형이 새면 "선택 강조만 조용히 딴 모양"이 되는 시각 버그가 된다. 1차 구현이 실제로
+# 그 버그를 냈다(`_SymbolItem`이 `QGraphicsRectItem` 하위라 isinstance 판정에 걸려 삼각형·
+# 마름모가 사각형 밴드로 그려짐) — 기존 스모크 어디에도 선택 밴드를 검사하는 테스트가 없어
+# 못 잡았고, `tools/perf_baseline_check.py`도 선택 상태를 렌더하지 않아 못 잡는다.
+
+def _band_area(path):
+    """QPainterPath의 채움 면적(신발끈 공식) — 밴드 비교용."""
+    total = 0.0
+    for poly in path.toFillPolygons():
+        s = 0.0
+        n = poly.count()
+        for i in range(n):
+            p1, p2 = poly.at(i), poly.at((i + 1) % n)
+            s += p1.x() * p2.y() - p2.x() * p1.y()
+        total += abs(s) / 2.0
+    return total
+
+
+def test_highlight_band_fast_skips_symbol_items():
+    """심볼은 고속경로에 절대 들어가면 안 된다(`QGraphicsRectItem` 상속 함정)."""
+    from PyQt6.QtGui import QPen
+    from easycad.canvas.core_shapes import _highlight_band, _highlight_band_fast
+
+    sym = _SymbolItem("triangle", QRectF(0, 0, 130, 110))
+    pen = QPen(QColor("#222222")); pen.setWidthF(2.0); sym.setPen(pen)
+
+    assert _highlight_band_fast(sym) is None, "심볼이 사각형 고속경로로 샜다"
+
+    # 밴드가 실제 삼각형 외곽선을 따라가는지 기하로 확인. 삼각형은 (0,0)-(0,110)-(130,55)이라
+    # 위쪽 빗변 중점 바로 바깥인 (65, 26.5)는 삼각형 밖(≈0.9 유닛)이면서 bbox 안이다 —
+    # 삼각형 밴드는 이 점을 품고, (버그 시의) 사각형 밴드는 bbox 바깥만 감싸므로 못 품는다.
+    band = _highlight_band(sym)
+    assert band.contains(QPointF(65, 26.5)), "밴드가 삼각형 빗변을 안 따라간다(사각형 밴드 회귀)"
+
+
+def test_highlight_band_fast_matches_slow_path_for_rect():
+    """사각형 고속경로는 근사가 아니라 기존 스트로크+불리언 결과와 동일해야 한다."""
+    from PyQt6.QtGui import QPen, QPainterPathStroker
+    from easycad.canvas.core_shapes import _highlight_band_fast, _item_center_path
+
+    r = _RectItem(QRectF(0, 0, 150, 90))
+    pen = QPen(QColor("#222222")); pen.setWidthF(2.0); r.setPen(pen)
+
+    fast = _highlight_band_fast(r)
+    assert fast is not None, "사각형이 고속경로를 못 탔다"
+
+    centerline = _item_center_path(r)
+    stroker = QPainterPathStroker()
+    stroker.setWidth(max(2.0, 1.0) + 3.0)
+    stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
+    stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    slow = stroker.createStroke(centerline).simplified().subtracted(centerline)
+
+    a_slow = _band_area(slow)
+    a_xor = _band_area(fast.united(slow)) - _band_area(fast.intersected(slow))
+    assert a_xor / a_slow < 0.01, f"사각형 밴드가 기존 경로와 다르다(대칭차 {a_xor / a_slow:.1%})"
+
+
+def test_highlight_band_fast_falls_back_for_eccentric_ellipse():
+    """납작한 타원 + 굵은 펜은 '타원의 오프셋 곡선은 타원이 아니다' 오차가 커져 폴백해야 한다."""
+    from PyQt6.QtGui import QPen
+    from easycad.canvas.core_shapes import _highlight_band_fast
+
+    def mk(w, h, pw):
+        e = _EllipseItem(QRectF(0, 0, w, h))
+        pen = QPen(QColor("#222222")); pen.setWidthF(pw); e.setPen(pen)
+        return e
+
+    assert _highlight_band_fast(mk(150, 90, 2.0)) is not None    # 통상 비율 — 고속경로
+    assert _highlight_band_fast(mk(400, 40, 2.0)) is not None    # 실측 오차 1.1% — 허용
+    assert _highlight_band_fast(mk(400, 20, 10.0)) is None       # 실측 5.2% — 폴백
+    assert _highlight_band_fast(mk(600, 12, 12.0)) is None       # 실측 8.8% — 폴백
+
+
+def test_highlight_band_fast_falls_back_for_ports_and_cuts():
+    """포트·TRIM 자국이 있으면 실제 외곽선이 단순 사각형이 아니므로 폴백해야 한다."""
+    from PyQt6.QtGui import QPen
+    from easycad.canvas.core_shapes import _highlight_band_fast
+
+    r = _RectItem(QRectF(0, 0, 150, 90))
+    pen = QPen(QColor("#222222")); pen.setWidthF(2.0); r.setPen(pen)
+    assert _highlight_band_fast(r) is not None
+
+    r._cuts = [(0, 0.3, 0.6)]        # 위쪽 변 일부가 잘린 상태
+    assert _highlight_band_fast(r) is None, "cut이 있는데도 고속경로를 탔다"
