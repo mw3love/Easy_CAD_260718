@@ -1965,3 +1965,31 @@ def test_shapes_move_without_arrow_still_follows():
     after = arrow._pts[0]
     assert (abs(after.x() - before.x()) > 1e-6 or abs(after.y() - before.y()) > 1e-6), \
         "도형이 옮겨졌는데 화살표 끝점이 따라오지 않았다"
+
+
+def test_arrow_stays_orthogonal_during_drag():
+    """[실사용 보고 2026-08-15] 드래그 중에도 화살표가 직각을 유지해야 한다.
+
+    2-B가 드래그 중 라우팅을 통째로 멈추자 끝점만 도형을 따라가고 중간 정점은 제자리에
+    남아 경로가 비스듬히 일그러졌다("직선으로 바뀌었다가 다시 그려진다"). 이제 드래그
+    중에는 A* 회피 대신 값싼 직각 엘보(`_apply_routing(cheap=True)`)로 모양만 유지하고,
+    정확한 회피 경로는 손을 떼는 순간 복원한다."""
+    w, a, b, arrow = _scene_all_bound()
+
+    def diagonal_segments(pts):
+        return [i for i in range(len(pts) - 1)
+                if abs(pts[i + 1].x() - pts[i].x()) > 1e-6
+                and abs(pts[i + 1].y() - pts[i].y()) > 1e-6]
+
+    assert diagonal_segments(arrow._pts) == [], "드래그 전부터 비직각(테스트 전제 실패)"
+
+    a.setSelected(True)
+    w._view._move_active = True
+    for _ in range(4):
+        a.setPos(a.pos() + QPointF(40, 25))
+        w._on_scene_changed(None)
+    assert diagonal_segments(arrow._pts) == [], "드래그 중 경로가 비스듬해졌다"
+
+    w._view._move_active = False
+    w.flush_deferred_reroute()
+    assert diagonal_segments(arrow._pts) == [], "놓은 뒤에도 비직각이 남았다"

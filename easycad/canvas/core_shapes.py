@@ -3940,8 +3940,11 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # 한쪽만 바인딩돼도(has_binding) 재적용해 도형 이동 시 직교가 깨지지 않게 한다
         # (_apply_routing이 양끝 바인딩=A*, 한쪽=단순 엘보로 분기). 수동 세그먼트 편집(auto_route
         # False)은 끝점만 추종(사용자 경로 보존).
-        if self._auto_route and self.has_binding() and not defer_route:
-            if self._apply_routing(fast=fast):
+        if self._auto_route and self.has_binding():
+            # [2-C 후속 2026-08-15] 드래그 중(defer_route)엔 A* 회피 대신 값싼 직각 엘보로만
+            # 모양을 유지한다 — 통째로 멈추면 중간 정점이 제자리에 남아 경로가 비스듬히
+            # 일그러져 보인다(실사용 보고). 정확한 회피 경로는 release에서 복원.
+            if self._apply_routing(fast=fast, cheap=defer_route):
                 changed = True
         if changed:
             self.prepareGeometryChange()
@@ -4034,23 +4037,29 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def _is_ortho(self) -> bool:
         return self._routing == "ortho"
 
-    def _apply_routing(self, *, fast=False) -> bool:
+    def _apply_routing(self, *, fast=False, cheap=False) -> bool:
         """[M4-4] 현재 _routing에 맞춰 _pts를 재생성(양끝점은 유지, 중간만 라우터 소유). 변경 시 True.
         · straight=2점 직선(대각 허용). · ortho=직교 경로(각짐·둥긂 무관) — 양끝 바인딩이면 build_elbow
           (A* 회피·법선·정렬흡수), 아니면 자유 끝점 사이 단순 L/HVH 엘보(_ortho_elbow).
         [성능 최적화 2026-08-11] `fast`는 `build_elbow`/`_route_ortho`로 그대로 전달(정확성
-        무영향, `_route_ortho` docstring 참조)."""
+        무영향, `_route_ortho` docstring 참조).
+        [성능계획 2-C 후속 2026-08-15] `cheap=True`면 A* 회피를 아예 안 쓰고 `_ortho_elbow`
+        (단순 L/HVH)로만 경로를 만든다 — **드래그하는 동안** 쓰는 모드다. 2-B가 드래그 중
+        라우팅을 통째로 멈추자 끝점만 따라가고 중간 정점은 제자리에 남아 경로가 비스듬히
+        일그러져 보였다(실사용 보고: "직선으로 바뀌었다가 다시 그려진다"). 직각은 유지하되
+        장애물 회피만 포기하면 A* 없이도 모양이 자연스럽다 — 정확한 회피 경로는 손을 떼는
+        순간 `flush_deferred_reroute`가 복원한다."""
         end_idx = len(self._pts) - 1
         s = self.mapToScene(self._pts[0])
         e = self.mapToScene(self._pts[end_idx])
         if self._routing == "straight":
             new_local = [self.mapFromScene(s), self.mapFromScene(e)]
-        elif self._bind_start is not None and self._bind_end is not None:
+        elif self._bind_start is not None and self._bind_end is not None and not cheap:
             return self.build_elbow(fast=fast)   # 바인딩 직교 — 기존 A* 라우팅 재사용
-        else:                            # 한쪽만 바인딩 / 완전 자유 직교
+        else:                            # 한쪽만 바인딩 / 완전 자유 직교 / 드래그 중(cheap)
             ns = self._bound_normal_scene(0)
             ne = self._bound_normal_scene(end_idx)
-            if self.has_binding():
+            if self.has_binding() and not cheap:
                 # 한쪽만 붙어도 build_elbow과 같은 _route_ortho로 회피(재진입·장애물·화살표) — 그리기
                 # 라이브 미리보기(set_ortho_preview가 이 경로 위임)와 릴리스 결과를 일치시킨다.
                 mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
