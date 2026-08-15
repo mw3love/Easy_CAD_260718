@@ -596,8 +596,23 @@ class _HandleResizeMixin:
     # 텍스트·번호는 기존 단일 핸들(중심 균일 스케일)을 그대로 쓰고, setRect가 있는 네모·원만
     # Lucid식 8핸들로 자유 리사이즈한다. 핸들 위치·리사이즈 모두 '기하 rect()' 기준(펜 여유 없이
     # 정확). 선택 점선은 _content_rect(펜 밖)이라 핸들이 그 안쪽에 살짝 들어오지만 무해.
+    # [성능계획 2-H(2), 2026-08-15] 아래 `_box_handles()`의 인스턴스 캐시(클래스 기본 None).
+    _box_handles_cached = None
+
     def _box_handles(self) -> bool:
-        return hasattr(self, "setRect") and not self._uses_endpoints()
+        """이 아이템이 '박스 핸들'(네모·원식 8핸들) 종류인가.
+
+        [성능] 결과는 **타입으로 결정되고 인스턴스 수명 동안 절대 안 변한다** —
+        `hasattr(self, "setRect")`는 클래스가 그 메서드를 갖느냐이고, `_uses_endpoints()`는
+        클래스마다 상수(False/True)를 돌려준다. 그런데 `boundingRect()`가 매번 이걸 다시
+        계산했고, `boundingRect()`는 Qt가 공간쿼리·히트테스트·페인트마다 부른다 — 500개
+        문서에서 마우스를 한 번 움직이면 1,892회 호출되며 `hasattr`만으로 6.5ms를 먹었다.
+        값이 변할 수 없으므로 한 번 계산해 두는 것이 안전하다(stale이 원리적으로 불가능)."""
+        v = self._box_handles_cached
+        if v is None:
+            v = hasattr(self, "setRect") and not self._uses_endpoints()
+            self._box_handles_cached = v
+        return v
 
     # [Lucid 대조 2026-08-03 재도입 → 2026-08-11 모서리만 원복] 한때 꼭짓점·변 핸들과
     # qc-dot이 같은 gap(`_HANDLE_GAP_FACTOR`, 6px)을 공유해 테두리 밖으로 함께 떠 있었다 —

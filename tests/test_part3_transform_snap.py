@@ -1954,3 +1954,24 @@ def test_group_items_cache_invalidates_on_selection_change():
     assert len(w._view._group.items()) == 2, "선택이 늘었는데 items()가 옛 목록이다"
     a.setSelected(False); b.setSelected(False)
     assert w._view._group.items() == [], "선택 해제 후에도 items()가 남아 있다"
+
+
+def test_box_handles_cache_matches_type():
+    """`_box_handles()` 인스턴스 캐시가 타입별 정답과 일치해야 한다(성능계획 2-H(2)).
+
+    이 값은 타입으로 결정되고 인스턴스 수명 동안 안 변하므로 한 번만 계산한다 —
+    그래서 stale이 원리적으로 불가능하지만, '타입별 정답' 자체가 틀리면 조용히 핸들이
+    사라지거나 생기므로 여기서 못 박는다."""
+    w = CanvasWindow()
+    cases = [
+        (_mk_pen_rect(w, x=0, y=0, ww=80, hh=50), True),      # 네모 — 박스 핸들
+        (_EllipseItem(QRectF(0, 0, 80, 50)), True),           # 원 — 박스 핸들
+        (_LineItem(QLineF(0, 0, 80, 50)), False),             # 선 — 끝점 핸들
+        (_PolyArrowItem(QColor("#333333"), 2.0, True), False),  # 직각 화살표 — 끝점
+        (_ArrowItem(QColor("#333333"), 2.0, True), False),      # 곡선 화살표 — 끝점
+    ]
+    for it, expected in cases:
+        fresh = hasattr(it, "setRect") and not it._uses_endpoints()   # 캐시 없이 직접 계산
+        assert fresh == expected, f"{type(it).__name__} 타입별 정답이 바뀌었다"
+        assert it._box_handles() == expected, f"{type(it).__name__} 첫 호출이 틀림"
+        assert it._box_handles() == expected, f"{type(it).__name__} 캐시 히트가 틀림"
