@@ -1827,3 +1827,70 @@ def test_unselected_label_bbox_has_no_handle_padding():
     pad = 3.0 / label._scale_or_1()
     expected = QRectF(label._content_rect()).adjusted(-pad, -pad, pad, pad)
     assert QRectF(label.boundingRect()) == expected, "미선택 라벨이 회전 핸들 자리를 예약한다"
+
+
+# --- 드래그 종료 뒷정리가 모든 return 경로에서 보장되는가(실사용 버그 2026-08-15) ---
+# mouseReleaseEvent는 조기 return이 13곳이라 종료 처리를 끝에 두면 경로에 따라 실행이 안 됐다.
+# 사용자 보고: "드래그가 끝났는데 어쩔 땐 파란 밴드가 다시 나타나고 어쩔 땐 안 나타남".
+# 눈에 보이는 밴드보다 심각한 건 `_move_active`가 True로 남아 미뤄둔 A* 재라우팅이 영영
+# 안 도는 것 — 화살표 경로가 옛 모양에 굳는다.
+
+def _release_event(view, pos=None):
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent, QPointF as _P
+    p = _P(pos if pos is not None else view.viewport().rect().center())
+    return QMouseEvent(QEvent.Type.MouseButtonRelease, p, p,
+                       Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+                       Qt.KeyboardModifier.NoModifier)
+
+
+def test_drag_session_ends_on_every_release_path():
+    """조기 return 경로(그룹 본체 드래그·세그먼트 드래그 등)로 끝나도 드래그 세션이 닫혀야."""
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=300, y=200, ww=120, hh=72)
+    a.setSelected(True); b.setSelected(True)
+    v = w._view
+
+    # ⓐ 그룹 본체 드래그 — 자기 자리에서 커밋하고 조기 return 하는 경로
+    v._move_active = True
+    v._group_body_drag = True
+    v.mouseReleaseEvent(_release_event(v))
+    assert v.is_drag_session() is False, "그룹 본체 드래그 후 세션이 안 닫혔다"
+
+    # ⓑ 러버밴드 — 역시 조기 return
+    v._move_active = True
+    v._rb_active = True
+    v._rb_origin = v._rb_current = v.viewport().rect().center()
+    v.mouseReleaseEvent(_release_event(v))
+    assert v.is_drag_session() is False, "러버밴드 종료 후 세션이 안 닫혔다"
+
+    # ⓒ 평범한 경로
+    v._move_active = True
+    v.mouseReleaseEvent(_release_event(v))
+    assert v.is_drag_session() is False
+
+
+def test_deferred_reroute_flushed_on_early_return_release():
+    """조기 return 경로로 끝나도 미뤄둔 재라우팅이 반드시 복원돼야 한다(더 심각한 쪽)."""
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=400, y=300, ww=120, hh=72)
+    arrow = _PolyArrowItem(QColor("#333333"), 2.0, True)
+    arrow._pts = [QPointF(60, 72), QPointF(460, 300)]
+    arrow._auto_route = True
+    w._scene.addItem(arrow)
+    arrow.set_bound(0, a, a.mapFromScene(QPointF(60, 72)))
+    arrow.set_bound(len(arrow._pts) - 1, b, b.mapFromScene(QPointF(460, 300)))
+    w._on_scene_changed(None)
+
+    a.setSelected(True); b.setSelected(True)
+    v = w._view
+    v._move_active = True
+    v._group_body_drag = True
+    a.setPos(a.pos() + QPointF(150, 90))
+    w._on_scene_changed(None)
+    assert w._deferred_arrows, "드래그 중인데 재라우팅이 안 미뤄졌다(테스트 전제 실패)"
+
+    v.mouseReleaseEvent(_release_event(v))
+    assert not w._deferred_arrows, "조기 return 경로에서 미뤄둔 재라우팅이 복원되지 않았다"

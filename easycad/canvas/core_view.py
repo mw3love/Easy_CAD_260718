@@ -3013,6 +3013,43 @@ class _AnnotatorView(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        """[실사용 버그 2026-08-15] 드래그 종료 뒷정리를 **어느 경로로 나가든** 보장한다.
+
+        이 함수는 조기 `return`이 13곳이다(러버밴드·그룹변형·그룹본체·세그먼트·열폭·접속점
+        드래그가 각자 자기 자리에서 커밋하고 빠져나간다). 그런데 종료 처리(`_move_active`
+        해제 + 미뤄둔 재라우팅 flush + 리페인트)는 함수 **맨 끝**에 있어서, 어떤 경로로
+        끝나느냐에 따라 실행되기도 안 되기도 했다.
+
+        사용자 보고("드래그가 끝났을 때 어쩔 땐 파란 밴드가 다시 나타나고 어쩔 땐 안 나타남")가
+        그 신호였다. 눈에 보이는 밴드보다 심각한 게 함께 있었다 — `_move_active`가 True로
+        남으면 `is_drag_session()`이 계속 참이라 **미뤄둔 A* 재라우팅이 영영 안 돌고**, 그
+        뒤의 모든 지오메트리 변경도 계속 미뤄진다(화살표 경로가 옛 모양에 굳는다).
+
+        실제 처리는 `_mouse_release_impl`에 그대로 두고, 여기서 `try/finally`로 종료 처리만
+        감싼다 — 13곳에 각각 넣는 것보다 안전하고, 앞으로 return이 늘어도 자동으로 덮인다."""
+        try:
+            return self._mouse_release_impl(event)
+        finally:
+            self._end_drag_session()
+
+    def _end_drag_session(self):
+        """드래그 종료 뒷정리 — 위 `mouseReleaseEvent`의 finally에서만 부른다.
+
+        `_move_active`만 해제한다. 나머지 드래그 플래그(`_group_dragging`·`_group_body_drag`·
+        `_seg_drag`·`_table_col_drag`)는 각자의 처리 경로가 커밋과 함께 내리므로 여기서
+        건드리지 않는다. `_stretch_active`는 클릭-클릭 모달이라 release가 끝이 아니다
+        (`_stretch_clear`가 자기 자리에서 flush한다)."""
+        self._move_active = False
+        if self._align_guides:
+            self._align_guides = []
+        flush = getattr(self._owner, "flush_deferred_reroute", None)
+        if flush is not None:
+            flush()
+        # 드래그 중 숨겼던 선택 밴드를 되살릴 계기 — 마지막 프레임 이후 변화가 없으면 Qt가
+        # 리페인트를 안 보내 숨겨진 채로 남는다.
+        self.viewport().update()
+
+    def _mouse_release_impl(self, event):
         if event.button() == Qt.MouseButton.MiddleButton:
             self._owner._win_drag_end()
             self.viewport().unsetCursor()
@@ -3162,23 +3199,10 @@ class _AnnotatorView(QGraphicsView):
                 if host is not None:
                     _attach_port_to_host(c, host, center)
             self._pending_port_reattach = []
-        if self._move_active or self._align_guides:   # [2e] 스마트 정렬 상태 정리
-            self._move_active = False
-            self._align_guides = []
-            self.viewport().update()
+        # [2026-08-15] 종료 뒷정리(`_move_active` 해제·정렬 가이드 정리·미뤄둔 재라우팅
+        # flush·리페인트)는 `_end_drag_session()`으로 옮겼다 — 위 `mouseReleaseEvent`의
+        # finally가 부르므로 이 함수의 조기 return 13곳 전부에서 실행이 보장된다.
         super().mouseReleaseEvent(event)
-        # [성능계획 2-B, 2026-08-15] 드래그 중 미뤄둔 A* 재라우팅을 여기서 정확히 복원한다.
-        # ⚠ 반드시 위의 `_move_active = False`(및 super()의 그랩 해제) **다음**이어야 한다 —
-        # 앞에 두면 `is_drag_session()`이 아직 True라 재라우팅이 또 미뤄져 경로가 영영
-        # 갱신되지 않는다. 미룬 게 없으면 이 호출은 즉시 반환한다(무비용).
-        flush = getattr(self._owner, "flush_deferred_reroute", None)
-        if flush is not None:
-            flush()
-        # [성능계획 2-C(b)] 드래그 중 숨겼던 장식(라벨·선택 밴드)을 확실히 되살린다.
-        # 억제 판정 자체는 매 paint마다 뷰에 직접 묻는 무상태 방식이라 stale이 없지만,
-        # **다시 그릴 계기**는 있어야 한다 — 마지막 프레임 이후 아무 변화가 없으면 Qt가
-        # 리페인트를 안 보내 숨겨진 채로 남는다.
-        self.viewport().update()
 
     def _labelable_at(self, view_pos):
         """[우리 확장] 커서 아래 '맨 위 선택가능 아이템'이 선/화살표면 그 아이템, 아니면 None.
