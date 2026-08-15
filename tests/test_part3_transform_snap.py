@@ -1975,3 +1975,158 @@ def test_box_handles_cache_matches_type():
         assert fresh == expected, f"{type(it).__name__} 타입별 정답이 바뀌었다"
         assert it._box_handles() == expected, f"{type(it).__name__} 첫 호출이 틀림"
         assert it._box_handles() == expected, f"{type(it).__name__} 캐시 히트가 틀림"
+
+
+# --- 드래그 프록시(성능계획 2-D, 2026-08-15) --------------------------------
+# 씬이 클 때 드래그 프레임 비용의 절반 이상이 "아이템 하나하나에 Qt가 painter를 셋업하고
+# 우리 paint()를 부르는" 구조 자체다. 드래그 중에는 `ItemHasNoContents`로 그 디스패치를
+# 통째로 건너뛰고 뷰가 `drawForeground`에서 단순 윤곽을 한 번에 그린다.
+#
+# ⚠ 이 최적화의 본질은 「덜 그리는 것」이라 **결과물이 아니라 일한 양**(paint 호출 수)을
+#    검사해야 한다 — 결과만 보면 최적화가 통째로 되돌아가도 조용히 통과한다
+#    (`docs/pitfalls.md` "검증 방법론"). 그리고 복원 누락이 곧 **아이템이 안 보이는 버그**
+#    이므로 릴리스 후 플래그 잔류 0을 함께 못 박는다.
+
+def _big_scene(w, n=None):
+    """프록시 게이트(`_DRAG_PROXY_MIN_ITEMS`)를 넘기는 최소 규모 씬."""
+    n = n or (w._view._DRAG_PROXY_MIN_ITEMS + 10)
+    rects = []
+    for i in range(n):
+        # ⚠ 도형을 충분히 크게 만든다 — 작으면 중심을 눌러도 테두리 접속점 margin에 걸려
+        # 이동 대신 커넥터 뽑기(`_hp_dragging`)로 판정돼 드래그 세션이 시작되지 않는다.
+        rects.append(_mk_pen_rect(w, x=(i % 20) * 120, y=(i // 20) * 100, ww=80, hh=60))
+    return rects
+
+
+def _paint_counter(cls):
+    """cls.paint 호출 횟수를 세는 컨텍스트 — '일한 양'을 직접 잰다."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _ctx():
+        calls = []
+        orig = cls.paint
+
+        def counted(self, painter, option, widget=None):
+            calls.append(1)
+            return orig(self, painter, option, widget)
+
+        cls.paint = counted
+        try:
+            yield calls
+        finally:
+            cls.paint = orig
+    return _ctx()
+
+
+def _render_view(view, w=240, h=180):
+    from PyQt6.QtGui import QImage, QPainter
+    img = QImage(w, h, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    view.render(p)
+    p.end()
+    return img
+
+
+def test_drag_proxy_skips_item_paint_dispatch():
+    """드래그 중에는 아이템 paint()가 **한 번도** 안 불려야 한다(그게 이 최적화의 전부).
+    ⚠ 수정 전 소스에 돌리면 여기서 실패한다 — 그때는 프레임마다 아이템 수만큼 불린다."""
+    w = CanvasWindow()
+    w.resize(400, 300)
+    w.show()
+    rects = _big_scene(w)
+    v = w._view
+    # ⚠ fitInView로 전체를 화면에 넣지 않는다 — 210개가 들어가면 도형 하나가 1px로 줄어
+    # 히트테스트가 빗나가 드래그 자체가 시작되지 않는다(실제로 겪음). 기본 배율이면
+    # 원점 근처 도형들이 그대로 보이므로 이 테스트에는 충분하다.
+    QApplication.processEvents()
+
+    press, release, _click, _move, drag_move, _dbl = _draw_helpers(v)
+    target = rects[0].mapToScene(rects[0].rect().center())
+    press(target)
+    drag_move(target + QPointF(10, 8))
+    assert v._drag_proxy is not None, "큰 씬을 드래그 중인데 프록시가 안 켜졌다"
+
+    with _paint_counter(_RectItem) as calls:
+        _render_view(v)
+    assert not calls, f"프록시 중인데 아이템 paint()가 {len(calls)}회 불렸다"
+
+    release(target + QPointF(10, 8))
+    assert v._drag_proxy is None, "릴리스 후에도 프록시가 남았다"
+    with _paint_counter(_RectItem) as calls2:
+        _render_view(v)
+    assert calls2, "릴리스 후에도 아이템이 스스로 그리지 않는다(복원 실패)"
+
+
+def test_drag_proxy_still_draws_something_on_screen():
+    """프록시 중에도 화면이 비면 안 된다 — 오버레이가 대신 그린다.
+    2-D의 가장 큰 위험이 '아이템이 통째로 사라져 보이는 것'이라 픽셀로 못 박는다."""
+    w = CanvasWindow()
+    w.resize(400, 300)
+    w.show()
+    rects = _big_scene(w)
+    v = w._view
+    # ⚠ fitInView로 전체를 화면에 넣지 않는다 — 210개가 들어가면 도형 하나가 1px로 줄어
+    # 히트테스트가 빗나가 드래그 자체가 시작되지 않는다(실제로 겪음). 기본 배율이면
+    # 원점 근처 도형들이 그대로 보이므로 이 테스트에는 충분하다.
+    QApplication.processEvents()
+    bg = w._scene.backgroundBrush().color().rgb() & 0xFFFFFF
+
+    def ink(img):
+        return sum(1 for y in range(img.height()) for x in range(img.width())
+                   if (img.pixel(x, y) & 0xFFFFFF) != bg)
+
+    idle = ink(_render_view(v))
+    press, release, _c, _m, drag_move, _d = _draw_helpers(v)
+    target = rects[0].mapToScene(rects[0].rect().center())
+    press(target)
+    drag_move(target + QPointF(10, 8))
+    assert v._drag_proxy is not None
+    dragging = ink(_render_view(v))
+    release(target + QPointF(10, 8))
+
+    assert idle > 0, "유휴 상태에서 아무것도 안 그려졌다(테스트 전제 실패)"
+    assert dragging > idle * 0.3, \
+        f"프록시 중 화면이 사실상 비었다(유휴 {idle} / 드래그 {dragging})"
+
+
+def test_drag_proxy_not_armed_for_small_scene():
+    """작은 씬은 이미 60fps 예산 안이라 화면을 바꿀 이유가 없다 — 게이트 아래면 미발동."""
+    w = CanvasWindow()
+    w.show()
+    a = _mk_pen_rect(w, x=0, y=0, ww=80, hh=60)
+    _mk_pen_rect(w, x=200, y=0, ww=80, hh=60)
+    v = w._view
+    press, release, _c, _m, drag_move, _d = _draw_helpers(v)
+    target = a.mapToScene(a.rect().center())
+    press(target)
+    drag_move(target + QPointF(10, 8))
+    assert v.is_drag_session() is True, "테스트 전제: 드래그 세션은 켜져 있어야 한다"
+    assert v._drag_proxy is None, "작은 씬인데 프록시가 켜졌다"
+    release(target + QPointF(10, 8))
+
+
+def test_drag_proxy_restored_on_early_return_release_path():
+    """`mouseReleaseEvent`는 조기 return이 13곳이라 복원을 함수 끝에 두면 경로에 따라
+    실행이 누락된다(2026-08-15 실사용 버그). 조기 return 경로에서도 복원돼야 한다."""
+    w = CanvasWindow()
+    w.show()
+    _big_scene(w)
+    v = w._view
+    flag = _RectItem.GraphicsItemFlag.ItemHasNoContents
+
+    v._move_active = True
+    v._ensure_drag_proxy()
+    assert v._drag_proxy is not None
+    assert any(it.flags() & flag for it in w._scene.items())
+
+    # 그룹 본체 드래그는 자기 자리에서 커밋하고 곧바로 return하는 경로다.
+    v._group_body_drag = True
+    v._group_body_anchor = QPointF(0, 0)
+    press, release, _c, _m, _dm, _d = _draw_helpers(v)
+    release(QPointF(5, 5))
+
+    assert v._drag_proxy is None, "조기 return 경로에서 프록시가 복원되지 않았다"
+    leaked = [it for it in w._scene.items() if it.flags() & flag]
+    assert not leaked, f"플래그가 {len(leaked)}개 아이템에 남았다(화면에서 사라진다)"

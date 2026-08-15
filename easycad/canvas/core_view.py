@@ -115,6 +115,10 @@ class _AnnotatorView(QGraphicsView):
         self._axis_lock = None
         # [2e] 스마트 정렬 가이드 — 단일 도형 이동 중 근처 도형과 모서리·중심 정렬 시 스냅+가상선.
         self._move_active = False    # 도형 드래그(이동/핸들) 진행 중(_snapshot_movable서 set)
+        # [성능계획 2-D] 드래그 프록시 — None=미발동 / list[item]=이번 드래그에 우리가 플래그를
+        # 세운 아이템들(그 목록 그대로 되돌린다). 자세한 근거는 `_ensure_drag_proxy` 참조.
+        self._drag_proxy = None
+        self._drag_proxy_set = frozenset()
         self._align_guides = []      # 그릴 가이드선 [("v", x, y0, y1) | ("h", y, x0, x1)]
         # [실사용 버그 수정 2026-08-13] TRIM 자국 복구 스냅(cut_restore_snap_delta)이 이번
         # 프레임에 dx·dy를 정확히 확정했는지 — True면 mouseMoveEvent가 뒤이어 돌리는 격자
@@ -639,6 +643,131 @@ class _AnnotatorView(QGraphicsView):
         return bool(self._move_active or self._group_dragging or self._group_body_drag
                     or self._stretch_active or self._seg_drag is not None
                     or self._table_col_drag is not None)
+
+    # ---- [성능계획 2-D] 드래그 프록시 — 아이템별 paint 디스패치를 통째로 우회 ----------
+    #
+    # 씬이 클 때 드래그 프레임 비용의 절반 이상이 "아이템 하나하나에 대해 Qt가 painter를
+    # 셋업하고 우리 paint()를 부르는" 구조 자체다(1000개 문서 실측: 우리 paint() 본문
+    # 69.2ms + Qt 아이템별 셋업 39.7ms = 108.9ms / 프레임 186.8ms). 드래그 중에는 그
+    # 디스패치를 아예 안 타고, 뷰가 `drawForeground`에서 단순 윤곽을 **한 번에** 그린다.
+    # 결정 ⓐ(`docs/perf_plan_500_1000.md`): 누르고 있는 동안만 품질을 낮추고 손을 떼는
+    # 순간 정확히 복원한다.
+    #
+    # ⚠ 계획서 원안의 `setVisible(False)`는 실측으로 **쓸 수 없다**: 숨기면 Qt가 그
+    # 아이템의 선택을 해제한다(실측: 선택 5개 → 숨긴 뒤 1개). 선택이 풀리면
+    # `_uniform_translation`(전체선택=강체 평행이동) 판정이 깨져 멈춰 있던 A*가 다시
+    # 돌기 시작해 프레임이 **오히려 나빠졌다**(148ms). 마우스 그랩도 잃는다.
+    # `ItemHasNoContents`는 선택·이벤트·히트테스트·스냅·shape()를 전부 그대로 두고
+    # paint() 호출만 건너뛴다 — 되돌리기도 플래그 하나라 멱등하다.
+    #
+    # ⚠ 원안의 "선택된 아이템만"도 실측으로 뒤집혔다: 30개를 옮겨도 그 더티영역에 걸친
+    # **정지 도형 수백 개가 같이 다시 그려지므로**, 움직이는 것만 감춰서는 이득이 -5%뿐이다
+    # (씬 전체 프록시는 -53~-61%). 그래서 대상은 씬 전체다.
+
+    _DRAG_PROXY_MIN_ITEMS = 200   # 이보다 작은 씬은 이미 60fps 예산 안 — 화면을 바꿀 이유가 없다
+    _DRAG_PROXY_MIN_TEXT_PX = 6.0   # 이보다 작게 렌더될 라벨 글자는 못 읽으므로 안 그린다
+
+    def _ensure_drag_proxy(self):
+        """드래그 세션이 시작됐고 씬이 충분히 크면 프록시를 켠다(이미 켜져 있으면 무시).
+
+        `mouseMoveEvent` 맨 위에서 부른다 — 드래그 종류가 6가지(`is_drag_session()` 참조)라
+        press 경로마다 심으면 하나를 빠뜨리기 쉬운데, 어떤 드래그든 mouseMove를 반드시
+        지나가므로 한 곳으로 덮인다. 유휴 hover에서는 `is_drag_session()`이 False라
+        불리언 검사 한 번으로 끝난다."""
+        if self._drag_proxy is not None or not self.is_drag_session():
+            return
+        sc = self.scene()
+        if sc is None:
+            return
+        items = sc.items()
+        if len(items) < self._DRAG_PROXY_MIN_ITEMS:
+            return
+        flag = QGraphicsItem.GraphicsItemFlag.ItemHasNoContents
+        # 원래부터 이 플래그를 갖고 있던 아이템은 건드리지 않는다 — 우리가 세운 것만
+        # 기록해 두면 복원이 정확히 원상태로 돌아간다.
+        proxied = [it for it in items if not (it.flags() & flag)]
+        for it in proxied:
+            it.setFlag(flag, True)
+        self._drag_proxy = proxied
+        self._drag_proxy_set = set(proxied)   # `_draw_drag_proxy`의 O(1) 소속 판정용
+        self.viewport().update()
+
+    def _end_drag_proxy(self):
+        """프록시 해제 — `_end_drag_session()`(mouseReleaseEvent의 finally)에서만 부른다.
+
+        해제가 누락되면 **아이템이 화면에서 통째로 사라진 것처럼 보이므로**(2-D의 가장 큰
+        위험) 진입점을 조기 return 13곳이 자동으로 덮이는 그 finally 하나로 묶는다.
+        플래그를 하나씩 내리면 각각이 update를 쏘므로(1500개 실측 119.7ms) 뷰포트 갱신을
+        잠시 끄고 한 번에 몰아친다."""
+        if self._drag_proxy is None:
+            return
+        items, self._drag_proxy = self._drag_proxy, None
+        self._drag_proxy_set = frozenset()
+        flag = QGraphicsItem.GraphicsItemFlag.ItemHasNoContents
+        vp = self.viewport()
+        vp.setUpdatesEnabled(False)
+        try:
+            for it in items:
+                try:
+                    if it.scene() is not None:
+                        it.setFlag(flag, False)
+                except RuntimeError:
+                    pass   # 드래그 중 삭제된 아이템(C++ 객체 소멸) — 되돌릴 대상이 없다
+        finally:
+            vp.setUpdatesEnabled(True)
+            vp.update()
+
+    def _draw_drag_proxy(self, painter, exposed: QRectF):
+        """프록시 중인 씬을 단순 윤곽으로 **일괄** 렌더 — 경로 하나로 모아 한 번에 스트로크.
+
+        외곽선은 이미 있는 `_item_center_path`(선택 강조·러버밴드 미리보기가 공유하는
+        '패딩 없는 로컬 원본 외곽선')를 그대로 쓴다 — 도형·심볼·선·패스·화살표를 전부
+        알고 있고 포트/cut 자국까지 반영하므로 타입 분기를 새로 만들 필요가 없다.
+
+        라벨 글자는 계속 그린다 — 2-C에서 사용자가 "라벨은 장식이 아니라 내용"이라며
+        억제를 되돌린 결정을 지킨다(대가 실측 15.1ms, 그래도 현행 대비 -46%)."""
+        sc = self.scene()
+        if not self._drag_proxy or sc is None:
+            return
+        # 화면 밖 컬링은 **씬의 공간쿼리**로 한다 — 프록시 목록을 직접 훑으며
+        # `sceneBoundingRect()`를 부르면 그 호출만으로 오버레이 비용의 40%가 나갔다(실측).
+        # 씬 인덱스는 `BspTreeIndex`로 고정이라(2-E `NoIndex` 확정 폐기) 진짜 공간쿼리다.
+        # ⚠ 모드를 반드시 `IntersectsItemBoundingRect`로 준다 — 기본값은 `shape()`를 불러
+        #    아이템마다 경로를 만든다.
+        mine = self._drag_proxy_set
+        painter.save()
+        pen = QPen(QColor(_SUBTEXT))
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        outline = QPainterPath()
+        labels = []
+        for it in sc.items(exposed, Qt.ItemSelectionMode.IntersectsItemBoundingRect):
+            if it not in mine:
+                continue              # 프록시 대상이 아닌 아이템(드래그 중 새로 생긴 것 등)
+            try:
+                if isinstance(it, QGraphicsTextItem):
+                    text = it.toPlainText()
+                    if text:
+                        labels.append((it, text))
+                    continue
+                outline.addPath(it.mapToScene(_item_center_path(it)))
+            except (RuntimeError, AttributeError):
+                continue              # 이 아이템만 건너뛴다 — 드래그 전체를 깨지 않는다
+        painter.drawPath(outline)
+        # 라벨 글자는 **읽을 수 있는 배율일 때만** 그린다. 2-C의 결정("라벨은 장식이 아니라
+        # 내용")이 지키려는 것은 "무엇을 옮기는지 읽히는 것"인데, 문서 전체를 화면에 넣은
+        # 축소 배율에서는 글자 높이가 3px 남짓이라 어차피 못 읽는다 — 그 배율에서 텍스트를
+        # 그리는 건 순수 낭비다(1000개 문서 fit 줌 실측 15.3ms).
+        s = self._view_scale()
+        align = int(Qt.AlignmentFlag.AlignCenter)
+        for lbl, text in labels:
+            r = lbl.sceneBoundingRect()
+            if r.height() * s < self._DRAG_PROXY_MIN_TEXT_PX:
+                continue
+            painter.setFont(lbl.font())
+            painter.drawText(r, align, text)
+        painter.restore()
 
     def _maybe_alt_drag_copy(self, event):
         """[편의기능] Alt+드래그 시작 — 선택 항목을 제자리 복제하고 복제본을 선택한다.
@@ -1752,6 +1881,11 @@ class _AnnotatorView(QGraphicsView):
 
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
+        # [성능계획 2-D] 프록시 중이면 씬 아이템이 스스로 그리지 않으므로 여기서 대신 그린다.
+        # 편집 모드 판정보다 **먼저** — 어떤 이유로든 이 아래에서 빠져나가면 캔버스가 통째로
+        # 비어 보인다(2-D의 가장 큰 위험). 아래 마커·가이드류가 위에 얹히도록 맨 처음에 그린다.
+        if self._drag_proxy is not None:
+            self._draw_drag_proxy(painter, rect)
         if not self._owner.is_edit_mode():
             return
         s = self._view_scale()
@@ -2782,6 +2916,9 @@ class _AnnotatorView(QGraphicsView):
             vp.setCursor(Qt.CursorShape.CrossCursor)         # 도형 그리기
 
     def mouseMoveEvent(self, event):
+        # [성능계획 2-D] 드래그 프록시 진입점 — 어떤 드래그든 반드시 이 함수를 지나가므로
+        # press 경로 6곳에 흩지 않고 여기 한 곳에서 켠다(유휴 hover는 불리언 검사 1회로 끝).
+        self._ensure_drag_proxy()
         if event.buttons() & Qt.MouseButton.MiddleButton:
             self._owner._win_drag_move(event.globalPosition().toPoint())
             return
@@ -3040,6 +3177,9 @@ class _AnnotatorView(QGraphicsView):
         건드리지 않는다. `_stretch_active`는 클릭-클릭 모달이라 release가 끝이 아니다
         (`_stretch_clear`가 자기 자리에서 flush한다)."""
         self._move_active = False
+        # [성능계획 2-D] 프록시 해제는 무엇보다 먼저 — 아래 flush가 예외를 던져도 아이템이
+        # 안 보이는 상태로 남지 않게 한다(해제는 멱등이라 안 켜져 있었으면 즉시 반환).
+        self._end_drag_proxy()
         if self._align_guides:
             self._align_guides = []
         flush = getattr(self._owner, "flush_deferred_reroute", None)

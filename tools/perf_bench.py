@@ -161,15 +161,19 @@ class Bench:
         """[성능계획 2-B, 2026-08-15] 실제 드래그 수명주기를 흉내낸다.
         예전 시나리오는 `setPos`만 불러 press~release 상태를 만들지 않았다 — 그래서
         '드래그 중에만' 켜지는 최적화(2-B 재라우팅 지연 등)가 벤치에선 아예 발동하지 않아
-        효과가 0%로 나왔다(실제 앱에선 발동함). 실사용과 같은 상태를 만들어야 측정이 맞다."""
+        효과가 0%로 나왔다(실제 앱에선 발동함). 실사용과 같은 상태를 만들어야 측정이 맞다.
+
+        [성능계획 2-D, 2026-08-15] 같은 이유로 드래그 프록시 진입점도 여기서 부른다 —
+        실제 앱은 `mouseMoveEvent`가 이걸 부르는데 벤치는 마우스 이벤트를 안 흘리므로,
+        안 부르면 2-D가 벤치에서만 통째로 발동하지 않아 "효과 0%"를 또 찍게 된다."""
         self.win._view._move_active = True
+        self.win._view._ensure_drag_proxy()
 
     def end_drag(self):
-        """놓는 순간 — 미뤄둔 재라우팅을 정확히 복원(실제 mouseReleaseEvent와 같은 순서)."""
-        self.win._view._move_active = False
-        flush = getattr(self.win, "flush_deferred_reroute", None)
-        if flush is not None:
-            flush()
+        """놓는 순간 — 실제 `mouseReleaseEvent`가 finally에서 부르는 그 함수를 그대로 쓴다
+        (드래그 세션 해제 + 프록시 복원 + 미뤄둔 재라우팅 flush + 리페인트). 여기서 별도
+        구현을 흉내내면 실사용 경로와 조용히 어긋난다."""
+        self.win._view._end_drag_session()
         self._tick()
 
     def drag_reset(self, snap):
@@ -375,6 +379,13 @@ class Bench:
             self.end_drag()          # = 실제 릴리스(미룬 재라우팅 flush)
             self._paint_tick()
         self._time("release", 1, one, frame=False, reset=prime)
+        # ⚠ [하네스 오염 수정 2026-08-15, 2-D] `_time`은 마지막에 `reset()`을 한 번 더 부르는데
+        # 여기서 그 reset은 `prime()`이고, prime의 끝은 `begin_drag()`다 — 즉 이 시나리오는
+        # **드래그 세션을 켠 채로** 끝나고 있었다. 다른 드래그 시나리오는 전부 뒤에
+        # `end_drag()`가 있는데 여기만 빠져 있어서, 뒤따르는 zoom/pan/render 시나리오가
+        # "드래그 중"으로 측정됐다(2-C 장식 억제·2-D 프록시가 켜진 화면 = 실제보다 싼 값).
+        # 다른 드래그 시나리오와 같은 뒷정리를 붙인다.
+        self.end_drag()
         self.win._scene.clearSelection()
         self._tick()
 

@@ -461,6 +461,13 @@ class _MinimapView(QGraphicsView):
         #1e2731로 일치 확인) — 사용자가 실제 창에서 "미니맵에 검정 부분"으로 발견한 원인
         (이전엔 투명이라 부모 패널의 다른 색/미초기화 픽셀이 비쳤다)을 없애고, 라이트/다크
         테마 전환에도 자동으로 맞는 색을 쓴다."""
+        # [성능계획 2-D] 메인 뷰가 드래그 프록시 중이면 씬 아이템이 `ItemHasNoContents`라
+        # `scene().render()`가 **빈 그림**을 만든다 — 그 빈 스냅샷을 캐시에 굳히면 미니맵이
+        # 드래그 내내 비어 보인다. 드래그가 끝날 때까지 미룬다(디바운스 타이머 재시작).
+        main = getattr(self._owner, "_view", None)
+        if main is not None and getattr(main, "_drag_proxy", None) is not None:
+            self._rebuild_timer.start()
+            return
         self._refit()
         padded = self._padded_bounds()
         vp = self.viewport().size()
