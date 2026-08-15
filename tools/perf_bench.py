@@ -157,6 +157,27 @@ class Bench:
                 n += 1
         return n
 
+    def begin_drag(self):
+        """[성능계획 2-B, 2026-08-15] 실제 드래그 수명주기를 흉내낸다.
+        예전 시나리오는 `setPos`만 불러 press~release 상태를 만들지 않았다 — 그래서
+        '드래그 중에만' 켜지는 최적화(2-B 재라우팅 지연 등)가 벤치에선 아예 발동하지 않아
+        효과가 0%로 나왔다(실제 앱에선 발동함). 실사용과 같은 상태를 만들어야 측정이 맞다."""
+        self.win._view._move_active = True
+
+    def end_drag(self):
+        """놓는 순간 — 미뤄둔 재라우팅을 정확히 복원(실제 mouseReleaseEvent와 같은 순서)."""
+        self.win._view._move_active = False
+        flush = getattr(self.win, "flush_deferred_reroute", None)
+        if flush is not None:
+            flush()
+        self._tick()
+
+    def drag_reset(self, snap):
+        """드래그 시나리오용 reset — 세션을 끝내 미룬 것을 정리한 뒤 배치를 복원하고 다시 시작."""
+        self.end_drag()
+        self.restore_positions(snap)
+        self.begin_drag()
+
     def snapshot_positions(self):
         """씬 아이템들의 현재 위치를 저장 — 시나리오 간 간섭 차단용(아래 `_time` 참조)."""
         return [(it, QPointF(it.pos())) for it in self.win._scene.items()
@@ -236,7 +257,8 @@ class Bench:
         def one(i):
             r.setPos(r.pos() + QPointF(3, 2))
             self._paint_tick()
-        self._time("drag", 20, one, reset=lambda: self.restore_positions(snap))
+        self._time("drag", 20, one, reset=lambda: self.drag_reset(snap))
+        self.end_drag()
         self.win._scene.clearSelection()
         self._tick()
 
@@ -251,7 +273,8 @@ class Bench:
             for r in rects:
                 r.setPos(r.pos() + QPointF(2, 1))
             self._paint_tick()
-        self._time("drag_multi", 10, one, reset=lambda: self.restore_positions(snap))
+        self._time("drag_multi", 10, one, reset=lambda: self.drag_reset(snap))
+        self.end_drag()
         self.win._scene.clearSelection()
         self._tick()
 
@@ -268,7 +291,8 @@ class Bench:
             for r in rects:
                 r.setPos(r.pos() + QPointF(2, 1))
             self._paint_tick()
-        self._time("drag_all", 10, one, reset=lambda: self.restore_positions(snap))
+        self._time("drag_all", 10, one, reset=lambda: self.drag_reset(snap))
+        self.end_drag()
         self.win._scene.clearSelection()
         self._tick()
 
@@ -291,7 +315,8 @@ class Bench:
             for r in subset:
                 r.setPos(r.pos() + QPointF(2, 1))
             self._paint_tick()
-        self._time("drag_subset", 10, one, reset=lambda: self.restore_positions(snap))
+        self._time("drag_subset", 10, one, reset=lambda: self.drag_reset(snap))
+        self.end_drag()
         self.win._scene.clearSelection()
         self._tick()
 
@@ -321,23 +346,35 @@ class Bench:
         self._tick()
 
     def scn_release(self):
-        """[성능계획 1-0] 드래그를 **놓는 순간** 한 번에 도는 비용(결정 ⓑ의 0.5초 상한 대상).
-        지금 코드에는 '드래그 중 미루기'가 없어서 이 값은 아직 '전체 재라우팅 1회'의 비용이다 —
-        2-B(드래그 중 재라우팅 정지)를 넣은 뒤 이 수치가 상한 안에 있는지가 판정 기준이 된다."""
+        """[성능계획 1-0 → 2-B로 정의 갱신] 드래그를 **놓는 순간**만의 비용(결정 ⓑ 0.5초 상한).
+
+        ⚠ 측정 구간이 정확히 '릴리스'여야 한다. 드래그 프레임까지 한 덩어리로 재면 그 비용이
+        섞여 상한 판정이 무의미해진다(실제로 처음엔 그렇게 재서 819ms가 나왔다). 그래서
+        **이동은 `reset`(타이밍 밖)에서 해 두고, 타이밍 안에서는 `end_drag()`만** 부른다 —
+        `end_drag`가 곧 실제 mouseReleaseEvent가 하는 일(미룬 재라우팅 flush)이다."""
         snap = self.snapshot_positions()
-        rects = self._rects()
+        # ⚠ **부분 선택**으로 잰다. 전체를 함께 옮기면 도형·화살표가 같은 델타라 강체
+        # 평행이동으로 처리돼 A*가 애초에 안 돈다 — 미룰 일이 없어 릴리스가 공짜로 나오고
+        # (실측 8.8ms) 예산 판정이 무의미해진다. 실제로 밀린 A*가 쌓이는 건 경계를 넘는
+        # 화살표가 생기는 부분 선택이고, 0.5초 상한은 그 최악을 견디는지 보려는 것이다.
+        rects = self._rects()[:30]
         self.win._scene.clearSelection()
         for r in rects:
             r.setSelected(True)
         self._tick()
-        def one(i):
+        def prime():
+            # 타이밍 밖: 배치를 되돌리고, 드래그 세션 안에서 옮겨 '미뤄진 상태'를 만든다.
+            self.end_drag()
+            self.restore_positions(snap)
+            self.begin_drag()
             for r in rects:
                 r.setPos(r.pos() + QPointF(1, 1))
-            # 전체 재라우팅 강제: region=None이면 필터 없이 모든 바인딩 화살표 재검토
-            # (host_canvas._on_scene_changed의 기존 관례 — 테스트용 강제 호출 경로).
-            self.win._on_scene_changed(None)
             self._paint_tick()
-        self._time("release", 1, one, frame=False, reset=lambda: self.restore_positions(snap))
+
+        def one(i):
+            self.end_drag()          # = 실제 릴리스(미룬 재라우팅 flush)
+            self._paint_tick()
+        self._time("release", 1, one, frame=False, reset=prime)
         self.win._scene.clearSelection()
         self._tick()
 

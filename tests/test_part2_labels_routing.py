@@ -1833,3 +1833,70 @@ def test_route_hint_never_accumulates():
         assert len(sa._pts) <= 7, [(round(p.x()), round(p.y())) for p in sa._pts]
 
 
+
+
+# --- 드래그 중 재라우팅 지연(성능계획 2-B/2-F, 2026-08-15) ------------------
+
+def _two_boxes_with_arrow():
+    """도형 2개 + 그 사이 자동라우팅 화살표 1개. 세 번째 도형은 장애물로 둔다."""
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=500, y=400, ww=120, hh=72)
+    arrow = _PolyArrowItem(QColor("#333333"), 2.0, True)
+    arrow._pts = [QPointF(60, 72), QPointF(560, 400)]
+    arrow._auto_route = True
+    w._scene.addItem(arrow)
+    arrow.set_bound(0, a, a.mapFromScene(QPointF(60, 72)))
+    arrow.set_bound(len(arrow._pts) - 1, b, b.mapFromScene(QPointF(560, 400)))
+    w._on_scene_changed(None)
+    return w, a, b, arrow
+
+
+def test_reroute_defers_during_drag_and_flushes_on_release():
+    """드래그 중엔 A* 재라우팅이 미뤄지고(끝점만 추종), 놓는 순간 정확히 복원된다."""
+    w, a, b, arrow = _two_boxes_with_arrow()
+    a.setSelected(True)
+
+    w._view._move_active = True          # 드래그 세션 시작
+    a.setPos(a.pos() + QPointF(140, 90))
+    w._on_scene_changed(None)
+    assert arrow in w._deferred_arrows, "드래그 중인데 재라우팅이 미뤄지지 않았다"
+    deferred_pts = [QPointF(p) for p in arrow._pts]
+
+    w._view._move_active = False         # 놓기
+    w.flush_deferred_reroute()
+    assert not w._deferred_arrows, "flush 후에도 미룬 목록이 남았다"
+
+    # 끝점은 드래그 중에도 이미 도형을 따라갔어야 한다(화살표가 떨어져 보이면 안 됨).
+    tgt = arrow.mapFromScene(a.mapToScene(arrow._bind_pt(0)))
+    assert abs(deferred_pts[0].x() - tgt.x()) < 1e-6
+    assert abs(deferred_pts[0].y() - tgt.y()) < 1e-6
+
+
+def test_deferred_reroute_final_path_matches_undeferred():
+    """같은 이동을 '매 프레임 재라우팅'과 '미뤘다 놓기'로 각각 했을 때 최종 경로가 동일해야 한다.
+    이게 깨지면 2-B는 성능이 아니라 그림을 바꾼 것이다."""
+    def run(defer):
+        w, a, b, arrow = _two_boxes_with_arrow()
+        a.setSelected(True)
+        w._view._move_active = bool(defer)
+        for _ in range(5):
+            a.setPos(a.pos() + QPointF(37, 23))
+            w._on_scene_changed(None)
+        w._view._move_active = False
+        w.flush_deferred_reroute()
+        return [(round(p.x(), 6), round(p.y(), 6)) for p in arrow._pts]
+
+    assert run(defer=False) == run(defer=True)
+
+
+def test_flush_is_noop_without_deferral():
+    """드래그가 아닌 평범한 조작 뒤엔 flush가 아무 일도 하지 않아야 한다 —
+    무조건 전체 재라우팅을 돌면 클릭 한 번에 1000개 문서 기준 수백 ms를 물게 된다."""
+    w, a, b, arrow = _two_boxes_with_arrow()
+    a.setPos(a.pos() + QPointF(50, 50))
+    w._on_scene_changed(None)                 # 드래그 세션 아님 → 즉시 라우팅
+    assert not w._deferred_arrows
+    before = [(p.x(), p.y()) for p in arrow._pts]
+    w.flush_deferred_reroute()
+    assert [(p.x(), p.y()) for p in arrow._pts] == before

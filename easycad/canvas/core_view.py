@@ -2617,6 +2617,12 @@ class _AnnotatorView(QGraphicsView):
         if was:
             self.viewport().unsetCursor()
             self.viewport().update()
+            # [성능계획 2-B] 스트레치는 클릭-클릭 모달이라 mouseRelease가 끝을 알리지 않는다 —
+            # 여기가 이 조작의 실제 종료 지점이므로 미뤄둔 재라우팅을 직접 복원한다
+            # (위에서 `_stretch_active`를 이미 내렸으므로 다시 미뤄지지 않는다).
+            flush = getattr(self._owner, "flush_deferred_reroute", None)
+            if flush is not None:
+                flush()
 
     def _paint_stretch(self, painter, s):
         """[Stage2b] stretch 오버레이 — crossing 박스 + 걸친 정점(●) 또는 기준점→커서 프리뷰선."""
@@ -3126,6 +3132,13 @@ class _AnnotatorView(QGraphicsView):
             self._align_guides = []
             self.viewport().update()
         super().mouseReleaseEvent(event)
+        # [성능계획 2-B, 2026-08-15] 드래그 중 미뤄둔 A* 재라우팅을 여기서 정확히 복원한다.
+        # ⚠ 반드시 위의 `_move_active = False`(및 super()의 그랩 해제) **다음**이어야 한다 —
+        # 앞에 두면 `is_drag_session()`이 아직 True라 재라우팅이 또 미뤄져 경로가 영영
+        # 갱신되지 않는다. 미룬 게 없으면 이 호출은 즉시 반환한다(무비용).
+        flush = getattr(self._owner, "flush_deferred_reroute", None)
+        if flush is not None:
+            flush()
 
     def _labelable_at(self, view_pos):
         """[우리 확장] 커서 아래 '맨 위 선택가능 아이템'이 선/화살표면 그 아이템, 아니면 None.

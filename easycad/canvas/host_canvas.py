@@ -62,6 +62,10 @@ _PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 
 
 
 class _CanvasMixin:
+    # reroute 후보를 공간쿼리로 좁힐지(적게 변함) 전체스캔할지(많이 변함) 가르는 경계.
+    # 실측 경계(1건=공간쿼리 승, 20건=전체스캔 승)에서 넉넉히 보수적으로 잡은 값.
+    _FEW_CHANGED = 4
+
     def _sync_geom_snapshot(self) -> QRectF | None:
         """[성능수정 2026-08-07] `self._geom_snapshot`(item→직전 타이트 rect)과 현재 씬을 비교해
         실제로 지오메트리(이동/리사이즈/생성/삭제)가 바뀐 아이템들의 rect 합집합만 반환한다.
@@ -155,8 +159,9 @@ class _CanvasMixin:
             # 바뀐 아이템 수"(`_last_geom_change_count`, 위 `_sync_geom_snapshot`)가 적을 때만
             # 공간 쿼리를 쓴다 — 바뀐 아이템이 적으면 union도 좁아 공간 쿼리가 확실히 이기고,
             # 많으면(다중선택 드래그) 검증된 전체스캔으로 안전하게 폴백한다.
-            _FEW_CHANGED = 4   # 실측 경계(1건=승, 20건=패)에서 넉넉히 보수적으로 잡은 값
-            many_changed = union is None or self._last_geom_change_count > _FEW_CHANGED
+            # [2026-08-15] 상수를 클래스 속성으로 승격 — `flush_deferred_reroute`가 같은
+            # 신호로 fast를 골라야 지연 전후의 최종 경로가 일치한다(_FEW_CHANGED 참조).
+            many_changed = union is None or self._last_geom_change_count > self._FEW_CHANGED
             if many_changed:
                 candidates = self._scene.items()   # 강제 전체 재검토 / 다건 변경 — 검증된 경로
             else:
@@ -169,12 +174,56 @@ class _CanvasMixin:
             # 확정된 뒤의 미관 개선일 뿐). `_last_geom_change_count`가 이미 "공간쿼리 vs 전체스캔"을
             # 가르는 데 검증된 신호라 그대로 재사용(실측: 20개 그룹 드래그 프레임당 A*가 시간의
             # 96%를 먹던 것 중 상당수가 이 불필요한 폴리시 탐색이었다).
+            # [성능계획 2-B, 2026-08-15] 드래그하는 동안엔 A* 재라우팅을 아예 안 돈다 —
+            # 끝점만 도형을 따라가고(화살표는 계속 붙어 보인다) 꺾인 경로는 직전 모양 유지.
+            # 놓는 순간 `flush_deferred_reroute()`가 정확한 경로를 복원한다(결정 ⓐ·ⓑ).
+            # 1-0 실측: 1000개에서 도형 1개 드래그 916.6ms 중 순수 렌더는 142.3ms뿐이고
+            # 나머지 대부분이 이 A*였다(`docs/perf_plan_500_1000.md` §5).
+            view = getattr(self, "_view", None)
+            defer = bool(view is not None and view.is_drag_session())
             for it in candidates:
                 # 곡선화살표(_ArrowItem)·직선화살표(_PolyArrowItem) 모두 지속 연결 리라우트.
                 if isinstance(it, (_ArrowItem, _PolyArrowItem)) and it.has_binding():
                     if union is None or it.sceneBoundingRect().adjusted(
                             -margin, -margin, margin, margin).intersects(union):
-                        it.reroute(pin_pred=self._make_pin_pred(it), fast=many_changed)
+                        it.reroute(pin_pred=self._make_pin_pred(it), fast=many_changed,
+                                   defer_route=defer)
+                        if defer:
+                            self._deferred_arrows.add(it)
+                            # ⚠ fast 판단은 **미루는 이 시점의 것을 기억**해 둔다. flush 때
+                            # `_last_geom_change_count`를 다시 읽으면 안 된다 — 릴리스 직전
+                            # 마지막 scene.changed가 보통 '변경 0건'(리페인트만)이라 그 값이
+                            # 0으로 덮이고, 그러면 fast=False가 돼 클리어런스 사다리를 전부
+                            # 돌아 릴리스가 2417→3775ms로 오히려 악화된다(실측).
+                            self._deferred_fast = many_changed
+        finally:
+            self._rerouting = False
+
+    def flush_deferred_reroute(self):
+        """[성능계획 2-B+2-F] 드래그를 놓는 순간 미뤄둔 A* 재라우팅을 정확히 복원한다.
+
+        **미뤄진 화살표만** 돈다(2-F). 처음엔 `_on_scene_changed(None)`으로 씬 전체를 재검토
+        하게 했다가 1000개 문서에서 릴리스가 2417ms(상한 0.5초의 5배)로 튀었다 — 드래그 중
+        미룬 것을 갚는 자리라 대상이 명확한데도 관계없는 화살표까지 전부 A*를 돌린 탓이다.
+        미룬 게 없으면 즉시 반환한다(평범한 클릭·해제에 비용 0).
+
+        `fast`는 **미루던 시점에 기억해 둔 값**(`_deferred_fast`)을 쓴다 — 지연이 없던 시절에도
+        드래그 마지막 프레임이 바로 그 값으로 라우팅을 확정했으므로, 같은 값이어야 최종 경로가
+        예전과 정확히 일치한다(회귀 테스트로 확인). flush 시점에 `_last_geom_change_count`를
+        다시 읽으면 안 되는 이유는 위 `_on_scene_changed`의 저장 지점 주석 참조."""
+        arrows = self._deferred_arrows
+        if not arrows:
+            return
+        self._deferred_arrows = set()
+        if self._rerouting:
+            return
+        self._rerouting = True
+        try:
+            fast = getattr(self, "_deferred_fast", True)
+            for a in arrows:
+                if a.scene() is None:
+                    continue
+                a.reroute(pin_pred=self._make_pin_pred(a), fast=fast)
         finally:
             self._rerouting = False
 

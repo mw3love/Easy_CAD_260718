@@ -135,6 +135,10 @@ class CanvasWindow(
         # 수 — `_on_scene_changed`가 공간쿼리/전체스캔 중 무엇을 쓸지 가르는 신호(그 함수 주석
         # 참조). 항상 `_sync_geom_snapshot()`이 먼저 갱신하지만, 초기값도 명시해 둔다.
         self._last_geom_change_count = 0
+        # [성능계획 2-B+2-F, 2026-08-15] 드래그 중 A* 재라우팅을 미뤄둔 화살표들 —
+        # release에서 `flush_deferred_reroute()`가 **이것만** 정확히 다시 라우팅한다.
+        # 씬 전체를 재검토하면 1000개 문서에서 릴리스가 2.4초로 튄다(실측).
+        self._deferred_arrows = set()
         self._scene.changed.connect(self._on_scene_changed)
         # [성능수정 2026-08-15, docs/perf_report_multiselect.md 병목 A] `_selection_is_solo`
         # (core_shapes.py)가 paint마다 O(N) `selectedItems()`를 부르던 것을 O(1) 캐시 읽기로

@@ -3278,12 +3278,13 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def has_binding(self) -> bool:
         return self._bind1 is not None or self._bind2 is not None
 
-    def reroute(self, pin_pred=None, *, fast=False) -> bool:
+    def reroute(self, pin_pred=None, *, fast=False, defer_route=False) -> bool:
         """바인딩된 끝점을 '도형의 고정 부착점'(로컬→씬)으로 추종. 변경 있었으면 True.
         곡선은 재계산하지 않는다 — _set_endpoint가 제어점을 delta로 끌고 가 사용자가 그린 곡선을 보존.
         pin_pred(idx)가 False면 재고정 안 함(강체). 무변경이면 geometry 미변경으로 되먹임 루프 차단.
-        `fast`는 받기만 하고 무시한다 — 곡선은 애초에 A* 재라우팅을 안 하므로 (`_PolyArrowItem.
-        reroute`와 호출부(`host_canvas._on_scene_changed`)를 공유하기 위한 시그니처 정합 목적)."""
+        `fast`/`defer_route`는 받기만 하고 무시한다 — 곡선은 애초에 A* 재라우팅을 안 하므로
+        (`_PolyArrowItem.reroute`와 호출부(`host_canvas._on_scene_changed`)를 공유하기 위한
+        시그니처 정합 목적)."""
         if not self.has_binding():
             return False
         changed = False
@@ -3813,8 +3814,14 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         else:
             self._set_endpoint(idx, local_p if snapped is None else snapped[0])
 
-    def reroute(self, pin_pred=None, *, fast=False) -> bool:
+    def reroute(self, pin_pred=None, *, fast=False, defer_route=False) -> bool:
         """바인딩된 끝(시작·끝)을 도형의 고정 부착점(로컬→씬)으로 추종. 변경 있으면 True.
+        [성능계획 2-B, 2026-08-15] `defer_route=True`면 **끝점 추종까지만 하고 A* 재라우팅
+        (`_apply_routing`)은 건너뛴다.** 드래그하는 동안 쓰는 모드로, 화살표는 도형에 계속
+        붙어 따라오지만 꺾인 경로는 직전 모양을 유지한다(결정 ⓐ: 드래그 중 품질 저하 허용).
+        놓는 순간 호출부가 `defer_route` 없이 한 번 더 돌려 정확한 경로를 복원한다(결정 ⓑ).
+        1-0 실측 근거: 1000개 문서에서 도형 1개 드래그 916.6ms 중 순수 렌더는 142.3ms뿐이고
+        나머지 대부분이 이 A*였다.
         pin_pred(idx)=False면 재고정 안 함(강체). 무변경이면 되먹임 루프 차단.
         [Stage1] 자동 라우팅(_auto_route)이고 양끝 모두 바인딩이면 끝점 추종 후 직교 엘보를 재계산.
         [성능 최적화 2026-08-11] `fast=True`면 `_apply_routing`/`_route_ortho`에 그대로
@@ -3876,7 +3883,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # 한쪽만 바인딩돼도(has_binding) 재적용해 도형 이동 시 직교가 깨지지 않게 한다
         # (_apply_routing이 양끝 바인딩=A*, 한쪽=단순 엘보로 분기). 수동 세그먼트 편집(auto_route
         # False)은 끝점만 추종(사용자 경로 보존).
-        if self._auto_route and self.has_binding():
+        if self._auto_route and self.has_binding() and not defer_route:
             if self._apply_routing(fast=fast):
                 changed = True
         if changed:
