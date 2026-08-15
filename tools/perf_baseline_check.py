@@ -79,26 +79,55 @@ def geometry_fingerprint(scene) -> list:
     return [_item_sig(it) for it in scene.items(Qt.SortOrder.AscendingOrder)]
 
 
-# 렌더 지문을 뜰 뷰 상태 3종 — 이름, 설정 함수.
+# 렌더 지문을 뜰 뷰 상태 — 이름, 설정 함수.
 # 서로 다른 줌 배율을 섞는 이유: `_view_zoom_factor`가 boundingRect에 들어가 있어 줌마다
 # 다른 코드 경로를 타므로, 한 배율만 보면 캐시 무효화 버그를 놓친다.
+#
+# ⚠ [2026-08-15 추가] `sel_multi`·`sel_solo` — **선택 상태**를 렌더하는 뷰.
+# 그 전까지 이 게이트는 아무것도 선택하지 않은 화면만 찍었다. 그래서 선택 강조(밴드·핸들·
+# qc-dot) 경로가 통째로 사각지대였고, 실제로 그 자리에서 시각 회귀가 났는데(심볼 선택 밴드가
+# 사각형으로 그려짐, 커밋 de71498) 이 게이트를 통과해버렸다. 다중선택과 단일선택은 서로
+# 다른 강조 경로(밴드 vs 중심선)를 타므로 둘 다 찍는다.
 def _view_states(win):
     scene_rect = win._scene.itemsBoundingRect()
 
     def fit_all():
+        win._scene.clearSelection()
         win._view.fitInView(scene_rect, Qt.AspectRatioMode.KeepAspectRatio)
 
     def actual_size():
+        win._scene.clearSelection()
         win._view.resetTransform()
         win._view.centerOn(scene_rect.center())
 
     def dense_zoom():
         # 밀집 클러스터 확대 — 씬 좌상단 1/6 영역(도형·화살표가 겹쳐 라우팅이 복잡한 구간).
+        win._scene.clearSelection()
         w, h = scene_rect.width() / 6.0, scene_rect.height() / 6.0
         win._view.fitInView(QRectF(scene_rect.x(), scene_rect.y(), w, h),
                             Qt.AspectRatioMode.KeepAspectRatio)
 
-    return [("fit_all", fit_all), ("actual", actual_size), ("dense", dense_zoom)]
+    def _selectable(limit=None):
+        from PyQt6.QtWidgets import QGraphicsItem
+        items = [it for it in win._scene.items(Qt.SortOrder.AscendingOrder)
+                 if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable]
+        return items[:limit] if limit else items
+
+    def sel_multi():
+        # 다중선택 강조(바깥 밴드) — 밀집 구간을 확대해 밴드가 실제 외곽선을 따라가는지 본다.
+        dense_zoom()
+        for it in _selectable(40):
+            it.setSelected(True)
+
+    def sel_solo():
+        # 단일선택 강조(얇은 중심선) — 다중선택과 다른 코드 경로다.
+        dense_zoom()
+        items = _selectable(1)
+        if items:
+            items[0].setSelected(True)
+
+    return [("fit_all", fit_all), ("actual", actual_size), ("dense", dense_zoom),
+            ("sel_multi", sel_multi), ("sel_solo", sel_solo)]
 
 
 def render_view(win, app) -> QImage:

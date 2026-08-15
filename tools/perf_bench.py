@@ -12,10 +12,27 @@
    **수정 전후 비교**가 목적이라 상대값이면 충분하다(전역 규칙 11-c: 프록시 검증).
    실조건 체감은 `python run.py`로 사용자가 따로 확인한다.
 
+⚠⚠ **2026-08-15 측정 방법론 수정 — 이 날 이전에 기록된 절대 ms와는 비교 불가.**
+`docs/perf_plan_500_1000.md` 1-0에서 하네스 자체를 검증하다 결함 3개를 찾았다(실측 근거는
+그 문서 §5). 고치기 전 수치는 **실제보다 크게 낙관적**이었다:
+
+  1. **줌을 통제하지 않았다** — 기본 줌에선 문서 대부분이 뷰포트 밖이라 페인트가 거의 안 돌았다
+     (도형 250개 드래그에 paint 8회/프레임). 사용자는 전체를 선택하려면 축소해서 보므로
+     그게 진짜 조건이다. → `--zoom fit`(기본값)으로 문서 전체가 화면에 들어오게 고정.
+  2. **`processEvents()` 한 번으론 프레임을 건너뛴다** — Qt가 페인트를 합쳐버려 실제 렌더
+     비용이 빠졌다(도형 250개가 움직였는데 paint는 125회뿐). → 프레임형 시나리오는
+     `processEvents()`를 여러 번 돌려 밀린 페인트를 정지 상태까지 흘려보낸다
+     (`_paint_tick` 주석에 세 방식 실측 비교). `viewport().repaint()`는 더티 영역과 무관하게
+     뷰포트 전체를 다시 그려 **부분 드래그를 과대측정**하므로 쓰지 않는다.
+  3. **워밍업·반복 없이 단발 평균** — 첫 프레임의 지연 초기화가 섞이고 노이즈에 취약했다
+     (같은 코드로 6%와 20% 개선이 둘 다 나온 전례). → 워밍업 후 **best-of-N**.
+
 사용법:
     python tools/perf_bench.py                          # 기본 문서로 전 시나리오
-    python tools/perf_bench.py --doc heavy_perf_test.ecad
+    python tools/perf_bench.py --doc perf_1000.ecad     # (tools/make_perf_doc.py로 생성)
     python tools/perf_bench.py --no-minimap             # 미니맵 기여도 분리
+    python tools/perf_bench.py --zoom current           # 옛 방식(문서 일부만 화면) 재현용
+    python tools/perf_bench.py --trials 7               # best-of-N 횟수(기본 5)
     python tools/perf_bench.py --save before.json       # 결과 저장
     python tools/perf_bench.py --compare before.json    # 저장분 대비 증감 표시
     python tools/perf_bench.py --only drag,select       # 일부만
@@ -57,6 +74,9 @@ SCENARIOS = {
     "drag":        ("도형 1개 드래그",         True),
     "drag_multi":  ("20개 그룹 드래그",        True),
     "drag_all":    ("전체 선택 그룹 드래그",    True),
+    "drag_subset": ("큰 씬 / 30개만 드래그",   True),
+    "rubberband":  ("러버밴드 드래그 중",      True),
+    "release":     ("놓는 순간 일괄 정리",     False),
     "zoom":        ("휠 줌 1틱",               True),
     "pan":         ("팬 1프레임",              True),
     "render":      ("뷰 렌더(현재 줌)",        True),
@@ -70,9 +90,11 @@ SCENARIOS = {
 class Bench:
     """측정 컨텍스트 — 창 1개를 만들어 시나리오들을 순서대로 돌린다."""
 
-    def __init__(self, doc_path: str, hide_minimap: bool):
+    def __init__(self, doc_path: str, hide_minimap: bool, trials: int = 5, zoom: str = "fit"):
         self.app = QApplication.instance() or QApplication(sys.argv)
         self.doc_path = doc_path
+        self.trials = max(1, trials)
+        self.zoom_mode = zoom
         self.results: dict[str, float] = {}
         self.win = CanvasWindow()
         self.win.resize(VIEW_W, VIEW_H)
@@ -97,14 +119,90 @@ class Bench:
     def _tick(self):
         self.app.processEvents()
 
-    def _time(self, key: str, reps: int, fn):
-        """fn을 reps회 돌려 1회 평균 ms를 기록. reps는 시나리오마다 다르다(비용 규모가 달라서)."""
-        t0 = time.perf_counter()
-        for i in range(reps):
+    _PAINT_FLUSH = 3
+
+    def _paint_tick(self):
+        """[2026-08-15] 프레임형 시나리오 전용 — 밀린 페인트를 **정지 상태까지 흘려보낸다**.
+
+        세 방식을 실측해 고른 것이다(도형 250 + 화살표 250 문서, fit 줌, `_RectItem.paint` 계수):
+
+            방식                이동 1개      이동 250개(전체)
+            processEvents x1    paint  54      paint 125   ← 250개가 움직였는데 125회뿐(누락)
+            processEvents x3    paint 108      paint 250   ← 이동분과 정확히 일치
+            viewport().repaint() paint 304     paint 375   ← 1개만 움직여도 전체 재도색(과대)
+
+        `repaint()`는 더티 영역과 무관하게 뷰포트 전체를 다시 그려, 부분 드래그의 렌더 비용을
+        실제보다 크게 부풀린다(실사용에선 Qt가 더티 영역만 그린다). `processEvents()` 한 번은
+        반대로 페인트를 합쳐 누락한다. 세 번 돌리면 Qt의 정상 더티 전파를 그대로 쓰면서
+        큐에 남은 페인트까지 소진돼, 이동한 만큼만 정확히 그려진다."""
+        for _ in range(self._PAINT_FLUSH):
+            self.app.processEvents()
+
+    def apply_zoom(self):
+        """[2026-08-15] 줌 상태를 명시적으로 고정한다 — 이걸 안 하면 문서 크기·기본 줌에 따라
+        화면 밖 도형이 페인트를 건너뛰어 같은 코드가 문서마다 다른 결론을 낸다.
+        `fit` = 문서 전체가 화면에(전체선택 드래그의 실제 조건), `current` = 옛 방식."""
+        if self.zoom_mode == "fit":
+            rect = self.win._scene.itemsBoundingRect()
+            if not rect.isEmpty():
+                self.win._view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self._tick()
+
+    def visible_shape_count(self) -> int:
+        """현재 뷰포트 안에 실제로 들어온 도형 수 — 측정이 무엇을 재고 있는지 표에 찍는다."""
+        vp = self.win._view.viewport().rect()
+        n = 0
+        for it in self._rects():
+            if vp.intersects(self.win._view.mapFromScene(it.sceneBoundingRect()).boundingRect()):
+                n += 1
+        return n
+
+    def snapshot_positions(self):
+        """씬 아이템들의 현재 위치를 저장 — 시나리오 간 간섭 차단용(아래 `_time` 참조)."""
+        return [(it, QPointF(it.pos())) for it in self.win._scene.items()
+                if it.parentItem() is None]
+
+    def restore_positions(self, snap):
+        for it, pos in snap:
+            if it.pos() != pos:
+                it.setPos(pos)
+        self.win._on_scene_changed(None)      # 되돌린 배치로 라우팅도 원상복구
+        self._tick()
+
+    def _time(self, key: str, reps: int, fn, frame: bool = True, reset=None):
+        """[2026-08-15 방법론 수정] 워밍업 후 **best-of-N**을 기록한다.
+
+        예전엔 워밍업 없이 한 번만 돌려 평균을 냈다 — 첫 프레임의 지연 초기화(캐시 콜드,
+        Qt 내부 할당)가 섞이고 배경 노이즈에 그대로 노출돼, 같은 코드 변경을 두고 6%와
+        20%가 둘 다 나오는 일이 실제로 있었다. 최소값을 쓰는 이유: 성능 측정에서 노이즈는
+        항상 **더 느린 쪽으로만** 작용하므로 최소값이 참값에 가장 가깝다.
+
+        ⚠ **`reset`이 없으면 이 하네스는 거짓말을 한다**(2026-08-15 실측으로 발견).
+        드래그 시나리오는 도형을 실제로 옮긴 채 끝난다. 그래서 ⓐ 다음 시나리오가 어긋난
+        배치에서 시작하고 ⓑ best-of-N의 각 시도가 **서로 다른 배치**를 재게 된다 — 노이즈
+        제거가 아니라 '가장 싼 배치 고르기'가 된다. 특히 일부만 옮기면 도형이 서로 겹쳐
+        A* 라우팅이 급등해, 30개 드래그(504ms)가 250개 전체 드래그(197ms)보다 느리다는
+        물리적으로 불가능한 결과가 나왔다. `reset`은 매 시도 **직전**에 원래 배치로 되돌려
+        모든 시도가 같은 일을 재게 한다.
+        """
+        warm = 2 if frame else 1
+        if reset:
+            reset()
+        for i in range(warm):
             fn(i)
-        dt = (time.perf_counter() - t0) * 1000.0 / max(reps, 1)
-        self.results[key] = dt
-        return dt
+        best = None
+        for _ in range(self.trials):
+            if reset:
+                reset()
+            t0 = time.perf_counter()
+            for i in range(reps):
+                fn(i)
+            dt = (time.perf_counter() - t0) * 1000.0 / max(reps, 1)
+            best = dt if best is None else min(best, dt)
+        if reset:
+            reset()                            # 다음 시나리오를 위해 원상복구
+        self.results[key] = best
+        return best
 
     # ---- 시나리오 ----------------------------------------------------------
 
@@ -125,10 +223,11 @@ class Bench:
         def one(i):
             self.win._scene.clearSelection()
             rects[i % len(rects)].setSelected(True)
-            self._tick()
+            self._paint_tick()
         self._time("select", 10, one)
 
     def scn_drag(self):
+        snap = self.snapshot_positions()
         r = self._rects()[0]
         self.win._scene.clearSelection()
         r.setSelected(True)
@@ -136,12 +235,13 @@ class Bench:
         # 실제 드래그와 같은 경로: setPos → scene.changed → reroute/repaint 체인 전부 탄다.
         def one(i):
             r.setPos(r.pos() + QPointF(3, 2))
-            self._tick()
-        self._time("drag", 20, one)
+            self._paint_tick()
+        self._time("drag", 20, one, reset=lambda: self.restore_positions(snap))
         self.win._scene.clearSelection()
         self._tick()
 
     def scn_drag_multi(self):
+        snap = self.snapshot_positions()
         rects = self._rects()[:20]
         self.win._scene.clearSelection()
         for r in rects:
@@ -150,14 +250,15 @@ class Bench:
         def one(i):
             for r in rects:
                 r.setPos(r.pos() + QPointF(2, 1))
-            self._tick()
-        self._time("drag_multi", 10, one)
+            self._paint_tick()
+        self._time("drag_multi", 10, one, reset=lambda: self.restore_positions(snap))
         self.win._scene.clearSelection()
         self._tick()
 
     def scn_drag_all(self):
         """[성능조사 2026-08-13] drag_multi(20개 고정)는 200개+ 선택 규모를 재현하지 못한다 —
         문서에 있는 도형 전부를 선택해 한 번에 옮겨, 선택 개수 자체가 큰 시나리오를 잡는다."""
+        snap = self.snapshot_positions()
         rects = self._rects()
         self.win._scene.clearSelection()
         for r in rects:
@@ -166,8 +267,77 @@ class Bench:
         def one(i):
             for r in rects:
                 r.setPos(r.pos() + QPointF(2, 1))
-            self._tick()
-        self._time("drag_all", 10, one)
+            self._paint_tick()
+        self._time("drag_all", 10, one, reset=lambda: self.restore_positions(snap))
+        self.win._scene.clearSelection()
+        self._tick()
+
+    def scn_drag_subset(self):
+        """[성능계획 1-0, 2026-08-15] 결정 ⓒ — **씬은 크고 선택은 작은** 경우.
+        `drag_all`은 씬 규모와 선택 규모가 같아 둘을 분리할 수 없다(`docs/perf_group_drag_200.md`가
+        "별도 문서로 재실측해야 확정된다"고 남겨둔 항목). 실사용 빈도는 이쪽이 더 높다 —
+        큰 도면을 열어놓고 그중 몇십 개만 옮긴다. 여기서 비싼 게 남으면 그건 **선택 개수와
+        무관하게 씬 전체에 비례하는 비용**(매 프레임 씬 순회 등)이라는 뜻이다."""
+        snap = self.snapshot_positions()
+        rects = self._rects()
+        if len(rects) < 40:
+            return                      # 씬이 작으면 '씬≫선택'이 성립 안 함 — 측정 스킵
+        subset = rects[:30]
+        self.win._scene.clearSelection()
+        for r in subset:
+            r.setSelected(True)
+        self._tick()
+        def one(i):
+            for r in subset:
+                r.setPos(r.pos() + QPointF(2, 1))
+            self._paint_tick()
+        self._time("drag_subset", 10, one, reset=lambda: self.restore_positions(snap))
+        self.win._scene.clearSelection()
+        self._tick()
+
+    def scn_rubberband(self):
+        """[성능계획 1-0] 러버밴드로 영역을 끄는 **동안**의 비용(선택 확정 전).
+        `drawForeground`가 매 프레임 후보들을 훑어 미리보기 강조를 그리는 경로라
+        아이템 `paint()`와 별개다(옛 병목 C). 뷰의 실제 진행 상태를 그대로 세팅해 잰다."""
+        v = self.win._view
+        rect = self.win._scene.itemsBoundingRect()
+        self.win._scene.clearSelection()
+        self._tick()
+        # 실제 mouseMove 경로(core_view.py `_rb_active` 분기)와 같은 상태를 만든다:
+        #   _rb_current 갱신 → _rb_preview = _rb_preview_hits() → 화면 갱신.
+        v._rb_active = True
+        v._rb_origin = v.mapFromScene(rect.topLeft())
+        def one(i):
+            # 밴드를 조금씩 키우며 끈다 — 후보 수가 점점 늘어나는 실제 조작과 같은 모양.
+            frac = 0.2 + 0.8 * ((i % 10) + 1) / 10.0
+            v._rb_current = v.mapFromScene(QPointF(rect.left() + rect.width() * frac,
+                                                   rect.top() + rect.height() * frac))
+            v._rb_preview = v._rb_preview_hits()
+            self._paint_tick()
+        self._time("rubberband", 10, one)
+        v._rb_active = False
+        v._rb_origin = v._rb_current = None
+        v._rb_preview = set()
+        self._tick()
+
+    def scn_release(self):
+        """[성능계획 1-0] 드래그를 **놓는 순간** 한 번에 도는 비용(결정 ⓑ의 0.5초 상한 대상).
+        지금 코드에는 '드래그 중 미루기'가 없어서 이 값은 아직 '전체 재라우팅 1회'의 비용이다 —
+        2-B(드래그 중 재라우팅 정지)를 넣은 뒤 이 수치가 상한 안에 있는지가 판정 기준이 된다."""
+        snap = self.snapshot_positions()
+        rects = self._rects()
+        self.win._scene.clearSelection()
+        for r in rects:
+            r.setSelected(True)
+        self._tick()
+        def one(i):
+            for r in rects:
+                r.setPos(r.pos() + QPointF(1, 1))
+            # 전체 재라우팅 강제: region=None이면 필터 없이 모든 바인딩 화살표 재검토
+            # (host_canvas._on_scene_changed의 기존 관례 — 테스트용 강제 호출 경로).
+            self.win._on_scene_changed(None)
+            self._paint_tick()
+        self._time("release", 1, one, frame=False, reset=lambda: self.restore_positions(snap))
         self.win._scene.clearSelection()
         self._tick()
 
@@ -277,6 +447,10 @@ def main():
     ap.add_argument("--save", help="결과를 JSON으로 저장")
     ap.add_argument("--compare", help="이 JSON 대비 증감 표시")
     ap.add_argument("--only", help="쉼표로 구분한 시나리오만 실행(예: drag,select)")
+    ap.add_argument("--trials", type=int, default=5,
+                    help="best-of-N 반복 횟수(기본 5) — 노이즈 저항")
+    ap.add_argument("--zoom", choices=("fit", "current"), default="fit",
+                    help="fit=문서 전체가 화면에(기본·실사용 조건) / current=옛 방식")
     args = ap.parse_args()
 
     if not os.path.exists(args.doc):
@@ -286,19 +460,25 @@ def main():
     def want(name: str) -> bool:
         return only is None or name in only
 
-    b = Bench(args.doc, hide_minimap=args.no_minimap)
+    b = Bench(args.doc, hide_minimap=args.no_minimap, trials=args.trials, zoom=args.zoom)
     b.scn_load()                                    # 문서가 있어야 나머지가 성립 — 항상 실행
+    b.apply_zoom()                                  # [2026-08-15] 측정 전 줌 상태 고정
     print()
     print(f"문서   : {os.path.basename(args.doc)}")
     print(f"씬     : {b.scene_summary()}")
     print(f"미니맵 : {'숨김' if args.no_minimap else '표시'}    "
           f"뷰 {VIEW_W}x{VIEW_H}    60fps 예산 {FRAME_BUDGET_MS:.2f} ms")
+    print(f"측정   : zoom={args.zoom}(화면 안 도형 {b.visible_shape_count()}/{len(b._rects())}) "
+          f"· best-of-{args.trials} · 프레임형은 페인트 flush x{Bench._PAINT_FLUSH} · 시도마다 배치 복원")
     print()
 
     if want("select"):      b.scn_select()
     if want("drag"):        b.scn_drag()
     if want("drag_multi"):  b.scn_drag_multi()
     if want("drag_all"):    b.scn_drag_all()
+    if want("drag_subset"): b.scn_drag_subset()
+    if want("rubberband"):  b.scn_rubberband()
+    if want("release"):     b.scn_release()
     if want("zoom"):        b.scn_zoom()
     if want("pan"):         b.scn_pan()
     if want("render"):      b.scn_render()
