@@ -258,8 +258,21 @@ class _SelectionMixin:
         마우스를 한 번 움직일 때마다 `selectedItems()`가 1,260회 호출돼 호버 하나에 157ms가
         들었다(1000개 선택 실측). 두 캐시를 한 슬롯에서 갱신해 무효화 지점을 하나로 유지한다."""
         sel = self._scene.selectedItems()
+        prev_top = getattr(self._scene, "_sel_top_count_cache", 0)
+        top = sum(1 for it in sel if it.parentItem() is None)
         self._scene._sel_count_cache = len(sel)
-        self._scene._sel_top_count_cache = sum(1 for it in sel if it.parentItem() is None)
+        self._scene._sel_top_count_cache = top
+        # [2-C(a) 2026-08-15] 다중선택 경계(2개↔1개)를 넘으면 **남아 있는 선택 아이템들의
+        # boundingRect가 달라진다**(다중선택이면 개별 핸들 자리를 예약 안 함, core_shapes
+        # `boundingRect` 참조). 그런데 그 아이템들 자신의 선택 상태는 안 바뀌었으므로 Qt에
+        # `prepareGeometryChange()`가 가지 않는다 — 안 알려주면 Qt가 옛 bbox로 컬링해 핸들이
+        # 잘려 보인다(이 레포가 반복해서 밟은 캐시 무효화 함정과 같은 부류). 경계를 넘는
+        # 순간에만 명시적으로 알린다(선택 변경당 1회, 드래그 중엔 안 돈다).
+        if (prev_top >= 2) != (top >= 2):
+            for it in sel:
+                if it.parentItem() is None:
+                    it.prepareGeometryChange()
+                    it.update()
 
     # ---- [편의기능] Group / Ungroup --------------------------------------
 

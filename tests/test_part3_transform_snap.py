@@ -1775,3 +1775,55 @@ def test_group_active_uses_cache_and_matches_manual_count():
         for it in sel:
             it.setSelected(True)
         assert a._group_active() == manual(), f"선택 {len(sel)}개에서 캐시와 실계산이 다르다"
+
+
+# --- 다중선택 시 boundingRect 핸들 예약 생략(2-C(a), 2026-08-15) -------------
+
+def test_multi_selection_bbox_skips_handle_reservation():
+    """다중선택 중엔 개별 핸들이 안 그려지므로 boundingRect도 그 자리를 예약하지 않는다.
+    (1000개 전체선택 드래그에서 이 체인이 프레임 비용의 41%였다.)"""
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=400, y=300, ww=120, hh=72)
+
+    w._scene.clearSelection()
+    unselected = QRectF(a.boundingRect())
+
+    a.setSelected(True)                      # 단일선택 — 핸들이 그려지므로 자리 예약
+    single = QRectF(a.boundingRect())
+    assert single.width() > unselected.width(), "단일선택인데 핸들 자리를 예약 안 했다"
+
+    b.setSelected(True)                      # 다중선택 — 그룹 오버레이가 대신 변형
+    multi = QRectF(a.boundingRect())
+    assert multi == unselected, "다중선택인데 핸들 자리를 여전히 예약한다"
+
+
+def test_bbox_restored_when_selection_drops_below_two():
+    """2개→1개로 줄면 남은 아이템의 boundingRect가 다시 커져야 한다.
+    ⚠ 그 아이템 자신의 선택 상태는 안 바뀌므로 Qt에 prepareGeometryChange가 자동으로 가지
+    않는다 — `_sync_selection_count_cache`가 경계에서 명시적으로 알린다. 이게 없으면 핸들이
+    잘려 보인다."""
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=400, y=300, ww=120, hh=72)
+
+    a.setSelected(True)
+    single = QRectF(a.boundingRect())
+    b.setSelected(True)
+    assert a.boundingRect() != single         # 다중 → 축소
+    b.setSelected(False)                      # 다시 단일 — a의 선택 상태는 안 바뀜
+    assert QRectF(a.boundingRect()) == single, "2→1 전환 후 핸들 자리가 복원되지 않았다"
+
+
+def test_unselected_label_bbox_has_no_handle_padding():
+    """도형 라벨(_TextItem)은 선택되지도 않는데 회전 핸들 자리를 계산·예약하고 있었다
+    (1000개 문서 10프레임에 _rot_handle_rect 49,990회)."""
+    w = CanvasWindow()
+    r = _mk_pen_rect(w, x=0, y=0, ww=160, hh=90)
+    r.ensure_label().setPlainText("A")
+    r._sync_label()
+    label = r._label
+    assert label is not None and not label.isSelected()
+    pad = 3.0 / label._scale_or_1()
+    expected = QRectF(label._content_rect()).adjusted(-pad, -pad, pad, pad)
+    assert QRectF(label.boundingRect()) == expected, "미선택 라벨이 회전 핸들 자리를 예약한다"

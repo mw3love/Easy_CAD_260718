@@ -512,7 +512,16 @@ class _HandleResizeMixin:
                 r = r.united(self._inflate_to_hit(self._endpoint_rect(i, s), s, vz))
             return r.adjusted(-pad, -pad, pad, pad)
         if self._box_handles():
-            if not self.isSelected():
+            # [성능수정 2026-08-15, 2-C(a)] 다중선택 중엔 개별 핸들·qc-dot이 **그려지지 않으므로**
+            # (`_handle_active()`가 False) 그 자리를 예약할 이유도 없다. 예약하려면 아래에서
+            # `_box_rot_rect`·`_qc_dot_rects`·`_box_corner_rects` 기하를 매번 계산해야 하는데,
+            # 1000개 전체선택 드래그 실측에서 이 boundingRect 체인이 프레임 비용의 41%
+            # (프레임당 10,500회 호출)였다. 오늘 고친 "다중선택이면 개별 핸들은 없는 것"
+            # 규칙(`_group_owns_interaction`)이 여기에만 아직 적용 안 돼 있었다.
+            # ⚠ 2개↔1개 경계를 넘을 때는 이 아이템 자신의 선택 상태가 안 바뀌어 Qt에
+            # `prepareGeometryChange()`가 안 간다 — `CanvasWindow._sync_selection_count_cache`
+            # 가 그 전환에서 명시적으로 무효화한다(안 하면 핸들이 잘려 보인다).
+            if not self.isSelected() or self._group_active():
                 return self._content_rect().adjusted(-pad, -pad, pad, pad)
             # 꼭짓점·변 핸들은 rect 경계서 half-handle 삐져나오고, 회전 핸들·접속점은 바깥.
             h = self._handle_px(s)
@@ -559,6 +568,12 @@ class _HandleResizeMixin:
             self._bbox_cache_key = key
             self._bbox_cache_rect = result
             return result
+        # [성능수정 2026-08-15, 2-C(a)] 핸들이 안 그려지는 상태(미선택 또는 다중선택)면 회전
+        # 핸들 자리를 union하지 않는다 — `_rot_handle_rect`는 캐시가 없어 매 호출 계산된다.
+        # 실측에서 가장 놀라웠던 지점: 도형 라벨(`_TextItem`)은 **선택되지도 않는데** 이 경로를
+        # 타서, 1000개 문서 드래그 10프레임에 `_rot_handle_rect`가 49,990회 불렸다.
+        if not self._handle_active():
+            return self._content_rect().adjusted(-pad, -pad, pad, pad)
         return self._content_rect().united(self._rot_handle_rect().adjusted(-pad, -pad, pad, pad))
 
     def _handle_local_rect(self) -> QRectF:
