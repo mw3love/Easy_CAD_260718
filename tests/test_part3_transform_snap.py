@@ -1677,3 +1677,35 @@ def test_cut_restore_snap_survives_grid_snap_when_grid_enabled():
     assert abs(tri.pos().y() - orig_pos.y()) < 1e-6
 
 
+
+
+# --- 드래그 세션 스위치(성능계획 2-A, 2026-08-15) ---------------------------
+# `docs/perf_plan_500_1000.md` 결정 ⓐ의 단일 스위치. 이후 드래그 중 단순화가 전부 이걸
+# 보므로, 판정 집합이 조용히 어긋나면 최적화가 엉뚱한 때 켜지거나 안 켜진다.
+
+def test_is_drag_session_tracks_each_drag_kind():
+    w = CanvasWindow()
+    v = w._view
+    assert v.is_drag_session() is False, "유휴 상태에서 켜져 있으면 안 된다"
+
+    for attr, on, off in (
+        ("_move_active", True, False),          # 도형 이동/핸들
+        ("_group_dragging", True, False),       # 그룹 변형
+        ("_group_body_drag", True, False),      # 그룹 본체 드래그
+        ("_stretch_active", True, False),       # 스트레치
+        ("_seg_drag", object(), None),          # 화살표 세그먼트 알약
+        ("_table_col_drag", object(), None),    # 표 열폭
+    ):
+        setattr(v, attr, on)
+        assert v.is_drag_session() is True, f"{attr} 중인데 드래그 세션이 아니라고 판정됨"
+        setattr(v, attr, off)
+        assert v.is_drag_session() is False, f"{attr} 해제 후에도 세션이 남음"
+
+
+def test_is_drag_session_excludes_rubberband():
+    """러버밴드는 아이템이 하나도 안 움직이므로 드래그 세션이 아니다 — 라우팅·렌더를 미룰
+    이유가 없고, 실측으로도 이미 60fps 예산 안이다(계획 문서 §5)."""
+    w = CanvasWindow()
+    v = w._view
+    v._rb_active = True
+    assert v.is_drag_session() is False

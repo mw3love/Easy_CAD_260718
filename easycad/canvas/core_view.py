@@ -589,6 +589,22 @@ class _AnnotatorView(QGraphicsView):
             and not isinstance(it, _ConnectorLabel)   # 라벨 드래그는 t·off 소유라 위치-undo 스코프 밖
         ]
 
+    def is_drag_session(self) -> bool:
+        """[성능계획 2-A, 2026-08-15] 지금 **아이템을 실제로 옮기는 중**인가(press~release 사이).
+
+        `docs/perf_plan_500_1000.md` 결정 ⓐ("드래그 중에는 화면 품질을 과감히 낮추고 놓는 순간
+        정확히 복원")의 단일 스위치. 이후의 모든 드래그 중 단순화가 이 하나를 본다 — 조건을
+        여기 모아두지 않으면 최적화마다 제각각 판정하다 어긋난다(과거 "호버 예고점 판정과
+        갱신 트리거가 따로 놀아 잔상이 남던" 것과 같은 부류의 함정).
+
+        판정 집합은 `_port_dot_target`(위)이 이미 "지금 조작 중이라 예고점을 띄우면 안 되는"
+        상태로 쓰던 것과 같다 — 다만 러버밴드(`_rb_active`)는 **뺀다**: 밴드를 끄는 동안엔
+        아이템이 하나도 안 움직이므로 라우팅·렌더를 미룰 이유가 없다(실측으로도 이미 60fps
+        예산 안 — 계획 문서 §5)."""
+        return bool(self._move_active or self._group_dragging or self._group_body_drag
+                    or self._stretch_active or self._seg_drag is not None
+                    or self._table_col_drag is not None)
+
     def _maybe_alt_drag_copy(self, event):
         """[편의기능] Alt+드래그 시작 — 선택 항목을 제자리 복제하고 복제본을 선택한다.
         복제본이 원본과 같은 자리·zValue에 놓여 Qt의 기본 히트테스트가 복제본을 잡으므로,
