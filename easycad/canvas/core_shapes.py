@@ -167,10 +167,18 @@ class _HandleResizeMixin:
 
     def _group_active(self) -> bool:
         """[우리 확장] 씬에 최상위(라벨 등 자식 제외) 선택 아이템이 2개 이상인가.
-        참이면 개별 회전·크기·끝점 핸들을 숨기고 그룹 변형 오버레이(_GroupTransform)에 넘긴다."""
+        참이면 개별 회전·크기·끝점 핸들을 숨기고 그룹 변형 오버레이(_GroupTransform)에 넘긴다.
+        [성능수정 2026-08-15] `selectedItems()`는 Qt가 매 호출마다 선택 전체 리스트를 새로
+        만든다. 이 함수는 hover·paint 스캔에서 **아이템마다** 불려, 1000개 선택 시 마우스를
+        한 번 움직이는 데만 1,260회 호출돼 157ms를 먹었다(병목 A와 같은 O(N²) 패턴).
+        `CanvasWindow._sync_selection_count_cache`가 selectionChanged에서만 갱신하는
+        `_sel_top_count_cache`를 O(1)로 읽고, 없으면(독립 씬) 기존 방식으로 폴백한다."""
         sc = self.scene()
         if sc is None:
             return False
+        cached = getattr(sc, "_sel_top_count_cache", None)
+        if cached is not None:
+            return cached >= 2
         n = 0
         for it in sc.selectedItems():
             if it.parentItem() is None:

@@ -251,8 +251,15 @@ class _SelectionMixin:
         `scene._sel_count_cache`를 갱신 — `_selection_is_solo`(core_shapes.py)가 paint마다
         `scene().selectedItems()`(O(N))를 직접 부르던 것을 O(1) 읽기로 대체하기 위한 캐시.
         `_bulk_select`가 이 시그널을 다른 두 슬롯과 함께 묶어 대량선택 중엔 끄고 끝나면 1회만
-        부른다(아래)."""
-        self._scene._sel_count_cache = len(self._scene.selectedItems())
+        부른다(아래).
+
+        [2026-08-15 확장] `_sel_top_count_cache`(최상위=라벨 등 자식 제외 선택 수)도 함께
+        갱신한다. `_group_active()`(core_shapes)가 같은 O(N²)를 호버 경로에서 재현하고 있었다 —
+        마우스를 한 번 움직일 때마다 `selectedItems()`가 1,260회 호출돼 호버 하나에 157ms가
+        들었다(1000개 선택 실측). 두 캐시를 한 슬롯에서 갱신해 무효화 지점을 하나로 유지한다."""
+        sel = self._scene.selectedItems()
+        self._scene._sel_count_cache = len(sel)
+        self._scene._sel_top_count_cache = sum(1 for it in sel if it.parentItem() is None)
 
     # ---- [편의기능] Group / Ungroup --------------------------------------
 

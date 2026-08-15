@@ -144,6 +144,7 @@ class CanvasWindow(
         # (core_shapes.py)가 paint마다 O(N) `selectedItems()`를 부르던 것을 O(1) 캐시 읽기로
         # 대체 — 시작값을 미리 채워 첫 selectionChanged 전에도 캐시가 존재하게 한다.
         self._scene._sel_count_cache = 0
+        self._scene._sel_top_count_cache = 0   # 최상위(자식 제외) 선택 수 — `_group_active`용
         self._scene.selectionChanged.connect(self._sync_selection_count_cache)
         # [편의기능] 그룹 멤버 중 하나가 선택되면 같은 그룹 전체를 함께 선택.
         self._scene.selectionChanged.connect(self._sync_group_selection)

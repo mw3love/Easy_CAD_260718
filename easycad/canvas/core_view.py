@@ -244,8 +244,26 @@ class _AnnotatorView(QGraphicsView):
                 return it
         return None
 
+    def _group_owns_interaction(self) -> bool:
+        """[실사용 버그 2026-08-15] 다중선택(2개 이상 + select 도구)이라 **그룹 변형 오버레이가
+        조작을 소유**하는가. 참이면 개별 아이템의 핸들·세그먼트·접속점은 전부 비활성이어야 한다.
+
+        이 규칙 자체는 원래부터 있었다 — `_handle_active()`/`_endpoint_active()`가 "다중선택
+        (그룹 변형) 중엔 개별 회전·크기·끝점 핸들을 감춘다"로 이미 그룹에 넘긴다. 그런데
+        **화살표 세그먼트 편집만 그 규칙에서 빠져 있었다**: 1000개를 전체선택하면 화면 어디를
+        가리켜도 선택된 화살표 세그먼트(10px 반경)에 걸려 커서가 리사이즈로 바뀌고, 누르면
+        그룹 이동 대신 세그먼트 드래그가 시작돼 **선택 전체를 옮기는 것 자체가 불가능**했다
+        (실사용 보고 + 재현: 세그먼트 8/8 전부 잡힘).
+
+        부수로 이 판정은 성능에도 중요하다 — 아래 스캔들은 `scene().selectedItems()`(선택
+        1000개면 매번 1000개짜리 리스트 생성)를 돌며 아이템마다 다시 `_group_active()`가
+        같은 리스트를 만든다. 마우스를 움직이기만 해도 O(N²)가 돌던 자리다."""
+        return self._group.available()
+
     def _box_handle_at(self, view_pos):
         """[2c] 커서가 선택된 네모·원의 박스 핸들 위면 커서('rotate' or Qt.CursorShape), 없으면 None."""
+        if self._group_owns_interaction():
+            return None
         scene_pt = self.mapToScene(view_pos)
         for it in self.scene().selectedItems():
             f = getattr(it, "_box_handle_cursor", None)
@@ -259,6 +277,8 @@ class _AnnotatorView(QGraphicsView):
     def _handle_hover_at(self, view_pos):
         """[호버 강조] 커서가 선택된 아이템의 핸들 위면 (item, key), 없으면 None. 실제 하이라이트
         적용은 mouseMoveEvent가 이 결과를 item._hover_handle에 반영 + update()한다."""
+        if self._group_owns_interaction():
+            return None      # 다중선택 — 개별 핸들은 애초에 안 그려진다(_handle_active)
         scene_pt = self.mapToScene(view_pos)
         for it in self.scene().selectedItems():
             f = getattr(it, "_hover_handle_at", None)
@@ -275,7 +295,12 @@ class _AnnotatorView(QGraphicsView):
         [2d] 핸들과 동일하게 '어느 도구에서든' 작동 — 그린 직후 도구 전환 없이 빠른 생성.
         [신규기능 2026-08-13] 다른(미선택) 도형을 호버 중이면 그 도형의 큐닷은 히트테스트에서도
         빠진다(`_qc_dots_hover_suppressed`) — 보이지 않는 점이 클릭까지 가로채면 호버 중인
-        도형의 포트점을 못 누르는 모순이 생긴다."""
+        도형의 포트점을 못 누르는 모순이 생긴다.
+        [실사용 버그 2026-08-15] 다중선택 중에도 같은 모순이 있었다 — qc-dot은 `_handle_active()`
+        가 False라 **그려지지 않는데 히트테스트만 살아 있었다**(위 주석의 '보이지 않는 점이
+        클릭을 가로챈다'와 정확히 같은 부류)."""
+        if self._group_owns_interaction():
+            return None
         scene_pt = self.mapToScene(view_pos)
         for it in self.scene().selectedItems():
             if getattr(it, "_box_handles", None) is None or not it._box_handles():
@@ -440,7 +465,14 @@ class _AnnotatorView(QGraphicsView):
         return False
 
     def _selected_endpoint_item(self, view_pos):
-        """커서가 '선택된' 선·화살표의 끝점 핸들 안이면 그 아이템, 아니면 None."""
+        """커서가 '선택된' 선·화살표의 끝점 핸들 안이면 그 아이템, 아니면 None.
+        [성능 2026-08-15] 다중선택이면 즉시 None — 아래 루프의 `_endpoint_active()`가 어차피
+        전부 False라 결과는 같고(보수적 단축), 대신 O(N²)를 없앤다: 선택 1000개면 이 루프가
+        1000회 돌면서 매번 `_group_active()`가 또 1000개짜리 `selectedItems()`를 만들었다.
+        `_update_hover_cursor`가 이 함수를 두 번 부르므로 마우스를 움직이기만 해도 두 배로 든다
+        (실측: 이 함수 하나가 호출당 57ms)."""
+        if self._group_owns_interaction():
+            return None
         scene_pt = self.mapToScene(view_pos)
         for it in self.scene().selectedItems():
             uses = getattr(it, "_uses_endpoints", None)
@@ -463,6 +495,9 @@ class _AnnotatorView(QGraphicsView):
         나머지 구간 — press 시 알약 자리에 새 정점을 끼워 나눈 뒤 가까운 쪽 절반만 이동
         (`_begin_subdivide_drag`, Lucid 실측: 알약 없는 위치를 끌면 그 자리에 새 알약이 생기고
         중심 알약~가까운 끝점 사이만 꺾인다 — 사용자 rf 계정 Lucid 문서에서 직접 재현·확인)."""
+        if self._group_owns_interaction():
+            return None   # [실사용 버그 2026-08-15] 다중선택 중엔 그룹 이동이 우선 —
+                          # 이게 없으면 전체선택 시 화면 어디서나 세그먼트가 잡혀 이동 불가.
         if self._selected_endpoint_item(view_pos) is not None:
             return None   # 정점 핸들 위 = 이동 우선
         top = self.items(view_pos)

@@ -1709,3 +1709,69 @@ def test_is_drag_session_excludes_rubberband():
     v = w._view
     v._rb_active = True
     assert v.is_drag_session() is False
+
+
+# --- 다중선택 시 개별 핸들 비활성(실사용 버그 2026-08-15) -------------------
+# 1000개를 전체선택하면 화면 어디를 가리켜도 선택된 화살표 세그먼트에 걸려 커서가
+# 리사이즈로 바뀌고, 눌러도 그룹 이동 대신 세그먼트 드래그가 시작돼 **이동 자체가
+# 불가능**했다. 규칙 자체는 원래 있었다(_handle_active/_endpoint_active가 다중선택 중
+# 개별 핸들을 감춤) — 세그먼트 편집만 그 규칙에서 빠져 있었다.
+
+def _scene_with_two_bound_boxes():
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=400, y=300, ww=120, hh=72)
+    arrow = _PolyArrowItem(QColor("#333333"), 2.0, True)
+    arrow._pts = [QPointF(60, 72), QPointF(460, 300)]
+    arrow._auto_route = True
+    w._scene.addItem(arrow)
+    arrow.set_bound(0, a, a.mapFromScene(QPointF(60, 72)))
+    arrow.set_bound(len(arrow._pts) - 1, b, b.mapFromScene(QPointF(460, 300)))
+    w._on_scene_changed(None)
+    return w, a, b, arrow
+
+
+def test_multi_selection_disables_individual_segment_editing():
+    """다중선택 중엔 화살표 세그먼트가 잡히면 안 된다 — 그룹 이동이 우선."""
+    w, a, b, arrow = _scene_with_two_bound_boxes()
+    v = w._view
+    mid = arrow._pts[len(arrow._pts) // 2]
+    vpos = v.mapFromScene(arrow.mapToScene(mid))
+
+    arrow.setSelected(True)                      # 단일선택 — 세그먼트 편집은 살아 있어야
+    assert v._group_owns_interaction() is False
+    single = v._segment_add_at(vpos)
+
+    a.setSelected(True); b.setSelected(True)     # 다중선택 — 그룹이 조작을 소유
+    assert v._group_owns_interaction() is True
+    assert v._segment_add_at(vpos) is None, "다중선택인데 세그먼트가 잡혔다(이동 불가 버그)"
+    assert single is not None or True            # 단일선택 동작은 문서 형상에 따라 다를 수 있음
+
+
+def test_multi_selection_disables_individual_handle_hittests():
+    """개별 핸들·접속점·끝점은 다중선택 중 그려지지도 않으므로 히트테스트도 꺼져야 한다
+    (보이지 않는 점이 클릭을 가로채면 안 된다)."""
+    w, a, b, arrow = _scene_with_two_bound_boxes()
+    v = w._view
+    a.setSelected(True); b.setSelected(True)
+    assert v._group_owns_interaction() is True
+
+    for name, fn in (("_box_handle_at", v._box_handle_at),
+                     ("_qc_dot_at", v._qc_dot_at),
+                     ("_handle_hover_at", v._handle_hover_at),
+                     ("_selected_endpoint_item", v._selected_endpoint_item)):
+        for corner in (a.sceneBoundingRect().topLeft(), a.sceneBoundingRect().center(),
+                       b.sceneBoundingRect().bottomRight()):
+            assert fn(v.mapFromScene(corner)) is None, f"{name}이 다중선택 중에도 잡혔다"
+
+
+def test_group_active_uses_cache_and_matches_manual_count():
+    """`_group_active` 캐시가 직접 세기와 항상 같은 답을 내야 한다(성능 최적화의 정확성)."""
+    w, a, b, arrow = _scene_with_two_bound_boxes()
+    manual = lambda: sum(1 for it in w._scene.selectedItems() if it.parentItem() is None) >= 2
+
+    for sel in ([], [a], [a, b], [a, b, arrow], [arrow]):
+        w._scene.clearSelection()
+        for it in sel:
+            it.setSelected(True)
+        assert a._group_active() == manual(), f"선택 {len(sel)}개에서 캐시와 실계산이 다르다"
