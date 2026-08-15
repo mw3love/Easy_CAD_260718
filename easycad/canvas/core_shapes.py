@@ -5021,11 +5021,12 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         super().keyPressEvent(event)
 
     def paint(self, painter, option, widget=None):
-        # [성능계획 2-C(b), 2026-08-15] 도형·화살표에 붙은 **라벨**(자식 텍스트)은 드래그 중
-        # 다중선택이면 그리지 않는다 — 1000개 전체선택 드래그에서 프레임당 1,000회 페인트되던
-        # 자리다. 독립 텍스트 아이템(부모 없음)은 장식이 아니라 내용이므로 그대로 그린다.
-        if self.parentItem() is not None and _drag_decor_suppressed(self):
-            return
+        # [2-C(b) 되돌림 2026-08-15, 사용자 판단] 한때 드래그 중 다중선택이면 라벨을 안 그렸다.
+        # 되돌린 이유: **효과가 작고 손실이 크다.** 기여도를 갈라 재보니 1000개 전체선택
+        # 드래그에서 라벨 억제 몫은 20.3ms뿐이었다(선택밴드 억제 100.5ms, 2-C(a) 202ms).
+        # 전체 개선폭 323ms의 6%를 위해 도형 안 텍스트가 사라지는 건 손해 — 라벨은 '장식'이
+        # 아니라 사용자가 읽는 **내용**이고, 드래그 중에 무엇을 옮기는지 보여야 한다.
+        # (선택밴드 억제는 그대로 유지 — 그건 진짜 장식이고 그룹 박스가 대신 보여준다.)
         if self._bg is not None:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)

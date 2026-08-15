@@ -1493,8 +1493,11 @@ def test_drag_decor_suppressed_only_when_dragging_and_multi():
     assert _drag_decor_suppressed(a) is False, "드래그가 끝났는데 계속 숨긴다"
 
 
-def test_labels_and_band_not_painted_during_multi_drag():
-    """실제 렌더로 확인 — 다중선택 드래그 중엔 라벨 글자가 화면에 안 나온다."""
+def test_label_text_stays_visible_during_multi_drag():
+    """[사용자 판단 2026-08-15] 도형 안 텍스트는 드래그 중에도 계속 보여야 한다.
+    한때 성능을 위해 숨겼다가 되돌렸다 — 기여도를 갈라 재보니 1000개 전체선택 드래그에서
+    라벨 억제 몫은 20.3ms뿐(선택밴드 억제 100.5ms, 2-C(a) 202ms)이라, 전체 개선폭 323ms의
+    6%를 위해 내용이 사라지는 건 손해였다. 이 테스트가 그 결정을 고정한다."""
     from PyQt6.QtGui import QImage, QPainter
     w = CanvasWindow()
     a = _mk_pen_rect(w, x=0, y=0, ww=200, hh=120)
@@ -1505,11 +1508,10 @@ def test_labels_and_band_not_painted_during_multi_drag():
     a.setSelected(True); b.setSelected(True)
 
     src = a._label.sceneBoundingRect()
-
     bg = w._scene.backgroundBrush().color().rgb()
 
     def ink():
-        """배경색과 다른 픽셀 수 = 실제로 그려진 것(글자·선). ⚠ '알파가 있는 픽셀'로 세면
+        """배경색과 다른 픽셀 수 = 실제로 그려진 것(글자). ⚠ '알파가 있는 픽셀'로 세면
         씬 배경이 불투명하게 깔려 전 픽셀이 걸리므로 아무것도 측정하지 못한다(실제로 겪음)."""
         img = QImage(120, 60, QImage.Format.Format_ARGB32)
         img.fill(0)
@@ -1525,4 +1527,33 @@ def test_labels_and_band_not_painted_during_multi_drag():
     dragging = ink()
 
     assert idle > 0, "유휴 상태에서 라벨이 아예 안 그려졌다(테스트 전제 실패)"
-    assert dragging < idle, f"드래그 중에도 장식이 그대로 그려진다(유휴 {idle} / 드래그 {dragging})"
+    assert dragging == idle, f"드래그 중 라벨 글자가 사라졌다(유휴 {idle} / 드래그 {dragging})"
+
+
+def test_selection_band_suppressed_during_multi_drag():
+    """선택 밴드는 드래그 중 다중선택이면 안 그린다 — 진짜 장식이고, 무엇이 선택됐는지는
+    그룹 변형 오버레이의 바운딩박스가 계속 보여준다. 2-C(b)에서 실제로 일한 부분(-100.5ms)."""
+    from easycad.canvas.core_shapes import _drag_decor_suppressed, _paint_selection_highlight
+    from PyQt6.QtGui import QImage, QPainter
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=200, hh=120)
+    b = _mk_pen_rect(w, x=400, y=300, ww=200, hh=120)
+    a.boundingRect()
+    a.setSelected(True); b.setSelected(True)
+
+    img = QImage(40, 40, QImage.Format.Format_ARGB32)
+
+    def band_ink():
+        img.fill(0)
+        p = QPainter(img)
+        p.translate(20, 20)
+        _paint_selection_highlight(p, a, 1.0)
+        p.end()
+        return sum(1 for y in range(40) for x in range(40) if (img.pixel(x, y) >> 24) & 0xFF)
+
+    w._view._move_active = False
+    assert _drag_decor_suppressed(a) is False
+    idle = band_ink()
+    w._view._move_active = True
+    assert _drag_decor_suppressed(a) is True
+    assert band_ink() < idle, "드래그 중인데 선택 밴드를 그대로 그린다"
