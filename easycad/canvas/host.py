@@ -136,6 +136,11 @@ class CanvasWindow(
         # 참조). 항상 `_sync_geom_snapshot()`이 먼저 갱신하지만, 초기값도 명시해 둔다.
         self._last_geom_change_count = 0
         self._scene.changed.connect(self._on_scene_changed)
+        # [성능수정 2026-08-15, perf_lab/REPORT_multiselect_perf.md 병목 A] `_selection_is_solo`
+        # (core_shapes.py)가 paint마다 O(N) `selectedItems()`를 부르던 것을 O(1) 캐시 읽기로
+        # 대체 — 시작값을 미리 채워 첫 selectionChanged 전에도 캐시가 존재하게 한다.
+        self._scene._sel_count_cache = 0
+        self._scene.selectionChanged.connect(self._sync_selection_count_cache)
         # [편의기능] 그룹 멤버 중 하나가 선택되면 같은 그룹 전체를 함께 선택.
         self._scene.selectionChanged.connect(self._sync_group_selection)
         self._view = _AnnotatorView(self._scene, self)

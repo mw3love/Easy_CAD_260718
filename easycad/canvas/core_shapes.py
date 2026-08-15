@@ -1412,10 +1412,20 @@ def _highlight_band(it, extra_width: float = 3.0) -> QPainterPath:
 def _selection_is_solo(it) -> bool:
     """[Lucid 대조 2026-08-03] 이 아이템이 지금 유일하게 선택된 아이템인지(다중선택 중 하나가
     아닌지). 씬이 없으면(테스트 등 고립 아이템) True로 취급 — 그런 맥락에선 항상 단일선택
-    스타일을 기본으로 본다."""
+    스타일을 기본으로 본다.
+    [성능수정 2026-08-15, perf_lab/REPORT_multiselect_perf.md 병목 A] `scene().selectedItems()`
+    는 Qt C++이 매 호출마다 선택된 아이템 전체 리스트를 새로 만들어 반환한다(O(선택수)) — 이게
+    선택된 N개 각각의 paint()에서 불려 프레임당 O(N²)이 되던 게 다중선택 드래그 버벅임의
+    핵심 원인이었다(실측: 200개 선택 시 10프레임에 selectedItems() 4192회, 115ms). `CanvasWindow`
+    가 selectionChanged에서 갱신하는 `scene._sel_count_cache`(host_selection.py
+    `_sync_selection_count_cache`)가 있으면 그걸 O(1)로 읽고, 없으면(다이얼로그 미리보기 등
+    독립 QGraphicsScene) 기존처럼 직접 계산 — 정확성은 항상 보존, 캐시는 순수 가속."""
     sc = it.scene()
     if sc is None:
         return True
+    cached = getattr(sc, "_sel_count_cache", None)
+    if cached is not None:
+        return cached <= 1
     return len(sc.selectedItems()) <= 1
 
 
