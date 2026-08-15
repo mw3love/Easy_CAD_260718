@@ -1900,3 +1900,68 @@ def test_flush_is_noop_without_deferral():
     before = [(p.x(), p.y()) for p in arrow._pts]
     w.flush_deferred_reroute()
     assert [(p.x(), p.y()) for p in arrow._pts] == before
+
+
+# --- 씬 전체 평행이동이면 라우팅을 건너뛴다(실사용 버그 2026-08-15) ---------
+# Ctrl+A 후 드래그하면 화살표까지 함께 선택돼 Qt가 통째로 옮긴다 — 상대 기하가 하나도
+# 안 바뀌는데도 500개를 전부 '미룬 빚'으로 쌓고 놓는 순간 A*를 500번 돌려 실화면 5초를
+# 멈췄다(실측 2249ms). 반대로 도형만 옮기고 화살표는 제자리면 끝점이 따라가야 하므로
+# 건너뛰면 안 된다 — 두 경우를 정확히 갈라야 한다.
+
+def _scene_all_bound(w=None):
+    w = w or CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
+    b = _mk_pen_rect(w, x=400, y=300, ww=120, hh=72)
+    arrow = _PolyArrowItem(QColor("#333333"), 2.0, True)
+    arrow._pts = [QPointF(60, 72), QPointF(460, 300)]
+    arrow._auto_route = True
+    w._scene.addItem(arrow)
+    arrow.set_bound(0, a, a.mapFromScene(QPointF(60, 72)))
+    arrow.set_bound(len(arrow._pts) - 1, b, b.mapFromScene(QPointF(460, 300)))
+    w._on_scene_changed(None)
+    return w, a, b, arrow
+
+
+def test_uniform_translation_skips_routing_and_defers_nothing():
+    """Ctrl+A 드래그 — 도형·화살표가 전부 같은 델타로 움직이면 미룰 빚이 0이어야 한다."""
+    w, a, b, arrow = _scene_all_bound()
+    for it in (a, b, arrow):
+        it.setSelected(True)
+    w._view._move_active = True
+
+    d = QPointF(37, 23)
+    for it in (a, b, arrow):
+        it.setPos(it.pos() + d)
+    w._on_scene_changed(None)
+
+    assert w._uniform_translation is True, "전체 평행이동인데 uniform으로 판정 안 됨"
+    assert not w._deferred_arrows, "상대 기하가 안 바뀌었는데 재라우팅을 빚으로 쌓았다"
+
+
+def test_partial_move_is_not_uniform_and_still_reroutes():
+    """도형 하나만 옮기면 상대 기하가 바뀐 것 — uniform이 아니고 정상 처리돼야 한다."""
+    w, a, b, arrow = _scene_all_bound()
+    a.setSelected(True)
+    w._view._move_active = True
+    a.setPos(a.pos() + QPointF(60, 40))
+    w._on_scene_changed(None)
+
+    assert w._uniform_translation is False
+    assert arrow in w._deferred_arrows, "부분 이동인데 재라우팅이 안 미뤄졌다"
+
+
+def test_shapes_move_without_arrow_still_follows():
+    """도형은 전부 옮기고 화살표는 제자리(선택 안 됨) — uniform이어도 끝점이 따라와야 한다.
+    여기서 건너뛰면 화살표가 도형에서 떨어져 남는다."""
+    w, a, b, arrow = _scene_all_bound()
+    a.setSelected(True); b.setSelected(True)      # 화살표는 선택 안 함
+    before = QPointF(arrow._pts[0])
+
+    d = QPointF(50, 30)
+    a.setPos(a.pos() + d)
+    b.setPos(b.pos() + d)
+    w._on_scene_changed(None)                     # 드래그 세션 아님 — 즉시 라우팅
+
+    after = arrow._pts[0]
+    assert (abs(after.x() - before.x()) > 1e-6 or abs(after.y() - before.y()) > 1e-6), \
+        "도형이 옮겨졌는데 화살표 끝점이 따라오지 않았다"

@@ -83,10 +83,21 @@ class _CanvasMixin:
         changed = None
         changed_n = 0   # [성능 최적화 2026-08-08] 아래 _on_scene_changed 주석 참조
         current = set()
+        total_n = 0
+        # [성능수정 2026-08-15] 아래 `_uniform_translation` 판정용 — 이번 사이클에 움직인
+        # 것들이 전부 '같은 델타의 평행이동'인가(크기·회전 변화가 섞이면 즉시 탈락).
+        uniform = True
+        shift = None
+        arrow_pos = {}
         for it in self._scene.items():
             if isinstance(it, (_ArrowItem, _PolyArrowItem)):
+                # [성능수정 2026-08-15] 화살표는 기하 스냅샷 대상이 아니지만(2026-08-08 결정),
+                # **위치만** 따로 적어 둔다 — 아래 uniform 판정에서 "이 화살표도 도형들과 같은
+                # 델타로 함께 움직였는가"를 가르는 데 쓴다(pos() 읽기뿐이라 비용 무시 가능).
+                arrow_pos[it] = QPointF(it.pos())
                 continue
             current.add(it)
+            total_n += 1
             cr = getattr(it, "_content_rect", None)
             rect = it.mapRectToScene(cr()) if cr is not None else it.sceneBoundingRect()
             prev = self._geom_snapshot.get(it)
@@ -95,11 +106,43 @@ class _CanvasMixin:
                 delta = rect if prev is None else prev.united(rect)
                 changed = delta if changed is None else changed.united(delta)
                 changed_n += 1
+                if uniform:
+                    if prev is None or abs(prev.width() - rect.width()) > 1e-6 \
+                            or abs(prev.height() - rect.height()) > 1e-6:
+                        uniform = False          # 새로 생겼거나 크기가 변함 = 평행이동 아님
+                    else:
+                        d = (rect.x() - prev.x(), rect.y() - prev.y())
+                        if shift is None:
+                            shift = d
+                        elif abs(d[0] - shift[0]) > 1e-6 or abs(d[1] - shift[1]) > 1e-6:
+                            uniform = False
         for it in [k for k in self._geom_snapshot if k not in current]:
             delta = self._geom_snapshot.pop(it)
             changed = delta if changed is None else changed.united(delta)
             changed_n += 1
+            uniform = False                      # 삭제 = 장애물 구성이 바뀜
         self._last_geom_change_count = changed_n
+        # [성능수정 2026-08-15] **씬의 도형이 하나도 빠짐없이 같은 델타로 평행이동**했는가.
+        # 그렇다면 도형끼리의 상대 기하가 완전히 그대로이므로 어떤 화살표의 최적 경로도
+        # 바뀔 수 없다 — `_on_scene_changed`가 라우팅 자체를 통째로 건너뛴다.
+        # 실사용 계기: Ctrl+A 후 드래그. 화살표까지 선택돼 Qt가 통째로 옮기므로 정말로
+        # 아무것도 바뀌지 않는데, 드래그 중 500개를 전부 '미룬 빚'으로 쌓고 놓는 순간
+        # A*를 500번 돌려 2.2초(실화면 5초)를 멈췄다.
+        # 일부만 안 움직였으면(부분 선택) 상대 기하가 바뀐 것이므로 uniform이 아니다.
+        self._uniform_translation = bool(
+            uniform and shift is not None and changed_n == total_n and total_n > 0)
+        # 그 평행이동에 **함께 실려 간** 화살표들 — 이들만 건너뛸 수 있다. 도형만 옮기고
+        # 화살표는 선택 안 된 경우(화살표가 제자리) 끝점이 따라가야 하므로 건너뛰면 안 된다.
+        prev_arrow_pos = getattr(self, "_arrow_pos_snapshot", None) or {}
+        moved_with = set()
+        if self._uniform_translation:
+            for a, pos in arrow_pos.items():
+                p0 = prev_arrow_pos.get(a)
+                if p0 is not None and abs((pos.x() - p0.x()) - shift[0]) <= 1e-6 \
+                        and abs((pos.y() - p0.y()) - shift[1]) <= 1e-6:
+                    moved_with.add(a)
+        self._uniform_moved_arrows = moved_with
+        self._arrow_pos_snapshot = arrow_pos
         return changed
 
     def _on_scene_changed(self, region):
@@ -181,9 +224,16 @@ class _CanvasMixin:
             # 나머지 대부분이 이 A*였다(`docs/perf_plan_500_1000.md` §5).
             view = getattr(self, "_view", None)
             defer = bool(view is not None and view.is_drag_session())
+            uniform = getattr(self, "_uniform_translation", False)
+            moved_with = getattr(self, "_uniform_moved_arrows", ()) or ()
             for it in candidates:
                 # 곡선화살표(_ArrowItem)·직선화살표(_PolyArrowItem) 모두 지속 연결 리라우트.
                 if isinstance(it, (_ArrowItem, _PolyArrowItem)) and it.has_binding():
+                    if uniform and it in moved_with:
+                        # 씬 전체가 같은 델타로 평행이동했고 이 화살표도 함께 실려 갔다 —
+                        # 상대 기하가 완전히 그대로라 최적 경로가 바뀔 수 없다. 재계산도,
+                        # 나중에 갚을 빚(deferred)도 없다. (Ctrl+A 드래그가 이 경우.)
+                        continue
                     if union is None or it.sceneBoundingRect().adjusted(
                             -margin, -margin, margin, margin).intersects(union):
                         it.reroute(pin_pred=self._make_pin_pred(it), fast=many_changed,
