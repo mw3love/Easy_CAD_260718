@@ -86,13 +86,13 @@ class _LayersMixin:
         # [캔버스-퍼스트] QListWidget의 기본 sizeHint는 항목 수와 무관하게 넓은 고정값(256×192)
         # 이라 플로팅 카드가 콘텐츠보다 훨씬 커진다 — 실제 행 높이 합으로 클램프해야 낭비
         # 공간이 안 생긴다(옛 dock이 칼럼 전체를 예약해 항목 0개에도 창 높이만큼 비던 문제의
-        # 재발 방지). [2026-08-12] 폭도 같은 이유로 캡 — 그동안 좌측 패널 전체 폭이 이 256px
-        # 기본값에 발목 잡혀 있었다(실제 행 콘텐츠는 훨씬 좁음, 사용자가 속성/미니맵 패널
-        # (218px)만큼 좁히자고 지적하며 드러남). 200으로 캡해 속성/미니맵 폭 근처로 수렴.
+        # 재발 방지). [2026-08-19] 폭은 더 이상 여기서 캡하지 않는다 — 레이어가 좌하단 독립
+        # 패널로 분리되며 폭은 도형 패널 폭을 그대로 따라가야 해(`_sync_layers_panel_width`)
+        # 고정 상한(200) 대신 그 함수가 매번 정확한 값으로 덮어쓴다.
         total_h = sum(lst.sizeHintForRow(i) for i in range(lst.count())) + 2 * lst.frameWidth() + 4
         lst.setFixedHeight(max(60, min(total_h, 320)))
-        lst.setMaximumWidth(200)
-        if getattr(self, "_left_panel", None) is not None:
+        if getattr(self, "_layers_panel", None) is not None:
+            self._sync_layers_panel_width()
             self._reposition_panels()
 
 

@@ -5,7 +5,9 @@
 가져다 쓰고, host.py 자신도 __init__에서 일부(_ToastLabel/_UndoEntry/_SCENE_HALF)를 쓴다.
 순환 임포트를 피하려고 이 파일은 host.py나 믹스인 쪽을 임포트하지 않는 잎(leaf) 모듈이다.
 """
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
+from PyQt6.QtCore import (
+    Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent, pyqtSignal,
+)
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
     QPolygonF, QPainterPath, QPalette, QDrag, QFont,
@@ -594,16 +596,26 @@ class _FloatingPanel(QFrame):
     포지셔닝 패턴은 선택 위 컨텍스트 툴바(M3 #15, 2026-07-31 폐지)가 쓰던 것을 그대로 따른다
     (QFrame(host) 부모 + host 좌표계 move — 규칙 2 손안의 카드)."""
 
+    # [패널 관련 수정, 2026-08-19] 사용자 요청 — 패널 헤더 우클릭으로 닫고, 다시 보고 싶으면
+    # 메뉴(host_ui._build_panel_menu)에서 재오픈. 접기(`_collapse_key`)와 별개 축(접기=내용만
+    # 숨김, 닫기=패널 전체를 화면에서 뗌)이라 QSettings 키도 분리한다. 재오픈 메뉴의 체크상태를
+    # 우클릭 닫기와도 동기화해야 해 신호로 알린다(메뉴는 패널보다 나중에 만들어져 생성 시점
+    # 콜백 연결이 불가능 — host_ui._build_panel_menu 주석 참조).
+    visibility_changed = pyqtSignal(bool)
+
     def __init__(self, host, title: str, collapse_key: str):
         super().__init__(host)
         self.setObjectName("floatPanel")
         self._host = host
         self._collapse_key = f"panel_collapsed_{collapse_key}"
+        self._visible_key = f"panel_visible_{collapse_key}"
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0); v.setSpacing(0)
 
         head = QWidget(); head.setObjectName("floatPanelHead")
         self._head = head
+        head.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        head.customContextMenuRequested.connect(self._show_header_menu)
         hl = QHBoxLayout(head)
         hl.setContentsMargins(9, 4, 4, 4); hl.setSpacing(4)
         self._title_lbl = QLabel(title)
@@ -628,6 +640,26 @@ class _FloatingPanel(QFrame):
             self._set_collapsed(True, persist=False)
         else:
             self._update_collapse_icon()
+
+        if not QSettings("EasyCAD", "EasyCAD").value(self._visible_key, True, type=bool):
+            self.hide()   # 명시적 hide — 부모(창) show() 뒤에도 감춤 유지(Qt 관례)
+
+    def _show_header_menu(self, pos):
+        menu = QMenu(self)
+        menu.addAction("닫기", self._close_panel)
+        menu.exec(self._head.mapToGlobal(pos))
+
+    def _close_panel(self):
+        self.set_panel_visible(False)
+
+    def set_panel_visible(self, visible: bool):
+        """우클릭 「닫기」와 보기(V)→패널 메뉴 재오픈이 공유하는 단일 경로 — 상태 반영·
+        영속화·신호 발신을 한 곳에서(둘 중 하나만 하면 다른 쪽이 동기화를 놓친다)."""
+        self.setVisible(visible)
+        QSettings("EasyCAD", "EasyCAD").setValue(self._visible_key, visible)
+        self.visibility_changed.emit(visible)
+        if visible:
+            self._host._reposition_panels()
 
     def paintEvent(self, event):
         # [2026-07-31] 배경·테두리를 QSS(`#floatPanel {...}`) 대신 직접 그린다 — `setStyleSheet()`를

@@ -13,7 +13,8 @@ def test_host_construction():
     assert not ({"rect", "ellipse", "sarrow"} & set(w._tool_buttons))
     assert "arrow" in w._tool_buttons                      # 화살표 버튼 하나가 직선·곡선·직각 대표
     assert "trim" in w._tool_buttons
-    # 왼쪽 팔레트: 기본도형(네모·원·삼각형) + 순서도(5종) + 내 심볼(폴더) + 레이어, 아코디언.
+    # 왼쪽 팔레트: 기본도형(네모·원·삼각형) + 순서도(5종) + 내 심볼(폴더), 아코디언(레이어는
+    # 2026-08-19부터 좌하단 독립 패널 — `w._layers_panel`, test_floating_panels_and_zoom_readout).
     # (2026-08-04: 옛 "순서도" 섹션 18종 제거(파라메트릭 심볼 전략 폐기) → 2026-08-12 좌측
     # 패널 아코디언 개편에서 Mermaid 문법이 직접 매핑하는 5종만 재추가.
     # 2026-08-10 §8 항목17 7단계: 포트□/포트○ 제거 — TRIM이 겹친 도형 자르기로 대체,
@@ -125,6 +126,7 @@ def test_floating_panels_and_zoom_readout():
     # 패널 폭의 절반이 빈 공간으로 남아 밀도를 높임).
     w = CanvasWindow()
     assert w._left_panel.parent() is w
+    assert w._layers_panel.parent() is w   # [2026-08-19] 레이어 — 좌하단 독립 패널로 분리
     assert w._props_panel.parent() is w
     assert w._minimap_panel.parent() is w
     basic_grid, basic_btns = w._shape_sections[0]
@@ -145,6 +147,9 @@ def test_floating_panels_and_zoom_readout():
     w.resize(1400, 900)
     w._reposition_panels()
     assert w._left_panel.pos().x() >= w._view.mapTo(w, QPoint(0, 0)).x()
+    assert w._layers_panel.pos().x() == w._left_panel.pos().x()   # 좌하단, 도형과 같은 x
+    assert w._layers_panel.pos().y() > w._left_panel.pos().y()    # 도형 아래(하단)
+    assert w._layers_panel.width() == w._left_panel.width()       # 폭 동기화(사용자 요청)
     assert w._props_panel.pos().x() < w.width()
     # 줌 % 리드아웃 — 독립 배지가 아니라 미니맵 패널 제목에 "미니맵 (100%)"로 표기된다
     # (2026-08-01, 사용자 요청 — 제목 클릭이 곧 100%+정중앙 이동, test_zoom_title_click_recenters).
@@ -199,26 +204,62 @@ def test_left_panel_accordion_collapse_expand_resizes_panel():
     # 첫 `.height()` 접근 전까지 실제보다 큰 값을 낸다(이 테스트가 만든 게 아니라
     # `_refresh_layers_panel`이 이미 갖고 있던 특성) — `CanvasWindow.showEvent`가 이제 이
     # settle을 자동으로 해준다(2026-08-12, 좌측 패널 왕복 비교로 처음 드러나 소스에 고정).
-    # [2026-08-13] 옛 "flowchart" 섹션은 기본도형에 병합되어 사라졌다 — "layers"(레이어)로
+    # [2026-08-13] 옛 "flowchart" 섹션은 기본도형에 병합되어 사라졌다 — "basic"(기본도형)으로
     # 같은 계약을 확인한다("customsym"은 폴더 드롭존 등 동적 콘텐츠라 접기 왕복 시 sizeHint가
-    # 자체적으로 안정되지 않아 대상에서 제외 — 실측 확인, `layers`는 정확히 원복됨).
+    # 자체적으로 안정되지 않아 대상에서 제외 — 실측 확인). [2026-08-19] 옛 "layers" 섹션은
+    # 좌하단 독립 패널로 분리돼 이 아코디언 자체에서 없어졌다(`_left_accordion_sections`에
+    # 남은 건 basic/customsym뿐) — "basic"도 정적 그리드 콘텐츠라 layers와 같은 계약을 만족.
     # 기본값은 펼침 시작(default_collapsed=False)이라 QSettings로 접힘 시작을 강제한다(다른
     # accordion 테스트와 같은 관례 — 실사용 QSettings에 이미 다른 상태가 저장돼 있을 수 있음).
     from PyQt6.QtCore import QSettings
-    QSettings("EasyCAD", "EasyCAD").setValue("accordion_collapsed_layers", True)
+    QSettings("EasyCAD", "EasyCAD").setValue("accordion_collapsed_basic", True)
     w = CanvasWindow(); w.show()
     collapsed_size = w._left_panel.size()
-    layers_section = w._left_accordion_sections["layers"]
-    assert layers_section._collapsed
-    layers_section._toggle()                       # 펼치기
-    assert not layers_section._collapsed
+    basic_section = w._left_accordion_sections["basic"]
+    assert basic_section._collapsed
+    basic_section._toggle()                       # 펼치기
+    assert not basic_section._collapsed
     expanded_size = w._left_panel.size()
     assert expanded_size.height() > collapsed_size.height()
-    layers_section._toggle()                        # 다시 접기
+    basic_section._toggle()                        # 다시 접기
     assert w._left_panel.size() == collapsed_size   # 왕복 후에도 스턱 없이 원래 크기로 복원
     w._active_doc.dirty = False   # [§8 항목10 Stage C] 이 테스트는 닫기확인창을 검증 대상이 아님
     w.close()
-    QSettings("EasyCAD", "EasyCAD").remove("accordion_collapsed_layers")
+    QSettings("EasyCAD", "EasyCAD").remove("accordion_collapsed_basic")
+
+
+
+
+def test_panel_close_reopen_via_header_menu_and_view_menu():
+    """[패널 관련 수정, 2026-08-19, 사용자 요청] 패널 헤더 우클릭 「닫기」와 보기(V)→패널
+    메뉴 재오픈이 양방향으로 동기화되는지 — 닫기가 메뉴 체크를 풀고, 메뉴 토글이 패널을
+    다시 보여준다(`_FloatingPanel.visibility_changed` 신호 배관, `host_ui._build_panel_menu`
+    참조). `isVisible()`은 최상위 창이 실제로 show()된 상태여야 자식 위젯에 의미가 있어
+    다른 패널 테스트(`test_left_panel_accordion_collapse_expand_resizes_panel`)와 같이 show()."""
+    from PyQt6.QtCore import QSettings
+    QSettings("EasyCAD", "EasyCAD").remove("panel_visible_layers")
+    w = CanvasWindow(); w.show()
+    panel = w._layers_panel
+    act = w._panel_visibility_actions["layers"]
+    assert panel.isVisible()
+    assert act.isChecked()
+
+    panel._close_panel()   # 우클릭 헤더 「닫기」와 같은 경로(_show_header_menu가 부르는 메서드)
+    assert not panel.isVisible()
+    assert not act.isChecked()   # 메뉴 체크상태도 함께 풀림(visibility_changed 신호)
+    assert not QSettings("EasyCAD", "EasyCAD").value("panel_visible_layers", True, type=bool)
+
+    act.setChecked(True)   # 보기(V)→패널→레이어 패널 체크 = 재오픈
+    assert panel.isVisible()
+    assert QSettings("EasyCAD", "EasyCAD").value("panel_visible_layers", False, type=bool)
+
+    # 다른 패널(도형)은 레이어를 닫아도 영향 없음 — 패널별 독립.
+    assert w._left_panel.isVisible()
+    assert w._panel_visibility_actions["shapes"].isChecked()
+
+    w._active_doc.dirty = False
+    w.close()
+    QSettings("EasyCAD", "EasyCAD").remove("panel_visible_layers")
 
 
 

@@ -162,9 +162,11 @@ class CanvasWindow(
         # 콘텐츠 크기와 무관하게 예약해 낭비 공간을 만들던 근본원인)을 캔버스 위 플로팅
         # 카드(`_FloatingPanel`)로 교체 — Figma/Excalidraw처럼 패널이 콘텐츠만큼만 쓰고
         # 나머지는 도면 영역. 위치는 고정(자유 드래그 재배치는 스코프 밖), 대신 접기/펴기.
-        self._build_left_panel()          # 도형 + 레이어(탭), 좌상단
+        self._build_left_panel()          # 도형, 좌상단
+        self._build_layers_panel()        # [2026-08-19] 레이어 — 좌하단 독립 패널로 분리
         self._build_properties_panel()    # 속성, 우상단(도형바꾸기·화살표종류·반경·방향도 여기 포함)
         self._build_minimap_panel()       # [신규기능] 미니맵 — 우하단, 제목에 줌%까지 표기(클릭 가능)
+        self._build_panel_menu()          # [2026-08-19] 보기(V)→패널 — 표시/숨김(모든 패널 생성 후)
         self.set_tool("select")
         self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
         self._reposition_panels()

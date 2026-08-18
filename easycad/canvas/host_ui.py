@@ -222,6 +222,11 @@ class _UIBuildMixin:
         self._act_help = self._make_action("단축키 도움말…", "help",
             self._show_shortcuts, "F1")
         v.addAction(self._act_help)
+        # [패널 관련 수정, 2026-08-19] 「패널」 하위메뉴(도형·레이어·속성·미니맵 표시/숨김)는
+        # 패널 객체가 아직 없는 이 시점엔 못 만든다(전부 이 메서드보다 나중에 생성됨,
+        # __init__ 순서 참조) — 참조만 저장해두고 `_build_panel_menu()`가 모든 패널 생성 후
+        # 채운다.
+        self._view_menu = v
 
     # ---- 보기: 기준 zoom / 스냅 -------------------------------------------
 
@@ -353,22 +358,88 @@ class _UIBuildMixin:
         super().showEvent(e)
         _ = self._layers_list.height()
         self._relayout_left_panel()
+        self._sync_layers_panel_width()
+
+    # ---- [패널 관련 수정, 2026-08-19] 패널 표시/숨김 메뉴 --------------------
+
+    def _build_panel_menu(self):
+        """보기(&V)→「패널」 하위메뉴 — 패널별 체크형 표시/숨김. 우클릭 헤더의 「닫기」
+        (`_FloatingPanel._close_panel`)와 짝을 이루는 재오픈 경로. 모든 `_build_*_panel`이
+        끝난 뒤(=패널 객체가 다 있는 시점) `CanvasWindow.__init__`이 호출한다.
+        ⚠ [실측, 2026-08-19] `act.toggled.connect(lambda checked, p=panel: ...)`처럼 QAction의
+        시그널을 "다른 QObject(panel)를 캡처한 람다"에 연결하면, 창을 반복 생성만 하고 닫지
+        않는(`w.close()`를 안 부르는 기존 테스트 다수의) pytest 스모크에서 재현되는 비결정적
+        네이티브 크래시를 유발했다(faulthandler로도 잡히지 않는 액세스 위반, 5회 실측 재현 후
+        이 연결 하나만 지우면 사라짐을 이분 제거로 확인). 원인 후보는 QAction·panel이 둘 다
+        같은 창의 C++ 자식인데 그 사이를 파이썬 람다 클로저가 또 참조해 파이썬 GC 사이클
+        수집과 Qt의 C++ 자식 파괴 순서가 서로 다른 시점에 얽히는 것 — 이 코드베이스가 이미
+        수백 곳에서 쓰는 "바운드 메서드를 직접 connect"(`_make_action`의 `a.triggered.
+        connect(slot)` 관례, 클로저 없음)로 바꿔 회피한다: `sender()`로 발신 액션/패널을
+        역조회해 QObject를 클로저에 담지 않는다."""
+        menu = self._view_menu.addMenu("패널")
+        self._panel_visibility_actions = {}
+        self._panel_action_targets: dict[QAction, _FloatingPanel] = {}
+        specs = (
+            ("shapes", "도형 패널", self._left_panel),
+            ("layers", "레이어 패널", self._layers_panel),
+            ("props", "속성 패널", self._props_panel),
+            ("minimap", "미니맵 패널", self._minimap_panel),
+        )
+        for key, label, panel in specs:
+            act = QAction(label, self)
+            act.setCheckable(True)
+            # ⚠ `panel.isVisible()`가 아니라 `isHidden()`의 부정 — 이 시점(`__init__` 도중,
+            # 최상위 창이 아직 `.show()`되기 전)엔 조상 체인이 안 보여 `isVisible()`이 항상
+            # False라 초기 체크상태가 전부 꺼진 것처럼 잘못 뜬다. `isHidden()`은 "이 위젯이
+            # 명시적으로 hide()됐는가"만 보므로 창 표시 여부와 무관하게 정확하다.
+            act.setChecked(not panel.isHidden())
+            self._panel_action_targets[act] = panel
+            act.toggled.connect(self._on_panel_action_toggled)
+            panel.visibility_changed.connect(self._on_panel_visibility_changed)
+            menu.addAction(act)
+            self._panel_visibility_actions[key] = act
+
+    def _on_panel_action_toggled(self, checked: bool):
+        act = self.sender()
+        panel = self._panel_action_targets.get(act)
+        if panel is not None:
+            panel.set_panel_visible(checked)
+
+    def _on_panel_visibility_changed(self, visible: bool):
+        # 우클릭 「닫기」가 만든 상태변화를 메뉴 체크상태로 반영. `panel.set_panel_visible`이
+        # 이미 `visible`을 결정해 보내므로 여기선 그 값을 그대로 반영만 한다(재질의 없음).
+        panel = self.sender()
+        for act, p in self._panel_action_targets.items():
+            if p is panel:
+                self._sync_panel_action(act, visible)
+                break
+
+    def _sync_panel_action(self, act: QAction, visible: bool):
+        # 「닫기」가 만든 상태변화를 메뉴 체크상태로 반영 — act.toggled가 이미
+        # `set_panel_visible`을 부른 경우(메뉴 클릭 자체)엔 이미 일치하므로 무한루프 없음.
+        if act.isChecked() != visible:
+            act.blockSignals(True)
+            act.setChecked(visible)
+            act.blockSignals(False)
 
     # ---- [캔버스-퍼스트] 플로팅 패널·토스트 위치 계산 -------------------------
 
     def _reposition_panels(self):
-        """좌상단=도형/레이어, 우상단=속성(편집 클러스터). 우하단=미니맵(탐색 클러스터 — 지도 +
-        제목에 표기된 줌%, 한 카드 — 줌 배지는 독립 위젯이 아니라 미니맵 패널 제목 자체다,
-        `_build_minimap_panel`/`_update_zoom_label` 참조). [2026-08-01 폭 통일] 미니맵 폭을
-        속성 패널 폭에 맞춰 매 호출마다 동기화 — 두 패널이 나란히 있을 때 폭이 어긋나 튀어
-        보이던 문제(사용자 지적)를 "미니맵이 속성 폭을 따라간다"로 해소. 선택 상태에 따라 속성
-        패널 폭이 미세하게 바뀌어도 계속 맞음. 전부 `self._view`가 차지하는 실제 캔버스 영역
-        (메뉴·상단툴바 아래) 기준 — `self._view.mapTo(self, ...)` 좌표 관례."""
-        panels = (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
-                  getattr(self, "_minimap_panel", None))
+        """좌상단=도형, 좌하단=레이어, 우상단=속성(편집 클러스터). 우하단=미니맵(탐색 클러스터
+        — 지도 + 제목에 표기된 줌%, 한 카드 — 줌 배지는 독립 위젯이 아니라 미니맵 패널 제목
+        자체다, `_build_minimap_panel`/`_update_zoom_label` 참조). [2026-08-01 폭 통일] 미니맵
+        폭을 속성 패널 폭에, [2026-08-19] 레이어 패널 폭을 도형 패널 폭에 맞춰 매 호출마다
+        동기화 — 나란한 패널 폭이 어긋나 튀어 보이던 문제(사용자 지적)를 "따라간다"로 해소.
+        선택 상태에 따라 속성 패널 폭이 미세하게 바뀌어도 계속 맞음. 전부 `self._view`가
+        차지하는 실제 캔버스 영역(메뉴·상단툴바 아래) 기준 — `self._view.mapTo(self, ...)`
+        좌표 관례. 닫힌(숨김) 패널도 그대로 위치·크기 계산은 하되 화면엔 안 그려진다(재오픈 시
+        곧바로 제자리) — `isVisible()` 분기를 넣지 않는 편이 훨씬 단순하고 숨김 상태에서
+        move()/adjustSize()는 부작용이 없다."""
+        panels = (getattr(self, "_left_panel", None), getattr(self, "_layers_panel", None),
+                  getattr(self, "_props_panel", None), getattr(self, "_minimap_panel", None))
         if any(p is None for p in panels):
             return   # 초기화 중 조기 호출 가드
-        left_panel, props_panel, minimap_panel = panels
+        left_panel, layers_panel, props_panel, minimap_panel = panels
         m = self._PANEL_MARGIN
         vx, vy = self._view.mapTo(self, QPoint(0, 0)).x(), self._view.mapTo(self, QPoint(0, 0)).y()
         vw, vh = self._view.width(), self._view.height()
@@ -376,6 +447,10 @@ class _UIBuildMixin:
         left_panel.adjustSize()
         left_panel.move(vx + m, vy + m)
         left_panel.raise_()
+
+        layers_panel.adjustSize()
+        layers_panel.move(vx + m, vy + vh - m - layers_panel.height())
+        layers_panel.raise_()
 
         props_panel.adjustSize()
         props_panel.move(vx + vw - m - props_panel.width(), vy + m)
@@ -972,8 +1047,9 @@ class _UIBuildMixin:
 
 
     def _build_left_panel(self):
-        """[캔버스-퍼스트][좌측 패널 아코디언 개편, 2026-08-12 → 2026-08-13 3섹션으로 병합]
-        기본도형(순서도 5종 포함)/내 심볼/레이어 3섹션을 `_AccordionSection`으로 쌓은 좌상단
+        """[캔버스-퍼스트][좌측 패널 아코디언 개편, 2026-08-12 → 2026-08-13 3섹션으로 병합
+        → 2026-08-19 레이어를 좌하단 독립 패널로 재분리, `_build_layers_panel` 참조]
+        기본도형(순서도 5종 포함)/내 심볼 2섹션을 `_AccordionSection`으로 쌓은 좌상단
         플로팅 카드(deep-interview 확정 스코프 — 옛 도형/레이어 탭 2개를 대체). 탭 전환
         특유의 "숨긴 페이지가 sizeHint에서 안 빠지는" 문제(2026-07-29, `_switch_left_tab`이
         겪던 QTabWidget 함정)는 애초에 탭이 아니라 섹션마다 독립 `setVisible()`이라 같은
@@ -1039,8 +1115,25 @@ class _UIBuildMixin:
         outer.addWidget(custom_section)
         self._refresh_custom_symbol_section()
 
-        # ---- 레이어 (펼침 시작) ----
-        layers_section = _AccordionSection(self, "레이어", "layers", default_collapsed=False)
+        self._left_accordion_sections = {
+            "basic": basic_section,
+            "customsym": custom_section,
+        }
+        self._relayout_left_panel()
+
+
+    def _build_layers_panel(self):
+        """[패널 관련 수정, 2026-08-19, 사용자 요청] 레이어를 도형 팔레트 아코디언에서
+        분리해 좌하단 독립 `_FloatingPanel`로 — "도구 선택"(도형 팔레트)과 "레이어 가시성/
+        순서 관리"는 성격이 달라 나눠도 자연스럽고, 좌하단이 그동안 비어 있던 사분면이라
+        늘어난 패널 하나만큼 화면을 더 차지하는 대신 공간 낭비는 없다. `_build_left_panel()`
+        *뒤에* 호출돼야 한다(폭을 그 결과인 `_left_panel.width()`에 맞춤, 아래
+        `_sync_layers_panel_width` 참조)."""
+        panel = _FloatingPanel(self, "레이어", "layers")
+        self._layers_panel = panel
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(3, 3, 3, 3); v.setSpacing(4)
         self._layers_list = QListWidget()
         self._layers_list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         # [2026-08-13 시도했다 되돌림] `border-radius`를 걸어봤으나 `QAbstractScrollArea`
@@ -1048,19 +1141,34 @@ class _UIBuildMixin:
         # 실측 결과 위쪽만 둥글고 아래쪽은 그대로 각진 채(뷰포트 배경이 그 밑을 사각으로
         # 채움) 일관성 없이 보여 원상복구. 제대로 하려면 커스텀 paintEvent로 클립 리전을
         # 그려야 해 이번 저위험 범위 밖으로 미룸.
-        layers_section.body_layout.addWidget(self._layers_list)
+        v.addWidget(self._layers_list)
         add_layer_btn = QToolButton()
         add_layer_btn.setText("+ 레이어 추가")
         add_layer_btn.clicked.connect(lambda: self.add_layer())
-        layers_section.body_layout.addWidget(add_layer_btn)
-        outer.addWidget(layers_section)
-
-        self._left_accordion_sections = {
-            "basic": basic_section,
-            "customsym": custom_section, "layers": layers_section,
-        }
-        self._relayout_left_panel()
+        v.addWidget(add_layer_btn)
+        panel.set_content(container)
+        self._sync_layers_panel_width()
         self._refresh_layers_panel()
+
+
+    def _sync_layers_panel_width(self):
+        """레이어 패널 폭을 도형 패널(`_left_panel`) 폭에 맞춘다(2026-08-19, 사용자 요청) —
+        미니맵이 속성 패널 폭을 따라가는 기존 패턴(`_reposition_panels` 주석 참조)과 동일
+        관례. `_build_left_panel()`이 끝나기 전(레이어 패널 자체가 아직 없는 시점)엔 조용히
+        건너뛴다.
+        ⚠ [실측] `_left_panel.width()`는 그 안 컨테이너(`_left_container`, 좌우 여백 3+3)의
+        폭과 정확히 같다(패널 자신의 프레임은 레이아웃 공간을 안 먹는 오버레이 그리기라
+        오버헤드 0) — 레이어 패널의 콘텐츠 컨테이너도 같은 3+3 여백이므로, 안쪽
+        `_layers_list`에는 그 여백만큼 뺀 폭을 줘야 바깥 패널 폭이 정확히 일치한다(그대로
+        주면 여백만큼 6px 더 넓어짐 — 실측으로 확인한 값, 매직넘버 아님)."""
+        layers_panel = getattr(self, "_layers_panel", None)
+        if layers_panel is None:
+            return
+        container_margin = 6   # 레이어 패널 콘텐츠 컨테이너의 좌+우 여백(3+3) — 위 주석 참조
+        target_w = self._left_panel.width() - container_margin
+        if self._layers_list.width() != target_w:
+            self._layers_list.setFixedWidth(target_w)
+        layers_panel.adjustSize()
 
 
     def _relayout_left_panel(self):
@@ -1083,6 +1191,7 @@ class _UIBuildMixin:
         self._left_panel.layout().invalidate()
         self._left_panel.layout().activate()
         self._left_panel.adjustSize()
+        self._sync_layers_panel_width()
         self._reposition_panels()
 
     # ---- 속성 패널 (M2 #2: 편집 — 색·두께·선스타일·폰트를 push_undo_state 경로로) ----
