@@ -14,7 +14,7 @@ from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPixmap
 
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem,
+    _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _PolygonItem,
     _reposition_port_from_frac,
 )
 
@@ -202,6 +202,16 @@ def item_to_dict(it) -> dict | None:
                  pen=_col(it.pen().color()), width=it.pen().widthF(),
                  fill=None if it.brush().style() == Qt.BrushStyle.NoBrush
                  else _col(it.brush().color()))
+    elif isinstance(it, _PolygonItem):
+        # [§8 항목21] rect는 리사이즈 상태 복원용, pts는 그 rect 기준 로컬 정점 그대로
+        # (local_pts()가 정규화좌표×rect를 이미 계산해 줌 — 왕복 시 손실 없음).
+        r = it.rect()
+        d.update(type="polygon", closed=it._closed,
+                 rect=[r.x(), r.y(), r.width(), r.height()],
+                 pts=[[p.x(), p.y()] for p in it.local_pts()],
+                 pen=_col(it.pen().color()), width=it.pen().widthF(),
+                 fill=None if it.brush().style() == Qt.BrushStyle.NoBrush
+                 else _col(it.brush().color()))
     elif isinstance(it, _RectItem):
         r = it.rect()
         d.update(type="rect", rect=[r.x(), r.y(), r.width(), r.height()],
@@ -245,7 +255,7 @@ def item_to_dict(it) -> dict | None:
         d["style"] = int(it.pen().style().value)
     # [우리 확장] 선·화살표·닫힌도형(네모·원·심볼)에 붙은 라벨 — 본체 dict 안에 함께 직렬화.
     if isinstance(it, (_ArrowItem, _LineItem, _PolyArrowItem,
-                       _SymbolItem, _RectItem, _EllipseItem)) and it.has_label():
+                       _SymbolItem, _RectItem, _EllipseItem, _PolygonItem)) and it.has_label():
         lbl = it._label
         bg = lbl._bg
         d["label"] = {
@@ -289,6 +299,12 @@ def dict_to_item(d: dict):
     elif t == "symbol":
         it = _SymbolItem(d.get("kind", "decision"), QRectF(*d["rect"]))
         it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
+    elif t == "polygon":
+        pts = [QPointF(*xy) for xy in d["pts"]]
+        it = _PolygonItem(pts, d.get("closed", True), rect=QRectF(*d["rect"]))
+        it.setPen(_mkpen(d))
+        if it._closed:
+            it.setBrush(_mkbrush(d))
     elif t == "rect":
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
     elif t == "ellipse":

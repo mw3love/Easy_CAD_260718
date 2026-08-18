@@ -77,11 +77,12 @@ def _real_snap_vertices_local(item) -> list:
 
 
 class _AnnotatorView(QGraphicsView):
-    # [화살표 통합] 화살표는 도구 하나 → 단축키도 3 하나. 9는 비운다(사용자가 후속 전면 조정 예정).
+    # [화살표 통합] 화살표는 도구 하나 → 단축키도 3 하나.
     _SHORTCUTS = {
         Qt.Key.Key_1: "select", Qt.Key.Key_2: "rect", Qt.Key.Key_3: "arrow",
         Qt.Key.Key_4: "text", Qt.Key.Key_5: "ellipse", Qt.Key.Key_6: "line",
         Qt.Key.Key_7: "pen", Qt.Key.Key_8: "badge",
+        Qt.Key.Key_9: "polygon",   # [§8 항목21] 비어 있던 9 — 다각형/폴리라인 도구.
         Qt.Key.Key_T: "trim",   # [§8 항목17 4단계] 숫자 1~9가 다 차 letter 단축키(AutoCAD TR 관례)
     }
 
@@ -2356,7 +2357,7 @@ class _AnnotatorView(QGraphicsView):
         sp = self.mapToScene(event.position().toPoint())
         # [그리드 스냅] 생성 시작점도 이동 중(_cur_point)과 동일 대상(네모·원·심볼·선)에 맞춘다 —
         # 안 하면 시작 모서리는 격자 밖에 남고 드래그로 옮긴 반대쪽 모서리만 격자에 맞아 어긋난다.
-        if tool in ("rect", "ellipse", "line") or tool.startswith(("sym:", "customsym:")):
+        if tool in ("rect", "ellipse", "line", "polygon") or tool.startswith(("sym:", "customsym:")):
             sp = self._grid_snap_scene(sp)
         self._start = sp
         owner = self._owner
@@ -2450,6 +2451,17 @@ class _AnnotatorView(QGraphicsView):
         elif tool in ("port_rect", "port_circle"):
             # [신규기능 §8-12] 포트는 badge/text처럼 단발 클릭 배치 — 드래그로 그리지 않는다.
             owner._create_port_at(tool, sp)
+        elif tool == "polygon":
+            # [§8 항목21] sarrow(직선화살)와 달리 드래그 시작 단계 없이 첫 클릭부터 바로
+            # 클릭-배치 모드로 들어간다 — "드래그=2점 직선"이라는 sarrow의 하이브리드는 다각형
+            # 에는 안 맞는다(설계 확정: 클릭-클릭으로만 그린다). `_enter_click_place`는 다른
+            # 클릭배치 도구와 동일 골격(선택 해제·미리보기 정리)을 재사용.
+            it = _PolygonItem([sp, sp], closed=False)
+            it.setPen(pen)
+            it.setZValue(1)
+            self.scene().addItem(it)
+            it._draw_pts = [QPointF(sp), QPointF(sp)]   # 마지막 점 = 커서 추종 미리보기
+            self._enter_click_place(it, tool)
 
     def _begin_draw(self, item: QGraphicsItem):
         # [M2 #3] 화살표는 pen()이 없어 make_pen의 sticky current_style을 못 받는다 →
@@ -2479,6 +2491,7 @@ class _AnnotatorView(QGraphicsView):
         return self._constrain(anchor, scene_p, "ortho")
 
     _MIN_SNAP_SPAN_PX = 30.0  # tip 스냅점이 직전 점에서 이 픽셀 미만이면 무시(극소 화살표 방지)
+    _POLY_CLOSE_PX = 12.0     # [§8 항목21] 시작점 재클릭 판정 반경(화면 px, 줌 무관)
 
     def _snap_ortho_to_border(self, ortho_p: QPointF, anchor_scene: QPointF) -> QPointF:
         """[A3] F8일 때도 ortho'd 점이 도형 테두리 근처면 그 테두리점으로 스냅(+마커).
@@ -2542,6 +2555,14 @@ class _AnnotatorView(QGraphicsView):
             item._set_endpoint(len(item._pts) - 1, item.mapFromScene(p))
             self.viewport().update()   # 스냅 마커 갱신
             return
+        if tool == "polygon":
+            # [§8 항목21] 그리드 스냅만 적용(테두리 스냅·F8 ortho는 이번 라운드 스코프 밖 —
+            # `docs/polygon_tool_design.md` "남은 질문" 참조). 마지막 점(커서 추종)만 갱신.
+            p = self._grid_snap_scene(self.mapToScene(event.position().toPoint()))
+            item._draw_pts[-1] = QPointF(p)
+            item.set_live_points(item._draw_pts)
+            self.viewport().update()
+            return
         sp = self._cur_point(event)
         if tool in ("rect", "ellipse") or tool.startswith("sym:"):
             item.setRect(QRectF(self._start, sp).normalized())
@@ -2569,8 +2590,52 @@ class _AnnotatorView(QGraphicsView):
                 self._finish_place()
                 return
             self.viewport().update()
+        elif self._place_tool == "polygon":
+            self._polygon_click(event)
         else:
             self._finish_place(event)
+
+    def _polygon_click(self, event):
+        """[§8 항목21] 좌클릭 — 시작점 재클릭이면 닫아서 완성, 아니면 정점 추가(계속)."""
+        it = self._place
+        pts = it._draw_pts
+        vpos = event.position().toPoint()
+        # 확정 정점이 최소 3개(닫히면 삼각형 이상)일 때만 "시작점 재클릭=닫기"가 유효.
+        # pts는 [확정...,미리보기] 구조라 확정 3개 + 미리보기 1개 = len 4 이상.
+        if len(pts) >= 4 and self._view_dist(pts[0], vpos) <= self._POLY_CLOSE_PX:
+            self._finish_polygon(closed=True)
+            return
+        p = self._grid_snap_scene(self.mapToScene(vpos))
+        pts[-1] = QPointF(p)      # 미리보기 → 확정
+        pts.append(QPointF(p))    # 새 미리보기(커서 추종) — _finish_polygon이 pop
+        it.set_live_points(pts)
+        self.viewport().update()
+
+    def _finish_polygon(self, closed: bool):
+        """[§8 항목21] 다각형/폴리라인 배치 확정(닫기·더블클릭·Enter 공통) — 정점 부족하면 폐기."""
+        it = self._place
+        self._place = None
+        self._place_tool = None
+        pts = it._draw_pts
+        if pts:
+            pts.pop()   # 커서 추종 미리보기점 제거
+        valid = len(pts) >= (3 if closed else 2)
+        if valid:
+            it.finalize_points(pts, closed)
+            del it._draw_pts
+            it.setFlags(
+                QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+                | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            )
+            self._owner.push_undo_add(it)
+            self.scene().clearSelection()
+            it.setSelected(True)
+            if hasattr(it, "_sync_label"):
+                it._sync_label()
+            it.update()
+        elif it.scene() is not None:
+            self.scene().removeItem(it)
+        self.viewport().update()
 
     def _place_nondegenerate(self, it, tool) -> bool:
         """2점 도구가 '점 하나'로 퇴화하지 않았는지(너무 작지 않은지)."""
@@ -2589,6 +2654,11 @@ class _AnnotatorView(QGraphicsView):
         it, tool = self._place, self._place_tool
         if it is None:
             self._place = self._place_tool = None
+            return
+        if tool == "polygon":
+            # [§8 항목21] Esc는 위 keyPressEvent가 이미 tool!="sarrow" 분기(=_cancel_place)로
+            # 처리하므로 여기 도달하는 건 더블클릭/Enter(=열린 폴리라인 종료)뿐.
+            self._finish_polygon(closed=False)
             return
         if tool == "sarrow":
             it.prepareGeometryChange()
@@ -3370,7 +3440,7 @@ class _AnnotatorView(QGraphicsView):
             if it is getattr(self._owner, "_bg_item", None):
                 continue
             if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem,
-                               _SymbolItem, _RectItem, _EllipseItem)):
+                               _SymbolItem, _RectItem, _EllipseItem, _PolygonItem)):
                 return it
             if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
                 return None

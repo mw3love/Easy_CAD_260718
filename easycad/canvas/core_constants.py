@@ -100,8 +100,13 @@ _TOOLS = [
     ("select", "선택", "1"), ("rect", "사각형", "2"), ("arrow", "화살표", "3"),
     ("text", "텍스트", "4"), ("ellipse", "원", "5"), ("line", "선", "6"),
     ("pen", "펜", "7"), ("badge", "번호", "8"), ("sarrow", "직선화살", "9"),
-    # [§8 항목17 4단계, 2026-08-10] TRIM(문지르기) — 숫자 1~9는 이미 다 찼고(9는 비움) 새
-    # 도구라 letter 단축키. AutoCAD 관례(TR)와 겹치는 첫 글자 T, 비어 있는 키(2026-08-10 확인).
+    # [§8 항목21] 다각형/폴리라인 — sarrow는 화살표 통합(2026-08) 이후 3(화살표) 하나로
+    # 흡수돼 단축키 9가 실제로는 비어 있었다(`core_view.py` `_SHORTCUTS` 주석 참조,
+    # `host_ui.py`가 sarrow 항목 자체를 툴바 버튼 생성에서 건너뛰므로 표시 라벨 "9" 중복은
+    # 화면에 안 나타난다). 그 자리를 다각형 도구가 받는다.
+    ("polygon", "다각형", "9"),
+    # [§8 항목17 4단계, 2026-08-10] TRIM(문지르기) — 숫자 1~9는 이미 다 찼고 새 도구라 letter
+    # 단축키. AutoCAD 관례(TR)와 겹치는 첫 글자 T, 비어 있는 키(2026-08-10 확인).
     ("trim", "자르기", "T"),
 ]
 
@@ -220,7 +225,9 @@ def _svg_icon(name: str, size: int = 22, color: QColor | None = None) -> QIcon:
 
 
 # _tool_icon이 실제로 받는 도구 이름 전부(상단 툴바 7종 + 화살표 종류전환용 sarrow).
-_TOOL_ICON_NAMES = frozenset({"select", "arrow", "text", "line", "pen", "badge", "sarrow", "trim"})
+_TOOL_ICON_NAMES = frozenset({
+    "select", "arrow", "text", "line", "pen", "badge", "sarrow", "trim", "polygon",
+})
 
 
 def _tool_icon(tool: str, color: QColor | None = None) -> QIcon:

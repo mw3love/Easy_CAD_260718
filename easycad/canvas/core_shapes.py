@@ -1384,6 +1384,11 @@ def _item_center_path(it) -> QPainterPath:
     if isinstance(it, (_SymbolItem, QGraphicsEllipseItem, QGraphicsRectItem)) and \
             (getattr(it, "_ports", None) or getattr(it, "_cuts", None)):
         return build_trimmed_border_path(it)
+    # [§8 항목21] _PolygonItem은 QGraphicsRectItem 하위(박스 리사이즈 재사용)라 아래
+    # 범용 QGraphicsRectItem 분기(addRect)보다 먼저 걸러야 한다 — 안 그러면 실제 다각형
+    # 대신 그 외접 사각형이 선택 강조선으로 그려진다(2026-08-03 _SymbolItem과 같은 함정).
+    if isinstance(it, _PolygonItem):
+        return it._poly_path()
     if isinstance(it, _SymbolItem):
         return it._sym_path()
     if isinstance(it, QGraphicsEllipseItem):
@@ -3073,6 +3078,106 @@ class _PathItem(_HandleResizeMixin, QGraphicsPathItem):
         fill = QColor(_BLUE); fill.setAlpha(110)
         painter.setBrush(QBrush(fill))
         painter.drawPath(self._sel_outline)
+
+
+class _PolygonItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
+    """[§8 항목21] 다각형(닫힘)/폴리라인(열림) — 클릭으로 정점을 찍어 그리는 다중점 도형.
+
+    `_SymbolItem`(삼각형 등)과 같은 패턴: 실제 정점은 원래 그려진 bbox 기준 [0,1] 정규화
+    좌표(`_norm_pts`)로 저장하고, `rect()`(QGraphicsRectItem 소유)가 박스 리사이즈로 바뀌면
+    그 rect에 맞춰 다시 스케일해 그린다 — 그래서 `_HandleResizeMixin`의 박스 핸들(꼭짓점·변·
+    회전)이 별도 코드 없이 그대로 동작한다(`_box_handles()`가 `hasattr(self,"setRect")`와
+    `not _uses_endpoints()`만 보므로). 정점별 개별 드래그(끝점 핸들)는 v1 범위 밖 — 통짜
+    이동/균일축척 리사이즈만 지원(설계문서 `docs/polygon_tool_design.md` 확정 범위)."""
+
+    def __init__(self, pts, closed: bool, rect: QRectF | None = None):
+        if rect is None:
+            xs = [p.x() for p in pts]
+            ys = [p.y() for p in pts]
+            rect = QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
+        super().__init__(rect)
+        self._closed = bool(closed)
+        self._norm_pts = self._normalize(pts, rect)
+        self._init_resize()
+        self._init_label()
+
+    @staticmethod
+    def _normalize(pts, rect: QRectF):
+        w = rect.width() or 1.0
+        h = rect.height() or 1.0
+        return [QPointF((p.x() - rect.left()) / w, (p.y() - rect.top()) / h) for p in pts]
+
+    def local_pts(self):
+        """현재 rect()에 맞춰 스케일된 로컬 정점 리스트(리사이즈 반영)."""
+        r = self.rect()
+        return [QPointF(r.left() + n.x() * r.width(), r.top() + n.y() * r.height())
+                for n in self._norm_pts]
+
+    def _poly_path(self) -> QPainterPath:
+        p = QPainterPath()
+        pts = self.local_pts()
+        if not pts:
+            return p
+        p.moveTo(pts[0])
+        for pt in pts[1:]:
+            p.lineTo(pt)
+        if self._closed:
+            p.closeSubpath()
+        return p
+
+    def set_live_points(self, pts):
+        """[그리기 중] 아직 확정 전 — 점 목록으로 rect·정규화좌표를 즉시 재계산(미리보기)."""
+        self.prepareGeometryChange()
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        rect = QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
+        self._norm_pts = self._normalize(pts, rect)
+        self.setRect(rect)   # _CenterLabelMixin.setRect가 라벨·포트 동기화까지(둘 다 아직 없어 no-op)
+
+    def finalize_points(self, pts, closed: bool):
+        """[그리기 확정] 배치 완료 — 닫힘 여부를 확정하고 최종 정점으로 기하를 굳힌다."""
+        self._closed = bool(closed)
+        self.set_live_points(pts)
+
+    def clone(self):
+        c = _PolygonItem(self.local_pts(), self._closed, rect=QRectF(self.rect()))
+        c.setPen(QPen(self.pen()))
+        if self._closed:
+            c.setBrush(QBrush(self.brush()))
+        return self._copy_common_to(c)
+
+    def apply_fill(self, color):
+        """[신규기능 · 도형 채우기] rect/ellipse/symbol과 동일 관례 — 열린 폴리라인은 채움 개념이
+        없으므로(design: "열린 폴리라인 — 채움 없음") no-op으로 무시한다."""
+        if not self._closed:
+            return
+        self.prepareGeometryChange()
+        self.setBrush(QBrush(QColor(color)) if color is not None else QBrush(Qt.BrushStyle.NoBrush))
+        self.update()
+
+    def _fill_path(self) -> QPainterPath:
+        # [§8 항목17과 동급 TRIM 연동 대비 — 이번 라운드는 미구현] 닫힌 도형만 채움 경로를 갖는다.
+        return self._poly_path() if self._closed else QPainterPath()
+
+    def _base_shape(self):
+        path = self._poly_path()
+        if self._closed and self.brush().style() != Qt.BrushStyle.NoBrush:
+            return path
+        stroker = QPainterPathStroker()
+        stroker.setWidth(max(self.pen().widthF(), self._EDGE_HIT_MIN / self._scale_or_1()))
+        return stroker.createStroke(path)
+
+    def _interior_path(self):
+        if not self._closed or self.brush().style() != Qt.BrushStyle.NoBrush:
+            return None
+        return self._poly_path()
+
+    def _paint_base(self, painter, option, widget):
+        # QGraphicsRectItem 네이티브 paint(rect() 그대로 사각형을 그림)는 다각형 기하와 무관해
+        # 완전히 override(rect/ellipse처럼 super() 경유 없이 직접 그린다).
+        painter.setPen(self.pen())
+        painter.setBrush(self.brush() if self._closed else QBrush(Qt.BrushStyle.NoBrush))
+        painter.drawPath(self._poly_path())
 
 
 def _cubic_axis_extrema(p0: float, c1: float, c2: float, p3: float):
