@@ -151,6 +151,32 @@ def test_open_new_tab_registers_and_activates_doc():
     assert w._tabs.currentWidget() is doc.view
 
 
+def test_new_tab_inherits_current_theme_background():
+    """[§8 항목10 실사용 버그 수정, 2026-08-18] 사용자 실사용 발견 — 새 탭이 다크모드에서도
+    흰 배경으로 뜨고, 다크모드를 껐다 켜야만 정상화됐다. `CanvasDocument`는 항상 흰색으로
+    시작(테마를 모르는 잎 클래스)하는데, 원래 단일 문서 시절엔 `__init__` 끝의 `_apply_theme`
+    한 번이 그 유일한 씬을 다시 칠해 문제가 없었지만, "새 탭"으로 만든 문서는 그 호출을 못
+    받았다."""
+    w = CanvasWindow()   # 다크 기본
+    dark_hex = w._docs[0].scene.backgroundBrush().color().name()
+    assert dark_hex != "#ffffff"
+
+    doc2 = w._open_new_tab()
+    assert doc2.scene.backgroundBrush().color().name() == dark_hex   # 새 탭도 즉시 다크
+
+
+def test_theme_toggle_repaints_background_tabs_too():
+    """`_apply_theme`가 활성 탭(`self._scene`)만 칠하면 다른 탭은 테마를 토글해도 예전
+    색으로 남는다 — 열려 있는 모든 문서를 칠해야 한다."""
+    w = CanvasWindow()
+    doc2 = w._open_new_tab()
+    w._tabs.setCurrentIndex(0)   # doc2는 이제 비활성(백그라운드) 탭
+
+    w._apply_theme(False)   # 라이트로 토글 — 활성 탭에서 눌렀다고 가정
+    assert w._docs[0].scene.backgroundBrush().color().name() == "#ffffff"
+    assert doc2.scene.backgroundBrush().color().name() == "#ffffff"   # 백그라운드 탭도 갱신
+
+
 # ---- Stage C: dirty 추적 + 빠른저장 + 닫기확인 ------------------------------
 
 def test_dirty_set_on_edit_cleared_on_save():

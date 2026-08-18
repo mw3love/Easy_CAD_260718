@@ -59,7 +59,7 @@ from easycad.canvas.host_canvas import _CanvasMixin
 from easycad.canvas.host_widgets import (
     _PaletteButton, _clipboard_pixmap, _act_icon, _dark_palette,
     _MinimapView, _FloatingPanel, _ToastLabel, _ColorGridPopup,
-    _SharedClipboard,
+    _SharedClipboard, _CANVAS_BG,
 )
 from easycad.canvas.host_dialogs import (
     _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _CableNumberDialog,
@@ -197,6 +197,14 @@ class CanvasWindow(
         `self._docs`에 등록한다. 탭에 `addTab`하는 건 호출부 책임(__init__ 최초 1개와
         `_open_new_tab`이 타이밍이 달라 여기서 안 함)."""
         doc = CanvasDocument(self)
+        # [§8 항목10 실사용 버그 수정, 2026-08-18] CanvasDocument는 배경을 항상 흰색으로
+        # 시작한다(테마를 모르는 잎 클래스라 의도된 것) — 원래 단일 문서 시절엔 __init__ 끝의
+        # `_apply_theme(self._dark)` 한 번이 그 유일한 씬을 다시 칠해 문제가 없었지만, 탭
+        # 도입 후 "새 탭"으로 만든 문서는 그 호출을 한 번도 못 받아 다크모드에서도 캔버스가
+        # 계속 흰색으로 남았다(사용자 실사용 발견 — "새 탭만 흰색, 다크 껐다 켜면 정상화").
+        # 여기서 생성 시점 테마를 바로 반영한다. `getattr` 폴백은 __init__ 최초 문서 생성
+        # 시점엔 self._dark가 아직 없어서(그 줄이 이보다 뒤에 있음) 필요.
+        doc.scene.setBackgroundBrush(QBrush(_CANVAS_BG["dark" if getattr(self, "_dark", True) else "light"]))
         doc.view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         doc.view.centerOn(0, 0)
         # [M3 #17] 팔레트 드롭이 캔버스 뷰 위에서 무시되던 문제 — 뷰(QGraphicsView)가 드래그를

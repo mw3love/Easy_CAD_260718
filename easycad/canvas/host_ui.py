@@ -515,7 +515,12 @@ class _UIBuildMixin:
             # 패널·버튼·제목/토스트 텍스트는 다크 색 그대로 남아 안 보이던 원인. `_dark_palette()`처럼
             # 고정 색 팔레트(`_light_palette()`)로 OS 설정과 무관하게 만들어 해결.
             app.setPalette(_dark_palette() if dark else _light_palette())
-        self._scene.setBackgroundBrush(QBrush(_CANVAS_BG[key]))
+        # [§8 항목10 실사용 버그 수정, 2026-08-18] self._scene(활성 탭만)이 아니라 열려 있는
+        # 모든 탭의 씬을 칠한다 — 안 그러면 배경 탭들은 테마를 토글해도 여전히 예전 색으로
+        # 남는다(활성 탭에서 토글해도 다른 탭까지 정상화되어야 함). _apply_theme가 처음 불릴
+        # 때(__init__ 끝)는 이미 self._docs가 채워진 뒤라 폴백 없이 안전.
+        for _doc in self._docs:
+            _doc.scene.setBackgroundBrush(QBrush(_CANVAS_BG[key]))
         # 아이콘 재생성: 액션(파일/보기 26종 전부 — SVG 11종·QPainter 8종 모두 이제 중립색이라
         # 테마 전환마다 실제로 재칠됨) + 팔레트/심볼(중립색) + 상단 그리기 도구 7종(2026-08-02
         # 4차 피드백으로 코랄 고정 → 중립색 전환, 이제 테마 전환 시 재생성 필요 — 2026-08-10
