@@ -2,6 +2,8 @@
 
 tests/test_easycad.py 2026-08-02 분할분. 실행: python tests/test_easycad.py (전체) 또는 pytest test_part5_precision_edit.py.
 """
+import math
+
 from _shared import *  # noqa: F401,F403
 
 
@@ -1181,5 +1183,281 @@ def test_grid_snap_local_disabled_noop():
     r = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     lp = QPointF(37, 51)
     assert r._grid_snap_local(lp) == lp
+
+
+# ---------------------------------------------------------------------------
+# [실사용 버그 수정 2026-08-19] 펜 궤적 서브픽셀 정밀도 + 완성 시 스무딩
+# ---------------------------------------------------------------------------
+
+
+def test_scene_pos_precise_keeps_subpixel_fraction():
+    # event.position().toPoint()로 정수 뷰포트 픽셀에 반올림하던 옛 경로와 달리,
+    # _scene_pos_precise는 분수 좌표를 그대로 씬으로 환산해야 한다.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow()
+    view = w._view
+    vp = QPointF(140.37, 62.81)   # 정수가 아닌 뷰포트 픽셀 위치
+    evt = QMouseEvent(QEvent.Type.MouseMove, vp, vp,
+                       Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
+                       Qt.KeyboardModifier.NoModifier)
+    precise = view._scene_pos_precise(evt)
+    rounded = view.mapToScene(vp.toPoint())   # 옛(버그) 경로 — 정수 반올림 후 변환
+    # 뷰가 확대·이동 없는 기본 상태라 스케일 ~1 → 반올림 오차(최대 0.71px)가 그대로 드러난다.
+    assert abs(precise.x() - rounded.x()) > 0.05 or abs(precise.y() - rounded.y()) > 0.05
+    # 왕복 검증 — 뷰 변환의 역행렬을 직접 곱한 값과 일치해야 한다(간접 mapToScene 우회 확인).
+    inv, ok = view.viewportTransform().inverted()
+    assert ok
+    expect = inv.map(vp)
+    assert abs(precise.x() - expect.x()) < 1e-6 and abs(precise.y() - expect.y()) < 1e-6
+
+
+def test_smooth_freehand_path_converts_polyline_to_curve():
+    # 픽셀 양자화로 생긴 계단형 지그재그(마우스 원시 샘플을 흉내)를 스무딩하면 lineTo가 아니라
+    # cubicTo로 이어지는 매끄러운 곡선이 되어야 하고, 시작·끝점은 원본과 정확히 같아야 한다.
+    from easycad.canvas.annotator_core import _smooth_freehand_path
+    raw = QPainterPath(QPointF(0, 0))
+    # 대각선을 따라가지만 축별로 번갈아 튀는 "계단" 패턴(정수 픽셀 반올림의 전형적 모양).
+    for i in range(1, 21):
+        x = i * 5 if i % 2 == 0 else (i - 1) * 5
+        y = i * 5 if i % 2 else (i - 1) * 5
+        raw.lineTo(QPointF(x, y))
+    smoothed = _smooth_freehand_path(raw)
+    n = smoothed.elementCount()
+    assert n > 1
+    has_curve = any(smoothed.elementAt(i).isCurveTo() for i in range(n))
+    assert has_curve   # 이제 3차 베지어로 이어짐 — 원시 lineTo 폴리라인이 아니다
+    first, last_raw = raw.elementAt(0), raw.elementAt(raw.elementCount() - 1)
+    last_smooth = smoothed.elementAt(n - 1)
+    assert _close(QPointF(smoothed.elementAt(0).x, smoothed.elementAt(0).y),
+                  QPointF(first.x, first.y))
+    assert _close(QPointF(last_smooth.x, last_smooth.y), QPointF(last_raw.x, last_raw.y))
+
+
+def test_smooth_freehand_path_noop_below_three_points():
+    from easycad.canvas.annotator_core import _smooth_freehand_path
+    raw = QPainterPath(QPointF(0, 0))
+    raw.lineTo(QPointF(10, 10))
+    smoothed = _smooth_freehand_path(raw)
+    assert smoothed.elementCount() == raw.elementCount()
+    for i in range(raw.elementCount()):
+        a, b = raw.elementAt(i), smoothed.elementAt(i)
+        assert abs(a.x - b.x) < 1e-9 and abs(a.y - b.y) < 1e-9
+
+
+def test_pen_tool_draw_commits_smoothed_curve():
+    # 종단 시나리오 — 실제 뷰 마우스 이벤트로 펜 드래그(계단형 지그재그)를 흘려서, 그리는
+    # 중엔 원시 폴리라인이던 것이 손을 뗀 순간 곡선으로 바뀌는지 확인.
+    # [2026-08-19 실시간 스무딩 시도 → 같은 날 되돌림] 매 프레임 전체 재계산이 이미 그려진
+    # 구간까지 흔드는 "울렁거림"을 실사용에서 유발해(RDP가 새 점마다 과거 critical point
+    # 선택을 바꿈), 그리는 중엔 다시 원시 폴리라인만 보여준다 — 최종 스무딩만 유지.
+    w = CanvasWindow(); w.set_tool("pen")
+    view = w._view
+    press, release, click, move, drag_move, dbl = _draw_helpers(view)
+    press(QPointF(0, 0))
+    pts = [QPointF(10, 0), QPointF(10, 10), QPointF(20, 10), QPointF(20, 20),
+           QPointF(30, 20), QPointF(30, 30)]
+    for p in pts:
+        drag_move(p)
+    live = view._temp
+    assert live is not None
+    live_n = live.path().elementCount()
+    assert live_n >= 3
+    assert not any(live.path().elementAt(i).isCurveTo() for i in range(live_n))   # 그리는 중=직선
+    release(pts[-1])
+    items = [it for it in w._scene.items() if isinstance(it, _PathItem)]
+    assert len(items) == 1
+    final_path = items[0].path()
+    n = final_path.elementCount()
+    assert any(final_path.elementAt(i).isCurveTo() for i in range(n))   # 확정 후=곡선
+
+
+def test_pen_tool_release_smooths_long_stroke_and_preserves_endpoint():
+    # 긴 획(30점)도 놓는 순간 원시 누적(`self._path`)에서 스무딩되고, 끝점은 정확히 보존되는지.
+    w = CanvasWindow(); w.set_tool("pen")
+    view = w._view
+    press, release, click, move, drag_move, dbl = _draw_helpers(view)
+    press(QPointF(0, 0))
+    pts = [QPointF(i * 4, 20 * (1 - ((i - 15) / 15.0) ** 2)) for i in range(1, 31)]
+    for p in pts:
+        drag_move(p)
+    assert not any(view._temp.path().elementAt(i).isCurveTo()
+                   for i in range(view._temp.path().elementCount()))   # 그리는 중=여전히 직선
+    release(pts[-1])
+    final_path = [it for it in w._scene.items() if isinstance(it, _PathItem)][0].path()
+    n = final_path.elementCount()
+    assert any(final_path.elementAt(i).isCurveTo() for i in range(n))
+    last = final_path.elementAt(n - 1)
+    assert _close(QPointF(last.x, last.y), pts[-1])   # 끝점은 정확히 보존(궤적이 일그러지지 않음)
+
+
+# ---------------------------------------------------------------------------
+# [실사용 요청 2026-08-19] 펜 궤적(_PathItem) 양 끝 이산 포트
+# ---------------------------------------------------------------------------
+
+
+def test_shape_ports_pathitem_returns_two_endpoints():
+    from easycad.canvas.annotator_core import _shape_ports
+    it = _PathItem(QPainterPath(QPointF(0, 0)))
+    p = QPainterPath(QPointF(0, 0))
+    p.lineTo(QPointF(60, 0))
+    p.lineTo(QPointF(100, 40))
+    it.setPath(p)
+    it.setPos(QPointF(500, 300))   # 아이템 위치가 있어도 scene 변환이 맞는지 함께 확인
+    ports = _shape_ports(it)
+    assert len(ports) == 2
+    (sp0, n0), (sp1, n1) = ports
+    assert _close(sp0, QPointF(500, 300))          # 시작점 = 로컬(0,0) + pos
+    assert _close(sp1, QPointF(600, 340))          # 끝점 = 로컬(100,40) + pos
+    assert abs(math.hypot(n0.x(), n0.y()) - 1.0) < 1e-6   # 법선은 단위벡터
+    assert abs(math.hypot(n1.x(), n1.y()) - 1.0) < 1e-6
+    assert n0.x() < 0   # 시작점 법선은 궤적이 뻗어나가는 반대(왼쪽=바깥)
+
+
+def test_shape_ports_pathitem_too_short_returns_empty():
+    from easycad.canvas.annotator_core import _shape_ports
+    it = _PathItem(QPainterPath(QPointF(0, 0)))   # moveTo만, 점 하나
+    assert _shape_ports(it) == []
+
+
+def test_hover_port_at_shows_pathitem_endpoint():
+    # 종단 — 미선택 펜 궤적 근처를 호버하면(다른 도형과 동일하게) 이산 끝점이 잡혀야 한다.
+    w = CanvasWindow(); w.set_tool("select")
+    view = w._view
+    p = QPainterPath(QPointF(0, 0))
+    p.lineTo(QPointF(50, 0))
+    p.lineTo(QPointF(120, 60))
+    it = _PathItem(p)
+    it.setPen(w.make_pen())
+    w._scene.addItem(it)
+    hp = view._hover_port_at(view.mapFromScene(QPointF(120, 60)))
+    assert hp is not None
+    sh, sp, _n, is_discrete = hp
+    assert sh is it and is_discrete
+    assert _close(sp, QPointF(120, 60))
+
+
+def test_border_snap_at_prefers_pathitem_endpoint_over_continuous():
+    # 끝점 근처는 이산 포트(넓은 반경)가, 몸통 중간은 연속 폴백이 잡아야 한다 — 둘 다 살아있는지.
+    w = CanvasWindow()
+    view = w._view
+    p = QPainterPath(QPointF(0, 0))
+    p.lineTo(QPointF(200, 0))
+    it = _PathItem(p)
+    it.setPen(w.make_pen())
+    w._scene.addItem(it)
+    near_end = view._border_snap_at(view.mapFromScene(QPointF(198, 4)))
+    assert near_end is not None and _close(near_end[0], QPointF(200, 0))
+    mid = view._border_snap_at(view.mapFromScene(QPointF(100, 2)))
+    assert mid is not None and _close(mid[0], QPointF(100, 0))   # 연속 폴백은 여전히 작동
+
+
+def test_draw_port_dots_suppressed_on_idle_select_hover_shown_on_arrow_tool():
+    # [실사용 지적 2026-08-19] select 도구의 유휴 호버(드래그 중 아님)에서는 예고점을 그리지
+    # 않아야 한다(Lucid 대조 — 화살표 도구를 실제로 쓸 때만) — `_port_dot_target` 신호 자체는
+    # (qc-dot 억제가 의존하므로) select에서도 계속 살아있되, 렌더만 걸러지는지 확인.
+    from unittest.mock import MagicMock
+    w = CanvasWindow(); w.grid_enabled = False
+    view = w._view
+    rect = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    center = rect.sceneBoundingRect().center()
+    view.mapFromGlobal = lambda gp: view.mapFromScene(center)
+
+    w.set_tool("select")
+    assert view._port_dot_target(center) is rect
+    painter = MagicMock()
+    view._draw_port_dots(painter, 1.0)
+    assert not painter.drawEllipse.called
+
+    w.set_tool("arrow")
+    painter2 = MagicMock()
+    view._draw_port_dots(painter2, 1.0)
+    assert painter2.drawEllipse.called
+
+    # 활성 커넥터 드래그 중(_hp_dragging)이면 select여도 계속 그린다(실시간 부착 피드백).
+    w.set_tool("select")
+    view._hp_dragging = True
+    painter3 = MagicMock()
+    view._draw_port_dots(painter3, 1.0)
+    assert painter3.drawEllipse.called
+    view._hp_dragging = False
+
+
+# ---------------------------------------------------------------------------
+# [실사용 요청 2026-08-19] 펜 궤적(_PathItem) 선택 시 양 끝점 드래그 핸들
+# ---------------------------------------------------------------------------
+
+
+def test_pathitem_uses_endpoints_and_matches_path_ends():
+    p = QPainterPath(QPointF(10, 20))
+    p.lineTo(QPointF(40, 20))
+    p.lineTo(QPointF(90, 70))
+    it = _PathItem(p)
+    assert it._uses_endpoints() is True
+    eps = it._endpoints()
+    assert len(eps) == 2
+    assert _close(eps[0], QPointF(10, 20))
+    assert _close(eps[1], QPointF(90, 70))
+    assert it._handle_indices() == [0, 1]
+
+
+def test_pathitem_set_endpoint_line_moves_only_that_end():
+    p = QPainterPath(QPointF(0, 0))
+    p.lineTo(QPointF(50, 0))
+    p.lineTo(QPointF(100, 0))
+    it = _PathItem(p)
+    it._set_endpoint(1, QPointF(100, 80))   # 끝점만 이동
+    pts = it._endpoints()
+    assert _close(pts[0], QPointF(0, 0))    # 시작점 불변
+    assert _close(pts[1], QPointF(100, 80))
+    mid = it.path().elementAt(1)
+    assert _close(QPointF(mid.x, mid.y), QPointF(50, 0))   # 중간 정점도 불변
+
+
+def test_pathitem_set_endpoint_curve_keeps_tangent_via_control_point_shift():
+    # 스무딩(cubicTo)된 궤적의 끝점을 옮기면, 그 끝의 제어점도 같은 delta로 따라가야
+    # 접선이 유지된다(끝만 툭 꺾이지 않음) — `_ArrowItem`과 동일 패턴 회귀 확인.
+    from easycad.canvas.annotator_core import _smooth_freehand_path
+    raw = QPainterPath(QPointF(0, 0))
+    for x, y in [(10, 0), (20, 10), (30, 10), (40, 20), (50, 20)]:
+        raw.lineTo(QPointF(x, y))
+    smoothed = _smooth_freehand_path(raw, min_seg=0.0, epsilon=0.0)   # 전부 보존 → 확실히 곡선화
+    it = _PathItem(smoothed)
+    n0 = it.path().elementCount()
+    assert it.path().elementAt(1).isCurveTo()   # 전제: 시작 직후가 곡선 제어점
+    c1_before = it.path().elementAt(1)
+    c1_before = QPointF(c1_before.x, c1_before.y)
+    delta = QPointF(30, -15)
+    start0 = it._endpoints()[0]
+    it._set_endpoint(0, start0 + delta)
+    assert it.path().elementCount() == n0   # 원소 개수(구조)는 안 바뀜
+    assert _close(it._endpoints()[0], start0 + delta)
+    c1_after = it.path().elementAt(1)
+    c1_after = QPointF(c1_after.x, c1_after.y)
+    assert _close(c1_after, c1_before + delta)   # c1도 같은 delta로 따라감(접선 유지)
+    # 반대쪽 끝은 전혀 안 건드림.
+    last_el = it.path().elementAt(n0 - 1)
+    assert _close(QPointF(last_el.x, last_el.y), it._endpoints()[1])
+
+
+def test_pathitem_endpoint_drag_end_to_end_via_view():
+    w = CanvasWindow(); w.set_tool("select")
+    view = w._view
+    p = QPainterPath(QPointF(0, 0))
+    p.lineTo(QPointF(100, 0))
+    it = _PathItem(p)
+    it.setPen(w.make_pen())
+    it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(it)
+    it.setSelected(True)
+
+    press, release, click, move, drag_move, dbl = _draw_helpers(view)
+    end_local = it._endpoint_rect(1).center()
+    press(it.mapToScene(end_local))
+    assert it._drag_endpoint == 1   # 끝점 핸들이 실제로 히트됨
+    drag_move(QPointF(100, 60))
+    release(QPointF(100, 60))
+    assert _close(it._endpoints()[1], QPointF(100, 60))
+    assert _close(it._endpoints()[0], QPointF(0, 0))   # 반대쪽은 그대로
 
 

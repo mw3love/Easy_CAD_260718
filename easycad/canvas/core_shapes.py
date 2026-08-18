@@ -2988,6 +2988,69 @@ class _LineItem(_LabelMixin, _HandleResizeMixin, QGraphicsLineItem):
     # _item_center_path(QGraphicsLineItem 분기)로 동일한 결과를 낸다(중복 로직 흡수).
 
 
+def _rdp_simplify(pts: list, epsilon: float) -> list:
+    """Ramer-Douglas-Peucker — 시작·끝을 잇는 직선에서 수직거리가 epsilon 이하인 중간 점은
+    버린다(재귀 분할정복, 표준 알고리즘). `_smooth_freehand_path`가 계단형 미세 지그재그
+    자체를 지우는 데 쓴다 — Catmull-Rom은 '있는 점을 매끄럽게 잇기'만 하지 '불필요한 점을
+    지우기'는 못 해, 계단 한 칸 한 칸을 그대로 보간해 모서리만 둥글어질 뿐 계단 자체는
+    안 없어진다(실측 확인). 끝점 2개는 항상 보존."""
+    if len(pts) < 3:
+        return pts
+    start, end = pts[0], pts[-1]
+    dx, dy = end.x() - start.x(), end.y() - start.y()
+    seg_len = math.hypot(dx, dy)
+    dmax, index = 0.0, 0
+    for i in range(1, len(pts) - 1):
+        p = pts[i]
+        if seg_len < 1e-9:
+            d = math.hypot(p.x() - start.x(), p.y() - start.y())
+        else:
+            d = abs(dy * p.x() - dx * p.y() + end.x() * start.y() - end.y() * start.x()) / seg_len
+        if d > dmax:
+            dmax, index = d, i
+    if dmax > epsilon:
+        left = _rdp_simplify(pts[:index + 1], epsilon)
+        right = _rdp_simplify(pts[index:], epsilon)
+        return left[:-1] + right
+    return [start, end]
+
+
+def _smooth_freehand_path(raw: QPainterPath, min_seg: float = 2.0, epsilon: float = 5.0) -> QPainterPath:
+    """[실사용 요청 2026-08-19] 펜 궤적을 부드러운 곡선으로 — 원시 lineTo 폴리라인은 마우스
+    샘플 하나하나가 꺾인 점이 돼(특히 확대 시) 계단·각짐으로 보인다. 두 단계로 처리한다:
+    ① `_rdp_simplify`로 궤적의 진짜 모양과 무관한 미세 지그재그(계단)를 지우고, ② 남은 점을
+    Catmull-Rom→3차 베지어 변환(표준 공식)으로 매끄럽게 잇는다 — 남은 점은 그대로 지나가므로
+    (근사가 아니라 보간) 단순화 이후의 손그림 궤적 자체를 왜곡하지 않는다. 너무 가까운 연속
+    점(min_seg 미만, 느리게 그릴 때 마우스 샘플이 몰리는 구간)은 단순화 전에 먼저 솎아낸다.
+    펜 그리기가 끝나는 순간(mouseReleaseEvent) 1회만 호출 — 그리는 중 매 프레임 재계산하지
+    않는다(라이브 미리보기는 원시 폴리라인 그대로 두어 반응성 유지)."""
+    n = raw.elementCount()
+    if n < 2:
+        return raw
+    dedup = [QPointF(raw.elementAt(0).x, raw.elementAt(0).y)]
+    for i in range(1, n):
+        el = raw.elementAt(i)
+        p = QPointF(el.x, el.y)
+        if math.hypot(p.x() - dedup[-1].x(), p.y() - dedup[-1].y()) >= min_seg:
+            dedup.append(p)
+    last_raw = QPointF(raw.elementAt(n - 1).x, raw.elementAt(n - 1).y)
+    if dedup[-1] != last_raw:
+        dedup.append(last_raw)   # 끝점은 솎아내기와 무관하게 항상 보존
+    pts = _rdp_simplify(dedup, epsilon)
+    if len(pts) < 3:
+        return raw
+    out = QPainterPath(pts[0])
+    last = len(pts) - 1
+    for i in range(last):
+        p0 = pts[i - 1] if i > 0 else pts[i]
+        p1, p2 = pts[i], pts[i + 1]
+        p3 = pts[i + 2] if i + 2 <= last else pts[i + 1]
+        c1 = QPointF(p1.x() + (p2.x() - p0.x()) / 6.0, p1.y() + (p2.y() - p0.y()) / 6.0)
+        c2 = QPointF(p2.x() - (p3.x() - p1.x()) / 6.0, p2.y() - (p3.y() - p1.y()) / 6.0)
+        out.cubicTo(c1, c2, p2)
+    return out
+
+
 class _PathItem(_HandleResizeMixin, QGraphicsPathItem):
     def __init__(self, *args):
         super().__init__(*args)
@@ -3013,6 +3076,70 @@ class _PathItem(_HandleResizeMixin, QGraphicsPathItem):
 
     def _apply_geom_local(self, g):
         self.setPath(g)
+
+    # ---- [실사용 요청 2026-08-19] 선택 시 양 끝점 드래그 핸들 ------------------------
+    # `_LineItem`/`_ArrowItem`과 같은 `_uses_endpoints()` 계약만 채우면(끝점 목록·끝점 이동)
+    # 히트테스트·드래그·undo·Shift 각도스냅까지 믹스인이 이미 갖고 있는 공용 코드를 그대로
+    # 탄다(끝점 인덱스 0=시작·1=끝, `_handle_indices()` 기본값이 `range(len(_endpoints()))`
+    # 라 별도 오버라이드 불필요). 회전·균일축척(`_handle_active`)은 여전히 거부한다 — 자유
+    # 곡선을 통째로 돌리거나 늘리는 건 그리기 전용이라는 원래 취지와 안 맞는다(펜은 "끝만
+    # 다듬기"만 허용, 몸통 변형은 삭제·되돌리기로).
+    def _uses_endpoints(self):
+        return True
+
+    def _endpoints(self):
+        path = self.path()
+        n = path.elementCount()
+        if n < 1:
+            return []
+        first = QPointF(path.elementAt(0).x, path.elementAt(0).y)
+        last = QPointF(path.elementAt(n - 1).x, path.elementAt(n - 1).y)
+        return [first, last]
+
+    def _set_endpoint(self, idx: int, p: QPointF):
+        """끝점(idx=0 시작/그 외=끝)을 로컬 좌표 p로 이동. 스무딩된 궤적(cubicTo)이면 그 끝의
+        제어점도 같은 delta로 함께 옮겨 접선을 유지한다(`_ArrowItem._set_endpoint`와 동일
+        패턴 — 안 하면 끝점만 툭 꺾여 스무딩한 보람이 없어진다)."""
+        old = self.path()
+        n = old.elementCount()
+        if n < 1:
+            return
+        p = QPointF(p)
+        target_i = 0 if idx == 0 else n - 1
+        old_pt = QPointF(old.elementAt(target_i).x, old.elementAt(target_i).y)
+        delta = p - old_pt
+        ctrl_i = None
+        if idx == 0 and n >= 2 and old.elementAt(1).isCurveTo():
+            ctrl_i = 1   # 시작 직후 c1
+        elif idx != 0 and n >= 2 \
+                and old.elementAt(n - 1).type == QPainterPath.ElementType.CurveToDataElement:
+            ctrl_i = n - 2   # 끝 직전 c2
+
+        def shifted(k, base):
+            if k == target_i:
+                return p
+            if k == ctrl_i:
+                return base + delta
+            return base
+
+        new = QPainterPath()
+        i = 0
+        while i < n:
+            el = old.elementAt(i)
+            if el.isMoveTo():
+                new.moveTo(shifted(i, QPointF(el.x, el.y)))
+                i += 1
+            elif el.isCurveTo():
+                e2, e3 = old.elementAt(i + 1), old.elementAt(i + 2)
+                c1 = shifted(i, QPointF(el.x, el.y))
+                c2 = shifted(i + 1, QPointF(e2.x, e2.y))
+                endp = shifted(i + 2, QPointF(e3.x, e3.y))
+                new.cubicTo(c1, c2, endp)
+                i += 3
+            else:
+                new.lineTo(shifted(i, QPointF(el.x, el.y)))
+                i += 1
+        self.setPath(new)
 
     def rebake_scene(self, fn):
         old = self.path()
@@ -6343,6 +6470,38 @@ def apply_extend(host, idx: int, new_pt: QPointF) -> None:
     host.update()
 
 
+def _path_endpoint_ports(item):
+    """[실사용 요청 2026-08-19] 펜 궤적(`_PathItem`) 전용 이산 포트 — 시작·끝 2점뿐.
+    `elementAt(1)`/`elementAt(n-2)`는 궤적이 직선(lineTo)이든 스무딩된 곡선(cubicTo)이든
+    항상 그 끝점에 가장 가까운 제어점/샘플점이라(Qt 경로 원소 순서상 곡선의 첫 제어점은
+    시작점 바로 다음, 마지막 제어점은 끝점 바로 앞) 접선 방향 근사로 그대로 쓸 수 있다 —
+    곡선인지 직선인지 분기할 필요가 없다. `_shape_ports`가 다른 타입에 하듯 `_nearest_border`
+    에 넣지 않는다 — 이미 경로 위의 정확한 점이라 왕복할 이유가 없다(`_path_nearest`도 결국
+    같은 폴리곤 평탄화로 이 점을 되돌려줄 뿐)."""
+    path = item.path()
+    n = path.elementCount()
+    if n < 2:
+        return []
+    first = QPointF(path.elementAt(0).x, path.elementAt(0).y)
+    last = QPointF(path.elementAt(n - 1).x, path.elementAt(n - 1).y)
+    second = QPointF(path.elementAt(1).x, path.elementAt(1).y)
+    prev = QPointF(path.elementAt(n - 2).x, path.elementAt(n - 2).y)
+
+    def _outward_local(p, ref):
+        dx, dy = p.x() - ref.x(), p.y() - ref.y()
+        L = math.hypot(dx, dy) or 1.0
+        return QPointF(dx / L, dy / L)
+
+    out = []
+    for p, ref in ((first, second), (last, prev)):
+        nrm = _outward_local(p, ref)
+        sp = item.mapToScene(p)
+        nd = item.mapToScene(QPointF(p.x() + nrm.x(), p.y() + nrm.y())) - sp
+        L = math.hypot(nd.x(), nd.y()) or 1.0
+        out.append((sp, QPointF(nd.x() / L, nd.y() / L)))
+    return out
+
+
 def _shape_ports(item):
     """도형의 이산 접속점(포트) → [(scene_pt, 바깥법선), ...]. 변 중점 4개(N·E·S·W)를
     _nearest_border로 '실제 외곽선'에 투영한다 — 네모·원은 변 중점 그대로, 심볼은 슬랜트 변
@@ -6355,7 +6514,15 @@ def _shape_ports(item):
     피드백(Lucid 대조)으로 discrete 포트 목록은 다시 4개로 되돌린다. 대각 근처로 드래그해도
     스냅 자체는 여전히 된다 — `_border_snap_at`의 연속 폴백(Pass 2)이 `_nearest_border`를
     이 목록과 무관하게 직접 호출해 도형 외곽선 어디든(대각 포함) 투영하기 때문(무회귀).
-    줄어드는 건 '포트 우선순위·상시 표시 점 개수'뿐, 대각 부착 능력 자체는 그대로다."""
+    줄어드는 건 '포트 우선순위·상시 표시 점 개수'뿐, 대각 부착 능력 자체는 그대로다.
+
+    [실사용 요청 2026-08-19] `_PathItem`(펜 궤적)은 `.rect()`가 없어(임의 QPainterPath) 이
+    함수를 아예 못 탔다 — 연속 폴백(`_nearest_border`→`_path_nearest`)으로 궤적 위 아무
+    곳에나 화살표가 붙기는 했지만, 다른 도형처럼 늘 보이는 '여기 붙일 수 있어요' 점이 없었다.
+    사각형 N/E/S/W 같은 변 중점 개념 자체가 없는 임의 경로라, 대신 유일하게 의미 있는 두
+    지점(궤적의 시작·끝)만 돌려준다."""
+    if isinstance(item, _PathItem):
+        return _path_endpoint_ports(item)
     r = item.rect()
     cx, cy = r.center().x(), r.center().y()
     if isinstance(item, _SymbolItem) and item._kind == "triangle":

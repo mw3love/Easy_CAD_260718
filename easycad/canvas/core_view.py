@@ -1137,8 +1137,10 @@ class _AnnotatorView(QGraphicsView):
                 or (isinstance(it, _PolygonItem) and it._closed)]
 
     def _conn_paths(self):
-        """[외부 DXF 폴백/펜] _PathItem — 연속 폴백(Pass 2)만 지원, 이산 포트는 없음(임의
-        외곽선이라 N/E/S/W 개념이 불분명 — 계획서 §8 항목 5 확정). 지속연결 바인딩은 지원."""
+        """[외부 DXF 폴백/펜] _PathItem — 연속 폴백(Pass 2, 궤적 어디든)에 더해 [실사용 요청
+        2026-08-19]부터 이산 포트(Pass 1, 양 끝 2점뿐 — `_path_endpoint_ports`)도 지원한다.
+        임의 외곽선이라 N/E/S/W 같은 4변 개념은 여전히 없어 `_conn_shapes()`엔 안 넣는다.
+        지속연결 바인딩은 지원."""
         return [it for it in self.scene().items() if isinstance(it, _PathItem)]
 
     def _conn_lines(self, exclude=None):
@@ -1313,6 +1315,14 @@ class _AnnotatorView(QGraphicsView):
                 d = self._view_dist(sp, view_pos)
                 if d <= bestpd:
                     bestpd, bestp, pexit, pshape = d, sp, n, sh
+        # [실사용 요청 2026-08-19] 펜 궤적(_PathItem)도 이제 양 끝 2점의 이산 포트를 갖는다
+        # (`_path_endpoint_ports`) — 아래 Pass 2(연속 폴백)와 같은 `_conn_paths()` 후보 목록을
+        # 공유하되, 끝점 근처는 이산 우선순위(넓은 반경)로 먼저 잡히게 한다.
+        for pit in self._conn_paths():
+            for sp, n in _shape_ports_visible(pit):
+                d = self._view_dist(sp, view_pos)
+                if d <= bestpd:
+                    bestpd, bestp, pexit, pshape = d, sp, n, pit
         for cl in lines:
             for ep, ed in _conn_endpoint_dirs(cl):
                 d = self._view_dist(ep, view_pos)
@@ -1503,9 +1513,11 @@ class _AnnotatorView(QGraphicsView):
         마우스무브마다 씬 전체를 수동 순회하던 게(cProfile 실측) 다중선택 드래그 버벅임과
         무거운 도면 호버 클러터의 원인이었다. 반환은 근사 후보 목록 — 정밀 판정(마진 사각형
         contains)은 호출부가 그대로 한다.
-        [2026-08-04 연속 호버 §8 항목16] _PathItem(DXF 폴백 도형)도 후보에 포함 — 이산 포트가
-        없어 Pass 1(discrete)에선 호출부가 스킵하지만, Pass 2(연속 폴백)는 _nearest_border가
-        이미 _PathItem을 지원하므로 대상에 넣어 화살표-그리기 스냅과 동작을 통일한다.
+        [2026-08-04 연속 호버 §8 항목16] _PathItem(DXF 폴백/펜)도 후보에 포함 — Pass 2(연속
+        폴백)는 _nearest_border가 이미 _PathItem을 지원하므로 대상에 넣어 화살표-그리기 스냅과
+        동작을 통일한다. [실사용 요청 2026-08-19] Pass 1(이산)도 이제 이 후보를 그대로 쓴다 —
+        `_shape_ports`가 펜 궤적의 양 끝 2점을 돌려주게 됐기 때문(호출부가 더는 타입으로
+        스킵하지 않는다).
         [2026-08-04, 3차 수정] 포트를 여기서 걸러내지 않는다 — 포트도 이 후보 목록을 타는
         `_hover_port_at`(미선택 4점)·`_qc_dot_at`을 통해 자신의 4변 접속점을 항상 제공해야
         하기 때문(실사용 요구: 선택 여부 무관하게 4변 중심점은 살아있어야 함). 포트를
@@ -1523,11 +1535,18 @@ class _AnnotatorView(QGraphicsView):
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PathItem, _ImageItem))]
 
     def _port_dot_target(self, scene_c):
-        """[2026-08-03 분리 — _draw_port_dots·mouseMoveEvent 공용] 지금 예고점을 그릴 도형
-        하나(가장 가까운 미선택 도형) or None. 페인트와 '다시 그려야 하는가' 판정이 서로 다른
-        기준을 쓰면(과거 버그: 페인트는 이 넓은 margin, 갱신 트리거는 훨씬 좁은 _hp_hover 스냅
-        반경) 판정 따로 반영 따로 놀아 예고점이 늦게 뜨거나(반경 진입해도 안 그려짐) 잔상으로
-        남는다(반경 이탈해도 안 지워짐) — 실사용 보고. 하나의 함수로 통일해 이 어긋남을 없앤다."""
+        """[2026-08-03 분리 — _draw_port_dots·mouseMoveEvent 공용] 지금 커서 아래(또는 근처)
+        미선택 도형 하나(가장 가까운 것) or None. 페인트와 '다시 그려야 하는가' 판정이 서로
+        다른 기준을 쓰면(과거 버그: 페인트는 이 넓은 margin, 갱신 트리거는 훨씬 좁은 _hp_hover
+        스냅 반경) 판정 따로 반영 따로 놀아 예고점이 늦게 뜨거나(반경 진입해도 안 그려짐)
+        잔상으로 남는다(반경 이탈해도 안 지워짐) — 실사용 보고. 하나의 함수로 통일해 이
+        어긋남을 없앤다.
+
+        [2026-08-19] select 도구에서도 값을 계속 계산한다 — `_qc_dots_hover_suppressed()`가
+        도구와 무관하게 이 결과(`view._port_dot_shape`)로 "다른 도형을 호버 중이면 선택된
+        도형의 큐닷을 감춘다"를 판정하기 때문(2026-08-13 신규기능). 실제 예고**점 렌더**를
+        select 도구에서 끄는 건 `_draw_port_dots` 쪽 책임 — 이 함수는 여전히 "지금 뭘 호버
+        중인가"라는 더 근본적인 신호라 도구로 좁히지 않는다."""
         tool = self._owner.current_tool
         if not self._owner.is_edit_mode() or tool not in ("arrow", "sarrow", "select"):
             return None
@@ -1569,9 +1588,10 @@ class _AnnotatorView(QGraphicsView):
         return best_sh
 
     def _draw_port_dots(self, painter, s):
-        """[우리 확장] 화살표 도구로 도형 근처에 가면 그 도형의 포트(8점)를 속 빈 점으로 예고.
-        [8포트 select-hover 2026-07-29] select 도구에서도 동일하게 예고하되, 선택된 도형은
-        제외(리사이즈·회전 핸들과 자리가 겹침 — 그건 qc-dot(4방향점)이 담당).
+        """[우리 확장] 화살표 도구로 도형 근처에 가면 그 도형의 포트를 속 빈 점으로 예고.
+        [8포트 select-hover 2026-07-29 → 2026-08-19 범위 축소] select 도구에서도 한때 동일하게
+        예고했으나, 실사용 지적으로 select의 **유휴** 호버 예고는 뺐다(아래 참조) — 선택된
+        도형은 여전히 제외(리사이즈·회전 핸들과 자리가 겹침 — 그건 qc-dot(4방향점)이 담당).
         [성능 조사 2026-07-30] 가장 가까운 도형 '하나'만 그린다(이전엔 마진 안의 모든 도형을
         전부 그려, Ctrl+D로 겹쳐 복제한 도형들 위에서 호버하면 포트 점이 잔뜩 뒤덮이는 클러터가
         났다 — _hover_port_at은 원래도 최근접 하나만 골랐으니 미리보기 쪽을 그와 맞췄다).
@@ -1584,19 +1604,28 @@ class _AnnotatorView(QGraphicsView):
         지적을 받았다. 그 별도 마커를 없애고, 대신 지금 targeted(= `_hp_hover`가 가리키는)
         점 자신을 반전 스타일로 강조한다 — 선택된 qc-dot이 `_hover_handle`로 자신을 강조하는
         것과 같은 패턴.
-        [2026-08-04 연속 호버 §8 항목16, deep-interview] `_hp_hover`가 이제 이산 4점과 무관한
-        테두리 임의 위치(Pass 2 연속 폴백, `_hover_port_at`)일 수 있다 — 그 경우 아래 고정 4점
+        [2026-08-04 연속 호버 §8 항목16, deep-interview] `_hp_hover`가 이제 이산 포트와 무관한
+        테두리 임의 위치(Pass 2 연속 폴백, `_hover_port_at`)일 수 있다 — 그 경우 아래 고정 포트
         루프의 어느 것과도 안 맞아 강조점이 안 뜨므로, 루프 뒤에서 한 번 더 확인해 그 정확한
-        위치에 별도 강조점을 그린다. `_PathItem`(DXF 폴백 도형)은 이산 포트 자체가 없으므로
-        고정 4점 루프를 건너뛰고 이 연속 강조점만 그린다.
+        위치에 별도 강조점을 그린다.
+        [실사용 요청 2026-08-19] `_PathItem`(펜 궤적)도 이제 이산 포트(양 끝 2점)가 있어 아래
+        고정 포트 루프를 그대로 탄다 — 예전엔 이산 포트가 없다고 보고 이 루프를 건너뛰었었다.
         [실사용 요청 2026-08-09] 선택된 화살표의 끝점 핸들(재부착 대상) 위를 호버할 땐 대상 점
         하나만 남기고 나머지 변의 예고점은 그리지 않는다 — 이 경우는 새 커넥터를 뽑는 상황이
         아니라 이미 있는 연결을 다른 자리로 옮기는 상황이라, 4점 전부를 보여주는 게 "이 도형에
-        새로 연결 가능"이라는 원래 의미와 어긋나고 시각적으로도 산만하다."""
+        새로 연결 가능"이라는 원래 의미와 어긋나고 시각적으로도 산만하다.
+        [실사용 지적 2026-08-19] select 도구의 **유휴** 호버(드래그 중이 아닐 때)에서는 예고점을
+        그리지 않는다 — 아무 도형이나 마우스가 지나가기만 해도 점이 뜨는 게 노이즈라는 지적
+        (Lucid 대조: 화살표 도구를 실제로 쓸 때만 뜬다). `_hp_dragging`(2026-07-29 select-hover
+        커넥터 뽑기가 이미 진행 중)이면 도구와 무관하게 그대로 그린다 — 그건 "어디 붙을지"
+        실시간 피드백이라 예고와 다른 목적이다. `_port_dot_target` 자체는 도구를 안 가린다 —
+        `_qc_dots_hover_suppressed()`가 select 모드에서도 이 결과에 계속 의존하기 때문."""
         view_pos = self.mapFromGlobal(QCursor.pos())
         scene_c = self.mapToScene(view_pos)
         best_sh = self._port_dot_target(scene_c)
         if best_sh is None:
+            return
+        if self._owner.current_tool not in ("arrow", "sarrow") and not self._hp_dragging:
             return
         r = 5.0 / s
         hp = self._hp_hover
@@ -1614,21 +1643,20 @@ class _AnnotatorView(QGraphicsView):
         targeted_pt = hp[1] if (hp is not None and hp[0] is best_sh) else None
         reattach_hover = self._over_selected_endpoint(view_pos)
         matched = False
-        if not isinstance(best_sh, _PathItem):
-            for sp, n in _shape_ports_for_preview(best_sh):
-                targeted = (targeted_pt is not None
-                            and abs(targeted_pt.x() - sp.x()) < 0.5 and abs(targeted_pt.y() - sp.y()) < 0.5)
-                if reattach_hover and not targeted:
-                    continue
-                p = QPointF(sp.x() + n.x() * gap, sp.y() + n.y() * gap)
-                if targeted:
-                    matched = True
-                    painter.setPen(QPen(QColor("white"), 1.5 / s))
-                    painter.setBrush(QBrush(QColor(_BLUE)))
-                else:
-                    painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
-                    painter.setBrush(QBrush(QColor("white")))
-                painter.drawEllipse(p, r, r)
+        for sp, n in _shape_ports_for_preview(best_sh):
+            targeted = (targeted_pt is not None
+                        and abs(targeted_pt.x() - sp.x()) < 0.5 and abs(targeted_pt.y() - sp.y()) < 0.5)
+            if reattach_hover and not targeted:
+                continue
+            p = QPointF(sp.x() + n.x() * gap, sp.y() + n.y() * gap)
+            if targeted:
+                matched = True
+                painter.setPen(QPen(QColor("white"), 1.5 / s))
+                painter.setBrush(QBrush(QColor(_BLUE)))
+            else:
+                painter.setPen(QPen(QColor(_BLUE), 1.4 / s))
+                painter.setBrush(QBrush(QColor("white")))
+            painter.drawEllipse(p, r, r)
         if targeted_pt is not None and not matched:
             n = hp[2]
             p = QPointF(targeted_pt.x() + n.x() * gap, targeted_pt.y() + n.y() * gap)
@@ -1683,11 +1711,14 @@ class _AnnotatorView(QGraphicsView):
         """[8포트 select-hover] 미선택 도형 근처 접속점 → (shape, port_pt, normal, is_discrete)
         or None. 선택된 도형은 제외 — `_connect_port_at`가 이미 그 경로를 처리해(mousePressEvent
         상단에서 어느 도구든 우선 검사), 여기서 또 잡으면 렌더가 중복된다.
-        [2026-08-04 연속 호버 §8 항목16, deep-interview] Pass 1(이산 4포트, _PORT_SNAP_PX)이
+        [2026-08-04 연속 호버 §8 항목16, deep-interview] Pass 1(이산 포트, _PORT_SNAP_PX)이
         없으면 Pass 2(테두리 임의 위치 최근접점, _BORDER_SNAP_PX)로 폴백 — `_border_snap_at`의
-        화살표-그리기 2단 우선순위(이산 우선, 연속 폴백)와 동일 패턴. Pass 2는 이산 포트가 없는
-        _PathItem(DXF 폴백 도형)도 포함한다. `is_discrete`는 호출부(커서 분기)가 Pass 1/2를
-        구분해, Pass 1은 항상 커넥터 커서·Pass 2는 테두리 안쪽/바깥쪽으로 커서를 가르는 데 쓴다."""
+        화살표-그리기 2단 우선순위(이산 우선, 연속 폴백)와 동일 패턴. `is_discrete`는 호출부
+        (커서 분기)가 Pass 1/2를 구분해, Pass 1은 항상 커넥터 커서·Pass 2는 테두리 안쪽/바깥쪽
+        으로 커서를 가르는 데 쓴다.
+        [실사용 요청 2026-08-19] `_PathItem`(펜 궤적)도 Pass 1 대상 — 이제 양 끝 2점의 이산
+        포트를 갖는다(`_path_endpoint_ports`, 사각형의 N/E/S/W와 달리 궤적엔 이 두 점만
+        의미가 있다). 그 두 점 근처가 아니면 여전히 Pass 2(궤적 어디든 연속 스냅)로 폴백."""
         margin = 30.0 / self._view_scale()
         scene_pt = self.mapToScene(view_pos)
         all_near = self._conn_shapes_near(scene_pt, margin)
@@ -1726,7 +1757,9 @@ class _AnnotatorView(QGraphicsView):
         best = None
         bestd = self._PORT_SNAP_PX
         for sh in near:
-            if isinstance(sh, (_PathItem, _ImageItem)) or _occluded(sh):
+            # [실사용 요청 2026-08-19] _PathItem은 더 이상 이산 포트에서 제외하지 않는다 —
+            # `_shape_ports`가 이제 펜 궤적의 양 끝 2점을 돌려준다(`_path_endpoint_ports`).
+            if isinstance(sh, _ImageItem) or _occluded(sh):
                 continue
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_pt):
@@ -2063,6 +2096,15 @@ class _AnnotatorView(QGraphicsView):
         if tool in ("rect", "ellipse", "line") or tool.startswith("sym:"):
             return self._grid_snap_scene(sp)
         return sp
+
+    def _scene_pos_precise(self, event) -> QPointF:
+        """[실사용 버그 수정 2026-08-19] `event.position()`은 Qt6에서 서브픽셀 정밀 QPointF인데
+        `.toPoint()`로 정수 뷰포트 픽셀에 반올림한 뒤 mapToScene하면 그 반올림 오차가 씬 좌표에
+        그대로 양자화된다 — 클릭·호버 판정(정수 픽셀이면 충분)은 무관하지만, 펜 궤적처럼
+        점 하나하나가 최종 기하가 되는 연속 입력은 나중에 확대하면(실사용 1238%) 계단으로
+        보인다. `viewportTransform()` 역행렬을 QPointF에 직접 적용해 반올림을 건너뛴다."""
+        inv, ok = self.viewportTransform().inverted()
+        return inv.map(event.position()) if ok else self.mapToScene(event.position().toPoint())
 
     def _grid_snap_scene(self, pt: QPointF) -> QPointF:
         """[그리드 스냅] 씬 좌표를 격자 교차점으로 양자화. owner.grid_enabled False면 그대로."""
@@ -2426,7 +2468,7 @@ class _AnnotatorView(QGraphicsView):
             it.set_points(self._start, self._start)
             self._begin_draw(it)
         elif tool == "pen":
-            self._path = QPainterPath(sp)
+            self._path = QPainterPath(self._scene_pos_precise(event))
             it = _PathItem(self._path)
             it.setPen(pen)
             self._begin_draw(it)
@@ -3249,7 +3291,16 @@ class _AnnotatorView(QGraphicsView):
                                              getattr(self, "_arrow_tip_snap_shape", None))
                 self.viewport().update()   # 스냅 마커 갱신
             elif tool == "pen" and self._path is not None:
-                self._path.lineTo(sp)
+                self._path.lineTo(self._scene_pos_precise(event))
+                # [실사용 요청 2026-08-19 → 같은 날 되돌림] 매 프레임 전체 궤적을 다시 스무딩해
+                # 보여주는 실시간 미리보기를 시도했으나, RDP가 새 점이 추가될 때마다 이전
+                # 구간의 "критical point" 선택을 바꿔 **이미 그려진 부분이 매 프레임 미세하게
+                # 흔들리는**("울렁거림") 부작용이 실사용에서 나왔다 — 실측상 부드러워 보여도
+                # 이미 지나간 궤적이 안정적이지 않으면 손맛이 나쁘다는 게 핵심. 원인이 "전체
+                # 재계산" 구조 자체(이미 확정된 과거 구간까지 매번 다시 흔든다)라 임계값 조정으로
+                # 고칠 문제가 아니라고 판단해 그리는 중에는 다시 원시 폴리라인만 보여준다(변경
+                # 전 동작). 최종 스무딩(mouseReleaseEvent, `self._path`에서 1회 재계산)은 그대로
+                # 유지 — "계단 없는 최종 결과"라는 원래 요청은 이걸로 계속 충족된다.
                 self._temp.setPath(self._path)
             return
         # [2e] 도형 이동 드래그 — Qt로 옮긴 뒤 스마트 정렬 스냅 + 가이드선.
@@ -3414,6 +3465,7 @@ class _AnnotatorView(QGraphicsView):
         if self._drawing and self._temp is not None:
             item = self._temp
             tool = self._owner.current_tool
+            raw_pen_path = QPainterPath(self._path) if tool == "pen" and self._path is not None else None
             self._drawing = False
             self._temp = None
             self._path = None
@@ -3432,6 +3484,12 @@ class _AnnotatorView(QGraphicsView):
             # 드래그로 그린 경우 — 즉시 확정.
             self._arrow_snap_exit = None
             self._arrow_tip_snap = None
+            if tool == "pen" and isinstance(item, _PathItem) and raw_pen_path is not None:
+                # [실사용 요청 2026-08-19] 실시간 미리보기가 이미 스무딩됐을 수 있으므로(위
+                # elif "pen" 분기) `item.path()`가 아니라 항상 원시 누적 좌표(raw_pen_path)에서
+                # 다시 계산한다 — cubicTo가 섞인 경로를 또 스무딩(이중 적용)하면 제어점을 원본
+                # 표본점으로 오인해 궤적이 일그러진다.
+                item.setPath(_smooth_freehand_path(raw_pen_path))
             if isinstance(item, _PolyArrowItem):
                 # [화살표 그리기 라이브 직각] 드래그 미리보기로 늘어난 정점을 시작·끝 2점으로 되돌린다
                 # — _bind_poly_ends는 len==2일 때만 자동라우팅(build_elbow)하고 3점↑는 수동 폴리라인

@@ -101,6 +101,34 @@ def test_parse_svg_string_raises_on_malformed_xml():
         pass
 
 
+def test_parse_svg_polygon_and_polyline_map_to_polygon_item():
+    # [실사용 요청 2026-08-19] §8 항목21로 `_PolygonItem`이 생기기 전엔 <polygon>/<polyline>도
+    # 임의 QPainterPath 컨테이너인 `_PathItem`(펜 도구와 같은 타입)으로만 들어왔다 — 이제
+    # box 리사이즈·이산 포트·TRIM을 그대로 얻도록 `_PolygonItem`으로 옮겼다. 닫힘 여부(closed)
+    # 는 태그 종류(polygon=닫힘/polyline=열림) 그대로 반영돼야 한다.
+    svg = ('<svg viewBox="0 0 100 100">'
+           '<polygon points="10,10 90,10 50,90"/>'
+           '<polyline points="10,50 40,20 70,50 90,30"/>'
+           '</svg>')
+    items, _vb = parse_svg_string(svg)
+    assert len(items) == 2
+    poly, line = items
+    assert isinstance(poly, _PolygonItem) and poly._closed
+    assert isinstance(line, _PolygonItem) and not line._closed
+    assert len(poly.local_pts()) == 3
+    assert len(line.local_pts()) == 4
+    assert not isinstance(poly, _PathItem) and not isinstance(line, _PathItem)
+
+
+def test_parse_svg_path_still_maps_to_path_item():
+    # <path>(베지어·호)는 임의 곡선이라 정점 목록이 아니다 — `_PolygonItem`으로 옮길 대상이
+    # 아니고, 지금도 정확히 `_PathItem`이 맞는 선택임을 회귀로 고정.
+    svg = '<svg viewBox="0 0 100 100"><path d="M10,10 C20,20 40,20 50,10"/></svg>'
+    items, _vb = parse_svg_string(svg)
+    assert len(items) == 1
+    assert isinstance(items[0], _PathItem)
+
+
 # ── _SvgAssetDialog ───────────────────────────────────────────────────────────
 
 def test_svg_asset_dialog_both_models_checked_by_default():

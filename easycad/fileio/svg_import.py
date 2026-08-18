@@ -24,11 +24,11 @@ import math
 import re
 import xml.etree.ElementTree as ET
 
-from PyQt6.QtCore import QRectF, QLineF
+from PyQt6.QtCore import QRectF, QLineF, QPointF
 from PyQt6.QtGui import QPainterPath, QColor
 
 from easycad.canvas.annotator_core import (
-    _RectItem, _EllipseItem, _LineItem, _PathItem, _TextItem,
+    _RectItem, _EllipseItem, _LineItem, _PathItem, _PolygonItem, _TextItem,
 )
 
 _NS = "{http://www.w3.org/2000/svg}"
@@ -278,16 +278,16 @@ def _parse_svg_root(root, long_side: float | None, center):
             x0, y0 = coord(cx - rx, cy - ry)
             it = _EllipseItem(QRectF(x0, y0, rx * 2 * sx, ry * 2 * sy))
         elif tag in ("polyline", "polygon"):
+            # [실사용 요청 2026-08-19] §8 항목21로 닫힌/열린 다각형 전용 `_PolygonItem`이
+            # 생기기 전엔 임의 QPainterPath 컨테이너인 `_PathItem`(펜과 동일 타입)으로만
+            # 담을 수 있었다 — 이제 `_PolygonItem`이 있으므로 box 리사이즈·이산 포트·TRIM을
+            # 그대로 얻도록 옮긴다. `<path>`(베지어·호)는 대상 밖(정점 목록이 아니라 임의
+            # 곡선이라 여전히 `_PathItem`이 맞는 선택).
             pts = _parse_points(el.get("points"))
             if len(pts) < 2:
                 continue
-            pp = QPainterPath()
-            pp.moveTo(*coord(*pts[0]))
-            for p in pts[1:]:
-                pp.lineTo(*coord(*p))
-            if tag == "polygon":
-                pp.closeSubpath()
-            it = _PathItem(pp)
+            qpts = [QPointF(*coord(*p)) for p in pts]
+            it = _PolygonItem(qpts, closed=(tag == "polygon"))
         elif tag == "path":
             d = el.get("d")
             if not d:
