@@ -1614,18 +1614,26 @@ class _AnnotatorView(QGraphicsView):
         하나만 남기고 나머지 변의 예고점은 그리지 않는다 — 이 경우는 새 커넥터를 뽑는 상황이
         아니라 이미 있는 연결을 다른 자리로 옮기는 상황이라, 4점 전부를 보여주는 게 "이 도형에
         새로 연결 가능"이라는 원래 의미와 어긋나고 시각적으로도 산만하다.
-        [실사용 지적 2026-08-19] select 도구의 **유휴** 호버(드래그 중이 아닐 때)에서는 예고점을
-        그리지 않는다 — 아무 도형이나 마우스가 지나가기만 해도 점이 뜨는 게 노이즈라는 지적
-        (Lucid 대조: 화살표 도구를 실제로 쓸 때만 뜬다). `_hp_dragging`(2026-07-29 select-hover
-        커넥터 뽑기가 이미 진행 중)이면 도구와 무관하게 그대로 그린다 — 그건 "어디 붙을지"
-        실시간 피드백이라 예고와 다른 목적이다. `_port_dot_target` 자체는 도구를 안 가린다 —
-        `_qc_dots_hover_suppressed()`가 select 모드에서도 이 결과에 계속 의존하기 때문."""
+        [실사용 지적 2026-08-19 → 2026-08-19 범위 재조정] select 도구의 **유휴** 호버(드래그
+        중이 아닐 때)에서는 예고점을 그리지 않는다 — 처음엔 도형까지 포함해 전부 껐으나
+        (아무 도형이나 마우스가 지나가기만 해도 점이 뜨는 게 노이즈라는 지적, Lucid 대조:
+        화살표 도구를 실제로 쓸 때만 뜬다), 그 지적은 실제로는 **펜 궤적(`_PathItem`)** 한정
+        이었다 — 도형(사각형/원/심볼)은 화살표와 밀접히 엮여 있어 유휴 호버에서도 포트점이
+        계속 보여야 화살표를 넣고 빼기 편하다는 게 원래 의도였는데, 같은 세션(펜 궤적 실사용
+        피드백 커밋)에서 이 억제가 `best_sh` 타입을 안 가리고 전부에 걸리는 바람에 도형까지
+        같이 꺼졌다(재확인 후 `_PathItem`만으로 좁힘). `_hp_dragging`(2026-07-29 select-hover
+        커넥터 뽑기가 이미 진행 중)이면 도구·타입과 무관하게 그대로 그린다 — 그건 "어디
+        붙을지" 실시간 피드백이라 예고와 다른 목적이다. `_port_dot_target` 자체는 도구를 안
+        가린다 — `_qc_dots_hover_suppressed()`가 select 모드에서도 이 결과에 계속 의존하기
+        때문."""
         view_pos = self.mapFromGlobal(QCursor.pos())
         scene_c = self.mapToScene(view_pos)
         best_sh = self._port_dot_target(scene_c)
         if best_sh is None:
             return
-        if self._owner.current_tool not in ("arrow", "sarrow") and not self._hp_dragging:
+        if (isinstance(best_sh, _PathItem)
+                and self._owner.current_tool not in ("arrow", "sarrow")
+                and not self._hp_dragging):
             return
         r = 5.0 / s
         hp = self._hp_hover

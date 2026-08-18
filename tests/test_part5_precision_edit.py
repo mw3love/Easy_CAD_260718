@@ -1352,10 +1352,11 @@ def test_border_snap_at_prefers_pathitem_endpoint_over_continuous():
     assert mid is not None and _close(mid[0], QPointF(100, 0))   # 연속 폴백은 여전히 작동
 
 
-def test_draw_port_dots_suppressed_on_idle_select_hover_shown_on_arrow_tool():
-    # [실사용 지적 2026-08-19] select 도구의 유휴 호버(드래그 중 아님)에서는 예고점을 그리지
-    # 않아야 한다(Lucid 대조 — 화살표 도구를 실제로 쓸 때만) — `_port_dot_target` 신호 자체는
-    # (qc-dot 억제가 의존하므로) select에서도 계속 살아있되, 렌더만 걸러지는지 확인.
+def test_draw_port_dots_shown_on_idle_select_hover_for_shapes():
+    # [실사용 지적 2026-08-19 → 2026-08-19 범위 재조정] 도형(사각형/원/심볼)은 화살표와 밀접히
+    # 엮여 있어 select 도구의 유휴 호버(드래그 중 아님)에서도 포트점이 계속 보여야 화살표를
+    # 넣고 빼기 편하다 — 처음엔 이 아래 펜(_PathItem) 케이스와 함께 도형까지 억제됐던 것을
+    # 재확인해 도형만 원상복구(아래 별도 테스트가 펜은 여전히 억제됨을 확인).
     from unittest.mock import MagicMock
     w = CanvasWindow(); w.grid_enabled = False
     view = w._view
@@ -1367,7 +1368,7 @@ def test_draw_port_dots_suppressed_on_idle_select_hover_shown_on_arrow_tool():
     assert view._port_dot_target(center) is rect
     painter = MagicMock()
     view._draw_port_dots(painter, 1.0)
-    assert not painter.drawEllipse.called
+    assert painter.drawEllipse.called   # 도형은 유휴 호버에서도 그려야 함
 
     w.set_tool("arrow")
     painter2 = MagicMock()
@@ -1381,6 +1382,32 @@ def test_draw_port_dots_suppressed_on_idle_select_hover_shown_on_arrow_tool():
     view._draw_port_dots(painter3, 1.0)
     assert painter3.drawEllipse.called
     view._hp_dragging = False
+
+
+def test_draw_port_dots_suppressed_on_idle_select_hover_for_pen_only():
+    # [실사용 지적 2026-08-19 → 2026-08-19 범위 재조정] 펜 궤적(`_PathItem`)은 화살표와 그런
+    # 밀접한 관계가 없어 — select 도구의 유휴 호버에서 점이 뜨면 노이즈라는 원래 지적이 이
+    # 케이스였다. 이 타입만 계속 억제되는지 확인(위 도형 테스트와 대칭).
+    from unittest.mock import MagicMock
+    w = CanvasWindow(); w.grid_enabled = False
+    view = w._view
+    p = QPainterPath(QPointF(0, 0)); p.lineTo(QPointF(100, 0))
+    pen_it = _PathItem(p)
+    pen_it.setPen(w.make_pen())
+    w._scene.addItem(pen_it)
+    center = QPointF(50, 0)
+    view.mapFromGlobal = lambda gp: view.mapFromScene(center)
+
+    w.set_tool("select")
+    assert view._port_dot_target(center) is pen_it
+    painter = MagicMock()
+    view._draw_port_dots(painter, 1.0)
+    assert not painter.drawEllipse.called   # 펜은 유휴 호버에서 억제되어야 함
+
+    w.set_tool("arrow")
+    painter2 = MagicMock()
+    view._draw_port_dots(painter2, 1.0)
+    assert painter2.drawEllipse.called
 
 
 # ---------------------------------------------------------------------------
@@ -1459,5 +1486,79 @@ def test_pathitem_endpoint_drag_end_to_end_via_view():
     release(QPointF(100, 60))
     assert _close(it._endpoints()[1], QPointF(100, 60))
     assert _close(it._endpoints()[0], QPointF(0, 0))   # 반대쪽은 그대로
+
+
+def test_arrow_endpoint_detach_reattach_handle_turns_green_when_bound():
+    # [실사용 버그 수정 2026-08-19] "화살표를 처음 그릴 때 다른 도형에 가면 예고점이 보이는데
+    # 한번 붙이고 뗐다가 다시 붙이면 예고점 안 보임(스냅은 됨)" — 부착(바인딩) 자체는 항상
+    # 정상이었다. 처음엔 새로 그리기(`_update_arrow_draw`)처럼 view의 예고점 필드
+    # (`_arrow_tip_snap`)를 갱신하는 방식으로 고쳤으나, 실사용 재확인 결과 그 마커(반경
+    # 5/s 파란 원)가 바로 이 끝점 핸들 사각형(같은 파랑, 같은 위치·크기 — `_HANDLE_PX`가
+    # 애초에 "_draw_snap_marker 지름과 동일")과 완전히 겹쳐 시각적으로 아무 차이가 없었다
+    # (`drawForeground`가 아이템 자신의 `paint()`보다 나중에 그려져 오히려 핸들을 덮기까지
+    # 했다). 최종 해법은 새 마커를 얹는 대신 핸들 자체의 색을 바꾸는 것 —
+    # `_paint_endpoint_handles`가 그 인덱스의 `bound_shapes()`를 확인해 붙어 있으면 초록,
+    # 아니면 기존 파랑으로 그린다(핸들 사각형의 실제 렌더 색을 픽셀로 검증).
+    w = CanvasWindow(); w.set_tool("arrow"); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)      # 우측 테두리 x=300, 중앙 y=30
+    view = w._view
+    press, release, click, move, drag_move, _d = _draw_helpers(view)
+
+    press(QPointF(0, 30)); drag_move(QPointF(305, 30)); release(QPointF(305, 30))
+    arrow = [it for it in w._scene.items() if isinstance(it, _ArrowItem)][0]
+    assert arrow.isSelected() and arrow._bind2 is not None
+
+    w.set_tool("select")
+    end_scene = arrow.mapToScene(arrow._endpoint_rect(1).center())
+    press(end_scene)
+    assert arrow._drag_endpoint == 1
+
+    drag_move(QPointF(150, 200))   # 뗀다 — 도형에서 멀어짐
+    assert arrow._bind2 is None
+    assert arrow._handle_indices() == [0, 1]   # 아래 bound_shapes()[1] 인덱싱 전제 확인
+    assert arrow.bound_shapes()[1] is None     # 핸들 색 판정이 보는 값 자체(파랑이어야 함)
+
+    drag_move(QPointF(305, 30))    # 같은 테두리에 다시 붙인다
+    assert arrow._bind2 is not None
+    assert arrow.bound_shapes()[1] is not None   # 핸들 색 판정이 보는 값(초록이어야 함)
+
+    release(QPointF(305, 30))
+    assert arrow.bound_shapes()[1] is not None   # 릴리스 후에도 유지(색이 계속 초록이어야 함)
+
+
+def test_arrow_endpoint_handle_pixel_color_reflects_binding():
+    # 위 테스트의 데이터 계층(bound_shapes) 검증을 실제 렌더 픽셀로 한 번 더 — 핸들이
+    # `_paint_endpoint_handles`를 실제로 타서 파랑/초록으로 그려지는지 육안 대신 픽셀로 확인.
+    from easycad.canvas.core_shapes import _GREEN, _BLUE
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtGui import QColor
+
+    w = CanvasWindow(); w.set_tool("arrow"); w._zoom_reset()
+    _mk_rect(w._scene, w.make_pen(), 200, 0, 100, 60)
+    view = w._view
+    press, release, click, move, drag_move, _d = _draw_helpers(view)
+
+    press(QPointF(0, 30)); drag_move(QPointF(305, 30)); release(QPointF(305, 30))
+    arrow = [it for it in w._scene.items() if isinstance(it, _ArrowItem)][0]
+    w.set_tool("select")
+    press(arrow.mapToScene(arrow._endpoint_rect(1).center()))
+
+    def dominant_color_at(scene_pt):
+        img = view.viewport().grab().toImage()
+        vp = view.mapFromScene(scene_pt)
+        counts = {}
+        for dx in range(-6, 7):
+            for dy in range(-6, 7):
+                c = img.pixelColor(QPoint(vp.x() + dx, vp.y() + dy)).name()
+                counts[c] = counts.get(c, 0) + 1
+        return max(counts, key=counts.get)
+
+    drag_move(QPointF(150, 200))   # 뗀다 — 미부착이면 파랑
+    assert dominant_color_at(arrow.mapToScene(arrow._endpoint_rect(1).center())) == QColor(_BLUE).name()
+
+    drag_move(QPointF(305, 30))    # 다시 붙인다 — 부착되면 초록
+    assert dominant_color_at(arrow.mapToScene(arrow._endpoint_rect(1).center())) == QColor(_GREEN).name()
+
+    release(QPointF(305, 30))
 
 

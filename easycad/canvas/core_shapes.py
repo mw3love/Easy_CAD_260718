@@ -275,7 +275,15 @@ class _HandleResizeMixin:
         재스냅 시 self 제외)") 여기서 안 넘겼다. 그 결과 이 아이템(화살표) 자신의 다른 세그먼트/
         끝점이 M4-2b의 "선·화살표 몸통 스냅"(기하만, shape=None) 후보로 잡혀, 도형 테두리보다
         먼저·더 가깝게 자기 몸에 스냅될 수 있었다 — 시각적으로는 도형 근처라 붙은 것처럼 보이지만
-        `set_bound(idx, None)`이 호출돼 바인딩이 전혀 안 걸린다(디버그 로그로 재현·확인)."""
+        `set_bound(idx, None)`이 호출돼 바인딩이 전혀 안 걸린다(디버그 로그로 재현·확인).
+
+        [실사용 버그 수정 2026-08-19, 시행착오] 처음엔 여기서 새 그리기와 같은 view 필드
+        (`_arrow_tip_snap`)를 갱신해 예고점을 띄우려 했으나, 그 원(반경 5/s)이 바로 이 끝점
+        핸들 사각형(같은 파랑, 같은 위치·크기 — `_HANDLE_PX`가 애초에 "_draw_snap_marker
+        지름과 동일"로 설계됨)과 겹쳐 시각적으로 아무 차이가 없었다(실사용 재확인). 게다가
+        `drawForeground`가 아이템 자신의 `paint()`보다 **나중에** 그려져, 그 파란 원이 아래
+        판정으로 바뀐 초록 핸들마저 위에서 덮어버리는 부작용까지 있었다 — 그래서 이 접근은
+        폐기하고 `_paint_endpoint_handles`(핸들 자체 색 변경)로 대체했다(그 함수 주석 참조)."""
         if not self._connects_to_border():
             return None
         sc = self.scene()
@@ -333,8 +341,23 @@ class _HandleResizeMixin:
             return
         s = self._scale_or_1()
         hv = self._hover_handle
-        for i in self._handle_indices():
-            self._set_handle_paint(painter, s, _BLUE, hv == ("ep", i))
+        # [실사용 버그 수정 2026-08-19] 뗐다 다시 붙이는 드래그에서 `_arrow_tip_snap` 예고점
+        # (반경 5/s 원)을 켜도 실사용자 눈엔 안 보였다 — 원인은 그 위치가 바로 이 끝점 핸들
+        # 사각형(같은 파랑, `_HANDLE_PX`가 애초에 "_draw_snap_marker 지름과 동일"로 설계돼
+        # 있다, 주석 참조) **바로 그 자리**라 새로 그린 원이 기존 사각형과 완전히 겹쳐 시각적
+        # 차이가 없었던 것(디버그 로그로 매 프레임 정상 계산·페인트되는 것까지 확인했는데도
+        # 실제 화면에서 "여전히 안 보인다"고 재확인된 원인). 새 도형을 얹는 대신 핸들 자체의
+        # 색을 바꾼다 — 지금 붙어 있으면(`bound_shapes()`가 그 인덱스에 도형을 돌려주면)
+        # 초록(이 코드베이스에서 "생기는/붙는" 예고에 이미 쓰는 색, TRIM 빨강과 대비), 아니면
+        # 기존 파랑. 바인딩이 없는 타입(_LineItem·_PathItem)은 `bound_shapes` 자체가 없어
+        # getattr 폴백으로 항상 파랑 그대로.
+        idxs = self._handle_indices()
+        bound_fn = getattr(self, "bound_shapes", None)
+        bound_pair = bound_fn() if bound_fn is not None else (None, None)
+        for i in idxs:
+            slot = 0 if i == idxs[0] else 1
+            base_color = _GREEN if (slot < len(bound_pair) and bound_pair[slot] is not None) else _BLUE
+            self._set_handle_paint(painter, s, base_color, hv == ("ep", i))
             painter.drawRect(self._endpoint_rect(i))
 
     # 선택된 도형에 현재 색/두께 적용. pen 기반(rect/ellipse/line/path)은 QPen에,
