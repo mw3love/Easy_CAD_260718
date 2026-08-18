@@ -52,6 +52,7 @@ def test_grid_snap_shape_creation():
     br = it.mapToScene(it.rect().bottomRight())
     for coord in (tl.x(), tl.y(), br.x(), br.y()):
         assert abs(coord % _GRID_SPACING) < 1e-6 or abs(coord % _GRID_SPACING - _GRID_SPACING) < 1e-6
+    w._active_doc.dirty = False   # [§8 항목10 Stage C] 이 테스트는 닫기확인창을 검증 대상이 아님
     w.close()
 
 
@@ -70,6 +71,7 @@ def test_grid_snap_excluded_for_arrow_tool():
                      Qt.MouseButton.NoButton, Qt.MouseButton.NoButton, NO)
     p = view._cur_point(e)
     assert p == QPointF(97, 61)
+    w._active_doc.dirty = False   # [§8 항목10 Stage C] 이 테스트는 닫기확인창을 검증 대상이 아님
     w.close()
 
 
@@ -140,6 +142,7 @@ def test_minimap_indicator_fixed_pixel_size_regardless_of_zoom():
     px_w_6x = w._minimap._indicator_draw_rect().width() * w._minimap.transform().m11()
     assert abs(px_w_1x - px_w_6x) < 1.0
     assert abs(px_w_1x - w._minimap._INDICATOR_PX) < 1.0
+    w._active_doc.dirty = False   # [§8 항목10 Stage C] 이 테스트는 닫기확인창을 검증 대상이 아님
     w.close()
 
 
@@ -160,6 +163,7 @@ def test_minimap_indicator_is_scene_coords_not_double_transformed():
     indicator = w._minimap._indicator_scene_rect()
     items_bbox = w._scene.itemsBoundingRect()
     assert indicator.contains(items_bbox), (indicator, items_bbox)
+    w._active_doc.dirty = False   # [§8 항목10 Stage C] 이 테스트는 닫기확인창을 검증 대상이 아님
     w.close()
 
 
@@ -178,6 +182,7 @@ def test_minimap_click_navigates_main_view():
     after = w._view.mapToScene(w._view.viewport().rect().center())
     assert _close(after, target_scene, eps=2.0)
     assert not _close(after, before, eps=2.0)
+    w._active_doc.dirty = False   # [§8 항목10 Stage C] 이 테스트는 닫기확인창을 검증 대상이 아님
     w.close()
 
 
@@ -211,6 +216,7 @@ def test_minimap_refresh_hooked_to_zoom_and_resize():
     assert len(calls) >= 2
     w._zoom_fit()
     assert len(calls) >= 3
+    w._active_doc.dirty = False   # [§8 항목10 Stage C] 이 테스트는 닫기확인창을 검증 대상이 아님
     w.close()
 
 
@@ -267,6 +273,7 @@ def test_minimap_refresh_hooked_to_viewport_resize_not_just_window():
     ev = QResizeEvent(QSize(600, 800), QSize(872, 800))   # 창 resizeEvent 없이 뷰포트만 변경
     w.eventFilter(w._view.viewport(), ev)
     assert len(calls) >= 1
+    w._active_doc.dirty = False   # [§8 항목10 Stage C] 이 테스트는 닫기확인창을 검증 대상이 아님
     w.close()
 
 

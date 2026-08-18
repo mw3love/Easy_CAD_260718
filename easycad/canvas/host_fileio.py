@@ -87,26 +87,30 @@ _PALETTE_TRIANGLE_WH = (77.94, 90.0)
 
 class _FileIOMixin:
     def _new_doc(self):
-        self._scene.clear()
-        self._reset_history()
-        self._clip.clear()
-        self._badge_n = 0
-        self._doc_path = None
-        self._reset_layers()
+        """[§8 항목10 Stage B] "새로 만들기"(Ctrl+N) — 빈 문서를 새 탭으로 연다. 예전엔 현재
+        씬을 통째로 비웠지만, 탭이 생긴 뒤로는 다른 탭의 작업을 그대로 둔 채 새 탭을 여는
+        쪽이 자연스럽다(탭 도입에 따른 의도된 의미 변화). 클립보드(`_clip`)는 더는 문서별이
+        아니라 창이 공유하는 상태(§8 항목10)라 여기서 비우지 않는다."""
+        self._open_new_tab()
 
 
     def _open_doc(self):
         """[통합] 확장자로 분기 — .dxf/.dwg는 DXF 가져오기(DWG는 ODA File Converter로 먼저
-        변환, §8 2026-08-14), 그 외는 .ecad 네이티브 열기. 셋 다 현재 씬을 통째로 교체(열기
-        시맨틱) — 기존 도면 위에 추가 삽입하는 기능은 스코프 밖(deep-interview 2026-07-29 확정)."""
+        변환, §8 2026-08-14), 그 외는 .ecad 네이티브 열기. [§8 항목10 Stage B] 항상 새 탭에
+        연다 — 예전엔 현재 씬을 통째로 교체했지만, 탭이 생긴 뒤로는 다른 탭의 작업을 보존해야
+        하므로 자연스럽게 바뀐 의미다(기존 도면 '안에' 추가 삽입하는 기능은 여전히 스코프 밖,
+        deep-interview 2026-07-29 확정). 로드가 실패하면 방금 연 빈 탭이 남는다(사용자가
+        직접 닫으면 됨) — 실패가 드물고 되돌리기 쉬워 자동 정리까지는 하지 않는다."""
         path, _ = QFileDialog.getOpenFileName(self, "열기", "", self._OPEN_FILTER)
         if not path:
             return
         if path.lower().endswith((".dxf", ".dwg")):
             if not self._confirm_dxf_open_once():
                 return
+            self._open_new_tab()
             self._do_open_dxf(path)
         else:
+            self._open_new_tab()
             self._do_open_ecad(path)
 
 
@@ -119,6 +123,7 @@ class _FileIOMixin:
             return
         self._reset_history()
         self._doc_path = path
+        self._update_tab_title()   # [§8 항목10 Stage B] 탭 제목을 파일명으로
         self._apply_loaded_layers(layers)
         # 번호 마커 카운터를 로드된 최대값 뒤로 재설정
         nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
@@ -157,16 +162,17 @@ class _FileIOMixin:
 
     def _confirm_dxf_open_once(self) -> bool:
         """[통합] DXF/DWG 열기 안내 — 앱 생애 처음 1회만(사용자 요청, QSettings 플래그).
-        현재 도면을 통째로 교체한다는 점 + 외부 CAD 도형은 근사 변환될 수 있음을 고지.
-        [§8 DWG 자동변환, 2026-08-14] DWG는 내부적으로 DXF로 변환된 뒤 같은 경로를 타므로
-        같은 안내·같은 1회성 플래그를 공유한다(별개 문구로 나눌 만큼 의미가 다르지 않음)."""
+        [§8 항목10 Stage B] 새 탭에 연다는 점(예전엔 "현재 도면을 통째로 교체") + 외부 CAD
+        도형은 근사 변환될 수 있음을 고지. [§8 DWG 자동변환, 2026-08-14] DWG는 내부적으로
+        DXF로 변환된 뒤 같은 경로를 타므로 같은 안내·같은 1회성 플래그를 공유한다(별개
+        문구로 나눌 만큼 의미가 다르지 않음)."""
         settings = QSettings("EasyCAD", "EasyCAD")
         if settings.value("dxf_open_notified", False, type=bool):
             return True
         settings.setValue("dxf_open_notified", True)
         resp = QMessageBox.information(
             self, "DXF/DWG 열기",
-            "DXF·DWG를 열면 현재 도면을 통째로 교체합니다(추가 삽입 아님).\n"
+            "DXF·DWG는 새 탭으로 엽니다(기존 도면 안에 추가 삽입 아님).\n"
             "외부 CAD에서 만든 도형 중 일부(INSERT 배열·클리핑 등)는 근사 변환될 수 있습니다.\n\n"
             "계속 열까요?",
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
@@ -228,11 +234,23 @@ class _FileIOMixin:
 
 
     def _save_doc(self):
-        """[통합] 저장 다이얼로그에서 고른 확장자로 분기 — 기본 필터는 항상 .ecad
-        (DXF/DWG를 방금 열었어도 마찬가지, deep-interview 2026-07-29 결정).
-        [§8 DWG 자동변환 후속, 2026-08-14] .dwg도 .dxf와 같은 손실 경고를 거쳐 내보낸다."""
+        """[통합] Ctrl+S — [§8 항목10 Stage C] 이미 저장 경로(.ecad)가 있으면 다이얼로그
+        없이 그 경로로 바로 저장(빠른저장). 없으면(처음 저장하는 문서, 또는 DXF/DWG로 열어
+        `_doc_path`가 비어 있는 문서 — "저장"의 기본 포맷은 언제나 .ecad라는 기존 결정 때문에
+        DXF 출처를 되돌아 덮어쓰지 않는다) "다른 이름으로 저장"과 동일하게 다이얼로그를 띄운다."""
+        if self._doc_path:
+            self._do_save_ecad(self._doc_path)
+        else:
+            self._save_doc_as()
+
+
+    def _save_doc_as(self):
+        """[§8 항목10 Stage C] "다른 이름으로 저장"(Ctrl+Shift+S) — 항상 다이얼로그에서 고른
+        확장자로 분기. 기본 필터는 항상 .ecad(DXF/DWG를 방금 열었어도 마찬가지,
+        deep-interview 2026-07-29 결정). [§8 DWG 자동변환 후속, 2026-08-14] .dwg도 .dxf와
+        같은 손실 경고를 거쳐 내보낸다."""
         path, _ = QFileDialog.getSaveFileName(
-            self, "저장", self._doc_path or "", self._DOC_FILTER)
+            self, "다른 이름으로 저장", self._doc_path or "", self._DOC_FILTER)
         if not path:
             return
         if path.lower().endswith((".dxf", ".dwg")):
@@ -255,6 +273,8 @@ class _FileIOMixin:
             QMessageBox.warning(self, "저장 실패", str(e))
             return
         self._doc_path = path
+        self._active_doc.dirty = False   # [§8 항목10 Stage C] DXF/DWG 내보내기는 안 건드림(손실 변환)
+        self._update_tab_title()
         self.statusBar().showMessage(f"저장 완료: {path}", 5000)
 
 

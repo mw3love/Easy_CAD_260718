@@ -26,8 +26,9 @@ import test_part6_grid_minimap_layers as _p6
 import test_part7_symbol_library as _p7
 import test_part8_trim_kernel as _p8
 import test_part9_ai_mermaid as _p9
+import test_part10_multi_doc as _p10
 
-_PARTS = [_p1, _p2, _p3, _p4, _p5, _p6, _p7, _p8, _p9]
+_PARTS = [_p1, _p2, _p3, _p4, _p5, _p6, _p7, _p8, _p9, _p10]
 
 
 def _run_all():

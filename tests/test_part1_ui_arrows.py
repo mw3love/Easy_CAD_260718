@@ -197,6 +197,7 @@ def test_left_panel_accordion_collapse_expand_resizes_panel():
     assert expanded_size.height() > collapsed_size.height()
     layers_section._toggle()                        # 다시 접기
     assert w._left_panel.size() == collapsed_size   # 왕복 후에도 스턱 없이 원래 크기로 복원
+    w._active_doc.dirty = False   # [§8 항목10 Stage C] 이 테스트는 닫기확인창을 검증 대상이 아님
     w.close()
     QSettings("EasyCAD", "EasyCAD").remove("accordion_collapsed_layers")
 

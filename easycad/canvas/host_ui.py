@@ -122,7 +122,17 @@ class _UIBuildMixin:
                                            QKeySequence.StandardKey.Open)
         self._act_save = self._make_action("저장…", "save", self._save_doc,
                                            QKeySequence.StandardKey.Save)
-        for a in (self._act_new, self._act_open, self._act_save):
+        # [§8 항목10 Stage C] 빠른저장(Ctrl+S, 위 _act_save)과 별개로 항상 다이얼로그를
+        # 띄우는 경로 — 저장 경로를 바꾸고 싶을 때.
+        self._act_save_as = self._make_action(
+            "다른 이름으로 저장…", "save", self._save_doc_as,
+            QKeySequence.StandardKey.SaveAs)
+        # [§8 항목10 Stage D] "새 탭"은 이미 있는 "새로 만들기"(Ctrl+N)가 겸한다(§8 항목10
+        # Stage B — 탭 도입에 맞춰 의미를 바꿈) — 여긴 완전히 독립된 새 최상위 창.
+        self._act_new_window = self._make_action(
+            "새 창", "new", self._new_window, "Ctrl+Shift+N")
+        for a in (self._act_new, self._act_open, self._act_save, self._act_save_as,
+                  self._act_new_window):
             m.addAction(a)
         m.addSeparator()
 
@@ -1147,7 +1157,8 @@ class _UIBuildMixin:
         form.addRow(self._pf_hint)
         panel.set_content(content)
         self._props_form = form
-        self._scene.selectionChanged.connect(self._refresh_properties)
+        # [§8 항목10] selectionChanged→_refresh_properties 연결은 host._wire_document_signals가
+        # 문서(탭)마다 맡는다(여기서 하면 최초 문서 하나만 연결되고 새 탭은 못 받음).
         self._refresh_properties()
 
     # ---- 미니맵 패널 (신규기능 — deep-interview 2026-07-28) ------------------
@@ -1197,6 +1208,7 @@ class _UIBuildMixin:
         self._minimap_timer = QTimer(self)
         self._minimap_timer.timeout.connect(self._refresh_minimap)
         self._minimap_timer.start(200)
+        self._minimap_wired_view = self._view   # [§8 항목10 Stage B] _rebuild_minimap 대조용
 
 
     def _on_wheel_zoom(self, dy: int):

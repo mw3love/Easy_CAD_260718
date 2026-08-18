@@ -66,8 +66,20 @@ class _CanvasMixin:
     # 실측 경계(1건=공간쿼리 승, 20건=전체스캔 승)에서 넉넉히 보수적으로 잡은 값.
     _FEW_CHANGED = 4
 
-    def _sync_geom_snapshot(self) -> QRectF | None:
-        """[성능수정 2026-08-07] `self._geom_snapshot`(item→직전 타이트 rect)과 현재 씬을 비교해
+    def _resolve_doc(self):
+        """[§8 항목10] `scene.changed` 시그널이 어느 문서(탭)에서 왔는지 판별. 탭이 여러 개면
+        백그라운드 탭의 씬이 바뀌어도(예: 새 탭에 파일을 로드하는 도중) 이 시그널은 뜬다 —
+        `self._active_doc`(활성 탭 포워딩)을 무심코 읽으면 엉뚱한 문서의 캐시를 오염시키므로,
+        `self.sender()`(신호를 실제로 emit한 QObject)로 진짜 발신 씬을 찾아 그 씬이 속한
+        CanvasDocument를 반환한다. 직접 호출(테스트·`_on_scene_changed(None)` 등)이면
+        `sender()`가 None이라 `self._active_doc`로 폴백 — 단일 탭 시나리오(기존 테스트 전부)
+        에서는 활성 문서가 유일한 문서이므로 이 폴백이 항상 정답이다."""
+        scene = self.sender()
+        doc = getattr(scene, "_owner_doc", None)
+        return doc if doc is not None else self._active_doc
+
+    def _sync_geom_snapshot(self, doc) -> QRectF | None:
+        """[성능수정 2026-08-07] `doc.geom_snapshot`(item→직전 타이트 rect)과 현재 씬을 비교해
         실제로 지오메트리(이동/리사이즈/생성/삭제)가 바뀐 아이템들의 rect 합집합만 반환한다.
         `sceneBoundingRect()`가 아니라 `_content_rect()`(선택 시 핸들 여백 미포함)를 씬좌표로
         매핑해 비교하므로, 클릭으로 선택 상태만 바뀌어 boundingRect가 핸들 여백만큼 커지는 것은
@@ -84,13 +96,13 @@ class _CanvasMixin:
         changed_n = 0   # [성능 최적화 2026-08-08] 아래 _on_scene_changed 주석 참조
         current = set()
         total_n = 0
-        # [성능수정 2026-08-15] 아래 `_uniform_translation` 판정용 — 이번 사이클에 움직인
+        # [성능수정 2026-08-15] 아래 `uniform_translation` 판정용 — 이번 사이클에 움직인
         # 것들이 전부 '같은 델타의 평행이동'인가(크기·회전 변화가 섞이면 즉시 탈락).
         uniform = True
         shift = None
         moved = set()      # 이번 사이클에 실제로 기하가 바뀐 도형들(재라우팅 트리거용)
         arrow_pos = {}
-        for it in self._scene.items():
+        for it in doc.scene.items():
             if isinstance(it, (_ArrowItem, _PolyArrowItem)):
                 # [성능수정 2026-08-15] 화살표는 기하 스냅샷 대상이 아니지만(2026-08-08 결정),
                 # **위치만** 따로 적어 둔다 — 아래 uniform 판정에서 "이 화살표도 도형들과 같은
@@ -101,9 +113,9 @@ class _CanvasMixin:
             total_n += 1
             cr = getattr(it, "_content_rect", None)
             rect = it.mapRectToScene(cr()) if cr is not None else it.sceneBoundingRect()
-            prev = self._geom_snapshot.get(it)
+            prev = doc.geom_snapshot.get(it)
             if prev is None or prev != rect:
-                self._geom_snapshot[it] = QRectF(rect)
+                doc.geom_snapshot[it] = QRectF(rect)
                 delta = rect if prev is None else prev.united(rect)
                 changed = delta if changed is None else changed.united(delta)
                 changed_n += 1
@@ -118,15 +130,15 @@ class _CanvasMixin:
                             shift = d
                         elif abs(d[0] - shift[0]) > 1e-6 or abs(d[1] - shift[1]) > 1e-6:
                             uniform = False
-        for it in [k for k in self._geom_snapshot if k not in current]:
-            delta = self._geom_snapshot.pop(it)
+        for it in [k for k in doc.geom_snapshot if k not in current]:
+            delta = doc.geom_snapshot.pop(it)
             changed = delta if changed is None else changed.united(delta)
             changed_n += 1
             uniform = False                      # 삭제 = 장애물 구성이 바뀜
-        self._last_geom_change_count = changed_n
+        doc.last_geom_change_count = changed_n
         if changed_n:
             # [2-H] 실제 기하 변경이 있을 때만 — 그룹 오버레이 캐시 무효화 도장.
-            self._geom_version = getattr(self, "_geom_version", 0) + 1
+            doc.geom_version += 1
         # [성능수정 2026-08-15] **씬의 도형이 하나도 빠짐없이 같은 델타로 평행이동**했는가.
         # 그렇다면 도형끼리의 상대 기하가 완전히 그대로이므로 어떤 화살표의 최적 경로도
         # 바뀔 수 없다 — `_on_scene_changed`가 라우팅 자체를 통째로 건너뛴다.
@@ -134,21 +146,21 @@ class _CanvasMixin:
         # 아무것도 바뀌지 않는데, 드래그 중 500개를 전부 '미룬 빚'으로 쌓고 놓는 순간
         # A*를 500번 돌려 2.2초(실화면 5초)를 멈췄다.
         # 일부만 안 움직였으면(부분 선택) 상대 기하가 바뀐 것이므로 uniform이 아니다.
-        self._uniform_translation = bool(
+        doc.uniform_translation = bool(
             uniform and shift is not None and changed_n == total_n and total_n > 0)
         # 그 평행이동에 **함께 실려 간** 화살표들 — 이들만 건너뛸 수 있다. 도형만 옮기고
         # 화살표는 선택 안 된 경우(화살표가 제자리) 끝점이 따라가야 하므로 건너뛰면 안 된다.
-        prev_arrow_pos = getattr(self, "_arrow_pos_snapshot", None) or {}
+        prev_arrow_pos = doc.arrow_pos_snapshot or {}
         moved_with = set()
-        if self._uniform_translation:
+        if doc.uniform_translation:
             for a, pos in arrow_pos.items():
                 p0 = prev_arrow_pos.get(a)
                 if p0 is not None and abs((pos.x() - p0.x()) - shift[0]) <= 1e-6 \
                         and abs((pos.y() - p0.y()) - shift[1]) <= 1e-6:
                     moved_with.add(a)
-        self._uniform_moved_arrows = moved_with
-        self._arrow_pos_snapshot = arrow_pos
-        self._moved_items = moved
+        doc.uniform_moved_arrows = moved_with
+        doc.arrow_pos_snapshot = arrow_pos
+        doc.moved_items = moved
         return changed
 
     def _on_scene_changed(self, region):
@@ -168,13 +180,14 @@ class _CanvasMixin:
         56초, `tools/profile_reroute.py`). region 대신 `_sync_geom_snapshot()`이 계산한 '실제로
         움직인 아이템들의 rect 합집합'으로 화살표 겹침을 판정해, 순수 선택 클릭은 아예 reroute를
         건너뛴다. region=None(테스트 강제호출)은 기존처럼 무조건 전체 재검토로 유지."""
-        if self._rerouting:
+        doc = self._resolve_doc()   # [§8 항목10] 발신 씬이 속한 문서 — 활성 탭이 아니라도 정확
+        if doc.rerouting:
             return  # 재진입 가드 — reroute가 유발한 changed로 되돌아오지 않게
-        if getattr(self._view, "_drawing", False):
+        if getattr(doc.view, "_drawing", False):
             return  # 화살표 그리는 중엔 _update_arrow_draw가 tip을 주도 — 간섭 방지
-        if getattr(self._view, "_place", None) is not None:
+        if getattr(doc.view, "_place", None) is not None:
             return  # 클릭 배치 중엔 배치 로직이 끝점을 주도 — 간섭 방지
-        geom_changed = self._sync_geom_snapshot()
+        geom_changed = self._sync_geom_snapshot(doc)
         if region is None:
             union = None
         else:
@@ -187,9 +200,9 @@ class _CanvasMixin:
                 return  # 실제 지오메트리 변경 없음(순수 선택 등 리페인트만) — reroute 불필요
             union = geom_changed
         margin = _PolyArrowItem._ROUTE_CLEARANCE  # 기존 장애물-회피 여유와 동일 감도로 재사용
-        self._rerouting = True
+        doc.rerouting = True
         try:
-            # [성능 최적화 2026-08-08] `self._scene.items()`(전체 ~1600개) 순회 대신 Qt의 BSP
+            # [성능 최적화 2026-08-08] `doc.scene.items()`(전체 ~1600개) 순회 대신 Qt의 BSP
             # 트리 공간 인덱스로 후보를 좁힌다 — `_rb_preview_hits()`(core_view.py)가 이미 같은
             # 목적으로 쓰는 검증된 패턴(규칙 2 손안의 카드: Qt가 이미 제공)을 재사용. 정확성
             # 근거: 아래 조건은 원래도 "화살표 bbox를 margin만큼 부풀려 union과 겹치는가"였다 —
@@ -210,12 +223,12 @@ class _CanvasMixin:
             # 많으면(다중선택 드래그) 검증된 전체스캔으로 안전하게 폴백한다.
             # [2026-08-15] 상수를 클래스 속성으로 승격 — `flush_deferred_reroute`가 같은
             # 신호로 fast를 골라야 지연 전후의 최종 경로가 일치한다(_FEW_CHANGED 참조).
-            many_changed = union is None or self._last_geom_change_count > self._FEW_CHANGED
+            many_changed = union is None or doc.last_geom_change_count > self._FEW_CHANGED
             if many_changed:
-                candidates = self._scene.items()   # 강제 전체 재검토 / 다건 변경 — 검증된 경로
+                candidates = doc.scene.items()   # 강제 전체 재검토 / 다건 변경 — 검증된 경로
             else:
                 query_rect = union.adjusted(-margin, -margin, margin, margin)
-                candidates = self._scene.items(
+                candidates = doc.scene.items(
                     query_rect, Qt.ItemSelectionMode.IntersectsItemBoundingRect)
             # [성능 최적화 2026-08-11] 다건 변경(그룹 드래그 등)일 때만 fast=True — `_route_ortho`의
             # 클리어런스 폴리시 탐색(경로가 이미 결함 없어도 "더 예쁜 우회로"를 찾는 추가 A* 탐색,
@@ -228,11 +241,11 @@ class _CanvasMixin:
             # 놓는 순간 `flush_deferred_reroute()`가 정확한 경로를 복원한다(결정 ⓐ·ⓑ).
             # 1-0 실측: 1000개에서 도형 1개 드래그 916.6ms 중 순수 렌더는 142.3ms뿐이고
             # 나머지 대부분이 이 A*였다(`docs/perf_plan_500_1000.md` §5).
-            view = getattr(self, "_view", None)
+            view = doc.view
             defer = bool(view is not None and view.is_drag_session())
-            uniform = getattr(self, "_uniform_translation", False)
-            moved_with = getattr(self, "_uniform_moved_arrows", ()) or ()
-            moved = getattr(self, "_moved_items", None)
+            uniform = doc.uniform_translation
+            moved_with = doc.uniform_moved_arrows or ()
+            moved = doc.moved_items
             for it in candidates:
                 # 곡선화살표(_ArrowItem)·직선화살표(_PolyArrowItem) 모두 지속 연결 리라우트.
                 if isinstance(it, (_ArrowItem, _PolyArrowItem)) and it.has_binding():
@@ -258,15 +271,15 @@ class _CanvasMixin:
                     it.reroute(pin_pred=self._make_pin_pred(it), fast=many_changed,
                                defer_route=defer)
                     if defer:
-                        self._deferred_arrows.add(it)
+                        doc.deferred_arrows.add(it)
                         # ⚠ fast 판단은 **미루는 이 시점의 것을 기억**해 둔다. flush 때
                         # `_last_geom_change_count`를 다시 읽으면 안 된다 — 릴리스 직전
                         # 마지막 scene.changed가 보통 '변경 0건'(리페인트만)이라 그 값이
                         # 0으로 덮이고, 그러면 fast=False가 돼 클리어런스 사다리를 전부
                         # 돌아 릴리스가 2417→3775ms로 오히려 악화된다(실측).
-                        self._deferred_fast = many_changed
+                        doc.deferred_fast = many_changed
         finally:
-            self._rerouting = False
+            doc.rerouting = False
 
     def flush_deferred_reroute(self):
         """[성능계획 2-B+2-F] 드래그를 놓는 순간 미뤄둔 A* 재라우팅을 정확히 복원한다.
@@ -279,22 +292,27 @@ class _CanvasMixin:
         `fast`는 **미루던 시점에 기억해 둔 값**(`_deferred_fast`)을 쓴다 — 지연이 없던 시절에도
         드래그 마지막 프레임이 바로 그 값으로 라우팅을 확정했으므로, 같은 값이어야 최종 경로가
         예전과 정확히 일치한다(회귀 테스트로 확인). flush 시점에 `_last_geom_change_count`를
-        다시 읽으면 안 되는 이유는 위 `_on_scene_changed`의 저장 지점 주석 참조."""
-        arrows = self._deferred_arrows
+        다시 읽으면 안 되는 이유는 위 `_on_scene_changed`의 저장 지점 주석 참조.
+
+        [§8 항목10] 항상 `self._active_doc`을 쓴다(sender 기반 해석이 아님) — 이 메서드는
+        시그널 슬롯이 아니라 마우스 릴리스에서 직접 호출되고, 마우스 이벤트는 언제나 현재
+        보이는(=활성) 탭의 뷰에만 온다."""
+        doc = self._active_doc
+        arrows = doc.deferred_arrows
         if not arrows:
             return
-        self._deferred_arrows = set()
-        if self._rerouting:
+        doc.deferred_arrows = set()
+        if doc.rerouting:
             return
-        self._rerouting = True
+        doc.rerouting = True
         try:
-            fast = getattr(self, "_deferred_fast", True)
+            fast = doc.deferred_fast
             for a in arrows:
                 if a.scene() is None:
                     continue
                 a.reroute(pin_pred=self._make_pin_pred(a), fast=fast)
         finally:
-            self._rerouting = False
+            doc.rerouting = False
 
     @staticmethod
     def _make_pin_pred(arrow):

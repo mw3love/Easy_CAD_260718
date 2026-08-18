@@ -134,6 +134,23 @@ def _border_attach(rect_scene: QRectF, toward: QPointF) -> QPointF:
 # 무한 캔버스: 아주 큰 sceneRect로 사실상 무한한 팬 범위 제공.
 _SCENE_HALF = 50000.0
 
+
+class _SharedClipboard:
+    """[§8 항목10, 2026-08-18] 도형 클립보드 + 스타일 복사(format painter) — 여러 창이 실시간
+    으로 공유할 수 있는 그릇(deep-interview 확정: "새 창"에서도 어디서 복사해도 어디든
+    붙여넣기 가능해야 함). 모듈 레벨 싱글턴이 아니라 `CanvasWindow.__init__`이 매번 새
+    인스턴스를 만든다 — 독립적으로 생성된 창(앱 시작·테스트의 `CanvasWindow()`)은 서로
+    다른 인스턴스를 가져 완전히 격리되고, "새 창"(§8 항목10 Stage D)만 부모 창의 인스턴스를
+    그대로 넘겨받아(생성자 인자) 진짜 라이브 공유가 된다. 처음에 모듈 레벨 싱글턴으로
+    구현했다가 기존 테스트가 `CanvasWindow()`를 여러 번 만들 때마다 서로 클립보드를
+    공유해버려(오염) 되돌렸다 — `docs/pitfalls.md` 참조 예정."""
+
+    def __init__(self):
+        self.clip: list = []
+        self.clip_src: list = []
+        self.style: dict | None = None
+
+
 # [Phase 6 M1] 파일·보기 액션 아이콘 색(단색). 다크모드 도입 시 팔레트 기반으로 승격 예정.
 _ICON_COLOR = QColor("#39434f")
 
