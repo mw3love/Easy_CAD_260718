@@ -54,7 +54,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~9_*.py       테마별 회귀 스모크 543종(개별 pytest 실행 가능)
+└── test_part1~10_*.py      테마별 회귀 스모크 641종(개별 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -759,6 +759,19 @@ docs/
   삭제)로 교체(`symbol_library.rename_symbol` 신설). 기존 등록된 심볼의 썸네일은 재등록
   전까진 그대로(정적 PNG 저장 방식). 신규 pytest 11종, 직접실행 625→636종, 실제 창 스크린샷
   으로 다크/라이트 기본색·미니맵·썸네일 육안 확인. 상세: `docs/history/2026-08.md` 같은 제목.
+- **Shift+휠 다중선택 일괄 적용 + 텍스트/라벨 폰트크기 확장 완료(2026-08-18, 같은 날 후속)**
+  — 다중선택 상태에서 shift+휠이 커서 아래 하나만이 아니라 선택된 것 전부에 일괄 적용되도록
+  `host_canvas.adjust_selected_properties`(신규) 추가, 독립 텍스트·도형/화살표 라벨(둘 다
+  같은 `_TextItem`)은 두께 대신 폰트크기(`_base_pt` 기준)가 조절되도록 확장 — 커서가 라벨
+  위에 있으면 라벨 폰트가, 도형 몸통 위에 있으면 도형 두께가 바뀌도록 우선순위 분기.
+  속성패널도 단일종류 다중선택 시 개수를 표시(`"사각형 3개"`, 이전엔 혼합 선택일 때만
+  개수가 붙었음). 신규 pytest 5종, 직접실행 636→641종, 실제 창에서 QWheelEvent 직접
+  발화로 검증. 상세: `docs/history/2026-08.md` 같은 제목.
+- **다각형/폴리라인 도구 — 설계 확정, 구현 대기(2026-08-18, 같은 날 후속, 코드 변경 없음)**
+  — deep-interview로 별도 "다각형" 도구·닫기/열린종료 지원·진짜 새 도형 클래스·1차 범위
+  (그리기+이동/리사이즈+undo+`.ecad`, DXF·TRIM/EXTEND는 후속)까지 확정. 다른 PC에서 이어서
+  구현할 예정이라 이번엔 설계만 문서화. 전문: `docs/polygon_tool_design.md`(신규),
+  `docs/EasyCAD_계획.md` §8 항목21.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

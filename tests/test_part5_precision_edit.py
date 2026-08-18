@@ -138,6 +138,83 @@ def test_shiftwheel_updates_default_width():
 
 
 
+def test_shiftwheel_font_size_on_text_item():
+    # [실사용 피드백 2026-08-18] 텍스트(독립 텍스트 도구)는 두께가 아니라 폰트크기가 조절돼야 한다.
+    w = CanvasWindow()
+    it = _TextItem(QColor("#111111")); it.setPlainText("hello")
+    w._scene.addItem(it); it.setSelected(True)
+    assert it._base_pt == 16
+    w.adjust_item_property(it, +3)
+    assert it._base_pt == 19
+    assert it.font().pointSize() == 19
+    w.undo()
+    assert it._base_pt == 16
+    w.redo()
+    assert it._base_pt == 19
+
+
+def test_shiftwheel_font_size_on_shape_label_leaves_host_width_untouched():
+    # [실사용 피드백 2026-08-18] 도형/화살표에 붙은 라벨도 같은 _TextItem이라 폰트크기가
+    # 조절 대상 — 단, 호스트(도형) 자체의 선 두께는 라벨 조절과 별개로 그대로 유지돼야 한다.
+    w = CanvasWindow()
+    rect = _mk_pen_rect(w, width=2.0)
+    lbl = rect.ensure_label(); lbl.setPlainText("A")
+    before_base = lbl._base_pt
+    before_pen_w = rect.pen().widthF()
+    w.adjust_item_property(lbl, +2)
+    assert lbl._base_pt == before_base + 2
+    assert abs(rect.pen().widthF() - before_pen_w) < 1e-9
+
+
+def test_adjust_selected_properties_applies_to_entire_multiselection():
+    # [실사용 피드백 2026-08-18] 여러 개 선택 후 shift+휠 = 커서 아래 하나가 아니라
+    # 선택된 것 전부에 일괄 적용 + undo 1스텝으로 묶인다.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, width=2.0)
+    b = _mk_pen_rect(w, x=100, width=2.0)
+    a.setSelected(True); b.setSelected(True)
+    d0 = len(w._undo)
+    w.adjust_selected_properties([a, b], +2)
+    assert abs(a.pen().widthF() - 4.0) < 1e-6
+    assert abs(b.pen().widthF() - 4.0) < 1e-6
+    assert len(w._undo) == d0 + 1
+    w.undo()
+    assert abs(a.pen().widthF() - 2.0) < 1e-6
+    assert abs(b.pen().widthF() - 2.0) < 1e-6
+
+
+def test_adjust_selected_properties_bulk_mixed_shape_and_text():
+    # 도형(두께)+텍스트(폰트크기)가 섞인 다중선택도 각자 맞는 속성으로 한 번에 조절된다.
+    w = CanvasWindow()
+    rect = _mk_pen_rect(w, width=2.0)
+    txt = _TextItem(QColor("#111111")); txt.setPlainText("hi")
+    w._scene.addItem(txt)
+    rect.setSelected(True); txt.setSelected(True)
+    w.adjust_selected_properties([rect, txt], +2)
+    assert abs(rect.pen().widthF() - 4.0) < 1e-6
+    assert txt._base_pt == 18
+
+
+def test_shiftwheel_event_prioritizes_label_over_host_shape():
+    # 종단 검증 — 실제 QWheelEvent를 라벨 위치에 흘려, 두께 분기보다 먼저 라벨의
+    # 폰트크기 분기가 잡히는지 확인(선택 여부와 무관하게 커서 위치가 우선).
+    from PyQt6.QtGui import QWheelEvent
+    w = CanvasWindow()
+    rect = _mk_pen_rect(w, x=0, y=0, ww=200, hh=200, width=2.0)
+    lbl = rect.ensure_label(); lbl.setPlainText("LBL")
+    before_base = lbl._base_pt
+    before_pen_w = rect.pen().widthF()
+    local = QPointF(w._view.mapFromScene(lbl.sceneBoundingRect().center()))
+    ev = QWheelEvent(local, local, QPoint(0, 0), QPoint(0, 120),
+                      Qt.MouseButton.NoButton, Qt.KeyboardModifier.ShiftModifier,
+                      Qt.ScrollPhase.NoScrollPhase, False)
+    w._view.wheelEvent(ev)
+    assert lbl._base_pt == before_base + 1
+    assert abs(rect.pen().widthF() - before_pen_w) < 1e-9
+
+
+
+
 def test_disabled_icon_has_dim_pixmap():
     from easycad.canvas.host_widgets import _act_icon
     from PyQt6.QtGui import QIcon

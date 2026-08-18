@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
+    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon, _nearest_border,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
@@ -383,6 +383,15 @@ class _CanvasMixin:
         # [M2] Shift+휠 두께 조절도 저널에 실어 되돌릴 수 있게 한다(이전엔 미추적).
         # 연속 굴림은 (아이템별) coalesce_key로 undo 1스텝에 병합.
         before = item.capture_state()
+        if isinstance(item, _TextItem):
+            # [실사용 피드백 2026-08-18] 텍스트(독립 텍스트 도구·도형/화살표 라벨이 같은
+            # 클래스)는 두께 대신 폰트크기를 조절한다. `_base_pt`는 중앙라벨 축소렌더
+            # (`_fit_label_to_shape`) 이전의 "기준" 크기라 표시값이 아니라 이걸 가감한다.
+            new_size = max(_MIN_FONT, min(_MAX_FONT, item._base_pt + step))
+            item.apply_font_size(new_size)
+            self.push_undo_state([(item, before)], coalesce_key=("font", id(item)))
+            self._refresh_properties()
+            return
         if isinstance(item, (_ArrowItem, _PolyArrowItem)):
             new_w = max(1, item._width + step)
             item.apply_width(new_w)
@@ -394,5 +403,33 @@ class _CanvasMixin:
         self.push_undo_state([(item, before)], coalesce_key=("width", id(item)))
         self.current_width = float(new_w)   # [M2 #A] 바꾼 두께를 다음 도형 기본값으로(sticky)
         self._refresh_properties()          # [M2 #3] 속성 패널 값 실시간 반영
+
+
+    def adjust_selected_properties(self, items, step: int):
+        # [실사용 피드백 2026-08-18] Shift+휠 다중선택 일괄 조절 — 이전엔 커서 아래
+        # 첫 아이템 하나만 바뀌고 나머지 선택은 무시됐다. 한 번의 휠 굴림을 undo
+        # 1스텝으로 묶기 위해 adjust_item_property를 아이템별로 부르지 않고 배치 처리.
+        snaps = []
+        for item in items:
+            before = item.capture_state()
+            if isinstance(item, _TextItem):
+                new_size = max(_MIN_FONT, min(_MAX_FONT, item._base_pt + step))
+                item.apply_font_size(new_size)
+            elif isinstance(item, (_ArrowItem, _PolyArrowItem)):
+                new_w = max(1, item._width + step)
+                item.apply_width(new_w)
+                self.current_width = float(new_w)
+            elif hasattr(item, "pen"):
+                new_w = max(1.0, item.pen().widthF() + step)
+                item.apply_width(new_w)
+                self.current_width = float(new_w)
+            else:
+                continue
+            snaps.append((item, before))
+        if not snaps:
+            return
+        key_ids = tuple(sorted(id(it) for it, _ in snaps))
+        self.push_undo_state(snaps, coalesce_key=("wheel_adjust", key_ids))
+        self._refresh_properties()
 
     # 줌 (커서 기준 — 뷰가 AnchorUnderMouse)

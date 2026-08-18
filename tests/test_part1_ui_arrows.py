@@ -259,7 +259,9 @@ def test_properties_dock_readout():
     r2.setSelected(True); w._refresh_properties()
     assert w._pf_color_val.text() == "혼합"
     assert abs(w._pf_width.value() - 3.0) < 1e-6
-    assert w._pf_type.text() == "사각형"        # 둘 다 사각형 → 종류 유지
+    # [실사용 피드백 2026-08-18] 단일종류 다중선택도 개수를 표시(이전엔 "사각형"만 표시돼
+    # 몇 개가 선택됐는지 알 수 없었다).
+    assert w._pf_type.text() == "사각형 2개"
 
 
 

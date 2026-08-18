@@ -374,8 +374,15 @@ class _StyleMixin:
                 return
             props = [self._read_props(it) for it in sel]
             types = {p["type"] for p in props}
-            self._pf_type.setText(next(iter(types)) if len(types) == 1
-                                  else f"{len(sel)}개 · 혼합")
+            if len(types) != 1:
+                self._pf_type.setText(f"{len(sel)}개 · 혼합")
+            elif len(sel) > 1:
+                # [실사용 피드백 2026-08-18] 단일종류 다중선택도 개수를 보여준다 —
+                # 이전엔 혼합 선택일 때만 개수를 붙여, 같은 종류 3개를 선택해도 "사각형"만
+                # 표시돼 몇 개가 선택됐는지 알 수 없었다.
+                self._pf_type.setText(f"{next(iter(types))} {len(sel)}개")
+            else:
+                self._pf_type.setText(next(iter(types)))
             self._pf_hint.setText("")
 
             # 색 — 스와치 + hex(혼합이면 표시만).

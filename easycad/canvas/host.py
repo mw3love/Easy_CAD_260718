@@ -8,7 +8,7 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
   속성: current_tool/color/width, arrow_head_at_end, current_font_size,
         current_text_bg, current_badge_size, _bg_item
   메서드: is_edit_mode/toggle_edit_mode/_on_escape/make_pen/set_tool/
-          next_badge_number/adjust_item_property/_on_wheel_zoom/
+          next_badge_number/adjust_item_property/adjust_selected_properties/_on_wheel_zoom/
           _win_drag_start/_win_drag_move/_win_drag_end/
           push_undo_add/push_undo_delete/push_undo_move/undo/
           copy_selection/paste_selection

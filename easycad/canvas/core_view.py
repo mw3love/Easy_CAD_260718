@@ -1989,12 +1989,31 @@ class _AnnotatorView(QGraphicsView):
         # (도형=두께 / 텍스트·번호=크기)은 'Shift+휠'로 옮긴다(휠-줌 충돌 방지).
         if (self._owner.is_edit_mode()
                 and event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            step = 1 if dy > 0 else -1
             bg = getattr(self._owner, "_bg_item", None)
-            for it in self.items(event.position().toPoint()):
+            pt = event.position().toPoint()
+            # [실사용 피드백 2026-08-18] 라벨(도형/화살표에 붙은 텍스트)은 선택 대상이
+            # 아니라(도형 클릭 시 도형이 선택되게 한 관례) 커서가 정확히 텍스트 위에
+            # 있을 때만 잡을 수 있다 — 두께 분기보다 먼저 확인해 폰트크기로 처리.
+            for it in self.items(pt):
+                if it is bg:
+                    continue
+                if isinstance(it, _TextItem):
+                    self._owner.adjust_item_property(it, step)
+                    event.accept()
+                    return
+            # [실사용 피드백 2026-08-18] 다중선택 상태면 선택된 것 전부에 일괄 적용
+            # (이전엔 커서 아래 첫 아이템 하나만 바뀌고 나머지 선택은 무시됐다).
+            sel = self.scene().selectedItems()
+            if sel:
+                self._owner.adjust_selected_properties(sel, step)
+                event.accept()
+                return
+            for it in self.items(pt):
                 if it is bg:
                     continue
                 if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
-                    self._owner.adjust_item_property(it, 1 if dy > 0 else -1)
+                    self._owner.adjust_item_property(it, step)
                     event.accept()
                     return
         self._owner._on_wheel_zoom(dy)
