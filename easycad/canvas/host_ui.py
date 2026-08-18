@@ -27,6 +27,7 @@ from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
     _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
+    _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
@@ -497,6 +498,11 @@ class _UIBuildMixin:
         persist=True일 때만 QSettings에 저장(테스트가 사용자 설정을 덮지 않도록 분리)."""
         self._dark = dark
         key = "dark" if dark else "light"
+        # [실사용 피드백 2026-08-18] 기본 도형 색이 아직 사용자가 안 건드린 상태(sticky
+        # 미변경)면 새 테마의 잉크색으로 따라간다 — 직접 고른 색은 `_color_is_default`가
+        # False라 여기 안 걸리고 그대로 유지(host_style._set_current_color 참조).
+        if getattr(self, "_color_is_default", False):
+            self.current_color = QColor(_DEFAULT_INK_DARK if dark else _DEFAULT_INK_LIGHT)
         _set_icon_color(dark)   # host_widgets._ICON_COLOR 갱신(host_widgets._act_icon()이 읽는 실제 전역)
         app = QApplication.instance()
         if app is not None:
@@ -887,7 +893,7 @@ class _UIBuildMixin:
                 btn = self._palette_button(entry["name"][:6], icon, entry["name"], key)
                 btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                 btn.customContextMenuRequested.connect(
-                    lambda _pos, sid=sid: self._delete_custom_symbol_prompt(sid))
+                    lambda pos, b=btn, sid=sid: self._show_custom_symbol_context_menu(b, pos, sid))
                 self._custom_sym_buttons[sid] = btn
                 btns.append(btn)
             for i, b in enumerate(btns):
@@ -900,6 +906,29 @@ class _UIBuildMixin:
         for name in folders:
             add_group(name, name, deletable=True)
         self._relayout_left_panel()
+
+
+    def _show_custom_symbol_context_menu(self, btn: QToolButton, pos, sym_id: str):
+        """[실사용 피드백 2026-08-18] 우클릭 = 곧바로 삭제 확인창이던 것을 메뉴(이름변경/삭제)
+        로 교체 — 탐색기 관례. 폴더 이름변경은 스코프 밖(심볼만)."""
+        menu = QMenu(self)
+        menu.addAction("이름변경…", lambda: self._rename_custom_symbol_prompt(sym_id))
+        menu.addAction("삭제…", lambda: self._delete_custom_symbol_prompt(sym_id))
+        menu.exec(btn.mapToGlobal(pos))
+
+
+    def _rename_custom_symbol_prompt(self, sym_id: str):
+        """[실사용 피드백 2026-08-18] 팔레트 버튼 우클릭 → 이름변경 — 새 이름 입력 후
+        `symbol_library.rename_symbol`로 저장, 패널을 다시 그려 버튼 라벨/툴팁에 반영."""
+        entry = next((e for e in symbol_library.load_library() if e.get("id") == sym_id), None)
+        if entry is None:
+            return
+        name, ok = QInputDialog.getText(self, "심볼 이름변경", "새 이름:", text=entry["name"])
+        name = name.strip()
+        if not ok or not name:
+            return
+        symbol_library.rename_symbol(sym_id, name)
+        self._refresh_custom_symbol_section()
 
 
     def _delete_custom_symbol_prompt(self, sym_id: str):

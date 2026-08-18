@@ -71,6 +71,14 @@ _COLOR_PRESETS = [
 ]
 _DEFAULT_COLOR = _COLOR_PRESETS[0]
 
+# [실사용 피드백 2026-08-18] 새 도형의 기본 선색 — 표제란/표(core_shapes.py의 _INK_DARK/
+# _INK_LIGHT)와 같은 "테마 적응 잉크색" 값 재사용. 라이트 캔버스(#ffffff)에서 순수 흰색은
+# 편집 중 안 보이므로 다크/라이트에 따라 갈아끼운다(host.py 초기화 + host_ui._apply_theme).
+# 사용자가 직접 색을 고르면 그 순간부터 sticky로 고정(host_style._set_current_color가
+# self._color_is_default를 False로 내림 — 이후엔 테마를 안 따라감).
+_DEFAULT_INK_DARK = "#cdd8e3"
+_DEFAULT_INK_LIGHT = "#111111"
+
 # 밝은 툴바(Snipaste식 pill) 위 중립 아이콘 색 — 어두운 회색(선택·되돌리기·복사·저장).
 # 그리기 도구 아이콘은 current_color(색)로 칠해져 밝은 바에서도 보인다.
 _ICON_DARK = "#3a3a3a"

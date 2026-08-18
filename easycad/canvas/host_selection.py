@@ -31,6 +31,7 @@ from easycad.canvas.annotator_core import (
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    _min_stroke_render,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -93,7 +94,10 @@ def _render_symbol_thumbnail(items, box: QRectF, size: int = 64) -> str:
     scale = min(avail / box.width(), avail / box.height()) if box.width() > 0 and box.height() > 0 else 1.0
     w, h = box.width() * scale, box.height() * scale
     target = QRectF(margin + (avail - w) / 2, margin + (avail - h) / 2, w, h)
-    scene.render(p, target, box)
+    # [실사용 피드백 2026-08-18] 64px 축소 렌더라 1px(기본 두께) 선이 안 보임 — 미니맵과
+    # 같은 이유·같은 처방(_min_stroke_render 참조).
+    with _min_stroke_render(items):
+        scene.render(p, target, box)
     p.end()
     return _pixmap_to_b64(pm)
 

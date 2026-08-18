@@ -6,7 +6,7 @@ pytest test_part7_symbol_library.py. 라이브러리 파일은 _isolated_symbol_
 """
 from unittest.mock import patch
 
-from PyQt6.QtWidgets import QInputDialog, QMessageBox
+from PyQt6.QtWidgets import QInputDialog, QMessageBox, QMenu
 
 from _shared import *  # noqa: F401,F403
 from easycad.fileio import symbol_library
@@ -30,6 +30,20 @@ def test_register_selection_creates_entry_and_palette_button():
         assert entries[0]["name"] == "증폭기"
         assert {d["type"] for d in entries[0]["items"]} == {"rect", "ellipse"}
         assert entries[0]["id"] in w._custom_sym_buttons
+
+
+def test_register_selection_thumbnail_uses_min_stroke_render():
+    # [실사용 피드백 2026-08-18] 배선 확인 — 등록 시 썸네일 렌더가 최소 두께 헬퍼를 거치는지
+    # (값 검증은 test_part6의 test_min_stroke_render_* 가 이미 함, 여기선 배선만).
+    from easycad.canvas import host_selection
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        r = _mk_pen_rect(w, width=1.0); r.setSelected(True)
+        with patch("easycad.canvas.host_selection._min_stroke_render",
+                   wraps=host_selection._min_stroke_render) as spy, \
+             patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
+            w.register_selection_as_symbol()
+        assert spy.called
 
 
 def test_register_empty_selection_is_noop():
@@ -113,6 +127,85 @@ def test_delete_custom_symbol_declined_keeps_entry():
             w._delete_custom_symbol_prompt(sym_id)
         assert len(symbol_library.load_library()) == 1
         assert sym_id in w._custom_sym_buttons
+
+
+# ---- [실사용 피드백 2026-08-18] 심볼 이름변경(우클릭 메뉴) -----------------------------
+
+def test_rename_symbol_updates_name():
+    with _isolated_symbol_library():
+        entry = symbol_library.add_symbol("증폭기", [], "")
+        symbol_library.rename_symbol(entry["id"], "저잡음 증폭기")
+        assert symbol_library.load_library()[0]["name"] == "저잡음 증폭기"
+
+
+def test_rename_symbol_blank_name_is_noop():
+    with _isolated_symbol_library():
+        entry = symbol_library.add_symbol("증폭기", [], "")
+        symbol_library.rename_symbol(entry["id"], "   ")
+        assert symbol_library.load_library()[0]["name"] == "증폭기"
+
+
+def test_rename_symbol_unknown_id_is_noop():
+    with _isolated_symbol_library():
+        symbol_library.add_symbol("증폭기", [], "")
+        symbol_library.rename_symbol("doesnotexist", "새이름")
+        assert symbol_library.load_library()[0]["name"] == "증폭기"
+
+
+def test_rename_custom_symbol_prompt_updates_entry_and_button_refresh():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
+            w.register_selection_as_symbol()
+        sym_id = symbol_library.load_library()[0]["id"]
+
+        with patch.object(QInputDialog, "getText", return_value=("저잡음 증폭기", True)):
+            w._rename_custom_symbol_prompt(sym_id)
+        assert symbol_library.load_library()[0]["name"] == "저잡음 증폭기"
+        assert sym_id in w._custom_sym_buttons   # refresh가 다시 그려도 버튼 매핑 유지
+        assert w._custom_sym_buttons[sym_id].toolTip() == "저잡음 증폭기"
+
+
+def test_rename_custom_symbol_prompt_cancelled_keeps_name():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
+            w.register_selection_as_symbol()
+        sym_id = symbol_library.load_library()[0]["id"]
+
+        with patch.object(QInputDialog, "getText", return_value=("무시될 이름", False)):
+            w._rename_custom_symbol_prompt(sym_id)
+        assert symbol_library.load_library()[0]["name"] == "증폭기"
+
+
+def test_custom_symbol_context_menu_has_rename_and_delete_actions():
+    """우클릭이 곧바로 삭제 확인창을 띄우던 옛 동작 대신 메뉴(이름변경/삭제)를 띄우는지 —
+    실제 모달은 `exec`를 no-op으로 바꿔 안 띄우고, 만들어진 메뉴의 액션 텍스트만 확인."""
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
+            w.register_selection_as_symbol()
+        sym_id = symbol_library.load_library()[0]["id"]
+        btn = w._custom_sym_buttons[sym_id]
+
+        created_menus = []
+
+        class _CapturingMenu(QMenu):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                created_menus.append(self)
+
+            def exec(self, *a, **kw):
+                return None   # 실제 모달을 안 띄움
+
+        with patch("easycad.canvas.host_ui.QMenu", _CapturingMenu):
+            w._show_custom_symbol_context_menu(btn, QPointF(1, 1).toPoint(), sym_id)
+        assert len(created_menus) == 1
+        texts = [a.text() for a in created_menus[0].actions()]
+        assert texts == ["이름변경…", "삭제…"]
 
 
 # ---- [신규기능, 2026-08-12 좌측 패널 아코디언 개편] 내 심볼 폴더 -----------------------

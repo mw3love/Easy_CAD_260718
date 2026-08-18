@@ -277,6 +277,48 @@ def test_minimap_refresh_hooked_to_viewport_resize_not_just_window():
     w.close()
 
 
+# ---- [실사용 피드백 2026-08-18] 축소 렌더 최소 선두께 ---------------------------------
+
+def test_min_stroke_render_bumps_thin_pens_only_during_block():
+    # [실사용 피드백] 미니맵/심볼 썸네일처럼 축소 렌더하는 자리에서 1px 기본 두께가 안 보임
+    # — 렌더 블록 동안만 최소 두께로 올렸다가 블록이 끝나면 원래 값으로 되돌아가야 한다.
+    from easycad.canvas.core_shapes import _min_stroke_render, _MIN_RENDER_STROKE_SCENE
+    w = CanvasWindow()
+    thin = _mk_pen_rect(w, width=1.0)
+    thick = _mk_pen_rect(w, x=200, width=5.0)
+    with _min_stroke_render([thin, thick]):
+        assert thin.pen().widthF() == _MIN_RENDER_STROKE_SCENE
+        assert thick.pen().widthF() == 5.0   # 이미 충분히 두꺼우면 안 건드림
+    assert abs(thin.pen().widthF() - 1.0) < 1e-9   # 블록이 끝나면 원복
+    assert abs(thick.pen().widthF() - 5.0) < 1e-9
+
+
+def test_min_stroke_render_bumps_thin_arrow_width_field():
+    # [실사용 피드백] _ArrowItem/_PolyArrowItem은 QPen이 아니라 자체 `_width` 필드를 쓴다
+    # (paint()가 매번 QPen을 새로 만듦) — 같은 헬퍼가 이 계열도 다뤄야 한다.
+    from easycad.canvas.core_shapes import _min_stroke_render, _MIN_RENDER_STROKE_SCENE
+    w = CanvasWindow()
+    ar = _ArrowItem(QColor("#111111"), 1.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 0))
+    w._scene.addItem(ar)
+    with _min_stroke_render([ar]):
+        assert ar._width == _MIN_RENDER_STROKE_SCENE
+    assert ar._width == 1.0
+
+
+def test_minimap_rebuild_uses_min_stroke_render():
+    # [실사용 피드백] 배선 확인 — 실제 미니맵 렌더가 위 헬퍼를 거치는지(값 검증은 위 테스트가
+    # 이미 함, 여기선 "이 자리에서 실제로 불리는지"만).
+    from unittest.mock import patch
+    from easycad.canvas import host_widgets
+    w = CanvasWindow()
+    _mk_pen_rect(w, width=1.0)
+    with patch("easycad.canvas.host_widgets._min_stroke_render",
+               wraps=host_widgets._min_stroke_render) as spy:
+        w._minimap._rebuild_pixmap()
+    assert spy.called
+
+
 
 
 def test_style_copy_paste_pen_to_pen():

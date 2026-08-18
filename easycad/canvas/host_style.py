@@ -98,8 +98,11 @@ class _StyleMixin:
     def _set_current_color(self, color: QColor):
         """[M2 #A] 현재 색을 갱신, 새 도형·화살표에 반영. [2026-08-02] 상단 도구 아이콘은
         디자인 베이크오프 2라운드로 코랄 고정 스타일이 돼 더 이상 draw-color를 반영하지
-        않는다 — 예전엔 여기서 아이콘을 다시 칠했지만 이제 그 루프는 불필요."""
+        않는다 — 예전엔 여기서 아이콘을 다시 칠했지만 이제 그 루프는 불필요.
+        [실사용 피드백 2026-08-18] 사용자가 직접 고른 색이므로 이제부터 테마 전환에
+        안 따라간다 — `_color_is_default`를 내려 `_apply_theme`의 자동 갱신 대상에서 뺀다."""
         self.current_color = QColor(color)
+        self._color_is_default = False
 
 
     def _show_color_grid_popup(self, anchor: QWidget, initial, allow_none: bool,

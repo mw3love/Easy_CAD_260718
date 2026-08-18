@@ -4,7 +4,8 @@ AppData에 JSON으로 영구 저장(다크모드 등 QSettings 관례와 달리,
 썸네일 PNG를 품는 구조라 레지스트리보다 파일이 적합).
 
 deep-interview 2026-08-03 확정 스코프: 등록 대상=현재 선택 전부(1개 이상, 가져온 심볼
-한정 아님) · 썸네일=실제 렌더 캡처 · 관리 기능=등록+삭제(이름변경은 스코프 밖).
+한정 아님) · 썸네일=실제 렌더 캡처 · 관리 기능=등록+삭제(이름변경은 스코프 밖 — 2026-08-18
+실사용 피드백으로 심볼 한정 번복, `rename_symbol` 참조. 폴더 이름변경은 여전히 스코프 밖).
 화살표의 지속연결 바인딩은 저장하지 않는다 — DXF 가져오기 산출물은 애초에 좌표만
 있는 라인·경로라 바인딩이 없고, 위치 자체는 그대로 보존되므로 시각적 손실이 없다.
 
@@ -85,6 +86,22 @@ def add_symbol(name: str, item_dicts: list[dict], thumb_b64: str, folder: str | 
     data["symbols"].append(entry)
     _save_raw(data)
     return entry
+
+
+def rename_symbol(symbol_id: str, new_name: str):
+    """[실사용 피드백 2026-08-18] 심볼 이름을 바꾼다 — 등록 관례("이름변경 스코프 밖")를
+    실사용 요청으로 뒤집음. 빈 이름은 무시(호출부가 우클릭 메뉴에서 확인)."""
+    new_name = new_name.strip()
+    if not new_name:
+        return
+    data = _load_raw()
+    for e in data["symbols"]:
+        if e.get("id") == symbol_id:
+            e["name"] = new_name
+            break
+    else:
+        return
+    _save_raw(data)
 
 
 def delete_symbol(symbol_id: str):

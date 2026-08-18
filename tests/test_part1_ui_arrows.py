@@ -82,6 +82,24 @@ def test_dark_mode_toggle():
     assert w._scene.backgroundBrush().color().lightness() < 80
 
 
+def test_default_shape_color_follows_theme_until_user_picks_one():
+    """[실사용 피드백 2026-08-18] 기본 도형색이 순수 흰색으로 고정되면 라이트 캔버스
+    (#ffffff)에서 안 보인다 — 표제란/표와 같은 "테마 적응 잉크색"으로 대신 따라가되,
+    사용자가 직접 색을 고르면 그 순간부터 sticky로 고정돼 테마를 안 따라간다."""
+    from easycad.canvas.core_constants import _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT
+    w = CanvasWindow()
+    assert w._dark is True
+    assert w.current_color.name() == QColor(_DEFAULT_INK_DARK).name()
+    w._apply_theme(False)
+    assert w.current_color.name() == QColor(_DEFAULT_INK_LIGHT).name()
+    w._apply_theme(True)
+    assert w.current_color.name() == QColor(_DEFAULT_INK_DARK).name()
+
+    w._set_current_color(QColor("#e02424"))   # 사용자가 직접 색을 고름 — 이제부터 sticky
+    w._apply_theme(False)
+    assert w.current_color.name() == QColor("#e02424").name()   # 테마 전환에 안 바뀜
+
+
 
 
 def test_pdf_export_forces_white_bg():

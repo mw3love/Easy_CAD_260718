@@ -35,6 +35,7 @@ from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
     _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
+    _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
@@ -105,7 +106,9 @@ class CanvasWindow(
         # 설정. 탭 전환에는 안 바뀐다. "새 창"은 생성 시점에 이 값들을 스냅샷 복사만 하고
         # 그 뒤론 독립(deep-interview 확정 — 진짜 실시간 공유는 아래 클립보드만).
         self.current_tool = "select"
-        self.current_color = QColor(_DEFAULT_COLOR)
+        self._dark = QSettings("EasyCAD", "EasyCAD").value("dark", True, type=bool)  # 다크 기본
+        self.current_color = QColor(_DEFAULT_INK_DARK if self._dark else _DEFAULT_INK_LIGHT)
+        self._color_is_default = True   # [실사용 피드백] 사용자가 직접 색을 고르기 전엔 테마를 따라감
         self.current_width = _DEFAULT_WIDTH
         self.current_style = Qt.PenStyle.SolidLine   # [M2] 새 도형 기본 선스타일(sticky)
         self.current_font_size = _DEFAULT_FONT
@@ -152,7 +155,6 @@ class CanvasWindow(
         self._tabs.tabCloseRequested.connect(self._close_tab_at)
 
         # [Phase 6 M1] 메뉴(=액션)를 먼저 만들고 → 상단 QToolBar가 그 액션을 재사용(setDefaultAction).
-        self._dark = QSettings("EasyCAD", "EasyCAD").value("dark", True, type=bool)  # 다크 기본
         self._build_menu()
         self.setCentralWidget(self._tabs)
         self._build_toolbar()

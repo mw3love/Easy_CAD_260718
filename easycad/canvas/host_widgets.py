@@ -26,7 +26,7 @@ from easycad.canvas.annotator_core import (
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
-    _svg_icon_pixmap,
+    _svg_icon_pixmap, _min_stroke_render,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -499,7 +499,10 @@ class _MinimapView(QGraphicsView):
         scale = min(vp.width() / sw, vp.height() / sh) if sw > 0 and sh > 0 else 1.0
         draw_w, draw_h = sw * scale, sh * scale
         target = QRectF((vp.width() - draw_w) / 2.0, (vp.height() - draw_h) / 2.0, draw_w, draw_h)
-        self.scene().render(painter, target, padded, Qt.AspectRatioMode.KeepAspectRatio)
+        # [실사용 피드백 2026-08-18] 축소 렌더라 1px(기본 두께) 선이 안 보임 — 렌더 순간만
+        # 최소 두께로 임시 상향(실제 도형 데이터는 무변경, _min_stroke_render 참조).
+        with _min_stroke_render(self.scene().items()):
+            self.scene().render(painter, target, padded, Qt.AspectRatioMode.KeepAspectRatio)
         painter.end()
         self._pixmap_cache = pm
         self.viewport().update()

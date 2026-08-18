@@ -8,6 +8,7 @@
 임포트를 여러 곳에 흩뿌려야 해서 이 프로젝트에서 가장 버그가 잦았던 영역(docs/pitfalls.md
 참조: A* 격자·정렬 게이트 등)의 위험만 키운다 — 하나로 유지하는 쪽이 더 안전하다는 판단.
 """
+import contextlib
 import heapq
 import io
 import math
@@ -39,6 +40,45 @@ from easycad.theme import (
 
 
 from easycad.canvas.core_constants import *  # noqa: F401,F403
+
+# [실사용 피드백 2026-08-18] 미니맵(host_widgets._MinimapView._rebuild_pixmap)·커스텀 심볼
+# 썸네일(host_selection._render_symbol_thumbnail) 둘 다 씬을 그대로 축소 렌더한다 — 실제
+# 도형 두께가 1px(기본값)면 축소 후 소수점 이하로 사라져 안 보인다. 사용자가 실측으로 확인한
+# 값("1px는 안 보이고 3px부터 보인다")을 그대로 최소 두께 상수로 쓴다.
+_MIN_RENDER_STROKE_SCENE = 3.0
+
+
+@contextlib.contextmanager
+def _min_stroke_render(items, min_width: float = _MIN_RENDER_STROKE_SCENE):
+    """items(보통 scene.items())의 펜 두께가 min_width보다 얇으면 렌더 동안만 min_width로
+    올렸다가 블록이 끝나면 원복한다. 실제 도형 데이터(.ecad에 저장되는 값)는 안 바뀐다 —
+    렌더 전후로만 잠깐 바뀌었다 되돌아간다. 두 계열을 다룬다: `_RectItem`/`_EllipseItem`/
+    `_SymbolItem`/`_LineItem`/`_PathItem`처럼 Qt 내장 pen()/setPen()을 쓰는 것, `_ArrowItem`/
+    `_PolyArrowItem`처럼 자체 `_width`/`_color` 필드로 paint()마다 QPen을 새로 만드는 것."""
+    restore = []
+    for it in items:
+        pen_fn = getattr(it, "pen", None)
+        if callable(pen_fn):
+            p = pen_fn()
+            if 0 < p.widthF() < min_width:
+                restore.append((it, "pen", p))
+                new_p = QPen(p)
+                new_p.setWidthF(min_width)
+                it.setPen(new_p)
+        elif hasattr(it, "_width") and hasattr(it, "_color"):
+            w = it._width
+            if isinstance(w, (int, float)) and 0 < w < min_width:
+                restore.append((it, "_width", w))
+                it._width = min_width
+    try:
+        yield
+    finally:
+        for it, attr, val in restore:
+            if attr == "pen":
+                it.setPen(val)
+            else:
+                setattr(it, attr, val)
+
 
 class _HandleResizeMixin:
     # 핸들(스케일 사각·회전 원·끝점 사각) 크기는 도형 획 두께와 무관하게 고정이다(2026-07-30
