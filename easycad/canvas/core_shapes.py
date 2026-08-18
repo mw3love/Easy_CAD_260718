@@ -5436,6 +5436,34 @@ def _symbol_nearest(item, p):
     return best_q, QPointF(nx / L, ny / L)
 
 
+def _polygon_nearest(item, p):
+    """[§8 항목21 후속 — 실사용 피드백 2026-08-18] 닫힌 `_PolygonItem`의 실제 외곽선
+    (`_poly_path`)에서 점 p(로컬) 최근접점 + 바깥 단위 법선(로컬). `_symbol_nearest`와 같은
+    패턴(폴리곤 평탄화 → 변별 최근접 → 중심 반대쪽으로 법선 정렬) — 임의 다각형이라 축 보정
+    (`_axis_forced_local_normal`, 사각형·마름모류 전제)은 적용하지 않는다(`_PathItem`과 동일
+    취급)."""
+    path = item._poly_path()
+    c = item.rect().center()
+    best_q = None
+    best_seg = None
+    best_d = float("inf")
+    for poly in path.toSubpathPolygons():
+        for i in range(poly.count() - 1):
+            a, b = poly.at(i), poly.at(i + 1)
+            q = _seg_nearest(a, b, p)
+            d = (q.x() - p.x()) ** 2 + (q.y() - p.y()) ** 2
+            if d < best_d:
+                best_d, best_q, best_seg = d, q, (a, b)
+    if best_q is None:                       # 방어(빈 경로) — 박스 폴백
+        return _rect_nearest(item.rect(), p)
+    a, b = best_seg
+    nx, ny = -(b.y() - a.y()), (b.x() - a.x())   # 변에 수직
+    if (best_q.x() - c.x()) * nx + (best_q.y() - c.y()) * ny < 0:
+        nx, ny = -nx, -ny                        # 중심 반대(바깥)로 정렬
+    L = math.hypot(nx, ny) or 1.0
+    return best_q, QPointF(nx / L, ny / L)
+
+
 def _path_nearest(item, p):
     """[외부 DXF 폴백/펜 도형] 임의 QPainterPath(_PathItem, item.rect() 없음)의 외곽선에서
     점 p(로컬) 최근접점 + 바깥 단위 법선(로컬). _symbol_nearest와 동일한 폴리곤 평탄화
@@ -5538,6 +5566,8 @@ def _nearest_border(item, scene_pt):
         n = _axis_forced_local_normal(item, q, n)
     elif isinstance(item, _PathItem):
         q, n = _path_nearest(item, p)
+    elif isinstance(item, _PolygonItem) and item._closed:
+        q, n = _polygon_nearest(item, p)   # [§8 항목21 후속] 임의 다각형 — 축 보정 없음
     else:
         q, n = _rect_nearest(item.rect(), p)
         n = _axis_forced_local_normal(item, q, n)
@@ -6403,6 +6433,9 @@ def _conn_polyline_scene(it):
         return [it.mapToScene(p) for p in it._pts]
     if isinstance(it, _ArrowItem):
         return [it.mapToScene(it._point_at(i / 16.0)) for i in range(17)]
+    if isinstance(it, _PolygonItem) and not it._closed:
+        # [§8 항목21 후속] 열린 폴리라인 — 화살표·선과 동일하게 몸통 스냅 대상.
+        return [it.mapToScene(p) for p in it.local_pts()]
     return []
 
 

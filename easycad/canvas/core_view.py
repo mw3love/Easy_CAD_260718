@@ -1129,9 +1129,12 @@ class _AnnotatorView(QGraphicsView):
         return math.hypot(vp.x() - view_pos.x(), vp.y() - view_pos.y())
 
     def _conn_shapes(self):
-        """씬의 네모·원·심볼 아이템(위→아래 순) — 화살표 테두리 스냅·지속연결 대상."""
+        """씬의 네모·원·심볼·닫힌 다각형 아이템(위→아래 순) — 화살표 테두리 스냅·지속연결 대상.
+        [§8 항목21 후속] 닫힌 `_PolygonItem`도 다른 닫힌 도형과 동일하게 스냅 대상에 포함
+        (`_nearest_border`가 `_polygon_nearest`로 처리) — 열린 폴리라인은 `_conn_lines`로."""
         return [it for it in self.scene().items()
-                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))]
+                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))
+                or (isinstance(it, _PolygonItem) and it._closed)]
 
     def _conn_paths(self):
         """[외부 DXF 폴백/펜] _PathItem — 연속 폴백(Pass 2)만 지원, 이산 포트는 없음(임의
@@ -1139,11 +1142,15 @@ class _AnnotatorView(QGraphicsView):
         return [it for it in self.scene().items() if isinstance(it, _PathItem)]
 
     def _conn_lines(self, exclude=None):
-        """[M4-2b] 스냅 대상 선·화살표 — 그리기 중(_temp)·클릭배치 중(_place)·exclude는 제외해
-        자기 자신에 스냅하지 않게 한다(자기 preview 정점에 붙어 조기 마무리되던 문제)."""
+        """[M4-2b] 스냅 대상 선·화살표·열린 다각형(폴리라인) — 그리기 중(_temp)·클릭배치 중
+        (_place)·exclude는 제외해 자기 자신에 스냅하지 않게 한다(자기 preview 정점에 붙어
+        조기 마무리되던 문제). [§8 항목21 후속] 열린 `_PolygonItem`도 `_conn_polyline_scene`이
+        같은 방식(몸통 점열)으로 다뤄 화살표·선과 동일하게 스냅 대상이 된다."""
         skip = (self._temp, getattr(self, "_place", None), exclude)
         return [it for it in self.scene().items()
-                if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem)) and it not in skip]
+                if (isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem))
+                    or (isinstance(it, _PolygonItem) and not it._closed))
+                and it not in skip]
 
     def _trim_candidates_near(self, scene_pt: QPointF, margin: float):
         """[§8 항목17 5단계] TRIM 도구 전용 후보 — 닫힌 도형(_RectItem/_EllipseItem/_SymbolItem)
@@ -2456,6 +2463,14 @@ class _AnnotatorView(QGraphicsView):
             # 클릭-배치 모드로 들어간다 — "드래그=2점 직선"이라는 sarrow의 하이브리드는 다각형
             # 에는 안 맞는다(설계 확정: 클릭-클릭으로만 그린다). `_enter_click_place`는 다른
             # 클릭배치 도구와 동일 골격(선택 해제·미리보기 정리)을 재사용.
+            # [실사용 피드백 2026-08-18] 시작점도 line/sarrow와 동일하게 테두리 스냅 우선
+            # (grid snap은 위에서 이미 적용됐고, 테두리 근처면 그 스냅점이 덮어쓴다).
+            psnap = self._border_snap_at(event.position().toPoint())
+            if psnap is not None:
+                sp = psnap[0]
+                self._arrow_snap_exit = psnap[1]   # drawForeground 시작 마커(화살표/선과 공유)
+            else:
+                self._arrow_snap_exit = None
             it = _PolygonItem([sp, sp], closed=False)
             it.setPen(pen)
             it.setZValue(1)
@@ -2531,6 +2546,27 @@ class _AnnotatorView(QGraphicsView):
         self._arrow_tip_snap_shape = snap[2] if snap is not None else None   # [라이브 직각] tip 도형
         return snap[0] if snap is not None else None
 
+    def _polygon_place_point(self, event, it):
+        """[§8 항목21 후속 — 실사용 피드백 2026-08-18] 다각형 정점 배치 라이브 스냅.
+        미리보기(_update_place)와 클릭(_polygon_click)이 항상 같은 좌표를 쓰게 한다
+        (sarrow의 `_poly_place_point`와 동일 목적). 우선순위: 시작점 근접(닫기 예고,
+        확정 정점 3개↑)이면 정확히 시작점으로 스냅 > 다른 도형 테두리(`_poly_border_snap_tip`
+        재사용, 직전 점과 너무 가까운 스냅은 그 안에서 자체 무시) > 그리드.
+        [실사용 피드백 2026-08-18] 닫기 예고에도 포트점과 같은 시각 마커(`_arrow_tip_snap`)를
+        세워 "곧 닫힌다"는 것을 다른 스냅과 동일한 언어로 보여준다(전엔 좌표만 스냅되고
+        마커가 없어 조용했다)."""
+        pts = it._draw_pts
+        vpos = event.position().toPoint()
+        if len(pts) >= 4 and self._view_dist(pts[0], vpos) <= self._POLY_CLOSE_PX:
+            self._arrow_tip_snap = QPointF(pts[0])
+            self._arrow_tip_snap_shape = None
+            return QPointF(pts[0])
+        anchor = pts[-2] if len(pts) >= 2 else None
+        snapped = self._poly_border_snap_tip(event, anchor)
+        if snapped is not None:
+            return snapped
+        return self._grid_snap_scene(self.mapToScene(vpos))
+
     def _enter_click_place(self, item, tool):
         """드래그 없는 클릭 → 클릭 배치 모드 진입. item은 이미 시작점을 가진 상태(퇴화)."""
         # [화살표 그리기 라이브 직각] 클릭(무드래그)인데 미리보기가 엘보로 늘어났으면 시작점 2개로
@@ -2556,9 +2592,10 @@ class _AnnotatorView(QGraphicsView):
             self.viewport().update()   # 스냅 마커 갱신
             return
         if tool == "polygon":
-            # [§8 항목21] 그리드 스냅만 적용(테두리 스냅·F8 ortho는 이번 라운드 스코프 밖 —
-            # `docs/polygon_tool_design.md` "남은 질문" 참조). 마지막 점(커서 추종)만 갱신.
-            p = self._grid_snap_scene(self.mapToScene(event.position().toPoint()))
+            # [실사용 피드백 2026-08-18] 테두리 스냅(다른 도형에 붙기)·닫기 예고 스냅 추가
+            # (F8 ortho는 이번 라운드에도 스코프 밖 — `docs/polygon_tool_design.md` "남은 질문").
+            # 마지막 점(커서 추종)만 갱신.
+            p = self._polygon_place_point(event, item)
             item._draw_pts[-1] = QPointF(p)
             item.set_live_points(item._draw_pts)
             self.viewport().update()
@@ -2605,7 +2642,7 @@ class _AnnotatorView(QGraphicsView):
         if len(pts) >= 4 and self._view_dist(pts[0], vpos) <= self._POLY_CLOSE_PX:
             self._finish_polygon(closed=True)
             return
-        p = self._grid_snap_scene(self.mapToScene(vpos))
+        p = self._polygon_place_point(event, it)   # 클릭과 동일 계산(미리보기 일치) — 테두리 스냅 포함
         pts[-1] = QPointF(p)      # 미리보기 → 확정
         pts.append(QPointF(p))    # 새 미리보기(커서 추종) — _finish_polygon이 pop
         it.set_live_points(pts)
@@ -2616,6 +2653,8 @@ class _AnnotatorView(QGraphicsView):
         it = self._place
         self._place = None
         self._place_tool = None
+        self._arrow_snap_exit = None
+        self._arrow_tip_snap = None
         pts = it._draw_pts
         if pts:
             pts.pop()   # 커서 추종 미리보기점 제거
