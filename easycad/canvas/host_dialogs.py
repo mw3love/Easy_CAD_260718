@@ -7,9 +7,11 @@
 """
 import io
 import os
+import time
 
 from PyQt6.QtCore import (
     Qt, QPoint, QPointF, QRectF, QSize, QSettings, QEvent, QBuffer, QIODevice, QByteArray,
+    QThread, pyqtSignal, QTimer,
 )
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter, QImage,
@@ -21,7 +23,7 @@ from PyQt6.QtWidgets import (
     QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
     QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
-    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
+    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame, QProgressBar,
     QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
 )
 from PyQt6.QtSvg import QSvgRenderer
@@ -351,6 +353,75 @@ def _handdrawn_down_arrow_pixmap(color: QColor, w: int = 30, h: int = 46) -> QPi
     return pm
 
 
+class _GenProgressRow(QWidget):
+    """AI 생성 중 진행 표시 — marquee(무한) 진행바 + 경과시간 텍스트. 게이트웨이가
+    스트리밍 진행률을 안 주는 단발 호출이라 결정형(%) 대신 이 형태를 쓴다(2026-08-19
+    deep-interview 확정). `_MermaidDialog`·`_SvgAssetDialog`가 공유."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(6)
+        self._bar = QProgressBar(self)
+        self._bar.setRange(0, 0)   # marquee
+        self._bar.setTextVisible(False)
+        self._bar.setFixedHeight(6)
+        lay.addWidget(self._bar, 1)
+        self._label = QLabel("", self)
+        self._label.setStyleSheet("color:#8a8a8a; font-size:11px;")
+        lay.addWidget(self._label)
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._tick)
+        self._t0 = 0.0
+        self._text = ""
+        self.setVisible(False)
+
+    def start(self, text: str):
+        self._text = text
+        self._t0 = time.monotonic()
+        self._label.setText(f"{text}… 0초")
+        self.setVisible(True)
+        self._timer.start()
+
+    def stop(self):
+        self._timer.stop()
+        self.setVisible(False)
+
+    def _tick(self):
+        elapsed = int(time.monotonic() - self._t0)
+        self._label.setText(f"{self._text}… {elapsed}초")
+
+
+class _MermaidGenWorker(QThread):
+    """`generate_mermaid` 1회 호출을 메인(GUI) 스레드 밖에서 돈다(2026-08-19 —
+    동기 호출+`WaitCursor`가 게이트웨이 응답을 기다리는 동안 이벤트 루프 자체를 막아
+    창이 완전히 멈춘 것처럼 보이던 문제 수정). 성공/실패를 시그널로 알린다 — 수신자
+    (`_MermaidDialog`)가 메인 스레드에 있으므로 Qt가 큐 연결로 안전하게 전달한다."""
+
+    succeeded = pyqtSignal(str, str)   # (mermaid 텍스트, 실제 사용된 모델)
+    failed = pyqtSignal(str)           # 에러 메시지
+
+    def __init__(self, api_key, desc, model, base_url, image, parent=None):
+        super().__init__(parent)
+        self._api_key = api_key
+        self._desc = desc
+        self._model = model
+        self._base_url = base_url
+        self._image = image
+
+    def run(self):
+        try:
+            from easycad.ai.text_to_mermaid import generate_mermaid
+            text, used = generate_mermaid(self._api_key, self._desc, model=self._model,
+                                          base_url=self._base_url, image=self._image)
+        except Exception as e:  # noqa: BLE001 — 실패 사유를 그대로 다이얼로그에 전달
+            self.failed.emit(str(e))
+            return
+        self.succeeded.emit(text, used)
+
+
 class _MermaidDialog(QDialog):
     """Mermaid flowchart 입력창 — 프롬프트(AI 지시)와 Mermaid 코드를 별개 칸으로 받는다.
 
@@ -394,6 +465,7 @@ class _MermaidDialog(QDialog):
         self.setAcceptDrops(True)
         self._attached_image = None       # PIL.Image.Image | None
         self._attached_image_name = ""
+        self._worker = None               # _MermaidGenWorker | None — 생성 중일 때만 설정
         lay = QVBoxLayout(self)
 
         # [2026-08-13 5차] 옛 상단 3줄 안내(Enter·드래그/Ctrl+V·코드칸 직접입력)를 각자
@@ -521,6 +593,9 @@ class _MermaidDialog(QDialog):
         prompt_frame_lay.addWidget(toolbar_widget)
         lay.addWidget(prompt_frame)
 
+        self._progress = _GenProgressRow(self)
+        lay.addWidget(self._progress)
+
         # ---- 모델 선택: 평범한 드롭다운(gemini/gpt 그룹 헤더, 추천 배지 없음) + 새로고침 +
         # 설정. [2026-08-13 6차] 옛 위치(코드칸 아래)에서 입력카드 바로 아래(화살표 꼬리
         # 위)로 옮기고, 커넥터 줄에 혼자 있던 설정 버튼도 이 행 맨 오른쪽(새로고침 옆)으로
@@ -567,15 +642,24 @@ class _MermaidDialog(QDialog):
         self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         lay.addWidget(self._edit)
 
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
-                                | QDialogButtonBox.StandardButton.Cancel, self)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        btns.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(_CORAL_BTN_QSS)
-        lay.addWidget(btns)
+        self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                      | QDialogButtonBox.StandardButton.Cancel, self)
+        self._btns.accepted.connect(self.accept)
+        self._btns.rejected.connect(self.reject)
+        self._btns.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(_CORAL_BTN_QSS)
+        lay.addWidget(self._btns)
 
     def text(self):
         return self._edit.toPlainText()
+
+    def closeEvent(self, e):
+        # 생성 중(QThread 워커가 돎)에는 닫지 않는다 — 워커가 끝나기 전에 다이얼로그가
+        # 사라지면 다른 스레드에서 이미 소멸된 위젯에 시그널을 전달하려다 죽을 위험이 있다
+        # (2026-08-19, 이 프로젝트가 과거 겪은 Qt 라이프사이클 네이티브 크래시 계열과 같은 종류).
+        if self._worker is not None and self._worker.isRunning():
+            e.ignore()
+            return
+        super().closeEvent(e)
 
     def eventFilter(self, obj, event):
         if obj is self._prompt_edit and event.type() == QEvent.Type.KeyPress:
@@ -722,6 +806,11 @@ class _MermaidDialog(QDialog):
         return data or gw.TEXT_RECOMMEND_1
 
     def _on_ai_clicked(self):
+        """2026-08-19 비동기화 — 예전엔 `generate_mermaid`를 이 자리에서 동기 호출+
+        `WaitCursor`로 감싸 게이트웨이 응답이 올 때까지(길면 20~28초) 창이 완전히
+        멈춘 것처럼 보였다. `_MermaidGenWorker`(QThread)로 옮기고 marquee 진행바+
+        경과시간(`_GenProgressRow`)으로 대체 — 이벤트 루프가 안 막히므로 창을
+        옮기거나 다른 다이얼로그 조작도 가능하다."""
         desc = self._prompt_edit.toPlainText().strip()
         image = self._attached_image
         if not desc and image is None:
@@ -736,17 +825,15 @@ class _MermaidDialog(QDialog):
             return
         base_url = gw.resolve_base_url()
         self._ai_btn.setEnabled(False)
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            from easycad.ai.text_to_mermaid import generate_mermaid
-            text, _used = generate_mermaid(key, desc, model=self.model(), base_url=base_url,
-                                           image=image)
-        except Exception as e:
-            QMessageBox.warning(self, "Mermaid 가져오기", f"생성 실패: {e}")
-            return
-        finally:
-            QApplication.restoreOverrideCursor()
-            self._ai_btn.setEnabled(True)
+        self._btns.setEnabled(False)
+        self._progress.start("AI로 생성 중")
+        self._worker = _MermaidGenWorker(key, desc, self.model(), base_url, image, self)
+        self._worker.succeeded.connect(self._on_gen_succeeded)
+        self._worker.failed.connect(self._on_gen_failed)
+        self._worker.finished.connect(self._on_gen_thread_finished)
+        self._worker.start()
+
+    def _on_gen_succeeded(self, text, _used):
         # [2칸 분리 후에도 유지] setPlainText()는 되돌리기 스택을 초기화해버려 이전에 손으로
         # 고친 코드를 잃는다 — QTextCursor 전체선택+치환은 `_edit`의 undo 스택에 남아
         # Ctrl+Z로 AI 생성 전 코드를 복구할 수 있다.
@@ -755,6 +842,15 @@ class _MermaidDialog(QDialog):
         cursor.insertText(text)
         # [2026-08-12 4차, 디자인 시안 합의] 크레딧 잔액 표시는 이 창에서 제거하고
         # `_AIGatewaySettingsDialog`의 "연결 테스트" 한 곳으로 통합했다(중복 표시 제거).
+
+    def _on_gen_failed(self, err):
+        QMessageBox.warning(self, "Mermaid 가져오기", f"생성 실패: {err}")
+
+    def _on_gen_thread_finished(self):
+        self._progress.stop()
+        self._ai_btn.setEnabled(True)
+        self._btns.setEnabled(True)
+        self._worker = None
 
 
 class _AIGatewaySettingsDialog(QDialog):
@@ -947,18 +1043,44 @@ class _SvgCandidateCard(QFrame):
         super().mousePressEvent(e)
 
 
+class _SvgGenWorker(QThread):
+    """`generate_svg`를 체크된 모델 순서대로 순차 호출 — 2026-08-19 Stage 1은 프리징
+    해소만 다룬다(모델 간 병렬화·모델당 후보 개수 확장은 §8 항목20 후속 Stage 2 몫,
+    2026-08-19 deep-interview로 단계 분리 확정). 후보가 완성될 때마다 `candidate`
+    시그널로 즉시 알려 다이얼로그가 끝난 순서대로 카드를 하나씩 채울 수 있게 한다."""
+
+    candidate = pyqtSignal(str, str)      # (실제 사용된 모델, svg 텍스트)
+    model_failed = pyqtSignal(str, str)   # (모델, 에러 메시지)
+
+    def __init__(self, api_key, subject, models, base_url, parent=None):
+        super().__init__(parent)
+        self._api_key = api_key
+        self._subject = subject
+        self._models = models
+        self._base_url = base_url
+
+    def run(self):
+        for model in self._models:
+            try:
+                svg_text, used = generate_svg(self._api_key, self._subject, model=model,
+                                              base_url=self._base_url)
+            except Exception as e:  # noqa: BLE001 — 모델별 개별 실패, 나머지는 계속 시도
+                self.model_failed.emit(model, str(e))
+                continue
+            self.candidate.emit(used, svg_text)
+
+
 class _SvgAssetDialog(QDialog):
     """AI SVG 에셋 생성 — 대상 설명 한 줄 + gpt/gemini 체크박스(모델당 후보 1개, 2026-08-14
     deep-interview 확정) + 생성 버튼 + 후보 카드 가로 나열(클릭 선택) + OK/Cancel. 진입점
     2곳(메뉴 삽입·우클릭 대체)이 이 다이얼로그를 그대로 공유한다 — 호출부가 `selected_svg()`
     결과를 각자의 방식(새로 삽입 vs 기존 도형 대체)으로 소비.
 
-    진행 표시는 동기 호출 + `WaitCursor`(2026-08-14 deep-interview 확정) — 이 기능
-    착수 시점엔 이미 프로젝트가 옛 QThread 워커(`host_ai.py._AISketchWorker`, §8 항목18
-    C단계)를 폐기하고 Mermaid AI 보조 생성도 `_MermaidDialog._on_ai_clicked`처럼 동기
-    호출로 정리한 뒤였다(2026-08-12) — 그 판단을 그대로 계승. 체크한 모델을 순차 호출
-    하므로 최악(gpt+gemini 둘 다, gemini 20~28초)엔 그만큼 블로킹되지만, 이 다이얼로그
-    자체가 모달이라 별도 진행률 UI 없이 대기 커서만으로 충분하다고 판단."""
+    진행 표시는 `_SvgGenWorker`(QThread) + marquee 진행바·경과시간(`_GenProgressRow`,
+    2026-08-19 비동기화) — 예전엔 동기 호출+`WaitCursor`였다(2026-08-14 deep-interview
+    당시 결정, `_MermaidDialog`와 같은 판단을 계승했었음). 체크한 모델을 순차 호출하므로
+    최악(gpt+gemini 둘 다, gemini 20~28초)엔 그만큼 걸리지만, 더는 창이 멈추지 않고
+    끝난 모델부터 카드가 하나씩 채워진다."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -966,6 +1088,8 @@ class _SvgAssetDialog(QDialog):
         self.setMinimumWidth(440)
         self._candidates: list[tuple[_SvgCandidateCard, str, str]] = []
         self._selected_card: _SvgCandidateCard | None = None
+        self._worker = None        # _SvgGenWorker | None — 생성 중일 때만 설정
+        self._gen_errors: list[str] = []
         lay = QVBoxLayout(self)
 
         lay.addWidget(QLabel("생성할 대상(예: BNC 커넥터 아이콘):", self))
@@ -992,6 +1116,9 @@ class _SvgAssetDialog(QDialog):
         model_row.addWidget(self._gen_btn)
         lay.addLayout(model_row)
 
+        self._progress = _GenProgressRow(self)
+        lay.addWidget(self._progress)
+
         self._candidates_row = QHBoxLayout()
         self._candidates_row.addStretch(1)
         lay.addLayout(self._candidates_row)
@@ -1001,16 +1128,24 @@ class _SvgAssetDialog(QDialog):
         self._hint_label.setVisible(False)
         lay.addWidget(self._hint_label)
 
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
-                                | QDialogButtonBox.StandardButton.Cancel, self)
-        self._ok_btn = btns.button(QDialogButtonBox.StandardButton.Ok)
+        self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                      | QDialogButtonBox.StandardButton.Cancel, self)
+        self._ok_btn = self._btns.button(QDialogButtonBox.StandardButton.Ok)
         self._ok_btn.setEnabled(False)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        lay.addWidget(btns)
+        self._btns.accepted.connect(self.accept)
+        self._btns.rejected.connect(self.reject)
+        lay.addWidget(self._btns)
 
     def selected_svg(self) -> str:
         return self._selected_card.svg_text() if self._selected_card else ""
+
+    def closeEvent(self, e):
+        # 생성 중(QThread 워커가 돎)에는 닫지 않는다 — `_MermaidDialog.closeEvent`와 같은
+        # 이유(2026-08-19).
+        if self._worker is not None and self._worker.isRunning():
+            e.ignore()
+            return
+        super().closeEvent(e)
 
     def _checked_models(self) -> list[str]:
         out = []
@@ -1021,6 +1156,9 @@ class _SvgAssetDialog(QDialog):
         return out
 
     def _on_generate_clicked(self):
+        """2026-08-19 비동기화 — `_SvgGenWorker`(QThread)로 옮겨 창이 멈추지 않는다.
+        완료 처리는 `_on_candidate_ready`(후보 도착마다)·`_on_gen_thread_finished`
+        (전체 완료, 옛 코드의 finally 블록 역할)로 나뉜다."""
         subject = self._prompt_edit.text().strip()
         if not subject:
             QMessageBox.information(self, "AI SVG 에셋 생성", "생성할 대상을 입력하세요.")
@@ -1036,30 +1174,37 @@ class _SvgAssetDialog(QDialog):
             return
         base_url = gw.resolve_base_url()
         self._clear_candidates()
+        self._gen_errors = []
         self._gen_btn.setEnabled(False)
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        errors = []
-        try:
-            for model in models:
-                try:
-                    svg_text, used = generate_svg(key, subject, model=model, base_url=base_url)
-                except Exception as e:  # noqa: BLE001 — 모델별 개별 실패, 나머지는 계속 시도
-                    errors.append(f"{model}: {e}")
-                    continue
-                self._add_candidate(used, svg_text)
-        finally:
-            QApplication.restoreOverrideCursor()
-            self._gen_btn.setEnabled(True)
-        if errors and not self._candidates:
-            QMessageBox.warning(self, "AI SVG 에셋 생성",
-                                "생성에 실패했습니다:\n" + "\n".join(errors))
-        elif errors:
-            QMessageBox.warning(self, "AI SVG 에셋 생성",
-                                "일부 모델이 실패했습니다(성공한 후보만 표시):\n"
-                                + "\n".join(errors))
-        if self._candidates:
+        self._btns.setEnabled(False)
+        self._progress.start("SVG 생성 중")
+        self._worker = _SvgGenWorker(key, subject, models, base_url, self)
+        self._worker.candidate.connect(self._on_candidate_ready)
+        self._worker.model_failed.connect(self._on_model_failed)
+        self._worker.finished.connect(self._on_gen_thread_finished)
+        self._worker.start()
+
+    def _on_candidate_ready(self, model_used, svg_text):
+        self._add_candidate(model_used, svg_text)
+        if len(self._candidates) == 1:
             self._hint_label.setVisible(True)
             self._pick_card(self._candidates[0][0])   # 첫 성공 후보를 기본 선택
+
+    def _on_model_failed(self, model, err):
+        self._gen_errors.append(f"{model}: {err}")
+
+    def _on_gen_thread_finished(self):
+        self._progress.stop()
+        self._gen_btn.setEnabled(True)
+        self._btns.setEnabled(True)
+        if self._gen_errors and not self._candidates:
+            QMessageBox.warning(self, "AI SVG 에셋 생성",
+                                "생성에 실패했습니다:\n" + "\n".join(self._gen_errors))
+        elif self._gen_errors:
+            QMessageBox.warning(self, "AI SVG 에셋 생성",
+                                "일부 모델이 실패했습니다(성공한 후보만 표시):\n"
+                                + "\n".join(self._gen_errors))
+        self._worker = None
 
     def _clear_candidates(self):
         for card, _svg, _model in self._candidates:

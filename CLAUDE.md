@@ -822,6 +822,20 @@ docs/
   pytest 12종, 전체 pytest 732종 회귀 통과(사전 존재하던 무관 AI 게이트웨이 키 테스트 3건
   제외). 상세: `docs/history/2026-08.md` "'내 심볼' 팔레트 아이콘 확대 + 호버 미리보기 +
   폴더 이름변경".
+- **§8 항목20 후속 — Mermaid·SVG AI 다이얼로그 재정리 Stage 1(비동기화+진행표시)
+  완료(2026-08-19)** — SVG 생성 시 창이 멈추는 문제를 사용자가 보고, deep-interview로
+  6단계 계획 확정 후 1단계만 착수. 원인은 `_SvgAssetDialog`가 gpt+gemini를 `WaitCursor`+
+  메인 스레드 순차 동기 호출로 처리하던 것(최악 gemini 20~28초+gpt 합산 블로킹) — 과거
+  이미지→도면 기능이 쓰던 `QThread` 워커는 그 기능 폐기로 코드에서 완전히 삭제된 상태라
+  새로 설계. `_MermaidGenWorker`/`_SvgGenWorker`(QThread, `host_dialogs.py` 안 — 회귀
+  테스트가 `host_ai.py` 존재를 금지) + 공유 `_GenProgressRow`(marquee 진행바+경과시간)로
+  교체, SVG는 이번 단계에서 호출 의미(순차·후보 1개씩)는 유지하고 스레드만 옮김(다중후보·
+  병렬화는 Stage 2). 기존 pytest 9종 비동기 대응 갱신 + 신규 4종, 전체 pytest 737종
+  통과. 부수로 테스트 자체 버그(어서션이 워커 join 전에 실패 → 살아있는 스레드가 patch
+  해제 후 진짜 네트워크 함수를 다시 잡음)가 스위트를 몇 시간 멈추게 한 사고를 진단·수정
+  (`try/finally`로 항상 join). 실제 창+실제 게이트웨이 호출로 종단 검증(이벤트루프 반응
+  틱 수 확인, 마퀴 진행바·완료 결과 스크린샷). 상세: `docs/history/2026-08.md` "§8 항목20
+  후속 — Mermaid·SVG AI 다이얼로그 재정리 Stage 1", 함정: `docs/pitfalls.md` "검증 방법론".
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

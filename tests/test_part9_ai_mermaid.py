@@ -30,6 +30,16 @@ from easycad.ai import text_to_mermaid as ttm  # noqa: E402
 from easycad.canvas.host_dialogs import _MermaidDialog, _AIGatewaySettingsDialog  # noqa: E402
 
 
+def _wait_worker(dlg):
+    """2026-08-19 비동기화(`_MermaidGenWorker`, QThread) — `_on_ai_clicked()`는 즉시
+    반환하고 백그라운드 스레드에서 돈다. `wait()`로 스레드 종료까지 막은 뒤
+    `processEvents()`를 몇 번 돌려야 큐잉된(cross-thread) 시그널이 실제로 슬롯에
+    전달된다(Qt의 기본 QueuedConnection 동작 — 이벤트 루프가 펌핑돼야 배달됨)."""
+    dlg._worker.wait(5000)
+    for _ in range(5):
+        QApplication.processEvents()
+
+
 def _clear_gateway_settings():
     """`store_api_key`/`store_base_url` 테스트가 실사용자 QSettings를 건드리므로
     (기존 dark모드·recent_colors 테스트와 동일 관례), 매번 명시적으로 지워 오염 방지."""
@@ -296,6 +306,7 @@ def test_mermaid_dialog_two_boxes_ai_fills_code_box_prompt_stays():
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
         dlg._on_ai_clicked()
+        _wait_worker(dlg)
 
     assert dlg.text() == "flowchart TD\n A[관측] --> B[예보]"
     assert dlg._prompt_edit.toPlainText() == "날씨를 예보하는 워크플로우"   # 프롬프트는 안 지워짐
@@ -318,6 +329,7 @@ def test_mermaid_dialog_ai_fill_is_undoable_via_ctrl_z():
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
         dlg._on_ai_clicked()
+        _wait_worker(dlg)
     assert dlg.text() == "flowchart TD\n X-->Y"
     dlg._edit.undo()
     assert dlg.text() == "flowchart TD\n A-->B  # 직접 고친 코드"
@@ -369,6 +381,7 @@ def test_mermaid_dialog_has_no_credit_label():
          patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate), \
          patch("easycad.canvas.host_dialogs.gw.get_credit_balance") as get_credit:
         dlg._on_ai_clicked()
+        _wait_worker(dlg)
     assert dlg.text() == "flowchart TD\n A-->B"
     assert not get_credit.called
 
@@ -409,9 +422,72 @@ def test_mermaid_dialog_ai_button_shows_warning_on_generation_failure():
          patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn, \
          patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
         dlg._on_ai_clicked()
+        _wait_worker(dlg)
     assert warn.called
     assert dlg.text() == "flowchart TD\n A-->B  # 기존 코드"   # 실패해도 기존 코드를 지우지 않음
-    assert dlg._ai_btn.isEnabled()   # finally에서 버튼이 다시 활성화됨
+    assert dlg._ai_btn.isEnabled()   # 완료 시그널에서 버튼이 다시 활성화됨
+
+
+def test_mermaid_dialog_shows_progress_and_disables_controls_while_generating():
+    """2026-08-19 비동기화 — 프리징 해소의 핵심 증거: 워커가 도는 동안(`_on_ai_clicked()`가
+    반환한 직후, 아직 `wait()`하기 전) 진행 표시가 보이고 생성/버튼박스가 비활성화돼
+    있어야 한다. 예전 동기 구현은 이 순간 자체가 없었다.
+
+    ⚠ 어서션이 `_wait_worker()` 전에 실패하면(=워커를 join하지 않은 채 테스트가 죽으면)
+    아직 살아있는 QThread가 뒤이은 `with patch(...)` 종료로 원본(진짜 네트워크 호출)
+    함수를 다시 붙잡을 위험이 있다(실측으로 확인된 함정 — 실제로 이 문제 때문에 전체
+    스위트가 몇 시간 멈춘 적이 있다). 그래서 `try/finally`로 무슨 일이 있어도 join한다."""
+    import time
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._prompt_edit.setPlainText("아무 설명")
+
+    def fake_generate(key, desc, *, model, **kw):
+        time.sleep(0.05)
+        return "flowchart TD\n A-->B", model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
+        dlg._on_ai_clicked()
+        try:
+            assert not dlg._progress.isHidden()
+            assert not dlg._ai_btn.isEnabled()
+            assert not dlg._btns.isEnabled()
+        finally:
+            _wait_worker(dlg)
+    assert dlg._progress.isHidden()
+    assert dlg._ai_btn.isEnabled()
+    assert dlg._btns.isEnabled()
+    assert dlg._worker is None
+
+
+def test_mermaid_dialog_close_ignored_while_generating():
+    """생성 중 닫기를 무시해야 한다(`_SvgAssetDialog`와 같은 이유) — `closeEvent`에 직접
+    `QCloseEvent`를 흘려 `isAccepted()`로 확인한다(`close()`+`result()` 조합은 갓 만든
+    다이얼로그의 기본 `result()`가 이미 `Rejected`(0)라 "닫힘 전"과 구분이 안 돼 오판을
+    낳는다 — 실측으로 걸린 함정, `try/finally` 필요성도 이 사고에서 확인됨)."""
+    import time
+    from PyQt6.QtGui import QCloseEvent
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._prompt_edit.setPlainText("아무 설명")
+
+    def fake_generate(key, desc, *, model, **kw):
+        time.sleep(0.05)
+        return "flowchart TD\n A-->B", model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
+        dlg._on_ai_clicked()
+        try:
+            ev = QCloseEvent()
+            dlg.closeEvent(ev)
+            assert not ev.isAccepted()   # 생성 중 — 무시돼야 함
+        finally:
+            _wait_worker(dlg)
+    ev2 = QCloseEvent()
+    dlg.closeEvent(ev2)
+    assert ev2.isAccepted()   # 생성이 끝난 뒤엔 평범하게 닫힘(super() 경로)
 
 
 def test_mermaid_dialog_direct_paste_still_works_without_ai():
@@ -541,6 +617,7 @@ def test_mermaid_dialog_ai_click_with_image_and_no_text_still_generates():
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
         dlg._on_ai_clicked()
+        _wait_worker(dlg)
 
     assert captured["desc"] == ""
     assert captured["image"] is not None

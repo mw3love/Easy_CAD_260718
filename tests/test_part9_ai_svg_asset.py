@@ -36,6 +36,16 @@ _SAMPLE_SVG = ('<svg viewBox="0 0 100 100">'
               '</svg>')
 
 
+def _wait_worker(dlg):
+    """2026-08-19 비동기화(`_SvgGenWorker`, QThread) — `_on_generate_clicked()`는 즉시
+    반환하고 백그라운드 스레드에서 돈다. `wait()`로 스레드 종료까지 막은 뒤
+    `processEvents()`를 몇 번 돌려야 큐잉된(cross-thread) 시그널이 실제로 슬롯에
+    전달된다(Qt의 기본 QueuedConnection 동작 — 이벤트 루프가 펌핑돼야 배달됨)."""
+    dlg._worker.wait(5000)
+    for _ in range(5):
+        QApplication.processEvents()
+
+
 # ── text_to_svg.py ───────────────────────────────────────────────────────────
 
 def test_build_prompt_includes_subject_and_parser_rules():
@@ -187,10 +197,76 @@ def test_svg_asset_dialog_generates_one_candidate_per_checked_model():
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
         dlg._on_generate_clicked()
+        _wait_worker(dlg)
     assert calls == [gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2]
     assert len(dlg._candidates) == 2
     assert dlg._selected_card is not None   # 첫 성공 후보 기본 선택
     assert dlg._ok_btn.isEnabled()
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_shows_progress_and_disables_controls_while_generating():
+    """2026-08-19 비동기화 — 프리징 해소의 핵심 증거: 워커가 도는 동안(=`_on_generate_
+    clicked()`가 반환한 직후, 아직 `wait()`하기 전) 진행 표시가 보이고 생성/버튼박스가
+    비활성화돼 있어야 한다. 예전 동기 구현은 이 순간 자체가 없었다(호출이 끝나야
+    `_on_generate_clicked()`가 반환했으므로).
+
+    ⚠ 어서션이 `_wait_worker()` 전에 실패하면(=워커를 join하지 않은 채 테스트가 죽으면)
+    아직 살아있는 QThread가 뒤이은 `with patch(...)` 종료로 원본(진짜 네트워크 호출)
+    함수를 다시 붙잡을 위험이 있다(실측으로 확인된 함정 — 실제로 이 문제 때문에 전체
+    스위트가 몇 시간 멈춘 적이 있다). 그래서 `try/finally`로 무슨 일이 있어도 join한다."""
+    import time
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+
+    def fake_generate(key, subject, *, model, **kw):
+        time.sleep(0.05)   # 스레드가 실제로 도는 동안 메인 스레드가 상태를 관찰할 여지
+        return _SAMPLE_SVG, model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
+        dlg._on_generate_clicked()
+        try:
+            assert not dlg._progress.isHidden()
+            assert not dlg._gen_btn.isEnabled()
+            assert not dlg._btns.isEnabled()
+        finally:
+            _wait_worker(dlg)
+    assert dlg._progress.isHidden()
+    assert dlg._gen_btn.isEnabled()
+    assert dlg._btns.isEnabled()
+    assert dlg._worker is None
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_close_ignored_while_generating():
+    """생성 중 닫기(제목표시줄 X 등)를 무시해야 한다 — 워커가 끝나기 전에 다이얼로그가
+    사라지면 다른 스레드의 시그널이 이미 소멸된 위젯에 배달되며 죽을 위험이 있다.
+    `closeEvent`에 직접 `QCloseEvent`를 흘려 `isAccepted()`로 확인한다(`close()`+
+    `result()` 조합은 갓 만든 다이얼로그의 기본 `result()`가 이미 `Rejected`(0)라
+    "닫힘 전"과 구분이 안 돼 오판을 낳는다 — 실측으로 걸린 함정, `try/finally`
+    필요성도 이 사고에서 확인됨)."""
+    import time
+    from PyQt6.QtGui import QCloseEvent
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+
+    def fake_generate(key, subject, *, model, **kw):
+        time.sleep(0.05)
+        return _SAMPLE_SVG, model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
+        dlg._on_generate_clicked()
+        try:
+            ev = QCloseEvent()
+            dlg.closeEvent(ev)
+            assert not ev.isAccepted()   # 생성 중 — 무시돼야 함
+        finally:
+            _wait_worker(dlg)
+    ev2 = QCloseEvent()
+    dlg.closeEvent(ev2)
+    assert ev2.isAccepted()   # 생성이 끝난 뒤엔 평범하게 닫힘(super() 경로)
     dlg.deleteLater()
 
 
@@ -207,6 +283,7 @@ def test_svg_asset_dialog_partial_failure_keeps_successful_candidates():
          patch("easycad.canvas.host_dialogs.generate_svg", fake_generate), \
          patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn:
         dlg._on_generate_clicked()
+        _wait_worker(dlg)
     assert warn.called   # 실패 사실은 알림
     assert len(dlg._candidates) == 1
     assert dlg._candidates[0][2] == gw.TEXT_RECOMMEND_2
@@ -224,6 +301,7 @@ def test_svg_asset_dialog_all_models_fail_shows_no_candidates():
          patch("easycad.canvas.host_dialogs.generate_svg", fake_generate), \
          patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn:
         dlg._on_generate_clicked()
+        _wait_worker(dlg)
     assert warn.called
     assert dlg._candidates == []
     assert not dlg._ok_btn.isEnabled()
@@ -240,6 +318,7 @@ def test_svg_asset_dialog_clicking_card_switches_selection():
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
         dlg._on_generate_clicked()
+        _wait_worker(dlg)
     first_card, _svg, first_model = dlg._candidates[0]
     second_card, _svg2, second_model = dlg._candidates[1]
     assert dlg._selected_card is first_card
@@ -279,8 +358,10 @@ def test_svg_asset_dialog_regenerate_clears_old_candidates():
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
         dlg._on_generate_clicked()
+        _wait_worker(dlg)
         first_batch = list(dlg._candidates)
         dlg._on_generate_clicked()
+        _wait_worker(dlg)
     assert len(dlg._candidates) == 2   # 누적되지 않고 새로 교체
     for card, *_r in first_batch:
         assert card not in [c for c, *_r2 in dlg._candidates]
