@@ -28,7 +28,7 @@ deep-interview(2026-08-14)로 확정된 대로: 진입점 2곳(삽입 메뉴로 
 실행: python tests/test_easycad.py (전체) 또는 pytest test_part9_ai_svg_asset.py.
 """
 from PyQt6.QtCore import QRectF, QPointF, QEvent
-from PyQt6.QtWidgets import QDialog
+from PyQt6.QtWidgets import QDialog, QDialogButtonBox
 
 from _shared import *  # noqa: F401,F403
 
@@ -876,7 +876,7 @@ def test_generate_svg_replace_swaps_shape_bbox_long_side_and_center():
     rect = _mk_pen_rect(w, x=100, y=100, ww=200, hh=80)   # bbox 200×80, 긴변 200, 중심(200,140)
 
     class _FakeDlg:
-        def __init__(self, parent=None):
+        def __init__(self, parent=None, confirm_label=None):
             pass
 
         def exec(self):
@@ -908,7 +908,7 @@ def test_generate_svg_replace_is_single_undo_step():
     before = len(w._scene.items())
 
     class _FakeDlg:
-        def __init__(self, parent=None):
+        def __init__(self, parent=None, confirm_label=None):
             pass
 
         def exec(self):
@@ -942,7 +942,7 @@ def test_generate_svg_replace_leaves_bound_arrow_frozen_not_rebound():
     before_pts = [arrow.mapToScene(p) for p in arrow._pts]
 
     class _FakeDlg:
-        def __init__(self, parent=None):
+        def __init__(self, parent=None, confirm_label=None):
             pass
 
         def exec(self):
@@ -965,7 +965,7 @@ def test_generate_svg_replace_cancel_keeps_original_shape():
     rect = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
 
     class _FakeDlg:
-        def __init__(self, parent=None):
+        def __init__(self, parent=None, confirm_label=None):
             pass
 
         def exec(self):
@@ -1025,4 +1025,42 @@ def test_context_menu_omits_svg_generate_for_arrow_selection():
     menu = w._build_context_menu()
     texts = [act.text() for act in menu.actions()]
     assert not any("SVG로 생성" in t for t in texts)
+    w.deleteLater()
+
+
+# ── §8 항목23 Stage 6(2026-08-19) — 레이아웃 최종 통일(목업 시각 언어 차용) ────────
+
+def test_svg_asset_dialog_default_confirm_label_is_insert():
+    """호출부가 안 넘기면(host_fileio._insert_ai_svg_asset 경로) 기본값 "도형 삽입"."""
+    dlg = _SvgAssetDialog()
+    ok_btn = dlg._btns.button(QDialogButtonBox.StandardButton.Ok)
+    assert ok_btn.text() == "확인 (도형 삽입)"
+
+
+def test_svg_asset_dialog_custom_confirm_label_used_for_replace():
+    dlg = _SvgAssetDialog(confirm_label="확인 (도형 대체)")
+    ok_btn = dlg._btns.button(QDialogButtonBox.StandardButton.Ok)
+    assert ok_btn.text() == "확인 (도형 대체)"
+
+
+def test_generate_svg_replace_passes_replace_confirm_label():
+    """host_context._generate_svg_replace가 실제로 "도형 대체" 라벨을 넘기는지 —
+    대체 진입점은 새로 삽입이 아니라 기존 도형을 바꾸는 것이므로 라벨이 달라야 한다."""
+    w = CanvasWindow()
+    rect = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
+    captured = {}
+
+    class _FakeDlg:
+        def __init__(self, parent=None, confirm_label=None):
+            captured["confirm_label"] = confirm_label
+
+        def exec(self):
+            return QDialog.DialogCode.Rejected
+
+        def selected_svg(self):
+            return ""
+
+    with patch("easycad.canvas.host_context._SvgAssetDialog", _FakeDlg):
+        w._generate_svg_replace(rect)
+    assert captured["confirm_label"] == "확인 (도형 대체)"
     w.deleteLater()

@@ -21,7 +21,7 @@ tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easyca
 pytest test_part9_ai_mermaid.py.
 """
 from PyQt6.QtCore import QSettings, QEvent
-from PyQt6.QtWidgets import QDialog
+from PyQt6.QtWidgets import QDialog, QDialogButtonBox
 
 from _shared import *  # noqa: F401,F403
 
@@ -948,3 +948,22 @@ def test_mermaid_dialog_ai_fill_also_refreshes_preview():
     dlg._update_preview()
     pm = dlg._preview_label.pixmap()
     assert pm is not None and not pm.isNull()
+
+
+# ── §8 항목23 Stage 6(2026-08-19) — 레이아웃 최종 통일(목업 시각 언어 차용) ────────
+
+def test_mermaid_dialog_ok_button_has_descriptive_label():
+    """"OK" 대신 결과를 명시하는 라벨(목업 "확인 (캔버스 삽입)" 차용, 사용자 확정:
+    구조는 그대로 두고 시각 언어만 반영)."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    ok_btn = dlg._btns.button(QDialogButtonBox.StandardButton.Ok)
+    assert ok_btn.text() == "확인 (캔버스 삽입)"
+
+
+def test_mermaid_dialog_copy_button_copies_code_to_clipboard():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("flowchart TD\n A-->B")
+    dlg._copy_code_to_clipboard()
+    assert QApplication.clipboard().text() == "flowchart TD\n A-->B"

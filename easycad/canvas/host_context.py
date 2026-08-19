@@ -352,7 +352,7 @@ class _ContextMixin:
         rect_scene = item.mapToScene(QRectF(item.rect())).boundingRect()
         long_side = max(rect_scene.width(), rect_scene.height())
         center = rect_scene.center()
-        dlg = _SvgAssetDialog(self)
+        dlg = _SvgAssetDialog(self, confirm_label="확인 (도형 대체)")
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         svg_text = dlg.selected_svg()

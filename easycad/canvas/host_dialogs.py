@@ -827,7 +827,17 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # 붙이므로 위 프롬프트카드·모델행·커넥터는 무변경.
         code_row = QHBoxLayout()
         code_col = QVBoxLayout()
-        code_col.addWidget(QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능):", self))
+        # [2026-08-19 Stage 6] 목업("Mermaid 가져오기 Studio v2.0")의 시각 언어만 차용 —
+        # 코드칸 라벨 옆에 복사 버튼(사용자 확정: 구조는 그대로, 이 요소만 반영).
+        code_label_row = QHBoxLayout()
+        code_label_row.addWidget(QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능):", self))
+        code_label_row.addStretch(1)
+        self._copy_code_btn = QToolButton(self)
+        self._copy_code_btn.setText("복사")   # 전용 아이콘 없음(범위 밖) — 텍스트만
+        self._copy_code_btn.setToolTip("Mermaid 코드를 클립보드로 복사")
+        self._copy_code_btn.clicked.connect(self._copy_code_to_clipboard)
+        code_label_row.addWidget(self._copy_code_btn)
+        code_col.addLayout(code_label_row)
         self._edit = QPlainTextEdit(self)
         self._edit.setPlaceholderText(self._SAMPLE)
         self._edit.setMinimumSize(QSize(420, 260))
@@ -871,11 +881,17 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
                                       | QDialogButtonBox.StandardButton.Cancel, self)
         self._btns.accepted.connect(self.accept)
         self._btns.rejected.connect(self.reject)
-        self._btns.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(_CORAL_BTN_QSS)
+        ok_btn = self._btns.button(QDialogButtonBox.StandardButton.Ok)
+        # [2026-08-19 Stage 6] 목업 시각 언어 차용 — "OK" 대신 결과를 명시하는 라벨.
+        ok_btn.setText("확인 (캔버스 삽입)")
+        ok_btn.setStyleSheet(_CORAL_BTN_QSS)
         lay.addWidget(self._btns)
 
     def text(self):
         return self._edit.toPlainText()
+
+    def _copy_code_to_clipboard(self):
+        QApplication.clipboard().setText(self._edit.toPlainText())
 
     def _update_preview(self):
         """디바운스 타이머 만료 시 호출 — `_render_mermaid_preview_pixmap`으로 다시 그린다."""
@@ -1306,10 +1322,10 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
 
     _MAX_PER_MODEL = 5
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, confirm_label: str = "확인 (도형 삽입)"):
         super().__init__(parent)
         self.setWindowTitle("AI SVG 에셋 생성")
-        self.setMinimumWidth(440)
+        self.setMinimumWidth(460)
         self.setAcceptDrops(True)
         self._init_image_attach_state()
         self._candidates: list[tuple[_SvgCandidateCard, str, str]] = []
@@ -1319,50 +1335,86 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._gen_errors: list[str] = []
         lay = QVBoxLayout(self)
 
-        lay.addWidget(QLabel("생성할 대상(예: BNC 커넥터 아이콘):", self))
-        self._prompt_edit = QLineEdit(self)
+        # [2026-08-19 Stage 6] 목업("Mermaid 가져오기 Studio v2.0")의 시각 언어만 차용해
+        # 입력카드+툴바 구성을 `_MermaidDialog`와 통일(2칸 분리 등 구조 자체는 그대로 —
+        # deep-interview 확정: "시각 언어만 차용"). 입력칸(위, 밝게 고정) + 첨부·모델·생성
+        # 툴바(아래) 카드 하나로 묶는다.
+        dark = bool(getattr(self.parent(), "_dark", True))
+        prompt_frame = QFrame(self)
+        prompt_frame.setObjectName("svgPromptCard")
+        prompt_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        prompt_frame.setStyleSheet(
+            "QFrame#svgPromptCard { border:1px solid rgba(128,128,128,90); border-radius:8px; "
+            f"background:{'#e7e0d6' if dark else 'palette(base)'}; }}"
+        )
+        prompt_frame_lay = QVBoxLayout(prompt_frame)
+        prompt_frame_lay.setContentsMargins(0, 0, 0, 0)
+        prompt_frame_lay.setSpacing(0)
+
+        label_row = QHBoxLayout()
+        label_row.setContentsMargins(10, 8, 10, 0)
+        label_row.addWidget(QLabel("생성할 대상(예: BNC 커넥터 아이콘):", self))
+        prompt_frame_lay.addLayout(label_row)
+
+        self._prompt_edit = QLineEdit(prompt_frame)
         self._prompt_edit.setPlaceholderText("예: 야기 안테나 아이콘")
         self._prompt_edit.setAcceptDrops(False)   # 드롭을 다이얼로그(dropEvent)로 넘김
         self._prompt_edit.installEventFilter(self)   # Ctrl+V 이미지 첨부
         self._prompt_edit.returnPressed.connect(self._on_generate_clicked)
-        lay.addWidget(self._prompt_edit)
+        self._prompt_edit.setFrame(False)
+        self._prompt_edit.setStyleSheet(
+            "QLineEdit { background:transparent; padding:4px 10px; " +
+            ("color:#241a15; }" if dark else "}")
+        )
+        prompt_frame_lay.addWidget(self._prompt_edit)
 
-        attach_row = QHBoxLayout()
-        self._attach_btn = QToolButton(self)
+        toolbar_widget = QWidget(prompt_frame)
+        toolbar_widget.setObjectName("svgPromptToolbar")
+        toolbar_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        toolbar_widget.setStyleSheet(
+            "QWidget#svgPromptToolbar { background:palette(button); "
+            "border-top:1px solid rgba(128,128,128,90); "
+            "border-bottom-left-radius:8px; border-bottom-right-radius:8px; }"
+        )
+        toolbar_lay = QHBoxLayout(toolbar_widget)
+        toolbar_lay.setContentsMargins(8, 6, 8, 6)
+        toolbar_lay.setSpacing(8)
+
+        self._attach_btn = QToolButton(toolbar_widget)
         self._attach_btn.setIcon(_act_icon("attach"))
         self._attach_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._attach_btn.setText("이미지 첨부")
         self._attach_btn.setToolTip("이미지 첨부<br>· 드래그 앤 드롭<br>· Ctrl+V 붙여넣기")
         self._attach_btn.clicked.connect(self._browse_image)
-        attach_row.addWidget(self._attach_btn)
-        attach_row.addWidget(self._build_image_chip(self))
-        attach_row.addStretch(1)
-        lay.addLayout(attach_row)
+        toolbar_lay.addWidget(self._attach_btn)
+        toolbar_lay.addWidget(self._build_image_chip(toolbar_widget))
+        toolbar_lay.addStretch(1)
 
-        model_row = QHBoxLayout()
-        model_row.addWidget(QLabel(f"GPT ({gw.TEXT_RECOMMEND_1}):", self))
-        self._gpt_count = QComboBox(self)
+        toolbar_lay.addWidget(QLabel(f"GPT ({gw.TEXT_RECOMMEND_1}):", toolbar_widget))
+        self._gpt_count = QComboBox(toolbar_widget)
         self._gpt_count.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
         self._gpt_count.setCurrentIndex(1)   # 기본 1개(Stage 1과 동일 체감 유지)
         self._gpt_count.setStyleSheet(_ROUNDED_COMBO_QSS)
-        model_row.addWidget(self._gpt_count)
-        model_row.addSpacing(12)
-        model_row.addWidget(QLabel(f"Gemini ({gw.TEXT_RECOMMEND_2}):", self))
-        self._gemini_count = QComboBox(self)
+        toolbar_lay.addWidget(self._gpt_count)
+        toolbar_lay.addSpacing(4)
+        toolbar_lay.addWidget(QLabel(f"Gemini ({gw.TEXT_RECOMMEND_2}):", toolbar_widget))
+        self._gemini_count = QComboBox(toolbar_widget)
         self._gemini_count.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
         self._gemini_count.setCurrentIndex(1)
         self._gemini_count.setStyleSheet(_ROUNDED_COMBO_QSS)
-        model_row.addWidget(self._gemini_count)
-        model_row.addStretch(1)
-        self._gen_btn = QToolButton(self)
+        toolbar_lay.addWidget(self._gemini_count)
+
+        self._gen_btn = QToolButton(toolbar_widget)
         self._gen_btn.setIcon(_act_icon("generate"))
         self._gen_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._gen_btn.setText("생성")
         self._gen_btn.setToolTip("생성 (Enter)")
         self._gen_btn.clicked.connect(self._on_generate_clicked)
         self._gen_btn.setStyleSheet(_CORAL_BTN_QSS)
-        model_row.addWidget(self._gen_btn)
-        lay.addLayout(model_row)
+        toolbar_lay.addWidget(self._gen_btn)
+
+        prompt_frame_lay.addWidget(toolbar_widget)
+        lay.addWidget(prompt_frame)
 
         self._progress = _GenProgressRow(self)
         lay.addWidget(self._progress)
@@ -1402,6 +1454,11 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
                                       | QDialogButtonBox.StandardButton.Cancel, self)
         self._ok_btn = self._btns.button(QDialogButtonBox.StandardButton.Ok)
         self._ok_btn.setEnabled(False)
+        # [2026-08-19 Stage 6] 목업 시각 언어 차용 — "OK" 대신 결과를 명시하는 라벨.
+        # 호출부가 삽입/대체 중 실제로 일어날 일을 넘겨준다(host_fileio.py는 기본값
+        # "확인 (도형 삽입)" 그대로, host_context.py의 대체 진입점만 다르게 넘김).
+        self._ok_btn.setText(confirm_label)
+        self._ok_btn.setStyleSheet(_CORAL_BTN_QSS)
         self._btns.accepted.connect(self.accept)
         self._btns.rejected.connect(self.reject)
         lay.addWidget(self._btns)
