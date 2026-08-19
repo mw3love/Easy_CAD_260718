@@ -1061,6 +1061,70 @@ def test_palette_drag_drop_creates_shape():
 
 
 
+def test_palette_drag_live_snap_and_commit():
+    # [실사용 피드백 2026-08-19] 팔레트 드래그가 씬에 진짜 임시 도형을 만들어 기존 도형
+    # 이동과 같은 `_apply_smart_snap()`을 태우므로, 드롭 전(드래그 도중)에도 실시간으로
+    # 정렬 스냅이 걸려야 한다(기존엔 네이티브 QDrag라 드롭 순간에만 위치가 확정됐음).
+    w = CanvasWindow(); w.resize(1200, 760); w.show()
+    a = _mk_rect(w._scene, w.make_pen(), -260, -60, 120, 120)
+    b = _mk_rect(w._scene, w.make_pen(), 60, -60, 120, 120)   # 같은 y → top/center/bottom 동시 정렬
+    vp = w._view.viewport()
+
+    def scene_to_global(sp):
+        return vp.mapToGlobal(w._view.mapFromScene(sp))
+
+    n0 = len(w._scene.items())
+    assert w._palette_drag_begin("rect") is True   # 씬에 반투명 임시 도형이 바로 생김
+    assert len(w._scene.items()) == n0 + 1
+    it = w._palette_drag_item
+    assert it.opacity() < 1.0
+
+    gp = scene_to_global(QPointF(-100.0, 3.0))   # 완벽 정렬에서 y로 3만큼 어긋난 위치
+    w._palette_drag_move("rect", gp)
+    assert any(g[0] == "h" for g in w._view._align_guides), "드래그 도중에도 가이드선이 떠야 함"
+    assert abs(it.sceneBoundingRect().center().y() - 0.0) < 1.0, "드롭 전인데도 실시간 SNAP돼야 함"
+
+    d0 = len(w._undo)
+    w._palette_drag_end("rect", gp)
+    assert len(w._scene.items()) == n0 + 1   # 임시 도형이 그대로 확정(추가 생성 아님)
+    assert len(w._undo) == d0 + 1            # undo 1스텝
+    assert it.opacity() == 1.0
+    assert w._view._align_guides == []
+    w.undo()
+    assert it not in w._scene.items()
+
+
+def test_palette_drag_cancel_when_released_outside_viewport():
+    # [실사용 피드백 2026-08-19] 캔버스 밖에서 손을 떼면 취소(=놓지 않음)와 같은 관례.
+    w = CanvasWindow(); w.resize(1200, 760); w.show()
+    vp = w._view.viewport()
+    n0 = len(w._scene.items())
+    assert w._palette_drag_begin("ellipse") is True
+    assert len(w._scene.items()) == n0 + 1
+
+    outside = vp.mapToGlobal(vp.rect().bottomRight()) + QPoint(500, 500)
+    w._palette_drag_move("ellipse", outside)
+    assert w._palette_drag_item.isVisible() is False   # 뷰포트 밖이면 숨김
+
+    d0 = len(w._undo)
+    w._palette_drag_end("ellipse", outside)
+    assert len(w._scene.items()) == n0            # 임시 도형이 지워짐(순증가 없음)
+    assert len(w._undo) == d0                      # undo에도 안 남음
+
+
+def test_palette_drag_begin_falls_back_for_port_tool_keys():
+    # [2026-08-19] 포트는 호스트 테두리 부착이라는 별도 배치 로직(_create_port_at)이라
+    # 실시간 정렬 스냅 대상이 아니다 — begin이 False를 돌려줘야 _PaletteButton이 기존
+    # 네이티브 QDrag로 폴백한다.
+    w = CanvasWindow()
+    n0 = len(w._scene.items())
+    assert w._palette_drag_begin("port_rect") is False
+    assert w._palette_drag_begin("port_circle") is False
+    assert len(w._scene.items()) == n0   # 씬에 아무것도 안 생김(네이티브 경로가 대신 처리)
+
+
+
+
 def test_rmb_busy_cancel_vs_idle_pan():
     # [M3 #16] 우클릭 상태 분기: BUSY(무장)=취소 / 유휴=드래그 팬(release로 메뉴/팬 분기).
     w = CanvasWindow(); v = w._view

@@ -59,15 +59,28 @@ _PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 
 
 class _PaletteButton(QToolButton):
     """[Phase 6 M3 #17] 좌측 팔레트 버튼 — 클릭=도구 무장(기존 clicked 유지) /
-    임계(px)를 넘게 끌면 QDrag로 캔버스에 도형을 드롭 생성한다. 드래그 시엔 release가
-    버튼에 안 와 clicked가 발화하지 않으므로 무장되지 않는다(의도 — 드래그와 무장 분리)."""
+    임계(px)를 넘게 끌면 캔버스에 도형을 드롭 생성한다. 드래그 시엔 release가
+    버튼에 안 와 clicked가 발화하지 않으므로 무장되지 않는다(의도 — 드래그와 무장 분리).
+
+    [2026-08-19, 실사용 피드백] 임계를 넘는 순간 우선 `drag_begin_fn`(host_fileio.py
+    `_palette_drag_begin`)을 불러 씬에 진짜 임시 도형을 만들 수 있는지 묻는다 — 되면
+    이 버튼이 `grabMouse()`로 전역 마우스를 잡아 `drag_move_fn`/`drag_end_fn`으로 캔버스
+    쪽에 좌표만 계속 통보한다(정렬 스냅이 기존 도형 이동과 똑같이 드래그 도중에도
+    실시간으로 걸리게 하려는 설계 — 네이티브 `QDrag`는 OS가 고스트를 그려 앱이 위치를
+    되돌릴 수 없어 이 체감을 못 냈다). False면(포트·커스텀심볼처럼 별도 배치 로직이
+    있는 tool_key) 기존 네이티브 `QDrag` 경로로 폴백한다."""
     _DRAG_THRESH = 6
 
-    def __init__(self, tool_key: str, parent=None, preview_fn=None):
+    def __init__(self, tool_key: str, parent=None, preview_fn=None,
+                 drag_begin_fn=None, drag_move_fn=None, drag_end_fn=None):
         super().__init__(parent)
         self._drag_tool_key = tool_key
         self._drag_press = None
-        self._preview_fn = preview_fn   # [UX] 실물 미리보기 렌더 콜백(host._render_drag_preview)
+        self._preview_fn = preview_fn   # [UX] 실물 미리보기 렌더 콜백(host._render_drag_preview) — 네이티브 폴백용
+        self._drag_begin_fn = drag_begin_fn   # (tool_key) -> bool
+        self._drag_move_fn = drag_move_fn     # (tool_key, global_pos: QPoint) -> None
+        self._drag_end_fn = drag_end_fn       # (tool_key, global_pos: QPoint) -> None
+        self._dragging = False   # 실물 드래그(씬 임시 도형) 진행 중 — grabMouse 소유 여부와 동일
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
@@ -75,16 +88,34 @@ class _PaletteButton(QToolButton):
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
+        if self._dragging:
+            if self._drag_move_fn:
+                self._drag_move_fn(self._drag_tool_key, e.globalPosition().toPoint())
+            return
         if (self._drag_press is not None and (e.buttons() & Qt.MouseButton.LeftButton)
                 and (e.position().toPoint() - self._drag_press).manhattanLength()
                 >= self._DRAG_THRESH):
             self._drag_press = None
-            self._start_palette_drag()
+            self.setDown(False)   # 드래그로 release를 못 받으니 눌림 상태 수동 해제
+            started = self._drag_begin_fn(self._drag_tool_key) if self._drag_begin_fn else False
+            if started:
+                self._dragging = True
+                self.grabMouse()
+                if self._drag_move_fn:
+                    self._drag_move_fn(self._drag_tool_key, e.globalPosition().toPoint())
+            else:
+                self._start_palette_drag()   # 폴백 — 포트·커스텀심볼 등
             return
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
         self._drag_press = None
+        if self._dragging:
+            self._dragging = False
+            self.releaseMouse()
+            if self._drag_end_fn:
+                self._drag_end_fn(self._drag_tool_key, e.globalPosition().toPoint())
+            return
         super().mouseReleaseEvent(e)
 
     def _start_palette_drag(self):
@@ -98,7 +129,8 @@ class _PaletteButton(QToolButton):
         if not pm.isNull():
             drag.setPixmap(pm)
             drag.setHotSpot(QPoint(pm.width() // 2, pm.height() // 2))
-        self.setDown(False)   # 드래그로 release를 못 받으니 눌림 상태 수동 해제
+        # setDown(False)는 호출부(mouseMoveEvent)가 분기 전에 이미 했다(드래그로 release를
+        # 못 받으니 눌림 상태 수동 해제 — 네이티브 폴백·실물 드래그 두 경로 공통이라 위로 옮김).
         drag.exec(Qt.DropAction.CopyAction)
 
 

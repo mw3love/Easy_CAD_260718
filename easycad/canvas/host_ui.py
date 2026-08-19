@@ -863,7 +863,13 @@ class _UIBuildMixin:
     def _palette_button(self, label: str, icon_kind, tooltip: str, tool_key: str) -> QToolButton:
         """icon_kind는 보통 _SYMBOL_KINDS 키 문자열이지만, 커스텀 심볼(§8-8)처럼 미리 만든
         QIcon(썸네일)을 직접 넘길 수도 있다."""
-        btn = _PaletteButton(tool_key, preview_fn=self._render_drag_preview)   # [M3 #17] 클릭=무장 / 드래그=캔버스 드롭 생성
+        # [M3 #17] 클릭=무장 / 드래그=캔버스 드롭 생성. [2026-08-19] drag_*_fn 3개는 씬에
+        # 진짜 임시 도형을 만들어 실시간 정렬 스냅을 태우는 경로(host_fileio.py 참조) —
+        # False를 돌려주는 tool_key(포트·커스텀심볼)는 preview_fn 기반 네이티브 QDrag로 폴백.
+        btn = _PaletteButton(tool_key, preview_fn=self._render_drag_preview,
+                              drag_begin_fn=self._palette_drag_begin,
+                              drag_move_fn=self._palette_drag_move,
+                              drag_end_fn=self._palette_drag_end)
         btn.setText(label)
         btn.setIcon(icon_kind if isinstance(icon_kind, QIcon) else self._shape_icon(icon_kind, px=_PALETTE_ICON_PX))
         btn.setIconSize(QSize(_PALETTE_ICON_PX, _PALETTE_ICON_PX))

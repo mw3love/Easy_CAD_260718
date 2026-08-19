@@ -76,6 +76,59 @@ def _real_snap_vertices_local(item) -> list:
     return poly if 0 < len(poly) <= _SNAP_VERTEX_CAP else []
 
 
+def _smart_snap_srect(o) -> QRectF:
+    """[2e] 스마트 정렬 스냅 — 보이는 외형 기준 씬 사각(핸들·도트 여유 제외).
+    [실사용 버그 수정 2026-08-10] 선/곡선화살표/타원/DXF패스의 `_content_rect()`는
+    재귀 방지·hit-test 여유로 펜폭/2+1(또는 +2)만큼 부풀린 값이라(core_shapes.py 각
+    클래스 주석 참조), 이 정렬 스냅에 그대로 쓰면 "닿았다"고 이동시켜도 실제 선과
+    1~수 유닛 간극이 남는다. 이 넷은 실제 기하(끝점/정점/patch) bbox를 대신 쓴다 —
+    패딩 없는 진짜 시각적 경계. `_RectItem`·`_SymbolItem`도 같은 병이 있어(`_content_
+    rect()` 미override, `_HandleResizeMixin` 기본값이 펜폭/2 패딩) `_tight_scene_bbox`
+    (core_shapes.py — `_GroupTransform.bbox`도 같은 이유로 이걸 쓴다)로 통일한다.
+    `_AnnotatorView._apply_smart_snap`이 이 함수로 상대 도형 rect를 구한다. 팔레트
+    드래그(2026-08-19 이후)도 씬에 진짜 임시 도형을 만들어 이 `_apply_smart_snap`을
+    그대로 태우므로(host_fileio.py `_palette_drag_move`), 별도 진입점이 필요 없다."""
+    if isinstance(o, (_LineItem, _PolyArrowItem, _ArrowItem)):
+        pts = _conn_polyline_scene(o)
+        if pts:
+            xs = [p.x() for p in pts]; ys = [p.y() for p in pts]
+            return QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
+    if isinstance(o, _EllipseItem):
+        return o.mapToScene(o.rect()).boundingRect()
+    if isinstance(o, _PathItem):
+        return o.mapToScene(o.path().boundingRect()).boundingRect()
+    tb = _tight_scene_bbox(o)
+    if tb is not None:
+        return tb
+    cr = o._content_rect() if hasattr(o, "_content_rect") else o.boundingRect()
+    return o.mapToScene(cr).boundingRect()
+
+
+def _build_align_guides(nr, bx_winners, bx_orr, by_winners, by_orr) -> list:
+    """스냅 승자(축별 동률 포함) → 그릴 가이드선 리스트. 각 항목은
+    ("v", x, y0, y1, role) | ("h", y, x0, x1, role) — role은 `drawForeground`가 실선·
+    점선을 가르는 데 쓴다(role == "center"만 실선, 나머지는 점선 — 2026-08-19 실사용
+    피드백: 여러 변이 동시에 맞으면 전부 실선이라 산만했다)."""
+    guides = []
+    if bx_winners:
+        o = bx_orr
+        y0, y1 = min(nr.top(), o.top()), max(nr.bottom(), o.bottom())
+        seen = set()
+        for _ad, _d, coord, role in bx_winners:
+            if coord not in seen:
+                seen.add(coord)
+                guides.append(("v", coord, y0, y1, role))
+    if by_winners:
+        o = by_orr
+        x0, x1 = min(nr.left(), o.left()), max(nr.right(), o.right())
+        seen = set()
+        for _ad, _d, coord, role in by_winners:
+            if coord not in seen:
+                seen.add(coord)
+                guides.append(("h", coord, x0, x1, role))
+    return guides
+
+
 class _AnnotatorView(QGraphicsView):
     # [화살표 통합] 화살표는 도구 하나 → 단축키도 3 하나.
     _SHORTCUTS = {
@@ -850,72 +903,24 @@ class _AnnotatorView(QGraphicsView):
             for it, old in moving:
                 it.setPos(QPointF(old.x(), it.pos().y()))
 
-    def _apply_smart_snap(self):
-        """[2e] 단일 도형 이동 중 — 근처 도형과 모서리(좌/우/상/하)·중심 정렬 시 스냅 + 가상선.
-        Qt가 커서로 옮긴 뒤 호출돼, 임계 내면 정렬 좌표로 살짝 당기고 가이드선을 기록한다.
-        핸들 조작(리사이즈·회전·끝점) 중이거나 단일 선택이 아니면 건드리지 않는다."""
-        self._align_guides = []
-        self._cut_restore_snapped = False
-        if not getattr(self._owner, "align_guides_enabled", True):
-            return   # [토글] 꺼져 있으면 스냅도 가이드선도 전부 스킵
-        sel = [it for it in self.scene().selectedItems() if it.parentItem() is None]
-        if len(sel) != 1:
-            return
-        it = sel[0]
-        if (getattr(it, "_resizing", False) or getattr(it, "_rotating", False)
-                or getattr(it, "_box_resize", None) is not None
-                or getattr(it, "_drag_endpoint", None) is not None):
-            return
-        bg = getattr(self._owner, "_bg_item", None)
-
-        def srect(o):   # 보이는 외형 기준 씬 사각 — 핸들·도트 여유 제외.
-            # [실사용 버그 수정 2026-08-10] 선/곡선화살표/타원/DXF패스의 `_content_rect()`는
-            # 재귀 방지·hit-test 여유로 펜폭/2+1(또는 +2)만큼 부풀린 값이라(core_shapes.py 각
-            # 클래스 주석 참조), 이 정렬 스냅에 그대로 쓰면 "닿았다"고 이동시켜도 실제 선과
-            # 1~수 유닛 간극이 남는다(실측: 펜폭 1.0 → 1.5유닛 간극, 고배율 확대 시 스냅
-            # 문턱보다 커져 아예 안 붙는 것처럼 보임). 이 넷은 실제 기하(끝점/정점/patch)
-            # bbox를 대신 쓴다 — 패딩 없는 진짜 시각적 경계.
-            if isinstance(o, (_LineItem, _PolyArrowItem, _ArrowItem)):
-                pts = _conn_polyline_scene(o)
-                if pts:
-                    xs = [p.x() for p in pts]; ys = [p.y() for p in pts]
-                    return QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
-            if isinstance(o, _EllipseItem):
-                return o.mapToScene(o.rect()).boundingRect()
-            if isinstance(o, _PathItem):
-                return o.mapToScene(o.path().boundingRect()).boundingRect()
-            # [실사용 버그 수정 2026-08-10, 후속] `_RectItem`·`_SymbolItem`도 같은 병이 있었다 —
-            # 둘 다 `_content_rect()`를 override 안 해 `_HandleResizeMixin` 기본값(Qt
-            # `boundingRect()`, 펜폭/2 패딩)을 그대로 썼다. 사각형은 패딩이 작아(펜폭 1.0 →
-            # 0.5유닛) 위 4종처럼 "아예 안 붙는" 정도는 아니었지만, 고배율에선 또렷이 보이는
-            # 오차였다 — 실사용 재현(2026-08-10, 4354% 줌): 사각형 A에 정확히 붙였다고 여긴
-            # 사각형 B의 중심점이 화면상 A의 테두리 선 자체가 아니라 그 0.5유닛 바깥(패딩된
-            # bbox 값)에 얹혀, "테두리 오른쪽에 배치된" 것처럼 보였다. `_tight_scene_bbox`
-            # (core_shapes.py — `_GroupTransform.bbox`도 같은 이유로 이걸 쓴다)로 통일.
-            tb = _tight_scene_bbox(o)
-            if tb is not None:
-                return tb
-            cr = o._content_rect() if hasattr(o, "_content_rect") else o.boundingRect()
-            return o.mapToScene(cr).boundingRect()
-
-        nr = srect(it)
-        # 실사용 재현(2026-08-01, 로그 확인) — 6화면px는 게이트·로직 자체는 정상 작동했지만
-        # (로그상 인접 스냅이 수십 프레임·수십 유닛 구간에서 계속 유지됨을 확인) 실제 손 드래그
-        # 속도로는 그 폭(화면에서 2mm 미만)을 그냥 지나쳐 버려 "닿기 직전까진 전혀 반응 없다가
-        # 닿는 순간 나타난다"는 체감으로 이어졌다. 로직이 아니라 문턱 자체가 좁았던 것 — 10px로
-        # 넉넉히 늘린다(과발화 원인이었던 교차조합·전역 tie 도용은 이미 별도로 막아 뒀으므로,
-        # 문턱만 넓혀도 그 문제들이 재발하진 않는다).
+    def _align_candidates(self, nr: QRectF, exclude_item=None):
+        """[2e/팔레트 미리보기 공용] nr 주변 정렬 스냅 후보 도형 스캔 → (thr, other_items).
+        실사용 재현(2026-08-01, 로그 확인) — 6화면px는 게이트·로직 자체는 정상 작동했지만
+        실제 손 드래그 속도로는 그 폭(화면에서 2mm 미만)을 그냥 지나쳐 버려 "닿기 직전까진
+        전혀 반응 없다가 닿는 순간 나타난다"는 체감으로 이어졌다. 10px로 넉넉히 늘린다
+        (과발화 원인이었던 교차조합·전역 tie 도용은 이미 별도로 막아 뒀으므로, 문턱만
+        넓혀도 그 문제들이 재발하진 않는다).
+        [성능 조사 2026-08-13] 이전엔 `self.scene().items()`(전체 씬)를 매 마우스무브 프레임마다
+        스캔해 실측 200개=15.8ms·800개=56ms·1600개=120ms(60fps 예산 16.67ms 초과)로 밀집
+        도면에서 O(n) 병목이었다. ⚠ 1차 시도(내 bbox를 thr로 부풀린 사각 하나로만 질의)는
+        회귀였다 — 이 스냅은 X·Y를 **축별 독립**으로 비교해(2026-08-01 결정: "두 도형이 세로로
+        수백 유닛 떨어져 있어도 가로 변끼리는 맞을 수 있다"), 한쪽 축만 맞는 아득히 먼 후보도
+        정상 케이스다(위 `test_smart_align_adjacent_edge_snap_when_far_apart_perpendicular`류).
+        2D 사각 하나로 질의하면 이 축별 매칭을 다시 게이트로 막아버린다(9개 회귀 테스트로 실측
+        확인). 대신 **가로 띠**(내 y범위±thr, x는 전 구간)와 **세로 띠**(내 x범위±thr, y는 전
+        구간) 둘로 나눠 질의해 합집합을 취한다 — "어느 한 축이라도 thr 이내"라는 실제 매칭
+        조건과 정확히 대응하면서도, 두 축 다 먼(스캔 대상 대부분) 도형은 여전히 걸러낸다."""
         thr = 10.0 / self._view_scale()
-        # [성능 조사 2026-08-13] 이전엔 `self.scene().items()`(전체 씬)를 매 마우스무브 프레임마다
-        # 스캔해 실측 200개=15.8ms·800개=56ms·1600개=120ms(60fps 예산 16.67ms 초과)로 밀집
-        # 도면에서 O(n) 병목이었다. ⚠ 1차 시도(내 bbox를 thr로 부풀린 사각 하나로만 질의)는
-        # 회귀였다 — 이 스냅은 X·Y를 **축별 독립**으로 비교해(2026-08-01 결정: "두 도형이 세로로
-        # 수백 유닛 떨어져 있어도 가로 변끼리는 맞을 수 있다"), 한쪽 축만 맞는 아득히 먼 후보도
-        # 정상 케이스다(위 `test_smart_align_adjacent_edge_snap_when_far_apart_perpendicular`류).
-        # 2D 사각 하나로 질의하면 이 축별 매칭을 다시 게이트로 막아버린다(9개 회귀 테스트로 실측
-        # 확인). 대신 **가로 띠**(내 y범위±thr, x는 전 구간)와 **세로 띠**(내 x범위±thr, y는 전
-        # 구간) 둘로 나눠 질의해 합집합을 취한다 — "어느 한 축이라도 thr 이내"라는 실제 매칭
-        # 조건과 정확히 대응하면서도, 두 축 다 먼(스캔 대상 대부분) 도형은 여전히 걸러낸다.
         _BIG = 1.0e7
         x_strip = QRectF(nr.left() - thr, -_BIG, nr.width() + 2 * thr, 2 * _BIG)
         y_strip = QRectF(-_BIG, nr.top() - thr, 2 * _BIG, nr.height() + 2 * thr)
@@ -923,43 +928,26 @@ class _AnnotatorView(QGraphicsView):
         # 내부를 스치기만 하면 안 걸린다(실측으로 발견). 정렬 후보는 "가깝다"의 기준이 실제
         # 그려진 모양이 아니라 bbox이므로 `IntersectsItemBoundingRect`를 명시한다.
         mode = Qt.ItemSelectionMode.IntersectsItemBoundingRect
+        bg = getattr(self._owner, "_bg_item", None)
         cand = {}
         for o in self.scene().items(x_strip, mode):
             cand[id(o)] = o
         for o in self.scene().items(y_strip, mode):
             cand[id(o)] = o
         other_items = [o for o in cand.values()
-                       if o is not it and o is not bg and o.parentItem() is None
+                       if o is not exclude_item and o is not bg and o.parentItem() is None
                        and (o.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)]
-        if not other_items:
-            return
-        # [신규기능 2026-08-10] 실제 정점(꼭짓점) 후보 — bbox만으론 삼각형처럼 bbox와 실제
-        # 외곽선이 다른 도형의 대각선 변이 스냅 후보에 아예 안 잡히던 한계(실사용 지적)를 푼다.
-        # `srect()`가 이제 `_RectItem`/`_SymbolItem`도 이 함수와 같은 패딩 없는 기준을 쓰므로
-        # (위 `srect` 정의 참조), my↔other 정점을 서로 직접 짝지어도(vertex×vertex) 더 이상
-        # 유사-중복 후보가 생기지 않는다.
-        my_verts = [it.mapToScene(p) for p in _real_snap_vertices_local(it)]
-        # [신규기능 2026-08-10, §8 항목17 후속] 자국 복구 스냅 — 일반 정점 스냅(위)보다 먼저
-        # 시도한다. TRIM으로 지운 자국의 경계 두 점에 이 도형의 변 두 개가 다시 정확히 지나도록
-        # 강체이동을 역산하는, 축별 독립비교로는 원리적으로 못 푸는 케이스(대각선 변이 사각형
-        # 변의 "중간"을 지나며 만든 cut, 실사용 지적) — 성공하면 정확한 dx·dy가 이미 정해지므로
-        # 아래 축별 로직은 건너뛴다(더 구체적인 매치가 우선).
-        cut_delta = cut_restore_snap_delta(it, other_items, thr)
-        if cut_delta is not None:
-            dx, dy = cut_delta
-            if dx or dy:
-                it.moveBy(dx, dy)
-            self._align_guides = []
-            self._cut_restore_snapped = True
-            return
-        # 동률(같은 크기 도형끼리는 좌/중심/우 또는 상/중심/하의 "얼마나 가까운가"가 수학적으로
-        # 완전히 같아짐) 시 승자를 하나만 골라 보여주면, 같은 크기 도형끼리는 그 하나(예: 중심)만
-        # 영원히 뜨고 나머지 역할은 절대 못 본다 — 실사용 로그로 확인(2026-08-01): 같은 크기
-        # 도형끼리는 항상 좌/중심/우 거리가 소수점까지 정확히 일치했다. 그래서 "승자 하나"가 아니라
-        # **동률인 역할을 전부** 가이드선으로 보여준다(Figma·Lucid도 여러 정렬이 동시에 맞으면
-        # 선을 여러 개 함께 보여준다). 이동량(dx/dy)은 동률 후보끼리 델타가 같아 아무거나 써도
-        # 결과가 같지만, 가이드선은 역할마다 그리는 좌표(그 변·중심의 실제 위치)가 달라 하나만
-        # 고르면 정보가 사라진다.
+        return thr, other_items
+
+    def _align_match(self, nr: QRectF, my_verts: list, other_items: list, thr: float):
+        """[2e/팔레트 미리보기 공용] 후보 도형들과 축별(x/y) 독립 비교 → (dx, dy, bx_winners,
+        bx_orr, by_winners, by_orr). 동률(같은 크기 도형끼리는 좌/중심/우 또는 상/중심/하의
+        "얼마나 가까운가"가 수학적으로 완전히 같아짐) 시 승자를 하나만 골라 보여주면, 같은
+        크기 도형끼리는 그 하나(예: 중심)만 영원히 뜨고 나머지 역할은 절대 못 본다 — 실사용
+        로그로 확인(2026-08-01). 그래서 "승자 하나"가 아니라 **동률인 역할을 전부** 반환한다
+        (Figma·Lucid도 여러 정렬이 동시에 맞으면 선을 여러 개 함께 보여준다). 이동량(dx/dy)은
+        동률 후보끼리 델타가 같아 아무거나 써도 결과가 같지만, 가이드선은 역할마다 그리는
+        좌표가 달라 하나만 고르면 정보가 사라진다."""
         tie_eps = 1.5 / self._view_scale()
 
         def pick_local(cands):
@@ -978,7 +966,7 @@ class _AnnotatorView(QGraphicsView):
         bx_orr = by_orr = None
 
         for other_item in other_items:
-            orr = srect(other_item)
+            orr = _smart_snap_srect(other_item)
             other_verts = [other_item.mapToScene(p) for p in _real_snap_vertices_local(other_item)]
             # 후보는 축당 9개 — 같은 역할 3개(좌-좌/중심-중심/우-우, 상-상/중심-중심/하-하) +
             # **마주보는 변** 2개(내 우변=상대 좌변, 내 좌변=상대 우변 / 내 아랫변=상대 윗변,
@@ -1047,25 +1035,55 @@ class _AnnotatorView(QGraphicsView):
                 by_winners, by_orr = local_y, orr
         dx = bx_winners[0][1] if bx_winners else 0.0
         dy = by_winners[0][1] if by_winners else 0.0
+        return dx, dy, bx_winners, bx_orr, by_winners, by_orr
+
+    def _apply_smart_snap(self):
+        """[2e] 단일 도형 이동 중 — 근처 도형과 모서리(좌/우/상/하)·중심 정렬 시 스냅 + 가상선.
+        Qt가 커서로 옮긴 뒤 호출돼, 임계 내면 정렬 좌표로 살짝 당기고 가이드선을 기록한다.
+        핸들 조작(리사이즈·회전·끝점) 중이거나 단일 선택이 아니면 건드리지 않는다.
+        후보 스캔·매칭은 `_align_candidates`/`_align_match`로 뺐다(팔레트 드래그도 씬에
+        진짜 임시 도형을 만들어 이 메서드를 그대로 호출하므로 같이 재사용된다,
+        host_fileio.py `_palette_drag_move`) — TRIM 자국 복구는 실제 도형 이동 전용이라
+        여기 남는다."""
+        self._align_guides = []
+        self._cut_restore_snapped = False
+        if not getattr(self._owner, "align_guides_enabled", True):
+            return   # [토글] 꺼져 있으면 스냅도 가이드선도 전부 스킵
+        sel = [it for it in self.scene().selectedItems() if it.parentItem() is None]
+        if len(sel) != 1:
+            return
+        it = sel[0]
+        if (getattr(it, "_resizing", False) or getattr(it, "_rotating", False)
+                or getattr(it, "_box_resize", None) is not None
+                or getattr(it, "_drag_endpoint", None) is not None):
+            return
+        nr = _smart_snap_srect(it)
+        thr, other_items = self._align_candidates(nr, exclude_item=it)
+        if not other_items:
+            return
+        # [신규기능 2026-08-10] 실제 정점(꼭짓점) 후보 — bbox만으론 삼각형처럼 bbox와 실제
+        # 외곽선이 다른 도형의 대각선 변이 스냅 후보에 아예 안 잡히던 한계(실사용 지적)를 푼다.
+        # `_smart_snap_srect()`가 이제 `_RectItem`/`_SymbolItem`도 패딩 없는 기준을 쓰므로,
+        # my↔other 정점을 서로 직접 짝지어도(vertex×vertex) 더 이상 유사-중복 후보가 안 생긴다.
+        my_verts = [it.mapToScene(p) for p in _real_snap_vertices_local(it)]
+        # [신규기능 2026-08-10, §8 항목17 후속] 자국 복구 스냅 — 일반 정점 스냅(위)보다 먼저
+        # 시도한다. TRIM으로 지운 자국의 경계 두 점에 이 도형의 변 두 개가 다시 정확히 지나도록
+        # 강체이동을 역산하는, 축별 독립비교로는 원리적으로 못 푸는 케이스(대각선 변이 사각형
+        # 변의 "중간"을 지나며 만든 cut, 실사용 지적) — 성공하면 정확한 dx·dy가 이미 정해지므로
+        # 아래 축별 로직은 건너뛴다(더 구체적인 매치가 우선).
+        cut_delta = cut_restore_snap_delta(it, other_items, thr)
+        if cut_delta is not None:
+            dx, dy = cut_delta
+            if dx or dy:
+                it.moveBy(dx, dy)
+            self._align_guides = []
+            self._cut_restore_snapped = True
+            return
+        dx, dy, bx_winners, bx_orr, by_winners, by_orr = self._align_match(nr, my_verts, other_items, thr)
         if dx or dy:
             it.moveBy(dx, dy)
-            nr = srect(it)
-        if bx_winners:
-            o = bx_orr
-            y0, y1 = min(nr.top(), o.top()), max(nr.bottom(), o.bottom())
-            seen = set()
-            for _ad, _d, coord, _role in bx_winners:
-                if coord not in seen:
-                    seen.add(coord)
-                    self._align_guides.append(("v", coord, y0, y1))
-        if by_winners:
-            o = by_orr
-            x0, x1 = min(nr.left(), o.left()), max(nr.right(), o.right())
-            seen = set()
-            for _ad, _d, coord, _role in by_winners:
-                if coord not in seen:
-                    seen.add(coord)
-                    self._align_guides.append(("h", coord, x0, x1))
+            nr = _smart_snap_srect(it)
+        self._align_guides = _build_align_guides(nr, bx_winners, bx_orr, by_winners, by_orr)
 
     def _apply_grid_snap_move(self, skip_x: bool, skip_y: bool):
         """[그리드 스냅] 단일 도형 이동 중 — 스마트정렬·축고정이 이미 자리를 정한 축은 skip_*로
@@ -2003,23 +2021,37 @@ class _AnnotatorView(QGraphicsView):
         # [실사용 요청 2026-08-09, 5차] 누르지 않고 접속점만 hover했을 때의 점선 고스트
         # 사각형+화살표 미리보기(`_draw_hp_hover_preview`)는 "다른 작업 중 방해된다"는
         # 피드백으로 폐지 — 이제 hover는 `_draw_port_dots`의 점 강조(아래)까지만 반응한다.
-        # [2e] 스마트 정렬 가이드선 — 이동 중 정렬 맞은 축에 마젠타 실선. 인접(맞닿음) 매칭은
+        # [2e] 스마트 정렬 가이드선 — 이동 중 정렬 맞은 축에 마젠타. 인접(맞닿음) 매칭은
         # 정의상 가이드 좌표가 도형 자신의 테두리(선택 파란 테두리 등)와 정확히 겹쳐, 색이 섞여
         # 거의 안 보이는 문제가 실사용에서 발견됨(GIF 프레임 픽셀 분석으로 확인 — 로직·렌더링
         # 자체는 정상, 다른 UI 색과 겹쳐 묻히는 것만 문제). 검정 헤일로를 먼저 깔아 어떤 배경
         # 색과 겹쳐도 마젠타가 도드라지게 한다(Figma류 가이드선 관례).
+        # [실사용 피드백 2026-08-19] 변 여러 개가 동시에 맞으면 전부 실선이라 산만하다는 지적
+        # — Lucid 대조로 "대부분 점선, 가장 강한 신호인 중심-중심 정렬(role == 'center')만
+        # 실선"으로 정리(`_build_align_guides`가 role을 guides[4]에 실어 보낸다).
         if self._align_guides:
-            halo = QPen(QColor(0, 0, 0, 180), 3.0)
-            halo.setCosmetic(True)
-            core = QPen(QColor(230, 60, 160), 1.5)
-            core.setCosmetic(True)
-            for pen in (halo, core):
-                painter.setPen(pen)
-                for g in self._align_guides:
-                    if g[0] == "v":
-                        painter.drawLine(QPointF(g[1], g[2]), QPointF(g[1], g[3]))
-                    else:
-                        painter.drawLine(QPointF(g[2], g[1]), QPointF(g[3], g[1]))
+            dash_guides = [g for g in self._align_guides if g[4] != "center"]
+            solid_guides = [g for g in self._align_guides if g[4] == "center"]
+
+            def _draw_guide(g):
+                if g[0] == "v":
+                    painter.drawLine(QPointF(g[1], g[2]), QPointF(g[1], g[3]))
+                else:
+                    painter.drawLine(QPointF(g[2], g[1]), QPointF(g[3], g[1]))
+
+            groups = [(dash_guides, Qt.PenStyle.DashLine), (solid_guides, Qt.PenStyle.SolidLine)]
+            for width, color, alpha in ((3.0, QColor(0, 0, 0), 180), (1.5, QColor(230, 60, 160), 255)):
+                for guides, style in groups:
+                    if not guides:
+                        continue
+                    c = QColor(color)
+                    c.setAlpha(alpha)
+                    pen = QPen(c, width)
+                    pen.setCosmetic(True)
+                    pen.setStyle(style)
+                    painter.setPen(pen)
+                    for g in guides:
+                        _draw_guide(g)
         # [M4-4] 세그먼트 핸들은 아이템(_paint_segment_handles)이 직접 그린다 — 여기선 마커 없음.
         # [우리 확장] 다중선택 그룹 변형 오버레이 — 공통 bbox + 모서리(스케일)·상단(회전) 핸들.
         # stretch 진행 중엔 그리지 않는다(두 오버레이 겹침 방지 — 그때 조작은 stretch가 소유).

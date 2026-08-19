@@ -514,14 +514,12 @@ class _FileIOMixin:
         self.statusBar().showMessage(f"AI SVG 에셋 삽입: 도형 {len(items)}개", 4000)
 
 
-    def _create_shape_at(self, tool_key: str, scene_pos: QPointF):
-        """[Phase 6 M3 #17] 팔레트에서 드롭한 도구를 scene_pos 중심에 기본 크기로 생성.
-        무장 후 드래그로 그리는 경로(_AnnotatorView.mousePressEvent)와 같은 아이템·펜·플래그를
-        써 이후 편집(리사이즈·회전·undo·저장)이 전부 동일하게 동작한다."""
-        if tool_key.startswith("customsym:"):
-            return self._create_custom_symbol_at(tool_key[len("customsym:"):], scene_pos)
-        if tool_key in ("port_rect", "port_circle"):
-            return self._create_port_at(tool_key, scene_pos)
+    def _build_shape_item(self, tool_key: str):
+        """[리팩터 2026-08-19] `_create_shape_at`의 '아이템 생성+스타일링'만 분리 —
+        씬 추가·선택·undo push는 호출부(`_create_shape_at`/팔레트 실시간 드래그
+        `_palette_drag_begin`) 각자 몫이다. 포트·커스텀심볼은 각각 호스트 부착·그룹
+        재구성이라는 별도 배치 로직이 있어 여기 포함하지 않는다(호출부가 먼저 걸러낸다).
+        반환: (아이템, w, h) 또는 미지원 tool_key면 None."""
         if tool_key.startswith("sym:"):
             kind = tool_key[4:]
             w, h = _PALETTE_TRIANGLE_WH if kind == "triangle" else _PALETTE_SYM_WH
@@ -533,13 +531,102 @@ class _FileIOMixin:
             return None
         it.setPen(self.make_pen())
         it.setBrush(self.make_brush())   # [신규기능] sticky 채움색
-        it.setPos(scene_pos.x() - w / 2.0, scene_pos.y() - h / 2.0)
         it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
+        return it, w, h
+
+
+    def _create_shape_at(self, tool_key: str, scene_pos: QPointF):
+        """[Phase 6 M3 #17] 팔레트에서 드롭한 도구를 scene_pos 중심에 기본 크기로 생성.
+        무장 후 드래그로 그리는 경로(_AnnotatorView.mousePressEvent)와 같은 아이템·펜·플래그를
+        써 이후 편집(리사이즈·회전·undo·저장)이 전부 동일하게 동작한다."""
+        if tool_key.startswith("customsym:"):
+            return self._create_custom_symbol_at(tool_key[len("customsym:"):], scene_pos)
+        if tool_key in ("port_rect", "port_circle"):
+            return self._create_port_at(tool_key, scene_pos)
+        built = self._build_shape_item(tool_key)
+        if built is None:
+            return None
+        it, w, h = built
+        it.setPos(scene_pos.x() - w / 2.0, scene_pos.y() - h / 2.0)
         self._scene.addItem(it)
         self._scene.clearSelection()
         it.setSelected(True)
         self.push_undo_add(it)
         return it
+
+
+    def _palette_drag_begin(self, tool_key: str) -> bool:
+        """[신규기능 2026-08-19, 실사용 피드백] 팔레트 버튼 드래그 임계 넘김(`_PaletteButton`)
+        — 진짜 임시 도형을 씬에 만들어 커서를 따라다니게 한다. 이러면 이동 중에도 기존
+        도형 이동과 완전히 같은 `_view._apply_smart_snap()`을 그대로 태울 수 있어(호출부
+        `_palette_drag_move`), 정렬 스냅이 드롭 순간이 아니라 드래그 도중에도 실시간으로
+        걸린다 — 네이티브 QDrag는 OS가 고스트 이미지를 직접 그려 앱이 위치를 되돌릴 수
+        없어(플랫폼 공통 제약) 이 체감을 낼 수 없었다(기존 도형 이동과 다르다는 실사용
+        지적으로 확인). 반환 False면 `_PaletteButton`이 기존 네이티브 QDrag로 폴백한다
+        — 포트(호스트 테두리 부착이라는 별도 배치 로직, `_create_port_at`)가 그 경우."""
+        if tool_key in ("port_rect", "port_circle"):
+            return False
+        built = self._build_shape_item(tool_key)
+        if built is None:
+            return False
+        it, w, h = built
+        it.setOpacity(0.6)   # [UX] 아직 확정 전임을 반투명으로 표시(드롭하면 1.0으로 복원)
+        self._scene.addItem(it)
+        self._scene.clearSelection()
+        it.setSelected(True)
+        self._palette_drag_item = it
+        self._palette_drag_size = (w, h)
+        return True
+
+
+    def _palette_drag_move(self, tool_key: str, global_pos: QPoint):
+        """[신규기능 2026-08-19] 팔레트 드래그 중 매 이동 호출 — 커서 아래 씬 좌표로 임시
+        도형을 옮기고, 기존 도형 이동과 동일한 스냅 체인(`_apply_smart_snap` → 정렬
+        가이드 축은 건너뛰고 나머지만 `_apply_grid_snap_move`)을 그대로 태운다. 캔버스
+        뷰포트 밖이면(다른 패널 위 등) 숨겨서 엉뚱한 자리에 스냅되지 않게 한다."""
+        it = getattr(self, "_palette_drag_item", None)
+        if it is None:
+            return
+        vp = self._view.viewport()
+        local = vp.mapFromGlobal(global_pos)
+        inside = vp.rect().contains(local)
+        if not inside:
+            if it.isVisible():
+                it.setVisible(False)
+            if self._view._align_guides:
+                self._view._align_guides = []
+                self._view.viewport().update()
+            return
+        if not it.isVisible():
+            it.setVisible(True)
+        w, h = self._palette_drag_size
+        scene_pos = self._view.mapToScene(local)
+        it.setPos(scene_pos.x() - w / 2.0, scene_pos.y() - h / 2.0)
+        self._view._apply_smart_snap()
+        skip_x = any(g[0] == "v" for g in self._view._align_guides)
+        skip_y = any(g[0] == "h" for g in self._view._align_guides)
+        self._view._apply_grid_snap_move(skip_x, skip_y)
+        self._view.viewport().update()
+
+
+    def _palette_drag_end(self, tool_key: str, global_pos: QPoint):
+        """[신규기능 2026-08-19] 팔레트 드래그 release — 캔버스 위면 확정(undo 등록·불투명
+        복원), 밖이면 임시 도형을 그냥 지운다(=취소, 드롭 안 함과 동일한 관례)."""
+        it = getattr(self, "_palette_drag_item", None)
+        self._palette_drag_item = None
+        self._view._align_guides = []
+        if it is None:
+            return
+        vp = self._view.viewport()
+        inside = vp.rect().contains(vp.mapFromGlobal(global_pos))
+        if not inside:
+            self._scene.removeItem(it)
+            self._view.viewport().update()
+            return
+        it.setOpacity(1.0)
+        it.setSelected(True)
+        self.push_undo_add(it)
+        self._view.viewport().update()
 
 
     def _create_port_at(self, tool_key: str, scene_pos: QPointF):
@@ -624,6 +711,10 @@ class _FileIOMixin:
                     event.acceptProposedAction()
                     return True
             elif et == QEvent.Type.Drop and event.mimeData().hasFormat(_PALETTE_MIME):
+                # [2026-08-19] 이 네이티브 QDrag 경로는 이제 포트·커스텀심볼(`_palette_drag_
+                # begin`이 False를 돌려주는 tool_key)에서만 쓰인다 — 일반 도형·심볼은
+                # `_PaletteButton`이 씬 안 실물 임시 도형으로 직접 끌어(정렬 스냅이 드래그
+                # 도중에도 실시간으로 걸리도록, `_palette_drag_begin/_move/_end` 참조).
                 tool_key = bytes(event.mimeData().data(_PALETTE_MIME)).decode("utf-8")
                 scene_pos = self._view.mapToScene(event.position().toPoint())
                 if self._create_shape_at(tool_key, scene_pos) is not None:
