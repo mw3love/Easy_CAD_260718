@@ -43,7 +43,7 @@ from easycad.fileio.mermaid_import import (
 from easycad.canvas.host_widgets import (
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
-    _AccordionSection, _SymbolFolderDropZone, _ACCENT_CORAL, _apply_native_titlebar_scheme,
+    _StaticSection, _SymbolFolderDropZone, _apply_native_titlebar_scheme,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -647,8 +647,17 @@ class _UIBuildMixin:
                       getattr(self, "_minimap_panel", None)):
             if panel is not None:
                 panel._refresh_collapse_color()
-        for section in getattr(self, "_left_accordion_sections", {}).values():
-            section._refresh_collapse_color()
+        # [2026-08-19 재개편] "기본도형"/"내 심볼" 최상단 접기 화살표는 없어졌다 — 남은 접기
+        # 버튼은 폴더별(`_refresh_custom_symbol_section.add_group`가 만드는 것)뿐이라 그
+        # 목록을 대신 재도색한다.
+        for btn in getattr(self, "_symfolder_collapse_btns", []):
+            btn.setStyleSheet(
+                f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
+        add_folder_btn = getattr(self, "_add_folder_btn", None)
+        if add_folder_btn is not None:
+            add_folder_btn.setStyleSheet(
+                f"QToolButton {{ color: {_current_icon_color().name()}; "
+                f"font-weight:700; font-size:15px; }}")
         self._refresh_arrow_tool_button()
         # [캔버스-퍼스트] 플로팅 패널 제목줄 = accent 밑줄 + 틴트 배경(옛 dock 제목표시줄과 같은
         # '잡아 눈에 띄는 카드' 언어 유지, 자유 드래그는 없지만 접기 버튼이 있는 자리라 여전히
@@ -961,10 +970,11 @@ class _UIBuildMixin:
 
 
     def _refresh_custom_symbol_section(self):
-        """[신규기능 §8-8, 폴더 지원 2026-08-12] '내 심볼' 섹션을 라이브러리 파일(심볼+폴더)
-        기준으로 다시 그린다 — 등록/삭제/폴더 생성·삭제·이동 직후 호출. 폴더마다 독립
-        `_SymbolFolderDropZone`(드롭하면 그 폴더로 이동) + 그 안에 2열 버튼 그리드. 미분류는
-        항상 최상단에 고정(삭제 불가), 빈 폴더도 드롭 대상으로 남아야 하므로 숨기지 않는다."""
+        """[신규기능 §8-8, 폴더 지원 2026-08-12 → 2026-08-19 폴더별 접기 재개편] '내 심볼'
+        섹션을 라이브러리 파일(심볼+폴더) 기준으로 다시 그린다 — 등록/삭제/폴더 생성·삭제·
+        이동 직후 호출. 폴더마다 독립 `_SymbolFolderDropZone`(드롭하면 그 폴더로 이동) + 그
+        안에 접이식 2열 버튼 그리드. 미분류는 항상 최상단에 고정(삭제 불가, 접기는 가능),
+        빈 폴더도 드롭 대상으로 남아야 하므로 숨기지 않는다."""
         body = self._custom_sym_body
         while body.layout().count():
             item = body.layout().takeAt(0)
@@ -975,32 +985,57 @@ class _UIBuildMixin:
         entries = symbol_library.load_library()
         folders = symbol_library.load_folders()
         self._custom_sym_buttons: dict[str, QToolButton] = {}
+        self._symfolder_collapse_btns: list[QToolButton] = []   # `_apply_theme` 재도색용
 
         def add_group(folder_name, title, deletable):
             zone = _SymbolFolderDropZone(folder_name, self._move_custom_symbol)
             zv = QVBoxLayout(zone)
-            zv.setContentsMargins(2, 2, 2, 2); zv.setSpacing(2)
+            # [실사용 버그 수정 2026-08-19] 좌우 여백을 0으로 — `custom_section.body_layout`
+            # (이 zone의 부모)이 이미 좌우 2px 여백을 갖고 있어, zone에도 좌우 여백을 또
+            # 주면 이중으로 겹쳐 "폭 흔들림" 수정(그리드 자체 여백 0)을 적용해도 4px가
+            # 남았다(실측). 상하 여백은 폴더 사이 구분감을 위해 유지.
+            zv.setContentsMargins(0, 2, 0, 2); zv.setSpacing(2)
             head = QHBoxLayout()
-            head.addWidget(self._section_label(title), 1)
+            title_lbl = self._section_label(title)
+            head.addWidget(title_lbl, 1)
             if deletable:
-                # [실사용 피드백 2026-08-19] "새 폴더는 만드는데 이름수정이 안 된다" 보고로
-                # 신설 — 도입 당시엔 폴더 이름변경이 스코프 밖이었다(심볼 이름변경만 지원).
-                rename_btn = QToolButton()
-                rename_btn.setText("✎"); rename_btn.setAutoRaise(True)
-                rename_btn.setFixedSize(QSize(16, 16))
-                rename_btn.setToolTip(f"'{folder_name}' 폴더 이름변경")
-                rename_btn.clicked.connect(
-                    lambda _c=False, n=folder_name: self._rename_symbol_folder_prompt(n))
-                head.addWidget(rename_btn)
-                del_btn = QToolButton()
-                del_btn.setText("×"); del_btn.setAutoRaise(True)
-                del_btn.setFixedSize(QSize(16, 16))
-                del_btn.setToolTip(f"'{folder_name}' 폴더 삭제")
-                del_btn.clicked.connect(
-                    lambda _c=False, n=folder_name: self._delete_symbol_folder_prompt(n))
-                head.addWidget(del_btn)
+                # [실사용 피드백 2026-08-19 재개편] 이름변경(✎)·삭제(×) 버튼 2개를 없애고
+                # 폴더 이름 우클릭 메뉴로 통합(탐색기 관례, 심볼 버튼 우클릭과 같은 패턴) —
+                # 비워진 자리는 아래 폴더 접기 버튼이 대신 차지한다. 미분류는 이름변경·삭제
+                # 대상이 아니라 메뉴를 안 건다(우클릭해도 반응 없음).
+                title_lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                title_lbl.customContextMenuRequested.connect(
+                    lambda pos, n=folder_name, w=title_lbl:
+                        self._show_symbol_folder_context_menu(w, pos, n))
+            # [실사용 피드백 2026-08-19 재개편] 폴더별 접기 — 예전엔 "내 심볼" 섹션 전체를
+            # 한 번에 접었지만(옛 `_AccordionSection`), 폴더가 늘어날수록 그 방식은 원하는
+            # 폴더 하나만 잠깐 접어두는 용도로 안 맞았다. "미분류"를 포함해 모든 그룹이 같은
+            # 자격으로 접힌다(add_group가 공유하는 한 코드 경로).
+            collapse_key = f"symfolder_collapsed_{folder_name or '__unfiled__'}"
+            collapsed = QSettings("EasyCAD", "EasyCAD").value(collapse_key, False, type=bool)
+            collapse_btn = QToolButton()
+            collapse_btn.setAutoRaise(True)
+            collapse_btn.setFixedSize(QSize(16, 16))
+            collapse_btn.setText("▸" if collapsed else "▾")
+            collapse_btn.setToolTip("펼치기" if collapsed else "접기")
+            # [2026-08-19] `_FloatingPanel`/`_StaticSection` 접기 화살표와 같은 테마 적응
+            # 중립색 관례(코랄은 버튼 "선택" 상태 전용) — `_apply_theme`가 재도색할 수
+            # 있게 목록에도 등록해둔다.
+            collapse_btn.setStyleSheet(
+                f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
+            self._symfolder_collapse_btns.append(collapse_btn)
+            head.addWidget(collapse_btn)
             zv.addLayout(head)
-            grid = QGridLayout(); grid.setSpacing(2)   # [2026-08-12 3차] 4→2
+            grid_container = QWidget()   # 접기 대상 — QLayout은 setVisible이 없어 래핑 필요
+            grid = QGridLayout(grid_container); grid.setSpacing(2)   # [2026-08-12 3차] 4→2
+            # [실사용 버그 수정 2026-08-19] `QGridLayout(grid_container)`처럼 위젯 생성자로
+            # 곧바로 건 레이아웃은 그 위젯의 "자기 레이아웃"이 되어 Qt 기본 여백(플랫폼별
+            # ~9px×4방향)을 그대로 물려받는다 — "기본도형" 그리드(`_make_shape_grid`)는
+            # `addLayout()`으로 중첩돼 있어 여백이 0이라 이 그리드만 조용히 더 넓었다(4열이
+            # 꽉 찬 폴더를 펼치면 패널 전체 폭이 여백만큼 늘어났다 접으면 줄어드는 "폭 흔들림"
+            # 버그의 원인, 실측: 여백 있는 채로 216px, 0으로 하면 198px — 기본도형 기준폭
+            # 208px보다도 작아져 어느 폴더를 펼쳐도 폭이 안 늘어난다).
+            grid.setContentsMargins(0, 0, 0, 0)
             btns = []
             for entry in entries:
                 if entry.get("folder") != folder_name:
@@ -1030,8 +1065,30 @@ class _UIBuildMixin:
             for i, b in enumerate(btns):
                 grid.addWidget(b, i // _PALETTE_COLS, i % _PALETTE_COLS)
             grid.setColumnStretch(_PALETTE_COLS, 1)
-            zv.addLayout(grid)
+            grid_container.setVisible(not collapsed)
+            zv.addWidget(grid_container)
             body.layout().addWidget(zone)
+
+            def _toggle_folder(_checked=False, zone=zone, gc=grid_container,
+                                btn=collapse_btn, key=collapse_key):
+                now_collapsed = gc.isVisible()   # 지금 보이면 → 이 클릭으로 접는다
+                gc.setVisible(not now_collapsed)
+                btn.setText("▸" if now_collapsed else "▾")
+                btn.setToolTip("펼치기" if now_collapsed else "접기")
+                QSettings("EasyCAD", "EasyCAD").setValue(key, now_collapsed)
+                # [실사용 버그 수정 2026-08-19] `gc`(grid_container)의 가시성 변화는 `zv`
+                # (zone의 own 레이아웃)까지만 자동 반영된다 — 그 위로 위젯 경계를 넘을 때마다
+                # (zone→body_layout, body→customsym 섹션 자신의 레이아웃, custom_section→
+                # container의 outer) `QWidgetItem`이 부모 레이아웃에 캐시해 둔 옛 sizeHint가
+                # `updateGeometry()` 없이는 갱신되지 않아, 두 번째 접기부터 패널이 줄어들지
+                # 않고 부풀어 보이는 버그가 있었다(옛 `_AccordionSection`이 겪던 것과 같은
+                # Qt 함정, 이번엔 폴더가 한 단 더 중첩돼 있어 경계가 3개 — 실측으로 하나씩
+                # 확인: 이 셋 중 하나라도 빠지면 그 지점에서 다시 막힌다).
+                zone.updateGeometry()
+                self._custom_sym_body.updateGeometry()
+                self._custom_sym_section.updateGeometry()
+                self._relayout_left_panel()
+            collapse_btn.clicked.connect(_toggle_folder)
 
         add_group(None, "미분류", deletable=False)
         for name in folders:
@@ -1039,10 +1096,21 @@ class _UIBuildMixin:
         self._relayout_left_panel()
 
 
+    def _show_symbol_folder_context_menu(self, label_widget: QLabel, pos, folder_name: str):
+        """[실사용 피드백 2026-08-19 재개편] 폴더 이름 우클릭 → 이름변경/삭제 메뉴 — 옛
+        헤더의 "✎"/"×" 버튼 2개를 대체한다(심볼 버튼 우클릭 메뉴, 아래
+        `_show_custom_symbol_context_menu`와 같은 관례). 미분류는 이 메뉴 자체가 안 걸림
+        (`add_group`의 `deletable=False` 분기)."""
+        menu = QMenu(self)
+        menu.addAction("이름변경…", lambda: self._rename_symbol_folder_prompt(folder_name))
+        menu.addAction("삭제…", lambda: self._delete_symbol_folder_prompt(folder_name))
+        menu.exec(label_widget.mapToGlobal(pos))
+
+
     def _show_custom_symbol_context_menu(self, btn: QToolButton, pos, sym_id: str):
         """[실사용 피드백 2026-08-18] 우클릭 = 곧바로 삭제 확인창이던 것을 메뉴(이름변경/삭제)
-        로 교체 — 탐색기 관례. 폴더 이름변경은 헤더의 "✎" 버튼이 별도로 담당(아래
-        `_rename_symbol_folder_prompt`, 2026-08-19 신설)."""
+        로 교체 — 탐색기 관례. 폴더 이름변경/삭제는 폴더 이름 우클릭이 별도로 담당(위
+        `_show_symbol_folder_context_menu`, 2026-08-19 재개편)."""
         menu = QMenu(self)
         menu.addAction("이름변경…", lambda: self._rename_custom_symbol_prompt(sym_id))
         menu.addAction("삭제…", lambda: self._delete_custom_symbol_prompt(sym_id))
@@ -1083,10 +1151,11 @@ class _UIBuildMixin:
 
 
     def _rename_symbol_folder_prompt(self, name: str):
-        """[실사용 피드백 2026-08-19] 폴더 그룹 헤더의 "✎" 버튼 → 새 이름 입력 후
-        `symbol_library.rename_folder`로 저장 — 도입 당시 "폴더 이름변경은 스코프 밖"이던
-        것을 심볼 이름변경(2026-08-18)과 같은 이유로 뒤집음. 이름 중복은 폴더 목록에서
-        직접 확인(라이브러리 쪽은 조용히 무시하므로 사용자에게 이유를 알려줘야 함)."""
+        """[실사용 피드백 2026-08-19 → 같은 날 우클릭 메뉴로 재개편] 폴더 이름 우클릭 메뉴
+        → 새 이름 입력 후 `symbol_library.rename_folder`로 저장 — 도입 당시 "폴더 이름변경은
+        스코프 밖"이던 것을 심볼 이름변경(2026-08-18)과 같은 이유로 뒤집음. 이름 중복은
+        폴더 목록에서 직접 확인(라이브러리 쪽은 조용히 무시하므로 사용자에게 이유를 알려줘야
+        함)."""
         new_name, ok = QInputDialog.getText(self, "폴더 이름변경", "새 이름:", text=name)
         new_name = new_name.strip()
         if not ok or not new_name or new_name == name:
@@ -1100,7 +1169,7 @@ class _UIBuildMixin:
 
     def _prompt_create_symbol_folder(self):
         """[신규기능, 2026-08-12] '내 심볼' 섹션 헤더의 "+" 버튼 — 새 폴더 생성. 이름변경은
-        `_rename_symbol_folder_prompt`(2026-08-19 신설, 폴더 헤더의 "✎" 버튼)가 담당."""
+        `_rename_symbol_folder_prompt`(2026-08-19 신설, 폴더 이름 우클릭 메뉴)가 담당."""
         name, ok = QInputDialog.getText(self, "새 폴더", "폴더 이름:")
         name = name.strip()
         if not ok or not name:
@@ -1110,10 +1179,18 @@ class _UIBuildMixin:
 
 
     def _delete_symbol_folder_prompt(self, name: str):
-        """[신규기능, 2026-08-12] 폴더 그룹 헤더의 "×" 버튼 → 확인 후 폴더만 삭제, 소속
-        심볼은 미분류로 소급(심볼 자체는 보존 — `symbol_library.delete_folder` 참조)."""
-        ret = QMessageBox.question(
-            self, "폴더 삭제", f"'{name}' 폴더를 삭제할까요? 안의 심볼은 미분류로 이동합니다.")
+        """[신규기능, 2026-08-12 → 2026-08-19 우클릭 메뉴로 재개편 → 같은 날 정책 전환] 폴더
+        이름 우클릭 메뉴 → 확인 후 폴더와 소속 심볼을 전부 삭제(`symbol_library.delete_folder`
+        참조) — 미분류로 옮겨 보존하던 옛 동작을 실사용 피드백으로 뒤집음(남기고 싶은 심볼은
+        지우기 전에 다른 폴더로 옮겨두는 게 루틴이라는 전제). 개수를 셈해 경고에 반영 —
+        "몇 개가 사라지는지" 없이 "삭제됩니다"만 뜨면 되돌릴 수 없는 조작 앞에서 정보가 너무
+        적다."""
+        count = sum(1 for e in symbol_library.load_library() if e.get("folder") == name)
+        if count:
+            msg = f"'{name}' 폴더를 삭제할까요? 안의 심볼 {count}개도 함께 완전히 삭제됩니다."
+        else:
+            msg = f"'{name}' 폴더를 삭제할까요?"
+        ret = QMessageBox.question(self, "폴더 삭제", msg)
         if ret == QMessageBox.StandardButton.Yes:
             symbol_library.delete_folder(name)
             self._refresh_custom_symbol_section()
@@ -1121,12 +1198,17 @@ class _UIBuildMixin:
 
     def _build_left_panel(self):
         """[캔버스-퍼스트][좌측 패널 아코디언 개편, 2026-08-12 → 2026-08-13 3섹션으로 병합
-        → 2026-08-19 레이어를 좌하단 독립 패널로 재분리, `_build_layers_panel` 참조]
-        기본도형(순서도 5종 포함)/내 심볼 2섹션을 `_AccordionSection`으로 쌓은 좌상단
-        플로팅 카드(deep-interview 확정 스코프 — 옛 도형/레이어 탭 2개를 대체). 탭 전환
-        특유의 "숨긴 페이지가 sizeHint에서 안 빠지는" 문제(2026-07-29, `_switch_left_tab`이
-        겪던 QTabWidget 함정)는 애초에 탭이 아니라 섹션마다 독립 `setVisible()`이라 같은
-        함정을 밟지 않는다(검증된 메커니즘 재사용)."""
+        → 2026-08-19 레이어를 좌하단 독립 패널로 재분리, `_build_layers_panel` 참조 →
+        2026-08-19 재실사용 피드백으로 기본도형/내 심볼 최상단 접기 제거]
+        기본도형(순서도 5종 포함)/내 심볼 2섹션을 `_StaticSection`으로 쌓은 좌상단 플로팅
+        카드(deep-interview 확정 스코프 — 옛 도형/레이어 탭 2개를 대체). 최상단 두 섹션은
+        더 이상 접지 않는다 — 실사용 중 이 아코디언을 접었다 펼 때 패널이 원래 크기로
+        정확히 복원되지 않고 부풀어 보이는 레이아웃 버그(`QWidgetItem`이 부모 레이아웃에
+        캐시한 옛 sizeHint가 `updateGeometry()` 없이는 갱신되지 않는 Qt 함정, 아래
+        `_refresh_custom_symbol_section.add_group._toggle_folder` 참조)가 있었고, "내 심볼"은
+        폴더 단위로 접는 게 더 유용하다는 판단(사용자 확인). 탭 전환 특유의 "숨긴 페이지가
+        sizeHint에서 안 빠지는" 문제(2026-07-29, `_switch_left_tab`이 겪던 QTabWidget 함정)는
+        애초에 탭이 아니라 섹션마다 독립 `setVisible()`이라 같은 함정을 밟지 않는다."""
         # [2026-08-13 피드백] 빈 제목이라 패널 최상단바에 아무 표시가 없던 것 — 속성/미니맵
         # 패널처럼 짧은 명사 하나로("도형", 내부엔 도형 팔레트+레이어가 함께 있지만 팔레트가
         # 주 콘텐츠).
@@ -1142,7 +1224,7 @@ class _UIBuildMixin:
         self._sym_buttons: dict[str, QToolButton] = {}
         self._shape_sections: list = []   # (grid, buttons) — 기본도형·순서도
 
-        # ---- 기본도형 (펼침 시작) ----
+        # ---- 기본도형 (항상 펼침, 접기 없음 — 2026-08-19) ----
         # [2026-08-13 피드백] 옛 "기본도형"(네모·원·삼각형)과 "순서도"(판단·시작/끝·입출력·
         # 준비·저장소) 두 아코디언 섹션을 하나로 병합 — 순서도 5종도 mermaid 기준으로는
         # 각자 고유 shape 이름(decision/terminal 등)일 뿐 "기본"과 상위 카테고리로 묶이진
@@ -1155,7 +1237,7 @@ class _UIBuildMixin:
         # `_shape_tool_buttons`/`_sym_buttons` 딕셔너리 분리(기본 도구 vs 심볼)는 `set_tool`
         # 체크상태 동기화가 참조하므로 그대로 유지(host_canvas.py `set_tool` 참조) — 한 그리드
         # 안에서도 항목별로 다른 dict에 저장 가능하도록 `_make_shape_grid`를 확장했다.
-        basic_section = _AccordionSection(self, "기본도형", "basic", default_collapsed=False)
+        basic_section = _StaticSection("기본도형")
         basic_grid = self._make_shape_grid([
             ("사각형", "rect", "사각형 — 클릭 후 캔버스에 드래그", "rect", self._shape_tool_buttons),
             ("원", "ellipse", "원 — 클릭 후 캔버스에 드래그", "ellipse", self._shape_tool_buttons),
@@ -1171,16 +1253,20 @@ class _UIBuildMixin:
 
         self._relayout_sections(horiz=False)   # 항상 세로(2열) — 반응형 전환 없음
 
-        # ---- 내 심볼 (접힘 시작, 폴더 지원) ----
-        custom_section = _AccordionSection(self, "내 심볼", "customsym", default_collapsed=True)
+        # ---- 내 심볼 (폴더 지원, 최상단은 항상 펼침 — 폴더별 접기는 add_group 참조) ----
+        custom_section = _StaticSection("내 심볼")
         add_folder_btn = QToolButton()
         add_folder_btn.setText("+"); add_folder_btn.setAutoRaise(True)
         add_folder_btn.setFixedSize(QSize(22, 22))   # [2026-08-12 피드백] 18→22, 눈에 띄게
+        # [실사용 피드백 2026-08-19 재개편] 코랄은 이 앱에서 "선택된 상태" 전용 accent인데
+        # (host_ui.py 아이콘 재칠 주석 참조) 이 버튼은 상시 떠 있는 헤더 액션이라 계속 튀어
+        # 보였다 — 접기 화살표·`+ 레이어 추가`처럼 테마 적응 중립색으로 낮춘다.
+        self._add_folder_btn = add_folder_btn
         add_folder_btn.setStyleSheet(
-            f"QToolButton {{ color: {_ACCENT_CORAL}; font-weight:700; font-size:15px; }}")
+            f"QToolButton {{ color: {_current_icon_color().name()}; font-weight:700; font-size:15px; }}")
         add_folder_btn.setToolTip("새 폴더")
         add_folder_btn.clicked.connect(self._prompt_create_symbol_folder)
-        custom_section.header_layout.insertWidget(1, add_folder_btn)   # 제목과 접기버튼 사이
+        custom_section.header_layout.insertWidget(1, add_folder_btn)   # 제목 라벨 바로 다음
         custom_section.body_layout.setSpacing(8)
         self._custom_sym_section = custom_section
         self._custom_sym_body = custom_section.body
@@ -1188,6 +1274,9 @@ class _UIBuildMixin:
         outer.addWidget(custom_section)
         self._refresh_custom_symbol_section()
 
+        # [2026-08-19] 이제 어느 쪽도 최상단에서 접히지 않지만, "내 심볼"은 폴더 추가/삭제·
+        # 심볼 등록마다 내용이 바뀌므로 `_relayout_left_panel()`이 계속 invalidate() 대상으로
+        # 참조한다(이름은 옛 아코디언 시절 그대로 — `_relayout_left_panel` 주석 참조).
         self._left_accordion_sections = {
             "basic": basic_section,
             "customsym": custom_section,

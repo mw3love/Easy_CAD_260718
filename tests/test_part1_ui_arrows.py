@@ -192,40 +192,145 @@ def test_zoom_title_click_recenters():
 
 
 
-def test_left_panel_accordion_collapse_expand_resizes_panel():
-    # [캔버스-퍼스트 레이아웃][좌측 패널 아코디언 개편, 2026-08-12] 옛 도형/레이어 탭
-    # (QTabWidget → setVisible 토글로 교체했던 2026-07-29 수정)을 아코디언 4섹션으로 대체.
-    # 이 회귀 테스트도 같은 계약을 확인한다 — 접힌 섹션을 펼치면 패널이 커지고, 다시 접으면
-    # 스턱 없이 원래 크기로 정확히 복원돼야 한다(옛 탭 전환의 레이아웃 무효화 타이밍 함정과
-    # 같은 클래스, `_relayout_left_panel`이 같은 activate()→adjustSize() 해법을 재사용).
-    # ⚠ show() 필수 — 창을 띄우지 않으면 Qt가 레이아웃 무효화를 다르게(더 늦게) 처리해
-    # adjustSize()가 stale한 값으로 멈춘다.
-    # ⚠ [실측] `_layers_list`(QListWidget, 커스텀 행 위젯)의 `sizeHintForRow()`는 show() 직후
-    # 첫 `.height()` 접근 전까지 실제보다 큰 값을 낸다(이 테스트가 만든 게 아니라
-    # `_refresh_layers_panel`이 이미 갖고 있던 특성) — `CanvasWindow.showEvent`가 이제 이
-    # settle을 자동으로 해준다(2026-08-12, 좌측 패널 왕복 비교로 처음 드러나 소스에 고정).
-    # [2026-08-13] 옛 "flowchart" 섹션은 기본도형에 병합되어 사라졌다 — "basic"(기본도형)으로
-    # 같은 계약을 확인한다("customsym"은 폴더 드롭존 등 동적 콘텐츠라 접기 왕복 시 sizeHint가
-    # 자체적으로 안정되지 않아 대상에서 제외 — 실측 확인). [2026-08-19] 옛 "layers" 섹션은
-    # 좌하단 독립 패널로 분리돼 이 아코디언 자체에서 없어졌다(`_left_accordion_sections`에
-    # 남은 건 basic/customsym뿐) — "basic"도 정적 그리드 콘텐츠라 layers와 같은 계약을 만족.
-    # 기본값은 펼침 시작(default_collapsed=False)이라 QSettings로 접힘 시작을 강제한다(다른
-    # accordion 테스트와 같은 관례 — 실사용 QSettings에 이미 다른 상태가 저장돼 있을 수 있음).
-    from PyQt6.QtCore import QSettings
-    QSettings("EasyCAD", "EasyCAD").setValue("accordion_collapsed_basic", True)
+def test_left_panel_top_sections_no_longer_collapsible():
+    # [실사용 피드백 2026-08-19] "기본도형"·"내 심볼" 최상단 접기를 없앴다(사용자 보고 —
+    # 이 최상단 아코디언을 접었다 펼 때 패널이 원래 크기로 복원되지 않고 부풀어 보이는 버그가
+    # 있었고, 대신 "내 심볼"은 폴더 단위로 접는 게 더 유용했다). `_StaticSection`은 접기
+    # 버튼·`_collapsed`·`_toggle()` 자체가 없다 — 옛 `_AccordionSection` API가 사라졌음을
+    # 확인.
     w = CanvasWindow(); w.show()
-    collapsed_size = w._left_panel.size()
     basic_section = w._left_accordion_sections["basic"]
-    assert basic_section._collapsed
-    basic_section._toggle()                       # 펼치기
-    assert not basic_section._collapsed
-    expanded_size = w._left_panel.size()
-    assert expanded_size.height() > collapsed_size.height()
-    basic_section._toggle()                        # 다시 접기
-    assert w._left_panel.size() == collapsed_size   # 왕복 후에도 스턱 없이 원래 크기로 복원
-    w._active_doc.dirty = False   # [§8 항목10 Stage C] 이 테스트는 닫기확인창을 검증 대상이 아님
+    custom_section = w._left_accordion_sections["customsym"]
+    assert not hasattr(basic_section, "_toggle")
+    assert not hasattr(basic_section, "_collapsed")
+    assert not hasattr(custom_section, "_toggle")
+    assert basic_section.body.isVisible()
+    assert custom_section.body.isVisible()
+    w._active_doc.dirty = False
     w.close()
-    QSettings("EasyCAD", "EasyCAD").remove("accordion_collapsed_basic")
+
+
+def test_symbol_folder_collapse_expand_round_trips_panel_size():
+    # [실사용 버그 수정 2026-08-19] 위 최상단 접기를 없앤 자리에 폴더별 접기를 새로 넣었다 —
+    # 옛 `_AccordionSection` 시절 "customsym은 폴더 드롭존 등 동적 콘텐츠라 접기 왕복 시
+    # sizeHint가 자체적으로 안정되지 않아 회귀 대상에서 제외"됐던 바로 그 불안정성이 실사용
+    # 버그(패널이 두 번째 접기부터 줄어들지 않고 부풀어 보임)로 재현됐던 것 — 이번엔 원인
+    # (그리드→zone→body→내 심볼 섹션, 위젯 경계 3개 모두에서 `updateGeometry()` 없이는
+    # 부모 레이아웃의 캐시된 sizeHint가 안 갱신됨, `add_group._toggle_folder` 참조)을 고쳐
+    # 왕복 안정성 자체를 회귀 테스트로 고정한다.
+    # ⚠ show() 필수 — 창을 띄우지 않으면 Qt가 레이아웃 무효화를 다르게(더 늦게) 처리한다.
+    from unittest.mock import patch
+    from PyQt6.QtWidgets import QInputDialog, QToolButton
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtTest import QTest
+    from easycad.fileio import symbol_library
+    from easycad.canvas.host_widgets import _PaletteButton
+
+    with _isolated_symbol_library():
+        QSettings("EasyCAD", "EasyCAD").remove("symfolder_collapsed_무선")
+        w = CanvasWindow(); w.show()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
+            w.register_selection_as_symbol()
+        with patch.object(QInputDialog, "getText", return_value=("무선", True)):
+            w._prompt_create_symbol_folder()
+        sym_id = symbol_library.load_library()[0]["id"]
+        w._move_custom_symbol(sym_id, "무선")
+        # [실측] 새로 만든 위젯의 sizeHint는 이벤트 루프를 몇 차례 돌아야 폰트 메트릭까지
+        # 반영된 진짜 값으로 안정된다(§8 항목18 인계 세션이 겪은 것과 같은 부류) — 왕복
+        # 비교의 기준값(baseline)을 안정된 상태에서 잡아야 오탐을 피한다.
+        for _ in range(10):
+            QApplication.instance().processEvents()
+        QTest.qWait(20)
+        for _ in range(10):
+            QApplication.instance().processEvents()
+        w._relayout_left_panel()
+        QApplication.instance().processEvents()
+
+        body = w._custom_sym_body
+        zones = [body.layout().itemAt(i).widget() for i in range(body.layout().count())]
+        wireless_zone = zones[1]   # 0=미분류, 1=무선
+        collapse_btn = next(
+            b for b in wireless_zone.findChildren(QToolButton)
+            if not isinstance(b, _PaletteButton))
+
+        expanded_size = w._left_panel.size()
+        collapse_btn.click()
+        QApplication.instance().processEvents()
+        collapsed_size = w._left_panel.size()
+        assert collapsed_size.height() < expanded_size.height()
+
+        collapse_btn.click()   # 펼치기
+        QApplication.instance().processEvents()
+        assert w._left_panel.size() == expanded_size
+
+        collapse_btn.click()   # 다시 접기 — 두 번째 왕복에서 재발했던 지점
+        QApplication.instance().processEvents()
+        assert w._left_panel.size() == collapsed_size
+
+        collapse_btn.click()   # 다시 펼치기
+        QApplication.instance().processEvents()
+        assert w._left_panel.size() == expanded_size
+
+        w._active_doc.dirty = False
+        w.close()
+        QSettings("EasyCAD", "EasyCAD").remove("symfolder_collapsed_무선")
+
+
+def test_symbol_folder_full_row_does_not_widen_panel():
+    # [실사용 버그 수정 2026-08-19] 폴더 그리드가 `QGridLayout(grid_container)`(위젯 생성자
+    # 직결)라 Qt 기본 여백(~9px×4방향)을 물려받아, 4열이 꽉 찬 폴더(≥`_PALETTE_COLS`개
+    # 항목)를 펼치면 그 여백만큼 패널 전체 폭이 늘어나고 접으면 다시 줄어드는 "폭 흔들림"이
+    # 있었다(사용자 실측 보고: 230px↔208px). `add_group`에 `grid.setContentsMargins(0,0,0,0)`
+    # 을 추가해 폴더 그리드를 "기본도형" 그리드(`addLayout()`로 중첩 — 애초에 여백 0)와
+    # 동일하게 맞췄다 — 이제 몇 열이 꽉 찬 폴더를 펼쳐도 패널 폭이 "기본도형" 기준보다
+    # 커지지 않아야 한다.
+    from PyQt6.QtWidgets import QInputDialog, QToolButton
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtTest import QTest
+    from easycad.fileio import symbol_library
+    from easycad.canvas.host_widgets import _PaletteButton
+    from easycad.canvas.host_ui import _PALETTE_COLS
+
+    with _isolated_symbol_library():
+        QSettings("EasyCAD", "EasyCAD").remove("symfolder_collapsed_풀로우")
+        w = CanvasWindow(); w.show()
+        with patch.object(QInputDialog, "getText", return_value=("풀로우", True)):
+            w._prompt_create_symbol_folder()
+        for i in range(_PALETTE_COLS + 2):   # 한 줄을 꽉 채우고 다음 줄까지 넘기게(실사용 사례)
+            r = _mk_pen_rect(w); r.setSelected(True)
+            with patch.object(QInputDialog, "getText", return_value=(f"심볼{i}", True)):
+                w.register_selection_as_symbol()
+            sym_id = symbol_library.load_library()[-1]["id"]
+            w._move_custom_symbol(sym_id, "풀로우")
+
+        for _ in range(10):
+            QApplication.instance().processEvents()
+        QTest.qWait(20)
+        for _ in range(10):
+            QApplication.instance().processEvents()
+        w._relayout_left_panel()
+        QApplication.instance().processEvents()
+
+        basic_width = w._left_accordion_sections["basic"].sizeHint().width()
+        expanded_width = w._left_panel.width()
+
+        body = w._custom_sym_body
+        zones = [body.layout().itemAt(i).widget() for i in range(body.layout().count())]
+        full_zone = zones[1]
+        collapse_btn = next(
+            b for b in full_zone.findChildren(QToolButton)
+            if not isinstance(b, _PaletteButton))
+        collapse_btn.click()
+        QApplication.instance().processEvents()
+        collapsed_width = w._left_panel.width()
+
+        assert expanded_width == collapsed_width   # 접어도 펼쳐도 폭이 그대로여야 함
+        assert expanded_width <= basic_width + 8    # 기본도형 기준폭을 크게 넘지 않음(여유 8px)
+
+        w._active_doc.dirty = False
+        w.close()
+        QSettings("EasyCAD", "EasyCAD").remove("symfolder_collapsed_풀로우")
 
 
 

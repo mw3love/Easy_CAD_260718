@@ -250,16 +250,22 @@ def test_move_symbol_between_folders():
         assert symbol_library.load_library()[0]["folder"] is None
 
 
-def test_delete_folder_moves_members_to_unclassified_not_deletes_them():
+def test_delete_folder_deletes_member_symbols_too():
+    # [정책 전환 2026-08-19] 도입 당시엔 소속 심볼을 미분류로 옮겨 보존했으나, 실사용
+    # 피드백으로 "폴더 삭제 = 안의 것도 함께 삭제" 정책으로 뒤집혔다(남기고 싶으면 삭제
+    # 전에 직접 다른 폴더로 옮겨두는 루틴 전제). 무관한 다른 폴더·미분류 심볼은 그대로
+    # 남는지도 함께 확인.
     with _isolated_symbol_library():
         symbol_library.create_folder("무선")
-        entry = symbol_library.add_symbol("증폭기", [], "", folder="무선")
+        symbol_library.create_folder("전원")
+        deleted = symbol_library.add_symbol("증폭기", [], "", folder="무선")
+        kept_other_folder = symbol_library.add_symbol("변압기", [], "", folder="전원")
+        kept_unfiled = symbol_library.add_symbol("커넥터", [], "", folder=None)
         symbol_library.delete_folder("무선")
-        assert symbol_library.load_folders() == []
-        entries = symbol_library.load_library()
-        assert len(entries) == 1
-        assert entries[0]["id"] == entry["id"]
-        assert entries[0]["folder"] is None
+        assert symbol_library.load_folders() == ["전원"]
+        remaining_ids = {e["id"] for e in symbol_library.load_library()}
+        assert deleted["id"] not in remaining_ids
+        assert remaining_ids == {kept_other_folder["id"], kept_unfiled["id"]}
 
 
 # ---- [실사용 피드백 2026-08-19] 폴더 이름변경 ("새 폴더 만들고 이름수정이 안 되네") -----
@@ -340,7 +346,77 @@ def test_left_panel_new_folder_and_drag_move_wiring():
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
             w._delete_symbol_folder_prompt("무선")
         assert symbol_library.load_folders() == []
-        assert symbol_library.load_library()[0]["folder"] is None
+        assert symbol_library.load_library() == []   # [정책 전환 2026-08-19] 소속 심볼도 함께 삭제
+
+
+def test_delete_symbol_folder_prompt_warns_with_member_count():
+    # [정책 전환 2026-08-19] "미분류로 이동" 문구 대신 실제로 사라질 개수를 경고에 담는다 —
+    # 되돌릴 수 없는 조작이라 "몇 개가 없어지는지"가 문구에 있어야 한다.
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        with patch.object(QInputDialog, "getText", return_value=("무선", True)):
+            w._prompt_create_symbol_folder()
+        symbol_library.add_symbol("증폭기", [], "", folder="무선")
+        symbol_library.add_symbol("안테나", [], "", folder="무선")
+
+        with patch.object(QMessageBox, "question",
+                           return_value=QMessageBox.StandardButton.No) as mock_q:
+            w._delete_symbol_folder_prompt("무선")
+        msg = mock_q.call_args[0][2]
+        assert "2개" in msg
+        assert "완전히 삭제" in msg
+        assert symbol_library.load_folders() == ["무선"]   # No 선택 — 변경 없음
+
+
+def _folder_zone_and_label(w, folder_name):
+    """폴더 이름으로 `_SymbolFolderDropZone`과 그 안 제목 QLabel을 찾는다(폴더 목록 순서 —
+    미분류가 항상 0번, 이후 `symbol_library.load_folders()` 순서)."""
+    body = w._custom_sym_body
+    zones = [body.layout().itemAt(i).widget() for i in range(body.layout().count())]
+    idx = 0 if folder_name is None else 1 + symbol_library.load_folders().index(folder_name)
+    zone = zones[idx]
+    title_lbl = zone.layout().itemAt(0).layout().itemAt(0).widget()
+    return zone, title_lbl
+
+
+def test_symbol_folder_right_click_opens_rename_delete_menu():
+    """[실사용 피드백 2026-08-19 재개편] 폴더 이름변경(✎)·삭제(×) 버튼 2개를 없애고 이름
+    우클릭 메뉴로 통합 — 실제 배선(`customContextMenuRequested` → `_show_symbol_folder_
+    context_menu`)이 걸려 있는지, 액션이 올바른 폴더를 대상으로 하는지 확인."""
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        with patch.object(QInputDialog, "getText", return_value=("무선", True)):
+            w._prompt_create_symbol_folder()
+        _, title_lbl = _folder_zone_and_label(w, "무선")
+        assert title_lbl.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+
+        created_menus = []
+
+        class _CapturingMenu(QMenu):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                created_menus.append(self)
+
+            def exec(self, *a, **kw):
+                return None
+
+        with patch("easycad.canvas.host_ui.QMenu", _CapturingMenu):
+            title_lbl.customContextMenuRequested.emit(QPointF(1, 1).toPoint())
+        assert len(created_menus) == 1
+        assert [a.text() for a in created_menus[0].actions()] == ["이름변경…", "삭제…"]
+
+        with patch.object(QInputDialog, "getText", return_value=("안테나", True)):
+            created_menus[0].actions()[0].trigger()
+        assert symbol_library.load_folders() == ["안테나"]
+
+
+def test_unfiled_group_has_no_right_click_menu():
+    """미분류는 이름변경·삭제 대상이 아니므로 우클릭 메뉴 자체가 안 걸려야 한다
+    (`add_group`의 `deletable=False` 분기)."""
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        _, title_lbl = _folder_zone_and_label(w, None)
+        assert title_lbl.contextMenuPolicy() != Qt.ContextMenuPolicy.CustomContextMenu
 
 
 # ---- [실사용 버그 수정 2026-08-19] 팔레트 버튼 스타일 + 썸네일 선명도 --------------------

@@ -764,38 +764,29 @@ class _FloatingPanel(QFrame):
             f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
 
 
-class _AccordionSection(QWidget):
-    """[좌측 패널 아코디언 개편, 2026-08-12] `_FloatingPanel` 하나 안에 여러 개 쌓이는 접이식
-    섹션 — ▾/▸ 규약·QSettings 영속화는 `_FloatingPanel`과 동일하게 따르되, 배경/테두리를
-    직접 그리지 않는다(패널 자체가 이미 카드 배경을 그리므로 중첩 배경이 필요 없음, 그리고
-    2026-07-31 주석의 스타일시트→QFormLayout 간격 오염 함정을 다시 밟지 않기 위해 컨테이너에
-    스타일시트를 아예 안 건다). `header_layout`을 공개해 `_FloatingPanel`의 미니맵 fit_btn과
-    같은 패턴으로 제목 옆에 버튼(예: 내 심볼의 "+")을 끼워 넣을 수 있게 한다."""
+class _StaticSection(QWidget):
+    """[좌측 패널 개편, 2026-08-19 실사용 피드백] 옛 `_AccordionSection`에서 접기 기능만 뺀
+    정적 섹션 — "기본도형"·"내 심볼" 최상단은 더 이상 접지 않는다(실사용 보고: 이 최상단
+    아코디언을 접었다 펼치면 패널이 부풀어 보이는 레이아웃 버그가 있었고, "내 심볼"은
+    이제 폴더 단위로 접는 게 더 유용하다는 판단 — 폴더별 접기는 `host_ui._refresh_custom_
+    symbol_section`의 `add_group`가 별도로 구현). `header_layout`을 그대로 공개해 제목
+    옆에 버튼(내 심볼의 "+")을 끼우는 관례를 옛 클래스와 동일하게 유지한다."""
 
-    def __init__(self, host, title: str, collapse_key: str, default_collapsed: bool):
+    def __init__(self, title: str):
         super().__init__()
-        self._host = host
-        self._collapse_key = f"accordion_collapsed_{collapse_key}"
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0); v.setSpacing(0)
 
         head = QWidget()
         hl = QHBoxLayout(head)
         hl.setContentsMargins(2, 4, 2, 2); hl.setSpacing(4)
-        # [2026-08-13 버그 수정] 색을 안 정한 `setStyleSheet()`는 QLabel을 QStyleSheetStyle로
-        # 전환해 앱 다크 팔레트(WindowText)를 안 따르고 검정으로 렌더됐다(다크 배경에 검정
-        # 글자로 거의 안 보이던 원인) — 폰트는 스타일시트 대신 QFont로 걸어 팔레트 색 상속을
-        # 그대로 유지한다.
+        # [2026-08-13 버그 수정, 옛 _AccordionSection에서 이관] 색을 안 정한 `setStyleSheet()`는
+        # QLabel을 QStyleSheetStyle로 전환해 앱 다크 팔레트(WindowText)를 안 따르고 검정으로
+        # 렌더됐다 — 폰트는 스타일시트 대신 QFont로 걸어 팔레트 색 상속을 그대로 유지한다.
         title_lbl = QLabel(title)
         f = title_lbl.font(); f.setWeight(QFont.Weight.DemiBold); title_lbl.setFont(f)
         hl.addWidget(title_lbl, 1)
-        self.header_layout = hl   # 확장 지점 — insertWidget(1, ...)으로 제목과 접기버튼 사이에 삽입
-        self._collapse_btn = QToolButton()
-        self._collapse_btn.setAutoRaise(True)
-        self._collapse_btn.setFixedSize(QSize(21, 21))   # [2026-08-13 피드백] 18→21
-        self._refresh_collapse_color()   # [2026-08-13 피드백] 코랄(눈에 띔) → 테마 적응 중립색
-        self._collapse_btn.clicked.connect(self._toggle)
-        hl.addWidget(self._collapse_btn)
+        self.header_layout = hl   # 확장 지점 — insertWidget(1, ...)으로 제목 옆에 버튼 삽입
         v.addWidget(head)
 
         self.body = QWidget()
@@ -804,28 +795,6 @@ class _AccordionSection(QWidget):
         # 맞추기 위한 축소 시리즈의 일부.
         self.body_layout.setContentsMargins(2, 2, 2, 4); self.body_layout.setSpacing(4)
         v.addWidget(self.body)
-
-        self._collapsed = QSettings("EasyCAD", "EasyCAD").value(
-            self._collapse_key, default_collapsed, type=bool)
-        self.body.setVisible(not self._collapsed)
-        self._update_icon()
-
-    def _toggle(self):
-        self._collapsed = not self._collapsed
-        self.body.setVisible(not self._collapsed)
-        self._update_icon()
-        QSettings("EasyCAD", "EasyCAD").setValue(self._collapse_key, self._collapsed)
-        self._host._relayout_left_panel()
-
-    def _update_icon(self):
-        self._collapse_btn.setText("▸" if self._collapsed else "▾")
-        self._collapse_btn.setToolTip("펼치기" if self._collapsed else "접기")
-
-    def _refresh_collapse_color(self):
-        """[2026-08-13 피드백] `_FloatingPanel._refresh_collapse_color`와 동일 — 접기 화살표를
-        코랄에서 테마 적응 중립색으로."""
-        self._collapse_btn.setStyleSheet(
-            f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
 
 
 class _SymbolFolderDropZone(QWidget):
