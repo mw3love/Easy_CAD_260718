@@ -42,6 +42,15 @@ def _wait_worker(dlg):
         QApplication.processEvents()
 
 
+def _wait_model_list_worker(dlg):
+    """2026-08-20 비동기화(`_ModelListWorker`, QThread) — `_populate_models()`가 이제
+    즉시 반환하고 실제 목록 조회는 백그라운드에서 돈다. `_wait_worker`와 동일한 이유로
+    `wait()`+`processEvents()` 펌핑이 필요."""
+    dlg._model_list_worker.wait(5000)
+    for _ in range(5):
+        QApplication.processEvents()
+
+
 def _clear_gateway_settings():
     """`store_api_key`/`store_base_url` 테스트가 실사용자 QSettings를 건드리므로
     (기존 dark모드·recent_colors 테스트와 동일 관례), 매번 명시적으로 지워 오염 방지."""
@@ -258,11 +267,14 @@ def _select_model(dlg, model_id):
 
 def test_mermaid_dialog_populate_models_groups_gemini_and_gpt():
     """gpt/gemini를 그룹 헤더(선택 불가)가 있는 평범한 드롭다운으로 나눈다(재피드백:
-    2열 병렬 패널 대신 드롭다운으로, 추천 배지·설명 문구는 뺌)."""
+    2열 병렬 패널 대신 드롭다운으로, 추천 배지·설명 문구는 뺌).
+    [2026-08-20] `_populate_models`가 `_ModelListWorker`(QThread)로 비동기화돼(첫
+    오픈 지연 수정) 조회 완료를 명시적으로 기다려야 한다."""
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.gw.list_text_models",
                return_value=["gpt-5.4-mini", "gpt-5.4-nano", "gemini-3.6-flash"]):
         dlg = _MermaidDialog()
+        _wait_model_list_worker(dlg)
     assert dlg.model() == gw.TEXT_RECOMMEND_1
     assert set(_combo_model_ids(dlg)) == {"gpt-5.4-mini", "gpt-5.4-nano", "gemini-3.6-flash"}
     m = dlg._model_combo.model()
@@ -279,6 +291,7 @@ def test_mermaid_dialog_populate_models_falls_back_when_list_fails():
          patch("easycad.canvas.host_dialogs.gw.list_text_models",
                side_effect=RuntimeError("no network")):
         dlg = _MermaidDialog()
+        _wait_model_list_worker(dlg)
     assert dlg.model() == gw.TEXT_RECOMMEND_1
     assert set(_combo_model_ids(dlg)) == {gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2}
 
@@ -288,6 +301,7 @@ def test_mermaid_dialog_selecting_combo_item_updates_model():
          patch("easycad.canvas.host_dialogs.gw.list_text_models",
                return_value=["gpt-5.4-mini", "gemini-3.6-flash", "gemini-2.0-flash"]):
         dlg = _MermaidDialog()
+        _wait_model_list_worker(dlg)
     _select_model(dlg, "gemini-2.0-flash")
     assert dlg.model() == "gemini-2.0-flash"
 
@@ -649,19 +663,34 @@ def test_mermaid_dialog_populate_models_uses_resolved_base_url():
          patch("easycad.canvas.host_dialogs.gw.resolve_base_url",
                return_value="https://custom.example.com/v1/gateway"), \
          patch("easycad.canvas.host_dialogs.gw.list_text_models", fake_list_text_models):
-        _MermaidDialog()
+        dlg = _MermaidDialog()
+        _wait_model_list_worker(dlg)
     assert captured["base_url"] == "https://custom.example.com/v1/gateway"
 
 
-# ── 게이트웨이 설정 진입점 — 상단 메뉴/툴바로 나갔다가 재피드백으로 Mermaid 창 안으로
-# 복귀(2026-08-12, 같은 날 두 번) — "Mermaid 가져오기를 열 때만 필요한 설정인데 상위에
-# 있으면 맥락이 끊긴다"는 지적. CanvasWindow에는 더 이상 액션 자체가 없다(회귀 가드는
-# 아래 test_ai_gateway_settings_action_removed_from_menu_and_toolbar).
+# ── 게이트웨이 설정 진입점 — 상단 메뉴/툴바로 나갔다가(2026-08-12) Mermaid 창 안으로
+# 복귀했다가, 2026-08-20 재피드백으로 삽입(&I) 메뉴에 독립 항목으로 다시 추가됐다(다만
+# Mermaid/SVG 창 안의 설정 버튼은 그대로 유지 — "그 창을 같이 사용"). 툴바에는 안 둔다
+# (과거 "상시노출 아이콘은 실사용 결과 되돌림" 판단 유지, 메뉴 텍스트로만 노출).
 
-def test_ai_gateway_settings_action_removed_from_menu_and_toolbar():
+def test_ai_gateway_settings_action_in_insert_menu_opens_dialog():
     w = CanvasWindow()
-    assert not hasattr(w, "_act_ai_gw_settings")
-    assert not hasattr(w, "_open_ai_gateway_settings")
+    assert hasattr(w, "_act_ai_settings")
+    assert w._act_ai_settings.text() == "AI 게이트웨이 설정…"
+    assert w._act_ai_settings not in w._toolbar.actions()   # 메뉴 전용, 툴바엔 없음
+    opened = {}
+
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            opened["parent"] = parent
+
+        def exec(self):
+            opened["exec"] = True
+
+    with patch("easycad.canvas.host_fileio._AIGatewaySettingsDialog", _FakeDlg):
+        w._open_ai_gateway_settings()
+    assert opened.get("exec") is True
+    assert opened.get("parent") is w
     w.deleteLater()
 
 
@@ -961,9 +990,3 @@ def test_mermaid_dialog_ok_button_has_descriptive_label():
     assert ok_btn.text() == "확인 (캔버스 삽입)"
 
 
-def test_mermaid_dialog_copy_button_copies_code_to_clipboard():
-    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
-        dlg = _MermaidDialog()
-    dlg._edit.setPlainText("flowchart TD\n A-->B")
-    dlg._copy_code_to_clipboard()
-    assert QApplication.clipboard().text() == "flowchart TD\n A-->B"

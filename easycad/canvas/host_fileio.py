@@ -49,7 +49,7 @@ from easycad.canvas.host_widgets import _border_attach
 from easycad.canvas.host_selection import _group_scene_rect, _render_symbol_thumbnail
 from easycad.canvas.host_dialogs import (
     _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _MermaidDialog, _PdfExportDialog,
-    _SvgAssetDialog,
+    _SvgAssetDialog, _AIGatewaySettingsDialog,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -487,6 +487,11 @@ class _FileIOMixin:
                     it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
             it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
         return items
+
+    def _open_ai_gateway_settings(self):
+        """삽입(&I) 메뉴 「AI 게이트웨이 설정…」 진입점(2026-08-20 피드백) — Mermaid/SVG
+        창 안의 설정 버튼과 같은 `_AIGatewaySettingsDialog`를 독립적으로 연다."""
+        _AIGatewaySettingsDialog(self).exec()
 
     def _insert_ai_svg_asset(self):
         """메뉴 진입점(삽입(&I) 메뉴 「AI SVG 에셋 생성…」) — 뷰 중심에 새로 삽입.

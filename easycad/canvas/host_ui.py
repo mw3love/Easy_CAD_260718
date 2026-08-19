@@ -197,6 +197,12 @@ class _UIBuildMixin:
             self._insert_ai_svg_asset, "Ctrl+Shift+A")
         for a in (self._act_img, self._act_mmd, self._act_ai_svg):
             i.addAction(a)
+        i.addSeparator()   # [2026-08-20 피드백] 위 3개(가져오기) vs 아래(AI 연결 설정) 구분
+        # Mermaid/SVG 창 안의 설정 버튼과 같은 다이얼로그를 독립적으로 여는 진입점 — 그
+        # 안에서 열면 해당 창을 그대로 같이 쓴다(호출부는 무변경).
+        self._act_ai_settings = self._make_action("AI 게이트웨이 설정…", "settings",
+            self._open_ai_gateway_settings)
+        i.addAction(self._act_ai_settings)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")

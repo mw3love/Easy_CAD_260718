@@ -413,6 +413,23 @@ class _ImageAttachMixin:
     def _init_image_attach_state(self):
         self._attached_image = None       # PIL.Image.Image | None
         self._attached_image_name = ""
+        self._drop_frame = None           # QFrame | None — 드래그 오버 시 강조할 카드
+        self._drop_frame_normal_qss = ""
+        self._drop_frame_active_qss = ""
+
+    def _set_image_drop_frame(self, frame, normal_qss: str, active_qss: str):
+        """[2026-08-20 피드백: "드래그해도 되는 느낌이 없다"] 드래그 오버 중 강조할 카드
+        위젯을 등록 — dragEnterEvent/dragLeaveEvent/dropEvent가 이 카드 테두리를
+        실선↔코랄 점선으로 실시간 토글해 드롭 가능 영역임을 보여준다."""
+        self._drop_frame = frame
+        self._drop_frame_normal_qss = normal_qss
+        self._drop_frame_active_qss = active_qss
+
+    def _set_drop_active(self, active: bool):
+        if self._drop_frame is None:
+            return
+        self._drop_frame.setStyleSheet(
+            self._drop_frame_active_qss if active else self._drop_frame_normal_qss)
 
     def _build_image_chip(self, parent) -> QWidget:
         """컴팩트 이미지 칩(썸네일+이름+제거 버튼, 첨부 시에만 노출) — 만들어서 돌려주기만
@@ -498,11 +515,16 @@ class _ImageAttachMixin:
         if md.hasImage() or (md.hasUrls() and any(
                 u.toLocalFile().lower().endswith(self._IMG_EXTS) for u in md.urls())):
             e.acceptProposedAction()
+            self._set_drop_active(True)
 
     def dragMoveEvent(self, e):
         self.dragEnterEvent(e)
 
+    def dragLeaveEvent(self, e):
+        self._set_drop_active(False)
+
     def dropEvent(self, e):
+        self._set_drop_active(False)
         md = e.mimeData()
         if md.hasUrls():
             for u in md.urls():
@@ -556,6 +578,31 @@ class _MermaidGenWorker(QThread):
             self.failed.emit(str(e))
             return
         self.succeeded.emit(text, used)
+
+
+class _ModelListWorker(QThread):
+    """`list_text_models` 1회 조회를 메인 스레드 밖에서 돈다(2026-08-20, 피드백: "Mermaid
+    창 처음 열 때 느리다, 두 번째부터는 빠르다" — 검토 결과 `_populate_models`가 다이얼로그
+    생성자 안에서 이 네트워크 호출을 동기로 하고 있어, 첫 오픈이 응답을 기다리는 동안
+    다이얼로그 자체가 뜨지 않은 것처럼 보인 것이었다(연결 재사용으로 두 번째부터 빨라지는
+    체감과 일치). 추천 모델 2개로 드롭다운을 즉시 채운 뒤, 실제 목록은 이 워커가 도착하는
+    대로 갱신한다."""
+
+    succeeded = pyqtSignal(list)
+    failed = pyqtSignal(str)
+
+    def __init__(self, api_key, base_url, parent=None):
+        super().__init__(parent)
+        self._api_key = api_key
+        self._base_url = base_url
+
+    def run(self):
+        try:
+            models = gw.list_text_models(self._api_key, self._base_url, timeout=8.0)
+        except Exception as e:  # noqa: BLE001 — 조회 실패는 조용히 폴백(추천 2개만 유지)
+            self.failed.emit(str(e))
+            return
+        self.succeeded.emit(models)
 
 
 def _render_mermaid_preview_pixmap(text: str, target_size: QSize) -> QPixmap | None:
@@ -636,6 +683,18 @@ def _render_mermaid_preview_pixmap(text: str, target_size: QSize) -> QPixmap | N
     return pm
 
 
+class _ClickablePreviewLabel(QLabel):
+    """미리보기 QLabel — 클릭하면 확대 보기를 연다(2026-08-20 피드백: "미리보기창을
+    누르면 크게 보여주는 기능이 있으면 좋겠다")."""
+
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(e)
+
+
 class _MermaidDialog(_ImageAttachMixin, QDialog):
     """Mermaid flowchart 입력창 — 프롬프트(AI 지시)와 Mermaid 코드를 별개 칸으로 받는다.
 
@@ -678,6 +737,7 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         self.setAcceptDrops(True)
         self._init_image_attach_state()
         self._worker = None               # _MermaidGenWorker | None — 생성 중일 때만 설정
+        self._model_list_worker = None    # _ModelListWorker | None — 조회 중일 때만 설정
         lay = QVBoxLayout(self)
 
         # [2026-08-13 5차] 옛 상단 3줄 안내(Enter·드래그/Ctrl+V·코드칸 직접입력)를 각자
@@ -697,10 +757,19 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         prompt_frame = QFrame(self)
         prompt_frame.setObjectName("promptCard")
         prompt_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        prompt_frame.setStyleSheet(
+        _prompt_bg = '#e7e0d6' if dark else 'palette(base)'
+        _prompt_normal_qss = (
             "QFrame#promptCard { border:1px solid rgba(128,128,128,90); border-radius:8px; "
-            f"background:{'#e7e0d6' if dark else 'palette(base)'}; }}"
+            f"background:{_prompt_bg}; }}"
         )
+        # [2026-08-20 피드백] 드래그 오버 중엔 이 카드 테두리를 코랄 점선으로 바꿔 드롭
+        # 가능 영역임을 실시간으로 알린다(`_ImageAttachMixin._set_drop_active`가 토글).
+        _prompt_active_qss = (
+            f"QFrame#promptCard {{ border:2px dashed {_ACCENT_CORAL}; border-radius:8px; "
+            f"background:{_prompt_bg}; }}"
+        )
+        prompt_frame.setStyleSheet(_prompt_normal_qss)
+        self._set_image_drop_frame(prompt_frame, _prompt_normal_qss, _prompt_active_qss)
         prompt_frame_lay = QVBoxLayout(prompt_frame)
         prompt_frame_lay.setContentsMargins(0, 0, 0, 0)
         prompt_frame_lay.setSpacing(0)
@@ -779,10 +848,14 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         toolbar_lay.addWidget(self._ai_btn)
 
         prompt_frame_lay.addWidget(toolbar_widget)
-        lay.addWidget(prompt_frame)
+
+        # [2026-08-20 피드백] 레이아웃 재구성 — 오른쪽(미리보기)이 세로 전체를 채우고,
+        # 왼쪽(입력 카드+모델행+커넥터+코드칸)은 위아래로 쌓인 2분할 구조.
+        left_col = QVBoxLayout()
+        left_col.addWidget(prompt_frame)
 
         self._progress = _GenProgressRow(self)
-        lay.addWidget(self._progress)
+        left_col.addWidget(self._progress)
 
         # ---- 모델 선택: 평범한 드롭다운(gemini/gpt 그룹 헤더, 추천 배지 없음) + 새로고침 +
         # 설정. [2026-08-13 6차] 옛 위치(코드칸 아래)에서 입력카드 바로 아래(화살표 꼬리
@@ -794,17 +867,14 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         self._model_combo = QComboBox(self)
         self._model_combo.setStyleSheet(_ROUNDED_COMBO_QSS)   # [2026-08-13] 각진 모서리 → 둥글게
         model_row.addWidget(self._model_combo, 1)
-        self._model_refresh_btn = QToolButton(self)
-        self._model_refresh_btn.setIcon(_act_icon("refresh"))
-        self._model_refresh_btn.setToolTip("모델 목록 새로고침")
-        self._model_refresh_btn.clicked.connect(self._populate_models)
-        model_row.addWidget(self._model_refresh_btn)
+        # [2026-08-20 피드백] 전용 새로고침 버튼 제거 — "API 키를 만지는 설정 창의
+        # 연결 테스트가 그 역할을 겸한다"는 지적으로, 설정 버튼만 남긴다.
         self._settings_btn = QToolButton(self)
         self._settings_btn.setIcon(_act_icon("settings"))
-        self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·모델 새로고침·크레딧 확인)")
+        self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·연결 테스트)")
         self._settings_btn.clicked.connect(self._open_gateway_settings)
         model_row.addWidget(self._settings_btn)
-        lay.addLayout(model_row)
+        left_col.addLayout(model_row)
         self._populate_models()
 
         # ---- 입력→코드 커넥터 — 순서도 커넥터 느낌으로 "이 입력이 아래 코드로 바뀐다"를
@@ -818,35 +888,29 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         arrow_label.setFixedSize(30, 46)
         connector_row.addWidget(arrow_label)
         connector_row.addStretch(1)
-        lay.addLayout(connector_row)
+        left_col.addLayout(connector_row)
 
         # ---- 2번 칸: Mermaid 코드(넉넉함) — AI 결과가 채워지거나 직접 타이핑/붙여넣기 ----
         # [2026-08-13 5차] 옛 상단 힌트 3번째 줄("아래 칸에 직접 입력·붙여넣기 가능")을
-        # 라벨에 흡수. [2026-08-19 Stage 5] 오른쪽에 실시간 렌더 미리보기 패널을 추가
-        # (deep-interview 확정 배치 — "옆(가로 분할)"). 코드칸은 그대로 두고 옆으로만
-        # 붙이므로 위 프롬프트카드·모델행·커넥터는 무변경.
-        code_row = QHBoxLayout()
-        code_col = QVBoxLayout()
-        # [2026-08-19 Stage 6] 목업("Mermaid 가져오기 Studio v2.0")의 시각 언어만 차용 —
-        # 코드칸 라벨 옆에 복사 버튼(사용자 확정: 구조는 그대로, 이 요소만 반영).
+        # 라벨에 흡수. [2026-08-20 피드백] 레이아웃 재구성 — 미리보기가 세로 2분할 중
+        # 오른쪽 전체를 채우고, 코드칸은 왼쪽(입력 카드 아래)에 남는다(옛 "옆(가로 분할)"
+        # 배치에서 좌우 열 자체를 좌=입력전체/우=미리보기로 승격). 복사 버튼은 제거
+        # (피드백: "드래그해서 복사하면 됨").
         code_label_row = QHBoxLayout()
         code_label_row.addWidget(QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능):", self))
         code_label_row.addStretch(1)
-        self._copy_code_btn = QToolButton(self)
-        self._copy_code_btn.setText("복사")   # 전용 아이콘 없음(범위 밖) — 텍스트만
-        self._copy_code_btn.setToolTip("Mermaid 코드를 클립보드로 복사")
-        self._copy_code_btn.clicked.connect(self._copy_code_to_clipboard)
-        code_label_row.addWidget(self._copy_code_btn)
-        code_col.addLayout(code_label_row)
+        left_col.addLayout(code_label_row)
         self._edit = QPlainTextEdit(self)
         self._edit.setPlaceholderText(self._SAMPLE)
         self._edit.setMinimumSize(QSize(420, 260))
         self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        code_col.addWidget(self._edit)
-        code_row.addLayout(code_col, 1)
+        left_col.addWidget(self._edit, 1)
+
+        split = QHBoxLayout()
+        split.addLayout(left_col, 1)
 
         preview_col = QVBoxLayout()
-        preview_col.addWidget(QLabel("미리보기:", self))
+        preview_col.addWidget(QLabel("미리보기 (클릭하면 확대):", self))
         preview_frame = QFrame(self)
         preview_frame.setObjectName("mermaidPreviewFrame")
         preview_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -856,17 +920,21 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         )
         preview_frame_lay = QVBoxLayout(preview_frame)
         preview_frame_lay.setContentsMargins(6, 6, 6, 6)
-        self._preview_label = QLabel(preview_frame)
-        self._preview_label.setFixedSize(220, 220)
+        self._preview_label = _ClickablePreviewLabel(preview_frame)
+        self._preview_label.setMinimumSize(160, 160)
+        self._preview_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_label.setWordWrap(True)
         self._preview_label.setStyleSheet("color:#8a8a8a; font-size:11px;")
         self._preview_label.setText("코드를 입력하면\n미리보기가 표시됩니다")
+        self._preview_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._preview_label.clicked.connect(self._show_enlarged_preview)
         preview_frame_lay.addWidget(self._preview_label)
-        preview_col.addWidget(preview_frame)
-        preview_col.addStretch(1)
-        code_row.addLayout(preview_col)
-        lay.addLayout(code_row)
+        preview_col.addWidget(preview_frame, 1)
+        split.addLayout(preview_col, 1)
+
+        lay.addLayout(split, 1)
 
         # 코드 변경 350ms 후 재렌더(디바운스) — 타이핑마다 즉시 다시 그리면 무거워질 수
         # 있어 QTimer로 묶는다. `textChanged`는 인자가 없어 `QTimer.start`(무인자 오버로드)
@@ -890,8 +958,29 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
     def text(self):
         return self._edit.toPlainText()
 
-    def _copy_code_to_clipboard(self):
-        QApplication.clipboard().setText(self._edit.toPlainText())
+    def _show_enlarged_preview(self):
+        """미리보기를 클릭하면 큰 창으로 다시 렌더해 보여준다(2026-08-20 피드백) — 작은
+        패널 해상도로는 안 보이던 라벨·구조를 확인할 수 있게. 코드가 비어 있으면 무시."""
+        text = self._edit.toPlainText()
+        if not text.strip():
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("미리보기 확대")
+        v = QVBoxLayout(dlg)
+        label = QLabel(dlg)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        size = QSize(900, 700)
+        pm = _render_mermaid_preview_pixmap(text, size)
+        if pm is None:
+            label.setText("구문 오류 — 미리보기를 표시할 수 없습니다")
+        else:
+            label.setPixmap(pm)
+        v.addWidget(label)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dlg)
+        btns.rejected.connect(dlg.reject)
+        v.addWidget(btns)
+        dlg.resize(size)
+        dlg.exec()
 
     def _update_preview(self):
         """디바운스 타이머 만료 시 호출 — `_render_mermaid_preview_pixmap`으로 다시 그린다."""
@@ -915,6 +1004,9 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         if self._worker is not None and self._worker.isRunning():
             e.ignore()
             return
+        if self._model_list_worker is not None and self._model_list_worker.isRunning():
+            e.ignore()
+            return
         super().closeEvent(e)
 
     def eventFilter(self, obj, event):
@@ -931,25 +1023,43 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
     # ---- 모델 선택(드롭다운) ----------------------------------------------------
 
     def _open_gateway_settings(self):
-        """`_AIGatewaySettingsDialog`(주소·키·모델 새로고침·크레딧 확인)를 이 Mermaid 창의
-        자식 모달로 연다. 주소/키/모델 목록이 바뀌었을 수 있으니 닫힌 뒤 드롭다운을
-        다시 채운다."""
+        """`_AIGatewaySettingsDialog`(주소·키·연결 테스트)를 이 Mermaid 창의 자식 모달로
+        연다. 주소/키가 바뀌었을 수 있으니 닫힌 뒤 드롭다운을 다시(비동기로) 채운다."""
         if _AIGatewaySettingsDialog(self).exec() == QDialog.DialogCode.Accepted:
             self._populate_models()
 
     def _populate_models(self):
-        """게이트웨이 `/models`를 실호출해(옛 코드와 동일한 지점 — 별도 캐시 계층은 안 둔다,
-        `_AIGatewaySettingsDialog`의 새로고침도 자기 몫의 확인용으로 독립 호출) gemini·gpt
-        그룹 헤더가 있는 평범한 드롭다운으로 채운다. 추천 배지·설명은 뺐다(재피드백: "추천
-        설명은 빼자") — 그룹 구분만 명확히 남긴다. 헤더 행은 `QStandardItem.setEnabled(False)`
-        로 선택 불가. 조회 실패(키 없음·네트워크 오류) 시 추천 둘만으로 조용히 폴백."""
-        models: list[str] = []
-        try:
-            key = gw.resolve_api_key()
-            if key:
-                models = gw.list_text_models(key, gw.resolve_base_url(), timeout=8.0)
-        except Exception:
-            models = []
+        """[2026-08-20 재작성 — 피드백: "Mermaid 창 처음 열 때 느리다, 두 번째부터는
+        빠르다" 검토] 옛 코드는 게이트웨이 `/models`를 이 생성자 호출 경로에서 동기로
+        불러 첫 오픈이 응답을 기다리는 동안 다이얼로그 자체가 못 뜨는 것처럼 보였다(연결
+        재사용으로 두 번째부터 빨라지는 체감과 일치하는 원인). 이제는 추천 모델 2개로
+        드롭다운을 즉시 채우고, 실제 목록은 `_ModelListWorker`(QThread)가 백그라운드로
+        조회해 도착하면 갱신한다."""
+        self._fill_model_combo([])
+        key = gw.resolve_api_key()
+        if not key:
+            return
+        if self._model_list_worker is not None and self._model_list_worker.isRunning():
+            # 이미 조회 중(예: 설정 창을 열자마자 다시 닫는 경우) — 새로 또 띄우면
+            # `self._model_list_worker`가 새 워커로 덮어써져 먼저 시작한 워커가 고아가
+            # 되고, `closeEvent`가 그 고아 워커를 못 봐 다이얼로그가 먼저 닫혀버릴 수
+            # 있다(이 프로젝트가 과거 겪은 Qt 라이프사이클 크래시와 같은 종류). 지금
+            # 도는 조회가 끝나면 어차피 최신 결과로 갱신되므로 조용히 건너뛴다.
+            return
+        self._model_list_worker = _ModelListWorker(key, gw.resolve_base_url(), self)
+        self._model_list_worker.succeeded.connect(self._on_models_listed)
+        self._model_list_worker.start()
+
+    def _on_models_listed(self, models):
+        self._fill_model_combo(models)
+
+    def _fill_model_combo(self, models):
+        """gemini·gpt 그룹 헤더가 있는 평범한 드롭다운으로 채운다(추천 배지·설명은 없음
+        — 재피드백: "추천 설명은 빼자"). 헤더 행은 `QStandardItem.setEnabled(False)`로
+        선택 불가. `models`가 비어 있으면(조회 전·실패 시) 추천 둘만으로 조용히 폴백.
+        이전에 고른 모델이 새 목록에도 있으면 그대로 유지한다(백그라운드 갱신이 사용자가
+        막 고른 모델을 조용히 되돌리지 않도록)."""
+        prev = self.model() if self._model_combo.count() else None
         r1, r2 = gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2
         pool = sorted(set(models) | {r1, r2})
         gemini_models = sorted(m for m in pool if "gemini" in m.lower())
@@ -971,9 +1081,10 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         add_group("GPT", gpt_models)
         self._model_combo.setModel(std_model)
 
+        target = prev if prev in pool else r1
         default_row = next(
             (i for i in range(std_model.rowCount())
-             if std_model.item(i).data(Qt.ItemDataRole.UserRole) == r1), -1)
+             if std_model.item(i).data(Qt.ItemDataRole.UserRole) == target), -1)
         self._model_combo.setCurrentIndex(default_row if default_row >= 0 else
                                           (1 if std_model.rowCount() > 1 else -1))
 
@@ -1343,10 +1454,19 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         prompt_frame = QFrame(self)
         prompt_frame.setObjectName("svgPromptCard")
         prompt_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        prompt_frame.setStyleSheet(
+        _prompt_bg = '#e7e0d6' if dark else 'palette(base)'
+        _prompt_normal_qss = (
             "QFrame#svgPromptCard { border:1px solid rgba(128,128,128,90); border-radius:8px; "
-            f"background:{'#e7e0d6' if dark else 'palette(base)'}; }}"
+            f"background:{_prompt_bg}; }}"
         )
+        # [2026-08-20 피드백] 드래그 오버 중엔 이 카드 테두리를 코랄 점선으로(Mermaid
+        # 창과 동일 관례) — "드래그해도 되는 느낌이 없다".
+        _prompt_active_qss = (
+            f"QFrame#svgPromptCard {{ border:2px dashed {_ACCENT_CORAL}; border-radius:8px; "
+            f"background:{_prompt_bg}; }}"
+        )
+        prompt_frame.setStyleSheet(_prompt_normal_qss)
+        self._set_image_drop_frame(prompt_frame, _prompt_normal_qss, _prompt_active_qss)
         prompt_frame_lay = QVBoxLayout(prompt_frame)
         prompt_frame_lay.setContentsMargins(0, 0, 0, 0)
         prompt_frame_lay.setSpacing(0)
@@ -1403,6 +1523,14 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._gemini_count.setCurrentIndex(1)
         self._gemini_count.setStyleSheet(_ROUNDED_COMBO_QSS)
         toolbar_lay.addWidget(self._gemini_count)
+
+        # [2026-08-20 피드백] 이 창엔 설정 진입점이 아예 없었다 — Mermaid 창과 같은 자리
+        # (모델 관련 컨트롤 옆)에 추가(모델 목록 자체가 없어 새로고침할 것은 없음).
+        self._settings_btn = QToolButton(toolbar_widget)
+        self._settings_btn.setIcon(_act_icon("settings"))
+        self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·연결 테스트)")
+        self._settings_btn.clicked.connect(self._open_gateway_settings)
+        toolbar_lay.addWidget(self._settings_btn)
 
         self._gen_btn = QToolButton(toolbar_widget)
         self._gen_btn.setIcon(_act_icon("generate"))
@@ -1479,6 +1607,12 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
             if self._maybe_intercept_paste_image(event):
                 return True
         return super().eventFilter(obj, event)
+
+    def _open_gateway_settings(self):
+        """`_AIGatewaySettingsDialog`를 이 SVG 창의 자식 모달로 연다(2026-08-20 — Mermaid
+        창과 동일한 진입점을 SVG 창에도 추가, 이전엔 이 창에 설정 진입점이 없었다).
+        모델 드롭다운이 없어(개수 선택뿐) 닫힌 뒤 다시 채울 것도 없다."""
+        _AIGatewaySettingsDialog(self).exec()
 
     def _requested_jobs(self) -> list[str]:
         """모델별 개수 드롭다운 → 호출할 모델 목록(개수만큼 반복) — 예: GPT 2·Gemini 1이면
