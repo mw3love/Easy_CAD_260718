@@ -567,6 +567,24 @@ class _UIBuildMixin:
 
     # ---- 테마 (다크 기본 + 라이트 토글) -------------------------------------
 
+    @staticmethod
+    def _palette_accent_qss(dark: bool) -> str:
+        """[실사용 버그 수정 2026-08-19] 팔레트 버튼 스타일(미선택=투명 테두리만·선택=코랄
+        틴트)을 `_apply_theme`의 `btn_qss`에서 뽑아낸 것 — 커스텀 심볼 버튼(§8-8)이 이
+        스타일을 못 받아 Qt 기본 테마의 raised 배경 박스로 남던 버그를 고치려면
+        `_refresh_custom_symbol_section`(버튼을 매번 새로 만드는 곳)에서도 같은 문자열이
+        필요해서다. `_apply_theme`가 항상 갖고 있는 `dark`만 받으면 되므로 static으로 뺐다."""
+        hover_bg = "rgba(255,255,255,22)" if dark else "rgba(0,0,0,18)"
+        strong_checked_bg = "rgba(218,119,86,150)"
+        return (
+            "QToolButton { border:1px solid transparent; border-radius:6px; padding:3px; }"
+            "QToolButton:checked { background:rgba(218,119,86,35); }"
+            f"QToolButton#toolStrongCheck:checked {{ background:{strong_checked_bg};"
+            " border-color:#da7756; }"
+            f"QToolButton:hover {{ background:{hover_bg}; }}"
+            f"QToolButton:pressed {{ background:{strong_checked_bg}; border-color:#da7756; }}"
+        )
+
     def _apply_theme(self, dark: bool, persist: bool = False):
         """[Phase 6 M1] 다크/라이트 일괄 적용 — 팔레트(Fusion)·캔버스 배경·아이콘 색.
         아이콘은 baked QPixmap이라 테마색이 바뀌면 액션·팔레트 아이콘을 재생성한다.
@@ -674,7 +692,6 @@ class _UIBuildMixin:
         # 밝히는 흰색 계열(rgba(255,255,255,22)), 라이트는 반대로 어둡히는 검정 계열
         # (rgba(0,0,0,18))— 밝은 배경 위에 흰 틴트를 얹으면 안 보이므로 방향을 테마별로 뒤집는다.
         # pressed는 여전히 코랄 진하게(클릭 확정 피드백은 또렷해야 하므로 건드리지 않음).
-        hover_bg = "rgba(255,255,255,22)" if dark else "rgba(0,0,0,18)"
         # [2026-08-02 5차 피드백] "상시 켜짐"(스냅·격자, 기본값 ON)은 옅은 틴트(35)를 유지하되,
         # "순간적으로 켜지는" 것(그리기 도구 무장·핀·직교)은 클릭 순간(pressed)의 진한 코랄을
         # 뗀 뒤에도 고정색으로 유지해 달라는 요청 — objectName 선택자로 두 그룹을 나눈다.
@@ -682,15 +699,7 @@ class _UIBuildMixin:
         # 일반 `QToolButton:checked` 규칙을 이긴다 — 같은 스타일시트 문자열 안에서 셀렉터
         # 명시도로 가르는 방식이라(각 버튼에 별도 stylesheet를 걸어 조상↔자손 캐스케이드에
         # 기대는 방식보다) 결과가 항상 결정적이다. 이 objectName은 아래에서 대상 위젯에만 부여.
-        strong_checked_bg = "rgba(218,119,86,150)"
-        btn_qss = (
-            "QToolButton { border:1px solid transparent; border-radius:6px; padding:3px; }"
-            "QToolButton:checked { background:rgba(218,119,86,35); }"
-            f"QToolButton#toolStrongCheck:checked {{ background:{strong_checked_bg};"
-            " border-color:#da7756; }"
-            f"QToolButton:hover {{ background:{hover_bg}; }}"
-            f"QToolButton:pressed {{ background:{strong_checked_bg}; border-color:#da7756; }}"
-        )
+        btn_qss = self._palette_accent_qss(dark)
         toolbar = getattr(self, "_toolbar", None)
         if toolbar is not None:
             sep_color = "#3d4b5c" if dark else "#c9d3dc"
@@ -713,6 +722,11 @@ class _UIBuildMixin:
         _accent_btns = (
             list(getattr(self, "_shape_tool_buttons", {}).values())
             + list(getattr(self, "_sym_buttons", {}).values())
+            # [실사용 버그 수정 2026-08-19] 커스텀 심볼(§8-8) 버튼이 이 목록에서 빠져 있어
+            # 위 btn_qss(미선택=투명 테두리만·선택=코랄 틴트)를 못 받고 Qt 기본 스타일의
+            # raised 배경 박스로 남아 있었다 — 일반 도형/심볼 버튼과 시각적으로 달라 보이던
+            # 원인.
+            + list(getattr(self, "_custom_sym_buttons", {}).values())
         )
         for name in ("_pf_color", "_pf_fill", "_pf_swap_btn", "_pf_routing_btn", "_pf_dir_btn"):
             b = getattr(self, name, None)
@@ -968,10 +982,18 @@ class _UIBuildMixin:
             for entry in entries:
                 if entry.get("folder") != folder_name:
                     continue
+                # [실사용 버그 수정 2026-08-19] 2026-08-19 이전에 등록된 심볼의 옛 흐린
+                # 썸네일을 재등록 없이 자동 치유(host_selection._ensure_symbol_thumb_current).
+                entry = self._ensure_symbol_thumb_current(entry)
                 icon = QIcon(_b64_to_pixmap(entry["thumb"]))
                 sid = entry["id"]
                 key = f"customsym:{sid}"
                 btn = self._palette_button(entry["name"][:6], icon, entry["name"], key)
+                # [실사용 버그 수정 2026-08-19] 이 섹션은 등록/삭제/이름변경/이동마다 버튼을
+                # 새로 만든다 — `_apply_theme`의 접근 목록(`_accent_btns`)이 다음 테마 전환
+                # 때나 이 새 버튼을 보므로, 만든 즉시 같은 스타일을 걸어 일반 도형 버튼과
+                # 바로 동일하게 보이게 한다.
+                btn.setStyleSheet(self._palette_accent_qss(self._dark))
                 btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                 btn.customContextMenuRequested.connect(
                     lambda pos, b=btn, sid=sid: self._show_custom_symbol_context_menu(b, pos, sid))

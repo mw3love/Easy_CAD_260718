@@ -361,6 +361,10 @@ class _CanvasMixin:
         view = getattr(self, "_view", None)
         if view is not None:
             view._cancel_place()
+            # [실사용 피드백 2026-08-19] 커스텀 심볼 클릭-클릭 배치가 armed(둘째 클릭 대기)
+            # 상태로 남아 있는데 도구를 바꾸면(단축키 등) 프리뷰 아이템이 고아로 남는다.
+            if view._csym_drag is not None:
+                view._cancel_csym_drag()
         self.current_tool = key
         for k, b in self._tool_buttons.items():
             # [화살표 통합] 화살표 버튼 1개가 내부 두 도구(arrow·sarrow)를 대표한다.

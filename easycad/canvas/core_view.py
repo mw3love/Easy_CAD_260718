@@ -138,6 +138,10 @@ class _AnnotatorView(QGraphicsView):
         Qt.Key.Key_9: "polygon",   # [§8 항목21] 비어 있던 9 — 다각형/폴리라인 도구.
         Qt.Key.Key_T: "trim",   # [§8 항목17 4단계] 숫자 1~9가 다 차 letter 단축키(AutoCAD TR 관례)
     }
+    # [실사용 피드백 2026-08-19] 커스텀 심볼 드래그-리사이즈(`_csym_drag`) 최소 배율 — press
+    # 시점부터 이 크기로 시작해 드래그로 커지기만 하므로(깜빡임 없음), 0이면 겹친 아이템들의
+    # scale=0 특이점(면적 0)을 만들 수 있어 작지만 0은 아닌 값을 쓴다.
+    _CSYM_MIN_SCALE = 0.05
 
     def __init__(self, scene: QGraphicsScene, owner):
         super().__init__(scene)
@@ -159,6 +163,12 @@ class _AnnotatorView(QGraphicsView):
         # 직선화살(sarrow)은 클릭마다 정점 추가·더블클릭/Enter 마무리. 마지막 점은 커서 추종.
         self._place: QGraphicsItem | None = None   # 배치 중 아이템
         self._place_tool: str | None = None        # 그 도구 키
+        # [실사용 피드백 2026-08-19] 커스텀 심볼(§8-8) 클릭-드래그 크기조절 — 그룹(여러
+        # 아이템)이라 위 `_place`/`_temp`의 단일-아이템(setRect) 가정에 안 맞아 전용 상태로
+        # 분리. None=진행 중 아님, 아니면 {"items","orig","anchor","diag0"}(mousePressEvent
+        # customsym 분기가 채움 — mouseMoveEvent가 비율고정 스케일 프리뷰, mouseReleaseEvent가
+        # 마무리).
+        self._csym_drag: dict | None = None
         # 실제 press 지점(씬) — 드래그/클릭 판정 기준. self._start는 테두리 스냅으로 '점프'할 수
         # 있어(시작 스냅), 그걸로 이동량을 재면 가만히 클릭해도 드래그로 오인된다(→극소 화살표).
         self._press_scene = QPointF()
@@ -2123,7 +2133,11 @@ class _AnnotatorView(QGraphicsView):
         sp = self.mapToScene(event.position().toPoint())
         tool = self._owner.current_tool
         if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-            if tool in ("rect", "ellipse"):
+            # [실사용 버그 수정 2026-08-19] 삼각형 등 심볼(sym:*)도 rect/ellipse와 똑같이
+            # QRectF(sp, sp) 드래그-그리기 경로를 쓰는데(mousePressEvent의 sym: 분기 참조)
+            # 이 제약에서만 빠져 있었다 — 팔레트-드래그 후 리사이즈에서 Shift가 되는 것과
+            # 헷갈리기 쉬운 별개 경로.
+            if tool in ("rect", "ellipse") or tool.startswith("sym:"):
                 return self._constrain(self._start, sp, "square")
             if tool in ("line", "arrow", "sarrow"):
                 return self._constrain(self._start, sp, "angle")
@@ -2176,6 +2190,12 @@ class _AnnotatorView(QGraphicsView):
         if self._place is not None:
             if event.button() == Qt.MouseButton.LeftButton:
                 self._place_click(event)
+                return
+        # [실사용 피드백 2026-08-19] 커스텀 심볼 클릭-클릭(두 번 클릭) 배치 — 둘째 클릭 확정.
+        # _place와 별도 상태(_csym_drag)라 위 분기가 못 잡으므로 바로 다음 우선순위에 둔다.
+        if self._csym_drag is not None and self._csym_drag.get("armed"):
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._finish_csym_place(event)
                 return
         # 뷰어 모드: 좌클릭 드래그 = 창 이동 (그리기·선택 안 함)
         if not self._owner.is_edit_mode():
@@ -2453,9 +2473,30 @@ class _AnnotatorView(QGraphicsView):
         pen = owner.make_pen()
 
         if tool.startswith("customsym:"):
-            # [신규기능 §8-8] 커스텀 심볼은 그룹이라 rect처럼 드래그로 그릴 수 없다 —
-            # sym:*와 달리 클릭 즉시 원본 비율 그대로 배치(text/badge와 같은 단발 배치).
-            owner._create_shape_at(tool, sp)
+            # [실사용 피드백 2026-08-19] 커스텀 심볼은 그룹이라 rect처럼 setRect()로 그릴 순
+            # 없지만(_place/_temp의 단일-아이템 가정과 안 맞음), "클릭-드래그로 크기조절"이라는
+            # 다른 도형과 같은 조작 자체는 가능하다 — 비율 고정 확대(사용자 선택, 다른 방식은
+            # 그룹 내부 도형이 늘어나 어색해짐)로 구현. box0.topLeft()를 press 지점(anchor)에
+            # 맞춘 뒤(단발 클릭=드래그 없음일 때의 기존 배치와 동일 앵커), 드래그 거리를
+            # box0 대각선 길이에 대한 비율로 환산해 각 아이템을 pos/scale로 동시 스케일한다
+            # — 그룹 멤버가 어떤 아이템 타입이든(도형·경로·화살표 등) pos()/scale()은 전
+            # QGraphicsItem 공통이라 타입 분기 없이 일반화된다.
+            sym_id = tool[len("customsym:"):]
+            built = owner._build_custom_symbol_items(sym_id)
+            if built is None:
+                return
+            items, box0 = built
+            orig = [(QPointF(it.pos()) - box0.topLeft(), it.scale()) for it in items]
+            for it in items:
+                self.scene().addItem(it)
+            diag0 = math.hypot(box0.width(), box0.height()) or 1.0
+            self._csym_drag = {"items": items, "orig": orig, "anchor": QPointF(sp), "diag0": diag0}
+            # [실사용 버그 수정 2026-08-19] 예전엔 여기서 바로 기본 크기(scale=1)로 놓은 뒤
+            # mouseMoveEvent가 첫 프레임에 scale 공식(dist≈0 → 최소치)을 적용해 "기본크기로
+            # 잠깐 반짝했다가 줄어드는" 깜빡임이 있었다 — press 시점부터 같은 공식(최소
+            # 크기에서 시작)을 적용해 드래그 내내 끊김 없이 커지기만 하게 통일한다. 순수
+            # 클릭(드래그 없음)은 release의 moved<4 보정이 기본 크기로 되돌린다.
+            self._csym_apply_scale(self._csym_drag, self._CSYM_MIN_SCALE)
             return
         if tool == "rect":
             it = _RectItem(QRectF(sp, sp))
@@ -2843,6 +2884,50 @@ class _AnnotatorView(QGraphicsView):
             self.scene().removeItem(it)
         self.viewport().update()
 
+    def _csym_apply_scale(self, d: dict, scale: float):
+        """[실사용 피드백 2026-08-19] `_csym_drag` 상태에 스케일 `scale`을 적용 — press(초기
+        최소크기)·mouseMoveEvent(실시간 갱신) 공용. 그룹 멤버 타입 무관(전 QGraphicsItem
+        공통 pos()/scale())."""
+        for it, (offset, orig_scale) in zip(d["items"], d["orig"]):
+            it.setPos(d["anchor"] + offset * scale)
+            it.setScale(orig_scale * scale)
+
+    def _finish_csym_place(self, event=None):
+        """[실사용 피드백 2026-08-19] 클릭-클릭(두 번 클릭) 배치 확정 — `_finish_place`(2점
+        도구 공통)의 그룹 버전. 둘째 클릭(event 있음)이면 그 위치로 스케일을 한 번 더
+        갱신하고, Enter(event 없음)면 이미 적용돼 있는 마지막 라이브 스케일 그대로 확정한다.
+        `_place_nondegenerate`와 같은 이유로, 커서를 거의 안 움직인 채(=여전히 최소크기
+        근처) 확정하면 rect/ellipse가 '점 하나'짜리 퇴화 도형을 폐기하는 것과 동일하게
+        폐기한다(undo 없이 조용히)."""
+        d = self._csym_drag
+        self._csym_drag = None
+        if event is not None:
+            cur = self.mapToScene(event.position().toPoint())
+            dist = math.hypot(cur.x() - d["anchor"].x(), cur.y() - d["anchor"].y())
+            self._csym_apply_scale(d, max(self._CSYM_MIN_SCALE, dist / d["diag0"]))
+        applied_scale = d["items"][0].scale() / d["orig"][0][1] if d["orig"][0][1] else d["items"][0].scale()
+        if applied_scale <= self._CSYM_MIN_SCALE * 1.01:
+            for it in d["items"]:
+                if it.scene() is not None:
+                    self.scene().removeItem(it)
+            self.viewport().update()
+            return
+        self._owner._finish_custom_symbol_placement(d["items"])
+        self.viewport().update()
+
+    def _cancel_csym_drag(self):
+        """[실사용 피드백 2026-08-19] 커스텀 심볼 드래그-리사이즈 배치를 통째로 폐기(우클릭
+        취소용) — `_cancel_drag_draw`의 그룹 버전. 아이템이 이미 씬에 추가돼 있으므로(미리보기
+        갱신을 위해 press에서 바로 넣음) 안 지우면 undo 기록 없는 고아 아이템이 남는다."""
+        d = self._csym_drag
+        self._csym_drag = None
+        if d is None:
+            return
+        for it in d["items"]:
+            if it.scene() is not None:
+                self.scene().removeItem(it)
+        self.viewport().update()
+
     def _right_click_cancel(self):
         """[Phase 6 M2] 우클릭 — 진행 중 그리기를 폐기하고 무장 도구를 선택모드로 되돌린다.
         아무것도 진행 중이 아니고 이미 select면 아무 일도 하지 않는다(무해)."""
@@ -2850,13 +2935,15 @@ class _AnnotatorView(QGraphicsView):
             self._cancel_place()
         elif self._drawing:
             self._cancel_drag_draw()
+        elif self._csym_drag is not None:
+            self._cancel_csym_drag()
         if self._owner.current_tool not in (None, "select"):
             self._owner.set_tool("select")
 
     def _rmb_is_busy(self) -> bool:
         """[M3 #16] 우클릭이 '취소'여야 하는 상태인가 — 진행 중 배치/그리기 또는 무장된 그리기 도구.
         M2가 실제로 취소하던 경우와 정확히 일치(그 외 유휴는 팬/메뉴로 넘긴다)."""
-        if self._place is not None or self._drawing:
+        if self._place is not None or self._drawing or self._csym_drag is not None:
             return True
         return self._owner.current_tool not in (None, "select")
 
@@ -3148,6 +3235,13 @@ class _AnnotatorView(QGraphicsView):
             self._seg_drag._drag_segment_to(self.mapToScene(event.position().toPoint()))
             self.viewport().update()
             return
+        if self._csym_drag is not None:  # [실사용 피드백 2026-08-19] 커스텀 심볼 비율고정 확대
+            d = self._csym_drag
+            cur = self.mapToScene(event.position().toPoint())
+            dist = math.hypot(cur.x() - d["anchor"].x(), cur.y() - d["anchor"].y())
+            self._csym_apply_scale(d, max(self._CSYM_MIN_SCALE, dist / d["diag0"]))
+            self.viewport().update()
+            return
         if self._table_col_drag is not None:  # [열폭 드래그] 경계를 커서 x로 이동
             item = self._table_col_drag
             local = item.mapFromScene(self.mapToScene(event.position().toPoint()))
@@ -3429,6 +3523,25 @@ class _AnnotatorView(QGraphicsView):
             self._none_win_dragging = False
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
             return
+        if self._csym_drag is not None and not self._csym_drag.get("armed"):
+            # [실사용 피드백 2026-08-19] 커스텀 심볼 배치 — 드래그 종료 판정.
+            d = self._csym_drag
+            release = self.mapToScene(event.position().toPoint())
+            moved = max(abs(release.x() - self._press_scene.x()),
+                        abs(release.y() - self._press_scene.y()))
+            if moved < 4:
+                # [실사용 피드백 2026-08-19] 드래그 없는 클릭 — 즉시 확정 대신 rect/ellipse/
+                # sym:와 동일하게 클릭-클릭(두 번 클릭) 배치 모드로 전환한다(일관성, 사용자
+                # 선택). 현재 크기(min-scale 근처, press 이후 실질 이동이 없었으므로)를
+                # 그대로 두어 이 전환 자체는 화면에 아무 점프도 없다 — 이후 idle
+                # mouseMoveEvent(버튼 안 눌러도)가 계속 갱신하고, 다음 클릭이 확정한다.
+                d["armed"] = True
+                self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+                return
+            self._csym_drag = None
+            self._owner._finish_custom_symbol_placement(d["items"])
+            self.viewport().update()
+            return
         if self._trim_dragging:  # [Fence 재설계 2026-08-10] 펜스 종료
             self._trim_dragging = False
             self._trim_seen = set()
@@ -3649,6 +3762,14 @@ class _AnnotatorView(QGraphicsView):
                 self._finish_place(event)
                 event.accept()
             return
+        # [실사용 피드백 2026-08-19] 커스텀 심볼 클릭-클릭 배치 armed 중 빠르게 두 번 클릭하면
+        # Qt가 둘째 press를 MouseButtonPress가 아니라 이 더블클릭 이벤트로 보낸다 — 위
+        # mousePressEvent의 armed 확정 분기가 못 잡으므로 여기서도 동일하게 받아준다.
+        if self._csym_drag is not None and self._csym_drag.get("armed"):
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._finish_csym_place(event)
+                event.accept()
+            return
         # [우리 확장 · Phase 4] 표제란 프레임 더블클릭 = 필드 편집 폼(host가 소유).
         if event.button() == Qt.MouseButton.LeftButton:
             tb = self._titleblock_at(event.position().toPoint())
@@ -3695,6 +3816,14 @@ class _AnnotatorView(QGraphicsView):
                     self._finish_place()
                 else:
                     self._cancel_place()
+                return
+        # [실사용 피드백 2026-08-19] 커스텀 심볼 클릭-클릭 배치 armed — Enter=확정/Esc=취소.
+        if self._csym_drag is not None and self._csym_drag.get("armed") and not editing_text:
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._finish_csym_place()
+                return
+            if key == Qt.Key.Key_Escape:
+                self._cancel_csym_drag()
                 return
         if editing_text and key == Qt.Key.Key_Escape:
             # 텍스트 편집 중 ESC = 편집기 닫기가 아니라 텍스트 완료(=Ctrl+Enter와 동일).

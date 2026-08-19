@@ -38,13 +38,14 @@ from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.document import (
     save_document, load_document, load_document_layers,
-    item_to_dict, dict_to_item, _pixmap_to_b64,
+    item_to_dict, dict_to_item, _pixmap_to_b64, _b64_to_pixmap,
 )
 from easycad.fileio import symbol_library
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
 from easycad.canvas.host_widgets import _clipboard_pixmap
+from easycad.canvas.host_ui import _PALETTE_ICON_PX
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
@@ -79,9 +80,15 @@ def _group_scene_rect(items) -> QRectF:
     return box
 
 
-def _render_symbol_thumbnail(items, box: QRectF, size: int = 64) -> str:
+def _render_symbol_thumbnail(items, box: QRectF, size: int = _PALETTE_ICON_PX) -> str:
     """items(아직 scene 미소속인 임시 인스턴스)를 정사각 PNG로 렌더해 base64로 반환.
-    등록 직후 한 번만 쓰는 저해상도 팔레트 아이콘이라 임시 QGraphicsScene을 그때그때 만든다."""
+    등록 직후 한 번만 쓰는 저해상도 팔레트 아이콘이라 임시 QGraphicsScene을 그때그때 만든다.
+    [실사용 버그 수정 2026-08-19] 예전엔 64px로 렌더한 뒤 팔레트가 그 PNG를 다시
+    `_PALETTE_ICON_PX`(18)로 스무스 축소했다 — 두 번째 축소가 1px대 선을 서브픽셀로
+    지워 기본 도형 아이콘(`_shape_icon`, 18px에서 직접 그림)보다 훨씬 흐리고 얇아 보였다
+    (2026-08-18 `_min_stroke_render` 처방은 64px 기준 3px였는데, 18px로 다시 줄면
+    ~0.8px밖에 안 남아 부족했다). 이 이중축소 자체를 없애려 최종 아이콘 해상도에서
+    바로 렌더한다 — margin도 `_shape_icon`과 동일값이라 형제 아이콘과 같은 크기 envelope."""
     scene = QGraphicsScene()
     for it in items:
         scene.addItem(it)
@@ -89,14 +96,16 @@ def _render_symbol_thumbnail(items, box: QRectF, size: int = 64) -> str:
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    margin = 4.0
+    margin = 4.0   # `_shape_icon`(host_ui.py)과 동일 — 팔레트에서 같은 크기로 보이게.
     avail = size - 2 * margin
     scale = min(avail / box.width(), avail / box.height()) if box.width() > 0 and box.height() > 0 else 1.0
     w, h = box.width() * scale, box.height() * scale
     target = QRectF(margin + (avail - w) / 2, margin + (avail - h) / 2, w, h)
-    # [실사용 피드백 2026-08-18] 64px 축소 렌더라 1px(기본 두께) 선이 안 보임 — 미니맵과
-    # 같은 이유·같은 처방(_min_stroke_render 참조).
-    with _min_stroke_render(items):
+    # 목표 최종 두께(1.6px)는 `_shape_icon`의 `pen.setWidthF(1.6)`과 맞춘 값 — 심볼마다
+    # box 크기(=scale)가 달라 씬 단위 최소두께를 매번 역산해야 한 값으로 고정 못 한다.
+    target_px = 1.6
+    min_scene = target_px / scale if scale > 0 else target_px
+    with _min_stroke_render(items, min_width=min_scene):
         scene.render(p, target, box)
     p.end()
     return _pixmap_to_b64(pm)
@@ -352,6 +361,35 @@ class _SelectionMixin:
         symbol_library.add_symbol(name, dicts, thumb)
         self._refresh_custom_symbol_section()
         self.statusBar().showMessage(f"팔레트에 등록: {name}", 3000)
+
+    def _ensure_symbol_thumb_current(self, entry: dict) -> dict:
+        """[실사용 피드백 2026-08-19] 2026-08-19 이전에 등록된 심볼은 옛 64px 렌더+이중축소
+        방식 썸네일(흐릿함, `_render_symbol_thumbnail` 개편 참조)을 그대로 갖고 있다 —
+        재등록해야만 고쳐진다는 게 기존 관례였지만, 실사용자가 자기 심볼로 바로 재현해
+        "여전히 안 보인다"고 재보고해 자동 치유로 정책을 바꿨다. 새 포맷 썸네일은 항상
+        정확히 `_PALETTE_ICON_PX` 크기이므로 그 자체가 버전 마커 — 별도 스키마 필드 없이
+        팔레트를 다시 그릴 때마다(`_refresh_custom_symbol_section`) 감지해 조용히 재렌더한다.
+
+        [정정 2026-08-19] 처음엔 `symbol_library.update_symbol_thumb`로 디스크에도 영구
+        저장했다가, 전체 스모크에서 무관해 보이는 다른 테스트(`test_minimap_bounds_cached_
+        and_invalidated_by_scene_change`)가 실패해 그 파일 쓰기가 원인이라고 잠정 결론
+        내렸었다 — 하지만 이후 **변경 전 베이스라인(git stash)만으로 5회 반복 실행해도
+        같은 테스트가 3/5 실패**함을 확인해 그 결론은 틀렸다(이 테스트는 이 세션의 어떤
+        변경과도 무관하게 이미 간헐적으로 실패하던 기존 결함, 원인 미상). 영구 저장을
+        포기한 결정 자체는 유지한다(디스크 I/O를 매 팔레트 리프레시의 UI 경로에서 빼는
+        것은 그 자체로 무해하고 방어적) — 다만 "그것이 저 플레이키 테스트의 원인이었다"는
+        주장은 폐기. 팔레트를 새로 그릴 때마다 재구성해 화면에 보여주는 것만으로 목적
+        (눈에 보이는 흐림 해결)은 충분히 달성되고 재렌더 비용도 작은 아이콘 하나뿐이라
+        저렴하다(디스크의 옛 썸네일은 그대로 남지만 팔레트에는 항상 최신 렌더가 보인다)."""
+        pm = _b64_to_pixmap(entry.get("thumb", ""))
+        if pm.width() == _PALETTE_ICON_PX and pm.height() == _PALETTE_ICON_PX:
+            return entry
+        items = [it for it in (dict_to_item(d) for d in entry.get("items", [])) if it is not None]
+        if not items:
+            return entry
+        box = _group_scene_rect(items)
+        new_thumb = _render_symbol_thumbnail(items, box)
+        return {**entry, "thumb": new_thumb}
 
     # ---- [편의기능] 객체 잠금 ---------------------------------------------
 

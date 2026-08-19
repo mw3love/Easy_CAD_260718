@@ -1562,3 +1562,36 @@ def test_arrow_endpoint_handle_pixel_color_reflects_binding():
     release(QPointF(305, 30))
 
 
+# ---- [실사용 버그 수정 2026-08-19] Shift 정사각형 제약 — 심볼(sym:*) 드래그-그리기 ----------
+
+def test_shift_square_constraint_applies_to_symbol_draw_tool_too():
+    # `_cur_point`(core_view.py)의 Shift 정사각형/정원 제약이 rect/ellipse에만 걸려 있고
+    # 심볼(sym:*, 예: 삼각형)은 같은 QRectF(sp,sp) 드래그-그리기 경로를 쓰는데도 빠져 있었다
+    # — 팔레트에서 드래그해 꺼낸 뒤 리사이즈할 때의 Shift(종횡비 유지, 별개 메커니즘)와
+    # 혼동하기 쉬운 다른 경로.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+
+    w = CanvasWindow(); w.set_tool("sym:triangle")
+    view = w._view
+
+    def _ev(etype, scene_pt, buttons, mods=Qt.KeyboardModifier.NoModifier):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, Qt.MouseButton.LeftButton, buttons, mods)
+
+    NB = Qt.MouseButton.NoButton
+    L = Qt.MouseButton.LeftButton
+    SHIFT = Qt.KeyboardModifier.ShiftModifier
+
+    start = QPointF(50, 50)
+    end = QPointF(150, 90)   # dx=100, dy=40 — shift 없으면 정사각형이 아님
+    view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, start, L))
+    view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, end, L, SHIFT))
+    view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, end, NB, SHIFT))
+
+    items = [it for it in w._scene.items() if isinstance(it, _SymbolItem)]
+    assert len(items) == 1
+    r = items[0].rect()
+    assert abs(r.width() - r.height()) < 1e-6
+
+

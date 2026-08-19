@@ -7,10 +7,13 @@ pytest test_part7_symbol_library.py. 라이브러리 파일은 _isolated_symbol_
 from unittest.mock import patch
 
 from PyQt6.QtWidgets import QInputDialog, QMessageBox, QMenu
+from PyQt6.QtGui import QPen
 
 from _shared import *  # noqa: F401,F403
 from easycad.fileio import symbol_library
 from easycad.canvas.host_selection import _group_scene_rect
+from easycad.canvas.host_ui import _PALETTE_ICON_PX
+from easycad.fileio.document import _b64_to_pixmap
 
 
 def test_register_selection_creates_entry_and_palette_button():
@@ -279,3 +282,404 @@ def test_left_panel_new_folder_and_drag_move_wiring():
             w._delete_symbol_folder_prompt("무선")
         assert symbol_library.load_folders() == []
         assert symbol_library.load_library()[0]["folder"] is None
+
+
+# ---- [실사용 버그 수정 2026-08-19] 팔레트 버튼 스타일 + 썸네일 선명도 --------------------
+
+def test_custom_symbol_button_gets_palette_accent_qss():
+    # 커스텀 심볼 버튼이 `_accent_btns`(host_ui._apply_theme)에서 빠져 있어 Qt 기본 스타일의
+    # raised 배경 박스로 남던 버그 — 일반 도형/심볼 버튼과 같은 스타일시트를 받는지 확인.
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
+            w.register_selection_as_symbol()
+        sym_id = symbol_library.load_library()[0]["id"]
+        btn = w._custom_sym_buttons[sym_id]
+        assert btn.styleSheet() == w._palette_accent_qss(w._dark)
+        # 형제(기본 도형) 버튼과 완전히 같은 문자열이어야 시각적으로도 동일하게 렌더된다.
+        assert btn.styleSheet() == w._shape_tool_buttons["rect"].styleSheet()
+
+
+def test_custom_symbol_thumbnail_matches_palette_icon_resolution():
+    # 예전엔 64px로 렌더한 뒤 팔레트가 그 PNG를 18px로 다시 스무스 축소해(이중축소) 선이
+    # 서브픽셀로 사라졌다 — 이제 최종 아이콘 해상도에서 바로 렌더해 이중축소 자체가 없다.
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        r = _mk_pen_rect(w, ww=100, hh=60); r.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
+            w.register_selection_as_symbol()
+        entry = symbol_library.load_library()[0]
+        pm = _b64_to_pixmap(entry["thumb"])
+        assert pm.width() == _PALETTE_ICON_PX and pm.height() == _PALETTE_ICON_PX
+
+
+def test_custom_symbol_thumbnail_stroke_visible_for_thin_wide_symbol():
+    # [실사용 버그 수정 2026-08-19] 가로로 길고 펜이 얇은(1px) 그룹은 옛 고정 최소두께
+    # (씬 단위 3.0)로도 18px 아이콘에서 서브픽셀(<1px)로 사라졌다 — 목표 두께를 최종
+    # 픽셀 기준으로 역산하는 새 로직이 이런 극단 비율에서도 눈에 보이는 픽셀을 남기는지
+    # 직접 렌더해 확인(육안 확인은 이미 스크린샷으로 완료 — 여기선 회귀 방지용 픽셀 카운트).
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        pen = QPen(QColor("#cdd8e3")); pen.setWidthF(1.0)
+        r = _RectItem(QRectF(0, 0, 60, 40)); r.setPen(pen); r.setPos(0, 0)
+        r.setFlags(r.GraphicsItemFlag.ItemIsSelectable | r.GraphicsItemFlag.ItemIsMovable)
+        e = _EllipseItem(QRectF(0, 0, 30, 30)); e.setPen(pen); e.setPos(80, 10)
+        e.setFlags(e.GraphicsItemFlag.ItemIsSelectable | e.GraphicsItemFlag.ItemIsMovable)
+        w._scene.addItem(r); w._scene.addItem(e)
+        r.setSelected(True); e.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
+            w.register_selection_as_symbol()
+        entry = symbol_library.load_library()[0]
+        img = _b64_to_pixmap(entry["thumb"]).toImage()
+        opaque = sum(
+            1 for x in range(img.width()) for y in range(img.height())
+            if img.pixelColor(x, y).alpha() > 40
+        )
+        total = img.width() * img.height()
+        # [실측] 이 심볼(60x40+30x30, 18px 렌더)에서 새 로직은 34/324(~10.5%). 같은 box를
+        # 옛 고정 최소두께(scene 3.0)로 렌더하면 21/324(~6.5%)뿐 — 0.08은 둘을 확실히
+        # 가르면서 심볼마다 갈리는 실측치에는 여유를 둔 문턱값.
+        assert opaque / total > 0.08, f"expected a clearly visible icon, got {opaque}/{total} opaque px"
+
+
+# ---- [실사용 피드백 2026-08-19] 커스텀 심볼 클릭-드래그 비율고정 크기조절 --------------------
+
+def _place_customsym_via_mouse(view, tool_key, start, end=None, shift=False):
+    """press(→move→release)로 커스텀 심볼 배치를 시뮬레이트. end가 None이면 순수 클릭(드래그 없음)."""
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    mods = Qt.KeyboardModifier.ShiftModifier if shift else Qt.KeyboardModifier.NoModifier
+
+    def _ev(etype, sp, buttons):
+        vp = QPointF(view.mapFromScene(sp))
+        return QMouseEvent(etype, vp, vp, Qt.MouseButton.LeftButton, buttons, mods)
+
+    NB = Qt.MouseButton.NoButton
+    L = Qt.MouseButton.LeftButton
+    view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, start, L))
+    release_pt = start if end is None else end
+    if end is not None:
+        view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, end, L))
+    view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, release_pt, NB))
+
+
+def _register_two_shape_symbol(w, name="드래그심볼"):
+    r = _mk_pen_rect(w, x=0, y=0, ww=60, hh=40)
+    e = _EllipseItem(QRectF(0, 0, 30, 30)); e.setPos(80, 10)
+    e.setFlags(e.GraphicsItemFlag.ItemIsSelectable | e.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(e)
+    r.setSelected(True); e.setSelected(True)
+    with patch.object(QInputDialog, "getText", return_value=(name, True)):
+        w.register_selection_as_symbol()
+    sym_id = symbol_library.load_library()[0]["id"]
+    w._scene.clear()
+    return sym_id
+
+
+def test_customsym_click_without_drag_arms_two_click_mode():
+    # [실사용 피드백 2026-08-19, "1번 방식" 추가] rect/ellipse/sym:와 동일하게, 드래그 없는
+    # 클릭은 즉시 배치가 아니라 클릭-클릭 배치 모드로 전환한다 — 옛 "단발 클릭=즉시
+    # 기본크기 배치" 관례는 일관성을 위해 폐지됐다(사용자 선택).
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        w.set_tool(f"customsym:{sym_id}")
+        view = w._view
+        u0 = len(w._undo)
+
+        _place_customsym_via_mouse(view, sym_id, QPointF(0, 0))
+
+        assert view._csym_drag is not None and view._csym_drag["armed"]
+        assert len(w._undo) == u0   # 아직 확정 전 — undo에 안 남음
+
+        # 움직임 없이 같은 자리에서 다시 클릭 = rect/ellipse의 '점 하나' 퇴화와 동일하게 폐기.
+        from PyQt6.QtCore import QEvent
+        L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+        view.mousePressEvent(_csym_ev(view, QEvent.Type.MouseButtonPress, QPointF(0, 0), L, L))
+        view.mouseReleaseEvent(_csym_ev(view, QEvent.Type.MouseButtonRelease, QPointF(0, 0), NB, NB))
+
+        assert view._csym_drag is None
+        assert not [it for it in w._scene.items() if isinstance(it, (_RectItem, _EllipseItem))]
+        assert len(w._undo) == u0
+
+
+def test_customsym_drag_scales_uniformly_and_undoes_as_one_group():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        _, box0 = w._build_custom_symbol_items(sym_id)
+        import math
+        diag0 = math.hypot(box0.width(), box0.height())
+
+        w.set_tool(f"customsym:{sym_id}")
+        u0 = len(w._undo)
+        start = QPointF(200, 200)
+        end = QPointF(start.x() + diag0 * 2.0, start.y())   # 대각선 2배 거리만큼 드래그
+        _place_customsym_via_mouse(w._view, sym_id, start, end)
+
+        assert w._view._csym_drag is None
+        placed = [it for it in w._scene.items() if isinstance(it, (_RectItem, _EllipseItem))]
+        assert len(placed) == 2
+        new_r = next(it for it in placed if isinstance(it, _RectItem))
+        new_e = next(it for it in placed if isinstance(it, _EllipseItem))
+        assert abs(new_r.scale() - 2.0) < 0.05
+        assert abs(new_e.scale() - 2.0) < 0.05   # 비율 고정 — 그룹 전체가 같은 배율
+        # 앵커(box0 좌상단)는 press 지점 그대로 — 패딩(eps=3.0)이 스케일(2배)만큼도 커지므로 여유를 둔다.
+        assert _close(new_r.pos(), start, eps=6.0)
+        assert len(w._undo) == u0 + 1   # 드래그 전체가 undo 1스텝
+
+        gids = {getattr(it, "_group_id", None) for it in placed}
+        assert len(gids) == 1 and None not in gids
+
+        w.undo()
+        assert not [it for it in w._scene.items() if isinstance(it, (_RectItem, _EllipseItem))]
+
+
+def test_customsym_tiny_jitter_click_arms_instead_of_finalizing():
+    # [실사용 버그 방지 2026-08-19] moved<4 판정은 press~release 거리만 본다 — 그 사이에
+    # 손떨림 같은 미세한 mouseMoveEvent(예: 2px)가 껴도 "그냥 클릭"과 동일하게 클릭-클릭
+    # 배치 모드로 전환돼야 한다(즉시 확정되면 안 됨).
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        w.set_tool(f"customsym:{sym_id}")
+        view = w._view
+
+        from PyQt6.QtGui import QMouseEvent
+        from PyQt6.QtCore import QEvent
+        NO = Qt.KeyboardModifier.NoModifier
+        L = Qt.MouseButton.LeftButton
+        NB = Qt.MouseButton.NoButton
+
+        def _ev(etype, sp, btn, btns):
+            vp = QPointF(view.mapFromScene(sp))
+            return QMouseEvent(etype, vp, vp, btn, btns, NO)
+
+        start = QPointF(0, 0)
+        jitter = QPointF(2, 1)   # 4px 미만 — moved<4 임계 안쪽
+        u0 = len(w._undo)
+        view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, start, L, L))
+        view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, jitter, NB, L))
+        view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, jitter, NB, NB))
+
+        assert view._csym_drag is not None and view._csym_drag["armed"]
+        assert len(w._undo) == u0
+
+
+def test_customsym_drag_scale_grows_smoothly_without_flicker():
+    # [실사용 버그 수정 2026-08-19] 예전엔 press에서 바로 기본크기(scale=1)로 놓은 뒤 첫
+    # move에서 공식(dist≈0 → 최소치)이 적용돼 "기본크기로 반짝했다가 줄어드는" 깜빡임이
+    # 있었다 — press 시점부터 최소크기에서 시작해 드래그 내내 단조증가해야 한다.
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        w.set_tool(f"customsym:{sym_id}")
+        view = w._view
+
+        from PyQt6.QtGui import QMouseEvent
+        from PyQt6.QtCore import QEvent
+        NO = Qt.KeyboardModifier.NoModifier
+        L = Qt.MouseButton.LeftButton
+        NB = Qt.MouseButton.NoButton
+
+        def _ev(etype, sp, btn, btns):
+            vp = QPointF(view.mapFromScene(sp))
+            return QMouseEvent(etype, vp, vp, btn, btns, NO)
+
+        start = QPointF(0, 0)
+        view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, start, L, L))
+        r_item = next(it for it in view._csym_drag["items"] if isinstance(it, _RectItem))
+        scales = [r_item.scale()]
+        assert scales[0] < 0.2, f"press should start near-minimum scale, not default(1.0), got {scales[0]}"
+
+        for step in range(1, 11):
+            pt = QPointF(start.x() + step * 12, start.y())
+            view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, pt, NB, L))
+            scales.append(r_item.scale())
+        assert all(b >= a - 1e-9 for a, b in zip(scales, scales[1:])), \
+            f"scale must grow monotonically (no flicker/dip): {scales}"
+        view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, pt, NB, NB))
+
+
+def test_customsym_button_thumbnail_self_heals_from_old_64px_format():
+    # [실사용 버그 수정 2026-08-19] 2026-08-19 이전(구 포맷, 64px 이중축소)에 등록된 심볼도
+    # 재등록 없이 팔레트를 다시 그릴 때 자동으로 최신 포맷(18px, 직접렌더)으로 화면엔 치유돼
+    # 보인다. 실제 사용자 파일(37898900 "46")에서 재현됐던 버그의 회귀 테스트.
+    # [실사용 회귀 수정 2026-08-19] 디스크 영구저장(symbol_library.update_symbol_thumb)은
+    # 전체 스모크에서 무관한 다른 테스트를 간헐 실패시켜(동기 파일쓰기가 Qt 이벤트 타이밍을
+    # 건드림, host_selection._ensure_symbol_thumb_current 참조) 포기했다 — 그래서 이 테스트는
+    # 디스크가 아니라 인메모리 결과(팔레트 버튼에 실제로 걸리는 아이콘)를 확인한다.
+    with _isolated_symbol_library():
+        w0 = CanvasWindow()
+        r = _mk_pen_rect(w0, ww=100, hh=60)
+        item_dicts = [item_to_dict(r)]
+        entry = symbol_library.add_symbol("옛심볼", item_dicts, "")
+        assert entry["thumb"] == ""   # 구 데이터를 흉내(빈 문자열 = _b64_to_pixmap이 0x0 취급)
+
+        healed = w0._ensure_symbol_thumb_current(entry)
+        pm = _b64_to_pixmap(healed["thumb"])
+        assert pm.width() == _PALETTE_ICON_PX and pm.height() == _PALETTE_ICON_PX
+        assert symbol_library.load_library()[0]["thumb"] == ""   # 디스크는 의도적으로 그대로
+
+        # 팔레트 버튼 자체도 (디스크가 아니라) 이 인메모리 치유 결과로 아이콘을 그린다.
+        w0._refresh_custom_symbol_section()
+        btn = w0._custom_sym_buttons[entry["id"]]
+        assert not btn.icon().isNull()
+
+
+def test_customsym_right_click_cancel_removes_preview_items():
+    # 드래그 도중 우클릭 취소 — 씬에 미리 넣어둔 프리뷰 아이템이 고아로 남지 않아야 한다.
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        w.set_tool(f"customsym:{sym_id}")
+        view = w._view
+        u0 = len(w._undo)
+
+        from PyQt6.QtGui import QMouseEvent
+        from PyQt6.QtCore import QEvent
+        NO = Qt.KeyboardModifier.NoModifier
+        L = Qt.MouseButton.LeftButton
+
+        def _ev(etype, sp, btn, btns):
+            vp = QPointF(view.mapFromScene(sp))
+            return QMouseEvent(etype, vp, vp, btn, btns, NO)
+
+        view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, QPointF(0, 0), L, L))
+        assert view._csym_drag is not None
+        assert view._rmb_is_busy()
+        view._right_click_cancel()
+
+        assert view._csym_drag is None
+        assert not [it for it in w._scene.items() if isinstance(it, (_RectItem, _EllipseItem))]
+        assert len(w._undo) == u0   # 폐기된 배치는 undo에 안 남는다
+        assert w.current_tool == "select"
+
+
+# ---- [실사용 피드백 2026-08-19] 커스텀 심볼 클릭-클릭(드래그 없는 두 번 클릭) 배치 ------------
+
+def _csym_ev(view, etype, sp, btn, btns, mods=Qt.KeyboardModifier.NoModifier):
+    from PyQt6.QtGui import QMouseEvent
+    vp = QPointF(view.mapFromScene(sp))
+    return QMouseEvent(etype, vp, vp, btn, btns, mods)
+
+
+def test_customsym_two_click_placement_scales_via_idle_move():
+    # rect/ellipse/sym:와 동일한 "클릭 → 버튼 안 눌러도 이동 → 다시 클릭" 워크플로가
+    # 커스텀 심볼(그룹)에도 동작하는지 — 특히 버튼을 안 누른 상태의 mouseMoveEvent가
+    # 라이브 스케일을 갱신하는지가 핵심(기존 드래그 경로와 다른 코드 분기).
+    with _isolated_symbol_library():
+        from PyQt6.QtCore import QEvent
+        import math
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        _, box0 = w._build_custom_symbol_items(sym_id)
+        diag0 = math.hypot(box0.width(), box0.height())
+        w.set_tool(f"customsym:{sym_id}")
+        view = w._view
+        u0 = len(w._undo)
+        L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+        start = QPointF(0, 0)
+        view.mousePressEvent(_csym_ev(view, QEvent.Type.MouseButtonPress, start, L, L))
+        view.mouseReleaseEvent(_csym_ev(view, QEvent.Type.MouseButtonRelease, start, NB, NB))
+        assert view._csym_drag is not None and view._csym_drag["armed"]
+
+        far = QPointF(diag0 * 1.5, 0)
+        view.mouseMoveEvent(_csym_ev(view, QEvent.Type.MouseMove, far, NB, NB))   # 버튼 안 누름
+        r_item = next(it for it in view._csym_drag["items"] if isinstance(it, _RectItem))
+        assert 1.3 < r_item.scale() < 1.7
+
+        view.mousePressEvent(_csym_ev(view, QEvent.Type.MouseButtonPress, far, L, L))
+        assert view._csym_drag is None
+        view.mouseReleaseEvent(_csym_ev(view, QEvent.Type.MouseButtonRelease, far, NB, NB))
+
+        placed = [it for it in w._scene.items() if isinstance(it, (_RectItem, _EllipseItem))]
+        assert len(placed) == 2
+        assert len(w._undo) == u0 + 1
+
+
+def test_customsym_two_click_escape_cancels_without_undo():
+    with _isolated_symbol_library():
+        from PyQt6.QtCore import QEvent
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        w.set_tool(f"customsym:{sym_id}")
+        view = w._view
+        u0 = len(w._undo)
+        L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+        start = QPointF(0, 0)
+        view.mousePressEvent(_csym_ev(view, QEvent.Type.MouseButtonPress, start, L, L))
+        view.mouseReleaseEvent(_csym_ev(view, QEvent.Type.MouseButtonRelease, start, NB, NB))
+        assert view._csym_drag is not None and view._csym_drag["armed"]
+
+        view.keyPressEvent(_EscapeKeyEvent())
+
+        assert view._csym_drag is None
+        assert not [it for it in w._scene.items() if isinstance(it, (_RectItem, _EllipseItem))]
+        assert len(w._undo) == u0
+
+
+def test_customsym_two_click_enter_confirms_current_scale():
+    with _isolated_symbol_library():
+        from PyQt6.QtCore import QEvent
+        import math
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        _, box0 = w._build_custom_symbol_items(sym_id)
+        diag0 = math.hypot(box0.width(), box0.height())
+        w.set_tool(f"customsym:{sym_id}")
+        view = w._view
+        u0 = len(w._undo)
+        L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+        start = QPointF(0, 0)
+        view.mousePressEvent(_csym_ev(view, QEvent.Type.MouseButtonPress, start, L, L))
+        view.mouseReleaseEvent(_csym_ev(view, QEvent.Type.MouseButtonRelease, start, NB, NB))
+        far = QPointF(diag0, 0)
+        view.mouseMoveEvent(_csym_ev(view, QEvent.Type.MouseMove, far, NB, NB))
+
+        view.keyPressEvent(_EnterKeyEvent())
+
+        assert view._csym_drag is None
+        placed = [it for it in w._scene.items() if isinstance(it, (_RectItem, _EllipseItem))]
+        assert len(placed) == 2
+        new_r = next(it for it in placed if isinstance(it, _RectItem))
+        assert abs(new_r.scale() - 1.0) < 0.05
+        assert len(w._undo) == u0 + 1
+
+
+def test_customsym_two_click_tool_switch_cancels_pending_placement():
+    with _isolated_symbol_library():
+        from PyQt6.QtCore import QEvent
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        w.set_tool(f"customsym:{sym_id}")
+        view = w._view
+        u0 = len(w._undo)
+        L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+        start = QPointF(0, 0)
+        view.mousePressEvent(_csym_ev(view, QEvent.Type.MouseButtonPress, start, L, L))
+        view.mouseReleaseEvent(_csym_ev(view, QEvent.Type.MouseButtonRelease, start, NB, NB))
+        assert view._csym_drag is not None and view._csym_drag["armed"]
+
+        w.set_tool("select")   # [실사용 피드백 2026-08-19] 단축키 등으로 도구 전환
+
+        assert view._csym_drag is None
+        assert not [it for it in w._scene.items() if isinstance(it, (_RectItem, _EllipseItem))]
+        assert len(w._undo) == u0
+
+
+def _EscapeKeyEvent():
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtCore import QEvent
+    return QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+
+
+def _EnterKeyEvent():
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtCore import QEvent
+    return QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)

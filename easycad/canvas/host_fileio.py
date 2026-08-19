@@ -657,9 +657,12 @@ class _FileIOMixin:
         return it
 
 
-    def _create_custom_symbol_at(self, sym_id: str, scene_pos: QPointF):
-        """[신규기능 §8-8] 팔레트에 등록해 둔 커스텀 심볼(그룹)을 scene_pos에 재구성.
-        단일 아이템이 아니라 그룹이라 위 분기와 별도 경로 — bbox 좌상단을 scene_pos에 맞춘다."""
+    def _build_custom_symbol_items(self, sym_id: str):
+        """[클릭-드래그 배치 2026-08-19] 등록된 커스텀 심볼(그룹) 항목들을 원본 배치 그대로
+        재구성만 하고 씬엔 아직 안 넣는다 — `_create_custom_symbol_at`(단발 배치)과 캔버스
+        드래그-리사이즈 배치(`core_view.py`의 `_csym_drag`) 둘 다 이 조립 단계를 공유한다.
+        반환: (items, box) 또는 항목이 없으면 None. `box`는 아이템들이 씬에 없어도
+        `mapToScene`이 자기 좌표계 기준으로 동작하므로 `_group_scene_rect`로 바로 잴 수 있다."""
         entry = next((e for e in symbol_library.load_library() if e.get("id") == sym_id), None)
         if entry is None:
             return None
@@ -667,10 +670,11 @@ class _FileIOMixin:
         if not items:
             return None
         box = _group_scene_rect(items)
-        dx, dy = scene_pos.x() - box.left(), scene_pos.y() - box.top()
-        for it in items:
-            it.moveBy(dx, dy)
-            self._scene.addItem(it)
+        return items, box
+
+    def _finish_custom_symbol_placement(self, items):
+        """씬에 이미 놓인(위치 확정된) 커스텀 심볼 그룹의 마무리 — 그룹ID 부여+선택+undo 등록.
+        단발 배치·드래그 리사이즈 배치 둘 다 마지막에 이걸 부른다."""
         if len(items) >= 2:
             gid = uuid.uuid4().hex[:8]
             for it in items:
@@ -678,6 +682,21 @@ class _FileIOMixin:
         self._scene.clearSelection()
         self._bulk_select(items)
         self.push_undo_add_many(items)
+
+    def _create_custom_symbol_at(self, sym_id: str, scene_pos: QPointF):
+        """[신규기능 §8-8] 팔레트에 등록해 둔 커스텀 심볼(그룹)을 scene_pos에 기본 크기로
+        재구성(드래그 없는 단발 배치 — 캔버스에서 클릭-드래그로 크기를 조절하는 경로는
+        `core_view.py`의 `_csym_drag` 참조). 단일 아이템이 아니라 그룹이라 위 분기와 별도
+        경로 — bbox 좌상단을 scene_pos에 맞춘다."""
+        built = self._build_custom_symbol_items(sym_id)
+        if built is None:
+            return None
+        items, box = built
+        dx, dy = scene_pos.x() - box.left(), scene_pos.y() - box.top()
+        for it in items:
+            it.moveBy(dx, dy)
+            self._scene.addItem(it)
+        self._finish_custom_symbol_placement(items)
         return items[0]
 
 
