@@ -1871,8 +1871,10 @@ def test_drag_session_ends_on_every_release_path():
     assert v.is_drag_session() is False
 
 
-def test_deferred_reroute_flushed_on_early_return_release():
-    """조기 return 경로로 끝나도 미뤄둔 재라우팅이 반드시 복원돼야 한다(더 심각한 쪽)."""
+def test_early_return_release_does_not_break_realtime_routing():
+    """[실시간 재라우팅 실험, 2026-08-19] 2-B 비활성화로 더 이상 미룰 빚이 없다 — 조기 return
+    release 경로가 예전처럼 '미뤄둔 재라우팅을 못 갚아 경로가 굳는' 방식으로는 더 이상 깨질 수
+    없음을 확인한다(옛 버그 클래스 자체가 구조적으로 성립하지 않게 됨)."""
     w = CanvasWindow()
     a = _mk_pen_rect(w, x=0, y=0, ww=120, hh=72)
     b = _mk_pen_rect(w, x=400, y=300, ww=120, hh=72)
@@ -1890,10 +1892,14 @@ def test_deferred_reroute_flushed_on_early_return_release():
     v._group_body_drag = True
     a.setPos(a.pos() + QPointF(150, 90))
     w._on_scene_changed(None)
-    assert w._deferred_arrows, "드래그 중인데 재라우팅이 안 미뤄졌다(테스트 전제 실패)"
+    assert not w._deferred_arrows, "실시간 모드인데 재계산이 미뤄지고 있다(테스트 전제 실패)"
+    tgt = arrow.mapFromScene(a.mapToScene(arrow._bind_pt(0)))
+    assert abs(arrow._pts[0].x() - tgt.x()) < 1e-6, "드래그 중 이미 정확히 재라우팅됐어야 한다"
 
     v.mouseReleaseEvent(_release_event(v))
-    assert not w._deferred_arrows, "조기 return 경로에서 미뤄둔 재라우팅이 복원되지 않았다"
+    assert not w._deferred_arrows
+    tgt2 = arrow.mapFromScene(a.mapToScene(arrow._bind_pt(0)))
+    assert abs(arrow._pts[0].x() - tgt2.x()) < 1e-6, "조기 return release 후 경로가 어긋났다"
 
 
 # --- 그룹 오버레이 bbox 캐시 무효화(성능계획 2-H, 2026-08-15) ----------------

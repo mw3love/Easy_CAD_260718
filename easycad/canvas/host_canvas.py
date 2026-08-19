@@ -236,13 +236,13 @@ class _CanvasMixin:
             # 확정된 뒤의 미관 개선일 뿐). `_last_geom_change_count`가 이미 "공간쿼리 vs 전체스캔"을
             # 가르는 데 검증된 신호라 그대로 재사용(실측: 20개 그룹 드래그 프레임당 A*가 시간의
             # 96%를 먹던 것 중 상당수가 이 불필요한 폴리시 탐색이었다).
-            # [성능계획 2-B, 2026-08-15] 드래그하는 동안엔 A* 재라우팅을 아예 안 돈다 —
-            # 끝점만 도형을 따라가고(화살표는 계속 붙어 보인다) 꺾인 경로는 직전 모양 유지.
-            # 놓는 순간 `flush_deferred_reroute()`가 정확한 경로를 복원한다(결정 ⓐ·ⓑ).
-            # 1-0 실측: 1000개에서 도형 1개 드래그 916.6ms 중 순수 렌더는 142.3ms뿐이고
-            # 나머지 대부분이 이 A*였다(`docs/perf_plan_500_1000.md` §5).
-            view = doc.view
-            defer = bool(view is not None and view.is_drag_session())
+            # [실시간 재라우팅 실험, 2026-08-19] 2-B(드래그 중 A* 정지, `docs/perf_plan_500_1000.md`
+            # §4)를 사용자 요청으로 비활성화 — 드래그 중에도 매 프레임 정확한 경로를 재계산한다.
+            # 대가 실측(`docs/route_review_2026-08.md`류 하네스): 가벼운 문서(500개대)는 화살표
+            # 1개당 수 ms라 무해하지만, 밀집 문서(1000개대)에서 화살표가 몰린 도형을 옮기면
+            # 프레임당 수십~수백 ms까지 튄다(최악 실측 385ms/프레임). 되돌리려면 `defer`를
+            # `bool(doc.view is not None and doc.view.is_drag_session())`로.
+            defer = False
             uniform = doc.uniform_translation
             moved_with = doc.uniform_moved_arrows or ()
             moved = doc.moved_items

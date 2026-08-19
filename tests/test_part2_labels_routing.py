@@ -1852,25 +1852,26 @@ def _two_boxes_with_arrow():
     return w, a, b, arrow
 
 
-def test_reroute_defers_during_drag_and_flushes_on_release():
-    """드래그 중엔 A* 재라우팅이 미뤄지고(끝점만 추종), 놓는 순간 정확히 복원된다."""
+def test_reroute_is_immediate_and_accurate_during_drag():
+    """[실시간 재라우팅 실험, 2026-08-19] 사용자 요청으로 2-B(드래그 중 A* 정지)를
+    비활성화했다 — 드래그 중에도 매 프레임 정확히 재라우팅되고, 더 이상 미룰 빚
+    (`_deferred_arrows`)이 쌓이지 않는다(대가는 `docs/perf_plan_500_1000.md` §4 2-B 참조)."""
     w, a, b, arrow = _two_boxes_with_arrow()
     a.setSelected(True)
 
     w._view._move_active = True          # 드래그 세션 시작
     a.setPos(a.pos() + QPointF(140, 90))
     w._on_scene_changed(None)
-    assert arrow in w._deferred_arrows, "드래그 중인데 재라우팅이 미뤄지지 않았다"
-    deferred_pts = [QPointF(p) for p in arrow._pts]
-
-    w._view._move_active = False         # 놓기
-    w.flush_deferred_reroute()
-    assert not w._deferred_arrows, "flush 후에도 미룬 목록이 남았다"
+    assert not w._deferred_arrows, "드래그 중인데 재라우팅이 여전히 미뤄지고 있다"
 
     # 끝점은 드래그 중에도 이미 도형을 따라갔어야 한다(화살표가 떨어져 보이면 안 됨).
     tgt = arrow.mapFromScene(a.mapToScene(arrow._bind_pt(0)))
-    assert abs(deferred_pts[0].x() - tgt.x()) < 1e-6
-    assert abs(deferred_pts[0].y() - tgt.y()) < 1e-6
+    assert abs(arrow._pts[0].x() - tgt.x()) < 1e-6
+    assert abs(arrow._pts[0].y() - tgt.y()) < 1e-6
+
+    w._view._move_active = False         # 놓기 — flush는 이제 미룬 게 없어 no-op이어야 한다
+    w.flush_deferred_reroute()
+    assert not w._deferred_arrows
 
 
 def test_deferred_reroute_final_path_matches_undeferred():
@@ -1947,7 +1948,9 @@ def test_partial_move_is_not_uniform_and_still_reroutes():
     w._on_scene_changed(None)
 
     assert w._uniform_translation is False
-    assert arrow in w._deferred_arrows, "부분 이동인데 재라우팅이 안 미뤄졌다"
+    tgt = arrow.mapFromScene(a.mapToScene(arrow._bind_pt(0)))
+    assert abs(arrow._pts[0].x() - tgt.x()) < 1e-6 and abs(arrow._pts[0].y() - tgt.y()) < 1e-6, \
+        "부분 이동인데 화살표가 도형을 따라가지 않았다(재라우팅 안 됨)"
 
 
 def test_shapes_move_without_arrow_still_follows():
@@ -2026,12 +2029,22 @@ def test_only_connected_arrows_reroute_not_bystanders():
     bystander = connect(c, d)     # a와 무관하지만 a가 지나갈 자리에 있는 화살표
     w._on_scene_changed(None)
 
-    # 드래그 세션으로 재계산 대상을 `_deferred_arrows`에 모이게 한다(트리거 관찰용).
+    # [실시간 재라우팅 실험, 2026-08-19] `_deferred_arrows`는 더 이상 재계산 대상을 모아두지
+    # 않는다(2-B 비활성화, 즉시 처리) — 대신 `reroute` 호출 자체를 직접 가로채 관찰한다.
+    calls = []
+    for it in (mine, bystander):
+        orig = it.reroute
+        def _make_wrapper(item, orig_fn):
+            def _wrapper(*args, **kwargs):
+                calls.append(item)
+                return orig_fn(*args, **kwargs)
+            return _wrapper
+        it.reroute = _make_wrapper(it, orig)
+
     a.setSelected(True)
     w._view._move_active = True
-    w._deferred_arrows = set()
     a.setPos(a.pos() + QPointF(120, 380))     # bystander 경로를 가로지르도록 크게 이동
     w._on_scene_changed([a.sceneBoundingRect()])
 
-    assert mine in w._deferred_arrows, "연결된 화살표가 재계산 대상에서 빠졌다"
-    assert bystander not in w._deferred_arrows,         "무관한 화살표까지 재계산 대상에 들어갔다(낙장불입 위반)"
+    assert mine in calls, "연결된 화살표가 재계산 대상에서 빠졌다"
+    assert bystander not in calls, "무관한 화살표까지 재계산 대상에 들어갔다(낙장불입 위반)"
