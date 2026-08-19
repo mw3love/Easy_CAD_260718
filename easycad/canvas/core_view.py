@@ -846,12 +846,18 @@ class _AnnotatorView(QGraphicsView):
             return
         sel = self.scene().selectedItems()
         src = sel if top[0] in sel else [top[0]]
+        self._clone_selection_for_alt_drag(src)
+
+    def _clone_selection_for_alt_drag(self, src) -> bool:
+        """[공용] `src`를 제자리 복제하고 복제본을 선택 상태로 만든다 — Alt+드래그 복제의
+        실제 구현. 클릭 지점 히트테스트가 필요 없는 호출부(다중선택 바운딩박스 안쪽 빈틈
+        드래그 등)도 같은 로직을 쓰도록 `_maybe_alt_drag_copy`에서 분리했다."""
         # [실사용 지적 2026-08-09] 포트는 호스트의 진짜 Qt 자식(parentItem)이라 예전엔 이 필터에
         # 걸려 Alt+드래그 복제가 아예 동작하지 않았다(그냥 원본이 이동함) — 포트만 예외로 허용.
         src = [it for it in src if hasattr(it, "clone") and (
             it.parentItem() is None or getattr(it, "_port_host", None) is not None)]
         if not src:
-            return
+            return False
         clones = []
         for it in src:
             c = it.clone()
@@ -882,6 +888,7 @@ class _AnnotatorView(QGraphicsView):
         self._owner._bulk_select(clones)
         if hasattr(self._owner, "push_undo_add_many"):
             self._owner.push_undo_add_many(clones)
+        return True
 
     def _apply_axis_lock(self, event):
         """[편의기능] Shift+드래그 — 첫 유의미한 편차 방향(수평/수직)으로 축을 고정해 그 축으로만
@@ -2425,6 +2432,12 @@ class _AnnotatorView(QGraphicsView):
                 # 없어 Qt가 못 잡으므로 델타를 직접 계산해 선택 아이템들에 moveBy한다.
                 if self._group_body_area_at(vpos) and not (
                         event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+                    # [버그 수정 2026-08-19] Alt+드래그 복제는 원래 클릭 지점 히트테스트 기반
+                    # `_maybe_alt_drag_copy`만 태워 "선택 바운딩박스 안쪽 빈틈"(도형이 없는
+                    # 자리)에선 아예 호출되지 않았다 — 실사용 보고: 도형을 직접 눌러 Alt+드래그
+                    # 하면 복제되는데 같은 선택의 빈 공간에서 하면 복제 없이 그냥 이동만 됨.
+                    if event.modifiers() & Qt.KeyboardModifier.AltModifier:
+                        self._clone_selection_for_alt_drag(self.scene().selectedItems())
                     self._snapshot_movable()
                     self._group_body_drag = True
                     self._group_body_anchor = self.mapToScene(vpos)

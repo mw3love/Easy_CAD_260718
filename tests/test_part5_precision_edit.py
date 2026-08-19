@@ -1015,6 +1015,49 @@ def test_group_body_gap_drag_moves_selection():
     assert _close(a.pos(), a0) and _close(b.pos(), b0)
 
 
+def test_group_body_gap_alt_drag_copies_selection():
+    # [버그 수정 2026-08-19] 실사용 보고: 다중선택 후 도형을 직접 눌러 Alt+드래그하면
+    # 복제되는데, 같은 선택의 바운딩박스 안쪽 '빈틈'(도형이 없는 곳)에서 Alt+드래그하면
+    # 복제 없이 그냥 원본이 이동만 됐다 — `_group_body_area_at` 경로가 `_maybe_alt_drag_copy`를
+    # 아예 호출하지 않던 것이 원인.
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    view = w._view
+    a = _mk_pen_rect(w, x=0, y=0, ww=40, hh=30)
+    b = _mk_pen_rect(w, x=300, y=20, ww=40, hh=30)
+    a.setSelected(True); b.setSelected(True)
+    bbox = view._group.bbox()
+    gap = QPointF(bbox.center().x(), bbox.center().y())
+    assert view._is_empty_area(view.mapFromScene(gap))
+    assert view._group_body_area_at(view.mapFromScene(gap))
+
+    a0, b0 = QPointF(a.pos()), QPointF(b.pos())
+    n0 = len(w._scene.items())
+    u0 = len(w._undo)
+
+    def _ev(etype, scene_pt, buttons, mods=Qt.KeyboardModifier.NoModifier):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, Qt.MouseButton.LeftButton, buttons, mods)
+
+    NB = Qt.MouseButton.NoButton
+    L = Qt.MouseButton.LeftButton
+    ALT = Qt.KeyboardModifier.AltModifier
+    view.mousePressEvent(_ev(QEvent.Type.MouseButtonPress, gap, L, ALT))
+    assert view._group_body_drag
+    # 원본 자리에 복제본이 새로 생기고, 이제 선택은 복제본이어야 한다(원본은 선택 해제).
+    assert len(w._scene.items()) == n0 + 2
+    assert not a.isSelected() and not b.isSelected()
+    moved_to = QPointF(gap.x() + 25, gap.y() + 15)
+    view.mouseMoveEvent(_ev(QEvent.Type.MouseMove, moved_to, L, ALT))
+    view.mouseReleaseEvent(_ev(QEvent.Type.MouseButtonRelease, moved_to, NB, ALT))
+    assert not view._group_body_drag
+
+    # 원본은 제자리에 그대로 남아 있고, 이동한 것은 복제본이다.
+    assert _close(a.pos(), a0) and _close(b.pos(), b0)
+    clones = [x for x in view.scene().selectedItems() if x not in (a, b)]
+    assert len(clones) == 2
+    assert len(w._undo) == u0 + 2   # 복제(add_many) 1건 + 이동 1건
 
 
 def test_group_ungroup_shows_status_message():
