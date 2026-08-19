@@ -951,9 +951,19 @@ class _AnnotatorView(QGraphicsView):
             cand[id(o)] = o
         for o in self.scene().items(y_strip, mode):
             cand[id(o)] = o
+        def _bound_to_excluded(o):
+            # exclude_item(대개 드래그 중인 도형)에 붙은 커넥터는 매 프레임 그 도형을 따라
+            # 재라우팅되므로 bbox 한쪽 변이 항상 드래그 위치와 정확히 같다 — 다른 도형과의
+            # 진짜 정렬이 아니라 자기 자신과의 자명한 매치라 후보에서 제외한다(실사용 버그
+            # 재현: 2026-08-19, 부착된 화살표의 팔꿈치 x·도착점 y가 매번 "정렬됨"으로 오판됨).
+            if exclude_item is None or not isinstance(o, (_ArrowItem, _PolyArrowItem)):
+                return False
+            return exclude_item in o.bound_shapes()
+
         other_items = [o for o in cand.values()
                        if o is not exclude_item and o is not bg and o.parentItem() is None
-                       and (o.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)]
+                       and (o.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+                       and not _bound_to_excluded(o)]
         return thr, other_items
 
     def _align_match(self, nr: QRectF, my_verts: list, other_items: list, thr: float):

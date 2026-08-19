@@ -933,7 +933,27 @@ def test_smart_align_no_snap_beyond_threshold():
 
 
 
-def test_smart_align_shows_all_tied_roles():
+def test_smart_align_excludes_connector_bound_to_dragged_shape():
+    # [버그 수정 2026-08-19, 실사용 재현] 드래그 중인 도형에 붙은 커넥터는 매 프레임 그
+    # 도형의 위치를 그대로 따라가므로, 커넥터 bbox의 한쪽 변이 항상 내 위치와 정확히
+    # 같아진다 — 다른 도형과 진짜 정렬된 게 아니라 자기 자신과의 자명한 매치인데도
+    # 가이드선이 떴다. 씬에 이 화살표 하나뿐(다른 도형 없음)이므로, 제외되면 후보가
+    # 아예 없어 가이드선도 전혀 안 떠야 한다.
+    w = CanvasWindow()
+    b = _mk_rect(w._scene, w.make_pen(), 300, 300, 100, 60); b.setSelected(True)
+    ar = _PolyArrowItem(QColor("black"), 2, True)
+    ar.set_points(QPointF(100, 100), QPointF(350, 300))
+    ar.insert_vertex(0, QPointF(350, 100))   # 꺾임점 — bbox 우변이 b의 center.x와 정확히 겹침
+    w._scene.addItem(ar)
+    ar.set_bound(2, b, b.mapFromScene(QPointF(350, 300)))   # 끝점 = b의 윗변 중점(도착점)
+    v = w._view
+    v._apply_smart_snap()
+    assert v._align_guides == [], "붙은 커넥터 자신과의 자명한 매치는 가이드선으로 뜨면 안 됨"
+
+
+
+
+
     # [2e] 같은 높이 도형끼리는 상/중/하가 "얼마나 가까운가"가 수학적으로 완전히 같아진다(실사용
     # 재현으로 확인 — 같은 크기 도형끼리는 항상 정확히 동률). 승자를 하나만 골라 보여주면 같은
     # 크기 도형끼리는 그 하나만 영원히 뜨고 나머지 역할은 절대 못 보게 되므로, 동률인 역할
