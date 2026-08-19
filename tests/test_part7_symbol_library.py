@@ -169,7 +169,7 @@ def test_rename_custom_symbol_prompt_updates_entry_and_button_refresh():
         assert sym_id in w._custom_sym_buttons   # refresh가 다시 그려도 버튼 매핑 유지
         # [실사용 피드백 2026-08-19] 정적 toolTip()이 아니라 호버 시 지연 계산되는 확대
         # 미리보기(tooltip_html_fn)로 바뀌었다 — 그 계산 결과에 새 이름이 반영되는지 확인.
-        btn = w._custom_sym_buttons[sym_id]
+        btn = w._custom_sym_buttons[sym_id][0]
         assert btn.toolTip() == ""
         assert "저잡음 증폭기" in btn._tooltip_html_fn()
 
@@ -188,15 +188,16 @@ def test_rename_custom_symbol_prompt_cancelled_keeps_name():
 
 
 def test_custom_symbol_context_menu_has_rename_and_delete_actions():
-    """우클릭이 곧바로 삭제 확인창을 띄우던 옛 동작 대신 메뉴(이름변경/삭제)를 띄우는지 —
-    실제 모달은 `exec`를 no-op으로 바꿔 안 띄우고, 만들어진 메뉴의 액션 텍스트만 확인."""
+    """우클릭이 곧바로 삭제 확인창을 띄우던 옛 동작 대신 메뉴(즐겨찾기 토글/이름변경/삭제)를
+    띄우는지 — 실제 모달은 `exec`를 no-op으로 바꿔 안 띄우고, 만들어진 메뉴의 액션 텍스트만
+    확인. [2026-08-20] 즐겨찾기 토글 항목이 맨 앞에 추가됨(deep-interview)."""
     with _isolated_symbol_library():
         w = CanvasWindow()
         r = _mk_pen_rect(w); r.setSelected(True)
         with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
             w.register_selection_as_symbol()
         sym_id = symbol_library.load_library()[0]["id"]
-        btn = w._custom_sym_buttons[sym_id]
+        btn = w._custom_sym_buttons[sym_id][0]
 
         created_menus = []
 
@@ -212,7 +213,7 @@ def test_custom_symbol_context_menu_has_rename_and_delete_actions():
             w._show_custom_symbol_context_menu(btn, QPointF(1, 1).toPoint(), sym_id)
         assert len(created_menus) == 1
         texts = [a.text() for a in created_menus[0].actions()]
-        assert texts == ["이름변경…", "삭제…"]
+        assert texts == ["즐겨찾기 추가", "이름변경…", "삭제…"]
 
 
 # ---- [신규기능, 2026-08-12 좌측 패널 아코디언 개편] 내 심볼 폴더 -----------------------
@@ -430,7 +431,7 @@ def test_custom_symbol_button_gets_palette_accent_qss():
         with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
             w.register_selection_as_symbol()
         sym_id = symbol_library.load_library()[0]["id"]
-        btn = w._custom_sym_buttons[sym_id]
+        btn = w._custom_sym_buttons[sym_id][0]
         assert btn.styleSheet() == w._palette_accent_qss(w._dark)
         # 형제(기본 도형) 버튼과 완전히 같은 문자열이어야 시각적으로도 동일하게 렌더된다.
         assert btn.styleSheet() == w._shape_tool_buttons["rect"].styleSheet()
@@ -659,7 +660,7 @@ def test_customsym_button_thumbnail_self_heals_from_old_64px_format():
 
         # 팔레트 버튼 자체도 (디스크가 아니라) 이 인메모리 치유 결과로 아이콘을 그린다.
         w0._refresh_custom_symbol_section()
-        btn = w0._custom_sym_buttons[entry["id"]]
+        btn = w0._custom_sym_buttons[entry["id"]][0]
         assert not btn.icon().isNull()
 
 
@@ -853,7 +854,7 @@ def test_custom_symbol_button_uses_lazy_tooltip_not_precomputed_at_refresh():
     with _isolated_symbol_library():
         w = CanvasWindow()
         sym_id = _register_two_shape_symbol(w)
-        btn = w._custom_sym_buttons[sym_id]
+        btn = w._custom_sym_buttons[sym_id][0]
         assert btn.toolTip() == ""
         assert btn._tooltip_html_fn is not None
         assert "드래그심볼" in btn._tooltip_html_fn()
@@ -865,7 +866,7 @@ def test_custom_symbol_icon_size_at_least_matches_base_shape_icon():
     with _isolated_symbol_library():
         w = CanvasWindow()
         sym_id = _register_two_shape_symbol(w)
-        custom_icon_size = w._custom_sym_buttons[sym_id].iconSize()
+        custom_icon_size = w._custom_sym_buttons[sym_id][0].iconSize()
         base_icon_size = w._shape_tool_buttons["rect"].iconSize()
         assert custom_icon_size.width() >= base_icon_size.width()
         assert custom_icon_size.height() >= base_icon_size.height()
@@ -881,7 +882,7 @@ def test_custom_symbol_button_dispatches_real_qevent_tooltip_to_qtooltip_showtex
     with _isolated_symbol_library():
         w = CanvasWindow()
         sym_id = _register_two_shape_symbol(w)
-        btn = w._custom_sym_buttons[sym_id]
+        btn = w._custom_sym_buttons[sym_id][0]
         ev = QHelpEvent(QEvent.Type.ToolTip, QPoint(1, 1), QPoint(10, 10))
         with patch("easycad.canvas.host_widgets.QToolTip.showText") as mock_show:
             handled = btn.event(ev)
@@ -894,3 +895,144 @@ def test_custom_symbol_button_dispatches_real_qevent_tooltip_to_qtooltip_showtex
         with patch("easycad.canvas.host_widgets.QToolTip.showText") as mock_show2:
             base_btn.event(ev2)
         assert not mock_show2.called   # 기본도형은 정적 setToolTip 경로 그대로
+
+
+# ---- [신규기능, 2026-08-20, deep-interview] '내 심볼' 즐겨찾기 -------------------------
+# 확정 스코프: favorite 불리언 필드(folder와 같은 패턴, 별도 id목록 아님) · UI 위치는 '내
+# 심볼' 최상단(미분류보다 위) · 표시방식은 이중표시(원래 폴더+즐겨찾기 둘 다) · 폴더
+# 완전삭제 시 자동 정리(별도 코드 불필요, entry 자체가 지워지므로) · 우클릭 메뉴는 토글
+# 액션 1개 · 드래그 대상 아님(우클릭 전용).
+
+def test_add_symbol_defaults_favorite_false():
+    with _isolated_symbol_library():
+        entry = symbol_library.add_symbol("증폭기", [], "")
+        assert entry["favorite"] is False
+        assert symbol_library.load_library()[0]["favorite"] is False
+
+
+def test_toggle_favorite_sets_and_unsets_flag():
+    with _isolated_symbol_library():
+        entry = symbol_library.add_symbol("증폭기", [], "")
+        symbol_library.toggle_favorite(entry["id"])
+        assert symbol_library.load_library()[0]["favorite"] is True
+        symbol_library.toggle_favorite(entry["id"])
+        assert symbol_library.load_library()[0]["favorite"] is False
+
+
+def test_toggle_favorite_unknown_id_is_noop():
+    with _isolated_symbol_library():
+        symbol_library.add_symbol("증폭기", [], "")
+        symbol_library.toggle_favorite("doesnotexist")
+        assert symbol_library.load_library()[0]["favorite"] is False
+
+
+def test_delete_folder_drops_favorited_member_from_favorites_too():
+    # favorite는 심볼 엔트리 자체의 필드라 폴더 완전삭제(2026-08-19 정책) 시 별도 정리
+    # 코드 없이 엔트리와 함께 자동으로 사라진다 — deep-interview에서 확정한 전제 검증.
+    with _isolated_symbol_library():
+        symbol_library.create_folder("무선")
+        entry = symbol_library.add_symbol("증폭기", [], "", folder="무선")
+        symbol_library.toggle_favorite(entry["id"])
+        symbol_library.delete_folder("무선")
+        assert symbol_library.load_library() == []
+
+
+def test_favorites_dual_display_button_count_tracks_toggle():
+    # 즐겨찾기 안 된 상태 = 원래 폴더(미분류) 버튼 1개. 즐겨찾기하면 이중표시로 2개
+    # (미분류+즐겨찾기 섹션)가 되고, 해제하면 다시 1개로 돌아온다.
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        assert len(w._custom_sym_buttons[sym_id]) == 1
+
+        w._toggle_custom_symbol_favorite(sym_id)
+        assert len(w._custom_sym_buttons[sym_id]) == 2
+
+        w._toggle_custom_symbol_favorite(sym_id)
+        assert len(w._custom_sym_buttons[sym_id]) == 1
+
+
+def test_favorites_group_absent_from_panel_when_empty():
+    # 즐겨찾기 섹션은 항목이 하나도 없으면 아예 그려지지 않는다(add_group의 early return).
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        body_count_before = w._custom_sym_body.layout().count()   # 미분류 1개 그룹뿐
+
+        w._toggle_custom_symbol_favorite(sym_id)
+        body_count_after = w._custom_sym_body.layout().count()   # 즐겨찾기+미분류 2개 그룹
+        assert body_count_after == body_count_before + 1
+
+        w._toggle_custom_symbol_favorite(sym_id)
+        assert w._custom_sym_body.layout().count() == body_count_before
+
+
+def test_set_tool_syncs_checked_state_across_dual_display_buttons():
+    # host_canvas.set_tool이 sid당 버튼 전부(이중표시 2개)의 체크상태를 함께 동기화하는지.
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        w._toggle_custom_symbol_favorite(sym_id)
+        assert len(w._custom_sym_buttons[sym_id]) == 2
+
+        w.set_tool(f"customsym:{sym_id}")
+        assert all(b.isChecked() for b in w._custom_sym_buttons[sym_id])
+
+        w.set_tool("select")
+        assert not any(b.isChecked() for b in w._custom_sym_buttons[sym_id])
+
+
+def test_context_menu_favorite_action_label_toggles_with_state():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+
+        created_menus = []
+
+        class _CapturingMenu(QMenu):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                created_menus.append(self)
+
+            def exec(self, *a, **kw):
+                return None
+
+        btn = w._custom_sym_buttons[sym_id][0]
+        with patch("easycad.canvas.host_ui.QMenu", _CapturingMenu):
+            w._show_custom_symbol_context_menu(btn, QPointF(1, 1).toPoint(), sym_id)
+        assert [a.text() for a in created_menus[0].actions()][0] == "즐겨찾기 추가"
+
+        w._toggle_custom_symbol_favorite(sym_id)
+        created_menus.clear()
+        btn = w._custom_sym_buttons[sym_id][0]
+        with patch("easycad.canvas.host_ui.QMenu", _CapturingMenu):
+            w._show_custom_symbol_context_menu(btn, QPointF(1, 1).toPoint(), sym_id)
+        assert [a.text() for a in created_menus[0].actions()][0] == "즐겨찾기 해제"
+
+
+def test_context_menu_toggle_action_invokes_toggle_favorite():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        btn = w._custom_sym_buttons[sym_id][0]
+
+        with patch("easycad.canvas.host_ui.QMenu.exec", return_value=None):
+            w._show_custom_symbol_context_menu(btn, QPointF(1, 1).toPoint(), sym_id)
+            # exec()는 no-op이라 메뉴가 실제로 안 뜨므로, 핸들러를 직접 호출해 배선 확인.
+            w._toggle_custom_symbol_favorite(sym_id)
+        assert symbol_library.load_library()[0]["favorite"] is True
+
+
+def test_favorites_zone_is_not_a_symbol_folder_drop_target():
+    # deep-interview 확정: 즐겨찾기 섹션은 드롭 대상이 아니라 우클릭 전용 — 다른 폴더처럼
+    # _SymbolFolderDropZone(acceptDrops=True)로 감싸지 않는다.
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        w._toggle_custom_symbol_favorite(sym_id)
+        zones = [w._custom_sym_body.layout().itemAt(i).widget()
+                 for i in range(w._custom_sym_body.layout().count())]
+        drop_zones = [z for z in zones if z.acceptDrops()]
+        # 즐겨찾기(비-드롭) + 미분류(드롭) 2그룹 중 드롭 가능한 건 미분류 하나뿐.
+        assert len(zones) == 2
+        assert len(drop_zones) == 1

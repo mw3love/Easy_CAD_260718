@@ -17,6 +17,10 @@ deep-interview 2026-08-03 확정 스코프: 등록 대상=현재 선택 전부(1
 마찬가지로 실사용 피드백(2026-08-19)으로 뒤집어 `rename_folder` 추가 — 이름 자체가 심볼의
 "folder" 필드 값과 같은 식별자라 이름을 바꾸면 소속 심볼 전체의 참조도 함께 갱신해야 한다
 (심볼 이름변경은 id로 식별해 이런 캐스케이드가 불필요했던 것과 다른 점).
+
+[신규기능, 2026-08-20, deep-interview] 즐겨찾기 추가 — 심볼 항목에 "favorite" 불리언 필드
+(folder와 같은 패턴). 이중표시(원래 폴더+즐겨찾기 섹션 둘 다에 노출) 확정이라 별도 참조
+목록이 없고, 폴더 필드처럼 원본 삭제·폴더 완전삭제 시 자동으로 함께 정리된다.
 """
 import json
 import os
@@ -106,7 +110,7 @@ def add_symbol(name: str, item_dicts: list[dict], thumb_b64: str, folder: str | 
     """새 항목을 등록하고 그 항목(id 포함)을 반환. folder 생략 시 미분류."""
     data = _load_raw()
     entry = {"id": uuid.uuid4().hex[:8], "name": name, "thumb": thumb_b64, "items": item_dicts,
-              "folder": folder}
+              "folder": folder, "favorite": False}
     data["symbols"].append(entry)
     _save_raw(data)
     return entry
@@ -122,6 +126,20 @@ def rename_symbol(symbol_id: str, new_name: str):
     for e in data["symbols"]:
         if e.get("id") == symbol_id:
             e["name"] = new_name
+            break
+    else:
+        return
+    _save_raw(data)
+
+
+def toggle_favorite(symbol_id: str):
+    """[신규기능, 2026-08-20, deep-interview] 즐겨찾기 on/off를 뒤집는다 — `folder`와 같이
+    심볼 엔트리 자체의 필드라 원본 삭제·폴더 완전삭제 시 자동으로 함께 사라진다(별도 정리
+    코드 불필요). 이중표시(원래 폴더+즐겨찾기 섹션 둘 다에 노출)라 별도 목록 동기화도 없다."""
+    data = _load_raw()
+    for e in data["symbols"]:
+        if e.get("id") == symbol_id:
+            e["favorite"] = not e.get("favorite", False)
             break
     else:
         return

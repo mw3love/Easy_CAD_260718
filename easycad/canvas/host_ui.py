@@ -741,8 +741,9 @@ class _UIBuildMixin:
             # [실사용 버그 수정 2026-08-19] 커스텀 심볼(§8-8) 버튼이 이 목록에서 빠져 있어
             # 위 btn_qss(미선택=투명 테두리만·선택=코랄 틴트)를 못 받고 Qt 기본 스타일의
             # raised 배경 박스로 남아 있었다 — 일반 도형/심볼 버튼과 시각적으로 달라 보이던
-            # 원인.
-            + list(getattr(self, "_custom_sym_buttons", {}).values())
+            # 원인. [2026-08-20] 즐겨찾기 이중표시로 sid당 버튼이 여러 개일 수 있어 리스트를
+            # 평탄화(flatten)한다.
+            + [b for blist in getattr(self, "_custom_sym_buttons", {}).values() for b in blist]
         )
         for name in ("_pf_color", "_pf_fill", "_pf_swap_btn", "_pf_routing_btn", "_pf_dir_btn"):
             b = getattr(self, name, None)
@@ -984,11 +985,22 @@ class _UIBuildMixin:
 
         entries = symbol_library.load_library()
         folders = symbol_library.load_folders()
-        self._custom_sym_buttons: dict[str, QToolButton] = {}
+        self._custom_sym_buttons: dict[str, list[QToolButton]] = {}
         self._symfolder_collapse_btns: list[QToolButton] = []   # `_apply_theme` 재도색용
 
-        def add_group(folder_name, title, deletable):
-            zone = _SymbolFolderDropZone(folder_name, self._move_custom_symbol)
+        def add_group(folder_name, title, deletable, favorites=False):
+            # [신규기능 2026-08-20, deep-interview] 즐겨찾기는 진짜 폴더가 아니라 심볼
+            # 엔트리의 "favorite" 표식만 모아 보여주는 이중표시 섹션 — 드롭 대상이 아니므로
+            # (우클릭 토글만 지원, deep-interview 확정) `_SymbolFolderDropZone` 대신 평범한
+            # QWidget을 쓰고, 즐겨찾기 항목이 하나도 없으면 섹션 자체를 만들지 않는다.
+            if favorites:
+                group_entries = [e for e in entries if e.get("favorite")]
+                if not group_entries:
+                    return
+            else:
+                group_entries = [e for e in entries if e.get("folder") == folder_name]
+            zone = QWidget() if favorites else _SymbolFolderDropZone(
+                folder_name, self._move_custom_symbol)
             zv = QVBoxLayout(zone)
             # [실사용 버그 수정 2026-08-19] 좌우 여백을 0으로 — `custom_section.body_layout`
             # (이 zone의 부모)이 이미 좌우 2px 여백을 갖고 있어, zone에도 좌우 여백을 또
@@ -1011,7 +1023,8 @@ class _UIBuildMixin:
             # 한 번에 접었지만(옛 `_AccordionSection`), 폴더가 늘어날수록 그 방식은 원하는
             # 폴더 하나만 잠깐 접어두는 용도로 안 맞았다. "미분류"를 포함해 모든 그룹이 같은
             # 자격으로 접힌다(add_group가 공유하는 한 코드 경로).
-            collapse_key = f"symfolder_collapsed_{folder_name or '__unfiled__'}"
+            collapse_slug = "__favorites__" if favorites else (folder_name or "__unfiled__")
+            collapse_key = f"symfolder_collapsed_{collapse_slug}"
             collapsed = QSettings("EasyCAD", "EasyCAD").value(collapse_key, False, type=bool)
             collapse_btn = QToolButton()
             collapse_btn.setAutoRaise(True)
@@ -1037,9 +1050,7 @@ class _UIBuildMixin:
             # 208px보다도 작아져 어느 폴더를 펼쳐도 폭이 안 늘어난다).
             grid.setContentsMargins(0, 0, 0, 0)
             btns = []
-            for entry in entries:
-                if entry.get("folder") != folder_name:
-                    continue
+            for entry in group_entries:
                 # [실사용 버그 수정 2026-08-19] 2026-08-19 이전에 등록된 심볼의 옛 흐린
                 # 썸네일을 재등록 없이 자동 치유(host_selection._ensure_symbol_thumb_current).
                 entry = self._ensure_symbol_thumb_current(entry)
@@ -1060,7 +1071,10 @@ class _UIBuildMixin:
                 btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
                 btn.customContextMenuRequested.connect(
                     lambda pos, b=btn, sid=sid: self._show_custom_symbol_context_menu(b, pos, sid))
-                self._custom_sym_buttons[sid] = btn
+                # [신규기능 2026-08-20] 이중표시라 즐겨찾기된 심볼은 버튼이 2개(원래 폴더+
+                # 즐겨찾기 섹션) 생길 수 있어 sid당 리스트로 보관 — set_tool 체크상태 동기화
+                # (host_canvas.set_tool)·테마 재도색(_accent_btns) 둘 다 전부를 봐야 한다.
+                self._custom_sym_buttons.setdefault(sid, []).append(btn)
                 btns.append(btn)
             for i, b in enumerate(btns):
                 grid.addWidget(b, i // _PALETTE_COLS, i % _PALETTE_COLS)
@@ -1090,6 +1104,7 @@ class _UIBuildMixin:
                 self._relayout_left_panel()
             collapse_btn.clicked.connect(_toggle_folder)
 
+        add_group(None, "즐겨찾기", deletable=False, favorites=True)
         add_group(None, "미분류", deletable=False)
         for name in folders:
             add_group(name, name, deletable=True)
@@ -1110,11 +1125,23 @@ class _UIBuildMixin:
     def _show_custom_symbol_context_menu(self, btn: QToolButton, pos, sym_id: str):
         """[실사용 피드백 2026-08-18] 우클릭 = 곧바로 삭제 확인창이던 것을 메뉴(이름변경/삭제)
         로 교체 — 탐색기 관례. 폴더 이름변경/삭제는 폴더 이름 우클릭이 별도로 담당(위
-        `_show_symbol_folder_context_menu`, 2026-08-19 재개편)."""
+        `_show_symbol_folder_context_menu`, 2026-08-19 재개편).
+        [신규기능 2026-08-20] 즐겨찾기 토글도 여기 추가 — deep-interview로 "추가/해제 액션
+        2개"가 아니라 "토글 1개"로 확정, 현재 상태에 따라 라벨이 바뀐다."""
+        entry = next((e for e in symbol_library.load_library() if e.get("id") == sym_id), None)
+        is_fav = bool(entry and entry.get("favorite"))
         menu = QMenu(self)
+        menu.addAction("즐겨찾기 해제" if is_fav else "즐겨찾기 추가",
+                        lambda: self._toggle_custom_symbol_favorite(sym_id))
         menu.addAction("이름변경…", lambda: self._rename_custom_symbol_prompt(sym_id))
         menu.addAction("삭제…", lambda: self._delete_custom_symbol_prompt(sym_id))
         menu.exec(btn.mapToGlobal(pos))
+
+
+    def _toggle_custom_symbol_favorite(self, sym_id: str):
+        """[신규기능 2026-08-20, deep-interview] 심볼 우클릭 → 즐겨찾기 추가/해제 토글."""
+        symbol_library.toggle_favorite(sym_id)
+        self._refresh_custom_symbol_section()
 
 
     def _rename_custom_symbol_prompt(self, sym_id: str):
@@ -1270,7 +1297,7 @@ class _UIBuildMixin:
         custom_section.body_layout.setSpacing(8)
         self._custom_sym_section = custom_section
         self._custom_sym_body = custom_section.body
-        self._custom_sym_buttons: dict[str, QToolButton] = {}   # set_tool 체크상태 동기화용
+        self._custom_sym_buttons: dict[str, list[QToolButton]] = {}   # set_tool 체크상태 동기화용
         outer.addWidget(custom_section)
         self._refresh_custom_symbol_section()
 
