@@ -394,6 +394,138 @@ class _GenProgressRow(QWidget):
         self._label.setText(f"{self._text}… {elapsed}초")
 
 
+class _ImageAttachMixin:
+    """이미지 첨부(찾아보기·드래그드롭·Ctrl+V) 공용 로직 — 원래 `_MermaidDialog` 전용
+    이었던 것을 2026-08-19 Stage 3(SVG 이미지 입력, deep-interview 확정 — "Mermaid와
+    동일한 첨부 UI 재사용")에서 `_SvgAssetDialog`와 공유하도록 추출. 상태
+    (`_attached_image`/`_attached_image_name`)와 로직만 여기 두고, 칩 UI 자체
+    (`_build_image_chip`)는 만들어 돌려주되 어느 레이아웃에 넣을지는 호출부(각 다이얼로그
+    의 툴바 구성)가 정한다 — 두 다이얼로그의 툴바 모양이 달라 위젯 트리 배치까지는 공유
+    하지 않는다. `dragEnterEvent`/`dropEvent`는 다이얼로그 자신에 걸리는 이벤트라 이
+    믹스인을 상속한 QDialog가 `setAcceptDrops(True)`만 해두면 그대로 작동한다."""
+
+    _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
+
+    def _init_image_attach_state(self):
+        self._attached_image = None       # PIL.Image.Image | None
+        self._attached_image_name = ""
+
+    def _build_image_chip(self, parent) -> QWidget:
+        """컴팩트 이미지 칩(썸네일+이름+제거 버튼, 첨부 시에만 노출) — 만들어서 돌려주기만
+        하고 레이아웃에 얹는 건 호출부 몫."""
+        chip = QWidget(parent)
+        chip.setObjectName("imageChip")
+        chip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        chip.setStyleSheet(
+            "QWidget#imageChip { background:palette(alternate-base); "
+            "border:1px solid rgba(128,128,128,90); border-radius:11px; }"
+        )
+        chip_lay = QHBoxLayout(chip)
+        chip_lay.setContentsMargins(3, 2, 4, 2)
+        chip_lay.setSpacing(4)
+        self._image_thumb = QLabel(chip)
+        self._image_thumb.setFixedSize(20, 20)
+        self._image_thumb.setScaledContents(True)
+        chip_lay.addWidget(self._image_thumb)
+        self._image_name_label = QLabel("", chip)
+        self._image_name_label.setStyleSheet("font-size:11px;")
+        self._image_name_label.setMaximumWidth(140)
+        chip_lay.addWidget(self._image_name_label)
+        self._image_clear_btn = QToolButton(chip)
+        self._image_clear_btn.setText("✕")
+        self._image_clear_btn.setToolTip("이미지 제거")
+        self._image_clear_btn.setFixedSize(16, 16)
+        self._image_clear_btn.clicked.connect(self._clear_image)
+        chip_lay.addWidget(self._image_clear_btn)
+        chip.setVisible(False)
+        self._image_chip = chip
+        return chip
+
+    def _browse_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "이미지 선택", "", "이미지 (*.png *.jpg *.jpeg *.bmp *.webp *.gif)")
+        if path:
+            self._load_image_path(path)
+
+    def _load_image_path(self, path: str):
+        from PIL import Image
+        try:
+            img = Image.open(path).convert("RGB")
+        except Exception as e:
+            QMessageBox.warning(self, self.windowTitle(), f"이미지를 읽을 수 없습니다: {e}")
+            return
+        self._set_attached_image(img, os.path.basename(path))
+
+    def _set_attached_qimage(self, qimg: QImage, name: str):
+        """붙여넣기/드롭으로 받은 QImage → PIL Image 변환(임시파일 없이 메모리에서만
+        처리 — 옛 `_AIImageImportDialog`의 temp 파일+정리 관례를 이번엔 안 씀)."""
+        from PIL import Image
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        qimg.save(buf, "PNG")
+        pil_img = Image.open(io.BytesIO(bytes(ba.data()))).convert("RGB")
+        self._set_attached_image(pil_img, name)
+
+    def _set_attached_image(self, pil_img, name: str):
+        self._attached_image = pil_img
+        self._attached_image_name = name
+        buf = io.BytesIO()
+        pil_img.save(buf, format="PNG")
+        pm = QPixmap()
+        pm.loadFromData(buf.getvalue())
+        self._image_thumb.setPixmap(pm)
+        # 칩 폭이 좁으니(2026-08-12 4차, 컴팩트 칩) 긴 파일명은 가운데 생략 — 전체 이름은
+        # 툴팁으로.
+        fm = QFontMetrics(self._image_name_label.font())
+        self._image_name_label.setText(
+            fm.elidedText(name, Qt.TextElideMode.ElideMiddle, 130))
+        self._image_name_label.setToolTip(name)
+        self._image_chip.setVisible(True)
+
+    def _clear_image(self):
+        self._attached_image = None
+        self._attached_image_name = ""
+        self._image_thumb.clear()
+        self._image_chip.setVisible(False)
+
+    def dragEnterEvent(self, e):
+        md = e.mimeData()
+        if md.hasImage() or (md.hasUrls() and any(
+                u.toLocalFile().lower().endswith(self._IMG_EXTS) for u in md.urls())):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        self.dragEnterEvent(e)
+
+    def dropEvent(self, e):
+        md = e.mimeData()
+        if md.hasUrls():
+            for u in md.urls():
+                p = u.toLocalFile()
+                if p.lower().endswith(self._IMG_EXTS):
+                    self._load_image_path(p)
+                    e.acceptProposedAction()
+                    return
+        if md.hasImage():
+            img = md.imageData()
+            if isinstance(img, QImage) and not img.isNull():
+                self._set_attached_qimage(img, "드롭한 이미지")
+                e.acceptProposedAction()
+
+    def _maybe_intercept_paste_image(self, event) -> bool:
+        """Ctrl+V 키 이벤트를 받으면 클립보드에 이미지가 있는지 확인해 있으면 첨부로
+        가로채고 True를 돌려준다(호출부 `eventFilter`가 이벤트를 소비). 없으면 False —
+        보통의 텍스트 붙여넣기이므로 호출부가 기본 동작에 맡긴다."""
+        if event.matches(QKeySequence.StandardKey.Paste):
+            md = QApplication.clipboard().mimeData()
+            img = md.imageData() if md.hasImage() else None
+            if isinstance(img, QImage) and not img.isNull():
+                self._set_attached_qimage(img, "붙여넣은 이미지")
+                return True
+        return False
+
+
 class _MermaidGenWorker(QThread):
     """`generate_mermaid` 1회 호출을 메인(GUI) 스레드 밖에서 돈다(2026-08-19 —
     동기 호출+`WaitCursor`가 게이트웨이 응답을 기다리는 동안 이벤트 루프 자체를 막아
@@ -422,7 +554,7 @@ class _MermaidGenWorker(QThread):
         self.succeeded.emit(text, used)
 
 
-class _MermaidDialog(QDialog):
+class _MermaidDialog(_ImageAttachMixin, QDialog):
     """Mermaid flowchart 입력창 — 프롬프트(AI 지시)와 Mermaid 코드를 별개 칸으로 받는다.
 
     §8 항목18(AI 이미지→도면) 후속(2026-08-12) — 하루 사이 이 축을 두 번 오갔다: 처음엔
@@ -457,14 +589,12 @@ class _MermaidDialog(QDialog):
                "    B -->|예| C[처리]\n"
                "    B -->|아니오| D([종료])\n"
                "    C --> D")
-    _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Mermaid 가져오기")
         self.setAcceptDrops(True)
-        self._attached_image = None       # PIL.Image.Image | None
-        self._attached_image_name = ""
+        self._init_image_attach_state()
         self._worker = None               # _MermaidGenWorker | None — 생성 중일 때만 설정
         lay = QVBoxLayout(self)
 
@@ -537,33 +667,9 @@ class _MermaidDialog(QDialog):
         toolbar_lay.addWidget(self._attach_btn)
 
         # 컴팩트 이미지 칩(첨부 시에만 노출) — 옛 전체폭 행 대신 툴바 안 작은 pill로
-        # (2026-08-12 4차, "이미지첨부 자리에 썸네일만 작게" 피드백).
-        self._image_chip = QWidget(toolbar_widget)
-        self._image_chip.setObjectName("imageChip")
-        self._image_chip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._image_chip.setStyleSheet(
-            "QWidget#imageChip { background:palette(alternate-base); "
-            "border:1px solid rgba(128,128,128,90); border-radius:11px; }"
-        )
-        chip_lay = QHBoxLayout(self._image_chip)
-        chip_lay.setContentsMargins(3, 2, 4, 2)
-        chip_lay.setSpacing(4)
-        self._image_thumb = QLabel(self._image_chip)
-        self._image_thumb.setFixedSize(20, 20)
-        self._image_thumb.setScaledContents(True)
-        chip_lay.addWidget(self._image_thumb)
-        self._image_name_label = QLabel("", self._image_chip)
-        self._image_name_label.setStyleSheet("font-size:11px;")
-        self._image_name_label.setMaximumWidth(140)
-        chip_lay.addWidget(self._image_name_label)
-        self._image_clear_btn = QToolButton(self._image_chip)
-        self._image_clear_btn.setText("✕")
-        self._image_clear_btn.setToolTip("이미지 제거")
-        self._image_clear_btn.setFixedSize(16, 16)
-        self._image_clear_btn.clicked.connect(self._clear_image)
-        chip_lay.addWidget(self._image_clear_btn)
-        self._image_chip.setVisible(False)
-        toolbar_lay.addWidget(self._image_chip)
+        # (2026-08-12 4차, "이미지첨부 자리에 썸네일만 작게" 피드백). Stage 3(2026-08-19)
+        # 부터 `_ImageAttachMixin._build_image_chip`로 `_SvgAssetDialog`와 공유.
+        toolbar_lay.addWidget(self._build_image_chip(toolbar_widget))
 
         toolbar_lay.addStretch(1)
 
@@ -668,88 +774,9 @@ class _MermaidDialog(QDialog):
                     return False   # Shift+Enter는 기본 동작(줄바꿈)에 맡김
                 self._on_ai_clicked()
                 return True
-            if event.matches(QKeySequence.StandardKey.Paste):
-                md = QApplication.clipboard().mimeData()
-                img = md.imageData() if md.hasImage() else None
-                if isinstance(img, QImage) and not img.isNull():
-                    self._set_attached_qimage(img, "붙여넣은 이미지")
-                    return True
-                # 클립보드에 이미지가 없으면(보통의 텍스트 붙여넣기) 위젯 기본 동작에 맡긴다.
+            if self._maybe_intercept_paste_image(event):
+                return True
         return super().eventFilter(obj, event)
-
-    # ---- 이미지 첨부(찾아보기·드래그드롭·Ctrl+V) --------------------------------
-
-    def _browse_image(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "이미지 선택", "", "이미지 (*.png *.jpg *.jpeg *.bmp *.webp *.gif)")
-        if path:
-            self._load_image_path(path)
-
-    def _load_image_path(self, path: str):
-        from PIL import Image
-        try:
-            img = Image.open(path).convert("RGB")
-        except Exception as e:
-            QMessageBox.warning(self, "Mermaid 가져오기", f"이미지를 읽을 수 없습니다: {e}")
-            return
-        self._set_attached_image(img, os.path.basename(path))
-
-    def _set_attached_qimage(self, qimg: QImage, name: str):
-        """붙여넣기/드롭으로 받은 QImage → PIL Image 변환(임시파일 없이 메모리에서만
-        처리 — 옛 `_AIImageImportDialog`의 temp 파일+정리 관례를 이번엔 안 씀)."""
-        from PIL import Image
-        ba = QByteArray()
-        buf = QBuffer(ba)
-        buf.open(QIODevice.OpenModeFlag.WriteOnly)
-        qimg.save(buf, "PNG")
-        pil_img = Image.open(io.BytesIO(bytes(ba.data()))).convert("RGB")
-        self._set_attached_image(pil_img, name)
-
-    def _set_attached_image(self, pil_img, name: str):
-        self._attached_image = pil_img
-        self._attached_image_name = name
-        buf = io.BytesIO()
-        pil_img.save(buf, format="PNG")
-        pm = QPixmap()
-        pm.loadFromData(buf.getvalue())
-        self._image_thumb.setPixmap(pm)
-        # 칩 폭이 좁아졌으니(2026-08-12 4차, 컴팩트 칩) 긴 파일명은 가운데 생략 — 전체
-        # 이름은 툴팁으로.
-        fm = QFontMetrics(self._image_name_label.font())
-        self._image_name_label.setText(
-            fm.elidedText(name, Qt.TextElideMode.ElideMiddle, 130))
-        self._image_name_label.setToolTip(name)
-        self._image_chip.setVisible(True)
-
-    def _clear_image(self):
-        self._attached_image = None
-        self._attached_image_name = ""
-        self._image_thumb.clear()
-        self._image_chip.setVisible(False)
-
-    def dragEnterEvent(self, e):
-        md = e.mimeData()
-        if md.hasImage() or (md.hasUrls() and any(
-                u.toLocalFile().lower().endswith(self._IMG_EXTS) for u in md.urls())):
-            e.acceptProposedAction()
-
-    def dragMoveEvent(self, e):
-        self.dragEnterEvent(e)
-
-    def dropEvent(self, e):
-        md = e.mimeData()
-        if md.hasUrls():
-            for u in md.urls():
-                p = u.toLocalFile()
-                if p.lower().endswith(self._IMG_EXTS):
-                    self._load_image_path(p)
-                    e.acceptProposedAction()
-                    return
-        if md.hasImage():
-            img = md.imageData()
-            if isinstance(img, QImage) and not img.isNull():
-                self._set_attached_qimage(img, "드롭한 이미지")
-                e.acceptProposedAction()
 
     # ---- 모델 선택(드롭다운) ----------------------------------------------------
 
@@ -1055,24 +1082,25 @@ class _SvgGenWorker(QThread):
     candidate = pyqtSignal(str, str)      # (실제 사용된 모델, svg 텍스트)
     model_failed = pyqtSignal(str, str)   # (모델, 에러 메시지)
 
-    def __init__(self, api_key, subject, model, base_url, parent=None):
+    def __init__(self, api_key, subject, model, base_url, image, parent=None):
         super().__init__(parent)
         self._api_key = api_key
         self._subject = subject
         self._model = model
         self._base_url = base_url
+        self._image = image   # PIL.Image.Image | None — Stage 3(2026-08-19)
 
     def run(self):
         try:
             svg_text, used = generate_svg(self._api_key, self._subject, model=self._model,
-                                          base_url=self._base_url)
+                                          base_url=self._base_url, image=self._image)
         except Exception as e:  # noqa: BLE001 — 개별 실패, 다른 워커는 계속 진행
             self.model_failed.emit(self._model, str(e))
             return
         self.candidate.emit(used, svg_text)
 
 
-class _SvgAssetDialog(QDialog):
+class _SvgAssetDialog(_ImageAttachMixin, QDialog):
     """AI SVG 에셋 생성 — 대상 설명 한 줄 + 모델별 후보 개수 드롭다운(GPT/Gemini 각각
     0~5개, 2026-08-19 deep-interview 확정 — §8 항목20 후속 Stage 2, 최대 10개까지 한
     번에 받아 마음에 드는 걸 고르고 싶다는 실사용 요청) + 생성 버튼 + 후보 카드 가로
@@ -1085,7 +1113,12 @@ class _SvgAssetDialog(QDialog):
     모델 내부 구분 없이 완전 병렬, deep-interview 확정 — 최악 10개 동시 호출도 실측으로
     확인함: gpt 5개는 ~7초, gemini 5개는 30~52초에 걸쳐 전부 성공, 실패 0건). 끝난
     순서대로 카드가 하나씩 채워지므로(gpt가 보통 먼저 도착) 전부 끝나기 전에도 고를 수
-    있다."""
+    있다.
+
+    이미지 입력도 받는다(찾아보기·드래그드롭·Ctrl+V, `_ImageAttachMixin` — 2026-08-19
+    Stage 3, `_MermaidDialog`와 동일한 첨부 UI를 재사용). 이미지가 첨부되면 대상 설명은
+    선택 사항이 된다(`generate_svg`의 `image` 인자, `text_to_mermaid.generate_mermaid`와
+    동일 관례)."""
 
     _MAX_PER_MODEL = 5
 
@@ -1093,6 +1126,8 @@ class _SvgAssetDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("AI SVG 에셋 생성")
         self.setMinimumWidth(440)
+        self.setAcceptDrops(True)
+        self._init_image_attach_state()
         self._candidates: list[tuple[_SvgCandidateCard, str, str]] = []
         self._selected_card: _SvgCandidateCard | None = None
         self._workers: list[_SvgGenWorker] = []   # 생성 중일 때만 항목이 있음
@@ -1103,8 +1138,22 @@ class _SvgAssetDialog(QDialog):
         lay.addWidget(QLabel("생성할 대상(예: BNC 커넥터 아이콘):", self))
         self._prompt_edit = QLineEdit(self)
         self._prompt_edit.setPlaceholderText("예: 야기 안테나 아이콘")
+        self._prompt_edit.setAcceptDrops(False)   # 드롭을 다이얼로그(dropEvent)로 넘김
+        self._prompt_edit.installEventFilter(self)   # Ctrl+V 이미지 첨부
         self._prompt_edit.returnPressed.connect(self._on_generate_clicked)
         lay.addWidget(self._prompt_edit)
+
+        attach_row = QHBoxLayout()
+        self._attach_btn = QToolButton(self)
+        self._attach_btn.setIcon(_act_icon("attach"))
+        self._attach_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._attach_btn.setText("이미지 첨부")
+        self._attach_btn.setToolTip("이미지 첨부<br>· 드래그 앤 드롭<br>· Ctrl+V 붙여넣기")
+        self._attach_btn.clicked.connect(self._browse_image)
+        attach_row.addWidget(self._attach_btn)
+        attach_row.addWidget(self._build_image_chip(self))
+        attach_row.addStretch(1)
+        lay.addLayout(attach_row)
 
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel(f"GPT ({gw.TEXT_RECOMMEND_1}):", self))
@@ -1173,6 +1222,12 @@ class _SvgAssetDialog(QDialog):
             return
         super().closeEvent(e)
 
+    def eventFilter(self, obj, event):
+        if obj is self._prompt_edit and event.type() == QEvent.Type.KeyPress:
+            if self._maybe_intercept_paste_image(event):
+                return True
+        return super().eventFilter(obj, event)
+
     def _requested_jobs(self) -> list[str]:
         """모델별 개수 드롭다운 → 호출할 모델 목록(개수만큼 반복) — 예: GPT 2·Gemini 1이면
         [gpt, gpt, gemini]. 워커 하나가 이 목록의 항목 하나씩을 맡는다."""
@@ -1187,8 +1242,10 @@ class _SvgAssetDialog(QDialog):
         전체 완료 처리 — 옛 "워커 하나=전체"였던 Stage 1의 finally 블록 역할을 카운터로
         대신한다)로 나뉜다."""
         subject = self._prompt_edit.text().strip()
-        if not subject:
-            QMessageBox.information(self, "AI SVG 에셋 생성", "생성할 대상을 입력하세요.")
+        image = self._attached_image
+        if not subject and image is None:
+            QMessageBox.information(self, "AI SVG 에셋 생성",
+                                    "먼저 생성할 대상을 입력하거나 이미지를 첨부하세요.")
             return
         jobs = self._requested_jobs()
         if not jobs:
@@ -1210,7 +1267,7 @@ class _SvgAssetDialog(QDialog):
         self._pending = len(jobs)
         self._workers = []
         for model in jobs:
-            w = _SvgGenWorker(key, subject, model, base_url, self)
+            w = _SvgGenWorker(key, subject, model, base_url, image, self)
             w.candidate.connect(self._on_candidate_ready)
             w.model_failed.connect(self._on_model_failed)
             w.finished.connect(self._on_one_worker_finished)

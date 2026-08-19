@@ -844,6 +844,14 @@ docs/
   전체 pytest 739종 통과, 실제 창+실제 게이트웨이(4개 동시 요청)로 종단 검증(4개 모두
   다른 모양의 아이콘으로 성공, 첫 도착 후보가 나머지가 도는 중에도 화면에 뜸). 상세:
   `docs/history/2026-08.md` "§8 항목20 후속 — Mermaid·SVG AI 다이얼로그 재정리 Stage 2".
+- **§8 항목20 후속 — Stage 3(SVG 이미지 입력) 완료, Stage 1~3 종료(2026-08-19, 같은 세션
+  후속)** — `_MermaidDialog`의 이미지 첨부 로직(찾아보기·드래그드롭·Ctrl+V)을
+  `_ImageAttachMixin`으로 추출해 `_SvgAssetDialog`와 공유(문자 그대로 복붙 대신 재사용).
+  `text_to_svg.py`에 `generate_mermaid`와 동일 패턴으로 이미지 분기 추가(이미지 있으면
+  대상 설명 선택사항, timeout 120s). 신규 pytest 12종, 전체 pytest 749종 통과, 실제
+  창+실제 게이트웨이로 종단 검증(`docs/reference/`의 실제 참고 이미지 1장, 텍스트 설명
+  없이 gpt·gemini 둘 다 서로 다른 아이콘 생성 성공). 상세: `docs/history/2026-08.md`
+  "§8 항목20 후속 — Mermaid·SVG AI 다이얼로그 재정리 Stage 3".
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

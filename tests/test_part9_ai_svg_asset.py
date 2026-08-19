@@ -1,23 +1,25 @@
-"""§8 항목20 AI SVG 에셋 생성 — B단계(앱 UI 통합, 2026-08-14) + Stage 1/2(2026-08-19).
+"""§8 항목20 AI SVG 에셋 생성 — B단계(앱 UI 통합, 2026-08-14) + Stage 1/2/3(2026-08-19).
 
 deep-interview(2026-08-14)로 확정된 대로: 진입점 2곳(삽입 메뉴로 새로 삽입 + 우클릭으로
 기존 도형 대체)이 `_SvgAssetDialog` 하나를 공유, 대체 시 새 SVG 크기는 대체 도형
 바운딩박스 긴 변 기준(SVG 자체 종횡비 유지), 화살표는 재연결하지 않음(`delete_selection()`
 이 이미 제공하는 "제자리에 얼어붙는다" 동작과 같은 결과).
 
-2026-08-19 deep-interview로 두 차례 더 확정: **Stage 1** — 동기 호출+WaitCursor(원래
+2026-08-19 deep-interview로 세 차례 더 확정: **Stage 1** — 동기 호출+WaitCursor(원래
 2026-08-14 결정, 당시 옛 QThread 워커는 §8 항목18에서 이미 폐기된 상태였음)가 프리징을
 일으켜 `_SvgGenWorker`(QThread)+진행바로 교체. **Stage 2** — 모델별 후보 개수를 gpt/gemini
 체크박스(모델당 1개 고정) 대신 독립 드롭다운(0~5개)으로 확장, 요청한 후보 전부를 완전
-병렬 호출(워커 하나=호출 하나, 전부 동시 `start()`), 끝난 순서대로 카드 채움.
+병렬 호출(워커 하나=호출 하나, 전부 동시 `start()`), 끝난 순서대로 카드 채움. **Stage 3** —
+이미지 입력(찾아보기·드래그드롭·Ctrl+V)을 `_ImageAttachMixin`으로 `_MermaidDialog`와
+공유해 추가, 이미지가 첨부되면 대상 설명은 선택 사항이 된다.
 
 이 파일이 검증하는 것:
-  - `easycad/ai/text_to_svg.py` — 프롬프트 빌더·코드펜스 벗기기·generate_svg.
+  - `easycad/ai/text_to_svg.py` — 프롬프트 빌더(텍스트·이미지)·코드펜스 벗기기·generate_svg.
   - `easycad/fileio/svg_import.py` — `parse_svg_string`(문자열 입력, `parse_svg_items`와
     동일 동작).
   - `_SvgAssetDialog` — 모델별 개수 드롭다운→완전 병렬 호출, 부분 실패 시 성공한 후보만
     표시, 후보 카드 클릭 선택, 빈 프롬프트/개수 0/키 없음 가드, 생성 중 진행 표시·컨트롤
-    비활성화·닫기 무시.
+    비활성화·닫기 무시, 이미지 첨부(찾아보기·드롭·Ctrl+V).
   - `host_fileio._insert_ai_svg_asset` — 삽입 경로(undo 1스텝).
   - `host_context._generate_svg_replace` — 대체 경로(remove+create 단일 undo, 화살표
     미재연결, 대체 도형 bbox 긴 변 기준 리스케일).
@@ -25,7 +27,7 @@ deep-interview(2026-08-14)로 확정된 대로: 진입점 2곳(삽입 메뉴로 
 
 실행: python tests/test_easycad.py (전체) 또는 pytest test_part9_ai_svg_asset.py.
 """
-from PyQt6.QtCore import QRectF, QPointF
+from PyQt6.QtCore import QRectF, QPointF, QEvent
 from PyQt6.QtWidgets import QDialog
 
 from _shared import *  # noqa: F401,F403
@@ -88,6 +90,53 @@ def test_generate_svg_returns_text_and_model_used():
         text, used = tts.generate_svg("key", "안테나 아이콘", model="gpt-5.4-mini")
     assert text == '<svg viewBox="0 0 10 10"></svg>'
     assert used == "gpt-5.4-mini"
+
+
+# ── text_to_svg.py: 이미지 입력(Stage 3, 2026-08-19) ──────────────────────────
+
+def test_build_image_prompt_includes_subject_and_no_hallucination_note():
+    text = tts.build_image_prompt("BNC 커넥터 아이콘")
+    assert "BNC 커넥터 아이콘" in text
+    assert "실제로 있는 형태만" in text   # 2026-07-21 환각 함정 재확인 규칙 계승
+
+
+def test_build_image_prompt_omits_subject_line_when_empty():
+    text = tts.build_image_prompt("")
+    assert "참고" not in text
+
+
+def test_generate_svg_uses_image_prompt_and_longer_timeout_when_image_given():
+    from PIL import Image
+    captured = {}
+
+    def fake_call(api_key, prompt, *, model, image=None, base_url=None, timeout=None):
+        captured["prompt"] = prompt
+        captured["image"] = image
+        captured["timeout"] = timeout
+        return gw.GatewayResult('<svg viewBox="0 0 10 10"></svg>', model, None, 1.0)
+
+    img = Image.new("RGB", (10, 10), "white")
+    with patch.object(tts.gw, "call_text_with_fallback", fake_call):
+        text, used = tts.generate_svg("key", "보충설명", model="gpt-5.4-mini", image=img)
+    assert text == '<svg viewBox="0 0 10 10"></svg>'
+    assert captured["image"] is img
+    assert "보충설명" in captured["prompt"]
+    assert "실제로 있는 형태만" in captured["prompt"]
+    assert captured["timeout"] == 120.0   # 텍스트 전용 기본(60s)보다 넉넉하게
+
+
+def test_generate_svg_uses_text_prompt_when_no_image():
+    captured = {}
+
+    def fake_call(api_key, prompt, *, model, image=None, base_url=None, timeout=None):
+        captured["prompt"] = prompt
+        captured["timeout"] = timeout
+        return gw.GatewayResult('<svg viewBox="0 0 10 10"></svg>', model, None, 1.0)
+
+    with patch.object(tts.gw, "call_text_with_fallback", fake_call):
+        tts.generate_svg("key", "안테나 아이콘", model="gpt-5.4-mini")
+    assert "viewBox" in captured["prompt"]
+    assert captured["timeout"] == 60.0
 
 
 # ── svg_import.py: parse_svg_string ──────────────────────────────────────────
@@ -420,6 +469,112 @@ def test_svg_asset_dialog_regenerate_clears_old_candidates():
     assert len(dlg._candidates) == 2   # 누적되지 않고 새로 교체
     for card, *_r in first_batch:
         assert card not in [c for c, *_r2 in dlg._candidates]
+    dlg.deleteLater()
+
+
+# ── _SvgAssetDialog: 이미지 첨부(Stage 3, 2026-08-19 — `_MermaidDialog`와 동일 UI 재사용) ──
+
+def test_svg_asset_dialog_browse_image_attaches_and_shows_thumbnail():
+    dlg = _SvgAssetDialog()
+    assert dlg._image_chip.isHidden()
+
+    real_path = os.path.join(_TMP, f"attach_{uuid.uuid4().hex}.png")
+    _mk_pixmap(60, 40).save(real_path)
+    with patch("easycad.canvas.host_dialogs.QFileDialog.getOpenFileName",
+              return_value=(real_path, "")):
+        dlg._browse_image()
+    assert dlg._attached_image is not None
+    assert dlg._attached_image_name == os.path.basename(real_path)
+    assert not dlg._image_chip.isHidden()
+    assert not dlg._image_thumb.pixmap().isNull()
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_clear_image_hides_chip_and_resets_state():
+    dlg = _SvgAssetDialog()
+    real_path = os.path.join(_TMP, f"attach_{uuid.uuid4().hex}.png")
+    _mk_pixmap(40, 40).save(real_path)
+    dlg._load_image_path(real_path)
+    assert dlg._attached_image is not None
+
+    dlg._clear_image()
+    assert dlg._attached_image is None
+    assert dlg._attached_image_name == ""
+    assert dlg._image_chip.isHidden()
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_drop_image_file_attaches():
+    from PyQt6.QtCore import QUrl
+    dlg = _SvgAssetDialog()
+    real_path = os.path.join(_TMP, f"drop_{uuid.uuid4().hex}.png")
+    _mk_pixmap(50, 30).save(real_path)
+    fake_url = QUrl.fromLocalFile(real_path)
+    fake_md = type("_MD", (), {
+        "hasUrls": lambda self: True,
+        "urls": lambda self: [fake_url],
+        "hasImage": lambda self: False,
+    })()
+    fake_event = type("_E", (), {
+        "mimeData": lambda self: fake_md,
+        "acceptProposedAction": lambda self: None,
+    })()
+    dlg.dropEvent(fake_event)
+    assert dlg._attached_image is not None
+    assert dlg._attached_image_name == os.path.basename(real_path)
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_ctrl_v_with_clipboard_image_attaches_not_pastes_text():
+    dlg = _SvgAssetDialog()
+    pm = _mk_pixmap(40, 20)
+    fake_md = type("_MD", (), {"hasImage": lambda self: True, "imageData": lambda self: pm.toImage()})()
+    from PyQt6.QtGui import QKeyEvent
+    with patch.object(QApplication.clipboard(), "mimeData", return_value=fake_md):
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+        handled = dlg.eventFilter(dlg._prompt_edit, ev)
+    assert handled is True
+    assert dlg._attached_image is not None
+    assert dlg._attached_image_name == "붙여넣은 이미지"
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_ctrl_v_with_plain_text_clipboard_falls_through():
+    dlg = _SvgAssetDialog()
+    fake_md = type("_MD", (), {"hasImage": lambda self: False})()
+    from PyQt6.QtGui import QKeyEvent
+    with patch.object(QApplication.clipboard(), "mimeData", return_value=fake_md):
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+        handled = dlg.eventFilter(dlg._prompt_edit, ev)
+    assert handled is False
+    assert dlg._attached_image is None
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_generate_with_image_and_no_subject_still_generates():
+    """이미지 경로는 텍스트 전용 경로와 달리 대상 설명이 필수가 아니다(Mermaid와 동일
+    관례) — 이미지가 각 워커에 그대로 전달되는지도 함께 확인."""
+    dlg = _SvgAssetDialog()
+    real_path = os.path.join(_TMP, f"attach_{uuid.uuid4().hex}.png")
+    _mk_pixmap(40, 20).save(real_path)
+    dlg._load_image_path(real_path)
+    dlg._gemini_count.setCurrentText("0")   # gpt 1개만 — 검증 단순화
+
+    captured = {}
+
+    def fake_generate(key, subject, *, model, image=None, base_url=None):
+        captured["subject"] = subject
+        captured["image"] = image
+        return _SAMPLE_SVG, model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
+        dlg._on_generate_clicked()
+        _wait_workers(dlg)
+
+    assert captured["subject"] == ""
+    assert captured["image"] is not None
+    assert len(dlg._candidates) == 1
     dlg.deleteLater()
 
 
