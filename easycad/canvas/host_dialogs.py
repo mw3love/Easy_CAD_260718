@@ -46,6 +46,7 @@ from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
 from easycad.fileio.svg_import import parse_svg_string
+from easycad.fileio import symbol_library
 from easycad.ai import gateway as gw
 from easycad.ai.text_to_svg import generate_svg
 
@@ -1024,8 +1025,10 @@ def _render_svg_candidate_pixmap(svg_text: str, size: int) -> QPixmap | None:
 
 
 class _SvgCandidateCard(QFrame):
-    """후보 1개 카드 — 썸네일 + 모델명, 클릭하면 부모(`_SvgAssetDialog._pick_card`)에
-    선택을 알린다(단일 선택, 코랄 테두리로 표시)."""
+    """후보 1개 카드 — 체크박스 + 썸네일 + 모델명. 두 가지 독립된 선택 개념을 함께 담는다
+    (2026-08-19 Stage 4, deep-interview 확정): ⓐ 카드 클릭 = 단일 선택(코랄 테두리) —
+    OK 눌러 캔버스에 삽입/대체할 후보 하나. ⓑ 좌상단 체크박스 = 다중 선택 — "내 심볼로
+    저장" 버튼으로 한꺼번에 심볼 팔레트에 등록할 후보들(0개 이상, 클릭 선택과 무관)."""
 
     def __init__(self, model_label: str, svg_text: str, pixmap: QPixmap | None,
                 on_pick, parent=None):
@@ -1033,10 +1036,13 @@ class _SvgCandidateCard(QFrame):
         self._svg_text = svg_text
         self._on_pick = on_pick
         self._selected = False
-        self.setFixedSize(120, 140)
+        self.setFixedSize(120, 156)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setContentsMargins(6, 4, 6, 6)
+        self._save_check = QCheckBox("심볼로 저장", self)
+        self._save_check.setStyleSheet("font-size:10px;")
+        lay.addWidget(self._save_check)
         thumb = QLabel(self)
         thumb.setFixedSize(100, 100)
         thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1055,6 +1061,9 @@ class _SvgCandidateCard(QFrame):
     def svg_text(self) -> str:
         return self._svg_text
 
+    def is_checked_for_save(self) -> bool:
+        return self._save_check.isChecked()
+
     def set_selected(self, selected: bool):
         self._selected = selected
         self._apply_style()
@@ -1068,6 +1077,48 @@ class _SvgCandidateCard(QFrame):
     def mousePressEvent(self, e):
         self._on_pick(self)
         super().mousePressEvent(e)
+
+
+class _SaveToSymbolsFolderDialog(QDialog):
+    """"내 심볼로 저장" 대상 폴더 선택 — 기존 폴더 드롭다운 또는 새 폴더 이름(2026-08-19
+    Stage 4, deep-interview 확정: "기존 폴더 또는 새폴더로"). `symbol_library.py`(fileio,
+    host_selection.py 아님)만 참조해 이 잎 모듈의 순환 임포트 제약을 어기지 않는다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("내 심볼로 저장")
+        lay = QVBoxLayout(self)
+
+        lay.addWidget(QLabel("저장할 폴더:", self))
+        self._folder_combo = QComboBox(self)
+        self._folder_combo.addItem("(미분류)", None)
+        for f in symbol_library.load_folders():
+            self._folder_combo.addItem(f, f)
+        self._folder_combo.addItem("새 폴더…", "__new__")
+        self._folder_combo.setStyleSheet(_ROUNDED_COMBO_QSS)
+        self._folder_combo.currentIndexChanged.connect(self._on_combo_changed)
+        lay.addWidget(self._folder_combo)
+
+        self._new_folder_edit = QLineEdit(self)
+        self._new_folder_edit.setPlaceholderText("새 폴더 이름")
+        self._new_folder_edit.setVisible(False)
+        lay.addWidget(self._new_folder_edit)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                | QDialogButtonBox.StandardButton.Cancel, self)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        btns.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(_CORAL_BTN_QSS)
+        lay.addWidget(btns)
+
+    def _on_combo_changed(self, _idx):
+        self._new_folder_edit.setVisible(self._folder_combo.currentData() == "__new__")
+
+    def chosen_folder(self) -> str | None:
+        data = self._folder_combo.currentData()
+        if data == "__new__":
+            return self._new_folder_edit.text().strip() or None
+        return data
 
 
 class _SvgGenWorker(QThread):
@@ -1194,14 +1245,25 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         candidates_scroll.setWidgetResizable(True)
         candidates_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         candidates_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        candidates_scroll.setFixedHeight(160)
+        candidates_scroll.setFixedHeight(176)   # 카드 156 + 여유(체크박스 추가로 카드가 커짐)
         candidates_scroll.setFrameShape(QFrame.Shape.NoFrame)
         lay.addWidget(candidates_scroll)
 
+        hint_row = QHBoxLayout()
         self._hint_label = QLabel("후보를 클릭해 선택하세요.", self)
         self._hint_label.setStyleSheet("color:#8a8a8a; font-size:11px;")
         self._hint_label.setVisible(False)
-        lay.addWidget(self._hint_label)
+        hint_row.addWidget(self._hint_label)
+        hint_row.addStretch(1)
+        self._save_symbols_btn = QToolButton(self)
+        self._save_symbols_btn.setIcon(_act_icon("save"))
+        self._save_symbols_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._save_symbols_btn.setText("내 심볼로 저장")
+        self._save_symbols_btn.setToolTip("체크한 후보를 내 심볼 팔레트에 한꺼번에 저장")
+        self._save_symbols_btn.setEnabled(False)
+        self._save_symbols_btn.clicked.connect(self._on_save_to_symbols_clicked)
+        hint_row.addWidget(self._save_symbols_btn)
+        lay.addLayout(hint_row)
 
         self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                       | QDialogButtonBox.StandardButton.Cancel, self)
@@ -1310,10 +1372,12 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._selected_card = None
         self._ok_btn.setEnabled(False)
         self._hint_label.setVisible(False)
+        self._save_symbols_btn.setEnabled(False)
 
     def _add_candidate(self, model_used: str, svg_text: str):
         pm = _render_svg_candidate_pixmap(svg_text, 100)
         card = _SvgCandidateCard(model_used, svg_text, pm, self._pick_card, self)
+        card._save_check.stateChanged.connect(self._refresh_save_symbols_enabled)
         self._candidates_row.insertWidget(self._candidates_row.count() - 1, card)
         self._candidates.append((card, svg_text, model_used))
 
@@ -1322,4 +1386,40 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
             c.set_selected(c is card)
         self._selected_card = card
         self._ok_btn.setEnabled(True)
+
+    def _refresh_save_symbols_enabled(self, *_args):
+        self._save_symbols_btn.setEnabled(
+            any(c.is_checked_for_save() for c, _svg, _model in self._candidates))
+
+    def _checked_for_save_candidates(self) -> list[tuple[str, str]]:
+        """체크박스로 고른 (svg 텍스트, 사용된 모델) 목록 — 클릭 단일선택(`_selected_card`)
+        과는 무관한 별개 선택."""
+        return [(svg, model) for c, svg, model in self._candidates if c.is_checked_for_save()]
+
+    def _on_save_to_symbols_clicked(self):
+        """2026-08-19 Stage 4 — 체크한 후보 전부를 내 심볼 팔레트에 한 번에 등록한다.
+        실제 등록(SVG→아이템 변환·썸네일 렌더·`symbol_library` 기록)은 이 다이얼로그가
+        아니라 부모 `CanvasWindow`(host_fileio.py 믹스인)가 한다 — `host_dialogs.py`는
+        순환 임포트를 피하려는 잎(leaf) 모듈이라 `host_selection.py`(썸네일 렌더 등)를
+        직접 import할 수 없다(모듈 docstring 참조). `getattr`로 부모의 메서드를 이름으로만
+        호출하는 방식(`_MermaidDialog`가 `self.parent()._dark`를 읽는 것과 같은 관례)으로
+        결합을 느슨하게 유지한다."""
+        entries = self._checked_for_save_candidates()
+        if not entries:
+            return
+        folder_dlg = _SaveToSymbolsFolderDialog(self)
+        if folder_dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        folder = folder_dlg.chosen_folder()
+        if folder and folder not in symbol_library.load_folders():
+            symbol_library.create_folder(folder)
+        parent = self.parent()
+        save_fn = getattr(parent, "_save_svg_candidates_to_symbols", None)
+        if save_fn is None:
+            QMessageBox.warning(self, "내 심볼로 저장",
+                                "지금 창에서는 심볼 저장을 사용할 수 없습니다.")
+            return
+        subject = self._prompt_edit.text().strip()
+        saved = save_fn(entries, subject, folder)
+        QMessageBox.information(self, "내 심볼로 저장", f"{saved}개를 내 심볼에 저장했습니다.")
 

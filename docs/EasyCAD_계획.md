@@ -1072,9 +1072,16 @@ deep-interview로 확정, 인계 파일(handoff)로 이어받아 같은 날 구�
       추가(이미지 있으면 대상 설명 선택사항, timeout 120s). 신규 pytest 12종, 전체
       749종 통과, 실제 창+실제 게이트웨이(참고 이미지 1장, 텍스트 설명 없이)로 종단
       검증. **Stage 1~3 전부 이 세션에서 완료.**
-    - **다음 순서(Stage 4)**: 후보 카드 다중선택(체크박스)+내 심볼 일괄저장.
+    - **Stage 4(카드 다중선택+내 심볼 저장) 완료** — 카드에 체크박스("심볼로 저장") 추가,
+      "내 심볼로 저장" 버튼→`_SaveToSymbolsFolderDialog`(기존 폴더/새 폴더)→
+      `CanvasWindow._save_svg_candidates_to_symbols`(host_fileio.py, `register_
+      selection_as_symbol`과 같은 위치정규화·썸네일 관례). 다이얼로그는 잎 모듈 제약상
+      `getattr(parent, ...)` 위임으로 호출(host_selection.py 직접 import 불가). 신규
+      pytest 20종, 전체 762종 통과, 실제 창 종단 검증(격리 라이브러리 파일에 실제 기록,
+      팔레트 반영 스크린샷).
+    - **다음 순서(Stage 5)**: Mermaid 실시간 렌더 미리보기(기존 파서+임시 씬 렌더 재사용).
     - 상세 경위: `docs/history/2026-08.md` "§8 항목20 후속 — Mermaid·SVG AI 다이얼로그
-      재정리 Stage 1"·"Stage 2"·"Stage 3".
+      재정리 Stage 1"·"Stage 2"·"Stage 3"·"Stage 4".
 
 ## 9. 검증 철학
 

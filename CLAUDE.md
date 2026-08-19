@@ -852,6 +852,16 @@ docs/
   창+실제 게이트웨이로 종단 검증(`docs/reference/`의 실제 참고 이미지 1장, 텍스트 설명
   없이 gpt·gemini 둘 다 서로 다른 아이콘 생성 성공). 상세: `docs/history/2026-08.md`
   "§8 항목20 후속 — Mermaid·SVG AI 다이얼로그 재정리 Stage 3".
+- **§8 항목20 후속 — Stage 4(카드 다중선택+내 심볼 저장) 완료(2026-08-19, 같은 세션
+  후속)** — 후보 카드에 체크박스("심볼로 저장") 추가(클릭 단일선택과 완전 독립), "내
+  심볼로 저장" 버튼→폴더 선택 다이얼로그(기존 폴더/새 폴더)→`CanvasWindow._save_svg_
+  candidates_to_symbols`(host_fileio.py, `register_selection_as_symbol`과 같은 위치
+  정규화·썸네일 관례)로 한 번에 등록. `host_dialogs.py`는 순환 임포트를 피하는 잎 모듈
+  이라 `host_selection.py`를 직접 import 못 해 `getattr(parent, ...)` 위임으로 호출
+  (`_MermaidDialog`가 이미 쓰던 관례 재사용). 신규 pytest 20종, 전체 pytest 762종 통과,
+  실제 창 종단 검증(격리된 심볼 라이브러리 파일에 실제 기록, 좌측 팔레트 반영까지
+  스크린샷 3장). §8 항목20 후속 Stage 1~4 전부 이 세션에서 완료. 상세:
+  `docs/history/2026-08.md` "§8 항목20 후속 — Mermaid·SVG AI 다이얼로그 재정리 Stage 4".
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

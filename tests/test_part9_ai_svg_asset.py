@@ -35,7 +35,11 @@ from _shared import *  # noqa: F401,F403
 from easycad.ai import gateway as gw  # noqa: E402
 from easycad.ai import text_to_svg as tts  # noqa: E402
 from easycad.fileio.svg_import import parse_svg_items, parse_svg_string  # noqa: E402
-from easycad.canvas.host_dialogs import _SvgAssetDialog, _SvgCandidateCard  # noqa: E402
+from easycad.fileio import symbol_library  # noqa: E402
+from easycad.canvas.host_dialogs import (  # noqa: E402
+    _SvgAssetDialog, _SvgCandidateCard, _SaveToSymbolsFolderDialog,
+)
+from easycad.canvas.host_selection import _group_scene_rect  # noqa: E402
 
 _SAMPLE_SVG = ('<svg viewBox="0 0 100 100">'
               '<line x1="10" y1="10" x2="90" y2="90"/>'
@@ -576,6 +580,245 @@ def test_svg_asset_dialog_generate_with_image_and_no_subject_still_generates():
     assert captured["image"] is not None
     assert len(dlg._candidates) == 1
     dlg.deleteLater()
+
+
+# ── _SvgAssetDialog: 다중선택+내 심볼 저장(Stage 4, 2026-08-19) ─────────────────
+
+def _gen_two_candidates(dlg):
+    def fake_generate(key, subject, *, model, **kw):
+        return _SAMPLE_SVG, model
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
+        dlg._on_generate_clicked()
+        _wait_workers(dlg)
+
+
+def test_svg_candidate_checkbox_independent_of_click_selection():
+    """체크박스(다중선택, 심볼저장용)와 카드 클릭(단일선택, OK로 삽입용)은 서로 무관해야
+    한다 — 하나를 체크해도 다른 카드의 클릭 선택 상태는 안 바뀐다."""
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+    _gen_two_candidates(dlg)
+    first_card, _s1, _m1 = dlg._candidates[0]
+    second_card, _s2, _m2 = dlg._candidates[1]
+
+    first_card._save_check.setChecked(True)
+    assert dlg._checked_for_save_candidates() == [(first_card.svg_text(), _m1)]
+    assert dlg._selected_card is first_card   # 클릭 선택은 첫 성공 후보 기본값 그대로
+
+    dlg._pick_card(second_card)
+    assert dlg._selected_card is second_card
+    assert first_card._save_check.isChecked()   # 클릭 선택 전환이 체크박스를 안 건드림
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_save_button_enabled_only_when_something_checked():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+    _gen_two_candidates(dlg)
+    assert not dlg._save_symbols_btn.isEnabled()
+
+    card, _svg, _model = dlg._candidates[0]
+    card._save_check.setChecked(True)
+    assert dlg._save_symbols_btn.isEnabled()
+
+    card._save_check.setChecked(False)
+    assert not dlg._save_symbols_btn.isEnabled()
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_regenerate_resets_save_button():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+    _gen_two_candidates(dlg)
+    dlg._candidates[0][0]._save_check.setChecked(True)
+    assert dlg._save_symbols_btn.isEnabled()
+
+    _gen_two_candidates(dlg)   # 재생성 — 새 카드로 교체되며 체크 상태도 초기화
+    assert not dlg._save_symbols_btn.isEnabled()
+    dlg.deleteLater()
+
+
+def test_save_to_symbols_folder_dialog_lists_existing_folders_and_new_folder_field():
+    with _isolated_symbol_library():
+        symbol_library.create_folder("기존폴더")
+        d = _SaveToSymbolsFolderDialog()
+        texts = [d._folder_combo.itemText(i) for i in range(d._folder_combo.count())]
+        assert texts == ["(미분류)", "기존폴더", "새 폴더…"]
+        assert d._new_folder_edit.isHidden()
+
+        d._folder_combo.setCurrentIndex(texts.index("기존폴더"))
+        assert d.chosen_folder() == "기존폴더"
+        assert d._new_folder_edit.isHidden()
+
+        d._folder_combo.setCurrentIndex(texts.index("새 폴더…"))
+        assert not d._new_folder_edit.isHidden()
+        d._new_folder_edit.setText("만드는 중인 폴더")
+        assert d.chosen_folder() == "만드는 중인 폴더"
+
+        d._folder_combo.setCurrentIndex(texts.index("(미분류)"))
+        assert d.chosen_folder() is None
+        d.deleteLater()
+
+
+def test_svg_asset_dialog_save_to_symbols_calls_parent_method_with_checked_entries():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+    _gen_two_candidates(dlg)
+    card, svg_text, model = dlg._candidates[0]
+    card._save_check.setChecked(True)
+
+    class _FakeParent:
+        def __init__(self):
+            self.calls = []
+
+        def _save_svg_candidates_to_symbols(self, entries, subject, folder):
+            self.calls.append((entries, subject, folder))
+            return len(entries)
+
+    fake_parent = _FakeParent()
+
+    class _FakeFolderDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def chosen_folder(self):
+            return "새폴더"
+
+    with patch.object(dlg, "parent", return_value=fake_parent), \
+         patch("easycad.canvas.host_dialogs._SaveToSymbolsFolderDialog", _FakeFolderDlg), \
+         patch("easycad.canvas.host_dialogs.symbol_library.load_folders", return_value=[]), \
+         patch("easycad.canvas.host_dialogs.symbol_library.create_folder") as create_folder, \
+         patch("easycad.canvas.host_dialogs.QMessageBox.information") as info:
+        dlg._on_save_to_symbols_clicked()
+
+    create_folder.assert_called_once_with("새폴더")
+    assert fake_parent.calls == [([(svg_text, model)], "BNC 커넥터 아이콘", "새폴더")]
+    assert info.called
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_save_to_symbols_noop_when_nothing_checked():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+    _gen_two_candidates(dlg)
+    with patch("easycad.canvas.host_dialogs._SaveToSymbolsFolderDialog") as folder_dlg:
+        dlg._on_save_to_symbols_clicked()
+    assert not folder_dlg.called
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_save_to_symbols_warns_when_parent_lacks_method():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+    _gen_two_candidates(dlg)
+    dlg._candidates[0][0]._save_check.setChecked(True)
+
+    class _FakeFolderDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def chosen_folder(self):
+            return None
+
+    with patch.object(dlg, "parent", return_value=object()), \
+         patch("easycad.canvas.host_dialogs._SaveToSymbolsFolderDialog", _FakeFolderDlg), \
+         patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn:
+        dlg._on_save_to_symbols_clicked()
+    assert warn.called
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_save_to_symbols_cancel_does_nothing():
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+    _gen_two_candidates(dlg)
+    dlg._candidates[0][0]._save_check.setChecked(True)
+
+    class _FakeFolderDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Rejected
+
+    fake_parent = type("_P", (), {"_save_svg_candidates_to_symbols":
+                                   lambda self, *a: 99})()
+    with patch.object(dlg, "parent", return_value=fake_parent), \
+         patch("easycad.canvas.host_dialogs._SaveToSymbolsFolderDialog", _FakeFolderDlg), \
+         patch("easycad.canvas.host_dialogs.QMessageBox.information") as info:
+        dlg._on_save_to_symbols_clicked()
+    assert not info.called
+    dlg.deleteLater()
+
+
+# ── host_fileio._save_svg_candidates_to_symbols (Stage 4 실제 등록) ────────────
+
+def test_save_svg_candidates_to_symbols_creates_normalized_entries():
+    """`_LineItem`/`_RectItem`는 종류에 따라 절대좌표를 `pos`에 담기도, 로컬 도형(rect/
+    line)에 담기도 해(전자는 드래그로 옮겨진 도형, 후자는 방금 파싱된 SVG 도형) `pos`
+    필드 자체를 직접 비교할 수 없다 — dict를 실제 아이템으로 복원해 합친 bbox의 좌상단이
+    원점 근처인지로 정규화 여부를 확인한다(`register_selection_as_symbol`과 동일한
+    `_group_scene_rect` 기준)."""
+    from easycad.fileio.document import dict_to_item
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        saved = w._save_svg_candidates_to_symbols(
+            [(_SAMPLE_SVG, "gpt-5.4-mini")], "BNC 커넥터", None)
+        assert saved == 1
+        entries = symbol_library.load_library()
+        assert len(entries) == 1
+        assert entries[0]["name"] == "BNC 커넥터 — gpt-5.4-mini"
+        assert entries[0]["folder"] is None
+        restored = [it for it in (dict_to_item(d) for d in entries[0]["items"]) if it is not None]
+        box = _group_scene_rect(restored)
+        assert abs(box.left()) < 2.0 and abs(box.top()) < 2.0
+        w.deleteLater()
+
+
+def test_save_svg_candidates_to_symbols_uses_model_only_when_subject_empty():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        w._save_svg_candidates_to_symbols([(_SAMPLE_SVG, "gemini-3.6-flash")], "", None)
+        entries = symbol_library.load_library()
+        assert entries[0]["name"] == "gemini-3.6-flash"
+        w.deleteLater()
+
+
+def test_save_svg_candidates_to_symbols_assigns_folder():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        w._save_svg_candidates_to_symbols([(_SAMPLE_SVG, "gpt-5.4-mini")], "안테나", "내폴더")
+        entries = symbol_library.load_library()
+        assert entries[0]["folder"] == "내폴더"
+        w.deleteLater()
+
+
+def test_save_svg_candidates_to_symbols_saves_multiple_and_refreshes_palette():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        saved = w._save_svg_candidates_to_symbols(
+            [(_SAMPLE_SVG, "gpt-5.4-mini"), (_SAMPLE_SVG, "gemini-3.6-flash")], "안테나", None)
+        assert saved == 2
+        assert len(symbol_library.load_library()) == 2
+        w.deleteLater()
+
+
+def test_save_svg_candidates_to_symbols_skips_unparseable_entry():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        saved = w._save_svg_candidates_to_symbols(
+            [("<not valid svg", "gpt-5.4-mini"), (_SAMPLE_SVG, "gemini-3.6-flash")],
+            "안테나", None)
+        assert saved == 1   # 깨진 것 하나는 건너뛰고 나머지는 저장
+        assert len(symbol_library.load_library()) == 1
+        w.deleteLater()
 
 
 # ── host_fileio._insert_ai_svg_asset (삽입 경로) ──────────────────────────────

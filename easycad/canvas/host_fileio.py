@@ -38,13 +38,15 @@ from easycad.fileio.pdf_export import export_pdf
 from easycad.fileio.dxf_export import export_dxf, export_dwg
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.svg_import import parse_svg_items, parse_svg_string
-from easycad.fileio.document import save_document, load_document, load_document_layers, dict_to_item
+from easycad.fileio.document import (
+    save_document, load_document, load_document_layers, dict_to_item, item_to_dict,
+)
 from easycad.fileio import symbol_library
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
 from easycad.canvas.host_widgets import _border_attach
-from easycad.canvas.host_selection import _group_scene_rect
+from easycad.canvas.host_selection import _group_scene_rect, _render_symbol_thumbnail
 from easycad.canvas.host_dialogs import (
     _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _MermaidDialog, _PdfExportDialog,
     _SvgAssetDialog,
@@ -512,6 +514,39 @@ class _FileIOMixin:
         self.push_undo_add_many(items)
         self.set_tool("select")
         self.statusBar().showMessage(f"AI SVG 에셋 삽입: 도형 {len(items)}개", 4000)
+
+    def _save_svg_candidates_to_symbols(self, entries: list[tuple[str, str]],
+                                        subject: str, folder: str | None) -> int:
+        """SVG 후보(체크된 카드) 여러 개를 한 번에 내 심볼 팔레트에 등록 — §8 항목20 후속
+        Stage 4(2026-08-19). `_SvgAssetDialog`가 `getattr(self, ...)`로 이름만 보고
+        호출한다(그 다이얼로그는 순환 임포트를 피하는 잎 모듈이라 이 파일을 직접 import
+        못 함, `host_dialogs._on_save_to_symbols_clicked` 참조). `register_selection_
+        as_symbol`(host_selection.py)과 같은 관례(위치를 bbox 좌상단 기준으로 정규화,
+        실제 렌더 캡처 썸네일)를 따르되, 소스가 캔버스 선택이 아니라 아직 씬에 없는 SVG
+        파싱 결과라는 점만 다르다 — `_svg_text_to_items`로 만든 임시 아이템을 그대로
+        재사용(씬에는 추가하지 않음, 등록만 하고 버림)."""
+        saved = 0
+        for svg_text, model_used in entries:
+            try:
+                items = self._svg_text_to_items(svg_text, self._SVG_LONG, QPointF(0.0, 0.0))
+            except Exception:  # noqa: BLE001 — 후보 하나 실패해도 나머지는 계속 저장
+                continue
+            if not items:
+                continue
+            dicts = [d for d in (item_to_dict(it) for it in items) if d is not None]
+            if not dicts:
+                continue
+            box = _group_scene_rect(items)
+            for d in dicts:
+                d["pos"][0] -= box.left()
+                d["pos"][1] -= box.top()
+            thumb = _render_symbol_thumbnail(items, box)
+            name = f"{subject} — {model_used}" if subject else model_used
+            symbol_library.add_symbol(name, dicts, thumb, folder)
+            saved += 1
+        if saved:
+            self._refresh_custom_symbol_section()
+        return saved
 
 
     def _build_shape_item(self, tool_key: str):
