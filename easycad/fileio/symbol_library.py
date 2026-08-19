@@ -11,8 +11,11 @@ deep-interview 2026-08-03 확정 스코프: 등록 대상=현재 선택 전부(1
 
 [신규기능, 2026-08-12 좌측 패널 아코디언 개편] 폴더 지원 추가 — 심볼 항목에 "folder" 필드
 (없거나 None=미분류), 폴더 자체는 별도 목록(빈 폴더도 드롭 대상으로 남아야 하므로 심볼
-필드만으론 존재를 못 담음). 관리 기능은 심볼과 같은 관례로 생성+삭제만(이름변경 스코프 밖).
-폴더 삭제 시 소속 심볼은 미분류로 소급(심볼 자체는 보존).
+필드만으론 존재를 못 담음). 폴더 삭제 시 소속 심볼은 미분류로 소급(심볼 자체는 보존).
+폴더 이름변경은 도입 당시 스코프 밖이었으나, 심볼 이름변경과 마찬가지로 실사용 피드백
+(2026-08-19)으로 뒤집어 `rename_folder` 추가 — 이름 자체가 심볼의 "folder" 필드 값과
+같은 식별자라 이름을 바꾸면 소속 심볼 전체의 참조도 함께 갱신해야 한다(심볼 이름변경은
+id로 식별해 이런 캐스케이드가 불필요했던 것과 다른 점).
 """
 import json
 import os
@@ -75,6 +78,24 @@ def delete_folder(name: str):
     for e in data["symbols"]:
         if e.get("folder") == name:
             e["folder"] = None
+    _save_raw(data)
+
+
+def rename_folder(old_name: str, new_name: str):
+    """[실사용 피드백 2026-08-19] 폴더 이름을 바꾼다 — 폴더 목록의 이름 자체와, 그 이름을
+    "folder" 값으로 참조 중인 모든 심볼을 함께 갱신(캐스케이드, 심볼 이름변경엔 없던 단계 —
+    심볼은 id로 식별되지만 폴더는 이름이 곧 식별자라서). 빈 새 이름·변화 없음·존재하지 않는
+    old_name·이미 있는 new_name은 무시(호출부가 확인)."""
+    new_name = new_name.strip()
+    if not new_name or new_name == old_name:
+        return
+    data = _load_raw()
+    if old_name not in data["folders"] or new_name in data["folders"]:
+        return
+    data["folders"][data["folders"].index(old_name)] = new_name
+    for e in data["symbols"]:
+        if e.get("folder") == old_name:
+            e["folder"] = new_name
     _save_raw(data)
 
 

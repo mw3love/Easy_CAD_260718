@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import html
 import re
 import uuid
 
@@ -45,7 +46,7 @@ from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
 from easycad.canvas.host_widgets import _clipboard_pixmap
-from easycad.canvas.host_ui import _PALETTE_ICON_PX
+from easycad.canvas.host_ui import _PALETTE_ICON_PX, _PALETTE_SYM_ICON_PX
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
@@ -66,6 +67,10 @@ _PALETTE_MIME = "application/x-easycad-tool"      # QDrag가 실어 나르는 to
 _PALETTE_DROP_WH = {"rect": (120.0, 72.0), "ellipse": (100.0, 100.0)}  # 기본 생성 크기
 _PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 크기
 
+# [실사용 피드백 2026-08-19] '내 심볼' 호버 확대 미리보기 해상도 — 팔레트 아이콘
+# (`_PALETTE_SYM_ICON_PX`=28)보다 훨씬 커서 다중 도형 조합도 형태를 알아볼 수 있게.
+_SYMBOL_PREVIEW_PX = 160
+
 
 def _group_scene_rect(items) -> QRectF:
     """아이템 목록의 '보이는 도형' 기준 합집합 씬 사각형(§8-8 커스텀 심볼 등록/배치 공용).
@@ -80,15 +85,19 @@ def _group_scene_rect(items) -> QRectF:
     return box
 
 
-def _render_symbol_thumbnail(items, box: QRectF, size: int = _PALETTE_ICON_PX) -> str:
+def _render_symbol_thumbnail(items, box: QRectF, size: int = _PALETTE_SYM_ICON_PX) -> str:
     """items(아직 scene 미소속인 임시 인스턴스)를 정사각 PNG로 렌더해 base64로 반환.
-    등록 직후 한 번만 쓰는 저해상도 팔레트 아이콘이라 임시 QGraphicsScene을 그때그때 만든다.
-    [실사용 버그 수정 2026-08-19] 예전엔 64px로 렌더한 뒤 팔레트가 그 PNG를 다시
+    팔레트 아이콘·호버 미리보기가 공유하는 저해상도 렌더라 임시 QGraphicsScene을 그때그때
+    만든다. [실사용 버그 수정 2026-08-19] 예전엔 64px로 렌더한 뒤 팔레트가 그 PNG를 다시
     `_PALETTE_ICON_PX`(18)로 스무스 축소했다 — 두 번째 축소가 1px대 선을 서브픽셀로
     지워 기본 도형 아이콘(`_shape_icon`, 18px에서 직접 그림)보다 훨씬 흐리고 얇아 보였다
     (2026-08-18 `_min_stroke_render` 처방은 64px 기준 3px였는데, 18px로 다시 줄면
     ~0.8px밖에 안 남아 부족했다). 이 이중축소 자체를 없애려 최종 아이콘 해상도에서
-    바로 렌더한다 — margin도 `_shape_icon`과 동일값이라 형제 아이콘과 같은 크기 envelope."""
+    바로 렌더한다 — margin도 `_shape_icon`과 동일값이라 형제 아이콘과 같은 크기 envelope.
+    [실사용 피드백 2026-08-19 후속] 기본값을 `_PALETTE_ICON_PX`(18, 기본도형용)에서
+    `_PALETTE_SYM_ICON_PX`(28, 내 심볼 전용)로 올림 — 다중 도형 조합은 기본도형과 같은
+    18px에서는 형태가 안 보인다는 보고. 호출부는 팔레트 아이콘(기본값)과 호버 미리보기
+    (`size=_SYMBOL_PREVIEW_PX`로 명시 호출)로 이 함수를 공유한다."""
     scene = QGraphicsScene()
     for it in items:
         scene.addItem(it)
@@ -367,8 +376,11 @@ class _SelectionMixin:
         방식 썸네일(흐릿함, `_render_symbol_thumbnail` 개편 참조)을 그대로 갖고 있다 —
         재등록해야만 고쳐진다는 게 기존 관례였지만, 실사용자가 자기 심볼로 바로 재현해
         "여전히 안 보인다"고 재보고해 자동 치유로 정책을 바꿨다. 새 포맷 썸네일은 항상
-        정확히 `_PALETTE_ICON_PX` 크기이므로 그 자체가 버전 마커 — 별도 스키마 필드 없이
+        정확히 `_PALETTE_SYM_ICON_PX` 크기이므로 그 자체가 버전 마커 — 별도 스키마 필드 없이
         팔레트를 다시 그릴 때마다(`_refresh_custom_symbol_section`) 감지해 조용히 재렌더한다.
+        [같은 날 후속] 마커 크기를 `_PALETTE_ICON_PX`(18, 기본도형용)에서 `_PALETTE_SYM_
+        ICON_PX`(28)로 올림 — 아이콘 자체를 키운 라운드가 이 값도 같이 옮겨, 옛 18px
+        썸네일(이 라운드 전 등록분 포함)도 같은 경로로 자동 치유된다.
 
         [정정 2026-08-19] 처음엔 `symbol_library.update_symbol_thumb`로 디스크에도 영구
         저장했다가, 전체 스모크에서 무관해 보이는 다른 테스트(`test_minimap_bounds_cached_
@@ -382,7 +394,7 @@ class _SelectionMixin:
         (눈에 보이는 흐림 해결)은 충분히 달성되고 재렌더 비용도 작은 아이콘 하나뿐이라
         저렴하다(디스크의 옛 썸네일은 그대로 남지만 팔레트에는 항상 최신 렌더가 보인다)."""
         pm = _b64_to_pixmap(entry.get("thumb", ""))
-        if pm.width() == _PALETTE_ICON_PX and pm.height() == _PALETTE_ICON_PX:
+        if pm.width() == _PALETTE_SYM_ICON_PX and pm.height() == _PALETTE_SYM_ICON_PX:
             return entry
         items = [it for it in (dict_to_item(d) for d in entry.get("items", [])) if it is not None]
         if not items:
@@ -390,6 +402,24 @@ class _SelectionMixin:
         box = _group_scene_rect(items)
         new_thumb = _render_symbol_thumbnail(items, box)
         return {**entry, "thumb": new_thumb}
+
+    def _symbol_preview_html(self, entry: dict) -> str:
+        """[실사용 피드백 2026-08-19] '내 심볼' 버튼 호버 확대 미리보기 — 팔레트 아이콘을
+        `_PALETTE_SYM_ICON_PX`(28)로 키워도 다중 도형 조합(예: 사각형 2개+화살표 2개인
+        작은 흐름도)은 여전히 형태 구분이 어렵다는 보고에 대한 답. 버튼을 더 키우는 대신
+        저장된 items json에서 그때그때 고해상도로 다시 그려 툴팁 이미지로 보여준다 —
+        호버할 때만 계산되므로(`host_widgets._PaletteButton.event`) 심볼이 아무리 많아져도
+        팔레트 새로고침 자체의 비용은 늘지 않는다(등록 개수 증가에 대한 사용자의 확장성
+        우려에 대한 답이기도 함). host_ui.py는 host_selection.py를 임포트할 수 없어(순환
+        임포트, `_ensure_symbol_thumb_current`와 같은 제약) 이 메서드를 여기 두고
+        `self._symbol_preview_html(...)`로 호출한다."""
+        name = html.escape(entry.get("name", ""))
+        items = [it for it in (dict_to_item(d) for d in entry.get("items", [])) if it is not None]
+        if not items:
+            return name
+        box = _group_scene_rect(items)
+        b64 = _render_symbol_thumbnail(items, box, size=_SYMBOL_PREVIEW_PX)
+        return f'<div>{name}<br><img src="data:image/png;base64,{b64}"></div>'
 
     # ---- [편의기능] 객체 잠금 ---------------------------------------------
 

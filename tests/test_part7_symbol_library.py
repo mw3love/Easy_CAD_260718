@@ -12,7 +12,7 @@ from PyQt6.QtGui import QPen
 from _shared import *  # noqa: F401,F403
 from easycad.fileio import symbol_library
 from easycad.canvas.host_selection import _group_scene_rect
-from easycad.canvas.host_ui import _PALETTE_ICON_PX
+from easycad.canvas.host_ui import _PALETTE_SYM_ICON_PX
 from easycad.fileio.document import _b64_to_pixmap
 
 
@@ -167,7 +167,11 @@ def test_rename_custom_symbol_prompt_updates_entry_and_button_refresh():
             w._rename_custom_symbol_prompt(sym_id)
         assert symbol_library.load_library()[0]["name"] == "저잡음 증폭기"
         assert sym_id in w._custom_sym_buttons   # refresh가 다시 그려도 버튼 매핑 유지
-        assert w._custom_sym_buttons[sym_id].toolTip() == "저잡음 증폭기"
+        # [실사용 피드백 2026-08-19] 정적 toolTip()이 아니라 호버 시 지연 계산되는 확대
+        # 미리보기(tooltip_html_fn)로 바뀌었다 — 그 계산 결과에 새 이름이 반영되는지 확인.
+        btn = w._custom_sym_buttons[sym_id]
+        assert btn.toolTip() == ""
+        assert "저잡음 증폭기" in btn._tooltip_html_fn()
 
 
 def test_rename_custom_symbol_prompt_cancelled_keeps_name():
@@ -258,6 +262,61 @@ def test_delete_folder_moves_members_to_unclassified_not_deletes_them():
         assert entries[0]["folder"] is None
 
 
+# ---- [실사용 피드백 2026-08-19] 폴더 이름변경 ("새 폴더 만들고 이름수정이 안 되네") -----
+
+def test_rename_folder_updates_name_and_member_references():
+    with _isolated_symbol_library():
+        symbol_library.create_folder("무선")
+        entry = symbol_library.add_symbol("증폭기", [], "", folder="무선")
+        symbol_library.rename_folder("무선", "안테나")
+        assert symbol_library.load_folders() == ["안테나"]
+        assert symbol_library.load_library()[0]["id"] == entry["id"]
+        assert symbol_library.load_library()[0]["folder"] == "안테나"   # 참조도 함께 갱신
+
+
+def test_rename_folder_blank_or_unchanged_or_unknown_is_noop():
+    with _isolated_symbol_library():
+        symbol_library.create_folder("무선")
+        symbol_library.rename_folder("무선", "   ")
+        symbol_library.rename_folder("무선", "무선")
+        symbol_library.rename_folder("없음", "새이름")
+        assert symbol_library.load_folders() == ["무선"]
+
+
+def test_rename_folder_to_existing_name_is_noop():
+    with _isolated_symbol_library():
+        symbol_library.create_folder("무선")
+        symbol_library.create_folder("안테나")
+        symbol_library.rename_folder("무선", "안테나")   # 중복 이름은 무시(호출부가 확인)
+        assert symbol_library.load_folders() == ["무선", "안테나"]
+
+
+def test_rename_symbol_folder_prompt_updates_library_and_refreshes_panel():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        with patch.object(QInputDialog, "getText", return_value=("무선", True)):
+            w._prompt_create_symbol_folder()
+
+        with patch.object(QInputDialog, "getText", return_value=("안테나", True)):
+            w._rename_symbol_folder_prompt("무선")
+        assert symbol_library.load_folders() == ["안테나"]
+
+
+def test_rename_symbol_folder_prompt_duplicate_name_warns_and_keeps_original():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        with patch.object(QInputDialog, "getText", return_value=("무선", True)):
+            w._prompt_create_symbol_folder()
+        with patch.object(QInputDialog, "getText", return_value=("전원", True)):
+            w._prompt_create_symbol_folder()
+
+        with patch.object(QInputDialog, "getText", return_value=("전원", True)), \
+                patch.object(QMessageBox, "warning") as mock_warn:
+            w._rename_symbol_folder_prompt("무선")
+        assert mock_warn.called
+        assert symbol_library.load_folders() == ["무선", "전원"]   # 변경 없음
+
+
 def test_left_panel_new_folder_and_drag_move_wiring():
     """UI 배선 — "+" 버튼(`_prompt_create_symbol_folder`)과 드롭존 콜백(`_move_custom_symbol`)이
     실제로 라이브러리를 갱신하고 팔레트를 다시 그리는지. 실제 QDrag 합성은 이 하네스가
@@ -311,7 +370,7 @@ def test_custom_symbol_thumbnail_matches_palette_icon_resolution():
             w.register_selection_as_symbol()
         entry = symbol_library.load_library()[0]
         pm = _b64_to_pixmap(entry["thumb"])
-        assert pm.width() == _PALETTE_ICON_PX and pm.height() == _PALETTE_ICON_PX
+        assert pm.width() == _PALETTE_SYM_ICON_PX and pm.height() == _PALETTE_SYM_ICON_PX
 
 
 def test_custom_symbol_thumbnail_stroke_visible_for_thin_wide_symbol():
@@ -519,7 +578,7 @@ def test_customsym_button_thumbnail_self_heals_from_old_64px_format():
 
         healed = w0._ensure_symbol_thumb_current(entry)
         pm = _b64_to_pixmap(healed["thumb"])
-        assert pm.width() == _PALETTE_ICON_PX and pm.height() == _PALETTE_ICON_PX
+        assert pm.width() == _PALETTE_SYM_ICON_PX and pm.height() == _PALETTE_SYM_ICON_PX
         assert symbol_library.load_library()[0]["thumb"] == ""   # 디스크는 의도적으로 그대로
 
         # 팔레트 버튼 자체도 (디스크가 아니라) 이 인메모리 치유 결과로 아이콘을 그린다.
@@ -683,3 +742,79 @@ def _EnterKeyEvent():
     from PyQt6.QtGui import QKeyEvent
     from PyQt6.QtCore import QEvent
     return QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
+
+
+# ---- [실사용 피드백 2026-08-19] 호버 확대 미리보기 — "46번 아이콘이 뭔 그림인지 안 보임" ---
+
+def test_symbol_preview_html_embeds_larger_render_than_palette_icon():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        entry = symbol_library.load_library()[0]
+        html_out = w._symbol_preview_html(entry)
+        assert "드래그심볼" in html_out
+        assert '<img src="data:image/png;base64,' in html_out
+        b64 = html_out.split("base64,", 1)[1].split('"', 1)[0]
+        pm = _b64_to_pixmap(b64)
+        # 팔레트 아이콘(_PALETTE_SYM_ICON_PX)보다 훨씬 큰 해상도로 다시 렌더해야 한다 —
+        # 그래야 다중 도형(2개+) 조합의 형태가 확대해서 구분된다.
+        assert pm.width() > _PALETTE_SYM_ICON_PX * 2
+
+
+def test_symbol_preview_html_escapes_name():
+    with _isolated_symbol_library():
+        entry = symbol_library.add_symbol("<b>위험</b>", [], "")
+        w = CanvasWindow()
+        html_out = w._symbol_preview_html(entry)
+        assert "<b>위험</b>" not in html_out
+        assert "&lt;b&gt;" in html_out
+
+
+def test_custom_symbol_button_uses_lazy_tooltip_not_precomputed_at_refresh():
+    """[실사용 피드백 2026-08-19] "심볼이 많아지면?" 확장성 우려에 대한 답 — 새로고침 시점엔
+    아무 것도 안 그리고, 실제 호버(QEvent.ToolTip)가 일어날 때만 큰 미리보기를 계산한다.
+    버튼의 정적 QToolTip은 비워두고, 지연 콜백만 들고 있는지로 이를 검증한다."""
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        btn = w._custom_sym_buttons[sym_id]
+        assert btn.toolTip() == ""
+        assert btn._tooltip_html_fn is not None
+        assert "드래그심볼" in btn._tooltip_html_fn()
+
+
+def test_custom_symbol_icon_size_at_least_matches_base_shape_icon():
+    # [실사용 피드백 2026-08-19] "심볼 아이콘이 최소한 기본도형만큼은 나오게" — 커스텀 심볼
+    # 버튼의 아이콘 픽셀 크기가 기본도형 버튼과 같거나 커야 한다.
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        custom_icon_size = w._custom_sym_buttons[sym_id].iconSize()
+        base_icon_size = w._shape_tool_buttons["rect"].iconSize()
+        assert custom_icon_size.width() >= base_icon_size.width()
+        assert custom_icon_size.height() >= base_icon_size.height()
+
+
+def test_custom_symbol_button_dispatches_real_qevent_tooltip_to_qtooltip_showtext():
+    """단위 테스트는 지금까지 `btn._tooltip_html_fn()`을 직접 호출해 콜백 내용만 검증했다 —
+    여기서는 실제 `QEvent.ToolTip`을 `event()`에 흘려 Qt 배선 자체(`QToolTip.showText` 호출)
+    까지 확인한다. 기본도형 버튼은 정적 tooltip 경로 그대로라 이 배선을 안 타는지도 함께."""
+    from PyQt6.QtCore import QEvent, QPoint
+    from PyQt6.QtGui import QHelpEvent
+
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)
+        btn = w._custom_sym_buttons[sym_id]
+        ev = QHelpEvent(QEvent.Type.ToolTip, QPoint(1, 1), QPoint(10, 10))
+        with patch("easycad.canvas.host_widgets.QToolTip.showText") as mock_show:
+            handled = btn.event(ev)
+        assert handled is True
+        assert mock_show.called
+        assert "드래그심볼" in mock_show.call_args.args[1]
+
+        base_btn = w._shape_tool_buttons["rect"]
+        ev2 = QHelpEvent(QEvent.Type.ToolTip, QPoint(1, 1), QPoint(10, 10))
+        with patch("easycad.canvas.host_widgets.QToolTip.showText") as mock_show2:
+            base_btn.event(ev2)
+        assert not mock_show2.called   # 기본도형은 정적 setToolTip 경로 그대로

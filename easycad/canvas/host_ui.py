@@ -86,6 +86,13 @@ _PALETTE_TRIANGLE_WH = (77.94, 90.0)
 # [같은 날 3차 후속] 패널 자체를 속성/미니맵 패널(218px)과 비슷한 폭으로 줄이자는 요청 —
 # 버튼·아이콘·폰트를 한 번 더 줄이고(58→48, 22→18, 폰트 -2pt), 4열은 유지.
 _PALETTE_ICON_PX = 18
+# [실사용 피드백 2026-08-19] 기본도형은 단일 글리프라 18px에서도 또렷하지만, "내 심볼"은
+# 사용자가 등록한 임의 조합(예: 사각형 2개+화살표 2개인 작은 흐름도)이라 같은 18px에서는
+# 형태 자체가 안 보인다는 보고 — 기본도형과 "최소한 같은 크기"를 요청받아 그보다 큰 전용
+# 상수를 신설(기본도형 자체는 이미 충분히 커서 함께 키우지 않음). 그래도 가로로 아주 긴
+# 조합은 이 크기에서도 한계가 있어(2:1 이상이면 세로가 다시 눌린다) 호버 확대 미리보기
+# (`host_selection._symbol_preview_html`)로 보완한다.
+_PALETTE_SYM_ICON_PX = 28
 _PALETTE_COLS = 4
 _PALETTE_FONT_SHRINK = 1   # pt만큼 기본 폰트에서 뺀다 — [2026-08-12 5차] 2→1, 너무 작다는 피드백
 # [2026-08-12 6차] 폰트를 키운 뒤 버튼 높이(40)가 실제 sizeHint(48)보다 작아 라벨 아래가
@@ -874,21 +881,28 @@ class _UIBuildMixin:
         return pm
 
 
-    def _palette_button(self, label: str, icon_kind, tooltip: str, tool_key: str) -> QToolButton:
+    def _palette_button(self, label: str, icon_kind, tooltip: str, tool_key: str,
+                         icon_px: int = _PALETTE_ICON_PX, tooltip_html_fn=None) -> QToolButton:
         """icon_kind는 보통 _SYMBOL_KINDS 키 문자열이지만, 커스텀 심볼(§8-8)처럼 미리 만든
-        QIcon(썸네일)을 직접 넘길 수도 있다."""
+        QIcon(썸네일)을 직접 넘길 수도 있다. icon_px는 [실사용 피드백 2026-08-19]로 신설 —
+        커스텀 심볼은 `_PALETTE_SYM_ICON_PX`(기본도형보다 큼)를 받는다. tooltip_html_fn은
+        같은 피드백의 호버 확대 미리보기 — 매 팔레트 새로고침마다 전 심볼을 미리 렌더하면
+        심볼이 많아질수록 비용이 커지므로(사용자가 우려한 바로 그 확장성 문제), 실제 호버가
+        일어날 때만 지연 계산한다(`_PaletteButton.event`가 QEvent.ToolTip에서 호출)."""
         # [M3 #17] 클릭=무장 / 드래그=캔버스 드롭 생성. [2026-08-19] drag_*_fn 3개는 씬에
         # 진짜 임시 도형을 만들어 실시간 정렬 스냅을 태우는 경로(host_fileio.py 참조) —
         # False를 돌려주는 tool_key(포트·커스텀심볼)는 preview_fn 기반 네이티브 QDrag로 폴백.
         btn = _PaletteButton(tool_key, preview_fn=self._render_drag_preview,
                               drag_begin_fn=self._palette_drag_begin,
                               drag_move_fn=self._palette_drag_move,
-                              drag_end_fn=self._palette_drag_end)
+                              drag_end_fn=self._palette_drag_end,
+                              tooltip_html_fn=tooltip_html_fn)
         btn.setText(label)
-        btn.setIcon(icon_kind if isinstance(icon_kind, QIcon) else self._shape_icon(icon_kind, px=_PALETTE_ICON_PX))
-        btn.setIconSize(QSize(_PALETTE_ICON_PX, _PALETTE_ICON_PX))
+        btn.setIcon(icon_kind if isinstance(icon_kind, QIcon) else self._shape_icon(icon_kind, px=icon_px))
+        btn.setIconSize(QSize(icon_px, icon_px))
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        btn.setToolTip(tooltip)
+        if tooltip_html_fn is None:
+            btn.setToolTip(tooltip)
         btn.setCheckable(True)
         # [2026-08-12 3차 피드백] 라벨 폰트도 축소 — QFont로(추후 _apply_theme가 setStyleSheet로
         # checked/hover 배경색을 다시 씌워도 폰트는 별도 채널이라 안 덮임, 스타일시트로 넣으면
@@ -969,6 +983,15 @@ class _UIBuildMixin:
             head = QHBoxLayout()
             head.addWidget(self._section_label(title), 1)
             if deletable:
+                # [실사용 피드백 2026-08-19] "새 폴더는 만드는데 이름수정이 안 된다" 보고로
+                # 신설 — 도입 당시엔 폴더 이름변경이 스코프 밖이었다(심볼 이름변경만 지원).
+                rename_btn = QToolButton()
+                rename_btn.setText("✎"); rename_btn.setAutoRaise(True)
+                rename_btn.setFixedSize(QSize(16, 16))
+                rename_btn.setToolTip(f"'{folder_name}' 폴더 이름변경")
+                rename_btn.clicked.connect(
+                    lambda _c=False, n=folder_name: self._rename_symbol_folder_prompt(n))
+                head.addWidget(rename_btn)
                 del_btn = QToolButton()
                 del_btn.setText("×"); del_btn.setAutoRaise(True)
                 del_btn.setFixedSize(QSize(16, 16))
@@ -988,7 +1011,12 @@ class _UIBuildMixin:
                 icon = QIcon(_b64_to_pixmap(entry["thumb"]))
                 sid = entry["id"]
                 key = f"customsym:{sid}"
-                btn = self._palette_button(entry["name"][:6], icon, entry["name"], key)
+                # [실사용 피드백 2026-08-19] icon_px를 기본도형보다 큰 전용 상수로, 정적
+                # tooltip 대신 호버 시에만 계산되는 확대 미리보기(tooltip_html_fn)로.
+                btn = self._palette_button(
+                    entry["name"][:6], icon, entry["name"], key,
+                    icon_px=_PALETTE_SYM_ICON_PX,
+                    tooltip_html_fn=lambda e=entry: self._symbol_preview_html(e))
                 # [실사용 버그 수정 2026-08-19] 이 섹션은 등록/삭제/이름변경/이동마다 버튼을
                 # 새로 만든다 — `_apply_theme`의 접근 목록(`_accent_btns`)이 다음 테마 전환
                 # 때나 이 새 버튼을 보므로, 만든 즉시 같은 스타일을 걸어 일반 도형 버튼과
@@ -1013,7 +1041,8 @@ class _UIBuildMixin:
 
     def _show_custom_symbol_context_menu(self, btn: QToolButton, pos, sym_id: str):
         """[실사용 피드백 2026-08-18] 우클릭 = 곧바로 삭제 확인창이던 것을 메뉴(이름변경/삭제)
-        로 교체 — 탐색기 관례. 폴더 이름변경은 스코프 밖(심볼만)."""
+        로 교체 — 탐색기 관례. 폴더 이름변경은 헤더의 "✎" 버튼이 별도로 담당(아래
+        `_rename_symbol_folder_prompt`, 2026-08-19 신설)."""
         menu = QMenu(self)
         menu.addAction("이름변경…", lambda: self._rename_custom_symbol_prompt(sym_id))
         menu.addAction("삭제…", lambda: self._delete_custom_symbol_prompt(sym_id))
@@ -1053,9 +1082,25 @@ class _UIBuildMixin:
         self._refresh_custom_symbol_section()
 
 
+    def _rename_symbol_folder_prompt(self, name: str):
+        """[실사용 피드백 2026-08-19] 폴더 그룹 헤더의 "✎" 버튼 → 새 이름 입력 후
+        `symbol_library.rename_folder`로 저장 — 도입 당시 "폴더 이름변경은 스코프 밖"이던
+        것을 심볼 이름변경(2026-08-18)과 같은 이유로 뒤집음. 이름 중복은 폴더 목록에서
+        직접 확인(라이브러리 쪽은 조용히 무시하므로 사용자에게 이유를 알려줘야 함)."""
+        new_name, ok = QInputDialog.getText(self, "폴더 이름변경", "새 이름:", text=name)
+        new_name = new_name.strip()
+        if not ok or not new_name or new_name == name:
+            return
+        if new_name in symbol_library.load_folders():
+            QMessageBox.warning(self, "폴더 이름변경", f"'{new_name}' 폴더가 이미 있습니다.")
+            return
+        symbol_library.rename_folder(name, new_name)
+        self._refresh_custom_symbol_section()
+
+
     def _prompt_create_symbol_folder(self):
-        """[신규기능, 2026-08-12] '내 심볼' 섹션 헤더의 "+" 버튼 — 새 폴더 생성(이름변경은
-        스코프 밖, 기존 심볼 등록 관례와 동일)."""
+        """[신규기능, 2026-08-12] '내 심볼' 섹션 헤더의 "+" 버튼 — 새 폴더 생성. 이름변경은
+        `_rename_symbol_folder_prompt`(2026-08-19 신설, 폴더 헤더의 "✎" 버튼)가 담당."""
         name, ok = QInputDialog.getText(self, "새 폴더", "폴더 이름:")
         name = name.strip()
         if not ok or not name:

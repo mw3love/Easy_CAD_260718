@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem,
+    QListWidget, QListWidgetItem, QToolTip,
 )
 
 from easycad.canvas.annotator_core import (
@@ -72,7 +72,8 @@ class _PaletteButton(QToolButton):
     _DRAG_THRESH = 6
 
     def __init__(self, tool_key: str, parent=None, preview_fn=None,
-                 drag_begin_fn=None, drag_move_fn=None, drag_end_fn=None):
+                 drag_begin_fn=None, drag_move_fn=None, drag_end_fn=None,
+                 tooltip_html_fn=None):
         super().__init__(parent)
         self._drag_tool_key = tool_key
         self._drag_press = None
@@ -81,6 +82,15 @@ class _PaletteButton(QToolButton):
         self._drag_move_fn = drag_move_fn     # (tool_key, global_pos: QPoint) -> None
         self._drag_end_fn = drag_end_fn       # (tool_key, global_pos: QPoint) -> None
         self._dragging = False   # 실물 드래그(씬 임시 도형) 진행 중 — grabMouse 소유 여부와 동일
+        # [실사용 피드백 2026-08-19] 호버 확대 미리보기 — () -> HTML str, 지연 계산(전 항목을
+        # 매 새로고침마다 렌더하면 심볼이 늘수록 비용이 커진다). None이면 평범한 setToolTip.
+        self._tooltip_html_fn = tooltip_html_fn
+
+    def event(self, e):
+        if self._tooltip_html_fn is not None and e.type() == QEvent.Type.ToolTip:
+            QToolTip.showText(e.globalPos(), self._tooltip_html_fn(), self)
+            return True
+        return super().event(e)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
