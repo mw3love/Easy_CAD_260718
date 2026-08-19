@@ -1,18 +1,23 @@
-"""§8 항목20 AI SVG 에셋 생성 — B단계(앱 UI 통합, 2026-08-14).
+"""§8 항목20 AI SVG 에셋 생성 — B단계(앱 UI 통합, 2026-08-14) + Stage 1/2(2026-08-19).
 
 deep-interview(2026-08-14)로 확정된 대로: 진입점 2곳(삽입 메뉴로 새로 삽입 + 우클릭으로
-기존 도형 대체)이 `_SvgAssetDialog` 하나를 공유, 모델은 gpt/gemini 체크박스(모델당
-후보 1개), 진행 표시는 동기 호출+WaitCursor(옛 QThread 워커는 이미 §8 항목18에서
-폐기됨), 대체 시 새 SVG 크기는 대체 도형 바운딩박스 긴 변 기준(SVG 자체 종횡비 유지),
-화살표는 재연결하지 않음(`delete_selection()`이 이미 제공하는 "제자리에 얼어붙는다"
-동작과 같은 결과).
+기존 도형 대체)이 `_SvgAssetDialog` 하나를 공유, 대체 시 새 SVG 크기는 대체 도형
+바운딩박스 긴 변 기준(SVG 자체 종횡비 유지), 화살표는 재연결하지 않음(`delete_selection()`
+이 이미 제공하는 "제자리에 얼어붙는다" 동작과 같은 결과).
+
+2026-08-19 deep-interview로 두 차례 더 확정: **Stage 1** — 동기 호출+WaitCursor(원래
+2026-08-14 결정, 당시 옛 QThread 워커는 §8 항목18에서 이미 폐기된 상태였음)가 프리징을
+일으켜 `_SvgGenWorker`(QThread)+진행바로 교체. **Stage 2** — 모델별 후보 개수를 gpt/gemini
+체크박스(모델당 1개 고정) 대신 독립 드롭다운(0~5개)으로 확장, 요청한 후보 전부를 완전
+병렬 호출(워커 하나=호출 하나, 전부 동시 `start()`), 끝난 순서대로 카드 채움.
 
 이 파일이 검증하는 것:
   - `easycad/ai/text_to_svg.py` — 프롬프트 빌더·코드펜스 벗기기·generate_svg.
   - `easycad/fileio/svg_import.py` — `parse_svg_string`(문자열 입력, `parse_svg_items`와
     동일 동작).
-  - `_SvgAssetDialog` — 체크박스 다중선택 순차 호출, 부분 실패 시 성공한 후보만 표시,
-    후보 카드 클릭 선택, 빈 프롬프트/모델 없음/키 없음 가드.
+  - `_SvgAssetDialog` — 모델별 개수 드롭다운→완전 병렬 호출, 부분 실패 시 성공한 후보만
+    표시, 후보 카드 클릭 선택, 빈 프롬프트/개수 0/키 없음 가드, 생성 중 진행 표시·컨트롤
+    비활성화·닫기 무시.
   - `host_fileio._insert_ai_svg_asset` — 삽입 경로(undo 1스텝).
   - `host_context._generate_svg_replace` — 대체 경로(remove+create 단일 undo, 화살표
     미재연결, 대체 도형 bbox 긴 변 기준 리스케일).
@@ -36,12 +41,15 @@ _SAMPLE_SVG = ('<svg viewBox="0 0 100 100">'
               '</svg>')
 
 
-def _wait_worker(dlg):
+def _wait_workers(dlg):
     """2026-08-19 비동기화(`_SvgGenWorker`, QThread) — `_on_generate_clicked()`는 즉시
-    반환하고 백그라운드 스레드에서 돈다. `wait()`로 스레드 종료까지 막은 뒤
-    `processEvents()`를 몇 번 돌려야 큐잉된(cross-thread) 시그널이 실제로 슬롯에
-    전달된다(Qt의 기본 QueuedConnection 동작 — 이벤트 루프가 펌핑돼야 배달됨)."""
-    dlg._worker.wait(5000)
+    반환하고 요청한 후보 개수만큼의 백그라운드 스레드가 동시에 돈다(Stage 2, 완전 병렬).
+    각 워커를 `wait()`로 종료까지 막은 뒤 `processEvents()`를 몇 번 돌려야 큐잉된
+    (cross-thread) 시그널이 실제로 슬롯에 전달된다(Qt의 기본 QueuedConnection 동작 —
+    이벤트 루프가 펌핑돼야 배달됨). 마지막 워커의 `finished`가 `dlg._workers`를 비우므로
+    반드시 먼저 리스트를 복사해 둔다."""
+    for w in list(dlg._workers):
+        w.wait(5000)
     for _ in range(5):
         QApplication.processEvents()
 
@@ -141,11 +149,23 @@ def test_parse_svg_path_still_maps_to_path_item():
 
 # ── _SvgAssetDialog ───────────────────────────────────────────────────────────
 
-def test_svg_asset_dialog_both_models_checked_by_default():
+def test_svg_asset_dialog_defaults_to_one_candidate_per_model():
+    """2026-08-19 Stage 2 — 체크박스(모델당 1개 고정) 대신 모델별 개수 드롭다운(0~5)으로
+    확장됐지만, 기본값은 Stage 1과 같은 체감(각 1개)을 유지한다."""
     dlg = _SvgAssetDialog()
-    assert dlg._gpt_check.isChecked()
-    assert dlg._gemini_check.isChecked()
-    assert dlg._checked_models() == [gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2]
+    assert dlg._gpt_count.currentText() == "1"
+    assert dlg._gemini_count.currentText() == "1"
+    assert dlg._gpt_count.count() == 6        # 0~5
+    assert dlg._gemini_count.count() == 6
+    assert dlg._requested_jobs() == [gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2]
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_requested_jobs_repeats_model_per_count():
+    dlg = _SvgAssetDialog()
+    dlg._gpt_count.setCurrentText("3")
+    dlg._gemini_count.setCurrentText("2")
+    assert dlg._requested_jobs() == [gw.TEXT_RECOMMEND_1] * 3 + [gw.TEXT_RECOMMEND_2] * 2
     dlg.deleteLater()
 
 
@@ -174,8 +194,8 @@ def test_svg_asset_dialog_requires_api_key():
 def test_svg_asset_dialog_requires_at_least_one_model_checked():
     dlg = _SvgAssetDialog()
     dlg._prompt_edit.setText("안테나 아이콘")
-    dlg._gpt_check.setChecked(False)
-    dlg._gemini_check.setChecked(False)
+    dlg._gpt_count.setCurrentText("0")
+    dlg._gemini_count.setCurrentText("0")
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.QMessageBox.information") as info, \
          patch("easycad.canvas.host_dialogs.generate_svg") as gen:
@@ -185,7 +205,7 @@ def test_svg_asset_dialog_requires_at_least_one_model_checked():
     dlg.deleteLater()
 
 
-def test_svg_asset_dialog_generates_one_candidate_per_checked_model():
+def test_svg_asset_dialog_generates_one_candidate_per_default_job():
     dlg = _SvgAssetDialog()
     dlg._prompt_edit.setText("BNC 커넥터 아이콘")
     calls = []
@@ -197,11 +217,42 @@ def test_svg_asset_dialog_generates_one_candidate_per_checked_model():
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
         dlg._on_generate_clicked()
-        _wait_worker(dlg)
-    assert calls == [gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2]
+        _wait_workers(dlg)
+    # 2026-08-19 Stage 2 — 완전 병렬(워커별 실행 순서는 OS 스케줄링에 달림)이라 도착
+    # 순서는 보장 안 됨, 호출된 모델 집합만 확인한다.
+    assert sorted(calls) == sorted([gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2])
     assert len(dlg._candidates) == 2
     assert dlg._selected_card is not None   # 첫 성공 후보 기본 선택
     assert dlg._ok_btn.isEnabled()
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_all_requested_workers_start_together():
+    """2026-08-19 Stage 2 핵심 증거 — 개수를 늘리면(GPT 3·Gemini 2=5개) 워커가 순차가
+    아니라 전부 동시에 만들어져 시작된다. `_on_generate_clicked()`가 반환한 직후(아직
+    `wait()`하기 전) 워커 5개가 모두 존재+실행 중이어야 한다(하나씩 만들고 끝나길
+    기다렸다가 다음을 만드는 방식이면 이 순간 워커가 1개뿐일 것)."""
+    import time
+    dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setText("BNC 커넥터 아이콘")
+    dlg._gpt_count.setCurrentText("3")
+    dlg._gemini_count.setCurrentText("2")
+
+    def fake_generate(key, subject, *, model, **kw):
+        time.sleep(0.05)
+        return _SAMPLE_SVG, model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
+        dlg._on_generate_clicked()
+        try:
+            assert len(dlg._workers) == 5
+            assert dlg._pending == 5
+            time.sleep(0.01)   # 스레드들이 실제로 뜰 시간
+            assert sum(1 for w in dlg._workers if w.isRunning()) >= 2   # 순차라면 1개뿐일 것
+        finally:
+            _wait_workers(dlg)
+    assert len(dlg._candidates) == 5
     dlg.deleteLater()
 
 
@@ -211,7 +262,7 @@ def test_svg_asset_dialog_shows_progress_and_disables_controls_while_generating(
     비활성화돼 있어야 한다. 예전 동기 구현은 이 순간 자체가 없었다(호출이 끝나야
     `_on_generate_clicked()`가 반환했으므로).
 
-    ⚠ 어서션이 `_wait_worker()` 전에 실패하면(=워커를 join하지 않은 채 테스트가 죽으면)
+    ⚠ 어서션이 `_wait_workers()` 전에 실패하면(=워커를 join하지 않은 채 테스트가 죽으면)
     아직 살아있는 QThread가 뒤이은 `with patch(...)` 종료로 원본(진짜 네트워크 호출)
     함수를 다시 붙잡을 위험이 있다(실측으로 확인된 함정 — 실제로 이 문제 때문에 전체
     스위트가 몇 시간 멈춘 적이 있다). 그래서 `try/finally`로 무슨 일이 있어도 join한다."""
@@ -230,12 +281,16 @@ def test_svg_asset_dialog_shows_progress_and_disables_controls_while_generating(
             assert not dlg._progress.isHidden()
             assert not dlg._gen_btn.isEnabled()
             assert not dlg._btns.isEnabled()
+            assert not dlg._gpt_count.isEnabled()
+            assert not dlg._gemini_count.isEnabled()
         finally:
-            _wait_worker(dlg)
+            _wait_workers(dlg)
     assert dlg._progress.isHidden()
     assert dlg._gen_btn.isEnabled()
     assert dlg._btns.isEnabled()
-    assert dlg._worker is None
+    assert dlg._gpt_count.isEnabled()
+    assert dlg._gemini_count.isEnabled()
+    assert dlg._workers == []
     dlg.deleteLater()
 
 
@@ -263,7 +318,7 @@ def test_svg_asset_dialog_close_ignored_while_generating():
             dlg.closeEvent(ev)
             assert not ev.isAccepted()   # 생성 중 — 무시돼야 함
         finally:
-            _wait_worker(dlg)
+            _wait_workers(dlg)
     ev2 = QCloseEvent()
     dlg.closeEvent(ev2)
     assert ev2.isAccepted()   # 생성이 끝난 뒤엔 평범하게 닫힘(super() 경로)
@@ -283,7 +338,7 @@ def test_svg_asset_dialog_partial_failure_keeps_successful_candidates():
          patch("easycad.canvas.host_dialogs.generate_svg", fake_generate), \
          patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn:
         dlg._on_generate_clicked()
-        _wait_worker(dlg)
+        _wait_workers(dlg)
     assert warn.called   # 실패 사실은 알림
     assert len(dlg._candidates) == 1
     assert dlg._candidates[0][2] == gw.TEXT_RECOMMEND_2
@@ -301,7 +356,7 @@ def test_svg_asset_dialog_all_models_fail_shows_no_candidates():
          patch("easycad.canvas.host_dialogs.generate_svg", fake_generate), \
          patch("easycad.canvas.host_dialogs.QMessageBox.warning") as warn:
         dlg._on_generate_clicked()
-        _wait_worker(dlg)
+        _wait_workers(dlg)
     assert warn.called
     assert dlg._candidates == []
     assert not dlg._ok_btn.isEnabled()
@@ -318,7 +373,7 @@ def test_svg_asset_dialog_clicking_card_switches_selection():
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
         dlg._on_generate_clicked()
-        _wait_worker(dlg)
+        _wait_workers(dlg)
     first_card, _svg, first_model = dlg._candidates[0]
     second_card, _svg2, second_model = dlg._candidates[1]
     assert dlg._selected_card is first_card
@@ -358,10 +413,10 @@ def test_svg_asset_dialog_regenerate_clears_old_candidates():
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
         dlg._on_generate_clicked()
-        _wait_worker(dlg)
+        _wait_workers(dlg)
         first_batch = list(dlg._candidates)
         dlg._on_generate_clicked()
-        _wait_worker(dlg)
+        _wait_workers(dlg)
     assert len(dlg._candidates) == 2   # 누적되지 않고 새로 교체
     for card, *_r in first_batch:
         assert card not in [c for c, *_r2 in dlg._candidates]

@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame, QProgressBar,
-    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
+    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup, QScrollArea,
 )
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -1044,43 +1044,50 @@ class _SvgCandidateCard(QFrame):
 
 
 class _SvgGenWorker(QThread):
-    """`generate_svg`를 체크된 모델 순서대로 순차 호출 — 2026-08-19 Stage 1은 프리징
-    해소만 다룬다(모델 간 병렬화·모델당 후보 개수 확장은 §8 항목20 후속 Stage 2 몫,
-    2026-08-19 deep-interview로 단계 분리 확정). 후보가 완성될 때마다 `candidate`
-    시그널로 즉시 알려 다이얼로그가 끝난 순서대로 카드를 하나씩 채울 수 있게 한다."""
+    """`generate_svg` 1회 호출을 담당하는 워커 — 요청한 개수만큼 인스턴스를 만들어 전부
+    동시에 `start()`하면 모델 간·모델 내부 완전 병렬이 된다(2026-08-19 deep-interview
+    확정, §8 항목20 후속 Stage 2). Stage 1의 "워커 하나가 모델 리스트를 순차 호출"하던
+    설계(당시는 프리징 해소만이 목표라 호출 의미를 그대로 유지)에서 "워커 하나 = 호출
+    하나"로 재설계 — 모델당 후보 개수 확장(0~5개)과 완전 병렬화를 동시에 만족하는 가장
+    단순한 형태. `_SvgAssetDialog`가 워커 목록을 들고 각자의 `finished`를 세어 전체
+    완료를 판정한다."""
 
     candidate = pyqtSignal(str, str)      # (실제 사용된 모델, svg 텍스트)
     model_failed = pyqtSignal(str, str)   # (모델, 에러 메시지)
 
-    def __init__(self, api_key, subject, models, base_url, parent=None):
+    def __init__(self, api_key, subject, model, base_url, parent=None):
         super().__init__(parent)
         self._api_key = api_key
         self._subject = subject
-        self._models = models
+        self._model = model
         self._base_url = base_url
 
     def run(self):
-        for model in self._models:
-            try:
-                svg_text, used = generate_svg(self._api_key, self._subject, model=model,
-                                              base_url=self._base_url)
-            except Exception as e:  # noqa: BLE001 — 모델별 개별 실패, 나머지는 계속 시도
-                self.model_failed.emit(model, str(e))
-                continue
-            self.candidate.emit(used, svg_text)
+        try:
+            svg_text, used = generate_svg(self._api_key, self._subject, model=self._model,
+                                          base_url=self._base_url)
+        except Exception as e:  # noqa: BLE001 — 개별 실패, 다른 워커는 계속 진행
+            self.model_failed.emit(self._model, str(e))
+            return
+        self.candidate.emit(used, svg_text)
 
 
 class _SvgAssetDialog(QDialog):
-    """AI SVG 에셋 생성 — 대상 설명 한 줄 + gpt/gemini 체크박스(모델당 후보 1개, 2026-08-14
-    deep-interview 확정) + 생성 버튼 + 후보 카드 가로 나열(클릭 선택) + OK/Cancel. 진입점
-    2곳(메뉴 삽입·우클릭 대체)이 이 다이얼로그를 그대로 공유한다 — 호출부가 `selected_svg()`
-    결과를 각자의 방식(새로 삽입 vs 기존 도형 대체)으로 소비.
+    """AI SVG 에셋 생성 — 대상 설명 한 줄 + 모델별 후보 개수 드롭다운(GPT/Gemini 각각
+    0~5개, 2026-08-19 deep-interview 확정 — §8 항목20 후속 Stage 2, 최대 10개까지 한
+    번에 받아 마음에 드는 걸 고르고 싶다는 실사용 요청) + 생성 버튼 + 후보 카드 가로
+    스크롤 나열(클릭 선택) + OK/Cancel. 진입점 2곳(메뉴 삽입·우클릭 대체)이 이 다이얼로그를
+    그대로 공유한다 — 호출부가 `selected_svg()` 결과를 각자의 방식(새로 삽입 vs 기존 도형
+    대체)으로 소비.
 
-    진행 표시는 `_SvgGenWorker`(QThread) + marquee 진행바·경과시간(`_GenProgressRow`,
-    2026-08-19 비동기화) — 예전엔 동기 호출+`WaitCursor`였다(2026-08-14 deep-interview
-    당시 결정, `_MermaidDialog`와 같은 판단을 계승했었음). 체크한 모델을 순차 호출하므로
-    최악(gpt+gemini 둘 다, gemini 20~28초)엔 그만큼 걸리지만, 더는 창이 멈추지 않고
-    끝난 모델부터 카드가 하나씩 채워진다."""
+    진행 표시는 `_SvgGenWorker`(QThread, 호출 1건당 인스턴스 1개) + marquee 진행바·
+    경과시간(`_GenProgressRow`). 요청한 후보 전부를 **동시에 병렬 호출**한다(모델 간·
+    모델 내부 구분 없이 완전 병렬, deep-interview 확정 — 최악 10개 동시 호출도 실측으로
+    확인함: gpt 5개는 ~7초, gemini 5개는 30~52초에 걸쳐 전부 성공, 실패 0건). 끝난
+    순서대로 카드가 하나씩 채워지므로(gpt가 보통 먼저 도착) 전부 끝나기 전에도 고를 수
+    있다."""
+
+    _MAX_PER_MODEL = 5
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1088,7 +1095,8 @@ class _SvgAssetDialog(QDialog):
         self.setMinimumWidth(440)
         self._candidates: list[tuple[_SvgCandidateCard, str, str]] = []
         self._selected_card: _SvgCandidateCard | None = None
-        self._worker = None        # _SvgGenWorker | None — 생성 중일 때만 설정
+        self._workers: list[_SvgGenWorker] = []   # 생성 중일 때만 항목이 있음
+        self._pending = 0          # 아직 안 끝난 워커 수
         self._gen_errors: list[str] = []
         lay = QVBoxLayout(self)
 
@@ -1099,12 +1107,19 @@ class _SvgAssetDialog(QDialog):
         lay.addWidget(self._prompt_edit)
 
         model_row = QHBoxLayout()
-        self._gpt_check = QCheckBox(f"GPT ({gw.TEXT_RECOMMEND_1})", self)
-        self._gpt_check.setChecked(True)
-        self._gemini_check = QCheckBox(f"Gemini ({gw.TEXT_RECOMMEND_2})", self)
-        self._gemini_check.setChecked(True)
-        model_row.addWidget(self._gpt_check)
-        model_row.addWidget(self._gemini_check)
+        model_row.addWidget(QLabel(f"GPT ({gw.TEXT_RECOMMEND_1}):", self))
+        self._gpt_count = QComboBox(self)
+        self._gpt_count.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
+        self._gpt_count.setCurrentIndex(1)   # 기본 1개(Stage 1과 동일 체감 유지)
+        self._gpt_count.setStyleSheet(_ROUNDED_COMBO_QSS)
+        model_row.addWidget(self._gpt_count)
+        model_row.addSpacing(12)
+        model_row.addWidget(QLabel(f"Gemini ({gw.TEXT_RECOMMEND_2}):", self))
+        self._gemini_count = QComboBox(self)
+        self._gemini_count.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
+        self._gemini_count.setCurrentIndex(1)
+        self._gemini_count.setStyleSheet(_ROUNDED_COMBO_QSS)
+        model_row.addWidget(self._gemini_count)
         model_row.addStretch(1)
         self._gen_btn = QToolButton(self)
         self._gen_btn.setIcon(_act_icon("generate"))
@@ -1119,9 +1134,20 @@ class _SvgAssetDialog(QDialog):
         self._progress = _GenProgressRow(self)
         lay.addWidget(self._progress)
 
+        # 최대 10장까지 나올 수 있어(모델당 5개×2) 고정 QHBoxLayout만으론 다이얼로그 폭을
+        # 넘친다 — 가로 스크롤 영역으로 감싼다(카드 자체 크기·스타일은 무변경).
         self._candidates_row = QHBoxLayout()
         self._candidates_row.addStretch(1)
-        lay.addLayout(self._candidates_row)
+        candidates_container = QWidget(self)
+        candidates_container.setLayout(self._candidates_row)
+        candidates_scroll = QScrollArea(self)
+        candidates_scroll.setWidget(candidates_container)
+        candidates_scroll.setWidgetResizable(True)
+        candidates_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        candidates_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        candidates_scroll.setFixedHeight(160)
+        candidates_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        lay.addWidget(candidates_scroll)
 
         self._hint_label = QLabel("후보를 클릭해 선택하세요.", self)
         self._hint_label.setStyleSheet("color:#8a8a8a; font-size:11px;")
@@ -1140,32 +1166,33 @@ class _SvgAssetDialog(QDialog):
         return self._selected_card.svg_text() if self._selected_card else ""
 
     def closeEvent(self, e):
-        # 생성 중(QThread 워커가 돎)에는 닫지 않는다 — `_MermaidDialog.closeEvent`와 같은
+        # 생성 중(워커가 하나라도 돎)에는 닫지 않는다 — `_MermaidDialog.closeEvent`와 같은
         # 이유(2026-08-19).
-        if self._worker is not None and self._worker.isRunning():
+        if any(w.isRunning() for w in self._workers):
             e.ignore()
             return
         super().closeEvent(e)
 
-    def _checked_models(self) -> list[str]:
-        out = []
-        if self._gpt_check.isChecked():
-            out.append(gw.TEXT_RECOMMEND_1)
-        if self._gemini_check.isChecked():
-            out.append(gw.TEXT_RECOMMEND_2)
-        return out
+    def _requested_jobs(self) -> list[str]:
+        """모델별 개수 드롭다운 → 호출할 모델 목록(개수만큼 반복) — 예: GPT 2·Gemini 1이면
+        [gpt, gpt, gemini]. 워커 하나가 이 목록의 항목 하나씩을 맡는다."""
+        n_gpt = int(self._gpt_count.currentText())
+        n_gemini = int(self._gemini_count.currentText())
+        return [gw.TEXT_RECOMMEND_1] * n_gpt + [gw.TEXT_RECOMMEND_2] * n_gemini
 
     def _on_generate_clicked(self):
-        """2026-08-19 비동기화 — `_SvgGenWorker`(QThread)로 옮겨 창이 멈추지 않는다.
-        완료 처리는 `_on_candidate_ready`(후보 도착마다)·`_on_gen_thread_finished`
-        (전체 완료, 옛 코드의 finally 블록 역할)로 나뉜다."""
+        """2026-08-19 Stage 2 — 요청한 후보 전부를 워커 하나씩(`_SvgGenWorker`)으로
+        동시에 시작해 완전 병렬 호출한다. 완료 처리는 `_on_candidate_ready`(후보 도착마다)
+        ·`_on_one_worker_finished`(워커 하나가 끝날 때마다 `_pending`을 줄이고, 0이 되면
+        전체 완료 처리 — 옛 "워커 하나=전체"였던 Stage 1의 finally 블록 역할을 카운터로
+        대신한다)로 나뉜다."""
         subject = self._prompt_edit.text().strip()
         if not subject:
             QMessageBox.information(self, "AI SVG 에셋 생성", "생성할 대상을 입력하세요.")
             return
-        models = self._checked_models()
-        if not models:
-            QMessageBox.information(self, "AI SVG 에셋 생성", "모델을 하나 이상 체크하세요.")
+        jobs = self._requested_jobs()
+        if not jobs:
+            QMessageBox.information(self, "AI SVG 에셋 생성", "모델별 개수를 하나 이상 선택하세요.")
             return
         key = gw.resolve_api_key()
         if not key:
@@ -1177,12 +1204,19 @@ class _SvgAssetDialog(QDialog):
         self._gen_errors = []
         self._gen_btn.setEnabled(False)
         self._btns.setEnabled(False)
+        self._gpt_count.setEnabled(False)
+        self._gemini_count.setEnabled(False)
         self._progress.start("SVG 생성 중")
-        self._worker = _SvgGenWorker(key, subject, models, base_url, self)
-        self._worker.candidate.connect(self._on_candidate_ready)
-        self._worker.model_failed.connect(self._on_model_failed)
-        self._worker.finished.connect(self._on_gen_thread_finished)
-        self._worker.start()
+        self._pending = len(jobs)
+        self._workers = []
+        for model in jobs:
+            w = _SvgGenWorker(key, subject, model, base_url, self)
+            w.candidate.connect(self._on_candidate_ready)
+            w.model_failed.connect(self._on_model_failed)
+            w.finished.connect(self._on_one_worker_finished)
+            self._workers.append(w)
+        for w in self._workers:   # 전부 만든 뒤에 전부 시작 — 동시 발사
+            w.start()
 
     def _on_candidate_ready(self, model_used, svg_text):
         self._add_candidate(model_used, svg_text)
@@ -1193,18 +1227,23 @@ class _SvgAssetDialog(QDialog):
     def _on_model_failed(self, model, err):
         self._gen_errors.append(f"{model}: {err}")
 
-    def _on_gen_thread_finished(self):
+    def _on_one_worker_finished(self):
+        self._pending -= 1
+        if self._pending > 0:
+            return   # 아직 다른 워커가 도는 중 — 전체 완료 처리는 마지막 하나가 담당
         self._progress.stop()
         self._gen_btn.setEnabled(True)
         self._btns.setEnabled(True)
+        self._gpt_count.setEnabled(True)
+        self._gemini_count.setEnabled(True)
         if self._gen_errors and not self._candidates:
             QMessageBox.warning(self, "AI SVG 에셋 생성",
                                 "생성에 실패했습니다:\n" + "\n".join(self._gen_errors))
         elif self._gen_errors:
             QMessageBox.warning(self, "AI SVG 에셋 생성",
-                                "일부 모델이 실패했습니다(성공한 후보만 표시):\n"
+                                "일부 후보가 실패했습니다(성공한 후보만 표시):\n"
                                 + "\n".join(self._gen_errors))
-        self._worker = None
+        self._workers = []
 
     def _clear_candidates(self):
         for card, _svg, _model in self._candidates:
