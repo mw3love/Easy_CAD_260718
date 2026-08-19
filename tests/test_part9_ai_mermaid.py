@@ -27,7 +27,9 @@ from _shared import *  # noqa: F401,F403
 
 from easycad.ai import gateway as gw  # noqa: E402
 from easycad.ai import text_to_mermaid as ttm  # noqa: E402
-from easycad.canvas.host_dialogs import _MermaidDialog, _AIGatewaySettingsDialog  # noqa: E402
+from easycad.canvas.host_dialogs import (  # noqa: E402
+    _MermaidDialog, _AIGatewaySettingsDialog, _render_mermaid_preview_pixmap,
+)
 
 
 def _wait_worker(dlg):
@@ -834,3 +836,115 @@ def test_sketch_pipeline_and_host_ai_modules_removed():
             assert False, f"{modname} should have been deleted"
         except ModuleNotFoundError:
             pass
+
+
+# ── §8 항목23 Stage 5(2026-08-19) — Mermaid 실시간 렌더 미리보기 ───────────────
+
+def test_render_mermaid_preview_pixmap_none_for_empty_text():
+    from PyQt6.QtCore import QSize
+    assert _render_mermaid_preview_pixmap("", QSize(220, 220)) is None
+    assert _render_mermaid_preview_pixmap("   \n  ", QSize(220, 220)) is None
+
+
+def test_render_mermaid_preview_pixmap_uses_same_shape_mapping_as_insert():
+    """실제 삽입 경로(host_fileio._make_mermaid_node)와 같은 도형 매핑을 타는지 —
+    rhombus(판단)가 원(_EllipseItem) 대신 사각형 폴백이 아니라 실제로 결정 심볼로
+    그려지는지는 픽셀로 직접 못 보므로, 파서·배치·매핑 각 단계가 예외 없이 끝까지
+    돌아 None이 아닌 픽스맵을 만들어내는지로 대신 검증(도형별 렌더 자체는 위 자체확인
+    스크린샷으로 육안 확인 완료)."""
+    from PyQt6.QtCore import QSize
+    text = ("flowchart TD\n"
+            "    A[시작] --> B{조건}\n"
+            "    B -->|예| C[처리]\n"
+            "    B -->|아니오| D([종료])\n"
+            "    C --> D")
+    pm = _render_mermaid_preview_pixmap(text, QSize(220, 220))
+    assert pm is not None
+    assert not pm.isNull()
+    assert pm.width() == 220 and pm.height() == 220
+
+
+def test_render_mermaid_preview_pixmap_single_node_no_edges():
+    """엣지 없는 단일 노드도 렌더 실패 없이 픽스맵을 낸다(레이아웃 bbox가 노드 하나뿐)."""
+    from PyQt6.QtCore import QSize
+    pm = _render_mermaid_preview_pixmap("flowchart TD\n A[혼자]", QSize(100, 100))
+    assert pm is not None and not pm.isNull()
+
+
+def test_mermaid_dialog_has_preview_panel_with_placeholder_initially():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    assert hasattr(dlg, "_preview_label")
+    assert dlg._preview_label.pixmap() is None or dlg._preview_label.pixmap().isNull()
+    assert "미리보기" in dlg._preview_label.text()
+
+
+def test_mermaid_dialog_typing_schedules_debounced_timer_not_immediate():
+    """타이핑(`setPlainText` → `textChanged`) 즉시가 아니라 디바운스 타이머가 도는 것만
+    확인 — 매 키 입력마다 무거운 렌더를 즉시 돌리지 않는다는 계약(§8 항목23 Stage 5
+    deep-interview 확정: "몇백ms 디바운스")."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    assert dlg._preview_timer.isSingleShot()
+    dlg._edit.setPlainText("flowchart TD\n A-->B")
+    assert dlg._preview_timer.isActive()
+    # 타이머가 아직 안 끝났으니 미리보기는 그대로 플레이스홀더여야 한다.
+    assert dlg._preview_label.pixmap() is None or dlg._preview_label.pixmap().isNull()
+
+
+def test_mermaid_dialog_preview_updates_when_timer_fires():
+    """타이머 만료(`timeout` 강제 발화, 실 대기 없이)로 `_update_preview`가 실제로
+    도형이 담긴 픽스맵을 채우는지 — 유효한 Mermaid 코드일 때."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("flowchart TD\n A[시작] --> B[끝]")
+    dlg._preview_timer.stop()
+    dlg._update_preview()
+    pm = dlg._preview_label.pixmap()
+    assert pm is not None and not pm.isNull()
+
+
+def test_mermaid_dialog_preview_shows_error_text_for_invalid_code():
+    """빈 노드(파싱 실패)일 때는 픽스맵 대신 안내 문구."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("flowchart TD\n classDef only styling, no nodes")
+    dlg._preview_timer.stop()
+    dlg._update_preview()
+    assert dlg._preview_label.pixmap() is None or dlg._preview_label.pixmap().isNull()
+    assert "구문 오류" in dlg._preview_label.text()
+
+
+def test_mermaid_dialog_preview_clears_back_to_placeholder_when_text_emptied():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("flowchart TD\n A[시작] --> B[끝]")
+    dlg._preview_timer.stop()
+    dlg._update_preview()
+    assert not dlg._preview_label.pixmap().isNull()
+    dlg._edit.setPlainText("")
+    dlg._preview_timer.stop()
+    dlg._update_preview()
+    assert dlg._preview_label.pixmap() is None or dlg._preview_label.pixmap().isNull()
+    assert "미리보기" in dlg._preview_label.text()
+
+
+def test_mermaid_dialog_ai_fill_also_refreshes_preview():
+    """AI 생성 결과가 `_edit`에 채워지는 것도 `QTextCursor.insertText`를 통하지만
+    `textChanged`는 그대로 발화하므로, 별도 훅 없이도 디바운스 타이머가 걸려야 한다."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+
+    def fake_generate(key, desc, *, model, **kw):
+        return "flowchart TD\n X[가]-->Y[나]", model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
+        dlg._prompt_edit.setPlainText("아무 설명")
+        dlg._on_ai_clicked()
+        _wait_worker(dlg)
+    assert dlg._preview_timer.isActive()
+    dlg._preview_timer.stop()
+    dlg._update_preview()
+    pm = dlg._preview_label.pixmap()
+    assert pm is not None and not pm.isNull()

@@ -37,7 +37,10 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
-from easycad.canvas.host_widgets import _clipboard_pixmap, _act_icon, _ACCENT_CORAL, _ICON_COLOR
+from easycad.canvas.host_widgets import (
+    _clipboard_pixmap, _act_icon, _ACCENT_CORAL, _ICON_COLOR,
+    _MERMAID_SHAPE_ITEM, _border_attach,
+)
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, render_preview, _list_title_frames
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
@@ -555,6 +558,84 @@ class _MermaidGenWorker(QThread):
         self.succeeded.emit(text, used)
 
 
+def _render_mermaid_preview_pixmap(text: str, target_size: QSize) -> QPixmap | None:
+    """Mermaid 코드 → 미리보기 픽스맵(§8 항목23 Stage 5, 2026-08-19). 실제 삽입 경로
+    (`host_fileio._build_mermaid`/`_make_mermaid_node`/`_make_mermaid_edge`)와 똑같은
+    파서(`parse_mermaid`)+배치(`layout_positions`)+도형매핑(`_MERMAID_SHAPE_ITEM`)+
+    부착점(`_border_attach`)+직교라우팅(`_PolyArrowItem.build_elbow`)을 그대로 재사용해
+    미리보기와 실제 삽입 결과가 어긋나지 않게 한다 — SVG 후보 미리보기
+    (`_render_svg_candidate_pixmap`)와 같은 원칙. host_fileio.py 자체를 import하면
+    이 잎 모듈의 순환 임포트 제약을 어기므로, host_fileio가 이미 재사용 가능한 형태로
+    분리해둔 `host_widgets._MERMAID_SHAPE_ITEM`/`_border_attach`만 가져다 쓴다. 파싱
+    실패·빈 입력이면 None(호출부가 안내 문구를 보여준다)."""
+    try:
+        graph = parse_mermaid(text)
+    except MermaidError:
+        return None
+    w, h = 120.0, 56.0
+    pos = layout_positions(graph, node_w=w, node_h=h)
+    if not pos:
+        return None
+
+    scene = QGraphicsScene()
+    pen = QPen(_ICON_COLOR, 1.5)
+    items_by_id: dict[str, object] = {}
+    for nid, node in graph.nodes.items():
+        x, y = pos[nid]
+        shape, kind = _MERMAID_SHAPE_ITEM.get(node.shape, ("rect", None))
+        rect = QRectF(0.0, 0.0, w, h)
+        if shape == "ellipse":
+            it = _EllipseItem(rect)
+        elif shape == "symbol":
+            it = _SymbolItem(kind, rect)
+        else:
+            it = _RectItem(rect)
+        it.setPen(QPen(pen))
+        it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        it.setPos(x, y)
+        scene.addItem(it)
+        if node.label:
+            it.ensure_label().setPlainText(node.label)
+        it._sync_label()
+        items_by_id[nid] = it
+
+    for e in graph.edges:
+        s = items_by_id.get(e.src)
+        d = items_by_id.get(e.dst)
+        if s is None or d is None or s is d:
+            continue
+        rs = s.mapRectToScene(s.rect())
+        rd = d.mapRectToScene(d.rect())
+        a_src = _border_attach(rs, rd.center())
+        a_dst = _border_attach(rd, rs.center())
+        arr = _PolyArrowItem(_ICON_COLOR, 1, e.arrow)
+        arr.set_points(a_src, a_dst)
+        arr.set_bound(0, s, s.mapFromScene(a_src))
+        arr.set_bound(len(arr._pts) - 1, d, d.mapFromScene(a_dst))
+        arr._auto_route = True
+        scene.addItem(arr)
+        try:
+            arr.build_elbow()
+        except Exception:
+            pass
+        if e.label:
+            arr.ensure_label().setPlainText(e.label)
+        arr._sync_label()
+
+    pm = QPixmap(target_size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    margin = 10.0
+    target = QRectF(margin, margin,
+                    target_size.width() - 2 * margin, target_size.height() - 2 * margin)
+    source = scene.itemsBoundingRect()
+    if source.width() > 0 and source.height() > 0:
+        scene.render(p, target, source, Qt.AspectRatioMode.KeepAspectRatio)
+    p.end()
+    return pm
+
+
 class _MermaidDialog(_ImageAttachMixin, QDialog):
     """Mermaid flowchart 입력창 — 프롬프트(AI 지시)와 Mermaid 코드를 별개 칸으로 받는다.
 
@@ -741,13 +822,50 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
 
         # ---- 2번 칸: Mermaid 코드(넉넉함) — AI 결과가 채워지거나 직접 타이핑/붙여넣기 ----
         # [2026-08-13 5차] 옛 상단 힌트 3번째 줄("아래 칸에 직접 입력·붙여넣기 가능")을
-        # 라벨에 흡수.
-        lay.addWidget(QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능):", self))
+        # 라벨에 흡수. [2026-08-19 Stage 5] 오른쪽에 실시간 렌더 미리보기 패널을 추가
+        # (deep-interview 확정 배치 — "옆(가로 분할)"). 코드칸은 그대로 두고 옆으로만
+        # 붙이므로 위 프롬프트카드·모델행·커넥터는 무변경.
+        code_row = QHBoxLayout()
+        code_col = QVBoxLayout()
+        code_col.addWidget(QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능):", self))
         self._edit = QPlainTextEdit(self)
         self._edit.setPlaceholderText(self._SAMPLE)
-        self._edit.setMinimumSize(QSize(460, 260))
+        self._edit.setMinimumSize(QSize(420, 260))
         self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        lay.addWidget(self._edit)
+        code_col.addWidget(self._edit)
+        code_row.addLayout(code_col, 1)
+
+        preview_col = QVBoxLayout()
+        preview_col.addWidget(QLabel("미리보기:", self))
+        preview_frame = QFrame(self)
+        preview_frame.setObjectName("mermaidPreviewFrame")
+        preview_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        preview_frame.setStyleSheet(
+            "QFrame#mermaidPreviewFrame { border:1px solid rgba(128,128,128,90); "
+            "border-radius:8px; }"
+        )
+        preview_frame_lay = QVBoxLayout(preview_frame)
+        preview_frame_lay.setContentsMargins(6, 6, 6, 6)
+        self._preview_label = QLabel(preview_frame)
+        self._preview_label.setFixedSize(220, 220)
+        self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview_label.setWordWrap(True)
+        self._preview_label.setStyleSheet("color:#8a8a8a; font-size:11px;")
+        self._preview_label.setText("코드를 입력하면\n미리보기가 표시됩니다")
+        preview_frame_lay.addWidget(self._preview_label)
+        preview_col.addWidget(preview_frame)
+        preview_col.addStretch(1)
+        code_row.addLayout(preview_col)
+        lay.addLayout(code_row)
+
+        # 코드 변경 350ms 후 재렌더(디바운스) — 타이핑마다 즉시 다시 그리면 무거워질 수
+        # 있어 QTimer로 묶는다. `textChanged`는 인자가 없어 `QTimer.start`(무인자 오버로드)
+        # 로 바로 연결 가능(재시작 = 디바운스).
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(350)
+        self._preview_timer.timeout.connect(self._update_preview)
+        self._edit.textChanged.connect(self._preview_timer.start)
 
         self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                       | QDialogButtonBox.StandardButton.Cancel, self)
@@ -758,6 +876,21 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
 
     def text(self):
         return self._edit.toPlainText()
+
+    def _update_preview(self):
+        """디바운스 타이머 만료 시 호출 — `_render_mermaid_preview_pixmap`으로 다시 그린다."""
+        text = self._edit.toPlainText()
+        if not text.strip():
+            self._preview_label.setPixmap(QPixmap())
+            self._preview_label.setText("코드를 입력하면\n미리보기가 표시됩니다")
+            return
+        pm = _render_mermaid_preview_pixmap(text, self._preview_label.size())
+        if pm is None:
+            self._preview_label.setPixmap(QPixmap())
+            self._preview_label.setText("구문 오류 —\n미리보기를 표시할 수 없습니다")
+        else:
+            self._preview_label.setText("")
+            self._preview_label.setPixmap(pm)
 
     def closeEvent(self, e):
         # 생성 중(QThread 워커가 돎)에는 닫지 않는다 — 워커가 끝나기 전에 다이얼로그가

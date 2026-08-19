@@ -862,6 +862,16 @@ docs/
   실제 창 종단 검증(격리된 심볼 라이브러리 파일에 실제 기록, 좌측 팔레트 반영까지
   스크린샷 3장). §8 항목20 후속 Stage 1~4 전부 이 세션에서 완료. 상세:
   `docs/history/2026-08.md` "§8 항목20 후속 — Mermaid·SVG AI 다이얼로그 재정리 Stage 4".
+- **§8 항목20 후속 — Stage 5(Mermaid 실시간 렌더 미리보기) 완료(2026-08-19, 다른 PC에서
+  handoff로 이어받은 세션)** — 코드칸 옆(가로 분할)에 미리보기 패널 추가.
+  `_render_mermaid_preview_pixmap`(신규, `host_dialogs.py`)이 실제 삽입 경로
+  (`host_fileio._make_mermaid_node`/`_make_mermaid_edge`)와 같은 파서·배치·도형매핑
+  (`host_widgets._MERMAID_SHAPE_ITEM`)·직교라우팅(`_PolyArrowItem.build_elbow`)을
+  그대로 재사용해 임시 씬에 렌더(신규 mermaid.js 의존성 없음), `_edit.textChanged` →
+  350ms 디바운스 `QTimer`로 갱신(AI 생성 결과도 같은 훅으로 자동 반영). 신규 pytest
+  9종, 전체 pytest 771종 통과, 실제 창(오프스크린 아님) 스크린샷으로 한글 라벨·엣지
+  라벨까지 렌더 확인. 상세: `docs/history/2026-08.md` "§8 항목20 후속 — Mermaid·SVG AI
+  다이얼로그 재정리 Stage 5".
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

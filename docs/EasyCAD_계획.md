@@ -1079,9 +1079,31 @@ deep-interview로 확정, 인계 파일(handoff)로 이어받아 같은 날 구�
       `getattr(parent, ...)` 위임으로 호출(host_selection.py 직접 import 불가). 신규
       pytest 20종, 전체 762종 통과, 실제 창 종단 검증(격리 라이브러리 파일에 실제 기록,
       팔레트 반영 스크린샷).
-    - **다음 순서(Stage 5)**: Mermaid 실시간 렌더 미리보기(기존 파서+임시 씬 렌더 재사용).
+    - **Stage 5(Mermaid 실시간 렌더 미리보기) 완료(2026-08-19, 다른 PC에서 handoff로
+      이어받은 세션)** — 착수 전 배치(코드칸 옆/아래)만 선택창으로 확정("옆", 가로
+      분할). `_render_mermaid_preview_pixmap`(신규, `host_dialogs.py`) — 실제 삽입 경로
+      (`host_fileio._make_mermaid_node`/`_make_mermaid_edge`)와 똑같은 파서(`parse_
+      mermaid`)+배치(`layout_positions`)+도형매핑(`host_widgets._MERMAID_SHAPE_ITEM`)+
+      부착점(`_border_attach`)+직교라우팅(`_PolyArrowItem.build_elbow`)을 그대로 재사용해
+      미리보기와 실제 삽입 결과가 어긋나지 않게 한다(SVG 후보 미리보기
+      `_render_svg_candidate_pixmap`과 같은 원칙) — 임시 `QGraphicsScene`에 얹어
+      렌더(신규 mermaid.js 등 외부 의존성 없음). `host_fileio.py`를 직접 import하면 이
+      잎 모듈의 순환 임포트 제약을 어기므로, 이미 재사용 가능한 형태로 분리돼 있던
+      `host_widgets._MERMAID_SHAPE_ITEM`/`_border_attach`만 가져다 썼다(새 헬퍼 추출
+      불필요). `_edit.textChanged`에 350ms 싱글샷 `QTimer` 디바운스로 연결(타이핑마다
+      즉시 재렌더하지 않음), AI 생성 결과가 `QTextCursor.insertText`로 채워질 때도
+      `textChanged`가 그대로 발화해 같은 훅으로 갱신된다(별도 훅 불필요). 빈 입력·파싱
+      실패는 각각 다른 안내 문구로(빈 칸: "코드를 입력하면…", 오류: "구문 오류…").
+      신규 pytest 9종(빈 입력 None·유효 코드 픽스맵 크기·단일노드·다이얼로그 초기
+      플레이스홀더·디바운스 중 미갱신·타이머 발화 후 갱신·오류 문구·비움→플레이스홀더
+      복귀·AI 생성 결과도 갱신), 전체 pytest 771종 통과(사전에 알려진 이 PC 로컬
+      secrets 파일발 무관 실패 3건 제외). 자체확인: offscreen 픽스맵 저장으로 도형별
+      매핑(사각형/결정 다이아몬드/터미널 스타디움) 렌더 확인 + **실제 창**(오프스크린
+      아님) 스크린샷으로 한글 라벨·엣지 라벨("예"/"아니오") 포함 최종 레이아웃 확인.
+    - **다음 순서(Stage 6)**: 레이아웃 최종 통일(시안 이미지 기준) — Stage 5 결과에
+      따라 세부가 달라져 미리 설계하지 않음(착수 시 필요하면 짧은 deep-interview).
     - 상세 경위: `docs/history/2026-08.md` "§8 항목20 후속 — Mermaid·SVG AI 다이얼로그
-      재정리 Stage 1"·"Stage 2"·"Stage 3"·"Stage 4".
+      재정리 Stage 1"·"Stage 2"·"Stage 3"·"Stage 4"·"Stage 5".
 
 ## 9. 검증 철학
 
