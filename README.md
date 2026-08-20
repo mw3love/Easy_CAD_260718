@@ -12,7 +12,8 @@ pip install -r requirements.txt
 python run.py
 ```
 
-테스트: `python tests/test_easycad.py` (또는 `pytest tests/`) — 373종 offscreen 회귀 스모크.
+테스트: `python tests/test_easycad.py`(732종, 요약 러너) 또는 `pytest tests/`(806종, 전체 —
+요약 러너가 안 모으는 일부 `test_part9_*` 포함) — offscreen 회귀 스모크.
 
 ## 구조
 

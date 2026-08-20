@@ -40,6 +40,22 @@ from easycad.fileio.sketch_build import Sketch, _argb
 _app = QApplication.instance() or QApplication([])
 _TMP = tempfile.mkdtemp(prefix="easycad_test_")
 
+# [2026-08-20 후속 — 커밋 9323180이 놓친 두 번째 경로] `conftest.py`의 autouse fixture는
+# **pytest로 실행할 때만** 발동한다. `tests/test_easycad.py`(문서화된 "전체 실행 진입점",
+# CLAUDE.md가 그대로 추천하는 명령)는 pytest 없이 테스트 함수를 직접 호출하는 자체 러너라
+# 그 fixture가 아예 안 걸린다 — 이 경로로 실행하면 `test_part9_ai_mermaid.py`의
+# `_clear_gateway_settings()`가 `gw._SETTINGS_ORG/_SETTINGS_APP`의 기본값("EasyCAD")을
+# 그대로 참조해 실사용자 레지스트리(`HKCU\Software\EasyCAD\EasyCAD\ai_gateway_key`)를
+# 또 지운다 — 실제로 이 세션에서 `python tests/test_easycad.py`를 두 차례 실행해 재발시켰다
+# (실측: 수정 전 조회 시 `ai_gateway_key`가 빈 문자열). `_shared.py`는 pytest·자체 러너
+# 어느 경로든 모든 test_part*.py가 제일 먼저 `from _shared import *`로 가져가므로, 여기서
+# 모듈 임포트 시점에 한 번 재바인딩하면 두 경로 다 커버된다(`conftest.py`의 pytest-전용
+# monkeypatch는 방어 한 겹으로 유지 — 매 테스트 teardown마다 이 값으로 되돌아갈 뿐이라
+# 충돌 없음).
+from easycad.ai import gateway as _gw
+_gw._SETTINGS_ORG = "EasyCAD-pytest"
+_gw._SETTINGS_APP = "EasyCAD-pytest"
+
 
 def _close(a, b, eps=0.5):
     return abs(a.x() - b.x()) < eps and abs(a.y() - b.y()) < eps

@@ -210,7 +210,9 @@ _ACCENT_CORAL = "#da7756"
 _SVG_ACT_ICON_NAMES = frozenset({
     "new", "open", "save", "undo", "redo", "snap", "ortho", "grid", "theme", "help", "pin",
     # [§8 항목18 후속, 2026-08-12] AI 게이트웨이 설정·Mermaid 다이얼로그 아이콘화 요청으로 추가.
-    "refresh", "settings", "generate", "connect", "attach",
+    "refresh", "settings", "generate", "connect",
+    # ["attach" 2026-08-20 제거 — 첨부 버튼이 이 SVG 클립 아이콘 대신 "+" 정사각 버튼으로
+    # 바뀌어(`_ImageAttachMixin._build_attach_button`) 마지막 참조가 사라짐, `attach.svg`도 삭제.]
 })
 
 
@@ -289,6 +291,19 @@ def _act_icon(name: str) -> QIcon:
     elif name == "zoom_100":
         p.drawEllipse(QPointF(10.5, 10.5), 5, 5)
         line(14.2, 14.2, 19.5, 19.5)
+    elif name == "copy":
+        # [2026-08-20, SVG 창 "프롬프트 복사" 버튼 아이콘화] 겹친 종이 두 장 — 표준 복사
+        # 픽토그램. 겹치는 자리의 선 교차는 이 앱의 다른 단순 라인 아이콘(mermaid 등)과
+        # 같은 수준이라 별도 배경 지우기 없이 허용.
+        p.drawRoundedRect(QRectF(4, 3, 12, 15), 1.5, 1.5)
+        p.drawRoundedRect(QRectF(8, 7, 12, 15), 1.5, 1.5)
+    elif name == "check":
+        # [2026-08-20] 아이콘 전용 버튼의 "완료" 순간 피드백(예: 프롬프트 복사됨) — 텍스트
+        # 라벨을 못 쓰는 자리에서 아이콘을 잠깐 이걸로 바꿔 보여준다.
+        path = QPainterPath(QPointF(5, 12.5))
+        path.lineTo(9.5, 17.5)
+        path.lineTo(19, 6)
+        p.drawPath(path)
     p.end()
     icon = _finish_act_icon(pm)
     _ACT_ICON_CACHE[key] = icon

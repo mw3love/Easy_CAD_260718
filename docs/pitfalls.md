@@ -163,6 +163,17 @@
   전에 기존 워커가 도는 중이면 새로 안 띄우는 가드 한 줄로 막는다(실제 재현은 안 했으나
   구조적으로 명백해 self-review 단계에서 선제 수정). (`2026-08.md` "§8 항목20 후속 —
   Mermaid/SVG 다이얼로그 UX 개선 8건")
+- **`QEvent.Type.WindowDeactivate`는 `changeEvent()`가 아니라 `event()`로 직접 전달된다.**
+  `changeEvent()`는 그 대신 `QEvent.Type.ActivationChange`만 받는다(구분하려면
+  `isActiveWindow()`를 같이 봐야 함). "창이 비활성화되면 스스로 닫히는 팝업"을
+  `changeEvent()`에서 `WindowDeactivate`를 잡는 방식으로 구현했더니 pytest는 통과했지만
+  (`changeEvent()`를 **직접 호출**하는 합성 테스트라 Qt가 실제로 그 경로를 타는지 자체를
+  검증 못 함 — 규칙 11-c 위반: 메서드 직접호출은 프록시검증이지 확인이 아니다) 실사용에서
+  바깥 클릭이 전혀 안 먹혔다. 진짜 top-level 창 두 개를 띄우고 하나를 `activateWindow()`
+  하는 실측으로 두 이벤트 타입이 서로 다른 통로로 배달됨을 확인 후 `event()` 오버라이드로
+  교체 — 회귀 테스트도 `changeEvent()` 직접호출 대신 같은 실측 기법(진짜 창 두 개+
+  `activateWindow()`)으로 다시 썼다. (`2026-08.md` "SVG 에셋 생성창 5건" 후속 —
+  확대창 갤러리 뷰어화)
 
 ## 좌표계·변환
 - `drawForeground`의 painter는 Qt가 이미 **씬 좌표계**로 매핑해 넘긴다 — 여기에 다시
@@ -561,6 +572,14 @@
   전에 그 요소의 위치·크기·색을 먼저 확인할 것 — 안 겹치면 다행이지만 겹치면 새 마커 대신
   **기존 요소 자체의 속성(색 등)을 바꾸는 쪽**이 항상 눈에 띈다. (2026-08-19, 화살표 끝점
   재부착 예고점)
+- **`QScrollArea`(=`QAbstractScrollArea`)에 QSS `border`+`border-radius`만 주면 꼭짓점이
+  각져 보인다.** 일반 `QFrame`은 기본 `frameShape`가 이미 `NoFrame`이라 QSS `border`만
+  줘도 그대로 둥글게 그려지지만(Mermaid `preview_frame`이 그 경우), `QScrollArea`의 기본
+  `frameShape`는 `StyledPanel`(사각 네이티브 프레임)이라 그 프레임이 QSS 둥근 테두리
+  위에 겹쳐 그려져 모서리만 사각으로 튀어나온 것처럼 보인다. `setFrameShape(QFrame.Shape.
+  NoFrame)`을 먼저 호출해 네이티브 프레임을 끈 뒤 QSS `border`를 줘야 한다 — 같은 QSS를
+  다른 QFrame 서브클래스에 복붙할 때 서브클래스별 기본 `frameShape`가 다를 수 있음을
+  기억할 것. (2026-08-20, SVG 에셋 생성창 후보 갤러리 테두리)
 
 ## 검증 방법론
 - 오프스크린(headless) 통과는 "해결"이 아니다 — 지속연결 초안이 offscreen은 통과했지만 실제
@@ -766,6 +785,21 @@
   검증은 `close()`+`result()` 조합(갓 만든 `QDialog.result()`가 이미 `Rejected`(0)라 "닫기
   전"과 구분 불가) 대신 `closeEvent(QCloseEvent())`를 직접 호출해 `isAccepted()`로 판정한다.
   (`2026-08.md` §8 항목18/20 후속 — SVG/Mermaid 다이얼로그 비동기화, 2026-08-19)
+- **pytest 격리(`conftest.py` autouse fixture)는 pytest로 실행할 때만 발동한다 — 같은
+  테스트 함수를 다른 진입점으로 부르면 무방비다.** 커밋 9323180이 "테스트가 실사용자
+  QSettings(`HKCU\Software\EasyCAD\EasyCAD`)를 지운다"를 `conftest.py`의 autouse
+  `monkeypatch`로 고쳤는데, 바로 다음 세션에서 **같은 사고가 재발**했다 — 원인은
+  `tests/test_easycad.py`(CLAUDE.md가 "전체 실행" 진입점으로 그대로 추천하는 커스텀
+  러너)가 pytest 없이 테스트 함수를 직접 호출해 그 fixture 자체가 안 걸리는 것이었다.
+  실측: 실제 레지스트리에 표식 값을 넣고 `python tests/test_easycad.py`를 돌리자
+  사라짐(수정 전) / 살아남음(수정 후, `_shared.py`에서 모듈 임포트 시점에 `gw._SETTINGS_
+  ORG/_SETTINGS_APP`을 재바인딩 — 모든 test_part*.py가 pytest·커스텀 러너 어느 쪽으로
+  실행되든 제일 먼저 `from _shared import *`를 타므로 두 경로 다 커버). **교훈: 격리
+  훅을 pytest 픽스처 한 곳에만 걸면 "pytest로 실행한다"는 전제가 깨지는 순간(레거시
+  진입점, `python -m module` 직접 호출, CI가 다른 러너를 쓰는 경우 등) 조용히 무력화된다
+  — 실사용자 상태를 건드리는 격리는 그 리소스에 접근하는 모든 코드가 반드시 거치는
+  가장 이른 지점(여기선 공용 `_shared.py` 임포트)에 걸어야 진짜 안전하다.**
+  (`2026-08.md` "pytest 게이트웨이 키 소실 재발 — 두 번째 진입점", 2026-08-20)
 
 ## 하위호환·직렬화
 - `.ecad`에 필드를 추가할 때는 항상 "키 없으면 안전한 기본값"으로 로드하게 만든다(예: 옛

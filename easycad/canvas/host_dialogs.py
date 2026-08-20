@@ -39,7 +39,7 @@ from easycad.canvas.annotator_core import (
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
 from easycad.canvas.host_widgets import (
-    _clipboard_pixmap, _act_icon, _ACCENT_CORAL, _ICON_COLOR,
+    _clipboard_pixmap, _act_icon, _ACCENT_CORAL, _ICON_COLOR, _current_icon_color,
     _MERMAID_SHAPE_ITEM, _border_attach,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, render_preview, _list_title_frames
@@ -52,7 +52,7 @@ from easycad.fileio.mermaid_import import (
 from easycad.fileio.svg_import import parse_svg_string
 from easycad.fileio import symbol_library
 from easycad.ai import gateway as gw
-from easycad.ai.text_to_svg import generate_svg
+from easycad.ai.text_to_svg import generate_svg, build_prompt, build_image_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +482,26 @@ class _ImageAttachMixin:
         self._image_chip = chip
         return chip
 
+    def _build_attach_button(self, parent) -> QToolButton:
+        """이미지 첨부 버튼 — 클립 아이콘 대신 "+ 새 폴더" 버튼(`host_ui.py`
+        `_add_folder_btn`)과 같은 정사각 "+" 글리프로(2026-08-20 피드백: "클립 아이콘이
+        작아서 눌러서 불러오거나 드래그된다는 느낌이 안 난다" — 새 아이콘을 그리는 대신
+        앱이 이미 쓰던 "+" 버튼 스타일을 재사용, 다만 이 버튼은 헤더 안이 아니라 독립
+        툴바 안이라 눌러볼 수 있는 경계가 보이도록 테두리를 추가했다)."""
+        btn = QToolButton(parent)
+        btn.setText("+")
+        btn.setAutoRaise(True)
+        btn.setFixedSize(QSize(28, 28))
+        col = _current_icon_color().name()
+        btn.setStyleSheet(
+            f"QToolButton {{ color:{col}; font-weight:700; font-size:18px; "
+            "border:1px solid rgba(128,128,128,90); border-radius:6px; }"
+            "QToolButton:hover { background:rgba(128,128,128,40); }"
+        )
+        btn.setToolTip("이미지 첨부<br>· 드래그 앤 드롭<br>· Ctrl+V 붙여넣기")
+        btn.clicked.connect(self._browse_image)
+        return btn
+
     def _browse_image(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "이미지 선택", "", "이미지 (*.png *.jpg *.jpeg *.bmp *.webp *.gif)")
@@ -570,6 +590,50 @@ class _ImageAttachMixin:
                 self._set_attached_qimage(img, "붙여넣은 이미지")
                 return True
         return False
+
+
+def _fill_model_combo_grouped(combo: QComboBox, models: list, default_model: str,
+                              prev: str | None = None):
+    """Gemini·GPT 그룹 헤더가 있는 드롭다운으로 채운다 — 원래 `_MermaidDialog`
+    전용이던 로직을 2026-08-20(SVG 창의 모델 슬롯 2개가 각자 실제 모델을 고를 수 있게
+    확장하며)에 모듈 함수로 추출해 두 다이얼로그가 공유한다. 헤더 행은
+    `QStandardItem.setEnabled(False)`로 선택 불가. `models`가 비어 있으면(조회 전·실패
+    시) 추천 둘만으로 조용히 폴백. `prev`가 새 목록에도 있으면 유지, 없으면
+    `default_model`(호출부가 정하는 이 콤보의 기본 모델 — Mermaid는 1개뿐이라
+    `TEXT_RECOMMEND_1` 고정, SVG는 슬롯 A/B가 각각 다른 기본값을 쓴다)."""
+    r1, r2 = gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2
+    pool = sorted(set(models) | {r1, r2})
+    gemini_models = sorted(m for m in pool if "gemini" in m.lower())
+    gpt_models = sorted(m for m in pool if "gpt" in m.lower())
+
+    std_model = QStandardItemModel(combo)
+
+    def add_group(label, group_models):
+        header = QStandardItem(label)
+        header.setEnabled(False)
+        f = header.font(); f.setBold(True); header.setFont(f)
+        std_model.appendRow(header)
+        for m in group_models:
+            it = QStandardItem(m)
+            it.setData(m, Qt.ItemDataRole.UserRole)
+            std_model.appendRow(it)
+
+    add_group("Gemini", gemini_models)
+    add_group("GPT", gpt_models)
+    combo.setModel(std_model)
+
+    target = prev if prev in pool else default_model
+    default_row = next(
+        (i for i in range(std_model.rowCount())
+         if std_model.item(i).data(Qt.ItemDataRole.UserRole) == target), -1)
+    combo.setCurrentIndex(default_row if default_row >= 0 else
+                          (1 if std_model.rowCount() > 1 else -1))
+
+
+def _combo_selected_model(combo: QComboBox, fallback: str) -> str:
+    idx = combo.currentIndex()
+    data = combo.itemData(idx, Qt.ItemDataRole.UserRole) if idx >= 0 else None
+    return data or fallback
 
 
 class _MermaidGenWorker(QThread):
@@ -827,15 +891,9 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         toolbar_lay.setContentsMargins(8, 6, 8, 6)
         toolbar_lay.setSpacing(8)
 
-        # [2026-08-20 피드백] 텍스트 라벨 제거, 설정 버튼(`_settings_btn`)과 같은 아이콘
-        # 전용 정사각 버튼으로 축소 — 보조 동작이라는 위계도 맞고, 시각적으로 "추가/드롭"
-        # 느낌이 텍스트 라벨보다 잘 산다는 피드백. 발견성 손실은 아래 툴팁이 대신 맡는다.
-        self._attach_btn = QToolButton(toolbar_widget)
-        self._attach_btn.setIcon(_act_icon("attach"))
-        # [2026-08-13 5차] 옛 상단 힌트 2번째 줄(드래그·Ctrl+V)을 이 버튼 툴팁으로 흡수 —
-        # Qt 툴팁은 HTML을 주면 자동으로 리치텍스트 처리해 불릿(<br>·)이 그대로 렌더된다.
-        self._attach_btn.setToolTip("이미지 첨부<br>· 드래그 앤 드롭<br>· Ctrl+V 붙여넣기")
-        self._attach_btn.clicked.connect(self._browse_image)
+        # [2026-08-20 피드백 재작업] 클립 아이콘 → "+" 정사각 버튼(`_build_attach_button`,
+        # `_ImageAttachMixin` 공용) — "눌러서 불러오거나 드래그된다"는 느낌을 더 뚜렷하게.
+        self._attach_btn = self._build_attach_button(toolbar_widget)
         toolbar_lay.addWidget(self._attach_btn)
 
         # 컴팩트 이미지 칩(첨부 시에만 노출) — 옛 전체폭 행 대신 툴바 안 작은 pill로
@@ -893,14 +951,13 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         self._model_combo = QComboBox(self)
         self._model_combo.setStyleSheet(_ROUNDED_COMBO_QSS)   # [2026-08-13] 각진 모서리 → 둥글게
         model_row.addWidget(self._model_combo, 1)
-        # [2026-08-20 피드백] 전용 새로고침 버튼 제거 — "API 키를 만지는 설정 창의
-        # 연결 테스트가 그 역할을 겸한다"는 지적으로, 설정 버튼만 남긴다.
+        left_col.addLayout(model_row)
+        # [2026-08-20 재피드백] 모델 행 끝에 있던 설정 버튼이 줄맞춤을 깨뜨린다는 지적(SVG
+        # 창과 동일) — 우하단 확인/취소 버튼 옆(부가 동작 자리)으로 옮긴다(아래 `bottom_row`).
         self._settings_btn = QToolButton(self)
         self._settings_btn.setIcon(_act_icon("settings"))
         self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·연결 테스트)")
         self._settings_btn.clicked.connect(self._open_gateway_settings)
-        model_row.addWidget(self._settings_btn)
-        left_col.addLayout(model_row)
         self._populate_models()
 
         # ---- 입력→코드 커넥터 — 순서도 커넥터 느낌으로 "이 입력이 아래 코드로 바뀐다"를
@@ -988,7 +1045,13 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # [2026-08-19 Stage 6] 목업 시각 언어 차용 — "OK" 대신 결과를 명시하는 라벨.
         ok_btn.setText("확인 (캔버스 삽입)")
         ok_btn.setStyleSheet(_CORAL_BTN_QSS)
-        lay.addWidget(self._btns)
+        # [2026-08-20 재피드백] 설정 버튼을 여기(확인/취소 옆)로 옮겨왔다 — 부가 동작은
+        # 왼쪽, 주 동작(확인/취소)은 오른쪽(SVG 창과 동일).
+        bottom_row = QHBoxLayout()
+        bottom_row.addWidget(self._settings_btn)
+        bottom_row.addStretch(1)
+        bottom_row.addWidget(self._btns)
+        lay.addLayout(bottom_row)
 
     def text(self):
         return self._edit.toPlainText()
@@ -1090,43 +1153,15 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
 
     def _fill_model_combo(self, models):
         """gemini·gpt 그룹 헤더가 있는 평범한 드롭다운으로 채운다(추천 배지·설명은 없음
-        — 재피드백: "추천 설명은 빼자"). 헤더 행은 `QStandardItem.setEnabled(False)`로
-        선택 불가. `models`가 비어 있으면(조회 전·실패 시) 추천 둘만으로 조용히 폴백.
-        이전에 고른 모델이 새 목록에도 있으면 그대로 유지한다(백그라운드 갱신이 사용자가
-        막 고른 모델을 조용히 되돌리지 않도록)."""
+        — 재피드백: "추천 설명은 빼자"). `models`가 비어 있으면(조회 전·실패 시) 추천
+        둘만으로 조용히 폴백. 이전에 고른 모델이 새 목록에도 있으면 그대로 유지한다
+        (백그라운드 갱신이 사용자가 막 고른 모델을 조용히 되돌리지 않도록). 실제 채우기는
+        `_fill_model_combo_grouped`(모듈 함수, 2026-08-20 SVG 창과 공유하도록 추출)."""
         prev = self.model() if self._model_combo.count() else None
-        r1, r2 = gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2
-        pool = sorted(set(models) | {r1, r2})
-        gemini_models = sorted(m for m in pool if "gemini" in m.lower())
-        gpt_models = sorted(m for m in pool if "gpt" in m.lower())
-
-        std_model = QStandardItemModel(self._model_combo)
-
-        def add_group(label, group_models):
-            header = QStandardItem(label)
-            header.setEnabled(False)
-            f = header.font(); f.setBold(True); header.setFont(f)
-            std_model.appendRow(header)
-            for m in group_models:
-                it = QStandardItem(m)
-                it.setData(m, Qt.ItemDataRole.UserRole)
-                std_model.appendRow(it)
-
-        add_group("Gemini", gemini_models)
-        add_group("GPT", gpt_models)
-        self._model_combo.setModel(std_model)
-
-        target = prev if prev in pool else r1
-        default_row = next(
-            (i for i in range(std_model.rowCount())
-             if std_model.item(i).data(Qt.ItemDataRole.UserRole) == target), -1)
-        self._model_combo.setCurrentIndex(default_row if default_row >= 0 else
-                                          (1 if std_model.rowCount() > 1 else -1))
+        _fill_model_combo_grouped(self._model_combo, models, gw.TEXT_RECOMMEND_1, prev)
 
     def model(self) -> str:
-        idx = self._model_combo.currentIndex()
-        data = self._model_combo.itemData(idx, Qt.ItemDataRole.UserRole) if idx >= 0 else None
-        return data or gw.TEXT_RECOMMEND_1
+        return _combo_selected_model(self._model_combo, gw.TEXT_RECOMMEND_1)
 
     def _on_ai_clicked(self):
         """2026-08-19 비동기화 — 예전엔 `generate_mermaid`를 이 자리에서 동기 호출+
@@ -1292,7 +1327,8 @@ class _AIGatewaySettingsDialog(QDialog):
 # 생성/대체). 코랄 버튼 QSS 등 스타일만 그쪽 관례를 재사용.
 # ---------------------------------------------------------------------------
 
-def _render_svg_candidate_pixmap(svg_text: str, size: int) -> QPixmap | None:
+def _render_svg_candidate_pixmap(svg_text: str, size: int,
+                                 pen_color: QColor | None = None) -> QPixmap | None:
     """후보 미리보기 렌더 — 원본 SVG를 그대로 QSvgRenderer로 그리지 않고, 실제 삽입 때와
     동일한 파서(`parse_svg_string`)로 아이템을 만들어 임시 씬에 얹은 뒤 우리 펜(중립
     잉크색·NoBrush)으로 렌더한다. 프롬프트가 "색은 지정 안 해도 됨"을 허용하는데(
@@ -1301,7 +1337,13 @@ def _render_svg_candidate_pixmap(svg_text: str, size: int) -> QPixmap | None:
     반대로 닫힌 도형은 기본 fill:black 검은 덩어리로 나올 수 있다 — A단계 실측 때 진단
     스크립트가 실제로 겪은 함정과 같은 종류(`docs/history/2026-08.md` "§8 항목20" 참조).
     미리보기와 실제 삽입 결과가 달라지면 신뢰할 수 없으므로 항상 같은 경로로 렌더한다.
-    파싱 실패·빈 결과면 None(호출부가 "미리보기 실패" 표시)."""
+    파싱 실패·빈 결과면 None(호출부가 "미리보기 실패" 표시).
+
+    `pen_color`(2026-08-20 피드백) — 기본은 `_ICON_COLOR`(캔버스 실삽입과 같은 중립
+    잉크색)지만, 이 작은 카드 안에서는 다크 테마 카드 배경과 대비가 약해 흐리게 보인다는
+    지적으로 호출부(다이얼로그)가 미리보기 전용 밝은 색을 넘길 수 있게 열어둔다 — **실제
+    캔버스 삽입 색(`_ICON_COLOR`)은 이 인자와 무관하게 그대로**(여긴 미리보기 렌더 함수의
+    펜 색만 바꾸는 것)."""
     try:
         items, vb = parse_svg_string(svg_text)
     except Exception:
@@ -1309,7 +1351,7 @@ def _render_svg_candidate_pixmap(svg_text: str, size: int) -> QPixmap | None:
     if not items:
         return None
     scene = QGraphicsScene()
-    pen = QPen(_ICON_COLOR, 1.5)
+    pen = QPen(pen_color or _ICON_COLOR, 1.5)
     for it in items:
         if not isinstance(it, _TextItem):
             it.setPen(pen)
@@ -1329,11 +1371,137 @@ def _render_svg_candidate_pixmap(svg_text: str, size: int) -> QPixmap | None:
     return pm
 
 
+class _QuickLookDialog(QDialog):
+    """확대 보기 — 후보 갤러리 뷰어(2026-08-20 3차 피드백으로 확장). 다이얼로그(`_svg_
+    dialog`) 하나당 인스턴스 하나만 재사용하며, "지금 몇 번째를 보는지"(`_index`)만 바꿔
+    다시 그린다.
+
+    ⓐ **닫기** — 우상단 X·Esc(`QDialog` 기본 `reject()`)에 더해, 창 포커스를 잃으면
+    (다른 곳 클릭·창 전환) 자동으로 닫힌다. ⚠ **재재재피드백(2026-08-20) — 바깥 클릭이
+    실사용에선 안 먹혔다**: 처음엔 `changeEvent()`에서 `QEvent.Type.WindowDeactivate`를
+    잡으려 했는데, 실측(두 개 진짜 top-level 창을 띄우고 하나를 활성화해 다른 하나가 받는
+    이벤트를 직접 로그)해보니 **`WindowDeactivate`는 `changeEvent()`가 아니라 `event()`로
+    직접 전달된다** — `changeEvent()`는 그 대신 `QEvent.Type.ActivationChange`만 받는다.
+    이전 검증(pytest)이 `changeEvent()`를 직접 호출해 통과시켰던 것 자체가 함정이었다 —
+    Qt가 실제로 그 경로를 타는지 확인 없이 메서드를 직접 불러 "확인됨"으로 착각한
+    프록시검증(전역 규칙 11-c 위반 사례). `event()` 오버라이드로 교체.
+
+    ⓑ **탐색** — `←`/`→` 키 또는 화면 ‹›버튼으로 후보를 넘기며, 이동은 메인 그리드의
+    단일선택(`_svg_dialog._pick_card`)과 양방향 동기화된다(카드 클릭 → 확대창 갱신도,
+    확대창 이동 → 카드 선택 갱신도 됨). 상단에 "n / N · 모델명" 표시.
+
+    ⓒ **Space** — 지금 보는 후보의 "심볼로 저장" 체크박스를 그대로 토글(`_SvgCandidateCard.
+    _save_check`와 같은 상태 공유, 다중 후보 골라 한꺼번에 저장하는 기존 기능과 자연히
+    맞물림). 네비 버튼은 `NoFocus`로 둬 Space가 항상 이 다이얼로그의 `keyPressEvent`로
+    온다(버튼이 포커스를 채가면 Space가 "버튼 클릭"으로 먼저 소비돼버림)."""
+
+    def __init__(self, svg_dialog, parent=None):
+        super().__init__(parent)
+        self._svg_dialog = svg_dialog
+        self._index = 0
+        self.setWindowTitle("SVG 후보 확대")
+
+        v = QVBoxLayout(self)
+        nav_row = QHBoxLayout()
+        self._prev_btn = QToolButton(self)
+        self._prev_btn.setText("‹")
+        self._prev_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._prev_btn.clicked.connect(lambda: self._step(-1))
+        nav_row.addWidget(self._prev_btn)
+        nav_row.addStretch(1)
+        self._counter_label = QLabel(self)
+        self._counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        nav_row.addWidget(self._counter_label)
+        nav_row.addStretch(1)
+        self._next_btn = QToolButton(self)
+        self._next_btn.setText("›")
+        self._next_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._next_btn.clicked.connect(lambda: self._step(1))
+        nav_row.addWidget(self._next_btn)
+        v.addLayout(nav_row)
+
+        self._label = QLabel(self)
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(self._label, 1)
+
+        self._check_hint = QLabel(self)
+        self._check_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._check_hint.setStyleSheet("color:#8a8a8a; font-size:11px;")
+        v.addWidget(self._check_hint)
+
+        self.resize(QSize(640, 640))
+
+    def show_index(self, index: int):
+        """`index`번째 후보를 그린다 — 카드 클릭(`_pick_card`)·화살표 탐색(`_step`)·
+        더블클릭(`_show_enlarged_candidate`) 세 진입점이 전부 이걸 부른다."""
+        candidates = self._svg_dialog._candidates
+        if not candidates:
+            self.close()
+            return
+        index = max(0, min(index, len(candidates) - 1))
+        self._index = index
+        card, svg_text, model_used = candidates[index]
+        pm = _render_svg_candidate_pixmap(svg_text, 600, self._svg_dialog._preview_pen_color)
+        if pm is None:
+            self._label.setPixmap(QPixmap())
+            self._label.setText("구문 오류 — 미리보기를 표시할 수 없습니다")
+        else:
+            self._label.setText("")
+            self._label.setPixmap(pm)
+        self._counter_label.setText(f"{index + 1} / {len(candidates)}  ·  {model_used}")
+        self._prev_btn.setEnabled(index > 0)
+        self._next_btn.setEnabled(index < len(candidates) - 1)
+        self._update_check_hint(card)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _update_check_hint(self, card: "_SvgCandidateCard"):
+        mark = "☑" if card.is_checked_for_save() else "☐"
+        self._check_hint.setText(f"{mark}  Space — 심볼로 저장 체크/해제")
+
+    def _step(self, delta: int):
+        candidates = self._svg_dialog._candidates
+        if not candidates:
+            return
+        new_index = self._index + delta
+        if not (0 <= new_index < len(candidates)):
+            return
+        self.show_index(new_index)
+        self._svg_dialog._pick_card(candidates[new_index][0])
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key.Key_Left:
+            self._step(-1)
+            return
+        if e.key() == Qt.Key.Key_Right:
+            self._step(1)
+            return
+        if e.key() == Qt.Key.Key_Space:
+            candidates = self._svg_dialog._candidates
+            if candidates and 0 <= self._index < len(candidates):
+                card = candidates[self._index][0]
+                card._save_check.setChecked(not card._save_check.isChecked())
+                self._update_check_hint(card)
+            return
+        super().keyPressEvent(e)
+
+    def event(self, e):
+        # ⚠ 위 클래스 docstring ⓐ 참조 — `WindowDeactivate`는 `changeEvent()`가 아니라
+        # 여기(`event()`)로 온다. 실측으로 확인된 함정이라 되풀이하지 않도록 주석 유지.
+        if e.type() == QEvent.Type.WindowDeactivate:
+            self.close()
+        return super().event(e)
+
+
 class _SvgCandidateCard(QFrame):
-    """후보 1개 카드 — 체크박스 + 썸네일 + 모델명. 두 가지 독립된 선택 개념을 함께 담는다
-    (2026-08-19 Stage 4, deep-interview 확정): ⓐ 카드 클릭 = 단일 선택(코랄 테두리) —
-    OK 눌러 캔버스에 삽입/대체할 후보 하나. ⓑ 좌상단 체크박스 = 다중 선택 — "내 심볼로
-    저장" 버튼으로 한꺼번에 심볼 팔레트에 등록할 후보들(0개 이상, 클릭 선택과 무관)."""
+    """후보 1개 카드 — 체크박스 + 썸네일 + 모델명. 세 가지 독립된 상호작용을 함께 담는다:
+    ⓐ 카드 클릭 = 단일 선택(코랄 테두리, 2026-08-19 Stage 4) — OK 눌러 캔버스에
+    삽입/대체할 후보 하나. ⓑ 좌상단 체크박스 = 다중 선택(2026-08-19 Stage 4) — "내 심볼로
+    저장" 버튼으로 한꺼번에 심볼 팔레트에 등록할 후보들(0개 이상, 클릭 선택과 무관).
+    ⓒ 더블클릭(2026-08-20) = 확대 보기 — 미리보기 패널을 없앤 자리를 대신한다."""
+
+    doubleClicked = pyqtSignal()
 
     def __init__(self, model_label: str, svg_text: str, pixmap: QPixmap | None,
                 on_pick, parent=None):
@@ -1382,6 +1550,10 @@ class _SvgCandidateCard(QFrame):
     def mousePressEvent(self, e):
         self._on_pick(self)
         super().mousePressEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        self.doubleClicked.emit()
+        super().mouseDoubleClickEvent(e)
 
 
 class _SaveToSymbolsFolderDialog(QDialog):
@@ -1457,19 +1629,26 @@ class _SvgGenWorker(QThread):
 
 
 class _SvgAssetDialog(_ImageAttachMixin, QDialog):
-    """AI SVG 에셋 생성 — 대상 설명 한 줄 + 모델별 후보 개수 드롭다운(GPT/Gemini 각각
-    0~5개, 2026-08-19 deep-interview 확정 — §8 항목20 후속 Stage 2, 최대 10개까지 한
-    번에 받아 마음에 드는 걸 고르고 싶다는 실사용 요청) + 생성 버튼 + 후보 카드 가로
-    스크롤 나열(클릭 선택) + OK/Cancel. 진입점 2곳(메뉴 삽입·우클릭 대체)이 이 다이얼로그를
-    그대로 공유한다 — 호출부가 `selected_svg()` 결과를 각자의 방식(새로 삽입 vs 기존 도형
-    대체)으로 소비.
+    """AI SVG 에셋 생성 — 대상 설명 한 줄 + 모델 슬롯 2개(각각 실제 모델 선택 + 후보
+    개수 0~5, 최대 10개) + 생성 버튼 + 후보 카드 그리드(클릭 선택·더블클릭 확대) +
+    OK/Cancel. 진입점 2곳(메뉴 삽입·우클릭 대체)이 이 다이얼로그를 그대로 공유한다 —
+    호출부가 `selected_svg()` 결과를 각자의 방식(새로 삽입 vs 기존 도형 대체)으로 소비.
+
+    **2026-08-20 재작업** — 옛 "GPT/Gemini 두 가족 고정, 개수만 선택"(Stage 2)을
+    "슬롯 A/B 각각 실제 모델(Mermaid와 같은 `list_text_models` 목록)+개수" 로 확장(사용자
+    확정: "여러 모델은 과하다, 2개면 충분 — 대신 모델도 사용자가 고르게"). 그룹 드롭다운
+    채우기는 `_fill_model_combo_grouped`(모듈 함수로 추출, `_MermaidDialog`와 공유)가
+    맡는다. 같은 세션에서 미리보기 패널을 제거하고 후보 그리드가 그 자리를 대신하며
+    (더블클릭=확대), 프롬프트 복사 버튼(외부 AI에 이 창의 AI 지시 프롬프트를 그대로 줘서
+    SVG를 받아오는 워크플로 지원)과 "생성할 대상" 제목을 카드 밖으로 옮기는 것(Mermaid와
+    동일 위치)도 함께 반영했다.
 
     진행 표시는 `_SvgGenWorker`(QThread, 호출 1건당 인스턴스 1개) + marquee 진행바·
-    경과시간(`_GenProgressRow`). 요청한 후보 전부를 **동시에 병렬 호출**한다(모델 간·
-    모델 내부 구분 없이 완전 병렬, deep-interview 확정 — 최악 10개 동시 호출도 실측으로
-    확인함: gpt 5개는 ~7초, gemini 5개는 30~52초에 걸쳐 전부 성공, 실패 0건). 끝난
-    순서대로 카드가 하나씩 채워지므로(gpt가 보통 먼저 도착) 전부 끝나기 전에도 고를 수
-    있다.
+    경과시간(`_GenProgressRow`). 요청한 후보 전부를 **동시에 병렬 호출**한다(슬롯 간·
+    슬롯 내부 구분 없이 완전 병렬, 2026-08-19 deep-interview 확정 — 최악 10개 동시 호출도
+    실측으로 확인함: gpt 5개는 ~7초, gemini 5개는 30~52초에 걸쳐 전부 성공, 실패 0건).
+    끝난 순서대로 카드가 하나씩 채워지므로(gpt가 보통 먼저 도착) 전부 끝나기 전에도 고를
+    수 있다.
 
     이미지 입력도 받는다(찾아보기·드래그드롭·Ctrl+V, `_ImageAttachMixin` — 2026-08-19
     Stage 3, `_MermaidDialog`와 동일한 첨부 UI를 재사용). 이미지가 첨부되면 대상 설명은
@@ -1477,6 +1656,7 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
     동일 관례)."""
 
     _MAX_PER_MODEL = 5
+    _CANDIDATE_COLS = 3   # [2026-08-20] 후보 그리드 열 수 — 카드 120px+간격이 왼쪽 열 폭에 맞음
 
     def __init__(self, parent=None, confirm_label: str = "확인 (도형 삽입)"):
         super().__init__(parent)
@@ -1485,6 +1665,9 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._init_image_attach_state()
         self._candidates: list[tuple[_SvgCandidateCard, str, str]] = []
         self._selected_card: _SvgCandidateCard | None = None
+        # [2026-08-20 3차 피드백] 확대 보기를 매번 새로 만들지 않고 인스턴스 하나를 계속
+        # 재사용(카드 클릭·화살표 탐색·더블클릭이 전부 `_QuickLookDialog.show_index`를 부름).
+        self._quicklook: _QuickLookDialog | None = None
         self._workers: list[_SvgGenWorker] = []   # 생성 중일 때만 항목이 있음
         self._pending = 0          # 아직 안 끝난 워커 수
         self._gen_errors: list[str] = []
@@ -1495,6 +1678,11 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         # deep-interview 확정: "시각 언어만 차용"). 입력칸(위, 밝게 고정) + 첨부·모델·생성
         # 툴바(아래) 카드 하나로 묶는다.
         dark = bool(getattr(self.parent(), "_dark", True))
+        # [2026-08-20 피드백] "후보 미리보기 선이 배경과 비슷해 흐리다" — 다크 테마에서만
+        # 밝은 미리보기 전용 펜 색으로(라이트 테마는 흰 배경에 흰 선이 안 보이므로 그대로
+        # 기본 잉크색). `_render_svg_candidate_pixmap`이 이 값을 안 받으면 실삽입과 같은
+        # `_ICON_COLOR`로 폴백.
+        self._preview_pen_color = QColor("#f2f2f2") if dark else None
         prompt_frame = QFrame(self)
         prompt_frame.setObjectName("svgPromptCard")
         prompt_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -1515,28 +1703,24 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         prompt_frame_lay.setContentsMargins(0, 0, 0, 0)
         prompt_frame_lay.setSpacing(0)
 
-        label_row = QHBoxLayout()
-        label_row.setContentsMargins(10, 8, 10, 0)
-        prompt_title = QLabel("생성할 대상(예: BNC 커넥터 아이콘):", self)
-        prompt_title.setStyleSheet(_SECTION_TITLE_QSS)
-        label_row.addWidget(prompt_title)
-        prompt_frame_lay.addLayout(label_row)
-
-        self._prompt_edit = QLineEdit(prompt_frame)
+        # [2026-08-20 재피드백] "3줄 정도는 입력할 수 있게" — 한 줄 전용 `QLineEdit`에서
+        # Mermaid `_prompt_edit`과 같은 `QPlainTextEdit`(고정 높이)으로 전환, Enter=생성
+        # 규칙도 그대로 가져와 Shift+Enter=줄바꿈이 자연히 딸려온다(Mermaid는 64px=~2줄,
+        # 여기는 90px=~3줄).
+        self._prompt_edit = QPlainTextEdit(prompt_frame)
         self._prompt_edit.setPlaceholderText("예: 야기 안테나 아이콘")
+        self._prompt_edit.setFixedHeight(90)
+        self._prompt_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self._prompt_edit.setFrameShape(QFrame.Shape.NoFrame)   # 테두리는 카드가 그림
         self._prompt_edit.setAcceptDrops(False)   # 드롭을 다이얼로그(dropEvent)로 넘김
-        self._prompt_edit.installEventFilter(self)   # Ctrl+V 이미지 첨부
-        self._prompt_edit.returnPressed.connect(self._on_generate_clicked)
-        self._prompt_edit.setFrame(False)
+        self._prompt_edit.installEventFilter(self)   # Enter 생성·Ctrl+V 이미지 첨부
         self._prompt_edit.setStyleSheet(
-            "QLineEdit { background:transparent; padding:4px 10px; " +
+            "QPlainTextEdit { background:transparent; " +
             ("color:#241a15; }" if dark else "}")
         )
         prompt_frame_lay.addWidget(self._prompt_edit)
 
-        # [2026-08-20 피드백] Mermaid 카드의 "Enter 생성 · Shift+Enter 줄바꿈" 캡션과 같은
-        # 자리 — 이 칸은 한 줄이라 Shift+Enter 안내는 필요 없다.
-        enter_hint = QLabel("Enter 생성", prompt_frame)
+        enter_hint = QLabel("Enter 생성 · Shift+Enter 줄바꿈", prompt_frame)
         enter_hint.setAlignment(Qt.AlignmentFlag.AlignRight)
         enter_hint.setStyleSheet("color:#8a8a8a; font-size:11px; background:transparent; "
                                   "padding:0 8px 3px 0;")
@@ -1554,11 +1738,8 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         toolbar_lay.setContentsMargins(8, 6, 8, 6)
         toolbar_lay.setSpacing(8)
 
-        # [2026-08-20 피드백] Mermaid 창과 동일 — 아이콘 전용 정사각 버튼으로 축소.
-        self._attach_btn = QToolButton(toolbar_widget)
-        self._attach_btn.setIcon(_act_icon("attach"))
-        self._attach_btn.setToolTip("이미지 첨부<br>· 드래그 앤 드롭<br>· Ctrl+V 붙여넣기")
-        self._attach_btn.clicked.connect(self._browse_image)
+        # [2026-08-20 피드백 재작업] Mermaid 창과 동일 — "+" 정사각 버튼(`_build_attach_button`).
+        self._attach_btn = self._build_attach_button(toolbar_widget)
         toolbar_lay.addWidget(self._attach_btn)
         toolbar_lay.addWidget(self._build_image_chip(toolbar_widget))
         toolbar_lay.addStretch(1)
@@ -1578,38 +1759,60 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         prompt_frame_lay.addWidget(toolbar_widget)
 
         # [2026-08-20 재검토] "완전히 똑같아도 된다"는 피드백으로 Mermaid와 똑같이 카드·
-        # 모델행·코드칸을 전부 왼쪽 열(`left_col`) 하나에 쌓고, 오른쪽 열은 미리보기+후보를
-        # 합친 갤러리로 — 다이얼로그 전체를 진짜 좌우 2단으로 재구성한다.
+        # 모델행·코드칸을 전부 왼쪽 열(`left_col`) 하나에 쌓고, 오른쪽 열은 후보 갤러리로
+        # (미리보기 패널은 제거 — 아래 참조).
         left_col = QVBoxLayout()
+        # [2026-08-20 재피드백: "제목이 입력창 안에 있어서 잘 안 보인다"] 카드 안(입력칸과
+        # 같은 밝은 배경)에 있던 라벨을 카드 밖(다이얼로그 중립 배경)으로 — Mermaid의
+        # "텍스트 설명" 라벨과 완전히 같은 자리·같은 스타일.
+        prompt_title = QLabel("생성할 대상(예: BNC 커넥터 아이콘):", self)
+        prompt_title.setStyleSheet(_SECTION_TITLE_QSS)
+        left_col.addWidget(prompt_title)
         left_col.addWidget(prompt_frame)
 
         self._progress = _GenProgressRow(self)
         left_col.addWidget(self._progress)
 
-        # ---- 모델 선택(개수) — Mermaid의 "모델:" 행과 같은 자리(카드 바로 아래) ----
-        model_row = QHBoxLayout()
-        model_row.addWidget(QLabel(f"GPT ({gw.TEXT_RECOMMEND_1}):", self))
-        self._gpt_count = QComboBox(self)
-        self._gpt_count.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
-        self._gpt_count.setCurrentIndex(1)   # 기본 1개(Stage 1과 동일 체감 유지)
-        self._gpt_count.setStyleSheet(_ROUNDED_COMBO_QSS)
-        model_row.addWidget(self._gpt_count)
-        model_row.addSpacing(4)
-        model_row.addWidget(QLabel(f"Gemini ({gw.TEXT_RECOMMEND_2}):", self))
-        self._gemini_count = QComboBox(self)
-        self._gemini_count.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
-        self._gemini_count.setCurrentIndex(1)
-        self._gemini_count.setStyleSheet(_ROUNDED_COMBO_QSS)
-        model_row.addWidget(self._gemini_count)
-        model_row.addStretch(1)
-        # [2026-08-20 피드백] 이 창엔 설정 진입점이 아예 없었다 — Mermaid 창과 같은 자리
-        # (모델 관련 컨트롤 옆)에 추가(모델 목록 자체가 없어 새로고침할 것은 없음).
+        # ---- 모델 선택(슬롯 2개, 각각 모델+개수) — 2026-08-20 재작업: 옛 "GPT/Gemini
+        # 고정 2종" 대신 Mermaid와 같은 실제 모델 목록(`list_text_models`)에서 슬롯마다
+        # 원하는 모델을 고르고, 슬롯마다 개수(0~5)를 매긴다(사용자 확정: "여러 모델은
+        # 과하다, 2개 슬롯 + 각각 모델·개수 선택"). `_populate_models`가 두 콤보를 함께
+        # 채운다 — Mermaid의 `_fill_model_combo`/`_ModelListWorker`를 그대로 재사용
+        # (`_fill_model_combo_grouped`로 모듈 함수 추출, 아래 참조).
+        model_row1 = QHBoxLayout()
+        model_row1.addWidget(QLabel("모델 A:", self))
+        self._model_combo_a = QComboBox(self)
+        self._model_combo_a.setStyleSheet(_ROUNDED_COMBO_QSS)
+        model_row1.addWidget(self._model_combo_a, 1)
+        model_row1.addWidget(QLabel("개수:", self))
+        self._count_a = QComboBox(self)
+        self._count_a.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
+        self._count_a.setCurrentIndex(1)   # 기본 1개(Stage 1과 동일 체감 유지)
+        self._count_a.setStyleSheet(_ROUNDED_COMBO_QSS)
+        model_row1.addWidget(self._count_a)
+        left_col.addLayout(model_row1)
+
+        model_row2 = QHBoxLayout()
+        model_row2.addWidget(QLabel("모델 B:", self))
+        self._model_combo_b = QComboBox(self)
+        self._model_combo_b.setStyleSheet(_ROUNDED_COMBO_QSS)
+        model_row2.addWidget(self._model_combo_b, 1)
+        model_row2.addWidget(QLabel("개수:", self))
+        self._count_b = QComboBox(self)
+        self._count_b.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
+        self._count_b.setCurrentIndex(1)
+        self._count_b.setStyleSheet(_ROUNDED_COMBO_QSS)
+        model_row2.addWidget(self._count_b)
+        left_col.addLayout(model_row2)
+        # [2026-08-20 재피드백] 모델 행 끝에 있던 설정 버튼이 "모델 B/개수" 줄맞춤을
+        # 깨뜨린다는 지적 — 우하단 확인/취소 버튼 옆(부가 동작 자리)으로 옮긴다
+        # (아래 `bottom_row` 참조, Mermaid도 동일).
         self._settings_btn = QToolButton(self)
         self._settings_btn.setIcon(_act_icon("settings"))
         self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·연결 테스트)")
         self._settings_btn.clicked.connect(self._open_gateway_settings)
-        model_row.addWidget(self._settings_btn)
-        left_col.addLayout(model_row)
+        self._model_list_worker = None    # _ModelListWorker | None — 조회 중일 때만 설정
+        self._populate_models()
 
         # ---- SVG 코드(왼쪽 열 마지막 칸) — Mermaid와 동일 구조. 후보를 클릭하면 이 칸에
         # 채워지고, OK는 항상 이 칸의 내용을 쓴다(카드 선택 여부와 무관) — 그래서 외부
@@ -1623,68 +1826,84 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         connector_row.addStretch(1)
         left_col.addLayout(connector_row)
 
+        code_row = QHBoxLayout()
         code_title = QLabel("SVG 코드 (직접 입력·붙여넣기 가능):", self)
         code_title.setStyleSheet(_SECTION_TITLE_QSS)
-        left_col.addWidget(code_title)
+        code_row.addWidget(code_title)
+        code_row.addStretch(1)
+        # [2026-08-20 재피드백] "외부 AI에 우리 프롬프트를 주고 SVG를 받아와 붙여넣는"
+        # 워크플로 지원 버튼 — 위쪽 툴바(생성 관련 버튼들)가 아니라 이 붙여넣는 코드칸
+        # 제목 옆으로 옮기고(그 워크플로가 실제로 끝나는 자리), 텍스트 대신 아이콘+
+        # 호버 툴팁으로(상시 노출되는 텍스트 라벨보다 이 창에서 자주 쓰는 동작은 아니므로).
+        self._copy_prompt_btn = QToolButton(self)
+        self._copy_prompt_btn.setIcon(_act_icon("copy"))
+        self._copy_prompt_btn.setToolTip(
+            "이 창이 쓰는 AI 지시 프롬프트를 클립보드에 복사합니다.\n"
+            "외부 AI(Claude, ChatGPT 등)에 붙여넣어 SVG를 받은 뒤,\n"
+            "그 결과를 이 코드칸에 붙여넣으면 그대로 사용할 수 있습니다.")
+        self._copy_prompt_btn.clicked.connect(self._copy_prompt_to_clipboard)
+        code_row.addWidget(self._copy_prompt_btn)
+        left_col.addLayout(code_row)
         self._code_edit = QPlainTextEdit(self)
         self._code_edit.setPlaceholderText(
             '<svg viewBox="0 0 100 100">...</svg>\n외부 AI가 준 SVG 코드를 여기 붙여넣어도 됩니다.')
-        self._code_edit.setMinimumSize(QSize(300, 200))
+        # [2026-08-20 재피드백] "왼쪽 입력창 폭이 오른쪽 후보 테두리보다 좁다" — Mermaid는
+        # 양쪽에 같은 상수(420)를 줘서 균일하게 맞춘 것과 같은 방식으로, 여기도 오른쪽
+        # 열(카드 3열 폭, 아래 `_candidates_scroll`과 정확히 같은 계산식)을 공용 최소폭으로
+        # 왼쪽에도 그대로 적용한다.
+        self._lr_min_width = self._CANDIDATE_COLS * 120 + (self._CANDIDATE_COLS - 1) * 8 + 16
+        self._code_edit.setMinimumSize(QSize(self._lr_min_width, 200))
         self._code_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         left_col.addWidget(self._code_edit, 1)
 
         split = QHBoxLayout()
         split.addLayout(left_col, 1)
 
-        # ---- 오른쪽 열: 미리보기 + 생성 후보 갤러리 통합(2026-08-20 재검토 — "생성 후보와
-        # 미리보기 창을 통합" 요청) — 큰 미리보기가 남는 공간을 다 차지하고, 그 아래 후보
-        # 썸네일을 가로 스크롤로 붙인다. 후보를 클릭하면 위 미리보기+코드칸에 반영된다
-        # (`_pick_card`).
+        # ---- 오른쪽 열: 생성 후보 갤러리(2026-08-20 재작업 — 미리보기 패널 제거, 그
+        # 자리를 후보 갤러리가 대신 채운다: 클릭=선택(코드칸에 채움), 더블클릭=확대
+        # 보기(`_show_enlarged_candidate`, 옛 미리보기 확대창과 동일 렌더 함수 재사용) —
+        # 별도 미리보기 없이도 후보 자체로 "보기"까지 겸한다). 가로 1줄 스크롤 대신
+        # 고정 열(`_CANDIDATE_COLS`) 그리드로 바꿔 늘어난 세로 공간을 활용한다.
         right_col = QVBoxLayout()
-        preview_title = QLabel("미리보기 (클릭하면 확대):", self)
-        preview_title.setStyleSheet(_SECTION_TITLE_QSS)
-        right_col.addWidget(preview_title)
-        preview_frame = QFrame(self)
-        preview_frame.setObjectName("svgPreviewFrame")
-        preview_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        preview_frame.setStyleSheet(
-            "QFrame#svgPreviewFrame { border:1px solid rgba(128,128,128,90); "
-            "border-radius:8px; }"
-        )
-        preview_frame.setMinimumWidth(300)
-        preview_frame_lay = QVBoxLayout(preview_frame)
-        preview_frame_lay.setContentsMargins(6, 6, 6, 6)
-        self._svg_preview_label = _ClickablePreviewLabel(preview_frame)
-        self._svg_preview_label.setMinimumSize(160, 160)
-        self._svg_preview_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._svg_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._svg_preview_label.setWordWrap(True)
-        self._svg_preview_label.setStyleSheet("color:#8a8a8a; font-size:11px;")
-        self._svg_preview_label.setText("코드를 입력하면\n미리보기가 표시됩니다")
-        self._svg_preview_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._svg_preview_label.clicked.connect(self._show_enlarged_svg_preview)
-        preview_frame_lay.addWidget(self._svg_preview_label)
-        right_col.addWidget(preview_frame, 1)
-
-        candidates_title = QLabel("생성 후보 (클릭하면 코드에 채움):", self)
+        candidates_title = QLabel("생성 후보 (클릭=선택 · 더블클릭=확대):", self)
         candidates_title.setStyleSheet(_SECTION_TITLE_QSS)
         right_col.addWidget(candidates_title)
 
-        # 최대 10장까지 나올 수 있어(모델당 5개×2) 고정 QHBoxLayout만으론 폭을 넘친다 —
-        # 가로 스크롤 영역으로 감싼다(카드 자체 크기·스타일은 무변경).
-        self._candidates_row = QHBoxLayout()
-        self._candidates_row.addStretch(1)
+        # 최대 10장까지 나올 수 있어(슬롯당 5개×2) 그리드 + 세로 스크롤로 감싼다(카드 자체
+        # 크기·스타일은 무변경 — 열 개수만 창 폭에 반응, `_update_candidate_columns` 참조).
+        self._candidate_cols = self._CANDIDATE_COLS   # [2026-08-20 재피드백] 반응형 열 수
+        self._candidates_grid = QGridLayout()
+        self._candidates_grid.setSpacing(8)
+        self._candidates_grid.setContentsMargins(6, 6, 6, 6)
         candidates_container = QWidget(self)
-        candidates_container.setLayout(self._candidates_row)
-        candidates_scroll = QScrollArea(self)
-        candidates_scroll.setWidget(candidates_container)
-        candidates_scroll.setWidgetResizable(True)
-        candidates_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        candidates_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        candidates_scroll.setFixedHeight(176)   # 카드 156 + 여유(체크박스 추가로 카드가 커짐)
-        candidates_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        right_col.addWidget(candidates_scroll)
+        candidates_container.setLayout(self._candidates_grid)
+        self._candidates_scroll = QScrollArea(self)
+        # [2026-08-20 재피드백] "미리보기처럼 사각 테두리를 크게 둬서 별도 창인 걸
+        # 나타내달라" — `QScrollArea`도 `QFrame`이라 Mermaid `preview_frame`과 같은 QSS를
+        # 직접 줄 수 있다(별도 래퍼 프레임 불필요). ⚠ 재재피드백(같은 날): 처음엔
+        # `setFrameShape(NoFrame)`을 빼고 QSS `border`만 줬더니 꼭짓점이 잘려 보였다 —
+        # `QScrollArea`(=`QAbstractScrollArea`)의 기본 `frameShape`는 일반 `QFrame`과
+        # 달리 `StyledPanel`(사각 눌린 프레임)이라, 그 네이티브 프레임이 내 QSS 둥근
+        # 테두리 위에 겹쳐 그려져(모서리만 튀어나온 것처럼) 각져 보인 것 — `NoFrame`으로
+        # 네이티브 프레임을 끄고 QSS `border`만 그리게 해야 Mermaid의 평범한 `QFrame`과
+        # 같은 결과가 난다.
+        self._candidates_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._candidates_scroll.setObjectName("svgCandidatesFrame")
+        self._candidates_scroll.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._candidates_scroll.setStyleSheet(
+            "QScrollArea#svgCandidatesFrame { border:1px solid rgba(128,128,128,90); "
+            "border-radius:8px; }"
+        )
+        self._candidates_scroll.setWidget(candidates_container)
+        self._candidates_scroll.setWidgetResizable(True)
+        self._candidates_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._candidates_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # [2026-08-20 피드백 → 재피드백] "생성후보 너비를 왼쪽 입력창들과 비슷하게" —
+        # 처음엔 이 값(3열×카드120px+간격)만 오른쪽에 줬는데, 왼쪽 `_code_edit`이 그보다
+        # 좁은 300을 쓰고 있어 여전히 비대칭이었다 — 위에서 계산한 `self._lr_min_width`
+        # (왼쪽·오른쪽 공용)로 통일.
+        self._candidates_scroll.setMinimumWidth(self._lr_min_width)
+        right_col.addWidget(self._candidates_scroll, 1)
 
         split.addLayout(right_col, 1)
         lay.addLayout(split, 1)
@@ -1695,21 +1914,16 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._hint_label.setVisible(False)
         hint_row.addWidget(self._hint_label)
         hint_row.addStretch(1)
+        # [2026-08-20 재피드백] 텍스트 라벨 제거, 아이콘 전용+호버 툴팁으로(프롬프트 복사
+        # 버튼과 같은 축약).
         self._save_symbols_btn = QToolButton(self)
         self._save_symbols_btn.setIcon(_act_icon("save"))
-        self._save_symbols_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._save_symbols_btn.setText("내 심볼로 저장")
         self._save_symbols_btn.setToolTip("체크한 후보를 내 심볼 팔레트에 한꺼번에 저장")
         self._save_symbols_btn.setEnabled(False)
         self._save_symbols_btn.clicked.connect(self._on_save_to_symbols_clicked)
         hint_row.addWidget(self._save_symbols_btn)
         lay.addLayout(hint_row)
 
-        self._svg_preview_timer = QTimer(self)
-        self._svg_preview_timer.setSingleShot(True)
-        self._svg_preview_timer.setInterval(350)
-        self._svg_preview_timer.timeout.connect(self._update_svg_preview)
-        self._code_edit.textChanged.connect(self._svg_preview_timer.start)
         self._code_edit.textChanged.connect(self._on_code_changed)
 
         self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
@@ -1723,51 +1937,48 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._ok_btn.setStyleSheet(_CORAL_BTN_QSS)
         self._btns.accepted.connect(self.accept)
         self._btns.rejected.connect(self.reject)
-        lay.addWidget(self._btns)
+        # [2026-08-20 재피드백] 설정 버튼을 여기(확인/취소 옆)로 옮겨왔다 — 부가 동작은
+        # 왼쪽, 주 동작(확인/취소)은 오른쪽.
+        bottom_row = QHBoxLayout()
+        bottom_row.addWidget(self._settings_btn)
+        bottom_row.addStretch(1)
+        bottom_row.addWidget(self._btns)
+        lay.addLayout(bottom_row)
 
     def _on_code_changed(self):
         """SVG 코드칸이 항상 최종 소스 — Mermaid `_edit`와 동일 관례. 후보 클릭이든 직접
         타이핑/붙여넣기든 이 칸에 뭔가 있으면 OK를 누를 수 있다."""
         self._ok_btn.setEnabled(bool(self._code_edit.toPlainText().strip()))
 
-    def _update_svg_preview(self):
-        """디바운스 타이머 만료 시 호출 — `_render_svg_candidate_pixmap`으로 다시 그린다
-        (후보 카드 렌더와 동일 함수라 미리보기와 실제 삽입 결과가 항상 일치)."""
-        text = self._code_edit.toPlainText()
-        if not text.strip():
-            self._svg_preview_label.setPixmap(QPixmap())
-            self._svg_preview_label.setText("코드를 입력하면\n미리보기가 표시됩니다")
-            return
-        pm = _render_svg_candidate_pixmap(text, 260)
-        if pm is None:
-            self._svg_preview_label.setPixmap(QPixmap())
-            self._svg_preview_label.setText("구문 오류 —\n미리보기를 표시할 수 없습니다")
-        else:
-            self._svg_preview_label.setText("")
-            self._svg_preview_label.setPixmap(pm)
+    def _show_enlarged_candidate(self, index: int):
+        """후보 카드 더블클릭 시 확대 보기(2026-08-20 — 미리보기 패널 제거를 대체:
+        단일클릭=선택은 이미 카드가 담당하므로 확대는 더블클릭으로 분리했다).
 
-    def _show_enlarged_svg_preview(self):
-        """미리보기를 클릭하면 큰 창으로 다시 렌더(`_MermaidDialog._show_enlarged_preview`와
-        동일 패턴). 코드가 비어 있으면 무시."""
-        text = self._code_edit.toPlainText()
-        if not text.strip():
+        [2026-08-20 3차 피드백] 매번 새 다이얼로그를 만들지 않고 `self._quicklook`
+        인스턴스 하나를 재사용 — 화살표 탐색·카드 클릭 동기화가 "같은 창"이어야 자연스럽기
+        때문(`_QuickLookDialog` 클래스 docstring 참조)."""
+        if not self._candidates:
             return
-        dlg = QDialog(self)
-        dlg.setWindowTitle("미리보기 확대")
-        v = QVBoxLayout(dlg)
-        label = QLabel(dlg)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pm = _render_svg_candidate_pixmap(text, 600)
-        if pm is None:
-            label.setText("구문 오류 — 미리보기를 표시할 수 없습니다")
-        else:
-            label.setPixmap(pm)
-        v.addWidget(label)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dlg)
-        btns.rejected.connect(dlg.reject)
-        v.addWidget(btns)
-        dlg.resize(QSize(640, 640))
-        dlg.exec()
+        if self._quicklook is None:
+            self._quicklook = _QuickLookDialog(self, self)
+        self._quicklook.show_index(index)
+
+    def _copy_prompt_to_clipboard(self):
+        """"프롬프트 복사" 버튼 — 외부 AI(Claude, ChatGPT 등)에 이 창과 같은 조건으로
+        SVG를 요청할 수 있게, `text_to_svg`가 실제로 쓰는 프롬프트(형식 규칙 포함)를
+        그대로 클립보드에 담는다. 이미지가 첨부돼 있으면 이미지용 프롬프트로."""
+        subject = self._prompt_edit.toPlainText().strip()
+        if not subject and self._attached_image is None:
+            QMessageBox.information(self, "AI SVG 에셋 생성",
+                                    "먼저 생성할 대상을 입력하거나 이미지를 첨부하세요.")
+            return
+        prompt = (build_image_prompt(subject) if self._attached_image is not None
+                  else build_prompt(subject))
+        QApplication.clipboard().setText(prompt)
+        # [2026-08-20 재피드백] 아이콘 전용 버튼이라 텍스트로 "복사됨"을 보여줄 수 없다 —
+        # 아이콘을 잠깐 체크 표시로 바꿨다가 되돌린다.
+        self._copy_prompt_btn.setIcon(_act_icon("check"))
+        QTimer.singleShot(1200, lambda: self._copy_prompt_btn.setIcon(_act_icon("copy")))
 
     def selected_svg(self) -> str:
         """OK가 실제로 가져가는 값 — 카드 클릭이 아니라 코드칸(`_code_edit`)이 최종 소스다
@@ -1777,30 +1988,69 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
 
     def closeEvent(self, e):
         # 생성 중(워커가 하나라도 돎)에는 닫지 않는다 — `_MermaidDialog.closeEvent`와 같은
-        # 이유(2026-08-19).
+        # 이유(2026-08-19). 모델 목록 조회 워커도 같은 이유로 함께 확인(2026-08-20 추가).
         if any(w.isRunning() for w in self._workers):
+            e.ignore()
+            return
+        if self._model_list_worker is not None and self._model_list_worker.isRunning():
             e.ignore()
             return
         super().closeEvent(e)
 
     def eventFilter(self, obj, event):
         if obj is self._prompt_edit and event.type() == QEvent.Type.KeyPress:
+            # [2026-08-20 재피드백] `QPlainTextEdit`으로 전환하며 `returnPressed` 시그널이
+            # 없어졌다 — Mermaid `_prompt_edit`과 동일하게 Enter=생성/Shift+Enter=줄바꿈을
+            # 여기서 직접 가로챈다.
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    return False   # Shift+Enter는 기본 동작(줄바꿈)에 맡김
+                self._on_generate_clicked()
+                return True
             if self._maybe_intercept_paste_image(event):
                 return True
         return super().eventFilter(obj, event)
 
     def _open_gateway_settings(self):
-        """`_AIGatewaySettingsDialog`를 이 SVG 창의 자식 모달로 연다(2026-08-20 — Mermaid
-        창과 동일한 진입점을 SVG 창에도 추가, 이전엔 이 창에 설정 진입점이 없었다).
-        모델 드롭다운이 없어(개수 선택뿐) 닫힌 뒤 다시 채울 것도 없다."""
-        _AIGatewaySettingsDialog(self).exec()
+        """`_AIGatewaySettingsDialog`를 이 SVG 창의 자식 모달로 연다. 주소/키가 바뀌었을
+        수 있으니(2026-08-20 — 이제 이 창도 실제 모델 목록을 쓰므로) 닫힌 뒤 두 모델
+        콤보를 Mermaid와 동일하게 다시 채운다."""
+        if _AIGatewaySettingsDialog(self).exec() == QDialog.DialogCode.Accepted:
+            self._populate_models()
+
+    def _populate_models(self):
+        """모델 슬롯 A/B 콤보를 채운다 — `_MermaidDialog._populate_models`와 동일 패턴
+        (추천 모델로 즉시 채운 뒤 `_ModelListWorker`가 백그라운드로 실제 목록을 가져오면
+        갱신). 슬롯 A 기본값은 `TEXT_RECOMMEND_1`, 슬롯 B는 `TEXT_RECOMMEND_2`(옛 GPT/
+        Gemini 2종 고정과 같은 초기값을 유지하되, 이제 사용자가 자유롭게 바꿀 수 있다)."""
+        _fill_model_combo_grouped(self._model_combo_a, [], gw.TEXT_RECOMMEND_1)
+        _fill_model_combo_grouped(self._model_combo_b, [], gw.TEXT_RECOMMEND_2)
+        key = gw.resolve_api_key()
+        if not key:
+            return
+        if self._model_list_worker is not None and self._model_list_worker.isRunning():
+            return   # `_MermaidDialog._populate_models`와 동일한 이유로 조용히 건너뜀
+        self._model_list_worker = _ModelListWorker(key, gw.resolve_base_url(), self)
+        self._model_list_worker.succeeded.connect(self._on_models_listed)
+        self._model_list_worker.start()
+
+    def _on_models_listed(self, models):
+        prev_a = (_combo_selected_model(self._model_combo_a, gw.TEXT_RECOMMEND_1)
+                  if self._model_combo_a.count() else None)
+        prev_b = (_combo_selected_model(self._model_combo_b, gw.TEXT_RECOMMEND_2)
+                  if self._model_combo_b.count() else None)
+        _fill_model_combo_grouped(self._model_combo_a, models, gw.TEXT_RECOMMEND_1, prev_a)
+        _fill_model_combo_grouped(self._model_combo_b, models, gw.TEXT_RECOMMEND_2, prev_b)
 
     def _requested_jobs(self) -> list[str]:
-        """모델별 개수 드롭다운 → 호출할 모델 목록(개수만큼 반복) — 예: GPT 2·Gemini 1이면
-        [gpt, gpt, gemini]. 워커 하나가 이 목록의 항목 하나씩을 맡는다."""
-        n_gpt = int(self._gpt_count.currentText())
-        n_gemini = int(self._gemini_count.currentText())
-        return [gw.TEXT_RECOMMEND_1] * n_gpt + [gw.TEXT_RECOMMEND_2] * n_gemini
+        """슬롯 A/B의 (모델, 개수) → 호출할 모델 목록(개수만큼 반복) — 예: A=gpt-5.4-mini
+        2개·B=gemini-3.6-flash 1개면 [gpt-5.4-mini, gpt-5.4-mini, gemini-3.6-flash].
+        워커 하나가 이 목록의 항목 하나씩을 맡는다."""
+        n_a = int(self._count_a.currentText())
+        n_b = int(self._count_b.currentText())
+        model_a = _combo_selected_model(self._model_combo_a, gw.TEXT_RECOMMEND_1)
+        model_b = _combo_selected_model(self._model_combo_b, gw.TEXT_RECOMMEND_2)
+        return [model_a] * n_a + [model_b] * n_b
 
     def _on_generate_clicked(self):
         """2026-08-19 Stage 2 — 요청한 후보 전부를 워커 하나씩(`_SvgGenWorker`)으로
@@ -1808,7 +2058,7 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         ·`_on_one_worker_finished`(워커 하나가 끝날 때마다 `_pending`을 줄이고, 0이 되면
         전체 완료 처리 — 옛 "워커 하나=전체"였던 Stage 1의 finally 블록 역할을 카운터로
         대신한다)로 나뉜다."""
-        subject = self._prompt_edit.text().strip()
+        subject = self._prompt_edit.toPlainText().strip()
         image = self._attached_image
         if not subject and image is None:
             QMessageBox.information(self, "AI SVG 에셋 생성",
@@ -1828,8 +2078,10 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._gen_errors = []
         self._gen_btn.setEnabled(False)
         self._btns.setEnabled(False)
-        self._gpt_count.setEnabled(False)
-        self._gemini_count.setEnabled(False)
+        self._model_combo_a.setEnabled(False)
+        self._model_combo_b.setEnabled(False)
+        self._count_a.setEnabled(False)
+        self._count_b.setEnabled(False)
         self._progress.start("SVG 생성 중")
         self._pending = len(jobs)
         self._workers = []
@@ -1858,8 +2110,10 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._progress.stop()
         self._gen_btn.setEnabled(True)
         self._btns.setEnabled(True)
-        self._gpt_count.setEnabled(True)
-        self._gemini_count.setEnabled(True)
+        self._model_combo_a.setEnabled(True)
+        self._model_combo_b.setEnabled(True)
+        self._count_a.setEnabled(True)
+        self._count_b.setEnabled(True)
         if self._gen_errors and not self._candidates:
             QMessageBox.warning(self, "AI SVG 에셋 생성",
                                 "생성에 실패했습니다:\n" + "\n".join(self._gen_errors))
@@ -1870,6 +2124,8 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._workers = []
 
     def _clear_candidates(self):
+        if self._quicklook is not None:
+            self._quicklook.close()   # 인덱스가 통째로 무의미해지므로 열려 있으면 닫는다
         for card, _svg, _model in self._candidates:
             card.setParent(None)
             card.deleteLater()
@@ -1880,11 +2136,41 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._save_symbols_btn.setEnabled(False)
 
     def _add_candidate(self, model_used: str, svg_text: str):
-        pm = _render_svg_candidate_pixmap(svg_text, 100)
+        # [2026-08-20 자체발견] 다이얼로그가 막 열린 직후 등 아직 `resizeEvent`가 최종
+        # 크기로 한 번도 안 온 시점에 후보가 추가되면 `_candidate_cols`가 초기값(또는 오래된
+        # 값)에 머물러 있을 수 있다 — 배치 직전에 항상 한 번 최신화(변화 없으면 무비용
+        # no-op이라 실사용 경로엔 영향 없음).
+        self._update_candidate_columns()
+        pm = _render_svg_candidate_pixmap(svg_text, 100, self._preview_pen_color)
         card = _SvgCandidateCard(model_used, svg_text, pm, self._pick_card, self)
         card._save_check.stateChanged.connect(self._refresh_save_symbols_enabled)
-        self._candidates_row.insertWidget(self._candidates_row.count() - 1, card)
+        idx = len(self._candidates)
+        # [2026-08-20 3차 피드백] 더블클릭 확대가 이제 갤러리 뷰어(`_QuickLookDialog`,
+        # 화살표 탐색·n/N)라 svg 텍스트가 아니라 "몇 번째냐"(인덱스)를 넘긴다.
+        card.doubleClicked.connect(lambda i=idx: self._show_enlarged_candidate(i))
+        row, col = divmod(idx, self._candidate_cols)
+        self._candidates_grid.addWidget(card, row, col)
         self._candidates.append((card, svg_text, model_used))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_candidate_columns()
+
+    def _update_candidate_columns(self):
+        """[2026-08-20 피드백] "창 크기에 따라 후보 크기도 변하게" — 카드 자체 픽셀
+        크기(120×156)는 고정해 리사이즈 드래그마다 SVG를 다시 래스터화하는 비용·버벅임을
+        피하고(더블클릭 확대가 이미 "크게 보기" 역할을 함, 손안의 카드), 대신 가용 폭에
+        맞춰 **열 개수**를 늘리거나 줄여 넓은 창을 실제로 활용한다. 열 수가 안 바뀌면
+        아무 것도 다시 안 그림(매 리사이즈 이벤트마다 무의미한 재배치 방지)."""
+        avail = self._candidates_scroll.viewport().width()
+        card_w, spacing = 120, 8
+        cols = max(1, (avail + spacing) // (card_w + spacing))
+        if cols == self._candidate_cols:
+            return
+        self._candidate_cols = cols
+        for idx, (card, _svg, _model) in enumerate(self._candidates):
+            row, col = divmod(idx, cols)
+            self._candidates_grid.addWidget(card, row, col)
 
     def _pick_card(self, card: _SvgCandidateCard):
         for c, _svg, _model in self._candidates:
@@ -1892,6 +2178,12 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._selected_card = card
         # setPlainText가 textChanged를 발화해 OK 활성화·미리보기 갱신까지 같이 일어난다.
         self._code_edit.setPlainText(card.svg_text())
+        # [2026-08-20 3차 피드백] "클릭으로 선택 바꾸면 이미 열린 확대창도 갱신" — 확대창이
+        # 열려 있을 때만, 자기 자신을 다시 부르는 `_QuickLookDialog._step`의 역방향.
+        if self._quicklook is not None and self._quicklook.isVisible():
+            idx = next((i for i, (c, _s, _m) in enumerate(self._candidates) if c is card), None)
+            if idx is not None:
+                self._quicklook.show_index(idx)
 
     def _refresh_save_symbols_enabled(self, *_args):
         self._save_symbols_btn.setEnabled(
@@ -1925,7 +2217,7 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
             QMessageBox.warning(self, "내 심볼로 저장",
                                 "지금 창에서는 심볼 저장을 사용할 수 없습니다.")
             return
-        subject = self._prompt_edit.text().strip()
+        subject = self._prompt_edit.toPlainText().strip()
         saved = save_fn(entries, subject, folder)
         QMessageBox.information(self, "내 심볼로 저장", f"{saved}개를 내 심볼에 저장했습니다.")
 
