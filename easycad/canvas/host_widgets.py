@@ -325,7 +325,12 @@ def _finish_act_icon(pm: QPixmap) -> QIcon:
 
 # [Phase 6 M1] 캔버스 배경 — 테마별. 다크는 CAD 관습대로 어두운 모델공간.
 _CANVAS_BG = {"dark": QColor("#1e2731"), "light": QColor("#ffffff")}
-_ICON_COLOR_THEME = {"dark": QColor("#cdd8e3"), "light": QColor("#39434f")}
+# [실사용 피드백 2026-08-20] 다크 테마 중립색을 은은한 오프화이트(#cdd8e3)에서 순백으로
+# 환원 — 작은 아이콘(속성패널 선/화살표 콤보 등)이 이 색으로 그려지는데 옅은 톤이라 잘 안
+# 보인다는 지적. 짙은 네이비 배경(#1e2731)에서 순백이 눈부실 정도는 아니라고 판단, 미묘한
+# 눈편안함보다 작은 요소의 가독성을 우선(사용자 확인). `_dark_palette()`의 텍스트색도 같은
+# 이유로 함께 환원.
+_ICON_COLOR_THEME = {"dark": QColor("#ffffff"), "light": QColor("#39434f")}
 
 
 def _set_icon_color(dark: bool) -> QColor:
@@ -352,11 +357,11 @@ def _dark_palette() -> QPalette:
     c = QColor
     p = QPalette()
     R = QPalette.ColorRole
-    p.setColor(R.Window, c("#171e26"));         p.setColor(R.WindowText, c("#cdd8e3"))
+    p.setColor(R.Window, c("#171e26"));         p.setColor(R.WindowText, c("#ffffff"))
     p.setColor(R.Base, c("#0e1319"));           p.setColor(R.AlternateBase, c("#1d2632"))
-    p.setColor(R.Text, c("#cdd8e3"));           p.setColor(R.PlaceholderText, c("#78889a"))
-    p.setColor(R.Button, c("#1d2632"));         p.setColor(R.ButtonText, c("#cdd8e3"))
-    p.setColor(R.ToolTipBase, c("#232f3d"));    p.setColor(R.ToolTipText, c("#cdd8e3"))
+    p.setColor(R.Text, c("#ffffff"));           p.setColor(R.PlaceholderText, c("#78889a"))
+    p.setColor(R.Button, c("#1d2632"));         p.setColor(R.ButtonText, c("#ffffff"))
+    p.setColor(R.ToolTipBase, c("#232f3d"));    p.setColor(R.ToolTipText, c("#ffffff"))
     # [디자인 베이크오프 2026-08-02] accent를 블루(#54a9ff/#2f6dbf)에서 코랄(Claude 브랜드톤)로 교체.
     p.setColor(R.Highlight, c("#a8583a"));      p.setColor(R.HighlightedText, c("#ffffff"))
     p.setColor(R.Link, c("#da7756"))

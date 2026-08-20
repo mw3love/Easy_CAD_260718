@@ -142,7 +142,8 @@ def test_floating_panels_and_zoom_readout():
     b = w._shape_tool_buttons["rect"]
     assert b.minimumWidth() == b.maximumWidth() == 48
     # 속성 패널은 값(hex)이 안 잘리는 최소폭 바닥을 가진다(슬랙 없이 그 아래로 못 좁힘).
-    assert w._props_panel._body_layout.itemAt(0).widget().minimumWidth() == 170
+    # [2026-08-20] 170→190 — 힌트 라벨 최대폭과 맞춰 선택 유무에 따른 패널 폭 요동을 없앰.
+    assert w._props_panel._body_layout.itemAt(0).widget().minimumWidth() == 190
     # 패널은 창 리사이즈 후에도 뷰 영역 안쪽에 고정 위치(자유 드래그 없음의 반대증거).
     w.resize(1400, 900)
     w._reposition_panels()
@@ -599,12 +600,16 @@ def test_properties_panel_curve_radius_stepper():
 
 
 def test_arrow_kind_menu_labels():
-    # [화살표 통합 → 2026-08-20 아이콘 콤보 통일] 종류 선택지는 직선·곡선·직각 3개. 옛
-    # QMenu(_build_routing_menu, 삭제됨) 대신 속성패널의 아이콘 QComboBox(_pf_routing_btn)가
-    # 같은 선택지를 담는다 — 상단 툴바가 아니라 선택 후 컨텍스트에서 고르는 원칙은 그대로.
+    # [화살표 통합 → 2026-08-20 아이콘 콤보 통일 → 같은 날 재피드백으로 텍스트 제거·아이콘만]
+    # 종류 선택지는 직선·곡선·직각 3개. 옛 QMenu(_build_routing_menu, 삭제됨) 대신 속성패널의
+    # 아이콘 전용 QComboBox(_pf_routing_btn)가 같은 선택지를 담는다 — 항목 표시 텍스트는
+    # 비어 있지만(아이콘만) 이름은 툴팁(ToolTipRole)으로 남아 있어 그걸로 확인.
+    from PyQt6.QtCore import Qt as _Qt
     w = CanvasWindow()
     assert [w._pf_routing_btn.itemText(i) for i in range(w._pf_routing_btn.count())] == \
-        ["직선", "곡선", "직각"]
+        ["", "", ""]
+    assert [w._pf_routing_btn.itemData(i, _Qt.ItemDataRole.ToolTipRole)
+            for i in range(w._pf_routing_btn.count())] == ["직선", "곡선", "직각"]
 
 
 

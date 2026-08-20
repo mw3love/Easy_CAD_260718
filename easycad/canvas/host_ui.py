@@ -672,11 +672,13 @@ class _UIBuildMixin:
         pf_style = getattr(self, "_pf_style", None)
         if pf_style is not None:
             for i, (st, _name) in enumerate(self._PEN_STYLE_ITEMS):
-                pf_style.setItemIcon(i, _pen_style_icon(st, _current_icon_color()))
+                pf_style.setItemIcon(i, _pen_style_icon(
+                    st, _current_icon_color(), self._PROPS_ICON_W, self._PROPS_ICON_H))
         pf_routing = getattr(self, "_pf_routing_btn", None)
         if pf_routing is not None:
             for i, (kind, _label) in enumerate(_ARROW_KIND_LABELS):
-                pf_routing.setItemIcon(i, _arrow_kind_icon(kind, _current_icon_color()))
+                pf_routing.setItemIcon(i, _arrow_kind_icon(
+                    kind, _current_icon_color(), self._PROPS_ICON_W, self._PROPS_ARROW_ICON_H))
         pf_dir = getattr(self, "_pf_dir_btn", None)
         if pf_dir is not None:
             pf_dir.setIcon(_flip_icon(_current_icon_color()))
@@ -1413,14 +1415,29 @@ class _UIBuildMixin:
         (Qt.PenStyle.DotLine, "점선(도트)"), (Qt.PenStyle.DashDotLine, "일점쇄선"),
         (Qt.PenStyle.DashDotDotLine, "이점쇄선"),
     ]
+    # [실사용 피드백 2026-08-20] '선'/'화살표' 아이콘 콤보가 텍스트 없이 아이콘만 보여주므로
+    # (아래 _build_properties_panel) 생성 시점과 테마 재도색(_apply_theme) 양쪽이 같은
+    # 크기를 써야 한다 — 클래스 상수로 한 곳에.
+    _PROPS_ICON_W, _PROPS_ICON_H = 72, 18
+    _PROPS_ARROW_ICON_H = _PROPS_ICON_H + 6
 
 
     def _build_properties_panel(self):
         panel = _FloatingPanel(self, "속성", "props")
         self._props_panel = panel
         self._pf_updating = False   # 프로그램적 값 세팅 중엔 편집 시그널 무시(피드백 차단)
+        # [실사용 피드백 2026-08-20] 값·컨트롤이 안 잘리는 바닥폭. 원래 170이었으나, 아래
+        # 힌트 라벨에 최대폭을 걸어 패널 폭 요동(170↔190)을 없애는 김에 그 요동의 "넓은 쪽"
+        # 값(190)을 새 바닥으로 채택했다 — 단순히 좁은 쪽(170)으로 고정하면 `_update_zoom_
+        # label()`의 "미니맵 (100%)" 제목이 그 폭 기준으로 여유공간(avail_w = 패널폭-57)을
+        # 계산하는데, 오프스크린 테스트 폰트(한글 대체글리프가 원본보다 넓게 잡힘, 헤드리스
+        # 폰트 한계 — screenshot.py 문서 참조)에서 딱 그 문턱에 걸려 "%)"가 말줄임되는 게
+        # 재현됐다(실측: 폭170→avail_w 113px vs 필요 120px). 190이면 여유(avail_w 133px)가
+        # 넉넉해 오프스크린·네이티브 폰트 모두 안전. 힌트 라벨의 최대폭도 이 값과 맞춰야
+        # 한다(다음 줄 주석 참조), 그래서 매직넘버를 한 곳에만 둔다.
+        _PROPS_MIN_W = 190
         content = QWidget()
-        content.setMinimumWidth(170)   # 값·컨트롤이 안 잘리는 바닥폭 — 이 아래로는 못 좁힘(슬랙 없음)
+        content.setMinimumWidth(_PROPS_MIN_W)
         form = QFormLayout(content)
         form.setContentsMargins(10, 10, 10, 10); form.setSpacing(8)
 
@@ -1467,10 +1484,18 @@ class _UIBuildMixin:
         self._pf_width.valueChanged.connect(self._edit_width)
 
         # 선스타일 — 콤보(pen 기반 도형 전용; 화살표·DXF는 #3). [실사용 피드백 2026-08-20]
-        # 텍스트 목록 대신 각 스타일을 실제로 그린 아이콘을 항목에 붙인다.
+        # 텍스트 목록 대신 각 스타일을 실제로 그린 아이콘. 1차(아이콘+텍스트)는 QComboBox
+        # 기본 iconSize(16×16)에 짜부라져 잘 안 보인다는 재피드백으로 텍스트를 없애고
+        # 그만큼 아이콘 자체를 키움(_PROPS_ICON_W/H) — 이름은 툴팁(ToolTipRole)으로 유지해
+        # 드롭다운에서 항목에 마우스를 올리면 확인 가능. "이상하면 다시 텍스트 넣기"로
+        # 사용자가 시험 승인.
         self._pf_style = QComboBox()
-        for st, name in self._PEN_STYLE_ITEMS:
-            self._pf_style.addItem(_pen_style_icon(st, _current_icon_color()), name, st)
+        self._pf_style.setToolTip("선 스타일")
+        self._pf_style.setIconSize(QSize(self._PROPS_ICON_W, self._PROPS_ICON_H))
+        for i, (st, name) in enumerate(self._PEN_STYLE_ITEMS):
+            self._pf_style.addItem(_pen_style_icon(st, _current_icon_color(),
+                                                    self._PROPS_ICON_W, self._PROPS_ICON_H), "", st)
+            self._pf_style.setItemData(i, name, Qt.ItemDataRole.ToolTipRole)
         self._pf_style.currentIndexChanged.connect(self._edit_style)
 
         # 폰트 — 스핀박스(pt; 텍스트/라벨 전용).
@@ -1496,10 +1521,16 @@ class _UIBuildMixin:
         # 배치(화살표→방향→반경, 반경은 곡선일 때만 조건부 노출이라 맨 뒤) ② 화살표 종류를
         # '선'과 같은 아이콘 콤보로 통일(예전엔 QToolButton+QMenu라 위젯 자체가 달라 보였음).
         # 속성 이름은 하위호환을 위해 그대로 _pf_routing_btn(이제 QComboBox)을 유지.
+        # [실사용 피드백 2026-08-20] '선'과 같은 이유로 텍스트 없이 아이콘만(더 큼) + 툴팁.
         self._pf_routing_btn = QComboBox()
         self._pf_routing_btn.setToolTip("화살표 종류(직선·곡선·직각)")
-        for kind, label in _ARROW_KIND_LABELS:
-            self._pf_routing_btn.addItem(_arrow_kind_icon(kind, _current_icon_color()), label, kind)
+        self._pf_routing_btn.setIconSize(QSize(self._PROPS_ICON_W, self._PROPS_ARROW_ICON_H))
+        for i, (kind, label) in enumerate(_ARROW_KIND_LABELS):
+            self._pf_routing_btn.addItem(
+                _arrow_kind_icon(kind, _current_icon_color(),
+                                 self._PROPS_ICON_W, self._PROPS_ARROW_ICON_H),
+                "", kind)
+            self._pf_routing_btn.setItemData(i, label, Qt.ItemDataRole.ToolTipRole)
         self._pf_routing_btn.currentIndexChanged.connect(self._edit_arrow_kind_combo)
         form.addRow("화살표", self._pf_routing_btn)
 
@@ -1527,6 +1558,14 @@ class _UIBuildMixin:
         self._pf_hint = QLabel("객체를 선택하면 속성을 편집할 수 있습니다.")
         self._pf_hint.setStyleSheet("color:#888; font-size:11px;")
         self._pf_hint.setWordWrap(True)   # 줄바꿈 허용 → 안내문이 패널 최소폭을 붙잡지 않게
+        # [실사용 피드백 2026-08-20] 위 wordWrap만으론 부족했다 — 줄바꿈 QLabel의 sizeHint()는
+        # 폭 상한이 없으면 Qt가 자체적으로 "적당히 넓은" 값(약 190px)을 계산해 반환하고,
+        # `adjustSize()`는 그 sizeHint를 그대로 쓴다(위 _PROPS_MIN_W 바닥폭 170px보다 큼) —
+        # 그래서 선택 없음(이 안내문이 보임)↔선택 있음(안내문이 "" 로 비워짐) 사이에서 패널
+        # 폭이 170↔190으로 실제로 흔들렸고, 미니맵이 속성패널 폭을 그대로 따라가는 설계라
+        # (_reposition_panels) 그 요동이 미니맵 크기 요동(사용자가 지적한 "이상한 여백")으로
+        # 번졌다. 명시적 최대폭을 걸어 sizeHint 자체가 바닥폭을 못 넘게 고정.
+        self._pf_hint.setMaximumWidth(_PROPS_MIN_W)
         form.addRow(self._pf_hint)
         panel.set_content(content)
         self._props_form = form
