@@ -52,9 +52,12 @@ def _wait_model_list_worker(dlg):
 
 
 def _clear_gateway_settings():
-    """`store_api_key`/`store_base_url` 테스트가 실사용자 QSettings를 건드리므로
-    (기존 dark모드·recent_colors 테스트와 동일 관례), 매번 명시적으로 지워 오염 방지."""
-    s = QSettings("EasyCAD", "EasyCAD")
+    """반복 실행 시 테스트끼리 서로 오염되지 않도록 매번 명시적으로 지운다.
+    conftest.py의 `_isolate_gateway_settings`(autouse)가 `gw._SETTINGS_ORG/_SETTINGS_APP`을
+    격리된 값으로 이미 바꿔치기해 두므로, 여기서도 하드코딩 대신 그 값을 그대로 참조해야
+    실사용자 레지스트리를 건드리지 않는다(2026-08-20 — 하드코딩된 "EasyCAD"였을 때 pytest
+    실행마다 실사용자의 진짜 저장 API 키가 지워지던 사고, `docs/pitfalls.md` 참조)."""
+    s = QSettings(gw._SETTINGS_ORG, gw._SETTINGS_APP)
     s.remove("ai_gateway_key")
     s.remove("ai_gateway_base_url")
 

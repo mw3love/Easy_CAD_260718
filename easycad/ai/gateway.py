@@ -43,6 +43,15 @@ BASE_URL = "https://factchat.mindlogic-kr-api.com/v1/gateway"
 KEY_ENV = "EASYCAD_GW_KEY"
 SECRETS_FILE = Path.home() / ".claude" / ".secrets" / "easycad-gateway.key"
 
+# QSettings 조직/앱 이름 — 상수로 빼서 테스트가 `monkeypatch`로 격리된 값으로 바꿔치기할 수
+# 있게 한다(2026-08-20, `_isolated_symbol_library` 관례를 그대로 따름). 이전엔 4개 함수가
+# 전부 `QSettings("EasyCAD", "EasyCAD")`를 하드코딩해 테스트가 격리할 방법이 없었고, 그
+# 결과 실사용자의 진짜 저장된 API 키가 pytest 실행마다(`tests/test_part9_ai_mermaid.py`의
+# `_clear_gateway_settings()`) 조용히 지워지는 사고로 이어졌다 — "저장한 키가 앱을 껐다
+# 켜면 사라진다"는 재현 안 되던 버그의 실제 원인이 앱 코드가 아니라 이거였다.
+_SETTINGS_ORG = "EasyCAD"
+_SETTINGS_APP = "EasyCAD"
+
 # 게이트웨이가 reasoning(thinking) 토큰을 같은 max_tokens 예산에서 차감한다(ocr_engine.py와
 # 동일 실측 근거) — 작게 잡으면 thinking 모델에서 본문이 잘린다.
 DEFAULT_MAX_TOKENS = 16384
@@ -97,7 +106,7 @@ def resolve_api_key(explicit: str = "") -> str:
         return from_file
     try:
         from PyQt6.QtCore import QSettings
-        stored = QSettings("EasyCAD", "EasyCAD").value("ai_gateway_key", "", type=str)
+        stored = QSettings(_SETTINGS_ORG, _SETTINGS_APP).value("ai_gateway_key", "", type=str)
         if stored:
             return stored.strip()
     except Exception:
@@ -106,9 +115,15 @@ def resolve_api_key(explicit: str = "") -> str:
 
 
 def store_api_key(key: str) -> None:
-    """설정창(C단계)에서 키를 저장할 때 쓸 대칭 함수 — QSettings에 영구 저장."""
+    """설정창(C단계)에서 키를 저장할 때 쓸 대칭 함수 — QSettings에 영구 저장.
+    `sync()`로 즉시 디스크/레지스트리에 flush — Qt의 암묵적 지연 flush(보통 이벤트루프
+    유휴 시나 객체 소멸 시)에만 맡기면, 저장 직후 비정상 종료(강제 종료·크래시)가 겹칠 때
+    쓰기가 유실될 여지가 이론상 있다(2026-08-20, 저장이 안 되는 것처럼 보인다는 재현
+    안 되는 사용자 보고에 대한 방어적 조치 — 실측으로는 유실을 재현하지 못했다)."""
     from PyQt6.QtCore import QSettings
-    QSettings("EasyCAD", "EasyCAD").setValue("ai_gateway_key", key.strip())
+    settings = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+    settings.setValue("ai_gateway_key", key.strip())
+    settings.sync()
 
 
 def resolve_base_url(explicit: str = "") -> str:
@@ -119,7 +134,7 @@ def resolve_base_url(explicit: str = "") -> str:
         return explicit.strip()
     try:
         from PyQt6.QtCore import QSettings
-        stored = QSettings("EasyCAD", "EasyCAD").value("ai_gateway_base_url", "", type=str)
+        stored = QSettings(_SETTINGS_ORG, _SETTINGS_APP).value("ai_gateway_base_url", "", type=str)
         if stored:
             return stored.strip()
     except Exception:
@@ -128,9 +143,12 @@ def resolve_base_url(explicit: str = "") -> str:
 
 
 def store_base_url(url: str) -> None:
-    """설정창에서 게이트웨이 주소를 저장할 때 쓸 대칭 함수 — QSettings에 영구 저장."""
+    """설정창에서 게이트웨이 주소를 저장할 때 쓸 대칭 함수 — QSettings에 영구 저장.
+    `store_api_key`와 동일 이유로 `sync()` 즉시 flush."""
     from PyQt6.QtCore import QSettings
-    QSettings("EasyCAD", "EasyCAD").setValue("ai_gateway_base_url", url.strip())
+    settings = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+    settings.setValue("ai_gateway_base_url", url.strip())
+    settings.sync()
 
 
 # ── OpenAI 호환 클라이언트 캐시(ocr_engine._get_client와 동일 관례: 커넥션 풀 재사용) ──
