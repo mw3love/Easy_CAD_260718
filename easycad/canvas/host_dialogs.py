@@ -5,6 +5,7 @@
 다이얼로그 클래스를 가져다 쓴다. 순환 임포트를 피하려고 host.py·믹스인을 임포트하지 않는
 잎(leaf) 모듈이다.
 """
+import html
 import io
 import os
 import time
@@ -60,7 +61,26 @@ from easycad.ai.text_to_svg import generate_svg
 _ORIENTS = [("landscape", "가로"), ("portrait", "세로")]
 
 
-_ROUNDED_COMBO_QSS = "QComboBox { border-radius:6px; }"
+_ROUNDED_COMBO_QSS = (
+    "QComboBox { border:1px solid rgba(128,128,128,90); border-radius:8px; "
+    "padding:6px 10px; }"
+    "QComboBox:hover { border-color:rgba(128,128,128,150); }"
+    "QComboBox::drop-down { border:none; width:24px; }"
+    "QComboBox QAbstractItemView { border:1px solid rgba(128,128,128,90); "
+    "border-radius:6px; padding:2px; outline:0; }"
+)
+
+# [2026-08-20 피드백] 다이얼로그 섹션 캡션("Mermaid 코드", "미리보기" 등)을 본문 라벨과
+# 구분되는 "제목"으로 보이게 — 굵기+크기만 올린다(Qt 스타일시트는 letter-spacing/
+# text-transform 미지원이라 그 축은 배제, 색은 팔레트 기본 유지 — 코랄은 상태 전용이라는
+# 기존 규칙(easy-cad.md) 유지).
+_SECTION_TITLE_QSS = "font-weight:600; font-size:13px;"
+
+# [2026-08-20 피드백] 연결 테스트 결과(성공/실패)를 색으로 구분 — "연결 잘 되면 좋은 일"
+# 이라는 요청대로 성공은 초록, 실패는 빨강(둘 다 코랄 accent와 겹치지 않는 별도 색상,
+# 코랄은 이 앱에서 "선택/액션" 전용이라는 기존 규칙 유지).
+_STATUS_OK_COLOR = "#22c55e"
+_STATUS_FAIL_COLOR = "#e5484d"
 
 
 def _build_paper_combos(dlg, size: str, orient: str):
@@ -807,10 +827,11 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         toolbar_lay.setContentsMargins(8, 6, 8, 6)
         toolbar_lay.setSpacing(8)
 
+        # [2026-08-20 피드백] 텍스트 라벨 제거, 설정 버튼(`_settings_btn`)과 같은 아이콘
+        # 전용 정사각 버튼으로 축소 — 보조 동작이라는 위계도 맞고, 시각적으로 "추가/드롭"
+        # 느낌이 텍스트 라벨보다 잘 산다는 피드백. 발견성 손실은 아래 툴팁이 대신 맡는다.
         self._attach_btn = QToolButton(toolbar_widget)
         self._attach_btn.setIcon(_act_icon("attach"))
-        self._attach_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._attach_btn.setText("이미지 첨부")
         # [2026-08-13 5차] 옛 상단 힌트 2번째 줄(드래그·Ctrl+V)을 이 버튼 툴팁으로 흡수 —
         # Qt 툴팁은 HTML을 주면 자동으로 리치텍스트 처리해 불릿(<br>·)이 그대로 렌더된다.
         self._attach_btn.setToolTip("이미지 첨부<br>· 드래그 앤 드롭<br>· Ctrl+V 붙여넣기")
@@ -852,6 +873,11 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # [2026-08-20 피드백] 레이아웃 재구성 — 오른쪽(미리보기)이 세로 전체를 채우고,
         # 왼쪽(입력 카드+모델행+커넥터+코드칸)은 위아래로 쌓인 2분할 구조.
         left_col = QVBoxLayout()
+        # [2026-08-20 피드백] 입력 카드 위에도 다른 두 섹션(코드·미리보기)과 같은 "제목"을
+        # 달아 세 구역의 시각적 위계를 통일.
+        prompt_title = QLabel("텍스트 설명", self)
+        prompt_title.setStyleSheet(_SECTION_TITLE_QSS)
+        left_col.addWidget(prompt_title)
         left_col.addWidget(prompt_frame)
 
         self._progress = _GenProgressRow(self)
@@ -897,7 +923,9 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # 배치에서 좌우 열 자체를 좌=입력전체/우=미리보기로 승격). 복사 버튼은 제거
         # (피드백: "드래그해서 복사하면 됨").
         code_label_row = QHBoxLayout()
-        code_label_row.addWidget(QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능):", self))
+        code_title = QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능):", self)
+        code_title.setStyleSheet(_SECTION_TITLE_QSS)
+        code_label_row.addWidget(code_title)
         code_label_row.addStretch(1)
         left_col.addLayout(code_label_row)
         self._edit = QPlainTextEdit(self)
@@ -910,7 +938,9 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         split.addLayout(left_col, 1)
 
         preview_col = QVBoxLayout()
-        preview_col.addWidget(QLabel("미리보기 (클릭하면 확대):", self))
+        preview_title = QLabel("미리보기 (클릭하면 확대):", self)
+        preview_title.setStyleSheet(_SECTION_TITLE_QSS)
+        preview_col.addWidget(preview_title)
         preview_frame = QFrame(self)
         preview_frame.setObjectName("mermaidPreviewFrame")
         preview_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -918,6 +948,11 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
             "QFrame#mermaidPreviewFrame { border:1px solid rgba(128,128,128,90); "
             "border-radius:8px; }"
         )
+        # [2026-08-20 피드백] "미리보기 너비가 왼쪽 입력창들과 비슷했으면" — split은 이미
+        # stretch 1:1이지만, 좌측은 `_edit.setMinimumSize(420, ...)`가 최소폭을 못박는 반면
+        # 우측은 최소폭이 preview_label(160)뿐이라 다이얼로그 초기 sizeHint에서 좌우가
+        # 비대칭이었다. 우측도 같은 420으로 맞춰 최초 오픈부터 균형이 잡히게 한다.
+        preview_frame.setMinimumWidth(420)
         preview_frame_lay = QVBoxLayout(preview_frame)
         preview_frame_lay.setContentsMargins(6, 6, 6, 6)
         self._preview_label = _ClickablePreviewLabel(preview_frame)
@@ -1190,6 +1225,7 @@ class _AIGatewaySettingsDialog(QDialog):
 
         self._test_result_label = QLabel("", self)
         self._test_result_label.setWordWrap(True)
+        self._test_result_label.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(self._test_result_label)
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
@@ -1211,7 +1247,8 @@ class _AIGatewaySettingsDialog(QDialog):
         같은 어순, 옛 설정창의 "…사용"은 헷갈린다는 피드백으로 폐기)."""
         key = self.api_key()
         if not key:
-            self._test_result_label.setText("API 키를 입력하세요.")
+            self._test_result_label.setText(
+                f"<span style='color:{_STATUS_FAIL_COLOR};'>API 키를 입력하세요.</span>")
             return
         self._test_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -1221,15 +1258,23 @@ class _AIGatewaySettingsDialog(QDialog):
                 models = gw.list_text_models(key, self.base_url(), timeout=10.0)
                 n_gpt = sum(1 for m in models if "gpt" in m.lower())
                 n_gemini = sum(1 for m in models if "gemini" in m.lower())
-                lines.append(f"Gemini {n_gemini}개 · GPT {n_gpt}개 응답")
+                lines.append(
+                    f"<span style='color:{_STATUS_OK_COLOR};'>Gemini {n_gemini}개 · "
+                    f"GPT {n_gpt}개 응답</span>")
             except Exception as e:
-                lines.append(f"모델 조회 실패: {e}")
+                lines.append(
+                    f"<span style='color:{_STATUS_FAIL_COLOR};'>모델 조회 실패: "
+                    f"{html.escape(str(e))}</span>")
             try:
                 remaining, quota = gw.get_credit_balance(key, self.base_url())
-                lines.append(f"크레딧 잔여 {remaining:.0f} / {quota:.0f}")
+                lines.append(
+                    f"<span style='color:{_STATUS_OK_COLOR};'>크레딧 잔여 "
+                    f"{remaining:.0f} / {quota:.0f}</span>")
             except Exception as e:
-                lines.append(f"크레딧 확인 실패: {e}")
-            self._test_result_label.setText("\n".join(lines))
+                lines.append(
+                    f"<span style='color:{_STATUS_FAIL_COLOR};'>크레딧 확인 실패: "
+                    f"{html.escape(str(e))}</span>")
+            self._test_result_label.setText("<br>".join(lines))
         finally:
             QApplication.restoreOverrideCursor()
             self._test_btn.setEnabled(True)
@@ -1500,10 +1545,9 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         toolbar_lay.setContentsMargins(8, 6, 8, 6)
         toolbar_lay.setSpacing(8)
 
+        # [2026-08-20 피드백] Mermaid 창과 동일 — 아이콘 전용 정사각 버튼으로 축소.
         self._attach_btn = QToolButton(toolbar_widget)
         self._attach_btn.setIcon(_act_icon("attach"))
-        self._attach_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._attach_btn.setText("이미지 첨부")
         self._attach_btn.setToolTip("이미지 첨부<br>· 드래그 앤 드롭<br>· Ctrl+V 붙여넣기")
         self._attach_btn.clicked.connect(self._browse_image)
         toolbar_lay.addWidget(self._attach_btn)
