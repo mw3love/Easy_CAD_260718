@@ -163,7 +163,7 @@ def _frame_label(frame, fallback_idx: int) -> str:
 
 
 class _PdfExportDialog(QDialog):
-    """[§8 항목14, 2026-08-07] PDF 내보내기 — 옛 "전체"/"선택영역" 별도 메뉴 2개를 이 다이얼로그
+    """[§8 항목14, 2026-08-07] 내보내기 — 옛 "전체"/"선택영역" 별도 메뉴 2개를 이 다이얼로그
     하나로 통합. 전체/선택 라디오·용지크기·방향을 고르면 그 즉시 라이브 미리보기가 다시 렌더된다
     (deep-interview 확정 — 왕복 다이얼로그 대신 옵션·미리보기를 한 화면에). 씬에 표제란/용지틀이
     있고 "전체 도면"을 고른 상태면 그 프레임이 이미 용지 크기·방향을 정해둔 것이라 용지크기·방향
@@ -174,19 +174,43 @@ class _PdfExportDialog(QDialog):
     [다중 페이지 지원, 2026-08-14] 씬에 프레임이 2개 이상이면 "전체 도면" 옆에 드롭다운이
     자동으로 나타나 어느 프레임을 낼지 고른다(deep-interview 확정 — 새 라디오 옵션 대신
     기존 "전체 도면"의 자연스러운 확장). 프레임이 0~1개면 지금까지와 완전히 동일(드롭다운
-    자체가 안 뜸, 무회귀)."""
+    자체가 안 뜸, 무회귀).
 
-    def __init__(self, parent, scene, has_selection: bool):
+    [내보내기 통합, 2026-08-20 실사용 피드백] PDF 전용이던 것을 PDF/PNG/PNG(투명배경)/SVG
+    형식 콤보로 확장(Lucid의 "File format" 드롭다운과 같은 자리) — 우클릭 메뉴·File 메뉴
+    두 진입점이 이 다이얼로그 하나를 공유하고, `default_format`/`default_selection_only`로
+    진입점별 초기값만 다르게 준다(로직은 하나, 사용자가 안에서 서로 반대쪽으로 바꿀 수도 있음)."""
+
+    _FORMAT_OPTIONS = (
+        ("PDF", "pdf"), ("PNG", "png"), ("PNG (투명 배경)", "png_transparent"), ("SVG", "svg"))
+    _FORMAT_OK_LABEL = {
+        "pdf": "PDF로 저장…", "png": "PNG로 저장…",
+        "png_transparent": "PNG로 저장…", "svg": "SVG로 저장…"}
+
+    def __init__(self, parent, scene, has_selection: bool,
+                default_format: str = "pdf", default_selection_only: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("PDF 내보내기")
+        self.setWindowTitle("내보내기")
         self._scene = scene
         self._frames = _list_title_frames(scene)
 
         opts = QVBoxLayout()
+        self._format_cb = QComboBox(self)
+        for label, key in self._FORMAT_OPTIONS:
+            self._format_cb.addItem(label, key)
+        fidx = self._format_cb.findData(default_format)
+        self._format_cb.setCurrentIndex(fidx if fidx >= 0 else 0)
+        form0 = QFormLayout()
+        form0.addRow("형식", self._format_cb)
+        opts.addLayout(form0)
+
         self._rb_all = QRadioButton("전체 도면")
         self._rb_sel = QRadioButton("선택 영역")
         self._rb_sel.setEnabled(has_selection)
-        self._rb_all.setChecked(True)
+        if default_selection_only and has_selection:
+            self._rb_sel.setChecked(True)
+        else:
+            self._rb_all.setChecked(True)
         grp = QButtonGroup(self)
         grp.addButton(self._rb_all)
         grp.addButton(self._rb_sel)
@@ -222,7 +246,7 @@ class _PdfExportDialog(QDialog):
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                 | QDialogButtonBox.StandardButton.Cancel, self)
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText("PDF로 저장…")
+        self._ok_btn = btns.button(QDialogButtonBox.StandardButton.Ok)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
 
@@ -230,11 +254,19 @@ class _PdfExportDialog(QDialog):
         root.addLayout(row)
         root.addWidget(btns)
 
+        self._format_cb.currentIndexChanged.connect(self._refresh_ok_label)
         self._rb_all.toggled.connect(self._refresh)
         self._size_cb.currentIndexChanged.connect(self._refresh)
         self._orient_cb.currentIndexChanged.connect(self._refresh)
         self._frame_cb.currentIndexChanged.connect(self._refresh)   # [다중 페이지]
+        self._refresh_ok_label()
         self._refresh()
+
+    def _format(self) -> str:
+        return self._format_cb.currentData()
+
+    def _refresh_ok_label(self):
+        self._ok_btn.setText(self._FORMAT_OK_LABEL[self._format()])
 
     def _selection_only(self) -> bool:
         return self._rb_sel.isChecked()
@@ -278,11 +310,14 @@ class _PdfExportDialog(QDialog):
             self._preview.setPixmap(pixmap)
 
     def result_options(self) -> dict:
+        fmt = self._format()
         return {
             "selection_only": self._selection_only(),
             "page": self._size_cb.currentData(),
             "orientation": self._orient_cb.currentData(),
             "frame": self._current_frame() if not self._selection_only() else None,
+            "format": "png" if fmt == "png_transparent" else fmt,
+            "transparent": fmt == "png_transparent",
         }
 
 

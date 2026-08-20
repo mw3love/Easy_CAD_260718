@@ -369,6 +369,9 @@ class _CanvasMixin:
         for k, b in self._tool_buttons.items():
             # [화살표 통합] 화살표 버튼 1개가 내부 두 도구(arrow·sarrow)를 대표한다.
             b.setChecked(k == key or (k == "arrow" and key == "sarrow"))
+        # [도구(&T) 메뉴, 2026-08-20] 상단 툴바 버튼과 같은 체크 상태를 메뉴 액션에도 동기화.
+        for k, a in getattr(self, "_tool_menu_actions", {}).items():
+            a.setChecked(k == key or (k == "arrow" and key == "sarrow"))
         # 왼쪽 「도형」 팔레트 버튼 동기화: 기본(네모·원)은 key 직접, 심볼은 sym:kind.
         for k, b in getattr(self, "_shape_tool_buttons", {}).items():
             b.setChecked(k == key)

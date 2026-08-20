@@ -612,6 +612,40 @@ def test_arrow_kind_menu_labels():
             for i in range(w._pf_routing_btn.count())] == ["직선", "곡선", "직각"]
 
 
+def test_arrow_and_line_combo_icon_heights_match():
+    # [실사용 피드백 2026-08-20] "화살표" 콤보가 "선" 콤보보다 위아래로 커 보인다는 지적 —
+    # 곡선 아이콘을 재설계해 별도로 더 큰 높이가 필요 없어졌으므로 두 상수를 통일했다.
+    w = CanvasWindow()
+    assert w._PROPS_ARROW_ICON_H == w._PROPS_ICON_H
+    assert w._pf_style.sizeHint().height() == w._pf_routing_btn.sizeHint().height()
+
+
+def test_curved_arrow_icon_visibly_bulges_from_straight_line():
+    # [실사용 피드백 2026-08-20] "곡선 아이콘이 직선과 별 차이 없다" — 재설계한 곡선 글리프가
+    # 시작~끝을 잇는 직선에서 뚜렷이 벗어나는지(중점 부근 픽셀이 칠해져 있는지) 픽셀로 확인.
+    from PyQt6.QtGui import QColor
+    from easycad.canvas.core_constants import _arrow_kind_icon
+    w, h = 72, 18
+    icon = _arrow_kind_icon("curved", QColor("#ffffff"), w, h)
+    img = icon.pixmap(w, h).toImage()
+    # 직선(대각선)이 지나가는 라인에서 수직으로 3px 위쪽 지점 — 곡선이면 칠해져 있어야 하고
+    # (부풀림 방향, 본문 구현 참조) 직선 글리프였다면 그 자리는 배경(투명)이어야 한다.
+    x0, y0 = 4.0, h - 4.0
+    x1, y1 = w - 8.0, 4.0
+    mx, my = round((x0 + x1) / 2), round((y0 + y1) / 2) - 3
+    assert img.pixelColor(mx, my).alpha() > 0, "곡선이 직선 경로에서 충분히 부풀지 않음"
+
+
+def test_light_theme_icon_color_is_pure_black():
+    # [실사용 피드백 2026-08-20] 다크 테마 아이콘 중립색은 이미 순백(#ffffff)으로 환원돼
+    # 있었는데 라이트 테마만 짙은 네이비(#39434f, 순검정 아님)로 남아 비대칭이라는 지적 —
+    # 같은 "가독성 우선" 판단을 라이트에도 대칭 적용해 순검정으로.
+    from easycad.canvas.host_widgets import _ICON_COLOR_THEME
+    from PyQt6.QtGui import QColor
+    assert _ICON_COLOR_THEME["dark"] == QColor("#ffffff")
+    assert _ICON_COLOR_THEME["light"] == QColor("#000000")
+
+
 
 
 def test_straight_kind_flattens_on_draw():

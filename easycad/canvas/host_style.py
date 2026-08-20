@@ -88,11 +88,16 @@ class _StyleMixin:
 
 
     def _refresh_arrow_tool_button(self):
-        """[화살표 통합] 툴바 화살표 아이콘을 현재 종류에 맞춘다 — 직각이면 직각 커넥터 아이콘."""
+        """[화살표 통합] 툴바·도구(&T) 메뉴의 화살표 아이콘을 현재 종류에 맞춘다 —
+        직각이면 직각 커넥터 아이콘."""
+        icon = _tool_icon(_ARROW_KIND_TOOL.get(self.current_arrow_kind, "arrow"),
+                          _current_icon_color())
         btn = getattr(self, "_tool_buttons", {}).get("arrow")
         if btn is not None:
-            btn.setIcon(_tool_icon(_ARROW_KIND_TOOL.get(self.current_arrow_kind, "arrow"),
-                                   _current_icon_color()))
+            btn.setIcon(icon)
+        act = getattr(self, "_tool_menu_actions", {}).get("arrow")
+        if act is not None:
+            act.setIcon(icon)
 
 
     def _set_current_color(self, color: QColor):

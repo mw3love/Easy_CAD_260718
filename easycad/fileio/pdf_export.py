@@ -1,4 +1,4 @@
-"""PDF 출력 — 씬(또는 선택영역)을 A4~A1 용지에 맞춰 벡터 PDF로 렌더.
+"""PDF/PNG/SVG 내보내기 — 씬(또는 선택영역)을 A4~A1 용지에 맞춰 렌더.
 
 전체 출력: 그려진 모든 객체의 경계(itemsBoundingRect)를 용지에 fit.
 선택영역 출력: 선택된 객체들의 경계를 용지에 fit.
@@ -7,10 +7,12 @@
 
 [§8 항목14, 2026-08-07] `export_pdf`(파일 저장)와 `render_preview`(다이얼로그 라이브 미리보기)가
 `_resolve_geometry`/`_paint_scene`을 공유해 미리보기와 실제 출력이 항상 같은 결과를 낸다.
-"""
-from PyQt6.QtCore import Qt, QRectF, QMarginsF
+[2026-08-20 실사용 피드백] `export_image`(PNG)·`export_svg`가 같은 두 헬퍼를 재사용해
+합류 — 세 포맷 모두 같은 크롭/용지/방향/선택영역 규칙을 공유한다."""
+from PyQt6.QtCore import Qt, QRectF, QMarginsF, QSize
 from PyQt6.QtGui import QPainter, QPageSize, QPageLayout, QBrush, QColor, QPixmap
 from PyQt6.QtPrintSupport import QPrinter
+from PyQt6.QtSvg import QSvgGenerator
 
 # 라벨 → QPageSize id
 PAGE_SIZES = {
@@ -133,20 +135,70 @@ def _resolve_geometry(scene, page: str, selection_only: bool, margin_mm: float,
     return source, page, landscape, margin_mm
 
 
-def _paint_scene(scene, painter: QPainter, target: QRectF, source: QRectF):
-    """선택 해제(핸들 미출력) + 흰 배경 강제 + 흰 잉크→검정 치환 후 렌더, 끝나면 전부 원복."""
+def _has_kept_ancestor(it, keep: set) -> bool:
+    """`it` 자신 또는 그 조상 중 하나가 `keep`에 있으면 True — 선택된 도형의 라벨 등
+    자식 아이템은 자신이 직접 선택되지 않아도 부모가 선택됐으면 함께 남겨야 한다."""
+    p = it
+    while p is not None:
+        if p in keep:
+            return True
+        p = p.parentItem()
+    return False
+
+
+def _centered_target_rect(target: QRectF, source: QRectF) -> QRectF:
+    """[2026-08-20 실사용 버그 수정] `QGraphicsScene.render(painter, target, source,
+    KeepAspectRatio)`는 종횡비가 안 맞을 때 남는 여백을 target 왼쪽/위로 몰아붙인다
+    (Qt 기본 동작 — 가운데 정렬이 아님, 실측으로 확인). "여백이 이상하다"는 실사용
+    피드백의 원인 — target을 source와 같은 비율의 중앙 부분 사각형으로 미리 좁혀 넘기면
+    남는 여백이 사방에 고르게 분배된다."""
+    if source.isEmpty() or target.isEmpty():
+        return target
+    scale = min(target.width() / source.width(), target.height() / source.height())
+    w, h = source.width() * scale, source.height() * scale
+    x = target.x() + (target.width() - w) / 2
+    y = target.y() + (target.height() - h) / 2
+    return QRectF(x, y, w, h)
+
+
+def _paint_scene(scene, painter: QPainter, target: QRectF, source: QRectF,
+                 isolate_selection: bool = False, white_bg: bool = True):
+    """선택 해제(핸들 미출력) + (기본) 흰 배경 강제·흰 잉크→검정 치환 후 렌더, 끝나면 전부 원복.
+
+    [2026-08-20 실사용 버그 수정] `isolate_selection=True`면 렌더 동안 선택되지 않은
+    아이템(과 그 자식)을 잠시 숨긴다 — `scene.render(painter, target, source)`는 `source`
+    사각형과 겹치는 아이템을 전부 그리기 때문에, 이게 없으면 "선택 영역 내보내기"가
+    선택한 항목의 bounding box 안에 있는 다른(비선택) 도형까지 함께 내보내고 있었다.
+
+    [내보내기 통합, 2026-08-20] `white_bg=False`면 배경을 강제하지 않는다(투명 배경
+    PNG/SVG 전용) — 흰 종이 인쇄 관례(흰 배경 강제 + 흰 잉크→검정 치환)는 투명 배경일
+    땐 의미가 없으므로 함께 건너뛴다."""
     saved = list(scene.selectedItems())
     scene.clearSelection()
-    # [Phase 6 M1] 다크 테마여도 인쇄물은 흰 종이 — 렌더 동안 배경을 흰색으로 강제 후 복원.
+    hidden = []
+    if isolate_selection:
+        keep = set(saved)
+        for it in scene.items():
+            if it.isVisible() and not _has_kept_ancestor(it, keep):
+                it.setVisible(False)
+                hidden.append(it)
     saved_bg = scene.backgroundBrush()
-    scene.setBackgroundBrush(QBrush(QColor("#ffffff")))
-    # [2026-07-29] 흰 잉크색(예: DXF ACI 7)은 흰 종이에 안 보이므로 인쇄 관례대로 검정 치환.
-    swapped_colors = _swap_white_to_black_for_print(scene)
+    swapped_colors = []
+    if white_bg:
+        # [Phase 6 M1] 다크 테마여도 인쇄물은 흰 종이 — 렌더 동안 배경을 흰색으로 강제 후 복원.
+        scene.setBackgroundBrush(QBrush(QColor("#ffffff")))
+        # [2026-07-29] 흰 잉크색(예: DXF ACI 7)은 흰 종이에 안 보이므로 인쇄 관례대로 검정 치환.
+        swapped_colors = _swap_white_to_black_for_print(scene)
+    else:
+        scene.setBackgroundBrush(QBrush(Qt.BrushStyle.NoBrush))
     try:
-        scene.render(painter, target, source, Qt.AspectRatioMode.KeepAspectRatio)
+        scene.render(painter, _centered_target_rect(target, source), source,
+                     Qt.AspectRatioMode.KeepAspectRatio)
     finally:
         scene.setBackgroundBrush(saved_bg)
         _restore_swapped_colors(swapped_colors)
+        for it in hidden:
+            it.setVisible(True)
         for it in saved:
             it.setSelected(True)
 
@@ -186,7 +238,78 @@ def export_pdf(scene, path: str, page: str = "A4", selection_only: bool = False,
     try:
         paint_rect = printer.pageLayout().paintRectPixels(printer.resolution())
         target = QRectF(0, 0, paint_rect.width(), paint_rect.height())
-        _paint_scene(scene, painter, target, source)
+        _paint_scene(scene, painter, target, source, isolate_selection=selection_only)
+    finally:
+        painter.end()
+    return True
+
+
+def _page_pixel_geometry(page_id, landscape: bool, margin_mm: float, dpi: int):
+    """(px_w, px_h, target) — mm 단위 용지를 `dpi` 해상도의 픽셀 사각형으로 환산.
+    `export_image`/`export_svg`가 공유(둘 다 같은 픽셀 좌표계에 그려 화질·여백이 일치)."""
+    paper_mm = QPageSize(page_id).size(QPageSize.Unit.Millimeter)
+    pw_mm, ph_mm = paper_mm.width(), paper_mm.height()
+    if landscape:
+        pw_mm, ph_mm = ph_mm, pw_mm
+    mm_to_px = dpi / 25.4
+    px_w = max(1, round(pw_mm * mm_to_px))
+    px_h = max(1, round(ph_mm * mm_to_px))
+    margin_px = round(margin_mm * mm_to_px)
+    target = QRectF(margin_px, margin_px,
+                    max(1, px_w - 2 * margin_px), max(1, px_h - 2 * margin_px))
+    return px_w, px_h, target
+
+
+def export_image(scene, path: str, page: str = "A4", selection_only: bool = False,
+                 margin_mm: float = 10.0, orientation: str | None = None, frame=None,
+                 transparent: bool = False, dpi: int = 200) -> bool:
+    """scene을 path에 PNG로 저장 — `export_pdf`와 같은 크롭/용지/방향/선택영역 규칙.
+    [내보내기 통합, 2026-08-20] `transparent=True`면 흰 배경 강제·흰 잉크→검정 치환을
+    건너뛰고 알파 배경으로 저장한다(로고·다른 문서에 얹어 쓰는 용도)."""
+    geo = _resolve_geometry(scene, page, selection_only, margin_mm, orientation, frame)
+    if geo is None:
+        return False
+    source, page, landscape, margin_mm = geo
+    page_id = PAGE_SIZES.get(page, QPageSize.PageSizeId.A4)
+    px_w, px_h, target = _page_pixel_geometry(page_id, landscape, margin_mm, dpi)
+
+    pixmap = QPixmap(px_w, px_h)
+    pixmap.fill(Qt.GlobalColor.transparent if transparent else QColor("white"))
+    painter = QPainter(pixmap)
+    try:
+        _paint_scene(scene, painter, target, source, isolate_selection=selection_only,
+                     white_bg=not transparent)
+    finally:
+        painter.end()
+    return pixmap.save(path, "PNG")
+
+
+def export_svg(scene, path: str, page: str = "A4", selection_only: bool = False,
+               margin_mm: float = 10.0, orientation: str | None = None, frame=None,
+               transparent: bool = False, dpi: int = 200) -> bool:
+    """scene을 path에 SVG로 저장 — `export_pdf`와 같은 크롭/용지/방향/선택영역 규칙.
+    QtSvg의 `QSvgGenerator`가 이미 프로젝트 의존성(SVG 가져오기/미리보기에서 사용 중)이라
+    새 외부 패키지 없이 구현 가능."""
+    geo = _resolve_geometry(scene, page, selection_only, margin_mm, orientation, frame)
+    if geo is None:
+        return False
+    source, page, landscape, margin_mm = geo
+    page_id = PAGE_SIZES.get(page, QPageSize.PageSizeId.A4)
+    px_w, px_h, target = _page_pixel_geometry(page_id, landscape, margin_mm, dpi)
+
+    generator = QSvgGenerator()
+    generator.setFileName(path)
+    generator.setSize(QSize(px_w, px_h))
+    generator.setViewBox(QRectF(0, 0, px_w, px_h))
+    # `setResolution` 없이는 Qt가 72dpi로 가정해 SVG의 물리 크기(width/height mm) 속성이
+    # `dpi`(기본 200)만큼 실제보다 커진다 — 뷰어 화면에선 안 보여도 "실척 인쇄" 시 어긋난다.
+    generator.setResolution(dpi)
+    generator.setTitle("Easy CAD")
+
+    painter = QPainter(generator)
+    try:
+        _paint_scene(scene, painter, target, source, isolate_selection=selection_only,
+                     white_bg=not transparent)
     finally:
         painter.end()
     return True
@@ -219,7 +342,7 @@ def render_preview(scene, page: str = "A4", selection_only: bool = False,
 
     painter = QPainter(pixmap)
     try:
-        _paint_scene(scene, painter, target, source)
+        _paint_scene(scene, painter, target, source, isolate_selection=selection_only)
     finally:
         painter.end()
     return pixmap

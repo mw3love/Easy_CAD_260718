@@ -34,7 +34,7 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
-from easycad.fileio.pdf_export import export_pdf
+from easycad.fileio.pdf_export import export_pdf, export_image, export_svg
 from easycad.fileio.dxf_export import export_dxf, export_dwg
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.svg_import import parse_svg_items, parse_svg_string
@@ -299,24 +299,50 @@ class _FileIOMixin:
         return resp == QMessageBox.StandardButton.Ok
 
 
-    def _export_pdf(self):
+    # [내보내기 통합, 2026-08-20 실사용 피드백] PDF/PNG/SVG 공통 진입점 — File 메뉴
+    # "내보내기" 하위메뉴·우클릭 메뉴가 형식별 기본값(default_format)·범위별 기본값
+    # (default_selection_only)만 다르게 이 메서드 하나를 공유한다. 다이얼로그 안에서
+    # 형식·범위를 서로 반대쪽으로 바꿀 수도 있어(라디오·콤보 그대로 노출) 별도 경로를
+    # 두 벌 만들 필요가 없다.
+    _EXPORT_FILTERS = {
+        "pdf": ("PDF로 저장", "PDF 파일 (*.pdf)", ".pdf"),
+        "png": ("PNG로 저장", "PNG 파일 (*.png)", ".png"),
+        "svg": ("SVG로 저장", "SVG 파일 (*.svg)", ".svg"),
+    }
+
+    def _export_document(self, default_format: str = "pdf", default_selection_only: bool = False):
         if self._scene.itemsBoundingRect().isEmpty():
-            QMessageBox.information(self, "PDF 내보내기", "출력할 객체가 없습니다.")
+            QMessageBox.information(self, "내보내기", "출력할 객체가 없습니다.")
             return
-        dlg = _PdfExportDialog(self, self._scene, bool(self._scene.selectedItems()))
+        dlg = _PdfExportDialog(self, self._scene, bool(self._scene.selectedItems()),
+                               default_format=default_format,
+                               default_selection_only=default_selection_only)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         opts = dlg.result_options()
-        path, _ = QFileDialog.getSaveFileName(self, "PDF로 저장", "", "PDF 파일 (*.pdf)")
+        fmt = opts["format"]
+        title, filt, ext = self._EXPORT_FILTERS[fmt]
+        path, _ = QFileDialog.getSaveFileName(self, title, "", filt)
         if not path:
             return
-        if not path.lower().endswith(".pdf"):
-            path += ".pdf"
-        if export_pdf(self._scene, path, page=opts["page"], selection_only=opts["selection_only"],
-                      orientation=opts["orientation"], frame=opts.get("frame")):
-            QMessageBox.information(self, "PDF 내보내기", f"저장 완료:\n{path}")
+        if not path.lower().endswith(ext):
+            path += ext
+        common = dict(page=opts["page"], selection_only=opts["selection_only"],
+                     orientation=opts["orientation"], frame=opts.get("frame"))
+        if fmt == "pdf":
+            ok = export_pdf(self._scene, path, **common)
+        elif fmt == "png":
+            ok = export_image(self._scene, path, transparent=opts["transparent"], **common)
         else:
-            QMessageBox.warning(self, "PDF 내보내기", "저장에 실패했습니다.")
+            ok = export_svg(self._scene, path, transparent=opts["transparent"], **common)
+        if ok:
+            QMessageBox.information(self, "내보내기", f"저장 완료:\n{path}")
+        else:
+            QMessageBox.warning(self, "내보내기", "저장에 실패했습니다.")
+
+    def _export_pdf(self):
+        """File 메뉴 「PDF 내보내기…」(Ctrl+P·툴바 버튼) — 항상 PDF·전체 도면 기본."""
+        self._export_document("pdf", False)
 
 
     def _do_export_dxf(self, path: str):

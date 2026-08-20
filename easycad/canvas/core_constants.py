@@ -285,10 +285,20 @@ def _arrow_kind_icon(kind: str, color: QColor, w: int = 46, h: int = 20) -> QIco
     x0, y0 = 4.0, h - 4.0
     x1, y1 = w - 8.0, 4.0
     if kind == "curved":
+        # [실사용 피드백 2026-08-20] 옛 cubicTo(양끝 y값을 제어점에 그대로 재사용)는 직선과
+        # 구분이 잘 안 될 만큼 완만했다 — 직선의 수직 이등분선 방향으로 확실히 부풀린
+        # quadTo 단일 곡선으로 교체(높이 h에 안 잘리게 bulge를 클램프해 어떤 icon 크기에도
+        # 견고). 화살촉 각도는 제어점→끝점 접선을 그대로 쓴다.
+        mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+        dx, dy = x1 - x0, y1 - y0
+        length = math.hypot(dx, dy) or 1.0
+        perp_x, perp_y = dy / length, -dx / length   # 위쪽으로 부풀도록 부호 고정
+        bulge = min(7.0, h / 2 - 2.0)
+        ctrl = QPointF(mx + perp_x * bulge, my + perp_y * bulge)
         path = QPainterPath(QPointF(x0, y0))
-        path.cubicTo(QPointF(w * 0.35, y0), QPointF(w * 0.55, y1), QPointF(x1, y1))
+        path.quadTo(ctrl, QPointF(x1, y1))
         p.drawPath(path)
-        tip, tail = QPointF(x1, y1), QPointF(w * 0.55, y1)
+        tip, tail = QPointF(x1, y1), ctrl
     elif kind == "ortho":
         midx = (x0 + x1) / 2
         p.drawLine(QPointF(x0, y0), QPointF(midx, y0))

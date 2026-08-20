@@ -206,11 +206,14 @@ _ACCENT_CORAL = "#da7756"
 
 # [디자인 베이크오프 2라운드, 2026-08-02] 코랄 듀오톤 SVG로 새로 그린 액션 이름 —
 # 상단 QToolBar에 실제로 노출되는 것들. 메뉴 전용(pdf/image/table/titleblock/mermaid/
-# zoom_fit/zoom_100/align)은 이번 라운드 스코프 밖이라 아래 QPainter 코드를 그대로 유지.
+# zoom_fit/zoom_100)은 이번 라운드 스코프 밖이라 아래 QPainter 코드를 그대로 유지.
 _SVG_ACT_ICON_NAMES = frozenset({
     "new", "open", "save", "undo", "redo", "snap", "ortho", "grid", "theme", "help", "pin",
     # [§8 항목18 후속, 2026-08-12] AI 게이트웨이 설정·Mermaid 다이얼로그 아이콘화 요청으로 추가.
     "refresh", "settings", "generate", "connect",
+    # [2026-08-20 실사용 버그 수정] "align"은 toolbar 노출 대상인데도 SVG/글리프 어디에도
+    # 없어 완전히 빈 아이콘으로 그려지고 있었다(`align.svg` 신설로 수정).
+    "align",
     # ["attach" 2026-08-20 제거 — 첨부 버튼이 이 SVG 클립 아이콘 대신 "+" 정사각 버튼으로
     # 바뀌어(`_ImageAttachMixin._build_attach_button`) 마지막 참조가 사라짐, `attach.svg`도 삭제.]
 })
@@ -330,7 +333,10 @@ _CANVAS_BG = {"dark": QColor("#1e2731"), "light": QColor("#ffffff")}
 # 보인다는 지적. 짙은 네이비 배경(#1e2731)에서 순백이 눈부실 정도는 아니라고 판단, 미묘한
 # 눈편안함보다 작은 요소의 가독성을 우선(사용자 확인). `_dark_palette()`의 텍스트색도 같은
 # 이유로 함께 환원.
-_ICON_COLOR_THEME = {"dark": QColor("#ffffff"), "light": QColor("#39434f")}
+# [같은 이유, 같은 날 후속] 라이트 테마는 그때 짙은 네이비 계열(#39434f, 순검정 아님)로
+# 남겨뒀었는데, 다크 쪽만 순백으로 끝까지 밀어붙인 것과 대칭이 안 맞는다는 재지적 —
+# 같은 "미묘함보다 가독성" 판단을 라이트에도 그대로 적용해 순검정으로 환원.
+_ICON_COLOR_THEME = {"dark": QColor("#ffffff"), "light": QColor("#000000")}
 
 
 def _set_icon_color(dark: bool) -> QColor:

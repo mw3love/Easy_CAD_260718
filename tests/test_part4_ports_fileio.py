@@ -1335,7 +1335,7 @@ def test_pdf_export_dialog_no_selection_disables_selection_radio():
     assert not dlg._rb_sel.isEnabled()
     opts = dlg.result_options()
     assert opts == {"selection_only": False, "page": "A4", "orientation": "landscape",
-                    "frame": None}
+                    "frame": None, "format": "pdf", "transparent": False}
 
 
 def test_pdf_export_dialog_locks_paper_controls_to_title_frame():
@@ -1401,6 +1401,123 @@ def test_render_preview_title_frame_ignores_manual_orientation():
     assert px.height() > px.width()  # 프레임이 portrait이므로 orientation="landscape" 무시
 
 
+def test_render_preview_centers_content_when_aspect_mismatches():
+    # [2026-08-20 실사용 버그 수정] `QGraphicsScene.render(target, source, KeepAspectRatio)`는
+    # 종횡비가 안 맞으면 남는 여백을 기본적으로 target 좌상단에 몰아준다(Qt 기본 동작 —
+    # 실측으로 확인) — 콘텐츠가 페이지 정중앙이 아니라 한쪽으로 쏠려 "여백이 이상하다"는
+    # 피드백의 원인이었다. 세로 슬랙이 생기도록 가로로 넓은 장면을 만들어 위/아래 여백이
+    # 대칭인지 확인한다.
+    w = CanvasWindow()
+    a = _RectItem(QRectF(0, 0, 150, 90)); a.setPos(0, 0)
+    w._scene.addItem(a)
+    b = _RectItem(QRectF(0, 0, 60, 40)); b.setPos(250, 60)   # bbox를 옆으로 넓혀 세로 슬랙 유도
+    w._scene.addItem(b)
+
+    px = render_preview(w._scene, page="A4", orientation="landscape", max_px=200)
+    assert px is not None
+    img = px.toImage()
+    rows_with_ink = [y for y in range(img.height())
+                      if any(img.pixelColor(x, y).red() < 250 for x in range(img.width()))]
+    assert rows_with_ink, "내용이 전혀 렌더되지 않음"
+    top_margin = rows_with_ink[0]
+    bottom_margin = img.height() - 1 - rows_with_ink[-1]
+    assert abs(top_margin - bottom_margin) <= 2, (top_margin, bottom_margin)
+
+
+def test_pdf_export_selection_only_isolates_selected_items():
+    # [2026-08-20 실사용 버그 수정] "선택 영역" 내보내기가 선택한 도형의 bounding box와
+    # 겹치는 비선택 도형까지 함께 그리던 버그 — `scene.render(target, source)`가 source
+    # 사각형과 겹치는 아이템을 전부 그리는 Qt 기본 동작이라, 선택된 도형의 bbox만으로는
+    # 그 안에 걸친 다른 도형까지 함께 나왔다. 겹친 사각형 2개 중 하나만 선택해 내보내면
+    # 비선택 사각형의 테두리가 안 보여야 한다(전체 출력보다 색칠된 픽셀이 적어야 함).
+    w = CanvasWindow()
+    a = _RectItem(QRectF(0, 0, 100, 60)); a.setPos(0, 0)
+    a.setFlags(a.GraphicsItemFlag.ItemIsSelectable | a.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(a)
+    b = _RectItem(QRectF(0, 0, 100, 60)); b.setPos(50, 20)   # a의 bbox와 겹침
+    b.setFlags(b.GraphicsItemFlag.ItemIsSelectable | b.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(b)
+    a.setSelected(True)
+
+    px_full = render_preview(w._scene, selection_only=False, max_px=80)
+    px_sel = render_preview(w._scene, selection_only=True, max_px=80)
+    assert px_full is not None and px_sel is not None
+
+    def _non_white_count(pm):
+        img = pm.toImage()
+        return sum(
+            1 for y in range(img.height()) for x in range(img.width())
+            if img.pixelColor(x, y).red() < 250)
+
+    assert _non_white_count(px_sel) < _non_white_count(px_full)
+    # 렌더 후 선택·가시성이 원복돼야 한다(부작용 없음).
+    assert a.isSelected() and not b.isSelected()
+    assert a.isVisible() and b.isVisible()
+
+
+def test_file_menu_export_submenu_has_pdf_png_svg():
+    # [내보내기 통합, 2026-08-20 실사용 피드백] "PDF 내보내기…" 단독 항목이 "내보내기"
+    # 하위메뉴로 승격 — PNG/SVG가 나란히 노출되고, 기존 Ctrl+P 액션(_act_pdf)이 그대로
+    # 하위메뉴 첫 항목으로 재사용된다(같은 QAction을 메뉴 두 곳에 붙여도 Qt가 동기화).
+    w = CanvasWindow()
+    file_menu = w.menuBar().actions()[0].menu()
+    export_menu = next((a.menu() for a in file_menu.actions()
+                        if a.menu() is not None and a.text() == "내보내기"), None)
+    assert export_menu is not None
+    assert [a.text() for a in export_menu.actions()] == [
+        "PDF 내보내기…", "이미지 (PNG)…", "SVG…"]
+    assert export_menu.actions()[0] is w._act_pdf
+
+
+def test_context_menu_export_submenu_present_only_with_selection():
+    # [내보내기 통합, 2026-08-20 실사용 피드백] 선택된 도형이 있을 때만 우클릭 메뉴에
+    # "내보내기" 하위메뉴가 뜬다(전체 도면 내보내기는 File 메뉴 몫).
+    w = CanvasWindow()
+    rect = _RectItem(QRectF(0, 0, 50, 50))
+    rect.setFlags(rect.GraphicsItemFlag.ItemIsSelectable)
+    w._scene.addItem(rect)
+
+    menu_no_sel = w._build_context_menu()
+    no_sel_export = [a for a in (menu_no_sel.actions() if menu_no_sel else [])
+                     if a.menu() is not None and a.text() == "내보내기"]
+    assert not no_sel_export
+
+    rect.setSelected(True)
+    menu_sel = w._build_context_menu()
+    sel_export = [a.menu() for a in menu_sel.actions()
+                 if a.menu() is not None and a.text() == "내보내기"]
+    assert len(sel_export) == 1
+    assert [a.text() for a in sel_export[0].actions()] == ["PDF…", "이미지 (PNG)…", "SVG…"]
+
+
+def test_export_document_end_to_end_pdf_png_svg():
+    # [내보내기 통합, 2026-08-20 실사용 피드백] `_export_document`가 다이얼로그 결과대로
+    # 세 포맷 각각 올바른 export_* 함수를 호출해 실제 파일을 만드는지 종단 검증
+    # (다이얼로그 exec만 몽키패치 — result_options()는 실제 콤보/라디오 상태에서 나온다).
+    # `QMessageBox.information/warning`도 몽키패치 — 안 하면 실제 모달 `exec()`가 블로킹된다
+    # (test_part10_multi_doc.py가 이미 쓰는 관례).
+    from PyQt6.QtWidgets import QDialog, QFileDialog, QMessageBox
+    w = CanvasWindow()
+    rect = _RectItem(QRectF(0, 0, 80, 50))
+    w._scene.addItem(rect)
+
+    orig_exec = _PdfExportDialog.exec
+    orig_info = QMessageBox.information
+    orig_warn = QMessageBox.warning
+    _PdfExportDialog.exec = lambda self: QDialog.DialogCode.Accepted
+    QMessageBox.information = staticmethod(lambda *a, **kw: None)
+    QMessageBox.warning = staticmethod(lambda *a, **kw: None)
+    try:
+        for fmt, ext in (("pdf", ".pdf"), ("png", ".png"), ("svg", ".svg")):
+            out = os.path.join(_TMP, f"export_doc_test{ext}")
+            with patch.object(QFileDialog, "getSaveFileName",
+                              staticmethod(lambda *a, _out=out, **k: (_out, ""))):
+                w._export_document(fmt, False)
+            assert os.path.getsize(out) > 0, fmt
+    finally:
+        _PdfExportDialog.exec = orig_exec
+        QMessageBox.information = orig_info
+        QMessageBox.warning = orig_warn
 
 
 def test_sketch_argb_normalizes_color():

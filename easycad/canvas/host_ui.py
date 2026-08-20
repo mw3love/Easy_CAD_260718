@@ -141,8 +141,10 @@ class _UIBuildMixin:
         # Stage B — 탭 도입에 맞춰 의미를 바꿈) — 여긴 완전히 독립된 새 최상위 창.
         self._act_new_window = self._make_action(
             "새 창", "new", self._new_window, "Ctrl+Shift+N")
-        for a in (self._act_new, self._act_open, self._act_save, self._act_save_as,
-                  self._act_new_window):
+        # [2026-08-20 피드백] "새 창"은 "새로 만들기"와 같은 성격(새 시작)이라 저장 계열
+        # (열기·저장·다른 이름으로 저장) 앞, 바로 아래에 둔다.
+        for a in (self._act_new, self._act_new_window, self._act_open, self._act_save,
+                  self._act_save_as):
             m.addAction(a)
         m.addSeparator()
 
@@ -151,7 +153,17 @@ class _UIBuildMixin:
         self._act_pdf = self._make_action("PDF 내보내기…", "pdf", self._export_pdf, "Ctrl+P")
         # [신규기능] DXF 가져오기/내보내기 통합 — 옛 전용 메뉴·단축키(Ctrl+Shift+D/I)는
         # 폐지하고 열기(Ctrl+O)/저장(Ctrl+S)이 확장자로 분기(아래 _open_doc/_save_doc).
-        m.addAction(self._act_pdf)
+        # [내보내기 통합, 2026-08-20 실사용 피드백] PDF 단독 항목을 "내보내기" 하위메뉴로
+        # 승격 — PNG/SVG 형식을 나란히 노출한다(다이얼로그 자체는 셋이 공유, 진입점은
+        # 기본 형식만 다르게 지정). 기존 Ctrl+P·툴바 버튼은 `self._act_pdf`를 그대로
+        # 재사용(같은 QAction을 메뉴 두 곳에 붙여도 Qt가 상태를 동기화한다).
+        self._act_export_png = self._make_action(
+            "이미지 (PNG)…", "image", lambda: self._export_document("png", False))
+        self._act_export_svg = self._make_action(
+            "SVG…", None, lambda: self._export_document("svg", False))
+        export_menu = m.addMenu("내보내기")
+        for a in (self._act_pdf, self._act_export_png, self._act_export_svg):
+            export_menu.addAction(a)
 
         # 편집(상단 툴바와 액션 공유. Ctrl+Z/Ctrl+Y 키는 여전히 뷰가 직접 처리하므로 QAction엔
         # 단축키를 안 건다 — 여기에 같은 단축키를 걸면 Qt 전역 단축키가 뷰의 keyPressEvent보다
@@ -206,6 +218,27 @@ class _UIBuildMixin:
             self._open_ai_gateway_settings)
         i.addAction(self._act_ai_settings)
 
+        # ---- 도구(&T) 메뉴 — 상단 그리기 도구 버튼과 같은 목록(메뉴 접근성 부재
+        # 실사용 피드백 2026-08-20). 단축키는 표시만 — 실제 처리는 뷰의 키 이벤트가 하므로
+        # (`core_view.py`) QAction에 단축키를 걸면 편집(&E)의 undo/redo와 같은 이유로
+        # 이중 실행 위험이 생긴다(위 주석 참조). 네모·원·직선화살은 상단 툴바와 동일하게
+        # 제외(팔레트가 담당 / 화살표 하나로 통합).
+        t = self.menuBar().addMenu("도구(&T)")
+        self._tool_menu_actions: dict[str, QAction] = {}
+        for key, name, sc in _TOOLS:
+            if key in ("rect", "ellipse", "sarrow"):
+                continue
+            act = QAction(f"{name}\t{sc}", self)
+            act.setIcon(_tool_icon(key, _current_icon_color()))
+            act.setCheckable(True)
+            if key == "arrow":
+                act.triggered.connect(lambda _c=False: self.arm_arrow_tool())
+            else:
+                act.triggered.connect(
+                    lambda _c=False, k=key: self.set_tool(None if self.current_tool == k else k))
+            t.addAction(act)
+            self._tool_menu_actions[key] = act
+
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
         self._act_zoom100 = self._make_action("100% (1:1)", "zoom_100",
@@ -220,7 +253,7 @@ class _UIBuildMixin:
         self._act_snap.setChecked(True)
         self._act_ortho = self._make_action("직교 제약 (Ortho)", "ortho",
             self._toggle_ortho, "F8", checkable=True)
-        self._act_grid = self._make_action("격자 (스냅투그리드)", "grid",
+        self._act_grid = self._make_action("격자 (Grid Snap)", "grid",
             self._toggle_grid, "Shift+G", checkable=True)
         self._act_grid.setChecked(False)
         self._act_align = self._make_action("정렬 가이드선", "align",
@@ -647,6 +680,8 @@ class _UIBuildMixin:
             b.setIcon(self._shape_icon(k))
         for k, b in getattr(self, "_tool_buttons", {}).items():
             b.setIcon(_tool_icon(k, _current_icon_color()))
+        for k, a in getattr(self, "_tool_menu_actions", {}).items():
+            a.setIcon(_tool_icon(k, _current_icon_color()))
         # [2026-08-13 피드백] 패널 접기 화살표(코랄→중립색 전환)도 아이콘과 같은 전역색을
         # 쓰므로 테마 전환마다 재도색 — `_apply_theme`가 호출되는 시점(위 386~388줄)엔
         # `_build_left_panel`/`_build_properties_panel`/`_build_minimap_panel`이 이미 끝나
@@ -705,7 +740,7 @@ class _UIBuildMixin:
             f"#floatPanelHead {{ background:{title_bg}; border-top-left-radius:5px;"
             f" border-top-right-radius:5px; border-bottom:2px solid {accent}; font-weight:600; }}")
         for panel in (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
-                      getattr(self, "_minimap_panel", None)):
+                      getattr(self, "_minimap_panel", None), getattr(self, "_layers_panel", None)):
             if panel is not None:
                 panel._head.setStyleSheet(head_qss)
                 panel.update()
@@ -1419,7 +1454,10 @@ class _UIBuildMixin:
     # (아래 _build_properties_panel) 생성 시점과 테마 재도색(_apply_theme) 양쪽이 같은
     # 크기를 써야 한다 — 클래스 상수로 한 곳에.
     _PROPS_ICON_W, _PROPS_ICON_H = 72, 18
-    _PROPS_ARROW_ICON_H = _PROPS_ICON_H + 6
+    # [실사용 피드백 2026-08-20] 화살표 콤보만 '선' 콤보보다 위아래로 커 보인다는 지적 —
+    # 곡선 아이콘을 수직 이등분선 방향 bulge로 재설계(위 `_arrow_kind_icon`)해 18px
+    # 높이에서도 직선과 뚜렷이 구분되므로, 더 큰 높이가 필요 없어져 통일한다.
+    _PROPS_ARROW_ICON_H = _PROPS_ICON_H
 
 
     def _build_properties_panel(self):
