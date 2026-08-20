@@ -1481,7 +1481,6 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
     def __init__(self, parent=None, confirm_label: str = "확인 (도형 삽입)"):
         super().__init__(parent)
         self.setWindowTitle("AI SVG 에셋 생성")
-        self.setMinimumWidth(460)
         self.setAcceptDrops(True)
         self._init_image_attach_state()
         self._candidates: list[tuple[_SvgCandidateCard, str, str]] = []
@@ -1518,7 +1517,9 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
 
         label_row = QHBoxLayout()
         label_row.setContentsMargins(10, 8, 10, 0)
-        label_row.addWidget(QLabel("생성할 대상(예: BNC 커넥터 아이콘):", self))
+        prompt_title = QLabel("생성할 대상(예: BNC 커넥터 아이콘):", self)
+        prompt_title.setStyleSheet(_SECTION_TITLE_QSS)
+        label_row.addWidget(prompt_title)
         prompt_frame_lay.addLayout(label_row)
 
         self._prompt_edit = QLineEdit(prompt_frame)
@@ -1532,6 +1533,14 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
             ("color:#241a15; }" if dark else "}")
         )
         prompt_frame_lay.addWidget(self._prompt_edit)
+
+        # [2026-08-20 피드백] Mermaid 카드의 "Enter 생성 · Shift+Enter 줄바꿈" 캡션과 같은
+        # 자리 — 이 칸은 한 줄이라 Shift+Enter 안내는 필요 없다.
+        enter_hint = QLabel("Enter 생성", prompt_frame)
+        enter_hint.setAlignment(Qt.AlignmentFlag.AlignRight)
+        enter_hint.setStyleSheet("color:#8a8a8a; font-size:11px; background:transparent; "
+                                  "padding:0 8px 3px 0;")
+        prompt_frame_lay.addWidget(enter_hint)
 
         toolbar_widget = QWidget(prompt_frame)
         toolbar_widget.setObjectName("svgPromptToolbar")
@@ -1554,45 +1563,116 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         toolbar_lay.addWidget(self._build_image_chip(toolbar_widget))
         toolbar_lay.addStretch(1)
 
-        toolbar_lay.addWidget(QLabel(f"GPT ({gw.TEXT_RECOMMEND_1}):", toolbar_widget))
-        self._gpt_count = QComboBox(toolbar_widget)
-        self._gpt_count.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
-        self._gpt_count.setCurrentIndex(1)   # 기본 1개(Stage 1과 동일 체감 유지)
-        self._gpt_count.setStyleSheet(_ROUNDED_COMBO_QSS)
-        toolbar_lay.addWidget(self._gpt_count)
-        toolbar_lay.addSpacing(4)
-        toolbar_lay.addWidget(QLabel(f"Gemini ({gw.TEXT_RECOMMEND_2}):", toolbar_widget))
-        self._gemini_count = QComboBox(toolbar_widget)
-        self._gemini_count.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
-        self._gemini_count.setCurrentIndex(1)
-        self._gemini_count.setStyleSheet(_ROUNDED_COMBO_QSS)
-        toolbar_lay.addWidget(self._gemini_count)
-
-        # [2026-08-20 피드백] 이 창엔 설정 진입점이 아예 없었다 — Mermaid 창과 같은 자리
-        # (모델 관련 컨트롤 옆)에 추가(모델 목록 자체가 없어 새로고침할 것은 없음).
-        self._settings_btn = QToolButton(toolbar_widget)
-        self._settings_btn.setIcon(_act_icon("settings"))
-        self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·연결 테스트)")
-        self._settings_btn.clicked.connect(self._open_gateway_settings)
-        toolbar_lay.addWidget(self._settings_btn)
-
+        # [2026-08-20 피드백] GPT/Gemini 개수·설정 버튼을 카드 툴바에서 빼서(아래 model_row로)
+        # Mermaid처럼 카드 툴바엔 첨부+생성 버튼만 남긴다 — 한 줄에 다 몰려 있던 게 SVG 창이
+        # Mermaid보다 훨씬 빽빽해 보이던 가장 큰 원인이었다.
         self._gen_btn = QToolButton(toolbar_widget)
         self._gen_btn.setIcon(_act_icon("generate"))
         self._gen_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._gen_btn.setText("생성")
-        self._gen_btn.setToolTip("생성 (Enter)")
+        self._gen_btn.setText("AI로 생성")   # Mermaid 버튼과 동일 문구로 통일
+        self._gen_btn.setToolTip("AI로 생성 (Enter)")
         self._gen_btn.clicked.connect(self._on_generate_clicked)
         self._gen_btn.setStyleSheet(_CORAL_BTN_QSS)
         toolbar_lay.addWidget(self._gen_btn)
 
         prompt_frame_lay.addWidget(toolbar_widget)
-        lay.addWidget(prompt_frame)
+
+        # [2026-08-20 재검토] "완전히 똑같아도 된다"는 피드백으로 Mermaid와 똑같이 카드·
+        # 모델행·코드칸을 전부 왼쪽 열(`left_col`) 하나에 쌓고, 오른쪽 열은 미리보기+후보를
+        # 합친 갤러리로 — 다이얼로그 전체를 진짜 좌우 2단으로 재구성한다.
+        left_col = QVBoxLayout()
+        left_col.addWidget(prompt_frame)
 
         self._progress = _GenProgressRow(self)
-        lay.addWidget(self._progress)
+        left_col.addWidget(self._progress)
 
-        # 최대 10장까지 나올 수 있어(모델당 5개×2) 고정 QHBoxLayout만으론 다이얼로그 폭을
-        # 넘친다 — 가로 스크롤 영역으로 감싼다(카드 자체 크기·스타일은 무변경).
+        # ---- 모델 선택(개수) — Mermaid의 "모델:" 행과 같은 자리(카드 바로 아래) ----
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel(f"GPT ({gw.TEXT_RECOMMEND_1}):", self))
+        self._gpt_count = QComboBox(self)
+        self._gpt_count.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
+        self._gpt_count.setCurrentIndex(1)   # 기본 1개(Stage 1과 동일 체감 유지)
+        self._gpt_count.setStyleSheet(_ROUNDED_COMBO_QSS)
+        model_row.addWidget(self._gpt_count)
+        model_row.addSpacing(4)
+        model_row.addWidget(QLabel(f"Gemini ({gw.TEXT_RECOMMEND_2}):", self))
+        self._gemini_count = QComboBox(self)
+        self._gemini_count.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
+        self._gemini_count.setCurrentIndex(1)
+        self._gemini_count.setStyleSheet(_ROUNDED_COMBO_QSS)
+        model_row.addWidget(self._gemini_count)
+        model_row.addStretch(1)
+        # [2026-08-20 피드백] 이 창엔 설정 진입점이 아예 없었다 — Mermaid 창과 같은 자리
+        # (모델 관련 컨트롤 옆)에 추가(모델 목록 자체가 없어 새로고침할 것은 없음).
+        self._settings_btn = QToolButton(self)
+        self._settings_btn.setIcon(_act_icon("settings"))
+        self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·연결 테스트)")
+        self._settings_btn.clicked.connect(self._open_gateway_settings)
+        model_row.addWidget(self._settings_btn)
+        left_col.addLayout(model_row)
+
+        # ---- SVG 코드(왼쪽 열 마지막 칸) — Mermaid와 동일 구조. 후보를 클릭하면 이 칸에
+        # 채워지고, OK는 항상 이 칸의 내용을 쓴다(카드 선택 여부와 무관) — 그래서 외부
+        # AI(게이트웨이 밖)가 준 SVG를 직접 붙여넣어도 그대로 삽입된다.
+        connector_row = QHBoxLayout()
+        connector_row.addStretch(1)
+        arrow_label = QLabel(self)
+        arrow_label.setPixmap(_handdrawn_down_arrow_pixmap(QColor(_ACCENT_CORAL)))
+        arrow_label.setFixedSize(30, 46)
+        connector_row.addWidget(arrow_label)
+        connector_row.addStretch(1)
+        left_col.addLayout(connector_row)
+
+        code_title = QLabel("SVG 코드 (직접 입력·붙여넣기 가능):", self)
+        code_title.setStyleSheet(_SECTION_TITLE_QSS)
+        left_col.addWidget(code_title)
+        self._code_edit = QPlainTextEdit(self)
+        self._code_edit.setPlaceholderText(
+            '<svg viewBox="0 0 100 100">...</svg>\n외부 AI가 준 SVG 코드를 여기 붙여넣어도 됩니다.')
+        self._code_edit.setMinimumSize(QSize(300, 200))
+        self._code_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        left_col.addWidget(self._code_edit, 1)
+
+        split = QHBoxLayout()
+        split.addLayout(left_col, 1)
+
+        # ---- 오른쪽 열: 미리보기 + 생성 후보 갤러리 통합(2026-08-20 재검토 — "생성 후보와
+        # 미리보기 창을 통합" 요청) — 큰 미리보기가 남는 공간을 다 차지하고, 그 아래 후보
+        # 썸네일을 가로 스크롤로 붙인다. 후보를 클릭하면 위 미리보기+코드칸에 반영된다
+        # (`_pick_card`).
+        right_col = QVBoxLayout()
+        preview_title = QLabel("미리보기 (클릭하면 확대):", self)
+        preview_title.setStyleSheet(_SECTION_TITLE_QSS)
+        right_col.addWidget(preview_title)
+        preview_frame = QFrame(self)
+        preview_frame.setObjectName("svgPreviewFrame")
+        preview_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        preview_frame.setStyleSheet(
+            "QFrame#svgPreviewFrame { border:1px solid rgba(128,128,128,90); "
+            "border-radius:8px; }"
+        )
+        preview_frame.setMinimumWidth(300)
+        preview_frame_lay = QVBoxLayout(preview_frame)
+        preview_frame_lay.setContentsMargins(6, 6, 6, 6)
+        self._svg_preview_label = _ClickablePreviewLabel(preview_frame)
+        self._svg_preview_label.setMinimumSize(160, 160)
+        self._svg_preview_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._svg_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._svg_preview_label.setWordWrap(True)
+        self._svg_preview_label.setStyleSheet("color:#8a8a8a; font-size:11px;")
+        self._svg_preview_label.setText("코드를 입력하면\n미리보기가 표시됩니다")
+        self._svg_preview_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._svg_preview_label.clicked.connect(self._show_enlarged_svg_preview)
+        preview_frame_lay.addWidget(self._svg_preview_label)
+        right_col.addWidget(preview_frame, 1)
+
+        candidates_title = QLabel("생성 후보 (클릭하면 코드에 채움):", self)
+        candidates_title.setStyleSheet(_SECTION_TITLE_QSS)
+        right_col.addWidget(candidates_title)
+
+        # 최대 10장까지 나올 수 있어(모델당 5개×2) 고정 QHBoxLayout만으론 폭을 넘친다 —
+        # 가로 스크롤 영역으로 감싼다(카드 자체 크기·스타일은 무변경).
         self._candidates_row = QHBoxLayout()
         self._candidates_row.addStretch(1)
         candidates_container = QWidget(self)
@@ -1604,7 +1684,10 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         candidates_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         candidates_scroll.setFixedHeight(176)   # 카드 156 + 여유(체크박스 추가로 카드가 커짐)
         candidates_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        lay.addWidget(candidates_scroll)
+        right_col.addWidget(candidates_scroll)
+
+        split.addLayout(right_col, 1)
+        lay.addLayout(split, 1)
 
         hint_row = QHBoxLayout()
         self._hint_label = QLabel("후보를 클릭해 선택하세요.", self)
@@ -1622,6 +1705,13 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         hint_row.addWidget(self._save_symbols_btn)
         lay.addLayout(hint_row)
 
+        self._svg_preview_timer = QTimer(self)
+        self._svg_preview_timer.setSingleShot(True)
+        self._svg_preview_timer.setInterval(350)
+        self._svg_preview_timer.timeout.connect(self._update_svg_preview)
+        self._code_edit.textChanged.connect(self._svg_preview_timer.start)
+        self._code_edit.textChanged.connect(self._on_code_changed)
+
         self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                       | QDialogButtonBox.StandardButton.Cancel, self)
         self._ok_btn = self._btns.button(QDialogButtonBox.StandardButton.Ok)
@@ -1635,8 +1725,55 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._btns.rejected.connect(self.reject)
         lay.addWidget(self._btns)
 
+    def _on_code_changed(self):
+        """SVG 코드칸이 항상 최종 소스 — Mermaid `_edit`와 동일 관례. 후보 클릭이든 직접
+        타이핑/붙여넣기든 이 칸에 뭔가 있으면 OK를 누를 수 있다."""
+        self._ok_btn.setEnabled(bool(self._code_edit.toPlainText().strip()))
+
+    def _update_svg_preview(self):
+        """디바운스 타이머 만료 시 호출 — `_render_svg_candidate_pixmap`으로 다시 그린다
+        (후보 카드 렌더와 동일 함수라 미리보기와 실제 삽입 결과가 항상 일치)."""
+        text = self._code_edit.toPlainText()
+        if not text.strip():
+            self._svg_preview_label.setPixmap(QPixmap())
+            self._svg_preview_label.setText("코드를 입력하면\n미리보기가 표시됩니다")
+            return
+        pm = _render_svg_candidate_pixmap(text, 260)
+        if pm is None:
+            self._svg_preview_label.setPixmap(QPixmap())
+            self._svg_preview_label.setText("구문 오류 —\n미리보기를 표시할 수 없습니다")
+        else:
+            self._svg_preview_label.setText("")
+            self._svg_preview_label.setPixmap(pm)
+
+    def _show_enlarged_svg_preview(self):
+        """미리보기를 클릭하면 큰 창으로 다시 렌더(`_MermaidDialog._show_enlarged_preview`와
+        동일 패턴). 코드가 비어 있으면 무시."""
+        text = self._code_edit.toPlainText()
+        if not text.strip():
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("미리보기 확대")
+        v = QVBoxLayout(dlg)
+        label = QLabel(dlg)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pm = _render_svg_candidate_pixmap(text, 600)
+        if pm is None:
+            label.setText("구문 오류 — 미리보기를 표시할 수 없습니다")
+        else:
+            label.setPixmap(pm)
+        v.addWidget(label)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dlg)
+        btns.rejected.connect(dlg.reject)
+        v.addWidget(btns)
+        dlg.resize(QSize(640, 640))
+        dlg.exec()
+
     def selected_svg(self) -> str:
-        return self._selected_card.svg_text() if self._selected_card else ""
+        """OK가 실제로 가져가는 값 — 카드 클릭이 아니라 코드칸(`_code_edit`)이 최종 소스다
+        (Mermaid `_edit`와 동일 관례, 2026-08-20). 카드를 클릭하면 그 SVG가 코드칸에
+        채워지므로 결과적으로 같지만, 클릭 없이 코드칸에 직접 타이핑/붙여넣기만 해도 된다."""
+        return self._code_edit.toPlainText().strip()
 
     def closeEvent(self, e):
         # 생성 중(워커가 하나라도 돎)에는 닫지 않는다 — `_MermaidDialog.closeEvent`와 같은
@@ -1738,7 +1875,7 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
             card.deleteLater()
         self._candidates = []
         self._selected_card = None
-        self._ok_btn.setEnabled(False)
+        self._code_edit.clear()   # textChanged가 OK 비활성화·미리보기 초기화까지 처리
         self._hint_label.setVisible(False)
         self._save_symbols_btn.setEnabled(False)
 
@@ -1753,7 +1890,8 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         for c, _svg, _model in self._candidates:
             c.set_selected(c is card)
         self._selected_card = card
-        self._ok_btn.setEnabled(True)
+        # setPlainText가 textChanged를 발화해 OK 활성화·미리보기 갱신까지 같이 일어난다.
+        self._code_edit.setPlainText(card.svg_text())
 
     def _refresh_save_symbols_enabled(self, *_args):
         self._save_symbols_btn.setEnabled(
