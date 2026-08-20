@@ -2,7 +2,8 @@
 
 tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easycad.py (전체) 또는
 pytest test_part7_symbol_library.py. 라이브러리 파일은 _isolated_symbol_library로 격리된
-임시 경로를 써 실제 사용자 AppData(symbol_library.json)를 건드리지 않는다.
+임시 경로를 써 실제 리포의 symbol_library/symbol_library.json(2026-08-20 이관, 이전엔
+OS AppData)을 건드리지 않는다.
 """
 from unittest.mock import patch
 

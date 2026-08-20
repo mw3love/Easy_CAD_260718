@@ -1,7 +1,15 @@
 """사용자 정의 심볼 팔레트 — 임의 선택(주로 DXF에서 가져온 심볼)을 앱 전역에 등록해
-다른 도면에서도 재사용한다. 계획서 §8 항목8. 문서(.ecad)와 무관하게 QStandardPaths
-AppData에 JSON으로 영구 저장(다크모드 등 QSettings 관례와 달리, 항목 수가 늘고
-썸네일 PNG를 품는 구조라 레지스트리보다 파일이 적합).
+다른 도면에서도 재사용한다. 계획서 §8 항목8. 문서(.ecad)와 무관하게 JSON으로 영구
+저장(다크모드 등 QSettings 관례와 달리, 항목 수가 늘고 썸네일 PNG를 품는 구조라
+레지스트리보다 파일이 적합).
+
+[2026-08-20 실사용 피드백] 저장 위치를 OS `QStandardPaths.AppDataLocation`에서
+리포 루트 하위 `symbol_library/symbol_library.json`으로 변경 — 사용자가 여러 PC를
+git으로 상시 동기화하는 습관이 있어(`.claude/handoff/`와 같은 이유, 2026-08-18 결정),
+심볼 라이브러리도 git으로 PC 간 따라가길 원함. 프로젝트의 기존 "작업 산출물은 리포에
+안 들어간다" 원칙(루트 `.ecad`·작업 사진 등)과는 반대 방향인데, 저 원칙은 "커밋할
+가치가 없는 대용량/개인 자료"가 대상이고 심볼 라이브러리는 사용자가 직접 쌓아 재사용
+하려는 구조화된 데이터라 예외로 판단(사용자 명시 요청).
 
 deep-interview 2026-08-03 확정 스코프: 등록 대상=현재 선택 전부(1개 이상, 가져온 심볼
 한정 아님) · 썸네일=실제 렌더 캡처 · 관리 기능=등록+삭제(이름변경은 스코프 밖 — 2026-08-18
@@ -26,13 +34,14 @@ import json
 import os
 import uuid
 
-from PyQt6.QtCore import QStandardPaths
-
 _FILE_NAME = "symbol_library.json"
+
+# easycad/fileio/symbol_library.py → 두 단계 위가 리포 루트.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _library_path() -> str:
-    d = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+    d = os.path.join(_REPO_ROOT, "symbol_library")
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, _FILE_NAME)
 

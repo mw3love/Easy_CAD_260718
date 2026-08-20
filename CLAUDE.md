@@ -66,6 +66,11 @@ docs/
 ├── pitfalls.md              ⚠ 함정 요약(재발 방지 체크용)
 ├── perf_plan_500_1000.md    500~1000개 부하 감소 계획·최종 수치·남은 항목(2-D)
 └── reference/                참고 이미지
+symbol_library/
+└── symbol_library.json     "내 심볼" 팔레트 데이터(폴더·즐겨찾기·썸네일 포함) — 2026-08-20
+                             까지 OS AppData에 있던 것을 리포로 이관해 git으로 PC 간 동기화
+                             (`easycad/fileio/symbol_library.py._library_path()`, 사용자
+                             요청 — 다른 작업산출물과 반대로 이건 의도적으로 커밋 대상).
 ```
 실행: `python run.py` · 테스트: `python tests/test_easycad.py` · PyQt6 전역설치(Python 3.14).
 
@@ -937,6 +942,18 @@ docs/
   타이밍 실측으로 자체검증 완료. 상세: `docs/history/2026-08.md` "§8 항목20 후속 —
   Mermaid/SVG 다이얼로그 UX 개선 8건 + 첫 오픈 지연 수정", 함정
   `docs/pitfalls.md` "Qt 시그널·이벤트 발화 조건" 절 끝부분.
+- **심볼 라이브러리 저장 위치를 OS AppData → 리포 안(`symbol_library/symbol_library.json`)
+  으로 이관(2026-08-20, 같은 세션 후속)** — 사용자가 여러 PC를 git으로 동기화하는 습관이
+  있어 "내 심볼"도 그 흐름을 타길 원함(`.claude/handoff/`가 2026-08-18에 같은 이유로
+  git 추적 대상이 된 것과 동일 판단). `symbol_library.py._library_path()`가 이제
+  `QStandardPaths.AppDataLocation` 대신 리포 루트 기준 `symbol_library/`를 반환(경로
+  계산은 파일 위치에서 2단계 상위로 고정, `QStandardPaths` 의존성 제거). 기존 AppData에
+  있던 실제 데이터(폴더 1개·심볼 5개, 테스트용 이름들 — 사용자 확인 후 "그대로 이관"으로
+  진행)를 새 위치로 복사해 유실 없이 이어짐. 테스트는 `_library_path`를 이미 격리 경로로
+  `patch.object` 하고 있어(`tests/_shared.py._isolated_symbol_library`) 구현 변경에
+  영향받지 않음. 전체 pytest 790종 통과(무관한 사전 존재 실패 3건 제외, 위 항목과 동일
+  원인). `.gitignore`는 새 경로를 특별히 배제하지 않음(다른 작업산출물과 반대로 이건
+  의도적으로 커밋 대상).
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
