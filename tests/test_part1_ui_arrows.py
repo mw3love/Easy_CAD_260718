@@ -599,9 +599,12 @@ def test_properties_panel_curve_radius_stepper():
 
 
 def test_arrow_kind_menu_labels():
-    # [화살표 통합] 종류 메뉴는 직선·곡선·직각 3개. 상단 툴바가 아니라 여기서 종류를 고른다.
+    # [화살표 통합 → 2026-08-20 아이콘 콤보 통일] 종류 선택지는 직선·곡선·직각 3개. 옛
+    # QMenu(_build_routing_menu, 삭제됨) 대신 속성패널의 아이콘 QComboBox(_pf_routing_btn)가
+    # 같은 선택지를 담는다 — 상단 툴바가 아니라 선택 후 컨텍스트에서 고르는 원칙은 그대로.
     w = CanvasWindow()
-    assert [a.text() for a in w._build_routing_menu().actions()] == ["직선", "곡선", "직각"]
+    assert [w._pf_routing_btn.itemText(i) for i in range(w._pf_routing_btn.count())] == \
+        ["직선", "곡선", "직각"]
 
 
 
@@ -1508,6 +1511,47 @@ def test_properties_panel_arrow_kind_dropdown():
     w.undo()                                              # 교체 되돌림 → 곡선 화살표 복귀
     assert ar.scene() is not None and not [x for x in w._scene.items()
                                            if isinstance(x, _PolyArrowItem)]
+
+
+
+
+def test_properties_panel_routing_combo_reflects_and_drives_kind():
+    # [실사용 피드백 2026-08-20] 화살표 종류 콤보(옛 QToolButton+QMenu → 아이콘 QComboBox)가
+    # ⓐ 선택된 화살표의 현재 종류로 동기화되고 ⓑ 사용자가 콤보를 바꾸면 실제로 종류가 바뀐다.
+    from easycad.canvas.host_widgets import _arrow_kind_of
+    w = CanvasWindow()
+    ar = _ArrowItem(QColor("#111111"), 3.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 60))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar); ar.setSelected(True)
+    assert w._pf_routing_btn.currentData() == "straight"
+
+    i = w._pf_routing_btn.findData("curved")
+    w._pf_routing_btn.setCurrentIndex(i)               # 사용자 조작 → currentIndexChanged
+    assert _arrow_kind_of(ar) == "curved"
+
+
+def test_properties_panel_type_swap_merged_row():
+    # [실사용 피드백 2026-08-20] '종류'와 '도형 바꾸기'를 한 행으로 통합 — 바꿀 수 있는
+    # 도형(사각형 등) 단일선택이면 종류 행이 바꾸기 버튼(현재 종류 표시)으로 바뀌고, 그
+    # 외(화살표 등)는 읽기전용 라벨 그대로.
+    w = CanvasWindow()
+    assert w._pf_type_stack.currentWidget() is w._pf_type      # 선택 없음 → 라벨
+
+    rect = _RectItem(QRectF(0, 0, 100, 60))
+    rect.setFlags(rect.GraphicsItemFlag.ItemIsSelectable | rect.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(rect); rect.setSelected(True)
+    assert w._pf_type_stack.currentWidget() is w._pf_swap_btn   # 바꿀 수 있는 도형 → 버튼
+    assert w._pf_swap_btn.text() == "사각형 ▾"
+    assert not w._pf_swap_btn.isHidden() and w._pf_type.isHidden()
+
+    w._scene.clearSelection()
+    ar = _ArrowItem(QColor("#111111"), 3.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 60))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar); ar.setSelected(True)
+    assert w._pf_type_stack.currentWidget() is w._pf_type       # 화살표 → 라벨로 복귀
+    assert w._pf_swap_btn.isHidden()
 
 
 

@@ -71,12 +71,19 @@ _COLOR_PRESETS = [
 ]
 _DEFAULT_COLOR = _COLOR_PRESETS[0]
 
-# [실사용 피드백 2026-08-18] 새 도형의 기본 선색 — 표제란/표(core_shapes.py의 _INK_DARK/
-# _INK_LIGHT)와 같은 "테마 적응 잉크색" 값 재사용. 라이트 캔버스(#ffffff)에서 순수 흰색은
-# 편집 중 안 보이므로 다크/라이트에 따라 갈아끼운다(host.py 초기화 + host_ui._apply_theme).
-# 사용자가 직접 색을 고르면 그 순간부터 sticky로 고정(host_style._set_current_color가
-# self._color_is_default를 False로 내림 — 이후엔 테마를 안 따라감).
-_DEFAULT_INK_DARK = "#cdd8e3"
+# [실사용 피드백 2026-08-20] 새 도형의 기본 선색 — 다크 캔버스는 순수 흰색. 2026-08-18엔
+# 표제란/표와 같은 "테마 적응 잉크색"(#cdd8e3)을 재사용했으나, 이 앱의 목적이 A4 인쇄임을
+# 감안하면 그 값은 인쇄에 불리하다: `pdf_export._swap_white_to_black_for_print`가 이미
+# "화면 흰색 → 종이 검정"(AutoCAD ACI 7 관례, 2026-07-29 확정) 치환을 하는데 그 판정
+# 임계값(_is_near_white, r/g/b≥250)을 #cdd8e3(205,216,227)는 통과 못 해 치환 대상에서
+# 빠지고, 흰 종이 위에 옅은 회청색으로 흐릿하게 찍힌다. 순수 흰색으로 되돌리면 화면(다크
+# 캔버스)에서 가장 밝고 잘 보이면서, 인쇄 시엔 그 치환 로직을 그대로 타 검정으로 나와
+# 대비가 오히려 더 좋아진다. 라이트 캔버스(#ffffff)에서 순수 흰색은 편집 중 안 보이므로
+# 그쪽만 여전히 어두운 값을 쓴다(host.py 초기화 + host_ui._apply_theme). 사용자가 직접
+# 색을 고르면 그 순간부터 sticky로 고정(host_style._set_current_color가
+# self._color_is_default를 False로 내림 — 이후엔 테마를 안 따라감). 표제란/표 잉크색
+# (core_shapes.py의 _INK_DARK)은 이 변경과 무관하게 #cdd8e3 유지(요청 범위 밖).
+_DEFAULT_INK_DARK = "#FFFFFF"
 _DEFAULT_INK_LIGHT = "#111111"
 
 # 밝은 툴바(Snipaste식 pill) 위 중립 아이콘 색 — 어두운 회색(선택·되돌리기·복사·저장).
@@ -248,6 +255,76 @@ def _arrow_dir_icon(head_at_end: bool) -> QIcon:
         p.drawPolygon(QPolygonF([QPointF(21, 9), QPointF(15, 5), QPointF(15, 13)]))
     else:
         p.drawPolygon(QPolygonF([QPointF(3, 9), QPointF(9, 5), QPointF(9, 13)]))
+    p.end()
+    return QIcon(pm)
+
+
+def _pen_style_icon(style: Qt.PenStyle, color: QColor, w: int = 46, h: int = 14) -> QIcon:
+    """선 스타일(실선/파선 등) 드롭다운용 아이콘 — 실제 그 스타일의 선 견본을 그려 텍스트
+    목록 대신 한눈에 구분되게 한다(실사용 피드백 2026-08-20)."""
+    pm = QPixmap(w, h)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(QPen(QColor(color), 2, style, Qt.PenCapStyle.RoundCap))
+    y = h / 2
+    p.drawLine(QPointF(4, y), QPointF(w - 4, y))
+    p.end()
+    return QIcon(pm)
+
+
+def _arrow_kind_icon(kind: str, color: QColor, w: int = 46, h: int = 20) -> QIcon:
+    """화살표 종류(직선/곡선/직각) 드롭다운용 아이콘 — 실제 경로 모양 축소본 + 화살촉
+    (실사용 피드백 2026-08-20, '선' 아이콘화와 같은 요청으로 통일)."""
+    pm = QPixmap(w, h)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    col = QColor(color)
+    p.setPen(QPen(col, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    x0, y0 = 4.0, h - 4.0
+    x1, y1 = w - 8.0, 4.0
+    if kind == "curved":
+        path = QPainterPath(QPointF(x0, y0))
+        path.cubicTo(QPointF(w * 0.35, y0), QPointF(w * 0.55, y1), QPointF(x1, y1))
+        p.drawPath(path)
+        tip, tail = QPointF(x1, y1), QPointF(w * 0.55, y1)
+    elif kind == "ortho":
+        midx = (x0 + x1) / 2
+        p.drawLine(QPointF(x0, y0), QPointF(midx, y0))
+        p.drawLine(QPointF(midx, y0), QPointF(midx, y1))
+        p.drawLine(QPointF(midx, y1), QPointF(x1, y1))
+        tip, tail = QPointF(x1, y1), QPointF(midx, y1)
+    else:   # straight
+        p.drawLine(QPointF(x0, y0), QPointF(x1, y1))
+        tip, tail = QPointF(x1, y1), QPointF(x0, y0)
+    ang = math.atan2(tip.y() - tail.y(), tip.x() - tail.x())
+    size = 5.0
+    a1, a2 = ang + math.radians(150), ang - math.radians(150)
+    p1 = QPointF(tip.x() + size * math.cos(a1), tip.y() + size * math.sin(a1))
+    p2 = QPointF(tip.x() + size * math.cos(a2), tip.y() + size * math.sin(a2))
+    p.setBrush(col)
+    p.drawPolygon(QPolygonF([tip, p1, p2]))
+    p.end()
+    return QIcon(pm)
+
+
+def _flip_icon(color: QColor, w: int = 28, h: int = 20) -> QIcon:
+    """'방향 뒤집기' 버튼 아이콘 — 작은 유니코드 글리프(⇄) 대신 직접 그린 두 화살표
+    (실사용 피드백 2026-08-20: 기존 글리프가 너무 작아 시인성이 떨어짐)."""
+    pm = QPixmap(w, h)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    col = QColor(color)
+    p.setPen(QPen(col, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    p.setBrush(col)
+    top_y, bot_y = h * 0.32, h * 0.68
+    x0, x1 = 4.0, w - 4.0
+    p.drawLine(QPointF(x0, top_y), QPointF(x1 - 2, top_y))
+    p.drawPolygon(QPolygonF([QPointF(x1, top_y), QPointF(x1 - 6, top_y - 4), QPointF(x1 - 6, top_y + 4)]))
+    p.drawLine(QPointF(x1, bot_y), QPointF(x0 + 2, bot_y))
+    p.drawPolygon(QPolygonF([QPointF(x0, bot_y), QPointF(x0 + 6, bot_y - 4), QPointF(x0 + 6, bot_y + 4)]))
     p.end()
     return QIcon(pm)
 

@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem,
+    QListWidget, QListWidgetItem, QStackedWidget,
 )
 
 from easycad.canvas.annotator_core import (
@@ -31,6 +31,7 @@ from easycad.canvas.annotator_core import (
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    _pen_style_icon, _arrow_kind_icon, _flip_icon,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -44,6 +45,7 @@ from easycad.canvas.host_widgets import (
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
     _StaticSection, _SymbolFolderDropZone, _apply_native_titlebar_scheme,
+    _ARROW_KIND_LABELS,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -665,6 +667,19 @@ class _UIBuildMixin:
                 f"QToolButton {{ color: {_current_icon_color().name()}; "
                 f"font-weight:700; font-size:15px; }}")
         self._refresh_arrow_tool_button()
+        # [실사용 피드백 2026-08-20, 아이콘화] 속성패널 '선'·'화살표'·'방향' 아이콘도 중립색
+        # baked QPixmap이라 테마 전환마다 재생성해야 한다(위 액션 아이콘들과 같은 이유).
+        pf_style = getattr(self, "_pf_style", None)
+        if pf_style is not None:
+            for i, (st, _name) in enumerate(self._PEN_STYLE_ITEMS):
+                pf_style.setItemIcon(i, _pen_style_icon(st, _current_icon_color()))
+        pf_routing = getattr(self, "_pf_routing_btn", None)
+        if pf_routing is not None:
+            for i, (kind, _label) in enumerate(_ARROW_KIND_LABELS):
+                pf_routing.setItemIcon(i, _arrow_kind_icon(kind, _current_icon_color()))
+        pf_dir = getattr(self, "_pf_dir_btn", None)
+        if pf_dir is not None:
+            pf_dir.setIcon(_flip_icon(_current_icon_color()))
         # [캔버스-퍼스트] 플로팅 패널 제목줄 = accent 밑줄 + 틴트 배경(옛 dock 제목표시줄과 같은
         # '잡아 눈에 띄는 카드' 언어 유지, 자유 드래그는 없지만 접기 버튼이 있는 자리라 여전히
         # 상호작용 영역으로 보여야 함).
@@ -751,7 +766,10 @@ class _UIBuildMixin:
             # 평탄화(flatten)한다.
             + [b for blist in getattr(self, "_custom_sym_buttons", {}).values() for b in blist]
         )
-        for name in ("_pf_color", "_pf_fill", "_pf_swap_btn", "_pf_routing_btn", "_pf_dir_btn"):
+        # [2026-08-20] _pf_routing_btn은 QToolButton→QComboBox로 바뀌어(아이콘화 통일) 이
+        # QToolButton 전용 QSS가 안 먹는다 — _pf_style(원래도 QComboBox)과 같은 취급으로
+        # 목록에서 뺐다(적용해도 무해하지만 아무 효과 없는 스타일 적용은 남기지 않음).
+        for name in ("_pf_color", "_pf_fill", "_pf_swap_btn", "_pf_dir_btn"):
             b = getattr(self, name, None)
             if b is not None:
                 _accent_btns.append(b)
@@ -1406,7 +1424,20 @@ class _UIBuildMixin:
         form = QFormLayout(content)
         form.setContentsMargins(10, 10, 10, 10); form.setSpacing(8)
 
+        # [실사용 피드백 2026-08-20] '종류'(읽기전용 라벨)와 '도형 바꾸기' 버튼을 한 행으로
+        # 통합 — 바꿀 수 있는 도형(사각형/원/심볼)이 단일선택되면 이 행 자체가 현재 종류를
+        # 보여주는 클릭형 버튼(=기존 _pf_swap_btn, 메뉴 그대로)으로 바뀌고, 그 외(화살표·텍스트·
+        # 다중선택 등)는 기존처럼 읽기전용 라벨을 보여준다. 두 위젯을 QStackedWidget에 넣어
+        # "안 보이는 페이지의 위젯은 isHidden()==True" Qt 기본 동작을 그대로 이용 — 옛 회귀
+        # 테스트(선택 없으면 _pf_swap_btn.isHidden())가 별도 수정 없이 계속 성립한다.
         self._pf_type = QLabel("—")
+        self._pf_swap_btn = QToolButton()
+        self._pf_swap_btn.setToolTip("클릭: 다른 도형으로 바꾸기(크기·연결 유지)")
+        self._pf_swap_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._pf_swap_btn.setMenu(self._build_swap_menu())
+        self._pf_type_stack = QStackedWidget()
+        self._pf_type_stack.addWidget(self._pf_type)
+        self._pf_type_stack.addWidget(self._pf_swap_btn)
 
         # 색 — 스와치 버튼(현재색 표시) → 클릭 시 QColorDialog.
         self._pf_color = QToolButton()
@@ -1435,10 +1466,11 @@ class _UIBuildMixin:
         self._pf_width.setDecimals(1); self._pf_width.setSuffix(" px")
         self._pf_width.valueChanged.connect(self._edit_width)
 
-        # 선스타일 — 콤보(pen 기반 도형 전용; 화살표·DXF는 #3).
+        # 선스타일 — 콤보(pen 기반 도형 전용; 화살표·DXF는 #3). [실사용 피드백 2026-08-20]
+        # 텍스트 목록 대신 각 스타일을 실제로 그린 아이콘을 항목에 붙인다.
         self._pf_style = QComboBox()
         for st, name in self._PEN_STYLE_ITEMS:
-            self._pf_style.addItem(name, st)
+            self._pf_style.addItem(_pen_style_icon(st, _current_icon_color()), name, st)
         self._pf_style.currentIndexChanged.connect(self._edit_style)
 
         # 폰트 — 스핀박스(pt; 텍스트/라벨 전용).
@@ -1446,7 +1478,7 @@ class _UIBuildMixin:
         self._pf_font.setRange(_MIN_FONT, _MAX_FONT); self._pf_font.setSuffix(" pt")
         self._pf_font.valueChanged.connect(self._edit_font)
 
-        form.addRow("종류", self._pf_type)
+        form.addRow("종류", self._pf_type_stack)
         form.addRow("색", color_row)
         form.addRow("채움", fill_row)
         form.addRow("두께", self._pf_width)
@@ -1454,23 +1486,31 @@ class _UIBuildMixin:
         form.addRow("폰트", self._pf_font)
 
         # [미니패널 통합, 2026-07-31] 선택 위를 따라다니던 플로팅 컨텍스트 툴바(M3 #15)를
-        # 폐지하고 그 안의 타입 전용 액션 4개를 여기로 이관 — 사용자 피드백: 우측 속성 dock과
-        # 겹치는 부분(색·선스타일)이 많아 따라다니는 패널이 방해로 느껴짐. 색·선스타일은 위 행이
-        # 이미 대신하고, 아래 4개는 dock에 없던 것들이라 새로 추가한다. 핸들러(_swap_selected·
-        # _floating_set_arrow_kind·_floating_set_radius·_floating_flip_arrows)는 플로팅 툴바가
-        # 쓰던 것을 그대로 재사용(로직 변경 없음), 행 노출만 옛 _reposition_floating_toolbar의
-        # show_swap/show_routing/curved/show_dir 판정을 그대로 옮겨 _refresh_properties가 담당.
-        self._pf_swap_btn = QToolButton(); self._pf_swap_btn.setText("⬗ 바꾸기")
-        self._pf_swap_btn.setToolTip("도형 바꾸기(크기·연결 유지)")
-        self._pf_swap_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._pf_swap_btn.setMenu(self._build_swap_menu())
-        form.addRow("도형", self._pf_swap_btn)
-
-        self._pf_routing_btn = QToolButton(); self._pf_routing_btn.setText("⌐▾ 종류")
+        # 폐지하고 그 안의 타입 전용 액션을 여기로 이관 — 사용자 피드백: 우측 속성 dock과
+        # 겹치는 부분(색·선스타일)이 많아 따라다니는 패널이 방해로 느껴짐. 핸들러
+        # (_floating_set_arrow_kind·_floating_set_radius·_floating_flip_arrows)는 플로팅
+        # 툴바가 쓰던 것을 그대로 재사용(로직 변경 없음), 행 노출만 옛
+        # _reposition_floating_toolbar의 show_routing/curved/show_dir 판정을 그대로 옮겨
+        # _refresh_properties가 담당.
+        # [실사용 피드백 2026-08-20] ① 화살표 종류와 방향 뒤집기가 성격이 비슷하니 인접
+        # 배치(화살표→방향→반경, 반경은 곡선일 때만 조건부 노출이라 맨 뒤) ② 화살표 종류를
+        # '선'과 같은 아이콘 콤보로 통일(예전엔 QToolButton+QMenu라 위젯 자체가 달라 보였음).
+        # 속성 이름은 하위호환을 위해 그대로 _pf_routing_btn(이제 QComboBox)을 유지.
+        self._pf_routing_btn = QComboBox()
         self._pf_routing_btn.setToolTip("화살표 종류(직선·곡선·직각)")
-        self._pf_routing_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._pf_routing_btn.setMenu(self._build_routing_menu())
+        for kind, label in _ARROW_KIND_LABELS:
+            self._pf_routing_btn.addItem(_arrow_kind_icon(kind, _current_icon_color()), label, kind)
+        self._pf_routing_btn.currentIndexChanged.connect(self._edit_arrow_kind_combo)
         form.addRow("화살표", self._pf_routing_btn)
+
+        self._pf_dir_btn = QToolButton()
+        self._pf_dir_btn.setText("뒤집기")
+        self._pf_dir_btn.setIcon(_flip_icon(_current_icon_color()))
+        self._pf_dir_btn.setIconSize(QSize(28, 20))
+        self._pf_dir_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._pf_dir_btn.setToolTip("화살표 방향 뒤집기")
+        self._pf_dir_btn.clicked.connect(self._floating_flip_arrows)
+        form.addRow("방향", self._pf_dir_btn)
 
         self._pf_radius = QSpinBox()
         self._pf_radius.setRange(0, int(_PolyArrowItem._CURVE_R_MAX))
@@ -1483,11 +1523,6 @@ class _UIBuildMixin:
         self._pf_radius.setToolTip("곡선 반경(0=직각)")
         self._pf_radius.valueChanged.connect(self._floating_set_radius)
         form.addRow("반경", self._pf_radius)
-
-        self._pf_dir_btn = QToolButton(); self._pf_dir_btn.setText("⇄ 뒤집기")
-        self._pf_dir_btn.setToolTip("화살표 방향 뒤집기")
-        self._pf_dir_btn.clicked.connect(self._floating_flip_arrows)
-        form.addRow("방향", self._pf_dir_btn)
 
         self._pf_hint = QLabel("객체를 선택하면 속성을 편집할 수 있습니다.")
         self._pf_hint.setStyleSheet("color:#888; font-size:11px;")

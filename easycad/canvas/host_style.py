@@ -31,7 +31,7 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
-from easycad.canvas.host_widgets import _current_icon_color
+from easycad.canvas.host_widgets import _current_icon_color, _arrow_kind_of
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
@@ -206,6 +206,18 @@ class _StyleMixin:
             self.current_style = style   # [M2 #A] 다음 도형 기본 선스타일로(sticky)
 
 
+    def _edit_arrow_kind_combo(self, _idx):
+        """[실사용 피드백 2026-08-20] 속성패널의 '화살표' 종류 콤보(옛 QToolButton+QMenu를
+        아이콘 콤보로 통일) — _pf_updating 중(=_refresh_properties가 현재 선택값으로 콤보를
+        동기화하는 중)엔 되돌아오는 신호를 무시한다(_edit_style과 동일 관례, _floating_
+        set_arrow_kind 자체엔 이 가드가 없어 여기서 걸어야 함)."""
+        if self._pf_updating:
+            return
+        kind = self._pf_routing_btn.currentData()
+        if kind is not None:
+            self._floating_set_arrow_kind(kind)
+
+
     def _edit_font(self, val):
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_font_size")]
         self._edit_items(sel, lambda it: it.apply_font_size(int(val)),
@@ -358,13 +370,14 @@ class _StyleMixin:
                 w.setEnabled(has)
             if not has:
                 self._pf_type.setText("—")
+                self._pf_type_stack.setCurrentWidget(self._pf_type)   # [종류+도형 통합] 라벨 페이지로
                 self._pf_color_val.setText("—")
                 self._pf_color.setStyleSheet(self._swatch_css(None))
                 self._pf_fill.setEnabled(False)
                 self._pf_fill_val.setText("—")
                 self._pf_fill.setStyleSheet(self._swatch_css(None))
                 self._pf_hint.setText("객체를 선택하면 속성을 편집할 수 있습니다.")
-                for w in (self._pf_swap_btn, self._pf_routing_btn, self._pf_radius, self._pf_dir_btn):
+                for w in (self._pf_routing_btn, self._pf_radius, self._pf_dir_btn):
                     self._props_form.setRowVisible(w, False)
                 # 아래 "선택 있음" 분기와 동일 — 행을 숨긴 뒤 패널을 그 크기로 다시 줄이지
                 # 않으면, 직전에 화살표 등 확장 행이 있던 선택에서 커진 패널 크기가 선택
@@ -438,10 +451,21 @@ class _StyleMixin:
             show_routing = len(sel) == 1 and isinstance(sel[0], (_ArrowItem, _PolyArrowItem))
             show_dir = any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel)
             curved = (len(sel) == 1 and isinstance(sel[0], _PolyArrowItem) and sel[0]._is_ortho())
-            self._props_form.setRowVisible(self._pf_swap_btn, show_swap)
+            # [실사용 피드백 2026-08-20, 종류+도형 통합] 바꿀 수 있는 도형이면 '종류' 행
+            # 자체가 바꾸기 버튼(현재 종류 표시 + 클릭 시 변경 메뉴)으로, 아니면 읽기전용
+            # 라벨로. 별도 '도형' 행은 더 이상 없다.
+            if show_swap:
+                self._pf_swap_btn.setText(f"{self._pf_type.text()} ▾")
+                self._pf_type_stack.setCurrentWidget(self._pf_swap_btn)
+            else:
+                self._pf_type_stack.setCurrentWidget(self._pf_type)
             self._props_form.setRowVisible(self._pf_routing_btn, show_routing)
             self._props_form.setRowVisible(self._pf_radius, curved)
             self._props_form.setRowVisible(self._pf_dir_btn, show_dir)
+            if show_routing:   # [아이콘화] 콤보 현재 선택을 실제 화살표 종류로 동기화
+                i = self._pf_routing_btn.findData(_arrow_kind_of(sel[0]))
+                if i >= 0:
+                    self._pf_routing_btn.setCurrentIndex(i)
             # ⚠ [2026-07-31, 진짜 원인 확정 — 실기기에서 직접 반복 재현해 확인] 선택 종류가
             # 바뀌어 행 개수가 달라져도(예: 네모 7행 → 화살표 9행) `_props_panel` 위젯 자체의
             # 크기(`adjustSize()`로만 커짐)는 창 리사이즈 때만 호출되는 `_reposition_panels()`

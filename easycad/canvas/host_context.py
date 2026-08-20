@@ -38,7 +38,7 @@ from easycad.fileio.document import save_document, load_document, load_document_
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
-from easycad.canvas.host_widgets import _ARROW_KIND_LABELS, _ARROW_KIND_TOOL, _arrow_kind_of
+from easycad.canvas.host_widgets import _ARROW_KIND_TOOL, _arrow_kind_of
 from easycad.canvas.host_dialogs import _CableNumberDialog, _SvgAssetDialog
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -137,15 +137,6 @@ class _ContextMixin:
         if not arrows:
             return
         self._edit_items(arrows, lambda it: it.flip_head())
-
-
-    def _build_routing_menu(self):
-        """[화살표 통합] 화살표 종류 메뉴 — 직선·곡선·직각. 상단 툴바가 아니라 여기서 종류를
-        고른다(선택 후 컨텍스트). 세 항목 모두 누르는 즉시 눈에 보이는 변화가 있어야 한다."""
-        m = QMenu(self)
-        for kind, label in _ARROW_KIND_LABELS:
-            m.addAction(label, lambda k=kind: self._floating_set_arrow_kind(k))
-        return m
 
 
     def _floating_set_arrow_kind(self, kind):
