@@ -33,11 +33,14 @@ from easycad.canvas.annotator_core import (
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
     _pen_style_icon, _arrow_kind_icon, _flip_icon,
 )
-from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
+from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, export_svg_symbol
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
-from easycad.fileio.document import save_document, load_document, load_document_layers, _b64_to_pixmap
+from easycad.fileio.document import (
+    save_document, load_document, load_document_layers, _b64_to_pixmap, insert_items,
+)
 from easycad.fileio import symbol_library
+from easycad.canvas import shortcuts
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
@@ -45,7 +48,7 @@ from easycad.canvas.host_widgets import (
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
     _StaticSection, _SymbolFolderDropZone, _apply_native_titlebar_scheme,
-    _ARROW_KIND_LABELS,
+    _ARROW_KIND_LABELS, _set_menu_sep_color, _style_menu_separators,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -106,14 +109,31 @@ _PALETTE_BTN_WIDTH = 48
 
 
 class _UIBuildMixin:
-    def _make_action(self, text, icon, slot, shortcut=None, checkable=False):
+    def _make_action(self, text, icon, slot, shortcut=None, checkable=False,
+                      shortcut_id=None, display_only=False):
         """[Phase 6 M1] 메뉴·상단 툴바가 공유할 QAction 하나를 만든다(아이콘 포함).
-        상단 QToolBar는 이 액션을 setDefaultAction으로 재사용 → 상태(체크 등) 자동 동기화."""
+        상단 QToolBar는 이 액션을 setDefaultAction으로 재사용 → 상태(체크 등) 자동 동기화.
+
+        [단축키 설정, 2026-08-21] `shortcut_id`를 주면 `shortcuts.py` 레지스트리가 단축키의
+        유일한 출처가 된다(`shortcut` 인자 무시) — 초기값은 QSettings 저장값(설정 창에서
+        재할당했으면 그 값, 없으면 기본값)이고, `self._shortcut_actions[shortcut_id] = a`로
+        등록해 설정 창이 나중에 라이브 갱신할 수 있게 한다. 툴팁에도 현재 단축키를 붙여
+        (호버 요청) 재할당 후에도 항상 최신값을 보여준다.
+
+        `display_only=True`면 실제 `QAction.setShortcut()`은 절대 안 건다 — 되돌리기/
+        다시 실행처럼 진짜 키 처리는 뷰의 `keyPressEvent`가 하는 항목(위 편집(&E) 메뉴
+        생성부 주석 참조: QAction에 같은 단축키를 걸면 Qt 전역 단축키가 뷰보다 먼저
+        가로채 이중 실행 위험이 생긴다). 툴팁만 레지스트리 값을 따라간다."""
         a = QAction(text, self)
         if icon:
             a.setIcon(_act_icon(icon))
             self._icon_actions.append((a, icon))   # 테마 전환 시 아이콘 재생성용 등록
-        if shortcut:
+        if shortcut_id is not None:
+            self._shortcut_actions[shortcut_id] = a
+            if display_only:
+                self._shortcut_display_only.add(shortcut_id)
+            self._apply_action_shortcut(shortcut_id)
+        elif shortcut:
             a.setShortcut(QKeySequence(shortcut))
         if checkable:
             a.setCheckable(True)
@@ -121,26 +141,68 @@ class _UIBuildMixin:
         return a
 
 
+    def refresh_shortcut_ui(self):
+        """[단축키 설정, 2026-08-21] 설정 창이 저장한 뒤 호출 — 메뉴/툴바 QAction 전부
+        (`_apply_action_shortcut`) + 상단 툴바 도구 버튼 툴팁 + 도구(&T) 메뉴 표시 텍스트를
+        전부 레지스트리 현재값으로 다시 그린다. 대상이 넓어 보이지만 다 가벼운 텍스트/
+        QKeySequence 갱신뿐이라 매번 다시 계산해도 무해(설정 저장은 드문 이벤트)."""
+        for sid in self._shortcut_actions:
+            self._apply_action_shortcut(sid)
+        for key, name, sc in _TOOLS:
+            if key in ("rect", "ellipse", "sarrow"):
+                continue
+            sid = shortcuts.SHORTCUT_ID_BY_TOOL.get(key)
+            live_sc = shortcuts.current_sequence(sid) if sid else sc
+            btn = self._tool_buttons.get(key)
+            if btn is not None:
+                tip = f"화살표 ({live_sc} — 그린 뒤 속성 패널에서 종류 변경)" \
+                    if key == "arrow" else f"{name} ({live_sc})"
+                btn.setToolTip(tip)
+            act = self._tool_menu_actions.get(key)
+            if act is not None:
+                act.setText(f"{name}\t{live_sc}" if live_sc else name)
+
+
+    def _apply_action_shortcut(self, shortcut_id: str):
+        """[단축키 설정, 2026-08-21] `shortcut_id`의 현재 QSettings 값(또는 기본값)을
+        해당 QAction에 반영(`display_only` 등록이면 툴팁만) + 툴팁을 "{텍스트} ({단축키})"
+        로 갱신(호버 요청). 설정 창이 저장할 때마다 바뀐 id들에 대해 이걸 다시 부른다."""
+        a = self._shortcut_actions.get(shortcut_id)
+        if a is None:
+            return
+        seq_str = shortcuts.current_sequence(shortcut_id)
+        seq = QKeySequence(seq_str)
+        if shortcut_id not in self._shortcut_display_only:
+            a.setShortcut(seq)
+        base_text = a.text().split("\t")[0]
+        if seq.isEmpty():
+            a.setToolTip(base_text)
+        else:
+            a.setToolTip(f"{base_text} ({seq.toString(QKeySequence.SequenceFormat.NativeText)})")
+
+
     def _build_menu(self):
         self._doc_path = None
         self._icon_actions: list[tuple[QAction, str]] = []   # (액션, 아이콘이름) — 테마 재생성용
+        self._shortcut_actions: dict[str, QAction] = {}   # [단축키 설정] id → QAction
+        self._shortcut_display_only: set = set()   # [단축키 설정] setShortcut() 안 거는 id들
         m = self.menuBar().addMenu("파일(&F)")
 
         self._act_new = self._make_action("새로 만들기", "new", self._new_doc,
-                                          QKeySequence.StandardKey.New)
+                                          shortcut_id="new_doc")
         self._act_open = self._make_action("열기…", "open", self._open_doc,
-                                           QKeySequence.StandardKey.Open)
+                                           shortcut_id="open_doc")
         self._act_save = self._make_action("저장…", "save", self._save_doc,
-                                           QKeySequence.StandardKey.Save)
+                                           shortcut_id="save_doc")
         # [§8 항목10 Stage C] 빠른저장(Ctrl+S, 위 _act_save)과 별개로 항상 다이얼로그를
         # 띄우는 경로 — 저장 경로를 바꾸고 싶을 때.
         self._act_save_as = self._make_action(
             "다른 이름으로 저장…", "save", self._save_doc_as,
-            QKeySequence.StandardKey.SaveAs)
+            shortcut_id="save_doc_as")
         # [§8 항목10 Stage D] "새 탭"은 이미 있는 "새로 만들기"(Ctrl+N)가 겸한다(§8 항목10
         # Stage B — 탭 도입에 맞춰 의미를 바꿈) — 여긴 완전히 독립된 새 최상위 창.
         self._act_new_window = self._make_action(
-            "새 창", "new", self._new_window, "Ctrl+Shift+N")
+            "새 창", "new", self._new_window, shortcut_id="new_window")
         # [2026-08-20 피드백] "새 창"은 "새로 만들기"와 같은 성격(새 시작)이라 저장 계열
         # (열기·저장·다른 이름으로 저장) 앞, 바로 아래에 둔다.
         for a in (self._act_new, self._act_new_window, self._act_open, self._act_save,
@@ -150,7 +212,8 @@ class _UIBuildMixin:
 
         # [§8 항목14, 2026-08-07] 옛 "전체"/"선택영역" 별도 메뉴 2개를 1개로 통합 —
         # 전체/선택 선택지는 _PdfExportDialog 안의 라디오로 이동(옵션+라이브 미리보기).
-        self._act_pdf = self._make_action("PDF 내보내기…", "pdf", self._export_pdf, "Ctrl+P")
+        self._act_pdf = self._make_action("PDF 내보내기…", "pdf", self._export_pdf,
+                                          shortcut_id="export_pdf")
         # [신규기능] DXF 가져오기/내보내기 통합 — 옛 전용 메뉴·단축키(Ctrl+Shift+D/I)는
         # 폐지하고 열기(Ctrl+O)/저장(Ctrl+S)이 확장자로 분기(아래 _open_doc/_save_doc).
         # [내보내기 통합, 2026-08-20 실사용 피드백] PDF 단독 항목을 "내보내기" 하위메뉴로
@@ -171,14 +234,21 @@ class _UIBuildMixin:
         # [2026-08-13 재피드백] 예전엔 이 셋이 툴바 전용으로 의도돼 있었으나("메뉴엔 없던
         # undo/redo"), 표준 메뉴 관례(File→Edit→Insert→View)를 따라 "편집(&E)" 메뉴로도
         # 노출하기로 재확정.
-        self._act_undo = self._make_action("되돌리기", "undo", self.undo)
-        self._act_redo = self._make_action("다시 실행", "redo", self.redo)
+        self._act_undo = self._make_action("되돌리기", "undo", self.undo,
+                                           shortcut_id="undo", display_only=True)
+        self._act_redo = self._make_action("다시 실행", "redo", self.redo,
+                                           shortcut_id="redo", display_only=True)
         # [M2] 도구 고정 — 켜면 도형을 그려도 도구가 유지(연속 그리기), 끄면 one-shot(그리면 선택모드).
         self._act_pin = self._make_action("도구 고정", "pin", self._toggle_pin, checkable=True)
         self._act_pin.setToolTip("도구 고정 — 켜면 연속으로 그리기(끄면 하나 그린 뒤 선택모드)")
         e = self.menuBar().addMenu("편집(&E)")
         for a in (self._act_undo, self._act_redo, self._act_pin):
             e.addAction(a)
+        e.addSeparator()
+        # [단축키 설정, 2026-08-21] 단축키 재할당 창 진입점.
+        self._act_shortcut_settings = self._make_action(
+            "단축키 설정…", None, self._show_shortcut_settings)
+        e.addAction(self._act_shortcut_settings)
 
         # [2026-08-12 재피드백] "파일" 메뉴가 파일 I/O(새로만들기·열기·저장·내보내기)와
         # 문서에 콘텐츠를 끼워넣는 "삽입" 계열(표제란·표·Mermaid)이 섞여 있어 분리 —
@@ -187,9 +257,9 @@ class _UIBuildMixin:
         # 예전 방식 — 상위 메뉴/툴바 상시노출은 실사용 결과 되돌림).
         i = self.menuBar().addMenu("삽입(&I)")
         self._act_tb = self._make_action("표제란 / 용지틀 삽입…", "titleblock",
-            self._insert_titleblock, "Ctrl+Shift+T")
+            self._insert_titleblock, shortcut_id="insert_titleblock")
         self._act_tbl = self._make_action("표 삽입…", "table",
-            self._insert_table, "Ctrl+Shift+B")
+            self._insert_table, shortcut_id="insert_table")
         for a in (self._act_tb, self._act_tbl):
             i.addAction(a)
         i.addSeparator()   # [2026-08-13] 위 2개(문서 내장 요소) vs 아래 2개(외부 소스 가져오기) 구분
@@ -199,16 +269,16 @@ class _UIBuildMixin:
         # 래스터는 내부에서 확장자로 갈라 각자의 기존 경로로 보낸다 — 로직 무변경, 메뉴
         # 위치만 이동).
         self._act_img = self._make_action("이미지/SVG 삽입…", "image",
-            self._insert_image_or_svg, "Ctrl+Shift+M")
+            self._insert_image_or_svg, shortcut_id="insert_image")
         # [§8 항목18 후속, 2026-08-12] "Mermaid 가져오기"가 AI 보조 생성까지 흡수 —
         # 옛 "AI 이미지→도면…"(이미지 입력, Ctrl+Shift+A)은 실사용 결과 이미지 경로를
         # 폐기하기로 하며 이 메뉴로 통합됐다(_MermaidDialog 안 프롬프트칸+AI버튼 참조).
         self._act_mmd = self._make_action("Mermaid 가져오기…", "mermaid",
-            self._insert_mermaid, "Ctrl+Shift+F")
+            self._insert_mermaid, shortcut_id="insert_mermaid")
         # [§8 항목20 B단계, 2026-08-14] AI SVG 에셋 생성 — 옛 "AI 이미지→도면…"이 쓰던
         # Ctrl+Shift+A는 그 기능 폐기(위 주석 참조)로 비어 있던 것을 재사용.
         self._act_ai_svg = self._make_action("AI SVG 에셋 생성…", "generate",
-            self._insert_ai_svg_asset, "Ctrl+Shift+A")
+            self._insert_ai_svg_asset, shortcut_id="insert_ai_svg")
         for a in (self._act_img, self._act_mmd, self._act_ai_svg):
             i.addAction(a)
         i.addSeparator()   # [2026-08-20 피드백] 위 3개(가져오기) vs 아래(AI 연결 설정) 구분
@@ -228,7 +298,11 @@ class _UIBuildMixin:
         for key, name, sc in _TOOLS:
             if key in ("rect", "ellipse", "sarrow"):
                 continue
-            act = QAction(f"{name}\t{sc}", self)
+            # [단축키 설정, 2026-08-21] 표시 텍스트의 단축키 부분을 레지스트리 현재값으로
+            # (재할당 반영) — `_TOOLS`의 `sc`는 매핑 없는 도구용 폴백일 뿐.
+            sid = shortcuts.SHORTCUT_ID_BY_TOOL.get(key)
+            live_sc = shortcuts.current_sequence(sid) if sid else sc
+            act = QAction(f"{name}\t{live_sc}" if live_sc else name, self)
             act.setIcon(_tool_icon(key, _current_icon_color()))
             act.setCheckable(True)
             if key == "arrow":
@@ -242,22 +316,22 @@ class _UIBuildMixin:
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
         self._act_zoom100 = self._make_action("100% (1:1)", "zoom_100",
-            self._zoom_reset, "Ctrl+0")
+            self._zoom_reset, shortcut_id="zoom_100")
         self._act_fit = self._make_action("전체 맞춤", "zoom_fit",
-            self._zoom_fit, "Ctrl+9")
+            self._zoom_fit, shortcut_id="zoom_fit")
         v.addAction(self._act_zoom100)
         v.addAction(self._act_fit)
         v.addSeparator()
         self._act_snap = self._make_action("스냅 (o-snap)", "snap",
-            self._toggle_snap, "F3", checkable=True)
+            self._toggle_snap, shortcut_id="toggle_snap", checkable=True)
         self._act_snap.setChecked(True)
         self._act_ortho = self._make_action("직교 제약 (Ortho)", "ortho",
-            self._toggle_ortho, "F8", checkable=True)
+            self._toggle_ortho, shortcut_id="toggle_ortho", checkable=True)
         self._act_grid = self._make_action("격자 (Grid Snap)", "grid",
-            self._toggle_grid, "Shift+G", checkable=True)
+            self._toggle_grid, shortcut_id="toggle_grid", checkable=True)
         self._act_grid.setChecked(False)
         self._act_align = self._make_action("정렬 가이드선", "align",
-            self._toggle_align_guides, "Shift+A", checkable=True)
+            self._toggle_align_guides, shortcut_id="toggle_align", checkable=True)
         self._act_align.setChecked(True)
         v.addAction(self._act_snap)
         v.addAction(self._act_ortho)
@@ -265,16 +339,22 @@ class _UIBuildMixin:
         v.addAction(self._act_align)
         v.addSeparator()
         self._act_theme = self._make_action("다크/라이트 전환", "theme",
-            self._toggle_theme, "Ctrl+Shift+L")
+            self._toggle_theme, shortcut_id="toggle_theme")
         v.addAction(self._act_theme)
-        self._act_help = self._make_action("단축키 도움말…", "help",
-            self._show_shortcuts, "F1")
-        v.addAction(self._act_help)
         # [패널 관련 수정, 2026-08-19] 「패널」 하위메뉴(도형·레이어·속성·미니맵 표시/숨김)는
         # 패널 객체가 아직 없는 이 시점엔 못 만든다(전부 이 메서드보다 나중에 생성됨,
         # __init__ 순서 참조) — 참조만 저장해두고 `_build_panel_menu()`가 모든 패널 생성 후
         # 채운다.
         self._view_menu = v
+
+        # ---- 도움말(&H) — [실사용 요청 2026-08-21] 옛 "단축키 도움말"이 보기(&V) 메뉴에
+        # 파묻혀 있던 것을 독립 메뉴로 승격 + 프로그램 정보(버전·문의처) 추가.
+        h = self.menuBar().addMenu("도움말(&H)")
+        self._act_help = self._make_action("단축키 도움말…", "help",
+            self._show_shortcuts, shortcut_id="show_help")
+        h.addAction(self._act_help)
+        self._act_about = self._make_action("프로그램 정보…", None, self._show_about)
+        h.addAction(self._act_about)
 
     # ---- 보기: 기준 zoom / 스냅 -------------------------------------------
 
@@ -583,8 +663,12 @@ class _UIBuildMixin:
             btn = QToolButton()
             btn.setIcon(_tool_icon(key, _current_icon_color()))
             btn.setIconSize(QSize(20, 20))
-            tip = "화살표 (3 — 그린 뒤 속성 패널에서 종류 변경)" \
-                if key == "arrow" else f"{name} ({sc})"
+            # [단축키 설정, 2026-08-21] 레지스트리 현재값으로(재할당 반영) — `_TOOLS`의
+            # `sc`는 매핑 없는 도구용 폴백일 뿐.
+            sid = shortcuts.SHORTCUT_ID_BY_TOOL.get(key)
+            live_sc = shortcuts.current_sequence(sid) if sid else sc
+            tip = f"화살표 ({live_sc} — 그린 뒤 속성 패널에서 종류 변경)" \
+                if key == "arrow" else f"{name} ({live_sc})"
             btn.setToolTip(tip)
             btn.setCheckable(True)
             if key == "arrow":
@@ -645,6 +729,7 @@ class _UIBuildMixin:
         if getattr(self, "_color_is_default", False):
             self.current_color = QColor(_DEFAULT_INK_DARK if dark else _DEFAULT_INK_LIGHT)
         _set_icon_color(dark)   # host_widgets._ICON_COLOR 갱신(host_widgets._act_icon()이 읽는 실제 전역)
+        _set_menu_sep_color(dark)   # host_widgets._MENU_SEP_COLOR 갱신 — 각 QMenu 생성 시점에 읽음
         app = QApplication.instance()
         if app is not None:
             # [2026-08-12] 이미 Fusion이면 재적용하지 않는다 — `setStyle()`은 그 순간 살아있는
@@ -834,28 +919,57 @@ class _UIBuildMixin:
 
 
     def _show_shortcuts(self):
-        """[Phase 6 M1] 상단바에서 뺀 단축키 안내를 도움말 다이얼로그로."""
-        rows = [
+        """[Phase 6 M1] 상단바에서 뺀 단축키 안내를 도움말 다이얼로그로.
+        [단축키 설정, 2026-08-21] 마우스 제스처(휠·팬)만 고정 안내로 남기고, 키보드
+        단축키는 `shortcuts.SHORTCUT_DEFS`에서 카테고리별로 동적 생성 — 설정 창에서
+        재할당하면 이 목록도 항상 최신값을 보여준다(하드코딩 목록이 따로 안 썩는다)."""
+        mouse_rows = [
             ("휠", "확대·축소 (커서 기준)"),
             ("Shift + 휠", "선 두께·도형 크기 조절"),
             ("가운데버튼 드래그", "화면 이동(팬)"),
-            ("Ctrl+0 / Ctrl+9", "100%(1:1) / 전체 맞춤"),
-            ("F3 / F8", "스냅 / 직교 제약 토글"),
-            ("Shift+G", "격자 표시/스냅투그리드 토글"),
-            ("Shift+A", "정렬 가이드선(스마트 정렬 스냅) 토글"),
-            ("Del", "선택 객체 삭제"),
-            ("Ctrl+Z", "되돌리기"),
-            ("Ctrl+C / Ctrl+V", "복사 / 연속 붙여넣기(버퍼 없으면 클립보드 이미지)"),
-            ("Ctrl+D", "제자리 복제"),
-            ("1·3·4·6·7·8", "선택·화살표·텍스트·선·펜·번호"),
-            ("3", "화살표(그린 뒤 미니툴바서 직선·곡선·직각 선택)"),
-            ("2 / 5", "사각형 / 원"),
         ]
-        body = "\n".join(f"{k:<20}{d}" for k, d in rows)
+        lines = [f"{k:<18}{d}" for k, d in mouse_rows]
+        last_cat = None
+        for sid, cat, label, _default in shortcuts.SHORTCUT_DEFS:
+            if cat != last_cat:
+                lines.append("")
+                lines.append(f"[{cat}]")
+                last_cat = cat
+            seq = shortcuts.current_sequence(sid) or "(없음)"
+            lines.append(f"{seq:<18}{label}")
+        lines.append("")
+        lines.append("단축키는 편집(&E) → 단축키 설정…에서 바꿀 수 있습니다.")
+        body = "\n".join(lines)
         box = QMessageBox(self)
         box.setWindowTitle("단축키 도움말")
         box.setText("Easy CAD 단축키")
         box.setInformativeText(body)
+        box.setIcon(QMessageBox.Icon.NoIcon)
+        box.exec()
+
+
+    def _show_shortcut_settings(self):
+        """[단축키 설정, 2026-08-21] 편집(&E) → 단축키 설정… — 재할당 다이얼로그를 열고,
+        저장됐으면(Accepted) 메뉴/툴바/도구메뉴 표시를 전부 최신값으로 다시 그린다."""
+        from easycad.canvas.host_dialogs import _ShortcutSettingsDialog
+        dlg = _ShortcutSettingsDialog(self)
+        if dlg.exec() == dlg.DialogCode.Accepted:
+            self.refresh_shortcut_ui()
+
+
+    def _show_about(self):
+        """[실사용 요청 2026-08-21] 도움말(&H) → 프로그램 정보 — 버전(`easycad.__version__`)·
+        문의처·런타임(Qt/Python) 정도만. 별도 문서·라이선스 화면은 아직 없어 범위 밖."""
+        import sys
+        from PyQt6.QtCore import QT_VERSION_STR, PYQT_VERSION_STR
+        from easycad import __version__ as easycad_version
+        box = QMessageBox(self)
+        box.setWindowTitle("Easy CAD 정보")
+        box.setText(f"Easy CAD v{easycad_version}")
+        box.setInformativeText(
+            "빠르고 쉬운 순서도/간단도면 작성기\n\n"
+            f"문의: jjrftech@gmail.com\n\n"
+            f"Python {sys.version.split()[0]} · Qt {QT_VERSION_STR} · PyQt {PYQT_VERSION_STR}")
         box.setIcon(QMessageBox.Icon.NoIcon)
         box.exec()
 
@@ -1178,6 +1292,7 @@ class _UIBuildMixin:
         `_show_custom_symbol_context_menu`와 같은 관례). 미분류는 이 메뉴 자체가 안 걸림
         (`add_group`의 `deletable=False` 분기)."""
         menu = QMenu(self)
+        _style_menu_separators(menu)
         menu.addAction("이름변경…", lambda: self._rename_symbol_folder_prompt(folder_name))
         menu.addAction("삭제…", lambda: self._delete_symbol_folder_prompt(folder_name))
         menu.exec(label_widget.mapToGlobal(pos))
@@ -1192,11 +1307,37 @@ class _UIBuildMixin:
         entry = next((e for e in symbol_library.load_library() if e.get("id") == sym_id), None)
         is_fav = bool(entry and entry.get("favorite"))
         menu = QMenu(self)
+        _style_menu_separators(menu)
         menu.addAction("즐겨찾기 해제" if is_fav else "즐겨찾기 추가",
                         lambda: self._toggle_custom_symbol_favorite(sym_id))
         menu.addAction("이름변경…", lambda: self._rename_custom_symbol_prompt(sym_id))
+        menu.addSeparator()
+        menu.addAction("SVG로 내보내기…", lambda: self._export_custom_symbol_svg(sym_id))
         menu.addAction("삭제…", lambda: self._delete_custom_symbol_prompt(sym_id))
         menu.exec(btn.mapToGlobal(pos))
+
+
+    def _export_custom_symbol_svg(self, sym_id: str):
+        """[실사용 요청 2026-08-21] 심볼 우클릭 → SVG로 내보내기 — 심볼 저장 형식이 이미
+        도형 dict 목록(`symbol_library.add_symbol`)이라 새 의존성 없이 `insert_items`(임시
+        씬 재구성, AI 이미지→도면 삽입과 같은 헬퍼)+`export_svg_symbol`(콘텐츠 크기에 꽉
+        맞춘 SVG, `export_svg`의 A4 캔버스는 심볼 하나엔 과함)만으로 구현 가능."""
+        entry = next((e for e in symbol_library.load_library() if e.get("id") == sym_id), None)
+        if entry is None:
+            return
+        tmp_scene = QGraphicsScene()
+        insert_items(tmp_scene, entry.get("items", []))
+        if not tmp_scene.items():
+            QMessageBox.warning(self, "SVG로 내보내기", "내보낼 도형이 없습니다.")
+            return
+        default_name = f"{entry.get('name', 'symbol')}.svg"
+        path, _f = QFileDialog.getSaveFileName(self, "SVG로 내보내기", default_name, "SVG 파일 (*.svg)")
+        if not path:
+            return
+        if export_svg_symbol(tmp_scene, path):
+            self.statusBar().showMessage(f"'{entry.get('name')}' SVG로 내보냄", 3000)
+        else:
+            QMessageBox.warning(self, "SVG로 내보내기", "내보내기 실패 — 도형 크기를 확인하세요.")
 
 
     def _toggle_custom_symbol_favorite(self, sym_id: str):

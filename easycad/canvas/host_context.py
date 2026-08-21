@@ -38,7 +38,9 @@ from easycad.fileio.document import save_document, load_document, load_document_
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
-from easycad.canvas.host_widgets import _ARROW_KIND_TOOL, _arrow_kind_of
+from easycad.canvas.host_widgets import (
+    _ARROW_KIND_TOOL, _arrow_kind_of, _style_menu_separators,
+)
 from easycad.canvas.host_dialogs import _CableNumberDialog, _SvgAssetDialog
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -69,6 +71,7 @@ class _ContextMixin:
         전부 기존 편집 경로(copy/paste/duplicate/delete/select_all)를 재사용해 undo 일관.
         exec는 _show_context_menu가 하고, 이 메서드는 구성만(스모크 테스트용 분리)."""
         menu = QMenu(self)
+        _style_menu_separators(menu)
         sel = self._scene.selectedItems()
         has_sel = bool(sel)
         has_clip = bool(getattr(self, "_clip", None))
@@ -244,13 +247,23 @@ class _ContextMixin:
 
     # ---- [Phase 6 M4-3] 도형 바로 바꾸기 -----------------------------------
 
+    # [실사용 피드백 2026-08-21] 백엔드 `_SYMBOL_KINDS`엔 2026-08-04에 좌측 팔레트에서 뺀
+    # 옛 흐름도/안테나 심볼 13종이 DXF·.ecad·Mermaid 호환을 위해 그대로 남아 있다 — 이
+    # 메뉴가 그걸 무필터로 나열해 "패널엔 없는 도형이 여기만 보인다"는 유령 UI가 됐다.
+    # 팔레트 기본도형 그리드(`host_ui.py._build_left_panel` basic_section)와 정확히 같은
+    # 6종으로 좁힌다(백엔드 `_SYMBOL_KINDS`는 무변경 — 노출만 맞춤).
+    _SWAP_SYMBOL_KINDS = ("triangle", "decision", "terminal", "data", "prep", "database")
+
     def _build_swap_menu(self):
-        """도형 교체 대상 메뉴 — 네모·원 + 심볼 14종. 트리거 시 현재 단일 선택 도형을 변환."""
+        """도형 교체 대상 메뉴 — 네모·원 + 팔레트에 실제로 있는 심볼 6종만. 트리거 시 현재
+        단일 선택 도형을 변환."""
         m = QMenu(self)
+        _style_menu_separators(m)
         m.addAction("사각형", lambda: self._swap_selected("rect"))
         m.addAction("원", lambda: self._swap_selected("ellipse"))
         m.addSeparator()
-        for kind, (label, _f) in _SYMBOL_KINDS.items():
+        for kind in self._SWAP_SYMBOL_KINDS:
+            label = _SYMBOL_KINDS[kind][0]
             m.addAction(label, lambda k=kind: self._swap_selected(f"sym:{k}"))
         return m
 
@@ -545,6 +558,7 @@ class _ContextMixin:
         """정렬 6 + 분배 2 메뉴. 미니툴바 드롭다운과 우클릭 서브메뉴가 같은 메뉴를 쓴다.
         우클릭 메뉴는 매번 새로 만들어지므로 parent를 그 메뉴로 줘서 함께 정리되게 한다."""
         m = QMenu(title, parent or self)
+        _style_menu_separators(m)
         for mode, label in self._ALIGN_MODES[:3]:
             m.addAction(label, lambda md=mode: self.align_selection(md))
         m.addSeparator()

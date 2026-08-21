@@ -38,6 +38,7 @@ from easycad.fileio.document import save_document, load_document, load_document_
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
+from easycad.canvas.host_widgets import _style_menu_separators
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
@@ -133,6 +134,7 @@ class _LayersMixin:
 
     def _show_layer_row_menu(self, row: QWidget, layer_id: str):
         menu = QMenu(self)
+        _style_menu_separators(menu)
         menu.addAction("이름 변경...", lambda: self._prompt_rename_layer(layer_id))
         if layer_id != "default":
             menu.addAction("삭제", lambda: self.delete_layer(layer_id))
@@ -229,6 +231,7 @@ class _LayersMixin:
 
     def _build_layer_menu(self, title: str, parent=None) -> QMenu:
         m = QMenu(title, parent or self)
+        _style_menu_separators(m)
         for layer in self._layers:
             m.addAction(layer["name"], lambda checked=False, i=layer["id"]:
                         self.move_selection_to_layer(i))

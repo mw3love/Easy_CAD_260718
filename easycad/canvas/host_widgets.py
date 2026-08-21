@@ -358,6 +358,29 @@ def _current_icon_color() -> QColor:
     return _ICON_COLOR
 
 
+# [실사용 피드백 2026-08-21] QMenu 구분선이 Fusion 팔레트 계산값으론 배경과 거의 구별이
+# 안 갔다(실측 확인 — `R.Mid`를 포함해 시도한 팔레트 롤 어느 것도 Fusion의 분리선 렌더에
+# 영향을 안 줬다). `QMenu::separator` QSS는 확실히 먹히지만(실측 확인), `self`/QApplication에
+# 걸면 그 하위 위젯 전부(형제 QAbstractSpinBox 포함)가 QStyleSheetStyle로 강제 전환돼
+# sizeHint가 깨지는 기존 함정(`docs/pitfalls.md` "렌더링" — 스핀박스 sizeHint 사고와 같은
+# 클래스)을 재현한다(실측으로 재현·확인) — 대신 QMenu 인스턴스 각각에 직접 건다(팝업은
+# 메인윈도우 자식 트리 밖의 독립 최상위 위젯이라 다른 위젯에 안 번진다, 실측 확인:
+# `_pf_width` 높이 무변화). 이 모듈이 색만 들고, `QMenu(...)`를 만드는 모든 곳
+# (host_context/host_layers/host_ui)이 생성 직후 `_style_menu_separators(menu)`를 호출한다.
+_MENU_SEP_COLOR_THEME = {"dark": "#3d4b5c", "light": "#c9d3dc"}
+_MENU_SEP_COLOR = _MENU_SEP_COLOR_THEME["dark"]
+
+
+def _set_menu_sep_color(dark: bool) -> None:
+    global _MENU_SEP_COLOR
+    _MENU_SEP_COLOR = _MENU_SEP_COLOR_THEME["dark" if dark else "light"]
+
+
+def _style_menu_separators(menu) -> None:
+    menu.setStyleSheet(
+        f"QMenu::separator {{ background:{_MENU_SEP_COLOR}; height:1px; margin:4px 8px; }}")
+
+
 def _dark_palette() -> QPalette:
     """다크 테마 팔레트(Fusion 스타일과 함께 쓰면 전 위젯에 안정 적용)."""
     c = QColor
@@ -714,6 +737,7 @@ class _FloatingPanel(QFrame):
 
     def _show_header_menu(self, pos):
         menu = QMenu(self)
+        _style_menu_separators(menu)
         menu.addAction("닫기", self._close_panel)
         menu.exec(self._head.mapToGlobal(pos))
 

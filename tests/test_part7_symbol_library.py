@@ -7,7 +7,7 @@ OS AppData)을 건드리지 않는다.
 """
 from unittest.mock import patch
 
-from PyQt6.QtWidgets import QInputDialog, QMessageBox, QMenu
+from PyQt6.QtWidgets import QInputDialog, QMessageBox, QMenu, QFileDialog
 from PyQt6.QtGui import QPen
 
 from _shared import *  # noqa: F401,F403
@@ -191,7 +191,8 @@ def test_rename_custom_symbol_prompt_cancelled_keeps_name():
 def test_custom_symbol_context_menu_has_rename_and_delete_actions():
     """우클릭이 곧바로 삭제 확인창을 띄우던 옛 동작 대신 메뉴(즐겨찾기 토글/이름변경/삭제)를
     띄우는지 — 실제 모달은 `exec`를 no-op으로 바꿔 안 띄우고, 만들어진 메뉴의 액션 텍스트만
-    확인. [2026-08-20] 즐겨찾기 토글 항목이 맨 앞에 추가됨(deep-interview)."""
+    확인. [2026-08-20] 즐겨찾기 토글 항목이 맨 앞에 추가됨(deep-interview).
+    [실사용 요청 2026-08-21] "SVG로 내보내기…"가 구분선과 함께 이름변경/삭제 사이에 추가됨."""
     with _isolated_symbol_library():
         w = CanvasWindow()
         r = _mk_pen_rect(w); r.setSelected(True)
@@ -213,8 +214,37 @@ def test_custom_symbol_context_menu_has_rename_and_delete_actions():
         with patch("easycad.canvas.host_ui.QMenu", _CapturingMenu):
             w._show_custom_symbol_context_menu(btn, QPointF(1, 1).toPoint(), sym_id)
         assert len(created_menus) == 1
-        texts = [a.text() for a in created_menus[0].actions()]
-        assert texts == ["즐겨찾기 추가", "이름변경…", "삭제…"]
+        texts = [a.text() for a in created_menus[0].actions() if not a.isSeparator()]
+        assert texts == ["즐겨찾기 추가", "이름변경…", "SVG로 내보내기…", "삭제…"]
+
+
+# ---- [실사용 요청 2026-08-21] 심볼 우클릭 → SVG로 내보내기 --------------------------------
+
+def test_export_custom_symbol_svg_writes_file():
+    # 심볼 저장 형식이 이미 도형 dict 목록이라(insert_items로 재구성) + export_svg_symbol
+    # (콘텐츠 크기에 꽉 맞춘 SVG)만으로 새 의존성 없이 구현 — 실제 파일이 생기는지 확인.
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        r = _mk_pen_rect(w, x=0, y=0, ww=80, hh=50); r.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
+            w.register_selection_as_symbol()
+        sym_id = symbol_library.load_library()[0]["id"]
+
+        out = os.path.join(_TMP, f"amp_{uuid.uuid4().hex}.svg")
+        with patch.object(QFileDialog, "getSaveFileName", return_value=(out, "")):
+            w._export_custom_symbol_svg(sym_id)
+        assert os.path.exists(out)
+        with open(out, encoding="utf-8") as f:
+            content = f.read()
+        assert "<svg" in content and "<rect" in content
+
+
+def test_export_custom_symbol_svg_missing_id_is_noop():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        with patch.object(QFileDialog, "getSaveFileName") as mock_save:
+            w._export_custom_symbol_svg("no-such-id")
+        mock_save.assert_not_called()
 
 
 # ---- [신규기능, 2026-08-12 좌측 패널 아코디언 개편] 내 심볼 폴더 -----------------------

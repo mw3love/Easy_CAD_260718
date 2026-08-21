@@ -315,6 +315,34 @@ def export_svg(scene, path: str, page: str = "A4", selection_only: bool = False,
     return True
 
 
+def export_svg_symbol(scene, path: str, pad: float = 6.0) -> bool:
+    """scene 전체 콘텐츠를 여백만 두고 꽉 채운 SVG로 저장 — 페이지 개념이 없는 아이콘/심볼
+    전용 내보내기. [실사용 요청, 2026-08-21] '내 심볼' 우클릭 「SVG로 내보내기」가 사용.
+    `export_svg`는 A4~A1 용지 캔버스에 콘텐츠를 fit하는 인쇄용이라 심볼 하나를 내보내면
+    거대한 빈 여백의 SVG가 나온다(과함) — 그래서 페이지/프레임 로직을 건너뛰고
+    `itemsBoundingRect()` 기준으로 캔버스 크기 자체를 콘텐츠에 맞춘다."""
+    source = scene.itemsBoundingRect()
+    if source.isEmpty():
+        return False
+    source = source.adjusted(-pad, -pad, pad, pad)
+    px_w = max(1, round(source.width()))
+    px_h = max(1, round(source.height()))
+    target = QRectF(0, 0, px_w, px_h)
+
+    generator = QSvgGenerator()
+    generator.setFileName(path)
+    generator.setSize(QSize(px_w, px_h))
+    generator.setViewBox(target)
+    generator.setTitle("Easy CAD Symbol")
+
+    painter = QPainter(generator)
+    try:
+        _paint_scene(scene, painter, target, source, isolate_selection=False, white_bg=False)
+    finally:
+        painter.end()
+    return True
+
+
 def render_preview(scene, page: str = "A4", selection_only: bool = False,
                    margin_mm: float = 10.0, orientation: str | None = None,
                    max_px: int = 420, frame=None) -> QPixmap | None:

@@ -2,6 +2,7 @@
 
 tests/test_easycad.py 2026-08-02 분할분. 실행: python tests/test_easycad.py (전체) 또는 pytest test_part1_ui_arrows.py.
 """
+from PyQt6.QtWidgets import QMessageBox
 from _shared import *  # noqa: F401,F403
 
 
@@ -61,6 +62,34 @@ def test_toolbar_icons_and_actions():
     assert w._act_snap.isChecked() is False and w.snap_enabled is False
 
 
+def test_help_menu_is_independent_top_level_menu():
+    # [실사용 요청 2026-08-21] "단축키 도움말"이 보기(&V)에 파묻혀 있던 것을 독립
+    # 도움말(&H) 메뉴로 승격 + "프로그램 정보…" 추가.
+    w = CanvasWindow()
+    top_menus = [a.text() for a in w.menuBar().actions()]
+    assert "도움말(&H)" in top_menus
+    help_menu = next(a.menu() for a in w.menuBar().actions() if a.text() == "도움말(&H)")
+    items = [a.text() for a in help_menu.actions()]
+    assert items == ["단축키 도움말…", "프로그램 정보…"]
+    view_menu = next(a.menu() for a in w.menuBar().actions() if a.text() == "보기(&V)")
+    assert "단축키 도움말…" not in [a.text() for a in view_menu.actions()]
+
+
+def test_about_dialog_shows_current_version_and_contact():
+    from unittest.mock import patch
+    from easycad import __version__ as easycad_version
+    w = CanvasWindow()
+    with patch.object(QMessageBox, "exec", return_value=None) as mock_exec:
+        w._show_about()
+        assert mock_exec.called
+    # 실제 표시 텍스트를 잡으려면 QMessageBox 생성 자체를 가로채야 하므로, box.setText
+    # 인자를 스파이한다(모달 자체는 여전히 안 뜸).
+    with patch.object(QMessageBox, "setText") as mock_set_text, \
+         patch.object(QMessageBox, "setInformativeText") as mock_set_info, \
+         patch.object(QMessageBox, "exec", return_value=None):
+        w._show_about()
+    assert easycad_version in mock_set_text.call_args[0][0]
+    assert "jjrftech@gmail.com" in mock_set_info.call_args[0][0]
 
 
 def test_dark_mode_toggle():

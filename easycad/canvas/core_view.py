@@ -16,8 +16,10 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QPixmap, QImage, QPainter, QPen, QBrush, QColor, QPainterPath,
     QPainterPathStroker, QPolygonF, QFont, QFontMetricsF, QIcon, QCursor,
-    QConicalGradient,
+    QConicalGradient, QKeySequence,
 )
+
+from easycad.canvas import shortcuts as _shortcuts
 from PyQt6.QtWidgets import (
     QWidget, QGraphicsScene, QGraphicsView, QGraphicsRectItem,
     QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsPathItem,
@@ -131,13 +133,12 @@ def _build_align_guides(nr, bx_winners, bx_orr, by_winners, by_orr) -> list:
 
 class _AnnotatorView(QGraphicsView):
     # [화살표 통합] 화살표는 도구 하나 → 단축키도 3 하나.
-    _SHORTCUTS = {
-        Qt.Key.Key_1: "select", Qt.Key.Key_2: "rect", Qt.Key.Key_3: "arrow",
-        Qt.Key.Key_4: "text", Qt.Key.Key_5: "ellipse", Qt.Key.Key_6: "line",
-        Qt.Key.Key_7: "pen", Qt.Key.Key_8: "badge",
-        Qt.Key.Key_9: "polygon",   # [§8 항목21] 비어 있던 9 — 다각형/폴리라인 도구.
-        Qt.Key.Key_T: "trim",   # [§8 항목17 4단계] 숫자 1~9가 다 차 letter 단축키(AutoCAD TR 관례)
-    }
+    # [단축키 설정, 2026-08-21] Qt.Key 리터럴 직접비교 대신 `shortcuts.py` 레지스트리의
+    # id로 갈아탄다(설정 창에서 재할당 가능해지려면 값이 QSettings에서 와야 한다) —
+    # 아래 `_shortcut_hit()`가 매 keyPressEvent마다 현재 설정된 QKeySequence와 비교한다.
+    # 매핑 자체는 `shortcuts.TOOL_SHORTCUT_IDS`(host_ui.py의 도구 메뉴·툴팁과 공유하는
+    # 단일 출처)를 그대로 쓴다 — 여기 사본을 따로 안 둔다(드리프트 방지).
+    _TOOL_SHORTCUT_IDS = _shortcuts.TOOL_SHORTCUT_IDS
     # [실사용 피드백 2026-08-19] 커스텀 심볼 드래그-리사이즈(`_csym_drag`) 최소 배율 — press
     # 시점부터 이 크기로 시작해 드래그로 커지기만 하므로(깜빡임 없음), 0이면 겹친 아이템들의
     # scale=0 특이점(면적 0)을 만들 수 있어 작지만 0은 아닌 값을 쓴다.
@@ -3827,6 +3828,19 @@ class _AnnotatorView(QGraphicsView):
                 return
         super().mouseDoubleClickEvent(event)
 
+    def _shortcut_hit(self, event, shortcut_id: str) -> bool:
+        """[단축키 설정, 2026-08-21] `event`(key+modifiers)가 `shortcut_id`의 현재 설정
+        (기본값 또는 설정 창에서 재할당된 값)과 정확히 일치하는지. 빈 시퀀스(사용자가
+        "지정 안 함"으로 비움)는 항상 불일치 — 그 단축키는 꺼진 것."""
+        seq_str = _shortcuts.current_sequence(shortcut_id)
+        if not seq_str:
+            return False
+        target = QKeySequence(seq_str)
+        if target.isEmpty():
+            return False
+        pressed = QKeySequence(event.keyCombination())
+        return target.matches(pressed) == QKeySequence.SequenceMatch.ExactMatch
+
     # ---- 키 (Space 토글 / 도구 단축키 / Delete / Ctrl+Z / Esc) -------------
     def keyPressEvent(self, event):
         fi = self.scene().focusItem()
@@ -3897,83 +3911,81 @@ class _AnnotatorView(QGraphicsView):
                     for it in sel:
                         it.moveBy(arrow[0] * step, arrow[1] * step)
                     return
-            if (mods & Qt.KeyboardModifier.ShiftModifier) and key == Qt.Key.Key_H:
+            # [단축키 설정, 2026-08-21] 아래 전부 `self._shortcut_hit(event, id)`로 현재
+            # 설정된(기본 또는 재할당된) QKeySequence와 정확 일치를 본다 — Qt.Key 리터럴
+            # 비교를 없애 설정 창에서 재할당한 값이 여기까지 그대로 반영되게 한다. 분기
+            # 순서·hasattr 가드·조건 자체는 전부 그대로(우선순위가 미묘하게 얽혀 있어
+            # 로직은 안 건드리고 "무엇과 비교하는가"만 바꿨다).
+            if self._shortcut_hit(event, "mirror_x"):
                 self.mirror_selection("x")   # [Stage2] 좌우 반전
                 return
-            if (mods & Qt.KeyboardModifier.ShiftModifier) and key == Qt.Key.Key_V:
+            if self._shortcut_hit(event, "mirror_y"):
                 self.mirror_selection("y")   # [Stage2] 상하 반전
                 return
-            if (key == Qt.Key.Key_S and not (mods & (
-                    Qt.KeyboardModifier.ControlModifier
-                    | Qt.KeyboardModifier.AltModifier
-                    | Qt.KeyboardModifier.ShiftModifier))
-                    and self._owner.current_tool in ("select", None)):
+            if self._shortcut_hit(event, "stretch_arm") \
+                    and self._owner.current_tool in ("select", None):
                 self._stretch_arm_now()   # [Stage2b] 러버밴드 선택 후 S = stretch 무장
                 return
-            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_A:
+            if self._shortcut_hit(event, "select_all"):
                 # [성능조사 2026-08-01] 개별 setSelected 루프는 O(n²) — owner._bulk_select로 일괄.
                 self._owner._bulk_select([
                     it for it in self.scene().items()
                     if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable])
                 return
-            # [신규기능] Ctrl+Alt+C/V = 스타일 복사/붙여넣기 — 일반 Ctrl+C/V(아이템 복사)보다
-            # 먼저 검사해야 한다(Alt를 함께 눌러도 아래 Ctrl+C 체크가 먼저 걸리면 항상 이김).
-            if (mods & Qt.KeyboardModifier.ControlModifier) and (mods & Qt.KeyboardModifier.AltModifier) \
-                    and key == Qt.Key.Key_C and hasattr(self._owner, "copy_style_from_selection"):
+            # [신규기능] 스타일 복사/붙여넣기 — 일반 복사/붙여넣기보다 먼저 검사해야 한다
+            # (기본 시퀀스가 서로 Alt 유무로만 갈라 겹칠 수 있어, 먼저 검사하는 쪽이 이긴다).
+            if self._shortcut_hit(event, "style_copy") \
+                    and hasattr(self._owner, "copy_style_from_selection"):
                 self._owner.copy_style_from_selection()
                 return
-            if (mods & Qt.KeyboardModifier.ControlModifier) and (mods & Qt.KeyboardModifier.AltModifier) \
-                    and key == Qt.Key.Key_V and hasattr(self._owner, "paste_style_to_selection"):
+            if self._shortcut_hit(event, "style_paste") \
+                    and hasattr(self._owner, "paste_style_to_selection"):
                 self._owner.paste_style_to_selection()
                 return
-            if (mods & Qt.KeyboardModifier.ControlModifier) and not (mods & Qt.KeyboardModifier.AltModifier) \
-                    and key == Qt.Key.Key_C:
+            if self._shortcut_hit(event, "copy"):
                 self._owner.copy_selection()
                 return
-            if (mods & Qt.KeyboardModifier.ControlModifier) and not (mods & Qt.KeyboardModifier.AltModifier) \
-                    and key == Qt.Key.Key_V:
+            if self._shortcut_hit(event, "paste"):
                 self._owner.paste_selection()
                 return
-            # [M2 #3] Ctrl+D = 제자리 복제(오프셋). Easy CAD 호스트만 제공 → hasattr 가드.
-            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_D \
+            # [M2 #3] 제자리 복제(오프셋). Easy CAD 호스트만 제공 → hasattr 가드.
+            if self._shortcut_hit(event, "duplicate") \
                     and hasattr(self._owner, "duplicate_selection"):
                 self._owner.duplicate_selection()
                 return
-            # [편의기능] Ctrl+G=그룹, Ctrl+Shift+G=그룹 해제. Easy CAD 호스트만 제공 → hasattr 가드.
-            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_G \
-                    and hasattr(self._owner, "group_selection"):
-                if mods & Qt.KeyboardModifier.ShiftModifier:
+            # [편의기능] 그룹/그룹 해제. Easy CAD 호스트만 제공 → hasattr 가드.
+            if hasattr(self._owner, "group_selection"):
+                if self._shortcut_hit(event, "ungroup"):
                     self._owner.ungroup_selection()
-                else:
+                    return
+                if self._shortcut_hit(event, "group"):
                     self._owner.group_selection()
-                return
-            # [편의기능] Ctrl+L = 선택 잠금 전환.
-            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_L \
-                    and not (mods & Qt.KeyboardModifier.ShiftModifier) \
+                    return
+            # [편의기능] 선택 잠금 전환.
+            if self._shortcut_hit(event, "lock_toggle") \
                     and hasattr(self._owner, "toggle_lock_selection"):
                 self._owner.toggle_lock_selection()
                 return
-            # [편의기능] Ctrl+] = 맨 앞으로, Ctrl+[ = 맨 뒤로.
-            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_BracketRight \
+            # [편의기능] 맨 앞으로 / 맨 뒤로.
+            if self._shortcut_hit(event, "bring_front") \
                     and hasattr(self._owner, "bring_to_front"):
                 self._owner.bring_to_front()
                 return
-            if (mods & Qt.KeyboardModifier.ControlModifier) and key == Qt.Key.Key_BracketLeft \
+            if self._shortcut_hit(event, "send_back") \
                     and hasattr(self._owner, "send_to_back"):
                 self._owner.send_to_back()
                 return
-            if key in self._SHORTCUTS and not (mods & (
-                    Qt.KeyboardModifier.ControlModifier
-                    | Qt.KeyboardModifier.AltModifier
-                    | Qt.KeyboardModifier.ShiftModifier)):
-                tool = self._SHORTCUTS[key]
-                # [화살표 통합] 화살표 단축키(3·9)는 종류→도구 변환 진입점을 탄다(도구는 하나).
-                if tool in ("arrow", "sarrow") and hasattr(self._owner, "arm_arrow_tool"):
-                    self._owner.arm_arrow_tool()
-                else:
-                    self._owner.set_tool(tool)
-                return
-            if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            for _sid, _tool in self._TOOL_SHORTCUT_IDS.items():
+                if self._shortcut_hit(event, _sid):
+                    # [화살표 통합] 화살표 단축키(3·9)는 종류→도구 변환 진입점을 탄다(도구는 하나).
+                    if _tool in ("arrow", "sarrow") and hasattr(self._owner, "arm_arrow_tool"):
+                        self._owner.arm_arrow_tool()
+                    else:
+                        self._owner.set_tool(_tool)
+                    return
+            if self._shortcut_hit(event, "delete") or key == Qt.Key.Key_Backspace:
+                # Backspace는 삭제의 고정 별칭(운영체제 관례) — 설정 창에서 "삭제"를
+                # 다른 키로 바꿔도 계속 동작한다(사용자가 놀라지 않게 하는 의도적 예외).
                 selected = list(self.scene().selectedItems())
                 if selected:
                     for it in selected:
@@ -3981,17 +3993,19 @@ class _AnnotatorView(QGraphicsView):
                         self.scene().removeItem(it)
                     self._owner.push_undo_delete(selected)
                     return
-            if key == Qt.Key.Key_Z and (mods & Qt.KeyboardModifier.ControlModifier):
-                # Ctrl+Shift+Z = 다시 실행(redo), Ctrl+Z = 되돌리기. redo는 Easy CAD 호스트만
-                # 제공하므로 hasattr 가드(pasteflow 독립 owner엔 없음).
-                if (mods & Qt.KeyboardModifier.ShiftModifier) and hasattr(self._owner, "redo"):
+            if self._shortcut_hit(event, "undo"):
+                self._owner.undo()
+                return
+            if self._shortcut_hit(event, "redo") \
+                    or (key == Qt.Key.Key_Z and (mods & Qt.KeyboardModifier.ControlModifier)
+                        and (mods & Qt.KeyboardModifier.ShiftModifier)):
+                # Ctrl+Shift+Z는 "다시 실행"의 고정 별칭(관용적 redo 단축키 — 위 "삭제"/
+                # Backspace와 같은 이유로 재할당과 무관하게 항상 동작). redo가 없는 owner
+                # (pasteflow 단독 사용 등)면 옛 동작 그대로 undo로 폴백한다.
+                if hasattr(self._owner, "redo"):
                     self._owner.redo()
                 else:
                     self._owner.undo()
-                return
-            if key == Qt.Key.Key_Y and (mods & Qt.KeyboardModifier.ControlModifier) \
-                    and hasattr(self._owner, "redo"):
-                self._owner.redo()
                 return
         super().keyPressEvent(event)
 

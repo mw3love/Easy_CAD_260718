@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame, QProgressBar,
     QListWidget, QListWidgetItem, QRadioButton, QButtonGroup, QScrollArea,
+    QKeySequenceEdit,
 )
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -53,6 +54,7 @@ from easycad.fileio.svg_import import parse_svg_string
 from easycad.fileio import symbol_library
 from easycad.ai import gateway as gw
 from easycad.ai.text_to_svg import generate_svg, build_prompt, build_image_prompt
+from easycad.canvas import shortcuts
 
 
 # ---------------------------------------------------------------------------
@@ -1244,6 +1246,128 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         self._ai_btn.setEnabled(True)
         self._btns.setEnabled(True)
         self._worker = None
+
+
+class _ShortcutSettingsDialog(QDialog):
+    """단축키 재할당 창 — [실사용 요청 2026-08-21] 편집(&E) → "단축키 설정…". 대상은
+    `shortcuts.SHORTCUT_DEFS`(메뉴/툴바 QAction + `core_view.py`가 직접 매칭하는 뷰
+    단축키를 하나로 묶은 레지스트리) 전부 — 카테고리(도구/편집/파일/삽입/보기/도움말)별로
+    `QFormLayout`을 나눠 스크롤 영역에 쌓는다. 항목마다 `QKeySequenceEdit`+「초기화」.
+
+    같은 키를 두 항목에 중복 지정하면(이산 매칭이라 먼저 검사되는 쪽만 항상 이겨 나머지가
+    죽은 단축키가 된다) 실시간으로 감지해 OK를 막는다 — 저장 후에야 알아채면 원인을 못
+    찾는 조용한 버그가 되므로 입력 시점 차단이 낫다는 판단.
+
+    삭제=Backspace·다시 실행=Ctrl+Shift+Z는 `core_view.py`의 고정 별칭이라(재할당과
+    무관하게 항상 동작) 이 창에 노출하지 않는 대신 상단 안내문으로 고지한다.
+
+    OK를 눌러야 QSettings에 저장된다(Cancel은 변경 폐기, `_AIGatewaySettingsDialog`와
+    같은 관례) — 기본값과 같아진 항목은 `reset_sequence()`로 QSettings 키 자체를 지워
+    "저장된 커스터마이즈가 하나도 없음"과 "전부 기본값으로 되돌림"을 구분되게 둔다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("단축키 설정")
+        self.resize(480, 580)
+        outer = QVBoxLayout(self)
+
+        hint = QLabel(
+            "삭제는 Backspace, 다시 실행은 Ctrl+Shift+Z로도 항상 동작합니다(고정 별칭,"
+            " 아래 목록과 별개).", self)
+        hint.setWordWrap(True)
+        outer.addWidget(hint)
+
+        self._conflict_label = QLabel("", self)
+        self._conflict_label.setWordWrap(True)
+        self._conflict_label.setTextFormat(Qt.TextFormat.RichText)
+        outer.addWidget(self._conflict_label)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
+
+        self._edits: dict[str, QKeySequenceEdit] = {}
+        last_cat = None
+        form = None
+        for sid, cat, label, _default in shortcuts.SHORTCUT_DEFS:
+            if cat != last_cat:
+                cat_font = self.font()
+                cat_font.setBold(True)
+                cat_lbl = QLabel(f"[{cat}]", self)
+                cat_lbl.setFont(cat_font)
+                body_lay.addWidget(cat_lbl)
+                form = QFormLayout()
+                body_lay.addLayout(form)
+                last_cat = cat
+            edit = QKeySequenceEdit(QKeySequence(shortcuts.current_sequence(sid)), self)
+            edit.keySequenceChanged.connect(self._check_conflicts)
+            reset_btn = QToolButton(self)
+            reset_btn.setText("초기화")
+            reset_btn.setToolTip(f"기본값으로: {shortcuts.default_sequence(sid) or '(없음)'}")
+            reset_btn.clicked.connect(
+                lambda _c=False, s=sid, e=edit:
+                    e.setKeySequence(QKeySequence(shortcuts.default_sequence(s))))
+            row = QHBoxLayout()
+            row.addWidget(edit, 1)
+            row.addWidget(reset_btn)
+            form.addRow(label, row)
+            self._edits[sid] = edit
+
+        btn_row = QHBoxLayout()
+        reset_all_btn = QToolButton(self)
+        reset_all_btn.setText("전체 초기화")
+        reset_all_btn.clicked.connect(self._reset_all_fields)
+        btn_row.addWidget(reset_all_btn)
+        btn_row.addStretch(1)
+        outer.addLayout(btn_row)
+
+        self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                      | QDialogButtonBox.StandardButton.Cancel, self)
+        self._btns.accepted.connect(self._on_accept)
+        self._btns.rejected.connect(self.reject)
+        outer.addWidget(self._btns)
+
+        self._check_conflicts()
+
+    def _reset_all_fields(self):
+        for sid, edit in self._edits.items():
+            edit.setKeySequence(QKeySequence(shortcuts.default_sequence(sid)))
+
+    def _check_conflicts(self, *_a):
+        seen: dict[str, str] = {}
+        conflicts: set[str] = set()
+        for sid, edit in self._edits.items():
+            seq = edit.keySequence()
+            if seq.isEmpty():
+                continue
+            key = seq.toString()
+            if key in seen:
+                conflicts.add(sid)
+                conflicts.add(seen[key])
+            else:
+                seen[key] = sid
+        ok_btn = self._btns.button(QDialogButtonBox.StandardButton.Ok)
+        if conflicts:
+            names = ", ".join(shortcuts.label_of(s) for s in sorted(conflicts))
+            self._conflict_label.setText(
+                f"<span style='color:{_STATUS_FAIL_COLOR};'>같은 키가 중복 지정됨: "
+                f"{html.escape(names)}</span>")
+            ok_btn.setEnabled(False)
+        else:
+            self._conflict_label.setText("")
+            ok_btn.setEnabled(True)
+
+    def _on_accept(self):
+        for sid, edit in self._edits.items():
+            seq_str = edit.keySequence().toString()
+            if not seq_str or seq_str == shortcuts.default_sequence(sid):
+                shortcuts.reset_sequence(sid)
+            else:
+                shortcuts.set_sequence(sid, seq_str)
+        self.accept()
 
 
 class _AIGatewaySettingsDialog(QDialog):

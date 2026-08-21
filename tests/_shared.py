@@ -56,6 +56,12 @@ from easycad.ai import gateway as _gw
 _gw._SETTINGS_ORG = "EasyCAD-pytest"
 _gw._SETTINGS_APP = "EasyCAD-pytest"
 
+# [실사용 요청 2026-08-21, 단축키 설정] 같은 이유로 `easycad.canvas.shortcuts`도 실사용자
+# 레지스트리("EasyCAD"/"EasyCAD" — 다크모드 등 다른 설정과 같은 그룹)를 안 건드리게 격리.
+from easycad.canvas import shortcuts as _shortcuts
+_shortcuts._SETTINGS_ORG = "EasyCAD-pytest"
+_shortcuts._SETTINGS_APP = "EasyCAD-pytest"
+
 
 def _close(a, b, eps=0.5):
     return abs(a.x() - b.x()) < eps and abs(a.y() - b.y()) < eps
@@ -367,6 +373,20 @@ def _isolated_symbol_library():
     path = os.path.join(_TMP, f"symlib_{uuid.uuid4().hex}.json")
     with patch.object(symbol_library, "_library_path", return_value=path):
         yield
+
+
+@contextmanager
+def _isolated_shortcuts():
+    """[실사용 요청 2026-08-21] 단축키 설정을 매 테스트 시작/종료에 초기화 — `_shortcuts.
+    _SETTINGS_ORG/_APP`은 이미 격리값("EasyCAD-pytest")이라 실사용자 설정은 안 건드리지만,
+    그 격리된 그룹 자체엔 이전 테스트 실행이 남긴 값이 계속 쌓일 수 있어(디스크/레지스트리에
+    실제로 저장되므로) 테스트 간 서로 오염되지 않게 항상 리셋한다."""
+    from easycad.canvas import shortcuts
+    shortcuts.reset_all()
+    try:
+        yield
+    finally:
+        shortcuts.reset_all()
 
 
 def _mock_color_dialog_exec(picked: QColor):
