@@ -29,7 +29,7 @@ from easycad.canvas.annotator_core import (
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data, _dbg2,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -266,7 +266,11 @@ class _CanvasMixin:
                     # 지나간다 — 그 화살표를 직접 건드리기 전까지. 의도된 트레이드오프다.
                     if union is not None and moved is not None:
                         s0, s1 = it.bound_shapes()
-                        if s0 not in moved and s1 not in moved:
+                        skip = s0 not in moved and s1 not in moved
+                        _dbg2(f"[canvas] gate arrow#{id(it)} s0={type(s0).__name__}#{id(s0)} "
+                              f"s1={type(s1).__name__}#{id(s1)} s0_in_moved={s0 in moved} "
+                              f"s1_in_moved={s1 in moved} moved_ids={[id(m) for m in moved]} skip={skip}")
+                        if skip:
                             continue
                     it.reroute(pin_pred=self._make_pin_pred(it), fast=many_changed,
                                defer_route=defer)

@@ -441,6 +441,26 @@ def test_properties_dock_readout():
     assert w._pf_type.text() == "사각형 2개"
 
 
+def test_properties_type_shows_real_symbol_kind_not_generic_bucket():
+    # [실사용 피드백 2026-08-21] `_TYPE_NAMES`가 `_SymbolItem` 전부를 "심볼" 한 단어로
+    # 뭉개던 버그 — 삼각형·판단 등 실제 종류(_kind)가 "종류" 콤보에 그대로 보여야 한다.
+    from easycad.canvas.annotator_core import _SymbolItem
+    w = CanvasWindow()
+    tri = _SymbolItem("triangle", QRectF(0, 0, 90, 90))
+    tri.setFlags(tri.GraphicsItemFlag.ItemIsSelectable | tri.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(tri)
+    tri.setSelected(True)
+    w._refresh_properties()
+    assert w._pf_type.text() == "삼각형"
+    assert w._pf_swap_btn.text().startswith("삼각형")
+
+    dec = _SymbolItem("decision", QRectF(0, 0, 90, 90))
+    dec.setFlags(dec.GraphicsItemFlag.ItemIsSelectable | dec.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(dec)
+    w._scene.clearSelection(); dec.setSelected(True)
+    w._refresh_properties()
+    assert w._pf_type.text() == "판단"
+
 
 
 def test_props_edit_width_color_font_undoable():

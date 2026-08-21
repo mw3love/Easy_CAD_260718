@@ -42,6 +42,7 @@ from easycad.canvas.host_widgets import (
     _ARROW_KIND_TOOL, _arrow_kind_of, _style_menu_separators,
 )
 from easycad.canvas.host_dialogs import _CableNumberDialog, _SvgAssetDialog
+from easycad.fileio import symbol_library
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
@@ -255,8 +256,10 @@ class _ContextMixin:
     _SWAP_SYMBOL_KINDS = ("triangle", "decision", "terminal", "data", "prep", "database")
 
     def _build_swap_menu(self):
-        """도형 교체 대상 메뉴 — 네모·원 + 팔레트에 실제로 있는 심볼 6종만. 트리거 시 현재
-        단일 선택 도형을 변환."""
+        """도형 교체 대상 메뉴 — 기본도형 8종(네모·원 + 팔레트 심볼 6종) + 내 심볼(폴더별
+        구분선). [실사용 요청 2026-08-21] "내 심볼"도 전부 노출 — 다중 아이템 심볼은
+        "그룹으로 삽입" 방식(`_swap_to_custom_symbol`)이라 단일/다중을 가릴 필요가 없다
+        (사용자 결정: 그룹이니까 일단 바꾸고, 낱개 편집이 필요하면 그룹 해제)."""
         m = QMenu(self)
         _style_menu_separators(m)
         m.addAction("사각형", lambda: self._swap_selected("rect"))
@@ -265,6 +268,21 @@ class _ContextMixin:
         for kind in self._SWAP_SYMBOL_KINDS:
             label = _SYMBOL_KINDS[kind][0]
             m.addAction(label, lambda k=kind: self._swap_selected(f"sym:{k}"))
+        entries = symbol_library.load_library()
+        if entries:
+            by_folder: dict = {}
+            for e in entries:
+                by_folder.setdefault(e.get("folder"), []).append(e)
+            folders = symbol_library.load_folders()
+            groups = [("미분류", by_folder.get(None, []))] + [
+                (name, by_folder.get(name, [])) for name in folders]
+            for name, group_entries in groups:
+                if not group_entries:
+                    continue
+                m.addSeparator()
+                for e in group_entries:
+                    sym_id, sym_name = e["id"], e.get("name", "심볼")
+                    m.addAction(sym_name, lambda s=sym_id: self._swap_selected(f"customsym:{s}"))
         return m
 
 
@@ -318,23 +336,50 @@ class _ContextMixin:
         return out
 
 
-    def _rebind_arrow(self, arr, idx, new):
-        """화살표 끝점(idx)을 new 도형에 다시 바인딩. [M4-3 fix] 옛 도형 테두리 위 좌표를 그대로
-        쓰면 원·평행사변형처럼 외곽선이 안쪽으로 든 도형에선 끝점이 떠 버린다 → new의 실제
-        외곽선에 투영한 뒤 reroute로 끌어붙인다."""
+    def _arrow_endpoint_scene(self, arr, idx):
+        """화살표(idx=0 시작/1 끝)의 현재 끝점 씬좌표. `_rebind_arrow`/`_rebind_arrow_to_group`
+        공유."""
         if isinstance(arr, _ArrowItem):
             ep = arr._p1 if idx == 0 else arr._p2
         else:
             ep = arr._pts[0] if idx == 0 else arr._pts[-1]
-        ep_scene = arr.mapToScene(ep)
+        return arr.mapToScene(ep)
+
+
+    def _rebind_arrow(self, arr, idx, new):
+        """화살표 끝점(idx)을 new 도형에 다시 바인딩. [M4-3 fix] 옛 도형 테두리 위 좌표를 그대로
+        쓰면 원·평행사변형처럼 외곽선이 안쪽으로 든 도형에선 끝점이 떠 버린다 → new의 실제
+        외곽선에 투영한 뒤 reroute로 끌어붙인다."""
+        ep_scene = self._arrow_endpoint_scene(arr, idx)
         q_scene, _n = _nearest_border(new, ep_scene)   # new 외곽선 최근접점(회전·심볼 슬랜트 반영)
         arr.set_bound(idx, new, new.mapFromScene(q_scene))
         arr.reroute()   # 끝점을 new 외곽선 위로 즉시 이동(뜬 채로 남지 않게)
 
 
+    def _rebind_arrow_to_group(self, arr, idx, members):
+        """[그룹 스왑, 2026-08-21] `_rebind_arrow`의 그룹 버전 — 새로 들어온 여러 아이템 중
+        화살표 끝점에서 가장 가까운 외곽선을 가진 멤버를 골라 그쪽으로 재바인딩한다."""
+        ep_scene = self._arrow_endpoint_scene(arr, idx)
+        best = None
+        for m in members:
+            q_scene, _n = _nearest_border(m, ep_scene)
+            d = (ep_scene - q_scene).manhattanLength()
+            if best is None or d < best[0]:
+                best = (d, m, q_scene)
+        _d, m, q_scene = best
+        arr.set_bound(idx, m, m.mapFromScene(q_scene))
+        arr.reroute()
+
+
     def _swap_shape(self, item, target_kind):
         """[M4-3] 도형을 target_kind로 즉석 변환(크기·위치·라벨 유지). 연결 화살표는 new로
-        재바인딩. remove(old)+create(new)+화살표 geom 변경을 하나의 undo 엔트리로 묶는다."""
+        재바인딩. remove(old)+create(new)+화살표 geom 변경을 하나의 undo 엔트리로 묶는다.
+        [실사용 요청 2026-08-21] `target_kind`가 "customsym:<id>"면 내 심볼(단일/다중 아이템
+        무관)로 바꾸는 별도 경로(`_swap_to_custom_symbol`) — 새 아이템이 여럿일 수 있어
+        1:1 치환 전제인 이 함수와 분리."""
+        if target_kind.startswith("customsym:"):
+            self._swap_to_custom_symbol(item, target_kind[len("customsym:"):])
+            return
         new = self._make_swapped(item, target_kind)
         if new is None:
             return
@@ -349,6 +394,53 @@ class _ContextMixin:
         self._push_entry(ops)
         self._scene.clearSelection()
         new.setSelected(True)
+        self._refresh_properties()
+
+
+    def _swap_to_custom_symbol(self, item, sym_id: str):
+        """[실사용 요청 2026-08-21] '종류' 드롭다운 → 내 심볼로 바꾸기 — 그룹으로 삽입
+        (사용자 결정: "그룹이면 하나로 보는 거니까 일단 바꾸고, 그룹 안 객체를 바꾸고
+        싶으면 그룹 해제하면 된다" — 단일/다중 아이템 심볼을 가리지 않는 이유이기도 하다).
+        크기: 새 그룹 콘텐츠의 긴 변을 옛 도형의 긴 변에 맞춰 리스케일(종횡비 유지, 중심
+        유지) — `_generate_svg_replace`와 같은 관례. 화살표는 `_swap_shape`처럼 재바인딩
+        하되, 대상이 여러 개라 `_rebind_arrow_to_group`(가장 가까운 멤버 선택)을 쓴다.
+        라벨은 옮기지 않는다 — 다중 아이템 중 어느 멤버로 옮길지 원칙적으로 애매해서다
+        (단일→단일 스왑은 `_make_swapped`가 계속 라벨을 유지)."""
+        built = self._build_custom_symbol_items(sym_id)
+        if built is None:
+            return
+        items, box = built
+        if box.width() < 1e-6 or box.height() < 1e-6:
+            return
+        old_rect = item.mapToScene(QRectF(item.rect())).boundingRect()
+        target_long = max(old_rect.width(), old_rect.height())
+        content_long = max(box.width(), box.height())
+        scale = target_long / content_long if content_long > 1e-6 else 1.0
+        center = old_rect.center()
+        box_center = box.center()
+        for it in items:
+            offset = it.pos() - box_center
+            it.setPos(center + offset * scale)
+            it.setScale(it.scale() * scale)
+            it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
+
+        befores = [(arr, idx, arr.capture_geom()) for arr, idx in self._arrows_bound_to(item)]
+        self._scene.removeItem(item)
+        if len(items) >= 2:
+            gid = uuid.uuid4().hex[:8]
+            for it in items:
+                it._group_id = gid
+        for it in items:
+            self._scene.addItem(it)
+        ops = [("remove", item)] + [("create", it) for it in items]
+        for arr, idx, before in befores:
+            self._rebind_arrow_to_group(arr, idx, items)
+            arr.update()
+            ops.append(("mut", arr, "geom", before, arr.capture_geom()))
+        self._push_entry(ops)
+        self._scene.clearSelection()
+        for it in items:
+            it.setSelected(True)
         self._refresh_properties()
 
 

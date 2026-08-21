@@ -1067,3 +1067,93 @@ def test_favorites_zone_is_not_a_symbol_folder_drop_target():
         # 즐겨찾기(비-드롭) + 미분류(드롭) 2그룹 중 드롭 가능한 건 미분류 하나뿐.
         assert len(zones) == 2
         assert len(drop_zones) == 1
+
+
+# ---- [실사용 요청 2026-08-21] '종류' 드롭다운 — 내 심볼(폴더별 구분선) + 그룹 삽입 --------
+
+def test_swap_menu_includes_custom_symbol_folders_with_separators():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("미분류심볼", True)):
+            w.register_selection_as_symbol()
+        w._scene.clearSelection()
+
+        symbol_library.create_folder("장비")
+        r2 = _mk_pen_rect(w); r2.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("장비심볼", True)):
+            w.register_selection_as_symbol()
+        entries = symbol_library.load_library()
+        moved = next(e for e in entries if e["name"] == "장비심볼")
+        symbol_library.move_symbol(moved["id"], "장비")
+
+        actions = w._build_swap_menu().actions()
+        texts = [a.text() for a in actions if not a.isSeparator()]
+        # 기본 8종 뒤로 구분선 + 미분류 그룹 + 구분선 + "장비" 그룹이 이어진다.
+        assert texts[:8] == ["사각형", "원", "삼각형", "판단", "시작/끝", "입출력", "준비", "저장소"]
+        assert "미분류심볼" in texts and "장비심볼" in texts
+        sep_count = sum(1 for a in actions if a.isSeparator())
+        assert sep_count >= 3   # 기본/심볼 사이 1 + 폴더 그룹마다 1
+
+
+def test_swap_to_single_item_custom_symbol_replaces_and_rebinds():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        src = _mk_pen_rect(w, x=0, y=0, ww=60, hh=40); src.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("단일심볼", True)):
+            w.register_selection_as_symbol()
+        sym_id = symbol_library.load_library()[0]["id"]
+        w._scene.clear()
+
+        target = _mk_pen_rect(w, x=100, y=100, ww=80, hh=50)
+        arr = _PolyArrowItem(w.current_color, 2, True)
+        arr.set_points(QPointF(0, 125), QPointF(100, 125))
+        arr.setFlags(arr.GraphicsItemFlag.ItemIsSelectable | arr.GraphicsItemFlag.ItemIsMovable)
+        w._scene.addItem(arr)
+        arr.set_bound(1, target, target.mapFromScene(QPointF(100, 125)))
+        arr.reroute()
+
+        w._scene.clearSelection(); target.setSelected(True)
+        w._swap_shape(target, f"customsym:{sym_id}")
+
+        remaining = [it for it in w._scene.items()
+                     if isinstance(it, _RectItem) and it is not target]
+        assert target.scene() is None   # 옛 도형은 제거됨
+        assert len(remaining) == 1
+        new_item = remaining[0]
+        assert arr._bind_end is new_item   # 화살표가 새 도형으로 재바인딩
+        w.undo()
+        assert target.scene() is not None and new_item.scene() is None
+        assert arr._bind_end is target
+
+
+def test_swap_to_multi_item_custom_symbol_inserts_as_group_and_rebinds():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        sym_id = _register_two_shape_symbol(w)   # rect 60x40 + ellipse 30x30, 2 items
+
+        target = _mk_pen_rect(w, x=200, y=200, ww=80, hh=50)
+        arr = _PolyArrowItem(w.current_color, 2, True)
+        arr.set_points(QPointF(0, 225), QPointF(200, 225))
+        arr.setFlags(arr.GraphicsItemFlag.ItemIsSelectable | arr.GraphicsItemFlag.ItemIsMovable)
+        w._scene.addItem(arr)
+        arr.set_bound(1, target, target.mapFromScene(QPointF(200, 225)))
+        arr.reroute()
+
+        d0 = len(w._undo)
+        w._scene.clearSelection(); target.setSelected(True)
+        w._swap_shape(target, f"customsym:{sym_id}")
+
+        assert target.scene() is None
+        new_items = [it for it in w._scene.items()
+                     if isinstance(it, (_RectItem, _EllipseItem))]
+        assert len(new_items) == 2
+        gids = {it._group_id for it in new_items}
+        assert len(gids) == 1 and None not in gids   # 같은 그룹으로 묶임
+        assert arr._bind_end in new_items            # 가장 가까운 멤버로 재바인딩
+        assert len(w._undo) == d0 + 1                 # 단일 undo 엔트리
+
+        w.undo()
+        assert target.scene() is not None
+        assert all(it.scene() is None for it in new_items)
+        assert arr._bind_end is target

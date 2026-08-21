@@ -284,8 +284,15 @@ class _StyleMixin:
         elif hasattr(item, "set_bg"):
             bg = getattr(item, "_bg", None)
             fill = QColor(bg) if bg is not None else None
+        # [실사용 피드백 2026-08-21] `_TYPE_NAMES`엔 `_SymbolItem` 클래스 하나에 "심볼"
+        # 한 단어뿐이라, 삼각형·판단·저장소 등 19종 심볼이 전부 그 이름으로 뭉개졌다 —
+        # 실제 종류(`_kind`)가 이미 있으니 그대로 쓴다("종류" 콤보가 그 값을 그대로 표시).
+        if isinstance(item, _SymbolItem) and item._kind in _SYMBOL_KINDS:
+            type_name = _SYMBOL_KINDS[item._kind][0]
+        else:
+            type_name = _TYPE_NAMES.get(type(item).__name__, "객체")
         return {
-            "type": _TYPE_NAMES.get(type(item).__name__, "객체"),
+            "type": type_name,
             "color": QColor(col) if col is not None else None,
             "width": width, "style": style, "font": font,
             "has_fill": has_fill, "fill": fill,

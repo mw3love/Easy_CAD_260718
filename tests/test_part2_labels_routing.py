@@ -39,10 +39,12 @@ def test_swap_menu_hides_symbols_not_in_palette():
     # [실사용 피드백 2026-08-21] `_build_swap_menu`가 백엔드 _SYMBOL_KINDS 전체(19종)를
     # 나열해 2026-08-04에 팔레트에서 뺀 옛 흐름도/안테나 심볼까지 유령처럼 노출되던 버그.
     # 팔레트 기본도형 그리드와 정확히 같은 8종(사각형·원 + 심볼 6종)만 남아야 한다.
-    w = CanvasWindow()
-    labels = [a.text() for a in w._build_swap_menu().actions() if not a.isSeparator()]
-    assert labels == ["사각형", "원", "삼각형", "판단", "시작/끝", "입출력", "준비", "저장소"]
-    assert "문서" not in labels and "MW 파라볼릭(측면)" not in labels and "번개 표식" not in labels
+    # (내 심볼 라이브러리는 비워서 격리 — 실제 등록분과 무관하게 기본 8종만 검증.)
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        labels = [a.text() for a in w._build_swap_menu().actions() if not a.isSeparator()]
+        assert labels == ["사각형", "원", "삼각형", "판단", "시작/끝", "입출력", "준비", "저장소"]
+        assert "문서" not in labels and "MW 파라볼릭(측면)" not in labels and "번개 표식" not in labels
 
 
 def test_arrow_endpoint_drag_onto_line_no_crash():

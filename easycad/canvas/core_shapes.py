@@ -41,6 +41,21 @@ from easycad.theme import (
 
 from easycad.canvas.core_constants import *  # noqa: F401,F403
 
+# [임시 진단 로그 2026-08-21] 종류 콤보로 도형 스왑 후 화살표 머리쪽이 드래그를 안 따라오는
+# 버그 재현용 — `core_view.py`의 `_dbg`/`_DBG_LOG_PATH`와 같은 파일에 쓴다(이 모듈은 core_view를
+# import 못 하는 방향이라 순환참조 피하려고 작은 사본을 둔다). 사용자 요청 전엔 제거 금지.
+_DBG_LOG_PATH2 = r"C:\Users\minwoo\Desktop\PasteFlow\easycad_debug.log"
+
+
+def _dbg2(msg: str) -> None:
+    try:
+        import datetime
+        with open(_DBG_LOG_PATH2, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]} [shapes] {msg}\n")
+    except Exception:
+        pass
+
+
 # [실사용 피드백 2026-08-18] 미니맵(host_widgets._MinimapView._rebuild_pixmap)·커스텀 심볼
 # 썸네일(host_selection._render_symbol_thumbnail) 둘 다 씬을 그대로 축소 렌더한다 — 실제
 # 도형 두께가 1px(기본값)면 축소 후 소수점 이하로 사라져 안 보인다. 사용자가 실측으로 확인한
@@ -4316,6 +4331,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         if not self.has_binding():
             return False
         end_idx = len(self._pts) - 1
+        _dbg2(f"reroute() enter id={id(self)} end_idx={end_idx} pts={self._pts} "
+              f"auto_route={self._auto_route} pin_pred={'set' if pin_pred else 'none'}")
         if pin_pred is None or (pin_pred(0) and pin_pred(end_idx)):
             sh0, sh1 = self._bound(0), self._bound(end_idx)
             pt0, pt1 = self._bind_pt(0), self._bind_pt(end_idx)
@@ -4339,13 +4356,19 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         for idx in (0, len(self._pts) - 1):
             sh = self._bound(idx)
             pt = self._bind_pt(idx)
+            which = "TAIL(idx0)" if idx == 0 else "HEAD(end_idx)"
+            sh_desc = f"{type(sh).__name__}#{id(sh)}" + (f" kind={sh._kind}" if hasattr(sh, "_kind") else "")
             if sh is None or pt is None or sh.scene() is None:
+                _dbg2(f"  {which} skip: sh={sh_desc} pt={pt} sh.scene()={None if sh is None else sh.scene()}")
                 continue
             if pin_pred is not None and not pin_pred(idx):
+                _dbg2(f"  {which} skip: pin_pred(idx)=False sh={sh_desc}")
                 continue
             target = self.mapFromScene(sh.mapToScene(pt))
             cur = self._pts[idx]
-            if abs(target.x() - cur.x()) > 1e-6 or abs(target.y() - cur.y()) > 1e-6:
+            moved_flag = abs(target.x() - cur.x()) > 1e-6 or abs(target.y() - cur.y()) > 1e-6
+            _dbg2(f"  {which} sh={sh_desc} cur={cur} target={target} moved={moved_flag} manual_ortho={manual_ortho}")
+            if moved_flag:
                 # [M4-4 ⑦] 수동 직교 폴리라인(세그먼트 드래그 후)은 끝점을 따라가되 인접 정점을 함께
                 # 옮겨 첫/끝 변(스텁)을 직교로 유지한다(auto_route면 아래 _apply_routing이 통째로 재계산).
                 if manual_ortho:
@@ -4356,6 +4379,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                                          else QPointF(nb.x(), target.y()))
                 self._set_endpoint(idx, target)
                 changed = True
+        _dbg2(f"reroute() exit id={id(self)} changed={changed} pts_after={self._pts}")
         # [M4-4 ⑦] 자동 라우팅이면 라우팅 스타일대로 재계산(straight=2점 유지 / ortho=엘보 재계산).
         # 한쪽만 바인딩돼도(has_binding) 재적용해 도형 이동 시 직교가 깨지지 않게 한다
         # (_apply_routing이 양끝 바인딩=A*, 한쪽=단순 엘보로 분기). 수동 세그먼트 편집(auto_route
