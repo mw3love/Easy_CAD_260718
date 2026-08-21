@@ -5322,6 +5322,15 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         super().setTextInteractionFlags(flags)
 
     def focusOutEvent(self, event):
+        # [버그 수정] 편집 진입(더블클릭 재편집)이 텍스트 전체를 select-all 해두는데, 여기서
+        # 편집 권한만 끄고 선택 자체는 안 지웠다 — Qt는 QTextCursor에 선택이 남아 있으면 그
+        # 하이라이트 배경을 계속 그려서(이 시스템 팔레트에서 주황), 아무것도 고치지 않고
+        # 바깥을 클릭해 나가도 하이라이트가 영구히 남았다(실사용 재현: 더블클릭→클릭만으로
+        # 나가면 주황 배경이 "안 풀림"). 편집을 끝낼 땐 항상 선택부터 지운다.
+        cur = self.textCursor()
+        if cur.hasSelection():
+            cur.clearSelection()
+            self.setTextCursor(cur)
         self.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         super().focusOutEvent(event)
         # 연속 텍스트 모드에서 빈 클릭으로 생긴 빈 텍스트는 정리(undo는 scene None 가드로 무해).

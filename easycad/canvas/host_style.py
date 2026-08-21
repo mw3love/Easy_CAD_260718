@@ -162,8 +162,13 @@ class _StyleMixin:
 
     def _edit_fill(self):
         """[신규기능] 채움색 선택 — 스와치 클릭. 그리드 팝업의 "다른 색…"은 알파 채널 허용
-        (반투명 채움, .ecad가 이미 HexArgb로 왕복 지원 — document.py 무변경)."""
-        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_fill")]
+        (반투명 채움, .ecad가 이미 HexArgb로 왕복 지원 — document.py 무변경).
+        [버그 수정] 텍스트(_TextItem/_ConnectorLabel)는 apply_fill이 없어 이 스와치가 항상
+        비활성으로 굳어 있었다 — 대신 이미 구현돼 있던 `set_bg`(자막/스티커 배경, 지금까지
+        UI에 안 걸려 있던 죽은 기능)를 "채움"이 그대로 대신 쓰도록 연결한다(실사용 보고:
+        "속성에서 채움도 안되는듯")."""
+        sel = [it for it in self._scene.selectedItems()
+               if hasattr(it, "apply_fill") or hasattr(it, "set_bg")]
         if not sel:
             return
         init = self._read_props(sel[0])["fill"] or QColor("#ffffff")
@@ -172,7 +177,8 @@ class _StyleMixin:
             if col is None:
                 self._clear_fill()
                 return
-            self._edit_items(sel, lambda it: it.apply_fill(QColor(col)))
+            self._edit_items(sel, lambda it: it.apply_fill(QColor(col))
+                             if hasattr(it, "apply_fill") else it.set_bg(QColor(col)))
             self.current_fill = QColor(col)   # sticky
 
         self._show_color_grid_popup(self._pf_fill, init, True, True, "채움색 선택", on_pick)
@@ -181,10 +187,12 @@ class _StyleMixin:
     def _clear_fill(self):
         """채움을 투명으로(None) — 그리드 팝업의 "없음" 항목이 호출(요청③: 별도 외부 버튼
         대신 팝업 안 항목)."""
-        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_fill")]
+        sel = [it for it in self._scene.selectedItems()
+               if hasattr(it, "apply_fill") or hasattr(it, "set_bg")]
         if not sel:
             return
-        self._edit_items(sel, lambda it: it.apply_fill(None))
+        self._edit_items(sel, lambda it: it.apply_fill(None)
+                         if hasattr(it, "apply_fill") else it.set_bg(None))
         self.current_fill = None
 
 
@@ -238,6 +246,13 @@ class _StyleMixin:
         if col is None and hasattr(item, "pen"):
             try: col = item.pen().color()
             except Exception: col = None
+        # [버그 수정] 텍스트(_TextItem/_ConnectorLabel)는 _color도 pen()도 없어(글자색은
+        # QGraphicsTextItem.defaultTextColor() 소유) 위 두 분기가 항상 실패 → color가 계속
+        # None으로 읽혀 "색" 스와치가 비활성화된 채 굳어 있었다(실사용 보고: 텍스트·화살표
+        # 라벨 선택 시 색 편집이 아예 안 먹힘).
+        if col is None and hasattr(item, "defaultTextColor"):
+            try: col = item.defaultTextColor()
+            except Exception: col = None
         width = getattr(item, "_width", None)
         if width is None and hasattr(item, "pen"):
             try: width = item.pen().widthF()
@@ -253,17 +268,22 @@ class _StyleMixin:
                 font = fs if fs and fs > 0 else None
             except Exception:
                 font = None
-        # [신규기능] 채움색 — rect/ellipse/symbol만 지원(apply_fill 존재로 판정). fill=None은
-        # "지원하지만 지금 투명"이라 has_fill과 분리해야 한다(color/width처럼 항상 값이 있는
-        # 속성과 달리, 채움은 "이 항목이 채움 자체를 지원하는가"를 따로 알아야 함).
-        has_fill = hasattr(item, "apply_fill")
+        # [신규기능] 채움색 — rect/ellipse/symbol은 apply_fill(브러시), 텍스트류는 set_bg
+        # (자막/스티커 배경 — 버그 수정으로 "채움" 스와치가 대신 이걸 쓰도록 연결됨, 위
+        # _edit_fill 참조)로 판정. fill=None은 "지원하지만 지금 투명"이라 has_fill과
+        # 분리해야 한다(color/width처럼 항상 값이 있는 속성과 달리, 채움은 "이 항목이
+        # 채움 자체를 지원하는가"를 따로 알아야 함).
+        has_fill = hasattr(item, "apply_fill") or hasattr(item, "set_bg")
         fill = None
-        if has_fill:
+        if hasattr(item, "apply_fill"):
             try:
                 fill = (QColor(item.brush().color())
                        if item.brush().style() != Qt.BrushStyle.NoBrush else None)
             except Exception:
                 fill = None
+        elif hasattr(item, "set_bg"):
+            bg = getattr(item, "_bg", None)
+            fill = QColor(bg) if bg is not None else None
         return {
             "type": _TYPE_NAMES.get(type(item).__name__, "객체"),
             "color": QColor(col) if col is not None else None,
