@@ -15,7 +15,7 @@ from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPixmap
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _PolygonItem,
-    _reposition_port_from_frac,
+    _ConnectorLabel, _reposition_port_from_frac, _TEXT,
 )
 
 FORMAT = "easycad-doc"
@@ -24,6 +24,24 @@ VERSION = 1
 
 def _col(c: QColor) -> str:
     return c.name(QColor.NameFormat.HexArgb)
+
+
+def _label_to_dict(lbl) -> dict:
+    """[우리 확장] 라벨 하나(_TextItem/_ConnectorLabel)를 dict로 — 도형 중앙 라벨(단수 "label")과
+    화살표 라벨(복수 "labels") 양쪽이 공유한다. 화살표 라벨(`_conn_t`/`_conn_off` 보유)만
+    경로 위 위치(t)+수직 오프셋(off)을 추가로 담는다(FigJam/Lucid 드래그)."""
+    bg = lbl._bg
+    d = {
+        "text": lbl.toPlainText(),
+        "color": _col(lbl.defaultTextColor()),
+        # 중앙 라벨은 도형에 맞춰 렌더 폰트가 축소될 수 있으니 '기준' 크기(_base_pt)를 저장.
+        "font": getattr(lbl, "_base_pt", lbl.font().pointSize()),
+        "bg": None if bg is None else [bg.red(), bg.green(), bg.blue(), bg.alpha()],
+    }
+    if isinstance(lbl, _ConnectorLabel):
+        d["t"] = getattr(lbl, "_conn_t", 0.5)
+        d["off"] = getattr(lbl, "_conn_off", 0.0)
+    return d
 
 
 # ---- 공통 변환 -------------------------------------------------------------
@@ -254,21 +272,14 @@ def item_to_dict(it) -> dict | None:
     if "pen" in d:
         d["style"] = int(it.pen().style().value)
     # [우리 확장] 선·화살표·닫힌도형(네모·원·심볼)에 붙은 라벨 — 본체 dict 안에 함께 직렬화.
-    if isinstance(it, (_ArrowItem, _LineItem, _PolyArrowItem,
-                       _SymbolItem, _RectItem, _EllipseItem, _PolygonItem)) and it.has_label():
-        lbl = it._label
-        bg = lbl._bg
-        d["label"] = {
-            "text": lbl.toPlainText(),
-            "color": _col(lbl.defaultTextColor()),
-            # 중앙 라벨은 도형에 맞춰 렌더 폰트가 축소될 수 있으니 '기준' 크기(_base_pt)를 저장.
-            "font": getattr(lbl, "_base_pt", lbl.font().pointSize()),
-            "bg": None if bg is None else [bg.red(), bg.green(), bg.blue(), bg.alpha()],
-        }
-        # [우리 확장] 화살표 라벨은 경로/곡선 위 위치(t)+수직 오프셋(off)까지 저장(FigJam/Lucid 드래그).
-        if isinstance(it, (_ArrowItem, _PolyArrowItem)):
-            d["label"]["t"] = it._label_t
-            d["label"]["off"] = it._label_off
+    if isinstance(it, (_ArrowItem, _PolyArrowItem)) and it.has_label():
+        # [다중 라벨 2026-08-21] 화살표는 라벨을 여러 개 가질 수 있어 리스트("labels")로
+        # 저장한다 — 옛 단수 "label" 키는 하위호환 로드 전용(아래 dict_to_item)이고, 새로
+        # 저장하는 파일은 항상 "labels"만 쓴다(1개짜리도 리스트 원소 1개).
+        d["labels"] = [_label_to_dict(lbl) for lbl in it._live_labels() if lbl.toPlainText().strip()]
+    elif isinstance(it, (_LineItem, _SymbolItem, _RectItem, _EllipseItem, _PolygonItem)) \
+            and it.has_label():
+        d["label"] = _label_to_dict(it._label)
     # [신규기능 §8-12] 부착된 포트 — 라벨과 동일하게 부모 dict 안에 중첩 직렬화.
     if getattr(it, "_ports", None):
         d["ports"] = [_port_to_dict(p) for p in it._ports]
@@ -399,8 +410,21 @@ def insert_items(scene, items: list[dict]) -> list:
             if j is not None and 0 <= j < len(created) and created[j] is not None and pt is not None:
                 it.set_bound(bi, created[j], QPointF(*pt))
     # [우리 확장] 선·화살표 라벨 복원(본체가 씬에 들어간 뒤라 자식 부착 가능).
+    # [다중 라벨 2026-08-21] 화살표/직선화살은 새 "labels"(리스트) 키를 우선 읽고, 없으면
+    # 옛 파일의 단수 "label" 키로 하위호환 폴백한다(둘 다 없으면 아무것도 안 함).
     for d, it in zip(items, created):
-        if it is not None and d.get("label") and hasattr(it, "restore_label"):
+        if it is None:
+            continue
+        if isinstance(it, (_ArrowItem, _PolyArrowItem)) and d.get("labels"):
+            for ld in d["labels"]:
+                lbl = it.add_label_at_t(ld.get("t", 0.5), ld.get("off", 0.0))
+                lbl.apply_font_size(ld.get("font", 16))
+                lbl.setPlainText(ld.get("text", ""))
+                lbl.apply_color(QColor(ld.get("color", _TEXT)))
+                if ld.get("bg") is not None:
+                    lbl.set_bg(QColor(*ld["bg"]))
+            it._sync_label()
+        elif d.get("label") and hasattr(it, "restore_label"):
             it.restore_label(d["label"])
             # [우리 확장] 화살표 라벨의 경로/곡선 위 위치(t·off) 복원 후 재배치(없으면 기본 중점).
             if isinstance(it, (_ArrowItem, _PolyArrowItem)):

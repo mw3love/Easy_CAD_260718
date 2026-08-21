@@ -3747,10 +3747,20 @@ class _AnnotatorView(QGraphicsView):
         """[우리 확장 · Phase 4] 표 셀 (r, c)에 인라인 편집기를 띄운다."""
         self._cell_editor = _CellEditor(self, item, r, c)
 
-    def _begin_label_edit(self, item):
-        """[우리 확장] 선/화살표의 라벨을 생성(없으면)하고 편집 모드로 진입."""
-        new = not item._label_alive()
-        lbl = item.ensure_label()
+    def _begin_label_edit(self, item, scene_pos=None):
+        """[우리 확장] 선/화살표의 라벨을 생성(없으면)하고 편집 모드로 진입.
+        [다중 라벨 2026-08-21] 화살표(_ArrowItem/_PolyArrowItem) 선 위 빈 자리를 더블클릭한
+        경우(scene_pos 있음)는 기존 라벨을 재편집하는 게 아니라 그 자리에 새 라벨을 하나 더
+        만든다 — 이미 라벨이 있는 자리를 더블클릭하면 Qt 히트테스트가 이 함수 대신 그 라벨
+        자신의 mouseDoubleClickEvent로 바로 보내므로(`_labelable_at`이 라벨 위에서는 None을
+        반환) 여기 도달했다는 것 자체가 "빈 선 위"라는 뜻이다. 도형·선(_LineItem)은 라벨이
+        하나뿐이라 예전처럼 있으면 재사용·없으면 생성."""
+        if isinstance(item, (_ArrowItem, _PolyArrowItem)) and scene_pos is not None:
+            lbl = item.add_label_at_scene_pos(scene_pos)
+            new = True
+        else:
+            new = not item._label_alive()
+            lbl = item.ensure_label()
         if new:
             self._owner.push_undo_add(lbl)   # 라벨 생성 되돌리기(빈 채 나가면 자동 폐기됨)
         self.scene().clearSelection()
@@ -3812,7 +3822,7 @@ class _AnnotatorView(QGraphicsView):
         if event.button() == Qt.MouseButton.LeftButton:
             target = self._labelable_at(event.position().toPoint())
             if target is not None:
-                self._begin_label_edit(target)
+                self._begin_label_edit(target, self.mapToScene(event.position().toPoint()))
                 event.accept()
                 return
         super().mouseDoubleClickEvent(event)

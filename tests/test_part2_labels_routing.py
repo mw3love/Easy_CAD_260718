@@ -478,14 +478,15 @@ def test_arrow_label_3_positions_and_gap():
         br = lbl._content_rect()
         D = br.height() / 2.0 + _LABEL_SIDE_GAP
         assert cls._LABEL_GAP_PAD == 2.0                    # 갭 패딩 축소
-        # 큰 아래 오프셋 → +D 스냅, t 유지
-        ar._reproject_label(QPointF(50 - br.width() / 2, 40 - br.height() / 2))
+        # 큰 아래 오프셋 → +D 스냅, t 유지 ([다중 라벨] _reproject_label은 이제 어느 라벨인지
+        # 명시로 받는다 — 화살표당 라벨이 여러 개일 수 있어서).
+        ar._reproject_label(lbl, QPointF(50 - br.width() / 2, 40 - br.height() / 2))
         assert abs(ar._label_off - D) < 1e-6 and abs(ar._label_t - 0.5) < 0.05
         # 큰 위 오프셋 → -D 스냅
-        ar._reproject_label(QPointF(50 - br.width() / 2, -40 - br.height() / 2))
+        ar._reproject_label(lbl, QPointF(50 - br.width() / 2, -40 - br.height() / 2))
         assert abs(ar._label_off + D) < 1e-6
         # 선 근처(작은 오프셋) → 0(선 위)로 흡수
-        ar._reproject_label(QPointF(50 - br.width() / 2, 1 - br.height() / 2))
+        ar._reproject_label(lbl, QPointF(50 - br.width() / 2, 1 - br.height() / 2))
         assert ar._label_off == 0.0
         w._scene.removeItem(ar)
 
@@ -2048,3 +2049,173 @@ def test_only_connected_arrows_reroute_not_bystanders():
 
     assert mine in calls, "연결된 화살표가 재계산 대상에서 빠졌다"
     assert bystander not in calls, "무관한 화살표까지 재계산 대상에 들어갔다(낙장불입 위반)"
+
+
+
+
+# ---------------------------------------------------------------------------
+# [다중 라벨 2026-08-21] 화살표 하나에 라벨 여러 개 — deep-interview로 확정한 설계:
+# 임의 위치·개수 제한 없음, 화살표 선 위 빈 자리 더블클릭=새 라벨, 라벨 클릭+Delete=그
+# 하나만 삭제. 기존 단일-라벨 API(ensure_label/_label/_label_t/_label_off)는 전부
+# "첫 번째 라벨" 하위호환으로 그대로 유지된다(위 기존 테스트 전부 무변경으로 통과).
+# ---------------------------------------------------------------------------
+
+def test_arrow_add_label_at_t_multiple_independent_positions():
+    # add_label_at_t로 라벨을 두 개 붙이면 서로 다른 t를 각자 유지하고, 둘 다 살아있다.
+    for cls in (_ArrowItem, _PolyArrowItem):
+        w = CanvasWindow()
+        ar = cls(QColor("#ff111111"), 4, True)
+        ar.set_points(QPointF(0, 0), QPointF(200, 0))
+        ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+        w._scene.addItem(ar)
+        l1 = ar.add_label_at_t(0.2); l1.setPlainText("A"); ar._sync_label()
+        l2 = ar.add_label_at_t(0.8); l2.setPlainText("B"); ar._sync_label()
+        assert l1 is not l2
+        assert {l.toPlainText() for l in ar._live_labels()} == {"A", "B"}
+        assert abs(l1._conn_t - 0.2) < 1e-6 and abs(l2._conn_t - 0.8) < 1e-6
+        # 하위호환: _label/_label_t는 첫 번째(생성 순서상 l1)를 가리킨다.
+        assert ar._label is l1
+        assert abs(ar._label_t - 0.2) < 1e-6
+        # 서로 다른 앵커(경로 위 다른 지점)에 놓인다 — 겹치지 않음.
+        a1, a2 = ar._label_anchor_for(l1), ar._label_anchor_for(l2)
+        assert abs(a1.x() - a2.x()) > 50
+
+
+def test_arrow_ensure_label_reuses_first_does_not_duplicate():
+    # 기존 단일-라벨 API(ensure_label)는 여러 번 불러도 같은 라벨을 계속 반환한다
+    # (다중 라벨을 만드는 건 add_label_at_t/add_label_at_scene_pos 뿐).
+    ar = _PolyArrowItem(QColor("#ff111111"), 4, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 0))
+    w = CanvasWindow(); w._scene.addItem(ar)
+    l1 = ar.ensure_label(); l1.setPlainText("only")
+    l2 = ar.ensure_label()
+    assert l1 is l2
+    assert len(ar._live_labels()) == 1
+
+
+def test_arrow_multi_label_gap_rects_and_visible_path_has_two_gaps():
+    # 라벨 2개 = 갭 사각형 2개, 폴리라인 시각 경로가 두 라벨 자리 모두에서 끊긴다.
+    ar = _PolyArrowItem(QColor("#ff111111"), 4, True)
+    ar.set_points(QPointF(0, 0), QPointF(300, 0))
+    w = CanvasWindow(); w._scene.addItem(ar)
+    assert ar._label_gap_rects() == []                     # 라벨 없음 = 갭 없음
+    l1 = ar.add_label_at_t(0.2); l1.setPlainText("A"); ar._sync_label()
+    l2 = ar.add_label_at_t(0.8); l2.setPlainText("B"); ar._sync_label()
+    rects = ar._label_gap_rects()
+    assert len(rects) == 2
+    path = ar._visible_polyline_path()
+    # 열린 폴리라인(면적 없음)이라 contains()는 못 쓴다 — 연속 구간(subpath)별 x범위로 확인.
+    polys = path.toSubpathPolygons()
+    assert len(polys) == 3, "라벨 2개가 만드는 갭 2개로 시각 경로가 3구간으로 끊겨야 함"
+    covered = [(min(p.x() for p in poly), max(p.x() for p in poly)) for poly in polys]
+
+    def _covered(x):
+        return any(lo - 1e-6 <= x <= hi + 1e-6 for lo, hi in covered)
+
+    # 두 라벨 중심 x좌표는 시각 경로가 지나지 않아야 한다(갭으로 비워짐).
+    for lbl in (l1, l2):
+        cx = lbl.pos().x() + lbl._content_rect().center().x()
+        assert not _covered(cx)
+    # 라벨 사이(t=0.5 부근)는 여전히 그려진다.
+    assert _covered(150)
+
+
+def test_arrow_multi_label_delete_one_keeps_other():
+    # 라벨 하나를 씬에서 제거해도(=선택+Delete와 동일한 결과) 나머지 라벨은 그대로 남는다.
+    ar = _PolyArrowItem(QColor("#ff111111"), 4, True)
+    ar.set_points(QPointF(0, 0), QPointF(200, 0))
+    w = CanvasWindow(); w._scene.addItem(ar)
+    l1 = ar.add_label_at_t(0.2); l1.setPlainText("A")
+    l2 = ar.add_label_at_t(0.8); l2.setPlainText("B")
+    w._scene.removeItem(l1)                                 # Delete키 경로가 하는 것과 동일
+    assert ar._live_labels() == [l2]
+    assert ar.has_label() and ar._label is l2
+
+
+def test_arrow_multi_label_document_roundtrip():
+    # .ecad 저장/로드로 라벨 2개(텍스트·색·폰트·t·off)가 모두 보존된다(새 "labels" 리스트 포맷).
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    ar = _PolyArrowItem(QColor("#ff111111"), 4, True)
+    ar.set_points(QPointF(0, 0), QPointF(300, 0))
+    sc.addItem(ar)
+    l1 = ar.add_label_at_t(0.2); l1.setPlainText("Alpha"); l1.apply_color(QColor("#ff0000"))
+    l2 = ar.add_label_at_t(0.8, off=10.0); l2.setPlainText("Beta"); l2.apply_font_size(20)
+    ar._sync_label()
+    d = item_to_dict(ar)
+    assert "labels" in d and len(d["labels"]) == 2 and "label" not in d
+    path = os.path.join(_TMP, "arrow_multi_label.ecad")
+    save_document(sc, path)
+    sc2 = QGraphicsScene(); load_document(sc2, path)
+    ar2 = [it for it in sc2.items() if isinstance(it, _PolyArrowItem)][0]
+    texts = {l.toPlainText() for l in ar2._live_labels()}
+    assert texts == {"Alpha", "Beta"}
+    alpha = next(l for l in ar2._live_labels() if l.toPlainText() == "Alpha")
+    beta = next(l for l in ar2._live_labels() if l.toPlainText() == "Beta")
+    assert abs(alpha._conn_t - 0.2) < 1e-6
+    assert abs(beta._conn_t - 0.8) < 1e-6 and abs(beta._conn_off - 10.0) < 1e-6
+    assert beta.font().pointSize() == 20 or beta._base_pt == 20
+
+
+def test_old_singular_label_format_still_loads_into_arrow():
+    # [하위호환] 옛 파일 포맷(단수 "label" 키, "labels" 없음)도 화살표에 그대로 로드된다.
+    from easycad.fileio.document import insert_items
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    d = {
+        "type": "sarrow", "pos": [0, 0], "scale": 1.0, "rotation": 0.0, "z": 0.0,
+        "origin": [0, 0], "locked": False, "group_id": None, "layer_id": None,
+        "pts": [[0, 0], [100, 0]], "color": "#ffff0000", "width": 2.0, "head": True,
+        "style": 1, "auto_route": False, "routing": "ortho", "curve_r": 10.0,
+        "route_hints": [],
+        "label": {"text": "옛형식", "color": "#ffffffff", "font": 16, "bg": None,
+                  "t": 0.35, "off": 5.0},
+    }
+    created = insert_items(sc, [d])
+    assert len(created) == 1
+    ar = created[0]
+    assert ar.has_label() and ar._label.toPlainText() == "옛형식"
+    assert abs(ar._label_t - 0.35) < 1e-6 and abs(ar._label_off - 5.0) < 1e-6
+
+
+def test_begin_label_edit_on_empty_line_spot_creates_new_label_not_reuse():
+    # [UI] 화살표 선 위 빈 자리를 더블클릭 = 그 자리에 새 라벨(기존 라벨 재편집 아님).
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    ar = _PolyArrowItem(QColor("#ff111111"), 4, True)
+    ar.set_points(QPointF(0, 0), QPointF(200, 0))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    view = w._view
+
+    view._begin_label_edit(ar, QPointF(30, 0))     # 첫 번째: 선 왼쪽 부근
+    lbl1 = ar._live_labels()[-1]
+    lbl1.setPlainText("First")
+    lbl1.clearFocus()                              # focusOut → 편집 종료(빈 텍스트 아니므로 유지)
+
+    view._begin_label_edit(ar, QPointF(170, 0))    # 두 번째: 선 오른쪽 부근 — 새 라벨이어야 함
+    labels = ar._live_labels()
+    assert len(labels) == 2, "두 번째 더블클릭이 새 라벨을 만들지 않고 기존 것을 재사용했다"
+    lbl2 = labels[-1]
+    assert lbl2 is not lbl1
+    assert lbl2._conn_t > lbl1._conn_t             # 오른쪽에 놓인 라벨이 더 큰 t
+
+
+def test_double_click_on_existing_label_reedits_same_one():
+    # [UI] 이미 있는 라벨 자리를 더블클릭하면 새로 만들지 않고 그 라벨 자체가 편집모드로 들어간다
+    # (Qt 히트테스트가 _labelable_at보다 먼저 라벨 자신에게 이벤트를 보낸다).
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
+    ar = _PolyArrowItem(QColor("#ff111111"), 4, True)
+    ar.set_points(QPointF(0, 0), QPointF(200, 0))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar)
+    view = w._view
+    view._begin_label_edit(ar, QPointF(100, 0))
+    lbl = ar._live_labels()[0]
+    lbl.setPlainText("Solo")
+    lbl.clearFocus()
+
+    target = view._labelable_at(view.mapFromScene(lbl.mapToScene(lbl.boundingRect().center())))
+    assert target is None, "라벨이 있는 자리인데 _labelable_at이 화살표를 돌려줘 새 라벨을 만들 위험"
+    assert len(ar._live_labels()) == 1
