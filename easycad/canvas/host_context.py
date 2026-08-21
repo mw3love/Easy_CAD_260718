@@ -264,7 +264,9 @@ class _ContextMixin:
         _style_menu_separators(m)
         m.addAction("사각형", lambda: self._swap_selected("rect"))
         m.addAction("원", lambda: self._swap_selected("ellipse"))
-        m.addSeparator()
+        # [실사용 피드백 2026-08-21] 사각형·원~저장소까지 전부 좌측 팔레트의 "기본도형"
+        # 한 섹션이라(참고: host_ui.py의 basic_section) 구분선으로 나눌 이유가 없다 —
+        # 여기서 끊지 말고 "내 심볼" 앞에서만 끊는다(아래).
         for kind in self._SWAP_SYMBOL_KINDS:
             label = _SYMBOL_KINDS[kind][0]
             m.addAction(label, lambda k=kind: self._swap_selected(f"sym:{k}"))

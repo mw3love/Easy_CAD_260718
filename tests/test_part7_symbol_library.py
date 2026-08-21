@@ -1093,7 +1093,10 @@ def test_swap_menu_includes_custom_symbol_folders_with_separators():
         assert texts[:8] == ["사각형", "원", "삼각형", "판단", "시작/끝", "입출력", "준비", "저장소"]
         assert "미분류심볼" in texts and "장비심볼" in texts
         sep_count = sum(1 for a in actions if a.isSeparator())
-        assert sep_count >= 3   # 기본/심볼 사이 1 + 폴더 그룹마다 1
+        # [실사용 피드백 2026-08-21] 사각형·원~저장소는 전부 "기본도형" 한 섹션이라
+        # 그 사이엔 구분선 없음(위 texts[:8] 순서 검증이 이미 확인) — 구분선은 "내 심볼"
+        # 앞 1 + 폴더 그룹마다 1개씩만.
+        assert sep_count >= 2   # 기본도형→내심볼 1 + 폴더 그룹(미분류·"장비") 2 = 최소 2 이어짐
 
 
 def test_swap_to_single_item_custom_symbol_replaces_and_rebinds():

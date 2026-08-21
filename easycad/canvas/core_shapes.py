@@ -42,9 +42,12 @@ from easycad.theme import (
 from easycad.canvas.core_constants import *  # noqa: F401,F403
 
 # [임시 진단 로그 2026-08-21] 종류 콤보로 도형 스왑 후 화살표 머리쪽이 드래그를 안 따라오는
-# 버그 재현용 — `core_view.py`의 `_dbg`/`_DBG_LOG_PATH`와 같은 파일에 쓴다(이 모듈은 core_view를
-# import 못 하는 방향이라 순환참조 피하려고 작은 사본을 둔다). 사용자 요청 전엔 제거 금지.
-_DBG_LOG_PATH2 = r"C:\Users\minwoo\Desktop\PasteFlow\easycad_debug.log"
+# 버그 재현용 — `core_view.py`의 `_dbg`(`easycad_debug.log`)와 **별도 파일**에 쓴다(이 모듈은
+# core_view를 import 못 하는 방향이라 순환참조 피하려고 작은 사본을 둔다). [2026-08-21 교훈]
+# 처음엔 같은 파일을 썼다가, pytest 스위트(851종 다수가 CanvasWindow를 만들어 reroute()를
+# 태움) 실행 때마다 그 파일이 오염돼 사용자의 실제 재현 로그를 못 찾는 사고가 났다 — 반드시
+# 별도 파일. 사용자 요청 전엔 제거 금지.
+_DBG_LOG_PATH2 = r"C:\Users\minwoo\Desktop\PasteFlow\easycad_debug_shapes.log"
 
 
 def _dbg2(msg: str) -> None:
