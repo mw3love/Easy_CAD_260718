@@ -322,19 +322,28 @@ class _ContextMixin:
 
 
     def _arrows_bound_to(self, item):
-        """item에 지속 연결된 화살표 목록 → [(arrow, idx0/1), ...]. 곡선·직선 화살표 모두."""
+        """item에 지속 연결된 화살표 목록 → [(arrow, idx0/끝idx), ...]. 곡선·직선 화살표 모두.
+
+        [버그 수정 2026-08-21, 실사용 재현] `_PolyArrowItem`의 끝(머리)쪽을 하드코딩된
+        `1`로 돌려주고 있었다 — 직선(2점)은 우연히 `len(pts)-1 == 1`이라 맞았지만, A*
+        자동배선으로 꺾인 화살표(4점 이상)는 `len(pts)-1`이 1이 아니다. `set_bound(idx,...)`
+        는 `idx == 0` 또는 `idx == len(self._pts)-1`만 인식하므로(그 외는 조용히 무시),
+        스왑 후 재바인딩(`_rebind_arrow`)이 아무 효과 없이 실패해 화살표 머리가 지워진
+        옛 도형을 계속 가리키고 있었다 — "종류에서 도형 바꾸면 화살표 머리쪽만 자석이
+        떨어진다"는 실사용 보고의 정확한 원인(진단 로그로 확인: `sh.scene()=None`인데도
+        재바인딩이 다시 안 걸림). 꼬리(idx=0)는 두 클래스 다 특례가 없어 원래도 정상이었다."""
         out = []
         for it in self._scene.items():
             if isinstance(it, _ArrowItem):
                 if it._bind1 is item:
                     out.append((it, 0))
                 if it._bind2 is item:
-                    out.append((it, 1))
+                    out.append((it, 1))   # _ArrowItem(곡선)은 항상 p1/p2 2점 고정 — 그대로 1
             elif isinstance(it, _PolyArrowItem):
                 if it._bind_start is item:
                     out.append((it, 0))
                 if it._bind_end is item:
-                    out.append((it, 1))
+                    out.append((it, len(it._pts) - 1))
         return out
 
 

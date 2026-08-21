@@ -35,6 +35,44 @@ def test_shape_swap_preserves_and_rebinds():
     assert labels[:2] == ["사각형", "원"] and "판단" in labels
 
 
+def test_shape_swap_rebinds_head_of_elbow_arrow_with_more_than_2_points():
+    # [버그 수정 2026-08-21, 실사용 재현] `_arrows_bound_to`가 `_PolyArrowItem` 머리쪽을
+    # 하드코딩된 idx=1로 돌려주고 있었다 — 직선(2점)은 우연히 맞았지만, A* 자동배선으로
+    # 꺾인 화살표(4점 이상)는 실제 머리 인덱스가 1이 아니라 `set_bound`가 조용히 무시해
+    # 재바인딩이 실패했다("종류에서 도형 바꾸면 화살표 머리쪽만 자석이 떨어진다"는 정확한
+    # 재현). 이 테스트는 반드시 `build_elbow()`로 실제 4점 이상 경로를 만들어 검증한다
+    # (2점짜리 화살표만 쓰면 이 회귀를 다시 놓친다).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 300, 200, 100, 60)
+    sa = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    sa.set_points(QPointF(100, 30), QPointF(300, 230))
+    sa.setFlags(sa.GraphicsItemFlag.ItemIsSelectable | sa.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(sa)
+    sa.set_bound(0, a, QPointF(100, 30))
+    sa.set_bound(1, b, QPointF(300, 230))
+    sa._auto_route = True
+    assert sa.build_elbow()
+    assert len(sa._pts) == 4   # 직선 2점이 아니라 진짜 꺾인 경로여야 이 회귀를 잡는다
+
+    w._scene.clearSelection(); b.setSelected(True)
+    w._swap_shape(b, "ellipse")
+    new_b = [x for x in w._scene.items() if isinstance(x, _EllipseItem)]
+    assert len(new_b) == 1
+    new_b = new_b[0]
+    assert b.scene() is None
+    assert sa._bind_end is new_b, "머리가 재바인딩 안 되고 삭제된 옛 도형을 계속 가리킴"
+    assert sa._bind_end is not b
+
+    # 실사용 재현 그대로: 바뀐 도형을 이동하면 화살표 머리가 따라와야 한다.
+    before_head = sa.mapToScene(sa._pts[-1])
+    new_b.moveBy(50, 40)
+    w._on_scene_changed(None)
+    after_head = sa.mapToScene(sa._pts[-1])
+    assert _close(after_head, before_head + QPointF(50, 40)), \
+        f"드래그해도 화살표 머리가 안 따라옴: {before_head} -> {after_head}"
+
+
 def test_swap_menu_hides_symbols_not_in_palette():
     # [실사용 피드백 2026-08-21] `_build_swap_menu`가 백엔드 _SYMBOL_KINDS 전체(19종)를
     # 나열해 2026-08-04에 팔레트에서 뺀 옛 흐름도/안테나 심볼까지 유령처럼 노출되던 버그.
