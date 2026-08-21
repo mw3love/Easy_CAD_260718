@@ -940,12 +940,28 @@ class _UIBuildMixin:
         lines.append("")
         lines.append("단축키는 편집(&E) → 단축키 설정…에서 바꿀 수 있습니다.")
         body = "\n".join(lines)
-        box = QMessageBox(self)
-        box.setWindowTitle("단축키 도움말")
-        box.setText("Easy CAD 단축키")
-        box.setInformativeText(body)
-        box.setIcon(QMessageBox.Icon.NoIcon)
-        box.exec()
+        # [실사용 버그 수정 2026-08-21] 예전엔 QMessageBox.setInformativeText였는데, 이 목록이
+        # 카테고리 추가마다 계속 늘어나(현재 6개) 작은 화면에서 스크롤 없이 화면 아래로
+        # 잘렸다(QMessageBox는 화면 높이를 넘는 내용을 스크롤 지원 안 함). 스크롤 가능한
+        # QPlainTextEdit로 교체 — 화면 크기와 무관하게 전체 목록을 볼 수 있다.
+        dlg = QDialog(self)
+        dlg.setWindowTitle("단축키 도움말")
+        lay = QVBoxLayout(dlg)
+        title = QLabel("Easy CAD 단축키")
+        title.setStyleSheet("font-weight:bold;")
+        lay.addWidget(title)
+        text = QPlainTextEdit(dlg)
+        text.setPlainText(body)
+        text.setReadOnly(True)
+        text.setFont(QFont("Consolas"))
+        lay.addWidget(text)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dlg)
+        buttons.rejected.connect(dlg.reject)
+        buttons.accepted.connect(dlg.accept)
+        buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(dlg.accept)
+        lay.addWidget(buttons)
+        dlg.resize(560, 700)
+        dlg.exec()
 
 
     def _show_shortcut_settings(self):
