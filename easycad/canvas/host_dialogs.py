@@ -8,6 +8,7 @@
 import html
 import io
 import os
+import re
 import time
 
 from PyQt6.QtCore import (
@@ -43,7 +44,9 @@ from easycad.canvas.host_widgets import (
     _clipboard_pixmap, _act_icon, _ACCENT_CORAL, _ICON_COLOR, _current_icon_color,
     _MERMAID_SHAPE_ITEM, _border_attach,
 )
-from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, render_preview, _list_title_frames
+from easycad.fileio.pdf_export import (
+    export_pdf, PAGE_SIZES, render_preview, _list_title_frames, _centered_target_rect,
+)
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.document import save_document, load_document, load_document_layers
@@ -726,7 +729,8 @@ class _ModelListWorker(QThread):
         self.succeeded.emit(models)
 
 
-def _render_mermaid_preview_pixmap(text: str, target_size: QSize) -> QPixmap | None:
+def _render_mermaid_preview_pixmap(text: str, target_size: QSize,
+                                    pen_color: QColor | None = None) -> QPixmap | None:
     """Mermaid 코드 → 미리보기 픽스맵(§8 항목23 Stage 5, 2026-08-19). 실제 삽입 경로
     (`host_fileio._build_mermaid`/`_make_mermaid_node`/`_make_mermaid_edge`)와 똑같은
     파서(`parse_mermaid`)+배치(`layout_positions`)+도형매핑(`_MERMAID_SHAPE_ITEM`)+
@@ -735,7 +739,11 @@ def _render_mermaid_preview_pixmap(text: str, target_size: QSize) -> QPixmap | N
     (`_render_svg_candidate_pixmap`)와 같은 원칙. host_fileio.py 자체를 import하면
     이 잎 모듈의 순환 임포트 제약을 어기므로, host_fileio가 이미 재사용 가능한 형태로
     분리해둔 `host_widgets._MERMAID_SHAPE_ITEM`/`_border_attach`만 가져다 쓴다. 파싱
-    실패·빈 입력이면 None(호출부가 안내 문구를 보여준다)."""
+    실패·빈 입력이면 None(호출부가 안내 문구를 보여준다).
+
+    `pen_color`(2026-08-21 실사용 피드백 — "도형이 너무 어두워서 잘 안보임") — 기본은
+    `_ICON_COLOR`지만 `_render_svg_candidate_pixmap`과 같은 이유로 다크 테마 카드
+    배경에서 대비가 약하다. 호출부(`_MermaidDialog`)가 테마에 맞는 밝은 색을 넘긴다."""
     try:
         graph = parse_mermaid(text)
     except MermaidError:
@@ -746,7 +754,7 @@ def _render_mermaid_preview_pixmap(text: str, target_size: QSize) -> QPixmap | N
         return None
 
     scene = QGraphicsScene()
-    pen = QPen(_ICON_COLOR, 1.5)
+    pen = QPen(pen_color or _ICON_COLOR, 1.5)
     items_by_id: dict[str, object] = {}
     for nid, node in graph.nodes.items():
         x, y = pos[nid]
@@ -776,7 +784,7 @@ def _render_mermaid_preview_pixmap(text: str, target_size: QSize) -> QPixmap | N
         rd = d.mapRectToScene(d.rect())
         a_src = _border_attach(rs, rd.center())
         a_dst = _border_attach(rd, rs.center())
-        arr = _PolyArrowItem(_ICON_COLOR, 1, e.arrow)
+        arr = _PolyArrowItem(pen_color or _ICON_COLOR, 1, e.arrow)
         arr.set_points(a_src, a_dst)
         arr.set_bound(0, s, s.mapFromScene(a_src))
         arr.set_bound(len(arr._pts) - 1, d, d.mapFromScene(a_dst))
@@ -799,7 +807,12 @@ def _render_mermaid_preview_pixmap(text: str, target_size: QSize) -> QPixmap | N
                     target_size.width() - 2 * margin, target_size.height() - 2 * margin)
     source = scene.itemsBoundingRect()
     if source.width() > 0 and source.height() > 0:
-        scene.render(p, target, source, Qt.AspectRatioMode.KeepAspectRatio)
+        # [2026-08-21 실사용 피드백] "가로든 세로든 중앙에" — `render(target, source,
+        # KeepAspectRatio)`는 남는 여백을 target 왼쪽/위로 몰아붙이는 Qt 기본 동작(가운데
+        # 정렬이 아님, `pdf_export._centered_target_rect` 도입 때 실측으로 이미 확인된
+        # 함정과 같은 종류) — 같은 헬퍼를 재사용해 target을 미리 중앙 사각형으로 좁힌다.
+        scene.render(p, _centered_target_rect(target, source), source,
+                     Qt.AspectRatioMode.KeepAspectRatio)
     p.end()
     return pm
 
@@ -814,6 +827,11 @@ class _ClickablePreviewLabel(QLabel):
         if e.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(e)
+
+
+# [2026-08-21 실사용 피드백] Mermaid 코드 첫 줄의 방향 토큰 — `mermaid_import._HEADER_RE`와
+# 같은 패턴이지만 그쪽은 파싱(가져오기) 전용 private이라 여기서 UI 동기화용으로 별도 소유.
+_MERMAID_HEADER_RE = re.compile(r"^\s*(?:flowchart|graph)\s+(TD|TB|LR|RL|BT)\b", re.IGNORECASE)
 
 
 class _MermaidDialog(_ImageAttachMixin, QDialog):
@@ -846,11 +864,19 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
     `_AIGatewaySettingsDialog` 쪽으로 옮겼다(그쪽에서 gpt/gemini 개수와 크레딧까지 함께
     확인 가능)."""
 
-    _SAMPLE = ("flowchart TD\n"
+    _SAMPLE = ("flowchart LR\n"
                "    A[시작] --> B{조건?}\n"
                "    B -->|예| C[처리]\n"
                "    B -->|아니오| D([종료])\n"
                "    C --> D")
+
+    # [2026-08-21 실사용 피드백] 방향 드롭다운 항목 — 기본(0번, 콤보 초기 선택)은 가로(LR).
+    _DIRECTIONS = [
+        ("가로 (→)", "LR"),
+        ("세로 (↓)", "TD"),
+        ("세로 (↑)", "BT"),
+        ("가로 (←)", "RL"),
+    ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -874,6 +900,10 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # 톤을 살짝 낮췄다(#e7e0d6, 따뜻한 아이보리) — 아래 Mermaid 코드칸(어두운 배경)과의
         # 대비는 유지하면서 시선을 덜 자극하게.
         dark = bool(getattr(self.parent(), "_dark", True))
+        # [2026-08-21 실사용 피드백 — "도형이 너무 어두워서 잘 안보임"] 미리보기 펜 색 —
+        # `_SvgAssetDialog._preview_pen_color`와 같은 이유·같은 값(다크 테마 카드 배경에서
+        # `_ICON_COLOR` 기본값은 대비가 약하다).
+        self._preview_pen_color = QColor("#f2f2f2") if dark else None
 
         prompt_frame = QFrame(self)
         prompt_frame.setObjectName("promptCard")
@@ -897,7 +927,11 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
 
         self._prompt_edit = QPlainTextEdit(prompt_frame)
         self._prompt_edit.setPlaceholderText("예: 날씨를 예보하는 워크플로우")
-        self._prompt_edit.setFixedHeight(64)
+        # [2026-08-21 피드백] "텍스트 설명 상하 폭이 좁다, 아래 모델까지 합쳐 Mermaid
+        # 코드칸과 1:1 비율이면 좋겠다" — 고정 높이 대신 최소 높이만 두고 카드(아래
+        # `prompt_frame_lay.addWidget(self._prompt_edit, 1)`)와 상위 `top_col`의 stretch를
+        # 타고 자라게 한다.
+        self._prompt_edit.setMinimumHeight(64)
         self._prompt_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self._prompt_edit.setFrameShape(QFrame.Shape.NoFrame)   # 테두리는 카드가 그림
         self._prompt_edit.setAcceptDrops(False)   # 드롭을 이 다이얼로그(dropEvent)로 넘김
@@ -906,7 +940,7 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
             "QPlainTextEdit { background:transparent; " +
             ("color:#241a15; }" if dark else "}")
         )
-        prompt_frame_lay.addWidget(self._prompt_edit)
+        prompt_frame_lay.addWidget(self._prompt_edit, 1)
 
         # [2026-08-13 5차] 옛 상단 힌트 1번째 줄("Enter — AI로 생성")을 입력칸 안(카드 하단,
         # 툴바 위)의 작은 캡션으로 흡수 — 입력 중엔 눈에 거슬리지 않게 우측 정렬·저채도.
@@ -968,15 +1002,20 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # [2026-08-20 피드백] 레이아웃 재구성 — 오른쪽(미리보기)이 세로 전체를 채우고,
         # 왼쪽(입력 카드+모델행+커넥터+코드칸)은 위아래로 쌓인 2분할 구조.
         left_col = QVBoxLayout()
+        # [2026-08-21 피드백] "텍스트 설명(+모델행)"과 "Mermaid 코드"가 1:1 비율로 세로공간을
+        # 나눠 갖도록 각각을 별도 QVBoxLayout(top_col/bottom_col)으로 묶어 left_col에 stretch
+        # 1씩 준다 — 이전엔 코드칸(`_edit`)만 stretch=1이라 창이 커질수록 코드칸만 자라고
+        # 위쪽(텍스트 설명)은 그대로였다.
+        top_col = QVBoxLayout()
         # [2026-08-20 피드백] 입력 카드 위에도 다른 두 섹션(코드·미리보기)과 같은 "제목"을
         # 달아 세 구역의 시각적 위계를 통일.
         prompt_title = QLabel("텍스트 설명", self)
         prompt_title.setStyleSheet(_SECTION_TITLE_QSS)
-        left_col.addWidget(prompt_title)
-        left_col.addWidget(prompt_frame)
+        top_col.addWidget(prompt_title)
+        top_col.addWidget(prompt_frame, 1)
 
         self._progress = _GenProgressRow(self)
-        left_col.addWidget(self._progress)
+        top_col.addWidget(self._progress)
 
         # ---- 모델 선택: 평범한 드롭다운(gemini/gpt 그룹 헤더, 추천 배지 없음) + 새로고침 +
         # 설정. [2026-08-13 6차] 옛 위치(코드칸 아래)에서 입력카드 바로 아래(화살표 꼬리
@@ -988,7 +1027,7 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         self._model_combo = QComboBox(self)
         self._model_combo.setStyleSheet(_ROUNDED_COMBO_QSS)   # [2026-08-13] 각진 모서리 → 둥글게
         model_row.addWidget(self._model_combo, 1)
-        left_col.addLayout(model_row)
+        top_col.addLayout(model_row)
         # [2026-08-20 재피드백] 모델 행 끝에 있던 설정 버튼이 줄맞춤을 깨뜨린다는 지적(SVG
         # 창과 동일) — 우하단 확인/취소 버튼 옆(부가 동작 자리)으로 옮긴다(아래 `bottom_row`).
         self._settings_btn = QToolButton(self)
@@ -996,6 +1035,7 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·연결 테스트)")
         self._settings_btn.clicked.connect(self._open_gateway_settings)
         self._populate_models()
+        left_col.addLayout(top_col, 1)
 
         # ---- 입력→코드 커넥터 — 순서도 커넥터 느낌으로 "이 입력이 아래 코드로 바뀐다"를
         # 시각화(2026-08-12 4차, 디자인 시안 합의). [2026-08-13 5차] 원 테두리를 없애고
@@ -1016,23 +1056,36 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # 오른쪽 전체를 채우고, 코드칸은 왼쪽(입력 카드 아래)에 남는다(옛 "옆(가로 분할)"
         # 배치에서 좌우 열 자체를 좌=입력전체/우=미리보기로 승격). 복사 버튼은 제거
         # (피드백: "드래그해서 복사하면 됨").
+        bottom_col = QVBoxLayout()
         code_label_row = QHBoxLayout()
-        code_title = QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능):", self)
+        code_title = QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능)", self)
         code_title.setStyleSheet(_SECTION_TITLE_QSS)
         code_label_row.addWidget(code_title)
         code_label_row.addStretch(1)
-        left_col.addLayout(code_label_row)
+        # [2026-08-21 실사용 피드백] 방향 컨트롤 — 생성 후에도 세로↔가로를 쉽게 바꾸도록.
+        # 콤보를 바꾸면 코드 첫 줄의 방향 토큰만 고쳐 쓰고(`_on_direction_changed`), 반대로
+        # 코드가 바뀌면(직접 타이핑·AI 생성 결과 반영 둘 다) 콤보도 따라 동기화된다
+        # (`_sync_direction_combo_from_code`, `_on_edit_text_changed`에서 호출).
+        code_label_row.addWidget(QLabel("방향:", self))
+        self._direction_combo = QComboBox(self)
+        self._direction_combo.setStyleSheet(_ROUNDED_COMBO_QSS)
+        for label, token in self._DIRECTIONS:
+            self._direction_combo.addItem(label, token)
+        self._direction_combo.currentIndexChanged.connect(self._on_direction_changed)
+        code_label_row.addWidget(self._direction_combo)
+        bottom_col.addLayout(code_label_row)
         self._edit = QPlainTextEdit(self)
         self._edit.setPlaceholderText(self._SAMPLE)
         self._edit.setMinimumSize(QSize(420, 260))
         self._edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        left_col.addWidget(self._edit, 1)
+        bottom_col.addWidget(self._edit, 1)
+        left_col.addLayout(bottom_col, 1)
 
         split = QHBoxLayout()
         split.addLayout(left_col, 1)
 
         preview_col = QVBoxLayout()
-        preview_title = QLabel("미리보기 (클릭하면 확대):", self)
+        preview_title = QLabel("미리보기 (클릭하면 확대)", self)
         preview_title.setStyleSheet(_SECTION_TITLE_QSS)
         preview_col.addWidget(preview_title)
         preview_frame = QFrame(self)
@@ -1072,7 +1125,7 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(350)
         self._preview_timer.timeout.connect(self._update_preview)
-        self._edit.textChanged.connect(self._preview_timer.start)
+        self._edit.textChanged.connect(self._on_edit_text_changed)
 
         self._btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                       | QDialogButtonBox.StandardButton.Cancel, self)
@@ -1105,7 +1158,7 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         label = QLabel(dlg)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         size = QSize(900, 700)
-        pm = _render_mermaid_preview_pixmap(text, size)
+        pm = _render_mermaid_preview_pixmap(text, size, self._preview_pen_color)
         if pm is None:
             label.setText("구문 오류 — 미리보기를 표시할 수 없습니다")
         else:
@@ -1117,6 +1170,42 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         dlg.resize(size)
         dlg.exec()
 
+    def _on_edit_text_changed(self):
+        self._preview_timer.start()
+        self._sync_direction_combo_from_code()
+
+    def _sync_direction_combo_from_code(self):
+        """코드 첫 줄의 방향 토큰을 읽어 방향 콤보를 맞춘다(직접 타이핑·AI 생성 결과
+        둘 다 여기로 들어온다) — 콤보가 실제 코드와 다른 값을 보여주는 혼란을 막는다.
+        `TB`는 Mermaid에서 `TD`와 같은 뜻이라 같은 항목으로 묶는다."""
+        m = _MERMAID_HEADER_RE.match(self._edit.toPlainText())
+        if not m:
+            return
+        token = m.group(1).upper()
+        if token == "TB":
+            token = "TD"
+        idx = self._direction_combo.findData(token)
+        if idx >= 0 and idx != self._direction_combo.currentIndex():
+            self._direction_combo.blockSignals(True)
+            self._direction_combo.setCurrentIndex(idx)
+            self._direction_combo.blockSignals(False)
+
+    def _on_direction_changed(self):
+        """방향 콤보 선택 → 코드 첫 줄의 방향 토큰만 고쳐 쓴다(나머지 코드는 그대로).
+        헤더가 아직 없으면(빈 칸) 바꿀 대상이 없으니 조용히 무시 — 다음 생성/입력에
+        어차피 기본값(가로)이 적용된다."""
+        m = _MERMAID_HEADER_RE.match(self._edit.toPlainText())
+        if not m:
+            return
+        token = self._direction_combo.currentData()
+        start, end = m.span(1)
+        text = self._edit.toPlainText()
+        if text[start:end].upper() == token:
+            return
+        cursor = self._edit.textCursor()
+        cursor.select(QTextCursor.SelectionType.Document)
+        cursor.insertText(text[:start] + token + text[end:])
+
     def _update_preview(self):
         """디바운스 타이머 만료 시 호출 — `_render_mermaid_preview_pixmap`으로 다시 그린다."""
         text = self._edit.toPlainText()
@@ -1124,7 +1213,8 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
             self._preview_label.setPixmap(QPixmap())
             self._preview_label.setText("코드를 입력하면\n미리보기가 표시됩니다")
             return
-        pm = _render_mermaid_preview_pixmap(text, self._preview_label.size())
+        pm = _render_mermaid_preview_pixmap(text, self._preview_label.size(),
+                                            self._preview_pen_color)
         if pm is None:
             self._preview_label.setPixmap(QPixmap())
             self._preview_label.setText("구문 오류 —\n미리보기를 표시할 수 없습니다")
