@@ -122,12 +122,12 @@ def _unit(dx: float, dy: float):
     return (dx / n, dy / n) if n > 1e-9 else (0.0, 0.0)
 
 
-def _arrowhead(msp, tip, near, width: float, attrs: dict):
+def _arrowhead(msp, tip, near, width: float, attrs: dict, scale: float = 1.0):
     """tip(월드)에 near→tip 방향의 닫힌 삼각형 화살촉 LWPOLYLINE."""
     ux, uy = _unit(tip[0] - near[0], tip[1] - near[1])
     if ux == 0.0 and uy == 0.0:
         return
-    s = max(width * 3.0, 6.0)           # 화살촉 길이
+    s = max(width * 3.0, 6.0) * scale   # 화살촉 길이 — [화살촉 크기 배율, 2026-08-21]
     px, py = -uy, ux                     # 좌우 수직
     base = (tip[0] - ux * s, tip[1] - uy * s)
     b1 = (base[0] + px * s * 0.4, base[1] + py * s * 0.4)
@@ -226,24 +226,26 @@ def _export_arrow(msp, it):
         _wx(msp.add_open_spline(ctrl, degree=3, dxfattribs=body), it._width)
     else:
         _wx(msp.add_line(_w(it, *p1), _w(it, *p2), dxfattribs=body), it._width)
+    hscale = getattr(it, "_head_scale", 1.0)   # [화살촉 크기 배율, 2026-08-21]
     if it._head_at_end:
         near = it._ctrl2 if it._ctrl2 is not None else it._p1
-        _arrowhead(msp, _w(it, *p2), _w(it, near.x(), near.y()), it._width, attrs)
-    else:
+        _arrowhead(msp, _w(it, *p2), _w(it, near.x(), near.y()), it._width, attrs, hscale)
+    if getattr(it, "_head_at_start", False):   # [양방향 화살표] 끝과 독립 — 둘 다 가능
         near = it._ctrl1 if it._ctrl1 is not None else it._p2
-        _arrowhead(msp, _w(it, *p1), _w(it, near.x(), near.y()), it._width, attrs)
+        _arrowhead(msp, _w(it, *p1), _w(it, near.x(), near.y()), it._width, attrs, hscale)
 
 
 def _export_sarrow(msp, it):
     attrs = _attrs(_LAYERS["sarrow"], it._color)
     body = _with_linetype(attrs, it._style)   # [M2 #3] 몸통만 점선, 화살촉은 solid(attrs)
     pts = [_w(it, p.x(), p.y()) for p in it._pts]
+    hscale = getattr(it, "_head_scale", 1.0)   # [화살촉 크기 배율, 2026-08-21]
     if len(pts) >= 2:
         _wx(msp.add_lwpolyline(pts, close=False, dxfattribs=body), it._width)
         if it._head_at_end:
-            _arrowhead(msp, pts[-1], pts[-2], it._width, attrs)
-        else:
-            _arrowhead(msp, pts[0], pts[1], it._width, attrs)
+            _arrowhead(msp, pts[-1], pts[-2], it._width, attrs, hscale)
+        if getattr(it, "_head_at_start", False):   # [양방향 화살표]
+            _arrowhead(msp, pts[0], pts[1], it._width, attrs, hscale)
 
 
 def _export_path(msp, it):

@@ -464,6 +464,10 @@ class _HandleResizeMixin:
                           if self.brush().style() != Qt.BrushStyle.NoBrush else None)
         if hasattr(self, "_head_at_end") and hasattr(self, "set_head_at_end"):
             st["head"] = self._head_at_end   # [M3 #15] 화살표 방향 — 토글을 undo 가능하게
+        if hasattr(self, "_head_at_start") and hasattr(self, "set_head_at_start"):
+            st["head_start"] = self._head_at_start   # [양방향 화살표] 시작쪽 화살촉
+        if hasattr(self, "_head_scale") and hasattr(self, "set_head_scale"):
+            st["head_scale"] = self._head_scale   # [실사용 피드백 2026-08-21] 화살촉 크기 배율
         if hasattr(self, "setDefaultTextColor"):
             st["tcolor"] = QColor(self.defaultTextColor())
         if hasattr(self, "toPlainText"):
@@ -490,6 +494,10 @@ class _HandleResizeMixin:
             self.apply_fill(st["fill"])
         if "head" in st and hasattr(self, "set_head_at_end"):   # [M3 #15] 화살표 방향
             self.set_head_at_end(st["head"])
+        if "head_start" in st and hasattr(self, "set_head_at_start"):   # [양방향 화살표]
+            self.set_head_at_start(st["head_start"])
+        if "head_scale" in st and hasattr(self, "set_head_scale"):   # [화살촉 크기 배율]
+            self.set_head_scale(st["head_scale"])
         if "tcolor" in st and hasattr(self, "setDefaultTextColor"):
             self.setDefaultTextColor(st["tcolor"])
         if "font_pt" in st and hasattr(self, "apply_font_size"):
@@ -1444,7 +1452,8 @@ def _item_center_path(it) -> QPainterPath:
     if isinstance(it, _PolyArrowItem):
         base = it._rounded_polyline_path() if it._corner_radius() > 0 else it._polyline_path()
         p = QPainterPath(base)
-        p.addPolygon(QPolygonF(it._head_points()))
+        for tri in it._head_points():
+            p.addPolygon(QPolygonF(tri))
         return p
     if isinstance(it, _ArrowItem):
         p = QPainterPath()
@@ -1453,7 +1462,8 @@ def _item_center_path(it) -> QPainterPath:
             p.lineTo(it._p2)
         else:
             p.cubicTo(it._ctrl1, it._ctrl2, it._p2)
-        p.addPolygon(QPolygonF(it._head_points()))
+        for tri in it._head_points():
+            p.addPolygon(QPolygonF(tri))
         return p
     return it._base_shape() if hasattr(it, "_base_shape") else it.shape()
 
@@ -1568,12 +1578,13 @@ def _highlight_band(it, extra_width: float = 3.0) -> QPainterPath:
         stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
         stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         body_band = stroker.createStroke(_arrow_body_path(it)).simplified()
-        tip, _ang = it._tip_and_angle()
-        cap_cut = QPainterPath()
-        cap_cut.addEllipse(tip, band_w / 2.0 + 1.0, band_w / 2.0 + 1.0)
-        body_band = body_band.subtracted(cap_cut)
         head = QPainterPath()
-        head.addPolygon(_expand_polygon(QPolygonF(it._head_points()), extra_width))
+        for tri in it._head_points():   # [양방향 화살표] 0~2개 — 활성 화살촉마다 캡 제거+확대
+            tip = tri[0]
+            cap_cut = QPainterPath()
+            cap_cut.addEllipse(tip, band_w / 2.0 + 1.0, band_w / 2.0 + 1.0)
+            body_band = body_band.subtracted(cap_cut)
+            head.addPolygon(_expand_polygon(QPolygonF(tri), extra_width))
         return body_band.united(head.simplified())
     centerline = _item_center_path(it)
     pw = it.pen().widthF() if hasattr(it, "pen") else getattr(it, "_width", 1.0)
@@ -3441,7 +3452,8 @@ def _snap_label_off(n: QPointF, raw_off: float, br: QRectF) -> float:
 class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     """선 + 끝점 삼각형 화살촉. 머리 방향(head_at_end) 선택 가능."""
 
-    def __init__(self, color: QColor, width: int, head_at_end: bool = True):
+    def __init__(self, color: QColor, width: int, head_at_end: bool = True,
+                 head_at_start: bool = False, head_scale: float = 1.0):
         super().__init__()
         self._p1 = QPointF(0, 0)
         self._p2 = QPointF(0, 0)
@@ -3452,6 +3464,14 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._width = width
         self._style = Qt.PenStyle.SolidLine   # [M2 #3] 몸통 선스타일(점선 등) — 화살촉은 항상 solid
         self._head_at_end = head_at_end
+        # [양방향 화살표, 2026-08-21] 시작쪽(_p1) 화살촉 — _head_at_end와 독립. 두 값 조합으로
+        # 없음(둘 다 False)/끝만(end만)/시작만(start만)/양쪽(둘 다 True) 4상태를 표현한다.
+        # 옛 파일은 이 필드가 없어 기본 False로 로드되고, 기존 "머리 하나"만 있던 의미가 그대로
+        # 보존된다(head_at_end가 그 하나를 그대로 결정).
+        self._head_at_start = head_at_start
+        # [실사용 피드백 2026-08-21] 화살촉 크기 배율(기본 공식 위에 곱하는 값) — Lucid 대비
+        # 머리가 작다는 지적으로 신설, 기본 공식(`_head_size`)도 같은 날 상향했다.
+        self._head_scale = head_scale
         self._bind1 = None     # 지속 연결: 끝점0이 묶인 도형(_RectItem/_EllipseItem) or None
         self._bind2 = None     # 끝점1이 묶인 도형 or None
         self._bind1_pt = None  # 그 도형의 '로컬 좌표' 부착점(고정) — 도형 이동/스케일 시 mapToScene로 추종
@@ -3647,15 +3667,27 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._head_at_end = value
         self.update()
 
+    def set_head_at_start(self, value: bool):   # [양방향 화살표]
+        self._head_at_start = value
+        self.update()
+
+    def set_head_scale(self, value: float):   # [실사용 피드백 2026-08-21] 화살촉 크기 배율
+        self._head_scale = max(0.3, float(value))
+        self.update()
+
     def flip_head(self):
-        self.set_head_at_end(not self._head_at_end)
+        """머리 위치를 반대쪽으로 스왑. 단일 머리(끝만↔시작만)일 때만 시각적으로 의미가
+        있다 — 양쪽/없음처럼 두 값이 같으면 스왑해도 그대로라 자연히 무해한 no-op이 된다."""
+        self._head_at_end, self._head_at_start = self._head_at_start, self._head_at_end
+        self.update()
 
     def apply_style(self, style):   # [M2 #3] 몸통 선스타일(점선 등)
         self._style = style
         self.update()
 
     def clone(self):
-        c = _ArrowItem(QColor(self._color), self._width, self._head_at_end)
+        c = _ArrowItem(QColor(self._color), self._width, self._head_at_end, self._head_at_start,
+                       self._head_scale)
         c._style = self._style
         c.set_points(QPointF(self._p1), QPointF(self._p2))
         if self._ctrl1 is not None:
@@ -3878,26 +3910,36 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # 선택돼 있으면 어떤 도구에서든 곡선 조절 가능(끝점·회전·크기조절 핸들과 동일 정책).
         return self.isSelected()
 
-    def _tip_and_angle(self):
-        """화살촉이 놓이는 tip 점과 그 지점의 진행 방향 각도(paint와 동일 규칙)."""
-        tail, tip = (self._p1, self._p2) if self._head_at_end else (self._p2, self._p1)
+    def _tip_and_angle_at(self, at_end: bool):
+        """한쪽 끝(at_end=True면 p2, False면 p1)의 tip 점과 그 지점의 진행 방향 각도."""
+        tail, tip = (self._p1, self._p2) if at_end else (self._p2, self._p1)
         if self._ctrl1 is None:
             length = math.hypot(tip.x() - tail.x(), tip.y() - tail.y())
             angle = math.atan2(tip.y() - tail.y(), tip.x() - tail.x()) if length > 1e-6 else 0.0
         else:
-            C2, P3 = (self._ctrl2, self._p2) if self._head_at_end else (self._ctrl1, self._p1)
+            C2, P3 = (self._ctrl2, self._p2) if at_end else (self._ctrl1, self._p1)
             angle = math.atan2(P3.y() - C2.y(), P3.x() - C2.x())
         return tip, angle
 
-    def _head_size(self) -> float:
-        """화살촉 크기 — 선 두께에 비례(얇으면 작게, 굵으면 크게). 최소 7로 아주 얇은
-        선에서도 머리가 보이되, 옛 max(14,…) 바닥값이 얇은 선에서 머리를 불비례로
-        키우던 문제를 없앤다(두께 휠 조절 시 머리도 같이 줄고 커짐)."""
-        return max(self._width * 2.5, 7.0)
+    def _tip_and_angle(self):
+        """하위호환 — 활성 머리 중 '주 머리'(end 우선, 없으면 start) 하나만 돌려준다.
+        양쪽 다 그리려면 `_head_points()`(0~2개 삼각형 리스트)를 쓴다."""
+        if self._head_at_end:
+            return self._tip_and_angle_at(True)
+        if self._head_at_start:
+            return self._tip_and_angle_at(False)
+        return self._tip_and_angle_at(True)   # 머리 없음 — 호출부 안전을 위한 폴백(그리진 않음)
 
-    def _head_points(self):
-        """화살촉 삼각형 세 꼭짓점(tip + 뒤쪽 두 점)."""
-        tip, angle = self._tip_and_angle()
+    def _head_size(self) -> float:
+        """화살촉 크기 — 선 두께에 비례(얇으면 작게, 굵으면 크게)한 기본 공식에 사용자 배율
+        (`_head_scale`, 기본 1.0)을 곱한다. [실사용 피드백 2026-08-21] Lucid 대비 화살촉이
+        작다는 지적으로 기본 공식 자체도 상향(2.5배·바닥7 → 3.2배·바닥11)했고, 그 위에
+        속성패널 '머리크기' 배율로 추가 조절 가능하게 했다."""
+        return max(self._width * 3.2, 11.0) * self._head_scale
+
+    def _head_points_at(self, at_end: bool):
+        """한쪽 끝 화살촉 삼각형 세 꼭짓점(tip + 뒤쪽 두 점)."""
+        tip, angle = self._tip_and_angle_at(at_end)
         size = self._head_size()
         a1 = angle + math.radians(150)
         a2 = angle - math.radians(150)
@@ -3906,6 +3948,30 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             QPointF(tip.x() + size * math.cos(a1), tip.y() + size * math.sin(a1)),
             QPointF(tip.x() + size * math.cos(a2), tip.y() + size * math.sin(a2)),
         ]
+
+    def _head_points(self):
+        """활성 화살촉 삼각형들(0~2개) — 각 원소가 3점(QPointF) 리스트."""
+        tris = []
+        if self._head_at_end:
+            tris.append(self._head_points_at(True))
+        if self._head_at_start:
+            tris.append(self._head_points_at(False))
+        return tris
+
+    @staticmethod
+    def _bezier_trim_from(P0, C1, C2, P3, frac, from_start):
+        """3차 베지어에서 시작(from_start=True)/끝에서 frac만큼 잘라낸 나머지 구간의 새
+        4개 제어점 — 표준 De Casteljau 분할(양끝 어디를 잘라도 같은 공식의 좌우 대칭)."""
+        t = frac if from_start else (1.0 - frac)
+        ax = P0.x() + (C1.x() - P0.x()) * t; ay = P0.y() + (C1.y() - P0.y()) * t
+        bx = C1.x() + (C2.x() - C1.x()) * t; by = C1.y() + (C2.y() - C1.y()) * t
+        cx = C2.x() + (P3.x() - C2.x()) * t; cy = C2.y() + (P3.y() - C2.y()) * t
+        dx = ax + (bx - ax) * t; dy = ay + (by - ay) * t
+        ex = bx + (cx - bx) * t; ey = by + (cy - by) * t
+        fx = dx + (ex - dx) * t; fy = dy + (ey - dy) * t
+        if from_start:
+            return QPointF(fx, fy), QPointF(ex, ey), QPointF(cx, cy), P3
+        return P0, QPointF(ax, ay), QPointF(dx, dy), QPointF(fx, fy)
 
     def _content_rect(self) -> QRectF:
         if self._ctrl1 is None:
@@ -3917,10 +3983,13 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         # (옛 방식은 화살촉 크기를 네 변 모두에 더해 박스가 곡선보다 과하게 넓었음).
         stroke = self._width / 2.0 + 2
         r = r.adjusted(-stroke, -stroke, stroke, stroke)
-        hx = [p.x() for p in self._head_points()]
-        hy = [p.y() for p in self._head_points()]
-        head_r = QRectF(QPointF(min(hx), min(hy)), QPointF(max(hx), max(hy)))
-        return r.united(head_r.adjusted(-2, -2, 2, 2))
+        tris = self._head_points()
+        if tris:
+            hx = [p.x() for tri in tris for p in tri]
+            hy = [p.y() for tri in tris for p in tri]
+            head_r = QRectF(QPointF(min(hx), min(hy)), QPointF(max(hx), max(hy)))
+            r = r.united(head_r.adjusted(-2, -2, 2, 2))
+        return r
 
     def _base_shape(self):
         # 클릭/hit 영역은 '실제 선+화살촉'만 감싼다(박스 전체가 아니라). 그래야 곡선 안쪽
@@ -3936,7 +4005,8 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
         stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         shape = stroker.createStroke(body)
-        shape.addPolygon(QPolygonF(self._head_points()))
+        for tri in self._head_points():
+            shape.addPolygon(QPolygonF(tri))
         if self._bend_active():   # 초록 bend 핸들도 잡을 수 있게(넉넉한 잡기 영역)
             for which in (1, 2):
                 shape.addEllipse(self._inflate_to_hit(self._bend_handle_rect(which)))
@@ -3944,14 +4014,14 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        tail, tip = (self._p1, self._p2) if self._head_at_end else (self._p2, self._p1)
-        length = math.hypot(tip.x() - tail.x(), tip.y() - tail.y())
+        length = math.hypot(self._p2.x() - self._p1.x(), self._p2.y() - self._p1.y())
         if self._ctrl1 is None and length < 1:
             return  # 클릭만 한 0길이 직선 화살표는 머리도 그리지 않음(깜빡임 방지)
 
         size = self._head_size()
         pen = QPen(self._color, self._width, self._style,
                    Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+        end_active, start_active = self._head_at_end, self._head_at_start
 
         # [FigJam 갭] 라벨이 있으면 그 사각형들만 클립으로 비워 선/곡선이 텍스트를 관통하지
         # 않게 한다(다중 라벨 2026-08-21: 라벨마다 하나씩, 전부 같은 클립에서 뺀다).
@@ -3967,33 +4037,34 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             painter.setClipPath(clip.subtracted(hole))
 
         if self._ctrl1 is None:
-            # 직선: 선은 화살촉 밑변까지만 그린다. 짧은 화살표에서 base가 tail 뒤로 넘어가
-            # 선이 거꾸로 삐져나오지 않도록 tail~tip 구간 안으로 클램프한다.
-            t = max(0.0, 1.0 - (size * 0.85) / length) if length > 1 else 0.0
-            base = QPointF(tail.x() + (tip.x() - tail.x()) * t,
-                           tail.y() + (tip.y() - tail.y()) * t)
+            # 직선: 활성 화살촉이 있는 쪽 끝만 그 밑변까지 자르고, 없는 쪽은 원래 끝점 그대로.
+            p0, p3 = self._p1, self._p2
+            t0 = min(0.9, (size * 0.85) / length) if start_active else 0.0
+            t1 = max(t0 + 0.05, 1.0 - (size * 0.85) / length) if end_active else 1.0
+            a = QPointF(p0.x() + (p3.x() - p0.x()) * t0, p0.y() + (p3.y() - p0.y()) * t0)
+            b = QPointF(p0.x() + (p3.x() - p0.x()) * t1, p0.y() + (p3.y() - p0.y()) * t1)
             painter.setPen(pen)
-            painter.drawLine(tail, base)
+            painter.drawLine(a, b)
         else:
-            # 곡선: p1→c1→c2→p2 3차 베지어. 머리 방향에 맞춰 그리기 순서(P0..P3)를 정렬한다
-            # (head_at_end면 p1→p2, 아니면 곡선을 뒤집어 p2→p1 — 제어점도 c2·c1 순서로 뒤집음).
-            # tip 쪽을 화살촉 밑변까지 잘라 그린다(안 자르면 굵은 선 끝이 화살촉 밖으로 삐져나옴):
-            # tip 접선 크기 |B'(1)|=3·|P3−C2| 로 되돌릴 dt를 근사하고 De Casteljau로 [0,te] 분할.
-            if self._head_at_end:
-                P0, C1, C2, P3 = self._p1, self._ctrl1, self._ctrl2, self._p2
-            else:
-                P0, C1, C2, P3 = self._p2, self._ctrl2, self._ctrl1, self._p1
-            seg = math.hypot(P3.x() - C2.x(), P3.y() - C2.y())
-            dt = min(0.5, (size * 0.85) / (3 * seg)) if seg > 1e-6 else 0.0
-            te = 1.0 - dt
-            ax = P0.x() + (C1.x() - P0.x()) * te; ay = P0.y() + (C1.y() - P0.y()) * te
-            bx = C1.x() + (C2.x() - C1.x()) * te; by = C1.y() + (C2.y() - C1.y()) * te
-            cx = C2.x() + (P3.x() - C2.x()) * te; cy = C2.y() + (P3.y() - C2.y()) * te
-            dx = ax + (bx - ax) * te; dyv = ay + (by - ay) * te
-            ex = bx + (cx - bx) * te; ey = by + (cy - by) * te
-            fx = dx + (ex - dx) * te; fy = dyv + (ey - dyv) * te  # 곡선 위 te 지점(화살촉 밑변)
+            # 곡선: p1→c1→c2→p2 3차 베지어. 활성 화살촉이 있는 쪽 끝(들)만 밑변까지 잘라
+            # 그린다(안 자르면 굵은 선 끝이 화살촉 밖으로 삐져나옴) — 끝쪽을 먼저 자르고,
+            # 시작쪽도 활성이면 그 결과 구간을 로컬 t로 재정규화해 한 번 더 자른다
+            # (De Casteljau 분할은 부분구간의 파라미터화를 보존하므로 두 번 적용해도 정확하다).
+            P0, C1, C2, P3 = self._p1, self._ctrl1, self._ctrl2, self._p2
+            de = 0.0
+            if end_active:
+                seg_e = math.hypot(P3.x() - C2.x(), P3.y() - C2.y())
+                de = min(0.5, (size * 0.85) / (3 * seg_e)) if seg_e > 1e-6 else 0.0
+                if de > 0.0:
+                    P0, C1, C2, P3 = self._bezier_trim_from(P0, C1, C2, P3, de, from_start=False)
+            if start_active:
+                seg_s = math.hypot(C1.x() - P0.x(), C1.y() - P0.y())
+                ds = min(0.5, (size * 0.85) / (3 * seg_s)) if seg_s > 1e-6 else 0.0
+                if ds > 0.0:
+                    ds_local = min(ds / (1.0 - de), 0.9)
+                    P0, C1, C2, P3 = self._bezier_trim_from(P0, C1, C2, P3, ds_local, from_start=True)
             path = QPainterPath(P0)
-            path.cubicTo(QPointF(ax, ay), QPointF(dx, dyv), QPointF(fx, fy))
+            path.cubicTo(C1, C2, P3)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(path)
@@ -4001,11 +4072,12 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         if gaps:
             painter.restore()   # 화살촉·핸들은 클립 없이 온전히 그린다
 
-        head = QPolygonF(self._head_points())
-        painter.setBrush(QBrush(self._color))
-        painter.setPen(QPen(self._color, 1, Qt.PenStyle.SolidLine,
-                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        painter.drawPolygon(head)
+        if end_active or start_active:
+            painter.setBrush(QBrush(self._color))
+            painter.setPen(QPen(self._color, 1, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            for tri in self._head_points():
+                painter.drawPolygon(QPolygonF(tri))
         if self.isSelected():
             self._paint_selection_outline(painter, self._scale_or_1())
         self._paint_handle(painter)
@@ -4133,13 +4205,16 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     """정점 리스트로 이루어진 직선 화살표. _endpoints()로 모든 정점을 노출하므로
     _HandleResizeMixin의 끝점 드래그 machinery가 정점 이동을 그대로 처리한다."""
 
-    def __init__(self, color: QColor, width: int, head_at_end: bool = True):
+    def __init__(self, color: QColor, width: int, head_at_end: bool = True,
+                 head_at_start: bool = False, head_scale: float = 1.0):
         super().__init__()
         self._pts = [QPointF(0, 0), QPointF(0, 0)]   # 정점 리스트(최소 2)
         self._color = QColor(color)
         self._width = width
         self._style = Qt.PenStyle.SolidLine   # [M2 #3] 몸통 선스타일(점선 등) — 화살촉은 항상 solid
         self._head_at_end = head_at_end
+        self._head_at_start = head_at_start   # [양방향 화살표, 2026-08-21] _ArrowItem과 동일 규약
+        self._head_scale = head_scale   # [실사용 피드백 2026-08-21] 화살촉 크기 배율
         # [A3] 지속 연결 — 양 끝(시작=idx0, 끝=idx last)만 도형에 고정 부착(중간 waypoint 제외).
         # 곡선화살표와 같은 방식(도형 로컬좌표 부착점 + scene.changed 리라우트). waypoint 삽입·삭제로
         # 인덱스가 바뀌므로 절대 idx가 아닌 '시작/끝 역할'로 저장한다.
@@ -4927,11 +5002,26 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._head_at_end = value
         self.update()
 
+    def set_head_at_start(self, value: bool):   # [양방향 화살표]
+        self.prepareGeometryChange()
+        self._head_at_start = value
+        self.update()
+
+    def set_head_scale(self, value: float):   # [실사용 피드백 2026-08-21] 화살촉 크기 배율
+        self.prepareGeometryChange()
+        self._head_scale = max(0.3, float(value))
+        self.update()
+
     def flip_head(self):
-        self.set_head_at_end(not self._head_at_end)
+        """머리 위치를 반대쪽으로 스왑 — _ArrowItem.flip_head와 동일 규약(양쪽/없음은 무해한
+        no-op)."""
+        self.prepareGeometryChange()
+        self._head_at_end, self._head_at_start = self._head_at_start, self._head_at_end
+        self.update()
 
     def clone(self):
-        c = _PolyArrowItem(QColor(self._color), self._width, self._head_at_end)
+        c = _PolyArrowItem(QColor(self._color), self._width, self._head_at_end, self._head_at_start,
+                           self._head_scale)
         c._style = self._style
         c._pts = [QPointF(p) for p in self._pts]
         c._bind_start, c._bind_end = self._bind_start, self._bind_end   # [A3] 지속 연결 유지
@@ -4982,8 +5072,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self.update()
 
     # ---- 화살촉(끝 세그먼트 방향) --------------------------------------
-    def _tip_and_angle(self):
-        if self._head_at_end:
+    def _tip_and_angle_at(self, at_end: bool):
+        if at_end:
             tip, tail = self._pts[-1], self._pts[-2]
         else:
             tip, tail = self._pts[0], self._pts[1]
@@ -4991,24 +5081,42 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                if tip != tail else 0.0)
         return tip, ang
 
-    def _head_size(self) -> float:
-        return max(self._width * 2.5, 7.0)
+    def _tip_and_angle(self):
+        """하위호환 — 활성 머리 중 '주 머리'(end 우선, 없으면 start) 하나만. 양쪽 다 다루려면
+        `_head_points()`(0~2개 삼각형 리스트)를 쓴다."""
+        if self._head_at_end:
+            return self._tip_and_angle_at(True)
+        if self._head_at_start:
+            return self._tip_and_angle_at(False)
+        return self._tip_and_angle_at(True)   # 머리 없음 — 호출부 안전을 위한 폴백(그리진 않음)
 
-    def _head_points(self):
-        # [성능 최적화 2026-08-09] __init__ 주석 참조 — `_geom_version` 키 캐시.
-        cache = self._head_pts_cache
-        if cache is not None and cache[0] == self._geom_version:
-            return cache[1]
-        tip, ang = self._tip_and_angle()
+    def _head_size(self) -> float:
+        # [실사용 피드백 2026-08-21] _ArrowItem._head_size와 동일 상향 공식 + 배율.
+        return max(self._width * 3.2, 11.0) * self._head_scale
+
+    def _head_points_at(self, at_end: bool):
+        tip, ang = self._tip_and_angle_at(at_end)
         size = self._head_size()
         a1, a2 = ang + math.radians(150), ang - math.radians(150)
-        result = [
+        return [
             QPointF(tip),
             QPointF(tip.x() + size * math.cos(a1), tip.y() + size * math.sin(a1)),
             QPointF(tip.x() + size * math.cos(a2), tip.y() + size * math.sin(a2)),
         ]
-        self._head_pts_cache = (self._geom_version, result)
-        return result
+
+    def _head_points(self):
+        """활성 화살촉 삼각형들(0~2개) — 각 원소가 3점(QPointF) 리스트.
+        [성능 최적화 2026-08-09] __init__ 주석 참조 — `_geom_version` 키 캐시."""
+        cache = self._head_pts_cache
+        if cache is not None and cache[0] == self._geom_version:
+            return cache[1]
+        tris = []
+        if self._head_at_end:
+            tris.append(self._head_points_at(True))
+        if self._head_at_start:
+            tris.append(self._head_points_at(False))
+        self._head_pts_cache = (self._geom_version, tris)
+        return tris
 
     def _polyline_path(self) -> QPainterPath:
         return self._segment_path(self._pts)
@@ -5045,25 +5153,30 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         폭이 계단처럼 삐져나와 보였다(Lucid 대조 스크린샷으로 확인). 히트테스트(`_polyline_path`
         가 쓰는 `self._pts`)·직렬화는 원본 그대로 — 이건 paint 전용 시각 트림.
 
+        [양방향 화살표, 2026-08-21] 양끝 각자 활성 화살촉이 있을 때만 그쪽을 트림한다 — 두
+        트림 모두 원본(`self._pts`) 기준으로 독립 계산해, 2정점 화살표(양쪽 다 활성)에서
+        한쪽을 먼저 잘라 놓은 값을 다른쪽 트림이 잘못 재사용하는 순서 의존 버그를 피한다.
+
         [성능 최적화 2026-08-09] `_head_points()`와 같은 계약 — `_geom_version` 키 캐시."""
         cache = self._trimmed_pts_cache
         if cache is not None and cache[0] == self._geom_version:
             return cache[1]
-        pts = list(self._pts)
+        orig = self._pts
+        pts = list(orig)
         if len(pts) >= 2:
             size = self._head_size() * 0.85
             if self._head_at_end:
-                a, b = pts[-2], pts[-1]
-            else:
-                a, b = pts[1], pts[0]
-            seg_len = math.hypot(b.x() - a.x(), b.y() - a.y())
-            if seg_len > 1e-6:
-                t = max(0.0, 1.0 - size / seg_len)
-                trimmed = QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
-                if self._head_at_end:
-                    pts[-1] = trimmed
-                else:
-                    pts[0] = trimmed
+                a, b = orig[-2], orig[-1]
+                seg_len = math.hypot(b.x() - a.x(), b.y() - a.y())
+                if seg_len > 1e-6:
+                    t = max(0.0, 1.0 - size / seg_len)
+                    pts[-1] = QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
+            if self._head_at_start:
+                a, b = orig[1], orig[0]
+                seg_len = math.hypot(b.x() - a.x(), b.y() - a.y())
+                if seg_len > 1e-6:
+                    t = max(0.0, 1.0 - size / seg_len)
+                    pts[0] = QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
         self._trimmed_pts_cache = (self._geom_version, pts)
         return pts
 
@@ -5306,11 +5419,13 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         r = QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
         stroke = self._width / 2.0 + 2
         r = r.adjusted(-stroke, -stroke, stroke, stroke)
-        hp = self._head_points()
-        hx = [p.x() for p in hp]
-        hy = [p.y() for p in hp]
-        head_r = QRectF(QPointF(min(hx), min(hy)), QPointF(max(hx), max(hy)))
-        result = r.united(head_r.adjusted(-2, -2, 2, 2))
+        tris = self._head_points()
+        if tris:
+            hx = [p.x() for tri in tris for p in tri]
+            hy = [p.y() for tri in tris for p in tri]
+            head_r = QRectF(QPointF(min(hx), min(hy)), QPointF(max(hx), max(hy)))
+            r = r.united(head_r.adjusted(-2, -2, 2, 2))
+        result = r
         self._content_rect_cache = (self._geom_version, result)
         return result
 
@@ -5341,7 +5456,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         stroker.setCapStyle(Qt.PenCapStyle.RoundCap)
         stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         shape = stroker.createStroke(self._polyline_path())
-        shape.addPolygon(QPolygonF(self._head_points()))
+        for tri in self._head_points():
+            shape.addPolygon(QPolygonF(tri))
         return shape
 
     # [선택 표시 통일 2026-08-01 → 2026-08-03 Lucid 대조] 커스텀 _paint_selection_outline·
@@ -5385,7 +5501,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         painter.setPen(QPen(self._color, 1, Qt.PenStyle.SolidLine,
                             Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         painter.setBrush(QBrush(self._color))
-        painter.drawPolygon(QPolygonF(self._head_points()))
+        for tri in self._head_points():
+            painter.drawPolygon(QPolygonF(tri))
         if self.isSelected():
             self._paint_selection_outline(painter, self._scale_or_1())
         self._paint_segment_handles(painter)   # [M4-4] 변 중점 알약 핸들(끝점 사각 아래에)

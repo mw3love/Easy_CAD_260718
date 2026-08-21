@@ -354,6 +354,29 @@ def _flip_icon(color: QColor, w: int = 28, h: int = 20) -> QIcon:
     return QIcon(pm)
 
 
+def _arrow_head_icon(kind: str, color: QColor, w: int = 46, h: int = 20) -> QIcon:
+    """화살촉 위치(없음/끝만/양쪽/시작만) 드롭다운용 아이콘 — 수평선 견본 + 활성 끝에 삼각형
+    (`_arrow_kind_icon`·`_pen_style_icon`과 같은 '실제 모양 축소본' 관례)."""
+    pm = QPixmap(w, h)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    col = QColor(color)
+    y = h / 2.0
+    x0, x1 = 6.0, w - 6.0
+    p.setPen(QPen(col, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    p.drawLine(QPointF(x0, y), QPointF(x1, y))
+    size = 5.0
+    p.setBrush(col)
+    p.setPen(QPen(col, 1, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    if kind in ("end", "both"):
+        p.drawPolygon(QPolygonF([QPointF(x1, y), QPointF(x1 - size, y - size), QPointF(x1 - size, y + size)]))
+    if kind in ("start", "both"):
+        p.drawPolygon(QPolygonF([QPointF(x0, y), QPointF(x0 + size, y - size), QPointF(x0 + size, y + size)]))
+    p.end()
+    return QIcon(pm)
+
+
 def _rainbow_icon(current: QColor | None = None, size: int = 20) -> QIcon:
     """무지개 색 버튼 아이콘 — 무지개 링 + 가운데 현재 색 점(팔레트 팝업 진입점)."""
     pm = QPixmap(size, size)

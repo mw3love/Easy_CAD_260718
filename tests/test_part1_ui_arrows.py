@@ -633,8 +633,11 @@ def test_properties_panel_curve_radius_stepper():
     w._scene.addItem(ar); ar.setSelected(True)
     w._floating_set_arrow_kind("ortho")         # 직각 커넥터 → 각짐(반경) 스테퍼 대상
     assert not w._pf_radius.isHidden()
-    # 키보드 포커스를 가져가면 Del·Ctrl+D(뷰 keyPressEvent 처리)가 캔버스로 안 간다 → NoFocus 고정.
-    assert w._pf_radius.focusPolicy() == Qt.FocusPolicy.NoFocus
+    # [실사용 버그 2026-08-21 수정] 클릭 없이 휠만으로 포커스를 뺏기면 Del·Ctrl+D(뷰
+    # keyPressEvent 처리)가 캔버스로 안 간다 — 그렇다고 NoFocus로 막으면 클릭해서 숫자를
+    # 타이핑하는 것도 함께 막힌다(실사용 재현). ClickFocus면 명시적 클릭 없이는 포커스를
+    # 안 뺏기면서도 클릭 후 타이핑은 된다.
+    assert w._pf_radius.focusPolicy() == Qt.FocusPolicy.ClickFocus
     poly = [x for x in w._scene.items() if isinstance(x, _PolyArrowItem)][0]
     assert w._pf_radius.value() == int(_PolyArrowItem._CORNER_R)   # 현재 값 동기화
     w._pf_radius.setValue(2)                                       # 사용자 조작
@@ -1513,10 +1516,12 @@ def test_snap_to_external_path_item():
 
 
 def test_properties_panel_type_rows_hidden_without_selection():
-    # [미니패널 통합 2026-07-31] 선택이 없으면 도형바꾸기·화살표종류·반경·방향 4개 행은 전부
-    # 숨어야 한다(빈 dock에 죽은 버튼이 남지 않게) — 옛 플로팅 툴바의 "바 전체 숨김"과 동일 취지.
+    # [미니패널 통합 2026-07-31 → 2026-08-21 화살촉·회전 추가] 선택이 없으면 도형바꾸기·
+    # 화살표종류·반경·방향·화살촉·회전 행은 전부 숨어야 한다(빈 dock에 죽은 버튼이 남지
+    # 않게) — 옛 플로팅 툴바의 "바 전체 숨김"과 동일 취지.
     w = CanvasWindow()
-    for widget in (w._pf_swap_btn, w._pf_routing_btn, w._pf_radius, w._pf_dir_btn):
+    for widget in (w._pf_swap_btn, w._pf_routing_btn, w._pf_radius, w._pf_dir_btn,
+                   w._pf_head_btn, w._pf_rotation):
         assert widget.isHidden()
 
 
@@ -1638,7 +1643,9 @@ def test_properties_panel_type_swap_merged_row():
     ar.set_points(QPointF(0, 0), QPointF(100, 60))
     ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(ar); ar.setSelected(True)
-    assert w._pf_type_stack.currentWidget() is w._pf_type       # 화살표 → 라벨로 복귀
+    # [실사용 피드백 2026-08-21] 화살표는 이제 '종류' 자리에서 바로 경로 형태(직선·곡선·
+    # 직각)를 고르는 콤보로 바뀐다(도형의 바꾸기 버튼과 같은 자리, 라벨로의 복귀가 아님).
+    assert w._pf_type_stack.currentWidget() is w._pf_routing_btn
     assert w._pf_swap_btn.isHidden()
 
 
@@ -1703,7 +1710,9 @@ def test_arrowhead_shoulders_not_beveled():
     from PyQt6.QtWidgets import QGraphicsScene
     from PyQt6.QtGui import QImage, QPainter
 
-    SCALE, SX, SY, SPAN = 20, -6.0, -9.0, 12.0
+    # [실사용 피드백 2026-08-21] 화살촉 기본 공식이 커져(바닥 7→11) 옛 12단위 렌더창을
+    # 어깨점이 넘어설 수 있어 여유를 키웠다(렌더 로직 자체와는 무관, 창 크기만 조정).
+    SCALE, SX, SY, SPAN = 20, -9.0, -13.0, 18.0
     px = int(SPAN * SCALE)
 
     def shoulders_filled(item):
@@ -1716,7 +1725,7 @@ def test_arrowhead_shoulders_not_beveled():
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         sc.render(p, QRectF(0, 0, px, px), QRectF(SX, SY, SPAN, SPAN))
         p.end()
-        tip, bl, br = item._head_points()
+        tip, bl, br = item._head_points()[0]   # [양방향 화살표] 이제 삼각형 리스트(0~2개) — 주 머리 하나
         cx = (tip.x() + bl.x() + br.x()) / 3.0
         cy = (tip.y() + bl.y() + br.y()) / 3.0
         out = []
@@ -1921,3 +1930,238 @@ def test_selection_band_suppressed_during_multi_drag():
     w._view._move_active = True
     assert _drag_decor_suppressed(a) is True
     assert band_ink() < idle, "드래그 중인데 선택 밴드를 그대로 그린다"
+
+
+
+
+# ---- 양방향 화살표(화살촉 위치) + 속성패널 순서·회전 (실사용 피드백 2026-08-21) --------
+
+def test_arrow_head_states_geometry_both_classes():
+    """_ArrowItem(직선·곡선)·_PolyArrowItem 둘 다 없음/끝만/양쪽/시작만 4상태에서 활성
+    화살촉 개수가 정확하고(_head_points), paint()가 크래시하지 않는다."""
+    from easycad.canvas.host_widgets import _apply_arrow_head, _arrow_head_of
+    from PyQt6.QtGui import QPixmap, QPainter
+
+    def make_arrow(cls, curved=False):
+        it = cls(QColor("#111111"), 3.0, True, False)
+        if cls is _ArrowItem:
+            it.set_points(QPointF(0, 0), QPointF(120, 60))
+            if curved:
+                it.apply_curved()
+        else:
+            it.set_points(QPointF(0, 0), QPointF(120, 0))
+        return it
+
+    for cls in (_ArrowItem, _PolyArrowItem):
+        for curved in ((False, True) if cls is _ArrowItem else (False,)):
+            it = make_arrow(cls, curved)
+            expect = {"none": 0, "end": 1, "start": 1, "both": 2}
+            for kind, n in expect.items():
+                _apply_arrow_head(it, kind)
+                assert _arrow_head_of(it) == kind
+                assert len(it._head_points()) == n
+                pm = QPixmap(200, 200); pm.fill(QColor("white"))
+                p = QPainter(pm)
+                it.paint(p, None)
+                p.end()   # 크래시 없이 끝나면 통과
+
+
+def test_arrow_flip_head_swap_semantics():
+    """flip_head는 end/start를 스왑 — 단일머리는 반대쪽으로, 양쪽/없음은 무해한 no-op."""
+    from easycad.canvas.host_widgets import _apply_arrow_head, _arrow_head_of
+    it = _PolyArrowItem(QColor("#111111"), 2.0, True, False)
+    it.set_points(QPointF(0, 0), QPointF(100, 0))
+    assert _arrow_head_of(it) == "end"
+    it.flip_head()
+    assert _arrow_head_of(it) == "start"
+    it.flip_head()
+    assert _arrow_head_of(it) == "end"
+
+    _apply_arrow_head(it, "both")
+    it.flip_head()
+    assert _arrow_head_of(it) == "both"   # no-op
+
+    _apply_arrow_head(it, "none")
+    it.flip_head()
+    assert _arrow_head_of(it) == "none"   # no-op
+
+
+def test_arrow_head_serialize_roundtrip():
+    """.ecad 직렬화(item_to_dict/dict_to_item) 왕복 — head_start 필드가 보존되고,
+    옛 파일(head_start 키 없음)은 하위호환으로 False(단일 머리 그대로)로 읽힌다."""
+    from easycad.canvas.host_widgets import _apply_arrow_head, _arrow_head_of
+    from easycad.fileio.document import dict_to_item
+
+    ar = _ArrowItem(QColor("#222222"), 2.0, True, False)
+    ar.set_points(QPointF(0, 0), QPointF(50, 40))
+    _apply_arrow_head(ar, "both")
+    d = item_to_dict(ar)
+    assert d["head_start"] is True
+    restored = dict_to_item(d)
+    assert _arrow_head_of(restored) == "both"
+
+    sar = _PolyArrowItem(QColor("#222222"), 2.0, False, True)   # "시작만"
+    sar.set_points(QPointF(0, 0), QPointF(80, 0))
+    d2 = item_to_dict(sar)
+    assert d2["head_start"] is True
+    restored2 = dict_to_item(d2)
+    assert _arrow_head_of(restored2) == "start"
+
+    # 하위호환: head_start 키 자체가 없는 옛 파일 형식.
+    d.pop("head_start")
+    old_restored = dict_to_item(d)
+    assert old_restored._head_at_start is False
+
+
+def test_arrow_head_dxf_export_no_crash():
+    """DXF 내보내기 — 양쪽/없음 상태에서도(화살촉 0~2개) 예외 없이 끝난다."""
+    import ezdxf
+    from easycad.fileio.dxf_export import _export_arrow, _export_sarrow
+    from easycad.canvas.host_widgets import _apply_arrow_head
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    ar = _ArrowItem(QColor("#000000"), 2.0, True, False)
+    ar.set_points(QPointF(0, 0), QPointF(50, 30))
+    sar = _PolyArrowItem(QColor("#000000"), 2.0, True, False)
+    sar.set_points(QPointF(0, 0), QPointF(50, 0))
+    for kind in ("none", "end", "start", "both"):
+        _apply_arrow_head(ar, kind)
+        _apply_arrow_head(sar, kind)
+        _export_arrow(msp, ar)
+        _export_sarrow(msp, sar)
+
+
+def test_properties_panel_row_order():
+    """[실사용 피드백 2026-08-21] 기본 6항목 순서 — 종류→채움→색→선→두께→폰트."""
+    w = CanvasWindow()
+    form = w._props_form
+    order = []
+    for i in range(form.rowCount()):
+        label_item = form.itemAt(i, form.ItemRole.LabelRole)
+        if label_item is not None and label_item.widget() is not None:
+            order.append(label_item.widget().text())
+    idx = {name: order.index(name) for name in ("종류", "채움", "색", "선", "두께", "폰트")}
+    assert idx["종류"] < idx["채움"] < idx["색"] < idx["선"] < idx["두께"] < idx["폰트"]
+
+
+def test_properties_panel_arrow_head_row_and_undo():
+    """화살표 선택 시 '화살촉' 행 노출 + 콤보 조작이 undo 가능."""
+    from easycad.canvas.host_widgets import _arrow_head_of
+    w = CanvasWindow()
+    ar = _PolyArrowItem(QColor("#111111"), 3.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 0))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar); ar.setSelected(True)
+    assert not w._pf_head_btn.isHidden()
+    assert w._pf_head_btn.currentData() == "end"
+
+    i = w._pf_head_btn.findData("both")
+    w._pf_head_btn.setCurrentIndex(i)
+    assert _arrow_head_of(ar) == "both"
+    assert w._pf_dir_btn.isHidden()   # 양쪽이면 방향(뒤집기) 행이 숨는다
+
+    w.undo()
+    assert _arrow_head_of(ar) == "end"
+
+
+def test_properties_panel_rotation_field():
+    """[신규기능 2026-08-21] 회전 각도 숫자입력 — 사각형(회전 가능)엔 뜨고, 화살표(끝점으로
+    모양을 정함)엔 안 뜬다. 조작은 undo 가능(capture_geom 경로)."""
+    w = CanvasWindow()
+    rect = _RectItem(QRectF(0, 0, 100, 60))
+    rect.setFlags(rect.GraphicsItemFlag.ItemIsSelectable | rect.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(rect); rect.setSelected(True)
+    assert not w._pf_rotation.isHidden()
+    w._pf_rotation.setValue(30.0)
+    assert rect.rotation() == 30.0
+    w.undo()
+    assert rect.rotation() == 0.0
+    w.redo()
+    assert rect.rotation() == 30.0
+
+    w._scene.clearSelection()
+    ar = _ArrowItem(QColor("#111111"), 3.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 60))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar); ar.setSelected(True)
+    assert w._pf_rotation.isHidden()
+
+
+def test_rotation_and_radius_spinbox_clickfocus_typable():
+    """[실사용 버그 2026-08-21] 회전·반경 스핀박스는 클릭 후 직접 타이핑이 돼야 하고
+    (예전 NoFocus는 커서조차 안 뜨는 회귀였음), 클릭 없이 휠만 굴렸을 땐 값은 바뀌어도
+    포커스를 뺏지 않아야 한다(캔버스 Del·Ctrl+D 단축키 보호)."""
+    from PyQt6.QtCore import Qt as _Qt, QPointF as _QPointF, QPoint as _QPoint
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtTest import QTest
+    w = CanvasWindow(); w.show()
+    w.activateWindow(); QApplication.setActiveWindow(w)
+    rect = _RectItem(QRectF(0, 0, 100, 60))
+    rect.setFlags(rect.GraphicsItemFlag.ItemIsSelectable | rect.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(rect); rect.setSelected(True)
+    w._refresh_properties()
+
+    sb = w._pf_rotation
+    w._view.setFocus(_Qt.FocusReason.OtherFocusReason)
+    assert not sb.hasFocus()
+    we = QWheelEvent(_QPointF(5, 5), _QPointF(5, 5), _QPoint(0, 0), _QPoint(0, 120),
+                     _Qt.MouseButton.NoButton, _Qt.KeyboardModifier.NoModifier,
+                     _Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(sb, we)
+    assert not sb.hasFocus(), "휠만으로 스핀박스가 캔버스 포커스를 뺏었다"
+
+    # [오프스크린 한계] QTest.mouseClick의 포커스 전달은 창 활성화 상태에 의존해 불안정할 수
+    # 있다(이 리포에 반복 기록된 오프스크린 합성이벤트 함정과 같은 계열) — 클릭이 "명시적으로
+    # 이 위젯에 포커스를 준다"는 사실 자체는 `setFocus(MouseFocusReason)`로 직접 재현하고,
+    # 그 뒤 실제 타이핑 반영만 검증한다(실조건 클릭 자체는 `python run.py`로 사용자 확인).
+    sb.setFocus(_Qt.FocusReason.MouseFocusReason)
+    assert sb.hasFocus()
+    sb.selectAll()
+    QTest.keyClicks(sb, "270")
+    QTest.keyClick(sb, _Qt.Key.Key_Return)
+    assert rect.rotation() == 270.0
+
+
+def test_arrow_head_scale_default_bump_and_panel_undo():
+    """[실사용 피드백 2026-08-21] 기본 화살촉 공식 상향(Lucid 대비 작다는 지적) + 새 '머리크기'
+    배율 필드 — 패널 조작이 undo 가능하고, 화살촉='없음'이면 행이 숨는다."""
+    from easycad.canvas.host_widgets import _apply_arrow_head
+    w = CanvasWindow()
+    ar = _PolyArrowItem(QColor("#111111"), 1.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 0))
+    ar.setFlags(ar.GraphicsItemFlag.ItemIsSelectable | ar.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ar); ar.setSelected(True)
+    assert ar._head_size() == 11.0   # 기본 공식 상향(옛 7.0) 확인
+    assert not w._pf_head_scale.isHidden()
+
+    w._pf_head_scale.setValue(2.0)
+    assert ar._head_scale == 2.0 and ar._head_size() == 22.0
+    w.undo()
+    assert ar._head_scale == 1.0
+
+    _apply_arrow_head(ar, "none")
+    w._refresh_properties()
+    assert w._pf_head_scale.isHidden()   # 화살촉 없으면 배율 무의미 → 숨김
+
+
+def test_arrow_head_scale_serialize_and_style_copy():
+    """머리크기 배율이 .ecad 왕복 + 스타일 복사(format painter)로도 전달된다."""
+    from easycad.fileio.document import dict_to_item
+    ar = _ArrowItem(QColor("#222222"), 2.0, True, False, 1.8)
+    ar.set_points(QPointF(0, 0), QPointF(50, 40))
+    d = item_to_dict(ar)
+    assert d["head_scale"] == 1.8
+    restored = dict_to_item(d)
+    assert restored._head_scale == 1.8
+
+    w = CanvasWindow()
+    src = _ArrowItem(QColor("#333333"), 2.0, True, False, 2.5)
+    src.set_points(QPointF(0, 0), QPointF(10, 10))
+    dst = _ArrowItem(QColor("#000000"), 2.0, True)
+    w._scene.addItem(src); w._scene.addItem(dst)
+    src.setSelected(True)
+    w.copy_style_from_selection()
+    src.setSelected(False)
+    dst.setSelected(True)
+    w.paste_style_to_selection()
+    assert dst._head_scale == 2.5

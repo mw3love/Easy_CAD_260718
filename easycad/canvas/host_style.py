@@ -31,7 +31,9 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
-from easycad.canvas.host_widgets import _current_icon_color, _arrow_kind_of
+from easycad.canvas.host_widgets import (
+    _current_icon_color, _arrow_kind_of, _arrow_head_of, _apply_arrow_head, _is_rotatable,
+)
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
@@ -231,6 +233,44 @@ class _StyleMixin:
             self._floating_set_arrow_kind(kind)
 
 
+    def _edit_arrow_head_combo(self, _idx):
+        """[양방향 화살표, 2026-08-21] 속성패널의 '화살촉' 콤보(없음/끝만/양쪽/시작만) —
+        위 `_edit_arrow_kind_combo`와 같은 관례(_pf_updating 가드로 동기화 신호 무시)."""
+        if self._pf_updating:
+            return
+        kind = self._pf_head_btn.currentData()
+        if kind is None:
+            return
+        sel = [it for it in self._scene.selectedItems() if isinstance(it, (_ArrowItem, _PolyArrowItem))]
+        self._edit_items(sel, lambda it: _apply_arrow_head(it, kind))
+
+
+    def _edit_head_scale(self, val):
+        """[실사용 피드백 2026-08-21] 화살촉 크기 배율 — 색·두께와 같은 '겉모습' 속성이라
+        `_edit_items`(capture_state 경로)를 그대로 쓴다(회전과 달리 기하 undo가 아님)."""
+        sel = [it for it in self._scene.selectedItems() if isinstance(it, (_ArrowItem, _PolyArrowItem))]
+        self._edit_items(sel, lambda it: it.set_head_scale(val),
+                         key=("head_scale", tuple(sorted(id(it) for it in sel))))
+
+
+    def _edit_rotation(self, val):
+        """[신규기능 2026-08-21] 회전 각도 숫자입력 — 대상은 끝점으로 모양을 정하지 않는
+        도형(사각형·원·심볼·텍스트 등, `_uses_endpoints()`가 없거나 False)만. 회전 중심은
+        핸들 드래그와 동일하게 콘텐츠 사각형 중심으로 맞춘 뒤 적용한다. 회전은 색·두께 같은
+        '겉모습'(capture_state)이 아니라 위치/스케일과 같은 '기하'(capture_geom) 소관이라
+        `_floating_set_radius`와 동일하게 geom undo 경로를 쓴다(state 경로는 rotation을
+        스냅샷에 안 담아 되돌리기가 무효였다 — offscreen 자체검증으로 발견)."""
+        sel = [it for it in self._scene.selectedItems() if _is_rotatable(it)]
+        if not sel:
+            return
+        snaps = [(it, it.capture_geom()) for it in sel]
+        for it in sel:
+            it.setTransformOriginPoint(it._content_rect().center())
+            it.setRotation(float(val))
+        self.push_undo_geom(snaps, coalesce_key=("rotation", tuple(sorted(id(it) for it in sel))))
+        self._view.viewport().update()
+
+
     def _edit_font(self, val):
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_font_size")]
         self._edit_items(sel, lambda it: it.apply_font_size(int(val)),
@@ -311,6 +351,10 @@ class _StyleMixin:
             st["bg"] = QColor(item._bg) if getattr(item, "_bg", None) is not None else None
         if hasattr(item, "_head_at_end") and hasattr(item, "set_head_at_end"):
             st["head"] = item._head_at_end
+        if hasattr(item, "_head_at_start") and hasattr(item, "set_head_at_start"):
+            st["head_start"] = item._head_at_start   # [양방향 화살표]
+        if hasattr(item, "_head_scale") and hasattr(item, "set_head_scale"):
+            st["head_scale"] = item._head_scale   # [화살촉 크기 배율]
         return st
 
 
@@ -339,6 +383,10 @@ class _StyleMixin:
             item.set_bg(st["bg"])
         if "head" in st and hasattr(item, "set_head_at_end"):
             item.set_head_at_end(st["head"])
+        if "head_start" in st and hasattr(item, "set_head_at_start"):
+            item.set_head_at_start(st["head_start"])
+        if "head_scale" in st and hasattr(item, "set_head_scale"):
+            item.set_head_scale(st["head_scale"])
 
 
     def copy_style_from_selection(self):
@@ -409,7 +457,8 @@ class _StyleMixin:
                 self._pf_fill_val.setText("—")
                 self._pf_fill.setStyleSheet(self._swatch_css(None))
                 self._pf_hint.setText("객체를 선택하면 속성을 편집할 수 있습니다.")
-                for w in (self._pf_routing_btn, self._pf_radius, self._pf_dir_btn):
+                for w in (self._pf_head_btn, self._pf_head_scale, self._pf_radius,
+                         self._pf_dir_btn, self._pf_rotation):
                     self._props_form.setRowVisible(w, False)
                 # 아래 "선택 있음" 분기와 동일 — 행을 숨긴 뒤 패널을 그 크기로 다시 줄이지
                 # 않으면, 직전에 화살표 등 확장 행이 있던 선택에서 커진 패널 크기가 선택
@@ -481,23 +530,55 @@ class _StyleMixin:
             # [미니패널 통합] 타입 전용 행 노출 — 옛 _reposition_floating_toolbar의 판정을 그대로.
             show_swap = len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem))
             show_routing = len(sel) == 1 and isinstance(sel[0], (_ArrowItem, _PolyArrowItem))
-            show_dir = any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel)
+            show_head = any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel)
+            # [실사용 피드백 2026-08-21] '방향'(뒤집기)은 화살촉이 한쪽만 있을 때만 의미가
+            # 있다 — 양쪽/없음은 두 값이 같아 스왑해도 그대로(무해한 no-op)이므로 행 자체를
+            # 숨긴다(핵심 판정은 core_shapes.py의 flip_head가 하는 스왑과 동일한 XOR).
+            show_dir = any(isinstance(it, (_ArrowItem, _PolyArrowItem))
+                           and bool(it._head_at_end) != bool(getattr(it, "_head_at_start", False))
+                           for it in sel)
+            show_rotation = any(_is_rotatable(it) for it in sel)
             curved = (len(sel) == 1 and isinstance(sel[0], _PolyArrowItem) and sel[0]._is_ortho())
-            # [실사용 피드백 2026-08-20, 종류+도형 통합] 바꿀 수 있는 도형이면 '종류' 행
-            # 자체가 바꾸기 버튼(현재 종류 표시 + 클릭 시 변경 메뉴)으로, 아니면 읽기전용
-            # 라벨로. 별도 '도형' 행은 더 이상 없다.
+            # [실사용 피드백 2026-08-20, 종류+도형 통합 → 2026-08-21 화살표까지 확장] 바꿀 수
+            # 있는 도형이면 '종류' 행 자체가 바꾸기 버튼으로, 화살표면 화살표 종류 콤보로,
+            # 그 외(텍스트·다중선택 등)는 읽기전용 라벨로. 별도 '도형'·'화살표' 행은 없다.
             if show_swap:
                 self._pf_swap_btn.setText(f"{self._pf_type.text()} ▾")
                 self._pf_type_stack.setCurrentWidget(self._pf_swap_btn)
+            elif show_routing:
+                self._pf_type_stack.setCurrentWidget(self._pf_routing_btn)
             else:
                 self._pf_type_stack.setCurrentWidget(self._pf_type)
-            self._props_form.setRowVisible(self._pf_routing_btn, show_routing)
+            # [실사용 피드백 2026-08-21] 머리크기 배율은 화살촉이 하나라도 있을 때만 의미가
+            # 있다 — 첫 화살표 기준 '없음'이면 숨긴다(방향 행과 같은 판정 재료 재사용).
+            arrows_sel = [it for it in sel if isinstance(it, (_ArrowItem, _PolyArrowItem))]
+            show_head_scale = bool(arrows_sel) and _arrow_head_of(arrows_sel[0]) != "none"
+            self._props_form.setRowVisible(self._pf_head_btn, show_head)
+            self._props_form.setRowVisible(self._pf_head_scale, show_head_scale)
             self._props_form.setRowVisible(self._pf_radius, curved)
             self._props_form.setRowVisible(self._pf_dir_btn, show_dir)
+            self._props_form.setRowVisible(self._pf_rotation, show_rotation)
             if show_routing:   # [아이콘화] 콤보 현재 선택을 실제 화살표 종류로 동기화
                 i = self._pf_routing_btn.findData(_arrow_kind_of(sel[0]))
                 if i >= 0:
                     self._pf_routing_btn.setCurrentIndex(i)
+            if show_head:   # [양방향 화살표] 콤보 현재 선택을 첫 화살표의 화살촉 상태로 동기화
+                first_arrow = arrows_sel[0]
+                i = self._pf_head_btn.findData(_arrow_head_of(first_arrow))
+                if i >= 0:
+                    self._pf_head_btn.setCurrentIndex(i)
+            if show_head_scale:   # [화살촉 크기 배율] 값 동기화 — 균일하면 그 값, 아니면 첫 값
+                scales = [it._head_scale for it in arrows_sel]
+                self._pf_head_scale.blockSignals(True)
+                self._pf_head_scale.setValue(scales[0])
+                self._pf_head_scale.blockSignals(False)
+            if show_rotation:   # [신규기능 2026-08-21] 값 동기화 — 균일하면 그 값, 아니면 0
+                rotatable = [it for it in sel if _is_rotatable(it)]
+                rots = [it.rotation() for it in rotatable]
+                uniform_rot = len({round(r, 1) for r in rots}) == 1
+                self._pf_rotation.blockSignals(True)
+                self._pf_rotation.setValue(rots[0] if uniform_rot else 0.0)
+                self._pf_rotation.blockSignals(False)
             # ⚠ [2026-07-31, 진짜 원인 확정 — 실기기에서 직접 반복 재현해 확인] 선택 종류가
             # 바뀌어 행 개수가 달라져도(예: 네모 7행 → 화살표 9행) `_props_panel` 위젯 자체의
             # 크기(`adjustSize()`로만 커짐)는 창 리사이즈 때만 호출되는 `_reposition_panels()`

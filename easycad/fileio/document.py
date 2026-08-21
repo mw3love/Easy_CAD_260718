@@ -212,6 +212,8 @@ def item_to_dict(it) -> dict | None:
             ctrl1=None if it._ctrl1 is None else [it._ctrl1.x(), it._ctrl1.y()],
             ctrl2=None if it._ctrl2 is None else [it._ctrl2.x(), it._ctrl2.y()],
             color=_col(it._color), width=it._width, head=it._head_at_end,
+            head_start=it._head_at_start,   # [양방향 화살표, 2026-08-21]
+            head_scale=it._head_scale,   # [화살촉 크기 배율, 2026-08-21]
             style=int(it._style.value),   # [M2 #3] 몸통 선스타일(점선 등)
         )
     elif isinstance(it, _SymbolItem):
@@ -245,6 +247,8 @@ def item_to_dict(it) -> dict | None:
     elif isinstance(it, _PolyArrowItem):
         d.update(type="sarrow", pts=[[p.x(), p.y()] for p in it._pts],
                  color=_col(it._color), width=it._width, head=it._head_at_end,
+                 head_start=it._head_at_start,   # [양방향 화살표, 2026-08-21]
+                 head_scale=it._head_scale,   # [화살촉 크기 배율, 2026-08-21]
                  style=int(it._style.value),   # [M2 #3] 몸통 선스타일(점선 등)
                  auto_route=it._auto_route,   # [Stage1] 직교 자동 라우팅 상태
                  routing=it._routing,         # [M4-4] 라우팅 스타일(#4)
@@ -301,7 +305,9 @@ def dict_to_item(d: dict):
     elif t == "image":
         it = _ImageItem(_b64_to_pixmap(d["data"]), QRectF(*d["rect"]))
     elif t == "arrow":
-        it = _ArrowItem(QColor(d["color"]), d["width"], d.get("head", True))
+        it = _ArrowItem(QColor(d["color"]), d["width"], d.get("head", True),
+                        d.get("head_start", False),   # [양방향 화살표] 하위호환 기본 False
+                        d.get("head_scale", 1.0))     # [화살촉 크기 배율] 하위호환 기본 1.0
         it.set_points(QPointF(*d["p1"]), QPointF(*d["p2"]))
         if d.get("ctrl1") is not None:
             it._ctrl1 = QPointF(*d["ctrl1"])
@@ -321,7 +327,9 @@ def dict_to_item(d: dict):
     elif t == "ellipse":
         it = _EllipseItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
     elif t == "sarrow":
-        it = _PolyArrowItem(QColor(d["color"]), d["width"], d.get("head", True))
+        it = _PolyArrowItem(QColor(d["color"]), d["width"], d.get("head", True),
+                            d.get("head_start", False),   # [양방향 화살표] 하위호환 기본 False
+                            d.get("head_scale", 1.0))     # [화살촉 크기 배율] 하위호환 기본 1.0
         it._pts = [QPointF(*xy) for xy in d["pts"]]
         it._auto_route = d.get("auto_route", False)   # [Stage1] 직교 자동 라우팅 상태
         # [M4-4] 라우팅 스타일 — 신규 필드. 옛 파일은 auto_route→ortho / 아니면 straight로 유추(무손실).

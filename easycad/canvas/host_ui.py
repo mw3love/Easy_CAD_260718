@@ -31,7 +31,7 @@ from easycad.canvas.annotator_core import (
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
-    _pen_style_icon, _arrow_kind_icon, _flip_icon,
+    _pen_style_icon, _arrow_kind_icon, _flip_icon, _arrow_head_icon,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, export_svg_symbol
 from easycad.fileio.dxf_export import export_dxf
@@ -48,7 +48,7 @@ from easycad.canvas.host_widgets import (
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
     _StaticSection, _SymbolFolderDropZone, _apply_native_titlebar_scheme,
-    _ARROW_KIND_LABELS, _set_menu_sep_color, _style_menu_separators,
+    _ARROW_KIND_LABELS, _ARROW_HEAD_LABELS, _set_menu_sep_color, _style_menu_separators,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -1647,6 +1647,10 @@ class _UIBuildMixin:
         self._pf_swap_btn.setToolTip("클릭: 다른 도형으로 바꾸기(크기·연결 유지)")
         self._pf_swap_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._pf_swap_btn.setMenu(self._build_swap_menu())
+        # [실사용 피드백 2026-08-21] 화살표는 '종류'(경로 형태: 직선·곡선·직각)를 이 자리
+        # 대신 별도 '화살표' 행에서 골라야 해 도형(사각형 등)의 바꾸기 버튼과 비일관이었다 —
+        # 같은 스택에 화살표 종류 콤보(`_pf_routing_btn`, 아래에서 생성)를 3번째 페이지로
+        # 추가해 도형·화살표 둘 다 '종류' 자리에서 바로 바꾸도록 통일한다.
         self._pf_type_stack = QStackedWidget()
         self._pf_type_stack.addWidget(self._pf_type)
         self._pf_type_stack.addWidget(self._pf_swap_btn)
@@ -1698,11 +1702,14 @@ class _UIBuildMixin:
         self._pf_font.setRange(_MIN_FONT, _MAX_FONT); self._pf_font.setSuffix(" pt")
         self._pf_font.valueChanged.connect(self._edit_font)
 
+        # [실사용 피드백 2026-08-21] 항목 순서 — 종류(무엇인지) → 채움·색(같은 '색' 계열,
+        # 면적이 넓은 채움을 먼저) → 선(선의 형태부터 정한 뒤) → 두께(그 선을 얼마나 굵게,
+        # 연속값 다듬기라 선 바로 다음) → 폰트(텍스트 전용, 도형 축과 무관해 맨 뒤).
         form.addRow("종류", self._pf_type_stack)
-        form.addRow("색", color_row)
         form.addRow("채움", fill_row)
-        form.addRow("두께", self._pf_width)
+        form.addRow("색", color_row)
         form.addRow("선", self._pf_style)
+        form.addRow("두께", self._pf_width)
         form.addRow("폰트", self._pf_font)
 
         # [미니패널 통합, 2026-07-31] 선택 위를 따라다니던 플로팅 컨텍스트 툴바(M3 #15)를
@@ -1727,7 +1734,34 @@ class _UIBuildMixin:
                 "", kind)
             self._pf_routing_btn.setItemData(i, label, Qt.ItemDataRole.ToolTipRole)
         self._pf_routing_btn.currentIndexChanged.connect(self._edit_arrow_kind_combo)
-        form.addRow("화살표", self._pf_routing_btn)
+        # [실사용 피드백 2026-08-21] 별도 '화살표' 행 대신 위 '종류' 스택의 3번째 페이지로 —
+        # 화살표 선택 시 `_refresh_properties`가 이 위젯을 currentWidget으로 올린다.
+        self._pf_type_stack.addWidget(self._pf_routing_btn)
+
+        # [양방향 화살표, 2026-08-21] 화살촉 위치(없음/끝만/양쪽/시작만) — 화살표 전용 행.
+        self._pf_head_btn = QComboBox()
+        self._pf_head_btn.setToolTip("화살촉 위치(없음·끝만·양쪽·시작만)")
+        self._pf_head_btn.setIconSize(QSize(self._PROPS_ICON_W, self._PROPS_ARROW_ICON_H))
+        for i, (kind, label) in enumerate(_ARROW_HEAD_LABELS):
+            self._pf_head_btn.addItem(
+                _arrow_head_icon(kind, _current_icon_color(),
+                                 self._PROPS_ICON_W, self._PROPS_ARROW_ICON_H),
+                "", kind)
+            self._pf_head_btn.setItemData(i, label, Qt.ItemDataRole.ToolTipRole)
+        self._pf_head_btn.currentIndexChanged.connect(self._edit_arrow_head_combo)
+        form.addRow("화살촉", self._pf_head_btn)
+
+        # [실사용 피드백 2026-08-21] 화살촉 크기 배율 — Lucid 대비 화살촉이 작다는 지적으로
+        # 신설(기본 공식도 같이 상향, `core_shapes._head_size` 참조). 화살촉이 아예 없으면
+        # (화살촉='없음') 배율이 무의미하므로 그때만 숨긴다(_refresh_properties가 판정).
+        self._pf_head_scale = QDoubleSpinBox()
+        self._pf_head_scale.setRange(0.5, 3.0); self._pf_head_scale.setSingleStep(0.1)
+        self._pf_head_scale.setDecimals(1); self._pf_head_scale.setSuffix("×")
+        self._pf_head_scale.setKeyboardTracking(False)
+        self._pf_head_scale.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self._pf_head_scale.setToolTip("화살촉 크기 배율")
+        self._pf_head_scale.valueChanged.connect(self._edit_head_scale)
+        form.addRow("머리크기", self._pf_head_scale)
 
         self._pf_dir_btn = QToolButton()
         self._pf_dir_btn.setText("뒤집기")
@@ -1743,12 +1777,29 @@ class _UIBuildMixin:
         self._pf_radius.setSingleStep(2)
         self._pf_radius.setSuffix(" px")
         self._pf_radius.setKeyboardTracking(False)   # 타이핑 중 매 글자 커밋 방지
-        # ⚠ NoFocus 필수 — Del·Ctrl+D·도구 숫자키는 뷰의 keyPressEvent가 처리한다(윈도 QAction이
-        # 아님). 스핀박스가 포커스를 가져가면 반경을 만진 뒤 그 단축키들이 캔버스로 안 간다.
-        self._pf_radius.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # [실사용 버그 2026-08-21] 예전엔 NoFocus였다 — Del·Ctrl+D·도구 숫자키를 뷰
+        # keyPressEvent가 처리하는데, 스핀박스가 포커스를 가져가면(휠로 값만 만져도 기본
+        # 포커스정책이 그걸 흡수) 그 단축키들이 캔버스로 안 갔기 때문. 그런데 NoFocus는
+        # 키보드 포커스 자체를 영구 차단해 클릭해서 숫자를 '타이핑'하는 것도 함께 막아버렸다
+        # (커서 깜빡임조차 없음, 사용자가 회전 필드에서 직접 재현). 실측(offscreen)으로 확인한
+        # `ClickFocus`가 둘 다 만족한다 — 명시적으로 클릭해야만 포커스를 얻고(타이핑 가능),
+        # 포커스 없이 휠만 굴리면 값은 바뀌어도 포커스는 안 옮겨간다(캔버스 단축키 안전).
+        self._pf_radius.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._pf_radius.setToolTip("곡선 반경(0=직각)")
         self._pf_radius.valueChanged.connect(self._floating_set_radius)
         form.addRow("반경", self._pf_radius)
+
+        # [신규기능 2026-08-21] 회전 각도 숫자입력 — 핸들 드래그만 있던 회전에 정밀 입력을
+        # 더한다. 끝점으로 모양을 정하는 도형(화살표·선·펜 등, `_uses_endpoints()`)은 회전
+        # 핸들 자체가 없어 대상에서 뺀다(_refresh_properties가 행 노출을 그 조건으로 판정).
+        self._pf_rotation = QDoubleSpinBox()
+        self._pf_rotation.setRange(0.0, 359.9); self._pf_rotation.setDecimals(1)
+        self._pf_rotation.setSuffix("°"); self._pf_rotation.setWrapping(True)
+        self._pf_rotation.setKeyboardTracking(False)
+        self._pf_rotation.setFocusPolicy(Qt.FocusPolicy.ClickFocus)   # 위 반경 스핀박스 주석 참조
+        self._pf_rotation.setToolTip("회전 각도")
+        self._pf_rotation.valueChanged.connect(self._edit_rotation)
+        form.addRow("회전", self._pf_rotation)
 
         self._pf_hint = QLabel("객체를 선택하면 속성을 편집할 수 있습니다.")
         self._pf_hint.setStyleSheet("color:#888; font-size:11px;")

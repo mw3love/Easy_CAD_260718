@@ -189,11 +189,12 @@ class _ContextMixin:
         is_poly = isinstance(item, _PolyArrowItem)
         p1 = item.mapToScene(item._pts[0] if is_poly else item._p1)
         p2 = item.mapToScene(item._pts[-1] if is_poly else item._p2)
+        head_at_start = getattr(item, "_head_at_start", False)   # [양방향 화살표]
         if kind == "ortho":
-            new = _PolyArrowItem(QColor(item._color), item._width, item._head_at_end)
+            new = _PolyArrowItem(QColor(item._color), item._width, item._head_at_end, head_at_start)
             new._curve_r = float(self.current_curve_r)   # 반경도 sticky
         else:
-            new = _ArrowItem(QColor(item._color), item._width, item._head_at_end)
+            new = _ArrowItem(QColor(item._color), item._width, item._head_at_end, head_at_start)
         new._style = item._style
         new.setZValue(item.zValue())
         new.setFlags(new.GraphicsItemFlag.ItemIsMovable | new.GraphicsItemFlag.ItemIsSelectable)

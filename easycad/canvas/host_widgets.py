@@ -475,6 +475,45 @@ def _arrow_kind_of(item):
     return None
 
 
+# [양방향 화살표, 2026-08-21] 화살촉 위치 — _head_at_end/_head_at_start 두 독립 플래그의
+# 조합을 사용자에게 보이는 4상태 하나로 표현(속성패널 아이콘 콤보용, _arrow_kind_of와 같은 관례).
+_ARROW_HEAD_LABELS = (("none", "없음"), ("end", "끝만"), ("both", "양쪽"), ("start", "시작만"))
+
+
+def _arrow_head_of(item):
+    """화살표 아이템의 현재 화살촉 위치(none/end/both/start). 화살표가 아니면 None."""
+    if not isinstance(item, (_ArrowItem, _PolyArrowItem)):
+        return None
+    e, s = bool(item._head_at_end), bool(getattr(item, "_head_at_start", False))
+    if e and s:
+        return "both"
+    if e:
+        return "end"
+    if s:
+        return "start"
+    return "none"
+
+
+def _is_rotatable(item) -> bool:
+    """[신규기능 2026-08-21 회전각도] 회전 핸들·속성패널 회전 행의 공통 대상 판정 —
+    끝점으로 모양을 정하는 도형(화살표·선·펜, `_uses_endpoints()` True)은 회전 핸들
+    자체가 없다(core_shapes.py mousePressEvent 참조). `_HandleResizeMixin`을 아예 안 쓰는
+    항목(예: `_TitleBlockItem`, 고정 크기)은 `_uses_endpoints` 속성 자체가 없어 함께 걸러진다."""
+    return hasattr(item, "_uses_endpoints") and not item._uses_endpoints()
+
+
+def _apply_arrow_head(item, kind: str):
+    """`_arrow_head_of`의 역함수 — 화살표 아이템에 4상태 중 하나를 적용."""
+    if kind == "both":
+        item.set_head_at_end(True); item.set_head_at_start(True)
+    elif kind == "start":
+        item.set_head_at_end(False); item.set_head_at_start(True)
+    elif kind == "none":
+        item.set_head_at_end(False); item.set_head_at_start(False)
+    else:   # "end"
+        item.set_head_at_end(True); item.set_head_at_start(False)
+
+
 class _UndoEntry:
     """[Phase 6 M2] 되돌리기/다시 실행의 원자 단위 — per-item 연산 리스트 하나.
     연산(op)은 딱 3종의 튜플:
