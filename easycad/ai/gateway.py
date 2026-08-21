@@ -58,14 +58,29 @@ DEFAULT_MAX_TOKENS = 16384
 
 # 텍스트 전용 기본값(§8 항목18 후속, 2026-08-12 — Mermaid 가져오기 통합, 이미지 경로 폐기).
 # gpt/gemini 두 계열만 노출(사용자 확정 — claude 제외), 계열별 가성비 최선 1곳씩 추천.
+# SVG 에셋 생성창(`_SvgAssetDialog`)의 슬롯 A/B 기본값으로 쓰인다 — GPT/Gemini
+# 두 계열을 나란히 비교하는 게 그 창의 설계 의도라 계열별로 하나씩 유지한다.
 # [2026-08-21 실사용 버그] `gpt-5.4-mini`가 게이트웨이에서 은퇴돼(`Model not found` 404)
 # 재실측 — 실제 Mermaid 생성 호출(`text_to_mermaid.generate_mermaid`)로 크레딧 잔액
 # 전후차를 실측한 결과 gpt-5.6-luna가 압도적으로 저렴·최속이었다(같은 설명 기준
 # gpt-5.6-luna 0.09 크레딧/0.99초, gpt-5.6-sol 2.12/1.67, gpt-5.6-terra 0.77/1.14,
-# gpt-5.5 3.23/4.57 — 그 자리에 있던 "vision 비교를 유추 적용" 경고는 이제 텍스트
-# 실측으로 대체됐으니 지웠다).
-TEXT_RECOMMEND_1 = "gpt-5.6-luna"       # gpt 계열
-TEXT_RECOMMEND_2 = "gemini-3.6-flash"   # gemini 계열
+# gpt-5.5 3.23/4.57).
+# ⚠ 같은 날 후속 재실측(더 상세한 요청 프롬프트로) — gpt-5.6 계열(luna/sol/terra)
+# 전부 "상세하게" 같은 확장 요청에 노드 1개만 돌려주고 마는 경우가 잦았다(luna 3/3,
+# terra 1/4 — 나머지는 정상이었지만 비용도 0.77~3.71 크레딧으로 요동쳐 신뢰하기
+# 어려움). 확장 요청엔 상위 모델 gpt-5.5(26노드, 3.23 크레딧)만 안정적이었으나
+# "가성비 최선"이라는 이 상수의 취지에 안 맞아 SVG 창 몫으로만 남겨두고(그쪽은
+# 이번에 검증 안 함), **Mermaid 창은 아래 `TEXT_RECOMMEND_MERMAID`로 완전히 분리**했다.
+TEXT_RECOMMEND_1 = "gpt-5.6-luna"       # gpt 계열 — SVG 슬롯 A 전용(Mermaid는 미사용)
+TEXT_RECOMMEND_2 = "gemini-3.6-flash"   # gemini 계열 — SVG 슬롯 B 전용(Mermaid는 미사용)
+
+# Mermaid 가져오기 창 전용 기본값(2026-08-21) — 위 GPT/Gemini 비교쌍과 별개로,
+# "이 작업 하나에 제일 나은 모델 하나"만 필요해서 분리했다. 실측: 같은 "재건축
+# 시나리오 상세하게" 프롬프트로 4회 반복한 결과 노드 12~13개·엣지 11~12개를 매번
+# 안정적으로 냈고(gpt-5.6 계열의 들쭉날쭉함과 대조적), 비용도 0.43~0.46 크레딧으로
+# 좁게 수렴 — gpt-5.6-luna보다 조금 비싸지만(약 4~5배) gpt-5.5(3.23)의 1/7 수준이면서
+# 품질은 gpt-5.5와 대등했다.
+TEXT_RECOMMEND_MERMAID = "gemini-3.5-flash-lite"
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -193,9 +208,16 @@ def list_models(api_key: str, base_url: str = BASE_URL, timeout: float = 600.0) 
 def list_text_models(api_key: str, base_url: str = BASE_URL, timeout: float = 8.0) -> list[str]:
     """`list_models`를 gpt·gemini 계열로만 걸러 반환 — 텍스트 전용 드롭다운용(사용자 확정,
     claude 계열은 제외). 짧은 기본 timeout은 `_MermaidDialog._populate_models`와 같은
-    이유(다이얼로그 생성이 동기 호출이라 네트워크가 죽어 있으면 다이얼로그 자체가 못 뜬다)."""
+    이유(다이얼로그 생성이 동기 호출이라 네트워크가 죽어 있으면 다이얼로그 자체가 못 뜬다).
+
+    [2026-08-21 실사용 버그] "gpt"/"gemini" 이름 포함만 걸러서 `gemini-3.1-flash-
+    lite-image` 같은 이미지 전용 모델까지 "텍스트 모델"로 새고 있었다 — 실제로
+    text chat completion을 호출해보면 404("Model not found")를 낸다(실측 확인).
+    이름에 "image"·"tts"가 들어간 것(이미지 생성·음성합성 전용)을 추가로 제외한다."""
     models = list_models(api_key, base_url, timeout=timeout)
-    return sorted(m for m in models if "gpt" in m.lower() or "gemini" in m.lower())
+    return sorted(m for m in models
+                 if ("gpt" in m.lower() or "gemini" in m.lower())
+                 and "image" not in m.lower() and "tts" not in m.lower())
 
 
 def get_credit_balance(api_key: str, base_url: str = BASE_URL) -> tuple[float, float]:

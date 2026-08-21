@@ -29,6 +29,7 @@ from easycad.ai import gateway as gw  # noqa: E402
 from easycad.ai import text_to_mermaid as ttm  # noqa: E402
 from easycad.canvas.host_dialogs import (  # noqa: E402
     _MermaidDialog, _AIGatewaySettingsDialog, _render_mermaid_preview_pixmap,
+    _pick_fallback_model, _model_version_key,
 )
 
 
@@ -170,6 +171,41 @@ def test_list_text_models_filters_to_gpt_and_gemini_only():
     assert "claude-haiku-4-5" not in out
 
 
+def test_list_text_models_excludes_image_and_tts_variants():
+    """[2026-08-21 실사용 버그] `gemini-3.1-flash-lite-image`처럼 이름에 gpt/gemini가
+    들어있어도 실제로는 이미지·음성 전용이라 text chat completion에서 404가 나는
+    모델이 있었다(실측 확인) — "image"/"tts"가 들어간 이름은 텍스트 목록에서 제외."""
+    with patch.object(gw, "list_models",
+                      lambda *a, **k: ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite-image",
+                                       "gemini-2.5-flash-preview-tts", "gpt-image-1",
+                                       "gpt-5.6-luna"]):
+        out = gw.list_text_models("key")
+    assert out == sorted(["gemini-3.5-flash-lite", "gpt-5.6-luna"])
+
+
+def test_model_version_key_extracts_leading_version():
+    assert _model_version_key("gemini-3.5-flash-lite") == (3, 5)
+    assert _model_version_key("gpt-5.6-luna") == (5, 6)
+    assert _model_version_key("gemini-3.10-flash") == (3, 10)   # 10 > 9, 문자열 정렬 함정 회피
+    assert _model_version_key("no-version-here") == (0,)
+
+
+def test_pick_fallback_model_prefers_highest_versioned_lite():
+    """[2026-08-21 사용자 확정] "lite가 붙은 이름 중 가장 높은 번호를 최우선"."""
+    candidates = ["gemini-3.5-flash", "gemini-3.4-flash-lite",
+                 "gemini-3.6-flash-lite", "gemini-3.5-flash-lite"]
+    assert _pick_fallback_model(candidates) == "gemini-3.6-flash-lite"
+
+
+def test_pick_fallback_model_falls_back_to_alphabetical_when_no_lite():
+    candidates = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.5"]
+    assert _pick_fallback_model(candidates) == sorted(candidates)[0]
+
+
+def test_pick_fallback_model_empty_candidates_returns_none():
+    assert _pick_fallback_model([]) is None
+
+
 # ── text_to_mermaid.py ───────────────────────────────────────────────────────
 
 def test_build_prompt_includes_description_and_mermaid_rules():
@@ -273,18 +309,20 @@ def test_mermaid_dialog_populate_models_groups_gemini_and_gpt():
     2열 병렬 패널 대신 드롭다운으로, 추천 배지·설명 문구는 뺌).
     [2026-08-20] `_populate_models`가 `_ModelListWorker`(QThread)로 비동기화돼(첫
     오픈 지연 수정) 조회 완료를 명시적으로 기다려야 한다."""
-    # [2026-08-21] 추천 모델(gw.TEXT_RECOMMEND_1)을 하드코딩 문자열이 아니라 심볼로
-    # 넣는다 — 게이트웨이가 추천 모델을 은퇴시켜 상수 값이 바뀌어도(gpt-5.4-mini 404
-    # 실사용 버그) 이 테스트가 "추천 모델이 실제 목록에 있을 때 기본 선택된다"는 의도를
-    # 계속 검증하게 하려는 것(하드코딩이면 상수가 바뀌는 순간 목록에 없는 모델을
-    # 기본값으로 기대하는 죽은 테스트가 된다).
+    # [2026-08-21] 추천 모델(gw.TEXT_RECOMMEND_MERMAID)을 하드코딩 문자열이 아니라
+    # 심볼로 넣는다 — 게이트웨이가 추천 모델을 은퇴시켜 상수 값이 바뀌어도(gpt-5.4-mini
+    # 404 실사용 버그) 이 테스트가 "추천 모델이 실제 목록에 있을 때 기본 선택된다"는
+    # 의도를 계속 검증하게 하려는 것(하드코딩이면 상수가 바뀌는 순간 목록에 없는 모델을
+    # 기본값으로 기대하는 죽은 테스트가 된다). Mermaid 창은 gpt-5.6 계열이 확장 요청에
+    # 불안정함이 드러나(같은 날 후속) `TEXT_RECOMMEND_1`(GPT, SVG 창 전용)이 아니라
+    # `TEXT_RECOMMEND_MERMAID`(Gemini)를 쓴다.
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.gw.list_text_models",
-               return_value=[gw.TEXT_RECOMMEND_1, "gpt-5.4-nano", gw.TEXT_RECOMMEND_2]):
+               return_value=[gw.TEXT_RECOMMEND_MERMAID, "gpt-5.4-nano", "gemini-2.0-flash"]):
         dlg = _MermaidDialog()
         _wait_model_list_worker(dlg)
-    assert dlg.model() == gw.TEXT_RECOMMEND_1
-    assert set(_combo_model_ids(dlg)) == {gw.TEXT_RECOMMEND_1, "gpt-5.4-nano", gw.TEXT_RECOMMEND_2}
+    assert dlg.model() == gw.TEXT_RECOMMEND_MERMAID
+    assert set(_combo_model_ids(dlg)) == {gw.TEXT_RECOMMEND_MERMAID, "gpt-5.4-nano", "gemini-2.0-flash"}
     m = dlg._model_combo.model()
     header_texts = {m.item(i).text() for i in range(m.rowCount()) if not m.item(i).isEnabled()}
     assert header_texts == {"Gemini", "GPT"}
@@ -295,17 +333,33 @@ def test_mermaid_dialog_populate_models_groups_gemini_and_gpt():
 
 
 def test_mermaid_dialog_falls_back_when_recommended_model_retired():
-    """[2026-08-21 실사용 버그 재발방지] 게이트웨이가 추천 모델(TEXT_RECOMMEND_1)을
+    """[2026-08-21 실사용 버그 재발방지] 게이트웨이가 추천 모델(TEXT_RECOMMEND_MERMAID)을
     은퇴시켜 실제 목록에 없으면(gpt-5.4-mini 404 재현), 예전엔 `_fill_model_combo_
     grouped`가 그 값을 풀에 강제로 합쳐넣어 죽은 모델이 계속 기본 선택으로 남았다 —
-    이제는 같은 계열(gpt) 안의 살아있는 모델로 자동 폴백해야 한다."""
+    이제는 같은 계열(gemini) 안의 살아있는 모델로 자동 폴백해야 한다. 폴백 후보에
+    "lite" 붙은 게 있으면 그걸 최우선으로(`_pick_fallback_model` — 같은 날 후속 확정)."""
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.gw.list_text_models",
-               return_value=["gpt-5.4-nano", gw.TEXT_RECOMMEND_2]):
+               return_value=["gemini-3.5-flash", "gemini-3.6-flash"]):
         dlg = _MermaidDialog()
         _wait_model_list_worker(dlg)
-    assert dlg.model() == "gpt-5.4-nano"
-    assert gw.TEXT_RECOMMEND_1 not in _combo_model_ids(dlg)
+    # 후보에 lite가 하나도 없으니 알파벳 순 첫 항목(gemini-3.5-flash)으로 폴백.
+    assert dlg.model() == "gemini-3.5-flash"
+    assert gw.TEXT_RECOMMEND_MERMAID not in _combo_model_ids(dlg)
+
+
+def test_mermaid_dialog_falls_back_prefers_highest_versioned_lite():
+    """[2026-08-21] 폴백 후보 중 "lite" 붙은 이름이 여러 버전 있으면 가장 높은 버전을
+    고른다 — 사용자 확정 휴리스틱: "lite가 붙은 이름 중에 가장 높은 번호를 최우선".
+    목록에서 `TEXT_RECOMMEND_MERMAID` 자체는 빼야 폴백 경로가 실제로 걸린다(있으면
+    그대로 선택돼 폴백 로직을 안 타므로 이 테스트가 무의미해진다)."""
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.gw.list_text_models",
+               return_value=["gemini-3.5-flash", "gemini-3.4-flash-lite",
+                            "gemini-3.6-flash-lite"]):
+        dlg = _MermaidDialog()
+        _wait_model_list_worker(dlg)
+    assert dlg.model() == "gemini-3.6-flash-lite"
 
 
 def test_mermaid_dialog_populate_models_falls_back_when_list_fails():
@@ -314,8 +368,9 @@ def test_mermaid_dialog_populate_models_falls_back_when_list_fails():
                side_effect=RuntimeError("no network")):
         dlg = _MermaidDialog()
         _wait_model_list_worker(dlg)
-    assert dlg.model() == gw.TEXT_RECOMMEND_1
-    assert set(_combo_model_ids(dlg)) == {gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2}
+    assert dlg.model() == gw.TEXT_RECOMMEND_MERMAID
+    assert set(_combo_model_ids(dlg)) == {
+        gw.TEXT_RECOMMEND_MERMAID, gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2}
 
 
 def test_mermaid_dialog_selecting_combo_item_updates_model():

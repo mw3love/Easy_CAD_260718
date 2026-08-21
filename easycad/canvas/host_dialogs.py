@@ -632,6 +632,37 @@ class _ImageAttachMixin:
         return False
 
 
+_MODEL_VERSION_RE = re.compile(r"^(?:gemini|gpt)-(\d+(?:\.\d+)*)", re.IGNORECASE)
+
+
+def _model_version_key(name: str) -> tuple:
+    """이름 맨 앞 버전 번호("gemini-3.5-flash-lite" → (3, 5))를 비교 가능한 튜플로.
+    버전을 못 찾으면 (0,)으로 가장 낮게 취급."""
+    m = _MODEL_VERSION_RE.match(name)
+    if not m:
+        return (0,)
+    return tuple(int(p) for p in m.group(1).split("."))
+
+
+def _pick_fallback_model(candidates: list[str]) -> str | None:
+    """추천 모델이 은퇴돼 목록에 없을 때 같은 계열(`candidates`) 안에서 대신 고를 모델.
+
+    [2026-08-21 실사용 확정] "lite"가 붙은 이름 중 버전 번호가 가장 높은 것을
+    최우선으로 한다 — 실측(gemini-3.5-flash-lite가 gpt-5.6 비-lite 계열 전체보다
+    저렴·안정적으로 우수)을 일반화한 휴리스틱이다. **주의: 이건 확신이 아니라
+    추측이다** — "lite"라는 이름이 실제로 저비용·양호품질을 뜻하는지는 이 게이트웨이의
+    지금까지 관찰 사례로 유추한 것일 뿐, 새로 나오는 모델의 실제 성능·비용은 실측
+    전까진 알 수 없다(모델 목록 API에 가격 정보가 없다 — 확인함). lite 후보가
+    하나도 없으면 알파벳 순 첫 항목으로 폴백(기존 안전망 — 이것도 품질 보장은
+    아니고 "완전히 죽은 모델에 머물지 않는다"는 최소 보장일 뿐)."""
+    if not candidates:
+        return None
+    lite = [m for m in candidates if "lite" in m.lower()]
+    if lite:
+        return max(lite, key=_model_version_key)
+    return sorted(candidates)[0]
+
+
 def _fill_model_combo_grouped(combo: QComboBox, models: list, default_model: str,
                               prev: str | None = None):
     """Gemini·GPT 그룹 헤더가 있는 드롭다운으로 채운다 — 원래 `_MermaidDialog`
@@ -639,17 +670,21 @@ def _fill_model_combo_grouped(combo: QComboBox, models: list, default_model: str
     확장하며)에 모듈 함수로 추출해 두 다이얼로그가 공유한다. 헤더 행은
     `QStandardItem.setEnabled(False)`로 선택 불가. `models`가 비어 있으면(조회 전·실패
     시) 추천 둘만으로 조용히 폴백. `prev`가 새 목록에도 있으면 유지, 없으면
-    `default_model`(호출부가 정하는 이 콤보의 기본 모델 — Mermaid는 1개뿐이라
-    `TEXT_RECOMMEND_1` 고정, SVG는 슬롯 A/B가 각각 다른 기본값을 쓴다).
+    `default_model`(호출부가 정하는 이 콤보의 기본 모델 — Mermaid는 `TEXT_RECOMMEND_
+    MERMAID` 고정, SVG는 슬롯 A/B가 `TEXT_RECOMMEND_1`/`_2`를 각각 쓴다).
 
     [2026-08-21 실사용 버그 수정] 예전엔 실제 목록이 도착해도 추천 상수(r1/r2)를 항상
     풀에 강제로 합쳐 넣었다(`set(models) | {r1, r2}`) — 그 결과 게이트웨이가 추천
     모델을 은퇴시켜도(`gpt-5.4-mini` 404) UI가 존재하지 않는 모델을 계속 기본 선택한
     채로 남았다. 이제 `models`가 실제로 도착했을 때는 그 목록만 쓰고, 추천값이 그
-    안에 없으면 같은 계열(gpt/gemini) 안에서 대체 기본값을 고른다 — 다음에 또 추천
-    모델이 은퇴돼도 조용히 죽은 모델에 머물지 않고 살아있는 모델로 넘어가게."""
+    안에 없으면 같은 계열(gpt/gemini) 안에서 `_pick_fallback_model`로 대체 기본값을
+    고른다 — 다음에 또 추천 모델이 은퇴돼도 조용히 죽은 모델에 머물지 않는다."""
     r1, r2 = gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2
-    pool = sorted(set(models)) if models else sorted({r1, r2})
+    # [2026-08-21] `default_model`을 항상 포함시킨다 — Mermaid는 이제 `TEXT_RECOMMEND_
+    # MERMAID`(r1/r2 어느 쪽도 아님)를 쓰므로, 목록 도착 전 placeholder 풀이 r1/r2만
+    # 보여주면 정작 이 콤보의 기본값 자체가 빠지는 문제가 생긴다. SVG(default_model이
+    # 이미 r1이나 r2)는 집합이 그대로라 동작 무변화.
+    pool = sorted(set(models)) if models else sorted({default_model, r1, r2})
     gemini_models = sorted(m for m in pool if "gemini" in m.lower())
     gpt_models = sorted(m for m in pool if "gpt" in m.lower())
 
@@ -671,11 +706,10 @@ def _fill_model_combo_grouped(combo: QComboBox, models: list, default_model: str
 
     target = prev if prev in pool else default_model
     if target not in pool:
-        # default_model도(추천값이 은퇴돼) pool에 없으면 같은 계열 우선으로 대체 —
-        # 죽은 모델을 기본 선택으로 남기지 않는다.
+        # default_model도(추천값이 은퇴돼) pool에 없으면 같은 계열 우선으로 대체.
         same_vendor = gpt_models if "gpt" in default_model.lower() else gemini_models
         fallback_pool = same_vendor or gemini_models or gpt_models
-        target = fallback_pool[0] if fallback_pool else None
+        target = _pick_fallback_model(fallback_pool)
     default_row = next(
         (i for i in range(std_model.rowCount())
          if std_model.item(i).data(Qt.ItemDataRole.UserRole) == target), -1)
@@ -1329,12 +1363,17 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         — 재피드백: "추천 설명은 빼자"). `models`가 비어 있으면(조회 전·실패 시) 추천
         둘만으로 조용히 폴백. 이전에 고른 모델이 새 목록에도 있으면 그대로 유지한다
         (백그라운드 갱신이 사용자가 막 고른 모델을 조용히 되돌리지 않도록). 실제 채우기는
-        `_fill_model_combo_grouped`(모듈 함수, 2026-08-20 SVG 창과 공유하도록 추출)."""
+        `_fill_model_combo_grouped`(모듈 함수, 2026-08-20 SVG 창과 공유하도록 추출).
+
+        [2026-08-21] 기본값은 `TEXT_RECOMMEND_1`(GPT — SVG 창과 공유하는 "계열별 비교"용
+        상수)이 아니라 `TEXT_RECOMMEND_MERMAID`를 쓴다 — gpt-5.6 계열이 "상세하게" 같은
+        확장 요청에 실측으로 불안정함이 드러나 Mermaid 전용 기본값을 분리했다(SVG 슬롯
+        A/B는 이번에 검증 안 해 `TEXT_RECOMMEND_1`/`_2` 그대로 유지)."""
         prev = self.model() if self._model_combo.count() else None
-        _fill_model_combo_grouped(self._model_combo, models, gw.TEXT_RECOMMEND_1, prev)
+        _fill_model_combo_grouped(self._model_combo, models, gw.TEXT_RECOMMEND_MERMAID, prev)
 
     def model(self) -> str:
-        return _combo_selected_model(self._model_combo, gw.TEXT_RECOMMEND_1)
+        return _combo_selected_model(self._model_combo, gw.TEXT_RECOMMEND_MERMAID)
 
     def _on_ai_clicked(self):
         """2026-08-19 비동기화 — 예전엔 `generate_mermaid`를 이 자리에서 동기 호출+
