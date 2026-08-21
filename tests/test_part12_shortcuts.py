@@ -25,23 +25,23 @@ def test_default_sequence_matches_registry():
 
 def test_current_sequence_falls_back_to_default_when_unset():
     with _isolated_shortcuts():
-        assert shortcuts.current_sequence("tool_rect") == "2"
+        assert shortcuts.current_sequence("tool_line") == "4"
 
 
 def test_set_and_reset_sequence_roundtrip():
     with _isolated_shortcuts():
-        shortcuts.set_sequence("tool_rect", "R")
-        assert shortcuts.current_sequence("tool_rect") == "R"
-        shortcuts.reset_sequence("tool_rect")
-        assert shortcuts.current_sequence("tool_rect") == "2"
+        shortcuts.set_sequence("tool_line", "R")
+        assert shortcuts.current_sequence("tool_line") == "R"
+        shortcuts.reset_sequence("tool_line")
+        assert shortcuts.current_sequence("tool_line") == "4"
 
 
 def test_reset_all_clears_every_override():
     with _isolated_shortcuts():
-        shortcuts.set_sequence("tool_rect", "R")
+        shortcuts.set_sequence("tool_line", "R")
         shortcuts.set_sequence("save_doc", "Ctrl+Shift+K")
         shortcuts.reset_all()
-        assert shortcuts.current_sequence("tool_rect") == "2"
+        assert shortcuts.current_sequence("tool_line") == "4"
         assert shortcuts.current_sequence("save_doc") == "Ctrl+S"
 
 
@@ -59,19 +59,19 @@ def test_tool_switch_default_key_works():
     with _isolated_shortcuts():
         w = CanvasWindow()
         w.set_tool("select")
-        QTest.keyClick(w._view, Qt.Key.Key_2)
-        assert w.current_tool == "rect"
+        QTest.keyClick(w._view, Qt.Key.Key_4)
+        assert w.current_tool == "line"
 
 
 def test_tool_switch_reassigned_key_replaces_default():
     with _isolated_shortcuts():
         w = CanvasWindow()
-        shortcuts.set_sequence("tool_rect", "R")
+        shortcuts.set_sequence("tool_line", "R")
         w.set_tool("select")
-        QTest.keyClick(w._view, Qt.Key.Key_2)
+        QTest.keyClick(w._view, Qt.Key.Key_4)
         assert w.current_tool == "select"   # 옛 키는 더 이상 안 먹음
         QTest.keyClick(w._view, Qt.Key.Key_R)
-        assert w.current_tool == "rect"
+        assert w.current_tool == "line"
 
 
 def test_tool_switch_ignores_extra_modifiers():
@@ -154,10 +154,10 @@ def test_refresh_shortcut_ui_updates_tool_button_tooltip_and_menu_text():
 
 def test_dialog_prefills_current_values():
     with _isolated_shortcuts():
-        shortcuts.set_sequence("tool_rect", "R")
+        shortcuts.set_sequence("tool_line", "R")
         w = CanvasWindow()
         dlg = _ShortcutSettingsDialog(w)
-        assert dlg._edits["tool_rect"].keySequence() == QKeySequence("R")
+        assert dlg._edits["tool_line"].keySequence() == QKeySequence("R")
         assert dlg._edits["tool_select"].keySequence() == QKeySequence("1")
 
 
@@ -167,10 +167,10 @@ def test_dialog_conflict_blocks_ok_until_resolved():
         dlg = _ShortcutSettingsDialog(w)
         ok_btn = dlg._btns.button(dlg._btns.StandardButton.Ok)
         assert ok_btn.isEnabled()
-        dlg._edits["tool_rect"].setKeySequence(QKeySequence("1"))   # tool_select과 충돌
+        dlg._edits["tool_line"].setKeySequence(QKeySequence("1"))   # tool_select과 충돌
         assert not ok_btn.isEnabled()
-        assert "사각형" in dlg._conflict_label.text() or "선택" in dlg._conflict_label.text()
-        dlg._edits["tool_rect"].setKeySequence(QKeySequence("2"))
+        assert "선 도구" in dlg._conflict_label.text() or "선택 도구" in dlg._conflict_label.text()
+        dlg._edits["tool_line"].setKeySequence(QKeySequence("4"))
         assert ok_btn.isEnabled()
 
 
@@ -191,10 +191,10 @@ def test_dialog_accept_persists_and_prunes_default_values():
 
 def test_dialog_reset_all_button_restores_defaults():
     with _isolated_shortcuts():
-        shortcuts.set_sequence("tool_rect", "R")
+        shortcuts.set_sequence("tool_line", "R")
         w = CanvasWindow()
         dlg = _ShortcutSettingsDialog(w)
-        assert dlg._edits["tool_rect"].keySequence() == QKeySequence("R")
+        assert dlg._edits["tool_line"].keySequence() == QKeySequence("R")
         dlg._reset_all_fields()
         for sid, edit in dlg._edits.items():
             assert edit.keySequence() == QKeySequence(shortcuts.default_sequence(sid))

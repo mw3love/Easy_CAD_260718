@@ -20,15 +20,17 @@ from PyQt6.QtCore import QSettings
 # 남아 있으면 그 사용자의 커스터마이즈가 조용히 유실된다).
 SHORTCUT_DEFS: list[tuple[str, str, str, str]] = [
     # ---- 도구 전환 (view) ----
+    # [2026-08-21 도형 단축키 폐지] "tool_rect"/"tool_ellipse"는 여기서 완전히 삭제됐다
+    # (사각형·원이 좌측 팔레트 전용 클릭/드래그로 통일 — 나머지 6종 도형과 동일 취급).
+    # 이 두 id는 위 규칙(id 재사용 금지)에 따라 앞으로도 재사용하지 않는다. 빈 2·5를
+    # 포함해 나머지 도구는 상단 툴바 시각 순서 그대로 1~7로 재번호.
     ("tool_select",  "도구", "선택 도구",     "1"),
-    ("tool_rect",    "도구", "사각형 도구",   "2"),
-    ("tool_arrow",   "도구", "화살표 도구",   "3"),
-    ("tool_text",    "도구", "텍스트 도구",   "4"),
-    ("tool_ellipse", "도구", "원 도구",       "5"),
-    ("tool_line",    "도구", "선 도구",       "6"),
-    ("tool_pen",     "도구", "펜 도구",       "7"),
-    ("tool_badge",   "도구", "번호(배지) 도구", "8"),
-    ("tool_polygon", "도구", "다각형 도구",   "9"),
+    ("tool_arrow",   "도구", "화살표 도구",   "2"),
+    ("tool_text",    "도구", "텍스트 도구",   "3"),
+    ("tool_line",    "도구", "선 도구",       "4"),
+    ("tool_polygon", "도구", "다각형 도구",   "5"),
+    ("tool_pen",     "도구", "펜 도구",       "6"),
+    ("tool_badge",   "도구", "번호(배지) 도구", "7"),
     ("tool_trim",    "도구", "자르기(TRIM) 도구", "T"),
     ("stretch_arm",  "도구", "스트레치 무장(러버밴드 선택 후)", "S"),
     # ---- 편집 (view) ----
@@ -80,8 +82,8 @@ _DEFAULT_BY_ID = {d[0]: d[3] for d in SHORTCUT_DEFS}
 # `host_ui.py`(도구(&T) 메뉴·상단 툴바 버튼 툴팁 표시)가 같은 매핑을 공유한다 —
 # 두 파일이 각자 사본을 들면 하나만 고치고 잊는 드리프트가 생기기 쉽다.
 TOOL_SHORTCUT_IDS: dict[str, str] = {
-    "tool_select": "select", "tool_rect": "rect", "tool_arrow": "arrow",
-    "tool_text": "text", "tool_ellipse": "ellipse", "tool_line": "line",
+    "tool_select": "select", "tool_arrow": "arrow",
+    "tool_text": "text", "tool_line": "line",
     "tool_pen": "pen", "tool_badge": "badge",
     "tool_polygon": "polygon", "tool_trim": "trim",
 }
