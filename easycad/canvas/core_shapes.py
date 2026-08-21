@@ -1779,23 +1779,28 @@ class _LabelMixin:
 
 
 # [우리 확장] 라벨 세로 광학정렬 — 글리프 '실제 잉크' 중심을 도형 중심에 맞춘다.
-def _ink_center_dy(lbl) -> float:
-    """라벨 글리프의 실제 잉크 세로중심이 문서박스 중심에서 벗어난 양(아래로 +).
-    QGraphicsTextItem의 실렌더 글리프 배치가 baseline·폰트메트릭 추정과 어긋나(폰트·언어마다
-    다름 — Malgun/폴백이 부호까지 반대), 어떤 공식으로도 못 맞춘다. 그래서 텍스트를 작은
-    오프스크린에 그려 잉크를 픽셀로 직접 재 폰트·언어 무관하게 정확히 센터링한다.
-    같은 (텍스트·폰트크기·여백)이면 캐시해 리사이즈 드래그 중 재계산을 피한다."""
+def _ink_vertical_span(lbl):
+    """라벨 글리프가 실제로 잉크를 칠하는 로컬 세로 구간 (top, bot) — 문서박스(0~height)가
+    아니라 눈에 보이는 부분만. 텍스트를 작은 오프스크린에 그려 픽셀로 직접 재 폰트·언어
+    무관하게 정확히 잰다(폰트메트릭 추정은 Malgun/폴백마다 어긋남 — 실측 필요).
+    빈 텍스트면 (0, height) — 갭·중심 계산 모두 문서박스 그대로 쓰게 하는 안전한 기본값.
+    같은 (텍스트·폰트크기·여백)이면 캐시해 리사이즈 드래그 중 재계산을 피한다.
+    [화살표 갭 비대칭 수정 2026-08-21] `_ink_center_dy`(글자 중심 보정)와 화살표 라벨의
+    선-갭 세로 폭 계산(`_label_gap_rects`)이 같은 스캔을 공유하도록 분리했다 — 폰트 줄간격이
+    baseline 위/아래로 여백을 다르게 주는 게 세로선 라벨에서 "위쪽 여백이 유독 넓다"로
+    드러났던 원인이라(실측: "ghjghj" 문서박스 36px 중 잉크 위 11px·아래 6px), 둘 다 문서박스
+    대신 이 실측 잉크 구간을 기준으로 삼아야 한다."""
+    br = lbl._content_rect()
     text = lbl.toPlainText()
     if not text.strip():
-        return 0.0
+        return 0.0, br.height()
     key = (text, round(lbl.font().pointSizeF(), 2), round(lbl.document().documentMargin(), 2))
-    cached = getattr(lbl, "_ink_dy_cache", None)
+    cached = getattr(lbl, "_ink_span_cache", None)
     if cached is not None and cached[0] == key:
         return cached[1]
-    br = lbl._content_rect()
     w = max(1, int(br.width()) + 2)
     h = max(1, int(br.height()) + 2)
-    dy = 0.0
+    span = (0.0, br.height())
     if h > 2 and w > 2:
         img = QImage(w, h, QImage.Format.Format_ARGB32)
         img.fill(Qt.GlobalColor.transparent)
@@ -1813,9 +1818,15 @@ def _ink_center_dy(lbl) -> float:
                     bot = y
                     break
         if top is not None:
-            dy = br.height() / 2.0 - (top + bot) / 2.0
-    lbl._ink_dy_cache = (key, dy)
-    return dy
+            span = (float(top), float(bot))
+    lbl._ink_span_cache = (key, span)
+    return span
+
+
+def _ink_center_dy(lbl) -> float:
+    """라벨 글리프의 실제 잉크 세로중심이 문서박스 중심에서 벗어난 양(아래로 +)."""
+    top, bot = _ink_vertical_span(lbl)
+    return lbl._content_rect().height() / 2.0 - (top + bot) / 2.0
 
 
 class _CenterLabelMixin(_LabelMixin):
@@ -3522,22 +3533,32 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         label._conn_off = _snap_label_off(n, raw_off, br)
         self.update()   # 라벨만 움직여도 부모 화살표 paint(갭)가 새 위치로 다시 그려지게
         a = self._label_anchor_for(label)
-        return QPointF(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+        dy = _ink_center_dy(label)   # [실사용 지적 2026-08-21] 세로 갭 비대칭 보정, 아래 _sync_label 참조
+        return QPointF(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0 + dy)
 
     def _sync_label(self):
-        """모든 라벨을 각자의 곡선 위 앵커에 완전중앙 배치(선 위) — paint가 그 자리에 갭을 낸다."""
+        """모든 라벨을 각자의 곡선 위 앵커에 완전중앙 배치(선 위) — paint가 그 자리에 갭을 낸다.
+        [실사용 지적 2026-08-21] Qt 텍스트 박스는 폰트 줄간격 때문에 글자 위쪽 여백이 아래쪽보다
+        훨씬 넓다(실측: "ghjghj" 기준 위 11px vs 아래 6px) — 세로선 라벨에서 이 비대칭이 그대로
+        갭 크기 차이로 드러났다. `_CenterLabelMixin`이 이미 쓰던 잉크 중심 보정(`_ink_center_dy`)
+        을 여기도 적용해 박스가 아니라 실제 글자 잉크가 앵커에 오도록 세로 위치를 보정한다."""
         for lbl in self._live_labels():
             a = self._label_anchor_for(lbl)
             br = lbl._content_rect()
+            dy = _ink_center_dy(lbl)
             lbl._syncing = True
-            lbl.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+            lbl.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0 + dy)
             lbl._syncing = False
 
     _LABEL_GAP_PAD = 2.0   # [M4-1] 선-텍스트 갭 축소(5→2). 라벨 둘레로 선을 비우는 여유.
 
     def _label_gap_rects(self):
         """라벨들이 각각 차지하는 로컬 사각형(+패딩) 목록. paint에서 이 안의 선을 비운다
-        (FigJam 갭) — 빈 텍스트 라벨은 갭을 내지 않는다(기존 has_label 판정과 동일 기준)."""
+        (FigJam 갭) — 빈 텍스트 라벨은 갭을 내지 않는다(기존 has_label 판정과 동일 기준).
+        [실사용 지적 2026-08-21] 세로 폭은 문서박스 전체가 아니라 실제 잉크 구간
+        (`_ink_vertical_span`)만 쓴다 — 안 그러면 폰트 줄간격이 baseline 위에 더 두는
+        여백까지 갭에 포함돼, 세로선 라벨에서 위쪽 여백만 눈에 띄게 넓어 보였다. 가로 폭은
+        그대로 문서박스 기준(실사용 확인: 좌우 여백은 이미 적당함)."""
         pad = self._LABEL_GAP_PAD
         rects = []
         for lbl in self._live_labels():
@@ -3545,8 +3566,9 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                 continue
             br = lbl._content_rect()
             pos = lbl.pos()
-            rects.append(QRectF(pos.x() + br.x() - pad, pos.y() + br.y() - pad,
-                                br.width() + 2 * pad, br.height() + 2 * pad))
+            ink_top, ink_bot = _ink_vertical_span(lbl)
+            rects.append(QRectF(pos.x() + br.x() - pad, pos.y() + br.y() + ink_top - pad,
+                                br.width() + 2 * pad, (ink_bot - ink_top) + 2 * pad))
         return rects
 
     def _label_gap_rect(self):
@@ -5050,7 +5072,11 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def _label_gap_rects(self):
         """[우리 확장] 라벨들이 각각 차지하는 로컬 사각형(+패딩) 목록. 이 안의 선을 지워
         텍스트를 앉힌다(다중 라벨 2026-08-21: 라벨마다 하나씩). 라벨이 선에서 멀리 떨어지면
-        (오프셋 드래그) 그 사각형이 선과 안 겹쳐 자연히 갭이 사라진다."""
+        (오프셋 드래그) 그 사각형이 선과 안 겹쳐 자연히 갭이 사라진다.
+        [실사용 지적 2026-08-21] 세로 폭은 문서박스 전체가 아니라 실제 잉크 구간
+        (`_ink_vertical_span`)만 쓴다 — 폰트 줄간격이 baseline 위에 더 두는 여백까지 갭에
+        포함되면 세로선 라벨에서 위쪽 여백만 눈에 띄게 넓어 보인다. 가로 폭은 문서박스
+        기준 그대로(실사용 확인: 좌우 여백은 이미 적당함)."""
         pad = self._LABEL_GAP_PAD
         rects = []
         for lbl in self._live_labels():
@@ -5058,8 +5084,9 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                 continue
             br = lbl._content_rect()
             pos = lbl.pos()
-            rects.append(QRectF(pos.x() + br.x() - pad, pos.y() + br.y() - pad,
-                                br.width() + 2 * pad, br.height() + 2 * pad))
+            ink_top, ink_bot = _ink_vertical_span(lbl)
+            rects.append(QRectF(pos.x() + br.x() - pad, pos.y() + br.y() + ink_top - pad,
+                                br.width() + 2 * pad, (ink_bot - ink_top) + 2 * pad))
         return rects
 
     def _label_gap_rect(self):
@@ -5219,17 +5246,24 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         label._conn_off = _snap_label_off(n, raw_off, br)
         self.update()   # 라벨(자식)만 움직여도 부모 화살표 paint(갭)가 새 위치로 다시 그려지게
         a = self._label_anchor_for(label)
-        return QPointF(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+        dy = _ink_center_dy(label)   # [실사용 지적 2026-08-21] 세로 갭 비대칭 보정, 아래 _sync_label 참조
+        return QPointF(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0 + dy)
 
     def _sync_label(self):
         """[우리 확장] 모든 라벨을 각자의 앵커에 '완전 중앙'(x·y)으로 놓는다 — 선·베지어의
         '중점 위쪽'과 달리 선 위에 앉히고 paint가 그 자리에 갭을 낸다. _syncing 가드로
-        setPos→itemChange 되먹임 차단."""
+        setPos→itemChange 되먹임 차단.
+        [실사용 지적 2026-08-21] Qt 텍스트 박스는 폰트 줄간격 때문에 글자 위쪽 여백이 아래쪽보다
+        훨씬 넓다(실측: "ghjghj" 기준 위 11px vs 아래 6px) — 세로선 라벨(위/아래로 뻗는 세그먼트)
+        에서 이 비대칭이 그대로 갭 크기 차이로 드러났다. `_CenterLabelMixin`이 이미 쓰던 잉크
+        중심 보정(`_ink_center_dy`)을 여기도 적용해 박스가 아니라 실제 글자 잉크가 앵커에
+        오도록 세로 위치를 보정한다."""
         for lbl in self._live_labels():
             a = self._label_anchor_for(lbl)
             br = lbl._content_rect()
+            dy = _ink_center_dy(lbl)
             lbl._syncing = True
-            lbl.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0)
+            lbl.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0 + dy)
             lbl._syncing = False
 
     # ---- 경계/외형 -----------------------------------------------------

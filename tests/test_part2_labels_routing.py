@@ -547,7 +547,7 @@ def test_sarrow_label_gap_breaks_line():
 def test_sarrow_label_drag_slides_and_offsets():
     # 라벨 드래그(Movable+itemChange 재투영) — 슬라이드(t)는 자유, 수직 오프셋은 [M4-1] 3위치 스냅.
     from PyQt6.QtWidgets import QGraphicsScene
-    from easycad.canvas.annotator_core import _LABEL_SIDE_GAP
+    from easycad.canvas.annotator_core import _LABEL_SIDE_GAP, _ink_center_dy
     sc = QGraphicsScene()
     sa = _PolyArrowItem(QColor("#000000ff"), 3, True)
     sa._pts = [QPointF(0, 0), QPointF(200, 0)]
@@ -560,9 +560,10 @@ def test_sarrow_label_drag_slides_and_offsets():
     lbl.setPos(QPointF(50 - br.width() / 2, -15 - br.height() / 2))
     assert abs(sa._label_t - 0.25) < 0.02                        # 슬라이드 유지(자유)
     assert abs(sa._label_off - (-D)) < 0.5                       # 3위치 스냅(-15→-D)
-    a = sa._label_anchor()                                        # 구속 중심 == 앵커
+    a = sa._label_anchor()                                        # 구속 중심 == 앵커(+잉크보정 dy)
+    dy = _ink_center_dy(lbl)   # [실사용 지적 2026-08-21] 박스중심이 아니라 글자잉크가 앵커에 옴
     c = QPointF(lbl.pos().x() + br.width() / 2, lbl.pos().y() + br.height() / 2)
-    assert abs(c.x() - a.x()) < 0.5 and abs(c.y() - a.y()) < 0.5
+    assert abs(c.x() - a.x()) < 0.5 and abs(c.y() - dy - a.y()) < 0.5
 
 
 
@@ -597,13 +598,15 @@ def test_arrow_curved_label_gap_drag_roundtrip():
     assert isinstance(a._label, _ConnectorLabel)
     assert a._label_gap_rect() is not None                         # 라벨 = 갭 사각형 생김
     assert (round(a._label_t, 2), round(a._label_off, 2)) == (0.5, 0.0)
-    # 드래그: 곡선 위 t≈0.25 지점 근처 + 바깥으로 당김 → t·off 갱신, 중심이 앵커에 구속.
+    # 드래그: 곡선 위 t≈0.25 지점 근처 + 바깥으로 당김 → t·off 갱신, 중심이 앵커에 구속(+잉크보정).
+    from easycad.canvas.annotator_core import _ink_center_dy
     br = lbl._content_rect(); q = a._point_at(0.25)
     lbl.setPos(QPointF(q.x() - br.width() / 2, q.y() - 30 - br.height() / 2))
     assert abs(a._label_t - 0.25) < 0.08 and abs(a._label_off) > 5
+    dy = _ink_center_dy(lbl)   # [실사용 지적 2026-08-21] 박스중심이 아니라 글자잉크가 앵커에 옴
     c = QPointF(lbl.pos().x() + br.width() / 2, lbl.pos().y() + br.height() / 2)
     a2anchor = a._label_anchor()
-    assert abs(c.x() - a2anchor.x()) < 0.5 and abs(c.y() - a2anchor.y()) < 0.5
+    assert abs(c.x() - a2anchor.x()) < 0.5 and abs(c.y() - dy - a2anchor.y()) < 0.5
     # .ecad 왕복으로 t·off 보존.
     w = CanvasWindow()
     path = os.path.join(_TMP, "arrow_curve_label.ecad")
@@ -2091,6 +2094,26 @@ def test_arrow_ensure_label_reuses_first_does_not_duplicate():
     l2 = ar.ensure_label()
     assert l1 is l2
     assert len(ar._live_labels()) == 1
+
+
+def test_arrow_vertical_label_gap_is_symmetric_top_bottom():
+    # [실사용 지적 2026-08-21] 세로선(위→아래) 위 라벨은 문서박스 전체가 아니라 실제 잉크
+    # 구간만 갭으로 잡아야 위/아래 여백이 좌우 여백과 똑같이 pad만큼만 남는다 — 전에는
+    # 폰트 줄간격 때문에 위쪽 여백이 아래쪽의 거의 2배였다(실측: ghjghj 기준 11px vs 6px).
+    from easycad.canvas.annotator_core import _ink_vertical_span
+    for cls in (_ArrowItem, _PolyArrowItem):
+        ar = cls(QColor("#ff111111"), 4, True)
+        ar.set_points(QPointF(0, 0), QPointF(0, 300))          # 순수 수직선
+        w = CanvasWindow(); w._scene.addItem(ar)
+        lbl = ar.ensure_label(); lbl.setPlainText("ghjghj"); ar._sync_label()
+        gap = ar._label_gap_rects()[0]
+        ink_top, ink_bot = _ink_vertical_span(lbl)
+        pos = lbl.pos(); br = lbl._content_rect()
+        top_ws = (pos.y() + br.y() + ink_top) - gap.top()
+        bottom_ws = gap.bottom() - (pos.y() + br.y() + ink_bot)
+        assert abs(top_ws - ar._LABEL_GAP_PAD) < 0.5
+        assert abs(bottom_ws - ar._LABEL_GAP_PAD) < 0.5
+        w._scene.removeItem(ar)
 
 
 def test_arrow_multi_label_gap_rects_and_visible_path_has_two_gaps():
