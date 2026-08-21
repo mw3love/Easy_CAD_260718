@@ -273,13 +273,18 @@ def test_mermaid_dialog_populate_models_groups_gemini_and_gpt():
     2열 병렬 패널 대신 드롭다운으로, 추천 배지·설명 문구는 뺌).
     [2026-08-20] `_populate_models`가 `_ModelListWorker`(QThread)로 비동기화돼(첫
     오픈 지연 수정) 조회 완료를 명시적으로 기다려야 한다."""
+    # [2026-08-21] 추천 모델(gw.TEXT_RECOMMEND_1)을 하드코딩 문자열이 아니라 심볼로
+    # 넣는다 — 게이트웨이가 추천 모델을 은퇴시켜 상수 값이 바뀌어도(gpt-5.4-mini 404
+    # 실사용 버그) 이 테스트가 "추천 모델이 실제 목록에 있을 때 기본 선택된다"는 의도를
+    # 계속 검증하게 하려는 것(하드코딩이면 상수가 바뀌는 순간 목록에 없는 모델을
+    # 기본값으로 기대하는 죽은 테스트가 된다).
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.gw.list_text_models",
-               return_value=["gpt-5.4-mini", "gpt-5.4-nano", "gemini-3.6-flash"]):
+               return_value=[gw.TEXT_RECOMMEND_1, "gpt-5.4-nano", gw.TEXT_RECOMMEND_2]):
         dlg = _MermaidDialog()
         _wait_model_list_worker(dlg)
     assert dlg.model() == gw.TEXT_RECOMMEND_1
-    assert set(_combo_model_ids(dlg)) == {"gpt-5.4-mini", "gpt-5.4-nano", "gemini-3.6-flash"}
+    assert set(_combo_model_ids(dlg)) == {gw.TEXT_RECOMMEND_1, "gpt-5.4-nano", gw.TEXT_RECOMMEND_2}
     m = dlg._model_combo.model()
     header_texts = {m.item(i).text() for i in range(m.rowCount()) if not m.item(i).isEnabled()}
     assert header_texts == {"Gemini", "GPT"}
@@ -287,6 +292,20 @@ def test_mermaid_dialog_populate_models_groups_gemini_and_gpt():
     assert not any("추천" in t for t in all_texts)   # 추천 배지/설명 문구 없음
     # claude는 애초에 list_text_models가 걸러주므로 드롭다운에 아예 없어야 함(방어적 확인).
     assert "claude-sonnet-5" not in _combo_model_ids(dlg)
+
+
+def test_mermaid_dialog_falls_back_when_recommended_model_retired():
+    """[2026-08-21 실사용 버그 재발방지] 게이트웨이가 추천 모델(TEXT_RECOMMEND_1)을
+    은퇴시켜 실제 목록에 없으면(gpt-5.4-mini 404 재현), 예전엔 `_fill_model_combo_
+    grouped`가 그 값을 풀에 강제로 합쳐넣어 죽은 모델이 계속 기본 선택으로 남았다 —
+    이제는 같은 계열(gpt) 안의 살아있는 모델로 자동 폴백해야 한다."""
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.gw.list_text_models",
+               return_value=["gpt-5.4-nano", gw.TEXT_RECOMMEND_2]):
+        dlg = _MermaidDialog()
+        _wait_model_list_worker(dlg)
+    assert dlg.model() == "gpt-5.4-nano"
+    assert gw.TEXT_RECOMMEND_1 not in _combo_model_ids(dlg)
 
 
 def test_mermaid_dialog_populate_models_falls_back_when_list_fails():
@@ -904,11 +923,14 @@ def test_render_mermaid_preview_pixmap_single_node_no_edges():
 
 
 def test_mermaid_dialog_has_preview_panel_with_placeholder_initially():
+    """[2026-08-21] 클릭-확대 QLabel(`_ClickablePreviewLabel`)을 휠줌/드래그팬
+    `_MermaidPreviewView`로 교체 — `pixmap()/text()` 대신 `has_content()`/
+    `message_text()`로 같은 계약(플레이스홀더 vs 실제 도형)을 확인한다."""
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
-    assert hasattr(dlg, "_preview_label")
-    assert dlg._preview_label.pixmap() is None or dlg._preview_label.pixmap().isNull()
-    assert "미리보기" in dlg._preview_label.text()
+    assert hasattr(dlg, "_preview_view")
+    assert not dlg._preview_view.has_content()
+    assert "미리보기" in dlg._preview_view.message_text()
 
 
 def test_mermaid_dialog_typing_schedules_debounced_timer_not_immediate():
@@ -921,30 +943,29 @@ def test_mermaid_dialog_typing_schedules_debounced_timer_not_immediate():
     dlg._edit.setPlainText("flowchart TD\n A-->B")
     assert dlg._preview_timer.isActive()
     # 타이머가 아직 안 끝났으니 미리보기는 그대로 플레이스홀더여야 한다.
-    assert dlg._preview_label.pixmap() is None or dlg._preview_label.pixmap().isNull()
+    assert not dlg._preview_view.has_content()
 
 
 def test_mermaid_dialog_preview_updates_when_timer_fires():
     """타이머 만료(`timeout` 강제 발화, 실 대기 없이)로 `_update_preview`가 실제로
-    도형이 담긴 픽스맵을 채우는지 — 유효한 Mermaid 코드일 때."""
+    도형을 씬에 채우는지 — 유효한 Mermaid 코드일 때."""
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
     dlg._edit.setPlainText("flowchart TD\n A[시작] --> B[끝]")
     dlg._preview_timer.stop()
     dlg._update_preview()
-    pm = dlg._preview_label.pixmap()
-    assert pm is not None and not pm.isNull()
+    assert dlg._preview_view.has_content()
 
 
 def test_mermaid_dialog_preview_shows_error_text_for_invalid_code():
-    """빈 노드(파싱 실패)일 때는 픽스맵 대신 안내 문구."""
+    """빈 노드(파싱 실패)일 때는 도형 대신 안내 문구."""
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
     dlg._edit.setPlainText("flowchart TD\n classDef only styling, no nodes")
     dlg._preview_timer.stop()
     dlg._update_preview()
-    assert dlg._preview_label.pixmap() is None or dlg._preview_label.pixmap().isNull()
-    assert "구문 오류" in dlg._preview_label.text()
+    assert not dlg._preview_view.has_content()
+    assert "구문 오류" in dlg._preview_view.message_text()
 
 
 def test_mermaid_dialog_preview_clears_back_to_placeholder_when_text_emptied():
@@ -953,12 +974,12 @@ def test_mermaid_dialog_preview_clears_back_to_placeholder_when_text_emptied():
     dlg._edit.setPlainText("flowchart TD\n A[시작] --> B[끝]")
     dlg._preview_timer.stop()
     dlg._update_preview()
-    assert not dlg._preview_label.pixmap().isNull()
+    assert dlg._preview_view.has_content()
     dlg._edit.setPlainText("")
     dlg._preview_timer.stop()
     dlg._update_preview()
-    assert dlg._preview_label.pixmap() is None or dlg._preview_label.pixmap().isNull()
-    assert "미리보기" in dlg._preview_label.text()
+    assert not dlg._preview_view.has_content()
+    assert "미리보기" in dlg._preview_view.message_text()
 
 
 def test_mermaid_dialog_ai_fill_also_refreshes_preview():
@@ -978,8 +999,47 @@ def test_mermaid_dialog_ai_fill_also_refreshes_preview():
     assert dlg._preview_timer.isActive()
     dlg._preview_timer.stop()
     dlg._update_preview()
-    pm = dlg._preview_label.pixmap()
-    assert pm is not None and not pm.isNull()
+    assert dlg._preview_view.has_content()
+
+
+def test_mermaid_preview_view_wheel_zoom_and_pan_drag_mode():
+    """[2026-08-21 실사용 피드백] "클릭하면 확대 방식보다 드래그·휠 방식은 어떤지" —
+    클릭-확대 다이얼로그를 없애고 패널 자체가 휠로 확대·드래그로 패닝하게 했다.
+    `ScrollHandDrag`(좌클릭 드래그=패닝, Qt 기본 제공)가 켜져 있는지, 휠이 실제로
+    `scale()`을 호출해 확대하는지(도형이 있을 때만) 확인."""
+    from PyQt6.QtCore import QPoint, Qt as _Qt
+    from PyQt6.QtGui import QWheelEvent
+    from easycad.canvas.host_dialogs import _MermaidPreviewView
+
+    view = _MermaidPreviewView()
+    assert view.dragMode() == view.DragMode.ScrollHandDrag
+
+    view.set_mermaid_code("flowchart LR\n A[시작] --> B[끝]")
+    assert view.has_content()
+    before = view.transform().m11()   # 가로 스케일
+
+    ev = QWheelEvent(QPoint(50, 50).toPointF(), QPoint(50, 50).toPointF(),
+                     QPoint(0, 0), QPoint(0, 120), _Qt.MouseButton.NoButton,
+                     _Qt.KeyboardModifier.NoModifier, _Qt.ScrollPhase.NoScrollPhase, False)
+    view.wheelEvent(ev)
+    after = view.transform().m11()
+    assert after > before   # 휠 위로 = 확대
+
+
+def test_mermaid_preview_view_wheel_noop_on_placeholder():
+    """안내문(도형 없음)만 떠 있을 땐 휠이 확대를 하지 않는다 — 확대할 대상이 없으므로."""
+    from PyQt6.QtCore import QPoint, Qt as _Qt
+    from PyQt6.QtGui import QWheelEvent
+    from easycad.canvas.host_dialogs import _MermaidPreviewView
+
+    view = _MermaidPreviewView()
+    assert not view.has_content()
+    before = view.transform().m11()
+    ev = QWheelEvent(QPoint(50, 50).toPointF(), QPoint(50, 50).toPointF(),
+                     QPoint(0, 0), QPoint(0, 120), _Qt.MouseButton.NoButton,
+                     _Qt.KeyboardModifier.NoModifier, _Qt.ScrollPhase.NoScrollPhase, False)
+    view.wheelEvent(ev)
+    assert view.transform().m11() == before
 
 
 # ── §8 항목23 Stage 6(2026-08-19) — 레이아웃 최종 통일(목업 시각 언어 차용) ────────

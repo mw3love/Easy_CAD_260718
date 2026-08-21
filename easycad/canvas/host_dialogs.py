@@ -640,9 +640,16 @@ def _fill_model_combo_grouped(combo: QComboBox, models: list, default_model: str
     `QStandardItem.setEnabled(False)`로 선택 불가. `models`가 비어 있으면(조회 전·실패
     시) 추천 둘만으로 조용히 폴백. `prev`가 새 목록에도 있으면 유지, 없으면
     `default_model`(호출부가 정하는 이 콤보의 기본 모델 — Mermaid는 1개뿐이라
-    `TEXT_RECOMMEND_1` 고정, SVG는 슬롯 A/B가 각각 다른 기본값을 쓴다)."""
+    `TEXT_RECOMMEND_1` 고정, SVG는 슬롯 A/B가 각각 다른 기본값을 쓴다).
+
+    [2026-08-21 실사용 버그 수정] 예전엔 실제 목록이 도착해도 추천 상수(r1/r2)를 항상
+    풀에 강제로 합쳐 넣었다(`set(models) | {r1, r2}`) — 그 결과 게이트웨이가 추천
+    모델을 은퇴시켜도(`gpt-5.4-mini` 404) UI가 존재하지 않는 모델을 계속 기본 선택한
+    채로 남았다. 이제 `models`가 실제로 도착했을 때는 그 목록만 쓰고, 추천값이 그
+    안에 없으면 같은 계열(gpt/gemini) 안에서 대체 기본값을 고른다 — 다음에 또 추천
+    모델이 은퇴돼도 조용히 죽은 모델에 머물지 않고 살아있는 모델로 넘어가게."""
     r1, r2 = gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2
-    pool = sorted(set(models) | {r1, r2})
+    pool = sorted(set(models)) if models else sorted({r1, r2})
     gemini_models = sorted(m for m in pool if "gemini" in m.lower())
     gpt_models = sorted(m for m in pool if "gpt" in m.lower())
 
@@ -663,6 +670,12 @@ def _fill_model_combo_grouped(combo: QComboBox, models: list, default_model: str
     combo.setModel(std_model)
 
     target = prev if prev in pool else default_model
+    if target not in pool:
+        # default_model도(추천값이 은퇴돼) pool에 없으면 같은 계열 우선으로 대체 —
+        # 죽은 모델을 기본 선택으로 남기지 않는다.
+        same_vendor = gpt_models if "gpt" in default_model.lower() else gemini_models
+        fallback_pool = same_vendor or gemini_models or gpt_models
+        target = fallback_pool[0] if fallback_pool else None
     default_row = next(
         (i for i in range(std_model.rowCount())
          if std_model.item(i).data(Qt.ItemDataRole.UserRole) == target), -1)
@@ -729,9 +742,11 @@ class _ModelListWorker(QThread):
         self.succeeded.emit(models)
 
 
-def _render_mermaid_preview_pixmap(text: str, target_size: QSize,
-                                    pen_color: QColor | None = None) -> QPixmap | None:
-    """Mermaid 코드 → 미리보기 픽스맵(§8 항목23 Stage 5, 2026-08-19). 실제 삽입 경로
+def _build_mermaid_preview_scene(text: str, pen_color: QColor | None = None) -> QGraphicsScene | None:
+    """Mermaid 코드 → 미리보기용 QGraphicsScene(§8 항목23 Stage 5, 2026-08-19 —
+    2026-08-21에 `_render_mermaid_preview_pixmap`에서 씬 조립 부분만 뽑아냈다: 정적
+    픽스맵 렌더(`_render_mermaid_preview_pixmap`)와 실시간 휠줌/드래그팬 뷰
+    (`_MermaidPreviewView`) 둘 다 같은 씬을 필요로 하므로). 실제 삽입 경로
     (`host_fileio._build_mermaid`/`_make_mermaid_node`/`_make_mermaid_edge`)와 똑같은
     파서(`parse_mermaid`)+배치(`layout_positions`)+도형매핑(`_MERMAID_SHAPE_ITEM`)+
     부착점(`_border_attach`)+직교라우팅(`_PolyArrowItem.build_elbow`)을 그대로 재사용해
@@ -798,6 +813,18 @@ def _render_mermaid_preview_pixmap(text: str, target_size: QSize,
             arr.ensure_label().setPlainText(e.label)
         arr._sync_label()
 
+    return scene
+
+
+def _render_mermaid_preview_pixmap(text: str, target_size: QSize,
+                                    pen_color: QColor | None = None) -> QPixmap | None:
+    """`_build_mermaid_preview_scene`을 target_size 픽스맵으로 래스터화(정적 이미지가
+    필요한 자리 — 지금은 pytest 순수함수 테스트가 이 계약을 지킨다). 라이브 미리보기
+    패널 자체는 더 이상 이 함수를 쓰지 않고 `_MermaidPreviewView`가 씬을 직접 든다
+    (2026-08-21, 클릭-확대창 대신 패널 안 휠줌/드래그팬으로 교체하며)."""
+    scene = _build_mermaid_preview_scene(text, pen_color)
+    if scene is None:
+        return None
     pm = QPixmap(target_size)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
@@ -817,16 +844,73 @@ def _render_mermaid_preview_pixmap(text: str, target_size: QSize,
     return pm
 
 
-class _ClickablePreviewLabel(QLabel):
-    """미리보기 QLabel — 클릭하면 확대 보기를 연다(2026-08-20 피드백: "미리보기창을
-    누르면 크게 보여주는 기능이 있으면 좋겠다")."""
+class _MermaidPreviewView(QGraphicsView):
+    """Mermaid 미리보기 — 클릭하면 별도 창으로 확대하던 방식(`_ClickablePreviewLabel`
+    +확대 다이얼로그) 대신, 패널 안에서 바로 휠로 확대·드래그로 이동하며 확인한다
+    (2026-08-21 실사용 피드백: "클릭하면 확대 방식보다 그냥 미리보기에서 드래그
+    휠방식으로 확대 축소하며 확인하는 방식은 어떤지"). 캔버스 본체의 줌 관례(휠 배율
+    1.15, `AnchorUnderMouse` — `host_ui._on_wheel_zoom`)를 그대로 재사용해 새 줌
+    공식을 만들지 않는다(손안의 카드). 도형을 선택·편집할 대상이 아닌 순수 읽기전용
+    보기라, 좌클릭 드래그를 Qt 기본 `ScrollHandDrag`(손모양 패닝)에 그대로 맡길 수
+    있다 — 별도 팬 로직이 필요 없다.
 
-    clicked = pyqtSignal()
+    코드가 바뀔 때마다(`set_mermaid_code`) 화면을 그 도형 전체가 보이도록 다시
+    맞춘다(`fitInView`) — 이 자체가 "가로든 세로든 중앙에" 요구를 공짜로 만족시킨다
+    (정적 픽스맵 렌더와 달리 `fitInView`는 Qt가 알아서 중앙 정렬한다). 그 이후의
+    휠줌·드래그팬은 사용자 조작 그대로 유지되고, 다음 코드 변경이 오면 다시 맞춰진다
+    — "최신 도형을 한눈에 보여주고, 그 다음은 직접 둘러본다"는 의도."""
 
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(e)
+    _PLACEHOLDER = "코드를 입력하면\n미리보기가 표시됩니다"
+    _ERROR = "구문 오류 —\n미리보기를 표시할 수 없습니다"
+    _ZOOM_FACTOR = 1.15
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self._message = self._PLACEHOLDER
+        self._show_message(self._message)
+
+    def has_content(self) -> bool:
+        """실제 도형이 그려져 있으면 True, 안내문(플레이스홀더·구문오류)만 있으면 False
+        — pytest가 QLabel 시절의 `pixmap().isNull()` 대신 이걸로 상태를 확인한다."""
+        return not self._message
+
+    def message_text(self) -> str:
+        """현재 표시 중인 안내문(도형이 있으면 빈 문자열)."""
+        return self._message
+
+    def set_mermaid_code(self, text: str, pen_color: QColor | None = None):
+        scene = _build_mermaid_preview_scene(text, pen_color)
+        if scene is None:
+            self._message = self._ERROR if text.strip() else self._PLACEHOLDER
+            self._show_message(self._message)
+            return
+        self._message = ""
+        self.setScene(scene)
+        r = scene.itemsBoundingRect()
+        margin = 12.0
+        self.fitInView(r.adjusted(-margin, -margin, margin, margin),
+                       Qt.AspectRatioMode.KeepAspectRatio)
+
+    def _show_message(self, text: str):
+        scene = QGraphicsScene(self)
+        item = scene.addText(text)
+        item.setDefaultTextColor(QColor("#8a8a8a"))
+        self.setScene(scene)
+        self.resetTransform()
+        self.centerOn(item)
+
+    def wheelEvent(self, e):
+        if not self.has_content():
+            return   # 안내문뿐일 땐 확대할 대상이 없음
+        dy = e.angleDelta().y()
+        if dy == 0:
+            return
+        factor = self._ZOOM_FACTOR if dy > 0 else 1.0 / self._ZOOM_FACTOR
+        self.scale(factor, factor)
 
 
 # [2026-08-21 실사용 피드백] Mermaid 코드 첫 줄의 방향 토큰 — `mermaid_import._HEADER_RE`와
@@ -1085,7 +1169,9 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         split.addLayout(left_col, 1)
 
         preview_col = QVBoxLayout()
-        preview_title = QLabel("미리보기 (클릭하면 확대)", self)
+        # [2026-08-21 실사용 피드백] "클릭하면 확대"에서 "휠로 확대·드래그로 이동"으로
+        # 교체 — 제목도 그 조작법 안내로 바꾼다(패널 자체가 `_MermaidPreviewView`).
+        preview_title = QLabel("미리보기 (휠로 확대·드래그로 이동)", self)
         preview_title.setStyleSheet(_SECTION_TITLE_QSS)
         preview_col.addWidget(preview_title)
         preview_frame = QFrame(self)
@@ -1097,22 +1183,17 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         )
         # [2026-08-20 피드백] "미리보기 너비가 왼쪽 입력창들과 비슷했으면" — split은 이미
         # stretch 1:1이지만, 좌측은 `_edit.setMinimumSize(420, ...)`가 최소폭을 못박는 반면
-        # 우측은 최소폭이 preview_label(160)뿐이라 다이얼로그 초기 sizeHint에서 좌우가
+        # 우측은 최소폭이 preview_view(160)뿐이라 다이얼로그 초기 sizeHint에서 좌우가
         # 비대칭이었다. 우측도 같은 420으로 맞춰 최초 오픈부터 균형이 잡히게 한다.
         preview_frame.setMinimumWidth(420)
         preview_frame_lay = QVBoxLayout(preview_frame)
         preview_frame_lay.setContentsMargins(6, 6, 6, 6)
-        self._preview_label = _ClickablePreviewLabel(preview_frame)
-        self._preview_label.setMinimumSize(160, 160)
-        self._preview_label.setSizePolicy(
+        self._preview_view = _MermaidPreviewView(preview_frame)
+        self._preview_view.setMinimumSize(160, 160)
+        self._preview_view.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview_label.setWordWrap(True)
-        self._preview_label.setStyleSheet("color:#8a8a8a; font-size:11px;")
-        self._preview_label.setText("코드를 입력하면\n미리보기가 표시됩니다")
-        self._preview_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._preview_label.clicked.connect(self._show_enlarged_preview)
-        preview_frame_lay.addWidget(self._preview_label)
+        self._preview_view.setStyleSheet("background:transparent; border:none;")
+        preview_frame_lay.addWidget(self._preview_view)
         preview_col.addWidget(preview_frame, 1)
         split.addLayout(preview_col, 1)
 
@@ -1145,30 +1226,6 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
 
     def text(self):
         return self._edit.toPlainText()
-
-    def _show_enlarged_preview(self):
-        """미리보기를 클릭하면 큰 창으로 다시 렌더해 보여준다(2026-08-20 피드백) — 작은
-        패널 해상도로는 안 보이던 라벨·구조를 확인할 수 있게. 코드가 비어 있으면 무시."""
-        text = self._edit.toPlainText()
-        if not text.strip():
-            return
-        dlg = QDialog(self)
-        dlg.setWindowTitle("미리보기 확대")
-        v = QVBoxLayout(dlg)
-        label = QLabel(dlg)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        size = QSize(900, 700)
-        pm = _render_mermaid_preview_pixmap(text, size, self._preview_pen_color)
-        if pm is None:
-            label.setText("구문 오류 — 미리보기를 표시할 수 없습니다")
-        else:
-            label.setPixmap(pm)
-        v.addWidget(label)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, dlg)
-        btns.rejected.connect(dlg.reject)
-        v.addWidget(btns)
-        dlg.resize(size)
-        dlg.exec()
 
     def _on_edit_text_changed(self):
         self._preview_timer.start()
@@ -1207,20 +1264,9 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         cursor.insertText(text[:start] + token + text[end:])
 
     def _update_preview(self):
-        """디바운스 타이머 만료 시 호출 — `_render_mermaid_preview_pixmap`으로 다시 그린다."""
-        text = self._edit.toPlainText()
-        if not text.strip():
-            self._preview_label.setPixmap(QPixmap())
-            self._preview_label.setText("코드를 입력하면\n미리보기가 표시됩니다")
-            return
-        pm = _render_mermaid_preview_pixmap(text, self._preview_label.size(),
-                                            self._preview_pen_color)
-        if pm is None:
-            self._preview_label.setPixmap(QPixmap())
-            self._preview_label.setText("구문 오류 —\n미리보기를 표시할 수 없습니다")
-        else:
-            self._preview_label.setText("")
-            self._preview_label.setPixmap(pm)
+        """디바운스 타이머 만료 시 호출 — `_preview_view`(실시간 휠줌/드래그팬 뷰)를
+        새 코드로 다시 그린다."""
+        self._preview_view.set_mermaid_code(self._edit.toPlainText(), self._preview_pen_color)
 
     def closeEvent(self, e):
         # 생성 중(QThread 워커가 돎)에는 닫지 않는다 — 워커가 끝나기 전에 다이얼로그가
@@ -1615,7 +1661,11 @@ def _render_svg_candidate_pixmap(svg_text: str, size: int,
     target = QRectF(margin, margin, size - 2 * margin, size - 2 * margin)
     source = scene.itemsBoundingRect()
     if source.width() > 0 and source.height() > 0:
-        scene.render(p, target, source, Qt.AspectRatioMode.KeepAspectRatio)
+        # [2026-08-21] Mermaid 미리보기와 같은 함정·같은 수정 — `render(target, source,
+        # KeepAspectRatio)`는 여백을 target 좌상단으로 몰아붙이는 Qt 기본 동작(가운데
+        # 정렬 아님), `_centered_target_rect`(pdf_export.py)로 미리 중앙 사각형을 계산.
+        scene.render(p, _centered_target_rect(target, source), source,
+                     Qt.AspectRatioMode.KeepAspectRatio)
     p.end()
     return pm
 

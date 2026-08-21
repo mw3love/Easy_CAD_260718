@@ -58,9 +58,13 @@ DEFAULT_MAX_TOKENS = 16384
 
 # 텍스트 전용 기본값(§8 항목18 후속, 2026-08-12 — Mermaid 가져오기 통합, 이미지 경로 폐기).
 # gpt/gemini 두 계열만 노출(사용자 확정 — claude 제외), 계열별 가성비 최선 1곳씩 추천.
-# ⚠ 아래 값은 위 vision 4모델 비교(docs/ai_image_import.md, gpt-5.4-mini 최저비용·최속)를
-# 텍스트 전용 호출에 유추 적용한 것 — 텍스트 전용 실측은 API 키가 있어야 가능해 아직 없다.
-TEXT_RECOMMEND_1 = "gpt-5.4-mini"       # gpt 계열
+# [2026-08-21 실사용 버그] `gpt-5.4-mini`가 게이트웨이에서 은퇴돼(`Model not found` 404)
+# 재실측 — 실제 Mermaid 생성 호출(`text_to_mermaid.generate_mermaid`)로 크레딧 잔액
+# 전후차를 실측한 결과 gpt-5.6-luna가 압도적으로 저렴·최속이었다(같은 설명 기준
+# gpt-5.6-luna 0.09 크레딧/0.99초, gpt-5.6-sol 2.12/1.67, gpt-5.6-terra 0.77/1.14,
+# gpt-5.5 3.23/4.57 — 그 자리에 있던 "vision 비교를 유추 적용" 경고는 이제 텍스트
+# 실측으로 대체됐으니 지웠다).
+TEXT_RECOMMEND_1 = "gpt-5.6-luna"       # gpt 계열
 TEXT_RECOMMEND_2 = "gemini-3.6-flash"   # gemini 계열
 
 
