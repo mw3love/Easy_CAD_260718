@@ -2165,3 +2165,55 @@ def test_arrow_head_scale_serialize_and_style_copy():
     dst.setSelected(True)
     w.paste_style_to_selection()
     assert dst._head_scale == 2.5
+
+
+def test_text_item_participates_in_connection_system():
+    """[실사용 요청 2026-08-22] 독립 텍스트(`_TextItem`)도 다른 도형처럼 화살표 접속점을
+    제공해야 한다 — 미선택 텍스트는 호버 예고점, 선택된 텍스트는 qc-dot, 화살표
+    드로잉/드롭 둘 다 텍스트에 스냅·바인딩된다. `_ConnectorLabel`(도형·화살표 라벨,
+    `_TextItem` 서브클래스)은 종속 표식이라 제외돼야 한다."""
+    from easycad.canvas.core_shapes import _shape_ports, _shape_ports_for_preview
+
+    w = CanvasWindow()
+    sc = w._scene
+    view = w._view
+
+    t = _TextItem(QColor("black"))
+    t.setPlainText("hello world")
+    t.setPos(QPointF(100, 100))
+    sc.addItem(t)
+    r = _mk_rect(sc, w.make_pen(), 400, 400, 80, 40)
+
+    assert t.rect() == t._content_rect()   # 읽기전용 rect 폴백
+    assert not hasattr(t, "setRect")         # 자유 박스 리사이즈 대상은 아님(_box_handles 유지)
+    assert not t._box_handles() and t._qc_capable()
+
+    ports = _shape_ports(t)
+    assert len(ports) == 4
+    top_pt, _n = ports[0]
+
+    # 미선택 텍스트 근처 호버 → 호버 타깃·예고점 목록에 텍스트가 잡힌다.
+    assert view._port_dot_target(top_pt) is t
+    assert len(_shape_ports_for_preview(t)) == 4
+
+    # 선택된 텍스트 → 4방향 qc-dot이 히트테스트된다.
+    t.setSelected(True)
+    for side, dr in t._qc_dot_rects():
+        vp = view.mapFromScene(t.mapToScene(dr.center()))
+        hit = view._qc_dot_at(vp)
+        assert hit == (t, side)
+    t.setSelected(False)
+
+    # 다른 도형에서 뽑은 화살표를 텍스트 위로 드롭 → 텍스트에 바인딩.
+    cursor_scene = t.mapToScene(t._content_rect().center())
+    snap = view._qc_snap_target(cursor_scene, r)
+    assert snap is not None and snap[2] is t
+
+    # 라벨(_ConnectorLabel)은 같은 자격을 얻으면 안 된다.
+    ar = _PolyArrowItem(QColor("#111111"), 1.0, True)
+    ar.set_points(QPointF(0, 0), QPointF(100, 0))
+    sc.addItem(ar)
+    lbl = ar.ensure_label()
+    assert not lbl._qc_capable()
+    assert lbl not in view._conn_shapes()
+    assert lbl not in view._conn_shapes_near(QPointF(0, 0), 1_000_000.0)

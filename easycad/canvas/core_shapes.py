@@ -703,6 +703,17 @@ class _HandleResizeMixin:
             self._box_handles_cached = v
         return v
 
+    def _qc_capable(self) -> bool:
+        """이 아이템이 qc-dot(화살표 시작용 4변 접속점)을 제공하는가.
+        [실사용 요청 2026-08-22] 기본은 `_box_handles()`와 같다(네모·원·심볼 등 기존 동작
+        무변경). `_TextItem`은 이걸 override해 True를 준다 — 텍스트는 `setRect()`가 없어
+        (자유 박스 리사이즈 대신 폰트크기 단일 핸들을 쓰므로) `_box_handles()`는 계속
+        False로 둬야 하지만, 화살표 접속점만은 다른 도형과 동일하게 필요해서 두 개념을
+        분리했다. `_qc_dot_rects()`가 쓰는 `_shape_ports()`/`_nearest_border()`는 `.rect()`
+        만 있으면 되므로(`_TextItem.rect()` 참조) 이 플래그만 열면 나머지는 기존 코드를
+        그대로 탄다."""
+        return self._box_handles()
+
     # [Lucid 대조 2026-08-03 재도입 → 2026-08-11 모서리만 원복] 한때 꼭짓점·변 핸들과
     # qc-dot이 같은 gap(`_HANDLE_GAP_FACTOR`, 6px)을 공유해 테두리 밖으로 함께 떠 있었다 —
     # "핸들이 도형 자체가 아니라 별도 컨트롤"이라는 시각적 구분이 목적이었는데, 그 결과 qc-dot이
@@ -1119,6 +1130,12 @@ class _HandleResizeMixin:
             return ("rot", None)
         if self._handle_local_rect().contains(local_pt):
             return ("scale", None)
+        # [실사용 요청 2026-08-22] 박스 핸들이 아닌(단일 스케일 핸들) 종류 중 텍스트만 qc-dot도
+        # 갖는다 — `_qc_capable()` 참조.
+        if self._qc_capable() and not self._qc_dots_hover_suppressed():
+            for side, r in self._qc_dot_rects():
+                if r.contains(local_pt):
+                    return ("qc", side)
         return None
 
     def _set_handle_paint(self, painter: QPainter, s: float, base_color, hovered: bool):
@@ -1178,6 +1195,12 @@ class _HandleResizeMixin:
         r = self._handle_local_rect()
         self._set_handle_paint(painter, s, _BLUE, hv == ("scale", None))
         painter.drawRect(r)
+        # [실사용 요청 2026-08-22] 텍스트 — 회전·크기 핸들과 별개로 화살표 접속용 qc-dot도
+        # 그린다(`_qc_capable()` 참조, 박스 리사이즈 핸들은 그대로 없음).
+        if self._qc_capable() and not self._qc_dots_hover_suppressed():
+            for k, dr in self._qc_dot_rects():
+                self._set_handle_paint(painter, s, QColor(90, 150, 235), hv == ("qc", k))
+                painter.drawEllipse(dr)
 
     def _paint_base(self, painter, option, widget):
         # Qt 기본 paint의 자동 선택 점선(회전 핸들까지 확장된 boundingRect 둘레)을 막고
@@ -5631,6 +5654,22 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         c.set_bg(self._bg)
         return self._copy_common_to(c)
 
+    def rect(self) -> QRectF:
+        """[실사용 요청 2026-08-22] 화살표 접속점 시스템(`_shape_ports`/`_nearest_border`/
+        `_shape_interior_contains` 등)이 공통으로 기대하는 `.rect()` — 다른 rect류 도형처럼
+        `setRect()`로 바뀌는 값이 아니라 `_content_rect()`(실제 텍스트 잉크 경계, 패딩 없음)를
+        읽기 전용으로 그대로 반환한다. `setRect()`는 일부러 두지 않는다 — `_box_handles()`가
+        `hasattr(self, "setRect")`로 "박스 리사이즈 가능" 여부를 판정하는데, 텍스트는 폰트크기
+        단일 핸들을 계속 써야 하므로(자유 리사이즈 대상이 되면 안 됨) `_box_handles()`가 계속
+        False여야 한다 — qc-dot만 별도로 여는 `_qc_capable()` override(아래)와 짝을 이룬다."""
+        return QRectF(self._content_rect())
+
+    def _qc_capable(self) -> bool:
+        # [실사용 요청 2026-08-22] 다른 도형에서 텍스트로(또는 텍스트에서 다른 도형으로)
+        # 화살표를 붙일 수 있어야 한다는 실사용 요청 — 위 `.rect()`가 있으면 `_shape_ports`
+        # 이하 접속점 파이프라인은 이미 텍스트를 지원하므로, 이 플래그만 열면 된다.
+        return True
+
     def boundingRect(self):
         # 편집 중(텍스트 입력)엔 회전 핸들 예약(우상단 여백)을 빼 Qt 편집 프레임이 글자에
         # 딱 맞게 한다 — 안 그러면 핸들 자리만큼 점선 프레임이 위·우로 크게 벌어진다.
@@ -5712,6 +5751,12 @@ class _ConnectorLabel(_TextItem):
             if parent is not None and hasattr(parent, "_reproject_label"):
                 return parent._reproject_label(self, value)
         return super().itemChange(change, value)
+
+    def _qc_capable(self) -> bool:
+        # [실사용 요청 2026-08-22] `_TextItem`은 qc-dot을 얻었지만, 화살표에 딸린 라벨은
+        # 독립 주석이 아니라 부모 화살표에 종속된 표식이라 화살표가 붙을 대상이 아니다
+        # (`_conn_shapes()`/`_conn_shapes_near()`도 `_ConnectorLabel`을 명시적으로 제외).
+        return False
 
 
 # ---------------------------------------------------------------------------

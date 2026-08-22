@@ -360,19 +360,23 @@ class _AnnotatorView(QGraphicsView):
 
     # ---- [2d] 빠른 생성(quick-create) ---------------------------------------
     def _qc_dot_at(self, view_pos):
-        """커서가 선택된 네모·원의 외부 도트 위면 (item, side), 아니면 None.
+        """커서가 선택된 네모·원·독립 텍스트의 외부 도트 위면 (item, side), 아니면 None.
         [2d] 핸들과 동일하게 '어느 도구에서든' 작동 — 그린 직후 도구 전환 없이 빠른 생성.
         [신규기능 2026-08-13] 다른(미선택) 도형을 호버 중이면 그 도형의 큐닷은 히트테스트에서도
         빠진다(`_qc_dots_hover_suppressed`) — 보이지 않는 점이 클릭까지 가로채면 호버 중인
         도형의 포트점을 못 누르는 모순이 생긴다.
         [실사용 버그 2026-08-15] 다중선택 중에도 같은 모순이 있었다 — qc-dot은 `_handle_active()`
         가 False라 **그려지지 않는데 히트테스트만 살아 있었다**(위 주석의 '보이지 않는 점이
-        클릭을 가로챈다'와 정확히 같은 부류)."""
+        클릭을 가로챈다'와 정확히 같은 부류).
+        [실사용 요청 2026-08-22] 게이트를 `_box_handles()`(자유 리사이즈 가능 종류만)에서
+        `_qc_capable()`로 넓혔다 — 텍스트는 `setRect()`가 없어(폰트크기 단일핸들 유지)
+        `_box_handles()`가 항상 False지만, 화살표 접속점(qc-dot)만은 다른 도형과 동일하게
+        필요하다(`_HandleResizeMixin._qc_capable`/`_TextItem` override 참조)."""
         if self._group_owns_interaction():
             return None
         scene_pt = self.mapToScene(view_pos)
         for it in self.scene().selectedItems():
-            if getattr(it, "_box_handles", None) is None or not it._box_handles():
+            if getattr(it, "_qc_capable", None) is None or not it._qc_capable():
                 continue
             if not it._handle_active():
                 continue
@@ -1175,12 +1179,19 @@ class _AnnotatorView(QGraphicsView):
         return math.hypot(vp.x() - view_pos.x(), vp.y() - view_pos.y())
 
     def _conn_shapes(self):
-        """씬의 네모·원·심볼·닫힌 다각형 아이템(위→아래 순) — 화살표 테두리 스냅·지속연결 대상.
+        """씬의 네모·원·심볼·닫힌 다각형·독립 텍스트 아이템(위→아래 순) — 화살표 테두리
+        스냅·지속연결 대상.
         [§8 항목21 후속] 닫힌 `_PolygonItem`도 다른 닫힌 도형과 동일하게 스냅 대상에 포함
-        (`_nearest_border`가 `_polygon_nearest`로 처리) — 열린 폴리라인은 `_conn_lines`로."""
+        (`_nearest_border`가 `_polygon_nearest`로 처리) — 열린 폴리라인은 `_conn_lines`로.
+        [실사용 요청 2026-08-22] 독립 텍스트(`_TextItem`)도 포함 — `.rect()`가 `_content_rect()`
+        (텍스트 실제 잉크 경계, 패딩 없음)로 위임돼 있어 `_shape_ports`/`_nearest_border`의
+        기본 사각형 폴백을 그대로 탄다. `_ConnectorLabel`(도형·화살표에 딸린 라벨, `_TextItem`
+        서브클래스)은 제외 — 그건 독립 주석이 아니라 다른 아이템에 종속된 표식이라 화살표가
+        직접 붙을 대상이 아니다."""
         return [it for it in self.scene().items()
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))
-                or (isinstance(it, _PolygonItem) and it._closed)]
+                or (isinstance(it, _PolygonItem) and it._closed)
+                or (isinstance(it, _TextItem) and not isinstance(it, _ConnectorLabel))]
 
     def _conn_paths(self):
         """[외부 DXF 폴백/펜] _PathItem — 연속 폴백(Pass 2, 궤적 어디든)에 더해 [실사용 요청
@@ -1575,10 +1586,13 @@ class _AnnotatorView(QGraphicsView):
         존재 자체가 완전히 무시돼, 뒤에 깔린 도형의 예고점·포트 히트테스트가 이미지를
         투명한 유리처럼 뚫고 그대로 반응했다(호버 예고점 잔상 + 이미지 드래그가 뒤 도형의
         커넥터 뽑기로 새는 버그). 포트 후보로는 여전히 제외해야 하므로 호출부(두 함수)가
-        각자의 후보 루프에서 `isinstance(sh, _ImageItem)`을 걸러낸다."""
+        각자의 후보 루프에서 `isinstance(sh, _ImageItem)`을 걸러낸다.
+        [실사용 요청 2026-08-22] 독립 텍스트(`_TextItem`, `_ConnectorLabel` 제외)도 포함 —
+        `_conn_shapes()`와 같은 사유(위 참조)."""
         rect = QRectF(scene_pt.x() - margin, scene_pt.y() - margin, margin * 2, margin * 2)
         return [it for it in self.scene().items(rect)
-                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PathItem, _ImageItem))]
+                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PathItem, _ImageItem))
+                or (isinstance(it, _TextItem) and not isinstance(it, _ConnectorLabel))]
 
     def _port_dot_target(self, scene_c):
         """[2026-08-03 분리 — _draw_port_dots·mouseMoveEvent 공용] 지금 커서 아래(또는 근처)
