@@ -2146,8 +2146,12 @@ def test_arrow_ensure_label_reuses_first_does_not_duplicate():
 
 def test_arrow_vertical_label_gap_is_symmetric_top_bottom():
     # [실사용 지적 2026-08-21] 세로선(위→아래) 위 라벨은 문서박스 전체가 아니라 실제 잉크
-    # 구간만 갭으로 잡아야 위/아래 여백이 좌우 여백과 똑같이 pad만큼만 남는다 — 전에는
-    # 폰트 줄간격 때문에 위쪽 여백이 아래쪽의 거의 2배였다(실측: ghjghj 기준 11px vs 6px).
+    # 구간만 갭으로 잡아야 위/아래 여백이 서로 같다 — 전에는 폰트 줄간격 때문에 위쪽
+    # 여백이 아래쪽의 거의 2배였다(실측: ghjghj 기준 11px vs 6px).
+    # [실사용 지적 2026-08-22] 위/아래 폭 자체는 `_LABEL_GAP_PAD`(가로 전용, 2px)가 아니라
+    # 별도 `_LABEL_GAP_PAD_V`(7px)를 쓴다 — 가로는 Qt 문서박스 폭에 이미 여백이 녹아 있어
+    # 2px만 더해도 실측 6~7px가 되는데, 세로는 잉크 구간만 남기고 그 여백을 걷어내므로
+    # 좌우와 비슷하게 보이려면 pad 자체를 키워야 한다(대칭 여부는 이 값과 무관하게 유지).
     from easycad.canvas.annotator_core import _ink_vertical_span
     for cls in (_ArrowItem, _PolyArrowItem):
         ar = cls(QColor("#ff111111"), 4, True)
@@ -2159,8 +2163,8 @@ def test_arrow_vertical_label_gap_is_symmetric_top_bottom():
         pos = lbl.pos(); br = lbl._content_rect()
         top_ws = (pos.y() + br.y() + ink_top) - gap.top()
         bottom_ws = gap.bottom() - (pos.y() + br.y() + ink_bot)
-        assert abs(top_ws - ar._LABEL_GAP_PAD) < 0.5
-        assert abs(bottom_ws - ar._LABEL_GAP_PAD) < 0.5
+        assert abs(top_ws - ar._LABEL_GAP_PAD_V) < 0.5
+        assert abs(bottom_ws - ar._LABEL_GAP_PAD_V) < 0.5
         w._scene.removeItem(ar)
 
 

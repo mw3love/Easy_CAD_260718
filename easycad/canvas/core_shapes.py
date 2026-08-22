@@ -3611,7 +3611,14 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             lbl.setPos(a.x() - br.width() / 2.0, a.y() - br.height() / 2.0 + dy)
             lbl._syncing = False
 
-    _LABEL_GAP_PAD = 2.0   # [M4-1] 선-텍스트 갭 축소(5→2). 라벨 둘레로 선을 비우는 여유.
+    _LABEL_GAP_PAD = 2.0     # [M4-1] 선-텍스트 갭 축소(5→2). 가로(폭) 방향 여유.
+    # [실사용 지적 2026-08-22] 세로 방향 전용 여유 — 문서박스 폭(가로)엔 Qt
+    # `documentMargin()`(기본 4px)+글자 좌우여백이 이미 녹아 있어 `_LABEL_GAP_PAD`(2)만
+    # 더해도 실측 좌우 여백이 6~7px가 된다. 반면 세로는 `_ink_vertical_span`으로 그 여백을
+    # 전부 걷어내고 순수 잉크 구간만 쓰므로(2026-08-21 비대칭 수정), 같은 2px pad로는
+    # 위아래가 눈에 띄게 타이트해 보였다(실측 좌우 6~7px vs 위아래 2px). 가로 쪽 실측
+    # 여백(~6~7px)에 맞춰 세로 pad를 키운다.
+    _LABEL_GAP_PAD_V = 7.0
 
     def _label_gap_rects(self):
         """라벨들이 각각 차지하는 로컬 사각형(+패딩) 목록. paint에서 이 안의 선을 비운다
@@ -3619,8 +3626,12 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         [실사용 지적 2026-08-21] 세로 폭은 문서박스 전체가 아니라 실제 잉크 구간
         (`_ink_vertical_span`)만 쓴다 — 안 그러면 폰트 줄간격이 baseline 위에 더 두는
         여백까지 갭에 포함돼, 세로선 라벨에서 위쪽 여백만 눈에 띄게 넓어 보였다. 가로 폭은
-        그대로 문서박스 기준(실사용 확인: 좌우 여백은 이미 적당함)."""
+        그대로 문서박스 기준(실사용 확인: 좌우 여백은 이미 적당함).
+        [실사용 지적 2026-08-22] 위 수정이 세로 여백을 좌우보다 훨씬 타이트하게 만든
+        부작용을 냈다 — 세로 전용 `_LABEL_GAP_PAD_V`로 분리해 좌우와 비슷한 느낌으로
+        맞춘다(가로는 `_LABEL_GAP_PAD` 그대로)."""
         pad = self._LABEL_GAP_PAD
+        pad_v = self._LABEL_GAP_PAD_V
         rects = []
         for lbl in self._live_labels():
             if not lbl.toPlainText().strip():
@@ -3628,8 +3639,8 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             br = lbl._content_rect()
             pos = lbl.pos()
             ink_top, ink_bot = _ink_vertical_span(lbl)
-            rects.append(QRectF(pos.x() + br.x() - pad, pos.y() + br.y() + ink_top - pad,
-                                br.width() + 2 * pad, (ink_bot - ink_top) + 2 * pad))
+            rects.append(QRectF(pos.x() + br.x() - pad, pos.y() + br.y() + ink_top - pad_v,
+                                br.width() + 2 * pad, (ink_bot - ink_top) + 2 * pad_v))
         return rects
 
     def _label_gap_rect(self):
@@ -5230,7 +5241,12 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         path.lineTo(pts[-1])
         return path
 
-    _LABEL_GAP_PAD = 2.0   # [M4-1] 선-텍스트 갭 축소(5→2). 라벨 둘레로 선을 끊을 때의 여유(px)
+    _LABEL_GAP_PAD = 2.0     # [M4-1] 선-텍스트 갭 축소(5→2). 가로(폭) 방향 여유.
+    # [실사용 지적 2026-08-22] 세로 방향 전용 여유 — `_LineItem._label_gap_rects`와 같은
+    # 사유(그쪽 주석 참조): 가로는 Qt `documentMargin()` 등이 문서박스 폭에 이미 녹아 있어
+    # 실측 좌우 여백이 6~7px인데, 세로는 `_ink_vertical_span`으로 그 여백을 걷어낸 순수
+    # 잉크 구간만 써서 같은 2px pad로는 위아래가 눈에 띄게 타이트했다.
+    _LABEL_GAP_PAD_V = 7.0
 
     def _label_gap_rects(self):
         """[우리 확장] 라벨들이 각각 차지하는 로컬 사각형(+패딩) 목록. 이 안의 선을 지워
@@ -5239,8 +5255,12 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         [실사용 지적 2026-08-21] 세로 폭은 문서박스 전체가 아니라 실제 잉크 구간
         (`_ink_vertical_span`)만 쓴다 — 폰트 줄간격이 baseline 위에 더 두는 여백까지 갭에
         포함되면 세로선 라벨에서 위쪽 여백만 눈에 띄게 넓어 보인다. 가로 폭은 문서박스
-        기준 그대로(실사용 확인: 좌우 여백은 이미 적당함)."""
+        기준 그대로(실사용 확인: 좌우 여백은 이미 적당함).
+        [실사용 지적 2026-08-22] 위 수정이 세로 여백을 좌우보다 훨씬 타이트하게 만든
+        부작용을 냈다 — 세로 전용 `_LABEL_GAP_PAD_V`로 분리해 좌우와 비슷한 느낌으로
+        맞춘다(가로는 `_LABEL_GAP_PAD` 그대로)."""
         pad = self._LABEL_GAP_PAD
+        pad_v = self._LABEL_GAP_PAD_V
         rects = []
         for lbl in self._live_labels():
             if not lbl.toPlainText().strip():
@@ -5248,8 +5268,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             br = lbl._content_rect()
             pos = lbl.pos()
             ink_top, ink_bot = _ink_vertical_span(lbl)
-            rects.append(QRectF(pos.x() + br.x() - pad, pos.y() + br.y() + ink_top - pad,
-                                br.width() + 2 * pad, (ink_bot - ink_top) + 2 * pad))
+            rects.append(QRectF(pos.x() + br.x() - pad, pos.y() + br.y() + ink_top - pad_v,
+                                br.width() + 2 * pad, (ink_bot - ink_top) + 2 * pad_v))
         return rects
 
     def _label_gap_rect(self):
