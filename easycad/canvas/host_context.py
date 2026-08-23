@@ -94,7 +94,11 @@ class _ContextMixin:
                     menu.addAction("SVG로 생성...", lambda it=sel[0]: self._generate_svg_replace(it))
             if has_sel and has_style_clip:
                 menu.addAction("스타일 붙여넣기\tCtrl+Alt+V", self.paste_style_to_selection)
-        if len(self._align_targets()) >= 2:      # [M5] 여럿 선택 시만 정렬/분배 서브메뉴
+        if len(self._align_targets()) >= 2 or self._has_distribute_candidates():
+            # [M5] 여럿 선택 시만 정렬/분배 서브메뉴. [실사용 버그 수정 2026-08-23] 도형
+            # 없이 바인딩 화살표만 선택해도(대표 세그먼트 합쳐 3개 이상) 분배는 가능한데
+            # 도형 개수만 보는 첫 조건만으로는 서브메뉴 자체가 안 뜨던 버그 — 두 번째
+            # 조건으로 보완(`docs/arrow_gap_distribute_design.md` 후속).
             menu.addSeparator()
             menu.addMenu(self._build_align_menu("정렬 / 분배", parent=menu))
         if len(self._arrow_targets()) >= 1:      # [신규기능] 화살표 선택 시만 채번 진입점
@@ -626,6 +630,15 @@ class _ContextMixin:
         if moved:
             self.push_undo_move(pairs)
             self._repaint_overlays()
+
+
+    def _has_distribute_candidates(self):
+        """[실사용 버그 수정 2026-08-23] 분배(균등/첫간격기준)가 실제로 뭔가 할 수 있는지 —
+        두 축 중 하나라도 대상(도형+화살표 대표 세그먼트)이 3개 이상이면 True. 우클릭
+        메뉴에서 "정렬/분배" 서브메뉴를 보여줄지 판단하는 데 쓴다(도형 개수만 보는
+        `_align_targets()`와 달리 화살표만 선택한 경우도 잡는다)."""
+        return (len(self._distribute_gap_entries("x")) >= 3
+                or len(self._distribute_gap_entries("y")) >= 3)
 
 
     def _distribute_gap_entries(self, axis):

@@ -497,6 +497,40 @@ def test_align_entry_points_visibility():
 
 
 
+def test_align_entry_shows_for_arrow_only_selection():
+    # [실사용 버그 2026-08-23] 도형 없이 바인딩된 화살표만 3개 이상 선택해도 분배가
+    # 가능한데(화살표 대표 세그먼트), 메뉴 표시 게이트가 도형 개수(_align_targets)만 보고
+    # 서브메뉴 자체를 숨기던 버그.
+    w = CanvasWindow()
+
+    def mk_bound_arrow(y, x_end=100):
+        h0 = _mk_pen_rect(w, x=-30, y=y - 10, ww=20, hh=20, width=0)
+        h1 = _mk_pen_rect(w, x=x_end + 10, y=y - 10, ww=20, hh=20, width=0)
+        it = _PolyArrowItem(QColor("#111111"), 2.0, True)
+        p0 = QPointF(0, y - 15); p3 = QPointF(x_end, y + 15)
+        it._pts = [p0, QPointF(0, y), QPointF(x_end, y), p3]
+        it._routing = "ortho"; it._auto_route = True
+        it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+        w._scene.addItem(it)
+        it.set_bound(0, h0, h0.mapFromScene(p0))
+        it.set_bound(len(it._pts) - 1, h1, h1.mapFromScene(p3))
+        return it
+
+    for it in (mk_bound_arrow(0), mk_bound_arrow(20), mk_bound_arrow(200)):
+        it.setSelected(True)
+    labels = [a.text() for a in w._build_context_menu().actions() if not a.isSeparator()]
+    assert "정렬 / 분배" in labels
+
+    # 화살표가 2개뿐이면(대표 세그먼트 합쳐도 3개 미만) 여전히 안 뜬다.
+    w._scene.clearSelection()
+    for it in (mk_bound_arrow(400), mk_bound_arrow(420)):
+        it.setSelected(True)
+    labels2 = [a.text() for a in w._build_context_menu().actions() if not a.isSeparator()]
+    assert "정렬 / 분배" not in labels2
+
+
+
+
 def test_sarrow_does_not_ride_shared_edge():
     # [M4-4 ⓐ 잔여] 나란히 놓인 두 박스의 N포트끼리 잇기. 옛 라우터는 두 윗변 위에 정확히 포개진
     # 직선을 냈다(_seg_hits_rect가 테두리 접촉을 '안전'으로 통과시키므로 관통 검사엔 안 걸림).
