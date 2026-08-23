@@ -776,6 +776,33 @@ class _ModelListWorker(QThread):
         self.succeeded.emit(models)
 
 
+_ORPHANED_WORKERS: set[QThread] = set()   # 아래 _detach_worker가 채움 — GC 방지용 임시 보관
+
+
+def _detach_worker(worker: QThread | None) -> None:
+    """다이얼로그가 닫힐 때 아직 도는 워커(`_ModelListWorker`/`_MermaidGenWorker`/
+    `_SvgGenWorker`)를 죽은 다이얼로그와 분리해 크래시 없이 백그라운드에서 마저 끝나게
+    한다(2026-08-23, 실사용 버그 — X·Cancel을 열자마자 누르면 안 닫히거나(모델목록
+    조회를 "생성 중"과 같은 걸로 취급해 닫기 자체를 막던 방어코드) Cancel로 강제로
+    닫으면 `reject()`가 그 방어코드(`closeEvent`)를 거치지 않고 곧장 다이얼로그를 없애
+    parent로 물려있던 워커까지 함께 파괴돼(살아있는 QThread 파괴) 프로그램이 죽던 문제).
+    닫기는 무엇이 돌든 항상 즉시 허용하고, 결과 시그널 연결을 끊어(결과는 버림) 워커가
+    끝나도 죽은 다이얼로그를 건드리지 않게 하는 쪽으로 설계를 바꿨다."""
+    if worker is None or not worker.isRunning():
+        return
+    try:
+        worker.disconnect()   # 다이얼로그 쪽 슬롯 연결 전부 해제 — 결과는 버려짐
+    except TypeError:
+        pass   # 연결된 슬롯이 이미 없으면 PyQt6이 TypeError를 던짐(무해)
+    worker.setParent(None)   # 다이얼로그가 사라져도 함께 파괴되지 않도록 분리
+    _ORPHANED_WORKERS.add(worker)
+
+    def _reap():
+        _ORPHANED_WORKERS.discard(worker)
+        worker.deleteLater()
+    worker.finished.connect(_reap)
+
+
 def _build_mermaid_preview_scene(text: str, pen_color: QColor | None = None) -> QGraphicsScene | None:
     """Mermaid 코드 → 미리보기용 QGraphicsScene(§8 항목23 Stage 5, 2026-08-19 —
     2026-08-21에 `_render_mermaid_preview_pixmap`에서 씬 조립 부분만 뽑아냈다: 정적
@@ -1302,17 +1329,15 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         새 코드로 다시 그린다."""
         self._preview_view.set_mermaid_code(self._edit.toPlainText(), self._preview_pen_color)
 
-    def closeEvent(self, e):
-        # 생성 중(QThread 워커가 돎)에는 닫지 않는다 — 워커가 끝나기 전에 다이얼로그가
-        # 사라지면 다른 스레드에서 이미 소멸된 위젯에 시그널을 전달하려다 죽을 위험이 있다
-        # (2026-08-19, 이 프로젝트가 과거 겪은 Qt 라이프사이클 네이티브 크래시 계열과 같은 종류).
-        if self._worker is not None and self._worker.isRunning():
-            e.ignore()
-            return
-        if self._model_list_worker is not None and self._model_list_worker.isRunning():
-            e.ignore()
-            return
-        super().closeEvent(e)
+    def done(self, r):
+        # X·Cancel·OK·Esc 전부 결국 여기로 모인다(QDialog 표준 흐름) — 닫기는 무엇이 돌든
+        # 항상 즉시 허용하고, 아직 도는 워커는 `_detach_worker`로 분리해 결과를 버린다
+        # (2026-08-23, 실사용 버그 수정 — 상세 이유는 `_detach_worker` 주석 참조. 예전엔
+        # `closeEvent`에서 `e.ignore()`로 닫기 자체를 막았는데, Cancel 버튼의 `reject()`는
+        # `closeEvent`를 거치지 않고 곧장 여기로 와 그 방어코드가 원천 무효였다).
+        _detach_worker(self._worker)
+        _detach_worker(self._model_list_worker)
+        super().done(r)
 
     def eventFilter(self, obj, event):
         if obj is self._prompt_edit and event.type() == QEvent.Type.KeyPress:
@@ -2324,16 +2349,13 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         채워지므로 결과적으로 같지만, 클릭 없이 코드칸에 직접 타이핑/붙여넣기만 해도 된다."""
         return self._code_edit.toPlainText().strip()
 
-    def closeEvent(self, e):
-        # 생성 중(워커가 하나라도 돎)에는 닫지 않는다 — `_MermaidDialog.closeEvent`와 같은
-        # 이유(2026-08-19). 모델 목록 조회 워커도 같은 이유로 함께 확인(2026-08-20 추가).
-        if any(w.isRunning() for w in self._workers):
-            e.ignore()
-            return
-        if self._model_list_worker is not None and self._model_list_worker.isRunning():
-            e.ignore()
-            return
-        super().closeEvent(e)
+    def done(self, r):
+        # `_MermaidDialog.done`과 동일한 이유(2026-08-23) — X·Cancel·OK·Esc 전부 여기로
+        # 모이므로, 닫기는 항상 즉시 허용하고 아직 도는 워커는 분리해 결과를 버린다.
+        for w in self._workers:
+            _detach_worker(w)
+        _detach_worker(self._model_list_worker)
+        super().done(r)
 
     def eventFilter(self, obj, event):
         if obj is self._prompt_edit and event.type() == QEvent.Type.KeyPress:

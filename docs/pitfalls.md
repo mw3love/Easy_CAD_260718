@@ -183,6 +183,20 @@
   스핀박스에 직접 보내 실측한 결과 `ClickFocus`는 휠만으로는 포커스를 안 뺏기면서(값은 바뀜)
   명시적 클릭 시엔 정상적으로 포커스를 얻어 타이핑도 된다 — NoFocus의 상위 호환. (`2026-08.md`
   "회전 스핀박스 타이핑 불가 버그 + 화살촉 크기(배율) 신설")
+- **`QDialog.reject()`/`accept()`는 `closeEvent()`를 거치지 않고 곧장 `done()`으로 간다 —
+  `closeEvent()`에만 건 "워커 도는 중엔 안 닫음" 가드는 X 버튼(WM_CLOSE)만 막고 Cancel
+  버튼·Esc 키는 무방비로 샌다.** `_MermaidDialog`/`_SvgAssetDialog`가 창을 열면 자동으로
+  도는 모델목록 조회(`_ModelListWorker`, parent=다이얼로그)가 안 끝난 채 Cancel을 누르면
+  `reject()`가 그 가드를 안 거치고 다이얼로그를 곧장 없애 살아있는 자식 QThread까지 함께
+  파괴돼(`docs/pitfalls.md` 위 "QThread-vs-destroyed-widget" 계열과 같은 뿌리) 프로그램
+  전체가 죽었다(실사용 재현: 창 열자마자 X는 안 먹히고(가드가 걸림) 그 상태에서 Cancel을
+  누르면 크래시). 근본 수정은 가드 위치를 옮기는 게 아니라 설계를 바꾸는 것 — 닫기는
+  무엇이 돌든 항상 즉시 허용하고(X·Cancel·OK·Esc 전부 `done()` 오버라이드 하나로 수렴),
+  아직 도는 워커는 `disconnect()`+`setParent(None)`으로 다이얼로그와 분리해 결과를 버리고
+  백그라운드에서 조용히 끝내게 한다(모듈 전역 집합에 잠깐 보관해 GC를 막고, `finished`
+  시그널에서 스스로 정리 — `_detach_worker`). "닫는다는 건 결과가 필요없다는 뜻"이라
+  애초에 막을 이유가 없었다는 게 핵심 통찰. (`2026-08.md` "Mermaid·SVG 생성창 X/Cancel
+  크래시 수정 — 닫기 즉시 허용 + 워커 분리")
 
 ## 좌표계·변환
 - `drawForeground`의 painter는 Qt가 이미 **씬 좌표계**로 매핑해 넘긴다 — 여기에 다시

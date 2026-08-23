@@ -554,33 +554,35 @@ def test_mermaid_dialog_shows_progress_and_disables_controls_while_generating():
     assert dlg._worker is None
 
 
-def test_mermaid_dialog_close_ignored_while_generating():
-    """생성 중 닫기를 무시해야 한다(`_SvgAssetDialog`와 같은 이유) — `closeEvent`에 직접
-    `QCloseEvent`를 흘려 `isAccepted()`로 확인한다(`close()`+`result()` 조합은 갓 만든
-    다이얼로그의 기본 `result()`가 이미 `Rejected`(0)라 "닫힘 전"과 구분이 안 돼 오판을
-    낳는다 — 실측으로 걸린 함정, `try/finally` 필요성도 이 사고에서 확인됨)."""
+def test_mermaid_dialog_close_immediate_while_generating():
+    """2026-08-23 설계 변경 — 예전엔 생성 중 닫기를 `closeEvent`의 `e.ignore()`로
+    막았으나, Cancel 버튼의 `reject()`는 그 방어코드를 거치지 않고 곧장 다이얼로그를
+    없애 아직 도는 워커까지 함께 파괴돼(살아있는 QThread 파괴) 프로그램이 죽는 실사용
+    크래시로 이어졌다(X·Cancel을 누른다는 건 결과가 필요없다는 뜻이므로 애초에 막을
+    이유도 없었다). 이제는 무엇이 돌든 닫기가 항상 즉시 되고, 아직 도는 워커는
+    `_detach_worker`로 다이얼로그와 분리돼 크래시 없이 백그라운드에서 마저 끝난다."""
     import time
-    from PyQt6.QtGui import QCloseEvent
+    from easycad.canvas import host_dialogs
     with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
         dlg = _MermaidDialog()
     dlg._prompt_edit.setPlainText("아무 설명")
 
     def fake_generate(key, desc, *, model, **kw):
-        time.sleep(0.05)
+        time.sleep(0.3)
         return "flowchart TD\n A-->B", model
 
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.ai.text_to_mermaid.generate_mermaid", fake_generate):
         dlg._on_ai_clicked()
-        try:
-            ev = QCloseEvent()
-            dlg.closeEvent(ev)
-            assert not ev.isAccepted()   # 생성 중 — 무시돼야 함
-        finally:
-            _wait_worker(dlg)
-    ev2 = QCloseEvent()
-    dlg.closeEvent(ev2)
-    assert ev2.isAccepted()   # 생성이 끝난 뒤엔 평범하게 닫힘(super() 경로)
+        worker = dlg._worker
+        assert worker.isRunning()
+        dlg.reject()   # Cancel 버튼과 완전히 같은 경로 — 실사용 크래시가 재현되던 지점
+        assert dlg.result() == QDialog.DialogCode.Rejected   # 생성 중이어도 즉시 닫힘
+        assert worker in host_dialogs._ORPHANED_WORKERS   # 분리돼 백그라운드에서 계속 돎
+        worker.wait(5000)
+        for _ in range(5):
+            QApplication.processEvents()
+    assert worker not in host_dialogs._ORPHANED_WORKERS   # 끝난 뒤 스스로 정리됨
 
 
 def test_mermaid_dialog_direct_paste_still_works_without_ai():

@@ -19,7 +19,8 @@ deep-interview(2026-08-14)로 확정된 대로: 진입점 2곳(삽입 메뉴로 
     동일 동작).
   - `_SvgAssetDialog` — 모델별 개수 드롭다운→완전 병렬 호출, 부분 실패 시 성공한 후보만
     표시, 후보 카드 클릭 선택, 빈 프롬프트/개수 0/키 없음 가드, 생성 중 진행 표시·컨트롤
-    비활성화·닫기 무시, 이미지 첨부(찾아보기·드롭·Ctrl+V).
+    비활성화·닫기는 즉시(생성 중이어도 워커를 분리해 백그라운드에서 마저 끝남), 이미지
+    첨부(찾아보기·드롭·Ctrl+V).
   - `host_fileio._insert_ai_svg_asset` — 삽입 경로(undo 1스텝).
   - `host_context._generate_svg_replace` — 대체 경로(remove+create 단일 undo, 화살표
     미재연결, 대체 도형 bbox 긴 변 기준 리스케일).
@@ -355,35 +356,35 @@ def test_svg_asset_dialog_shows_progress_and_disables_controls_while_generating(
     dlg.deleteLater()
 
 
-def test_svg_asset_dialog_close_ignored_while_generating():
-    """생성 중 닫기(제목표시줄 X 등)를 무시해야 한다 — 워커가 끝나기 전에 다이얼로그가
-    사라지면 다른 스레드의 시그널이 이미 소멸된 위젯에 배달되며 죽을 위험이 있다.
-    `closeEvent`에 직접 `QCloseEvent`를 흘려 `isAccepted()`로 확인한다(`close()`+
-    `result()` 조합은 갓 만든 다이얼로그의 기본 `result()`가 이미 `Rejected`(0)라
-    "닫힘 전"과 구분이 안 돼 오판을 낳는다 — 실측으로 걸린 함정, `try/finally`
-    필요성도 이 사고에서 확인됨)."""
+def test_svg_asset_dialog_close_immediate_while_generating():
+    """2026-08-23 설계 변경(`_MermaidDialog`와 동일 이유) — 예전엔 생성 중 닫기를
+    `closeEvent`의 `e.ignore()`로 막았으나, Cancel 버튼의 `reject()`는 그 방어코드를
+    거치지 않고 곧장 다이얼로그를 없애 아직 도는 워커까지 함께 파괴돼 프로그램이 죽는
+    실사용 크래시로 이어졌다. 이제는 무엇이 돌든 닫기가 항상 즉시 되고, 아직 도는
+    워커는 `_detach_worker`로 분리돼 크래시 없이 백그라운드에서 마저 끝난다."""
     import time
-    from PyQt6.QtGui import QCloseEvent
+    from easycad.canvas import host_dialogs
     with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
 
     def fake_generate(key, subject, *, model, **kw):
-        time.sleep(0.05)
+        time.sleep(0.3)
         return _SAMPLE_SVG, model
 
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
          patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
         dlg._on_generate_clicked()
-        try:
-            ev = QCloseEvent()
-            dlg.closeEvent(ev)
-            assert not ev.isAccepted()   # 생성 중 — 무시돼야 함
-        finally:
-            _wait_workers(dlg)
-    ev2 = QCloseEvent()
-    dlg.closeEvent(ev2)
-    assert ev2.isAccepted()   # 생성이 끝난 뒤엔 평범하게 닫힘(super() 경로)
+        workers = list(dlg._workers)
+        assert workers and all(w.isRunning() for w in workers)
+        dlg.reject()   # Cancel 버튼과 완전히 같은 경로 — 실사용 크래시가 재현되던 지점
+        assert dlg.result() == QDialog.DialogCode.Rejected   # 생성 중이어도 즉시 닫힘
+        assert all(w in host_dialogs._ORPHANED_WORKERS for w in workers)   # 전부 분리됨
+        for w in workers:
+            w.wait(5000)
+        for _ in range(5):
+            QApplication.processEvents()
+    assert not any(w in host_dialogs._ORPHANED_WORKERS for w in workers)   # 끝난 뒤 정리됨
     dlg.deleteLater()
 
 
