@@ -1185,6 +1185,33 @@ symbol_library/
   확인 대기). 상세: `docs/history/2026-08.md` "Mermaid·SVG 생성창 X/Cancel 크래시 수정",
   함정: `docs/pitfalls.md` "Qt 시그널·이벤트 발화 조건" 절 끝부분. **Not-tested**: 진짜
   OS 마우스 클릭 재현.
+- **PDF/PNG/SVG 내보내기 개별 여백(mm) 설정 완료(2026-08-23)** — `margin_mm`(단일값)이
+  실제로는 다이얼로그가 안 넘겨 항상 10mm 균등 고정이던 것을 `margins_mm`(상/우/하/좌
+  4개 mm)로 확장해 PDF/PNG/SVG 세 포맷 export 함수 + `_PdfExportDialog` 숫자입력 4개까지
+  관통. 신규 pytest 5종, 전체 876종 통과. 상세: `docs/history/2026-08.md` 같은 제목.
+- **정렬/분배 — 첫 간격 기준 분배 + 연결된 화살표 지원 완료(2026-08-23, 4개 커밋)** —
+  ① 기존 배치 재정렬에 "첫 간격 기준 분배"(AutoCAD copy 반복 관례) 모드 신설.
+  ② 바인딩된 화살표도 분배 대상에 편입 — 화살표 전체가 아니라 "가장 긴 매칭 방향
+  세그먼트"만 기존 세그먼트 드래그 함수로 옮기고 양 끝은 그대로 둠(A* 라우팅 코드는
+  안 건드림, 설계 원문 `docs/arrow_gap_distribute_design.md`). ③ 서브메뉴 10개 아이콘화 +
+  라벨 정리. ④ 실사용 버그 — ②에서 계산 로직은 화살표까지 넓혔지만 서브메뉴 노출 게이트는
+  안 넓혀서 화살표만 선택하면 메뉴 자체가 안 뜨던 것 수정(`_has_distribute_candidates()`).
+  4개 커밋 전부 pytest + 실제 창 재현 확인. 상세: `docs/history/2026-08.md` 같은 제목,
+  함정: `docs/pitfalls.md` "상호작용 설계" 절 끝부분(④ 게이트 놓침 패턴 신규 기록).
+- **캔버스 드래그앤드롭 확장 — .ecad/.dxf·.dwg/.svg + 뷰포트 이벤트필터 버그 수정
+  (2026-08-24)** — 이미지 파일만 되던 드롭에 `.ecad`(새 탭 열기)·`.dxf`/`.dwg`(새 탭
+  가져오기)·`.svg`(도형 삽입) 추가하던 중, 실사용 재확인(2번째 보고, 규칙 11-b)으로 더
+  근본적인 버그 발견 — 캔버스 뷰포트에 `viewport().setAcceptDrops(True)`가 걸려 있어
+  (2026-08-19 팔레트 드래그 수정 때 추가) Qt가 URL 드래그를 `CanvasWindow`가 아니라
+  뷰포트로 직접 보내고, 뷰 자신의 기본 드래그 처리는 scene에 드롭 수용 아이템이 없어
+  `dragMoveEvent`를 항상 거부(`dragEnter`는 accept=True인데 `dragMove`는 False로 갈리는
+  것을 실측 확인) — 캔버스 중앙에서는 `CanvasWindow.dragEnterEvent`/`dropEvent`가 애초에
+  호출될 기회가 없었다(기존 이미지 드래그앤드롭도 이 경로로는 원래부터 안 됐을 가능성).
+  팔레트 mime과 동일하게 뷰포트 `eventFilter`에서 URL 드래그도 직접 가로채도록 확장
+  (`_handle_url_drop`으로 처리 로직 공유). 신규 pytest 7종 + 실제 창에 실제 Qt 이벤트를
+  직접 보내 재현·확인 + 사용자의 실제 OS 드래그 재확인까지 완료, 전체 889종 통과. 상세:
+  `docs/history/2026-08.md` 같은 제목, 함정: `docs/pitfalls.md` "Qt 시그널·이벤트 발화
+  조건" 절 끝부분(신규 기록).
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

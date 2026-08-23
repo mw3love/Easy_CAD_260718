@@ -955,6 +955,118 @@ def test_do_open_dxf_dwg_generic_failure_shows_dwg_titled_warning():
 
 
 
+def _fake_url_drop_event(paths, pos=(30.0, 40.0)):
+    """[드래그앤드롭 확장, 2026-08-23] 실제 QMimeData(URL 목록)를 실은 가짜 드롭/드래그
+    이벤트 — CanvasWindow.dropEvent/dragEnterEvent가 쓰는 mimeData()/position()/
+    acceptProposedAction()만 흉내(QDropEvent 생성자의 화면 좌표 요구사항을 피하는 관례,
+    test_part9_ai_svg_asset.py의 dropEvent 테스트와 동일 패턴). accept 호출 여부는
+    반환하는 ev._accepted 리스트로 확인한다."""
+    from PyQt6.QtCore import QUrl, QMimeData
+    md = QMimeData()
+    md.setUrls([QUrl.fromLocalFile(p) for p in paths])
+    accepted = []
+    ev = type("_E", (), {
+        "mimeData": lambda self: md,
+        "position": lambda self: QPointF(*pos),
+        "acceptProposedAction": lambda self: accepted.append(True),
+    })()
+    ev._accepted = accepted
+    return ev
+
+
+def test_drag_enter_event_accepts_ecad_dxf_dwg_svg_urls():
+    # [드래그앤드롭 확장, 2026-08-23] 이미지 외에 .ecad/.dxf/.dwg/.svg도 캔버스로 끌면
+    # 받아들여야(acceptProposedAction) 한다 — 실제 파일 존재 여부는 확장자 검사와 무관.
+    w = CanvasWindow()
+    for ext in (".ecad", ".dxf", ".dwg", ".svg", ".png"):
+        ev = _fake_url_drop_event([f"C:/fake/path{ext}"])
+        w.dragEnterEvent(ev)
+        assert ev._accepted, f"{ext} 드래그가 accept 안 됨"
+    # 미지원 확장자는 거부(accept 호출 없음).
+    ev = _fake_url_drop_event(["C:/fake/path.txt"])
+    w.dragEnterEvent(ev)
+    assert not ev._accepted
+
+
+def test_drop_ecad_file_opens_new_tab_and_preserves_prior_tab():
+    # [드래그앤드롭 확장, 2026-08-23] .ecad를 캔버스로 끌어놓으면 Ctrl+O와 동일하게
+    # 새 탭으로 열리고(_do_open_ecad 재사용), 기존 탭의 도형은 그대로 보존된다.
+    src = CanvasWindow()
+    _mk_pen_rect(src, x=10, y=20)
+    path = os.path.join(_TMP, f"drop_{uuid.uuid4().hex}.ecad")
+    save_document(src._scene, path)
+
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=0, y=0)
+    n_tabs0 = len(w._docs)
+    w.dropEvent(_fake_url_drop_event([path]))
+    assert len(w._docs) == n_tabs0 + 1
+    # QUrl.toLocalFile()이 백슬래시를 슬래시로 정규화해 돌려줄 수 있어(Windows) normpath로 비교.
+    assert os.path.normpath(w._doc_path) == os.path.normpath(path)
+    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == 1
+    w._tabs.setCurrentIndex(0)   # 이전 탭으로 돌아가 원래 도형이 그대로 있는지 확인
+    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == 1
+
+
+def test_drop_dxf_file_imports_new_tab():
+    # [드래그앤드롭 확장, 2026-08-23] .dxf를 캔버스로 끌어놓으면 새 탭에 가져온다
+    # (_do_open_dxf 재사용). 안내창은 QSettings 플래그로 스킵(헤드리스 관례, 기존 테스트와 동일).
+    from PyQt6.QtCore import QSettings
+    from PyQt6.QtWidgets import QMessageBox
+    QSettings("EasyCAD", "EasyCAD").setValue("dxf_open_notified", True)
+    orig_info, orig_warn = QMessageBox.information, QMessageBox.warning
+    QMessageBox.information = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
+    QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
+    try:
+        src = CanvasWindow()
+        _mk_pen_rect(src, x=5, y=5, ww=80, hh=40)
+        path = os.path.join(_TMP, f"drop_{uuid.uuid4().hex}.dxf")
+        src._do_export_dxf(path)
+
+        w = CanvasWindow()
+        n_tabs0 = len(w._docs)
+        w.dropEvent(_fake_url_drop_event([path]))
+        assert len(w._docs) == n_tabs0 + 1
+        assert any(isinstance(x, _RectItem) for x in w._scene.items())
+    finally:
+        QMessageBox.information, QMessageBox.warning = orig_info, orig_warn
+
+
+def test_drop_svg_file_inserts_shapes_into_current_tab():
+    # [드래그앤드롭 확장, 2026-08-23] .svg는 새 탭이 아니라 현재 도면 위 드롭 위치에
+    # 바로 도형으로 삽입된다(_insert_svgs_at 재사용, 파일선택창 SVG 가져오기와 동일 경로).
+    svg = ('<svg viewBox="0 0 100 100">'
+           '<line x1="10" y1="10" x2="90" y2="90"/>'
+           '<rect x="20" y="20" width="30" height="30"/>'
+           '</svg>')
+    path = os.path.join(_TMP, f"drop_{uuid.uuid4().hex}.svg")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(svg)
+
+    w = CanvasWindow()
+    n_tabs0 = len(w._docs)
+    n0 = len(w._scene.items())
+    w.dropEvent(_fake_url_drop_event([path]))
+    assert len(w._docs) == n_tabs0   # 새 탭 아님 — 현재 탭에 삽입
+    assert len(w._scene.items()) == n0 + 2   # line + rect
+    assert any(isinstance(x, _LineItem) for x in w._scene.items())
+    assert any(isinstance(x, _RectItem) for x in w._scene.items())
+
+
+def test_drop_image_file_still_inserts_at_drop_position():
+    # [회귀] 확장자 라우팅을 넓히기 전부터 있던 이미지 드롭 경로가 그대로 동작하는지.
+    path = os.path.join(_TMP, f"drop_{uuid.uuid4().hex}.png")
+    _mk_pixmap(40, 20).save(path)
+
+    w = CanvasWindow()
+    n0 = len(w._scene.items())
+    w.dropEvent(_fake_url_drop_event([path], pos=(50.0, 60.0)))
+    assert len(w._scene.items()) == n0 + 1
+    assert any(isinstance(x, _ImageItem) for x in w._scene.items())
+
+
+
+
 def _fake_clicked_button_by_text(self, needle: str):
     """[§8 DWG 자동변환 테스트 헬퍼] `_prompt_odafc_missing`이 실제로 만든 버튼들
     (`self.buttons()`, addButton은 안 건드림 — 진짜 QPushButton) 중 텍스트에 needle이 들어간

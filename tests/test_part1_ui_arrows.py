@@ -1296,6 +1296,65 @@ def test_palette_drag_drop_creates_shape():
 
 
 
+def test_viewport_event_filter_accepts_and_routes_url_drag():
+    # [드래그앤드롭 확장, 2026-08-23] 실사용 재현으로 발견한 버그 — 캔버스 뷰포트는
+    # `viewport().setAcceptDrops(True)`가 걸려 있어(M3 #17, 팔레트 드래그용) 팔레트 mime이
+    # 아닌 드래그(파일 URL)도 Qt가 CanvasWindow가 아니라 뷰포트로 직접 보낸다. 뷰(QGraphics
+    # View) 자신의 기본 처리는 dragEnter는 낙관적으로 받아주지만, scene에 드롭을 받는
+    # 아이템이 없어 dragMove는 항상 거부한다 — 실측(`event.isAccepted()`)으로 dragEnter=True,
+    # dragMove=False로 갈리는 걸 확인했고, 커서는 dragMove 기준이라 이게 "캔버스 중앙에
+    # .ecad/이미지를 끌면 항상 금지 커서만 뜬다"로 보였다. 팔레트와 동일하게 뷰포트
+    # 이벤트 필터가 URL 드래그도 직접 가로채야 한다.
+    from PyQt6.QtCore import QUrl, QMimeData, QEvent
+    from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+
+    w = CanvasWindow()
+    md = QMimeData()
+    md.setUrls([QUrl.fromLocalFile("C:/fake/probe.ecad")])
+    pos = QPointF(30, 40)
+
+    de_enter = QDragEnterEvent(pos.toPoint(), Qt.DropAction.CopyAction, md,
+                                Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
+    assert w.eventFilter(w._view.viewport(), de_enter) is True
+    assert de_enter.isAccepted()
+
+    de_move = QDragMoveEvent(pos.toPoint(), Qt.DropAction.CopyAction, md,
+                              Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
+    assert w.eventFilter(w._view.viewport(), de_move) is True
+    assert de_move.isAccepted()   # [실사용 버그] 수정 전엔 뷰의 기본 처리로 새 False.
+
+    calls = []
+    w._handle_url_drop = lambda md_, scene_pos: (calls.append((md_, scene_pos)) or 1)
+    de_drop = QDropEvent(pos, Qt.DropAction.CopyAction, md,
+                         Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, QEvent.Type.Drop)
+    assert w.eventFilter(w._view.viewport(), de_drop) is True
+    assert de_drop.isAccepted()
+    assert len(calls) == 1
+
+
+def test_viewport_event_filter_drop_opens_ecad_new_tab():
+    # 위 테스트가 라우팅(accept 여부·호출 여부)만 본다면, 이건 실제로 새 탭이 열리고
+    # 도형이 들어오는 것까지 뷰포트 이벤트 필터 경로(=실사용 경로) 그대로 끝까지 확인.
+    from PyQt6.QtCore import QUrl, QMimeData, QEvent
+    from PyQt6.QtGui import QDropEvent
+
+    src = CanvasWindow()
+    _mk_pen_rect(src, x=1, y=2)
+    path = os.path.join(_TMP, f"vpdrop_{uuid.uuid4().hex}.ecad")
+    save_document(src._scene, path)
+
+    w = CanvasWindow()
+    n_tabs0 = len(w._docs)
+    md = QMimeData(); md.setUrls([QUrl.fromLocalFile(path)])
+    de = QDropEvent(QPointF(30, 40), Qt.DropAction.CopyAction, md,
+                    Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier, QEvent.Type.Drop)
+    assert w.eventFilter(w._view.viewport(), de) is True
+    assert len(w._docs) == n_tabs0 + 1
+    assert len([x for x in w._scene.items() if isinstance(x, _RectItem)]) == 1
+
+
+
+
 def test_palette_drag_live_snap_and_commit():
     # [실사용 피드백 2026-08-19] 팔레트 드래그가 씬에 진짜 임시 도형을 만들어 기존 도형
     # 이동과 같은 `_apply_smart_snap()`을 태우므로, 드롭 전(드래그 도중)에도 실시간으로

@@ -767,23 +767,73 @@ class _FileIOMixin:
         return items[0]
 
 
+    # [드래그앤드롭 확장, 2026-08-23] 이미지 외에 .ecad(새 탭 열기)/.dxf·.dwg(새 탭
+    # 가져오기)/.svg(도형 삽입)도 캔버스에 직접 끌어놓을 수 있게 — 각각 이미 있던 열기/
+    # 가져오기/삽입 함수(_do_open_ecad/_do_open_dxf/_insert_svgs_at)를 그대로 재사용한다.
+    _DOC_EXTS = (".ecad",)
+    _DXF_EXTS = (".dxf", ".dwg")
+    _DROP_EXTS = _IMG_EXTS + _DOC_EXTS + _DXF_EXTS + (".svg",)
+
     def dragEnterEvent(self, e):
         md = e.mimeData()
         if md.hasFormat(_PALETTE_MIME) or (
-                md.hasUrls() and any(u.toLocalFile().lower().endswith(self._IMG_EXTS)
+                md.hasUrls() and any(u.toLocalFile().lower().endswith(self._DROP_EXTS)
                                      for u in md.urls())):
             e.acceptProposedAction()
 
 
     def dragMoveEvent(self, e):
         md = e.mimeData()
-        if md.hasFormat(_PALETTE_MIME) or md.hasUrls():
+        if md.hasFormat(_PALETTE_MIME) or (
+                md.hasUrls() and any(u.toLocalFile().lower().endswith(self._DROP_EXTS)
+                                     for u in md.urls())):
             e.acceptProposedAction()
+
+
+    def _handle_url_drop(self, md, scene_pos: QPointF) -> int:
+        """[드래그앤드롭 확장, 2026-08-23] URL 목록(md.hasUrls())을 확장자별로 분류해
+        연다/가져온다/삽입한다 — `dropEvent`(창 레벨)와 `eventFilter`(뷰포트 레벨, 아래
+        참조)가 공유하는 실제 처리 본문. 반환값은 처리한 개수(0이면 아무 URL도 못 알아봄)."""
+        paths = [u.toLocalFile() for u in md.urls() if u.isLocalFile()]
+        doc_paths = [p for p in paths if p.lower().endswith(self._DOC_EXTS)]
+        dxf_paths = [p for p in paths if p.lower().endswith(self._DXF_EXTS)]
+        svg_paths = [p for p in paths if p.lower().endswith(".svg")]
+        img_paths = [p for p in paths if p.lower().endswith(self._IMG_EXTS)]
+        n = 0
+        # .ecad/.dxf·.dwg는 기존 "열기(Ctrl+O)"와 동일하게 새 탭에 연다(현재 도면 보존).
+        for p in doc_paths:
+            self._open_new_tab()
+            self._do_open_ecad(p)
+            n += 1
+        for p in dxf_paths:
+            if not self._confirm_dxf_open_once():
+                continue
+            self._open_new_tab()
+            self._do_open_dxf(p)
+            n += 1
+        # SVG·이미지는 현재 도면(마지막에 열린 탭이 있으면 그 탭) 위 드롭 위치에 바로 삽입.
+        if svg_paths:
+            self._insert_svgs_at(svg_paths, scene_pos)
+            n += len(svg_paths)
+        for p in img_paths:
+            self._insert_image_at(p, scene_pos)
+            scene_pos = QPointF(scene_pos.x() + 20.0, scene_pos.y() + 20.0)
+            n += 1
+        return n
 
 
     def eventFilter(self, obj, event):
         # [M3 #17] 캔버스 뷰포트 위의 팔레트 드래그를 여기서 직접 처리(뷰가 가로채기 전에).
         # 뷰포트 좌표 → mapToScene 로 놓은 자리에 도형 생성. 팔레트 mime가 아니면 통과.
+        # [드래그앤드롭 확장, 2026-08-23] 실사용 재현으로 발견 — `viewport().setAcceptDrops
+        # (True)`가 걸려 있으면 팔레트 mime이 아닌 드래그(파일 URL 등)도 Qt가 CanvasWindow가
+        # 아니라 뷰포트로 직접 보낸다. `QGraphicsView`(우리 뷰) 자신의 기본 드래그 처리는
+        # dragEnter는 낙관적으로 받아주지만 dragMove는 "그 위치에 드롭을 받는 씬 아이템이
+        # 없으면" 거부한다(우리 도형·화살표는 애초에 드롭 수용 아이템이 아님) — 그래서
+        # 캔버스 중앙에서 실제로 마우스를 움직이면 항상 금지 커서가 뜨고 CanvasWindow.
+        # dropEvent(아래)까지 이벤트가 아예 안 왔다(실측: `event.isAccepted()`가 dragEnter는
+        # True, dragMove는 False로 갈림 — 커서는 dragMove 기준이라 이게 실제로 보인 증상).
+        # 팔레트와 동일하게 여기서 파일 URL도 직접 가로채 처리해야 한다.
         if obj is self._view.viewport():
             et = event.type()
             if et == QEvent.Type.Resize:
@@ -793,19 +843,31 @@ class _FileIOMixin:
                 # 뷰포트 자체의 resize를 잡아야 원인 불문 항상 정확하다.
                 self._refresh_minimap()
             if et in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
-                if event.mimeData().hasFormat(_PALETTE_MIME):
+                md = event.mimeData()
+                if md.hasFormat(_PALETTE_MIME):
                     event.acceptProposedAction()
                     return True
-            elif et == QEvent.Type.Drop and event.mimeData().hasFormat(_PALETTE_MIME):
-                # [2026-08-19] 이 네이티브 QDrag 경로는 이제 포트·커스텀심볼(`_palette_drag_
-                # begin`이 False를 돌려주는 tool_key)에서만 쓰인다 — 일반 도형·심볼은
-                # `_PaletteButton`이 씬 안 실물 임시 도형으로 직접 끌어(정렬 스냅이 드래그
-                # 도중에도 실시간으로 걸리도록, `_palette_drag_begin/_move/_end` 참조).
-                tool_key = bytes(event.mimeData().data(_PALETTE_MIME)).decode("utf-8")
-                scene_pos = self._view.mapToScene(event.position().toPoint())
-                if self._create_shape_at(tool_key, scene_pos) is not None:
+                if md.hasUrls() and any(u.toLocalFile().lower().endswith(self._DROP_EXTS)
+                                        for u in md.urls()):
                     event.acceptProposedAction()
-                return True
+                    return True
+            elif et == QEvent.Type.Drop:
+                md = event.mimeData()
+                if md.hasFormat(_PALETTE_MIME):
+                    # [2026-08-19] 이 네이티브 QDrag 경로는 이제 포트·커스텀심볼(`_palette_
+                    # drag_begin`이 False를 돌려주는 tool_key)에서만 쓰인다 — 일반 도형·심볼은
+                    # `_PaletteButton`이 씬 안 실물 임시 도형으로 직접 끌어(정렬 스냅이 드래그
+                    # 도중에도 실시간으로 걸리도록, `_palette_drag_begin/_move/_end` 참조).
+                    tool_key = bytes(md.data(_PALETTE_MIME)).decode("utf-8")
+                    scene_pos = self._view.mapToScene(event.position().toPoint())
+                    if self._create_shape_at(tool_key, scene_pos) is not None:
+                        event.acceptProposedAction()
+                    return True
+                if md.hasUrls():
+                    scene_pos = self._view.mapToScene(event.position().toPoint())
+                    if self._handle_url_drop(md, scene_pos):
+                        event.acceptProposedAction()
+                    return True
         return super().eventFilter(obj, event)
 
 
@@ -821,16 +883,12 @@ class _FileIOMixin:
             return
         if not md.hasUrls():
             return
+        # [드래그앤드롭 확장, 2026-08-23] 실사용에선 캔버스(뷰포트)가 이 이벤트를 가로채
+        # 위 eventFilter의 Drop 분기가 처리하므로, 이 메서드는 뷰포트 밖(툴바 여백 등)에
+        # 떨어졌을 때만 남는 폴백 경로 — 좌표만 창 기준으로 변환해 같은 본문을 재사용한다.
         view_pt = self._view.mapFrom(self, e.position().toPoint())
         scene_pos = self._view.mapToScene(view_pt)
-        n = 0
-        for u in md.urls():
-            p = u.toLocalFile()
-            if p.lower().endswith(self._IMG_EXTS):
-                self._insert_image_at(p, scene_pos)
-                scene_pos = QPointF(scene_pos.x() + 20.0, scene_pos.y() + 20.0)
-                n += 1
-        if n:
+        if self._handle_url_drop(md, scene_pos):
             e.acceptProposedAction()
 
     # ---- 표제란 / 용지틀 (Phase 4) ------------------------------------------
