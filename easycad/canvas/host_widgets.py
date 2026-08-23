@@ -307,6 +307,74 @@ def _act_icon(name: str) -> QIcon:
         path.lineTo(9.5, 17.5)
         path.lineTo(19, 6)
         p.drawPath(path)
+    elif name in ("align_left", "align_hcenter", "align_right"):
+        # [2026-08-23, 정렬/분배 메뉴 아이콘화] 폭이 다른 막대 3개를 기준선에 맞춘 모양 —
+        # 점선 기준선 + 그 선에 닿는 막대들로 "이 선에 맞춘다"는 뜻을 직관적으로 전달.
+        widths = (7.0, 13.0, 10.0)
+        ys = (5.0, 10.5, 16.0)
+        if name == "align_left":
+            guide_x = 5.0; xs = [guide_x] * 3
+        elif name == "align_right":
+            guide_x = 19.0; xs = [guide_x - w for w in widths]
+        else:
+            guide_x = 12.0; xs = [guide_x - w / 2.0 for w in widths]
+        p.save()
+        p.setPen(QPen(col, 1.2, Qt.PenStyle.DashLine))
+        line(guide_x, 2.5, guide_x, 21.5)
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(col)
+        for x, y, w in zip(xs, ys, widths):
+            p.drawRoundedRect(QRectF(x, y, w, 2.6), 1.0, 1.0)
+        p.restore()
+    elif name in ("align_top", "align_vcenter", "align_bottom"):
+        heights = (7.0, 13.0, 10.0)
+        xs = (5.0, 10.5, 16.0)
+        if name == "align_top":
+            guide_y = 5.0; ys = [guide_y] * 3
+        elif name == "align_bottom":
+            guide_y = 19.0; ys = [guide_y - h for h in heights]
+        else:
+            guide_y = 12.0; ys = [guide_y - h / 2.0 for h in heights]
+        p.save()
+        p.setPen(QPen(col, 1.2, Qt.PenStyle.DashLine))
+        line(2.5, guide_y, 21.5, guide_y)
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(col)
+        for x, y, h in zip(xs, ys, heights):
+            p.drawRoundedRect(QRectF(x, y, 2.6, h), 1.0, 1.0)
+        p.restore()
+    elif name in ("dist_even_h", "dist_gap_h"):
+        # 균등 분배=크기가 다른 막대를 같은 틈으로 편 모양. 첫간격기준 분배=같은 크기
+        # 막대+같은 틈+끝에 화살표(그 간격대로 계속 이어짐)로 구분.
+        same_size = (name == "dist_gap_h")
+        widths = (3.0, 3.0, 3.0) if same_size else (3.0, 8.0, 5.0)
+        gap = 3.0 if same_size else 2.0
+        p.save()
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(col)
+        x = 3.0
+        for w in widths:
+            p.drawRoundedRect(QRectF(x, 9.5, w, 5.0), 1.0, 1.0)
+            x += w + gap
+        if same_size:
+            p.setPen(QPen(col, 1.5, Qt.PenStyle.SolidLine,
+                          Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            line(x - gap + 0.5, 12.0, 21.0, 12.0)
+            poly([(21.0, 12.0), (18.3, 10.2), (18.3, 13.8)])
+        p.restore()
+    elif name in ("dist_even_v", "dist_gap_v"):
+        same_size = (name == "dist_gap_v")
+        heights = (3.0, 3.0, 3.0) if same_size else (3.0, 8.0, 5.0)
+        gap = 3.0 if same_size else 2.0
+        p.save()
+        p.setPen(Qt.PenStyle.NoPen); p.setBrush(col)
+        y = 3.0
+        for h in heights:
+            p.drawRoundedRect(QRectF(9.5, y, 5.0, h), 1.0, 1.0)
+            y += h + gap
+        if same_size:
+            p.setPen(QPen(col, 1.5, Qt.PenStyle.SolidLine,
+                          Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            line(12.0, y - gap + 0.5, 12.0, 21.0)
+            poly([(12.0, 21.0), (10.2, 18.3), (13.8, 18.3)])
+        p.restore()
     p.end()
     icon = _finish_act_icon(pm)
     _ACT_ICON_CACHE[key] = icon

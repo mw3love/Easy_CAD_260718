@@ -39,7 +39,7 @@ from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
 from easycad.canvas.host_widgets import (
-    _ARROW_KIND_TOOL, _arrow_kind_of, _style_menu_separators,
+    _ARROW_KIND_TOOL, _arrow_kind_of, _style_menu_separators, _act_icon,
 )
 from easycad.canvas.host_dialogs import _CableNumberDialog, _SvgAssetDialog
 from easycad.fileio import symbol_library
@@ -730,19 +730,33 @@ class _ContextMixin:
             self._repaint_overlays()
 
 
+    # [2026-08-23] 정렬 모드 → 아이콘 이름. "첫 간격 기준 분배" 라벨이 헷갈린다는 피드백으로
+    # 서브메뉴 10개 전부 아이콘을 붙이고, 그 라벨도 "첫 간격 반복"으로 정리했다
+    # (`docs/arrow_gap_distribute_design.md` 후속 — 화살표 지원까지 확정된 뒤 정리).
+    _ALIGN_ICON = {
+        "left": "align_left", "hcenter": "align_hcenter", "right": "align_right",
+        "top": "align_top", "vcenter": "align_vcenter", "bottom": "align_bottom",
+    }
+
     def _build_align_menu(self, title="", parent=None):
         """정렬 6 + 분배 4 메뉴. 미니툴바 드롭다운과 우클릭 서브메뉴가 같은 메뉴를 쓴다.
         우클릭 메뉴는 매번 새로 만들어지므로 parent를 그 메뉴로 줘서 함께 정리되게 한다."""
         m = QMenu(title, parent or self)
         _style_menu_separators(m)
         for mode, label in self._ALIGN_MODES[:3]:
-            m.addAction(label, lambda md=mode: self.align_selection(md))
+            act = m.addAction(label, lambda md=mode: self.align_selection(md))
+            act.setIcon(_act_icon(self._ALIGN_ICON[mode]))
         m.addSeparator()
         for mode, label in self._ALIGN_MODES[3:]:
-            m.addAction(label, lambda md=mode: self.align_selection(md))
+            act = m.addAction(label, lambda md=mode: self.align_selection(md))
+            act.setIcon(_act_icon(self._ALIGN_ICON[mode]))
         m.addSeparator()
-        m.addAction("가로 균등 분배", lambda: self.distribute_selection("x"))
-        m.addAction("세로 균등 분배", lambda: self.distribute_selection("y"))
-        m.addAction("가로 첫 간격 기준 분배", lambda: self.distribute_selection_fixed_gap("x"))
-        m.addAction("세로 첫 간격 기준 분배", lambda: self.distribute_selection_fixed_gap("y"))
+        act = m.addAction("가로 균등 분배", lambda: self.distribute_selection("x"))
+        act.setIcon(_act_icon("dist_even_h"))
+        act = m.addAction("세로 균등 분배", lambda: self.distribute_selection("y"))
+        act.setIcon(_act_icon("dist_even_v"))
+        act = m.addAction("가로 첫 간격 반복", lambda: self.distribute_selection_fixed_gap("x"))
+        act.setIcon(_act_icon("dist_gap_h"))
+        act = m.addAction("세로 첫 간격 반복", lambda: self.distribute_selection_fixed_gap("y"))
+        act.setIcon(_act_icon("dist_gap_v"))
         return m

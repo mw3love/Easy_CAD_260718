@@ -483,12 +483,16 @@ def test_align_entry_points_visibility():
     assert "정렬 / 분배" not in labels()
     b = _mk_pen_rect(w, x=100, y=60); b.setSelected(True)
     assert "정렬 / 분배" in labels()
-    # 메뉴 구성 = 정렬 6 + 분배 4(균등 2 + 첫 간격 기준 2, 2026-08-23 추가).
-    acts = [x.text() for x in w._build_align_menu().actions() if not x.isSeparator()]
+    # 메뉴 구성 = 정렬 6 + 분배 4(균등 2 + 첫 간격 반복 2). [2026-08-23] "첫 간격 기준
+    # 분배"가 헷갈린다는 피드백으로 라벨을 "첫 간격 반복"으로 정리 + 서브메뉴 10개 전부
+    # 아이콘 부착(`docs/arrow_gap_distribute_design.md`의 후속 작업).
+    act_widgets = [x for x in w._build_align_menu().actions() if not x.isSeparator()]
+    acts = [x.text() for x in act_widgets]
     assert acts == ["왼쪽 맞춤", "가로 가운데", "오른쪽 맞춤",
                     "위쪽 맞춤", "세로 가운데", "아래쪽 맞춤",
                     "가로 균등 분배", "세로 균등 분배",
-                    "가로 첫 간격 기준 분배", "세로 첫 간격 기준 분배"]
+                    "가로 첫 간격 반복", "세로 첫 간격 반복"]
+    assert all(not x.icon().isNull() for x in act_widgets)
 
 
 
