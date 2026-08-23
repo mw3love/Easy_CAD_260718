@@ -837,6 +837,42 @@ def test_sarrow_manual_ortho_stays_ortho_on_move():
 
 
 
+def test_dominant_segment_picks_longest_matching_orientation():
+    # [간격분배 2026-08-23] 세그먼트 방향이 섞인 화살표에서, 지정 방향(가로/세로)의
+    # '가장 긴' 세그먼트를 고른다 — 짧은 매칭 세그먼트나 다른 방향 세그먼트는 무시한다
+    # (`docs/arrow_gap_distribute_design.md` — 꺾이는 위치가 화살표마다 달라도 애매함 없이
+    # 기계적으로 고르기 위한 규칙).
+    it = _PolyArrowItem(QColor("#111111"), 2.0, True)
+    # seg0 수직(길이 10) - seg1 수평(길이 100, 대표) - seg2 수직(길이 30, 대표)
+    it._pts = [QPointF(0, 0), QPointF(0, 10), QPointF(100, 10), QPointF(100, 40)]
+    it._routing = "ortho"
+    assert it.dominant_segment(True) == 1     # 가로(수평) 세그먼트 중 최장
+    assert it.dominant_segment(False) == 2    # 세로(수직) 세그먼트 중 최장(30 > 10)
+
+
+def test_dominant_segment_none_when_not_ortho():
+    # 직선/곡선 라우팅은 매칭 세그먼트 개념이 없어 항상 None(간격분배 대상에서 조용히 제외).
+    it = _PolyArrowItem(QColor("#111111"), 2.0, True)
+    it._pts = [QPointF(0, 0), QPointF(100, 0)]
+    it._routing = "straight"
+    assert it.dominant_segment(True) is None
+    assert it.dominant_segment(False) is None
+
+
+def test_segment_scene_rect_normalized_and_offset_by_pos():
+    # 대표 세그먼트 방향의 폭/높이는 0 — 도형의 _align_rect와 같은 방식으로 정렬/분배
+    # 계산에 끼워 넣을 수 있어야 한다.
+    it = _PolyArrowItem(QColor("#111111"), 2.0, True)
+    it._pts = [QPointF(0, 0), QPointF(100, 0), QPointF(100, 40)]
+    it._routing = "ortho"
+    it.setPos(QPointF(10, 5))
+    r = it.segment_scene_rect(0)   # 가로 세그먼트: 씬좌표 (10,5)-(110,5)
+    assert abs(r.left() - 10) < 1e-6 and abs(r.right() - 110) < 1e-6
+    assert abs(r.top() - 5) < 1e-6 and abs(r.bottom() - 5) < 1e-6
+
+
+
+
 def test_reroute_rigid_translate_skips_astar_when_both_ends_selected():
     # [성능 최적화 2026-08-13] 양끝 도형이 둘 다 선택돼 같은 델타로 함께 움직이면(다중선택
     # 그룹 드래그), reroute()가 build_elbow(A*)를 다시 안 돌리고 _pts를 그 델타만큼

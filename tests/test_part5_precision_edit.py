@@ -339,6 +339,48 @@ def test_distribute_selection_fixed_gap_uses_first_pair():
 
 
 
+def test_distribute_selection_fixed_gap_moves_bound_arrow_segments():
+    # [간격분배 2026-08-23] 도형에 연결된(바인딩된) 화살표도 대표 세그먼트(가장 긴 매칭
+    # 방향 세그먼트)만 옮겨 간격을 정리한다 — 끝점은 원래 붙은 자리 그대로 유지된다.
+    # `docs/arrow_gap_distribute_design.md` 참조.
+    w = CanvasWindow()
+
+    def mk_bound_arrow(y, x_end=100):
+        h0 = _mk_pen_rect(w, x=-30, y=y - 10, ww=20, hh=20, width=0)
+        h1 = _mk_pen_rect(w, x=x_end + 10, y=y - 10, ww=20, hh=20, width=0)
+        it = _PolyArrowItem(QColor("#111111"), 2.0, True)
+        p0 = QPointF(0, y - 15); p3 = QPointF(x_end, y + 15)
+        it._pts = [p0, QPointF(0, y), QPointF(x_end, y), p3]   # 스텁-수평-스텁(Z자)
+        it._routing = "ortho"; it._auto_route = True
+        it.setFlags(it.GraphicsItemFlag.ItemIsSelectable | it.GraphicsItemFlag.ItemIsMovable)
+        w._scene.addItem(it)
+        it.set_bound(0, h0, h0.mapFromScene(p0))
+        it.set_bound(len(it._pts) - 1, h1, h1.mapFromScene(p3))
+        return it
+
+    a = mk_bound_arrow(0)
+    b = mk_bound_arrow(20)      # a-b 간격 20
+    c = mk_bound_arrow(200)     # b-c 간격 180(불균등)
+    for it in (a, b, c):
+        it.setSelected(True)
+    seg_y = lambda it: it.mapToScene(it._pts[it.dominant_segment(True)]).y()
+    endpoints0 = [(QPointF(it.mapToScene(it._pts[0])), QPointF(it.mapToScene(it._pts[-1])))
+                  for it in (a, b, c)]
+    n0 = len(w._undo)
+    w.distribute_selection_fixed_gap("y")
+    assert abs(seg_y(a) - 0.0) < 0.5 and abs(seg_y(b) - 20.0) < 0.5   # 처음 둘은 고정
+    assert abs(seg_y(c) - 40.0) < 0.5                                 # 기준 간격(20)만큼 이동
+    for it, (p0_before, p3_before) in zip((a, b, c), endpoints0):
+        assert _close(it.mapToScene(it._pts[0]), p0_before)           # 끝점은 그대로
+        assert _close(it.mapToScene(it._pts[-1]), p3_before)
+        assert it.has_binding()
+    assert len(w._undo) == n0 + 1
+    w.undo()
+    assert abs(seg_y(c) - 200.0) < 0.5                                # 되돌아옴
+
+
+
+
 def test_align_targets_exclude_labels():
     # [M5] 라벨(자식 아이템)은 대상에서 빠진다 — selectable·movable이라 러버밴드에 딸려 오지만
     # 위치를 부모가 소유하고(재투영) moveBy 델타의 좌표계도 다르다.

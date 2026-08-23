@@ -628,33 +628,77 @@ class _ContextMixin:
             self._repaint_overlays()
 
 
+    def _distribute_gap_entries(self, axis):
+        """[간격분배 2026-08-23] 정렬 대상 도형 + 조건에 맞는 바인딩 화살표(대표 세그먼트)를
+        (kind, ref, rect) 리스트로 합친다 — kind="shape"(ref=item) | "arrow"(ref=(item,seg_idx)).
+        rect는 화살표는 대표 세그먼트의 씬 사각형(분배축 방향 폭 0인 '상자'로 취급해 도형의
+        _align_rect와 같은 계산식을 그대로 태운다), 도형은 기존 _align_rect.
+        `docs/arrow_gap_distribute_design.md` 참조."""
+        out = [("shape", it, self._align_rect(it)) for it in self._align_targets()]
+        horizontal_seg = (axis == "y")   # 세로 분배="가로 세그먼트"의 y, 가로 분배="세로 세그먼트"의 x
+        for it in self._scene.selectedItems():
+            if it.parentItem() is not None or not isinstance(it, _PolyArrowItem):
+                continue
+            if not it.has_binding():
+                continue
+            seg_idx = it.dominant_segment(horizontal_seg)
+            if seg_idx is None:
+                continue   # 매칭 세그먼트 없음(직선/곡선 라우팅 등) — 조용히 제외
+            out.append(("arrow", (it, seg_idx), it.segment_scene_rect(seg_idx)))
+        return out
+
+
+    def _apply_gap_shift(self, kind, ref, d, horiz):
+        """[간격분배 2026-08-23] 계산된 이동량 d를 도형(전체 이동)/화살표(대표 세그먼트만)에
+        적용하고 undo용 ops 튜플을 반환한다(변화 없으면 None). 화살표는 기존 '세그먼트 드래그'
+        내부 함수(_begin_segment_drag→_drag_segment_to→_end_segment_drag)를 마우스 대신
+        계산된 좌표로 그대로 호출 — 자동배선 해제·양끝 스텁 보호·직교 유지를 그 함수들이
+        이미 처리하므로 라우팅(A*) 코드는 건드리지 않는다."""
+        if not d:
+            return None
+        if kind == "shape":
+            it = ref
+            before = QPointF(it.pos())
+            it.moveBy(d, 0.0) if horiz else it.moveBy(0.0, d)
+            return ("mut", it, "pos", before, QPointF(it.pos()))
+        it, seg_idx = ref
+        before = it.capture_geom()
+        a, b = it._pts[seg_idx], it._pts[seg_idx + 1]
+        mid = it.mapToScene(QPointF((a.x() + b.x()) / 2.0, (a.y() + b.y()) / 2.0))
+        target = QPointF(mid.x() + d, mid.y()) if horiz else QPointF(mid.x(), mid.y() + d)
+        it._begin_segment_drag(seg_idx)
+        it._drag_segment_to(target)
+        it._end_segment_drag()
+        return ("mut", it, "geom", before, it.capture_geom())
+
+
     def distribute_selection(self, axis):
         """가로("x")/세로("y") 균등 분배 — 양 끝은 그대로 두고 사이 '여백'을 같게 편다.
         중심 간격이 아니라 여백을 나누는 것은 크기가 제각각인 도형에서도 눈에 보이는 틈이
-        같아야 하기 때문. 3개 미만이면 나눌 사이가 없어 아무 일도 하지 않는다."""
-        targets = self._align_targets()
-        if len(targets) < 3:
+        같아야 하기 때문. 3개 미만이면 나눌 사이가 없어 아무 일도 하지 않는다.
+        [간격분배 2026-08-23] 대상에 바인딩 화살표(대표 세그먼트)도 포함 — 처음 요청 자체가
+        평행하게 지나가는 화살표 정리였다(`docs/arrow_gap_distribute_design.md`)."""
+        entries = self._distribute_gap_entries(axis)
+        if len(entries) < 3:
             return
         horiz = (axis == "x")
-        boxes = sorted(((it, self._align_rect(it)) for it in targets),
-                       key=lambda p: p[1].left() if horiz else p[1].top())
-        first, last = boxes[0][1], boxes[-1][1]
+        boxes = sorted(entries, key=lambda e: e[2].left() if horiz else e[2].top())
+        first, last = boxes[0][2], boxes[-1][2]
         span = (last.right() - first.left()) if horiz else (last.bottom() - first.top())
-        used = sum((r.width() if horiz else r.height()) for _it, r in boxes)
+        used = sum((r.width() if horiz else r.height()) for _k, _ref, r in boxes)
         gap = (span - used) / (len(boxes) - 1)   # 겹쳐 있으면 음수 — 그래도 균등해진다
-        pairs = [(it, QPointF(it.pos())) for it, _r in boxes]
         cur = first.left() if horiz else first.top()
         prev = first.width() if horiz else first.height()
-        moved = False
-        for it, r in boxes[1:-1]:
+        ops = []
+        for kind, ref, r in boxes[1:-1]:
             cur += prev + gap
             d = cur - (r.left() if horiz else r.top())
-            if d:
-                it.moveBy(d, 0.0) if horiz else it.moveBy(0.0, d)
-                moved = True
+            op = self._apply_gap_shift(kind, ref, d, horiz)
+            if op:
+                ops.append(op)
             prev = r.width() if horiz else r.height()
-        if moved:
-            self.push_undo_move(pairs)
+        if ops:
+            self._push_entry(ops)
             self._repaint_overlays()
 
 
@@ -662,27 +706,27 @@ class _ContextMixin:
         """가로("x")/세로("y") 첫 간격 기준 분배 — 처음 두 객체(위치순)의 간격을 그대로
         기준 삼아 세 번째부터 누적 적용한다. CAD의 copy 반복(기준점)·offset 관례와 동일한
         결과 — 균등분배(양 끝 고정, `distribute_selection`)와 달리 마지막 객체까지 위치가
-        밀릴 수 있다(처음 두 개만 고정). 최소 3개 필요(2개면 기준만 있고 옮길 대상이 없다)."""
-        targets = self._align_targets()
-        if len(targets) < 3:
+        밀릴 수 있다(처음 두 개만 고정). 최소 3개 필요(2개면 기준만 있고 옮길 대상이 없다).
+        [간격분배 2026-08-23] 대상에 바인딩 화살표(대표 세그먼트)도 포함 —
+        `docs/arrow_gap_distribute_design.md` 참조."""
+        entries = self._distribute_gap_entries(axis)
+        if len(entries) < 3:
             return
         horiz = (axis == "x")
-        boxes = sorted(((it, self._align_rect(it)) for it in targets),
-                       key=lambda p: p[1].left() if horiz else p[1].top())
-        first, second = boxes[0][1], boxes[1][1]
+        boxes = sorted(entries, key=lambda e: e[2].left() if horiz else e[2].top())
+        first, second = boxes[0][2], boxes[1][2]
         gap = (second.left() - first.right()) if horiz else (second.top() - first.bottom())
-        pairs = [(it, QPointF(it.pos())) for it, _r in boxes]
         cur = second.right() if horiz else second.bottom()
-        moved = False
-        for it, r in boxes[2:]:
+        ops = []
+        for kind, ref, r in boxes[2:]:
             cur += gap
             d = cur - (r.left() if horiz else r.top())
-            if d:
-                it.moveBy(d, 0.0) if horiz else it.moveBy(0.0, d)
-                moved = True
+            op = self._apply_gap_shift(kind, ref, d, horiz)
+            if op:
+                ops.append(op)
             cur += r.width() if horiz else r.height()
-        if moved:
-            self.push_undo_move(pairs)
+        if ops:
+            self._push_entry(ops)
             self._repaint_overlays()
 
 

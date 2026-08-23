@@ -4642,6 +4642,32 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         a, b = self._pts[seg_idx], self._pts[seg_idx + 1]
         return abs(b.y() - a.y()) <= abs(b.x() - a.x())   # True=수평 변
 
+    # ---- [간격분배 2026-08-23] 연결된 화살표의 "대표 세그먼트" ------------------------
+    # `docs/arrow_gap_distribute_design.md` 참조 — host_context.py의 distribute_selection*이
+    # 이 둘을 도형의 _align_rect처럼 다뤄 정렬/분배 계산에 그대로 끼워 넣는다.
+    def dominant_segment(self, horizontal: bool) -> int | None:
+        """지정 방향(가로=horizontal)과 일치하는 가장 긴 세그먼트의 인덱스, 없으면 None.
+        화살표마다 꺾이는 위치가 달라도 "가장 긴 매칭 세그먼트"를 기계적으로 골라 애매함을
+        없앤다. 직선/곡선 라우팅(`_is_ortho()`가 False)은 애초에 매칭 세그먼트가 없어
+        항상 None(간격분배 대상에서 조용히 제외)."""
+        if not self._is_ortho():
+            return None
+        best_idx, best_len = None, -1.0
+        for i in range(len(self._pts) - 1):
+            if self._segment_orientation(i) != horizontal:
+                continue
+            a, b = self._pts[i], self._pts[i + 1]
+            length = math.hypot(b.x() - a.x(), b.y() - a.y())
+            if length > best_len:
+                best_idx, best_len = i, length
+        return best_idx
+
+    def segment_scene_rect(self, seg_idx: int) -> QRectF:
+        """세그먼트의 씬 사각형 — 대표 세그먼트 방향의 폭/높이는 0(정렬/분배 계산이
+        도형의 `_align_rect`와 동일한 방식으로 다룰 수 있게)."""
+        a, b = self._pts[seg_idx], self._pts[seg_idx + 1]
+        return QRectF(self.mapToScene(a), self.mapToScene(b)).normalized()
+
     def _segment_handles(self):
         """[M4-4] 세그먼트 핸들을 그릴 (seg_idx, 중점 local, 수평여부) 목록. 직교 라우팅 + 충분히
         긴 변만(끝점 핸들과 겹치지 않게). straight 라우팅은 세그먼트 드래그 없음(빈 목록)."""
