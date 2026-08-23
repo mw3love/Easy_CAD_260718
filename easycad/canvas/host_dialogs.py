@@ -46,6 +46,7 @@ from easycad.canvas.host_widgets import (
 )
 from easycad.fileio.pdf_export import (
     export_pdf, PAGE_SIZES, render_preview, _list_title_frames, _centered_target_rect,
+    _DEFAULT_MARGINS_MM,
 )
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
@@ -227,6 +228,32 @@ class _PdfExportDialog(QDialog):
         form.addRow("용지 크기", self._size_cb)
         form.addRow("방향", self._orient_cb)
         opts.addLayout(form)
+
+        # [여백 상하좌우 개별 지정, 2026-08-23 실사용 피드백] 기존엔 margin_mm이 코드에만
+        # 있고 다이얼로그가 값을 안 넘겨 항상 10mm 균등 고정·UI 비노출이었다 — 4개 숫자입력으로
+        # 노출(전체 도면·선택 영역 둘 다 적용, 표제란 활성 시엔 크기/방향과 같은 이유로 잠금).
+        margin_grid = QGridLayout()
+        top_mm, right_mm, bottom_mm, left_mm = _DEFAULT_MARGINS_MM
+        self._margin_top_sb = QSpinBox(self)
+        self._margin_right_sb = QSpinBox(self)
+        self._margin_bottom_sb = QSpinBox(self)
+        self._margin_left_sb = QSpinBox(self)
+        for sb, v in ((self._margin_top_sb, top_mm), (self._margin_right_sb, right_mm),
+                     (self._margin_bottom_sb, bottom_mm), (self._margin_left_sb, left_mm)):
+            sb.setRange(0, 100)
+            sb.setValue(int(v))
+            sb.setSuffix(" mm")
+        margin_grid.addWidget(QLabel("여백", self), 0, 0)
+        margin_grid.addWidget(QLabel("위", self), 0, 1)
+        margin_grid.addWidget(self._margin_top_sb, 0, 2)
+        margin_grid.addWidget(QLabel("아래", self), 0, 3)
+        margin_grid.addWidget(self._margin_bottom_sb, 0, 4)
+        margin_grid.addWidget(QLabel("왼쪽", self), 1, 1)
+        margin_grid.addWidget(self._margin_left_sb, 1, 2)
+        margin_grid.addWidget(QLabel("오른쪽", self), 1, 3)
+        margin_grid.addWidget(self._margin_right_sb, 1, 4)
+        opts.addLayout(margin_grid)
+
         self._frame_note = QLabel("표제란 용지 설정을 따름", self)
         self._frame_note.setVisible(False)
         opts.addWidget(self._frame_note)
@@ -264,6 +291,9 @@ class _PdfExportDialog(QDialog):
         self._size_cb.currentIndexChanged.connect(self._refresh)
         self._orient_cb.currentIndexChanged.connect(self._refresh)
         self._frame_cb.currentIndexChanged.connect(self._refresh)   # [다중 페이지]
+        for sb in (self._margin_top_sb, self._margin_right_sb,
+                  self._margin_bottom_sb, self._margin_left_sb):
+            sb.valueChanged.connect(self._refresh)
         self._refresh_ok_label()
         self._refresh()
 
@@ -287,11 +317,18 @@ class _PdfExportDialog(QDialog):
     def _frame_active(self) -> bool:
         return (not self._selection_only()) and self._current_frame() is not None
 
+    def _margins_mm(self) -> tuple:
+        return (self._margin_top_sb.value(), self._margin_right_sb.value(),
+               self._margin_bottom_sb.value(), self._margin_left_sb.value())
+
     def _refresh(self):
         frame = self._current_frame()
         active = (not self._selection_only()) and frame is not None
         self._size_cb.setEnabled(not active)
         self._orient_cb.setEnabled(not active)
+        for sb in (self._margin_top_sb, self._margin_right_sb,
+                  self._margin_bottom_sb, self._margin_left_sb):
+            sb.setEnabled(not active)
         self._frame_note.setVisible(active)
         # [다중 페이지] 드롭다운은 "전체 도면"이고 프레임이 2개 이상일 때만 노출.
         self._frame_cb.setVisible(len(self._frames) >= 2 and not self._selection_only())
@@ -306,6 +343,7 @@ class _PdfExportDialog(QDialog):
             self._scene, page=self._size_cb.currentData(),
             selection_only=self._selection_only(), orientation=self._orient_cb.currentData(),
             frame=frame if not self._selection_only() else None,
+            margins_mm=self._margins_mm(),
         )
         if pixmap is None:
             self._preview.setPixmap(QPixmap())
@@ -323,6 +361,7 @@ class _PdfExportDialog(QDialog):
             "frame": self._current_frame() if not self._selection_only() else None,
             "format": "png" if fmt == "png_transparent" else fmt,
             "transparent": fmt == "png_transparent",
+            "margins_mm": self._margins_mm(),
         }
 
 

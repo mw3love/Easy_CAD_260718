@@ -1335,7 +1335,8 @@ def test_pdf_export_dialog_no_selection_disables_selection_radio():
     assert not dlg._rb_sel.isEnabled()
     opts = dlg.result_options()
     assert opts == {"selection_only": False, "page": "A4", "orientation": "landscape",
-                    "frame": None, "format": "pdf", "transparent": False}
+                    "frame": None, "format": "pdf", "transparent": False,
+                    "margins_mm": (10, 10, 10, 10)}
 
 
 def test_pdf_export_dialog_locks_paper_controls_to_title_frame():
@@ -1350,6 +1351,11 @@ def test_pdf_export_dialog_locks_paper_controls_to_title_frame():
     assert not dlg._orient_cb.isEnabled()
     assert dlg._size_cb.currentData() == "A2"
     assert dlg._orient_cb.currentData() == "portrait"
+    # [여백 상하좌우 개별 지정, 2026-08-23] 표제란이 이미 정확한 용지 경계라 여백도
+    # 크기/방향과 같은 이유로 잠긴다.
+    for sb in (dlg._margin_top_sb, dlg._margin_right_sb,
+              dlg._margin_bottom_sb, dlg._margin_left_sb):
+        assert not sb.isEnabled()
     # 다이얼로그를 실제로 show()하지 않아 isVisible()은 항상 False(최상위가 안 떠서) —
     # setVisible() 호출 여부만 보는 isHidden()으로 확인.
     assert not dlg._frame_note.isHidden()
@@ -1359,6 +1365,9 @@ def test_pdf_export_dialog_locks_paper_controls_to_title_frame():
     assert dlg._size_cb.isEnabled()
     assert dlg._orient_cb.isEnabled()
     assert dlg._frame_note.isHidden()
+    for sb in (dlg._margin_top_sb, dlg._margin_right_sb,
+              dlg._margin_bottom_sb, dlg._margin_left_sb):
+        assert sb.isEnabled()
 
 
 def test_pdf_export_dialog_live_preview_updates_and_empty_shows_none():
@@ -1422,6 +1431,77 @@ def test_render_preview_centers_content_when_aspect_mismatches():
     top_margin = rows_with_ink[0]
     bottom_margin = img.height() - 1 - rows_with_ink[-1]
     assert abs(top_margin - bottom_margin) <= 2, (top_margin, bottom_margin)
+
+
+def test_resolve_geometry_forces_zero_margins_when_frame_active():
+    # [여백 상하좌우 개별 지정, 2026-08-23] 표제란이 적용되면 용지 경계 자체가 크롭 대상이라
+    # 사용자가 지정한 여백은(크기/방향처럼) 항상 0으로 강제된다.
+    from easycad.fileio import pdf_export as pdf_export_mod
+    w = CanvasWindow()
+    frame = _TitleBlockItem(size="A3", orient="portrait")
+    w._scene.addItem(frame)
+    geo = pdf_export_mod._resolve_geometry(
+        w._scene, "A4", selection_only=False, margins_mm=(5, 15, 25, 35),
+        orientation=None, frame=frame)
+    assert geo is not None
+    _source, _page, _landscape, margins_mm = geo
+    assert margins_mm == (0.0, 0.0, 0.0, 0.0)
+
+
+def test_page_pixel_geometry_applies_asymmetric_margins():
+    # [여백 상하좌우 개별 지정, 2026-08-23] (위,오른쪽,아래,왼쪽) 각각 다른 mm이 각기 다른
+    # px 여백으로 정확히 변환되는지 — PDF와 PNG/SVG(export_image/export_svg)가 공유하는
+    # `_page_pixel_geometry`가 이 계산의 유일한 지점이라 여기서 검증하면 셋 다 커버된다.
+    from easycad.fileio import pdf_export as pdf_export_mod
+    from PyQt6.QtGui import QPageSize
+    dpi = 200
+    mm_to_px = dpi / 25.4
+    page_id = pdf_export_mod.PAGE_SIZES["A4"]
+    px_w, px_h, target = pdf_export_mod._page_pixel_geometry(
+        page_id, landscape=False, margins_mm=(5.0, 15.0, 25.0, 35.0), dpi=dpi)
+    assert target.top() == round(5.0 * mm_to_px)
+    assert target.right() == px_w - round(15.0 * mm_to_px)
+    assert target.bottom() == px_h - round(25.0 * mm_to_px)
+    assert target.left() == round(35.0 * mm_to_px)
+
+
+def test_render_preview_and_export_pdf_honor_asymmetric_margins():
+    # 실제 렌더 결과에서 위/아래 여백 픽셀 폭이 지정한 mm 비율대로 달라지는지 확인
+    # (test_render_preview_centers_content_when_aspect_mismatches와 같은 잉크-행 스캔 기법).
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=0, y=0, ww=150, hh=90)
+    px = render_preview(w._scene, page="A4", orientation="landscape", max_px=300,
+                        margins_mm=(10, 10, 60, 10))   # 아래 여백만 훨씬 넓게
+    assert px is not None
+    img = px.toImage()
+    rows_with_ink = [y for y in range(img.height())
+                      if any(img.pixelColor(x, y).red() < 250 for x in range(img.width()))]
+    assert rows_with_ink, "내용이 전혀 렌더되지 않음"
+    top_margin = rows_with_ink[0]
+    bottom_margin = img.height() - 1 - rows_with_ink[-1]
+    assert bottom_margin > top_margin * 2, (top_margin, bottom_margin)
+
+    out = os.path.join(_TMP, "asym_margins.pdf")
+    assert export_pdf(w._scene, out, page="A4", orientation="landscape",
+                      margins_mm=(10, 10, 60, 10)) is True
+    assert os.path.getsize(out) > 0
+
+
+def test_pdf_export_dialog_margin_spinboxes_default_and_flow_into_result():
+    # [여백 상하좌우 개별 지정, 2026-08-23] 기본값 10mm 균등, 값 변경이 미리보기·
+    # result_options() 양쪽에 반영되는지.
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=0, y=0, ww=50, hh=50)
+    dlg = _PdfExportDialog(None, w._scene, has_selection=False)
+    assert dlg._margins_mm() == (10, 10, 10, 10)
+    dlg._margin_top_sb.setValue(5)
+    dlg._margin_right_sb.setValue(15)
+    dlg._margin_bottom_sb.setValue(25)
+    dlg._margin_left_sb.setValue(35)
+    assert dlg._margins_mm() == (5, 15, 25, 35)
+    assert dlg.result_options()["margins_mm"] == (5, 15, 25, 35)
+    # 값 변경마다 라이브 미리보기가 다시 그려져도(크래시 없이) 픽스맵이 유효해야 한다.
+    assert not dlg._preview.pixmap().isNull()
 
 
 def test_pdf_export_selection_only_isolates_selected_items():

@@ -98,9 +98,13 @@ def _restore_swapped_colors(swapped):
         it.apply_color(col)
 
 
-def _resolve_geometry(scene, page: str, selection_only: bool, margin_mm: float,
+_DEFAULT_MARGINS_MM = (10.0, 10.0, 10.0, 10.0)   # (위, 오른쪽, 아래, 왼쪽) — CSS 순서
+
+
+def _resolve_geometry(scene, page: str, selection_only: bool,
+                      margins_mm: tuple[float, float, float, float],
                       orientation: str | None, frame=None):
-    """(source, page, landscape, margin_mm) 계산. 출력 대상이 없으면 None.
+    """(source, page, landscape, margins_mm) 계산. 출력 대상이 없으면 None.
 
     표제란/용지틀이 있고 전체 출력이면 그 프레임 경계·크기·방향이 항상 우선(`orientation`
     무시 — 프레임이 이미 '이 용지로 낸다'는 결정을 대신하므로, §8 항목14 deep-interview
@@ -108,7 +112,11 @@ def _resolve_geometry(scene, page: str, selection_only: bool, margin_mm: float,
 
     [다중 페이지 지원, 2026-08-14] `frame`을 명시하면 그 프레임을 그대로 쓴다(씬에 프레임이
     여러 개일 때 `_PdfExportDialog`가 사용자가 고른 걸 넘긴다). 생략(None)하면 기존처럼
-    `_find_title_frame`(첫 번째 프레임) 자동탐지로 폴백 — 기존 호출부(테스트 등) 무변경."""
+    `_find_title_frame`(첫 번째 프레임) 자동탐지로 폴백 — 기존 호출부(테스트 등) 무변경.
+
+    [여백 상하좌우 개별 지정, 2026-08-23] `margins_mm`은 (위, 오른쪽, 아래, 왼쪽) mm 4개.
+    표제란/용지틀이 적용되면 그 프레임이 이미 정확한 용지 경계라 여백은 항상 0으로 강제한다
+    (기존 크기/방향 잠금과 같은 이유)."""
     if not selection_only:
         frame = frame if frame is not None else _find_title_frame(scene)
     else:
@@ -118,7 +126,7 @@ def _resolve_geometry(scene, page: str, selection_only: bool, margin_mm: float,
         source = frame.mapRectToScene(frame.rect())
         page = frame._size
         landscape = frame._orient == "landscape"
-        margin_mm = 0.0
+        margins_mm = (0.0, 0.0, 0.0, 0.0)
     else:
         if selection_only:
             source = _selection_rect(scene)
@@ -126,13 +134,13 @@ def _resolve_geometry(scene, page: str, selection_only: bool, margin_mm: float,
             source = scene.itemsBoundingRect()
         if source.isEmpty():
             return None
-        # 여백(획 두께·화살촉이 경계 밖으로 삐져나오는 것 보정)
+        # 여백(획 두께·화살촉이 경계 밖으로 삐져나오는 것 보정) — 사용자 지정 여백과는 별개.
         pad = max(source.width(), source.height()) * 0.02
         source = source.adjusted(-pad, -pad, pad, pad)
         landscape = (orientation == "landscape") if orientation else source.width() >= source.height()
     if source.isEmpty():
         return None
-    return source, page, landscape, margin_mm
+    return source, page, landscape, margins_mm
 
 
 def _has_kept_ancestor(it, keep: set) -> bool:
@@ -204,7 +212,8 @@ def _paint_scene(scene, painter: QPainter, target: QRectF, source: QRectF,
 
 
 def export_pdf(scene, path: str, page: str = "A4", selection_only: bool = False,
-               margin_mm: float = 10.0, orientation: str | None = None, frame=None) -> bool:
+               margins_mm: tuple[float, float, float, float] = _DEFAULT_MARGINS_MM,
+               orientation: str | None = None, frame=None) -> bool:
     """scene을 path에 PDF로 저장. selection_only면 선택영역만. 성공 True.
 
     [Phase 4] 전체 출력이고 씬에 표제란/용지틀이 있으면 그 '용지 경계'를 출력 대상으로
@@ -213,11 +222,14 @@ def export_pdf(scene, path: str, page: str = "A4", selection_only: bool = False,
     렌더 전 선택을 잠시 해제해 파란 핸들/점선이 PDF에 찍히지 않게 하고, 끝나면 복원한다.
     [다중 페이지 지원, 2026-08-14] `frame`으로 여러 프레임 중 하나를 명시할 수 있다(생략 시
     씬의 첫 프레임 자동탐지, 기존 동작 무변경).
+    [여백 상하좌우 개별 지정, 2026-08-23] `margins_mm`은 (위, 오른쪽, 아래, 왼쪽) mm 4개
+    (기존 `margin_mm` 단일값을 대체 — 외부 호출부가 없어 하위호환 유지 불필요).
     """
-    geo = _resolve_geometry(scene, page, selection_only, margin_mm, orientation, frame)
+    geo = _resolve_geometry(scene, page, selection_only, margins_mm, orientation, frame)
     if geo is None:
         return False
-    source, page, landscape, margin_mm = geo
+    source, page, landscape, margins_mm = geo
+    top, right, bottom, left = margins_mm
 
     page_id = PAGE_SIZES.get(page, QPageSize.PageSizeId.A4)
 
@@ -227,7 +239,7 @@ def export_pdf(scene, path: str, page: str = "A4", selection_only: bool = False,
     layout = QPageLayout(
         QPageSize(page_id),
         QPageLayout.Orientation.Landscape if landscape else QPageLayout.Orientation.Portrait,
-        QMarginsF(margin_mm, margin_mm, margin_mm, margin_mm),
+        QMarginsF(left, top, right, bottom),
         QPageLayout.Unit.Millimeter,
     )
     printer.setPageLayout(layout)
@@ -244,9 +256,11 @@ def export_pdf(scene, path: str, page: str = "A4", selection_only: bool = False,
     return True
 
 
-def _page_pixel_geometry(page_id, landscape: bool, margin_mm: float, dpi: int):
+def _page_pixel_geometry(page_id, landscape: bool,
+                         margins_mm: tuple[float, float, float, float], dpi: int):
     """(px_w, px_h, target) — mm 단위 용지를 `dpi` 해상도의 픽셀 사각형으로 환산.
-    `export_image`/`export_svg`가 공유(둘 다 같은 픽셀 좌표계에 그려 화질·여백이 일치)."""
+    `export_image`/`export_svg`가 공유(둘 다 같은 픽셀 좌표계에 그려 화질·여백이 일치).
+    `margins_mm`은 (위, 오른쪽, 아래, 왼쪽) — 상하좌우 개별 지정(2026-08-23)."""
     paper_mm = QPageSize(page_id).size(QPageSize.Unit.Millimeter)
     pw_mm, ph_mm = paper_mm.width(), paper_mm.height()
     if landscape:
@@ -254,24 +268,25 @@ def _page_pixel_geometry(page_id, landscape: bool, margin_mm: float, dpi: int):
     mm_to_px = dpi / 25.4
     px_w = max(1, round(pw_mm * mm_to_px))
     px_h = max(1, round(ph_mm * mm_to_px))
-    margin_px = round(margin_mm * mm_to_px)
-    target = QRectF(margin_px, margin_px,
-                    max(1, px_w - 2 * margin_px), max(1, px_h - 2 * margin_px))
+    top, right, bottom, left = (round(m * mm_to_px) for m in margins_mm)
+    target = QRectF(left, top,
+                    max(1, px_w - left - right), max(1, px_h - top - bottom))
     return px_w, px_h, target
 
 
 def export_image(scene, path: str, page: str = "A4", selection_only: bool = False,
-                 margin_mm: float = 10.0, orientation: str | None = None, frame=None,
+                 margins_mm: tuple[float, float, float, float] = _DEFAULT_MARGINS_MM,
+                 orientation: str | None = None, frame=None,
                  transparent: bool = False, dpi: int = 200) -> bool:
-    """scene을 path에 PNG로 저장 — `export_pdf`와 같은 크롭/용지/방향/선택영역 규칙.
+    """scene을 path에 PNG로 저장 — `export_pdf`와 같은 크롭/용지/방향/선택영역/여백 규칙.
     [내보내기 통합, 2026-08-20] `transparent=True`면 흰 배경 강제·흰 잉크→검정 치환을
     건너뛰고 알파 배경으로 저장한다(로고·다른 문서에 얹어 쓰는 용도)."""
-    geo = _resolve_geometry(scene, page, selection_only, margin_mm, orientation, frame)
+    geo = _resolve_geometry(scene, page, selection_only, margins_mm, orientation, frame)
     if geo is None:
         return False
-    source, page, landscape, margin_mm = geo
+    source, page, landscape, margins_mm = geo
     page_id = PAGE_SIZES.get(page, QPageSize.PageSizeId.A4)
-    px_w, px_h, target = _page_pixel_geometry(page_id, landscape, margin_mm, dpi)
+    px_w, px_h, target = _page_pixel_geometry(page_id, landscape, margins_mm, dpi)
 
     pixmap = QPixmap(px_w, px_h)
     pixmap.fill(Qt.GlobalColor.transparent if transparent else QColor("white"))
@@ -285,17 +300,18 @@ def export_image(scene, path: str, page: str = "A4", selection_only: bool = Fals
 
 
 def export_svg(scene, path: str, page: str = "A4", selection_only: bool = False,
-               margin_mm: float = 10.0, orientation: str | None = None, frame=None,
+               margins_mm: tuple[float, float, float, float] = _DEFAULT_MARGINS_MM,
+               orientation: str | None = None, frame=None,
                transparent: bool = False, dpi: int = 200) -> bool:
-    """scene을 path에 SVG로 저장 — `export_pdf`와 같은 크롭/용지/방향/선택영역 규칙.
+    """scene을 path에 SVG로 저장 — `export_pdf`와 같은 크롭/용지/방향/선택영역/여백 규칙.
     QtSvg의 `QSvgGenerator`가 이미 프로젝트 의존성(SVG 가져오기/미리보기에서 사용 중)이라
     새 외부 패키지 없이 구현 가능."""
-    geo = _resolve_geometry(scene, page, selection_only, margin_mm, orientation, frame)
+    geo = _resolve_geometry(scene, page, selection_only, margins_mm, orientation, frame)
     if geo is None:
         return False
-    source, page, landscape, margin_mm = geo
+    source, page, landscape, margins_mm = geo
     page_id = PAGE_SIZES.get(page, QPageSize.PageSizeId.A4)
-    px_w, px_h, target = _page_pixel_geometry(page_id, landscape, margin_mm, dpi)
+    px_w, px_h, target = _page_pixel_geometry(page_id, landscape, margins_mm, dpi)
 
     generator = QSvgGenerator()
     generator.setFileName(path)
@@ -344,15 +360,17 @@ def export_svg_symbol(scene, path: str, pad: float = 6.0) -> bool:
 
 
 def render_preview(scene, page: str = "A4", selection_only: bool = False,
-                   margin_mm: float = 10.0, orientation: str | None = None,
+                   margins_mm: tuple[float, float, float, float] = _DEFAULT_MARGINS_MM,
+                   orientation: str | None = None,
                    max_px: int = 420, frame=None) -> QPixmap | None:
     """[§8 항목14] `export_pdf`와 같은 geometry(`_resolve_geometry`)로 미리보기 QPixmap을 렌더.
     출력 대상이 없으면 None(호출부가 안내 문구로 대체 표시).
-    [다중 페이지 지원, 2026-08-14] `frame` — `export_pdf`와 동일(생략 시 자동탐지)."""
-    geo = _resolve_geometry(scene, page, selection_only, margin_mm, orientation, frame)
+    [다중 페이지 지원, 2026-08-14] `frame` — `export_pdf`와 동일(생략 시 자동탐지).
+    [여백 상하좌우 개별 지정, 2026-08-23] `margins_mm` — (위, 오른쪽, 아래, 왼쪽) mm."""
+    geo = _resolve_geometry(scene, page, selection_only, margins_mm, orientation, frame)
     if geo is None:
         return None
-    source, page, landscape, margin_mm = geo
+    source, page, landscape, margins_mm = geo
 
     page_id = PAGE_SIZES.get(page, QPageSize.PageSizeId.A4)
     paper_mm = QPageSize(page_id).size(QPageSize.Unit.Millimeter)
@@ -365,8 +383,9 @@ def render_preview(scene, page: str = "A4", selection_only: bool = False,
 
     pixmap = QPixmap(px_w, px_h)
     pixmap.fill(QColor("white"))
-    margin_px = round((margin_mm / pw_mm) * px_w) if pw_mm else 0
-    target = QRectF(margin_px, margin_px, max(1, px_w - 2 * margin_px), max(1, px_h - 2 * margin_px))
+    scale = px_w / pw_mm if pw_mm else 0
+    top, right, bottom, left = (round(m * scale) for m in margins_mm)
+    target = QRectF(left, top, max(1, px_w - left - right), max(1, px_h - top - bottom))
 
     painter = QPainter(pixmap)
     try:

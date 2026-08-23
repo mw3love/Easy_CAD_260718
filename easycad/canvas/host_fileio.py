@@ -328,7 +328,8 @@ class _FileIOMixin:
         if not path.lower().endswith(ext):
             path += ext
         common = dict(page=opts["page"], selection_only=opts["selection_only"],
-                     orientation=opts["orientation"], frame=opts.get("frame"))
+                     orientation=opts["orientation"], frame=opts.get("frame"),
+                     margins_mm=opts["margins_mm"])
         if fmt == "pdf":
             ok = export_pdf(self._scene, path, **common)
         elif fmt == "png":
