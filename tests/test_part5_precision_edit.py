@@ -307,6 +307,38 @@ def test_distribute_selection_even_gaps():
 
 
 
+def test_distribute_selection_fixed_gap_uses_first_pair():
+    # [신규 2026-08-23] 첫 간격 기준 분배 — 처음 두 객체(위치순)는 고정, 그 간격을
+    # 기준으로 세 번째부터 누적 이동한다(균등분배와 달리 마지막 객체도 밀릴 수 있음).
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=40, hh=20, width=0)
+    b = _mk_pen_rect(w, x=60, y=0, ww=20, hh=20, width=0)      # a-b 간격 20
+    c = _mk_pen_rect(w, x=200, y=0, ww=40, hh=20, width=0)     # b-c 간격 120(불균등)
+    for it in (a, b, c):
+        it.setSelected(True)
+    ar = w._align_rect
+    a_pos0, b_pos0, c_pos0 = QPointF(a.pos()), QPointF(b.pos()), QPointF(c.pos())
+    w.distribute_selection_fixed_gap("x")
+    ra, rb, rc = ar(a), ar(b), ar(c)
+    gap1 = rb.left() - ra.right()
+    gap2 = rc.left() - rb.right()
+    assert abs(gap1 - 20.0) < 0.5                  # 기준 간격은 원래 a-b 간격 그대로
+    assert abs(gap1 - gap2) < 0.5                   # 세 번째 간격이 기준 간격과 같아짐
+    assert _close(a.pos(), a_pos0) and _close(b.pos(), b_pos0)   # 처음 두 개는 고정
+    assert not _close(c.pos(), c_pos0)              # 세 번째는 실제로 움직였다
+    w.undo()
+    assert _close(c.pos(), c_pos0)                  # 되돌아옴
+
+    # 2개뿐이면 기준만 있고 옮길 대상이 없어 no-op(undo 스택도 안 쌓임).
+    w._scene.clearSelection()
+    a.setSelected(True); b.setSelected(True)
+    n = len(w._undo)
+    w.distribute_selection_fixed_gap("x")
+    assert len(w._undo) == n
+
+
+
+
 def test_align_targets_exclude_labels():
     # [M5] 라벨(자식 아이템)은 대상에서 빠진다 — selectable·movable이라 러버밴드에 딸려 오지만
     # 위치를 부모가 소유하고(재투영) moveBy 델타의 좌표계도 다르다.
@@ -409,11 +441,12 @@ def test_align_entry_points_visibility():
     assert "정렬 / 분배" not in labels()
     b = _mk_pen_rect(w, x=100, y=60); b.setSelected(True)
     assert "정렬 / 분배" in labels()
-    # 메뉴 구성 = 정렬 6 + 분배 2.
+    # 메뉴 구성 = 정렬 6 + 분배 4(균등 2 + 첫 간격 기준 2, 2026-08-23 추가).
     acts = [x.text() for x in w._build_align_menu().actions() if not x.isSeparator()]
     assert acts == ["왼쪽 맞춤", "가로 가운데", "오른쪽 맞춤",
                     "위쪽 맞춤", "세로 가운데", "아래쪽 맞춤",
-                    "가로 균등 분배", "세로 균등 분배"]
+                    "가로 균등 분배", "세로 균등 분배",
+                    "가로 첫 간격 기준 분배", "세로 첫 간격 기준 분배"]
 
 
 

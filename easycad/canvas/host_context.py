@@ -658,8 +658,36 @@ class _ContextMixin:
             self._repaint_overlays()
 
 
+    def distribute_selection_fixed_gap(self, axis):
+        """가로("x")/세로("y") 첫 간격 기준 분배 — 처음 두 객체(위치순)의 간격을 그대로
+        기준 삼아 세 번째부터 누적 적용한다. CAD의 copy 반복(기준점)·offset 관례와 동일한
+        결과 — 균등분배(양 끝 고정, `distribute_selection`)와 달리 마지막 객체까지 위치가
+        밀릴 수 있다(처음 두 개만 고정). 최소 3개 필요(2개면 기준만 있고 옮길 대상이 없다)."""
+        targets = self._align_targets()
+        if len(targets) < 3:
+            return
+        horiz = (axis == "x")
+        boxes = sorted(((it, self._align_rect(it)) for it in targets),
+                       key=lambda p: p[1].left() if horiz else p[1].top())
+        first, second = boxes[0][1], boxes[1][1]
+        gap = (second.left() - first.right()) if horiz else (second.top() - first.bottom())
+        pairs = [(it, QPointF(it.pos())) for it, _r in boxes]
+        cur = second.right() if horiz else second.bottom()
+        moved = False
+        for it, r in boxes[2:]:
+            cur += gap
+            d = cur - (r.left() if horiz else r.top())
+            if d:
+                it.moveBy(d, 0.0) if horiz else it.moveBy(0.0, d)
+                moved = True
+            cur += r.width() if horiz else r.height()
+        if moved:
+            self.push_undo_move(pairs)
+            self._repaint_overlays()
+
+
     def _build_align_menu(self, title="", parent=None):
-        """정렬 6 + 분배 2 메뉴. 미니툴바 드롭다운과 우클릭 서브메뉴가 같은 메뉴를 쓴다.
+        """정렬 6 + 분배 4 메뉴. 미니툴바 드롭다운과 우클릭 서브메뉴가 같은 메뉴를 쓴다.
         우클릭 메뉴는 매번 새로 만들어지므로 parent를 그 메뉴로 줘서 함께 정리되게 한다."""
         m = QMenu(title, parent or self)
         _style_menu_separators(m)
@@ -671,4 +699,6 @@ class _ContextMixin:
         m.addSeparator()
         m.addAction("가로 균등 분배", lambda: self.distribute_selection("x"))
         m.addAction("세로 균등 분배", lambda: self.distribute_selection("y"))
+        m.addAction("가로 첫 간격 기준 분배", lambda: self.distribute_selection_fixed_gap("x"))
+        m.addAction("세로 첫 간격 기준 분배", lambda: self.distribute_selection_fixed_gap("y"))
         return m
