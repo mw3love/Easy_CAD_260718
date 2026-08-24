@@ -34,3 +34,6 @@ tools/_perf_*.json
 
 # 작업용 SVG 산출물(용도 미상 — 리포는 코드·문서만, 사용자 산출물은 로컬만 유지)
 /broadcast_svg_set/
+
+# superpowers subagent-driven-development 작업 워크스페이스(로컬 워크트리 스크래치) — git 추적 대상 아님
+/.worktrees/
