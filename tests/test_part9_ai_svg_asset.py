@@ -203,16 +203,19 @@ def test_parse_svg_path_still_maps_to_path_item():
 
 # ── _SvgAssetDialog ───────────────────────────────────────────────────────────
 
-def test_svg_asset_dialog_defaults_to_one_candidate_per_model():
-    """2026-08-19 Stage 2 — 체크박스(모델당 1개 고정) 대신 모델별 개수 드롭다운(0~5)으로
-    확장됐지만, 기본값은 Stage 1과 같은 체감(각 1개)을 유지한다."""
+def test_svg_asset_dialog_defaults_to_model_a_only():
+    """2026-08-25 — "GPT/Gemini 나란히 비교" bake-off에서 "슬롯 A만 기본 사용, 슬롯 B는
+    필요할 때만 켜는 옵션"으로 설계 변경(사용자 확정). 슬롯 A는 기본 1개로 자동 생성되고
+    슬롯 B는 개수 0(꺼짐)으로 시작한다 — 단 드롭다운 자체는 두 슬롯 다 0~5 전부 선택
+    가능한 채로 열려 있어야 한다("꺼짐"이 드롭다운을 비우거나 비활성화한다는 뜻이
+    아님)."""
     with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
         dlg = _SvgAssetDialog()
     assert dlg._count_a.currentText() == "1"
-    assert dlg._count_b.currentText() == "1"
+    assert dlg._count_b.currentText() == "0"
     assert dlg._count_a.count() == 6        # 0~5
-    assert dlg._count_b.count() == 6
-    assert dlg._requested_jobs() == [gw.TEXT_RECOMMEND_1, gw.TEXT_RECOMMEND_2]
+    assert dlg._count_b.count() == 6        # 0도 그중 하나일 뿐, 드롭다운은 항상 완전
+    assert dlg._requested_jobs() == [gw.TEXT_RECOMMEND_1]
     dlg.deleteLater()
 
 
@@ -264,10 +267,13 @@ def test_svg_asset_dialog_requires_at_least_one_model_checked():
     dlg.deleteLater()
 
 
-def test_svg_asset_dialog_generates_one_candidate_per_default_job():
+def test_svg_asset_dialog_generates_one_candidate_per_requested_job():
+    """2026-08-25 — 기본값은 이제 슬롯 A 1개뿐이라(`_count_b` 기본 0), B도 함께
+    생성되는 걸 확인하려면 명시적으로 켜야 한다."""
     with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
+    dlg._count_b.setCurrentText("1")
     calls = []
 
     def fake_generate(key, subject, *, model, **kw):
@@ -392,6 +398,7 @@ def test_svg_asset_dialog_partial_failure_keeps_successful_candidates():
     with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
+    dlg._count_b.setCurrentText("1")   # 2026-08-25: B는 기본 0이라 명시적으로 켜야 함
 
     def fake_generate(key, subject, *, model, **kw):
         if model == gw.TEXT_RECOMMEND_1:
@@ -432,6 +439,7 @@ def test_svg_asset_dialog_clicking_card_switches_selection():
     with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
+    dlg._count_b.setCurrentText("1")   # 2026-08-25: 후보 2개가 필요하므로 B를 명시적으로 켬
 
     def fake_generate(key, subject, *, model, **kw):
         return _SAMPLE_SVG, model
@@ -711,6 +719,7 @@ def test_svg_asset_dialog_regenerate_clears_old_candidates():
     with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
+    dlg._count_b.setCurrentText("1")   # 2026-08-25: 교체 확인엔 후보 2개가 필요
 
     def fake_generate(key, subject, *, model, **kw):
         return _SAMPLE_SVG, model
@@ -843,6 +852,11 @@ def test_svg_asset_dialog_generate_with_image_and_no_subject_still_generates():
 # ── _SvgAssetDialog: 다중선택+내 심볼 저장(Stage 4, 2026-08-19) ─────────────────
 
 def _gen_two_candidates(dlg):
+    """이름대로 후보 2개(A+B 각 1개)가 나와야 하는데, 2026-08-25부터 B 기본 개수가
+    0이라 여기서 명시적으로 켠다 — 호출부 9곳이 전부 이 헬퍼를 통해서만 개수를
+    건드리므로 이 한 줄만 고치면 전부 해결된다."""
+    dlg._count_b.setCurrentText("1")
+
     def fake_generate(key, subject, *, model, **kw):
         return _SAMPLE_SVG, model
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \

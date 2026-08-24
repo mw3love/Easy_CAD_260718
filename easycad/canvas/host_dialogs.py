@@ -2181,6 +2181,14 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         # 과하다, 2개 슬롯 + 각각 모델·개수 선택"). `_populate_models`가 두 콤보를 함께
         # 채운다 — Mermaid의 `_fill_model_combo`/`_ModelListWorker`를 그대로 재사용
         # (`_fill_model_combo_grouped`로 모듈 함수 추출, 아래 참조).
+        # [2026-08-25 재작업] "GPT vs Gemini 나란히 비교" bake-off에서 "슬롯 A만 기본
+        # 사용, 슬롯 B는 필요할 때만 켜는 옵션"으로 설계 변경(사용자 확정) — 슬롯 A는
+        # 개수 기본 1개 그대로(`gw.TEXT_RECOMMEND_1`, 2026-08-25부로 gemini lite 계열로
+        # 교체, `gateway.py` 주석 참조), 슬롯 B는 개수 기본 0개(꺼짐). 모델 드롭다운
+        # 자체는 두 슬롯 다 항상 정상적으로 채워져 선택 가능한 상태다 — "꺼짐"은 개수가
+        # 0이라 생성 요청에서 빠진다는 뜻이지, 드롭다운이 비거나 비활성화된다는 뜻이
+        # 아니다(사용자가 "드롭박스 선택했을 때 아무것도 안 보이면 안 된다"고 명시).
+        # B를 쓰고 싶으면 개수 드롭다운에서 1 이상을 고르기만 하면 A와 함께 생성된다.
         model_row1 = QHBoxLayout()
         model_row1.addWidget(QLabel("모델 A:", self))
         self._model_combo_a = QComboBox(self)
@@ -2202,7 +2210,7 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         model_row2.addWidget(QLabel("개수:", self))
         self._count_b = QComboBox(self)
         self._count_b.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
-        self._count_b.setCurrentIndex(1)
+        self._count_b.setCurrentIndex(0)   # [2026-08-25] 기본 off — opt-in으로 개수 선택 시 A와 함께 사용
         self._count_b.setStyleSheet(_ROUNDED_COMBO_QSS)
         model_row2.addWidget(self._count_b)
         left_col.addLayout(model_row2)
@@ -2420,8 +2428,10 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
     def _populate_models(self):
         """모델 슬롯 A/B 콤보를 채운다 — `_MermaidDialog._populate_models`와 동일 패턴
         (추천 모델로 즉시 채운 뒤 `_ModelListWorker`가 백그라운드로 실제 목록을 가져오면
-        갱신). 슬롯 A 기본값은 `TEXT_RECOMMEND_1`, 슬롯 B는 `TEXT_RECOMMEND_2`(옛 GPT/
-        Gemini 2종 고정과 같은 초기값을 유지하되, 이제 사용자가 자유롭게 바꿀 수 있다)."""
+        갱신). 슬롯 A 기본값은 `TEXT_RECOMMEND_1`, 슬롯 B는 `TEXT_RECOMMEND_2` — 콤보
+        자체는 둘 다 항상 전체 모델로 채워지고 사용자가 자유롭게 바꿀 수 있다(2026-08-25:
+        기본으로 실제 생성에 쓰이느냐 여부는 이 콤보가 아니라 `_count_a`/`_count_b`
+        개수가 가른다 — B는 기본 0개)."""
         _fill_model_combo_grouped(self._model_combo_a, [], gw.TEXT_RECOMMEND_1)
         _fill_model_combo_grouped(self._model_combo_b, [], gw.TEXT_RECOMMEND_2)
         key = gw.resolve_api_key()
