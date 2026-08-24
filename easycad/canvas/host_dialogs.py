@@ -2073,6 +2073,7 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._workers: list[_SvgGenWorker] = []   # 생성 중일 때만 항목이 있음
         self._pending = 0          # 아직 안 끝난 워커 수
         self._gen_errors: list[str] = []
+        self._generating = False   # [2026-08-25] 취소 버튼 토글용 — _set_generating() 참조
         lay = QVBoxLayout(self)
 
         # [2026-08-19 Stage 6] 목업("Mermaid 가져오기 Studio v2.0")의 시각 언어만 차용해
@@ -2150,12 +2151,14 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         # Mermaid처럼 카드 툴바엔 첨부+생성 버튼만 남긴다 — 한 줄에 다 몰려 있던 게 SVG 창이
         # Mermaid보다 훨씬 빽빽해 보이던 가장 큰 원인이었다.
         self._gen_btn = QToolButton(toolbar_widget)
-        self._gen_btn.setIcon(_act_icon("generate"))
         self._gen_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._gen_btn.setText("AI로 생성")   # Mermaid 버튼과 동일 문구로 통일
-        self._gen_btn.setToolTip("AI로 생성 (Enter)")
-        self._gen_btn.clicked.connect(self._on_generate_clicked)
+        # [2026-08-25 실사용 피드백] 느린/실패하는 모델 하나 때문에 이미 도착한 후보를
+        # 못 쓰고 전체 완료까지 기다려야 했다 — 버튼 자체를 생성 중엔 "취소"로 토글해
+        # 즉시 대기 상태로 돌아올 수 있게 한다(이미 만들어진 후보는 그대로 유지,
+        # `_cancel_generation` 참조). `_set_generating(False)`가 초기 라벨/아이콘을 맞춘다.
+        self._gen_btn.clicked.connect(self._on_gen_btn_clicked)
         self._gen_btn.setStyleSheet(_CORAL_BTN_QSS)
+        self._set_generating(False)
         toolbar_lay.addWidget(self._gen_btn)
 
         prompt_frame_lay.addWidget(toolbar_widget)
@@ -2412,7 +2415,10 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
             if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                     return False   # Shift+Enter는 기본 동작(줄바꿈)에 맡김
-                self._on_generate_clicked()
+                # [2026-08-25] 버튼과 동일한 디스패처를 타야 한다 — 생성 중 Enter가 그냥
+                # `_on_generate_clicked()`를 다시 부르면 워커가 중복으로 시작된다(버튼은
+                # `_gen_btn.setEnabled(False)`로 막혀 있었지만 이 경로는 그 가드를 안 탐).
+                self._on_gen_btn_clicked()
                 return True
             if self._maybe_intercept_paste_image(event):
                 return True
@@ -2461,6 +2467,29 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         model_b = _combo_selected_model(self._model_combo_b, gw.TEXT_RECOMMEND_2)
         return [model_a] * n_a + [model_b] * n_b
 
+    def _on_gen_btn_clicked(self):
+        """[2026-08-25] `_gen_btn`(＝Enter 키)의 단일 진입점 — 생성 중이 아니면 생성을
+        시작하고, 생성 중이면(버튼이 이미 "취소"로 바뀐 상태) 취소한다. Enter 단축키도
+        이걸 통해야 생성 중 재입력이 중복 워커를 만들지 않는다(가드가 여기 한 곳뿐이라
+        버튼 클릭이든 Enter든 항상 같은 분기를 탄다)."""
+        if self._generating:
+            self._cancel_generation()
+        else:
+            self._on_generate_clicked()
+
+    def _set_generating(self, flag: bool):
+        """[2026-08-25] 생성 버튼을 "AI로 생성" ↔ "취소"로 토글 — 별도 취소 버튼을 새로
+        만드는 대신 같은 버튼이 상태에 따라 다른 동작을 하게 한다(사용자 제안)."""
+        self._generating = flag
+        if flag:
+            self._gen_btn.setIcon(_act_icon("stop"))
+            self._gen_btn.setText("취소")
+            self._gen_btn.setToolTip("생성 취소 — 이미 도착한 후보는 그대로 남습니다")
+        else:
+            self._gen_btn.setIcon(_act_icon("generate"))
+            self._gen_btn.setText("AI로 생성")
+            self._gen_btn.setToolTip("AI로 생성 (Enter)")
+
     def _on_generate_clicked(self):
         """2026-08-19 Stage 2 — 요청한 후보 전부를 워커 하나씩(`_SvgGenWorker`)으로
         동시에 시작해 완전 병렬 호출한다. 완료 처리는 `_on_candidate_ready`(후보 도착마다)
@@ -2485,7 +2514,7 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         base_url = gw.resolve_base_url()
         self._clear_candidates()
         self._gen_errors = []
-        self._gen_btn.setEnabled(False)
+        self._set_generating(True)
         self._btns.setEnabled(False)
         self._model_combo_a.setEnabled(False)
         self._model_combo_b.setEnabled(False)
@@ -2512,17 +2541,34 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
     def _on_model_failed(self, model, err):
         self._gen_errors.append(f"{model}: {err}")
 
-    def _on_one_worker_finished(self):
-        self._pending -= 1
-        if self._pending > 0:
-            return   # 아직 다른 워커가 도는 중 — 전체 완료 처리는 마지막 하나가 담당
+    def _reset_generation_ui(self):
+        """생성 종료(정상 완료·취소 공통) 시 원상복구 — 진행바 끄고 버튼·콤보를 되돌린다."""
         self._progress.stop()
-        self._gen_btn.setEnabled(True)
+        self._set_generating(False)
         self._btns.setEnabled(True)
         self._model_combo_a.setEnabled(True)
         self._model_combo_b.setEnabled(True)
         self._count_a.setEnabled(True)
         self._count_b.setEnabled(True)
+
+    def _cancel_generation(self):
+        """[2026-08-25 실사용 피드백] 느리거나(수십 초) 실패하는(타임아웃) 모델 하나
+        때문에 이미 도착한 후보를 못 쓰고 전체 완료까지 기다려야 하던 문제 — 아직 안
+        끝난 워커를 `_detach_worker`(다이얼로그를 닫을 때와 같은 메커니즘)로 분리해
+        결과를 버리고 즉시 대기 상태로 돌아온다. 네트워크 호출 자체를 강제로 끊을 순
+        없어 워커는 백그라운드에서 마저 끝나지만, 이 다이얼로그에는 더 이상 영향을 주지
+        않는다. `self._candidates`는 손대지 않으므로 이미 도착한 후보는 그대로 남는다."""
+        for w in self._workers:
+            _detach_worker(w)
+        self._workers = []
+        self._pending = 0
+        self._reset_generation_ui()
+
+    def _on_one_worker_finished(self):
+        self._pending -= 1
+        if self._pending > 0:
+            return   # 아직 다른 워커가 도는 중 — 전체 완료 처리는 마지막 하나가 담당
+        self._reset_generation_ui()
         if self._gen_errors and not self._candidates:
             QMessageBox.warning(self, "AI SVG 에셋 생성",
                                 "생성에 실패했습니다:\n" + "\n".join(self._gen_errors))

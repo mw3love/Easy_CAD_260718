@@ -307,6 +307,12 @@ def _act_icon(name: str) -> QIcon:
         path.lineTo(9.5, 17.5)
         path.lineTo(19, 6)
         p.drawPath(path)
+    elif name == "stop":
+        # [2026-08-25] AI SVG 생성 중 "AI로 생성" 버튼이 토글되는 취소 아이콘 — 미디어
+        # 플레이어 관례의 정지(■) 픽토그램.
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(col)
+        p.drawRoundedRect(QRectF(6.5, 6.5, 11, 11), 2, 2)
     elif name in ("align_left", "align_hcenter", "align_right"):
         # [2026-08-23, 정렬/분배 메뉴 아이콘화] 폭이 다른 막대 3개를 기준선에 맞춘 모양 —
         # 점선 기준선 + 그 선에 닿는 막대들로 "이 선에 맞춘다"는 뜻을 직관적으로 전달.

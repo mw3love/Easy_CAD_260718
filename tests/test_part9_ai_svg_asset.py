@@ -347,7 +347,11 @@ def test_svg_asset_dialog_shows_progress_and_disables_controls_while_generating(
         dlg._on_generate_clicked()
         try:
             assert not dlg._progress.isHidden()
-            assert not dlg._gen_btn.isEnabled()
+            # [2026-08-25] 생성 중엔 버튼을 비활성화하지 않고 "취소"로 토글한다(사용자
+            # 제안 — 느리거나 실패하는 모델을 기다리지 않고 도착한 후보를 바로 쓰기 위함).
+            assert dlg._gen_btn.isEnabled()
+            assert dlg._generating
+            assert dlg._gen_btn.text() == "취소"
             assert not dlg._btns.isEnabled()
             assert not dlg._count_a.isEnabled()
             assert not dlg._count_b.isEnabled()
@@ -355,6 +359,8 @@ def test_svg_asset_dialog_shows_progress_and_disables_controls_while_generating(
             _wait_workers(dlg)
     assert dlg._progress.isHidden()
     assert dlg._gen_btn.isEnabled()
+    assert not dlg._generating
+    assert dlg._gen_btn.text() == "AI로 생성"
     assert dlg._btns.isEnabled()
     assert dlg._count_a.isEnabled()
     assert dlg._count_b.isEnabled()
@@ -391,6 +397,92 @@ def test_svg_asset_dialog_close_immediate_while_generating():
         for _ in range(5):
             QApplication.processEvents()
     assert not any(w in host_dialogs._ORPHANED_WORKERS for w in workers)   # 끝난 뒤 정리됨
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_cancel_keeps_arrived_candidates_and_detaches_pending():
+    """2026-08-25 실사용 피드백 — 느리거나(수십 초) 타임아웃 나는 모델 하나 때문에 이미
+    도착한 후보를 못 쓰고 전체 완료까지 기다려야 했다. "AI로 생성" 버튼이 생성 중엔
+    "취소"로 바뀌어(`_on_gen_btn_clicked`), 눌렀을 때 아직 안 끝난 워커는 `_detach_worker`
+    (다이얼로그를 닫을 때와 같은 메커니즘)로 분리해 버리되, 이미 도착한 후보는 그대로
+    남고 다이얼로그는 즉시 대기 상태로 돌아와야 한다."""
+    import time
+    from easycad.canvas import host_dialogs
+    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+        dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
+    dlg._count_b.setCurrentText("1")
+
+    def fake_generate(key, subject, *, model, **kw):
+        if model == gw.TEXT_RECOMMEND_1:
+            return _SAMPLE_SVG, model   # A(슬롯 A)는 즉시 성공
+        time.sleep(0.5)                # B는 사용자가 겪은 상황처럼 느림
+        return _SAMPLE_SVG, model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
+        dlg._on_generate_clicked()
+        assert dlg._generating
+        for _ in range(200):   # A가 도착할 때까지 짧게 폴링
+            QApplication.processEvents()
+            if dlg._candidates:
+                break
+            time.sleep(0.01)
+        assert len(dlg._candidates) == 1   # A만 먼저 도착, B는 아직 도는 중
+        # A 워커는 이미 끝났어도(`finished` 시그널 자체는 옴) B가 안 끝나 `_pending>0`인
+        # 동안은 `_on_one_worker_finished`가 `self._workers`를 안 비운다 — 그래서 여기
+        # 목록엔 둘 다 남아 있고, 실제로 "아직 도는" 것만 `isRunning()`으로 가려낸다.
+        still_listed = list(dlg._workers)
+        running_before = [w for w in still_listed if w.isRunning()]
+        assert len(running_before) == 1
+
+        dlg._on_gen_btn_clicked()   # 버튼이 지금 "취소" 상태 — 눌러서 취소
+
+        assert not dlg._generating
+        assert dlg._gen_btn.text() == "AI로 생성"
+        assert dlg._progress.isHidden()
+        assert dlg._btns.isEnabled()
+        assert len(dlg._candidates) == 1   # 이미 도착한 후보는 그대로 남음
+        assert dlg._workers == []          # 다이얼로그는 더 이상 이 워커를 기다리지 않음
+        assert all(w in host_dialogs._ORPHANED_WORKERS for w in running_before)
+
+        for w in running_before:           # 백그라운드에서 마저 끝나게 정리
+            w.wait(5000)
+        for _ in range(5):
+            QApplication.processEvents()
+    assert len(dlg._candidates) == 1   # 뒤늦게 끝난 B 결과가 취소 후 새로 추가되지 않음
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_enter_key_while_generating_cancels_instead_of_duplicating():
+    """[2026-08-25] Enter 단축키도 버튼과 같은 디스패처(`_on_gen_btn_clicked`)를 타야
+    한다 — 그렇지 않으면 생성 중 Enter가 `_on_generate_clicked()`를 다시 불러 워커가
+    중복으로 생기고(버튼 비활성화 가드가 이 경로엔 없었음) `_clear_candidates()`가 이미
+    도착한 후보까지 지워버린다."""
+    import time
+    from PyQt6.QtGui import QKeyEvent
+    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+        dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
+
+    def fake_generate(key, subject, *, model, **kw):
+        time.sleep(0.3)
+        return _SAMPLE_SVG, model
+
+    with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value="key"), \
+         patch("easycad.canvas.host_dialogs.generate_svg", fake_generate):
+        dlg._on_generate_clicked()
+        first_batch_workers = list(dlg._workers)
+        assert dlg._generating
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
+        handled = dlg.eventFilter(dlg._prompt_edit, ev)
+        assert handled is True
+        assert not dlg._generating   # 취소로 처리됐다 — 새 배치가 시작되지 않음
+        assert dlg._workers == []
+        for w in first_batch_workers:
+            w.wait(5000)
+        for _ in range(5):
+            QApplication.processEvents()
     dlg.deleteLater()
 
 
