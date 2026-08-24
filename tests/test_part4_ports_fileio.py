@@ -1535,23 +1535,21 @@ def test_pdf_export_selection_only_isolates_selected_items():
     assert a.isVisible() and b.isVisible()
 
 
-def test_file_menu_export_submenu_has_pdf_png_svg():
-    # [내보내기 통합, 2026-08-20 실사용 피드백] "PDF 내보내기…" 단독 항목이 "내보내기"
-    # 하위메뉴로 승격 — PNG/SVG가 나란히 노출되고, 기존 Ctrl+P 액션(_act_pdf)이 그대로
-    # 하위메뉴 첫 항목으로 재사용된다(같은 QAction을 메뉴 두 곳에 붙여도 Qt가 동기화).
+def test_file_menu_export_is_single_action():
+    # [내보내기 단일화, 2026-08-24 실사용 피드백] "내보내기" 하위메뉴(PDF/PNG/SVG 3개)는
+    # 다이얼로그 안 「형식」 콤보와 완전히 중복이라 걷어내고, 다시 항목 하나(_act_pdf)로
+    # 되돌렸다 — 이번엔 라벨이 "내보내기…"(형식 중립)로 바뀐다.
     w = CanvasWindow()
     file_menu = w.menuBar().actions()[0].menu()
-    export_menu = next((a.menu() for a in file_menu.actions()
-                        if a.menu() is not None and a.text() == "내보내기"), None)
-    assert export_menu is not None
-    assert [a.text() for a in export_menu.actions()] == [
-        "PDF 내보내기…", "이미지 (PNG)…", "SVG…"]
-    assert export_menu.actions()[0] is w._act_pdf
+    export_action = next((a for a in file_menu.actions() if a.text() == "내보내기…"), None)
+    assert export_action is not None
+    assert export_action.menu() is None
+    assert export_action is w._act_pdf
 
 
-def test_context_menu_export_submenu_present_only_with_selection():
-    # [내보내기 통합, 2026-08-20 실사용 피드백] 선택된 도형이 있을 때만 우클릭 메뉴에
-    # "내보내기" 하위메뉴가 뜬다(전체 도면 내보내기는 File 메뉴 몫).
+def test_context_menu_export_action_present_only_with_selection():
+    # [내보내기 단일화, 2026-08-24 실사용 피드백] 선택된 도형이 있을 때만 우클릭 메뉴에
+    # "내보내기…" 항목이 뜬다(전체 도면 내보내기는 File 메뉴 몫). 하위메뉴는 없다.
     w = CanvasWindow()
     rect = _RectItem(QRectF(0, 0, 50, 50))
     rect.setFlags(rect.GraphicsItemFlag.ItemIsSelectable)
@@ -1559,15 +1557,14 @@ def test_context_menu_export_submenu_present_only_with_selection():
 
     menu_no_sel = w._build_context_menu()
     no_sel_export = [a for a in (menu_no_sel.actions() if menu_no_sel else [])
-                     if a.menu() is not None and a.text() == "내보내기"]
+                     if a.text() == "내보내기…"]
     assert not no_sel_export
 
     rect.setSelected(True)
     menu_sel = w._build_context_menu()
-    sel_export = [a.menu() for a in menu_sel.actions()
-                 if a.menu() is not None and a.text() == "내보내기"]
+    sel_export = [a for a in menu_sel.actions() if a.text() == "내보내기…"]
     assert len(sel_export) == 1
-    assert [a.text() for a in sel_export[0].actions()] == ["PDF…", "이미지 (PNG)…", "SVG…"]
+    assert sel_export[0].menu() is None
 
 
 def test_export_document_end_to_end_pdf_png_svg():

@@ -120,11 +120,11 @@ class _ContextMixin:
             # [내보내기 통합, 2026-08-20 실사용 피드백] 선택 상태에서 바로 내보내기 —
             # File 메뉴 「내보내기」와 같은 다이얼로그를 공유하되 범위 기본값만 "선택
             # 영역"으로 다르게 연다(다이얼로그 안에서 "전체 도면"으로도 바꿀 수 있음).
+            # [내보내기 단일화, 2026-08-24 실사용 피드백] 형식별 하위메뉴 3개는 다이얼로그
+            # 안 「형식」 콤보와 중복이라 제거 — 항목 하나만 남긴다(host_ui.py 파일 메뉴와
+            # 동일 판단).
             menu.addSeparator()
-            export_menu = menu.addMenu("내보내기")
-            export_menu.addAction("PDF…", lambda: self._export_document("pdf", True))
-            export_menu.addAction("이미지 (PNG)…", lambda: self._export_document("png", True))
-            export_menu.addAction("SVG…", lambda: self._export_document("svg", True))
+            menu.addAction("내보내기…", lambda: self._export_document("pdf", True))
         if has_clip:
             if has_sel:
                 menu.addSeparator()

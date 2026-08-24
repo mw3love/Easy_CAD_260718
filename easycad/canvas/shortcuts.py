@@ -56,7 +56,7 @@ SHORTCUT_DEFS: list[tuple[str, str, str, str]] = [
     ("open_doc",    "파일", "열기",        "Ctrl+O"),
     ("save_doc",    "파일", "저장",        "Ctrl+S"),
     ("save_doc_as", "파일", "다른 이름으로 저장", "Ctrl+Shift+S"),
-    ("export_pdf",  "파일", "PDF 내보내기", "Ctrl+P"),
+    ("export_pdf",  "파일", "내보내기", "Ctrl+P"),
     # ---- 삽입 (QAction) ----
     ("insert_titleblock", "삽입", "표제란/용지틀 삽입", "Ctrl+Shift+T"),
     ("insert_table",      "삽입", "표 삽입",            "Ctrl+Shift+B"),

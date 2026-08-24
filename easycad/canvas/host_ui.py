@@ -212,21 +212,17 @@ class _UIBuildMixin:
 
         # [§8 항목14, 2026-08-07] 옛 "전체"/"선택영역" 별도 메뉴 2개를 1개로 통합 —
         # 전체/선택 선택지는 _PdfExportDialog 안의 라디오로 이동(옵션+라이브 미리보기).
-        self._act_pdf = self._make_action("PDF 내보내기…", "pdf", self._export_pdf,
-                                          shortcut_id="export_pdf")
         # [신규기능] DXF 가져오기/내보내기 통합 — 옛 전용 메뉴·단축키(Ctrl+Shift+D/I)는
         # 폐지하고 열기(Ctrl+O)/저장(Ctrl+S)이 확장자로 분기(아래 _open_doc/_save_doc).
-        # [내보내기 통합, 2026-08-20 실사용 피드백] PDF 단독 항목을 "내보내기" 하위메뉴로
-        # 승격 — PNG/SVG 형식을 나란히 노출한다(다이얼로그 자체는 셋이 공유, 진입점은
-        # 기본 형식만 다르게 지정). 기존 Ctrl+P·툴바 버튼은 `self._act_pdf`를 그대로
-        # 재사용(같은 QAction을 메뉴 두 곳에 붙여도 Qt가 상태를 동기화한다).
-        self._act_export_png = self._make_action(
-            "이미지 (PNG)…", "image", lambda: self._export_document("png", False))
-        self._act_export_svg = self._make_action(
-            "SVG…", None, lambda: self._export_document("svg", False))
-        export_menu = m.addMenu("내보내기")
-        for a in (self._act_pdf, self._act_export_png, self._act_export_svg):
-            export_menu.addAction(a)
+        # [내보내기 단일화, 2026-08-24 실사용 피드백] "내보내기" 하위메뉴로 PDF/PNG/SVG
+        # 3개를 나란히 뒀던 것을 다시 걷어냄 — 다이얼로그 안 「형식」 콤보
+        # (host_dialogs.py `_FORMAT_OPTIONS`)가 이미 같은 4종을 고르게 하므로 진입점에서
+        # 형식을 미리 고르는 하위메뉴는 순수 중복 UI였다. 항목 하나(_export_pdf, 기본
+        # pdf·전체 도면)가 다이얼로그를 열고, 형식·범위는 그 안에서 바꾼다. Ctrl+P·툴바
+        # 버튼도 이 액션 하나를 그대로 공유.
+        self._act_pdf = self._make_action("내보내기…", "pdf", self._export_pdf,
+                                          shortcut_id="export_pdf")
+        m.addAction(self._act_pdf)
 
         # 편집(상단 툴바와 액션 공유. Ctrl+Z/Ctrl+Y 키는 여전히 뷰가 직접 처리하므로 QAction엔
         # 단축키를 안 건다 — 여기에 같은 단축키를 걸면 Qt 전역 단축키가 뷰의 keyPressEvent보다
