@@ -138,6 +138,14 @@ def _build_align_guides(nr, bx_winners, bx_orr, by_winners, by_orr) -> list:
 _MM_BLOCK_MODS = (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
                    | Qt.KeyboardModifier.MetaModifier)
 
+# [마인드맵 뻗기] Alt+방향키 → mm_create_in_direction 방향 이름. 편집 중/미편집 두 분기가
+# 공유(편집 중 분기가 2026-08-25에 추가되며 리터럴 dict 중복을 여기로 뽑았다). 순수 생성
+# 전용으로 재설계(같은 날 후속) — 값 이름을 공간 방향 그대로로 바꿔 의미를 명확히 했다.
+_MM_ALT_DIRS = {
+    Qt.Key.Key_Right: "right", Qt.Key.Key_Left: "left",
+    Qt.Key.Key_Down: "down", Qt.Key.Key_Up: "up",
+}
+
 
 class _AnnotatorView(QGraphicsView):
     # [화살표 통합] 화살표는 도구 하나 → 단축키도 3 하나.
@@ -1244,6 +1252,39 @@ class _AnnotatorView(QGraphicsView):
             nr = _smart_snap_srect(it)
         self._align_guides = _build_align_guides(nr, bx_winners, bx_orr, by_winners, by_orr)
 
+    def _apply_segment_align_snap(self, item):
+        """[실사용 지적 2026-08-25] 직각(엘보) 화살표의 세그먼트 드래그(M4-4, `_seg_drag`)는
+        `_move_active` 경로를 안 타 `_apply_smart_snap`이 원래 전혀 안 걸렸다 — 도형은 화살표에
+        정렬 스냅이 붙는데 반대로 화살표(의 변)를 옮길 땐 안 붙는 비대칭이 실사용 지적으로
+        확인됐다. 세그먼트는 이동 자유도가 축 하나뿐이라(가로 변=y만, 세로 변=x만)
+        `_apply_smart_snap`처럼 두 축을 다 스냅하지 않고, 그 세그먼트의 `segment_scene_rect`
+        (한쪽 폭/높이가 0인 사각 — §8 간격분배 설계가 이미 세그먼트를 도형 rect처럼 다루는
+        관례를 그대로 재사용)만 그 축으로 `_align_candidates`/`_align_match`에 넘겨 후보 스캔·
+        매칭 로직 자체는 도형 이동과 완전히 같게 유지한다. 반대축 결과(dx 또는 dy 중 안 쓰는
+        쪽)는 세그먼트 방향과 무관해 버린다."""
+        self._align_guides = []
+        if not getattr(self._owner, "align_guides_enabled", True):
+            return
+        move = getattr(item, "_seg_move", None)
+        if not move:
+            return
+        lo, hi, horizontal = move
+        nr = item.segment_scene_rect(lo)
+        thr, other_items = self._align_candidates(nr, exclude_item=item)
+        if not other_items:
+            return
+        dx, dy, bx_winners, bx_orr, by_winners, by_orr = self._align_match(nr, [], other_items, thr)
+        if horizontal:
+            if dy:
+                item._nudge_segment_axis(lo, hi, True, dy)
+                nr = item.segment_scene_rect(lo)
+            self._align_guides = _build_align_guides(nr, None, None, by_winners, by_orr)
+        else:
+            if dx:
+                item._nudge_segment_axis(lo, hi, False, dx)
+                nr = item.segment_scene_rect(lo)
+            self._align_guides = _build_align_guides(nr, bx_winners, bx_orr, None, None)
+
     def _apply_grid_snap_move(self, skip_x: bool, skip_y: bool):
         """[그리드 스냅] 단일 도형 이동 중 — 스마트정렬·축고정이 이미 자리를 정한 축은 skip_*로
         건드리지 않고, 나머지 축만 격자 교차점으로 양자화한다. 우선순위는 축고정(Shift) >
@@ -1314,11 +1355,17 @@ class _AnnotatorView(QGraphicsView):
         (텍스트 실제 잉크 경계, 패딩 없음)로 위임돼 있어 `_shape_ports`/`_nearest_border`의
         기본 사각형 폴백을 그대로 탄다. `_ConnectorLabel`(도형·화살표에 딸린 라벨, `_TextItem`
         서브클래스)은 제외 — 그건 독립 주석이 아니라 다른 아이템에 종속된 표식이라 화살표가
-        직접 붙을 대상이 아니다."""
+        직접 붙을 대상이 아니다.
+        [버그 수정 2026-08-25, 실사용 지적] 위 제외가 `_ConnectorLabel`만 걸러 도형 중앙 라벨
+        (`_CenterLabelMixin`의 sub-`_TextItem`, 마찬가지로 `parentItem()`이 있는 종속 아이템)을
+        놓치고 있었다 — 그 라벨을 클릭하면 `_hover_port_at`가 라벨 자신을 큐닷 호스트로 잡아
+        도형 선택이 아예 안 되던 회귀의 원인. "독립"의 실제 기준은 부모가 없다는 것이므로
+        `parentItem() is None`으로 직접 검사한다(`_ConnectorLabel` 여부와 무관하게 부모 있는
+        `_TextItem`은 전부 배제 — 더 일반적이라 `_ConnectorLabel` 특례 없이도 같은 결과)."""
         return [it for it in self.scene().items()
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))
                 or (isinstance(it, _PolygonItem) and it._closed)
-                or (isinstance(it, _TextItem) and not isinstance(it, _ConnectorLabel))]
+                or (isinstance(it, _TextItem) and it.parentItem() is None)]
 
     def _conn_paths(self):
         """[외부 DXF 폴백/펜] _PathItem — 연속 폴백(Pass 2, 궤적 어디든)에 더해 [실사용 요청
@@ -1715,11 +1762,15 @@ class _AnnotatorView(QGraphicsView):
         커넥터 뽑기로 새는 버그). 포트 후보로는 여전히 제외해야 하므로 호출부(두 함수)가
         각자의 후보 루프에서 `isinstance(sh, _ImageItem)`을 걸러낸다.
         [실사용 요청 2026-08-22] 독립 텍스트(`_TextItem`, `_ConnectorLabel` 제외)도 포함 —
-        `_conn_shapes()`와 같은 사유(위 참조)."""
+        `_conn_shapes()`와 같은 사유(위 참조).
+        [버그 수정 2026-08-25] `_conn_shapes()`와 동일한 회귀 — `parentItem() is None`으로
+        고쳐 도형 중앙 라벨을 배제한다(자세한 경위는 `_conn_shapes()` 주석 참조). 이 함수가
+        바로 `_hover_port_at`가 매 press마다 호출하는 실제 경로라 라벨 클릭이 도형 선택 대신
+        큐닷 드래그로 잘못 잡히던 버그의 진짜 원인은 여기였다."""
         rect = QRectF(scene_pt.x() - margin, scene_pt.y() - margin, margin * 2, margin * 2)
         return [it for it in self.scene().items(rect)
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PathItem, _ImageItem))
-                or (isinstance(it, _TextItem) and not isinstance(it, _ConnectorLabel))]
+                or (isinstance(it, _TextItem) and it.parentItem() is None)]
 
     def _port_dot_target(self, scene_c):
         """[2026-08-03 분리 — _draw_port_dots·mouseMoveEvent 공용] 지금 커서 아래(또는 근처)
@@ -3403,6 +3454,8 @@ class _AnnotatorView(QGraphicsView):
             return
         if self._seg_drag is not None:  # [M4-4] 세그먼트 드래그 — 변을 커서 위치로 수직 이동
             self._seg_drag._drag_segment_to(self.mapToScene(event.position().toPoint()))
+            # [실사용 지적 2026-08-25] 도형 이동과 대칭 — 다른 도형과의 정렬 스냅+가이드선.
+            self._apply_segment_align_snap(self._seg_drag)
             self.viewport().update()
             return
         if self._csym_drag is not None:  # [실사용 피드백 2026-08-19] 커스텀 심볼 비율고정 확대
@@ -3974,6 +4027,25 @@ class _AnnotatorView(QGraphicsView):
                 return
         super().mouseDoubleClickEvent(event)
 
+    def begin_edit_selected(self, item) -> bool:
+        """[신규기능, 2026-08-25] 더블클릭 없이 선택된 아이템의 텍스트 편집을 시작한다
+        (Ctrl+Enter, 편집 종료용 Ctrl+Enter와 대칭 — 토글처럼 기억하기 쉽다).
+        라벨을 가질 수 있는 타입(도형/선/화살표/독립 텍스트)만 처리, 그 외(표제란·표·
+        이미지 등)는 아무 것도 안 하고 False를 반환한다."""
+        if isinstance(item, _TextItem):
+            item.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+            item.setFocus()
+            self.scene().clearSelection()
+            cur = item.textCursor()
+            cur.select(cur.SelectionType.Document)
+            item.setTextCursor(cur)
+            return True
+        if isinstance(item, (_RectItem, _EllipseItem, _SymbolItem, _PolygonItem,
+                              _LineItem, _ArrowItem, _PolyArrowItem)):
+            self._begin_label_edit(item)
+            return True
+        return False
+
     def _shortcut_hit(self, event, shortcut_id: str) -> bool:
         """[단축키 설정, 2026-08-21] `event`(key+modifiers)가 `shortcut_id`의 현재 설정
         (기본값 또는 설정 창에서 재할당된 값)과 정확히 일치하는지. 빈 시퀀스(사용자가
@@ -4058,6 +4130,16 @@ class _AnnotatorView(QGraphicsView):
                 fi.clearFocus()
                 self._mm_dispatch(key, shape)
                 return
+        # [실사용 피드백 2026-08-25] Alt+방향키도 편집 중에 즉시 커밋 후 동작 — Tab/Enter와
+        # 같은 원칙("쓰면서 뻗어나가는" 흐름이 방향 이동/생성에도 그대로 적용돼야 함).
+        if editing_text and mods == Qt.KeyboardModifier.AltModifier:
+            alt_dir = _MM_ALT_DIRS.get(key)
+            if alt_dir is not None:
+                shape = fi.parentItem() if fi.parentItem() is not None else fi
+                if self._owner.mm_is_node(shape):
+                    fi.clearFocus()
+                    self._owner.mm_create_in_direction(shape, alt_dir, self)
+                    return
         if not editing_text and key == Qt.Key.Key_Space:
             self._owner.toggle_edit_mode()
             return
@@ -4081,6 +4163,29 @@ class _AnnotatorView(QGraphicsView):
                 sel = self.scene().selectedItems()
                 if len(sel) == 1 and self._owner.mm_is_node(sel[0]):
                     self._mm_dispatch(key, sel[0])
+                    return
+            # [신규기능, 2026-08-25] Ctrl+Enter — 더블클릭 없이 선택된 아이템 텍스트 편집
+            # 시작(편집 중일 때의 "Ctrl+Enter=편집 종료"와 대칭이라 토글처럼 외우기 쉽다).
+            # Enter가 이미 마인드맵 형제생성에 쓰이므로 이 용도엔 Ctrl을 더한다.
+            if mods == Qt.KeyboardModifier.ControlModifier \
+                    and key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                sel = self.scene().selectedItems()
+                if len(sel) == 1:
+                    self.begin_edit_selected(sel[0])
+                return
+            # [마인드맵 뻗기, 2026-08-25 후속] Alt+방향키 — 4방향 전부 순수 생성 전용(이미
+            # 뭔가 있어도 그냥 새로 만든다 — "이동 겸용"이던 이전 설계가 실사용 혼란의
+            # 원인이라 폐기, host_mindmap.py 주석 참조). 아래 화살표키 nudge는 Alt 여부를
+            # 안 가리므로(Shift/Ctrl만 확인) 반드시 그보다 먼저 검사한다. alt_dir가 매치되면
+            # (에디팅 대상이 아니거나 다중선택이라 아무 일도 안 하더라도) 항상 return —
+            # 안 그러면 아래 nudge로 조용히 새서 "새로 만들려 했는데 도형이 이동해버림"
+            # 버그가 재발한다(실사용 재현 원인).
+            if mods == Qt.KeyboardModifier.AltModifier:
+                alt_dir = _MM_ALT_DIRS.get(key)
+                if alt_dir is not None:
+                    sel = self.scene().selectedItems()
+                    if len(sel) == 1:
+                        self._owner.mm_create_in_direction(sel[0], alt_dir, self)
                     return
             # 화살표키 — 선택된 주석 이동. 기본은 넓게(10px), Shift/Ctrl로 세밀하게(1px). 도구와 무관.
             arrow = {

@@ -28,18 +28,12 @@ class _MindMapMixin:
     """CanvasWindow에 다중상속되는 믹스인. `self`는 항상 CanvasWindow 인스턴스."""
 
     def _mm_enter_edit_mode(self, new_node, view):
-        """새 노드의 편집 모드 진입. _TextItem과 일반 도형(sub-label 있음) 분기 처리."""
+        """새 노드의 편집 모드 진입. _TextItem은 clone()이 원본 텍스트를 복사하므로 먼저
+        비우고, 실제 진입은 `view.begin_edit_selected()`(범용 "선택 항목 편집 시작" —
+        Ctrl+Enter와 공유하는 로직, core_view.py 참조)에 위임한다."""
         if isinstance(new_node, _TextItem):
-            # _TextItem은 clone()이 원본의 텍스트를 복사하므로 먼저 비운다.
             new_node.setPlainText("")
-            # 텍스트 도구와 동일한 방식으로 편집 시작(view._begin_label_edit은 _TextItem
-            # 메서드 부재로 사용 불가).
-            new_node.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
-            new_node.setFocus()
-            self._scene.clearSelection()
-        else:
-            # 일반 도형(사각형, 원, 심볼, 다각형)은 sub-label을 가지므로 기존 경로 사용.
-            view._begin_label_edit(new_node)
+        view.begin_edit_selected(new_node)
 
     def mm_is_node(self, item) -> bool:
         # `_ConnectorLabel`은 `_TextItem`의 서브클래스지만(화살표를 따라 슬라이드하는
@@ -111,12 +105,29 @@ class _MindMapMixin:
         self._scene.addItem(new)
         return new
 
-    def mm_connect(self, src_item, dst_item):
+    def mm_parent_attach_point(self, parent_item):
+        """[실사용 피드백] parent_item에서 이미 뻗어나간 마인드맵 화살표가 있으면 그
+        부착점(씬좌표)을 반환 — 형제가 늘어날 때마다 `_border_attach`가 방향을 다시
+        계산해 부착점이 오른쪽→아래쪽으로 슬금슬금 옮겨가던 버그 수정용. 없으면 None
+        (호출부가 기존처럼 `_border_attach`로 새로 계산)."""
+        for arr, idx in self._arrows_bound_to(parent_item):
+            if idx != 0:
+                continue
+            other = arr._bind2 if isinstance(arr, _ArrowItem) else arr._bind_end
+            if other is None or other.scene() is None or not self.mm_is_node(other):
+                continue
+            pt = arr._bind1_pt if isinstance(arr, _ArrowItem) else arr._bind_start_pt
+            if pt is not None:
+                return parent_item.mapToScene(pt)
+        return None
+
+    def mm_connect(self, src_item, dst_item, src_pt=None):
         """src_item -> dst_item 직교 자동라우팅 화살표(mermaid_import._make_mermaid_edge와
-        동일 패턴 — 이미 검증된 지속연결 바인딩 재사용)."""
+        동일 패턴 — 이미 검증된 지속연결 바인딩 재사용). src_pt를 주면 그 점을 그대로
+        부착점으로 쓴다(형제 간 부착점 통일용, `mm_parent_attach_point` 참조)."""
         rs = self.mm_node_rect_scene(src_item)
         rd = self.mm_node_rect_scene(dst_item)
-        a_src = _border_attach(rs, rd.center())
+        a_src = src_pt if src_pt is not None else _border_attach(rs, rd.center())
         a_dst = _border_attach(rd, rs.center())
         arr = _PolyArrowItem(self.current_color, self.current_width, self.arrow_head_at_end)
         arr.set_points(a_src, a_dst)
@@ -146,7 +157,7 @@ class _MindMapMixin:
         candidate = QRectF(left, top, pr.width(), pr.height())
         candidate = self.mm_free_rect(candidate, (0.0, pr.height() + _MM_GAP_Y))
         new_node = self.mm_new_node_like(parent_item, candidate.topLeft())
-        arrow = self.mm_connect(parent_item, new_node)
+        arrow = self.mm_connect(parent_item, new_node, src_pt=self.mm_parent_attach_point(parent_item))
         self.push_undo_add_many([new_node, arrow])
         self._scene.clearSelection()
         self._mm_enter_edit_mode(new_node, view)
@@ -170,3 +181,44 @@ class _MindMapMixin:
             self._mm_enter_edit_mode(new_node, view)
             return new_node
         return self.mm_create_child(parent, view)
+
+    # ---- [실사용 피드백 2026-08-25 후속] Alt+방향키 — 순수 생성 전용으로 재설계 -------
+    # 이전엔 "그 방향에 이미 있으면 이동, 없으면 생성"(Lucid Alt+드래그 감각을 흉내낸 것)
+    # 이었는데, 실사용 중 "새로 만들려 했는데 조용히 기존 도형으로 이동"·"이전 부모 밑에
+    # 병렬로 생성돼버림" 혼란이 반복 보고됐다 — 두 의미가 같은 키에 얹혀있어 사용자가
+    # 결과를 예측할 수 없었던 게 근본 원인. 순수 생성으로 단순화하면 이 혼란 자체가
+    # 사라진다(대신 기존 노드 사이 자유 탐색은 범위 밖 — 마우스 클릭으로 대체, 재요청 시
+    # 별도 설계). 왼쪽/위도 이제 생성 가능해져 기존(이동 전용)보다 기능이 늘었다.
+    _MM_DIR_VEC = {"right": (1, 0), "left": (-1, 0), "down": (0, 1), "up": (0, -1)}
+
+    def mm_create_in_direction(self, item, direction, view):
+        """[Alt+방향키] item에서 direction("right"/"left"/"down"/"up") 방향으로 새
+        도형+화살표를 무조건 생성한다 — 그 자리에 이미 뭔가 있어도 이동하지 않고 새로
+        만든다(mm_free_rect가 겹치는 도형만 피해서 배치, 그 결과 새 노드가 옆으로 밀려날
+        수 있다). 부착점은 `mm_connect`의 기본 계산(목적지 중심 방향으로 재추정)을 안
+        쓰고 direction으로 직접 결정한다 — 안 그러면 밀려난 새 노드의 중심 방향이
+        바뀌어 항목①과 같은 부착점 드리프트가 재발한다(실측으로 확인,
+        `mm_create_child`가 기존 화살표를 재사용해 피하는 것과 달리 여기는 direction
+        자체가 이미 정답을 알고 있으므로 재계산 없이 바로 지정)."""
+        if not self.mm_is_node(item):
+            return None
+        ir = self.mm_node_rect_scene(item)
+        dx, dy = self._MM_DIR_VEC[direction]
+        if dx:
+            left = ir.right() + _MM_GAP_X if dx > 0 else ir.left() - _MM_GAP_X - ir.width()
+            top = ir.top()
+            step = (0.0, ir.height() + _MM_GAP_Y)
+            src_pt = QPointF(ir.right() if dx > 0 else ir.left(), ir.center().y())
+        else:
+            left = ir.left()
+            top = ir.bottom() + _MM_GAP_Y if dy > 0 else ir.top() - _MM_GAP_Y - ir.height()
+            step = (ir.width() + _MM_GAP_X, 0.0)
+            src_pt = QPointF(ir.center().x(), ir.bottom() if dy > 0 else ir.top())
+        candidate = QRectF(left, top, ir.width(), ir.height())
+        candidate = self.mm_free_rect(candidate, step)
+        new_node = self.mm_new_node_like(item, candidate.topLeft())
+        arrow = self.mm_connect(item, new_node, src_pt=src_pt)
+        self.push_undo_add_many([new_node, arrow])
+        self._scene.clearSelection()
+        self._mm_enter_edit_mode(new_node, view)
+        return new_node

@@ -1245,6 +1245,17 @@ symbol_library/
   전체 스위트 12회 연속 무플레이크 확정. 신규 pytest 4종, 전체 896종. 상세:
   `docs/history/2026-08.md` "팬도 드래그 프록시 대상으로 확장 — v2 후속", 함정:
   `docs/pitfalls.md` "Qt 시그널·이벤트 발화 조건" 절 끝부분 + 개인 위키.
+- **직각화살표 세그먼트 드래그에 정렬 스냅 연결 — 도형↔화살표 비대칭 해소(2026-08-25)** —
+  "도형은 직각 화살표에 정렬선이 붙는데 화살표 자체를 옮길 땐 안 붙는다"는 실사용 지적.
+  원인은 두 동작이 다른 메커니즘(도형=`_move_active`→`_apply_smart_snap()`, 직각화살표
+  몸통=M4-4 세그먼트 드래그 `_seg_drag`)이라 후자엔 애초에 스냅 호출 자체가 없었던 것 —
+  `_PolyArrowItem._nudge_segment_axis`(신규)+`_AnnotatorView._apply_segment_align_snap`
+  (신규)으로 같은 후보 스캔·매칭(`_align_candidates`/`_align_match`)을 재사용하되 세그먼트
+  이동 자유도(축 하나)만 적용. 다중선택 이동 정렬선 미지원은 그룹 기준 설계 결정이 필요해
+  스코프 밖(별도 deep-interview 필요). 신규 pytest 3종, 전체 825종 통과, 실제 창에서 API
+  직접호출로 스냅값·가이드선 렌더 스크린샷 확인. 상세: `docs/history/2026-08.md` "직각화살표
+  세그먼트 드래그에 정렬 스냅 연결". **Not-tested**: 진짜 마우스 드래그 손맛(`python run.py`
+  사용자 확인 필요).
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

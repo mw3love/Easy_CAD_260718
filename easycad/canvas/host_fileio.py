@@ -693,6 +693,10 @@ class _FileIOMixin:
         it.setOpacity(1.0)
         it.setSelected(True)
         self.push_undo_add(it)
+        # [실사용 피드백 2026-08-25] 팔레트 버튼이 드래그 내내 grabMouse()로 키보드 포커스를
+        # 안 가진 위젯이었으므로, 드롭 후 캔버스 뷰가 키보드 포커스를 도로 안 받으면(도형은
+        # 선택됐어도) Ctrl+Enter/Tab/Enter 같은 단축키가 뷰에 아예 도착하지 못한다.
+        self._view.setFocus(Qt.FocusReason.MouseFocusReason)
         self._view.viewport().update()
 
 

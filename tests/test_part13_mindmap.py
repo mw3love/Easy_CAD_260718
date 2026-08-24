@@ -431,3 +431,355 @@ def test_i3_tab_then_escape_on_empty_new_textitem_no_phantom_child():
     _app.processEvents()
     assert new_node.scene() is None   # 실제로 씬에서 빠졌는지(전제 확인)
     assert w.mm_children(root) == []   # 유령 자식이 남으면 안 된다
+
+
+# ---- [실사용 피드백 2026-08-25] 형제 부착점 통일 + Alt+방향키 이동/생성 --------------
+
+def _arrow_src_scene_pt(w, parent, child):
+    """parent -> child 화살표의 부모쪽 부착점(씬좌표). 못 찾으면 None."""
+    for arr, idx in w._arrows_bound_to(parent):
+        if idx != 0:
+            continue
+        other = arr._bind2 if isinstance(arr, _ArrowItem) else arr._bind_end
+        if other is child:
+            pt = arr._bind1_pt if isinstance(arr, _ArrowItem) else arr._bind_start_pt
+            return parent.mapToScene(pt)
+    return None
+
+
+def test_mm_create_child_reuses_same_attach_point_across_many_siblings():
+    """버그 수정 확인 — 형제가 3개 이상으로 늘어나도 전부 부모의 같은 지점에서 나가야
+    한다(수정 전에는 `_border_attach`가 매번 방향을 다시 계산해 부착점이 슬금슬금
+    옮겨갔다)."""
+    w = CanvasWindow()
+    parent = _mm_rect(w, 0, 0)
+    kid1 = w.mm_create_child(parent, w._view)
+    kid2 = w.mm_create_sibling(kid1, w._view)
+    kid3 = w.mm_create_sibling(kid2, w._view)
+    kid4 = w.mm_create_sibling(kid3, w._view)
+    p1 = _arrow_src_scene_pt(w, parent, kid1)
+    p2 = _arrow_src_scene_pt(w, parent, kid2)
+    p3 = _arrow_src_scene_pt(w, parent, kid3)
+    p4 = _arrow_src_scene_pt(w, parent, kid4)
+    assert None not in (p1, p2, p3, p4)
+    for p in (p2, p3, p4):
+        assert _close(p, p1), (p, p1)
+
+
+def test_mm_create_in_direction_right_places_to_the_right_and_connects():
+    w = CanvasWindow()
+    item = _mm_rect(w, 0, 0)
+    new_node = w.mm_create_in_direction(item, "right", w._view)
+    assert new_node is not None
+    assert w.mm_parent(new_node) is item
+    ir, nr = w.mm_node_rect_scene(item), w.mm_node_rect_scene(new_node)
+    assert nr.left() >= ir.right()
+
+
+def test_mm_create_in_direction_left_places_to_the_left_and_connects():
+    w = CanvasWindow()
+    item = _mm_rect(w, 300, 0)
+    new_node = w.mm_create_in_direction(item, "left", w._view)
+    assert new_node is not None
+    assert w.mm_parent(new_node) is item
+    ir, nr = w.mm_node_rect_scene(item), w.mm_node_rect_scene(new_node)
+    assert nr.right() <= ir.left()
+
+
+def test_mm_create_in_direction_down_places_below_and_connects():
+    w = CanvasWindow()
+    item = _mm_rect(w, 0, 0)
+    new_node = w.mm_create_in_direction(item, "down", w._view)
+    assert new_node is not None
+    assert w.mm_parent(new_node) is item
+    ir, nr = w.mm_node_rect_scene(item), w.mm_node_rect_scene(new_node)
+    assert nr.top() >= ir.bottom()
+
+
+def test_mm_create_in_direction_up_places_above_and_connects():
+    w = CanvasWindow()
+    item = _mm_rect(w, 0, 300)
+    new_node = w.mm_create_in_direction(item, "up", w._view)
+    assert new_node is not None
+    assert w.mm_parent(new_node) is item
+    ir, nr = w.mm_node_rect_scene(item), w.mm_node_rect_scene(new_node)
+    assert nr.bottom() <= ir.top()
+
+
+def test_mm_create_in_direction_always_creates_even_if_something_already_there():
+    """[재설계 2026-08-25 후속] 이전엔 "있으면 이동"이었으나 순수 생성으로 바뀌어, 같은
+    방향으로 두 번 호출하면 서로 다른 두 개의 새 노드가 생겨야 한다(겹치지 않게 배치)."""
+    w = CanvasWindow()
+    item = _mm_rect(w, 0, 0)
+    first = w.mm_create_in_direction(item, "right", w._view)
+    second = w.mm_create_in_direction(item, "right", w._view)
+    assert first is not second
+    assert set(w.mm_children(item)) == {first, second}
+    fr, sr = w.mm_node_rect_scene(first), w.mm_node_rect_scene(second)
+    assert not fr.intersects(sr)
+
+
+def test_mm_create_in_direction_repeated_same_axis_keeps_attach_point():
+    """같은 축(아래)으로 반복 생성해도 부착점이 안 흔들려야 한다(항목①과 같은 부류의
+    드리프트가 이 새 함수에서도 재발하지 않는지 확인 — 매번 x오프셋 0으로 순수 수직
+    스택이라 원리적으로 안전해야 함)."""
+    w = CanvasWindow()
+    item = _mm_rect(w, 0, 0)
+    n1 = w.mm_create_in_direction(item, "down", w._view)
+    n2 = w.mm_create_in_direction(item, "down", w._view)
+    n3 = w.mm_create_in_direction(item, "down", w._view)
+    p1 = _arrow_src_scene_pt(w, item, n1)
+    p2 = _arrow_src_scene_pt(w, item, n2)
+    p3 = _arrow_src_scene_pt(w, item, n3)
+    assert None not in (p1, p2, p3)
+    assert _close(p1, p2) and _close(p1, p3)
+
+
+def test_mm_create_in_direction_on_non_node_is_noop():
+    w = CanvasWindow()
+    arrow = _mk_arrow(w, 0, 0, 10, 10)
+    assert w.mm_create_in_direction(arrow, "right", w._view) is None
+
+
+def test_alt_right_key_creates_new_child_each_press():
+    w = CanvasWindow()
+    w.set_tool("select")
+    item = _mm_rect(w, 0, 0)
+    item.setSelected(True)
+    QTest.keyClick(w._view, Qt.Key.Key_Right, Qt.KeyboardModifier.AltModifier)
+    assert len(w.mm_children(item)) == 1
+
+
+def test_alt_left_key_creates_new_node_to_the_left():
+    w = CanvasWindow()
+    w.set_tool("select")
+    item = _mm_rect(w, 300, 0)
+    item.setSelected(True)
+    QTest.keyClick(w._view, Qt.Key.Key_Left, Qt.KeyboardModifier.AltModifier)
+    kids = w.mm_children(item)
+    assert len(kids) == 1
+    ir, nr = w.mm_node_rect_scene(item), w.mm_node_rect_scene(kids[0])
+    assert nr.right() <= ir.left()
+
+
+def test_alt_down_key_creates_new_node_below():
+    w = CanvasWindow()
+    w.set_tool("select")
+    item = _mm_rect(w, 0, 0)
+    item.setSelected(True)
+    QTest.keyClick(w._view, Qt.Key.Key_Down, Qt.KeyboardModifier.AltModifier)
+    assert len(w.mm_children(item)) == 1
+
+
+def test_alt_up_key_creates_new_node_above():
+    w = CanvasWindow()
+    w.set_tool("select")
+    item = _mm_rect(w, 0, 300)
+    item.setSelected(True)
+    QTest.keyClick(w._view, Qt.Key.Key_Up, Qt.KeyboardModifier.AltModifier)
+    kids = w.mm_children(item)
+    assert len(kids) == 1
+    ir, nr = w.mm_node_rect_scene(item), w.mm_node_rect_scene(kids[0])
+    assert nr.bottom() <= ir.top()
+
+
+def test_alt_arrow_with_multiple_selected_is_noop():
+    w = CanvasWindow()
+    w.set_tool("select")
+    a = _mm_rect(w, 0, 0)
+    b = _mm_rect(w, 300, 0)
+    a.setSelected(True)
+    b.setSelected(True)
+    before = len(w._scene.items())
+    QTest.keyClick(w._view, Qt.Key.Key_Right, Qt.KeyboardModifier.AltModifier)
+    assert len(w._scene.items()) == before
+
+
+def test_alt_arrow_never_nudges_even_for_non_node_selection():
+    """[버그 수정 2026-08-25 후속] 재설계 전엔 selection이 mm 노드가 아니면 Alt+화살표가
+    조용히 기존 nudge로 새서 "새로 만들려는데 도형이 이동해버린다"는 실사용 혼란의
+    원인이었다 — 이제는 alt_dir가 매치되는 순간 항상 return해서 nudge로 새지 않는다."""
+    w = CanvasWindow()
+    w.set_tool("select")
+    arrow = _mk_arrow(w, 0, 0, 10, 10)
+    arrow.setSelected(True)
+    before = QPointF(arrow.pos())
+    QTest.keyClick(w._view, Qt.Key.Key_Right, Qt.KeyboardModifier.AltModifier)
+    assert arrow.pos() == before   # nudge로 안 샜다(이동 없음)
+
+
+# ---- [실사용 피드백 2026-08-25] 도형 중앙 라벨 클릭 시 도형 선택 안 되던 버그 +
+# Ctrl+Enter 편집 시작 — 마인드맵 자체는 아니지만 이 세션에서 발견·수정됐다. ------------
+
+def test_click_on_center_label_selects_shape_not_the_label():
+    """[버그 수정 2026-08-25] _conn_shapes()/_conn_shapes_near()가 `_ConnectorLabel`만
+    걸러내고 도형 중앙 라벨(부모 있는 _TextItem)은 안 걸러내 `_hover_port_at`가 라벨을
+    큐닷 호스트로 오인 — 라벨을 클릭해도 도형이 안 선택되던 회귀. 실제 QTest 클릭 경로로
+    검증(offscreen 아님 요구 없음 — 이 경로는 마우스 이벤트 디스패치만 걸리고 텍스트
+    포커스 아웃은 안 걸림)."""
+    w = CanvasWindow()
+    w.set_tool("select")
+    rect = _mm_rect(w, 0, 0)
+    rect.ensure_label().setPlainText("dsfsdf")
+    rect._sync_label()
+    lbl = rect._label
+    label_scene_center = lbl.mapToScene(lbl._content_rect().center())
+    view_pt = w._view.mapFromScene(label_scene_center)
+    QTest.mouseClick(w._view.viewport(), Qt.MouseButton.LeftButton,
+                      Qt.KeyboardModifier.NoModifier, view_pt)
+    assert rect.isSelected() is True
+    assert lbl.isSelected() is False
+
+
+def test_double_click_on_center_label_still_enters_label_edit():
+    """위 수정이 더블클릭=라벨 편집 진입까지 건드리지 않았는지 회귀 확인."""
+    w = CanvasWindow()
+    w.set_tool("select")
+    rect = _mm_rect(w, 0, 0)
+    rect.ensure_label().setPlainText("dsfsdf")
+    rect._sync_label()
+    lbl = rect._label
+    label_scene_center = lbl.mapToScene(lbl._content_rect().center())
+    view_pt = w._view.mapFromScene(label_scene_center)
+    QTest.mouseDClick(w._view.viewport(), Qt.MouseButton.LeftButton,
+                       Qt.KeyboardModifier.NoModifier, view_pt)
+    assert w._scene.focusItem() is lbl
+
+
+def test_conn_shapes_excludes_center_labels_but_includes_standalone_text():
+    w = CanvasWindow()
+    rect = _mm_rect(w, 0, 0)
+    rect.ensure_label().setPlainText("center")
+    standalone = _mm_text(w, 300, 0, text="alone")
+    shapes = w._view._conn_shapes()
+    assert rect._label not in shapes
+    assert standalone in shapes
+    near = w._view._conn_shapes_near(QPointF(60, 60), 1000.0)
+    assert rect._label not in near
+    assert standalone in near
+
+
+def test_ctrl_enter_begins_edit_on_selected_shape_without_double_click():
+    w = CanvasWindow()
+    w.set_tool("select")
+    rect = _mm_rect(w, 0, 0)
+    rect.setSelected(True)
+    QTest.keyClick(w._view, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    fi = w._scene.focusItem()
+    assert fi is not None and fi.parentItem() is rect
+
+
+def test_ctrl_enter_begins_edit_on_selected_standalone_text():
+    w = CanvasWindow()
+    w.set_tool("select")
+    txt = _mm_text(w, 0, 0, text="hello")
+    txt.setSelected(True)
+    QTest.keyClick(w._view, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    assert w._scene.focusItem() is txt
+    assert txt.textInteractionFlags() == Qt.TextInteractionFlag.TextEditorInteraction
+
+
+def test_ctrl_enter_with_no_selection_is_noop():
+    w = CanvasWindow()
+    w.set_tool("select")
+    before = len(w._scene.items())
+    QTest.keyClick(w._view, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    assert len(w._scene.items()) == before
+    assert w._scene.focusItem() is None
+
+
+def test_ctrl_enter_with_multiple_selected_is_noop():
+    w = CanvasWindow()
+    w.set_tool("select")
+    a = _mm_rect(w, 0, 0)
+    b = _mm_rect(w, 300, 0)
+    a.setSelected(True)
+    b.setSelected(True)
+    QTest.keyClick(w._view, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    assert w._scene.focusItem() is None
+
+
+# ---- [실사용 피드백 2026-08-25] 편집 종료 시 주인 도형 선택 + 팔레트 드래그 후 포커스
+# + Alt+방향키 편집 중 동작 -------------------------------------------------------------
+
+def test_escape_after_editing_shape_label_selects_owning_shape():
+    """[오프스크린 한계] `clearFocus()`가 진짜 focusOutEvent를 내보내려면 씬이 실제 입력
+    포커스를 가져야 한다(`test_i3_...`와 동일 이유) — show+activate+setFocus로 맞춘다."""
+    w = CanvasWindow()
+    w.show()
+    w.activateWindow()
+    QApplication.setActiveWindow(w)
+    w.set_tool("select")
+    rect = _mm_rect(w, 0, 0)
+    w._view._begin_label_edit(rect)
+    lbl = w._scene.focusItem()
+    lbl.setPlainText("hi")
+    w._view.setFocus(Qt.FocusReason.OtherFocusReason)
+    QTest.keyClick(w._view, Qt.Key.Key_Escape)
+    _app.processEvents()
+    assert rect.isSelected() is True
+
+
+def test_escape_after_editing_standalone_text_selects_itself():
+    w = CanvasWindow()
+    w.show()
+    w.activateWindow()
+    QApplication.setActiveWindow(w)
+    w.set_tool("select")
+    txt = _mm_text(w, 0, 0, text="")
+    txt.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+    txt.setFocus()
+    w._scene.focusItem().setPlainText("hello")
+    w._view.setFocus(Qt.FocusReason.OtherFocusReason)
+    QTest.keyClick(w._view, Qt.Key.Key_Escape)
+    _app.processEvents()
+    assert txt.isSelected() is True
+
+
+def test_alt_right_while_still_editing_label_commits_and_creates_child():
+    w = CanvasWindow()
+    w.set_tool("select")
+    parent = _mm_rect(w, 0, 0)
+    w._view._begin_label_edit(parent)
+    lbl = w._scene.focusItem()
+    lbl.setPlainText("root")
+    QTest.keyClick(w._view, Qt.Key.Key_Right, Qt.KeyboardModifier.AltModifier)
+    kids = w.mm_children(parent)
+    assert len(kids) == 1
+    fi = w._scene.focusItem()
+    assert fi is not None and fi.parentItem() is kids[0]
+
+
+def test_alt_down_while_still_editing_label_commits_and_creates_child_of_current_item():
+    """[재설계 2026-08-25 후속] Alt+↓는 이제 부모 관점의 "형제"가 아니라 순수 방향 —
+    편집 중이던 kid1의 자식(kid1 아래)이 생긴다. 원래 부모(parent)의 자식 수는 그대로 1."""
+    w = CanvasWindow()
+    w.set_tool("select")
+    parent = _mm_rect(w, 0, 0)
+    kid1 = w.mm_create_child(parent, w._view)   # 이미 편집모드
+    lbl = w._scene.focusItem()
+    lbl.setPlainText("kid1")
+    QTest.keyClick(w._view, Qt.Key.Key_Down, Qt.KeyboardModifier.AltModifier)
+    assert w.mm_children(parent) == [kid1]
+    grandkids = w.mm_children(kid1)
+    assert len(grandkids) == 1
+    fi = w._scene.focusItem()
+    assert fi is not None and fi.parentItem() is grandkids[0]
+
+
+def test_palette_drag_end_gives_view_keyboard_focus():
+    """[버그 수정 2026-08-25] `_PaletteButton`이 드래그 내내 grabMouse()를 쥐고 있어서,
+    드롭 후 도형은 선택되지만 캔버스 뷰가 키보드 포커스를 못 받아 Ctrl+Enter 등이
+    도착하지 않던 문제. `_palette_drag_begin`/`_palette_drag_end`를 직접 호출해 실제
+    드래그앤드롭 시퀀스를 재현한다."""
+    w = CanvasWindow()
+    w.show()
+    _app.processEvents()
+    started = w._palette_drag_begin("rect")
+    assert started is True
+    vp = w._view.viewport()
+    local = vp.rect().center()
+    global_pos = vp.mapToGlobal(local)
+    w._palette_drag_end("rect", global_pos)
+    _app.processEvents()
+    assert w._view.hasFocus() is True

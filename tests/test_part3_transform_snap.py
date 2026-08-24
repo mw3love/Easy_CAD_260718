@@ -1177,6 +1177,64 @@ def test_smart_align_skips_multiselect():
 
 
 
+def test_segment_align_snap_horizontal_segment_to_rect_edge():
+    # [실사용 지적 2026-08-25] 직각화살표 세그먼트 드래그도 도형 이동(_apply_smart_snap)과
+    # 대칭으로 다른 도형과 정렬 스냅 + 가이드선이 떠야 한다 — 가로 변이면 y축만.
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 300, 300, 100, 60)   # 윗변 y=300
+    ar = _PolyArrowItem(QColor("black"), 2, True)
+    ar._pts = [QPointF(0, 0), QPointF(100, 0), QPointF(100, 200)]
+    ar._routing = "ortho"
+    w._scene.addItem(ar)
+    v = w._view
+    ar._begin_segment_drag(0)   # 가로 변(0,0)-(100,0) — 시작 끝점이라 보호삽입 후 lo=1,hi=2
+    lo, hi, horizontal = ar._seg_move
+    assert horizontal
+    ar._pts[lo] = QPointF(ar._pts[lo].x(), 297.0)   # 임계 내로 3px 어긋난 상태(드래그 결과 가정)
+    ar._pts[hi] = QPointF(ar._pts[hi].x(), 297.0)
+    v._apply_segment_align_snap(ar)
+    assert abs(ar._pts[lo].y() - 300.0) < 1e-6 and abs(ar._pts[hi].y() - 300.0) < 1e-6
+    assert any(g[0] == "h" for g in v._align_guides)
+
+
+def test_segment_align_snap_vertical_segment_to_rect_edge():
+    # 세로 변이면 x축만 스냅 — 가로 변과 대칭 확인.
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 300, 0, 100, 200)   # 왼쪽 변 x=300
+    ar = _PolyArrowItem(QColor("black"), 2, True)
+    ar._pts = [QPointF(0, 0), QPointF(0, 100), QPointF(200, 100)]
+    ar._routing = "ortho"
+    w._scene.addItem(ar)
+    v = w._view
+    ar._begin_segment_drag(0)   # 세로 변(0,0)-(0,100)
+    lo, hi, horizontal = ar._seg_move
+    assert not horizontal
+    ar._pts[lo] = QPointF(297.0, ar._pts[lo].y())
+    ar._pts[hi] = QPointF(297.0, ar._pts[hi].y())
+    v._apply_segment_align_snap(ar)
+    assert abs(ar._pts[lo].x() - 300.0) < 1e-6 and abs(ar._pts[hi].x() - 300.0) < 1e-6
+    assert any(g[0] == "v" for g in v._align_guides)
+
+
+def test_segment_align_snap_no_snap_beyond_threshold():
+    # 임계 밖이면 세그먼트 좌표·가이드선 그대로.
+    w = CanvasWindow()
+    _mk_rect(w._scene, w.make_pen(), 300, 300, 100, 60)
+    ar = _PolyArrowItem(QColor("black"), 2, True)
+    ar._pts = [QPointF(0, 0), QPointF(100, 0), QPointF(100, 200)]
+    ar._routing = "ortho"
+    w._scene.addItem(ar)
+    v = w._view
+    ar._begin_segment_drag(0)
+    lo, hi, _h = ar._seg_move
+    ar._pts[lo] = QPointF(ar._pts[lo].x(), 250.0)   # 임계(10) 밖
+    ar._pts[hi] = QPointF(ar._pts[hi].x(), 250.0)
+    v._apply_segment_align_snap(ar)
+    assert abs(ar._pts[lo].y() - 250.0) < 1e-6 and v._align_guides == []
+
+
+
+
 def test_stretch_grips_pure():
     # [2b] grip 수집 — 네모=4모서리, 선/화살표/폴리=끝점들.
     w = CanvasWindow()

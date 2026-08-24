@@ -4786,6 +4786,21 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self.update()
         self._sync_label()
 
+    def _nudge_segment_axis(self, lo: int, hi: int, horizontal: bool, delta: float):
+        """[실사용 지적 2026-08-25] `_apply_segment_align_snap`(core_view.py) 전용 — 세그먼트
+        드래그가 이미 확정한 lo/hi 점을 다른 도형과의 정렬 스냅만큼 마저 보정한다. delta는
+        씬 단위지만 이 클래스의 로컬좌표는 pos()만큼의 평행이동이라 그대로 더해도 된다
+        (`_drag_segment_to`의 자체 정렬 스냅도 같은 가정)."""
+        self.prepareGeometryChange()
+        if horizontal:
+            self._pts[lo] = QPointF(self._pts[lo].x(), self._pts[lo].y() + delta)
+            self._pts[hi] = QPointF(self._pts[hi].x(), self._pts[hi].y() + delta)
+        else:
+            self._pts[lo] = QPointF(self._pts[lo].x() + delta, self._pts[lo].y())
+            self._pts[hi] = QPointF(self._pts[hi].x() + delta, self._pts[hi].y())
+        self.update()
+        self._sync_label()
+
     def _end_segment_drag(self):
         """드래그 종료 — 공선·중복 정점 정리(보호 삽입 잔재 접힘, 끝점은 보존)."""
         if getattr(self, "_seg_move", None) is None:
@@ -5745,6 +5760,15 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
             QTimer.singleShot(0, self._discard_if_empty)
         else:
             self.setSelected(False)  # 완료(ESC/Ctrl+Enter) 후 점선 없이 글자만 — 재편집은 V 도구로
+            # [실사용 피드백 2026-08-25] 편집이 끝나면 그 라벨의 주인(중앙 라벨=도형,
+            # 독립 텍스트=자기 자신)이 선택 상태로 남는다 — 마우스로 다시 클릭 안 해도
+            # 곧바로 이동하거나 Tab/Enter/Alt+방향키를 계속할 수 있도록(마인드맵 "마우스
+            # 없이" 흐름의 핵심). 모든 편집종료 경로(Escape·Ctrl+Enter·클릭 아웃)가 이
+            # focusOutEvent 하나로 모이므로 여기 한 곳만 고치면 된다. 다른 도형을 클릭해
+            # 나가는 경우엔 이 선택이 뒤이은 mousePressEvent의 새 선택으로 바로 덮인다.
+            owner = self.parentItem() or self
+            if owner.scene() is not None:
+                owner.setSelected(True)
 
     def _discard_if_empty(self):
         if not self.toPlainText().strip() and self.scene() is not None:
