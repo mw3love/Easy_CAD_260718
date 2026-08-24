@@ -184,6 +184,21 @@ class _AnnotatorView(QGraphicsView):
         # 세운 아이템들(그 목록 그대로 되돌린다). 자세한 근거는 `_ensure_drag_proxy` 참조.
         self._drag_proxy = None
         self._drag_proxy_set = frozenset()
+        # [성능 후속 2026-08-24 v2] 순수 팬/줌(아이템은 안 움직이고 뷰 변환만 바뀌는 세션)은
+        # 외곽선을 한 번만 지어 재사용 — None이면 매 프레임 라이브 재스캔(기존 동작, 진짜
+        # 아이템 드래그용), (outline, labels) 튜플이면 캐시 재생. `_ensure_drag_proxy` 참조.
+        self._drag_proxy_static = None
+        # [성능 후속 2026-08-24 v2] 줌(휠)은 팬과 달리 press~release 같은 명확한 경계가 없어
+        # (틱 하나하나가 독립 이벤트) 디바운스 타이머로 "세션"을 흉내낸다 — 미니맵 갱신이
+        # 이미 쓰는 것과 같은 관례(150ms). **지연 생성**(None으로 시작, 실제 휠줌이 처음
+        # 발생할 때만 `_ensure_zoom_end_timer()`가 짓는다) — 즉시 생성하면 줌을 한 번도 안
+        # 쓰는 나머지 씬 대다수까지 `QTimer` 인스턴스를 매번 새로 얹어, 전역 이벤트루프
+        # 스케줄링 특성이 미세하게 바뀐다(전체 pytest 스위트에서 실측: 이 인스턴스화 자체가
+        # 무관한 다른 테스트의 Qt 지연 시그널 타이밍을 건드려 간헐적 플레이크로 이어졌다 —
+        # `docs/pitfalls.md` "검증 방법론"). 실제 줌을 쓰는 세션에서만 존재해야 그 영향이
+        # 그 세션에만 국한된다.
+        self._zoom_session_active = False
+        self._zoom_end_timer = None
         self._align_guides = []      # 그릴 가이드선 [("v", x, y0, y1) | ("h", y, x0, x1)]
         # [실사용 버그 수정 2026-08-13] TRIM 자국 복구 스냅(cut_restore_snap_delta)이 이번
         # 프레임에 dx·dy를 정확히 확정했는지 — True면 mouseMoveEvent가 뒤이어 돌리는 격자
@@ -744,19 +759,71 @@ class _AnnotatorView(QGraphicsView):
         게이트에서만 OR로 얹는다."""
         return getattr(self._owner, "_pan_last", None) is not None
 
+    def _is_zooming(self) -> bool:
+        """[성능 후속 2026-08-24 v2] 지금 휠줌 "세션" 중인가 — 휠은 팬과 달리 press~release
+        같은 경계가 없다(틱 하나하나가 독립 이벤트). `wheelEvent`가 매 틱마다 `_zoom_end_timer`
+        (150ms, 미니맵 디바운스와 같은 관례)를 재시작하는 방식으로 세션을 흉내낸다."""
+        return self._zoom_session_active
+
+    def _view_only_session(self) -> bool:
+        """[성능 후속 2026-08-24 v2] 아이템은 안 움직이고 뷰(팬·줌)만 바뀌는 세션인가 — 이때만
+        프록시 외곽선을 한 번 짓고 재사용해도 안전하다(씬 내용이 세션 내내 그대로이므로).
+        `is_drag_session()`도 같이 True면(팬+아이템드래그가 겹치는 경우는 실사용상 안 생기지만
+        방어적으로) 라이브 재스캔 경로로 폴백한다."""
+        return (self._is_panning() or self._is_zooming()) and not self.is_drag_session()
+
+    def _ensure_zoom_end_timer(self) -> QTimer:
+        """[성능 후속 2026-08-24 v2] `_zoom_end_timer`를 처음 쓸 때만 짓는다(지연 생성) —
+        `__init__`에서 즉시 만들면 줌을 한 번도 안 쓰는 대다수 뷰 인스턴스까지 매번 새
+        `QTimer`를 얹어(전체 pytest 스위트에선 거의 900개) 전역 이벤트루프 스케줄링을
+        미세하게 흔든다는 게 실측으로 드러났다(다른 무관한 테스트의 Qt 지연 시그널 타이밍이
+        영향받아 간헐적 플레이크로 이어짐, `docs/pitfalls.md` "검증 방법론"). 실제 휠줌을
+        쓰는 세션에서만 만들어 그 영향 범위를 그 세션으로 좁힌다."""
+        if self._zoom_end_timer is None:
+            self._zoom_end_timer = QTimer(self)
+            self._zoom_end_timer.setSingleShot(True)
+            self._zoom_end_timer.timeout.connect(self._end_zoom_session)
+        return self._zoom_end_timer
+
+    def _end_zoom_session(self):
+        """[성능 후속 2026-08-24 v2] `_zoom_end_timer` 만료(마지막 휠 틱 후 150ms간 무응답)
+        시 발화 — 줌 세션을 끝내고, 팬·아이템드래그가 겹쳐 있지 않으면 프록시도 해제해
+        원래 화질을 복원한다.
+
+        살아있으면 `_zoom_end_timer.stop()`을 먼저 호출한다 — 이 메서드가 타이머의 정상
+        만료 경로 말고도 **호출될 수 있어서다**(다른 세션이 이 창을 재사용하는 경우는 없지만,
+        이 메서드를 직접 불러 조기 종료를 흉내내는 테스트가 있다). 멈추지 않으면 실제 타이머는
+        여전히 카운트다운 중이라 나중에 **한 번 더** 발화해 — 창을 안 닫는 다른 테스트들
+        틈에서 무관한 나중 시점에 `scene.changed`를 다시 쏘는 소음이 됐다(실사용 버그는
+        아님 — 프로덕션에선 타이머 콜백 자신 말고 이 메서드를 부르는 곳이 없다)."""
+        if self._zoom_end_timer is not None:
+            self._zoom_end_timer.stop()
+        self._zoom_session_active = False
+        if not (self.is_drag_session() or self._is_panning()):
+            self._end_drag_proxy()
+
     def _ensure_drag_proxy(self):
-        """드래그 세션 또는 팬이 시작됐고 씬이 충분히 크면 프록시를 켠다(이미 켜져 있으면 무시).
+        """드래그 세션·팬·줌 중 하나가 시작됐고 씬이 충분히 크면 프록시를 켠다(이미 켜져
+        있으면 무시).
 
         `mouseMoveEvent` 맨 위에서 부른다 — 드래그 종류가 6가지(`is_drag_session()` 참조)+팬
         이라 press 경로마다 심으면 하나를 빠뜨리기 쉬운데, 어떤 드래그든 mouseMove를 반드시
-        지나가므로 한 곳으로 덮인다. 유휴 hover에서는 둘 다 False라 불리언 검사 두 번으로 끝난다.
+        지나가므로 한 곳으로 덮인다(줌은 `wheelEvent`가 직접 부른다). 유휴 hover에서는 셋 다
+        False라 불리언 검사 세 번으로 끝난다.
 
         [성능 후속 2026-08-24] 팬은 원래 이 프록시 대상이 아니었다 — 아무것도 선택 안 하고
         화면만 이동해도 1000개 문서에서 프레임당 ~74ms(60fps 예산 4.4배)였던 것을 실측으로
-        확인, `_is_panning()`을 OR로 얹어 확장했다(프록시 강제 ON 실측 시 ~42ms로 개선,
-        여전히 예산 2.5배 초과 — 남은 격차는 Qt 자체 더티영역 계산 비용이라 LOD 없이는
-        못 넘는다, `docs/perf_plan_500_1000.md`의 render_fit과 같은 한계)."""
-        if self._drag_proxy is not None or not (self.is_drag_session() or self._is_panning()):
+        확인, `_is_panning()`을 OR로 얹어 확장했다.
+
+        [성능 후속 2026-08-24 v2] 그 확장만으론 여전히 예산 1.7~2.5배가 남았다 — cProfile로
+        보니 그 잔여의 97%가 Qt 쪽이 아니라 **우리 자신의** `_draw_drag_proxy`였다: 팬 중
+        `drawForeground`의 `exposed` 인자가 매 프레임 뷰포트 전체(실측 — 1개짜리 최소 씬으로도
+        재현, offscreen·실제 창 둘 다 동일)라 사실상 씬 전체를 매 프레임 다시 스캔·재구성하고
+        있었다. 팬·줌은 **뷰 변환만 바뀌고 아이템은 안 움직이므로**(`_view_only_session()`),
+        외곽선을 세션 시작 시 한 번만 지어(`_build_drag_proxy_static`) 재생하면 된다 — 줌도
+        같은 게이트에 얹었다(`_is_zooming()`)."""
+        if self._drag_proxy is not None or not (
+                self.is_drag_session() or self._is_panning() or self._is_zooming()):
             return
         sc = self.scene()
         if sc is None:
@@ -772,10 +839,34 @@ class _AnnotatorView(QGraphicsView):
             it.setFlag(flag, True)
         self._drag_proxy = proxied
         self._drag_proxy_set = set(proxied)   # `_draw_drag_proxy`의 O(1) 소속 판정용
+        self._drag_proxy_static = (
+            self._build_drag_proxy_static(proxied) if self._view_only_session() else None)
         self.viewport().update()
 
+    def _build_drag_proxy_static(self, proxied):
+        """[성능 후속 2026-08-24 v2] 순수 팬/줌 세션용 외곽선을 **한 번만** 짓는다.
+
+        그리는 내용은 `_draw_drag_proxy`의 라이브 경로와 완전히 같다(같은 `_item_center_path`
+        재사용) — 차이는 매 프레임 `exposed` 기준으로 씬을 다시 훑는 대신, 세션 시작 시
+        확정된 `proxied` 목록을 여기서 딱 한 번 순회해 결과(외곽선 하나 + 라벨 rect/텍스트/
+        폰트 튜플)를 캐싱하는 것뿐. 팬·줌 세션 내내 아이템 위치·모양이 안 바뀌므로 안전하다."""
+        outline = QPainterPath()
+        labels = []
+        for it in proxied:
+            try:
+                if isinstance(it, QGraphicsTextItem):
+                    text = it.toPlainText()
+                    if text:
+                        labels.append((it.sceneBoundingRect(), text, it.font()))
+                    continue
+                outline.addPath(it.mapToScene(_item_center_path(it)))
+            except (RuntimeError, AttributeError):
+                continue              # 이 아이템만 건너뛴다 — 세션 전체를 깨지 않는다
+        return outline, labels
+
     def _end_drag_proxy(self):
-        """프록시 해제 — `_end_drag_session()`(mouseReleaseEvent의 finally)에서만 부른다.
+        """프록시 해제 — `_end_drag_session()`(mouseReleaseEvent의 finally)·`_end_zoom_session()`
+        에서만 부른다.
 
         해제가 누락되면 **아이템이 화면에서 통째로 사라진 것처럼 보이므로**(2-D의 가장 큰
         위험) 진입점을 조기 return 13곳이 자동으로 덮이는 그 finally 하나로 묶는다.
@@ -785,6 +876,7 @@ class _AnnotatorView(QGraphicsView):
             return
         items, self._drag_proxy = self._drag_proxy, None
         self._drag_proxy_set = frozenset()
+        self._drag_proxy_static = None
         flag = QGraphicsItem.GraphicsItemFlag.ItemHasNoContents
         vp = self.viewport()
         vp.setUpdatesEnabled(False)
@@ -807,9 +899,30 @@ class _AnnotatorView(QGraphicsView):
         알고 있고 포트/cut 자국까지 반영하므로 타입 분기를 새로 만들 필요가 없다.
 
         라벨 글자는 계속 그린다 — 2-C에서 사용자가 "라벨은 장식이 아니라 내용"이라며
-        억제를 되돌린 결정을 지킨다(대가 실측 15.1ms, 그래도 현행 대비 -46%)."""
+        억제를 되돌린 결정을 지킨다(대가 실측 15.1ms, 그래도 현행 대비 -46%).
+
+        [성능 후속 2026-08-24 v2] `_drag_proxy_static`이 있으면(팬/줌) 캐시를 그대로 재생 —
+        `exposed`는 팬 중 실측상 거의 항상 뷰포트 전체라 씬 재스캔이 매 프레임 반복이었다.
+        아이템이 실제로 움직이는 드래그는 이 캐시가 없어(`None`) 아래 라이브 경로 그대로다."""
         sc = self.scene()
         if not self._drag_proxy or sc is None:
+            return
+        painter.save()
+        pen = QPen(QColor(_SUBTEXT))
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        s = self._view_scale()
+        align = int(Qt.AlignmentFlag.AlignCenter)
+        if self._drag_proxy_static is not None:
+            outline, labels = self._drag_proxy_static
+            painter.drawPath(outline)
+            for r, text, font in labels:
+                if r.height() * s < self._DRAG_PROXY_MIN_TEXT_PX:
+                    continue
+                painter.setFont(font)
+                painter.drawText(r, align, text)
+            painter.restore()
             return
         # 화면 밖 컬링은 **씬의 공간쿼리**로 한다 — 프록시 목록을 직접 훑으며
         # `sceneBoundingRect()`를 부르면 그 호출만으로 오버레이 비용의 40%가 나갔다(실측).
@@ -817,11 +930,6 @@ class _AnnotatorView(QGraphicsView):
         # ⚠ 모드를 반드시 `IntersectsItemBoundingRect`로 준다 — 기본값은 `shape()`를 불러
         #    아이템마다 경로를 만든다.
         mine = self._drag_proxy_set
-        painter.save()
-        pen = QPen(QColor(_SUBTEXT))
-        pen.setCosmetic(True)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
         outline = QPainterPath()
         labels = []
         for it in sc.items(exposed, Qt.ItemSelectionMode.IntersectsItemBoundingRect):
@@ -841,8 +949,6 @@ class _AnnotatorView(QGraphicsView):
         # 내용")이 지키려는 것은 "무엇을 옮기는지 읽히는 것"인데, 문서 전체를 화면에 넣은
         # 축소 배율에서는 글자 높이가 3px 남짓이라 어차피 못 읽는다 — 그 배율에서 텍스트를
         # 그리는 건 순수 낭비다(1000개 문서 fit 줌 실측 15.3ms).
-        s = self._view_scale()
-        align = int(Qt.AlignmentFlag.AlignCenter)
         for lbl, text in labels:
             r = lbl.sceneBoundingRect()
             if r.height() * s < self._DRAG_PROXY_MIN_TEXT_PX:
@@ -2152,6 +2258,11 @@ class _AnnotatorView(QGraphicsView):
                     self._owner.adjust_item_property(it, step)
                     event.accept()
                     return
+        # [성능 후속 2026-08-24 v2] 연속 휠 틱을 "줌 세션"으로 묶어 프록시를 켠다 — 틱마다
+        # 타이머를 재시작해, 마지막 틱 후 150ms 무응답이면 `_end_zoom_session`이 정리한다.
+        self._zoom_session_active = True
+        self._ensure_drag_proxy()
+        self._ensure_zoom_end_timer().start(150)
         self._owner._on_wheel_zoom(dy)
 
     # ---- Shift 제약 적용 ---------------------------------------------------

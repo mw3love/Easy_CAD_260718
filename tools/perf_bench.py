@@ -52,8 +52,8 @@ try:
 except (AttributeError, OSError):
     pass
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
-from PyQt6.QtGui import QImage, QPainter
+from PyQt6.QtCore import QPointF, QPoint, QRectF, Qt
+from PyQt6.QtGui import QImage, QPainter, QWheelEvent
 from PyQt6.QtWidgets import QApplication
 
 from easycad.canvas.host import CanvasWindow
@@ -406,15 +406,29 @@ class Bench:
         self._tick()
 
     def scn_zoom(self):
-        # [2026-08-24] in/out 교대라 트라이얼 내부에서는 거의 상쇄되지만, 다른 프레임형
-        # 시나리오와 관례를 맞추기 위해(그리고 부동소수 누적오차 방지) 트라이얼 사이에도
-        # 원래 변환으로 되돌린다.
+        """[2026-08-24 v2] `win._on_wheel_zoom()`을 직접 부르는 대신 실제 휠 이벤트를
+        `wheelEvent()`에 합성해 흘려보낸다 — 실제 앱은 마우스휠이 `core_view.wheelEvent()`를
+        지나가야 줌 세션(`_zoom_session_active`)이 잡히고 그래야 프록시(2026-08-24 v2 확장)가
+        켜지는데, `_on_wheel_zoom()` 직접호출은 그 경로를 건너뛰어 이 최적화가 벤치에서만
+        발동 안 하는 "효과 0%"를 찍는다(`begin_drag`/`begin_pan`과 같은 이유). 실측으로도
+        직접호출 55ms대 vs 실제 이벤트 경로 15ms대로 크게 갈렸다 — 원인 불명이나(오프스크린
+        `AnchorUnderMouse`가 실제 커서 위치를 참조하는 등 추정) 실제 경로 쪽이 프로덕션과
+        일치하므로 이쪽을 쓴다.
+
+        [2026-08-24] in/out 교대라 트라이얼 내부에서는 거의 상쇄되지만, 다른 프레임형
+        시나리오와 관례를 맞추기 위해(그리고 부동소수 누적오차 방지) 트라이얼 사이에도
+        원래 변환으로 되돌린다."""
         xf0 = self.win._view.transform()
+        pos = QPointF(self.win._view.viewport().rect().center())
+        def wheel(dy):
+            e = QWheelEvent(pos, pos, QPoint(0, 0), QPoint(0, dy), Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+            self.win._view.wheelEvent(e)
         def reset():
             self.win._view.setTransform(xf0)
             self._tick()
         def one(i):
-            self.win._on_wheel_zoom(120 if i % 2 == 0 else -120)
+            wheel(120 if i % 2 == 0 else -120)
             self._tick()
         self._time("zoom", 20, one, reset=reset)
 

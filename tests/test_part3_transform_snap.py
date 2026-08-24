@@ -2178,6 +2178,30 @@ def _mid_btn(v, etype, local, glob=None):
         v.mouseReleaseEvent(e)
 
 
+def _drain_and_close(w):
+    """[성능 후속 2026-08-24 v2 회귀 수정] 이 파일의 기존 관례는 테스트가 끝나도 창을 안
+    닫는다 — 대부분의 테스트는 무해하지만, `_big_scene`(210+ 아이템) 위에서 `ItemHasNoContents`
+    플래그를 여러 번 넣었다 뺐다 하는 이 파일의 팬/줌 프록시 테스트들은 `QGraphicsScene.changed`
+    를 매번 **곧바로**가 아니라 다음 이벤트루프 처리 시점까지 미룬다(Qt 자체 동작) — 안 닫힌
+    창이 스위트 전체에 걸쳐 계속 쌓이다(실측: 이 파일 끝 무렵 90개+) 훨씬 나중의 무관한 테스트가
+    `processEvents()`를 부르는 순간 한꺼번에 발화해, 그 테스트의 **자기 자신과 무관한** 미니맵
+    dirty 플래그를 건드리는 실제 스위트 전체 한정 플레이크로 이어졌다(`docs/pitfalls.md`
+    "검증 방법론").
+
+    `close()`만으론 부족하다 — Qt에서 `close()`는 위젯을 숨길 뿐 C++ 객체를 없애지 않는다
+    (`deleteLater()`가 필요, Python 쪽 지역변수 `w`가 함수 끝까지 살아있어 참조카운트로도 안
+    지워짐). `deleteLater()` + 몇 번의 `processEvents()`로 실제 파괴까지 끝내야 이 창의
+    QTimer·씬이 스위트의 "영원히 안 닫히는 창" 더미에 합류하지 않는다 — 더미 자체(기존 관례,
+    이 세션이 만든 게 아님)는 그대로 남지만, 최소한 이 세션이 새로 추가하는 3개 창은 거기
+    보태지 않는다."""
+    for _ in range(3):
+        QApplication.processEvents()
+    w.close()
+    w.deleteLater()
+    for _ in range(3):
+        QApplication.processEvents()
+
+
 def test_drag_proxy_activates_during_pan():
     """[성능 후속 2026-08-24] 아무것도 선택·이동 안 해도(순수 화면 팬) 프록시가 켜져야 한다.
 
@@ -2207,3 +2231,121 @@ def test_drag_proxy_activates_during_pan():
     flag = _RectItem.GraphicsItemFlag.ItemHasNoContents
     leaked = [it for it in w._scene.items() if it.flags() & flag]
     assert not leaked, f"플래그가 {len(leaked)}개 아이템에 남았다(화면에서 사라진다)"
+    _drain_and_close(w)
+
+
+def test_drag_proxy_pan_uses_static_cache_and_still_draws():
+    """[성능 후속 2026-08-24 v2] 팬 중엔 외곽선을 세션당 한 번만 짓고 재사용해야 한다.
+
+    cProfile 실측으로 확인: 팬 중 `drawForeground`의 `exposed` 인자가 매 프레임 뷰포트
+    전체였다(1개짜리 최소 씬으로도 재현) — v1(프록시만 켜짐)의 라이브 재스캔 경로가 매
+    프레임 씬을 사실상 통째로 다시 훑고 있어 여전히 예산 초과였다. `_drag_proxy_static`
+    캐시가 실제로 쓰이는지, 그리고 화면이 비지 않는지(2-D의 가장 큰 위험) 함께 검증한다."""
+    w = CanvasWindow()
+    w.resize(400, 300)
+    w.show()
+    _big_scene(w)
+    v = w._view
+    QApplication.processEvents()
+    bg = w._scene.backgroundBrush().color().rgb() & 0xFFFFFF
+
+    def ink(img):
+        return sum(1 for y in range(img.height()) for x in range(img.width())
+                   if (img.pixel(x, y) & 0xFFFFFF) != bg)
+
+    idle = ink(_render_view(v))
+    _mid_btn(v, "press", QPointF(50, 50))
+    _mid_btn(v, "move", QPointF(60, 58))
+    assert v._drag_proxy_static is not None, "팬 중인데 정적 캐시가 안 켜졌다"
+    outline, labels = v._drag_proxy_static
+    assert not outline.isEmpty(), "캐시된 외곽선이 비었다"
+
+    with _paint_counter(_RectItem) as calls:
+        panning = ink(_render_view(v))
+    assert not calls, f"팬 중인데 아이템 paint()가 {len(calls)}회 불렸다"
+    assert idle > 0, "유휴 상태에서 아무것도 안 그려졌다(테스트 전제 실패)"
+    assert panning > idle * 0.3, \
+        f"팬 프록시 중 화면이 사실상 비었다(유휴 {idle} / 팬 중 {panning})"
+
+    # 팬 중 계속 움직여도 캐시가 재사용될 뿐 다시 지어지지 않아야 한다(같은 객체 identity).
+    cached_outline = v._drag_proxy_static[0]
+    _mid_btn(v, "move", QPointF(65, 62))
+    assert v._drag_proxy_static[0] is cached_outline, "팬 중 프레임마다 외곽선이 재구성됐다"
+
+    _mid_btn(v, "release", QPointF(65, 62))
+    assert v._drag_proxy_static is None, "팬 종료 후에도 정적 캐시가 남았다"
+    _drain_and_close(w)
+
+
+def _wheel_event(v, dy: int, pos=None):
+    """휠 이벤트 합성 — `_mid_btn`(가운데버튼)과 같은 패턴, 줌 세션 트리거용."""
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtCore import QPoint
+    pos = pos if pos is not None else QPointF(v.viewport().rect().center())
+    e = QWheelEvent(pos, pos, QPoint(0, 0), QPoint(0, dy), Qt.MouseButton.NoButton,
+                    Qt.KeyboardModifier.NoModifier, Qt.ScrollPhase.NoScrollPhase, False)
+    v.wheelEvent(e)
+
+
+def test_drag_proxy_activates_during_zoom_session_and_expires():
+    """[성능 후속 2026-08-24 v2] 연속 휠 줌도 팬과 같은 프록시(+정적 캐시) 대상이어야 한다.
+
+    휠은 press~release 같은 경계가 없어 `_zoom_end_timer`(150ms 디바운스)로 세션을 흉내낸다
+    — 실제 타이머 만료를 기다리지 않고 `_end_zoom_session()`을 직접 불러 같은 정리 경로가
+    도는지 검증한다(단위 테스트에서 실제 QTimer를 기다리는 건 취약하다)."""
+    w = CanvasWindow()
+    w.resize(400, 300)
+    w.show()
+    _big_scene(w)
+    v = w._view
+    QApplication.processEvents()
+
+    assert v._zoom_session_active is False
+    _wheel_event(v, 120)
+    assert v._zoom_session_active is True, "휠 틱 후 줌 세션이 안 켜졌다"
+    assert v._drag_proxy is not None, "줌 세션 중인데 프록시가 안 켜졌다"
+    assert v._drag_proxy_static is not None, "줌도 뷰만 바뀌므로 정적 캐시 대상이어야 한다"
+
+    _wheel_event(v, -120)   # 연속 틱 — 세션이 계속 유지돼야 한다
+    assert v._zoom_session_active is True
+    assert v._drag_proxy is not None
+    assert v._zoom_end_timer.isActive(), "테스트 전제: 아직 타이머가 카운트다운 중이어야 한다"
+
+    v._end_zoom_session()   # 타이머 만료를 직접 흉내(실제 150ms를 기다리지 않음)
+    assert v._zoom_session_active is False
+    assert v._drag_proxy is None, "줌 세션 종료 후에도 프록시가 남았다"
+    # [회귀 방지] 직접 호출로 조기 종료해도 실제 타이머까지 멈춰야 한다 — 안 그러면 원래
+    # 카운트다운이 나중에(이 테스트가 끝난 뒤, 창을 안 닫는 다른 테스트들 틈에서) 한 번 더
+    # 발화해 무관한 시점에 `scene.changed`를 다시 쏘는 소음이 된다(실제로 겪은 스위트
+    # 전체 한정 플레이크 — 이 창을 닫지 않는 게 이 파일의 기존 관례라 재발하기 쉽다).
+    assert not v._zoom_end_timer.isActive(), "조기 종료 후에도 실제 타이머가 살아있다"
+    flag = _RectItem.GraphicsItemFlag.ItemHasNoContents
+    leaked = [it for it in w._scene.items() if it.flags() & flag]
+    assert not leaked, f"플래그가 {len(leaked)}개 아이템에 남았다(화면에서 사라진다)"
+    _drain_and_close(w)
+
+
+def test_drag_proxy_zoom_session_not_ended_while_still_panning():
+    """[성능 후속 2026-08-24 v2] 줌 타이머가 만료돼도, 아직 팬이 진행 중이면 프록시를 끄면
+    안 된다(방어적 케이스 — 실사용상 거의 안 겹치지만 `_end_zoom_session`이 다른 세션까지
+    같이 꺼버리는 회귀를 막는다)."""
+    w = CanvasWindow()
+    w.resize(400, 300)
+    w.show()
+    _big_scene(w)
+    v = w._view
+    QApplication.processEvents()
+
+    _mid_btn(v, "press", QPointF(50, 50))
+    _mid_btn(v, "move", QPointF(60, 58))
+    assert v._drag_proxy is not None
+    _wheel_event(v, 120)
+    assert v._zoom_session_active is True
+
+    v._end_zoom_session()
+    assert v._zoom_session_active is False
+    assert v._drag_proxy is not None, "팬이 아직 진행 중인데 프록시가 꺼졌다"
+
+    _mid_btn(v, "release", QPointF(60, 58))
+    assert v._drag_proxy is None
+    _drain_and_close(w)

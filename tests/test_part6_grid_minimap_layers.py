@@ -241,13 +241,23 @@ def test_minimap_bounds_cached_and_invalidated_by_scene_change():
     # addItem()의 scene.changed 방출은 비동기(이벤트 루프에 제어가 돌아갈 때 발행)라, 아직
     # 소비되기 전에 _refit()을 먼저 부르면 그 신호가 이후 processEvents()에서 뒤늦게 도착해
     # 아래 '줌은 dirty 안 켠다' 검증을 오염시킨다 — 먼저 비우고 나서 _refit()으로 소비한다.
-    _app.processEvents()
+    # [2026-08-24 스위트 전체 한정 플레이크 수정] processEvents() 「한 번」으론 밀린 큐를
+    # 항상 다 못 비운다 — `perf_bench.py`의 `_paint_tick`이 이미 같은 이유로 3회 flush를
+    # 쓴다(2026-08-15, "processEvents x1은 페인트를 합쳐 누락"). 이 테스트는 그동안 1회로도
+    # 대체로 충분했지만(큐가 한가할 때), 팬/줌 프록시 테스트들(`test_part3_transform_snap.py`)
+    # 이 창을 계속 열어둔 채 QTimer를 추가하며 전역 이벤트 큐가 바빠지자 1회로는 addItem의
+    # 지연 신호가 간헐적으로 못 빠져나가 아래 '줌은 dirty 안 켠다' 검증이 스위트 전체 실행
+    # 한정으로 가끔 깨졌다(격리 실행은 항상 통과 — 순서·부하 의존 플레이크였다). 같은 관례로
+    # 3회 flush.
+    for _ in range(3):
+        _app.processEvents()
     mm._refit()
     assert mm._bounds_dirty is False
     cached = mm._bounds_cache
     # 순수 뷰 변환(줌)은 scene.changed를 안 태우므로 dirty가 그대로 False 유지.
     w._on_wheel_zoom(1)
-    _app.processEvents()
+    for _ in range(3):   # 위와 같은 이유(2026-08-24) — 이 체크포인트도 큐 배출이 필요
+        _app.processEvents()
     assert mm._bounds_dirty is False
     # 아이템 이동(실제 콘텐츠 변경)은 scene.changed를 태워 dirty=True.
     # [Qt] scene.changed는 비동기 시그널(이벤트 루프에 제어가 돌아갈 때 발행) — processEvents 필요.
