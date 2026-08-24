@@ -736,14 +736,27 @@ class _AnnotatorView(QGraphicsView):
     _DRAG_PROXY_MIN_ITEMS = 200   # 이보다 작은 씬은 이미 60fps 예산 안 — 화면을 바꿀 이유가 없다
     _DRAG_PROXY_MIN_TEXT_PX = 6.0   # 이보다 작게 렌더될 라벨 글자는 못 읽으므로 안 그린다
 
-    def _ensure_drag_proxy(self):
-        """드래그 세션이 시작됐고 씬이 충분히 크면 프록시를 켠다(이미 켜져 있으면 무시).
+    def _is_panning(self) -> bool:
+        """[성능 후속 2026-08-24] 지금 화면(뷰포트)을 팬 중인가 — 가운데버튼·우클릭 팬·손모드
+        빈영역 드래그가 전부 `_win_drag_start`~`_win_drag_end`(호스트 `_pan_last`)를 공유해
+        하나로 잡힌다. `is_drag_session()`과 합치지 않고 별도로 두는 이유: 그쪽은 A* 재라우팅
+        유예까지 겸하는데(§9의 문서 참조) 팬은 아이템을 안 옮기니 라우팅과는 무관 — 프록시
+        게이트에서만 OR로 얹는다."""
+        return getattr(self._owner, "_pan_last", None) is not None
 
-        `mouseMoveEvent` 맨 위에서 부른다 — 드래그 종류가 6가지(`is_drag_session()` 참조)라
-        press 경로마다 심으면 하나를 빠뜨리기 쉬운데, 어떤 드래그든 mouseMove를 반드시
-        지나가므로 한 곳으로 덮인다. 유휴 hover에서는 `is_drag_session()`이 False라
-        불리언 검사 한 번으로 끝난다."""
-        if self._drag_proxy is not None or not self.is_drag_session():
+    def _ensure_drag_proxy(self):
+        """드래그 세션 또는 팬이 시작됐고 씬이 충분히 크면 프록시를 켠다(이미 켜져 있으면 무시).
+
+        `mouseMoveEvent` 맨 위에서 부른다 — 드래그 종류가 6가지(`is_drag_session()` 참조)+팬
+        이라 press 경로마다 심으면 하나를 빠뜨리기 쉬운데, 어떤 드래그든 mouseMove를 반드시
+        지나가므로 한 곳으로 덮인다. 유휴 hover에서는 둘 다 False라 불리언 검사 두 번으로 끝난다.
+
+        [성능 후속 2026-08-24] 팬은 원래 이 프록시 대상이 아니었다 — 아무것도 선택 안 하고
+        화면만 이동해도 1000개 문서에서 프레임당 ~74ms(60fps 예산 4.4배)였던 것을 실측으로
+        확인, `_is_panning()`을 OR로 얹어 확장했다(프록시 강제 ON 실측 시 ~42ms로 개선,
+        여전히 예산 2.5배 초과 — 남은 격차는 Qt 자체 더티영역 계산 비용이라 LOD 없이는
+        못 넘는다, `docs/perf_plan_500_1000.md`의 render_fit과 같은 한계)."""
+        if self._drag_proxy is not None or not (self.is_drag_session() or self._is_panning()):
             return
         sc = self.scene()
         if sc is None:

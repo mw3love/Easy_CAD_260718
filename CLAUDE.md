@@ -1212,6 +1212,21 @@ symbol_library/
   직접 보내 재현·확인 + 사용자의 실제 OS 드래그 재확인까지 완료, 전체 889종 통과. 상세:
   `docs/history/2026-08.md` 같은 제목, 함정: `docs/pitfalls.md` "Qt 시그널·이벤트 발화
   조건" 절 끝부분(신규 기록).
+- **팬(화면이동)도 드래그 프록시 대상으로 확장 + perf_bench pan/zoom reset 버그 수정
+  (2026-08-24)** — "1000개 문서에서 아무것도 선택 안 해도 화면 팬이 Figma보다 느리다"는
+  사용자 보고를 조사, `is_drag_session()`(2026-08-15 성능계획 2-D 게이트)이 아이템 이동
+  플래그만 보고 팬(가운데버튼·우클릭·손모드 빈영역 드래그)은 처음부터 프록시 대상 밖이었던
+  것을 확인 — sustained pan 실측 median 73.5ms(60fps 예산 4.4배)였다가 프록시 강제 ON
+  대조군에서 42.0ms로 개선되는 것으로 원인 확정. `_ensure_drag_proxy()` 게이트에
+  `_is_panning()`(호스트 `_pan_last` 기반, 팬 4종 공유)을 OR로 추가하는 surgical 수정 —
+  기존 정리 경로(`_end_drag_session`의 `try/finally`)가 이미 팬 release도 덮고 있어 추가
+  위험 없음. `perf_bench.py`의 `scn_pan`/`scn_zoom`에도 드래그 시나리오와 같은 관례로
+  trial 간 리셋을 추가(reset 누락이 "가장 싼 우연"을 best로 고르던 methodology 버그,
+  2026-08-15에 드래그 계열이 겪은 것과 같은 재발). 고쳐진 하네스로 재측정: 팬 1프레임
+  28.95ms(x1.7 초과, 실제 마우스이벤트 경로 median 26~28ms와 자릿수 일치) — ⚠ **완전한
+  해결은 아니다**, 남은 격차는 Qt 자체 더티영역 계산 비용이라 render_fit과 같은 LOD 필요
+  한계. 줌(휠)은 이번 스코프 밖(x3.2 초과 그대로). 신규 pytest 1종, 전체 893종 통과. 상세:
+  `docs/history/2026-08.md` 같은 제목, 함정: `docs/pitfalls.md` "검증 방법론" 절 끝부분.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

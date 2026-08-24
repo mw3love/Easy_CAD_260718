@@ -176,6 +176,22 @@ class Bench:
         self.win._view._end_drag_session()
         self._tick()
 
+    def begin_pan(self):
+        """[성능 후속 2026-08-24] 팬 진입 상태를 흉내낸다 — `begin_drag`와 같은 이유다.
+        실제 앱은 `mouseMoveEvent`가 매번 `_ensure_drag_proxy()`를 부르는데, 그 게이트가
+        보는 `_pan_last`(호스트 팬 상태)는 이제 팬도 프록시 대상으로 잡으므로(`core_view.
+        _is_panning`), 마우스 이벤트를 안 흘리는 이 벤치도 그 상태를 직접 세워야 프록시가
+        켜진 채로 재진다 — 안 하면 이 수정의 효과가 벤치에서만 0%로 찍힌다."""
+        self.win._win_drag_start(QPointF(0, 0))
+        self.win._view._ensure_drag_proxy()
+
+    def end_pan(self):
+        """팬 종료 — 실제 `mouseReleaseEvent`가 부르는 정리 경로 그대로(`_end_drag_session`
+        이 프록시 해제까지 겸한다) + `_pan_last` 해제."""
+        self.win._win_drag_end()
+        self.win._view._end_drag_session()
+        self._tick()
+
     def drag_reset(self, snap):
         """드래그 시나리오용 reset — 세션을 끝내 미룬 것을 정리한 뒤 배치를 복원하고 다시 시작."""
         self.end_drag()
@@ -390,20 +406,45 @@ class Bench:
         self._tick()
 
     def scn_zoom(self):
+        # [2026-08-24] in/out 교대라 트라이얼 내부에서는 거의 상쇄되지만, 다른 프레임형
+        # 시나리오와 관례를 맞추기 위해(그리고 부동소수 누적오차 방지) 트라이얼 사이에도
+        # 원래 변환으로 되돌린다.
+        xf0 = self.win._view.transform()
+        def reset():
+            self.win._view.setTransform(xf0)
+            self._tick()
         def one(i):
             self.win._on_wheel_zoom(120 if i % 2 == 0 else -120)
             self._tick()
-        self._time("zoom", 20, one)
+        self._time("zoom", 20, one, reset=reset)
 
     def scn_pan(self):
-        # 팬은 스크롤바 값 직접 조작으로 구현돼 있다(core_view 주석 참조) — 같은 경로로 흉내낸다.
+        """팬은 스크롤바 값 직접 조작으로 구현돼 있다(core_view 주석 참조) — 같은 경로로
+        흉내낸다.
+
+        [2026-08-24 방법론 수정] `reset` 없이 20스텝 × trial을 계속 이어 붙이면 스크롤
+        위치가 시도마다 누적 이동해 콘텐츠 밖(빈 캔버스)까지 벗어날 수 있다 — best-of-N이
+        "가장 먼저 빈 화면에 닿은 시도"를 고르는 셈이라 실제보다 낙관적인 값이 나온다
+        (사용자 실사용 보고로 발견: 이 버그가 있는 채로는 1000개 문서에서 "OK"가 찍혔지만,
+        매 스텝 콘텐츠 안에 머무는 sustained 측정은 60fps 예산의 4배 이상이었다). 드래그
+        시나리오(`drag_reset`)와 같은 관례로 시도 전 원위치로 되돌린다.
+
+        [같은 수정, 팬 프록시 반영] 팬도 이제 드래그 프록시 대상이다(`core_view.
+        _is_panning`, 2026-08-24) — `begin_pan`/`end_pan`으로 실제 진입 상태를 세운다."""
         hb = self.win._view.horizontalScrollBar()
         vb = self.win._view.verticalScrollBar()
+        h0, v0 = hb.value(), vb.value()
+        def reset():
+            self.end_pan()
+            hb.setValue(h0)
+            vb.setValue(v0)
+            self.begin_pan()
         def one(i):
             hb.setValue(hb.value() + 7)
             vb.setValue(vb.value() + 5)
             self._tick()
-        self._time("pan", 20, one)
+        self._time("pan", 20, one, reset=reset)
+        self.end_pan()
 
     def scn_render(self):
         def one(i):

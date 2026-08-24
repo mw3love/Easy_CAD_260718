@@ -2156,3 +2156,54 @@ def test_drag_proxy_restored_on_early_return_release_path():
     assert v._drag_proxy is None, "조기 return 경로에서 프록시가 복원되지 않았다"
     leaked = [it for it in w._scene.items() if it.flags() & flag]
     assert not leaked, f"플래그가 {len(leaked)}개 아이템에 남았다(화면에서 사라진다)"
+
+
+def _mid_btn(v, etype, local, glob=None):
+    """가운데버튼 마우스 이벤트 합성 — `_rmb`(우클릭)와 같은 패턴, 팬 트리거용."""
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    glob = glob if glob is not None else local
+    M = Qt.MouseButton.MiddleButton
+    if etype == "press":
+        e = QMouseEvent(QEvent.Type.MouseButtonPress, local, glob, M, M,
+                        Qt.KeyboardModifier.NoModifier)
+        v.mousePressEvent(e)
+    elif etype == "move":
+        e = QMouseEvent(QEvent.Type.MouseMove, local, glob,
+                        Qt.MouseButton.NoButton, M, Qt.KeyboardModifier.NoModifier)
+        v.mouseMoveEvent(e)
+    else:
+        e = QMouseEvent(QEvent.Type.MouseButtonRelease, local, glob,
+                        M, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
+        v.mouseReleaseEvent(e)
+
+
+def test_drag_proxy_activates_during_pan():
+    """[성능 후속 2026-08-24] 아무것도 선택·이동 안 해도(순수 화면 팬) 프록시가 켜져야 한다.
+
+    실측(offscreen 재현이 아니라 실제 창 sustained pan)으로 팬이 프록시 미적용 때문에
+    프레임당 ~74ms(60fps 예산 4.4배)였음을 확인 — `is_drag_session()`은 아이템 이동만 보고
+    팬은 원래 대상이 아니었다. `_is_panning()`을 얹은 뒤 프록시가 켜지고, paint() 디스패치가
+    통째로 건너뛰어지는지 확인한다. ⚠ 수정 전 소스에 돌리면 여기서 실패한다."""
+    w = CanvasWindow()
+    w.resize(400, 300)
+    w.show()
+    _big_scene(w)
+    v = w._view
+    QApplication.processEvents()
+
+    assert v.is_drag_session() is False, "테스트 전제: 아이템은 아무것도 안 움직인다"
+    _mid_btn(v, "press", QPointF(50, 50))
+    assert v._drag_proxy is None, "press 직후(아직 move 없음)엔 아직 켜지면 안 된다"
+    _mid_btn(v, "move", QPointF(60, 58))
+    assert v._drag_proxy is not None, "팬 중인데 프록시가 안 켜졌다"
+
+    with _paint_counter(_RectItem) as calls:
+        _render_view(v)
+    assert not calls, f"팬 프록시 중인데 아이템 paint()가 {len(calls)}회 불렸다"
+
+    _mid_btn(v, "release", QPointF(60, 58))
+    assert v._drag_proxy is None, "팬 종료 후에도 프록시가 남았다"
+    flag = _RectItem.GraphicsItemFlag.ItemHasNoContents
+    leaked = [it for it in w._scene.items() if it.flags() & flag]
+    assert not leaked, f"플래그가 {len(leaked)}개 아이템에 남았다(화면에서 사라진다)"
