@@ -56,6 +56,7 @@ from easycad.canvas.host_undo import _UndoMixin
 from easycad.canvas.host_selection import _SelectionMixin
 from easycad.canvas.host_context import _ContextMixin
 from easycad.canvas.host_canvas import _CanvasMixin
+from easycad.canvas.host_mindmap import _MindMapMixin
 
 from easycad.canvas.host_widgets import (
     _PaletteButton, _clipboard_pixmap, _act_icon, _dark_palette,
@@ -71,7 +72,7 @@ from easycad.canvas.document import CanvasDocument
 
 class CanvasWindow(
     _UIBuildMixin, _FileIOMixin, _LayersMixin, _StyleMixin, _UndoMixin,
-    _SelectionMixin, _ContextMixin, _CanvasMixin, QMainWindow,
+    _SelectionMixin, _ContextMixin, _CanvasMixin, _MindMapMixin, QMainWindow,
 ):
     _PANEL_MARGIN = 10      # [캔버스-퍼스트] 플로팅 패널·줌배지·토스트와 창/뷰 경계 사이 여백(px)
 

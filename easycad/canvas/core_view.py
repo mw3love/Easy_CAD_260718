@@ -131,6 +131,14 @@ def _build_align_guides(nr, bx_winners, bx_orr, by_winners, by_orr) -> list:
     return guides
 
 
+# [마인드맵 뻗기] Tab/Enter가 마인드맵 액션으로 해석되지 않아야 하는 모디파이어 조합.
+# Shift는 별도로(줄바꿈/포커스순회 유지) 검사하므로 여기 포함하지 않는다 — Ctrl+Enter(라벨
+# 편집 종료 하위호환)·Ctrl+Tab(다음 탭 전환)·Alt+Tab(OS 창전환, 원리상 앱에 안 와야 함)을
+# 마인드맵이 가로채지 않도록 한다.
+_MM_BLOCK_MODS = (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
+                   | Qt.KeyboardModifier.MetaModifier)
+
+
 class _AnnotatorView(QGraphicsView):
     # [화살표 통합] 화살표는 도구 하나 → 단축키도 3 하나.
     # [단축키 설정, 2026-08-21] Qt.Key 리터럴 직접비교 대신 `shortcuts.py` 레지스트리의
@@ -3979,6 +3987,30 @@ class _AnnotatorView(QGraphicsView):
         pressed = QKeySequence(event.keyCombination())
         return target.matches(pressed) == QKeySequence.SequenceMatch.ExactMatch
 
+    def _mm_dispatch(self, key, shape):
+        """[마인드맵 뻗기] Tab=자식 생성 / Enter=형제 생성 분기를 한 곳에 모은다 — 편집 중
+        분기·선택-only 분기 두 호출부가 각자 이 if/else를 들고 있으면 향후 모디파이어·가드
+        변경이 한쪽에만 반영되고 다른 쪽은 누락되는 드리프트가 재발하기 쉽다(1차 라운드의
+        Shift+Enter 버그가 정확히 이 패턴이었다)."""
+        if key == Qt.Key.Key_Tab:
+            self._owner.mm_create_child(shape, self)
+        else:
+            self._owner.mm_create_sibling(shape, self)
+
+    def event(self, e):
+        """[마인드맵 뻗기] Tab/Backtab은 기본적으로 위젯 포커스 순회로 먼저 소비되므로
+        (표 셀 편집기 `_CellEditor.event()`와 동일한 이유 — core_shapes.py 참조)
+        keyPressEvent에 도달하기 전에 여기서 가로챈다. Backtab(Shift+Tab)도 함께 삼켜
+        엉뚱하게 위젯 포커스가 캔버스 밖으로 튀는 것을 막지만, Tab과 달리 마인드맵 생성은
+        트리거하지 않는다(트리 탐색은 2차 범위 — keyPressEvent가 Backtab을 그냥 무시).
+        Ctrl/Alt/Meta가 섞인 조합(Ctrl+Tab=다음 탭 전환 등)은 이 가로채기 자체를 하지
+        않는다 — 그래야 `QTabWidget`의 표준 탭 전환 단축키가 평소처럼 동작한다."""
+        if e.type() == QEvent.Type.KeyPress and e.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab) \
+                and not (e.modifiers() & _MM_BLOCK_MODS):
+            self.keyPressEvent(e)
+            return True
+        return super().event(e)
+
     # ---- 키 (Space 토글 / 도구 단축키 / Delete / Ctrl+Z / Esc) -------------
     def keyPressEvent(self, event):
         fi = self.scene().focusItem()
@@ -4015,6 +4047,17 @@ class _AnnotatorView(QGraphicsView):
             # clearFocus → focusOutEvent가 정리(빈 텍스트 폐기 / 비어있지 않으면 선택 해제).
             fi.clearFocus()
             return
+        # [마인드맵 뻗기, 2026-08-24] 텍스트 편집 중에도 Tab/Enter가 즉시 다음 노드를
+        # 만든다(deep-interview 확정 — "쓰면서 뻗어나가는" 흐름이 핵심). Shift+Enter(줄바꿈)
+        # 는 제외해야 하므로 모디파이어를 명시적으로 검사한다. Ctrl+Enter는 라벨 편집
+        # 종료 전용 하위호환 제스처(`_TextItem.keyPressEvent` 참조)라 마찬가지로 제외.
+        if editing_text and key in (Qt.Key.Key_Tab, Qt.Key.Key_Return, Qt.Key.Key_Enter) \
+                and not (mods & (Qt.KeyboardModifier.ShiftModifier | _MM_BLOCK_MODS)):
+            shape = fi.parentItem() if fi.parentItem() is not None else fi
+            if self._owner.mm_is_node(shape):
+                fi.clearFocus()
+                self._mm_dispatch(key, shape)
+                return
         if not editing_text and key == Qt.Key.Key_Space:
             self._owner.toggle_edit_mode()
             return
@@ -4030,6 +4073,15 @@ class _AnnotatorView(QGraphicsView):
             self._owner._on_escape()
             return
         if self._owner.is_edit_mode() and not editing_text:
+            # [마인드맵 뻗기, 2026-08-24] 텍스트 편집 중이 아니어도(마우스로 도형만 선택한
+            # 상태) Tab/Enter는 동일하게 뻗는다 — "모든 도형에 상시 적용" 확정(다중선택·
+            # 비-노드 타입은 mm_create_*가 각각 None을 반환해 조용히 no-op).
+            if key in (Qt.Key.Key_Tab, Qt.Key.Key_Return, Qt.Key.Key_Enter) \
+                    and not (mods & (Qt.KeyboardModifier.ShiftModifier | _MM_BLOCK_MODS)):
+                sel = self.scene().selectedItems()
+                if len(sel) == 1 and self._owner.mm_is_node(sel[0]):
+                    self._mm_dispatch(key, sel[0])
+                    return
             # 화살표키 — 선택된 주석 이동. 기본은 넓게(10px), Shift/Ctrl로 세밀하게(1px). 도구와 무관.
             arrow = {
                 Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0),
