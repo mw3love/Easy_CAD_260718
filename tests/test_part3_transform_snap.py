@@ -3,6 +3,7 @@
 tests/test_easycad.py 2026-08-02 분할분. 실행: python tests/test_easycad.py (전체) 또는 pytest test_part3_transform_snap.py.
 """
 from _shared import *  # noqa: F401,F403
+from easycad.canvas.core_constants import _GRID_SPACING
 
 
 def test_route_hint_drop_threshold_scales_with_zoom():
@@ -1161,8 +1162,32 @@ def test_smart_align_rect_center_lands_exactly_on_other_rect_edge_no_padding():
 
 
 
-def test_smart_align_skips_multiselect():
-    # [2e] 2개 이상 선택 시엔 스마트 정렬 스냅을 적용하지 않는다(그룹 변형 영역).
+def test_smart_align_multiselect_uses_group_bbox():
+    # [2026-08-25 deep-interview 확정] 2개 이상 선택 시 그룹 bbox를 단일 가상 도형처럼
+    # 취급 — 옛 "다중선택은 전부 스킵" 동작(이 테스트가 예전엔 그걸 고정했음)을 대체한다.
+    # a·b를 함께 선택해 그룹(x:[0,230])을 이루고, 외부 도형 c의 좌변에 그룹 우변(=b의
+    # 우변)이 스냅되면 a·b 둘 다 같은 델타로 함께 움직여야 한다(상대 배치 유지).
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)      # x:[0,100]
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 80, 60)
+    v = w._view
+    thr = 6.0 / v._view_scale()
+    b.setPos(QPointF(150, 0))                                 # x:[150,230] → 그룹 x:[0,230]
+    c = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    c.setPos(QPointF(230 + thr * 0.5, 300))                   # c 좌변이 그룹 우변(230) 임계 내
+    a.setSelected(True); b.setSelected(True)
+    a_before_x, b_before_x = a.pos().x(), b.pos().x()
+    v._apply_smart_snap()
+    dx = a.pos().x() - a_before_x
+    assert abs(dx) > 1e-6                                      # 실제로 스냅 이동이 일어남
+    assert abs((b.pos().x() - b_before_x) - dx) < 1e-6          # a·b가 같은 델타로 함께 이동
+    assert abs(_cright(b) - _cleft(c)) < 1e-6                   # 그룹 우변이 c 좌변에 붙음
+    assert any(g[0] == "v" for g in v._align_guides)
+
+
+def test_smart_align_multiselect_excludes_own_members():
+    # [2026-08-25] 그룹 안 도형끼리는 서로 정렬 후보가 아니다(자기 자신과의 자명한 매치
+    # 방지) — 씬에 a·b 둘뿐이고 둘 다 선택되면 후보가 아예 없어 스냅·가이드선 모두 없다.
     w = CanvasWindow()
     a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
     b = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
@@ -1173,6 +1198,28 @@ def test_smart_align_skips_multiselect():
     before = _cleft(b)
     v._apply_smart_snap()
     assert abs(_cleft(b) - before) < 1e-6 and v._align_guides == []
+
+
+def test_grid_snap_multiselect_moves_group_together():
+    # [2026-08-25 deep-interview 확정] 격자 스냅도 그룹 bbox(좌상단)를 앵커로 다중선택을
+    # 지원 — 옛 "다중선택은 스킵" 동작을 대체. a·b를 함께 선택해 그룹 좌상단을 격자 밖
+    # 위치에 두면, 스냅 후 a·b가 같은 델타로 함께 이동해 그룹 좌상단이 격자에 맞아야 한다.
+    w = CanvasWindow(); w.grid_enabled = True
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 100, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 0, 0, 80, 40)
+    v = w._view
+    a.setPos(QPointF(3, 3))                                    # 그룹 좌상단 = a 좌상단(3,3), 격자 밖
+    b.setPos(QPointF(150, 20))
+    a.setSelected(True); b.setSelected(True)
+    a_before, b_before = QPointF(a.pos()), QPointF(b.pos())
+    v._apply_grid_snap_move(False, False)
+    dx = a.pos().x() - a_before.x()
+    dy = a.pos().y() - a_before.y()
+    assert abs(dx) > 1e-6 or abs(dy) > 1e-6
+    assert abs((b.pos().x() - b_before.x()) - dx) < 1e-6
+    assert abs((b.pos().y() - b_before.y()) - dy) < 1e-6
+    assert abs(a.pos().x() % _GRID_SPACING) < 1e-6
+    assert abs(a.pos().y() % _GRID_SPACING) < 1e-6
 
 
 

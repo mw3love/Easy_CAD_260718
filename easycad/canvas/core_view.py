@@ -1060,8 +1060,10 @@ class _AnnotatorView(QGraphicsView):
             for it, old in moving:
                 it.setPos(QPointF(old.x(), it.pos().y()))
 
-    def _align_candidates(self, nr: QRectF, exclude_item=None):
+    def _align_candidates(self, nr: QRectF, exclude_item=None, exclude_items=None):
         """[2e/팔레트 미리보기 공용] nr 주변 정렬 스냅 후보 도형 스캔 → (thr, other_items).
+        `exclude_items`(다중선택 그룹 정렬 스냅, 2026-08-25)는 여러 도형을 한꺼번에 제외한다 —
+        `exclude_item`(단일)과 상호배타는 아니지만 호출부는 둘 중 하나만 쓴다.
         실사용 재현(2026-08-01, 로그 확인) — 6화면px는 게이트·로직 자체는 정상 작동했지만
         실제 손 드래그 속도로는 그 폭(화면에서 2mm 미만)을 그냥 지나쳐 버려 "닿기 직전까진
         전혀 반응 없다가 닿는 순간 나타난다"는 체감으로 이어졌다. 10px로 넉넉히 늘린다
@@ -1091,17 +1093,20 @@ class _AnnotatorView(QGraphicsView):
             cand[id(o)] = o
         for o in self.scene().items(y_strip, mode):
             cand[id(o)] = o
+        excl = set(exclude_items) if exclude_items is not None else (
+            {exclude_item} if exclude_item is not None else set())
+
         def _bound_to_excluded(o):
-            # exclude_item(대개 드래그 중인 도형)에 붙은 커넥터는 매 프레임 그 도형을 따라
+            # excl(대개 드래그 중인 도형들)에 붙은 커넥터는 매 프레임 그 도형을 따라
             # 재라우팅되므로 bbox 한쪽 변이 항상 드래그 위치와 정확히 같다 — 다른 도형과의
             # 진짜 정렬이 아니라 자기 자신과의 자명한 매치라 후보에서 제외한다(실사용 버그
             # 재현: 2026-08-19, 부착된 화살표의 팔꿈치 x·도착점 y가 매번 "정렬됨"으로 오판됨).
-            if exclude_item is None or not isinstance(o, (_ArrowItem, _PolyArrowItem)):
+            if not excl or not isinstance(o, (_ArrowItem, _PolyArrowItem)):
                 return False
-            return exclude_item in o.bound_shapes()
+            return any(e in o.bound_shapes() for e in excl)
 
         other_items = [o for o in cand.values()
-                       if o is not exclude_item and o is not bg and o.parentItem() is None
+                       if o not in excl and o is not bg and o.parentItem() is None
                        and (o.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
                        and not _bound_to_excluded(o)]
         return thr, other_items
@@ -1205,25 +1210,33 @@ class _AnnotatorView(QGraphicsView):
         return dx, dy, bx_winners, bx_orr, by_winners, by_orr
 
     def _apply_smart_snap(self):
-        """[2e] 단일 도형 이동 중 — 근처 도형과 모서리(좌/우/상/하)·중심 정렬 시 스냅 + 가상선.
+        """[2e] 도형 이동 중 — 근처 도형과 모서리(좌/우/상/하)·중심 정렬 시 스냅 + 가상선.
         Qt가 커서로 옮긴 뒤 호출돼, 임계 내면 정렬 좌표로 살짝 당기고 가이드선을 기록한다.
-        핸들 조작(리사이즈·회전·끝점) 중이거나 단일 선택이 아니면 건드리지 않는다.
+        핸들 조작(리사이즈·회전·끝점) 중이면 건드리지 않는다.
         후보 스캔·매칭은 `_align_candidates`/`_align_match`로 뺐다(팔레트 드래그도 씬에
         진짜 임시 도형을 만들어 이 메서드를 그대로 호출하므로 같이 재사용된다,
         host_fileio.py `_palette_drag_move`) — TRIM 자국 복구는 실제 도형 이동 전용이라
-        여기 남는다."""
+        여기 남는다.
+        [다중선택 지원, 2026-08-25 deep-interview 확정] 2개 이상 선택 시엔 그룹 bbox를
+        단일 가상 도형처럼 취급(옵션 (a) — 그룹 내 개별 정렬/과발화 위험이 큰 (c)는 기각)해
+        `_multi_align_snap`으로 위임한다. 정점(vertex) 후보·TRIM 자국복구는 단일 도형 전용
+        개념이라 다중선택 경로엔 없다."""
         self._align_guides = []
         self._cut_restore_snapped = False
         if not getattr(self._owner, "align_guides_enabled", True):
             return   # [토글] 꺼져 있으면 스냅도 가이드선도 전부 스킵
         sel = [it for it in self.scene().selectedItems() if it.parentItem() is None]
-        if len(sel) != 1:
+        if not sel:
+            return
+        if any(getattr(it, "_resizing", False) or getattr(it, "_rotating", False)
+               or getattr(it, "_box_resize", None) is not None
+               or getattr(it, "_drag_endpoint", None) is not None
+               for it in sel):
+            return
+        if len(sel) > 1:
+            self._multi_align_snap(sel)
             return
         it = sel[0]
-        if (getattr(it, "_resizing", False) or getattr(it, "_rotating", False)
-                or getattr(it, "_box_resize", None) is not None
-                or getattr(it, "_drag_endpoint", None) is not None):
-            return
         nr = _smart_snap_srect(it)
         thr, other_items = self._align_candidates(nr, exclude_item=it)
         if not other_items:
@@ -1250,6 +1263,24 @@ class _AnnotatorView(QGraphicsView):
         if dx or dy:
             it.moveBy(dx, dy)
             nr = _smart_snap_srect(it)
+        self._align_guides = _build_align_guides(nr, bx_winners, bx_orr, by_winners, by_orr)
+
+    def _multi_align_snap(self, sel: list):
+        """[다중선택 그룹 정렬 스냅, 2026-08-25] `sel`(2개 이상)의 tight bbox 합집합을 단일
+        가상 도형으로 취급 — 정점 후보·TRIM 자국복구 없이 축별(x/y) 변/중심 매칭만 적용,
+        스냅되면 선택된 도형 전부를 같은 델타로 함께 옮겨 상대 배치를 유지한다."""
+        rects = [_smart_snap_srect(it) for it in sel]
+        nr = rects[0]
+        for r in rects[1:]:
+            nr = nr.united(r)
+        thr, other_items = self._align_candidates(nr, exclude_items=set(sel))
+        if not other_items:
+            return
+        dx, dy, bx_winners, bx_orr, by_winners, by_orr = self._align_match(nr, [], other_items, thr)
+        if dx or dy:
+            for it in sel:
+                it.moveBy(dx, dy)
+            nr = nr.translated(dx, dy)
         self._align_guides = _build_align_guides(nr, bx_winners, bx_orr, by_winners, by_orr)
 
     def _apply_segment_align_snap(self, item):
@@ -1286,7 +1317,7 @@ class _AnnotatorView(QGraphicsView):
             self._align_guides = _build_align_guides(nr, bx_winners, bx_orr, None, None)
 
     def _apply_grid_snap_move(self, skip_x: bool, skip_y: bool):
-        """[그리드 스냅] 단일 도형 이동 중 — 스마트정렬·축고정이 이미 자리를 정한 축은 skip_*로
+        """[그리드 스냅] 도형 이동 중 — 스마트정렬·축고정이 이미 자리를 정한 축은 skip_*로
         건드리지 않고, 나머지 축만 격자 교차점으로 양자화한다. 우선순위는 축고정(Shift) >
         스마트정렬(2e) > 격자스냅 순 — 호출부(mouseMoveEvent)가 skip_*로 강제.
         ⚠ pos()를 직접 스냅하면 안 된다 — 마우스 드래그로 그린 도형은 로컬 도형이 클릭 시점의
@@ -1296,25 +1327,37 @@ class _AnnotatorView(QGraphicsView):
         실제로 그려진 도형(로컬 rect)과 무관한 점이라 같은 함정을 이름만 바꿔 반복한다(1차 시도의
         회귀 — 실측: rect(307,53,100,60)에서 mapToScene(0,0)이 그대로 (0,0)이라 스냅이 무효화됨).
         `_apply_smart_snap`의 `srect()`와 동일하게 **콘텐츠 rect**(`_content_rect()`, 없으면
-        boundingRect)의 좌상단을 mapToScene한 실제 화면 기준점을 격자로 당기고 moveBy로 적용한다."""
+        boundingRect)의 좌상단을 mapToScene한 실제 화면 기준점을 격자로 당기고 moveBy로 적용한다.
+        [다중선택 지원, 2026-08-25 deep-interview 확정] 2개 이상 선택 시엔 정렬 스냅과 같은
+        기준(그룹 tight bbox)의 좌상단을 앵커로 써서 그룹 전체를 함께 격자에 맞춘다 — 상대
+        배치는 그대로 유지된다."""
         if not getattr(self._owner, "grid_enabled", True):
             return
         sel = [it for it in self.scene().selectedItems() if it.parentItem() is None]
-        if len(sel) != 1:
+        if not sel:
             return
-        it = sel[0]
-        if (getattr(it, "_resizing", False) or getattr(it, "_rotating", False)
-                or getattr(it, "_box_resize", None) is not None
-                or getattr(it, "_drag_endpoint", None) is not None):
+        if any(getattr(it, "_resizing", False) or getattr(it, "_rotating", False)
+               or getattr(it, "_box_resize", None) is not None
+               or getattr(it, "_drag_endpoint", None) is not None
+               for it in sel):
             return
-        cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
-        anchor = it.mapToScene(cr.topLeft())
+        if len(sel) > 1:
+            rects = [_smart_snap_srect(it) for it in sel]
+            nr = rects[0]
+            for r in rects[1:]:
+                nr = nr.united(r)
+            anchor = nr.topLeft()
+        else:
+            it = sel[0]
+            cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
+            anchor = it.mapToScene(cr.topLeft())
         sp = _GRID_SPACING
         tx = round(anchor.x() / sp) * sp if not skip_x else anchor.x()
         ty = round(anchor.y() / sp) * sp if not skip_y else anchor.y()
         dx, dy = tx - anchor.x(), ty - anchor.y()
         if dx or dy:
-            it.moveBy(dx, dy)
+            for it in sel:
+                it.moveBy(dx, dy)
 
     def _commit_move(self):
         """release 시 실제로 위치가 바뀐 아이템만 이동 undo로 기록."""

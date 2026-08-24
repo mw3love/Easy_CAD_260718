@@ -1256,6 +1256,16 @@ symbol_library/
   직접호출로 스냅값·가이드선 렌더 스크린샷 확인. 상세: `docs/history/2026-08.md` "직각화살표
   세그먼트 드래그에 정렬 스냅 연결". **Not-tested**: 진짜 마우스 드래그 손맛(`python run.py`
   사용자 확인 필요).
+- **다중선택 이동 시 정렬/격자 스냅 그룹 bbox 지원(2026-08-25, 같은 날 후속, handoff로
+  이어받음)** — 위 항목이 스코프 밖으로 미룬 "다중선택은 정렬선 미지원"을 deep-interview로
+  기준 확정(그룹 bbox 전체를 단일 가상 도형처럼 취급, 대표도형/개별스냅 기각) 후 구현.
+  `_apply_smart_snap`/`_apply_grid_snap_move`의 `len(sel)!=1` 스킵 게이트를 완화해 신규
+  `_multi_align_snap`(그룹 tight bbox 합집합→기존 `_align_candidates`/`_align_match` 재사용,
+  `exclude_items`로 그룹 멤버 전원 제외)으로 분기, 스냅되면 그룹 멤버 전부가 같은 델타로
+  함께 이동(상대 배치 유지). 옛 "다중선택 스킵" 회귀가드 교체 + 신규 pytest 2종, 전체 953종
+  통과. 실제 창(오프스크린 아님) API 직접호출로 그룹 스냅·격자 스냅·가이드선 렌더 확인.
+  상세: `docs/history/2026-08.md` "다중선택 이동 시 정렬/격자 스냅 그룹 bbox 지원".
+  **Not-tested**: 진짜 마우스 드래그 손맛(`python run.py` 사용자 확인 필요).
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
