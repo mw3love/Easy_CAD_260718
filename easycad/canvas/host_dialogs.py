@@ -1961,6 +1961,9 @@ class _SvgCandidateCard(QFrame):
     def is_checked_for_save(self) -> bool:
         return self._save_check.isChecked()
 
+    def set_checked_for_save(self, checked: bool):
+        self._save_check.setChecked(checked)
+
     def set_selected(self, selected: bool):
         self._selected = selected
         self._apply_style()
@@ -2307,7 +2310,17 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         right_col = QVBoxLayout()
         candidates_title = QLabel("생성 후보 (클릭=선택 · 더블클릭=확대):", self)
         candidates_title.setStyleSheet(_SECTION_TITLE_QSS)
-        right_col.addWidget(candidates_title)
+        # [실사용 피드백 2026-08-25] 후보가 여러 개일 때 "심볼로 저장" 체크박스를 하나씩
+        # 누르지 않고 한 번에 켜고 끌 수 있게 — 개별 체크 상태를 되읽어 tri-state로
+        # 동기화하진 않는다(단순한 일괄 액션, 새로 추가되는 후보엔 영향 없음).
+        title_row = QHBoxLayout()
+        title_row.addWidget(candidates_title)
+        title_row.addStretch(1)
+        self._select_all_check = QCheckBox("전체선택", self)
+        self._select_all_check.setStyleSheet("font-size:11px;")
+        self._select_all_check.toggled.connect(self._on_select_all_toggled)
+        title_row.addWidget(self._select_all_check)
+        right_col.addLayout(title_row)
 
         # 최대 10장까지 나올 수 있어(슬롯당 5개×2) 그리드 + 세로 스크롤로 감싼다(카드 자체
         # 크기·스타일은 무변경 — 열 개수만 창 폭에 반응, `_update_candidate_columns` 참조).
@@ -2425,6 +2438,19 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         (Mermaid `_edit`와 동일 관례, 2026-08-20). 카드를 클릭하면 그 SVG가 코드칸에
         채워지므로 결과적으로 같지만, 클릭 없이 코드칸에 직접 타이핑/붙여넣기만 해도 된다."""
         return self._code_edit.toPlainText().strip()
+
+    def svgs_for_insert(self) -> list[str]:
+        """[실사용 피드백 2026-08-25] "도형삽입"이 체크한 후보를 다 받아가야 한다는 지적
+        — 체크박스는 원래 "심볼로 저장" 전용(`_checked_for_save_candidates`)이었는데,
+        체크된 게 있으면 그걸 그대로 삽입 대상으로도 쓴다(체크=이 후보들을 채택한다는
+        의미로 통합). 체크가 하나도 없으면 기존처럼 `selected_svg()` 1개(코드칸)만
+        돌려줘 하위호환 유지 — "도형 대체"(1개 도형 전용, `_generate_svg_replace`)는
+        이 메서드를 안 쓰고 여전히 `selected_svg()`를 직접 부른다."""
+        checked = self._checked_for_save_candidates()
+        if checked:
+            return [svg for svg, _model in checked]
+        single = self.selected_svg()
+        return [single] if single else []
 
     def done(self, r):
         # `_MermaidDialog.done`과 동일한 이유(2026-08-23) — X·Cancel·OK·Esc 전부 여기로
@@ -2627,6 +2653,13 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._code_edit.clear()   # textChanged가 OK 비활성화·미리보기 초기화까지 처리
         self._hint_label.setVisible(False)
         self._save_symbols_btn.setEnabled(False)
+        self._select_all_check.blockSignals(True)   # 새 생성 라운드 — 일괄체크 표시 초기화
+        self._select_all_check.setChecked(False)
+        self._select_all_check.blockSignals(False)
+
+    def _on_select_all_toggled(self, checked: bool):
+        for card, _svg, _model in self._candidates:
+            card.set_checked_for_save(checked)
 
     def _add_candidate(self, model_used: str, svg_text: str):
         # [2026-08-20 자체발견] 다이얼로그가 막 열린 직후 등 아직 `resizeEvent`가 최종

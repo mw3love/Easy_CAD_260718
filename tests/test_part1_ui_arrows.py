@@ -307,6 +307,37 @@ def test_symbol_folder_collapse_expand_round_trips_panel_size():
         QSettings("EasyCAD", "EasyCAD").remove("symfolder_collapsed_무선")
 
 
+def test_left_panel_scrolls_instead_of_growing_unbounded_with_many_folders():
+    # [실사용 피드백 2026-08-25] "새폴더 추가하면 계속 길어질텐데 어딘가서부터는 스크롤로
+    # 작동되나?" — 폴더가 소수일 땐 그대로(스크롤 없음), 많이 쌓이면 `_LEFT_PANEL_MAX_H`에서
+    # 멈추고 내부 스크롤바가 뜬다(패널이 화면 밖으로 무한정 잘려나가지 않음).
+    from unittest.mock import patch
+    from PyQt6.QtWidgets import QInputDialog
+    from easycad.fileio import symbol_library
+
+    with _isolated_symbol_library():
+        w = CanvasWindow(); w.show()
+        assert w._left_scroll.height() <= w._LEFT_PANEL_MAX_H
+        assert not w._left_scroll.verticalScrollBar().isVisible()   # 폴더 없을 때 스크롤 없음
+
+        for i in range(40):
+            r = _mk_pen_rect(w); r.setSelected(True)
+            with patch.object(QInputDialog, "getText", return_value=(f"sym{i}", True)):
+                w.register_selection_as_symbol()
+            with patch.object(QInputDialog, "getText", return_value=(f"folder{i}", True)):
+                w._prompt_create_symbol_folder()
+            sym_id = symbol_library.load_library()[-1]["id"]
+            w._move_custom_symbol(sym_id, f"folder{i}")
+        w._relayout_left_panel()
+        QApplication.instance().processEvents()
+
+        assert w._left_container.sizeHint().height() > w._LEFT_PANEL_MAX_H
+        assert w._left_scroll.height() == w._LEFT_PANEL_MAX_H   # 상한에서 멈춤
+        assert w._left_panel.height() <= w._LEFT_PANEL_MAX_H + 40   # 패널 자체도 화면 안에 머묾
+        assert w._left_scroll.verticalScrollBar().isVisible()
+        w.close()
+
+
 def test_symbol_folder_full_row_does_not_widen_panel():
     # [실사용 버그 수정 2026-08-19] 폴더 그리드가 `QGridLayout(grid_container)`(위젯 생성자
     # 직결)라 Qt 기본 여백(~9px×4방향)을 물려받아, 4열이 꽉 찬 폴더(≥`_PALETTE_COLS`개
@@ -1415,6 +1446,53 @@ def test_palette_drag_begin_falls_back_for_port_tool_keys():
     assert w._palette_drag_begin("port_rect") is False
     assert w._palette_drag_begin("port_circle") is False
     assert len(w._scene.items()) == n0   # 씬에 아무것도 안 생김(네이티브 경로가 대신 처리)
+
+
+def test_palette_drag_customsym_moves_as_group_and_commits_with_group_id():
+    # [실사용 피드백 2026-08-25] "기본도형은 실물 크기로 드래그되는데 내 심볼만 팔레트
+    # 아이콘 크기 고스트로 보인다" — customsym(내 심볼)도 위 rect/ellipse 테스트와 같은
+    # 실시간 드래그 경로(_palette_drag_group)를 타는지, 여러 아이템의 상대 배치가 이동
+    # 중에도 유지되는지, 커밋 시 그룹ID·단일 undo 스텝이 붙는지 확인.
+    from unittest.mock import patch
+    from PyQt6.QtWidgets import QInputDialog
+    from easycad.fileio import symbol_library
+
+    with _isolated_symbol_library():
+        w = CanvasWindow(); w.resize(1200, 760); w.show()
+        r1 = _mk_rect(w._scene, w.make_pen(), 0, 0, 40, 40)
+        r2 = _mk_rect(w._scene, w.make_pen(), 60, 0, 40, 40)
+        w._scene.clearSelection()
+        r1.setSelected(True); r2.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("묶음", True)):
+            w.register_selection_as_symbol()
+        sym_id = symbol_library.load_library()[0]["id"]
+        tool_key = f"customsym:{sym_id}"
+
+        n0 = len(w._scene.items())
+        assert w._palette_drag_begin(tool_key) is True
+        assert len(w._scene.items()) == n0 + 2   # 2개짜리 그룹이 통째로 씬에 생김
+        group = w._palette_drag_group
+        assert group is not None and len(group) == 2
+        assert all(it.opacity() < 1.0 for it in group)
+        rel0 = group[1].pos() - group[0].pos()   # 원래 상대 배치(간격)
+
+        vp = w._view.viewport()
+        def scene_to_global(sp):
+            return vp.mapToGlobal(w._view.mapFromScene(sp))
+        w._palette_drag_move(tool_key, scene_to_global(QPointF(400.0, 300.0)))
+        rel1 = group[1].pos() - group[0].pos()
+        assert (rel1 - rel0).manhattanLength() < 0.01, "이동 중에도 그룹 내 상대 배치가 유지돼야 함"
+
+        d0 = len(w._undo)
+        gp = scene_to_global(QPointF(400.0, 300.0))
+        w._palette_drag_end(tool_key, gp)
+        assert len(w._scene.items()) == n0 + 2
+        assert len(w._undo) == d0 + 1                 # 여러 아이템이어도 undo는 1스텝
+        assert w._palette_drag_group is None           # 드래그 상태 정리됨
+        assert group[0]._group_id == group[1]._group_id and group[0]._group_id
+        assert all(it.opacity() == 1.0 for it in group)
+        w.undo()
+        assert len(w._scene.items()) == n0
 
 
 

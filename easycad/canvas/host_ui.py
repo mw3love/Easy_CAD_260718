@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem, QStackedWidget,
+    QListWidget, QListWidgetItem, QStackedWidget, QScrollArea,
 )
 
 from easycad.canvas.annotator_core import (
@@ -1466,6 +1466,8 @@ class _UIBuildMixin:
             self._refresh_custom_symbol_section()
 
 
+    _LEFT_PANEL_MAX_H = 640   # [2026-08-25] 좌측 도형 패널 스크롤 상한(px) — `_build_left_panel` 참조.
+
     def _build_left_panel(self):
         """[캔버스-퍼스트][좌측 패널 아코디언 개편, 2026-08-12 → 2026-08-13 3섹션으로 병합
         → 2026-08-19 레이어를 좌하단 독립 패널로 재분리, `_build_layers_panel` 참조 →
@@ -1488,7 +1490,24 @@ class _UIBuildMixin:
         outer = QVBoxLayout(container)
         outer.setContentsMargins(3, 3, 3, 3); outer.setSpacing(2)   # [2026-08-12 3차] 4→3
         self._left_container = container   # _refresh_custom_symbol_section이 아래에서 바로 씀
-        panel.set_content(container)
+        # [실사용 피드백 2026-08-25] "내 심볼" 폴더가 계속 늘어나면 이 패널은 그냥 화면
+        # 아래로 잘려나갈 뿐 스크롤이 없었다 — 콘텐츠를 QScrollArea로 감싸고 높이를
+        # 고정 상한(`_LEFT_PANEL_MAX_H`)으로 클램프한다(실제 높이 계산은 `_relayout_
+        # left_panel`이 콘텐츠가 바뀔 때마다 담당 — 그 메서드 주석 참조). 뷰 높이 기준으로
+        # 매번 다시 재는 방식은 시도했다가 되돌렸다 — 오프스크린 테스트 플랫폼의 가상
+        # 화면이 작아 평소 콘텐츠(폴더 1~2개)조차 항상 클램프에 걸려버려 "폴더를 접으면
+        # 패널이 줄어든다"는 기존 동작 자체가 검증 불가능해졌다(회귀 테스트 실패로 확인).
+        # 고정 상한은 실사용 창 크기(기본 1200×800, `host.py` 참조)에서 폴더 몇 개
+        # 수준까진 전혀 안 걸리고, 정말 폴더가 쌓였을 때만("어딘가서부터는 스크롤" —
+        # 실사용 질문) 개입한다.
+        scroll = QScrollArea()
+        scroll.setWidget(container)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._left_scroll = scroll
+        panel.set_content(scroll)
 
         self._shape_tool_buttons: dict[str, QToolButton] = {}
         self._sym_buttons: dict[str, QToolButton] = {}
@@ -1618,6 +1637,17 @@ class _UIBuildMixin:
             section.layout().invalidate()
         self._left_container.layout().invalidate()
         self._left_container.layout().activate()
+        # [실사용 피드백 2026-08-25, 스크롤 지원 신설] `_left_container`가 이제 패널 body에
+        # 직접 얹히지 않고 `_left_scroll`(QScrollArea)을 한 겹 더 거친다 — `updateGeometry()`
+        # 만으로는 부족했다(실측: `QScrollArea.sizeHint()`가 `setWidget()` 이후 내용이
+        # 바뀌어도 최초 값에 멈춰 있어, 폴더를 접어도 패널 높이가 안 줄었다 — 이 함정은
+        # `docs/pitfalls.md`에 별도 기록 예정). 대신 콘텐츠의 진짜 sizeHint(`_left_container`,
+        # 이건 실측으로 정상 갱신됨을 확인)를 직접 읽어 `setFixedHeight`로 강제한다 — 고정
+        # 높이는 레이아웃이 `sizeHint()`를 다시 묻지 않고 이 값을 그대로 쓰므로 캐시 여부와
+        # 무관하게 항상 정확하다. 상한(`_LEFT_PANEL_MAX_H`)을 넘으면 그 값에서 멈추고
+        # 내부 스크롤바가 뜬다.
+        content_h = self._left_container.sizeHint().height()
+        self._left_scroll.setFixedHeight(min(content_h, self._LEFT_PANEL_MAX_H))
         self._left_panel._body_layout.invalidate()
         self._left_panel._body_layout.activate()
         self._left_panel.layout().invalidate()

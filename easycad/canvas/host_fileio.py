@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import math
 import re
 import uuid
 
@@ -523,29 +524,66 @@ class _FileIOMixin:
     def _insert_ai_svg_asset(self):
         """메뉴 진입점(삽입(&I) 메뉴 「AI SVG 에셋 생성…」) — 뷰 중심에 새로 삽입.
         우클릭 「SVG로 생성」(기존 도형 대체)은 `host_context._generate_svg_replace`가
-        같은 `_SvgAssetDialog`를 공유하되 별도 undo 경로를 쓴다."""
+        같은 `_SvgAssetDialog`를 공유하되 별도 undo 경로를 쓴다.
+        [실사용 피드백 2026-08-25] "체크한 후보 여러 개를 다 넣어달라" — 예전엔 체크박스로
+        몇 개를 골라도 코드칸(`selected_svg()`, 클릭 단일선택 1개)만 삽입됐다.
+        `svgs_for_insert()`(체크됨 있으면 체크된 전부, 없으면 기존처럼 코드칸 1개)로
+        바꾸고, 2개 이상이면 `_place_svg_groups_no_overlap`으로 서로 안 겹치게 격자
+        배치한다. "도형 대체"(위 `_generate_svg_replace`, 대상이 기존 도형 1개)는 다중
+        삽입 개념 자체가 안 맞아 그대로 `selected_svg()` 단일 경로를 유지한다."""
         dlg = _SvgAssetDialog(self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        svg_text = dlg.selected_svg()
-        if not svg_text:
+        svg_texts = dlg.svgs_for_insert()
+        if not svg_texts:
             return
         center = self._view.mapToScene(self._view.viewport().rect().center())
-        try:
-            items = self._svg_text_to_items(svg_text, self._SVG_LONG, center)
-        except Exception as e:  # noqa: BLE001 — AI 응답 파싱 실패(구조 손상 등)
-            QMessageBox.warning(self, "AI SVG 에셋 생성", f"가져오기 실패: {e}")
+        groups = []
+        for svg_text in svg_texts:
+            try:
+                items = self._svg_text_to_items(svg_text, self._SVG_LONG, QPointF(0.0, 0.0))
+            except Exception:  # noqa: BLE001 — 후보 하나 실패해도 나머지는 계속 삽입
+                continue
+            if items:
+                groups.append(items)
+        if not groups:
+            QMessageBox.warning(self, "AI SVG 에셋 생성", "가져올 도형이 없습니다.")
             return
-        if not items:
-            QMessageBox.information(self, "AI SVG 에셋 생성", "가져올 도형이 없습니다.")
-            return
+        all_items = self._place_svg_groups_no_overlap(groups, center)
         self._scene.clearSelection()
-        for it in items:
+        for it in all_items:
             self._scene.addItem(it)
             it.setSelected(True)
-        self.push_undo_add_many(items)
+        self.push_undo_add_many(all_items)
         self.set_tool("select")
-        self.statusBar().showMessage(f"AI SVG 에셋 삽입: 도형 {len(items)}개", 4000)
+        msg = (f"AI SVG 에셋 삽입: 도형 {len(all_items)}개" if len(groups) <= 1 else
+               f"AI SVG 에셋 삽입: 후보 {len(groups)}개, 도형 {len(all_items)}개")
+        self.statusBar().showMessage(msg, 4000)
+
+    def _place_svg_groups_no_overlap(self, groups: list, center: QPointF) -> list:
+        """[2026-08-25] 체크한 SVG 후보 여러 개를 한 번에 삽입할 때 서로 안 겹치도록
+        정사각형에 가까운 격자로 나눠 놓는다 — 칸 크기는 후보 중 가장 큰 bbox+여백에
+        맞춰 전부 통일(후보마다 크기가 달라도 겹칠 일이 없다), 격자 전체를 뷰 중심에
+        맞춘다. 단일 후보(len==1)도 같은 경로를 타되 격자가 1칸이라 기존 "뷰 중심에
+        바로 삽입" 동작과 결과가 같다."""
+        boxes = [_group_scene_rect(items) for items in groups]
+        gap = 24.0
+        cell_w = max(b.width() for b in boxes) + gap
+        cell_h = max(b.height() for b in boxes) + gap
+        cols = max(1, math.ceil(math.sqrt(len(groups))))
+        rows = math.ceil(len(groups) / cols)
+        origin_x = center.x() - (cols * cell_w) / 2.0
+        origin_y = center.y() - (rows * cell_h) / 2.0
+        all_items = []
+        for i, (items, box) in enumerate(zip(groups, boxes)):
+            r, c = divmod(i, cols)
+            cell_cx = origin_x + c * cell_w + cell_w / 2.0
+            cell_cy = origin_y + r * cell_h + cell_h / 2.0
+            dx, dy = cell_cx - box.center().x(), cell_cy - box.center().y()
+            for it in items:
+                it.moveBy(dx, dy)
+            all_items.extend(items)
+        return all_items
 
     def _save_svg_candidates_to_symbols(self, entries: list[tuple[str, str]],
                                         subject: str, folder: str | None) -> int:
@@ -630,9 +668,35 @@ class _FileIOMixin:
         걸린다 — 네이티브 QDrag는 OS가 고스트 이미지를 직접 그려 앱이 위치를 되돌릴 수
         없어(플랫폼 공통 제약) 이 체감을 낼 수 없었다(기존 도형 이동과 다르다는 실사용
         지적으로 확인). 반환 False면 `_PaletteButton`이 기존 네이티브 QDrag로 폴백한다
-        — 포트(호스트 테두리 부착이라는 별도 배치 로직, `_create_port_at`)가 그 경우."""
+        — 포트(호스트 테두리 부착이라는 별도 배치 로직, `_create_port_at`)가 그 경우.
+        [실사용 피드백 2026-08-25] 커스텀 심볼("customsym:")도 예전엔 이 False 폴백
+        대상이라 OS 고스트가 팔레트 아이콘 크기(28px)로만 보였다 — "기본도형은 실제
+        캔버스 크기로 보이는데 내 심볼만 다르다"는 지적으로 여기 그룹 경로를 신설,
+        `_palette_drag_group`(리스트)로 단일 아이템 경로와 상태를 분리해 이후
+        `_palette_drag_move`/`_palette_drag_end`가 둘 중 있는 쪽만 따른다."""
         if tool_key in ("port_rect", "port_circle"):
             return False
+        if tool_key.startswith("customsym:"):
+            built = self._build_custom_symbol_items(tool_key[len("customsym:"):])
+            if built is None:
+                return False
+            items, box = built
+            dx, dy = -box.left(), -box.top()
+            for it in items:
+                it.moveBy(dx, dy)
+                it.setOpacity(0.6)
+                self._scene.addItem(it)
+            self._scene.clearSelection()
+            for it in items:
+                it.setSelected(True)
+            self._palette_drag_group = items
+            # [drift 방지] 매 이동 프레임마다 커서 기준 절대좌표로 다시 배치하므로(단일
+            # 아이템의 setPos와 동일한 관례), 각 아이템의 "그룹 박스 좌상단 기준 상대
+            # 오프셋"을 한 번만 기록해둔다 — moveBy 델타를 누적하면 이전 프레임의 스냅
+            # 보정까지 매번 다시 얹혀 그룹 형태가 서서히 어긋날 수 있다.
+            self._palette_drag_offsets = [it.pos() for it in items]
+            self._palette_drag_size = (box.width(), box.height())
+            return True
         built = self._build_shape_item(tool_key)
         if built is None:
             return False
@@ -650,25 +714,38 @@ class _FileIOMixin:
         """[신규기능 2026-08-19] 팔레트 드래그 중 매 이동 호출 — 커서 아래 씬 좌표로 임시
         도형을 옮기고, 기존 도형 이동과 동일한 스냅 체인(`_apply_smart_snap` → 정렬
         가이드 축은 건너뛰고 나머지만 `_apply_grid_snap_move`)을 그대로 태운다. 캔버스
-        뷰포트 밖이면(다른 패널 위 등) 숨겨서 엉뚱한 자리에 스냅되지 않게 한다."""
+        뷰포트 밖이면(다른 패널 위 등) 숨겨서 엉뚱한 자리에 스냅되지 않게 한다.
+        [2026-08-25] 커스텀 심볼(그룹, `_palette_drag_group`)은 여러 아이템을 한 번에
+        옮겨야 해 단일 아이템 분기와 나눴다 — 스냅 호출부(`_apply_smart_snap` 등)는
+        선택된 아이템 전부(다중선택 그룹 bbox 지원, 2026-08-25)를 그대로 다루므로 공유."""
         it = getattr(self, "_palette_drag_item", None)
-        if it is None:
+        group = getattr(self, "_palette_drag_group", None)
+        if it is None and not group:
             return
+        items = group if group else [it]
         vp = self._view.viewport()
         local = vp.mapFromGlobal(global_pos)
         inside = vp.rect().contains(local)
         if not inside:
-            if it.isVisible():
-                it.setVisible(False)
+            if items[0].isVisible():
+                for x in items:
+                    x.setVisible(False)
             if self._view._align_guides:
                 self._view._align_guides = []
                 self._view.viewport().update()
             return
-        if not it.isVisible():
-            it.setVisible(True)
+        if not items[0].isVisible():
+            for x in items:
+                x.setVisible(True)
         w, h = self._palette_drag_size
         scene_pos = self._view.mapToScene(local)
-        it.setPos(scene_pos.x() - w / 2.0, scene_pos.y() - h / 2.0)
+        tx, ty = scene_pos.x() - w / 2.0, scene_pos.y() - h / 2.0
+        if group:
+            offsets = self._palette_drag_offsets
+            for x, off in zip(group, offsets):
+                x.setPos(tx + off.x(), ty + off.y())
+        else:
+            it.setPos(tx, ty)
         self._view._apply_smart_snap()
         skip_x = any(g[0] == "v" for g in self._view._align_guides)
         skip_y = any(g[0] == "h" for g in self._view._align_guides)
@@ -678,21 +755,33 @@ class _FileIOMixin:
 
     def _palette_drag_end(self, tool_key: str, global_pos: QPoint):
         """[신규기능 2026-08-19] 팔레트 드래그 release — 캔버스 위면 확정(undo 등록·불투명
-        복원), 밖이면 임시 도형을 그냥 지운다(=취소, 드롭 안 함과 동일한 관례)."""
+        복원), 밖이면 임시 도형을 그냥 지운다(=취소, 드롭 안 함과 동일한 관례).
+        [2026-08-25] 그룹(`_palette_drag_group`)은 `_finish_custom_symbol_placement`
+        (그룹ID 부여+선택+undo 1건)로 마무리 — `_create_custom_symbol_at`(단발 배치)과
+        같은 경로라 undo·그룹ID 관례가 자연히 일치한다."""
         it = getattr(self, "_palette_drag_item", None)
+        group = getattr(self, "_palette_drag_group", None)
         self._palette_drag_item = None
+        self._palette_drag_group = None
+        self._palette_drag_offsets = None
         self._view._align_guides = []
-        if it is None:
+        if it is None and not group:
             return
+        items = group if group else [it]
         vp = self._view.viewport()
         inside = vp.rect().contains(vp.mapFromGlobal(global_pos))
         if not inside:
-            self._scene.removeItem(it)
+            for x in items:
+                self._scene.removeItem(x)
             self._view.viewport().update()
             return
-        it.setOpacity(1.0)
-        it.setSelected(True)
-        self.push_undo_add(it)
+        for x in items:
+            x.setOpacity(1.0)
+        if group:
+            self._finish_custom_symbol_placement(items)
+        else:
+            it.setSelected(True)
+            self.push_undo_add(it)
         # [실사용 피드백 2026-08-25] 팔레트 버튼이 드래그 내내 grabMouse()로 키보드 포커스를
         # 안 가진 위젯이었으므로, 드롭 후 캔버스 뷰가 키보드 포커스를 도로 안 받으면(도형은
         # 선택됐어도) Ctrl+Enter/Tab/Enter 같은 단축키가 뷰에 아예 도착하지 못한다.

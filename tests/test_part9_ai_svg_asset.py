@@ -1056,6 +1056,127 @@ def test_svg_asset_dialog_regenerate_resets_save_button():
     dlg.deleteLater()
 
 
+def test_svg_asset_dialog_select_all_checkbox_toggles_every_card():
+    # [실사용 피드백 2026-08-25] "생성 후보 여러 개 나오면 전체 체크박스 한번에 선택"
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
+        dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
+    _gen_two_candidates(dlg)
+    cards = [c for c, _s, _m in dlg._candidates]
+    assert not any(c.is_checked_for_save() for c in cards)
+
+    dlg._select_all_check.setChecked(True)
+    assert all(c.is_checked_for_save() for c in cards)
+    assert dlg._save_symbols_btn.isEnabled()
+
+    dlg._select_all_check.setChecked(False)
+    assert not any(c.is_checked_for_save() for c in cards)
+    assert not dlg._save_symbols_btn.isEnabled()
+
+    # 새 생성 라운드 — 전체선택 체크 표시도 초기화되고, 재계산해 다시 눌러도 정상 동작.
+    dlg._select_all_check.setChecked(True)
+    _gen_two_candidates(dlg)
+    assert not dlg._select_all_check.isChecked()
+    new_cards = [c for c, _s, _m in dlg._candidates]
+    dlg._select_all_check.setChecked(True)
+    assert all(c.is_checked_for_save() for c in new_cards)
+    dlg.deleteLater()
+
+
+def test_svgs_for_insert_prefers_checked_candidates_over_single_selection():
+    # [실사용 피드백 2026-08-25] "체크한 후보는 도면에 다 넣어줘야 하지 않을까" — 체크된
+    # 게 있으면 클릭 단일선택(코드칸)이 아니라 체크된 전부를 돌려준다.
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
+        dlg = _SvgAssetDialog()
+    dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
+    _gen_two_candidates(dlg)
+    first_card, s1, _m1 = dlg._candidates[0]
+    second_card, s2, _m2 = dlg._candidates[1]
+
+    # 체크 없음 — 기존처럼 클릭선택(코드칸) 1개만.
+    assert dlg.svgs_for_insert() == [dlg.selected_svg()]
+
+    second_card.set_checked_for_save(True)
+    assert dlg.svgs_for_insert() == [s2]   # 체크된 것만(클릭선택과 무관)
+
+    first_card.set_checked_for_save(True)
+    assert sorted(dlg.svgs_for_insert()) == sorted([s1, s2])
+    dlg.deleteLater()
+
+
+def test_svgs_for_insert_empty_when_no_checked_and_no_code():
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
+        dlg = _SvgAssetDialog()
+    assert dlg.svgs_for_insert() == []
+    dlg.deleteLater()
+
+
+def test_insert_ai_svg_asset_inserts_all_checked_candidates_without_overlap():
+    # [실사용 피드백 2026-08-25] "확인(도형삽입)을 누르면 체크한 후보 전부를 겹치지 않게
+    # 도면에 넣어줘야 한다" — 후보 2개를 체크해 확인을 누르면 둘 다 삽입되고, 서로
+    # bbox가 겹치지 않아야 한다.
+    w = CanvasWindow()
+    before = len(w._scene.items())
+
+    class _FakeCard:
+        def __init__(self, svg):
+            self._svg = svg
+            self._checked = True
+
+        def is_checked_for_save(self):
+            return self._checked
+
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            self._svgs = [_SAMPLE_SVG, _SAMPLE_SVG]
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def selected_svg(self):
+            return self._svgs[0]
+
+        def svgs_for_insert(self):
+            return list(self._svgs)
+
+    with patch("easycad.canvas.host_fileio._SvgAssetDialog", _FakeDlg):
+        w._insert_ai_svg_asset()
+    after_items = w._scene.items()
+    assert len(after_items) == before + 4   # (line+rect) × 2
+
+    w.undo()
+    assert len(w._scene.items()) == before   # 여러 후보를 넣어도 undo는 1스텝
+    w.redo()
+    assert len(w._scene.items()) == before + 4
+    w.deleteLater()
+
+
+def test_place_svg_groups_no_overlap_keeps_groups_apart():
+    # [실사용 피드백 2026-08-25] "기왕이면 겹치지 않게" — 여러 그룹을 격자에 나눠 놓을 때
+    # 서로의 bbox가 겹치지 않아야 한다.
+    from PyQt6.QtCore import QRectF
+    from easycad.canvas.host_selection import _group_scene_rect
+
+    w = CanvasWindow()
+    group_a = [_mk_rect(w._scene, w.make_pen(), 0, 0, 30, 30)]
+    group_b = [_mk_rect(w._scene, w.make_pen(), 0, 0, 50, 20)]
+    group_c = [_mk_rect(w._scene, w.make_pen(), 0, 0, 20, 60)]
+    for it in group_a + group_b + group_c:
+        w._scene.removeItem(it)   # _place_svg_groups_no_overlap는 씬 미소속 아이템도 다룸
+
+    all_items = w._place_svg_groups_no_overlap(
+        [group_a, group_b, group_c], QPointF(500.0, 400.0))
+    assert len(all_items) == 3
+    for it in all_items:
+        w._scene.addItem(it)
+
+    boxes = [_group_scene_rect(g) for g in (group_a, group_b, group_c)]
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            assert not boxes[i].intersects(boxes[j]), f"그룹 {i}, {j}가 겹침"
+    w.deleteLater()
+
+
 def test_save_to_symbols_folder_dialog_lists_existing_folders_and_new_folder_field():
     with _isolated_symbol_library():
         symbol_library.create_folder("기존폴더")
@@ -1257,6 +1378,9 @@ def test_insert_ai_svg_asset_adds_items_as_single_undo_step():
 
         def selected_svg(self):
             return _SAMPLE_SVG
+
+        def svgs_for_insert(self):
+            return [_SAMPLE_SVG]
 
     with patch("easycad.canvas.host_fileio._SvgAssetDialog", _FakeDlg):
         w._insert_ai_svg_asset()
