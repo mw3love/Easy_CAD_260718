@@ -1296,8 +1296,23 @@ symbol_library/
   통과. 상세: `docs/history/2026-08.md` "실사용 피드백 3건 — 팔레트 등록 폴더 서브메뉴
   + SVG 큐닷 1차 + 그룹 호버 억제 + 도구 고정 핀 위치 이동". **다음 순서(인계 파일
   `.claude/handoff/pending/`)**: 팔레트 등록 메뉴 "미분류"를 제거하고 그 자리를
-  즐겨찾기 등록 슬롯으로 교체, SVG 다중조각 심볼의 그룹 큐닷(바인딩 대상 설계 확정
-  필요). **Not-tested**: 그룹 호버 억제·SVG 큐닷의 실제 마우스 손맛.
+  즐겨찾기 등록 슬롯으로 교체. **Not-tested**: 그룹 호버 억제·SVG 큐닷의 실제 마우스 손맛.
+- **그룹 프레임 — SVG 다중조각 그룹 등을 이미지처럼 "하나의 틀"로 포트닷·큐닷·화살표
+  부착 완료(2026-08-25, 같은 날 후속)** — 위 항목이 인계로 미뤄둔 "다중조각 SVG 심볼엔
+  큐닷이 없어 화살표를 못 붙인다" 문제 해결. deep-interview로 대상(`_group_id` 있는
+  모든 그룹, Ctrl+G 임의 조합 포함)·범위(포트닷·큐닷·화살표 부착만, TRIM 제외)를 정한
+  뒤, 프레임 챌린지로 "실체 있는 새 프레임 객체" 대신 **group_id 직접 참조 + 매번
+  라이브 계산**(`_GroupBindProxy`, 신규)으로 확정 — `_group_id`가 이미 `.ecad`에 왕복
+  저장되므로 새 아이템 없이도 저장·undo·재열기가 다 된다. `.rect()`가 단위 정사각형을
+  돌려주고 `mapToScene`/`mapFromScene`이 그룹 tight bbox(scene)로 변환하도록 설계해
+  `_nearest_border`/`_shape_ports`/`reroute()` 등 기존 사각형 전용 함수를 한 줄도
+  안 고치고 재사용, 실제로 고친 곳은 "후보 발견" 4곳(`_border_snap_at`·`_qc_snap_
+  target`·`_port_dot_target`·`_hover_port_at`, 전부 `core_view.py`)뿐. 선택된 그룹
+  자신의 큐닷 드래그(`_connect_port_at`)는 이 프로젝트가 반복 유보해 온 별도 민감
+  영역이라 이번에도 스코프 밖(미선택 상태에서 그룹에 화살표를 붙이는 경로만 대상).
+  신규 pytest 10종(`tests/test_part13_group_frame.py`) + 기존 2건 갱신, 전체 981종
+  중 무관한 3건 제외 통과, 오프스크린 렌더 확인. 상세: `docs/history/2026-08.md`
+  "그룹 프레임 — SVG 다중조각 그룹을...". **Not-tested**: 진짜 마우스 드래그 손맛.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

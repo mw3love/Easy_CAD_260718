@@ -29,8 +29,9 @@ import test_part9_ai_mermaid as _p9
 import test_part10_multi_doc as _p10
 import test_part11_polygon as _p11
 import test_part12_shortcuts as _p12
+import test_part13_group_frame as _p13
 
-_PARTS = [_p1, _p2, _p3, _p4, _p5, _p6, _p7, _p8, _p9, _p10, _p11, _p12]
+_PARTS = [_p1, _p2, _p3, _p4, _p5, _p6, _p7, _p8, _p9, _p10, _p11, _p12, _p13]
 
 
 def _run_all():

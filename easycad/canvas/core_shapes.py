@@ -5602,41 +5602,126 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         self._paint_endpoint_handles(painter)
 
 
-def remap_grouped_bindings(pairs):
+def _group_members(scene, group_id):
+    """[그룹 프레임, 2026-08-25 deep-interview] group_id를 가진 최상위 아이템 전체(부착
+    포트·라벨 등 Qt 자식은 제외 — `_conn_shapes`류와 같은 관례). scene이나 group_id가
+    없으면 빈 리스트."""
+    if scene is None or not group_id:
+        return []
+    return [it for it in scene.items()
+            if it.parentItem() is None and getattr(it, "_group_id", None) == group_id]
+
+
+def _group_bbox_scene(members) -> QRectF | None:
+    """[그룹 프레임] 그룹 멤버들의 '보이는 도형' 기준 합집합 씬 사각형 — 패딩 없는 실제
+    외곽선(`host_selection._group_scene_rect`와 같은 계산이지만, 순환 임포트를 피하려 이
+    잎 모듈 안에도 둔다 — host_selection.py는 core_shapes.py를 임포트하는 쪽이라 반대
+    방향은 불가). 멤버가 없으면 None."""
+    if not members:
+        return None
+    def _rect(it):
+        r = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
+        return it.mapToScene(r).boundingRect()
+    box = _rect(members[0])
+    for it in members[1:]:
+        box = box.united(_rect(it))
+    return box
+
+
+class _GroupBindProxy:
+    """[그룹 프레임, 2026-08-25 deep-interview: "svg 등 그룹을 이미지처럼 하나의 틀로
+    포트닷/큐닷 적용"] `_group_id`를 가진 그룹에 화살표가 지속 연결될 때 `_bind1`/`_bind2`
+    (곡선) 또는 `_bind_start`/`_bind_end`(직선/직교)에 실제 도형 대신 저장되는 가벼운 가상
+    호스트. 실제 QGraphicsItem을 새로 만들지 않는다(그룹핑/해제·undo·delete마다 생성·삭제를
+    동기화할 필요가 없어짐 — "group_id 직접 참조 + 매번 라이브 계산"으로 확정).
+
+    `.rect()`가 항상 단위 정사각형(0,0,1,1)을 돌려주고 `mapToScene`/`mapFromScene`이 그
+    단위좌표 ↔ '지금 이 순간' 그룹 멤버들의 tight bbox(scene) 사이를 변환한다 — 이렇게 하면
+    `_nearest_border`/`_shape_ports`/`_axis_forced_local_normal`/`reroute()`/`apply_curved()`
+    등 기존 사각형 전용 기하·바인딩 함수를 단 한 줄도 안 고치고 그대로 재사용할 수 있다(전부
+    `item.rect()`+`item.mapToScene`/`mapFromScene`+`item.scene()`만으로 동작하기 때문).
+    그룹이 이동·리사이즈되거나 멤버 구성이 바뀌어도 매 호출마다 다시 계산하므로 항상 '지금'
+    상태를 반영하고(저장된 낡은 좌표가 없어 staleness 자체가 발생 못 함), 멤버가 하나도
+    안 남으면 `scene()`이 None을 돌려줘 `reroute()`가 이미 하는 dangling 체크(`sh.scene()
+    is None`)가 그대로 무해화한다. 동일성 비교(`is`)가 필요한 호출부(`core_view.py`의 hover
+    타깃 일치 판정 등)를 위해 view별 캐시(`_AnnotatorView._group_proxy`)가 group_id당 같은
+    인스턴스를 재사용한다 — 이 클래스 자체는 일부러 `__eq__`/`__hash__`를 재정의하지 않는다
+    (기본 identity 비교가 실제 도형과 동일한 규약이라 나머지 코드가 특례 없이 동작한다)."""
+
+    _UNIT_RECT = QRectF(0.0, 0.0, 1.0, 1.0)
+
+    def __init__(self, scene, group_id: str):
+        self._scene_ref = scene
+        self.group_id = group_id
+
+    def _live_rect(self) -> QRectF | None:
+        return _group_bbox_scene(_group_members(self._scene_ref, self.group_id))
+
+    def rect(self) -> QRectF:
+        return self._UNIT_RECT
+
+    def scene(self):
+        return self._scene_ref if self._live_rect() is not None else None
+
+    def mapFromScene(self, p: QPointF) -> QPointF:
+        r = self._live_rect()
+        if r is None or r.width() < 1e-6 or r.height() < 1e-6:
+            return QPointF(0.5, 0.5)
+        return QPointF((p.x() - r.left()) / r.width(), (p.y() - r.top()) / r.height())
+
+    def mapToScene(self, p: QPointF) -> QPointF:
+        r = self._live_rect()
+        if r is None:
+            return QPointF(p)   # 그룹 소실 — scene()이 이미 None이라 호출부가 안 쓰는 게 정상
+        return QPointF(r.left() + p.x() * r.width(), r.top() + p.y() * r.height())
+
+
+def remap_grouped_bindings(pairs, gid_map: dict | None = None):
     """복사/붙여넣기·Ctrl+D·Alt-드래그 복제가 한 배치로 함께 만든 (원본, 새 아이템) 쌍 안에서,
     화살표가 같은 배치 안의 도형에 바인딩돼 있었다면 그 도형의 사본으로 재연결한다. clone()은
     _bind1/_bind2(또는 _bind_start/_bind_end)를 원본 참조 그대로 복사하므로(배치 밖 도형에
-    붙은 경우를 보존하기 위해 의도적), 배치 안에서 함께 복제된 상대는 여기서 후처리로 갈아끼운다."""
+    붙은 경우를 보존하기 위해 의도적), 배치 안에서 함께 복제된 상대는 여기서 후처리로 갈아끼운다.
+    [그룹 프레임 2026-08-25] `gid_map`(옛 group_id → 새 group_id, `regroup_duplicated_items`가
+    반환)이 있으면 `_GroupBindProxy` 바인딩도 같은 배치의 새 그룹으로 재연결 — 화살표와 그것이
+    붙은 그룹을 함께 복제하면(예: Ctrl+D) 사본 화살표가 원본 그룹이 아니라 사본 그룹을 가리켜야
+    하기 때문(그렇지 않으면 사본끼리 옮겨도 화살표가 원본 자리에 남는다)."""
     remap = dict(pairs)
+    def _fix(host):
+        if isinstance(host, _GroupBindProxy):
+            if gid_map and host.group_id in gid_map:
+                return _GroupBindProxy(host._scene_ref, gid_map[host.group_id])
+            return host
+        return remap.get(host, host)
     for new in remap.values():
         if hasattr(new, "_bind1"):
-            if new._bind1 in remap:
-                new._bind1 = remap[new._bind1]
-            if new._bind2 in remap:
-                new._bind2 = remap[new._bind2]
+            new._bind1 = _fix(new._bind1)
+            new._bind2 = _fix(new._bind2)
         elif hasattr(new, "_bind_start"):
-            if new._bind_start in remap:
-                new._bind_start = remap[new._bind_start]
-            if new._bind_end in remap:
-                new._bind_end = remap[new._bind_end]
+            new._bind_start = _fix(new._bind_start)
+            new._bind_end = _fix(new._bind_end)
 
 
-def regroup_duplicated_items(pairs):
+def regroup_duplicated_items(pairs) -> dict:
     """복제된 아이템이 원본에서 같은 그룹에 속해 있었다면, 사본끼리 새 그룹id로 묶는다.
     clone()은 _group_id를 복사하지 않아(원본 참조가 아니라 값이라 안전해 보이지만) 기본값
     None으로 시작하므로, 그대로 두면 사본이 그룹 해제 상태가 된다. 원본 그룹id를 그대로
-    쓰면 사본이 원본 그룹에 합류해 버리므로(둘이 하나의 그룹으로 뭉침) 반드시 새 id를 쓴다."""
+    쓰면 사본이 원본 그룹에 합류해 버리므로(둘이 하나의 그룹으로 뭉침) 반드시 새 id를 쓴다.
+    [그룹 프레임 2026-08-25] 반환값(옛 group_id → 새 group_id)을 `remap_grouped_bindings`에
+    넘기면 그룹에 바인딩된 화살표도 같은 배치 안에서 재연결된다."""
     remap = dict(pairs)
     by_gid = {}
     for old, new in remap.items():
         gid = getattr(old, "_group_id", None)
         if gid is not None:
             by_gid.setdefault(gid, []).append(new)
-    for members in by_gid.values():
+    gid_map = {}
+    for old_gid, members in by_gid.items():
         if len(members) >= 2:
             new_gid = uuid.uuid4().hex[:8]
             for m in members:
                 m._group_id = new_gid
+            gid_map[old_gid] = new_gid
+    return gid_map
 
 
 class _BadgeItem(_HandleResizeMixin, QGraphicsItem):

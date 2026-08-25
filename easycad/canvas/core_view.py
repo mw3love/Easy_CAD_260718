@@ -281,6 +281,9 @@ class _AnnotatorView(QGraphicsView):
         # 잡히느냐**(qc-dot 쪽은 어느 도구에서든, hover-port 쪽은 select 도구에서만 — 그리기 도구
         # 사용 중 다른 도형 테두리 근처를 클릭했을 때 그리기를 방해하지 않기 위한 기존의 의도적
         # 구분)만 남기고 상태·생성 경로는 하나로 합친다(_connect_port_at이 그 진입점).
+        self._group_proxy_cache = {}  # [그룹 프레임 2026-08-25] group_id → _GroupBindProxy,
+        # `_group_proxy()`가 채운다 — 같은 그룹이면 항상 같은 인스턴스를 돌려줘야 `hp[0] is
+        # best_sh` 같은 identity 비교(아래 여러 곳)가 실제 도형과 동일하게 동작한다.
         self._hp_hover = None       # (item, port_pt, normal) — 유휴 hover(스냅 마커용) or None
         self._port_dot_shape = None  # [2026-08-03 잔상/불규칙 표시 수정] _draw_port_dots가 그릴
         # 대상(미선택 도형 하나) — mouseMoveEvent가 이 값이 바뀔 때만 update()를 부르던 게 아니라
@@ -502,9 +505,27 @@ class _AnnotatorView(QGraphicsView):
         snap = self._border_snap_at(self.mapFromScene(cursor_scene))
         if snap is not None:
             return snap
+        seen_gids = set()
         for sh in self._conn_shapes():   # 위(나중 그린 것)부터
             if sh is src:
                 continue
+            # [그룹 프레임 2026-08-25] 그룹 멤버는 낱개 rect가 아니라 그룹 전체 bbox 안이면
+            # 흡수 대상 — 그룹당 한 번만 판정.
+            gid = getattr(sh, "_group_id", None)
+            if gid:
+                if gid in seen_gids:
+                    continue
+                seen_gids.add(gid)
+                gbox = _group_bbox_scene(_group_members(self.scene(), gid))
+                if gbox is None or not gbox.contains(cursor_scene):
+                    continue
+                probe = self._group_proxy(gid)
+                best, bestd = None, None
+                for sp, n in _shape_ports_visible(probe):
+                    d = QLineF(sp, cursor_scene).length()
+                    if bestd is None or d < bestd:
+                        bestd, best = d, (sp, n, probe)
+                return best
             # rect()로 판정 — 채움 없는 도형은 shape()가 외곽선만이라 contains가 내부를 못 잡는다.
             if sh.rect().contains(sh.mapFromScene(cursor_scene)):
                 best, bestd = None, None
@@ -1020,8 +1041,8 @@ class _AnnotatorView(QGraphicsView):
                 c.setZValue(it.zValue())
                 self.scene().addItem(c)
             clones.append(c)
-        remap_grouped_bindings(zip(src, clones))   # 배치 안에서 함께 복제된 도형끼리 재연결
-        regroup_duplicated_items(zip(src, clones)) # 그룹째 복제 시 사본도 새 그룹으로
+        gid_map = regroup_duplicated_items(zip(src, clones))  # 그룹째 복제 시 사본도 새 그룹으로
+        remap_grouped_bindings(zip(src, clones), gid_map)     # 배치 안에서 함께 복제된 도형·그룹 재연결
         self.scene().clearSelection()
         # [성능조사 2026-08-01] paste/duplicate/rubber-band와 동일한 O(n²) 함정 — 다중선택
         # Alt+드래그 복제 시 개별 setSelected 대신 owner의 배치 선택 헬퍼로 한 번에.
@@ -1582,7 +1603,23 @@ class _AnnotatorView(QGraphicsView):
         bestpd = self._PORT_SNAP_PX
         pexit = None
         pshape = None
+        seen_gids_p1 = set()
         for sh in shapes:
+            # [그룹 프레임 2026-08-25 deep-interview] `_group_id`가 있는 도형은 낱개 테두리
+            # 대신 그룹 전체 bbox를 가진 가상 호스트(`_group_proxy`)로 접속점을 낸다 —
+            # SVG 다중조각 심볼 등도 이미지처럼 "하나의 틀"로 취급하기 위함. 같은 그룹이
+            # `shapes`에 여러 번 나와도 그룹당 한 번만 계산.
+            gid = getattr(sh, "_group_id", None)
+            if gid:
+                if gid in seen_gids_p1:
+                    continue
+                seen_gids_p1.add(gid)
+                probe = self._group_proxy(gid)
+                for sp, n in _shape_ports_visible(probe):
+                    d = self._view_dist(sp, view_pos)
+                    if d <= bestpd:
+                        bestpd, bestp, pexit, pshape = d, sp, n, probe
+                continue
             # [§8 항목17 3단계] 포트/cut에 가려 안 보이는 접속점은 이산 스냅 대상에서도 뺀다 —
             # Pass 2(연속 폴백, _nearest_border_visible)가 이미 지키는 원칙을 이산 4점에도 통일.
             for sp, n in _shape_ports_visible(sh):
@@ -1614,7 +1651,20 @@ class _AnnotatorView(QGraphicsView):
         bestd = self._BORDER_SNAP_PX
         bexit = None
         bshape = None
+        seen_gids_p2 = set()
         for sh in shapes:
+            # [그룹 프레임 2026-08-25] 연속 폴백도 이산 Pass 1과 같은 치환 — 그룹당 한 번만.
+            gid = getattr(sh, "_group_id", None)
+            if gid:
+                if gid in seen_gids_p2:
+                    continue
+                seen_gids_p2.add(gid)
+                probe = self._group_proxy(gid)
+                sp, n = _nearest_border(probe, scene_pt)   # 그룹 프레임은 포트/cut이 없어 gap 없음
+                d = self._view_dist(sp, view_pos)
+                if d <= bestd:
+                    bestd, best, bexit, bshape = d, sp, n, probe
+                continue
             # [실사용 버그 2026-08-09] 부착 포트에 가려 화면에 없는 테두리 구간은 스냅 대상에서
             # 뺀다 — 종전엔 포트 몸통 한가운데서도 그 뒤 호스트 테두리에 화살표가 붙었다(실측).
             hit = _nearest_border_visible(sh, scene_pt)
@@ -1781,6 +1831,16 @@ class _AnnotatorView(QGraphicsView):
                 return
             painter.drawLine(host.mapToScene(pts[idx]), host.mapToScene(new_pt))
 
+    def _group_proxy(self, group_id: str) -> "_GroupBindProxy":
+        """[그룹 프레임 2026-08-25] group_id 하나당 항상 같은 `_GroupBindProxy` 인스턴스를
+        돌려준다(`_group_proxy_cache`) — `hp[0] is best_sh`, `snap[2] is not src` 같은 identity
+        비교가 실제 도형과 똑같이 동작하려면 매번 새 객체를 만들면 안 된다."""
+        proxy = self._group_proxy_cache.get(group_id)
+        if proxy is None:
+            proxy = _GroupBindProxy(self.scene(), group_id)
+            self._group_proxy_cache[group_id] = proxy
+        return proxy
+
     def _conn_shapes_near(self, scene_pt: QPointF, margin: float):
         """[성능 조사 2026-07-30] scene.items(rect) 공간 인덱스(Qt BSP 트리)로 scene_pt 근방만
         질의 — _conn_shapes()의 전체 스캔 대체. _draw_port_dots·_hover_port_at가 매 페인트·매
@@ -1846,7 +1906,8 @@ class _AnnotatorView(QGraphicsView):
         # 호버와 동일한 예고점"이어야 한다(이동 가능함과 커넥터 시작점을 보여주는 건 별개).
         # 그래서 sh 자신은 occluder에서 제외하고, *다른* 도형이 이 지점을 점유할 때만 억제한다.
         occluders = [sh for sh in near if _shape_interior_contains(sh, scene_c)] if select_mode else []
-        best_sh, best_d = None, None
+        best_sh, best_d, best_member = None, None, None
+        seen_group_ids = set()
         for sh in near:
             # [실사용 버그 수정 2026-08-11] 이미지는 occluder 후보일 뿐 접속점을 제공하는
             # 도형이 아니다 — 여기서 걸러야 위 occluders 계산(이미지가 다른 도형을 가리는
@@ -1856,12 +1917,29 @@ class _AnnotatorView(QGraphicsView):
                 continue
             if sh.isSelected():
                 continue
-            # [실사용 요청 2026-08-25] Ctrl+G로 묶인 멤버는 "한 덩어리"로 다루자는 취지와
-            # 달리 낱개 도형처럼 자기 호버 포트를 계속 내밀고 있었다 — 그룹으로 화살표를
-            # 붙이려면 먼저 그룹 해제(Ctrl+Shift+G)하게 한다. occluder 판정(다른 도형이
-            # 이 지점을 가리는가)엔 그룹 멤버도 계속 참여시킨다 — 이건 "포트를 보여줄
-            # 대상"이 아니라 "화면 스택 순서" 문제라 무관하다.
-            if getattr(sh, "_group_id", None):
+            # [그룹 프레임 2026-08-25 deep-interview] Ctrl+G로 묶인 멤버는 이제 "한 덩어리"의
+            # 예고점을 낱개 대신 그룹 전체 bbox 기준으로 낸다(이미지처럼 취급) — 2026-08-25
+            # 당시엔 자기 호버 포트를 계속 내미는 게 "한 덩어리" 취지와 어긋나 통째로 꺼두기만
+            # 했었는데(그룹으로 화살표를 붙이려면 그룹 해제부터 해야 했다), 이번에 그 자리를
+            # 그룹 bbox 기준 예고점으로 채운다. 같은 그룹 멤버가 near에 여러 개 있어도 그룹당
+            # 한 번만 계산(중복 방지). occluder 판정은 실제로 커서가 올라간 멤버(sh) 기준으로
+            # 그대로 둔다 — "화면 스택 순서"는 그룹 여부와 무관하기 때문.
+            gid = getattr(sh, "_group_id", None)
+            if gid:
+                if gid in seen_group_ids:
+                    continue
+                seen_group_ids.add(gid)
+                gbox = _group_bbox_scene(_group_members(self.scene(), gid))
+                if gbox is None:
+                    continue
+                br = gbox.adjusted(-margin, -margin, margin, margin)
+                if not br.contains(scene_c):
+                    continue
+                if select_mode and any(o is not sh for o in occluders):
+                    continue
+                d = QLineF(gbox.center(), scene_c).length()
+                if best_d is None or d < best_d:
+                    best_d, best_sh, best_member = d, self._group_proxy(gid), sh
                 continue
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_c):
@@ -1870,8 +1948,8 @@ class _AnnotatorView(QGraphicsView):
                 continue
             d = QLineF(sh.sceneBoundingRect().center(), scene_c).length()
             if best_d is None or d < best_d:
-                best_d, best_sh = d, sh
-        if best_sh is not None and any(o is not best_sh for o in occluders):
+                best_d, best_sh, best_member = d, sh, sh
+        if best_sh is not None and any(o is not best_member for o in occluders):
             return None
         return best_sh
 
@@ -2036,11 +2114,11 @@ class _AnnotatorView(QGraphicsView):
         # `test_port_participates_normally_in_hover_and_qc_systems`가 깨진다(실측 확인).
         if any(sh.isSelected() and _shape_interior_contains(sh, scene_pt) for sh in all_near):
             return None
-        # [실사용 요청 2026-08-25] `_port_dot_target`과 같은 이유로 그룹 멤버는 여기서도
-        # 후보 제외 — 그렇지 않으면 예고점은 안 보이는데(위에서 뺐음) 클릭·드래그로 연결
-        # 자체는 여전히 되는 시각-동작 불일치가 생긴다.
-        near = [sh for sh in all_near
-                if not sh.isSelected() and not getattr(sh, "_group_id", None)]
+        # [그룹 프레임 2026-08-25 deep-interview] 2026-08-25 당시엔 `_port_dot_target`과 같은
+        # 이유(예고점-동작 불일치 방지)로 그룹 멤버를 통째로 후보 제외했으나, 이제 아래 두
+        # Pass가 그룹 멤버를 만나면 그룹 bbox 기준 가상 호스트(`_group_proxy`)로 치환해 예고
+        # 점·클릭/드래그 연결 둘 다 그룹 기준으로 통일한다(더 이상 제외할 필요가 없다).
+        near = [sh for sh in all_near if not sh.isSelected()]
         # [실사용 버그 수정 2026-08-11] 커서가 실제로 놓인 지점(scene_pt)에서 Qt 화면 스택
         # 맨 위 아이템을 확인 — 그게 이번 후보(sh)도, sh의 포트↔호스트 가족(부모-자식 체인)도
         # 아니면 sh는 뭔가 다른 것(전형적으로 붙여넣은 이미지)에 시각적으로 가려진 것이므로
@@ -2063,10 +2141,29 @@ class _AnnotatorView(QGraphicsView):
 
         best = None
         bestd = self._PORT_SNAP_PX
+        seen_gids_1 = set()
         for sh in near:
             # [실사용 요청 2026-08-19] _PathItem은 더 이상 이산 포트에서 제외하지 않는다 —
             # `_shape_ports`가 이제 펜 궤적의 양 끝 2점을 돌려준다(`_path_endpoint_ports`).
             if isinstance(sh, _ImageItem) or _occluded(sh):
+                continue
+            # [그룹 프레임 2026-08-25] 그룹 멤버는 그룹 bbox를 가진 가상 호스트로 치환 —
+            # 같은 그룹이 near에 여러 번 나와도 그룹당 한 번만 계산(중복 방지).
+            gid = getattr(sh, "_group_id", None)
+            if gid:
+                if gid in seen_gids_1:
+                    continue
+                seen_gids_1.add(gid)
+                gbox = _group_bbox_scene(_group_members(self.scene(), gid))
+                if gbox is None:
+                    continue
+                if not gbox.adjusted(-margin, -margin, margin, margin).contains(scene_pt):
+                    continue
+                probe = self._group_proxy(gid)
+                for sp, n in _shape_ports_for_preview(probe):
+                    d = self._view_dist(sp, view_pos)
+                    if d <= bestd:
+                        bestd, best = d, (probe, sp, n)
                 continue
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_pt):
@@ -2079,8 +2176,21 @@ class _AnnotatorView(QGraphicsView):
             return (*best, True)
         best2 = None
         bestd2 = self._BORDER_SNAP_PX
+        seen_gids_2 = set()
         for sh in near:
             if isinstance(sh, _ImageItem) or _occluded(sh):
+                continue
+            gid = getattr(sh, "_group_id", None)
+            if gid:
+                if gid in seen_gids_2:
+                    continue
+                seen_gids_2.add(gid)
+                probe = self._group_proxy(gid)
+                hit = _nearest_border(probe, scene_pt)   # 그룹 프레임은 포트/cut이 없어 gap 없음
+                sp, n = hit
+                d = self._view_dist(sp, view_pos)
+                if d <= bestd2:
+                    bestd2, best2 = d, (probe, sp, n)
                 continue
             # [실사용 버그 2026-08-09] 부착 포트에 가려 화면에 없는 테두리 구간은 호버 대상에서
             # 뺀다 — 이게 "포트 몸통 한가운데인데 뒤쪽 호스트 테두리 때문에 십자 커서"의 원인.

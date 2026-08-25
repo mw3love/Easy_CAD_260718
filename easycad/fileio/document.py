@@ -15,7 +15,7 @@ from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPixmap
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _PolygonItem,
-    _ConnectorLabel, _reposition_port_from_frac, _TEXT,
+    _ConnectorLabel, _reposition_port_from_frac, _TEXT, _GroupBindProxy,
 )
 
 FORMAT = "easycad-doc"
@@ -383,14 +383,27 @@ def save_document(scene, path: str, layers: list | None = None):
     for it, d in serial:
         if d["type"] in ("arrow", "sarrow"):
             end_idx = [0, 1] if d["type"] == "arrow" else [0, len(it._pts) - 1]
-            for (key, pkey), bi in zip((("bind1", "bind1_pt"), ("bind2", "bind2_pt")), end_idx):
+            for (key, pkey, gkey), bi in zip(
+                    (("bind1", "bind1_pt", "bind1_group"), ("bind2", "bind2_pt", "bind2_group")),
+                    end_idx):
                 sh = it._bound(bi)
                 pt = it._bind_pt(bi)
-                if sh is not None and id(sh) in idx_of and pt is not None:
+                # [그룹 프레임 2026-08-25] `_GroupBindProxy`는 저장 리스트 안의 실제 아이템이
+                # 아니라 group_id 문자열을 직접 참조 — `_group_id`가 이미 .ecad에 왕복되므로
+                # (`_common`/`_apply_common`) 인덱스 없이도 저장·복원된다. `pt`는 이 경우
+                # 도형 로컬좌표가 아니라 그룹 bbox 대비 분수좌표(0~1)다(`_GroupBindProxy.
+                # mapFromScene`).
+                if isinstance(sh, _GroupBindProxy) and pt is not None:
+                    d[key] = None
+                    d[gkey] = sh.group_id
+                    d[pkey] = [pt.x(), pt.y()]
+                elif sh is not None and id(sh) in idx_of and pt is not None:
                     d[key] = idx_of[id(sh)]
+                    d[gkey] = None
                     d[pkey] = [pt.x(), pt.y()]
                 else:
                     d[key] = None
+                    d[gkey] = None
                     d[pkey] = None
     items = [d for _it, d in serial]
     doc = {"format": FORMAT, "version": VERSION, "items": items}
@@ -417,9 +430,18 @@ def insert_items(scene, items: list[dict]) -> list:
         if it is None or d.get("type") not in ("arrow", "sarrow"):
             continue
         end_idx = [0, 1] if d["type"] == "arrow" else [0, len(it._pts) - 1]
-        for (key, pkey), bi in zip((("bind1", "bind1_pt"), ("bind2", "bind2_pt")), end_idx):
-            j = d.get(key)
+        for (key, pkey, gkey), bi in zip(
+                (("bind1", "bind1_pt", "bind1_group"), ("bind2", "bind2_pt", "bind2_group")),
+                end_idx):
             pt = d.get(pkey)
+            gid = d.get(gkey)
+            if gid is not None and pt is not None:
+                # [그룹 프레임 2026-08-25] group_id만으로 복원 — 대상 그룹 멤버가 실제로
+                # 씬에 있는지는 안 따진다(멤버가 아직 없거나 나중에 지워져도 `_GroupBindProxy.
+                # scene()`이 None을 돌려줘 `reroute()`가 조용히 무해화한다).
+                it.set_bound(bi, _GroupBindProxy(scene, gid), QPointF(*pt))
+                continue
+            j = d.get(key)
             if j is not None and 0 <= j < len(created) and created[j] is not None and pt is not None:
                 it.set_bound(bi, created[j], QPointF(*pt))
     # [우리 확장] 선·화살표 라벨 복원(본체가 씬에 들어간 뒤라 자식 부착 가능).

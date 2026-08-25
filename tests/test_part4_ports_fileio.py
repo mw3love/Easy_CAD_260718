@@ -3,6 +3,7 @@
 tests/test_easycad.py 2026-08-02 분할분. 실행: python tests/test_easycad.py (전체) 또는 pytest test_part4_ports_fileio.py.
 """
 from _shared import *  # noqa: F401,F403
+from easycad.canvas.annotator_core import _GroupBindProxy
 
 
 def test_diamond_cardinal_normals_are_axis_aligned():
@@ -56,30 +57,36 @@ def test_hover_port_at_skips_selected_shape():
     assert view._hover_port_at(view.mapFromScene(QPointF(100, 30))) is None
 
 
-def test_hover_port_at_skips_grouped_unselected_member():
-    # [실사용 요청 2026-08-25] Ctrl+G로 묶인 멤버는 "한 덩어리"라는 그룹 취지와 달리 낱개
-    # 도형처럼 자기 호버 포트를 계속 내밀고 있었다 — 미선택이어도 `_group_id`가 있으면
-    # hover 커넥터 대상에서 제외(그룹 해제 후 다시 붙일 수 있어야 함).
+def test_hover_port_at_targets_group_frame_for_grouped_unselected_member():
+    # [실사용 요청 2026-08-25 → 같은 날 그룹 프레임 deep-interview로 대체] Ctrl+G로 묶인
+    # 멤버가 낱개 도형처럼 자기 호버 포트를 내미는 게 "한 덩어리" 취지와 어긋난다는 지적으로
+    # 한때 통째로 억제했으나, 이제는 억제 대신 그룹 bbox 기준 가상 호스트(`_GroupBindProxy`)로
+    # 치환한다(이미지처럼 "하나의 틀" 취급) — 멤버 1개짜리 그룹은 자기 자신의 bbox와 같으므로
+    # 호스트 타입만 바뀌고 반환 자체는 계속 된다.
     w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
     view = w._view
     r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
-    assert view._hover_port_at(view.mapFromScene(QPointF(100, 30))) is not None  # 그룹 전: 통과
+    hit = view._hover_port_at(view.mapFromScene(QPointF(100, 30)))
+    assert hit is not None and hit[0] is r                     # 그룹 전: 도형 자신
     r._group_id = "g1"
-    assert view._hover_port_at(view.mapFromScene(QPointF(100, 30))) is None      # 그룹 후: 억제
+    hit = view._hover_port_at(view.mapFromScene(QPointF(100, 30)))
+    assert hit is not None and isinstance(hit[0], _GroupBindProxy) and hit[0].group_id == "g1"
     r._group_id = None
-    assert view._hover_port_at(view.mapFromScene(QPointF(100, 30))) is not None  # 해제 후: 복원
+    hit = view._hover_port_at(view.mapFromScene(QPointF(100, 30)))
+    assert hit is not None and hit[0] is r                     # 해제 후: 도형 자신으로 복원
 
 
-def test_port_dot_target_skips_grouped_unselected_member():
+def test_port_dot_target_targets_group_frame_for_grouped_unselected_member():
     # 위 테스트와 대칭 — 예고점 렌더 대상(_draw_port_dots가 쓰는 최근접 후보)도 동일하게
-    # 억제돼야 시각(점 안 보임)과 동작(연결 안 됨)이 일치한다.
+    # 그룹 프레임으로 치환돼야 시각(점 위치)과 동작(연결 대상)이 일치한다.
     w = CanvasWindow(); w.show(); w.set_tool("select"); w._zoom_reset()
     view = w._view
     r = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60)
     scene_c = QPointF(100, 30)
     assert view._port_dot_target(scene_c) is r
     r._group_id = "g1"
-    assert view._port_dot_target(scene_c) is None
+    target = view._port_dot_target(scene_c)
+    assert isinstance(target, _GroupBindProxy) and target.group_id == "g1"
 
 
 def test_select_tool_port_drag_creates_connector():

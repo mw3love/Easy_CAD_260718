@@ -143,8 +143,8 @@ class _SelectionMixin:
             new_items.append(c)
         # clone()이 _bind1/_bind2 등을 원본 그대로 복사해 왔으므로(clip 세대를 거쳐도 불변),
         # 같이 복사된 도형끼리는 여기서 사본으로 재연결한다(배치 밖 도형 바인딩은 그대로 유지).
-        remap_grouped_bindings(zip(self._clip_src, new_items))
-        regroup_duplicated_items(zip(self._clip_src, new_items))   # 그룹째 복사 시 사본도 새 그룹으로
+        gid_map = regroup_duplicated_items(zip(self._clip_src, new_items))  # 그룹째 복사 시 사본도 새 그룹으로
+        remap_grouped_bindings(zip(self._clip_src, new_items), gid_map)
         self._bulk_select(new_items)   # [성능] 개별 setSelected 대신 한 번에 — O(n²) 회피
         if new_items:
             self.push_undo_add_many(new_items)
@@ -174,8 +174,8 @@ class _SelectionMixin:
             c.moveBy(20.0, 20.0)
             self._scene.addItem(c)
             new_items.append(c)
-        remap_grouped_bindings(zip(src, new_items))
-        regroup_duplicated_items(zip(src, new_items))   # 그룹째 복제 시 사본도 새 그룹으로
+        gid_map = regroup_duplicated_items(zip(src, new_items))  # 그룹째 복제 시 사본도 새 그룹으로
+        remap_grouped_bindings(zip(src, new_items), gid_map)
         self._bulk_select(new_items)   # [성능] 개별 setSelected 대신 한 번에 — O(n²) 회피
         if new_items:
             self.push_undo_add_many(new_items)
