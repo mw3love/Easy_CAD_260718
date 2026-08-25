@@ -2208,12 +2208,9 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         # (`_fill_model_combo_grouped`로 모듈 함수 추출, 아래 참조).
         # [2026-08-25 재작업] "GPT vs Gemini 나란히 비교" bake-off에서 "슬롯 A만 기본
         # 사용, 슬롯 B는 필요할 때만 켜는 옵션"으로 설계 변경(사용자 확정) — 슬롯 A는
-        # 개수 기본 1개 그대로(`gw.TEXT_RECOMMEND_1`, 2026-08-25부로 gemini lite 계열로
-        # 교체, `gateway.py` 주석 참조), 슬롯 B는 개수 기본 0개(꺼짐). 모델 드롭다운
-        # 자체는 두 슬롯 다 항상 정상적으로 채워져 선택 가능한 상태다 — "꺼짐"은 개수가
-        # 0이라 생성 요청에서 빠진다는 뜻이지, 드롭다운이 비거나 비활성화된다는 뜻이
-        # 아니다(사용자가 "드롭박스 선택했을 때 아무것도 안 보이면 안 된다"고 명시).
-        # B를 쓰고 싶으면 개수 드롭다운에서 1 이상을 고르기만 하면 A와 함께 생성된다.
+        # 기본 모델(`gw.TEXT_RECOMMEND_1`, 2026-08-25부로 gemini lite 계열로 교체,
+        # `gateway.py` 주석 참조) + 개수 기본 3개(같은 날 후속 요청). 슬롯 B는 모델
+        # "(미선택)"이 곧 꺼짐이다(같은 날 후속 재작업 — 아래 `_count_b` 참조).
         model_row1 = QHBoxLayout()
         model_row1.addWidget(QLabel("모델 A:", self))
         self._model_combo_a = QComboBox(self)
@@ -2222,7 +2219,7 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         model_row1.addWidget(QLabel("개수:", self))
         self._count_a = QComboBox(self)
         self._count_a.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
-        self._count_a.setCurrentIndex(1)   # 기본 1개(Stage 1과 동일 체감 유지)
+        self._count_a.setCurrentIndex(3)   # [2026-08-25] 기본 3개로 상향(사용자 요청)
         self._count_a.setStyleSheet(_ROUNDED_COMBO_QSS)
         model_row1.addWidget(self._count_a)
         left_col.addLayout(model_row1)

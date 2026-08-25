@@ -227,18 +227,19 @@ def test_parse_svg_path_still_maps_to_path_item():
 def test_svg_asset_dialog_defaults_to_model_a_only():
     """2026-08-25 재작업 — on/off를 "개수 0"이 아니라 "모델 미선택"으로 표현하도록
     바꿨다(사용자 지적: 개수만 0이면 콤보엔 멀쩡한 모델명이 떠 있는데 안 쓰이는 상태가
-    한눈에 안 들어옴). 슬롯 A는 항상 실제 모델이 기본 선택되고 개수 1, 슬롯 B는 모델이
-    "(미선택)"으로 기본 선택되며 개수는 1이어도(미선택 상태에선 안 쓰이므로 무해) 무시된다
-    — 실제 모델을 고르는 순간 바로 그 개수만큼 생성된다."""
+    한눈에 안 들어옴). 슬롯 A는 항상 실제 모델이 기본 선택되고 개수 3(같은 날 후속 요청,
+    최초엔 1이었음), 슬롯 B는 모델이 "(미선택)"으로 기본 선택되며 개수는 1이어도(미선택
+    상태에선 안 쓰이므로 무해) 무시된다 — 실제 모델을 고르는 순간 바로 그 개수만큼
+    생성된다."""
     with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
-    assert dlg._count_a.currentText() == "1"
+    assert dlg._count_a.currentText() == "3"
     assert dlg._count_b.currentText() == "1"
     assert _combo_selected_model_or_none(dlg._model_combo_b) is None   # "(미선택)" 기본
     assert dlg._count_a.count() == 6        # 0~5
     assert dlg._count_b.count() == 6
     assert not dlg._count_b.isEnabled()     # 미선택 상태라 개수 콤보 자체가 비활성
-    assert dlg._requested_jobs() == [gw.TEXT_RECOMMEND_1]
+    assert dlg._requested_jobs() == [gw.TEXT_RECOMMEND_1] * 3
     dlg.deleteLater()
 
 
@@ -260,7 +261,7 @@ def test_svg_asset_dialog_model_b_unselected_forces_zero_jobs_regardless_of_coun
         dlg = _SvgAssetDialog()
     dlg._count_b.setCurrentText("5")
     assert _combo_selected_model_or_none(dlg._model_combo_b) is None
-    assert dlg._requested_jobs() == [gw.TEXT_RECOMMEND_1]
+    assert dlg._requested_jobs() == [gw.TEXT_RECOMMEND_1] * 3   # A 기본 개수(3)만 반영
     dlg.deleteLater()
 
 
@@ -304,11 +305,14 @@ def test_svg_asset_dialog_requires_at_least_one_model_checked():
 
 
 def test_svg_asset_dialog_generates_one_candidate_per_requested_job():
-    """2026-08-25 재작업 — 기본값은 슬롯 A 1개뿐이라(B는 모델 미선택), B도 함께
-    생성되는 걸 확인하려면 모델을 명시적으로 골라야 한다(개수는 이미 기본 1)."""
+    """2026-08-25 재작업 — 기본은 슬롯 A만 켜져 있으니(B는 모델 미선택) B도 함께
+    생성되는 걸 확인하려면 모델을 명시적으로 골라야 한다. A 개수는 기본값(같은 날 후속
+    요청으로 3으로 상향됨)에 기대지 않도록 1로 명시해 "요청한 job당 후보 1개"라는
+    이름의 취지를 정확히 A 1개+B 1개=2개로 검증한다."""
     with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
+    dlg._count_a.setCurrentText("1")
     _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)
     calls = []
 
@@ -451,6 +455,7 @@ def test_svg_asset_dialog_cancel_keeps_arrived_candidates_and_detaches_pending()
     with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
+    dlg._count_a.setCurrentText("1")   # A 기본 개수(3)면 아래 "A 1개만 먼저 도착" 전제가 깨짐
     _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)
 
     def fake_generate(key, subject, *, model, **kw):
@@ -851,6 +856,7 @@ def test_svg_asset_dialog_regenerate_clears_old_candidates():
     with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
+    dlg._count_a.setCurrentText("1")   # A 기본 개수(3)면 아래 "정확히 2개" 전제가 깨짐
     _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)   # 교체 확인엔 후보 2개가 필요
 
     def fake_generate(key, subject, *, model, **kw):
@@ -961,6 +967,7 @@ def test_svg_asset_dialog_generate_with_image_and_no_subject_still_generates():
     real_path = os.path.join(_TMP, f"attach_{uuid.uuid4().hex}.png")
     _mk_pixmap(40, 20).save(real_path)
     dlg._load_image_path(real_path)
+    dlg._count_a.setCurrentText("1")   # A 기본 개수(3)면 아래 "정확히 1개" 전제가 깨짐
     dlg._count_b.setCurrentText("0")   # gpt 1개만 — 검증 단순화
 
     captured = {}
@@ -985,8 +992,11 @@ def test_svg_asset_dialog_generate_with_image_and_no_subject_still_generates():
 
 def _gen_two_candidates(dlg):
     """이름대로 후보 2개(A+B 각 1개)가 나와야 하는데, 2026-08-25 재작업부터 B는 기본
-    "(미선택)"이라 여기서 모델을 명시적으로 고른다 — 호출부 9곳이 전부 이 헬퍼를 통해서만
-    B를 건드리므로 이 한 줄만 고치면 전부 해결된다."""
+    "(미선택)"이라 여기서 모델을 명시적으로 고르고(호출부 9곳이 전부 이 헬퍼를 통해서만
+    B를 건드리므로 이 한 줄만 고치면 전부 해결된다), A 개수는 기본값(2026-08-25 후속
+    요청으로 3으로 상향됨)에 기대지 않도록 1로 명시해 총 후보 개수를 이름대로 2개로
+    고정한다."""
+    dlg._count_a.setCurrentText("1")
     _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)
 
     def fake_generate(key, subject, *, model, **kw):
