@@ -41,7 +41,7 @@ from easycad.fileio.mermaid_import import (
 from easycad.canvas.host_widgets import (
     _ARROW_KIND_TOOL, _arrow_kind_of, _style_menu_separators, _act_icon,
 )
-from easycad.canvas.host_dialogs import _CableNumberDialog, _SvgAssetDialog
+from easycad.canvas.host_dialogs import _CableNumberDialog
 from easycad.fileio import symbol_library
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -473,11 +473,15 @@ class _ContextMixin:
         remove+create만 하나의 undo 엔트리로 묶으면 같은 결과가 난다(별도 언바인드 불필요).
         `item.rect()` 기반 bbox 계산은 `_make_swapped`와 동일 관례 — `sceneBoundingRect()`
         대신 쓰는 이유는 그쪽이 펜 두께만큼 부풀려진 값이라 실제 도형 크기가 아니기
-        때문(`docs/pitfalls.md` "좌표계·변환" 참조)."""
+        때문(`docs/pitfalls.md` "좌표계·변환" 참조).
+        [2026-08-25] 삽입 진입점(`host_fileio._insert_ai_svg_asset`)과 같은 다이얼로그
+        인스턴스를 공유한다(`_get_svg_asset_dialog()`, 사용자 선택 — "방금 만든 후보를
+        다른 자리에도 재사용" 우선)."""
         rect_scene = item.mapToScene(QRectF(item.rect())).boundingRect()
         long_side = max(rect_scene.width(), rect_scene.height())
         center = rect_scene.center()
-        dlg = _SvgAssetDialog(self, confirm_label="확인 (도형 대체)")
+        dlg = self._get_svg_asset_dialog()
+        dlg.set_confirm_label("확인 (도형 대체)")
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         svg_text = dlg.selected_svg()

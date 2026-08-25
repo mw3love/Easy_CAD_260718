@@ -798,11 +798,35 @@ def test_svg_asset_dialog_quicklook_space_toggles_save_checkbox():
     from PyQt6.QtGui import QKeyEvent
     ql.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier))
     assert card.is_checked_for_save()
-    assert "☑" in ql._check_hint.text()
+    assert ql._check_btn.isChecked()
+    assert "☑" in ql._check_btn.text()
 
     ql.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier))
     assert not card.is_checked_for_save()
-    assert "☐" in ql._check_hint.text()
+    assert not ql._check_btn.isChecked()
+    assert "☐" in ql._check_btn.text()
+    ql.close()
+    dlg.deleteLater()
+
+
+def test_svg_asset_dialog_quicklook_check_button_click_toggles_save_checkbox():
+    # [실사용 피드백 2026-08-25] 하단 버튼을 마우스로 눌러도 Space와 동일하게 토글돼야
+    # 한다(예전엔 순수 안내 텍스트라 클릭할 방법이 없었음).
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
+        dlg = _SvgAssetDialog()
+    _gen_n_candidates_direct(dlg, 2)
+    dlg._show_enlarged_candidate(0)
+    ql = dlg._quicklook
+    card = dlg._candidates[0][0]
+    assert not card.is_checked_for_save()
+
+    ql._check_btn.click()
+    assert card.is_checked_for_save()
+    assert ql._check_btn.isChecked()
+
+    ql._check_btn.click()
+    assert not card.is_checked_for_save()
+    assert not ql._check_btn.isChecked()
     ql.close()
     dlg.deleteLater()
 
@@ -1130,6 +1154,9 @@ def test_insert_ai_svg_asset_inserts_all_checked_candidates_without_overlap():
         def __init__(self, parent=None):
             self._svgs = [_SAMPLE_SVG, _SAMPLE_SVG]
 
+        def set_confirm_label(self, text):
+            pass
+
         def exec(self):
             return QDialog.DialogCode.Accepted
 
@@ -1373,6 +1400,9 @@ def test_insert_ai_svg_asset_adds_items_as_single_undo_step():
         def __init__(self, parent=None):
             pass
 
+        def set_confirm_label(self, text):
+            pass
+
         def exec(self):
             return QDialog.DialogCode.Accepted
 
@@ -1401,6 +1431,9 @@ def test_insert_ai_svg_asset_cancel_does_nothing():
         def __init__(self, parent=None):
             pass
 
+        def set_confirm_label(self, text):
+            pass
+
         def exec(self):
             return QDialog.DialogCode.Rejected
 
@@ -1421,7 +1454,10 @@ def test_generate_svg_replace_swaps_shape_bbox_long_side_and_center():
     rect = _mk_pen_rect(w, x=100, y=100, ww=200, hh=80)   # bbox 200×80, 긴변 200, 중심(200,140)
 
     class _FakeDlg:
-        def __init__(self, parent=None, confirm_label=None):
+        def __init__(self, parent=None):
+            pass
+
+        def set_confirm_label(self, text):
             pass
 
         def exec(self):
@@ -1430,7 +1466,7 @@ def test_generate_svg_replace_swaps_shape_bbox_long_side_and_center():
         def selected_svg(self):
             return _SAMPLE_SVG   # 원본 viewBox 100×100(정사각) — 긴 변 기준으로만 스케일
 
-    with patch("easycad.canvas.host_context._SvgAssetDialog", _FakeDlg):
+    with patch("easycad.canvas.host_fileio._SvgAssetDialog", _FakeDlg):
         w._generate_svg_replace(rect)
 
     assert rect.scene() is None   # 옛 도형은 씬에서 빠짐
@@ -1453,7 +1489,10 @@ def test_generate_svg_replace_is_single_undo_step():
     before = len(w._scene.items())
 
     class _FakeDlg:
-        def __init__(self, parent=None, confirm_label=None):
+        def __init__(self, parent=None):
+            pass
+
+        def set_confirm_label(self, text):
             pass
 
         def exec(self):
@@ -1462,7 +1501,7 @@ def test_generate_svg_replace_is_single_undo_step():
         def selected_svg(self):
             return _SAMPLE_SVG
 
-    with patch("easycad.canvas.host_context._SvgAssetDialog", _FakeDlg):
+    with patch("easycad.canvas.host_fileio._SvgAssetDialog", _FakeDlg):
         w._generate_svg_replace(rect)
     assert len(w._scene.items()) == before + 2 - 1   # -1(제거된 rect) +2(신규)
 
@@ -1487,7 +1526,10 @@ def test_generate_svg_replace_leaves_bound_arrow_frozen_not_rebound():
     before_pts = [arrow.mapToScene(p) for p in arrow._pts]
 
     class _FakeDlg:
-        def __init__(self, parent=None, confirm_label=None):
+        def __init__(self, parent=None):
+            pass
+
+        def set_confirm_label(self, text):
             pass
 
         def exec(self):
@@ -1496,7 +1538,7 @@ def test_generate_svg_replace_leaves_bound_arrow_frozen_not_rebound():
         def selected_svg(self):
             return _SAMPLE_SVG
 
-    with patch("easycad.canvas.host_context._SvgAssetDialog", _FakeDlg):
+    with patch("easycad.canvas.host_fileio._SvgAssetDialog", _FakeDlg):
         w._generate_svg_replace(rect)
 
     assert arrow._bind_start is rect   # 재바인딩 안 됨(옛 도형을 계속 가리킴)
@@ -1510,7 +1552,10 @@ def test_generate_svg_replace_cancel_keeps_original_shape():
     rect = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
 
     class _FakeDlg:
-        def __init__(self, parent=None, confirm_label=None):
+        def __init__(self, parent=None):
+            pass
+
+        def set_confirm_label(self, text):
             pass
 
         def exec(self):
@@ -1519,7 +1564,7 @@ def test_generate_svg_replace_cancel_keeps_original_shape():
         def selected_svg(self):
             return ""
 
-    with patch("easycad.canvas.host_context._SvgAssetDialog", _FakeDlg):
+    with patch("easycad.canvas.host_fileio._SvgAssetDialog", _FakeDlg):
         w._generate_svg_replace(rect)
     assert rect.scene() is w._scene
     w.deleteLater()
@@ -1591,15 +1636,21 @@ def test_svg_asset_dialog_custom_confirm_label_used_for_replace():
 
 
 def test_generate_svg_replace_passes_replace_confirm_label():
-    """host_context._generate_svg_replace가 실제로 "도형 대체" 라벨을 넘기는지 —
-    대체 진입점은 새로 삽입이 아니라 기존 도형을 바꾸는 것이므로 라벨이 달라야 한다."""
+    """host_context._generate_svg_replace가 실제로 "도형 대체" 라벨로 다시 맞추는지 —
+    대체 진입점은 새로 삽입이 아니라 기존 도형을 바꾸는 것이므로 라벨이 달라야 한다.
+    [2026-08-25, 인스턴스 재사용 신설] 라벨은 이제 생성자 kwarg가 아니라
+    `set_confirm_label()` 호출로 매번 다시 맞춘다(`_get_svg_asset_dialog()`가 인스턴스를
+    캐싱·재사용하므로)."""
     w = CanvasWindow()
     rect = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
     captured = {}
 
     class _FakeDlg:
-        def __init__(self, parent=None, confirm_label=None):
-            captured["confirm_label"] = confirm_label
+        def __init__(self, parent=None):
+            pass
+
+        def set_confirm_label(self, text):
+            captured["confirm_label"] = text
 
         def exec(self):
             return QDialog.DialogCode.Rejected
@@ -1607,7 +1658,40 @@ def test_generate_svg_replace_passes_replace_confirm_label():
         def selected_svg(self):
             return ""
 
-    with patch("easycad.canvas.host_context._SvgAssetDialog", _FakeDlg):
+    with patch("easycad.canvas.host_fileio._SvgAssetDialog", _FakeDlg):
         w._generate_svg_replace(rect)
     assert captured["confirm_label"] == "확인 (도형 대체)"
+    w.deleteLater()
+
+
+def test_svg_asset_dialog_shared_across_insert_and_replace_entry_points():
+    """[실사용 피드백 2026-08-25] "닫았다 다시 열어도 이전 결과가 살아있으면" — deep-
+    interview로 삽입/대체 두 진입점이 하나의 인스턴스(서랍)를 공유하기로 확정. 대체에서
+    만든 다이얼로그가 이후 삽입 호출에서도 같은 객체여야 한다(라벨만 갱신)."""
+    w = CanvasWindow()
+    rect = _mk_pen_rect(w, x=0, y=0, ww=100, hh=100)
+    seen: list = []
+
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def set_confirm_label(self, text):
+            pass
+
+        def exec(self):
+            seen.append(self)
+            return QDialog.DialogCode.Rejected
+
+        def selected_svg(self):
+            return ""
+
+        def svgs_for_insert(self):
+            return []
+
+    with patch("easycad.canvas.host_fileio._SvgAssetDialog", _FakeDlg):
+        w._generate_svg_replace(rect)
+        w._insert_ai_svg_asset()
+    assert len(seen) == 2
+    assert seen[0] is seen[1]   # 같은 인스턴스 재사용(라벨만 다시 맞춤)
     w.deleteLater()

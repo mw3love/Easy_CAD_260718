@@ -521,17 +521,36 @@ class _FileIOMixin:
         창 안의 설정 버튼과 같은 `_AIGatewaySettingsDialog`를 독립적으로 연다."""
         _AIGatewaySettingsDialog(self).exec()
 
+    def _get_svg_asset_dialog(self) -> "_SvgAssetDialog":
+        """[실사용 피드백 2026-08-25] "닫았다 다시 열어도 이전 결과가 살아있으면 좋겠다"
+        — 매번 새로 `_SvgAssetDialog(self)`를 만들면 후보·코드·첨부이미지·프롬프트가
+        닫는 순간 통째로 버려졌다. 이제 창당 인스턴스 하나만 지연 생성해 재사용한다(
+        `dlg.exec()`만 다시 호출 — QDialog는 재실행 가능). "다시 AI로 생성할 때만
+        기존 걸 날린다"는 요구는 이미 `_on_generate_clicked`→`_clear_candidates()`
+        흐름이 그 정책이라(생성 버튼을 눌러야만 후보 초기화) 별도 로직이 필요 없다.
+        deep-interview로 확정: 삽입(새 도형)과 대체(`host_context._generate_svg_
+        replace`, 기존 도형 1개 대체) 두 진입점이 **하나의 서랍을 공유**한다(사용자
+        선택 — 분리안도 검토했으나 "방금 만든 후보를 다른 자리에도 써보고 싶다"는
+        재사용 의도를 우선). 부수 이득: 모델 목록 재조회(`_populate_models`, 최초
+        오픈만 느렸던 비동기 호출)도 두 번째부턴 아예 안 일어나 재오픈이 더 빠르다."""
+        dlg = getattr(self, "_svg_asset_dialog", None)
+        if dlg is None:
+            dlg = _SvgAssetDialog(self)
+            self._svg_asset_dialog = dlg
+        return dlg
+
     def _insert_ai_svg_asset(self):
         """메뉴 진입점(삽입(&I) 메뉴 「AI SVG 에셋 생성…」) — 뷰 중심에 새로 삽입.
         우클릭 「SVG로 생성」(기존 도형 대체)은 `host_context._generate_svg_replace`가
-        같은 `_SvgAssetDialog`를 공유하되 별도 undo 경로를 쓴다.
+        `_get_svg_asset_dialog()`로 같은 인스턴스를 공유하되 별도 undo 경로를 쓴다.
         [실사용 피드백 2026-08-25] "체크한 후보 여러 개를 다 넣어달라" — 예전엔 체크박스로
         몇 개를 골라도 코드칸(`selected_svg()`, 클릭 단일선택 1개)만 삽입됐다.
         `svgs_for_insert()`(체크됨 있으면 체크된 전부, 없으면 기존처럼 코드칸 1개)로
         바꾸고, 2개 이상이면 `_place_svg_groups_no_overlap`으로 서로 안 겹치게 격자
         배치한다. "도형 대체"(위 `_generate_svg_replace`, 대상이 기존 도형 1개)는 다중
         삽입 개념 자체가 안 맞아 그대로 `selected_svg()` 단일 경로를 유지한다."""
-        dlg = _SvgAssetDialog(self)
+        dlg = self._get_svg_asset_dialog()
+        dlg.set_confirm_label("확인 (도형 삽입)")
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         svg_texts = dlg.svgs_for_insert()
@@ -1050,10 +1069,20 @@ class _FileIOMixin:
     _MMD_NODE_W, _MMD_NODE_H = 120.0, 56.0   # 노드 기본 치수(mermaid_import 레이아웃 상수와 동일)
 
 
+    def _get_mermaid_dialog(self) -> "_MermaidDialog":
+        """[실사용 피드백 2026-08-25] SVG와 같은 이유로 인스턴스 하나를 재사용 —
+        `_get_svg_asset_dialog()` 참조. Mermaid는 진입점이 이거 하나뿐이라 공유 범위
+        고민 없이 창당 싱글턴 1개면 된다."""
+        dlg = getattr(self, "_mermaid_dialog", None)
+        if dlg is None:
+            dlg = _MermaidDialog(self)
+            self._mermaid_dialog = dlg
+        return dlg
+
     def _insert_mermaid(self):
         """Mermaid flowchart 코드를 붙여넣어 편집가능 도형+화살표로 자동배치(뷰 중앙 기준).
         노드는 _RectItem/_EllipseItem/_SymbolItem, 엣지는 _PolyArrowItem 직교 라우팅으로 연결."""
-        dlg = _MermaidDialog(self)
+        dlg = self._get_mermaid_dialog()
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         try:

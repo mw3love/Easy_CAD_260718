@@ -1110,3 +1110,45 @@ def test_mermaid_dialog_ok_button_has_descriptive_label():
     assert ok_btn.text() == "확인 (캔버스 삽입)"
 
 
+# ── 인스턴스 재사용(2026-08-25 실사용 피드백 — 닫았다 다시 열어도 이전 결과 유지) ────
+
+def test_insert_mermaid_reuses_single_dialog_instance_across_calls():
+    """[실사용 피드백 2026-08-25] "닫았다 다시 열어도 이전 결과가 살아있으면" — 매번
+    새 `_MermaidDialog`를 만드는 대신 창당 하나만 지연 생성해 재사용한다."""
+    w = CanvasWindow()
+    seen: list = []
+
+    class _FakeDlg:
+        def __init__(self, parent=None):
+            pass
+
+        def exec(self):
+            seen.append(self)
+            return QDialog.DialogCode.Rejected
+
+        def text(self):
+            return ""
+
+    with patch("easycad.canvas.host_fileio._MermaidDialog", _FakeDlg):
+        w._insert_mermaid()
+        w._insert_mermaid()
+    assert len(seen) == 2
+    assert seen[0] is seen[1]   # 두 번째 호출도 같은 인스턴스
+    w.deleteLater()
+
+
+def test_insert_mermaid_reused_dialog_keeps_previous_code_until_regenerated():
+    """실제 `_MermaidDialog`로 — 창을 두 번째로 열어도(exec 재호출) 코드칸 내용이
+    남아있어야 하고("이전 걸 살아있게"), 재생성 버튼을 눌러야만 지워진다는 기존 정책
+    (`_on_generate_clicked` → 코드칸 덮어쓰기)은 인스턴스 재사용과 무관하게 그대로다."""
+    w = CanvasWindow()
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg1 = w._get_mermaid_dialog()
+    dlg1._edit.setPlainText("flowchart TD\n A-->B")
+
+    dlg2 = w._get_mermaid_dialog()
+    assert dlg2 is dlg1
+    assert dlg2.text() == "flowchart TD\n A-->B"   # 재사용해도 이전 내용 그대로
+    w.deleteLater()
+
+

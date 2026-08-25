@@ -1810,14 +1810,24 @@ class _QuickLookDialog(QDialog):
     Qt가 실제로 그 경로를 타는지 확인 없이 메서드를 직접 불러 "확인됨"으로 착각한
     프록시검증(전역 규칙 11-c 위반 사례). `event()` 오버라이드로 교체.
 
-    ⓑ **탐색** — `←`/`→` 키 또는 화면 ‹›버튼으로 후보를 넘기며, 이동은 메인 그리드의
+    ⓑ **탐색** — `←`/`→` 키 또는 하단 ‹›버튼으로 후보를 넘기며, 이동은 메인 그리드의
     단일선택(`_svg_dialog._pick_card`)과 양방향 동기화된다(카드 클릭 → 확대창 갱신도,
-    확대창 이동 → 카드 선택 갱신도 됨). 상단에 "n / N · 모델명" 표시.
+    확대창 이동 → 카드 선택 갱신도 됨). 상단엔 "n / N · 모델명"만 표시.
 
-    ⓒ **Space** — 지금 보는 후보의 "심볼로 저장" 체크박스를 그대로 토글(`_SvgCandidateCard.
-    _save_check`와 같은 상태 공유, 다중 후보 골라 한꺼번에 저장하는 기존 기능과 자연히
-    맞물림). 네비 버튼은 `NoFocus`로 둬 Space가 항상 이 다이얼로그의 `keyPressEvent`로
-    온다(버튼이 포커스를 채가면 Space가 "버튼 클릭"으로 먼저 소비돼버림)."""
+    ⓒ **심볼로 저장 토글** — 지금 보는 후보의 "심볼로 저장" 체크박스를 `_SvgCandidateCard.
+    _save_check`와 같은 상태로 공유(다중 후보 골라 한꺼번에 저장하는 기존 기능과 자연히
+    맞물림). Space 키 또는 하단 가운데 버튼 클릭 둘 다로 토글한다.
+
+    [실사용 피드백 2026-08-25] 하단이 작은 회색 안내 텍스트(11px, #8a8a8a) 하나뿐이라
+    ⓐ 위쪽 카운터보다 눈에 덜 띄고 ⓑ 사실은 "클릭 가능한 버튼"이 아니라 Space 전용
+    안내문이라 마우스로는 토글할 방법이 아예 없었다 — 상단 ‹›버튼을 하단으로 내려
+    체크 토글 버튼과 한 줄에 가운데 정렬하고(모두 실제 버튼, 크게), 상단엔 카운터만
+    남겼다. 네비 버튼은 여전히 `NoFocus`로 둬 Space가 항상 이 다이얼로그의
+    `keyPressEvent`로 온다(버튼이 포커스를 채가면 Space가 "버튼 클릭"으로 먼저
+    소비돼버린다)."""
+
+    _NAV_BTN_PX = 44          # [2026-08-25] 재배치 — 기존 기본 크기보다 확대
+    _BOTTOM_FONT_PX = 16
 
     def __init__(self, svg_dialog, parent=None):
         super().__init__(parent)
@@ -1826,34 +1836,58 @@ class _QuickLookDialog(QDialog):
         self.setWindowTitle("SVG 후보 확대")
 
         v = QVBoxLayout(self)
-        nav_row = QHBoxLayout()
-        self._prev_btn = QToolButton(self)
-        self._prev_btn.setText("‹")
-        self._prev_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._prev_btn.clicked.connect(lambda: self._step(-1))
-        nav_row.addWidget(self._prev_btn)
-        nav_row.addStretch(1)
         self._counter_label = QLabel(self)
         self._counter_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        nav_row.addWidget(self._counter_label)
-        nav_row.addStretch(1)
-        self._next_btn = QToolButton(self)
-        self._next_btn.setText("›")
-        self._next_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._next_btn.clicked.connect(lambda: self._step(1))
-        nav_row.addWidget(self._next_btn)
-        v.addLayout(nav_row)
+        f = self._counter_label.font(); f.setPointSize(f.pointSize() + 1); self._counter_label.setFont(f)
+        v.addWidget(self._counter_label)
 
         self._label = QLabel(self)
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         v.addWidget(self._label, 1)
 
-        self._check_hint = QLabel(self)
-        self._check_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._check_hint.setStyleSheet("color:#8a8a8a; font-size:11px;")
-        v.addWidget(self._check_hint)
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(12)
+        bottom_row.addStretch(1)
+        self._prev_btn = QToolButton(self)
+        self._prev_btn.setText("‹")
+        self._prev_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._prev_btn.setFixedSize(QSize(self._NAV_BTN_PX, self._NAV_BTN_PX))
+        self._prev_btn.setStyleSheet(f"font-size:{self._BOTTOM_FONT_PX + 6}px;")
+        self._prev_btn.clicked.connect(lambda: self._step(-1))
+        bottom_row.addWidget(self._prev_btn)
+
+        self._check_btn = QToolButton(self)
+        self._check_btn.setCheckable(True)
+        self._check_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._check_btn.setToolTip("단축키: Space")
+        self._check_btn.setStyleSheet(
+            f"QToolButton {{ font-size:{self._BOTTOM_FONT_PX}px; padding:8px 16px; }}")
+        self._check_btn.clicked.connect(self._on_check_btn_clicked)
+        bottom_row.addWidget(self._check_btn)
+
+        self._next_btn = QToolButton(self)
+        self._next_btn.setText("›")
+        self._next_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._next_btn.setFixedSize(QSize(self._NAV_BTN_PX, self._NAV_BTN_PX))
+        self._next_btn.setStyleSheet(f"font-size:{self._BOTTOM_FONT_PX + 6}px;")
+        self._next_btn.clicked.connect(lambda: self._step(1))
+        bottom_row.addWidget(self._next_btn)
+        bottom_row.addStretch(1)
+        v.addLayout(bottom_row)
 
         self.resize(QSize(640, 640))
+
+    def _on_check_btn_clicked(self):
+        """[2026-08-25] 하단 버튼 클릭으로도 Space와 동일하게 토글 — `_check_btn`이
+        `setCheckable(True)`라 클릭 시점엔 이미 새 상태로 바뀌어 있으므로, 그 값을
+        그대로 카드에 반영한다(카드의 `stateChanged`가 "내 심볼로 저장" 버튼 활성화도
+        같이 갱신, 기존 관례)."""
+        candidates = self._svg_dialog._candidates
+        if not candidates or not (0 <= self._index < len(candidates)):
+            return
+        card = candidates[self._index][0]
+        card._save_check.setChecked(self._check_btn.isChecked())
+        self._update_check_hint(card)
 
     def show_index(self, index: int):
         """`index`번째 후보를 그린다 — 카드 클릭(`_pick_card`)·화살표 탐색(`_step`)·
@@ -1881,8 +1915,10 @@ class _QuickLookDialog(QDialog):
         self.activateWindow()
 
     def _update_check_hint(self, card: "_SvgCandidateCard"):
-        mark = "☑" if card.is_checked_for_save() else "☐"
-        self._check_hint.setText(f"{mark}  Space — 심볼로 저장 체크/해제")
+        checked = card.is_checked_for_save()
+        self._check_btn.setChecked(checked)
+        mark = "☑" if checked else "☐"
+        self._check_btn.setText(f"{mark}  심볼로 저장")
 
     def _step(self, delta: int):
         candidates = self._svg_dialog._candidates
@@ -2386,6 +2422,8 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         # [2026-08-19 Stage 6] 목업 시각 언어 차용 — "OK" 대신 결과를 명시하는 라벨.
         # 호출부가 삽입/대체 중 실제로 일어날 일을 넘겨준다(host_fileio.py는 기본값
         # "확인 (도형 삽입)" 그대로, host_context.py의 대체 진입점만 다르게 넘김).
+        # [2026-08-25, 인스턴스 재사용 신설] 두 진입점이 이제 같은 인스턴스를 공유해
+        # 매번 새로 안 만들므로, 열 때마다 `set_confirm_label()`로 라벨을 다시 맞춘다.
         self._ok_btn.setText(confirm_label)
         self._ok_btn.setStyleSheet(_CORAL_BTN_QSS)
         self._btns.accepted.connect(self.accept)
@@ -2438,6 +2476,12 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         (Mermaid `_edit`와 동일 관례, 2026-08-20). 카드를 클릭하면 그 SVG가 코드칸에
         채워지므로 결과적으로 같지만, 클릭 없이 코드칸에 직접 타이핑/붙여넣기만 해도 된다."""
         return self._code_edit.toPlainText().strip()
+
+    def set_confirm_label(self, text: str):
+        """[2026-08-25, 인스턴스 재사용 신설] 삽입/대체 두 진입점이 인스턴스를 공유하므로
+        여는 쪽이 매번 자기 맥락에 맞는 라벨로 다시 맞춘다(생성자 인자 `confirm_label`은
+        최초 생성 시 기본값일 뿐)."""
+        self._ok_btn.setText(text)
 
     def svgs_for_insert(self) -> list[str]:
         """[실사용 피드백 2026-08-25] "도형삽입"이 체크한 후보를 다 받아가야 한다는 지적
