@@ -1326,6 +1326,15 @@ symbol_library/
   스코프 밖** — `_qc_dot_at`이 다중선택 중 전부 `_group_owns_interaction()`으로 막고
   그 자리의 `_GroupTransform` 오버레이엔 큐닷 파이프라인이 아예 없음(별도 설계 필요,
   사용자 확인 대기 중). **Not-tested**: 실제 데스크톱 마우스 드래그 손맛.
+- **그룹 프레임 3차 — 선택된 그룹 자신의 큐닷 추가 완료(2026-08-25, 같은 날 후속)** —
+  위에서 스코프 밖으로 남긴 것을 사용자가 명시 요청, deep-interview로 `_group_id`
+  그룹만(임의 다중선택 전체 제외)으로 확정 후 구현. `_GroupTransform`에 `whole_group_id()`
+  /`qc_dot_rects()`(변 중점 리사이즈 핸들과 안 겹치게 바깥으로 띄움)를 추가하고 `_qc_dot_at`
+  이 `_group_owns_interaction()`일 때 이 새 큐닷을 히트테스트하도록 확장 — `_connect_
+  port_at`이 `_shape_ports(item)`만으로 동작해 새 상태기계 없이 기존 클릭/드래그 파이프라인
+  그대로 재사용. 신규 pytest 4종, 전체 979종 중 무관한 3건 제외 통과. 상세:
+  `docs/history/2026-08.md` "그룹 프레임 3차". **Not-tested**: 실제 마우스 드래그 손맛,
+  호버 전용 커서(스코프 밖).
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
