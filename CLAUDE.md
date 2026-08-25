@@ -1313,6 +1313,19 @@ symbol_library/
   신규 pytest 10종(`tests/test_part13_group_frame.py`) + 기존 2건 갱신, 전체 981종
   중 무관한 3건 제외 통과, 오프스크린 렌더 확인. 상세: `docs/history/2026-08.md`
   "그룹 프레임 — SVG 다중조각 그룹을...". **Not-tested**: 진짜 마우스 드래그 손맛.
+- **그룹 프레임 후속 — 실사용 크래시 + 형제 조각 호버 억제 오탐 수정(2026-08-25, 같은
+  날 후속)** — 위 항목을 사용자가 스크린샷 4장으로 실제 재현해 낸 실버그 2건. ① 미선택
+  그룹 포트→일반 도형 화살표를 그은 뒤 아무 도형이나 옮기면 `scene.changed`→`reroute
+  (pin_pred)`가 `_GroupBindProxy.isSelected()`를 호출하는데 그 메서드가 없어
+  `AttributeError`가 Qt 콜백 안에서 새어나가 앱이 통째로 죽음 — 오프스크린에서 정확히
+  재현(exit 127) 후 `isSelected()`(그룹 전원 선택 시 True) 추가로 수정. ② SVG 다중조각
+  아이콘처럼 그룹 멤버끼리 겹칠 때 커서가 형제 조각 위에 있으면 "남이 가린다"고 오판해
+  그룹 예고점이 사라지던 것을 `_port_dot_target`/`_hover_port_at`의 occluder 판정에
+  "같은 group_id끼리는 서로 안 가림" 규칙을 추가해 수정. 신규 pytest 4종, 전체 975종
+  중 무관한 3건 제외 통과. **선택된 그룹 자신의 큐닷(드래그로 화살표 시작)은 여전히
+  스코프 밖** — `_qc_dot_at`이 다중선택 중 전부 `_group_owns_interaction()`으로 막고
+  그 자리의 `_GroupTransform` 오버레이엔 큐닷 파이프라인이 아예 없음(별도 설계 필요,
+  사용자 확인 대기 중). **Not-tested**: 실제 데스크톱 마우스 드래그 손맛.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
