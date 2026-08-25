@@ -966,6 +966,18 @@ def _render_mermaid_preview_pixmap(text: str, target_size: QSize,
     return pm
 
 
+def _close_on_window_deactivate(dlg: QDialog, e) -> bool:
+    """[code-review 2026-08-26] `_QuickLookDialog`·`_MermaidPreviewEnlargeDialog` 둘 다
+    "창 포커스를 잃으면 스스로 닫는다"를 같은 5줄로 복붙하고 있던 것을 공유 함수로 추출.
+    ⚠ `WindowDeactivate`는 `changeEvent()`가 아니라 `event()`로 온다(실측으로 확인된
+    Qt 함정 — pytest는 `changeEvent()` 직접호출로는 이 경로 자체를 검증 못 한다,
+    `docs/pitfalls.md` "Qt 시그널·이벤트 발화 조건" 참조). 호출부는
+    `return _close_on_window_deactivate(self, e)`로 `event()` 오버라이드를 대신한다."""
+    if e.type() == QEvent.Type.WindowDeactivate:
+        dlg.close()
+    return QDialog.event(dlg, e)
+
+
 class _MermaidPreviewView(QGraphicsView):
     """Mermaid 미리보기 — 패널 안에서 바로 휠로 확대·드래그로 이동하며 확인하는
     인터랙티브 뷰(2026-08-21 실사용 피드백으로 도입). 캔버스 본체의 줌 관례(휠 배율
@@ -1076,17 +1088,21 @@ class _MermaidPreviewEnlargeDialog(QDialog):
         # 배치되지 않아 크기가 확정 안 된 채로 fit이 계산돼 빈 화면이 렌더된다(오프스크린
         # 스크린샷으로 실측 확인 — `has_content()`는 True인데 실제로 아무것도 안 그려짐).
         # `show()`를 먼저 불러 뷰가 최종 크기를 갖게 한 뒤에 fit을 계산해야 한다.
+        # [code-review 2026-08-26] 단 이미 열려 있는 상태(디바운스 타이머가 배경에서 계속
+        # 갱신하는 경우)라면 `activateWindow()`를 다시 부르면 안 된다 — 메인 다이얼로그의
+        # 코드 편집기에서 계속 타이핑 중인 사용자의 키보드 포커스를 이 창이 매 350ms마다
+        # 빼앗아가 타이핑이 끊기는 버그였다. 최초 오픈(아직 안 보이는 상태)에만 포커스를 준다.
+        first_open = not self.isVisible()
         self.show()
-        self.raise_()
-        self.activateWindow()
+        if first_open:
+            self.raise_()
+            self.activateWindow()
         self._view.set_mermaid_code(text, pen_color)
 
     def event(self, e):
         # ⚠ `_QuickLookDialog.event()`와 동일 함정 — `WindowDeactivate`는 `changeEvent()`가
         # 아니라 `event()`로 온다(실측으로 확인된 함정, 그 클래스 docstring 참조).
-        if e.type() == QEvent.Type.WindowDeactivate:
-            self.close()
-        return super().event(e)
+        return _close_on_window_deactivate(self, e)
 
 
 # [2026-08-21 실사용 피드백] Mermaid 코드 첫 줄의 방향 토큰 — `mermaid_import._HEADER_RE`와
@@ -2028,9 +2044,7 @@ class _QuickLookDialog(QDialog):
     def event(self, e):
         # ⚠ 위 클래스 docstring ⓐ 참조 — `WindowDeactivate`는 `changeEvent()`가 아니라
         # 여기(`event()`)로 온다. 실측으로 확인된 함정이라 되풀이하지 않도록 주석 유지.
-        if e.type() == QEvent.Type.WindowDeactivate:
-            self.close()
-        return super().event(e)
+        return _close_on_window_deactivate(self, e)
 
 
 class _SvgCandidateCard(QFrame):

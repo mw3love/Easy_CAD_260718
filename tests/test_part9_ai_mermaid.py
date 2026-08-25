@@ -21,7 +21,7 @@ tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easyca
 pytest test_part9_ai_mermaid.py.
 """
 from PyQt6.QtCore import QSettings, QEvent
-from PyQt6.QtWidgets import QDialog, QDialogButtonBox
+from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QWidget
 
 from _shared import *  # noqa: F401,F403
 
@@ -1183,6 +1183,60 @@ def test_mermaid_dialog_done_closes_open_enlarge_dialog():
     assert dlg._preview_enlarge.isVisible()
     dlg.reject()
     assert not dlg._preview_enlarge.isVisible()
+
+
+def test_mermaid_dialog_typing_refresh_does_not_steal_focus_from_open_enlarge_dialog():
+    """[code-review 2026-08-26] 확대창이 이미 열려 있는 상태에서 배경 타이핑이
+    `_update_preview()`를 재실행할 때(디바운스 타이머 만료) `activateWindow()`를
+    다시 부르면 안 된다 — 메인 다이얼로그의 코드 편집기에서 타이핑 중인 키보드
+    포커스를 매번 확대창이 빼앗아가던 버그. 최초 오픈 1회에만 포커스를 준다."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("flowchart TD\n A-->B")
+    dlg._preview_view.clicked.emit()   # 최초 오픈 — 여기서만 activateWindow()가 불려야 함
+    enlarge = dlg._preview_enlarge
+
+    with patch.object(type(enlarge), "activateWindow") as mock_activate, \
+         patch.object(type(enlarge), "raise_") as mock_raise:
+        dlg._edit.setPlainText("flowchart TD\n A-->B\n B-->C")
+        dlg._update_preview()   # 이미 열려 있는 상태의 배경 갱신
+        assert not mock_activate.called, "이미 열린 확대창을 갱신할 때 포커스를 다시 뺏음(회귀)"
+        assert not mock_raise.called
+    assert enlarge._view.has_content()   # 갱신 자체는 여전히 반영돼야 함
+    dlg._preview_enlarge.close()
+
+
+def test_mermaid_preview_enlarge_closes_on_real_window_deactivate():
+    """[code-review 2026-08-26] `_MermaidPreviewEnlargeDialog.event()`를 `_QuickLookDialog`
+    (test_part9_ai_svg_asset.py의 동명 테스트)와 같은 공유 헬퍼(`_close_on_window_
+    deactivate`)로 통합했다 — 그 리팩터가 실제 WindowDeactivate 경로에서도 동작하는지
+    진짜 top-level 창 두 개로 재확인(`changeEvent()` 직접호출은 이 경로 자체를 검증
+    못 함, `docs/pitfalls.md` 참조)."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("flowchart TD\n A-->B")
+    dlg.show()
+    QApplication.processEvents()
+    dlg._preview_view.clicked.emit()
+    enlarge = dlg._preview_enlarge
+    enlarge.show()
+    enlarge.activateWindow()
+    for _ in range(10):
+        QApplication.processEvents()
+
+    other = QWidget()
+    other.setWindowTitle("other top-level window")
+    other.move(50, 50)
+    other.resize(200, 150)
+    other.show()
+    other.activateWindow()
+    other.raise_()
+    for _ in range(20):
+        QApplication.processEvents()
+
+    assert not enlarge.isVisible()
+    other.close()
+    dlg.close()
 
 
 class _FakeLeftClickEvent:
