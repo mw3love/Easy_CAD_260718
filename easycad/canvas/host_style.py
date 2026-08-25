@@ -277,8 +277,6 @@ class _StyleMixin:
                          key=("font", tuple(sorted(id(it) for it in sel))))
 
     @staticmethod
-
-    @staticmethod
     def _read_props(item) -> dict:
         """아이템의 색·두께·선스타일·폰트를 duck-typing으로 읽는다(화살표=_color/_width,
         도형=pen(), 텍스트=font()). 없는 값은 None."""

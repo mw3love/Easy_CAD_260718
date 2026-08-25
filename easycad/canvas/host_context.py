@@ -596,8 +596,6 @@ class _ContextMixin:
         self._view.viewport().update()
 
     @staticmethod
-
-    @staticmethod
     def _align_rect(it) -> QRectF:
         """정렬 기준이 되는 '보이는 도형'의 씬 사각형.
         ⚠ sceneBoundingRect()를 쓰면 안 된다 — 코어의 boundingRect()는 선택 핸들·회전 핸들·

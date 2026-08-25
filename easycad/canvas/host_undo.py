@@ -86,8 +86,6 @@ class _UndoMixin:
         self._mark_dirty()   # [§8 항목10 Stage C]
 
     @staticmethod
-
-    @staticmethod
     def _coalesce_into(entry, new_ops):
         """연속 변이 병합 — 같은 아이템·같은 sub의 mut는 before를 유지한 채 after만 갱신
         (예: Shift+휠 두께를 여러 번 굴려도 undo 1스텝). 그 외 op는 뒤에 덧붙인다."""

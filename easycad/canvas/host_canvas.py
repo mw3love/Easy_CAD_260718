@@ -279,10 +279,16 @@ class _CanvasMixin:
                                 return any(m in moved for m in
                                            _group_members(sh._scene_ref, sh.group_id))
                             return sh in moved
-                        skip = not _bound_moved(s0) and not _bound_moved(s1)
+                        # [code-review 2026-08-26] 이 값들을 f-string 안에서 다시 호출하면
+                        # 그룹 바인딩 끝(_GroupBindProxy)마다 _group_members()(scene 전체
+                        # 선형스캔)가 한 번 더 돈다 — _dbg2()는 이 PC엔 없는 경로에 쓰다
+                        # except로 조용히 실패해 로그 자체는 무의미한데 그 비용만 매번 낸다.
+                        # 위에서 이미 구한 값을 재사용해 중복 호출을 없앤다.
+                        s0_moved, s1_moved = _bound_moved(s0), _bound_moved(s1)
+                        skip = not s0_moved and not s1_moved
                         _dbg2(f"[canvas] gate arrow#{id(it)} s0={type(s0).__name__}#{id(s0)} "
-                              f"s1={type(s1).__name__}#{id(s1)} s0_in_moved={_bound_moved(s0)} "
-                              f"s1_in_moved={_bound_moved(s1)} moved_ids={[id(m) for m in moved]} skip={skip}")
+                              f"s1={type(s1).__name__}#{id(s1)} s0_in_moved={s0_moved} "
+                              f"s1_in_moved={s1_moved} moved_ids={[id(m) for m in moved]} skip={skip}")
                         if skip:
                             continue
                     it.reroute(pin_pred=self._make_pin_pred(it), fast=many_changed,
