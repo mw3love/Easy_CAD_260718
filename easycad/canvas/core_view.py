@@ -284,6 +284,13 @@ class _AnnotatorView(QGraphicsView):
         self._group_proxy_cache = {}  # [그룹 프레임 2026-08-25] group_id → _GroupBindProxy,
         # `_group_proxy()`가 채운다 — 같은 그룹이면 항상 같은 인스턴스를 돌려줘야 `hp[0] is
         # best_sh` 같은 identity 비교(아래 여러 곳)가 실제 도형과 동일하게 동작한다.
+        # [code-review 2026-08-25] `_group_bbox_cached()`가 쓰는 캐시 저장소 — 여러 호출부
+        # (`_qc_snap_target`·`_border_snap_at`·`_port_dot_target`·`_hover_port_at`)가 같은
+        # 마우스무브 프레임 안에서 같은 그룹의 bbox를 반복 계산(scene.items() 전체 스캔)하던
+        # 것을 줄인다. `_GroupTransform._cache_key()`와 동일한 (sel_version, geom_version)
+        # 무효화 시맨틱 — 값이 None이면(독립 씬 등) 캐시를 안 쓰고 항상 재계산.
+        self._group_bbox_cache = {}
+        self._group_bbox_cache_key = None
         self._hp_hover = None       # (item, port_pt, normal) — 유휴 hover(스냅 마커용) or None
         self._port_dot_shape = None  # [2026-08-03 잔상/불규칙 표시 수정] _draw_port_dots가 그릴
         # 대상(미선택 도형 하나) — mouseMoveEvent가 이 값이 바뀔 때만 update()를 부르던 게 아니라
@@ -531,7 +538,7 @@ class _AnnotatorView(QGraphicsView):
                 if gid in seen_gids:
                     continue
                 seen_gids.add(gid)
-                gbox = _group_bbox_scene(_group_members(self.scene(), gid))
+                gbox = self._group_bbox_cached(gid)
                 if gbox is None or not gbox.contains(cursor_scene):
                     continue
                 probe = self._group_proxy(gid)
@@ -556,12 +563,21 @@ class _AnnotatorView(QGraphicsView):
         """[미리보기≠확정 버그 수정 2026-07-27] _hp_paint_ghost가 쓸 obstacles/conn_rects —
         _PolyArrowItem._obstacle_rects·_connected_rects와 같은 판정을 화살표 없이 계산(고스트는
         아직 실제 아이템이 아니므로). src·target 자신은 회피 대상에서 제외해야 릴리스 때
-        _hp_create_arrow가 만드는 실제 화살표와 같은 입력이 된다."""
+        _hp_create_arrow가 만드는 실제 화살표와 같은 입력이 된다.
+        [code-review 2026-08-25] src·target이 `_GroupBindProxy`(그룹 큐닷에서 시작하거나
+        그룹으로 스냅된 경우)면 그 자체는 scene.items()에 없어 `it is src/target`이 실제
+        그룹 멤버와 매칭될 일이 없다 — 그룹 자신의 조각들이 자기 화살표 라우팅의 장애물로
+        잘못 취급돼 시작점 근처에서 부자연스럽게 우회하던 버그. 프록시의 group_id로 멤버도
+        같이 제외한다."""
         sc = self.scene()
         obstacles = []
+        excl_gids = {h.group_id for h in (src, target)
+                     if isinstance(h, _GroupBindProxy)}
         if sc is not None:
             for it in sc.items():
                 if it is src or it is target:
+                    continue
+                if excl_gids and getattr(it, "_group_id", None) in excl_gids:
                     continue
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem)):
                     obstacles.append(it.mapRectToScene(it.rect()))
@@ -1132,14 +1148,25 @@ class _AnnotatorView(QGraphicsView):
         excl = set(exclude_items) if exclude_items is not None else (
             {exclude_item} if exclude_item is not None else set())
 
+        excl_gids = {getattr(e, "_group_id", None) for e in excl} - {None}
+
         def _bound_to_excluded(o):
             # excl(대개 드래그 중인 도형들)에 붙은 커넥터는 매 프레임 그 도형을 따라
             # 재라우팅되므로 bbox 한쪽 변이 항상 드래그 위치와 정확히 같다 — 다른 도형과의
             # 진짜 정렬이 아니라 자기 자신과의 자명한 매치라 후보에서 제외한다(실사용 버그
             # 재현: 2026-08-19, 부착된 화살표의 팔꿈치 x·도착점 y가 매번 "정렬됨"으로 오판됨).
+            # [code-review 2026-08-25] excl이 그룹 멤버(그룹 통째 드래그)일 때, 그 그룹에
+            # 바인딩된 화살표의 bound_shapes()는 실제 멤버가 아니라 `_GroupBindProxy`를
+            # 돌려줘 `e in o.bound_shapes()`가 항상 거짓이었다 — group_id로도 매칭한다.
             if not excl or not isinstance(o, (_ArrowItem, _PolyArrowItem)):
                 return False
-            return any(e in o.bound_shapes() for e in excl)
+            bound = o.bound_shapes()
+            if any(e in bound for e in excl):
+                return True
+            if excl_gids:
+                return any(isinstance(h, _GroupBindProxy) and h.group_id in excl_gids
+                            for h in bound)
+            return False
 
         other_items = [o for o in cand.values()
                        if o not in excl and o is not bg and o.parentItem() is None
@@ -1856,6 +1883,30 @@ class _AnnotatorView(QGraphicsView):
             self._group_proxy_cache[group_id] = proxy
         return proxy
 
+    def _group_bbox_cached(self, group_id: str) -> QRectF | None:
+        """[code-review 2026-08-25] `_group_bbox_scene(_group_members(scene, group_id))`를
+        캐시해서 돌려준다 — 이 계산은 `scene.items()` 전체 선형스캔인데, 같은 마우스무브
+        프레임 안에서 `_qc_snap_target`·`_border_snap_at`·`_port_dot_target`·
+        `_hover_port_at` 여러 호출부가 같은 그룹을 각자 다시 스캔하고 있었다(1000개+ 씬에서
+        호버 1회에 전체스캔이 여러 번 도는 것 — `_GroupTransform._cache_key()`가 막던 것과
+        같은 성능 계열이 그룹 근접 hover 경로에도 있었음). `_GroupTransform`과 동일하게
+        (sel_version, geom_version)을 무효화 신호로 쓴다 — 둘 중 하나라도 없으면(독립 씬 등)
+        캐시를 안 쓰고 항상 재계산."""
+        owner = getattr(self, "_owner", None)
+        sv = getattr(owner, "_sel_version", None)
+        gv = getattr(owner, "_geom_version", None)
+        key = (sv, gv) if sv is not None and gv is not None else None
+        if key is None:
+            return _group_bbox_scene(_group_members(self.scene(), group_id))
+        if key != self._group_bbox_cache_key:
+            self._group_bbox_cache_key = key
+            self._group_bbox_cache = {}
+        if group_id in self._group_bbox_cache:
+            return self._group_bbox_cache[group_id]
+        val = _group_bbox_scene(_group_members(self.scene(), group_id))
+        self._group_bbox_cache[group_id] = val
+        return val
+
     def _conn_shapes_near(self, scene_pt: QPointF, margin: float):
         """[성능 조사 2026-07-30] scene.items(rect) 공간 인덱스(Qt BSP 트리)로 scene_pt 근방만
         질의 — _conn_shapes()의 전체 스캔 대체. _draw_port_dots·_hover_port_at가 매 페인트·매
@@ -1944,7 +1995,7 @@ class _AnnotatorView(QGraphicsView):
                 if gid in seen_group_ids:
                     continue
                 seen_group_ids.add(gid)
-                gbox = _group_bbox_scene(_group_members(self.scene(), gid))
+                gbox = self._group_bbox_cached(gid)
                 if gbox is None:
                     continue
                 br = gbox.adjusted(-margin, -margin, margin, margin)
@@ -2194,7 +2245,7 @@ class _AnnotatorView(QGraphicsView):
                 if gid in seen_gids_1:
                     continue
                 seen_gids_1.add(gid)
-                gbox = _group_bbox_scene(_group_members(self.scene(), gid))
+                gbox = self._group_bbox_cached(gid)
                 if gbox is None:
                     continue
                 if not gbox.adjusted(-margin, -margin, margin, margin).contains(scene_pt):

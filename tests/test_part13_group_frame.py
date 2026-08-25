@@ -363,3 +363,72 @@ def test_qc_dot_at_reuses_precomputed_gid_avoiding_redundant_scene_scan():
     assert call_count[0] == 1, (
         f"whole_group_id()의 scene.items() 전체 스캔이 히트테스트 1회에 "
         f"{call_count[0]}번 돎(중복 스캔 회귀)")
+
+
+def test_qc_route_context_excludes_own_group_members_as_obstacles():
+    """[code-review 2026-08-25] src/target이 `_GroupBindProxy`(그룹 큐닷에서 새 화살표를
+    시작하거나 그룹으로 스냅될 때)면 그 프록시 자체는 `scene.items()`에 없어
+    `it is src/target` 판정이 실제 그룹 멤버와 매칭될 일이 없었다 — 그룹 자신의 조각들이
+    자기 화살표 라우팅의 장애물로 잘못 포함돼 시작점 근처에서 부자연스럽게 우회하던 버그."""
+    w = CanvasWindow()
+    a, b = _mk_group(w)
+    normal = _mk_rect(w._scene, w.make_pen(), 400, 0, 100, 60)
+    view = w._view
+    proxy = view._group_proxy("g1")
+    obstacles, conn_rects = view._qc_route_context(proxy, normal)
+    a_rect, b_rect = a.mapRectToScene(a.rect()), b.mapRectToScene(b.rect())
+    assert a_rect not in obstacles and b_rect not in obstacles, (
+        "그룹 자신의 멤버 도형이 자기 화살표 라우팅의 장애물 목록에 남음(회귀)")
+    normal_rect = normal.mapRectToScene(normal.rect())
+    assert normal_rect not in obstacles   # target 자신도 여전히 제외돼야 함(기존 동작)
+
+
+def test_align_candidates_excludes_arrow_bound_to_dragged_group():
+    """[code-review 2026-08-25] 그룹을 드래그(excl에 그 실제 멤버들)할 때, 그 그룹에
+    바인딩된 화살표는 `bound_shapes()`가 `_GroupBindProxy`를 돌려줘 `e in o.bound_shapes()`
+    (e=실제 멤버)가 항상 거짓이었다 — 매 프레임 그룹을 따라 재라우팅되는 그 화살표가
+    "다른 도형과 진짜 정렬됨"으로 오판되던 실사용 버그(2026-08-19 원본 수정의 그룹 버전)."""
+    w = CanvasWindow(); w.show()
+    a, b = _mk_group(w)
+    normal = _mk_rect(w._scene, w.make_pen(), 400, 0, 100, 60)
+    proxy = _GroupBindProxy(w._scene, "g1")
+    arrow = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    arrow.set_points(QPointF(220, 30), QPointF(400, 30))
+    arrow.setFlags(arrow.GraphicsItemFlag.ItemIsSelectable | arrow.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(arrow)
+    arrow.set_bound(0, proxy, proxy.mapFromScene(QPointF(220, 30)))
+    arrow.set_bound(1, normal, normal.mapFromScene(QPointF(400, 30)))
+
+    view = w._view
+    nr = QRectF(0, 100, 220, 60)   # 그룹이 (0,100)으로 옮겨진 상태를 가정한 새 위치
+    thr, other_items = view._align_candidates(nr, exclude_items=[a, b])
+    assert arrow not in other_items, (
+        "그룹에 바인딩된 화살표가 그룹 드래그 중 자기-정렬 후보에서 제외되지 않음(회귀)")
+
+
+def test_group_bbox_cached_avoids_repeated_full_scene_scan():
+    """[code-review 2026-08-25] `_group_bbox_cached()`가 없던 이전엔 `_qc_snap_target`·
+    `_border_snap_at`·`_port_dot_target`·`_hover_port_at`가 같은 마우스무브 프레임 안에서
+    같은 그룹의 bbox를 각자 다시 계산(`_group_bbox_scene(_group_members(...))` — scene
+    전체 선형스캔)하고 있었다. 같은 (sel_version, geom_version) 안에서 같은 group_id를
+    반복 조회하면 실제 스캔은 1회만 일어나야 한다."""
+    from unittest.mock import patch
+    from easycad.canvas import annotator_core as ac
+
+    w = CanvasWindow()
+    _mk_group(w)
+    view = w._view
+
+    call_count = [0]
+    orig = ac._group_members
+
+    def counting_group_members(scene, group_id):
+        call_count[0] += 1
+        return orig(scene, group_id)
+
+    with patch("easycad.canvas.core_view._group_members", counting_group_members):
+        r1 = view._group_bbox_cached("g1")
+        r2 = view._group_bbox_cached("g1")   # 같은 프레임 — 캐시 히트여야 함
+    assert r1 == r2
+    assert call_count[0] == 1, (
+        f"같은 (sel/geom)버전 안 동일 group_id 반복 조회가 {call_count[0]}회 스캔함(캐시 미작동)")

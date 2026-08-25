@@ -228,20 +228,58 @@ tests/test_easycad.py` 정상 종료(865종). 3회 이상 반복 재현으로 �
 
 ---
 
-### Phase 2 — 코어 기하·이벤트 2대 파일 코드리뷰
+### Phase 2 — 코어 기하·이벤트 2대 파일 코드리뷰 — **완료 (2026-08-25)**
 
 **대상**: `easycad/canvas/core_shapes.py`(8,288줄) · `easycad/canvas/core_view.py`(4,520줄)
 — 전체 코드의 46%이자 버그 이력이 가장 짙은 영역.
 
-- [ ] `/code-review high easycad/canvas/core_shapes.py`
-- [ ] `/code-review high easycad/canvas/core_view.py`
-- [ ] findings 분류: **채택 / 보류(근거 기록) / 기각(근거 기록)**
-- [ ] 채택분은 Phase 7에서 회귀 테스트 동반 반영 (여기서 바로 고치지 않음)
+⚠ **계획 대비 실제 진행 방식 변경**: 원안은 "findings를 분류표로만 정리하고 Phase 7에서
+일괄 반영"이었으나, 두 파일 모두 findings가 소규모·저위험·즉시 검증 가능해 **발견
+즉시 반영**했다. review finding이 이 정도 규모(수정 몇 줄, 회귀 테스트로 즉시 검증
+가능)면 즉시 반영, 설계 변경급이거나 넓은 파급 범위면 Phase 7로 미루는 원칙으로
+Phase 2 전체를 마쳤다.
 
-⚠ 파일이 커서 한 번에 안 들어가면 관심사별로 쪼갠다(`core_shapes.py`: 아이템 클래스군 /
-라우팅·A\* / TRIM·EXTEND 커널 / 그룹·바인딩). 쪼갠 단위도 이 문서에 기록해 다음 세션이 이어받게.
+- [x] `code-review high easycad/canvas/core_shapes.py` — **완료**. 2건 발견, 둘 다
+      즉시 반영(커밋 `bb248b4`):
+      1. `_GroupTransform.whole_group_id()`가 호출될 때마다 `_group_members()`(scene
+         전체 선형스캔)를 재실행 — `_qc_dot_at` 호버 히트테스트 1회에 2번 중복 스캔되던
+         것을 `qc_dot_rects(gid=...)` 옵션 인자로 재사용하게 수정.
+      2. `_GroupTransform._HANDLE_PX`와 `_HandleResizeMixin._HANDLE_PX`가 값만 우연히
+         같은 별개 상수(10.0) — 전자가 후자를 직접 참조하도록 통일.
+      신규 pytest 1종.
+- [x] `code-review high easycad/canvas/core_view.py` — **완료**(백그라운드 fork,
+      약 12분 소요, 4건 발견 — 이 중 3건 즉시 반영, 1건 보류):
+      1. **[채택]** `_qc_route_context(src, target)`가 `it is src/target`으로 라우팅
+         장애물을 제외하는데, 그룹 큐닷 연결에서 `src`/`target`이 `_GroupBindProxy`면
+         실제 그룹 멤버는 그 프록시와 절대 `is` 매칭이 안 돼 그룹 자신의 조각이 자기
+         화살표의 장애물로 잘못 포함되던 버그(우회 경로 렌더). proxy의 `group_id`로
+         멤버도 같이 제외하도록 수정.
+      2. **[채택]** `_align_candidates`의 `_bound_to_excluded`가 `e in o.bound_shapes()`
+         (e=드래그 중인 실제 도형)로 자기-정렬 오탐을 막는데, 그룹에 바인딩된 화살표의
+         `bound_shapes()`는 `_GroupBindProxy`를 돌려줘 그룹 드래그 시 이 제외가 항상
+         무효였다(2026-08-19에 개별 도형용으로 고쳤던 것과 같은 버그의 그룹 버전) —
+         `excl` 멤버들의 `_group_id`로도 매칭하도록 확장.
+      3. **[채택]** `_group_bbox_scene(_group_members(...))`(scene 전체 선형스캔)가
+         `_qc_snap_target`·`_border_snap_at`·`_port_dot_target`·`_hover_port_at` 4개
+         호출부에서 같은 마우스무브 프레임 안에 그룹당 각자 재계산되고 있었음 —
+         `_GroupTransform._cache_key()`와 동일한 `(sel_version, geom_version)` 무효화
+         시맨틱을 쓰는 뷰 레벨 캐시(`_group_bbox_cached()`)를 신설해 3개 호출부에 적용.
+      4. **[보류]** `_group_proxy_cache`가 생성된 group_id마다 항목을 영구 보유(프루닝
+         없음) — 리뷰어도 "low impact"로 평가했고, 섣불리 프루닝하면 "같은 group_id는
+         항상 같은 인스턴스" identity 계약(`_GroupBindProxy` 클래스 docstring이 명시한
+         설계 전제)이 깨질 위험이 커서 유보. 정상 사용 범위(장시간 세션이라도 그룹
+         수백 개)에서 메모리 영향은 무시할 수준.
+      신규 pytest 3종(라우팅 장애물 제외·정렬 후보 제외·캐시 히트 각각 직접 검증).
+- [x] findings 분류 완료: **채택 5건**(core_shapes 2 + core_view 3, 전부 즉시 반영) /
+      **보류 1건**(core_view finding 4, 근거 위 기록) / **기각 0건**.
 
-**완료 기준**: 두 파일의 findings가 분류표로 정리돼 이 문서에 붙어 있다.
+⚠ 파일이 커서 한 번에 안 들어갈 걸 대비해 관심사별 분할 계획을 세워뒀으나, 두 파일
+모두 한 번에 리뷰가 완주해(각각 2건·4건만 반환) 쪼갤 필요가 없었다 — 다만 이게
+12,808줄 전체를 빠짐없이 훑었다는 보증은 아니므로(리뷰어 자체 판단으로 findings를
+추릴 수 있음), 정말 철저한 커버리지가 필요하면 재검토 시 관심사별 분할도 고려.
+
+**완료 기준 충족**: 두 파일의 findings 6건 전부 분류·처리(커밋 `bb248b4`, 그리고 이번
+core_view.py 3건 반영 커밋). 전체 스위트 1005종(신규 4종 포함) 통과.
 
 ---
 
@@ -380,3 +418,8 @@ Phase 1은 우선순위가 가장 높지만 **차단 조건은 아니다** — �
   정식 스위트 무죄로 재확인(memory 갱신). 전체 스위트(1001종)+자체러너(865종) exit 0
   안정 재현(각 2~3회). 성능 베이스라인 1회 저장(관찰 1건 Phase 7로 이관). 다음: 커밋 →
   `docs/history/2026-08.md`+`docs/pitfalls.md` 기록 → Phase 2(코어 2대 파일 코드리뷰).
+- **2026-08-25 (후속 3)** — **Phase 2 완료**. `core_shapes.py`(2건)·`core_view.py`(4건,
+  백그라운드 fork로 병렬 실행) 리뷰 완료, findings 6건 중 5건 즉시 반영(전부 그룹
+  프레임 기능의 `_GroupBindProxy` 관련 성능·정확성 버그 — 중복 scene 전체스캔 3곳,
+  라우팅 장애물 오판, 정렬 자기매칭 오판), 1건은 low-impact로 근거와 함께 보류. 신규
+  pytest 4종, 전체 스위트 1005종 통과. 다음: 커밋 → Phase 3(host_* UI 레이어 코드리뷰).
