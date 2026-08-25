@@ -1427,6 +1427,36 @@ def test_palette_drag_live_snap_and_commit():
     assert it not in w._scene.items()
 
 
+def test_palette_button_right_click_during_drag_does_not_end_it():
+    """[code-review 2026-08-26] `_PaletteButton.mouseReleaseEvent`가 `e.button()`을 안 봐서,
+    왼쪽 버튼으로 드래그 중(grabMouse() 상태 — 모든 버튼 이벤트가 이 위젯으로 옴)에 오른쪽
+    버튼을 눌렀다 떼기만 해도 드래그가 끝난 걸로 오판했다(왼쪽은 여전히 눌린 채인데 grab만
+    풀림). `mousePressEvent`가 이미 왼쪽 버튼만 드래그 후보로 잡는 것과 대칭이 되도록,
+    release도 왼쪽 버튼만 드래그 종료 신호로 인정해야 한다."""
+    from easycad.canvas.host_widgets import _PaletteButton
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+
+    w = CanvasWindow(); w.resize(1200, 760); w.show()
+    btn: _PaletteButton = w._shape_tool_buttons["rect"]
+    assert w._palette_drag_begin("rect") is True
+    btn._dragging = True   # 실제 press+threshold 이동을 거친 것과 동일한 상태로 세팅
+    btn.grabMouse()
+
+    p = QPointF(10, 10)
+    right_release = QMouseEvent(
+        QEvent.Type.MouseButtonRelease, p, p,
+        Qt.MouseButton.RightButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    btn.mouseReleaseEvent(right_release)
+    assert btn._dragging is True, "오른쪽 버튼 release가 진행 중이던 왼쪽 드래그를 끝냈음(회귀)"
+
+    left_release = QMouseEvent(
+        QEvent.Type.MouseButtonRelease, p, p,
+        Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
+    btn.mouseReleaseEvent(left_release)
+    assert btn._dragging is False   # 왼쪽 버튼 release는 여전히 정상적으로 드래그를 끝냄
+
+
 def test_palette_drag_cancel_when_released_outside_viewport():
     # [실사용 피드백 2026-08-19] 캔버스 밖에서 손을 떼면 취소(=놓지 않음)와 같은 관례.
     w = CanvasWindow(); w.resize(1200, 760); w.show()

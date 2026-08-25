@@ -119,6 +119,13 @@ class _PaletteButton(QToolButton):
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
+        # [code-review 2026-08-26] `mousePressEvent`는 왼쪽 버튼만 드래그 시작 후보로
+        # 잡는데(위), 여기는 버튼 종류를 안 봐서 드래그 중(grabMouse() 상태 — 모든 버튼
+        # 이벤트가 이 위젯으로 옴) 오른쪽 버튼을 눌렀다 떼기만 해도 드래그가 끝난 걸로
+        # 오판했다(왼쪽은 여전히 눌린 채라 grab만 풀려 커서 아래 캔버스가 대신 반응).
+        if e.button() != Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(e)
+            return
         self._drag_press = None
         if self._dragging:
             self._dragging = False
