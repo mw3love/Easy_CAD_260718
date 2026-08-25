@@ -5675,6 +5675,17 @@ class _GroupBindProxy:
             return QPointF(p)   # 그룹 소실 — scene()이 이미 None이라 호출부가 안 쓰는 게 정상
         return QPointF(r.left() + p.x() * r.width(), r.top() + p.y() * r.height())
 
+    def isSelected(self) -> bool:
+        """[실사용 크래시 수정 2026-08-25] `_PolyArrowItem.reroute()`의 "양끝이 함께 선택돼
+        평행이동" 지름길과 `host_canvas._make_pin_pred`가 바인딩된 호스트에 `.isSelected()`를
+        무조건 호출한다 — 이 메서드가 없어 그룹에 붙은 화살표를 만든 직후(다음 `scene.changed`
+        처리 때) `AttributeError`로 앱이 죽었다(재현: 미선택 그룹 포트에서 일반 도형으로
+        화살표를 그은 뒤 아무 도형이나 움직이기만 해도 발화). 그룹 멤버는 항상 함께
+        선택/해제되므로(`_sync_group_selection`) "그룹 전체가 선택됐나"로 정의 — 멤버가 하나도
+        없으면 False."""
+        members = _group_members(self._scene_ref, self.group_id)
+        return bool(members) and all(m.isSelected() for m in members)
+
 
 def remap_grouped_bindings(pairs, gid_map: dict | None = None):
     """복사/붙여넣기·Ctrl+D·Alt-드래그 복제가 한 배치로 함께 만든 (원본, 새 아이템) 쌍 안에서,

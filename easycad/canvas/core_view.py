@@ -1935,7 +1935,13 @@ class _AnnotatorView(QGraphicsView):
                 br = gbox.adjusted(-margin, -margin, margin, margin)
                 if not br.contains(scene_c):
                     continue
-                if select_mode and any(o is not sh for o in occluders):
+                # [실사용 버그 수정 2026-08-25, 그룹 프레임 후속] `o is not sh`는 "커서가 겹친
+                # 게 이 도형 자신이 아니면 억제"인데, 그룹은 `sh`가 이 그룹 여러 멤버 중
+                # 하나(순회 순서상 우연히 걸린 것)라 정작 커서 밑에 있는 게 *같은 그룹의
+                # 다른 조각*(예: WiFi 아이콘의 겹친 호 여러 개)이면 매번 "남이 가린다"고
+                # 오판해 그룹 전체 예고점이 커서를 대면 사라졌다(실사용 재현). 같은 group_id
+                # 멤버끼리는 서로를 가리는 존재로 안 친다 — 그룹은 "하나의 틀"이므로.
+                if select_mode and any(getattr(o, "_group_id", None) != gid for o in occluders):
                     continue
                 d = QLineF(gbox.center(), scene_c).length()
                 if best_d is None or d < best_d:
@@ -1949,8 +1955,12 @@ class _AnnotatorView(QGraphicsView):
             d = QLineF(sh.sceneBoundingRect().center(), scene_c).length()
             if best_d is None or d < best_d:
                 best_d, best_sh, best_member = d, sh, sh
-        if best_sh is not None and any(o is not best_member for o in occluders):
-            return None
+        if best_sh is not None:
+            if isinstance(best_sh, _GroupBindProxy):
+                if any(getattr(o, "_group_id", None) != best_sh.group_id for o in occluders):
+                    return None
+            elif any(o is not best_member for o in occluders):
+                return None
         return best_sh
 
     def _draw_port_dots(self, painter, s):
@@ -2134,10 +2144,25 @@ class _AnnotatorView(QGraphicsView):
                     return True
                 n = n.parentItem()
             return False
+
+        def _top_owner_group_id(it):
+            n = it
+            while n.parentItem() is not None:
+                n = n.parentItem()
+            return getattr(n, "_group_id", None)
+
         topmost = self.scene().itemAt(scene_pt, self.transform())
 
         def _occluded(sh):
-            return (topmost is not None and not _related(topmost, sh) and not _related(sh, topmost))
+            # [실사용 버그 수정 2026-08-25, 그룹 프레임 후속] 커서가 그룹의 *다른* 조각(예:
+            # WiFi 아이콘의 겹친 호 여러 개) 위에 있으면 `topmost`가 그 형제 조각이 되어
+            # `_related`가 둘 다 실패(형제는 부모-자식 관계가 아님)해 이 그룹 전체가 가려진
+            # 걸로 오판했다(실사용 재현: 커서가 그룹에 가까워질수록 예고점이 사라짐). 같은
+            # group_id를 공유하는 조각끼리는 서로를 가리는 존재로 안 친다.
+            if topmost is None or _related(topmost, sh) or _related(sh, topmost):
+                return False
+            gid = getattr(sh, "_group_id", None)
+            return gid is None or _top_owner_group_id(topmost) != gid
 
         best = None
         bestd = self._PORT_SNAP_PX

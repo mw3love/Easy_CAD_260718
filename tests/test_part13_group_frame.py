@@ -169,3 +169,71 @@ def test_duplicate_group_with_bound_arrow_rebinds_to_new_group():
     host2 = arrow2._bound(len(arrow2._pts) - 1)
     assert isinstance(host2, _GroupBindProxy)
     assert host2.group_id == a2._group_id   # 사본 그룹으로 재연결, 원본 그룹이 아님
+
+
+def test_group_bind_proxy_is_selected_reflects_all_members():
+    # [실사용 크래시 수정 2026-08-25] `.isSelected()`가 없어 AttributeError로 앱이 죽던
+    # 버그(host_canvas._make_pin_pred, _PolyArrowItem.reroute 양쪽에서 무조건 호출)의
+    # 재발 방지 — 존재 자체와 의미(그룹 전체가 선택돼야 True)를 함께 검증. `CanvasWindow`의
+    # `_sync_group_selection`은 멤버 하나만 선택해도 즉시 전체를 함께 선택시켜(host_selection.py)
+    # "일부만 선택된" 중간 상태를 실제로는 못 만드므로, 그 동기화가 안 걸린 맨 `QGraphicsScene`
+    # 으로 all() 정의 자체를 직접 검증한다.
+    from PyQt6.QtWidgets import QGraphicsScene
+    scene = QGraphicsScene()
+    a = _RectItem(QRectF(0, 0, 100, 60)); b = _RectItem(QRectF(120, 0, 100, 60))
+    a.setFlags(a.GraphicsItemFlag.ItemIsSelectable); b.setFlags(b.GraphicsItemFlag.ItemIsSelectable)
+    a._group_id = b._group_id = "g1"
+    scene.addItem(a); scene.addItem(b)
+    proxy = _GroupBindProxy(scene, "g1")
+    assert proxy.isSelected() is False
+    a.setSelected(True)
+    assert proxy.isSelected() is False   # 일부만 선택 — 아직 그룹 전체는 아님
+    b.setSelected(True)
+    assert proxy.isSelected() is True
+
+
+def test_group_to_normal_shape_arrow_survives_scene_changed_without_crash():
+    # [실사용 크래시 수정 2026-08-25, 실조건 재현] 미선택 그룹 포트에서 일반 도형으로
+    # 화살표를 긋고 아무 도형이나 움직이면(→ scene.changed → _on_scene_changed →
+    # reroute(pin_pred=...)) AttributeError로 프로그램이 통째로 죽던 버그. 화살표를
+    # 선택한 채로(사용자가 그린 직후 상태) 재현해야 `_make_pin_pred`의
+    # `arrow.isSelected() and sh.isSelected()` 분기를 실제로 태운다.
+    w = CanvasWindow()
+    a, b = _mk_group(w)
+    normal = _mk_rect(w._scene, w.make_pen(), 400, 0, 100, 60)
+    proxy = _GroupBindProxy(w._scene, "g1")
+    arrow = _ArrowItem(QColor("#ff0000ff"), 2, True)
+    arrow.set_points(QPointF(220, 30), QPointF(400, 30))
+    arrow.setFlags(arrow.GraphicsItemFlag.ItemIsSelectable | arrow.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(arrow)
+    arrow.set_bound(0, proxy, proxy.mapFromScene(QPointF(220, 30)))
+    arrow.set_bound(1, normal, normal.mapFromScene(QPointF(400, 30)))
+    w._scene.clearSelection()
+    arrow.setSelected(True)   # 방금 그린 화살표는 선택된 채로 남는다(실사용 관례)
+
+    normal.moveBy(50, 20)
+    w._on_scene_changed(None)   # 크래시 없이 통과해야 함(수정 전엔 여기서 AttributeError)
+    assert _close(arrow.mapToScene(arrow._endpoints()[1]), QPointF(450, 50))
+
+
+def test_port_dot_target_not_occluded_by_overlapping_sibling_group_member():
+    # [실사용 버그 수정 2026-08-25, 그룹 프레임 후속] SVG 다중조각 심볼처럼 그룹 멤버끼리
+    # 겹치는 경우(예: WiFi 아이콘의 겹친 호), 커서가 겹치는 영역(=형제 멤버의 몸통) 위에
+    # 있으면 예전엔 "남이 가린다"고 오판해 그룹 예고점이 사라졌다.
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 200, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 100, 0, 100, 60)   # a와 100~200 구간 겹침
+    a._group_id = b._group_id = "gtest"
+    w._scene.clearSelection()
+    target = w._view._port_dot_target(QPointF(150, 30))   # 겹치는 영역, b의 몸통 한가운데
+    assert isinstance(target, _GroupBindProxy) and target.group_id == "gtest"
+
+
+def test_hover_port_at_not_occluded_by_overlapping_sibling_group_member():
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 200, 60)
+    b = _mk_rect(w._scene, w.make_pen(), 100, 0, 100, 60)
+    a._group_id = b._group_id = "gtest"
+    w._scene.clearSelection()
+    hit = w._view._hover_port_at(w._view.mapFromScene(QPointF(199, 30)))   # 오른쪽 변, b 쪽
+    assert hit is not None and isinstance(hit[0], _GroupBindProxy) and hit[0].group_id == "gtest"
