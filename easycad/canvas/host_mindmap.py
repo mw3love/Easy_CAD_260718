@@ -77,14 +77,24 @@ class _MindMapMixin:
         """rect가 기존 마인드맵 노드와 안 겹칠 때까지 step 방향으로 밀어낸 결과.
         `items(rect, mode=...)`의 기본 판정(IntersectsItemShape)은 채움 없는 도형의 얇은
         테두리-링 히트영역만 보므로(core_shapes.py `_base_shape`) bbox 겹침을 놓친다 —
-        반드시 IntersectsItemBoundingRect로 조회한다."""
+        반드시 IntersectsItemBoundingRect로 조회한다.
+
+        [실사용 버그 수정 2026-08-25] 최종 겹침 판정은 `other.sceneBoundingRect()`가 아니라
+        `mm_node_rect_scene(other)`(실제 도형 기하, 선택 장식 없음)를 써야 한다 — Enter로
+        형제 노드를 만드는 순간 방금 만든 이전 형제가 아직 선택된 채인 경우가 흔한데(Tab 직후
+        편집모드 종료 시점 자체가 그 노드에 대한 Enter이므로), 선택된 도형의 `boundingRect()`
+        (`_HandleResizeMixin`)는 리사이즈 핸들·회전핸들·큐닷까지 포함해 실제 도형보다 훨씬
+        크다 — 이 부풀려진 영역과 24px 세로 간격이 항상 겹쳐, `mm_free_rect`가 매번 통째로
+        한 스텝(도형높이+간격) 더 밀어내고 있었다(Tab의 60px 가로 간격은 이 부풀림보다
+        넉넉히 커서 안 걸림 — Tab은 괜찮고 Enter만 넓어 보이던 이유). 실측(사용자 스크린샷
+        픽셀 대조): 예측된 밀림값(120+24=144)이 실제 관측 간격(167px)과 거의 정확히 일치."""
         dx, dy = step
         probe = QRectF(rect)
         guard = 0
         while guard < 200:
             collided = False
             for other in self._scene.items(probe, Qt.ItemSelectionMode.IntersectsItemBoundingRect):
-                if self.mm_is_node(other) and other.sceneBoundingRect().intersects(probe):
+                if self.mm_is_node(other) and self.mm_node_rect_scene(other).intersects(probe):
                     collided = True
                     break
             if not collided:
