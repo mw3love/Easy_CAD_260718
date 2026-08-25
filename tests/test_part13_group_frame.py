@@ -302,3 +302,35 @@ def test_qc_dot_at_hits_selected_group_qc_dot_and_creates_bound_arrow():
     assert len(arrows) == 1
     assert isinstance(arrows[0]._bound(0), _GroupBindProxy)
     assert arrows[0]._bound(0).group_id == "g1"
+
+
+def test_group_move_reroutes_arrow_immediately_not_only_after_other_side_moves():
+    # [실사용 버그 수정 2026-08-25, 그룹 프레임 3차 후속] 실사용 재현: 그룹↔일반 도형을
+    # 화살표로 이은 뒤 "그룹 쪽"을 옮기면 화살표 끝점이 안 따라오다가(스냅이 떨어진 것처럼
+    # 보임), 반대편(일반 도형)을 살짝만 움직여도 그제서야 두 끝 다 갱신돼 다시 붙는다.
+    # 원인은 `host_canvas._on_scene_changed`의 "실제로 움직인 도형에 붙은 화살표만 다시
+    # 그린다" 게이트(`s0 not in moved`)가 `_GroupBindProxy`를 `moved`(실제 도형 집합)의
+    # 원소로 찾을 수 없어 "그룹이 움직여도 이 화살표는 안 움직인 걸로" 오판한 것 —
+    # `region=None`(테스트 강제호출)은 이 게이트 자체를 건너뛰므로 실제 Qt `scene.changed`
+    # 신호 경로(`processEvents()`)로만 재현된다.
+    from PyQt6.QtWidgets import QApplication
+    w = CanvasWindow(); w.show()
+    a, b = _mk_group(w)
+    normal = _mk_rect(w._scene, w.make_pen(), 400, 0, 100, 60)
+    proxy = _GroupBindProxy(w._scene, "g1")
+    arrow = _PolyArrowItem(QColor("#ff0000ff"), 6, True)
+    arrow.set_points(QPointF(220, 30), QPointF(400, 30))
+    arrow.setFlags(arrow.GraphicsItemFlag.ItemIsSelectable | arrow.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(arrow)
+    arrow.set_bound(0, proxy, proxy.mapFromScene(QPointF(220, 30)))
+    arrow.set_bound(1, normal, normal.mapFromScene(QPointF(400, 30)))
+    arrow._auto_route = True
+    QApplication.instance().processEvents()
+
+    a.moveBy(0, 100); b.moveBy(0, 100)   # 그룹 전체 이동(실사용: SVG 그룹 드래그)
+    QApplication.instance().processEvents()
+    QApplication.instance().processEvents()
+
+    ep0 = arrow.mapToScene(arrow._endpoints()[0])
+    assert _close(ep0, QPointF(220, 130), eps=1.0), (
+        "그룹을 옮겨도 화살표 끝점이 즉시 따라오지 않음(회귀)")

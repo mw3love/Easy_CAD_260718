@@ -30,6 +30,7 @@ from easycad.canvas.annotator_core import (
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data, _dbg2,
+    _GroupBindProxy, _group_members,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -266,10 +267,22 @@ class _CanvasMixin:
                     # 지나간다 — 그 화살표를 직접 건드리기 전까지. 의도된 트레이드오프다.
                     if union is not None and moved is not None:
                         s0, s1 = it.bound_shapes()
-                        skip = s0 not in moved and s1 not in moved
+                        # [실사용 버그 수정 2026-08-25, 그룹 프레임 후속] `s0`/`s1`이
+                        # `_GroupBindProxy`(그룹에 바인딩된 끝)면 `moved`(실제 도형 집합)에
+                        # 그 프록시 자체가 들어 있을 리 없다 — 그룹을 옮겨도 항상 "안 움직인
+                        # 걸로" 오판해 reroute를 건너뛰었다(실사용 재현: SVG 그룹을 옮기면
+                        # 화살표가 안 따라오다가, 반대편 도형을 살짝만 움직여도 그제서야
+                        # 두 끝 다시 계산돼 따라붙음). 프록시는 "멤버 중 하나라도 움직였는가"
+                        # 로 판정한다.
+                        def _bound_moved(sh):
+                            if isinstance(sh, _GroupBindProxy):
+                                return any(m in moved for m in
+                                           _group_members(sh._scene_ref, sh.group_id))
+                            return sh in moved
+                        skip = not _bound_moved(s0) and not _bound_moved(s1)
                         _dbg2(f"[canvas] gate arrow#{id(it)} s0={type(s0).__name__}#{id(s0)} "
-                              f"s1={type(s1).__name__}#{id(s1)} s0_in_moved={s0 in moved} "
-                              f"s1_in_moved={s1 in moved} moved_ids={[id(m) for m in moved]} skip={skip}")
+                              f"s1={type(s1).__name__}#{id(s1)} s0_in_moved={_bound_moved(s0)} "
+                              f"s1_in_moved={_bound_moved(s1)} moved_ids={[id(m) for m in moved]} skip={skip}")
                         if skip:
                             continue
                     it.reroute(pin_pred=self._make_pin_pred(it), fast=many_changed,
