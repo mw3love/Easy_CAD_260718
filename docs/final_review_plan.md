@@ -302,17 +302,32 @@ core_view.py 3건 반영 커밋). 전체 스위트 1005종(신규 4종 포함) �
       버튼 드래그 중 오른쪽 버튼 release가 왼쪽 드래그를 잘못 끝내던 버그. 1건 스킵
       (캐시된 rect 산술 중복 호출, 실질 비용 0에 가까움).
 - [ ] `host_fileio.py`(1,187줄) — **재실행 중**(2026-08-26).
-- [ ] 나머지 9개 묶음(3,687줄) — **재실행 중**(2026-08-26, 8각도 서브에이전트 병렬).
-      1차 실행에서 여러 각도(D·E·F·G·H·B·C)가 findings를 이미 반환했으나 메인 취합·
-      검증 에이전트가 세션 한도로 죽어 **미검증 상태로 폐기** — 재실행 결과만 신뢰한다.
-      (참고로만: 반복 발견된 패턴은 host.py 분할(2026-08-02) 잔재인 `_MERMAID_SHAPE_ITEM`
-      /`_PALETTE_MIME` 등 상수가 9개 파일에 죽은 사본으로 복제된 것, 그룹 프레임 관련
-      추가 성능·정확성 이슈, 고아 `@staticmethod` 중복 데코레이터 3곳 — 재검증 시 이
-      단서들을 우선 확인)
-- [ ] **중점 축**: QThread 수명(이 프로젝트가 반복해서 크래시를 낸 지점) · 다이얼로그
-      `done()`/`reject()` 경로 · 시그널 연결 해제 · 위젯 부모 관계
+- [x] 나머지 9개 묶음(3,687줄) — **완료(2026-08-26, 2차 시도)**. 2차도 취합·검증 에이전트가
+      세션 한도로 죽었으나(8각도 중 완주는 Angle A 하나) **Angle A(라인 단위 정확성)의
+      findings 5건은 실측 검증까지 마쳐 신뢰**, 2건 반영(커밋 `62acdb5`):
+      1. `host_canvas.py._on_scene_changed`의 `_dbg2` 진단로그 f-string이 이미 구한
+         `_bound_moved()` 값을 재계산 — 그룹 바인딩 화살표마다 `_group_members()`
+         (scene 전체 스캔)가 매 reroute 후보당 한 번 더 돌고, 그 로그조차 이 PC엔 없는
+         경로라 항상 무의미하게 버려지고 있었다. 이미 구한 값 재사용으로 수정.
+      2. 고아 `@staticmethod` 중복 데코레이터 3곳(`host_style.py`·`host_undo.py`·
+         `host_context.py`) — Angle A와 별도로 1차 시도의 Angle H도 독립적으로 발견해
+         2각도 교차확인. 전부 정리.
+      3건 보류: `host_mindmap.py` bare except(저위험) · `host_undo.py._coalesce_into`
+      배치 내 중복 mut 키(현재 호출부에서 실제 트리거 안 됨) · `host_style.py._edit_color`
+      비모달 팝업 stale 선택 캡처(좁은 타이밍 윈도우).
+      ⚠ **1차 시도가 낸 나머지 6건(D·E·F·G·H·B·C 각도)은 메인 취합이 죽어 미검증
+      상태로 완전히 폐기** — `_MERMAID_SHAPE_ITEM`/`_PALETTE_MIME` 등 상수가 여러
+      host_* 파일에 죽은 사본으로 복제된 것, `_align_rect`가 `_tight_scene_bbox`를
+      안 쓰는 것, 여러 곳의 함수 중복(`paste_selection`/`duplicate_selection` 등) 같은
+      항목들은 근거 있어 보이지만 재검증 없이는 반영하지 않는다(전역 규칙 11-c
+      "프록시검증≠확인"과 같은 원칙) — 재검토가 필요하면 Phase 7에서 재실행.
+- [x] **중점 축 확인**: QThread 수명·다이얼로그 `done()`/`reject()` 경로는 Phase 3
+      초반(`host_dialogs.py` 리뷰)에서 이미 다뤄짐(2026-08-23 커밋들이 선제 수정한
+      상태를 리뷰어가 재확인, 새 findings 없음).
 
-**완료 기준**: findings 분류표.
+**완료 기준**: 4개 파일(`host_dialogs`·`host_ui`·`host_widgets`·`host_fileio`) + 9개
+묶음 findings 전부 분류·처리. `host_fileio.py`(1,187줄)는 **아직 재실행 중** — 완료되면
+이 문서에 이어 기록. 현재까지(3/4 파일 + 9개 묶음) 전체 스위트 1008종 통과.
 
 ---
 
