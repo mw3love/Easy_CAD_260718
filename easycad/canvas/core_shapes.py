@@ -3166,6 +3166,14 @@ class _PathItem(_HandleResizeMixin, QGraphicsPathItem):
         super().__init__(*args)
         self._init_resize()
         self._sel_outline = None  # 선택 점선 외곽선 캐시(획·펜 불변 → 이동 중 재계산 회피)
+        # [실사용 요청 2026-08-25] 이 클래스는 손그림 펜 궤적·DXF 폴백 곡선·SVG 가져오기/생성
+        # 결과 셋을 겸한다. 2026-08-19에 도입된 "select 도구 유휴 호버 예고점 억제"는 손그림
+        # 낙서(마우스가 지나가기만 해도 점이 뜨는 노이즈)만 겨냥한 것인데 `isinstance(_PathItem)`
+        # 로 걸어 SVG로 들여온/생성한 구조적 도형(곡선 위주라 대부분 이 클래스로 매핑됨)까지
+        # 큐닷을 통한 화살표 시작이 막혔다(core_view.py `_draw_port_dots` 참조). 펜 도구가
+        # 그릴 때만 True로 세팅해 그 억제를 손그림에만 좁힌다 — 기본값 False(SVG·DXF는 도형
+        # 취급, 화살표 관련 호버가 다른 도형처럼 항상 보임).
+        self._freehand = False
 
     def setPath(self, path):
         self._sel_outline = None
@@ -3178,6 +3186,7 @@ class _PathItem(_HandleResizeMixin, QGraphicsPathItem):
     def clone(self):
         c = _PathItem(QPainterPath(self.path()))
         c.setPen(QPen(self.pen()))
+        c._freehand = self._freehand
         return self._copy_common_to(c)
 
     # [Stage2] 기하 리베이크 — 패스 원소(Move/Line/Curve)의 모든 점을 씬변형.

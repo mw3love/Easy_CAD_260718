@@ -115,7 +115,11 @@ class _ContextMixin:
             if any(getattr(it, "_group_id", None) for it in targets):
                 menu.addAction("그룹 해제\tCtrl+Shift+G", self.ungroup_selection)
             menu.addMenu(self._build_layer_menu("레이어로 이동", parent=menu))  # [신규기능]
-            menu.addAction("팔레트에 등록...", self.register_selection_as_symbol)  # [신규기능 §8-8]
+            # [실사용 요청 2026-08-25] 다이얼로그 단일 액션 → 레이어 이동과 같은 서브메뉴로.
+            # 기존 폴더는 클릭 한 번으로 확정(이름만 입력하면 끝, 항상 팝업 1개) — 서브메뉴 자체가
+            # 아니라 "이름 입력 전에 폴더까지 다이얼로그 한 화면에서 고르게 하던" 옛 구조가 흔한
+            # 경로에서 클릭을 하나 더 요구했던 것. "새 폴더…"만 팝업이 2단(폴더명→심볼명)이 된다.
+            menu.addMenu(self._build_register_symbol_menu(parent=menu))
         if has_sel:
             # [내보내기 통합, 2026-08-20 실사용 피드백] 선택 상태에서 바로 내보내기 —
             # File 메뉴 「내보내기」와 같은 다이얼로그를 공유하되 범위 기본값만 "선택

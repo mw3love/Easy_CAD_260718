@@ -636,7 +636,7 @@ class _UIBuildMixin:
         tb.addSeparator()
 
         # 편집(&E)
-        for a in (self._act_undo, self._act_redo, self._act_pin):
+        for a in (self._act_undo, self._act_redo):
             tb.addAction(a)
         self._refresh_history_actions()   # undo/redo 버튼 초기 활성 상태(둘 다 비어 disabled)
         tb.addSeparator()
@@ -675,6 +675,11 @@ class _UIBuildMixin:
             tb.addWidget(btn)
             self._tool_buttons[key] = btn
         self._refresh_arrow_tool_button()   # [화살표 통합] 아이콘을 현재 종류에 맞춤
+        # [실사용 요청 2026-08-25] "도구 고정"은 undo/redo(히스토리 조작)와 무관한, 그리기
+        # 도구 자체의 동작 모드(연속 그리기 on/off) 토글이라 도구 묶음 옆이 의미상 맞다 —
+        # 옛 위치(편집 그룹, undo/redo 옆)에서 이리 옮긴다. 메뉴(편집(&E)) 쪽 위치는 그대로
+        # (기능별 분류라 문제 없음, 툴바만 시각적 근접성이 문제였다).
+        tb.addAction(self._act_pin)
         tb.addSeparator()
 
         # 보기(&V) — 메뉴 자체의 내부 구분(줌 / 스냅·정렬 토글 / 테마·도움말)을 그대로 반영.

@@ -72,6 +72,21 @@ def test_pin_keeps_tool_armed():
     assert w.current_tool == "rect"    # pin ON → 무장 유지(연속 그리기)
 
 
+def test_pin_toolbar_button_next_to_drawing_tools_not_undo_redo():
+    # [실사용 요청 2026-08-25] "도구 고정"은 그리기 도구의 동작 모드 토글이지 히스토리
+    # 조작이 아니다 — 툴바에서 undo/redo 옆(옛 위치)이 아니라 그리기 도구 버튼 묶음 옆에
+    # 있어야 한다. 그리기 도구는 QToolButton(addWidget)이라 tb.actions()엔 래핑 액션으로
+    # 잡히므로, "화살표 도구 버튼의 액션보다 뒤, undo/redo보다는 훨씬 뒤"로 확인한다.
+    w = CanvasWindow()
+    actions = w._toolbar.actions()
+    pin_i = actions.index(w._act_pin)
+    redo_i = actions.index(w._act_redo)
+    # QToolButton 자신이 아니라 그 버튼을 담은 QAction을 actions()에서 찾는다(addWidget 래핑).
+    arrow_action = next(a for a in actions if w._toolbar.widgetForAction(a) is w._tool_buttons["arrow"])
+    arrow_i = actions.index(arrow_action)
+    assert pin_i > arrow_i > redo_i   # 핀은 undo/redo 그룹이 아니라 도구 그룹 뒤에
+
+
 
 
 def test_oneshot_symbol_prefix_and_pen_exclusion():
@@ -1543,12 +1558,15 @@ def test_draw_port_dots_shown_on_idle_select_hover_for_shapes():
 def test_draw_port_dots_suppressed_on_idle_select_hover_for_pen_only():
     # [실사용 지적 2026-08-19 → 2026-08-19 범위 재조정] 펜 궤적(`_PathItem`)은 화살표와 그런
     # 밀접한 관계가 없어 — select 도구의 유휴 호버에서 점이 뜨면 노이즈라는 원래 지적이 이
-    # 케이스였다. 이 타입만 계속 억제되는지 확인(위 도형 테스트와 대칭).
+    # 케이스였다. [2026-08-25 좁힘] `_PathItem`은 SVG 가져오기/생성·DXF 폴백도 겸하게 되며
+    # 억제 대상을 타입 전체가 아니라 `_freehand` 표식(펜 도구가 그릴 때만 True)으로 좁혔다 —
+    # 이 테스트는 그 표식이 실제로 켜진 손그림 궤적만 계속 억제되는지 확인(위 도형 테스트와 대칭).
     from unittest.mock import MagicMock
     w = CanvasWindow(); w.grid_enabled = False
     view = w._view
     p = QPainterPath(QPointF(0, 0)); p.lineTo(QPointF(100, 0))
     pen_it = _PathItem(p)
+    pen_it._freehand = True
     pen_it.setPen(w.make_pen())
     w._scene.addItem(pen_it)
     center = QPointF(50, 0)
@@ -1564,6 +1582,27 @@ def test_draw_port_dots_suppressed_on_idle_select_hover_for_pen_only():
     painter2 = MagicMock()
     view._draw_port_dots(painter2, 1.0)
     assert painter2.drawEllipse.called
+
+
+def test_draw_port_dots_not_suppressed_for_non_freehand_path():
+    # [실사용 요청 2026-08-25] SVG 가져오기/생성은 `_PathItem`으로 매핑되지만 `_freehand`가
+    # 없다(False) — 손그림이 아니라 구조적 도형이므로 다른 도형처럼 select 유휴 호버에서도
+    # 큐닷 예고점이 바로 보여야 화살표를 붙일 수 있다(위 테스트와 대칭 회귀 가드).
+    from unittest.mock import MagicMock
+    w = CanvasWindow(); w.grid_enabled = False
+    view = w._view
+    p = QPainterPath(QPointF(0, 0)); p.lineTo(QPointF(100, 0))
+    svg_it = _PathItem(p)   # _freehand 미설정 — svg_import.parse_svg_* 결과와 동일 상태
+    svg_it.setPen(w.make_pen())
+    w._scene.addItem(svg_it)
+    center = QPointF(50, 0)
+    view.mapFromGlobal = lambda gp: view.mapFromScene(center)
+
+    w.set_tool("select")
+    assert view._port_dot_target(center) is svg_it
+    painter = MagicMock()
+    view._draw_port_dots(painter, 1.0)
+    assert painter.drawEllipse.called   # 펜이 아니므로 억제되면 안 됨
 
 
 # ---------------------------------------------------------------------------

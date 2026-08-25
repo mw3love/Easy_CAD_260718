@@ -45,7 +45,7 @@ from easycad.fileio import symbol_library
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
-from easycad.canvas.host_widgets import _clipboard_pixmap
+from easycad.canvas.host_widgets import _clipboard_pixmap, _style_menu_separators
 from easycad.canvas.host_ui import _PALETTE_ICON_PX, _PALETTE_SYM_ICON_PX
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -345,9 +345,42 @@ class _SelectionMixin:
 
     # ---- [신규기능 §8-8] 커스텀 심볼 팔레트 등록 ------------------------------
 
-    def register_selection_as_symbol(self):
+    def _build_register_symbol_menu(self, title: str = "팔레트에 등록...", parent=None) -> QMenu:
+        """["팔레트에 등록" 서브메뉴화, 2026-08-25 실사용 요청] `_build_layer_menu`와 같은
+        패턴 — 기존 폴더는 클릭 한 번으로 확정되고 그 뒤엔 심볼 이름만 물어 팝업이 항상
+        1개로 끝난다. 새 폴더만 폴더명→심볼명 2단(레이어와 달리 심볼은 이름이 항상 필수라
+        서브메뉴 자체가 그 입력을 없애주진 못한다 — 대신 흔한 경로인 "기존 폴더"를
+        최소 클릭으로 만드는 게 이번 개편의 실익).
+        [실사용 버그 수정 2026-08-25] `_build_layer_menu`처럼 `QMenu(title, parent)`로
+        만들어야 하는데 title 인자를 빼먹어 이 서브메뉴를 여는 상위 항목 글자가 빈 줄로
+        보이던 버그 — `title` 매개변수를 받아 생성자에 전달한다."""
+        m = QMenu(title, parent or self)
+        _style_menu_separators(m)
+        m.addAction("(미분류)", lambda checked=False: self.register_selection_as_symbol(folder=None))
+        folders = symbol_library.load_folders()
+        if folders:
+            m.addSeparator()
+            for f in folders:
+                m.addAction(f, lambda checked=False, name=f:
+                            self.register_selection_as_symbol(folder=name))
+        m.addSeparator()
+        m.addAction("새 폴더...", self._register_selection_as_symbol_new_folder)
+        return m
+
+    def _register_selection_as_symbol_new_folder(self):
+        """서브메뉴 "새 폴더..." — `host_ui._prompt_create_symbol_folder`와 같은 관례(이름
+        하나만 입력)로 폴더를 만들고 바로 그 폴더에 등록한다."""
+        name, ok = QInputDialog.getText(self, "새 폴더", "폴더 이름:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        symbol_library.create_folder(name)
+        self.register_selection_as_symbol(folder=name)
+
+    def register_selection_as_symbol(self, folder: str | None = None):
         """선택(주로 DXF에서 가져온 심볼)을 앱 전역 팔레트에 등록해 다른 도면에서도 재사용.
-        위치는 그대로 보존하되 화살표의 지속연결 바인딩은 저장하지 않는다(모듈 docstring 참조)."""
+        위치는 그대로 보존하되 화살표의 지속연결 바인딩은 저장하지 않는다(모듈 docstring 참조).
+        `folder`는 호출부(`_build_register_symbol_menu`)가 서브메뉴 클릭으로 미리 정해온다."""
         targets = self._edit_targets()
         if not targets:
             return
@@ -367,7 +400,7 @@ class _SelectionMixin:
             d["pos"][0] -= box.left()
             d["pos"][1] -= box.top()
         thumb = _render_symbol_thumbnail(tmp, box)
-        symbol_library.add_symbol(name, dicts, thumb)
+        symbol_library.add_symbol(name, dicts, thumb, folder=folder)
         self._refresh_custom_symbol_section()
         self.statusBar().showMessage(f"팔레트에 등록: {name}", 3000)
 

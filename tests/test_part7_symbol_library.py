@@ -266,6 +266,56 @@ def test_create_folder_persists_even_when_empty():
         assert symbol_library.load_folders() == ["무선"]
 
 
+# ---- [실사용 요청 2026-08-25] 우클릭 "팔레트에 등록" 서브메뉴화 -------------------------
+
+def test_register_selection_as_symbol_folder_arg_targets_that_folder():
+    with _isolated_symbol_library():
+        symbol_library.create_folder("장비")
+        w = CanvasWindow()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("장비증폭기", True)):
+            w.register_selection_as_symbol(folder="장비")
+        assert symbol_library.load_library()[0]["folder"] == "장비"
+
+
+def test_build_register_symbol_menu_lists_unclassified_folders_and_new_folder():
+    with _isolated_symbol_library():
+        symbol_library.create_folder("무선")
+        symbol_library.create_folder("장비")
+        w = CanvasWindow()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        menu = w._build_register_symbol_menu()
+        texts = [a.text() for a in menu.actions() if not a.isSeparator()]
+        assert texts == ["(미분류)", "무선", "장비", "새 폴더..."]
+
+
+def test_register_symbol_menu_folder_action_registers_directly_with_one_popup():
+    # [핵심] 기존 폴더 클릭 = 이름 팝업 1개로 바로 그 폴더에 등록(폴더 선택 팝업 없음).
+    with _isolated_symbol_library():
+        symbol_library.create_folder("장비")
+        w = CanvasWindow()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        menu = w._build_register_symbol_menu()
+        folder_action = next(a for a in menu.actions() if a.text() == "장비")
+        with patch.object(QInputDialog, "getText", return_value=("증폭기", True)) as mock_name:
+            folder_action.trigger()
+        assert mock_name.call_count == 1
+        assert symbol_library.load_library()[0]["folder"] == "장비"
+
+
+def test_register_symbol_menu_new_folder_creates_and_registers():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        menu = w._build_register_symbol_menu()
+        new_folder_action = next(a for a in menu.actions() if a.text() == "새 폴더...")
+        with patch.object(QInputDialog, "getText",
+                           side_effect=[("송신부", True), ("증폭기", True)]):
+            new_folder_action.trigger()
+        assert "송신부" in symbol_library.load_folders()
+        assert symbol_library.load_library()[0]["folder"] == "송신부"
+
+
 def test_create_folder_blank_name_is_noop():
     with _isolated_symbol_library():
         symbol_library.create_folder("   ")

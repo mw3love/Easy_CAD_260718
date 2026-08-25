@@ -1856,6 +1856,13 @@ class _AnnotatorView(QGraphicsView):
                 continue
             if sh.isSelected():
                 continue
+            # [실사용 요청 2026-08-25] Ctrl+G로 묶인 멤버는 "한 덩어리"로 다루자는 취지와
+            # 달리 낱개 도형처럼 자기 호버 포트를 계속 내밀고 있었다 — 그룹으로 화살표를
+            # 붙이려면 먼저 그룹 해제(Ctrl+Shift+G)하게 한다. occluder 판정(다른 도형이
+            # 이 지점을 가리는가)엔 그룹 멤버도 계속 참여시킨다 — 이건 "포트를 보여줄
+            # 대상"이 아니라 "화면 스택 순서" 문제라 무관하다.
+            if getattr(sh, "_group_id", None):
+                continue
             br = sh.sceneBoundingRect().adjusted(-margin, -margin, margin, margin)
             if not br.contains(scene_c):
                 continue
@@ -1898,21 +1905,28 @@ class _AnnotatorView(QGraphicsView):
         [실사용 지적 2026-08-19 → 2026-08-19 범위 재조정] select 도구의 **유휴** 호버(드래그
         중이 아닐 때)에서는 예고점을 그리지 않는다 — 처음엔 도형까지 포함해 전부 껐으나
         (아무 도형이나 마우스가 지나가기만 해도 점이 뜨는 게 노이즈라는 지적, Lucid 대조:
-        화살표 도구를 실제로 쓸 때만 뜬다), 그 지적은 실제로는 **펜 궤적(`_PathItem`)** 한정
-        이었다 — 도형(사각형/원/심볼)은 화살표와 밀접히 엮여 있어 유휴 호버에서도 포트점이
-        계속 보여야 화살표를 넣고 빼기 편하다는 게 원래 의도였는데, 같은 세션(펜 궤적 실사용
+        화살표 도구를 실제로 쓸 때만 뜬다), 그 지적은 실제로는 **손그림 펜 궤적** 한정이었다
+        — 도형(사각형/원/심볼)은 화살표와 밀접히 엮여 있어 유휴 호버에서도 포트점이 계속
+        보여야 화살표를 넣고 빼기 편하다는 게 원래 의도였는데, 같은 세션(펜 궤적 실사용
         피드백 커밋)에서 이 억제가 `best_sh` 타입을 안 가리고 전부에 걸리는 바람에 도형까지
         같이 꺼졌다(재확인 후 `_PathItem`만으로 좁힘). `_hp_dragging`(2026-07-29 select-hover
         커넥터 뽑기가 이미 진행 중)이면 도구·타입과 무관하게 그대로 그린다 — 그건 "어디
         붙을지" 실시간 피드백이라 예고와 다른 목적이다. `_port_dot_target` 자체는 도구를 안
         가린다 — `_qc_dots_hover_suppressed()`가 select 모드에서도 이 결과에 계속 의존하기
-        때문."""
+        때문.
+        [실사용 요청 2026-08-25] `isinstance(_PathItem)`만으로 걸었던 게 과대적용이었다 —
+        `_PathItem`은 손그림 낙서뿐 아니라 SVG 가져오기/생성 결과(곡선 위주라 대부분 이
+        클래스로 매핑됨)·DXF 폴백 곡선도 겸하는데, 이 셋은 사용자가 의도적으로 배치한
+        "구조적 도형"이라 노이즈 취지(마우스가 우연히 지나가는 낙서)와 무관하다 — 예고점이
+        없으면 select 도구에서 화살표를 붙일 방법 자체가 안 보였다(화살표 도구로 먼저 바꿔야
+        함). 펜 도구가 그릴 때만 세우는 `_freehand` 표식(`core_shapes._PathItem.__init__`)으로
+        좁혀 SVG·DXF 곡선은 다른 도형과 동일하게 항상 예고점을 보여준다."""
         view_pos = self.mapFromGlobal(QCursor.pos())
         scene_c = self.mapToScene(view_pos)
         best_sh = self._port_dot_target(scene_c)
         if best_sh is None:
             return
-        if (isinstance(best_sh, _PathItem)
+        if (getattr(best_sh, "_freehand", False)
                 and self._owner.current_tool not in ("arrow", "sarrow")
                 and not self._hp_dragging):
             return
@@ -2022,7 +2036,11 @@ class _AnnotatorView(QGraphicsView):
         # `test_port_participates_normally_in_hover_and_qc_systems`가 깨진다(실측 확인).
         if any(sh.isSelected() and _shape_interior_contains(sh, scene_pt) for sh in all_near):
             return None
-        near = [sh for sh in all_near if not sh.isSelected()]
+        # [실사용 요청 2026-08-25] `_port_dot_target`과 같은 이유로 그룹 멤버는 여기서도
+        # 후보 제외 — 그렇지 않으면 예고점은 안 보이는데(위에서 뺐음) 클릭·드래그로 연결
+        # 자체는 여전히 되는 시각-동작 불일치가 생긴다.
+        near = [sh for sh in all_near
+                if not sh.isSelected() and not getattr(sh, "_group_id", None)]
         # [실사용 버그 수정 2026-08-11] 커서가 실제로 놓인 지점(scene_pt)에서 Qt 화면 스택
         # 맨 위 아이템을 확인 — 그게 이번 후보(sh)도, sh의 포트↔호스트 가족(부모-자식 체인)도
         # 아니면 sh는 뭔가 다른 것(전형적으로 붙여넣은 이미지)에 시각적으로 가려진 것이므로
@@ -2815,6 +2833,7 @@ class _AnnotatorView(QGraphicsView):
         elif tool == "pen":
             self._path = QPainterPath(self._scene_pos_precise(event))
             it = _PathItem(self._path)
+            it._freehand = True   # [실사용 요청 2026-08-25] select 유휴호버 억제는 이 표식만 본다
             it.setPen(pen)
             self._begin_draw(it)
         elif tool == "text":
