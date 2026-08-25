@@ -6,6 +6,7 @@ QT_QPA_PLATFORM/프로젝트 루트 sys.path는 _shared.py도 방어적으로 �
 """
 import os
 import sys
+import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +26,19 @@ def _isolate_gateway_settings(monkeypatch):
     조용히 사라졌다("저장한 키가 앱을 껐다 켜면 사라진다"던 재현 안 되던 버그의 실제
     원인). `_isolated_symbol_library()`(_shared.py)와 동일한 관례로, 앱 코드를 건드리지
     않고 QSettings의 진입점(`easycad.ai.gateway._SETTINGS_ORG/_SETTINGS_APP`)만 세션
-    전체에서 격리해 원천 차단한다."""
+    전체에서 격리해 원천 차단한다.
+
+    [최종 검수 Phase 1, 2026-08-25] `gw.resolve_api_key()`는 QSettings보다 **먼저**
+    `gw.SECRETS_FILE`(`~/.claude/.secrets/easycad-gateway.key`)을 확인한다 — 이 파일이
+    실제로 존재하는 PC(이 프로젝트가 게이트웨이 키를 이 경로에 저장하는 관례, 2026-08-11
+    도입)에서는 위 QSettings 격리만으로는 부족해 `test_gateway_settings_dialog_*` 3종이
+    실제 키 값을 그대로 흘려받아 실패했다(PC마다 통과/실패가 갈리는 결정론 붕괴 — 다른
+    PC에서 "무관한 실패"로 반복 관찰돼 온 것의 실제 원인). 같은 관례로 `SECRETS_FILE`도
+    존재하지 않는 임시 경로로 격리한다."""
     monkeypatch.setattr("easycad.ai.gateway._SETTINGS_ORG", "EasyCAD-pytest")
     monkeypatch.setattr("easycad.ai.gateway._SETTINGS_APP", "EasyCAD-pytest")
+    import pathlib
+    monkeypatch.setattr(
+        "easycad.ai.gateway.SECRETS_FILE",
+        pathlib.Path(tempfile.gettempdir()) / "easycad-pytest-no-such-secrets.key",
+    )

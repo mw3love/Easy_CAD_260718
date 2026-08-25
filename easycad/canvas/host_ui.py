@@ -1322,9 +1322,12 @@ class _UIBuildMixin:
         # 예약해 둔(비동기) `LayoutRequest`가 실제로 한 번 처리돼야 한다(네 겹 중첩 — 이 파일의
         # `_toggle_folder`가 겪은 세 겹 캐싱 함정과 같은 종류인데 한 단 더 깊다). 그래서 두 번째
         # 호출 전에 이벤트루프를 한 틱 돌려야 한다 — 단순 반복 호출만으론 안 됨을 실측으로 확인.
+        # [2026-08-25 Phase 1 재수정] 이 틱을 `QApplication.processEvents()`로 동기 재진입시키면
+        # 함수 맨 위 clear 루프가 예약한 `deleteLater()`까지 같은 재진입 안에서 처리되며 힙
+        # 손상 abort(pytest exit 127, 실측 재현·격리 확인)를 유발한다 — 재진입 없이 다음
+        # 이벤트루프 틱으로 미루는 `QTimer.singleShot(0, ...)`로 교체(동일 효과, 재진입 없음).
         self._relayout_left_panel()
-        QApplication.processEvents()
-        self._relayout_left_panel()
+        QTimer.singleShot(0, self._relayout_left_panel)
 
 
     def _show_symbol_folder_context_menu(self, label_widget: QLabel, pos, folder_name: str):

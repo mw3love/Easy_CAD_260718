@@ -1364,6 +1364,21 @@ symbol_library/
   창(`_MermaidPreviewEnlargeDialog`)으로 분리(`interactive` 플래그로 뷰 클래스 공유).
   상세: `docs/history/2026-08.md` 관련 4개 항목(같은 날). **Not-tested**(공통): 실제
   마우스 클릭/드래그 손맛(`python run.py` 확인 필요).
+- **최종 검수 착수 + Phase 0·1 완료(2026-08-25)** — 사용자 요청으로 프로젝트 최종
+  코드리뷰 계획을 세움(계획서 `docs/final_review_plan.md` 신설, 태그 `v0.1.0`으로
+  기준점 확보). 계획 수립 중 **회귀 안전망 붕괴**를 발견해 1순위를 재조정 — `pytest
+  tests/`가 exit 127로 1001개 중 21%만 실행하고 죽고 있었다. Phase 1에서 이등분 탐색
+  으로 단일 테스트(`test_left_panel_scrolls_...`, 40회 UI 반복이 좌측 패널 위젯을
+  최대 120회 재구축)로 원인을 확정 — `host_ui.py`의 `QApplication.processEvents()`
+  동기 재진입이 예약된 `deleteLater()`와 충돌해 힙 손상 abort를 일으킨 것(단, 진짜
+  `QApplication.exec()` 이벤트루프로는 재현 안 돼 실사용자 영향은 없었음도 확인).
+  `QTimer.singleShot(0, ...)`으로 교체 + 테스트를 위젯 처치량 대폭 축소로 재설계.
+  부수로 `test_part9_ai_mermaid` 3건(SECRETS_FILE 격리 누락)도 해소, `symbol_library.
+  json` 오염 known issue는 정식 스위트 무죄로 재규명(memory 갱신). 최종: 전체 스위트
+  (1001종)+자체러너(865종) exit 0 안정 재현. 상세: `docs/history/2026-08.md` "최종
+  검수 Phase 1", 함정: `docs/pitfalls.md` "검증 방법론" 절 끝부분. 다음: Phase 2
+  (`core_shapes.py`/`core_view.py` 코드리뷰) — 진행 계획·체크리스트는
+  `docs/final_review_plan.md` 참조.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

@@ -151,7 +151,7 @@ superpowers 플러그인의 `requesting-code-review`와는 별개이며, superpo
 
 ---
 
-### Phase 0 — 사전 정리 (작업공간·문서 위생) — **거의 완료 (2026-08-25)**
+### Phase 0 — 사전 정리 (작업공간·문서 위생) — **완료 (2026-08-25)**
 
 **왜 먼저**: 리뷰 중 나올 변경을 깨끗한 기준선 위에 올리기 위해. 짧다.
 
@@ -162,46 +162,69 @@ superpowers 플러그인의 `requesting-code-review`와는 별개이며, superpo
       미해결** — Phase 1로 이관.
 - [x] `이미지 모음/`(untracked, JPEG 7장, 23MB) — 기존 `.gitignore`의 "작업 도면·입력 사진"
       패턴(`/송출 도면/`·`/실제 도면/`)과 동일 성격이라 같은 방식으로 `/이미지 모음/` 추가.
-- [ ] **기준점 태그** `v0.1.0` 생성 — 위 변경들 커밋 후 진행 (사용자 승인 대기 — 커밋은
-      전역 규칙 10-a에 따라 매번 확인 후)
+- [x] **기준점 태그** `v0.1.0` 생성(로컬, 커밋 `d382fb1`) — annotated tag, 아직 push 안 함
 - [x] `tools/` 산출물 점검 — 대부분(`_perf_*.json`·`_shot_*.png`)은 이미 `.gitignore` 대상이라
       깨끗함. 단 **`tools/_kbs_hit_crop.png`·`tools/_route_bug.png` 2개는 tracked인데 ignore
       패턴에 안 걸림**(과거 버그 재현용 스크린샷, 지금은 스코프 밖) — 삭제하지 않고 보고만
       (전역 규칙 8: dead code는 보고, 삭제는 승인 후). Phase 7 정리 대상 후보로 남김.
 
 **완료 기준**: `git status`가 깨끗하고, 마지막 커밋까지 문서에 반영돼 있으며, 태그가 있다.
-**남은 것**: 커밋 승인 → 태그 생성.
+**완료** — 커밋 `d382fb1`, 태그 `v0.1.0`(로컬).
 
 ---
 
-### Phase 1 — 검증 기반 복구 ⭐ (최우선 · 단 차단 조건은 아님)
+### Phase 1 — 검증 기반 복구 ⭐ — **완료 (2026-08-25)**
 
-**왜 최우선**: §0에서 확인한 대로 기본 테스트 명령이 21%만 작동한다.
-**단 교착은 없다** — `--ignore=tests/test_part1_ui_arrows.py`로 900개가 완주하므로,
-Phase 1이 길어져도 Phase 2 이후를 그 안전망 위에서 진행할 수 있다.
-⚠ **타임박스 2세션** — 그 안에 근본원인이 안 잡히면 "part1 격리 러너 + 사각지대 명시"로
-잠정 종결하고 Phase 2로 넘어간다(과거 같은 서명의 크래시를 미상으로 포기한 이력이 있다).
+**결과: 근본원인 규명 성공, 타임박스 안에 완전 종결.** exit 127 크래시는 미상으로 남기지
+않고 특정·수정했다.
 
-- [ ] **exit 127 네이티브 크래시 진단** — 범인 `test_part1_ui_arrows.py`(101개)로 이미 특정됨.
-      - 이등분 탐색으로 크래시를 유발하는 최소 테스트 집합 좁히기 (파일 하나 안이라 범위가 좁다)
-      - 유력 가설(우선순위순): ⓐ 이 리포의 **"창을 안 닫는 관례"**(pitfalls.md에 기록됨 —
-        `CanvasWindow()`를 만들고 안 닫아 창·씬·타이머가 누적) ⓑ 인터프리터 종료 시
-        `QApplication` 파괴 순서 대 살아있는 `QWidget`/`QGraphicsScene` ⓒ 살아있는 `QThread`
-        (Mermaid/SVG 워커, `_detach_worker` 경로 포함)
-      - 참고 선행 사례: pitfalls.md "`__init__`에서 무조건 만든 `QTimer`가 pytest 스위트
-        전체 한정 플레이크를 만들 수 있다" — 같은 계열의 축적 효과
-- [ ] **`test_part9_ai_mermaid` 3건 실패 해소** — 로컬 secrets 의존을 끊어 어느 PC에서도
-      같은 결과가 나오게 (Phase 0의 `symbol_library.json` 오염과 뿌리가 같을 수 있음:
-      테스트가 실제 사용자 환경을 건드림)
-- [ ] **`symbol_library.json` 테스트 오염 근본원인 규명** (memory known issue 종결)
-- [ ] CLAUDE.md의 테스트 명령 안내 갱신 (지금 문서가 추천하는 명령이 작동하지 않음)
-- [ ] **성능 베이스라인 재측정** — `tools/perf_bench.py` + `tools/perf_baseline_check.py`를
-      지금 코드로 한 번 돌려 검수 전 기준값 고정(Phase 7에서 회귀 비교용)
+- [x] **exit 127 네이티브 크래시 진단·수정** — 이등분 탐색으로 `test_part1_ui_arrows.py`의
+      단일 테스트(`test_left_panel_scrolls_instead_of_growing_unbounded_with_many_folders`)로
+      확정. **원인은 앞서 세운 3개 가설(창 미종료·QApplication 파괴 순서·QThread) 전부 아니었다** —
+      실제로는 ⓐ 이 테스트가 40회 반복으로 UI 위젯을 실제로 짓고 부수며(등록+폴더생성+이동,
+      매회 `_refresh_custom_symbol_section()`가 좌측 패널 전체 재구축, 최대 120회) ⓑ
+      `.show()`된 실제 창 위에서 ⓒ `host_ui.py`(당일 앞선 커밋 `39e1b84`가 추가한 코드)가
+      `QApplication.processEvents()`를 동기 재진입시켜, clear-loop가 예약한 `deleteLater()`가
+      같은 재진입 안에서 처리되며 힙 손상 abort를 유발한 것(`os.abort()`가 이 환경에서
+      정확히 exit 127을 냄을 별도 확인해 서명 일치를 검증). 수정 2건:
+      1. **프로덕션**(`easycad/canvas/host_ui.py`) — 문제의 `processEvents()` 동기호출을
+         `QTimer.singleShot(0, self._relayout_left_panel)`로 교체(재진입 없이 다음 이벤트루프
+         틱으로 지연). 진짜 `QApplication.exec()` 이벤트루프(오프스크린 아님, 실제 앱과
+         동일 조건)로 별도 재현해본 결과 **원래 코드도 실사용자에게는 크래시가 없었다**
+         (pytest의 합성 `processEvents()` 호출 특유의 문제) — 그래도 안전한 패턴으로
+         교체해 향후 유사 재진입 위험을 원천 차단.
+      2. **테스트**(`tests/test_part1_ui_arrows.py`) — 40회 실제 UI 액션 대신 라이브러리
+         데이터를 직접 채우고 위젯 재구축은 1회만 실행하도록 재설계(같은 최종 상태를
+         검증하되 위젯 처치량을 대폭 축소, "많은 폴더 → 스크롤"이라는 원래 검증 목적은 유지).
+      3자 검증: 원인 파일 단독 3회 연속 재현 성공 → 수정 후 3회 연속 무크래시, 전체 파일
+      101종 3회 연속 통과, 전체 스위트(1001종) exit 0, 자체러너(`test_easycad.py`, 865종)
+      정상 종료 — 전부 확인 완료.
+- [x] **`test_part9_ai_mermaid` 3건 실패 해소** — `gw.resolve_api_key()`가 QSettings보다
+      **먼저** `gw.SECRETS_FILE`(`~/.claude/.secrets/easycad-gateway.key`)을 확인하는데,
+      기존 `conftest.py`/`_shared.py` 격리는 QSettings 조직명만 바꿔치기하고 이 파일 경로는
+      그대로 둬 실제 키가 있는 이 PC에서만 3건이 실패했다(다른 PC에서 "무관한 실패"로
+      반복 관찰된 것의 실제 원인). `conftest.py`의 autouse fixture + `_shared.py` 양쪽에
+      `SECRETS_FILE`을 존재하지 않는 임시 경로로 재바인딩(2026-08-20 "게이트웨이 키 소실
+      재발 — 두 번째 진입점"과 같은 패턴: 격리 진입점이 여러 개면 하나씩 빠짐). 수정 후
+      81/81 통과.
+- [x] **`symbol_library.json` 테스트 오염 재조사** — 정식 스위트(`pytest tests/`·
+      `test_easycad.py`) 각 2회 연속 실행 후 `git diff`가 매번 공백 — **오염 없음, 정식
+      스위트는 무죄로 재확인**. 실제 오염은 이번 진단 과정에서 만든 임시 스크립트(격리
+      컨텍스트 없이 `register_selection_as_symbol()` 직접 호출)가 만든 것으로 재현·확정.
+      memory(`bug_symbol_library_test_leak.md`) 갱신 완료 — "정식 스위트 무죄, 위험은
+      애드혹 진단 스크립트"로 결론 정정.
+- [ ] CLAUDE.md의 테스트 명령 안내 갱신 — **보류, 불필요로 재확인**: 이미 exit 0으로
+      정상 작동하므로 기존 안내(`python tests/test_easycad.py`)를 고칠 이유가 없어졌다.
+- [x] **성능 베이스라인 재측정** — `tools/perf_bench.py --save
+      tools/_perf_baseline_phase1_2026-08-25.json`(`.gitignore` 대상, 로컬 전용) 1회 실행,
+      `heavy_perf_test.ecad`(1599아이템) 기준. ⚠ **관찰(조사 안 함, Phase 7로 이관)**:
+      `전체 선택 그룹 드래그` 448.24ms가 `docs/perf_plan_500_1000.md`가 기록한 1000개
+      문서 최종치(123.8ms)보다 크게 나쁘다 — 단 서로 다른 문서(1599 vs 1000아이템)라
+      직접 비교는 아니고, 회귀인지 문서 규모 차이인지는 미판정. Phase 7에서 같은 문서로
+      재측정해 판정할 것.
 
-**완료 기준(실조건)**: `python -m pytest tests/`가 **exit 0으로 1,001개 전부 실행**되고,
-`python tests/test_easycad.py`도 정상 종료한다. 실패 0건.
-**잠정 종결 기준(타임박스 초과 시)**: 3건 실패 해소 + `--ignore` 러너를 공식 명령으로 문서화
-+ part1 101개가 검증 사각지대임을 명시. 이 경우 Phase 7에서 재도전 여부를 다시 판단한다.
+**완료 기준(실조건) 충족**: `python -m pytest tests/` exit 0(1,001종), `python
+tests/test_easycad.py` 정상 종료(865종). 3회 이상 반복 재현으로 안정성 확인.
 
 ---
 
@@ -345,3 +368,15 @@ Phase 1은 우선순위가 가장 높지만 **차단 조건은 아니다** — �
 - **2026-08-25** — 계획 수립. §0 실측 완료. 회귀 안전망 붕괴(exit 127) 발견 →
   범인을 `test_part1_ui_arrows.py` 하나로 특정(제외 시 900개 완주 = 필요충분 실측),
   임시 안전망 확보로 계획 교착 위험 제거.
+- **2026-08-25 (후속)** — **Phase 0 완료**. 문서 6건 동기화, `symbol_library.json`을
+  진짜 사용자 데이터로 확인(오염 아님), `이미지 모음/` gitignore 편입, 커밋 `d382fb1`,
+  태그 `v0.1.0`(로컬) 생성. `tools/_kbs_hit_crop.png`·`tools/_route_bug.png`(tracked인데
+  ignore 미적용)를 Phase 7 정리 후보로 기록. 다음: Phase 1(exit 127 진단, 타임박스 2세션).
+- **2026-08-25 (후속 2)** — **Phase 1 완료(타임박스 안, 근본원인 규명 성공)**. exit 127
+  크래시를 `test_left_panel_scrolls_...` 단일 테스트로 확정(가설 3개는 전부 기각 —
+  실제 원인은 `processEvents()` 재진입 중 `deleteLater()` 처리로 인한 힙 손상), 프로덕션
+  코드(`host_ui.py`)와 테스트(`test_part1_ui_arrows.py`) 양쪽 수정. AI 게이트웨이 테스트
+  3건은 `SECRETS_FILE` 격리 누락으로 확인·수정. `symbol_library.json` known issue는
+  정식 스위트 무죄로 재확인(memory 갱신). 전체 스위트(1001종)+자체러너(865종) exit 0
+  안정 재현(각 2~3회). 성능 베이스라인 1회 저장(관찰 1건 Phase 7로 이관). 다음: 커밋 →
+  `docs/history/2026-08.md`+`docs/pitfalls.md` 기록 → Phase 2(코어 2대 파일 코드리뷰).

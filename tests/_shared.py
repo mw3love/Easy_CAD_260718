@@ -55,6 +55,12 @@ _TMP = tempfile.mkdtemp(prefix="easycad_test_")
 from easycad.ai import gateway as _gw
 _gw._SETTINGS_ORG = "EasyCAD-pytest"
 _gw._SETTINGS_APP = "EasyCAD-pytest"
+# [최종 검수 Phase 1, 2026-08-25] `resolve_api_key()`가 QSettings보다 먼저 확인하는
+# `SECRETS_FILE`(실제 사용자 게이트웨이 키 저장 경로)도 같은 이유로 격리 — conftest.py의
+# autouse fixture와 동일 목적이지만 이 경로(자체 러너 `test_easycad.py`)는 pytest fixture가
+# 안 걸리므로 여기서 모듈 임포트 시점에 재바인딩(위 `_SETTINGS_ORG/_APP`과 같은 관례).
+import pathlib as _pathlib
+_gw.SECRETS_FILE = _pathlib.Path(_TMP) / "no-such-secrets.key"
 
 # [실사용 요청 2026-08-21, 단축키 설정] 같은 이유로 `easycad.canvas.shortcuts`도 실사용자
 # 레지스트리("EasyCAD"/"EasyCAD" — 다크모드 등 다른 설정과 같은 그룹)를 안 건드리게 격리.

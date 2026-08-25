@@ -311,8 +311,18 @@ def test_left_panel_scrolls_instead_of_growing_unbounded_with_many_folders():
     # [실사용 피드백 2026-08-25] "새폴더 추가하면 계속 길어질텐데 어딘가서부터는 스크롤로
     # 작동되나?" — 폴더가 소수일 땐 그대로(스크롤 없음), 많이 쌓이면 `_LEFT_PANEL_MAX_H`에서
     # 멈추고 내부 스크롤바가 뜬다(패널이 화면 밖으로 무한정 잘려나가지 않음).
-    from unittest.mock import patch
-    from PyQt6.QtWidgets import QInputDialog
+    #
+    # [Phase 1 재작성, 2026-08-25 후속(최종 검수)] 원래 이 시나리오를 40회 실제 UI 액션
+    # (등록+폴더생성+이동, 매번 `_refresh_custom_symbol_section()`이 좌측 패널 위젯 전체를
+    # 지었다 부숨 — 최대 120회 재구축)으로 만들었더니, 이 정도 규모의 반복 위젯 재구축이
+    # `.show()`된 실제 창 위에서 힙 손상 abort(pytest exit 127, faulthandler로도 추적 불가)를
+    # 유발함을 실측으로 확인했다 — 파일 전체(101종)를 이등분 탐색해 이 테스트 하나로 원인을
+    # 확정했고(이 테스트만 빼면 나머지 100종은 100% 재현 통과), 진짜 `QApplication.exec()`
+    # 이벤트루프(오프스크린 아님, 실제 앱과 동일 조건)에서는 같은 조작이 재현 안 돼 최종
+    # 사용자에게는 영향이 없음도 별도 확인했다(상세: `docs/final_review_plan.md` Phase 1).
+    # 이 테스트가 검증해야 할 것은 "많은 폴더가 있으면 패널이 스크롤되는가"이지 "UI를 40번
+    # 조작해도 안 죽는가"가 아니므로, 라이브러리 데이터를 직접 채우고 위젯 재구축은 1회만
+    # 실행하도록 재설계했다 — 같은 최종 상태(폴더 40개)를 훨씬 적은 위젯 처치로 검증한다.
     from easycad.fileio import symbol_library
 
     with _isolated_symbol_library():
@@ -321,13 +331,11 @@ def test_left_panel_scrolls_instead_of_growing_unbounded_with_many_folders():
         assert not w._left_scroll.verticalScrollBar().isVisible()   # 폴더 없을 때 스크롤 없음
 
         for i in range(40):
-            r = _mk_pen_rect(w); r.setSelected(True)
-            with patch.object(QInputDialog, "getText", return_value=(f"sym{i}", True)):
-                w.register_selection_as_symbol()
-            with patch.object(QInputDialog, "getText", return_value=(f"folder{i}", True)):
-                w._prompt_create_symbol_folder()
-            sym_id = symbol_library.load_library()[-1]["id"]
-            w._move_custom_symbol(sym_id, f"folder{i}")
+            symbol_library.create_folder(f"folder{i}")
+            symbol_library.add_symbol(f"sym{i}", [], "", folder=f"folder{i}")
+        w._refresh_custom_symbol_section()
+        w._relayout_left_panel()
+        QApplication.instance().processEvents()
         w._relayout_left_panel()
         QApplication.instance().processEvents()
 
