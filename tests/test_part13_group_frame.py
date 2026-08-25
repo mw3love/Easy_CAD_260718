@@ -237,3 +237,68 @@ def test_hover_port_at_not_occluded_by_overlapping_sibling_group_member():
     w._scene.clearSelection()
     hit = w._view._hover_port_at(w._view.mapFromScene(QPointF(199, 30)))   # 오른쪽 변, b 쪽
     assert hit is not None and isinstance(hit[0], _GroupBindProxy) and hit[0].group_id == "gtest"
+
+
+# ---- [실사용 요청 2026-08-25, 그룹 프레임 후속] 선택된 그룹 자신의 큐닷 -------------------
+# deep-interview로 범위 확정: `_group_id` 그룹이 선택 전체와 정확히 일치할 때만(임의
+# 다중선택 전체는 대상 아님). 다중선택 변형 오버레이(_GroupTransform)의 변 중점 리사이즈
+# 핸들(gap=0)과 안 겹치게 큐닷은 바깥으로 띄운다.
+
+def test_whole_group_id_requires_exact_selection_match():
+    w = CanvasWindow()
+    a, b = _mk_group(w, "g1")
+    c = _mk_rect(w._scene, w.make_pen(), 500, 0, 40, 40)   # 무관 도형
+    view = w._view
+    a.setSelected(True)   # b도 동기화로 함께 선택됨
+    assert view._group.whole_group_id() == "g1"
+    c.setSelected(True)   # 그룹 밖 도형이 섞이면 더 이상 "정확히 이 그룹"이 아님
+    assert view._group.whole_group_id() is None
+
+
+def test_whole_group_id_none_for_arbitrary_multi_select():
+    w = CanvasWindow()
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 40, 40)
+    b = _mk_rect(w._scene, w.make_pen(), 100, 0, 40, 40)   # _group_id 없음
+    view = w._view
+    a.setSelected(True); b.setSelected(True)
+    assert view._group.whole_group_id() is None
+    assert view._group.qc_dot_rects() == []
+
+
+def test_selected_group_qc_dot_rects_offset_outside_resize_edge_handles():
+    w = CanvasWindow()
+    a, b = _mk_group(w)   # 합집합 bbox 대략 (0,0)-(220,60)
+    view = w._view
+    a.setSelected(True)
+    rects = dict(view._group.qc_dot_rects())
+    box = view._group.bbox()
+    # 큐닷은 리사이즈 변 중점 핸들(gap=0, 정확히 bbox 테두리 위)보다 항상 바깥에 있어야
+    # 겹치지 않는다.
+    assert rects["t"].y() < box.top()
+    assert rects["r"].x() > box.right()
+    assert rects["b"].y() > box.bottom()
+    assert rects["l"].x() < box.left()
+
+
+def test_qc_dot_at_hits_selected_group_qc_dot_and_creates_bound_arrow():
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    a, b = _mk_group(w)
+    normal = _mk_rect(w._scene, w.make_pen(), 400, 0, 100, 60)
+    view = w._view
+    a.setSelected(True)
+    right_pt = dict(view._group.qc_dot_rects())["r"]
+    hit = view._qc_dot_at(view.mapFromScene(right_pt))
+    assert hit is not None
+    item, side = hit
+    assert isinstance(item, _GroupBindProxy) and item.group_id == "g1" and side == "r"
+
+    press, release, click, move, drag_move, dbl = _draw_helpers(view)
+    press(right_pt)
+    drag_move(QPointF(350, 30))
+    drag_move(QPointF(400, 30))
+    release(QPointF(400, 30))
+
+    arrows = [it for it in w._scene.items() if isinstance(it, (_ArrowItem, _PolyArrowItem))]
+    assert len(arrows) == 1
+    assert isinstance(arrows[0]._bound(0), _GroupBindProxy)
+    assert arrows[0]._bound(0).group_id == "g1"

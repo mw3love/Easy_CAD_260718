@@ -8096,6 +8096,41 @@ class _GroupTransform:
     def _rot_center(self, b: QRectF) -> QPointF:
         return QPointF(b.center().x(), b.top() - self._ROT_GAP_PX / self._s())
 
+    # ---- [실사용 요청 2026-08-25, 그룹 프레임 후속] 그룹 자신을 선택했을 때도 큐닷 ----------
+    # 대상은 `_group_id` 그룹만(임의 다중선택 전체가 아님) — deep-interview로 확정. 다중선택
+    # 변형 오버레이(위 회전·스케일 핸들)와 같은 bbox를 쓰지만, 자리는 `_edges()`(변 중점
+    # 리사이즈 핸들, gap=0)와 겹치지 않게 `_QC_DOT_GAP_PX`만큼 바깥으로 띄운다(단일 도형
+    # qc-dot과 동일한 관례, `_HandleResizeMixin._qc_dot_gap()` 참조).
+    def whole_group_id(self):
+        """지금 선택된 최상위 아이템 전체가 정확히 하나의 `_group_id` 그룹과 일치하면 그
+        group_id, 아니면(무그룹·부분선택·다른 아이템 섞임·여러 그룹 혼재) None."""
+        its = self.items()
+        if not its:
+            return None
+        gid = getattr(its[0], "_group_id", None)
+        if gid is None or any(getattr(it, "_group_id", None) != gid for it in its):
+            return None
+        sc = self._scene()
+        if sc is None:
+            return None
+        members = _group_members(sc, gid)
+        return gid if set(members) == set(its) else None
+
+    def qc_dot_rects(self):
+        """(side, scene_pt) 4개 — `whole_group_id()`가 None이면 빈 리스트."""
+        if self.whole_group_id() is None:
+            return []
+        b = self.bbox()
+        if b is None:
+            return []
+        gap = _HandleResizeMixin._QC_DOT_GAP_PX / self._s()
+        return [
+            ("t", QPointF(b.center().x(), b.top() - gap)),
+            ("r", QPointF(b.right() + gap, b.center().y())),
+            ("b", QPointF(b.center().x(), b.bottom() + gap)),
+            ("l", QPointF(b.left() - gap, b.center().y())),
+        ]
+
     def handle_at(self, scene_pt: QPointF):
         """씬점이 회전/스케일/변 핸들 위면 조작 튜플, 아니면 None."""
         b = self.bbox()
@@ -8131,6 +8166,15 @@ class _GroupTransform:
         rc = self._rot_center(b)                       # 회전 핸들 — 코랄 원(개별 회전 핸들과 색 통일)
         painter.setBrush(QBrush(QColor(_PEACH)))
         painter.drawEllipse(rc, h / 2, h / 2)
+        # [그룹 프레임 후속 2026-08-25] 그룹 자신이 선택된 큐닷 — 단일 도형 qc-dot과 동일 색·
+        # 크기(painter.setBrush를 여기서 새로 세팅해 위 회전 핸들 색과 안 섞이게 한다).
+        qc = self.qc_dot_rects()
+        if qc:
+            qr = h * 0.9 / 2.0
+            painter.setPen(QPen(QColor("white"), 1.0 / s))
+            painter.setBrush(QBrush(QColor(90, 150, 235)))
+            for _side, pt in qc:
+                painter.drawEllipse(pt, qr, qr)
 
     # ---- 변형 트랜잭션 ------------------------------------------------------
     def begin(self, hit, scene_pt: QPointF):

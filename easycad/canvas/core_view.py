@@ -407,6 +407,19 @@ class _AnnotatorView(QGraphicsView):
         `_box_handles()`가 항상 False지만, 화살표 접속점(qc-dot)만은 다른 도형과 동일하게
         필요하다(`_HandleResizeMixin._qc_capable`/`_TextItem` override 참조)."""
         if self._group_owns_interaction():
+            # [실사용 요청 2026-08-25, 그룹 프레임 후속] 다중선택(2개 이상)은 여전히 개별
+            # 큐닷을 전부 숨기고 그룹 변형 오버레이가 조작을 소유하지만, 그 선택이 정확히
+            # `_group_id` 그룹 하나와 일치하면 그룹 자신의 큐닷(그룹 bbox 변 중점, 리사이즈
+            # 핸들과 겹치지 않게 바깥으로 띄운 점)을 대신 히트테스트한다 — 임의의 다중선택
+            # 전체로는 확장하지 않는다(범위 확정, deep-interview).
+            gid = self._group.whole_group_id()
+            if gid is None:
+                return None
+            scene_pt = self.mapToScene(view_pos)
+            hit_r = (_HandleResizeMixin._HANDLE_PX * 0.9 / self._view_scale()) / 2.0
+            for side, pt in self._group.qc_dot_rects():
+                if QLineF(pt, scene_pt).length() <= hit_r:
+                    return (self._group_proxy(gid), side)
             return None
         scene_pt = self.mapToScene(view_pos)
         for it in self.scene().selectedItems():
