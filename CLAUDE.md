@@ -1392,6 +1392,26 @@ symbol_library/
   캐시(`_group_bbox_cached()`) 신설로 해소. 보류 1건(`_group_proxy_cache` 무프루닝)은
   low-impact + identity 계약 파손 위험으로 유보. 신규 pytest 4종, 전체 스위트 1005종
   통과. 다음: Phase 3(host_* UI 레이어 코드리뷰) — `docs/final_review_plan.md` 참조.
+- **최종 검수 Phase 3 완료(2026-08-26)** — `host_dialogs.py`(2,872줄)·`host_ui.py`
+  (1,959줄)·`host_widgets.py`(1,181줄)·`host_fileio.py`(1,187줄) 개별 리뷰 + 나머지
+  9개 파일 묶음(3,687줄) 리뷰, 총 findings 18건 중 7건 반영·1건 재분류(기각)·10건
+  보류. 가장 무거운 발견은 `_do_open_ecad`가 도형 로드(`load_document`)는 성공했는데
+  레이어 읽기(`load_document_layers`, 같은 파일을 별도로 재오픈)만 실패해도 통째로
+  "열기 실패"로 되돌려 `_doc_path` 없는 미완성 문서가 씬에 남던 버그(레이어 읽기를
+  격리해 기본 레이어로 폴백하도록 수정) — docstring이 문서화한 "실패 시 빈 탭"과 실제
+  결과가 달랐다. 그 외: Mermaid 확대창이 배경 타이핑마다 350ms 간격으로 키보드 포커스를
+  뺏던 버그, 팔레트 버튼 드래그 중 오른쪽 버튼 release가 왼쪽 드래그를 잘못 끝내던 버그,
+  SVG 전체 가져오기 실패 시 경고+상태바 중복 메시지, 진단로그(`_dbg2`)가 무의미한
+  기록을 위해 그룹 scene 전체스캔을 중복 실행하던 것, 2026-08-02 host.py 분할 잔재로
+  보이는 고아 `@staticmethod` 중복 데코레이터 3곳. `_QuickLookDialog`·`_MermaidPreview
+  EnlargeDialog`의 `WindowDeactivate` 처리 중복도 공유 헬퍼로 통합. ⚠ **세션 진행 중
+  API 한도로 백그라운드 리뷰가 여러 번 중단** — 취합 실패한 1차 시도 결과(6건)는 재검증
+  없이 전량 폐기하고 재실행 결과만 반영(전역 규칙 11-c "프록시검증≠확인" 적용, 근거
+  없는 항목을 신뢰도 있는 발견과 섞지 않음). `_confirm_dxf_open_once`/`_confirm_dxf_
+  save_once`의 QSettings 플래그 타이밍은 리뷰어가 버그로 지목했으나 docstring이 "이후는
+  조용히 진행"으로 확정 설계임을 명시해 기각. 신규 pytest 9종, 전체 스위트 1010종 통과.
+  다음: Phase 4(fileio·ai 경계 코드리뷰, 데이터 손실 리스크 최상) —
+  `docs/final_review_plan.md` 참조.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
