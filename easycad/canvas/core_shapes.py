@@ -7979,7 +7979,10 @@ class _GroupTransform:
     A를 그룹 기준으로 옮기고(pos 조정) rotation/scale을 더하면 아이템 전체가 강체로 변형된다.
     (비유: 회전목마 — 각 말은 제자리서 돌면서(회전) 동시에 축을 중심으로 공전(pos)한다.)
     """
-    _HANDLE_PX = 10.0   # 화면 px — 모서리 사각 핸들 한 변(단일선택 _HandleResizeMixin과 통일)
+    # [code-review 2026-08-25] `_HandleResizeMixin._HANDLE_PX`를 직접 참조 — 예전엔 값만
+    # 10.0으로 우연히 같은 별개 상수라, 한쪽만 조정되면 그린 원 크기와 클릭 판정 반경
+    # (core_view.py._qc_dot_at의 hit_r)이 조용히 어긋날 위험이 있었다.
+    _HANDLE_PX = _HandleResizeMixin._HANDLE_PX   # 화면 px — 모서리 사각 핸들 한 변
     _HIT_PX = 24.0      # 화면 px — 핸들 잡기 지름(줌 무관)
     _ROT_GAP_PX = 22.0  # 화면 px — bbox 위 회전 핸들 간격
 
@@ -8116,9 +8119,18 @@ class _GroupTransform:
         members = _group_members(sc, gid)
         return gid if set(members) == set(its) else None
 
-    def qc_dot_rects(self):
-        """(side, scene_pt) 4개 — `whole_group_id()`가 None이면 빈 리스트."""
-        if self.whole_group_id() is None:
+    def qc_dot_rects(self, gid=...):
+        """(side, scene_pt) 4개 — `whole_group_id()`가 None이면 빈 리스트.
+
+        [code-review 2026-08-25] `gid`를 옵션으로 받는다 — `whole_group_id()`는 그룹
+        멤버십을 매번 `scene.items()` 전체 스캔(`_group_members`)으로 재확인하는데, 이
+        메서드가 항상 다시 부르면 호출부(호버 히트테스트·매 paint)가 프레임마다 여러 번
+        중복 스캔하게 된다(1000개+ 씬에서 `_tight_scene_bbox` 캐시 도입 계기였던 것과
+        같은 성능 계열). 호출부가 이미 `whole_group_id()`를 한 번 불러 알고 있으면 그
+        값을 넘겨 재스캔을 없앤다 — 안 넘기면(기본값) 기존처럼 직접 계산해 하위호환 유지."""
+        if gid is ...:
+            gid = self.whole_group_id()
+        if gid is None:
             return []
         b = self.bbox()
         if b is None:

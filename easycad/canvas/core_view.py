@@ -417,7 +417,9 @@ class _AnnotatorView(QGraphicsView):
                 return None
             scene_pt = self.mapToScene(view_pos)
             hit_r = (_HandleResizeMixin._HANDLE_PX * 0.9 / self._view_scale()) / 2.0
-            for side, pt in self._group.qc_dot_rects():
+            # [code-review 2026-08-25] 이미 위에서 구한 gid를 넘겨 whole_group_id()의
+            # scene.items() 전체 스캔을 이 프레임에서 한 번 더 반복하지 않게 한다.
+            for side, pt in self._group.qc_dot_rects(gid):
                 if QLineF(pt, scene_pt).length() <= hit_r:
                     return (self._group_proxy(gid), side)
             return None

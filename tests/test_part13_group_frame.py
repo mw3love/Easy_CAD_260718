@@ -334,3 +334,32 @@ def test_group_move_reroutes_arrow_immediately_not_only_after_other_side_moves()
     ep0 = arrow.mapToScene(arrow._endpoints()[0])
     assert _close(ep0, QPointF(220, 130), eps=1.0), (
         "그룹을 옮겨도 화살표 끝점이 즉시 따라오지 않음(회귀)")
+
+
+def test_qc_dot_at_reuses_precomputed_gid_avoiding_redundant_scene_scan():
+    """[code-review 2026-08-25] `_qc_dot_at`이 `whole_group_id()`로 gid를 한 번 구한 뒤,
+    `qc_dot_rects()` 내부에서 그 gid를 다시 계산(=`_group_members`의 scene.items() 전체
+    스캔 재실행)하지 않고 넘겨받은 값을 그대로 쓰는지 확인. 수정 전에는 히트테스트 한 번에
+    `_group_members`가 2회(→ 결국 `whole_group_id` 2회) 불렸다."""
+    from unittest.mock import patch
+    from easycad.canvas import annotator_core as ac
+
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    a, b = _mk_group(w)
+    view = w._view
+    a.setSelected(True)
+    right_pt = dict(view._group.qc_dot_rects())["r"]
+
+    call_count = [0]
+    orig = ac._group_members
+
+    def counting_group_members(scene, group_id):
+        call_count[0] += 1
+        return orig(scene, group_id)
+
+    with patch("easycad.canvas.core_shapes._group_members", counting_group_members):
+        hit = view._qc_dot_at(view.mapFromScene(right_pt))
+    assert hit is not None
+    assert call_count[0] == 1, (
+        f"whole_group_id()의 scene.items() 전체 스캔이 히트테스트 1회에 "
+        f"{call_count[0]}번 돎(중복 스캔 회귀)")
