@@ -1860,8 +1860,15 @@ class _QuickLookDialog(QDialog):
         self._check_btn.setCheckable(True)
         self._check_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._check_btn.setToolTip("단축키: Space")
+        # [실사용 피드백 2026-08-25] 체크됐을 때 포인트색(코랄) — 앱 전역에서 코랄=선택
+        # 상태 accent인 관례(`_CORAL_BTN_QSS`·`_SvgCandidateCard._apply_style`과 동일
+        # 언어) 그대로, 체크 안 됐을 땐 중립 테두리만.
         self._check_btn.setStyleSheet(
-            f"QToolButton {{ font-size:{self._BOTTOM_FONT_PX}px; padding:8px 16px; }}")
+            f"QToolButton {{ font-size:{self._BOTTOM_FONT_PX}px; padding:8px 16px; "
+            f"border:1px solid rgba(128,128,128,120); border-radius:6px; }}"
+            f"QToolButton:checked {{ background:{_ACCENT_CORAL}; border-color:{_ACCENT_CORAL}; "
+            f"color:#1b120d; font-weight:600; }}"
+            f"QToolButton:hover {{ border-color:{_ACCENT_CORAL}; }}")
         self._check_btn.clicked.connect(self._on_check_btn_clicked)
         bottom_row.addWidget(self._check_btn)
 
