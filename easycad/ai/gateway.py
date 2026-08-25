@@ -71,15 +71,18 @@ DEFAULT_MAX_TOKENS = 16384
 # "가성비 최선"이라는 이 상수의 취지에 안 맞아 당시엔 SVG 창 몫으로만 남겨두고(그쪽은
 # 그때는 검증 안 함), Mermaid 창은 아래 `TEXT_RECOMMEND_MERMAID`로 완전히 분리했었다.
 # [2026-08-25] 사용자 지적으로 재검토 — SVG 창을 "GPT/Gemini 계열별 비교 bake-off"에서
-# "슬롯 A만 기본 사용·슬롯 B는 필요할 때만 드롭다운으로 opt-in"으로 설계를 바꾸며
-# (`_SvgAssetDialog._count_b` 기본값 0, `host_dialogs.py` 참조), 슬롯 A가 사실상 "항상
-# 쓰이는 유일한 기본 모델"이 됐다. 그 자리에 검증도 안 됐고 위에 적힌 대로 불안정 이력까지
-# 있는 gpt-5.6-luna를 그대로 두는 건 앞뒤가 안 맞아, Mermaid가 이미 실측 검증해 둔 아래
-# `TEXT_RECOMMEND_MERMAID`(gemini-3.5-flash-lite)와 같은 값으로 교체한다. 상수를 하나로
-# 합치지 않고 값만 맞춘 이유는 두 창의 기본값이 앞으로 서로 다른 이유로 독립적으로 바뀔 수
-# 있어야 해서다. 슬롯 B는 이제 기본 off라 그 기본값(gemini-3.6-flash)은 "권장"이라기보다
-# "opt-in 시 처음 보여줄 값" 정도의 의미로 격하됐다 — gpt 계열을 쓰고 싶으면 슬롯 B
-# 드롭다운에서 직접 고르면 된다(모델 목록 자체는 무제한 노출, 기본값만 gemini).
+# "슬롯 A만 기본 사용·슬롯 B는 필요할 때만 opt-in"으로 설계를 바꾸며, 슬롯 A가 사실상
+# "항상 쓰이는 유일한 기본 모델"이 됐다. 그 자리에 검증도 안 됐고 위에 적힌 대로 불안정
+# 이력까지 있는 gpt-5.6-luna를 그대로 두는 건 앞뒤가 안 맞아, Mermaid가 이미 실측 검증해
+# 둔 아래 `TEXT_RECOMMEND_MERMAID`(gemini-3.5-flash-lite)와 같은 값으로 교체한다. 상수를
+# 하나로 합치지 않고 값만 맞춘 이유는 두 창의 기본값이 앞으로 서로 다른 이유로 독립적으로
+# 바뀔 수 있어야 해서다.
+# [2026-08-25 같은 날 재작업] opt-in 표현 방식을 "개수 0"에서 "모델 콤보 자체가
+# '(미선택)'"으로 바꿨다(`_SvgAssetDialog._model_combo_b`/`_requested_jobs`,
+# `host_dialogs.py` 참조) — 개수만 0이면 콤보엔 멀쩡한 모델명이 떠 있는데 안 쓰이는
+# 상태가 한눈에 안 들어온다는 지적. 슬롯 B는 이제 기본 미선택이라 이 값(gemini-3.6-flash)
+# 은 "권장"이라기보다 "opt-in 시 처음 보여줄 값" 정도의 의미다 — gpt 계열을 쓰고 싶으면
+# 슬롯 B 드롭다운에서 직접 고르면 된다(모델 목록 자체는 무제한 노출, 기본값만 gemini).
 TEXT_RECOMMEND_1 = "gemini-3.5-flash-lite"  # SVG 슬롯 A(기본 사용) — Mermaid와 같은 값
 TEXT_RECOMMEND_2 = "gemini-3.6-flash"       # SVG 슬롯 B 전용(기본 off, opt-in 시 초기값)
 

@@ -703,7 +703,7 @@ def _pick_fallback_model(candidates: list[str]) -> str | None:
 
 
 def _fill_model_combo_grouped(combo: QComboBox, models: list, default_model: str,
-                              prev: str | None = None):
+                              prev: str | None = None, none_option: str | None = None):
     """Gemini·GPT 그룹 헤더가 있는 드롭다운으로 채운다 — 원래 `_MermaidDialog`
     전용이던 로직을 2026-08-20(SVG 창의 모델 슬롯 2개가 각자 실제 모델을 고를 수 있게
     확장하며)에 모듈 함수로 추출해 두 다이얼로그가 공유한다. 헤더 행은
@@ -711,6 +711,13 @@ def _fill_model_combo_grouped(combo: QComboBox, models: list, default_model: str
     시) 추천 둘만으로 조용히 폴백. `prev`가 새 목록에도 있으면 유지, 없으면
     `default_model`(호출부가 정하는 이 콤보의 기본 모델 — Mermaid는 `TEXT_RECOMMEND_
     MERMAID` 고정, SVG는 슬롯 A/B가 `TEXT_RECOMMEND_1`/`_2`를 각각 쓴다).
+
+    `none_option`(2026-08-25 재작업, SVG 슬롯 B 전용): 주어지면 맨 위에 그 라벨의
+    선택 가능한 항목을 하나 더 두되 UserRole 데이터는 설정하지 않아(`_combo_selected_
+    model_or_none`이 None으로 읽는다) "이 슬롯을 안 쓴다"는 뜻이 되게 한다. `prev`가
+    None이면(최초 호출이거나, 직전에도 미선택 상태였거나 둘 다) `default_model` 대신
+    이 항목을 기본 선택한다 — Mermaid·SVG 슬롯 A는 `none_option`을 안 넘기므로 기존
+    동작 그대로다.
 
     [2026-08-21 실사용 버그 수정] 예전엔 실제 목록이 도착해도 추천 상수(r1/r2)를 항상
     풀에 강제로 합쳐 넣었다(`set(models) | {r1, r2}`) — 그 결과 게이트웨이가 추천
@@ -729,6 +736,9 @@ def _fill_model_combo_grouped(combo: QComboBox, models: list, default_model: str
 
     std_model = QStandardItemModel(combo)
 
+    if none_option is not None:
+        std_model.appendRow(QStandardItem(none_option))   # UserRole 미설정 = None
+
     def add_group(label, group_models):
         header = QStandardItem(label)
         header.setEnabled(False)
@@ -742,6 +752,10 @@ def _fill_model_combo_grouped(combo: QComboBox, models: list, default_model: str
     add_group("Gemini", gemini_models)
     add_group("GPT", gpt_models)
     combo.setModel(std_model)
+
+    if none_option is not None and prev is None:
+        combo.setCurrentIndex(0)   # "(미선택)" 항목 — 최초 호출 또는 직전에도 미선택
+        return
 
     target = prev if prev in pool else default_model
     if target not in pool:
@@ -760,6 +774,14 @@ def _combo_selected_model(combo: QComboBox, fallback: str) -> str:
     idx = combo.currentIndex()
     data = combo.itemData(idx, Qt.ItemDataRole.UserRole) if idx >= 0 else None
     return data or fallback
+
+
+def _combo_selected_model_or_none(combo: QComboBox) -> str | None:
+    """`_combo_selected_model`과 달리 폴백하지 않는다 — `none_option` 항목(UserRole
+    미설정이라 데이터가 None)이 선택돼 있으면 그대로 None을 돌려줘 "미선택" 상태를
+    구분할 수 있게 한다(SVG 창 모델 B 전용, 2026-08-25 재작업)."""
+    idx = combo.currentIndex()
+    return combo.itemData(idx, Qt.ItemDataRole.UserRole) if idx >= 0 else None
 
 
 class _MermaidGenWorker(QThread):
@@ -2213,10 +2235,18 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         model_row2.addWidget(QLabel("개수:", self))
         self._count_b = QComboBox(self)
         self._count_b.addItems([str(i) for i in range(self._MAX_PER_MODEL + 1)])
-        self._count_b.setCurrentIndex(0)   # [2026-08-25] 기본 off — opt-in으로 개수 선택 시 A와 함께 사용
+        self._count_b.setCurrentIndex(1)   # [2026-08-25 재작업] on/off는 이제 모델 선택
+                                            # 여부가 가른다(아래 참조) — 개수는 미선택일 땐
+                                            # 안 쓰이므로 1로 둬도 무해하고, 모델을 고르는
+                                            # 순간 바로 1개가 생성된다.
         self._count_b.setStyleSheet(_ROUNDED_COMBO_QSS)
         model_row2.addWidget(self._count_b)
         left_col.addLayout(model_row2)
+        # [2026-08-25 재작업] "개수=0"으로 켜짐/꺼짐을 표현하면 콤보엔 멀쩡한 모델명이
+        # 떠 있는데 실제론 안 쓰이는 상태가 한눈에 안 들어온다(사용자 지적) — 대신
+        # 모델 B 콤보 자체에 "(미선택)" 항목을 두고 그게 곧 "B 안 씀"이 되도록 한다.
+        # `_requested_jobs()`가 이 상태를 개수와 무관하게 0개로 강제한다.
+        self._model_combo_b.currentIndexChanged.connect(self._on_model_b_changed)
         # [2026-08-20 재피드백] 모델 행 끝에 있던 설정 버튼이 "모델 B/개수" 줄맞춤을
         # 깨뜨린다는 지적 — 우하단 확인/취소 버튼 옆(부가 동작 자리)으로 옮긴다
         # (아래 `bottom_row` 참조, Mermaid도 동일).
@@ -2434,12 +2464,12 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
     def _populate_models(self):
         """모델 슬롯 A/B 콤보를 채운다 — `_MermaidDialog._populate_models`와 동일 패턴
         (추천 모델로 즉시 채운 뒤 `_ModelListWorker`가 백그라운드로 실제 목록을 가져오면
-        갱신). 슬롯 A 기본값은 `TEXT_RECOMMEND_1`, 슬롯 B는 `TEXT_RECOMMEND_2` — 콤보
-        자체는 둘 다 항상 전체 모델로 채워지고 사용자가 자유롭게 바꿀 수 있다(2026-08-25:
-        기본으로 실제 생성에 쓰이느냐 여부는 이 콤보가 아니라 `_count_a`/`_count_b`
-        개수가 가른다 — B는 기본 0개)."""
+        갱신). 슬롯 A 기본값은 `TEXT_RECOMMEND_1`(항상 실제 모델). 슬롯 B는
+        `none_option`으로 "(미선택)" 항목을 두고 기본 선택되게 한다(2026-08-25 재작업 —
+        B를 쓸지 여부를 개수가 아니라 이 콤보 자체가 가른다)."""
         _fill_model_combo_grouped(self._model_combo_a, [], gw.TEXT_RECOMMEND_1)
-        _fill_model_combo_grouped(self._model_combo_b, [], gw.TEXT_RECOMMEND_2)
+        _fill_model_combo_grouped(self._model_combo_b, [], gw.TEXT_RECOMMEND_2,
+                                  none_option="(미선택)")
         key = gw.resolve_api_key()
         if not key:
             return
@@ -2452,19 +2482,30 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
     def _on_models_listed(self, models):
         prev_a = (_combo_selected_model(self._model_combo_a, gw.TEXT_RECOMMEND_1)
                   if self._model_combo_a.count() else None)
-        prev_b = (_combo_selected_model(self._model_combo_b, gw.TEXT_RECOMMEND_2)
+        prev_b = (_combo_selected_model_or_none(self._model_combo_b)
                   if self._model_combo_b.count() else None)
         _fill_model_combo_grouped(self._model_combo_a, models, gw.TEXT_RECOMMEND_1, prev_a)
-        _fill_model_combo_grouped(self._model_combo_b, models, gw.TEXT_RECOMMEND_2, prev_b)
+        _fill_model_combo_grouped(self._model_combo_b, models, gw.TEXT_RECOMMEND_2, prev_b,
+                                  none_option="(미선택)")
+
+    def _on_model_b_changed(self):
+        """모델 B가 "(미선택)"이면 개수 콤보는 안 쓰이는 값이라 비활성화해 혼란을
+        막는다(생성 중엔 `_on_generate_clicked`가 이미 비활성화하므로 그 상태는
+        건드리지 않는다)."""
+        if self._generating:
+            return
+        self._count_b.setEnabled(
+            _combo_selected_model_or_none(self._model_combo_b) is not None)
 
     def _requested_jobs(self) -> list[str]:
         """슬롯 A/B의 (모델, 개수) → 호출할 모델 목록(개수만큼 반복) — 예: A=gpt-5.4-mini
         2개·B=gemini-3.6-flash 1개면 [gpt-5.4-mini, gpt-5.4-mini, gemini-3.6-flash].
-        워커 하나가 이 목록의 항목 하나씩을 맡는다."""
+        워커 하나가 이 목록의 항목 하나씩을 맡는다. B가 "(미선택)"이면 개수와 무관하게
+        0개로 취급한다(2026-08-25 재작업 — on/off는 모델 선택 여부가 가른다)."""
         n_a = int(self._count_a.currentText())
-        n_b = int(self._count_b.currentText())
         model_a = _combo_selected_model(self._model_combo_a, gw.TEXT_RECOMMEND_1)
-        model_b = _combo_selected_model(self._model_combo_b, gw.TEXT_RECOMMEND_2)
+        model_b = _combo_selected_model_or_none(self._model_combo_b)
+        n_b = int(self._count_b.currentText()) if model_b is not None else 0
         return [model_a] * n_a + [model_b] * n_b
 
     def _on_gen_btn_clicked(self):
@@ -2549,7 +2590,7 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         self._model_combo_a.setEnabled(True)
         self._model_combo_b.setEnabled(True)
         self._count_a.setEnabled(True)
-        self._count_b.setEnabled(True)
+        self._on_model_b_changed()   # count_b는 무조건 켜지 않고 미선택 상태를 존중
 
     def _cancel_generation(self):
         """[2026-08-25 실사용 피드백] 느리거나(수십 초) 실패하는(타임아웃) 모델 하나

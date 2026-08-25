@@ -39,6 +39,7 @@ from easycad.fileio.svg_import import parse_svg_items, parse_svg_string  # noqa:
 from easycad.fileio import symbol_library  # noqa: E402
 from easycad.canvas.host_dialogs import (  # noqa: E402
     _SvgAssetDialog, _SvgCandidateCard, _SaveToSymbolsFolderDialog, _QuickLookDialog,
+    _fill_model_combo_grouped, _combo_selected_model_or_none,
 )
 from easycad.canvas.host_selection import _group_scene_rect  # noqa: E402
 
@@ -46,6 +47,26 @@ _SAMPLE_SVG = ('<svg viewBox="0 0 100 100">'
               '<line x1="10" y1="10" x2="90" y2="90"/>'
               '<rect x="20" y="20" width="30" height="30"/>'
               '</svg>')
+
+
+def _populate_models_offline(self):
+    """`_populate_models`의 네트워크(`_ModelListWorker`) 부분만 뺀 테스트용 대역 —
+    2026-08-25 재작업으로 모델 콤보에 "(미선택)" 항목이 생겨, 완전 no-op으로 두면
+    `_model_combo_b`가 텅 빈 채로 남아 `_combo_selected_model_or_none`이 언제나 None을
+    돌려주는 문제를 피한다(실제 앱 동작과 같은 오프라인 채움을 재현)."""
+    _fill_model_combo_grouped(self._model_combo_a, [], gw.TEXT_RECOMMEND_1)
+    _fill_model_combo_grouped(self._model_combo_b, [], gw.TEXT_RECOMMEND_2,
+                              none_option="(미선택)")
+
+
+def _pick_combo_model(combo, model):
+    """콤보에서 UserRole 데이터가 `model`인 행을 찾아 선택한다(헤더·"(미선택)" 항목은
+    데이터가 없어 걸리지 않음) — 모델 B를 명시적으로 "켜는" 테스트용 헬퍼."""
+    for i in range(combo.count()):
+        if combo.itemData(i, Qt.ItemDataRole.UserRole) == model:
+            combo.setCurrentIndex(i)
+            return
+    raise AssertionError(f"model {model!r} not found in combo")
 
 
 def _wait_workers(dlg):
@@ -204,32 +225,47 @@ def test_parse_svg_path_still_maps_to_path_item():
 # ── _SvgAssetDialog ───────────────────────────────────────────────────────────
 
 def test_svg_asset_dialog_defaults_to_model_a_only():
-    """2026-08-25 — "GPT/Gemini 나란히 비교" bake-off에서 "슬롯 A만 기본 사용, 슬롯 B는
-    필요할 때만 켜는 옵션"으로 설계 변경(사용자 확정). 슬롯 A는 기본 1개로 자동 생성되고
-    슬롯 B는 개수 0(꺼짐)으로 시작한다 — 단 드롭다운 자체는 두 슬롯 다 0~5 전부 선택
-    가능한 채로 열려 있어야 한다("꺼짐"이 드롭다운을 비우거나 비활성화한다는 뜻이
-    아님)."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    """2026-08-25 재작업 — on/off를 "개수 0"이 아니라 "모델 미선택"으로 표현하도록
+    바꿨다(사용자 지적: 개수만 0이면 콤보엔 멀쩡한 모델명이 떠 있는데 안 쓰이는 상태가
+    한눈에 안 들어옴). 슬롯 A는 항상 실제 모델이 기본 선택되고 개수 1, 슬롯 B는 모델이
+    "(미선택)"으로 기본 선택되며 개수는 1이어도(미선택 상태에선 안 쓰이므로 무해) 무시된다
+    — 실제 모델을 고르는 순간 바로 그 개수만큼 생성된다."""
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     assert dlg._count_a.currentText() == "1"
-    assert dlg._count_b.currentText() == "0"
+    assert dlg._count_b.currentText() == "1"
+    assert _combo_selected_model_or_none(dlg._model_combo_b) is None   # "(미선택)" 기본
     assert dlg._count_a.count() == 6        # 0~5
-    assert dlg._count_b.count() == 6        # 0도 그중 하나일 뿐, 드롭다운은 항상 완전
+    assert dlg._count_b.count() == 6
+    assert not dlg._count_b.isEnabled()     # 미선택 상태라 개수 콤보 자체가 비활성
     assert dlg._requested_jobs() == [gw.TEXT_RECOMMEND_1]
     dlg.deleteLater()
 
 
 def test_svg_asset_dialog_requested_jobs_repeats_model_per_count():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._count_a.setCurrentText("3")
+    _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)   # B를 명시적으로 켬
+    assert dlg._count_b.isEnabled()
     dlg._count_b.setCurrentText("2")
     assert dlg._requested_jobs() == [gw.TEXT_RECOMMEND_1] * 3 + [gw.TEXT_RECOMMEND_2] * 2
     dlg.deleteLater()
 
 
+def test_svg_asset_dialog_model_b_unselected_forces_zero_jobs_regardless_of_count():
+    """2026-08-25 재작업 핵심 회귀 — 개수 콤보 값을 억지로 올려도(비활성 상태에서 값만
+    바꿔치기) 모델이 "(미선택)"이면 `_requested_jobs()`는 B를 절대 포함하지 않는다."""
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
+        dlg = _SvgAssetDialog()
+    dlg._count_b.setCurrentText("5")
+    assert _combo_selected_model_or_none(dlg._model_combo_b) is None
+    assert dlg._requested_jobs() == [gw.TEXT_RECOMMEND_1]
+    dlg.deleteLater()
+
+
 def test_svg_asset_dialog_requires_nonempty_subject():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     with patch("easycad.canvas.host_dialogs.QMessageBox.information") as info, \
          patch("easycad.canvas.host_dialogs.generate_svg") as gen:
@@ -240,7 +276,7 @@ def test_svg_asset_dialog_requires_nonempty_subject():
 
 
 def test_svg_asset_dialog_requires_api_key():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("안테나 아이콘")
     with patch("easycad.canvas.host_dialogs.gw.resolve_api_key", return_value=""), \
@@ -253,7 +289,7 @@ def test_svg_asset_dialog_requires_api_key():
 
 
 def test_svg_asset_dialog_requires_at_least_one_model_checked():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("안테나 아이콘")
     dlg._count_a.setCurrentText("0")
@@ -268,12 +304,12 @@ def test_svg_asset_dialog_requires_at_least_one_model_checked():
 
 
 def test_svg_asset_dialog_generates_one_candidate_per_requested_job():
-    """2026-08-25 — 기본값은 이제 슬롯 A 1개뿐이라(`_count_b` 기본 0), B도 함께
-    생성되는 걸 확인하려면 명시적으로 켜야 한다."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    """2026-08-25 재작업 — 기본값은 슬롯 A 1개뿐이라(B는 모델 미선택), B도 함께
+    생성되는 걸 확인하려면 모델을 명시적으로 골라야 한다(개수는 이미 기본 1)."""
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
-    dlg._count_b.setCurrentText("1")
+    _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)
     calls = []
 
     def fake_generate(key, subject, *, model, **kw):
@@ -299,10 +335,11 @@ def test_svg_asset_dialog_all_requested_workers_start_together():
     `wait()`하기 전) 워커 5개가 모두 존재+실행 중이어야 한다(하나씩 만들고 끝나길
     기다렸다가 다음을 만드는 방식이면 이 순간 워커가 1개뿐일 것)."""
     import time
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
     dlg._count_a.setCurrentText("3")
+    _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)
     dlg._count_b.setCurrentText("2")
 
     def fake_generate(key, subject, *, model, **kw):
@@ -334,7 +371,7 @@ def test_svg_asset_dialog_shows_progress_and_disables_controls_while_generating(
     함수를 다시 붙잡을 위험이 있다(실측으로 확인된 함정 — 실제로 이 문제 때문에 전체
     스위트가 몇 시간 멈춘 적이 있다). 그래서 `try/finally`로 무슨 일이 있어도 join한다."""
     import time
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
 
@@ -363,7 +400,10 @@ def test_svg_asset_dialog_shows_progress_and_disables_controls_while_generating(
     assert dlg._gen_btn.text() == "AI로 생성"
     assert dlg._btns.isEnabled()
     assert dlg._count_a.isEnabled()
-    assert dlg._count_b.isEnabled()
+    # 모델 B는 이 테스트에서 한 번도 선택되지 않았으니(기본 "(미선택)") 생성 종료 후에도
+    # 개수 콤보는 다시 비활성 상태로 돌아온다 — `_reset_generation_ui`가 무조건
+    # `setEnabled(True)` 대신 `_on_model_b_changed()`로 미선택 상태를 존중한다.
+    assert not dlg._count_b.isEnabled()
     assert dlg._workers == []
     dlg.deleteLater()
 
@@ -376,7 +416,7 @@ def test_svg_asset_dialog_close_immediate_while_generating():
     워커는 `_detach_worker`로 분리돼 크래시 없이 백그라운드에서 마저 끝난다."""
     import time
     from easycad.canvas import host_dialogs
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
 
@@ -408,10 +448,10 @@ def test_svg_asset_dialog_cancel_keeps_arrived_candidates_and_detaches_pending()
     남고 다이얼로그는 즉시 대기 상태로 돌아와야 한다."""
     import time
     from easycad.canvas import host_dialogs
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
-    dlg._count_b.setCurrentText("1")
+    _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)
 
     def fake_generate(key, subject, *, model, **kw):
         if model == gw.TEXT_RECOMMEND_1:
@@ -461,7 +501,7 @@ def test_svg_asset_dialog_enter_key_while_generating_cancels_instead_of_duplicat
     도착한 후보까지 지워버린다."""
     import time
     from PyQt6.QtGui import QKeyEvent
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
 
@@ -487,10 +527,10 @@ def test_svg_asset_dialog_enter_key_while_generating_cancels_instead_of_duplicat
 
 
 def test_svg_asset_dialog_partial_failure_keeps_successful_candidates():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
-    dlg._count_b.setCurrentText("1")   # 2026-08-25: B는 기본 0이라 명시적으로 켜야 함
+    _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)   # B는 기본 미선택이라 명시적으로 켜야 함
 
     def fake_generate(key, subject, *, model, **kw):
         if model == gw.TEXT_RECOMMEND_1:
@@ -509,7 +549,7 @@ def test_svg_asset_dialog_partial_failure_keeps_successful_candidates():
 
 
 def test_svg_asset_dialog_all_models_fail_shows_no_candidates():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
 
@@ -528,10 +568,10 @@ def test_svg_asset_dialog_all_models_fail_shows_no_candidates():
 
 
 def test_svg_asset_dialog_clicking_card_switches_selection():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
-    dlg._count_b.setCurrentText("1")   # 2026-08-25: 후보 2개가 필요하므로 B를 명시적으로 켬
+    _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)   # 후보 2개가 필요하므로 B를 명시적으로 켬
 
     def fake_generate(key, subject, *, model, **kw):
         return _SAMPLE_SVG, model
@@ -557,7 +597,7 @@ def test_svg_asset_dialog_enter_in_prompt_triggers_generate():
     가 Enter를 가로채 `_on_generate_clicked`를 호출한다 — 실제 Qt 시그널 연결이 아니라
     이 다이얼로그가 직접 처리하므로 인스턴스 속성 monkeypatch로도 검증 가능(Mermaid의
     동일 테스트와 같은 방식)."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     calls = {"n": 0}
     dlg._on_generate_clicked = lambda: calls.__setitem__("n", calls["n"] + 1)
@@ -573,7 +613,7 @@ def test_svg_asset_dialog_enter_in_prompt_triggers_generate():
 def test_svg_asset_dialog_shift_enter_in_prompt_inserts_newline_not_generate():
     """Shift+Enter는 줄바꿈(여러 줄 대상 설명용)이지 생성 트리거가 아니어야 한다
     (Mermaid `_prompt_edit`과 동일 관례)."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     calls = {"n": 0}
     dlg._on_generate_clicked = lambda: calls.__setitem__("n", calls["n"] + 1)
@@ -593,7 +633,7 @@ def test_svg_asset_dialog_dark_theme_preview_uses_brighter_pen():
     창일 때만 미리보기 전용 밝은 펜 색을 준비해야 한다(실삽입 색과는 무관)."""
     parent = QWidget()
     parent._dark = True
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog(parent)
     assert dlg._preview_pen_color is not None
     assert dlg._preview_pen_color.name() == "#f2f2f2"
@@ -606,7 +646,7 @@ def test_svg_asset_dialog_light_theme_preview_uses_default_pen():
     (`_render_svg_candidate_pixmap`의 `_ICON_COLOR` 폴백)에 맡긴다."""
     parent = QWidget()
     parent._dark = False
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog(parent)
     assert dlg._preview_pen_color is None
     dlg.deleteLater()
@@ -618,7 +658,7 @@ def test_svg_asset_dialog_candidate_columns_respond_to_width():
     열 개수만 가용 폭에 반응해야 한다. 실제 창(레이아웃이 살아있는)에서 다이얼로그
     자체를 리사이즈해 `resizeEvent`가 `_update_candidate_columns`를 발화시키는지까지
     확인한다(스크롤 영역만 직접 `resize()`하면 부모 레이아웃이 되돌려버려 무의미함)."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg.show()
     QApplication.processEvents()
@@ -642,7 +682,7 @@ def test_svg_asset_dialog_add_candidate_uses_current_column_count():
     부르므로, 이 테스트에서 수동으로 정한 `_candidate_cols`가 실제(레이아웃 안 된) 폭
     기준 값으로 덮어써지지 않도록 그 갱신만 무력화한다 — 여기서 검증하려는 건 "배치가
     `_candidate_cols`를 따르는가"이지 "폭에서 열 수를 어떻게 계산하는가"가 아니다."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._candidate_cols = 2
     with patch.object(dlg, "_update_candidate_columns"):
@@ -664,7 +704,7 @@ def _gen_n_candidates_direct(dlg, n):
 def test_svg_asset_dialog_enlarge_candidate_is_non_modal_without_close_button():
     """[2026-08-20 재피드백] 확대 보기는 하단 Close 버튼 없이 비모달로 뜬다(우상단 X는
     창 자체가 원래 제공, 빠르게 여러 후보를 훑어보기 위함)."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     _gen_n_candidates_direct(dlg, 2)
     dlg._show_enlarged_candidate(0)
@@ -679,7 +719,7 @@ def test_svg_asset_dialog_enlarge_candidate_is_non_modal_without_close_button():
 def test_svg_asset_dialog_enlarge_candidate_reuses_single_instance():
     """[2026-08-20 3차 피드백] 매번 새 창을 만들지 않고 인스턴스 하나를 재사용해야 한다
     (화살표 탐색·카드 클릭 동기화가 "같은 창"이어야 자연스러우므로)."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     _gen_n_candidates_direct(dlg, 3)
     dlg._show_enlarged_candidate(0)
@@ -692,7 +732,7 @@ def test_svg_asset_dialog_enlarge_candidate_reuses_single_instance():
 
 
 def test_svg_asset_dialog_quicklook_shows_position_counter_and_model():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     _gen_n_candidates_direct(dlg, 4)
     dlg._show_enlarged_candidate(1)
@@ -704,7 +744,7 @@ def test_svg_asset_dialog_quicklook_shows_position_counter_and_model():
 def test_svg_asset_dialog_quicklook_arrow_keys_navigate_and_sync_selection():
     """[2026-08-20 3차 피드백] 확대창 안 ←/→로 후보를 넘기면 메인 그리드의 단일선택
     (`_pick_card`)도 함께 이동해야 한다."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     _gen_n_candidates_direct(dlg, 3)
     dlg._show_enlarged_candidate(0)
@@ -728,7 +768,7 @@ def test_svg_asset_dialog_quicklook_arrow_keys_navigate_and_sync_selection():
 
 def test_svg_asset_dialog_picking_card_updates_open_quicklook():
     """카드를 클릭(단일선택)하면 이미 열려 있는 확대창도 그 후보로 갱신돼야 한다."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     _gen_n_candidates_direct(dlg, 3)
     dlg._show_enlarged_candidate(0)
@@ -742,7 +782,7 @@ def test_svg_asset_dialog_picking_card_updates_open_quicklook():
 
 
 def test_svg_asset_dialog_quicklook_space_toggles_save_checkbox():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     _gen_n_candidates_direct(dlg, 2)
     dlg._show_enlarged_candidate(0)
@@ -763,7 +803,7 @@ def test_svg_asset_dialog_quicklook_space_toggles_save_checkbox():
 
 
 def test_svg_asset_dialog_clear_candidates_closes_open_quicklook():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     _gen_n_candidates_direct(dlg, 2)
     dlg._show_enlarged_candidate(0)
@@ -779,7 +819,7 @@ def test_svg_asset_dialog_enlarge_candidate_closes_on_real_window_deactivate():
     하나를 활성화)해보니 Qt는 `WindowDeactivate`를 `changeEvent()`가 아니라 `event()`로
     보낸다는 게 드러났다(실사용에서 안 닫히던 원인) — `_QuickLookDialog.event()`로 옮긴
     수정이 실제로 이 실측 경로에서도 닫히는지 이번엔 진짜 창 활성화 전환으로 확인한다."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     _gen_n_candidates_direct(dlg, 1)
     dlg.show()
@@ -808,10 +848,10 @@ def test_svg_asset_dialog_enlarge_candidate_closes_on_real_window_deactivate():
 
 
 def test_svg_asset_dialog_regenerate_clears_old_candidates():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
-    dlg._count_b.setCurrentText("1")   # 2026-08-25: 교체 확인엔 후보 2개가 필요
+    _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)   # 교체 확인엔 후보 2개가 필요
 
     def fake_generate(key, subject, *, model, **kw):
         return _SAMPLE_SVG, model
@@ -832,7 +872,7 @@ def test_svg_asset_dialog_regenerate_clears_old_candidates():
 # ── _SvgAssetDialog: 이미지 첨부(Stage 3, 2026-08-19 — `_MermaidDialog`와 동일 UI 재사용) ──
 
 def test_svg_asset_dialog_browse_image_attaches_and_shows_thumbnail():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     assert dlg._image_chip.isHidden()
 
@@ -849,7 +889,7 @@ def test_svg_asset_dialog_browse_image_attaches_and_shows_thumbnail():
 
 
 def test_svg_asset_dialog_clear_image_hides_chip_and_resets_state():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     real_path = os.path.join(_TMP, f"attach_{uuid.uuid4().hex}.png")
     _mk_pixmap(40, 40).save(real_path)
@@ -865,7 +905,7 @@ def test_svg_asset_dialog_clear_image_hides_chip_and_resets_state():
 
 def test_svg_asset_dialog_drop_image_file_attaches():
     from PyQt6.QtCore import QUrl
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     real_path = os.path.join(_TMP, f"drop_{uuid.uuid4().hex}.png")
     _mk_pixmap(50, 30).save(real_path)
@@ -886,7 +926,7 @@ def test_svg_asset_dialog_drop_image_file_attaches():
 
 
 def test_svg_asset_dialog_ctrl_v_with_clipboard_image_attaches_not_pastes_text():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     pm = _mk_pixmap(40, 20)
     fake_md = type("_MD", (), {"hasImage": lambda self: True, "imageData": lambda self: pm.toImage()})()
@@ -901,7 +941,7 @@ def test_svg_asset_dialog_ctrl_v_with_clipboard_image_attaches_not_pastes_text()
 
 
 def test_svg_asset_dialog_ctrl_v_with_plain_text_clipboard_falls_through():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     fake_md = type("_MD", (), {"hasImage": lambda self: False})()
     from PyQt6.QtGui import QKeyEvent
@@ -916,7 +956,7 @@ def test_svg_asset_dialog_ctrl_v_with_plain_text_clipboard_falls_through():
 def test_svg_asset_dialog_generate_with_image_and_no_subject_still_generates():
     """이미지 경로는 텍스트 전용 경로와 달리 대상 설명이 필수가 아니다(Mermaid와 동일
     관례) — 이미지가 각 워커에 그대로 전달되는지도 함께 확인."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     real_path = os.path.join(_TMP, f"attach_{uuid.uuid4().hex}.png")
     _mk_pixmap(40, 20).save(real_path)
@@ -944,10 +984,10 @@ def test_svg_asset_dialog_generate_with_image_and_no_subject_still_generates():
 # ── _SvgAssetDialog: 다중선택+내 심볼 저장(Stage 4, 2026-08-19) ─────────────────
 
 def _gen_two_candidates(dlg):
-    """이름대로 후보 2개(A+B 각 1개)가 나와야 하는데, 2026-08-25부터 B 기본 개수가
-    0이라 여기서 명시적으로 켠다 — 호출부 9곳이 전부 이 헬퍼를 통해서만 개수를
-    건드리므로 이 한 줄만 고치면 전부 해결된다."""
-    dlg._count_b.setCurrentText("1")
+    """이름대로 후보 2개(A+B 각 1개)가 나와야 하는데, 2026-08-25 재작업부터 B는 기본
+    "(미선택)"이라 여기서 모델을 명시적으로 고른다 — 호출부 9곳이 전부 이 헬퍼를 통해서만
+    B를 건드리므로 이 한 줄만 고치면 전부 해결된다."""
+    _pick_combo_model(dlg._model_combo_b, gw.TEXT_RECOMMEND_2)
 
     def fake_generate(key, subject, *, model, **kw):
         return _SAMPLE_SVG, model
@@ -960,7 +1000,7 @@ def _gen_two_candidates(dlg):
 def test_svg_candidate_checkbox_independent_of_click_selection():
     """체크박스(다중선택, 심볼저장용)와 카드 클릭(단일선택, OK로 삽입용)은 서로 무관해야
     한다 — 하나를 체크해도 다른 카드의 클릭 선택 상태는 안 바뀐다."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
     _gen_two_candidates(dlg)
@@ -978,7 +1018,7 @@ def test_svg_candidate_checkbox_independent_of_click_selection():
 
 
 def test_svg_asset_dialog_save_button_enabled_only_when_something_checked():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
     _gen_two_candidates(dlg)
@@ -994,7 +1034,7 @@ def test_svg_asset_dialog_save_button_enabled_only_when_something_checked():
 
 
 def test_svg_asset_dialog_regenerate_resets_save_button():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
     _gen_two_candidates(dlg)
@@ -1029,7 +1069,7 @@ def test_save_to_symbols_folder_dialog_lists_existing_folders_and_new_folder_fie
 
 
 def test_svg_asset_dialog_save_to_symbols_calls_parent_method_with_checked_entries():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
     _gen_two_candidates(dlg)
@@ -1070,7 +1110,7 @@ def test_svg_asset_dialog_save_to_symbols_calls_parent_method_with_checked_entri
 
 
 def test_svg_asset_dialog_save_to_symbols_noop_when_nothing_checked():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
     _gen_two_candidates(dlg)
@@ -1081,7 +1121,7 @@ def test_svg_asset_dialog_save_to_symbols_noop_when_nothing_checked():
 
 
 def test_svg_asset_dialog_save_to_symbols_warns_when_parent_lacks_method():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
     _gen_two_candidates(dlg)
@@ -1106,7 +1146,7 @@ def test_svg_asset_dialog_save_to_symbols_warns_when_parent_lacks_method():
 
 
 def test_svg_asset_dialog_save_to_symbols_cancel_does_nothing():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     dlg._prompt_edit.setPlainText("BNC 커넥터 아이콘")
     _gen_two_candidates(dlg)
@@ -1403,14 +1443,14 @@ def test_context_menu_omits_svg_generate_for_arrow_selection():
 
 def test_svg_asset_dialog_default_confirm_label_is_insert():
     """호출부가 안 넘기면(host_fileio._insert_ai_svg_asset 경로) 기본값 "도형 삽입"."""
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog()
     ok_btn = dlg._btns.button(QDialogButtonBox.StandardButton.Ok)
     assert ok_btn.text() == "확인 (도형 삽입)"
 
 
 def test_svg_asset_dialog_custom_confirm_label_used_for_replace():
-    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+    with patch.object(_SvgAssetDialog, "_populate_models", _populate_models_offline):
         dlg = _SvgAssetDialog(confirm_label="확인 (도형 대체)")
     ok_btn = dlg._btns.button(QDialogButtonBox.StandardButton.Ok)
     assert ok_btn.text() == "확인 (도형 대체)"
