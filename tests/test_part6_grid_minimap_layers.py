@@ -749,6 +749,28 @@ def test_do_open_save_ecad_roundtrip():
 
 
 
+def test_do_open_ecad_survives_layers_read_failure():
+    """[code-review 2026-08-26] `load_document`(도형)와 `load_document_layers`(레이어)가
+    같은 파일을 독립적으로 두 번 여는데, 첫 호출이 성공해 씬을 이미 채운 뒤 두 번째
+    호출만 실패하면(과거엔 통째로 `except`에 걸려) `_doc_path`가 끝내 안 잡혀 "제목
+    없는 미완성 문서"가 남았다 — docstring이 문서화한 "실패 시 빈 탭"과 실제 결과가
+    달랐던 버그. 레이어 읽기 실패를 격리해 기본 레이어로 폴백하며 정상 완료돼야 한다."""
+    from unittest.mock import patch
+    from easycad.canvas import host_fileio as hf
+
+    w = CanvasWindow()
+    _mk_pen_rect(w, x=10, y=20)
+    path = os.path.join(_TMP, "layers_fail.ecad")
+    w._do_save_ecad(path)
+
+    w2 = CanvasWindow()
+    with patch.object(hf, "load_document_layers", side_effect=OSError("simulated race")):
+        w2._do_open_ecad(path)
+    assert w2._doc_path == path, "레이어 읽기만 실패했는데 문서 열기 자체가 실패로 처리됨(회귀)"
+    assert len([x for x in w2._scene.items() if isinstance(x, _RectItem)]) == 1
+    assert w2._layers and w2._layers[0]["id"] == "default"   # 폴백 기본 레이어
+
+
 def test_do_open_export_dxf_roundtrip_no_doc_path():
     # [신규기능] DXF는 열기/저장 둘 다 _doc_path를 갱신하지 않는다(deep-interview 결정 —
     # 통합 저장 다이얼로그의 기본 필터가 항상 .ecad로 뜨게 하기 위함).
@@ -1061,6 +1083,33 @@ def test_drop_svg_file_inserts_shapes_into_current_tab():
     assert len(w._scene.items()) == n0 + 2   # line + rect
     assert any(isinstance(x, _LineItem) for x in w._scene.items())
     assert any(isinstance(x, _RectItem) for x in w._scene.items())
+
+
+def test_insert_svgs_all_failed_shows_only_warning_not_double_message():
+    """[code-review 2026-08-26] 모든 SVG가 파싱에 실패하면(malformed XML 등) 실패 경고창을
+    띄운 뒤 `return` 없이 이어져 상태바에도 "파일 0개, 도형 0개"를 또 찍고 있었다 — 같은
+    실패를 두 번 알리는 중복. 전부 실패했으면 상태바 메시지는 안 나가야 한다(부분 성공
+    이면 여전히 상태바로 몇 개가 실제 들어왔는지 알려줘야 하므로 그 경로는 무변경)."""
+    bad_path = os.path.join(_TMP, f"broken_{uuid.uuid4().hex}.svg")
+    with open(bad_path, "w", encoding="utf-8") as f:
+        f.write("<not-valid-svg")   # parse_svg_items가 실패할 malformed XML
+
+    w = CanvasWindow()
+    n0 = len(w._scene.items())
+    warned, statused = [], []
+    from PyQt6.QtWidgets import QMessageBox
+    orig_warn = QMessageBox.warning
+    QMessageBox.warning = staticmethod(
+        lambda *a, **k: (warned.append(True), QMessageBox.StandardButton.Ok)[-1])
+    orig_show = w.statusBar().showMessage
+    w.statusBar().showMessage = lambda *a, **k: statused.append(a)
+    try:
+        w._insert_svgs_at([bad_path], QPointF(0, 0))
+    finally:
+        QMessageBox.warning = orig_warn
+    assert len(w._scene.items()) == n0   # 아무것도 추가되지 않음
+    assert warned, "실패 경고가 안 뜸"
+    assert not statused, "전부 실패했는데 상태바에 중복 메시지가 또 뜸(회귀)"
 
 
 def test_drop_image_file_still_inserts_at_drop_position():

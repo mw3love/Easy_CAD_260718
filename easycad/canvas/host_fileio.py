@@ -120,10 +120,20 @@ class _FileIOMixin:
     def _do_open_ecad(self, path: str):
         try:
             n = load_document(self._scene, path)
-            layers = load_document_layers(path)
         except Exception as e:  # noqa: BLE001 — 사용자에게 오류만 전달
             QMessageBox.warning(self, "열기 실패", str(e))
             return
+        # [code-review 2026-08-26] `load_document_layers`가 같은 파일을 별도로 다시
+        # 여는데(레이어 목록만 뽑으려고), 그 사이 파일이 사라지거나 바뀌면(네트워크
+        # 드라이브·동시 외부수정 등) 위 `load_document`는 이미 성공해 씬을 채웠는데도
+        # 여기서 예외가 나 전체를 "열기 실패"로 되돌리던 게 있었다 — `_doc_path`가 끝내
+        # 안 잡혀 방금 채운 씬이 "제목 없는 미완성 문서"로 남는 상태였다(docstring이
+        # 문서화한 "실패 시 빈 탭"과 실제로 달랐음). 이미 유효함이 확인된 문서이므로
+        # 레이어 읽기만 별도로 격리 — 실패해도 기본 레이어로 계속 진행한다.
+        try:
+            layers = load_document_layers(path)
+        except Exception:
+            layers = None
         self._reset_history()
         self._doc_path = path
         self._update_tab_title()   # [§8 항목10 Stage B] 탭 제목을 파일명으로
@@ -492,6 +502,12 @@ class _FileIOMixin:
             names = "\n".join(f"{p} — {e}" for p, e in failed)
             QMessageBox.warning(self, "SVG 가져오기",
                                 f"{len(failed)}개 파일을 읽지 못했습니다:\n{names}")
+            # [code-review 2026-08-26] 전부 실패(all_items도 비어 있음)면 여기서 끝 —
+            # return이 없어 아래 상태바에 "파일 0개, 도형 0개"를 또 찍어 방금 뜬 경고와
+            # 같은 실패를 중복 보고하고 있었다. 일부만 성공했으면(all_items 있음) 계속
+            # 진행해 상태바에 몇 개가 실제로 들어왔는지 알려준다.
+            if not all_items:
+                return
         elif not all_items:
             QMessageBox.information(self, "SVG 가져오기", "가져올 도형이 없습니다.")
             return
