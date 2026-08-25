@@ -1346,6 +1346,24 @@ symbol_library/
   (`processEvents()`)로만 재현·검증 가능했음(교훈: 이 게이트류 버그는 강제호출로 못 잡음).
   신규 pytest 1종, 전체 980종 중 무관한 3건 제외 통과. 상세: `docs/history/2026-08.md`
   "그룹 프레임 4차". **Not-tested**: 실제 데스크톱 드래그 손맛.
+- **빈 폴더 첫 심볼 등록 라벨 버그 + 마인드맵 Enter 간격 버그 수정(2026-08-25, 같은 날
+  후속)** — ① `_refresh_custom_symbol_section`이 3겹(zone/body/section)
+  `updateGeometry()` 캐스케이드를 안 걸어 빈 폴더에 첫 심볼을 등록하면 라벨 텍스트가
+  잘리던 버그, 두 번째 relayout 전 이벤트루프를 한 틱 돌려야 함을 실측으로 확인해 수정.
+  ② `mm_free_rect`의 겹침 판정이 `sceneBoundingRect()`(선택 장식 포함, 부풀려짐)를 써서
+  Enter로 마인드맵 형제 노드를 만들 때마다 168px(의도 24px)로 밀려나던 버그 — 실제 도형
+  기하만 보는 `mm_node_rect_scene`으로 교체, 사용자 스크린샷 픽셀 대조(167px)와 일치
+  확인. 상세: `docs/history/2026-08.md` 같은 두 제목.
+- **SVG 에셋 창 UX 3건 + Mermaid 인라인 미리보기 재설계(2026-08-25, 같은 날 후속)** —
+  SVG 후보 전체선택 체크박스 신설(확인 시 체크한 후보 전부를 격자로 일괄삽입), 내 심볼
+  팔레트 드래그를 기본도형처럼 실물 임시 도형+`grabMouse()`로 전환(예전엔 QDrag 고스트만),
+  좌측 도형 패널 `QScrollArea`화(내 심볼 폴더 증가 대응). SVG 확대창 하단을 ‹›+심볼저장
+  토글 한 줄로 재배치하고 코랄 강조 적용, SVG/Mermaid 다이얼로그를 창당 인스턴스 재사용
+  (닫아도 후보·코드 보존)으로 전환. Mermaid 인라인 미리보기는 "만지면 움직이는 것 같다"는
+  지적으로 휠줌/드래그팬 인터랙션을 제거해 정지 이미지로 되돌리고, 확대는 별도 비모달
+  창(`_MermaidPreviewEnlargeDialog`)으로 분리(`interactive` 플래그로 뷰 클래스 공유).
+  상세: `docs/history/2026-08.md` 관련 4개 항목(같은 날). **Not-tested**(공통): 실제
+  마우스 클릭/드래그 손맛(`python run.py` 확인 필요).
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
