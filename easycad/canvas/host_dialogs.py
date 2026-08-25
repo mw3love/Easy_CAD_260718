@@ -967,29 +967,38 @@ def _render_mermaid_preview_pixmap(text: str, target_size: QSize,
 
 
 class _MermaidPreviewView(QGraphicsView):
-    """Mermaid 미리보기 — 클릭하면 별도 창으로 확대하던 방식(`_ClickablePreviewLabel`
-    +확대 다이얼로그) 대신, 패널 안에서 바로 휠로 확대·드래그로 이동하며 확인한다
-    (2026-08-21 실사용 피드백: "클릭하면 확대 방식보다 그냥 미리보기에서 드래그
-    휠방식으로 확대 축소하며 확인하는 방식은 어떤지"). 캔버스 본체의 줌 관례(휠 배율
+    """Mermaid 미리보기 — 패널 안에서 바로 휠로 확대·드래그로 이동하며 확인하는
+    인터랙티브 뷰(2026-08-21 실사용 피드백으로 도입). 캔버스 본체의 줌 관례(휠 배율
     1.15, `AnchorUnderMouse` — `host_ui._on_wheel_zoom`)를 그대로 재사용해 새 줌
-    공식을 만들지 않는다(손안의 카드). 도형을 선택·편집할 대상이 아닌 순수 읽기전용
-    보기라, 좌클릭 드래그를 Qt 기본 `ScrollHandDrag`(손모양 패닝)에 그대로 맡길 수
-    있다 — 별도 팬 로직이 필요 없다.
+    공식을 만들지 않는다(손안의 카드).
 
-    코드가 바뀔 때마다(`set_mermaid_code`) 화면을 그 도형 전체가 보이도록 다시
-    맞춘다(`fitInView`) — 이 자체가 "가로든 세로든 중앙에" 요구를 공짜로 만족시킨다
-    (정적 픽스맵 렌더와 달리 `fitInView`는 Qt가 알아서 중앙 정렬한다). 그 이후의
-    휠줌·드래그팬은 사용자 조작 그대로 유지되고, 다음 코드 변경이 오면 다시 맞춰진다
-    — "최신 도형을 한눈에 보여주고, 그 다음은 직접 둘러본다"는 의도."""
+    [실사용 피드백 2026-08-25] 정작 작은 인라인 패널에서는 "미리보기인데 마우스를
+    만지면(확대하려고 드래그하다가) 뭔가 움직이는 것 같다"는 지적 — 실측으로 확인한
+    결과 아이템 자체(`ItemIsMovable` 없음)는 안 움직이지만, 드래그=`ScrollHandDrag`가
+    실제로 뷰를 패닝시키는 것 자체가 "미리보기는 손대면 안 된다"는 사용자 기대와 안
+    맞았다. 그래서 이 뷰를 **두 가지 모드**로 나눈다 — `interactive=True`(기본, SVG
+    확대창처럼 별도의 큰 뷰에서 쓰임)는 휠줌·드래그팬 그대로, `interactive=False`
+    (인라인 작은 패널 전용)는 휠·드래그를 전부 무시하는 순수 정지 이미지가 되고
+    클릭하면 `clicked` 시그널만 낸다(SVG 후보 카드의 "클릭=확대" 관례와 통일 —
+    `_MermaidDialog._show_enlarged_preview`가 받아 `_MermaidPreviewEnlargeDialog`를
+    연다). 씬 조립·`fitInView`(코드 바뀔 때마다 전체가 보이게 다시 맞춤)는 두 모드가
+    동일하게 공유한다."""
 
     _PLACEHOLDER = "코드를 입력하면\n미리보기가 표시됩니다"
     _ERROR = "구문 오류 —\n미리보기를 표시할 수 없습니다"
     _ZOOM_FACTOR = 1.15
 
-    def __init__(self, parent=None):
+    clicked = pyqtSignal()
+
+    def __init__(self, parent=None, interactive: bool = True):
         super().__init__(parent)
+        self._interactive = interactive
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        if interactive:
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        else:
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self._message = self._PLACEHOLDER
@@ -1026,6 +1035,8 @@ class _MermaidPreviewView(QGraphicsView):
         self.centerOn(item)
 
     def wheelEvent(self, e):
+        if not self._interactive:
+            return   # [2026-08-25] 인라인 미리보기는 정지 이미지 — 휠도 무시
         if not self.has_content():
             return   # 안내문뿐일 땐 확대할 대상이 없음
         dy = e.angleDelta().y()
@@ -1033,6 +1044,49 @@ class _MermaidPreviewView(QGraphicsView):
             return
         factor = self._ZOOM_FACTOR if dy > 0 else 1.0 / self._ZOOM_FACTOR
         self.scale(factor, factor)
+
+    def mousePressEvent(self, e):
+        # [2026-08-25] 인라인(비인터랙티브) 모드는 클릭=확대창 열기 신호만 내고 끝 —
+        # `ScrollHandDrag`가 아니므로 드래그해도 패닝조차 안 일어난다(진짜 정지 이미지).
+        if not self._interactive:
+            if e.button() == Qt.MouseButton.LeftButton and self.has_content():
+                self.clicked.emit()
+            return
+        super().mousePressEvent(e)
+
+
+class _MermaidPreviewEnlargeDialog(QDialog):
+    """미리보기 확대 — SVG 후보 확대(`_QuickLookDialog`)와 같은 비모달·바깥클릭 닫힘
+    관례(2026-08-25). Mermaid는 후보가 하나뿐이라 탐색·체크박스 없이, 인터랙티브
+    `_MermaidPreviewView`(휠줌·드래그팬) 하나만 크게 보여준다 — 인라인 작은 패널에서
+    빼앗긴 그 조작성을 여기서 그대로 되돌려준다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("미리보기 확대")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        self._view = _MermaidPreviewView(self, interactive=True)
+        v.addWidget(self._view)
+        self.resize(QSize(900, 700))
+
+    def set_mermaid_code(self, text: str, pen_color: QColor | None = None):
+        # [실사용 자체검증 2026-08-25] `_view.set_mermaid_code()`는 내부에서 `fitInView()`를
+        # 즉시 계산하는데, 그게 `show()`보다 먼저면(닫혀 있던 첫 오픈 시점) 뷰가 아직 화면에
+        # 배치되지 않아 크기가 확정 안 된 채로 fit이 계산돼 빈 화면이 렌더된다(오프스크린
+        # 스크린샷으로 실측 확인 — `has_content()`는 True인데 실제로 아무것도 안 그려짐).
+        # `show()`를 먼저 불러 뷰가 최종 크기를 갖게 한 뒤에 fit을 계산해야 한다.
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self._view.set_mermaid_code(text, pen_color)
+
+    def event(self, e):
+        # ⚠ `_QuickLookDialog.event()`와 동일 함정 — `WindowDeactivate`는 `changeEvent()`가
+        # 아니라 `event()`로 온다(실측으로 확인된 함정, 그 클래스 docstring 참조).
+        if e.type() == QEvent.Type.WindowDeactivate:
+            self.close()
+        return super().event(e)
 
 
 # [2026-08-21 실사용 피드백] Mermaid 코드 첫 줄의 방향 토큰 — `mermaid_import._HEADER_RE`와
@@ -1091,6 +1145,7 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         self._init_image_attach_state()
         self._worker = None               # _MermaidGenWorker | None — 생성 중일 때만 설정
         self._model_list_worker = None    # _ModelListWorker | None — 조회 중일 때만 설정
+        self._preview_enlarge = None      # _MermaidPreviewEnlargeDialog | None — 지연 생성
         lay = QVBoxLayout(self)
 
         # [2026-08-13 5차] 옛 상단 3줄 안내(Enter·드래그/Ctrl+V·코드칸 직접입력)를 각자
@@ -1291,9 +1346,11 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         split.addLayout(left_col, 1)
 
         preview_col = QVBoxLayout()
-        # [2026-08-21 실사용 피드백] "클릭하면 확대"에서 "휠로 확대·드래그로 이동"으로
-        # 교체 — 제목도 그 조작법 안내로 바꾼다(패널 자체가 `_MermaidPreviewView`).
-        preview_title = QLabel("미리보기 (휠로 확대·드래그로 이동)", self)
+        # [실사용 피드백 2026-08-25] "미리보기인데 마우스를 만지면 뭔가 움직이는 것
+        # 같다" — 인라인 패널을 다시 정지 이미지로(`_MermaidPreviewView(interactive=
+        # False)`), 휠줌·드래그팬은 클릭해서 여는 별도 확대창(`_MermaidPreviewEnlargeDialog`,
+        # SVG 후보 확대와 같은 관례)으로 옮겼다. 제목도 그 조작법 안내로 되돌린다.
+        preview_title = QLabel("미리보기 (클릭하면 확대)", self)
         preview_title.setStyleSheet(_SECTION_TITLE_QSS)
         preview_col.addWidget(preview_title)
         preview_frame = QFrame(self)
@@ -1310,11 +1367,12 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         preview_frame.setMinimumWidth(420)
         preview_frame_lay = QVBoxLayout(preview_frame)
         preview_frame_lay.setContentsMargins(6, 6, 6, 6)
-        self._preview_view = _MermaidPreviewView(preview_frame)
+        self._preview_view = _MermaidPreviewView(preview_frame, interactive=False)
         self._preview_view.setMinimumSize(160, 160)
         self._preview_view.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._preview_view.setStyleSheet("background:transparent; border:none;")
+        self._preview_view.clicked.connect(self._show_enlarged_preview)
         preview_frame_lay.addWidget(self._preview_view)
         preview_col.addWidget(preview_frame, 1)
         split.addLayout(preview_col, 1)
@@ -1386,9 +1444,19 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         cursor.insertText(text[:start] + token + text[end:])
 
     def _update_preview(self):
-        """디바운스 타이머 만료 시 호출 — `_preview_view`(실시간 휠줌/드래그팬 뷰)를
-        새 코드로 다시 그린다."""
+        """디바운스 타이머 만료 시 호출 — `_preview_view`(정지 이미지 인라인 패널)를
+        새 코드로 다시 그린다. 확대창이 열려 있으면 그것도 같이 최신 코드로 갱신한다
+        (background에서 계속 타이핑 중이어도 확대창이 낡은 그림을 안 보여주게)."""
         self._preview_view.set_mermaid_code(self._edit.toPlainText(), self._preview_pen_color)
+        if self._preview_enlarge is not None and self._preview_enlarge.isVisible():
+            self._preview_enlarge.set_mermaid_code(self._edit.toPlainText(), self._preview_pen_color)
+
+    def _show_enlarged_preview(self):
+        """[2026-08-25] 인라인 미리보기 클릭 — SVG 후보 확대(`_QuickLookDialog`)와 같은
+        관례로 별도 비모달 창에 인터랙티브(휠줌·드래그팬) 뷰를 띄운다."""
+        if self._preview_enlarge is None:
+            self._preview_enlarge = _MermaidPreviewEnlargeDialog(self)
+        self._preview_enlarge.set_mermaid_code(self._edit.toPlainText(), self._preview_pen_color)
 
     def done(self, r):
         # X·Cancel·OK·Esc 전부 결국 여기로 모인다(QDialog 표준 흐름) — 닫기는 무엇이 돌든
@@ -1398,6 +1466,10 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # `closeEvent`를 거치지 않고 곧장 여기로 와 그 방어코드가 원천 무효였다).
         _detach_worker(self._worker)
         _detach_worker(self._model_list_worker)
+        # [2026-08-25] 인스턴스 재사용으로 이 다이얼로그가 이제 안 죽으므로, 확대창이
+        # 열린 채로 메인 창을 닫으면 확대창만 화면에 덩그러니 남는다 — 같이 닫는다.
+        if self._preview_enlarge is not None:
+            self._preview_enlarge.close()
         super().done(r)
 
     def eventFilter(self, obj, event):

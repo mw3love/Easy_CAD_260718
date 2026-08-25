@@ -1099,6 +1099,101 @@ def test_mermaid_preview_view_wheel_noop_on_placeholder():
     assert view.transform().m11() == before
 
 
+# ── 인라인 미리보기 비인터랙티브화 + 확대창(2026-08-25 실사용 피드백) ───────────────
+# "미리보기인데 마우스를 만지면(확대하려고) 뭔가 움직이는 것 같다" — 인라인 패널은
+# 정지 이미지로 되돌리고(휠·드래그 전부 무시), 클릭하면 SVG 후보 확대와 같은 관례로
+# 별도 창에 인터랙티브(휠줌·드래그팬) 뷰를 띄운다.
+
+def test_mermaid_preview_view_noninteractive_ignores_wheel_and_drag():
+    from PyQt6.QtCore import QPoint, Qt as _Qt
+    from PyQt6.QtGui import QWheelEvent
+    from easycad.canvas.host_dialogs import _MermaidPreviewView
+
+    view = _MermaidPreviewView(interactive=False)
+    assert view.dragMode() == view.DragMode.NoDrag   # 드래그해도 패닝조차 안 됨
+    view.set_mermaid_code("flowchart LR\n A[시작] --> B[끝]")
+    before = view.transform().m11()
+    ev = QWheelEvent(QPoint(50, 50).toPointF(), QPoint(50, 50).toPointF(),
+                     QPoint(0, 0), QPoint(0, 120), _Qt.MouseButton.NoButton,
+                     _Qt.KeyboardModifier.NoModifier, _Qt.ScrollPhase.NoScrollPhase, False)
+    view.wheelEvent(ev)
+    assert view.transform().m11() == before   # 휠도 무시
+
+
+def test_mermaid_preview_view_noninteractive_click_emits_signal_only():
+    from easycad.canvas.host_dialogs import _MermaidPreviewView
+
+    view = _MermaidPreviewView(interactive=False)
+    view.set_mermaid_code("flowchart LR\n A[시작] --> B[끝]")
+    clicks = []
+    view.clicked.connect(lambda: clicks.append(1))
+    view.mousePressEvent(_FakeLeftClickEvent())
+    assert clicks == [1]
+
+
+def test_mermaid_dialog_inline_preview_is_noninteractive_and_wired_to_enlarge():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    assert dlg._preview_view.dragMode() == dlg._preview_view.DragMode.NoDrag
+    assert dlg._preview_enlarge is None   # 지연 생성 — 클릭 전엔 아직 없음
+
+
+def test_mermaid_dialog_click_preview_opens_enlarge_dialog_with_same_code():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("flowchart TD\n A-->B")
+    dlg._preview_view.clicked.emit()
+    assert dlg._preview_enlarge is not None
+    assert dlg._preview_enlarge.isVisible()
+    assert dlg._preview_enlarge._view.has_content()
+    assert dlg._preview_enlarge._view.dragMode() == dlg._preview_enlarge._view.DragMode.ScrollHandDrag
+    dlg._preview_enlarge.close()
+
+
+def test_mermaid_dialog_enlarge_dialog_instance_reused_across_clicks():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("flowchart TD\n A-->B")
+    dlg._preview_view.clicked.emit()
+    first = dlg._preview_enlarge
+    dlg._preview_view.clicked.emit()
+    assert dlg._preview_enlarge is first
+    dlg._preview_enlarge.close()
+
+
+def test_mermaid_dialog_typing_refreshes_open_enlarge_dialog():
+    """[2026-08-25] 확대창이 열려 있는 동안 배경에서 코드를 고치면 확대창도 최신
+    코드로 갱신돼야 한다(디바운스 타이머를 거치지 않는 `_update_preview` 직접호출로
+    검증 — 타이머 자체는 다른 테스트가 이미 덮는다)."""
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("flowchart TD\n A-->B")
+    dlg._preview_view.clicked.emit()
+    dlg._edit.setPlainText("flowchart TD\n A-->B\n B-->C")
+    dlg._update_preview()
+    assert dlg._preview_enlarge._view.has_content()
+    dlg._preview_enlarge.close()
+
+
+def test_mermaid_dialog_done_closes_open_enlarge_dialog():
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = _MermaidDialog()
+    dlg._edit.setPlainText("flowchart TD\n A-->B")
+    dlg._preview_view.clicked.emit()
+    assert dlg._preview_enlarge.isVisible()
+    dlg.reject()
+    assert not dlg._preview_enlarge.isVisible()
+
+
+class _FakeLeftClickEvent:
+    """`QGraphicsView.mousePressEvent` 오버라이드가 필요로 하는 최소 인터페이스만
+    흉내(`e.button()`) — 진짜 `QMouseEvent`는 좌표계 관련 인자가 많아 순수 단위
+    테스트엔 과하다."""
+
+    def button(self):
+        return Qt.MouseButton.LeftButton
+
+
 # ── §8 항목23 Stage 6(2026-08-19) — 레이아웃 최종 통일(목업 시각 언어 차용) ────────
 
 def test_mermaid_dialog_ok_button_has_descriptive_label():
