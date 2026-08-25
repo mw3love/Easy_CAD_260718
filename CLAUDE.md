@@ -1379,6 +1379,19 @@ symbol_library/
   검수 Phase 1", 함정: `docs/pitfalls.md` "검증 방법론" 절 끝부분. 다음: Phase 2
   (`core_shapes.py`/`core_view.py` 코드리뷰) — 진행 계획·체크리스트는
   `docs/final_review_plan.md` 참조.
+- **최종 검수 Phase 2 완료(2026-08-25, 같은 세션 후속)** — `core_shapes.py`·
+  `core_view.py`(전체 코드의 46%) 코드리뷰, findings 6건 중 5건 즉시 반영·1건 보류
+  (커밋 `bb248b4`·`9016308`). 전부 2026-08-25 신설 그룹 프레임(`_GroupBindProxy`)
+  기능에 몰려 있었다 — ⓐ `whole_group_id()`/`qc_dot_rects()`가 호버·paint마다
+  `scene.items()` 전체 스캔을 중복 실행(1000개+ 씬에서 이미 겪은 성능 계열 재발)
+  ⓑ `_qc_route_context`가 `it is src/target` identity 판정만 써서 그룹 큐닷 연결 시
+  자기 그룹 조각을 라우팅 장애물로 오판·우회 렌더 ⓒ `_align_candidates`의 자기-정렬
+  제외가 그룹 드래그 시 무효(2026-08-19 개별 도형 수정의 그룹 버전 재발) ⓓ 위 스캔
+  중복이 `_qc_snap_target`/`_border_snap_at`/`_port_dot_target`/`_hover_port_at`
+  4곳에도 있었음 — `_GroupTransform._cache_key()`와 동일한 무효화 시맨틱의 뷰 레벨
+  캐시(`_group_bbox_cached()`) 신설로 해소. 보류 1건(`_group_proxy_cache` 무프루닝)은
+  low-impact + identity 계약 파손 위험으로 유보. 신규 pytest 4종, 전체 스위트 1005종
+  통과. 다음: Phase 3(host_* UI 레이어 코드리뷰) — `docs/final_review_plan.md` 참조.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
