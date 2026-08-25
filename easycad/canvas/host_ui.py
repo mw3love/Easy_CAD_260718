@@ -1295,11 +1295,35 @@ class _UIBuildMixin:
                 self._custom_sym_section.updateGeometry()
                 self._relayout_left_panel()
             collapse_btn.clicked.connect(_toggle_folder)
+            return zone
 
-        add_group(None, "즐겨찾기", deletable=False, favorites=True)
-        add_group(None, "미분류", deletable=False)
-        for name in folders:
-            add_group(name, name, deletable=True)
+        # [실사용 버그 수정 2026-08-25] 빈 폴더에 첫 심볼을 등록하면(=이 섹션 전체를 처음부터
+        # 다시 짓는 이 경로) 아이콘은 보이는데 라벨 텍스트만 안 보이던 버그 — `_toggle_folder`
+        # 가 겪던 것과 같은 Qt 함정(위 주석 참조)이 "새로 지어 넣는" 이 경로에도 그대로
+        # 있었다: 새로 추가된 `zone`들의 크기 변화가 `body`→`custom_sym_section` 두 위젯
+        # 경계를 넘어 즉시 반영되지 않아, 패널이 새 줄을 담을 만큼 안 자라 텍스트 행이 잘려
+        # 나갔다(실측: 강제 `updateGeometry()` 전엔 안 보이고, 건 뒤엔 보임). `_toggle_folder`
+        # 와 동일하게 각 zone + body + section 세 겹 모두 `updateGeometry()`를 걸어야 한다.
+        zones = [add_group(None, "즐겨찾기", deletable=False, favorites=True),
+                 add_group(None, "미분류", deletable=False)]
+        zones += [add_group(name, name, deletable=True) for name in folders]
+        for z in zones:
+            if z is not None:
+                z.updateGeometry()
+        self._custom_sym_body.layout().invalidate()
+        self._custom_sym_body.layout().activate()
+        self._custom_sym_body.updateGeometry()
+        self._custom_sym_section.layout().invalidate()
+        self._custom_sym_section.layout().activate()
+        self._custom_sym_section.updateGeometry()
+        # 실측: 위 invalidate()들만으론 부족하다 — `_relayout_left_panel()`을 한 번 부르면
+        # `_left_container`가 custom_sym_section의 새 sizeHint까지는 읽어내지만, 그 커진 값이
+        # `_left_panel` 자신의 크기(adjustSize())까지 반영되려면 그 사이에 `updateGeometry()`가
+        # 예약해 둔(비동기) `LayoutRequest`가 실제로 한 번 처리돼야 한다(네 겹 중첩 — 이 파일의
+        # `_toggle_folder`가 겪은 세 겹 캐싱 함정과 같은 종류인데 한 단 더 깊다). 그래서 두 번째
+        # 호출 전에 이벤트루프를 한 틱 돌려야 한다 — 단순 반복 호출만으론 안 됨을 실측으로 확인.
+        self._relayout_left_panel()
+        QApplication.processEvents()
         self._relayout_left_panel()
 
 
