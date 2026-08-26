@@ -1508,6 +1508,15 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # (2026-08-23, 실사용 버그 수정 — 상세 이유는 `_detach_worker` 주석 참조. 예전엔
         # `closeEvent`에서 `e.ignore()`로 닫기 자체를 막았는데, Cancel 버튼의 `reject()`는
         # `closeEvent`를 거치지 않고 곧장 여기로 와 그 방어코드가 원천 무효였다).
+        # [실사용 버그 2026-08-26] 텍스트칸에 포커스가 남은 채(타이핑 여부 무관 — 한글
+        # 입력기가 시스템 기본이면 포커스만으로도 IME 컨텍스트가 그 위젯에 물린다) 창을
+        # 반복해서 열고/X로 닫으면 몇 번 만에 Qt6Core.dll 안에서 죽는 게 실측(minidump)
+        # 으로 확인됨 — 이 창은 인스턴스를 재사용해(2026-08-25) 같은 텍스트위젯이 매번
+        # 다시 포커스를 받는데, 그 IME 연결이 숨겨질 때 안 풀리고 쌓이는 것으로 추정.
+        # 포커스를 먼저 떼 Qt가 IME 컨텍스트를 정리하게 한 뒤 실제로 숨긴다.
+        fw = QApplication.focusWidget()
+        if fw is not None:
+            fw.clearFocus()
         _detach_worker(self._worker)
         _detach_worker(self._model_list_worker)
         # [2026-08-25] 인스턴스 재사용으로 이 다이얼로그가 이제 안 죽으므로, 확대창이
@@ -2649,6 +2658,11 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
     def done(self, r):
         # `_MermaidDialog.done`과 동일한 이유(2026-08-23) — X·Cancel·OK·Esc 전부 여기로
         # 모이므로, 닫기는 항상 즉시 허용하고 아직 도는 워커는 분리해 결과를 버린다.
+        # [실사용 버그 2026-08-26] `_MermaidDialog.done`과 동일 — 텍스트칸 포커스를
+        # 먼저 떼 IME 컨텍스트를 정리한 뒤 숨긴다(상세 이유는 그쪽 주석 참조).
+        fw = QApplication.focusWidget()
+        if fw is not None:
+            fw.clearFocus()
         for w in self._workers:
             _detach_worker(w)
         _detach_worker(self._model_list_worker)
