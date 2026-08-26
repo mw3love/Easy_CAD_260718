@@ -32,7 +32,7 @@ from easycad.canvas.annotator_core import (
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
-    _min_stroke_render,
+    _min_stroke_render, _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -438,10 +438,25 @@ class _SelectionMixin:
         (눈에 보이는 흐림 해결)은 충분히 달성되고 재렌더 비용도 작은 아이콘 하나뿐이라
         저렴하다(디스크의 옛 썸네일은 그대로 남지만 팔레트에는 항상 최신 렌더가 보인다)."""
         pm = _b64_to_pixmap(entry.get("thumb", ""))
-        if pm.width() == _PALETTE_SYM_ICON_PX and pm.height() == _PALETTE_SYM_ICON_PX:
-            return entry
+        size_ok = pm.width() == _PALETTE_SYM_ICON_PX and pm.height() == _PALETTE_SYM_ICON_PX
         items = [it for it in (dict_to_item(d) for d in entry.get("items", [])) if it is not None]
         if not items:
+            return entry
+        # [실사용 피드백 2026-08-26] 등록 당시 테마의 기본 잉크색 그대로인 조각은 현재
+        # 테마에 맞게 반전 — 캔버스 도형 반전(host_ui._apply_theme)과 같은 규칙을 여기
+        # 저장된 심볼 '레시피'(items)에도 적용한다. 사용자가 직접 고른 색은 매칭 안 돼
+        # 그대로 유지된다.
+        wrong_ink = QColor(_DEFAULT_INK_LIGHT if self._dark else _DEFAULT_INK_DARK).name()
+        right_ink = QColor(_DEFAULT_INK_DARK if self._dark else _DEFAULT_INK_LIGHT).name()
+        needs_retint = False
+        for it in items:
+            if not hasattr(it, "apply_color"):
+                continue
+            cur = self._read_props(it).get("color")
+            if cur is not None and cur.name().lower() == wrong_ink.lower():
+                it.apply_color(QColor(right_ink))
+                needs_retint = True
+        if size_ok and not needs_retint:
             return entry
         box = _group_scene_rect(items)
         new_thumb = _render_symbol_thumbnail(items, box)

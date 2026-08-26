@@ -806,6 +806,25 @@ class _UIBuildMixin:
             add_folder_btn.setStyleSheet(
                 f"QToolButton {{ color: {_current_icon_color().name()}; "
                 f"font-weight:700; font-size:15px; }}")
+        # [실사용 피드백 2026-08-26] '내 심볼' 팔레트 아이콘은 등록 당시 테마 잉크색으로
+        # 박제된 정지 이미지라(캔버스 도형과 달리 QGraphicsItem이 아니라 반영 안 됨) —
+        # 저장된 레시피(items)로 재렌더하는 기존 자동치유 경로(`_ensure_symbol_thumb_
+        # current`)를 재사용해 아이콘만 바꿔치기한다. `_refresh_custom_symbol_section()`
+        # 전체 재구성(위젯 삭제·재생성)은 여기서 매번 부르면 안 된다 — 스모크 스위트처럼
+        # 창을 안 닫고 대량 생성하는 환경에서 위젯 재구축을 반복하면 과거(2026-08-12)
+        # 겪었던 것과 같은 계열의 네이티브 크래시를 재현시킨다(실측 확인, 이 커밋에서
+        # 처음엔 전체 재구성을 불렀다가 스모크 스위트가 중간에 죽어 발견).
+        custom_sym_buttons = getattr(self, "_custom_sym_buttons", None)
+        if custom_sym_buttons:
+            entries_by_id = {e["id"]: e for e in symbol_library.load_library()}
+            for sid, blist in custom_sym_buttons.items():
+                entry = entries_by_id.get(sid)
+                if entry is None:
+                    continue
+                fresh = self._ensure_symbol_thumb_current(entry)
+                icon = QIcon(_b64_to_pixmap(fresh["thumb"]))
+                for btn in blist:
+                    btn.setIcon(icon)
         self._refresh_arrow_tool_button()
         # [실사용 피드백 2026-08-20, 아이콘화] 속성패널 '선'·'화살표'·'방향' 아이콘도 중립색
         # baked QPixmap이라 테마 전환마다 재생성해야 한다(위 액션 아이콘들과 같은 이유).
