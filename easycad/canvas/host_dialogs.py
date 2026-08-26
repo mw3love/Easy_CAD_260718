@@ -42,7 +42,7 @@ from easycad.canvas.annotator_core import (
 )
 from easycad.canvas.host_widgets import (
     _clipboard_pixmap, _act_icon, _ACCENT_CORAL, _ICON_COLOR, _current_icon_color,
-    _MERMAID_SHAPE_ITEM, _border_attach,
+    _MERMAID_SHAPE_ITEM, _border_attach, _sync_native_titlebar,
 )
 from easycad.fileio.pdf_export import (
     export_pdf, PAGE_SIZES, render_preview, _list_title_frames, _centered_target_rect,
@@ -81,6 +81,18 @@ _ROUNDED_COMBO_QSS = (
 # text-transform 미지원이라 그 축은 배제, 색은 팔레트 기본 유지 — 코랄은 상태 전용이라는
 # 기존 규칙(easy-cad.md) 유지).
 _SECTION_TITLE_QSS = "font-weight:600; font-size:13px;"
+
+
+def _attach_button_qss(col: str) -> str:
+    """[실사용 피드백 2026-08-26 4차] `_ImageAttachMixin._build_attach_button`(이미지 첨부
+    "+" 버튼)의 스타일시트를 함수로 뽑았다 — 이 버튼도 `_SECTION_TITLE_QSS`가 걸린 라벨과
+    같은 문제(색이 생성 시점에 박제돼 팔레트만 바뀌어선 재도색이 안 됨)를 겪고 있었다.
+    `_refresh_theme_colors()`가 현재 `_current_icon_color()`로 다시 걸어 재폴리시한다."""
+    return (
+        f"QToolButton {{ color:{col}; font-weight:700; font-size:18px; "
+        "border:1px solid rgba(128,128,128,90); border-radius:6px; }"
+        "QToolButton:hover { background:rgba(128,128,128,40); }"
+    )
 
 # [2026-08-20 피드백] 연결 테스트 결과(성공/실패)를 색으로 구분 — "연결 잘 되면 좋은 일"
 # 이라는 요청대로 성공은 초록, 실패는 빨강(둘 다 코랄 accent와 겹치지 않는 별도 색상,
@@ -571,12 +583,7 @@ class _ImageAttachMixin:
         btn.setText("+")
         btn.setAutoRaise(True)
         btn.setFixedSize(QSize(28, 28))
-        col = _current_icon_color().name()
-        btn.setStyleSheet(
-            f"QToolButton {{ color:{col}; font-weight:700; font-size:18px; "
-            "border:1px solid rgba(128,128,128,90); border-radius:6px; }"
-            "QToolButton:hover { background:rgba(128,128,128,40); }"
-        )
+        btn.setStyleSheet(_attach_button_qss(_current_icon_color().name()))
         btn.setToolTip("이미지 첨부<br>· 드래그 앤 드롭<br>· Ctrl+V 붙여넣기")
         btn.clicked.connect(self._browse_image)
         return btn
@@ -1110,6 +1117,14 @@ class _MermaidPreviewEnlargeDialog(QDialog):
         if first_open:
             self.raise_()
             self.activateWindow()
+        # [실사용 재보고 2026-08-26 2차] 이유는 `_QuickLookDialog.show_index` 참조 — 이
+        # 창도 350ms 디바운스로 반복 호출되므로, 테마가 실제로 안 바뀐 동안은 리사이즈
+        # nudge를 반복하지 않는다. `self.parent()`는 `_MermaidDialog`(CanvasWindow가
+        # 아님)라 한 단계 더 올라가야 `_dark`에 닿는다.
+        dark_now = bool(getattr(self.parent().parent(), "_dark", True))
+        if getattr(self, "_titlebar_dark_synced", None) != dark_now:
+            self._titlebar_dark_synced = dark_now
+            _sync_native_titlebar(self)
         self._view.set_mermaid_code(text, pen_color)
 
     def event(self, e):
@@ -1299,9 +1314,9 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         top_col = QVBoxLayout()
         # [2026-08-20 피드백] 입력 카드 위에도 다른 두 섹션(코드·미리보기)과 같은 "제목"을
         # 달아 세 구역의 시각적 위계를 통일.
-        prompt_title = QLabel("텍스트 설명", self)
-        prompt_title.setStyleSheet(_SECTION_TITLE_QSS)
-        top_col.addWidget(prompt_title)
+        self._prompt_title = QLabel("텍스트 설명", self)
+        self._prompt_title.setStyleSheet(_SECTION_TITLE_QSS)
+        top_col.addWidget(self._prompt_title)
         top_col.addWidget(prompt_frame, 1)
 
         self._progress = _GenProgressRow(self)
@@ -1348,9 +1363,9 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # (피드백: "드래그해서 복사하면 됨").
         bottom_col = QVBoxLayout()
         code_label_row = QHBoxLayout()
-        code_title = QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능)", self)
-        code_title.setStyleSheet(_SECTION_TITLE_QSS)
-        code_label_row.addWidget(code_title)
+        self._code_title = QLabel("Mermaid 코드 (직접 입력·붙여넣기 가능)", self)
+        self._code_title.setStyleSheet(_SECTION_TITLE_QSS)
+        code_label_row.addWidget(self._code_title)
         code_label_row.addStretch(1)
         # [2026-08-21 실사용 피드백] 방향 컨트롤 — 생성 후에도 세로↔가로를 쉽게 바꾸도록.
         # 콤보를 바꾸면 코드 첫 줄의 방향 토큰만 고쳐 쓰고(`_on_direction_changed`), 반대로
@@ -1379,9 +1394,9 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # 같다" — 인라인 패널을 다시 정지 이미지로(`_MermaidPreviewView(interactive=
         # False)`), 휠줌·드래그팬은 클릭해서 여는 별도 확대창(`_MermaidPreviewEnlargeDialog`,
         # SVG 후보 확대와 같은 관례)으로 옮겼다. 제목도 그 조작법 안내로 되돌린다.
-        preview_title = QLabel("미리보기 (클릭하면 확대)", self)
-        preview_title.setStyleSheet(_SECTION_TITLE_QSS)
-        preview_col.addWidget(preview_title)
+        self._preview_title = QLabel("미리보기 (클릭하면 확대)", self)
+        self._preview_title.setStyleSheet(_SECTION_TITLE_QSS)
+        preview_col.addWidget(self._preview_title)
         preview_frame = QFrame(self)
         preview_frame.setObjectName("mermaidPreviewFrame")
         preview_frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -1461,6 +1476,17 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # 같은 스타일시트를 다시 걸어주면 그 순간의 팔레트로 강제 재폴리시된다.
         self._model_combo.setStyleSheet(_ROUNDED_COMBO_QSS)
         self._direction_combo.setStyleSheet(_ROUNDED_COMBO_QSS)
+        # [실사용 피드백 2026-08-26 3차] 위와 같은 이유 — 섹션 제목 라벨("텍스트 설명"·
+        # "Mermaid 코드"·"미리보기")도 `_SECTION_TITLE_QSS`(글꼴만 지정, 색은 없음)가
+        # 걸려 있어 팔레트만 바뀌어선 재폴리시가 안 된다(스크린샷 실측 — 초기 테마 색에
+        # 고정돼 토글해도 안 바뀌던 것 확인). 같은 스타일시트를 다시 걸어 재폴리시.
+        self._prompt_title.setStyleSheet(_SECTION_TITLE_QSS)
+        self._code_title.setStyleSheet(_SECTION_TITLE_QSS)
+        self._preview_title.setStyleSheet(_SECTION_TITLE_QSS)
+        # [실사용 피드백 2026-08-26 4차] 같은 이유 — "+" 첨부 버튼·설정 버튼도 생성
+        # 시점의 아이콘/색이 박제돼 있었다(스크린샷 실측 — 배경색과 비슷해 안 보임).
+        self._attach_btn.setStyleSheet(_attach_button_qss(_current_icon_color().name()))
+        self._settings_btn.setIcon(_act_icon("settings"))
         self._update_preview()
 
     def showEvent(self, event):
@@ -1474,6 +1500,10 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         if getattr(self, "_theme_colors_dark", None) != dark_now:
             self._theme_colors_dark = dark_now
             self._refresh_theme_colors()
+            # [실사용 재보고 2026-08-26 2차] `_apply_native_titlebar_scheme`는 토글이 일어난
+            # 그 순간 열려 있던 창만 훑는다 — 토글 이후 처음 여는 이 창은 그 루프 밖이라
+            # 자기 타이틀바를 스스로 챙겨야 한다(`_sync_native_titlebar` 참조).
+            _sync_native_titlebar(self)
 
     def text(self):
         return self._edit.toPlainText()
@@ -1967,15 +1997,21 @@ class _QuickLookDialog(QDialog):
 
     ⓒ **심볼로 저장 토글** — 지금 보는 후보의 "심볼로 저장" 체크박스를 `_SvgCandidateCard.
     _save_check`와 같은 상태로 공유(다중 후보 골라 한꺼번에 저장하는 기존 기능과 자연히
-    맞물림). Space 키 또는 하단 가운데 버튼 클릭 둘 다로 토글한다.
+    맞물림). Space 키 또는 하단 체크박스 클릭 둘 다로 토글한다.
 
     [실사용 피드백 2026-08-25] 하단이 작은 회색 안내 텍스트(11px, #8a8a8a) 하나뿐이라
     ⓐ 위쪽 카운터보다 눈에 덜 띄고 ⓑ 사실은 "클릭 가능한 버튼"이 아니라 Space 전용
     안내문이라 마우스로는 토글할 방법이 아예 없었다 — 상단 ‹›버튼을 하단으로 내려
-    체크 토글 버튼과 한 줄에 가운데 정렬하고(모두 실제 버튼, 크게), 상단엔 카운터만
-    남겼다. 네비 버튼은 여전히 `NoFocus`로 둬 Space가 항상 이 다이얼로그의
-    `keyPressEvent`로 온다(버튼이 포커스를 채가면 Space가 "버튼 클릭"으로 먼저
-    소비돼버린다)."""
+    체크 토글과 한 줄에 가운데 정렬했다(네비 버튼은 여전히 `NoFocus`로 둬 Space가 항상
+    이 다이얼로그의 `keyPressEvent`로 온다 — 버튼이 포커스를 채가면 Space가 "버튼 클릭"
+    으로 먼저 소비돼버린다).
+
+    [실사용 피드백 2026-08-26] 위 토글이 텍스트+코랄 배경 채움 `QToolButton`으로 남아
+    `_SvgCandidateCard._save_check`(같은 날 텍스트 없는 순수 체크박스로 이미 정리됨)와
+    스타일이 어긋나 있던 것을 뒤늦게 발견 — 선 위주 테두리(미체크=중립, 체크=코랄)+
+    작은 체크마크로 재설계하고, 배치 순서를 체크박스 → ‹ → ›로 변경(왼쪽 끝). 실제
+    구현은 `_check_btn` 생성부 주석 참조(네이티브 `QCheckBox`가 이 앱 다크 팔레트와
+    안 맞아 `QToolButton` 기반으로 대체)."""
 
     _NAV_BTN_PX = 44          # [2026-08-25] 재배치 — 기존 기본 크기보다 확대
     _BOTTOM_FONT_PX = 16
@@ -1999,6 +2035,32 @@ class _QuickLookDialog(QDialog):
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(12)
         bottom_row.addStretch(1)
+
+        # [실사용 피드백 2026-08-26] 카드 체크박스(`_SvgCandidateCard._save_check`, 텍스트
+        # 없이 체크박스만)와 달리 이 확대창 버튼만 큰 코랄 배경 채움 버튼으로 남아있던 것을
+        # 발견 — 같은 관례(선 위주 테두리 + 코랄은 체크 시 표식만)로 통일. ‹›보다 왼쪽
+        # (순서: 체크박스 → ‹ → ›)에 배치.
+        # ⚠ 실측 확인: 네이티브 `QCheckBox`로 먼저 시도했으나, 이 앱의 다크 팔레트에서는
+        # `QCheckBox::indicator`에 `border`를 직접 얹는 순간 Qt가 체크 표시(✓) 자체를
+        # 그리지 않게 됨(Qt가 완전 커스텀 렌더로 전환 — `image` 없이는 내용 없음), 반대로
+        # `border`를 안 주면 이 앱 다크 팔레트 조합에서 미체크 테두리가 배경과 거의
+        # 구분 안 됨(둘 다 스크린샷 실측으로 확인). 대신 체크 가능한 작은 `QToolButton`에
+        # 테두리(코랄=체크 시만)+체크마크 글자(✓, 코랄일 때만 보이고 평소엔 투명)를 직접
+        # 얹어 양쪽 테마 모두에서 테두리·체크마크가 항상 또렷하게 보이도록 함.
+        self._check_btn = QToolButton(self)
+        self._check_btn.setCheckable(True)
+        self._check_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._check_btn.setToolTip("심볼로 저장 (Space)")
+        self._check_btn.setFixedSize(QSize(24, 24))
+        self._check_btn.setText("✓")
+        self._check_btn.setStyleSheet(
+            "QToolButton { border:1px solid rgba(160,160,160,150); border-radius:4px; "
+            "background:transparent; color:transparent; font-size:15px; font-weight:700; }"
+            f"QToolButton:checked {{ border-color:{_ACCENT_CORAL}; color:{_ACCENT_CORAL}; }}"
+            f"QToolButton:hover {{ border-color:{_ACCENT_CORAL}; }}")
+        self._check_btn.clicked.connect(self._on_check_btn_clicked)
+        bottom_row.addWidget(self._check_btn)
+
         self._prev_btn = QToolButton(self)
         self._prev_btn.setText("‹")
         self._prev_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -2006,22 +2068,6 @@ class _QuickLookDialog(QDialog):
         self._prev_btn.setStyleSheet(f"font-size:{self._BOTTOM_FONT_PX + 6}px;")
         self._prev_btn.clicked.connect(lambda: self._step(-1))
         bottom_row.addWidget(self._prev_btn)
-
-        self._check_btn = QToolButton(self)
-        self._check_btn.setCheckable(True)
-        self._check_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._check_btn.setToolTip("단축키: Space")
-        # [실사용 피드백 2026-08-25] 체크됐을 때 포인트색(코랄) — 앱 전역에서 코랄=선택
-        # 상태 accent인 관례(`_CORAL_BTN_QSS`·`_SvgCandidateCard._apply_style`과 동일
-        # 언어) 그대로, 체크 안 됐을 땐 중립 테두리만.
-        self._check_btn.setStyleSheet(
-            f"QToolButton {{ font-size:{self._BOTTOM_FONT_PX}px; padding:8px 16px; "
-            f"border:1px solid rgba(128,128,128,120); border-radius:6px; }}"
-            f"QToolButton:checked {{ background:{_ACCENT_CORAL}; border-color:{_ACCENT_CORAL}; "
-            f"color:#1b120d; font-weight:600; }}"
-            f"QToolButton:hover {{ border-color:{_ACCENT_CORAL}; }}")
-        self._check_btn.clicked.connect(self._on_check_btn_clicked)
-        bottom_row.addWidget(self._check_btn)
 
         self._next_btn = QToolButton(self)
         self._next_btn.setText("›")
@@ -2036,10 +2082,9 @@ class _QuickLookDialog(QDialog):
         self.resize(QSize(640, 640))
 
     def _on_check_btn_clicked(self):
-        """[2026-08-25] 하단 버튼 클릭으로도 Space와 동일하게 토글 — `_check_btn`이
-        `setCheckable(True)`라 클릭 시점엔 이미 새 상태로 바뀌어 있으므로, 그 값을
-        그대로 카드에 반영한다(카드의 `stateChanged`가 "내 심볼로 저장" 버튼 활성화도
-        같이 갱신, 기존 관례)."""
+        """[2026-08-25] 하단 체크박스 클릭으로도 Space와 동일하게 토글 — `QCheckBox`는
+        클릭 시점엔 이미 새 상태로 바뀌어 있으므로, 그 값을 그대로 카드에 반영한다
+        (카드의 `stateChanged`가 "내 심볼로 저장" 버튼 활성화도 같이 갱신, 기존 관례)."""
         candidates = self._svg_dialog._candidates
         if not candidates or not (0 <= self._index < len(candidates)):
             return
@@ -2069,14 +2114,19 @@ class _QuickLookDialog(QDialog):
         self._next_btn.setEnabled(index < len(candidates) - 1)
         self._update_check_hint(card)
         self.show()
+        # [실사용 재보고 2026-08-26 2차] `_MermaidDialog.showEvent`와 동일 이유 — 이 창도
+        # 토글 이후 처음 열리면 자기 타이틀바를 스스로 챙겨야 한다. `show_index`가 ‹›
+        # 탐색마다 반복 호출되므로, 테마가 실제로 안 바뀐 동안은 건너뛴다(리사이즈 nudge를
+        # 매 탐색마다 반복하지 않도록).
+        dark_now = bool(getattr(self._svg_dialog.parent(), "_dark", True))
+        if getattr(self, "_titlebar_dark_synced", None) != dark_now:
+            self._titlebar_dark_synced = dark_now
+            _sync_native_titlebar(self)
         self.raise_()
         self.activateWindow()
 
     def _update_check_hint(self, card: "_SvgCandidateCard"):
-        checked = card.is_checked_for_save()
-        self._check_btn.setChecked(checked)
-        mark = "☑" if checked else "☐"
-        self._check_btn.setText(f"{mark}  심볼로 저장")
+        self._check_btn.setChecked(card.is_checked_for_save())
 
     def _step(self, delta: int):
         candidates = self._svg_dialog._candidates
@@ -2389,9 +2439,9 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         # [2026-08-20 재피드백: "제목이 입력창 안에 있어서 잘 안 보인다"] 카드 안(입력칸과
         # 같은 밝은 배경)에 있던 라벨을 카드 밖(다이얼로그 중립 배경)으로 — Mermaid의
         # "텍스트 설명" 라벨과 완전히 같은 자리·같은 스타일.
-        prompt_title = QLabel("생성할 대상(예: BNC 커넥터 아이콘):", self)
-        prompt_title.setStyleSheet(_SECTION_TITLE_QSS)
-        left_col.addWidget(prompt_title)
+        self._prompt_title = QLabel("생성할 대상(예: BNC 커넥터 아이콘):", self)
+        self._prompt_title.setStyleSheet(_SECTION_TITLE_QSS)
+        left_col.addWidget(self._prompt_title)
         left_col.addWidget(prompt_frame)
 
         self._progress = _GenProgressRow(self)
@@ -2464,9 +2514,9 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         left_col.addLayout(connector_row)
 
         code_row = QHBoxLayout()
-        code_title = QLabel("SVG 코드 (직접 입력·붙여넣기 가능):", self)
-        code_title.setStyleSheet(_SECTION_TITLE_QSS)
-        code_row.addWidget(code_title)
+        self._code_title = QLabel("SVG 코드 (직접 입력·붙여넣기 가능):", self)
+        self._code_title.setStyleSheet(_SECTION_TITLE_QSS)
+        code_row.addWidget(self._code_title)
         code_row.addStretch(1)
         # [2026-08-20 재피드백] "외부 AI에 우리 프롬프트를 주고 SVG를 받아와 붙여넣는"
         # 워크플로 지원 버튼 — 위쪽 툴바(생성 관련 버튼들)가 아니라 이 붙여넣는 코드칸
@@ -2502,13 +2552,13 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         # 별도 미리보기 없이도 후보 자체로 "보기"까지 겸한다). 가로 1줄 스크롤 대신
         # 고정 열(`_CANDIDATE_COLS`) 그리드로 바꿔 늘어난 세로 공간을 활용한다.
         right_col = QVBoxLayout()
-        candidates_title = QLabel("생성 후보 (클릭=선택 · 더블클릭=확대):", self)
-        candidates_title.setStyleSheet(_SECTION_TITLE_QSS)
+        self._candidates_title = QLabel("생성 후보 (클릭=선택 · 더블클릭=확대):", self)
+        self._candidates_title.setStyleSheet(_SECTION_TITLE_QSS)
         # [실사용 피드백 2026-08-25] 후보가 여러 개일 때 "심볼로 저장" 체크박스를 하나씩
         # 누르지 않고 한 번에 켜고 끌 수 있게 — 개별 체크 상태를 되읽어 tri-state로
         # 동기화하진 않는다(단순한 일괄 액션, 새로 추가되는 후보엔 영향 없음).
         title_row = QHBoxLayout()
-        title_row.addWidget(candidates_title)
+        title_row.addWidget(self._candidates_title)
         title_row.addStretch(1)
         self._select_all_check = QCheckBox("전체선택", self)
         self._select_all_check.setStyleSheet("font-size:11px;")
@@ -2625,6 +2675,20 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
             "QScrollArea#svgCandidatesFrame { border:1px solid rgba(128,128,128,90); "
             "border-radius:8px; }"
         )
+        # [실사용 피드백 2026-08-26 3차] `_MermaidDialog._refresh_theme_colors`와 동일 —
+        # 섹션 제목 라벨("생성할 대상"·"SVG 코드"·"생성 후보")과 "전체선택" 체크박스도
+        # 글꼴만 지정하는 QSS가 걸려 있어 팔레트만 바뀌어선 재폴리시가 안 된다(사용자
+        # 재현: "처음 열면 잘 보이는데, 테마를 바꾸고 다시 열면 배경색과 같아져 안 보인다").
+        self._prompt_title.setStyleSheet(_SECTION_TITLE_QSS)
+        self._code_title.setStyleSheet(_SECTION_TITLE_QSS)
+        self._candidates_title.setStyleSheet(_SECTION_TITLE_QSS)
+        self._select_all_check.setStyleSheet("font-size:11px;")
+        # [실사용 피드백 2026-08-26 4차] 같은 이유 — "+" 첨부 버튼·설정 버튼·프롬프트
+        # 복사 버튼·저장 버튼도 생성 시점의 아이콘/색이 박제돼 있었다(스크린샷 실측).
+        self._attach_btn.setStyleSheet(_attach_button_qss(_current_icon_color().name()))
+        self._settings_btn.setIcon(_act_icon("settings"))
+        self._copy_prompt_btn.setIcon(_act_icon("copy"))
+        self._save_symbols_btn.setIcon(_act_icon("save"))
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -2634,6 +2698,7 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         if getattr(self, "_theme_colors_dark", None) != dark_now:
             self._theme_colors_dark = dark_now
             self._refresh_theme_colors()
+            _sync_native_titlebar(self)   # [실사용 재보고 2026-08-26 2차] 이유는 `_MermaidDialog.showEvent` 참조.
 
     def _on_code_changed(self):
         """SVG 코드칸이 항상 최종 소스 — Mermaid `_edit`와 동일 관례. 후보 클릭이든 직접

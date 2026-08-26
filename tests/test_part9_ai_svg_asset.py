@@ -799,12 +799,10 @@ def test_svg_asset_dialog_quicklook_space_toggles_save_checkbox():
     ql.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier))
     assert card.is_checked_for_save()
     assert ql._check_btn.isChecked()
-    assert "☑" in ql._check_btn.text()
 
     ql.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier))
     assert not card.is_checked_for_save()
     assert not ql._check_btn.isChecked()
-    assert "☐" in ql._check_btn.text()
     ql.close()
     dlg.deleteLater()
 

@@ -508,17 +508,49 @@ def _light_palette() -> QPalette:
     return p
 
 
+def _set_hwnd_dark_titlebar(hwnd: int, dark: bool) -> None:
+    """[실사용 재보고 2026-08-26 2차] `DwmSetWindowAttribute`는 HRESULT 성공을 반환해도
+    (2026-08-13에도, 이번에도 실측 확인) 그 뒤 `SWP_FRAMECHANGED`만으로는 타이틀바가 그
+    자리에서 다시 그려지지 않을 수 있다 — 반면 사용자가 반복 보고한 "창 크기를 조절하면
+    반영된다"는 관찰은 두 방향(다크→라이트/라이트→다크) 재현 모두에서 사실이었다. 그
+    사실을 그대로 흉내낸다 — 속성을 설정한 뒤 세로 1px를 늘렸다 즉시 되돌리는 **진짜
+    리사이즈**를 강제로 한 번 일으킨다(`SetWindowPos` 2회, `SWP_FRAMECHANGED` 단독보다
+    신뢰도가 높다 — 육안 1px 깜빡임은 사실상 감지 불가). 속성 id는 Windows 버전별로
+    20(1903 20H1+)/19(그 이전 인사이더 빌드) 두 가지라 20 실패 시 19로 폴백."""
+    import ctypes
+    from ctypes import wintypes
+    dwmapi = ctypes.windll.dwmapi
+    user32 = ctypes.windll.user32
+    DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+    DWMWA_USE_IMMERSIVE_DARK_MODE_OLD = 19
+    value = ctypes.c_int(1 if dark else 0)
+    hr = dwmapi.DwmSetWindowAttribute(
+        hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
+    if hr != 0:
+        dwmapi.DwmSetWindowAttribute(
+            hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, ctypes.byref(value), ctypes.sizeof(value))
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return
+    width, height = rect.right - rect.left, rect.bottom - rect.top
+    SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE = 0x0002, 0x0004, 0x0010
+    flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
+    user32.SetWindowPos(hwnd, 0, 0, 0, width, height + 1, flags)
+    user32.SetWindowPos(hwnd, 0, 0, 0, width, height, flags)
+
+
 def _apply_native_titlebar_scheme(dark: bool) -> None:
     """[2026-08-13 피드백] Windows 네이티브 창 프레임(OS 타이틀바)은 `QPalette`가 못 닿는
-    영역이라, 클라이언트 영역을 다크로 칠해도 타이틀바만 흰색으로 튄다. ctypes로 DWM
-    (`DWMWA_USE_IMMERSIVE_DARK_MODE`/`DWMWA_CAPTION_COLOR`)을 직접 찔러본 시도 3종은 전부
-    HRESULT 성공을 반환하고도 실제 창에서 시각 변화가 없었다(이 환경의 원격 화면 캡처가
-    DWM 합성 효과를 못 잡는 것으로 추정 — 검증 자체가 이 환경에서 막힘). 대신 Qt 6.5+가
-    제공하는 앱 전역 `styleHints().colorScheme()`을 쓴다 — 이건 Qt 자신이 내부적으로 같은
-    DWM API를 호출해 신규·기존 창(다이얼로그 포함) 전체에 자동 반영하므로, 창마다 개별
-    ctypes 호출을 걸 필요가 없다(macOS·구버전 Qt·Windows 10 구버전에서도 안전하게 무시됨).
-    호출 시점: `_apply_theme`가 항상 다이얼로그 생성보다 먼저 실행되므로(앱 초기화 시
-    1회 + 테마 토글마다) 여기 한 곳만 갱신하면 충분."""
+    영역이라, 클라이언트 영역을 다크로 칠해도 타이틀바만 흰색으로 튄다. Qt 6.5+가 제공하는
+    앱 전역 `styleHints().colorScheme()`을 우선 걸어둔다(신규 창에 대한 최선의 기본값,
+    macOS·구버전 Qt·Windows 10 구버전에서도 안전하게 무시됨). 그 뒤 Windows에서는
+    `_set_hwnd_dark_titlebar`로 **그 순간 열려 있는 모든 창**의 타이틀바를 직접 확정한다
+    (`_apply_theme`가 항상 앱 초기화 시 1회 + 테마 토글마다 이 함수를 부른다).
+
+    ⚠ 이 함수는 "호출되는 그 순간 열려 있던 창"만 훑는다 — 그 뒤에 새로 열리거나
+    (토글 이후 처음 여는 생성창) 다시 보여지는(인스턴스 재사용 다이얼로그) 창은 이 루프가
+    끝난 뒤에야 존재하므로 못 잡는다. 그런 창은 `_sync_native_titlebar`(아래)를 자기
+    `showEvent`에서 불러 스스로 챙겨야 한다."""
     app = QApplication.instance()
     if app is None:
         return
@@ -527,22 +559,42 @@ def _apply_native_titlebar_scheme(dark: bool) -> None:
             Qt.ColorScheme.Dark if dark else Qt.ColorScheme.Light)
     except Exception:
         pass
-    # [실사용 피드백 2026-08-26] 위 호출로 DWM 쪽 속성 자체는 바뀌지만, Windows가 타이틀
-    # 바를 그 순간 바로 다시 그려주지는 않아(창 크기를 조절해야만 반영되던 실사용 보고)
-    # — SWP_FRAMECHANGED로 비클라이언트 영역(타이틀바) 재계산만 강제한다(크기·위치·
-    # z-order는 그대로, 실제 리사이즈 없이 "다시 그려라"만 알림).
-    if sys.platform == "win32":
+    if sys.platform != "win32":
+        return
+    try:
+        windows = [w for w in app.topLevelWidgets() if w.isVisible()]
+    except Exception:
+        return
+    # [실사용 피드백 2026-08-26] 창이 여러 개(생성창 포함) 열려 있을 때 하나의
+    # `winId()`/DWM 호출이 실패해도 나머지 창까지 통째로 건너뛰지 않도록 창별로 개별 try.
+    for w in windows:
         try:
-            import ctypes
-            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER = 0x0002, 0x0001, 0x0004
-            SWP_FRAMECHANGED = 0x0020
-            flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
-            for w in app.topLevelWidgets():
-                if w.isVisible():
-                    ctypes.windll.user32.SetWindowPos(
-                        int(w.winId()), 0, 0, 0, 0, 0, flags)
+            _set_hwnd_dark_titlebar(int(w.winId()), dark)
         except Exception:
             pass
+
+
+def _sync_native_titlebar(widget) -> None:
+    """[실사용 재보고 2026-08-26 2차] "다크로 켜고 라이트로 바꾼 뒤(또는 반대) 생성창을
+    새로 열면 그 생성창만 이전 테마로 남는다"는 재현 — `_apply_native_titlebar_scheme`가
+    토글 시점에 존재하던 창만 훑기 때문에, 그 뒤에 새로 열리거나(Mermaid/SVG 생성창을
+    토글 후 처음 염) 다시 보여지는(2026-08-25부터 인스턴스 재사용 관례) 창은 통째로
+    빠진다. 생성창들의 `showEvent`에서 이 함수를 불러 자기 자신의 타이틀바만 그 순간의
+    실제 테마(메인 창 `_dark`)로 맞춘다."""
+    if sys.platform != "win32":
+        return
+    app = QApplication.instance()
+    if app is None:
+        return
+    dark = True
+    for w in app.topLevelWidgets():
+        if hasattr(w, "_dark"):
+            dark = bool(w._dark)
+            break
+    try:
+        _set_hwnd_dark_titlebar(int(widget.winId()), dark)
+    except Exception:
+        pass
 
 
 # [Phase 6 M1] 속성 패널 표시용 — 아이템 클래스명 → 한글 종류, 펜 스타일 → 한글.
