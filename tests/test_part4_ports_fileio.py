@@ -451,6 +451,38 @@ def test_dxf_import_roundtrip():
 
 
 
+def test_dxf_roundtrip_preserves_bidirectional_and_headless_arrows():
+    # [최종 검수 Phase 4, 2026-08-26] 옛 `_match_head`(단수)는 샤프트당 tip을 1개만
+    # 소비해 양방향 화살표(둘 다 촉)의 시작쪽 촉이 DXF 왕복마다 조용히 사라지고,
+    # 화살촉 없음(둘 다 무촉)은 남의 tip을 잘못 주워 촉이 생겨나던 버그. 4개 상태
+    # (양쪽/끝만/시작만/없음) 전부가 곡선·직선·직교 화살표 셋 다에서 정확히 복원되는지 검증.
+    from PyQt6.QtWidgets import QGraphicsScene
+    from easycad.fileio.dxf_import import import_dxf
+
+    combos = [(True, True), (True, False), (False, True), (False, False)]
+    sc = QGraphicsScene()
+    for i, (end, start) in enumerate(combos):
+        a = _ArrowItem(QColor("#ff112233"), 2.0, end, start)
+        a.set_points(QPointF(i * 200, 0), QPointF(i * 200 + 100, 0))
+        sc.addItem(a)
+        s = _PolyArrowItem(QColor("#ff445566"), 2.0, end, start)
+        s._pts = [QPointF(i * 200, 300), QPointF(i * 200 + 50, 300), QPointF(i * 200 + 100, 300)]
+        sc.addItem(s)
+
+    path = os.path.join(_TMP, "roundtrip_arrow_heads.dxf")
+    assert export_dxf(sc, path)
+    sc2 = QGraphicsScene()
+    import_dxf(sc2, path)
+
+    got_arrow = {round(it.mapToScene(it._p1).x()): (it._head_at_end, it._head_at_start)
+                 for it in sc2.items() if isinstance(it, _ArrowItem)}
+    got_sarrow = {round(it._pts[0].x()): (it._head_at_end, it._head_at_start)
+                  for it in sc2.items() if isinstance(it, _PolyArrowItem)}
+    want = {i * 200: combo for i, combo in enumerate(combos)}
+    assert got_arrow == want, got_arrow
+    assert got_sarrow == want, got_sarrow
+
+
 def test_dxf_import_external_fallback():
     # 임의 외부 DXF(우리 레이어 관례 없음) → dxftype 폴백으로 손실 매핑(LINE·CIRCLE·TEXT).
     from PyQt6.QtWidgets import QGraphicsScene

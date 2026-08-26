@@ -226,28 +226,38 @@ def _line_item(e):
     return _flag(it)
 
 
-def _match_head(p_start, p_end, tips) -> bool:
-    """화살촉 tip 목록에서 이 샤프트에 가장 가까운 tip을 소비, head_at_end 반환.
+def _match_heads(p_start, p_end, tips) -> tuple[bool, bool]:
+    """화살촉 tip 목록에서 이 샤프트의 시작/끝점에 정확히 얹힌 tip을 각각 독립적으로
+    소비해 (head_at_start, head_at_end)를 복원한다.
 
-    export는 화살촉 tip을 끝점에 정확히 얹으므로 최근접이 곧 그 화살표의 촉이다.
-    tip이 없으면 기본 True(끝쪽 촉).
-    """
+    [최종 검수 Phase 4, 2026-08-26 버그 수정] 옛 `_match_head`(단수)는 샤프트 하나당
+    tip을 딱 1개만 globally-nearest로 소비했다 — 양방향 화살표(2026-08-21 신설)는
+    tip이 2개(시작·끝) 나오는데 한쪽만 소비되고 남은 tip은 이후 무관한 다른 화살표
+    매칭에 잘못 쓰이거나 그대로 버려져, DXF 왕복마다 양방향 화살표의 시작쪽 촉이
+    조용히 사라지고 있었다(실측 재현 확인, 계획서가 "미검증"으로 남겨뒀던 항목).
+    export가 tip을 샤프트 끝점에 정확히 얹으므로(같은 `_w()`/`_uf()` 변환의 부동소수
+    오차만 있고, 우리 export 파일은 `_compute_import_scale`이 재스케일을 skip해 배율도
+    1.0) 양 끝점 각각 좁은 허용오차로 독립 매칭하면 근사 없이 정확히 구분된다 — 화살촉
+    없음(tip 0개)·한쪽만·양쪽 다 전부 올바르게 복원. tips가 아예 비어 있으면(외부 DXF·
+    손편집 등, EC_ARROW/EC_SARROW 레이어인데 촉 폴리라인이 하나도 없는 경우) 기존
+    관례대로 기본 머리 하나(head_at_end=True)로 폴백한다."""
     if not tips:
-        return True
-    best_i, best_d, best_end = None, None, True
-    for i, tp in enumerate(tips):
-        ds = _dist2(tp, p_start)
-        de = _dist2(tp, p_end)
-        d = min(ds, de)
-        if best_d is None or d < best_d:
-            best_d, best_i, best_end = d, i, bool(de <= ds)   # np.bool_ → 파이썬 bool
-    tips.pop(best_i)
-    return best_end
+        return False, True
+    TOL2 = 1e-4   # 정확 일치 판정(양쪽 다 같은 변환을 거친 값이라 사실상 부동소수 오차뿐)
+
+    def _consume_near(pt) -> bool:
+        for i, tp in enumerate(tips):
+            if _dist2(tp, pt) <= TOL2:
+                tips.pop(i)
+                return True
+        return False
+
+    return _consume_near(p_start), _consume_near(p_end)
 
 
-def _arrow_from_spline(e, head_at_end: bool):
+def _arrow_from_spline(e, head_at_end: bool, head_at_start: bool = False):
     cps = [_uf(p[0], p[1]) for p in e.control_points]
-    it = _ArrowItem(_color(e), _width_of(e, 2.0), head_at_end)
+    it = _ArrowItem(_color(e), _width_of(e, 2.0), head_at_end, head_at_start)
     it.set_points(QPointF(*cps[0]), QPointF(*cps[-1]))
     if len(cps) >= 4:
         it._ctrl1 = QPointF(*cps[1])
@@ -258,10 +268,10 @@ def _arrow_from_spline(e, head_at_end: bool):
     return _flag(it)
 
 
-def _arrow_from_line(e, head_at_end: bool):
+def _arrow_from_line(e, head_at_end: bool, head_at_start: bool = False):
     s = _uf(e.dxf.start.x, e.dxf.start.y)
     t = _uf(e.dxf.end.x, e.dxf.end.y)
-    it = _ArrowItem(_color(e), _width_of(e, 2.0), head_at_end)
+    it = _ArrowItem(_color(e), _width_of(e, 2.0), head_at_end, head_at_start)
     it.set_points(QPointF(*s), QPointF(*t))
     st = _style_of(e)               # [M2 #3] 몸통 선스타일 복원
     if st is not None:
@@ -269,8 +279,8 @@ def _arrow_from_line(e, head_at_end: bool):
     return _flag(it)
 
 
-def _sarrow_item(pts, e, head_at_end: bool):
-    it = _PolyArrowItem(_color(e), _width_of(e, 2.0), head_at_end)
+def _sarrow_item(pts, e, head_at_end: bool, head_at_start: bool = False):
+    it = _PolyArrowItem(_color(e), _width_of(e, 2.0), head_at_end, head_at_start)
     it._pts = [QPointF(x, y) for x, y in pts]
     st = _style_of(e)               # [M2 #3] 몸통 선스타일 복원
     if st is not None:
@@ -686,21 +696,21 @@ def _ingest_modelspace(scene, msp) -> int:
         else:
             _ingest(e)
 
-    # 화살표(곡선/직선) — 화살촉 tip으로 head 방향 복원.
+    # 화살표(곡선/직선) — 화살촉 tip으로 head 방향(시작·끝 독립) 복원.
     for e in arrow_shafts:
         if e.dxftype() == "SPLINE":
             cps = [_uf(p[0], p[1]) for p in e.control_points]
-            head = _match_head(cps[0], cps[-1], arrow_head_tips)
-            built.append(_arrow_from_spline(e, head))
+            head_start, head_end = _match_heads(cps[0], cps[-1], arrow_head_tips)
+            built.append(_arrow_from_spline(e, head_end, head_start))
         else:
             s = _uf(e.dxf.start.x, e.dxf.start.y)
             t = _uf(e.dxf.end.x, e.dxf.end.y)
-            head = _match_head(s, t, arrow_head_tips)
-            built.append(_arrow_from_line(e, head))
+            head_start, head_end = _match_heads(s, t, arrow_head_tips)
+            built.append(_arrow_from_line(e, head_end, head_start))
     # 직교(꺾은선) 화살표.
     for pts, e in sarrow_shafts:
-        head = _match_head(pts[0], pts[-1], sarrow_head_tips)
-        built.append(_sarrow_item(pts, e, head))
+        head_start, head_end = _match_heads(pts[0], pts[-1], sarrow_head_tips)
+        built.append(_sarrow_item(pts, e, head_end, head_start))
     # 번호 배지(원+텍스트).
     built.extend(_build_badges(badge_circles, badge_texts))
     # 펜 경로.
