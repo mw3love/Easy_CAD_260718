@@ -112,7 +112,7 @@ superpowers 플러그인의 `requesting-code-review`와는 별개이며, superpo
 |---|---|---|
 | 강점 | 정확성 버그·중복/단순화·효율에 특화. **`path` 타겟 지원** → PR 없이 모듈 단위 실행 가능. effort 조절(low~max) | `docs/pitfalls.md` 12계열 재발 패턴·히스토리 맥락을 아는 유일한 경로 |
 | 약점 | 이 프로젝트의 재발 함정을 모른다(일반 리뷰어라 pitfalls.md를 안 읽음) | 정확성 버그 탐지를 사람 눈으로 재발명 — 느리고 누락 위험 |
-| 배치 | **Phase 2~4**(모듈별 1차 스캔) | **Phase 5~6**(함정 재발 감사 + Not-tested 트리아지) |
+| 배치 | ~~Phase 2~4~~ **Phase 2~3만**(모듈별 1차 스캔) | **Phase 4~6**(경계 코드리뷰 + 함정 재발 감사 + Not-tested 트리아지) |
 
 **`path` 타겟이 핵심이다** — 이 리포는 PR 없이 master에 직접 커밋하는 워크플로라 "현재 diff"가
 비어 있다. `/code-review high <파일경로>` 형태로 모듈을 지정해야 동작한다.
@@ -123,6 +123,14 @@ superpowers 플러그인의 `requesting-code-review`와는 별개이며, superpo
 **`ultra`(멀티에이전트 클라우드)** — Phase 7에서 **선택적으로만** 고려한다. ⓐ 사용자가 직접
 트리거해야 하고 과금되며 Claude가 대신 실행할 수 없다. ⓑ 브랜치 diff 기준이 기본이라 이
 워크플로와 잘 안 맞는다. Phase 2~6을 다 닫은 뒤에도 불안이 남으면 그때 판단.
+
+⚠ **2026-08-26 방침 변경 — Phase 4부터 `code-review` 스킬 사용 중단.** Phase 2~3을 실제로
+`code-review high`(백그라운드 fork 포함)로 돌려보니 서브에이전트 호출량이 사용자 요금제
+대비 감당이 안 됨을 확인(같은 이유로 `superpowers` 플러그인은 이미 완전 삭제, 2026-08-26).
+전역 설정에 `skillOverrides: {"code-review": "user-invocable-only"}`를 걸어 **자동 트리거는
+막되 수동 `/code-review` 호출 자체는 남겨둠**(나중에 저부담 effort로 국소 사용할 옵션은
+유지). **Phase 4~6은 이 계획서 최초 배치대로(자체 진행) 그대로 진행** — 표만 실제와
+일치하도록 갱신, Phase 4 실행 방식은 아래 체크리스트 참조.
 
 ---
 
@@ -345,9 +353,13 @@ core_view.py 3건 반영 커밋). 전체 스위트 1005종(신규 4종 포함) �
 svg_import 309 · mermaid_import 292 · sketch_build 212 · symbol_library 173) ·
 `ai/`(gateway 379 · text_to_mermaid 87 · text_to_svg 85)
 
-- [ ] `/code-review high easycad/fileio/`
-- [ ] `/code-review high easycad/ai/`
-- [ ] **중점 축**:
+- [ ] **자체 진행**(2026-08-26부로 `code-review` 스킬 미사용, §1 방침 변경 참조) —
+      Read/Grep으로 파일별 직접 정독
+- [ ] **일반 정확성·중복/단순화·효율 스캔** — `code-review` 스킬이 자동으로 하던 역할을
+      수동으로 대체: 각 파일을 끝까지 읽으며 로직 오류·중복 코드·불필요한 복잡도·비효율
+      패턴을 직접 찾는다(Phase 2~3에서 스킬이 찾아낸 findings 유형 — 캐시 무효화 누락,
+      identity 비교 오판, 중복 스캔 — 을 참고 기준으로 삼는다)
+- [ ] **중점 축**(도메인 특화, 스킬 사용 여부와 무관하게 항상 유효했던 항목):
       - **왕복 무손실성** — `.ecad` 저장→열기, DXF 내보내기→가져오기에서 잃는 필드
         (알려진 미검증: 화살촉 개수 `head_start` 보존 여부)
       - **하위호환** — 옛 `.ecad`가 지금 코드로 열리는지(스키마가 여러 번 확장됨:
@@ -414,7 +426,11 @@ svg_import 309 · mermaid_import 292 · sketch_build 212 · symbol_library 173) 
 - [ ] **릴리스 준비**: PyInstaller 스펙(원 계획서 Phase 0 미실행분) · README 최신화 ·
       `requirements.txt` 버전 고정 여부 · `__version__` 상향 + git 태그
 - [ ] `doc-sync`로 CLAUDE.md·계획서 최종 동기화
-- [ ] (선택) `/code-review ultra` 최종 1회 — 사용자 트리거·과금 · Phase 2~6 종료 후 판단
+- [ ] **마감 전 자체 최종 diff 검토** — `git diff v0.1.0..HEAD`(기준 태그~현재 전체 누적
+      변경)를 자체 정독해, Phase 2~6이 파일·모듈 단위로 나눠 봐서 놓쳤을 수 있는 교차
+      파일 상호작용·일관성 문제를 마지막에 한 번 더 확인(§1 방침 변경으로 `/code-review
+      ultra` 대체 — subagent 비용 없이 같은 "최종 광역 점검" 목적 수행. 국소적으로
+      `/code-review low <경로>`가 필요하면 그건 여전히 수동 호출 가능하니 그때 판단)
 
 **완료 기준(실조건)**: 전체 스위트 exit 0 · 실사용 시나리오표 사용자 통과 · 태그된 릴리스.
 
@@ -472,3 +488,16 @@ Phase 1은 우선순위가 가장 높지만 **차단 조건은 아니다** — �
   리뷰 3~4회 재시도) 매번 재시도해 findings를 확보했고, 미완료 취합은 전부 폐기하고
   재실행분만 신뢰(전역 규칙 11-c 원칙 적용). 다음: 커밋+push → Phase 4(fileio·ai
   경계 코드리뷰, 데이터 손실 리스크 최상).
+- **2026-08-26 (후속)** — **방침 변경: Phase 4부터 `code-review` 스킬 미사용**. Phase 2~3
+  실사용 결과 서브에이전트 호출량이 사용자 요금제로 감당 안 됨을 확인(같은 판단으로
+  `superpowers` 플러그인도 완전 삭제). 전역 `~/.claude/settings.json`에
+  `skillOverrides: {"code-review": "user-invocable-only"}` 설정(자동 트리거만 차단,
+  수동 `/code-review` 호출 옵션은 유지). §1 표·Phase 4 체크리스트를 실제 방침대로
+  갱신(코드 변경 없음, 계획서 동기화만). Phase 4는 자체 진행(Read/Grep 정독 +
+  `docs/pitfalls.md` 대조)으로 착수.
+- **2026-08-26 (후속 2)** — Phase 4 체크리스트에 "일반 정확성·중복/단순화·효율 스캔"
+  항목 추가(code-review 스킬이 자동으로 하던 역할의 수동 대체 명시). Phase 5·6은
+  원래부터 자체 진행 전제라 변경 없음(문서 전체 grep으로 확인). Phase 7의
+  `(선택) /code-review ultra` 최종 점검 항목을 **삭제**하고 "마감 전 자체 최종 diff
+  검토"(`git diff v0.1.0..HEAD` 정독)로 대체 — 같은 "최종 광역 점검" 목적을 subagent
+  비용 없이 수행.
