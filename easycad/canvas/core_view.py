@@ -6,6 +6,7 @@
 import heapq
 import io
 import math
+import os
 import struct
 import uuid
 
@@ -39,10 +40,16 @@ from easycad.canvas.core_constants import *  # noqa: F401,F403
 from easycad.canvas.core_shapes import *  # noqa: F401,F403
 
 # [임시 진단 로그 2026-08-10, 재투입] EXTEND 실사용 재현 원인 찾기용 — 사용자 요청 전엔 제거 금지.
+# [2026-08-26 최종 검수 Phase 7] 기본 무조건 기록이 매 reroute()마다 파일을 열어써(펜테스트
+# 1회로 64MB) 실사용·pytest 성능을 갉아먹고 있었다 — EASYCAD_DEBUG 환경변수 게이트 신설,
+# 미설정 시 완전 무비용(os.environ.get 1회 조회 후 조기 return).
 _DBG_LOG_PATH = r"C:\Users\minwoo\Desktop\PasteFlow\easycad_debug.log"
+_DBG_ENABLED = bool(os.environ.get("EASYCAD_DEBUG"))
 
 
 def _dbg(msg: str) -> None:
+    if not _DBG_ENABLED:
+        return
     try:
         import datetime
         with open(_DBG_LOG_PATH, "a", encoding="utf-8") as f:

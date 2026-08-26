@@ -1,2 +1,15 @@
-PyQt6
-# Phase 3(DXF 상호운용)에서 추가 예정: ezdxf
+# 핵심 — 캔버스·PDF(QtPrintSupport)·SVG(QtSvg) 전부 이 패키지 하나에 포함.
+PyQt6>=6.10
+
+# DXF 상호운용(가져오기/내보내기/DWG 자동변환 — ODA 애드온은 이 안에 내장, 외부 exe는
+# 사용자가 별도 설치). easycad/fileio/dxf_import.py·dxf_export.py.
+ezdxf>=1.4
+
+# AI 게이트웨이(Mindlogic) — Mermaid/SVG 생성·AI 이미지→도면. easycad/ai/gateway.py.
+# 앱의 다른 기능(그리기·PDF·DXF)은 이 둘 없이도 정상 동작한다(AI 메뉴만 비활성 아님 —
+# 호출 시점에만 필요, gateway.py가 openai ImportError는 잡지만 httpx는 안 잡으므로 함께 명시).
+openai>=2.36
+httpx>=0.28
+
+# 클립보드 이미지 붙여넣기·SVG 에셋 대체 도형 리스케일 등에서 사용. easycad/fileio/*.
+Pillow>=12.1

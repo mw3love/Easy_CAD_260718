@@ -30,7 +30,7 @@ from easycad.canvas.annotator_core import (
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data, _dbg2,
-    _GroupBindProxy, _group_members,
+    _DBG_ENABLED2, _GroupBindProxy, _group_members,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -281,14 +281,20 @@ class _CanvasMixin:
                             return sh in moved
                         # [code-review 2026-08-26] 이 값들을 f-string 안에서 다시 호출하면
                         # 그룹 바인딩 끝(_GroupBindProxy)마다 _group_members()(scene 전체
-                        # 선형스캔)가 한 번 더 돈다 — _dbg2()는 이 PC엔 없는 경로에 쓰다
-                        # except로 조용히 실패해 로그 자체는 무의미한데 그 비용만 매번 낸다.
-                        # 위에서 이미 구한 값을 재사용해 중복 호출을 없앤다.
+                        # 선형스캔)가 한 번 더 돈다 — 위에서 이미 구한 값을 재사용해 중복
+                        # 호출을 없앤다.
+                        # [최종 검수 Phase 7, 2026-08-26] 위 정리에도 f-string 자체(특히
+                        # `[id(m) for m in moved]` — moved 전체를 순회)는 여전히 화살표마다
+                        # 무조건 조립되고 있었다. 1000개 문서 전체선택 드래그에서 이 한 줄이
+                        # `id()` 250만+회 호출의 근원이었다(123.8ms 문서화 기준 대비 351ms로
+                        # 재측정 악화) — EASYCAD_DEBUG 게이트 뒤로 옮겨 미설정 시 완전히
+                        # 건너뛴다.
                         s0_moved, s1_moved = _bound_moved(s0), _bound_moved(s1)
                         skip = not s0_moved and not s1_moved
-                        _dbg2(f"[canvas] gate arrow#{id(it)} s0={type(s0).__name__}#{id(s0)} "
-                              f"s1={type(s1).__name__}#{id(s1)} s0_in_moved={s0_moved} "
-                              f"s1_in_moved={s1_moved} moved_ids={[id(m) for m in moved]} skip={skip}")
+                        if _DBG_ENABLED2:
+                            _dbg2(f"[canvas] gate arrow#{id(it)} s0={type(s0).__name__}#{id(s0)} "
+                                  f"s1={type(s1).__name__}#{id(s1)} s0_in_moved={s0_moved} "
+                                  f"s1_in_moved={s1_moved} moved_ids={[id(m) for m in moved]} skip={skip}")
                         if skip:
                             continue
                     it.reroute(pin_pred=self._make_pin_pred(it), fast=many_changed,

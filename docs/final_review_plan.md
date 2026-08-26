@@ -456,23 +456,87 @@ svg_import 309 · mermaid_import 292 · sketch_build 212 · symbol_library 173) 
 
 ---
 
-### Phase 7 — 수정 반영 · 릴리스 준비 · 마감
+### Phase 7 — 수정 반영 · 릴리스 준비 · 마감 — **구현 완료(2026-08-26), 실사용 검증 대기**
 
-- [ ] Phase 2~6의 **채택 findings 반영** — 건마다 회귀 테스트 동반 (전역 규칙 8: surgical)
-- [ ] 반영 후 **전체 스위트 재실행**(Phase 1에서 복구된 상태로) + `perf_baseline_check.py`로
-      시각·기하 지문 무회귀 확인 + `perf_bench.py`로 Phase 1 베이스라인 대비 성능 무회귀
-- [ ] **진단 로그(`_dbg`/`_dbg2`) 처리 결정** — 유지 / 환경변수 게이트 / 제거 (사용자 승인 필요)
-- [ ] **죽은 코드 보고**(제거는 별건 — 전역 규칙 8: 기존 dead code는 보고만)
-- [ ] **릴리스 준비**: PyInstaller 스펙(원 계획서 Phase 0 미실행분) · README 최신화 ·
-      `requirements.txt` 버전 고정 여부 · `__version__` 상향 + git 태그
-- [ ] `doc-sync`로 CLAUDE.md·계획서 최종 동기화
-- [ ] **마감 전 자체 최종 diff 검토** — `git diff v0.1.0..HEAD`(기준 태그~현재 전체 누적
-      변경)를 자체 정독해, Phase 2~6이 파일·모듈 단위로 나눠 봐서 놓쳤을 수 있는 교차
-      파일 상호작용·일관성 문제를 마지막에 한 번 더 확인(§1 방침 변경으로 `/code-review
-      ultra` 대체 — subagent 비용 없이 같은 "최종 광역 점검" 목적 수행. 국소적으로
-      `/code-review low <경로>`가 필요하면 그건 여전히 수동 호출 가능하니 그때 판단)
+- [x] Phase 2~6의 **채택 findings 반영** — 전부 발견 즉시 반영해 옴(Phase 2~6 각 절 참조),
+      Phase 7 시작 시점에 일괄 반영 대상 없음(원안 대비 방침 변경, §1 참조)
+- [x] **전체 스위트 재실행** — `pytest tests/` 1018종 exit 0(이 Phase에서 3회 재확인,
+      마지막은 진단 로그 게이트 수정 반영 후). `perf_baseline_check.py`는 **Phase 1
+      베이스라인 파일 자체가 로컬 전용(`.gitignore` 대상)이라 이 세션엔 없어 새 기준선을
+      저장**(`save`, `perf_1000.ecad` 기준) — Phase 1과의 직접 비교는 불가, 앞으로의
+      회귀만 잡는다. `perf_bench.py`는 아래 항목에서 실제로 회귀를 잡아냈다.
+- [x] **성능 회귀 발견·수정(원안에 없던 항목, 이 Phase에서 발견)** — Phase 1이 관찰만
+      해두고 넘긴 "1000개 문서 전체선택 드래그가 문서화된 123.8ms보다 훨씬 나쁘다"(§3
+      Phase 1 참조)를 `perf_1000.ecad`로 재현: `perf_bench.py` 실측 2224ms(x18 초과).
+      cProfile로 원인 확정 — `_dbg2`(core_shapes.py `reroute()`) 진단 로그가 **매
+      reroute() 호출마다 무조건 파일을 열어쓰고**(pytest 1회로 `easycad_debug_shapes.log`
+      64MB), `host_canvas.py._on_scene_changed`의 게이트 로그 한 줄은 화살표 후보마다
+      `[id(m) for m in moved]`(선택 전체 순회)를 무조건 f-string으로 조립하고 있었다 —
+      로깅이 꺼져 있어도(호출 자체가 무조건) 비용은 그대로 났다. `EASYCAD_DEBUG`
+      환경변수 게이트를 `core_view._dbg`·`core_shapes._dbg2`·`host_canvas.py` 호출부
+      **셋 다**에 걸어 미설정 시 파일 I/O뿐 아니라 문자열 조립까지 완전히 건너뛰게 수정
+      (`core_shapes.py`·`core_view.py`·`host_canvas.py`, `os` import 추가 2곳,
+      `annotator_core.py` 재수출 경로로 `host_canvas.py`가 `_DBG_ENABLED2`를 가져오는
+      구조 — 처음엔 이 이름을 명시 import 목록에 안 넣어 `NameError`가 Qt 슬롯 안에서
+      네이티브 크래시(exit 127)로 샜다, 즉시 발견·수정). 결과: 1000개 전체선택 드래그
+      2224ms→**224ms**(1.8배 여전히 크지만 최악 규모는 해소), 20개 부분선택은
+      1764ms→590ms인데 이건 **버그가 아니라 2026-08-19에 사용자 요청으로 확정된 트레이드
+      오프**(코드 주석에 "밀집 문서 최악 385ms/프레임" 명시, 드래그 중 A* 실시간 재계산 —
+      되돌리려면 `defer`를 `is_drag_session()`으로) — `perf_plan_500_1000.md`의 66.2ms
+      최종표는 그 결정 4일 전 기록이라 지금은 낡은 비교 기준. 신규 코드 변경 없이 pytest
+      1018종 재통과 확인(순수 게이트 추가라 회귀 위험 낮음, 기존 스위트로 충분).
+- [x] **진단 로그(`_dbg`/`_dbg2`) 처리 결정** — 사용자 확인: **환경변수 게이트**(위 항목에
+      정확히 이 형태로 반영, 별도 작업 아님). `EASYCAD_DEBUG=1` 없으면 완전 무비용.
+- [x] **죽은 코드 보고**(제거 안 함) — `pyflakes easycad/`로 unused-import 계열 스캔.
+      wildcard-import 노이즈(`import *` 재수출 3파일) 제외 후 836줄 — `host_*.py`
+      11개 믹스인 파일에 집중(`host.py` 87·`host_undo.py` 86·`host_layers.py` 79·
+      `host_canvas.py` 78·`host_selection.py` 77·`host_style.py` 76·`host_context.py`
+      71·`host_fileio.py` 55·`host_widgets.py` 50·`host_ui.py` 45·`host_dialogs.py` 41,
+      `core_*.py` 3파일 84줄 별도). 근본 원인: 2026-08-02 host.py 분할 때 각 믹스인이
+      `annotator_core`의 공용 이름 목록을 통째로 복붙해 시작했고, 그중 자기 파일이 실제로
+      쓰는 것만 남기는 정리가 안 됨(Phase 3가 `host_fileio.py` 한 파일에서 이미 같은
+      계열 ~49개를 발견해 "규칙 8 보고만"으로 남긴 것과 동일 원인, 이번에 전체 규모를
+      확인). Import 외의 죽은 함수/클래스는 `vulture` 등 전용 도구가 미설치라 이번
+      스코프에서 별도 조사 안 함(설치·전수조사는 이 Phase 범위를 넘는 새 작업으로 판단).
+      **제거는 하지 않음** — 각 파일이 어떤 이름을 실제 안 쓰는지 개별 확인 없이 일괄
+      삭제하면 surgical 원칙 위반.
+- [x] **릴리스 준비**:
+      - `EasyCAD.spec`(신규) — PyInstaller onedir 빌드. **실제 빌드+실행까지 검증**
+        (`pyinstaller EasyCAD.spec`, 이 PC에 PySide6이 별도 설치돼 있어 Qt 바인딩 충돌로
+        1차 실패 → `excludes=['PySide6']`로 해결) — `dist/EasyCAD/EasyCAD.exe` 실행해
+        실제 창(오프스크린 아님)이 한글 텍스트·팔레트·메뉴 전부 정상 렌더함을 스크린샷
+        확인 후 프로세스 종료, 빌드 산출물은 정리(`.gitignore`가 `build/`·`dist/`
+        이미 배제). ⚠ **알려진 한계**(스펙 파일에 주석으로 기록, 코드는 안 고침):
+        `symbol_library.py._library_path()`가 `__file__` 기준 3단계 상위(리포 루트)를
+        계산해 frozen 빌드 폴더 구조에서는 엉뚱한 경로를 가리킨다 — "내 심볼" 기능이
+        frozen 빌드에서 깨짐(개발 실행엔 무영향). 고치려면 "frozen 빌드에서 심볼
+        라이브러리를 어디에 둘지" 새 설계 결정이 필요해 별도 deep-interview로 이관.
+      - `README.md` — 테스트 종수 고정 숫자(732/806, 스테일) 삭제(계속 느는 숫자를
+        문서에 고정하지 않는 원칙으로 교체), 도구 목록을 현재 단축키 1~7+T 구성으로,
+        로드맵 절을 "핵심 기능 전부 완료, 최종 검수 단계"로 갱신.
+      - `requirements.txt` — 실제 런타임 의존성(코드 grep으로 확인, 지연 import 포함)을
+        전수 반영: `PyQt6`(기존)·`ezdxf`(DXF, 지연 import라 누락돼 있었음)·`openai`+
+        `httpx`(AI 게이트웨이)·`Pillow`(이미지 처리). **최소버전(`>=`) 고정** — 정확한
+        버전 고정은 1인 개발 레포에 과도하다고 판단(추천), 이 세션 설치 버전 기준
+        `pip install -r requirements.txt --dry-run`으로 해석 가능함을 확인.
+      - `__version__` — `"0.1.0"` → `"0.2.0"`(minor, 사용자 확인). v0.1.0(2026-08-21)
+        이후 71커밋 누적(다중 페이지·마인드맵·그룹 프레임·AI SVG 에셋·단축키 설정 창·
+        양방향 화살촉 등 신기능 다수 + 이 최종검수 Phase 0~7) — `.ecad`/DXF 포맷은
+        계속 하위호환이라 breaking change 없음. **git 태그(`v0.2.0`)는 이 문서 커밋과
+        함께 아직 안 걸었다** — 사용자 push 확인 시점에 함께.
+- [x] `doc-sync`로 CLAUDE.md·계획서 최종 동기화 — 이 절 자체 + CLAUDE.md 이번 요약 갱신.
+- [x] **마감 전 자체 최종 diff 검토** — `git diff v0.1.0..HEAD`(53파일, +10,581/-802)를
+      독립 fork로 6개 축(병렬 후보목록 드리프트·`_content_rect()` 오용·`_scale_or_1()`
+      누락·진단로그 무비용 아닌 호출·그룹프레임/head_start/TRIM 기능 패리티·신규기능
+      테스트 비례성) 재검토. **새 발견 없음** — 위 진단로그 성능 회귀(이 Phase에서 이미
+      발견·수정한 바로 그 건)가 유일한 실 findings였고, 나머지는 전부 "이미 알려짐" 또는
+      "설계상 의도된 차이"로 확인. 상세 근거는 이 절 자체(fork 산출물은 대화 로그에만
+      남고 파일로는 저장 안 함 — 결론만 여기 반영).
 
-**완료 기준(실조건)**: 전체 스위트 exit 0 · 실사용 시나리오표 사용자 통과 · 태그된 릴리스.
+**완료 기준(실조건) — 부분 미충족**: 전체 스위트 exit 0 ✓ · 태그된 릴리스(버전 상향 완료,
+git 태그는 push 시점에) · **실사용 시나리오표 사용자 통과는 미확인** — `docs/user_test_
+scenarios.md`는 손맛·실기기 확인이 전제라 Claude가 대리 검증할 수 없다(전역 규칙 11-d).
+사용자가 실제로 훑어보기 전까지 이 항목은 "구현 완료"이지 "완료"가 아니다.
 
 ---
 

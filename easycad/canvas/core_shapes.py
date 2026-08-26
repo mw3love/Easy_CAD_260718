@@ -12,6 +12,7 @@ import contextlib
 import heapq
 import io
 import math
+import os
 import struct
 import uuid
 
@@ -47,10 +48,18 @@ from easycad.canvas.core_constants import *  # noqa: F401,F403
 # 처음엔 같은 파일을 썼다가, pytest 스위트(851종 다수가 CanvasWindow를 만들어 reroute()를
 # 태움) 실행 때마다 그 파일이 오염돼 사용자의 실제 재현 로그를 못 찾는 사고가 났다 — 반드시
 # 별도 파일. 사용자 요청 전엔 제거 금지.
+# [2026-08-26 최종 검수 Phase 7] 무조건 파일 I/O가 `reroute()`(밀집 도면 드래그 시 프레임당
+# 수백 회) 안에 있어 실사용·pytest 성능을 갉아먹고 있었다(1000개 문서 전체선택 드래그
+# 123.8ms→2224ms까지 악화, pytest 1회로 64MB 로그) — `core_view._dbg`와 같은 EASYCAD_DEBUG
+# 환경변수를 공유하는 게이트 신설. 호출부(`reroute()`)의 f-string도 게이트 뒤로 옮겨 미설정
+# 시 문자열 조립 비용까지 완전히 0으로 만든다(파일 I/O만 건너뛰면 이 조립 비용이 남는다).
 _DBG_LOG_PATH2 = r"C:\Users\minwoo\Desktop\PasteFlow\easycad_debug_shapes.log"
+_DBG_ENABLED2 = bool(os.environ.get("EASYCAD_DEBUG"))
 
 
 def _dbg2(msg: str) -> None:
+    if not _DBG_ENABLED2:
+        return
     try:
         import datetime
         with open(_DBG_LOG_PATH2, "a", encoding="utf-8") as f:
@@ -4452,8 +4461,9 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         if not self.has_binding():
             return False
         end_idx = len(self._pts) - 1
-        _dbg2(f"reroute() enter id={id(self)} end_idx={end_idx} pts={self._pts} "
-              f"auto_route={self._auto_route} pin_pred={'set' if pin_pred else 'none'}")
+        if _DBG_ENABLED2:
+            _dbg2(f"reroute() enter id={id(self)} end_idx={end_idx} pts={self._pts} "
+                  f"auto_route={self._auto_route} pin_pred={'set' if pin_pred else 'none'}")
         if pin_pred is None or (pin_pred(0) and pin_pred(end_idx)):
             sh0, sh1 = self._bound(0), self._bound(end_idx)
             pt0, pt1 = self._bind_pt(0), self._bind_pt(end_idx)
@@ -4478,17 +4488,22 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             sh = self._bound(idx)
             pt = self._bind_pt(idx)
             which = "TAIL(idx0)" if idx == 0 else "HEAD(end_idx)"
-            sh_desc = f"{type(sh).__name__}#{id(sh)}" + (f" kind={sh._kind}" if hasattr(sh, "_kind") else "")
+            sh_desc = None
+            if _DBG_ENABLED2:
+                sh_desc = f"{type(sh).__name__}#{id(sh)}" + (f" kind={sh._kind}" if hasattr(sh, "_kind") else "")
             if sh is None or pt is None or sh.scene() is None:
-                _dbg2(f"  {which} skip: sh={sh_desc} pt={pt} sh.scene()={None if sh is None else sh.scene()}")
+                if _DBG_ENABLED2:
+                    _dbg2(f"  {which} skip: sh={sh_desc} pt={pt} sh.scene()={None if sh is None else sh.scene()}")
                 continue
             if pin_pred is not None and not pin_pred(idx):
-                _dbg2(f"  {which} skip: pin_pred(idx)=False sh={sh_desc}")
+                if _DBG_ENABLED2:
+                    _dbg2(f"  {which} skip: pin_pred(idx)=False sh={sh_desc}")
                 continue
             target = self.mapFromScene(sh.mapToScene(pt))
             cur = self._pts[idx]
             moved_flag = abs(target.x() - cur.x()) > 1e-6 or abs(target.y() - cur.y()) > 1e-6
-            _dbg2(f"  {which} sh={sh_desc} cur={cur} target={target} moved={moved_flag} manual_ortho={manual_ortho}")
+            if _DBG_ENABLED2:
+                _dbg2(f"  {which} sh={sh_desc} cur={cur} target={target} moved={moved_flag} manual_ortho={manual_ortho}")
             if moved_flag:
                 # [M4-4 ⑦] 수동 직교 폴리라인(세그먼트 드래그 후)은 끝점을 따라가되 인접 정점을 함께
                 # 옮겨 첫/끝 변(스텁)을 직교로 유지한다(auto_route면 아래 _apply_routing이 통째로 재계산).
@@ -4500,7 +4515,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                                          else QPointF(nb.x(), target.y()))
                 self._set_endpoint(idx, target)
                 changed = True
-        _dbg2(f"reroute() exit id={id(self)} changed={changed} pts_after={self._pts}")
+        if _DBG_ENABLED2:
+            _dbg2(f"reroute() exit id={id(self)} changed={changed} pts_after={self._pts}")
         # [M4-4 ⑦] 자동 라우팅이면 라우팅 스타일대로 재계산(straight=2점 유지 / ortho=엘보 재계산).
         # 한쪽만 바인딩돼도(has_binding) 재적용해 도형 이동 시 직교가 깨지지 않게 한다
         # (_apply_routing이 양끝 바인딩=A*, 한쪽=단순 엘보로 분기). 수동 세그먼트 편집(auto_route
