@@ -1935,11 +1935,18 @@ class _AnnotatorView(QGraphicsView):
         [버그 수정 2026-08-25] `_conn_shapes()`와 동일한 회귀 — `parentItem() is None`으로
         고쳐 도형 중앙 라벨을 배제한다(자세한 경위는 `_conn_shapes()` 주석 참조). 이 함수가
         바로 `_hover_port_at`가 매 press마다 호출하는 실제 경로라 라벨 클릭이 도형 선택 대신
-        큐닷 드래그로 잘못 잡히던 버그의 진짜 원인은 여기였다."""
+        큐닷 드래그로 잘못 잡히던 버그의 진짜 원인은 여기였다.
+        [최종 검수 Phase 5, 2026-08-26 버그 수정] 닫힌 `_PolygonItem`이 빠져 있었다 —
+        `_conn_shapes()`는 §8 항목21 후속(2026-08-18)에서 포함하도록 고쳐졌는데 이 병렬
+        후보목록은 그때 같이 안 넓혀져, 다각형 도형은 `_border_snap_at`(화살표 그리기,
+        `_conn_shapes()`를 직접 씀)로는 붙일 수 있어도 select 도구 유휴 호버 예고점·
+        미선택 도형 큐닷 드래그(둘 다 이 함수를 거치는 `_hover_port_at`/`_port_dot_target`
+        경로)는 조용히 작동하지 않았다(`docs/pitfalls.md` "히트테스트·후보목록 누락" 참조)."""
         rect = QRectF(scene_pt.x() - margin, scene_pt.y() - margin, margin * 2, margin * 2)
         return [it for it in self.scene().items(rect)
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PathItem, _ImageItem))
-                or (isinstance(it, _TextItem) and it.parentItem() is None)]
+                or (isinstance(it, _TextItem) and it.parentItem() is None)
+                or (isinstance(it, _PolygonItem) and it._closed)]
 
     def _port_dot_target(self, scene_c):
         """[2026-08-03 분리 — _draw_port_dots·mouseMoveEvent 공용] 지금 커서 아래(또는 근처)

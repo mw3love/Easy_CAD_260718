@@ -328,6 +328,24 @@ def test_polygon_vertex_snaps_to_other_polygon_border():
     assert 145 <= snapped[0] <= 158 and 68 <= snapped[1] <= 82, snapped
 
 
+def test_polygon_appears_in_hover_port_candidates_near_cursor():
+    # [최종 검수 Phase 5, 2026-08-26] `_conn_shapes()`(전체스캔)는 §8 항목21 후속
+    # (2026-08-18)에서 닫힌 다각형을 포함하도록 고쳐졌는데, 병렬 후보목록인
+    # `_conn_shapes_near()`(select 도구 유휴 호버 예고점·미선택 도형 큐닷 드래그가 거치는
+    # 근접 후보 — `_hover_port_at`/`_port_dot_target`)는 그때 같이 안 넓혀져 있었다.
+    # 화살표 그리기(`_border_snap_at`)는 `_conn_shapes()`를 직접 써 영향이 없었지만, 이
+    # 근접 경로는 다각형을 계속 놓치고 있었다.
+    w = CanvasWindow(); w.show(); w.set_tool("polygon"); w._zoom_reset()
+    tri = _mk_triangle(w)
+    w.set_tool("select")
+    tri.setSelected(False)   # 미선택 도형 근접 호버(예고점) 경로만 대상 — 그린 직후는 선택돼 있음
+    view = w._view
+    center = QPointF(100, 50)   # 삼각형 (0,0)-(200,0)-(100,150) 내부
+    near = view._conn_shapes_near(center, 60.0)
+    assert tri in near, "닫힌 다각형이 근접 후보 목록에서 빠져 있음"
+    assert view._port_dot_target(center) is tri
+
+
 def test_polygon_open_polyline_is_snap_target_like_a_line():
     # 열린 폴리라인도 선/화살표처럼 몸통에 스냅돼야 한다.
     w = CanvasWindow(); w.show(); w.set_tool("polygon"); w._zoom_reset()
