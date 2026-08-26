@@ -848,9 +848,22 @@ def _detach_worker(worker: QThread | None) -> None:
     닫으면 `reject()`가 그 방어코드(`closeEvent`)를 거치지 않고 곧장 다이얼로그를 없애
     parent로 물려있던 워커까지 함께 파괴돼(살아있는 QThread 파괴) 프로그램이 죽던 문제).
     닫기는 무엇이 돌든 항상 즉시 허용하고, 결과 시그널 연결을 끊어(결과는 버림) 워커가
-    끝나도 죽은 다이얼로그를 건드리지 않게 하는 쪽으로 설계를 바꿨다."""
-    if worker is None or not worker.isRunning():
+    끝나도 죽은 다이얼로그를 건드리지 않게 하는 쪽으로 설계를 바꿨다.
+
+    [실사용 크래시 2026-08-26] 아래 `_reap`이 `deleteLater()`로 C++ 객체를 지우고 나면
+    호출부가 들고 있던 파이썬 래퍼는 "죽은 래퍼"가 된다 — 그 상태로 다시 들어오면
+    `worker.isRunning()`이 곧장 `RuntimeError`를 던지고, 이 함수는 `QDialog.done()`
+    (Qt 가상함수 재구현) 안에서 불리므로 그 예외가 PyQt6의 `qFatal()`→`abort()`로
+    이어져 **앱 전체가 죽었다**(minidump의 0xC0000409 + fastfail 7 = FATAL_APP_EXIT과
+    일치). 근본 원인(호출부의 낡은 참조)은 각 `done()`에서 참조를 비우는 것으로
+    고치되, 공용 헬퍼인 이 함수도 죽은 래퍼를 만나면 조용히 넘어가게 한다."""
+    if worker is None:
         return
+    try:
+        if not worker.isRunning():
+            return
+    except RuntimeError:
+        return   # 이미 파괴된 C++ 객체 — 더 볼 것 없음
     try:
         worker.disconnect()   # 다이얼로그 쪽 슬롯 연결 전부 해제 — 결과는 버려짐
     except TypeError:
@@ -1522,17 +1535,16 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         # (2026-08-23, 실사용 버그 수정 — 상세 이유는 `_detach_worker` 주석 참조. 예전엔
         # `closeEvent`에서 `e.ignore()`로 닫기 자체를 막았는데, Cancel 버튼의 `reject()`는
         # `closeEvent`를 거치지 않고 곧장 여기로 와 그 방어코드가 원천 무효였다).
-        # [실사용 버그 2026-08-26] 텍스트칸에 포커스가 남은 채(타이핑 여부 무관 — 한글
-        # 입력기가 시스템 기본이면 포커스만으로도 IME 컨텍스트가 그 위젯에 물린다) 창을
-        # 반복해서 열고/X로 닫으면 몇 번 만에 Qt6Core.dll 안에서 죽는 게 실측(minidump)
-        # 으로 확인됨 — 이 창은 인스턴스를 재사용해(2026-08-25) 같은 텍스트위젯이 매번
-        # 다시 포커스를 받는데, 그 IME 연결이 숨겨질 때 안 풀리고 쌓이는 것으로 추정.
-        # 포커스를 먼저 떼 Qt가 IME 컨텍스트를 정리하게 한 뒤 실제로 숨긴다.
-        fw = QApplication.focusWidget()
-        if fw is not None:
-            fw.clearFocus()
         _detach_worker(self._worker)
         _detach_worker(self._model_list_worker)
+        # [실사용 크래시 2026-08-26 — 근본 원인] 분리한 워커는 `_detach_worker`의 `_reap`
+        # 이 `deleteLater()`로 지우는데, 여기 참조를 안 비우면 다음 번 닫기에서 이미
+        # 파괴된 C++ 객체를 건드려 `RuntimeError`가 나고, 그게 Qt 가상함수(`done`)를
+        # 뚫고 나가 PyQt6의 `qFatal()`→`abort()`로 앱 전체가 죽었다(사용자 보고:
+        # "생성창 2~6번 열닫으면 프로그램이 꺼진다"). 참조를 즉시 끊는다 — 다음
+        # `_populate_models()`/`_on_ai_clicked()`가 필요하면 새로 만든다.
+        self._worker = None
+        self._model_list_worker = None
         # [2026-08-25] 인스턴스 재사용으로 이 다이얼로그가 이제 안 죽으므로, 확대창이
         # 열린 채로 메인 창을 닫으면 확대창만 화면에 덩그러니 남는다 — 같이 닫는다.
         if self._preview_enlarge is not None:
@@ -2686,14 +2698,13 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
     def done(self, r):
         # `_MermaidDialog.done`과 동일한 이유(2026-08-23) — X·Cancel·OK·Esc 전부 여기로
         # 모이므로, 닫기는 항상 즉시 허용하고 아직 도는 워커는 분리해 결과를 버린다.
-        # [실사용 버그 2026-08-26] `_MermaidDialog.done`과 동일 — 텍스트칸 포커스를
-        # 먼저 떼 IME 컨텍스트를 정리한 뒤 숨긴다(상세 이유는 그쪽 주석 참조).
-        fw = QApplication.focusWidget()
-        if fw is not None:
-            fw.clearFocus()
         for w in self._workers:
             _detach_worker(w)
         _detach_worker(self._model_list_worker)
+        # [실사용 크래시 2026-08-26] `_MermaidDialog.done`과 동일한 근본 원인 — 분리한
+        # 워커의 C++ 객체는 곧 지워지므로 낡은 참조를 즉시 끊는다(상세는 그쪽 주석).
+        self._workers = []
+        self._model_list_worker = None
         super().done(r)
 
     def eventFilter(self, obj, event):

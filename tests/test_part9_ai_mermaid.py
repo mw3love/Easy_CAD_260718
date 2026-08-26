@@ -1301,3 +1301,29 @@ def test_insert_mermaid_reused_dialog_keeps_previous_code_until_regenerated():
     w.deleteLater()
 
 
+
+
+def test_mermaid_dialog_done_survives_stale_worker_reference():
+    """[실사용 크래시 2026-08-26] 생성창을 몇 번 열고 X로 닫으면 앱 전체가 죽던 버그.
+
+    `_detach_worker`는 아직 도는 워커를 고아로 떼어낸 뒤 `finished`에서 `deleteLater()`로
+    지운다 — 그런데 다이얼로그(인스턴스 재사용, 2026-08-25)가 `self._model_list_worker`
+    참조를 그대로 들고 있어, 다음 번 닫기에서 이미 파괴된 C++ 객체에 `isRunning()`을
+    불러 `RuntimeError`가 났다. 그 예외는 Qt 가상함수(`QDialog.done`) 재구현 안에서
+    발생하므로 PyQt6가 `qFatal()`→`abort()`로 프로세스를 죽인다(minidump 실측:
+    0xC0000409 + fastfail 7 = FATAL_APP_EXIT).
+
+    `sip.delete()`는 `deleteLater()`가 이벤트 루프에서 실제로 하는 일(C++ 객체만 파괴,
+    파이썬 래퍼는 낡은 참조로 남김)과 같은 상태를 결정론적으로 만든다."""
+    from PyQt6 import sip
+    from easycad.canvas.host_dialogs import _ModelListWorker
+
+    w = CanvasWindow()
+    with patch.object(_MermaidDialog, "_populate_models", lambda self: None):
+        dlg = w._get_mermaid_dialog()
+    worker = _ModelListWorker("key", "http://example.invalid", dlg)
+    dlg._model_list_worker = worker
+    sip.delete(worker)          # C++ 객체만 파괴 — 파이썬 래퍼는 살아있는 '죽은 참조'
+    dlg.done(0)                 # 수정 전: RuntimeError → qFatal → 프로세스 종료
+    assert dlg._model_list_worker is None   # 낡은 참조를 반드시 끊어야 재발 안 함
+    w.deleteLater()

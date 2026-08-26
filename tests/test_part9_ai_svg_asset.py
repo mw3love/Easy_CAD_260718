@@ -1695,3 +1695,25 @@ def test_svg_asset_dialog_shared_across_insert_and_replace_entry_points():
     assert len(seen) == 2
     assert seen[0] is seen[1]   # 같은 인스턴스 재사용(라벨만 다시 맞춤)
     w.deleteLater()
+
+
+def test_svg_dialog_done_survives_stale_worker_reference():
+    """[실사용 크래시 2026-08-26] `_MermaidDialog`와 동일한 크래시 — 상세 경위는
+    `tests/test_part9_ai_mermaid.py`의 같은 이름 테스트 주석 참조. SVG 창은 워커를
+    리스트(`_workers`)로도 들고 있어 그쪽까지 함께 비워지는지 확인한다."""
+    from PyQt6 import sip
+    from easycad.canvas.host_dialogs import _ModelListWorker, _SvgGenWorker
+
+    w = CanvasWindow()
+    with patch.object(_SvgAssetDialog, "_populate_models", lambda self: None):
+        dlg = w._get_svg_asset_dialog()
+    ml = _ModelListWorker("key", "http://example.invalid", dlg)
+    gen = _SvgGenWorker("key", "subject", "model", "http://example.invalid", None, dlg)
+    dlg._model_list_worker = ml
+    dlg._workers = [gen]
+    sip.delete(ml)
+    sip.delete(gen)
+    dlg.done(0)                 # 수정 전: RuntimeError → qFatal → 프로세스 종료
+    assert dlg._model_list_worker is None
+    assert dlg._workers == []
+    w.deleteLater()
