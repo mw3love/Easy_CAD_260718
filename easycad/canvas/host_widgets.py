@@ -5,6 +5,8 @@
 가져다 쓰고, host.py 자신도 __init__에서 일부(_ToastLabel/_UndoEntry/_SCENE_HALF)를 쓴다.
 순환 임포트를 피하려고 이 파일은 host.py나 믹스인 쪽을 임포트하지 않는 잎(leaf) 모듈이다.
 """
+import sys
+
 from PyQt6.QtCore import (
     Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent, pyqtSignal,
 )
@@ -525,6 +527,22 @@ def _apply_native_titlebar_scheme(dark: bool) -> None:
             Qt.ColorScheme.Dark if dark else Qt.ColorScheme.Light)
     except Exception:
         pass
+    # [실사용 피드백 2026-08-26] 위 호출로 DWM 쪽 속성 자체는 바뀌지만, Windows가 타이틀
+    # 바를 그 순간 바로 다시 그려주지는 않아(창 크기를 조절해야만 반영되던 실사용 보고)
+    # — SWP_FRAMECHANGED로 비클라이언트 영역(타이틀바) 재계산만 강제한다(크기·위치·
+    # z-order는 그대로, 실제 리사이즈 없이 "다시 그려라"만 알림).
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER = 0x0002, 0x0001, 0x0004
+            SWP_FRAMECHANGED = 0x0020
+            flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+            for w in app.topLevelWidgets():
+                if w.isVisible():
+                    ctypes.windll.user32.SetWindowPos(
+                        int(w.winId()), 0, 0, 0, 0, 0, flags)
+        except Exception:
+            pass
 
 
 # [Phase 6 M1] 속성 패널 표시용 — 아이템 클래스명 → 한글 종류, 펜 스타일 → 한글.

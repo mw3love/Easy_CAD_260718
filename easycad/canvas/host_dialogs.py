@@ -1442,11 +1442,25 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
             "QPlainTextEdit { background:transparent; " +
             ("color:#241a15; }" if dark else "}")
         )
+        # [실사용 버그 2026-08-26] QSS가 걸린 위젯은 한 번 폴리시되면 이후
+        # `QApplication.setPalette()`만으로는 배경이 안 따라가는 Qt/Fusion 특성이 있다
+        # (스크린샷 실측 확인 — 라이트로 바꿔도 이 콤보들만 계속 다크로 남아있었음).
+        # 같은 스타일시트를 다시 걸어주면 그 순간의 팔레트로 강제 재폴리시된다.
+        self._model_combo.setStyleSheet(_ROUNDED_COMBO_QSS)
+        self._direction_combo.setStyleSheet(_ROUNDED_COMBO_QSS)
         self._update_preview()
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._refresh_theme_colors()
+        # [실사용 피드백 2026-08-26] 테마가 실제로 안 바뀐 채 재오픈될 때(대부분의 경우)는
+        # setStyleSheet 재적용을 건너뛴다 — 매번 무조건 다시 칠하면 열 때마다 불필요한
+        # 위젯 재도색·재레이아웃이 쌓여, 크래시(별도 메모리 참조)가 더 빨리 나는 것 같다는
+        # 사용자 의심에 대한 방어적 조치이기도 하다(근본 원인은 다른 곳으로 추정되지만,
+        # 안 해도 되는 작업을 매번 반복할 이유는 없다).
+        dark_now = bool(getattr(self.parent(), "_dark", True))
+        if getattr(self, "_theme_colors_dark", None) != dark_now:
+            self._theme_colors_dark = dark_now
+            self._refresh_theme_colors()
 
     def text(self):
         return self._edit.toPlainText()
@@ -2590,10 +2604,24 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
             "QPlainTextEdit { background:transparent; " +
             ("color:#241a15; }" if dark else "}")
         )
+        # [실사용 버그 2026-08-26] `_MermaidDialog._refresh_theme_colors`와 동일 —
+        # QSS 걸린 위젯은 팔레트만 바뀌어선 재도색이 안 돼(스크린샷 실측으로 후보영역·
+        # 모델/개수 콤보가 다크로 계속 남아있는 것 확인) 강제 재폴리시한다.
+        for combo in (self._model_combo_a, self._count_a, self._model_combo_b, self._count_b):
+            combo.setStyleSheet(_ROUNDED_COMBO_QSS)
+        self._candidates_scroll.setStyleSheet(
+            "QScrollArea#svgCandidatesFrame { border:1px solid rgba(128,128,128,90); "
+            "border-radius:8px; }"
+        )
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._refresh_theme_colors()
+        # [실사용 피드백 2026-08-26] `_MermaidDialog.showEvent`와 동일 이유 — 테마가
+        # 실제로 안 바뀐 재오픈에서는 재도색을 건너뛴다.
+        dark_now = bool(getattr(self.parent(), "_dark", True))
+        if getattr(self, "_theme_colors_dark", None) != dark_now:
+            self._theme_colors_dark = dark_now
+            self._refresh_theme_colors()
 
     def _on_code_changed(self):
         """SVG 코드칸이 항상 최종 소스 — Mermaid `_edit`와 동일 관례. 후보 클릭이든 직접
