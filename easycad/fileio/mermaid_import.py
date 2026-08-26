@@ -42,7 +42,15 @@ _SHAPE_DELIMS = [
     ("{", "}", "rhombus"),          # 판단
 ]
 
-_ID_RE = re.compile(r"[A-Za-z0-9_]+")
+
+# [실사용 버그 2026-08-26] ASCII 전용(`[A-Za-z0-9_]+`)이라 한글 등 비-ASCII 문자를 그대로
+# 노드 id로 쓴 실제 Mermaid 코드(`강남 --> 역삼 --> ...`, 흔한 실사용 패턴)가 통째로
+# 파싱 실패 — id 토큰 자체가 안 뽑히니 `_parse_node_token`이 매 노드마다 None을 돌려주고,
+# 체인 전체가 조용히 사라져 브래킷 라벨(`sub5["2호선 루트"]`) 같은 예외적 ASCII id 노드
+# 하나만 살아남았다(실사용 보고: "미리보기에 박스 하나만 뜬다"). 여는 괄호류·공백만 빼고
+# 전부 id 후보로 허용 — `_parse_node_token`이 그 뒤 `_SHAPE_DELIMS`로 여전히 브래킷을
+# 정확히 분리하므로(그리디하게 앞부분만 먹음) 기존 ASCII 동작은 그대로 보존된다.
+_ID_RE = re.compile(r"[^\s\[\](){}]+")
 _HEADER_RE = re.compile(r"^\s*(?:flowchart|graph)\s+(TD|TB|LR|RL|BT)\b", re.IGNORECASE)
 
 # 연결자: 점선/굵은/보통 × (화살표/선), 뒤에 선택적 파이프 라벨. 긴 것부터 매칭.

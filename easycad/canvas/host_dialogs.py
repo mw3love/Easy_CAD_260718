@@ -1420,6 +1420,34 @@ class _MermaidDialog(_ImageAttachMixin, QDialog):
         bottom_row.addWidget(self._btns)
         lay.addLayout(bottom_row)
 
+    def _refresh_theme_colors(self):
+        """[실사용 피드백 2026-08-26] 이 창은 인스턴스 하나를 재사용한다(2026-08-25) —
+        __init__에서 그 시점의 테마로 한 번만 계산해 구운 색(입력칸 배경·글자색·미리보기
+        펜색)이 이후 테마를 토글해도 안 따라가 "라이트모드인데 일부만 다크로 남는다"는
+        보고로 이어졌다. 재오픈(`showEvent`)마다 현재 테마로 다시 계산한다."""
+        dark = bool(getattr(self.parent(), "_dark", True))
+        self._preview_pen_color = QColor("#f2f2f2") if dark else None
+        _prompt_bg = '#e7e0d6' if dark else 'palette(base)'
+        _prompt_normal_qss = (
+            "QFrame#promptCard { border:1px solid rgba(128,128,128,90); border-radius:8px; "
+            f"background:{_prompt_bg}; }}"
+        )
+        _prompt_active_qss = (
+            f"QFrame#promptCard {{ border:2px dashed {_ACCENT_CORAL}; border-radius:8px; "
+            f"background:{_prompt_bg}; }}"
+        )
+        self._set_image_drop_frame(self._drop_frame, _prompt_normal_qss, _prompt_active_qss)
+        self._drop_frame.setStyleSheet(_prompt_normal_qss)
+        self._prompt_edit.setStyleSheet(
+            "QPlainTextEdit { background:transparent; " +
+            ("color:#241a15; }" if dark else "}")
+        )
+        self._update_preview()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_theme_colors()
+
     def text(self):
         return self._edit.toPlainText()
 
@@ -2066,8 +2094,10 @@ class _SvgCandidateCard(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 4, 6, 6)
-        self._save_check = QCheckBox("심볼로 저장", self)
-        self._save_check.setStyleSheet("font-size:10px;")
+        # [실사용 피드백 2026-08-26] 카드가 작아 텍스트까지 있으면 산만하다는 지적 —
+        # 체크박스만 남기고 뜻은 툴팁으로.
+        self._save_check = QCheckBox(self)
+        self._save_check.setToolTip("심볼로 저장")
         lay.addWidget(self._save_check)
         thumb = QLabel(self)
         thumb.setFixedSize(100, 100)
@@ -2528,6 +2558,33 @@ class _SvgAssetDialog(_ImageAttachMixin, QDialog):
         bottom_row.addStretch(1)
         bottom_row.addWidget(self._btns)
         lay.addLayout(bottom_row)
+
+    def _refresh_theme_colors(self):
+        """[실사용 피드백 2026-08-26] `_MermaidDialog._refresh_theme_colors`와 동일 이유 —
+        이 창도 인스턴스를 재사용해(2026-08-25) __init__ 시점에 구운 테마색이 이후 토글에
+        안 따라갔다. 이미 그려진 후보 썸네일은 소급 재렌더하지 않는다(다음 생성분부터
+        새 펜색 적용 — 기존 "펜색은 렌더 시점에 읽는다" 설계 그대로)."""
+        dark = bool(getattr(self.parent(), "_dark", True))
+        self._preview_pen_color = QColor("#f2f2f2") if dark else None
+        _prompt_bg = '#e7e0d6' if dark else 'palette(base)'
+        _prompt_normal_qss = (
+            "QFrame#svgPromptCard { border:1px solid rgba(128,128,128,90); border-radius:8px; "
+            f"background:{_prompt_bg}; }}"
+        )
+        _prompt_active_qss = (
+            f"QFrame#svgPromptCard {{ border:2px dashed {_ACCENT_CORAL}; border-radius:8px; "
+            f"background:{_prompt_bg}; }}"
+        )
+        self._set_image_drop_frame(self._drop_frame, _prompt_normal_qss, _prompt_active_qss)
+        self._drop_frame.setStyleSheet(_prompt_normal_qss)
+        self._prompt_edit.setStyleSheet(
+            "QPlainTextEdit { background:transparent; " +
+            ("color:#241a15; }" if dark else "}")
+        )
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_theme_colors()
 
     def _on_code_changed(self):
         """SVG 코드칸이 항상 최종 소스 — Mermaid `_edit`와 동일 관례. 후보 클릭이든 직접
