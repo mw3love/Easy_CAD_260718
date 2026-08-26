@@ -139,7 +139,8 @@ class _MindMapMixin:
         rd = self.mm_node_rect_scene(dst_item)
         a_src = src_pt if src_pt is not None else _border_attach(rs, rd.center())
         a_dst = _border_attach(rd, rs.center())
-        arr = _PolyArrowItem(self.current_color, self.current_width, self.arrow_head_at_end)
+        arr = _PolyArrowItem(self.current_color, self.current_width, self.arrow_head_at_end,
+                             self.current_head_at_start, self.current_head_scale)
         arr.set_points(a_src, a_dst)
         arr.set_bound(0, src_item, src_item.mapFromScene(a_src))
         arr.set_bound(len(arr._pts) - 1, dst_item, dst_item.mapFromScene(a_dst))

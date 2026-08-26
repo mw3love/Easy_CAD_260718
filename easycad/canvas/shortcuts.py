@@ -51,7 +51,7 @@ SHORTCUT_DEFS: list[tuple[str, str, str, str]] = [
     ("mirror_x",    "편집", "좌우 반전",       "Shift+H"),
     ("mirror_y",    "편집", "상하 반전",       "Shift+V"),
     # ---- 파일 (QAction) ----
-    ("new_doc",     "파일", "새로 만들기",  "Ctrl+N"),
+    ("new_doc",     "파일", "새 탭",  "Ctrl+N"),
     ("new_window",  "파일", "새 창",       "Ctrl+Shift+N"),
     ("open_doc",    "파일", "열기",        "Ctrl+O"),
     ("save_doc",    "파일", "저장",        "Ctrl+S"),

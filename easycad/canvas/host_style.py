@@ -241,6 +241,10 @@ class _StyleMixin:
         kind = self._pf_head_btn.currentData()
         if kind is None:
             return
+        # [실사용 피드백 2026-08-26] 두께·색과 같은 관례로 sticky화 — 다음 새 화살표도
+        # 이 위치를 이어받는다.
+        self.arrow_head_at_end = kind in ("end", "both")
+        self.current_head_at_start = kind in ("start", "both")
         sel = [it for it in self._scene.selectedItems() if isinstance(it, (_ArrowItem, _PolyArrowItem))]
         self._edit_items(sel, lambda it: _apply_arrow_head(it, kind))
 
@@ -248,6 +252,7 @@ class _StyleMixin:
     def _edit_head_scale(self, val):
         """[실사용 피드백 2026-08-21] 화살촉 크기 배율 — 색·두께와 같은 '겉모습' 속성이라
         `_edit_items`(capture_state 경로)를 그대로 쓴다(회전과 달리 기하 undo가 아님)."""
+        self.current_head_scale = float(val)   # [실사용 피드백 2026-08-26] sticky
         sel = [it for it in self._scene.selectedItems() if isinstance(it, (_ArrowItem, _PolyArrowItem))]
         self._edit_items(sel, lambda it: it.set_head_scale(val),
                          key=("head_scale", tuple(sorted(id(it) for it in sel))))

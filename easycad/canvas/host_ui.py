@@ -188,7 +188,9 @@ class _UIBuildMixin:
         self._shortcut_display_only: set = set()   # [단축키 설정] setShortcut() 안 거는 id들
         m = self.menuBar().addMenu("파일(&F)")
 
-        self._act_new = self._make_action("새로 만들기", "new", self._new_doc,
+        # [실사용 피드백 2026-08-26] 탭 도입 이후 실제 동작이 "새 탭 열기"라 이름도 그에
+        # 맞춤(예전 "새로 만들기"는 탭 이전 시절 명칭이 남아있던 것).
+        self._act_new = self._make_action("새 탭", "new", self._new_doc,
                                           shortcut_id="new_doc")
         self._act_open = self._make_action("열기…", "open", self._open_doc,
                                            shortcut_id="open_doc")
@@ -199,11 +201,10 @@ class _UIBuildMixin:
         self._act_save_as = self._make_action(
             "다른 이름으로 저장…", "save", self._save_doc_as,
             shortcut_id="save_doc_as")
-        # [§8 항목10 Stage D] "새 탭"은 이미 있는 "새로 만들기"(Ctrl+N)가 겸한다(§8 항목10
-        # Stage B — 탭 도입에 맞춰 의미를 바꿈) — 여긴 완전히 독립된 새 최상위 창.
+        # [§8 항목10 Stage D] 새 탭(위 "새 탭", Ctrl+N)과 별개 — 여긴 완전히 독립된 새 최상위 창.
         self._act_new_window = self._make_action(
             "새 창", "new", self._new_window, shortcut_id="new_window")
-        # [2026-08-20 피드백] "새 창"은 "새로 만들기"와 같은 성격(새 시작)이라 저장 계열
+        # [2026-08-20 피드백] "새 창"은 "새 탭"과 같은 성격(새 시작)이라 저장 계열
         # (열기·저장·다른 이름으로 저장) 앞, 바로 아래에 둔다.
         for a in (self._act_new, self._act_new_window, self._act_open, self._act_save,
                   self._act_save_as):
@@ -803,6 +804,13 @@ class _UIBuildMixin:
         pf_dir = getattr(self, "_pf_dir_btn", None)
         if pf_dir is not None:
             pf_dir.setIcon(_flip_icon(_current_icon_color()))
+        # [실사용 피드백 2026-08-26] '화살촉' 콤보만 위 재도색 목록에서 빠져 있어 테마 전환
+        # 시 만들 때 색 그대로 흐리게 남던 버그 — 같은 관례로 추가.
+        pf_head = getattr(self, "_pf_head_btn", None)
+        if pf_head is not None:
+            for i, (kind, _label) in enumerate(_ARROW_HEAD_LABELS):
+                pf_head.setItemIcon(i, _arrow_head_icon(
+                    kind, _current_icon_color(), self._PROPS_ICON_W, self._PROPS_ARROW_ICON_H))
         # [캔버스-퍼스트] 플로팅 패널 제목줄 = accent 밑줄 + 틴트 배경(옛 dock 제목표시줄과 같은
         # '잡아 눈에 띄는 카드' 언어 유지, 자유 드래그는 없지만 접기 버튼이 있는 자리라 여전히
         # 상호작용 영역으로 보여야 함).

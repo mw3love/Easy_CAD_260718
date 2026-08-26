@@ -485,7 +485,8 @@ class _AnnotatorView(QGraphicsView):
         p_src = _edge_mid(self._qc_src_scene_rect(src), side)
         p_dup = _edge_mid(self._qc_src_scene_rect(dup), opp)
         owner = self._owner
-        arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+        arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end,
+                               owner.current_head_at_start, owner.current_head_scale)
         arrow._style = getattr(owner, "current_style", arrow._style)   # [M2 #3] sticky 선스타일
         arrow.set_points(p_src, p_dup)
         arrow.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -507,7 +508,8 @@ class _AnnotatorView(QGraphicsView):
         경로 포함 직각 엘보를 만든다 — 종전엔 스냅 안 됐을 때만 직선으로 남았다(2026-07-27 피드백)."""
         owner = self._owner
         p_src = _edge_mid(self._qc_src_scene_rect(src), side)
-        arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+        arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end,
+                               owner.current_head_at_start, owner.current_head_scale)
         arrow._style = getattr(owner, "current_style", arrow._style)   # sticky 선스타일
         arrow._curve_r = float(getattr(owner, "current_curve_r", arrow._curve_r))  # sticky 모서리 반경
         arrow.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -2379,7 +2381,8 @@ class _AnnotatorView(QGraphicsView):
         안 바뀜) / 드래그=화살표만(여기)"으로 규칙 자체를 통일해, 포트만의 예외 코드 없이
         포트가 원하는 동작(드래그=화살표만)을 저절로 만족시킨다(실사용 제안)."""
         owner = self._owner
-        arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+        arrow = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end,
+                               owner.current_head_at_start, owner.current_head_scale)
         arrow._style = getattr(owner, "current_style", arrow._style)      # sticky 선스타일
         arrow._curve_r = float(getattr(owner, "current_curve_r", arrow._curve_r))  # sticky 모서리 반경
         arrow.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -2798,7 +2801,8 @@ class _AnnotatorView(QGraphicsView):
             snap = self._border_snap_at(event.position().toPoint())
             if snap is not None:
                 owner = self._owner
-                it = _ArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+                it = _ArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end,
+                          owner.current_head_at_start, owner.current_head_scale)
                 self._start = snap[0]
                 self._arrow_snap_exit = snap[1]
                 self._arrow_tip_snap = None
@@ -2813,7 +2817,8 @@ class _AnnotatorView(QGraphicsView):
             snap = self._border_snap_at(event.position().toPoint())
             if snap is not None:
                 owner = self._owner
-                it = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+                it = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end,
+                               owner.current_head_at_start, owner.current_head_scale)
                 self._start = snap[0]
                 self._arrow_snap_exit = snap[1]   # 시작 마커
                 self._arrow_tip_snap = None
@@ -3027,7 +3032,8 @@ class _AnnotatorView(QGraphicsView):
             it.setPen(pen)
             self._begin_draw(it)
         elif tool == "arrow":
-            it = _ArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+            it = _ArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end,
+                          owner.current_head_at_start, owner.current_head_scale)
             it.set_points(sp, sp)
             self._arrow_snap_exit = None   # 자유 시작(테두리 스냅 아님) → 직선/자유 곡선
             self._arrow_tip_snap = None
@@ -3035,7 +3041,8 @@ class _AnnotatorView(QGraphicsView):
         elif tool == "sarrow":
             # [우리 확장] 하이브리드: 다른 도형처럼 드래그로 시작(드래그=2점 직선, 릴리스 시
             # 이동이 없으면 클릭 배치 모드로 전환돼 멀티정점 폴리라인이 된다).
-            it = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end)
+            it = _PolyArrowItem(owner.current_color, owner.current_width, owner.arrow_head_at_end,
+                               owner.current_head_at_start, owner.current_head_scale)
             # [A3] 시작점이 도형 테두리 근처면 스냅(라이브 시작 마커 + 확정 시 _bind_poly_ends가 바인딩).
             ssnap = self._border_snap_at(event.position().toPoint())
             if ssnap is not None:

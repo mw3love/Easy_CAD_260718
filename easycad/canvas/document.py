@@ -37,6 +37,10 @@ class CanvasDocument:
         self.layers: list[dict] = [
             {"id": "default", "name": "기본", "visible": True, "locked": False}]
         self.doc_path: str | None = None
+        # [실사용 피드백 2026-08-26] DXF/DWG는 손실 변환이라 `doc_path`(Ctrl+S 빠른저장
+        # 대상)로 취급하지 않는다(host_fileio._do_save_ecad 주석 참조) — 그래도 탭 제목엔
+        # 그 파일명을 보여주는 게 자연스러워, 표시 전용 경로를 별도로 둔다.
+        self.external_path: str | None = None
         self.dirty = False   # [§8 항목10 Stage C]
         self.untitled_n: int | None = None   # [§8 항목10 Stage B] host._create_doc()가 부여
 

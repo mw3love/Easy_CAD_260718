@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 import uuid
 
@@ -97,15 +98,32 @@ class _FileIOMixin:
         self._open_new_tab()
 
 
+    def _focus_existing_tab_for(self, path: str) -> bool:
+        """[실사용 피드백 2026-08-26] 이미 열려 있는 파일을 또 열면 새 탭을 만드는 대신 그
+        탭으로 포커스만 옮긴다(VSCode 등 일반적인 편집기 관례) — 새 탭에 대해서만
+        deep-interview로 확정했던 §8 항목10 Stage B 결정과 별개, "같은 파일 두 번 열기"는
+        그때 고려 대상이 아니었다. `.ecad`는 `doc_path`, DXF/DWG는 `external_path`(위
+        탭 제목 표시용 경로)와 비교 — 대소문자·상대경로 차이를 없애려 정규화한다."""
+        target = os.path.normcase(os.path.abspath(path))
+        for doc in self._docs:
+            shown = doc.doc_path or doc.external_path
+            if shown and os.path.normcase(os.path.abspath(shown)) == target:
+                self._tabs.setCurrentIndex(self._docs.index(doc))
+                return True
+        return False
+
     def _open_doc(self):
         """[통합] 확장자로 분기 — .dxf/.dwg는 DXF 가져오기(DWG는 ODA File Converter로 먼저
         변환, §8 2026-08-14), 그 외는 .ecad 네이티브 열기. [§8 항목10 Stage B] 항상 새 탭에
         연다 — 예전엔 현재 씬을 통째로 교체했지만, 탭이 생긴 뒤로는 다른 탭의 작업을 보존해야
         하므로 자연스럽게 바뀐 의미다(기존 도면 '안에' 추가 삽입하는 기능은 여전히 스코프 밖,
         deep-interview 2026-07-29 확정). 로드가 실패하면 방금 연 빈 탭이 남는다(사용자가
-        직접 닫으면 됨) — 실패가 드물고 되돌리기 쉬워 자동 정리까지는 하지 않는다."""
+        직접 닫으면 됨) — 실패가 드물고 되돌리기 쉬워 자동 정리까지는 하지 않는다.
+        [실사용 피드백 2026-08-26] 단, 이미 열려 있는 파일이면 새 탭 없이 그 탭으로 이동."""
         path, _ = QFileDialog.getOpenFileName(self, "열기", "", self._OPEN_FILTER)
         if not path:
+            return
+        if self._focus_existing_tab_for(path):
             return
         if path.lower().endswith((".dxf", ".dwg")):
             if not self._confirm_dxf_open_once():
@@ -167,6 +185,10 @@ class _FileIOMixin:
         self._reset_history()
         nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
         self._badge_n = max(nums) if nums else 0
+        # [실사용 피드백 2026-08-26] `doc_path`는 손실 변환이라 계속 비워두지만(Ctrl+S가
+        # 조용히 DXF/DWG를 덮어쓰지 않도록), 탭 제목에는 파일명을 보여준다.
+        self._external_path = path
+        self._update_tab_title()
         # [2026-07-29] 외부 DXF는 우리 앱과 원점·스케일이 무관해 가져온 직후 화면 밖이거나
         # 100% 줌에서 너무 작게/크게 보일 수 있다 — 열기 직후 항상 전체 맞춤(Ctrl+9와 동일).
         self._zoom_fit()
@@ -366,6 +388,10 @@ class _FileIOMixin:
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "DXF로 저장", f"저장에 실패했습니다:\n{e}")
             return
+        # [실사용 피드백 2026-08-26] doc_path는 그대로 비워두되(손실 변환이라 Ctrl+S가
+        # 이 파일을 조용히 덮어쓰면 안 됨) 탭 제목에는 파일명을 보여준다.
+        self._external_path = path
+        self._update_tab_title()
         QMessageBox.information(self, "DXF로 저장", f"저장 완료:\n{path}")
 
 
@@ -390,6 +416,9 @@ class _FileIOMixin:
             else:
                 QMessageBox.warning(self, "DWG로 저장", f"저장에 실패했습니다:\n{e}")
                 return
+        # [실사용 피드백 2026-08-26] DXF 저장과 동일 — doc_path는 비워두고 탭 제목만 갱신.
+        self._external_path = path
+        self._update_tab_title()
         QMessageBox.information(self, "DWG로 저장", f"저장 완료:\n{path}")
 
 
@@ -929,11 +958,19 @@ class _FileIOMixin:
         img_paths = [p for p in paths if p.lower().endswith(self._IMG_EXTS)]
         n = 0
         # .ecad/.dxf·.dwg는 기존 "열기(Ctrl+O)"와 동일하게 새 탭에 연다(현재 도면 보존).
+        # [실사용 피드백 2026-08-26] 단, 이미 열려 있는 파일이면 새 탭 대신 그 탭으로 이동
+        # (`_open_doc`과 동일 관례 — `_focus_existing_tab_for`).
         for p in doc_paths:
+            if self._focus_existing_tab_for(p):
+                n += 1
+                continue
             self._open_new_tab()
             self._do_open_ecad(p)
             n += 1
         for p in dxf_paths:
+            if self._focus_existing_tab_for(p):
+                n += 1
+                continue
             if not self._confirm_dxf_open_once():
                 continue
             self._open_new_tab()

@@ -82,7 +82,7 @@ class CanvasWindow(
     # 쓰는 코드)을 한 줄도 안 건드리기 위한 장치 — CanvasDocument 도입은 단일 문서 동작에
     # 아무 변화가 없는 순수 리팩터다(docs/EasyCAD_계획.md §8 10번, 계획 파일 참조).
     _PER_DOC_ATTRS = (
-        "scene", "view", "undo", "redo", "layers", "doc_path", "dirty",
+        "scene", "view", "undo", "redo", "layers", "doc_path", "external_path", "dirty",
         "badge_n", "paste_seq", "pan_last", "rerouting", "deferred_arrows",
         "deferred_fast", "group_sync_active", "geom_snapshot",
         "last_geom_change_count", "uniform_translation", "uniform_moved_arrows",
@@ -118,6 +118,10 @@ class CanvasWindow(
         self.current_fill = None   # [신규기능] 도형 채우기 — sticky, 기본 투명(NoBrush)
         self._recent_colors = self._load_recent_colors()   # [신규기능] 색 그리드 팝업 "최근 사용한 색"
         self.arrow_head_at_end = True
+        # [실사용 피드백 2026-08-26] 화살촉 위치(시작쪽)·크기 배율도 두께·색과 같은 sticky
+        # 규칙으로 통일 — 예전엔 새 화살표마다 항상 기본값(끝만·1.0배)으로 리셋됐다.
+        self.current_head_at_start = False
+        self.current_head_scale = 1.0
         # [화살표 통합] 화살표는 상단 도구 1개. '어떤 종류로 그릴지'는 마지막에 고른 종류를 기억
         # (sticky — 색·두께·선스타일과 같은 관례). 최초 기본은 직각(순서도 위주 사용 — 실사용
         # 피드백 2026-07-30, 이전 기본은 곡선).
@@ -226,7 +230,10 @@ class CanvasWindow(
         """[§8 항목10 Stage B] 탭 제목 = 파일명(있으면) / "제목 없음N"(없으면, 생성 순번
         고정 — 다른 탭이 닫혀도 안 바뀜). [Stage C] dirty면 `*` 접두 — 저장 안 한 변경사항이
         있다는 표시(닫기 실수 방지가 이 접두의 목적)."""
-        name = os.path.basename(doc.doc_path) if doc.doc_path else f"제목 없음{doc.untitled_n}"
+        # [실사용 피드백 2026-08-26] DXF/DWG는 `doc_path`(Ctrl+S 빠른저장 대상)로 취급하지
+        # 않지만, 탭 제목에는 그 파일명을 보여주는 게 자연스러워 `external_path`로 폴백.
+        shown = doc.doc_path or doc.external_path
+        name = os.path.basename(shown) if shown else f"제목 없음{doc.untitled_n}"
         return f"*{name}" if doc.dirty else name
 
     def _update_tab_title(self, doc=None):
@@ -392,7 +399,8 @@ del _win_name, _shared_name
 _STICKY_SNAPSHOT_ATTRS = (
     "current_color", "current_width", "current_style", "current_font_size",
     "current_badge_size", "current_text_bg", "current_fill", "_recent_colors",
-    "arrow_head_at_end", "current_arrow_kind", "current_curve_r", "tool_pinned",
+    "arrow_head_at_end", "current_head_at_start", "current_head_scale",
+    "current_arrow_kind", "current_curve_r", "tool_pinned",
     "snap_enabled", "ortho_enabled", "grid_enabled", "align_guides_enabled",
 )
 
