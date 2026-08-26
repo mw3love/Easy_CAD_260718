@@ -61,8 +61,29 @@ def _load_raw() -> dict:
 
 
 def _save_raw(data: dict):
-    with open(_library_path(), "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
+    """[최종 검수 Phase 4, 2026-08-26] 임시파일에 쓴 뒤 `os.replace`로 원자적 교체 —
+    예전엔 대상 파일을 직접 열어 썼는데, 그 도중 크래시(이 프로젝트가 exit 127 네이티브
+    크래시를 반복 겪은 이력 — `docs/perf_group_drag_200.md`·최종 검수 Phase 1 참조)가
+    나면 JSON이 반쯤 쓰인 채 깨지고, 다음 `_load_raw`가 파싱 실패를 조용히 "빈 라이브러리"로
+    삼켜(아래 `except (OSError, ValueError)`) 그 직후 심볼을 하나만 추가해도 기존 전체가
+    영구 소실될 수 있었다(재현은 안 했지만 원리적으로 가능한 조용한 데이터 손실 — 왕복
+    무손실성 점검 중 발견). `os.replace`는 같은 볼륨 안에서 POSIX·Windows 둘 다 원자적이라
+    (표준 라이브러리 보증) 쓰기 도중 죽어도 원본 파일은 항상 이전 완성본 그대로 남는다."""
+    path = _library_path()
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        # 실패한 임시파일을 남기지 않는다 — 대상 `path`는 이 지점에서 건드리지 않았으므로
+        # 항상 이전 완성본 그대로다(프로세스 자체가 죽는 경우는 이 except가 안 돌지만,
+        # 그때도 대상 path는 여전히 무사하다 — 유실 위험은 오직 tmp가 지저분해지는 것뿐).
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def load_library() -> list[dict]:

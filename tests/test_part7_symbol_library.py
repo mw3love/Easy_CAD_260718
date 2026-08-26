@@ -266,6 +266,37 @@ def test_create_folder_persists_even_when_empty():
         assert symbol_library.load_folders() == ["무선"]
 
 
+# ---- [최종 검수 Phase 4, 2026-08-26] 원자적 쓰기(임시파일+os.replace) ------------------
+
+def test_save_raw_writes_atomically_no_leftover_tmp():
+    with _isolated_symbol_library():
+        symbol_library.create_folder("무선")
+        path = symbol_library._library_path()
+        assert os.path.exists(path)
+        assert not os.path.exists(path + ".tmp")
+
+
+def test_save_raw_leaves_prior_file_intact_if_json_dump_fails():
+    # [원자성 검증] 쓰기 도중 실패해도 대상 파일은 "이전 완성본" 그대로 남아야 한다
+    # (반쯤 쓰인 상태로 깨지면 안 됨) — json.dump가 도중에 실패하도록 흉내낸다.
+    with _isolated_symbol_library():
+        symbol_library.create_folder("무선")   # 정상 상태 기준선
+        path = symbol_library._library_path()
+        with open(path, encoding="utf-8") as f:
+            before = f.read()
+        raised = False
+        with patch("json.dump", side_effect=RuntimeError("boom")):
+            try:
+                symbol_library.create_folder("장비")
+            except RuntimeError:
+                raised = True
+        assert raised, "json.dump 실패가 조용히 삼켜지면 안 된다"
+        with open(path, encoding="utf-8") as f:
+            after = f.read()
+        assert after == before, "실패한 쓰기가 대상 파일을 건드리면 안 된다"
+        assert not os.path.exists(path + ".tmp"), "실패한 임시파일이 남으면 안 된다(정리 필요)"
+
+
 # ---- [실사용 요청 2026-08-25] 우클릭 "팔레트에 등록" 서브메뉴화 -------------------------
 
 def test_register_selection_as_symbol_folder_arg_targets_that_folder():
