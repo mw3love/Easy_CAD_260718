@@ -246,7 +246,8 @@ def test_disabled_icon_has_dim_pixmap():
 
 
 def test_align_rect_ignores_selection_handles():
-    # [M5] 정렬 기준은 _content_rect(획까지) — 코어 boundingRect는 (선택 시) 핸들·빠른생성
+    # [M5] 정렬 기준은 패딩 없는 실제 시각적 경계(`_smart_snap_srect`, 최종 검수 Phase 5에서
+    # `_content_rect()` 직접 사용을 이걸로 교체 — 코어 boundingRect는 (선택 시) 핸들·빠른생성
     # 도트 자리를 예약해 도형마다 여백이 달라(정렬이 그만큼 어긋난다) 기준으로 쓸 수 없다.
     # [성능 조사 2026-07-30] 핸들 여백 예약이 선택 상태 조건부로 바뀌어(boundingRect가
     # 미선택 도형까지 매번 계산하던 비용 제거) — 정렬 대상은 실제로 항상 선택된 상태이므로
@@ -259,6 +260,21 @@ def test_align_rect_ignores_selection_handles():
     assert it.sceneBoundingRect().width() > r.width() + 10     # 핸들 여백이 실제로 크다
 
 
+
+
+def test_align_left_matches_true_visible_edges_across_differing_pen_widths():
+    # [최종 검수 Phase 5, 2026-08-26] 옛 `_align_rect`는 `_content_rect()`(펜폭만큼 부풀린
+    # 값)를 직접 썼다 — 펜 두께가 다른 두 도형을 "왼쪽 맞춤"해도 실제 보이는 왼쪽 변은
+    # 정렬 안 되고 펜 두께 차이(pen/2)만큼 계속 어긋나 있었다(실측: 1.0 vs 9.0 펜 → 4.0
+    # 유닛 차이). `_smart_snap_srect`(패딩 없는 실제 경계)로 교체해 해소.
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60, width=1.0)
+    b = _mk_pen_rect(w, x=300, y=0, ww=100, hh=60, width=9.0)
+    a.setSelected(True); b.setSelected(True)
+    w.align_selection("left")
+    left_a = a.mapToScene(a.rect().topLeft()).x()
+    left_b = b.mapToScene(b.rect().topLeft()).x()
+    assert abs(left_a - left_b) < 0.01, (left_a, left_b)
 
 
 def test_align_selection_six_modes_and_undo():

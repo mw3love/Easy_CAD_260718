@@ -30,6 +30,7 @@ from easycad.canvas.annotator_core import (
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    _smart_snap_srect,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -600,9 +601,16 @@ class _ContextMixin:
         """정렬 기준이 되는 '보이는 도형'의 씬 사각형.
         ⚠ sceneBoundingRect()를 쓰면 안 된다 — 코어의 boundingRect()는 선택 핸들·회전 핸들·
         빠른생성 도트 자리를 상시 예약하므로 도형마다 여백이 제각각이고(실측 26px vs 19.75px)
-        그만큼 어긋나게 정렬된다. _content_rect()가 획까지만 포함한 실제 내용 사각형."""
-        r = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
-        return it.mapToScene(r).boundingRect()   # 회전·스케일 반영
+        그만큼 어긋나게 정렬된다.
+        [최종 검수 Phase 5, 2026-08-26 버그 수정] `_content_rect()`를 직접 쓰던 옛 구현은
+        "획까지만 포함한 실제 내용 사각형"이라고 주장했지만 실제로는 그 반대 — `_content_rect()`
+        는 재귀 방지·hit-test 여유로 펜폭만큼(도형 종류별로 다른 양) 부풀린 값이다
+        (`docs/pitfalls.md` "좌표계·변환" 참조). 그 결과 펜 두께가 다른 두 도형을 "왼쪽 맞춤"
+        하면 실제 보이는 왼쪽 변은 정렬되지 않고 펜 두께 차이만큼 어긋난 채로 남았다(실측:
+        펜 1.0 vs 9.0 사각형 정렬 후 4.0유닛 차이). 드래그 중 스마트 정렬 스냅이 2026-08-10에
+        이미 같은 병을 고쳐 둔 `_smart_snap_srect`(패딩 없는 진짜 시각적 경계, 도형 종류별
+        분기 포함)를 그대로 재사용해 두 기능이 같은 기준을 쓰게 통일한다."""
+        return _smart_snap_srect(it)
 
 
     def align_selection(self, mode):
