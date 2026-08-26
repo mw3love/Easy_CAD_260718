@@ -286,7 +286,33 @@ def test_build_register_symbol_menu_lists_unclassified_folders_and_new_folder():
         r = _mk_pen_rect(w); r.setSelected(True)
         menu = w._build_register_symbol_menu()
         texts = [a.text() for a in menu.actions() if not a.isSeparator()]
-        assert texts == ["(미분류)", "무선", "장비", "새 폴더..."]
+        assert texts == ["즐겨찾기로 등록", "무선", "장비", "새 폴더..."]
+
+
+def test_register_symbol_menu_favorite_action_registers_unfiled_and_favorited():
+    # [실사용 요청 2026-08-25 후속] "(미분류)"를 대체한 "즐겨찾기로 등록" — folder=None +
+    # favorite=True로 등록돼야 함(별도 폴더가 아니라 이중표시 섹션에 뜨는 표식).
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        menu = w._build_register_symbol_menu()
+        fav_action = next(a for a in menu.actions() if a.text() == "즐겨찾기로 등록")
+        with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
+            fav_action.trigger()
+        entry = symbol_library.load_library()[0]
+        assert entry["folder"] is None
+        assert entry["favorite"] is True
+
+
+def test_register_selection_as_symbol_favorite_arg_sets_favorite_flag():
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        r = _mk_pen_rect(w); r.setSelected(True)
+        with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
+            w.register_selection_as_symbol(folder=None, favorite=True)
+        entry = symbol_library.load_library()[0]
+        assert entry["folder"] is None
+        assert entry["favorite"] is True
 
 
 def test_register_symbol_menu_folder_action_registers_directly_with_one_popup():

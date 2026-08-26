@@ -353,10 +353,16 @@ class _SelectionMixin:
         최소 클릭으로 만드는 게 이번 개편의 실익).
         [실사용 버그 수정 2026-08-25] `_build_layer_menu`처럼 `QMenu(title, parent)`로
         만들어야 하는데 title 인자를 빼먹어 이 서브메뉴를 여는 상위 항목 글자가 빈 줄로
-        보이던 버그 — `title` 매개변수를 받아 생성자에 전달한다."""
+        보이던 버그 — `title` 매개변수를 받아 생성자에 전달한다.
+        [실사용 요청 2026-08-25 후속] "(미분류)"를 "즐겨찾기로 등록"으로 교체 — 진짜
+        미분류가 필요하면 1개짜리 임시 폴더를 만드는 게 오히려 직관적이라는 판단(사용자
+        확정). 즐겨찾기는 `folder=None`이면서 `favorite=True`인 심볼이라 별도 폴더 개념이
+        아니다 — 좌측 팔레트의 기존 "이중표시"(원래 폴더+즐겨찾기 섹션, 2026-08-20)가
+        이 조합을 이미 지원한다."""
         m = QMenu(title, parent or self)
         _style_menu_separators(m)
-        m.addAction("(미분류)", lambda checked=False: self.register_selection_as_symbol(folder=None))
+        m.addAction("즐겨찾기로 등록",
+                    lambda checked=False: self.register_selection_as_symbol(folder=None, favorite=True))
         folders = symbol_library.load_folders()
         if folders:
             m.addSeparator()
@@ -377,10 +383,13 @@ class _SelectionMixin:
         symbol_library.create_folder(name)
         self.register_selection_as_symbol(folder=name)
 
-    def register_selection_as_symbol(self, folder: str | None = None):
+    def register_selection_as_symbol(self, folder: str | None = None, favorite: bool = False):
         """선택(주로 DXF에서 가져온 심볼)을 앱 전역 팔레트에 등록해 다른 도면에서도 재사용.
         위치는 그대로 보존하되 화살표의 지속연결 바인딩은 저장하지 않는다(모듈 docstring 참조).
-        `folder`는 호출부(`_build_register_symbol_menu`)가 서브메뉴 클릭으로 미리 정해온다."""
+        `folder`는 호출부(`_build_register_symbol_menu`)가 서브메뉴 클릭으로 미리 정해온다.
+        [실사용 요청 2026-08-25 후속] `favorite`은 "즐겨찾기로 등록" 메뉴 항목 전용 — `add_symbol`
+        시그니처는 그대로 두고(다른 호출부인 `host_fileio.py`의 SVG "내 심볼로 저장" 영향 회피)
+        등록 직후 `toggle_favorite`으로 뒤집는다."""
         targets = self._edit_targets()
         if not targets:
             return
@@ -400,7 +409,9 @@ class _SelectionMixin:
             d["pos"][0] -= box.left()
             d["pos"][1] -= box.top()
         thumb = _render_symbol_thumbnail(tmp, box)
-        symbol_library.add_symbol(name, dicts, thumb, folder=folder)
+        entry = symbol_library.add_symbol(name, dicts, thumb, folder=folder)
+        if favorite:
+            symbol_library.toggle_favorite(entry["id"])
         self._refresh_custom_symbol_section()
         self.statusBar().showMessage(f"팔레트에 등록: {name}", 3000)
 
