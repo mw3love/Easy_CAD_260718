@@ -21,6 +21,9 @@ tools/_shot*.png
 tools/_perf_ref/
 tools/_perf_*.json
 
+# 크래시 진단 로그(tools/diag_run.py) — 그때그때의 실행 기록이라 공유 대상 아님.
+tools/_diag.log*
+
 # 작업 도면·입력 사진 (사용자 산출물 — 로컬만 유지, 리포는 코드·문서만).
 # 리포 루트의 .ecad만 무시한다 — 의도적으로 넣는 테스트 픽스처(tests/**.ecad)는 살린다.
 /*.ecad
