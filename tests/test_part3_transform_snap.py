@@ -433,6 +433,17 @@ def test_box_handles_gate():
     assert not b._box_handles()
 
 
+def test_badge_apply_color_updates_own_color_field():
+    # [최종 검수 Phase 6, 2026-08-26] `apply_color`(2026-07-28 리팩터로 arrow/PolyArrow/
+    # badge 3곳의 중복 `_color` 분기를 `_HandleResizeMixin.apply_color`로 흡수)가 배지에도
+    # 실제로 걸리는지 검증하는 전용 테스트가 없었다(_BadgeItem 자신은 apply_color를 오버라이드
+    # 안 하고 공유 구현만 의존) — hasattr(self, "_color") 분기를 배지로 직접 확인.
+    w = CanvasWindow()
+    b = _BadgeItem(3, QColor("black")); w._scene.addItem(b)
+    b.apply_color(QColor("#ff0000"))
+    assert b._color == QColor("#ff0000")
+
+
 
 
 def test_bounding_rect_reserves_handle_space_only_when_selected():
