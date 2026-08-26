@@ -347,28 +347,39 @@ core_view.py 3건 반영 커밋). 전체 스위트 1005종(신규 4종 포함) �
 
 ---
 
-### Phase 4 — fileio·ai 경계 코드리뷰 (데이터 손실 리스크 최상)
+### Phase 4 — fileio·ai 경계 코드리뷰 (데이터 손실 리스크 최상) — **완료 (2026-08-26)**
 
 **대상**: `fileio/`(document 489 · dxf_import 711 · dxf_export 365 · pdf_export 395 ·
 svg_import 309 · mermaid_import 292 · sketch_build 212 · symbol_library 173) ·
-`ai/`(gateway 379 · text_to_mermaid 87 · text_to_svg 85)
+`ai/`(gateway 379 · text_to_mermaid 87 · text_to_svg 85) — 11개 파일 전부 자체 정독.
 
-- [ ] **자체 진행**(2026-08-26부로 `code-review` 스킬 미사용, §1 방침 변경 참조) —
-      Read/Grep으로 파일별 직접 정독
-- [ ] **일반 정확성·중복/단순화·효율 스캔** — `code-review` 스킬이 자동으로 하던 역할을
-      수동으로 대체: 각 파일을 끝까지 읽으며 로직 오류·중복 코드·불필요한 복잡도·비효율
-      패턴을 직접 찾는다(Phase 2~3에서 스킬이 찾아낸 findings 유형 — 캐시 무효화 누락,
-      identity 비교 오판, 중복 스캔 — 을 참고 기준으로 삼는다)
-- [ ] **중점 축**(도메인 특화, 스킬 사용 여부와 무관하게 항상 유효했던 항목):
-      - **왕복 무손실성** — `.ecad` 저장→열기, DXF 내보내기→가져오기에서 잃는 필드
-        (알려진 미검증: 화살촉 개수 `head_start` 보존 여부)
-      - **하위호환** — 옛 `.ecad`가 지금 코드로 열리는지(스키마가 여러 번 확장됨:
-        `cuts`·`favorite`·`head_scale`·`_group_id`·다중 라벨)
-      - **조용한 실패 12곳** — `except Exception: pass`가 데이터 손실을 숨기는지 개별 판정
-        (특히 `dxf_export.py:76,80` · `dxf_import.py:125,519` · `host_fileio.py:1141`)
-      - **API 키 취급** — `gateway.py`의 secrets 경로·QSettings, 로그·예외 메시지 노출 여부
+- [x] **자체 진행**(`code-review` 스킬 미사용) — Read로 11개 파일 전부 정독
+- [x] **일반 정확성·중복/단순화·효율 스캔**
+- [x] **중점 축** — 왕복 무손실성·하위호환·조용한 실패 12곳·API 키 취급 전부 확인
 
-**완료 기준**: findings 분류표 + 왕복 무손실성 판정표.
+**findings 분류표**(총 4건 — 3건 반영, 1건 기록만):
+
+| # | 위치 | 내용 | 처리 |
+|---|---|---|---|
+| 1 | `dxf_import.py` `_match_head` | 양방향 화살표(`head_start`)가 DXF 왕복마다 조용히 소실 — 계획서가 "미검증"으로 남겨뒀던 항목을 재현으로 확정. 샤프트당 tip 1개만 소비하던 단수 매칭을 시작/끝 독립 매칭(`_match_heads`)으로 교체 | **반영**(커밋 `11d05ca`, pytest 4종) |
+| 2 | `symbol_library.py` `_save_raw` | 비원자적 쓰기 — 쓰기 도중 크래시 시 JSON 손상 → 다음 로드가 조용히 빈 라이브러리로 대체 → 첫 저장에서 기존 심볼 전체 영구 소실 가능(재현은 안 했으나 원리적으로 가능, 이 프로젝트의 반복된 exit 127 크래시 이력과 결합하면 현실적 리스크) | **반영**(커밋 `465d08d`, 임시파일+`os.replace`, pytest 2종) |
+| 3 | `text_to_mermaid.py`/`text_to_svg.py` | `extract_mermaid`/`extract_svg`가 코드펜스 벗기기 로직을 완전히 복제 | **반영**(커밋 `83925bf`, `gateway.strip_code_fence`로 통합) |
+| 4 | `dxf_export.py`/`dxf_import.py` 의 `except Exception: pass`(XDATA 부착·bbox 추정·linetype 조회 등) | 전부 "실패해도 다른 항목 export/import를 막지 않기 위한" 방어적 설계이고 재현된 실패 사례 없음 — `_build_dxf_doc`의 per-item `except: continue`(개별 엔티티 export 실패를 사용자에게 안 알림)만 저위험 개선 후보 | **기록만**(Phase 7 후보로 이관, 재현 전엔 손대지 않음) |
+
+**왕복 무손실성 판정표**:
+
+| 필드/기능 | `.ecad` 왕복 | DXF 왕복 |
+|---|---|---|
+| `head_start`(양방향 화살표) | ✓ 보존(테스트 기존) | ✓ **이번에 수정**(finding #1) |
+| `head_scale`(화살촉 크기) | ✓ 보존 | ✗ 손실(방향과 달리 순수 표시값, 의도적 범위 밖으로 결정 — `11d05ca` 커밋 Rejected 참조) |
+| `cuts`(TRIM 자국) | ✓ 보존 | ✓ 보존(진짜 분절 LINE으로) |
+| `favorite`/`_group_id`/다중 라벨 | ✓ 보존(하위호환 포함) | `_group_id`만 INSERT 그룹 태깅으로 근사 보존, `favorite`은 개념 자체 없음(스코프 밖) |
+| 심볼 `kind` | ✓ 보존 | ✗ 손실(외곽선만, 기존 승인된 설계) |
+| 지속연결 바인딩 | ✓ 보존 | ✗ 손실(DXF에 개념 없음, 기존 승인된 설계) |
+| 펜 두께 | ✓ 보존 | ✓ XDATA로 정밀 보존(외부 CAD 표시용 lineweight는 근사) |
+
+**완료 기준 충족**: 위 두 표. 신규 pytest 6종(head 재구성 4 + 원자적 쓰기 2), 전체 스위트
+1015종 통과. 다음: Phase 5(프로젝트 고유 함정 재발 감사).
 
 ---
 
@@ -501,3 +512,13 @@ Phase 1은 우선순위가 가장 높지만 **차단 조건은 아니다** — �
   `(선택) /code-review ultra` 최종 점검 항목을 **삭제**하고 "마감 전 자체 최종 diff
   검토"(`git diff v0.1.0..HEAD` 정독)로 대체 — 같은 "최종 광역 점검" 목적을 subagent
   비용 없이 수행.
+- **2026-08-26 (후속 3)** — **Phase 4 완료**. 11개 파일(`fileio/` 8 + `ai/` 3) 전부
+  Read로 직접 정독, findings 4건 중 3건 즉시 반영: ⓐ DXF 왕복에서 양방향 화살표
+  (`head_start`)가 조용히 소실되던 버그(계획서가 "미검증"으로 남겨뒀던 항목을 실제
+  재현으로 확정, `_match_head`→`_match_heads`로 시작/끝 독립 매칭 재설계) ⓑ
+  `symbol_library.json` 저장이 비원자적이라 쓰기 도중 크래시 시 손상→다음 로드가
+  조용히 빈 라이브러리로 대체→기존 심볼 전체 영구 소실 위험(임시파일+`os.replace`로
+  원인 차단) ⓒ Mermaid/SVG 코드펜스 벗기기 로직 중복(`gateway.strip_code_fence`로
+  통합). 1건(DXF export의 per-item silent skip)은 재현된 실패 없어 기록만 하고
+  Phase 7로 이관. 왕복 무손실성 판정표 작성 완료(계획서 Phase 4 절 참조). 신규
+  pytest 6종, 전체 스위트 1015종 통과. 다음: Phase 5(프로젝트 고유 함정 재발 감사).
