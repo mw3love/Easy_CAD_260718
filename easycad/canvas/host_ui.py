@@ -723,6 +723,7 @@ class _UIBuildMixin:
         """[Phase 6 M1] 다크/라이트 일괄 적용 — 팔레트(Fusion)·캔버스 배경·아이콘 색.
         아이콘은 baked QPixmap이라 테마색이 바뀌면 액션·팔레트 아이콘을 재생성한다.
         persist=True일 때만 QSettings에 저장(테스트가 사용자 설정을 덮지 않도록 분리)."""
+        was_dark = getattr(self, "_dark", dark)   # [실사용 피드백 2026-08-26] 아래 도형 반전용
         self._dark = dark
         key = "dark" if dark else "light"
         # [실사용 피드백 2026-08-18] 기본 도형 색이 아직 사용자가 안 건드린 상태(sticky
@@ -755,6 +756,23 @@ class _UIBuildMixin:
         # 때(__init__ 끝)는 이미 self._docs가 채워진 뒤라 폴백 없이 안전.
         for _doc in self._docs:
             _doc.scene.setBackgroundBrush(QBrush(_CANVAS_BG[key]))
+        # [실사용 피드백 2026-08-26] 다크→라이트(또는 반대)로 실제 전환될 때, 이미 그려둔
+        # 도형 중 "그 순간 테마의 기본 잉크색 그대로"인 것만 새 테마 기본색으로 반전한다 —
+        # 그리는 순간 색이 박제되는 기존 설계(위 731~732줄) 탓에 다크에서 그린 흰 도형이
+        # 라이트 배경에서 안 보이던 문제(미니맵도 같은 씬을 그리므로 동시에 해결). 사용자가
+        # 직접 고른 색(기본값과 다른 값)은 조건에 안 걸려 그대로 유지된다. 기본색 "값" 자체는
+        # 안 바꾸므로 PDF 내보내기의 "흰색→검정" 임계값 매칭과도 안 부딪힌다(2026-08-18에
+        # 기본색 자체를 회색빛으로 바꿨다가 그 매칭이 깨졌던 것과는 다른 접근).
+        if was_dark != dark:
+            old_ink = QColor(_DEFAULT_INK_DARK if was_dark else _DEFAULT_INK_LIGHT).name()
+            new_ink = QColor(_DEFAULT_INK_DARK if dark else _DEFAULT_INK_LIGHT).name()
+            for _doc in self._docs:
+                for _it in _doc.scene.items():
+                    if not hasattr(_it, "apply_color"):
+                        continue
+                    _cur = self._read_props(_it).get("color")
+                    if _cur is not None and _cur.name().lower() == old_ink.lower():
+                        _it.apply_color(QColor(new_ink))
         # 아이콘 재생성: 액션(파일/보기 26종 전부 — SVG 11종·QPainter 8종 모두 이제 중립색이라
         # 테마 전환마다 실제로 재칠됨) + 팔레트/심볼(중립색) + 상단 그리기 도구 7종(2026-08-02
         # 4차 피드백으로 코랄 고정 → 중립색 전환, 이제 테마 전환 시 재생성 필요 — 2026-08-10
