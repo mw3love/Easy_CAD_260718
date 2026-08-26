@@ -1,37 +1,25 @@
-# 팔레트 등록 즐겨찾기 슬롯 (항목 B는 같은 날 후속 세션에서 해결됨)
+# 팔레트 등록 메뉴 — "미분류" 제거 → 즐겨찾기 슬롯으로 교체
 
 생성: 2026-08-25 11:59
-갱신: 2026-08-25 (같은 날 후속) — 항목 B(SVG 그룹 큐닷) 해결, 항목 A만 남음
+갱신: 2026-08-26 — 항목 B(SVG 그룹 큐닷)는 완전히 해결돼(그룹 프레임 3차, `_GroupBindProxy`/
+`whole_group_id()`/`qc_dot_rects()` 코드로 재확인 완료) 서술을 걷어냄, 항목 A만 남김.
 
 ## 배경
 
-이번 세션은 사용자가 앱을 실사용하며 낸 4가지 지적을 다뤘다: ① 우클릭 "팔레트에 등록"
-폴더 선택 ② SVG 생성 도형 큐닷 화살표 ③ 그룹 호버 시 포트점 ④ 도구 고정 핀 위치.
-①③④는 이번 세션에 구현·검증·커밋까지 끝났다(git log 최신 커밋 참조). ②는 1차 수정
-(`_PathItem._freehand` 표식 도입, select 유휴호버 억제를 손그림 펜만으로 좁힘)까지
-끝났지만, 사용자가 실제 삽입된 다중조각 SVG 심볼("Zigbee" 아이콘)로 재현한 결과 **더
-근본적인 문제**를 새로 발견해 별도 항목(B)으로 분리했었다.
+2026-08-25 세션에서 사용자가 우클릭 "팔레트에 등록" 서브메뉴에 대해 추가 요청을 냈다:
+"미분류 제거하고 그 자리는 즐겨찾기 자리로. 진짜 미분류가 필요하면 1개짜리 임시폴더를
+만드는 게 오히려 직관적." 아직 미착수.
 
-**항목 B는 같은 날 후속 세션(deep-interview + 구현)에서 해결 완료** — "그룹 프레임"
-기능으로 `_group_id`가 있는 모든 그룹(SVG 다중조각 포함)이 이미지처럼 하나의 틀로
-포트닷·큐닷·화살표 부착을 지원한다. 상세: `docs/history/2026-08.md` "그룹 프레임 —
-SVG 다중조각 그룹을 이미지처럼...", `tests/test_part13_group_frame.py`. 아래 항목 B
-절은 그 해결 전 상태 기록으로 남겨둔다(참고용, 착수 불필요) — 다음 세션은 **항목 A만**
-보면 된다. 그 논의 중 사용자가 폴더선택 UX(①)에 대한 추가 요청(미분류 제거 + 즐겨찾기)
-도 냈는데 아직 미착수다.
+## 현재 상태
 
-## 항목 A — "팔레트에 등록" 서브메뉴: 미분류 제거 → 즐겨찾기 슬롯으로 교체
+`host_selection.py::_build_register_symbol_menu`(348번 줄 부근)가 `[(미분류), 폴더1,
+폴더2, ..., 새 폴더...]` 순으로 서브메뉴를 만든다(359번 줄: `m.addAction("(미분류)", ...)`).
 
-**현재 상태**: `host_selection.py::_build_register_symbol_menu`가 `[(미분류), 폴더1,
-폴더2, ..., 새 폴더...]` 순으로 서브메뉴를 만든다(이번 세션 구현, 커밋됨).
+## 구현 방향(확인 필요한 지점)
 
-**사용자 요청 (원문 취지)**: "미분류 제거하고 그 자리는 즐겨찾기 자리로. 진짜 미분류가
-필요하면 1개짜리 임시폴더를 만드는 게 오히려 직관적."
-
-**구현 방향(확인 필요한 지점)**:
-- `symbol_library.py`에 이미 `toggle_favorite(symbol_id)`(122·144번 줄 부근)가 있다 —
+- `symbol_library.py`에 이미 `toggle_favorite(symbol_id)`(144번 줄)가 있다 —
   `add_symbol(name, item_dicts, thumb_b64, folder=None)`는 `favorite` 인자가 없고 항상
-  `False`로 생성한 뒤 별도 토글이 필요하다.
+  `False`로 생성한 뒤(121번 줄) 별도 토글이 필요하다.
 - "즐겨찾기로 등록" 메뉴 항목을 클릭하면: (a) `add_symbol(..., folder=None)`로 등록 후
   반환된 entry의 id로 `toggle_favorite(id)` 호출, 또는 (b) `add_symbol`에 `favorite=True`
   인자를 새로 추가하는 두 방법이 있다. (b)가 더 깔끔해 보이지만 `add_symbol` 시그니처
@@ -42,59 +30,13 @@ SVG 다중조각 그룹을 이미지처럼...", `tests/test_part13_group_frame.p
   `_refresh_custom_symbol_section` 로직 확인).
 - 서브메뉴 순서는 `[즐겨찾기로 등록, 폴더1, 폴더2, ..., 새 폴더...]`로 재구성.
 
-**판단 기준**: `_build_register_symbol_menu`/`register_selection_as_symbol`는 이번
-세션에 이미 익숙해진 코드라 국소 수정으로 충분할 것. 새 pytest는 기존
-`tests/test_part7_symbol_library.py`의 서브메뉴 테스트들(`test_build_register_symbol_menu_*`)
-옆에 추가.
+## 판단 기준
 
-## 항목 B — SVG 다중조각 심볼: 그룹일 때만 큐닷 지원
-
-**발견 경위**: 사용자가 "Zigbee" AI 생성 SVG 심볼(안테나 호 3개+선+박스, 여러
-`_PathItem`/`_LineItem` 개별 조각)을 "내 심볼"에서 캔버스에 다시 꺼낸 뒤 스크린샷으로
-보여줬다 — 선택하면 그룹 오버레이(모서리 사각 핸들 4개+회전점)만 뜨고 큐닷(화살표 시작
-접속점)이 전혀 없다. 원인: 여러 개별 아이템이 동시 선택되면 `_handle_active()`가
-`_group_active()` 체크로 개별 핸들(큐닷 포함)을 전부 숨기는데, 그 대신 뜨는 "그룹
-오버레이"엔애초에 큐닷 파이프라인이 연결돼 있지 않다. 즉 다중조각 SVG 심볼은 지금
-구조상 화살표를 시작할 방법이 없다.
-
-**사용자가 제안한 방향(이 세션 마지막에 나온 구체안)**: "svg는 그룹으로 묶을 때랑 안
-묶을 때 두 가지 경우가 있을 듯한데. 그룹으로 안 묶으면 개별이니 이건 무시해도 될 듯하고,
-**그룹일 때만 일반 도형인 것처럼 인식되게** 하는 게 좋을 듯."
-
-이 제안의 장점: 2026-08-04 "SVG는 낱개 선택 가능해야 한다" 결정을 건드리지 않는다
-(안 묶은 SVG는 그대로 낱개). 오직 사용자가 명시적으로 Ctrl+G로 묶은 경우에만(즉 "이걸
-하나로 다루고 싶다"는 명시적 신호가 있을 때만) 그룹 전체 bbox가 하나의 큐닷 제공자처럼
-동작하게 확장한다.
-
-**아직 안 풀린 설계 질문 (다음 세션에서 먼저 확인)**:
-1. **바인딩 대상**: 지금 화살표 바인딩(`_detach_port_from_host` 등)은 항상 특정
-   아이템 하나(host)를 참조한다. 그룹은 여러 아이템의 집합이라 "그룹에 화살표가
-   붙었다"를 어떤 단일 host로 표현할지가 없다. 후보:
-   - (i) 그룹 멤버 중 큐닷이 나온 변에 가장 가까운 멤버 하나를 실제 host로 삼아
-     바인딩(사용자 입장에선 "그룹에 붙은 것처럼" 보이지만 내부적으론 개별 아이템
-     바인딩 — 이동/삭제 시 예외 케이스가 뭐가 생길지 확인 필요, 예: 그 멤버만 그룹에서
-     빠지면?).
-   - (ii) 그룹 자체를 위한 합성 host 개념을 새로 도입(더 근본적이지만 범위가 큼).
-   - `_group_id` 기반 그룹의 이동/삭제/복제 기존 코드(`group_selection`/
-     `ungroup_selection`, `host_selection.py`)부터 먼저 읽고 (i)이 실제로 안전한지
-     확인하는 게 우선.
-2. **큐닷 렌더 위치**: 그룹 bbox의 N/E/S/W(다른 심볼과 같은 방식) — `_group_scene_rect`
-   (이미 있음, 팔레트 등록 시 그룹 bbox 계산에 씀)를 재사용 가능해 보임.
-3. **호버 미리보기도 필요한가**: 지금 세션에서 고친 "그룹 멤버는 미선택 상태 호버 억제"
-   (`core_view.py`, `_group_id` 있으면 `_port_dot_target`/`_hover_port_at`에서 제외)와
-   이 항목이 상충하지 않는지 확인 — 그 수정은 "그룹 멤버 개별 호버"를 막은 것이지 "그룹
-   전체의 새 호버 표시"를 막은 게 아니므로 별도로 그룹 bbox 호버 미리보기를 추가해야
-   완전한 기능이 된다(선택 안 해도 화살표 도구로 그룹에 접근 가능하려면).
-
-**권장 착수 순서**: deep-interview로 바인딩 대상(질문 1)부터 확정 → 그다음 구현.
-이 항목은 이번 세션 구조 조사(`core_view.py`의 `_handle_active`/`_group_active`,
-`_qc_dot_rects`, `core_shapes.py`의 그룹 이동/바인딩 코드)를 이미 상당히 마쳤으니
-다음 세션은 코드 재탐색보다 설계 확정에 시간을 더 쓰면 된다.
+`_build_register_symbol_menu`/`register_selection_as_symbol`는 국소 수정으로 충분할 것.
+새 pytest는 기존 `tests/test_part7_symbol_library.py`의 서브메뉴 테스트들
+(`test_build_register_symbol_menu_*`) 옆에 추가.
 
 ## 참고
 
-- 이번 세션 구현분(①③④ + ②1차)은 커밋 로그 참조(`git log`, 2026-08-25 커밋).
-- 관련 코드: `easycad/canvas/host_selection.py`(등록 메뉴), `easycad/canvas/core_view.py`
-  (`_port_dot_target`/`_hover_port_at`/`_draw_port_dots`), `easycad/canvas/core_shapes.py`
-  (`_handle_active`/`_group_active`/`_qc_dot_rects`), `easycad/fileio/symbol_library.py`
-  (`add_symbol`/`toggle_favorite`).
+관련 코드: `easycad/canvas/host_selection.py`(등록 메뉴), `easycad/fileio/symbol_library.py`
+(`add_symbol`/`toggle_favorite`).
