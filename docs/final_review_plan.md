@@ -383,25 +383,31 @@ svg_import 309 · mermaid_import 292 · sketch_build 212 · symbol_library 173) 
 
 ---
 
-### Phase 5 — 프로젝트 고유 함정 재발 감사 (자체 · 스킬이 못 하는 부분)
+### Phase 5 — 프로젝트 고유 함정 재발 감사 (자체 · 스킬이 못 하는 부분) — **완료 (2026-08-26)**
 
 `docs/pitfalls.md`의 각 계열이 **지금 코드에 재발해 있지 않은지** 기계적으로 확인한다.
 이 프로젝트에서 같은 함정이 2~4회씩 재발한 이력이 있어(예: `_scale_or_1` 나눗셈 누락 4회)
 "한 번 고쳤다"가 보증이 안 된다.
 
-- [ ] **좌표계·변환** — `_scale_or_1()` 나눗셈 누락 grep (4회 재발 이력) ·
-      `_content_rect()`를 "보이는 외형"으로 오용한 곳 · `drawForeground` 이중 변환
-- [ ] **히트테스트·후보목록 누락** — `isinstance(it, (_RectItem, ...))` 병렬 목록 전수 대조
-      (새 타입 `_PolygonItem`·`_TextItem`·`_GroupBindProxy`가 빠진 목록이 있는지)
-- [ ] **이벤트 우선순위** — `mousePressEvent`/`mouseMoveEvent`/`mouseDoubleClickEvent`에서
-      `current_tool`을 확인 안 하는 early-return 분기 전수 나열
-- [ ] **`try/finally` 뒷정리 보장** — 조기 return이 많은 핸들러의 상태 플래그 해제 경로
-- [ ] **버전키 메모이즈** — `prepareGeometryChange()` 순서(super 먼저) · 네이티브 Qt 호출이
-      우회하는 캐시
-- [ ] **Qt 레이아웃 `updateGeometry()`** — 위젯 경계마다 걸렸는지
-- [ ] 발견분은 회귀 테스트와 함께 Phase 7에서 반영
+⚠ **원안과 달리 발견 즉시 반영했다**(Phase 2~4와 동일 판단 — 소규모·저위험·즉시 검증
+가능한 건은 Phase 7까지 미루지 않는다).
 
-**완료 기준**: pitfalls.md 계열별 "재발 없음 / 재발 발견(위치)" 판정표.
+**계열별 판정표**:
+
+| 계열 | 판정 | 근거 |
+|---|---|---|
+| `_scale_or_1()` 나눗셈 누락 | ✓ 재발 없음 | `_scale_or_1`/`_EDGE_HIT_MIN`/`_HANDLE_PX`/`_SEG_HANDLE_PX`/`_QC_DOT_GAP_PX`/`_COL_HIT_PX` 전체 호출부(약 40곳, `_GroupTransform` 2026-08-25 신설분 포함) grep 전수 대조 — 전부 일관되게 나눗셈 적용 |
+| `_content_rect()`를 "보이는 외형"으로 오용 | ✗ **재발 발견 → 반영**(커밋 `e92b2e8`) | `host_context.py::_align_rect`(메뉴 기반 Align/Distribute)가 2026-08-10에 드래그 스냅(`_smart_snap_srect`)에서 고친 것과 동일한 패딩 버그를 그대로 갖고 있었다 — 펜 두께가 다른 두 도형을 "왼쪽 맞춤"해도 실제 시각 경계가 4유닛까지 어긋남(실측). `_smart_snap_srect` 재사용으로 통일 |
+| `drawForeground` 이중 변환 | ✓ 재발 없음 | `_AnnotatorView.drawForeground`·미니맵 `paintEvent`(별도 메커니즘, `mapFromScene` 필요한 게 정상) 둘 다 정독 — 이중 변환 없음 |
+| 히트테스트·후보목록 누락(`isinstance` 병렬 목록) | ✗ **재발 발견 → 반영**(커밋 `2616a81`) | `_conn_shapes()`(전체스캔)는 §8 항목21 후속(2026-08-18)에서 닫힌 `_PolygonItem`을 포함하도록 고쳐졌는데, 병렬 후보목록 `_conn_shapes_near()`(select 호버 예고점·큐닷 근접이 거치는 실제 경로)는 그때 같이 안 넓혀짐 — 실측 확인 후 수정 |
+| 이벤트 우선순위(`current_tool` 미확인 early-return) | ✓ 재발 없음 | TRIM 전용 가드 3곳(`grab` 판정·`_connect_port_at`·더블클릭 위임) 전부 건재 확인. 이후 추가된 폴리곤 도구는 `_place is not None` 최우선 분기로 이미 보호됨(별도 가드 불필요) |
+| `try/finally` 뒷정리 보장 | ✓ 재발 없음 | `mouseReleaseEvent`→`_mouse_release_impl`+`_end_drag_session()` 래퍼 패턴 건재 — 조기 return 몇 개가 늘어도 구조적으로 자동 커버 |
+| 버전키 메모이즈(`prepareGeometryChange` 순서) | ✓ 재발 없음 | 오버라이드는 `_PolyArrowItem` 1곳뿐, `super()` 먼저·버전증가 나중 순서 유지 확인. `_geom_version` 확장 범위도 네이티브 setter 없는 클래스로 국한됨(`_GroupTransform`의 `CanvasWindow._geom_version`은 별도의 안전한 값비교 캐시 방식) |
+| Qt 레이아웃 `updateGeometry()` | ✓ 재발 없음(표본 검토) | 기존 collapse 토글 지점(`_FloatingPanel._set_collapsed`) 확인 — 단일 계층 `setVisible`이라 Qt가 자동 처리, "내 심볼" 3중 중첩 케이스는 이미 수정된 상태 유지 확인. 전수 감사는 위젯 트리 규모상 시간 대비 낮은 수확으로 판단해 표본 검토로 갈음 |
+
+**완료 기준 충족**: 위 판정표. 발견 2건 모두 즉시 반영(회귀 테스트 동반, 재현 스크립트로
+수정 전 실패·수정 후 통과 확인). 신규 pytest 4종, 전체 스위트 1017종 통과. 다음: Phase 6
+(Not-tested 백로그 트리아지).
 
 ---
 
@@ -522,3 +528,15 @@ Phase 1은 우선순위가 가장 높지만 **차단 조건은 아니다** — �
   통합). 1건(DXF export의 per-item silent skip)은 재현된 실패 없어 기록만 하고
   Phase 7로 이관. 왕복 무손실성 판정표 작성 완료(계획서 Phase 4 절 참조). 신규
   pytest 6종, 전체 스위트 1015종 통과. 다음: Phase 5(프로젝트 고유 함정 재발 감사).
+- **2026-08-26 (후속 4)** — **Phase 5 완료**. pitfalls.md 8개 계열 전수 감사, 2건
+  재발 발견·즉시 반영: ⓐ Align/Distribute 메뉴(`host_context._align_rect`)가
+  2026-08-10에 드래그 스냅에서 고친 것과 동일한 `_content_rect()` 패딩 버그를
+  그대로 갖고 있어 펜 두께 다른 도형끼리 "왼쪽 맞춤"해도 실제 4유닛까지 어긋남
+  (`_smart_snap_srect` 재사용으로 통일) ⓑ `_conn_shapes()`(전체스캔)는 §8 항목21
+  후속(2026-08-18)에서 닫힌 다각형을 포함하도록 고쳤는데 병렬 후보목록
+  `_conn_shapes_near()`(select 호버 예고점·큐닷 근접 실제 경로)는 그때 같이 안
+  넓혀져 다각형이 그 경로에서 계속 누락되고 있었음. 둘 다 재현 스크립트로 수정
+  전 실패·수정 후 통과 확인, 신규 pytest 4종, 전체 스위트 1017종 통과. 나머지
+  6개 계열(_scale_or_1 나눗셈·drawForeground 이중변환·이벤트 우선순위·try/finally·
+  버전키 메모이즈·updateGeometry)은 재발 없음 확인. 다음: Phase 6(Not-tested
+  백로그 트리아지 + 실사용 검증 시나리오표).
