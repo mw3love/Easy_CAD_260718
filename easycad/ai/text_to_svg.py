@@ -61,14 +61,7 @@ def build_image_prompt(subject: str = "") -> str:
 def extract_svg(raw: str) -> str:
     """모델 응답에서 SVG 텍스트만 꺼낸다 — text_to_mermaid.extract_mermaid와 동일 패턴
     (```svg 코드펜스가 섞여 나오면 벗긴다)."""
-    txt = raw.strip()
-    if txt.startswith("```"):
-        lines = txt.split("\n")
-        lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        txt = "\n".join(lines).strip()
-    return txt
+    return gw.strip_code_fence(raw)
 
 
 def generate_svg(api_key: str, subject: str, *, model: str, image=None,

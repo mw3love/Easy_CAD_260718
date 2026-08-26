@@ -61,14 +61,7 @@ def build_image_prompt(note: str = "") -> str:
 
 def extract_mermaid(raw: str) -> str:
     """모델 응답에서 Mermaid 텍스트만 꺼낸다 — ```mermaid 코드펜스가 섞여 나오면 벗긴다."""
-    txt = raw.strip()
-    if txt.startswith("```"):
-        lines = txt.split("\n")
-        lines = lines[1:]                 # 여는 펜스(```mermaid 또는 ```) 제거
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]            # 닫는 펜스 제거
-        txt = "\n".join(lines).strip()
-    return txt
+    return gw.strip_code_fence(raw)
 
 
 def generate_mermaid(api_key: str, description: str, *, model: str,

@@ -328,6 +328,20 @@ def _b64_png(img) -> str:
     return base64.standard_b64encode(buf.getvalue()).decode()
 
 
+def strip_code_fence(raw: str) -> str:
+    """모델 응답에서 코드펜스를 벗긴다(````mermaid`·```` svg```` 등 언어 태그 무관) —
+    [최종 검수 Phase 4, 2026-08-26] `text_to_mermaid.extract_mermaid`와
+    `text_to_svg.extract_svg`가 완전히 동일한 로직을 각자 복제하고 있던 것을 여기로 통합."""
+    txt = raw.strip()
+    if txt.startswith("```"):
+        lines = txt.split("\n")
+        lines = lines[1:]                 # 여는 펜스(```lang 또는 ```) 제거
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]            # 닫는 펜스 제거
+        txt = "\n".join(lines).strip()
+    return txt
+
+
 def call_text(client, model: str, prompt: str, *, image=None,
               max_tokens: int = DEFAULT_MAX_TOKENS) -> tuple[str, float]:
     """텍스트 전용 또는 이미지+텍스트 호출(단일, 폴백 없음). `image`(PIL Image)를 주면
