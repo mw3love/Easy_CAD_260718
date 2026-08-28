@@ -1851,34 +1851,32 @@ class _AnnotatorView(QGraphicsView):
         if kind == "restore":
             _tag, host, cut = self._trim_preview
             edge_i, t0, t1 = cut
-            poly = _host_outline_local_polygon(host)
-            n = len(poly)
+            edges = _host_outline_edges(host)
+            n = len(edges)
             if edge_i == -1:
                 # [2026-08-28] 테두리 전체 트림 복구(sentinel) — 외곽선 전체가 되돌아올 예고.
-                for i in range(n):
-                    a, b = poly[i], poly[(i + 1) % n]
+                for a, b in edges:
                     painter.drawLine(host.mapToScene(a), host.mapToScene(b))
                 return
             if not (0 <= edge_i < n):
                 return
-            a, b = poly[edge_i], poly[(edge_i + 1) % n]
+            a, b = edges[edge_i]
             p0 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0))
             p1 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t1, a.y() + (b.y() - a.y()) * t1))
             painter.drawLine(p0, p1)
         elif kind == "closed":
             _tag, host, edge_i, t0, t1 = self._trim_preview
-            poly = _host_outline_local_polygon(host)
-            n = len(poly)
+            edges = _host_outline_edges(host)
+            n = len(edges)
             if edge_i == -1:
                 # [2026-08-28] 테두리 전체 트림(타원 등 곡선 근사 도형, sentinel) — 변 하나가
                 # 아니라 외곽선 전체를 빨간 점선으로 예고한다.
-                for i in range(n):
-                    a, b = poly[i], poly[(i + 1) % n]
+                for a, b in edges:
                     painter.drawLine(host.mapToScene(a), host.mapToScene(b))
                 return
             if not (0 <= edge_i < n):
                 return
-            a, b = poly[edge_i], poly[(edge_i + 1) % n]
+            a, b = edges[edge_i]
             p0 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0))
             p1 = host.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t1, a.y() + (b.y() - a.y()) * t1))
             painter.drawLine(p0, p1)

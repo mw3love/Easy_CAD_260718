@@ -30,7 +30,8 @@ from easycad.canvas.annotator_core import (
     _border_pt_in_gap, _shape_ports_visible, _trim_candidate_segment,
     _open_item_local_pts, _item_local_edges, _trim_candidate_open_segment,
     _extend_candidate, _ray_seg_intersection, apply_open_item_trim, apply_extend,
-    _tight_scene_bbox, _item_center_path, _merge_cuts_list, _restore_cut_candidate)
+    _tight_scene_bbox, _item_center_path, _merge_cuts_list, _restore_cut_candidate,
+    _host_outline_edges)
 from easycad.fileio.pdf_export import export_pdf, _selection_rect, render_preview
 from easycad.canvas.host_dialogs import _PdfExportDialog
 from easycad.fileio.document import save_document, load_document, load_document_layers, item_to_dict

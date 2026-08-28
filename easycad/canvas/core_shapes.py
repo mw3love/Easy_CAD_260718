@@ -835,8 +835,8 @@ class _HandleResizeMixin:
         cuts = getattr(self, "_cuts", None)
         if not cuts:
             return []
-        poly = _host_outline_local_polygon(self)
-        n = len(poly)
+        edges = _host_outline_edges(self)
+        n = len(edges)
         if n < 2:
             return []
         # [2026-08-10 후속] 크기를 0.8배(다른 핸들보다 작음)에서 다른 핸들과 같은 표준 크기로
@@ -850,7 +850,7 @@ class _HandleResizeMixin:
                 continue   # [2026-08-28] 테두리 전체 트림 — 잡을 개별 경계가 없다(핸들 없음)
             if not (0 <= edge_i < n):
                 continue
-            a, b = poly[edge_i], poly[(edge_i + 1) % n]
+            a, b = edges[edge_i]
             for which, t in (("t0", t0), ("t1", t1)):
                 p = QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
                 out.append(((ci, which), QRectF(p.x() - h / 2, p.y() - h / 2, h, h)))
@@ -865,12 +865,12 @@ class _HandleResizeMixin:
         cuts = getattr(self, "_cuts", None) or []
         if not (0 <= ci < len(cuts)):
             return
-        poly = _host_outline_local_polygon(self)
-        n = len(poly)
+        edges = _host_outline_edges(self)
+        n = len(edges)
         edge_i, t0, t1 = cuts[ci]
         if not (0 <= edge_i < n):
             return
-        a, b = poly[edge_i], poly[(edge_i + 1) % n]
+        a, b = edges[edge_i]
         t, _perp = _seg_param_and_perp(a, b, local_pt)
         MIN_GAP = 0.01
         if which == "t0":
@@ -6338,20 +6338,20 @@ def _border_pt_in_gap(host, local_pt) -> bool:
     호버에 잡히는 원인이었다. [§8 항목17 7단계, 2026-08-10] 그 우회는 폐지되고 포트도 이제
     `build_trimmed_border_path`로 진짜 분절 렌더를 쓰지만, 이 함수의 판정 로직(호버·스냅이
     "그려지는 선"과 같은 정의를 쓰게 하는 것)은 렌더 방식과 무관하게 여전히 필요하다 —
-    `build_trimmed_border_path`와 **같은** 소스(`_host_outline_local_polygon`·`_port_edge_gap`·
+    `build_trimmed_border_path`와 **같은** 소스(`_host_outline_edges`·`_port_edge_gap`·
     `host._cuts`)로 판정해 "스냅되는 곳 == 선이 그려진 곳"을 유지한다(TRIM으로 자른 자리에
     화살표가 붙는 것을 막는 게 3단계의 목적)."""
     ports = getattr(host, "_ports", None) or []
     cuts = getattr(host, "_cuts", None) or []
     if not ports and not cuts:
         return False                      # 포트도 cut도 없는 도형은 비용 0 — 즉시 통과
-    poly = _host_outline_local_polygon(host)
-    n = len(poly)
+    edges = _host_outline_edges(host)
+    n = len(edges)
     if n < 2:
         return False
 
     def _pt_in_edge_range(edge_i: int, t0: float, t1: float) -> bool:
-        a, b = poly[edge_i], poly[(edge_i + 1) % n]
+        a, b = edges[edge_i]
         t, perp = _seg_param_and_perp(a, b, local_pt)
         # perp 허용치: 인자로 오는 건 이미 외곽선 위의 점이라 이론상 0이다. 변끼리는 도형
         # 크기만큼 떨어져 있어 넉넉히 잡아도 옆 변으로 샐 일이 없다(부동소수 잡음만 흡수).
@@ -6371,7 +6371,7 @@ def _border_pt_in_gap(host, local_pt) -> bool:
         if abs(c.x() - local_pt.x()) <= reach and abs(c.y() - local_pt.y()) <= reach:
             near_ports.append(port)
     for port in near_ports:
-        hit = _port_edge_gap(poly, port)
+        hit = _port_edge_gap(edges, port)
         if hit is None:
             continue
         i, t0, t1 = hit
@@ -6518,12 +6518,13 @@ def _flatten_closed_path_to_polygon(path: QPainterPath) -> list:
     [2026-08-28 실사용 버그 수정] 서브패스가 여러 개인 심볼(예: 저장소=원기둥 — 윗면 타원
     `addEllipse()`와 몸통 왼쪽변/아랫면 호/오른쪽변이 별개 서브패스)은 이전엔 `polys[0]`만
     써서 몸통이 TRIM 계산에서 통째로 빠져 있었다(실사용 재현: 몸통을 클릭해도 엉뚱하게
-    가까운 타원 변에 매칭됨). 전 서브패스를 순서대로 이어붙인다 — 이어붙인 결과가 기하학적
-    으로 "진짜 하나의 닫힌 루프"는 아니라 서브패스 경계마다 가짜 변(화면엔 안 그려짐, 도형
-    내부를 가로지름)이 하나씩 생기지만, `_nearest_border_visible`(실제 `_symbol_nearest`
-    기반, 이미 전 서브패스를 정확히 봄)이 먼저 찾아준 실제 클릭 지점은 항상 그 근처의 진짜
-    변에 압도적으로 가까워 가짜 변이 선택될 일이 없다(도형 내부 대각선이라 테두리 근접보다
-    항상 멀다)."""
+    가까운 타원 변에 매칭됨). 전 서브패스를 순서대로 이어붙여 이 함수는 고쳤지만, 이 점
+    목록을 그대로 "하나의 원형 폴리곤"처럼 `(i+1)%n`으로 변을 만들면 서브패스 경계마다
+    화면에 없는 대각선 "이음매 변"이 또 생긴다는 게 재실사용으로 드러났다(가로선이 렌더에
+    나타나고, 그 대각선이 실제 클릭보다 가까이 있어 곡선의 엉뚱한 위치가 잘림 — "압도적으로
+    멀다"는 가정이 틀렸었다). 그래서 TRIM cut 모델(edge_index 기반 조회·렌더·커터)은 전부
+    이 함수가 아니라 서브패스 경계를 존중하는 `_host_outline_edges`를 쓴다 — 이 함수(점
+    목록만)는 bbox·정렬스냅처럼 "변 연결" 개념이 필요 없는 곳에만 남는다."""
     pts = []
     for poly in path.toSubpathPolygons():
         sub = [poly.at(i) for i in range(poly.count())]
@@ -6556,6 +6557,49 @@ def _host_outline_local_polygon(host) -> list:
         return host.local_pts()
     r = host.rect()
     return [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
+
+
+def _host_outline_edges(host) -> list:
+    """[2026-08-28 실사용 버그 수정] host 외곽선의 변(선분) 목록((a,b) 쌍), host 로컬좌표 —
+    TRIM의 (edge_index, t0, t1) cut 모델이 여기서 나온 인덱스로 저장·조회한다.
+
+    `_host_outline_local_polygon`(점 목록, bbox·정렬스냅 등에 계속 쓰임)과 갈라선 이유:
+    그 함수는 서브패스가 여럿이면 그냥 이어붙이기만 해서(2026-08-28 저장소=원기둥 몸통
+    누락 수정), 점 목록으로는 맞지만 그걸 "하나의 원형 폴리곤"처럼 `(i+1)%n`으로 변을
+    만들면 서브패스 경계마다 화면에 없는 대각선 "이음매 변"이 생긴다 — 실사용 재현: 저장소
+    몸통을 클릭해도 이 대각선이 가로채 엉뚱한 위치가 잘리고, 아무 것도 안 잘랐는데도 윗면
+    타원을 가로지르는 선이 렌더에 나타났다(이 이음매 변이 cut 없이도 "그려질 변"으로 취급됨).
+
+    서브패스마다 독립적으로 닫힘 여부를 보존한다 — 닫힌 서브패스(윗면 타원처럼 시작점=
+    끝점)는 자기 시작점으로 돌아가는 변까지 포함하고, 열린 서브패스(원기둥 몸통처럼
+    moveTo로 시작해 안 닫힘)는 포함하지 않는다. 서로 다른 서브패스끼리는 변이 아예
+    생기지 않는다."""
+    if isinstance(host, _PolygonItem) and host._closed:
+        poly = host.local_pts()
+        n = len(poly)
+        return [(poly[i], poly[(i + 1) % n]) for i in range(n)]
+    if isinstance(host, _SymbolItem):
+        path = host._sym_path()
+    elif isinstance(host, _EllipseItem):
+        path = QPainterPath()
+        path.addEllipse(host.rect())
+    else:
+        r = host.rect()
+        poly = [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
+        return [(poly[i], poly[(i + 1) % 4]) for i in range(4)]
+    edges = []
+    for sub in path.toSubpathPolygons():
+        pts = [sub.at(i) for i in range(sub.count())]
+        closed = len(pts) >= 2 and _close_pt(pts[0], pts[-1])
+        if closed:
+            pts.pop()
+        m = len(pts)
+        if m < 2:
+            continue
+        span = m if closed else m - 1
+        for i in range(span):
+            edges.append((pts[i], pts[(i + 1) % m]))
+    return edges
 
 
 def _tight_scene_bbox(item) -> QRectF | None:
@@ -6606,11 +6650,11 @@ def _item_local_edges(item) -> list:
     열린 폴리라인)은 안 닫는다. TRIM 커터 순회를 도형 종류 무관하게 만든다(이전엔
     `_trim_candidate_segment`가 `_host_outline_local_polygon`만 가정해 열린 도형을 커터로
     쓰면 크래시했다 — host.rect() 미존재). 인식 못 하는 타입(화살표 곡선·`_PathItem` 등)은
-    빈 리스트를 돌려줘 그냥 기여 없는 커터로 취급된다."""
+    빈 리스트를 돌려줘 그냥 기여 없는 커터로 취급된다. [2026-08-28] 닫힌 쪽은
+    `_host_outline_edges`로 통일 — 서브패스가 여럿인 심볼(저장소 등)을 커터로 써도
+    서브패스 이음매의 가짜 대각선이 커터 변으로 새지 않는다."""
     if _is_closed_trim_shape(item):
-        poly = _host_outline_local_polygon(item)
-        n = len(poly)
-        return [(poly[i], poly[(i + 1) % n]) for i in range(n)]
+        return _host_outline_edges(item)
     pts = _open_item_local_pts(item)
     return [(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
 
@@ -6630,11 +6674,12 @@ def _seg_param_and_perp(a: QPointF, b: QPointF, p: QPointF):
     return t, math.hypot(p.x() - px, p.y() - py)
 
 
-def _port_edge_gap(poly: list, port):
-    """포트가 호스트 외곽선(poly, 로컬좌표)의 어느 변에 걸쳐 있는지 찾아 (edge_index, t0, t1)
-    반환(못 찾으면 None) — 포트 중심에서 가장 가까운 변을 고르고, 포트 폭/높이를 그 변
-    방향으로 투영해 걸친 구간을 근사한다(축정렬 변은 정확, 대각/사선 변은 근사)."""
-    n = len(poly)
+def _port_edge_gap(edges: list, port):
+    """포트가 호스트 외곽선(edges, `_host_outline_edges` 결과, 로컬좌표 (a,b) 쌍 목록)의
+    어느 변에 걸쳐 있는지 찾아 (edge_index, t0, t1) 반환(못 찾으면 None) — 포트 중심에서
+    가장 가까운 변을 고르고, 포트 폭/높이를 그 변 방향으로 투영해 걸친 구간을 근사한다
+    (축정렬 변은 정확, 대각/사선 변은 근사)."""
+    n = len(edges)
     if n < 2:
         return None
     pr = port.rect()
@@ -6642,7 +6687,7 @@ def _port_edge_gap(poly: list, port):
     half_w, half_h = pr.width() / 2.0, pr.height() / 2.0
     best = None
     for i in range(n):
-        a, b = poly[i], poly[(i + 1) % n]
+        a, b = edges[i]
         t_c, perp = _seg_param_and_perp(a, b, center_local)
         if perp > max(half_w, half_h) + 4.0:   # 변에서 너무 멀면(여유 4씬단위) 이 변 아님
             continue
@@ -6714,8 +6759,8 @@ def _restore_cut_candidate(host, scene_pt: QPointF):
     cuts = getattr(host, "_cuts", None) or []
     if not cuts:
         return None
-    poly = _host_outline_local_polygon(host)
-    n = len(poly)
+    edges = _host_outline_edges(host)
+    n = len(edges)
     if n < 2:
         return None
     local_pt = host.mapFromScene(scene_pt)
@@ -6726,7 +6771,7 @@ def _restore_cut_candidate(host, scene_pt: QPointF):
             # [2026-08-28] 테두리 전체 트림(sentinel) — 특정 변이 아니라 전체 외곽선 중
             # local_pt에 가장 가까운 점으로 복구 커서 위치를 잡는다(어디를 눌러도 복구
             # 대상은 이 한 항목뿐).
-            for a, b in zip(poly, poly[1:] + poly[:1]):
+            for a, b in edges:
                 t, _perp = _seg_param_and_perp(a, b, local_pt)
                 tc = max(0.0, min(1.0, t))
                 px, py = a.x() + (b.x() - a.x()) * tc, a.y() + (b.y() - a.y()) * tc
@@ -6736,7 +6781,7 @@ def _restore_cut_candidate(host, scene_pt: QPointF):
             continue
         if not (0 <= edge_i < n):
             continue
-        a, b = poly[edge_i], poly[(edge_i + 1) % n]
+        a, b = edges[edge_i]
         t, _perp = _seg_param_and_perp(a, b, local_pt)
         tc = max(t0, min(t1, t))
         px, py = a.x() + (b.x() - a.x()) * tc, a.y() + (b.y() - a.y()) * tc
@@ -6803,12 +6848,12 @@ def cut_restore_snap_delta(it, other_items: list, thr: float):
         cuts = getattr(other, "_cuts", None) or []
         if not cuts:
             continue
-        poly = _host_outline_local_polygon(other)
-        n = len(poly)
+        other_edges = _host_outline_edges(other)
+        n = len(other_edges)
         for edge_i, t0, t1 in cuts:
             if not (0 <= edge_i < n):
                 continue
-            a, b = poly[edge_i], poly[(edge_i + 1) % n]
+            a, b = other_edges[edge_i]
             p0 = other.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0))
             p1 = other.mapToScene(QPointF(a.x() + (b.x() - a.x()) * t1, a.y() + (b.y() - a.y()) * t1))
             m0 = _best_edge_for_point(scene_edges, p0, thr)
@@ -6834,10 +6879,19 @@ def cut_restore_snap_delta(it, other_items: list, thr: float):
 def build_trimmed_border_path(host) -> QPainterPath:
     """[신규기능 §8-12, 2026-08-10 §8 항목17 2단계에서 cut 구간 일반형으로 확장] 호스트
     외곽선에서 부착된 포트가 걸친 구간 + `host._cuts`(TRIM으로 잘라낸 일반 구간)를 합쳐
-    실제로 끊은 경로 — 닫힌 하나의 subpath가 아니라 남은 조각마다 별도 subpath(moveTo/lineTo)로
-    그린다. 포트도 cut도 없으면 원래 외곽선과 동일(끊김 없음)."""
-    poly = _host_outline_local_polygon(host)
-    n = len(poly)
+    실제로 끊은 경로 — 남은 조각마다 별도 subpath(moveTo/lineTo)로 그린다. 포트도 cut도
+    없으면 원래 외곽선과 동일(끊김 없음).
+
+    [2026-08-28 실사용 버그 수정] 예전엔 `edge_i`(외곽선 변 인덱스)마다 무조건 새
+    `moveTo()`를 찍었다 — 사각형(변 4개)에선 문제가 안 됐지만, 타원·심볼처럼 곡선을 수십 개
+    변으로 근사한 도형은 cut이 하나만 있어도 이 렌더 경로로 갈아타면서 안 잘린 곡선 구간까지
+    변 경계마다 독립된 moveTo/lineTo 쌍으로 흩어져 "점선처럼 뚝뚝 끊긴" 것처럼 렌더됐다
+    (실사용 재현: 저장소 몸통 한 변만 잘랐는데 안 건드린 윗면 타원·아랫면 호까지 전부 끊겨
+    보임). `last_pt`로 직전에 실제로 그은 끝점을 추적해, 다음 그릴 시작점과 정확히 일치하면
+    (= 사이에 진짜 gap이 없었다면) `moveTo` 대신 `lineTo`로 이어 그려 하나의 연속 subpath를
+    유지한다 — 실제 gap(cut·포트) 경계에서만 여전히 moveTo로 갈라진다."""
+    edges = _host_outline_edges(host)
+    n = len(edges)
     path = QPainterPath()
     if n < 2:
         return path
@@ -6846,7 +6900,7 @@ def build_trimmed_border_path(host) -> QPainterPath:
     ports = getattr(host, "_ports", None) or []
     gaps_by_edge: dict = {}
     for port in ports:
-        hit = _port_edge_gap(poly, port)
+        hit = _port_edge_gap(edges, port)
         if hit is None:
             continue
         i, t0, t1 = hit
@@ -6854,8 +6908,9 @@ def build_trimmed_border_path(host) -> QPainterPath:
     for edge_i, t0, t1 in getattr(host, "_cuts", None) or []:
         if 0 <= edge_i < n:
             gaps_by_edge.setdefault(edge_i, []).append((t0, t1))
+    last_pt = None
     for i in range(n):
-        a, b = poly[i], poly[(i + 1) % n]
+        a, b = edges[i]
         gaps = sorted(gaps_by_edge.get(i, []))
         merged = []
         for t0, t1 in gaps:
@@ -6868,13 +6923,21 @@ def build_trimmed_border_path(host) -> QPainterPath:
             if t0 > cursor + 1e-6:
                 p0 = QPointF(a.x() + (b.x() - a.x()) * cursor, a.y() + (b.y() - a.y()) * cursor)
                 p1 = QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0)
-                path.moveTo(p0)
-                path.lineTo(p1)
+                if last_pt is not None and _close_pt(last_pt, p0):
+                    path.lineTo(p1)
+                else:
+                    path.moveTo(p0)
+                    path.lineTo(p1)
             cursor = max(cursor, t1)
+            last_pt = None   # 방금 구간에 실제 gap이 있었다 — 연속성이 끊김
         if cursor < 1.0 - 1e-6:
             p0 = QPointF(a.x() + (b.x() - a.x()) * cursor, a.y() + (b.y() - a.y()) * cursor)
-            path.moveTo(p0)
-            path.lineTo(b)
+            if last_pt is not None and _close_pt(last_pt, p0):
+                path.lineTo(b)
+            else:
+                path.moveTo(p0)
+                path.lineTo(b)
+            last_pt = b
     return path
 
 
@@ -6906,28 +6969,34 @@ def _trim_candidate_segment(host, scene_pt, other_shapes):
     의도적으로 막아뒀었다).
 
     구현은 2단계 결정("타원도 폴리곤 근사로 통일")을 그대로 재사용한다 — host와 cutter 둘 다
-    `_host_outline_local_polygon`으로 폴리곤화하면 원·타원 cutter도 특례 없이 `_seg_seg_
+    `_host_outline_edges`로 변 목록화하면 원·타원 cutter도 특례 없이 `_seg_seg_
     intersection`(선분-선분) 하나로 처리된다(선분-원/타원 전용 커널은 이 경로에선 불필요 —
-    5단계 EXTEND처럼 진짜 곡선 정밀도가 필요한 다른 용도를 위해 남겨둔다). cutter 폴리곤은
+    5단계 EXTEND처럼 진짜 곡선 정밀도가 필요한 다른 용도를 위해 남겨둔다). cutter 변은
     `other.mapToScene`→`host.mapFromScene` 왕복으로 host 로컬좌표로 옮겨(1단계 결정: 커널은
-    좌표계 무관, 호출부가 항상 대상 host 로컬좌표로 변환) 회전·스케일이 달라도 그대로 맞는다."""
+    좌표계 무관, 호출부가 항상 대상 host 로컬좌표로 변환) 회전·스케일이 달라도 그대로 맞는다.
+
+    [2026-08-28] `_host_outline_edges`(서브패스 경계를 존중)를 쓴다 — 예전엔 `_host_outline_
+    local_polygon`(서브패스를 그냥 이어붙인 점 목록)을 하나의 원형 폴리곤처럼 취급해, 저장소
+    (원기둥) 등 서브패스가 여럿인 심볼에서 서브패스 경계마다 화면에 없는 대각선 "이음매 변"이
+    생겼다 — 실사용 재현: 몸통을 클릭해도 이 대각선이 가까이 있어 가로채 엉뚱한 곳(곡선의
+    임의 위치)이 잘렸다."""
     hit = _nearest_border_visible(host, scene_pt)
     if hit is None:
         return None
     local_pt = host.mapFromScene(hit[0])
-    poly = _host_outline_local_polygon(host)
-    n = len(poly)
+    edges = _host_outline_edges(host)
+    n = len(edges)
     if n < 2:
         return None
     best_edge, best_t, best_perp = None, None, None
     for i in range(n):
-        a, b = poly[i], poly[(i + 1) % n]
+        a, b = edges[i]
         t, perp = _seg_param_and_perp(a, b, local_pt)
         if -1e-6 <= t <= 1.0 + 1e-6 and (best_perp is None or perp < best_perp):
             best_edge, best_t, best_perp = i, max(0.0, min(1.0, t)), perp
     if best_edge is None:
         return None
-    a, b = poly[best_edge], poly[(best_edge + 1) % n]
+    a, b = edges[best_edge]
     ts = [0.0, 1.0]
     for other in other_shapes:
         if other is host or isinstance(other, _PathItem):

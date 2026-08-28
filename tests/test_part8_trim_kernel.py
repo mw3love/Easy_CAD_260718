@@ -36,6 +36,7 @@ tests/test_easycad.py 실행 시 함께 돈다. 실행: python tests/test_easyca
 pytest test_part8_trim_kernel.py.
 """
 import json
+import math
 
 from _shared import *  # noqa: F401,F403
 from PyQt6.QtWidgets import QGraphicsScene
@@ -175,6 +176,9 @@ def test_host_outline_local_polygon_ellipse_flattens_to_ring_on_boundary():
 
 def test_build_trimmed_border_path_uses_cuts_without_ports():
     # cut 구간은 포트와 완전히 독립 경로 — 포트가 하나도 없는 호스트도 gap이 생겨야 한다.
+    # [2026-08-28] 안 잘린 변끼리는 하나의 연속 subpath로 이어 그리므로(끊긴 것처럼 보이는
+    # 실사용 버그 수정) baseline은 1(닫힌 루프 전체가 한 조각) — cut 하나가 그 루프를
+    # 정확히 둘로 가르므로 +1 관계는 그대로 유지된다.
     rect = QRectF(0, 0, 200, 120)
     ET = QPainterPath.ElementType
 
@@ -183,12 +187,12 @@ def test_build_trimmed_border_path_uses_cuts_without_ports():
                    if path.elementAt(i).type == ET.MoveToElement)
 
     baseline = build_trimmed_border_path(_RectItem(QRectF(rect)))
-    assert move_count(baseline) == 4   # 변 4개 = 끊김 없는 subpath 4개
+    assert move_count(baseline) == 1   # cut 없으면 끊김 없는 연속 루프 1개
 
     host = _RectItem(QRectF(rect))
     _add_border_cut(host, 0, 0.25, 0.75)
     cut_path = build_trimmed_border_path(host)
-    assert move_count(cut_path) == 5, "포트 없이 cut만 있어도 끊겨야 함(gap 하나 = subpath +1)"
+    assert move_count(cut_path) == 2, "포트 없이 cut만 있어도 끊겨야 함(gap 하나 = subpath +1)"
 
 
 def test_add_border_cut_appends_multiple_and_updates():
@@ -461,11 +465,65 @@ def test_trim_candidate_segment_database_body_edge_not_matched_to_ellipse():
     seg = _trim_candidate_segment(sym, sym.mapToScene(QPointF(0, 150)), [])
     assert seg is not None
     edge_i, t0, t1 = seg
-    poly = _host_outline_local_polygon(sym)
-    a, b = poly[edge_i], poly[(edge_i + 1) % len(poly)]
+    edges = _host_outline_edges(sym)
+    a, b = edges[edge_i]
     assert _close(a, QPointF(0, e)) and _close(b, QPointF(0, 300 - e)), \
         f"몸통 왼쪽 변이 아니라 엉뚱한 변({a}, {b})에 매칭됨"
     assert abs(t0 - 0.0) < 1e-6 and abs(t1 - 1.0) < 1e-6
+
+
+def test_host_outline_edges_has_no_cross_subpath_seam():
+    # [2026-08-28 후속 실사용 재현] 서브패스 이어붙이기(`_host_outline_local_polygon`)만으로는
+    # 부족했다 — 그 점 목록을 "원형 폴리곤"처럼 (i+1)%n으로 변을 만들면 서브패스 경계마다
+    # 화면에 없는 대각선("이음매 변")이 생긴다 — 실사용 재현: 렌더에 가로선이 나타나고
+    # (윗면 타원 시작점↔몸통 시작점을 잇는 대각선), 곡선 클릭이 이 대각선에 가로채였다.
+    # 전용 변 목록(`_host_outline_edges`)은 서로 다른 서브패스끼리 변을 만들지 않아야 한다 —
+    # 어떤 변도 몸통의 최대 변 길이(왼쪽/오른쪽 변, 192)를 훌쩍 넘는 긴 변이면 안 된다는
+    # 것으로 검증(이음매 대각선은 타원↔몸통을 가로질러 최소 200 이상, 실제 변은 전부 그보다
+    # 짧다).
+    sym = _SymbolItem("database", QRectF(0, 0, 200, 300))
+    edges = _host_outline_edges(sym)
+    assert len(edges) > 0
+    for a, b in edges:
+        length = math.hypot(b.x() - a.x(), b.y() - a.y())
+        assert length < 195.0, f"서브패스 이음매로 보이는 긴 변 발견: {a}-{b} (길이 {length:.1f})"
+
+
+def test_database_trim_render_has_no_stray_seam_line_across_ellipse():
+    """[2026-08-28 실사용 재현] 몸통 왼쪽 변을 트림한 뒤 실제 렌더(scene.render)에서 윗면
+    타원 한가운데(자국과 무관한, 원래 뚫려 있어야 할 자리)에 저절로 생기던 가로선이 더는
+    없는지 픽셀로 확인."""
+    from PyQt6.QtGui import QImage, QPainter, QPen
+    from PyQt6.QtWidgets import QGraphicsScene
+
+    def darkest(img, px, py):
+        d = 255
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                c = QColor(img.pixel(px + dx, py + dy))
+                d = min(d, (c.red() + c.green() + c.blue()) // 3)
+        return d
+
+    sym = _SymbolItem("database", QRectF(0, 0, 200, 300))
+    sym.setPen(QPen(QColor("black"), 3))
+    scene = QGraphicsScene()
+    scene.setSceneRect(-20, -20, 340, 440)
+    scene.setBackgroundBrush(QColor("white"))
+    scene.addItem(sym)
+    e = min(300 * 0.18, 200 * 0.5)
+    _add_border_cut(sym, *_trim_candidate_segment(sym, sym.mapToScene(QPointF(0, 150)), []))
+    assert sym._cuts and sym._cuts[0][0] != -1   # 몸통 변 하나만 잘렸어야(원 전체 아님)
+
+    img = QImage(340, 440, QImage.Format.Format_RGB32)
+    img.fill(QColor("white"))
+    p = QPainter(img)
+    scene.render(p, QRectF(0, 0, 340, 440), QRectF(-20, -20, 340, 440))
+    p.end()
+    # 윗면 타원의 세로 중심(y=e, 폭 방향 한가운데) — Qt addEllipse 시작점(오른쪽, y=e)과
+    # 몸통 moveTo 시작점(왼쪽, y=e)을 잇던 옛 이음매 대각선이 정확히 이 높이를 지났다.
+    ghost = sym.mapToScene(QPointF(100, e))
+    assert darkest(img, int(ghost.x() + 20), int(ghost.y() + 20)) > 150, \
+        "타원 안쪽에 저절로 생긴 이음매 가로선이 여전히 있음"
 
 
 def test_trim_candidate_segment_clamps_to_edge_end_when_cutter_extends_past_corner():
@@ -1291,13 +1349,14 @@ def test_selection_center_path_respects_cuts():
     # [신규기능 2026-08-10] 실사용 지적 — 잘린(TRIM) 도형을 선택하면 강조선(단일 중심선·
     # 다중 밴드 공용)이 실제 렌더(`build_trimmed_border_path`)가 아니라 안 잘린 원본 경로를
     # 그려서, 선택하는 순간 지워진 부분이 "유령처럼" 다시 보였다. `_item_center_path`가 cut/
-    # 포트 있는 도형에선 렌더와 같은 경로를 쓰도록 통일했는지 검증(닫힌 하나의 subpath가
-    # 아니라 남은 조각마다 별도 subpath로 끊겨야 한다 — 실제 렌더와 subpath 개수가 같아야 함).
+    # 포트 있는 도형에선 렌더와 같은 경로를 쓰도록 통일했는지 검증 — 안 잘린 변끼리는 연속
+    # subpath로 이어지므로(2026-08-28) 자국 하나 = 원래 닫힌 루프(1개)가 정확히 둘로 갈라져
+    # 2개, 실제 렌더와 subpath 개수가 같아야 함(같은 함수를 공유하므로).
     r = _RectItem(QRectF(0, 0, 100, 100))
     r._cuts = [(3, 0.3, 0.7)]
     center = _item_center_path(r)
     rendered = build_trimmed_border_path(r)
-    assert len(center.toSubpathPolygons()) == len(rendered.toSubpathPolygons()) == 5
+    assert len(center.toSubpathPolygons()) == len(rendered.toSubpathPolygons()) == 2
 
     # cut·포트가 없으면 예전처럼 안 잘린 닫힌 사각형 하나 그대로(회귀 없음).
     r2 = _RectItem(QRectF(0, 0, 50, 50))

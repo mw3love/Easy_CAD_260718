@@ -2118,12 +2118,15 @@ def test_qc_drag_never_spawns_device_click_still_does_port_and_normal_shape():
 
 
 def test_build_trimmed_border_path_has_gap_at_port():
+    # [2026-08-28] 안 잘린 변끼리는 하나의 연속 subpath로 이어 그리므로(실사용 버그 수정 —
+    # 곡선 근사 도형에서 안 잘린 구간까지 변 경계마다 끊겨 보이던 것) 포트가 걸친 위쪽 변만
+    # 자기 gap 앞/뒤로 독립 subpath 2개(각 moveTo+lineTo=4 요소)를 만들고, 나머지 우·하·좌
+    # 3개 변은 그 뒤쪽 subpath에 lineTo로 이어붙는다 → 4 + lineTo 3개 = 7.
     dev = _RectItem(QRectF(0, 0, 200, 100))
     port = _RectItem(QRectF(0, 0, 18, 18))
     _attach_port_to_host(port, dev, QPointF(60, 0))
     path = build_trimmed_border_path(dev)
-    # 포트 없는 변(우·하·좌)은 각 1세그먼트, 포트 걸친 위쪽 변만 2세그먼트 → 총 elementCount 10.
-    assert path.elementCount() == 10
+    assert path.elementCount() == 7
 
 
 def test_build_trimmed_border_path_no_ports_is_unused_by_paint_but_still_correct():
@@ -2132,7 +2135,8 @@ def test_build_trimmed_border_path_no_ports_is_unused_by_paint_but_still_correct
     # DXF export(_export_rect)가 무조건 안전하게 호출할 수 있다.
     dev = _RectItem(QRectF(0, 0, 200, 100))
     path = build_trimmed_border_path(dev)
-    assert path.elementCount() == 8   # 4변 × (moveTo+lineTo), 끊김 없음
+    # [2026-08-28] 끊김 없으면 4변이 하나의 연속 닫힌 루프 — moveTo 1 + lineTo 4 = 5.
+    assert path.elementCount() == 5
 
 
 def test_ecad_roundtrip_preserves_ports_on_rect_and_triangle():
