@@ -846,6 +846,8 @@ class _HandleResizeMixin:
         h = self._handle_px()
         out = []
         for ci, (edge_i, t0, t1) in enumerate(cuts):
+            if edge_i == -1:
+                continue   # [2026-08-28] 테두리 전체 트림 — 잡을 개별 경계가 없다(핸들 없음)
             if not (0 <= edge_i < n):
                 continue
             a, b = poly[edge_i], poly[(edge_i + 1) % n]
@@ -3394,6 +3396,30 @@ class _PolygonItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QG
         self._closed = bool(closed)
         self.set_live_points(pts)
 
+    def _capture_geom_local(self):
+        """[2026-08-28 TRIM 연동] `_RectGeometryMixin`의 rect-only 기본 override — 정점
+        개수 자체가 바뀌는 조작(TRIM이 열린 폴리라인을 구간별로 쪼갤 때)까지 undo/apply가
+        따라가려면 rect만으론 부족하다(균일 리사이즈는 정규화좌표라 rect만으로 충분하지만,
+        TRIM은 `_norm_pts` 자체의 점 개수를 바꾼다)."""
+        return (list(self.local_pts()), self._closed)
+
+    def _apply_geom_local(self, g):
+        pts, closed = g
+        self._closed = closed
+        self.set_live_points(pts)
+
+    def _set_endpoint(self, idx: int, p: QPointF):
+        """[2026-08-28 TRIM 연동] EXTEND가 열린 폴리라인의 끝 정점을 늘일 때 쓴다(기본값은
+        no-op이라 안 고치면 EXTEND가 조용히 아무 효과 없이 "성공"한 것처럼 보인다). 정점
+        하나만 바뀌어도 bbox가 달라질 수 있어(늘어난 방향으로) `set_live_points`로 전체
+        재정규화한다 — 부분 갱신은 `_norm_pts`가 낡은 rect 기준으로 [0,1] 밖까지 새는 걸
+        방치하게 된다."""
+        pts = self.local_pts()
+        if not (0 <= idx < len(pts)):
+            return
+        pts[idx] = QPointF(p)
+        self.set_live_points(pts)
+
     def clone(self):
         c = _PolygonItem(self.local_pts(), self._closed, rect=QRectF(self.rect()))
         c.setPen(QPen(self.pen()))
@@ -3411,7 +3437,7 @@ class _PolygonItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QG
         self.update()
 
     def _fill_path(self) -> QPainterPath:
-        # [§8 항목17과 동급 TRIM 연동 대비 — 이번 라운드는 미구현] 닫힌 도형만 채움 경로를 갖는다.
+        # 닫힌 도형만 채움 경로를 갖는다(`_paint_filled_trimmed_border`가 cut 있을 때 이걸 그대로 씀).
         return self._poly_path() if self._closed else QPainterPath()
 
     def _base_shape(self):
@@ -3430,6 +3456,11 @@ class _PolygonItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QG
     def _paint_base(self, painter, option, widget):
         # QGraphicsRectItem 네이티브 paint(rect() 그대로 사각형을 그림)는 다각형 기하와 무관해
         # 완전히 override(rect/ellipse처럼 super() 경유 없이 직접 그린다).
+        # [2026-08-28 TRIM 연동] 닫힌 다각형에 `_cuts`가 있으면 rect/ellipse/symbol과 같은
+        # 관례로 갈아탄다 — 채움은 `_fill_path()` 그대로(비파괴), 테두리만 진짜로 끊어 그림.
+        if self._closed and (getattr(self, "_cuts", None)):
+            _paint_filled_trimmed_border(self, painter)
+            return
         painter.setPen(self.pen())
         painter.setBrush(self.brush() if self._closed else QBrush(Qt.BrushStyle.NoBrush))
         painter.drawPath(self._poly_path())
@@ -6482,14 +6513,23 @@ def _port_owner_at(host, scene_pt, eps: float = 1.0):
 def _flatten_closed_path_to_polygon(path: QPainterPath) -> list:
     """닫힌 QPainterPath → 정점 리스트(마지막=첫점 중복 없이). `_host_outline_local_polygon`의
     심볼·타원 분기가 공유한다(둘 다 곡선/복합경로를 평탄화해 같은 폴리곤 꼴로 맞추는 절차라
-    2026-08-10 §8 항목17 2단계에서 중복 제거)."""
-    polys = path.toSubpathPolygons()
-    if not polys:
-        return []
-    poly = polys[0]
-    pts = [poly.at(i) for i in range(poly.count())]
-    if len(pts) >= 2 and _close_pt(pts[0], pts[-1]):
-        pts.pop()
+    2026-08-10 §8 항목17 2단계에서 중복 제거).
+
+    [2026-08-28 실사용 버그 수정] 서브패스가 여러 개인 심볼(예: 저장소=원기둥 — 윗면 타원
+    `addEllipse()`와 몸통 왼쪽변/아랫면 호/오른쪽변이 별개 서브패스)은 이전엔 `polys[0]`만
+    써서 몸통이 TRIM 계산에서 통째로 빠져 있었다(실사용 재현: 몸통을 클릭해도 엉뚱하게
+    가까운 타원 변에 매칭됨). 전 서브패스를 순서대로 이어붙인다 — 이어붙인 결과가 기하학적
+    으로 "진짜 하나의 닫힌 루프"는 아니라 서브패스 경계마다 가짜 변(화면엔 안 그려짐, 도형
+    내부를 가로지름)이 하나씩 생기지만, `_nearest_border_visible`(실제 `_symbol_nearest`
+    기반, 이미 전 서브패스를 정확히 봄)이 먼저 찾아준 실제 클릭 지점은 항상 그 근처의 진짜
+    변에 압도적으로 가까워 가짜 변이 선택될 일이 없다(도형 내부 대각선이라 테두리 근접보다
+    항상 멀다)."""
+    pts = []
+    for poly in path.toSubpathPolygons():
+        sub = [poly.at(i) for i in range(poly.count())]
+        if len(sub) >= 2 and _close_pt(sub[0], sub[-1]):
+            sub.pop()
+        pts.extend(sub)
     return pts
 
 
@@ -6509,6 +6549,11 @@ def _host_outline_local_polygon(host) -> list:
         path = QPainterPath()
         path.addEllipse(host.rect())
         return _flatten_closed_path_to_polygon(path)
+    if isinstance(host, _PolygonItem) and host._closed:
+        # [2026-08-28 TRIM 연동] 사용자가 직접 찍은 정점이라 이미 "진짜 꼭짓점"뿐인 직선
+        # 폴리곤 — 타원과 달리 평탄화(근사)가 필요 없다. 닫힌 다각형만 이 경로를 타고,
+        # 열린 폴리라인은 `_open_item_local_pts`로 별도 처리된다(호출부가 그쪽으로 분기).
+        return host.local_pts()
     r = host.rect()
     return [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
 
@@ -6532,24 +6577,37 @@ def _tight_scene_bbox(item) -> QRectF | None:
 
 
 def _open_item_local_pts(item) -> list:
-    """[§8 항목17 5단계] 열린 도형(_LineItem/_PolyArrowItem)의 로컬좌표 정점열 — TRIM/EXTEND가
-    도형 종류 무관하게 세그먼트 체인으로 다루는 공통 인터페이스(`_conn_polyline_scene`의 로컬판,
-    그쪽은 스냅용 씬좌표라 별도 유지). 그 외 타입은 빈 리스트(커터로 기여 없음)."""
+    """[§8 항목17 5단계, 2026-08-28 다각형 도구 추가] 열린 도형(_LineItem/_PolyArrowItem/
+    열린 _PolygonItem)의 로컬좌표 정점열 — TRIM/EXTEND가 도형 종류 무관하게 세그먼트 체인으로
+    다루는 공통 인터페이스(`_conn_polyline_scene`의 로컬판, 그쪽은 스냅용 씬좌표라 별도 유지).
+    그 외 타입은 빈 리스트(커터로 기여 없음)."""
     if isinstance(item, _LineItem):
         ln = item.line()
         return [ln.p1(), ln.p2()]
     if isinstance(item, _PolyArrowItem):
         return list(item._pts)
+    if isinstance(item, _PolygonItem) and not item._closed:
+        return item.local_pts()
     return []
 
 
+def _is_closed_trim_shape(item) -> bool:
+    """[2026-08-28 다각형 도구 TRIM 연동] TRIM/EXTEND가 "닫힌 도형"으로 취급할지 판정하는
+    공용 기준 — 사각·타원·심볼은 태생적으로 닫힘, 다각형 도구는 사용자가 그릴 때 정한
+    `_closed` 플래그를 따른다(같은 클래스가 열린 폴리라인일 수도 있어 isinstance만으론
+    못 가른다). `_item_local_edges`·`_trim_preview_at`(core_view.py)가 공유한다."""
+    return isinstance(item, (_RectItem, _EllipseItem, _SymbolItem)) or (
+        isinstance(item, _PolygonItem) and item._closed)
+
+
 def _item_local_edges(item) -> list:
-    """[§8 항목17 5단계] 항목의 변(선분) 목록, item 로컬좌표 — 닫힌 도형(사각·타원·심볼)은
-    폐곡선(마지막→첫 변 포함), 열린 도형(선·직선화살)은 안 닫는다. TRIM 커터 순회를 도형
-    종류 무관하게 만든다(이전엔 `_trim_candidate_segment`가 `_host_outline_local_polygon`만
-    가정해 열린 도형을 커터로 쓰면 크래시했다 — host.rect() 미존재). 인식 못 하는 타입(화살표
-    곡선·`_PathItem` 등)은 빈 리스트를 돌려줘 그냥 기여 없는 커터로 취급된다."""
-    if isinstance(item, (_RectItem, _EllipseItem, _SymbolItem)):
+    """[§8 항목17 5단계, 2026-08-28 다각형 도구 추가] 항목의 변(선분) 목록, item 로컬좌표 —
+    닫힌 도형(사각·타원·심볼·닫힌 다각형)은 폐곡선(마지막→첫 변 포함), 열린 도형(선·직선화살·
+    열린 폴리라인)은 안 닫는다. TRIM 커터 순회를 도형 종류 무관하게 만든다(이전엔
+    `_trim_candidate_segment`가 `_host_outline_local_polygon`만 가정해 열린 도형을 커터로
+    쓰면 크래시했다 — host.rect() 미존재). 인식 못 하는 타입(화살표 곡선·`_PathItem` 등)은
+    빈 리스트를 돌려줘 그냥 기여 없는 커터로 취급된다."""
+    if _is_closed_trim_shape(item):
         poly = _host_outline_local_polygon(item)
         n = len(poly)
         return [(poly[i], poly[(i + 1) % n]) for i in range(n)]
@@ -6629,7 +6687,16 @@ def _add_border_cut(host, edge_index: int, t0: float, t1: float) -> None:
     [2026-08-10 후속] 추가 직후 `_merge_cuts_list`로 같은 변 위 겹치는/맞닿은 cut을 즉시
     합친다 — 렌더 시 병합(`build_trimmed_border_path`, 여전히 유지: 포트처럼 별도 목록에서
     오는 gap까지 함께 병합해야 하는 렌더 전용 사정이 있어 저장 병합만으론 부족)과 별개로,
-    저장 리스트 자체를 부풀리지 않아야 자국 경계 핸들 개수가 실제 자국 수와 일치한다."""
+    저장 리스트 자체를 부풀리지 않아야 자국 경계 핸들 개수가 실제 자국 수와 일치한다.
+
+    [2026-08-28] edge_index=-1은 "테두리 전체"(타원 등 곡선 근사 도형의 커터 없는 트림)
+    sentinel — 근사 세그먼트마다 하나씩 쌓으면 수십 개짜리 자국 리스트(+마름모 핸들
+    수십 개)가 생겨버리므로, 이 한 값이 들어오면 나머지 cut을 전부 걷어내고 이 한 항목만
+    남긴다(테두리가 전부 없어졌으니 부분 자국은 의미가 없다)."""
+    if edge_index == -1:
+        host._cuts = [(-1, 0.0, 1.0)]
+        host.update()
+        return
     cuts = getattr(host, "_cuts", None)
     if cuts is None:
         cuts = host._cuts = []
@@ -6655,6 +6722,18 @@ def _restore_cut_candidate(host, scene_pt: QPointF):
     best = None
     for cut in cuts:
         edge_i, t0, t1 = cut
+        if edge_i == -1:
+            # [2026-08-28] 테두리 전체 트림(sentinel) — 특정 변이 아니라 전체 외곽선 중
+            # local_pt에 가장 가까운 점으로 복구 커서 위치를 잡는다(어디를 눌러도 복구
+            # 대상은 이 한 항목뿐).
+            for a, b in zip(poly, poly[1:] + poly[:1]):
+                t, _perp = _seg_param_and_perp(a, b, local_pt)
+                tc = max(0.0, min(1.0, t))
+                px, py = a.x() + (b.x() - a.x()) * tc, a.y() + (b.y() - a.y()) * tc
+                d = math.hypot(local_pt.x() - px, local_pt.y() - py)
+                if best is None or d < best[2]:
+                    best = (cut, QPointF(px, py), d)
+            continue
         if not (0 <= edge_i < n):
             continue
         a, b = poly[edge_i], poly[(edge_i + 1) % n]
@@ -6762,6 +6841,8 @@ def build_trimmed_border_path(host) -> QPainterPath:
     path = QPainterPath()
     if n < 2:
         return path
+    if any(edge_i == -1 for edge_i, _t0, _t1 in (getattr(host, "_cuts", None) or [])):
+        return path   # [2026-08-28] 테두리 전체 트림(sentinel) — 그릴 것 없음(빈 경로)
     ports = getattr(host, "_ports", None) or []
     gaps_by_edge: dict = {}
     for port in ports:
@@ -6818,8 +6899,11 @@ def _paint_filled_trimmed_border(item, painter) -> None:
 def _trim_candidate_segment(host, scene_pt, other_shapes):
     """[신규기능 §8 항목17 4단계] TRIM(문지르기) 호버·커밋이 공유하는 핵심 계산 — host 테두리
     위 `scene_pt` 근처 변에서, `other_shapes`(cutter 후보)와의 교차점으로 갈리는 구간
-    (edge_index, t0, t1)을 찾는다. cutter가 그 변에 하나도 안 걸리면 None(자를 게 없음 —
-    "포트 대체 워크플로"처럼 실제 교차가 있어야 하는 툴 스코프, 빈 변 통째 삭제는 대상 아님).
+    (edge_index, t0, t1)을 찾는다. cutter가 그 변에 하나도 안 걸리면 변 자신의 양 꼭짓점
+    (t=0~1, 이미 닫힌 폴리곤이라 항상 인접 변과 맞닿아 있는 자연 경계)을 그대로 구간으로
+    돌려준다 — AutoCAD TRIM이 커터 없이도 폴리라인 한 변 전체를 지우는 것과 동일 동작
+    (2026-08-28 실사용 확인 후 스코프 확장 — 이전엔 "빈 변 통째 삭제는 대상 아님"으로
+    의도적으로 막아뒀었다).
 
     구현은 2단계 결정("타원도 폴리곤 근사로 통일")을 그대로 재사용한다 — host와 cutter 둘 다
     `_host_outline_local_polygon`으로 폴리곤화하면 원·타원 cutter도 특례 없이 `_seg_seg_
@@ -6861,8 +6945,13 @@ def _trim_candidate_segment(host, scene_pt, other_shapes):
             if -1e-6 <= t <= 1.0 + 1e-6:
                 ts.append(max(0.0, min(1.0, t)))
     ts = sorted(set(round(t, 9) for t in ts))
-    if len(ts) <= 2:
-        return None   # 이 변에 걸친 cutter가 없음 — 자를 게 없다
+    if len(ts) <= 2 and isinstance(host, _EllipseItem):
+        # [2026-08-28 실사용 확인] 타원은 `_host_outline_local_polygon`이 곡선을 잘게 쪼갠
+        # 폴리곤 근사일 뿐 진짜 꼭짓점이 없다 — 위 "변 하나" 자연 경계를 그대로 적용하면
+        # 근사 세그먼트 한 조각(눈에 안 보이는 크기)만 지워져 "군데군데 뜯긴" 것처럼 보인다
+        # (실사용 재현). AutoCAD도 커터 없이 원을 TRIM하면 원 전체가 사라진다 — edge_i=-1은
+        # "테두리 전체"를 뜻하는 sentinel(build_trimmed_border_path/_add_border_cut이 처리).
+        return -1, 0.0, 1.0
     lo, hi = 0.0, 1.0
     for k in range(len(ts) - 1):
         if ts[k] - 1e-6 <= best_t <= ts[k + 1] + 1e-6:
@@ -6890,7 +6979,14 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
     폴리라인의 두 교차점 사이에 꼭짓점이 끼어 있는 경우 — 그 꼭짓점째로 지워진다). 그래서
     구간을 (seg_index, t) 마크 2개로 표현한다: 전체 경로를 변 index + 변 내 t로 정렬한 전역
     순서(비교키 = seg+t)가 성립하므로 닫힌 도형의 "변 인덱스+t" 포맷을 그대로 확장한 것뿐이다.
-    반환: ((seg_lo, t_lo), (seg_hi, t_hi)) 또는 None(이 지점에 걸친 cutter가 없음)."""
+    반환: ((seg_lo, t_lo), (seg_hi, t_hi)) 또는 None(이 지점에 걸친 cutter가 없음).
+
+    [2026-08-28 실사용 확장] 경로 전체에 cutter가 하나도 안 걸리면(marks가 양 끝 sentinel
+    뿐), 닫힌 도형의 "변 통째 트림"과 대칭으로 클릭한 세그먼트가 **양쪽 다 내부 관절**(다른
+    세그먼트와 꼭짓점을 공유하는 쪽 — 경로의 진짜 자유단이 아닌 경우)일 때만 그 세그먼트
+    하나를 자연 경계로 인정한다. 경로의 자유단(맨 처음·맨 끝) 쪽 세그먼트나 세그먼트가
+    하나뿐인 낱개 선(_LineItem)은 여전히 cutter 없이는 대상 밖 — "선 전체가 조용히
+    사라지는" 사고를 막는다."""
     pts = _open_item_local_pts(host)
     n = len(pts)
     if n < 2:
@@ -6931,7 +7027,11 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
 
     marks = sorted(set((i, round(t, 9)) for i, t in marks), key=key)
     if len(marks) <= 2:
-        return None   # 이 경로에 걸친 cutter가 없음 — 자를 게 없다
+        # 걸친 cutter가 전혀 없다 — 클릭한 세그먼트가 경로 양 자유단과 안 닿는(0 < best_seg
+        # < n-2) 순수 내부 세그먼트일 때만 그 하나(꼭짓점~꼭짓점)를 자연 경계로 인정한다.
+        if 0 < best_seg < n - 2:
+            return (best_seg, 0.0), (best_seg, 1.0)
+        return None
     cursor_key = best_seg + best_t
     lo, hi = marks[0], marks[-1]
     for k in range(len(marks) - 1):
@@ -6965,10 +7065,13 @@ def apply_open_item_trim(host, lo: tuple, hi: tuple):
     has_before = len(before_pts) >= 2
     has_after = len(after_pts) >= 2
     is_poly = isinstance(host, _PolyArrowItem)
+    is_polygon = isinstance(host, _PolygonItem)   # [2026-08-28 다각형 도구 TRIM 연동] 열린 폴리라인
 
     def geom_for(new_pts):
         if is_poly:
             return (new_pts, False, [], host._routing, host._curve_r)
+        if is_polygon:
+            return (new_pts, False)   # 분리된 조각은 항상 열린 상태로 남는다
         return QLineF(new_pts[0], new_pts[-1])
 
     clone = None

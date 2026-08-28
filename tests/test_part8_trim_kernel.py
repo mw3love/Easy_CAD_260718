@@ -390,10 +390,82 @@ def test_trim_candidate_segment_finds_gap_between_two_crossings():
     assert abs(t1 - 320.0 / 600.0) < 1e-6
 
 
-def test_trim_candidate_segment_none_without_cutter():
-    # cutter가 하나도 걸치지 않으면 "자를 게 없음"(빈 구간 통짜 삭제는 스코프 밖).
+def test_trim_candidate_segment_whole_edge_without_cutter():
+    # [2026-08-28 실사용 확장] cutter가 하나도 걸치지 않으면 이제 변 전체(자기 꼭짓점 사이,
+    # t=0~1)를 자연 경계로 돌려준다 — AutoCAD가 커터 없이 사각형 한 변을 통째로 지우는 것과
+    # 동일 동작(이전엔 여기서 None이었다 — 실사용 확인 후 스코프 확장).
     host = _RectItem(QRectF(0, 0, 600, 400))
-    assert _trim_candidate_segment(host, QPointF(300, 0), []) is None
+    seg = _trim_candidate_segment(host, QPointF(300, 0), [])
+    assert seg is not None
+    edge_i, t0, t1 = seg
+    assert edge_i == 0
+    assert abs(t0 - 0.0) < 1e-6 and abs(t1 - 1.0) < 1e-6
+
+
+def test_trim_candidate_segment_ellipse_whole_loop_without_cutter():
+    # [2026-08-28 실사용 확인] 타원은 폴리곤 근사(수십 개 근사 세그먼트)일 뿐 진짜 꼭짓점이
+    # 없다 — 사각형처럼 "근사 세그먼트 하나"만 지우면 눈에 안 보이는 크기라 여러 번 문지르면
+    # "군데군데 뜯긴" 것처럼 보인다(실사용 재현). AutoCAD가 커터 없이 원을 TRIM하면 원 전체가
+    # 사라지는 것과 동일하게, edge_i=-1(테두리 전체 sentinel)이 나와야 한다.
+    host = _EllipseItem(QRectF(0, 0, 300, 200))
+    seg = _trim_candidate_segment(host, QPointF(150, 0), [])
+    assert seg == (-1, 0.0, 1.0)
+
+
+def test_add_border_cut_whole_loop_collapses_other_cuts_and_empties_border_path():
+    # edge_i=-1로 추가하면 기존 부분 cut을 전부 밀어내고 그 한 항목만 남으며(핸들 폭주 방지),
+    # 렌더 경로(build_trimmed_border_path)는 완전히 빈 경로(테두리 전체 삭제)가 된다.
+    host = _EllipseItem(QRectF(0, 0, 300, 200))
+    _add_border_cut(host, 3, 0.1, 0.2)   # 먼저 부분 cut 하나
+    assert len(host._cuts) == 1
+    _add_border_cut(host, -1, 0.0, 1.0)   # 이후 전체 트림
+    assert host._cuts == [(-1, 0.0, 1.0)]
+    path = build_trimmed_border_path(host)
+    assert path.elementCount() == 0
+    assert host._cut_handle_rects() == []   # 잡을 개별 경계 없음
+
+
+def test_restore_cut_candidate_whole_loop_restores_via_extend():
+    # 전체 트림된 타원도 EXTEND(Shift) 복구 대상이 된다 — 어느 지점을 눌러도 그 한 항목이
+    # 후보로 잡히고, 복구(host._cuts.remove) 후엔 테두리가 다시 완전히 그려진다.
+    host = _EllipseItem(QRectF(0, 0, 300, 200))
+    _add_border_cut(host, -1, 0.0, 1.0)
+    hit = _restore_cut_candidate(host, QPointF(150, 0))
+    assert hit is not None
+    cut, _local_pt, _d = hit
+    assert cut == (-1, 0.0, 1.0)
+    host._cuts.remove(cut)
+    assert host._cuts == []
+    path = build_trimmed_border_path(host)
+    assert path.elementCount() > 0   # 원래 외곽선(끊김 없음)으로 복원
+
+
+def test_host_outline_local_polygon_includes_all_symbol_subpaths():
+    # [2026-08-28 실사용 버그 수정] "저장소"(원기둥)는 윗면 타원과 몸통(왼쪽변/아랫면호/
+    # 오른쪽변)이 별개 서브패스 — 이전엔 `polys[0]`(타원)만 써서 몸통 점이 통째로 빠졌다.
+    sym = _SymbolItem("database", QRectF(0, 0, 200, 300))
+    poly = _host_outline_local_polygon(sym)
+    # 몸통 왼쪽 변의 두 끝점(moveTo/lineTo, 곡선 근사 없는 정확한 좌표)이 실제로 들어있어야 함.
+    e = min(300 * 0.18, 200 * 0.5)   # _sym_database와 동일 공식
+    left_top = QPointF(0, e)
+    left_bot = QPointF(0, 300 - e)
+    assert any(_close(p, left_top) for p in poly), "몸통 왼쪽 변 시작점이 폴리곤에 없음"
+    assert any(_close(p, left_bot) for p in poly), "몸통 왼쪽 변 끝점이 폴리곤에 없음"
+
+
+def test_trim_candidate_segment_database_body_edge_not_matched_to_ellipse():
+    # 몸통 왼쪽 변 중앙을 클릭하면(커터 없음) 그 변 전체(위 두 끝점 사이)가 나와야 한다 —
+    # 이전 버그였다면 엉뚱하게 윗면 타원의 어느 근사 조각이 나왔을 것.
+    sym = _SymbolItem("database", QRectF(0, 0, 200, 300))
+    e = min(300 * 0.18, 200 * 0.5)
+    seg = _trim_candidate_segment(sym, sym.mapToScene(QPointF(0, 150)), [])
+    assert seg is not None
+    edge_i, t0, t1 = seg
+    poly = _host_outline_local_polygon(sym)
+    a, b = poly[edge_i], poly[(edge_i + 1) % len(poly)]
+    assert _close(a, QPointF(0, e)) and _close(b, QPointF(0, 300 - e)), \
+        f"몸통 왼쪽 변이 아니라 엉뚱한 변({a}, {b})에 매칭됨"
+    assert abs(t0 - 0.0) < 1e-6 and abs(t1 - 1.0) < 1e-6
 
 
 def test_trim_candidate_segment_clamps_to_edge_end_when_cutter_extends_past_corner():
@@ -423,11 +495,14 @@ def test_trim_candidate_segment_handles_ellipse_cutter_via_polygon_approx():
 
 def test_trim_candidate_segment_pathitem_cutter_ignored():
     # DXF 베지어 폴백(_PathItem)은 계획서 도형 범위 밖 — cutter 후보에서 조용히 제외된다.
+    # 무시되면 "cutter 없음"과 동일하므로, 이 위치에 실제 cutter가 있었다면 만들어졌을
+    # 부분 구간(280~320) 대신 변 전체(자연 경계, t=0~1)가 나와야 제외가 실제로 동작한 것.
     host = _RectItem(QRectF(0, 0, 600, 400))
     path = QPainterPath()
     path.addRect(QRectF(280, -20, 40, 40))
     cutter = _PathItem(path)
-    assert _trim_candidate_segment(host, QPointF(300, 0), [cutter]) is None
+    seg = _trim_candidate_segment(host, QPointF(300, 0), [cutter])
+    assert seg == (0, 0.0, 1.0)
 
 
 # ---- 4단계: TRIM 도구(문지르기) — 실제 뷰 종단 시나리오 -----------------------------------
@@ -562,8 +637,29 @@ def test_trim_candidate_open_segment_line_crossed_by_rect_middle():
 
 
 def test_trim_candidate_open_segment_none_without_cutter():
+    # 낱개 선(세그먼트 1개, 양 끝 다 자유단)은 cutter 없이는 여전히 대상 밖 —
+    # 통째로 사라지는 사고를 막는다.
     line = _LineItem(QLineF(0, 0, 600, 0))
     assert _trim_candidate_open_segment(line, QPointF(300, 0), []) is None
+
+
+def test_trim_candidate_open_segment_middle_segment_without_cutter():
+    # [2026-08-28 실사용 확장] 3세그먼트 꺾인선의 가운데 세그먼트(양쪽 다 다른 세그먼트와
+    # 꼭짓점을 공유하는 내부 관절)는 cutter 없이도 그 하나(꼭짓점~꼭짓점)가 자연 경계로
+    # 인정된다 — 사각형 "변 통째 트림"의 열린 도형 대응.
+    poly = _PolyArrowItem(QColor("#111111"), 2, True)
+    poly._pts = [QPointF(0, 0), QPointF(300, 0), QPointF(300, 300), QPointF(600, 300)]
+    seg = _trim_candidate_open_segment(poly, QPointF(300, 150), [])
+    assert seg == ((1, 0.0), (1, 1.0))
+
+
+def test_trim_candidate_open_segment_end_segment_still_needs_cutter():
+    # 같은 3세그먼트 꺾인선이라도 자유단에 닿은 첫/마지막 세그먼트는 cutter 없이는 여전히
+    # 대상 밖 — 그쪽엔 "다른 세그먼트와 공유하는 꼭짓점"이 한쪽뿐이라 경계가 불완전하다.
+    poly = _PolyArrowItem(QColor("#111111"), 2, True)
+    poly._pts = [QPointF(0, 0), QPointF(300, 0), QPointF(300, 300), QPointF(600, 300)]
+    assert _trim_candidate_open_segment(poly, QPointF(150, 0), []) is None
+    assert _trim_candidate_open_segment(poly, QPointF(450, 300), []) is None
 
 
 def test_trim_candidate_open_segment_spans_vertex_across_two_segments():
@@ -1320,3 +1416,153 @@ def test_add_border_cut_auto_merges_repeated_overlapping_trims():
     _add_border_cut(r, 3, 0.45, 0.8)   # 첫 자국과 겹침
     assert r._cuts == [(3, 0.2, 0.8)]
     assert len(r._cut_handle_rects()) == 2   # 자국 1개 = 핸들 2개(t0/t1)
+
+
+# ---- 2026-08-28 다각형 도구(§8 항목21, `_PolygonItem`) TRIM/EXTEND 연동 -----------------
+# 원래 "이번 라운드는 미구현"으로 미뤄뒀던 것(클래스 docstring 참조)을 실사용 보고로 뒤늦게
+# 연결했다 — 사용자가 직접 찍은 정점이라 이미 진짜 꼭짓점뿐, 타원 같은 근사가 필요 없다.
+
+def _mk_closed_triangle():
+    return _PolygonItem([QPointF(0, 0), QPointF(300, 0), QPointF(150, 200)], True)
+
+
+def _mk_open_zigzag():
+    return _PolygonItem([QPointF(0, 0), QPointF(300, 0), QPointF(300, 300), QPointF(600, 300)],
+                         False)
+
+
+def test_trim_candidate_segment_closed_polygon_whole_edge_without_cutter():
+    # 사각형과 동일한 자연 경계 규칙 — 닫힌 다각형은 정점 자체가 진짜 꼭짓점이라 평탄화 없이
+    # 그대로 변 하나(t=0~1)가 나온다(타원처럼 -1 sentinel이 아니어야 함).
+    tri = _mk_closed_triangle()
+    seg = _trim_candidate_segment(tri, QPointF(150, 0), [])   # 밑변(0,0)-(300,0) 중앙
+    assert seg is not None
+    edge_i, t0, t1 = seg
+    assert edge_i == 0
+    assert abs(t0 - 0.0) < 1e-6 and abs(t1 - 1.0) < 1e-6
+
+
+def test_trim_candidate_open_segment_open_polygon_crossed_by_cutter():
+    zz = _mk_open_zigzag()
+    cutter = _RectItem(QRectF(80, -20, 40, 40))   # 첫 세그먼트(y=0) x=80~120 가로지름
+    seg = _trim_candidate_open_segment(zz, QPointF(100, 0), [cutter])
+    assert seg is not None
+    lo, hi = seg
+    assert lo[0] == 0 and hi[0] == 0
+    assert abs(lo[1] - 80.0 / 300.0) < 1e-6
+    assert abs(hi[1] - 120.0 / 300.0) < 1e-6
+
+
+def test_trim_candidate_open_segment_open_polygon_middle_segment_without_cutter():
+    # 사각형 밑변과 대칭 — 열린 다각형도 내부 관절 세그먼트는 cutter 없이 그 하나가 자연 경계.
+    zz = _mk_open_zigzag()
+    seg = _trim_candidate_open_segment(zz, QPointF(300, 150), [])   # 가운데(수직) 세그먼트
+    assert seg == ((1, 0.0), (1, 1.0))
+
+
+def test_apply_open_item_trim_splits_open_polygon_into_two_polygon_fragments():
+    scene = QGraphicsScene()
+    zz = _mk_open_zigzag()
+    scene.addItem(zz)
+    lo, hi = (0, 80.0 / 300.0), (0, 120.0 / 300.0)
+    clone = apply_open_item_trim(zz, lo, hi)
+    assert clone is not None and clone.scene() is scene
+    assert isinstance(clone, _PolygonItem) and not clone._closed
+    host_pts = zz.local_pts()
+    assert _close(host_pts[0], QPointF(0, 0)) and _close(host_pts[-1], QPointF(80, 0))
+    clone_pts = clone.local_pts()
+    assert _close(clone_pts[0], QPointF(120, 0)) and _close(clone_pts[-1], QPointF(600, 300))
+
+
+def test_trim_tool_click_commits_cut_on_closed_polygon_real_view():
+    """[실사용 재현] 다각형 도구로 만든 닫힌 도형도 TRIM 클릭으로 변이 잘려야 한다 — 후보
+    스캔·외곽선 추출에 `_PolygonItem`이 빠져 있던 원래 공백을 실제 view 종단으로 확인."""
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    tri = _PolygonItem([QPointF(0, 0), QPointF(300, 0), QPointF(150, 200)], True)
+    w._scene.addItem(tri)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(150, 0), NB, NB))
+    assert view._trim_preview is not None
+    assert view._trim_preview[0] == "closed" and view._trim_preview[1] is tri
+
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(150, 0), L, L))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(150, 0), L, NB))
+    assert tri._cuts == [(0, 0.0, 1.0)]
+
+
+def test_trim_tool_click_commits_cut_on_open_polygon_real_view():
+    """[실사용 재현] 다각형 도구로 만든 열린 폴리라인도 TRIM으로 잘려야 한다."""
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    w = CanvasWindow(); w.grid_enabled = False
+    zz = _PolygonItem([QPointF(0, 0), QPointF(300, 0), QPointF(300, 300), QPointF(600, 300)],
+                       False)
+    w._scene.addItem(zz)
+    cutter = _RectItem(QRectF(80, -20, 40, 40))
+    w._scene.addItem(cutter)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    def ev(etype, scene_pt, btn, btns):
+        vp = QPointF(view.mapFromScene(scene_pt))
+        return QMouseEvent(etype, vp, vp, btn, btns, Qt.KeyboardModifier.NoModifier)
+
+    view.mouseMoveEvent(ev(QEvent.Type.MouseMove, QPointF(100, 0), NB, NB))
+    assert view._trim_preview is not None
+    assert view._trim_preview[0] == "open"
+
+    view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(100, 0), L, L))
+    view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(100, 0), L, NB))
+    # 원래 4점짜리 폴리라인이 잘려나간 조각(host) + 새 조각(clone) 둘로 갈렸는지 확인.
+    frags = [it for it in w._scene.items() if isinstance(it, _PolygonItem) and not it._closed]
+    assert len(frags) == 2
+
+
+def test_paint_renders_gap_for_closed_polygon_cut():
+    """[렌더 통합] `_paint_base`가 `_cuts` 있는 닫힌 다각형에서 실제로 갈아타는지 —
+    이전엔 이 게이트 자체가 없어(`_SymbolItem`이 §8 항목17 7단계 전에 겪었던 것과 같은
+    부류) 다각형 TRIM 자국이 화면에 전혀 안 잘려 보였을 잠재 버그를 픽셀로 확인."""
+    from PyQt6.QtGui import QImage, QPainter, QPen
+    from PyQt6.QtWidgets import QGraphicsScene
+
+    def darkest(img, px, py):
+        d = 255
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                c = QColor(img.pixel(px + dx, py + dy))
+                d = min(d, (c.red() + c.green() + c.blue()) // 3)
+        return d
+
+    tri = _PolygonItem([QPointF(0, 0), QPointF(300, 0), QPointF(150, 200)], True)
+    tri.setPen(QPen(QColor("black"), 3))
+    scene = QGraphicsScene()
+    scene.setSceneRect(-20, -20, 340, 240)
+    scene.setBackgroundBrush(QColor("white"))
+    scene.addItem(tri)
+    _add_border_cut(tri, 0, 0.3, 0.7)   # 밑변(0,0)-(300,0) 중앙 큰 구간을 잘라냄
+
+    img = QImage(340, 240, QImage.Format.Format_RGB32)
+    img.fill(QColor("white"))
+    p = QPainter(img)
+    scene.render(p, QRectF(0, 0, 340, 240), QRectF(-20, -20, 340, 240))
+    p.end()
+    gap_scene = tri.mapToScene(QPointF(150, 0))   # 자국 한가운데(t=0.5)
+    edge_scene = tri.mapToScene(QPointF(15, 0))   # 안 잘린 구간(t=0.05)
+    assert darkest(img, int(gap_scene.x() + 20), int(gap_scene.y() + 20)) > 150, \
+        "다각형 TRIM 자국 자리에 테두리가 남음"
+    assert darkest(img, int(edge_scene.x() + 20), int(edge_scene.y() + 20)) < 100, \
+        "안 잘린 구간까지 같이 사라짐"

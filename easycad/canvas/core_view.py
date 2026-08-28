@@ -1501,14 +1501,16 @@ class _AnnotatorView(QGraphicsView):
                 and it not in skip]
 
     def _trim_candidates_near(self, scene_pt: QPointF, margin: float):
-        """[§8 항목17 5단계] TRIM 도구 전용 후보 — 닫힌 도형(_RectItem/_EllipseItem/_SymbolItem)
-        + 열린 도형(_LineItem/_PolyArrowItem, 계획서 스코프 확정: 곡선 `_ArrowItem`·DXF
-        `_PathItem`은 제외). 기존 `_conn_shapes_near`(포트·호버 공용)를 그대로 넓히지 않고 TRIM
-        전용 함수를 새로 둔다 — 그쪽 호출부 다수가 "닫힌 도형만"을 전제하고 있어 범위를 넓히면
-        영향이 번진다(surgical 원칙)."""
+        """[§8 항목17 5단계, 2026-08-28 다각형 도구 추가] TRIM 도구 전용 후보 — 닫힌 도형
+        (_RectItem/_EllipseItem/_SymbolItem/닫힌 다각형) + 열린 도형(_LineItem/_PolyArrowItem/
+        열린 폴리라인, 계획서 스코프 확정: 곡선 `_ArrowItem`·DXF `_PathItem`은 제외). 기존
+        `_conn_shapes_near`(포트·호버 공용)를 그대로 넓히지 않고 TRIM 전용 함수를 새로 둔다 —
+        그쪽 호출부 다수가 "닫힌 도형만"을 전제하고 있어 범위를 넓히면 영향이 번진다
+        (surgical 원칙)."""
         rect = QRectF(scene_pt.x() - margin, scene_pt.y() - margin, margin * 2, margin * 2)
         return [it for it in self.scene().items(rect)
-                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _LineItem, _PolyArrowItem))]
+                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _LineItem,
+                                    _PolyArrowItem, _PolygonItem))]
 
     def _trim_preview_at(self, view_pos, extend=False):
         """[§8 항목17 4~5단계] TRIM(및 Shift=EXTEND) 도구 호버 — 커서 근처 도형에서 자를(또는
@@ -1533,7 +1535,8 @@ class _AnnotatorView(QGraphicsView):
             # 비용을 감수).
             best_host, best_dist = None, None
             for cand in candidates:
-                if not isinstance(cand, (_LineItem, _PolyArrowItem)):
+                if not (isinstance(cand, (_LineItem, _PolyArrowItem))
+                        or (isinstance(cand, _PolygonItem) and not cand._closed)):
                     continue
                 pts = _open_item_local_pts(cand)
                 if len(pts) < 2:
@@ -1552,7 +1555,7 @@ class _AnnotatorView(QGraphicsView):
             # 렌더에 안 보이는 구간이라 여기서만 전체 외곽선(포트/자국 무관)에 투영해 찾는다.
             best_cut_host, best_cut, best_cut_dist = None, None, None
             for cand in candidates:
-                if not isinstance(cand, (_RectItem, _EllipseItem, _SymbolItem)):
+                if not _is_closed_trim_shape(cand):
                     continue
                 hit = _restore_cut_candidate(cand, scene_pt)
                 if hit is None:
@@ -1566,7 +1569,7 @@ class _AnnotatorView(QGraphicsView):
             return ("restore", best_cut_host, best_cut)
         best_host, best_dist = None, None
         for cand in candidates:
-            if isinstance(cand, (_RectItem, _EllipseItem, _SymbolItem)):
+            if _is_closed_trim_shape(cand):
                 hit = _nearest_border_visible(cand, scene_pt)
                 pt = hit[0] if hit is not None else None
             else:
@@ -1579,7 +1582,7 @@ class _AnnotatorView(QGraphicsView):
         if best_host is None:
             return None
         others = [c for c in candidates if c is not best_host]
-        if isinstance(best_host, (_RectItem, _EllipseItem, _SymbolItem)):
+        if _is_closed_trim_shape(best_host):
             seg = _trim_candidate_segment(best_host, scene_pt, others)
             return ("closed", best_host, *seg) if seg is not None else None
         seg = _trim_candidate_open_segment(best_host, scene_pt, others)
@@ -1597,7 +1600,7 @@ class _AnnotatorView(QGraphicsView):
         rect = QRectF(p0, p1).normalized().adjusted(-margin, -margin, margin, margin)
         candidates = [it for it in self.scene().items(rect)
                       if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem,
-                                          _LineItem, _PolyArrowItem))]
+                                          _LineItem, _PolyArrowItem, _PolygonItem))]
         out = []
         for host in candidates:
             # [실사용 재현] 닫힌 도형(포트로 흔히 쓰는 작은 사각형 등)은 이 구간의 시작·끝점이
@@ -1605,7 +1608,7 @@ class _AnnotatorView(QGraphicsView):
             # press) 후보에서 뺀다 — 안 그러면 "선을 자르려고 포트를 관통해 지나가는" 흔한
             # 동작에서 포트 자신의 테두리까지 같이 잘려나가는 오탐이 생긴다(재현: 포트 안쪽에서
             # press한 뒤 그 포트를 가로질러 드래그하면 포트 오른쪽 변이 반으로 잘림).
-            if isinstance(host, (_RectItem, _EllipseItem, _SymbolItem)) and (
+            if _is_closed_trim_shape(host) and (
                     _shape_interior_contains(host, p0) or _shape_interior_contains(host, p1)):
                 continue
             for a, b in _item_local_edges(host):
@@ -1850,6 +1853,12 @@ class _AnnotatorView(QGraphicsView):
             edge_i, t0, t1 = cut
             poly = _host_outline_local_polygon(host)
             n = len(poly)
+            if edge_i == -1:
+                # [2026-08-28] 테두리 전체 트림 복구(sentinel) — 외곽선 전체가 되돌아올 예고.
+                for i in range(n):
+                    a, b = poly[i], poly[(i + 1) % n]
+                    painter.drawLine(host.mapToScene(a), host.mapToScene(b))
+                return
             if not (0 <= edge_i < n):
                 return
             a, b = poly[edge_i], poly[(edge_i + 1) % n]
@@ -1860,6 +1869,13 @@ class _AnnotatorView(QGraphicsView):
             _tag, host, edge_i, t0, t1 = self._trim_preview
             poly = _host_outline_local_polygon(host)
             n = len(poly)
+            if edge_i == -1:
+                # [2026-08-28] 테두리 전체 트림(타원 등 곡선 근사 도형, sentinel) — 변 하나가
+                # 아니라 외곽선 전체를 빨간 점선으로 예고한다.
+                for i in range(n):
+                    a, b = poly[i], poly[(i + 1) % n]
+                    painter.drawLine(host.mapToScene(a), host.mapToScene(b))
+                return
             if not (0 <= edge_i < n):
                 return
             a, b = poly[edge_i], poly[(edge_i + 1) % n]
