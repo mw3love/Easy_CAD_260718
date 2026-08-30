@@ -6700,9 +6700,15 @@ def _open_item_local_pts(item) -> list:
     삼각형+입 곡선이 한 `_PathItem`에 서브패스 2개로 들어있으면, 코 근처를 자르는 순간
     입 곡선째로 없어짐 — "펜이 끊김"으로 보고됨). 부분 지원으로 데이터를 조용히
     파괴하느니 아예 대상에서 빼는 쪽이 안전하다는 판단(단일 서브패스만 있는 흔한 경우
-    — 펜 스트로크 하나·SVG 패스 조각 하나 — 는 이 문제가 없어 그대로 지원). 서브패스가
-    닫혀 있으면(시작=끝) 열린-도형 TRIM 대상이 아니므로 마찬가지로 빈 리스트(닫힌 펜
-    낙서를 자르는 것은 이번 스코프 밖)."""
+    — 펜 스트로크 하나·SVG 패스 조각 하나 — 는 이 문제가 없어 그대로 지원).
+
+    [실사용 재현, 2026-08-30 같은 날 후속] 서브패스가 닫혀 있으면(시작=끝, 예: 손으로
+    한 붓에 그린 고양이 얼굴 윤곽 — 귀+턱 곡선이 출발점으로 돌아와 닫힘) 그룹 소속이
+    아닌 한 여전히 대상에서 뺀다(이 값이면 클릭해도 트림 예고 자체가 안 뜬다 — 원래
+    "닫힌 펜 낙서는 스코프 밖"이라는 결정 그대로). 다만 그룹 소속(`_trim_allows_full_
+    erase`)이면 예외로 허용 — 사용자 확인: 펜/SVG는 열림·닫힘과 무관하게 "손으로 그린
+    하나의 도형"이라 커터 없이 클릭 한 번에 전체가 지워져야 하고(`_trim_candidate_
+    open_segment`의 대칭 처리 참조), 닫힌 루프도 예외가 아니다."""
     if isinstance(item, _LineItem):
         ln = item.line()
         return [ln.p1(), ln.p2()]
@@ -6716,7 +6722,9 @@ def _open_item_local_pts(item) -> list:
             return []
         sub = polys[0]
         pts = [sub.at(i) for i in range(sub.count())]
-        if len(pts) < 2 or _close_pt(pts[0], pts[-1]):
+        if len(pts) < 2:
+            return []
+        if _close_pt(pts[0], pts[-1]) and not _trim_allows_full_erase(item):
             return []
         return pts
     return []
@@ -7441,7 +7449,17 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
     변을 원천 배제) ② 근처에 cutter 하나만 있으면 그 cutter까지 가는 길에 낀 모든 중간
     변(꼭짓점 여러 개)이 한 번에 통째로 트림 후보가 됨("첫 변 자르니 나머지 세 변이
     한꺼번에 잘린다"). 사용자 심상모델이 "예전 사각형의 변 하나하나"이지 자유롭게 그린
-    폴리라인이 아니므로, 꼭짓점을 절대 넘지 않는 편이 맞다."""
+    폴리라인이 아니므로, 꼭짓점을 절대 넘지 않는 편이 맞다.
+
+    [실사용 재현, 2026-08-30 같은 날 후속] `_PathItem`(펜·SVG 곡선)은 위 "클릭한 변
+    하나 안에서만"이 아니라 **일반 열린 폴리라인과 같은 marks(전체 경로 커터 탐색)
+    규칙을 그대로 쓰되, 커터가 하나도 없으면 클릭한 세그먼트가 아니라 경로 전체를
+    자연 경계로 인정**한다 — 사용자 확인: 펜/SVG 조각은 "예전 사각형의 변 하나하나"가
+    아니라 "손으로 그린 하나의 도형"이라, 커터가 있으면(다른 도형과 실제로 교차하면)
+    그 커터 기준으로 걸쳐 잘리는 구간을 그대로 쓰고(교차하는 도형이 있는데도 전체가
+    사라지면 오히려 예상 밖이므로), 커터가 전혀 없으면 세그먼트 개수·열림/닫힘과
+    무관하게 한 번에 전체가 지워진다(닫힌 펜 낙서도 `_open_item_local_pts`가 그룹
+    소속이면 이제 후보로 내놓는다)."""
     pts = _open_item_local_pts(host)
     n = len(pts)
     if n < 2:
@@ -7458,11 +7476,52 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
             best_seg, best_t, best_d = i, tc, d
     if best_seg is None:
         return None
+
+    def key(m):
+        return m[0] + m[1]
+
+    def cutter_marks():
+        marks = [(0, 0.0), (n - 2, 1.0)]
+        for other in other_shapes:
+            if other is host or isinstance(other, _PathItem):
+                continue
+            edges = _item_local_edges(other)
+            if not edges:
+                continue
+            oedges_h = [(host.mapFromScene(other.mapToScene(c)),
+                         host.mapFromScene(other.mapToScene(d))) for c, d in edges]
+            for i in range(n - 1):
+                a, b = pts[i], pts[i + 1]
+                for c, d in oedges_h:
+                    p = _seg_seg_intersection(a, b, c, d)
+                    if p is None:
+                        continue
+                    t, _perp = _seg_param_and_perp(a, b, p)
+                    if -1e-6 <= t <= 1.0 + 1e-6:
+                        marks.append((i, max(0.0, min(1.0, t))))
+        return sorted(set((i, round(t, 9)) for i, t in marks), key=key)
+
+    def bounded_span(marks):
+        cursor_key = best_seg + best_t
+        lo, hi = marks[0], marks[-1]
+        for k in range(len(marks) - 1):
+            if key(marks[k]) - 1e-6 <= cursor_key <= key(marks[k + 1]) + 1e-6:
+                lo, hi = marks[k], marks[k + 1]
+                break
+        if key(hi) - key(lo) < 1e-6:
+            return None
+        return lo, hi
+
     if _trim_allows_full_erase(host):
+        if isinstance(host, _PathItem):
+            marks = cutter_marks()
+            if len(marks) <= 2:
+                return (0, 0.0), (n - 2, 1.0)   # 커터 없음 — 경로 전체(닫힌 루프 포함)를 한 번에
+            return bounded_span(marks)
         # [TRIM 파괴적 재설계 실사용 버그 2건 + 그룹 확장, 2026-08-30] `_trim_derived`
-        # (닫힌 도형에서 방금 막 잘려나온 열린 조각) 또는 그룹에 속한 항목은 아래 "여러
-        # 세그먼트를 꼭짓점째로 지운다"는 일반 열린 폴리라인 규칙을 물려받지 않는다 —
-        # 사용자 심상모델이 "예전 사각형의 변 하나하나"·"더 큰 그림의 부품"이지 "자유롭게
+        # (닫힌 도형에서 방금 막 잘려나온 열린 조각) 또는 그룹에 속한 항목(`_PathItem`
+        # 제외)은 위 "여러 세그먼트를 꼭짓점째로 지운다"는 일반 열린 폴리라인 규칙을
+        # 물려받지 않는다 — 사용자 심상모델이 "예전 사각형의 변 하나하나"이지 "자유롭게
         # 그린 폴리라인"이 아니기 때문이다. 실사용 재현 2건:
         # ① 자유단에 닿은 변은 cutter 없이는 영원히 못 지워짐(마지막 마킹 이후 아래
         # marks 로직 자체가 그런 변을 배제) ② 근처에 다른 도형(cutter 역할)이 딱 하나만
@@ -7493,44 +7552,14 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
         if hi_t - lo_t < 1e-6:
             return None
         return (best_seg, lo_t), (best_seg, hi_t)
-    marks = [(0, 0.0), (n - 2, 1.0)]
-    for other in other_shapes:
-        if other is host or isinstance(other, _PathItem):
-            continue
-        edges = _item_local_edges(other)
-        if not edges:
-            continue
-        oedges_h = [(host.mapFromScene(other.mapToScene(c)),
-                     host.mapFromScene(other.mapToScene(d))) for c, d in edges]
-        for i in range(n - 1):
-            a, b = pts[i], pts[i + 1]
-            for c, d in oedges_h:
-                p = _seg_seg_intersection(a, b, c, d)
-                if p is None:
-                    continue
-                t, _perp = _seg_param_and_perp(a, b, p)
-                if -1e-6 <= t <= 1.0 + 1e-6:
-                    marks.append((i, max(0.0, min(1.0, t))))
-
-    def key(m):
-        return m[0] + m[1]
-
-    marks = sorted(set((i, round(t, 9)) for i, t in marks), key=key)
+    marks = cutter_marks()
     if len(marks) <= 2:
         # 걸친 cutter가 전혀 없다 — 클릭한 세그먼트가 경로 양 자유단과 안 닿는(0 < best_seg
         # < n-2) 순수 내부 세그먼트일 때만 그 하나(꼭짓점~꼭짓점)를 자연 경계로 인정한다.
         if 0 < best_seg < n - 2:
             return (best_seg, 0.0), (best_seg, 1.0)
         return None
-    cursor_key = best_seg + best_t
-    lo, hi = marks[0], marks[-1]
-    for k in range(len(marks) - 1):
-        if key(marks[k]) - 1e-6 <= cursor_key <= key(marks[k + 1]) + 1e-6:
-            lo, hi = marks[k], marks[k + 1]
-            break
-    if key(hi) - key(lo) < 1e-6:
-        return None
-    return lo, hi
+    return bounded_span(marks)
 
 
 _TRIM_ERASED = object()   # [2026-08-30] apply_open_item_trim의 "완전 소실 → delete" sentinel

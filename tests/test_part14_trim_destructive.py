@@ -919,10 +919,14 @@ def test_ungrouped_path_item_still_protected_from_full_erase():
     assert p.scene() is w._scene
 
 
-def test_multi_segment_path_item_natural_boundary_shortens_not_fully_erases():
-    """세그먼트가 여럿인 펜 궤적은 그룹 완화가 있어도 클릭한 세그먼트 하나만 지워지고
-    나머지는 남는다(전체 소실은 아니다) — 자유단 보호 완화는 "완전 소실 허용" 게이트일
-    뿐, 다중 세그먼트를 한꺼번에 지우는 것과는 별개."""
+def test_multi_segment_path_item_natural_boundary_erases_whole_path():
+    """[정책 변경, 2026-08-30 같은 날 후속] 커터 없는 다중세그먼트 펜은 이제 클릭한
+    세그먼트 하나만 지우고 끝나지 않고 경로 전체를 한 번에 지운다 — 실사용 재현(닫힌
+    루프 얼굴 윤곽이 아예 트림 후보로도 안 잡히던 문제)을 계기로 "펜/SVG는 예전
+    사각형의 변 하나하나가 아니라 손으로 그린 하나의 도형"이라는 심상모델을 사용자가
+    재확인해 정책을 바꿨다(이전엔 이 테스트가 "부분만 잘림"을 검증했었음). 선/폴리라인
+    (`_LineItem`/`_PolyArrowItem`)은 여전히 부분 트림 —
+    `test_multi_segment_poly_arrow_still_does_partial_trim_when_grouped` 참조."""
     L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
     w = CanvasWindow(); w.grid_enabled = False
     p = _mk_path_item(w, [QPointF(0, 0), QPointF(50, 20), QPointF(100, 0)], group_id="cat_group")
@@ -934,9 +938,78 @@ def test_multi_segment_path_item_natural_boundary_shortens_not_fully_erases():
     view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(25, 10), L, L))
     view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(25, 10), L, NB))
 
-    assert p.scene() is w._scene   # 완전 소실 아님 — 일부만 잘림
-    remaining = p.path().toSubpathPolygons()[0]
-    assert remaining.count() == 2   # 첫 세그먼트만 잘려나가고 나머지 한 변만 남음
+    assert p.scene() is None   # 한 번에 전체 삭제
+    w.undo()
+    assert p.scene() is w._scene
+
+
+def test_multi_segment_poly_arrow_still_does_partial_trim_when_grouped():
+    """[정책 변경 확인, 2026-08-30 같은 날 후속] `_PathItem`과 달리 `_PolyArrowItem`/
+    `_LineItem`은 그룹 소속이어도 여전히 클릭한 세그먼트 하나만(꼭짓점 단위) 자연
+    경계로 인정한다 — 이번 정책 변경 범위는 `_PathItem`(펜·SVG) 한정, 공학적
+    폴리라인(케이블·배선)은 세그먼트 단위 절단이 그대로 유용하다는 판단."""
+    poly = _PolyArrowItem(QColor("#111111"), 2, True)
+    poly._pts = [QPointF(0, 0), QPointF(300, 0), QPointF(300, 300), QPointF(600, 300)]
+    poly._group_id = "cat_group"
+    seg = _trim_candidate_open_segment(poly, QPointF(300, 150), [])
+    assert seg == ((1, 0.0), (1, 1.0))   # 경로 전체가 아니라 가운데 세그먼트 하나만
+
+
+def test_closed_pen_loop_erases_whole_thing_when_grouped():
+    """[실사용 재현, 2026-08-30 같은 날 후속] 손으로 한 붓에 그린 닫힌 얼굴 윤곽
+    (시작점=끝점, 직선+베지어 곡선 혼합)이 그룹 소속이면 이제 TRIM 후보로 잡히고
+    클릭 한 번에 전체가 지워진다 — 이전엔 `_open_item_local_pts`가 닫힌 서브패스를
+    무조건 빈 리스트로 돌려줘 클릭해도 예고조차 안 떴다("얼굴이 안지워지네" 보고)."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    path = QPainterPath()
+    path.moveTo(-80, -100)
+    path.lineTo(-50, -20)
+    path.cubicTo(-70, 60, -40, 120, 0, 120)
+    path.cubicTo(40, 120, 70, 60, 50, -20)
+    path.lineTo(80, -100)
+    path.lineTo(0, -60)
+    path.lineTo(-80, -100)   # 닫기(시작점 복귀)
+    outline = _PathItem(path)
+    outline._group_id = "cat2"
+    w._scene.addItem(outline)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    click_pt = QPointF(-65, -60)   # 왼쪽 귀 밑 직선 구간
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, click_pt, NB, NB))
+    assert view._trim_preview is not None and view._trim_preview[0] == "open"
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, click_pt, L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, click_pt, L, NB))
+
+    assert outline.scene() is None
+    w.undo()
+    assert outline.scene() is w._scene
+
+
+def test_ungrouped_closed_pen_loop_still_excluded_from_trim():
+    """[정책 변경 범위 확인, 2026-08-30 같은 날 후속] 그룹 소속이 아닌 닫힌 펜 낙서는
+    여전히 트림 대상 밖 — "닫힌 펜 낙서는 스코프 밖"이라는 원래 결정은 그룹 소속이
+    아닌 경우엔 그대로 유지된다(정책 변경은 그룹 소속에만 적용)."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    path = QPainterPath()
+    path.moveTo(0, 0)
+    path.lineTo(100, 0)
+    path.lineTo(50, 80)
+    path.lineTo(0, 0)   # 닫기, group_id 없음
+    outline = _PathItem(path)
+    w._scene.addItem(outline)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(50, 0), NB, NB))
+    assert view._trim_preview is None
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(50, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(50, 0), L, NB))
+    assert outline.scene() is w._scene
 
 
 def test_multi_subpath_path_item_is_not_a_trim_target():
