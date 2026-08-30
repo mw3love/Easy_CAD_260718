@@ -1618,7 +1618,20 @@ symbol_library/
   무변경 — 국소 수정, `_trim_candidate_segment`·`_trim_candidate_open_segment`·
   `_extend_candidate` 세 경로가 한 곳을 공유해 한 번에 일관되게 반영). 오프스크린
   재현으로 수정 전/후 결과 비교 + 실제 창에서 재확인, 신규 pytest 1종, 스위트
-  1083종 통과. 상세: `docs/history/2026-08.md` "TRIM 근본 재설계 후속 9".
+  1083종 통과. 상세: `docs/history/2026-08.md` "TRIM 근본 재설계 후속 9". **같은 날
+  열 번째 후속 — 정책 일부 반전** — 다른 SVG로 테스트하던 사용자가 "이번엔 얼굴
+  윤곽이 안 지워진다" 재보고. 원인은 별개: 이 윤곽이 시작=끝인 **닫힌 펜 루프**였는데
+  `_open_item_local_pts`가 "닫힌 펜 낙서는 스코프 밖"(후속 6 결정)이라 후보 자체가
+  안 잡힌 것. 이 발견이 방금 확정한 "부분 트림 유지" 정책과 부딪혀(그 근거 테스트
+  자체가 다중세그먼트 펜) 재검토 — AskUserQuestion으로 **"선/폴리라인(`_LineItem`/
+  `_PolyArrowItem`)은 부분 트림 유지, 펜/SVG(`_PathItem`)는 그룹+커터없으면 세그먼트·
+  열림닫힘 무관 항상 전체 삭제"**로 확정(방금 정책 일부 반전). `_open_item_local_pts`
+  의 닫힌-루프 제외를 `_trim_allows_full_erase` 조건부로 좁히고, `_trim_candidate_
+  open_segment`를 `isinstance(host, _PathItem)`로 갈라 PathItem 전용 "커터 있으면
+  marks대로, 없으면 경로 전체" 분기 신설(marks 계산은 `cutter_marks()`로 추출해
+  공유). 신규 pytest 4종+기존 1종 정책 갱신, 실제 창에서 사용자와 같은 구조(귀+베지어
+  턱곡선 닫힌 루프)로 호버예고·전체삭제 확인, 스위트 1086종 통과. 상세:
+  `docs/history/2026-08.md` "TRIM 근본 재설계 후속 10".
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
