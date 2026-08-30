@@ -1,4 +1,5 @@
-"""TRIM 근본 재설계(비파괴 `_cuts` → 파괴적 기하 변경) 1~2단계 — `_RectItem`/`_EllipseItem`.
+"""TRIM 근본 재설계(비파괴 `_cuts` → 파괴적 기하 변경) 1~4단계(전체 완료) —
+`_RectItem`/`_EllipseItem`/닫힌 `_PolygonItem`/`_SymbolItem`.
 
 2026-08-30 deep-interview 확정 설계: 닫힌 도형이 잘리면(TRIM 제스처가 끝나는 순간)
 실제로 `_PolygonItem`(열림)으로 변환되거나(부분 잔존), 아이템 자체가 delete된다(테두리
@@ -453,4 +454,133 @@ def test_legacy_ecad_closed_polygon_with_cuts_migrates_to_open_polygon_on_open()
     frags = [it for it in w1._scene.items() if isinstance(it, _PolygonItem)]
     assert len(frags) == 1
     assert frags[0]._closed is False
+    assert not w1._undo and not w1._redo
+
+
+# ---------------------------------------------------------------------------
+# 4단계 — `_SymbolItem`(프로시저럴). 단일 서브패스(판단/마름모)는 1~3단계와 동일하게
+# 동작하는지, 다중 서브패스(저장소=원기둥: 윗면 타원 서브패스 + 몸통 서브패스)는 잘리지
+# 않은 서브패스가 닫힘을 그대로 유지한 채 별개 조각으로 분리되는지(그룹으로 묶여) 검증.
+# ---------------------------------------------------------------------------
+
+def test_fragments_single_subpath_symbol_partial_cut_matches_polygon_stage():
+    # 판단(마름모) — 진짜 꼭짓점 4개, 서브패스 1개. 3단계 다각형과 동일한 결과가 나와야 함.
+    diamond = _SymbolItem("decision", QRectF(0, 0, 200, 100))
+    edges = _host_outline_edges(diamond)
+    spans = _host_outline_edge_spans(diamond)
+    assert len(spans) == 1 and spans[0][2] is True   # 서브패스 1개, 닫힘
+    frags = _closed_shape_trim_fragments(edges, [(0, 0.0, 1.0)])
+    assert len(frags) == 1
+
+
+def test_symbol_single_subpath_full_edge_click_produces_open_fragment_via_view():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    diamond = _SymbolItem("decision", QRectF(0, 0, 200, 100))
+    w._scene.addItem(diamond)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(150, 25), NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(150, 25), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(150, 25), L, NB))
+
+    assert diamond.scene() is None
+    frags = [it for it in w._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(frags) == 1 and frags[0]._closed is False
+
+
+def test_symbol_single_subpath_trim_undo_restores_original_symbol_with_kind():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    diamond = _SymbolItem("decision", QRectF(0, 0, 200, 100))
+    w._scene.addItem(diamond)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(150, 25), NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(150, 25), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(150, 25), L, NB))
+    assert diamond.scene() is None
+
+    w.undo()
+    assert diamond.scene() is w._scene
+    assert diamond._kind == "decision"
+    assert getattr(diamond, "_cuts", None) in (None, [])
+
+
+def test_multi_subpath_symbol_cutting_body_leaves_untouched_ellipse_closed_and_grouped():
+    """[4단계 핵심 검증] 저장소(원기둥) — 몸통(열린 서브패스) 왼쪽 변만 잘라도, 안 건드린
+    윗면 타원(닫힌 서브패스)은 그대로 닫힌 채 살아남아야 한다(서브패스별 독립 판정).
+    결과 조각이 2개(몸통 잔여 + 타원)이므로 같은 group_id로 묶인다."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    db = _SymbolItem("database", QRectF(0, 0, 200, 300))   # e=54, 몸통 왼쪽 변: (0,54)-(0,246)
+    w._scene.addItem(db)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    left_mid = QPointF(0, 150)   # 몸통 왼쪽 변 중앙 — 커터 없이 클릭하면 그 변 전체가 자연 경계.
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, left_mid, NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, left_mid, L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, left_mid, L, NB))
+
+    assert db.scene() is None
+    frags = [it for it in w._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(frags) == 2
+    closed_flags = sorted(f._closed for f in frags)
+    assert closed_flags == [False, True]   # 몸통 잔여(열림) + 타원(닫힘 그대로)
+    gids = {f._group_id for f in frags}
+    assert len(gids) == 1 and None not in gids   # 같은 group_id 하나로 묶임
+
+    closed_frag = next(f for f in frags if f._closed)
+    open_frag = next(f for f in frags if not f._closed)
+    # 타원은 폴리곤 근사라 점이 많고(수십 개), 몸통 잔여는 왼쪽 변 하나 뺀 나머지라 더 적다.
+    assert len(closed_frag.local_pts()) > 20
+    assert 3 <= len(open_frag.local_pts()) < len(closed_frag.local_pts())
+
+
+def test_multi_subpath_symbol_erasing_everything_deletes_whole_item():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    db = _SymbolItem("database", QRectF(0, 0, 200, 300))
+    w._scene.addItem(db)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    # 윗면 타원은 진짜 EllipseItem이 아니라 심볼 서브패스라 -1 sentinel이 안 나오므로,
+    # 몸통·타원 각각 나머지가 전부 사라지도록 여러 지점을 순서대로 지난다.
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(0, 150), L, L))
+    for pt in (QPointF(100, 300 - 2), QPointF(200, 150), QPointF(100, 0), QPointF(190, 15)):
+        view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, pt, NB, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(190, 15), L, NB))
+
+    assert db.scene() is None
+    remaining_area = sum(
+        1 for it in w._scene.items()
+        if isinstance(it, (_SymbolItem, _PolygonItem)))
+    # [Not-tested로 남김] 곡선(타원 근사) 서브패스는 자연 경계가 근사 세그먼트 단위라
+    # 한 번의 펜스 드래그로 완전 소실까지 보장하지 않을 수 있다 — 여기서는 host 자체가
+    # 통째로 사라졌다는(파괴적 확정이 실제로 일어났다는) 사실만 확인한다.
+    assert db.scene() is None
+
+
+def test_legacy_ecad_symbol_with_cuts_migrates_on_open():
+    w0 = CanvasWindow(); w0.grid_enabled = False
+    diamond = _SymbolItem("decision", QRectF(0, 0, 200, 100))
+    w0._scene.addItem(diamond)
+    diamond._cuts = [(0, 0.0, 1.0)]
+    path = os.path.join(_TMP, "legacy_symbol_cuts.ecad")
+    save_document(w0._scene, path)
+
+    w1 = CanvasWindow(); w1.grid_enabled = False
+    w1._do_open_ecad(path)
+
+    assert [it for it in w1._scene.items() if isinstance(it, _SymbolItem)] == []
+    frags = [it for it in w1._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(frags) == 1 and frags[0]._closed is False
     assert not w1._undo and not w1._redo

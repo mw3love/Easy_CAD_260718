@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
     _TableItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon,
-    _attach_port_to_host, _find_port_host_near, _is_destructive_trim_shape,
+    _attach_port_to_host, _find_port_host_near, _is_closed_trim_shape,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
@@ -136,17 +136,16 @@ class _FileIOMixin:
 
 
     def _migrate_legacy_closed_cuts(self):
-        """[TRIM 파괴적 재설계, 2026-08-30] `.ecad` 하위호환 — 재설계 이전에 저장된 파일은
-        `_is_destructive_trim_shape` 대상 도형에 비파괴 `_cuts`(옛 방식)가 그대로 남아
-        있을 수 있다. 로드 직후(undo 히스토리가 리셋되기 전) `finalize_closed_trim`을
-        재사용해 그 자리에서 바로 새 파괴적 표현(`_PolygonItem`/완전삭제)으로 확정한다 —
-        뒤이어 호출되는 `_reset_history()`가 이 변환이 만든 임시 undo 엔트리를 곧바로
-        지우므로 사용자에게는 "그냥 열렸다"로만 보인다(재저장하면 새 형식으로 굳는다 —
-        재설계 전 앱이 그 새 파일을 열어도 `_PolygonItem`은 이미 정식 지원 타입이라
-        평범한 다각형으로 안전하게 뜬다). 아직 전환 안 된 나머지(`_SymbolItem`)는
-        비파괴 그대로라 여기서 손대지 않는다(다음 단계에서 전환)."""
+        """[TRIM 파괴적 재설계 1~4단계 완료, 2026-08-30] `.ecad` 하위호환 — 재설계 이전에
+        저장된 파일은 닫힌 도형(`_is_closed_trim_shape` — 사각·원·심볼·닫힌다각형)에
+        비파괴 `_cuts`(옛 방식)가 그대로 남아 있을 수 있다. 로드 직후(undo 히스토리가
+        리셋되기 전) `finalize_closed_trim`을 재사용해 그 자리에서 바로 새 파괴적 표현
+        (`_PolygonItem`/완전삭제)으로 확정한다 — 뒤이어 호출되는 `_reset_history()`가 이
+        변환이 만든 임시 undo 엔트리를 곧바로 지우므로 사용자에게는 "그냥 열렸다"로만
+        보인다(재저장하면 새 형식으로 굳는다 — 재설계 전 앱이 그 새 파일을 열어도
+        `_PolygonItem`은 이미 정식 지원 타입이라 평범한 다각형으로 안전하게 뜬다)."""
         legacy = {it: [] for it in list(self._scene.items())
-                  if _is_destructive_trim_shape(it) and getattr(it, "_cuts", None)}
+                  if _is_closed_trim_shape(it) and getattr(it, "_cuts", None)}
         if legacy:
             self.finalize_closed_trim(legacy)
 

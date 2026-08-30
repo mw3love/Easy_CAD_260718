@@ -6573,11 +6573,29 @@ def _host_outline_edges(host) -> list:
     서브패스마다 독립적으로 닫힘 여부를 보존한다 — 닫힌 서브패스(윗면 타원처럼 시작점=
     끝점)는 자기 시작점으로 돌아가는 변까지 포함하고, 열린 서브패스(원기둥 몸통처럼
     moveTo로 시작해 안 닫힘)는 포함하지 않는다. 서로 다른 서브패스끼리는 변이 아예
-    생기지 않는다."""
+    생기지 않는다.
+
+    [TRIM 파괴적 재설계 4단계, 2026-08-30] `_host_outline_subpath_groups`(서브패스별
+    (변목록, 닫힘여부) 튜플을 순서대로 내놓는 공용 제너레이터)를 그대로 이어붙인 것 —
+    `_host_outline_edge_spans`가 같은 제너레이터로 인덱스 경계를 뽑아 이 함수의 반환값과
+    항상 같은 서브패스 분할을 보장한다(따로 두 번 짜면 한쪽만 고치는 함정 재발, 규칙
+    참조: `_is_destructive_trim_shape` 등)."""
+    edges = []
+    for group_edges, _closed in _host_outline_subpath_groups(host):
+        edges.extend(group_edges)
+    return edges
+
+
+def _host_outline_subpath_groups(host):
+    """[TRIM 파괴적 재설계 4단계, 2026-08-30] `_host_outline_edges`/`_host_outline_edge_spans`
+    가 공유하는 서브패스별 제너레이터 — (변목록, 닫힘여부)를 서브패스 순서대로 yield한다.
+    사각형/닫힌다각형/타원은 언제나 서브패스 1개(전체가 곧 하나의 루프), `_SymbolItem`만
+    `_sym_path()`의 실제 서브패스 개수만큼(저장소류는 윗면 타원+몸통 2개)."""
     if isinstance(host, _PolygonItem) and host._closed:
         poly = host.local_pts()
         n = len(poly)
-        return [(poly[i], poly[(i + 1) % n]) for i in range(n)]
+        yield [(poly[i], poly[(i + 1) % n]) for i in range(n)], True
+        return
     if isinstance(host, _SymbolItem):
         path = host._sym_path()
     elif isinstance(host, _EllipseItem):
@@ -6586,8 +6604,8 @@ def _host_outline_edges(host) -> list:
     else:
         r = host.rect()
         poly = [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
-        return [(poly[i], poly[(i + 1) % 4]) for i in range(4)]
-    edges = []
+        yield [(poly[i], poly[(i + 1) % 4]) for i in range(4)], True
+        return
     for sub in path.toSubpathPolygons():
         pts = [sub.at(i) for i in range(sub.count())]
         closed = len(pts) >= 2 and _close_pt(pts[0], pts[-1])
@@ -6597,9 +6615,22 @@ def _host_outline_edges(host) -> list:
         if m < 2:
             continue
         span = m if closed else m - 1
-        for i in range(span):
-            edges.append((pts[i], pts[(i + 1) % m]))
-    return edges
+        yield [(pts[i], pts[(i + 1) % m]) for i in range(span)], closed
+
+
+def _host_outline_edge_spans(host) -> list:
+    """[TRIM 파괴적 재설계 4단계, 2026-08-30] `_host_outline_edges(host)`가 반환하는 flat
+    변목록을 서브패스 경계로 다시 자르는 (start, end, closed) 목록 — `host._cuts`의
+    edge_i(항상 이 flat 인덱스 기준)가 어느 서브패스에 속하는지 판정하는 데 쓴다(단일
+    서브패스 도형은 언제나 [(0, len(edges), True)] 하나)."""
+    spans = []
+    idx = 0
+    for group_edges, closed in _host_outline_subpath_groups(host):
+        n = len(group_edges)
+        if n:
+            spans.append((idx, idx + n, closed))
+        idx += n
+    return spans
 
 
 def _tight_scene_bbox(item) -> QRectF | None:
@@ -6639,19 +6670,14 @@ def _is_closed_trim_shape(item) -> bool:
     """[2026-08-28 다각형 도구 TRIM 연동] TRIM/EXTEND가 "닫힌 도형"으로 취급할지 판정하는
     공용 기준 — 사각·타원·심볼은 태생적으로 닫힘, 다각형 도구는 사용자가 그릴 때 정한
     `_closed` 플래그를 따른다(같은 클래스가 열린 폴리라인일 수도 있어 isinstance만으론
-    못 가른다). `_item_local_edges`·`_trim_preview_at`(core_view.py)가 공유한다."""
+    못 가른다). `_item_local_edges`·`_trim_preview_at`(core_view.py)가 공유한다.
+
+    [TRIM 파괴적 재설계 1~4단계 완료, 2026-08-30] 이 4종 전부 파괴적 전환이 끝나
+    `_try_commit_trim`(core_view.py)·`_migrate_legacy_closed_cuts`(host_fileio.py)의
+    "파괴적으로 다룰 대상" 게이트도 이 함수 하나로 통일했다(전환 도중엔 임시로
+    `_is_destructive_trim_shape`라는 별도 함수로 좁혀 뒀었으나, 4단계로 두 기준이 완전히
+    같아져 굳이 두 함수를 유지할 이유가 없어 병합)."""
     return isinstance(item, (_RectItem, _EllipseItem, _SymbolItem)) or (
-        isinstance(item, _PolygonItem) and item._closed)
-
-
-def _is_destructive_trim_shape(item) -> bool:
-    """[TRIM 파괴적 재설계, 2026-08-30] `_is_closed_trim_shape` 중 이미 파괴적 전환이
-    끝난 종류만 True — 1단계(`_RectItem`)·2단계(`_EllipseItem`)·3단계(닫힌 `_PolygonItem`)
-    순서로 늘어난다. `_try_commit_trim`(core_view.py)·`_migrate_legacy_closed_cuts`
-    (host_fileio.py) 두 곳이 공유해 게이트가 벌어지지 않게 한다(2026-08-28에 병렬
-    후보목록 하나만 고쳐 재발했던 것과 같은 함정, `docs/pitfalls.md` 참조). 나머지
-    (`_SymbolItem`)는 다음 단계 전환 전까지 여전히 비파괴 `_cuts`+`push_undo_cut`."""
-    return isinstance(item, (_RectItem, _EllipseItem)) or (
         isinstance(item, _PolygonItem) and item._closed)
 
 
@@ -7025,6 +7051,44 @@ def _closed_shape_trim_fragments(edges: list, cuts: list) -> list:
         fragments[0] = fragments[-1][:-1] + fragments[0]
         fragments.pop()
     return fragments
+
+
+def _destructive_trim_result(host, cuts: list) -> list:
+    """[TRIM 파괴적 재설계 4단계, 2026-08-30] `host._cuts`를 실제로 확정할 때 `finalize_
+    closed_trim`이 쓰는 진입점 — `_closed_shape_trim_fragments`를 서브패스 단위로 독립
+    호출해 다중 서브패스 도형(`_SymbolItem`의 저장소류: 윗면 타원+몸통)까지 올바르게
+    처리한다. 반환은 [(점목록, 닫힘여부), ...] — 빈 리스트면 모든 서브패스가 통째로
+    사라졌다는 뜻(host 자체를 delete).
+
+    [왜 서브패스별로 쪼개야 하는가] `_closed_shape_trim_fragments`는 edges를 '하나의
+    순환 루프'로 가정한다 — 사각형·원·닫힌다각형처럼 서브패스가 원래 1개면 문제없지만,
+    저장소류처럼 2개 이상이면 flat 인덱스를 그대로 먹였을 때 서로 다른 서브패스의 끝점과
+    시작점이 우연히 안 이어진다는 사실 하나에 기대어 '어쩌다 보니' 안 섞이는 것뿐이고,
+    그 반대(잘리지 않은 닫힌 서브패스가 열린 조각으로 나와버리는 것)는 안 막아준다.
+    그래서 서브패스별로 (변, cuts)를 잘라 각자 독립적으로 판정한다: cuts가 없는 서브패스는
+    원래 모양(닫힘/열림) 그대로 보존, 있는 서브패스만 실제로 도려낸다.
+
+    edge_i=-1(테두리 전체 sentinel, 지금은 `_EllipseItem` 전용이라 항상 서브패스 1개일
+    때만 나옴)은 전체 소실로 즉시 처리한다."""
+    if any(edge_i == -1 for edge_i, _t0, _t1 in cuts):
+        return []
+    spans = _host_outline_edge_spans(host)
+    edges = _host_outline_edges(host)
+    out = []
+    for start, end, closed in spans:
+        span_edges = edges[start:end]
+        span_cuts = [(edge_i - start, t0, t1) for edge_i, t0, t1 in cuts
+                     if start <= edge_i < end]
+        if not span_cuts:
+            if closed:
+                pts = [a for a, _b in span_edges]
+            else:
+                pts = [span_edges[0][0]] + [b for _a, b in span_edges]
+            out.append((pts, closed))
+            continue
+        for pts in _closed_shape_trim_fragments(span_edges, span_cuts):
+            out.append((pts, False))
+    return out
 
 
 def _paint_filled_trimmed_border(item, painter) -> None:

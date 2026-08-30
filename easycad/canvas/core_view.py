@@ -1630,27 +1630,21 @@ class _AnnotatorView(QGraphicsView):
         펜스-교차/along-the-border 두 경로가 공유한다(중복 제거). `_trim_seen`으로 같은
         구간 재커밋을 막는다.
 
-        [TRIM 파괴적 재설계, 2026-08-30] `_is_destructive_trim_shape(host)`인 도형은 더
-        이상 비파괴 `_cuts`+`push_undo_cut`로 끝내지 않는다 — 드래그 중엔 지금까지와
-        똑같이 `_cuts`에 누적만 해(미리보기 렌더 무변경) `_trim_closed_dirty`에 표시해
-        두고, 실제 확정(점목록으로 굽기/완전 소실 삭제)은 제스처가 끝나는 `_mouse_
-        release_impl`의 `finalize_closed_trim` 한 번으로 미룬다(같은 드래그에서 여러
-        변을 잘라도 병합 로직 한 번으로 정확히 처리하기 위해 — 자세한 이유는
-        `_closed_shape_trim_fragments` 참조). 아직 전환 안 된 나머지(`_SymbolItem`)는
-        비파괴 그대로(다음 단계에서 전환)."""
+        [TRIM 파괴적 재설계 1~4단계 완료, 2026-08-30] 닫힌 도형(`_is_closed_trim_shape`
+        — 사각·원·심볼·닫힌다각형 전부)은 더 이상 비파괴 `_cuts`+`push_undo_cut`로 끝내지
+        않는다 — 드래그 중엔 지금까지와 똑같이 `_cuts`에 누적만 해(미리보기 렌더 무변경)
+        `_trim_closed_dirty`에 표시해두고, 실제 확정(점목록으로 굽기/완전 소실 삭제)은
+        제스처가 끝나는 `_mouse_release_impl`의 `finalize_closed_trim` 한 번으로 미룬다
+        (같은 드래그에서 여러 변을 잘라도 병합 로직 한 번으로 정확히 처리하기 위해 —
+        자세한 이유는 `_closed_shape_trim_fragments` 참조)."""
         if kind == "closed":
             edge_i, t0, t1 = seg
             key = ("closed", id(host), edge_i, round(t0, 6), round(t1, 6))
             if key in self._trim_seen:
                 return
-            if _is_destructive_trim_shape(host):
-                if host not in self._trim_closed_dirty:
-                    self._trim_closed_dirty[host] = list(getattr(host, "_cuts", None) or [])
-                _add_border_cut(host, edge_i, t0, t1)
-            else:
-                before_cuts = list(getattr(host, "_cuts", None) or [])
-                _add_border_cut(host, edge_i, t0, t1)
-                self._owner.push_undo_cut(host, before_cuts, coalesce_key=self._trim_undo_key)
+            if host not in self._trim_closed_dirty:
+                self._trim_closed_dirty[host] = list(getattr(host, "_cuts", None) or [])
+            _add_border_cut(host, edge_i, t0, t1)
             self._trim_seen.add(key)
         else:
             lo, hi = seg
