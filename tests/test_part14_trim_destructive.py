@@ -339,3 +339,118 @@ def test_legacy_ecad_ellipse_whole_loop_cut_migrates_to_deletion_on_open():
     assert [it for it in w1._scene.items()
             if isinstance(it, (_EllipseItem, _PolygonItem))] == []
     assert not w1._undo and not w1._redo
+
+
+# ---------------------------------------------------------------------------
+# 3단계 — 닫힌 `_PolygonItem`(다각형 도구). 진짜 꼭짓점이라 사각형과 구조가 가장 가깝다
+# (타원 같은 폴리곤 근사·-1 sentinel 없음) — finalize_closed_trim은 완전히 공유.
+# ---------------------------------------------------------------------------
+
+def _mk_pen_triangle(w):
+    tri = _PolygonItem([QPointF(0, 0), QPointF(300, 0), QPointF(150, 200)], True)
+    tri.setPen(QPen(QColor("#111111"), 2.0))
+    w._scene.addItem(tri)
+    return tri
+
+
+def test_fragments_partial_cut_on_closed_polygon_single_loop():
+    tri_edges = [(QPointF(0, 0), QPointF(300, 0)), (QPointF(300, 0), QPointF(150, 200)),
+                 (QPointF(150, 200), QPointF(0, 0))]
+    frags = _closed_shape_trim_fragments(tri_edges, [(0, 0.3, 0.7)])
+    assert len(frags) == 1
+    pts = [(round(p.x(), 3), round(p.y(), 3)) for p in frags[0]]
+    assert pts[0] == (210.0, 0.0) and pts[-1] == (90.0, 0.0)
+    assert (300.0, 0.0) in pts and (150.0, 200.0) in pts
+
+
+def test_closed_polygon_full_edge_click_removes_it_and_leaves_open_fragment():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    tri = _mk_pen_triangle(w)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(150, 0), NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(150, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(150, 0), L, NB))
+
+    assert tri.scene() is None
+    frags = [it for it in w._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(frags) == 1
+    assert frags[0]._closed is False
+    assert frags[0].pen().color().name() == "#111111"
+
+
+def test_erasing_all_three_polygon_edges_in_one_drag_deletes_the_item():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    tri = _mk_pen_triangle(w)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    # 밑변(0,0)-(300,0) → 오른빗변(300,0)-(150,200) → 왼빗변(150,200)-(0,0) 순서로 지난다.
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(150, 0), L, L))
+    for pt in (QPointF(225, 100), QPointF(75, 100), QPointF(10, 4)):
+        view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, pt, NB, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(10, 4), L, NB))
+
+    assert tri.scene() is None
+    assert [it for it in w._scene.items() if isinstance(it, _PolygonItem)] == []
+
+
+def test_closed_polygon_trim_undo_restores_original_closed_triangle():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    tri = _mk_pen_triangle(w)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(150, 0), NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(150, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(150, 0), L, NB))
+    assert tri.scene() is None
+
+    w.undo()
+    assert tri.scene() is w._scene
+    assert tri._closed is True
+    assert getattr(tri, "_cuts", None) in (None, [])
+
+
+def test_arrow_bound_to_trimmed_polygon_rebinds_to_new_fragment():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    tri = _mk_pen_triangle(w)
+    other = _mk_pen_rect(w, x=900, y=0, ww=100, hh=100)
+    arr = _mk_bound_sarrow(w, tri, other, 2, 3)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(150, 0), NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(150, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(150, 0), L, NB))
+
+    assert tri.scene() is None
+    frags = [it for it in w._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(frags) == 1
+    assert arr._bind_start is frags[0] or arr._bind_end is frags[0]
+    assert arr._bind_start is not tri and arr._bind_end is not tri
+
+
+def test_legacy_ecad_closed_polygon_with_cuts_migrates_to_open_polygon_on_open():
+    w0 = CanvasWindow(); w0.grid_enabled = False
+    tri = _mk_pen_triangle(w0)
+    tri._cuts = [(0, 0.0, 1.0)]
+    path = os.path.join(_TMP, "legacy_polygon_cuts.ecad")
+    save_document(w0._scene, path)
+
+    w1 = CanvasWindow(); w1.grid_enabled = False
+    w1._do_open_ecad(path)
+
+    frags = [it for it in w1._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(frags) == 1
+    assert frags[0]._closed is False
+    assert not w1._undo and not w1._redo

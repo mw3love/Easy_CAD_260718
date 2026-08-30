@@ -6644,6 +6644,17 @@ def _is_closed_trim_shape(item) -> bool:
         isinstance(item, _PolygonItem) and item._closed)
 
 
+def _is_destructive_trim_shape(item) -> bool:
+    """[TRIM 파괴적 재설계, 2026-08-30] `_is_closed_trim_shape` 중 이미 파괴적 전환이
+    끝난 종류만 True — 1단계(`_RectItem`)·2단계(`_EllipseItem`)·3단계(닫힌 `_PolygonItem`)
+    순서로 늘어난다. `_try_commit_trim`(core_view.py)·`_migrate_legacy_closed_cuts`
+    (host_fileio.py) 두 곳이 공유해 게이트가 벌어지지 않게 한다(2026-08-28에 병렬
+    후보목록 하나만 고쳐 재발했던 것과 같은 함정, `docs/pitfalls.md` 참조). 나머지
+    (`_SymbolItem`)는 다음 단계 전환 전까지 여전히 비파괴 `_cuts`+`push_undo_cut`."""
+    return isinstance(item, (_RectItem, _EllipseItem)) or (
+        isinstance(item, _PolygonItem) and item._closed)
+
+
 def _item_local_edges(item) -> list:
     """[§8 항목17 5단계, 2026-08-28 다각형 도구 추가] 항목의 변(선분) 목록, item 로컬좌표 —
     닫힌 도형(사각·타원·심볼·닫힌 다각형)은 폐곡선(마지막→첫 변 포함), 열린 도형(선·직선화살·

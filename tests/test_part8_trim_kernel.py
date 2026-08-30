@@ -1535,7 +1535,12 @@ def test_apply_open_item_trim_splits_open_polygon_into_two_polygon_fragments():
 
 def test_trim_tool_click_commits_cut_on_closed_polygon_real_view():
     """[실사용 재현] 다각형 도구로 만든 닫힌 도형도 TRIM 클릭으로 변이 잘려야 한다 — 후보
-    스캔·외곽선 추출에 `_PolygonItem`이 빠져 있던 원래 공백을 실제 view 종단으로 확인."""
+    스캔·외곽선 추출에 `_PolygonItem`이 빠져 있던 원래 공백을 실제 view 종단으로 확인.
+
+    [TRIM 파괴적 재설계 3단계, 2026-08-30] 닫힌 `_PolygonItem`도 `_is_destructive_
+    trim_shape` 대상이 돼, release 시점에 비파괴 `_cuts` 누적이 아니라 실제로 열린
+    조각으로 변환(원래 인스턴스는 씬에서 제거)된다 — `tri`는 더 이상 씬에 남지 않고
+    새 열린 `_PolygonItem`이 대신 들어온다."""
     from PyQt6.QtGui import QMouseEvent
     from PyQt6.QtCore import QEvent
     L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
@@ -1557,7 +1562,9 @@ def test_trim_tool_click_commits_cut_on_closed_polygon_real_view():
 
     view.mousePressEvent(ev(QEvent.Type.MouseButtonPress, QPointF(150, 0), L, L))
     view.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, QPointF(150, 0), L, NB))
-    assert tri._cuts == [(0, 0.0, 1.0)]
+    assert tri.scene() is None
+    frags = [it for it in w._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(frags) == 1 and frags[0]._closed is False
 
 
 def test_trim_tool_click_commits_cut_on_open_polygon_real_view():
