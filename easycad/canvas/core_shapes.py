@@ -7899,6 +7899,35 @@ def _nearest_on_polyline(pl, scene_pt):
     return best, bestn
 
 
+def _multi_subpath_path_item_nearest_scene(item, scene_pt: QPointF):
+    """[실사용 재현, 2026-08-30 같은 날 네 번째 후속] 서브패스 2개 이상인 `_PathItem`
+    (예: 코+입이 실수로 한 오브젝트에 합쳐진 경우 — 실제 사용자 파일에서 재현: 코 짧은
+    세로선+입 왼쪽/오른쪽 곡선이 한 펜 오브젝트 안에 서브패스 3개로 들어있었음)은
+    `_open_item_local_pts`가 부분 절단의 데이터파괴 위험 때문에 통째로 빈 리스트를
+    돌려준다(무변경 — "펜이 끊김" 방지 안전장치는 그대로 유지). 다만 "커터 없이
+    오브젝트 전체를 한 번에 지우는" 호버 판정만은 서브패스마다 독립적으로 최근접점을
+    찾아 지원한다(`_nearest_on_polyline`을 서브패스 단위로 따로 호출 — 서로 다른
+    서브패스를 잇는 가짜 선분을 만들지 않음). 단일 서브패스거나 점이 모자라면
+    None(그 경우는 기존 `_open_item_local_pts` 경로가 이미 처리)."""
+    if not isinstance(item, _PathItem):
+        return None
+    polys = item.path().toSubpathPolygons()
+    if len(polys) < 2:
+        return None
+    best_pt, best_d = None, None
+    for sub in polys:
+        pts = [item.mapToScene(sub.at(i)) for i in range(sub.count())]
+        if len(pts) < 2:
+            continue
+        pt, _n = _nearest_on_polyline(pts, scene_pt)
+        if pt is None:
+            continue
+        d = (pt.x() - scene_pt.x()) ** 2 + (pt.y() - scene_pt.y()) ** 2
+        if best_d is None or d < best_d:
+            best_d, best_pt = d, pt
+    return best_pt
+
+
 # ---- [Stage1] Lucid식 직교 자동 라우팅(기본 엘보) -----------------------------
 def _dedup_pts(pts, eps=1e-6):
     """연속 중복점 + 공선(collinear) 중간점 제거. 정렬된 도형 사이의 퇴화 엘보를 직선으로 접는다."""

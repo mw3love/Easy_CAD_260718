@@ -1590,6 +1590,11 @@ class _AnnotatorView(QGraphicsView):
                 # `_open_item_local_pts`(2026-08-30에 `_PathItem` 지원 추가)를 그대로 재사용.
                 pts = [cand.mapToScene(p) for p in _open_item_local_pts(cand)]
                 pt, _n = _nearest_on_polyline(pts, scene_pt) if len(pts) >= 2 else (None, None)
+                if pt is None:
+                    # [실사용 재현, 2026-08-30 같은 날 네 번째 후속] 서브패스 2개 이상이라
+                    # `_open_item_local_pts`가 빈 리스트를 돌려준 경우(예: 코+입이 한
+                    # 오브젝트로 합쳐짐) — "전체 삭제" 호버만 서브패스별 독립 탐색으로 지원.
+                    pt = _multi_subpath_path_item_nearest_scene(cand, scene_pt)
             else:
                 pt, _n = _nearest_on_polyline(_conn_polyline_scene(cand), scene_pt)
             if pt is None:
@@ -1603,6 +1608,8 @@ class _AnnotatorView(QGraphicsView):
         if _is_closed_trim_shape(best_host):
             seg = _trim_candidate_segment(best_host, scene_pt, others)
             return ("closed", best_host, *seg) if seg is not None else None
+        if isinstance(best_host, _PathItem) and len(best_host.path().toSubpathPolygons()) > 1:
+            return ("erase_whole", best_host)
         seg = _trim_candidate_open_segment(best_host, scene_pt, others)
         return ("open", best_host, *seg) if seg is not None else None
 
@@ -1656,7 +1663,21 @@ class _AnnotatorView(QGraphicsView):
         클릭 1회로 그 곡선 전체가 지워진다. 커터로 정확히 지정한 부분 절단
         (`t0`/`t1`이 0·1이 아님)에는 적용 안 함 — 사용자가 명시적으로 좁힌 범위를
         존중한다."""
-        if kind == "closed":
+        if kind == "erase_whole":
+            # [실사용 재현, 2026-08-30 같은 날 네 번째 후속] 서브패스 2개 이상인
+            # `_PathItem`(코+입이 한 오브젝트로 합쳐진 경우 등)은 부분 절단(`setPath()`가
+            # 나머지 서브패스를 통째로 지워버릴 위험)을 지원 안 하지만, 커터 없이
+            # 오브젝트 전체(모든 서브패스 포함)를 통째로 지우는 것은 그 위험 자체가
+            # 없다 — `scene.removeItem()`만으로 끝나 `setPath()`를 안 거치기 때문.
+            key = ("erase_whole", id(host))
+            if key in self._trim_seen:
+                return
+            scene = host.scene()
+            if scene is not None:
+                scene.removeItem(host)
+                self._owner.push_undo_delete([host], coalesce_key=self._trim_undo_key)
+            self._trim_seen.add(key)
+        elif kind == "closed":
             edge_i, t0, t1 = seg
             key = ("closed", id(host), edge_i, round(t0, 6), round(t1, 6))
             if key in self._trim_seen:
@@ -1896,7 +1917,15 @@ class _AnnotatorView(QGraphicsView):
         pen.setStyle(Qt.PenStyle.DashLine)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
-        if kind == "restore":
+        if kind == "erase_whole":
+            # [실사용 재현, 2026-08-30 같은 날 네 번째 후속] 서브패스 2개 이상인 펜은
+            # 부분 절단이 불가능하므로 예고도 "일부 구간"이 아니라 모든 서브패스 전체를
+            # 두른다 — 실제로 지워질 범위(오브젝트 전체)를 정확히 보여준다.
+            _tag, host = self._trim_preview
+            for sub in host.path().toSubpathPolygons():
+                for i in range(sub.count() - 1):
+                    painter.drawLine(host.mapToScene(sub.at(i)), host.mapToScene(sub.at(i + 1)))
+        elif kind == "restore":
             _tag, host, cut = self._trim_preview
             edge_i, t0, t1 = cut
             edges = _host_outline_edges(host)

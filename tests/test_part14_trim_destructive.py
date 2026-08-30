@@ -1021,11 +1021,13 @@ def test_ungrouped_closed_pen_loop_also_erases_now():
     assert outline.scene() is w._scene
 
 
-def test_multi_subpath_path_item_is_not_a_trim_target():
-    """[실사용 재현, 2026-08-30 같은 날 후속] 서브패스 2개짜리 펜(예: 코 삼각형 서브패스
-    + 입 곡선 서브패스가 한 `_PathItem`에 같이 들어있는 경우) — 첫 서브패스만 골라
-    자르면 나머지 서브패스가 `setPath()`에 통째로 사라진다("펜이 끊김" 보고). 부분
-    지원으로 데이터를 조용히 파괴하느니 아예 트림 대상에서 뺀다."""
+def test_multi_subpath_path_item_no_partial_but_erases_whole_object():
+    """[정책 변경, 2026-08-30 같은 날 네 번째 후속] 서브패스 2개짜리 펜(예: 코 짧은
+    세로선+입 왼쪽/오른쪽 곡선이 한 `_PathItem`에 실수로 합쳐진 경우 — 사용자의 실제
+    파일 `123.ecad`로 재현) — 부분 절단(`setPath()`가 나머지 서브패스를 통째로
+    지워버리는 "펜이 끊김" 위험)은 여전히 지원 안 하지만, 커터 없이 오브젝트
+    **전체**(모든 서브패스 포함)를 한 번에 지우는 것은 그 위험이 없어 이제 지원한다
+    (`kind == "erase_whole"`, 옛 "트림 대상에서 통째로 제외"는 폐기)."""
     L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
     w = CanvasWindow(); w.grid_enabled = False
     path = QPainterPath()
@@ -1041,12 +1043,14 @@ def test_multi_subpath_path_item_is_not_a_trim_target():
     view = w._view
 
     view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(50, 0), NB, NB))
-    assert view._trim_preview is None   # 후보 자체가 안 잡힘
+    assert view._trim_preview == ("erase_whole", p)
     view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(50, 0), L, L))
     view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(50, 0), L, NB))
 
+    assert p.scene() is None   # 두 서브패스 모두 함께 사라짐(부분 소실 아님)
+    w.undo()
     assert p.scene() is w._scene
-    assert len(p.path().toSubpathPolygons()) == 2   # 두 서브패스 모두 그대로 보존
+    assert len(p.path().toSubpathPolygons()) == 2   # undo 후 두 서브패스 모두 원상복구
 
 
 def _mk_ellipse(w, cx, cy, r):
