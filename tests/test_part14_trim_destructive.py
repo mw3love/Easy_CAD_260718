@@ -965,3 +965,54 @@ def test_multi_subpath_path_item_is_not_a_trim_target():
 
     assert p.scene() is w._scene
     assert len(p.path().toSubpathPolygons()) == 2   # 두 서브패스 모두 그대로 보존
+
+
+def _mk_ellipse(w, cx, cy, r):
+    e = _EllipseItem()
+    e.setRect(-r, -r, 2 * r, 2 * r)
+    e.setPos(cx, cy)
+    w._scene.addItem(e)
+    return e
+
+
+def _fence_drag(view, pts):
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, pts[0], L, L))
+    for p in pts[1:]:
+        view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, p, NB, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, pts[-1], L, NB))
+
+
+def test_one_continuous_fence_matches_two_separate_fences_for_grouped_whisker():
+    """[실사용 재현, 2026-08-30 같은 날 후속] 원(닫힌 도형)과 그룹 소속 수염(열린
+    PathItem)을 한 번의 연속 펜스 드래그로 함께 지나가면, 원은 아직 릴리즈 전이라
+    원본 그대로의 커터로 남아 수염이 "테두리 안쪽/바깥쪽 중 지나간 쪽만" 절반만
+    잘렸다 — 원을 먼저 트림해 릴리즈한 뒤 수염을 별도 드래그로 지나가면(그 자리
+    테두리가 이미 실제로 없어짐) 커터가 안 걸려 그룹 전체소실 규칙으로 한 번에
+    지워짐. 순전히 릴리즈 타이밍 때문에 같은 스윕이 다른 결과를 내던 불일치를
+    `_item_local_edges`가 미확정 `_cuts`까지 커터 계산에 반영하도록 고쳐 일치시켰다
+    — 두 경로 모두 수염이 완전히 사라져야 한다."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+
+    # 시나리오 A: 한 번의 연속 드래그로 원 오른쪽 변 + 수염을 모두 지나감.
+    w = CanvasWindow(); w.grid_enabled = False
+    circle = _mk_ellipse(w, 0, 0, 50)
+    circle._group_id = "cat"
+    whisker = _mk_path_item(w, [QPointF(20, 0), QPointF(120, 0)], group_id="cat")
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+    _fence_drag(view, [QPointF(0, -60), QPointF(75, 0), QPointF(150, 60)])
+    assert whisker.scene() is None   # 절반만 남지 않고 완전히 사라짐
+
+    # 시나리오 B: 원을 먼저 트림(릴리즈)한 뒤, 수염을 별도 드래그로 지나감.
+    w2 = CanvasWindow(); w2.grid_enabled = False
+    circle2 = _mk_ellipse(w2, 0, 0, 50)
+    circle2._group_id = "cat"
+    whisker2 = _mk_path_item(w2, [QPointF(20, 0), QPointF(120, 0)], group_id="cat")
+    w2._scene.clearSelection()
+    w2.set_tool("trim")
+    view2 = w2._view
+    _fence_drag(view2, [QPointF(45, -20), QPointF(45, 20)])
+    _fence_drag(view2, [QPointF(0, -60), QPointF(75, 0), QPointF(150, 60)])
+    assert whisker2.scene() is None   # 두 결과가 일치

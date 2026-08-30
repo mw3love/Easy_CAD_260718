@@ -6745,8 +6745,30 @@ def _item_local_edges(item) -> list:
     쓰면 크래시했다 — host.rect() 미존재). 인식 못 하는 타입(화살표 곡선·`_PathItem` 등)은
     빈 리스트를 돌려줘 그냥 기여 없는 커터로 취급된다. [2026-08-28] 닫힌 쪽은
     `_host_outline_edges`로 통일 — 서브패스가 여럿인 심볼(저장소 등)을 커터로 써도
-    서브패스 이음매의 가짜 대각선이 커터 변으로 새지 않는다."""
+    서브패스 이음매의 가짜 대각선이 커터 변으로 새지 않는다.
+
+    [실사용 재현, 2026-08-30] 닫힌 도형에 `_cuts`가 이미 누적돼 있으면(같은 펜스 드래그
+    안에서 방금 이 도형을 먼저 잘랐지만 `finalize_closed_trim`은 아직 안 됨 — 그건 제스처
+    종료까지 미뤄진다) 원본 미트림 외곽선 대신 `_destructive_trim_result`로 "지금 릴리즈
+    하면 나올 결과"를 커터 기준으로 삼는다. 안 그러면 한 드래그로 원을 지나 수염까지
+    이어 지나갈 때는 원이 아직 원본 그대로라 수염이 원 테두리를 커터로 삼아 절반만
+    잘리는데, 원을 먼저 릴리즈하고 수염을 별도 드래그로 지나가면(그 자리 테두리가 이미
+    실제로 없어짐) 커터가 안 걸려 그룹 전체소실 규칙으로 한 번에 지워지는 — 순전히 릴리즈
+    타이밍 때문에 같은 스윕이 다른 결과를 내는 불일치가 생겼다. `finalize_closed_trim` 자체
+    (같은 도형의 여러 변을 한 번에 병합하는 로직)는 그대로 두고, *다른* 아이템이 커터를
+    찾을 때만 "이미 잘린 부분은 없는 것"으로 쳐줘 한 드래그/두 드래그 결과를 일치시킨다."""
     if _is_closed_trim_shape(item):
+        cuts = getattr(item, "_cuts", None)
+        if cuts:
+            edges = []
+            for pts, closed, _span_idx in _destructive_trim_result(item, cuts):
+                n = len(pts)
+                if n < 2:
+                    continue
+                edges.extend((pts[i], pts[i + 1]) for i in range(n - 1))
+                if closed:
+                    edges.append((pts[-1], pts[0]))
+            return edges
         return _host_outline_edges(item)
     pts = _open_item_local_pts(item)
     return [(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
