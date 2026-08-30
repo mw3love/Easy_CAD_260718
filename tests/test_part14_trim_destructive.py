@@ -584,3 +584,84 @@ def test_legacy_ecad_symbol_with_cuts_migrates_on_open():
     frags = [it for it in w1._scene.items() if isinstance(it, _PolygonItem)]
     assert len(frags) == 1 and frags[0]._closed is False
     assert not w1._undo and not w1._redo
+
+
+# ---------------------------------------------------------------------------
+# 실사용 재현 버그(2026-08-30, 같은 날 후속) — "사각형 한 변은 잘 지워지는데, 그렇게
+# 생긴 다각형 상태에서 나머지 세 변은 트림이 안 먹는다." 원인: 열린 도형 TRIM의 기존
+# "자유단 보호"(독립된 선을 한 번에 통째로 지우는 사고 방지, `_trim_candidate_open_
+# segment`)가 방금 막 잘려나온 조각(`_trim_derived`)에도 그대로 적용돼, 남은 3변 중
+# 자유단에 닿은 2변(가운데 변 제외)은 자연 경계로 영원히 못 지웠다.
+# ---------------------------------------------------------------------------
+
+def test_side_adjacent_to_free_end_is_trimmable_in_a_separate_gesture():
+    """1단계 테스트(`test_erasing_all_four_edges_in_one_drag_deletes_the_item_entirely`)는
+    한 번의 연속 드래그로 4변을 다 지웠다 — 이 테스트는 실사용처럼 **별도의 제스처**로
+    한 변씩 지운다. 첫 절단 직후 생긴 자유단에 닿은 변(오른쪽)이 지워지는지가 핵심."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    # 1번째 제스처 — 위쪽 변 삭제(release로 확정, RectItem → 열린 PolygonItem 변환).
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(300, 0), NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(300, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(300, 0), L, NB))
+    frags = [it for it in w._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(frags) == 1
+    poly = frags[0]
+    assert poly._trim_derived is True
+
+    # 2번째 제스처(별도) — 오른쪽 변(자유단에 바로 닿은 변). 옛 버그에선 여기서 preview가
+    # None이라 아무 일도 안 일어났다.
+    right_mid = QPointF(600, 200)
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, right_mid, NB, NB))
+    assert view._trim_preview is not None and view._trim_preview[0] == "open"
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, right_mid, L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, right_mid, L, NB))
+    assert poly.scene() is w._scene   # 아직 다 안 지워졌으니 살아있어야 함
+    assert len(poly.local_pts()) == 3   # 남은 두 변(아래+왼쪽)
+
+
+def test_erasing_last_remaining_segment_across_separate_gestures_deletes_item():
+    """오른쪽·왼쪽 변을 별도 제스처로 지운 뒤, 마지막 남은 한 변(가운데)까지 지우면
+    완전 소실(아이템 delete)이어야 한다 — 옛 버그에선 이 마지막 변도 자유단 보호에
+    걸려 조용히 무시됐다."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    for pt in (QPointF(300, 0), QPointF(600, 200), QPointF(0, 200), QPointF(300, 400)):
+        view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, pt, NB, NB))
+        view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, pt, L, L))
+        view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, pt, L, NB))
+
+    assert host.scene() is None
+    assert [it for it in w._scene.items() if isinstance(it, (_RectItem, _PolygonItem))] == []
+
+
+def test_progressive_multi_gesture_erasure_undo_chain_restores_original_rect():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    host = _mk_pen_rect(w, x=0, y=0, ww=600, hh=400)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    pts = (QPointF(300, 0), QPointF(600, 200), QPointF(0, 200), QPointF(300, 400))
+    for pt in pts:
+        view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, pt, NB, NB))
+        view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, pt, L, L))
+        view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, pt, L, NB))
+    assert host.scene() is None
+
+    for _ in range(len(pts)):
+        w.undo()
+    assert host.scene() is w._scene
+    assert getattr(host, "_cuts", None) in (None, [])
+    assert [it for it in w._scene.items() if isinstance(it, _PolygonItem)] == []

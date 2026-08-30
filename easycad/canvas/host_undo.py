@@ -122,8 +122,11 @@ class _UndoMixin:
             QTimer.singleShot(0, lambda: self.set_tool("select"))
 
 
-    def push_undo_delete(self, items):
-        self._push_entry([("remove", it) for it in items])
+    def push_undo_delete(self, items, coalesce_key=None):
+        """[2026-08-30] `coalesce_key`(선택) — TRIM 문지르기 드래그 전체를 undo 1스텝으로
+        묶는 `_trim_undo_key`와 같은 패턴(`push_undo_cut`/`push_undo_open_trim` 참조).
+        기존 호출부(Delete 키 등)는 인자를 안 넘겨 None(코얼레스 없음) 그대로 유지."""
+        self._push_entry([("remove", it) for it in items], key=coalesce_key)
 
 
     def push_undo_move(self, pairs, coalesce_key=None):

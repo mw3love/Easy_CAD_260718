@@ -1652,9 +1652,15 @@ class _AnnotatorView(QGraphicsView):
             if key in self._trim_seen:
                 return
             before_geom = host.capture_geom()
-            clone = apply_open_item_trim(host, lo, hi)
-            self._owner.push_undo_open_trim(host, before_geom, clone,
-                                             coalesce_key=self._trim_undo_key)
+            result = apply_open_item_trim(host, lo, hi)
+            if result is _TRIM_ERASED:
+                # [2026-08-30 실사용 버그 수정] `_trim_derived` 조각의 마지막 남은 변까지
+                # 지워진 경우 — host는 이미 apply_open_item_trim이 씬에서 delete했으니
+                # undo도 "remove"로 남긴다(geom mut으로는 삭제가 안 되돌아온다).
+                self._owner.push_undo_delete([host], coalesce_key=self._trim_undo_key)
+            else:
+                self._owner.push_undo_open_trim(host, before_geom, result,
+                                                 coalesce_key=self._trim_undo_key)
             self._trim_seen.add(key)
 
     def _border_snap_at(self, view_pos, exclude=None):

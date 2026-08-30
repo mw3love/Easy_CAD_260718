@@ -7248,7 +7248,14 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
     if len(marks) <= 2:
         # 걸친 cutter가 전혀 없다 — 클릭한 세그먼트가 경로 양 자유단과 안 닿는(0 < best_seg
         # < n-2) 순수 내부 세그먼트일 때만 그 하나(꼭짓점~꼭짓점)를 자연 경계로 인정한다.
-        if 0 < best_seg < n - 2:
+        # [TRIM 파괴적 재설계 실사용 버그, 2026-08-30] 단, `_trim_derived`(닫힌 도형에서
+        # 방금 막 잘려나와 열린 조각이 된 것)는 이 제한을 안 받는다 — 원래 닫힌 도형일
+        # 때는 변 하나하나를 자유롭게 지울 수 있었는데, 첫 절단으로 열린 폴리라인이 된
+        # 순간부터 "자유단과 닿은 변은 못 지운다"는 완전히 다른(진짜 독립적인 선을 위한)
+        # 규칙을 그대로 물려받으면, 남은 3변짜리 사각형에서 중간 변 1개만 지워지고 나머지
+        # 2개(자유단에 닿은 변)는 영원히 자연 경계로 못 지워진다 — 실사용 재현: "네모 한
+        # 변은 잘 지워지는데 다각형이 된 다음 나머지 세 변은 트림이 안 먹는다."
+        if getattr(host, "_trim_derived", False) or 0 < best_seg < n - 2:
             return (best_seg, 0.0), (best_seg, 1.0)
         return None
     cursor_key = best_seg + best_t
@@ -7262,6 +7269,9 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
     return lo, hi
 
 
+_TRIM_ERASED = object()   # [2026-08-30] apply_open_item_trim의 "완전 소실 → delete" sentinel
+
+
 def apply_open_item_trim(host, lo: tuple, hi: tuple):
     """[§8 항목17 5단계] TRIM 커밋 — 열린 도형(host)에서 (lo, hi) 구간을 지운다. 닫힌 도형의
     `_add_border_cut`(비파괴 gap 목록)과 달리 host 자체가 진짜로 줄어들거나(한쪽만 남음)
@@ -7269,12 +7279,17 @@ def apply_open_item_trim(host, lo: tuple, hi: tuple):
     조각으로 줄어들고 뒤쪽 조각은 새 아이템으로 복제해 씬에 추가해 반환한다(없으면 None).
     양끝 경계에 닿은 자르기(경로 시작/끝을 포함)는 복제 없이 host 하나가 짧아지기만 한다 —
     적어도 한 조각은 항상 남는다(호출부가 이미 걸친 cutter 존재를 확인했으므로 전체 삭제는
-    일어나지 않는다).
+    일어나지 않는다) — **단, `_trim_derived` host는 예외**(2026-08-30 실사용 버그 수정):
+    닫힌 도형에서 막 잘려나온 조각은 남은 마지막 한 변까지 자연 경계로 지울 수 있어야
+    원래 닫힌 도형이 "테두리 전체 삭제"로 완전히 사라지던 것과 동작이 이어진다 — 이 경우
+    `host`를 씬에서 직접 delete하고 `_TRIM_ERASED` sentinel을 반환한다(호출부가 undo를
+    "remove"로 남겨야 함을 알 수 있게).
 
     바인딩(`_PolyArrowItem`만 해당)은 잘려나간 쪽 끝만 해제 — 남은 끝(원래 시작/끝 그대로인
     조각)은 원래 부착을 유지한다. 라벨은 host 자신(앞쪽 조각)은 원래 라벨을 그대로 들고
     가고, 복제된 뒤쪽 조각은 라벨을 새로 시작한다(`clone()`이 라벨을 복사하지 않는 기존
-    관례를 그대로 따름 — 같은 텍스트가 두 조각에 중복 표시되는 것을 피한다)."""
+    관례를 그대로 따름 — 같은 텍스트가 두 조각에 중복 표시되는 것을 피한다). 복제된 조각도
+    원본의 `_trim_derived` 표식을 물려받는다(계속 잘라낼 수 있어야 하므로)."""
     pts = _open_item_local_pts(host)
     lo_seg, lo_t = lo
     hi_seg, hi_t = hi
@@ -7283,8 +7298,16 @@ def apply_open_item_trim(host, lo: tuple, hi: tuple):
     after_pts = ([] if hi_t >= 1.0 - 1e-9 else [hi_pt]) + pts[hi_seg + 1:]
     has_before = len(before_pts) >= 2
     has_after = len(after_pts) >= 2
+    if not has_before and not has_after:
+        if not getattr(host, "_trim_derived", False):
+            return None   # 기존 동작 그대로 — 독립된 선의 완전 소실은 여전히 막는다
+        scene = host.scene()
+        if scene is not None:
+            scene.removeItem(host)
+        return _TRIM_ERASED
     is_poly = isinstance(host, _PolyArrowItem)
     is_polygon = isinstance(host, _PolygonItem)   # [2026-08-28 다각형 도구 TRIM 연동] 열린 폴리라인
+    trim_derived = getattr(host, "_trim_derived", False)
 
     def geom_for(new_pts):
         if is_poly:
@@ -7302,6 +7325,8 @@ def apply_open_item_trim(host, lo: tuple, hi: tuple):
             clone.set_bound(0, None)
             if orig_bind_end is not None:
                 clone._bind_end, clone._bind_end_pt = orig_bind_end
+        if trim_derived:
+            clone._trim_derived = True
         host._apply_geom_local(geom_for(before_pts))
         if is_poly:
             host.set_bound(len(host._pts) - 1, None)

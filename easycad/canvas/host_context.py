@@ -444,6 +444,12 @@ class _ContextMixin:
                 frag.setPen(QPen(host.pen()))
                 if closed:
                     frag.setBrush(QBrush(host.brush()))
+                else:
+                    # [실사용 버그 수정, 2026-08-30] 닫힌 도형에서 막 잘려나온 열린 조각은
+                    # 자유단 보호(`_trim_candidate_open_segment`, 독립된 선의 "한 번에 전체
+                    # 소실" 방지용) 없이 남은 변을 계속 자유롭게 지울 수 있어야 한다 —
+                    # 안 그러면 "사각형 한 변은 잘리는데 남은 세 변은 트림이 안 먹는다."
+                    frag._trim_derived = True
                 new_items.append(frag)
             if len(new_items) >= 2:
                 # [4단계, 다중 서브패스 심볼] 조각이 여럿이면 하나였던 원래 도형처럼 계속
