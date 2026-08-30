@@ -304,6 +304,42 @@ def test_qc_dot_at_hits_selected_group_qc_dot_and_creates_bound_arrow():
     assert arrows[0]._bound(0).group_id == "g1"
 
 
+def test_group_qc_dot_click_without_drag_selects_group_without_crash():
+    """[실사용 크래시 수정 2026-08-30] TRIM으로 그룹 멤버를 지워 그룹 bbox가 바뀐
+    뒤 새로 뜨는 그룹 큐닷을 드래그 없이 클릭만 하면(이동/화살표 생성 없음),
+    `core_view.py._mouse_release_impl`의 `_hp_dragging` 종료 처리가
+    `src.setSelected(True)`를 무조건 호출하는데 `_GroupBindProxy`엔 그 메서드가
+    없어 `AttributeError`가 Qt 콜백 안에서 새어나가 앱이 통째로 죽었다.
+    press~release를 커서 이동 없이(click) 재현해 예외 없이 끝나는지 + 그룹 멤버
+    전체가 함께 선택되는지(`isSelected()`와 대칭 정의) 확인한다."""
+    w = CanvasWindow(); w.show(); w.set_tool("select")
+    a, b = _mk_group(w)
+    view = w._view
+    a.setSelected(True)
+    right_pt = dict(view._group.qc_dot_rects())["r"]
+    press, release, click, move, drag_move, dbl = _draw_helpers(view)
+    click(right_pt)   # press+release, 중간 move 없음 = 드래그 임계 미달(클릭)
+    assert a.isSelected() and b.isSelected()
+    arrows = [it for it in w._scene.items() if isinstance(it, (_ArrowItem, _PolyArrowItem))]
+    assert len(arrows) == 0   # 클릭=선택만, 화살표/복제는 생성되지 않음
+
+
+def test_group_bind_proxy_set_selected_false_deselects_all_members():
+    """[실사용 크래시 수정 2026-08-30 후속] `setSelected(False)`를 멤버별로 단순
+    루프 돌리면 매번 `scene.selectionChanged`가 즉시 발화해
+    `host_selection._sync_group_selection`(그룹 멤버 하나라도 선택되면 전체를
+    함께 선택하는 단방향 규칙)이 아직 처리 안 된 멤버를 보고 방금 해제한 멤버를
+    도로 선택시켜버린다(자체 검증 중 발견) — `blockSignals`로 이 간섭을 막았는지
+    직접 확인."""
+    w = CanvasWindow()
+    a, b = _mk_group(w)
+    proxy = _GroupBindProxy(w._scene, "g1")
+    proxy.setSelected(True)
+    assert a.isSelected() and b.isSelected() and proxy.isSelected()
+    proxy.setSelected(False)
+    assert not a.isSelected() and not b.isSelected() and not proxy.isSelected()
+
+
 def test_group_move_reroutes_arrow_immediately_not_only_after_other_side_moves():
     # [실사용 버그 수정 2026-08-25, 그룹 프레임 3차 후속] 실사용 재현: 그룹↔일반 도형을
     # 화살표로 이은 뒤 "그룹 쪽"을 옮기면 화살표 끝점이 안 따라오다가(스냅이 떨어진 것처럼

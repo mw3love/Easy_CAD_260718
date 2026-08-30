@@ -5733,6 +5733,35 @@ class _GroupBindProxy:
         members = _group_members(self._scene_ref, self.group_id)
         return bool(members) and all(m.isSelected() for m in members)
 
+    def setSelected(self, selected: bool) -> None:
+        """[실사용 크래시 수정, 2026-08-30] `isSelected()`와 대칭 — 그룹 자신의 큐닷을
+        드래그 없이 클릭만 하면(core_view.py `_hp_dragging` 종료 처리) "이동/화살표는
+        아니고 선택만" 경로가 무조건 `src.setSelected(True)`를 호출하는데, 이 메서드가
+        없어 `AttributeError`가 Qt 콜백(`mouseReleaseEvent`) 안에서 새어나가 앱이 통째로
+        죽었다(재현: TRIM으로 그룹 멤버를 지워 그룹 bbox가 바뀐 뒤, 그 자리에 새로 뜨는
+        그룹 큐닷을 드래그 없이 클릭). `isSelected()`와 같은 정의(그룹 멤버는 항상 함께
+        선택/해제)를 그대로 따라 멤버 전체에 적용한다.
+
+        멤버를 하나씩 `setSelected()`하면 매번 `scene.selectionChanged`가 즉시 발화해
+        `host_selection._sync_group_selection`("그룹 멤버 하나가 선택되면 전체를 함께
+        선택" — 단방향, 선택만 강제하고 해제는 안 함)이 중간 상태(일부만 바뀐 상태)를
+        보고 끼어든다 — `setSelected(False)`를 루프로 돌리면 아직 처리 안 된 멤버가
+        "선택된 채"라 방금 해제한 멤버를 도로 선택시켜버려 해제 자체가 무효화된다(자체
+        검증 중 발견). `_bulk_select`(host_selection.py)가 대량선택 때 쓰는 것과 같은
+        원리로 `blockSignals`로 루프 동안 신호를 죽이고, 끝난 뒤 최종 상태로 딱 한 번만
+        `selectionChanged`를 다시 발화해 다른 구독자(속성 패널 등)에게 알린다."""
+        members = _group_members(self._scene_ref, self.group_id)
+        if not members:
+            return
+        self._scene_ref.blockSignals(True)
+        try:
+            for m in members:
+                m.setSelected(selected)
+        finally:
+            self._scene_ref.blockSignals(False)
+        self._scene_ref.selectionChanged.emit()
+
+
 
 def remap_grouped_bindings(pairs, gid_map: dict | None = None):
     """복사/붙여넣기·Ctrl+D·Alt-드래그 복제가 한 배치로 함께 만든 (원본, 새 아이템) 쌍 안에서,
