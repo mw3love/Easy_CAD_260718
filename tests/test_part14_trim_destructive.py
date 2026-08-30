@@ -650,6 +650,40 @@ def test_natural_boundary_click_on_top_ellipse_removes_whole_ellipse_keeps_body_
     assert len(frags[0].local_pts()) == 35   # 몸통 서브패스 34변 그대로(+1)
 
 
+def test_curve_run_intelligence_propagates_to_fragment_after_first_cut():
+    """[실사용 재현 4, 2026-08-30 같은 날 후속] 사용자가 정확히 이 순서로 재현: 몸통(호)을
+    먼저 잘라 심볼이 조각난 뒤, 남은 윗면 타원을 또 자르면 — 더 이상 `_SymbolItem`이
+    아니므로 예전처럼 근사 세그먼트 단위(점선)로 되돌아갔다. `_curve_hard_norm`을 조각에
+    물려줘 두 번째 절단도 타원 전체를 한 번에 지워야 한다."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    db = _SymbolItem("database", QRectF(0, 0, 200, 300))
+    w._scene.addItem(db)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    bottom_arc_pt = QPointF(100, 298)
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, bottom_arc_pt, NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, bottom_arc_pt, L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, bottom_arc_pt, L, NB))
+    w._scene.clearSelection()
+
+    frags = [it for it in w._scene.items() if isinstance(it, _PolygonItem)]
+    ellipse_frag = next(f for f in frags if f._closed)
+    assert getattr(ellipse_frag, "_curve_hard_norm", None)   # 조각에 물려받음
+
+    top_pt = QPointF(100, 0)
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, top_pt, NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, top_pt, L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, top_pt, L, NB))
+
+    assert ellipse_frag.scene() is None   # 근사 조각 하나가 아니라 타원 전체가 사라짐
+    remaining = [it for it in w._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(remaining) == 2   # 양쪽 벽(2점씩)만 남음
+    assert all(not f._closed and len(f.local_pts()) == 2 for f in remaining)
+
+
 def test_legacy_ecad_symbol_with_cuts_migrates_on_open():
     w0 = CanvasWindow(); w0.grid_enabled = False
     diamond = _SymbolItem("decision", QRectF(0, 0, 200, 100))

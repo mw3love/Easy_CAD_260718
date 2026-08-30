@@ -27,7 +27,7 @@ from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
     _TableItem, _RectItem, _EllipseItem, _SymbolItem, _PolygonItem, _tool_icon,
     _nearest_border, _host_outline_edges, _closed_shape_trim_fragments,
-    _destructive_trim_result,
+    _destructive_trim_result, _symbol_hard_vertices_by_subpath, _normalize_pt_to_rect,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
@@ -437,8 +437,9 @@ class _ContextMixin:
                     self._scene.removeItem(port)
                     ops.append(("remove", port))
                 continue
+            symbol_hard = _symbol_hard_vertices_by_subpath(host) if isinstance(host, _SymbolItem) else None
             new_items = []
-            for pts, closed in results:
+            for pts, closed, span_idx in results:
                 frag = _PolygonItem(pts, closed)
                 host._copy_common_to(frag)
                 frag.setPen(QPen(host.pen()))
@@ -450,6 +451,17 @@ class _ContextMixin:
                     # 소실" 방지용) 없이 남은 변을 계속 자유롭게 지울 수 있어야 한다 —
                     # 안 그러면 "사각형 한 변은 잘리는데 남은 세 변은 트림이 안 먹는다."
                     frag._trim_derived = True
+                if symbol_hard is not None and span_idx < len(symbol_hard) and symbol_hard[span_idx]:
+                    # [TRIM 자연 경계 곡선 확장 후속, 2026-08-30 실사용 재현] 심볼에서
+                    # 유래한 조각은 더 이상 `_SymbolItem`이 아니지만, 원래 곡선의 "진짜
+                    # 모서리" 정보를 rect 기준 분수좌표로 물려받아 나중에 이 조각을 또
+                    # 잘라도(`_curve_run_edges`) 근사 세그먼트 단위로 되돌아가지 않는다 —
+                    # 첫 절단으로 심볼이 조각난 뒤 남은 곡선(예: 몸통을 먼저 자른 뒤 윗면
+                    # 타원)을 또 자르면 예전처럼 점선으로 끊기던 실사용 재현.
+                    rect = frag.rect()
+                    frag._curve_hard_norm = {
+                        _normalize_pt_to_rect(QPointF(x, y), rect)
+                        for x, y in symbol_hard[span_idx]}
                 new_items.append(frag)
             if len(new_items) >= 2:
                 # [4단계, 다중 서브패스 심볼] 조각이 여럿이면 하나였던 원래 도형처럼 계속

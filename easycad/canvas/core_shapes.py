@@ -7057,8 +7057,13 @@ def _destructive_trim_result(host, cuts: list) -> list:
     """[TRIM 파괴적 재설계 4단계, 2026-08-30] `host._cuts`를 실제로 확정할 때 `finalize_
     closed_trim`이 쓰는 진입점 — `_closed_shape_trim_fragments`를 서브패스 단위로 독립
     호출해 다중 서브패스 도형(`_SymbolItem`의 저장소류: 윗면 타원+몸통)까지 올바르게
-    처리한다. 반환은 [(점목록, 닫힘여부), ...] — 빈 리스트면 모든 서브패스가 통째로
-    사라졌다는 뜻(host 자체를 delete).
+    처리한다. 반환은 [(점목록, 닫힘여부, span_idx), ...] — 빈 리스트면 모든 서브패스가
+    통째로 사라졌다는 뜻(host 자체를 delete). `span_idx`는 이 조각이 유래한
+    `_host_outline_edge_spans` 인덱스 — 호출부(`finalize_closed_trim`)가 `_SymbolItem`의
+    곡선 서브패스 정보를 새 조각에 물려줘, 그 조각을 나중에 다시 트림할 때도 `_curve_run_
+    edges`가 계속 작동하게 하는 데 쓴다(2026-08-30 실사용 재현: 첫 절단으로 심볼이 조각난
+    뒤 나머지 곡선 서브패스를 또 자르면 더 이상 `_SymbolItem`이 아니라 예전처럼 근사
+    세그먼트 단위로 되돌아갔었다).
 
     [왜 서브패스별로 쪼개야 하는가] `_closed_shape_trim_fragments`는 edges를 '하나의
     순환 루프'로 가정한다 — 사각형·원·닫힌다각형처럼 서브패스가 원래 1개면 문제없지만,
@@ -7075,7 +7080,7 @@ def _destructive_trim_result(host, cuts: list) -> list:
     spans = _host_outline_edge_spans(host)
     edges = _host_outline_edges(host)
     out = []
-    for start, end, closed in spans:
+    for span_idx, (start, end, closed) in enumerate(spans):
         span_edges = edges[start:end]
         span_cuts = [(edge_i - start, t0, t1) for edge_i, t0, t1 in cuts
                      if start <= edge_i < end]
@@ -7084,10 +7089,10 @@ def _destructive_trim_result(host, cuts: list) -> list:
                 pts = [a for a, _b in span_edges]
             else:
                 pts = [span_edges[0][0]] + [b for _a, b in span_edges]
-            out.append((pts, closed))
+            out.append((pts, closed, span_idx))
             continue
         for pts in _closed_shape_trim_fragments(span_edges, span_cuts):
-            out.append((pts, False))
+            out.append((pts, False, span_idx))
     return out
 
 
@@ -7240,17 +7245,36 @@ def _symbol_hard_vertices_by_subpath(host) -> list:
     return result
 
 
+def _normalize_pt_to_rect(pt: QPointF, rect: QRectF) -> tuple:
+    """[TRIM 자연 경계 곡선 확장 후속, 2026-08-30] host 로컬좌표 pt를 rect 기준 [0,1]
+    분수좌표로 — `_PolygonItem._normalize`와 같은 공식. `_curve_hard_norm`을 리사이즈에도
+    안 깨지게 저장/조회하는 공용키(리사이즈는 `_norm_pts`도 이 기준을 쓰므로 분수좌표는
+    불변)."""
+    w = rect.width() or 1.0
+    h = rect.height() or 1.0
+    return (round((pt.x() - rect.left()) / w, 4), round((pt.y() - rect.top()) / h, 4))
+
+
 def _curve_run_edges(host, edge_i: int) -> list:
     """[TRIM 자연 경계 곡선 확장, 2026-08-30 실사용 재현] `저장소`(원기둥)처럼 한 서브패스
     안에 직선(벽)과 곡선 근사(호, 수십 개 잘게 쪼갠 변)가 섞여 있으면, 커터 없이 곡선
     위를 클릭해도 `_trim_candidate_segment`가 근사 조각 하나(눈에 안 보이는 크기)만
     자연 경계로 돌려준다 — 여러 번 문질러도 "군데군데 끊긴" 점선처럼만 지워진다(실사용
     재현 스크린샷: 저장소 윗면 타원·아랫면 호 둘 다 이 증상). 원본 경로 요소 기준
-    "진짜 모서리"(`_symbol_hard_vertices_by_subpath`)를 만날 때까지 edge_i에서 좌우로
-    넓혀 같은 곡선을 이루는 변 전부를 돌려준다 — 사각형·닫힌다각형·`_EllipseItem`(이미
-    -1 sentinel로 별도 처리됨)이 아닌 `_SymbolItem`에만 적용한다(다른 타입은 hard-vertex
-    정보를 낼 원본 경로가 없어 확장 자체를 안 함, `[edge_i]` 그대로)."""
-    if not isinstance(host, _SymbolItem):
+    "진짜 모서리"를 만날 때까지 edge_i에서 좌우로 넓혀 같은 곡선을 이루는 변 전부를
+    돌려준다.
+
+    두 출처를 지원한다 — ⓐ `_SymbolItem`은 `_symbol_hard_vertices_by_subpath`로 원본
+    경로에서 직접 계산. ⓑ 그 심볼에서 이미 한 번 잘려나온 `_PolygonItem` 조각(예: 몸통을
+    먼저 자른 뒤 남은 윗면 타원)은 더 이상 `_SymbolItem`이 아니지만, `finalize_closed_
+    trim`이 조각을 만들 때 원래 곡선의 hard-vertex 정보를 분수좌표로 물려준
+    `_curve_hard_norm`을 대신 쓴다(2026-08-30 실사용 재현 후속: 첫 절단으로 심볼이 조각난
+    뒤 나머지 곡선을 또 자르면 예전처럼 근사 세그먼트 단위로 되돌아갔었다 — 리사이즈에도
+    안 깨지도록 절대좌표가 아니라 rect 기준 분수좌표로 저장). 둘 다 아니면(사각형·
+    닫힌다각형·`_EllipseItem`은 각각 진짜 꼭짓점뿐이거나 이미 -1 sentinel로 별도 처리됨)
+    hard-vertex 정보를 낼 수 없어 확장 자체를 안 하고 `[edge_i]` 그대로 돌려준다."""
+    curve_hard_norm = getattr(host, "_curve_hard_norm", None)
+    if not isinstance(host, _SymbolItem) and not curve_hard_norm:
         return [edge_i]
     edges = _host_outline_edges(host)
     spans = _host_outline_edge_spans(host)
@@ -7261,11 +7285,18 @@ def _curve_run_edges(host, edge_i: int) -> list:
     span_n = end - start
     if span_n <= 1:
         return [edge_i]
-    hard_by_subpath = _symbol_hard_vertices_by_subpath(host)
-    hard = hard_by_subpath[span_idx] if span_idx < len(hard_by_subpath) else set()
 
-    def is_hard(pt):
-        return (round(pt.x(), 3), round(pt.y(), 3)) in hard
+    if curve_hard_norm:
+        rect = host.rect()
+
+        def is_hard(pt):
+            return _normalize_pt_to_rect(pt, rect) in curve_hard_norm
+    else:
+        hard_by_subpath = _symbol_hard_vertices_by_subpath(host)
+        hard = hard_by_subpath[span_idx] if span_idx < len(hard_by_subpath) else set()
+
+        def is_hard(pt):
+            return (round(pt.x(), 3), round(pt.y(), 3)) in hard
 
     lo, hi = edge_i, edge_i
     for _ in range(span_n - 1):
