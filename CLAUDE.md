@@ -1579,7 +1579,29 @@ symbol_library/
   것을 사용자 확인 후 TRIM 대상으로 새로 추가(`_open_item_local_pts`/`apply_open_item_
   trim`에 분기 추가, 커터 역할은 여전히 제외). 실제 창에서 그룹 소속 Line+Path 둘 다
   커터 없이 지워지는 것 확인, 스위트 1079종 통과. 상세: `docs/history/2026-08.md`
-  "TRIM 근본 재설계 후속 5"·"후속 6".
+  "TRIM 근본 재설계 후속 5"·"후속 6". **같은 날 일곱 번째 후속** — 사용자가 실제
+  고양이 SVG로 두 증상 보고: ① 서브패스 2개 이상인 `_PathItem`(코 삼각형+입 곡선이
+  한 펜 객체 안에)을 트림하면 첫 서브패스만 남기고 나머지가 `setPath()`에 통째로
+  사라짐("펜이 끊김") — `_open_item_local_pts`를 `len(polys)!=1`이면 트림 후보
+  자체에서 제외하도록 좁혀 데이터 파괴 대신 안전 제외로 수정. ② "테두리 얼굴 지운
+  뒤 펜 클릭하면 프로그램이 꺼진다"는 재현 시도 4가지(단순 그룹 LineItem·그룹선택
+  PathItem·다중서브패스 PathItem·얼굴+눈+수염) 모두 실패 — `python -c` 직접 호출은
+  Qt 실제 `mouseReleaseEvent` 콜백 경로를 안 거쳐 재현이 안 됐다. 상세:
+  `docs/history/2026-08.md` "TRIM 근본 재설계 후속 7". **같은 날 여덟 번째 후속 —
+  ② 크래시 진단·수정 완료** — 사용자가 이 프로젝트 기존 진단 런처
+  `tools/diag_run.py`로 재현해 정확한 트레이스백 확보: 그룹 자신의 큐닷(2026-08-25
+  "그룹 프레임 3차")을 드래그 없이 클릭만 하면 `_mouse_release_impl`이 무조건
+  `src.setSelected(True)`를 호출하는데, `_GroupBindProxy`가 `isSelected()`만
+  갖고 `setSelected()`는 없어(같은 클래스의 QGraphicsItem 계약 절반만 이식된
+  상태) `AttributeError`가 Qt 콜백 안에서 새어나가 앱이 통째로 죽었다. TRIM으로
+  그룹 bbox가 바뀐 뒤 새로 뜬 큐닷을 클릭하는 경로라 API 직접호출 재현이 원천
+  불가능했던 것. `isSelected()`와 대칭 정의로 `setSelected()`를 추가했으나, 멤버별
+  단순 루프는 자체검증 중 `setSelected(False)`가 `_sync_group_selection`(그룹
+  멤버 하나라도 선택되면 전체를 재선택하는 단방향 규칙)의 중간상태 간섭으로 무효화
+  되는 것을 추가 발견 — `_bulk_select`와 같은 원리로 `blockSignals`로 루프를 감싸고
+  끝에 한 번만 재발화하도록 수정. 신규 pytest 2종(수정 제거 시 정확히 같은 예외로
+  실패함을 먼저 확인) + 전체 스위트 1082종 통과. 상세: `docs/history/2026-08.md`
+  "TRIM 근본 재설계 후속 8", 함정은 `docs/pitfalls.md` "상호작용 설계" 절 끝부분.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
