@@ -7205,7 +7205,16 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
     세그먼트와 꼭짓점을 공유하는 쪽 — 경로의 진짜 자유단이 아닌 경우)일 때만 그 세그먼트
     하나를 자연 경계로 인정한다. 경로의 자유단(맨 처음·맨 끝) 쪽 세그먼트나 세그먼트가
     하나뿐인 낱개 선(_LineItem)은 여전히 cutter 없이는 대상 밖 — "선 전체가 조용히
-    사라지는" 사고를 막는다."""
+    사라지는" 사고를 막는다.
+
+    [TRIM 파괴적 재설계 실사용 버그 2건, 2026-08-30] `_trim_derived`(닫힌 도형에서 막
+    잘려나온 조각)는 위 "여러 변을 꼭짓점째로 지운다"는 규칙 자체를 안 탄다 — 별도 분기로
+    빠져 `_trim_candidate_segment`처럼 클릭한 변 **하나 안에서만** cutter를 찾는다. 두
+    실사용 재현: ① 자유단에 닿은 변은 cutter 없이 영원히 못 지워짐(marks 로직이 그런
+    변을 원천 배제) ② 근처에 cutter 하나만 있으면 그 cutter까지 가는 길에 낀 모든 중간
+    변(꼭짓점 여러 개)이 한 번에 통째로 트림 후보가 됨("첫 변 자르니 나머지 세 변이
+    한꺼번에 잘린다"). 사용자 심상모델이 "예전 사각형의 변 하나하나"이지 자유롭게 그린
+    폴리라인이 아니므로, 꼭짓점을 절대 넘지 않는 편이 맞다."""
     pts = _open_item_local_pts(host)
     n = len(pts)
     if n < 2:
@@ -7222,6 +7231,40 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
             best_seg, best_t, best_d = i, tc, d
     if best_seg is None:
         return None
+    if getattr(host, "_trim_derived", False):
+        # [TRIM 파괴적 재설계 실사용 버그 2건, 2026-08-30] `_trim_derived`(닫힌 도형에서
+        # 방금 막 잘려나온 열린 조각)는 아래 "여러 세그먼트를 꼭짓점째로 지운다"는 일반
+        # 열린 폴리라인 규칙을 물려받지 않는다 — 사용자 심상모델이 "예전 사각형의 변
+        # 하나하나"이지 "자유롭게 그린 폴리라인"이 아니기 때문이다. 실사용 재현 2건:
+        # ① 자유단에 닿은 변은 cutter 없이는 영원히 못 지워짐(마지막 마킹 이후 아래
+        # marks 로직 자체가 그런 변을 배제) ② 근처에 다른 도형(cutter 역할)이 딱 하나만
+        # 있으면 그 cutter가 걸린 세그먼트까지 가는 동안의 **모든** 중간 변(꼭짓점 여러
+        # 개)이 한꺼번에 트림 후보로 잡힘("첫 변을 자르고 나니 세 변이 한 번에 잘린다").
+        # 닫힌 도형 TRIM(`_trim_candidate_segment`)과 동일하게 클릭한 세그먼트
+        # (best_seg) **안에서만** cutter를 찾아 항상 변 하나 단위로 판정한다.
+        a, b = pts[best_seg], pts[best_seg + 1]
+        ts = [0.0, 1.0]
+        for other in other_shapes:
+            if other is host or isinstance(other, _PathItem):
+                continue
+            for c, d in _item_local_edges(other):
+                c_h = host.mapFromScene(other.mapToScene(c))
+                d_h = host.mapFromScene(other.mapToScene(d))
+                p = _seg_seg_intersection(a, b, c_h, d_h)
+                if p is None:
+                    continue
+                t, _perp = _seg_param_and_perp(a, b, p)
+                if -1e-6 <= t <= 1.0 + 1e-6:
+                    ts.append(max(0.0, min(1.0, t)))
+        ts = sorted(set(round(t, 9) for t in ts))
+        lo_t, hi_t = 0.0, 1.0
+        for k in range(len(ts) - 1):
+            if ts[k] - 1e-6 <= best_t <= ts[k + 1] + 1e-6:
+                lo_t, hi_t = ts[k], ts[k + 1]
+                break
+        if hi_t - lo_t < 1e-6:
+            return None
+        return (best_seg, lo_t), (best_seg, hi_t)
     marks = [(0, 0.0), (n - 2, 1.0)]
     for other in other_shapes:
         if other is host or isinstance(other, _PathItem):
@@ -7248,14 +7291,7 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
     if len(marks) <= 2:
         # 걸친 cutter가 전혀 없다 — 클릭한 세그먼트가 경로 양 자유단과 안 닿는(0 < best_seg
         # < n-2) 순수 내부 세그먼트일 때만 그 하나(꼭짓점~꼭짓점)를 자연 경계로 인정한다.
-        # [TRIM 파괴적 재설계 실사용 버그, 2026-08-30] 단, `_trim_derived`(닫힌 도형에서
-        # 방금 막 잘려나와 열린 조각이 된 것)는 이 제한을 안 받는다 — 원래 닫힌 도형일
-        # 때는 변 하나하나를 자유롭게 지울 수 있었는데, 첫 절단으로 열린 폴리라인이 된
-        # 순간부터 "자유단과 닿은 변은 못 지운다"는 완전히 다른(진짜 독립적인 선을 위한)
-        # 규칙을 그대로 물려받으면, 남은 3변짜리 사각형에서 중간 변 1개만 지워지고 나머지
-        # 2개(자유단에 닿은 변)는 영원히 자연 경계로 못 지워진다 — 실사용 재현: "네모 한
-        # 변은 잘 지워지는데 다각형이 된 다음 나머지 세 변은 트림이 안 먹는다."
-        if getattr(host, "_trim_derived", False) or 0 < best_seg < n - 2:
+        if 0 < best_seg < n - 2:
             return (best_seg, 0.0), (best_seg, 1.0)
         return None
     cursor_key = best_seg + best_t

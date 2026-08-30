@@ -665,3 +665,44 @@ def test_progressive_multi_gesture_erasure_undo_chain_restores_original_rect():
     assert host.scene() is w._scene
     assert getattr(host, "_cuts", None) in (None, [])
     assert [it for it in w._scene.items() if isinstance(it, _PolygonItem)] == []
+
+
+# ---------------------------------------------------------------------------
+# 실사용 재현 버그 2(2026-08-30, 같은 날 후속) — 겹친 다른 도형이 근처에 있으면(커터
+# 역할), TRIM 파괴적 조각의 자연 경계 판정이 꼭짓점을 넘어 여러 변을 한 번에 잡아버림
+# ("첫 변 자르니 나머지 세 변이 한꺼번에 잘린다"). 원인: 열린 다각형 TRIM의 "cutter
+# 사이 꼭짓점째로 지운다"는 규칙(진짜 자유형 폴리라인엔 맞는 설계)이 `_trim_derived`
+# 조각에도 그대로 적용됐던 것 — 이제 트림 파생 조각은 클릭한 변 하나 안에서만 판정한다.
+# ---------------------------------------------------------------------------
+
+def test_natural_boundary_never_spans_past_a_corner_even_with_nearby_cutter():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    rect1 = _mk_pen_rect(w, x=0, y=0, ww=300, hh=300)
+    _mk_pen_rect(w, x=150, y=150, ww=300, hh=300)   # 겹치는 도형 = 잠재적 cutter
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    # 오른쪽 변 위쪽 절반만 자연 경계로 잘림(커터가 y=150에서 걸침) — 5점짜리 열린 조각.
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(300, 100), NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(300, 100), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(300, 100), L, NB))
+    frags = [it for it in w._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(frags) == 1
+    poly = frags[0]
+    assert poly._trim_derived is True
+
+    # 위쪽 변을 호버 — 옛 버그는 근처 cutter 탓에 왼쪽 변까지 한 번에 잡혔다. 이제는
+    # 딱 그 변 하나(단일 세그먼트)만 후보로 잡혀야 한다.
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(100, 0), NB, NB))
+    kind, tp_host, (seg_lo, t_lo), (seg_hi, t_hi) = view._trim_preview
+    assert kind == "open" and tp_host is poly
+    assert seg_lo == seg_hi   # 단일 세그먼트 — 꼭짓점을 넘어가지 않음
+    assert abs(t_lo - 0.0) < 1e-6 and abs(t_hi - 1.0) < 1e-6
+
+    before_pts = len(poly.local_pts())
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(100, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(100, 0), L, NB))
+    assert poly.scene() is w._scene   # 통째로 사라지지 않고 살아있어야 함
+    assert len(poly.local_pts()) == before_pts - 1   # 변 하나(꼭짓점 1개)만 줄어듦
