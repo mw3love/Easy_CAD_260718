@@ -323,6 +323,13 @@ class _AnnotatorView(QGraphicsView):
         self._trim_dragging = False  # press 이후 드래그 중(TRIM만 — EXTEND는 1회성)
         self._trim_seen: set = set()  # 이번 드래그에서 이미 커밋한 키 — 중복 방지
         self._trim_undo_key = None   # [6단계] 이번 드래그의 undo coalesce 키(전체=1스텝)
+        # [TRIM 파괴적 재설계 1단계, 2026-08-30] 이번 제스처에서 새로 절단을 받은 닫힌 도형
+        # (지금은 _RectItem만) → 제스처 시작 전 `_cuts` 스냅샷 — release 시점에 딱 한 번
+        # 실제 점목록으로 확정(finalize_closed_trim)한다. 드래그 도중엔 기존 비파괴 `_cuts`
+        # 미리보기 렌더를 그대로 재사용. 스냅샷은 undo가 host를 되살릴 때 `_cuts`도 트림
+        # 이전(보통 빈 리스트)으로 같이 되돌리기 위해 필요(안 그러면 되살린 사각형이 잘린
+        # 채로 렌더된다).
+        self._trim_closed_dirty: dict = {}
         # [실사용 재설계 2026-08-10, Fence] "문지르기"(커서가 테두리에 붙어 있어야만 잡힘)
         # 대신 press~release 사이 실제로 지나간 구간을 seg-seg 교차로 훑는 펜스 방식 —
         # 커서가 테두리 위에 있을 필요 없음(고전 AutoCAD Fence 관례, 사용자 확정 설계).
@@ -1621,15 +1628,28 @@ class _AnnotatorView(QGraphicsView):
         """[Fence 재설계 2026-08-10] 이미 계산된 (kind, host, seg) 하나를 실제로 커밋 — 문지르기
         시절의 press/move 커밋 코드(닫힌=cut 구간 추가, 열린=분리+undo)를 그대로 흡수해
         펜스-교차/along-the-border 두 경로가 공유한다(중복 제거). `_trim_seen`으로 같은
-        구간 재커밋을 막는다."""
+        구간 재커밋을 막는다.
+
+        [TRIM 파괴적 재설계 1단계, 2026-08-30] `_RectItem`은 더 이상 비파괴 `_cuts`+
+        `push_undo_cut`로 끝내지 않는다 — 드래그 중엔 지금까지와 똑같이 `_cuts`에 누적만
+        해(미리보기 렌더 무변경) `_trim_closed_dirty`에 표시해두고, 실제 확정(점목록으로
+        굽기/완전 소실 삭제)은 제스처가 끝나는 `_mouse_release_impl`의 `finalize_closed_
+        trim` 한 번으로 미룬다(같은 드래그에서 여러 변을 잘라도 병합 로직 한 번으로 정확히
+        처리하기 위해 — 자세한 이유는 `_closed_shape_trim_fragments` 참조). 그 외 닫힌
+        도형(원·심볼·닫힌다각형)은 아직 비파괴 그대로(다음 단계에서 순차 전환)."""
         if kind == "closed":
             edge_i, t0, t1 = seg
             key = ("closed", id(host), edge_i, round(t0, 6), round(t1, 6))
             if key in self._trim_seen:
                 return
-            before_cuts = list(getattr(host, "_cuts", None) or [])
-            _add_border_cut(host, edge_i, t0, t1)
-            self._owner.push_undo_cut(host, before_cuts, coalesce_key=self._trim_undo_key)
+            if isinstance(host, _RectItem):
+                if host not in self._trim_closed_dirty:
+                    self._trim_closed_dirty[host] = list(getattr(host, "_cuts", None) or [])
+                _add_border_cut(host, edge_i, t0, t1)
+            else:
+                before_cuts = list(getattr(host, "_cuts", None) or [])
+                _add_border_cut(host, edge_i, t0, t1)
+                self._owner.push_undo_cut(host, before_cuts, coalesce_key=self._trim_undo_key)
             self._trim_seen.add(key)
         else:
             lo, hi = seg
@@ -2878,6 +2898,7 @@ class _AnnotatorView(QGraphicsView):
             # `_trim_undo_key` 하나로 코얼레스(push_undo_move와 같은 패턴).
             self._trim_undo_key = object()
             self._trim_seen = set()
+            self._trim_closed_dirty = {}
             press_scene = self.mapToScene(event.position().toPoint())
             preview = self._trim_preview_at(event.position().toPoint())
             if preview is not None:
@@ -4065,7 +4086,12 @@ class _AnnotatorView(QGraphicsView):
             return
         if self._trim_dragging:  # [Fence 재설계 2026-08-10] 펜스 종료
             self._trim_dragging = False
+            if self._trim_closed_dirty:
+                # [TRIM 파괴적 재설계 1단계] 이 제스처(클릭 1회 또는 펜스 드래그 전체)에서
+                # 새로 절단을 받은 닫힌 도형을 여기서 딱 한 번 확정 — 같은 undo 엔트리로.
+                self._owner.finalize_closed_trim(self._trim_closed_dirty, self._trim_undo_key)
             self._trim_seen = set()
+            self._trim_closed_dirty = {}
             self._trim_undo_key = None   # [6단계] 다음 드래그는 새 coalesce 키로
             self._trim_fence_last = None
             self._trim_fence_pts = []

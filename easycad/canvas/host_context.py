@@ -25,7 +25,8 @@ from PyQt6.QtWidgets import (
 
 from easycad.canvas.annotator_core import (
     _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
+    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _PolygonItem, _tool_icon,
+    _nearest_border, _host_outline_edges, _closed_shape_trim_fragments,
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
@@ -390,6 +391,85 @@ class _ContextMixin:
         _d, m, q_scene = best
         arr.set_bound(idx, m, m.mapFromScene(q_scene))
         arr.reroute()
+
+
+    def finalize_closed_trim(self, hosts: dict, undo_key=None):
+        """[TRIM 파괴적 재설계 1단계, 2026-08-30] TRIM 제스처(클릭 1회 또는 펜스 드래그)가
+        끝나는 순간 `core_view._mouse_release_impl`이 호출 — 이번 제스처에서 새로 절단을
+        받은 닫힌 도형들(`hosts`: {host: 제스처 시작 전 `_cuts` 스냅샷})을 실제로 확정한다.
+        전체 테두리가 사라지면(빈 조각 리스트) 아이템 자체를 delete, 일부만 남으면
+        `_PolygonItem`(열림, 조각이 여럿이면 여러 개)으로 실제 점목록 변환 — `_swap_shape`와
+        정확히 같은 "remove old + create new + 화살표 재바인딩" 단일 undo 엔트리 패턴
+        (2026-08-30 deep-interview 확정: 새 undo primitive를 만들지 않고 이미 검증된 이
+        패턴을 재사용). host가 완전히 사라지든 조각으로 바뀌든 undo가 host를 다시 씬에
+        되살릴 수 있으므로(remove op의 역연산), `_cuts`도 제스처 시작 전 값으로 같이
+        되돌리는 "cuts" mut을 얹는다 — 안 그러면 되살아난 host가 여전히 잘린 채로 렌더된다.
+
+        포트는 비파괴로 유지하기로 확정했으므로(같은 인터뷰) `_cuts`에는 원래 안 섞여 있다
+        (포트 gap은 `_ports` 기반으로 매 렌더마다 따로 계산됨, `build_trimmed_border_path`
+        참조) — 여기서는 host가 통째로 없어지거나 다른 클래스로 바뀌므로 host의 `_ports`
+        자식만 새 아이템으로 재부모화한다(위치는 씬좌표 보존만 하고 프랙션 재계산은 안 함 —
+        'TRIM+포트 동시 사용'은 이 프로젝트가 이미 Not-tested로 남겨둔 조합, 여기서도
+        동일하게 남긴다)."""
+        ops = []
+        selected_after = []
+        for host, before_cuts in hosts.items():
+            if host.scene() is None:
+                continue   # 방어 — 이 제스처 중 이미 처리됨
+            cuts = list(getattr(host, "_cuts", None) or [])
+            if not cuts:
+                continue
+            edges = _host_outline_edges(host)
+            fragments = _closed_shape_trim_fragments(edges, cuts)
+            befores = [(arr, idx, arr.capture_geom()) for arr, idx in self._arrows_bound_to(host)]
+            ports = list(getattr(host, "_ports", None) or [])
+            port_scene_pos = {p: p.scenePos() for p in ports}
+            if not fragments:
+                # [완전 소실] AutoCAD도 테두리 전체가 사라지면 그 엔티티 자체가 없어진다 —
+                # "안 보이는데 드래그하면 잡힌다"는 유령 선택을 원천 차단.
+                self._scene.removeItem(host)
+                ops.append(("remove", host))
+                ops.append(("mut", host, "cuts", list(before_cuts), cuts))
+                for port in ports:
+                    self._scene.removeItem(port)
+                    ops.append(("remove", port))
+                continue
+            new_items = []
+            for pts in fragments:
+                frag = _PolygonItem(pts, closed=False)
+                host._copy_common_to(frag)
+                frag.setPen(QPen(host.pen()))
+                new_items.append(frag)
+            first = new_items[0]
+            if host.has_label() and host._label is not None:
+                txt = host._label.toPlainText()
+                if txt:
+                    first.ensure_label().setPlainText(txt)
+                    first._sync_label()
+            self._scene.removeItem(host)
+            for frag in new_items:
+                self._scene.addItem(frag)
+            ops.append(("remove", host))
+            ops.append(("mut", host, "cuts", list(before_cuts), cuts))
+            ops.extend(("create", frag) for frag in new_items)
+            selected_after.extend(new_items)
+            if ports:
+                first._ports = ports
+                for port in ports:
+                    port.setParentItem(first)
+                    port.setPos(first.mapFromScene(port_scene_pos[port]))
+                    port._port_host = first
+            for arr, idx, before in befores:
+                self._rebind_arrow_to_group(arr, idx, new_items)
+                arr.update()
+                ops.append(("mut", arr, "geom", before, arr.capture_geom()))
+        if not ops:
+            return
+        self._push_entry(ops, key=undo_key)
+        self._scene.clearSelection()
+        for it in selected_after:
+            it.setSelected(True)
+        self._refresh_properties()
 
 
     def _swap_shape(self, item, target_kind):

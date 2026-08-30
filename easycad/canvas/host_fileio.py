@@ -135,12 +135,29 @@ class _FileIOMixin:
             self._do_open_ecad(path)
 
 
+    def _migrate_legacy_closed_cuts(self):
+        """[TRIM 파괴적 재설계 1단계, 2026-08-30] `.ecad` 하위호환 — 재설계 이전에 저장된
+        파일은 `_RectItem`에 비파괴 `_cuts`(옛 방식)가 그대로 남아 있을 수 있다. 로드
+        직후(undo 히스토리가 리셋되기 전) `finalize_closed_trim`을 재사용해 그 자리에서
+        바로 새 파괴적 표현(`_PolygonItem`/완전삭제)으로 확정한다 — 뒤이어 호출되는
+        `_reset_history()`가 이 변환이 만든 임시 undo 엔트리를 곧바로 지우므로 사용자
+        에게는 "그냥 열렸다"로만 보인다(재저장하면 새 형식으로 굳는다 — 재설계 전 앱이
+        그 새 파일을 열어도 `_PolygonItem`은 이미 정식 지원 타입이라 평범한 다각형으로
+        안전하게 뜬다). 다른 종류(원·심볼·닫힌다각형)는 아직 비파괴 그대로라 여기서
+        손대지 않는다(다음 단계에서 순차 전환)."""
+        legacy = {it: [] for it in list(self._scene.items())
+                  if isinstance(it, _RectItem) and getattr(it, "_cuts", None)}
+        if legacy:
+            self.finalize_closed_trim(legacy)
+
+
     def _do_open_ecad(self, path: str):
         try:
             n = load_document(self._scene, path)
         except Exception as e:  # noqa: BLE001 — 사용자에게 오류만 전달
             QMessageBox.warning(self, "열기 실패", str(e))
             return
+        self._migrate_legacy_closed_cuts()   # [TRIM 파괴적 재설계 1단계, 2026-08-30]
         # [code-review 2026-08-26] `load_document_layers`가 같은 파일을 별도로 다시
         # 여는데(레이어 목록만 뽑으려고), 그 사이 파일이 사라지거나 바뀌면(네트워크
         # 드라이브·동시 외부수정 등) 위 `load_document`는 이미 성공해 씬을 채웠는데도

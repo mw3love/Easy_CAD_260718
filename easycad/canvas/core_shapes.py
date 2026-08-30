@@ -6941,6 +6941,81 @@ def build_trimmed_border_path(host) -> QPainterPath:
     return path
 
 
+def _closed_shape_trim_fragments(edges: list, cuts: list) -> list:
+    """[TRIM 파괴적 재설계 1단계, 2026-08-30] 단일 닫힌 루프(edges, host 로컬좌표, 예:
+    `_host_outline_edges`가 사각형/타원에 대해 돌려주는 것)에서 cuts((edge_i, t0, t1) 목록,
+    edge_i=-1은 '테두리 전체' sentinel)를 실제로 도려낸 뒤 남는 조각들을 점목록 리스트로
+    반환한다 — `apply_open_item_trim`이 그 점목록으로 `_PolygonItem`(열림)을 만든다.
+
+    포트(`host._ports`)가 만드는 gap은 여기서 보지 않는다 — 포트는 비파괴로 남기기로
+    확정했으므로(2026-08-30 deep-interview) TRIM이 만든 `cuts`만 파괴적으로 굽는다.
+
+    `build_trimmed_border_path`와 정확히 같은 변별 병합·연속성(`last_pt`) 로직을 점목록
+    버전으로 미러링한다 — 렌더가 이미 실사용·pytest로 검증한 그 로직을 그대로 재사용하는
+    편이 병합 규칙을 독립적으로 새로 짜는 것보다 안전하다(2026-08-28 서브패스 이음매 수정
+    포함해 그대로 이어받음). 조각이 여러 개(비인접 구간을 여러 번 잘라 루프가 두 동강 이상
+    난 경우)면 리스트도 여러 개, 테두리 전체가 사라지면 빈 리스트([])로 '완전 소실'을
+    신호한다(호출부가 아이템 자체를 delete)."""
+    n = len(edges)
+    if n < 2:
+        return []
+    if any(edge_i == -1 for edge_i, _t0, _t1 in cuts):
+        return []
+    gaps_by_edge: dict = {}
+    for edge_i, t0, t1 in cuts:
+        if 0 <= edge_i < n:
+            gaps_by_edge.setdefault(edge_i, []).append((t0, t1))
+    fragments: list = []
+    cur: list = []
+
+    def _move_to(p):
+        nonlocal cur
+        if cur:
+            fragments.append(cur)
+        cur = [QPointF(p)]
+
+    def _line_to(p):
+        cur.append(QPointF(p))
+
+    last_pt = None
+    for i in range(n):
+        a, b = edges[i]
+        gaps = sorted(gaps_by_edge.get(i, []))
+        merged = []
+        for t0, t1 in gaps:
+            if merged and t0 <= merged[-1][1] + 1e-6:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], t1))
+            else:
+                merged.append((t0, t1))
+        cursor = 0.0
+        for t0, t1 in merged:
+            if t0 > cursor + 1e-6:
+                p0 = QPointF(a.x() + (b.x() - a.x()) * cursor, a.y() + (b.y() - a.y()) * cursor)
+                p1 = QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0)
+                if last_pt is not None and _close_pt(last_pt, p0):
+                    _line_to(p1)
+                else:
+                    _move_to(p0)
+                    _line_to(p1)
+            cursor = max(cursor, t1)
+            last_pt = None
+        if cursor < 1.0 - 1e-6:
+            p0 = QPointF(a.x() + (b.x() - a.x()) * cursor, a.y() + (b.y() - a.y()) * cursor)
+            if last_pt is not None and _close_pt(last_pt, p0):
+                _line_to(b)
+            else:
+                _move_to(p0)
+                _line_to(b)
+            last_pt = b
+    if cur:
+        fragments.append(cur)
+    # 루프 이음 — edge 0의 시작점에 gap이 없었다면(=마지막 조각과 연속) 처음/끝 조각을 하나로.
+    if len(fragments) >= 2 and _close_pt(fragments[-1][-1], fragments[0][0]):
+        fragments[0] = fragments[-1][:-1] + fragments[0]
+        fragments.pop()
+    return fragments
+
+
 def _paint_filled_trimmed_border(item, painter) -> None:
     """[신규기능 §8 항목17 2단계] `item._cuts`가 있는 도형의 채움+테두리를 실제 분절 경로로
     그린다 — item.paint()가 평소의 super().paint()/drawRect·drawEllipse·drawPath(sym) 대신
