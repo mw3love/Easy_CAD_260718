@@ -1631,7 +1631,16 @@ symbol_library/
   marks대로, 없으면 경로 전체" 분기 신설(marks 계산은 `cutter_marks()`로 추출해
   공유). 신규 pytest 4종+기존 1종 정책 갱신, 실제 창에서 사용자와 같은 구조(귀+베지어
   턱곡선 닫힌 루프)로 호버예고·전체삭제 확인, 스위트 1086종 통과. 상세:
-  `docs/history/2026-08.md` "TRIM 근본 재설계 후속 10".
+  `docs/history/2026-08.md` "TRIM 근본 재설계 후속 10". **같은 날 열한 번째 후속** —
+  "고양이 코(펜)가 안 지워짐"·"다각형 도구로 그린 뒤 trim 안 됨" 재보고. 원인은 바로
+  전 정책이 **그룹 소속일 때만** 적용돼, 즉석에서 그린 낱개 펜/다각형 낙서(그룹 없음)는
+  여전히 자유단 보호에 걸렸던 것 — AskUserQuestion으로 "그룹 무관 항상 전체삭제"로
+  확정, 신규 `_trim_open_type_always_erases`(펜은 무조건, 열린 `_PolygonItem`은
+  `_trim_derived` 아니면) 도입해 `_open_item_local_pts`·`_trim_candidate_open_
+  segment`·`apply_open_item_trim` 세 지점에 적용(`_trim_derived` 조각·`_LineItem`/
+  `_PolyArrowItem`은 무변경). 신규 pytest 3종+기존 3종 갱신, 실제 창에서 사용자와
+  같은 체크마크 모양 펜(그룹 없음)으로 재현·해소 확인, 스위트 1089종 통과. 상세:
+  `docs/history/2026-08.md` "TRIM 근본 재설계 후속 11".
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
