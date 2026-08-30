@@ -6662,10 +6662,18 @@ def _open_item_local_pts(item) -> list:
     범위 밖으로 확정됐었지만(곡선을 점 목록으로 평탄화해야 하는 새 작업이라), 실사용
     재현으로 재검토 후 추가 — SVG로 들여온 다중 조각 그림의 낱개 조각이 이 클래스로
     매핑되는 경우가 많아, 그룹 소속 완화(`_trim_allows_full_erase`)와 짝을 맞춰야
-    "그림 부품 전체가 커터 없이도 지워진다"는 기대가 실제로 충족된다. `toSubpathPolygons()`
-    의 **첫 서브패스만** 쓴다(대부분 펜 스트로크·SVG 패스 조각은 단일 연속 궤적 — 다중
-    서브패스는 Not-tested로 남김). 서브패스가 닫혀 있으면(시작=끝) 열린-도형 TRIM 대상이
-    아니므로 빈 리스트(닫힌 펜 낙서를 자르는 것은 이번 스코프 밖)."""
+    "그림 부품 전체가 커터 없이도 지워진다"는 기대가 실제로 충족된다.
+
+    **서브패스가 2개 이상이면 통째로 빈 리스트를 돌려준다(트림 대상에서 제외)** —
+    2026-08-30 실사용 재현 버그: `apply_open_item_trim`의 `_PathItem` 커밋은 host의
+    `path()` 전체를 "잘린 서브패스 하나짜리" 새 경로로 통째로 `setPath()`하므로, 첫
+    서브패스만 골라 그 일부를 자르면 **나머지 서브패스가 통째로 사라진다**(예: 코
+    삼각형+입 곡선이 한 `_PathItem`에 서브패스 2개로 들어있으면, 코 근처를 자르는 순간
+    입 곡선째로 없어짐 — "펜이 끊김"으로 보고됨). 부분 지원으로 데이터를 조용히
+    파괴하느니 아예 대상에서 빼는 쪽이 안전하다는 판단(단일 서브패스만 있는 흔한 경우
+    — 펜 스트로크 하나·SVG 패스 조각 하나 — 는 이 문제가 없어 그대로 지원). 서브패스가
+    닫혀 있으면(시작=끝) 열린-도형 TRIM 대상이 아니므로 마찬가지로 빈 리스트(닫힌 펜
+    낙서를 자르는 것은 이번 스코프 밖)."""
     if isinstance(item, _LineItem):
         ln = item.line()
         return [ln.p1(), ln.p2()]
@@ -6675,7 +6683,7 @@ def _open_item_local_pts(item) -> list:
         return item.local_pts()
     if isinstance(item, _PathItem):
         polys = item.path().toSubpathPolygons()
-        if not polys:
+        if len(polys) != 1:
             return []
         sub = polys[0]
         pts = [sub.at(i) for i in range(sub.count())]

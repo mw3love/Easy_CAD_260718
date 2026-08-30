@@ -937,3 +937,31 @@ def test_multi_segment_path_item_natural_boundary_shortens_not_fully_erases():
     assert p.scene() is w._scene   # 완전 소실 아님 — 일부만 잘림
     remaining = p.path().toSubpathPolygons()[0]
     assert remaining.count() == 2   # 첫 세그먼트만 잘려나가고 나머지 한 변만 남음
+
+
+def test_multi_subpath_path_item_is_not_a_trim_target():
+    """[실사용 재현, 2026-08-30 같은 날 후속] 서브패스 2개짜리 펜(예: 코 삼각형 서브패스
+    + 입 곡선 서브패스가 한 `_PathItem`에 같이 들어있는 경우) — 첫 서브패스만 골라
+    자르면 나머지 서브패스가 `setPath()`에 통째로 사라진다("펜이 끊김" 보고). 부분
+    지원으로 데이터를 조용히 파괴하느니 아예 트림 대상에서 뺀다."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    path = QPainterPath()
+    path.moveTo(0, 0)
+    path.lineTo(100, 0)
+    path.moveTo(0, 50)   # 두 번째 서브패스 — 별개의 선
+    path.lineTo(100, 50)
+    p = _PathItem(path)
+    p._group_id = "cat_group"
+    w._scene.addItem(p)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(50, 0), NB, NB))
+    assert view._trim_preview is None   # 후보 자체가 안 잡힘
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(50, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(50, 0), L, NB))
+
+    assert p.scene() is w._scene
+    assert len(p.path().toSubpathPolygons()) == 2   # 두 서브패스 모두 그대로 보존
