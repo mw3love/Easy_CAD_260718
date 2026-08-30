@@ -1607,7 +1607,18 @@ symbol_library/
   의도인지 사용자가 재질문 — AskUserQuestion으로 "부분 트림 유지(전 도형 공통 규칙,
   실제 AutoCAD 관례와 일치)"로 확정, 그룹 소속 항목의 통짜 전체삭제 예외화는 기각.
   상세: `docs/history/2026-08.md` "TRIM 근본 재설계 — 다중세그먼트 PathItem 부분
-  트림 정책 사용자 확인 완료".
+  트림 정책 사용자 확인 완료". **같은 날 아홉 번째 후속** — "원(닫힌 도형)+수염을
+  한 드래그로 이어서 지나가면 절반만 잘리는데, 원을 먼저 트림해 릴리즈한 뒤 수염을
+  따로 지나가면 한 번에 다 지워진다"는 헷갈림 제보. 원인은 닫힌 도형의 파괴적 확정이
+  `finalize_closed_trim`에서 릴리즈 시점에만 일어나(같은 도형 여러 변 병합을 한 번에
+  처리하기 위한 2단계 설계) 한 드래그 안에서는 원이 아직 원본 그대로의 커터로 남는
+  것 — AskUserQuestion으로 "한 드래그 안에서도 즉시 반영"으로 확정 후,
+  `_item_local_edges(item)`이 닫힌 도형의 미확정 `_cuts`까지 `_destructive_trim_
+  result`로 반영해 커터 외곽선을 계산하도록 수정(`finalize_closed_trim` 자체는
+  무변경 — 국소 수정, `_trim_candidate_segment`·`_trim_candidate_open_segment`·
+  `_extend_candidate` 세 경로가 한 곳을 공유해 한 번에 일관되게 반영). 오프스크린
+  재현으로 수정 전/후 결과 비교 + 실제 창에서 재확인, 신규 pytest 1종, 스위트
+  1083종 통과. 상세: `docs/history/2026-08.md` "TRIM 근본 재설계 후속 9".
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
