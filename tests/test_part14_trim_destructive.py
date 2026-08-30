@@ -544,6 +544,11 @@ def test_multi_subpath_symbol_cutting_body_leaves_untouched_ellipse_closed_and_g
 
 
 def test_multi_subpath_symbol_erasing_everything_deletes_whole_item():
+    """[TRIM 자연 경계 곡선 확장, 2026-08-30 실사용 재현 이후 강화] 곡선 런 확장
+    (`_curve_run_edges`) 도입 전엔 이 펜스 드래그가 심볼 자체는 지워도 근사 세그먼트
+    단위로만 잘려 완전 소실은 Not-tested로 남겨뒀다 — 이제는 자연 경계 클릭 각각이
+    그 곡선(타원 전체·호 전체) 전부를 한 번에 지우므로, 같은 4점 펜스 드래그로 아무
+    잔여물 없이 완전히 사라짐까지 보장된다."""
     L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
     w = CanvasWindow(); w.grid_enabled = False
     db = _SymbolItem("database", QRectF(0, 0, 200, 300))
@@ -560,13 +565,89 @@ def test_multi_subpath_symbol_erasing_everything_deletes_whole_item():
     view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(190, 15), L, NB))
 
     assert db.scene() is None
-    remaining_area = sum(
-        1 for it in w._scene.items()
-        if isinstance(it, (_SymbolItem, _PolygonItem)))
-    # [Not-tested로 남김] 곡선(타원 근사) 서브패스는 자연 경계가 근사 세그먼트 단위라
-    # 한 번의 펜스 드래그로 완전 소실까지 보장하지 않을 수 있다 — 여기서는 host 자체가
-    # 통째로 사라졌다는(파괴적 확정이 실제로 일어났다는) 사실만 확인한다.
+    assert [it for it in w._scene.items() if isinstance(it, (_SymbolItem, _PolygonItem))] == []
+
+
+# ---------------------------------------------------------------------------
+# 실사용 재현 버그 3(2026-08-30, 같은 날 후속) — 저장소(원기둥) 심볼의 곡선(윗면 타원·
+# 아랫면 호)이 커터 없이 클릭해도 근사 세그먼트 하나만 지워져 "군데군데 끊긴" 점선처럼만
+# 트림됨. 원인: `_trim_candidate_segment`의 자연 경계가 변 하나 단위라 곡선 근사(수십
+# 개 세그먼트)엔 사실상 무의미. 1차 시도(각도 기반 판정)는 벽→호 전환이 접선 방향이라
+# 벽까지 삼켜버리는 더 나쁜 결과를 냈다(되돌림) — 최종 해법은 원본 QPainterPath 요소
+# (`elementAt`)를 서브패스별로 직접 훑어 "진짜 lineTo/moveTo 모서리"만 hard로 잡는 것.
+# ---------------------------------------------------------------------------
+
+def test_curve_run_edges_grows_whole_ellipse_subpath():
+    db = _SymbolItem("database", QRectF(0, 0, 200, 300))
+    spans = _host_outline_edge_spans(db)
+    ellipse_start, ellipse_end, closed = spans[0]
+    assert closed is True
+    run = _curve_run_edges(db, (ellipse_start + ellipse_end) // 2)
+    assert len(run) == ellipse_end - ellipse_start   # 서브패스 전체(타원 전부)
+
+
+def test_curve_run_edges_stops_at_wall_arc_boundary_not_the_walls():
+    db = _SymbolItem("database", QRectF(0, 0, 200, 300))
+    spans = _host_outline_edge_spans(db)
+    body_start, body_end, closed = spans[1]
+    assert closed is False
+    mid = (body_start + body_end) // 2
+    run = _curve_run_edges(db, mid)
+    assert body_start not in run and (body_end - 1) not in run   # 양쪽 벽은 안 딸려옴
+    assert len(run) > 1   # 호 근사 세그먼트 여럿은 하나로 묶임
+
+    # 벽 자체를 클릭하면(그 변 자신) 확장이 안 일어나 그 변 하나만.
+    assert _curve_run_edges(db, body_start) == [body_start]
+    assert _curve_run_edges(db, body_end - 1) == [body_end - 1]
+
+
+def test_natural_boundary_click_on_bottom_arc_removes_only_the_arc_via_view():
+    """실사용 재현 정확한 시나리오 — 아랫면 호를 커터 없이 클릭하면 호만 사라지고
+    양쪽 벽·윗면 타원은 그대로 남아야 한다(전엔 근사 조각 하나만 지워져 점선처럼
+    보였다)."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    db = _SymbolItem("database", QRectF(0, 0, 200, 300))
+    w._scene.addItem(db)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    bottom_arc_pt = QPointF(100, 298)   # 아랫면 호 한가운데
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, bottom_arc_pt, NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, bottom_arc_pt, L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, bottom_arc_pt, L, NB))
+
     assert db.scene() is None
+    frags = [it for it in w._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(frags) == 3   # 왼쪽 벽(열림 2점) + 오른쪽 벽(열림 2점) + 윗면 타원(닫힘)
+    closed_flags = sorted(f._closed for f in frags)
+    assert closed_flags == [False, False, True]
+    gids = {f._group_id for f in frags}
+    assert len(gids) == 1 and None not in gids
+    ellipse_frag = next(f for f in frags if f._closed)
+    assert len(ellipse_frag.local_pts()) == 64   # 타원은 완전히 그대로
+
+
+def test_natural_boundary_click_on_top_ellipse_removes_whole_ellipse_keeps_body_intact():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    db = _SymbolItem("database", QRectF(0, 0, 200, 300))
+    w._scene.addItem(db)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    top_pt = QPointF(100, 0)   # 윗면 타원 꼭대기
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, top_pt, NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, top_pt, L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, top_pt, L, NB))
+
+    assert db.scene() is None
+    frags = [it for it in w._scene.items() if isinstance(it, _PolygonItem)]
+    assert len(frags) == 1   # 몸통(벽+호)이 하나도 안 잘려 그대로 한 조각
+    assert frags[0]._closed is False
+    assert len(frags[0].local_pts()) == 35   # 몸통 서브패스 34변 그대로(+1)
 
 
 def test_legacy_ecad_symbol_with_cuts_migrates_on_open():

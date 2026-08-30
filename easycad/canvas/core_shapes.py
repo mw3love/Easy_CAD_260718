@@ -7181,6 +7181,112 @@ def _trim_candidate_segment(host, scene_pt, other_shapes):
     return best_edge, lo, hi
 
 
+def _symbol_hard_vertices_by_subpath(host) -> list:
+    """[TRIM 자연 경계 곡선 확장, 2026-08-30 실사용 재현] `_SymbolItem`의 원본(미평탄화)
+    `_sym_path()`를 직접 훑어, 서브패스별로 "진짜 모서리"의 좌표 집합을 돌려준다
+    (`_host_outline_subpath_groups`와 같은 순서 — 인덱스 k가 그 함수의 k번째 서브패스에
+    대응). 각도 기반 판정은 저장소(원기둥) 심볼에서 실패했다: `_sym_database`가 벽→호
+    전환을 접선 방향으로 매끄럽게 그려서(진짜 원기둥처럼 꺾임이 없음) 각도차로는 벽과
+    호를 구분 못 하고, 자연 경계 확장이 벽까지 통째로 삼켜버렸다(실측: 아랫면 호 클릭
+    1회로 양쪽 벽까지 전부 삭제됨 — 고치기 전보다 더 나쁜 결과라 되돌렸던 1차 시도).
+
+    `QPainterPath.elementAt()`으로 원본 명령을 직접 읽으면 이 구분이 정확해진다:
+    `MoveToElement`/`LineToElement`의 끝점은 항상 "진짜 모서리"(hard) — 사용자가 실제로
+    선을 그은 지점이다. `CurveToElement`(+뒤따르는 `CurveToDataElement` 2개, 3개가 큐빅
+    베지어 하나)는 곡선 명령인데, `arcTo` 하나가 정확도를 위해 내부적으로 베지어 여러
+    개로 쪼개질 수 있어(180° 호 = 큐빅 2개, 실측 확인) **연속된 CurveTo 묶음 전체를
+    하나의 곡선 명령으로 보고 그 사이 이음매는 soft로, 그 묶음이 끝나는 지점(다음이
+    LineTo/MoveTo이거나 경로 끝)만 hard로** 잡는다.
+
+    **서브패스별로 분리하는 이유(2차 실측 버그)** — 저장소 심볼은 윗면 타원의 가장 왼쪽
+    점(0,54)이 몸통 왼쪽 벽의 위 끝점(0,54)과 우연히 같은 좌표다(둘 다 원기둥 위 테두리의
+    같은 물리적 위치라 자연스러운 우연). 전체 경로를 하나의 좌표 집합으로 합치면, 이
+    좌표가 "몸통에서는 진짜 모서리"라는 사실이 "타원 안에서도 hard"로 잘못 새어나가
+    타원 확장이 정확히 절반에서 멈췄다(실측 확인: 64개 중 32개). 서브패스마다 독립된
+    집합을 두면 이 우연한 좌표 일치가 서로 간섭하지 않는다."""
+    path = host._sym_path()
+    n = path.elementCount()
+    result = []
+    current = None
+    i = 0
+    while i < n:
+        el = path.elementAt(i)
+        if el.isMoveTo():
+            current = {(round(el.x, 3), round(el.y, 3))}
+            result.append(current)
+            i += 1
+        elif el.isLineTo():
+            if current is None:
+                current = set()
+                result.append(current)
+            current.add((round(el.x, 3), round(el.y, 3)))
+            i += 1
+        elif el.isCurveTo():
+            if current is None:
+                current = set()
+                result.append(current)
+            j = i
+            last = None
+            while j < n and path.elementAt(j).isCurveTo():
+                if j + 2 < n:
+                    ep = path.elementAt(j + 2)
+                    last = (ep.x, ep.y)
+                j += 3
+            if last is not None:
+                current.add((round(last[0], 3), round(last[1], 3)))
+            i = j if j > i else i + 1
+        else:
+            i += 1
+    return result
+
+
+def _curve_run_edges(host, edge_i: int) -> list:
+    """[TRIM 자연 경계 곡선 확장, 2026-08-30 실사용 재현] `저장소`(원기둥)처럼 한 서브패스
+    안에 직선(벽)과 곡선 근사(호, 수십 개 잘게 쪼갠 변)가 섞여 있으면, 커터 없이 곡선
+    위를 클릭해도 `_trim_candidate_segment`가 근사 조각 하나(눈에 안 보이는 크기)만
+    자연 경계로 돌려준다 — 여러 번 문질러도 "군데군데 끊긴" 점선처럼만 지워진다(실사용
+    재현 스크린샷: 저장소 윗면 타원·아랫면 호 둘 다 이 증상). 원본 경로 요소 기준
+    "진짜 모서리"(`_symbol_hard_vertices_by_subpath`)를 만날 때까지 edge_i에서 좌우로
+    넓혀 같은 곡선을 이루는 변 전부를 돌려준다 — 사각형·닫힌다각형·`_EllipseItem`(이미
+    -1 sentinel로 별도 처리됨)이 아닌 `_SymbolItem`에만 적용한다(다른 타입은 hard-vertex
+    정보를 낼 원본 경로가 없어 확장 자체를 안 함, `[edge_i]` 그대로)."""
+    if not isinstance(host, _SymbolItem):
+        return [edge_i]
+    edges = _host_outline_edges(host)
+    spans = _host_outline_edge_spans(host)
+    span_idx = next((k for k, (s, e, _c) in enumerate(spans) if s <= edge_i < e), None)
+    if span_idx is None:
+        return [edge_i]
+    start, end, closed = spans[span_idx]
+    span_n = end - start
+    if span_n <= 1:
+        return [edge_i]
+    hard_by_subpath = _symbol_hard_vertices_by_subpath(host)
+    hard = hard_by_subpath[span_idx] if span_idx < len(hard_by_subpath) else set()
+
+    def is_hard(pt):
+        return (round(pt.x(), 3), round(pt.y(), 3)) in hard
+
+    lo, hi = edge_i, edge_i
+    for _ in range(span_n - 1):
+        prev = lo - 1 if lo - 1 >= start else (end - 1 if closed else None)
+        if prev is None or prev == hi:
+            break
+        if is_hard(edges[lo][0]):   # lo의 시작점 = prev와 lo 사이의 공유 꼭짓점
+            break
+        lo = prev
+    for _ in range(span_n - 1):
+        nxt = hi + 1 if hi + 1 < end else (start if closed else None)
+        if nxt is None or nxt == lo:
+            break
+        if is_hard(edges[hi][1]):   # hi의 끝점 = hi와 nxt 사이의 공유 꼭짓점
+            break
+        hi = nxt
+    if lo <= hi:
+        return list(range(lo, hi + 1))
+    return list(range(lo, end)) + list(range(start, hi + 1))   # 닫힌 서브패스에서 wrap
+
+
 def _open_item_bracket_points(pts: list, lo: tuple, hi: tuple):
     """[§8 항목17 5단계] `_trim_candidate_open_segment`가 반환하는 (seg, t) 마크 lo/hi를
     실제 로컬좌표 점으로 변환(host 로컬, pts=`_open_item_local_pts(host)`)."""

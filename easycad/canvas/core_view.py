@@ -1636,7 +1636,15 @@ class _AnnotatorView(QGraphicsView):
         `_trim_closed_dirty`에 표시해두고, 실제 확정(점목록으로 굽기/완전 소실 삭제)은
         제스처가 끝나는 `_mouse_release_impl`의 `finalize_closed_trim` 한 번으로 미룬다
         (같은 드래그에서 여러 변을 잘라도 병합 로직 한 번으로 정확히 처리하기 위해 —
-        자세한 이유는 `_closed_shape_trim_fragments` 참조)."""
+        자세한 이유는 `_closed_shape_trim_fragments` 참조).
+
+        [TRIM 자연 경계 곡선 확장, 2026-08-30 실사용 재현] 커터 없는 자연 경계 커밋
+        (`t0≈0, t1≈1`)이면 `_curve_run_edges`로 같은 곡선을 이루는 이웃 변 전부를 함께
+        커밋한다(사각형처럼 진짜 꼭짓점만 있는 도형·완전 삼각형은 확장이 안 일어나
+        `[edge_i]` 하나뿐이라 무변화) — 그래야 저장소류 심볼의 타원·호 위 자연 경계
+        클릭 1회로 그 곡선 전체가 지워진다. 커터로 정확히 지정한 부분 절단
+        (`t0`/`t1`이 0·1이 아님)에는 적용 안 함 — 사용자가 명시적으로 좁힌 범위를
+        존중한다."""
         if kind == "closed":
             edge_i, t0, t1 = seg
             key = ("closed", id(host), edge_i, round(t0, 6), round(t1, 6))
@@ -1644,7 +1652,15 @@ class _AnnotatorView(QGraphicsView):
                 return
             if host not in self._trim_closed_dirty:
                 self._trim_closed_dirty[host] = list(getattr(host, "_cuts", None) or [])
-            _add_border_cut(host, edge_i, t0, t1)
+            if edge_i >= 0 and t0 <= 1e-6 and t1 >= 1.0 - 1e-6:
+                for e in _curve_run_edges(host, edge_i):
+                    run_key = ("closed", id(host), e, round(0.0, 6), round(1.0, 6))
+                    if run_key in self._trim_seen:
+                        continue
+                    _add_border_cut(host, e, 0.0, 1.0)
+                    self._trim_seen.add(run_key)
+            else:
+                _add_border_cut(host, edge_i, t0, t1)
             self._trim_seen.add(key)
         else:
             lo, hi = seg
