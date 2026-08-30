@@ -904,7 +904,11 @@ def test_grouped_single_segment_path_item_erases_without_cutter():
     assert p.scene() is w._scene
 
 
-def test_ungrouped_path_item_still_protected_from_full_erase():
+def test_ungrouped_path_item_now_erases_too():
+    """[정책 변경, 2026-08-30 같은 날 후속] 펜(`_PathItem`)은 이제 그룹 여부와 무관하게
+    커터 없으면 전체 삭제 — 즉석에서 그린 낱개 체크마크·점 등이 그룹 없이도 안 지워지던
+    실사용 재현으로 확장(사용자 확인). `_LineItem`은 여전히 보호 —
+    `test_ungrouped_standalone_line_still_protected_from_full_erase` 참조."""
     L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
     w = CanvasWindow(); w.grid_enabled = False
     p = _mk_path_item(w, [QPointF(0, 0), QPointF(100, 0)])   # group_id 없음
@@ -913,9 +917,11 @@ def test_ungrouped_path_item_still_protected_from_full_erase():
     view = w._view
 
     view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(50, 0), NB, NB))
-    assert view._trim_preview is None
+    assert view._trim_preview is not None
     view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(50, 0), L, L))
     view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(50, 0), L, NB))
+    assert p.scene() is None
+    w.undo()
     assert p.scene() is w._scene
 
 
@@ -988,10 +994,11 @@ def test_closed_pen_loop_erases_whole_thing_when_grouped():
     assert outline.scene() is w._scene
 
 
-def test_ungrouped_closed_pen_loop_still_excluded_from_trim():
-    """[정책 변경 범위 확인, 2026-08-30 같은 날 후속] 그룹 소속이 아닌 닫힌 펜 낙서는
-    여전히 트림 대상 밖 — "닫힌 펜 낙서는 스코프 밖"이라는 원래 결정은 그룹 소속이
-    아닌 경우엔 그대로 유지된다(정책 변경은 그룹 소속에만 적용)."""
+def test_ungrouped_closed_pen_loop_also_erases_now():
+    """[정책 변경, 2026-08-30 같은 날 두 번째 후속] 그룹 소속이 아닌 닫힌 펜 낙서도
+    이제 한 번에 전체 삭제된다 — "닫힌 펜 낙서는 스코프 밖"이었던 결정을 처음엔 그룹
+    소속에만 완화했으나(바로 위 커밋), 즉석에서 그린 낱개 낙서(그룹 없음)도 똑같이
+    안 지워진다는 재현으로 그룹 조건 자체를 없앴다(사용자 확인)."""
     L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
     w = CanvasWindow(); w.grid_enabled = False
     path = QPainterPath()
@@ -1006,9 +1013,11 @@ def test_ungrouped_closed_pen_loop_still_excluded_from_trim():
     view = w._view
 
     view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(50, 0), NB, NB))
-    assert view._trim_preview is None
+    assert view._trim_preview is not None
     view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(50, 0), L, L))
     view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(50, 0), L, NB))
+    assert outline.scene() is None
+    w.undo()
     assert outline.scene() is w._scene
 
 
@@ -1089,3 +1098,57 @@ def test_one_continuous_fence_matches_two_separate_fences_for_grouped_whisker():
     _fence_drag(view2, [QPointF(45, -20), QPointF(45, 20)])
     _fence_drag(view2, [QPointF(0, -60), QPointF(75, 0), QPointF(150, 60)])
     assert whisker2.scene() is None   # 두 결과가 일치
+
+
+def test_ungrouped_checkmark_pen_erases_with_one_click():
+    """[실사용 재현, 2026-08-30 같은 날 세 번째 후속] 즉석에서 그린 체크마크 모양
+    펜(꺾인 3점, 그룹 없음)이 "코"처럼 그룹 밖에 낱개로 있으면 안 지워지던 문제 —
+    `_trim_open_type_always_erases`가 그룹 여부와 무관하게 펜을 전체삭제 대상으로
+    인정하도록 확장해 해결."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    p = _mk_path_item(w, [QPointF(0, 20), QPointF(15, 40), QPointF(45, 0)])  # group_id 없음
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(7, 30), NB, NB))
+    assert view._trim_preview is not None
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(7, 30), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(7, 30), L, NB))
+    assert p.scene() is None
+    w.undo()
+    assert p.scene() is w._scene
+
+
+def test_ungrouped_open_polygon_tool_line_erases_with_one_click():
+    """[실사용 재현, 2026-08-30 같은 날 세 번째 후속] 다각형 도구로 그린 뒤 그룹 없이
+    바로 TRIM하면 안 지워지던 문제 — 열린 `_PolygonItem`(`_trim_derived` 아닌 것)도
+    펜과 동일하게 그룹 여부와 무관하게 전체삭제 대상."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    poly = _PolygonItem([QPointF(0, 0), QPointF(40, 40)], False)   # group_id 없음
+    w._scene.addItem(poly)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(20, 20), NB, NB))
+    assert view._trim_preview is not None
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(20, 20), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(20, 20), L, NB))
+    assert poly.scene() is None
+    w.undo()
+    assert poly.scene() is w._scene
+
+
+def test_trim_derived_polygon_fragment_still_needs_clicked_segment_only():
+    """[정책 변경 범위 확인, 2026-08-30 같은 날 세 번째 후속] `_trim_derived`(닫힌
+    도형에서 막 잘려나온 `_PolygonItem` 조각)는 사용자가 직접 그린 다각형이 아니라
+    "예전 사각형의 변 하나하나"라는 별개 심상모델이라, 이번 전체삭제 확장 대상에서
+    제외 — 클릭한 세그먼트 안에서만 cutter를 찾는 기존 동작 그대로."""
+    zz = _PolygonItem([QPointF(0, 0), QPointF(300, 0), QPointF(300, 300), QPointF(600, 300)],
+                       False)
+    zz._trim_derived = True
+    seg = _trim_candidate_open_segment(zz, QPointF(300, 150), [])
+    assert seg == ((1, 0.0), (1, 1.0))   # 경로 전체가 아니라 가운데 세그먼트 하나만

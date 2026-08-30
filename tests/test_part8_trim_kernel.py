@@ -1512,11 +1512,17 @@ def test_trim_candidate_open_segment_open_polygon_crossed_by_cutter():
     assert abs(hi[1] - 120.0 / 300.0) < 1e-6
 
 
-def test_trim_candidate_open_segment_open_polygon_middle_segment_without_cutter():
-    # 사각형 밑변과 대칭 — 열린 다각형도 내부 관절 세그먼트는 cutter 없이 그 하나가 자연 경계.
+def test_trim_candidate_open_segment_open_polygon_without_cutter_erases_whole_path():
+    """[정책 변경, 2026-08-30] 다각형 도구로 그린 열린 폴리라인(`_trim_derived` 아님)은
+    이제 커터가 없으면 클릭한 세그먼트 하나가 아니라 경로 전체가 자연 경계로 잡힌다 —
+    "다각형 도구로 그린 뒤 trim 하면 안 지워진다"는 실사용 재현으로, 펜(`_PathItem`)과
+    같은 "손으로 그린 하나의 도형" 정책을 그룹 여부와 무관하게 적용(사용자 확인).
+    옛 기대값(가운데 세그먼트 하나만)은 `docs/history/2026-08.md` "TRIM 근본 재설계
+    후속 11" 참조 — 커터가 있는 경우의 부분 절단은
+    `test_trim_candidate_open_segment_open_polygon_crossed_by_cutter`가 계속 검증."""
     zz = _mk_open_zigzag()
     seg = _trim_candidate_open_segment(zz, QPointF(300, 150), [])   # 가운데(수직) 세그먼트
-    assert seg == ((1, 0.0), (1, 1.0))
+    assert seg == ((0, 0.0), (2, 1.0))   # 경로 전체(세그먼트 0~2)
 
 
 def test_apply_open_item_trim_splits_open_polygon_into_two_polygon_fragments():

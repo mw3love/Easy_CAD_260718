@@ -6702,13 +6702,14 @@ def _open_item_local_pts(item) -> list:
     파괴하느니 아예 대상에서 빼는 쪽이 안전하다는 판단(단일 서브패스만 있는 흔한 경우
     — 펜 스트로크 하나·SVG 패스 조각 하나 — 는 이 문제가 없어 그대로 지원).
 
-    [실사용 재현, 2026-08-30 같은 날 후속] 서브패스가 닫혀 있으면(시작=끝, 예: 손으로
-    한 붓에 그린 고양이 얼굴 윤곽 — 귀+턱 곡선이 출발점으로 돌아와 닫힘) 그룹 소속이
-    아닌 한 여전히 대상에서 뺀다(이 값이면 클릭해도 트림 예고 자체가 안 뜬다 — 원래
-    "닫힌 펜 낙서는 스코프 밖"이라는 결정 그대로). 다만 그룹 소속(`_trim_allows_full_
-    erase`)이면 예외로 허용 — 사용자 확인: 펜/SVG는 열림·닫힘과 무관하게 "손으로 그린
-    하나의 도형"이라 커터 없이 클릭 한 번에 전체가 지워져야 하고(`_trim_candidate_
-    open_segment`의 대칭 처리 참조), 닫힌 루프도 예외가 아니다."""
+    [실사용 재현, 2026-08-30 같은 날 후속] 서브패스가 닫혀 있어도(시작=끝, 예: 손으로
+    한 붓에 그린 고양이 얼굴 윤곽 — 귀+턱 곡선이 출발점으로 돌아와 닫힘) 대상에서
+    빼지 않는다 — 펜은 열림·닫힘·그룹 여부와 무관하게 "손으로 그린 하나의 도형"이라
+    커터 없이 클릭 한 번에 전체가 지워져야 한다(`_trim_open_type_always_erases`,
+    `_trim_candidate_open_segment`의 대칭 처리 참조). 처음엔 그룹 소속일 때만 예외로
+    뒀으나(원래 "닫힌 펜 낙서는 스코프 밖" 결정의 그룹 한정 완화), 그룹 없이 즉석에서
+    그린 낱개 낙서(체크마크·점 등)도 똑같이 안 지워진다는 재현으로 그룹 조건 자체를
+    없앴다."""
     if isinstance(item, _LineItem):
         ln = item.line()
         return [ln.p1(), ln.p2()]
@@ -6723,8 +6724,6 @@ def _open_item_local_pts(item) -> list:
         sub = polys[0]
         pts = [sub.at(i) for i in range(sub.count())]
         if len(pts) < 2:
-            return []
-        if _close_pt(pts[0], pts[-1]) and not _trim_allows_full_erase(item):
             return []
         return pts
     return []
@@ -7426,6 +7425,22 @@ def _trim_allows_full_erase(host) -> bool:
     return bool(getattr(host, "_trim_derived", False) or getattr(host, "_group_id", None))
 
 
+def _trim_open_type_always_erases(host) -> bool:
+    """[실사용 확장, 2026-08-30 같은 날 후속] 펜(`_PathItem`)과 다각형 도구로 직접 그린
+    열린 폴리라인(`_PolygonItem`, `_trim_derived`가 아닌 것)은 그룹 소속 여부와 **무관
+    하게** 커터 없으면 항상 전체 삭제 — 위 `_trim_allows_full_erase`가 그룹/유래로
+    게이트하는 것과 달리 이 둘은 도구 종류 자체로 결정된다. 실사용 재현: 즉석에서 그린
+    체크마크(펜)·짧은 선(다각형 도구) 둘 다 그룹이 없어 `_trim_allows_full_erase`가
+    거짓이라 트림 후보 자체가 안 잡혔다 — "손으로 그린 낙서 하나 = 원자 단위"라는
+    심상모델은 SVG 그룹 소속 여부와 무관하다는 사용자 확인. `_trim_derived`인
+    `_PolygonItem`(닫힌 도형에서 막 잘려나온 조각)은 제외 — 그건 "예전 사각형의 변
+    하나하나"라는 별개 심상모델이라 `_trim_allows_full_erase`의 그룹/유래 게이트를
+    그대로 따라야 한다(변경 없음)."""
+    if isinstance(host, _PathItem):
+        return True
+    return isinstance(host, _PolygonItem) and not getattr(host, "_trim_derived", False)
+
+
 def _trim_candidate_open_segment(host, scene_pt, other_shapes):
     """[§8 항목17 5단계] TRIM(문지르기)이 **열린 도형**(host: _LineItem/_PolyArrowItem) 위에서
     호출하는 버전 — `_trim_candidate_segment`(닫힌 도형, 변 하나 안에서만 자름)와 달리 host
@@ -7512,17 +7527,18 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
             return None
         return lo, hi
 
+    if _trim_open_type_always_erases(host):
+        marks = cutter_marks()
+        if len(marks) <= 2:
+            return (0, 0.0), (n - 2, 1.0)   # 커터 없음 — 경로 전체(닫힌 루프 포함)를 한 번에
+        return bounded_span(marks)
     if _trim_allows_full_erase(host):
-        if isinstance(host, _PathItem):
-            marks = cutter_marks()
-            if len(marks) <= 2:
-                return (0, 0.0), (n - 2, 1.0)   # 커터 없음 — 경로 전체(닫힌 루프 포함)를 한 번에
-            return bounded_span(marks)
         # [TRIM 파괴적 재설계 실사용 버그 2건 + 그룹 확장, 2026-08-30] `_trim_derived`
-        # (닫힌 도형에서 방금 막 잘려나온 열린 조각) 또는 그룹에 속한 항목(`_PathItem`
-        # 제외)은 위 "여러 세그먼트를 꼭짓점째로 지운다"는 일반 열린 폴리라인 규칙을
-        # 물려받지 않는다 — 사용자 심상모델이 "예전 사각형의 변 하나하나"이지 "자유롭게
-        # 그린 폴리라인"이 아니기 때문이다. 실사용 재현 2건:
+        # (닫힌 도형에서 방금 막 잘려나온 열린 조각) 또는 그룹에 속한 항목(펜·다각형
+        # 도구 직접그림 제외 — 위에서 이미 처리됨)은 위 "여러 세그먼트를 꼭짓점째로
+        # 지운다"는 일반 열린 폴리라인 규칙을 물려받지 않는다 — 사용자 심상모델이
+        # "예전 사각형의 변 하나하나"이지 "자유롭게 그린 폴리라인"이 아니기 때문이다.
+        # 실사용 재현 2건:
         # ① 자유단에 닿은 변은 cutter 없이는 영원히 못 지워짐(마지막 마킹 이후 아래
         # marks 로직 자체가 그런 변을 배제) ② 근처에 다른 도형(cutter 역할)이 딱 하나만
         # 있으면 그 cutter가 걸린 세그먼트까지 가는 동안의 **모든** 중간 변(꼭짓점 여러
@@ -7592,7 +7608,7 @@ def apply_open_item_trim(host, lo: tuple, hi: tuple):
     has_before = len(before_pts) >= 2
     has_after = len(after_pts) >= 2
     if not has_before and not has_after:
-        if not _trim_allows_full_erase(host):
+        if not (_trim_allows_full_erase(host) or _trim_open_type_always_erases(host)):
             return None   # 기존 동작 그대로 — 독립된 선의 완전 소실은 여전히 막는다
         scene = host.scene()
         if scene is not None:
