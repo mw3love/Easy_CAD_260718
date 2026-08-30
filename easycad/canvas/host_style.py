@@ -461,7 +461,7 @@ class _StyleMixin:
                 self._pf_fill.setStyleSheet(self._swatch_css(None))
                 self._pf_hint.setText("객체를 선택하면 속성을 편집할 수 있습니다.")
                 for w in (self._pf_head_btn, self._pf_head_scale, self._pf_radius,
-                         self._pf_dir_btn, self._pf_rotation):
+                         self._pf_dir_btn, self._pf_rotation, self._pf_fill_row):
                     self._props_form.setRowVisible(w, False)
                 # 아래 "선택 있음" 분기와 동일 — 행을 숨긴 뒤 패널을 그 크기로 다시 줄이지
                 # 않으면, 직전에 화살표 등 확장 행이 있던 선택에서 커진 패널 크기가 선택
@@ -494,6 +494,10 @@ class _StyleMixin:
             # color처럼 "값 있는 것만 필터"하면 안 되고, has_fill인 항목 전부를 모아야 한다.
             fillable = [p["fill"] for p in props if p["has_fill"]]
             has_fillable = bool(fillable)
+            # [실사용 피드백 2026-08-31] 화살촉/반경 등 타입 전용 행과 같은 관례로 행 자체를
+            # 숨긴다 — 채움은 색·두께와 달리 화살표·선 계열엔 원천적으로 해당 없는 속성이라
+            # "비활성화된 빈 행"으로 남겨두면(옛 동작) 왜 보이는지 헷갈린다는 지적.
+            self._props_form.setRowVisible(self._pf_fill_row, has_fillable)
             self._pf_fill.setEnabled(has_fillable)
             if has_fillable:
                 names = {(f.name(QColor.NameFormat.HexArgb) if f is not None else None)

@@ -1375,7 +1375,9 @@ def test_shape_fill_clone_and_interior_hit():
 
 
 def test_properties_panel_fill_row():
-    # 속성 dock 「채움」 행 — 단일선택 값 표시, 혼합 감지, 화살표만 선택 시 비활성.
+    # 속성 dock 「채움」 행 — 단일선택 값 표시, 혼합 감지, 화살표만 선택 시 행 자체를 숨김
+    # (2026-08-31 실사용 지적: 예전엔 비활성화만 하고 빈 "—" 행이 계속 남아 화살표에
+    # 왜 '채움'이 보이는지 헷갈렸다 — 화살촉/반경 등 타입 전용 행과 같은 관례로 통일).
     from PyQt6.QtGui import QPen
     w = CanvasWindow()
     sel_flags = _RectItem.GraphicsItemFlag.ItemIsSelectable | _RectItem.GraphicsItemFlag.ItemIsMovable
@@ -1384,6 +1386,7 @@ def test_properties_panel_fill_row():
     r.setSelected(True); w._refresh_properties()
     assert w._pf_fill.isEnabled()
     assert w._pf_fill_val.text() == "#ff00ff"
+    assert w._props_form.isRowVisible(w._pf_fill_row)
 
     e = _EllipseItem(QRectF(100, 0, 40, 30)); e.setPen(QPen(QColor("#000000"))); e.setFlags(sel_flags)
     w._scene.addItem(e)   # 채움 없음(투명) — 다른 값
@@ -1395,6 +1398,10 @@ def test_properties_panel_fill_row():
     ar.set_points(QPointF(0, 0), QPointF(50, 0)); w._scene.addItem(ar)
     ar.setSelected(True); w._refresh_properties()
     assert not w._pf_fill.isEnabled()   # 화살표는 채움 미지원
+    assert not w._props_form.isRowVisible(w._pf_fill_row)   # 행 자체가 숨겨진다
+
+    w._scene.clearSelection(); w._refresh_properties()
+    assert not w._props_form.isRowVisible(w._pf_fill_row)   # 선택 해제 상태도 숨김
 
 
 

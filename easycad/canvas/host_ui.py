@@ -1775,7 +1775,7 @@ class _UIBuildMixin:
         self._pf_fill.setToolTip("클릭: 채움색 선택")
         self._pf_fill.clicked.connect(self._edit_fill)
         self._pf_fill_val = QLabel("—"); self._pf_fill_val.setStyleSheet("color:#888;")
-        fill_row = QWidget(); fh = QHBoxLayout(fill_row)
+        self._pf_fill_row = fill_row = QWidget(); fh = QHBoxLayout(fill_row)
         fh.setContentsMargins(0, 0, 0, 0); fh.setSpacing(6)
         fh.addWidget(self._pf_fill); fh.addWidget(self._pf_fill_val, 1)
 
