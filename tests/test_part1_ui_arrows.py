@@ -2177,6 +2177,39 @@ def test_arrow_head_states_geometry_both_classes():
                 p.end()   # 크래시 없이 끝나면 통과
 
 
+def test_hp_ghost_preview_respects_both_arrowhead_flags():
+    """[실사용 지적 2026-08-31] qc-dot·hover-port로 새 화살표를 뽑는 드래그 중 뜨는 고스트
+    미리보기(`_hp_paint_ghost`)가 항상 끝쪽에만 화살촉을 그려, '양방향'으로 설정해도
+    드래그 중엔 한쪽만 보이다가 릴리스(진짜 아이템 생성)에야 양쪽이 나타났다 —
+    arrow_head_at_end/current_head_at_start를 그대로 따라가는지 확인."""
+    w = CanvasWindow()
+    view = w._view
+    sel_flags = _RectItem.GraphicsItemFlag.ItemIsSelectable | _RectItem.GraphicsItemFlag.ItemIsMovable
+    src = _RectItem(QRectF(0, 0, 100, 60)); src.setFlags(sel_flags)
+    w._scene.addItem(src)
+
+    from unittest.mock import MagicMock
+    calls = []
+    view._draw_ghost_arrowhead = lambda painter, tail, tip: calls.append((tail, tip))
+    painter = MagicMock()
+
+    w.arrow_head_at_end = True
+    w.current_head_at_start = False
+    view._hp_paint_ghost(painter, src, QPointF(100, 30), QPointF(1, 0), QPointF(300, 30))
+    assert len(calls) == 1   # 끝쪽만(기존 동작)
+
+    calls.clear()
+    w.current_head_at_start = True   # [양방향]
+    view._hp_paint_ghost(painter, src, QPointF(100, 30), QPointF(1, 0), QPointF(300, 30))
+    assert len(calls) == 2   # 양쪽 다 그려야 함 — 수정 전엔 여기서 1이었다(버그)
+
+    calls.clear()
+    w.arrow_head_at_end = False   # [시작만]
+    view._hp_paint_ghost(painter, src, QPointF(100, 30), QPointF(1, 0), QPointF(300, 30))
+    assert len(calls) == 1
+    assert calls[0][1] == QPointF(100, 30)   # tip이 시작점 쪽
+
+
 def test_arrow_flip_head_swap_semantics():
     """flip_head는 end/start를 스왑 — 단일머리는 반대쪽으로, 양쪽/없음은 무해한 no-op."""
     from easycad.canvas.host_widgets import _apply_arrow_head, _arrow_head_of

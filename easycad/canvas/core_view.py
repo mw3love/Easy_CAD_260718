@@ -2429,8 +2429,16 @@ class _AnnotatorView(QGraphicsView):
         pts = _dedup_pts([port_pt] + mids + [end])
         for i in range(len(pts) - 1):
             painter.drawLine(pts[i], pts[i + 1])
+        # [실사용 피드백 2026-08-31] 실제 생성 결과(_hp_create_arrow가 만드는 _PolyArrowItem)는
+        # arrow_head_at_end/current_head_at_start 둘 다 반영하는데, 이 고스트는 항상 끝쪽에만
+        # 화살촉을 그려 "양방향"으로 설정해도 드래그 중엔 한쪽만 보이다가 릴리스에야 양쪽이
+        # 나타났다 — 두 플래그를 그대로 따라가게 하면 미리보기=결과가 실제로 성립한다.
+        owner = self._owner
         if len(pts) >= 2:
-            self._draw_ghost_arrowhead(painter, pts[-2], pts[-1])
+            if getattr(owner, "arrow_head_at_end", True):
+                self._draw_ghost_arrowhead(painter, pts[-2], pts[-1])
+            if getattr(owner, "current_head_at_start", False):
+                self._draw_ghost_arrowhead(painter, pts[1], pts[0])
         if snap is not None:
             self._draw_snap_marker(painter, end, self._view_scale())
 
