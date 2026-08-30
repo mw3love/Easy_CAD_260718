@@ -1,10 +1,13 @@
-"""TRIM 근본 재설계(비파괴 `_cuts` → 파괴적 기하 변경) 1단계 — `_RectItem`.
+"""TRIM 근본 재설계(비파괴 `_cuts` → 파괴적 기하 변경) 1~2단계 — `_RectItem`/`_EllipseItem`.
 
-2026-08-30 deep-interview 확정 설계: 닫힌 사각형이 잘리면(TRIM 제스처가 끝나는 순간)
+2026-08-30 deep-interview 확정 설계: 닫힌 도형이 잘리면(TRIM 제스처가 끝나는 순간)
 실제로 `_PolygonItem`(열림)으로 변환되거나(부분 잔존), 아이템 자체가 delete된다(테두리
 전체 소실) — 기존 `shape()`가 원본 미트림 기하를 그대로 써서 "안 보이는데 드래그로 선택된다"
-는 유령 선택 버그의 근본 수정. 포트는 비파괴로 유지(범위 밖), 원/심볼/닫힌 다각형은 다음
-단계에서 순차 전환 예정 — 이 파일은 `_RectItem`만 다룬다.
+는 유령 선택 버그의 근본 수정. 포트는 비파괴로 유지(범위 밖), 심볼/닫힌 다각형은 다음
+단계에서 순차 전환 예정. 1단계(`_RectItem`)와 2단계(`_EllipseItem`)는 `finalize_closed_
+trim`/`_closed_shape_trim_fragments`를 그대로 공유해 구현이 사실상 게이트 확장뿐이었다 —
+2단계 전용 검증은 타원 특유의 폴리곤 근사·전체 소실(edge_i=-1 sentinel, 커터 없이 클릭하면
+항상 이 경로) 위주.
 
 - `_closed_shape_trim_fragments` 순수 함수: 부분 절단(단일 조각)·전체 변 절단(U자
   4점)·비인접 2구간 절단(2조각으로 분리)·테두리 전체(빈 리스트=완전 소실) 4가지.
@@ -22,7 +25,7 @@ pytest tests/test_part14_trim_destructive.py.
 import os
 
 from _shared import *  # noqa: F401,F403
-from PyQt6.QtGui import QMouseEvent
+from PyQt6.QtGui import QMouseEvent, QPen
 from PyQt6.QtCore import QEvent
 
 
@@ -255,4 +258,84 @@ def test_do_open_ecad_migrates_legacy_cuts_and_resets_history():
     assert len(frags) == 1
     # [실사용자 체감] 마이그레이션이 만든 임시 undo 엔트리는 _reset_history()가 지워
     # "그냥 열렸다"로만 보여야 한다 — Ctrl+Z를 눌러도 방금 연 문서가 흔들리면 안 됨.
+    assert not w1._undo and not w1._redo
+
+
+# ---------------------------------------------------------------------------
+# 2단계 — _EllipseItem. finalize_closed_trim/_closed_shape_trim_fragments는 1단계와
+# 완전히 공유(게이트 확장뿐) — 여기서는 타원 특유의 폴리곤 근사·전체 소실만 검증한다.
+# ---------------------------------------------------------------------------
+
+def test_fragments_partial_cut_on_ellipse_polygon_approx_wraps_into_one_loop():
+    ell = _EllipseItem(QRectF(0, 0, 300, 200))
+    edges = _host_outline_edges(ell)
+    n = len(edges)
+    assert n > 8   # 폴리곤 근사 — 사각형(4변)보다 훨씬 세밀해야 함
+    # 대략 위쪽 사분면 근방의 변 하나만 부분 절단(사각형 partial 테스트와 동일 형태).
+    cut_edge = n // 4
+    frags = _closed_shape_trim_fragments(edges, [(cut_edge, 0.3, 0.7)])
+    assert len(frags) == 1
+    # 근사 세그먼트 하나만 지운 것이므로 나머지 전부(근사 정점 수 - 1개 안팎)가 남는다.
+    assert len(frags[0]) >= n - 1
+
+
+def test_fragments_ellipse_whole_loop_sentinel_is_total_loss():
+    ell = _EllipseItem(QRectF(0, 0, 300, 200))
+    edges = _host_outline_edges(ell)
+    assert _closed_shape_trim_fragments(edges, [(-1, 0.0, 1.0)]) == []
+
+
+def test_ellipse_click_without_cutter_deletes_whole_ellipse_via_view():
+    """AutoCAD처럼 커터 없이 원을 TRIM하면 원 전체가 사라진다(2026-08-28 기존 결정) —
+    파괴적 재설계 이후에도 같은 사용자 동작이 이제는 진짜 delete로 이어져야 한다."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    ell = _EllipseItem(QRectF(0, 0, 300, 200))
+    ell.setPen(QPen(QColor("#111111"), 2.0))
+    ell.setFlags(ell.GraphicsItemFlag.ItemIsSelectable | ell.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(ell)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(150, 0), NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(150, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(150, 0), L, NB))
+
+    assert ell.scene() is None
+    assert [it for it in w._scene.items() if isinstance(it, (_EllipseItem, _PolygonItem))] == []
+
+
+def test_ellipse_deletion_undo_restores_original_ellipse_intact():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    ell = _EllipseItem(QRectF(0, 0, 300, 200))
+    w._scene.addItem(ell)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(150, 0), NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(150, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(150, 0), L, NB))
+    assert ell.scene() is None
+
+    w.undo()
+    assert ell.scene() is w._scene
+    assert getattr(ell, "_cuts", None) in (None, [])
+
+
+def test_legacy_ecad_ellipse_whole_loop_cut_migrates_to_deletion_on_open():
+    w0 = CanvasWindow(); w0.grid_enabled = False
+    ell = _EllipseItem(QRectF(0, 0, 300, 200))
+    w0._scene.addItem(ell)
+    ell._cuts = [(-1, 0.0, 1.0)]   # 재설계 이전 파일의 "원 전체 트림" 저장 형태
+    path = os.path.join(_TMP, "legacy_ellipse_cuts.ecad")
+    save_document(w0._scene, path)
+
+    w1 = CanvasWindow(); w1.grid_enabled = False
+    w1._do_open_ecad(path)
+
+    assert [it for it in w1._scene.items()
+            if isinstance(it, (_EllipseItem, _PolygonItem))] == []
     assert not w1._undo and not w1._redo

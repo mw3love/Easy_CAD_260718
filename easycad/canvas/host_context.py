@@ -394,7 +394,8 @@ class _ContextMixin:
 
 
     def finalize_closed_trim(self, hosts: dict, undo_key=None):
-        """[TRIM 파괴적 재설계 1단계, 2026-08-30] TRIM 제스처(클릭 1회 또는 펜스 드래그)가
+        """[TRIM 파괴적 재설계 1~2단계, 2026-08-30 — RectItem/EllipseItem 공용] TRIM 제스처
+        (클릭 1회 또는 펜스 드래그)가
         끝나는 순간 `core_view._mouse_release_impl`이 호출 — 이번 제스처에서 새로 절단을
         받은 닫힌 도형들(`hosts`: {host: 제스처 시작 전 `_cuts` 스냅샷})을 실제로 확정한다.
         전체 테두리가 사라지면(빈 조각 리스트) 아이템 자체를 delete, 일부만 남으면
