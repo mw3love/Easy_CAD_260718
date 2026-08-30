@@ -1508,16 +1508,20 @@ class _AnnotatorView(QGraphicsView):
                 and it not in skip]
 
     def _trim_candidates_near(self, scene_pt: QPointF, margin: float):
-        """[§8 항목17 5단계, 2026-08-28 다각형 도구 추가] TRIM 도구 전용 후보 — 닫힌 도형
-        (_RectItem/_EllipseItem/_SymbolItem/닫힌 다각형) + 열린 도형(_LineItem/_PolyArrowItem/
-        열린 폴리라인, 계획서 스코프 확정: 곡선 `_ArrowItem`·DXF `_PathItem`은 제외). 기존
-        `_conn_shapes_near`(포트·호버 공용)를 그대로 넓히지 않고 TRIM 전용 함수를 새로 둔다 —
-        그쪽 호출부 다수가 "닫힌 도형만"을 전제하고 있어 범위를 넓히면 영향이 번진다
-        (surgical 원칙)."""
+        """[§8 항목17 5단계, 2026-08-28 다각형 도구 추가, 2026-08-30 _PathItem 추가] TRIM
+        도구 전용 후보 — 닫힌 도형(_RectItem/_EllipseItem/_SymbolItem/닫힌 다각형) + 열린
+        도형(_LineItem/_PolyArrowItem/열린 다각형/열린 `_PathItem`, 곡선 `_ArrowItem`은
+        여전히 제외). `_PathItem`은 원래 계획서에서 범위 밖이었으나 실사용 재현(SVG 다중
+        조각 그림의 낱개 펜/곡선 조각이 트림 후보에 아예 안 잡힘)으로 추가 — 대상(TRIM될
+        도형)으로만 추가하고 커터 역할은 여전히 제외(`_trim_candidate_segment`/`_trim_
+        candidate_open_segment`가 `isinstance(other, _PathItem)`으로 커터 후보에서 계속
+        건너뜀, 무변경). 기존 `_conn_shapes_near`(포트·호버 공용)를 그대로 넓히지 않고
+        TRIM 전용 함수를 새로 둔다 — 그쪽 호출부 다수가 "닫힌 도형만"을 전제하고 있어
+        범위를 넓히면 영향이 번진다(surgical 원칙)."""
         rect = QRectF(scene_pt.x() - margin, scene_pt.y() - margin, margin * 2, margin * 2)
         return [it for it in self.scene().items(rect)
                 if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _LineItem,
-                                    _PolyArrowItem, _PolygonItem))]
+                                    _PolyArrowItem, _PolygonItem, _PathItem))]
 
     def _trim_preview_at(self, view_pos, extend=False):
         """[§8 항목17 4~5단계] TRIM(및 Shift=EXTEND) 도구 호버 — 커서 근처 도형에서 자를(또는
@@ -1579,6 +1583,13 @@ class _AnnotatorView(QGraphicsView):
             if _is_closed_trim_shape(cand):
                 hit = _nearest_border_visible(cand, scene_pt)
                 pt = hit[0] if hit is not None else None
+            elif isinstance(cand, _PathItem):
+                # [실사용 확장, 2026-08-30] `_conn_polyline_scene`은 커넥터 스냅 전용이라
+                # `_PathItem`을 아직 지원 안 함(그쪽까지 넓히면 무관한 기능인 화살표
+                # 커넥터 스냅에도 영향이 번진다 — surgical 원칙) — TRIM 자체가 이미 쓰는
+                # `_open_item_local_pts`(2026-08-30에 `_PathItem` 지원 추가)를 그대로 재사용.
+                pts = [cand.mapToScene(p) for p in _open_item_local_pts(cand)]
+                pt, _n = _nearest_on_polyline(pts, scene_pt) if len(pts) >= 2 else (None, None)
             else:
                 pt, _n = _nearest_on_polyline(_conn_polyline_scene(cand), scene_pt)
             if pt is None:
@@ -1607,7 +1618,7 @@ class _AnnotatorView(QGraphicsView):
         rect = QRectF(p0, p1).normalized().adjusted(-margin, -margin, margin, margin)
         candidates = [it for it in self.scene().items(rect)
                       if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem,
-                                          _LineItem, _PolyArrowItem, _PolygonItem))]
+                                          _LineItem, _PolyArrowItem, _PolygonItem, _PathItem))]
         out = []
         for host in candidates:
             # [실사용 재현] 닫힌 도형(포트로 흔히 쓰는 작은 사각형 등)은 이 구간의 시작·끝점이

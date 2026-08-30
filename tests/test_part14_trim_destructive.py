@@ -865,3 +865,75 @@ def test_ungrouped_standalone_line_still_protected_from_full_erase():
     view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(50, 0), L, L))
     view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(50, 0), L, NB))
     assert line.scene() is w._scene   # 그대로 유지
+
+
+# ---------------------------------------------------------------------------
+# 실사용 재현 버그 5 후속(2026-08-30, 같은 날 후속) — `_PathItem`(펜 궤적·DXF 베지어
+# 폴백·SVG 곡선 공용)은 §8 항목17 원안에서 TRIM 범위 밖으로 확정됐었으나, 고양이 SVG의
+# "펜" 조각이 이 클래스로 매핑돼 위 그룹 완화와 짝을 맞추지 못하면 여전히 안 지워진다는
+# 사용자 확인 후 추가. 커터 역할은 여전히 제외 — TRIM 대상(host)으로만 확장.
+# ---------------------------------------------------------------------------
+
+def _mk_path_item(w, pts, group_id=None):
+    path = QPainterPath()
+    path.moveTo(pts[0])
+    for pt in pts[1:]:
+        path.lineTo(pt)
+    it = _PathItem(path)
+    if group_id is not None:
+        it._group_id = group_id
+    w._scene.addItem(it)
+    return it
+
+
+def test_grouped_single_segment_path_item_erases_without_cutter():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    p = _mk_path_item(w, [QPointF(0, 0), QPointF(100, 0)], group_id="cat_group")
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(50, 0), NB, NB))
+    assert view._trim_preview is not None and view._trim_preview[0] == "open"
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(50, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(50, 0), L, NB))
+
+    assert p.scene() is None
+    w.undo()
+    assert p.scene() is w._scene
+
+
+def test_ungrouped_path_item_still_protected_from_full_erase():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    p = _mk_path_item(w, [QPointF(0, 0), QPointF(100, 0)])   # group_id 없음
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(50, 0), NB, NB))
+    assert view._trim_preview is None
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(50, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(50, 0), L, NB))
+    assert p.scene() is w._scene
+
+
+def test_multi_segment_path_item_natural_boundary_shortens_not_fully_erases():
+    """세그먼트가 여럿인 펜 궤적은 그룹 완화가 있어도 클릭한 세그먼트 하나만 지워지고
+    나머지는 남는다(전체 소실은 아니다) — 자유단 보호 완화는 "완전 소실 허용" 게이트일
+    뿐, 다중 세그먼트를 한꺼번에 지우는 것과는 별개."""
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    p = _mk_path_item(w, [QPointF(0, 0), QPointF(50, 20), QPointF(100, 0)], group_id="cat_group")
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(25, 10), NB, NB))
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(25, 10), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(25, 10), L, NB))
+
+    assert p.scene() is w._scene   # 완전 소실 아님 — 일부만 잘림
+    remaining = p.path().toSubpathPolygons()[0]
+    assert remaining.count() == 2   # 첫 세그먼트만 잘려나가고 나머지 한 변만 남음

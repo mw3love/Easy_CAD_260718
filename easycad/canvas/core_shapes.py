@@ -6652,10 +6652,20 @@ def _tight_scene_bbox(item) -> QRectF | None:
 
 
 def _open_item_local_pts(item) -> list:
-    """[§8 항목17 5단계, 2026-08-28 다각형 도구 추가] 열린 도형(_LineItem/_PolyArrowItem/
-    열린 _PolygonItem)의 로컬좌표 정점열 — TRIM/EXTEND가 도형 종류 무관하게 세그먼트 체인으로
-    다루는 공통 인터페이스(`_conn_polyline_scene`의 로컬판, 그쪽은 스냅용 씬좌표라 별도 유지).
-    그 외 타입은 빈 리스트(커터로 기여 없음)."""
+    """[§8 항목17 5단계, 2026-08-28 다각형 도구 추가, 2026-08-30 _PathItem 추가] 열린 도형
+    (_LineItem/_PolyArrowItem/열린 _PolygonItem/열린 _PathItem)의 로컬좌표 정점열 —
+    TRIM/EXTEND가 도형 종류 무관하게 세그먼트 체인으로 다루는 공통 인터페이스
+    (`_conn_polyline_scene`의 로컬판, 그쪽은 스냅용 씬좌표라 별도 유지). 그 외 타입은
+    빈 리스트(커터로 기여 없음).
+
+    `_PathItem`(펜 궤적·DXF 베지어 폴백·SVG 곡선 공용)은 원래 §8 항목17 계획서에서 TRIM
+    범위 밖으로 확정됐었지만(곡선을 점 목록으로 평탄화해야 하는 새 작업이라), 실사용
+    재현으로 재검토 후 추가 — SVG로 들여온 다중 조각 그림의 낱개 조각이 이 클래스로
+    매핑되는 경우가 많아, 그룹 소속 완화(`_trim_allows_full_erase`)와 짝을 맞춰야
+    "그림 부품 전체가 커터 없이도 지워진다"는 기대가 실제로 충족된다. `toSubpathPolygons()`
+    의 **첫 서브패스만** 쓴다(대부분 펜 스트로크·SVG 패스 조각은 단일 연속 궤적 — 다중
+    서브패스는 Not-tested로 남김). 서브패스가 닫혀 있으면(시작=끝) 열린-도형 TRIM 대상이
+    아니므로 빈 리스트(닫힌 펜 낙서를 자르는 것은 이번 스코프 밖)."""
     if isinstance(item, _LineItem):
         ln = item.line()
         return [ln.p1(), ln.p2()]
@@ -6663,6 +6673,15 @@ def _open_item_local_pts(item) -> list:
         return list(item._pts)
     if isinstance(item, _PolygonItem) and not item._closed:
         return item.local_pts()
+    if isinstance(item, _PathItem):
+        polys = item.path().toSubpathPolygons()
+        if not polys:
+            return []
+        sub = polys[0]
+        pts = [sub.at(i) for i in range(sub.count())]
+        if len(pts) < 2 or _close_pt(pts[0], pts[-1]):
+            return []
+        return pts
     return []
 
 
@@ -7493,6 +7512,7 @@ def apply_open_item_trim(host, lo: tuple, hi: tuple):
         return _TRIM_ERASED
     is_poly = isinstance(host, _PolyArrowItem)
     is_polygon = isinstance(host, _PolygonItem)   # [2026-08-28 다각형 도구 TRIM 연동] 열린 폴리라인
+    is_path = isinstance(host, _PathItem)   # [실사용 확장, 2026-08-30] 펜 궤적·SVG 곡선
     trim_derived = _trim_allows_full_erase(host)
 
     def geom_for(new_pts):
@@ -7500,6 +7520,15 @@ def apply_open_item_trim(host, lo: tuple, hi: tuple):
             return (new_pts, False, [], host._routing, host._curve_r)
         if is_polygon:
             return (new_pts, False)   # 분리된 조각은 항상 열린 상태로 남는다
+        if is_path:
+            # [실사용 확장, 2026-08-30] 잘린 뒤엔 원래 곡선(베지어) 대신 남은 평탄화 점들을
+            # 잇는 꺾은선으로 근사한다 — 원/타원/심볼 트림에서 이미 받아들인 것과 같은
+            # 폴리곤 근사 트레이드오프(정확한 곡선 재구성보다 코드 단순화 우선).
+            p = QPainterPath()
+            p.moveTo(new_pts[0])
+            for pt in new_pts[1:]:
+                p.lineTo(pt)
+            return p
         return QLineF(new_pts[0], new_pts[-1])
 
     clone = None
