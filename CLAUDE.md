@@ -1640,7 +1640,18 @@ symbol_library/
   segment`·`apply_open_item_trim` 세 지점에 적용(`_trim_derived` 조각·`_LineItem`/
   `_PolyArrowItem`은 무변경). 신규 pytest 3종+기존 3종 갱신, 실제 창에서 사용자와
   같은 체크마크 모양 펜(그룹 없음)으로 재현·해소 확인, 스위트 1089종 통과. 상세:
-  `docs/history/2026-08.md` "TRIM 근본 재설계 후속 11".
+  `docs/history/2026-08.md` "TRIM 근본 재설계 후속 11". **같은 날 열두 번째 후속** —
+  같은 코 증상을 다른 고양이에서 재보고하며 사용자가 실제 파일(`123.ecad`) 제공,
+  추측 대신 직접 로드해 진단. 원인은 별개: 오른쪽 고양이 코+입이 **서브패스 3개짜리
+  하나의 `_PathItem`**으로 합쳐져 있어 "다중 서브패스는 통째로 트림 제외"(후속 7,
+  "펜이 끊김" 방지) 안전장치에 걸린 것 — 이 정책을 "커터 없으면 오브젝트 전체
+  삭제"로 확장하면 부분절단의 데이터파괴 위험 자체가 없어짐을 확인 후 AskUserQuestion
+  으로 확정. 신규 `_multi_subpath_path_item_nearest_scene`(서브패스별 독립 최근접점) +
+  새 preview 태그 `erase_whole`(`_trim_preview_at`/`_try_commit_trim`/`_draw_trim_
+  preview` 3곳에 배선, `scene.removeItem()`만으로 끝나 `setPath()` 안 거침). 사용자의
+  실제 파일로 수정 전(`candidate: None`)/후(`erase_whole`→삭제→undo 복원) 직접 대조 +
+  실제 창에서 같은 파일로 호버·클릭·복원 확인, 스위트 1089종 통과(이름변경만, 순증
+  없음). 상세: `docs/history/2026-08.md` "TRIM 근본 재설계 후속 12".
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
