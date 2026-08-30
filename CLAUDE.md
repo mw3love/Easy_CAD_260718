@@ -1571,7 +1571,15 @@ symbol_library/
   closed_trim`이 그 서브패스의 hard-vertex 정보를 rect 기준 분수좌표로 새 조각에
   물려준다(`_curve_hard_norm`, 리사이즈에도 안 깨짐). 실제 창 스크린샷으로 두 번째
   절단도 한 번에 전부 삭제되는 것 확인, 스위트 1074종 통과. 상세:
-  `docs/history/2026-08.md` "TRIM 근본 재설계 후속 4".
+  `docs/history/2026-08.md` "TRIM 근본 재설계 후속 4". **같은 날 다섯·여섯 번째 후속** —
+  SVG로 들여온 다중 조각 그림(고양이)의 낱개 선/펜 조각이 안 지워지는 문제. ⓐ 그룹
+  소속 항목은 자유단 보호(독립된 선 통째 소실 방지)를 우회하도록
+  `_trim_allows_full_erase(host)`(`_trim_derived` 또는 `_group_id`) 신설, 그룹 밖 진짜
+  독립 선은 보호 유지. ⓑ `_PathItem`(펜·SVG 곡선)은 §8 항목17 원안에서 명시 제외됐던
+  것을 사용자 확인 후 TRIM 대상으로 새로 추가(`_open_item_local_pts`/`apply_open_item_
+  trim`에 분기 추가, 커터 역할은 여전히 제외). 실제 창에서 그룹 소속 Line+Path 둘 다
+  커터 없이 지워지는 것 확인, 스위트 1079종 통과. 상세: `docs/history/2026-08.md`
+  "TRIM 근본 재설계 후속 5"·"후속 6".
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
