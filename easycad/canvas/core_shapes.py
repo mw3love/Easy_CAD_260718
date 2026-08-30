@@ -7328,6 +7328,18 @@ def _open_item_bracket_points(pts: list, lo: tuple, hi: tuple):
     return pt_at(lo), pt_at(hi)
 
 
+def _trim_allows_full_erase(host) -> bool:
+    """[실사용 확장, 2026-08-30] 열린 도형 TRIM의 "자유단 보호"(2026-08-28, 독립된 선을
+    한 번에 통째로 지우는 사고 방지)를 우회해도 되는 host인지 — ⓐ `_trim_derived`(닫힌
+    도형에서 막 잘려나온 조각) ⓑ **그룹에 속한 항목**(`_group_id` 있음). SVG로 들여온
+    다중 조각 그림(예: 여러 `_LineItem`/`_PathItem`으로 이뤄진 고양이 그림)의 낱개
+    조각들은 사용자 심상모델상 "독립된 선 하나"가 아니라 "더 큰 그림의 부품"이라, 실수로
+    전체가 사라질 위험보다 개별 조각을 못 지우는 답답함이 더 크다는 사용자 판단(실사용
+    재현: 그룹을 풀어보니 부품이 선·펜으로 구성돼 있어 아무것도 안 지워졌다). 그룹 밖의
+    진짜 독립된 낱개 선(사용자가 Line 도구로 직접 그린 것)은 여전히 보호 대상 그대로다."""
+    return bool(getattr(host, "_trim_derived", False) or getattr(host, "_group_id", None))
+
+
 def _trim_candidate_open_segment(host, scene_pt, other_shapes):
     """[§8 항목17 5단계] TRIM(문지르기)이 **열린 도형**(host: _LineItem/_PolyArrowItem) 위에서
     호출하는 버전 — `_trim_candidate_segment`(닫힌 도형, 변 하나 안에서만 자름)와 달리 host
@@ -7368,11 +7380,12 @@ def _trim_candidate_open_segment(host, scene_pt, other_shapes):
             best_seg, best_t, best_d = i, tc, d
     if best_seg is None:
         return None
-    if getattr(host, "_trim_derived", False):
-        # [TRIM 파괴적 재설계 실사용 버그 2건, 2026-08-30] `_trim_derived`(닫힌 도형에서
-        # 방금 막 잘려나온 열린 조각)는 아래 "여러 세그먼트를 꼭짓점째로 지운다"는 일반
-        # 열린 폴리라인 규칙을 물려받지 않는다 — 사용자 심상모델이 "예전 사각형의 변
-        # 하나하나"이지 "자유롭게 그린 폴리라인"이 아니기 때문이다. 실사용 재현 2건:
+    if _trim_allows_full_erase(host):
+        # [TRIM 파괴적 재설계 실사용 버그 2건 + 그룹 확장, 2026-08-30] `_trim_derived`
+        # (닫힌 도형에서 방금 막 잘려나온 열린 조각) 또는 그룹에 속한 항목은 아래 "여러
+        # 세그먼트를 꼭짓점째로 지운다"는 일반 열린 폴리라인 규칙을 물려받지 않는다 —
+        # 사용자 심상모델이 "예전 사각형의 변 하나하나"·"더 큰 그림의 부품"이지 "자유롭게
+        # 그린 폴리라인"이 아니기 때문이다. 실사용 재현 2건:
         # ① 자유단에 닿은 변은 cutter 없이는 영원히 못 지워짐(마지막 마킹 이후 아래
         # marks 로직 자체가 그런 변을 배제) ② 근처에 다른 도형(cutter 역할)이 딱 하나만
         # 있으면 그 cutter가 걸린 세그먼트까지 가는 동안의 **모든** 중간 변(꼭짓점 여러
@@ -7472,7 +7485,7 @@ def apply_open_item_trim(host, lo: tuple, hi: tuple):
     has_before = len(before_pts) >= 2
     has_after = len(after_pts) >= 2
     if not has_before and not has_after:
-        if not getattr(host, "_trim_derived", False):
+        if not _trim_allows_full_erase(host):
             return None   # 기존 동작 그대로 — 독립된 선의 완전 소실은 여전히 막는다
         scene = host.scene()
         if scene is not None:
@@ -7480,7 +7493,7 @@ def apply_open_item_trim(host, lo: tuple, hi: tuple):
         return _TRIM_ERASED
     is_poly = isinstance(host, _PolyArrowItem)
     is_polygon = isinstance(host, _PolygonItem)   # [2026-08-28 다각형 도구 TRIM 연동] 열린 폴리라인
-    trim_derived = getattr(host, "_trim_derived", False)
+    trim_derived = _trim_allows_full_erase(host)
 
     def geom_for(new_pts):
         if is_poly:

@@ -821,3 +821,47 @@ def test_natural_boundary_never_spans_past_a_corner_even_with_nearby_cutter():
     view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(100, 0), L, NB))
     assert poly.scene() is w._scene   # 통째로 사라지지 않고 살아있어야 함
     assert len(poly.local_pts()) == before_pts - 1   # 변 하나(꼭짓점 1개)만 줄어듦
+
+
+# ---------------------------------------------------------------------------
+# 실사용 재현 버그 5(2026-08-30, 같은 날 후속) — SVG로 들여온 다중 조각 그림(고양이)의
+# 낱개 선 조각들이 커터 없이는 하나도 안 지워짐. 원인: 자유단 보호(2026-08-28)가 그룹에
+# 속한 조각에도 그대로 적용됨 — "독립된 선 하나"가 아니라 "더 큰 그림의 부품"이라는
+# 사용자 판단으로 그룹 소속 항목은 이 보호를 우회하도록 확장(`_trim_allows_full_erase`).
+# 그룹 밖의 진짜 독립된 낱개 선은 여전히 보호 대상 그대로 유지.
+# ---------------------------------------------------------------------------
+
+def test_grouped_standalone_line_erases_without_cutter():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    line = _LineItem(QLineF(0, 0, 100, 0))
+    line._group_id = "cat_group"
+    w._scene.addItem(line)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(50, 0), NB, NB))
+    assert view._trim_preview is not None and view._trim_preview[0] == "open"
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(50, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(50, 0), L, NB))
+
+    assert line.scene() is None
+    w.undo()
+    assert line.scene() is w._scene   # undo로 완전 복원
+
+
+def test_ungrouped_standalone_line_still_protected_from_full_erase():
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    w = CanvasWindow(); w.grid_enabled = False
+    line = _LineItem(QLineF(0, 0, 100, 0))   # group_id 없음 — 진짜 독립된 선
+    w._scene.addItem(line)
+    w._scene.clearSelection()
+    w.set_tool("trim")
+    view = w._view
+
+    view.mouseMoveEvent(_ev(view, QEvent.Type.MouseMove, QPointF(50, 0), NB, NB))
+    assert view._trim_preview is None   # 커터 없이는 후보 자체가 안 잡힘(기존 보호 유지)
+    view.mousePressEvent(_ev(view, QEvent.Type.MouseButtonPress, QPointF(50, 0), L, L))
+    view.mouseReleaseEvent(_ev(view, QEvent.Type.MouseButtonRelease, QPointF(50, 0), L, NB))
+    assert line.scene() is w._scene   # 그대로 유지
