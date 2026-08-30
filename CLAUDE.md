@@ -1523,6 +1523,25 @@ symbol_library/
   파일 `.claude/handoff/pending/` 참조 — 잘린 도형의 정체성·`.ecad` 하위호환·undo 복원·
   포트 gap 처리 4개 쟁점이 열려 있음). 상세: `docs/history/2026-08.md` "TRIM 자연 경계
   확장"·"서브패스 이음매 변 제거", 함정은 `docs/pitfalls.md` "렌더링" 절 끝부분.
+- **TRIM 근본 재설계 1~4단계 전부 완료 — §8 항목17 이후 남았던 "편법" 문제 해소
+  (2026-08-30, 인계 파일 deep-interview로 시작)** — deep-interview로 4개 쟁점 확정:
+  잘린 도형은 전부 `_PolygonItem`(열림)으로 통일 변환(곡선은 꺾은선 근사, 심볼은 첫
+  절단 시 프로시저럴 경로를 구워서 점목록화), 테두리 전체 소실은 아이템 자체를 delete,
+  포트는 비파괴 유지, undo는 새 primitive 없이 기존 '종류 바꾸기'(`_swap_shape`)
+  remove+create 패턴 재사용, `.ecad`는 열 때 즉시 마이그레이션. RectItem→EllipseItem→
+  닫힌PolygonItem→SymbolItem 단계별 구현·검증·커밋. 가장 까다로웠던 4단계(심볼)는
+  다중 서브패스(저장소=원기둥: 윗면 타원+몸통) — 기존 `_closed_shape_trim_fragments`가
+  변목록을 "하나의 순환 루프"로 가정해 그대로 먹이면 안 잘린 서브패스까지 열린 조각으로
+  오판될 뻔한 것을, `_host_outline_edges`를 서브패스별 공용 제너레이터로 리팩터해
+  서브패스마다 독립 판정(`_destructive_trim_result`)하도록 해결(결과 조각이 여럿이면
+  그룹 프레임과 같은 `_group_id`로 묶음). 신규 pytest 29종(`tests/test_part14_trim_
+  destructive.py`) + 전체 스위트 1065종 통과, 매 단계 실제 창(오프스크린 아님)
+  스크린샷으로 확인(사각형 U자 렌더+유령선택 해소, 삼각형 V자 렌더, 저장소 몸통만
+  잘리고 윗면 타원은 그대로 닫힌 채 렌더). §8 항목17이 남겨뒀던 "안 보이게만 처리하는
+  편법" 문제가 이걸로 완전히 해소됨. Not-tested: TRIM+포트 동시 사용 시 포트 위치 보존
+  (스냅 재계산 없음), 곡선(폴리곤 근사) 서브패스 한 펜스 드래그로 완전 소실 보장. 상세:
+  `docs/history/2026-08.md` "TRIM 근본 재설계 1~4단계", 함정은 `docs/pitfalls.md`
+  "히트테스트·법선" 절 끝부분.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md
