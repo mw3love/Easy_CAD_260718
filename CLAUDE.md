@@ -1734,6 +1734,19 @@ symbol_library/
   작동) — sentry.io 가입 후 채우면 켜짐. 신규 pytest 6종, 전체 스위트 1097종 통과.
   상세: `docs/history/2026-08.md` "크래시 리포트 시스템 도입", 함정:
   `docs/pitfalls.md` "Qt 시그널·이벤트 발화 조건" 절 끝부분.
+- **다각형(`_PolygonItem`) DXF 내보내기 완전 누락 수정(2026-08-31, 같은 날 후속)** —
+  사용자가 실제 파일(고양이 심볼 포함 `.ecad`)을 DXF로 내보내 AutoCAD에서 열어보니 왼쪽
+  고양이 귀가 사라져 있다고 제보. 원인은 `_PolygonItem`(§8 항목21)이 `_RectItem`을
+  상속하지 않는 독립 클래스라 `dxf_export.py`의 isinstance dispatch 체인 어디에도 안
+  걸려 예외 없이 통째로 드롭되던 것 — v1 설계문서가 "DXF는 후속으로 미룸"으로 명시한
+  뒤 TRIM 연동까지 끝나도록 한 번도 다시 안 다뤄졌고, 당시 회귀 테스트도 "조용히
+  스킵됨"을 정상으로 assert해 두고 있었다. `_export_polygon` 신설(닫힌 다각형은 rect/
+  ellipse/symbol과 같은 관례로 `_cuts` 있으면 진짜 분절 렌더, 없으면 `add_lwpolyline`)
+  + dispatch 분기 추가. 사용자의 실제 파일로 재현(수정 전 `EC_POLYGON` 엔티티 0개 →
+  수정 후 5개 정상 export) + ezdxf 래스터 렌더로 귀·코 삼각형 복원 육안 확인, 기존
+  "스킵 확인" 테스트를 실제 왕복 검증으로 교체, 전체 스위트 1098종 통과. 상세:
+  `docs/history/2026-08.md` "다각형 DXF 내보내기 완전 누락 수정", 함정:
+  `docs/pitfalls.md` "하위호환·직렬화" 절.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

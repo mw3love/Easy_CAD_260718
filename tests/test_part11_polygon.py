@@ -230,12 +230,37 @@ def test_polygon_duplicate_selection_clones_geometry():
         assert _close(QPointF(o.x() + 20, o.y() + 20), d)
 
 
-def test_polygon_dxf_export_skips_without_crash():
-    # [§8 항목21 v1 스코프] DXF 내보내기는 미구현 — 크래시 없이 조용히 건너뛰기만 확인.
+def test_polygon_dxf_export_closed_writes_closed_lwpolyline():
+    # [실사용 버그, 2026-08-31] `_PolygonItem`이 `_RectItem`을 상속하지 않아 dxf_export.py의
+    # isinstance 분기 어디에도 안 걸려 통째로 드롭되고 있었다(고양이 심볼의 귀·코 삼각형이
+    # EasyCAD엔 있는데 DXF엔 없던 원인). v1 설계문서가 "후속으로 미룸"으로 명시한 뒤 실제로
+    # 한 번도 뒤이어지지 않은 것 — 아래는 그 후속 구현의 회귀가드.
+    import ezdxf
     w = CanvasWindow(); w.show(); w.set_tool("polygon"); w._zoom_reset()
     _mk_triangle(w)
-    path = os.path.join(_TMP, "polygon_skip.dxf")
+    path = os.path.join(_TMP, "polygon_closed.dxf")
     assert export_dxf(w._scene, path) is True
+    doc = ezdxf.readfile(path)
+    polys = [e for e in doc.modelspace() if e.dxftype() == "LWPOLYLINE" and e.dxf.layer == "EC_POLYGON"]
+    assert len(polys) == 1
+    e = polys[0]
+    assert e.closed is True
+    pts = [(round(x), round(y)) for x, y, *_ in e.get_points()]
+    assert pts == [(0, 0), (200, 0), (100, -150)], pts   # DXF는 Y축 뒤집힘(화면 Y-down → CAD Y-up)
+
+
+def test_polygon_dxf_export_open_writes_open_lwpolyline():
+    import ezdxf
+    w = CanvasWindow(); w.show(); w.set_tool("polygon"); w._zoom_reset()
+    view = w._view
+    press, release, click, move, drag_move, dbl = _draw_helpers(view)
+    click(QPointF(0, 0)); click(QPointF(100, 0)); move(QPointF(80, 100)); dbl(QPointF(80, 100))
+    path = os.path.join(_TMP, "polygon_open.dxf")
+    assert export_dxf(w._scene, path) is True
+    doc = ezdxf.readfile(path)
+    polys = [e for e in doc.modelspace() if e.dxftype() == "LWPOLYLINE" and e.dxf.layer == "EC_POLYGON"]
+    assert len(polys) == 1
+    assert polys[0].closed is False
 
 
 def test_polygon_vertex_snaps_to_other_shape_border():

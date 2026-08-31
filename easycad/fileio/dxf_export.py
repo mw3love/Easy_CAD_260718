@@ -13,6 +13,7 @@
     text/라벨 → MTEXT
     badge    → CIRCLE + MTEXT
     symbol   → LWPOLYLINE(들) — 곡선 kind는 폴리라인 평탄화
+    polygon  → LWPOLYLINE(닫힘/열림, §8 항목21) — 2026-08-31까지 분기 누락으로 통째로 드롭됨
 
 공통:
     좌표 — 각 아이템의 로컬 기하를 mapToScene로 월드화(회전·스케일 흡수) 후
@@ -27,7 +28,7 @@ from PyQt6.QtWidgets import QGraphicsTextItem
 
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
-    _PolyArrowItem, _SymbolItem, build_trimmed_border_path,
+    _PolyArrowItem, _SymbolItem, _PolygonItem, build_trimmed_border_path,
 )
 
 # 타입 → DXF 레이어. AutoCAD에서 켜고/끄기·색 일괄관리가 쉽도록 분리.
@@ -35,7 +36,7 @@ _LAYERS = {
     "rect": "EC_RECT", "ellipse": "EC_ELLIPSE", "line": "EC_LINE",
     "arrow": "EC_ARROW", "sarrow": "EC_SARROW", "path": "EC_PATH",
     "text": "EC_TEXT", "badge": "EC_BADGE", "symbol": "EC_SYMBOL",
-    "label": "EC_LABEL",
+    "label": "EC_LABEL", "polygon": "EC_POLYGON",
 }
 
 
@@ -181,6 +182,22 @@ def _export_rect(msp, it):
     _wx(msp.add_lwpolyline(pts, close=True, dxfattribs=attrs), it.pen().widthF())
 
 
+def _export_polygon(msp, it):
+    """[§8 항목21 다각형/폴리라인 도구 — DXF 내보내기 누락 수정] v1 설계문서가 "후속으로
+    미룸"으로 명시한 뒤 한 번도 뒤이어지지 않아, 이 클래스가 `_RectItem`을 상속하지 않는
+    별도 클래스라 기존 isinstance 분기 어디에도 걸리지 않고 통째로 드롭되고 있었다(실사용
+    재현: 고양이 심볼의 귀·코 삼각형이 EasyCAD엔 있는데 DXF엔 없음). 닫힌 다각형이면
+    rect/symbol과 같은 관례로 `_cuts`(TRIM) 여부를 확인."""
+    attrs = _with_linetype(_attrs(_LAYERS["polygon"], it.pen().color()), it.pen().style())
+    if it._closed and getattr(it, "_cuts", None):
+        _export_trimmed_border(msp, it, attrs)
+        return
+    pts = [_w(it, p.x(), p.y()) for p in it.local_pts()]
+    if len(pts) < 2:
+        return
+    _wx(msp.add_lwpolyline(pts, close=it._closed, dxfattribs=attrs), it.pen().widthF())
+
+
 def _export_ellipse(msp, it):
     r = it.rect()
     attrs = _with_linetype(_attrs(_LAYERS["ellipse"], it.pen().color()), it.pen().style())
@@ -317,6 +334,8 @@ def _build_dxf_doc(scene):
                 _export_rect(msp, it)
             elif isinstance(it, _EllipseItem):
                 _export_ellipse(msp, it)
+            elif isinstance(it, _PolygonItem):
+                _export_polygon(msp, it)
             elif isinstance(it, _ArrowItem):
                 _export_arrow(msp, it)
             elif isinstance(it, _PolyArrowItem):
