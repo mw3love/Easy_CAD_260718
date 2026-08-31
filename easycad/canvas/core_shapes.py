@@ -8431,13 +8431,29 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
     # 첫 구간 길이가 0에 가까워져 법선 방향 이탈 없이 곧장 자기 도형 변을 타는 것처럼 보였다.
     # A* 우회(_candidates)가 이미 쓰던 _normal_stub(own-rect 팽창분까지 escape)을 base 계산
     # 자체로 옮겨, 항상 '자기 도형 밖으로 스텁 → 그 다음 엘보'가 되도록 통일한다.
+    own_s = conn_seq[0] if len(conn_seq) > 0 else None
+    own_e = conn_seq[1] if len(conn_seq) > 1 else None
+    # [실사용 버그 수정 2026-08-31 후속] 부착 도형 둘 다 같은 축(H-H 또는 V-V)의 마주보는
+    # 접속점으로 이어지는데 실제 간격이 conn_clear*2보다 좁으면, 양쪽 스텁이 서로의 escape
+    # 방향으로 상대를 지나쳐 밀려나 `_ortho_elbow`의 my/mx 평균이 원래 진행 방향을 거슬러
+    # '되돌아오는' 하이핀 모양을 만든다(위 `_dedup_pts` 수정으로 그동안 가려져 있던 이
+    # 도형이 드러남 — 실사용 재현: 좁게 배치된 두 도형을 마주보는 포트로 이으면 진입 직전
+    # 선이 180도 가까이 꺾여 돌아온다). 두 스텁의 escape 거리를 실제 간격의 절반으로 상한
+    # 지어 겹침 자체를 막는다 — 간격이 충분하면(≥ conn_clear*2) `min`이 항상 conn_clear를
+    # 골라 기존과 완전히 동일(무회귀).
+    own_push = conn_clear
+    if own_s is not None and own_e is not None and ns is not None and ne is not None:
+        ns_h = abs(ns.x()) >= abs(ns.y())
+        ne_h = abs(ne.x()) >= abs(ne.y())
+        if ns_h == ne_h:
+            gap = abs(e.x() - s.x()) if ns_h else abs(e.y() - s.y())
+            own_push = min(conn_clear, gap / 2.0)
+
     def _own_stub(p, n, rect):
         if rect is None:
             return _normal_stub(p, n, clearance)
-        infl_rect = rect.adjusted(-conn_clear, -conn_clear, conn_clear, conn_clear)
-        return _normal_stub(p, n, conn_clear, infl_rect)
-    own_s = conn_seq[0] if len(conn_seq) > 0 else None
-    own_e = conn_seq[1] if len(conn_seq) > 1 else None
+        infl_rect = rect.adjusted(-own_push, -own_push, own_push, own_push)
+        return _normal_stub(p, n, own_push, infl_rect)
     s_stub = _own_stub(s, ns, own_s)
     e_stub = _own_stub(e, ne, own_e)
     elbow_mid = _ortho_elbow(s_stub, e_stub, ns, ne)
