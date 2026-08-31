@@ -243,6 +243,7 @@ class _FileIOMixin:
             return import_dxf(self._scene, path)
         finally:
             QApplication.restoreOverrideCursor()
+            self.statusBar().showMessage("")
 
 
     @staticmethod
@@ -408,7 +409,7 @@ class _FileIOMixin:
         # 이 파일을 조용히 덮어쓰면 안 됨) 탭 제목에는 파일명을 보여준다.
         self._external_path = path
         self._update_tab_title()
-        QMessageBox.information(self, "DXF로 저장", f"저장 완료:\n{path}")
+        self.statusBar().showMessage(f"DXF 저장 완료: {path}", 5000)
 
 
     def _do_export_dwg(self, path: str):
@@ -435,7 +436,7 @@ class _FileIOMixin:
         # [실사용 피드백 2026-08-26] DXF 저장과 동일 — doc_path는 비워두고 탭 제목만 갱신.
         self._external_path = path
         self._update_tab_title()
-        QMessageBox.information(self, "DWG로 저장", f"저장 완료:\n{path}")
+        self.statusBar().showMessage(f"DWG 저장 완료: {path}", 5000)
 
 
     def _export_dwg_waited(self, path: str):
@@ -448,6 +449,7 @@ class _FileIOMixin:
             export_dwg(self._scene, path)
         finally:
             QApplication.restoreOverrideCursor()
+            self.statusBar().showMessage("")
 
     # ---- 이미지 삽입 (Phase 4) ---------------------------------------------
     _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".gif")

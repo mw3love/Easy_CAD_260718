@@ -774,9 +774,9 @@ def test_do_open_ecad_survives_layers_read_failure():
 def test_do_open_export_dxf_roundtrip_no_doc_path():
     # [신규기능] DXF는 열기/저장 둘 다 _doc_path를 갱신하지 않는다(deep-interview 결정 —
     # 통합 저장 다이얼로그의 기본 필터가 항상 .ecad로 뜨게 하기 위함).
-    # ⚠ _do_export_dxf 성공 경로가 QMessageBox.information("저장 완료")을 띄운다 —
-    # 헤드리스(offscreen)에서 실제 .exec()는 클릭할 사용자가 없어 영원히 블로킹되므로
-    # 반드시 모킹한다(실제로 이 모킹 없이 전체 스모크 스위트가 멈춘 사고 — 2026-07-29).
+    # [2026-08-31] 성공 경로는 이제 토스트(statusBar)라 QMessageBox 모킹이 더 이상 필수는
+    # 아니지만, 실패 시(예: 씬이 비어 있으면) 여전히 QMessageBox.information/warning을
+    # 띄우므로 헤드리스에서 블로킹되지 않도록 계속 모킹해둔다.
     from PyQt6.QtWidgets import QMessageBox
     orig_info, orig_warn = QMessageBox.information, QMessageBox.warning
     QMessageBox.information = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
@@ -1205,8 +1205,8 @@ def test_prompt_odafc_missing_browse_cancel_dialog_returns_false():
 def test_do_export_dwg_retries_after_odafc_missing_prompt_accepted():
     # [§8 DWG 자동변환 후속, 2026-08-14] 내보내기도 가져오기와 같은 재시도 구조 —
     # export_dwg는 host_fileio 모듈 전역으로 패치(그 모듈이 부르는 이름).
-    # ⚠ 성공 경로는 QMessageBox.information("저장 완료")을 띄운다 — 헤드리스에서 실제
-    # .exec()는 영원히 블로킹되므로 반드시 모킹(2026-07-29 사고, `_shared` 관례 재사용).
+    # [2026-08-31] 성공 경로는 이제 토스트(statusBar)라 QMessageBox 모킹이 더 이상 필수는
+    # 아니지만 무해하므로 남겨둠(다른 실패 경로 테스트와 관례 통일).
     import easycad.canvas.host_fileio as hf
     from PyQt6.QtWidgets import QMessageBox
     from ezdxf.addons.odafc import ODAFCNotInstalledError
