@@ -1260,6 +1260,14 @@
   "완료"처럼 보이는 이 조합이 재발 위험을 특히 키운다. (`2026-08.md` "다각형 DXF 내보내기
   완전 누락 수정")
 
+- **ezdxf는 `doc.header["$EXTMIN"]`/`"$EXTMAX"`/`"$LIMMIN"`/`"$LIMMAX"`에 직접 쓴 값을
+  저장(`save()`/`saveas()`) 시 조용히 덮어쓴다** — 내부 `update_all()`이 `update_extents()`/
+  `update_limits()`를 호출해 **modelspace 레이아웃 자신의 `dxf.extmin`/`extmax`/`limmin`/
+  `limmax` 속성**으로 헤더를 다시 채우기 때문(`ezdxf/document.py`). 저장 직전까지는 헤더에
+  내가 쓴 값이 그대로 보여 착각하기 쉽다 — 반드시 **레이아웃 속성**(`doc.modelspace().dxf.
+  extmin = ...`)에 써야 저장 후에도 살아남는다. (`2026-08.md` "DXF 내보내기 — 실제 콘텐츠
+  범위를 EXTMIN/EXTMAX·초기 뷰포트에 반영")
+
 ## 파일 분할(리팩터링)
 - 거대 파일을 쪼갤 때 공유 상수만 따로 뽑아 `_constants.py` 같은 별도 파일을 만들면, 그 상수를
   실제로 쓰는 다른 leaf 모듈(위젯·다이얼로그 등)과 원본 파일 양쪽에서 서로 참조하다 순환

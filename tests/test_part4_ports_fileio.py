@@ -262,6 +262,47 @@ def test_dxf_export():
     assert {"EC_RECT", "EC_ARROW", "EC_SARROW", "EC_SYMBOL", "EC_TEXT"} <= layers, layers
 
 
+def test_dxf_export_view_extents_match_content():
+    # [실사용 질문, 2026-08-31] 콘텐츠가 씬 원점에서 멀리 있어도 다른 CAD가 파일을 열자마자
+    # 그 구역을 보여주도록, ezdxf 기본값(원점 중심·세로 1000)이 아니라 실제 bbox가 EXTMIN/
+    # EXTMAX·*Active 뷰포트에 반영돼야 한다. 좌표값 자체(엔티티 위치)는 이 기능과 무관하게
+    # 그대로 유지되는지도 함께 확인.
+    import ezdxf
+    w = CanvasWindow(); w.show()
+    sc = w._scene
+    # 원점(0,0)에서 멀리 떨어진 곳에 도형을 둔다.
+    rect = _RectItem(QRectF(0, 0, 100, 60)); rect.setPos(QPointF(5000, 3000)); sc.addItem(rect)
+
+    path = os.path.join(_TMP, "export_extents.dxf")
+    assert export_dxf(sc, path)
+    doc = ezdxf.readfile(path)
+    entity = next(e for e in doc.modelspace() if e.dxftype() == "LWPOLYLINE")
+    # 좌표 자체는 안 바뀜(월드화 + Y뒤집기만) — bbox 힌트 기능이 실제 위치를 건드리면 안 됨.
+    corners = [tuple(p[:2]) for p in entity.get_points()]
+    assert any(abs(x - 5000) < 1e-6 and abs(y + 3000) < 1e-6 for x, y in corners), corners
+    # EXTMIN/EXTMAX가 ezdxf 기본 sentinel(1e20)이 아니라 실제 콘텐츠 범위를 반영.
+    extmin = doc.header.get("$EXTMIN")
+    extmax = doc.header.get("$EXTMAX")
+    assert extmin[0] < 1e19 and extmax[0] > -1e19, (extmin, extmax)
+    # 정확한 rect bbox(5000~5100, 3000~3060)에 히트테스트 여유(padding) 정도만 더한 근방 —
+    # 핵심은 "5000대"이지 ezdxf 기본 sentinel이나 원점 근방(0)이 아니라는 것.
+    assert 4900 <= extmin[0] <= 5010 and 5090 <= extmax[0] <= 5200, (extmin, extmax)
+    assert -3100 <= extmin[1] <= -2990 and -3010 <= extmax[1] <= -2900, (extmin, extmax)
+    # *Active 뷰포트도 그 범위 중심으로 재설정돼, AutoCAD가 파일을 열면 곧장 이 구역을 보여줌.
+    vport = doc.viewports.get_config("*Active")[0]
+    assert 4900 <= vport.dxf.center[0] <= 5100, vport.dxf.center
+    assert vport.dxf.height > 0
+
+
+def test_dxf_export_empty_scene_leaves_default_extents():
+    # 빈 씬은 bbox가 없어 EXTMIN/EXTMAX를 못 정하므로, ezdxf 기본 sentinel을 그대로 둔다
+    # (엉뚱한 (0,0,0)~(0,0,0) 같은 값을 잘못 채워 넣지 않는지 확인).
+    import ezdxf
+    w = CanvasWindow(); w.show()
+    path = os.path.join(_TMP, "export_extents_empty.dxf")
+    assert export_dxf(w._scene, path)
+    doc = ezdxf.readfile(path)
+    assert doc.header.get("$EXTMIN")[0] > 1e19
 
 
 def test_dwg_export_routes_through_odafc_export_dwg():

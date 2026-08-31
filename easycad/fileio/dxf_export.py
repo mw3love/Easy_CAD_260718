@@ -21,6 +21,9 @@
     색   — QColor → DXF true_color(RGB 24bit), 개별 객체 색 보존.
     레이어 — 타입별 레이어(EC_RECT·EC_ARROW…)로 분리.
     단위 — 1 scene unit = 1 DXF drawing unit(mm 월드좌표 매핑은 후속 리팩터까지 보류).
+    초기 뷰 — `_set_view_extents`가 EXTMIN/EXTMAX·*Active 뷰포트를 실제 콘텐츠 bbox로
+             채워, 다른 CAD가 파일을 열 때 콘텐츠가 화면 밖에 있어 빈 화면으로 뜨는 것을
+             방지(좌표값 자체는 안 바꿈 — 순수 "열자마자 보여줄 구역" 힌트).
 """
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QPainterPath
@@ -312,6 +315,36 @@ def _export_badge(msp, it):
     mtext.dxf.attachment_point = 5       # middle-center
 
 
+def _set_view_extents(doc, scene):
+    """[실사용 질문, 2026-08-31] EasyCAD 캔버스는 고정 원점이 없는 무한캔버스라 콘텐츠가
+    DXF 월드좌표 (0,0)에서 얼마나·어느 방향으로 떨어져 있는지는 그 문서를 작업하며 사용자가
+    화면을 얼마나 팬(pan)했는지에 좌우된다(우연의 산물) — `ezdxf.new()`의 기본 `*Active`
+    뷰포트(원점 중심, 세로 1000 범위)를 그대로 두면, 콘텐츠가 그 범위 밖에 있을 때 AutoCAD가
+    파일을 열자마자 빈 화면을 보여준다(Zoom Extents를 눌러야 찾음). 좌표값 자체는 절대 안
+    건드리고(재수입 시 위치 불변), "열자마자 보여줄 구역"만 실제 콘텐츠 bbox로 채운다."""
+    r = scene.itemsBoundingRect()
+    if r.isEmpty():
+        return
+    xmin, xmax = r.left(), r.right()
+    ymin, ymax = -r.bottom(), -r.top()   # Y-flip: 화면 Y-down → CAD Y-up (._w()와 동일 규칙)
+    # [함정] doc.header["$EXTMIN"]에 직접 써도 ezdxf.save()가 내부적으로 update_extents()/
+    # update_limits()를 호출해 modelspace 레이아웃 자신의 dxf.extmin/limmin 값으로 헤더를
+    # 덮어써버린다(실측 확인) — 그래서 헤더가 아니라 레이아웃 쪽 속성에 써야 살아남는다.
+    msp = doc.modelspace()
+    msp.dxf.extmin = (xmin, ymin, 0.0)
+    msp.dxf.extmax = (xmax, ymax, 0.0)
+    msp.dxf.limmin = (xmin, ymin)
+    msp.dxf.limmax = (xmax, ymax)
+    width, height = max(xmax - xmin, 1.0), max(ymax - ymin, 1.0)
+    try:
+        vport = doc.viewports.get_config("*Active")[0]
+        vport.dxf.center = ((xmin + xmax) / 2.0, (ymin + ymax) / 2.0)
+        vport.dxf.height = height * 1.1   # 10% 여백 — 콘텐츠가 화면 가장자리에 딱 붙지 않게
+        vport.dxf.aspect_ratio = width / height
+    except Exception:  # noqa: BLE001 — 뷰포트 힌트 실패가 export 자체를 막지 않게
+        pass
+
+
 def _build_dxf_doc(scene):
     """scene → ezdxf.Drawing(저장 전 상태). export_dxf/export_dwg가 공유한다.
     [§8 DWG 자동변환 후속, 2026-08-14] DWG 내보내기가 필요해지며 저장 직전까지의 변환
@@ -355,6 +388,7 @@ def _build_dxf_doc(scene):
         except Exception:  # noqa: BLE001 — 한 객체 실패가 전체 export를 막지 않게.
             continue
 
+    _set_view_extents(doc, scene)
     return doc
 
 
