@@ -1722,6 +1722,18 @@ symbol_library/
   확인)/후(직선으로 깔끔하게 진입) 스크린샷 대조. 상세: `docs/history/2026-08.md`
   "화살표 속성 리뷰 인계 항목2 후속", 함정: `docs/pitfalls.md` "라우팅(A*/직교 엘보)"
   절 끝부분. **Not-tested**: 실제 마우스로 그리는 손맛.
+- **크래시 리포트 시스템 도입 완료(2026-08-31)** — "배포 후 못 잡은 에러를 어떻게
+  알 수 있나" 질문에서 시작, `sys.excepthook`을 앱에 상시 설치해 `easycad/
+  crash_report.py`(신규)로 처리 안 된 예외를 로컬 로그(`%APPDATA%/EasyCAD/EasyCAD/
+  logs/crash.log`)+Sentry(옵션, `_SENTRY_DSN` 채우면 활성)+친절한 오류창("계속
+  사용"/"지금 종료")으로 처리한다. 이 설치 자체가 이 프로젝트가 반복 겪은 "PyQt6
+  슬롯 예외→abort" 크래시 클래스를 완전종료 대신 잡히게 만드는 부수효과가 있음을
+  실제 창에서 대조군(`exit 127`)/실험군(`exit 0`) 직접 재현으로 확인. `tools/
+  diag_run.py`는 상시 실행파일로 부적합함도 함께 확인(자기 docstring이 그 이유를
+  명시). `_SENTRY_DSN`은 아직 비어 있어 원격 전송은 미활성(로컬 로그+오류창은 지금
+  작동) — sentry.io 가입 후 채우면 켜짐. 신규 pytest 6종, 전체 스위트 1097종 통과.
+  상세: `docs/history/2026-08.md` "크래시 리포트 시스템 도입", 함정:
+  `docs/pitfalls.md` "Qt 시그널·이벤트 발화 조건" 절 끝부분.
 
 ## 작업 규칙
 - GUI라 **offscreen 스모크로 프록시검증** 후, **실조건은 먼저 직접 재현 시도**(전역 CLAUDE.md

@@ -4,10 +4,12 @@ import sys
 from PyQt6.QtWidgets import QApplication
 
 from easycad.canvas.host import CanvasWindow
+from easycad.crash_report import init_crash_reporting
 
 
 def main():
     app = QApplication(sys.argv)
+    init_crash_reporting()
     win = CanvasWindow()
     win.show()
     sys.exit(app.exec())
