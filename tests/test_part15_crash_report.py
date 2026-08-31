@@ -28,12 +28,15 @@ def _reset():
 
 
 def test_init_crash_reporting_installs_and_restores_hooks():
+    """훅 설치/복원 자체만 검증 — 실제 DSN이 채워진 뒤로도 이 테스트가 매번 진짜
+    sentry_sdk.init()을 태우지 않도록 _SENTRY_DSN을 빈 값으로 격리한다."""
     orig_exc, orig_thread_exc = sys.excepthook, threading.excepthook
     _reset()
     log_dir = os.path.join(_TMP, f"crashlog_{uuid.uuid4().hex}")
     os.makedirs(log_dir, exist_ok=True)
     try:
-        with patch.object(crash_report, "_log_dir", return_value=log_dir):
+        with patch.object(crash_report, "_log_dir", return_value=log_dir), \
+             patch.object(crash_report, "_SENTRY_DSN", ""):
             path = crash_report.init_crash_reporting()
         assert os.path.exists(path)
         assert sys.excepthook is crash_report._handle_exception

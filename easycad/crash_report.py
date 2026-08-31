@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from easycad import __version__ as _APP_VERSION
 
-_SENTRY_DSN = ""  # sentry.io 프로젝트 생성 후 여기 붙여넣기 (쓰기전용 키, 노출돼도 안전)
+_SENTRY_DSN = "https://58919103589caf31a4416114b91ba46d@o4512003625189376.ingest.us.sentry.io/4512003640983552"
 
 _logger = logging.getLogger("easycad.crash")
 _sentry_ready = False
@@ -74,10 +74,18 @@ def init_crash_reporting() -> str:
     if _SENTRY_DSN:
         try:
             import sentry_sdk
+            from sentry_sdk.integrations.logging import LoggingIntegration
             sentry_sdk.init(
                 dsn=_SENTRY_DSN,
                 release=f"easycad@{_APP_VERSION}",
                 traces_sample_rate=0.0,
+                # 기본 LoggingIntegration은 ERROR 레벨 logging 호출을 전부 별도 이벤트로
+                # 자동 캡처한다 — 우리 자신의 _logger.error(traceback텍스트) 호출까지
+                # 걸려 capture_exception()과 중복으로 "Traceback (most recent call
+                # last): (No error message)" 이벤트가 하나 더 생겼다(2026-08-31 실사용
+                # 대시보드에서 실측 확인). 우리는 예외를 항상 capture_exception()으로
+                # 명시 전송하므로 logging 자동훅은 완전히 끈다.
+                integrations=[LoggingIntegration(level=None, event_level=None)],
             )
             _sentry_ready = True
         except Exception:
