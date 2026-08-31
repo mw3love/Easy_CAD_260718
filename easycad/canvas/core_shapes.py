@@ -3731,12 +3731,14 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         n1 = None if self._bind1 is None else _nearest_border(self._bind1, self.mapToScene(p1))[1]
         n2 = None if self._bind2 is None else _nearest_border(self._bind2, self.mapToScene(p2))[1]
         if n1 is None and n2 is None:
+            # [실사용 피드백 2026-08-31] 제어점을 서로 반대 방향으로 오프셋해 S자로 —
+            # 이전엔 둘 다 같은 방향(nx,ny)이라 한 번만 부푸는 활 모양이었다.
             off = dist * self._BOW_FRAC
             nx, ny = -uy, ux
             self._ctrl1 = QPointF(p1.x() + ux * dist / 3 + nx * off,
                                   p1.y() + uy * dist / 3 + ny * off)
-            self._ctrl2 = QPointF(p2.x() - ux * dist / 3 + nx * off,
-                                  p2.y() - uy * dist / 3 + ny * off)
+            self._ctrl2 = QPointF(p2.x() - ux * dist / 3 - nx * off,
+                                  p2.y() - uy * dist / 3 - ny * off)
         else:
             k = max(30.0, min(dist * 0.5, 200.0))
             ex, ey = (n1.x(), n1.y()) if n1 is not None else (ux, uy)

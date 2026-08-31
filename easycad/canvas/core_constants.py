@@ -300,20 +300,27 @@ def _arrow_kind_icon(kind: str, color: QColor, w: int = 46, h: int = 20) -> QIco
     x0, y0 = 4.0, h - 4.0
     x1, y1 = w - 8.0, 4.0
     if kind == "curved":
-        # [실사용 피드백 2026-08-20] 옛 cubicTo(양끝 y값을 제어점에 그대로 재사용)는 직선과
-        # 구분이 잘 안 될 만큼 완만했다 — 직선의 수직 이등분선 방향으로 확실히 부풀린
-        # quadTo 단일 곡선으로 교체(높이 h에 안 잘리게 bulge를 클램프해 어떤 icon 크기에도
-        # 견고). 화살촉 각도는 제어점→끝점 접선을 그대로 쓴다.
-        mx, my = (x0 + x1) / 2, (y0 + y1) / 2
-        dx, dy = x1 - x0, y1 - y0
-        length = math.hypot(dx, dy) or 1.0
-        perp_x, perp_y = dy / length, -dx / length   # 위쪽으로 부풀도록 부호 고정
-        bulge = min(7.0, h / 2 - 2.0)
-        ctrl = QPointF(mx + perp_x * bulge, my + perp_y * bulge)
-        path = QPainterPath(QPointF(x0, y0))
-        path.quadTo(ctrl, QPointF(x1, y1))
+        # [실사용 피드백 2026-08-31] 세 아이콘(직선/곡선/직각)의 화살촉이 서로 다른 방향을
+        # 향해 통일감이 없다는 지적 — 직각처럼 전부 수평 오른쪽으로 마무리하도록 재설계.
+        # 단일 cubicTo는 양끝 접선을 수평으로 고정하면 제어점도 강제로 양끝과 같은 높이가
+        # 돼 완전히 평평해진다(부풀 수 없음) — 그래서 고전 시그모이드 S자 구성(2단
+        # cubicTo, 중앙 교차점에서 두 세그먼트의 접선이 맞물려 매끈하게 이어짐)으로 교체:
+        # 시작·끝은 수평 진입/이탈, 가운데만 위아래로 부푼다.
+        ymid = h / 2
+        mx = (x0 + x1) / 2
+        half = mx - x0
+        # [2026-08-31 재확인] 사용자가 "커브값을 좀더 심하게" 요청 — q(진입 구간)를 줄이고
+        # bulge를 키워 더 짧고 뚜렷한 굴곡으로.
+        q = half * 0.25
+        bulge = min(8.0, h / 2 - 1.0)
+        p0, m, p3 = QPointF(x0, ymid), QPointF(mx, ymid), QPointF(x1, ymid)
+        c1a, c2a = QPointF(x0 + q, ymid), QPointF(mx - q, ymid - bulge)
+        c1b, c2b = QPointF(mx + q, ymid + bulge), QPointF(x1 - q, ymid)
+        path = QPainterPath(p0)
+        path.cubicTo(c1a, c2a, m)
+        path.cubicTo(c1b, c2b, p3)
         p.drawPath(path)
-        tip, tail = QPointF(x1, y1), ctrl
+        tip, tail = p3, c2b      # c2b가 p3와 같은 높이라 접선이 정확히 수평
     elif kind == "ortho":
         midx = (x0 + x1) / 2
         p.drawLine(QPointF(x0, y0), QPointF(midx, y0))
@@ -321,8 +328,10 @@ def _arrow_kind_icon(kind: str, color: QColor, w: int = 46, h: int = 20) -> QIco
         p.drawLine(QPointF(midx, y1), QPointF(x1, y1))
         tip, tail = QPointF(x1, y1), QPointF(midx, y1)
     else:   # straight
-        p.drawLine(QPointF(x0, y0), QPointF(x1, y1))
-        tip, tail = QPointF(x1, y1), QPointF(x0, y0)
+        # [실사용 피드백 2026-08-31] 사선(대각선)이던 것을 다른 두 종류와 같은 수평으로.
+        ymid = h / 2
+        p.drawLine(QPointF(x0, ymid), QPointF(x1, ymid))
+        tip, tail = QPointF(x1, ymid), QPointF(x0, ymid)
     ang = math.atan2(tip.y() - tail.y(), tip.x() - tail.x())
     size = 5.0
     a1, a2 = ang + math.radians(150), ang - math.radians(150)

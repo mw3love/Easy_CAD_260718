@@ -711,20 +711,44 @@ def test_arrow_and_line_combo_icon_heights_match():
     assert w._pf_style.sizeHint().height() == w._pf_routing_btn.sizeHint().height()
 
 
-def test_curved_arrow_icon_visibly_bulges_from_straight_line():
-    # [실사용 피드백 2026-08-20] "곡선 아이콘이 직선과 별 차이 없다" — 재설계한 곡선 글리프가
-    # 시작~끝을 잇는 직선에서 뚜렷이 벗어나는지(중점 부근 픽셀이 칠해져 있는지) 픽셀로 확인.
+def test_curved_arrow_icon_horizontal_ends_with_s_bulge_between():
+    # [실사용 피드백 2026-08-31] "화살표 머리 방향이 다 제각각" — 직선(사선이었음)·곡선·
+    # 직각 세 아이콘이 전부 오른쪽 수평으로 끝나야 한다는 지적으로 곡선을 시그모이드
+    # 2단 cubicTo(양끝 수평 진입/이탈 + 가운데만 반대 방향으로 부푸는 S자)로 재설계했다.
+    # 옛 테스트의 "대각선 기준" 판정은 이제 실제로 그려지는 모양과 무관해져 무효 —
+    # 중심선(ymid) 기준으로 ⓐ 앞쪽 혹은 위로 ⓑ 뒤쪽 혹은 아래로(진짜 S자) ⓒ 화살촉
+    # 직전은 중심선에 딱 붙어 수평인지(직선·직각과 같은 방향) 세 가지를 확인한다.
     from PyQt6.QtGui import QColor
     from easycad.canvas.core_constants import _arrow_kind_icon
     w, h = 72, 18
     icon = _arrow_kind_icon("curved", QColor("#ffffff"), w, h)
     img = icon.pixmap(w, h).toImage()
-    # 직선(대각선)이 지나가는 라인에서 수직으로 3px 위쪽 지점 — 곡선이면 칠해져 있어야 하고
-    # (부풀림 방향, 본문 구현 참조) 직선 글리프였다면 그 자리는 배경(투명)이어야 한다.
-    x0, y0 = 4.0, h - 4.0
-    x1, y1 = w - 8.0, 4.0
-    mx, my = round((x0 + x1) / 2), round((y0 + y1) / 2) - 3
-    assert img.pixelColor(mx, my).alpha() > 0, "곡선이 직선 경로에서 충분히 부풀지 않음"
+    ymid = h / 2
+
+    def col_ys(x):
+        return [y for y in range(h) if img.pixelColor(x, y).alpha() > 0]
+
+    early, late, near_tip = col_ys(20), col_ys(48), col_ys(56)
+    assert early and late and near_tip, "예상 지점 열에 칠해진 픽셀이 없음"
+    margin = 3
+    assert min(early) <= ymid - margin, "S자 앞쪽 혹이 중심선 위로 뚜렷하지 않음"
+    assert max(late) >= ymid + margin, "S자 뒤쪽 혹이 중심선 아래로 뚜렷하지 않음(단일 활이면 실패)"
+    assert min(near_tip) >= ymid - 2 and max(near_tip) <= ymid + 2, (
+        "화살촉 직전이 중심선에서 벗어남 — 직선·직각과 다른 방향으로 끝남")
+
+
+def test_apply_curved_free_endpoints_makes_s_shape():
+    # [실사용 피드백 2026-08-31] 양끝이 도형에 안 붙은 자유 화살표를 '곡선'으로 바꾸면
+    # 제어점 2개가 서로 반대 방향으로 오프셋돼 S자가 나와야 한다(이전엔 같은 방향이라
+    # 한 번만 부푸는 활이었다) — 두 제어점을 잇는 벡터가 화살표 방향(ux,uy)의 법선과
+    # 반대 부호로 갈리는지 확인.
+    a = _ArrowItem(QColor("#111111"), 2.0, True)
+    a.set_points(QPointF(0, 0), QPointF(300, 0))
+    a.apply_curved()
+    assert a._ctrl1 is not None and a._ctrl2 is not None
+    # 화살표가 수평(0,0)->(300,0)이라 법선은 수직(y) 방향 — 두 제어점의 y가 서로 반대 부호.
+    assert a._ctrl1.y() != 0 and a._ctrl2.y() != 0
+    assert (a._ctrl1.y() > 0) != (a._ctrl2.y() > 0), "제어점 두 개가 같은 쪽으로 부풀어 S자가 아님"
 
 
 def test_light_theme_icon_color_is_pure_black():
