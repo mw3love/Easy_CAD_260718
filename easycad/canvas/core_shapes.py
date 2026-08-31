@@ -7932,7 +7932,16 @@ def _multi_subpath_path_item_nearest_scene(item, scene_pt: QPointF):
 
 # ---- [Stage1] Lucid식 직교 자동 라우팅(기본 엘보) -----------------------------
 def _dedup_pts(pts, eps=1e-6):
-    """연속 중복점 + 공선(collinear) 중간점 제거. 정렬된 도형 사이의 퇴화 엘보를 직선으로 접는다."""
+    """연속 중복점 + 공선(collinear) 중간점 제거. 정렬된 도형 사이의 퇴화 엘보를 직선으로 접는다.
+
+    [실사용 버그 수정 2026-08-31] `cross`가 0이면 a·b·c가 한 직선 위에 있다는 것만 보장하고
+    b가 a-c *구간 안*에 있다는 것은 보장하지 않는다 — b가 a-c 밖(양끝을 지나 반대로 꺾인
+    '되돌아오기' 지점)이어도 cross는 여전히 0이라 똑같이 제거됐다. `_route_ortho`의 진입/이탈
+    스텁이 만드는 엘보(예: 도형 밖으로 conn_clear만큼 밀었다가 다시 안쪽으로 꺾는 형태)가 이
+    되돌아오기 모양이라, 의도한 여백(conn_clear≈36px)이 통째로 사라지고 화살촉이 꺾임과
+    거의 맞닿는 결과를 냈다(정렬된 두 접속점 사이에서 재현: 최소 5px까지 관측). b가 a-c
+    구간 '안'(between)일 때만 제거하도록 좁힌다 — 진짜 퇴화(일직선 위 불필요한 경유점)는
+    그대로 접고, 되돌아오기(방향 반전)는 보존한다."""
     out = [pts[0]]
     for p in pts[1:]:
         if abs(p.x() - out[-1].x()) <= eps and abs(p.y() - out[-1].y()) <= eps:
@@ -7942,8 +7951,10 @@ def _dedup_pts(pts, eps=1e-6):
     while i < len(out) - 1:
         a, b, c = out[i - 1], out[i], out[i + 1]
         cross = (b.x() - a.x()) * (c.y() - a.y()) - (b.y() - a.y()) * (c.x() - a.x())
-        if abs(cross) <= eps:
-            del out[i]   # b가 a-c 선분 위 → 불필요
+        between = (min(a.x(), c.x()) - eps <= b.x() <= max(a.x(), c.x()) + eps
+                   and min(a.y(), c.y()) - eps <= b.y() <= max(a.y(), c.y()) + eps)
+        if abs(cross) <= eps and between:
+            del out[i]   # b가 a-c 선분 '위'(구간 안) → 불필요
         else:
             i += 1
     return out
