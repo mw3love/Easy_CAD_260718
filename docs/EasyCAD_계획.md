@@ -252,7 +252,9 @@ Lucid/FigJam 캡처 + 사용자 요청 반영, deep-interview 4가지 확정(202
   직각화살·핀·되돌리기·다시실행·스냅·직교·격자·테마토글·도움말)까지 같은 규칙으로 새로 그려
   `easycad/resources/icons/*.svg` 18개로 저장하고 `_tool_icon()`/`_act_icon()`을 QPainter
   코드 드로잉 → SVG 래스터화(`_svg_icon()`, QSvgRenderer)로 전환. 메뉴 전용 8종(pdf/image/
-  table/titleblock/mermaid/zoom_fit/zoom_100/align)은 스코프 밖이라 기존 QPainter 코드 유지.
+  table/titleblock/mermaid/zoom_fit/zoom_100/align)은 스코프 밖이라 기존 QPainter 코드 유지
+  (이후 `align`만 2026-08-20 SVG로 전환 — 남은 7종은 2026-08-13부터 툴바에도 노출돼 두
+  스타일이 섞여 보임, 통일은 미착수).
   **색은 최종적으로 코랄 고정이 아니라 도형 팔레트와 같은 테마 적응 중립색으로 확정**(같은
   날 4~5차 재피드백 — 코랄이 화면 전체에 흔해 "진짜 활성 상태(checked)" 신호력이 떨어진다는
   지적, hover도 코랄→테마별 중립 회색/검정 전환, checked는 순간 활성(그리기 도구·핀·직교,
@@ -260,6 +262,10 @@ Lucid/FigJam 캡처 + 사용자 요청 반영, deep-interview 4가지 확정(202
   (`CompositionMode_SourceIn`)가 스모크 테스트에서 재현 가능한 네이티브 세그폴트를 일으켜
   픽셀 루프 방식으로 교체·해결(`docs/pitfalls.md` "렌더링" 항목). 스모크 345종 통과.
   상세: `~/.claude/design-system/projects/easy-cad.md`.
+- **0-b 원칙 점검(2026-09-25) — 완료**: 후보 비교 없이 객관 항목 5건 수정(테마 전환 시 색
+  견본 소실·레이어 접기 화살표 옛 색·보조 글씨 대비·레이어 이모지→Phosphor 듀오톤 SVG·탭
+  닫기 빨간 ✗→회색). 남은 주관 후보: 스냅·격자 토글 "텍스트+체크마크"(1라운드 확정, 미구현)·
+  위 QPainter 아이콘 7종·'내 심볼' 썸네일. 상세: `docs/history/2026-09.md`.
 
 #### 후속 (Phase 6 이후 / 낮은 우선)
 개별 열폭 드래그.
