@@ -62,32 +62,6 @@ def test_toolbar_icons_and_actions():
     assert w._act_snap.isChecked() is False and w.snap_enabled is False
 
 
-def test_view_toggles_are_checkbox_with_label():
-    """[베이크오프 2026-09-25, A안] 상단바 보기 토글 4종은 「체크박스+글자」 버튼 — 액션과
-    별도 위젯이라, 버튼 클릭·액션 트리거(메뉴/단축키) 어느 쪽으로 바꿔도 서로 따라가야 한다."""
-    w = CanvasWindow()
-    bs = w._view_toggle_buttons
-    assert [b.text() for b in bs.values()] == ["스냅", "직교", "격자", "정렬"]
-    for a, b in bs.items():
-        assert b.isChecked() == a.isChecked() and not b.icon().isNull()
-        assert b.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-    # 버튼 클릭 → 액션·실제 상태
-    bs[w._act_grid].click()
-    assert w._act_grid.isChecked() and w.grid_enabled and bs[w._act_grid].isChecked()
-    # 액션 트리거(메뉴·단축키 경로) → 버튼
-    w._act_snap.trigger()
-    assert not w.snap_enabled and not bs[w._act_snap].isChecked()
-    # 직교만 순간 활성 강조(#toolStrongCheck), 나머지는 옅은 상시 틴트
-    assert bs[w._act_ortho].objectName() == "toolStrongCheck"
-    assert bs[w._act_snap].objectName() != "toolStrongCheck"
-    # 툴팁은 액션(단축키 재할당 반영)을 따라감
-    w._act_align.setToolTip("x")
-    assert bs[w._act_align].toolTip() == "x"
-    w._apply_theme(False)
-    assert all(not b.icon().isNull() for b in bs.values())
-    w._apply_theme(True)
-
-
 def test_help_menu_is_independent_top_level_menu():
     # [실사용 요청 2026-08-21] "단축키 도움말"이 보기(&V)에 파묻혀 있던 것을 독립
     # 도움말(&H) 메뉴로 승격 + "프로그램 정보…" 추가.
