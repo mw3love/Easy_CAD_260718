@@ -1,5 +1,6 @@
 layer_visible/layer_hidden/layer_locked/layer_unlocked.svg = Phosphor duotone (eye, eye-slash, lock-simple, lock-simple-open)
 tab_close.svg = Phosphor regular (x), fill recolored to #7d8794
+check_off.svg / check_on.svg = Phosphor regular (square) / duotone (check-square) — 보기 토글(스냅·직교·격자·정렬) 체크박스
 Source: https://github.com/phosphor-icons/core
 
 MIT License

@@ -836,6 +836,10 @@
   (2026-08-31, `docs/history/2026-08.md` "화살표 속성 리뷰 인계 항목2 후속")
 
 ## 렌더링(QPainter/QIcon/오프스크린)
+- **`QToolBar` 직속 `QToolButton`은 `setIconSize`가 무시된다** — `QToolButton::initStyleOption`이
+  부모가 툴바면 아이콘 크기를 툴바 값(여기선 20×20)으로 덮어써, 가로로 긴 합성 아이콘(39×20)이
+  반으로 찌그러져 그려졌다(`iconSize()`는 39×20을 돌려줘 겉으론 멀쩡 — 실측). 툴바 크기와 다른
+  아이콘이 필요하면 버튼을 얇은 `QWidget`으로 한 번 싸서 넣는다. (`2026-09.md` 보기 토글 베이크오프)
 - **스타일시트가 걸린 위젯은 앱 팔레트의 일부 역할을 못 받는다** — `QLabel`에 `font-size`·
   `padding`만 든 스타일시트를 걸고 `setForegroundRole(PlaceholderText)`를 주면, 앱 팔레트
   값이 아니라 Qt 기본 PlaceholderText(Text 색 α128)가 나왔다(최소 재현 단독 창에선 멀쩡 —

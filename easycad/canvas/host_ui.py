@@ -32,6 +32,7 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
     _pen_style_icon, _arrow_kind_icon, _flip_icon, _arrow_head_icon, _icons_dir,
+    _svg_icon,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, export_svg_symbol
 from easycad.fileio.dxf_export import export_dxf
@@ -687,8 +688,25 @@ class _UIBuildMixin:
         for a in (self._act_zoom100, self._act_fit):
             tb.addAction(a)
         tb.addSeparator()
-        for a in (self._act_snap, self._act_ortho, self._act_grid, self._act_align):
-            tb.addAction(a)
+        # [베이크오프 2026-09-25, A안 확정] 보기 토글 4종은 아이콘 대신 「체크박스+글자」 —
+        # 2026-08-02 1라운드의 "토글 = 텍스트 라벨+체크마크" 결정을 실폭 비교로 좁힌 결과
+        # (필터칩·아이콘+글자+체크박스는 기본 창 1200px에서 툴바가 넘쳐 탈락). 액션을 그대로
+        # 싣지 않고 별도 버튼을 액션에 잇는다 — 액션 아이콘은 메뉴(보기(&V))에서 계속 쓰이므로
+        # 액션 자체의 아이콘·텍스트를 바꿀 수 없어서다. 상태는 항상 액션이 원본(단축키·메뉴로
+        # 바꿔도 `_sync_view_toggle`가 따라감).
+        self._view_toggle_buttons: dict[QAction, QToolButton] = {}
+        for a, label in ((self._act_snap, "스냅"), (self._act_ortho, "직교"),
+                         (self._act_grid, "격자"), (self._act_align, "정렬")):
+            btn = QToolButton()
+            btn.setText(label)
+            btn.setCheckable(True)
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            btn.setProperty("viewToggle", True)   # 툴바 QSS의 좌우 여백 규칙용(_apply_theme)
+            btn.clicked.connect(lambda _c=False, a=a: a.trigger())
+            a.changed.connect(lambda a=a, b=btn: self._sync_view_toggle(a, b))   # 체크·툴팁(단축키 재할당)
+            tb.addWidget(btn)
+            self._view_toggle_buttons[a] = btn
+            self._sync_view_toggle(a, btn)
         tb.addSeparator()
 
         # 우측 정렬 스페이서 → 테마 → 도움말 (여백이 있을 때만 밀어냄 — 좁은 창에서는 그냥 이어짐).
@@ -698,6 +716,13 @@ class _UIBuildMixin:
         tb.addAction(self._act_theme)
         tb.addAction(self._act_help)
         self._toolbar = tb
+
+    def _sync_view_toggle(self, act: QAction, btn: QToolButton):
+        """보기 토글 버튼을 액션 상태에 맞춘다 — 체크·체크박스 아이콘(테마 중립색)·툴팁."""
+        on = act.isChecked()
+        btn.setChecked(on)
+        btn.setToolTip(act.toolTip())
+        btn.setIcon(_svg_icon("check_on" if on else "check_off", 18, _current_icon_color()))
 
     # ---- 테마 (다크 기본 + 라이트 토글) -------------------------------------
 
@@ -916,17 +941,24 @@ class _UIBuildMixin:
             toolbar.setStyleSheet(
                 f"QToolBar {{ border:none; border-bottom:2px solid {accent}; }}"
                 f"QToolBar::separator {{ background:{sep_color}; width:1px; margin:6px 9px; }}"
-                + btn_qss)
+                + btn_qss
+                # [베이크오프 2026-09-25] 보기 토글(체크박스+글자)만 좌우 여백을 글자에 맞춤.
+                + 'QToolButton[viewToggle="true"] { padding:3px 7px 3px 4px; }')
             # 순간적 활성 그룹: 그리기 도구 6종(선택/화살표/텍스트/선/펜/번호) + 핀 + 직교.
-            # 스냅·격자는 objectName을 안 줘서 위 일반 규칙(옅은 35)에 그대로 남는다.
+            # 스냅·격자·정렬은 objectName을 안 줘서 위 일반 규칙(옅은 35)에 그대로 남는다.
             _strong_check_widgets = list(getattr(self, "_tool_buttons", {}).values())
-            for act_name in ("_act_pin", "_act_ortho"):
-                act = getattr(self, act_name, None)
-                w = toolbar.widgetForAction(act) if act is not None else None
-                if w is not None:
-                    _strong_check_widgets.append(w)
+            pin_w = toolbar.widgetForAction(self._act_pin) if hasattr(self, "_act_pin") else None
+            if pin_w is not None:
+                _strong_check_widgets.append(pin_w)
+            # 직교는 액션을 싣지 않는 보기 토글 버튼이라(`_build_toolbar`) widgetForAction이 없다.
+            ortho_w = getattr(self, "_view_toggle_buttons", {}).get(getattr(self, "_act_ortho", None))
+            if ortho_w is not None:
+                _strong_check_widgets.append(ortho_w)
             for w in _strong_check_widgets:
                 w.setObjectName("toolStrongCheck")
+        # 보기 토글 체크박스 아이콘도 중립색이라 테마 전환마다 재칠.
+        for act, btn in getattr(self, "_view_toggle_buttons", {}).items():
+            self._sync_view_toggle(act, btn)
         _accent_btns = (
             list(getattr(self, "_shape_tool_buttons", {}).values())
             + list(getattr(self, "_sym_buttons", {}).values())
