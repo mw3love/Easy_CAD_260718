@@ -469,9 +469,11 @@ def _dark_palette() -> QPalette:
     c = QColor
     p = QPalette()
     R = QPalette.ColorRole
+    # [UI 검토 2026-09-25] PlaceholderText는 패널의 보조 글씨(폴더명·안내문·색 값)도 쓴다 —
+    # 두 테마 모두 창 배경 대비 4.5:1 이상인 값으로(다크 5.7:1 / 라이트 4.7:1).
     p.setColor(R.Window, c("#171e26"));         p.setColor(R.WindowText, c("#ffffff"))
     p.setColor(R.Base, c("#0e1319"));           p.setColor(R.AlternateBase, c("#1d2632"))
-    p.setColor(R.Text, c("#ffffff"));           p.setColor(R.PlaceholderText, c("#78889a"))
+    p.setColor(R.Text, c("#ffffff"));           p.setColor(R.PlaceholderText, c("#8a98a8"))
     p.setColor(R.Button, c("#1d2632"));         p.setColor(R.ButtonText, c("#ffffff"))
     p.setColor(R.ToolTipBase, c("#232f3d"));    p.setColor(R.ToolTipText, c("#ffffff"))
     # [디자인 베이크오프 2026-08-02] accent를 블루(#54a9ff/#2f6dbf)에서 코랄(Claude 브랜드톤)로 교체.
@@ -495,7 +497,7 @@ def _light_palette() -> QPalette:
     R = QPalette.ColorRole
     p.setColor(R.Window, c("#eef1f4"));         p.setColor(R.WindowText, c("#232a33"))
     p.setColor(R.Base, c("#ffffff"));           p.setColor(R.AlternateBase, c("#f4f6f8"))
-    p.setColor(R.Text, c("#232a33"));           p.setColor(R.PlaceholderText, c("#8a94a0"))
+    p.setColor(R.Text, c("#232a33"));           p.setColor(R.PlaceholderText, c("#626c78"))
     p.setColor(R.Button, c("#e5e9ed"));         p.setColor(R.ButtonText, c("#232a33"))
     p.setColor(R.ToolTipBase, c("#fffef2"));    p.setColor(R.ToolTipText, c("#232a33"))
     # [디자인 베이크오프 2026-08-02] 아이콘·버튼 accent가 다크/라이트 공통 코랄로 확정된 것과

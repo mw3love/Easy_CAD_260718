@@ -29,7 +29,7 @@ from easycad.canvas.annotator_core import (
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data, _svg_icon,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -38,7 +38,7 @@ from easycad.fileio.document import save_document, load_document, load_document_
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
-from easycad.canvas.host_widgets import _style_menu_separators
+from easycad.canvas.host_widgets import _style_menu_separators, _current_icon_color
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
@@ -107,14 +107,18 @@ class _LayersMixin:
         vis_btn = QToolButton()
         vis_btn.setCheckable(True)
         vis_btn.setChecked(layer["visible"])
-        vis_btn.setText("👁" if layer["visible"] else "🚫")
+        # [UI 검토 2026-09-25] 컬러 이모지(👁/🔒) → 다른 아이콘과 같은 중립색 SVG(Phosphor).
+        # 테마 전환 때 `_refresh_layer_icons`가 `_layer_icon_pair`를 읽어 다시 칠한다.
+        vis_btn._layer_icon_pair = ("layer_visible", "layer_hidden")
+        self._set_layer_btn_icon(vis_btn)
         vis_btn.setToolTip("레이어 표시/숨김")
         vis_btn.toggled.connect(lambda checked, i=lid: self.set_layer_visible(i, checked))
 
         lock_btn = QToolButton()
         lock_btn.setCheckable(True)
         lock_btn.setChecked(layer["locked"])
-        lock_btn.setText("🔒" if layer["locked"] else "🔓")
+        lock_btn._layer_icon_pair = ("layer_locked", "layer_unlocked")
+        self._set_layer_btn_icon(lock_btn)
         lock_btn.setToolTip("레이어 잠금")
         lock_btn.toggled.connect(lambda checked, i=lid: self.set_layer_locked(i, checked))
 
@@ -130,6 +134,25 @@ class _LayersMixin:
         row.customContextMenuRequested.connect(
             lambda pos, i=lid, r=row: self._show_layer_row_menu(r, i))
         return row
+
+
+    @staticmethod
+    def _set_layer_btn_icon(btn: QToolButton) -> None:
+        """레이어 표시/잠금 버튼 아이콘 — 체크 상태에 맞는 쪽을 현재 테마 중립색으로."""
+        on_name, off_name = btn._layer_icon_pair
+        btn.setIcon(_svg_icon(on_name if btn.isChecked() else off_name, 16,
+                              _current_icon_color()))
+
+
+    def _refresh_layer_icons(self) -> None:
+        """테마 전환 시 레이어 행 아이콘만 다시 칠한다(행 재구성 없이 — `_apply_theme`의
+        위젯 재구축 금지 주석 참조)."""
+        lst = getattr(self, "_layers_list", None)
+        if lst is None:
+            return
+        for btn in lst.findChildren(QToolButton):
+            if hasattr(btn, "_layer_icon_pair"):
+                self._set_layer_btn_icon(btn)
 
 
     def _show_layer_row_menu(self, row: QWidget, layer_id: str):

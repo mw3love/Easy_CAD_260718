@@ -836,6 +836,11 @@
   (2026-08-31, `docs/history/2026-08.md` "화살표 속성 리뷰 인계 항목2 후속")
 
 ## 렌더링(QPainter/QIcon/오프스크린)
+- **스타일시트가 걸린 위젯은 앱 팔레트의 일부 역할을 못 받는다** — `QLabel`에 `font-size`·
+  `padding`만 든 스타일시트를 걸고 `setForegroundRole(PlaceholderText)`를 주면, 앱 팔레트
+  값이 아니라 Qt 기본 PlaceholderText(Text 색 α128)가 나왔다(최소 재현 단독 창에선 멀쩡 —
+  실제 창에서만 재현, 실측). 팔레트 색을 따라야 하는 라벨은 크기를 `QFont.setPixelSize`,
+  여백을 `setContentsMargins`로 주고 스타일시트를 걸지 말 것. (`2026-09.md` UI 원칙 점검)
 - 오프스크린 플랫폼 플러그인(`QT_QPA_PLATFORM=offscreen`)에서 `QPainter`의
   `CompositionMode_SourceIn`/`DestinationIn`으로 SVG 아이콘을 런타임 재칠하면, 짧은 시간에
   CanvasWindow를 수십 개 생성하는 스모크 테스트에서 재현 가능한 네이티브 세그폴트가 났다 —

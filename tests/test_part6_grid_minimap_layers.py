@@ -1567,3 +1567,78 @@ def test_paint_style_copy_includes_fill():
     assert dst.brush().style() == Qt.BrushStyle.NoBrush
 
 
+
+
+# ---- [UI 검토 2026-09-25] 테마 전환 회귀 — 색 견본·레이어 패널·보조 글씨·탭 닫기 --------
+
+def _contrast(fg, bg):
+    def lum(c):
+        ch = [v / 255 for v in (c.red(), c.green(), c.blue())]
+        ch = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in ch]
+        return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2]
+    a, b = lum(fg), lum(bg)
+    return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+
+def test_theme_toggle_keeps_color_swatch():
+    # 선택한 채 테마를 바꿔도 색 견본 스타일(_swatch_css)이 버튼 공용 QSS로 덮이지 않는다.
+    w = CanvasWindow()
+    start = w._dark
+    try:
+        r = _mk_rect(w._scene, w.make_pen(), 0, 0, 40, 30)
+        r.setSelected(True)
+        w._refresh_properties()
+        before = w._pf_color.styleSheet()
+        assert before.startswith("background:#")
+        w._apply_theme(not start)
+        assert w._pf_color.styleSheet() == before
+    finally:
+        w._apply_theme(start)
+
+
+def test_theme_toggle_recolors_layers_panel_arrow_and_icons():
+    from easycad.canvas.host_widgets import _current_icon_color
+    w = CanvasWindow()
+    start = w._dark
+    try:
+        for dark in (not start, start):
+            w._apply_theme(dark)
+            want = _current_icon_color().name()
+            assert want in w._layers_panel._collapse_btn.styleSheet()
+            assert want in w._props_panel._collapse_btn.styleSheet()
+        btns = [b for b in w._layers_list.findChildren(QToolButton)
+                if hasattr(b, "_layer_icon_pair")]
+        assert len(btns) == 2 * len(w._layers)
+        assert all(not b.icon().isNull() and b.text() == "" for b in btns)   # 이모지 글자 없음
+    finally:
+        w._apply_theme(start)
+
+
+def test_muted_labels_follow_theme_with_readable_contrast():
+    # 폴더명·안내문 같은 보조 글씨는 앱 팔레트의 PlaceholderText를 따르고(스타일시트가 걸리면
+    # Qt 기본 흰색 α128로 빠지는 함정), 두 테마 모두 창 배경 대비 4.5:1 이상, 12px 이상.
+    from PyQt6.QtGui import QPalette
+    w = CanvasWindow()
+    start = w._dark
+    try:
+        lbl = w._section_label("미분류")
+        lbl.setParent(w._left_panel)   # 실제 폴더 라벨처럼 패널 안에(최상위 위젯은 팔레트 전파가 다름)
+        for dark in (True, False):
+            w._apply_theme(dark)
+            QApplication.processEvents()
+            app_pal = QApplication.palette()
+            for l in (lbl, w._pf_hint, w._pf_color_val):
+                c = l.palette().color(QPalette.ColorRole.PlaceholderText)
+                assert c == app_pal.color(QPalette.ColorRole.PlaceholderText)
+                assert _contrast(c, app_pal.color(QPalette.ColorRole.Window)) >= 4.5
+            assert lbl.font().pixelSize() >= 12 and w._pf_hint.font().pixelSize() >= 12
+    finally:
+        w._apply_theme(start)
+
+
+def test_tab_close_button_uses_neutral_icon():
+    import re, os
+    w = CanvasWindow()
+    qss = w._tabs.tabBar().styleSheet()
+    m = re.search(r"image:\s*url\(([^)]+)\)", qss)
+    assert m and m.group(1).endswith("tab_close.svg") and os.path.exists(m.group(1))

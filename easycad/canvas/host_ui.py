@@ -31,7 +31,7 @@ from easycad.canvas.annotator_core import (
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
-    _pen_style_icon, _arrow_kind_icon, _flip_icon, _arrow_head_icon,
+    _pen_style_icon, _arrow_kind_icon, _flip_icon, _arrow_head_icon, _icons_dir,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, export_svg_symbol
 from easycad.fileio.dxf_export import export_dxf
@@ -791,10 +791,13 @@ class _UIBuildMixin:
         # 쓰므로 테마 전환마다 재도색 — `_apply_theme`가 호출되는 시점(위 386~388줄)엔
         # `_build_left_panel`/`_build_properties_panel`/`_build_minimap_panel`이 이미 끝나
         # 있어(host.py __init__ 순서) 항상 존재함이 보장된다.
+        # [UI 검토 2026-09-25] 레이어 패널(2026-08-19 분리)이 이 목록에서 빠져 있어 그 접기
+        # 화살표만 테마 전환 후에도 옛 색으로 남았다(다크에서 흐려 비활성처럼 보임).
         for panel in (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
-                      getattr(self, "_minimap_panel", None)):
+                      getattr(self, "_minimap_panel", None), getattr(self, "_layers_panel", None)):
             if panel is not None:
                 panel._refresh_collapse_color()
+        self._refresh_layer_icons()
         # [2026-08-19 재개편] "기본도형"/"내 심볼" 최상단 접기 화살표는 없어졌다 — 남은 접기
         # 버튼은 폴더별(`_refresh_custom_symbol_section.add_group`가 만드는 것)뿐이라 그
         # 목록을 대신 재도색한다.
@@ -937,12 +940,26 @@ class _UIBuildMixin:
         # [2026-08-20] _pf_routing_btn은 QToolButton→QComboBox로 바뀌어(아이콘화 통일) 이
         # QToolButton 전용 QSS가 안 먹는다 — _pf_style(원래도 QComboBox)과 같은 취급으로
         # 목록에서 뺐다(적용해도 무해하지만 아무 효과 없는 스타일 적용은 남기지 않음).
-        for name in ("_pf_color", "_pf_fill", "_pf_swap_btn", "_pf_dir_btn"):
+        # [UI 검토 2026-09-25] `_pf_color`·`_pf_fill`(색 견본)은 뺐다 — 여기서 btn_qss로 덮으면
+        # `_refresh_properties`가 칠해 둔 견본색(`_swatch_css`)이 지워져, 선택한 채 테마를
+        # 바꾸면 견본이 사라지고 색 값 글자만 남았다.
+        for name in ("_pf_swap_btn", "_pf_dir_btn"):
             b = getattr(self, name, None)
             if b is not None:
                 _accent_btns.append(b)
         for b in _accent_btns:
             b.setStyleSheet(btn_qss)
+        # [UI 검토 2026-09-25] 탭 닫기 버튼 — Fusion 기본값은 빨간 네모 ✗라 "강조색은 의미
+        # 있는 상태에만"(checked·pressed만 코랄) 원칙과 어긋났다. 평소엔 중립 회색 ✗(두 테마
+        # 배경 모두 3:1 이상인 #7d8794, SVG에 고정), 호버 때만 도구 버튼과 같은 중립 틴트.
+        # 스타일시트는 탭바에만 건다 — 탭 위젯에 걸면 문서 뷰 아래 위젯까지 QStyleSheetStyle로
+        # 바뀐다(스핀박스 sizeHint 함정, 위 head_qss 주석 참조).
+        close_svg = (_icons_dir() / "tab_close.svg").as_posix()
+        close_hover = "rgba(255,255,255,22)" if dark else "rgba(0,0,0,18)"
+        self._tabs.tabBar().setStyleSheet(
+            f"QTabBar::close-button {{ image: url({close_svg}); subcontrol-position: right;"
+            " border-radius:3px; }"
+            f"QTabBar::close-button:hover {{ background:{close_hover}; }}")
         toast = getattr(self, "_toast", None)
         if toast is not None:
             toast.setStyleSheet(
@@ -1169,7 +1186,13 @@ class _UIBuildMixin:
     @staticmethod
     def _section_label(text: str) -> QLabel:
         lbl = QLabel(text)
-        lbl.setStyleSheet("color:#888; font-size:11px; padding:3px 2px 1px 2px;")
+        # [UI 검토 2026-09-25] 고정 #888·11px는 라이트 배경에서 대비 3.15:1(작은 글씨 권장
+        # 4.5:1 미달)이었다 — 색은 팔레트의 PlaceholderText(테마별 값, 전환 시 자동 반영)로.
+        # ⚠ 크기·여백을 스타일시트로 주면 안 된다 — 스타일시트가 걸린 라벨은 앱 팔레트 대신
+        # Qt 기본 PlaceholderText(흰색 α128)를 받아 라이트에서 거의 안 보였다(실측).
+        f = lbl.font(); f.setPixelSize(12); lbl.setFont(f)
+        lbl.setContentsMargins(2, 3, 2, 1)
+        lbl.setForegroundRole(QPalette.ColorRole.PlaceholderText)
         return lbl
 
 
@@ -1763,7 +1786,8 @@ class _UIBuildMixin:
         self._pf_color.setFixedSize(QSize(48, 20))
         self._pf_color.setToolTip("클릭: 색 선택")
         self._pf_color.clicked.connect(self._edit_color)
-        self._pf_color_val = QLabel("—"); self._pf_color_val.setStyleSheet("color:#888;")
+        self._pf_color_val = QLabel("—")
+        self._pf_color_val.setForegroundRole(QPalette.ColorRole.PlaceholderText)   # [UI 검토 2026-09-25] #888 대비 미달
         color_row = QWidget(); ch = QHBoxLayout(color_row)
         ch.setContentsMargins(0, 0, 0, 0); ch.setSpacing(6)
         ch.addWidget(self._pf_color); ch.addWidget(self._pf_color_val, 1)
@@ -1774,7 +1798,8 @@ class _UIBuildMixin:
         self._pf_fill.setFixedSize(QSize(48, 20))
         self._pf_fill.setToolTip("클릭: 채움색 선택")
         self._pf_fill.clicked.connect(self._edit_fill)
-        self._pf_fill_val = QLabel("—"); self._pf_fill_val.setStyleSheet("color:#888;")
+        self._pf_fill_val = QLabel("—")
+        self._pf_fill_val.setForegroundRole(QPalette.ColorRole.PlaceholderText)
         self._pf_fill_row = fill_row = QWidget(); fh = QHBoxLayout(fill_row)
         fh.setContentsMargins(0, 0, 0, 0); fh.setSpacing(6)
         fh.addWidget(self._pf_fill); fh.addWidget(self._pf_fill_val, 1)
@@ -1905,7 +1930,8 @@ class _UIBuildMixin:
         form.addRow("회전", self._pf_rotation)
 
         self._pf_hint = QLabel("객체를 선택하면 속성을 편집할 수 있습니다.")
-        self._pf_hint.setStyleSheet("color:#888; font-size:11px;")
+        _hf = self._pf_hint.font(); _hf.setPixelSize(12); self._pf_hint.setFont(_hf)   # 스타일시트 금지 — _section_label 주석
+        self._pf_hint.setForegroundRole(QPalette.ColorRole.PlaceholderText)
         self._pf_hint.setWordWrap(True)   # 줄바꿈 허용 → 안내문이 패널 최소폭을 붙잡지 않게
         # [실사용 피드백 2026-08-20] 위 wordWrap만으론 부족했다 — 줄바꿈 QLabel의 sizeHint()는
         # 폭 상한이 없으면 Qt가 자체적으로 "적당히 넓은" 값(약 190px)을 계산해 반환하고,
