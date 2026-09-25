@@ -223,6 +223,9 @@ _SVG_ACT_ICON_NAMES = frozenset({
     # [2026-08-20 실사용 버그 수정] "align"은 toolbar 노출 대상인데도 SVG/글리프 어디에도
     # 없어 완전히 빈 아이콘으로 그려지고 있었다(`align.svg` 신설로 수정).
     "align",
+    # [베이크오프 2026-09-25, H안] 옛 QPainter 선 글리프 7종 → A2 규칙(외곽선+한 부분만 채움)
+    # 손그림 SVG. 2026-08-13부터 삽입 메뉴가 툴바에도 나와 두 스타일이 섞여 보이던 것.
+    "pdf", "titleblock", "table", "image", "mermaid", "zoom_100", "zoom_fit",
     # ["attach" 2026-08-20 제거 — 첨부 버튼이 이 SVG 클립 아이콘 대신 "+" 정사각 버튼으로
     # 바뀌어(`_ImageAttachMixin._build_attach_button`) 마지막 참조가 사라짐, `attach.svg`도 삭제.]
 })
@@ -232,8 +235,8 @@ _ACT_ICON_CACHE: dict[tuple[str, str], QIcon] = {}
 
 
 def _act_icon(name: str) -> QIcon:
-    """[Phase 6 M1] 파일/삽입/보기 액션 아이콘. 상단바 노출 11종(`_SVG_ACT_ICON_NAMES`)은
-    2026-08-02부터 SVG(`easycad/resources/icons/`)를 래스터화 — 나머지(메뉴 전용)는 기존
+    """[Phase 6 M1] 파일/삽입/보기 액션 아이콘. 상단바 노출분(`_SVG_ACT_ICON_NAMES`)은
+    2026-08-02부터 SVG(`easycad/resources/icons/`)를 래스터화 — 나머지(대화상자 버튼 등)는
     QPainter 단색 라인 글리프 그대로(좌표는 icon_proposal 아티팩트에서 포팅). [같은 날 4차
     피드백] SVG 11종도 도형 팔레트와 같은 테마 적응 중립색(`_ICON_COLOR`)으로 재칠 — 아이콘
     색은 이제 상단바 전체가 중립, "활성 상태"만 버튼 배경 코랄 틴트가 담당한다.
@@ -269,41 +272,7 @@ def _act_icon(name: str) -> QIcon:
         pg = QPolygonF([QPointF(x, y) for x, y in pts])
         p.drawPolygon(pg) if close else p.drawPolyline(pg)
 
-    if name == "pdf":
-        poly([(6, 3.5), (13.5, 3.5), (17.5, 7.5), (17.5, 20.5), (6, 20.5)])
-        poly([(13.5, 3.5), (13.5, 7.5), (17.5, 7.5)], close=False)
-        p.save()
-        p.setPen(QPen(col, 1.3, Qt.PenStyle.SolidLine,
-                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-        line(8.5, 15.5, 8.5, 11.5); line(8.5, 11.5, 10.7, 11.5)   # 'P' 힌트
-        line(13, 15.5, 13, 11.5); line(15, 11.5, 15, 15.5)        # 'D' 힌트
-        p.restore()
-    elif name == "image":
-        p.drawRoundedRect(QRectF(4, 5, 16, 14), 2, 2)
-        p.save(); p.setBrush(col); p.setPen(QPen(col, 1))
-        p.drawEllipse(QPointF(9, 10), 1.7, 1.7); p.restore()
-        poly([(4, 16.5), (9.5, 12), (13, 15), (16, 12.5), (20, 16.5)], close=False)
-    elif name == "table":
-        p.drawRoundedRect(QRectF(4, 5, 16, 14), 1.5, 1.5)
-        line(4, 10, 20, 10); line(4, 14.5, 20, 14.5); line(11, 5, 11, 19)
-    elif name == "titleblock":
-        p.drawRoundedRect(QRectF(3.5, 5, 17, 14), 1, 1)
-        line(12, 14.5, 20, 14.5); line(16, 14.5, 16, 19)
-    elif name == "mermaid":
-        p.drawRoundedRect(QRectF(3.5, 4, 7.5, 5), 1.5, 1.5)
-        p.drawRoundedRect(QRectF(13, 15, 7.5, 5), 1.5, 1.5)
-        path = QPainterPath(QPointF(11, 6.5))
-        path.lineTo(15, 6.5); path.quadTo(17, 6.5, 17, 8.5); path.lineTo(17, 15)
-        p.drawPath(path)
-    elif name == "zoom_fit":
-        poly([(4, 8), (4, 4), (8, 4)], close=False)
-        poly([(16, 4), (20, 4), (20, 8)], close=False)
-        poly([(20, 16), (20, 20), (16, 20)], close=False)
-        poly([(8, 20), (4, 20), (4, 16)], close=False)
-    elif name == "zoom_100":
-        p.drawEllipse(QPointF(10.5, 10.5), 5, 5)
-        line(14.2, 14.2, 19.5, 19.5)
-    elif name == "copy":
+    if name == "copy":
         # [2026-08-20, SVG 창 "프롬프트 복사" 버튼 아이콘화] 겹친 종이 두 장 — 표준 복사
         # 픽토그램. 겹치는 자리의 선 교차는 이 앱의 다른 단순 라인 아이콘(mermaid 등)과
         # 같은 수준이라 별도 배경 지우기 없이 허용.
