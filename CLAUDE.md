@@ -47,7 +47,7 @@ easycad/
 │   ├── host_widgets.py     독립 위젯(팔레트버튼·미니맵뷰·플로팅패널·토스트·색상팝업) + 공유 상수
 │   ├── host_dialogs.py     입력 다이얼로그(용지·표제란·표·케이블채번·Mermaid·AI 게이트웨이 설정)
 │   ├── photo_dialog.py     사진→도면 창·워커·ops 렌더(§8 항목28, 2026-10-01)
-│   └── shortcuts.py        단축키 레지스트리(2026-08-21) — QAction·뷰 raw-key 46종 통합,
+│   └── shortcuts.py        단축키 레지스트리(2026-08-21) — QAction·뷰 raw-key 통합(`SHORTCUT_DEFS`),
 │                            설정 창에서 재할당 시 QSettings에 저장(기본값은 이 파일)
 ├── ai/
 │   ├── gateway.py          AI 게이트웨이(Mindlogic) 클라이언트 — 키/주소 저장·모델 목록·크레딧

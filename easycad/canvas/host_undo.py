@@ -84,6 +84,7 @@ class _UndoMixin:
         self._redo.clear()
         self._refresh_history_actions()
         self._mark_dirty()   # [§8 항목10 Stage C]
+        self._schedule_layer_counts()   # 레이어 패널 「이름 (개수)」 갱신
 
     @staticmethod
     def _coalesce_into(entry, new_ops):
@@ -279,6 +280,7 @@ class _UndoMixin:
         self._apply_entry(entry, redo=False)
         self._redo.append(entry)
         self._refresh_history_actions()
+        self._schedule_layer_counts()
         self._mark_dirty()   # [§8 항목10 Stage C] — 저장 후 되돌리기도 다시 dirty
         self._repaint_overlays()   # 되돌리기도 프로그램 이동 — 그룹 박스 잔상 방지
 
@@ -290,6 +292,7 @@ class _UndoMixin:
         self._apply_entry(entry, redo=True)
         self._undo.append(entry)
         self._refresh_history_actions()
+        self._schedule_layer_counts()
         self._mark_dirty()   # [§8 항목10 Stage C]
         self._repaint_overlays()   # 다시 실행도 마찬가지
 

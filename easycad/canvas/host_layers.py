@@ -125,6 +125,7 @@ class _LayersMixin:
         count = len(self._items_in_layer(lid))
         name_lbl = QLabel(f'{layer["name"]} ({count})')
         name_lbl.setWordWrap(False)
+        row._layer_name_lbl, row._layer_id = name_lbl, lid   # `_update_layer_counts`가 글자만 갱신
 
         h.addWidget(vis_btn)
         h.addWidget(lock_btn)
@@ -134,6 +135,30 @@ class _LayersMixin:
         row.customContextMenuRequested.connect(
             lambda pos, i=lid, r=row: self._show_layer_row_menu(r, i))
         return row
+
+
+    def _schedule_layer_counts(self):
+        """레이어 행의 「이름 (개수)」를 곧 다시 센다(2026-10-01 — 도형을 넣고 지우고 되돌려도
+        개수는 레이어 조작 때만 갱신돼 「기본 (0)」에 머물던 문제). undo 기록이 쌓이거나 undo/redo될
+        때 불린다. 0.15초 몰아서 한 번 — 드래그처럼 연달아 바뀌어도 한 번만 센다."""
+        if not hasattr(self, "_layers_list"):
+            return
+        t = getattr(self, "_layer_count_timer", None)
+        if t is None:
+            t = self._layer_count_timer = QTimer(self)
+            t.setSingleShot(True)
+            t.setInterval(150)
+            t.timeout.connect(self._update_layer_counts)
+        t.start()
+
+    def _update_layer_counts(self):
+        names = {layer["id"]: layer["name"] for layer in self._layers}
+        lst = self._layers_list
+        for i in range(lst.count()):
+            row = lst.itemWidget(lst.item(i))
+            lid = getattr(row, "_layer_id", None)
+            if lid in names:
+                row._layer_name_lbl.setText(f"{names[lid]} ({len(self._items_in_layer(lid))})")
 
 
     @staticmethod

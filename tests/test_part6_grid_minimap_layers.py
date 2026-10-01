@@ -1642,3 +1642,25 @@ def test_tab_close_button_uses_neutral_icon():
     qss = w._tabs.tabBar().styleSheet()
     m = re.search(r"image:\s*url\(([^)]+)\)", qss)
     assert m and m.group(1).endswith("tab_close.svg") and os.path.exists(m.group(1))
+
+
+def test_layer_panel_count_follows_insert_undo_redo():
+    # 2026-10-01: 「기본 (N)」이 레이어 조작 때만 갱신돼 삽입·undo 뒤에도 (0)에 머물던 문제.
+    import time
+    from PyQt6.QtWidgets import QLabel
+    w = CanvasWindow()
+
+    def label():
+        t0 = time.time()
+        while time.time() - t0 < 0.4:            # 0.15초 디바운스 대기
+            QApplication.processEvents()
+        row = w._layers_list.itemWidget(w._layers_list.item(0))
+        return row.findChildren(QLabel)[0].text()
+
+    w._build_mermaid("flowchart TD\n A-->B")
+    assert label().endswith("(3)")               # 노드 2 + 화살표 1
+    w.undo()
+    assert label().endswith("(0)")
+    w.redo()
+    assert label().endswith("(3)")
+    w.deleteLater()
