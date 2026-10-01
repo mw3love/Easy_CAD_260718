@@ -45,3 +45,6 @@ tools/_diag.log*
 
 # superpowers subagent-driven-development 작업 워크스페이스(로컬 워크트리 스크래치) — git 추적 대상 아님
 /.worktrees/
+
+# 사진→도면 실측 산출물(tools/sketch_ops_probe.py) — 실행마다 새로 뜨는 결과물
+tools/_sketch_ops/

@@ -1746,6 +1746,38 @@ def test_sketch_build_roundtrip():
         assert abs(lc.x() - sc.x()) < 4, (it, lc, sc)
 
 
+def test_sketch_ops_spec_roundtrip():
+    # 2026-10-01 사진→도면 재실험 도구(tools/sketch_ops.py): 모델이 낸 ops 명세 → .ecad →
+    # load_document 왕복. 원본 좌표 그대로(×2), 고정 경로 선의 지속연결, 1점쇄선 테두리,
+    # 잘못된 op는 건너뛰고 셈만 하는지.
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
+    from sketch_ops import build
+    spec = {"ops": [
+        {"op": "box", "id": "a", "x1": 10, "y1": 10, "x2": 60, "y2": 40, "label": "A"},
+        {"op": "box", "id": "b", "x1": 200, "y1": 100, "x2": 260, "y2": 140},
+        {"op": "line", "pts": [[60, 25], [130, 25], [130, 120], [200, 120]], "head": True,
+         "src": "a", "dst": "b"},
+        {"op": "text", "x": 70, "y": 10, "text": "<1DJ1-1>"},
+        {"op": "poly", "pts": [[0, 0], [5, 5], [0, 10]]},
+        {"op": "circle", "cx": 300, "cy": 50, "r": 8},
+        {"op": "dashrect", "x1": 180, "y1": 80, "x2": 320, "y2": 160},
+        {"op": "line", "pts": [[1, 1]]},          # 점 1개 — 건너뜀
+        {"op": "unknown_kind"},                     # 모르는 op — 건너뜀
+    ]}
+    path = os.path.join(_TMP, "sketch_ops.ecad")
+    n, skipped = build(spec, path)
+    assert (n, skipped) == (7, 2)
+
+    w = CanvasWindow()
+    load_document(w._scene, path)
+    ar = next(it for it in w._scene.items() if isinstance(it, _PolyArrowItem))
+    assert ar.has_binding() and not ar._auto_route          # 고정 경로 + 양끝 지속연결
+    assert [(p.x(), p.y()) for p in ar._pts] == [(120, 50), (260, 50), (260, 240), (400, 240)]
+    rects = [it for it in w._scene.items() if isinstance(it, _RectItem)]
+    assert any(it.pen().style() == Qt.PenStyle.DashDotLine for it in rects)
+    assert any(isinstance(it, _PolygonItem) for it in w._scene.items())
+
+
 
 
 def test_sketch_arrow_binding_follows_move():
