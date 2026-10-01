@@ -147,7 +147,7 @@ symbol_library/
   다시 재 보니 `gpt-6.1-sol`·`gpt-6-astra`가 사진 1장을 거의 맞힘(실패 주원인이 형식이었을 가능성).
   도구 `tools/sketch_ops*.py`, 앱 재도입은 §8 항목28(계획 단계). 같은 날 CAD 출력 PDF는 AI 없이
   벡터를 좌표째 옮기는 게 정확·무료임을 확인(`tools/pdf_vector_probe.py`, 후보29). 폰 사진(DMB 구획)
-  재시험도 통과 — 약점은 세로 회전 글자(ops에 회전 없음). 같은 사진 모델 4종 비교도 차이 작음. 항목28 착수 — 1단계(형식 정리: 글자 회전 rot, `easycad/fileio/photo_ops.py`·`easycad/ai/photo_to_ops.py`) ~5단계 완료 — 삽입 메뉴 「사진→도면…」(`Ctrl+Shift+P`, `easycad/canvas/photo_dialog.py`), 원본 사진 흐리게 깔기. 지시문은 범용화(분야 문구 제거). 남은 것: 사용자 실사용 확인, 다른 종류 도면 시험(사진 필요).
+  재시험도 통과 — 약점은 세로 회전 글자(ops에 회전 없음). 같은 사진 모델 4종 비교도 차이 작음. 항목28 착수 — 1단계(형식 정리: 글자 회전 rot, `easycad/fileio/photo_ops.py`·`easycad/ai/photo_to_ops.py`) ~5단계 완료 — 삽입 메뉴 「사진→도면…」(`Ctrl+Shift+P`, `easycad/canvas/photo_dialog.py`), 원본 사진 흐리게 깔기. 지시문은 범용화(분야 문구 제거). 건축 평면도(생성 이미지)도 쓸 만함 — 약점: 기울어진 사진의 원근 왜곡을 그대로 복사, 벽 채움 없음. 남은 것: 사용자 실사용 확인, 개선 후보(원근 보정 → fill).
 
 ## UI 원칙
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·
