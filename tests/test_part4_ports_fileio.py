@@ -1778,6 +1778,49 @@ def test_sketch_ops_spec_roundtrip():
     assert any(isinstance(it, _PolygonItem) for it in w._scene.items())
 
 
+def test_photo_ops_text_rot_and_forward_binding():
+    # §8 항목28 1단계(2026-10-01): ① text의 rot — 세로 케이블 번호를 세운다. (x,y)=읽기 시작점의
+    # 글줄 가운데, 그 점을 축으로 회전. ② 선이 자기보다 뒤에 적힌 상자 id를 가리켜도 지속연결 유지.
+    from easycad.fileio.photo_ops import ops_to_sketch
+    spec = {"ops": [
+        {"op": "line", "pts": [[60, 25], [200, 25]], "src": "a", "dst": "b"},   # 상자보다 먼저
+        {"op": "text", "x": 100, "y": 50, "text": "<DMBJ1-9>", "font": 12, "rot": 90},
+        {"op": "text", "x": 10, "y": 80, "text": "가로", "font": 12},
+        {"op": "box", "id": "a", "x1": 10, "y1": 10, "x2": 60, "y2": 40},
+        {"op": "box", "id": "b", "x1": 200, "y1": 10, "x2": 260, "y2": 40},
+    ]}
+    s, skipped = ops_to_sketch(spec)
+    assert skipped == 0
+    path = os.path.join(_TMP, "photo_ops_rot.ecad")
+    s.save(path)
+    w = CanvasWindow()
+    load_document(w._scene, path)
+    ar = next(it for it in w._scene.items() if isinstance(it, _PolyArrowItem))
+    assert ar.has_binding()
+    texts = {it.toPlainText(): it for it in w._scene.items() if isinstance(it, _TextItem)}
+    v, h = texts["<DMBJ1-9>"], texts["가로"]
+    assert v.rotation() == 90 and h.rotation() == 0
+    axis = v.mapToScene(v.transformOriginPoint())
+    assert (round(axis.x()), round(axis.y())) == (200, 100)        # 원본 (100,50) × 2
+    br = v.sceneBoundingRect()                                      # 아래로 뻗고 축 x를 가로지른다
+    assert br.top() >= 100 - 5 and br.height() > br.width() and br.left() < 200 < br.right()
+    assert (h.pos().x(), h.pos().y()) == (20, 160)                  # 회전 없으면 왼쪽 위 그대로
+
+
+def test_photo_to_ops_prompt_and_parse():
+    from easycad.ai.photo_to_ops import TASK, grid_crops, parse_ops
+    t = TASK.format(w=1600, h=1200)
+    assert "1600x1200" in t and '"rot":90' in t
+    assert len(grid_crops(1600, 1200)) == 6
+    assert parse_ops('설명\n```json\n{"ops": [{"op": "box"}]}\n```')["ops"] == [{"op": "box"}]
+    for bad in ("JSON 없음", '{"nodes": []}'):
+        try:
+            parse_ops(bad)
+            assert False, bad
+        except ValueError:
+            pass
+
+
 
 
 def test_sketch_arrow_binding_follows_move():

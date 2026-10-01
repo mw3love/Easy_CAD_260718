@@ -928,6 +928,8 @@ def test_gateway_settings_dialog_cancel_does_not_persist():
 
 
 # ── 이미지 경로 폐기 회귀 가드 ────────────────────────────────────────────────
+# 2026-08 "관계만 남기고 재배치" 경로의 부활을 막는다. §8 항목28(2026-10-01)의 좌표 보존 사진→도면은
+# 별개 경로라 다른 이름(`photo_ops`·`photo_to_ops`)을 쓰고, 이 가드는 그대로 유지한다.
 
 def test_ai_image_menu_action_and_mixin_are_gone():
     w = CanvasWindow()

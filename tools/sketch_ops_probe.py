@@ -17,7 +17,6 @@ import base64
 import io
 import json
 import os
-import re
 import sys
 import time
 
@@ -28,9 +27,11 @@ from PIL import Image
 
 from easycad.ai import gateway
 from sketch_ops import build, render
+from easycad.ai.photo_to_ops import CROP_NOTE, FIX_NOTE, TASK as TASK_APP, grid_crops, parse_ops as _parse
 
-# 2026-10-01 실측에 쓴 프롬프트 원문 — 결과 비교를 위해 바꾸지 말 것(바꾸면 새 이름으로 추가).
-TASK = """이 사진은 방송 송신소 계통도(블록 다이어그램)다. 이걸 CAD 앱에서 편집 가능한 도면으로 다시 그리려 한다.
+# 2026-10-01 실측에 쓴 프롬프트 원문 — 결과 비교를 위해 바꾸지 말 것(`--task v1`). 기본(`--task app`)은
+# 앱 모듈 `easycad/ai/photo_to_ops.py`의 TASK(이것 + 글자 회전 rot).
+TASK_V1 = """이 사진은 방송 송신소 계통도(블록 다이어그램)다. 이걸 CAD 앱에서 편집 가능한 도면으로 다시 그리려 한다.
 원본 사진 크기는 {w}x{h} 픽셀이고, 모든 좌표는 이 원본 픽셀 좌표계(x 오른쪽, y 아래)로 쓴다.
 
 출력은 JSON 객체 하나만: {{"ops": [ ... ]}}. 코드펜스·설명 금지. 사용 가능한 op:
@@ -48,27 +49,6 @@ TASK = """이 사진은 방송 송신소 계통도(블록 다이어그램)다. �
 - 글자는 원본 그대로(한글 포함) 정확히 읽는다.
 - 상자 내부 글자가 포트 이름과 겹치면 상자 label 대신 text로 제목 위치를 직접 지정한다."""
 
-CROP_NOTE = ("\n\n첫 이미지는 원본 전체다. 이어서 같은 사진을 구획별로 잘라 2배 확대한 조각들을 준다. "
-             "각 조각 앞에 원본 좌표계에서의 범위를 적었다(조각 픽셀÷2 + 왼쪽위 오프셋 = 원본 좌표). "
-             "작은 글자·기호는 조각에서 읽되, 출력 좌표는 원본 좌표계로.")
-
-FIX_NOTE = ("\n\n지금은 수정 라운드다. 첫 이미지=원본, 둘째 이미지=네 이전 JSON을 실제 앱으로 렌더한 결과"
-            "(같은 좌표 프레임). 둘을 비교해 위치 어긋남·빠진 상자/선/글자·겹친 글자·지어낸 선을 고친 "
-            "**전체** JSON을 다시 출력하라.\n\n이전 JSON:\n")
-
-
-def grid_crops(w, h, cols=3, rows=2, overlap=0.1):
-    """원본을 cols×rows 격자로 나눈 조각 범위(각 변 overlap 비율만큼 겹침)."""
-    cw, ch = w / cols, h / rows
-    ox, oy = cw * overlap, ch * overlap
-    out = []
-    for r in range(rows):
-        for c in range(cols):
-            out.append((int(max(0, c * cw - ox)), int(max(0, r * ch - oy)),
-                        int(min(w, (c + 1) * cw + ox)), int(min(h, (r + 1) * ch + oy))))
-    return out
-
-
 def _part(img):
     buf = io.BytesIO()
     img.save(buf, "PNG")
@@ -85,18 +65,13 @@ def _call(client, model, content, max_tokens):
     return txt, usage, time.time() - t0
 
 
-def _parse(txt):
-    m = re.search(r"\{.*\}", txt, re.S)
-    if not m:
-        raise ValueError("응답에 JSON 객체가 없음: " + txt[:200])
-    return json.loads(m.group(0))
-
-
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("photo")
     ap.add_argument("--model", required=True)
     ap.add_argument("--mode", choices=["oneshot", "loop"], required=True)
+    ap.add_argument("--task", choices=["app", "v1"], default="app",
+                    help="app=앱 프롬프트(글자 회전 rot 포함), v1=2026-10-01 실측 원문")
     ap.add_argument("--rounds", type=int, default=2, help="loop: 첫 생성 뒤 수정 라운드 수")
     ap.add_argument("--max-tokens", type=int, default=32000)
     ap.add_argument("--crops-json", help='loop 조각 범위 직접 지정: [[x1,y1,x2,y2],...] (기본 3×2 격자)')
@@ -109,7 +84,7 @@ def main(argv=None):
     os.makedirs(a.out_dir, exist_ok=True)
     orig = Image.open(a.photo).convert("RGB")
     W, H = orig.size
-    task = TASK.format(w=W, h=H)
+    task = (TASK_APP if a.task == "app" else TASK_V1).format(w=W, h=H)
     stem = os.path.join(a.out_dir, f"{a.model}_{a.mode}")
 
     if a.mode == "oneshot":
