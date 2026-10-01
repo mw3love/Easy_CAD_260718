@@ -66,7 +66,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~15_*.py      테마별 회귀 스모크 1112종(2026-10-01 기준, 개별 pytest 실행 가능)
+└── test_part1~15_*.py      테마별 회귀 스모크 1113종(2026-10-01 기준, 개별 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -147,7 +147,7 @@ symbol_library/
   다시 재 보니 `gpt-6.1-sol`·`gpt-6-astra`가 사진 1장을 거의 맞힘(실패 주원인이 형식이었을 가능성).
   도구 `tools/sketch_ops*.py`, 앱 재도입은 §8 항목28(계획 단계). 같은 날 CAD 출력 PDF는 AI 없이
   벡터를 좌표째 옮기는 게 정확·무료임을 확인(`tools/pdf_vector_probe.py`, 후보29). 폰 사진(DMB 구획)
-  재시험도 통과 — 약점은 세로 회전 글자(ops에 회전 없음). 같은 사진 모델 4종 비교도 차이 작음. 항목28 착수 — 1단계(형식 정리: 글자 회전 rot, `easycad/fileio/photo_ops.py`·`easycad/ai/photo_to_ops.py`) ~5단계 완료 — 삽입 메뉴 「사진→도면…」(`Ctrl+Shift+P`, `easycad/canvas/photo_dialog.py`), 원본 사진 흐리게 깔기. 사용자 실사용 확인 대기.
+  재시험도 통과 — 약점은 세로 회전 글자(ops에 회전 없음). 같은 사진 모델 4종 비교도 차이 작음. 항목28 착수 — 1단계(형식 정리: 글자 회전 rot, `easycad/fileio/photo_ops.py`·`easycad/ai/photo_to_ops.py`) ~5단계 완료 — 삽입 메뉴 「사진→도면…」(`Ctrl+Shift+P`, `easycad/canvas/photo_dialog.py`), 원본 사진 흐리게 깔기. 지시문은 범용화(분야 문구 제거). 남은 것: 사용자 실사용 확인, 다른 종류 도면 시험(사진 필요).
 
 ## UI 원칙
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·
