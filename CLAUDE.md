@@ -46,24 +46,27 @@ easycad/
 │   │   host_selection.py / host_context.py / host_canvas.py   CanvasWindow 믹스인(역할별)
 │   ├── host_widgets.py     독립 위젯(팔레트버튼·미니맵뷰·플로팅패널·토스트·색상팝업) + 공유 상수
 │   ├── host_dialogs.py     입력 다이얼로그(용지·표제란·표·케이블채번·Mermaid·AI 게이트웨이 설정)
+│   ├── photo_dialog.py     사진→도면 창·워커·ops 렌더(§8 항목28, 2026-10-01)
 │   └── shortcuts.py        단축키 레지스트리(2026-08-21) — QAction·뷰 raw-key 46종 통합,
 │                            설정 창에서 재할당 시 QSettings에 저장(기본값은 이 파일)
 ├── ai/
 │   ├── gateway.py          AI 게이트웨이(Mindlogic) 클라이언트 — 키/주소 저장·모델 목록·크레딧
 │   │                       조회·텍스트 호출(폴백 포함)
-│   └── text_to_mermaid.py  프롬프트 빌더·코드펜스 벗기기·generate_mermaid (§8 항목18)
+│   ├── text_to_mermaid.py  프롬프트 빌더·코드펜스 벗기기·generate_mermaid (§8 항목18)
+│   └── photo_to_ops.py     사진→도면 프롬프트·조각·AI 루프 generate_ops (§8 항목28, Qt 비의존)
 ├── fileio/
 │   ├── pdf_export.py       PDF 출력(A4~A1, 전체/선택영역)
 │   ├── document.py         .ecad(JSON) 저장/열기 — 문서모델 씨앗(DXF 매핑 기반)
 │   ├── dxf_export.py / dxf_import.py   DXF 왕복
 │   ├── mermaid_import.py   Mermaid flowchart → .ecad
-│   └── sketch_build.py     이미지→도면 빌더(Qt 비의존)
+│   ├── sketch_build.py     이미지→도면 빌더(Qt 비의존)
+│   └── photo_ops.py        사진→도면 ops JSON → Sketch 아이템(글자 회전 rot, Qt 비의존)
 └── main.py · run.py        진입점
 tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~15_*.py      테마별 회귀 스모크 1105종(2026-10-01 기준, 개별 pytest 실행 가능)
+└── test_part1~15_*.py      테마별 회귀 스모크 1112종(2026-10-01 기준, 개별 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -171,6 +174,8 @@ symbol_library/
      최선 1곳씩만 "(추천1)"/"(추천2)"로 표시.
   다음에 다른 AI 보조 생성 기능을 붙일 때도 이 셋을 먼저 검토 — 특히 "이 결과 포맷을
   사람이 직접 쓸 수 있는가?"가 참이면 수동 모드 UI가 불필요하다는 신호.
+  거짓이면(예: 사진→도면의 ops JSON, 2026-10-01) 글 칸 대신 원본|결과 나란히 미리보기를
+  "결과 칸"으로 둔다 — `photo_dialog._PhotoToDrawingDialog` 선례.
 
 ## 용어 — 캔버스의 점·핸들
 개발 대화에서 장황한 묘사 대신 쓰는 짧은 한국어 용어(2026-08-11 사용자 요청). 코드의 실제
