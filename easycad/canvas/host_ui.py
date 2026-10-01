@@ -276,7 +276,10 @@ class _UIBuildMixin:
         # Ctrl+Shift+A는 그 기능 폐기(위 주석 참조)로 비어 있던 것을 재사용.
         self._act_ai_svg = self._make_action("AI SVG 에셋 생성…", "generate",
             self._insert_ai_svg_asset, shortcut_id="insert_ai_svg")
-        for a in (self._act_img, self._act_mmd, self._act_ai_svg):
+        # [§8 항목28, 2026-10-01] 사진→도면 — 원본 좌표 그대로(Mermaid의 자동배치와 결과가 달라 따로 창).
+        self._act_photo = self._make_action("사진→도면…", "photo",
+            self._insert_photo_drawing, shortcut_id="insert_photo")
+        for a in (self._act_img, self._act_mmd, self._act_ai_svg, self._act_photo):
             i.addAction(a)
         i.addSeparator()   # [2026-08-20 피드백] 위 3개(가져오기) vs 아래(AI 연결 설정) 구분
         # Mermaid/SVG 창 안의 설정 버튼과 같은 다이얼로그를 독립적으로 여는 진입점 — 그
@@ -643,7 +646,8 @@ class _UIBuildMixin:
         tb.addSeparator()
 
         # 삽입(&I)
-        for a in (self._act_tb, self._act_tbl, self._act_img, self._act_mmd, self._act_ai_svg):
+        for a in (self._act_tb, self._act_tbl, self._act_img, self._act_mmd, self._act_ai_svg,
+                  self._act_photo):
             tb.addAction(a)
         tb.addSeparator()
 

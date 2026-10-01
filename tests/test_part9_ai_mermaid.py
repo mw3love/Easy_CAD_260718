@@ -1423,3 +1423,45 @@ def test_photo_ops_worker_renders_on_main_thread():
             QApplication.processEvents()
     assert "err" not in got, got.get("err")
     assert len(got["spec"]["ops"]) == 2 and threads == [True]
+
+
+# ── §8 항목28 3~4단계(2026-10-01) — 사진→도면 창·삽입 ─────────────────────────
+
+def test_build_photo_drawing_centers_underlays_and_undoes_once():
+    from PIL import Image
+    w = CanvasWindow()
+    w.resize(1200, 800)
+    spec = {"ops": [{"op": "box", "id": "a", "x1": 10, "y1": 10, "x2": 60, "y2": 40, "label": "A"},
+                    {"op": "line", "pts": [[60, 25], [100, 25]], "src": "a"},
+                    {"op": "text", "x": 70, "y": 40, "text": "V", "rot": 90},
+                    {"op": "bogus"}]}
+    added, skipped = w._build_photo_drawing(spec, Image.new("RGB", (120, 90), "white"))
+    assert skipped == 1
+    img = added[0]
+    assert isinstance(img, _ImageItem) and img._locked and not (img.flags() & img.GraphicsItemFlag.ItemIsSelectable)
+    assert img._pixmap.toImage().pixelColor(5, 5).alpha() == w._PHOTO_UNDERLAY_ALPHA   # 흐림이 픽스맵에 구워짐
+    assert all(it.zValue() > img.zValue() for it in added[1:])
+    center = w._view.mapToScene(w._view.viewport().rect().center())
+    r = img.mapRectToScene(img.rect())                    # sceneBoundingRect는 핸들 여백 포함
+    assert abs(r.center().x() - center.x()) < 1 and abs(r.width() - 240) < 1   # 사진 중심=뷰 중앙, ×2
+    box = next(it for it in added if isinstance(it, _RectItem))
+    assert abs(box.mapRectToScene(box.rect()).left() - (r.left() + 20)) < 1     # 원본 좌표 그대로(×2)
+    w.undo()
+    assert not [it for it in w._scene.items() if it.parentItem() is None]
+    w.deleteLater()
+
+
+def test_photo_dialog_result_enables_insert_and_action_registered():
+    from PIL import Image
+    w = CanvasWindow()
+    assert w._act_photo.shortcut().toString() == "Ctrl+Shift+P"
+    dlg = w._get_photo_dialog()
+    assert dlg.model() == "gpt-6.1-sol" and dlg.underlay()
+    assert not dlg._insert.isEnabled()
+    dlg._set_attached_image(Image.new("RGB", (120, 90), "white"), "t.png")
+    dlg._on_succeeded({"ops": [{"op": "box", "x1": 10, "y1": 10, "x2": 60, "y2": 40}]}, [])
+    assert dlg._insert.isEnabled() and dlg.result_spec() is not None
+    assert not dlg._result_view.pixmap().isNull()
+    dlg._clear_image()                                   # 사진을 빼면 결과도 버린다
+    assert not dlg._insert.isEnabled() and dlg.result_spec() is None
+    w.deleteLater()

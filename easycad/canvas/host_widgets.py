@@ -226,6 +226,8 @@ _SVG_ACT_ICON_NAMES = frozenset({
     # [베이크오프 2026-09-25, H안] 옛 QPainter 선 글리프 7종 → A2 규칙(외곽선+한 부분만 채움)
     # 손그림 SVG. 2026-08-13부터 삽입 메뉴가 툴바에도 나와 두 스타일이 섞여 보이던 것.
     "pdf", "titleblock", "table", "image", "mermaid", "zoom_100", "zoom_fit",
+    # [§8 항목28, 2026-10-01] 사진→도면 — 같은 A2 규칙(카메라 외곽선 + 렌즈만 채움).
+    "photo",
     # ["attach" 2026-08-20 제거 — 첨부 버튼이 이 SVG 클립 아이콘 대신 "+" 정사각 버튼으로
     # 바뀌어(`_ImageAttachMixin._build_attach_button`) 마지막 참조가 사라짐, `attach.svg`도 삭제.]
 })

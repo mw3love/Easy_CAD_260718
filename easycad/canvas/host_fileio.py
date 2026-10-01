@@ -41,8 +41,9 @@ from easycad.fileio.dxf_export import export_dxf, export_dwg
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.svg_import import parse_svg_items, parse_svg_string
 from easycad.fileio.document import (
-    save_document, load_document, load_document_layers, dict_to_item, item_to_dict,
+    save_document, load_document, load_document_layers, dict_to_item, item_to_dict, insert_items,
 )
+from easycad.fileio.photo_ops import SCALE as _PHOTO_SCALE, ops_to_sketch
 from easycad.fileio import symbol_library
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
@@ -53,6 +54,7 @@ from easycad.canvas.host_dialogs import (
     _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _MermaidDialog, _PdfExportDialog,
     _SvgAssetDialog, _AIGatewaySettingsDialog,
 )
+from easycad.canvas.photo_dialog import _PhotoToDrawingDialog, _pil_to_pixmap
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
@@ -1216,6 +1218,58 @@ class _FileIOMixin:
         self.push_undo_add_many(added)
         self._scene.clearSelection()
         return len(items_by_id), len(arrows), graph.direction
+
+
+    # ---- 사진→도면 (§8 항목28, 2026-10-01) -----------------------------------
+    _PHOTO_UNDERLAY_ALPHA = 90   # 밑에 까는 원본 사진 투명도(0~255) — 픽스맵에 구워 저장 후에도 유지
+
+    def _get_photo_dialog(self) -> "_PhotoToDrawingDialog":
+        """Mermaid 창과 같은 이유로 창당 하나를 재사용 — 결과·첨부 사진이 닫았다 열어도 남는다."""
+        dlg = getattr(self, "_photo_dialog", None)
+        if dlg is None:
+            dlg = _PhotoToDrawingDialog(self)
+            self._photo_dialog = dlg
+        return dlg
+
+    def _insert_photo_drawing(self):
+        """사진 → AI ops → 편집가능 도형을 원본 배치 그대로 뷰 중앙에 넣는다(한 번의 undo)."""
+        dlg = self._get_photo_dialog()
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        spec, photo = dlg.result_spec(), dlg.photo()
+        if spec is None or photo is None:
+            return
+        added, skipped = self._build_photo_drawing(spec, photo, underlay=dlg.underlay())
+        self.set_tool("select")
+        msg = f"사진→도면: 아이템 {len(added)}개 삽입"
+        if skipped:
+            msg += f" (읽지 못한 항목 {skipped}개 건너뜀)"
+        self.statusBar().showMessage(msg + " — Ctrl+Z로 한 번에 취소", 8000)
+
+    def _build_photo_drawing(self, spec: dict, photo, *, underlay: bool = True) -> tuple[list, int]:
+        """ops 명세 → 씬(원본 사진 픽셀 × _PHOTO_SCALE, 사진 중심 = 뷰 중앙). 반환 (넣은 아이템, 건너뛴 op 수).
+        underlay면 원본 사진을 같은 자리·같은 배율로 흐리게(알파 구움)·잠가서 맨 아래에 깐다.
+        UI 없음 — 스모크에서 그대로 호출 가능."""
+        W, H = photo.size
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        ox, oy = center.x() - W * _PHOTO_SCALE / 2.0, center.y() - H * _PHOTO_SCALE / 2.0
+        sk, skipped = ops_to_sketch(spec, dark=getattr(self, "_dark", True), offset=(ox, oy))
+        z0 = max((it.zValue() for it in self._scene.items() if it.parentItem() is None), default=0.0) + 1.0
+        for d in sk._items:
+            d["z"] = d["z"] + z0   # 기존 도면 위로
+        added = insert_items(self._scene, sk._items)
+        if underlay:
+            faint = photo.convert("RGBA")
+            faint.putalpha(self._PHOTO_UNDERLAY_ALPHA)
+            img = _ImageItem(_pil_to_pixmap(faint), QRectF(0.0, 0.0, W * _PHOTO_SCALE, H * _PHOTO_SCALE))
+            img.setPos(ox, oy)
+            img.setZValue(z0 - 0.5)   # 이번에 넣은 도형 바로 아래(기존 도면은 가리지 않게 그 위)
+            self._scene.addItem(img)
+            self._set_item_lock_flags(img, True)
+            added.insert(0, img)
+        self.push_undo_add_many(added)
+        self._scene.clearSelection()
+        return added, skipped
 
 
     def _make_mermaid_node(self, node, x, y, w, h, pen):

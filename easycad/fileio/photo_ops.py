@@ -27,8 +27,10 @@ def _line_height(font: int) -> float:
     return 1.8 * font + 13.0
 
 
-def ops_to_sketch(spec: dict, *, dark: bool = False, scale: float = SCALE) -> tuple[Sketch, int]:
+def ops_to_sketch(spec: dict, *, dark: bool = False, scale: float = SCALE,
+                  offset: tuple[float, float] = (0.0, 0.0)) -> tuple[Sketch, int]:
     """ops 명세 → Sketch. 반환 (Sketch, 건너뛴 op 수). 잘못된 op는 건너뛰고 셈만 한다.
+    좌표는 원본 픽셀 × scale + offset(캔버스 단위) — offset으로 사진 왼쪽 위를 캔버스 어디에 둘지 정한다.
 
     선(line)은 다른 op를 다 만든 뒤에 만든다 — 선이 자기보다 뒤에 적힌 상자 id를 가리켜도
     지속연결이 빠지지 않게(2026-10-01 세션 직접 작성본에서 발견). 그래서 선은 항상 도형 위(z)에 온다."""
@@ -36,12 +38,14 @@ def ops_to_sketch(spec: dict, *, dark: bool = False, scale: float = SCALE) -> tu
     ink = _argb(s._default_color)
     ids = {}
 
+    ox, oy = float(offset[0]), float(offset[1])
+
     def P(x, y):
-        return [float(x) * scale, float(y) * scale]
+        return [float(x) * scale + ox, float(y) * scale + oy]
 
     def rect_of(op):
         x1, y1, x2, y2 = (float(op[k]) for k in ("x1", "y1", "x2", "y2"))
-        return x1 * scale, y1 * scale, (x2 - x1) * scale, (y2 - y1) * scale
+        return x1 * scale + ox, y1 * scale + oy, (x2 - x1) * scale, (y2 - y1) * scale
 
     ops = spec.get("ops", [])
     if not isinstance(ops, list):
@@ -64,19 +68,19 @@ def ops_to_sketch(spec: dict, *, dark: bool = False, scale: float = SCALE) -> tu
                                      pen=ink, width=WIDTH, fill=None, style=_DASHDOT))
             elif k == "circle":
                 cx, cy, r = float(op["cx"]), float(op["cy"]), float(op["r"])
-                n = s.ellipse((cx - r) * scale, (cy - r) * scale, 2 * r * scale, 2 * r * scale,
+                n = s.ellipse((cx - r) * scale + ox, (cy - r) * scale + oy, 2 * r * scale, 2 * r * scale,
                               width=WIDTH)
                 if op.get("id"):
                     ids[op["id"]] = n
             elif k == "text":
                 font = int(op.get("font", 13))
-                x, y = float(op["x"]) * scale, float(op["y"]) * scale
+                x, y = P(op["x"], op["y"])
                 rot = float(op.get("rot") or 0.0)
                 if rot % 360.0:
                     # 축 = 글줄 가운데 왼쪽 끝(로컬 (0, h/2)). pos+origin이 (x,y)에 오게.
-                    oy = _line_height(font) / 2.0
-                    s.text(x, y - oy, op["text"], font=font)
-                    s._items[-1].update(rotation=rot, origin=[0.0, oy])
+                    half = _line_height(font) / 2.0
+                    s.text(x, y - half, op["text"], font=font)
+                    s._items[-1].update(rotation=rot, origin=[0.0, half])
                 else:
                     s.text(x, y, op["text"], font=font)
             elif k == "line":

@@ -144,7 +144,7 @@ symbol_library/
   다시 재 보니 `gpt-6.1-sol`·`gpt-6-astra`가 사진 1장을 거의 맞힘(실패 주원인이 형식이었을 가능성).
   도구 `tools/sketch_ops*.py`, 앱 재도입은 §8 항목28(계획 단계). 같은 날 CAD 출력 PDF는 AI 없이
   벡터를 좌표째 옮기는 게 정확·무료임을 확인(`tools/pdf_vector_probe.py`, 후보29). 폰 사진(DMB 구획)
-  재시험도 통과 — 약점은 세로 회전 글자(ops에 회전 없음). 같은 사진 모델 4종 비교도 차이 작음. 항목28 착수 — 1단계(형식 정리: 글자 회전 rot, `easycad/fileio/photo_ops.py`·`easycad/ai/photo_to_ops.py`) ·2단계(AI 루프 앱 이식, `easycad/canvas/photo_dialog.py`) 완료, 3단계(입력 창) 대기.
+  재시험도 통과 — 약점은 세로 회전 글자(ops에 회전 없음). 같은 사진 모델 4종 비교도 차이 작음. 항목28 착수 — 1단계(형식 정리: 글자 회전 rot, `easycad/fileio/photo_ops.py`·`easycad/ai/photo_to_ops.py`) ~5단계 완료 — 삽입 메뉴 「사진→도면…」(`Ctrl+Shift+P`, `easycad/canvas/photo_dialog.py`), 원본 사진 흐리게 깔기. 사용자 실사용 확인 대기.
 
 ## UI 원칙
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·
