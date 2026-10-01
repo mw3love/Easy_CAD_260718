@@ -6,8 +6,10 @@ AI 루프 본체는 `easycad/ai/photo_to_ops.generate_ops`(Qt 비의존), ops→
 """
 import io
 
-from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, QSize, QThread, Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QColor, QImage, QPainter, QPixmap
+from PyQt6.QtCore import (
+    QBuffer, QByteArray, QIODevice, QPointF, QRectF, QSize, QThread, Qt, pyqtSignal, pyqtSlot,
+)
+from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFrame, QGraphicsScene, QHBoxLayout, QLabel, QMessageBox,
     QPushButton, QVBoxLayout,
@@ -124,6 +126,104 @@ def _pil_to_pixmap(img) -> QPixmap:
     return pm
 
 
+class _CornerPreview(QLabel):
+    """원본 미리보기 + 모서리 점 4개(원근 보정, 2026-10-01). 점을 끌어 도면 종이의 네 귀퉁이에 맞추면
+    AI에 보내기 전에 그 사각형을 반듯하게 편다(`photo_to_ops.rectify`). 처음 위치는 사진 네 귀퉁이 —
+    건드리지 않으면 보정 없음. 좌표는 원본 사진 픽셀로 보관한다."""
+
+    quad_changed = pyqtSignal()
+    _HIT = 18   # 점 잡기 거리(px, 맨해튼)
+
+    def __init__(self, size: QSize, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("background:#ffffff; color:#999999; border:1px solid rgba(128,128,128,90);")
+        self.setText("원본")
+        self._img_size = None
+        self._pm = None
+        self._quad = []
+        self._drag = None
+
+    def set_image(self, pil_img):
+        self._drag = None
+        if pil_img is None:
+            self._img_size, self._pm, self._quad = None, None, []
+            self.setText("원본")
+        else:
+            self._img_size = pil_img.size
+            self._pm = _pil_to_pixmap(pil_img).scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio,
+                                                    Qt.TransformationMode.SmoothTransformation)
+            self.setText("")
+            self.reset_quad(emit=False)
+        self.update()
+
+    def reset_quad(self, emit=True):
+        if self._img_size is None:
+            return
+        w, h = self._img_size
+        self._quad = [(0.0, 0.0), (float(w), 0.0), (float(w), float(h)), (0.0, float(h))]
+        self.update()
+        if emit:
+            self.quad_changed.emit()
+
+    def quad(self):
+        return list(self._quad)
+
+    def set_quad(self, quad):
+        self._quad = [(float(x), float(y)) for x, y in quad]
+        self.update()
+        self.quad_changed.emit()
+
+    # 원본 픽셀 <-> 위젯 좌표
+    def _frame(self):
+        pw, ph = self._pm.width(), self._pm.height()
+        return (self.width() - pw) / 2.0, (self.height() - ph) / 2.0, pw / self._img_size[0]
+
+    def _to_widget(self, x, y):
+        ox, oy, k = self._frame()
+        return QPointF(ox + x * k, oy + y * k)
+
+    def _to_image(self, pt):
+        ox, oy, k = self._frame()
+        w, h = self._img_size
+        return (min(max((pt.x() - ox) / k, 0.0), float(w)), min(max((pt.y() - oy) / k, 0.0), float(h)))
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if self._pm is None:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        ox, oy, _ = self._frame()
+        p.drawPixmap(int(round(ox)), int(round(oy)), self._pm)
+        pts = [self._to_widget(x, y) for x, y in self._quad]
+        p.setPen(QPen(QColor(_ACCENT_CORAL), 1.5))
+        p.drawPolygon(QPolygonF(pts))
+        p.setBrush(QColor(_ACCENT_CORAL))
+        for q in pts:
+            p.drawEllipse(q, 5.0, 5.0)
+        p.end()
+
+    def mousePressEvent(self, e):
+        if self._pm is None or not self.isEnabled():
+            return
+        pos = e.position()
+        best = min(range(4), key=lambda i: (self._to_widget(*self._quad[i]) - pos).manhattanLength())
+        if (self._to_widget(*self._quad[best]) - pos).manhattanLength() <= self._HIT:
+            self._drag = best
+
+    def mouseMoveEvent(self, e):
+        if self._drag is not None:
+            self._quad[self._drag] = self._to_image(e.position())
+            self.update()
+
+    def mouseReleaseEvent(self, e):
+        if self._drag is not None:
+            self._drag = None
+            self.quad_changed.emit()
+
+
 class _PhotoToDrawingDialog(_ImageAttachMixin, QDialog):
     """사진 첨부 → AI(첫 생성 + 수정 2회) → 원본|결과 미리보기 → 캔버스에 넣기."""
 
@@ -136,6 +236,7 @@ class _PhotoToDrawingDialog(_ImageAttachMixin, QDialog):
         self._init_image_attach_state()
         self._worker = None
         self._spec = None
+        self._sent_photo = None   # 마지막으로 AI에 보낸(원근 보정된) 사진 — 결과·밑깔기의 기준
         lay = QVBoxLayout(self)
 
         # 사진 카드: 첨부 버튼 + 칩 + 안내
@@ -178,14 +279,25 @@ class _PhotoToDrawingDialog(_ImageAttachMixin, QDialog):
 
         # 원본 | 결과 미리보기
         prev = QHBoxLayout()
-        self._orig_view = self._preview_label("원본")
+        self._orig_view = _CornerPreview(self._PREVIEW, self)
+        self._orig_view.quad_changed.connect(self._on_quad_changed)
         self._result_view = self._preview_label("결과")
-        for title, v in (("원본", self._orig_view), ("결과", self._result_view)):
+        self._reset_corners = QPushButton("모서리 초기화", self)
+        self._reset_corners.setFlat(True)
+        self._reset_corners.setStyleSheet("color:#8a8a8a; font-size:11px; padding:0 4px;")
+        self._reset_corners.clicked.connect(self._orig_view.reset_quad)
+        for title, v in (("원본 — 비스듬히 찍었으면 주황 점을 종이 네 귀퉁이로", self._orig_view),
+                         ("결과", self._result_view)):
             col = QVBoxLayout()
             t = QLabel(title, self)
             t.setStyleSheet("color:#8a8a8a; font-size:11px;")
             col.addWidget(t)
             col.addWidget(v)
+            if v is self._orig_view:
+                # 제목 줄에 두면 옆 칸 「결과」 제목과 붙어 한 덩어리로 읽혀 미리보기 아래로.
+                col.addWidget(self._reset_corners, 0, Qt.AlignmentFlag.AlignRight)
+            else:
+                col.addStretch(1)
             prev.addLayout(col)
         lay.addLayout(prev)
 
@@ -220,15 +332,25 @@ class _PhotoToDrawingDialog(_ImageAttachMixin, QDialog):
     def _set_attached_image(self, pil_img, name: str):
         super()._set_attached_image(pil_img, name)
         self._hint.setVisible(False)
-        self._show(self._orig_view, _pil_to_pixmap(pil_img))
+        self._orig_view.set_image(pil_img)
+        self._sent_photo = None
         self._set_result(None)
 
     def _clear_image(self):
         super()._clear_image()
         self._hint.setVisible(True)
-        self._orig_view.clear()
-        self._orig_view.setText("원본")
+        self._orig_view.set_image(None)
+        self._sent_photo = None
         self._set_result(None)
+
+    def _on_quad_changed(self):
+        # 모서리를 바꾸면 보낼 사진이 달라지므로 이전 결과는 버린다.
+        self._sent_photo = None
+        self._set_result(None)
+
+    def _ai_photo(self):
+        """결과·밑깔기의 기준 사진 — AI에 보낸 보정본, 없으면 첨부 원본."""
+        return self._sent_photo if self._sent_photo is not None else self._attached_image
 
     def keyPressEvent(self, e):
         if self._maybe_intercept_paste_image(e):
@@ -242,7 +364,7 @@ class _PhotoToDrawingDialog(_ImageAttachMixin, QDialog):
             self._result_view.clear()
             self._result_view.setText("결과")
         else:
-            w, h = self._attached_image.size
+            w, h = self._ai_photo().size
             self._show(self._result_view, QPixmap.fromImage(render_spec_qimage(spec, (w, h))))
 
     # ---- 생성 ----
@@ -255,9 +377,16 @@ class _PhotoToDrawingDialog(_ImageAttachMixin, QDialog):
             QMessageBox.warning(self, "사진→도면", "게이트웨이 API 키가 없습니다. "
                                 "삽입 메뉴의 「AI 게이트웨이 설정…」에서 입력해 주세요.")
             return
+        from easycad.ai.photo_to_ops import rectify
+        try:
+            sent = rectify(self._attached_image, self._orig_view.quad())
+        except ValueError as e:
+            QMessageBox.warning(self, "사진→도면", f"모서리로 사진을 펼 수 없습니다: {e}")
+            return
         self._set_result(None)
+        self._sent_photo = sent
         self._set_running(True)
-        self._worker = _PhotoOpsWorker(key, gw.resolve_base_url(), self._attached_image,
+        self._worker = _PhotoOpsWorker(key, gw.resolve_base_url(), sent,
                                        self.model(), PHOTO_ROUNDS, self)
         self._worker.progressed.connect(self._on_progress)
         self._worker.succeeded.connect(self._on_succeeded)
@@ -289,6 +418,8 @@ class _PhotoToDrawingDialog(_ImageAttachMixin, QDialog):
         self._cancel.setVisible(on)
         self._cancel.setEnabled(on)
         self._model.setEnabled(not on)
+        self._orig_view.setEnabled(not on)        # 진행 중엔 모서리 고정(보낸 사진과 어긋나지 않게)
+        self._reset_corners.setEnabled(not on)
         if not on:
             self._progress.stop()
 
@@ -312,7 +443,7 @@ class _PhotoToDrawingDialog(_ImageAttachMixin, QDialog):
         return self._spec
 
     def photo(self):
-        return self._attached_image
+        return self._ai_photo()
 
     def underlay(self) -> bool:
         return self._underlay.isChecked()

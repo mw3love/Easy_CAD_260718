@@ -139,3 +139,53 @@ def generate_ops(client, photo, *, model: str, render, rounds: int = 2, task: st
         if on_round is not None:
             on_round(r, spec, entry)
     return spec, log
+
+
+# ---- 원근 보정(2026-10-01) -----------------------------------------------------
+# 비스듬히 찍은 사진은 결과 도면도 같은 사다리꼴이 된다("원본 위치 그대로" 규칙이 왜곡까지 따름 —
+# 평면도 시험에서 발견). 사용자가 창에서 맞춘 네 모서리를 반듯한 직사각형으로 펴서 AI에 보낸다.
+# Pillow 내장 PERSPECTIVE만 쓴다(OpenCV·numpy는 배포판 의존성에 없다).
+
+def _solve(a, b):
+    """가우스 소거(부분 피벗) — 8×8 하나라 순수 파이썬으로 충분."""
+    n = len(b)
+    m = [row[:] + [b[i]] for i, row in enumerate(a)]
+    for c in range(n):
+        p = max(range(c, n), key=lambda r: abs(m[r][c]))
+        if abs(m[p][c]) < 1e-12:
+            raise ValueError("네 점이 한 줄 위에 있어 펼 수 없음")
+        m[c], m[p] = m[p], m[c]
+        for r in range(n):
+            if r != c:
+                f = m[r][c] / m[c][c]
+                m[r] = [x - f * y for x, y in zip(m[r], m[c])]
+    return [m[i][n] / m[i][i] for i in range(n)]
+
+
+def is_full_frame(quad, size, tol=0.5) -> bool:
+    """네 점이 사진 네 귀퉁이 그대로인가(=보정 안 함)."""
+    w, h = size
+    full = ((0, 0), (w, 0), (w, h), (0, h))
+    return all(abs(px - fx) <= tol and abs(py - fy) <= tol for (px, py), (fx, fy) in zip(quad, full))
+
+
+def rectify(photo, quad):
+    """quad=(왼쪽위, 오른쪽위, 오른쪽아래, 왼쪽아래) 사진 좌표 → 그 사각형을 편 직사각형 사진.
+    결과 크기는 마주보는 변 길이 중 긴 쪽. 네 점이 사진 귀퉁이 그대로면 원본을 그대로 돌려준다."""
+    if is_full_frame(quad, photo.size):
+        return photo
+    from PIL import Image
+    (x0, y0), (x1, y1), (x2, y2), (x3, y3) = quad
+
+    def d(ax, ay, bx, by):
+        return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+    W = max(1, round(max(d(x0, y0, x1, y1), d(x3, y3, x2, y2))))
+    H = max(1, round(max(d(x0, y0, x3, y3), d(x1, y1, x2, y2))))
+    # 출력 (u,v) → 입력 (x,y): x=(a u+b v+c)/(g u+h v+1), y=(d u+e v+f)/(g u+h v+1)
+    rows, rhs = [], []
+    for (u, v), (x, y) in zip(((0, 0), (W, 0), (W, H), (0, H)), quad):
+        rows.append([u, v, 1, 0, 0, 0, -u * x, -v * x]); rhs.append(x)
+        rows.append([0, 0, 0, u, v, 1, -u * y, -v * y]); rhs.append(y)
+    coeffs = _solve(rows, rhs)
+    return photo.transform((W, H), Image.Transform.PERSPECTIVE, coeffs, Image.Resampling.BICUBIC,
+                           fillcolor="white")

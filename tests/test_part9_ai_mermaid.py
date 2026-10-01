@@ -1465,3 +1465,47 @@ def test_photo_dialog_result_enables_insert_and_action_registered():
     dlg._clear_image()                                   # 사진을 빼면 결과도 버린다
     assert not dlg._insert.isEnabled() and dlg.result_spec() is None
     w.deleteLater()
+
+
+# ── 사진→도면 원근 보정(2026-10-01) ─────────────────────────────────────────────
+
+def test_rectify_unwarps_quad_and_keeps_full_frame():
+    from PIL import Image, ImageDraw
+    from easycad.ai.photo_to_ops import rectify
+    im = Image.new("RGB", (400, 300), "white")
+    q = [(60, 40), (330, 70), (360, 260), (30, 240)]
+    ImageDraw.Draw(im).polygon(q, outline="black", width=4)
+    assert rectify(im, [(0, 0), (400, 0), (400, 300), (0, 300)]) is im     # 귀퉁이 그대로 → 보정 없음
+    r = rectify(im, q)
+    w, h = r.size
+    px = r.load()
+    dark = lambda p: sum(p) < 200
+    assert dark(px[w // 2, 1]) and dark(px[1, h // 2]) and dark(px[w - 2, h // 2])   # 기운 변이 가장자리로
+    assert px[w // 2, h // 2] == (255, 255, 255)
+    try:
+        rectify(im, [(0, 0), (100, 0), (200, 0), (300, 0)])                 # 한 줄 위 네 점
+        assert False
+    except ValueError:
+        pass
+
+
+def test_corner_preview_drag_moves_corner_and_drops_result():
+    from PIL import Image
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtTest import QTest
+    w = CanvasWindow()
+    dlg = w._get_photo_dialog()
+    dlg._set_attached_image(Image.new("RGB", (760, 570), "white"), "t.png")   # 미리보기 380×285의 정확히 2배
+    dlg._on_succeeded({"ops": [{"op": "box", "x1": 10, "y1": 10, "x2": 60, "y2": 40}]}, [])
+    assert dlg.result_spec() is not None
+    v = dlg._orig_view
+    assert v.quad()[0] == (0.0, 0.0)
+    QTest.mousePress(v, Qt.MouseButton.LeftButton, pos=QPoint(1, 1))
+    QTest.mouseMove(v, QPoint(51, 31))
+    QTest.mouseRelease(v, Qt.MouseButton.LeftButton, pos=QPoint(51, 31))
+    x, y = v.quad()[0]
+    assert abs(x - 100) <= 2 and abs(y - 60) <= 2                             # 위젯 50px = 원본 100px
+    assert dlg.result_spec() is None                                          # 모서리 바뀌면 결과 폐기
+    dlg._reset_corners.click()
+    assert v.quad()[0] == (0.0, 0.0)
+    w.deleteLater()
