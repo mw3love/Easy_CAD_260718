@@ -1451,3 +1451,6 @@
 - **AutoCAD PDF는 굵은 선·테두리를 삼각형 여러 개를 이은 채움 경로로 낸다** — 경로 하나를 다각형 하나로
   이으면 상자에 검은 삼각형이 생긴다. 끊긴 지점(이전 끝점 ≠ 다음 시작점)마다 별도 다각형으로 나눌 것.
   (2026-10-01, `docs/history/2026-10.md` "0단계 재시험")
+- **`photo_dialog._PhotoOpsWorker`는 수정 라운드 렌더를 `BlockingQueuedConnection`으로 메인 스레드에
+  맡긴다** — 메인 스레드에서 `worker.wait()`하면 교착. `processEvents()` 펌핑으로 기다릴 것.
+  (2026-10-01, `docs/history/2026-10.md` "항목28 2단계")

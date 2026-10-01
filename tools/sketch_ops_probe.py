@@ -13,12 +13,9 @@ mode
 산출물: <out-dir>/<model>_<mode>_r{N}.json/.ecad/.png + _log.json(토큰·소요초).
 """
 import argparse
-import base64
-import io
 import json
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -27,7 +24,7 @@ from PIL import Image
 
 from easycad.ai import gateway
 from sketch_ops import build, render
-from easycad.ai.photo_to_ops import CROP_NOTE, FIX_NOTE, TASK as TASK_APP, grid_crops, parse_ops as _parse
+from easycad.ai.photo_to_ops import TASK as TASK_APP, call, generate_ops, image_part, parse_ops as _parse
 
 # 2026-10-01 실측에 쓴 프롬프트 원문 — 결과 비교를 위해 바꾸지 말 것(`--task v1`). 기본(`--task app`)은
 # 앱 모듈 `easycad/ai/photo_to_ops.py`의 TASK(이것 + 글자 회전 rot).
@@ -49,22 +46,6 @@ TASK_V1 = """이 사진은 방송 송신소 계통도(블록 다이어그램)다
 - 글자는 원본 그대로(한글 포함) 정확히 읽는다.
 - 상자 내부 글자가 포트 이름과 겹치면 상자 label 대신 text로 제목 위치를 직접 지정한다."""
 
-def _part(img):
-    buf = io.BytesIO()
-    img.save(buf, "PNG")
-    return {"type": "image_url",
-            "image_url": {"url": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}}
-
-
-def _call(client, model, content, max_tokens):
-    t0 = time.time()
-    resp = client.chat.completions.create(model=model, max_tokens=max_tokens,
-                                          messages=[{"role": "user", "content": content}])
-    txt = resp.choices[0].message.content or ""
-    usage = resp.usage.model_dump() if getattr(resp, "usage", None) else {}
-    return txt, usage, time.time() - t0
-
-
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("photo")
@@ -84,36 +65,34 @@ def main(argv=None):
     os.makedirs(a.out_dir, exist_ok=True)
     orig = Image.open(a.photo).convert("RGB")
     W, H = orig.size
-    task = (TASK_APP if a.task == "app" else TASK_V1).format(w=W, h=H)
+    task = (TASK_APP if a.task == "app" else TASK_V1).format(w=W, h=H)   # oneshot용
     stem = os.path.join(a.out_dir, f"{a.model}_{a.mode}")
 
-    if a.mode == "oneshot":
-        content = [{"type": "text", "text": task}, _part(orig)]
-    else:
-        crops = json.loads(a.crops_json) if a.crops_json else grid_crops(W, H)
-        content = [{"type": "text", "text": task + CROP_NOTE}, _part(orig)]
-        for i, (x1, y1, x2, y2) in enumerate(crops):
-            c = orig.crop((x1, y1, x2, y2))
-            content += [{"type": "text", "text": f"조각 {i + 1}: 원본 범위 x {x1}~{x2}, y {y1}~{y2}"},
-                        _part(c.resize((c.width * 2, c.height * 2)))]
-
-    log = []
-    rounds = a.rounds if a.mode == "loop" else 0
-    spec = None
-    for r in range(rounds + 1):
-        if r > 0:
-            prev = Image.open(f"{stem}_r{r - 1}.png").convert("RGB")
-            content = [{"type": "text", "text": task + FIX_NOTE + json.dumps(spec, ensure_ascii=False)},
-                       _part(orig), _part(prev)]
-        txt, usage, dt = _call(client, a.model, content, a.max_tokens)
-        spec = _parse(txt)
+    def save_round(r, spec, entry):
         json.dump(spec, open(f"{stem}_r{r}.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         n, skipped = build(spec, f"{stem}_r{r}.ecad")
         render(f"{stem}_r{r}.ecad", f"{stem}_r{r}.png", (W, H))
-        log.append({"round": r, "sec": round(dt, 1), "ops": len(spec.get("ops", [])),
-                    "skipped": skipped, "usage": usage})
-        print(f"r{r}: ops={len(spec.get('ops', []))} skipped={skipped} {dt:.0f}s "
-              f"in={usage.get('prompt_tokens')} out={usage.get('completion_tokens')}", flush=True)
+        entry["skipped"] = skipped
+        u = entry.get("usage") or {}
+        print(f"r{r}: ops={entry['ops']} skipped={skipped} {entry['sec']:.0f}s "
+              f"in={u.get('prompt_tokens')} out={u.get('completion_tokens')}"
+              + (f" (수정 응답 깨짐 — 직전 결과 유지: {entry['error']})" if entry.get("error") else ""),
+              flush=True)
+
+    if a.mode == "oneshot":
+        txt, usage, dt = call(client, a.model, [{"type": "text", "text": task}, image_part(orig)], a.max_tokens)
+        spec = _parse(txt)
+        log = [{"round": 0, "sec": round(dt, 1), "usage": usage, "ops": len(spec["ops"])}]
+        save_round(0, spec, log[0])
+    else:
+        # 앱과 같은 루프(`photo_to_ops.generate_ops`)·같은 렌더(`photo_dialog.render_spec_pil`).
+        from PyQt6.QtWidgets import QApplication
+        from easycad.canvas.photo_dialog import render_spec_pil
+        _app = QApplication.instance() or QApplication([])  # noqa: F841 — 렌더에 필요
+        crops = json.loads(a.crops_json) if a.crops_json else None
+        _, log = generate_ops(client, orig, model=a.model, render=render_spec_pil, rounds=a.rounds,
+                              task=TASK_APP if a.task == "app" else TASK_V1, crops=crops,
+                              max_tokens=a.max_tokens, on_round=save_round)
     json.dump(log, open(f"{stem}_log.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 
 

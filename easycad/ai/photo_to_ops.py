@@ -1,11 +1,14 @@
 """사진→도면 프롬프트·조각·응답 파싱 (§8 항목28). Qt 비의존.
 
 게이트웨이 모델에게 사진을 주고 "ops" JSON(`easycad/fileio/photo_ops.py`)을 받는다.
-2026-10-01 실측 프롬프트(`tools/sketch_ops_probe.py`의 `TASK`, 비교용으로 그대로 보존)에
+2026-10-01 실측 프롬프트(`tools/sketch_ops_probe.py`의 `TASK_V1`, 비교용으로 그대로 보존)에
 글자 회전(`rot`)만 더했다 — DMB 폰 사진에서 세로 케이블 번호가 눕혀져 겹친 게 유일한 구조적 약점이었다.
 """
+import base64
+import io
 import json
 import re
+import time
 
 TASK = """이 사진은 방송 송신소 계통도(블록 다이어그램)다. 이걸 CAD 앱에서 편집 가능한 도면으로 다시 그리려 한다.
 원본 사진 크기는 {w}x{h} 픽셀이고, 모든 좌표는 이 원본 픽셀 좌표계(x 오른쪽, y 아래)로 쓴다.
@@ -57,3 +60,83 @@ def parse_ops(txt: str) -> dict:
     if not isinstance(spec, dict) or not isinstance(spec.get("ops"), list):
         raise ValueError("응답 JSON에 ops 목록이 없음")
     return spec
+
+
+# ---- AI 루프(§8 항목28 2단계) -------------------------------------------------
+# 도구(`tools/sketch_ops_probe.py`)와 앱이 같은 루프를 쓴다. 수정 라운드에 쓰는 "직전 결과 렌더"는
+# Qt가 필요해 밖에서 `render(spec, (W, H)) -> PIL.Image`로 받는다(이 모듈은 Qt 비의존 유지).
+
+class Cancelled(Exception):
+    """사용자가 취소함 — 호출 사이에서만 확인한다(진행 중인 HTTP 호출은 못 끊는다)."""
+
+
+def image_part(img) -> dict:
+    """PIL 이미지 → chat 콘텐츠 image_url 조각."""
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return {"type": "image_url",
+            "image_url": {"url": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}}
+
+
+def first_content(photo, task: str, crops=None) -> list:
+    """첫 호출 콘텐츠: [지시+조각 안내, 원본, (조각 범위 글, 2배 조각)×N]."""
+    W, H = photo.size
+    crops = grid_crops(W, H) if crops is None else crops
+    content = [{"type": "text", "text": task + CROP_NOTE}, image_part(photo)]
+    for i, (x1, y1, x2, y2) in enumerate(crops):
+        c = photo.crop((x1, y1, x2, y2))
+        content += [{"type": "text", "text": f"조각 {i + 1}: 원본 범위 x {x1}~{x2}, y {y1}~{y2}"},
+                    image_part(c.resize((c.width * 2, c.height * 2)))]
+    return content
+
+
+def fix_content(photo, prev_render, task: str, spec: dict) -> list:
+    """수정 라운드 콘텐츠: [지시+이전 JSON, 원본, 직전 렌더]."""
+    return [{"type": "text", "text": task + FIX_NOTE + json.dumps(spec, ensure_ascii=False)},
+            image_part(photo), image_part(prev_render)]
+
+
+def call(client, model: str, content: list, max_tokens: int) -> tuple[str, dict, float]:
+    """한 번 호출. 반환 (본문, usage dict, 소요초)."""
+    t0 = time.time()
+    resp = client.chat.completions.create(model=model, max_tokens=max_tokens,
+                                          messages=[{"role": "user", "content": content}])
+    txt = resp.choices[0].message.content or ""
+    usage = resp.usage.model_dump() if getattr(resp, "usage", None) else {}
+    return txt, usage, time.time() - t0
+
+
+def generate_ops(client, photo, *, model: str, render, rounds: int = 2, task: str = TASK,
+                 crops=None, max_tokens: int = 32000, progress=None, cancelled=None,
+                 on_round=None) -> tuple[dict, list]:
+    """사진(PIL RGB) → ops 명세. 첫 생성 1회 + 수정 `rounds`회. 반환 (최종 spec, 라운드별 로그).
+
+    - render(spec, (W, H)) -> PIL 이미지: 수정 라운드에 넘길 직전 결과 그림.
+    - progress(i, total, 글): 각 호출 직전에 알림. cancelled() -> bool: 호출 사이에 확인, 참이면 Cancelled.
+    - on_round(r, spec, log_entry): 라운드마다 결과를 받는다(도구가 파일로 남길 때).
+    - 수정 라운드의 응답이 깨졌으면(JSON 없음 등) 직전 spec을 그대로 쓰고 로그에 사유를 남긴다 —
+      이미 쓸 만한 결과를 버리지 않는다. 첫 생성이 깨지면 ValueError."""
+    W, H = photo.size
+    text = task.format(w=W, h=H)
+    total = rounds + 1
+    spec, log = None, []
+    for r in range(total):
+        if cancelled is not None and cancelled():
+            raise Cancelled()
+        if progress is not None:
+            progress(r, total, "첫 생성" if r == 0 else f"수정 {r}/{rounds}")
+        content = (first_content(photo, text, crops) if r == 0
+                   else fix_content(photo, render(spec, (W, H)), text, spec))
+        txt, usage, dt = call(client, model, content, max_tokens)
+        entry = {"round": r, "sec": round(dt, 1), "usage": usage}
+        try:
+            spec = parse_ops(txt)
+        except (ValueError, json.JSONDecodeError) as e:
+            if r == 0:
+                raise ValueError(f"응답을 읽지 못함: {e}") from e
+            entry["error"] = str(e)[:200]
+        entry["ops"] = len(spec["ops"])
+        log.append(entry)
+        if on_round is not None:
+            on_round(r, spec, entry)
+    return spec, log

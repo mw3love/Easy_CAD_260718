@@ -1329,3 +1329,97 @@ def test_mermaid_dialog_done_survives_stale_worker_reference():
     dlg.done(0)                 # 수정 전: RuntimeError → qFatal → 프로세스 종료
     assert dlg._model_list_worker is None   # 낡은 참조를 반드시 끊어야 재발 안 함
     w.deleteLater()
+
+
+# ── §8 항목28 2단계(2026-10-01) — 사진→도면 AI 루프·렌더·워커 ──────────────────
+
+class _FakeOpsClient:
+    """chat.completions.create만 흉내 — 응답 문자열을 차례로 돌려주고 받은 content를 기록."""
+
+    def __init__(self, replies):
+        self._replies = list(replies)
+        self.contents = []
+        outer = self
+
+        class _Comp:
+            def create(self, model, max_tokens, messages):
+                outer.contents.append(messages[0]["content"])
+                txt = outer._replies.pop(0)
+
+                class _R:
+                    choices = [type("C", (), {"message": type("M", (), {"content": txt})()})()]
+                    usage = None
+                return _R()
+
+        self.chat = type("Chat", (), {"completions": _Comp()})()
+
+
+_OPS_A = '{"ops": [{"op": "box", "id": "a", "x1": 10, "y1": 10, "x2": 60, "y2": 40}]}'
+_OPS_B = '{"ops": [{"op": "box", "id": "a", "x1": 10, "y1": 10, "x2": 60, "y2": 40}, {"op": "text", "x": 5, "y": 50, "text": "X"}]}'
+
+
+def test_generate_ops_loop_rounds_render_and_broken_fix():
+    from PIL import Image
+    from easycad.ai.photo_to_ops import generate_ops, Cancelled
+    photo = Image.new("RGB", (120, 90), "white")
+    client = _FakeOpsClient([_OPS_A, _OPS_B, "JSON 없음"])
+    rendered, progress = [], []
+
+    def render(spec, size):
+        rendered.append((len(spec["ops"]), size))
+        return Image.new("RGB", size, "white")
+
+    spec, log = generate_ops(client, photo, model="m", render=render, rounds=2,
+                             progress=lambda i, n, t: progress.append((i, n, t)))
+    assert len(client.contents[0]) == 2 + 2 * 6             # 지시+원본 + (범위 글+조각)×6
+    assert len(client.contents[1]) == 3                     # 지시+이전JSON, 원본, 직전 렌더
+    assert rendered == [(1, (120, 90)), (2, (120, 90))]     # 매 수정 라운드 직전 결과를 렌더
+    assert [p[:2] for p in progress] == [(0, 3), (1, 3), (2, 3)]
+    assert len(spec["ops"]) == 2 and "error" in log[2]      # 깨진 수정 응답 → 직전 결과 유지
+    try:                                                    # 첫 생성이 깨지면 실패
+        generate_ops(_FakeOpsClient(["없음"]), photo, model="m", render=render, rounds=0)
+        assert False
+    except ValueError:
+        pass
+    try:                                                    # 취소는 호출 사이에서
+        generate_ops(_FakeOpsClient([_OPS_A]), photo, model="m", render=render, rounds=1,
+                     cancelled=lambda: True)
+        assert False
+    except Cancelled:
+        pass
+
+
+def test_render_spec_qimage_draws_in_photo_frame():
+    from easycad.canvas.photo_dialog import render_spec_qimage
+    img = render_spec_qimage({"ops": [{"op": "box", "x1": 10, "y1": 10, "x2": 60, "y2": 40}]}, (120, 90))
+    assert (img.width(), img.height()) == (120, 90)
+    assert QColor(img.pixel(10, 25)).lightness() < 128       # 상자 왼쪽 변(원본 좌표 그대로)
+    assert QColor(img.pixel(35, 25)).lightness() > 240       # 상자 안은 흰 배경
+
+
+def test_photo_ops_worker_renders_on_main_thread():
+    import time
+    from PIL import Image
+    from PyQt6.QtCore import QThread
+    from easycad.ai import gateway as gw
+    import easycad.canvas.photo_dialog as pdlg
+    client = _FakeOpsClient([_OPS_A, _OPS_B])
+    threads, got = [], {}
+    orig_render = pdlg.render_spec_pil
+
+    def spy(spec, size):
+        threads.append(QThread.currentThread() is QApplication.instance().thread())
+        return orig_render(spec, size)
+
+    with patch.object(gw, "_client", lambda *a, **k: client), patch.object(pdlg, "render_spec_pil", spy):
+        w = pdlg._PhotoOpsWorker("key", "url", Image.new("RGB", (120, 90), "white"), "m", rounds=1)
+        w.succeeded.connect(lambda spec, log: got.update(spec=spec, log=log))
+        w.failed.connect(lambda e: got.update(err=e))
+        w.start()
+        t0 = time.time()
+        while not w.isFinished() and time.time() - t0 < 10:   # wait()는 금지 — 렌더 요청이 메인 루프를 기다림
+            QApplication.processEvents()
+        for _ in range(5):
+            QApplication.processEvents()
+    assert "err" not in got, got.get("err")
+    assert len(got["spec"]["ops"]) == 2 and threads == [True]
