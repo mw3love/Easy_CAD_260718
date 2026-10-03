@@ -21,7 +21,7 @@ import math
 from PyQt6.QtCore import QPointF
 from PyQt6.QtGui import QFontMetricsF
 
-from easycad.canvas.annotator_core import PAPER_SIZES_MM, _TextItem
+from easycad.canvas.annotator_core import PAPER_SIZES_MM
 from easycad.fileio.document import dict_to_item
 
 SCALE = 4.0            # PDF pt → 캔버스 단위(실험 도구와 같음 — A3 한 쪽이 약 4,800단위)

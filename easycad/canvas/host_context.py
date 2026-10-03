@@ -9,37 +9,18 @@ from __future__ import annotations
 import re
 import uuid
 
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
+from PyQt6.QtCore import QPointF, QRectF
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QFont, QPolygonF, QPainterPath, QPalette, QDrag,
+    QPen, QColor, QBrush,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
-    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem,
+    QMessageBox, QDialog, QMenu,
 )
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _PolygonItem, _tool_icon,
-    _nearest_border, _host_outline_edges, _closed_shape_trim_fragments,
-    _destructive_trim_result, _symbol_hard_vertices_by_subpath, _normalize_pt_to_rect,
-    _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
-    _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
-    _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
-    _smart_snap_srect,
-)
-from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
-from easycad.fileio.dxf_export import export_dxf
-from easycad.fileio.dxf_import import import_dxf
-from easycad.fileio.document import save_document, load_document, load_document_layers
-from easycad.fileio.mermaid_import import (
-    parse_mermaid, layout_positions, MermaidError,
+    _ArrowItem, _PolyArrowItem, _TitleBlockItem, _RectItem, _EllipseItem, _SymbolItem, _PolygonItem,
+    _nearest_border, _destructive_trim_result, _symbol_hard_vertices_by_subpath,
+    _normalize_pt_to_rect, _SYMBOL_KINDS, _smart_snap_srect,
 )
 from easycad.canvas.host_widgets import (
     _ARROW_KIND_TOOL, _arrow_kind_of, _style_menu_separators, _act_icon,

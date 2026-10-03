@@ -6,44 +6,28 @@
 """
 from __future__ import annotations
 
-import re
-import uuid
 
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
+from PyQt6.QtCore import Qt, QPoint, QRectF, QSize, QSettings, QTimer
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QFont, QPolygonF, QPainterPath, QPalette, QDrag,
+    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter, QFont, QPalette,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
-    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem, QStackedWidget, QScrollArea,
+    QApplication, QGraphicsScene, QWidget, QVBoxLayout, QToolButton, QLabel, QFileDialog,
+    QInputDialog, QMessageBox, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
+    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QSizePolicy, QHBoxLayout, QMenu,
+    QFrame, QListWidget, QStackedWidget, QScrollArea,
 )
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
-    _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
-    _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
-    _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
-    _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
-    _pen_style_icon, _arrow_kind_icon, _flip_icon, _arrow_head_icon, _icons_dir,
+    _PolyArrowItem, _tool_icon, _TOOLS, _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT, _MIN_FONT, _MAX_FONT,
+    _SYMBOL_KINDS, _pen_style_icon, _arrow_kind_icon, _flip_icon, _arrow_head_icon, _icons_dir,
 )
-from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES, export_svg_symbol
-from easycad.fileio.dxf_export import export_dxf
-from easycad.fileio.dxf_import import import_dxf
+from easycad.fileio.pdf_export import export_svg_symbol
 from easycad.fileio.document import (
-    save_document, load_document, load_document_layers, _b64_to_pixmap, insert_items,
+    _b64_to_pixmap, insert_items,
 )
 from easycad.fileio import symbol_library
 from easycad.canvas import shortcuts
-from easycad.fileio.mermaid_import import (
-    parse_mermaid, layout_positions, MermaidError,
-)
 from easycad.canvas.host_widgets import (
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,

@@ -12,46 +12,31 @@ import re
 import time
 
 from PyQt6.QtCore import (
-    Qt, QPoint, QPointF, QRectF, QSize, QSettings, QEvent, QBuffer, QIODevice, QByteArray,
-    QThread, pyqtSignal, QTimer,
+    Qt, QPointF, QRectF, QSize, QEvent, QBuffer, QIODevice, QByteArray, QThread, pyqtSignal, QTimer,
 )
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter, QImage,
-    QFont, QPainterPath, QPalette, QTextCursor, QStandardItemModel, QStandardItem,
-    QFontMetrics,
+    QPen, QColor, QBrush, QKeySequence, QIcon, QPixmap, QPainter, QImage, QPainterPath, QTextCursor,
+    QStandardItemModel, QStandardItem, QFontMetrics,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
-    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame, QProgressBar,
-    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup, QScrollArea,
+    QApplication, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout, QToolButton, QLabel,
+    QFileDialog, QMessageBox, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
+    QDialogButtonBox, QSpinBox, QCheckBox, QPlainTextEdit, QSizePolicy, QHBoxLayout, QFrame,
+    QProgressBar, QListWidget, QListWidgetItem, QRadioButton, QButtonGroup, QScrollArea,
     QKeySequenceEdit,
 )
-from PyQt6.QtSvg import QSvgRenderer
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon, _svg_icon,
-    _svg_icon_pixmap, _nearest_border,
-    _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
-    _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
-    _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    _PolyArrowItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _svg_icon_pixmap,
+    PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
 )
 from easycad.canvas.host_widgets import (
-    _clipboard_pixmap, _act_icon, _ACCENT_CORAL, _ICON_COLOR, _current_icon_color,
-    _MERMAID_SHAPE_ITEM, _border_attach, _sync_native_titlebar,
+    _act_icon, _ACCENT_CORAL, _ICON_COLOR, _current_icon_color, _MERMAID_SHAPE_ITEM, _border_attach,
+    _sync_native_titlebar,
 )
 from easycad.fileio.pdf_export import (
-    export_pdf, PAGE_SIZES, render_preview, _list_title_frames, _centered_target_rect,
-    _reading_order,
-    _DEFAULT_MARGINS_MM,
+    render_preview, _list_title_frames, _centered_target_rect, _reading_order, _DEFAULT_MARGINS_MM,
 )
-from easycad.fileio.dxf_export import export_dxf
-from easycad.fileio.dxf_import import import_dxf
-from easycad.fileio.document import save_document, load_document, load_document_layers
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )

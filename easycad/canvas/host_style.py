@@ -6,40 +6,20 @@
 """
 from __future__ import annotations
 
-import re
-import uuid
 
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
+from PyQt6.QtCore import Qt, QPoint, QSettings
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QFont, QPolygonF, QPainterPath, QPalette, QDrag,
+    QColor,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
-    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem,
+    QWidget,
 )
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
-    _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
-    _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
-    _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    _ArrowItem, _PolyArrowItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _SYMBOL_KINDS,
 )
 from easycad.canvas.host_widgets import (
     _current_icon_color, _arrow_kind_of, _arrow_head_of, _apply_arrow_head, _is_rotatable,
-)
-from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
-from easycad.fileio.dxf_export import export_dxf
-from easycad.fileio.dxf_import import import_dxf
-from easycad.fileio.document import save_document, load_document, load_document_layers
-from easycad.fileio.mermaid_import import (
-    parse_mermaid, layout_positions, MermaidError,
 )
 from easycad.canvas.host_widgets import _TYPE_NAMES, _RECENT_COLOR_MAX, _ARROW_KIND_TOOL, _ColorGridPopup
 

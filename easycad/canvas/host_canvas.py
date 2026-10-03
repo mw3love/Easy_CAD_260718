@@ -6,38 +6,15 @@
 """
 from __future__ import annotations
 
-import re
-import uuid
 
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
+from PyQt6.QtCore import Qt, QPointF, QRectF
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QFont, QPolygonF, QPainterPath, QPalette, QDrag,
-)
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
-    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem,
+    QPen, QColor, QBrush,
 )
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon, _nearest_border,
-    _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
-    _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
-    _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data, _dbg2,
-    _DBG_ENABLED2, _GroupBindProxy, _group_members,
-)
-from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
-from easycad.fileio.dxf_export import export_dxf
-from easycad.fileio.dxf_import import import_dxf
-from easycad.fileio.document import save_document, load_document, load_document_layers
-from easycad.fileio.mermaid_import import (
-    parse_mermaid, layout_positions, MermaidError,
+    _ArrowItem, _PolyArrowItem, _TextItem, _MIN_FONT, _MAX_FONT, _dbg2, _DBG_ENABLED2,
+    _GroupBindProxy, _group_members,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).

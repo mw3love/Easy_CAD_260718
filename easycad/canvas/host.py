@@ -14,40 +14,20 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
           copy_selection/paste_selection
 """
 import os
-import re
-import uuid
 
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
+from PyQt6.QtCore import Qt, QSize, QSettings, QTimer
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QFont, QPolygonF, QPainterPath, QPalette, QDrag,
+    QColor, QBrush,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
-    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem, QTabWidget,
+    QMainWindow, QGraphicsView, QMessageBox, QTabWidget,
 )
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
-    _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
-    _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
-    _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
-    _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    _PolyArrowItem, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _DEFAULT_INK_DARK,
+    _DEFAULT_INK_LIGHT,
 )
-from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
-from easycad.fileio.dxf_export import export_dxf
-from easycad.fileio.dxf_import import import_dxf
-from easycad.fileio.document import save_document, load_document, load_document_layers
 from easycad.fileio import autosave
-from easycad.fileio.mermaid_import import (
-    parse_mermaid, layout_positions, MermaidError,
-)
 
 from easycad.canvas.host_ui import _UIBuildMixin
 from easycad.canvas.host_fileio import _FileIOMixin
@@ -60,13 +40,7 @@ from easycad.canvas.host_canvas import _CanvasMixin
 from easycad.canvas.host_mindmap import _MindMapMixin
 
 from easycad.canvas.host_widgets import (
-    _PaletteButton, _clipboard_pixmap, _act_icon, _dark_palette,
-    _MinimapView, _FloatingPanel, _ToastLabel, _ColorGridPopup,
-    _SharedClipboard, _CANVAS_BG,
-)
-from easycad.canvas.host_dialogs import (
-    _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _CableNumberDialog,
-    _MermaidDialog,
+    _MinimapView, _ToastLabel, _SharedClipboard, _CANVAS_BG,
 )
 from easycad.canvas.document import CanvasDocument
 

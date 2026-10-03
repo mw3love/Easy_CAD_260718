@@ -8,33 +8,21 @@ from __future__ import annotations
 
 import math
 import os
-import re
 import uuid
 
 from PyQt6.QtCore import (
-    Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent,
+    Qt, QPoint, QPointF, QRectF, QSettings, QTimer, QEvent,
 )
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QFont, QPolygonF, QPainterPath, QPalette, QDrag,
+    QPen, QBrush, QPixmap,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QToolButton, QLabel, QFileDialog, QMessageBox,
-    QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
-    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem, QProgressDialog,
+    QApplication, QFileDialog, QMessageBox, QDialog, QProgressDialog,
 )
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon,
-    _attach_port_to_host, _find_port_host_near, _is_closed_trim_shape,
-    _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
-    _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
-    _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    _PolyArrowItem, _ImageItem, _TitleBlockItem, _TableItem, _RectItem, _EllipseItem, _SymbolItem,
+    _TextItem, _attach_port_to_host, _find_port_host_near, _is_closed_trim_shape,
 )
 from easycad.fileio.pdf_export import export_pdf, export_pdf_pages, export_image, export_svg
 from easycad.fileio.dxf_export import export_dxf, export_dwg

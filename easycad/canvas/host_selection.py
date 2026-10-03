@@ -7,47 +7,27 @@
 from __future__ import annotations
 
 import html
-import re
 import uuid
 from contextlib import contextmanager, nullcontext
 
-from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
+from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
-    QFont, QPolygonF, QPainterPath, QPalette, QDrag,
+    QColor, QPixmap, QPainter,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QWidget, QVBoxLayout,
-    QToolButton, QLabel, QFileDialog, QInputDialog, QMessageBox,
-    QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
-    QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem,
+    QGraphicsScene, QInputDialog, QMessageBox, QMenu,
 )
 
 from easycad.canvas.annotator_core import (
-    _AnnotatorView, _ArrowItem, _PolyArrowItem, _ImageItem, _TitleBlockItem,
-    _TableItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _nearest_border,
-    _detach_port_from_host,
-    _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
-    _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
-    _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items, drop_outside_bindings, _pixmap_from_data,
-    _min_stroke_render, _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
+    _TitleBlockItem, _detach_port_from_host, remap_grouped_bindings, regroup_duplicated_items,
+    drop_outside_bindings, _min_stroke_render, _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
 )
-from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
-from easycad.fileio.dxf_export import export_dxf
-from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.document import (
-    save_document, load_document, load_document_layers,
     item_to_dict, dict_to_item, _pixmap_to_b64, _b64_to_pixmap,
 )
 from easycad.fileio import symbol_library
-from easycad.fileio.mermaid_import import (
-    parse_mermaid, layout_positions, MermaidError,
-)
 from easycad.canvas.host_widgets import _clipboard_pixmap, _style_menu_separators
-from easycad.canvas.host_ui import _PALETTE_ICON_PX, _PALETTE_SYM_ICON_PX
+from easycad.canvas.host_ui import _PALETTE_SYM_ICON_PX
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.

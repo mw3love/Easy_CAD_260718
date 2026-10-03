@@ -12,7 +12,7 @@ import json
 from easycad.fileio.safe_write import write_via_temp
 
 from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF, QBuffer, QByteArray, QIODevice
-from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPixmap
+from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QPixmap
 
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
