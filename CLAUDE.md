@@ -37,9 +37,10 @@ easycad/
 │   ├── annotator_core.py   2026-08-02 분할 — 이제 아래 3개 재수출하는 얇은 shim(18줄).
 │   │                       실제 코드 수정은 core_constants/core_shapes/core_view에서.
 │   ├── core_constants.py   상수·아이콘·커서 팩토리(잎 모듈)
-│   ├── core_shapes.py      `_HandleResizeMixin`+전체 아이템 클래스+최근접점/포트/A* 라우팅/
+│   ├── core_shapes.py      `_HandleResizeMixin`+전체 아이템 클래스+최근접점/포트/TRIM/
 │   │                       그룹변형 — pasteflow verbatim 이식 + 우리 확장(지속연결 등),
-│   │                       크게 편집 가능(우리 fork). 셋이 실제 순환의존이라 한 파일 유지(주석 참조).
+│   │                       크게 편집 가능(우리 fork). 핸들믹스인↔아이템↔재바인딩이 실제 순환의존이라
+│   │                       한 파일 유지(주석 참조) — 클래스를 안 부르는 라우팅·심볼 경로만 아래로 분리.
 │   ├── core_routing.py     직교 자동 라우팅·A*·선분 교차(TRIM 기하 커널) — 2026-10-03 core_shapes에서
 │   │                       떼어 냄(도형 클래스 안 부르는 순수 기하, core_shapes가 `import *`로 받음)
 │   ├── core_symbols.py     순서도·안테나 심볼 경로 팩토리 + `_SYMBOL_KINDS`(같은 날 같은 이유로 떼어 냄)
