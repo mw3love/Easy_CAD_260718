@@ -165,6 +165,8 @@ def _clipboard_pixmap() -> QPixmap | None:
     if not img.isNull():
         return QPixmap.fromImage(img)
     md = cb.mimeData()
+    if md is None:   # [점검 2단계 2026-10-03] 클립보드를 못 읽으면 Qt가 None을 준다(다른 앱이 잡고 있을 때 등)
+        return None
     for fmt in md.formats():
         if fmt.startswith("image/"):
             pm2 = _pixmap_from_data(bytes(md.data(fmt)))

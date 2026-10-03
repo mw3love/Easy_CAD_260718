@@ -151,6 +151,8 @@ class _FileIOMixin:
                   if _is_closed_trim_shape(it) and getattr(it, "_cuts", None)}
         if legacy:
             self.finalize_closed_trim(legacy)
+            # [점검 2단계 2026-10-03] 변환 결과가 선택된 채 열리던 것 — "그냥 열렸다"로 보이게.
+            self._scene.clearSelection()
 
 
     def _do_open_ecad(self, path: str):
@@ -441,7 +443,8 @@ class _FileIOMixin:
             "화살표 지속연결·라벨 위치·심볼 종류·레이어 소속·포트 부착 관계 등 Easy CAD "
             "전용 정보는 저장되지 않습니다(도형·텍스트·색상·두께·좌표는 보존 — 포트가 "
             "만든 테두리 끊김도 실제 선분으로는 보존되지만, 다시 열면 개별 선·도형일 뿐 "
-            "포트로 인식되지 않습니다).\n\n계속 저장할까요?",
+            "포트로 인식되지 않습니다). 심볼·다각형은 다시 열면 일반 선으로 바뀝니다."
+            "\n\n계속 저장할까요?",
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
         return resp == QMessageBox.StandardButton.Ok
 

@@ -31,6 +31,7 @@ from easycad.canvas.annotator_core import (
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    arrow_end_indices, _GroupBindProxy,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
@@ -131,9 +132,46 @@ class _UndoMixin:
 
 
     def push_undo_move(self, pairs, coalesce_key=None):
-        self._push_entry(
-            [("mut", it, "pos", QPointF(old), QPointF(it.pos())) for it, old in pairs],
-            key=coalesce_key)
+        """`pairs`=(아이템, 이동 전 pos) — **이미 옮긴 뒤** 호출한다(after=현재 pos).
+        [점검 2단계 2026-10-03, 사용자 결정] 연결된 화살표를 통째로 옮기면(드래그·방향키),
+        같이 옮겨지지 않은 도형과의 연결은 푼다. 예전엔 연결된 채로 도형에서 떨어져 떠 있었고,
+        나중에 그 도형이 다시 계산되면 끝점만 도형으로 끌려가 되돌리기 뒤 화살표가 상자 안으로
+        파고드는 일이 생겼다(재현: 연결 화살표 이동→상자 삭제→전부 되돌리기). 연결 풀기는 같은
+        undo 단계에 'geom'(pos 포함 스냅샷)으로 실어 한 번에 되돌아간다."""
+        moved = {it for it, _old in pairs}
+        moved_gids = {g for g in (getattr(it, "_group_id", None) for it in moved) if g}
+        top = (self._undo[-1] if coalesce_key is not None and self._undo
+               and self._undo[-1].key == coalesce_key else None)
+        ops = []
+        for it, old in pairs:
+            left = [idx for idx in arrow_end_indices(it)
+                    if self._left_behind(it._bound(idx), moved, moved_gids)]
+            # 연속 방향키(코얼레스)에서 첫 번에 geom으로 실렸으면 계속 geom으로 — 그래야 병합된다
+            had_geom = top is not None and any(
+                o[0] == "mut" and o[1] is it and o[2] == "geom" for o in top.ops)
+            if left or had_geom:
+                before = it.capture_geom()
+                before["pos"] = QPointF(old)
+                for idx in left:
+                    it.set_bound(idx, None)
+                ops.append(("mut", it, "geom", before, it.capture_geom()))
+            else:
+                ops.append(("mut", it, "pos", QPointF(old), QPointF(it.pos())))
+        self._push_entry(ops, key=coalesce_key)
+
+    @staticmethod
+    def _left_behind(host, moved, moved_gids) -> bool:
+        """화살표 끝이 붙은 host가 이번 이동에 같이 안 옮겨졌나(포트처럼 자식이면 조상까지 본다)."""
+        if host is None:
+            return False
+        if isinstance(host, _GroupBindProxy):
+            return host.group_id not in moved_gids
+        x = host
+        while x is not None:
+            if x in moved:
+                return False
+            x = x.parentItem()
+        return True
 
 
     def push_undo_xform(self, snaps):
@@ -248,6 +286,7 @@ class _UndoMixin:
             host.update()
 
     def _apply_entry(self, entry, redo):
+        revived = []   # [점검 2단계] 되살린 아이템 — 아래에서 원래 겹침 순서로 되돌린다
         for op in entry.ops:
             kind = op[0]
             if kind == "create":
@@ -256,6 +295,7 @@ class _UndoMixin:
                     if it.scene() is None:
                         self._scene.addItem(it)
                         self._reattach_port_if_needed(it)
+                        revived.append(it)
                 elif it.scene() is not None:
                     self._detach_port_if_needed(it)
                     self._scene.removeItem(it)
@@ -268,9 +308,49 @@ class _UndoMixin:
                 elif it.scene() is None:
                     self._scene.addItem(it)
                     self._reattach_port_if_needed(it)
+                    revived.append(it)
             elif kind == "mut":
                 _, it, sub, before, after = op
                 self._apply_mut(it, sub, after if redo else before)
+        # [점검 2단계 2026-10-03] 다 되살린 뒤에 한꺼번에 — 같이 지워졌던 위쪽 아이템이 아직
+        # 안 돌아왔을 수 있어 순서와 무관하게 하려고 두 번째 패스로 둔다(_DocScene 주석 참조).
+        self._restack_revived([it for it in revived if it.parentItem() is None])
+
+    @staticmethod
+    def _restack_revived(items):
+        """[점검 2단계 2026-10-03] 되살린 최상위 아이템들을 지울 때 기록한 위/아래 이웃
+        (`_DocScene.removeItem`)대로 다시 쌓는다. ① 되살린 것끼리 위아래 관계로 위→아래 순서를
+        정하고 ② 위에서부터 차례로: 기록한 위쪽 이웃 중 지금 씬에 있는 첫 아이템 바로 아래로,
+        그런 이웃이 없으면(같이 지워져 기록이 비었으면) 바로 앞에 놓은 되살린 아이템 아래로."""
+        if not items:
+            return
+        rev = set(items)
+        above = {it: [a for a in (getattr(it, "_restack_above", None) or ())] for it in items}
+        below = {it: [b for b in (getattr(it, "_restack_below", None) or ())] for it in items}
+        over = {it: set() for it in items}   # over[x] = x보다 위에 있어야 하는 되살린 아이템
+        for it in items:
+            for a in above[it]:
+                if a in rev and a is not it:
+                    over[it].add(a)
+            for b in below[it]:
+                if b in rev and b is not it:
+                    over[b].add(it)
+        order, left = [], list(items)
+        while left:   # 위에 와야 할 것이 다 정해진 것부터(순환이면 남은 순서 그대로)
+            ready = [it for it in left if not (over[it] & set(left))] or left[:1]
+            for it in ready:
+                order.append(it)
+                left.remove(it)
+        prev = None
+        for it in order:
+            tgt = next((a for a in above[it]
+                        if a.scene() is it.scene() and a.parentItem() is None
+                        and (a not in rev or a in order[:order.index(it)])), None)
+            if tgt is None:
+                tgt = prev
+            if tgt is not None:
+                it.stackBefore(tgt)
+            prev = it
 
 
     def undo(self):

@@ -31,7 +31,7 @@ from easycad.canvas.annotator_core import (
     _DEFAULT_COLOR, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _TOOLS,
     _MIN_FONT, _MAX_FONT, _COLOR_PRESETS,
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
-    remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
+    remap_grouped_bindings, regroup_duplicated_items, drop_outside_bindings, _pixmap_from_data,
     _min_stroke_render, _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
 )
 from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
@@ -145,6 +145,7 @@ class _SelectionMixin:
         # 같이 복사된 도형끼리는 여기서 사본으로 재연결한다(배치 밖 도형 바인딩은 그대로 유지).
         gid_map = regroup_duplicated_items(zip(self._clip_src, new_items))  # 그룹째 복사 시 사본도 새 그룹으로
         remap_grouped_bindings(zip(self._clip_src, new_items), gid_map)
+        drop_outside_bindings(new_items, gid_map)   # [점검 2단계] 같이 복사 안 된 도형과의 연결은 풂
         self._bulk_select(new_items)   # [성능] 개별 setSelected 대신 한 번에 — O(n²) 회피
         if new_items:
             self.push_undo_add_many(new_items)
@@ -176,6 +177,7 @@ class _SelectionMixin:
             new_items.append(c)
         gid_map = regroup_duplicated_items(zip(src, new_items))  # 그룹째 복제 시 사본도 새 그룹으로
         remap_grouped_bindings(zip(src, new_items), gid_map)
+        drop_outside_bindings(new_items, gid_map)   # [점검 2단계] 같이 복제 안 된 도형과의 연결은 풂
         self._bulk_select(new_items)   # [성능] 개별 setSelected 대신 한 번에 — O(n²) 회피
         if new_items:
             self.push_undo_add_many(new_items)

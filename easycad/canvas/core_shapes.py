@@ -5790,6 +5790,34 @@ def remap_grouped_bindings(pairs, gid_map: dict | None = None):
             new._bind_end = _fix(new._bind_end)
 
 
+def arrow_end_indices(item):
+    """[점검 2단계 2026-10-03] 바인딩 가능한 끝점 idx — 곡선/직선(_ArrowItem)은 0·1,
+    직교(_PolyArrowItem)는 0·마지막. 바인딩이 없는 아이템이면 빈 튜플."""
+    if hasattr(item, "_bind_start"):
+        return (0, len(item._pts) - 1)
+    if hasattr(item, "_bind1"):
+        return (0, 1)
+    return ()
+
+
+def drop_outside_bindings(new_items, gid_map: dict | None = None):
+    """[점검 2단계 2026-10-03, 사용자 결정] 붙여넣기·Ctrl+D 사본 화살표가 **같이 복사되지 않은**
+    도형에 붙어 있으면 그 연결을 푼다(`remap_grouped_bindings` 다음에 호출). 예전엔 원본 도형
+    참조를 그대로 유지해서, 20px 옆에 놓인 사본이 "연결됨"인 채로 도형에서 떨어져 떠 있었다
+    (도형을 움직여야 붙음 — 실제 창 재현). draw.io·Lucid처럼 연결 없는 자유 사본으로 둔다.
+    Alt-드래그 복제는 호출하지 않는다(그 경로의 '의도적 보존' 동작은 그대로)."""
+    inside = set(new_items)
+    new_gids = set((gid_map or {}).values())
+    for it in new_items:
+        for idx in arrow_end_indices(it):
+            sh = it._bound(idx)
+            if sh is None:
+                continue
+            ok = (sh.group_id in new_gids) if isinstance(sh, _GroupBindProxy) else (sh in inside)
+            if not ok:
+                it.set_bound(idx, None)
+
+
 def regroup_duplicated_items(pairs) -> dict:
     """복제된 아이템이 원본에서 같은 그룹에 속해 있었다면, 사본끼리 새 그룹id로 묶는다.
     clone()은 _group_id를 복사하지 않아(원본 참조가 아니라 값이라 안전해 보이지만) 기본값

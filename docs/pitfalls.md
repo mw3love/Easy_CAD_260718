@@ -1461,3 +1461,10 @@
 - **오프스크린 전체 스위트에서 앞선 테스트의 합성 마우스 누름이 남는다**(`QApplication.mouseButtons()==LeftButton`
   실측) — 마우스 상태로 분기하는 코드를 테스트할 땐 `mouseButtons`를 고정할 것.
   (2026-10-03, `docs/history/2026-10.md` "점검 1단계")
+- **씬에서 아이템을 빼는 순간 그 아이템의 `boundingRect()`를 부르지 말 것** — 화살표 그리기 Esc 확정처럼 점이 1개만
+  남은 미완성 아이템은 boundingRect가 실패해 앱이 exit 127로 죽는다. 캐시(`geom_snapshot`)나 점 좌표로 계산.
+- **Qt는 removeItem→addItem 하면 같은 z 안에서 맨 위로 올린다**(원래 겹침 순서를 잊음) — 되살릴 땐 `stackBefore`로
+  제자리에. `QRectF.intersects`는 변이 닿기만 하면 거짓이라 테두리에 붙은 화살표를 놓친다(조금 넓혀서 검사).
+- **undo 기록은 바꾼 "뒤에"** — 바꾸기 전에 `push_undo_*`하면 after가 바꾸기 전 값으로 실려 다시실행이 덜 간다
+  (방향키 이동이 그랬음).
+  (2026-10-03, `docs/history/2026-10.md` "점검 2단계")

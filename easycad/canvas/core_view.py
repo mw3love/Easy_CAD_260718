@@ -4586,14 +4586,15 @@ class _AnnotatorView(QGraphicsView):
                 if sel:
                     # 이동 전 위치 기록(Ctrl+Z 원복). 같은 선택의 연속 nudge는 하나로 합쳐
                     # undo 폭주를 막는다(coalesce_key=선택 집합).
-                    self._owner.push_undo_move(
-                        [(it, QPointF(it.pos())) for it in sel],
-                        coalesce_key=frozenset(sel))
+                    # [점검 2단계 2026-10-03] 옮긴 **뒤에** 기록한다 — 예전엔 옮기기 전에 기록해
+                    # after가 이동 전 값으로 실려, 되돌린 뒤 다시실행이 한 칸 덜 갔다(1칸이면 제자리).
+                    pairs = [(it, QPointF(it.pos())) for it in sel]
                     fine = mods & (Qt.KeyboardModifier.ShiftModifier
                                    | Qt.KeyboardModifier.ControlModifier)
                     step = 1 if fine else 10
                     for it in sel:
                         it.moveBy(arrow[0] * step, arrow[1] * step)
+                    self._owner.push_undo_move(pairs, coalesce_key=frozenset(sel))
                     return
             # [단축키 설정, 2026-08-21] 아래 전부 `self._shortcut_hit(event, id)`로 현재
             # 설정된(기본 또는 재할당된) QKeySequence와 정확 일치를 본다 — Qt.Key 리터럴

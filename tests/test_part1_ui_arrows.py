@@ -1186,7 +1186,9 @@ def test_duplicate_rebinds_arrow_within_group():
     assert new_ar._bind1 is new_a and new_ar._bind2 is new_b   # 사본끼리 재연결
     assert ar._bind1 is a and ar._bind2 is b                   # 원본은 불변
 
-    # 대조군: 도형 없이 화살표만 복제하면 배치 밖 도형이라 원본 바인딩 유지(기존 동작 보존).
+    # 대조군: 도형 없이 화살표만 복제하면 배치 밖 도형이라 연결을 푼다.
+    # [점검 2단계 2026-10-03, 사용자 결정] 예전엔 원본 바인딩을 유지했는데, 20px 옆 사본이
+    # "연결됨"인 채로 도형에서 떨어져 떠 있었다 — 연결 없는 자유 사본으로 바꿈.
     w2 = CanvasWindow()
     a2 = _mk_pen_rect(w2, x=0, y=0); b2 = _mk_pen_rect(w2, x=300, y=20)
     ar2 = _ArrowItem(QColor("#111111"), 3, True)
@@ -1196,7 +1198,8 @@ def test_duplicate_rebinds_arrow_within_group():
     ar2.setSelected(True)
     w2.duplicate_selection()
     new_ar2 = [x for x in w2._scene.items() if isinstance(x, _ArrowItem) and x is not ar2][0]
-    assert new_ar2._bind1 is a2 and new_ar2._bind2 is b2
+    assert new_ar2._bind1 is None and new_ar2._bind2 is None
+    assert ar2._bind1 is a2 and ar2._bind2 is b2   # 원본은 불변
 
 
 
