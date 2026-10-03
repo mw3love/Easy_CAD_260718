@@ -5961,6 +5961,11 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
             self.setTextCursor(cur)
         self.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         super().focusOutEvent(event)
+        # [우리 확장 2026-10-03, §8 항목26] Tab/Enter로 막 만든 마인드맵 노드의 첫 편집이면
+        # 호스트가 판정(빈 채로 끝나면 노드+화살표+기록째 취소) — host_mindmap.mm_on_edit_end.
+        host = self._host()
+        if host is not None and hasattr(host, "mm_on_edit_end") and host.mm_on_edit_end(self):
+            return
         # 연속 텍스트 모드에서 빈 클릭으로 생긴 빈 텍스트는 정리(undo는 scene None 가드로 무해).
         if not self.toPlainText().strip():
             QTimer.singleShot(0, self._discard_if_empty)

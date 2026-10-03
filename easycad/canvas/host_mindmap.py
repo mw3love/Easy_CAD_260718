@@ -10,13 +10,14 @@
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QPointF, QRectF
+from PyQt6.QtCore import Qt, QPointF, QRectF, QTimer
 
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _SymbolItem, _PolygonItem, _TextItem,
     _ArrowItem, _PolyArrowItem, _ConnectorLabel,
 )
 from easycad.canvas.host_widgets import _border_attach
+from easycad.canvas.core_shapes import _detach_port_from_host
 
 
 _MM_NODE_TYPES = (_RectItem, _EllipseItem, _SymbolItem, _PolygonItem, _TextItem)
@@ -34,6 +35,76 @@ class _MindMapMixin:
         if isinstance(new_node, _TextItem):
             new_node.setPlainText("")
         view.begin_edit_selected(new_node)
+
+    # ---- [§8 항목26, 2026-10-03] 막 만든 빈 노드 취소 -------------------------------------
+    # 사용자 결정(deep-interview): Tab/Enter/Alt+방향키로 막 만든 노드를 **아무것도 안 친 채**(공백만
+    # 쳤으면 남김) 편집을 끝내면 — Esc·다른 곳 클릭·Enter 등 모든 경로 — 노드+화살표를 지우고 되돌리기
+    # 기록째 없앤다(Ctrl+Z에 안 보임). 빈 새 노드에서 Tab/Enter로 또 뻗으면 빈 노드는 지우고 그 노드를
+    # 만들었던 원래 동작을 다시 한다(Alt+방향키는 원래 노드에서 그 방향으로). 모든 편집 종료는
+    # `_TextItem.focusOutEvent` 한 곳으로 모이고, 거기서 `mm_on_edit_end`를 부른다.
+
+    def _mm_commit_fresh(self, new_node, arrow, origin, kind, view):
+        self.push_undo_add_many([new_node] + ([arrow] if arrow is not None else []))
+        self._scene.clearSelection()
+        self._mm_fresh = {"node": new_node, "arrow": arrow, "origin": origin, "kind": kind}
+        self._mm_enter_edit_mode(new_node, view)
+
+    def mm_on_edit_end(self, text_item) -> bool:
+        """편집이 끝난 글자(`text_item`)가 막 만든 노드의 첫 편집이면 판정. True면 호출부
+        (focusOutEvent)는 평소 정리(빈 글자 지우기·주인 선택)를 건너뛴다."""
+        f = getattr(self, "_mm_fresh", None)
+        if f is None or (text_item.parentItem() or text_item) is not f["node"]:
+            return False
+        self._mm_fresh = None
+        text = text_item.toPlainText()
+        if text:
+            if f["node"] is text_item and not text.strip():
+                text_item.setSelected(True)   # 공백만 친 글자 노드 — 평소처럼 지우면 화살표만 남는다
+                return True
+            return False
+        self._mm_cancelled = f
+        # 지금은 그 글자의 focusOutEvent 안 — 자기 자신(또는 부모)을 바로 지우지 않고 다음 차례에.
+        # 그 사이 Tab/Enter가 오면 `_mm_take_cancelled`가 먼저 지운다(done 플래그로 한 번만).
+        QTimer.singleShot(0, lambda: self._mm_discard_fresh(f))
+        return True
+
+    def _mm_cancelled_for(self, item):
+        f = getattr(self, "_mm_cancelled", None)
+        return f if f is not None and f["node"] is item and not f.get("done") else None
+
+    def _mm_take_cancelled(self, item, view) -> bool:
+        """`item`이 방금 빈 채로 취소된 새 노드면 지우고 그 노드를 만든 동작을 다시 한다."""
+        f = self._mm_cancelled_for(item)
+        if f is None:
+            return False
+        self._mm_discard_fresh(f)
+        if f["kind"] == "child":
+            self.mm_create_child(f["origin"], view)
+        elif f["kind"] == "sibling":
+            self.mm_create_sibling(f["origin"], view)
+        else:
+            self.mm_create_in_direction(f["origin"], f["kind"], view)
+        return True
+
+    def _mm_discard_fresh(self, f):
+        if f.get("done"):
+            return
+        f["done"] = True
+        if getattr(self, "_mm_cancelled", None) is f:
+            self._mm_cancelled = None
+        node, arrow = f["node"], f["arrow"]
+        doomed = {id(node)} | {id(c) for c in node.childItems()}
+        if arrow is not None:
+            doomed.add(id(arrow))
+        for it in (arrow, node):
+            if it is not None and it.scene() is not None:
+                _detach_port_from_host(it)
+                it.scene().removeItem(it)
+        # 이 노드·화살표·라벨을 "만든" 기록만 골라 없앤다(사이에 다른 작업 기록이 있어도 안전).
+        self._undo[:] = [e for e in self._undo
+                         if not all(op[0] == "create" and id(op[1]) in doomed for op in e.ops)]
+        self._refresh_history_actions()
+        self._schedule_layer_counts()   # 레이어 패널 「이름 (개수)」 — 기록을 거치지 않고 지웠으므로 직접
 
     def mm_is_node(self, item) -> bool:
         # `_ConnectorLabel`은 `_TextItem`의 서브클래스지만(화살표를 따라 슬라이드하는
@@ -155,6 +226,8 @@ class _MindMapMixin:
     def mm_create_child(self, parent_item, view):
         """[Tab] parent_item의 새 자식 노드+화살표 생성, 즉시 편집모드 진입.
         기존 자식이 있으면 그 아래(더 내려간 자리)에 쌓는다 — 기존 자식은 옮기지 않는다."""
+        if self._mm_take_cancelled(parent_item, view):
+            return None
         if not self.mm_is_node(parent_item):
             return None
         pr = self.mm_node_rect_scene(parent_item)
@@ -169,9 +242,7 @@ class _MindMapMixin:
         candidate = self.mm_free_rect(candidate, (0.0, pr.height() + _MM_GAP_Y))
         new_node = self.mm_new_node_like(parent_item, candidate.topLeft())
         arrow = self.mm_connect(parent_item, new_node, src_pt=self.mm_parent_attach_point(parent_item))
-        self.push_undo_add_many([new_node, arrow])
-        self._scene.clearSelection()
-        self._mm_enter_edit_mode(new_node, view)
+        self._mm_commit_fresh(new_node, arrow, parent_item, "child", view)
         return new_node
 
     def mm_create_sibling(self, item, view):
@@ -179,6 +250,8 @@ class _MindMapMixin:
         화살표 없는 고아 노드를 놓는다 — 두 번째 루트를 시작하는 것과 같음). 항상 부모의
         자식 목록 '끝'에 추가한다(v1: 중간 삽입이 아니라 append — 기존 형제는 안 밀어냄,
         docs/EasyCAD_계획.md §8 참조)."""
+        if self._mm_take_cancelled(item, view):
+            return None
         if not self.mm_is_node(item):
             return None
         parent = self.mm_parent(item)
@@ -187,9 +260,7 @@ class _MindMapMixin:
             candidate = QRectF(ir.left(), ir.bottom() + _MM_GAP_Y, ir.width(), ir.height())
             candidate = self.mm_free_rect(candidate, (0.0, ir.height() + _MM_GAP_Y))
             new_node = self.mm_new_node_like(item, candidate.topLeft())
-            self.push_undo_add_many([new_node])
-            self._scene.clearSelection()
-            self._mm_enter_edit_mode(new_node, view)
+            self._mm_commit_fresh(new_node, None, item, "sibling", view)
             return new_node
         return self.mm_create_child(parent, view)
 
@@ -211,6 +282,10 @@ class _MindMapMixin:
         바뀌어 항목①과 같은 부착점 드리프트가 재발한다(실측으로 확인,
         `mm_create_child`가 기존 화살표를 재사용해 피하는 것과 달리 여기는 direction
         자체가 이미 정답을 알고 있으므로 재계산 없이 바로 지정)."""
+        f = self._mm_cancelled_for(item)
+        if f is not None:   # 빈 채로 취소된 새 노드에서 Alt+방향키 → 그 노드를 만든 원래 노드에서 뻗음
+            self._mm_discard_fresh(f)
+            item = f["origin"]
         if not self.mm_is_node(item):
             return None
         ir = self.mm_node_rect_scene(item)
@@ -229,7 +304,5 @@ class _MindMapMixin:
         candidate = self.mm_free_rect(candidate, step)
         new_node = self.mm_new_node_like(item, candidate.topLeft())
         arrow = self.mm_connect(item, new_node, src_pt=src_pt)
-        self.push_undo_add_many([new_node, arrow])
-        self._scene.clearSelection()
-        self._mm_enter_edit_mode(new_node, view)
+        self._mm_commit_fresh(new_node, arrow, item, direction, view)
         return new_node
