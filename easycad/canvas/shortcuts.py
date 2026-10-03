@@ -128,6 +128,3 @@ def reset_all() -> None:
     settings.remove("")
     settings.endGroup()
 
-
-def all_sequences() -> dict[str, str]:
-    return {d[0]: current_sequence(d[0]) for d in SHORTCUT_DEFS}

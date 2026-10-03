@@ -350,7 +350,7 @@ def _set_view_extents(doc, scene):
         pass
 
 
-def _build_dxf_doc(scene):
+def _build_dxf_doc(scene, stats: dict | None = None):
     """scene → ezdxf.Drawing(저장 전 상태). export_dxf/export_dwg가 공유한다.
     [§8 DWG 자동변환 후속, 2026-08-14] DWG 내보내기가 필요해지며 저장 직전까지의 변환
     로직을 추출 — 도형→엔티티 매핑 자체는 한 글자도 안 바뀜(순수 리팩터)."""
@@ -391,25 +391,29 @@ def _build_dxf_doc(scene):
             elif isinstance(it, QGraphicsTextItem):
                 _export_text(msp, it, _LAYERS["text"])
         except Exception:  # noqa: BLE001 — 한 객체 실패가 전체 export를 막지 않게.
+            # [점검 3단계 2026-10-03] 조용히 빠지던 것 — 개수를 세어 호출부가 알리게 한다.
+            if stats is not None:
+                stats["failed"] = stats.get("failed", 0) + 1
             continue
 
     _set_view_extents(doc, scene)
     return doc
 
 
-def export_dxf(scene, path: str) -> bool:
+def export_dxf(scene, path: str, stats: dict | None = None) -> bool:
     """scene의 모든 아이템을 DXF로 저장. 성공 시 True.
 
     라벨(_TextItem 자식)은 EC_LABEL 레이어, 독립 텍스트는 EC_TEXT 레이어로 구분한다.
+    `stats` dict를 넘기면 변환에 실패해 빠진 객체 수를 `stats["failed"]`에 채운다.
     """
-    doc = _build_dxf_doc(scene)
+    doc = _build_dxf_doc(scene, stats)
     # [점검 1단계 2026-10-03] 임시 파일에 다 쓴 뒤 바꿔치기(safe_write.py) — 쓰는 도중
     # 실패해도 기존 .dxf가 반쯤 쓰인 채 깨지지 않는다.
     write_via_temp(path, doc.saveas)
     return True
 
 
-def export_dwg(scene, path: str) -> bool:
+def export_dwg(scene, path: str, stats: dict | None = None) -> bool:
     """[§8 DWG 자동변환 후속, 2026-08-14] scene을 DWG로 저장. 성공 시 True.
 
     가져오기(`dxf_import._load_ezdxf_doc`)와 대칭 — `ezdxf.addons.odafc`가 이미 내장한
@@ -420,7 +424,7 @@ def export_dwg(scene, path: str) -> bool:
     덮어쓰는 것과 동일한 기대) 여기서 또 막을 이유가 없어서다.
     """
     from ezdxf.addons import odafc
-    doc = _build_dxf_doc(scene)
+    doc = _build_dxf_doc(scene, stats)
     # [점검 1단계 2026-10-03] `odafc.export_dwg(replace=True)`는 변환을 시작하기 **전에**
     # 기존 대상 파일부터 지운다(ezdxf 소스로 확인) — ODA 미설치·변환 실패면 원본 .dwg가
     # 사라진 채 끝났다. 대상과 같은 폴더의 임시 폴더로 먼저 변환하고, 결과 파일이 실제로

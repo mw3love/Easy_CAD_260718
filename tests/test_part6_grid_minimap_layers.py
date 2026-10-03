@@ -916,7 +916,7 @@ def test_do_open_dxf_dwg_retries_after_odafc_missing_prompt_accepted():
     orig_import_dxf = hf.import_dxf
     calls = []
 
-    def fake_import_dxf(scene, path):
+    def fake_import_dxf(scene, path, **_kw):   # [2026-10-03] stats= 선택 인자 허용
         calls.append(path)
         if len(calls) == 1:
             raise ODAFCNotInstalledError("not installed")
@@ -941,7 +941,7 @@ def test_do_open_dxf_dwg_no_retry_when_prompt_declined():
     orig_import_dxf = hf.import_dxf
     calls = []
 
-    def fake_import_dxf(scene, path):
+    def fake_import_dxf(scene, path, **_kw):   # [2026-10-03] stats= 선택 인자 허용
         calls.append(path)
         raise ODAFCNotInstalledError("not installed")
 
@@ -966,7 +966,7 @@ def test_do_open_dxf_dwg_generic_failure_shows_dwg_titled_warning():
     orig_warning = QMessageBox.warning
     titles = []
 
-    def fake_import_dxf(scene, path):
+    def fake_import_dxf(scene, path, **_kw):   # [2026-10-03] stats= 선택 인자 허용
         raise RuntimeError("corrupt")
 
     def fake_warning(parent, title, text):
@@ -1214,7 +1214,7 @@ def test_do_export_dwg_retries_after_odafc_missing_prompt_accepted():
     orig_info = QMessageBox.information
     calls = []
 
-    def fake_export_dwg(scene, path):
+    def fake_export_dwg(scene, path, **_kw):   # [2026-10-03] stats= 선택 인자 허용
         calls.append(path)
         if len(calls) == 1:
             raise ODAFCNotInstalledError("not installed")
@@ -1241,7 +1241,7 @@ def test_do_export_dwg_no_retry_when_prompt_declined():
     orig_export_dwg = hf.export_dwg
     calls = []
 
-    def fake_export_dwg(scene, path):
+    def fake_export_dwg(scene, path, **_kw):   # [2026-10-03] stats= 선택 인자 허용
         calls.append(path)
         raise ODAFCNotInstalledError("not installed")
 
@@ -1265,7 +1265,7 @@ def test_do_export_dwg_empty_scene_shows_info_without_export_call():
     orig_export_dwg = hf.export_dwg
     orig_info = QMessageBox.information
     calls = []
-    hf.export_dwg = lambda scene, path: calls.append(path)
+    hf.export_dwg = lambda scene, path, **_kw: calls.append(path)
     QMessageBox.information = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
     w = CanvasWindow()   # 빈 씬
     try:
@@ -1287,7 +1287,7 @@ def test_do_export_dwg_generic_failure_shows_dwg_titled_warning():
     orig_warning = QMessageBox.warning
     titles = []
 
-    def fake_export_dwg(scene, path):
+    def fake_export_dwg(scene, path, **_kw):   # [2026-10-03] stats= 선택 인자 허용
         raise RuntimeError("disk full")
 
     def fake_warning(parent, title, text):

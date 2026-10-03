@@ -197,14 +197,15 @@ class _FileIOMixin:
         1회 재시도(§8 DWG 자동변환, 2026-08-14). DWG 변환은 외부 프로세스 호출이라 몇 초
         걸릴 수 있어 대기 커서를 띄운다."""
         is_dwg = path.lower().endswith(".dwg")
+        stats = {}   # [점검 3단계] 변환 실패로 건너뛴 엔티티 수
         try:
-            n = self._import_dxf_waited(path, is_dwg)
+            n = self._import_dxf_waited(path, is_dwg, stats)
         except Exception as e:  # noqa: BLE001
             if is_dwg and self._is_odafc_missing(e):
                 if not self._prompt_odafc_missing():
                     return
                 try:
-                    n = self._import_dxf_waited(path, is_dwg)
+                    n = self._import_dxf_waited(path, is_dwg, stats)
                 except Exception as e2:  # noqa: BLE001
                     QMessageBox.warning(self, "DWG 열기", f"가져오기에 실패했습니다:\n{e2}")
                     return
@@ -222,7 +223,12 @@ class _FileIOMixin:
         # [2026-07-29] 외부 DXF는 우리 앱과 원점·스케일이 무관해 가져온 직후 화면 밖이거나
         # 100% 줌에서 너무 작게/크게 보일 수 있다 — 열기 직후 항상 전체 맞춤(Ctrl+9와 동일).
         self._zoom_fit()
-        self.statusBar().showMessage(f"가져오기 완료: {n}개 객체 — {path}", 5000)
+        failed = stats.get("failed", 0)
+        if failed:   # [점검 3단계 2026-10-03] 예전엔 조용히 빠졌다
+            self.statusBar().showMessage(
+                f"가져오기 완료: {n}개 객체 — 변환하지 못한 {failed}개는 빠졌습니다", 10000)
+        else:
+            self.statusBar().showMessage(f"가져오기 완료: {n}개 객체 — {path}", 5000)
 
 
     def _confirm_dxf_open_once(self) -> bool:
@@ -244,17 +250,17 @@ class _FileIOMixin:
         return resp == QMessageBox.StandardButton.Ok
 
 
-    def _import_dxf_waited(self, path: str, is_dwg: bool) -> int:
+    def _import_dxf_waited(self, path: str, is_dwg: bool, stats: dict | None = None) -> int:
         """[§8 DWG 자동변환] import_dxf 얇은 래퍼 — .dwg일 때만 대기 커서+상태바 문구를
         띄운다(ODA File Converter가 외부 프로세스라 큰 파일은 수 초 걸릴 수 있음, .dxf는
         기존과 동일하게 즉시 진행)."""
         if not is_dwg:
-            return import_dxf(self._scene, path)
+            return import_dxf(self._scene, path, stats=stats)
         self.statusBar().showMessage("DWG 변환 중… (ODA File Converter)")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         QApplication.processEvents()
         try:
-            return import_dxf(self._scene, path)
+            return import_dxf(self._scene, path, stats=stats)
         finally:
             QApplication.restoreOverrideCursor()
             self.statusBar().showMessage("")
@@ -500,11 +506,13 @@ class _FileIOMixin:
         if self._scene.itemsBoundingRect().isEmpty():
             QMessageBox.information(self, "DXF로 저장", "저장할 객체가 없습니다.")
             return
+        stats = {}
         try:
-            export_dxf(self._scene, path)
+            export_dxf(self._scene, path, stats=stats)
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "DXF로 저장", f"저장에 실패했습니다:\n{e}")
             return
+        self._warn_export_failures("DXF로 저장", stats)
         # [실사용 피드백 2026-08-26] doc_path는 그대로 비워두되(손실 변환이라 Ctrl+S가
         # 이 파일을 조용히 덮어쓰면 안 됨) 탭 제목에는 파일명을 보여준다.
         self._external_path = path
@@ -519,34 +527,47 @@ class _FileIOMixin:
         if self._scene.itemsBoundingRect().isEmpty():
             QMessageBox.information(self, "DWG로 저장", "저장할 객체가 없습니다.")
             return
+        stats = {}
         try:
-            self._export_dwg_waited(path)
+            self._export_dwg_waited(path, stats)
         except Exception as e:  # noqa: BLE001
             if self._is_odafc_missing(e):
                 if not self._prompt_odafc_missing():
                     return
                 try:
-                    self._export_dwg_waited(path)
+                    self._export_dwg_waited(path, stats)
                 except Exception as e2:  # noqa: BLE001
                     QMessageBox.warning(self, "DWG로 저장", f"저장에 실패했습니다:\n{e2}")
                     return
             else:
                 QMessageBox.warning(self, "DWG로 저장", f"저장에 실패했습니다:\n{e}")
                 return
+        self._warn_export_failures("DWG로 저장", stats)
         # [실사용 피드백 2026-08-26] DXF 저장과 동일 — doc_path는 비워두고 탭 제목만 갱신.
         self._external_path = path
         self._update_tab_title()
         self.statusBar().showMessage(f"DWG 저장 완료: {path}", 5000)
 
 
-    def _export_dwg_waited(self, path: str):
+    def _warn_export_failures(self, title: str, stats: dict):
+        """[점검 3단계 2026-10-03] DXF/DWG 내보내기에서 변환에 실패해 빠진 객체가 있으면 알린다
+        (예전엔 `_build_dxf_doc`이 조용히 건너뛰어 도면 일부가 빠진 걸 알 수 없었다)."""
+        failed = stats.get("failed", 0)
+        if failed:
+            QMessageBox.warning(
+                self, title,
+                f"저장은 됐지만 객체 {failed}개는 변환하지 못해 파일에서 빠졌습니다.\n"
+                "Easy CAD 형식(.ecad)으로도 저장해 두면 원본을 잃지 않습니다.")
+
+
+    def _export_dwg_waited(self, path: str, stats: dict | None = None):
         """[§8 DWG 자동변환 후속] export_dwg 얇은 래퍼 — 대기 커서+상태바(외부 프로세스
         호출이라 몇 초 걸릴 수 있음, `_import_dxf_waited`와 동일 관례)."""
         self.statusBar().showMessage("DWG 변환 중… (ODA File Converter)")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         QApplication.processEvents()
         try:
-            export_dwg(self._scene, path)
+            export_dwg(self._scene, path, stats=stats)
         finally:
             QApplication.restoreOverrideCursor()
             self.statusBar().showMessage("")

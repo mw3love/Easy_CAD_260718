@@ -70,6 +70,7 @@ _LAYER_TYPE = {
 # 네모 150×90 등)과 같은 자릿수를 노려 handle/선택박스/기본펜폭 고정값들이 자동으로 비율이 맞게.
 _TARGET_EXTENT = 1000.0
 _IMPORT_SCALE = 1.0   # import_dxf() 실행 중에만 세팅되는 모듈 상태(단일 진입점, 재진입 없음)
+_IMPORT_FAILED = 0    # [점검 3단계 2026-10-03] 같은 방식 — 변환 실패로 건너뛴 엔티티·블록 수
 
 
 # ---- 좌표·색·공통 ----------------------------------------------------------
@@ -476,6 +477,8 @@ def _generic_item(e):
         try:
             pts = [_uf(v[0], v[1]) for v in e.flattening(0.5)]
         except Exception:      # noqa: BLE001 — flatten 실패 시 이 엔티티만 건너뜀
+            global _IMPORT_FAILED
+            _IMPORT_FAILED += 1
             return None
         if len(pts) < 2:
             return None
@@ -564,7 +567,9 @@ def _expand_insert(e, depth: int = 0, max_depth: int = 6):
         return
     try:
         children = list(e.virtual_entities())
-    except Exception:  # noqa: BLE001 — 변환 실패한 블록은 조용히 skip(손실 허용)
+    except Exception:  # noqa: BLE001 — 변환 실패한 블록은 skip(손실 허용 — 개수만 센다)
+        global _IMPORT_FAILED
+        _IMPORT_FAILED += 1
         return
     for child in children:
         if child.dxftype() == "INSERT":
@@ -604,22 +609,26 @@ def _load_ezdxf_doc(path: str):
 
 
 # ---- 진입점 ---------------------------------------------------------------
-def import_dxf(scene, path: str, *, clear: bool = True) -> int:
+def import_dxf(scene, path: str, *, clear: bool = True, stats: dict | None = None) -> int:
     """path의 DXF/DWG를 scene에 로드. 반환: 생성된 최상위 아이템 수.
 
     clear=True면 기존 씬을 지우고 대체(파일 '열기' 시맨틱). False면 현재 씬에 추가(병합).
+    `stats` dict를 넘기면 변환 실패로 건너뛴 엔티티·블록 수를 `stats["failed"]`에 채운다.
     """
     doc = _load_ezdxf_doc(path)
     msp = doc.modelspace()
     if clear:
         scene.clear()
 
-    global _IMPORT_SCALE
+    global _IMPORT_SCALE, _IMPORT_FAILED
     _IMPORT_SCALE = _compute_import_scale(msp)
+    _IMPORT_FAILED = 0
     try:
         return _ingest_modelspace(scene, msp)
     finally:
         _IMPORT_SCALE = 1.0    # 다음 호출에 새지 않도록 항상 원복(재진입 없는 단일 흐름 전제)
+        if stats is not None:
+            stats["failed"] = _IMPORT_FAILED
 
 
 def _ingest_modelspace(scene, msp) -> int:

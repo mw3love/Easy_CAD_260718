@@ -3228,11 +3228,6 @@ class _AnnotatorView(QGraphicsView):
     #   · 2점 도구(rect/ellipse/line/arrow): 둘째 클릭이 확정.
     #   · sarrow: 클릭마다 정점 추가, 더블클릭/Enter/우클릭 마무리.
     # 마지막 점은 커서를 따라다니는 미리보기. F8 Ortho면 직전 점 기준 0/90°. Esc·도구전환=폐기.
-    def _poly_apply_ortho(self, it: "_PolyArrowItem", scene_p: QPointF) -> QPointF:
-        if not getattr(self._owner, "ortho_enabled", False) or len(it._pts) < 2:
-            return scene_p
-        anchor = it.mapToScene(it._pts[-2])   # 직전(확정) 정점
-        return self._constrain(anchor, scene_p, "ortho")
 
     _MIN_SNAP_SPAN_PX = 30.0  # tip 스냅점이 직전 점에서 이 픽셀 미만이면 무시(극소 화살표 방지)
     _POLY_CLOSE_PX = 12.0     # [§8 항목21] 시작점 재클릭 판정 반경(화면 px, 줌 무관)

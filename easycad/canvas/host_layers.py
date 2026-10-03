@@ -286,13 +286,6 @@ class _LayersMixin:
         return m
 
 
-    def _reset_layers(self):
-        """새 문서 — 레이어를 기본 하나로 리셋."""
-        self._layers = [{"id": "default", "name": "기본", "visible": True, "locked": False}]
-        if hasattr(self, "_layers_list"):
-            self._refresh_layers_panel()
-
-
     def _apply_loaded_layers(self, layers):
         """열기 — 저장된 레이어 목록을 복원하고 표시/잠금을 아이템에 재적용.
         옛 .ecad(레이어 키 없음)는 기본 레이어로 리셋."""

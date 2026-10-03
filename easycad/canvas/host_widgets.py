@@ -1082,10 +1082,6 @@ class _ToastLabel(QLabel):
         # 조상 체인 전체가 보여야 True).
         return self._current
 
-    def addPermanentWidget(self, widget, stretch: int = 0):
-        pass   # [하위호환] 옛 QStatusBar API — 줌 배지는 이제 별도 플로팅 위젯이라 미사용
-
-
 # [신규기능 · 색 선택 UX 단순화] 그리드 팝업의 기본 색상 열 — 무채색 1열(흰/회/검, 고정 3값)
 # + 기존 _COLOR_PRESETS 5색(빨강·주황·노랑·초록·파랑)에 보라 1색을 더한 유채색 6열. 분홍은
 # 첫 열(빨강)과 밝기만 다른 사실상 중복이라 뺐다(2026-07-31 사용자 피드백 — 그 자리는 아래

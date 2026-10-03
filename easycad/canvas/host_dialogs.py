@@ -326,9 +326,6 @@ class _PdfExportDialog(QDialog):
             return self._frames[0]
         return self._frame_cb.currentData()
 
-    def _frame_active(self) -> bool:
-        return (not self._selection_only()) and self._current_frame() is not None
-
     def _margins_mm(self) -> tuple:
         return (self._margin_top_sb.value(), self._margin_right_sb.value(),
                self._margin_bottom_sb.value(), self._margin_left_sb.value())

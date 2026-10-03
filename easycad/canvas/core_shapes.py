@@ -5113,18 +5113,6 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                 best = (i, proj, d)
         return best
 
-    def remove_vertex(self, idx: int) -> bool:
-        """정점 삭제(최소 2정점은 유지). 삭제했으면 True."""
-        if len(self._pts) <= 2:
-            return False
-        self._auto_route = False   # [Stage1] 정점 삭제 = 수동 편집 → 자동 라우팅 해제
-        self._route_hints = []     # [경유지 힌트] 수동 전환 → 힌트 폐기
-        self.prepareGeometryChange()
-        del self._pts[idx]
-        self.update()
-        self._sync_label()
-        return True
-
     # ---- 색/두께 -------------------------------------------------------
     def apply_style(self, style):   # [M2 #3] 몸통 선스타일(점선 등)
         self._style = style
@@ -6058,11 +6046,6 @@ class _ColorLoupe(QWidget):
         self._color = QColor("black")
         self._hex = ""
         self.setFixedSize(104, 74)
-
-    def set_color(self, color: QColor):
-        self._color = QColor(color)
-        self._hex = self._color.name().upper()
-        self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)

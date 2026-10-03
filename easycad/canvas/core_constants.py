@@ -56,14 +56,6 @@ _GRID_MAX_DOTS = 6000
 _GRID_DOT_RGBA = (150, 150, 150, 115)
 
 
-def _clamp_int(v, lo, hi, default):
-    """v를 int로 파싱해 [lo, hi]로 클램프. 파싱 실패(None·빈문자열 등)면 default."""
-    try:
-        n = int(v)
-    except (TypeError, ValueError):
-        return default
-    return max(lo, min(n, hi))
-
 # 대표 프리셋 색상 (빨강·주황·노랑·초록·파랑·검정·흰색)
 _COLOR_PRESETS = [
     "#FF3B30", "#FF9500", "#FFCC00", "#34C759",
@@ -382,72 +374,6 @@ def _arrow_head_icon(kind: str, color: QColor, w: int = 46, h: int = 20) -> QIco
         p.drawPolygon(QPolygonF([QPointF(x1, y), QPointF(x1 - size, y - size), QPointF(x1 - size, y + size)]))
     if kind in ("start", "both"):
         p.drawPolygon(QPolygonF([QPointF(x0, y), QPointF(x0 + size, y - size), QPointF(x0 + size, y + size)]))
-    p.end()
-    return QIcon(pm)
-
-
-def _rainbow_icon(current: QColor | None = None, size: int = 20) -> QIcon:
-    """무지개 색 버튼 아이콘 — 무지개 링 + 가운데 현재 색 점(팔레트 팝업 진입점)."""
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    g = QConicalGradient(size / 2, size / 2, 90)
-    for stop, hexs in (
-        (0.00, "#FF3B30"), (0.17, "#FF9500"), (0.34, "#FFCC00"),
-        (0.50, "#34C759"), (0.67, "#007AFF"), (0.84, "#AF52DE"),
-        (1.00, "#FF3B30"),
-    ):
-        g.setColorAt(stop, QColor(hexs))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(g)
-    p.drawEllipse(1, 1, size - 2, size - 2)
-    if current is not None:
-        r = size * 0.30
-        p.setBrush(QColor(current))
-        p.setPen(QPen(QColor("#FFFFFF"), 1.4))
-        p.drawEllipse(QPointF(size / 2, size / 2), r, r)
-    p.end()
-    return QIcon(pm)
-
-
-def _bg_swatch_icon(bg) -> QIcon:
-    """텍스트 배경 스와치 — 불투명색은 그대로 채움, 반투명색은 체커보드 위에 얹어(투명 표시
-    관용) 회색 불투명과 헷갈리지 않게 한다. bg=None이면 투명(대각선)."""
-    pm = QPixmap(20, 20)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    rect = QRectF(2, 2, 16, 16)
-    if bg is None:
-        p.setPen(QPen(QColor(_TEXT), 1.4))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(rect, 3, 3)
-        p.drawLine(5, 15, 15, 5)                         # 투명 표시 대각선
-    else:
-        clip = QPainterPath()
-        clip.addRoundedRect(rect, 3, 3)
-        p.setClipPath(clip)
-        p.fillRect(rect, QColor("white"))
-        if bg.alpha() < 255:
-            # 반투명 → 체커보드 바탕(칸 4px)을 깔아 '뒤가 비친다'를 시각화
-            cell = 4
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor("#bfbfbf"))
-            yy = 2
-            while yy < 18:
-                xx = 2
-                while xx < 18:
-                    if ((int(xx) // cell) + (int(yy) // cell)) % 2 == 0:
-                        p.drawRect(QRectF(xx, yy, cell, cell))
-                    xx += cell
-                yy += cell
-        p.setBrush(QBrush(bg))                           # 실제 배경색(반투명이면 체커가 비침)
-        p.drawRect(rect)
-        p.setClipping(False)
-        p.setPen(QPen(QColor(_SUBTEXT), 1))              # 테두리
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(rect, 3, 3)
     p.end()
     return QIcon(pm)
 
