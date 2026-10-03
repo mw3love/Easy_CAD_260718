@@ -40,6 +40,9 @@ easycad/
 │   ├── core_shapes.py      `_HandleResizeMixin`+전체 아이템 클래스+최근접점/포트/A* 라우팅/
 │   │                       그룹변형 — pasteflow verbatim 이식 + 우리 확장(지속연결 등),
 │   │                       크게 편집 가능(우리 fork). 셋이 실제 순환의존이라 한 파일 유지(주석 참조).
+│   ├── core_routing.py     직교 자동 라우팅·A*·선분 교차(TRIM 기하 커널) — 2026-10-03 core_shapes에서
+│   │                       떼어 냄(도형 클래스 안 부르는 순수 기하, core_shapes가 `import *`로 받음)
+│   ├── core_symbols.py     순서도·안테나 심볼 경로 팩토리 + `_SYMBOL_KINDS`(같은 날 같은 이유로 떼어 냄)
 │   ├── core_view.py        `_AnnotatorView` — 마우스/키 이벤트, 드래그선택, 스냅, 팬/줌
 │   ├── host.py             CanvasWindow(창) — __init__만, 나머지는 아래 믹스인 다중상속
 │   ├── host_ui.py / host_fileio.py / host_layers.py / host_style.py / host_undo.py /
