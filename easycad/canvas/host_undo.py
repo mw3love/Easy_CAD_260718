@@ -83,9 +83,37 @@ class _UndoMixin:
         else:
             self._undo.append(_UndoEntry(ops, key))
         self._redo.clear()
+        if any(isinstance(o[1], _ImageItem) for o in ops):
+            self._trim_history_images()   # [§8 항목35] 그림이 오갈 때만 검사(드묾)
         self._refresh_history_actions()
         self._mark_dirty()   # [§8 항목10 Stage C]
         self._schedule_layer_counts()   # 레이어 패널 「이름 (개수)」 갱신
+
+    # [§8 항목35, 2026-10-03] 되돌리기 기록 상한 — 사용자 결정: 그림 메모리만 제한.
+    # 실측: 도형 5만 개를 지워 쌓아도 +80MB, 한 도형 5,000번 이동 +4MB인데, 1,200만 화소 사진은
+    # 넣었다 지우기 10번에 +458MB(장당 약 46MB). 그래서 기록만 붙잡고 있는(씬에 없는) 그림이
+    # 이 값을 넘으면 가장 오래된 기록부터 버린다. 도형 작업은 지금처럼 끝까지 되돌릴 수 있다.
+    _UNDO_IMAGE_BUDGET = 500 * 2**20
+
+    def _history_image_bytes(self) -> int:
+        seen, total = set(), 0
+        for entry in list(self._undo) + list(self._redo):
+            for o in entry.ops:
+                it = o[1]
+                if isinstance(it, _ImageItem) and id(it) not in seen and it.scene() is None:
+                    seen.add(id(it))
+                    pm = it._pixmap
+                    total += pm.width() * pm.height() * 4
+        return total
+
+    def _trim_history_images(self):
+        dropped = 0
+        while len(self._undo) > 1 and self._history_image_bytes() > self._UNDO_IMAGE_BUDGET:
+            self._undo.pop(0)   # 가장 오래된 기록 — 방금 쌓은 기록은 남긴다
+            dropped += 1
+        if dropped:
+            self.statusBar().showMessage(
+                f"지운 그림이 메모리를 많이 차지해 오래된 되돌리기 기록 {dropped}개를 정리했습니다", 5000)
 
     @staticmethod
     def _coalesce_into(entry, new_ops):
