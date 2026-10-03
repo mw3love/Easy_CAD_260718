@@ -62,13 +62,14 @@ easycad/
 │   ├── sketch_build.py     이미지→도면 빌더(Qt 비의존)
 │   ├── safe_write.py       안전 저장(임시 파일에 쓰고 바꿔치기) — .ecad·DXF·자동 저장 공용
 │   ├── autosave.py         자동 저장·복구 파일 관리(앱 데이터 `recovery` 폴더, 2026-10-03)
-│   └── photo_ops.py        사진→도면 ops JSON → Sketch 아이템(글자 회전 rot, Qt 비의존)
+│   ├── photo_ops.py        사진→도면 ops JSON → Sketch 아이템(글자 회전 rot, Qt 비의존)
+│   └── pdf_import.py       벡터 PDF 열기(PyMuPDF, 쪽마다 빈 용지틀, §8 항목33)
 └── main.py · run.py        진입점
 tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~21_*.py      테마별 회귀 스모크 1163종(2026-10-03 기준, 개별 pytest 실행 가능)
+└── test_part1~22_*.py      테마별 회귀 스모크 1179종(2026-10-03 기준, 개별 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -125,11 +126,7 @@ symbol_library/
 - 마인드맵 빈 노드 취소 시 남는 고아 화살표 정리(2026-08-24 도입 당시 의도적 최소범위).
 - LOD(레벨오브디테일) — 위 "성능" 항목의 남은 격차, 렌더 바닥값 자체를 낮추려면 필요.
 
-**최근 항목**(2026-08-30 ~ 10-03, 상세는 `docs/history/2026-08b.md`·`2026-09.md`·`2026-10.md`):
-- **TRIM 근본 재설계**(2026-08-30~31, 1~4단계+후속 12라운드) — 비파괴 `_cuts`를 파괴적
-  기하 변경(닫힌 도형 → `_PolygonItem`)으로 전환, §8 항목17이 남겼던 "편법" 문제 완전 해소.
-- **화살표 속성 리뷰 4건 + S자 곡선 + 직각화살표 진입 스텁 붕괴 수정**(2026-08-31) —
-  `_dedup_pts`의 betweenness 체크 누락이 진짜 원인(3줄 수정, 라우팅 회귀 없음 확인).
+**최근 항목**(2026-08-31 ~ 10-03, 상세는 `docs/history/2026-08b.md`·`2026-09.md`·`2026-10.md`):
 - **크래시 리포트 시스템 도입**(2026-08-31).
 - **DWG 변환 토스트 고착 + DXF/DWG 저장완료 팝업→토스트 전환**(2026-08-31).
 - **다각형(`_PolygonItem`) DXF 내보내기 누락 수정**(2026-08-31) — §8 항목21 이후 한 번도
@@ -161,7 +158,11 @@ symbol_library/
 - **§8 항목31 DXF 채우기(HATCH)**(2026-10-03) — 채움색·투명도·글자 배경을 EC_FILL 해치로 내보내고 다시 열면 복원,
   다른 CAD 단색 해치도 채운 패스로 가져옴(무늬 해치는 개수 안내).
 - **§8 항목32 최근 연 파일**(2026-10-03) — 파일 → 최근 파일(10개, DXF/DWG 포함). 테스트는 `EASYCAD_SETTINGS_ORG`로
-  실사용자 설정과 분리. 다음: 항목33 PDF 벡터 가져오기.
+  실사용자 설정과 분리.
+- **§8 항목33 벡터 PDF 가져오기**(2026-10-03) — 열기(Ctrl+O)·끌어놓기로 .pdf를 새 탭에(`easycad/fileio/pdf_import.py`,
+  PyMuPDF — `requirements.txt` 추가). 쪽마다 빈 용지틀(`_TitleBlockItem(plain=True)`, 표제란 표 없음) 나란히, 글자는
+  고칠 수 있는 글자, 2만 개 넘으면 확인. AutoCAD `1.pdf` 원본과 겹쳐 보일 만큼 일치. 9천 개 문서 편집이 느린 건 기존
+  성능 한계(미니맵·전체선택). 다음: 항목34 '내 심볼' 검색창.
 
 ## UI 원칙
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·

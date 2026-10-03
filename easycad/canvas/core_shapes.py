@@ -2627,8 +2627,12 @@ class _TitleBlockItem(QGraphicsRectItem):
     def _ink_color(self) -> QColor:
         return self._INK_DARK if _view_is_dark(self) else self._INK_LIGHT
 
-    def __init__(self, size: str = "A2", orient: str = "landscape", fields: dict | None = None):
+    def __init__(self, size: str = "A2", orient: str = "landscape", fields: dict | None = None,
+                 plain: bool = False):
         super().__init__()
+        # [§8 항목33, 2026-10-03] 빈 용지틀 — 용지 경계선만(안쪽 테두리·표제란 표 없음). PDF 가져오기용:
+        # CAD가 낸 PDF엔 자체 테두리·표제란이 이미 있어 우리 표가 그 위에 겹치면 안 된다.
+        self._plain = bool(plain)
         self._size = size if size in PAPER_SIZES_MM else "A2"
         self._orient = "portrait" if orient == "portrait" else "landscape"
         self._fields = {k: "" for k in TB_FIELD_KEYS}
@@ -2662,7 +2666,7 @@ class _TitleBlockItem(QGraphicsRectItem):
         self.update()
 
     def clone(self):
-        c = _TitleBlockItem(self._size, self._orient, dict(self._fields))
+        c = _TitleBlockItem(self._size, self._orient, dict(self._fields), self._plain)
         c.setPos(self.pos())
         c.setZValue(self.zValue())
         c.setFlags(self.flags())
@@ -2685,7 +2689,8 @@ class _TitleBlockItem(QGraphicsRectItem):
         stroker = QPainterPathStroker()
         stroker.setWidth(self._M)
         path.addPath(stroker.createStroke(border))
-        path.addRect(self._tb_rect())
+        if not self._plain:
+            path.addRect(self._tb_rect())
         return path
 
     # ---- 렌더 ---------------------------------------------------------------
@@ -2699,12 +2704,13 @@ class _TitleBlockItem(QGraphicsRectItem):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QPen(line, 0.5))
         painter.drawRect(r)
-        # 도면 테두리(안쪽, 굵게)
-        inner = r.adjusted(self._M, self._M, -self._M, -self._M)
-        painter.setPen(QPen(line, 1.2))
-        painter.drawRect(inner)
-        # 표제란 표
-        self._paint_table(painter)
+        if not self._plain:
+            # 도면 테두리(안쪽, 굵게)
+            inner = r.adjusted(self._M, self._M, -self._M, -self._M)
+            painter.setPen(QPen(line, 1.2))
+            painter.drawRect(inner)
+            # 표제란 표
+            self._paint_table(painter)
         painter.restore()
         if self.isSelected():
             _paint_selection_highlight(painter, self, self._scale_or_1())

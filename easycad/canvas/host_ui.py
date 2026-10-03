@@ -466,8 +466,8 @@ class _UIBuildMixin:
     # 항상 .ecad(무손실)가 먼저 뜨도록 유지 — DXF 가져오기/내보내기는 _doc_path를
     # 갱신하지 않는다(기존 동작 그대로).
     _DOC_FILTER = "Easy CAD 문서 (*.ecad);;DXF 파일 (*.dxf);;DWG 파일 (*.dwg)"
-    _OPEN_FILTER = ("지원 파일 (*.ecad *.dxf *.dwg);;Easy CAD 문서 (*.ecad);;"
-                    "DXF 파일 (*.dxf);;DWG 파일 (*.dwg)")
+    _OPEN_FILTER = ("지원 파일 (*.ecad *.dxf *.dwg *.pdf);;Easy CAD 문서 (*.ecad);;"
+                    "DXF 파일 (*.dxf);;DWG 파일 (*.dwg);;PDF 도면 (*.pdf)")
 
 
     def resizeEvent(self, e):

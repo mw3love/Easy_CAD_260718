@@ -197,6 +197,8 @@ def item_to_dict(it) -> dict | None:
     if isinstance(it, _TitleBlockItem):
         d.update(type="titleblock", size=it._size, orient=it._orient,
                  fields=dict(it._fields))
+        if getattr(it, "_plain", False):   # [§8 항목33] 빈 용지틀 — 없으면 키 생략(하위호환)
+            d["plain"] = True
     elif isinstance(it, _TableItem):
         r = it.rect()
         d.update(type="table", rows=it._rows, cols=it._cols, header=it._header,
@@ -307,7 +309,7 @@ def dict_to_item(d: dict):
     t = d.get("type")
     if t == "titleblock":
         it = _TitleBlockItem(d.get("size", "A2"), d.get("orient", "landscape"),
-                             d.get("fields"))
+                             d.get("fields"), d.get("plain", False))
     elif t == "table":
         it = _TableItem(d.get("rows", 1), d.get("cols", 1), QRectF(*d["rect"]),
                         d.get("cells"), d.get("header", True), d.get("col_widths"))

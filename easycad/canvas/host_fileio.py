@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPlainTextEdit,
     QSizePolicy, QColorDialog, QHBoxLayout, QMenu, QFrame,
-    QListWidget, QListWidgetItem,
+    QListWidget, QListWidgetItem, QProgressDialog,
 )
 
 from easycad.canvas.annotator_core import (
@@ -40,6 +40,7 @@ from easycad.fileio.pdf_export import export_pdf, export_pdf_pages, export_image
 from easycad.fileio.dxf_export import export_dxf, export_dwg
 from easycad.fileio import autosave
 from easycad.fileio.dxf_import import import_dxf
+from easycad.fileio.pdf_import import import_pdf, PdfImportError
 from easycad.fileio.svg_import import parse_svg_items, parse_svg_string
 from easycad.fileio.document import (
     save_document, load_document, load_document_layers, dict_to_item, item_to_dict, insert_items,
@@ -138,6 +139,9 @@ class _FileIOMixin:
                 return
             self._open_new_tab()
             self._do_open_dxf(path)
+        elif path.lower().endswith(".pdf"):   # [§8 항목33] 벡터 PDF 가져오기
+            self._open_new_tab()
+            self._do_open_pdf(path)
         else:
             self._open_new_tab()
             self._do_open_ecad(path)
@@ -287,6 +291,80 @@ class _FileIOMixin:
                 f"가져오기 완료: {n}개 객체 — 변환하지 못한 {failed}개는 빠졌습니다", 10000)
         else:
             self.statusBar().showMessage(f"가져오기 완료: {n}개 객체 — {path}", 5000)
+
+
+    # ---- [§8 항목33, 2026-10-03] 벡터 PDF 가져오기 ---------------------------------
+    # 사용자 결정: 열기(Ctrl+O)로 새 탭 · 쪽마다 빈 용지틀 나란히 · 글자는 고칠 수 있는 글자 ·
+    # 많으면(pdf_import.LARGE_COUNT 초과) 개수를 알려 주고 계속/취소. DXF처럼 `doc_path`는 비워
+    # 두고(Ctrl+S가 PDF를 덮어쓰지 않게) 탭 제목만 파일명.
+    def _do_open_pdf(self, path: str):
+        stats = {}
+        prog = None
+
+        def confirm(count):
+            QApplication.restoreOverrideCursor()
+            ok = self._confirm_large_pdf(count)
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            return ok
+
+        def progress(done, total):
+            nonlocal prog
+            if prog is None and total >= 3000:   # 1~2초 이상 걸릴 때만 진행 창
+                prog = QProgressDialog("PDF 도형을 만드는 중…", "취소", 0, total, self)
+                prog.setWindowTitle("PDF 열기")
+                prog.setWindowModality(Qt.WindowModality.WindowModal)
+                prog.setMinimumDuration(0)
+            if prog is None:
+                return True
+            prog.setValue(done)
+            QApplication.processEvents()
+            return not prog.wasCanceled()
+
+        self.statusBar().showMessage("PDF 읽는 중…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+        try:
+            n = import_pdf(self._scene, path, confirm=confirm, progress=progress, stats=stats)
+        except Exception as e:  # noqa: BLE001 — PdfImportError는 문구 그대로, 나머지도 오류창으로
+            QApplication.restoreOverrideCursor()
+            if prog is not None:
+                prog.close()
+            self.statusBar().showMessage("", 1)
+            QMessageBox.warning(self, "PDF 열기", str(e) if isinstance(e, PdfImportError)
+                                else f"가져오기에 실패했습니다:\n{e}")
+            return
+        QApplication.restoreOverrideCursor()
+        if prog is not None:
+            prog.close()
+        if n is None:
+            self.statusBar().showMessage("PDF 열기를 취소했습니다", 5000)
+            return
+        self._reset_history()
+        self._external_path = path
+        self._update_tab_title()
+        self._zoom_fit()
+        notes = []
+        if stats.get("no_frame"):
+            notes.append(f"용지가 A4~A1이 아닌 {stats['no_frame']}쪽은 용지틀 없이 놓음")
+        if stats.get("skipped_images"):
+            notes.append(f"그림 {stats['skipped_images']}개는 옮기지 못함")
+        if not stats.get("vector"):
+            notes.append("선·글자가 없는 PDF(스캔본) — 사진→도면(Ctrl+Shift+P)을 써 보세요")
+        msg = f"PDF 가져오기 완료: {n}개 객체, {stats.get('pages', 1)}쪽"
+        self.statusBar().showMessage(msg + (" — " + " · ".join(notes) if notes else ""),
+                                     10000 if notes else 5000)
+
+    def _confirm_large_pdf(self, count: int) -> bool:
+        """도형이 많을 때 계속할지(테스트는 이 메서드를 바꿔 끼운다 — 오프스크린 QMessageBox는 무한 대기)."""
+        resp = QMessageBox.question(
+            self, "PDF 열기",
+            f"이 PDF에는 도형이 약 {count:,}개 있습니다.\n"
+            "열고 편집하는 데 오래 걸리거나 느려질 수 있습니다(1만 개 안팎까지가 편함).\n"
+            "참고: 약 58만 개 도면은 여는 데 1분 넘게, 메모리 약 3GB가 들었습니다.\n\n"
+            "그래도 열까요?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        return resp == QMessageBox.StandardButton.Yes
 
 
     def _confirm_dxf_open_once(self) -> bool:
@@ -1129,7 +1207,7 @@ class _FileIOMixin:
     # 가져오기/삽입 함수(_do_open_ecad/_do_open_dxf/_insert_svgs_at)를 그대로 재사용한다.
     _DOC_EXTS = (".ecad",)
     _DXF_EXTS = (".dxf", ".dwg")
-    _DROP_EXTS = _IMG_EXTS + _DOC_EXTS + _DXF_EXTS + (".svg",)
+    _DROP_EXTS = _IMG_EXTS + _DOC_EXTS + _DXF_EXTS + (".svg", ".pdf")
 
     def dragEnterEvent(self, e):
         md = e.mimeData()
@@ -1175,6 +1253,13 @@ class _FileIOMixin:
                 continue
             self._open_new_tab()
             self._do_open_dxf(p)
+            n += 1
+        for p in (p for p in paths if p.lower().endswith(".pdf")):   # [§8 항목33]
+            if self._focus_existing_tab_for(p):
+                n += 1
+                continue
+            self._open_new_tab()
+            self._do_open_pdf(p)
             n += 1
         # SVG·이미지는 현재 도면(마지막에 열린 탭이 있으면 그 탭) 위 드롭 위치에 바로 삽입.
         if svg_paths:
