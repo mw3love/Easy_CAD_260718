@@ -42,6 +42,10 @@ class CanvasDocument:
         # 그 파일명을 보여주는 게 자연스러워, 표시 전용 경로를 별도로 둔다.
         self.external_path: str | None = None
         self.dirty = False   # [§8 항목10 Stage C]
+        # [점검 1단계 2026-10-03] 자동 저장(fileio/autosave.py) — 복구 폴더 파일 id(첫 자동
+        # 저장 때 부여)와 "마지막 자동 저장 뒤로 바뀐 게 있음" 표시.
+        self.autosave_id: str | None = None
+        self.autosave_pending = False
         self.untitled_n: int | None = None   # [§8 항목10 Stage B] host._create_doc()가 부여
 
         self.badge_n = 0

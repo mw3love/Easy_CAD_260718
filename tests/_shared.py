@@ -11,6 +11,9 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# [점검 1단계 2026-10-03] 자동 저장 복구 폴더를 실사용자 앱 데이터 대신 임시 폴더로
+# (창이 1분 넘게 살아 있으면 테스트 중에도 자동 저장 타이머가 돈다 — easycad/fileio/autosave.py).
+os.environ.setdefault("EASYCAD_RECOVERY_DIR", os.path.join(tempfile.gettempdir(), "easycad-pytest-recovery"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtWidgets import QApplication, QToolButton

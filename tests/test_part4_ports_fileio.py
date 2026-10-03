@@ -327,6 +327,8 @@ def test_dwg_export_routes_through_odafc_export_dwg():
         calls.append((path, k.get("replace")))
         kinds = {e.dxftype() for e in doc.modelspace()}
         assert "LWPOLYLINE" in kinds   # rect가 doc에 실제로 들어있는지(공유 로직 확인)
+        with open(path, "wb") as f:     # 변환기가 결과 파일을 만든 척
+            f.write(b"DWG")
 
     odafc.export_dwg = fake_export_dwg
     try:
@@ -334,7 +336,11 @@ def test_dwg_export_routes_through_odafc_export_dwg():
         assert export_dwg(sc, out_path) is True
     finally:
         odafc.export_dwg = orig_export_dwg
-    assert calls == [(out_path, True)]   # replace=True로 호출됨
+    # [점검 1단계 2026-10-03] 원본 보호를 위해 같은 폴더의 임시 폴더로 변환한 뒤 바꿔치기한다
+    # (test_part16_file_safety 참조) — 그래서 odafc가 받는 경로는 대상 그 자체가 아니다.
+    assert len(calls) == 1 and calls[0][1] is True   # replace=True로 1회 호출
+    assert os.path.basename(calls[0][0]) == os.path.basename(out_path)
+    assert open(out_path, "rb").read() == b"DWG"
 
 
 

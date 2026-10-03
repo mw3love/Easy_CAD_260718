@@ -44,6 +44,7 @@ from easycad.fileio.pdf_export import export_pdf, PAGE_SIZES
 from easycad.fileio.dxf_export import export_dxf
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.document import save_document, load_document, load_document_layers
+from easycad.fileio import autosave
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
@@ -176,6 +177,13 @@ class CanvasWindow(
         self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
         self._reposition_panels()
 
+        # [점검 1단계 2026-10-03] 자동 저장 — 바뀐 문서만 1분마다 복구 폴더에(사용자 결정:
+        # 간격 1분·별도 폴더). 본체는 host_fileio._autosave_tick.
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(self._AUTOSAVE_INTERVAL_MS)
+        self._autosave_timer.timeout.connect(self._autosave_tick)
+        self._autosave_timer.start()
+
     def _wire_document_signals(self, doc):
         """[§8 항목10] 새 CanvasDocument의 씬 시그널을 연결. 문서가 여러 개(탭)여도 전부 같은
         CanvasWindow 메서드로 모인다 — `_on_scene_changed`는 `self.sender()`로 발신 씬을
@@ -246,6 +254,7 @@ class CanvasWindow(
         저널에 뭔가 쌓이는(`_push_entry`) 모든 변이·되돌리기/다시실행(`undo`/`redo`)이
         공유하는 단일 훅 지점(host_undo.py)."""
         self._active_doc.dirty = True
+        self._active_doc.autosave_pending = True   # [점검 1단계] 다음 자동 저장 대상
         self._update_tab_title()
 
     def _open_new_tab(self) -> CanvasDocument:
@@ -284,6 +293,7 @@ class CanvasWindow(
             return
         self._docs.pop(index)
         self._tabs.removeTab(index)
+        autosave.remove(doc.autosave_id)   # [점검 1단계] 저장했거나 버리기로 한 문서 — 복구 불필요
         # CanvasDocument.scene은 QGraphicsScene(window)로 window에 부모 지정돼 있어
         # 명시적으로 떼어내지 않으면 창이 닫힐 때까지 메모리에 남는다.
         doc.view.setParent(None)
@@ -322,6 +332,9 @@ class CanvasWindow(
                 event.ignore()
                 return
         event.accept()
+        self._autosave_timer.stop()
+        for doc in self._docs:   # [점검 1단계] 정상 종료 — 복구 파일 정리
+            autosave.remove(doc.autosave_id)
         try:
             CanvasWindow._live_windows.remove(self)   # [§8 항목10 Stage D] "새 창"으로 만들었으면 해제
         except ValueError:

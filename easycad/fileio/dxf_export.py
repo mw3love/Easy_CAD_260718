@@ -25,6 +25,10 @@
              채워, 다른 CAD가 파일을 열 때 콘텐츠가 화면 밖에 있어 빈 화면으로 뜨는 것을
              방지(좌표값 자체는 안 바꿈 — 순수 "열자마자 보여줄 구역" 힌트).
 """
+import os
+import shutil
+import tempfile
+
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QPainterPath
 from PyQt6.QtWidgets import QGraphicsTextItem
@@ -33,6 +37,7 @@ from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _PolygonItem, build_trimmed_border_path,
 )
+from easycad.fileio.safe_write import write_via_temp
 
 # 타입 → DXF 레이어. AutoCAD에서 켜고/끄기·색 일괄관리가 쉽도록 분리.
 _LAYERS = {
@@ -398,7 +403,9 @@ def export_dxf(scene, path: str) -> bool:
     라벨(_TextItem 자식)은 EC_LABEL 레이어, 독립 텍스트는 EC_TEXT 레이어로 구분한다.
     """
     doc = _build_dxf_doc(scene)
-    doc.saveas(path)
+    # [점검 1단계 2026-10-03] 임시 파일에 다 쓴 뒤 바꿔치기(safe_write.py) — 쓰는 도중
+    # 실패해도 기존 .dxf가 반쯤 쓰인 채 깨지지 않는다.
+    write_via_temp(path, doc.saveas)
     return True
 
 
@@ -414,5 +421,18 @@ def export_dwg(scene, path: str) -> bool:
     """
     from ezdxf.addons import odafc
     doc = _build_dxf_doc(scene)
-    odafc.export_dwg(doc, path, replace=True)
+    # [점검 1단계 2026-10-03] `odafc.export_dwg(replace=True)`는 변환을 시작하기 **전에**
+    # 기존 대상 파일부터 지운다(ezdxf 소스로 확인) — ODA 미설치·변환 실패면 원본 .dwg가
+    # 사라진 채 끝났다. 대상과 같은 폴더의 임시 폴더로 먼저 변환하고, 결과 파일이 실제로
+    # 생겼을 때만 대상으로 바꿔치기한다(같은 볼륨이라 os.replace가 원자적).
+    path = os.path.abspath(path)
+    tmp_dir = tempfile.mkdtemp(prefix=".ecad_dwg_", dir=os.path.dirname(path))
+    try:
+        tmp_out = os.path.join(tmp_dir, os.path.basename(path))
+        odafc.export_dwg(doc, tmp_out, replace=True)
+        if not os.path.isfile(tmp_out):
+            raise RuntimeError("DWG 변환 결과 파일이 만들어지지 않았습니다.")
+        os.replace(tmp_out, path)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
     return True

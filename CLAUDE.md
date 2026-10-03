@@ -60,13 +60,15 @@ easycad/
 │   ├── dxf_export.py / dxf_import.py   DXF 왕복
 │   ├── mermaid_import.py   Mermaid flowchart → .ecad
 │   ├── sketch_build.py     이미지→도면 빌더(Qt 비의존)
+│   ├── safe_write.py       안전 저장(임시 파일에 쓰고 바꿔치기) — .ecad·DXF·자동 저장 공용
+│   ├── autosave.py         자동 저장·복구 파일 관리(앱 데이터 `recovery` 폴더, 2026-10-03)
 │   └── photo_ops.py        사진→도면 ops JSON → Sketch 아이템(글자 회전 rot, Qt 비의존)
 └── main.py · run.py        진입점
 tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~15_*.py      테마별 회귀 스모크 1115종(2026-10-01 기준, 개별 pytest 실행 가능)
+└── test_part1~16_*.py      테마별 회귀 스모크 1128종(2026-10-03 기준, 개별 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -123,10 +125,7 @@ symbol_library/
 - 마인드맵 빈 노드 취소 시 남는 고아 화살표 정리(2026-08-24 도입 당시 의도적 최소범위).
 - LOD(레벨오브디테일) — 위 "성능" 항목의 남은 격차, 렌더 바닥값 자체를 낮추려면 필요.
 
-**최근 항목**(2026-08-26 ~ 10-01, 상세는 `docs/history/2026-08b.md`·`2026-09.md`·`2026-10.md`):
-- **실사용 시나리오표 검증 중 발견된 버그 8건**(2026-08-26) — DXF/DWG 탭 제목·테마
-  전환 시 흰 도형 대비·Mermaid 한글 노드ID 파싱 등.
-- **라이트/다크 전환 시 생성창 잔존 스타일 3단계 수정**(2026-08-26~27, 스턱루프 3라운드).
+**최근 항목**(2026-08-28 ~ 10-03, 상세는 `docs/history/2026-08b.md`·`2026-09.md`·`2026-10.md`):
 - **TRIM 자연 경계 확장 + 다각형 도구 연동**(2026-08-28) — 커터 없이도 변/원 전체 삭제.
 - **TRIM 근본 재설계**(2026-08-30~31, 1~4단계+후속 12라운드) — 비파괴 `_cuts`를 파괴적
   기하 변경(닫힌 도형 → `_PolygonItem`)으로 전환, §8 항목17이 남겼던 "편법" 문제 완전 해소.
@@ -148,6 +147,9 @@ symbol_library/
   도구 `tools/sketch_ops*.py`, 앱 재도입은 §8 항목28(계획 단계). 같은 날 CAD 출력 PDF는 AI 없이
   벡터를 좌표째 옮기는 게 정확·무료임을 확인(`tools/pdf_vector_probe.py`, 후보29). 폰 사진(DMB 구획)
   재시험도 통과 — 약점은 세로 회전 글자(ops에 회전 없음). 같은 사진 모델 4종 비교도 차이 작음. 항목28 착수 — 1단계(형식 정리: 글자 회전 rot, `easycad/fileio/photo_ops.py`·`easycad/ai/photo_to_ops.py`) ~5단계 완료 — 삽입 메뉴 「사진→도면…」(`Ctrl+Shift+P`, `easycad/canvas/photo_dialog.py`), 원본 사진 흐리게 깔기. 지시문은 범용화(분야 문구 제거). 건축 평면도(생성 이미지)도 쓸 만함 — 기울어진 사진은 창에서 모서리 4점을 맞춰 펴서 보냄(원근 보정). 남은 것: 사용자 실사용 확인, 개선 후보(ops에 fill — 벽 채움).
+- **프로그램 점검 1단계 — 파일 안전**(2026-10-03) — `.ecad`·DXF 안전 저장(임시 파일→바꿔치기), DWG 덮어쓰기
+  때 변환 실패면 원본이 지워지던 버그 수정(ezdxf가 먼저 지움), 새 버전 파일 경고, 자동 저장(바뀐 문서만 1분,
+  별도 복구 폴더)+시작 시 복구. 다음: 2단계 실사용 시나리오·왕복 검사(단계마다 목록 보고 후 승인).
 
 ## UI 원칙
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·

@@ -9,6 +9,8 @@
 import base64
 import json
 
+from easycad.fileio.safe_write import write_via_temp
+
 from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF, QBuffer, QByteArray, QIODevice
 from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFont, QPixmap
 
@@ -409,8 +411,12 @@ def save_document(scene, path: str, layers: list | None = None):
     doc = {"format": FORMAT, "version": VERSION, "items": items}
     if layers is not None:   # [신규기능] 레이어 목록(이름·표시·잠금) — 문서 레벨 메타
         doc["layers"] = layers
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(doc, f, ensure_ascii=False, indent=1)
+    # [점검 1단계 2026-10-03] 대상 파일을 직접 열어 쓰지 않는다 — 임시 파일에 다 쓴 뒤
+    # 바꿔치기(safe_write.py). 쓰는 도중 크래시·예외가 나도 원래 파일은 멀쩡히 남는다.
+    def _write(tmp):
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False, indent=1)
+    write_via_temp(path, _write)
 
 
 def insert_items(scene, items: list[dict]) -> list:
@@ -469,14 +475,21 @@ def insert_items(scene, items: list[dict]) -> list:
     return [it for it in created if it is not None]
 
 
-def load_document(scene, path: str) -> int:
+def load_document(scene, path: str, info: dict | None = None) -> int:
     """path의 문서를 scene에 로드(기존 내용 지움). 로드한 객체 수 반환.
     레이어 목록은 반환값에 안 실음(기존 25+ 호출부의 `== n` 계약을 안 깨려고) —
-    필요하면 load_document_layers(path)를 별도 호출."""
+    필요하면 load_document_layers(path)를 별도 호출.
+    [점검 1단계 2026-10-03] `info` dict를 넘기면 파일의 형식 버전을 `info["version"]`에,
+    이 프로그램보다 새 버전이면 `info["newer"] = True`를 채운다 — 거부하지 않고 읽을 수
+    있는 만큼 읽되, 호출부(host)가 "일부가 빠졌을 수 있다"고 알리게 하려는 것."""
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
     if doc.get("format") != FORMAT:
         raise ValueError("Easy CAD 문서가 아닙니다.")
+    if info is not None:
+        ver = doc.get("version", 1)
+        info["version"] = ver
+        info["newer"] = isinstance(ver, (int, float)) and ver > VERSION
     scene.clear()
     return len(insert_items(scene, doc.get("items", [])))
 

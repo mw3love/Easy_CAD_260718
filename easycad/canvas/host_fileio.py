@@ -38,6 +38,7 @@ from easycad.canvas.annotator_core import (
 )
 from easycad.fileio.pdf_export import export_pdf, export_image, export_svg
 from easycad.fileio.dxf_export import export_dxf, export_dwg
+from easycad.fileio import autosave
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.svg_import import parse_svg_items, parse_svg_string
 from easycad.fileio.document import (
@@ -153,8 +154,9 @@ class _FileIOMixin:
 
 
     def _do_open_ecad(self, path: str):
+        info = {}
         try:
-            n = load_document(self._scene, path)
+            n = load_document(self._scene, path, info=info)
         except Exception as e:  # noqa: BLE001 — 사용자에게 오류만 전달
             QMessageBox.warning(self, "열기 실패", str(e))
             return
@@ -178,6 +180,14 @@ class _FileIOMixin:
         nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
         self._badge_n = max(nums) if nums else 0
         self.statusBar().showMessage(f"열기 완료: {n}개 객체 — {path}", 5000)
+        if info.get("newer"):
+            # [점검 1단계 2026-10-03] 이 프로그램보다 새 형식 — 거부하지 않고 읽을 수 있는
+            # 만큼 열되, 모르는 정보가 빠졌을 수 있음을 알린다(그대로 저장하면 그 정보는 사라짐).
+            QMessageBox.warning(
+                self, "새 버전 파일",
+                f"이 파일은 더 새로운 Easy CAD(형식 버전 {info.get('version')})에서 만들어졌습니다.\n"
+                "이 프로그램이 모르는 정보는 빠진 채로 열렸을 수 있고, 이대로 저장하면 그 정보는 "
+                "사라집니다.")
 
 
     def _do_open_dxf(self, path: str):
@@ -328,9 +338,94 @@ class _FileIOMixin:
             return
         self._doc_path = path
         self._active_doc.dirty = False   # [§8 항목10 Stage C] DXF/DWG 내보내기는 안 건드림(손실 변환)
+        # [점검 1단계] 진짜 저장이 끝났으니 복구 파일은 필요 없다.
+        autosave.remove(self._active_doc.autosave_id)
+        self._active_doc.autosave_id = None
+        self._active_doc.autosave_pending = False
         self._update_tab_title()
         self.statusBar().showMessage(f"저장 완료: {path}", 5000)
 
+
+    # ---- 자동 저장·복구 (점검 1단계 — 파일 안전, 2026-10-03) ----------------------
+    _AUTOSAVE_INTERVAL_MS = 60_000   # 사용자 결정: 바뀐 문서만 1분마다
+    _AUTOSAVE_RETRY_MS = 3_000
+
+    def _autosave_tick(self):
+        """마지막 자동 저장 뒤로 바뀐 문서만 복구 폴더에 쓴다(원본 파일은 안 건드림).
+        마우스를 누르고 있는 중(드래그·그리기 도중)이면 반쯤 된 상태를 피하려 잠시 뒤 다시."""
+        if QApplication.mouseButtons() != Qt.MouseButton.NoButton:
+            if not getattr(self, "_autosave_retry_pending", False):   # 재시도 예약은 한 겹만
+                self._autosave_retry_pending = True
+                QTimer.singleShot(self._AUTOSAVE_RETRY_MS, self._autosave_retry)
+            return
+        for doc in list(self._docs):
+            if not (doc.autosave_pending and doc.dirty):
+                continue
+            if doc.autosave_id is None:
+                doc.autosave_id = autosave.new_id()
+            try:
+                autosave.write(doc.autosave_id, doc.scene, doc.layers,
+                               doc_path=doc.doc_path, external_path=doc.external_path,
+                               title=self._tab_title_for(doc).lstrip("*"))
+            except Exception as e:  # noqa: BLE001 — 자동 저장 실패가 편집을 막으면 안 됨
+                self.statusBar().showMessage(f"자동 저장 실패: {e}", 5000)
+                continue   # pending 유지 — 다음 주기에 재시도
+            doc.autosave_pending = False
+
+    def _autosave_retry(self):
+        self._autosave_retry_pending = False
+        self._autosave_tick()
+
+    def _offer_recovery(self):
+        """시작 직후(main.py) 1회 — 지난번 비정상 종료로 남은 자동 저장이 있으면 복구를 묻는다.
+        복구한 문서는 원래 경로를 그대로 이어받고 '저장 안 함(*)' 상태로 연다 — Ctrl+S 한 번이면
+        원래 파일에 반영된다. 복구 파일은 진짜 저장/닫기 전까지 그대로 둔다(또 죽어도 안전)."""
+        orphans = autosave.find_orphans()
+        if not orphans:
+            return
+        names = "\n".join(f"  • {m.get('title') or '제목 없음'}" for _i, _p, m in orphans)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("도면 복구")
+        box.setText(f"지난번에 Easy CAD가 비정상 종료되어 저장하지 않은 도면 {len(orphans)}개가 "
+                    f"남아 있습니다.\n\n{names}\n\n복구할까요?")
+        b_restore = box.addButton("복구", QMessageBox.ButtonRole.AcceptRole)
+        b_delete = box.addButton("지우기", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("나중에", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(b_restore)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is b_delete:
+            for doc_id, _p, _m in orphans:
+                autosave.remove(doc_id)
+        elif clicked is b_restore:
+            for doc_id, ecad, meta in orphans:
+                self._restore_autosave(doc_id, ecad, meta)
+
+    def _restore_autosave(self, doc_id: str, ecad: str, meta: dict):
+        cur = self._active_doc
+        blank = (not cur.dirty and not cur.doc_path and not cur.external_path
+                 and not cur.scene.items())
+        if not blank:
+            self._open_new_tab()
+        self._do_open_ecad(ecad)
+        if self._doc_path != ecad:   # 로드 실패(_do_open_ecad가 이미 오류창을 띄움)
+            return
+        orig = meta.get("doc_path")
+        self._doc_path = orig if isinstance(orig, str) and orig.lower().endswith(".ecad") else None
+        ext = meta.get("external_path")
+        self._external_path = ext if isinstance(ext, str) else None
+        doc = self._active_doc
+        doc.dirty = True
+        doc.autosave_id = doc_id
+        doc.autosave_pending = False
+        try:
+            autosave.claim(doc_id)
+        except OSError:
+            pass
+        self._update_tab_title()
+        self.statusBar().showMessage(
+            f"복구했습니다: {meta.get('title') or '제목 없음'} — 확인 후 저장(Ctrl+S)하세요.", 8000)
 
     def _confirm_dxf_save_once(self) -> bool:
         """[통합] DXF/DWG 저장 손실 경고 — 앱 생애 처음 1회만(QSettings 플래그), 이후는
