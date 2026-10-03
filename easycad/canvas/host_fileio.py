@@ -126,7 +126,12 @@ class _FileIOMixin:
         path, _ = QFileDialog.getOpenFileName(self, "열기", "", self._OPEN_FILTER)
         if not path:
             return
+        self._open_path(path)
+
+    def _open_path(self, path: str):
+        """열기 본체 — 「열기…」 대화상자와 [§8 항목32] 「최근 파일」이 공유. 성공하면 최근 목록 맨 위로."""
         if self._focus_existing_tab_for(path):
+            self._remember_recent(path)
             return
         if path.lower().endswith((".dxf", ".dwg")):
             if not self._confirm_dxf_open_once():
@@ -136,6 +141,59 @@ class _FileIOMixin:
         else:
             self._open_new_tab()
             self._do_open_ecad(path)
+        if path in (self._doc_path, self._external_path):   # 열기 성공(실패면 오류창이 이미 뜸)
+            self._remember_recent(path)
+
+    # ---- [§8 항목32, 2026-10-03] 최근 연 파일 ------------------------------------
+    # 사용자 결정: 10개 · DXF/DWG 포함(DXF로 내보낸 파일은 제외 — 열거나 .ecad로 저장한 것만) ·
+    # 파일 메뉴 하위 목록. PC마다 따로(QSettings — 드라이브 경로가 PC마다 달라서). 테스트는
+    # 환경변수 EASYCAD_SETTINGS_ORG로 다른 저장 위치를 써 실사용자 목록을 덮지 않는다
+    # (2026-08-20 AI 키 소실 사고와 같은 계열 방지 — tests/conftest.py).
+    _RECENT_MAX = 10
+
+    @staticmethod
+    def _recent_settings():
+        org = os.environ.get("EASYCAD_SETTINGS_ORG", "EasyCAD")
+        return QSettings(org, "EasyCAD")
+
+    def _recent_files(self) -> list:
+        v = self._recent_settings().value("recent_files", [])
+        if isinstance(v, str):   # QSettings가 1개짜리 목록을 문자열로 돌려주는 경우
+            v = [v]
+        return [p for p in (v or []) if isinstance(p, str) and p]
+
+    def _set_recent_files(self, paths: list):
+        self._recent_settings().setValue("recent_files", list(paths)[: self._RECENT_MAX])
+
+    def _remember_recent(self, path: str):
+        key = os.path.normcase(os.path.abspath(path))
+        rest = [p for p in self._recent_files() if os.path.normcase(os.path.abspath(p)) != key]
+        self._set_recent_files([os.path.abspath(path)] + rest)
+
+    def _open_recent(self, path: str):
+        if not os.path.isfile(path):
+            QMessageBox.warning(self, "최근 파일",
+                                f"파일을 찾을 수 없어 목록에서 뺐습니다:\n{path}")
+            self._set_recent_files([p for p in self._recent_files() if p != path])
+            return
+        self._open_path(path)
+
+    def _fill_recent_menu(self):
+        """「최근 파일」 하위 메뉴를 열 때마다 다시 채운다(다른 창·다른 실행의 변경도 반영)."""
+        menu = self._recent_menu
+        menu.clear()
+        paths = self._recent_files()
+        if not paths:
+            act = menu.addAction("(없음)")
+            act.setEnabled(False)
+            return
+        for i, p in enumerate(paths):
+            label = f"{i + 1}  {os.path.basename(p)}  —  {os.path.dirname(p)}"
+            act = menu.addAction(label.replace("&", "&&"))
+            act.setToolTip(p)
+            act.triggered.connect(lambda _=False, path=p: self._open_recent(path))
+        menu.addSeparator()
+        menu.addAction("목록 비우기").triggered.connect(lambda: self._set_recent_files([]))
 
 
     def _migrate_legacy_closed_cuts(self):
@@ -346,6 +404,7 @@ class _FileIOMixin:
             return
         self._doc_path = path
         self._active_doc.dirty = False   # [§8 항목10 Stage C] DXF/DWG 내보내기는 안 건드림(손실 변환)
+        self._remember_recent(path)   # [§8 항목32]
         # [점검 1단계] 진짜 저장이 끝났으니 복구 파일은 필요 없다.
         autosave.remove(self._active_doc.autosave_id)
         self._active_doc.autosave_id = None

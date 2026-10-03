@@ -209,6 +209,9 @@ class _UIBuildMixin:
         for a in (self._act_new, self._act_new_window, self._act_open, self._act_save,
                   self._act_save_as):
             m.addAction(a)
+        # [§8 항목32, 2026-10-03] 최근 연 파일 — 열 때마다 다시 채움(host_fileio._fill_recent_menu)
+        self._recent_menu = m.addMenu("최근 파일")
+        self._recent_menu.aboutToShow.connect(self._fill_recent_menu)
         m.addSeparator()
 
         # [§8 항목14, 2026-08-07] 옛 "전체"/"선택영역" 별도 메뉴 2개를 1개로 통합 —
