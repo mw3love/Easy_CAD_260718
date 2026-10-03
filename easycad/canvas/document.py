@@ -149,6 +149,9 @@ class CanvasDocument:
         # 지속 연결 리라우팅 재진입 가드 + 드래그 중 미룬 화살표(host_canvas.py 참조).
         self.rerouting = False
         self.deferred_arrows: set = set()
+        # [점검 2단계 후속 2026-10-03] undo/redo로 되살아난 화살표 — 지워질 때의 경로를 그대로
+        # 갖고 돌아오므로 바로 다음 재라우팅 1회에서 뺀다(host_canvas._on_scene_changed).
+        self.skip_reroute_once: set = set()
         self.deferred_fast = False
 
         self.group_sync_active = False   # [편의기능] 그룹 동반선택 재진입 가드

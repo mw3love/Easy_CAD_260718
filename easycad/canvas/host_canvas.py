@@ -184,6 +184,11 @@ class _CanvasMixin:
         doc = self._resolve_doc()   # [§8 항목10] 발신 씬이 속한 문서 — 활성 탭이 아니라도 정확
         if doc.rerouting:
             return  # 재진입 가드 — reroute가 유발한 changed로 되돌아오지 않게
+        # [점검 2단계 후속 2026-10-03] undo/redo로 되살아난 화살표는 이번 1회만 건너뛴다.
+        # 아래 어느 early return으로 빠지든 여기서 바로 비워, 남아서 나중의 정상 재라우팅을
+        # 막는 일이 없게 한다(못 쓰고 버리면 재계산 한 번 더 할 뿐 — 무해).
+        skip_once = doc.skip_reroute_once
+        doc.skip_reroute_once = set()
         if getattr(doc.view, "_drawing", False):
             return  # 화살표 그리는 중엔 _update_arrow_draw가 tip을 주도 — 간섭 방지
         if getattr(doc.view, "_place", None) is not None:
@@ -250,6 +255,11 @@ class _CanvasMixin:
             for it in candidates:
                 # 곡선화살표(_ArrowItem)·직선화살표(_PolyArrowItem) 모두 지속 연결 리라우트.
                 if isinstance(it, (_ArrowItem, _PolyArrowItem)) and it.has_binding():
+                    if it in skip_once:
+                        # undo/redo가 지워질 때의 경로째 되살린 화살표 — 그때와 같은 상태로
+                        # 돌아왔으니 다시 계산해도 같은 결과(1000개 전체삭제 되돌리기에서 A*
+                        # 500회·실화면 2.6초를 쓰던 것).
+                        continue
                     if uniform and it in moved_with:
                         # 씬 전체가 같은 델타로 평행이동했고 이 화살표도 함께 실려 갔다 —
                         # 상대 기하가 완전히 그대로라 최적 경로가 바뀔 수 없다. 재계산도,

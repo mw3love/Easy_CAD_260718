@@ -315,6 +315,9 @@ class _UndoMixin:
         # [점검 2단계 2026-10-03] 다 되살린 뒤에 한꺼번에 — 같이 지워졌던 위쪽 아이템이 아직
         # 안 돌아왔을 수 있어 순서와 무관하게 하려고 두 번째 패스로 둔다(_DocScene 주석 참조).
         self._restack_revived([it for it in revived if it.parentItem() is None])
+        # [점검 2단계 후속] 되살린 화살표는 지워질 때의 경로를 그대로 가졌다 — 다음 재라우팅 1회 제외
+        self._active_doc.skip_reroute_once.update(
+            it for it in revived if isinstance(it, (_ArrowItem, _PolyArrowItem)))
 
     @staticmethod
     def _restack_revived(items):

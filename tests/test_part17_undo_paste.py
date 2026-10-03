@@ -246,3 +246,43 @@ def test_partial_delete_undo_keeps_full_stacking():
         it.setSelected(True)
     w.delete_selection(); w.undo()
     assert _tops(w) == before
+
+
+def _pump():
+    for _ in range(3):
+        QApplication.processEvents()
+
+
+def test_undo_of_full_delete_skips_reroute_of_revived_arrows():
+    """되돌리기로 함께 되살아난 화살표는 지워질 때 경로 그대로 — 다시 A*를 돌리지 않는다
+    (1000개 전체삭제 되돌리기에서 A* 500회·실화면 2.6초 → 0.6초)."""
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=300, y=100)
+    ar = _bound_arrow(w, a, b)
+    _pump()
+    before = (QPointF(ar._p1), QPointF(ar._p2))
+    w.select_all(); w.delete_selection(); _pump()
+    calls = []
+    orig = type(ar).reroute
+    with patch.object(type(ar), "reroute", lambda self, *x, **k: (calls.append(self), orig(self, *x, **k))[1]):
+        w.undo(); _pump()
+    assert ar not in calls
+    assert (ar._p1, ar._p2) == before and ar._bind1 is a and ar._bind2 is b
+    assert w._active_doc.skip_reroute_once == set()   # 한 번 쓰고 비움
+
+
+def test_undo_of_shape_only_delete_still_reroutes_remaining_arrow():
+    """도형만 지웠다 되돌리면(화살표는 안 지움) 그 화살표는 되살아난 게 아니므로 평소처럼 다시
+    계산돼 도형에 붙는다 — 건너뛰기는 '함께 되살아난 화살표'에만."""
+    w = CanvasWindow()
+    a = _mk_pen_rect(w, x=0, y=0); b = _mk_pen_rect(w, x=300, y=100)
+    ar = _bound_arrow(w, a, b)
+    _pump()
+    w._scene.clearSelection(); b.setSelected(True); w.delete_selection(); _pump()
+    b_old = QPointF(b.pos())
+    calls = []
+    orig = type(ar).reroute
+    with patch.object(type(ar), "reroute", lambda self, *x, **k: (calls.append(self), orig(self, *x, **k))[1]):
+        w.undo(); _pump()
+    assert ar in calls
+    assert b.pos() == b_old and ar._bind2 is b
