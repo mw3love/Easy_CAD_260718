@@ -36,7 +36,7 @@ from easycad.canvas.annotator_core import (
     _SYMBOL_KINDS, PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
     remap_grouped_bindings, regroup_duplicated_items, _pixmap_from_data,
 )
-from easycad.fileio.pdf_export import export_pdf, export_image, export_svg
+from easycad.fileio.pdf_export import export_pdf, export_pdf_pages, export_image, export_svg
 from easycad.fileio.dxf_export import export_dxf, export_dwg
 from easycad.fileio import autosave
 from easycad.fileio.dxf_import import import_dxf
@@ -486,7 +486,9 @@ class _FileIOMixin:
         common = dict(page=opts["page"], selection_only=opts["selection_only"],
                      orientation=opts["orientation"], frame=opts.get("frame"),
                      margins_mm=opts["margins_mm"])
-        if fmt == "pdf":
+        if fmt == "pdf" and opts.get("pages"):   # [§8 항목30] 여러 쪽 PDF 1개
+            ok = export_pdf_pages(self._scene, path, opts["pages"])
+        elif fmt == "pdf":
             ok = export_pdf(self._scene, path, **common)
         elif fmt == "png":
             ok = export_image(self._scene, path, transparent=opts["transparent"], **common)

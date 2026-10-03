@@ -68,7 +68,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~18_*.py      테마별 회귀 스모크 1148종(2026-10-03 기준, 개별 pytest 실행 가능)
+└── test_part1~19_*.py      테마별 회귀 스모크 1153종(2026-10-03 기준, 개별 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -156,6 +156,8 @@ symbol_library/
 - **프로그램 점검 3단계 — 코드 건강**(2026-10-03) — DXF 내보내기·가져오기에서 변환 실패로 빠진 객체를 이제
   개수로 알림(예전엔 조용히 빠짐), 미참조 함수 10개 삭제. 미룬 것: 미사용 import 828개·큰 파일 분할·4단계 군더더기.
   5단계(추가 기능 검토)로 다음 작업 순서 확정 — 계획서 §8 항목30~35(일괄 PDF→DXF 채우기→최근 파일→…).
+- **§8 항목30 여러 페이지 → PDF 1개 여러 쪽**(2026-10-03) — 내보내기 창 「모든 페이지를 한 PDF로」(프레임 2개+면
+  기본 켜짐), 배치 순서·체크로 고르기, 쪽마다 자기 용지. 다음: 항목31 DXF 채우기(HATCH).
 
 ## UI 원칙
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·

@@ -969,6 +969,10 @@ def test_pdf_export_dialog_shows_frame_dropdown_and_switches_geometry():
     w._scene.addItem(tb1)
     w._scene.addItem(tb2)
     dlg = _PdfExportDialog(None, w._scene, has_selection=False)
+    # [§8 항목30, 2026-10-03] 프레임 2개+면 "여러 쪽 PDF"가 기본으로 켜져 드롭다운이 숨는다 —
+    # 끄면 이 테스트가 보던 단일 프레임 드롭다운 동작 그대로(test_part19_multipage_pdf 참조).
+    assert dlg._frame_cb.isHidden()
+    dlg._multi_cb.setChecked(False)
     assert not dlg._frame_cb.isHidden()
     assert dlg._frame_cb.count() == 2
     # 정렬 순서(A-1 먼저)대로 기본 선택 = tb1 → A3 portrait 반영.
@@ -1446,7 +1450,7 @@ def test_pdf_export_dialog_no_selection_disables_selection_radio():
     opts = dlg.result_options()
     assert opts == {"selection_only": False, "page": "A4", "orientation": "landscape",
                     "frame": None, "format": "pdf", "transparent": False,
-                    "margins_mm": (10, 10, 10, 10)}
+                    "margins_mm": (10, 10, 10, 10), "pages": None}   # pages: §8 항목30
 
 
 def test_pdf_export_dialog_locks_paper_controls_to_title_frame():

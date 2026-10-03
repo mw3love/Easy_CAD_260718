@@ -46,6 +46,7 @@ from easycad.canvas.host_widgets import (
 )
 from easycad.fileio.pdf_export import (
     export_pdf, PAGE_SIZES, render_preview, _list_title_frames, _centered_target_rect,
+    _reading_order,
     _DEFAULT_MARGINS_MM,
 )
 from easycad.fileio.dxf_export import export_dxf
@@ -274,6 +275,21 @@ class _PdfExportDialog(QDialog):
             self._frame_cb.addItem(_frame_label(fr, i + 1), fr)
         self._frame_cb.setVisible(False)
         opts.addWidget(self._frame_cb)
+        # [§8 항목30, 2026-10-03] 여러 페이지 → PDF 1개 여러 쪽(사용자 결정: 배치 순서, 체크로
+        # 고르기·기본 전부, PDF만). 프레임이 2개 이상이면 기본으로 켠다 — 끄면 위 드롭다운으로
+        # 한 페이지만 내던 예전 방식 그대로.
+        self._multi_cb = QCheckBox("모든 페이지를 한 PDF로 (여러 쪽)", self)
+        self._multi_cb.setChecked(len(self._frames) >= 2)
+        opts.addWidget(self._multi_cb)
+        self._page_list = QListWidget(self)
+        for i, fr in enumerate(_reading_order(self._frames)):
+            item = QListWidgetItem(f"{i + 1}쪽 · {_frame_label(fr, i + 1)}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            item.setData(Qt.ItemDataRole.UserRole, fr)
+            self._page_list.addItem(item)
+        self._page_list.setMaximumHeight(140)
+        opts.addWidget(self._page_list)
         opts.addStretch(1)
 
         self._preview = QLabel(self)
@@ -299,6 +315,9 @@ class _PdfExportDialog(QDialog):
         root.addWidget(btns)
 
         self._format_cb.currentIndexChanged.connect(self._refresh_ok_label)
+        self._format_cb.currentIndexChanged.connect(self._refresh)   # [항목30] 여러 쪽은 PDF만
+        self._multi_cb.toggled.connect(self._refresh)
+        self._page_list.itemChanged.connect(self._refresh)
         self._rb_all.toggled.connect(self._refresh)
         self._size_cb.currentIndexChanged.connect(self._refresh)
         self._orient_cb.currentIndexChanged.connect(self._refresh)
@@ -313,17 +332,39 @@ class _PdfExportDialog(QDialog):
         return self._format_cb.currentData()
 
     def _refresh_ok_label(self):
-        self._ok_btn.setText(self._FORMAT_OK_LABEL[self._format()])
+        label = self._FORMAT_OK_LABEL[self._format()]
+        if self._multi_active():
+            n = len(self._checked_pages())
+            label = f"{label} ({n}쪽)"
+            self._ok_btn.setEnabled(n > 0)
+        else:
+            self._ok_btn.setEnabled(True)
+        self._ok_btn.setText(label)
+
+    def _multi_active(self) -> bool:
+        """[§8 항목30] 여러 쪽 모드 — 프레임 2개+ · 전체 도면 · PDF · 체크 켜짐일 때만."""
+        return (len(self._frames) >= 2 and not self._selection_only()
+                and self._format() == "pdf" and self._multi_cb.isChecked())
+
+    def _checked_pages(self) -> list:
+        """체크된 페이지를 목록 순서(=캔버스 배치 순서)대로."""
+        return [self._page_list.item(i).data(Qt.ItemDataRole.UserRole)
+                for i in range(self._page_list.count())
+                if self._page_list.item(i).checkState() == Qt.CheckState.Checked]
 
     def _selection_only(self) -> bool:
         return self._rb_sel.isChecked()
 
     def _current_frame(self):
-        """[다중 페이지 지원, 2026-08-14] 프레임 0개=None, 1개=그것, 2개+=드롭다운이 고른 것."""
+        """[다중 페이지 지원, 2026-08-14] 프레임 0개=None, 1개=그것, 2개+=드롭다운이 고른 것.
+        [§8 항목30] 여러 쪽 모드면 미리보기용으로 체크된 첫 페이지(없으면 None)."""
         if not self._frames:
             return None
         if len(self._frames) == 1:
             return self._frames[0]
+        if self._multi_active():
+            pages = self._checked_pages()
+            return pages[0] if pages else None
         return self._frame_cb.currentData()
 
     def _margins_mm(self) -> tuple:
@@ -340,7 +381,18 @@ class _PdfExportDialog(QDialog):
             sb.setEnabled(not active)
         self._frame_note.setVisible(active)
         # [다중 페이지] 드롭다운은 "전체 도면"이고 프레임이 2개 이상일 때만 노출.
-        self._frame_cb.setVisible(len(self._frames) >= 2 and not self._selection_only())
+        # [§8 항목30] 여러 쪽 모드면 드롭다운 대신 체크 목록.
+        multi_ok = (len(self._frames) >= 2 and not self._selection_only()
+                    and self._format() == "pdf")
+        self._multi_cb.setVisible(multi_ok)
+        self._page_list.setVisible(self._multi_active())
+        self._frame_cb.setVisible(len(self._frames) >= 2 and not self._selection_only()
+                                  and not self._multi_active())
+        self._refresh_ok_label()
+        if self._multi_active() and frame is None:   # 체크된 페이지가 하나도 없음
+            self._preview.setPixmap(QPixmap())
+            self._preview.setText("내보낼 페이지를 하나 이상 고르세요.")
+            return
         if active:
             idx = self._size_cb.findData(frame._size)
             if idx >= 0:
@@ -371,6 +423,8 @@ class _PdfExportDialog(QDialog):
             "format": "png" if fmt == "png_transparent" else fmt,
             "transparent": fmt == "png_transparent",
             "margins_mm": self._margins_mm(),
+            # [§8 항목30] 여러 쪽 모드면 체크된 페이지(배치 순서), 아니면 None
+            "pages": self._checked_pages() if self._multi_active() else None,
         }
 
 

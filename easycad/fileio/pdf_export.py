@@ -256,6 +256,68 @@ def export_pdf(scene, path: str, page: str = "A4", selection_only: bool = False,
     return True
 
 
+def _reading_order(frames):
+    """[§8 항목30, 2026-10-03] 용지틀을 캔버스 배치 순서(왼쪽 위부터 책 읽는 순서)로 — 사용자 결정.
+    위쪽 가장자리가 비슷한(앞 줄 높이의 절반 이내) 것끼리 한 줄로 묶고, 줄 안에서는 왼쪽부터.
+    페이지를 옮기면 순서도 따라 바뀐다."""
+    rects = sorted(((fr.sceneBoundingRect(), fr) for fr in frames),
+                   key=lambda t: (t[0].top(), t[0].left()))
+    rows, row, row_top, row_h = [], [], None, None
+    for r, fr in rects:
+        if row and r.top() > row_top + row_h * 0.5:
+            rows.append(row)
+            row = []
+        if not row:
+            row_top, row_h = r.top(), r.height()
+        else:
+            row_h = min(row_h, r.height())
+        row.append((r, fr))
+    if row:
+        rows.append(row)
+    return [fr for row in rows for r, fr in sorted(row, key=lambda t: t[0].left())]
+
+
+def export_pdf_pages(scene, path: str, frames) -> bool:
+    """[§8 항목30, 2026-10-03] 여러 용지틀을 **PDF 1개의 여러 쪽**으로 저장(넘긴 순서 그대로).
+    각 쪽은 자기 용지틀의 크기·방향을 따른다(A3 가로·A4 세로 혼합 가능 — 단일 출력과 같은 규칙,
+    여백 0). 성공 True."""
+    frames = list(frames)
+    if not frames:
+        return False
+    geos = []
+    for fr in frames:
+        geo = _resolve_geometry(scene, "A4", False, (0, 0, 0, 0), None, fr)
+        if geo is None:
+            return False
+        geos.append(geo)
+
+    def _layout(geo):
+        _source, page, landscape, (top, right, bottom, left) = geo
+        return QPageLayout(
+            QPageSize(PAGE_SIZES.get(page, QPageSize.PageSizeId.A4)),
+            QPageLayout.Orientation.Landscape if landscape else QPageLayout.Orientation.Portrait,
+            QMarginsF(left, top, right, bottom), QPageLayout.Unit.Millimeter)
+
+    printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+    printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+    printer.setOutputFileName(path)
+    printer.setPageLayout(_layout(geos[0]))
+    painter = QPainter()
+    if not painter.begin(printer):
+        return False
+    try:
+        for i, geo in enumerate(geos):
+            if i:
+                printer.setPageLayout(_layout(geo))   # 다음 쪽부터 적용 → newPage
+                printer.newPage()
+            paint_rect = printer.pageLayout().paintRectPixels(printer.resolution())
+            target = QRectF(0, 0, paint_rect.width(), paint_rect.height())
+            _paint_scene(scene, painter, target, geo[0], isolate_selection=False)
+    finally:
+        painter.end()
+    return True
+
+
 def _page_pixel_geometry(page_id, landscape: bool,
                          margins_mm: tuple[float, float, float, float], dpi: int):
     """(px_w, px_h, target) — mm 단위 용지를 `dpi` 해상도의 픽셀 사각형으로 환산.
