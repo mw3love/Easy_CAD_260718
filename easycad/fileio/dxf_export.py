@@ -25,12 +25,13 @@
              채워, 다른 CAD가 파일을 열 때 콘텐츠가 화면 밖에 있어 빈 화면으로 뜨는 것을
              방지(좌표값 자체는 안 바꿈 — 순수 "열자마자 보여줄 구역" 힌트).
 """
+import math
 import os
 import shutil
 import tempfile
 
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QPainterPath
+from PyQt6.QtGui import QColor, QPainterPath
 from PyQt6.QtWidgets import QGraphicsTextItem
 
 from easycad.canvas.annotator_core import (
@@ -45,6 +46,7 @@ _LAYERS = {
     "arrow": "EC_ARROW", "sarrow": "EC_SARROW", "path": "EC_PATH",
     "text": "EC_TEXT", "badge": "EC_BADGE", "symbol": "EC_SYMBOL",
     "label": "EC_LABEL", "polygon": "EC_POLYGON",
+    "fill": "EC_FILL",   # [§8 항목31] 채우기(HATCH) — 사용자 결정: 별도 레이어(CAD에서 한 번에 끄기·색 바꾸기)
 }
 
 
@@ -145,6 +147,52 @@ def _arrowhead(msp, tip, near, width: float, attrs: dict, scale: float = 1.0):
 
 
 # ---- 아이템별 export -------------------------------------------------------
+# ---- [§8 항목31, 2026-10-03] 채우기 → 단색 HATCH ------------------------------
+# 예전엔 도형 채움색이 DXF에서 통째로 사라졌다(§8 항목7 당시 "DXF는 skip"). 사용자 결정:
+# 별도 EC_FILL 레이어, 투명도 유지, 도형 4종(사각·원·심볼·닫힌 다각형) + 글자 배경 + 채운 패스.
+# 각 도형 내보내기가 **테두리보다 먼저** 부르므로 다른 CAD에서도 채우기가 선 아래에 깔린다.
+def _brush_color(it):
+    b = it.brush()
+    return None if b.style() == Qt.BrushStyle.NoBrush else QColor(b.color())
+
+
+def _export_fill(msp, it, loops_local, color):
+    """아이템 로컬 좌표의 닫힌 고리들(첫 고리=바깥, 나머지=구멍도 가능 — 홀짝 규칙)을 한 HATCH로."""
+    if color is None or color.alpha() == 0:
+        return
+    loops = [[_w(it, p.x(), p.y()) for p in loop] for loop in loops_local if len(loop) >= 3]
+    if not loops:
+        return
+    hatch = msp.add_hatch(dxfattribs={"layer": _LAYERS["fill"]})
+    hatch.set_solid_fill(rgb=(color.red(), color.green(), color.blue()))
+    for loop in loops:
+        hatch.paths.add_polyline_path(loop, is_closed=True)
+    if color.alpha() < 255:
+        hatch.transparency = 1.0 - color.alpha() / 255.0
+
+
+def _path_loops(path):
+    """QPainterPath의 서브패스들 → 점 목록(채우기는 열린 서브패스도 암묵적으로 닫으므로 3점 이상 전부)."""
+    out = []
+    for poly in path.toSubpathPolygons():
+        pts = [QPointF(p) for p in poly]
+        if len(pts) >= 2 and (pts[0] - pts[-1]).manhattanLength() < 1e-6:
+            pts = pts[:-1]
+        if len(pts) >= 3:
+            out.append(pts)
+    return out
+
+
+def _rect_loop(r):
+    return [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]
+
+
+def _ellipse_loop(r, n: int = 72):
+    cx, cy, rx, ry = r.center().x(), r.center().y(), r.width() / 2.0, r.height() / 2.0
+    return [QPointF(cx + rx * math.cos(2 * math.pi * i / n), cy + ry * math.sin(2 * math.pi * i / n))
+            for i in range(n)]
+
+
 def _export_trimmed_border(msp, it, attrs):
     """[신규기능 §8-12, §8 항목17 7단계부터 앱 화면도 같은 경로] 부착된 포트/TRIM cut이 걸친
     구간만큼 실제로 끊어서 내보낸다 — 진짜 분절 데이터(`build_trimmed_border_path`)를 그대로
@@ -162,6 +210,7 @@ def _export_trimmed_border(msp, it, attrs):
 
 
 def _export_symbol(msp, it):
+    _export_fill(msp, it, _path_loops(it._sym_path()), _brush_color(it))   # [§8 항목31]
     attrs = _with_linetype(_attrs(_LAYERS["symbol"], it.pen().color()), it.pen().style())
     # [§8 항목17 6단계] 포트뿐 아니라 TRIM cut(`_cuts`)도 있으면 진짜 분절로 내보낸다 —
     # 둘 다 build_trimmed_border_path가 이미 같은 gaps_by_edge로 합쳐서 처리함(2단계).
@@ -180,6 +229,7 @@ def _export_symbol(msp, it):
 
 
 def _export_rect(msp, it):
+    _export_fill(msp, it, [_rect_loop(it.rect())], _brush_color(it))   # [§8 항목31]
     attrs = _with_linetype(_attrs(_LAYERS["rect"], it.pen().color()), it.pen().style())
     if getattr(it, "_ports", None) or getattr(it, "_cuts", None):
         _export_trimmed_border(msp, it, attrs)
@@ -196,6 +246,8 @@ def _export_polygon(msp, it):
     별도 클래스라 기존 isinstance 분기 어디에도 걸리지 않고 통째로 드롭되고 있었다(실사용
     재현: 고양이 심볼의 귀·코 삼각형이 EasyCAD엔 있는데 DXF엔 없음). 닫힌 다각형이면
     rect/symbol과 같은 관례로 `_cuts`(TRIM) 여부를 확인."""
+    if it._closed:   # [§8 항목31] 열린 폴리라인은 채움 개념 없음
+        _export_fill(msp, it, [list(it.local_pts())], _brush_color(it))
     attrs = _with_linetype(_attrs(_LAYERS["polygon"], it.pen().color()), it.pen().style())
     if it._closed and getattr(it, "_cuts", None):
         _export_trimmed_border(msp, it, attrs)
@@ -208,6 +260,7 @@ def _export_polygon(msp, it):
 
 def _export_ellipse(msp, it):
     r = it.rect()
+    _export_fill(msp, it, [_ellipse_loop(r)], _brush_color(it))   # [§8 항목31]
     attrs = _with_linetype(_attrs(_LAYERS["ellipse"], it.pen().color()), it.pen().style())
     # [§8 항목17 6단계] rect/symbol과 달리 이 함수는 원래 포트/cut 분기가 아예 없었다(선분-원
     # 전용 add_circle/add_ellipse 엔티티라 gap을 뚫을 방법이 없었기 때문) — 있으면
@@ -274,8 +327,9 @@ def _export_sarrow(msp, it):
 
 
 def _export_path(msp, it):
-    attrs = _with_linetype(_attrs(_LAYERS["path"], it.pen().color()), it.pen().style())
     path = it.path()
+    _export_fill(msp, it, _path_loops(path), _brush_color(it))   # [§8 항목31] 채운 패스(가져온 해치 등)
+    attrs = _with_linetype(_attrs(_LAYERS["path"], it.pen().color()), it.pen().style())
     ET = QPainterPath.ElementType
     i, n = 0, path.elementCount()
     cur = None
@@ -300,6 +354,9 @@ def _export_text(msp, it, layer: str):
     txt = it.toPlainText()
     if not txt:
         return
+    bg = getattr(it, "_bg", None)   # [§8 항목31] 글자 배경(화면은 둥근 모서리 — DXF는 직사각형)
+    if bg is not None:
+        _export_fill(msp, it, [_rect_loop(it._content_rect().adjusted(1, 1, -1, -1))], QColor(bg))
     ins = _w(it, 0.0, 0.0)               # 텍스트 아이템 좌상단
     height = max(float(it.font().pointSize()), 1.0)
     mtext = msp.add_mtext(txt, dxfattribs=_attrs(layer, it.defaultTextColor()))

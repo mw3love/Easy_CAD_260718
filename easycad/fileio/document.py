@@ -263,6 +263,9 @@ def item_to_dict(it) -> dict | None:
     elif isinstance(it, _PathItem):
         d.update(type="path", elements=_path_elems(it.path()),
                  pen=_col(it.pen().color()), width=it.pen().widthF())
+        # [§8 항목31, 2026-10-03] 채운 패스(다른 CAD 해치 가져오기 — 구멍은 홀짝 규칙). 없으면 키 생략(하위호환).
+        if it.brush().style() != Qt.BrushStyle.NoBrush:
+            d["fill"] = _col(it.brush().color())
         # [실사용 요청 2026-08-25] select 유휴호버 억제 표식 — 펜으로 그렸을 때만 True.
         # SVG/DXF 폴백 곡선은 애초에 안 세우므로 키 자체를 생략(하위호환, `cuts`와 같은 관례).
         if getattr(it, "_freehand", False):
@@ -351,6 +354,8 @@ def dict_to_item(d: dict):
         it = _LineItem(QLineF(*d["line"])); it.setPen(_mkpen(d))
     elif t == "path":
         it = _PathItem(_elems_to_path(d["elements"])); it.setPen(_mkpen(d))
+        if d.get("fill") is not None:   # [§8 항목31]
+            it.setBrush(_mkbrush(d))
         it._freehand = bool(d.get("freehand", False))
     elif t == "text":
         it = _TextItem(QColor(d["color"])); it.apply_font_size(d.get("font", 16))

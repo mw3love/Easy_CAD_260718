@@ -559,6 +559,81 @@ def _compute_import_scale(msp) -> float:
     return min(max(scale, 1e-3), 1e3)           # 극단값 방지 세이프가드
 
 
+# ---- [§8 항목31, 2026-10-03] HATCH(채우기) 가져오기 ---------------------------------
+# 사용자 결정: Easy CAD가 낸 EC_FILL 해치는 그 도형의 채우기로 되살리고, 다른 CAD의 단색 해치도
+# 채운 패스로 가져온다(구멍은 홀짝 규칙으로 유지). 무늬 해치는 지원 밖 — 건너뛰고 개수만 센다.
+def _hatch_path(e):
+    """HATCH 경계 → 씬 좌표 QPainterPath(닫힌 서브패스들). 실패·빈 경계면 None."""
+    from ezdxf import path as ezpath
+    global _IMPORT_FAILED
+    try:
+        paths = ezpath.from_hatch(e)
+    except Exception:  # noqa: BLE001 — 경계 해석 실패는 이 해치만 건너뜀(개수는 셈)
+        _IMPORT_FAILED += 1
+        return None
+    qp = QPainterPath()
+    qp.setFillRule(Qt.FillRule.OddEvenFill)
+    for p in paths:
+        try:
+            pts = [_uf(v.x, v.y) for v in p.flattening(0.5)]
+        except Exception:  # noqa: BLE001
+            continue
+        if len(pts) >= 3:
+            qp.moveTo(QPointF(*pts[0]))
+            for q in pts[1:]:
+                qp.lineTo(QPointF(*q))
+            qp.closeSubpath()
+    return None if qp.isEmpty() else qp
+
+
+def _hatch_color(e) -> QColor:
+    c = QColor(_color(e))
+    try:
+        t = float(e.transparency or 0.0)   # 0=불투명 … 1=완전 투명
+    except Exception:  # noqa: BLE001 — ByLayer 등 해석 불가면 불투명
+        t = 0.0
+    if 0.0 < t <= 1.0:
+        c.setAlpha(round(255 * (1.0 - t)))
+    return c
+
+
+def _filled_path_item(qp, color):
+    it = _PathItem(qp)
+    it.setPen(QPen(color, 0.0))   # 경계선은 채움과 같은 색 머리카락선(표시만, 두께 없음)
+    it.setBrush(QBrush(color))
+    return _flag(it)
+
+
+def _match_fill_target(rect, candidates, used):
+    """EC_FILL 해치 범위와 위치·크기가 가장 잘 맞는 도형(내보낼 때의 그 도형)을 찾는다."""
+    best, best_score = None, None
+    base_tol = max(3.0, 0.05 * max(rect.width(), rect.height()))
+    for c in candidates:
+        if id(c) in used:
+            continue
+        # 도형 범위엔 선 두께 여유(사방 반 두께)가 붙어 있다 — 너비·높이 차이로 최대 4배까지 벌어진다
+        pen_w = c.pen().widthF() if hasattr(c, "pen") else 0.0
+        tol = base_tol + 4.0 * pen_w
+        cr = getattr(c, "_content_rect", None)
+        r = c.mapRectToScene(cr()) if cr is not None else c.sceneBoundingRect()
+        if isinstance(c, _TextItem):
+            r = r.adjusted(1, 1, -1, -1)   # 내보낼 때 글자 배경을 1px 안쪽으로 냈다
+        score = ((r.center() - rect.center()).manhattanLength()
+                 + abs(r.width() - rect.width()) + abs(r.height() - rect.height()))
+        if score <= tol and (best_score is None or score < best_score):
+            best, best_score = c, score
+    return best
+
+
+def _apply_fill_to(it, color):
+    if isinstance(it, _TextItem):
+        it.set_bg(color)
+    elif hasattr(it, "apply_fill"):
+        it.apply_fill(color)
+    else:   # 패스 등 — brush 직접
+        it.setBrush(QBrush(color))
+
+
 def _expand_insert(e, depth: int = 0, max_depth: int = 6):
     """INSERT를 재귀적으로 평탄화 — virtual_entities()가 이미 배치 변환(위치·스케일·회전)을
     적용한 자식 엔티티를 내주므로, 우리는 그걸 일반 엔티티처럼 취급하면 된다. 자식이 또
@@ -642,6 +717,7 @@ def _ingest_modelspace(scene, msp) -> int:
     badge_texts = []
     path_segments = []
     built = []                 # 즉시 완성된 아이템
+    fill_hatches = []          # [§8 항목31] EC_FILL 해치 (경로, 색) — 도형이 다 만들어진 뒤 짝지음
 
     def _ingest(e):
         """단일 엔티티(top-level 또는 INSERT에서 평탄화된 자식) 분류·변환. built 등
@@ -649,6 +725,21 @@ def _ingest_modelspace(scene, msp) -> int:
         layer = e.dxf.layer
         typ = _LAYER_TYPE.get(layer)
         dxft = e.dxftype()
+
+        if dxft == "HATCH":   # [§8 항목31]
+            global _IMPORT_FAILED
+            if not e.dxf.get("solid_fill", 0):
+                _IMPORT_FAILED += 1   # 무늬 해치 — 지원 밖
+                return
+            qp = _hatch_path(e)
+            if qp is None:
+                return
+            color = _hatch_color(e)
+            if layer == "EC_FILL":
+                fill_hatches.append((qp, color))
+            else:
+                built.append(_filled_path_item(qp, color))
+            return
 
         if typ == "rect" and dxft == "LWPOLYLINE":
             pts = _lw_points(e)
@@ -724,6 +815,22 @@ def _ingest_modelspace(scene, msp) -> int:
     built.extend(_build_badges(badge_circles, badge_texts))
     # 펜 경로.
     built.extend(_build_paths(path_segments))
+
+    # [§8 항목31] Easy CAD가 낸 채우기 → 위치·크기가 맞는 도형의 채우기로 되살린다. 짝이 없으면
+    # (도형이 지원 밖으로 빠졌거나 다른 프로그램이 옮김) 채운 패스로라도 남긴다.
+    if fill_hatches:
+        candidates = [it for it in built if hasattr(it, "apply_fill")
+                      or isinstance(it, (_TextItem, _PathItem))]
+        used = set()
+        orphans = []
+        for qp, color in fill_hatches:
+            target = _match_fill_target(qp.boundingRect(), candidates, used)
+            if target is None:
+                orphans.append(_filled_path_item(qp, color))
+            else:
+                used.add(id(target))
+                _apply_fill_to(target, color)
+        built[:0] = orphans   # 맨 앞 = 맨 아래(테두리를 가리지 않게)
 
     for it in built:
         scene.addItem(it)
