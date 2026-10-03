@@ -1451,6 +1451,10 @@
 - **AutoCAD PDF는 굵은 선·테두리를 삼각형 여러 개를 이은 채움 경로로 낸다** — 경로 하나를 다각형 하나로
   이으면 상자에 검은 삼각형이 생긴다. 끊긴 지점(이전 끝점 ≠ 다음 시작점)마다 별도 다각형으로 나눌 것.
   (2026-10-01, `docs/history/2026-10.md` "0단계 재시험")
+- **`QTest.keyClicks`로 한글 자모를 치면 프로세스가 exit 127로 죽는다**(받는 위젯의 신호를 다 끊어도 같음 — 시험
+  도구 한계). 한글 입력 테스트는 `setText`로. (2026-10-03, `docs/history/2026-10.md` "§8 항목34")
+- **`processEvents()`만 돌리는 자체검증 스크립트에선 `deleteLater` 위젯이 안 지워진다** — 다시 짓는 UI를 찍으면 옛 위젯이
+  겹쳐 보여 버그로 오인하기 쉽다. 스크린샷은 진짜 `app.exec()` 루프에서 `QTimer.singleShot`으로 단계 진행. (같은 곳)
 - **상태줄(`self.statusBar()`)은 QStatusBar가 아니라 우리 `_ToastLabel`** — `showMessage`/`currentMessage`만 있고
   `clearMessage()`는 없다(AttributeError). 비우려면 `showMessage("", 1)`. (2026-10-03, "§8 항목33")
 - **`photo_dialog._PhotoOpsWorker`는 수정 라운드 렌더를 `BlockingQueuedConnection`으로 메인 스레드에

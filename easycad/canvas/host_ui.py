@@ -99,6 +99,29 @@ _PALETTE_ICON_PX = 18
 # (`host_selection._symbol_preview_html`)로 보완한다.
 _PALETTE_SYM_ICON_PX = 28
 _PALETTE_COLS = 4
+
+# [§8 항목34, 2026-10-03] '내 심볼' 검색 — 이름 일부(대소문자 무시) 또는 한글 초성("ㅇㅌ" → "안테나").
+# 초성과 글자를 섞어 써도 된다("안ㅌ"). 사용자 결정: 이름만(폴더 이름은 검색 대상 아님).
+_CHOSEONG = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+
+
+def _symbol_name_matches(name: str, query: str) -> bool:
+    q = query.strip().lower()
+    if not q:
+        return True
+    n = name.lower()
+    if q in n:
+        return True
+
+    def same(qc, nc):
+        if qc == nc:
+            return True
+        if qc in _CHOSEONG and "가" <= nc <= "힣":
+            return _CHOSEONG[(ord(nc) - 0xAC00) // 588] == qc
+        return False
+
+    return any(all(same(qc, n[i + k]) for k, qc in enumerate(q))
+               for i in range(len(n) - len(q) + 1))
 _PALETTE_FONT_SHRINK = 1   # pt만큼 기본 폰트에서 뺀다 — [2026-08-12 5차] 2→1, 너무 작다는 피드백
 # [2026-08-12 6차] 폰트를 키운 뒤 버튼 높이(40)가 실제 sizeHint(48)보다 작아 라벨 아래가
 # 잘렸다 — 고정 크기가 자연 sizeHint 밑으로 내려가면 항상 이 클래스 버그가 재발하므로,
@@ -1252,6 +1275,12 @@ class _UIBuildMixin:
 
         entries = symbol_library.load_library()
         folders = symbol_library.load_folders()
+        # [§8 항목34] 검색 중이면 맞는 심볼만, 빈 폴더는 숨기고, 접어 둔 폴더도 펼쳐 보인다
+        # (저장된 접힘 상태는 그대로 — 검색을 지우면 원래대로). 사용자 결정 2026-10-03.
+        search = getattr(self, "_custom_sym_search", None)
+        query = search.text().strip() if search is not None else ""
+        if query:
+            entries = [e for e in entries if _symbol_name_matches(e["name"], query)]
         self._custom_sym_buttons: dict[str, list[QToolButton]] = {}
         self._symfolder_collapse_btns: list[QToolButton] = []   # `_apply_theme` 재도색용
 
@@ -1266,6 +1295,8 @@ class _UIBuildMixin:
                     return
             else:
                 group_entries = [e for e in entries if e.get("folder") == folder_name]
+            if query and not group_entries:
+                return None
             zone = QWidget() if favorites else _SymbolFolderDropZone(
                 folder_name, self._move_custom_symbol)
             zv = QVBoxLayout(zone)
@@ -1293,6 +1324,8 @@ class _UIBuildMixin:
             collapse_slug = "__favorites__" if favorites else (folder_name or "__unfiled__")
             collapse_key = f"symfolder_collapsed_{collapse_slug}"
             collapsed = QSettings("EasyCAD", "EasyCAD").value(collapse_key, False, type=bool)
+            if query:
+                collapsed = False   # [§8 항목34] 검색 결과는 접힌 폴더도 보이게(저장값은 안 바꿈)
             collapse_btn = QToolButton()
             collapse_btn.setAutoRaise(True)
             collapse_btn.setFixedSize(QSize(16, 16))
@@ -1382,6 +1415,10 @@ class _UIBuildMixin:
         zones = [add_group(None, "즐겨찾기", deletable=False, favorites=True),
                  add_group(None, "미분류", deletable=False)]
         zones += [add_group(name, name, deletable=True) for name in folders]
+        if query and not any(zones):
+            none_lbl = self._section_label("일치하는 심볼 없음")
+            body.layout().addWidget(none_lbl)
+            zones.append(none_lbl)
         for z in zones:
             if z is not None:
                 z.updateGeometry()
@@ -1635,6 +1672,23 @@ class _UIBuildMixin:
         add_folder_btn.clicked.connect(self._prompt_create_symbol_folder)
         custom_section.header_layout.insertWidget(1, add_folder_btn)   # 제목 라벨 바로 다음
         custom_section.body_layout.setSpacing(8)
+        # [§8 항목34, 2026-10-03] 검색칸 — 사용자 결정: 항상 보이게, 제목 바로 아래. body 밖에 두어
+        # 목록을 새로 그려도(등록·삭제·입력마다) 입력 중인 글자·포커스가 그대로 남는다.
+        search = QLineEdit()
+        search.setPlaceholderText("심볼 검색 (이름·초성)")
+        search.setClearButtonEnabled(True)
+        # 입력칸 기본 폭(sizeHint)이 패널을 202→220px로 밀어냈다 — 폭은 패널을 따르게만
+        search.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        search.setToolTip("이름 일부나 초성(예: ㅇㅌ)으로 찾기 — Esc로 지우기")
+        search.textChanged.connect(lambda _t: self._refresh_custom_symbol_section())
+        # ⚠ 등록을 먼저 — eventFilter가 이 칸을 알아보기 전에 이벤트가 오면 아직 없는 뷰를 찾다 죽는다
+        self._custom_sym_search = search
+        search.installEventFilter(self)   # Esc → 지우기(host_fileio.eventFilter)
+        search_row = QWidget()
+        sl = QHBoxLayout(search_row)
+        sl.setContentsMargins(2, 2, 2, 2)
+        sl.addWidget(search)
+        custom_section.layout().insertWidget(1, search_row)
         self._custom_sym_section = custom_section
         self._custom_sym_body = custom_section.body
         self._custom_sym_buttons: dict[str, list[QToolButton]] = {}   # set_tool 체크상태 동기화용

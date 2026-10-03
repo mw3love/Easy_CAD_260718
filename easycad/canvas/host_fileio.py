@@ -1284,6 +1284,13 @@ class _FileIOMixin:
         # dropEvent(아래)까지 이벤트가 아예 안 왔다(실측: `event.isAccepted()`가 dragEnter는
         # True, dragMove는 False로 갈림 — 커서는 dragMove 기준이라 이게 실제로 보인 증상).
         # 팔레트와 동일하게 여기서 파일 URL도 직접 가로채 처리해야 한다.
+        if obj is getattr(self, "_custom_sym_search", None):
+            # [§8 항목34] '내 심볼' 검색칸에서 Esc → 검색어 지우기
+            if (event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape
+                    and obj.text()):
+                obj.clear()
+                return True
+            return False
         if obj is self._view.viewport():
             et = event.type()
             if et == QEvent.Type.Resize:
