@@ -72,7 +72,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~26_*.py      테마별 회귀 스모크 1202종(2026-10-03 기준, 개별 pytest 실행 가능)
+└── test_part1~27_*.py      테마별 회귀 스모크 1205종(2026-10-03 기준, 개별 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -126,7 +126,9 @@ symbol_library/
 시점 미정) — Python 집중 결정. 상세: `docs/history/2026-08a.md` "웹 전환 실험" 각 항목.
 
 **미해결·보류(설계 판단 필요, 착수 후보)**:
-- LOD(레벨오브디테일) — 위 "성능" 항목의 남은 격차, 렌더 바닥값 자체를 낮추려면 필요.
+- 큰 도면 전체 보기 속도 — LOD ①(안 보이는 끝점 핸들 자리 안 잡기)로 1.pdf 9,488개 641→366ms. ②(멀리서 대충
+  그리기)는 측정상 −20%뿐이라 보류(바닥 183ms는 Qt 아이템별 기본 비용). 더 가려면 '스냅샷 방식'(멀리서 볼 때 화면을
+  한 장 그림으로 저장) — 실사용에서 답답하면 계획. 상세: `docs/history/2026-10.md` "LOD ②".
 
 **최근 항목**(2026-09-25 ~ 10-03, 상세는 `docs/history/2026-09.md`·`2026-10.md`):
 - **옛 QPainter 액션 아이콘 7종 → A2 손그림 SVG**(2026-09-25) — Phosphor와 비교 후 손그림 채택,
@@ -169,6 +171,8 @@ symbol_library/
 - **코드 정리**(2026-10-03) — 쓰지 않는 import 737개 삭제(`host*.py`; 코어 3파일 83개는 `__all__` 별표 연쇄라 남김),
   `core_shapes.py`에서 순수 기하 두 덩어리를 `core_routing.py`·`core_symbols.py`로 분리(9,063→8,139줄, 지문 일치).
   `tools/` 스크립트는 근거 자료라 전부 남김.
+- **LOD ①**(2026-10-03) — 끝점형 도형(경로·선)이 미선택·다중선택일 때 안 보이는 끝점 핸들 자리를 boundingRect에 안 잡음.
+  1.pdf 전체 보기 641→366ms·전체 선택 9.0→5.8초(그림 변화 0). ②는 측정 후 보류(위 "미해결·보류").
 
 ## UI 원칙
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·
