@@ -1471,13 +1471,15 @@ def test_generate_svg_replace_swaps_shape_bbox_long_side_and_center():
     new_items = [it for it in w._scene.items()
                 if isinstance(it, _LineItem) or isinstance(it, _RectItem)]
     assert len(new_items) >= 1
-    combined = QRectF()
-    for it in new_items:
-        combined = combined.united(it.mapToScene(it.boundingRect()).boundingRect()) \
-            if not combined.isNull() else it.mapToScene(it.boundingRect()).boundingRect()
-    assert abs(max(combined.width(), combined.height()) - 200.0) < 5.0
-    assert abs(combined.center().x() - 200.0) < 5.0
-    assert abs(combined.center().y() - 140.0) < 5.0
+    # [2026-10-03 측정 방법 수정] 예전엔 boundingRect(선택 핸들 여유 포함)를 합쳐 "≈200"을 봤는데,
+    # 샘플 선은 viewBox 100 중 10~90이라 실제 길이는 160이다 — 핸들 여유(약 20)가 우연히 메워
+    # 통과했다(LOD ①에서 안 보이는 핸들 자리를 안 잡게 되며 드러남, 실제 좌표는 전후 동일 확인).
+    # viewBox 긴 변 100 → 200(배율 2), 중심 (50,50) → (200,140)을 실제 선 좌표로 확인한다.
+    line = [it for it in new_items if isinstance(it, _LineItem)][0]
+    p1, p2 = line.mapToScene(line.line().p1()), line.mapToScene(line.line().p2())
+    assert abs(abs(p2.x() - p1.x()) - 160.0) < 1.0 and abs(abs(p2.y() - p1.y()) - 160.0) < 1.0
+    assert abs((p1.x() + p2.x()) / 2 - 200.0) < 1.0
+    assert abs((p1.y() + p2.y()) / 2 - 140.0) < 1.0
     w.deleteLater()
 
 

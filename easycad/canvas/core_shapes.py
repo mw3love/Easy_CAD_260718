@@ -612,6 +612,14 @@ class _HandleResizeMixin:
         pad = 3.0 / s
         if self._uses_endpoints():
             r = self._content_rect()
+            # [LOD ① 2026-10-03] 끝점 핸들은 `_endpoint_active()`(선택+단일선택)일 때만 그려지고
+            # 잡힌다(`shape()`도 같은 조건) — 아래 박스 핸들 분기(2-C(a))와 같은 규칙. 그 밖엔 자리를
+            # 예약할 이유가 없다. 실측(1.pdf 9,488개 — 경로·선 8천여 개): 미선택 경로까지 매 호출 끝점
+            # 핸들 영역을 계산해 전체 보기 다시 그리기 680ms 중 절반, 전체 선택 boundingRect 18만 회가
+            # 여기였다. 선택 켜고 끔은 itemChange의 prepareGeometryChange가, 2↔1개 경계는
+            # `_sync_selection_count_cache`가 Qt에 알린다(둘 다 도형 종류 무관).
+            if not self._endpoint_active():
+                return r.adjusted(-pad, -pad, pad, pad)
             for i in range(len(self._endpoints())):
                 # 시각 rect가 아니라 '잡기' rect까지 예약해야 넉넉한 hit-shape가
                 # boundingRect 밖으로 나가 Qt에 컬링당하지 않는다.
