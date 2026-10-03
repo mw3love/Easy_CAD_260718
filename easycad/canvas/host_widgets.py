@@ -9,6 +9,7 @@ import sys
 
 from PyQt6.QtCore import (
     Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent, pyqtSignal,
+    QCoreApplication,
 )
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter,
@@ -693,6 +694,7 @@ class _MinimapView(QGraphicsView):
         self._bounds_cache = QRectF()
         self._bounds_dirty = True
         self._pixmap_cache: QPixmap | None = None
+        self._ignore_changes = False   # _flush_scene_updates(own=True) 동안 자기 변경 무시
         self._rebuild_timer = QTimer(self)
         self._rebuild_timer.setSingleShot(True)
         self._rebuild_timer.setInterval(self._REBUILD_DEBOUNCE_MS)
@@ -700,6 +702,8 @@ class _MinimapView(QGraphicsView):
         scene.changed.connect(self._mark_bounds_dirty)
 
     def _mark_bounds_dirty(self, _regions=None):
+        if self._ignore_changes:
+            return
         self._bounds_dirty = True
         self._rebuild_timer.start()   # 재시작 — 변경이 몰리는 동안은 계속 미룸(디바운스)
 
@@ -743,6 +747,7 @@ class _MinimapView(QGraphicsView):
         if main is not None and getattr(main, "_drag_proxy", None) is not None:
             self._rebuild_timer.start()
             return
+        self._flush_scene_updates(own=False)   # 쌓여 있던 진짜 변경은 평소대로 먼저 처리
         self._refit()
         padded = self._padded_bounds()
         vp = self.viewport().size()
@@ -762,8 +767,33 @@ class _MinimapView(QGraphicsView):
         with _min_stroke_render(self.scene().items()):
             self.scene().render(painter, target, padded, Qt.AspectRatioMode.KeepAspectRatio)
         painter.end()
+        self._flush_scene_updates(own=True)
+        self._rebuild_timer.stop()   # 스냅샷이 지금 씬 그대로 — 대기 중이던 재생성은 불필요
         self._pixmap_cache = pm
         self.viewport().update()
+
+    def _flush_scene_updates(self, own: bool):
+        """[작은개선 2026-10-03] 씬이 미뤄 둔 갱신(scene.changed·화면 다시 그리기 예약 — Qt가
+        큐에 넣어 다음 이벤트 루프로 미룸)을 지금 처리한다. 위 `_min_stroke_render`가 얇은 펜을
+        setPen으로 잠깐 바꿨다 되돌리면, 그림은 그대로인데 scene.changed가 나중에 와서 디바운스가
+        다시 걸리고 → 또 재생성 → 또 setPen … **끝없이 돌았다**(실측: 9,488개 PDF에서 3.5초마다
+        2.3초짜리 재생성이 영원히 반복 + 메인 뷰도 매번 통째로 다시 그림). own=True면 그 자기
+        변경분을 여기서 처리하되 미니맵은 무시하고, 화면(뷰)들도 다시 그리지 않게 잠깐 막는다
+        (NoViewportUpdate — 모드만 바꿨다 되돌리므로 그 자체로는 다시 그리기를 부르지 않음)."""
+        scene = self.scene()
+        if not own:
+            QCoreApplication.sendPostedEvents(scene, QEvent.Type.MetaCall)
+            return
+        views = [(v, v.viewportUpdateMode()) for v in scene.views()]
+        for v, _m in views:
+            v.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.NoViewportUpdate)
+        self._ignore_changes = True
+        try:
+            QCoreApplication.sendPostedEvents(scene, QEvent.Type.MetaCall)
+        finally:
+            self._ignore_changes = False
+            for v, m in views:
+                v.setViewportUpdateMode(m)
 
     def paintEvent(self, event):
         # 캐시가 없거나(최초 페인트) 위젯 크기가 바뀌었으면(리사이즈) 이번만 동기 재생성 —

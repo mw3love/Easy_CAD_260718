@@ -1,4 +1,4 @@
-"""PDF/PNG/SVG 내보내기 — 씬(또는 선택영역)을 A4~A1 용지에 맞춰 렌더.
+"""PDF/PNG/SVG 내보내기 — 씬(또는 선택영역)을 A4~A0 용지에 맞춰 렌더.
 
 전체 출력: 그려진 모든 객체의 경계(itemsBoundingRect)를 용지에 fit.
 선택영역 출력: 선택된 객체들의 경계를 용지에 fit.
@@ -20,6 +20,7 @@ PAGE_SIZES = {
     "A3": QPageSize.PageSizeId.A3,
     "A2": QPageSize.PageSizeId.A2,
     "A1": QPageSize.PageSizeId.A1,
+    "A0": QPageSize.PageSizeId.A0,
 }
 
 
@@ -396,7 +397,7 @@ def export_svg(scene, path: str, page: str = "A4", selection_only: bool = False,
 def export_svg_symbol(scene, path: str, pad: float = 6.0) -> bool:
     """scene 전체 콘텐츠를 여백만 두고 꽉 채운 SVG로 저장 — 페이지 개념이 없는 아이콘/심볼
     전용 내보내기. [실사용 요청, 2026-08-21] '내 심볼' 우클릭 「SVG로 내보내기」가 사용.
-    `export_svg`는 A4~A1 용지 캔버스에 콘텐츠를 fit하는 인쇄용이라 심볼 하나를 내보내면
+    `export_svg`는 A4~A0 용지 캔버스에 콘텐츠를 fit하는 인쇄용이라 심볼 하나를 내보내면
     거대한 빈 여백의 SVG가 나온다(과함) — 그래서 페이지/프레임 로직을 건너뛰고
     `itemsBoundingRect()` 기준으로 캔버스 크기 자체를 콘텐츠에 맞춘다."""
     source = scene.itemsBoundingRect()

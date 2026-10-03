@@ -6,7 +6,7 @@
   - 진입점은 열기(Ctrl+O) — DXF/DWG처럼 새 탭에 연다(끌어놓기·최근 파일도 같은 경로).
   - 여러 쪽은 쪽마다 **빈 용지틀**(`_TitleBlockItem(plain=True)` — 우리 표제란 표 없음, CAD PDF엔
     자체 표제란이 있으므로)을 만들어 왼쪽부터 나란히 → §8 항목30 「모든 페이지를 한 PDF로」와 짝.
-    용지가 A4~A1이 아니면 용지틀 없이 놓는다(용지틀은 그 크기만 지원).
+    용지가 A4~A0이 아니면 용지틀 없이 놓는다(용지틀은 그 크기만 지원).
   - 글자는 고칠 수 있는 글자 도형으로(글꼴이 달라 폭은 조금 어긋날 수 있음).
   - 도형이 많으면(`LARGE_COUNT` 초과) 개수를 알려 주고 계속/취소를 묻는다(`confirm` 콜백).
 
@@ -68,7 +68,7 @@ def _dash_style(dashes) -> int | None:
 
 
 def paper_of(w_pt: float, h_pt: float):
-    """쪽 크기(pt) → (용지 이름, 방향) 또는 None(A4~A1이 아님)."""
+    """쪽 크기(pt) → (용지 이름, 방향) 또는 None(A4~A0이 아님)."""
     w_mm, h_mm = w_pt * 25.4 / 72.0, h_pt * 25.4 / 72.0
     for name, (pw, ph) in PAPER_SIZES_MM.items():
         for orient, (a, b) in (("portrait", (pw, ph)), ("landscape", (ph, pw))):

@@ -71,7 +71,7 @@ def test_paper_of_matches_a_sizes_both_orientations():
     assert pdf_import.paper_of(595.28, 841.89) == ("A4", "portrait")
     assert pdf_import.paper_of(1191, 842) == ("A3", "landscape")   # AutoCAD 1.pdf 크기(반올림)
     assert pdf_import.paper_of(612, 792) is None                    # Letter
-    assert pdf_import.paper_of(2384, 3370) is None                  # A0 — 용지틀 미지원
+    assert pdf_import.paper_of(2384, 3370) == ("A0", "portrait")    # A0 — 2026-10-03부터 지원
 
 
 def test_import_pages_side_by_side_with_plain_frames():

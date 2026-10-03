@@ -345,7 +345,7 @@ class _FileIOMixin:
         self._zoom_fit()
         notes = []
         if stats.get("no_frame"):
-            notes.append(f"용지가 A4~A1이 아닌 {stats['no_frame']}쪽은 용지틀 없이 놓음")
+            notes.append(f"용지가 A4~A0이 아닌 {stats['no_frame']}쪽은 용지틀 없이 놓음")
         if stats.get("skipped_images"):
             notes.append(f"그림 {stats['skipped_images']}개는 옮기지 못함")
         if not stats.get("vector"):

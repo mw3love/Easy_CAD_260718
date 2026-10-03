@@ -1477,3 +1477,6 @@
 - **오프스크린 테스트에서 앱이 QMessageBox를 띄우면 스위트가 무한 대기한다**(아무도 못 닫음) — 함수에 선택 인자를
   추가하면 그 함수를 가짜로 끼운 테스트가 TypeError→오류창으로 빠진다. 가짜 함수는 `**_kw`로 받고, 스위트는
   `timeout`을 걸어 돌릴 것. (2026-10-03, `docs/history/2026-10.md` "점검 3단계")
+- **렌더용으로 아이템 속성을 잠깐 바꿨다 되돌려도(`setPen` 등) `scene.changed`는 나중에 온다** — 그 신호로 다시 렌더하는
+  구조(미니맵 디바운스)면 끝없이 돈다. 렌더 뒤 `QCoreApplication.sendPostedEvents(scene, QEvent.Type.MetaCall)`로 즉시
+  처리하고 그동안은 무시할 것. (2026-10-03, `docs/history/2026-10.md` "작은 개선 2건")
