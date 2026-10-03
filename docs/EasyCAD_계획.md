@@ -61,7 +61,7 @@ pasteflow 편집기는 QGraphics 아이템을 사실상 모델로 쓰는 구조�
 - 테두리 스냅(재사용)
 - **Undo/Redo** (`QUndoStack`)
 - 네이티브 저장/열기 — JSON 문서 포맷(문서모델 씨앗)
-- **PDF 출력**(`QPrinter`): 전체 fit-to A4~A1 · 선택영역만 출력
+- **PDF 출력**(`QPrinter`): 전체 fit-to A4~A0 · 선택영역만 출력
 - **검증(실조건):** 순서도 1장 그려 A4 PDF 출력 → 인쇄물 확인 → 저장 후 다시 열기
 
 ### Phase 2 — 속도 UX (AutoCAD식 생산성)

@@ -55,7 +55,7 @@ easycad/
 │   ├── text_to_mermaid.py  프롬프트 빌더·코드펜스 벗기기·generate_mermaid (§8 항목18)
 │   └── photo_to_ops.py     사진→도면 프롬프트·조각·AI 루프 generate_ops (§8 항목28, Qt 비의존)
 ├── fileio/
-│   ├── pdf_export.py       PDF 출력(A4~A1, 전체/선택영역)
+│   ├── pdf_export.py       PDF 출력(A4~A0, 전체/선택영역)
 │   ├── document.py         .ecad(JSON) 저장/열기 — 문서모델 씨앗(DXF 매핑 기반)
 │   ├── dxf_export.py / dxf_import.py   DXF 왕복
 │   ├── mermaid_import.py   Mermaid flowchart → .ecad
