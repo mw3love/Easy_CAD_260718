@@ -196,3 +196,53 @@ def test_legacy_cut_migration_leaves_nothing_selected():
     legacy._cuts = [(0, 0.2, 0.5)]
     w._migrate_legacy_closed_cuts()
     assert w._scene.selectedItems() == []
+
+
+# ---- 대량 삭제·되돌리기 성능(점검 2단계 후속) ---------------------------------------
+def _grid_doc(n=60):
+    w = CanvasWindow()
+    items = []
+    for i in range(n):
+        it = _filled_rect(w, (i % 10) * 30, (i // 10) * 30, 50, 50)   # 이웃끼리 겹침
+        items.append(it)
+    return w, items
+
+
+def test_mass_delete_and_undo_refresh_properties_once():
+    """선택된 아이템을 하나씩 빼고 넣을 때마다 속성 패널을 다시 계산하던 O(n²) — 1000개 전체
+    삭제 8.4초·되돌리기 8.7초였다. 이제 일괄 편집 동안 신호를 끊고 끝에 한 번만 갱신."""
+    w, items = _grid_doc()
+    w.select_all()
+    calls = []
+    orig = w._refresh_properties
+    with patch.object(w, "_refresh_properties", side_effect=lambda: (calls.append(1), orig())):
+        # selectionChanged에 이미 연결된 건 원래 바운드 메서드라, 일시정지 해제 시 재연결되는
+        # 쪽을 세려면 시그널을 패치된 것으로 다시 잇는다.
+        sig = w._scene.selectionChanged
+        sig.disconnect(orig); sig.connect(w._refresh_properties)
+        w.delete_selection()
+        n_del = len(calls); calls.clear()
+        w.undo()
+        n_undo = len(calls)
+        sig.disconnect(w._refresh_properties); sig.connect(orig)
+    assert n_del <= 2 and n_undo <= 2, (n_del, n_undo)
+    assert len(w._scene.selectedItems()) == len(items)   # 되돌리면 선택도 그대로
+
+
+def test_mass_delete_undo_restores_exact_full_stacking():
+    w, items = _grid_doc()
+    before = _tops(w)
+    w.select_all(); w.delete_selection(); w.undo()
+    assert _tops(w) == before
+    w.redo(); w.undo()
+    assert _tops(w) == before
+
+
+def test_partial_delete_undo_keeps_full_stacking():
+    w, items = _grid_doc()
+    before = _tops(w)
+    w._scene.clearSelection()
+    for it in items[::3]:
+        it.setSelected(True)
+    w.delete_selection(); w.undo()
+    assert _tops(w) == before

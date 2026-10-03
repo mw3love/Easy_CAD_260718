@@ -9,6 +9,7 @@ from __future__ import annotations
 import html
 import re
 import uuid
+from contextlib import contextmanager, nullcontext
 
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent
 from PyQt6.QtGui import (
@@ -189,9 +190,10 @@ class _SelectionMixin:
         sel = list(self._scene.selectedItems())
         if not sel:
             return
-        for it in sel:
-            _detach_port_from_host(it)   # [신규기능 §8-12] 호스트의 _ports 목록도 정리
-            self._scene.removeItem(it)
+        with self._bulk_scene_edit():   # [점검 2단계 후속] 개당 속성 패널 재계산·겹침 검사 방지
+            for it in sel:
+                _detach_port_from_host(it)   # [신규기능 §8-12] 호스트의 _ports 목록도 정리
+                self._scene.removeItem(it)
         self.push_undo_delete(sel)
 
 
@@ -253,20 +255,38 @@ class _SelectionMixin:
         루프 동안 끊고 끝나면 한 번만 재계산."""
         if not items:
             return
+        with self._selection_signals_paused():
+            for it in items:
+                it.setSelected(True)
+
+    @contextmanager
+    def _bulk_scene_edit(self):
+        """[점검 2단계 후속 2026-10-03] 아이템을 한꺼번에 빼고/넣는 편집(삭제·undo/redo)용 —
+        선택 신호 일시정지 + 씬 일괄 모드(`_DocScene.batch`, 겹침 순서 기록을 싸게)."""
+        batch = getattr(self._scene, "batch", None)
+        with self._selection_signals_paused(), (batch() if batch else nullcontext()):
+            yield
+
+    @contextmanager
+    def _selection_signals_paused(self):
+        """selectionChanged에 걸린 세 슬롯을 잠시 끊었다가, 끝나면 다시 잇고 **한 번만** 갱신한다
+        (`_bulk_select`에서 뺀 공용 도우미). [점검 2단계 후속 2026-10-03] 선택된 아이템을 하나씩
+        removeItem/addItem해도 매번 selectionChanged가 나가 같은 O(n²)이 생긴다 — 1000개 전체
+        삭제 8.4초·되돌리기 8.7초(cProfile: `_read_props` 50만 회). 삭제(메뉴·Del 키)와
+        undo/redo도 이걸 쓴다."""
         sig = self._scene.selectionChanged
         sig.disconnect(self._refresh_properties)
         sig.disconnect(self._sync_group_selection)
         sig.disconnect(self._sync_selection_count_cache)
         try:
-            for it in items:
-                it.setSelected(True)
+            yield
         finally:
             sig.connect(self._sync_selection_count_cache)
             sig.connect(self._sync_group_selection)
             sig.connect(self._refresh_properties)
-        self._sync_selection_count_cache()
-        self._sync_group_selection()
-        self._refresh_properties()
+            self._sync_selection_count_cache()
+            self._sync_group_selection()
+            self._refresh_properties()
 
     # ---- [성능수정 2026-08-15] 선택 개수 캐시 -----------------------------
 

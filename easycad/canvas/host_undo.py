@@ -335,21 +335,36 @@ class _UndoMixin:
             for b in below[it]:
                 if b in rev and b is not it:
                     over[b].add(it)
-        order, left = [], list(items)
-        while left:   # 위에 와야 할 것이 다 정해진 것부터(순환이면 남은 순서 그대로)
-            ready = [it for it in left if not (over[it] & set(left))] or left[:1]
-            for it in ready:
-                order.append(it)
-                left.remove(it)
+        # 위→아래 순서(Kahn) — 이웃 기록이 아이템당 최대 8개라 거의 선형(예전 구현은 매번 남은
+        # 목록 전체를 훑어 1000개 되돌리기에 ~1초가 더 들었다)
+        under = {it: [] for it in items}   # under[a] = a 바로 아래에 와야 하는 되살린 아이템들
+        need = {it: len(over[it]) for it in items}
+        for it in items:
+            for a in over[it]:
+                under[a].append(it)
+        queue = [it for it in items if need[it] == 0]
+        order, qi = [], 0
+        while qi < len(queue):
+            a = queue[qi]; qi += 1
+            order.append(a)
+            for b in under[a]:
+                need[b] -= 1
+                if need[b] == 0:
+                    queue.append(b)
+        if len(order) < len(items):   # 순환(이론상 없음) — 남은 것은 원래 순서대로 뒤에
+            placed_set = set(order)
+            order += [it for it in items if it not in placed_set]
+        placed = set()
         prev = None
         for it in order:
             tgt = next((a for a in above[it]
                         if a.scene() is it.scene() and a.parentItem() is None
-                        and (a not in rev or a in order[:order.index(it)])), None)
+                        and (a not in rev or a in placed)), None)
             if tgt is None:
                 tgt = prev
             if tgt is not None:
                 it.stackBefore(tgt)
+            placed.add(it)
             prev = it
 
 
@@ -357,7 +372,8 @@ class _UndoMixin:
         if not self._undo:
             return
         entry = self._undo.pop()
-        self._apply_entry(entry, redo=False)
+        with self._bulk_scene_edit():   # [점검 2단계 후속] 대량 되살리기 O(n²) 방지
+            self._apply_entry(entry, redo=False)
         self._redo.append(entry)
         self._refresh_history_actions()
         self._schedule_layer_counts()
@@ -369,7 +385,8 @@ class _UndoMixin:
         if not self._redo:
             return
         entry = self._redo.pop()
-        self._apply_entry(entry, redo=True)
+        with self._bulk_scene_edit():
+            self._apply_entry(entry, redo=True)
         self._undo.append(entry)
         self._refresh_history_actions()
         self._schedule_layer_counts()

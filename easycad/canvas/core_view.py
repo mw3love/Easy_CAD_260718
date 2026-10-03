@@ -3,6 +3,7 @@
 입력을 실제 아이템·라우팅 조작으로 옮기는 상호작용 표면 — core_shapes.py의 아이템·기하·
 라우팅 함수를 소비하기만 하고(단방향), 역참조는 없다(순환 없음, 안전하게 분리 가능했음).
 """
+import contextlib
 import heapq
 import io
 import math
@@ -4673,9 +4674,12 @@ class _AnnotatorView(QGraphicsView):
                 # 다른 키로 바꿔도 계속 동작한다(사용자가 놀라지 않게 하는 의도적 예외).
                 selected = list(self.scene().selectedItems())
                 if selected:
-                    for it in selected:
-                        _detach_port_from_host(it)   # [신규기능 §8-12] 호스트의 _ports 목록도 정리
-                        self.scene().removeItem(it)
+                    # [점검 2단계 후속 2026-10-03] 개당 selectionChanged → 속성 패널 재계산(O(n²)) 방지
+                    paused = getattr(self._owner, "_bulk_scene_edit", None)
+                    with (paused() if paused else contextlib.nullcontext()):
+                        for it in selected:
+                            _detach_port_from_host(it)   # [신규기능 §8-12] 호스트의 _ports 목록도 정리
+                            self.scene().removeItem(it)
                     self._owner.push_undo_delete(selected)
                     return
             if self._shortcut_hit(event, "undo"):

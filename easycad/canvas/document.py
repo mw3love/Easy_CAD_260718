@@ -13,6 +13,8 @@
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QPolygonF
 from PyQt6.QtWidgets import QGraphicsScene
@@ -30,6 +32,39 @@ class _DocScene(QGraphicsScene):
     제자리에 넣는다. 겹치지 않는 아이템끼리의 순서는 눈에 안 보이므로 겹치는 것만 본다."""
 
     _RESTACK_KEEP = 8   # 위쪽 후보 몇 개까지 — 바로 위가 같이 지워졌거나 사라져도 그다음으로
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._batch_depth = 0
+        self._batch_order = None   # 일괄 편집 시작 시점의 최상위 쌓임 순서(위→아래)
+        self._batch_pos = None
+
+    @contextmanager
+    def batch(self):
+        """[점검 2단계 후속 2026-10-03] 한꺼번에 많이 빼는 동안(전체 삭제·undo/redo) 위/아래
+        이웃을 겹침 검사 대신 **시작 시점의 전체 쌓임 순서 한 번**에서 고른다 — 개당 겹침 검사가
+        Qt의 boundingRect 호출 13만 회(1000개 삭제에 ~1.2초)를 만들었다. 전체 순서 기준이라
+        겹침 기준보다 오히려 정확하다."""
+        self._batch_depth += 1
+        try:
+            yield
+        finally:
+            self._batch_depth -= 1
+            if self._batch_depth == 0:
+                self._batch_order = self._batch_pos = None
+
+    def _record_from_batch(self, item):
+        if self._batch_order is None:
+            self._batch_order = [it for it in self.items(Qt.SortOrder.DescendingOrder)
+                                 if it.parentItem() is None]
+            self._batch_pos = {it: i for i, it in enumerate(self._batch_order)}
+        i = self._batch_pos.get(item)
+        if i is None:   # 일괄 편집 도중 새로 들어온 아이템 — 겹침 방식으로
+            return False
+        k = self._RESTACK_KEEP
+        item._restack_above = self._batch_order[max(0, i - k):i][::-1]   # 바로 위부터
+        item._restack_below = self._batch_order[i + 1:i + 1 + k]
+        return True
 
     def _safe_scene_rect(self, item):
         """지우는 순간의 아이템 범위 — **아이템의 boundingRect를 부르지 않는다**. 화살표 그리기를
@@ -51,6 +86,10 @@ class _DocScene(QGraphicsScene):
         return item.mapToScene(QPolygonF(list(pts))).boundingRect()
 
     def removeItem(self, item):
+        if (self._batch_depth and item.parentItem() is None and item.scene() is self
+                and self._record_from_batch(item)):
+            super().removeItem(item)
+            return
         rect = (self._safe_scene_rect(item)
                 if item.parentItem() is None and item.scene() is self else None)
         if rect is not None:
