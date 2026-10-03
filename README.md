@@ -20,7 +20,7 @@ offscreen 회귀 스모크. 정확한 현재 종수는 실행 시 출력을 참�
 
 - `easycad/canvas/` — 캔버스 코어(`core_constants.py`/`core_shapes.py`/`core_view.py`,
   `annotator_core.py`는 하위호환 재수출 shim) + 창(`host.py`, 역할별 `host_*.py` 믹스인).
-- `easycad/fileio/` — PDF·DXF/DWG·`.ecad`·SVG·Mermaid·이미지→도면 빌더 왕복.
+- `easycad/fileio/` — PDF·DXF/DWG·`.ecad`·SVG·Mermaid·이미지→도면 빌더 왕복, 안전 저장·자동 저장/복구.
 - `easycad/ai/` — AI 게이트웨이 클라이언트(Mermaid/SVG 생성, 텍스트→도면).
 - 상세 구조·현재 진행 상태·작업 규칙은 `CLAUDE.md`, 월별 이력은 `docs/history/`,
   자주 겪는 함정은 `docs/pitfalls.md` 참조.
@@ -36,6 +36,7 @@ offscreen 회귀 스모크. 정확한 현재 종수는 실행 시 출력을 참�
 ## 로드맵
 
 핵심 기능(무한캔버스·PDF/`.ecad`·DXF·DWG 왕복·심볼 라이브러리·TRIM/EXTEND·AI 이미지→도면·
-Mermaid/SVG AI 생성·마인드맵 뻗기 등)은 전부 완료됐고, 현재는 최종 검수(코드리뷰·함정
-재발감사·릴리스 준비) 단계다. 상세 진행 상태·다음 순서는 `CLAUDE.md`와
-`docs/EasyCAD_계획.md` §8 참조.
+Mermaid/SVG AI 생성·마인드맵 뻗기 등)은 전부 완료됐다. 2026-10-03 프로그램 점검(파일 안전·
+왕복 검사·코드 건강)을 마쳤고, 지금은 그 점검에서 고른 추가 기능(§8 항목30~35 — 여러 쪽 PDF·
+DXF 채우기·최근 파일은 완료, PDF 벡터 가져오기부터 남음)을 진행 중이다. 상세 진행 상태·다음
+순서는 `CLAUDE.md`와 `docs/EasyCAD_계획.md` §8 참조.
