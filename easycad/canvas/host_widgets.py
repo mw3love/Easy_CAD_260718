@@ -8,8 +8,7 @@
 import sys
 
 from PyQt6.QtCore import (
-    Qt, QPoint, QPointF, QRectF, QSize, QSettings, QTimer, QMimeData, QEvent, pyqtSignal,
-    QCoreApplication,
+    Qt, QPoint, QPointF, QRectF, QSize, QTimer, QMimeData, QEvent, pyqtSignal, QCoreApplication,
 )
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QIcon, QPixmap, QPainter, QPolygonF, QPainterPath, QPalette, QDrag, QFont,
@@ -19,6 +18,7 @@ from PyQt6.QtWidgets import (
     QColorDialog, QHBoxLayout, QMenu, QFrame, QToolTip,
 )
 
+from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _ArrowItem, _PolyArrowItem, _COLOR_PRESETS, _pixmap_from_data, _svg_icon_pixmap,
     _min_stroke_render,
@@ -903,14 +903,14 @@ class _FloatingPanel(QFrame):
         v.addWidget(self._body)
 
         self._collapsed = False
-        want_collapsed = QSettings("EasyCAD", "EasyCAD").value(
+        want_collapsed = app_settings().value(
             self._collapse_key, False, type=bool)
         if want_collapsed:
             self._set_collapsed(True, persist=False)
         else:
             self._update_collapse_icon()
 
-        if not QSettings("EasyCAD", "EasyCAD").value(self._visible_key, True, type=bool):
+        if not app_settings().value(self._visible_key, True, type=bool):
             self.hide()   # 명시적 hide — 부모(창) show() 뒤에도 감춤 유지(Qt 관례)
 
     def _show_header_menu(self, pos):
@@ -926,7 +926,7 @@ class _FloatingPanel(QFrame):
         """우클릭 「닫기」와 보기(V)→패널 메뉴 재오픈이 공유하는 단일 경로 — 상태 반영·
         영속화·신호 발신을 한 곳에서(둘 중 하나만 하면 다른 쪽이 동기화를 놓친다)."""
         self.setVisible(visible)
-        QSettings("EasyCAD", "EasyCAD").setValue(self._visible_key, visible)
+        app_settings().setValue(self._visible_key, visible)
         self.visibility_changed.emit(visible)
         if visible:
             self._host._reposition_panels()
@@ -976,7 +976,7 @@ class _FloatingPanel(QFrame):
         self._body.setVisible(not collapsed)
         self._update_collapse_icon()
         if persist:
-            QSettings("EasyCAD", "EasyCAD").setValue(self._collapse_key, collapsed)
+            app_settings().setValue(self._collapse_key, collapsed)
         self.adjustSize()
         self._host._reposition_panels()
 

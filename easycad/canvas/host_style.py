@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 
-from PyQt6.QtCore import Qt, QPoint, QSettings
+from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import (
     QColor,
 )
@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _ArrowItem, _PolyArrowItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _SYMBOL_KINDS,
 )
@@ -108,7 +109,7 @@ class _StyleMixin:
 
 
     def _load_recent_colors(self) -> list[QColor]:
-        raw = QSettings("EasyCAD", "EasyCAD").value("recent_colors", [], type=list) or []
+        raw = app_settings().value("recent_colors", [], type=list) or []
         return [QColor(h) for h in raw if QColor(h).isValid()][:_RECENT_COLOR_MAX]
 
 
@@ -122,7 +123,7 @@ class _StyleMixin:
                                if c.name(QColor.NameFormat.HexArgb) != key]
         self._recent_colors.insert(0, col)
         self._recent_colors = self._recent_colors[:_RECENT_COLOR_MAX]
-        QSettings("EasyCAD", "EasyCAD").setValue(
+        app_settings().setValue(
             "recent_colors", [c.name(QColor.NameFormat.HexArgb) for c in self._recent_colors])
 
 

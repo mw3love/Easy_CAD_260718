@@ -68,12 +68,14 @@ easycad/
 │   ├── autosave.py         자동 저장·복구 파일 관리(앱 데이터 `recovery` 폴더, 2026-10-03)
 │   ├── photo_ops.py        사진→도면 ops JSON → Sketch 아이템(글자 회전 rot, Qt 비의존)
 │   └── pdf_import.py       벡터 PDF 열기(PyMuPDF, 쪽마다 빈 용지틀, §8 항목33)
+├── app_settings.py       앱 설정(QSettings) 여는 한 곳 — `EASYCAD_SETTINGS_ORG`로 테스트 격리(2026-10-03).
+│                         `QSettings("EasyCAD", ...)` 직접 열기 금지(테스트가 grep으로 잡음)
 └── main.py · run.py        진입점
 tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~27_*.py      테마별 회귀 스모크 1205종(2026-10-03 기준, 개별 pytest 실행 가능)
+└── test_part1~28_*.py      테마별 회귀 스모크 1209종(2026-10-03 기준, 개별 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -132,8 +134,6 @@ symbol_library/
   한 장 그림으로 저장) — 실사용에서 답답하면 계획. 상세: `docs/history/2026-10.md` "LOD ②".
 
 **최근 항목**(2026-09-25 ~ 10-03, 상세는 `docs/history/2026-09.md`·`2026-10.md`):
-- **옛 QPainter 액션 아이콘 7종 → A2 손그림 SVG**(2026-09-25) — Phosphor와 비교 후 손그림 채택,
-  툴바 한 스타일 통일. '내 심볼' 썸네일 옅음은 현재 데이터로 재현 안 돼 종결.
 - **사진→도면 재실험**(2026-10-01) — 8월에 폐기한 이미지→도면을 "원본 좌표 그대로의 ops 형식"으로
   다시 재 보니 `gpt-6.1-sol`·`gpt-6-astra`가 사진 1장을 거의 맞힘(실패 주원인이 형식이었을 가능성).
   도구 `tools/sketch_ops*.py`, 앱 재도입은 §8 항목28(계획 단계). 같은 날 CAD 출력 PDF는 AI 없이
@@ -174,6 +174,8 @@ symbol_library/
   `tools/` 스크립트는 근거 자료라 전부 남김.
 - **LOD ①**(2026-10-03) — 끝점형 도형(경로·선)이 미선택·다중선택일 때 안 보이는 끝점 핸들 자리를 boundingRect에 안 잡음.
   1.pdf 전체 보기 641→366ms·전체 선택 9.0→5.8초(그림 변화 0). ②는 측정 후 보류(위 "미해결·보류").
+- **작은 문제 4건**(2026-10-03) — 앱 설정을 `easycad/app_settings.py` 한 곳으로(테스트가 실사용자 설정을 바꾸던 것 차단),
+  DXF·PDF 연 직후 레이어 개수, 9천 개 DXF 열기 343초→4.7초(채우기 짝짓기 격자 색인, 결과 동일 확인).
 
 ## UI 원칙
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·

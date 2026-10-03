@@ -7,6 +7,7 @@ from PyQt6.QtGui import QPixmap
 from PyQt6.QtTest import QTest
 
 from _shared import *  # noqa: F401,F403
+from easycad.app_settings import app_settings
 from easycad.canvas.host_ui import _symbol_name_matches
 from easycad.fileio import symbol_library
 from easycad.fileio.document import _pixmap_to_b64
@@ -65,7 +66,7 @@ def test_search_shows_collapsed_folder_without_changing_saved_state():
         folder = f"접힘시험_{uuid.uuid4().hex[:6]}"
         ant, _amp, _zig = _lib(folder, f"다른_{uuid.uuid4().hex[:6]}")
         key = f"symfolder_collapsed_{folder}"
-        st = QSettings("EasyCAD", "EasyCAD")
+        st = app_settings()
         st.setValue(key, True)
         try:
             w = CanvasWindow()

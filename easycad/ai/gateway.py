@@ -49,7 +49,7 @@ SECRETS_FILE = Path.home() / ".claude" / ".secrets" / "easycad-gateway.key"
 # 결과 실사용자의 진짜 저장된 API 키가 pytest 실행마다(`tests/test_part9_ai_mermaid.py`의
 # `_clear_gateway_settings()`) 조용히 지워지는 사고로 이어졌다 — "저장한 키가 앱을 껐다
 # 켜면 사라진다"는 재현 안 되던 버그의 실제 원인이 앱 코드가 아니라 이거였다.
-_SETTINGS_ORG = "EasyCAD"
+_SETTINGS_ORG = os.environ.get("EASYCAD_SETTINGS_ORG", "EasyCAD")   # 2026-10-03 easycad/app_settings.py와 같은 격리 규칙
 _SETTINGS_APP = "EasyCAD"
 
 # 게이트웨이가 reasoning(thinking) 토큰을 같은 max_tokens 예산에서 차감한다(ocr_engine.py와

@@ -4,6 +4,7 @@ tests/test_easycad.py 2026-08-02 분할분. 실행: python tests/test_easycad.py
 """
 from PyQt6.QtWidgets import QMessageBox
 from _shared import *  # noqa: F401,F403
+from easycad.app_settings import app_settings
 
 
 def test_host_construction():
@@ -257,7 +258,7 @@ def test_symbol_folder_collapse_expand_round_trips_panel_size():
     from easycad.canvas.host_widgets import _PaletteButton
 
     with _isolated_symbol_library():
-        QSettings("EasyCAD", "EasyCAD").remove("symfolder_collapsed_무선")
+        app_settings().remove("symfolder_collapsed_무선")
         w = CanvasWindow(); w.show()
         r = _mk_pen_rect(w); r.setSelected(True)
         with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
@@ -304,7 +305,7 @@ def test_symbol_folder_collapse_expand_round_trips_panel_size():
 
         w._active_doc.dirty = False
         w.close()
-        QSettings("EasyCAD", "EasyCAD").remove("symfolder_collapsed_무선")
+        app_settings().remove("symfolder_collapsed_무선")
 
 
 def test_left_panel_scrolls_instead_of_growing_unbounded_with_many_folders():
@@ -362,7 +363,7 @@ def test_symbol_folder_full_row_does_not_widen_panel():
     from easycad.canvas.host_ui import _PALETTE_COLS
 
     with _isolated_symbol_library():
-        QSettings("EasyCAD", "EasyCAD").remove("symfolder_collapsed_풀로우")
+        app_settings().remove("symfolder_collapsed_풀로우")
         w = CanvasWindow(); w.show()
         with patch.object(QInputDialog, "getText", return_value=("풀로우", True)):
             w._prompt_create_symbol_folder()
@@ -399,7 +400,7 @@ def test_symbol_folder_full_row_does_not_widen_panel():
 
         w._active_doc.dirty = False
         w.close()
-        QSettings("EasyCAD", "EasyCAD").remove("symfolder_collapsed_풀로우")
+        app_settings().remove("symfolder_collapsed_풀로우")
 
 
 
@@ -411,7 +412,7 @@ def test_panel_close_reopen_via_header_menu_and_view_menu():
     참조). `isVisible()`은 최상위 창이 실제로 show()된 상태여야 자식 위젯에 의미가 있어
     다른 패널 테스트(`test_left_panel_accordion_collapse_expand_resizes_panel`)와 같이 show()."""
     from PyQt6.QtCore import QSettings
-    QSettings("EasyCAD", "EasyCAD").remove("panel_visible_layers")
+    app_settings().remove("panel_visible_layers")
     w = CanvasWindow(); w.show()
     panel = w._layers_panel
     act = w._panel_visibility_actions["layers"]
@@ -421,11 +422,11 @@ def test_panel_close_reopen_via_header_menu_and_view_menu():
     panel._close_panel()   # 우클릭 헤더 「닫기」와 같은 경로(_show_header_menu가 부르는 메서드)
     assert not panel.isVisible()
     assert not act.isChecked()   # 메뉴 체크상태도 함께 풀림(visibility_changed 신호)
-    assert not QSettings("EasyCAD", "EasyCAD").value("panel_visible_layers", True, type=bool)
+    assert not app_settings().value("panel_visible_layers", True, type=bool)
 
     act.setChecked(True)   # 보기(V)→패널→레이어 패널 체크 = 재오픈
     assert panel.isVisible()
-    assert QSettings("EasyCAD", "EasyCAD").value("panel_visible_layers", False, type=bool)
+    assert app_settings().value("panel_visible_layers", False, type=bool)
 
     # 다른 패널(도형)은 레이어를 닫아도 영향 없음 — 패널별 독립.
     assert w._left_panel.isVisible()
@@ -433,7 +434,7 @@ def test_panel_close_reopen_via_header_menu_and_view_menu():
 
     w._active_doc.dirty = False
     w.close()
-    QSettings("EasyCAD", "EasyCAD").remove("panel_visible_layers")
+    app_settings().remove("panel_visible_layers")
 
 
 

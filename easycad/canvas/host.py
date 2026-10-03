@@ -15,7 +15,7 @@ owner가 _AnnotatorView에 제공해야 하는 인터페이스(뷰 소스에서 
 """
 import os
 
-from PyQt6.QtCore import Qt, QSize, QSettings, QTimer
+from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import (
     QColor, QBrush,
 )
@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsView, QMessageBox, QTabWidget,
 )
 
+from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _PolyArrowItem, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _DEFAULT_INK_DARK,
     _DEFAULT_INK_LIGHT,
@@ -82,7 +83,7 @@ class CanvasWindow(
         # 설정. 탭 전환에는 안 바뀐다. "새 창"은 생성 시점에 이 값들을 스냅샷 복사만 하고
         # 그 뒤론 독립(deep-interview 확정 — 진짜 실시간 공유는 아래 클립보드만).
         self.current_tool = "select"
-        self._dark = QSettings("EasyCAD", "EasyCAD").value("dark", True, type=bool)  # 다크 기본
+        self._dark = app_settings().value("dark", True, type=bool)  # 다크 기본
         self.current_color = QColor(_DEFAULT_INK_DARK if self._dark else _DEFAULT_INK_LIGHT)
         self._color_is_default = True   # [실사용 피드백] 사용자가 직접 색을 고르기 전엔 테마를 따라감
         self.current_width = _DEFAULT_WIDTH

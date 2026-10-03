@@ -3,6 +3,7 @@
 tests/test_easycad.py 2026-08-02 분할분. 실행: python tests/test_easycad.py (전체) 또는 pytest test_part6_grid_minimap_layers.py.
 """
 from _shared import *  # noqa: F401,F403
+from easycad.app_settings import app_settings
 
 
 def test_grid_snap_box_resize_corner_lands_on_grid():
@@ -805,7 +806,7 @@ def test_save_doc_dispatches_by_extension():
     # 분기하는지 확인(.dwg는 §8 DWG 자동변환 후속, 2026-08-14).
     from PyQt6.QtWidgets import QFileDialog
     from PyQt6.QtCore import QSettings
-    QSettings("EasyCAD", "EasyCAD").setValue("dxf_save_warned", True)   # 손실 확인창 스킵(헤드리스)
+    app_settings().setValue("dxf_save_warned", True)   # 손실 확인창 스킵(헤드리스)
     w = CanvasWindow()
     calls = []
     w._do_save_ecad = lambda path: calls.append(("ecad", path))
@@ -840,7 +841,7 @@ def test_doc_filter_includes_dwg():
 def test_open_doc_dispatches_by_extension():
     from PyQt6.QtWidgets import QFileDialog
     from PyQt6.QtCore import QSettings
-    QSettings("EasyCAD", "EasyCAD").setValue("dxf_open_notified", True)   # 안내창 스킵(헤드리스)
+    app_settings().setValue("dxf_open_notified", True)   # 안내창 스킵(헤드리스)
     w = CanvasWindow()
     calls = []
     w._do_open_ecad = lambda path: calls.append(("ecad", path))
@@ -874,7 +875,7 @@ def test_dxf_confirm_dialogs_show_once_via_qsettings():
     # 처음 1회만 확인창을 띄우고, 이후는 QSettings 플래그로 조용히 통과한다.
     from PyQt6.QtCore import QSettings
     from PyQt6.QtWidgets import QMessageBox
-    settings = QSettings("EasyCAD", "EasyCAD")
+    settings = app_settings()
     settings.remove("dxf_save_warned")
     settings.remove("dxf_open_notified")
     w = CanvasWindow()
@@ -1045,7 +1046,7 @@ def test_drop_dxf_file_imports_new_tab():
     # (_do_open_dxf 재사용). 안내창은 QSettings 플래그로 스킵(헤드리스 관례, 기존 테스트와 동일).
     from PyQt6.QtCore import QSettings
     from PyQt6.QtWidgets import QMessageBox
-    QSettings("EasyCAD", "EasyCAD").setValue("dxf_open_notified", True)
+    app_settings().setValue("dxf_open_notified", True)
     orig_info, orig_warn = QMessageBox.information, QMessageBox.warning
     QMessageBox.information = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
     QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
@@ -1165,7 +1166,7 @@ def test_prompt_odafc_missing_browse_saves_path_to_settings():
     exe_path = r"C:\tools\ODAFileConverter.exe"
     QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (exe_path, ""))
 
-    settings = QSettings("EasyCAD", "EasyCAD")
+    settings = app_settings()
     had_prior = settings.contains("odafc_exe_path")
     prior = settings.value("odafc_exe_path", "", type=str)
     w = CanvasWindow()
@@ -1412,7 +1413,7 @@ def test_edit_fill_and_clear_fill_sticky():
     # 항목이 호출하는 메서드.
     from PyQt6.QtCore import QSettings
     from PyQt6.QtWidgets import QColorDialog
-    QSettings("EasyCAD", "EasyCAD").remove("recent_colors")
+    app_settings().remove("recent_colors")
     w = CanvasWindow()
     r = _mk_pen_rect(w); r.setSelected(True)
     orig_exec = QColorDialog.exec
@@ -1514,7 +1515,7 @@ def test_color_grid_popup_recent_column_shows_and_persists():
     # QSettings로 재시작 후에도 유지된다(다크모드와 같은 sticky 관례).
     from PyQt6.QtCore import QSettings
     from PyQt6.QtWidgets import QColorDialog
-    QSettings("EasyCAD", "EasyCAD").remove("recent_colors")
+    app_settings().remove("recent_colors")
     w = CanvasWindow()
     r = _mk_pen_rect(w); r.setSelected(True)
     orig_exec = QColorDialog.exec
@@ -1534,7 +1535,7 @@ def test_color_grid_popup_recent_column_shows_and_persists():
 
     w2 = CanvasWindow()   # 새 창(=재시작 흉내)도 QSettings에서 그대로 불러온다
     assert w2._recent_colors and w2._recent_colors[0].name() == "#abcdef"
-    QSettings("EasyCAD", "EasyCAD").remove("recent_colors")   # 다른 테스트 오염 방지
+    app_settings().remove("recent_colors")   # 다른 테스트 오염 방지
 
 
 

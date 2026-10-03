@@ -1484,5 +1484,9 @@
   마지막 동작 뒤에 돌아 버그가 있어도 우연히 통과한다(레이어 개수 0.15초). 새 테스트는 고치기 전 코드로 한 번 돌려 실패를
   확인. (2026-10-03, `docs/history/2026-10.md` "§8 항목26")
 - **`core_constants`·`core_shapes`·`core_view`의 "안 쓰는 import"는 지우면 안 될 수 있다** — 셋 다 `__all__`에 모든 전역을
-  넣어 import한 이름까지 별표로 넘긴다(pyflakes는 이 연쇄를 모름). 시험 스크립트에서 DXF를 열면 "DXF 안내 1회" 표시가
-  실사용자 설정(`QSettings("EasyCAD","EasyCAD")`)에 남는다. (2026-10-03, `docs/history/2026-10.md` "코드 정리 1묶음")
+  넣어 import한 이름까지 별표로 넘긴다(pyflakes는 이 연쇄를 모름). (2026-10-03, `docs/history/2026-10.md` "코드 정리 1묶음")
+- **앱 설정은 `easycad.app_settings.app_settings()`로만 연다** — `QSettings("EasyCAD", ...)`를 직접 열면 pytest·시험 스크립트가
+  실사용자 설정을 바꾼다(최근 색 삭제·"DXF 안내 봤음" 표시 — 2026-08-20 AI 키 소실과 같은 종류). `EASYCAD_SETTINGS_ORG`로
+  격리되고, 직접 여는 코드는 `tests/test_part28_small_fixes.py`가 잡는다. (2026-10-03, history "작은 문제 4건")
+- **가져오기의 "짝 찾기"는 후보 전체를 매번 훑지 말 것** — DXF 채우기 짝짓기가 해치 수×도형 수라 9천 개 DXF에 343초(작은
+  도면에선 안 보임). 범위를 한 번만 재고 격자 색인으로 근처만 본다(`dxf_import._FillMatcher`). (2026-10-03, 같은 항목)

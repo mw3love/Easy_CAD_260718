@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 
-from PyQt6.QtCore import Qt, QPoint, QRectF, QSize, QSettings, QTimer
+from PyQt6.QtCore import Qt, QPoint, QRectF, QSize, QTimer
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter, QFont, QPalette,
 )
@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QFrame, QListWidget, QStackedWidget, QScrollArea,
 )
 
+from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _PolyArrowItem, _tool_icon, _TOOLS, _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT, _MIN_FONT, _MAX_FONT,
     _SYMBOL_KINDS, _pen_style_icon, _arrow_kind_icon, _flip_icon, _arrow_head_icon, _icons_dir,
@@ -987,7 +988,7 @@ class _UIBuildMixin:
         # 열리는 모든 다이얼로그의 OS 타이틀바까지 자동 적용 — `_apply_native_titlebar_scheme` 참조).
         _apply_native_titlebar_scheme(dark)
         if persist:
-            QSettings("EasyCAD", "EasyCAD").setValue("dark", dark)
+            app_settings().setValue("dark", dark)
 
 
     def _toggle_theme(self):
@@ -1307,7 +1308,7 @@ class _UIBuildMixin:
             # 자격으로 접힌다(add_group가 공유하는 한 코드 경로).
             collapse_slug = "__favorites__" if favorites else (folder_name or "__unfiled__")
             collapse_key = f"symfolder_collapsed_{collapse_slug}"
-            collapsed = QSettings("EasyCAD", "EasyCAD").value(collapse_key, False, type=bool)
+            collapsed = app_settings().value(collapse_key, False, type=bool)
             if query:
                 collapsed = False   # [§8 항목34] 검색 결과는 접힌 폴더도 보이게(저장값은 안 바꿈)
             collapse_btn = QToolButton()
@@ -1373,7 +1374,7 @@ class _UIBuildMixin:
                 gc.setVisible(not now_collapsed)
                 btn.setText("▸" if now_collapsed else "▾")
                 btn.setToolTip("펼치기" if now_collapsed else "접기")
-                QSettings("EasyCAD", "EasyCAD").setValue(key, now_collapsed)
+                app_settings().setValue(key, now_collapsed)
                 # [실사용 버그 수정 2026-08-19] `gc`(grid_container)의 가시성 변화는 `zv`
                 # (zone의 own 레이아웃)까지만 자동 반영된다 — 그 위로 위젯 경계를 넘을 때마다
                 # (zone→body_layout, body→customsym 섹션 자신의 레이아웃, custom_section→

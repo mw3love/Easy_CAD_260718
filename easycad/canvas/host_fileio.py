@@ -11,7 +11,7 @@ import os
 import uuid
 
 from PyQt6.QtCore import (
-    Qt, QPoint, QPointF, QRectF, QSettings, QTimer, QEvent,
+    Qt, QPoint, QPointF, QRectF, QTimer, QEvent,
 )
 from PyQt6.QtGui import (
     QPen, QBrush, QPixmap,
@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QMessageBox, QDialog, QProgressDialog,
 )
 
+from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _PolyArrowItem, _ImageItem, _TitleBlockItem, _TableItem, _RectItem, _EllipseItem, _SymbolItem,
     _TextItem, _attach_port_to_host, _find_port_host_near, _is_closed_trim_shape,
@@ -145,8 +146,7 @@ class _FileIOMixin:
 
     @staticmethod
     def _recent_settings():
-        org = os.environ.get("EASYCAD_SETTINGS_ORG", "EasyCAD")
-        return QSettings(org, "EasyCAD")
+        return app_settings()   # 2026-10-03 같은 격리 규칙을 앱 설정 전체로 넓힘(easycad/app_settings.py)
 
     def _recent_files(self) -> list:
         v = self._recent_settings().value("recent_files", [])
@@ -361,7 +361,7 @@ class _FileIOMixin:
         도형은 근사 변환될 수 있음을 고지. [§8 DWG 자동변환, 2026-08-14] DWG는 내부적으로
         DXF로 변환된 뒤 같은 경로를 타므로 같은 안내·같은 1회성 플래그를 공유한다(별개
         문구로 나눌 만큼 의미가 다르지 않음)."""
-        settings = QSettings("EasyCAD", "EasyCAD")
+        settings = app_settings()
         if settings.value("dxf_open_notified", False, type=bool):
             return True
         settings.setValue("dxf_open_notified", True)
@@ -425,7 +425,7 @@ class _FileIOMixin:
             "실행 파일 (*.exe);;모든 파일 (*)")
         if not exe:
             return False
-        QSettings("EasyCAD", "EasyCAD").setValue("odafc_exe_path", exe)
+        app_settings().setValue("odafc_exe_path", exe)
         return True
 
 
@@ -564,7 +564,7 @@ class _FileIOMixin:
         """[통합] DXF/DWG 저장 손실 경고 — 앱 생애 처음 1회만(QSettings 플래그), 이후는
         조용히 진행. [§8 DWG 자동변환 후속, 2026-08-14] DWG도 내부적으로 DXF를 거쳐
         나가므로(dxf_export.export_dwg) 손실 범위가 동일 — 같은 안내·같은 플래그 공유."""
-        settings = QSettings("EasyCAD", "EasyCAD")
+        settings = app_settings()
         if settings.value("dxf_save_warned", False, type=bool):
             return True
         settings.setValue("dxf_save_warned", True)

@@ -53,6 +53,7 @@ import uuid
 from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF
 from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QFontMetricsF
 
+from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem,
@@ -604,25 +605,55 @@ def _filled_path_item(qp, color):
     return _flag(it)
 
 
-def _match_fill_target(rect, candidates, used):
-    """EC_FILL 해치 범위와 위치·크기가 가장 잘 맞는 도형(내보낼 때의 그 도형)을 찾는다."""
-    best, best_score = None, None
-    base_tol = max(3.0, 0.05 * max(rect.width(), rect.height()))
-    for c in candidates:
-        if id(c) in used:
-            continue
-        # 도형 범위엔 선 두께 여유(사방 반 두께)가 붙어 있다 — 너비·높이 차이로 최대 4배까지 벌어진다
-        pen_w = c.pen().widthF() if hasattr(c, "pen") else 0.0
-        tol = base_tol + 4.0 * pen_w
-        cr = getattr(c, "_content_rect", None)
-        r = c.mapRectToScene(cr()) if cr is not None else c.sceneBoundingRect()
-        if isinstance(c, _TextItem):
-            r = r.adjusted(1, 1, -1, -1)   # 내보낼 때 글자 배경을 1px 안쪽으로 냈다
-        score = ((r.center() - rect.center()).manhattanLength()
-                 + abs(r.width() - rect.width()) + abs(r.height() - rect.height()))
-        if score <= tol and (best_score is None or score < best_score):
-            best, best_score = c, score
-    return best
+class _FillMatcher:
+    """EC_FILL 해치 범위와 위치·크기가 가장 잘 맞는 도형(내보낼 때의 그 도형)을 찾는다.
+
+    [2026-10-03 성능] 예전엔 해치마다 후보 전체를 처음부터 훑으며 범위를 다시 계산했다(해치 수 × 도형
+    수) — 9,228개 DXF(해치 2,726개)를 여는 데 343초. 후보의 범위·선 두께를 한 번만 재 두고, 중심
+    격자로 "점수 허용치 안에 들 수 있는" 후보만 본다. 점수 ≥ 중심 사이 맨해튼 거리이므로 허용치
+    (`base_tol + 4×가장 굵은 선`)보다 먼 칸의 후보는 원래도 뽑힐 수 없다 — 결과 동일. 남은 후보는
+    원래 순서대로 같은 비교식(동점이면 먼저 나온 것)을 탄다."""
+
+    _CELL = 64.0
+
+    def __init__(self, candidates):
+        self._entries = []   # (후보, 장면 범위, 선 두께)
+        self._grid = {}
+        self._max_pen = 0.0
+        for i, c in enumerate(candidates):
+            # 도형 범위엔 선 두께 여유(사방 반 두께)가 붙어 있다 — 너비·높이 차이로 최대 4배까지 벌어진다
+            pen_w = c.pen().widthF() if hasattr(c, "pen") else 0.0
+            cr = getattr(c, "_content_rect", None)
+            r = c.mapRectToScene(cr()) if cr is not None else c.sceneBoundingRect()
+            if isinstance(c, _TextItem):
+                r = r.adjusted(1, 1, -1, -1)   # 내보낼 때 글자 배경을 1px 안쪽으로 냈다
+            self._entries.append((c, r, pen_w))
+            self._max_pen = max(self._max_pen, pen_w)
+            ctr = r.center()
+            key = (math.floor(ctr.x() / self._CELL), math.floor(ctr.y() / self._CELL))
+            self._grid.setdefault(key, []).append(i)
+
+    def match(self, rect, used):
+        best, best_score = None, None
+        base_tol = max(3.0, 0.05 * max(rect.width(), rect.height()))
+        reach = base_tol + 4.0 * self._max_pen
+        rc = rect.center()
+        x0, x1 = math.floor((rc.x() - reach) / self._CELL), math.floor((rc.x() + reach) / self._CELL)
+        y0, y1 = math.floor((rc.y() - reach) / self._CELL), math.floor((rc.y() + reach) / self._CELL)
+        near = []
+        for gx in range(x0, x1 + 1):
+            for gy in range(y0, y1 + 1):
+                near.extend(self._grid.get((gx, gy), ()))
+        for i in sorted(near):
+            c, r, pen_w = self._entries[i]
+            if id(c) in used:
+                continue
+            tol = base_tol + 4.0 * pen_w
+            score = ((r.center() - rc).manhattanLength()
+                     + abs(r.width() - rect.width()) + abs(r.height() - rect.height()))
+            if score <= tol and (best_score is None or score < best_score):
+                best, best_score = c, score
+        return best
 
 
 def _apply_fill_to(it, color):
@@ -662,8 +693,7 @@ def _apply_stored_odafc_path():
     """사용자가 이전에 「찾아보기」로 직접 지정한 ODAFileConverter 실행파일 경로가 있으면
     (표준 설치 경로 자동탐색 실패 대비, `host_fileio._prompt_odafc_missing`이 저장)
     ezdxf.options에 반영 — 매 .dwg 열기 직전 호출(가벼움, 파일 I/O 없이 QSettings 읽기뿐)."""
-    from PyQt6.QtCore import QSettings
-    stored = QSettings("EasyCAD", "EasyCAD").value("odafc_exe_path", "", type=str)
+    stored = app_settings().value("odafc_exe_path", "", type=str)
     if not stored:
         return
     import platform
@@ -821,10 +851,11 @@ def _ingest_modelspace(scene, msp) -> int:
     if fill_hatches:
         candidates = [it for it in built if hasattr(it, "apply_fill")
                       or isinstance(it, (_TextItem, _PathItem))]
+        matcher = _FillMatcher(candidates)
         used = set()
         orphans = []
         for qp, color in fill_hatches:
-            target = _match_fill_target(qp.boundingRect(), candidates, used)
+            target = matcher.match(qp.boundingRect(), used)
             if target is None:
                 orphans.append(_filled_path_item(qp, color))
             else:

@@ -43,6 +43,9 @@ class _UndoMixin:
         self._undo.clear()
         self._redo.clear()
         self._refresh_history_actions()
+        # [2026-10-03] 개수는 기록이 쌓일 때 다시 세는데, 문서를 통째로 바꾸는 열기는 기록 없이
+        # 도형을 넣는다 — DXF·PDF를 연 직후 「기본 (0)」으로 남던 것(.ecad는 레이어 복원이 따로 셈).
+        self._schedule_layer_counts()
 
 
     def _push_entry(self, ops, key=None):

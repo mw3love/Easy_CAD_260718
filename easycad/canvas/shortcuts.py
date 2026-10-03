@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QSettings
+from easycad.app_settings import settings_org
 
 # (id, category, label, default_sequence). id는 안정적인 키 — 절대 재사용 금지(과거 id가
 # 남아 있으면 그 사용자의 커스터마이즈가 조용히 유실된다).
@@ -90,7 +91,7 @@ TOOL_SHORTCUT_IDS: dict[str, str] = {
 }
 SHORTCUT_ID_BY_TOOL: dict[str, str] = {v: k for k, v in TOOL_SHORTCUT_IDS.items()}
 
-_SETTINGS_ORG = "EasyCAD"
+_SETTINGS_ORG = settings_org()   # 2026-10-03 테스트는 EASYCAD_SETTINGS_ORG로 실사용자 설정과 분리(easycad/app_settings.py)
 _SETTINGS_APP = "EasyCAD"
 
 

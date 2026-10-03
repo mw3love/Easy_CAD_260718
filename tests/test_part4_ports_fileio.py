@@ -3,6 +3,7 @@
 tests/test_easycad.py 2026-08-02 분할분. 실행: python tests/test_easycad.py (전체) 또는 pytest test_part4_ports_fileio.py.
 """
 from _shared import *  # noqa: F401,F403
+from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import _GroupBindProxy
 
 
@@ -675,7 +676,7 @@ def test_apply_stored_odafc_path_sets_ezdxf_option():
     import ezdxf
     from easycad.fileio.dxf_import import _apply_stored_odafc_path
 
-    settings = QSettings("EasyCAD", "EasyCAD")
+    settings = app_settings()
     had_prior = settings.contains("odafc_exe_path")
     prior_setting = settings.value("odafc_exe_path", "", type=str)
     prior_option = ezdxf.options.get("odafc-addon", "win_exec_path")

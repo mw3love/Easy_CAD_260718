@@ -148,7 +148,7 @@ def build_dicts(pages, stats: dict | None = None) -> list[dict]:
 
     for pg in pages:
         m = pg["matrix"]
-        pw, ph = pg["w"] * SCALE, pg["h"] * SCALE
+        pw = pg["w"] * SCALE
 
         def P(pt, _m=m, _x=x_off):
             if _m is not None:
