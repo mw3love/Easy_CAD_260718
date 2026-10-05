@@ -87,9 +87,12 @@ def test_kind_switch_updates_placeholder_hint_and_model():
     p.set_kind("trace")
     assert p.model() == "gpt-6.1-sol"
     assert not p._hint_lbl.isHidden() and "분" in p._hint_lbl.text()
-    # 빈 상태 카드를 눌러도 종류가 바뀐다
-    p._kind_cards["flow"].clicked.emit("flow")
-    assert p.kind() == "flow" and p._kind_buttons["flow"].isChecked()
+    # 버튼은 위 탭 하나, 아래는 고른 종류 설명 글(2026-10-05 피드백 — 안내 카드 3장 없앰)
+    assert not hasattr(p, "_kind_cards")
+    p._kind_buttons["flow"].click()
+    assert "관계만 읽어" in p._desc_lbl.text()
+    p._kind_buttons["symbol"].click()
+    assert "후보" in p._desc_lbl.text()
 
 
 def test_make_validates_input_and_records_history():
@@ -107,7 +110,6 @@ def test_make_validates_input_and_records_history():
     assert req is not None and req.kind == "symbol" and req.text == "송신기 → 결합기 → 안테나"
     assert got == [req]
     assert p._prompt_edit.toPlainText() == ""          # 입력 칸은 비운다
-    assert p._empty.isHidden() and not p._hist_scroll.isHidden()
     assert len(p.entries()) == 1
     from easycad.canvas.host_aimake import NO_KEY_TEXT
     assert req.entry.status_text() == NO_KEY_TEXT      # 호스트가 요청을 받아 상태를 단다(이 테스트는 키 없음)
@@ -494,21 +496,71 @@ def test_click_one_candidate_keeps_only_it_as_one_step():
     _close_clean(w)
 
 
-def test_ctrl_click_several_then_accept():
+def test_check_boxes_pick_several_then_accept():
+    # 2026-10-05 피드백: Ctrl+클릭은 이 캔버스에서 선택을 바꿔 버려(추가는 Shift) 마지막 하나만 골라졌다 → 칸마다 □.
     w = _shown_window()
     with _fake_svg():
         _make_symbol(w)
     st = w._ai_staged
-    ctrl = Qt.KeyboardModifier.ControlModifier
-    with _patch("easycad.canvas.host_aimake.QApplication.keyboardModifiers", return_value=ctrl):
-        st.cands[0].items[0].setSelected(True)
-        st.cands[4].items[0].setSelected(True)
-    _app.processEvents()
-    assert w._ai_staged is st and st.picked == {0, 4}
+    view = w._view
+    s_ = view.transform().m11()
+
+    def press_check(i):
+        r = w._ai_check_scene_rect(st.slots[i], s_)
+        return _mouse(w, _QMouseEvent.Type.MouseButtonPress, view.mapFromScene(r.center()))
+    assert press_check(0) is True and press_check(4) is True
+    assert st.picked == {0, 4} and st.bar.accept_btn.text() == "2개 채택"
+    assert press_check(4) is True and st.picked == {0}          # 다시 누르면 빠짐
+    assert press_check(3) is True
     st.bar.accept_btn.click()
     assert w._ai_staged is None
     kept = [i for i, c in enumerate(st.cands) if c.items[0].scene() is w._scene]
-    assert kept == [0, 4]
+    assert kept == [0, 3]
+    _close_clean(w)
+
+
+def test_accept_without_checks_does_nothing():
+    w = _shown_window()
+    with _fake_svg():
+        _make_symbol(w)
+    st = w._ai_staged
+    st.bar.accept_btn.click()
+    assert w._ai_staged is st    # 고른 게 없으면 그대로(안내만)
+    _close_clean(w)
+
+
+def test_symbol_count_from_advanced_is_used_and_remembered():
+    w = _shown_window()
+    p = w._ai_panel
+    p.set_kind("symbol")
+    p._adv_btn.click()
+    assert not p._count_row.isHidden()
+    p._count_spin.setValue(3)
+    assert p._hint_lbl.text() == "후보 3"
+    with _fake_svg():
+        _make_symbol(w)
+    assert len(w._ai_staged.slots) == 3
+    w2 = CanvasWindow()
+    assert w2._ai_panel.symbol_count() == 3          # 마지막 값 기억
+    p._count_spin.setValue(6)
+    p.set_kind("flow")
+    assert p._count_row.isHidden()
+    _close_clean(w)
+
+
+def test_history_entry_click_refills_input():
+    from PIL import Image
+    w = _shown_window()
+    p = w._ai_panel
+    p.set_kind("flow")
+    p._set_attached_image(Image.new("RGB", (40, 30), "white"), "손그림.png")
+    p._prompt_edit.setPlainText("송신기 → 안테나")
+    req = p.request_make()
+    p.set_kind("symbol")
+    assert p._prompt_edit.toPlainText() == "" and p._attached_image is None
+    req.entry.clicked.emit(req.entry)
+    assert p.kind() == "flow" and p._prompt_edit.toPlainText() == "송신기 → 안테나"
+    assert p._attached_image is req.image
     _close_clean(w)
 
 

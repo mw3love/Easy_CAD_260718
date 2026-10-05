@@ -18,7 +18,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PyQt6.QtGui import QColor, QPen, QPolygonF
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QToolButton, QWidget,
+    QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QToolButton, QWidget,
 )
 
 from easycad.ai import gateway as gw
@@ -44,7 +44,9 @@ FLOW_DIRECTIONS = (("가로 →", "LR"), ("세로 ↓", "TD"), ("세로 ↑", "B
 SYMBOL_COUNT = 6          # 심볼 후보 수(패널 입력칸 「후보 6」)
 SYMBOL_GAP = 40.0         # 후보 칸 사이(씬 단위)
 UNPICKED_TEXT = "고르지 않아 후보를 버렸어요"
-PICK_HINT = "하나를 클릭 · Ctrl+클릭 여러 개"
+PICK_HINT = "클릭=바로 넣기 · □=여러 개"
+_CHECK_PX = 16      # 후보 칸 체크 표시 크기(화면 px)
+_CHECK_INSET_PX = 4
 TRACE_HINT = "주황 점을 종이 네 귀퉁이로 끌어 맞추고 「만들기」"
 TRACE_NO_PHOTO_TEXT = "베끼기 사진이 캔버스에 없어요 — 사진을 다시 붙여 주세요"
 TRACE_BUSY_TEXT = "다른 베끼기가 만드는 중이에요 — 끝나거나 취소한 뒤에 다시"
@@ -461,6 +463,8 @@ class _AIMakeMixin:
                 st.doc.scene.selectionChanged.disconnect(self._ai_on_cand_selection)
             except (TypeError, RuntimeError):
                 pass
+            if not sip.isdeleted(st.doc.view):
+                self._ai_sync_viewport_filter(st.doc.view)
         if st.bar is not None and not sip.isdeleted(st.bar):
             st.bar.hide()
             st.bar.deleteLater()
@@ -586,6 +590,8 @@ class _AIMakeMixin:
                 painter.drawRoundedRect(r, 6 / s, 6 / s)
                 if not arrived:
                     painter.drawText(r, Qt.AlignmentFlag.AlignCenter, "…")
+                else:
+                    self._ai_draw_check(painter, self._ai_check_scene_rect(r, s), i in st.picked, s)
         else:
             pen = QPen(QColor(_ACCENT_CORAL), 2.0, Qt.PenStyle.DashLine)
             pen.setCosmetic(True)
@@ -635,7 +641,7 @@ class _AIMakeMixin:
             req.entry.set_status(NO_KEY_TEXT)
             return None
         L = self._SVG_LONG
-        n = SYMBOL_COUNT
+        n = max(1, int(getattr(req, "count", SYMBOL_COUNT) or SYMBOL_COUNT))
         target = getattr(req, "replace_target", None)
         if target is not None and target.scene() is self._scene:
             tr = target.mapToScene(QRectF(target.rect())).boundingRect()
@@ -672,9 +678,10 @@ class _AIMakeMixin:
         save_btn.clicked.connect(self._ai_save_candidates_to_symbols)
         st.bar = _StagingBar(view.viewport(), self._ai_commit_picked, self._ai_retry_staged,
                              self._ai_discard_staged, extras=(st.hint, save_btn), discard_text="모두 버리기")
-        st.bar.accept_btn.setToolTip("Ctrl+클릭으로 고른 후보를 넣기")
+        st.bar.accept_btn.setToolTip("□로 고른 후보를 한꺼번에 넣기")
         self._ai_staged = st
         st.doc.scene.selectionChanged.connect(self._ai_on_cand_selection)
+        self._ai_sync_viewport_filter(view)
         self._ai_ensure_visible()
         self._ai_place_bar()
         st.bar.show()
@@ -720,7 +727,7 @@ class _AIMakeMixin:
             return
         # 다 왔다 — 못 받은 칸은 줄에서 뺀다(빈 회색 칸이 남지 않게).
         st.slots = st.slots[:len(st.cands)]
-        req.entry.set_status(f"후보 {len(st.cands)}개 — 하나를 클릭해 고르세요", running=True)
+        req.entry.set_status(f"후보 {len(st.cands)}개 — 클릭해 넣거나 □로 여러 개 고르세요", running=True)
         st.doc.view.viewport().update()
         self._ai_place_bar()
 
@@ -729,33 +736,74 @@ class _AIMakeMixin:
         return [i for i, c in enumerate(st.cands) if any(it in sel for it in c.items)]
 
     def _ai_on_cand_selection(self):
-        """후보를 클릭(선택)하면 그 하나로 바로 결정, Ctrl을 누른 채면 고른 것만 모아 둔다(「채택」으로 넣음)."""
+        """후보 자체를 클릭(선택)하면 그 하나만 바로 넣는다. 여러 개는 칸 모서리 □로 모아 「N개 채택」.
+        (2026-10-05 피드백: 처음엔 Ctrl+클릭으로 모았는데, 이 캔버스는 선택 추가가 Shift라 Ctrl+클릭이 선택을 바꿔 버려
+        마지막 하나만 골라졌다 — 실제 창 재현으로 확인. 눈에 보이는 체크 표시로 바꿈.)"""
         st = self._ai_staged
         if st is None or st.slots is None:
             return
         hits = self._ai_cand_hits(st)
-        ctrl = bool(QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier)
-        if ctrl:
-            st.picked = set(hits)
-            if st.hint is not None:
-                st.hint.setText(f"{len(st.picked)}개 고름 — 「채택」으로 넣기" if st.picked else PICK_HINT)
-            st.doc.view.viewport().update()
-            self._ai_place_bar()
-        elif len(hits) == 1:
-            st.picked = {hits[0]}
-            QTimer.singleShot(0, self._ai_commit_picked)   # 선택 신호 도중 씬을 바꾸지 않는다
+        if len(hits) == 1:
+            st.clicked = hits[0]
+            QTimer.singleShot(0, self._ai_commit_clicked)   # 선택 신호 도중 씬을 바꾸지 않는다
+
+    def _ai_commit_clicked(self):
+        st = self._ai_staged
+        if st is None or st.slots is None or getattr(st, "clicked", None) is None:
+            return
+        self._ai_commit_candidates([st.clicked])
 
     def _ai_commit_picked(self):
+        """막대 「채택」 — □로 고른 후보들."""
         st = self._ai_staged
         if st is None or st.slots is None:
             return
         if not st.picked:
-            hits = self._ai_cand_hits(st)
-            st.picked = set(hits)
-        if not st.picked:
-            self.statusBar().showMessage("후보를 먼저 클릭해 고르세요 (Ctrl+클릭으로 여러 개)", 3000)
+            self.statusBar().showMessage("후보를 바로 클릭하거나, 칸 모서리 □를 눌러 여러 개 고르세요", 3000)
             return
         self._ai_commit_candidates(sorted(st.picked))
+
+    def _ai_check_scene_rect(self, slot, s) -> QRectF:
+        size, inset = _CHECK_PX / s, _CHECK_INSET_PX / s
+        return QRectF(slot.right() - inset - size, slot.top() + inset, size, size)
+
+    def _ai_draw_check(self, painter, r, on, s):
+        pen = QPen(QColor(_ACCENT_CORAL), 1.5)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(QColor(_ACCENT_CORAL) if on else QColor(255, 255, 255, 40))
+        painter.drawRoundedRect(r, 3 / s, 3 / s)
+        if on:
+            mark = QPen(QColor("#1b120d"), 2.0)
+            mark.setCosmetic(True)
+            painter.setPen(mark)
+            painter.drawPolyline(QPolygonF([QPointF(r.left() + r.width() * 0.22, r.top() + r.height() * 0.55),
+                                            QPointF(r.left() + r.width() * 0.43, r.top() + r.height() * 0.75),
+                                            QPointF(r.left() + r.width() * 0.8, r.top() + r.height() * 0.28)]))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    def _ai_toggle_check(self, i):
+        st = self._ai_staged
+        if i in st.picked:
+            st.picked.discard(i)
+        else:
+            st.picked.add(i)
+        n = len(st.picked)
+        st.bar.accept_btn.setText(f"{n}개 채택" if n else "채택")
+        st.doc.view.viewport().update()
+        self._ai_place_bar()
+
+    def _ai_sync_viewport_filter(self, view):
+        """viewport 이벤트 필터(베끼기 모서리 끌기·후보 □ 누르기)는 한 viewport에 하나만 걸린다 — 한쪽이 끝날 때
+        다른 쪽 것까지 떼지 않도록, 그 viewport에 지금 필요한지 보고 걸거나 뗀다."""
+        tr = getattr(self, "_ai_trace", None)
+        st = getattr(self, "_ai_staged", None)
+        need = (tr is not None and tr.doc.view is view) or \
+            (st is not None and st.slots is not None and st.doc.view is view)
+        vp = view.viewport()
+        vp.removeEventFilter(self)
+        if need:
+            vp.installEventFilter(self)
 
     def _ai_commit_candidates(self, indices):
         """고른 후보만 남기고 나머지는 걷는다 — 고른 것은 되돌리기 한 칸. 바꾸기 요청이면 고른 첫 후보로 그 도형을
@@ -880,7 +928,7 @@ class _AIMakeMixin:
         lay.addWidget(tr.cancel_btn)
         tr.bar = bar
         self._ai_trace = tr
-        view.viewport().installEventFilter(self)
+        self._ai_sync_viewport_filter(view)
         self._ai_ensure_visible(view, rect)
         tr.last_vp = self._ai_place_widget(view, bar, rect)
         bar.show()
@@ -894,7 +942,7 @@ class _AIMakeMixin:
         self._ai_trace = None
         view = getattr(tr.doc, "view", None)
         if view is not None and not sip.isdeleted(view):
-            view.viewport().removeEventFilter(self)
+            self._ai_sync_viewport_filter(view)
             view.viewport().update()
         if tr.bar is not None and not sip.isdeleted(tr.bar):
             tr.bar.hide()
@@ -965,7 +1013,18 @@ class _AIMakeMixin:
             self._ai_place_widget(tr.doc.view, tr.bar, tr.rect)
 
     def eventFilter(self, obj, event):
-        """베끼기 모서리 점 끌기 — 그 탭 캔버스의 viewport에만 건다. 점 근처 누름이 아니면 캔버스에 그대로 넘긴다."""
+        """베끼기 모서리 점 끌기·후보 칸 □ 누르기 — 그 탭 캔버스의 viewport에만 건다. 점·□ 위 누름이 아니면 캔버스로 넘긴다."""
+        st = getattr(self, "_ai_staged", None)
+        if st is not None and st.slots is not None and obj is st.doc.view.viewport() \
+                and event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            view = st.doc.view
+            s = view.transform().m11() or 1.0
+            pos = event.position()
+            for i in range(len(st.cands)):
+                box = view.mapFromScene(self._ai_check_scene_rect(st.slots[i], s)).boundingRect().adjusted(-3, -3, 3, 3)
+                if box.contains(pos.toPoint()):
+                    self._ai_toggle_check(i)
+                    return True
         tr = getattr(self, "_ai_trace", None)
         if tr is not None and not tr.running and obj is tr.doc.view.viewport():
             et = event.type()

@@ -17,10 +17,11 @@ from PyQt6.QtCore import QEvent, QPointF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QFont, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
     QButtonGroup, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QScrollArea,
-    QSizePolicy, QToolButton, QVBoxLayout, QWidget,
+    QSizePolicy, QSpinBox, QToolButton, QVBoxLayout, QWidget,
 )
 
 from easycad.ai import gateway as gw
+from easycad.app_settings import app_settings
 from easycad.canvas.host_dialogs import (
     _AIGatewaySettingsDialog, _CORAL_BTN_QSS, _ImageAttachMixin, _ModelListWorker, _ROUNDED_COMBO_QSS,
     _attach_button_qss, _combo_selected_model, _detach_worker, _fill_model_combo_grouped,
@@ -28,7 +29,7 @@ from easycad.canvas.host_dialogs import (
 from easycad.canvas.host_widgets import _ACCENT_CORAL, _act_icon, _current_icon_color
 from easycad.canvas.photo_dialog import PHOTO_MODELS
 
-# (키, 탭 이름, 안내 카드 제목, 안내 카드 설명, 안내 카드 예시) — 이름은 결과 기준(기술 이름 Mermaid·SVG를 쓰지 않음).
+# (키, 탭 이름, 제목, 설명, 예시) — 이름은 결과 기준(기술 이름 Mermaid·SVG를 쓰지 않음). 설명·예시는 탭 바로 아래 한 줄로.
 KINDS = (
     ("symbol", "심볼", "심볼 하나",
      "부품 아이콘을 후보 여러 개로 만들어요. 도면 옆에 줄지어 놓이고 클릭해서 골라요.", "예: BNC 커넥터 아이콘"),
@@ -43,7 +44,10 @@ PLACEHOLDER = {
     "flow": "설명을 쓰거나 손그림을 끌어 놓기",
     "trace": "도면 사진을 끌어다 놓기 · Ctrl+V",
 }
-INPUT_HINT = {"symbol": "후보 6", "flow": "", "trace": "약 2~3분"}
+INPUT_HINT = {"symbol": "후보 {n}", "flow": "", "trace": "약 2~3분"}
+SYMBOL_COUNT_DEFAULT = 6
+SYMBOL_COUNT_MAX = 10      # 옛 SVG 창 최대(모델 A 5 + B 5)와 같은 상한
+_SYMBOL_COUNT_KEY = "ai_panel/symbol_count"
 # 종류별 추천 모델(평소엔 이것을 자동으로 — 「고급」을 펼쳐야 바꿀 수 있다).
 DEFAULT_MODEL = {
     "symbol": gw.TEXT_RECOMMEND_1,
@@ -68,57 +72,23 @@ class AIRequest:
     doc: object = field(default=None, repr=False)     # 만들기를 누른 탭(CanvasDocument) — 호스트가 채움
     center: object = None                             # 결과를 놓을 씬 좌표(만들기를 누른 순간의 화면 가운데)
     replace_target: object = field(default=None, repr=False)   # 우클릭 「AI로 바꾸기」의 대상 도형(심볼)
-
-
-class _KindCard(QFrame):
-    """빈 상태(기록 없음)의 종류 안내 카드 — 누르면 그 종류로 바뀐다."""
-
-    clicked = pyqtSignal(str)
-
-    def __init__(self, key, title, desc, example, parent=None):
-        super().__init__(parent)
-        self._key = key
-        self.setObjectName("aiKindCard")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(9, 7, 9, 7)
-        lay.setSpacing(2)
-        t = QLabel(title, self)
-        t.setStyleSheet("font-weight:600;")
-        d = QLabel(desc, self)
-        d.setWordWrap(True)
-        d.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
-        e = QLabel(example, self)
-        e.setStyleSheet(f"color:{_ACCENT_CORAL}; font-size:11px;")
-        for wdg in (t, d, e):
-            lay.addWidget(wdg)
-        self.set_active(False)
-
-    def set_active(self, active: bool):
-        self._active = active
-        border = _ACCENT_CORAL if active else _CARD_BORDER
-        self.setStyleSheet("")   # 같은 문자열이면 다시 칠하지 않을 수 있어 비웠다가 건다(테마 전환 재도색)
-        self.setStyleSheet(f"QFrame#aiKindCard {{ border:1px solid {border}; border-radius:7px; }}")
-
-    def restyle(self):
-        """테마 전환 — QSS 걸린 카드 안 글자는 팔레트만 바뀌어선 처음 색에 남는다(라이트에서 흰 글자)."""
-        self.set_active(self._active)
-
-    def mouseReleaseEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton and self.rect().contains(e.position().toPoint()):
-            self.clicked.emit(self._key)
-        super().mouseReleaseEvent(e)
+    count: int = SYMBOL_COUNT_DEFAULT                 # 심볼 후보 수(고급에서 고름)
 
 
 class _HistoryEntry(QFrame):
-    """기록 한 칸 — "종류 · 시각", 요청 글(또는 그림 이름), 상태 한 줄."""
+    """기록 한 칸 — "종류 · 시각", 요청 글(또는 그림 이름), 상태 한 줄. 누르면 그 요청을 입력칸에 다시 채운다
+    (사용자 결정 2026-10-05 — 고쳐서 다시 만들기용)."""
+
+    clicked = pyqtSignal(object)   # self
 
     def __init__(self, kind: str, text: str, image_name: str, parent=None):
         super().__init__(parent)
         self.kind = kind
+        self.request = None   # AIRequest — 패널이 붙인다
         self.setObjectName("aiHistEntry")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("누르면 이 요청을 입력칸에 다시 채워요")
         self._running = False
         self.restyle()
         lay = QVBoxLayout(self)
@@ -131,8 +101,7 @@ class _HistoryEntry(QFrame):
         if image_name:
             body = f"[그림] {image_name}" + (f"\n{text}" if text else "")
         self._text_lbl = QLabel(body, self)
-        self._text_lbl.setWordWrap(True)
-        self._text_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._text_lbl.setWordWrap(True)   # 글 고르기(드래그 선택)는 끔 — 칸 누르기와 겹친다
         lay.addWidget(self._text_lbl)
         self._status_lbl = QLabel("", self)
         self._status_lbl.setWordWrap(True)
@@ -146,8 +115,13 @@ class _HistoryEntry(QFrame):
         color = _ACCENT_CORAL if running else _MUTED
         self._status_lbl.setStyleSheet(f"color:{color}; font-size:11px;")
 
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and self.rect().contains(e.position().toPoint()):
+            self.clicked.emit(self)
+        super().mouseReleaseEvent(e)
+
     def restyle(self):
-        """테마 전환 — `_KindCard.restyle`과 같은 이유로 칸 QSS를 비웠다가 다시 건다."""
+        """테마 전환 — QSS 걸린 칸 안 글자는 팔레트만 바뀌어선 처음 색에 남는다(라이트에서 흰 글자) — 비웠다가 다시 건다."""
         self.setStyleSheet("")
         self.setStyleSheet(f"QFrame#aiHistEntry {{ border:1px solid {_CARD_BORDER}; border-radius:7px; }}")
 
@@ -227,22 +201,15 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._kind_group.buttonClicked.connect(self._on_kind_button)
         bl.addWidget(seg)
 
-        # ---- 빈 상태: 종류 안내 카드 3장
-        self._empty = QWidget(body)
-        el = QVBoxLayout(self._empty)
-        el.setContentsMargins(0, 0, 0, 0)
-        el.setSpacing(7)
-        el.addStretch(1)
-        self._kind_cards: dict[str, _KindCard] = {}
-        for key, _short, title, desc, example in KINDS:
-            card = _KindCard(key, title, desc, example, self._empty)
-            card.clicked.connect(self.set_kind)
-            el.addWidget(card)
-            self._kind_cards[key] = card
-        el.addStretch(1)
-        bl.addWidget(self._empty, 1)
+        # ---- 고른 종류 설명(누를 수 없는 글) — 2026-10-05 피드백: 탭과 안내 카드가 둘 다 버튼이라 시선이 갈라짐 →
+        # 버튼은 위 탭 하나, 설명은 그 바로 아래 한두 줄.
+        self._desc_lbl = QLabel("", body)
+        self._desc_lbl.setWordWrap(True)
+        self._desc_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._desc_lbl.setStyleSheet(f"color:{_MUTED}; font-size:11px; padding:0 2px;")
+        bl.addWidget(self._desc_lbl)
 
-        # ---- 기록(요청이 하나라도 생기면 빈 상태 대신)
+        # ---- 기록
         self._hist_scroll = QScrollArea(body)
         self._hist_scroll.setWidgetResizable(True)
         self._hist_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -253,7 +220,6 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._hist_layout.setSpacing(6)
         self._hist_layout.addStretch(1)
         self._hist_scroll.setWidget(inner)
-        self._hist_scroll.setVisible(False)
         bl.addWidget(self._hist_scroll, 1)
 
         # ---- 고급(접힘): 모델 + 게이트웨이 설정. 코드 칸은 흐름도 단계(3단계)에서 여기에 붙는다.
@@ -264,9 +230,12 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._adv_btn.toggled.connect(self._on_adv_toggled)
         bl.addWidget(self._adv_btn)
         self._adv_box = QWidget(body)
-        al = QHBoxLayout(self._adv_box)
-        al.setContentsMargins(0, 0, 0, 0)
+        avl = QVBoxLayout(self._adv_box)
+        avl.setContentsMargins(0, 0, 0, 0)
+        avl.setSpacing(6)
+        al = QHBoxLayout()
         al.setSpacing(6)
+        avl.addLayout(al)
         al.addWidget(QLabel("모델", self._adv_box))
         self._model_combo = QComboBox(self._adv_box)
         self._model_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -277,6 +246,19 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·연결 테스트)")
         self._settings_btn.clicked.connect(self._open_gateway_settings)
         al.addWidget(self._settings_btn)
+        # 심볼 후보 수(사용자 결정: 고급 안) — 마지막 값 기억.
+        self._count_row = QWidget(self._adv_box)
+        crl = QHBoxLayout(self._count_row)
+        crl.setContentsMargins(0, 0, 0, 0)
+        crl.addWidget(QLabel("후보 수", self._count_row))
+        self._count_spin = QSpinBox(self._count_row)
+        self._count_spin.setRange(1, SYMBOL_COUNT_MAX)
+        self._count_spin.setValue(max(1, min(SYMBOL_COUNT_MAX, app_settings().value(
+            _SYMBOL_COUNT_KEY, SYMBOL_COUNT_DEFAULT, type=int))))
+        self._count_spin.valueChanged.connect(self._on_count_changed)
+        crl.addWidget(self._count_spin)
+        crl.addStretch(1)
+        avl.addWidget(self._count_row)
         self._adv_box.setVisible(False)
         bl.addWidget(self._adv_box)
 
@@ -410,8 +392,6 @@ class _AIPanel(_ImageAttachMixin, QFrame):
                 f"QToolButton {{ border:1px solid rgba(128,128,128,110); {left} {radius} padding:4px 0; }}"
                 f"QToolButton:hover {{ background:{hover}; }}"
                 f"QToolButton:checked {{ background:rgba(218,119,86,70); font-weight:600; }}")
-        for card in getattr(self, "_kind_cards", {}).values():
-            card.restyle()
         for entry in getattr(self, "_entries", []):
             entry.restyle()
         self.update()
@@ -426,11 +406,11 @@ class _AIPanel(_ImageAttachMixin, QFrame):
             return
         self._kind = kind
         self._kind_buttons[kind].setChecked(True)
-        for key, card in self._kind_cards.items():
-            card.set_active(key == kind)
+        _key, _short, _title, desc, example = next(k for k in KINDS if k[0] == kind)
+        self._desc_lbl.setText(f"{desc}<br><span style='color:{_ACCENT_CORAL}'>{example}</span>")
         self._prompt_edit.setPlaceholderText(PLACEHOLDER[kind])
-        self._hint_lbl.setText(INPUT_HINT[kind])
-        self._hint_lbl.setVisible(bool(INPUT_HINT[kind]))
+        self._update_input_hint()
+        self._count_row.setVisible(kind == "symbol")
         self._fill_models()
         self._update_adv_label()
         self._sync_code_box()
@@ -488,9 +468,21 @@ class _AIPanel(_ImageAttachMixin, QFrame):
             return self._model_combo.currentData() or DEFAULT_MODEL["trace"]
         return _combo_selected_model(self._model_combo, DEFAULT_MODEL[self._kind])
 
+    def _update_input_hint(self):
+        hint = INPUT_HINT[self._kind].format(n=self.symbol_count())
+        self._hint_lbl.setText(hint)
+        self._hint_lbl.setVisible(bool(hint))
+
+    def symbol_count(self) -> int:
+        return self._count_spin.value()
+
+    def _on_count_changed(self, n):
+        app_settings().setValue(_SYMBOL_COUNT_KEY, int(n))
+        self._update_input_hint()
+
     def _update_adv_label(self):
         arrow = "▾" if self._adv_btn.isChecked() else "▸"
-        what = "모델 · 코드" if self._kind == "flow" else "모델"
+        what = {"flow": "모델 · 코드", "symbol": "모델 · 후보 수"}.get(self._kind, "모델")
         self._adv_btn.setText(f"{arrow} 고급 — {what}")
 
     def _on_adv_toggled(self, on: bool):
@@ -596,7 +588,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
             return None
         req = AIRequest(kind=self._kind, text=text, image=image,
                         image_name=self._attached_image_name if image is not None else "",
-                        model=self.model())
+                        model=self.model(), count=self.symbol_count())
         req.entry = self._add_entry(req)
         self._prompt_edit.clear()
         if image is not None and self._kind != "trace":
@@ -607,7 +599,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     def resubmit(self, req: AIRequest) -> AIRequest:
         """결과 막대 「다시」 — 같은 입력(종류·글·그림·모델)으로 새 기록 칸을 만들어 다시 보낸다."""
         again = AIRequest(kind=req.kind, text=req.text, image=req.image, image_name=req.image_name,
-                          model=req.model, replace_target=req.replace_target)
+                          model=req.model, replace_target=req.replace_target, count=req.count)
         again.entry = self._add_entry(again)
         self.make_requested.emit(again)
         return again
@@ -615,10 +607,10 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     def _add_entry(self, req: AIRequest) -> _HistoryEntry:
         inner = self._hist_scroll.widget()
         entry = _HistoryEntry(req.kind, req.text, req.image_name, inner)
+        entry.request = req
+        entry.clicked.connect(self._on_entry_clicked)
         self._hist_layout.insertWidget(self._hist_layout.count() - 1, entry)   # 마지막 stretch 앞(오래된 것이 위)
         self._entries.append(entry)
-        self._empty.setVisible(False)
-        self._hist_scroll.setVisible(True)
         bar = self._hist_scroll.verticalScrollBar()
         bar.rangeChanged.connect(self._scroll_to_bottom_once)
         return entry
@@ -630,6 +622,28 @@ class _AIPanel(_ImageAttachMixin, QFrame):
             bar.rangeChanged.disconnect(self._scroll_to_bottom_once)
         except TypeError:
             pass
+
+    def _on_entry_clicked(self, entry):
+        """기록 칸 누르기 — 그 요청(종류·글·그림·후보 수)을 입력칸에 다시 채운다. 「코드로 넣기」 칸은 코드 칸에."""
+        req = entry.request
+        if req is None:
+            return
+        self.set_kind(req.kind)
+        if req.kind == "flow" and req.text == "(코드로 넣기)":
+            if not self._adv_btn.isChecked():
+                self._adv_btn.setChecked(True)
+            self.show_flow_code(getattr(req, "result_text", "") or self.flow_code())
+            self._prompt_edit.clear()
+        else:
+            self._prompt_edit.setPlainText(req.text)
+        if req.image is not None:
+            self._set_attached_image(req.image, req.image_name or "그림")
+        elif self._attached_image is not None:
+            self._clear_image()
+        if req.kind == "symbol":
+            self._count_spin.setValue(req.count)
+        self.focus_prompt()
+        self._prompt_edit.moveCursor(self._prompt_edit.textCursor().MoveOperation.End)
 
     def entries(self) -> list:
         return list(self._entries)
