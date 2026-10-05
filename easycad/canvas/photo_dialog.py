@@ -1,13 +1,13 @@
 """사진→도면(§8 항목28) — Qt 쪽: ops 렌더·백그라운드 워커(2단계), 입력 창(3단계).
 
-AI 루프 본체는 `easycad/ai/photo_to_ops.generate_ops`(Qt 비의존), ops→아이템 변환은
+AI 호출 본체는 `easycad/ai/photo_to_ops.generate_ops_tiled`(Qt 비의존), ops→아이템 변환은
 `easycad/fileio/photo_ops.ops_to_sketch`. 여기는 그 둘을 앱에 잇는다.
 2026-08의 "관계만 남기고 재배치" 경로(`host_ai`·`sketch_pipeline`, 폐기·회귀 가드 있음)와는 별개다.
 """
 import io
 
 from PyQt6.QtCore import (
-    QBuffer, QByteArray, QIODevice, QPointF, QRectF, QSize, QThread, Qt, pyqtSignal, pyqtSlot,
+    QBuffer, QByteArray, QIODevice, QPointF, QRectF, QSize, QThread, Qt, pyqtSignal,
 )
 from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import (
@@ -48,56 +48,41 @@ def qimage_to_pil(img: QImage):
 
 
 def render_spec_pil(spec: dict, size: tuple[int, int], *, scale: float = SCALE):
-    """`render_spec_qimage`의 PIL 판 — `generate_ops(render=...)`에 넘기는 모양."""
+    """`render_spec_qimage`의 PIL 판 — `generate_ops(render=...)`(도구 `tools/sketch_ops_probe.py`)에 넘기는 모양."""
     return qimage_to_pil(render_spec_qimage(spec, size, scale=scale))
 
 
 class _PhotoOpsWorker(QThread):
-    """`generate_ops`(첫 생성 + 수정 라운드)를 메인 스레드 밖에서 돈다. 1회 수 분이 걸린다.
+    """`generate_ops_tiled`(구역별 동시 생성, 2026-10-05)를 메인 스레드 밖에서 돈다. 2~3분 걸린다.
 
-    수정 라운드에 필요한 "직전 결과 렌더"는 Qt 글자 아이템을 쓰므로 메인 스레드에서 그린다 —
-    워커가 `_render_req`를 BlockingQueuedConnection으로 쏘면 메인 스레드의 `_do_render`가 그려
-    `_rendered`에 담고, 워커는 그동안 기다린다.
+    2026-10-01판은 첫 생성 + 수정 2라운드(`generate_ops`)라 수정마다 직전 결과를 메인 스레드에서
+    렌더해 넘겼는데, 벽 전체 도면에서 18분이 걸려 수정 라운드를 뺐다(렌더 장치도 함께 걷어 냄).
 
     취소는 호출 사이에서만 먹는다(진행 중인 HTTP 호출은 못 끊음). 창이 먼저 닫히면 호출부가
     `host_dialogs._detach_worker`로 떼어내 결과를 버린다."""
 
-    progressed = pyqtSignal(int, int, str)     # (라운드 i, 전체, 글)
-    succeeded = pyqtSignal(dict, list)         # (최종 spec, 라운드 로그)
+    progressed = pyqtSignal(int, int, str)     # (끝난 구역 수, 전체, 글)
+    succeeded = pyqtSignal(dict, list)         # (최종 spec, 구역별 로그)
     failed = pyqtSignal(str)
     cancelled = pyqtSignal()
-    _render_req = pyqtSignal(dict, int, int)
 
-    def __init__(self, api_key, base_url, photo, model, rounds=2, parent=None):
+    def __init__(self, api_key, base_url, photo, model, parent=None):
         super().__init__(parent)
         self._api_key = api_key
         self._base_url = base_url
         self._photo = photo
         self._model = model
-        self._rounds = rounds
         self._cancel = False
-        self._rendered = None
-        # 수신 객체(self)는 메인 스레드 소속이라 슬롯이 메인 스레드에서 돈다.
-        self._render_req.connect(self._do_render, Qt.ConnectionType.BlockingQueuedConnection)
 
     def request_cancel(self):
         self._cancel = True
 
-    @pyqtSlot(dict, int, int)
-    def _do_render(self, spec, w, h):
-        self._rendered = render_spec_pil(spec, (w, h))
-
-    def _render(self, spec, size):
-        self._rendered = None
-        self._render_req.emit(spec, size[0], size[1])
-        return self._rendered
-
     def run(self):
-        from easycad.ai.photo_to_ops import Cancelled, generate_ops
+        from easycad.ai.photo_to_ops import Cancelled, generate_ops_tiled
         try:
             client = gw._client(self._api_key, self._base_url, timeout=600.0)
-            spec, log = generate_ops(
-                client, self._photo, model=self._model, render=self._render, rounds=self._rounds,
+            spec, log = generate_ops_tiled(
+                client, self._photo, model=self._model,
                 progress=lambda i, n, t: self.progressed.emit(i, n, t),
                 cancelled=lambda: self._cancel)
         except Cancelled:
@@ -115,7 +100,6 @@ class _PhotoOpsWorker(QThread):
 
 PHOTO_MODELS = (("gpt-6.1-sol", "gpt-6.1-sol (추천1 — 가성비)"),
                 ("gpt-6-astra", "gpt-6-astra (추천2 — 약 5배 비쌈)"))
-PHOTO_ROUNDS = 2   # 첫 생성 뒤 수정 라운드 — 2026-10-01 실측 조건(조각 3×2 + 수정 2회)
 
 
 def _pil_to_pixmap(img) -> QPixmap:
@@ -271,7 +255,7 @@ class _PhotoToDrawingDialog(_ImageAttachMixin, QDialog):
         self._cancel.clicked.connect(self._on_cancel)
         row.addWidget(self._cancel)
         lay.addLayout(row)
-        note = QLabel(f"한 번에 첫 생성 + 수정 {PHOTO_ROUNDS}회(약 5~7분). 그동안 창을 옮기거나 닫을 수 있어요.", self)
+        note = QLabel("사진을 6구역으로 나눠 동시에 만들어요(약 2~3분). 그동안 창을 옮기거나 닫을 수 있어요.", self)
         note.setStyleSheet("color:#8a8a8a; font-size:11px;")
         lay.addWidget(note)
         self._progress = _GenProgressRow(self)
@@ -386,19 +370,22 @@ class _PhotoToDrawingDialog(_ImageAttachMixin, QDialog):
         self._set_result(None)
         self._sent_photo = sent
         self._set_running(True)
-        self._worker = _PhotoOpsWorker(key, gw.resolve_base_url(), sent,
-                                       self.model(), PHOTO_ROUNDS, self)
+        self._worker = _PhotoOpsWorker(key, gw.resolve_base_url(), sent, self.model(), self)
         self._worker.progressed.connect(self._on_progress)
         self._worker.succeeded.connect(self._on_succeeded)
         self._worker.failed.connect(self._on_failed)
         self._worker.finished.connect(self._on_finished)
         self._worker.start()
 
-    def _on_progress(self, i, n, text):
-        self._progress.start(f"{text} ({i + 1}/{n})")
+    def _on_progress(self, _i, _n, text):
+        self._progress.start(text)
 
-    def _on_succeeded(self, spec, _log):
+    def _on_succeeded(self, spec, log):
         self._set_result(spec)
+        bad = sum(1 for e in log if "error" in e)
+        if bad:
+            QMessageBox.warning(self, "사진→도면", f"{len(log)}구역 중 {bad}곳을 읽지 못해 그 자리가 비어 있어요. "
+                                "「도면 만들기」를 다시 누르면 새로 만들어요.")
 
     def _on_failed(self, err):
         QMessageBox.warning(self, "사진→도면", f"생성 실패: {err}")

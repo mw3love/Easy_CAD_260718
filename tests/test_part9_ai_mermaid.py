@@ -1396,32 +1396,107 @@ def test_render_spec_qimage_draws_in_photo_frame():
     assert QColor(img.pixel(35, 25)).lightness() > 240       # 상자 안은 흰 배경
 
 
-def test_photo_ops_worker_renders_on_main_thread():
+class _FnOpsClient:
+    """동시 호출용 가짜 — reply(콘텐츠 첫 글, 호출 번호) → 응답 글. 스트리밍 조각 2개로 돌려준다."""
+
+    def __init__(self, reply):
+        import threading
+        self.calls = []
+        lock = threading.Lock()
+        outer = self
+
+        class _Comp:
+            def create(self, model, max_tokens, messages, stream=False, stream_options=None):
+                assert stream
+                text = messages[0]["content"][0]["text"]
+                with lock:
+                    outer.calls.append(text)
+                    n = len(outer.calls)
+                txt = reply(text, n)
+                half = len(txt) // 2
+                return [type("K", (), {"choices": [type("C", (), {"delta": type("D", (), {"content": t})()})()],
+                                       "usage": None})() for t in (txt[:half], txt[half:])]
+
+        self.chat = type("Chat", (), {"completions": _Comp()})()
+
+
+def _tile_of(text):
+    import re
+    m = re.search(r"맡은 구역: 원본 좌표 x (\d+)~(\d+), y (\d+)~(\d+)", text)
+    x1, x2, y1, y2 = (int(v) for v in m.groups())
+    return x1, y1, x2, y2
+
+
+def test_generate_ops_tiled_owns_retries_and_joins_seams():
+    # 2026-10-05: 6구역 동시 생성 — 도형은 주인 구역 하나에만, 경계에서 잘린 선은 다시 이어지고,
+    # 깨진 응답(스트림이 중간에 끊김)은 그 구역만 다시 보낸다.
+    import json
+    from PIL import Image
+    from easycad.ai.photo_to_ops import generate_ops_tiled
+    photo = Image.new("RGB", (600, 400), "white")          # 3×2 구역 = 200×200씩
+    broken = {"first": True}
+
+    def reply(text, n):
+        x1, y1, x2, y2 = _tile_of(text)
+        ops = [{"op": "box", "id": "a", "x1": 20, "y1": 20, "x2": 80, "y2": 60},          # 모든 구역이 같은 상자를 봄
+               {"op": "line", "pts": [[50, 40], [550, 42 + (x1 > 0)]], "head": True,      # 구역마다 1px씩 어긋난 같은 선
+                "src": "a"}]
+        if x1 > 150 and y1 == 0 and broken["first"]:      # 가운데 위 구역 첫 응답은 끊긴 JSON
+            broken["first"] = False
+            return json.dumps({"ops": ops})[:40]
+        return json.dumps({"ops": ops})
+
+    client = _FnOpsClient(reply)
+    seen = []
+    spec, log = generate_ops_tiled(client, photo, model="m", progress=lambda i, n, t: seen.append((i, n)))
+    assert len(client.calls) == 7 and seen[0] == (0, 6) and seen[-1] == (6, 6)
+    assert sorted(e["tries"] for e in log) == [1, 1, 1, 1, 1, 2] and not any("error" in e for e in log)
+    boxes = [o for o in spec["ops"] if o["op"] == "box"]
+    lines = [o for o in spec["ops"] if o["op"] == "line"]
+    assert len(boxes) == 1 and boxes[0]["id"] == "t0_a"                  # 중심이 구역 0에 있는 것만
+    assert len(lines) == 1                                               # 세 구역 조각이 한 선으로
+    ln = lines[0]
+    assert ln["pts"][0] == [50.0, 40.0] and ln["pts"][-1][0] == 550 and ln["head"] and ln["src"] == "t0_a"
+
+
+def test_generate_ops_tiled_gives_up_tile_and_all_fail_raises():
+    from PIL import Image
+    from easycad.ai.photo_to_ops import generate_ops_tiled
+    photo = Image.new("RGB", (600, 400), "white")
+    ok = '{"ops": [{"op": "text", "x": 10, "y": 10, "text": "A"}]}'
+    spec, log = generate_ops_tiled(_FnOpsClient(lambda t, n: "없음" if _tile_of(t)[0] == 0 and _tile_of(t)[1] == 0
+                                                 else ok), photo, model="m")
+    assert [e["tile"] for e in log if "error" in e] == [0] and log[0]["tries"] == 2
+    assert spec["ops"] == []                       # 글자 시작점(10,10)의 주인 구역 0이 실패 → 비어 있음
+    try:
+        generate_ops_tiled(_FnOpsClient(lambda t, n: "없음"), photo, model="m")
+        assert False
+    except ValueError:
+        pass
+
+
+def test_photo_ops_worker_runs_tiled_off_main_thread():
+    import json
     import time
     from PIL import Image
-    from PyQt6.QtCore import QThread
     from easycad.ai import gateway as gw
     import easycad.canvas.photo_dialog as pdlg
-    client = _FakeOpsClient([_OPS_A, _OPS_B])
-    threads, got = [], {}
-    orig_render = pdlg.render_spec_pil
-
-    def spy(spec, size):
-        threads.append(QThread.currentThread() is QApplication.instance().thread())
-        return orig_render(spec, size)
-
-    with patch.object(gw, "_client", lambda *a, **k: client), patch.object(pdlg, "render_spec_pil", spy):
-        w = pdlg._PhotoOpsWorker("key", "url", Image.new("RGB", (120, 90), "white"), "m", rounds=1)
+    client = _FnOpsClient(lambda t, n: json.dumps({"ops": [{"op": "text", "x": _tile_of(t)[0] + 70,
+                                                            "y": _tile_of(t)[1] + 60, "text": "T"}]}))
+    got, prog = {}, []
+    with patch.object(gw, "_client", lambda *a, **k: client):
+        w = pdlg._PhotoOpsWorker("key", "url", Image.new("RGB", (120, 90), "white"), "m")
         w.succeeded.connect(lambda spec, log: got.update(spec=spec, log=log))
         w.failed.connect(lambda e: got.update(err=e))
+        w.progressed.connect(lambda i, n, t: prog.append(t))
         w.start()
         t0 = time.time()
-        while not w.isFinished() and time.time() - t0 < 10:   # wait()는 금지 — 렌더 요청이 메인 루프를 기다림
+        while not w.isFinished() and time.time() - t0 < 10:
             QApplication.processEvents()
         for _ in range(5):
             QApplication.processEvents()
     assert "err" not in got, got.get("err")
-    assert len(got["spec"]["ops"]) == 2 and threads == [True]
+    assert len(got["log"]) == 6 and prog and prog[-1] == "구역 6/6곳 끝"
 
 
 # ── §8 항목28 3~4단계(2026-10-01) — 사진→도면 창·삽입 ─────────────────────────

@@ -163,6 +163,236 @@ def generate_ops(client, photo, *, model: str, render, rounds: int = 2, task: st
     return spec, log
 
 
+# ---- 구역별 동시 생성(2026-10-05) ----------------------------------------------
+# 시간 대부분은 AI가 답을 쓰는 시간이라, 사진을 구역으로 나눠 동시에 쓰게 한다. 벽 전체 도면 실측:
+# 한 번에 전체 331초 → 3×2 구역 161초(4×3도 143초라 더 잘게는 이득 없음). 수정 라운드는 없다(전체를
+# 다시 쓰느라 18분이 걸렸다). 경위: docs/history/2026-10.md "구역별 동시 호출".
+
+TILE_NOTE = ("\n\n이번에는 도면의 한 구역만 맡는다. 첫 이미지=원본 전체(위치 참고용), 둘째 이미지=맡은 구역을 "
+             "2배 확대한 것. 맡은 구역: 원본 좌표 x {x1}~{x2}, y {y1}~{y2} (확대 이미지 픽셀÷2 + ({x1},{y1}) = "
+             "원본 좌표). 이 구역 안에 보이는 것만 그린다. 구역 밖으로 이어지는 선은 구역 경계까지만 그린다. "
+             "단 글자는 시작점(x,y)이 구역 안이면 구역 밖으로 넘어가도 끝까지 전부 쓰고(원본 전체 이미지에서 "
+             "읽어라), 시작점이 구역 밖인 글자는 쓰지 않는다. 상자도 중심이 구역 안이면 전체를 그린다. "
+             "좌표는 원본 좌표계로.")
+
+SEAM_TOL = 8   # 경계에서 양쪽 구역의 선 끝이 이 거리(원본 px) 안이면 같은 선으로 잇는다
+
+
+def core_rects(w, h, cols=3, rows=2):
+    """겹침 없는 구역 범위 — 도형마다 주인 구역을 하나로 정하는 데 쓴다(조각은 `grid_crops`로 겹쳐 보낸다)."""
+    cw, ch = w / cols, h / rows
+    return [(c * cw, r * ch, (c + 1) * cw, (r + 1) * ch) for r in range(rows) for c in range(cols)]
+
+
+def _clip_seg(p, q, r):
+    """선분 p→q를 사각형 r로 자른다(Liang-Barsky). 반환 (p', q') 또는 None."""
+    (x0, y0), (x1, y1) = p, q
+    dx, dy = x1 - x0, y1 - y0
+    t0, t1 = 0.0, 1.0
+    for pp, qq in ((-dx, x0 - r[0]), (dx, r[2] - x0), (-dy, y0 - r[1]), (dy, r[3] - y0)):
+        if pp == 0:
+            if qq < 0:
+                return None
+        else:
+            t = qq / pp
+            if pp < 0:
+                t0 = max(t0, t)
+            else:
+                t1 = min(t1, t)
+    if t0 > t1:
+        return None
+    return [x0 + t0 * dx, y0 + t0 * dy], [x0 + t1 * dx, y0 + t1 * dy]
+
+
+def _clip_polyline(pts, r):
+    """꺾은선을 사각형으로 잘라 안에 남는 조각들. 각 조각 = (점들, 시작이 잘렸나, 끝이 잘렸나)."""
+    out, cur = [], []
+
+    def flush():
+        if len(cur) > 1:
+            out.append((cur[:], cur[0] != pts_f[0], cur[-1] != pts_f[-1]))
+
+    pts_f = [[float(x), float(y)] for x, y in pts]
+    for a, b in zip(pts_f, pts_f[1:]):
+        s = _clip_seg(a, b, r)
+        if s is None:
+            flush()
+            cur = []
+            continue
+        if cur and cur[-1] == s[0]:
+            cur.append(s[1])
+        else:
+            flush()
+            cur = [s[0], s[1]]
+    flush()
+    return out
+
+
+def _inside(x, y, r):
+    return r[0] <= x < r[2] and r[1] <= y < r[3]
+
+
+def _own(op, core):
+    """구역 결과의 op 하나를 주인 구역 기준으로 거른다. 상자·원·글자는 중심(글자는 시작점)이 구역 안일
+    때만, 선은 구역 안 부분만 남긴다. 선 조각은 끝 정보(잘림·연결·화살촉)를 함께 돌려 나중에 잇는다."""
+    k = op.get("op")
+    try:
+        if k in ("box", "dashrect"):
+            return [op] if _inside((op["x1"] + op["x2"]) / 2, (op["y1"] + op["y2"]) / 2, core) else []
+        if k == "circle":
+            return [op] if _inside(op["cx"], op["cy"], core) else []
+        if k == "text":
+            return [op] if _inside(op["x"], op["y"], core) else []
+        if k in ("line", "poly"):
+            pts = list(op.get("pts") or [])
+            if op.get("closed") and pts:
+                pts.append(pts[0])
+            res = []
+            for piece, cut0, cut1 in _clip_polyline(pts, core):
+                base = {key: v for key, v in op.items()
+                        if key not in ("pts", "closed", "head", "src", "dst")}
+                res.append({"_piece": True, "base": base, "pts": piece,
+                            "ends": [{"cut": cut0, "node": None if cut0 else op.get("src"), "head": False},
+                                     {"cut": cut1, "node": None if cut1 else op.get("dst"),
+                                      "head": bool(op.get("head")) and not cut1}],
+                            "closed": bool(op.get("closed")) and not (cut0 or cut1)})
+            return res
+    except (KeyError, TypeError, ValueError):
+        return []
+    return []
+
+
+def _seam_join(pieces):
+    """구역 경계에서 잘린 선 조각끼리 잇는다 — 잘린 끝이 같은 경계 위에서 SEAM_TOL 안이면 한 선으로."""
+    def rev(p):
+        p["pts"].reverse()
+        p["ends"].reverse()
+
+    alive = list(pieces)
+    merged = True
+    while merged:
+        merged = False
+        for a in alive:
+            if not a["ends"][1]["cut"]:
+                if a["ends"][0]["cut"]:
+                    rev(a)
+                else:
+                    continue
+            ax, ay = a["pts"][-1]
+            best, best_d = None, SEAM_TOL
+            for b in alive:
+                if b is a or b["base"].get("op") != a["base"].get("op") or b["tile"] == a["tile"]:
+                    continue
+                for end in (0, 1):
+                    if not b["ends"][end]["cut"]:
+                        continue
+                    bx, by = b["pts"][-1 if end else 0]
+                    d = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                    if d < best_d:
+                        best, best_d, best_end = b, d, end
+            if best is None:
+                a["ends"][1]["cut"] = False     # 짝 없음 — 잘린 끝으로 남는다
+                merged = True
+                break
+            if best_end == 1:
+                rev(best)
+            bx, by = best["pts"][0]
+            mid = [(ax + bx) / 2, (ay + by) / 2]
+            a["pts"] = a["pts"][:-1] + [mid] + best["pts"][1:]
+            a["ends"][1] = best["ends"][1]
+            alive.remove(best)
+            merged = True
+            break
+    ops = []
+    for p in alive:
+        if p["ends"][0]["head"] and not p["ends"][1]["head"]:
+            rev(p)
+        op = dict(p["base"], pts=p["pts"])
+        if op.get("op") == "line":
+            op["head"] = p["ends"][1]["head"]
+            for key, end in (("src", 0), ("dst", 1)):
+                if p["ends"][end]["node"] is not None:
+                    op[key] = p["ends"][end]["node"]
+        elif p["closed"]:
+            op["pts"] = p["pts"][:-1]
+            op["closed"] = True
+        ops.append(op)
+    return ops
+
+
+def tile_content(photo, task: str, crop) -> list:
+    """구역 하나의 콘텐츠: [지시+구역 안내, 원본, 구역 2배 조각]."""
+    x1, y1, x2, y2 = crop
+    c = photo.crop(crop)
+    return [{"type": "text", "text": task + TILE_NOTE.format(x1=x1, y1=y1, x2=x2, y2=y2)},
+            image_part(photo), image_part(c.resize((c.width * 2, c.height * 2)))]
+
+
+def generate_ops_tiled(client, photo, *, model: str, cols: int = 3, rows: int = 2, task: str = TASK,
+                       max_tokens: int = 32000, tries: int = 2, progress=None,
+                       cancelled=None) -> tuple[dict, list]:
+    """사진(PIL RGB) → ops 명세. 구역 cols×rows를 동시에 생성해 합친다. 반환 (spec, 구역별 로그).
+
+    - 구역 응답이 깨지면(스트림이 오류 없이 중간에 끊긴 사례 실측) 그 구역만 `tries`번까지 다시 보낸다.
+      끝내 실패한 구역은 비워 두고 로그에 error를 남긴다. 전부 실패면 ValueError.
+    - progress(끝난 수, 전체, 글): 시작과 구역이 끝날 때마다. cancelled() -> bool: 다시 보내기 전과
+      다 끝난 뒤 확인(진행 중인 호출은 못 끊는다), 참이면 Cancelled."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    W, H = photo.size
+    text = task.format(w=W, h=H)
+    crops, cores = grid_crops(W, H, cols, rows), core_rects(W, H, cols, rows)
+    n = len(crops)
+
+    def one(i):
+        entry = {"tile": i}
+        for t in range(tries):
+            if cancelled is not None and cancelled():
+                entry["error"] = "취소"
+                return entry, []
+            try:
+                txt, usage, dt = call(client, model, tile_content(photo, text, crops[i]), max_tokens)
+                spec = parse_ops(txt)
+            except Exception as e:  # noqa: BLE001 — 깨진 응답·HTTP 오류 모두 그 구역만 다시
+                entry["error"] = str(e)[:200]
+                continue
+            entry.pop("error", None)
+            entry.update(tries=t + 1, sec=round(dt, 1), usage=usage, ops=len(spec["ops"]))
+            return entry, spec["ops"]
+        entry["tries"] = tries
+        return entry, []
+
+    if progress is not None:
+        progress(0, n, f"구역 {n}곳 동시 생성 중")
+    results = [None] * n
+    with ThreadPoolExecutor(n) as ex:
+        futs = {ex.submit(one, i): i for i in range(n)}
+        for done, f in enumerate(as_completed(futs), 1):
+            results[futs[f]] = f.result()
+            if progress is not None:
+                progress(done, n, f"구역 {done}/{n}곳 끝")
+    if cancelled is not None and cancelled():
+        raise Cancelled()
+    log = [e for e, _ in results]
+    if all("error" in e for e in log):
+        raise ValueError("모든 구역 생성 실패: " + log[0]["error"])
+    ops, pieces = [], []
+    for i, (_, tile_ops) in enumerate(results):
+        for op in tile_ops:
+            if not isinstance(op, dict):
+                continue
+            op = dict(op)
+            for key in ("id", "src", "dst"):          # 구역마다 id를 따로 매기므로 겹치지 않게
+                if key in op:
+                    op[key] = f"t{i}_{op[key]}"
+            for o in _own(op, cores[i]):
+                if o.get("_piece"):
+                    o["tile"] = i
+                    pieces.append(o)
+                else:
+                    ops.append(o)
+    return {"ops": ops + _seam_join(pieces)}, log
+
+
 # ---- 원근 보정(2026-10-01) -----------------------------------------------------
 # 비스듬히 찍은 사진은 결과 도면도 같은 사다리꼴이 된다("원본 위치 그대로" 규칙이 왜곡까지 따름 —
 # 평면도 시험에서 발견). 사용자가 창에서 맞춘 네 모서리를 반듯한 직사각형으로 펴서 AI에 보낸다.
