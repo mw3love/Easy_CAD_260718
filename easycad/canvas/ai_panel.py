@@ -65,6 +65,8 @@ class AIRequest:
     image_name: str = ""
     model: str = ""
     entry: object = field(default=None, repr=False)   # _HistoryEntry
+    doc: object = field(default=None, repr=False)     # 만들기를 누른 탭(CanvasDocument) — 호스트가 채움
+    center: object = None                             # 결과를 놓을 씬 좌표(만들기를 누른 순간의 화면 가운데)
 
 
 class _KindCard(QFrame):
@@ -482,6 +484,14 @@ class _AIPanel(_ImageAttachMixin, QFrame):
             self._clear_image()
         self.make_requested.emit(req)
         return req
+
+    def resubmit(self, req: AIRequest) -> AIRequest:
+        """결과 막대 「다시」 — 같은 입력(종류·글·그림·모델)으로 새 기록 칸을 만들어 다시 보낸다."""
+        again = AIRequest(kind=req.kind, text=req.text, image=req.image, image_name=req.image_name,
+                          model=req.model)
+        again.entry = self._add_entry(again)
+        self.make_requested.emit(again)
+        return again
 
     def _add_entry(self, req: AIRequest) -> _HistoryEntry:
         inner = self._hist_scroll.widget()

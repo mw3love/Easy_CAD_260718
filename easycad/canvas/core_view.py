@@ -2552,6 +2552,10 @@ class _AnnotatorView(QGraphicsView):
         # 비어 보인다(2-D의 가장 큰 위험). 아래 마커·가이드류가 위에 얹히도록 맨 처음에 그린다.
         if self._drag_proxy is not None:
             self._draw_drag_proxy(painter, rect)
+        # [우리 확장 §8 항목36] AI 임시 결과의 주황 점선 — 호스트가 그린다(씬 좌표라 줌·스크롤·이동을 따라감).
+        draw_staging = getattr(self._owner, "_draw_ai_staging", None)
+        if draw_staging is not None:
+            draw_staging(self, painter)
         if not self._owner.is_edit_mode():
             return
         s = self._view_scale()

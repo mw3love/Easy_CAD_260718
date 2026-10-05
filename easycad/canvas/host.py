@@ -39,6 +39,7 @@ from easycad.canvas.host_selection import _SelectionMixin
 from easycad.canvas.host_context import _ContextMixin
 from easycad.canvas.host_canvas import _CanvasMixin
 from easycad.canvas.host_mindmap import _MindMapMixin
+from easycad.canvas.host_aimake import _AIMakeMixin
 
 from easycad.canvas.host_widgets import (
     _MinimapView, _ToastLabel, _SharedClipboard, _CANVAS_BG,
@@ -47,6 +48,7 @@ from easycad.canvas.document import CanvasDocument
 
 
 class CanvasWindow(
+    _AIMakeMixin,   # [§8 항목36] 맨 앞 — `_refresh_history_actions`를 덮어 임시 결과를 맞춘다(super로 원래 것 호출)
     _UIBuildMixin, _FileIOMixin, _LayersMixin, _StyleMixin, _UndoMixin,
     _SelectionMixin, _ContextMixin, _CanvasMixin, _MindMapMixin, QMainWindow,
 ):

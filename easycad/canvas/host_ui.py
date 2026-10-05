@@ -29,7 +29,6 @@ from easycad.fileio.document import (
 )
 from easycad.fileio import symbol_library
 from easycad.canvas import shortcuts
-from easycad.canvas.ai_panel import _AIPanel, PENDING_TEXT as _AI_PENDING_TEXT
 from easycad.canvas.host_widgets import (
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
@@ -567,45 +566,6 @@ class _UIBuildMixin:
             act.blockSignals(True)
             act.setChecked(visible)
             act.blockSignals(False)
-
-    # ---- [§8 항목36] AI 만들기 패널(오른쪽 기둥) ---------------------------------
-
-    def _build_ai_panel(self):
-        """`CanvasWindow.__init__`이 중앙 위젯(탭 옆)에 붙인다. 기본은 꺼짐."""
-        self._ai_panel = _AIPanel(self)
-        self._ai_panel.close_requested.connect(self._close_ai_panel)
-        self._ai_panel.make_requested.connect(self._on_ai_make_requested)
-        return self._ai_panel
-
-    def _toggle_ai_panel(self, checked: bool = False):
-        self._set_ai_panel_visible(bool(checked))
-
-    def _close_ai_panel(self):
-        self._set_ai_panel_visible(False)
-
-    def _set_ai_panel_visible(self, visible: bool, kind: str | None = None):
-        """켜기/끄기의 단일 경로(메뉴·상단바·패널 ✕). 켜고 끄면 뷰 폭이 바뀌는데 창 크기는 그대로라
-        `resizeEvent`가 안 온다 — 레이아웃을 즉시 다시 잡고 플로팅 카드·미니맵 사각형을 직접 갱신한다."""
-        panel = self._ai_panel
-        if kind is not None:
-            panel.set_kind(kind)
-        panel.setVisible(visible)
-        act = self._act_ai_make
-        if act.isChecked() != visible:
-            act.blockSignals(True)
-            act.setChecked(visible)
-            act.blockSignals(False)
-        lay = self.centralWidget().layout() if self.centralWidget() is not None else None
-        if lay is not None:
-            lay.activate()
-        self._reposition_panels()
-        self._refresh_minimap()
-        if visible:
-            panel.focus_prompt()
-
-    def _on_ai_make_requested(self, req):
-        """[1단계] 생성은 아직 없다 — 종류별 생성은 3~5단계에서 여기서 갈라 붙인다."""
-        req.entry.set_status(_AI_PENDING_TEXT)
 
     # ---- [캔버스-퍼스트] 플로팅 패널·토스트 위치 계산 -------------------------
 
