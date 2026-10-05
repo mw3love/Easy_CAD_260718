@@ -377,7 +377,8 @@ class _AIMakeMixin:
         req.result_text = code
         self._ai_panel.show_flow_code(code)
         self.set_tool("select")
-        return self._ai_stage(added, req, extras=self._ai_flow_extras(direction))
+        # 흐름도 막대엔 「다시」가 없다(2026-10-05 피드백 5차 — 같은 요청은 기록 칸을 눌러 다시 채우면 됨).
+        return self._ai_stage(added, req, extras=self._ai_flow_extras(direction), retry=False)
 
     def _ai_flow_extras(self, direction):
         """방향 — 드롭다운 대신 화살표 버튼 4개(2026-10-05 피드백 2차: 한 번에 고르게), 지금 방향만 눌린 상태."""
@@ -459,7 +460,7 @@ class _AIMakeMixin:
 
     # ---- 임시 결과 ---------------------------------------------------------------
 
-    def _ai_stage(self, items, req, extras=()):
+    def _ai_stage(self, items, req, extras=(), retry=True):
         """`items`는 **이미 씬에 넣고 `push_undo_add_many`까지 마친** 결과. 그 한 칸을 기억하고 점선·막대를 띄운다."""
         self._ai_accept_staged()
         items = [it for it in items if it.scene() is self._scene]
@@ -467,7 +468,7 @@ class _AIMakeMixin:
             return None
         view = self._view
         st = _StagedResult(doc=self._active_doc, items=items, undo_entry=self._undo[-1], request=req)
-        st.bar = _StagingBar(view.viewport(), self._ai_accept_staged, self._ai_retry_staged,
+        st.bar = _StagingBar(view.viewport(), self._ai_accept_staged, self._ai_retry_staged if retry else None,
                              self._ai_discard_staged, extras)
         self._ai_staged = st
         if req is not None and getattr(req, "entry", None) is not None:

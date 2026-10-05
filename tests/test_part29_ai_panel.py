@@ -340,6 +340,7 @@ def test_flow_generates_and_stages_at_request_center():
     st = w._ai_staged
     assert st.request is req and req.entry.status_text() == STAGED_TEXT
     assert len(st.items) == 7   # 상자 4 + 화살표 3
+    assert st.bar.retry_btn is None   # 피드백 5차: 흐름도 막대엔 「다시」 없음(기록 칸으로 다시 채움)
     c = w._ai_staged_scene_rect().center()
     assert abs(c.x() - req.center.x()) < 2 and abs(c.y() - req.center.y()) < 60
     assert w._ai_panel.flow_code() == _FLOW
