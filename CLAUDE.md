@@ -57,7 +57,7 @@ easycad/
 │   ├── gateway.py          AI 게이트웨이(Mindlogic) 클라이언트 — 키/주소 저장·모델 목록·크레딧
 │   │                       조회·텍스트 호출(폴백 포함)
 │   ├── text_to_mermaid.py  프롬프트 빌더·코드펜스 벗기기·generate_mermaid (§8 항목18)
-│   └── photo_to_ops.py     사진→도면 프롬프트·조각·AI 루프 generate_ops (§8 항목28, Qt 비의존)
+│   └── photo_to_ops.py     사진→도면 프롬프트·구역 동시 생성 generate_ops_tiled(앱)·수정 루프 generate_ops(도구) (§8 항목28, Qt 비의존)
 ├── fileio/
 │   ├── pdf_export.py       PDF 출력(A4~A0, 전체/선택영역)
 │   ├── document.py         .ecad(JSON) 저장/열기 — 문서모델 씨앗(DXF 매핑 기반)

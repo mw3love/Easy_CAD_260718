@@ -1457,9 +1457,6 @@
   겹쳐 보여 버그로 오인하기 쉽다. 스크린샷은 진짜 `app.exec()` 루프에서 `QTimer.singleShot`으로 단계 진행. (같은 곳)
 - **상태줄(`self.statusBar()`)은 QStatusBar가 아니라 우리 `_ToastLabel`** — `showMessage`/`currentMessage`만 있고
   `clearMessage()`는 없다(AttributeError). 비우려면 `showMessage("", 1)`. (2026-10-03, "§8 항목33")
-- **`photo_dialog._PhotoOpsWorker`는 수정 라운드 렌더를 `BlockingQueuedConnection`으로 메인 스레드에
-  맡긴다** — 메인 스레드에서 `worker.wait()`하면 교착. `processEvents()` 펌핑으로 기다릴 것.
-  (2026-10-01, `docs/history/2026-10.md` "항목28 2단계")
 - **ezdxf `odafc.export_dwg(replace=True)`는 변환 전에 대상 파일부터 지운다** — 변환기가 없거나 실패하면 원본
   .dwg가 사라진다. 임시 폴더로 변환한 뒤 바꿔치기할 것(`dxf_export.export_dwg`).
 - **Windows에서 `os.kill(pid, 0)`은 "살아 있나" 확인이 아니라 그 프로세스를 죽인다**(신호 0도 TerminateProcess).
