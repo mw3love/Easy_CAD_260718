@@ -90,7 +90,7 @@ def test_kind_switch_updates_placeholder_hint_and_model():
     # 버튼은 위 탭 하나, 아래는 고른 종류 설명 글(2026-10-05 피드백 — 안내 카드 3장 없앰)
     assert not hasattr(p, "_kind_cards")
     p._kind_buttons["flow"].click()
-    assert "관계만 읽어" in p._intro_desc.text() and p._intro_img.pixmap() is not None
+    assert "말하듯" in p._intro_desc.text() and "상세하게" in p._intro_desc.text() and p._intro_img.pixmap() is not None
     p._kind_buttons["symbol"].click()
     assert "파라볼라" in p._intro_desc.text() and p._intro_title.text() == "심볼 하나"
 
@@ -146,9 +146,10 @@ def test_enter_makes_and_shift_enter_does_not():
 def test_advanced_section_folds_and_theme_toggle_keeps_panel_alive():
     w = CanvasWindow()
     p = w._ai_panel
-    assert p._adv_box.isHidden() and p._adv_btn.text().startswith("▸")
+    assert p._adv_box.isHidden() and p._adv_btn.text().startswith("고급 설정") and p._adv_btn.text().endswith("▾")
+    assert not p._adv_btn.icon().isNull()                 # 피드백 4차: 톱니 아이콘 + 테두리 버튼
     p._adv_btn.click()
-    assert not p._adv_box.isHidden() and p._adv_btn.text().startswith("▾")
+    assert not p._adv_box.isHidden() and p._adv_btn.text().endswith("▴")
     p._prompt_edit.setPlainText("BNC 커넥터 아이콘")
     p.request_make()   # 기록 칸이 있는 채로 테마 전환(칸 QSS를 다시 거는 경로 — 라이트에서 흰 글자 남던 것)
     w._apply_theme(not w._dark)
@@ -957,4 +958,106 @@ def test_theme_switch_repaints_floating_bars():
         assert "aiStagingBar" in bar.styleSheet()
         assert all(not b.property("aiIcon") or not b.icon().isNull() for b in bar.findChildren(QToolButton))
     w._apply_theme(not w._dark)
+    _close_clean(w)
+
+
+
+# ── 피드백 4차(2026-10-05): 칸 빈 곳 클릭·흐름 방향 화살표·이어 만들기 ─────────────────────
+
+def test_click_empty_space_inside_slot_toggles_pick():
+    w = _shown_window()
+    with _fake_svg():
+        _make_symbol(w)
+    st = w._ai_staged
+    view = w._view
+    slot = st.slots[2]
+    near_corner = view.mapFromScene(QPointF(slot.left() + 6, slot.bottom() - 6))   # 도형 선이 없는 칸 구석
+    assert _mouse(w, _QMouseEvent.Type.MouseButtonPress, near_corner) is True
+    assert st.picked == {2}
+    assert _mouse(w, _QMouseEvent.Type.MouseButtonPress, near_corner) is True
+    assert st.picked == set()
+    _close_clean(w)
+
+
+def test_flow_arrows_enter_along_flow_direction():
+    # 피드백 4차 사용자 화면: 위아래로 멀리 떨어진 짝이 위·아래 변으로 들어가며 같은 열 좁은 틈(40)을 지나
+    # 마지막 꺾임(12)이 화살촉+모서리보다 짧아 겹쳤다 → 앞으로 가는 화살표는 흐름 방향 변으로(가로면 오른쪽→왼쪽).
+    import math
+    code = ("flowchart LR\n A[내부 구조] --> B[기저대역부]\n A --> C[RF부]\n B --> D[데이터입력]\n"
+            " B --> E[부호화기]\n B --> F[변조기]\n C --> G[상향변환기]\n C --> H[전력증폭기]\n C --> I[안테나]")
+    w = CanvasWindow()
+    _n, _a, _d, added = w._build_mermaid_items(code)
+    arrows = [it for it in added if isinstance(it, _PolyArrowItem)]
+    boxes = [it for it in added if not isinstance(it, _PolyArrowItem)]
+    assert len(arrows) == 8
+    for arr in arrows:
+        pts = [arr.mapToScene(q) for q in arr._pts]
+        last = math.hypot(pts[-1].x() - pts[-2].x(), pts[-1].y() - pts[-2].y())
+        assert last >= 25, last                                     # 고치기 전 최솟값 12
+        end = pts[-1]
+        dst = next(b for b in boxes if b.mapRectToScene(b.rect()).adjusted(-1, -1, 1, 1).contains(end))
+        assert abs(end.x() - dst.mapRectToScene(dst.rect()).left()) < 1.0   # 왼쪽 변으로 들어감
+
+
+def test_symbol_followup_sends_picked_svgs_and_replaces_row():
+    w = _shown_window()
+    with _fake_svg():
+        req0 = _make_symbol(w)
+    st = w._ai_staged
+    w._ai_toggle_check(1)
+    w._ai_toggle_check(4)
+    w._ai_followup_symbol()
+    p = w._ai_panel
+    fu = p.followup()
+    assert fu is not None and fu["kind"] == "symbol" and len(fu["refs"]) == 2 and not p._follow_box.isHidden()
+    assert p._follow_thumbs.count() == 2
+    seen = []
+
+    def gen(*_a, refs=None, **_k):
+        seen.append(refs)
+        return _SVG, "m"
+    old_center = w._ai_staged_scene_rect().center()
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.canvas.host_dialogs.generate_svg", side_effect=gen):
+        p._prompt_edit.setPlainText("두 개를 섞어서")
+        req = p.request_make()
+        assert _wait_until(lambda: not w._ai_jobs)
+    assert req.refs == [st.cands[1].svg, st.cands[4].svg] and all(r == req.refs for r in seen)
+    assert req0.entry.status_text() == "이어 만들기로 넘김"
+    assert all(it.scene() is None for c in st.cands for it in c.items)      # 바탕 후보는 넣지 않고 걷음
+    st2 = w._ai_staged
+    assert st2 is not None and st2 is not st and p.followup() is None and p._follow_box.isHidden()
+    c2 = w._ai_staged_scene_rect().center()
+    assert abs(c2.x() - old_center.x()) < 1 and abs(c2.y() - old_center.y()) < 1   # 같은 자리에서 이어 감
+    assert req.entry._text_lbl.text().startswith("[이어서]")
+    _close_clean(w)
+
+
+def test_flow_followup_sends_code_and_replaces_result():
+    w = _shown_window()
+    with _fake_gateway():
+        _make_flow(w)
+        assert _wait_until(lambda: w._ai_staged is not None)
+    st = w._ai_staged
+    n_undo = len(w._undo)
+    follow = [b for b in st.bar.findChildren(QToolButton) if b.text() == "이어 고치기"][0]
+    follow.click()
+    p = w._ai_panel
+    assert p.followup()["base_code"] == _FLOW
+    assert p.request_make() is None and "어떻게 고칠지" in p._notice.text()   # 흐름도는 지시가 필요
+    seen = []
+    new_code = _FLOW + "\n  D --> E[경보]"
+
+    def gen(*_a, base_code="", **_k):
+        seen.append(base_code)
+        return new_code, "m"
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.text_to_mermaid.generate_mermaid", side_effect=gen):
+        p._prompt_edit.setPlainText("감시장치 뒤에 경보 추가")
+        req = p.request_make()
+        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not st)
+    assert seen == [_FLOW]
+    assert all(it.scene() is None for it in st.items)                       # 바탕 결과는 바꿔치기
+    assert len(w._ai_staged.items) == 9 and len(w._undo) == n_undo        # 기록 칸 수는 그대로(한 칸 바뀜)
+    assert w._ai_staged.request is req
     _close_clean(w)

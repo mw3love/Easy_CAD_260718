@@ -21,14 +21,22 @@ from __future__ import annotations
 
 from easycad.ai import gateway as gw
 
-_PROMPT_TEMPLATE = """다음 설명을 Mermaid flowchart 문법으로 변환하라.
+# [§8 항목36 피드백 4차, 2026-10-05] 말하듯 쓴 요청("~ 구조를 상세하게 알려줘")을 받게 고침. 옛 규칙 "설명에 없는 단계를
+# 임의로 추가하지 말 것"은 그런 요청에서 상자 2개짜리 결과를 냈다(기본 모델 실측 4회 중 3회 1줄). 단계를 직접 나열한 요청은
+# 여전히 그대로만(덧붙이지 않음) — 바꾼 지시문 실측: "상세하게 알려줘" 22~25줄, "그려줘" 10~14줄, "A → B → C" 1줄.
+# subgraph는 우리 해석기가 건너뛰어 묶음 안 상자가 따로 놀 수 있어 쓰지 말게 한다(`mermaid_import` 스코프 밖).
+_PROMPT_TEMPLATE = """다음 요청을 Mermaid flowchart 문법으로 그려라.
 
-설명: {description}
+요청: {description}
 
 규칙:
-- 반드시 `flowchart TD` 또는 `flowchart LR`로 시작할 것 — 설명이 명확히 위→아래 흐름(계층
+- 반드시 `flowchart TD` 또는 `flowchart LR`로 시작할 것 — 요청이 명확히 위→아래 흐름(계층
   구조·단계가 아래로 깊어지는 트리 등)을 요구하지 않는 한 기본은 `flowchart LR`(가로)로 할 것.
-- 노드 라벨은 한글로 간결하게, 설명에 없는 단계를 임의로 추가하지 말 것.
+- 요청이 단계·관계를 직접 나열하면(예: "A → B → C") 그 단계만 그대로 그리고 임의로 단계를 더하지 말 것.
+- 요청이 어떤 대상의 구조·원리·흐름을 설명해 달라는 말이면(예: "~ 구조를 알려줘", "~를 그려줘") 일반적인 기술 지식으로
+  주요 구성 요소와 신호·처리 흐름을 펼쳐 그려라. "상세하게·자세히"가 있으면 하위 구성까지 한 단계 더 깊게(대략 10~20개 노드).
+- subgraph·style·classDef는 쓰지 말고 노드와 화살표만 평평하게 나열할 것. 모든 노드는 화살표로 어딘가에 이어질 것.
+- 노드 라벨은 한글로 간결하게(필요하면 영문 약어 병기).
 - 다른 설명 없이 Mermaid 코드만 출력하라(```mermaid 코드블록으로 감싸도 되고 안 감싸도 됨).
 """
 
@@ -50,6 +58,26 @@ _IMAGE_PROMPT_TEMPLATE = """이 이미지(손그림·사진·스크린샷 등)�
 """
 
 
+# [§8 항목36 이어 고치기, 2026-10-05] 지금 결과 코드 + 지시 → 고친 전체 코드("감시장치를 아래로", "전원부 추가").
+_REFINE_TEMPLATE = """아래 Mermaid flowchart를 지시대로 고쳐라.
+
+```mermaid
+{code}
+```
+
+지시: {instruction}
+
+규칙:
+- 지시와 관계없는 노드·연결·라벨은 그대로 둘 것.
+- 첫 줄 방향(flowchart LR 등)은 지시가 바꾸라고 하지 않으면 그대로 둘 것.
+- 다른 설명 없이 고친 전체 Mermaid 코드만 출력하라(```mermaid 코드블록으로 감싸도 되고 안 감싸도 됨).
+"""
+
+
+def build_refine_prompt(instruction: str, code: str) -> str:
+    return _REFINE_TEMPLATE.format(code=code.strip(), instruction=instruction.strip())
+
+
 def build_prompt(description: str) -> str:
     return _PROMPT_TEMPLATE.format(description=description.strip())
 
@@ -65,7 +93,7 @@ def extract_mermaid(raw: str) -> str:
 
 
 def generate_mermaid(api_key: str, description: str, *, model: str,
-                      base_url: str = gw.BASE_URL, image=None) -> tuple[str, str]:
+                      base_url: str = gw.BASE_URL, image=None, base_code: str = "") -> tuple[str, str]:
     """설명(및/또는 이미지) → (Mermaid 텍스트, 실제 사용된 모델). `image`(PIL Image)가
     주어지면 이미지 프롬프트로 전환되고 `description`은 보충 설명 취급된다(비어 있어도
     됨 — 텍스트 전용 경로와 달리 이미지 경로는 설명이 필수가 아니다). 이미지 호출은
@@ -73,7 +101,10 @@ def generate_mermaid(api_key: str, description: str, *, model: str,
     (옛 밀집 타일링 파이프라인의 504 위험만큼은 아니다 — 이미지 1장뿐이라 그 정도는
     아니지만 텍스트 기본값 60s보다는 여유가 필요하다는 판단, 실측 없음). 실패 시 예외를
     그대로 올린다(호출자가 다이얼로그에서 메시지로 보여준다)."""
-    prompt = build_image_prompt(description) if image is not None else build_prompt(description)
+    if base_code.strip():   # 이어 고치기 — 지금 결과 코드 + 지시(`description`)
+        prompt = build_refine_prompt(description, base_code)
+    else:
+        prompt = build_image_prompt(description) if image is not None else build_prompt(description)
     timeout = 120.0 if image is not None else 60.0
     res = gw.call_text_with_fallback(api_key, prompt, model=model, base_url=base_url,
                                      image=image, timeout=timeout)

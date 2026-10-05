@@ -17,7 +17,7 @@ from PyQt6.QtCore import QByteArray, QEvent, QPointF, QSize, Qt, QTimer, pyqtSig
 from PyQt6.QtGui import QBrush, QColor, QFont, QIcon, QImage, QPainter, QPalette, QPen, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
-    QButtonGroup, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMenu, QPlainTextEdit, QScrollArea,
+    QButtonGroup, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMenu, QPlainTextEdit, QPushButton, QScrollArea,
     QSizePolicy, QSpinBox, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -37,14 +37,15 @@ KINDS = (
      "손으로 그리기 번거로운 부품을 아이콘 후보 여러 개로 만들어요. 도면 옆에 줄지어 놓이면 클릭해서 골라요.",
      "예: 파라볼라 안테나(위성 수신용)"),
     ("flow", "흐름도", "흐름도",
-     "설명이나 손그림에서 관계만 읽어 상자·화살표를 줄 맞춰 놓아요.", "예: 송신기 → 결합기 → 안테나"),
+     "말하듯 써도 돼요. 관계를 읽어 상자·화살표를 줄 맞춰 놓아요. 「상세하게」를 붙이면 더 자세히 나와요.",
+     "예: 송신기 내부 증폭 구조를 상세하게 그려줘"),
     ("trace", "베끼기", "그대로 베끼기",
      "도면 사진 속 위치 그대로 선·글자로 옮겨요. 사진이 필요하고 2~3분 걸려요.", "사진을 끌어다 놓기 · Ctrl+V"),
 )
 KIND_LABEL = {k[0]: k[1] for k in KINDS}
 PLACEHOLDER = {
     "symbol": "만들 부품을 적어 주세요 — 예: 파라볼라 안테나",
-    "flow": "설명을 쓰거나 손그림을 끌어 놓기",
+    "flow": "말하듯 써도 돼요 — 예: 송신기 내부 증폭 구조를 상세하게 그려줘",
     "trace": "도면 사진을 끌어다 놓기 · Ctrl+V",
 }
 INPUT_HINT = {"symbol": "후보 {n}", "flow": "", "trace": "약 2~3분"}
@@ -76,8 +77,8 @@ _ILLUS = {
 </svg>""",
     "flow": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 92" fill="none" stroke="{ink}" stroke-width="1.6">
   <rect x="2" y="22" width="86" height="48" rx="9" fill="#e7e0d6" stroke="none"/>
-  <text x="45" y="42" fill="#241a15" stroke="none" font-size="10" text-anchor="middle" font-family="Malgun Gothic">송신기 →</text>
-  <text x="45" y="58" fill="#241a15" stroke="none" font-size="10" text-anchor="middle" font-family="Malgun Gothic">결합기 → 안테나</text>
+  <text x="45" y="42" fill="#241a15" stroke="none" font-size="10" text-anchor="middle" font-family="Malgun Gothic">송신기 증폭 구조를</text>
+  <text x="45" y="58" fill="#241a15" stroke="none" font-size="10" text-anchor="middle" font-family="Malgun Gothic">상세하게 그려줘</text>
   <path d="M94 46h18M106 41l6 5-6 5" stroke="#da7756"/>
   <rect x="120" y="37" width="30" height="18" rx="2"/><rect x="163" y="37" width="30" height="18" rx="2"/>
   <rect x="206" y="14" width="30" height="18" rx="2"/><rect x="206" y="60" width="30" height="18" rx="2"/>
@@ -141,6 +142,11 @@ class AIRequest:
     center: object = None                             # 결과를 놓을 씬 좌표(만들기를 누른 순간의 화면 가운데)
     replace_target: object = field(default=None, repr=False)   # 우클릭 「AI로 바꾸기」의 대상 도형(심볼)
     count: int = SYMBOL_COUNT_DEFAULT                 # 심볼 후보 수(고급에서 고름)
+    # 이어 만들기(2026-10-05 피드백 4차): 심볼은 고른 후보 SVG(refs), 흐름도는 지금 결과 코드(base_code)를 지시와 함께 보낸다.
+    refs: list = None
+    base_code: str = ""
+    base_text: str = ""                               # 원래 요청 글(지시가 비면 이걸로)
+    followup_of: object = field(default=None, repr=False)   # 이어 만든 바탕 임시 결과(_StagedResult)
 
 
 class _HistoryEntry(QFrame):
@@ -355,10 +361,11 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         bl.addWidget(self._hist_box, 1)
 
         # ---- 고급(접힘): 모델 + 게이트웨이 설정. 코드 칸은 흐름도 단계(3단계)에서 여기에 붙는다.
-        self._adv_btn = QToolButton(body)
-        self._adv_btn.setAutoRaise(True)
+        # 피드백 4차: 회색 글자뿐이라 눌리는 항목으로 안 보임 → 톱니 아이콘 + 테두리 + 마우스 올림 효과가 있는 한 줄 버튼.
+        self._adv_btn = QPushButton(body)
         self._adv_btn.setCheckable(True)
-        self._adv_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._adv_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._adv_btn.setIconSize(QSize(14, 14))
         self._adv_btn.toggled.connect(self._on_adv_toggled)
         bl.addWidget(self._adv_btn)
         self._adv_box = QWidget(body)
@@ -434,6 +441,32 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._notice.setStyleSheet(f"color:{_ACCENT_CORAL}; font-size:11px;")
         self._notice.setVisible(False)
         bl.addWidget(self._notice)
+
+        # ---- 이어 만들기 칩 — 결과 막대 「이어 만들기/이어 고치기」를 누르면 입력 카드 위에 바탕이 붙는다(피드백 4차).
+        self._followup = None
+        self._follow_box = QFrame(body)
+        self._follow_box.setObjectName("aiFollowBox")
+        self._follow_box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._follow_box.setStyleSheet(
+            f"QFrame#aiFollowBox {{ border:1px dashed {_ACCENT_CORAL}; border-radius:7px; }}")
+        fl = QHBoxLayout(self._follow_box)
+        fl.setContentsMargins(8, 4, 4, 4)
+        fl.setSpacing(5)
+        self._follow_lbl = QLabel("", self._follow_box)
+        self._follow_lbl.setStyleSheet(f"color:{_ACCENT_CORAL}; font-size:11px; font-weight:600;")
+        fl.addWidget(self._follow_lbl)
+        self._follow_thumbs = QHBoxLayout()
+        self._follow_thumbs.setSpacing(3)
+        fl.addLayout(self._follow_thumbs)
+        fl.addStretch(1)
+        self._follow_x = QToolButton(self._follow_box)
+        self._follow_x.setAutoRaise(True)
+        self._follow_x.setFixedSize(18, 18)
+        self._follow_x.setToolTip("이어 만들기 그만두기")
+        self._follow_x.clicked.connect(self.clear_followup)
+        fl.addWidget(self._follow_x)
+        self._follow_box.setVisible(False)
+        bl.addWidget(self._follow_box)
 
         # ---- 입력 카드: 글(위) + 첨부·힌트·만들기(아래) — 옛 Mermaid/SVG 창의 카드와 같은 언어
         self._card = QFrame(body)
@@ -516,7 +549,13 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._model_combo.setStyleSheet(_ROUNDED_COMBO_QSS)
         self._close_btn.setStyleSheet(
             f"QToolButton {{ color:{_current_icon_color().name()}; font-size:12px; }}")
-        self._adv_btn.setStyleSheet(f"QToolButton {{ color:{_MUTED}; font-size:11px; border:none; }}")
+        hover_bg = "rgba(255,255,255,18)" if dark else "rgba(0,0,0,12)"
+        self._adv_btn.setIcon(_ai_icon("settings", _current_icon_color()))
+        self._adv_btn.setStyleSheet(
+            "QPushButton { text-align:left; padding:5px 9px; border:1px solid rgba(128,128,128,110); border-radius:7px;"
+            " font-size:12px; background:transparent; }"
+            f"QPushButton:hover {{ background:{hover_bg}; border-color:rgba(128,128,128,170); }}"
+            "QPushButton:checked { border-color:rgba(218,119,86,170); }")
         hover = "rgba(255,255,255,22)" if dark else "rgba(0,0,0,18)"
         for b in self._kind_buttons.values():
             pos = b.property("segPos")
@@ -543,11 +582,13 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     def set_kind(self, kind: str):
         if kind not in KIND_LABEL:
             return
+        if self._followup is not None and self._followup["kind"] != kind:
+            self.clear_followup()
         self._kind = kind
         self._kind_buttons[kind].setChecked(True)
         self._update_intro()
         self._refresh_history_view()
-        self._prompt_edit.setPlaceholderText(PLACEHOLDER[kind])
+        self._prompt_edit.setPlaceholderText(self._followup["placeholder"] if self._followup else PLACEHOLDER[kind])
         self._update_input_hint()
         self._count_row.setVisible(kind == "symbol")
         self._fill_models()
@@ -652,9 +693,9 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._update_input_hint()
 
     def _update_adv_label(self):
-        arrow = "▾" if self._adv_btn.isChecked() else "▸"
+        arrow = "▴" if self._adv_btn.isChecked() else "▾"
         what = {"flow": "모델 · 코드", "symbol": "모델 · 후보 수"}.get(self._kind, "모델")
-        self._adv_btn.setText(f"{arrow} 고급 — {what}")
+        self._adv_btn.setText(f"고급 설정  ·  {what}   {arrow}")
 
     def _on_adv_toggled(self, on: bool):
         self._adv_box.setVisible(on)
@@ -746,11 +787,61 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         if self._attached_image is not None:
             self._clear_image()
 
+    # ---- 이어 만들기 ---------------------------------------------------------------
+
+    FOLLOW_PLACEHOLDER = {
+        "symbol": "고른 후보를 어떻게 바꿀까요? 예: 두 개를 섞어서, 선을 더 단순하게 (비워 두면 다듬기만)",
+        "flow": "어떻게 고칠까요? 예: 감시장치를 아래로, 전원부도 추가해줘",
+    }
+
+    def set_followup(self, kind, label, pixmaps=(), *, refs=None, base_code="", base=None, base_text=""):
+        """호스트(결과 막대)가 부른다 — 다음 「만들기」를 그 결과를 바탕으로 한 이어 만들기로."""
+        self.set_kind(kind)
+        self._followup = {"kind": kind, "refs": list(refs) if refs else None, "base_code": base_code,
+                          "base": base, "base_text": base_text, "placeholder": self.FOLLOW_PLACEHOLDER[kind]}
+        self._follow_lbl.setText(f"이어 만들기 · {label}")
+        while self._follow_thumbs.count():
+            item = self._follow_thumbs.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        for pm in pixmaps:
+            t = QLabel(self._follow_box)
+            t.setFixedSize(28, 28)
+            t.setScaledContents(True)
+            t.setPixmap(pm)
+            t.setStyleSheet("background:#ffffff; border:1px solid rgba(128,128,128,120); border-radius:4px;")
+            self._follow_thumbs.addWidget(t)
+        self._follow_x.setIcon(_ai_icon("ai_close", _current_icon_color()))
+        self._follow_box.setVisible(True)
+        self._prompt_edit.setPlaceholderText(self._followup["placeholder"])
+        self.focus_prompt()
+
+    def clear_followup(self):
+        self._followup = None
+        self._follow_box.setVisible(False)
+        self._prompt_edit.setPlaceholderText(PLACEHOLDER[self._kind])
+
+    def followup(self):
+        return self._followup
+
     def request_make(self):
         """「만들기」(버튼·Enter) — 입력을 검사하고, 기록에 한 칸을 남긴 뒤 `make_requested`로 넘긴다.
         입력 칸과 그림은 비운다(채팅 입력창 관례 — 같은 요청은 기록에 남아 있다). 돌려준 값은 테스트용."""
         text = self._prompt_edit.toPlainText().strip()
         image = self._attached_image
+        fu = self._followup
+        if fu is not None:
+            if fu["kind"] == "flow" and not text:
+                self._show_notice("어떻게 고칠지 적어 주세요. 예: 감시장치를 아래로")
+                return None
+            req = AIRequest(kind=fu["kind"], text=text, model=self.model(), count=self.symbol_count(),
+                            refs=fu["refs"], base_code=fu["base_code"], base_text=fu["base_text"])
+            req.followup_of = fu["base"]
+            self.clear_followup()
+            req.entry = self._add_entry(req)
+            self._prompt_edit.clear()
+            self.make_requested.emit(req)
+            return req
         if self._kind == "trace" and image is None:
             self._show_notice("베끼기는 도면 사진이 필요해요. 사진을 끌어다 놓거나 Ctrl+V로 붙여 주세요.")
             return None
@@ -770,14 +861,18 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     def resubmit(self, req: AIRequest) -> AIRequest:
         """결과 막대 「다시」 — 같은 입력(종류·글·그림·모델)으로 새 기록 칸을 만들어 다시 보낸다."""
         again = AIRequest(kind=req.kind, text=req.text, image=req.image, image_name=req.image_name,
-                          model=req.model, replace_target=req.replace_target, count=req.count)
+                          model=req.model, replace_target=req.replace_target, count=req.count,
+                          refs=req.refs, base_code=req.base_code, base_text=req.base_text)
         again.entry = self._add_entry(again)
         self.make_requested.emit(again)
         return again
 
     def _add_entry(self, req: AIRequest) -> _HistoryEntry:
         inner = self._hist_scroll.widget()
-        entry = _HistoryEntry(req.kind, req.text, req.image_name, inner)
+        shown = req.text
+        if req.refs or req.base_code:
+            shown = "[이어서] " + (req.text or "다듬기")
+        entry = _HistoryEntry(req.kind, shown, req.image_name, inner)
         entry.request = req
         entry.clicked.connect(self._on_entry_clicked)
         entry.remove_requested.connect(self._remove_entry)

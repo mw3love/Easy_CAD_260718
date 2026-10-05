@@ -49,6 +49,23 @@ _IMAGE_PROMPT_TEMPLATE = """이 이미지(사진·스케치·아이콘 등)를 �
 """ + _RULES + "\n"
 
 
+# [§8 항목36 이어 만들기, 2026-10-05] 고른 후보 SVG를 참고로 지시대로 고친 새 아이콘 — "이것만 선을 더 굵게",
+# "두 개의 장점을 섞어서" 같은 이어서 하는 요청(사용자 제안). 참고 SVG는 우리가 만든 것이라 규칙을 이미 지킨다.
+_REFINE_TEMPLATE = """아래는 앞서 만든 선(line-art) 아이콘 SVG {n}개다. 이것을 바탕으로 지시대로 고친 새 아이콘 하나를 SVG로 그려라.
+
+{refs}
+지시: {instruction}
+(여러 개를 주면 각 장점을 섞어도 된다. 지시에 없는 부분은 참고 아이콘의 모양을 최대한 유지할 것.)
+
+""" + _RULES + "\n"
+
+
+def build_refine_prompt(instruction: str, refs: list[str]) -> str:
+    blocks = "\n".join(f"[참고 {i + 1}]\n```svg\n{svg.strip()}\n```\n" for i, svg in enumerate(refs))
+    instr = instruction.strip() or "같은 대상을 조금 더 다듬어라"
+    return _REFINE_TEMPLATE.format(n=len(refs), refs=blocks, instruction=instr)
+
+
 def build_prompt(subject: str) -> str:
     return _PROMPT_TEMPLATE.format(subject=subject.strip())
 
@@ -65,13 +82,16 @@ def extract_svg(raw: str) -> str:
 
 
 def generate_svg(api_key: str, subject: str, *, model: str, image=None,
-                  base_url: str = gw.BASE_URL) -> tuple[str, str]:
+                  base_url: str = gw.BASE_URL, refs: list[str] | None = None) -> tuple[str, str]:
     """대상 설명(및/또는 이미지) → (SVG 텍스트, 실제 사용된 모델). `image`(PIL Image)가
     주어지면 이미지 프롬프트로 전환되고 `subject`는 보충 설명 취급된다(비어 있어도 됨 —
     `generate_mermaid`와 동일 관례). 이미지 호출은 timeout을 넉넉히(120s) 잡는다(텍스트
     기본값 60s보다 여유, `generate_mermaid`와 동일 판단). 실패 시 예외를 그대로 올린다
     (호출자가 후보 카드에 실패로 표시)."""
-    prompt = build_image_prompt(subject) if image is not None else build_prompt(subject)
+    if refs:   # 이어 만들기 — 참고 SVG + 지시
+        prompt = build_refine_prompt(subject, refs)
+    else:
+        prompt = build_image_prompt(subject) if image is not None else build_prompt(subject)
     timeout = 120.0 if image is not None else 60.0
     res = gw.call_text_with_fallback(api_key, prompt, model=model, base_url=base_url,
                                      image=image, timeout=timeout)

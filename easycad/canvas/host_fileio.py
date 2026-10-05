@@ -1473,7 +1473,7 @@ class _FileIOMixin:
             d = items_by_id.get(e.dst)
             if s is None or d is None or s is d:   # self-loop은 스킵(직교 엘보 무의미)
                 continue
-            arr = self._make_mermaid_edge(e, s, d)
+            arr = self._make_mermaid_edge(e, s, d, graph.direction)
             self._scene.addItem(arr)
             arrows.append(arr)
             added.append(arr)
@@ -1562,11 +1562,40 @@ class _FileIOMixin:
         return it
 
 
-    def _make_mermaid_edge(self, edge, src_it, dst_it):
+    # [§8 항목36 피드백 4차, 2026-10-05] 흐름 방향(앞으로 가는 화살표) → (나가는 변, 들어오는 변).
+    _MMD_FLOW_SIDES = {"LR": ("right", "left"), "RL": ("left", "right"),
+                       "TD": ("bottom", "top"), "TB": ("bottom", "top"), "BT": ("top", "bottom")}
+
+    @staticmethod
+    def _rect_side_mid(r, side):
+        return {"right": QPointF(r.right(), r.center().y()), "left": QPointF(r.left(), r.center().y()),
+                "bottom": QPointF(r.center().x(), r.bottom()), "top": QPointF(r.center().x(), r.top())}[side]
+
+    def _make_mermaid_edge(self, edge, src_it, dst_it, direction=None):
+        """[피드백 4차] 앞으로 가는 화살표(흐름 방향으로 다음 단계)는 항상 흐름 방향 변으로 나가 반대 변으로 들어간다 —
+        가로 흐름이면 오른쪽→왼쪽. 예전엔 두 상자 거리 중 큰 축으로 변을 골라, 위아래로 멀리 떨어진 짝은 위·아래 변으로
+        들어갔고 같은 열 상자 사이 좁은 틈(40)을 지나느라 마지막 꺾임이 화살촉보다 짧아 겹쳤다(사용자 화면). 거꾸로 가는
+        화살표만 예전 규칙(`_border_attach`)."""
         rs = src_it.mapRectToScene(src_it.rect())
         rd = dst_it.mapRectToScene(dst_it.rect())
-        a_src = _border_attach(rs, rd.center())
-        a_dst = _border_attach(rd, rs.center())
+        sides = self._MMD_FLOW_SIDES.get((direction or "").upper())
+        forward = False
+        if sides is not None:
+            d = (direction or "").upper()
+            if d == "LR":
+                forward = rd.left() >= rs.right() - 1e-6
+            elif d == "RL":
+                forward = rd.right() <= rs.left() + 1e-6
+            elif d in ("TD", "TB"):
+                forward = rd.top() >= rs.bottom() - 1e-6
+            elif d == "BT":
+                forward = rd.bottom() <= rs.top() + 1e-6
+        if forward:
+            a_src = self._rect_side_mid(rs, sides[0])
+            a_dst = self._rect_side_mid(rd, sides[1])
+        else:
+            a_src = _border_attach(rs, rd.center())
+            a_dst = _border_attach(rd, rs.center())
         arr = _PolyArrowItem(self.current_color, self.current_width, edge.arrow)
         arr.set_points(a_src, a_dst)   # arrow pos=(0,0) → local==scene 좌표
         # 지속 연결 — 도형 이동 시 화살표가 따라오도록 양끝을 부착점에 바인딩(부착점=변 중점 로컬좌표).

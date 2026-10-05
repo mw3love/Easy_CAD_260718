@@ -60,6 +60,7 @@ _FREE_RINGS = 8           # 빈 자리 찾기: 가운데에서 몇 바퀴까지 
 SYMBOL_COUNT = 6          # 심볼 후보 수(패널 입력칸 「후보 6」)
 SYMBOL_GAP = 40.0         # 후보 칸 사이(씬 단위)
 UNPICKED_TEXT = "고르지 않아 후보를 버렸어요"
+FOLLOWED_TEXT = "이어 만들기로 넘김"
 _CHECK_PX = 16      # 후보 칸 체크 표시 크기(화면 px)
 _CHECK_INSET_PX = 4
 TRACE_HINT = "주황 점을 종이 네 귀퉁이로 끌어 맞추고 「만들기」"
@@ -237,16 +238,25 @@ class _AIMakeMixin:
     def _on_ai_make_requested(self, req):
         """패널의 「만들기」. 새로 만들면 남아 있던 임시 결과는 채택(사용자 확정). 결과를 놓을 자리는
         만들기를 누른 순간의 화면 가운데(사용자 확정) — 생성이 끝날 때 화면이 옮겨 가 있어도 여기로."""
-        self._ai_accept_staged()
+        base = getattr(req, "followup_of", None)
+        center = None
+        if base is not None and base is self._ai_staged:
+            # 이어 만들기 — 바탕 결과 자리에서 이어 간다. 심볼 후보 줄은 지금 걷고(고른 것도 넣지 않음 — 바탕일 뿐),
+            # 흐름도 임시 결과는 새 결과가 올 때 바꿔치기한다(`_ai_place_flow`).
+            center = self._ai_staged_scene_rect().center()
+            if base.slots is not None:
+                self._ai_discard_candidates(FOLLOWED_TEXT)
+        else:
+            self._ai_accept_staged()
         req.doc = self._active_doc
-        req.center = self._view.mapToScene(self._view.viewport().rect().center())
+        req.center = center if center is not None else self._view.mapToScene(self._view.viewport().rect().center())
         target, self._ai_replace_target = getattr(self, "_ai_replace_target", None), None
         if req.kind == "symbol" and target is not None and target.scene() is self._scene \
                 and getattr(req, "replace_target", None) is None:
             req.replace_target = target   # 우클릭 「AI로 바꾸기」로 연 요청 — 고르면 그 도형 자리에 바뀜
         if req.kind == "flow":
             self._ai_start_job(req, _MermaidGenWorker, (req.text, req.model, gw.resolve_base_url(), req.image),
-                               self._on_flow_generated)
+                               self._on_flow_generated, base_code=getattr(req, "base_code", "") or "")
         elif req.kind == "symbol":
             self._ai_start_symbol(req)
         elif req.kind == "trace":
@@ -256,14 +266,14 @@ class _AIMakeMixin:
 
     # ---- 생성 작업(백그라운드) ---------------------------------------------------------
 
-    def _ai_start_job(self, req, worker_cls, args, on_success):
+    def _ai_start_job(self, req, worker_cls, args, on_success, **kw):
         """워커 하나 = 요청 하나. 여러 요청이 동시에 돌아도 된다(각자 기록 칸에 경과 시간). 결과 수신자는
         `self.sender()`로 자기 작업을 찾는다(QObject를 붙잡는 람다 연결 금지 — host_ui `_build_panel_menu` 주석의 크래시)."""
         key = gw.resolve_api_key()
         if not key:
             req.entry.set_status(NO_KEY_TEXT)
             return None
-        worker = worker_cls(key, *args, parent=self)
+        worker = worker_cls(key, *args, parent=self, **kw)
         self._ai_jobs[worker] = _AIJob(req, worker, time.monotonic())
         worker.succeeded.connect(on_success)
         worker.failed.connect(self._on_ai_job_failed)
@@ -348,6 +358,10 @@ class _AIMakeMixin:
         """Mermaid 코드 → 도형·화살표(옛 Mermaid 창과 같은 배치 `_build_mermaid_items`)를 요청 자리에 임시로 놓는다."""
         if not self._ai_goto_request_doc(req):
             return None
+        base = getattr(req, "followup_of", None)
+        if base is not None and base is self._ai_staged and base.slots is None:
+            self._ai_drop_staged(base)               # 이어 고치기 — 바탕 결과를 새 결과로 바꿔치기
+            self._ai_finish_staging(FOLLOWED_TEXT)
         self._ai_accept_staged()
         try:
             _n, _a, direction, added = self._build_mermaid_items(code, req.center)
@@ -391,7 +405,10 @@ class _AIMakeMixin:
                             f"QToolButton:checked {{ background:rgba(218,119,86,90); border-color:{_ACCENT_CORAL}; }}")
             b.clicked.connect(self._on_flow_direction_clicked)
             lay.addWidget(b)
-        return (box,)
+        follow = _icon_button(None, "이어 고치기", "generate",
+                              tip="이 결과를 바탕으로 고칠 점을 말해 다시 만들기(예: 감시장치를 아래로)")
+        follow.clicked.connect(self._ai_followup_flow)
+        return (box, follow)
 
     def _on_flow_direction_clicked(self):
         st = self._ai_staged
@@ -743,7 +760,8 @@ class _AIMakeMixin:
         base_url = gw.resolve_base_url()
         now = time.monotonic()
         for _ in range(n):
-            worker = _SvgGenWorker(key, req.text, req.model, base_url, req.image, self)
+            subject = req.text or getattr(req, "base_text", "")   # 이어 만들기에서 지시를 비우면 원래 대상으로
+            worker = _SvgGenWorker(key, subject, req.model, base_url, req.image, self, refs=getattr(req, "refs", None))
             self._ai_jobs[worker] = _AIJob(req, worker, now)
             worker.candidate.connect(self._on_symbol_candidate)
             worker.model_failed.connect(self._on_symbol_failed)
@@ -761,11 +779,14 @@ class _AIMakeMixin:
         st.snap = (len(self._undo), self._undo[-1] if self._undo else None)
         st.all_btn = _icon_button(None, "모두 선택", "ai_check", tip="도착한 후보를 모두 고르기/모두 풀기")
         st.all_btn.clicked.connect(self._ai_toggle_all_checks)
+        follow_btn = _icon_button(None, "이어 만들기", "generate",
+                                  tip="고른 후보를 바탕으로 고칠 점을 말해 새 후보 받기(예: 두 개를 섞어서)")
+        follow_btn.clicked.connect(self._ai_followup_symbol)
         save_btn = _icon_button(None, "내 심볼에 저장", "save",
                                 tip="고른 후보(없으면 도착한 후보 전부)를 내 심볼 팔레트에 저장")
         save_btn.clicked.connect(self._ai_save_candidates_to_symbols)
         st.bar = _StagingBar(view.viewport(), self._ai_commit_picked, None,
-                             self._ai_discard_staged, extras=(st.all_btn, save_btn), discard_text="모두 버리기")
+                             self._ai_discard_staged, extras=(st.all_btn, follow_btn, save_btn), discard_text="모두 버리기")
         st.bar.accept_btn.setToolTip("고른 후보(실선·☑)를 캔버스에 넣기 — 후보를 클릭하거나 드래그로 묶어 고름")
         self._ai_staged = st
         st.doc.scene.selectionChanged.connect(self._ai_on_cand_selection)
@@ -1137,6 +1158,11 @@ class _AIMakeMixin:
                 if box.contains(pos.toPoint()):
                     self._ai_toggle_check(i)
                     return True
+            # 피드백 4차: 칸 안 빈 곳(테두리와 도형 사이)을 눌러도 고름/풀기 — 도형 선만 잡히던 것.
+            for i in range(len(st.cands)):
+                if view.mapFromScene(st.slots[i]).boundingRect().contains(pos.toPoint()):
+                    self._ai_toggle_check(i)
+                    return True
         tr = getattr(self, "_ai_trace", None)
         if tr is not None and not tr.running and obj is tr.doc.view.viewport():
             et = event.type()
@@ -1374,3 +1400,44 @@ class _AIMakeMixin:
             for v in (getattr(st, "doc", None), getattr(tr, "doc", None)):
                 if v is not None and not sip.isdeleted(v.view):
                     v.view.viewport().update()
+
+    # ---- 이어 만들기(2026-10-05 피드백 4차) ---------------------------------------------
+
+    @staticmethod
+    def _ai_svg_thumb(svg_text, size=56):
+        from PyQt6.QtCore import QByteArray
+        from PyQt6.QtGui import QImage, QPainter, QPixmap
+        from PyQt6.QtSvg import QSvgRenderer
+        img = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(Qt.GlobalColor.white)
+        r = QSvgRenderer(QByteArray(svg_text.encode("utf-8")))
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if r.isValid():
+            r.render(p, QRectF(4, 4, size - 8, size - 8))
+        p.end()
+        return QPixmap.fromImage(img)
+
+    def _ai_followup_symbol(self):
+        """후보 막대 「이어 만들기」 — 고른 후보(최대 4개)를 바탕으로 패널 입력칸에 붙인다. 후보 줄은 「만들기」 때 걷는다."""
+        st = self._ai_staged
+        if st is None or st.slots is None:
+            return
+        if not st.picked:
+            self.statusBar().showMessage("바탕으로 쓸 후보를 먼저 클릭해 고르세요", 3000)
+            return
+        idx = sorted(st.picked)[:4]
+        refs = [st.cands[i].svg for i in idx]
+        self._ai_panel.set_followup("symbol", f"고른 후보 {len(refs)}개", [self._ai_svg_thumb(v) for v in refs],
+                                    refs=refs, base=st, base_text=st.request.text)
+
+    def _ai_followup_flow(self):
+        """흐름도 막대 「이어 고치기」 — 지금 결과 코드를 바탕으로 패널 입력칸에 붙인다. 새 결과가 오면 바꿔치기."""
+        st = self._ai_staged
+        if st is None or st.slots is not None or st.request.kind != "flow":
+            return
+        code = getattr(st.request, "result_text", "")
+        if not code:
+            return
+        n = sum(1 for line in code.splitlines()[1:] if line.strip())
+        self._ai_panel.set_followup("flow", f"지금 흐름도({n}줄)", base_code=code, base=st, base_text=st.request.text)

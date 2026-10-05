@@ -836,19 +836,22 @@ class _MermaidGenWorker(QThread):
     succeeded = pyqtSignal(str, str)   # (mermaid 텍스트, 실제 사용된 모델)
     failed = pyqtSignal(str)           # 에러 메시지
 
-    def __init__(self, api_key, desc, model, base_url, image, parent=None):
+    def __init__(self, api_key, desc, model, base_url, image, parent=None, base_code=""):
         super().__init__(parent)
         self._api_key = api_key
         self._desc = desc
         self._model = model
         self._base_url = base_url
         self._image = image
+        self._base_code = base_code   # [§8 항목36] AI 패널 「이어 고치기」 — 지금 결과 코드
 
     def run(self):
         try:
             from easycad.ai.text_to_mermaid import generate_mermaid
+            # 이어 고치기일 때만 base_code를 넘긴다 — 옛 창과 그 테스트가 쓰는 호출 모양은 그대로.
+            extra = {"base_code": self._base_code} if self._base_code else {}
             text, used = generate_mermaid(self._api_key, self._desc, model=self._model,
-                                          base_url=self._base_url, image=self._image)
+                                          base_url=self._base_url, image=self._image, **extra)
         except Exception as e:  # noqa: BLE001 — 실패 사유를 그대로 다이얼로그에 전달
             self.failed.emit(str(e))
             return
@@ -2317,18 +2320,20 @@ class _SvgGenWorker(QThread):
     candidate = pyqtSignal(str, str)      # (실제 사용된 모델, svg 텍스트)
     model_failed = pyqtSignal(str, str)   # (모델, 에러 메시지)
 
-    def __init__(self, api_key, subject, model, base_url, image, parent=None):
+    def __init__(self, api_key, subject, model, base_url, image, parent=None, refs=None):
         super().__init__(parent)
         self._api_key = api_key
         self._subject = subject
         self._model = model
         self._base_url = base_url
         self._image = image   # PIL.Image.Image | None — Stage 3(2026-08-19)
+        self._refs = refs     # [§8 항목36] AI 패널 「이어 만들기」 — 고른 후보 SVG들
 
     def run(self):
         try:
+            extra = {"refs": self._refs} if self._refs else {}   # 이어 만들기일 때만(옛 호출 모양 유지)
             svg_text, used = generate_svg(self._api_key, self._subject, model=self._model,
-                                          base_url=self._base_url, image=self._image)
+                                          base_url=self._base_url, image=self._image, **extra)
         except Exception as e:  # noqa: BLE001 — 개별 실패, 다른 워커는 계속 진행
             self.model_failed.emit(self._model, str(e))
             return
