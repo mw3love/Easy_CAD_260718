@@ -245,6 +245,7 @@
   ⓓ 2026-10-05 AI 만들기 패널 기록 칸 — 테두리 QSS를 건 칸(QFrame) 안 글자(QSS 없는 QLabel)가
   라이트로 바꿔도 흰 글자로 남음. 실제 창 캡처로 발견, 칸마다 `restyle()`을 두고 `refresh_theme`이
   부르게 해 해결(`easycad/canvas/ai_panel.py`). **새로 만드는 칸·카드도 처음부터 이 목록에 넣을 것.**
+  ⓔ 같은 날 캔버스 위 AI 결과 막대(viewport 자식, 떠 있는 동안 테마 전환) — `host_aimake._ai_refresh_theme`.
 - **`QDialog` 인스턴스를 재사용하면(2026-08-25부터 관례) `done()`에서 정리 안 한 참조가
   다음 열기까지 살아남아 죽은 객체를 건드릴 수 있다.** `_detach_worker()`로 워커를
   고아로 뗀 뒤 `finished`에서 `deleteLater()`로 C++ 객체를 지우지만, 다이얼로그 필드

@@ -903,6 +903,7 @@ class _UIBuildMixin:
         ai_panel = getattr(self, "_ai_panel", None)
         if ai_panel is not None:
             ai_panel.refresh_theme(dark)
+            self._ai_refresh_theme()   # 떠 있는 결과·준비 막대도(host_aimake)
         # [그룹 구분 디자인 2026-08-01, 사용자 요청] 기본 QToolBar 구분선은 Fusion에서 거의
         # 안 보일 정도로 옅다 — 파일(새로 만들기~저장) / 도구(선택~핀) / 편집·보기(되돌리기~격자)
         # 3그룹이 한눈에 갈리도록 구분선을 굵고 여백 있게 강조.

@@ -13,10 +13,11 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QEvent, QPointF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QBrush, QFont, QPainter, QPalette, QPen
+from PyQt6.QtCore import QByteArray, QEvent, QPointF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QFont, QIcon, QImage, QPainter, QPalette, QPen, QPixmap
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
-    QButtonGroup, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QScrollArea,
+    QButtonGroup, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMenu, QPlainTextEdit, QScrollArea,
     QSizePolicy, QSpinBox, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -27,12 +28,14 @@ from easycad.canvas.host_dialogs import (
     _attach_button_qss, _combo_selected_model, _detach_worker, _fill_model_combo_grouped,
 )
 from easycad.canvas.host_widgets import _ACCENT_CORAL, _act_icon, _current_icon_color
+from easycad.canvas.core_constants import _svg_icon_pixmap
 from easycad.canvas.photo_dialog import PHOTO_MODELS
 
 # (키, 탭 이름, 제목, 설명, 예시) — 이름은 결과 기준(기술 이름 Mermaid·SVG를 쓰지 않음). 설명·예시는 탭 바로 아래 한 줄로.
 KINDS = (
     ("symbol", "심볼", "심볼 하나",
-     "부품 아이콘을 후보 여러 개로 만들어요. 도면 옆에 줄지어 놓이고 클릭해서 골라요.", "예: BNC 커넥터 아이콘"),
+     "손으로 그리기 번거로운 부품을 아이콘 후보 여러 개로 만들어요. 도면 옆에 줄지어 놓이면 클릭해서 골라요.",
+     "예: 파라볼라 안테나(위성 수신용)"),
     ("flow", "흐름도", "흐름도",
      "설명이나 손그림에서 관계만 읽어 상자·화살표를 줄 맞춰 놓아요.", "예: 송신기 → 결합기 → 안테나"),
     ("trace", "베끼기", "그대로 베끼기",
@@ -40,7 +43,7 @@ KINDS = (
 )
 KIND_LABEL = {k[0]: k[1] for k in KINDS}
 PLACEHOLDER = {
-    "symbol": "만들 부품을 적어 주세요",
+    "symbol": "만들 부품을 적어 주세요 — 예: 파라볼라 안테나",
     "flow": "설명을 쓰거나 손그림을 끌어 놓기",
     "trace": "도면 사진을 끌어다 놓기 · Ctrl+V",
 }
@@ -57,6 +60,58 @@ DEFAULT_MODEL = {
 PENDING_TEXT = "준비 중 — 지금은 삽입 메뉴의 옛 창을 쓰세요"   # 1단계 임시 문구(3~5단계에서 종류별로 사라짐)
 
 _MUTED = "#8a8a8a"
+
+# 가운데 안내 예시 그림(2026-10-05 시안 4차 B, 사용자 선택) — "이렇게 넣으면 → 이렇게 나온다". {ink}=테마 선 색.
+# 심볼 예시는 BNC처럼 쉬운 것 말고 손으로 그리기 어려운 부품(사용자 지적: SVG로 그리는 이유가 그거니까).
+_ILLUS = {
+    "symbol": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 92" fill="none" stroke="{ink}" stroke-width="1.6">
+  <rect x="2" y="30" width="92" height="28" rx="14" fill="#e7e0d6" stroke="none"/>
+  <text x="48" y="48" fill="#241a15" stroke="none" font-size="10.5" text-anchor="middle" font-family="Malgun Gothic">파라볼라 안테나</text>
+  <path d="M98 44h18M110 39l6 5-6 5" stroke="#da7756"/>
+  <g stroke="#da7756" stroke-dasharray="4 3"><rect x="124" y="16" width="34" height="38" rx="4"/><rect x="163" y="16" width="34" height="38" rx="4"/><rect x="202" y="16" width="34" height="38" rx="4"/></g>
+  <path d="M130 24 Q141 44 152 30"/><path d="M141 33 L136 27M141 33 v14M135 48h12"/>
+  <path d="M168 26 Q174 46 192 38"/><path d="M180 37 L188 26M178 40 l-3 8h12l-3-8"/>
+  <path d="M208 30 Q219 50 230 30 Z"/><path d="M219 39 v-11M219 40 v8M212 48h14"/>
+  <text x="180" y="72" fill="#9a948c" stroke="none" font-size="10" text-anchor="middle" font-family="Malgun Gothic">클릭해서 고르기</text>
+</svg>""",
+    "flow": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 92" fill="none" stroke="{ink}" stroke-width="1.6">
+  <rect x="2" y="22" width="86" height="48" rx="9" fill="#e7e0d6" stroke="none"/>
+  <text x="45" y="42" fill="#241a15" stroke="none" font-size="10" text-anchor="middle" font-family="Malgun Gothic">송신기 →</text>
+  <text x="45" y="58" fill="#241a15" stroke="none" font-size="10" text-anchor="middle" font-family="Malgun Gothic">결합기 → 안테나</text>
+  <path d="M94 46h18M106 41l6 5-6 5" stroke="#da7756"/>
+  <rect x="120" y="37" width="30" height="18" rx="2"/><rect x="163" y="37" width="30" height="18" rx="2"/>
+  <rect x="206" y="14" width="30" height="18" rx="2"/><rect x="206" y="60" width="30" height="18" rx="2"/>
+  <path d="M150 46h11M193 46h6V23h5M199 46v23h5"/>
+</svg>""",
+    "trace": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 92" fill="none" stroke-width="1.4">
+  <polygon points="10,14 92,8 96,82 4,78" fill="#8a847c"/>
+  <g stroke="#3b3733"><rect x="20" y="28" width="22" height="14"/><rect x="58" y="26" width="24" height="14"/><path d="M42 35h16M70 40v20"/><rect x="58" y="60" width="24" height="12"/></g>
+  <g fill="#da7756"><circle cx="10" cy="14" r="3.5"/><circle cx="92" cy="8" r="3.5"/><circle cx="96" cy="82" r="3.5"/><circle cx="4" cy="78" r="3.5"/></g>
+  <path d="M104 46h18M116 41l6 5-6 5" stroke="#da7756" stroke-width="1.6"/>
+  <g stroke="{ink}" stroke-width="1.6"><rect x="134" y="22" width="28" height="16"/><rect x="182" y="20" width="30" height="16"/><path d="M162 30h20M197 36v24"/><rect x="182" y="60" width="30" height="14"/></g>
+</svg>""",
+}
+
+
+def _render_illus(kind: str, ink: str, width: int = 248, dpr: float = 2.0) -> QPixmap:
+    svg = _ILLUS[kind].replace("{ink}", ink)
+    r = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+    vb = r.viewBoxF()
+    w, h = int(width * dpr), int(width * dpr * vb.height() / vb.width())
+    img = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(Qt.GlobalColor.transparent)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    r.render(p)
+    p.end()
+    pm = QPixmap.fromImage(img)
+    pm.setDevicePixelRatio(dpr)
+    return pm
+
+
+def _ai_icon(name: str, color) -> QIcon:
+    """resources/icons/<name>.svg를 그 색으로(옛 상단바 아이콘과 같은 재칠 방식, `core_constants._svg_icon_pixmap`)."""
+    return QIcon(_svg_icon_pixmap(name, 32, QColor(color)))
 _CARD_BORDER = "rgba(128,128,128,90)"
 
 
@@ -79,12 +134,14 @@ class _HistoryEntry(QFrame):
     """기록 한 칸 — "종류 · 시각", 요청 글(또는 그림 이름), 상태 한 줄. 누르면 그 요청을 입력칸에 다시 채운다
     (사용자 결정 2026-10-05 — 고쳐서 다시 만들기용)."""
 
-    clicked = pyqtSignal(object)   # self
+    clicked = pyqtSignal(object)          # self
+    remove_requested = pyqtSignal(object)   # self — ✕·우클릭 「지우기」
 
     def __init__(self, kind: str, text: str, image_name: str, parent=None):
         super().__init__(parent)
         self.kind = kind
         self.request = None   # AIRequest — 패널이 붙인다
+        self.removed = False  # 지운 칸 — 위젯은 남겨 둔다(도는 생성이 늦게 상태를 적어도 안전하게)
         self.setObjectName("aiHistEntry")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -94,9 +151,19 @@ class _HistoryEntry(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 6, 8, 6)
         lay.setSpacing(2)
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
         who = QLabel(f"{KIND_LABEL.get(kind, kind)} · {time.strftime('%H:%M')}", self)
         who.setStyleSheet(f"color:{_MUTED}; font-size:10px;")
-        lay.addWidget(who)
+        head.addWidget(who, 1)
+        self._x_btn = QToolButton(self)
+        self._x_btn.setAutoRaise(True)
+        self._x_btn.setFixedSize(18, 18)
+        self._x_btn.setToolTip("이 기록 지우기(만드는 중이면 취소)")
+        self._x_btn.clicked.connect(lambda: self.remove_requested.emit(self))   # 자기 자신만 붙잡는 람다(다른 QObject 아님)
+        self._x_btn.setVisible(False)   # 마우스를 올렸을 때만
+        head.addWidget(self._x_btn)
+        lay.addLayout(head)
         body = text
         if image_name:
             body = f"[그림] {image_name}" + (f"\n{text}" if text else "")
@@ -120,6 +187,21 @@ class _HistoryEntry(QFrame):
             self.clicked.emit(self)
         super().mouseReleaseEvent(e)
 
+    def enterEvent(self, e):
+        self._x_btn.setIcon(_ai_icon("ai_close", _current_icon_color()))
+        self._x_btn.setVisible(True)
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._x_btn.setVisible(False)
+        super().leaveEvent(e)
+
+    def contextMenuEvent(self, e):
+        menu = QMenu(self)
+        menu.addAction("입력칸에 다시 채우기", lambda: self.clicked.emit(self))
+        menu.addAction("지우기", lambda: self.remove_requested.emit(self))
+        menu.exec(e.globalPos())
+
     def restyle(self):
         """테마 전환 — QSS 걸린 칸 안 글자는 팔레트만 바뀌어선 처음 색에 남는다(라이트에서 흰 글자) — 비웠다가 다시 건다."""
         self.setStyleSheet("")
@@ -139,6 +221,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     code_insert_requested = pyqtSignal(object)   # AIRequest — 고급 「코드로 넣기」(AI 없이 Mermaid 코드 그대로)
     code_edited = pyqtSignal(str)                # 고급 코드 칸을 손으로 고침(0.5초 묶음) — 임시 흐름도를 바꿔 그림
     trace_photo_changed = pyqtSignal(object)     # 베끼기 사진(PIL | None) — 호스트가 캔버스에 깔고 모서리 점을 띄움
+    entry_removed = pyqtSignal(object)           # AIRequest — 기록을 지움(만드는 중이면 호스트가 취소)
 
     def __init__(self, host):
         super().__init__(host)
@@ -201,16 +284,48 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._kind_group.buttonClicked.connect(self._on_kind_button)
         bl.addWidget(seg)
 
-        # ---- 고른 종류 설명(누를 수 없는 글) — 2026-10-05 피드백: 탭과 안내 카드가 둘 다 버튼이라 시선이 갈라짐 →
-        # 버튼은 위 탭 하나, 설명은 그 바로 아래 한두 줄.
-        self._desc_lbl = QLabel("", body)
-        self._desc_lbl.setWordWrap(True)
-        self._desc_lbl.setTextFormat(Qt.TextFormat.RichText)
-        self._desc_lbl.setStyleSheet(f"color:{_MUTED}; font-size:11px; padding:0 2px;")
-        bl.addWidget(self._desc_lbl)
+        # ---- 가운데 안내(그 종류 기록이 없을 때) — 2026-10-05 피드백 2차: 가운데가 휑함 → 시안 4차 B(예시 그림형).
+        # 누를 수 있는 것은 위 탭뿐(1차 피드백: 버튼 두 벌로 시선이 갈라짐).
+        self._intro = QWidget(body)
+        il = QVBoxLayout(self._intro)
+        il.setContentsMargins(4, 0, 4, 0)
+        il.setSpacing(10)
+        il.addStretch(1)
+        self._intro_img = QLabel(self._intro)
+        self._intro_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        il.addWidget(self._intro_img)
+        self._intro_title = QLabel("", self._intro)
+        self._intro_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._intro_title.setStyleSheet("font-size:16px; font-weight:700;")
+        il.addWidget(self._intro_title)
+        self._intro_desc = QLabel("", self._intro)
+        self._intro_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._intro_desc.setWordWrap(True)
+        self._intro_desc.setTextFormat(Qt.TextFormat.RichText)
+        self._intro_desc.setStyleSheet(f"color:{_MUTED}; font-size:12px;")
+        il.addWidget(self._intro_desc)
+        il.addStretch(1)
+        bl.addWidget(self._intro, 1)
 
-        # ---- 기록
-        self._hist_scroll = QScrollArea(body)
+        # ---- 기록(지금 탭 종류만 — 2026-10-05 피드백 2차) + 「모두 지우기」
+        self._hist_box = QWidget(body)
+        hbl = QVBoxLayout(self._hist_box)
+        hbl.setContentsMargins(0, 0, 0, 0)
+        hbl.setSpacing(4)
+        hrow = QHBoxLayout()
+        hrow.setContentsMargins(0, 0, 0, 0)
+        self._hist_title = QLabel("기록", self._hist_box)
+        self._hist_title.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        hrow.addWidget(self._hist_title, 1)
+        self._clear_btn = QToolButton(self._hist_box)
+        self._clear_btn.setText("모두 지우기")
+        self._clear_btn.setAutoRaise(True)
+        self._clear_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._clear_btn.setToolTip("이 종류의 기록을 모두 지우기(만드는 중인 것은 취소)")
+        self._clear_btn.clicked.connect(self.clear_kind_history)
+        hrow.addWidget(self._clear_btn)
+        hbl.addLayout(hrow)
+        self._hist_scroll = QScrollArea(self._hist_box)
         self._hist_scroll.setWidgetResizable(True)
         self._hist_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._hist_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -220,7 +335,8 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._hist_layout.setSpacing(6)
         self._hist_layout.addStretch(1)
         self._hist_scroll.setWidget(inner)
-        bl.addWidget(self._hist_scroll, 1)
+        hbl.addWidget(self._hist_scroll, 1)
+        bl.addWidget(self._hist_box, 1)
 
         # ---- 고급(접힘): 모델 + 게이트웨이 설정. 코드 칸은 흐름도 단계(3단계)에서 여기에 붙는다.
         self._adv_btn = QToolButton(body)
@@ -339,6 +455,9 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._make_btn = QToolButton(bar)
         self._make_btn.setText("만들기")
         self._make_btn.setToolTip("만들기 (Enter · 줄바꿈은 Shift+Enter)")
+        self._make_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._make_btn.setIcon(_ai_icon("generate", "#1b120d"))
+        self._make_btn.setIconSize(QSize(14, 14))
         self._make_btn.setStyleSheet(_CORAL_BTN_QSS)
         self._make_btn.clicked.connect(self.request_make)
         tl.addWidget(self._make_btn)
@@ -394,6 +513,10 @@ class _AIPanel(_ImageAttachMixin, QFrame):
                 f"QToolButton:checked {{ background:rgba(218,119,86,70); font-weight:600; }}")
         for entry in getattr(self, "_entries", []):
             entry.restyle()
+        self._clear_btn.setIcon(_ai_icon("ai_trash", _MUTED))
+        self._clear_btn.setStyleSheet(f"QToolButton {{ color:{_MUTED}; font-size:11px; border:none; }}")
+        if getattr(self, "_kind", None):
+            self._update_intro()
         self.update()
 
     # ---- 종류 ---------------------------------------------------------------
@@ -406,8 +529,8 @@ class _AIPanel(_ImageAttachMixin, QFrame):
             return
         self._kind = kind
         self._kind_buttons[kind].setChecked(True)
-        _key, _short, _title, desc, example = next(k for k in KINDS if k[0] == kind)
-        self._desc_lbl.setText(f"{desc}<br><span style='color:{_ACCENT_CORAL}'>{example}</span>")
+        self._update_intro()
+        self._refresh_history_view()
         self._prompt_edit.setPlaceholderText(PLACEHOLDER[kind])
         self._update_input_hint()
         self._count_row.setVisible(kind == "symbol")
@@ -416,6 +539,38 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._sync_code_box()
         self._hide_notice()
         self.trace_photo_changed.emit(self._attached_image if kind == "trace" else None)
+
+    def _update_intro(self):
+        _key, _short, title, desc, example = next(k for k in KINDS if k[0] == self._kind)
+        ink = "#e6e2dc" if self._dark else "#3a3633"
+        self._intro_img.setPixmap(_render_illus(self._kind, ink))
+        self._intro_title.setText(title)
+        self._intro_desc.setText(f"{desc}<br><span style='color:{_ACCENT_CORAL}'>{example}</span>")
+
+    def _visible_entries(self) -> list:
+        return [e for e in self._entries if not e.removed and e.kind == self._kind]
+
+    def _refresh_history_view(self):
+        """기록은 지금 탭 종류만 — 없으면 가운데 안내."""
+        for e in self._entries:
+            e.setVisible(not e.removed and e.kind == self._kind)
+        has = bool(self._visible_entries())
+        self._hist_box.setVisible(has)
+        self._intro.setVisible(not has)
+
+    def _remove_entry(self, entry):
+        if entry.removed:
+            return
+        entry.removed = True
+        self._hist_layout.removeWidget(entry)
+        entry.hide()
+        self._refresh_history_view()
+        if entry.request is not None:
+            self.entry_removed.emit(entry.request)
+
+    def clear_kind_history(self):
+        for e in self._visible_entries():
+            self._remove_entry(e)
 
     def _on_kind_button(self, btn):
         self.set_kind(btn.property("kind"))
@@ -609,8 +764,10 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         entry = _HistoryEntry(req.kind, req.text, req.image_name, inner)
         entry.request = req
         entry.clicked.connect(self._on_entry_clicked)
+        entry.remove_requested.connect(self._remove_entry)
         self._hist_layout.insertWidget(self._hist_layout.count() - 1, entry)   # 마지막 stretch 앞(오래된 것이 위)
         self._entries.append(entry)
+        self._refresh_history_view()
         bar = self._hist_scroll.verticalScrollBar()
         bar.rangeChanged.connect(self._scroll_to_bottom_once)
         return entry
@@ -646,4 +803,5 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._prompt_edit.moveCursor(self._prompt_edit.textCursor().MoveOperation.End)
 
     def entries(self) -> list:
-        return list(self._entries)
+        """지우지 않은 기록 전부(모든 종류)."""
+        return [e for e in self._entries if not e.removed]

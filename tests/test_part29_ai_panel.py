@@ -90,9 +90,9 @@ def test_kind_switch_updates_placeholder_hint_and_model():
     # 버튼은 위 탭 하나, 아래는 고른 종류 설명 글(2026-10-05 피드백 — 안내 카드 3장 없앰)
     assert not hasattr(p, "_kind_cards")
     p._kind_buttons["flow"].click()
-    assert "관계만 읽어" in p._desc_lbl.text()
+    assert "관계만 읽어" in p._intro_desc.text() and p._intro_img.pixmap() is not None
     p._kind_buttons["symbol"].click()
-    assert "후보" in p._desc_lbl.text()
+    assert "파라볼라" in p._intro_desc.text() and p._intro_title.text() == "심볼 하나"
 
 
 def test_make_validates_input_and_records_history():
@@ -366,8 +366,9 @@ def test_flow_direction_change_redraws_without_new_history():
         assert _wait_until(lambda: w._ai_staged is not None)
     n_undo = len(w._undo)
     old_items = list(w._ai_staged.items)
-    combo = [c for c in w._ai_staged.bar.findChildren(QComboBox)][0]
-    combo.setCurrentIndex(combo.findData("TD"))
+    btns = {b.property("dir"): b for b in w._ai_staged.bar.findChildren(QToolButton) if b.property("dir")}
+    assert set(btns) == {"LR", "TD", "BT", "RL"} and btns["LR"].isChecked()   # 드롭다운 대신 화살표 버튼 4개
+    btns["TD"].click()
     st = w._ai_staged
     assert st is not None and st.items != old_items
     assert all(it.scene() is None for it in old_items)
@@ -790,4 +791,117 @@ def test_trace_retry_restores_photo_and_corners_and_regenerates():
         assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not first)
     assert all(it.scene() is None for it in first.items)
     assert len(w._ai_panel.entries()) == 2
+    _close_clean(w)
+
+
+
+# ── 피드백 2차(2026-10-05): 가운데 안내·종류별 기록·기록 지우기·빈 자리에 놓기 ───────────────────
+
+def test_intro_shows_per_kind_until_that_kind_has_history():
+    w = _shown_window()
+    p = w._ai_panel
+    p.set_kind("symbol")
+    assert not p._intro.isHidden() and p._hist_box.isHidden()
+    p._prompt_edit.setPlainText("파라볼라 안테나")
+    p.request_make()   # 키 없음 → 기록만
+    assert p._intro.isHidden() and not p._hist_box.isHidden()
+    p.set_kind("flow")                       # 다른 종류엔 기록이 없다 → 안내
+    assert not p._intro.isHidden() and p._hist_box.isHidden()
+    p.set_kind("symbol")
+    assert [e.kind for e in p._visible_entries()] == ["symbol"]
+    _close_clean(w)
+
+
+def test_remove_entry_and_clear_kind_history():
+    w = _shown_window()
+    p = w._ai_panel
+    p.set_kind("symbol")
+    for t in ("a", "b", "c"):
+        p._prompt_edit.setPlainText(t)
+        p.request_make()
+    p.set_kind("flow")
+    p._prompt_edit.setPlainText("d")
+    p.request_make()
+    p.set_kind("symbol")
+    ents = p._visible_entries()
+    ents[1].remove_requested.emit(ents[1])            # ✕ / 우클릭 「지우기」
+    assert [e.request.text for e in p._visible_entries()] == ["a", "c"]
+    p._clear_btn.click()                               # 이 종류만 모두 지우기
+    assert p._visible_entries() == [] and not p._intro.isHidden()
+    assert [e.request.text for e in p.entries()] == ["d"]
+    _close_clean(w)
+
+
+def test_removing_running_entry_cancels_generation():
+    import threading
+    gate = threading.Event()
+
+    def slow(*_a, **_k):
+        gate.wait(5)
+        return _FLOW, "m"
+    w = _shown_window()
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"),             _patch("easycad.ai.text_to_mermaid.generate_mermaid", side_effect=slow):
+        req = _make_flow(w)
+        assert w._ai_jobs
+        req.entry.remove_requested.emit(req.entry)
+        assert not w._ai_jobs                          # 떼어 냄
+        gate.set()
+        _wait_until(lambda: False, 400)
+    assert w._ai_staged is None                        # 늦게 온 결과는 버림
+    _close_clean(w)
+
+
+def test_flow_result_avoids_existing_drawing():
+    w = _shown_window()
+    c = w._view.mapToScene(w._view.viewport().rect().center())
+    block = _mk_pen_rect(w, x=c.x() - 150, y=c.y() - 100, ww=300, hh=200)
+    w.push_undo_add(block)
+    with _fake_gateway():
+        _make_flow(w)
+        assert _wait_until(lambda: w._ai_staged is not None)
+    st = w._ai_staged
+    r = w._ai_items_rect(st.items)
+    assert not r.intersects(block.mapToScene(block.rect()).boundingRect())
+    assert len(st.items) == 7 and all(it.scene() is w._scene for it in st.items)
+    n = len(w._undo)
+    st.bar.discard_btn.click()                         # 옮겨 다시 그린 것도 기록 한 칸
+    assert len(w._undo) == n - 1 and block.scene() is w._scene
+    _close_clean(w)
+
+
+def test_symbol_row_and_trace_photo_avoid_existing_drawing():
+    w = _shown_window()
+    c = w._view.mapToScene(w._view.viewport().rect().center())
+    block = _mk_pen_rect(w, x=c.x() - 200, y=c.y() - 60, ww=400, hh=120)
+    w.push_undo_add(block)
+    br = block.mapToScene(block.rect()).boundingRect()
+    with _fake_svg():
+        _make_symbol(w)
+    row = w._ai_staged_scene_rect()
+    assert not row.intersects(br)
+    w._ai_discard_staged()
+    tr = _attach_trace(w)
+    assert not tr.rect.intersects(br)
+    _close_clean(w)
+
+
+def test_find_free_center_returns_near_when_empty():
+    w = _shown_window()
+    near = QPointF(1234.0, -567.0)
+    assert w._ai_find_free_center(w._scene, 100, 80, near) == near
+    _close_clean(w)
+
+
+def test_theme_switch_repaints_floating_bars():
+    # 2026-10-05 실제 창: 결과 막대가 떠 있는 채 라이트로 바꾸면 막대만 어둡게 남음(QSS 테마 박제 함정) → 다시 칠함.
+    w = _shown_window()
+    with _fake_svg():
+        _make_symbol(w)
+    _attach_trace(w)
+    bars = [w._ai_staged.bar, w._ai_trace.bar]
+    w._apply_theme(not w._dark)
+    for bar in bars:
+        assert "aiStagingBar" in bar.styleSheet()
+        assert all(not b.property("aiIcon") or not b.icon().isNull() for b in bar.findChildren(QToolButton))
+    w._apply_theme(not w._dark)
     _close_clean(w)

@@ -11,18 +11,20 @@
 """
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 
 from PyQt6 import sip
-from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QPen, QPolygonF
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QToolButton, QWidget,
+    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QToolButton, QWidget,
 )
 
 from easycad.ai import gateway as gw
-from easycad.canvas.ai_panel import _AIPanel, PENDING_TEXT
+from easycad.canvas.ai_panel import _AIPanel, PENDING_TEXT, _ai_icon
+from easycad.canvas.host_widgets import _current_icon_color
 from easycad.canvas.host_dialogs import (
     _CORAL_BTN_QSS, _MERMAID_HEADER_RE, _MermaidGenWorker, _SaveToSymbolsFolderDialog, _SvgGenWorker, _detach_worker,
 )
@@ -41,6 +43,9 @@ NO_KEY_TEXT = "게이트웨이 키가 없어요 — 고급 ▸ ⚙ 설정에서 
 TAB_CLOSED_TEXT = "만드는 사이 그 탭이 닫혀서 버렸어요"
 # 흐름도 결과 막대의 방향 고르기 — 옛 Mermaid 창 `_DIRECTIONS`와 같은 네 가지.
 FLOW_DIRECTIONS = (("가로 →", "LR"), ("세로 ↓", "TD"), ("세로 ↑", "BT"), ("가로 ←", "RL"))
+_DIR_ICONS = {"LR": "ai_dir_right", "TD": "ai_dir_down", "BT": "ai_dir_up", "RL": "ai_dir_left"}
+_FREE_MARGIN = 40.0       # 빈 자리 찾기: 기존 도형과 띄울 거리(씬 단위)
+_FREE_RINGS = 8           # 빈 자리 찾기: 가운데에서 몇 바퀴까지 찾나
 SYMBOL_COUNT = 6          # 심볼 후보 수(패널 입력칸 「후보 6」)
 SYMBOL_GAP = 40.0         # 후보 칸 사이(씬 단위)
 UNPICKED_TEXT = "고르지 않아 후보를 버렸어요"
@@ -124,30 +129,45 @@ class _StagingBar(QFrame):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(6, 4, 6, 4)
         lay.setSpacing(5)
-        self.accept_btn = self._btn("채택", on_accept, coral=True)
+        self.accept_btn = self._btn("채택", on_accept, coral=True, icon="ai_check")
         lay.addWidget(self.accept_btn)
         for w in extras:
             w.setParent(self)
             lay.addWidget(w)
-        self.retry_btn = self._btn("다시", on_retry)
+        self.retry_btn = self._btn("다시", on_retry, icon="refresh")
         self.retry_btn.setToolTip("같은 요청으로 다시 만들어 바꿔치기")
         lay.addWidget(self.retry_btn)
         sep = QFrame(self)
         sep.setFrameShape(QFrame.Shape.VLine)
         sep.setStyleSheet("color:rgba(128,128,128,120);")
         lay.addWidget(sep)
-        self.discard_btn = self._btn(discard_text, on_discard)
+        self.discard_btn = self._btn(discard_text, on_discard, icon="ai_trash")
         lay.addWidget(self.discard_btn)
         self.adjustSize()
 
-    def _btn(self, text, slot, coral=False):
-        b = QToolButton(self)
-        b.setText(text)
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
-        if coral:
-            b.setStyleSheet(_CORAL_BTN_QSS.replace("padding: 6px 12px", "padding: 3px 12px"))
+    def _btn(self, text, slot, coral=False, icon=None):
+        b = _icon_button(self, text, icon, coral=coral)
         b.clicked.connect(slot)
         return b
+
+
+def _icon_button(parent, text, icon, coral=False, tip=None):
+    """결과·준비 막대 버튼 — 아이콘 + 글(2026-10-05 시안 4차 1번, 사용자 선택). 아이콘 색은 그 순간 테마 색으로 굽는다
+    (막대는 결과마다 새로 만들어 테마 전환 뒤에도 새 색)."""
+    b = QToolButton(parent)
+    b.setText(text)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    b.setProperty("aiIcon", icon or "")
+    b.setProperty("aiCoral", bool(coral))
+    if icon:
+        b.setIcon(_ai_icon(icon, "#1b120d" if coral else _current_icon_color()))
+        b.setIconSize(QSize(14, 14))
+        b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    if coral:
+        b.setStyleSheet(_CORAL_BTN_QSS.replace("padding: 6px 12px", "padding: 3px 10px"))
+    if tip:
+        b.setToolTip(tip)
+    return b
 
 
 class _AIMakeMixin:
@@ -170,6 +190,7 @@ class _AIMakeMixin:
         self._ai_panel.code_edited.connect(self._on_ai_code_edited)
         self._ai_trace = None
         self._ai_panel.trace_photo_changed.connect(self._on_ai_trace_photo)
+        self._ai_panel.entry_removed.connect(self._on_ai_entry_removed)
         return self._ai_panel
 
     def _toggle_ai_panel(self, checked: bool = False):
@@ -320,33 +341,58 @@ class _AIMakeMixin:
         except MermaidError as ex:
             req.entry.set_status(f"코드를 읽지 못했어요: {ex}")
             return None
+        # 기존 도면과 겹치면 가장 가까운 빈 자리로 다시 놓는다(배치는 결정적이라 옮겨 다시 그려도 같은 모양).
+        box = self._ai_items_rect(added)
+        spot = self._ai_find_free_center(self._scene, box.width(), box.height(), box.center(), exclude=added)
+        if (spot - box.center()).manhattanLength() > 1.0:
+            self._ai_undo_top_silently()
+            _n, _a, direction, added = self._build_mermaid_items(code, req.center + (spot - box.center()))
         req.result_text = code
         self._ai_panel.show_flow_code(code)
         self.set_tool("select")
         return self._ai_stage(added, req, extras=self._ai_flow_extras(direction))
 
     def _ai_flow_extras(self, direction):
-        lbl = QLabel("방향")
-        lbl.setStyleSheet("color:#8a8a8a; font-size:11px; padding:0 2px;")
-        combo = QComboBox()
-        for label, token in FLOW_DIRECTIONS:
-            combo.addItem(label, token)
+        """방향 — 드롭다운 대신 화살표 버튼 4개(2026-10-05 피드백 2차: 한 번에 고르게), 지금 방향만 눌린 상태."""
         token = "TD" if direction.upper() == "TB" else direction.upper()
-        combo.setCurrentIndex(max(0, combo.findData(token)))
-        combo.currentIndexChanged.connect(self._on_flow_direction_changed)
-        return (lbl, combo)
+        box = QWidget()
+        lay = QHBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        hover = "rgba(128,128,128,40)"
+        for i, (label, tok) in enumerate(FLOW_DIRECTIONS):
+            b = QToolButton(box)
+            b.setIcon(_ai_icon(_DIR_ICONS[tok], _current_icon_color()))
+            b.setIconSize(QSize(15, 15))
+            b.setCheckable(True)
+            b.setChecked(tok == token)
+            b.setToolTip(label)
+            b.setProperty("dir", tok)
+            b.setProperty("aiIcon", _DIR_ICONS[tok])
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            radius = "border-top-left-radius:6px; border-bottom-left-radius:6px;" if i == 0 else \
+                ("border-top-right-radius:6px; border-bottom-right-radius:6px;" if i == len(FLOW_DIRECTIONS) - 1 else "")
+            left = "" if i == 0 else "border-left:none;"
+            b.setStyleSheet(f"QToolButton {{ border:1px solid rgba(128,128,128,140); {left} {radius} padding:3px 5px; }}"
+                            f"QToolButton:hover {{ background:{hover}; }}"
+                            f"QToolButton:checked {{ background:rgba(218,119,86,90); border-color:{_ACCENT_CORAL}; }}")
+            b.clicked.connect(self._on_flow_direction_clicked)
+            lay.addWidget(b)
+        return (box,)
 
-    def _on_flow_direction_changed(self, _i):
+    def _on_flow_direction_clicked(self):
         st = self._ai_staged
-        combo = self.sender()
-        if st is None or st.request.kind != "flow" or combo is None:
+        btn = self.sender()
+        if st is None or st.request.kind != "flow" or btn is None:
             return
         code = getattr(st.request, "result_text", "")
         m = _MERMAID_HEADER_RE.match(code)
-        if not m:
+        tok = btn.property("dir")
+        if not m or m.group(1).upper() == tok or (tok == "TD" and m.group(1).upper() == "TB"):
+            btn.setChecked(True)   # 이미 그 방향 — 눌린 상태 유지
             return
         a, b = m.span(1)
-        self._ai_replace_flow(code[:a] + combo.currentData() + code[b:])
+        self._ai_replace_flow(code[:a] + tok + code[b:])
 
     def _ai_replace_flow(self, code):
         """임시 흐름도를 새 코드로 다시 그린다(방향 바꾸기·코드 칸 고치기) — 되돌리기 기록은 늘지 않는다.
@@ -648,7 +694,11 @@ class _AIMakeMixin:
             cx, cy = tr.center().x(), tr.bottom() + SYMBOL_GAP + L / 2   # 바꿀 도형 바로 아래 줄
         else:
             cx, cy = req.center.x(), req.center.y()
-        x0 = cx - (n * L + (n - 1) * SYMBOL_GAP) / 2
+        row_w = n * L + (n - 1) * SYMBOL_GAP
+        spot = self._ai_find_free_center(self._scene, row_w, L, QPointF(cx, cy),
+                                         exclude=(target,) if target is not None else ())
+        cx, cy = spot.x(), spot.y()
+        x0 = cx - row_w / 2
         slots = [QRectF(x0 + i * (L + SYMBOL_GAP), cy - L / 2, L, L) for i in range(n)]
         self._ai_stage_candidates(req, slots)
         base_url = gw.resolve_base_url()
@@ -672,9 +722,8 @@ class _AIMakeMixin:
         st.snap = (len(self._undo), self._undo[-1] if self._undo else None)
         st.hint = QLabel(PICK_HINT)
         st.hint.setStyleSheet("color:#8a8a8a; font-size:11px; padding:0 4px;")
-        save_btn = QToolButton()
-        save_btn.setText("내 심볼에 저장")
-        save_btn.setToolTip("고른 후보(없으면 도착한 후보 전부)를 내 심볼 팔레트에 저장")
+        save_btn = _icon_button(None, "내 심볼에 저장", "save",
+                                tip="고른 후보(없으면 도착한 후보 전부)를 내 심볼 팔레트에 저장")
         save_btn.clicked.connect(self._ai_save_candidates_to_symbols)
         st.bar = _StagingBar(view.viewport(), self._ai_commit_picked, self._ai_retry_staged,
                              self._ai_discard_staged, extras=(st.hint, save_btn), discard_text="모두 버리기")
@@ -897,7 +946,8 @@ class _AIMakeMixin:
         faint.putalpha(self._PHOTO_UNDERLAY_ALPHA)
         w, h = fitted.size
         view = self._view
-        c = view.mapToScene(view.viewport().rect().center())
+        c = self._ai_find_free_center(self._scene, w * _PHOTO_SCALE, h * _PHOTO_SCALE,
+                                      view.mapToScene(view.viewport().rect().center()))
         rect = QRectF(c.x() - w * _PHOTO_SCALE / 2, c.y() - h * _PHOTO_SCALE / 2, w * _PHOTO_SCALE, h * _PHOTO_SCALE)
         tr = _TraceSetup(doc=self._active_doc, original=img, fitted=fitted, pixmap=_pil_to_pixmap(faint), rect=rect,
                          quad=[(0.0, 0.0), (float(w), 0.0), (float(w), float(h)), (0.0, float(h))])
@@ -912,17 +962,13 @@ class _AIMakeMixin:
         tr.hint = QLabel(TRACE_HINT, bar)
         tr.hint.setStyleSheet("color:#8a8a8a; font-size:11px; padding:0 4px;")
         lay.addWidget(tr.hint)
-        tr.reset_btn = QToolButton(bar)
-        tr.reset_btn.setText("모서리 초기화")
+        tr.reset_btn = _icon_button(bar, "모서리 초기화", "ai_corners")
         tr.reset_btn.clicked.connect(self._ai_trace_reset_corners)
         lay.addWidget(tr.reset_btn)
-        tr.remove_btn = QToolButton(bar)
-        tr.remove_btn.setText("사진 빼기")
+        tr.remove_btn = _icon_button(bar, "사진 빼기", "ai_close")
         tr.remove_btn.clicked.connect(self._ai_panel.clear_attached_image)
         lay.addWidget(tr.remove_btn)
-        tr.cancel_btn = QToolButton(bar)
-        tr.cancel_btn.setText("취소")
-        tr.cancel_btn.setToolTip("남은 구역 생성을 멈춤(지금 도는 호출은 끝까지 감)")
+        tr.cancel_btn = _icon_button(bar, "취소", "ai_stop", tip="남은 구역 생성을 멈춤(지금 도는 호출은 끝까지 감)")
         tr.cancel_btn.clicked.connect(self._ai_trace_cancel)
         tr.cancel_btn.setVisible(False)
         lay.addWidget(tr.cancel_btn)
@@ -1163,3 +1209,102 @@ class _AIMakeMixin:
             job.request.entry.set_status(CANCELLED_TEXT)
         if tr is not None:
             self._ai_trace_set_running(False)
+
+    # ---- 빈 자리·기록 지우기(2026-10-05 피드백 2차) -------------------------------------------
+
+    @staticmethod
+    def _ai_items_rect(items) -> QRectF:
+        r = QRectF()
+        for it in items:
+            if it.scene() is not None:
+                r = r.united(it.sceneBoundingRect())
+        return r
+
+    def _ai_find_free_center(self, scene, w, h, near, exclude=()) -> QPointF:
+        """w×h를 기존 도형과 `_FREE_MARGIN` 이상 띄워 놓을 수 있는, `near`에서 가장 가까운 가운데점.
+        가운데부터 바깥으로(가로 반칸·세로 반칸 격자) 고리를 넓히며 씬 공간 색인(`scene.items(rect)`)으로 빈지 본다.
+        못 찾으면 도면 전체의 오른쪽 바깥(사용자 결정: 겹치지 않게)."""
+        ex = {e for e in exclude if e is not None}
+        m = _FREE_MARGIN
+
+        def free(cx, cy):
+            r = QRectF(cx - w / 2 - m, cy - h / 2 - m, w + 2 * m, h + 2 * m)
+            for it in scene.items(r):
+                top = it.topLevelItem()
+                if top in ex or it in ex or not top.isVisible():
+                    continue
+                return False
+            return True
+        if free(near.x(), near.y()):
+            return QPointF(near)
+        sx, sy = w / 2 + m, h / 2 + m
+        cands = []
+        for i in range(-_FREE_RINGS, _FREE_RINGS + 1):
+            for j in range(-_FREE_RINGS, _FREE_RINGS + 1):
+                if i or j:
+                    cands.append((math.hypot(i * sx, j * sy), i, j))
+        cands.sort()
+        for _d, i, j in cands:
+            cx, cy = near.x() + i * sx, near.y() + j * sy
+            if free(cx, cy):
+                return QPointF(cx, cy)
+        tops = [it for it in scene.items() if it.parentItem() is None and it not in ex]
+        allr = self._ai_items_rect(tops)
+        return QPointF(allr.right() + m + w / 2, near.y()) if not allr.isNull() else QPointF(near)
+
+    def _ai_undo_top_silently(self):
+        """방금 쌓은 되돌리기 한 칸을 되돌리고 다시 실행 목록에서도 뺀다(자리 옮겨 다시 그릴 때)."""
+        if not self._undo:
+            return
+        entry = self._undo[-1]
+        self.undo()
+        if self._redo and self._redo[-1] is entry:
+            self._redo.pop()
+            self._refresh_history_actions()
+
+    def _on_ai_entry_removed(self, req):
+        """기록 칸을 지움 — 그 요청이 아직 만드는 중이면 취소한다. 후보 줄도 함께 버린다(결과가 이미 놓였으면 그대로)."""
+        for worker, job in list(self._ai_jobs.items()):
+            if job.request is not req:
+                continue
+            cancel = getattr(worker, "request_cancel", None)
+            if cancel is not None:
+                cancel()   # 베끼기 — 지금 호출이 끝나면 멈추고 준비 단계로(취소 신호)
+            else:
+                _detach_worker(worker)   # 흐름도·심볼 — 결과를 버린다
+                self._ai_jobs.pop(worker, None)
+        if not self._ai_jobs:
+            self._ai_tick_timer.stop()
+        st = self._ai_staged
+        if st is not None and st.request is req and st.slots is not None:
+            self._ai_discard_candidates(DISCARDED_TEXT)
+
+    _AI_BAR_QSS = ("QFrame#aiStagingBar { background:palette(window); border:1px solid rgba(128,128,128,140);"
+                   " border-radius:8px; }")
+
+    def _ai_refresh_theme(self):
+        """테마 전환 — 떠 있는 결과·준비 막대도 스타일·아이콘을 다시 칠한다(QSS 걸린 위젯은 팔레트만 바뀌어선
+        처음 색에 남는 함정 — 라이트로 바꿔도 막대만 어둡게 남던 것, 2026-10-05 실제 창)."""
+        bars = []
+        st = getattr(self, "_ai_staged", None)
+        if st is not None and st.bar is not None:
+            bars.append(st.bar)
+        tr = getattr(self, "_ai_trace", None)
+        if tr is not None and tr.bar is not None:
+            bars.append(tr.bar)
+        for bar in bars:
+            if sip.isdeleted(bar):
+                continue
+            bar.setStyleSheet("")
+            bar.setStyleSheet(self._AI_BAR_QSS)
+            for b in bar.findChildren(QToolButton):
+                name = b.property("aiIcon")
+                if name:
+                    b.setIcon(_ai_icon(name, "#1b120d" if b.property("aiCoral") else _current_icon_color()))
+                ss = b.styleSheet()
+                if ss:
+                    b.setStyleSheet("")
+                    b.setStyleSheet(ss)
+            for v in (getattr(st, "doc", None), getattr(tr, "doc", None)):
+                if v is not None and not sip.isdeleted(v.view):
+                    v.view.viewport().update()
