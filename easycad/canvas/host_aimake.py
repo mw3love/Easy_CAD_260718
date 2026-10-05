@@ -60,7 +60,13 @@ _FREE_RINGS = 8           # 빈 자리 찾기: 가운데에서 몇 바퀴까지 
 SYMBOL_COUNT = 6          # 심볼 후보 수(패널 입력칸 「후보 6」)
 SYMBOL_GAP = 40.0         # 후보 칸 사이(씬 단위)
 UNPICKED_TEXT = "고르지 않아 후보를 버렸어요"
-FOLLOWED_TEXT = "이어 만들기로 넘김"
+# 이어 만들기(2026-10-05 피드백 6차): 심볼은 후보 줄을 아래로 쌓고, 흐름도는 원본 옆에 새 결과를 나란히 놓아 고른다.
+KEPT_TEXT = "이어 만들기 — 후보는 그대로 두고 아래 줄에 추가"
+ORIGINAL_TEXT = "원본 — 오른쪽 새 결과와 나란히 비교 중"
+KEPT_BOTH_TEXT = "✓ 넣음(원본도 남김)"
+CHOSE_NEW_TEXT = "새 결과를 골라 지움"
+CHOSE_ORIGINAL_TEXT = "원본을 골라 버림"
+_COMPARE_GAP = 120.0      # 흐름도 원본과 새 결과 사이(씬 단위)
 _CHECK_PX = 16      # 후보 칸 체크 표시 크기(화면 px)
 _CHECK_INSET_PX = 4
 TRACE_HINT = "주황 점을 종이 네 귀퉁이로 끌어 맞추고 「만들기」"
@@ -126,6 +132,13 @@ class _StagedResult:
     snap: tuple = None          # 후보를 띄울 때의 (기록 길이, 맨 위 칸) — 바뀌면 다른 작업이 있었던 것
     all_btn: QToolButton = None   # 후보 막대 「모두 선택/모두 풀기」
     clearing_sel: bool = False
+    row_start: int = 0          # 이어 만들기로 붙인 지금 줄의 첫 칸 번호(앞 줄들은 그대로 남는다)
+    base_marks: set = field(default_factory=set)   # 지금 줄의 바탕이 된 후보 번호(「바탕」 표시)
+    # ---- 흐름도 이어 고치기 비교(피드백 6차) — alt는 왼쪽에 남겨 둔 원본(_StagedResult), marks는 상대편과 다른 도형.
+    alt: object = None
+    alt_bar: QWidget = None
+    marks: list = field(default_factory=list)
+    alt_marks: list = field(default_factory=list)
 
 
 class _StagingBar(QFrame):
@@ -182,6 +195,41 @@ def _icon_button(parent, text, icon, coral=False, tip=None):
     if tip:
         b.setToolTip(tip)
     return b
+
+
+def _flow_diff_items(code, other_code, items) -> list:
+    """`code`로 그린 `items`(`_build_mermaid_items`가 돌려준 순서: 노드들 → 화살표들) 가운데 `other_code`에 똑같은
+    짝이 없는 것. 노드는 (글, 모양), 화살표는 (앞 노드 글, 뒤 노드 글, 화살표 글)로 맞춘다 — AI가 노드 id만 바꿔
+    붙여도 글이 같으면 같은 것으로 본다. 코드를 못 읽거나 개수가 안 맞으면 빈 목록(표시만 안 할 뿐)."""
+    from collections import Counter
+    try:
+        g, h = parse_mermaid(code), parse_mermaid(other_code)
+    except MermaidError:
+        return []
+
+    def text(gr, nid):
+        n = gr.nodes.get(nid)
+        return ((n.label or n.id) if n is not None else nid).strip()
+
+    def edges(gr):   # 빌더가 실제로 그리는 화살표만(양끝이 있고 자기 자신으로 가지 않는 것)
+        return [e for e in gr.edges if e.src in gr.nodes and e.dst in gr.nodes and e.src != e.dst]
+
+    def node_keys(gr):
+        return [(text(gr, nid), gr.nodes[nid].shape) for nid in gr.nodes]
+
+    def edge_keys(gr):
+        return [(text(gr, e.src), text(gr, e.dst), (e.label or "").strip()) for e in edges(gr)]
+    keys = node_keys(g) + edge_keys(g)
+    if len(keys) != len(items):
+        return []
+    left = Counter(node_keys(h) + edge_keys(h))
+    out = []
+    for key, it in zip(keys, items):
+        if left[key] > 0:
+            left[key] -= 1
+        else:
+            out.append(it)
+    return out
 
 
 class _AIMakeMixin:
@@ -241,11 +289,11 @@ class _AIMakeMixin:
         base = getattr(req, "followup_of", None)
         center = None
         if base is not None and base is self._ai_staged:
-            # 이어 만들기 — 바탕 결과 자리에서 이어 간다. 심볼 후보 줄은 지금 걷고(고른 것도 넣지 않음 — 바탕일 뿐),
-            # 흐름도 임시 결과는 새 결과가 올 때 바꿔치기한다(`_ai_place_flow`).
+            # 이어 만들기 — 바탕 결과는 지우지 않는다(피드백 6차). 심볼은 후보 줄 아래에 새 줄을 붙이고
+            # (`_ai_extend_candidates`), 흐름도는 새 결과가 오면 원본 옆에 나란히 놓아 고르게 한다(`_ai_place_flow`).
             center = self._ai_staged_scene_rect().center()
-            if base.slots is not None:
-                self._ai_discard_candidates(FOLLOWED_TEXT)
+            if base.slots is not None and getattr(req, "replace_target", None) is None:
+                req.replace_target = getattr(base.request, "replace_target", None)   # 「AI로 바꾸기」 줄이면 이어서도
         else:
             self._ai_accept_staged()
         req.doc = self._active_doc
@@ -296,7 +344,8 @@ class _AIMakeMixin:
             sec = int(now - job.t0)
             tr = self._ai_trace
             if job.request.kind == "symbol" and st is not None and st.request is job.request:
-                entry.set_status(f"후보 {len(st.cands)}/{len(st.slots)} 도착 · {sec}초", running=True)
+                entry.set_status(f"후보 {len(st.cands) - st.row_start}/{len(st.slots) - st.row_start} 도착 · {sec}초",
+                                 running=True)
             elif job.request.kind == "trace":
                 if getattr(job.worker, "_cancel", False):
                     continue   # 취소 중 — 「취소하는 중」 글을 덮지 않는다
@@ -354,23 +403,40 @@ class _AIMakeMixin:
         if job is not None:
             self._ai_place_flow(job.request, code)
 
-    def _ai_place_flow(self, req, code):
-        """Mermaid 코드 → 도형·화살표(옛 Mermaid 창과 같은 배치 `_build_mermaid_items`)를 요청 자리에 임시로 놓는다."""
+    def _ai_place_flow(self, req, code, alt=None):
+        """Mermaid 코드 → 도형·화살표(옛 Mermaid 창과 같은 배치 `_build_mermaid_items`)를 요청 자리에 임시로 놓는다.
+        이어 고치기 결과면 바탕(원본)을 지우지 않고 왼쪽에 남겨 새 결과를 그 오른쪽에 나란히 놓는다(피드백 6차 — 끝에만
+        붙여 달라 해도 AI가 가운데를 고칠 수 있어 눈으로 비교). `alt`는 비교 중인 새 결과를 다시 그릴 때 넘기는 원본."""
         if not self._ai_goto_request_doc(req):
             return None
         base = getattr(req, "followup_of", None)
-        if base is not None and base is self._ai_staged and base.slots is None:
-            self._ai_drop_staged(base)               # 이어 고치기 — 바탕 결과를 새 결과로 바꿔치기
-            self._ai_finish_staging(FOLLOWED_TEXT)
+        if alt is None and base is not None and base is self._ai_staged and base.slots is None \
+                and base.doc is self._active_doc and self._undo and self._undo[-1] is base.undo_entry:
+            alt = base
+            self._ai_drop_alt(base)              # 이어 고치기를 거듭하면 비교는 늘 「바탕 ↔ 새 결과」 둘 — 더 앞의 원본은 정리
+            self._ai_staged = None               # 바탕은 임시 결과에서 내려 원본 자리로(막대는 아래에서 바꿔 단다)
+            if base.bar is not None and not sip.isdeleted(base.bar):
+                base.bar.hide()
+                base.bar.deleteLater()
+            base.bar = None
+            if base.request.entry is not None and not sip.isdeleted(base.request.entry):
+                base.request.entry.set_status(ORIGINAL_TEXT, running=True)
         self._ai_accept_staged()
         try:
             _n, _a, direction, added = self._build_mermaid_items(code, req.center)
         except MermaidError as ex:
             req.entry.set_status(f"코드를 읽지 못했어요: {ex}")
+            if alt is not None:
+                self._ai_restage_flow(alt)
             return None
         # 기존 도면과 겹치면 가장 가까운 빈 자리로 다시 놓는다(배치는 결정적이라 옮겨 다시 그려도 같은 모양).
+        # 비교 중이면 원본 오른쪽부터 찾는다.
         box = self._ai_items_rect(added)
-        spot = self._ai_find_free_center(self._scene, box.width(), box.height(), box.center(), exclude=added)
+        near = box.center()
+        if alt is not None:
+            ar = self._ai_items_rect(alt.items)
+            near = QPointF(ar.right() + _COMPARE_GAP + box.width() / 2, ar.center().y())
+        spot = self._ai_find_free_center(self._scene, box.width(), box.height(), near, exclude=added)
         if (spot - box.center()).manhattanLength() > 1.0:
             self._ai_undo_top_silently()
             _n, _a, direction, added = self._build_mermaid_items(code, req.center + (spot - box.center()))
@@ -378,7 +444,115 @@ class _AIMakeMixin:
         self._ai_panel.show_flow_code(code)
         self.set_tool("select")
         # 흐름도 막대엔 「다시」가 없다(2026-10-05 피드백 5차 — 같은 요청은 기록 칸을 눌러 다시 채우면 됨).
-        return self._ai_stage(added, req, extras=self._ai_flow_extras(direction), retry=False)
+        st = self._ai_stage(added, req, extras=self._ai_flow_extras(direction), retry=False)
+        if st is not None and alt is not None:
+            self._ai_begin_compare(st, alt, added)
+        return st
+
+    # ---- 흐름도 이어 고치기 비교(피드백 6차) ------------------------------------------------
+
+    def _ai_begin_compare(self, st, alt, added):
+        """새 결과(st) 왼쪽에 원본(alt)을 남겨 둔 비교 상태 — 막대 「이걸로」는 새 결과를 쓰고 원본을 지운다.
+        원본 위엔 작은 막대(「원본」 「이걸로」)를 따로 띄운다. 서로 다른 도형은 주황으로 표시."""
+        st.alt = alt
+        old_code = getattr(alt.request, "result_text", "")
+        new_code = st.request.result_text
+        st.marks = _flow_diff_items(new_code, old_code, added)
+        st.alt_marks = _flow_diff_items(old_code, new_code, [it for it in alt.items if it.scene() is not None])
+        st.bar.accept_btn.clicked.disconnect()
+        st.bar.accept_btn.clicked.connect(self._ai_choose_new)
+        st.bar.accept_btn.setText("이걸로")
+        st.bar.accept_btn.setToolTip("새 결과를 쓰고 왼쪽 원본은 지우기")
+        st.bar.discard_btn.setToolTip("새 결과를 버리고 원본으로 돌아가기")
+        view = st.doc.view
+        bar = QFrame(view.viewport())
+        bar.setObjectName("aiStagingBar")
+        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar.setStyleSheet(self._AI_BAR_QSS)
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(5)
+        lbl = QLabel("원본", bar)
+        lbl.setStyleSheet("font-weight:600; padding:0 4px;")
+        lay.addWidget(lbl)
+        pick = _icon_button(bar, "이걸로", "ai_check", tip="원본을 쓰고 새 결과는 버리기")
+        pick.clicked.connect(self._ai_choose_original)
+        lay.addWidget(pick)
+        bar.adjustSize()
+        st.alt_bar = bar
+        n = len(st.marks)
+        if st.request.entry is not None:
+            st.request.entry.set_status(
+                f"원본과 다른 곳 {n}군데 주황 표시 — 「이걸로」로 고르세요" if n else "원본과 같아요 — 「이걸로」로 고르세요",
+                running=True)
+        self._ai_ensure_visible(view, self._ai_staged_scene_rect().united(self._ai_items_rect(alt.items)))
+        self._ai_place_bar()
+        bar.show()
+        view.viewport().update()
+
+    def _ai_end_alt(self, st, status=None):
+        """비교 상태를 걷는다(원본 막대 치우기). `status`가 있으면 원본 기록 칸에 적는다. 원본 도형은 건드리지 않는다."""
+        alt, st.alt = st.alt, None
+        if st.alt_bar is not None and not sip.isdeleted(st.alt_bar):
+            st.alt_bar.hide()
+            st.alt_bar.deleteLater()
+        st.alt_bar = None
+        st.marks, st.alt_marks = [], []
+        if alt is not None and status is not None:
+            entry = getattr(alt.request, "entry", None)
+            if entry is not None and not sip.isdeleted(entry):
+                entry.set_status(status)
+        return alt
+
+    def _ai_drop_alt(self, st):
+        """비교 중인 원본을 지운다. 그 기록 칸은 지금 결과 바로 밑이라(다른 편집이 끼면 자동 채택으로 비교가 끝난다)
+        기록 목록에서 그 칸째 뺀다 — 지우기 기록을 새로 쌓으면 Ctrl+Z 한 번에 원본이 되살아나 헷갈린다."""
+        alt = self._ai_end_alt(st, CHOSE_NEW_TEXT)
+        if alt is None:
+            return
+        undo = alt.doc.undo
+        for it in alt.items:
+            if it.scene() is not None:
+                it.scene().removeItem(it)
+        if alt.undo_entry in undo:
+            undo.remove(alt.undo_entry)
+        else:
+            self.push_undo_delete([it for it in alt.items])
+        self._refresh_history_actions()
+
+    def _ai_restage_flow(self, alt):
+        """원본을 다시 임시 결과로(새 결과를 버렸거나 Ctrl+Z로 빠졌을 때) — 원본 기록 칸이 맨 위일 때만."""
+        if alt.doc is not self._active_doc or not self._undo or self._undo[-1] is not alt.undo_entry:
+            entry = getattr(alt.request, "entry", None)
+            if entry is not None and not sip.isdeleted(entry):
+                entry.set_status(ACCEPTED_TEXT)
+            return None
+        m = _MERMAID_HEADER_RE.match(getattr(alt.request, "result_text", ""))
+        self._ai_panel.show_flow_code(getattr(alt.request, "result_text", ""))
+        return self._ai_stage(alt.items, alt.request, extras=self._ai_flow_extras(m.group(1) if m else "TD"),
+                              retry=False)
+
+    def _ai_choose_new(self):
+        """비교 막대 「이걸로」(새 결과) — 원본을 지우고 새 결과를 채택."""
+        st = self._ai_staged
+        if st is None:
+            return
+        if st.alt is not None:
+            self._ai_drop_alt(st)
+        self._ai_finish_staging(ACCEPTED_TEXT)
+
+    def _ai_choose_original(self):
+        """원본 막대 「이걸로」 — 새 결과를 버리고 원본을 채택."""
+        st = self._ai_staged
+        if st is None or st.alt is None:
+            return
+        alt = self._ai_end_alt(st)
+        self._ai_drop_staged(st)
+        self._ai_finish_staging(CHOSE_ORIGINAL_TEXT)
+        entry = getattr(alt.request, "entry", None)
+        if entry is not None and not sip.isdeleted(entry):
+            entry.set_status(ACCEPTED_TEXT)
+        self._ai_panel.show_flow_code(getattr(alt.request, "result_text", ""))
 
     def _ai_flow_extras(self, direction):
         """방향 — 드롭다운 대신 화살표 버튼 4개(2026-10-05 피드백 2차: 한 번에 고르게), 지금 방향만 눌린 상태."""
@@ -441,9 +615,10 @@ class _AIMakeMixin:
         except MermaidError as ex:
             req.entry.set_status(f"코드 오류 — 이전 결과 유지: {ex}", running=True)
             return None
+        alt = self._ai_end_alt(st)   # 비교 중이면 원본은 남긴 채 새 결과만 다시 그린다
         self._ai_drop_staged(st)
         self._ai_finish_staging("")
-        return self._ai_place_flow(req, code)
+        return self._ai_place_flow(req, code, alt=alt)
 
     def _on_ai_code_insert(self, req):
         """고급 「코드로 넣기」 — AI 없이 코드 그대로(옛 Mermaid 창의 "직접 붙여넣기" 길)."""
@@ -535,6 +710,11 @@ class _AIMakeMixin:
         if st is None:
             return
         self._ai_staged = None
+        if st.alt is not None:
+            # 비교 중에 자동 채택(다른 편집·새 만들기·저장)되면 둘 다 남긴다 — Ctrl+Z로 지울 수 있으니 잃는 게 없다.
+            self._ai_end_alt(st, ACCEPTED_TEXT)
+            if status == ACCEPTED_TEXT:
+                status = KEPT_BOTH_TEXT
         if st.slots is not None:
             try:
                 st.doc.scene.selectionChanged.disconnect(self._ai_on_cand_selection)
@@ -599,8 +779,11 @@ class _AIMakeMixin:
         if st.slots is not None:
             self._ai_discard_candidates(DISCARDED_TEXT)
             return
+        alt = self._ai_end_alt(st)
         self._ai_drop_staged(st)
         self._ai_finish_staging(DISCARDED_TEXT)
+        if alt is not None:
+            self._ai_restage_flow(alt)   # 이어 고친 새 결과를 버림 — 원본이 다시 임시 결과로
 
     def _ai_drop_staged(self, st):
         """임시 결과의 도형을 걷어 낸다(점선·막대는 그대로 — 호출부가 `_ai_finish_staging`한다)."""
@@ -649,7 +832,10 @@ class _AIMakeMixin:
         if st.slots is not None:                # 후보 줄은 다른 편집에도 남는다(피드백 3차) — 채택·버리기·저장 때 정리
             return
         if st.undo_entry not in undo:           # Ctrl+Z로 결과가 빠졌다
+            alt = self._ai_end_alt(st)
             self._ai_finish_staging(UNDONE_TEXT)
+            if alt is not None:
+                self._ai_restage_flow(alt)      # 이어 고친 결과가 빠짐 — 원본을 다시 임시 결과로
         elif undo[-1] is not st.undo_entry:     # 다른 편집이 기록됐다 → 자동 채택
             self._ai_finish_staging(ACCEPTED_TEXT)
 
@@ -695,11 +881,21 @@ class _AIMakeMixin:
                     painter.drawText(r, Qt.AlignmentFlag.AlignCenter, "…")
                 else:
                     self._ai_draw_check(painter, self._ai_check_scene_rect(r, s), i in st.picked, s)
+                    if i in st.base_marks:
+                        self._ai_draw_tag(view, painter, r, "바탕")
         else:
             pen = QPen(QColor(_ACCENT_CORAL), 2.0, Qt.PenStyle.DashLine)
             pen.setCosmetic(True)
             painter.setPen(pen)
             painter.drawRoundedRect(rect, 6 / s, 6 / s)
+            if st.alt is not None:   # 비교 중인 원본 — 회색 점선
+                ar = self._ai_items_rect(st.alt.items)
+                if not ar.isNull():
+                    pen = QPen(QColor(128, 128, 128, 200), 2.0, Qt.PenStyle.DashLine)
+                    pen.setCosmetic(True)
+                    painter.setPen(pen)
+                    painter.drawRoundedRect(ar.adjusted(-pad, -pad, pad, pad), 6 / s, 6 / s)
+            self._ai_draw_marks(painter, list(st.marks) + list(st.alt_marks), s)
         painter.restore()
         vp = view.mapFromScene(rect).boundingRect()
         if vp != st.last_vp:
@@ -717,6 +913,10 @@ class _AIMakeMixin:
         s = view.transform().m11() or 1.0
         pad = self._AI_STAGE_PAD_PX / s
         st.last_vp = self._ai_place_widget(view, st.bar, rect.adjusted(-pad, -pad, pad, pad))
+        if st.alt is not None and st.alt_bar is not None and not sip.isdeleted(st.alt_bar):
+            ar = self._ai_items_rect(st.alt.items)
+            if not ar.isNull():
+                self._ai_place_widget(view, st.alt_bar, ar.adjusted(-pad, -pad, pad, pad))
 
     def _ai_place_widget(self, view, bar, scene_rect) -> QRect:
         """막대 위젯을 씬 사각형 위(자리가 없으면 아래)에, 떠 있는 카드 밑에 깔리지 않게 놓는다."""
@@ -732,6 +932,51 @@ class _AIMakeMixin:
         bar.raise_()
         return vp
 
+    @staticmethod
+    def _ai_draw_marks(painter, items, s):
+        """비교 중 상대편과 다른 도형 — 상자는 주황 테두리+옅은 칠, 화살표는 꺾은선을 따라 굵은 주황 띠."""
+        fill = QColor(_ACCENT_CORAL)
+        fill.setAlpha(45)
+        for it in items:
+            if it.scene() is None:
+                continue
+            pts = getattr(it, "_pts", None)
+            if pts:
+                band = QColor(_ACCENT_CORAL)
+                band.setAlpha(120)
+                pen = QPen(band, 7.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+                pen.setCosmetic(True)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPolyline(QPolygonF([it.mapToScene(p) for p in pts]))
+            else:
+                pen = QPen(QColor(_ACCENT_CORAL), 2.5)
+                pen.setCosmetic(True)
+                painter.setPen(pen)
+                painter.setBrush(fill)
+                pad = 5 / s
+                painter.drawRoundedRect(it.sceneBoundingRect().adjusted(-pad, -pad, pad, pad), 5 / s, 5 / s)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    @staticmethod
+    def _ai_draw_tag(view, painter, scene_rect, text):
+        """칸 왼쪽 위에 작은 주황 꼬리표(화면 px 고정 크기)."""
+        pt = view.mapFromScene(scene_rect.topLeft())
+        painter.save()
+        painter.resetTransform()
+        f = painter.font()
+        f.setPixelSize(10)
+        f.setBold(True)
+        painter.setFont(f)
+        fm = painter.fontMetrics()
+        box = QRectF(pt.x() + 4, pt.y() + 4, fm.horizontalAdvance(text) + 8, fm.height() + 2)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(_ACCENT_CORAL))
+        painter.drawRoundedRect(box, 3, 3)
+        painter.setPen(QColor("#1b120d"))
+        painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+        painter.restore()
+
 
 
     # ---- 심볼 후보 줄(4단계) -----------------------------------------------------------
@@ -745,19 +990,23 @@ class _AIMakeMixin:
             return None
         L = self._SVG_LONG
         n = max(1, int(getattr(req, "count", SYMBOL_COUNT) or SYMBOL_COUNT))
-        target = getattr(req, "replace_target", None)
-        if target is not None and target.scene() is self._scene:
-            tr = target.mapToScene(QRectF(target.rect())).boundingRect()
-            cx, cy = tr.center().x(), tr.bottom() + SYMBOL_GAP + L / 2   # 바꿀 도형 바로 아래 줄
+        cur = self._ai_staged
+        if cur is not None and cur.slots is not None and getattr(req, "followup_of", None) is cur:
+            self._ai_extend_candidates(req, n)
         else:
-            cx, cy = req.center.x(), req.center.y()
-        row_w = n * L + (n - 1) * SYMBOL_GAP
-        spot = self._ai_find_free_center(self._scene, row_w, L, QPointF(cx, cy),
-                                         exclude=(target,) if target is not None else ())
-        cx, cy = spot.x(), spot.y()
-        x0 = cx - row_w / 2
-        slots = [QRectF(x0 + i * (L + SYMBOL_GAP), cy - L / 2, L, L) for i in range(n)]
-        self._ai_stage_candidates(req, slots)
+            target = getattr(req, "replace_target", None)
+            if target is not None and target.scene() is self._scene:
+                tr = target.mapToScene(QRectF(target.rect())).boundingRect()
+                cx, cy = tr.center().x(), tr.bottom() + SYMBOL_GAP + L / 2   # 바꿀 도형 바로 아래 줄
+            else:
+                cx, cy = req.center.x(), req.center.y()
+            row_w = n * L + (n - 1) * SYMBOL_GAP
+            spot = self._ai_find_free_center(self._scene, row_w, L, QPointF(cx, cy),
+                                             exclude=(target,) if target is not None else ())
+            cx, cy = spot.x(), spot.y()
+            x0 = cx - row_w / 2
+            slots = [QRectF(x0 + i * (L + SYMBOL_GAP), cy - L / 2, L, L) for i in range(n)]
+            self._ai_stage_candidates(req, slots)
         base_url = gw.resolve_base_url()
         now = time.monotonic()
         for _ in range(n):
@@ -772,6 +1021,37 @@ class _AIMakeMixin:
         self._ai_tick()
         self._ai_tick_timer.start()
         return self._ai_staged
+
+    def _ai_extend_candidates(self, req, n):
+        """이어 만들기(피드백 6차) — 지금 후보 줄은 그대로 두고 그 아래에 새 줄을 붙인다(고를 거리가 늘어남). 앞 요청에서
+        아직 안 온 후보는 끊는다(칸은 도착 순서로 채우므로 앞 줄이 다 닫혀야 새 줄 번호가 이어진다). 고름은 풀고, 바탕이 된
+        후보엔 「바탕」 꼬리표."""
+        st = self._ai_staged
+        old = st.request
+        for worker, job in list(self._ai_jobs.items()):
+            if job.request is old:
+                _detach_worker(worker)
+                self._ai_jobs.pop(worker, None)
+        st.slots = st.slots[:len(st.cands)]
+        refs = getattr(req, "refs", None) or []
+        st.base_marks = {i for i, c in enumerate(st.cands) if c.svg in refs}
+        st.picked = set()
+        entry = getattr(old, "entry", None)
+        if entry is not None and not sip.isdeleted(entry):
+            entry.set_status(KEPT_TEXT)
+        L = self._SVG_LONG
+        rect = self._ai_staged_scene_rect()
+        row_w = n * L + (n - 1) * SYMBOL_GAP
+        near = QPointF(rect.center().x(), rect.bottom() + SYMBOL_GAP + 2 + L / 2)
+        spot = self._ai_find_free_center(st.doc.scene, row_w, L, near)
+        x0 = spot.x() - row_w / 2
+        st.row_start = len(st.slots)
+        st.slots.extend(QRectF(x0 + i * (L + SYMBOL_GAP), spot.y() - L / 2, L, L) for i in range(n))
+        st.request = req
+        st.errors = []
+        self._ai_update_pick_ui(st)
+        self._ai_ensure_visible()
+        return st
 
     def _ai_stage_candidates(self, req, slots):
         self._ai_accept_staged()
@@ -831,13 +1111,20 @@ class _AIMakeMixin:
         st.pending -= 1
         if st.pending > 0:
             return
-        if not st.cands:
+        if len(st.cands) == st.row_start:
             why = st.errors[0] if st.errors else "응답 없음"
-            self._ai_finish_staging(f"실패: 후보를 하나도 못 받았어요 — {why}")
+            if not st.row_start:
+                self._ai_finish_staging(f"실패: 후보를 하나도 못 받았어요 — {why}")
+                return
+            # 이어 만든 줄만 실패 — 앞 줄 후보는 그대로 두고 고를 수 있게(피드백 6차).
+            st.slots = st.slots[:st.row_start]
+            req.entry.set_status(f"실패: 새 후보를 못 받았어요 — {why} (앞 후보는 그대로)", running=True)
+            st.doc.view.viewport().update()
+            self._ai_place_bar()
             return
         # 다 왔다 — 못 받은 칸은 줄에서 뺀다(빈 회색 칸이 남지 않게).
         st.slots = st.slots[:len(st.cands)]
-        req.entry.set_status(f"후보 {len(st.cands)}개 — 클릭해 넣거나 □로 여러 개 고르세요", running=True)
+        req.entry.set_status(f"후보 {len(st.cands) - st.row_start}개 — 클릭해 넣거나 □로 여러 개 고르세요", running=True)
         st.doc.view.viewport().update()
         self._ai_place_bar()
 
@@ -999,7 +1286,8 @@ class _AIMakeMixin:
         folder = dlg.chosen_folder()
         if folder and folder not in symbol_library.load_folders():
             symbol_library.create_folder(folder)
-        saved = self._save_svg_candidates_to_symbols(entries, st.request.text, folder)
+        name = getattr(st.request, "base_text", "") or st.request.text   # 이어 만든 줄이면 원래 대상 이름으로
+        saved = self._save_svg_candidates_to_symbols(entries, name, folder)
         self.statusBar().showMessage(f"내 심볼에 {saved}개 저장", 4000)
         return saved
 
@@ -1382,6 +1670,8 @@ class _AIMakeMixin:
         st = getattr(self, "_ai_staged", None)
         if st is not None and st.bar is not None:
             bars.append(st.bar)
+        if st is not None and st.alt_bar is not None:
+            bars.append(st.alt_bar)
         tr = getattr(self, "_ai_trace", None)
         if tr is not None and tr.bar is not None:
             bars.append(tr.bar)
@@ -1420,7 +1710,7 @@ class _AIMakeMixin:
         return QPixmap.fromImage(img)
 
     def _ai_followup_symbol(self):
-        """후보 막대 「이어 만들기」 — 고른 후보(최대 4개)를 바탕으로 패널 입력칸에 붙인다. 후보 줄은 「만들기」 때 걷는다."""
+        """후보 막대 「이어 만들기」 — 고른 후보(최대 4개)를 바탕으로 패널 입력칸에 붙인다. 「만들기」하면 새 줄이 아래에 붙는다."""
         st = self._ai_staged
         if st is None or st.slots is None:
             return
@@ -1430,10 +1720,10 @@ class _AIMakeMixin:
         idx = sorted(st.picked)[:4]
         refs = [st.cands[i].svg for i in idx]
         self._ai_panel.set_followup("symbol", f"고른 후보 {len(refs)}개", [self._ai_svg_thumb(v) for v in refs],
-                                    refs=refs, base=st, base_text=st.request.text)
+                                    refs=refs, base=st, base_text=getattr(st.request, "base_text", "") or st.request.text)
 
     def _ai_followup_flow(self):
-        """흐름도 막대 「이어 고치기」 — 지금 결과 코드를 바탕으로 패널 입력칸에 붙인다. 새 결과가 오면 바꿔치기."""
+        """흐름도 막대 「이어 고치기」 — 지금 결과 코드를 바탕으로 패널 입력칸에 붙인다. 새 결과는 원본 옆에 나란히."""
         st = self._ai_staged
         if st is None or st.slots is not None or st.request.kind != "flow":
             return

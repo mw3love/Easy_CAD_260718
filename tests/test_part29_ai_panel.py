@@ -1000,11 +1000,43 @@ def test_flow_arrows_enter_along_flow_direction():
         assert abs(end.x() - dst.mapRectToScene(dst.rect()).left()) < 1.0   # 왼쪽 변으로 들어감
 
 
-def test_symbol_followup_sends_picked_svgs_and_replaces_row():
+def _distinct_svg_gen(seen=None, tag="a"):
+    """후보마다 다른 SVG(반지름이 다름) — 「바탕」 표시를 SVG 글로 맞추므로 같은 글이면 구분이 안 된다."""
+    n = [0]
+
+    def gen(*_a, refs=None, **_k):
+        n[0] += 1
+        if seen is not None:
+            seen.append(refs)
+        return (f'<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="{4 + n[0]}" fill="none" stroke="black"'
+                f' id="{tag}{n[0]}"/></svg>'), "m"
+    return gen
+
+
+def _symbol_followup(w, text="두 개를 섞어서", seen=None, fail=False):
+    p = w._ai_panel
+    inner = _distinct_svg_gen(seen, tag="b")
+
+    def gen(*a, **k):
+        if fail:
+            raise RuntimeError("429 quota")
+        return inner(*a, **k)
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.canvas.host_dialogs.generate_svg", side_effect=gen):
+        p._prompt_edit.setPlainText(text)
+        req = p.request_make()
+        assert _wait_until(lambda: not w._ai_jobs)
+    return req
+
+
+def test_symbol_followup_keeps_row_and_adds_new_row_below():
+    # 피드백 6차: 이어 만들기가 앞 후보를 걷어 버려 선택지가 줄었다 → 앞 줄은 그대로 두고 아래에 새 줄을 붙인다.
     w = _shown_window()
-    with _fake_svg():
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.canvas.host_dialogs.generate_svg", side_effect=_distinct_svg_gen()):
         req0 = _make_symbol(w)
     st = w._ai_staged
+    first_row = list(st.slots)
     w._ai_toggle_check(1)
     w._ai_toggle_check(4)
     w._ai_followup_symbol()
@@ -1013,28 +1045,68 @@ def test_symbol_followup_sends_picked_svgs_and_replaces_row():
     assert fu is not None and fu["kind"] == "symbol" and len(fu["refs"]) == 2 and not p._follow_box.isHidden()
     assert p._follow_thumbs.count() == 2
     seen = []
-
-    def gen(*_a, refs=None, **_k):
-        seen.append(refs)
-        return _SVG, "m"
-    old_center = w._ai_staged_scene_rect().center()
-    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
-            _patch("easycad.canvas.host_dialogs.generate_svg", side_effect=gen):
-        p._prompt_edit.setPlainText("두 개를 섞어서")
-        req = p.request_make()
-        assert _wait_until(lambda: not w._ai_jobs)
+    req = _symbol_followup(w, seen=seen)
     assert req.refs == [st.cands[1].svg, st.cands[4].svg] and all(r == req.refs for r in seen)
-    assert req0.entry.status_text() == "이어 만들기로 넘김"
-    assert all(it.scene() is None for c in st.cands for it in c.items)      # 바탕 후보는 넣지 않고 걷음
-    st2 = w._ai_staged
-    assert st2 is not None and st2 is not st and p.followup() is None and p._follow_box.isHidden()
-    c2 = w._ai_staged_scene_rect().center()
-    assert abs(c2.x() - old_center.x()) < 1 and abs(c2.y() - old_center.y()) < 1   # 같은 자리에서 이어 감
+    assert w._ai_staged is st and st.request is req                              # 같은 후보 줄에 이어 붙음
+    assert req0.entry.status_text().startswith("이어 만들기")
+    assert len(st.cands) == SYMBOL_COUNT * 2 and len(st.slots) == SYMBOL_COUNT * 2 and st.row_start == SYMBOL_COUNT
+    assert all(it.scene() is w._scene for c in st.cands for it in c.items)   # 앞 후보도 그대로
+    assert st.slots[:SYMBOL_COUNT] == first_row
+    assert min(r.top() for r in st.slots[SYMBOL_COUNT:]) > max(r.bottom() for r in first_row)   # 새 줄은 아래
+    assert st.base_marks == {1, 4} and st.picked == set()                       # 고름은 풀고 바탕 표시
+    assert p.followup() is None and p._follow_box.isHidden()
     assert req.entry._text_lbl.text().startswith("[이어서]")
+    assert req.entry.status_text().startswith(f"후보 {SYMBOL_COUNT}개")
+    # 앞 줄 하나 + 새 줄 하나를 골라 넣으면 둘 다 들어간다.
+    w._ai_toggle_check(0)
+    w._ai_toggle_check(SYMBOL_COUNT + 2)
+    keep = st.cands[0].items + st.cands[SYMBOL_COUNT + 2].items
+    w._ai_commit_picked()
+    assert w._ai_staged is None and all(it.scene() is w._scene for it in keep)
+    assert sum(1 for c in st.cands for it in c.items if it.scene() is not None) == len(keep)
     _close_clean(w)
 
 
-def test_flow_followup_sends_code_and_replaces_result():
+def test_symbol_followup_failure_keeps_previous_rows():
+    w = _shown_window()
+    with _fake_svg():
+        _make_symbol(w)
+    st = w._ai_staged
+    w._ai_toggle_check(0)
+    w._ai_followup_symbol()
+    req = _symbol_followup(w, fail=True)
+    assert w._ai_staged is st and len(st.slots) == SYMBOL_COUNT and len(st.cands) == SYMBOL_COUNT
+    assert "앞 후보는 그대로" in req.entry.status_text()
+    _close_clean(w)
+
+
+def test_symbol_followup_cuts_unfinished_jobs_of_previous_row():
+    # 앞 줄이 다 오기 전에 이어 만들면 앞 줄의 남은 생성은 끊는다 — 늦게 온 앞 줄 후보가 새 줄 칸을 차지하지 않게.
+    import time as _t
+    from easycad.canvas.host_aimake import _AIJob
+    w = _shown_window()
+    with _fake_svg():
+        _make_symbol(w)
+    st = w._ai_staged
+    st.slots.append(QRectF(st.slots[-1].translated(200, 0)))   # 아직 안 온 칸 하나
+    fake = object()
+    w._ai_jobs[fake] = _AIJob(st.request, fake, _t.monotonic())
+    w._ai_toggle_check(0)
+    w._ai_followup_symbol()
+    with _patch("easycad.canvas.host_aimake._detach_worker") as det:
+        _symbol_followup(w)
+    det.assert_any_call(fake)
+    assert fake not in w._ai_jobs and st.row_start == SYMBOL_COUNT and len(st.slots) == SYMBOL_COUNT * 2
+    _close_clean(w)
+
+
+def test_flow_followup_keeps_original_beside_new_result():
+    # 피드백 6차: 끝에만 붙여 달라 해도 AI가 가운데를 고칠 수 있다 → 원본을 왼쪽에 남기고 새 결과를 오른쪽에, 다른 곳 표시.
+    w, st, new, n_undo = _flow_compare()
+    _close_clean(w)
+
+
+def _flow_compare():
     w = _shown_window()
     with _fake_gateway():
         _make_flow(w)
@@ -1058,7 +1130,95 @@ def test_flow_followup_sends_code_and_replaces_result():
         req = p.request_make()
         assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not st)
     assert seen == [_FLOW]
-    assert all(it.scene() is None for it in st.items)                       # 바탕 결과는 바꿔치기
-    assert len(w._ai_staged.items) == 9 and len(w._undo) == n_undo        # 기록 칸 수는 그대로(한 칸 바뀜)
-    assert w._ai_staged.request is req
+    new = w._ai_staged
+    assert new.request is req and new.alt is st and len(new.items) == 9
+    assert all(it.scene() is w._scene for it in st.items)                       # 원본은 그대로
+    assert len(w._undo) == n_undo + 1
+    assert w._ai_items_rect(new.items).left() > w._ai_items_rect(st.items).right()   # 새 결과는 오른쪽
+    assert len(new.marks) == 2 and new.alt_marks == []                           # 경보 상자 + 화살표
+    assert new.alt_bar is not None and not new.alt_bar.isHidden()
+    assert new.bar.accept_btn.text() == "이걸로" and "2군데" in req.entry.status_text()
+    assert "원본" in st.request.entry.status_text()
+    return w, st, new, n_undo
+
+
+def test_flow_compare_choose_new_removes_original_and_its_history():
+    w, st, new, n_undo = _flow_compare()
+    new.bar.accept_btn.click()
+    assert w._ai_staged is None and new.alt_bar is None
+    assert all(it.scene() is None for it in st.items) and all(it.scene() is w._scene for it in new.items)
+    assert len(w._undo) == n_undo and st.undo_entry not in w._undo              # 원본 기록 칸째 빠짐
+    assert new.request.entry.status_text() == ACCEPTED_TEXT
     _close_clean(w)
+
+
+def test_flow_compare_choose_original_drops_new():
+    w, st, new, n_undo = _flow_compare()
+    pick = [b for b in new.alt_bar.findChildren(QToolButton) if b.text() == "이걸로"][0]
+    pick.click()
+    assert w._ai_staged is None
+    assert all(it.scene() is w._scene for it in st.items) and all(it.scene() is None for it in new.items)
+    assert len(w._undo) == n_undo and st.request.entry.status_text() == ACCEPTED_TEXT
+    assert w._ai_panel.flow_code() == _FLOW
+    _close_clean(w)
+
+
+def test_flow_compare_discard_or_undo_restages_original():
+    for how in ("discard", "undo"):
+        w, st, new, n_undo = _flow_compare()
+        if how == "discard":
+            new.bar.discard_btn.click()
+        else:
+            w.undo()
+        cur = w._ai_staged
+        assert cur is not None and cur.items == st.items and cur.alt is None, how   # 원본이 다시 임시 결과
+        assert all(it.scene() is None for it in new.items) and len(w._undo) == n_undo, how
+        assert cur.request.entry.status_text() == STAGED_TEXT, how
+        _close_clean(w)
+
+
+def test_flow_compare_auto_accept_keeps_both():
+    w, st, new, n_undo = _flow_compare()
+    w._ai_accept_staged()                                                         # 새 만들기·저장의 자동 채택 길목
+    assert w._ai_staged is None
+    assert all(it.scene() is w._scene for it in st.items + new.items)
+    assert new.request.entry.status_text() == "✓ 넣음(원본도 남김)"
+    _close_clean(w)
+
+
+def test_flow_compare_direction_change_keeps_original():
+    w, st, new, n_undo = _flow_compare()
+    btn = [b for b in new.bar.findChildren(QToolButton) if b.property("dir") == "TD"][0]
+    btn.click()
+    cur = w._ai_staged
+    assert cur is not new and cur.alt is st and cur.request.result_text.startswith("flowchart TD")
+    assert all(it.scene() is w._scene for it in st.items) and len(w._undo) == n_undo + 1
+    assert w._ai_items_rect(cur.items).left() > w._ai_items_rect(st.items).right()
+    _close_clean(w)
+
+
+def test_flow_followup_again_compares_only_latest_pair():
+    w, st, new, n_undo = _flow_compare()
+    w._ai_followup_flow()
+    p = w._ai_panel
+    third = _FLOW + "\n  D --> E[경보]\n  E --> F[기록]"
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.text_to_mermaid.generate_mermaid", return_value=(third, "m")):
+        p._prompt_edit.setPlainText("기록 추가")
+        p.request_make()
+        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not new)
+    cur = w._ai_staged
+    assert cur.alt is new and all(it.scene() is None for it in st.items)       # 가장 앞 원본은 정리
+    assert st.undo_entry not in w._undo and len(w._undo) == n_undo + 1
+    assert len(cur.marks) == 2
+    _close_clean(w)
+
+
+def test_flow_diff_matches_by_text_not_id():
+    from easycad.canvas.host_aimake import _flow_diff_items
+    old = "flowchart LR\n A[송신] --> B[수신]\n B --> C[끝]"
+    new = "flowchart LR\n N1[송신] --> N2[수신]\n N2 --> N3[끝]\n N3 --> N4[경보]"
+    items = list(range(4 + 3))       # 노드 4 → 화살표 3 순서
+    assert _flow_diff_items(new, old, items) == [3, 6]
+    assert _flow_diff_items(old, new, list(range(5))) == []
+    assert _flow_diff_items(new, old, [1, 2]) == []   # 개수 안 맞으면 표시 안 함
