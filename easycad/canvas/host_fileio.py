@@ -434,7 +434,8 @@ class _FileIOMixin:
         없이 그 경로로 바로 저장(빠른저장). 없으면(처음 저장하는 문서, 또는 DXF/DWG로 열어
         `_doc_path`가 비어 있는 문서 — "저장"의 기본 포맷은 언제나 .ecad라는 기존 결정 때문에
         DXF 출처를 되돌아 덮어쓰지 않는다) "다른 이름으로 저장"과 동일하게 다이얼로그를 띄운다."""
-        self._ai_accept_staged()   # [§8 항목36] 저장하면 AI 임시 결과는 채택(사용자 확정)
+        if not self._ai_before_save():   # [§8 항목36] 임시 결과는 채택, 심볼 후보 줄이면 물어봄(취소 가능)
+            return
         if self._doc_path:
             self._do_save_ecad(self._doc_path)
         else:
@@ -446,7 +447,8 @@ class _FileIOMixin:
         확장자로 분기. 기본 필터는 항상 .ecad(DXF/DWG를 방금 열었어도 마찬가지,
         deep-interview 2026-07-29 결정). [§8 DWG 자동변환 후속, 2026-08-14] .dwg도 .dxf와
         같은 손실 경고를 거쳐 내보낸다."""
-        self._ai_accept_staged()   # [§8 항목36] 위 `_save_doc`과 같음
+        if not self._ai_before_save():   # [§8 항목36] 위 `_save_doc`과 같음
+            return
         path, _ = QFileDialog.getSaveFileName(
             self, "다른 이름으로 저장", self._doc_path or "", self._DOC_FILTER)
         if not path:

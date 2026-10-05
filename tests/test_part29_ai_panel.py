@@ -480,20 +480,42 @@ def test_symbol_candidates_arrive_in_a_row_without_history():
     _close_clean(w)
 
 
-def test_click_one_candidate_keeps_only_it_as_one_step():
+def test_click_toggles_pick_and_accept_inserts_as_one_step():
+    # 피드백 3차: 클릭 하나로 나머지가 사라지는 건 가혹 → 클릭은 고름/풀기(실선+☑), 넣기는 「채택」.
     w = _shown_window()
     with _fake_svg():
         req = _make_symbol(w)
     st = w._ai_staged
+    assert st.picked == set() and st.bar.retry_btn is None            # 기본은 아무것도 안 고름, 「다시」 없음
     n_undo = len(w._undo)
-    pick, others = st.cands[2], [c for i, c in enumerate(st.cands) if i != 2]
-    pick.items[0].setSelected(True)
-    _wait_until(lambda: w._ai_staged is None, 1000)
-    assert w._ai_staged is None and all(it.scene() is w._scene for it in pick.items)
-    assert all(it.scene() is None for c in others for it in c.items)
+    st.cands[2].items[0].setSelected(True)
+    _app.processEvents()
+    assert w._ai_staged is st and st.picked == {2} and st.bar.accept_btn.text() == "1개 채택"
+    assert all(it.scene() is w._scene for c in st.cands for it in c.items)   # 아무것도 안 사라짐
+    assert not any(it.isSelected() for c in st.cands for it in c.items)       # 캔버스 선택은 걷힘
+    st.cands[2].items[0].setSelected(True)                                    # 다시 누르면 풀림
+    _app.processEvents()
+    assert st.picked == set()
+    st.cands[2].items[0].setSelected(True)
+    _app.processEvents()
+    st.bar.accept_btn.click()
+    assert w._ai_staged is None and all(it.scene() is w._scene for it in st.cands[2].items)
+    assert all(it.scene() is None for i, c in enumerate(st.cands) if i != 2 for it in c.items)
     assert len(w._undo) == n_undo + 1 and "1개 넣음" in req.entry.status_text()
     w.undo()
-    assert all(it.scene() is None for it in pick.items)
+    assert all(it.scene() is None for it in st.cands[2].items)
+    _close_clean(w)
+
+
+def test_select_all_toggle():
+    w = _shown_window()
+    with _fake_svg():
+        _make_symbol(w)
+    st = w._ai_staged
+    st.all_btn.click()
+    assert st.picked == set(range(SYMBOL_COUNT)) and st.all_btn.text() == "모두 풀기"
+    st.all_btn.click()
+    assert st.picked == set() and st.all_btn.text() == "모두 선택"
     _close_clean(w)
 
 
@@ -565,21 +587,51 @@ def test_history_entry_click_refills_input():
     _close_clean(w)
 
 
-def test_unpicked_candidates_vanish_on_other_edit_or_new_make():
+def test_candidates_survive_other_edits_and_new_make_keeps_picked():
+    # 피드백 3차: 다른 편집을 해도 후보 줄은 남는다. 새 만들기는 고른 것은 넣고 안 고른 것은 버림.
     w = _shown_window()
     with _fake_svg():
         req = _make_symbol(w)
     st = w._ai_staged
     w.push_undo_add(_mk_pen_rect(w, x=900, y=900))
-    assert w._ai_staged is None and req.entry.status_text() == UNPICKED_TEXT
-    assert all(it.scene() is None for c in st.cands for it in c.items)
+    w.undo()
+    assert w._ai_staged is st and all(it.scene() is w._scene for c in st.cands for it in c.items)
+    w._ai_toggle_check(1)
     with _fake_svg():
-        req2 = _make_symbol(w)
-        st2 = w._ai_staged
         w._ai_panel._prompt_edit.setPlainText("다른 것")
-        w._ai_panel.request_make()   # 새 만들기 → 고르지 않은 후보 줄은 버림
-    assert req2.entry.status_text() == UNPICKED_TEXT
-    assert all(it.scene() is None for c in st2.cands for it in c.items)
+        w._ai_panel.request_make()
+        assert _wait_until(lambda: not w._ai_jobs)
+    assert "1개 넣음" in req.entry.status_text()
+    assert st.cands[1].items[0].scene() is w._scene and st.cands[0].items[0].scene() is None
+    _close_clean(w)
+
+
+def _save_choosing(w, label_start, tmp):
+    from PyQt6.QtWidgets import QMessageBox
+    w._doc_path = str(tmp)
+
+    def pick(box):
+        return next(b for b in box.buttons() if b.text().startswith(label_start))
+    with _patch.object(QMessageBox, "exec", return_value=0),             _patch.object(QMessageBox, "clickedButton", new=lambda self: pick(self)):
+        w._save_doc()
+
+
+def test_save_with_candidates_asks(tmp_path):
+    w = _shown_window()
+    with _fake_svg():
+        _make_symbol(w)
+    st = w._ai_staged
+    _save_choosing(w, "취소", tmp_path / "a.ecad")
+    assert w._ai_staged is st and not os.path.exists(tmp_path / "a.ecad")      # 취소면 저장 안 함
+    w._ai_toggle_check(0)
+    _save_choosing(w, "고른 1개", tmp_path / "b.ecad")
+    assert w._ai_staged is None and st.cands[0].items[0].scene() is w._scene
+    assert st.cands[1].items[0].scene() is None and os.path.exists(tmp_path / "b.ecad")
+    with _fake_svg():
+        _make_symbol(w)
+    st2 = w._ai_staged
+    _save_choosing(w, "후보 버리고", tmp_path / "c.ecad")
+    assert w._ai_staged is None and all(it.scene() is None for c in st2.cands for it in c.items)
     _close_clean(w)
 
 
@@ -608,7 +660,8 @@ def test_right_click_replace_swaps_shape_in_place():
     assert min(s.top() for s in st.slots) > rect.mapToScene(rect.rect()).boundingRect().bottom()   # 도형 아래 줄
     n_undo = len(w._undo)
     st.cands[0].items[0].setSelected(True)
-    _wait_until(lambda: w._ai_staged is None, 1000)
+    _app.processEvents()
+    st.bar.accept_btn.click()
     assert rect.scene() is None and len(w._undo) == n_undo + 1
     new = w._scene.selectedItems()
     box = _QRectF()

@@ -83,12 +83,25 @@ _ILLUS = {
   <rect x="206" y="14" width="30" height="18" rx="2"/><rect x="206" y="60" width="30" height="18" rx="2"/>
   <path d="M150 46h11M193 46h6V23h5M199 46v23h5"/>
 </svg>""",
-    "trace": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 92" fill="none" stroke-width="1.4">
-  <polygon points="10,14 92,8 96,82 4,78" fill="#8a847c"/>
-  <g stroke="#3b3733"><rect x="20" y="28" width="22" height="14"/><rect x="58" y="26" width="24" height="14"/><path d="M42 35h16M70 40v20"/><rect x="58" y="60" width="24" height="12"/></g>
-  <g fill="#da7756"><circle cx="10" cy="14" r="3.5"/><circle cx="92" cy="8" r="3.5"/><circle cx="96" cy="82" r="3.5"/><circle cx="4" cy="78" r="3.5"/></g>
-  <path d="M104 46h18M116 41l6 5-6 5" stroke="#da7756" stroke-width="1.6"/>
-  <g stroke="{ink}" stroke-width="1.6"><rect x="134" y="22" width="28" height="16"/><rect x="182" y="20" width="30" height="16"/><path d="M162 30h20M197 36v24"/><rect x="182" y="60" width="30" height="14"/></g>
+    # 베끼기: 흐름도와 달리 "복잡한 도면도 위치 그대로"가 핵심(피드백 3차) — 같은 빽빽한 도면 묶음(#d)을 왼쪽엔 비스듬한 사진으로,
+    # 오른쪽엔 반듯한 선으로 그린다.
+    "trace": """<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 240 96" fill="none">
+  <defs><g id="d" stroke-width="1.1">
+    <path d="M4 4h92M4 9h30"/>
+    <rect x="4" y="14" width="16" height="10"/><rect x="4" y="30" width="16" height="10"/><rect x="4" y="46" width="16" height="10"/>
+    <path d="M20 19h8v19h-8M28 28h6M20 51h14v-23"/>
+    <rect x="34" y="22" width="18" height="12"/><path d="M52 28h8"/>
+    <rect x="60" y="16" width="14" height="9"/><rect x="60" y="31" width="14" height="9"/><path d="M60 20.5h-4v15h4M74 20.5h6M74 35.5h6"/>
+    <path d="M80 16v24M80 16l-4-6M80 16l4-6M80 16v-6"/>
+    <rect x="34" y="46" width="22" height="14"/><path d="M38 50h14M38 54h10M56 53h10v16h-30v-9"/>
+    <rect x="66" y="50" width="26" height="22"/><path d="M70 55h18M70 60h12M70 65h16M79 72v6h-60v-16"/>
+    <path d="M6 66h10M6 70h8M6 74h12M24 66h6M24 70h8"/>
+  </g></defs>
+  <polygon points="6,10 104,4 108,90 2,86" fill="#8a847c"/>
+  <use xlink:href="#d" stroke="#2f2b28" transform="matrix(1.0,-0.055,-0.035,1.0,6,14)"/>
+  <g fill="#da7756"><circle cx="6" cy="10" r="3.2"/><circle cx="104" cy="4" r="3.2"/><circle cx="108" cy="90" r="3.2"/><circle cx="2" cy="86" r="3.2"/></g>
+  <path d="M112 47h14M120 42l6 5-6 5" stroke="#da7756" stroke-width="1.6"/>
+  <use xlink:href="#d" stroke="{ink}" transform="translate(134,8)"/>
 </svg>""",
 }
 
@@ -161,6 +174,9 @@ class _HistoryEntry(QFrame):
         self._x_btn.setFixedSize(18, 18)
         self._x_btn.setToolTip("이 기록 지우기(만드는 중이면 취소)")
         self._x_btn.clicked.connect(lambda: self.remove_requested.emit(self))   # 자기 자신만 붙잡는 람다(다른 QObject 아님)
+        sp = self._x_btn.sizePolicy()
+        sp.setRetainSizeWhenHidden(True)   # 숨어 있어도 자리를 잡아 둔다 — 나타날 때 칸이 길어지던 것(피드백 3차)
+        self._x_btn.setSizePolicy(sp)
         self._x_btn.setVisible(False)   # 마우스를 올렸을 때만
         head.addWidget(self._x_btn)
         lay.addLayout(head)

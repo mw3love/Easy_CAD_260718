@@ -19,14 +19,14 @@ from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QPen, QPolygonF
 from PyQt6.QtWidgets import (
-    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QToolButton, QWidget,
+    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QToolButton, QWidget,
 )
 
 from easycad.ai import gateway as gw
 from easycad.canvas.ai_panel import _AIPanel, PENDING_TEXT, _ai_icon
 from easycad.canvas.host_widgets import _current_icon_color
 from easycad.canvas.host_dialogs import (
-    _CORAL_BTN_QSS, _MERMAID_HEADER_RE, _MermaidGenWorker, _SaveToSymbolsFolderDialog, _SvgGenWorker, _detach_worker,
+    _MERMAID_HEADER_RE, _MermaidGenWorker, _SaveToSymbolsFolderDialog, _SvgGenWorker, _detach_worker,
 )
 from easycad.canvas.photo_dialog import _PhotoOpsWorker, _pil_to_pixmap
 from easycad.canvas.annotator_core import _ImageItem
@@ -45,11 +45,21 @@ TAB_CLOSED_TEXT = "만드는 사이 그 탭이 닫혀서 버렸어요"
 FLOW_DIRECTIONS = (("가로 →", "LR"), ("세로 ↓", "TD"), ("세로 ↑", "BT"), ("가로 ←", "RL"))
 _DIR_ICONS = {"LR": "ai_dir_right", "TD": "ai_dir_down", "BT": "ai_dir_up", "RL": "ai_dir_left"}
 _FREE_MARGIN = 40.0       # 빈 자리 찾기: 기존 도형과 띄울 거리(씬 단위)
+# 결과·준비 막대 버튼 — 채택(코랄)과 나머지(테두리만)를 같은 테두리 두께·여백·모서리·굵기로.
+_BAR_BTN_QSS = ("QToolButton { border:1px solid rgba(128,128,128,150); border-radius:7px; padding:3px 10px;"
+                " font-weight:600; background:transparent; }"
+                "QToolButton:hover { background:rgba(128,128,128,45); }"
+                "QToolButton:pressed, QToolButton:checked { background:rgba(218,119,86,90); border-color:#da7756; }"
+                "QToolButton:disabled { color:rgba(128,128,128,150); }")
+_BAR_CORAL_QSS = ("QToolButton { border:1px solid #da7756; border-radius:7px; padding:3px 10px; font-weight:600;"
+                  " background:#da7756; color:#1b120d; }"
+                  "QToolButton:hover { background:#e08a6c; }"
+                  "QToolButton:pressed { background:#c2673f; }"
+                  "QToolButton:disabled { background:#6b5148; border-color:#6b5148; }")
 _FREE_RINGS = 8           # 빈 자리 찾기: 가운데에서 몇 바퀴까지 찾나
 SYMBOL_COUNT = 6          # 심볼 후보 수(패널 입력칸 「후보 6」)
 SYMBOL_GAP = 40.0         # 후보 칸 사이(씬 단위)
 UNPICKED_TEXT = "고르지 않아 후보를 버렸어요"
-PICK_HINT = "클릭=바로 넣기 · □=여러 개"
 _CHECK_PX = 16      # 후보 칸 체크 표시 크기(화면 px)
 _CHECK_INSET_PX = 4
 TRACE_HINT = "주황 점을 종이 네 귀퉁이로 끌어 맞추고 「만들기」"
@@ -113,7 +123,8 @@ class _StagedResult:
     errors: list = field(default_factory=list)
     picked: set = field(default_factory=set)    # Ctrl+클릭으로 고른 후보 번호
     snap: tuple = None          # 후보를 띄울 때의 (기록 길이, 맨 위 칸) — 바뀌면 다른 작업이 있었던 것
-    hint: QLabel = None
+    all_btn: QToolButton = None   # 후보 막대 「모두 선택/모두 풀기」
+    clearing_sel: bool = False
 
 
 class _StagingBar(QFrame):
@@ -134,9 +145,11 @@ class _StagingBar(QFrame):
         for w in extras:
             w.setParent(self)
             lay.addWidget(w)
-        self.retry_btn = self._btn("다시", on_retry, icon="refresh")
-        self.retry_btn.setToolTip("같은 요청으로 다시 만들어 바꿔치기")
-        lay.addWidget(self.retry_btn)
+        self.retry_btn = None
+        if on_retry is not None:   # 심볼 후보 막대엔 없음(2026-10-05 피드백 3차)
+            self.retry_btn = self._btn("다시", on_retry, icon="refresh")
+            self.retry_btn.setToolTip("같은 요청으로 다시 만들어 바꿔치기")
+            lay.addWidget(self.retry_btn)
         sep = QFrame(self)
         sep.setFrameShape(QFrame.Shape.VLine)
         sep.setStyleSheet("color:rgba(128,128,128,120);")
@@ -163,8 +176,8 @@ def _icon_button(parent, text, icon, coral=False, tip=None):
         b.setIcon(_ai_icon(icon, "#1b120d" if coral else _current_icon_color()))
         b.setIconSize(QSize(14, 14))
         b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-    if coral:
-        b.setStyleSheet(_CORAL_BTN_QSS.replace("padding: 6px 12px", "padding: 3px 10px"))
+    # 모든 막대 버튼을 같은 크기·여백·글씨로(2026-10-05 피드백 3차: 채택만 스타일이 있어 나머지 중심이 어긋나 보임).
+    b.setStyleSheet(_BAR_CORAL_QSS if coral else _BAR_BTN_QSS)
     if tip:
         b.setToolTip(tip)
     return b
@@ -526,10 +539,38 @@ class _AIMakeMixin:
         st = self._ai_staged
         if st is None:
             return
-        if st.slots is not None:
-            self._ai_discard_candidates(UNPICKED_TEXT)
+        if st.slots is not None:   # 후보 줄: 고른 것이 있으면 넣고, 없으면 버림
+            if st.picked:
+                self._ai_commit_candidates(sorted(st.picked))
+            else:
+                self._ai_discard_candidates(UNPICKED_TEXT)
         else:
             self._ai_finish_staging(ACCEPTED_TEXT)
+
+    def _ai_before_save(self) -> bool:
+        """저장 직전(Ctrl+S·다른 이름으로) — 흐름도·베끼기 임시 결과는 채택, 심볼 후보 줄이 떠 있으면 물어본다
+        (2026-10-05 피드백 3차: 후보는 다른 편집에도 남기되, 기록에 없는 임시 도형이라 저장 땐 정리). False면 저장 취소."""
+        st = self._ai_staged
+        if st is None:
+            return True
+        if st.slots is None:
+            self._ai_finish_staging(ACCEPTED_TEXT)
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("심볼 후보")
+        box.setText("캔버스에 아직 고르지 않은 심볼 후보가 있어요. 어떻게 저장할까요?")
+        put = box.addButton(f"고른 {len(st.picked)}개 넣고 저장", QMessageBox.ButtonRole.AcceptRole) if st.picked else None
+        drop = box.addButton("후보 버리고 저장", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if put is not None and clicked is put:
+            self._ai_commit_candidates(sorted(st.picked))
+            return True
+        if clicked is drop:
+            self._ai_discard_candidates(DISCARDED_TEXT)
+            return True
+        return False
 
     def _ai_discard_staged(self):
         """버리기 — 그 한 칸이 맨 위면 되돌리고 다시 실행 목록에서도 뺀다(Ctrl+Y로 살아나지 않게).
@@ -587,9 +628,7 @@ class _AIMakeMixin:
             self._ai_finish_staging(DISCARDED_TEXT)
             return
         undo = st.doc.undo
-        if st.slots is not None:                # 후보 줄: 다른 편집·되돌리기가 있었으면 고르지 않은 것 → 버림
-            if (len(undo), undo[-1] if undo else None) != st.snap:
-                self._ai_discard_candidates(UNPICKED_TEXT)
+        if st.slots is not None:                # 후보 줄은 다른 편집에도 남는다(피드백 3차) — 채택·버리기·저장 때 정리
             return
         if st.undo_entry not in undo:           # Ctrl+Z로 결과가 빠졌다
             self._ai_finish_staging(UNDONE_TEXT)
@@ -720,14 +759,14 @@ class _AIMakeMixin:
         view = self._view
         st = _StagedResult(doc=self._active_doc, items=[], undo_entry=None, request=req, slots=slots)
         st.snap = (len(self._undo), self._undo[-1] if self._undo else None)
-        st.hint = QLabel(PICK_HINT)
-        st.hint.setStyleSheet("color:#8a8a8a; font-size:11px; padding:0 4px;")
+        st.all_btn = _icon_button(None, "모두 선택", "ai_check", tip="도착한 후보를 모두 고르기/모두 풀기")
+        st.all_btn.clicked.connect(self._ai_toggle_all_checks)
         save_btn = _icon_button(None, "내 심볼에 저장", "save",
                                 tip="고른 후보(없으면 도착한 후보 전부)를 내 심볼 팔레트에 저장")
         save_btn.clicked.connect(self._ai_save_candidates_to_symbols)
-        st.bar = _StagingBar(view.viewport(), self._ai_commit_picked, self._ai_retry_staged,
-                             self._ai_discard_staged, extras=(st.hint, save_btn), discard_text="모두 버리기")
-        st.bar.accept_btn.setToolTip("□로 고른 후보를 한꺼번에 넣기")
+        st.bar = _StagingBar(view.viewport(), self._ai_commit_picked, None,
+                             self._ai_discard_staged, extras=(st.all_btn, save_btn), discard_text="모두 버리기")
+        st.bar.accept_btn.setToolTip("고른 후보(실선·☑)를 캔버스에 넣기 — 후보를 클릭하거나 드래그로 묶어 고름")
         self._ai_staged = st
         st.doc.scene.selectionChanged.connect(self._ai_on_cand_selection)
         self._ai_sync_viewport_filter(view)
@@ -789,18 +828,33 @@ class _AIMakeMixin:
         (2026-10-05 피드백: 처음엔 Ctrl+클릭으로 모았는데, 이 캔버스는 선택 추가가 Shift라 Ctrl+클릭이 선택을 바꿔 버려
         마지막 하나만 골라졌다 — 실제 창 재현으로 확인. 눈에 보이는 체크 표시로 바꿈.)"""
         st = self._ai_staged
-        if st is None or st.slots is None:
+        if st is None or st.slots is None or getattr(st, "clearing_sel", False):
             return
         hits = self._ai_cand_hits(st)
-        if len(hits) == 1:
-            st.clicked = hits[0]
-            QTimer.singleShot(0, self._ai_commit_clicked)   # 선택 신호 도중 씬을 바꾸지 않는다
-
-    def _ai_commit_clicked(self):
-        st = self._ai_staged
-        if st is None or st.slots is None or getattr(st, "clicked", None) is None:
+        if not hits:
             return
-        self._ai_commit_candidates([st.clicked])
+        # 피드백 3차: 클릭 하나로 나머지가 사라지는 건 가혹 — 클릭은 고름/풀기만(테두리 실선 + ☑), 넣기는 「채택」.
+        # 한 개 클릭은 켜고 끄기, 드래그로 여럿 묶으면 그것들을 고름.
+        if len(hits) == 1:
+            st.picked ^= {hits[0]}
+        else:
+            st.picked |= set(hits)
+        QTimer.singleShot(0, self._ai_clear_cand_selection)   # 선택 신호 도중 씬을 바꾸지 않는다
+        self._ai_update_pick_ui(st)
+
+    def _ai_clear_cand_selection(self):
+        """후보를 고르고 나면 캔버스 선택(손잡이)은 걷는다 — 고름 표시는 실선·☑가 맡는다."""
+        st = self._ai_staged
+        if st is None or st.slots is None:
+            return
+        st.clearing_sel = True
+        try:
+            for c in st.cands:
+                for it in c.items:
+                    if it.isSelected():
+                        it.setSelected(False)
+        finally:
+            st.clearing_sel = False
 
     def _ai_commit_picked(self):
         """막대 「채택」 — □로 고른 후보들."""
@@ -808,7 +862,7 @@ class _AIMakeMixin:
         if st is None or st.slots is None:
             return
         if not st.picked:
-            self.statusBar().showMessage("후보를 바로 클릭하거나, 칸 모서리 □를 눌러 여러 개 고르세요", 3000)
+            self.statusBar().showMessage("넣을 후보를 클릭해 고르세요(드래그로 여러 개, 「모두 선택」)", 3000)
             return
         self._ai_commit_candidates(sorted(st.picked))
 
@@ -833,12 +887,24 @@ class _AIMakeMixin:
 
     def _ai_toggle_check(self, i):
         st = self._ai_staged
-        if i in st.picked:
-            st.picked.discard(i)
-        else:
-            st.picked.add(i)
+        st.picked ^= {i}
+        self._ai_update_pick_ui(st)
+
+    def _ai_toggle_all_checks(self):
+        st = self._ai_staged
+        if st is None or st.slots is None:
+            return
+        every = set(range(len(st.cands)))
+        st.picked = set() if every and st.picked >= every else every
+        self._ai_update_pick_ui(st)
+
+    def _ai_update_pick_ui(self, st):
         n = len(st.picked)
         st.bar.accept_btn.setText(f"{n}개 채택" if n else "채택")
+        every = set(range(len(st.cands)))
+        all_btn = getattr(st, "all_btn", None)
+        if all_btn is not None:
+            all_btn.setText("모두 풀기" if every and st.picked >= every else "모두 선택")
         st.doc.view.viewport().update()
         self._ai_place_bar()
 
