@@ -377,9 +377,9 @@ class _PhotoToDrawingDialog(_ImageAttachMixin, QDialog):
             QMessageBox.warning(self, "사진→도면", "게이트웨이 API 키가 없습니다. "
                                 "삽입 메뉴의 「AI 게이트웨이 설정…」에서 입력해 주세요.")
             return
-        from easycad.ai.photo_to_ops import rectify
+        from easycad.ai.photo_to_ops import fit_for_ai, rectify
         try:
-            sent = rectify(self._attached_image, self._orig_view.quad())
+            sent = fit_for_ai(rectify(self._attached_image, self._orig_view.quad()))
         except ValueError as e:
             QMessageBox.warning(self, "사진→도면", f"모서리로 사진을 펼 수 없습니다: {e}")
             return

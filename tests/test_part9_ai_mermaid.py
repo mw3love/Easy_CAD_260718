@@ -1342,14 +1342,13 @@ class _FakeOpsClient:
         outer = self
 
         class _Comp:
-            def create(self, model, max_tokens, messages):
+            def create(self, model, max_tokens, messages, stream=False, stream_options=None):
+                assert stream   # 5분 게이트웨이 시간초과를 피하려 스트리밍으로 받는다(2026-10-05)
                 outer.contents.append(messages[0]["content"])
                 txt = outer._replies.pop(0)
-
-                class _R:
-                    choices = [type("C", (), {"message": type("M", (), {"content": txt})()})()]
-                    usage = None
-                return _R()
+                half = len(txt) // 2
+                return [type("K", (), {"choices": [type("C", (), {"delta": type("D", (), {"content": t})()})()],
+                                       "usage": None})() for t in (txt[:half], txt[half:])]
 
         self.chat = type("Chat", (), {"completions": _Comp()})()
 
@@ -1487,6 +1486,18 @@ def test_rectify_unwarps_quad_and_keeps_full_frame():
         assert False
     except ValueError:
         pass
+
+
+def test_fit_for_ai_shrinks_phone_photo_under_gateway_limit():
+    # 2026-10-05: 폰 원본(5712×4284)을 그대로 보내 요청 69MB → 413(한도 25MB).
+    from PIL import Image
+    from easycad.ai.photo_to_ops import fit_for_ai, first_content
+    small = Image.new("RGB", (1200, 800), "white")
+    assert fit_for_ai(small) is small                                       # 작으면 그대로
+    big = fit_for_ai(Image.effect_noise((5712, 4284), 60).convert("RGB"))  # 압축 안 되는 최악 그림
+    assert big.size == (1600, 1200)
+    size = sum(len(p["image_url"]["url"]) for p in first_content(big, "x") if "image_url" in p)
+    assert size < 25_000_000, size
 
 
 def test_corner_preview_drag_moves_corner_and_drops_result():

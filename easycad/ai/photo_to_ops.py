@@ -69,6 +69,20 @@ class Cancelled(Exception):
     """사용자가 취소함 — 호출 사이에서만 확인한다(진행 중인 HTTP 호출은 못 끊는다)."""
 
 
+MAX_SIDE = 1600   # 2026-10-01 실측 조건(폰 사진 5712×4284를 1600×1200으로 줄여 통과)
+
+
+def fit_for_ai(photo, max_side: int = MAX_SIDE):
+    """긴 변이 max_side를 넘으면 비율 유지로 줄인다. 폰 원본(5712×4284) 그대로면 첫 호출 요청이
+    약 69MB로 게이트웨이 한도(25MB)를 넘어 413 오류가 났다(2026-10-05). 1600이면 약 9MB."""
+    if max(photo.size) <= max_side:
+        return photo
+    from PIL import Image
+    out = photo.copy()
+    out.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+    return out
+
+
 def image_part(img) -> dict:
     """PIL 이미지 → chat 콘텐츠 image_url 조각."""
     buf = io.BytesIO()
@@ -96,13 +110,21 @@ def fix_content(photo, prev_render, task: str, spec: dict) -> list:
 
 
 def call(client, model: str, content: list, max_tokens: int) -> tuple[str, dict, float]:
-    """한 번 호출. 반환 (본문, usage dict, 소요초)."""
+    """한 번 호출. 반환 (본문, usage dict, 소요초).
+
+    스트리밍으로 받는다 — 게이트웨이는 응답 전체가 5분(실측 303초) 안에 안 끝나면 504로 끊는데,
+    벽 전체 도면 사진(ops 709개)은 한 호출이 353초 걸렸다. 조금씩 흘려받으면 끊기지 않았다(2026-10-05)."""
     t0 = time.time()
-    resp = client.chat.completions.create(model=model, max_tokens=max_tokens,
-                                          messages=[{"role": "user", "content": content}])
-    txt = resp.choices[0].message.content or ""
-    usage = resp.usage.model_dump() if getattr(resp, "usage", None) else {}
-    return txt, usage, time.time() - t0
+    stream = client.chat.completions.create(model=model, max_tokens=max_tokens, stream=True,
+                                            stream_options={"include_usage": True},
+                                            messages=[{"role": "user", "content": content}])
+    parts, usage = [], {}
+    for ch in stream:
+        if ch.choices and ch.choices[0].delta and ch.choices[0].delta.content:
+            parts.append(ch.choices[0].delta.content)
+        if getattr(ch, "usage", None):
+            usage = ch.usage.model_dump()
+    return "".join(parts), usage, time.time() - t0
 
 
 def generate_ops(client, photo, *, model: str, render, rounds: int = 2, task: str = TASK,
