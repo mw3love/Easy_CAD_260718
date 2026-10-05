@@ -90,10 +90,10 @@ def test_make_validates_input_and_records_history():
     p.set_kind("trace")
     p._prompt_edit.setPlainText("설명만")
     assert p.request_make() is None and "사진" in p._notice.text()   # 베끼기는 사진 필수
-    p.set_kind("flow")
+    p.set_kind("symbol")   # 흐름도는 3단계부터 실제 생성을 부른다 — 아직 "준비 중"인 심볼로
     p._prompt_edit.setPlainText("송신기 → 결합기 → 안테나")
     req = p.request_make()
-    assert req is not None and req.kind == "flow" and req.text == "송신기 → 결합기 → 안테나"
+    assert req is not None and req.kind == "symbol" and req.text == "송신기 → 결합기 → 안테나"
     assert got == [req]
     assert p._prompt_edit.toPlainText() == ""          # 입력 칸은 비운다
     assert p._empty.isHidden() and not p._hist_scroll.isHidden()
@@ -153,7 +153,7 @@ def _close_clean(w):
 def _staged(w, n=3, text="송신기 → 결합기"):
     """패널 요청 하나 + 결과 도형 n개를 넣고(되돌리기 한 칸) 임시 결과로 띄운다."""
     p = w._ai_panel
-    p.set_kind("flow")
+    p.set_kind("symbol")   # 생성 없이 "준비 중"으로 끝나는 종류(4단계 전까지) — 여기선 도형을 직접 넣는다
     p._prompt_edit.setPlainText(text)
     req = p.request_make()
     items = [_mk_pen_rect(w, x=i * 80, y=0) for i in range(n)]
@@ -239,7 +239,7 @@ def test_retry_discards_and_resubmits_same_request():
     w._ai_panel.make_requested.connect(got.append)
     st.bar.retry_btn.click()
     assert w._ai_staged is None and all(it.scene() is None for it in items)
-    assert len(got) == 1 and got[0].text == "BNC 커넥터" and got[0].kind == "flow"
+    assert len(got) == 1 and got[0].text == "BNC 커넥터" and got[0].kind == "symbol"
     assert got[0].entry is not req.entry and len(w._ai_panel.entries()) == 2
     _close_clean(w)
 
@@ -272,4 +272,148 @@ def test_bar_sits_above_dashed_rect_and_follows_zoom():
     w._view.viewport().repaint()
     _app.processEvents()
     assert st.bar.y() != y0   # 확대하면 결과 위쪽 가장자리가 옮겨 가고 막대도 따라간다
+    _close_clean(w)
+
+
+# ── 3단계(2026-10-05): 흐름도 — 패널에서 생성 → 캔버스에 임시로, 방향·코드 칸 ─────────────────
+
+from contextlib import contextmanager
+from PyQt6.QtWidgets import QComboBox
+from unittest.mock import patch as _patch
+
+_FLOW = "flowchart LR\n  A[송신기] --> B[결합기]\n  B --> C[안테나]\n  B --> D[감시장치]"
+
+
+@contextmanager
+def _fake_gateway(result=_FLOW, error=None, key="k"):
+    """게이트웨이를 부르지 않게 — 키·생성 함수를 가짜로(워커는 진짜 QThread로 돈다)."""
+    def gen(*_a, **_k):
+        if error:
+            raise RuntimeError(error)
+        return result, "fake-model"
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value=key), \
+            _patch("easycad.ai.text_to_mermaid.generate_mermaid", side_effect=gen):
+        yield
+
+
+def _wait_until(cond, ms=5000):
+    import time
+    end = time.time() + ms / 1000
+    while time.time() < end:
+        _app.processEvents()
+        if cond():
+            return True
+    return False
+
+
+def _make_flow(w, text="송신기 → 결합기 → 안테나, 감시장치 분기"):
+    p = w._ai_panel
+    p.set_kind("flow")
+    p._prompt_edit.setPlainText(text)
+    return p.request_make()
+
+
+def test_flow_generates_and_stages_at_request_center():
+    w = _shown_window()
+    with _fake_gateway():
+        req = _make_flow(w)
+        assert _wait_until(lambda: w._ai_staged is not None)
+    st = w._ai_staged
+    assert st.request is req and req.entry.status_text() == STAGED_TEXT
+    assert len(st.items) == 7   # 상자 4 + 화살표 3
+    c = w._ai_staged_scene_rect().center()
+    assert abs(c.x() - req.center.x()) < 2 and abs(c.y() - req.center.y()) < 60
+    assert w._ai_panel.flow_code() == _FLOW
+    _close_clean(w)
+
+
+def test_flow_without_key_and_failure_show_in_entry():
+    from easycad.canvas.host_aimake import NO_KEY_TEXT
+    w = _shown_window()
+    with _fake_gateway(key=""):
+        req = _make_flow(w)
+    assert req.entry.status_text() == NO_KEY_TEXT and not w._ai_jobs
+    with _fake_gateway(error="503 busy"):
+        req2 = _make_flow(w)
+        assert _wait_until(lambda: not w._ai_jobs)
+    assert "실패" in req2.entry.status_text() and "503" in req2.entry.status_text()
+    assert w._ai_staged is None
+    _close_clean(w)
+
+
+def test_flow_direction_change_redraws_without_new_history():
+    w = _shown_window()
+    with _fake_gateway():
+        _make_flow(w)
+        assert _wait_until(lambda: w._ai_staged is not None)
+    n_undo = len(w._undo)
+    old_items = list(w._ai_staged.items)
+    combo = [c for c in w._ai_staged.bar.findChildren(QComboBox)][0]
+    combo.setCurrentIndex(combo.findData("TD"))
+    st = w._ai_staged
+    assert st is not None and st.items != old_items
+    assert all(it.scene() is None for it in old_items)
+    assert len(w._undo) == n_undo
+    assert w._ai_panel.flow_code().startswith("flowchart TD")
+    # 세로가 되면 결과가 가로보다 높다
+    r = w._ai_staged_scene_rect()
+    assert r.height() > r.width() * 0.6
+    _close_clean(w)
+
+
+def test_flow_code_edit_redraws_and_bad_code_keeps_result():
+    w = _shown_window()
+    with _fake_gateway():
+        _make_flow(w)
+        assert _wait_until(lambda: w._ai_staged is not None)
+    w._on_ai_code_edited(_FLOW + "\n  D --> E[경보]")
+    assert len(w._ai_staged.items) == 9
+    before = list(w._ai_staged.items)
+    w._on_ai_code_edited("이건 머메이드가 아님")
+    assert w._ai_staged.items == before and "코드 오류" in w._ai_staged.request.entry.status_text()
+    _close_clean(w)
+
+
+def test_code_insert_without_ai():
+    w = _shown_window()
+    p = w._ai_panel
+    p.set_kind("flow")
+    p._adv_btn.click()
+    assert not p._code_box.isHidden()
+    p._code_edit.setPlainText(_FLOW)
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value=""):
+        p._code_insert_btn.click()
+    assert w._ai_staged is not None and len(w._ai_staged.items) == 7
+    assert not w._ai_jobs
+    _close_clean(w)
+
+
+def test_flow_result_goes_back_to_request_tab():
+    w = _shown_window()
+    first = w._active_doc
+    with _fake_gateway():
+        _make_flow(w)
+        w._new_doc()   # 생성 도중 새 탭으로 옮겨 감
+        assert _wait_until(lambda: w._ai_staged is not None)
+    assert w._ai_staged.doc is first and w._active_doc is first
+    _close_clean(w)
+
+
+def test_wide_result_zooms_out_to_fit_between_side_cards():
+    # 2026-10-05 실제 창: 넓은 흐름도 왼쪽이 「도형」 카드 밑에 깔리고 막대 「채택」이 가려짐 → 카드 사이 띠에 맞춰 축소.
+    w = _shown_window()
+    p = w._ai_panel
+    p.set_kind("flow")
+    p._adv_btn.click()
+    chain = " --> ".join(f"N{i}[단계 {i}]" for i in range(12))
+    p._code_edit.setPlainText("flowchart LR\n  " + chain)
+    s0 = w._view.transform().m11()
+    p._code_insert_btn.click()
+    _app.processEvents()
+    st = w._ai_staged
+    assert st is not None and w._view.transform().m11() < s0   # 줄였다(확대는 안 함)
+    free = w._ai_free_viewport_rect(w._view)
+    vp = w._view.mapFromScene(w._ai_staged_scene_rect()).boundingRect()
+    assert free.left() <= vp.left() and vp.right() <= free.right()
+    assert st.bar.x() >= free.left()    # 막대도 카드 밑에 안 깔림
     _close_clean(w)

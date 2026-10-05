@@ -1434,6 +1434,12 @@ class _FileIOMixin:
     def _build_mermaid(self, text):
         """텍스트 → 도형·화살표를 씬에 배치(한 번의 undo). (노드수, 화살표수, 방향) 반환.
         파싱 실패 시 MermaidError를 올린다(UI 없음 — 스모크에서 그대로 호출 가능)."""
+        n_nodes, n_arrows, direction, _added = self._build_mermaid_items(text)
+        return n_nodes, n_arrows, direction
+
+    def _build_mermaid_items(self, text, center=None):
+        """`_build_mermaid` 본체 — 놓을 자리(`center`, 씬 좌표, 없으면 화면 가운데)를 받고 넣은 아이템도 돌려준다.
+        [§8 항목36 3단계] AI 패널은 「만들기」를 누른 순간의 화면 가운데에 놓는다(생성 중 화면이 옮겨 가도)."""
         graph = parse_mermaid(text)   # 실패 시 MermaidError
 
         W, H = self._MMD_NODE_W, self._MMD_NODE_H
@@ -1443,7 +1449,8 @@ class _FileIOMixin:
         min_x, min_y = (min(xs), min(ys)) if xs else (0.0, 0.0)
         span_x = (max(xs) - min_x + W) if xs else 0.0
         span_y = (max(ys) - min_y + H) if ys else 0.0
-        center = self._view.mapToScene(self._view.viewport().rect().center())
+        if center is None:
+            center = self._view.mapToScene(self._view.viewport().rect().center())
         ox = center.x() - span_x / 2.0 - min_x
         oy = center.y() - span_y / 2.0 - min_y
 
@@ -1479,7 +1486,7 @@ class _FileIOMixin:
 
         self.push_undo_add_many(added)
         self._scene.clearSelection()
-        return len(items_by_id), len(arrows), graph.direction
+        return len(items_by_id), len(arrows), graph.direction, added
 
 
     # ---- 사진→도면 (§8 항목28, 2026-10-01) -----------------------------------

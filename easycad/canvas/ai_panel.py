@@ -13,8 +13,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QEvent, QPointF, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QPainter, QPalette, QPen
+from PyQt6.QtCore import QEvent, QPointF, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QBrush, QFont, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
     QButtonGroup, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QScrollArea,
     QSizePolicy, QToolButton, QVBoxLayout, QWidget,
@@ -22,8 +22,8 @@ from PyQt6.QtWidgets import (
 
 from easycad.ai import gateway as gw
 from easycad.canvas.host_dialogs import (
-    _AIGatewaySettingsDialog, _CORAL_BTN_QSS, _ImageAttachMixin, _ROUNDED_COMBO_QSS, _attach_button_qss,
-    _combo_selected_model, _fill_model_combo_grouped,
+    _AIGatewaySettingsDialog, _CORAL_BTN_QSS, _ImageAttachMixin, _ModelListWorker, _ROUNDED_COMBO_QSS,
+    _attach_button_qss, _combo_selected_model, _detach_worker, _fill_model_combo_grouped,
 )
 from easycad.canvas.host_widgets import _ACCENT_CORAL, _act_icon, _current_icon_color
 from easycad.canvas.photo_dialog import PHOTO_MODELS
@@ -161,6 +161,8 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     WIDTH = 300
     make_requested = pyqtSignal(object)   # AIRequest
     close_requested = pyqtSignal()
+    code_insert_requested = pyqtSignal(object)   # AIRequest — 고급 「코드로 넣기」(AI 없이 Mermaid 코드 그대로)
+    code_edited = pyqtSignal(str)                # 고급 코드 칸을 손으로 고침(0.5초 묶음) — 임시 흐름도를 바꿔 그림
 
     def __init__(self, host):
         super().__init__(host)
@@ -171,6 +173,8 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._init_image_attach_state()
         self._kind = "symbol"
         self._models: dict[str, str] = dict(DEFAULT_MODEL)   # 종류별로 마지막에 고른 모델
+        self._listed_models: list = []        # 게이트웨이 전체 글 모델 목록(고급을 처음 펼칠 때 받아 옴)
+        self._model_list_worker = None
         self._entries: list[_HistoryEntry] = []
 
         v = QVBoxLayout(self)
@@ -273,6 +277,40 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         al.addWidget(self._settings_btn)
         self._adv_box.setVisible(False)
         bl.addWidget(self._adv_box)
+
+        # ---- 고급 안 Mermaid 코드 칸(흐름도만) — AI 결과가 채워지고, 고치면 임시 결과가 바뀌고, AI 없이 넣는 길도 여기.
+        self._code_box = QWidget(body)
+        cbl = QVBoxLayout(self._code_box)
+        cbl.setContentsMargins(0, 0, 0, 0)
+        cbl.setSpacing(4)
+        code_lbl = QLabel("Mermaid 코드 — 고치면 캔버스 결과도 바뀜", self._code_box)
+        code_lbl.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        cbl.addWidget(code_lbl)
+        self._code_edit = QPlainTextEdit(self._code_box)
+        self._code_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        mono = QFont("Consolas")
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        self._code_edit.setFont(mono)
+        self._code_edit.setFixedHeight(120)
+        self._code_edit.setPlaceholderText(
+            "flowchart LR\n    A[시작] --> B{조건?}\n    B -->|예| C[처리]")
+        self._code_edit.textChanged.connect(self._on_code_text_changed)
+        cbl.addWidget(self._code_edit)
+        crow = QHBoxLayout()
+        crow.addStretch(1)
+        self._code_insert_btn = QToolButton(self._code_box)
+        self._code_insert_btn.setText("코드로 넣기")
+        self._code_insert_btn.setToolTip("AI 없이 위 코드를 그대로 캔버스에 놓기")
+        self._code_insert_btn.clicked.connect(self._on_code_insert)
+        crow.addWidget(self._code_insert_btn)
+        cbl.addLayout(crow)
+        self._code_box.setVisible(False)
+        bl.addWidget(self._code_box)
+        self._code_timer = QTimer(self)
+        self._code_timer.setSingleShot(True)
+        self._code_timer.setInterval(500)
+        self._code_timer.timeout.connect(self._emit_code_edited)
+        self._code_programmatic = False
 
         # ---- 알림 한 줄(빈 입력으로 만들기 등) — 모달 창 대신. 다시 입력하면 사라진다.
         self._notice = QLabel("", body)
@@ -393,6 +431,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._hint_lbl.setVisible(bool(INPUT_HINT[kind]))
         self._fill_models()
         self._update_adv_label()
+        self._sync_code_box()
         self._hide_notice()
 
     def _on_kind_button(self, btn):
@@ -410,9 +449,33 @@ class _AIPanel(_ImageAttachMixin, QFrame):
             idx = combo.findData(self._models["trace"])
             combo.setCurrentIndex(max(0, idx))
         else:
-            # 1단계는 추천 모델만(목록 조회는 생성을 붙이는 단계에서 — 옛 창의 `_ModelListWorker` 재사용 예정).
-            _fill_model_combo_grouped(combo, [], DEFAULT_MODEL[self._kind], self._models[self._kind])
+            # 고급을 처음 펼칠 때 받아 온 전체 목록(없으면 추천만) — 옛 Mermaid·SVG 창과 같은 그룹 드롭다운.
+            _fill_model_combo_grouped(combo, self._listed_models, DEFAULT_MODEL[self._kind], self._models[self._kind])
         combo.blockSignals(False)
+
+    def _fetch_model_list(self):
+        """게이트웨이 글 모델 목록을 한 번 받아 온다(백그라운드 — 옛 창 `_populate_models`와 같은 이유로 동기 호출 금지)."""
+        key = gw.resolve_api_key()
+        if not key or self._listed_models:
+            return
+        w = self._model_list_worker
+        try:
+            if w is not None and w.isRunning():
+                return
+        except RuntimeError:
+            pass
+        self._model_list_worker = _ModelListWorker(key, gw.resolve_base_url(), self)
+        self._model_list_worker.succeeded.connect(self._on_models_listed)
+        self._model_list_worker.start()
+
+    def _on_models_listed(self, models):
+        self._listed_models = list(models)
+        self._fill_models()
+
+    def detach_workers(self):
+        """창이 닫힐 때 호스트가 부른다 — 도는 목록 조회는 떼어 내 결과를 버린다."""
+        _detach_worker(self._model_list_worker)
+        self._model_list_worker = None
 
     def _on_model_changed(self, _i):
         self._models[self._kind] = self.model()
@@ -424,11 +487,48 @@ class _AIPanel(_ImageAttachMixin, QFrame):
 
     def _update_adv_label(self):
         arrow = "▾" if self._adv_btn.isChecked() else "▸"
-        self._adv_btn.setText(f"{arrow} 고급 — 모델")
+        what = "모델 · 코드" if self._kind == "flow" else "모델"
+        self._adv_btn.setText(f"{arrow} 고급 — {what}")
 
     def _on_adv_toggled(self, on: bool):
         self._adv_box.setVisible(on)
+        self._sync_code_box()
         self._update_adv_label()
+        if on:
+            self._fetch_model_list()
+
+    # ---- 고급 코드 칸(흐름도) -------------------------------------------------------
+
+    def _sync_code_box(self):
+        self._code_box.setVisible(self._adv_btn.isChecked() and self._kind == "flow")
+
+    def flow_code(self) -> str:
+        return self._code_edit.toPlainText()
+
+    def show_flow_code(self, code: str):
+        """호스트가 결과 코드를 채운다 — 사람이 고친 게 아니므로 `code_edited`를 내보내지 않는다."""
+        if self._code_edit.toPlainText() == code:
+            return
+        self._code_programmatic = True
+        self._code_edit.setPlainText(code)
+        self._code_programmatic = False
+        self._code_timer.stop()
+
+    def _on_code_text_changed(self):
+        if not self._code_programmatic:
+            self._code_timer.start()
+
+    def _emit_code_edited(self):
+        self.code_edited.emit(self._code_edit.toPlainText())
+
+    def _on_code_insert(self):
+        code = self._code_edit.toPlainText().strip()
+        if not code:
+            self._show_notice("코드 칸이 비어 있어요.")
+            return
+        req = AIRequest(kind="flow", text="(코드로 넣기)", model="")
+        req.entry = self._add_entry(req)
+        self.code_insert_requested.emit(req)
 
     def _open_gateway_settings(self):
         if _AIGatewaySettingsDialog(self).exec() == QDialog.DialogCode.Accepted:

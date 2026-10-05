@@ -317,6 +317,7 @@ class CanvasWindow(
                 event.ignore()
                 return
         event.accept()
+        self._ai_detach_jobs()   # [§8 항목36] 돌고 있는 AI 생성은 떼어 내 결과를 버린다(살아 있는 QThread 파괴 방지)
         self._autosave_timer.stop()
         for doc in self._docs:   # [점검 1단계] 정상 종료 — 복구 파일 정리
             autosave.remove(doc.autosave_id)
