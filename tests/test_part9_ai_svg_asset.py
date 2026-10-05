@@ -1597,7 +1597,7 @@ def test_context_menu_offers_svg_generate_for_single_rect_selection():
     rect.setSelected(True)
     menu = w._build_context_menu()
     texts = [a.text() for a in menu.actions()]
-    assert any("SVG로 생성" in t for t in texts)
+    assert any("AI로 바꾸기" in t for t in texts)
     w.deleteLater()
 
 
@@ -1609,7 +1609,7 @@ def test_context_menu_omits_svg_generate_for_multi_selection():
     b.setSelected(True)
     menu = w._build_context_menu()
     texts = [act.text() for act in menu.actions()]
-    assert not any("SVG로 생성" in t for t in texts)
+    assert not any("AI로 바꾸기" in t for t in texts)
     w.deleteLater()
 
 
@@ -1619,7 +1619,7 @@ def test_context_menu_omits_svg_generate_for_arrow_selection():
     ar.setSelected(True)
     menu = w._build_context_menu()
     texts = [act.text() for act in menu.actions()]
-    assert not any("SVG로 생성" in t for t in texts)
+    assert not any("AI로 바꾸기" in t for t in texts)
     w.deleteLater()
 
 

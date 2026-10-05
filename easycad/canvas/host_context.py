@@ -75,7 +75,8 @@ class _ContextMixin:
                 # 대상 타입(사각형/원/심볼)만 허용. 화살표·라벨·표·용지틀은 "대체"라는
                 # 개념 자체가 안 맞아 제외.
                 if isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem)):
-                    menu.addAction("SVG로 생성...", lambda it=sel[0]: self._generate_svg_replace(it))
+                    # [§8 항목36 4단계] 옛 「SVG로 생성...」(옛 SVG 창) → AI 만들기 패널(심볼, 고르면 그 자리에 바뀜).
+                    menu.addAction("AI로 바꾸기…", lambda it=sel[0]: self._ai_open_for_replace(it))
             if has_sel and has_style_clip:
                 menu.addAction("스타일 붙여넣기\tCtrl+Alt+V", self.paste_style_to_selection)
         if len(self._align_targets()) >= 2 or self._has_distribute_candidates():

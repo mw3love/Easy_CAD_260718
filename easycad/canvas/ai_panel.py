@@ -67,6 +67,7 @@ class AIRequest:
     entry: object = field(default=None, repr=False)   # _HistoryEntry
     doc: object = field(default=None, repr=False)     # 만들기를 누른 탭(CanvasDocument) — 호스트가 채움
     center: object = None                             # 결과를 놓을 씬 좌표(만들기를 누른 순간의 화면 가운데)
+    replace_target: object = field(default=None, repr=False)   # 우클릭 「AI로 바꾸기」의 대상 도형(심볼)
 
 
 class _KindCard(QFrame):
@@ -550,6 +551,10 @@ class _AIPanel(_ImageAttachMixin, QFrame):
                 return True
         return super().eventFilter(obj, event)
 
+    def show_notice(self, text: str):
+        """호스트가 패널에 한 줄 안내를 띄울 때(예: 우클릭 「AI로 바꾸기」)."""
+        self._show_notice(text)
+
     def _show_notice(self, text: str):
         self._notice.setText(text)
         self._notice.setVisible(True)
@@ -588,7 +593,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     def resubmit(self, req: AIRequest) -> AIRequest:
         """결과 막대 「다시」 — 같은 입력(종류·글·그림·모델)으로 새 기록 칸을 만들어 다시 보낸다."""
         again = AIRequest(kind=req.kind, text=req.text, image=req.image, image_name=req.image_name,
-                          model=req.model)
+                          model=req.model, replace_target=req.replace_target)
         again.entry = self._add_entry(again)
         self.make_requested.emit(again)
         return again

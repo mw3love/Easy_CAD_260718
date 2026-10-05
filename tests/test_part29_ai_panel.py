@@ -7,8 +7,19 @@ from PyQt6.QtGui import QKeyEvent
 
 from _shared import *  # noqa: F401,F403
 
+import pytest
+
 from easycad.ai import gateway as gw
-from easycad.canvas.ai_panel import PENDING_TEXT, PLACEHOLDER
+from easycad.canvas.ai_panel import PLACEHOLDER
+
+
+@pytest.fixture(autouse=True)
+def _no_real_gateway():
+    """이 PC엔 실제 게이트웨이 키가 있다 — 흐름도·심볼 「만들기」가 진짜 호출을 하지 않게 기본은 키 없음.
+    생성이 필요한 테스트는 `_fake_gateway`(가짜 키+가짜 생성 함수)로 덮는다."""
+    from unittest.mock import patch
+    with patch("easycad.ai.gateway.resolve_api_key", return_value=""):
+        yield
 
 
 def _shown_window():
@@ -98,7 +109,8 @@ def test_make_validates_input_and_records_history():
     assert p._prompt_edit.toPlainText() == ""          # 입력 칸은 비운다
     assert p._empty.isHidden() and not p._hist_scroll.isHidden()
     assert len(p.entries()) == 1
-    assert req.entry.status_text() == PENDING_TEXT     # 1단계: 호스트가 "준비 중"을 단다
+    from easycad.canvas.host_aimake import NO_KEY_TEXT
+    assert req.entry.status_text() == NO_KEY_TEXT      # 호스트가 요청을 받아 상태를 단다(이 테스트는 키 없음)
 
 
 def test_image_counts_as_input_and_is_cleared_after_make():
@@ -416,4 +428,156 @@ def test_wide_result_zooms_out_to_fit_between_side_cards():
     vp = w._view.mapFromScene(w._ai_staged_scene_rect()).boundingRect()
     assert free.left() <= vp.left() and vp.right() <= free.right()
     assert st.bar.x() >= free.left()    # 막대도 카드 밑에 안 깔림
+    _close_clean(w)
+
+
+# ── 4단계(2026-10-05): 심볼 — 후보 줄, 클릭으로 고르기, 안 고르면 버림, 우클릭 바꾸기 ─────────────
+
+from PyQt6.QtCore import QRectF as _QRectF
+from easycad.canvas.host_aimake import SYMBOL_COUNT, UNPICKED_TEXT
+
+_SVG = '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="14" fill="none" stroke="black"/></svg>'
+
+
+@contextmanager
+def _fake_svg(fail=False):
+    def gen(*_a, **_k):
+        if fail:
+            raise RuntimeError("429 quota")
+        return _SVG, "fake-svg-model"
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.canvas.host_dialogs.generate_svg", side_effect=gen):
+        yield
+
+
+def _make_symbol(w, text="BNC 커넥터 아이콘"):
+    p = w._ai_panel
+    p.set_kind("symbol")
+    p._prompt_edit.setPlainText(text)
+    req = p.request_make()
+    assert _wait_until(lambda: not w._ai_jobs)
+    return req
+
+
+def test_symbol_candidates_arrive_in_a_row_without_history():
+    w = _shown_window()
+    n_undo = len(w._undo)
+    with _fake_svg():
+        req = _make_symbol(w)
+    st = w._ai_staged
+    assert st is not None and st.slots is not None and len(st.cands) == SYMBOL_COUNT
+    assert len(w._undo) == n_undo                     # 고르기 전엔 기록에 없음
+    xs = [s.center().x() for s in st.slots]
+    assert xs == sorted(xs) and len({round(s.center().y()) for s in st.slots}) == 1   # 한 줄
+    assert "6개" in req.entry.status_text()
+    _close_clean(w)
+
+
+def test_click_one_candidate_keeps_only_it_as_one_step():
+    w = _shown_window()
+    with _fake_svg():
+        req = _make_symbol(w)
+    st = w._ai_staged
+    n_undo = len(w._undo)
+    pick, others = st.cands[2], [c for i, c in enumerate(st.cands) if i != 2]
+    pick.items[0].setSelected(True)
+    _wait_until(lambda: w._ai_staged is None, 1000)
+    assert w._ai_staged is None and all(it.scene() is w._scene for it in pick.items)
+    assert all(it.scene() is None for c in others for it in c.items)
+    assert len(w._undo) == n_undo + 1 and "1개 넣음" in req.entry.status_text()
+    w.undo()
+    assert all(it.scene() is None for it in pick.items)
+    _close_clean(w)
+
+
+def test_ctrl_click_several_then_accept():
+    w = _shown_window()
+    with _fake_svg():
+        _make_symbol(w)
+    st = w._ai_staged
+    ctrl = Qt.KeyboardModifier.ControlModifier
+    with _patch("easycad.canvas.host_aimake.QApplication.keyboardModifiers", return_value=ctrl):
+        st.cands[0].items[0].setSelected(True)
+        st.cands[4].items[0].setSelected(True)
+    _app.processEvents()
+    assert w._ai_staged is st and st.picked == {0, 4}
+    st.bar.accept_btn.click()
+    assert w._ai_staged is None
+    kept = [i for i, c in enumerate(st.cands) if c.items[0].scene() is w._scene]
+    assert kept == [0, 4]
+    _close_clean(w)
+
+
+def test_unpicked_candidates_vanish_on_other_edit_or_new_make():
+    w = _shown_window()
+    with _fake_svg():
+        req = _make_symbol(w)
+    st = w._ai_staged
+    w.push_undo_add(_mk_pen_rect(w, x=900, y=900))
+    assert w._ai_staged is None and req.entry.status_text() == UNPICKED_TEXT
+    assert all(it.scene() is None for c in st.cands for it in c.items)
+    with _fake_svg():
+        req2 = _make_symbol(w)
+        st2 = w._ai_staged
+        w._ai_panel._prompt_edit.setPlainText("다른 것")
+        w._ai_panel.request_make()   # 새 만들기 → 고르지 않은 후보 줄은 버림
+    assert req2.entry.status_text() == UNPICKED_TEXT
+    assert all(it.scene() is None for c in st2.cands for it in c.items)
+    _close_clean(w)
+
+
+def test_all_candidates_fail_reports_in_entry():
+    w = _shown_window()
+    with _fake_svg(fail=True):
+        req = _make_symbol(w)
+    assert w._ai_staged is None and "실패" in req.entry.status_text() and "429" in req.entry.status_text()
+    _close_clean(w)
+
+
+def test_right_click_replace_swaps_shape_in_place():
+    w = _shown_window()
+    rect = _mk_pen_rect(w, x=0, y=0, ww=120, hh=80)
+    w.push_undo_add(rect)
+    rect.setSelected(True)
+    texts = [a.text() for a in w._build_context_menu().actions()]
+    assert any("AI로 바꾸기" in t for t in texts)
+    w._ai_open_for_replace(rect)
+    assert not w._ai_panel.isHidden() and w._ai_panel.kind() == "symbol"
+    with _fake_svg():
+        req = _make_symbol(w, "안테나")
+    st = w._ai_staged
+    assert req.replace_target is rect
+    # sceneBoundingRect는 선택 손잡이 여백까지 커져 실제 도형 크기가 아니다(pitfalls "좌표계·변환") — rect() 기준
+    assert min(s.top() for s in st.slots) > rect.mapToScene(rect.rect()).boundingRect().bottom()   # 도형 아래 줄
+    n_undo = len(w._undo)
+    st.cands[0].items[0].setSelected(True)
+    _wait_until(lambda: w._ai_staged is None, 1000)
+    assert rect.scene() is None and len(w._undo) == n_undo + 1
+    new = w._scene.selectedItems()
+    box = _QRectF()
+    for it in new:
+        box = box.united(it.sceneBoundingRect())
+    assert abs(box.center().x() - 60) < 6 and abs(box.center().y() - 40) < 6   # 같은 가운데
+    w.undo()
+    assert rect.scene() is w._scene and all(it.scene() is None for it in new)
+    _close_clean(w)
+
+
+def test_save_candidates_to_my_symbols():
+    w = _shown_window()
+    with _fake_svg():
+        _make_symbol(w)
+    got = {}
+
+    def fake_save(entries, subject, folder):
+        got.update(n=len(entries), subject=subject, folder=folder)
+        return len(entries)
+    from PyQt6.QtWidgets import QDialog
+    with _patch("easycad.canvas.host_aimake._SaveToSymbolsFolderDialog.exec",
+                return_value=QDialog.DialogCode.Accepted), \
+            _patch("easycad.canvas.host_aimake._SaveToSymbolsFolderDialog.chosen_folder", return_value=None), \
+            _patch.object(w, "_save_svg_candidates_to_symbols", side_effect=fake_save):
+        assert w._ai_save_candidates_to_symbols() == SYMBOL_COUNT
+    assert got == {"n": SYMBOL_COUNT, "subject": "BNC 커넥터 아이콘", "folder": None}
+    assert w._ai_staged is not None   # 저장해도 후보 줄은 그대로(고르기는 따로)
     _close_clean(w)
