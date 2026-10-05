@@ -588,7 +588,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._kind_buttons[kind].setChecked(True)
         self._update_intro()
         self._refresh_history_view()
-        self._prompt_edit.setPlaceholderText(self._followup["placeholder"] if self._followup else PLACEHOLDER[kind])
+        self._set_placeholder(self._followup["placeholder"] if self._followup else PLACEHOLDER[kind])
         self._update_input_hint()
         self._count_row.setVisible(kind == "symbol")
         self._fill_models()
@@ -596,6 +596,12 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._sync_code_box()
         self._hide_notice()
         self.trace_photo_changed.emit(self._attached_image if kind == "trace" else None)
+
+    def _set_placeholder(self, text):
+        """입력칸 안내글 바꾸기 — Qt 6.10은 안내글이 이미 보이는 중이면 글만 바뀌어도 칸을 다시 그리지 않아, 탭을 바꿔도
+        클릭하기 전까지 옛 글이 남았다(2026-10-05 피드백 6차, 다시 그리기 횟수 0으로 확인). 직접 다시 그리게 한다."""
+        self._prompt_edit.setPlaceholderText(text)
+        self._prompt_edit.viewport().update()
 
     def _update_intro(self):
         _key, _short, title, desc, example = next(k for k in KINDS if k[0] == self._kind)
@@ -813,13 +819,13 @@ class _AIPanel(_ImageAttachMixin, QFrame):
             self._follow_thumbs.addWidget(t)
         self._follow_x.setIcon(_ai_icon("ai_close", _current_icon_color()))
         self._follow_box.setVisible(True)
-        self._prompt_edit.setPlaceholderText(self._followup["placeholder"])
+        self._set_placeholder(self._followup["placeholder"])
         self.focus_prompt()
 
     def clear_followup(self):
         self._followup = None
         self._follow_box.setVisible(False)
-        self._prompt_edit.setPlaceholderText(PLACEHOLDER[self._kind])
+        self._set_placeholder(PLACEHOLDER[self._kind])
 
     def followup(self):
         return self._followup

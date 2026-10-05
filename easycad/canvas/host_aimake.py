@@ -66,6 +66,7 @@ ORIGINAL_TEXT = "원본 — 오른쪽 새 결과와 나란히 비교 중"
 KEPT_BOTH_TEXT = "✓ 넣음(원본도 남김)"
 CHOSE_NEW_TEXT = "새 결과를 골라 지움"
 CHOSE_ORIGINAL_TEXT = "원본을 골라 버림"
+LEFT_TEXT = "✓ 넣음(이어 고치기 비교에서 빠져 캔버스에 남김)"
 _COMPARE_GAP = 120.0      # 흐름도 원본과 새 결과 사이(씬 단위)
 _CHECK_PX = 16      # 후보 칸 체크 표시 크기(화면 px)
 _CHECK_INSET_PX = 4
@@ -137,6 +138,7 @@ class _StagedResult:
     # ---- 흐름도 이어 고치기 비교(피드백 6차) — alt는 왼쪽에 남겨 둔 원본(_StagedResult), marks는 상대편과 다른 도형.
     alt: object = None
     alt_bar: QWidget = None
+    both_btn: QToolButton = None   # 비교 중 새 결과 막대의 「둘 다 넣기」
     marks: list = field(default_factory=list)
     alt_marks: list = field(default_factory=list)
 
@@ -288,7 +290,10 @@ class _AIMakeMixin:
         만들기를 누른 순간의 화면 가운데(사용자 확정) — 생성이 끝날 때 화면이 옮겨 가 있어도 여기로."""
         base = getattr(req, "followup_of", None)
         center = None
-        if base is not None and base is self._ai_staged:
+        cur = self._ai_staged
+        if base is not None and cur is not None and base is cur.alt:
+            center = self._ai_items_rect(base.items).center()   # 비교 중인 원본 쪽에서 이어 고침 — 비교는 결과가 올 때 정리
+        elif base is not None and base is self._ai_staged:
             # 이어 만들기 — 바탕 결과는 지우지 않는다(피드백 6차). 심볼은 후보 줄 아래에 새 줄을 붙이고
             # (`_ai_extend_candidates`), 흐름도는 새 결과가 오면 원본 옆에 나란히 놓아 고르게 한다(`_ai_place_flow`).
             center = self._ai_staged_scene_rect().center()
@@ -410,16 +415,23 @@ class _AIMakeMixin:
         if not self._ai_goto_request_doc(req):
             return None
         base = getattr(req, "followup_of", None)
-        if alt is None and base is not None and base is self._ai_staged and base.slots is None \
-                and base.doc is self._active_doc and self._undo and self._undo[-1] is base.undo_entry:
-            alt = base
-            self._ai_drop_alt(base)              # 이어 고치기를 거듭하면 비교는 늘 「바탕 ↔ 새 결과」 둘 — 더 앞의 원본은 정리
-            self._ai_staged = None               # 바탕은 임시 결과에서 내려 원본 자리로(막대는 아래에서 바꿔 단다)
-            if base.bar is not None and not sip.isdeleted(base.bar):
-                base.bar.hide()
-                base.bar.deleteLater()
-            base.bar = None
-            if base.request.entry is not None and not sip.isdeleted(base.request.entry):
+        cur = self._ai_staged
+        if alt is None and base is not None and cur is not None and cur.slots is None \
+                and base.doc is self._active_doc:
+            # 이어 고치기를 거듭해도 비교는 늘 「바탕 ↔ 새 결과」 둘. 비교에 안 끼는 쪽은 지우지 않고 캔버스에 남긴다(사용자 결정).
+            if base is cur and self._undo and self._undo[-1] is base.undo_entry:
+                self._ai_end_alt(base, LEFT_TEXT)
+                self._ai_staged = None           # 바탕은 임시 결과에서 내려 원본 자리로(막대는 아래에서 바꿔 단다)
+                if base.bar is not None and not sip.isdeleted(base.bar):
+                    base.bar.hide()
+                    base.bar.deleteLater()
+                base.bar = None
+                alt = base
+            elif base is cur.alt and base.undo_entry in self._undo:   # 원본 쪽에서 이어 고침 — 새 결과 쪽이 빠진다
+                self._ai_end_alt(cur)
+                self._ai_finish_staging(LEFT_TEXT)
+                alt = base
+            if alt is not None and base.request.entry is not None and not sip.isdeleted(base.request.entry):
                 base.request.entry.set_status(ORIGINAL_TEXT, running=True)
         self._ai_accept_staged()
         try:
@@ -452,18 +464,46 @@ class _AIMakeMixin:
     # ---- 흐름도 이어 고치기 비교(피드백 6차) ------------------------------------------------
 
     def _ai_begin_compare(self, st, alt, added):
-        """새 결과(st) 왼쪽에 원본(alt)을 남겨 둔 비교 상태 — 막대 「이걸로」는 새 결과를 쓰고 원본을 지운다.
-        원본 위엔 작은 막대(「원본」 「이걸로」)를 따로 띄운다. 서로 다른 도형은 주황으로 표시."""
+        """새 결과(st) 왼쪽에 원본(alt)을 남겨 둔 비교 상태. 두 막대가 같은 조절(이걸로·방향·이어 고치기·버리기)을 갖고
+        (피드백 6차 2회: 원본도 방향을 바꿔 보거나 이어 고칠 수 있게), 새 결과 막대엔 「둘 다 넣기」가 더 있다.
+        서로 다른 도형은 주황으로 표시."""
         st.alt = alt
-        old_code = getattr(alt.request, "result_text", "")
-        new_code = st.request.result_text
-        st.marks = _flow_diff_items(new_code, old_code, added)
-        st.alt_marks = _flow_diff_items(old_code, new_code, [it for it in alt.items if it.scene() is not None])
+        self._ai_update_marks(st)
         st.bar.accept_btn.clicked.disconnect()
         st.bar.accept_btn.clicked.connect(self._ai_choose_new)
         st.bar.accept_btn.setText("이걸로")
         st.bar.accept_btn.setToolTip("새 결과를 쓰고 왼쪽 원본은 지우기")
         st.bar.discard_btn.setToolTip("새 결과를 버리고 원본으로 돌아가기")
+        both = _icon_button(st.bar, "둘 다 넣기", "ai_check", tip="원본과 새 결과를 둘 다 캔버스에 넣기")
+        both.clicked.connect(self._ai_keep_both)
+        lay = st.bar.layout()
+        lay.insertWidget(lay.count() - 2, both)   # 구분선·버리기 앞
+        both.show()   # 떠 있는 막대에 넣은 버튼은 나중에 보여져 폭 계산에서 빠진다 — 글이 「이…기」로 잘림(실제 창)
+        st.bar.adjustSize()
+        st.both_btn = both
+        view = st.doc.view
+        self._ai_make_alt_bar(st)
+        n = len(st.marks)
+        if st.request.entry is not None:
+            st.request.entry.set_status(
+                f"원본과 다른 곳 {n}군데 주황 표시 — 「이걸로」로 고르세요" if n else "원본과 같아요 — 「이걸로」로 고르세요",
+                running=True)
+        self._ai_ensure_visible(view, self._ai_staged_scene_rect().united(self._ai_items_rect(alt.items)))
+        self._ai_place_bar()
+        view.viewport().update()
+
+    def _ai_update_marks(self, st):
+        alt = st.alt
+        old_code = getattr(alt.request, "result_text", "")
+        new_code = st.request.result_text
+        st.marks = _flow_diff_items(new_code, old_code, [it for it in st.items if it.scene() is not None])
+        st.alt_marks = _flow_diff_items(old_code, new_code, [it for it in alt.items if it.scene() is not None])
+
+    def _ai_make_alt_bar(self, st):
+        """원본 위 막대 — 「원본」 이름표 + 새 결과 막대와 같은 조절(방향·이어 고치기는 원본 쪽에 걸린다)."""
+        if st.alt_bar is not None and not sip.isdeleted(st.alt_bar):
+            st.alt_bar.hide()
+            st.alt_bar.deleteLater()
         view = st.doc.view
         bar = QFrame(view.viewport())
         bar.setObjectName("aiStagingBar")
@@ -478,25 +518,41 @@ class _AIMakeMixin:
         pick = _icon_button(bar, "이걸로", "ai_check", tip="원본을 쓰고 새 결과는 버리기")
         pick.clicked.connect(self._ai_choose_original)
         lay.addWidget(pick)
+        m = _MERMAID_HEADER_RE.match(getattr(st.alt.request, "result_text", ""))
+        for w in self._ai_flow_extras(m.group(1) if m else "TD", side="alt"):
+            w.setParent(bar)
+            lay.addWidget(w)
+        sep = QFrame(bar)
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet("color:rgba(128,128,128,120);")
+        lay.addWidget(sep)
+        drop = _icon_button(bar, "버리기", "ai_trash", tip="원본만 버리고 새 결과는 남기기")
+        drop.clicked.connect(self._ai_discard_alt)
+        lay.addWidget(drop)
         bar.adjustSize()
         st.alt_bar = bar
-        n = len(st.marks)
-        if st.request.entry is not None:
-            st.request.entry.set_status(
-                f"원본과 다른 곳 {n}군데 주황 표시 — 「이걸로」로 고르세요" if n else "원본과 같아요 — 「이걸로」로 고르세요",
-                running=True)
-        self._ai_ensure_visible(view, self._ai_staged_scene_rect().united(self._ai_items_rect(alt.items)))
-        self._ai_place_bar()
         bar.show()
-        view.viewport().update()
+        return bar
 
     def _ai_end_alt(self, st, status=None):
-        """비교 상태를 걷는다(원본 막대 치우기). `status`가 있으면 원본 기록 칸에 적는다. 원본 도형은 건드리지 않는다."""
+        """비교 상태를 걷는다(원본 막대·「둘 다 넣기」 치우고 새 결과 막대를 보통으로). `status`가 있으면 원본 기록 칸에
+        적는다. 원본 도형은 건드리지 않는다."""
         alt, st.alt = st.alt, None
         if st.alt_bar is not None and not sip.isdeleted(st.alt_bar):
             st.alt_bar.hide()
             st.alt_bar.deleteLater()
         st.alt_bar = None
+        if st.both_btn is not None and not sip.isdeleted(st.both_btn):
+            st.both_btn.hide()
+            st.both_btn.deleteLater()
+        st.both_btn = None
+        if alt is not None and st.bar is not None and not sip.isdeleted(st.bar):
+            st.bar.accept_btn.clicked.disconnect()
+            st.bar.accept_btn.clicked.connect(self._ai_accept_staged)
+            st.bar.accept_btn.setText("채택")
+            st.bar.accept_btn.setToolTip("")
+            st.bar.discard_btn.setToolTip("")
+            st.bar.adjustSize()
         st.marks, st.alt_marks = [], []
         if alt is not None and status is not None:
             entry = getattr(alt.request, "entry", None)
@@ -504,10 +560,66 @@ class _AIMakeMixin:
                 entry.set_status(status)
         return alt
 
-    def _ai_drop_alt(self, st):
+    def _ai_keep_both(self):
+        """새 결과 막대 「둘 다 넣기」 — 원본·새 결과 모두 채택(자동 채택과 같은 결과)."""
+        if self._ai_staged is not None:
+            self._ai_finish_staging(ACCEPTED_TEXT)
+
+    def _ai_discard_alt(self):
+        """원본 막대 「버리기」 — 원본만 지우고 새 결과는 보통 임시 결과로 남는다."""
+        st = self._ai_staged
+        if st is not None and st.alt is not None:
+            self._ai_drop_alt(st, DISCARDED_TEXT)
+            if st.request.entry is not None and not sip.isdeleted(st.request.entry):
+                st.request.entry.set_status(STAGED_TEXT, running=True)
+            self._ai_place_bar()
+            st.doc.view.viewport().update()
+
+    def _ai_redraw_alt(self, code):
+        """원본 쪽 방향 바꾸기 — 원본을 제자리에서 다시 그린다. 원본 기록 칸은 새 결과 칸 밑이라, 다시 그린 기록을 같은
+        자리에 바꿔 끼운다(기록 칸 수 그대로). 넓어져 새 결과에 닿으면 왼쪽으로 민다."""
+        st = self._ai_staged
+        alt = st.alt if st is not None else None
+        if alt is None or alt.doc is not self._active_doc or alt.undo_entry not in self._undo:
+            return None
+        try:
+            parse_mermaid(code)
+        except MermaidError as ex:
+            alt.request.entry.set_status(f"코드 오류 — 원본 유지: {ex}", running=True)
+            return None
+        undo = self._undo
+        idx = undo.index(alt.undo_entry)
+        old = self._ai_items_rect(alt.items)
+        limit = self._ai_staged_scene_rect().left() - _COMPARE_GAP
+        st.discarding = True   # 다시 그리는 동안 기록이 바뀌어도 자동 채택하지 않게
+        try:
+            for it in alt.items:
+                if it.scene() is not None:
+                    it.scene().removeItem(it)
+            center = old.center()
+            _n, _a, _d, added = self._build_mermaid_items(code, center)
+            box = self._ai_items_rect(added)
+            if box.right() > limit:
+                self._ai_undo_top_silently()
+                _n, _a, _d, added = self._build_mermaid_items(code, QPointF(center.x() - (box.right() - limit), center.y()))
+            entry = undo.pop()
+            undo[idx] = entry
+        finally:
+            st.discarding = False
+        alt.items, alt.undo_entry = added, entry
+        alt.request.result_text = code
+        self._ai_update_marks(st)
+        self._ai_make_alt_bar(st)
+        self._refresh_history_actions()
+        self._ai_ensure_visible(st.doc.view, self._ai_staged_scene_rect().united(self._ai_items_rect(added)))
+        self._ai_place_bar()
+        st.doc.view.viewport().update()
+        return alt
+
+    def _ai_drop_alt(self, st, status=None):
         """비교 중인 원본을 지운다. 그 기록 칸은 지금 결과 바로 밑이라(다른 편집이 끼면 자동 채택으로 비교가 끝난다)
         기록 목록에서 그 칸째 뺀다 — 지우기 기록을 새로 쌓으면 Ctrl+Z 한 번에 원본이 되살아나 헷갈린다."""
-        alt = self._ai_end_alt(st, CHOSE_NEW_TEXT)
+        alt = self._ai_end_alt(st, status or CHOSE_NEW_TEXT)
         if alt is None:
             return
         undo = alt.doc.undo
@@ -554,8 +666,9 @@ class _AIMakeMixin:
             entry.set_status(ACCEPTED_TEXT)
         self._ai_panel.show_flow_code(getattr(alt.request, "result_text", ""))
 
-    def _ai_flow_extras(self, direction):
-        """방향 — 드롭다운 대신 화살표 버튼 4개(2026-10-05 피드백 2차: 한 번에 고르게), 지금 방향만 눌린 상태."""
+    def _ai_flow_extras(self, direction, side="new"):
+        """방향 — 드롭다운 대신 화살표 버튼 4개(2026-10-05 피드백 2차: 한 번에 고르게), 지금 방향만 눌린 상태.
+        `side`가 "alt"면 비교 중인 원본 쪽 막대용(버튼이 원본에 걸린다)."""
         token = "TD" if direction.upper() == "TB" else direction.upper()
         box = QWidget()
         lay = QHBoxLayout(box)
@@ -570,6 +683,7 @@ class _AIMakeMixin:
             b.setChecked(tok == token)
             b.setToolTip(label)
             b.setProperty("dir", tok)
+            b.setProperty("aiSide", side)
             b.setProperty("aiIcon", _DIR_ICONS[tok])
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             radius = "border-top-left-radius:6px; border-bottom-left-radius:6px;" if i == 0 else \
@@ -582,6 +696,7 @@ class _AIMakeMixin:
             lay.addWidget(b)
         follow = _icon_button(None, "이어 고치기", "generate",
                               tip="이 결과를 바탕으로 고칠 점을 말해 다시 만들기(예: 감시장치를 아래로)")
+        follow.setProperty("aiSide", side)
         follow.clicked.connect(self._ai_followup_flow)
         return (box, follow)
 
@@ -590,14 +705,18 @@ class _AIMakeMixin:
         btn = self.sender()
         if st is None or st.request.kind != "flow" or btn is None:
             return
-        code = getattr(st.request, "result_text", "")
+        on_alt = btn.property("aiSide") == "alt" and st.alt is not None
+        code = getattr((st.alt if on_alt else st).request, "result_text", "")
         m = _MERMAID_HEADER_RE.match(code)
         tok = btn.property("dir")
         if not m or m.group(1).upper() == tok or (tok == "TD" and m.group(1).upper() == "TB"):
             btn.setChecked(True)   # 이미 그 방향 — 눌린 상태 유지
             return
         a, b = m.span(1)
-        self._ai_replace_flow(code[:a] + tok + code[b:])
+        if on_alt:
+            self._ai_redraw_alt(code[:a] + tok + code[b:])
+        else:
+            self._ai_replace_flow(code[:a] + tok + code[b:])
 
     def _ai_replace_flow(self, code):
         """임시 흐름도를 새 코드로 다시 그린다(방향 바꾸기·코드 칸 고치기) — 되돌리기 기록은 늘지 않는다.
@@ -917,6 +1036,9 @@ class _AIMakeMixin:
             ar = self._ai_items_rect(st.alt.items)
             if not ar.isNull():
                 self._ai_place_widget(view, st.alt_bar, ar.adjusted(-pad, -pad, pad, pad))
+                if st.alt_bar.geometry().intersects(st.bar.geometry()):   # 멀리서 보면 두 막대가 겹친다 — 원본 막대를 한 칸 위로
+                    y = st.bar.y() - st.alt_bar.height() - 4
+                    st.alt_bar.move(st.alt_bar.x(), y if y >= 4 else st.bar.geometry().bottom() + 4)
 
     def _ai_place_widget(self, view, bar, scene_rect) -> QRect:
         """막대 위젯을 씬 사각형 위(자리가 없으면 아래)에, 떠 있는 카드 밑에 깔리지 않게 놓는다."""
@@ -1727,8 +1849,11 @@ class _AIMakeMixin:
         st = self._ai_staged
         if st is None or st.slots is not None or st.request.kind != "flow":
             return
-        code = getattr(st.request, "result_text", "")
+        btn = self.sender()
+        base = st.alt if (btn is not None and btn.property("aiSide") == "alt" and st.alt is not None) else st
+        code = getattr(base.request, "result_text", "")
         if not code:
             return
         n = sum(1 for line in code.splitlines()[1:] if line.strip())
-        self._ai_panel.set_followup("flow", f"지금 흐름도({n}줄)", base_code=code, base=st, base_text=st.request.text)
+        label = f"원본 흐름도({n}줄)" if base is not st else f"지금 흐름도({n}줄)"
+        self._ai_panel.set_followup("flow", label, base_code=code, base=base, base_text=base.request.text)

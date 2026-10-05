@@ -1197,20 +1197,128 @@ def test_flow_compare_direction_change_keeps_original():
     _close_clean(w)
 
 
-def test_flow_followup_again_compares_only_latest_pair():
-    w, st, new, n_undo = _flow_compare()
-    w._ai_followup_flow()
+def _followup_from(w, btn, third):
+    btn.click()
     p = w._ai_panel
-    third = _FLOW + "\n  D --> E[경보]\n  E --> F[기록]"
+    before = w._ai_staged
     with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
             _patch("easycad.ai.text_to_mermaid.generate_mermaid", return_value=(third, "m")):
         p._prompt_edit.setPlainText("기록 추가")
         p.request_make()
-        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not new)
-    cur = w._ai_staged
-    assert cur.alt is new and all(it.scene() is None for it in st.items)       # 가장 앞 원본은 정리
-    assert st.undo_entry not in w._undo and len(w._undo) == n_undo + 1
+        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not before)
+    return w._ai_staged
+
+
+_THIRD = _FLOW + "\n  D --> E[경보]\n  E --> F[기록]"
+
+
+def test_flow_followup_again_from_new_keeps_older_original_on_canvas():
+    # 피드백 6차 2회(사용자 결정): 비교에 안 끼는 쪽은 지우지 않고 캔버스에 남긴다.
+    w, st, new, n_undo = _flow_compare()
+    follow = [b for b in new.bar.findChildren(QToolButton) if b.text() == "이어 고치기"][0]
+    cur = _followup_from(w, follow, _THIRD)
+    assert cur.alt is new and all(it.scene() is w._scene for it in st.items)   # 가장 앞 원본은 캔버스에 남음
+    assert st.undo_entry in w._undo and len(w._undo) == n_undo + 2
+    assert "남김" in st.request.entry.status_text()
     assert len(cur.marks) == 2
+    _close_clean(w)
+
+
+def test_flow_followup_from_original_side():
+    w, st, new, n_undo = _flow_compare()
+    follow = [b for b in new.alt_bar.findChildren(QToolButton) if b.text() == "이어 고치기"][0]
+    cur = _followup_from(w, follow, _THIRD)
+    assert cur.alt is st and cur is not new                                       # 원본이 바탕
+    assert all(it.scene() is w._scene for it in new.items) and "남김" in new.request.entry.status_text()
+    assert len(cur.marks) == 4                                                    # 원본 대비 상자 2 + 화살표 2
+    _close_clean(w)
+
+
+def test_flow_compare_bars_have_same_controls():
+    w, st, new, n_undo = _flow_compare()
+    alt_texts = [b.text() for b in new.alt_bar.findChildren(QToolButton) if b.text()]
+    new_texts = [b.text() for b in new.bar.findChildren(QToolButton) if b.text()]
+    for t in ("이걸로", "이어 고치기", "버리기"):
+        assert t in alt_texts and t in new_texts, t
+    assert "둘 다 넣기" in new_texts
+    assert sum(1 for b in new.alt_bar.findChildren(QToolButton) if b.property("dir")) == 4
+    _close_clean(w)
+
+
+def test_flow_compare_keep_both_button():
+    w, st, new, n_undo = _flow_compare()
+    [b for b in new.bar.findChildren(QToolButton) if b.text() == "둘 다 넣기"][0].click()
+    assert w._ai_staged is None and len(w._undo) == n_undo + 1
+    assert all(it.scene() is w._scene for it in st.items + new.items)
+    assert st.request.entry.status_text() == ACCEPTED_TEXT
+    _close_clean(w)
+
+
+def test_flow_compare_discard_original_only():
+    w, st, new, n_undo = _flow_compare()
+    [b for b in new.alt_bar.findChildren(QToolButton) if b.text() == "버리기"][0].click()
+    assert w._ai_staged is new and new.alt is None and new.alt_bar is None and new.both_btn is None
+    assert all(it.scene() is None for it in st.items) and len(w._undo) == n_undo
+    assert new.bar.accept_btn.text() == "채택" and new.request.entry.status_text() == STAGED_TEXT
+    new.bar.accept_btn.click()                                                    # 보통 채택으로 돌아옴
+    assert w._ai_staged is None and new.request.entry.status_text() == ACCEPTED_TEXT
+    _close_clean(w)
+
+
+def test_flow_compare_original_direction_change_redraws_in_place():
+    w, st, new, n_undo = _flow_compare()
+    btn = [b for b in new.alt_bar.findChildren(QToolButton) if b.property("dir") == "TD"][0]
+    btn.click()
+    cur = w._ai_staged
+    assert cur is new and cur.alt is st and st.request.result_text.startswith("flowchart TD")
+    assert len(w._undo) == n_undo + 1 and w._undo[-1] is new.undo_entry and st.undo_entry in w._undo
+    assert all(it.scene() is w._scene for it in st.items)
+    assert w._ai_items_rect(st.items).right() < w._ai_items_rect(new.items).left()   # 새 결과와 안 겹침
+    on = [b for b in new.alt_bar.findChildren(QToolButton) if b.property("dir") and b.isChecked()]
+    assert [b.property("dir") for b in on] == ["TD"]
+    pick = [b for b in new.alt_bar.findChildren(QToolButton) if b.text() == "이걸로"][0]
+    pick.click()                                                                  # 바꾼 원본을 고르면 그대로 남음
+    assert all(it.scene() is w._scene for it in st.items) and all(it.scene() is None for it in new.items)
+    _close_clean(w)
+
+
+def test_mermaid_long_labels_wrap_and_fit_box():
+    # 피드백 6차 2회: 상자 폭 120 고정이라 긴 글이 하한 5pt로 줄어도 넘쳤다 → 두 줄로 나누고 상자를 글에 맞춰 키움.
+    w = CanvasWindow()
+    code = ("flowchart LR\n A[고출력 증폭 모듈 1 HPA Module 1] --> B[LDMOS/GaN 트랜지스터 LDMOS/GaN Transistor]\n"
+            " B --> C[출력 정합 회로 Output Matching]")
+    _n, _a, _d, added = w._build_mermaid_items(code)
+    for it in added[:3]:
+        box = it.mapRectToScene(it.rect())
+        lb = it._label.mapRectToScene(it._label.boundingRect())
+        assert box.contains(lb), (box, lb)
+        # 글자 크기 하한은 폭 상한(280)에 안 걸릴 때만 — 헤드리스는 한글 글꼴이 없어 글자 폭이 달라진다.
+        assert it._label.font().pointSize() >= w._MMD_LABEL_PT or box.width() >= w._MMD_NODE_W_MAX - 0.5, box.width()
+    assert added[1]._label.toPlainText() == "LDMOS/GaN 트랜지스터\nLDMOS/GaN Transistor"
+    short = w._build_mermaid_items("flowchart LR\n A[송신기] --> B[안테나]")[3]
+    assert short[0].rect().width() == 120 and short[0].rect().height() == 56   # 짧은 글은 예전 크기 그대로
+
+
+def test_prompt_placeholder_repaints_on_kind_switch():
+    # 피드백 6차 2회: 탭을 바꿔도 입력칸을 클릭하기 전까지 옛 안내글이 남음 — Qt가 안내글만 바뀌면 다시 그리지 않음.
+    from PyQt6.QtCore import QObject
+
+    class _Count(QObject):
+        n = 0
+
+        def eventFilter(self, _o, e):
+            if e.type() == QEvent.Type.Paint:
+                _Count.n += 1
+            return False
+    w = _shown_window()
+    w._set_ai_panel_visible(True)
+    p = w._ai_panel
+    w._view.setFocus()
+    _wait_until(lambda: False, ms=300)
+    c = _Count()
+    p._prompt_edit.viewport().installEventFilter(c)
+    p.set_kind("flow" if p.kind() != "flow" else "symbol")
+    assert _wait_until(lambda: _Count.n > 0, ms=1000)
     _close_clean(w)
 
 

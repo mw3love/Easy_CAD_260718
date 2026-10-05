@@ -1404,6 +1404,52 @@ class _FileIOMixin:
 
     # ---- Mermaid 가져오기 (Phase 4) -----------------------------------------
     _MMD_NODE_W, _MMD_NODE_H = 120.0, 56.0   # 노드 기본 치수(mermaid_import 레이아웃 상수와 동일)
+    # [§8 항목36 피드백 6차, 2026-10-05] 긴 글이 상자(폭 120 고정) 밖으로 나감 — 글자 축소가 하한 5pt에 걸려도 넘쳤다
+    # (실측: 「LDMOS/GaN 트랜지스터 LDMOS/GaN Transistor」 5pt에 폭 165). 글이 이 크기로 들어가게 상자를 키운다.
+    _MMD_LABEL_PT = 10
+    _MMD_NODE_W_MAX = 280.0
+
+    def _mermaid_node_size(self, graph):
+        """한 흐름도의 상자 크기(모두 같게 — 배치 계산이 상자 크기 하나를 받는다). 한 줄로 `_MMD_LABEL_PT`에 안 들어가는
+        글은 가운데에 가까운 띄어쓰기에서 두 줄로 나누고(`graph`의 라벨을 고침), 가장 긴 줄에 맞춰 폭을, 줄 수에 맞춰 높이를 키운다."""
+        from PyQt6.QtGui import QFont, QFontMetricsF
+        W, H = self._MMD_NODE_W, self._MMD_NODE_H
+        probe = _RectItem(QRectF(0.0, 0.0, W, H))
+        lbl = probe.ensure_label()
+        ratio = probe._label_inset_ratio()
+        margin = 2 * lbl.document().documentMargin()
+        base = QFont(lbl.font())
+        base.setPointSize(max(self._MMD_LABEL_PT, int(getattr(lbl, "_base_pt", base.pointSize() or 16))))
+        small = QFont(lbl.font())
+        small.setPointSize(self._MMD_LABEL_PT)
+        fm = QFontMetricsF(small)
+        widest, lines = 0.0, 1
+        for node in graph.nodes.values():
+            text = node.label or node.id
+            if "\n" not in text and fm.horizontalAdvance(text) + margin > W * ratio:
+                text = self._mermaid_wrap(text, fm)
+                if node.label:
+                    node.label = text
+            parts = text.split("\n")
+            widest = max(widest, max(fm.horizontalAdvance(t) for t in parts))
+            lines = max(lines, len(parts))
+        W = min(self._MMD_NODE_W_MAX, max(W, (widest + margin) / ratio + 2.0))   # +2: 반올림으로 한 단계 덜 줄게
+        H = max(H, lines * QFontMetricsF(base).lineSpacing() + margin + 8)
+        return W, H
+
+    @staticmethod
+    def _mermaid_wrap(text, fm):
+        """가장 긴 줄이 가장 짧아지는 띄어쓰기 한 곳에서 두 줄로(「한국어 English」면 대개 둘 사이). 띄어쓰기가 없으면 그대로."""
+        best = None
+        for i, ch in enumerate(text):
+            if ch != " ":
+                continue
+            a, b = text[:i].rstrip(), text[i + 1:].lstrip()
+            if a and b:
+                w = max(fm.horizontalAdvance(a), fm.horizontalAdvance(b))
+                if best is None or w < best[0]:
+                    best = (w, a + "\n" + b)
+        return best[1] if best else text
 
 
     def _get_mermaid_dialog(self) -> "_MermaidDialog":
@@ -1444,7 +1490,7 @@ class _FileIOMixin:
         [§8 항목36 3단계] AI 패널은 「만들기」를 누른 순간의 화면 가운데에 놓는다(생성 중 화면이 옮겨 가도)."""
         graph = parse_mermaid(text)   # 실패 시 MermaidError
 
-        W, H = self._MMD_NODE_W, self._MMD_NODE_H
+        W, H = self._mermaid_node_size(graph)
         pos = layout_positions(graph, node_w=W, node_h=H)
         xs = [p[0] for p in pos.values()]
         ys = [p[1] for p in pos.values()]
