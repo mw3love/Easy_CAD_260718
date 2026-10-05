@@ -2519,6 +2519,10 @@ class _AnnotatorView(QGraphicsView):
         (줌아웃) 자동 숨김. 표시되는 rect(이미 화면에 보이는 영역)만 순회해 무한캔버스에서도
         비용이 줌·팬과 무관하게 유계 — 그래도 극단적 조합을 대비해 점 개수 상한을 둔다."""
         super().drawBackground(painter, rect)
+        # [우리 확장 §8 항목36] AI 베끼기 준비 중인 사진 — 도형이 아니라 바닥 그림이라 저장·선택·되돌리기에 안 섞인다.
+        draw_trace = getattr(self._owner, "_draw_ai_trace_photo", None)
+        if draw_trace is not None:
+            draw_trace(self, painter)
         if not getattr(self._owner, "grid_enabled", True):
             return
         s = self._view_scale()

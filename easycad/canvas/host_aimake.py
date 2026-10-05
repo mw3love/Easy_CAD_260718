@@ -15,16 +15,21 @@ import time
 from dataclasses import dataclass, field
 
 from PyQt6 import sip
-from PyQt6.QtCore import QPoint, QRect, QRectF, Qt, QTimer
-from PyQt6.QtGui import QColor, QPen
-from PyQt6.QtWidgets import QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QToolButton, QWidget
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer
+from PyQt6.QtGui import QColor, QPen, QPolygonF
+from PyQt6.QtWidgets import (
+    QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QToolButton, QWidget,
+)
 
 from easycad.ai import gateway as gw
 from easycad.canvas.ai_panel import _AIPanel, PENDING_TEXT
 from easycad.canvas.host_dialogs import (
     _CORAL_BTN_QSS, _MERMAID_HEADER_RE, _MermaidGenWorker, _SaveToSymbolsFolderDialog, _SvgGenWorker, _detach_worker,
 )
+from easycad.canvas.photo_dialog import _PhotoOpsWorker, _pil_to_pixmap
+from easycad.canvas.annotator_core import _ImageItem
 from easycad.fileio import symbol_library
+from easycad.fileio.photo_ops import SCALE as _PHOTO_SCALE
 from easycad.canvas.host_widgets import _ACCENT_CORAL
 from easycad.fileio.mermaid_import import MermaidError, parse_mermaid
 
@@ -40,6 +45,34 @@ SYMBOL_COUNT = 6          # 심볼 후보 수(패널 입력칸 「후보 6」)
 SYMBOL_GAP = 40.0         # 후보 칸 사이(씬 단위)
 UNPICKED_TEXT = "고르지 않아 후보를 버렸어요"
 PICK_HINT = "하나를 클릭 · Ctrl+클릭 여러 개"
+TRACE_HINT = "주황 점을 종이 네 귀퉁이로 끌어 맞추고 「만들기」"
+TRACE_NO_PHOTO_TEXT = "베끼기 사진이 캔버스에 없어요 — 사진을 다시 붙여 주세요"
+TRACE_BUSY_TEXT = "다른 베끼기가 만드는 중이에요 — 끝나거나 취소한 뒤에 다시"
+CANCELLING_TEXT = "취소하는 중 — 지금 호출이 끝나면 멈춰요"
+CANCELLED_TEXT = "취소함"
+_TRACE_CORNER_HIT_PX = 14
+
+
+@dataclass
+class _TraceSetup:
+    """베끼기 준비(사진을 캔버스 바닥에 깔고 모서리 4점 맞추기) → 만드는 중 → 결과가 오면 걷힌다."""
+    doc: object
+    original: object            # 첨부 원본(PIL)
+    fitted: object              # AI에 보낼 크기로 줄인 것(PIL) — 화면 표시·모서리 좌표의 기준
+    pixmap: object              # 흐리게 구운 표시용
+    rect: QRectF                # 씬 위 사진 자리
+    quad: list                  # 모서리 4점(fitted 픽셀, 왼위·오위·오아래·왼아래)
+    bar: QWidget = None
+    hint: QLabel = None
+    reset_btn: QToolButton = None
+    remove_btn: QToolButton = None
+    cancel_btn: QToolButton = None
+    running: bool = False
+    req: object = None
+    worker: object = None
+    sent: object = None         # 실제로 보낸(펴고 줄인) 사진 — 결과·밑깔기의 기준
+    drag: int = None
+    last_vp: QRect = field(default_factory=QRect)
 
 
 @dataclass
@@ -54,6 +87,7 @@ class _AIJob:
     request: object
     worker: object
     t0: float
+    progress: tuple = None      # 베끼기 (끝난 구역, 전체)
 
 
 @dataclass
@@ -132,6 +166,8 @@ class _AIMakeMixin:
         self._ai_panel.make_requested.connect(self._on_ai_make_requested)
         self._ai_panel.code_insert_requested.connect(self._on_ai_code_insert)
         self._ai_panel.code_edited.connect(self._on_ai_code_edited)
+        self._ai_trace = None
+        self._ai_panel.trace_photo_changed.connect(self._on_ai_trace_photo)
         return self._ai_panel
 
     def _toggle_ai_panel(self, checked: bool = False):
@@ -177,8 +213,10 @@ class _AIMakeMixin:
                                self._on_flow_generated)
         elif req.kind == "symbol":
             self._ai_start_symbol(req)
+        elif req.kind == "trace":
+            self._ai_start_trace(req)
         else:
-            req.entry.set_status(PENDING_TEXT)   # 베끼기는 5단계에서 여기서 갈라 붙인다
+            req.entry.set_status(PENDING_TEXT)
 
     # ---- 생성 작업(백그라운드) ---------------------------------------------------------
 
@@ -210,8 +248,17 @@ class _AIMakeMixin:
             if entry is None or sip.isdeleted(entry):
                 continue
             sec = int(now - job.t0)
+            tr = self._ai_trace
             if job.request.kind == "symbol" and st is not None and st.request is job.request:
                 entry.set_status(f"후보 {len(st.cands)}/{len(st.slots)} 도착 · {sec}초", running=True)
+            elif job.request.kind == "trace":
+                if getattr(job.worker, "_cancel", False):
+                    continue   # 취소 중 — 「취소하는 중」 글을 덮지 않는다
+                done = f"{job.progress[0]}/{job.progress[1]} 구역 · " if job.progress else ""
+                text = f"만드는 중… {done}{sec // 60}분 {sec % 60}초" if sec >= 60 else f"만드는 중… {done}{sec}초"
+                entry.set_status(text, running=True)
+                if tr is not None and tr.req is job.request and tr.hint is not None:
+                    tr.hint.setText(text)
             else:
                 entry.set_status(f"만드는 중… {sec}초", running=True)
 
@@ -231,8 +278,15 @@ class _AIMakeMixin:
             worker.deleteLater()
 
     def _ai_detach_jobs(self):
-        """창이 닫힐 때 — 돌고 있는 생성은 떼어 내 결과를 버린다(`_detach_worker`가 끝날 때까지 살려 둠)."""
+        """창이 닫힐 때 — 돌고 있는 생성은 떼어 내 결과를 버린다(`_detach_worker`가 끝날 때까지 살려 둠).
+        베끼기는 남은 구역 호출(크레딧)을 막으려 취소부터 건다."""
         for worker in list(self._ai_jobs):
+            cancel = getattr(worker, "request_cancel", None)
+            if cancel is not None:
+                try:
+                    cancel()
+                except RuntimeError:
+                    pass
             _detach_worker(worker)
         self._ai_jobs.clear()
         self._ai_tick_timer.stop()
@@ -365,12 +419,13 @@ class _AIMakeMixin:
             x0, x1 = 0, vp.width()
         return QRect(x0, 0, x1 - x0, vp.height())
 
-    def _ai_ensure_visible(self):
+    def _ai_ensure_visible(self, view=None, rect=None):
         """결과가 카드 사이 빈 띠에 다 안 들어오면 그만큼만 축소해 보여 준다(확대는 하지 않음) — 넓은 흐름도의
-        왼쪽이 「도형」 카드 밑에 깔리고 막대의 「채택」까지 가려지던 것(2026-10-05 실제 창)."""
-        st = self._ai_staged
-        view = st.doc.view
-        rect = self._ai_staged_scene_rect()
+        왼쪽이 「도형」 카드 밑에 깔리고 막대의 「채택」까지 가려지던 것(2026-10-05 실제 창). 인자가 없으면 임시 결과."""
+        if rect is None:
+            st = self._ai_staged
+            view = st.doc.view
+            rect = self._ai_staged_scene_rect()
         if rect.isNull():
             return
         free = self._ai_free_viewport_rect(view)
@@ -459,6 +514,13 @@ class _AIMakeMixin:
             return
         req = st.request
         self._ai_discard_staged()
+        if req is not None and req.kind == "trace" and req.image is not None:
+            # 베끼기 준비(바닥 사진·모서리)는 결과가 오면서 걷혔다 — 같은 사진·같은 모서리로 되살린 뒤 다시 보낸다.
+            self._ai_trace_clear()
+            tr = self._ai_trace_setup(req.image)
+            quad = getattr(req, "trace_quad", None)
+            if quad:
+                tr.quad = list(quad)
         if req is not None:
             self._ai_panel.resubmit(req)
 
@@ -500,6 +562,7 @@ class _AIMakeMixin:
 
     def _draw_ai_staging(self, view, painter):
         """`core_view.drawForeground`가 부른다(우리 확장 훅)."""
+        self._draw_ai_trace_overlay(view, painter)
         st = getattr(self, "_ai_staged", None)
         if st is None or st.doc.view is not view:
             return
@@ -544,18 +607,21 @@ class _AIMakeMixin:
             return
         s = view.transform().m11() or 1.0
         pad = self._AI_STAGE_PAD_PX / s
-        vp = view.mapFromScene(rect.adjusted(-pad, -pad, pad, pad)).boundingRect()
-        st.last_vp = vp
-        bar = st.bar
+        st.last_vp = self._ai_place_widget(view, st.bar, rect.adjusted(-pad, -pad, pad, pad))
+
+    def _ai_place_widget(self, view, bar, scene_rect) -> QRect:
+        """막대 위젯을 씬 사각형 위(자리가 없으면 아래)에, 떠 있는 카드 밑에 깔리지 않게 놓는다."""
+        vp = view.mapFromScene(scene_rect).boundingRect()
         bar.adjustSize()
         vh = view.viewport().height()
-        free = self._ai_free_viewport_rect(view)   # 떠 있는 카드 밑에 깔리지 않게
+        free = self._ai_free_viewport_rect(view)
         x = max(free.left() + 4, min(vp.left(), free.right() - bar.width() - 4))
         y = vp.top() - bar.height() - self._AI_BAR_GAP_PX
         if y < 4:
             y = min(vp.bottom() + self._AI_BAR_GAP_PX, vh - bar.height() - 4)
         bar.move(int(x), int(max(4, y)))
         bar.raise_()
+        return vp
 
 
 
@@ -757,3 +823,284 @@ class _AIMakeMixin:
         self._ai_replace_target = item
         self._set_ai_panel_visible(True, kind="symbol")
         self._ai_panel.show_notice("고른 도형을 바꿀 심볼을 적고 「만들기」 — 후보를 클릭하면 그 자리가 바뀌어요")
+
+
+    # ---- 그대로 베끼기(5단계) -----------------------------------------------------------
+    # 사진을 붙이면 캔버스 바닥에 흐리게 깔고(도형 아님 — `core_view.drawBackground` 훅) 모서리 4점을 띄운다. 점은 viewport
+    # 이벤트 필터로 끈다(캔버스 코어의 마우스 처리를 건드리지 않음). 「만들기」는 그 4점으로 사진을 펴서(`rectify`) 구역별
+    # 동시 생성(`_PhotoOpsWorker`)에 보내고, 2~3분 동안 캔버스는 계속 쓸 수 있다. 결과는 사진 자리 가운데에 임시 결과로.
+
+    def _on_ai_trace_photo(self, img):
+        tr = self._ai_trace
+        if tr is not None and img is tr.original:
+            return   # 같은 사진(베끼기 탭을 다시 누름 등) — 맞춰 둔 모서리를 지우지 않는다
+        if tr is not None and tr.running:
+            if img is not None and img is not tr.original:
+                self._ai_panel.show_notice(TRACE_BUSY_TEXT)
+            return
+        self._ai_trace_clear()
+        if img is not None:
+            self._ai_trace_setup(img)
+
+    def _ai_trace_setup(self, img):
+        from easycad.ai.photo_to_ops import fit_for_ai
+        fitted = fit_for_ai(img)
+        faint = fitted.convert("RGBA")
+        faint.putalpha(self._PHOTO_UNDERLAY_ALPHA)
+        w, h = fitted.size
+        view = self._view
+        c = view.mapToScene(view.viewport().rect().center())
+        rect = QRectF(c.x() - w * _PHOTO_SCALE / 2, c.y() - h * _PHOTO_SCALE / 2, w * _PHOTO_SCALE, h * _PHOTO_SCALE)
+        tr = _TraceSetup(doc=self._active_doc, original=img, fitted=fitted, pixmap=_pil_to_pixmap(faint), rect=rect,
+                         quad=[(0.0, 0.0), (float(w), 0.0), (float(w), float(h)), (0.0, float(h))])
+        bar = QFrame(view.viewport())
+        bar.setObjectName("aiStagingBar")
+        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar.setStyleSheet("QFrame#aiStagingBar { background:palette(window); border:1px solid rgba(128,128,128,140);"
+                          " border-radius:8px; }")
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(5)
+        tr.hint = QLabel(TRACE_HINT, bar)
+        tr.hint.setStyleSheet("color:#8a8a8a; font-size:11px; padding:0 4px;")
+        lay.addWidget(tr.hint)
+        tr.reset_btn = QToolButton(bar)
+        tr.reset_btn.setText("모서리 초기화")
+        tr.reset_btn.clicked.connect(self._ai_trace_reset_corners)
+        lay.addWidget(tr.reset_btn)
+        tr.remove_btn = QToolButton(bar)
+        tr.remove_btn.setText("사진 빼기")
+        tr.remove_btn.clicked.connect(self._ai_panel.clear_attached_image)
+        lay.addWidget(tr.remove_btn)
+        tr.cancel_btn = QToolButton(bar)
+        tr.cancel_btn.setText("취소")
+        tr.cancel_btn.setToolTip("남은 구역 생성을 멈춤(지금 도는 호출은 끝까지 감)")
+        tr.cancel_btn.clicked.connect(self._ai_trace_cancel)
+        tr.cancel_btn.setVisible(False)
+        lay.addWidget(tr.cancel_btn)
+        tr.bar = bar
+        self._ai_trace = tr
+        view.viewport().installEventFilter(self)
+        self._ai_ensure_visible(view, rect)
+        tr.last_vp = self._ai_place_widget(view, bar, rect)
+        bar.show()
+        view.viewport().update()
+        return tr
+
+    def _ai_trace_clear(self):
+        tr = self._ai_trace
+        if tr is None:
+            return
+        self._ai_trace = None
+        view = getattr(tr.doc, "view", None)
+        if view is not None and not sip.isdeleted(view):
+            view.viewport().removeEventFilter(self)
+            view.viewport().update()
+        if tr.bar is not None and not sip.isdeleted(tr.bar):
+            tr.bar.hide()
+            tr.bar.deleteLater()
+
+    def _ai_trace_set_running(self, on: bool):
+        tr = self._ai_trace
+        tr.running = on
+        tr.drag = None
+        tr.reset_btn.setVisible(not on)
+        tr.remove_btn.setVisible(not on)
+        tr.cancel_btn.setVisible(on)
+        tr.cancel_btn.setEnabled(on)
+        if not on:
+            tr.hint.setText(TRACE_HINT)
+        tr.doc.view.viewport().update()
+        self._ai_place_widget(tr.doc.view, tr.bar, tr.rect)
+
+    def _ai_trace_reset_corners(self):
+        tr = self._ai_trace
+        if tr is None or tr.running:
+            return
+        w, h = tr.fitted.size
+        tr.quad = [(0.0, 0.0), (float(w), 0.0), (float(w), float(h)), (0.0, float(h))]
+        tr.doc.view.viewport().update()
+
+    def _ai_trace_corner_scene(self, tr, i) -> QPointF:
+        x, y = tr.quad[i]
+        return QPointF(tr.rect.left() + x * _PHOTO_SCALE, tr.rect.top() + y * _PHOTO_SCALE)
+
+    def _draw_ai_trace_photo(self, view, painter):
+        """`core_view.drawBackground` 훅 — 준비·만드는 중인 사진을 바닥에 흐리게."""
+        tr = getattr(self, "_ai_trace", None)
+        if tr is None or tr.doc.view is not view:
+            return
+        painter.drawPixmap(tr.rect, tr.pixmap, QRectF(tr.pixmap.rect()))
+
+    def _draw_ai_trace_overlay(self, view, painter):
+        tr = getattr(self, "_ai_trace", None)
+        if tr is None or tr.doc.view is not view:
+            return
+        s = view.transform().m11() or 1.0
+        painter.save()
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        if tr.running:
+            pen = QPen(QColor(_ACCENT_CORAL), 2.0, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.drawRect(tr.rect)
+        else:
+            pts = [self._ai_trace_corner_scene(tr, i) for i in range(4)]
+            pen = QPen(QColor(_ACCENT_CORAL), 1.5)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+            painter.drawPolygon(QPolygonF(pts))
+            painter.setBrush(QColor(_ACCENT_CORAL))
+            for q in pts:
+                painter.drawEllipse(q, 6.0 / s, 6.0 / s)
+        painter.restore()
+        vp = view.mapFromScene(tr.rect).boundingRect()
+        if vp != tr.last_vp:
+            tr.last_vp = vp
+            QTimer.singleShot(0, self._ai_trace_place_bar)
+
+    def _ai_trace_place_bar(self):
+        tr = self._ai_trace
+        if tr is not None and tr.bar is not None and not sip.isdeleted(tr.bar):
+            self._ai_place_widget(tr.doc.view, tr.bar, tr.rect)
+
+    def eventFilter(self, obj, event):
+        """베끼기 모서리 점 끌기 — 그 탭 캔버스의 viewport에만 건다. 점 근처 누름이 아니면 캔버스에 그대로 넘긴다."""
+        tr = getattr(self, "_ai_trace", None)
+        if tr is not None and not tr.running and obj is tr.doc.view.viewport():
+            et = event.type()
+            view = tr.doc.view
+            if et == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                pos = event.position()
+                best, dist = None, None
+                for i in range(4):
+                    d = (QPointF(view.mapFromScene(self._ai_trace_corner_scene(tr, i))) - pos).manhattanLength()
+                    if dist is None or d < dist:
+                        best, dist = i, d
+                if dist is not None and dist <= _TRACE_CORNER_HIT_PX:
+                    tr.drag = best
+                    return True
+            elif et == QEvent.Type.MouseMove and tr.drag is not None:
+                sp = view.mapToScene(event.position().toPoint())
+                w, h = tr.fitted.size
+                x = min(max((sp.x() - tr.rect.left()) / _PHOTO_SCALE, 0.0), float(w))
+                y = min(max((sp.y() - tr.rect.top()) / _PHOTO_SCALE, 0.0), float(h))
+                tr.quad[tr.drag] = (x, y)
+                view.viewport().update()
+                return True
+            elif et == QEvent.Type.MouseButtonRelease and tr.drag is not None:
+                tr.drag = None
+                return True
+        return super().eventFilter(obj, event)
+
+    def _ai_start_trace(self, req):
+        tr = self._ai_trace
+        if tr is None or tr.doc is not self._active_doc:
+            req.entry.set_status(TRACE_NO_PHOTO_TEXT)
+            return None
+        if tr.running:
+            req.entry.set_status(TRACE_BUSY_TEXT)
+            return None
+        key = gw.resolve_api_key()
+        if not key:
+            req.entry.set_status(NO_KEY_TEXT)
+            return None
+        from easycad.ai.photo_to_ops import fit_for_ai, rectify
+        k = tr.original.size[0] / tr.fitted.size[0]
+        try:
+            sent = fit_for_ai(rectify(tr.original, [(x * k, y * k) for x, y in tr.quad]))
+        except ValueError as e:
+            req.entry.set_status(f"모서리로 사진을 펼 수 없어요: {e}")
+            return None
+        worker = _PhotoOpsWorker(key, gw.resolve_base_url(), sent, req.model, self)
+        self._ai_jobs[worker] = _AIJob(req, worker, time.monotonic())
+        worker.progressed.connect(self._on_trace_progress)
+        worker.succeeded.connect(self._on_trace_done)
+        worker.failed.connect(self._on_trace_failed)
+        worker.cancelled.connect(self._on_trace_cancelled)
+        worker.finished.connect(self._on_ai_job_finished)
+        tr.req, tr.worker, tr.sent = req, worker, sent
+        req.trace_quad = list(tr.quad)   # 결과 막대 「다시」가 같은 모서리로 되살리게
+        self._ai_trace_set_running(True)
+        worker.start()
+        self._ai_tick()
+        self._ai_tick_timer.start()
+        return worker
+
+    def _ai_trace_cancel(self):
+        tr = self._ai_trace
+        if tr is None or not tr.running or tr.worker is None:
+            return
+        tr.worker.request_cancel()
+        tr.cancel_btn.setEnabled(False)
+        tr.hint.setText(CANCELLING_TEXT)
+        tr.req.entry.set_status(CANCELLING_TEXT, running=True)
+
+    def _on_trace_progress(self, i, n, _text):
+        job = self._ai_job_of_sender()
+        if job is not None:
+            job.progress = (i, n)
+            self._ai_tick()
+
+    def _ai_trace_of_sender(self):
+        job = self._ai_job_of_sender()
+        tr = self._ai_trace
+        if job is None or tr is None or tr.req is not job.request:
+            return None, job
+        return tr, job
+
+    def _on_trace_done(self, spec, log):
+        tr, job = self._ai_trace_of_sender()
+        if tr is None:
+            return
+        req = job.request
+        if not self._ai_goto_request_doc(req):
+            self._ai_trace_clear()
+            return
+        added, _skipped = self._build_photo_drawing(spec, tr.sent, underlay=True, center=tr.rect.center())
+        self._ai_trace_clear()
+        self._ai_panel.clear_attached_image()
+        keep = QCheckBox("사진도 밑에 남기기")
+        keep.setChecked(True)
+        keep.setToolTip("원본 사진을 흐리게 잠가 결과 밑에 둔다(대조하며 고친 뒤 지우면 됨)")
+        keep.toggled.connect(self._on_trace_keep_photo)
+        st = self._ai_stage(added, req, extras=(keep,))
+        bad = sum(1 for e in log if "error" in e)
+        if st is not None and bad:
+            req.entry.set_status(f"{STAGED_TEXT} · {len(log)}구역 중 {bad}곳을 못 읽어 비어 있어요", running=True)
+
+    def _on_trace_keep_photo(self, keep: bool):
+        """결과 막대 「사진도 밑에 남기기」 — 밑에 깐 사진을 결과(되돌리기 한 칸)에서 빼거나 다시 넣는다."""
+        st = self._ai_staged
+        if st is None:
+            return
+        img = getattr(st, "underlay", None)
+        if img is None:
+            img = next((it for it in st.items if isinstance(it, _ImageItem)), None)
+            st.underlay = img
+        if img is None:
+            return
+        op = ("create", img)
+        if keep and img.scene() is None:
+            st.doc.scene.addItem(img)
+            st.items.insert(0, img)
+            st.undo_entry.ops.insert(0, op)
+        elif not keep and img.scene() is not None:
+            img.scene().removeItem(img)
+            st.items = [it for it in st.items if it is not img]
+            st.undo_entry.ops = [o for o in st.undo_entry.ops if o[1] is not img]
+        st.doc.view.viewport().update()
+
+    def _on_trace_failed(self, err):
+        tr, job = self._ai_trace_of_sender()
+        if job is not None:
+            job.request.entry.set_status(f"실패: {err}")
+        if tr is not None:
+            self._ai_trace_set_running(False)
+
+    def _on_trace_cancelled(self):
+        tr, job = self._ai_trace_of_sender()
+        if job is not None:
+            job.request.entry.set_status(CANCELLED_TEXT)
+        if tr is not None:
+            self._ai_trace_set_running(False)

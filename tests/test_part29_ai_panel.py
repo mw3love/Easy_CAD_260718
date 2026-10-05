@@ -117,12 +117,16 @@ def test_image_counts_as_input_and_is_cleared_after_make():
     from PIL import Image
     w = CanvasWindow()
     p = w._ai_panel
-    p.set_kind("trace")
+    p.set_kind("flow")
     p._set_attached_image(Image.new("RGB", (40, 30), "white"), "IMG_7074_매우_긴_파일_이름_입니다.jpg")
     assert p._image_name_label.text() != "IMG_7074_매우_긴_파일_이름_입니다.jpg"   # 좁은 칸에 맞춰 줄임
     req = p.request_make()
     assert req is not None and req.image is not None and req.image_name.startswith("IMG_7074")
     assert p._attached_image is None and p._image_chip.isHidden()
+    # 베끼기는 사진이 캔버스에 깔린 채 만들므로 첨부를 남긴다(끝나면 호스트가 비움)
+    p.set_kind("trace")
+    p._set_attached_image(Image.new("RGB", (40, 30), "white"), "IMG_7074.jpg")
+    assert p.request_make() is not None and p._attached_image is not None
 
 
 def test_enter_makes_and_shift_enter_does_not():
@@ -290,7 +294,7 @@ def test_bar_sits_above_dashed_rect_and_follows_zoom():
 # ── 3단계(2026-10-05): 흐름도 — 패널에서 생성 → 캔버스에 임시로, 방향·코드 칸 ─────────────────
 
 from contextlib import contextmanager
-from PyQt6.QtWidgets import QComboBox
+from PyQt6.QtWidgets import QCheckBox, QComboBox
 from unittest.mock import patch as _patch
 
 _FLOW = "flowchart LR\n  A[송신기] --> B[결합기]\n  B --> C[안테나]\n  B --> D[감시장치]"
@@ -580,4 +584,158 @@ def test_save_candidates_to_my_symbols():
         assert w._ai_save_candidates_to_symbols() == SYMBOL_COUNT
     assert got == {"n": SYMBOL_COUNT, "subject": "BNC 커넥터 아이콘", "folder": None}
     assert w._ai_staged is not None   # 저장해도 후보 줄은 그대로(고르기는 따로)
+    _close_clean(w)
+
+
+# ── 5단계(2026-10-05): 그대로 베끼기 — 캔버스 바닥 사진·모서리 4점·생성 중 편집·취소·사진 남기기 ─────
+
+from PyQt6.QtCore import QPointF as _QPointF
+from PyQt6.QtGui import QMouseEvent as _QMouseEvent
+from easycad.canvas.host_aimake import CANCELLED_TEXT, TRACE_HINT
+
+_SPEC = {"ops": [{"op": "box", "id": "a", "x1": 100, "y1": 80, "x2": 300, "y2": 200},
+                 {"op": "text", "x": 120, "y": 140, "text": "TX"}]}
+
+
+def _photo(w=800, h=600):
+    from PIL import Image
+    return Image.new("RGB", (w, h), "white")
+
+
+def _attach_trace(w, img=None):
+    p = w._ai_panel
+    p.set_kind("trace")
+    p._set_attached_image(img or _photo(), "IMG_7074.jpg")
+    _app.processEvents()
+    return w._ai_trace
+
+
+@contextmanager
+def _fake_trace(spec=_SPEC, wait_cancel=False):
+    """구역 생성(generate_ops_tiled)을 가짜로 — wait_cancel이면 취소될 때까지 진행 신호만 보내며 버틴다."""
+    import time as _t
+    from easycad.ai.photo_to_ops import Cancelled
+
+    def gen(_client, _photo_, *, model, progress=None, cancelled=None, **_k):
+        if wait_cancel:
+            for i in range(200):
+                if progress:
+                    progress(min(i, 5), 6, "구역")
+                if cancelled and cancelled():
+                    raise Cancelled()
+                _t.sleep(0.02)
+        if progress:
+            progress(6, 6, "끝")
+        return spec, [{"tile": i} for i in range(6)]
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.photo_to_ops.generate_ops_tiled", side_effect=gen):
+        yield
+
+
+def _mouse(w, etype, vp_pos, button=Qt.MouseButton.LeftButton):
+    vp = w._view.viewport()
+    buttons = button if etype != _QMouseEvent.Type.MouseButtonRelease else Qt.MouseButton.NoButton
+    ev = _QMouseEvent(etype, _QPointF(vp_pos), _QPointF(vp.mapToGlobal(vp_pos)), button, buttons,
+                      Qt.KeyboardModifier.NoModifier)
+    return w.eventFilter(vp, ev)
+
+
+def test_trace_photo_lays_on_canvas_background_not_as_item():
+    w = _shown_window()
+    n_items = len(w._scene.items())
+    tr = _attach_trace(w)
+    assert tr is not None and tr.bar.isVisible() and tr.hint.text() == TRACE_HINT
+    assert len(w._scene.items()) == n_items and not w._undo   # 도형도 기록도 아님(저장에 안 섞임)
+    c = w._view.mapToScene(w._view.viewport().rect().center())
+    assert abs(tr.rect.center().x() - c.x()) < 40
+    w._ai_panel.set_kind("flow")            # 다른 종류로 가면 걷힘
+    assert w._ai_trace is None
+    w._ai_panel.set_kind("trace")           # 돌아오면 붙인 사진으로 다시
+    assert w._ai_trace is not None
+    w._ai_trace.bar.findChildren(QToolButton)[1].click()   # 「사진 빼기」
+    assert w._ai_trace is None and w._ai_panel._attached_image is None
+    _close_clean(w)
+
+
+def test_trace_corner_drag_moves_quad_and_other_clicks_pass_through():
+    w = _shown_window()
+    tr = _attach_trace(w)
+    corner = w._view.mapFromScene(w._ai_trace_corner_scene(tr, 0))
+    assert _mouse(w, _QMouseEvent.Type.MouseButtonPress, corner) is True
+    assert _mouse(w, _QMouseEvent.Type.MouseMove, corner + QPoint(40, 30)) is True
+    assert _mouse(w, _QMouseEvent.Type.MouseButtonRelease, corner + QPoint(40, 30)) is True
+    assert tr.quad[0][0] > 10 and tr.quad[0][1] > 5
+    far = w._view.viewport().rect().center()
+    assert _mouse(w, _QMouseEvent.Type.MouseButtonPress, far) is False   # 점에서 먼 누름은 캔버스로
+    tr_w = tr.fitted.size[0]
+    w._ai_trace_reset_corners()
+    assert tr.quad[1] == (float(tr_w), 0.0)
+    _close_clean(w)
+
+
+def test_trace_make_places_result_on_photo_with_underlay_toggle():
+    w = _shown_window()
+    tr = _attach_trace(w)
+    center = tr.rect.center()
+    with _fake_trace():
+        req = w._ai_panel.request_make()
+        assert w._ai_trace.running
+        assert _wait_until(lambda: w._ai_staged is not None)
+    st = w._ai_staged
+    assert w._ai_trace is None and w._ai_panel._attached_image is None
+    assert req.entry.status_text() == STAGED_TEXT
+    img = st.items[0]
+    assert type(img).__name__ == "_ImageItem" and img.scene() is w._scene
+    r = img.sceneBoundingRect()
+    assert abs(r.center().x() - center.x()) < 3 and abs(r.center().y() - center.y()) < 3
+    keep = st.bar.findChildren(QCheckBox)[0]
+    keep.setChecked(False)
+    assert img.scene() is None and all(op[1] is not img for op in st.undo_entry.ops)
+    keep.setChecked(True)
+    assert img.scene() is w._scene and st.undo_entry.ops[0][1] is img
+    keep.setChecked(False)
+    st.bar.accept_btn.click()
+    w.undo()   # 한 번에 결과 전부(사진 빼고 넣은 것) 사라짐
+    assert all(it.scene() is None for it in st.items) and img.scene() is None
+    _close_clean(w)
+
+
+def test_trace_cancel_returns_to_setup():
+    w = _shown_window()
+    _attach_trace(w)
+    with _fake_trace(wait_cancel=True):
+        req = w._ai_panel.request_make()
+        assert _wait_until(lambda: w._ai_jobs and next(iter(w._ai_jobs.values())).progress is not None, 3000)
+        w._ai_trace.cancel_btn.click()
+        assert _wait_until(lambda: not w._ai_jobs, 5000)
+    assert req.entry.status_text() == CANCELLED_TEXT
+    assert w._ai_trace is not None and not w._ai_trace.running and w._ai_staged is None
+    _close_clean(w)
+
+
+def test_editing_elsewhere_while_trace_runs():
+    w = _shown_window()
+    _attach_trace(w)
+    with _fake_trace(wait_cancel=False):
+        w._ai_panel.request_make()
+        other = _mk_pen_rect(w, x=-900, y=-900)
+        w.push_undo_add(other)   # 만드는 동안 다른 편집
+        assert _wait_until(lambda: w._ai_staged is not None)
+    assert other.scene() is w._scene and w._ai_staged is not None
+    _close_clean(w)
+
+
+def test_trace_retry_restores_photo_and_corners_and_regenerates():
+    w = _shown_window()
+    tr = _attach_trace(w)
+    tr.quad[0] = (30.0, 20.0)
+    with _fake_trace():
+        w._ai_panel.request_make()
+        assert _wait_until(lambda: w._ai_staged is not None)
+        first = w._ai_staged
+        first.bar.retry_btn.click()
+        assert w._ai_trace is not None and w._ai_trace.quad[0] == (30.0, 20.0)   # 같은 모서리로 되살림
+        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not first)
+    assert all(it.scene() is None for it in first.items)
+    assert len(w._ai_panel.entries()) == 2
     _close_clean(w)

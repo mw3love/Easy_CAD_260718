@@ -1515,12 +1515,13 @@ class _FileIOMixin:
             msg += f" (읽지 못한 항목 {skipped}개 건너뜀)"
         self.statusBar().showMessage(msg + " — Ctrl+Z로 한 번에 취소", 8000)
 
-    def _build_photo_drawing(self, spec: dict, photo, *, underlay: bool = True) -> tuple[list, int]:
+    def _build_photo_drawing(self, spec: dict, photo, *, underlay: bool = True, center=None) -> tuple[list, int]:
         """ops 명세 → 씬(원본 사진 픽셀 × _PHOTO_SCALE, 사진 중심 = 뷰 중앙). 반환 (넣은 아이템, 건너뛴 op 수).
         underlay면 원본 사진을 같은 자리·같은 배율로 흐리게(알파 구움)·잠가서 맨 아래에 깐다.
         UI 없음 — 스모크에서 그대로 호출 가능."""
         W, H = photo.size
-        center = self._view.mapToScene(self._view.viewport().rect().center())
+        if center is None:   # [§8 항목36 5단계] AI 패널은 캔버스에 깔아 둔 사진 자리(가운데)를 넘긴다
+            center = self._view.mapToScene(self._view.viewport().rect().center())
         ox, oy = center.x() - W * _PHOTO_SCALE / 2.0, center.y() - H * _PHOTO_SCALE / 2.0
         sk, skipped = ops_to_sketch(spec, dark=getattr(self, "_dark", True), offset=(ox, oy))
         z0 = max((it.zValue() for it in self._scene.items() if it.parentItem() is None), default=0.0) + 1.0

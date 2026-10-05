@@ -164,6 +164,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     close_requested = pyqtSignal()
     code_insert_requested = pyqtSignal(object)   # AIRequest — 고급 「코드로 넣기」(AI 없이 Mermaid 코드 그대로)
     code_edited = pyqtSignal(str)                # 고급 코드 칸을 손으로 고침(0.5초 묶음) — 임시 흐름도를 바꿔 그림
+    trace_photo_changed = pyqtSignal(object)     # 베끼기 사진(PIL | None) — 호스트가 캔버스에 깔고 모서리 점을 띄움
 
     def __init__(self, host):
         super().__init__(host)
@@ -434,6 +435,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         self._update_adv_label()
         self._sync_code_box()
         self._hide_notice()
+        self.trace_photo_changed.emit(self._attached_image if kind == "trace" else None)
 
     def _on_kind_button(self, btn):
         self.set_kind(btn.property("kind"))
@@ -568,6 +570,18 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         fm = self._image_name_label.fontMetrics()
         self._image_name_label.setText(fm.elidedText(name, Qt.TextElideMode.ElideMiddle, 80))
         self._hide_notice()
+        if self._kind == "trace":
+            self.trace_photo_changed.emit(pil_img)
+
+    def _clear_image(self):
+        super()._clear_image()
+        if self._kind == "trace":
+            self.trace_photo_changed.emit(None)
+
+    def clear_attached_image(self):
+        """호스트가 베끼기를 끝냈을 때 첨부 칩을 비운다."""
+        if self._attached_image is not None:
+            self._clear_image()
 
     def request_make(self):
         """「만들기」(버튼·Enter) — 입력을 검사하고, 기록에 한 칸을 남긴 뒤 `make_requested`로 넘긴다.
@@ -585,8 +599,8 @@ class _AIPanel(_ImageAttachMixin, QFrame):
                         model=self.model())
         req.entry = self._add_entry(req)
         self._prompt_edit.clear()
-        if image is not None:
-            self._clear_image()
+        if image is not None and self._kind != "trace":
+            self._clear_image()   # 베끼기는 사진이 캔버스에 깔린 채 만드는 중이라 남긴다(끝나면 호스트가 비움)
         self.make_requested.emit(req)
         return req
 
