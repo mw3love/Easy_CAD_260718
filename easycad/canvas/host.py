@@ -20,7 +20,7 @@ from PyQt6.QtGui import (
     QColor, QBrush,
 )
 from PyQt6.QtWidgets import (
-    QMainWindow, QGraphicsView, QMessageBox, QTabWidget,
+    QMainWindow, QGraphicsView, QMessageBox, QTabWidget, QWidget, QHBoxLayout,
 )
 
 from easycad.app_settings import app_settings
@@ -137,7 +137,15 @@ class CanvasWindow(
 
         # [Phase 6 M1] 메뉴(=액션)를 먼저 만들고 → 상단 QToolBar가 그 액션을 재사용(setDefaultAction).
         self._build_menu()
-        self.setCentralWidget(self._tabs)
+        # [§8 항목36, 2026-10-05] 중앙 = 탭 | AI 만들기 패널(오른쪽 기둥, 켰을 때만 보임). 패널이 켜지면
+        # 뷰가 좁아지고, 플로팅 카드는 뷰 기준으로 자리를 잡으므로(`_reposition_panels`) 저절로 비켜난다.
+        central = QWidget()
+        central_lay = QHBoxLayout(central)
+        central_lay.setContentsMargins(0, 0, 0, 0)
+        central_lay.setSpacing(0)
+        central_lay.addWidget(self._tabs, 1)
+        central_lay.addWidget(self._build_ai_panel())
+        self.setCentralWidget(central)
         self._build_toolbar()
         # [캔버스-퍼스트 레이아웃, deep-interview 2026-07-29] 좌/우 QDockWidget(칼럼 전체를
         # 콘텐츠 크기와 무관하게 예약해 낭비 공간을 만들던 근본원인)을 캔버스 위 플로팅

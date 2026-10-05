@@ -1580,9 +1580,14 @@ def test_ai_svg_menu_action_exists_with_shortcut():
 
 
 def test_ai_svg_action_is_on_toolbar():
-    """2026-08-13 재개편(모든 삽입 메뉴 항목을 상단 툴바에도) 관례를 그대로 따른다."""
+    """2026-08-13 재개편(모든 삽입 메뉴 항목을 상단 툴바에도) 관례 — [§8 항목36, 2026-10-05] AI 생성
+    아이콘 셋(Mermaid·SVG·사진)은 상단바에서 「AI로 만들기」 하나로 합쳤다(사용자 결정). SVG 생성 창은
+    패널로 옮겨질 때까지 삽입 메뉴에 남는다."""
     w = CanvasWindow()
-    assert w._act_ai_svg in w._toolbar.actions()
+    assert w._act_ai_make in w._toolbar.actions()
+    assert w._act_ai_svg not in w._toolbar.actions()
+    menu_acts = [a for m in w.menuBar().actions() if m.menu() for a in m.menu().actions()]
+    assert w._act_ai_svg in menu_acts
     w.deleteLater()
 
 

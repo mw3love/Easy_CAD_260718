@@ -29,6 +29,7 @@ from easycad.fileio.document import (
 )
 from easycad.fileio import symbol_library
 from easycad.canvas import shortcuts
+from easycad.canvas.ai_panel import _AIPanel, PENDING_TEXT as _AI_PENDING_TEXT
 from easycad.canvas.host_widgets import (
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
@@ -290,9 +291,15 @@ class _UIBuildMixin:
         # [§8 항목28, 2026-10-01] 사진→도면 — 원본 좌표 그대로(Mermaid의 자동배치와 결과가 달라 따로 창).
         self._act_photo = self._make_action("사진→도면…", "photo",
             self._insert_photo_drawing, shortcut_id="insert_photo")
-        for a in (self._act_img, self._act_mmd, self._act_ai_svg, self._act_photo):
+        # [§8 항목36, 2026-10-05] 세 생성 창을 합칠 오른쪽 「AI로 만들기」 패널(켜기/끄기). 위 세 항목은
+        # 종류별 생성이 패널로 옮겨질 때까지(3~5단계) 남기고 6단계에서 지운다. 상단바엔 이것 하나만.
+        self._act_ai_make = self._make_action("AI로 만들기", "generate",
+            self._toggle_ai_panel, checkable=True)
+        i.addAction(self._act_img)
+        i.addAction(self._act_ai_make)
+        for a in (self._act_mmd, self._act_ai_svg, self._act_photo):
             i.addAction(a)
-        i.addSeparator()   # [2026-08-20 피드백] 위 3개(가져오기) vs 아래(AI 연결 설정) 구분
+        i.addSeparator()   # [2026-08-20 피드백] 위(가져오기·AI) vs 아래(AI 연결 설정) 구분
         # Mermaid/SVG 창 안의 설정 버튼과 같은 다이얼로그를 독립적으로 여는 진입점 — 그
         # 안에서 열면 해당 창을 그대로 같이 쓴다(호출부는 무변경).
         self._act_ai_settings = self._make_action("AI 게이트웨이 설정…", "settings",
@@ -561,6 +568,45 @@ class _UIBuildMixin:
             act.setChecked(visible)
             act.blockSignals(False)
 
+    # ---- [§8 항목36] AI 만들기 패널(오른쪽 기둥) ---------------------------------
+
+    def _build_ai_panel(self):
+        """`CanvasWindow.__init__`이 중앙 위젯(탭 옆)에 붙인다. 기본은 꺼짐."""
+        self._ai_panel = _AIPanel(self)
+        self._ai_panel.close_requested.connect(self._close_ai_panel)
+        self._ai_panel.make_requested.connect(self._on_ai_make_requested)
+        return self._ai_panel
+
+    def _toggle_ai_panel(self, checked: bool = False):
+        self._set_ai_panel_visible(bool(checked))
+
+    def _close_ai_panel(self):
+        self._set_ai_panel_visible(False)
+
+    def _set_ai_panel_visible(self, visible: bool, kind: str | None = None):
+        """켜기/끄기의 단일 경로(메뉴·상단바·패널 ✕). 켜고 끄면 뷰 폭이 바뀌는데 창 크기는 그대로라
+        `resizeEvent`가 안 온다 — 레이아웃을 즉시 다시 잡고 플로팅 카드·미니맵 사각형을 직접 갱신한다."""
+        panel = self._ai_panel
+        if kind is not None:
+            panel.set_kind(kind)
+        panel.setVisible(visible)
+        act = self._act_ai_make
+        if act.isChecked() != visible:
+            act.blockSignals(True)
+            act.setChecked(visible)
+            act.blockSignals(False)
+        lay = self.centralWidget().layout() if self.centralWidget() is not None else None
+        if lay is not None:
+            lay.activate()
+        self._reposition_panels()
+        self._refresh_minimap()
+        if visible:
+            panel.focus_prompt()
+
+    def _on_ai_make_requested(self, req):
+        """[1단계] 생성은 아직 없다 — 종류별 생성은 3~5단계에서 여기서 갈라 붙인다."""
+        req.entry.set_status(_AI_PENDING_TEXT)
+
     # ---- [캔버스-퍼스트] 플로팅 패널·토스트 위치 계산 -------------------------
 
     def _reposition_panels(self):
@@ -657,8 +703,8 @@ class _UIBuildMixin:
         tb.addSeparator()
 
         # 삽입(&I)
-        for a in (self._act_tb, self._act_tbl, self._act_img, self._act_mmd, self._act_ai_svg,
-                  self._act_photo):
+        # [§8 항목36] AI 생성 아이콘 세 개(Mermaid·SVG·사진→도면) → 「AI로 만들기」 하나(패널 켜기/끄기).
+        for a in (self._act_tb, self._act_tbl, self._act_img, self._act_ai_make):
             tb.addAction(a)
         tb.addSeparator()
 
@@ -889,10 +935,14 @@ class _UIBuildMixin:
             f"#floatPanelHead {{ background:{title_bg}; border-top-left-radius:5px;"
             f" border-top-right-radius:5px; border-bottom:2px solid {accent}; font-weight:600; }}")
         for panel in (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
-                      getattr(self, "_minimap_panel", None), getattr(self, "_layers_panel", None)):
+                      getattr(self, "_minimap_panel", None), getattr(self, "_layers_panel", None),
+                      getattr(self, "_ai_panel", None)):
             if panel is not None:
                 panel._head.setStyleSheet(head_qss)
                 panel.update()
+        ai_panel = getattr(self, "_ai_panel", None)
+        if ai_panel is not None:
+            ai_panel.refresh_theme(dark)
         # [그룹 구분 디자인 2026-08-01, 사용자 요청] 기본 QToolBar 구분선은 Fusion에서 거의
         # 안 보일 정도로 옅다 — 파일(새로 만들기~저장) / 도구(선택~핀) / 편집·보기(되돌리기~격자)
         # 3그룹이 한눈에 갈리도록 구분선을 굵고 여백 있게 강조.
