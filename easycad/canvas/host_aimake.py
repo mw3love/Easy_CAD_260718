@@ -1894,7 +1894,9 @@ class _AIMakeMixin:
             self._ai_region_set(st, ((r.left() - o.x()) / _PHOTO_SCALE, (r.top() - o.y()) / _PHOTO_SCALE,
                                      (r.right() - o.x()) / _PHOTO_SCALE, (r.bottom() - o.y()) / _PHOTO_SCALE))
             return True
-        return et in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick)
+        # 왼쪽 누름만 고르기 몫 — 휠·가운데·오른쪽 끌기 이동과 휠 확대는 캔버스로(2026-10-06 실사용: 다 막혀 있었음).
+        return et in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick) \
+            and event.button() == Qt.MouseButton.LeftButton
 
     def _ai_region_set(self, st, region):
         """부분을 골랐다 — 고르기를 끝내고, 상자 위 막대를 띄우고, 패널을 이어 만들기(부분)로."""

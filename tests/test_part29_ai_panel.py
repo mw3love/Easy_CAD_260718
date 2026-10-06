@@ -1524,3 +1524,16 @@ def test_trace_region_cancel_while_running_keeps_old_result():
     assert req.entry.status_text() == CANCELLED_TEXT
     assert st.items == old and all(it.scene() is w._scene for it in old)   # 늦게 온 결과는 버림
     _close_clean(w)
+
+
+def test_trace_region_picking_lets_pan_buttons_through():
+    # 2026-10-06 실사용: 「부분 다시」 고르는 중 휠·우클릭 끌기 이동이 막혀 있었음 — 왼쪽만 가로챈다.
+    w = _shown_window()
+    st = _staged_trace(w)
+    st.region_btn.click()
+    c = w._view.viewport().rect().center()
+    assert _mouse(w, _QMouseEvent.Type.MouseButtonPress, c, Qt.MouseButton.RightButton) is False
+    assert _mouse(w, _QMouseEvent.Type.MouseButtonPress, c, Qt.MouseButton.MiddleButton) is False
+    assert _mouse(w, _QMouseEvent.Type.MouseButtonPress, c, Qt.MouseButton.LeftButton) is True
+    assert st.region_picking
+    _close_clean(w)
