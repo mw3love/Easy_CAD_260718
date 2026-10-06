@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 
 from PyQt6 import sip
-from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QSlider, QToolButton, QWidget,
@@ -30,7 +30,8 @@ from easycad.canvas.host_dialogs import (
 )
 from easycad.canvas.photo_dialog import _PhotoOpsWorker, _pil_to_pixmap
 from easycad.fileio import symbol_library
-from easycad.fileio.photo_ops import SCALE as _PHOTO_SCALE
+from easycad.fileio.photo_ops import SCALE as _PHOTO_SCALE, ops_to_sketch
+from easycad.fileio.document import insert_items
 from easycad.canvas.host_widgets import _ACCENT_CORAL
 from easycad.fileio.mermaid_import import MermaidError, parse_mermaid
 
@@ -80,7 +81,13 @@ _TRACE_HINT_QSS = f"color:{_ACCENT_CORAL}; font-size:11px; padding:0 4px;"
 _TRACE_HINT_RUNNING_QSS = _TRACE_HINT_QSS + " font-weight:700;"
 # 결과 막대 「도면 ↔ 원본」 막대 기본(%) — 원본 사진을 도면 *위에* 이만큼 덮어 그린다(0=도면만, 100=원본만, 2026-10-06 2차).
 TRACE_PHOTO_OPACITY = 40
-_TRACE_VIEW_MAX_SIDE = 4000   # 비교용으로 띄우는 원본(펴기만 하고 AI용 1600으로 줄이지 않음 — 확대해도 또렷하게)
+_TRACE_VIEW_MAX_SIDE = 4000
+# 부분 다시 베끼기(2026-10-06): 결과에서 틀린 곳만 상자로 골라 그 부분만 다시 그려 같은 결과(되돌리기 한 칸)에 바꿔 끼운다.
+REGION_PICK_TEXT = "고칠 부분을 사진 위에 상자로 끌어 주세요"
+REGION_HINT = "틀린 점을 오른쪽 입력칸에 적어도 돼요(비워도 됨)"
+REGION_DONE_TEXT = "✓ 고른 부분을 다시 그려 바꿈"
+REGION_LOST_TEXT = "결과가 이미 정리돼서 버렸어요"
+_REGION_MIN_PX = 12   # 이보다 작게 끈 상자(화면 px)는 클릭으로 보고 무시   # 비교용으로 띄우는 원본(펴기만 하고 AI용 1600으로 줄이지 않음 — 확대해도 또렷하게)
 
 
 @dataclass
@@ -154,6 +161,38 @@ class _StagedResult:
     photo_rect: QRectF = None   # 씬 좌표
     photo_shown: bool = True
     photo_opacity: int = TRACE_PHOTO_OPACITY
+    trace_sent: object = None   # AI에 보낸 펴진 사진(PIL) — 부분 다시 베끼기도 같은 사진·좌표로
+    trace_ops: list = None      # 지금 결과의 ops(원본 px) — 부분 다시 때 그 부분의 이전 결과로 같이 보냄
+    region_btn: QToolButton = None
+    region_picking: bool = False
+    region_drag: tuple = None   # 끄는 중 (시작 씬 점, 지금 씬 점)
+    region: tuple = None        # 고른 부분(원본 px x1,y1,x2,y2)
+    region_bar: QWidget = None
+    region_label: QLabel = None
+    region_make_btn: QToolButton = None
+    region_worker: object = None
+    region_last_vp: QRect = field(default_factory=QRect)
+
+
+class _TraceRegionWorker(QThread):
+    """부분 다시 베끼기 — `generate_ops_region` 한 번(수십 초)을 메인 스레드 밖에서."""
+    succeeded = pyqtSignal(dict, dict)
+    failed = pyqtSignal(str)
+
+    def __init__(self, api_key, base_url, photo, region, note, prev_ops, model, parent=None):
+        super().__init__(parent)
+        self._args = (api_key, base_url, photo, region, note, prev_ops, model)
+
+    def run(self):
+        from easycad.ai.photo_to_ops import generate_ops_region
+        key, base_url, photo, region, note, prev_ops, model = self._args
+        try:
+            client = gw._client(key, base_url, timeout=600.0)
+            spec, log = generate_ops_region(client, photo, region, model=model, note=note, prev_ops=prev_ops)
+        except Exception as e:  # noqa: BLE001 — 실패 사유를 그대로 기록 칸에
+            self.failed.emit(str(e))
+            return
+        self.succeeded.emit(spec, log)
 
 
 class _StagingBar(QFrame):
@@ -326,7 +365,10 @@ class _AIMakeMixin:
         elif req.kind == "symbol":
             self._ai_start_symbol(req)
         elif req.kind == "trace":
-            self._ai_start_trace(req)
+            if base is not None and base is self._ai_staged and base.trace_sent is not None:
+                self._ai_start_trace_region(req)
+            else:
+                self._ai_start_trace(req)
         else:
             req.entry.set_status(PENDING_TEXT)
 
@@ -372,6 +414,8 @@ class _AIMakeMixin:
                 entry.set_status(text, running=True)
                 if tr is not None and tr.req is job.request and tr.hint is not None:
                     tr.hint.setText(text)
+                if st is not None and st.region_worker is job.worker and st.region_label is not None:
+                    st.region_label.setText(f"고른 부분을 다시 그리는 중… {sec}초")
             else:
                 entry.set_status(f"만드는 중… {sec}초", running=True)
 
@@ -854,6 +898,8 @@ class _AIMakeMixin:
                 pass
             if not sip.isdeleted(st.doc.view):
                 self._ai_sync_viewport_filter(st.doc.view)
+        if st.trace_sent is not None:
+            self._ai_region_clear(st)
         if st.bar is not None and not sip.isdeleted(st.bar):
             st.bar.hide()
             st.bar.deleteLater()
@@ -1002,6 +1048,8 @@ class _AIMakeMixin:
             painter.setOpacity(st.photo_opacity / 100.0)
             painter.drawPixmap(st.photo_rect, st.photo, QRectF(st.photo.rect()))
             painter.restore()
+        if st.trace_sent is not None:
+            self._draw_ai_region(view, painter, st)
         rect = self._ai_staged_scene_rect()
         if rect.isNull():
             return
@@ -1369,7 +1417,7 @@ class _AIMakeMixin:
         tr = getattr(self, "_ai_trace", None)
         st = getattr(self, "_ai_staged", None)
         need = (tr is not None and tr.doc.view is view) or \
-            (st is not None and st.slots is not None and st.doc.view is view)
+            (st is not None and (st.slots is not None or st.region_picking) and st.doc.view is view)
         vp = view.viewport()
         vp.removeEventFilter(self)
         if need:
@@ -1617,6 +1665,9 @@ class _AIMakeMixin:
     def eventFilter(self, obj, event):
         """베끼기 모서리 점 끌기·후보 칸 □ 누르기 — 그 탭 캔버스의 viewport에만 건다. 점·□ 위 누름이 아니면 캔버스로 넘긴다."""
         st = getattr(self, "_ai_staged", None)
+        if st is not None and st.region_picking and obj is st.doc.view.viewport():
+            if self._ai_region_event(st, event):
+                return True
         if st is not None and st.slots is not None and obj is st.doc.view.viewport() \
                 and event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
             view = st.doc.view
@@ -1751,8 +1802,15 @@ class _AIMakeMixin:
         show.toggled.connect(self._on_trace_photo_shown)
         show.toggled.connect(mix.setEnabled)
         opacity.valueChanged.connect(self._on_trace_photo_opacity)
-        st = self._ai_stage(added, req, extras=(show, mix))
+        region_btn = _icon_button(None, "부분 다시", "ai_region",
+                                  tip="틀린 곳만 상자로 골라 그 부분만 다시 그림(전체를 다시 만들지 않음)")
+        region_btn.setCheckable(True)
+        region_btn.clicked.connect(self._ai_region_toggle_pick)
+        st = self._ai_stage(added, req, extras=(show, mix, region_btn))
         if st is not None:
+            st.trace_sent = tr.sent
+            st.trace_ops = [op for op in spec.get("ops", []) if isinstance(op, dict)]
+            st.region_btn = region_btn
             st.photo = _pil_to_pixmap(tr.view_img if tr.view_img is not None else tr.sent)
             st.photo_rect = QRectF(c.x() - W * _PHOTO_SCALE / 2, c.y() - H * _PHOTO_SCALE / 2, W * _PHOTO_SCALE, H * _PHOTO_SCALE)
             st.doc.view.viewport().update()
@@ -1785,6 +1843,248 @@ class _AIMakeMixin:
             job.request.entry.set_status(CANCELLED_TEXT)
         if tr is not None:
             self._ai_trace_set_running(False)
+
+    # ---- 부분 다시 베끼기(2026-10-06) ------------------------------------------------------------
+    # 결과 막대 「부분 다시」 → 사진 위에 상자를 끌어 고름 → 상자 위 작은 막대 「이 부분 다시 그리기」(패널 입력칸의 글은
+    # 이어 만들기처럼 "틀린 점"으로 같이 보냄) → 그 부분만 한 번 호출 → 상자 안 도형을 새 것으로 바꿔 같은 결과(되돌리기
+    # 한 칸)에 합친다. 상자 안/밖은 도형 가운데로 가른다(새 도형도 같은 기준이라 겹쳐 남지 않음).
+
+    def _ai_region_scene_rect(self, st, region) -> QRectF:
+        o = st.photo_rect.topLeft()
+        x1, y1, x2, y2 = region
+        return QRectF(o.x() + x1 * _PHOTO_SCALE, o.y() + y1 * _PHOTO_SCALE,
+                      (x2 - x1) * _PHOTO_SCALE, (y2 - y1) * _PHOTO_SCALE)
+
+    def _ai_region_toggle_pick(self, checked: bool = False):
+        st = self._ai_staged
+        if st is None or st.trace_sent is None:
+            return
+        if st.region_worker is not None:      # 다시 그리는 중엔 새로 고르지 않는다
+            st.region_btn.setChecked(False)
+            return
+        self._ai_region_clear(st)
+        if checked:
+            st.region_picking = True
+            st.region_btn.setChecked(True)
+            st.doc.view.viewport().setCursor(Qt.CursorShape.CrossCursor)
+            self._ai_panel.show_notice(REGION_PICK_TEXT)
+        self._ai_sync_viewport_filter(st.doc.view)
+        st.doc.view.viewport().update()
+
+    def _ai_region_event(self, st, event) -> bool:
+        view = st.doc.view
+        et = event.type()
+        if et == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            p = view.mapToScene(event.position().toPoint())
+            st.region_drag = (p, p)
+            return True
+        if et == QEvent.Type.MouseMove and st.region_drag is not None:
+            st.region_drag = (st.region_drag[0], view.mapToScene(event.position().toPoint()))
+            view.viewport().update()
+            return True
+        if et == QEvent.Type.MouseButtonRelease and st.region_drag is not None:
+            a, b = st.region_drag
+            st.region_drag = None
+            r = QRectF(a, b).normalized().intersected(st.photo_rect)
+            s = view.transform().m11() or 1.0
+            if r.width() * s < _REGION_MIN_PX or r.height() * s < _REGION_MIN_PX:
+                view.viewport().update()
+                return True   # 클릭만 함 — 계속 고르는 중
+            o = st.photo_rect.topLeft()
+            self._ai_region_set(st, ((r.left() - o.x()) / _PHOTO_SCALE, (r.top() - o.y()) / _PHOTO_SCALE,
+                                     (r.right() - o.x()) / _PHOTO_SCALE, (r.bottom() - o.y()) / _PHOTO_SCALE))
+            return True
+        return et in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick)
+
+    def _ai_region_set(self, st, region):
+        """부분을 골랐다 — 고르기를 끝내고, 상자 위 막대를 띄우고, 패널을 이어 만들기(부분)로."""
+        st.region_picking = False
+        st.region = tuple(region)
+        st.doc.view.viewport().unsetCursor()
+        st.region_btn.setChecked(False)
+        self._ai_sync_viewport_filter(st.doc.view)
+        bar = QFrame(st.doc.view.viewport())
+        bar.setObjectName("aiStagingBar")
+        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar.setStyleSheet("QFrame#aiStagingBar { background:palette(window); border:1px solid rgba(128,128,128,140);"
+                          " border-radius:8px; }")
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(5)
+        st.region_label = QLabel(REGION_HINT, bar)
+        st.region_label.setStyleSheet(_TRACE_HINT_QSS)
+        lay.addWidget(st.region_label)
+        st.region_make_btn = _icon_button(bar, "이 부분 다시 그리기", "generate", coral=True,
+                                          tip="고른 부분만 다시 그려 바꿈(입력칸의 글도 같이 보냄)")
+        st.region_make_btn.clicked.connect(self._ai_region_make)
+        lay.addWidget(st.region_make_btn)
+        cancel = _icon_button(bar, "취소", "ai_close")
+        cancel.clicked.connect(self._ai_region_cancel)
+        lay.addWidget(cancel)
+        st.region_bar = bar
+        st.region_last_vp = self._ai_place_widget(st.doc.view, bar, self._ai_region_scene_rect(st, st.region))
+        bar.show()
+        self._ai_region_followup(st)
+        st.doc.view.viewport().update()
+
+    def _ai_region_followup(self, st):
+        x1, y1, x2, y2 = (int(round(v)) for v in st.region)
+        thumb = _pil_to_pixmap(st.trace_sent.crop((x1, y1, max(x2, x1 + 1), max(y2, y1 + 1))))
+        self._ai_panel.set_followup("trace", "고른 부분", [thumb], base=st)
+
+    def _ai_region_make(self):
+        """상자 위 「이 부분 다시 그리기」 — 패널 「만들기」와 같은 길(입력칸 글을 틀린 점으로)."""
+        st = self._ai_staged
+        if st is None or st.region is None or st.region_worker is not None:
+            return
+        fu = self._ai_panel.followup()
+        if fu is None or fu.get("base") is not st:   # 패널에서 이어 만들기를 ✕로 닫았으면 다시 건다
+            self._ai_region_followup(st)
+        self._ai_panel.request_make()
+
+    def _ai_region_cancel(self):
+        """상자 막대 「취소」 — 고른 부분을 걷는다. 다시 그리는 중이면 그 호출 결과를 버린다(호출 자체는 못 끊음)."""
+        st = self._ai_staged
+        if st is not None:
+            self._ai_region_clear(st, CANCELLED_TEXT)
+
+    def _ai_region_clear(self, st, status=REGION_LOST_TEXT):
+        """고르기·고른 부분·상자 막대를 걷는다(도는 호출이 있으면 떼어 결과를 버리고 기록 칸에 `status`)."""
+        if st.region_worker is not None:
+            job = self._ai_jobs.pop(st.region_worker, None)
+            _detach_worker(st.region_worker)
+            st.region_worker = None
+            if not self._ai_jobs:
+                self._ai_tick_timer.stop()
+            if job is not None and job.request.entry is not None and not sip.isdeleted(job.request.entry):
+                job.request.entry.set_status(status)
+        was_picking = st.region_picking
+        st.region_picking = False
+        st.region_drag = None
+        st.region = None
+        if st.region_btn is not None and not sip.isdeleted(st.region_btn):
+            st.region_btn.setChecked(False)
+        if st.region_bar is not None and not sip.isdeleted(st.region_bar):
+            st.region_bar.hide()
+            st.region_bar.deleteLater()
+        st.region_bar = st.region_label = st.region_make_btn = None
+        fu = self._ai_panel.followup()
+        if fu is not None and fu.get("base") is st:
+            self._ai_panel.clear_followup()
+        view = getattr(st.doc, "view", None)
+        if view is not None and not sip.isdeleted(view):
+            if was_picking:
+                view.viewport().unsetCursor()
+            self._ai_sync_viewport_filter(view)
+            view.viewport().update()
+
+    def _ai_start_trace_region(self, req):
+        st = req.followup_of
+        if st.region is None:
+            req.entry.set_status("다시 그릴 부분을 먼저 상자로 골라 주세요")
+            return None
+        from easycad.ai.photo_to_ops import ops_in_region
+        prev = ops_in_region(st.trace_ops or [], st.region)
+        worker = self._ai_start_job(req, _TraceRegionWorker,
+                                    (gw.resolve_base_url(), st.trace_sent, st.region, req.text, prev, req.model),
+                                    self._on_trace_region_done)
+        if worker is None:
+            return None
+        worker.failed.connect(self._on_trace_region_failed)
+        st.region_worker = worker
+        st.region_make_btn.setVisible(False)
+        st.region_label.setStyleSheet(_TRACE_HINT_RUNNING_QSS)
+        self._ai_tick()
+        self._ai_place_widget(st.doc.view, st.region_bar, self._ai_region_scene_rect(st, st.region))
+        return worker
+
+    def _on_trace_region_done(self, spec, _log):
+        job = self._ai_job_of_sender()
+        st = self._ai_staged
+        if job is None:
+            return
+        if st is None or st.region_worker is not self.sender():
+            job.request.entry.set_status(REGION_LOST_TEXT)
+            return
+        st.region_worker = None
+        added = self._ai_region_replace(st, spec)
+        job.request.entry.set_status(f"{REGION_DONE_TEXT}({len(added)}개)")
+        self._ai_region_clear(st)
+
+    def _on_trace_region_failed(self, _err):
+        st = self._ai_staged
+        if st is not None and st.region_worker is self.sender():
+            st.region_worker = None
+            st.region_make_btn.setVisible(True)
+            st.region_label.setStyleSheet(_TRACE_HINT_QSS)
+            st.region_label.setText(REGION_HINT)
+            self._ai_place_widget(st.doc.view, st.region_bar, self._ai_region_scene_rect(st, st.region))
+
+    def _ai_region_replace(self, st, spec) -> list:
+        """상자 안(도형 가운데 기준) 옛 도형을 걷고 새 도형을 넣어, 같은 결과의 되돌리기 한 칸에 합친다."""
+        from easycad.ai.photo_to_ops import op_center
+        R = self._ai_region_scene_rect(st, st.region)
+        scene = st.doc.scene
+        o = st.photo_rect.topLeft()
+        sk, _skipped = ops_to_sketch(spec, dark=getattr(self, "_dark", True), offset=(o.x(), o.y()))
+        z0 = max((it.zValue() for it in st.items if it.scene() is not None), default=0.0) + 1.0
+        for d in sk._items:
+            d["z"] = d["z"] + z0
+        new = insert_items(scene, sk._items)
+        added = []
+        for it in new:
+            if R.contains(it.sceneBoundingRect().center()):
+                added.append(it)
+            else:
+                scene.removeItem(it)   # 대표점은 안이었지만 그린 모양이 밖으로 — 바깥은 그대로 두는 게 약속
+        gone = [it for it in st.items if it.scene() is not None and R.contains(it.sceneBoundingRect().center())]
+        for it in gone:
+            scene.removeItem(it)
+        gone_ids = {id(it) for it in gone}
+        st.items = [it for it in st.items if id(it) not in gone_ids] + added
+        st.undo_entry.ops = [op for op in st.undo_entry.ops if id(op[1]) not in gone_ids] + \
+            [("create", it) for it in added]
+        x1, y1, x2, y2 = st.region
+        keep = []
+        for op in st.trace_ops or []:
+            c = op_center(op)
+            if c is None or not (x1 <= c[0] <= x2 and y1 <= c[1] <= y2):
+                keep.append(op)
+        st.trace_ops = keep + list(spec.get("ops", []))
+        scene.clearSelection()
+        st.doc.view.viewport().update()
+        self._refresh_minimap()   # 되돌리기 기록을 안 거쳐 미니맵이 옛 모양으로 남던 것(실제 창)
+        return added
+
+    def _draw_ai_region(self, view, painter, st):
+        """고르는 중인 상자·고른 부분 — 주황 실선(다시 그리는 중엔 점선), 상자 막대 자리도 맞춘다."""
+        r = None
+        if st.region_drag is not None:
+            r = QRectF(st.region_drag[0], st.region_drag[1]).normalized()
+        elif st.region is not None:
+            r = self._ai_region_scene_rect(st, st.region)
+        if r is None:
+            return
+        painter.save()
+        fill = QColor(_ACCENT_CORAL)
+        fill.setAlpha(35)
+        painter.setBrush(fill)
+        style = Qt.PenStyle.DashLine if st.region_worker is not None else Qt.PenStyle.SolidLine
+        pen = QPen(QColor(_ACCENT_CORAL), 2.5, style)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.drawRect(r)
+        painter.restore()
+        if st.region_bar is not None and st.region is not None:
+            vp = view.mapFromScene(r).boundingRect()
+            if vp != st.region_last_vp:
+                st.region_last_vp = vp
+                QTimer.singleShot(0, self._ai_region_place_bar)
+
+    def _ai_region_place_bar(self):
+        st = self._ai_staged
+        if st is not None and st.region_bar is not None and not sip.isdeleted(st.region_bar) and st.region is not None:
+            self._ai_place_widget(st.doc.view, st.region_bar, self._ai_region_scene_rect(st, st.region))
 
     # ---- 빈 자리·기록 지우기(2026-10-05 피드백 2차) -------------------------------------------
 

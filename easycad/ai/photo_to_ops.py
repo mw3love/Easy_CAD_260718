@@ -393,6 +393,81 @@ def generate_ops_tiled(client, photo, *, model: str, cols: int = 3, rows: int = 
     return {"ops": ops + _seam_join(pieces)}, log
 
 
+# ---- 부분 다시 베끼기(2026-10-06) ------------------------------------------------
+# 결과에서 틀린 곳만 상자로 골라 그 부분만 다시 그린다 — 전체(6구역 2~3분)를 다시 쓰지 않는다. 한 번 호출.
+
+REGION_NOTE = ("\n\n이번에는 도면의 한 부분만 다시 그린다. 첫 이미지=원본 전체(위치 참고용), 둘째 이미지=다시 그릴 부분을 "
+               "{z}배 확대한 것. 부분: 원본 좌표 x {x1}~{x2}, y {y1}~{y2} (확대 이미지 픽셀÷{z} + ({x1},{y1}) = 원본 좌표). "
+               "이 부분 안에 보이는 것만 빠짐없이 그린다. 부분 밖으로 이어지는 선은 경계까지만 그린다. 좌표는 원본 좌표계로.")
+REGION_PREV = "\n\n이 부분의 이전 결과(틀리거나 빠진 것이 있어 다시 그린다 — 맞는 것은 그대로 살려도 된다):\n"
+REGION_ASK = "\n\n사용자가 짚은 문제: "
+REGION_MAX_ZOOM_SIDE = 1600   # 확대 조각의 긴 변 상한(요청 크기 — fit_for_ai와 같은 이유)
+
+
+def op_center(op):
+    """op 하나의 대표점(원본 px) — 부분 안에 드는지 가를 때 쓴다. 못 읽으면 None."""
+    try:
+        k = op.get("op")
+        if k in ("box", "dashrect"):
+            return (op["x1"] + op["x2"]) / 2, (op["y1"] + op["y2"]) / 2
+        if k == "circle":
+            return op["cx"], op["cy"]
+        if k == "text":
+            return op["x"], op["y"]
+        if k in ("line", "poly"):
+            xs = [p[0] for p in op["pts"]]
+            ys = [p[1] for p in op["pts"]]
+            return (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    return None
+
+
+def ops_in_region(ops, region):
+    """대표점이 부분(x1,y1,x2,y2) 안인 op만."""
+    out = []
+    for op in ops:
+        c = op_center(op) if isinstance(op, dict) else None
+        if c is not None and region[0] <= c[0] <= region[2] and region[1] <= c[1] <= region[3]:
+            out.append(op)
+    return out
+
+
+def region_content(photo, task: str, region, prev_ops=(), note: str = "") -> list:
+    """부분 하나의 콘텐츠: [지시+부분 안내(+이전 결과·사용자 지적), 원본, 부분 확대 조각]."""
+    x1, y1, x2, y2 = (int(round(v)) for v in region)
+    c = photo.crop((x1, y1, x2, y2))
+    z = max(1.0, min(2.0, REGION_MAX_ZOOM_SIDE / max(c.width, c.height, 1)))
+    z = round(z, 2)
+    text = task + REGION_NOTE.format(z=z, x1=x1, y1=y1, x2=x2, y2=y2)
+    if prev_ops:
+        text += REGION_PREV + json.dumps({"ops": list(prev_ops)}, ensure_ascii=False)
+    if note:
+        text += REGION_ASK + note
+    return [{"type": "text", "text": text}, image_part(photo),
+            image_part(c.resize((max(1, int(c.width * z)), max(1, int(c.height * z)))))]
+
+
+def generate_ops_region(client, photo, region, *, model: str, note: str = "", prev_ops=(), task: str = TASK,
+                        max_tokens: int = 32000, tries: int = 2) -> tuple[dict, dict]:
+    """사진의 한 부분(원본 px 사각형)만 다시 그린다. 반환 (spec — 대표점이 부분 안인 op만, 로그).
+    응답이 깨지면 `tries`번까지 다시 보내고, 끝내 실패하면 마지막 오류를 그대로 올린다."""
+    W, H = photo.size
+    text = task.format(w=W, h=H)
+    err = None
+    for t in range(tries):
+        try:
+            txt, usage, dt = call(client, model, region_content(photo, text, region, prev_ops, note), max_tokens)
+            spec = parse_ops(txt)
+        except Exception as e:  # noqa: BLE001 — 깨진 응답·HTTP 오류 모두 다시
+            err = e
+            continue
+        kept = ops_in_region(spec["ops"], region)
+        return {"ops": kept}, {"tries": t + 1, "sec": round(dt, 1), "usage": usage, "ops": len(spec["ops"]),
+                               "kept": len(kept)}
+    raise err
+
+
 # ---- 원근 보정(2026-10-01) -----------------------------------------------------
 # 비스듬히 찍은 사진은 결과 도면도 같은 사다리꼴이 된다("원본 위치 그대로" 규칙이 왜곡까지 따름 —
 # 평면도 시험에서 발견). 사용자가 창에서 맞춘 네 모서리를 반듯한 직사각형으로 펴서 AI에 보낸다.

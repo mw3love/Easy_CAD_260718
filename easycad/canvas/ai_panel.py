@@ -798,6 +798,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     FOLLOW_PLACEHOLDER = {
         "symbol": "고른 후보를 어떻게 바꿀까요? 예: 두 개를 섞어서, 선을 더 단순하게 (비워 두면 다듬기만)",
         "flow": "어떻게 고칠까요? 예: 감시장치를 아래로, 전원부도 추가해줘",
+        "trace": "고른 부분에서 무엇이 틀렸나요? 예: 표 칸이 빠짐, 글자가 틀림 (비워 두면 그대로 다시)",
     }
 
     def set_followup(self, kind, label, pixmaps=(), *, refs=None, base_code="", base=None, base_text=""):

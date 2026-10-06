@@ -1410,3 +1410,117 @@ def test_flow_diff_matches_by_text_not_id():
     assert _flow_diff_items(new, old, items) == [3, 6]
     assert _flow_diff_items(old, new, list(range(5))) == []
     assert _flow_diff_items(new, old, [1, 2]) == []   # 개수 안 맞으면 표시 안 함
+
+
+# ── 부분 다시 베끼기(2026-10-06): 결과에서 상자로 고른 곳만 다시 그려 같은 결과에 바꿔 끼움 ─────────────
+
+def test_ops_in_region_and_region_content():
+    from easycad.ai.photo_to_ops import ops_in_region, region_content
+    ops = [{"op": "box", "x1": 100, "y1": 80, "x2": 300, "y2": 200},
+           {"op": "text", "x": 500, "y": 400, "text": "밖"},
+           {"op": "line", "pts": [[110, 90], [150, 90]]}]
+    assert ops_in_region(ops, (50, 50, 320, 220)) == [ops[0], ops[2]]
+    content = region_content(_photo(), "TASK", (50, 50, 320, 220), prev_ops=ops[:1], note="표 칸이 빠짐")
+    assert "x 50~320" in content[0]["text"] and "표 칸이 빠짐" in content[0]["text"] and '"x1": 100' in content[0]["text"]
+    assert len(content) == 3
+
+
+def _staged_trace(w):
+    _attach_trace(w)
+    with _fake_trace():
+        w._ai_panel.request_make()
+        assert _wait_until(lambda: w._ai_staged is not None)
+    return w._ai_staged
+
+
+def _drag_region(w, st, x1, y1, x2, y2):
+    o = st.photo_rect.topLeft()
+    a = w._view.mapFromScene(_QPointF(o.x() + x1 * 2.0, o.y() + y1 * 2.0))
+    b = w._view.mapFromScene(_QPointF(o.x() + x2 * 2.0, o.y() + y2 * 2.0))
+    _mouse(w, _QMouseEvent.Type.MouseButtonPress, a)
+    _mouse(w, _QMouseEvent.Type.MouseMove, b)
+    _mouse(w, _QMouseEvent.Type.MouseButtonRelease, b)
+
+
+def test_trace_region_redraw_replaces_only_inside_and_stays_one_undo():
+    w = _shown_window()
+    st = _staged_trace(w)
+    n_undo = len(w._undo)
+    old_box, old_text = st.items[0], st.items[1]
+    st.region_btn.click()
+    assert st.region_picking and st.region_btn.isChecked()
+    _drag_region(w, st, 80, 60, 320, 120)             # 상자 가운데(200,140)는 밖, 글자(120,140)도 밖 → 둘 다 남아야
+    _drag_region(w, st, 50, 50, 350, 220)             # 다시 고르기 아님 — 고르기는 첫 상자로 끝남
+    assert not st.region_picking and st.region is not None and st.region_bar.isVisible()
+    fu = w._ai_panel.followup()
+    assert fu is not None and fu["kind"] == "trace" and fu["base"] is st
+    st.region_bar.findChildren(QToolButton)[-1].click()   # 상자 막대 「취소」
+    assert st.region is None and w._ai_panel.followup() is None
+    st.region_btn.click()
+    _drag_region(w, st, 50, 50, 350, 220)             # 상자·글자 둘 다 안
+    calls = []
+
+    def region(_client, _photo_, reg, *, model, note="", prev_ops=(), **_k):
+        calls.append((reg, note, list(prev_ops)))
+        return {"ops": [{"op": "box", "id": "n", "x1": 60, "y1": 60, "x2": 200, "y2": 210}]}, {"tries": 1}
+    w._ai_panel._prompt_edit.setPlainText("표 칸이 빠짐")
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.photo_to_ops.generate_ops_region", side_effect=region):
+        st.region_make_btn.click()
+        assert st.region_worker is not None
+        assert _wait_until(lambda: st.region_worker is None)
+    assert calls and calls[0][1] == "표 칸이 빠짐" and len(calls[0][2]) == 2   # 이전 결과(상자·글자)도 같이 보냄
+    assert old_box.scene() is None and old_text.scene() is None
+    new = [it for it in st.items if it.scene() is w._scene]
+    assert len(new) == 1 and w._ai_staged is st and len(w._undo) == n_undo   # 같은 결과·같은 되돌리기 칸
+    assert st.region is None and st.region_bar is None and w._ai_panel.followup() is None
+    st.bar.accept_btn.click()
+    w.undo()
+    assert new[0].scene() is None
+    _close_clean(w)
+
+
+def test_trace_region_discarded_result_is_dropped():
+    import threading
+    gate = threading.Event()
+
+    def slow(*_a, **_k):
+        gate.wait(5)
+        return {"ops": [{"op": "box", "x1": 60, "y1": 60, "x2": 200, "y2": 210}]}, {}
+    w = _shown_window()
+    st = _staged_trace(w)
+    st.region_btn.click()
+    _drag_region(w, st, 50, 50, 350, 220)
+    n_items = len(w._scene.items())
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.photo_to_ops.generate_ops_region", side_effect=slow):
+        st.region_make_btn.click()
+        st.bar.discard_btn.click()                       # 다시 그리는 중에 결과 버리기
+        gate.set()
+        _wait_until(lambda: False, 400)
+    assert w._ai_staged is None and len(w._scene.items()) < n_items
+    _close_clean(w)
+
+
+def test_trace_region_cancel_while_running_keeps_old_result():
+    import threading
+    gate = threading.Event()
+
+    def slow(*_a, **_k):
+        gate.wait(5)
+        return {"ops": [{"op": "box", "x1": 60, "y1": 60, "x2": 200, "y2": 210}]}, {}
+    w = _shown_window()
+    st = _staged_trace(w)
+    old = list(st.items)
+    st.region_btn.click()
+    _drag_region(w, st, 50, 50, 350, 220)
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.photo_to_ops.generate_ops_region", side_effect=slow):
+        req = w._ai_panel.request_make()
+        st.region_bar.findChildren(QToolButton)[-1].click()   # 다시 그리는 중 「취소」
+        assert st.region is None and st.region_worker is None
+        gate.set()
+        _wait_until(lambda: False, 400)
+    assert req.entry.status_text() == CANCELLED_TEXT
+    assert st.items == old and all(it.scene() is w._scene for it in old)   # 늦게 온 결과는 버림
+    _close_clean(w)
