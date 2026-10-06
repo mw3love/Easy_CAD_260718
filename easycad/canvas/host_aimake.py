@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
-from PyQt6.QtGui import QColor, QPen, QPolygonF
+from PyQt6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QSlider, QToolButton, QWidget,
 )
@@ -78,7 +78,9 @@ _TRACE_CORNER_HIT_PX = 14
 # 베끼기 피드백(2026-10-06): 안내글을 코랄로(흐린 사진 위 회색이 안 보임), 결과는 사진을 도면에 넣지 않고 고르는 동안만 겹쳐 본다.
 _TRACE_HINT_QSS = f"color:{_ACCENT_CORAL}; font-size:11px; padding:0 4px;"
 _TRACE_HINT_RUNNING_QSS = _TRACE_HINT_QSS + " font-weight:700;"
-TRACE_PHOTO_OPACITY = 35   # 결과 막대 「사진 보기」 진하기 기본(%) — 옛 밑깔기 알파 90/255와 비슷
+# 결과 막대 「도면 ↔ 원본」 막대 기본(%) — 원본 사진을 도면 *위에* 이만큼 덮어 그린다(0=도면만, 100=원본만, 2026-10-06 2차).
+TRACE_PHOTO_OPACITY = 40
+_TRACE_VIEW_MAX_SIDE = 4000   # 비교용으로 띄우는 원본(펴기만 하고 AI용 1600으로 줄이지 않음 — 확대해도 또렷하게)
 
 
 @dataclass
@@ -100,7 +102,8 @@ class _TraceSetup:
     running: bool = False
     req: object = None
     worker: object = None
-    sent: object = None         # 실제로 보낸(펴고 줄인) 사진 — 결과·밑깔기의 기준
+    sent: object = None         # 실제로 보낸(펴고 줄인) 사진 — 결과 좌표의 기준
+    view_img: object = None     # 같은 모서리로 편 원본 해상도 사진(결과 비교 표시용)
     drag: int = None
     last_vp: QRect = field(default_factory=QRect)
 
@@ -147,7 +150,7 @@ class _StagedResult:
     marks: list = field(default_factory=list)
     alt_marks: list = field(default_factory=list)
     # ---- 베끼기 결과(2026-10-06) — 고르는 동안만 바닥에 겹쳐 보는 원본 사진(도형 아님 — 채택해도 도면에 안 남는다).
-    photo: object = None        # QPixmap
+    photo: object = None        # QPixmap(원본 해상도로 편 것)
     photo_rect: QRectF = None   # 씬 좌표
     photo_shown: bool = True
     photo_opacity: int = TRACE_PHOTO_OPACITY
@@ -942,6 +945,7 @@ class _AIMakeMixin:
             quad = getattr(req, "trace_quad", None)
             if quad:
                 tr.quad = list(quad)
+                self._ai_trace_sync_reset(tr)
         if req is not None:
             self._ai_panel.resubmit(req)
 
@@ -990,6 +994,14 @@ class _AIMakeMixin:
         st = getattr(self, "_ai_staged", None)
         if st is None or st.doc.view is not view:
             return
+        if st.photo is not None and st.photo_shown and st.photo_opacity > 0:
+            # 베끼기 결과의 원본 — 도면 *위에* 덮어 그려 100%면 원본만 또렷하게(2026-10-06 2차: 바닥에 깔면 도면 선·격자가
+            # 늘 위를 덮어 100%에서도 원본만 볼 수 없었음).
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            painter.setOpacity(st.photo_opacity / 100.0)
+            painter.drawPixmap(st.photo_rect, st.photo, QRectF(st.photo.rect()))
+            painter.restore()
         rect = self._ai_staged_scene_rect()
         if rect.isNull():
             return
@@ -1481,6 +1493,7 @@ class _AIMakeMixin:
         lay.addWidget(tr.rotate_btn)
         tr.reset_btn = _icon_button(bar, "모서리 초기화", "ai_corners")
         tr.reset_btn.clicked.connect(self._ai_trace_reset_corners)
+        tr.reset_btn.setVisible(False)   # 모서리를 움직였을 때만(2026-10-06 2차)
         lay.addWidget(tr.reset_btn)
         tr.remove_btn = _icon_button(bar, "취소", "ai_close", tip="사진을 걷고 베끼기를 그만둠")
         tr.remove_btn.clicked.connect(self._ai_panel.clear_attached_image)
@@ -1518,7 +1531,7 @@ class _AIMakeMixin:
         tr.hint.setStyleSheet(_TRACE_HINT_RUNNING_QSS if on else _TRACE_HINT_QSS)
         tr.make_btn.setVisible(not on)
         tr.rotate_btn.setVisible(not on)
-        tr.reset_btn.setVisible(not on)
+        tr.reset_btn.setVisible(not on and self._ai_trace_corners_moved(tr))
         tr.remove_btn.setVisible(not on)
         tr.cancel_btn.setVisible(on)
         tr.cancel_btn.setEnabled(on)
@@ -1533,7 +1546,20 @@ class _AIMakeMixin:
             return
         w, h = tr.fitted.size
         tr.quad = [(0.0, 0.0), (float(w), 0.0), (float(w), float(h)), (0.0, float(h))]
+        self._ai_trace_sync_reset(tr)
         tr.doc.view.viewport().update()
+
+    @staticmethod
+    def _ai_trace_corners_moved(tr) -> bool:
+        w, h = tr.fitted.size
+        return tr.quad != [(0.0, 0.0), (float(w), 0.0), (float(w), float(h)), (0.0, float(h))]
+
+    def _ai_trace_sync_reset(self, tr):
+        """「모서리 초기화」는 모서리를 움직였을 때만 보인다 — 바뀌면 막대 크기·자리를 다시 잡는다."""
+        want = not tr.running and self._ai_trace_corners_moved(tr)
+        if tr.reset_btn.isVisibleTo(tr.bar) != want:
+            tr.reset_btn.setVisible(want)
+            self._ai_place_widget(tr.doc.view, tr.bar, tr.rect)
 
     def _ai_trace_rotate(self):
         """90° 돌리기 — 패널에 붙인 사진 자체를 돌려 다시 붙인다(그래야 「다시」·기록도 돌린 사진을 쓴다).
@@ -1550,13 +1576,7 @@ class _AIMakeMixin:
         return QPointF(tr.rect.left() + x * _PHOTO_SCALE, tr.rect.top() + y * _PHOTO_SCALE)
 
     def _draw_ai_trace_photo(self, view, painter):
-        """`core_view.drawBackground` 훅 — 준비·만드는 중인 사진을 바닥에 흐리게, 베끼기 결과를 고르는 동안의 원본 사진도."""
-        st = getattr(self, "_ai_staged", None)
-        if st is not None and st.photo is not None and st.photo_shown and st.doc.view is view:
-            painter.save()
-            painter.setOpacity(st.photo_opacity / 100.0)
-            painter.drawPixmap(st.photo_rect, st.photo, QRectF(st.photo.rect()))
-            painter.restore()
+        """`core_view.drawBackground` 훅 — 준비·만드는 중인 사진을 바닥에 흐리게."""
         tr = getattr(self, "_ai_trace", None)
         if tr is None or tr.doc.view is not view:
             return
@@ -1636,6 +1656,7 @@ class _AIMakeMixin:
                 return True
             elif et == QEvent.Type.MouseButtonRelease and tr.drag is not None:
                 tr.drag = None
+                self._ai_trace_sync_reset(tr)
                 return True
         return super().eventFilter(obj, event)
 
@@ -1654,7 +1675,9 @@ class _AIMakeMixin:
         from easycad.ai.photo_to_ops import fit_for_ai, rectify
         k = tr.original.size[0] / tr.fitted.size[0]
         try:
-            sent = fit_for_ai(rectify(tr.original, [(x * k, y * k) for x, y in tr.quad]))
+            flat = rectify(tr.original, [(x * k, y * k) for x, y in tr.quad])
+            sent = fit_for_ai(flat)
+            tr.view_img = fit_for_ai(flat, _TRACE_VIEW_MAX_SIDE)
         except ValueError as e:
             req.entry.set_status(f"모서리로 사진을 펼 수 없어요: {e}")
             return None
@@ -1709,20 +1732,28 @@ class _AIMakeMixin:
         # 피드백(2026-10-06): 사진은 도면에 넣지 않고 고르는 동안만 겹쳐 본다 — 켜고 끄기·진하기로 대조(채택하면 사라짐).
         W, H = tr.sent.size
         c = tr.rect.center()
-        show = QCheckBox("사진 보기")
+        show = QCheckBox("원본 보기")
         show.setChecked(True)
-        show.setToolTip("원본 사진을 결과 밑에 겹쳐 보기(비교용 — 채택하면 도면에는 안 남음)")
-        opacity = QSlider(Qt.Orientation.Horizontal)
-        opacity.setRange(5, 100)
+        show.setToolTip("원본 사진을 결과에 겹쳐 보기(비교용 — 채택하면 도면에는 안 남음)")
+        # 도면 ↔ 원본 막대(2026-10-06 2차): 0=도면만, 100=원본만. 양 끝 글씨로 무엇을 조절하는지 보이게.
+        mix = QWidget()
+        mix_lay = QHBoxLayout(mix)
+        mix_lay.setContentsMargins(0, 0, 0, 0)
+        mix_lay.setSpacing(4)
+        opacity = QSlider(Qt.Orientation.Horizontal, mix)
+        opacity.setRange(0, 100)
         opacity.setValue(TRACE_PHOTO_OPACITY)
         opacity.setFixedWidth(90)
-        opacity.setToolTip("사진 진하기")
+        opacity.setToolTip("왼쪽 끝 = 도면만 · 오른쪽 끝 = 원본만")
+        mix_lay.addWidget(QLabel("도면", mix))
+        mix_lay.addWidget(opacity)
+        mix_lay.addWidget(QLabel("원본", mix))
         show.toggled.connect(self._on_trace_photo_shown)
-        show.toggled.connect(opacity.setEnabled)
+        show.toggled.connect(mix.setEnabled)
         opacity.valueChanged.connect(self._on_trace_photo_opacity)
-        st = self._ai_stage(added, req, extras=(show, opacity))
+        st = self._ai_stage(added, req, extras=(show, mix))
         if st is not None:
-            st.photo = _pil_to_pixmap(tr.sent)
+            st.photo = _pil_to_pixmap(tr.view_img if tr.view_img is not None else tr.sent)
             st.photo_rect = QRectF(c.x() - W * _PHOTO_SCALE / 2, c.y() - H * _PHOTO_SCALE / 2, W * _PHOTO_SCALE, H * _PHOTO_SCALE)
             st.doc.view.viewport().update()
         bad = sum(1 for e in log if "error" in e)

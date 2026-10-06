@@ -786,6 +786,44 @@ def test_trace_bar_make_button_and_rotate():
     _close_clean(w)
 
 
+def test_trace_reset_corners_button_shows_only_after_moving():
+    w = _shown_window()
+    tr = _attach_trace(w)
+    assert not tr.reset_btn.isVisibleTo(tr.bar)
+    corner = w._view.mapFromScene(w._ai_trace_corner_scene(tr, 0))
+    _mouse(w, _QMouseEvent.Type.MouseButtonPress, corner)
+    _mouse(w, _QMouseEvent.Type.MouseMove, corner + QPoint(40, 30))
+    _mouse(w, _QMouseEvent.Type.MouseButtonRelease, corner + QPoint(40, 30))
+    assert tr.reset_btn.isVisibleTo(tr.bar)
+    tr.reset_btn.click()
+    assert not tr.reset_btn.isVisibleTo(tr.bar)
+    _close_clean(w)
+
+
+def test_trace_mix_slider_full_shows_only_original():
+    # 2026-10-06 2차: 원본을 도면 위에 덮어 그려 100%면 도면 선이 안 보이고 원본만(바닥에 깔면 선이 늘 위를 덮었음).
+    from PIL import Image
+    w = _shown_window()
+    _attach_trace(w, Image.new("RGB", (800, 600), (255, 0, 0)))
+    with _fake_trace():
+        w._ai_panel.request_make()
+        assert _wait_until(lambda: w._ai_staged is not None)
+    st = w._ai_staged
+    slider = st.bar.findChildren(QSlider)[0]
+    on_line = w._view.mapFromScene(_QPointF(st.photo_rect.left() + 200 * 2.0, st.photo_rect.top() + 80 * 2.0))
+
+    def px():
+        return w._view.viewport().grab().toImage().pixelColor(on_line)
+    slider.setValue(0)
+    _app.processEvents()
+    assert px().red() < 200 or px().green() > 100   # 도면 선(빨강 아님)
+    slider.setValue(100)
+    _app.processEvents()
+    c = px()
+    assert c.red() > 240 and c.green() < 20 and c.blue() < 20   # 원본만
+    _close_clean(w)
+
+
 def test_load_image_path_applies_exif_orientation():
     from PIL import Image
     path = os.path.join(_TMP, "exif_rot.jpg")
@@ -834,7 +872,7 @@ def test_trace_make_places_result_on_photo_with_photo_view_toggle():
     assert abs(st.photo_rect.center().x() - center.x()) < 3 and abs(st.photo_rect.center().y() - center.y()) < 3
     show = st.bar.findChildren(QCheckBox)[0]
     slider = st.bar.findChildren(QSlider)[0]
-    assert show.text() == "사진 보기" and slider.value() == TRACE_PHOTO_OPACITY
+    assert show.text() == "원본 보기" and slider.value() == TRACE_PHOTO_OPACITY
     slider.setValue(80)
     assert st.photo_opacity == 80
     show.setChecked(False)
@@ -842,6 +880,7 @@ def test_trace_make_places_result_on_photo_with_photo_view_toggle():
     w._view.grab()   # 그리기 경로가 터지지 않는지
     show.setChecked(True)
     w._view.grab()
+    assert st.photo.width() == 800   # 비교용은 AI용(1600 이하로 줄인 것)이 아니라 편 원본 해상도
     st.bar.accept_btn.click()
     assert w._ai_staged is None
     w.undo()   # 한 번에 결과 전부 사라짐
