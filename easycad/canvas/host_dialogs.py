@@ -631,9 +631,10 @@ class _ImageAttachMixin:
             self._load_image_path(path)
 
     def _load_image_path(self, path: str):
-        from PIL import Image
+        from PIL import Image, ImageOps
         try:
-            img = Image.open(path).convert("RGB")
+            # 폰 사진은 누운 채 저장하고 "돌려서 보여라" 표시(EXIF 방향)만 붙이는 일이 많다 — 그대로 열면 90° 누워 보임(2026-10-06).
+            img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
         except Exception as e:
             QMessageBox.warning(self, self.windowTitle(), f"이미지를 읽을 수 없습니다: {e}")
             return

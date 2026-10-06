@@ -19,7 +19,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QPen, QPolygonF
 from PyQt6.QtWidgets import (
-    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QToolButton, QWidget,
+    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QSlider, QToolButton, QWidget,
 )
 
 from easycad.ai import gateway as gw
@@ -29,7 +29,6 @@ from easycad.canvas.host_dialogs import (
     _MERMAID_HEADER_RE, _MermaidGenWorker, _SaveToSymbolsFolderDialog, _SvgGenWorker, _detach_worker,
 )
 from easycad.canvas.photo_dialog import _PhotoOpsWorker, _pil_to_pixmap
-from easycad.canvas.annotator_core import _ImageItem
 from easycad.fileio import symbol_library
 from easycad.fileio.photo_ops import SCALE as _PHOTO_SCALE
 from easycad.canvas.host_widgets import _ACCENT_CORAL
@@ -76,6 +75,10 @@ TRACE_BUSY_TEXT = "다른 베끼기가 만드는 중이에요 — 끝나거나 �
 CANCELLING_TEXT = "취소하는 중 — 지금 호출이 끝나면 멈춰요"
 CANCELLED_TEXT = "취소함"
 _TRACE_CORNER_HIT_PX = 14
+# 베끼기 피드백(2026-10-06): 안내글을 코랄로(흐린 사진 위 회색이 안 보임), 결과는 사진을 도면에 넣지 않고 고르는 동안만 겹쳐 본다.
+_TRACE_HINT_QSS = f"color:{_ACCENT_CORAL}; font-size:11px; padding:0 4px;"
+_TRACE_HINT_RUNNING_QSS = _TRACE_HINT_QSS + " font-weight:700;"
+TRACE_PHOTO_OPACITY = 35   # 결과 막대 「사진 보기」 진하기 기본(%) — 옛 밑깔기 알파 90/255와 비슷
 
 
 @dataclass
@@ -89,6 +92,8 @@ class _TraceSetup:
     quad: list                  # 모서리 4점(fitted 픽셀, 왼위·오위·오아래·왼아래)
     bar: QWidget = None
     hint: QLabel = None
+    make_btn: QToolButton = None
+    rotate_btn: QToolButton = None
     reset_btn: QToolButton = None
     remove_btn: QToolButton = None
     cancel_btn: QToolButton = None
@@ -141,6 +146,11 @@ class _StagedResult:
     both_btn: QToolButton = None   # 비교 중 새 결과 막대의 「둘 다 넣기」
     marks: list = field(default_factory=list)
     alt_marks: list = field(default_factory=list)
+    # ---- 베끼기 결과(2026-10-06) — 고르는 동안만 바닥에 겹쳐 보는 원본 사진(도형 아님 — 채택해도 도면에 안 남는다).
+    photo: object = None        # QPixmap
+    photo_rect: QRectF = None   # 씬 좌표
+    photo_shown: bool = True
+    photo_opacity: int = TRACE_PHOTO_OPACITY
 
 
 class _StagingBar(QFrame):
@@ -970,6 +980,8 @@ class _AIMakeMixin:
         for it in st.items:
             if it.scene() is not None:
                 rect = rect.united(it.sceneBoundingRect())
+        if st.photo_rect is not None:   # 베끼기 — 점선·막대가 사진 자리까지 감싸게(옛 밑깔기 사진이 도형이던 때와 같은 틀)
+            rect = rect.united(st.photo_rect)
         return rect
 
     def _draw_ai_staging(self, view, painter):
@@ -1458,12 +1470,19 @@ class _AIMakeMixin:
         lay.setContentsMargins(6, 4, 6, 4)
         lay.setSpacing(5)
         tr.hint = QLabel(TRACE_HINT, bar)
-        tr.hint.setStyleSheet("color:#8a8a8a; font-size:11px; padding:0 4px;")
+        tr.hint.setStyleSheet(_TRACE_HINT_QSS)
         lay.addWidget(tr.hint)
+        # 「만들기」를 사진 위에도(피드백 2026-10-06: 패널 입력칸에만 있어 어디를 눌러야 할지 헷갈림) — 패널 버튼과 같은 길.
+        tr.make_btn = _icon_button(bar, "만들기", "generate", coral=True, tip="이 모서리로 베끼기 시작(패널 「만들기」와 같음)")
+        tr.make_btn.clicked.connect(self._ai_panel.request_make)
+        lay.addWidget(tr.make_btn)
+        tr.rotate_btn = _icon_button(bar, "90° 돌리기", "ai_rotate", tip="사진을 시계 방향으로 90° 돌림(모서리는 처음 자리로)")
+        tr.rotate_btn.clicked.connect(self._ai_trace_rotate)
+        lay.addWidget(tr.rotate_btn)
         tr.reset_btn = _icon_button(bar, "모서리 초기화", "ai_corners")
         tr.reset_btn.clicked.connect(self._ai_trace_reset_corners)
         lay.addWidget(tr.reset_btn)
-        tr.remove_btn = _icon_button(bar, "사진 빼기", "ai_close")
+        tr.remove_btn = _icon_button(bar, "취소", "ai_close", tip="사진을 걷고 베끼기를 그만둠")
         tr.remove_btn.clicked.connect(self._ai_panel.clear_attached_image)
         lay.addWidget(tr.remove_btn)
         tr.cancel_btn = _icon_button(bar, "취소", "ai_stop", tip="남은 구역 생성을 멈춤(지금 도는 호출은 끝까지 감)")
@@ -1496,6 +1515,9 @@ class _AIMakeMixin:
         tr = self._ai_trace
         tr.running = on
         tr.drag = None
+        tr.hint.setStyleSheet(_TRACE_HINT_RUNNING_QSS if on else _TRACE_HINT_QSS)
+        tr.make_btn.setVisible(not on)
+        tr.rotate_btn.setVisible(not on)
         tr.reset_btn.setVisible(not on)
         tr.remove_btn.setVisible(not on)
         tr.cancel_btn.setVisible(on)
@@ -1513,12 +1535,28 @@ class _AIMakeMixin:
         tr.quad = [(0.0, 0.0), (float(w), 0.0), (float(w), float(h)), (0.0, float(h))]
         tr.doc.view.viewport().update()
 
+    def _ai_trace_rotate(self):
+        """90° 돌리기 — 패널에 붙인 사진 자체를 돌려 다시 붙인다(그래야 「다시」·기록도 돌린 사진을 쓴다).
+        `trace_photo_changed`가 새 사진으로 준비를 다시 깔아 모서리는 처음 자리로 돌아간다."""
+        from PIL import Image
+        tr = self._ai_trace
+        p = self._ai_panel
+        if tr is None or tr.running or p._attached_image is None:
+            return
+        p._set_attached_image(p._attached_image.transpose(Image.Transpose.ROTATE_270), p._attached_image_name)
+
     def _ai_trace_corner_scene(self, tr, i) -> QPointF:
         x, y = tr.quad[i]
         return QPointF(tr.rect.left() + x * _PHOTO_SCALE, tr.rect.top() + y * _PHOTO_SCALE)
 
     def _draw_ai_trace_photo(self, view, painter):
-        """`core_view.drawBackground` 훅 — 준비·만드는 중인 사진을 바닥에 흐리게."""
+        """`core_view.drawBackground` 훅 — 준비·만드는 중인 사진을 바닥에 흐리게, 베끼기 결과를 고르는 동안의 원본 사진도."""
+        st = getattr(self, "_ai_staged", None)
+        if st is not None and st.photo is not None and st.photo_shown and st.doc.view is view:
+            painter.save()
+            painter.setOpacity(st.photo_opacity / 100.0)
+            painter.drawPixmap(st.photo_rect, st.photo, QRectF(st.photo.rect()))
+            painter.restore()
         tr = getattr(self, "_ai_trace", None)
         if tr is None or tr.doc.view is not view:
             return
@@ -1665,39 +1703,43 @@ class _AIMakeMixin:
         if not self._ai_goto_request_doc(req):
             self._ai_trace_clear()
             return
-        added, _skipped = self._build_photo_drawing(spec, tr.sent, underlay=True, center=tr.rect.center())
+        added, _skipped = self._build_photo_drawing(spec, tr.sent, underlay=False, center=tr.rect.center())
         self._ai_trace_clear()
         self._ai_panel.clear_attached_image()
-        keep = QCheckBox("사진도 밑에 남기기")
-        keep.setChecked(True)
-        keep.setToolTip("원본 사진을 흐리게 잠가 결과 밑에 둔다(대조하며 고친 뒤 지우면 됨)")
-        keep.toggled.connect(self._on_trace_keep_photo)
-        st = self._ai_stage(added, req, extras=(keep,))
+        # 피드백(2026-10-06): 사진은 도면에 넣지 않고 고르는 동안만 겹쳐 본다 — 켜고 끄기·진하기로 대조(채택하면 사라짐).
+        W, H = tr.sent.size
+        c = tr.rect.center()
+        show = QCheckBox("사진 보기")
+        show.setChecked(True)
+        show.setToolTip("원본 사진을 결과 밑에 겹쳐 보기(비교용 — 채택하면 도면에는 안 남음)")
+        opacity = QSlider(Qt.Orientation.Horizontal)
+        opacity.setRange(5, 100)
+        opacity.setValue(TRACE_PHOTO_OPACITY)
+        opacity.setFixedWidth(90)
+        opacity.setToolTip("사진 진하기")
+        show.toggled.connect(self._on_trace_photo_shown)
+        show.toggled.connect(opacity.setEnabled)
+        opacity.valueChanged.connect(self._on_trace_photo_opacity)
+        st = self._ai_stage(added, req, extras=(show, opacity))
+        if st is not None:
+            st.photo = _pil_to_pixmap(tr.sent)
+            st.photo_rect = QRectF(c.x() - W * _PHOTO_SCALE / 2, c.y() - H * _PHOTO_SCALE / 2, W * _PHOTO_SCALE, H * _PHOTO_SCALE)
+            st.doc.view.viewport().update()
         bad = sum(1 for e in log if "error" in e)
         if st is not None and bad:
             req.entry.set_status(f"{STAGED_TEXT} · {len(log)}구역 중 {bad}곳을 못 읽어 비어 있어요", running=True)
 
-    def _on_trace_keep_photo(self, keep: bool):
-        """결과 막대 「사진도 밑에 남기기」 — 밑에 깐 사진을 결과(되돌리기 한 칸)에서 빼거나 다시 넣는다."""
+    def _on_trace_photo_shown(self, on: bool):
         st = self._ai_staged
-        if st is None:
-            return
-        img = getattr(st, "underlay", None)
-        if img is None:
-            img = next((it for it in st.items if isinstance(it, _ImageItem)), None)
-            st.underlay = img
-        if img is None:
-            return
-        op = ("create", img)
-        if keep and img.scene() is None:
-            st.doc.scene.addItem(img)
-            st.items.insert(0, img)
-            st.undo_entry.ops.insert(0, op)
-        elif not keep and img.scene() is not None:
-            img.scene().removeItem(img)
-            st.items = [it for it in st.items if it is not img]
-            st.undo_entry.ops = [o for o in st.undo_entry.ops if o[1] is not img]
-        st.doc.view.viewport().update()
+        if st is not None and st.photo is not None:
+            st.photo_shown = on
+            st.doc.view.viewport().update()
+
+    def _on_trace_photo_opacity(self, value: int):
+        st = self._ai_staged
+        if st is not None and st.photo is not None:
+            st.photo_opacity = value
+            st.doc.view.viewport().update()
 
     def _on_trace_failed(self, err):
         tr, job = self._ai_trace_of_sender()

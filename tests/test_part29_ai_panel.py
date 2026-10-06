@@ -699,7 +699,8 @@ def test_save_candidates_to_my_symbols():
 
 from PyQt6.QtCore import QPointF as _QPointF
 from PyQt6.QtGui import QMouseEvent as _QMouseEvent
-from easycad.canvas.host_aimake import CANCELLED_TEXT, TRACE_HINT
+from easycad.canvas.host_aimake import CANCELLED_TEXT, TRACE_HINT, TRACE_PHOTO_OPACITY, _TRACE_HINT_QSS
+from PyQt6.QtWidgets import QSlider
 
 _SPEC = {"ops": [{"op": "box", "id": "a", "x1": 100, "y1": 80, "x2": 300, "y2": 200},
                  {"op": "text", "x": 120, "y": 140, "text": "TX"}]}
@@ -760,8 +761,42 @@ def test_trace_photo_lays_on_canvas_background_not_as_item():
     assert w._ai_trace is None
     w._ai_panel.set_kind("trace")           # 돌아오면 붙인 사진으로 다시
     assert w._ai_trace is not None
-    w._ai_trace.bar.findChildren(QToolButton)[1].click()   # 「사진 빼기」
+    assert w._ai_trace.remove_btn.text() == "취소"
+    w._ai_trace.remove_btn.click()                          # 「취소」(옛 「사진 빼기」)
     assert w._ai_trace is None and w._ai_panel._attached_image is None
+    _close_clean(w)
+
+
+def test_trace_bar_make_button_and_rotate():
+    # 피드백(2026-10-06): 사진 위 막대에도 「만들기」, 90° 돌리기는 붙인 사진 자체를 돌리고 모서리를 처음 자리로.
+    w = _shown_window()
+    tr = _attach_trace(w, _photo(800, 600))
+    tr.quad[0] = (30.0, 20.0)
+    tr.rotate_btn.click()
+    tr2 = w._ai_trace
+    assert tr2 is not tr and w._ai_panel._attached_image.size == (600, 800)
+    assert tr2.fitted.size[0] < tr2.fitted.size[1] and tr2.quad[0] == (0.0, 0.0)
+    assert _TRACE_HINT_QSS in tr2.hint.styleSheet()
+    with _fake_trace(wait_cancel=True):
+        tr2.make_btn.click()
+        assert w._ai_trace.running and not tr2.make_btn.isVisibleTo(tr2.bar) and not tr2.rotate_btn.isVisibleTo(tr2.bar)
+        assert "font-weight:700" in tr2.hint.styleSheet()
+        tr2.cancel_btn.click()
+        assert _wait_until(lambda: not w._ai_jobs, 5000)
+    _close_clean(w)
+
+
+def test_load_image_path_applies_exif_orientation():
+    from PIL import Image
+    path = os.path.join(_TMP, "exif_rot.jpg")
+    im = Image.new("RGB", (80, 40), "white")
+    exif = im.getexif()
+    exif[0x0112] = 6   # 시계 방향 90° 돌려 보여라(폰 세로 사진)
+    im.save(path, exif=exif)
+    w = _shown_window()
+    w._ai_panel.set_kind("trace")
+    w._ai_panel._load_image_path(path)
+    assert w._ai_panel._attached_image.size == (40, 80)
     _close_clean(w)
 
 
@@ -781,7 +816,8 @@ def test_trace_corner_drag_moves_quad_and_other_clicks_pass_through():
     _close_clean(w)
 
 
-def test_trace_make_places_result_on_photo_with_underlay_toggle():
+def test_trace_make_places_result_on_photo_with_photo_view_toggle():
+    # 피드백(2026-10-06): 사진은 도면에 넣지 않고 고르는 동안만 바닥에 겹쳐 본다(켜고 끄기·진하기), 채택하면 사라짐.
     w = _shown_window()
     tr = _attach_trace(w)
     center = tr.rect.center()
@@ -792,19 +828,24 @@ def test_trace_make_places_result_on_photo_with_underlay_toggle():
     st = w._ai_staged
     assert w._ai_trace is None and w._ai_panel._attached_image is None
     assert req.entry.status_text() == STAGED_TEXT
-    img = st.items[0]
-    assert type(img).__name__ == "_ImageItem" and img.scene() is w._scene
-    r = img.sceneBoundingRect()
-    assert abs(r.center().x() - center.x()) < 3 and abs(r.center().y() - center.y()) < 3
-    keep = st.bar.findChildren(QCheckBox)[0]
-    keep.setChecked(False)
-    assert img.scene() is None and all(op[1] is not img for op in st.undo_entry.ops)
-    keep.setChecked(True)
-    assert img.scene() is w._scene and st.undo_entry.ops[0][1] is img
-    keep.setChecked(False)
+    assert not any(type(it).__name__ == "_ImageItem" for it in st.items)
+    assert not any(type(it).__name__ == "_ImageItem" for it in w._scene.items())
+    assert st.photo is not None and st.photo_shown
+    assert abs(st.photo_rect.center().x() - center.x()) < 3 and abs(st.photo_rect.center().y() - center.y()) < 3
+    show = st.bar.findChildren(QCheckBox)[0]
+    slider = st.bar.findChildren(QSlider)[0]
+    assert show.text() == "사진 보기" and slider.value() == TRACE_PHOTO_OPACITY
+    slider.setValue(80)
+    assert st.photo_opacity == 80
+    show.setChecked(False)
+    assert not st.photo_shown and not slider.isEnabled()
+    w._view.grab()   # 그리기 경로가 터지지 않는지
+    show.setChecked(True)
+    w._view.grab()
     st.bar.accept_btn.click()
-    w.undo()   # 한 번에 결과 전부(사진 빼고 넣은 것) 사라짐
-    assert all(it.scene() is None for it in st.items) and img.scene() is None
+    assert w._ai_staged is None
+    w.undo()   # 한 번에 결과 전부 사라짐
+    assert all(it.scene() is None for it in st.items)
     _close_clean(w)
 
 
