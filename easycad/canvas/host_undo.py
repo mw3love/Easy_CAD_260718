@@ -53,6 +53,7 @@ class _UndoMixin:
         새 변이가 실리면 redo 스택은 무효화된다(표준 undo 시맨틱)."""
         if not ops:
             return
+        self._assign_new_items_to_active_layer(ops)   # [2026-10-07] 새 도형은 「그리는 중」 레이어로
         top = self._undo[-1] if self._undo else None
         if key is not None and top is not None and top.key == key:
             self._coalesce_into(top, ops)   # before 유지, after만 갱신

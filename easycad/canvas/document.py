@@ -129,7 +129,9 @@ class CanvasDocument:
         self.undo: list[_UndoEntry] = []
         self.redo: list[_UndoEntry] = []
         self.layers: list[dict] = [
-            {"id": "default", "name": "기본", "visible": True, "locked": False}]
+            {"id": "default", "name": "기본", "visible": True, "locked": False, "color": "#8a98a8"}]
+        # [첫 화면 재디자인 2026-10-07] 「그리는 중」 레이어 — 새로 생기는 도형이 들어갈 곳(CAD의 현재 레이어).
+        self.active_layer = "default"
         self.doc_path: str | None = None
         # [실사용 피드백 2026-08-26] DXF/DWG는 손실 변환이라 `doc_path`(Ctrl+S 빠른저장
         # 대상)로 취급하지 않는다(host_fileio._do_save_ecad 주석 참조) — 그래도 탭 제목엔

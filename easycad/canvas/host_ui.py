@@ -1997,10 +1997,27 @@ class _UIBuildMixin:
         # 채움) 일관성 없이 보여 원상복구. 제대로 하려면 커스텀 paintEvent로 클립 리전을
         # 그려야 해 이번 저위험 범위 밖으로 미룸.
         v.addWidget(self._layers_list)
+        # [첫 화면 재디자인 2026-10-07, 시안 4라운드 L2] 아래 글자 버튼 두 개 — 새 레이어 / 선택한 도형을
+        # 「그리는 중」 레이어로 옮기기(예전엔 우클릭 메뉴에만 있던 기능).
+        # 버튼 줄은 크기 계산에서 뺀다(Ignored) — 폭은 도형·심볼 카드를 따라야 하는데(`_sync_layers_panel_width`),
+        # 글꼴이 넓게 잡히는 환경에서 이 줄이 레이어 카드를 272px까지 밀어 넓혔다(실측, 오프스크린).
+        btn_wrap = QWidget()
+        btn_wrap.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        btn_row = QHBoxLayout(btn_wrap)
+        btn_row.setContentsMargins(2, 2, 2, 2); btn_row.setSpacing(6)
         add_layer_btn = QToolButton()
-        add_layer_btn.setText("+ 레이어 추가")
+        add_layer_btn.setText("＋ 새 레이어")
+        add_layer_btn.setToolTip("레이어를 하나 더 만들어요")
         add_layer_btn.clicked.connect(lambda: self.add_layer())
-        v.addWidget(add_layer_btn)
+        move_btn = QToolButton()
+        move_btn.setText("선택한 것 옮기기")
+        move_btn.setToolTip("선택한 도형을 「그리는 중」 레이어로 옮겨요")
+        move_btn.clicked.connect(self._move_selection_to_active_layer)
+        self._layer_add_btn, self._layer_move_btn = add_layer_btn, move_btn
+        btn_row.addWidget(add_layer_btn)
+        btn_row.addWidget(move_btn)
+        btn_row.addStretch(1)
+        v.addWidget(btn_wrap)
         panel.set_content(container)
         self._sync_layers_panel_width()
         self._refresh_layers_panel()
@@ -2023,6 +2040,13 @@ class _UIBuildMixin:
         target_w = self._left_panel.width() - container_margin
         if self._layers_list.width() != target_w:
             self._layers_list.setFixedWidth(target_w)
+        # [2026-10-07] 목록 높이가 바뀐 직후엔 세 겹 레이아웃(목록 담은 칸 → 패널 본문 → 패널)이 옛 크기를
+        # 기억해 adjustSize가 예전 높이에 멈췄다(아래 버튼 줄 아래로 마지막 레이어가 가려짐, 실측 126 vs 159px)
+        # — `_relayout_left_panel`과 같은 함정이라 같은 방식으로 겹마다 비운 뒤 잰다.
+        for lay in (self._layers_list.parentWidget().layout(), layers_panel._body_layout,
+                    layers_panel.layout()):
+            lay.invalidate()
+            lay.activate()
         layers_panel.adjustSize()
 
 

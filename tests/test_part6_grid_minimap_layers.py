@@ -1656,12 +1656,86 @@ def test_layer_panel_count_follows_insert_undo_redo():
         while time.time() - t0 < 0.4:            # 0.15초 디바운스 대기
             QApplication.processEvents()
         row = w._layers_list.itemWidget(w._layers_list.item(0))
-        return row.findChildren(QLabel)[0].text()
+        return row._layer_count_lbl.text()       # [2026-10-07] 개수는 이름과 따로(시안 L2)
 
     w._build_mermaid("flowchart TD\n A-->B")
-    assert label().endswith("(3)")               # 노드 2 + 화살표 1
+    assert label() == "3"                        # 노드 2 + 화살표 1
     w.undo()
-    assert label().endswith("(0)")
+    assert label() == "0"
     w.redo()
-    assert label().endswith("(3)")
+    assert label() == "3"
     w.deleteLater()
+
+
+def test_layer_colors_and_legacy_default():
+    """[첫 화면 재디자인 2026-10-07, 시안 4라운드 L2] 레이어마다 구분용 색 — 새 레이어는 안 쓴 색부터,
+    옛 .ecad(색 없음)는 순서대로 기본 색, 색 점을 고르면 바뀌고 문서가 수정됨 표시."""
+    from easycad.canvas.host_layers import _LAYER_COLORS
+    w = CanvasWindow()
+    a = w.add_layer("케이블")
+    b = w.add_layer("표제란")
+    assert w._layers[0]["color"] == _LAYER_COLORS[0]
+    assert len({w._layers[0]["color"], a["color"], b["color"]}) == 3
+    w._apply_loaded_layers([{"id": "default", "name": "기본", "visible": True, "locked": False},
+                            {"id": "x1", "name": "옛", "visible": True, "locked": False}])
+    assert [ly["color"] for ly in w._layers] == _LAYER_COLORS[:2]
+    row = w._layers_list.itemWidget(w._layers_list.item(1))
+    dot = row.findChildren(QToolButton)[0]
+    w._pick_layer_color("x1", dot)
+    w._last_color_popup._on_pick(QColor("#123456"))
+    assert w._layer_by_id("x1")["color"] == "#123456" and w._active_doc.dirty
+
+
+def test_active_layer_receives_new_items_and_falls_back():
+    """[2026-10-07, 사용자 결정 「만들기」] 줄을 누르면 「그리는 중」 — 새 도형은 그 레이어로. 숨김·잠금
+    레이어엔 안 넣고(기본으로), 숨기거나 잠그거나 지우면 「그리는 중」은 기본으로, 파일을 열면 기본부터."""
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QLabel
+    w = CanvasWindow()
+    w.show()
+    cab = w.add_layer("케이블")
+    row = w._layers_list.itemWidget(w._layers_list.item(1))
+    QTest.mouseClick(row, Qt.MouseButton.LeftButton)          # 줄 클릭 → 그리는 중
+    assert w._current_active_layer() == cab["id"]
+    row = w._layers_list.itemWidget(w._layers_list.item(1))
+    assert any(l.text() == "그리는 중" and not l.isHidden() for l in row.findChildren(QLabel))
+    r = _mk_pen_rect(w, x=0, y=0)
+    w.push_undo_add(r)
+    assert w._item_layer_id(r) == cab["id"]
+    w.undo(); w.redo()
+    assert w._item_layer_id(r) == cab["id"]                    # 되살려도 그 레이어
+    w.set_layer_locked(cab["id"], True)
+    assert w._current_active_layer() == "default"
+    w.set_layer_locked(cab["id"], False)
+    w.set_active_layer(cab["id"])
+    w.set_layer_visible(cab["id"], False)
+    assert w._current_active_layer() == "default"
+    w.set_layer_visible(cab["id"], True)
+    w.set_active_layer(cab["id"])
+    w.delete_layer(cab["id"])
+    assert w._current_active_layer() == "default"
+    r2 = _mk_pen_rect(w, x=50, y=0)
+    w.push_undo_add(r2)
+    assert w._item_layer_id(r2) == "default"
+    c2 = w.add_layer("또")
+    w.set_active_layer(c2["id"])
+    w._apply_loaded_layers(None)                              # 파일 열기 → 기본부터
+    assert w._current_active_layer() == "default"
+
+
+def test_move_selection_button_moves_to_active_layer():
+    w = CanvasWindow()
+    cab = w.add_layer("케이블")
+    a = _mk_pen_rect(w, x=0, y=0)
+    w._layer_move_btn.click()                                 # 선택 없음 → 그대로
+    assert w._item_layer_id(a) == "default"
+    w.set_active_layer(cab["id"])
+    a.setSelected(True)
+    w._layer_move_btn.click()
+    assert w._item_layer_id(a) == cab["id"]
+    w.undo()
+    assert w._item_layer_id(a) == "default"
+    n = len(w._layers)
+    w._layer_add_btn.click()
+    assert len(w._layers) == n + 1
+

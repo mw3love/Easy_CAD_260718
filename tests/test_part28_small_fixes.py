@@ -34,7 +34,9 @@ def test_no_hardcoded_real_settings_store():
 
 def _layer_labels(w):
     lst = w._layers_list
-    return [lst.itemWidget(lst.item(i))._layer_name_lbl.text() for i in range(lst.count())]
+    # [2026-10-07] 개수는 이름과 따로(시안 L2) — 예전 「이름 (개수)」 모양으로 합쳐 비교한다.
+    return [f"{r._layer_name_lbl.text()} ({r._layer_count_lbl.text()})"
+            for r in (lst.itemWidget(lst.item(i)) for i in range(lst.count()))]
 
 
 def _wait(ms=400):

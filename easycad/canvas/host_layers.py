@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPalette, QPixmap
 from PyQt6.QtWidgets import (
     QWidget, QToolButton, QLabel, QInputDialog, QHBoxLayout, QMenu, QListWidgetItem,
 )
@@ -38,6 +39,40 @@ _PALETTE_DROP_WH = {"rect": (120.0, 72.0), "ellipse": (100.0, 100.0)}  # 기본 
 _PALETTE_SYM_WH = (120.0, 72.0)                   # 심볼(sym:*) 공통 기본 크기
 
 
+
+
+# [첫 화면 재디자인 2026-10-07, 시안 4라운드 L2] 레이어 색 점 — 구분 표시용(.ecad에만 저장, 도형 색은
+# 안 바꿈). DXF는 도형 종류별 레이어(EC_*)라 앱 레이어가 안 나간다 — 연동은 계획서 별도 항목.
+# 첫 색(기본 레이어)은 두 테마 모두에서 보이는 중립 회색.
+_LAYER_COLORS = ["#8a98a8", "#5aa9ff", "#e8c15a", "#5fbf8a", "#e0646a", "#b48cf2", "#da7756", "#4fd1e0"]
+
+
+def _layer_dot_icon(color: str, px: int = 12) -> QIcon:
+    pm = QPixmap(px, px)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    p.drawEllipse(1, 1, px - 2, px - 2)
+    p.end()
+    return QIcon(pm)
+
+
+class _LayerRow(QWidget):
+    """레이어 한 줄 — 빈 곳(이름·개수 포함)을 누르면 「그리는 중」으로. 색 점·눈·자물쇠는 각자 버튼이라
+    클릭을 먹고 여기까지 안 온다(QLabel은 누름을 받지 않아 부모로 넘긴다)."""
+
+    def __init__(self, on_click):
+        super().__init__()
+        self._on_click = on_click
+        self.setObjectName("layerRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._on_click()
+        super().mousePressEvent(e)
 
 
 class _LayersMixin:
@@ -76,11 +111,24 @@ class _LayersMixin:
 
 
     def _make_layer_row(self, layer: dict) -> QWidget:
-        row = QWidget()
-        h = QHBoxLayout(row)
-        h.setContentsMargins(4, 2, 4, 2)
-        h.setSpacing(6)
+        """[첫 화면 재디자인 2026-10-07, 시안 4라운드 L2] 색 점 · 이름 · 「그리는 중」 · 개수 · 눈 · 자물쇠.
+        줄을 누르면 그 레이어가 「그리는 중」(새 도형이 들어갈 곳)이 된다."""
         lid = layer["id"]
+        row = _LayerRow(lambda i=lid: self.set_active_layer(i))
+        h = QHBoxLayout(row)
+        h.setContentsMargins(6, 3, 4, 3)
+        h.setSpacing(6)
+        active = lid == self._current_active_layer()
+        if active:
+            # 켜진 줄만 옅은 면 — 팔레트 색이라 테마를 바꿔도 따라간다.
+            row.setStyleSheet("#layerRow { background: palette(alternate-base); border-radius:4px; }")
+
+        dot = QToolButton()
+        dot.setAutoRaise(True)
+        dot.setFixedSize(18, 18)
+        dot.setIcon(_layer_dot_icon(self._layer_color(layer)))
+        dot.setToolTip("레이어 색 바꾸기(구분용 — 도형 색은 그대로)")
+        dot.clicked.connect(lambda _c=False, i=lid, b=dot: self._pick_layer_color(i, b))
 
         vis_btn = QToolButton()
         vis_btn.setCheckable(True)
@@ -101,13 +149,24 @@ class _LayersMixin:
         lock_btn.toggled.connect(lambda checked, i=lid: self.set_layer_locked(i, checked))
 
         count = len(self._items_in_layer(lid))
-        name_lbl = QLabel(f'{layer["name"]} ({count})')
+        name_lbl = QLabel(layer["name"])
         name_lbl.setWordWrap(False)
-        row._layer_name_lbl, row._layer_id = name_lbl, lid   # `_update_layer_counts`가 글자만 갱신
+        tag = QLabel("그리는 중")
+        f = tag.font(); f.setPixelSize(11); tag.setFont(f)
+        tag.setForegroundRole(QPalette.ColorRole.Link)   # 강조색(코랄) — "지금 활성"이라는 의미 있는 상태
+        tag.setVisible(active)
+        count_lbl = QLabel(str(count))
+        count_lbl.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+        # `_update_layer_counts`가 개수 글자만 갱신
+        row._layer_name_lbl, row._layer_count_lbl, row._layer_id = name_lbl, count_lbl, lid
 
+        h.addWidget(dot)
+        h.addWidget(name_lbl)
+        h.addWidget(tag)
+        h.addStretch(1)
+        h.addWidget(count_lbl)
         h.addWidget(vis_btn)
         h.addWidget(lock_btn)
-        h.addWidget(name_lbl, 1)
 
         row.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         row.customContextMenuRequested.connect(
@@ -136,7 +195,7 @@ class _LayersMixin:
             row = lst.itemWidget(lst.item(i))
             lid = getattr(row, "_layer_id", None)
             if lid in names:
-                row._layer_name_lbl.setText(f"{names[lid]} ({len(self._items_in_layer(lid))})")
+                row._layer_count_lbl.setText(str(len(self._items_in_layer(lid))))
 
 
     @staticmethod
@@ -178,10 +237,65 @@ class _LayersMixin:
 
     def add_layer(self, name: str | None = None) -> dict:
         name = (name or "").strip() or f"레이어 {len(self._layers) + 1}"
-        layer = {"id": uuid.uuid4().hex[:8], "name": name, "visible": True, "locked": False}
+        used = {ly.get("color") for ly in self._layers}
+        color = next((c for c in _LAYER_COLORS if c not in used),
+                     _LAYER_COLORS[len(self._layers) % len(_LAYER_COLORS)])
+        layer = {"id": uuid.uuid4().hex[:8], "name": name, "visible": True, "locked": False,
+                 "color": color}
         self._layers.append(layer)
         self._refresh_layers_panel()
         return layer
+
+    # ---- 「그리는 중」 레이어 + 레이어 색 (첫 화면 재디자인 2026-10-07, 사용자 결정) ----
+    def _current_active_layer(self) -> str:
+        lid = getattr(self, "_active_layer", "default")
+        return lid if self._layer_by_id(lid) is not None else "default"
+
+    def set_active_layer(self, layer_id: str):
+        layer = self._layer_by_id(layer_id)
+        if layer is None or layer_id == self._current_active_layer():
+            return
+        self._active_layer = layer_id
+        self._refresh_layers_panel()
+        self.statusBar().showMessage(f'그리는 레이어: {layer["name"]}', 2500)
+
+    def _assign_new_items_to_active_layer(self, ops):
+        """`_push_entry`가 부른다 — 새로 생긴 도형(소속 없음)을 「그리는 중」 레이어로. 숨김·잠금
+        레이어로는 안 넣는다(그리자마자 사라지거나 못 고치게 되므로 기본 레이어에 남긴다)."""
+        lid = self._current_active_layer()
+        if lid == "default":
+            return
+        layer = self._layer_by_id(lid)
+        if not layer["visible"] or layer["locked"]:
+            return
+        for o in ops:
+            if o[0] == "create" and getattr(o[1], "_layer_id", None) is None:
+                o[1]._layer_id = lid
+
+    def _layer_color(self, layer: dict) -> str:
+        if not layer.get("color"):
+            layer["color"] = _LAYER_COLORS[self._layers.index(layer) % len(_LAYER_COLORS)]
+        return layer["color"]
+
+    def _pick_layer_color(self, layer_id: str, anchor):
+        layer = self._layer_by_id(layer_id)
+        if layer is None:
+            return
+
+        def _on_pick(col):
+            if col is None:
+                return
+            layer["color"] = QColor(col).name()
+            self._mark_dirty()
+            self._refresh_layers_panel()
+        self._show_color_grid_popup(anchor, QColor(self._layer_color(layer)), False, False,
+                                    "레이어 색", _on_pick)
+
+    def _move_selection_to_active_layer(self):
+        if not self._edit_targets():
+            self.statusBar().showMessage("옮길 도형을 먼저 선택하세요", 2500)
+            return
+        self.move_selection_to_layer(self._current_active_layer())
 
 
     def rename_layer(self, layer_id: str, name: str):
@@ -199,6 +313,8 @@ class _LayersMixin:
             it._layer_id = None
             self._sync_item_to_layer_state(it)   # 기본 레이어의 현재 표시/잠금을 물려받음
         self._layers = [ly for ly in self._layers if ly["id"] != layer_id]
+        if getattr(self, "_active_layer", "default") == layer_id:
+            self._active_layer = "default"
         self._refresh_layers_panel()
 
 
@@ -212,6 +328,8 @@ class _LayersMixin:
         layer["visible"] = visible
         for it in self._items_in_layer(layer_id):
             it.setVisible(visible)
+        if not visible and self._current_active_layer() == layer_id:
+            self._active_layer = "default"   # 숨긴 레이어엔 못 그리니 「그리는 중」은 기본으로
         self._refresh_layers_panel()
 
 
@@ -225,6 +343,8 @@ class _LayersMixin:
         layer["locked"] = locked
         for it in self._items_in_layer(layer_id):
             self._set_item_lock_flags(it, locked)
+        if locked and self._current_active_layer() == layer_id:
+            self._active_layer = "default"   # 잠근 레이어엔 못 그리니 「그리는 중」은 기본으로
         self._refresh_layers_panel()
 
 
@@ -269,6 +389,9 @@ class _LayersMixin:
         옛 .ecad(레이어 키 없음)는 기본 레이어로 리셋."""
         self._layers = layers if layers else [
             {"id": "default", "name": "기본", "visible": True, "locked": False}]
+        for i, ly in enumerate(self._layers):   # 옛 .ecad(색 없음)는 순서대로 기본 색
+            ly.setdefault("color", _LAYER_COLORS[i % len(_LAYER_COLORS)])
+        self._active_layer = "default"   # 파일을 열면 「그리는 중」은 기본부터(사용자 결정)
         for it in self._zorder_pool():
             self._sync_item_to_layer_state(it)
         self._refresh_layers_panel()

@@ -60,7 +60,7 @@ class CanvasWindow(
     # 쓰는 코드)을 한 줄도 안 건드리기 위한 장치 — CanvasDocument 도입은 단일 문서 동작에
     # 아무 변화가 없는 순수 리팩터다(docs/EasyCAD_계획.md §8 10번, 계획 파일 참조).
     _PER_DOC_ATTRS = (
-        "scene", "view", "undo", "redo", "layers", "doc_path", "external_path", "dirty",
+        "scene", "view", "undo", "redo", "layers", "active_layer", "doc_path", "external_path", "dirty",
         "badge_n", "paste_seq", "pan_last", "rerouting", "deferred_arrows",
         "deferred_fast", "group_sync_active", "geom_snapshot",
         "last_geom_change_count", "uniform_translation", "uniform_moved_arrows",

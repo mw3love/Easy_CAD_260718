@@ -193,5 +193,5 @@ def test_layer_count_updates_after_cancel():
     widgets = [w._layers_list.itemWidget(w._layers_list.item(i)) for i in range(w._layers_list.count())]
     from PyQt6.QtWidgets import QLabel
     labels = [lb.text() for wd in widgets if wd is not None for lb in wd.findChildren(QLabel)]
-    assert any("(1)" in t for t in texts + labels), texts + labels
+    assert any(t in ("1", "(1)") or "(1)" in t for t in texts + labels), texts + labels   # 2026-10-07 개수 따로
     _close(w)
