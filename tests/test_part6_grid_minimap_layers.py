@@ -1582,17 +1582,20 @@ def _contrast(fg, bg):
 
 
 def test_theme_toggle_keeps_color_swatch():
-    # 선택한 채 테마를 바꿔도 색 견본 스타일(_swatch_css)이 버튼 공용 QSS로 덮이지 않는다.
+    # 선택한 채 테마를 바꿔도 색 견본이 버튼 공용 QSS로 덮이지 않는다. [2026-10-07, 시안 P2] 견본은 이제
+    # 펼친 8칸 — 첫 칸(기본 잉크색)과 고리 색이 새 테마를 따라 다시 칠해진다.
+    from easycad.canvas.annotator_core import _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT
     w = CanvasWindow()
     start = w._dark
     try:
         r = _mk_rect(w._scene, w.make_pen(), 0, 0, 40, 30)
         r.setSelected(True)
         w._refresh_properties()
-        before = w._pf_color.styleSheet()
-        assert before.startswith("background:#")
+        assert "background:#" in w._pf_color_presets[1].styleSheet()
         w._apply_theme(not start)
-        assert w._pf_color.styleSheet() == before
+        ink = (_DEFAULT_INK_DARK if w._dark else _DEFAULT_INK_LIGHT).lower()
+        assert ink in w._pf_color_presets[0].styleSheet().lower()
+        assert "background:#" in w._pf_color_presets[1].styleSheet()
     finally:
         w._apply_theme(start)
 
@@ -1738,4 +1741,52 @@ def test_move_selection_button_moves_to_active_layer():
     n = len(w._layers)
     w._layer_add_btn.click()
     assert len(w._layers) == n + 1
+
+
+def test_props_card_presets_one_click_and_undo():
+    """[첫 화면 재디자인 2026-10-07, 시안 4라운드 P2] 선 색·채움 견본, 굵기 1·2·3·5, 선 모양 버튼은
+    한 번 누르면 바로 적용되고 되돌리기 한 칸. 지금 값과 같은 견본에 고리."""
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 40, 30)
+    r.setSelected(True)
+    w._refresh_properties()
+    w._pf_color_presets[1].click()                       # 파랑
+    assert w._read_props(r)["color"].name() == "#5aa9ff"
+    assert "2px solid" in w._pf_color_presets[1].styleSheet()
+    assert "2px solid" not in w._pf_color_presets[2].styleSheet()
+    w.undo()
+    assert w._read_props(r)["color"].name() != "#5aa9ff"
+    w._pf_fill_presets[1].click()                        # 반투명 파랑 채움
+    f = w._read_props(r)["fill"]
+    assert f is not None and f.alpha() < 255
+    assert "2px solid" in w._pf_fill_presets[1].styleSheet()
+    w._pf_fill_presets[0].click()                        # 없음
+    assert w._read_props(r)["fill"] is None
+    w._pf_width_presets[5.0].click()
+    assert w._read_props(r)["width"] == 5.0 and w._pf_width_presets[5.0].isChecked()
+    w._pf_style_btns[1].click()                          # 점선
+    assert w._read_props(r)["style"] == w._PEN_STYLE_ITEMS[1][0]
+    assert w._pf_style_btns[1].isChecked() and not w._pf_style_btns[0].isChecked()
+
+
+def test_props_card_hidden_without_selection_and_respects_closed():
+    """[2026-10-07, 시안 1라운드 A] 선택이 없으면 속성 카드를 숨기고, 사용자가 닫아 둔 카드는 선택해도 닫힌 채."""
+    w = CanvasWindow()
+    w.show()
+    panel = w._props_panel
+    assert not panel.isVisible()
+    r = _mk_rect(w._scene, w.make_pen(), 0, 0, 40, 30)
+    r.setSelected(True)
+    w._refresh_properties()
+    assert panel.isVisible()
+    r.setSelected(False)
+    w._refresh_properties()
+    assert not panel.isVisible()
+    try:
+        panel.set_panel_visible(False)                   # 우클릭 「닫기」
+        r.setSelected(True)
+        w._refresh_properties()
+        assert not panel.isVisible()
+    finally:
+        panel.set_panel_visible(True)
 

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _ArrowItem, _PolyArrowItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _SYMBOL_KINDS,
+    _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
 )
 from easycad.canvas.host_widgets import (
     _current_icon_color, _arrow_kind_of, _arrow_head_of, _apply_arrow_head, _is_rotatable,
@@ -166,6 +167,74 @@ class _StyleMixin:
 
         self._show_color_grid_popup(self._pf_fill, init, True, True, "채움색 선택", on_pick)
 
+
+    # ---- [첫 화면 재디자인 2026-10-07, 시안 4라운드 P2] 색·채움 견본 ----
+    def _line_presets(self) -> list:
+        """선 색 견본 8개 — 첫 칸은 지금 테마의 기본 잉크색(다크=밝은 회색, 라이트=진한 회색)."""
+        ink = QColor(_DEFAULT_INK_DARK if getattr(self, "_dark", True) else _DEFAULT_INK_LIGHT)
+        return [ink] + [QColor(c) for c in
+                        ("#5aa9ff", "#e02424", "#2e9e5b", "#e8a23a", "#8b5cf6", "#da7756", "#7f8c99")]
+
+    @staticmethod
+    def _fill_presets() -> list:
+        """채움 견본 8개 — 첫 칸 없음, 나머지는 약 1/3 불투명(캔버스·종이 모두에서 글자가 읽힘)."""
+        return [None] + [QColor(c) for c in
+                         ("#555aa9ff", "#555fbf8a", "#55e8c15a", "#55e0646a", "#55b48cf2", "#55da7756",
+                          "#558a98a8")]
+
+    def _preset_css(self, color, selected: bool) -> str:
+        ring = _current_icon_color().name()
+        if color is None:
+            bg, border = "transparent", "1px dashed #8a98a8"
+        else:
+            bg, border = color.name(), "1px solid #5d6976"
+            if color.alpha() < 255:   # 반투명은 rgba로(#RRGGBB엔 투명도가 없다)
+                bg = f"rgba({color.red()},{color.green()},{color.blue()},{color.alpha()})"
+        if selected:
+            border = f"2px solid {ring}"
+        return f"QToolButton {{ background:{bg}; border:{border}; border-radius:3px; }}"
+
+    def _apply_line_preset(self, i: int):
+        col = self._line_presets()[i]
+        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_color")]
+        if not sel:
+            return
+        self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
+        self._set_current_color(col)   # 다음 도형 기본 색으로(sticky) — ⋯ 팝업과 같은 규칙
+
+    def _apply_fill_preset(self, i: int):
+        col = self._fill_presets()[i]
+        if col is None:
+            self._clear_fill()
+            return
+        sel = [it for it in self._scene.selectedItems()
+               if hasattr(it, "apply_fill") or hasattr(it, "set_bg")]
+        if not sel:
+            return
+        self._edit_items(sel, lambda it: it.apply_fill(QColor(col))
+                         if hasattr(it, "apply_fill") else it.set_bg(QColor(col)))
+        self.current_fill = QColor(col)   # sticky
+
+    def _set_props_auto_visible(self, show: bool):
+        """선택 유무로 속성 카드를 보이고 숨긴다 — 사용자가 닫아 둔 카드(보기 메뉴·우클릭 「닫기」)는
+        선택해도 닫힌 채로 둔다(그 설정은 `_FloatingPanel`의 visible 키가 원본)."""
+        panel = getattr(self, "_props_panel", None)
+        if panel is None:
+            return
+        want = show and app_settings().value(panel._visible_key, True, type=bool)
+        if panel.isVisibleTo(self) != want:
+            panel.setVisible(want)
+
+    def _sync_props_presets(self, line_col, fill_col, fill_known: bool):
+        """견본 고리(지금 값과 같은 칸) + 굵기·선 모양 버튼 체크를 실제 값에 맞춘다."""
+        for b, c in zip(getattr(self, "_pf_color_presets", []), self._line_presets()):
+            b.setStyleSheet(self._preset_css(c, line_col is not None and c.name() == line_col.name()))
+            b.setToolTip(c.name())
+        fkey = (fill_col.name(QColor.NameFormat.HexArgb) if fill_col is not None else None)
+        for b, c in zip(getattr(self, "_pf_fill_presets", []), self._fill_presets()):
+            ckey = c.name(QColor.NameFormat.HexArgb) if c is not None else None
+            b.setStyleSheet(self._preset_css(c, fill_known and ckey == fkey))
+            b.setToolTip("없음" if c is None else ckey)
 
     def _clear_fill(self):
         """채움을 투명으로(None) — 그리드 팝업의 "없음" 항목이 호출(요청③: 별도 외부 버튼
@@ -399,13 +468,6 @@ class _StyleMixin:
         self.statusBar().showMessage(f"스타일 붙여넣기 — {len(sel)}개", 2000)
 
 
-    def _swatch_css(self, color: QColor | None) -> str:
-        """스와치 버튼 배경 — 단색이면 그 색, 혼합/없음이면 체크무늬 느낌의 중립 표시."""
-        if color is None:
-            return "background:transparent; border:1px solid #888; border-radius:3px;"
-        return (f"background:{color.name()}; border:1px solid #888; border-radius:3px;")
-
-
     def _resize_props_panel(self):
         """행 표시가 바뀐 뒤 `_props_panel`을 새 콘텐츠 크기로 맞춘다.
         ⚠ [2026-08-01] `_props_form.activate()` 하나만으론 세로 길이가 가끔 줄지 않고 이전
@@ -436,14 +498,16 @@ class _StyleMixin:
                 self._pf_type.setText("—")
                 self._pf_type_stack.setCurrentWidget(self._pf_type)   # [종류+도형 통합] 라벨 페이지로
                 self._pf_color_val.setText("—")
-                self._pf_color.setStyleSheet(self._swatch_css(None))
                 self._pf_fill.setEnabled(False)
                 self._pf_fill_val.setText("—")
-                self._pf_fill.setStyleSheet(self._swatch_css(None))
                 self._pf_hint.setText("객체를 선택하면 속성을 편집할 수 있습니다.")
                 for w in (self._pf_head_btn, self._pf_head_scale, self._pf_radius,
                          self._pf_dir_btn, self._pf_rotation, self._pf_fill_row):
                     self._props_form.setRowVisible(w, False)
+                self._sync_props_presets(None, None, False)
+                # [첫 화면 재디자인 2026-10-07, 시안 1라운드 A] 아무것도 선택 안 했으면 카드를 숨긴다(안내문만
+                # 떠 있던 자리를 도면에). 사용자가 닫아 둔 경우(보기 메뉴)는 선택해도 계속 닫힌 채.
+                self._set_props_auto_visible(False)
                 # 아래 "선택 있음" 분기와 동일 — 행을 숨긴 뒤 패널을 그 크기로 다시 줄이지
                 # 않으면, 직전에 화살표 등 확장 행이 있던 선택에서 커진 패널 크기가 선택
                 # 해제 후에도 그대로 남아 빈 공간만 길게 남는다.
@@ -462,12 +526,14 @@ class _StyleMixin:
             else:
                 self._pf_type.setText(next(iter(types)))
             self._pf_hint.setText("")
+            self._set_props_auto_visible(True)
 
             # 색 — 스와치 + hex(혼합이면 표시만).
             cols = [p["color"] for p in props if p["color"] is not None]
             uniform = cols and len(cols) == len(props) and len({c.name() for c in cols}) == 1
             self._pf_color.setEnabled(bool(cols))
-            self._pf_color.setStyleSheet(self._swatch_css(cols[0] if uniform else None))
+            for b in self._pf_color_presets:
+                b.setEnabled(bool(cols))
             self._pf_color_val.setText(cols[0].name() if uniform
                                        else ("혼합" if cols else "—"))
 
@@ -480,12 +546,12 @@ class _StyleMixin:
             # "비활성화된 빈 행"으로 남겨두면(옛 동작) 왜 보이는지 헷갈린다는 지적.
             self._props_form.setRowVisible(self._pf_fill_row, has_fillable)
             self._pf_fill.setEnabled(has_fillable)
+            uniform_fill, cur = False, None
             if has_fillable:
                 names = {(f.name(QColor.NameFormat.HexArgb) if f is not None else None)
                         for f in fillable}
                 uniform_fill = len(names) == 1
                 cur = fillable[0] if uniform_fill else None
-                self._pf_fill.setStyleSheet(self._swatch_css(cur))
                 if not uniform_fill:
                     self._pf_fill_val.setText("혼합")
                 elif cur is None:
@@ -493,14 +559,18 @@ class _StyleMixin:
                 else:
                     self._pf_fill_val.setText(cur.name())
             else:
-                self._pf_fill.setStyleSheet(self._swatch_css(None))
                 self._pf_fill_val.setText("—")
+            self._sync_props_presets(cols[0] if uniform else None, cur, uniform_fill)
 
             # 두께 — 균일하면 값, 아니면 대상 있음만 활성(값은 첫 대상).
             widths = [p["width"] for p in props if p["width"] is not None]
             self._pf_width.setEnabled(bool(widths))
             if widths:
                 self._pf_width.setValue(widths[0])
+            same_w = widths[0] if widths and len({round(x, 2) for x in widths}) == 1 else None
+            for v, b in self._pf_width_presets.items():
+                b.setEnabled(bool(widths))
+                b.setChecked(same_w is not None and abs(same_w - v) < 1e-6)
 
             # 선스타일 — pen 기반만. 대상 없으면 비활성.
             styles = [p["style"] for p in props if p["style"] is not None]
@@ -508,6 +578,9 @@ class _StyleMixin:
             if styles:
                 i = self._pf_style.findData(styles[0])
                 self._pf_style.setCurrentIndex(i if i >= 0 else 0)
+            for i, b in enumerate(self._pf_style_btns):
+                b.setEnabled(bool(styles))
+                b.setChecked(bool(styles) and i == self._pf_style.currentIndex())
 
             # 폰트 — 텍스트/라벨만.
             fonts = [p["font"] for p in props if p["font"] is not None]

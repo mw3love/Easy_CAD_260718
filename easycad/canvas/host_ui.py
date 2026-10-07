@@ -939,11 +939,25 @@ class _UIBuildMixin:
             for i, (st, _name) in enumerate(self._PEN_STYLE_ITEMS):
                 pf_style.setItemIcon(i, _pen_style_icon(
                     st, _current_icon_color(), self._PROPS_ICON_W, self._PROPS_ICON_H))
+            for b, (st, _name) in zip(getattr(self, "_pf_style_btns", []), self._PEN_STYLE_ITEMS):
+                b.setIcon(_pen_style_icon(st, _current_icon_color(), 26, 10))
         pf_routing = getattr(self, "_pf_routing_btn", None)
         if pf_routing is not None:
             for i, (kind, _label) in enumerate(_ARROW_KIND_LABELS):
                 pf_routing.setItemIcon(i, _arrow_kind_icon(
                     kind, _current_icon_color(), self._PROPS_ICON_W, self._PROPS_ARROW_ICON_H))
+        # [첫 화면 재디자인 2026-10-07, 시안 P2] 선 모양·굵기 버튼 — 켜진 것만 옅은 면+테두리. 스핀박스와
+        # 같은 폼 안이라 패널 전체가 아니라 버튼마다 따로 건다(속성 패널 스핀박스 sizeHint 함정, 위 주석).
+        seg_line, seg_on, seg_ring = (("#3a4450", "#3d4856", "#cdd8e3") if dark
+                                      else ("#c9d3dc", "#dfe5eb", "#39434f"))
+        seg_qss = (f"QToolButton {{ border:1px solid {seg_line}; border-radius:4px; background:transparent; }}"
+                   f"QToolButton:checked {{ background:{seg_on}; border-color:{seg_ring}; }}")
+        for b in (list(getattr(self, "_pf_style_btns", []))
+                  + list(getattr(self, "_pf_width_presets", {}).values())):
+            b.setStyleSheet(seg_qss)
+        # 견본 첫 칸(기본 잉크색)과 고리 색이 테마를 따르므로 선택 중이면 속성 카드를 다시 채운다.
+        if getattr(self, "_pf_color_presets", None) and getattr(self, "_props_form", None) is not None:
+            self._refresh_properties()
         pf_dir = getattr(self, "_pf_dir_btn", None)
         if pf_dir is not None:
             pf_dir.setIcon(_flip_icon(_current_icon_color()))
@@ -1068,9 +1082,8 @@ class _UIBuildMixin:
         # [2026-08-20] _pf_routing_btn은 QToolButton→QComboBox로 바뀌어(아이콘화 통일) 이
         # QToolButton 전용 QSS가 안 먹는다 — _pf_style(원래도 QComboBox)과 같은 취급으로
         # 목록에서 뺐다(적용해도 무해하지만 아무 효과 없는 스타일 적용은 남기지 않음).
-        # [UI 검토 2026-09-25] `_pf_color`·`_pf_fill`(색 견본)은 뺐다 — 여기서 btn_qss로 덮으면
-        # `_refresh_properties`가 칠해 둔 견본색(`_swatch_css`)이 지워져, 선택한 채 테마를
-        # 바꾸면 견본이 사라지고 색 값 글자만 남았다.
+        # [UI 검토 2026-09-25] `_pf_color`·`_pf_fill`은 뺐다 — [2026-10-07] 이제 둘은 「…」 버튼이고 견본은
+        # `_pf_color_presets`·`_pf_fill_presets`(스타일은 `_sync_props_presets`가 칠함, 아래 테마 끝에서 다시).
         for name in ("_pf_swap_btn", "_pf_dir_btn"):
             b = getattr(self, name, None)
             if b is not None:
@@ -2143,34 +2156,64 @@ class _UIBuildMixin:
         self._pf_type_stack.addWidget(self._pf_type)
         self._pf_type_stack.addWidget(self._pf_swap_btn)
 
-        # 색 — 스와치 버튼(현재색 표시) → 클릭 시 QColorDialog.
+        # 색 — [첫 화면 재디자인 2026-10-07, 시안 4라운드 P2] 견본 8개를 펼쳐 두고(한 번 클릭으로 바로 적용)
+        # 끝의 「⋯」가 예전 스와치 버튼 자리(그리드 팝업·다른 색). 지금 색과 같은 견본에 테두리 고리.
+        # hex 글자(`_pf_color_val`)는 시안에 없어 숨기되 값은 계속 채운다(테스트·접근성 텍스트).
         self._pf_color = QToolButton()
-        self._pf_color.setFixedSize(QSize(48, 20))
-        self._pf_color.setToolTip("클릭: 색 선택")
+        self._pf_color.setText("…")
+        self._pf_color.setFixedSize(QSize(22, 20))
+        self._pf_color.setToolTip("다른 색 고르기")
         self._pf_color.clicked.connect(self._edit_color)
         self._pf_color_val = QLabel("—")
         self._pf_color_val.setForegroundRole(QPalette.ColorRole.PlaceholderText)   # [UI 검토 2026-09-25] #888 대비 미달
+        self._pf_color_val.hide()
         color_row = QWidget(); ch = QHBoxLayout(color_row)
-        ch.setContentsMargins(0, 0, 0, 0); ch.setSpacing(6)
-        ch.addWidget(self._pf_color); ch.addWidget(self._pf_color_val, 1)
+        ch.setContentsMargins(0, 0, 0, 0); ch.setSpacing(3)
+        self._pf_color_presets: list[QToolButton] = []
+        for i in range(8):
+            b = QToolButton(); b.setFixedSize(QSize(18, 18))
+            b.clicked.connect(lambda _c=False, i=i: self._apply_line_preset(i))
+            ch.addWidget(b); self._pf_color_presets.append(b)
+        ch.addWidget(self._pf_color); ch.addWidget(self._pf_color_val); ch.addStretch(1)
 
         # [신규기능] 채움 — 스와치 하나(클릭=그리드 팝업, "없음"도 팝업 안 항목). rect/ellipse/
         # symbol 전용, 대상 없으면 행 자체를 비활성화(has_fill로 판정, _refresh_properties).
+        # [2026-10-07, 시안 P2] 색과 같은 모양 — 견본 8개(첫 칸 = 없음, 나머지는 반투명이라 다크·라이트 캔버스와
+        # 흰 종이 PDF 모두에서 글자가 읽힌다) + 「⋯」(예전 스와치 = 그리드 팝업·다른 색·투명도).
         self._pf_fill = QToolButton()
-        self._pf_fill.setFixedSize(QSize(48, 20))
-        self._pf_fill.setToolTip("클릭: 채움색 선택")
+        self._pf_fill.setText("…")
+        self._pf_fill.setFixedSize(QSize(22, 20))
+        self._pf_fill.setToolTip("다른 채움색 고르기")
         self._pf_fill.clicked.connect(self._edit_fill)
         self._pf_fill_val = QLabel("—")
         self._pf_fill_val.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+        self._pf_fill_val.hide()
         self._pf_fill_row = fill_row = QWidget(); fh = QHBoxLayout(fill_row)
-        fh.setContentsMargins(0, 0, 0, 0); fh.setSpacing(6)
-        fh.addWidget(self._pf_fill); fh.addWidget(self._pf_fill_val, 1)
+        fh.setContentsMargins(0, 0, 0, 0); fh.setSpacing(3)
+        self._pf_fill_presets: list[QToolButton] = []
+        for i in range(8):
+            b = QToolButton(); b.setFixedSize(QSize(18, 18))
+            b.clicked.connect(lambda _c=False, i=i: self._apply_fill_preset(i))
+            fh.addWidget(b); self._pf_fill_presets.append(b)
+        fh.addWidget(self._pf_fill); fh.addWidget(self._pf_fill_val); fh.addStretch(1)
 
         # 두께 — 스핀박스(px).
         self._pf_width = QDoubleSpinBox()
         self._pf_width.setRange(0.5, 50.0); self._pf_width.setSingleStep(0.5)
         self._pf_width.setDecimals(1); self._pf_width.setSuffix(" px")
         self._pf_width.valueChanged.connect(self._edit_width)
+        # [2026-10-07, 시안 P2] 자주 쓰는 굵기 버튼 1·2·3·5 — 한 번 클릭. 다른 값은 옆 숫자칸(예전 그대로).
+        width_row = QWidget(); wh = QHBoxLayout(width_row)
+        wh.setContentsMargins(0, 0, 0, 0); wh.setSpacing(2)
+        self._pf_width_presets: dict[float, QToolButton] = {}
+        for v in (1.0, 2.0, 3.0, 5.0):
+            b = QToolButton(); b.setText(f"{v:g}"); b.setCheckable(True)
+            b.setFixedSize(QSize(24, 22)); b.setToolTip(f"{v:g} px")
+            b.setProperty("propSeg", True)
+            b.clicked.connect(lambda _c=False, v=v: self._pf_width.setValue(v))
+            wh.addWidget(b); self._pf_width_presets[v] = b
+        self._pf_width.setFixedWidth(70)
+        wh.addSpacing(4); wh.addWidget(self._pf_width); wh.addStretch(1)
 
         # 선스타일 — 콤보(pen 기반 도형 전용; 화살표·DXF는 #3). [실사용 피드백 2026-08-20]
         # 텍스트 목록 대신 각 스타일을 실제로 그린 아이콘. 1차(아이콘+텍스트)는 QComboBox
@@ -2186,10 +2229,27 @@ class _UIBuildMixin:
                                                     self._PROPS_ICON_W, self._PROPS_ICON_H), "", st)
             self._pf_style.setItemData(i, name, Qt.ItemDataRole.ToolTipRole)
         self._pf_style.currentIndexChanged.connect(self._edit_style)
+        # [2026-10-07, 시안 P2] 선 모양 5종을 펼친 버튼으로 — 누르면 위 콤보의 현재 항목을 바꿔(편집 신호는
+        # 콤보가 그대로 낸다) 펼침 목록을 여는 단계를 없앤다. 콤보 자체는 숨겨 두고 값의 원본으로만 쓴다.
+        style_row = QWidget(); sh = QHBoxLayout(style_row)
+        sh.setContentsMargins(0, 0, 0, 0); sh.setSpacing(2)
+        self._pf_style_btns: list[QToolButton] = []
+        for i, (st, name) in enumerate(self._PEN_STYLE_ITEMS):
+            b = QToolButton(); b.setCheckable(True); b.setAutoExclusive(True)
+            b.setIcon(_pen_style_icon(st, _current_icon_color(), 26, 10)); b.setIconSize(QSize(26, 10))
+            b.setFixedSize(QSize(34, 22)); b.setToolTip(name)
+            b.setProperty("propSeg", True)
+            b.clicked.connect(lambda _c=False, i=i: self._pf_style.setCurrentIndex(i))
+            sh.addWidget(b); self._pf_style_btns.append(b)
+        sh.addStretch(1)
+        self._pf_style.hide()
+        sh.addWidget(self._pf_style)
 
         # 폰트 — 스핀박스(pt; 텍스트/라벨 전용).
         self._pf_font = QSpinBox()
         self._pf_font.setRange(_MIN_FONT, _MAX_FONT); self._pf_font.setSuffix(" pt")
+        # [2026-10-07, 시안 P2 「− 12 pt ＋」] 위아래 화살표 대신 −/＋ 기호.
+        self._pf_font.setButtonSymbols(QSpinBox.ButtonSymbols.PlusMinus)
         self._pf_font.valueChanged.connect(self._edit_font)
 
         # [실사용 피드백 2026-08-21] 항목 순서 — 종류(무엇인지) → 채움·색(같은 '색' 계열,
@@ -2198,8 +2258,8 @@ class _UIBuildMixin:
         form.addRow("종류", self._pf_type_stack)
         form.addRow("채움", fill_row)
         form.addRow("색", color_row)
-        form.addRow("선", self._pf_style)
-        form.addRow("두께", self._pf_width)
+        form.addRow("선", style_row)
+        form.addRow("두께", width_row)
         form.addRow("폰트", self._pf_font)
 
         # [미니패널 통합, 2026-07-31] 선택 위를 따라다니던 플로팅 컨텍스트 툴바(M3 #15)를
