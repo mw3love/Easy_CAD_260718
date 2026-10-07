@@ -63,6 +63,44 @@ def test_toolbar_icons_and_actions():
     assert w._act_snap.isChecked() is False and w.snap_enabled is False
 
 
+def test_toolbar_labels_toggles_and_ai_button():
+    """[첫 화면 재디자인 2026-10-07, 시안 2라운드 T3] 상단바 버튼은 아이콘 밑 짧은 이름,
+    「100%」「전체 보기」는 상단바에서 빠지고(미니맵 확대 줄로), 보기 토글 4종은 「체크박스+글자」
+    2×2 묶음, 「AI로 만들기」는 강조 버튼, 테마·도움말은 아이콘만."""
+    w = CanvasWindow()
+    tb = w._toolbar
+    assert tb.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+    assert w._act_new.iconText() == "새로" and w._act_save.iconText() == "저장"
+    assert w._act_new.text() == "새 탭"   # 메뉴 글자는 그대로
+    assert w._tool_buttons["select"].text() == "선택"
+    assert w._tool_buttons["select"].toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+    acts = tb.actions()
+    assert w._act_zoom100 not in acts and w._act_fit not in acts
+    assert w._act_zoom100 in w.menuBar().actions()[4].menu().actions()   # 보기(&V)엔 그대로
+    bs = w._view_toggle_buttons
+    assert [b.text() for b in bs.values()] == ["스냅", "직교", "격자", "정렬선"]
+    grid = next(iter(bs.values())).parentWidget().layout()
+    assert grid.itemAtPosition(0, 1).widget() is bs[w._act_ortho]       # 윗줄 스냅·직교
+    assert grid.itemAtPosition(1, 0).widget() is bs[w._act_grid]        # 아랫줄 격자·정렬선
+    for a, b in bs.items():
+        assert not b.isCheckable() and not b.icon().isNull()
+    # 버튼 클릭 → 액션·실제 상태, 액션 트리거(메뉴·단축키) → 버튼 아이콘·툴팁
+    was = w._act_grid.isChecked()
+    bs[w._act_grid].click()
+    assert w._act_grid.isChecked() is (not was) and w.grid_enabled is (not was)
+    w._act_align.setToolTip("x")
+    assert bs[w._act_align].toolTip() == "x"
+    ai = tb.widgetForAction(w._act_ai_make)
+    assert ai.objectName() == "aiMakeBtn"
+    assert ai.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    for a in (w._act_theme, w._act_help):
+        assert tb.widgetForAction(a).toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+    assert "border-bottom" not in tb.styleSheet()   # 코랄 하단선 제거
+    w._apply_theme(False)
+    assert all(not b.icon().isNull() for b in bs.values())
+    w._apply_theme(True)
+
+
 def test_help_menu_is_independent_top_level_menu():
     # [실사용 요청 2026-08-21] "단축키 도움말"이 보기(&V)에 파묻혀 있던 것을 독립
     # 도움말(&H) 메뉴로 승격 + "프로그램 정보…" 추가.

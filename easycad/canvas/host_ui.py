@@ -22,6 +22,7 @@ from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _PolyArrowItem, _tool_icon, _TOOLS, _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT, _MIN_FONT, _MAX_FONT,
     _SYMBOL_KINDS, _pen_style_icon, _arrow_kind_icon, _flip_icon, _arrow_head_icon, _icons_dir,
+    _svg_icon,
 )
 from easycad.fileio.pdf_export import export_svg_symbol
 from easycad.fileio.document import (
@@ -107,6 +108,7 @@ def _symbol_name_matches(name: str, query: str) -> bool:
 
     return any(all(same(qc, n[i + k]) for k, qc in enumerate(q))
                for i in range(len(n) - len(q) + 1))
+
 _PALETTE_FONT_SHRINK = 1   # pt만큼 기본 폰트에서 뺀다 — [2026-08-12 5차] 2→1, 너무 작다는 피드백
 # [2026-08-12 6차] 폰트를 키운 뒤 버튼 높이(40)가 실제 sizeHint(48)보다 작아 라벨 아래가
 # 잘렸다 — 고정 크기가 자연 sizeHint 밑으로 내려가면 항상 이 클래스 버그가 재발하므로,
@@ -638,11 +640,28 @@ class _UIBuildMixin:
 
     # 파일 탐색기에서 이미지를 캔버스로 끌어다 놓기 — QMainWindow가 드롭을 받는다(코어 뷰 무수정).
 
+    # [첫 화면 재디자인 2026-10-07, 시안 2라운드 T3] 상단바 버튼 밑에 붙는 짧은 이름 — 메뉴 글자
+    # (`text()`)는 그대로 두고 `iconText`만 바꾼다. 그리기 도구(액션 없는 QToolButton)도 여기서.
+    _TOOLBAR_LABELS = {
+        "new": "새로", "open": "열기", "save": "저장", "pdf": "PDF",
+        "undo": "되돌리기", "redo": "다시", "titleblock": "표제란", "table": "표", "image": "이미지",
+        "select": "선택", "arrow": "화살표", "text": "글자", "line": "선", "polygon": "다각형",
+        "pen": "펜", "badge": "번호", "trim": "자르기", "pin": "고정",
+    }
+
     def _build_toolbar(self):
         tb = self.addToolBar("주 도구모음")
         tb.setMovable(False)
         tb.setIconSize(QSize(20, 20))
-        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        # [첫 화면 재디자인 2026-10-07, 시안 2라운드 T3 채택] 아이콘만(T1)은 "알아보기 힘듦",
+        # 한 줄 전부 옆 글자(T2)는 "마우스 이동이 너무 넓음"으로 탈락 — 아이콘 밑에 짧은 이름.
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        lbl = self._TOOLBAR_LABELS
+        for a, key in ((self._act_new, "new"), (self._act_open, "open"), (self._act_save, "save"),
+                       (self._act_pdf, "pdf"), (self._act_undo, "undo"), (self._act_redo, "redo"),
+                       (self._act_tb, "titleblock"), (self._act_tbl, "table"),
+                       (self._act_img, "image"), (self._act_pin, "pin")):
+            a.setIconText(lbl[key])
 
         # [2026-08-13 재개편, 사용자 요청 "모든 메뉴 항목을 상단바에도"] 옛 결정(내보내기·삽입
         # 계열은 아이콘만으론 구분 어려워 상단바에서 제거)을 뒤집는다 — 각 액션 생성 시 이미
@@ -664,7 +683,8 @@ class _UIBuildMixin:
 
         # 삽입(&I)
         # [§8 항목36] AI 생성 아이콘 세 개(Mermaid·SVG·사진→도면) → 「AI로 만들기」 하나(패널 켜기/끄기).
-        for a in (self._act_tb, self._act_tbl, self._act_img, self._act_ai_make):
+        # [첫 화면 재디자인 2026-10-07] 그 「AI로 만들기」는 강조 버튼으로 보기 토글 뒤에 따로 둔다.
+        for a in (self._act_tb, self._act_tbl, self._act_img):
             tb.addAction(a)
         tb.addSeparator()
 
@@ -681,6 +701,8 @@ class _UIBuildMixin:
             btn = QToolButton()
             btn.setIcon(_tool_icon(key, _current_icon_color()))
             btn.setIconSize(QSize(20, 20))
+            btn.setText(lbl[key])
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             # [단축키 설정, 2026-08-21] 레지스트리 현재값으로(재할당 반영) — `_TOOLS`의
             # `sc`는 매핑 없는 도구용 폴백일 뿐.
             sid = shortcuts.SHORTCUT_ID_BY_TOOL.get(key)
@@ -704,13 +726,37 @@ class _UIBuildMixin:
         tb.addAction(self._act_pin)
         tb.addSeparator()
 
-        # 보기(&V) — 메뉴 자체의 내부 구분(줌 / 스냅·정렬 토글 / 테마·도움말)을 그대로 반영.
-        for a in (self._act_zoom100, self._act_fit):
-            tb.addAction(a)
+        # 보기(&V) — [첫 화면 재디자인 2026-10-07] 「100%」「전체 보기」는 상단바에서 빼고 미니맵
+        # 카드의 확대 줄로 옮긴다(사용자 결정, 보기 메뉴·단축키는 그대로). 스냅·직교·격자·정렬선은
+        # 「체크박스+글자」 2×2 묶음 — 2026-09-25에 아이콘 전용으로 되돌렸던 것을 시안 2라운드 T3
+        # 채택으로 다시 뒤집음(상단바 전체에 글자가 붙으니 아이콘만 남은 묶음이 오히려 안 읽힘).
+        # 액션은 보기 메뉴가 계속 쓰므로 별도 버튼을 잇고 상태는 항상 액션이 원본(`_sync_view_toggle`).
+        # 버튼은 체크형이 아니다 — 켜짐은 체크박스 아이콘이 말하므로 툴바 QSS의 checked 틴트를 안 받게.
+        # ⚠ 툴바 직속이 아니라 묶음 위젯의 자식이라 `QToolBar`가 iconSize를 20으로 덮어쓰는
+        # 함정(pitfalls 「setIconSize 무시」)을 밟지 않는다.
+        toggles = QWidget()
+        grid = QGridLayout(toggles)
+        grid.setContentsMargins(2, 0, 2, 0); grid.setHorizontalSpacing(2); grid.setVerticalSpacing(0)
+        self._view_toggle_buttons: dict[QAction, QToolButton] = {}
+        for i, (a, label) in enumerate(((self._act_snap, "스냅"), (self._act_ortho, "직교"),
+                                        (self._act_grid, "격자"), (self._act_align, "정렬선"))):
+            btn = QToolButton()
+            btn.setText(label)
+            btn.setIconSize(QSize(16, 16))
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            btn.setProperty("viewToggle", True)   # 툴바 QSS의 여백·글자 규칙용(_apply_theme)
+            btn.clicked.connect(lambda _c=False, a=a: a.trigger())
+            a.changed.connect(lambda a=a, b=btn: self._sync_view_toggle(a, b))   # 체크·툴팁(단축키 재할당)
+            grid.addWidget(btn, i // 2, i % 2)   # 윗줄 스냅·직교, 아랫줄 격자·정렬선(시안 T3 순서)
+            self._view_toggle_buttons[a] = btn
+            self._sync_view_toggle(a, btn)
+        tb.addWidget(toggles)
         tb.addSeparator()
-        for a in (self._act_snap, self._act_ortho, self._act_grid, self._act_align):
-            tb.addAction(a)
-        tb.addSeparator()
+        # 「AI로 만들기」는 강조 버튼(시안 1라운드 D·2라운드 T3에서 호평) — 아이콘 옆 글자.
+        tb.addAction(self._act_ai_make)
+        ai_btn = tb.widgetForAction(self._act_ai_make)
+        ai_btn.setObjectName("aiMakeBtn")
+        ai_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
 
         # 우측 정렬 스페이서 → 테마 → 도움말 (여백이 있을 때만 밀어냄 — 좁은 창에서는 그냥 이어짐).
         spacer = QWidget()
@@ -718,7 +764,15 @@ class _UIBuildMixin:
         tb.addWidget(spacer)
         tb.addAction(self._act_theme)
         tb.addAction(self._act_help)
+        for a in (self._act_theme, self._act_help):   # 오른쪽 끝 둘은 아이콘만(시안 그대로)
+            tb.widgetForAction(a).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self._toolbar = tb
+
+    def _sync_view_toggle(self, act: QAction, btn: QToolButton):
+        """보기 토글 버튼을 액션 상태에 맞춘다 — 체크박스 아이콘(테마 중립색)·툴팁."""
+        btn.setToolTip(act.toolTip())
+        btn.setIcon(_svg_icon("check_on" if act.isChecked() else "check_off", 16,
+                              _current_icon_color()))
 
     # ---- 테마 (다크 기본 + 라이트 토글) -------------------------------------
 
@@ -939,20 +993,33 @@ class _UIBuildMixin:
             sep_color = "#3d4b5c" if dark else "#c9d3dc"
             # [2026-08-13 피드백] 패널 헤더의 코랄 하단선(위 head_qss)과 같은 언어를 상단
             # 툴바에도 — "이 아래부터 캔버스"를 앱 전체 크롬에 통일.
+            # [첫 화면 재디자인 2026-10-07] 코랄 하단선은 뺀다 — 강조색은 "의미 있는 상태"에만
+            # (디자인 취향 확정 원칙), 시안 1라운드 A·2라운드 T3 모두 선 없이 채택.
+            # 버튼 밑 글자는 11px(시안 T3), 보기 토글 글자는 12.5px·좌우 여백을 글자에 맞춤.
+            # 「AI로 만들기」(#aiMakeBtn)만 따뜻한 테두리의 강조 버튼 — checked(패널 켜짐)는 코랄 틴트.
+            ai_bg, ai_bd, ai_fg = (("#2a2f36", "#4a3e38", "#f0d9cf") if dark
+                                   else ("#fbefe9", "#e3b9a6", "#7a3a22"))
             toolbar.setStyleSheet(
-                f"QToolBar {{ border:none; border-bottom:2px solid {accent}; }}"
-                f"QToolBar::separator {{ background:{sep_color}; width:1px; margin:6px 9px; }}"
-                + btn_qss)
-            # 순간적 활성 그룹: 그리기 도구 6종(선택/화살표/텍스트/선/펜/번호) + 핀 + 직교.
-            # 스냅·격자는 objectName을 안 줘서 위 일반 규칙(옅은 35)에 그대로 남는다.
+                "QToolBar { border:none; spacing:1px; }"
+                f"QToolBar::separator {{ background:{sep_color}; width:1px; margin:8px 6px; }}"
+                + btn_qss
+                + "QToolBar QToolButton { font-size:11px; padding:2px 3px; }"
+                + 'QToolButton[viewToggle="true"] { font-size:12.5px; padding:1px 6px 1px 3px; }'
+                + f"QToolButton#aiMakeBtn {{ font-size:13px; background:{ai_bg};"
+                  f" border:1px solid {ai_bd}; border-radius:8px; color:{ai_fg}; padding:6px 12px; }}"
+                + "QToolButton#aiMakeBtn:checked { background:rgba(218,119,86,90); }")
+            # 순간적 활성 그룹: 그리기 도구 6종(선택/화살표/텍스트/선/펜/번호) + 핀.
+            # [2026-10-07] 직교는 이제 체크박스 묶음이라(켜짐을 체크박스가 말함) 강조 대상에서 빠짐.
             _strong_check_widgets = list(getattr(self, "_tool_buttons", {}).values())
-            for act_name in ("_act_pin", "_act_ortho"):
-                act = getattr(self, act_name, None)
-                w = toolbar.widgetForAction(act) if act is not None else None
-                if w is not None:
-                    _strong_check_widgets.append(w)
+            act = getattr(self, "_act_pin", None)
+            w = toolbar.widgetForAction(act) if act is not None else None
+            if w is not None:
+                _strong_check_widgets.append(w)
             for w in _strong_check_widgets:
                 w.setObjectName("toolStrongCheck")
+        # 보기 토글 체크박스 아이콘도 중립색이라 테마 전환마다 재칠.
+        for act, btn in getattr(self, "_view_toggle_buttons", {}).items():
+            self._sync_view_toggle(act, btn)
         _accent_btns = (
             list(getattr(self, "_shape_tool_buttons", {}).values())
             + list(getattr(self, "_sym_buttons", {}).values())
