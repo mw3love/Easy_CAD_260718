@@ -56,7 +56,7 @@ def test_search_filters_and_hides_empty_folders():
         assert set(w._custom_sym_buttons) == {zig["id"]}
         w._custom_sym_search.setText("없는이름")
         assert not w._custom_sym_buttons and body.count() == 1
-        assert body.itemAt(0).widget().text() == "일치하는 심볼 없음"
+        assert body.itemAt(0).widget().text() == "일치하는 도형·심볼 없음"
         w._custom_sym_search.clear()
         assert set(w._custom_sym_buttons) == {ant["id"], amp["id"], zig["id"]} and body.count() == 3
 
@@ -95,8 +95,83 @@ def test_rebuild_during_search_keeps_query_and_esc_clears():
         assert len(w._custom_sym_buttons) == 4
 
 
-def test_search_box_sits_under_my_symbols_title():
+def test_search_box_sits_at_top_of_shape_symbol_card():
+    """[첫 화면 재디자인 2026-10-07, 시안 3라운드 S3] 검색칸은 카드 맨 위(「자주 쓰는 것」 위)."""
     w = CanvasWindow()
-    sec = w._custom_sym_section.layout()
-    assert sec.itemAt(1).widget().isAncestorOf(w._custom_sym_search)   # 제목(0) 바로 다음
+    outer = w._left_container.layout()
+    assert outer.itemAt(0).widget().isAncestorOf(w._custom_sym_search)
+    assert outer.itemAt(1).widget() is w._recent_section
+    assert outer.itemAt(2).widget() is w._basic_section
     assert w._custom_sym_search.isClearButtonEnabled()
+    assert w._left_panel._title_lbl.text() == "도형 · 심볼"
+
+
+def test_search_also_filters_basic_shapes_and_hides_recent():
+    with _isolated_symbol_library():
+        _lib("폴더A", "폴더B")
+        w = CanvasWindow()
+        w.show()
+        basic = [b for _g, bs in w._shape_sections for b in bs]
+        w._custom_sym_search.setText("ㅅ")          # 사각형·삼각형·시작/끝·저장소
+        shown = [b.text() for b in basic if b.isVisibleTo(w._left_container)]
+        assert shown == ["사각형", "삼각형", "시작/끝", "저장소"]
+        grid = w._shape_sections[0][0]
+        assert grid.itemAtPosition(0, 1).widget().text() == "삼각형"   # 빈칸 없이 앞에서부터
+        assert not w._recent_section.isVisibleTo(w._left_container)
+        w._custom_sym_search.setText("판단")
+        assert w._custom_sym_body.layout().count() == 0               # 심볼은 없고 도형만 맞음 → 안내 없음
+        w._custom_sym_search.clear()
+        assert all(b.isVisibleTo(w._left_container) for b in basic)
+        assert w._recent_section.isVisibleTo(w._left_container)
+
+
+def test_recent_palette_slots_keep_position_and_replace_oldest():
+    from easycad.canvas.host_ui import _recent_palette_note
+    s = [["a", 1], ["b", 2]]
+    s = _recent_palette_note(s, "a")                        # 있던 것 → 자리 그대로, 도장만 새로
+    assert [k for k, _ in s] == ["a", "b"] and s[0][1] == 3
+    s = _recent_palette_note(s, "c", max_n=3)               # 빈칸이면 뒤에
+    assert [k for k, _ in s] == ["a", "b", "c"]
+    s = _recent_palette_note(s, "d", max_n=3)               # 꽉 차면 가장 오래 안 쓴(b) 자리에
+    assert [k for k, _ in s] == ["a", "d", "c"]
+
+
+def test_recent_section_defaults_and_records_palette_use():
+    st = app_settings()
+    st.remove("recent_palette")
+    try:
+        w = CanvasWindow()
+        assert [b.text() for b in w._recent_palette_buttons.values()] == ["사각형", "원", "판단", "시작/끝"]
+        w._shape_tool_buttons["triangle"].click()           # 팔레트에서 꺼냄 → 기록
+        assert list(w._recent_palette_buttons) == ["rect", "ellipse", "sym:decision", "sym:terminal",
+                                                   "sym:triangle"]
+        assert w._recent_palette_buttons["sym:triangle"].isChecked()   # 무장 표시도 같이
+        w._recent_palette_buttons["rect"].click()           # 이미 있는 것 → 자리 그대로
+        assert list(w._recent_palette_buttons)[0] == "rect"
+        w2 = CanvasWindow()                                 # 저장돼 다음 창에도
+        assert "sym:triangle" in w2._recent_palette_buttons
+    finally:
+        st.remove("recent_palette")
+
+
+def test_palette_view_list_shows_full_names_and_persists():
+    from PyQt6.QtCore import Qt as _Qt
+    st = app_settings()
+    with _isolated_symbol_library():
+        ant, _amp, _zig = _lib("폴더A", "폴더B")
+        symbol_library.rename_symbol(ant["id"], "야기 안테나 3소자 긴 이름")
+        try:
+            w = CanvasWindow()
+            assert w._palette_view_btns["icon"].isChecked()
+            b = w._custom_sym_buttons[ant["id"]][0]
+            assert b.text() == "야기 안테나"                 # 아이콘 보기는 앞 6글자
+            w._palette_view_btns["list"].click()
+            b = w._custom_sym_buttons[ant["id"]][0]
+            assert b.text() == "야기 안테나 3소자 긴 이름"
+            assert b.toolButtonStyle() == _Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            assert st.value("palette_view") == "list"
+            assert CanvasWindow()._palette_view == "list"
+            w._palette_view_btns["icon"].click()
+            assert w._custom_sym_buttons[ant["id"]][0].toolButtonStyle() ==                 _Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+        finally:
+            st.remove("palette_view")

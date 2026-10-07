@@ -208,7 +208,8 @@ def test_floating_panels_and_zoom_readout():
     assert set(w._sym_buttons) == {"decision", "terminal", "data", "prep", "database"}
     # 버튼 고정 크기 — 패널이 넓어져도 커지거나 벌어지지 않는다(좌측 뭉침).
     b = w._shape_tool_buttons["rect"]
-    assert b.minimumWidth() == b.maximumWidth() == 48
+    from easycad.canvas.host_ui import _PALETTE_BTN_WIDTH
+    assert b.minimumWidth() == b.maximumWidth() == _PALETTE_BTN_WIDTH   # [2026-10-07] 48→56(시안 S3)
     # 속성 패널은 값(hex)이 안 잘리는 최소폭 바닥을 가진다(슬랙 없이 그 아래로 못 좁힘).
     # [2026-08-20] 170→190 — 힌트 라벨 최대폭과 맞춰 선택 유무에 따른 패널 폭 요동을 없앰.
     assert w._props_panel._body_layout.itemAt(0).widget().minimumWidth() == 190

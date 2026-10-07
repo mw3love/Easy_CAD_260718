@@ -1008,6 +1008,7 @@ class _FileIOMixin:
         캔버스 크기로 보이는데 내 심볼만 다르다"는 지적으로 여기 그룹 경로를 신설,
         `_palette_drag_group`(리스트)로 단일 아이템 경로와 상태를 분리해 이후
         `_palette_drag_move`/`_palette_drag_end`가 둘 중 있는 쪽만 따른다."""
+        self._note_palette_use(tool_key)   # [첫 화면 재디자인 2026-10-07] 「자주 쓰는 것」 — 끌어서 꺼낸 것도
         if tool_key in ("port_rect", "port_circle"):
             return False
         if tool_key.startswith("customsym:"):

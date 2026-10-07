@@ -398,6 +398,9 @@ class _CanvasMixin:
         for k, blist in getattr(self, "_custom_sym_buttons", {}).items():   # [신규기능 §8-8]
             for b in blist:
                 b.setChecked(f"customsym:{k}" == key)
+        # [첫 화면 재디자인 2026-10-07] 「자주 쓰는 것」 칸은 tool_key 그대로 키.
+        for k, b in getattr(self, "_recent_palette_buttons", {}).items():
+            b.setChecked(k == key)
 
 
     def next_badge_number(self) -> int:

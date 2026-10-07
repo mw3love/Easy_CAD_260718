@@ -755,7 +755,9 @@ def test_trace_photo_lays_on_canvas_background_not_as_item():
     tr = _attach_trace(w)
     assert tr is not None and tr.bar.isVisible() and tr.hint.text() == TRACE_HINT
     assert len(w._scene.items()) == n_items and not w._undo   # 도형도 기록도 아님(저장에 안 섞임)
-    c = w._view.mapToScene(w._view.viewport().rect().center())
+    # 사진은 카드 사이 빈 띠 가운데(`_ai_ensure_visible`) — [2026-10-07] 왼쪽 카드가 넓어져(칸 48→56)
+    # viewport 가운데와 띠 가운데가 더 벌어졌으므로 띠 가운데로 잰다.
+    c = w._view.mapToScene(w._ai_free_viewport_rect(w._view).center())
     assert abs(tr.rect.center().x() - c.x()) < 40
     w._ai_panel.set_kind("flow")            # 다른 종류로 가면 걷힘
     assert w._ai_trace is None

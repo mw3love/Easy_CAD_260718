@@ -76,7 +76,9 @@ _PALETTE_TRIANGLE_WH = (77.94, 90.0)
 # 줄이는 쪽이 grid spacing을 줄이는 것보다 효과적).
 # [같은 날 3차 후속] 패널 자체를 속성/미니맵 패널(218px)과 비슷한 폭으로 줄이자는 요청 —
 # 버튼·아이콘·폰트를 한 번 더 줄이고(58→48, 22→18, 폰트 -2pt), 4열은 유지.
-_PALETTE_ICON_PX = 18
+# [첫 화면 재디자인 2026-10-07, 시안 3라운드 S3 "아이콘이 커서 좋음"] 18→24, 칸 폭 48→56 — 카드 폭이
+# 시안(256px)에 가까워지고 오른쪽 카드(속성 P2)도 같은 폭대로 맞춘다.
+_PALETTE_ICON_PX = 24
 # [실사용 피드백 2026-08-19] 기본도형은 단일 글리프라 18px에서도 또렷하지만, "내 심볼"은
 # 사용자가 등록한 임의 조합(예: 사각형 2개+화살표 2개인 작은 흐름도)이라 같은 18px에서는
 # 형태 자체가 안 보인다는 보고 — 기본도형과 "최소한 같은 크기"를 요청받아 그보다 큰 전용
@@ -109,11 +111,33 @@ def _symbol_name_matches(name: str, query: str) -> bool:
     return any(all(same(qc, n[i + k]) for k, qc in enumerate(q))
                for i in range(len(n) - len(q) + 1))
 
+# [첫 화면 재디자인 2026-10-07, 시안 3라운드 S3] 「자주 쓰는 것」 — 팔레트에서 꺼낸 도형·심볼 최근 8개.
+# 칸은 [tool_key, 도장] 목록. 이미 있는 것을 또 쓰면 도장만 새로(자리 그대로 — 순서가 자꾸 바뀌면 손에
+# 안 익는다는 판단), 새 것은 빈칸에, 꽉 찼으면 가장 오래 안 쓴(도장이 가장 작은) 칸 자리에 들어간다.
+# 기록이 없으면 기본 도형 4개로 시작(빈 줄 대신).
+_RECENT_PALETTE_MAX = 8
+_RECENT_PALETTE_DEFAULT = ["rect", "ellipse", "sym:decision", "sym:terminal"]
+
+
+def _recent_palette_note(slots: list, key: str, max_n: int = _RECENT_PALETTE_MAX) -> list:
+    slots = [list(s) for s in slots]
+    stamp = max((s[1] for s in slots), default=0) + 1
+    for s in slots:
+        if s[0] == key:
+            s[1] = stamp
+            return slots
+    if len(slots) < max_n:
+        return slots + [[key, stamp]]
+    oldest = min(range(len(slots)), key=lambda i: slots[i][1])
+    slots[oldest] = [key, stamp]
+    return slots
+
+
 _PALETTE_FONT_SHRINK = 1   # pt만큼 기본 폰트에서 뺀다 — [2026-08-12 5차] 2→1, 너무 작다는 피드백
 # [2026-08-12 6차] 폰트를 키운 뒤 버튼 높이(40)가 실제 sizeHint(48)보다 작아 라벨 아래가
 # 잘렸다 — 고정 크기가 자연 sizeHint 밑으로 내려가면 항상 이 클래스 버그가 재발하므로,
 # 폭만 고정하고 높이는 버튼이 실제로 요구하는 sizeHint를 그대로 쓴다(아래 _palette_button).
-_PALETTE_BTN_WIDTH = 48
+_PALETTE_BTN_WIDTH = 56
 
 
 
@@ -858,6 +882,10 @@ class _UIBuildMixin:
             b.setIcon(self._shape_icon(k))
         for k, b in getattr(self, "_sym_buttons", {}).items():
             b.setIcon(self._shape_icon(k))
+        for k, b in getattr(self, "_recent_palette_buttons", {}).items():   # 「자주 쓰는 것」의 기본 도형 칸
+            hit = getattr(self, "_basic_palette_entries", {}).get(k)
+            if hit is not None:
+                b.setIcon(self._shape_icon(hit[1]))
         for k, b in getattr(self, "_tool_buttons", {}).items():
             b.setIcon(_tool_icon(k, _current_icon_color()))
         for k, a in getattr(self, "_tool_menu_actions", {}).items():
@@ -947,7 +975,13 @@ class _UIBuildMixin:
         # 아니라 형제)에 스타일시트로 남긴다.
         head_qss = (
             f"#floatPanelHead {{ background:{title_bg}; border-top-left-radius:5px;"
-            f" border-top-right-radius:5px; border-bottom:2px solid {accent}; font-weight:600; }}")
+            f" border-top-right-radius:5px; border-bottom:2px solid {accent}; font-weight:600; }}"
+            # [첫 화면 재디자인 2026-10-07] 도형·심볼 카드 제목 줄의 「아이콘 | 목록」 작은 분절 버튼 —
+            # 켜진 쪽만 중립 회색 면(코랄은 "의미 있는 상태" 전용이라 보기 방식 전환엔 안 씀).
+            + ('#floatPanelHead QToolButton[paletteView="true"] { font-size:11px; font-weight:400;'
+               f' padding:1px 7px; border:1px solid {"#3a4450" if dark else "#c9d3dc"}; border-radius:4px; }}'
+               f'#floatPanelHead QToolButton[paletteView="true"]:checked {{'
+               f' background:{"#3d4856" if dark else "#cfd8e1"}; }}'))
         for panel in (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
                       getattr(self, "_minimap_panel", None), getattr(self, "_layers_panel", None),
                       getattr(self, "_ai_panel", None)):
@@ -1029,6 +1063,7 @@ class _UIBuildMixin:
             # 원인. [2026-08-20] 즐겨찾기 이중표시로 sid당 버튼이 여러 개일 수 있어 리스트를
             # 평탄화(flatten)한다.
             + [b for blist in getattr(self, "_custom_sym_buttons", {}).values() for b in blist]
+            + list(getattr(self, "_recent_palette_buttons", {}).values())
         )
         # [2026-08-20] _pf_routing_btn은 QToolButton→QComboBox로 바뀌어(아이콘화 통일) 이
         # QToolButton 전용 QSS가 안 먹는다 — _pf_style(원래도 QComboBox)과 같은 취급으로
@@ -1239,7 +1274,8 @@ class _UIBuildMixin:
 
 
     def _palette_button(self, label: str, icon_kind, tooltip: str, tool_key: str,
-                         icon_px: int = _PALETTE_ICON_PX, tooltip_html_fn=None) -> QToolButton:
+                         icon_px: int = _PALETTE_ICON_PX, tooltip_html_fn=None,
+                         list_mode: bool = False) -> QToolButton:
         """icon_kind는 보통 _SYMBOL_KINDS 키 문자열이지만, 커스텀 심볼(§8-8)처럼 미리 만든
         QIcon(썸네일)을 직접 넘길 수도 있다. icon_px는 [실사용 피드백 2026-08-19]로 신설 —
         커스텀 심볼은 `_PALETTE_SYM_ICON_PX`(기본도형보다 큼)를 받는다. tooltip_html_fn은
@@ -1268,11 +1304,100 @@ class _UIBuildMixin:
         # [2026-08-12 6차] 폭만 고정하고 높이는 sizeHint를 그대로 — 폰트를 키운 뒤 고정 높이가
         # sizeHint보다 낮아 라벨 아래가 잘렸다(실사용 스크린샷). 폭을 고정폭으로 강제한 채
         # sizeHint를 물으면 Qt가 그 폭 기준으로 줄바꿈까지 반영한 진짜 필요 높이를 돌려준다.
-        btn.setFixedWidth(_PALETTE_BTN_WIDTH)
+        if list_mode:
+            # [첫 화면 재디자인 2026-10-07, 시안 3라운드 S4] 「목록」 보기 — 아이콘 옆에 전체 이름 한 줄.
+            # 폭을 고정하지 않는다(QToolButton은 글자를 가운데 정렬해서, 넓게 고정하면 줄이 들쭉날쭉
+            # 가운데로 몰린다) — 1열 그리드에서 자기 폭만큼 왼쪽에 붙는다.
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        else:
+            btn.setFixedWidth(_PALETTE_BTN_WIDTH)
         btn.setFixedHeight(btn.sizeHint().height())
         btn.clicked.connect(
-            lambda _c=False, k=tool_key: self.set_tool(None if self.current_tool == k else k))
+            lambda _c=False, k=tool_key: self._on_palette_click(k))
         return btn
+
+    def _on_palette_click(self, key: str):
+        arming = self.current_tool != key
+        self.set_tool(key if arming else None)
+        if arming:
+            self._note_palette_use(key)
+
+    # ---- 「자주 쓰는 것」(시안 3라운드 S3) ----
+    def _recent_palette_slots(self) -> list:
+        import json
+        raw = app_settings().value("recent_palette", "")
+        try:
+            slots = json.loads(raw) if raw else None
+        except ValueError:
+            slots = None
+        if not slots:
+            slots = [[k, 0] for k in _RECENT_PALETTE_DEFAULT]
+        return slots
+
+    def _note_palette_use(self, key: str):
+        """팔레트에서 도형·심볼을 꺼낼 때(클릭 무장·끌기 시작) 부른다."""
+        import json
+        if not key or not key.startswith(("rect", "ellipse", "sym:", "customsym:")):
+            return
+        before = self._recent_palette_slots()
+        after = _recent_palette_note(before, key)
+        app_settings().setValue("recent_palette", json.dumps(after))
+        if [s[0] for s in after] != [s[0] for s in before]:   # 칸 구성이 바뀔 때만 다시 그림
+            self._refresh_recent_section()
+
+    def _palette_entry_for(self, key: str):
+        """tool_key → (이름, 아이콘 종류 또는 QIcon, 아이콘 px, 툴팁 HTML 함수) — 사라진 심볼이면 None."""
+        if key.startswith("customsym:"):
+            sid = key[len("customsym:"):]
+            entry = next((e for e in symbol_library.load_library() if e.get("id") == sid), None)
+            if entry is None:
+                return None
+            entry = self._ensure_symbol_thumb_current(entry)
+            return (entry["name"], QIcon(_b64_to_pixmap(entry["thumb"])), _PALETTE_SYM_ICON_PX,
+                    lambda e=entry: self._symbol_preview_html(e))
+        hit = self._basic_palette_entries.get(key)
+        # 기본 도형 칸과 같은 그림(`_shape_icon` 기본 30px 원본을 칸 크기로 줄임 — 테마 전환 때도 같은 방식)
+        return None if hit is None else (hit[0], self._shape_icon(hit[1]), _PALETTE_ICON_PX, None)
+
+    def _refresh_recent_section(self):
+        section = getattr(self, "_recent_section", None)
+        if section is None:
+            return
+        lay = section.body_layout
+        while lay.count():
+            item = lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.hide(); w.deleteLater()   # 숨김 먼저 — 지연 삭제 전까지 새 칸과 겹쳐 보이지 않게
+            elif item.layout() is not None:
+                old = item.layout()
+                while old.count():
+                    wi = old.takeAt(0).widget()
+                    if wi is not None:
+                        wi.hide(); wi.deleteLater()
+        list_mode = self._palette_view == "list"
+        grid = QGridLayout(); grid.setSpacing(2); grid.setContentsMargins(0, 0, 0, 0)
+        self._recent_palette_buttons: dict[str, QToolButton] = {}
+        n = 0
+        for key, _stamp in self._recent_palette_slots():
+            info = self._palette_entry_for(key)
+            if info is None:
+                continue
+            name, icon, px, tip_fn = info
+            btn = self._palette_button(name if list_mode else name[:6], icon, name, key,
+                                       icon_px=20 if list_mode else px, tooltip_html_fn=tip_fn,
+                                       list_mode=list_mode)
+            btn.setStyleSheet(self._palette_accent_qss(self._dark))
+            btn.setChecked(self.current_tool == key)
+            self._recent_palette_buttons[key] = btn
+            cols = 1 if list_mode else _PALETTE_COLS
+            grid.addWidget(btn, n // cols, n % cols)
+            n += 1
+        grid.setColumnStretch(1 if list_mode else _PALETTE_COLS, 1)
+        lay.addLayout(grid)
+        section.updateGeometry()
+        if hasattr(self, "_left_container"):
+            self._relayout_left_panel()
 
     @staticmethod
 
@@ -1422,10 +1547,12 @@ class _UIBuildMixin:
                 key = f"customsym:{sid}"
                 # [실사용 피드백 2026-08-19] icon_px를 기본도형보다 큰 전용 상수로, 정적
                 # tooltip 대신 호버 시에만 계산되는 확대 미리보기(tooltip_html_fn)로.
+                list_mode = self._palette_view == "list"
                 btn = self._palette_button(
-                    entry["name"][:6], icon, entry["name"], key,
-                    icon_px=_PALETTE_SYM_ICON_PX,
-                    tooltip_html_fn=lambda e=entry: self._symbol_preview_html(e))
+                    entry["name"] if list_mode else entry["name"][:6], icon, entry["name"], key,
+                    icon_px=20 if list_mode else _PALETTE_SYM_ICON_PX,
+                    tooltip_html_fn=lambda e=entry: self._symbol_preview_html(e),
+                    list_mode=list_mode)
                 # [실사용 버그 수정 2026-08-19] 이 섹션은 등록/삭제/이름변경/이동마다 버튼을
                 # 새로 만든다 — `_apply_theme`의 접근 목록(`_accent_btns`)이 다음 테마 전환
                 # 때나 이 새 버튼을 보므로, 만든 즉시 같은 스타일을 걸어 일반 도형 버튼과
@@ -1439,9 +1566,10 @@ class _UIBuildMixin:
                 # (host_canvas.set_tool)·테마 재도색(_accent_btns) 둘 다 전부를 봐야 한다.
                 self._custom_sym_buttons.setdefault(sid, []).append(btn)
                 btns.append(btn)
+            cols = 1 if self._palette_view == "list" else _PALETTE_COLS
             for i, b in enumerate(btns):
-                grid.addWidget(b, i // _PALETTE_COLS, i % _PALETTE_COLS)
-            grid.setColumnStretch(_PALETTE_COLS, 1)
+                grid.addWidget(b, i // cols, i % cols)
+            grid.setColumnStretch(cols, 1)
             grid_container.setVisible(not collapsed)
             zv.addWidget(grid_container)
             body.layout().addWidget(zone)
@@ -1478,8 +1606,9 @@ class _UIBuildMixin:
         zones = [add_group(None, "즐겨찾기", deletable=False, favorites=True),
                  add_group(None, "미분류", deletable=False)]
         zones += [add_group(name, name, deletable=True) for name in folders]
-        if query and not any(zones):
-            none_lbl = self._section_label("일치하는 심볼 없음")
+        basic_hit = query and any(b.isVisible() for _g, bs in self._shape_sections for b in bs)
+        if query and not any(zones) and not basic_hit:
+            none_lbl = self._section_label("일치하는 도형·심볼 없음")
             body.layout().addWidget(none_lbl)
             zones.append(none_lbl)
         for z in zones:
@@ -1501,6 +1630,8 @@ class _UIBuildMixin:
         # 함수 맨 위 clear 루프가 예약한 `deleteLater()`까지 같은 재진입 안에서 처리되며 힙
         # 손상 abort(pytest exit 127, 실측 재현·격리 확인)를 유발한다 — 재진입 없이 다음
         # 이벤트루프 틱으로 미루는 `QTimer.singleShot(0, ...)`로 교체(동일 효과, 재진입 없음).
+        if hasattr(self, "_recent_palette_buttons"):   # 심볼 이름변경·삭제를 「자주 쓰는 것」에도
+            self._refresh_recent_section()
         self._relayout_left_panel()
         QTimer.singleShot(0, self._relayout_left_panel)
 
@@ -1662,7 +1793,9 @@ class _UIBuildMixin:
         # [2026-08-13 피드백] 빈 제목이라 패널 최상단바에 아무 표시가 없던 것 — 속성/미니맵
         # 패널처럼 짧은 명사 하나로("도형", 내부엔 도형 팔레트+레이어가 함께 있지만 팔레트가
         # 주 콘텐츠).
-        panel = _FloatingPanel(self, "도형", "left")
+        # [첫 화면 재디자인 2026-10-07, 시안 3라운드 S3+S4] 제목 「도형 · 심볼」, 제목 줄에 「아이콘|목록」
+        # 보기 전환과 새 폴더 ＋. 안은 위에서부터 큰 검색칸(도형도 찾음) → 자주 쓰는 것 → 기본 도형 → 폴더.
+        panel = _FloatingPanel(self, "도형 · 심볼", "left")
         self._left_panel = panel
         container = QWidget()
         outer = QVBoxLayout(container)
@@ -1690,6 +1823,71 @@ class _UIBuildMixin:
         self._shape_tool_buttons: dict[str, QToolButton] = {}
         self._sym_buttons: dict[str, QToolButton] = {}
         self._shape_sections: list = []   # (grid, buttons) — 기본도형·순서도
+        self._palette_view = "list" if app_settings().value("palette_view", "icon") == "list" else "icon"
+
+        # ---- 제목 줄: 「아이콘 | 목록」 + 새 폴더 ＋ ----
+        # 제목 줄이 카드 폭을 정하지 않게(폭은 아래 칸 그리드가 정함) — 버튼 묶음은 크기 계산에서 빼고
+        # (Ignored) 남는 폭에 놓는다. 글꼴이 넓게 잡히는 환경(오프스크린 테스트 대체 글꼴)에서 이 묶음이
+        # 카드를 269px까지 밀어 넓히던 것(실측) 방지 — 실제 창 폭(약 240px)엔 다 들어간다.
+        head_l = panel._head.layout()
+        head_extra = QWidget()
+        head_extra.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        extra_l = QHBoxLayout(head_extra)
+        extra_l.setContentsMargins(0, 0, 0, 0); extra_l.setSpacing(4)
+        extra_l.addStretch(1)
+        head_l.insertWidget(1, head_extra, 2)
+        self._palette_view_btns: dict[str, QToolButton] = {}
+        for i, (mode, text) in enumerate((("icon", "아이콘"), ("list", "목록"))):
+            vb = QToolButton()
+            vb.setText(text)
+            vb.setCheckable(True); vb.setAutoExclusive(True)
+            vb.setFixedHeight(20)
+            vb.setChecked(self._palette_view == mode)
+            vb.setProperty("paletteView", True)   # _apply_theme의 작은 분절 버튼 규칙
+            vb.setToolTip("큰 아이콘으로 보기" if mode == "icon" else "아이콘 옆에 전체 이름으로 보기")
+            vb.clicked.connect(lambda _c=False, m=mode: self._set_palette_view(m))
+            extra_l.addWidget(vb)
+            self._palette_view_btns[mode] = vb
+        add_folder_btn = QToolButton()
+        add_folder_btn.setText("+"); add_folder_btn.setAutoRaise(True)
+        add_folder_btn.setFixedSize(QSize(22, 22))   # [2026-08-12 피드백] 18→22, 눈에 띄게
+        # [실사용 피드백 2026-08-19 재개편] 코랄은 이 앱에서 "선택된 상태" 전용 accent인데
+        # (host_ui.py 아이콘 재칠 주석 참조) 이 버튼은 상시 떠 있는 헤더 액션이라 계속 튀어
+        # 보였다 — 접기 화살표·`+ 레이어 추가`처럼 테마 적응 중립색으로 낮춘다.
+        self._add_folder_btn = add_folder_btn
+        add_folder_btn.setStyleSheet(
+            f"QToolButton {{ color: {_current_icon_color().name()}; font-weight:700; font-size:15px; }}")
+        add_folder_btn.setToolTip("새 폴더")
+        add_folder_btn.clicked.connect(self._prompt_create_symbol_folder)
+        extra_l.addWidget(add_folder_btn)
+
+        # ---- 검색칸(맨 위, 도형·심볼 함께) ----
+        # [§8 항목34, 2026-10-03] 항상 보이게. 목록을 새로 그려도(등록·삭제·입력마다) 입력 중인
+        # 글자·포커스가 남도록 다시 그리는 영역 밖에 둔다. [2026-10-07] 「내 심볼」 아래에서 카드 맨 위로
+        # 올리고 크게(시안 S3 "검색이 위에 있어 좋음"), 기본 도형도 이름·초성으로 거른다.
+        search = QLineEdit()
+        search.setPlaceholderText("도형·심볼 검색 (이름·초성)")
+        search.setClearButtonEnabled(True)
+        search.setMinimumHeight(32)
+        # 입력칸 기본 폭(sizeHint)이 패널을 202→220px로 밀어냈다 — 폭은 패널을 따르게만
+        search.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        search.setToolTip("이름 일부나 초성(예: ㅇㅌ)으로 찾기 — Esc로 지우기")
+        search.textChanged.connect(lambda _t: self._on_palette_search())
+        # ⚠ 등록을 먼저 — eventFilter가 이 칸을 알아보기 전에 이벤트가 오면 아직 없는 뷰를 찾다 죽는다
+        self._custom_sym_search = search
+        search.installEventFilter(self)   # Esc → 지우기(host_fileio.eventFilter)
+        search_row = QWidget()
+        sl = QHBoxLayout(search_row)
+        sl.setContentsMargins(2, 2, 2, 4)
+        sl.addWidget(search)
+        outer.addWidget(search_row)
+
+        # ---- 자주 쓰는 것(최근 8개, 칸 자리 고정 — `_recent_palette_note`) ----
+        recent_section = _StaticSection("자주 쓰는 것")
+        hint = self._section_label("최근 8개")
+        recent_section.header_layout.addWidget(hint)
+        self._recent_section = recent_section
+        outer.addWidget(recent_section)
 
         # ---- 기본도형 (항상 펼침, 접기 없음 — 2026-08-19) ----
         # [2026-08-13 피드백] 옛 "기본도형"(네모·원·삼각형)과 "순서도"(판단·시작/끝·입출력·
@@ -1704,8 +1902,8 @@ class _UIBuildMixin:
         # `_shape_tool_buttons`/`_sym_buttons` 딕셔너리 분리(기본 도구 vs 심볼)는 `set_tool`
         # 체크상태 동기화가 참조하므로 그대로 유지(host_canvas.py `set_tool` 참조) — 한 그리드
         # 안에서도 항목별로 다른 dict에 저장 가능하도록 `_make_shape_grid`를 확장했다.
-        basic_section = _StaticSection("기본도형")
-        basic_grid = self._make_shape_grid([
+        basic_section = _StaticSection("기본 도형")
+        basic_entries = [
             ("사각형", "rect", "사각형 — 클릭 후 캔버스에 드래그", "rect", self._shape_tool_buttons),
             ("원", "ellipse", "원 — 클릭 후 캔버스에 드래그", "ellipse", self._shape_tool_buttons),
             ("삼각형", "triangle", "삼각형 — 클릭 후 캔버스에 드래그", "sym:triangle", self._shape_tool_buttons),
@@ -1714,7 +1912,11 @@ class _UIBuildMixin:
             ("입출력", "data", "입출력 — 클릭 후 캔버스에 드래그", "sym:data", self._sym_buttons),
             ("준비", "prep", "준비 — 클릭 후 캔버스에 드래그", "sym:prep", self._sym_buttons),
             ("저장소", "database", "저장소 — 클릭 후 캔버스에 드래그", "sym:database", self._sym_buttons),
-        ])
+        ]
+        # 「자주 쓰는 것」이 기본 도형 칸을 다시 만들 때 쓰는 표(tool_key → 이름·아이콘 종류).
+        self._basic_palette_entries = {e[3]: (e[0], e[1]) for e in basic_entries}
+        basic_grid = self._make_shape_grid(basic_entries)
+        self._basic_section = basic_section
         basic_section.body_layout.addLayout(basic_grid)
         outer.addWidget(basic_section)
 
@@ -1722,36 +1924,10 @@ class _UIBuildMixin:
 
         # ---- 내 심볼 (폴더 지원, 최상단은 항상 펼침 — 폴더별 접기는 add_group 참조) ----
         custom_section = _StaticSection("내 심볼")
-        add_folder_btn = QToolButton()
-        add_folder_btn.setText("+"); add_folder_btn.setAutoRaise(True)
-        add_folder_btn.setFixedSize(QSize(22, 22))   # [2026-08-12 피드백] 18→22, 눈에 띄게
-        # [실사용 피드백 2026-08-19 재개편] 코랄은 이 앱에서 "선택된 상태" 전용 accent인데
-        # (host_ui.py 아이콘 재칠 주석 참조) 이 버튼은 상시 떠 있는 헤더 액션이라 계속 튀어
-        # 보였다 — 접기 화살표·`+ 레이어 추가`처럼 테마 적응 중립색으로 낮춘다.
-        self._add_folder_btn = add_folder_btn
-        add_folder_btn.setStyleSheet(
-            f"QToolButton {{ color: {_current_icon_color().name()}; font-weight:700; font-size:15px; }}")
-        add_folder_btn.setToolTip("새 폴더")
-        add_folder_btn.clicked.connect(self._prompt_create_symbol_folder)
-        custom_section.header_layout.insertWidget(1, add_folder_btn)   # 제목 라벨 바로 다음
+        # [2026-10-07] 「내 심볼」 제목 줄은 숨긴다 — ＋는 카드 제목 줄로, 검색칸은 카드 맨 위로 옮겼고
+        # (시안 S3), 폴더 이름(미분류·즐겨찾기·사용자 폴더)이 바로 이어져 제목이 따로 필요 없다.
+        custom_section.layout().itemAt(0).widget().hide()
         custom_section.body_layout.setSpacing(8)
-        # [§8 항목34, 2026-10-03] 검색칸 — 사용자 결정: 항상 보이게, 제목 바로 아래. body 밖에 두어
-        # 목록을 새로 그려도(등록·삭제·입력마다) 입력 중인 글자·포커스가 그대로 남는다.
-        search = QLineEdit()
-        search.setPlaceholderText("심볼 검색 (이름·초성)")
-        search.setClearButtonEnabled(True)
-        # 입력칸 기본 폭(sizeHint)이 패널을 202→220px로 밀어냈다 — 폭은 패널을 따르게만
-        search.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        search.setToolTip("이름 일부나 초성(예: ㅇㅌ)으로 찾기 — Esc로 지우기")
-        search.textChanged.connect(lambda _t: self._refresh_custom_symbol_section())
-        # ⚠ 등록을 먼저 — eventFilter가 이 칸을 알아보기 전에 이벤트가 오면 아직 없는 뷰를 찾다 죽는다
-        self._custom_sym_search = search
-        search.installEventFilter(self)   # Esc → 지우기(host_fileio.eventFilter)
-        search_row = QWidget()
-        sl = QHBoxLayout(search_row)
-        sl.setContentsMargins(2, 2, 2, 2)
-        sl.addWidget(search)
-        custom_section.layout().insertWidget(1, search_row)
         self._custom_sym_section = custom_section
         self._custom_sym_body = custom_section.body
         self._custom_sym_buttons: dict[str, list[QToolButton]] = {}   # set_tool 체크상태 동기화용
@@ -1762,10 +1938,43 @@ class _UIBuildMixin:
         # 심볼 등록마다 내용이 바뀌므로 `_relayout_left_panel()`이 계속 invalidate() 대상으로
         # 참조한다(이름은 옛 아코디언 시절 그대로 — `_relayout_left_panel` 주석 참조).
         self._left_accordion_sections = {
+            "recent": recent_section,
             "basic": basic_section,
             "customsym": custom_section,
         }
+        self._refresh_recent_section()
         self._relayout_left_panel()
+
+    def _set_palette_view(self, mode: str):
+        """「아이콘 | 목록」 전환(시안 3라운드 — 사용자 요청 "둘 다 제공"). 기본 도형 8개는 이름이
+        짧아 늘 아이콘 칸으로 두고, 자주 쓰는 것·내 심볼만 바꾼다(AI로 만든 심볼은 이름이 길다)."""
+        if mode == self._palette_view:
+            return
+        self._palette_view = mode
+        app_settings().setValue("palette_view", mode)
+        for m, b in self._palette_view_btns.items():
+            b.setChecked(m == mode)
+        self._refresh_recent_section()
+        self._refresh_custom_symbol_section()
+
+    def _on_palette_search(self):
+        """검색어가 있으면 기본 도형도 이름·초성으로 거르고, 「자주 쓰는 것」은 숨긴다(결과만 보이게)."""
+        query = self._custom_sym_search.text().strip()
+        for grid, btns in self._shape_sections:
+            # 맞는 칸만 앞에서부터 다시 채운다(숨긴 칸 자리가 빈칸으로 남지 않게).
+            for b in btns:
+                grid.removeWidget(b)
+            shown = [b for b in btns if _symbol_name_matches(b.text(), query)]
+            for b in btns:
+                b.setVisible(b in shown)
+            for i, b in enumerate(shown):
+                grid.addWidget(b, i // _PALETTE_COLS, i % _PALETTE_COLS)
+        any_basic = any(b.isVisible() for _g, btns in self._shape_sections for b in btns) or not query
+        self._basic_section.setVisible(any_basic)
+        self._recent_section.setVisible(not query)
+        for sec in (self._basic_section, self._recent_section):
+            sec.updateGeometry()
+        self._refresh_custom_symbol_section()
 
 
     def _build_layers_panel(self):
@@ -1843,6 +2052,11 @@ class _UIBuildMixin:
         # 내부 스크롤바가 뜬다.
         content_h = self._left_container.sizeHint().height()
         self._left_scroll.setFixedHeight(min(content_h, self._LEFT_PANEL_MAX_H))
+        # [첫 화면 재디자인 2026-10-07] 스크롤바가 생기면 그 폭만큼 카드를 넓힌다 — 안 그러면 스크롤바가
+        # 안쪽 폭을 먹어 오른쪽 글자(「최근 8개」·4열 끝 칸)가 잘렸다(「목록」 보기에서 실측).
+        sb_w = (self._left_scroll.verticalScrollBar().sizeHint().width()
+                if content_h > self._LEFT_PANEL_MAX_H else 0)
+        self._left_scroll.setFixedWidth(self._left_container.sizeHint().width() + sb_w)
         self._left_panel._body_layout.invalidate()
         self._left_panel._body_layout.activate()
         self._left_panel.layout().invalidate()
