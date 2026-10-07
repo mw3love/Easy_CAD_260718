@@ -914,10 +914,14 @@ class _FloatingPanel(QFrame):
             self.hide()   # 명시적 hide — 부모(창) show() 뒤에도 감춤 유지(Qt 관례)
 
     def _show_header_menu(self, pos):
+        self._show_header_menu_at(self._head.mapToGlobal(pos))
+
+    def _show_header_menu_at(self, global_pos):
+        """[2026-10-07] 제목 줄을 숨긴 카드(미니맵 M2)도 다른 자리에서 같은 「닫기」 메뉴를 띄우게."""
         menu = QMenu(self)
         _style_menu_separators(menu)
         menu.addAction("닫기", self._close_panel)
-        menu.exec(self._head.mapToGlobal(pos))
+        menu.exec(global_pos)
 
     def _close_panel(self):
         self.set_panel_visible(False)

@@ -465,7 +465,10 @@ class _UIBuildMixin:
             avail_w = max(40, (self._props_panel.width() or 228) - 57)  # 57≈전체맞춤+접기 버튼·여백
             elided = panel._title_lbl.fontMetrics().elidedText(
                 full, Qt.TextElideMode.ElideRight, avail_w)
-            panel._title_lbl.setText(elided)
+            panel._title_lbl.setText(elided)   # [2026-10-07] 제목 줄은 숨겼지만 글자는 유지(테스트·접근성)
+            pct_lbl = getattr(self, "_zoom_pct_lbl", None)
+            if pct_lbl is not None:
+                pct_lbl.setText(f"{pct}%")
             self._reposition_panels()
 
 
@@ -953,7 +956,9 @@ class _UIBuildMixin:
         seg_qss = (f"QToolButton {{ border:1px solid {seg_line}; border-radius:4px; background:transparent; }}"
                    f"QToolButton:checked {{ background:{seg_on}; border-color:{seg_ring}; }}")
         for b in (list(getattr(self, "_pf_style_btns", []))
-                  + list(getattr(self, "_pf_width_presets", {}).values())):
+                  + list(getattr(self, "_pf_width_presets", {}).values())
+                  + [getattr(self, n) for n in ("_zoom_out_btn", "_zoom_in_btn", "_zoom_fit_btn",
+                                                 "_zoom_100_btn") if hasattr(self, n)]):
             b.setStyleSheet(seg_qss)
         # 견본 첫 칸(기본 잉크색)과 고리 색이 테마를 따르므로 선택 중이면 속성 카드를 다시 채운다.
         if getattr(self, "_pf_color_presets", None) and getattr(self, "_props_form", None) is not None:
@@ -976,6 +981,8 @@ class _UIBuildMixin:
         # 색이 어긋난다(예전엔 "라이트는 스코프 밖"으로 블루 유지했던 결정을 여기서 통일).
         accent = "#da7756"
         title_bg = "#232f3d" if dark else "#e8eef5"
+        # [첫 화면 재디자인 2026-10-07] 카드 제목 줄 밑줄은 코랄 대신 옅은 중립선(강조색은 의미 있는 상태에만)
+        sep_line = "#2f3a46" if dark else "#d3dbe3"
         # ⚠ [2026-07-31, 스턱루프 규칙 11-b — 3차 접근 전환] 속성 dock의 QSpinBox/QDoubleSpinBox
         # ("두께"·"폰트"·"반경")만 텍스트 디센더가 잘리는 버그 + (2차 시도인 setMinimumHeight
         # 이후) 그 행이 다음 행과 겹치는 새 증상까지 — 둘 다 근본원인은 같았다: `panel.
@@ -989,7 +996,7 @@ class _UIBuildMixin:
         # 아니라 형제)에 스타일시트로 남긴다.
         head_qss = (
             f"#floatPanelHead {{ background:{title_bg}; border-top-left-radius:5px;"
-            f" border-top-right-radius:5px; border-bottom:2px solid {accent}; font-weight:600; }}"
+            f" border-top-right-radius:5px; border-bottom:1px solid {sep_line}; font-weight:600; }}"
             # [첫 화면 재디자인 2026-10-07] 도형·심볼 카드 제목 줄의 「아이콘 | 목록」 작은 분절 버튼 —
             # 켜진 쪽만 중립 회색 면(코랄은 "의미 있는 상태" 전용이라 보기 방식 전환엔 안 씀).
             + ('#floatPanelHead QToolButton[paletteView="true"] { font-size:11px; font-weight:400;'
@@ -2404,6 +2411,44 @@ class _UIBuildMixin:
         w0 = self._props_panel.width() or 228
         self._minimap.setFixedSize(QSize(w0, round(w0 * 9 / 16)))
         panel.set_content(self._minimap)
+
+        # [첫 화면 재디자인 2026-10-07, 시안 4라운드 M2] 제목 줄 없이 지도가 맨 위(지도 클릭이 제목 줄을 안 거침),
+        # 아래에 확대 줄 「− % ＋ · 전체 보기 · 100%」(상단바에서 뺀 둘이 여기로, 사용자 결정). 제목 줄과 함께
+        # 접기 버튼·헤더 우클릭 「닫기」가 사라지므로 닫기는 확대 줄 우클릭으로 옮긴다(보기 메뉴로 다시 열기는 그대로).
+        panel._head.hide()
+        if panel._collapsed:
+            panel._set_collapsed(False, persist=False)   # 접기 버튼이 없으니 예전에 접어 둔 상태는 펼쳐 둔다
+        zoom_row = QWidget()
+        # 확대 줄이 카드 폭을 정하지 않게(폭은 지도 = 속성 카드 폭) — 도형·심볼 카드 제목 줄과 같은 이유.
+        zoom_row.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        zr = QHBoxLayout(zoom_row)
+        zr.setContentsMargins(6, 4, 6, 6); zr.setSpacing(3)
+
+        def _zbtn(text, tip, slot):
+            b = QToolButton(); b.setText(text); b.setToolTip(tip)
+            b.setFixedHeight(24); b.setProperty("propSeg", True)
+            b.clicked.connect(slot)
+            return b
+        self._zoom_out_btn = _zbtn("−", "축소", lambda: self._on_wheel_zoom(-1))
+        self._zoom_pct_lbl = QToolButton()
+        self._zoom_pct_lbl.setAutoRaise(True)
+        self._zoom_pct_lbl.setToolTip("누르면 100% + 내용 가운데로")
+        self._zoom_pct_lbl.setMinimumWidth(44)
+        _f = self._zoom_pct_lbl.font(); _f.setBold(True); self._zoom_pct_lbl.setFont(_f)
+        self._zoom_pct_lbl.clicked.connect(self._zoom_reset)
+        self._zoom_pct_lbl.setText(f"{round(self._view.transform().m11() * 100)}%")   # 첫 표시(이후는 _update_zoom_label)
+        self._zoom_in_btn = _zbtn("＋", "확대", lambda: self._on_wheel_zoom(1))
+        self._zoom_fit_btn = _zbtn("전체 보기", "도면 전체가 보이게(Ctrl+9)", self._act_fit.trigger)
+        self._zoom_100_btn = _zbtn("100%", "실제 크기(1:1)", self._act_zoom100.trigger)
+        for b in (self._zoom_out_btn, self._zoom_pct_lbl, self._zoom_in_btn):
+            zr.addWidget(b)
+        zr.addStretch(1)
+        zr.addWidget(self._zoom_fit_btn); zr.addWidget(self._zoom_100_btn)
+        zoom_row.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        zoom_row.customContextMenuRequested.connect(
+            lambda pos, z=zoom_row: panel._show_header_menu_at(z.mapToGlobal(pos)))
+        self._zoom_row = zoom_row
+        panel.set_content(zoom_row)
 
         self._view.horizontalScrollBar().valueChanged.connect(self._refresh_minimap)
         self._view.verticalScrollBar().valueChanged.connect(self._refresh_minimap)

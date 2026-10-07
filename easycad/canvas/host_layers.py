@@ -119,9 +119,8 @@ class _LayersMixin:
         h.setContentsMargins(6, 3, 4, 3)
         h.setSpacing(6)
         active = lid == self._current_active_layer()
-        if active:
-            # 켜진 줄만 옅은 면 — 팔레트 색이라 테마를 바꿔도 따라간다.
-            row.setStyleSheet("#layerRow { background: palette(alternate-base); border-radius:4px; }")
+        row._layer_active = active
+        self._style_layer_row(row)
 
         dot = QToolButton()
         dot.setAutoRaise(True)
@@ -206,12 +205,25 @@ class _LayersMixin:
                               _current_icon_color()))
 
 
+    def _style_layer_row(self, row) -> None:
+        """「그리는 중」 줄만 옅은 면. ⚠ `palette(alternate-base)`를 QSS에 쓰면 처음 칠할 때(테마 적용 전,
+        라이트 팔레트)의 값으로 굳어 다크에서 흰 띠가 됐다(실측) — 테마별 색을 직접 넣고 테마 전환 때 다시 칠한다."""
+        if getattr(row, "_layer_active", False):
+            bg = "#2d3640" if getattr(self, "_dark", True) else "#dfe5eb"
+            row.setStyleSheet(f"#layerRow {{ background:{bg}; border-radius:4px; }}")
+        else:
+            row.setStyleSheet("")
+
     def _refresh_layer_icons(self) -> None:
         """테마 전환 시 레이어 행 아이콘만 다시 칠한다(행 재구성 없이 — `_apply_theme`의
         위젯 재구축 금지 주석 참조)."""
         lst = getattr(self, "_layers_list", None)
         if lst is None:
             return
+        for i in range(lst.count()):
+            row = lst.itemWidget(lst.item(i))
+            if row is not None:
+                self._style_layer_row(row)
         for btn in lst.findChildren(QToolButton):
             if hasattr(btn, "_layer_icon_pair"):
                 self._set_layer_btn_icon(btn)
