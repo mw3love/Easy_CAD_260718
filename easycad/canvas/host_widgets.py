@@ -1060,6 +1060,9 @@ class _StaticSection(QWidget):
         self._dot.setFixedSize(8, 8)
         self._dot.hide()
         hl.addWidget(self._dot)
+        self._lead = QLabel()   # [2026-10-12] 제목 앞 작은 그림(「기본 도형」의 □○△) — `set_lead_pixmap`
+        self._lead.hide()
+        hl.addWidget(self._lead)
         # [2026-08-13 버그 수정, 옛 _AccordionSection에서 이관] 색을 안 정한 `setStyleSheet()`는
         # QLabel을 QStyleSheetStyle로 전환해 앱 다크 팔레트(WindowText)를 안 따르고 검정으로
         # 렌더됐다 — 폰트는 스타일시트 대신 QFont로 걸어 팔레트 색 상속을 그대로 유지한다.
@@ -1109,6 +1112,10 @@ class _StaticSection(QWidget):
         chip_bg, chip_fg = (("rgba(255,255,255,22)", "#aab4bf") if dark else ("rgba(0,0,0,16)", "#5d6976"))
         self.count_lbl.setStyleSheet(
             f"QLabel {{ background:{chip_bg}; color:{chip_fg}; border-radius:8px; padding:0px 6px; }}")
+
+    def set_lead_pixmap(self, pm):
+        self._lead.setPixmap(pm)
+        self._lead.setVisible(not pm.isNull())
 
     def set_title_html(self, html: str):
         self._title_lbl.setTextFormat(Qt.TextFormat.RichText)

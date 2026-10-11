@@ -338,3 +338,18 @@ def test_text_section_edits_shape_label_and_standalone_text():
     assert form.isRowVisible(w._pf_font) and not form.isRowVisible(w._pf_line_row)
     w._active_doc.dirty = False
     w.close()
+
+
+def test_basic_section_title_has_shapes_mark():
+    """[2026-10-12] 즐겨찾기 ★과 짝 — 「기본 도형」 제목 앞 □○△ 그림(폴더엔 없음), 테마를 바꿔도 남는다."""
+    with _isolated_symbol_library():
+        _fill("장비", 1)
+        w = CanvasWindow(); w.show(); _app.processEvents()
+        lead = w._basic_section._lead
+        assert lead.isVisible() and not lead.pixmap().isNull()
+        assert w._basic_section.header_layout.indexOf(lead) < w._basic_section.header_layout.indexOf(w._basic_section._title_lbl)
+        assert not _folder_section(w, "장비")._lead.isVisible()
+        w._apply_theme(False)
+        assert lead.isVisible() and not lead.pixmap().isNull()
+        w._active_doc.dirty = False
+        w.close()

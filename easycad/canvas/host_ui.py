@@ -22,7 +22,7 @@ from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _PolyArrowItem, _tool_icon, _TOOLS, _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT, _MIN_FONT, _MAX_FONT,
     _SYMBOL_KINDS, _pen_style_icon, _arrow_kind_icon, _flip_icon, _arrow_head_icon, _icons_dir,
-    _svg_icon,
+    _svg_icon, _svg_icon_pixmap,
 )
 from easycad.fileio.pdf_export import export_svg_symbol
 from easycad.fileio.document import (
@@ -1883,6 +1883,9 @@ class _UIBuildMixin:
         for sec in (getattr(self, "_basic_section", None),):
             if sec is not None:   # 안 고르면 중립 칸(점 없음), 고르면 폴더처럼 색 점 + 옅은 칸
                 sec.set_box(QColor(chosen["basic"]) if chosen.get("basic") else None, dark)
+                # [2026-10-12] 즐겨찾기 ★과 짝 — 제목 앞 □○△ 그림, 고른 칸 색이 있으면 그 색(★처럼)
+                lead = QColor(chosen["basic"]) if chosen.get("basic") else _current_icon_color()
+                sec.set_lead_pixmap(_svg_icon_pixmap("shapes", 15, lead))
         for sec, color in getattr(self, "_palette_folder_boxes", []):
             sec.set_box(color, dark)
         add_btn = getattr(self, "_add_folder_btn", None)
