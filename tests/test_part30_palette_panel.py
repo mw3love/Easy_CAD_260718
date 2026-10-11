@@ -125,8 +125,9 @@ def test_more_button_opens_big_browser_with_all_symbols():
 
 
 def test_browser_is_one_column_list_of_big_icon_and_name():
-    """[2026-10-11 후속] 크게 보기 = 폴더 목록을 확대한 것 — 큰 그림(76×56, 칸 모양대로 꽉) 옆에 이름, 한 줄에 하나씩 아래로.
-    보기 전환 없음, 긴 이름은 두 줄까지 접음, 오른쪽 끝 손잡이로 너비."""
+    """[2026-10-11 후속] 크게 보기 = 폴더 목록을 확대한 표 — 번호 | 그림(64×48, 칸 모양대로 꽉) | 이름, 한 줄에 하나씩 아래로,
+    맨 위 고정 제목 줄, 너비는 도형·심볼 카드와 같게. 긴 이름은 두 줄까지 접음, 오른쪽 끝 손잡이로 너비."""
+    from PyQt6.QtWidgets import QLabel
     from easycad.canvas.host_widgets import _wrap_two_lines
     st = app_settings()
     st.remove("symbol_browser_width")
@@ -141,19 +142,22 @@ def test_browser_is_one_column_list_of_big_icon_and_name():
             w.show()
             w._open_symbol_browser("긴것")
             b = w._symbol_browser
-            assert not hasattr(b, "_view_btns") and b.width() == b.DEFAULT_W
+            assert not hasattr(b, "_view_btns") and b.width() == b.DEFAULT_W == w._left_panel.width()
             b0, b1 = b._buttons
-            assert b0.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
             assert b1.y() > b0.y() and b1.x() == b0.x()                      # 한 줄에 하나, 아래로
-            pm = b0.icon().pixmap(QSize(b.ICON_W, b.ICON_H))
+            texts = [l.text() for l in b0.findChildren(QLabel)]
+            assert texts[0] == "1" and [l.text() for l in b1.findChildren(QLabel)][0] == "2"   # 번호
+            head = [l.text() for l in b.findChildren(QLabel)]
+            assert "#" in head and "그림" in head and "이름" in head                # 제목 줄
+            pm = b0._pixmap
             assert (pm.width(), pm.height()) == (b.ICON_W, b.ICON_H)         # 칸 모양 그대로(정사각 아님)
             img = pm.toImage()
             xs = [x for x in range(img.width()) if any(img.pixelColor(x, y).alpha() for y in range(img.height()))]
             assert xs[0] <= 4 and xs[-1] >= b.ICON_W - 5                      # 긴 심볼이 칸 가로를 끝까지 쓴다
-            assert b1.text().count("\n") == 1                                 # 긴 이름은 두 줄
-            assert b0.text() == "가로로 긴 심볼"
-            fm = b1.fontMetrics()
-            assert all(fm.horizontalAdvance(line) <= b._name_width() for line in b1.text().split("\n"))
+            assert b1._name_lbl.text().count("\n") == 1                       # 긴 이름은 두 줄
+            assert b0._name_lbl.text().replace("\n", " ").startswith("가로로")
+            fm = b1._name_lbl.fontMetrics()
+            assert all(fm.horizontalAdvance(line) <= b._name_width() for line in b1._name_lbl.text().split("\n"))
             assert _wrap_two_lines(fm, "짧음", 100) == "짧음"
             w0 = b.width()
             _drag_h(b._grip, 120)

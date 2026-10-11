@@ -1225,13 +1225,17 @@ class _SymbolFolderBrowser(_FloatingPanel):
     한 줄에 하나씩 아래로. 긴 이름은 두 줄까지 접는다. 폴더마다 제목 줄 ⤢로 들어오고(폴더 고르기 없음), 같은 ⤢를
     다시 누르거나 ✕로 닫는다. 오른쪽 끝 손잡이로 너비. 줄은 패널과 같은 팔레트 버튼(`make_button(entry, w, h)`)이라
     클릭=도구 쥐기, 끌기=도면에 놓기, 우클릭 메뉴가 그대로 된다. 위치·높이는 `CanvasWindow._reposition_panels`가 정한다.
-    [같은 날] 처음 만든 「아이콘 / 그림 아래 이름」 바둑판 두 보기는 뜻을 잘못 읽은 것이라 이 목록 하나로 바꿨다."""
+    [같은 날] 처음 만든 「아이콘 / 그림 아래 이름」 바둑판 두 보기는 뜻을 잘못 읽은 것이라 이 목록 하나로 바꿨다.
+    [같은 날 후속] 표 모양 — 번호 | 그림 | 이름 칸을 옅은 선으로 나누고 맨 위에 고정 제목 줄("그림과 이름이 섞여 보임"·
+    오른쪽 여백 지적). 너비는 도형·심볼 카드와 같게(192), 그래서 그림은 64×48로 한 단계 줄였다(사용자 선택)."""
 
-    ICON_W, ICON_H, ROW_H = 76, 56, 62
-    MIN_W, DEFAULT_W = 200, 260
+    NUM_W, ICON_W, ICON_H, ROW_H = 22, 64, 48, 54
+    MIN_W = 160
+    _LINE_QSS = "background: rgba(128,128,128,70);"
 
-    def __init__(self, host, folder: str, entries_fn, make_button):
+    def __init__(self, host, folder: str, entries_fn, make_button, default_w: int = 192):
         super().__init__(host, folder, "symbol_browser")
+        self.DEFAULT_W = default_w
         self._collapse_btn.hide()   # 이 카드는 접지 않고 닫는다(✕)
         self._entries_fn, self._make_button = entries_fn, make_button
         self.folder = folder
@@ -1251,17 +1255,22 @@ class _SymbolFolderBrowser(_FloatingPanel):
 
         body = QWidget()
         row = QHBoxLayout(body)
-        row.setContentsMargins(4, 4, 0, 6); row.setSpacing(0)
+        row.setContentsMargins(4, 0, 0, 6); row.setSpacing(0)
+        col = QVBoxLayout()
+        col.setContentsMargins(0, 0, 0, 0); col.setSpacing(0)
+        col.addWidget(self._table_row(QLabel("#"), QLabel("그림"), QLabel("이름"), header=True))
+        col.addWidget(self._line(horizontal=True))
+        row.addLayout(col, 1)
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._list_host = QWidget()
         self._list = QVBoxLayout(self._list_host)
-        self._list.setContentsMargins(0, 0, 0, 0); self._list.setSpacing(2)
+        self._list.setContentsMargins(0, 0, 0, 0); self._list.setSpacing(0)
         self._list.addStretch(1)
         self._scroll.setWidget(self._list_host)
-        row.addWidget(self._scroll, 1)
+        col.addWidget(self._scroll, 1)
         self._w0 = 0
         self._grip = _DragGrip("끌어서 너비 조절 · 더블클릭하면 원래대로", self._grip_press, self._grip_move,
                                self._grip_release, self._grip_reset, height=8, horizontal=True)
@@ -1291,30 +1300,76 @@ class _SymbolFolderBrowser(_FloatingPanel):
         self._title_lbl.setText(folder)
         self.refresh()
 
+    def _line(self, horizontal: bool) -> QFrame:
+        ln = QFrame()
+        ln.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        ln.setStyleSheet(self._LINE_QSS)
+        if horizontal:
+            ln.setFixedHeight(1)
+        else:
+            ln.setFixedWidth(1)
+        return ln
+
+    def _table_row(self, num: QLabel, pic: QLabel, name: QLabel, header=False, host=None) -> QWidget:
+        """한 줄 = 번호 | 그림 | 이름. 제목 줄(header)과 심볼 줄이 같은 칸 폭을 쓴다. 심볼 줄은 팔레트 버튼(host)
+        위에 얹고 칸 글자·그림은 마우스를 통과시켜(클릭·끌기·우클릭·호버 미리보기는 버튼이 받는다)."""
+        w = host if host is not None else QWidget()
+        hl = QHBoxLayout(w)
+        hl.setContentsMargins(0, 0, 4, 0); hl.setSpacing(0)
+        num.setFixedWidth(self.NUM_W)
+        num.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pic.setFixedWidth(self.ICON_W + 8)
+        pic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        name.setContentsMargins(6, 0, 0, 0)
+        name.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        for lb in (num, pic, name):
+            lb.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        num.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+        if header:
+            for lb in (num, pic, name):
+                f = lb.font(); f.setPixelSize(11); lb.setFont(f)
+                lb.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+            w.setFixedHeight(20)
+        hl.addWidget(num)
+        hl.addWidget(self._line(horizontal=False))
+        hl.addWidget(pic)
+        hl.addWidget(self._line(horizontal=False))
+        hl.addWidget(name, 1)
+        return w
+
     def refresh(self):
         """라이브러리가 바뀌면(이름변경·이동·삭제) 패널과 함께 다시 그린다."""
-        for b in self._buttons:
-            self._list.removeWidget(b)
-            b.hide()
-            b.deleteLater()
+        while self._list.count() > 1:   # 맨 끝 늘림 칸만 남기고(줄 버튼·줄 사이 선)
+            it = self._list.takeAt(0)
+            if it.widget() is not None:
+                it.widget().hide()
+                it.widget().deleteLater()
         self._buttons = [self._make_button(e, self.ICON_W, self.ICON_H) for e in self._entries_fn(self.folder)]
-        for i, b in enumerate(self._buttons):
-            b.setIconSize(QSize(self.ICON_W, self.ICON_H))
-            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        i = 0
+        for n, b in enumerate(self._buttons, 1):
+            pm = b.icon().pixmap(QSize(self.ICON_W, self.ICON_H))
+            b.setIcon(QIcon())   # 그림·글자는 칸(QLabel)이 그린다 — 버튼은 배경(호버·쥠)과 입력만
+            b.setText("")
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
             b.setFixedHeight(self.ROW_H)
             b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            self._list.insertWidget(i, b)
+            pic = QLabel(); pic.setPixmap(pm)
+            b._name_lbl = QLabel()
+            b._pixmap = pm
+            self._table_row(QLabel(str(n)), pic, b._name_lbl, host=b)
+            self._list.insertWidget(i, b); i += 1
+            self._list.insertWidget(i, self._line(horizontal=True)); i += 1
         self._count.setText(f"{len(self._buttons)}개")
         self._rewrap()
 
     def _name_width(self) -> int:
-        # 줄 폭 − 그림 − 버튼 안 여백·그림과 글자 사이(실측 약 16) − 스크롤바 자리
-        return max(60, self._scroll.viewport().width() - self.ICON_W - 22)
+        # 줄 폭 − 번호 칸 − 그림 칸 − 칸 선 2 − 이름 안쪽 여백 6 − 오른쪽 여백 4
+        return max(50, self._scroll.viewport().width() - self.NUM_W - (self.ICON_W + 8) - 2 - 6 - 4)
 
     def _rewrap(self):
         w = self._name_width()
         for b in self._buttons:
-            b.setText(_wrap_two_lines(b.fontMetrics(), b._full_name, w))
+            b._name_lbl.setText(_wrap_two_lines(b._name_lbl.fontMetrics(), b._full_name, w))
 
     def restyle(self):
         """테마 전환 — 머리줄 아이콘만 다시(줄은 `refresh`)."""

@@ -1789,7 +1789,7 @@ class _UIBuildMixin:
         if browser is None:
             browser = _SymbolFolderBrowser(
                 self, folder, lambda f: [e for e in symbol_library.load_library() if e.get("folder") == f],
-                self._make_browser_button)
+                self._make_browser_button, default_w=_LEFT_PANEL_W)   # 너비 = 도형·심볼 카드와 같게
             self._symbol_browser = browser
             browser._head.setStyleSheet(getattr(self, "_panel_head_qss", ""))
         else:
