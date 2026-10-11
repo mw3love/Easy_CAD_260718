@@ -175,3 +175,34 @@ def test_palette_view_list_shows_full_names_and_persists():
             assert w._custom_sym_buttons[ant["id"]][0].toolButtonStyle() ==                 _Qt.ToolButtonStyle.ToolButtonTextUnderIcon
         finally:
             st.remove("palette_view")
+
+
+def test_recent_and_basic_sections_collapse_and_persist():
+    """[실사용 피드백 2026-10-11] 「자주 쓰는 것」·「기본 도형」도 제목 줄에서 접는다 — 접힘 저장, 접었다 펴면
+    패널 높이가 원래대로, 접어 둔 기본 도형도 검색 중엔 펼쳐 보이고 결과로 센다."""
+    st = app_settings()
+    keys = ("palette_section_collapsed_recent", "palette_section_collapsed_basic")
+    try:
+        w = CanvasWindow()
+        w.show()
+        h0 = w._left_panel.height()
+        w._basic_section.collapse_btn.click()
+        assert w._basic_section.body.isHidden() and w._basic_section.collapse_btn.text() == "▸"
+        assert w._left_panel.height() < h0                       # 패널이 줄어든다
+        assert st.value(keys[1], False, type=bool) is True
+        w._custom_sym_search.setText("판단")
+        assert w._basic_section.isVisibleTo(w._left_container)   # 접혀 있어도 결과로 센다
+        assert not w._basic_section.body.isHidden()              # 검색 중엔 펼침
+        assert st.value(keys[1], False, type=bool) is True       # 저장값 그대로
+        w._custom_sym_search.clear()
+        QTest.qWait(50)                                          # 내 심볼 다시 그리기는 한 틱 뒤에 크기가 맞는다
+        assert w._basic_section.body.isHidden()
+        w._recent_section.collapse_btn.click()
+        assert w._recent_section.body.isHidden() and st.value(keys[0], False, type=bool) is True
+        w2 = CanvasWindow()                                      # 다음 창에도 접힌 채
+        assert w2._recent_section.body.isHidden() and w2._basic_section.body.isHidden()
+        w._basic_section.collapse_btn.click(); w._recent_section.collapse_btn.click()
+        assert w._left_panel.height() == h0, (w._left_panel.height(), h0)   # 다 펴면 원래 높이
+    finally:
+        for k in keys:
+            st.remove(k)

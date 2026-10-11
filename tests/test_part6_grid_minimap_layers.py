@@ -1477,6 +1477,23 @@ def test_color_grid_popup_fill_has_none_item_color_does_not():
     assert not any(b.text() == "Ø" for b in color_pop.findChildren(QToolButton))
 
 
+def test_color_grid_popup_stays_on_screen_near_right_edge():
+    # [실사용 피드백 2026-10-11] 속성 카드가 화면 오른쪽 끝이라 「⋯」 팝업이 화면 밖으로 나갔다.
+    w = CanvasWindow()
+    w.show()
+    _mk_pen_rect(w).setSelected(True)
+    area = w._pf_color.screen().availableGeometry()
+    anchor = QToolButton(w)
+    anchor.setFixedSize(22, 20)
+    anchor.move(w.mapFromGlobal(QPoint(area.right() - 30, area.bottom() - 25)))   # 오른쪽 아래 구석
+    anchor.show()
+    w._show_color_grid_popup(anchor, QColor("#000"), False, False, "색 선택", lambda c: None)
+    # 오프스크린 플랫폼은 띄울 때 창을 +2px 밀어 놓는다(실측) — 그만큼만 여유
+    assert area.adjusted(0, 0, 2, 2).contains(w._last_color_popup.geometry())
+    assert w._last_color_popup.geometry().bottom() < anchor.mapToGlobal(QPoint(0, 0)).y()   # 아래 자리 없으면 위로
+    w._last_color_popup.close()
+
+
 
 
 def test_color_grid_popup_swatch_click_applies_immediately():

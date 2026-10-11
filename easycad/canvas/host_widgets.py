@@ -1027,6 +1027,35 @@ class _StaticSection(QWidget):
         # 맞추기 위한 축소 시리즈의 일부.
         self.body_layout.setContentsMargins(2, 2, 2, 4); self.body_layout.setSpacing(4)
         v.addWidget(self.body)
+        self._title_lbl = title_lbl
+        self.collapse_btn = None
+
+    def make_collapsible(self, collapsed: bool, on_toggle):
+        """[실사용 피드백 2026-10-11] 「자주 쓰는 것」·「기본 도형」도 내 심볼 폴더처럼 제목 줄에서 접는다
+        (자주 안 쓰는 칸은 접어 두기). 오른쪽 ▾/▸ 버튼이나 제목 글자를 누르면 `on_toggle(새 접힘)`을
+        부른다 — 저장과 패널 크기 다시 재기(`_relayout_left_panel`)는 부르는 쪽 몫."""
+        btn = QToolButton()
+        btn.setAutoRaise(True)
+        btn.setFixedSize(QSize(16, 16))
+        btn.setStyleSheet(
+            f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
+        self.header_layout.addWidget(btn)
+        self.collapse_btn = btn
+
+        def toggle(_c=False):
+            self.set_collapsed(self.body.isVisible())
+            on_toggle(not self.body.isVisible())
+        btn.clicked.connect(toggle)
+        self._title_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._title_lbl.mousePressEvent = lambda e: toggle() if e.button() == Qt.MouseButton.LeftButton else None
+        self.set_collapsed(collapsed)
+
+    def set_collapsed(self, collapsed: bool):
+        self.body.setVisible(not collapsed)
+        if self.collapse_btn is not None:
+            self.collapse_btn.setText("▸" if collapsed else "▾")
+            self.collapse_btn.setToolTip("펼치기" if collapsed else "접기")
+        self.updateGeometry()
 
 
 class _SymbolFolderDropZone(QWidget):

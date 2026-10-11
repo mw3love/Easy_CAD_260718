@@ -907,7 +907,9 @@ class _UIBuildMixin:
         # [2026-08-19 재개편] "기본도형"/"내 심볼" 최상단 접기 화살표는 없어졌다 — 남은 접기
         # 버튼은 폴더별(`_refresh_custom_symbol_section.add_group`가 만드는 것)뿐이라 그
         # 목록을 대신 재도색한다.
-        for btn in getattr(self, "_symfolder_collapse_btns", []):
+        section_btns = [getattr(self, a).collapse_btn for a in ("_recent_section", "_basic_section")
+                        if getattr(self, a, None) is not None]   # [2026-10-11] 다시 생긴 섹션 접기
+        for btn in getattr(self, "_symfolder_collapse_btns", []) + section_btns:
             btn.setStyleSheet(
                 f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
         add_folder_btn = getattr(self, "_add_folder_btn", None)
@@ -1626,7 +1628,7 @@ class _UIBuildMixin:
         zones = [add_group(None, "즐겨찾기", deletable=False, favorites=True),
                  add_group(None, "미분류", deletable=False)]
         zones += [add_group(name, name, deletable=True) for name in folders]
-        basic_hit = query and any(b.isVisible() for _g, bs in self._shape_sections for b in bs)
+        basic_hit = query and any(not b.isHidden() for _g, bs in self._shape_sections for b in bs)
         if query and not any(zones) and not basic_hit:
             none_lbl = self._section_label("일치하는 도형·심볼 없음")
             body.layout().addWidget(none_lbl)
@@ -1962,7 +1964,18 @@ class _UIBuildMixin:
             "basic": basic_section,
             "customsym": custom_section,
         }
+        # [실사용 피드백 2026-10-11] 「자주 쓰는 것」·「기본 도형」도 폴더처럼 제목 줄에서 접는다(접힘 저장).
+        # 2026-08-19에 이 두 섹션 접기를 뺀 이유(접었다 펴면 패널이 부풀던 것)는 폴더 접기가 쓰는
+        # 겹마다 updateGeometry + `_relayout_left_panel` 방식으로 막는다.
+        for key, sec in (("recent", recent_section), ("basic", basic_section)):
+            setting = f"palette_section_collapsed_{key}"
+            sec.make_collapsible(app_settings().value(setting, False, type=bool),
+                                 lambda c, s=setting: self._on_palette_section_toggled(s, c))
         self._refresh_recent_section()
+        self._relayout_left_panel()
+
+    def _on_palette_section_toggled(self, setting: str, collapsed: bool):
+        app_settings().setValue(setting, collapsed)
         self._relayout_left_panel()
 
     def _set_palette_view(self, mode: str):
@@ -1989,8 +2002,12 @@ class _UIBuildMixin:
                 b.setVisible(b in shown)
             for i, b in enumerate(shown):
                 grid.addWidget(b, i // _PALETTE_COLS, i % _PALETTE_COLS)
-        any_basic = any(b.isVisible() for _g, btns in self._shape_sections for b in btns) or not query
+        # isVisible이 아니라 isHidden — 섹션을 접어 두면 칸이 다 "안 보임"이라 결과 없음으로 잘못 셌다
+        any_basic = any(not b.isHidden() for _g, btns in self._shape_sections for b in btns) or not query
         self._basic_section.setVisible(any_basic)
+        # 접어 둔 기본 도형도 검색 중엔 펼쳐 보인다(내 심볼 폴더와 같은 규칙, 저장값은 그대로)
+        self._basic_section.set_collapsed(
+            not query and app_settings().value("palette_section_collapsed_basic", False, type=bool))
         self._recent_section.setVisible(not query)
         for sec in (self._basic_section, self._recent_section):
             sec.updateGeometry()

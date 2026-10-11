@@ -104,7 +104,18 @@ class _StyleMixin:
         pop = _ColorGridPopup(self, initial, allow_none, show_alpha, title, on_pick,
                               recent=self._recent_colors, on_custom_picked=self._remember_recent_color)
         pop.adjustSize()
-        pop.move(anchor.mapToGlobal(QPoint(0, anchor.height() + 2)))
+        # [실사용 피드백 2026-10-11] 속성 카드가 화면 오른쪽 끝이라 「⋯」 아래 왼쪽 맞춤으로 띄우면
+        # 팝업 대부분이 화면 밖으로 나갔다 — 그 화면 안으로 밀어 넣고, 아래 자리가 없으면 위로 띄운다.
+        pos = anchor.mapToGlobal(QPoint(0, anchor.height() + 2))
+        screen = anchor.screen()
+        if screen is not None:
+            area = screen.availableGeometry()
+            x = max(area.left(), min(pos.x(), area.right() + 1 - pop.width()))
+            y = pos.y()
+            if y + pop.height() > area.bottom() + 1:
+                y = anchor.mapToGlobal(QPoint(0, 0)).y() - pop.height() - 2
+            pos = QPoint(x, max(area.top(), y))
+        pop.move(pos)
         pop.show()
         self._last_color_popup = pop   # 테스트 훅 — 실사용 흐름엔 영향 없음
 
