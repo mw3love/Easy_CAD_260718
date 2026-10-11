@@ -573,11 +573,13 @@ def test_symbol_folder_right_click_opens_rename_delete_menu():
             title_lbl.customContextMenuRequested.emit(QPointF(1, 1).toPoint())
         assert len(created_menus) == 1
         acts = [a for a in created_menus[0].actions() if not a.isSeparator()]
-        assert [a.text() for a in acts] == ["폴더 색 바꾸기…", "이름변경…", "삭제…"]   # [2026-10-11] 크게 보기는 ⤢ 버튼으로
-        assert all(not a.icon().isNull() for a in acts)
+        # [2026-10-11] 크게 보기는 ⤢ 버튼으로 · [2026-10-12] 기본이 중립이 되며 「기본 색으로」(고른 색 없으면 꺼짐, 칸 메뉴처럼 그림 없음)
+        assert [a.text() for a in acts] == ["폴더 색 바꾸기…", "기본 색으로", "이름변경…", "삭제…"]
+        assert not acts[1].isEnabled()
+        assert all(not a.icon().isNull() for a in acts if a.text() != "기본 색으로")
 
         with patch.object(QInputDialog, "getText", return_value=("안테나", True)):
-            acts[1].trigger()   # 이름변경…
+            acts[2].trigger()   # 이름변경…
         assert symbol_library.load_folders() == ["안테나"]
 
 
@@ -1289,8 +1291,9 @@ def test_symbol_folder_color_box_count_and_hover_menu():
         assert sec.count_lbl.text() == "1"
         # [2026-10-11 시안 F3] 색 점·칸 물들임 대신 제목 줄만 색 띠(칸은 중립)
         assert not sec._dot.isVisibleTo(sec)
-        dc = QColor(w._FOLDER_DEFAULT_COLORS[0])
-        assert f"rgba({dc.red()},{dc.green()},{dc.blue()}" in sec.head.styleSheet() and "#palSec" in sec.styleSheet()
+        # [2026-10-12] 안 고른 폴더는 띠 없이 중립 + 제목 앞 폴더 그림(예전엔 순서대로 기본색을 돌려 칠함)
+        assert sec.head.styleSheet() == "" and "#palSec" in sec.styleSheet()
+        assert sec._lead.isVisibleTo(sec) and not sec._lead.pixmap().isNull()
         more = sec._hover_btns[0]
         assert more.isHidden()                                  # 평소엔 숨김
         QApplication.sendEvent(sec, QEnterEvent(QPointF(5, 5), QPointF(5, 5), QPointF(5, 5)))
@@ -1301,6 +1304,11 @@ def test_symbol_folder_color_box_count_and_hover_menu():
         w._refresh_custom_symbol_section()
         zone, _t = _folder_zone_and_label(w, "무선")
         assert "rgba(18,52,86" in zone.layout().itemAt(0).widget().head.styleSheet()
+        w._reset_symbol_folder_color("무선")                    # 「기본 색으로」 → 다시 중립
+        assert symbol_library.load_folder_colors() == {}
+        zone, _t = _folder_zone_and_label(w, "무선")
+        assert zone.layout().itemAt(0).widget().head.styleSheet() == ""
+        symbol_library.set_folder_color("무선", "#123456")
         symbol_library.rename_folder("무선", "유선")
         assert symbol_library.load_folder_colors() == {"유선": "#123456"}
         symbol_library.delete_folder("유선")
