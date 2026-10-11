@@ -1417,6 +1417,9 @@ class _HandleResizeMixin:
             if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 new_rot = round(new_rot / 15.0) * 15.0  # 15° 스냅
             self.setRotation(new_rot % 360)
+            h = self._host()   # [우리 확장 2026-10-12] 속성 카드 회전 칸을 끄는 동안에도 따라 바꿈
+            if h is not None and hasattr(h, "_live_props_rotation"):
+                h._live_props_rotation()
             event.accept()
             return
         if getattr(self, "_resizing", False):
@@ -8128,6 +8131,9 @@ class _GroupTransform:
             if shift:
                 d = round(d / 15.0) * 15.0
             self._apply_rotate(self._center, d)
+            owner = getattr(self._view, "_owner", None)   # [우리 확장 2026-10-12] 속성 카드 회전 칸 실시간
+            if owner is not None and hasattr(owner, "_live_props_rotation"):
+                owner._live_props_rotation()
         else:
             dx = scene_pt.x() - self._anchor.x()
             dy = scene_pt.y() - self._anchor.y()

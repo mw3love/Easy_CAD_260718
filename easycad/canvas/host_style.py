@@ -600,6 +600,22 @@ class _StyleMixin:
             t.timeout.connect(self._refresh_properties)
         t.start()
 
+    def _live_props_rotation(self):
+        """[실사용 피드백 2026-10-12] 회전 손잡이(한 개·여러 개)를 끄는 동안 속성 카드의 회전 칸 숫자만 따라 바꾼다 —
+        카드 전체 다시 읽기(`_refresh_properties`, 줄 숨김·크기 재기)는 매 움직임마다 하기엔 무거워 손 뗄 때만(기록 쌓일 때).
+        값 규칙은 `_refresh_properties`와 같다(모두 같으면 그 값, 다르면 0). 신호를 막아야 `_edit_rotation`이
+        끄는 중에 되돌리기 기록을 쌓지 않는다."""
+        spin = getattr(self, "_pf_rotation", None)
+        if spin is None or not spin.isVisibleTo(self._props_panel):
+            return
+        rots = [it.rotation() for it in self._scene.selectedItems() if _is_rotatable(it)]
+        if not rots:
+            return
+        uniform = len({round(r, 1) for r in rots}) == 1
+        spin.blockSignals(True)
+        spin.setValue(rots[0] if uniform else 0.0)
+        spin.blockSignals(False)
+
     def _pf_text_rows(self) -> tuple:
         return (self._pf_text_sep, self._pf_text_head, self._pf_font, self._pf_text_color_row)
 

@@ -354,3 +354,53 @@ def test_basic_section_title_has_shapes_mark():
         assert lead.isVisible() and not lead.pixmap().isNull()
         w._active_doc.dirty = False
         w.close()
+
+
+def test_rotation_field_follows_handle_while_dragging_single_and_group():
+    """[실사용 피드백 2026-10-12] 회전 손잡이를 끄는 동안(손 떼기 전)에도 속성 카드 회전 칸이 따라옴 — 한 개(도형 손잡이)·
+    여러 개(그룹 위 손잡이) 모두. 끄는 중엔 되돌리기 기록이 안 쌓이고, 손 떼면 1건."""
+    from PyQt6.QtCore import QPoint
+
+    def send(t, p):
+        b = Qt.MouseButton.LeftButton if t != QEvent.Type.MouseMove else Qt.MouseButton.NoButton
+        btns = Qt.MouseButton.NoButton if t == QEvent.Type.MouseButtonRelease else Qt.MouseButton.LeftButton
+        QApplication.sendEvent(vp, QMouseEvent(t, QPointF(p), QPointF(vp.mapToGlobal(p)), b, btns,
+                                               Qt.KeyboardModifier.NoModifier))
+        _app.processEvents()
+
+    w = CanvasWindow(); w.resize(1200, 800); w.show(); _app.processEvents()
+    vp, v = w._view.viewport(), w._view
+
+    def mk(x):
+        r = _RectItem(QRectF(0, 0, 100, 60)); r.setPen(w.make_pen())
+        r.setFlags(r.GraphicsItemFlag.ItemIsSelectable | r.GraphicsItemFlag.ItemIsMovable)
+        w._scene.addItem(r); r.setPos(x, 0)
+        return r
+
+    r = mk(0); r.setSelected(True); _app.processEvents()
+    hp = v.mapFromScene(r.mapToScene(r._box_rot_rect().center()))
+    c = v.mapFromScene(r.mapToScene(r._content_rect().center()))
+    u0 = len(w._undo)
+    send(QEvent.Type.MouseButtonPress, hp)
+    send(QEvent.Type.MouseMove, QPoint(2 * c.x() - hp.x(), hp.y()))
+    assert r.rotation() > 1.0
+    assert abs(w._pf_rotation.value() - round(r.rotation(), 1)) < 0.05, "끄는 중에도 회전 칸이 따라와야 함"
+    assert len(w._undo) == u0                                     # 끄는 중엔 기록 없음
+    send(QEvent.Type.MouseButtonRelease, QPoint(2 * c.x() - hp.x(), hp.y()))
+    assert len(w._undo) == u0 + 1
+
+    r.setRotation(0); r2 = mk(250)
+    w._scene.clearSelection(); r.setSelected(True); r2.setSelected(True); _app.processEvents()
+    g = v._group
+    b = g.bbox()
+    hit = next(QPointF(x, y) for y in range(int(b.top()) - 80, int(b.bottom()), 2)
+               for x in range(int(b.left()), int(b.right()), 2)
+               if (h := g.handle_at(QPointF(x, y))) is not None and h[0] == "rotate")
+    gp, gc = v.mapFromScene(hit), v.mapFromScene(b.center())
+    send(QEvent.Type.MouseButtonPress, gp)
+    send(QEvent.Type.MouseMove, QPoint(gc.x() + (gc.y() - gp.y()), gc.y()))
+    assert r.rotation() > 1.0 and abs(r.rotation() - r2.rotation()) < 1e-6
+    assert abs(w._pf_rotation.value() - round(r.rotation(), 1)) < 0.05, "여러 개 회전도 따라와야 함"
+    send(QEvent.Type.MouseButtonRelease, QPoint(gc.x() + (gc.y() - gp.y()), gc.y()))
+    w._active_doc.dirty = False
+    w.close()
