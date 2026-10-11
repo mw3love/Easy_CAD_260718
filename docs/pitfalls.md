@@ -1540,3 +1540,5 @@
 - ⚠ (2026-10-11) **PyQt6 가상 함수 덮어쓰기(paintEvent·hideEvent 등)에서 값 반환·처리 안 된 예외 = 앱 강제 종료(exit 127, 출력 없음)** —
   람다로 `(a(), b())` 튜플을 돌려주면 죽는다. None 반환 함수로 쓰고, 창 닫힘 중 지워진 객체(RuntimeError)는 삼킬 것.
   또 `addToolBar("이름")`처럼 C++이 만든 위젯은 인스턴스 속성 덮어쓰기가 안 먹는다 — 파이썬에서 생성해 넘길 것.
+- ⚠ (2026-10-11) **테스트 설정 저장소(`HKCU\Software\EasyCAD-pytest`)에 값이 남아 다른 테스트를 깬다** — `dark=false`가 남아 "다크 기본"
+  테스트 2개가 실패했다(코드 변경과 무관). 다크·테마 테스트가 갑자기 실패하면 `reg query "HKCU\Software\EasyCAD-pytest\EasyCAD"`부터.

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtCore import Qt, QPoint, QTimer
 from PyQt6.QtGui import (
     QColor,
 )
@@ -57,6 +57,10 @@ class _StyleMixin:
         for it in targets:
             fn(it)
         self.push_undo_state(snaps, coalesce_key=key)
+        # [실사용 피드백 2026-10-11 후속] 목록을 열기만 하면 선택선을 그대로 두고, 그 목록에서 처음 고른 순간부터 숨긴다
+        # (열자마자 숨기면 아직 바뀐 게 없는데 "무엇이 선택됐나"만 사라졌다). 목록이 닫히면 `_on_prop_popup_visible`이 되돌린다.
+        if getattr(self, "_style_popup_open", False):
+            self._set_style_preview(True)
         self._refresh_properties()
 
 
@@ -133,7 +137,7 @@ class _StyleMixin:
         init = self._read_props(sel[0])["color"] or QColor("#000000")
         # [실사용 피드백 2026-10-11 후속] 「⋯」는 중간 그리드 팝업 없이 바로 「다른 색」 창 — 자주 쓰는 색은
         # 견본 칸을 사용자가 직접 정한다(견본 우클릭, `_customize_preset`).
-        col = self._pick_custom_color_previewing(init, False, "선 색")
+        col = _pick_custom_color(self, init, False, "선 색")
         if col is None:
             return
         self._remember_recent_color(col)   # 레이어·폴더 색 팝업의 「최근 사용한 색」에도 남긴다
@@ -154,7 +158,7 @@ class _StyleMixin:
             return
         init = self._read_props(sel[0])["fill"] or QColor("#ffffff")
         # [2026-10-11 후속] 「⋯」 = 바로 「다른 색」 창(투명도 포함). 「없음」은 견본 첫 칸.
-        col = self._pick_custom_color_previewing(init, True, "채움 색")
+        col = _pick_custom_color(self, init, True, "채움 색")
         if col is None:
             return
         self._remember_recent_color(col)
@@ -203,7 +207,7 @@ class _StyleMixin:
             self._refresh_properties()
 
         def pick():
-            col = self._pick_custom_color_previewing(cur, kind == "fill", "견본 칸 색")
+            col = _pick_custom_color(self, cur, kind == "fill", "견본 칸 색")
             if col is not None:
                 set_to(col)
         menu.addAction("이 칸 색 바꾸기…", pick)
@@ -246,7 +250,9 @@ class _StyleMixin:
 
     def _set_style_preview(self, on: bool):
         """[실사용 피드백 2026-10-11, 시안 S1 + Lucid] 색·선·두께를 고르는 동안(펼침 목록·「다른 색」 창) 선택 강조선과
-        꼭짓점 사각을 숨긴다 — 그리는 쪽은 `core_shapes._style_preview_active`."""
+        꼭짓점 사각을 숨긴다 — 그리는 쪽은 `core_shapes._style_preview_active`.
+        [같은 날 후속] 목록에서 실제로 하나 고른 뒤부터만(`_edit_items`). 「다른 색」 창은 확인을 눌러야 바뀌므로(미리 보기 없음)
+        창이 떠 있는 동안 숨길 이유가 없어 뺐다."""
         sc = getattr(self, "_scene", None)
         if sc is None or bool(getattr(sc, "_style_preview", False)) == on:
             return
@@ -254,12 +260,11 @@ class _StyleMixin:
         for it in sc.selectedItems():
             it.update()
 
-    def _pick_custom_color_previewing(self, initial, show_alpha: bool, title: str):
-        """「다른 색」 창 — 열린 동안 선택 강조를 숨긴다(목록과 같은 규칙)."""
-        self._set_style_preview(True)
-        try:
-            return _pick_custom_color(self, initial, show_alpha, title)
-        finally:
+    def _on_prop_popup_visible(self, on: bool):
+        """속성 펼침 목록(`_PropPopup`)이 열리고 닫힐 때. 여는 것만으로는 선택선을 숨기지 않고(고른 뒤 `_edit_items`가 숨김),
+        닫히면 다시 보인다."""
+        self._style_popup_open = on
+        if not on:
             self._set_style_preview(False)
 
     def _set_props_auto_visible(self, show: bool):
@@ -557,6 +562,18 @@ class _StyleMixin:
         self._props_panel.adjustSize()
 
 
+    def _schedule_props_refresh(self):
+        """[실사용 피드백 2026-10-11 후속] 속성 카드를 곧 다시 읽는다 — 카드는 선택이 바뀔 때·카드에서 고칠 때만 읽어서,
+        회전 손잡이로 돌리거나 되돌리기를 하면 각도·색이 옛 값으로 남았다. 기록이 쌓이거나 되돌릴 때 불리고, 드래그처럼
+        연달아 와도 다음 이벤트 차례에 한 번만 읽는다."""
+        t = getattr(self, "_props_refresh_timer", None)
+        if t is None:
+            t = self._props_refresh_timer = QTimer(self)
+            t.setSingleShot(True)
+            t.setInterval(0)
+            t.timeout.connect(self._refresh_properties)
+        t.start()
+
     def _refresh_properties(self):
         """선택에 맞춰 편집 컨트롤 값·활성 상태를 채운다. _pf_updating로 편집 시그널을 막아
         프로그램적 세팅이 다시 편집 핸들러를 트리거하지 않게 한다(피드백 차단)."""
@@ -678,6 +695,9 @@ class _StyleMixin:
             # 그 외(텍스트·다중선택 등)는 읽기전용 라벨로. 별도 '도형'·'화살표' 행은 없다.
             if show_swap:
                 self._pf_swap_btn.setText(f"{self._pf_type.text()} ▾")
+                it0 = sel[0]
+                kind = "rect" if isinstance(it0, _RectItem) else ("ellipse" if isinstance(it0, _EllipseItem) else it0._kind)
+                self._pf_swap_btn.setIcon(self._shape_icon(kind))   # 30px로 그려 16px로 줄여 보임(작게 그리면 여백에 묻힘)
                 self._pf_type_stack.setCurrentWidget(self._pf_swap_btn)
             elif show_routing:
                 self._pf_type_stack.setCurrentWidget(self._pf_routing_btn)

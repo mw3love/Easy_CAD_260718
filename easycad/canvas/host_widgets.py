@@ -1061,12 +1061,14 @@ class _StaticSection(QWidget):
         # 렌더됐다 — 폰트는 스타일시트 대신 QFont로 걸어 팔레트 색 상속을 그대로 유지한다.
         title_lbl = QLabel(title)
         f = title_lbl.font(); f.setWeight(QFont.Weight.DemiBold); title_lbl.setFont(f)
-        hl.addWidget(title_lbl, 1)
+        # [실사용 피드백 2026-10-11 후속] 개수 칩은 제목 바로 뒤 — 예전엔 제목이 남는 폭을 다 차지해 칩이 오른쪽 끝(⤢ 옆)에 붙었다.
+        hl.addWidget(title_lbl)
         self.count_lbl = QLabel()
         cf = self.count_lbl.font(); cf.setPixelSize(11); self.count_lbl.setFont(cf)
         self.count_lbl.setForegroundRole(QPalette.ColorRole.PlaceholderText)
         self.count_lbl.hide()
         hl.addWidget(self.count_lbl)
+        hl.addStretch(1)
         self.header_layout = hl   # 확장 지점 — insertWidget(1, ...)으로 제목 옆에 버튼 삽입
         self.head = head
         v.addWidget(head)

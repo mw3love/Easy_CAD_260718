@@ -1737,11 +1737,13 @@ class _UIBuildMixin:
             add_btn.setIcon(_menu_icon(add_btn._icon_name))
             add_btn.setText("새 폴더")
             add_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-            add_btn.setAutoRaise(True)
+            # [실사용 피드백 2026-10-11 후속] 테두리 없는 납작 버튼(autoRaise)은 목록 한 줄처럼 보여 "버튼처럼 안 보임" —
+            # 레이어 카드의 「Layer」·「선택 옮기기」와 같은 테두리 버튼, 같은 아이콘 크기, 왼쪽 정렬.
+            add_btn.setIconSize(QSize(14, 14))
             add_btn.setToolTip("새 폴더 만들기")
             add_btn.clicked.connect(self._prompt_create_symbol_folder)
             self._add_folder_btn = add_btn
-            body.layout().addWidget(add_btn)
+            body.layout().addWidget(add_btn, 0, Qt.AlignmentFlag.AlignLeft)
             zones.append(add_btn)
         self._restyle_palette_boxes()
         for z in zones:
@@ -2303,7 +2305,9 @@ class _UIBuildMixin:
         btn_row.setContentsMargins(2, 2, 2, 2); btn_row.setSpacing(6)
         # [실사용 피드백 2026-10-11] 버튼은 아이콘+글자(자리가 모자라면 아이콘만 — `_sync_layers_panel_width`).
         add_layer_btn = QToolButton()
-        add_layer_btn.setText("새로")   # [2026-10-11] 192px 카드에 두 버튼이 다 들어가게(「＋ 새 레이어」에서 줄임)
+        # [2026-10-11] 192px 카드에 두 버튼이 다 들어가게(「＋ 새 레이어」에서 줄임) → [같은 날 후속] 「새로」만으론 무엇을
+        # 만드는지 모호해 「Layer」로(사용자 선택 — 영어도 괜찮음).
+        add_layer_btn.setText("Layer")
         add_layer_btn._icon_name = "menu_plus"
         add_layer_btn.setToolTip("레이어를 하나 더 만들어요")
         add_layer_btn.clicked.connect(lambda: self.add_layer())
@@ -2446,6 +2450,9 @@ class _UIBuildMixin:
         self._pf_swap_btn.setToolTip("클릭: 다른 도형으로 바꾸기(크기·연결 유지)")
         self._pf_swap_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._pf_swap_btn.setMenu(self._build_swap_menu())
+        # [실사용 피드백 2026-10-11 후속] 지금 종류도 펼침 메뉴와 같은 그림을 글자 옆에(`_refresh_properties`가 채움).
+        self._pf_swap_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._pf_swap_btn.setIconSize(QSize(16, 16))
         # [실사용 피드백 2026-08-21] 화살표는 '종류'(경로 형태: 직선·곡선·직각)를 이 자리
         # 대신 별도 '화살표' 행에서 골라야 해 도형(사각형 등)의 바꾸기 버튼과 비일관이었다 —
         # 같은 스택에 화살표 종류 콤보(`_pf_routing_btn`, 아래에서 생성)를 3번째 페이지로
@@ -2564,11 +2571,12 @@ class _UIBuildMixin:
         # 바로 적용된다. 「선」 한 줄에 색 | 선 모양 | 두께.
         # [실사용 피드백 2026-10-11 후속] 골라도 목록은 열린 채 — 하나씩 바꿔 보며 비교하려면 닫히면 불편.
         # 닫기는 바깥 클릭·Esc·연 버튼 다시 누르기(`_PropPopup.mousePressEvent`).
-        # [2026-10-11, 시안 S1+Lucid] 목록이 열린 동안은 선택 강조선을 숨겨 바꾼 선 색이 그대로 보이게.
-        self._pf_color_pop = _PropPopup(self, color_row, self._set_style_preview)
-        self._pf_fill_pop = _PropPopup(self, fill_presets, self._set_style_preview)
-        self._pf_style_pop = _PropPopup(self, style_row, self._set_style_preview)
-        self._pf_width_pop = _PropPopup(self, width_row, self._set_style_preview)
+        # [2026-10-11, 시안 S1+Lucid] 목록에서 고른 뒤 목록이 닫힐 때까지 선택 강조선을 숨겨 바꾼 선 색이 그대로 보이게
+        # (같은 날 후속 — 열기만 했을 땐 그대로 둔다, `host_style._on_prop_popup_visible`).
+        self._pf_color_pop = _PropPopup(self, color_row, self._on_prop_popup_visible)
+        self._pf_fill_pop = _PropPopup(self, fill_presets, self._on_prop_popup_visible)
+        self._pf_style_pop = _PropPopup(self, style_row, self._on_prop_popup_visible)
+        self._pf_width_pop = _PropPopup(self, width_row, self._on_prop_popup_visible)
 
         def value_btn(tip, pop):
             b = QToolButton()

@@ -257,3 +257,54 @@ def test_layer_buttons_have_icons_and_header_close_menu_has_icon():
     with patch.object(QMenu, "exec", lambda m, *_a: seen.extend(m.actions())):
         w._left_panel._show_header_menu_at(w.mapToGlobal(w.rect().center()))
     assert [a.text() for a in seen] == ["닫기"] and not seen[0].icon().isNull()
+
+
+def _press_canvas(w):
+    vp = w._view.viewport()
+    p = QPointF(vp.width() / 2, vp.height() / 2)
+    ev = QMouseEvent(QEvent.Type.MouseButtonPress, p, QPointF(vp.mapToGlobal(p.toPoint())),
+                     Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    w.eventFilter(vp, ev)
+
+
+def test_feedback_followups_chip_folder_button_browser_close_layer_text():
+    """[실사용 피드백 2026-10-11 후속] 개수 칩은 제목 바로 뒤 · 「새 폴더」는 테두리 버튼(레이어 버튼과 같게) ·
+    크게 보기는 선택 도구로 도면을 누르면 닫히고, 심볼을 쥔 채 누르면(놓기) 안 닫힘 · 레이어 버튼 「Layer」."""
+    with _isolated_symbol_library():
+        ents = _fill("장비", 3)
+        w = CanvasWindow()
+        w.show()
+        sec = _folder_section(w, "장비")
+        hl = sec.header_layout
+        assert hl.indexOf(sec.count_lbl) == hl.indexOf(sec._title_lbl) + 1
+        assert sec.count_lbl.geometry().left() - sec._title_lbl.geometry().right() < 20
+        assert not w._add_folder_btn.autoRaise() and w._add_folder_btn.iconSize() == w._layer_add_btn.iconSize()
+        assert w._layer_add_btn.text() == "Layer"
+        w._open_symbol_browser("장비")
+        b = w._symbol_browser
+        w._custom_sym_buttons[ents[0]["id"]][0].click()   # 심볼을 쥠 = 놓기 대기
+        _press_canvas(w)
+        assert b.isVisible()
+        w.set_tool(None)
+        _press_canvas(w)
+        assert not b.isVisible()
+        w._active_doc.dirty = False
+        w.close()
+
+
+def test_type_button_icon_and_rotation_field_follows_handle_rotation():
+    """[실사용 피드백 2026-10-11 후속] 속성 카드 「종류」 버튼에 지금 도형 그림 · 회전 손잡이로 돌리거나 되돌려도 회전 칸이 따라옴."""
+    w = CanvasWindow()
+    r = _RectItem(QRectF(0, 0, 100, 60))
+    r.setFlags(r.GraphicsItemFlag.ItemIsSelectable | r.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(r); r.setSelected(True)
+    assert not w._pf_swap_btn.icon().isNull()
+    snaps = [(r, r.capture_geom())]
+    r.setRotation(30)                 # 손잡이 끌기와 같은 기록 경로(core_shapes mouseReleaseEvent → push_undo_geom)
+    w.push_undo_geom(snaps)
+    _app.processEvents()
+    assert w._pf_rotation.value() == 30.0
+    w.undo(); _app.processEvents()
+    assert r.rotation() == 0.0 and w._pf_rotation.value() == 0.0
+    w._active_doc.dirty = False
+    w.close()

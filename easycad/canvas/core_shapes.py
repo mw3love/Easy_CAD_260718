@@ -1722,7 +1722,7 @@ def _paint_selection_centerline(painter: QPainter, it, scale: float = 1.0, path:
 
 
 def _style_preview_active(it) -> bool:
-    """[실사용 피드백 2026-10-11, 우리 확장 — Lucid 방식] 속성 카드에서 색·선·두께 목록이나 「다른 색」 창이 열려 있는 동안은
+    """[실사용 피드백 2026-10-11, 우리 확장 — Lucid 방식] 속성 카드의 색·선·두께 목록에서 하나 고른 뒤 목록이 닫힐 때까지
     선택 강조선과 꼭짓점 사각을 숨긴다 — 파란 선택선이 도형 테두리에 겹쳐 바꾼 선 색이 안 보였다. 큐닷·회전 점은 그대로.
     호스트가 장면에 `_style_preview` 표시를 켜고 끈다(`host_style._set_style_preview`)."""
     sc = it.scene()

@@ -1298,6 +1298,14 @@ class _FileIOMixin:
             return False
         if obj is self._view.viewport():
             et = event.type()
+            if et == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                # [실사용 피드백 2026-10-11 후속] 폴더 「크게 보기」는 도면을 누르면 닫는다 — 단 선택 도구일 때만. 심볼을 집고
+                # (도구가 무장된 상태) 도면을 누르는 건 "놓기"라, 그때마다 닫히면 같은 폴더에서 여러 개 놓을 때마다 다시 열어야 한다.
+                browser = getattr(self, "_symbol_browser", None)
+                if (browser is not None and browser.isVisible() and self.current_tool in (None, "select")
+                        and getattr(self._view, "_csym_drag", None) is None):
+                    browser.hide()
+                    self._reposition_panels()
             if et == QEvent.Type.Resize:
                 # [미니맵 실조건 버그] dock 스플리터 드래그로 메인 뷰포트 크기가 바뀌면
                 # CanvasWindow.resizeEvent(창 자체 리사이즈)는 안 불려 미니맵 인디케이터가

@@ -1990,16 +1990,20 @@ def test_toolbar_groups_light_background_and_short_ai_label():
 
 
 def test_style_preview_hides_selection_chrome_while_picking():
-    """[실사용 피드백 2026-10-11, 시안 S1 + Lucid] 색·선·두께 목록이 열린 동안 선택 강조선·꼭짓점 사각을 숨긴다(바꾼 선 색이
-    보이게) — 닫으면 다시. 채움 견본은 진하게(C2), 실제 채움은 반투명 그대로."""
+    """[실사용 피드백 2026-10-11, 시안 S1 + Lucid] 색·선·두께 목록에서 고른 뒤 선택 강조선·꼭짓점 사각을 숨긴다(바꾼 선 색이
+    보이게) — 열기만 하면 그대로, 닫으면 다시. 채움 견본은 진하게(C2), 실제 채움은 반투명 그대로."""
     w = CanvasWindow(); w.show()
     r = _mk_pen_rect(w); r.setSelected(True); w._refresh_properties()
     from easycad.canvas.core_shapes import _style_preview_active
     assert not _style_preview_active(r)
     w._pf_color_btn.click()
-    assert _style_preview_active(r)
+    assert not _style_preview_active(r)       # [같은 날 후속] 열기만 하면 그대로
+    w._pf_color_presets[2].click()
+    assert _style_preview_active(r)           # 고른 순간부터 숨김
     w._pf_color_pop.hide()
     assert not _style_preview_active(r)
-    w._pf_fill_btn.click(); assert _style_preview_active(r); w._pf_fill_pop.hide()
+    w._pf_fill_btn.click(); assert not _style_preview_active(r)
+    w._pf_fill_presets[1].click(); assert _style_preview_active(r); w._pf_fill_pop.hide()
+    assert not _style_preview_active(r)
     css = w._pf_fill_presets[1].styleSheet()
     assert "rgba(" not in css and w._fill_presets()[1].alpha() < 255

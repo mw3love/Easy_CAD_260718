@@ -65,6 +65,7 @@ class _UndoMixin:
         self._refresh_history_actions()
         self._mark_dirty()   # [§8 항목10 Stage C]
         self._schedule_layer_counts()   # 레이어 패널 「이름 (개수)」 갱신
+        self._schedule_props_refresh()   # 속성 카드 값(회전 손잡이로 돌린 각도 등)
 
     # [§8 항목35, 2026-10-03] 되돌리기 기록 상한 — 사용자 결정: 그림 메모리만 제한.
     # 실측: 도형 5만 개를 지워 쌓아도 +80MB, 한 도형 5,000번 이동 +4MB인데, 1,200만 화소 사진은
@@ -387,6 +388,7 @@ class _UndoMixin:
         self._schedule_layer_counts()
         self._mark_dirty()   # [§8 항목10 Stage C] — 저장 후 되돌리기도 다시 dirty
         self._repaint_overlays()   # 되돌리기도 프로그램 이동 — 그룹 박스 잔상 방지
+        self._schedule_props_refresh()   # 되돌린 색·각도 등이 속성 카드에 남아 있지 않게
 
 
     def redo(self):
@@ -400,6 +402,7 @@ class _UndoMixin:
         self._schedule_layer_counts()
         self._mark_dirty()   # [§8 항목10 Stage C]
         self._repaint_overlays()   # 다시 실행도 마찬가지
+        self._schedule_props_refresh()   # 되돌린 색·각도 등이 속성 카드에 남아 있지 않게
 
 
     def _refresh_history_actions(self):
