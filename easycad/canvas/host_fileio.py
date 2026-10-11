@@ -982,8 +982,11 @@ class _FileIOMixin:
                 self._view.viewport().update()
             return
         if not items[0].isVisible():
+            # [실사용 피드백 2026-10-12] Qt는 숨길 때 선택도 풀어 버린다 — 끌기는 늘 패널 위(숨김)에서 시작하니
+            # 다시 보일 때 선택을 되살려야 `_apply_smart_snap`(선택된 도형 기준)이 정렬선을 낸다.
             for x in items:
                 x.setVisible(True)
+                x.setSelected(True)
         w, h = self._palette_drag_size
         scene_pos = self._view.mapToScene(local)
         tx, ty = scene_pos.x() - w / 2.0, scene_pos.y() - h / 2.0

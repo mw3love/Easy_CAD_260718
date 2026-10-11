@@ -1548,3 +1548,7 @@
   (`_PaletteButton._tooltip_html_fn`, 감시해 보니 `__dict__`는 비었는데 `sip.isdeleted`는 False). 정리 중에도 불리는 `event()`·
   `hideEvent()`가 읽는 속성은 **클래스 기본값**을 둘 것. 원인 불명 127은 pytest 플러그인으로 `sys.excepthook`을 걸어 돌리면
   예외가 찍힌다(걸면 안 죽으니 재현 확인은 훅 없이).
+- ⚠ (2026-10-12) **Qt는 `QGraphicsItem.setVisible(False)`에서 선택도 푼다** — 다시 보여도 선택은 안 돌아온다. 팔레트 끌기의
+  임시 도형을 패널 위에서 숨겼더니 정렬선(선택 기준)이 통째로 사라졌다. 숨겼다 다시 보이는 아이템은 선택을 직접 되살릴 것.
+- ⚠ (2026-10-12) **`QToolButton`의 아이콘 옆 글자(TextBesideIcon)는 버튼이 넓어도 왼쪽에 붙는다**(QSS로도 못 바꿈) — 가운데
+  정렬이 필요하면 `QPushButton`.

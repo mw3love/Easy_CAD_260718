@@ -1148,9 +1148,11 @@ class _StaticSection(QWidget):
         [같은 날 후속] 오른쪽 ▾/▸ 버튼은 없앴다("제목 눌러도 되니 제거") — 그 자리는 폴더 「크게 보기」가 쓴다.
         접힌 건 내용이 사라지는 것 자체로 보인다."""
         self._on_toggle = on_toggle
-        self._title_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._title_lbl.setToolTip("눌러서 접기·펼치기")
-        self._title_lbl.mousePressEvent = lambda e: self.toggle() if e.button() == Qt.MouseButton.LeftButton else None
+        # [실사용 피드백 2026-10-12] 제목 글자만 눌리던 것을 제목 줄 전체로 — 글자·개수 칩은 클릭을 부모(줄)로
+        # 넘기고, ⋯·⤢ 버튼은 자기 클릭을 먹으므로 버튼을 뺀 나머지가 다 접기 자리가 된다.
+        self.head.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.head.setToolTip("눌러서 접기·펼치기")
+        self.head.mousePressEvent = lambda e: self.toggle() if e.button() == Qt.MouseButton.LeftButton else None
         self.set_collapsed(collapsed)
 
     def toggle(self):

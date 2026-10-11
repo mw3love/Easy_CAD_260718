@@ -82,17 +82,16 @@ def test_toolbar_labels_toggles_and_ai_button():
     grid = next(iter(bs.values())).parentWidget().layout()
     assert grid.itemAtPosition(0, 1).widget() is bs[w._act_ortho]       # 윗줄 스냅·직교
     assert grid.itemAtPosition(1, 0).widget() is bs[w._act_grid]        # 아랫줄 격자·정렬선
-    # [2026-10-11] 체크박스 대신 뜻 아이콘(snap/ortho/grid/align) — 켜짐은 버튼 checked(코랄 바탕)
+    # [2026-10-12] 코랄 바탕(checked) 대신 다시 체크박스 — 버튼은 checkable이 아니고, 꺼지면 viewOff(흐림)
     for a, b in bs.items():
-        assert b.isCheckable() and not b.icon().isNull() and b.isChecked() == a.isChecked()
-    assert [b._icon_name for b in bs.values()] == ["snap", "ortho", "grid", "align"]
-    # 버튼 클릭 → 액션·실제 상태, 액션 트리거(메뉴·단축키) → 버튼 켜짐·툴팁
+        assert not b.isCheckable() and not b.icon().isNull() and b.property("viewOff") is (not a.isChecked())
+    # 버튼 클릭 → 액션·실제 상태, 액션 트리거(메뉴·단축키) → 버튼 흐림·툴팁
     was = w._act_grid.isChecked()
     bs[w._act_grid].click()
     assert w._act_grid.isChecked() is (not was) and w.grid_enabled is (not was)
-    assert bs[w._act_grid].isChecked() is (not was)
+    assert bs[w._act_grid].property("viewOff") is was
     w._act_grid.trigger()
-    assert bs[w._act_grid].isChecked() is was
+    assert bs[w._act_grid].property("viewOff") is (not was)
     w._act_align.setToolTip("x")
     assert bs[w._act_align].toolTip().endswith("x")
     # 창이 좁으면 아이콘만, 넓히면 다시 글자
@@ -298,6 +297,30 @@ class _TitleToggle:
     def click(self):
         from PyQt6.QtTest import QTest
         QTest.mouseClick(self._sec._title_lbl, Qt.MouseButton.LeftButton)
+
+
+def test_section_head_empty_area_toggles_but_buttons_do_not():
+    # [실사용 피드백 2026-10-12] 접기 자리가 제목 글자뿐이라 좁았다 — 제목 줄 빈 곳도 접고, ⋯·⤢ 버튼은 접지 않는다.
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QToolButton
+    from easycad.canvas.host_widgets import _StaticSection
+    sec = _StaticSection("폴더")
+    sec.set_count("3")
+    tail = QToolButton(); tail.setFixedSize(18, 16)
+    sec.add_tail_button(tail)
+    calls = []
+    sec.make_collapsible(False, calls.append)
+    sec.resize(192, 120); sec.show()
+    QApplication.processEvents()
+    empty = QPoint(tail.geometry().left() - 20, sec.head.height() // 2)   # 개수 칩과 ⤢ 사이 빈 곳
+    assert sec.head.childAt(empty) is None
+    QTest.mouseClick(sec.head, Qt.MouseButton.LeftButton, pos=empty)
+    assert calls == [True] and not sec.body.isVisible()
+    QTest.mouseClick(sec.count_lbl, Qt.MouseButton.LeftButton)            # 칩도 줄의 일부
+    assert calls == [True, False] and sec.body.isVisible()
+    QTest.mouseClick(tail, Qt.MouseButton.LeftButton)                     # 버튼은 접지 않음
+    assert calls == [True, False]
+    sec.close()
 
 
 @contextmanager
@@ -1596,6 +1619,8 @@ def test_palette_drag_hidden_over_floating_panel_and_cancel_on_release():
     free = panel.mapToGlobal(panel.rect().topRight()) + QPoint(200, 150)   # 패널 오른쪽 빈 도면
     w._palette_drag_move("rect", free)
     assert w._palette_drag_item.isVisible() is True
+    # [2026-10-12] Qt가 숨길 때 선택을 풀어 패널 밖으로 나와도 정렬선이 안 떴다 — 다시 보이면 선택도 복원
+    assert w._palette_drag_item.isSelected() is True
     w._palette_drag_end("rect", over_panel)
     assert len(w._scene.items()) == n0 + 1          # 임시 도형은 지워지고 상대 사각형만 남음
 

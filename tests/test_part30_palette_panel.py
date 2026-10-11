@@ -278,7 +278,7 @@ def test_feedback_followups_chip_folder_button_browser_close_layer_text():
         hl = sec.header_layout
         assert hl.indexOf(sec.count_lbl) == hl.indexOf(sec._title_lbl) + 1
         assert sec.count_lbl.geometry().left() - sec._title_lbl.geometry().right() < 20
-        assert not w._add_folder_btn.autoRaise() and w._add_folder_btn.iconSize() == w._layer_add_btn.iconSize()
+        assert not w._add_folder_btn.isFlat() and w._add_folder_btn.iconSize() == w._layer_add_btn.iconSize()
         assert w._layer_add_btn.text() == "Layer"
         w._open_symbol_browser("장비")
         b = w._symbol_browser

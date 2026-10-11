@@ -14,7 +14,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication, QGraphicsScene, QWidget, QVBoxLayout, QToolButton, QLabel, QFileDialog,
     QInputDialog, QMessageBox, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QSizePolicy, QHBoxLayout, QMenu,
+    QDialogButtonBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QSizePolicy, QHBoxLayout, QMenu, QPushButton,
     QFrame, QListWidget, QStackedWidget, QScrollArea, QToolBar,
 )
 
@@ -752,8 +752,9 @@ class _UIBuildMixin:
         # 「체크박스+글자」 2×2 묶음 — 2026-09-25에 아이콘 전용으로 되돌렸던 것을 시안 2라운드 T3
         # 채택으로 다시 뒤집음(상단바 전체에 글자가 붙으니 아이콘만 남은 묶음이 오히려 안 읽힘).
         # 액션은 보기 메뉴가 계속 쓰므로 별도 버튼을 잇고 상태는 항상 액션이 원본(`_sync_view_toggle`).
-        # [실사용 피드백 2026-10-11] 체크박스 대신 뜻 아이콘(스냅·직교·격자·정렬선) + 글자, 켜짐은 툴바 QSS의
-        # checked 코랄 바탕("켜짐"은 코랄이 맡는 의미 있는 상태). 창이 좁으면 아이콘만(`_fit_view_toggles`).
+        # [실사용 피드백 2026-10-11] 체크박스 대신 뜻 아이콘 + 코랄 바탕으로 바꿨다가
+        # [2026-10-12] "선택됐다는 느낌이 애매함" — 체크박스로 되돌리고 꺼진 것은 글자·체크를 흐리게(시안 A).
+        # 창이 좁으면 아이콘만(`_fit_view_toggles`).
         # ⚠ 툴바 직속이 아니라 묶음 위젯의 자식이라 `QToolBar`가 iconSize를 20으로 덮어쓰는
         # 함정(pitfalls 「setIconSize 무시」)을 밟지 않는다.
         toggles = QWidget()
@@ -765,7 +766,6 @@ class _UIBuildMixin:
             btn = QToolButton()
             btn.setText(label)
             btn._icon_name = icon
-            btn.setCheckable(True)
             btn.setIconSize(QSize(16, 16))
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             btn.setProperty("viewToggle", True)   # 툴바 QSS의 여백·글자 규칙용(_apply_theme)
@@ -835,10 +835,15 @@ class _UIBuildMixin:
         p.end()
 
     def _sync_view_toggle(self, act: QAction, btn: QToolButton):
-        """보기 토글 버튼을 액션 상태에 맞춘다 — 뜻 아이콘(테마 중립색)·켜짐(코랄 바탕)·툴팁."""
+        """보기 토글 버튼을 액션 상태에 맞춘다 — 체크박스 아이콘·툴팁, 꺼지면 체크·글자를 흐리게(`viewOff`)."""
+        on = act.isChecked()
         btn.setToolTip(f"{btn.text()} — {act.toolTip()}")
-        btn.setIcon(_svg_icon(btn._icon_name, 16, _current_icon_color()))
-        btn.setChecked(act.isChecked())
+        color = (_current_icon_color() if on
+                 else QApplication.palette().color(QPalette.ColorRole.PlaceholderText))
+        btn.setIcon(_svg_icon("check_on" if on else "check_off", 16, color))
+        if btn.property("viewOff") != (not on):
+            btn.setProperty("viewOff", not on)
+            btn.style().unpolish(btn); btn.style().polish(btn)   # 동적 속성 QSS는 다시 칠해야 반영
 
     def _fit_view_toggles(self):
         """[실사용 피드백 2026-10-11] 창이 좁아 상단바가 다 안 들어가면 보기 토글 넷은 아이콘만(이름은 툴팁에)."""
@@ -1117,6 +1122,7 @@ class _UIBuildMixin:
                 + btn_qss
                 + "QToolBar QToolButton { font-size:11px; padding:2px 3px; }"
                 + 'QToolButton[viewToggle="true"] { font-size:12.5px; padding:1px 6px 1px 3px; }'
+                + f'QToolButton[viewToggle="true"][viewOff="true"] {{ color:{"#6f7883" if dark else "#9aa2ab"}; }}'
                 + f"QToolButton#aiMakeBtn {{ font-size:13px; background:{ai_bg};"
                   f" border:1px solid {ai_bd}; border-radius:8px; color:{ai_fg}; padding:6px 12px; }}"
                 + "QToolButton#aiMakeBtn:checked { background:rgba(218,119,86,90); }")
@@ -1728,18 +1734,21 @@ class _UIBuildMixin:
             zones = [add_group(name) for name in folders]
             # [실사용 피드백 2026-10-11] 「＋ 새 폴더」는 마지막 폴더 아래(레이어 카드의 「새로」와 같은 자리 규칙) —
             # 예전 카드 제목 줄의 ＋는 "너무 위에 있음".
-            add_btn = QToolButton()
-            add_btn._icon_name = "menu_folder_plus"
+            add_btn = QPushButton()   # [2026-10-12] QToolButton은 아이콘 옆 글자를 늘 왼쪽에 붙여 가운데 정렬이 안 된다
+            add_btn._icon_name = "menu_plus"
             add_btn.setIcon(_menu_icon(add_btn._icon_name))
             add_btn.setText("새 폴더")
-            add_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             # [실사용 피드백 2026-10-11 후속] 테두리 없는 납작 버튼(autoRaise)은 목록 한 줄처럼 보여 "버튼처럼 안 보임" —
-            # 레이어 카드의 「Layer」·「선택 옮기기」와 같은 테두리 버튼, 같은 아이콘 크기, 왼쪽 정렬.
+            # 레이어 카드의 「Layer」·「선택 옮기기」와 같은 테두리 버튼, 같은 아이콘 크기.
+            # [2026-10-12] 카드 폭 가득 + 점선 테두리 + 가운데 「＋ 새 폴더」(점선 = "여기에 새로 추가", 폴더 칸 실선과 구분).
+            # 글자는 남긴다 — ＋만이면 이 카드에선 폴더 추가인지 심볼 추가인지 헷갈린다.
             add_btn.setIconSize(QSize(14, 14))
+            add_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            add_btn.setObjectName("addFolderBtn")
             add_btn.setToolTip("새 폴더 만들기")
             add_btn.clicked.connect(self._prompt_create_symbol_folder)
             self._add_folder_btn = add_btn
-            body.layout().addWidget(add_btn, 0, Qt.AlignmentFlag.AlignLeft)
+            body.layout().addWidget(add_btn)
             zones.append(add_btn)
         self._restyle_palette_boxes()
         for z in zones:
@@ -1876,6 +1885,13 @@ class _UIBuildMixin:
                 sec.set_box(QColor(chosen["basic"]) if chosen.get("basic") else None, dark)
         for sec, color in getattr(self, "_palette_folder_boxes", []):
             sec.set_box(color, dark)
+        add_btn = getattr(self, "_add_folder_btn", None)
+        if add_btn is not None:   # [2026-10-12] 새 폴더 = 점선 테두리 칸(폴더 칸과 같은 모서리, 중립색)
+            bd, hover = (("rgba(255,255,255,55)", "rgba(255,255,255,18)") if dark
+                         else ("rgba(0,0,0,70)", "rgba(0,0,0,12)"))
+            add_btn.setStyleSheet(
+                f"#addFolderBtn {{ border:1px dashed {bd}; border-radius:8px; padding:4px; background:transparent; }}"
+                f"#addFolderBtn:hover {{ background:{hover}; }}")
 
     def _pick_symbol_folder_color(self, anchor: QWidget, folder_name: str):
         current = self._symbol_folder_colors().get(folder_name)
