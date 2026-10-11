@@ -2608,7 +2608,7 @@ class _UIBuildMixin:
         form.addRow("종류", self._pf_type_stack)
         form.addRow("선", line_row)
         form.addRow("채움", self._pf_fill_row)
-        form.addRow("폰트", self._pf_font)
+        self._pf_line_row = line_row
 
         # [미니패널 통합, 2026-07-31] 선택 위를 따라다니던 플로팅 컨텍스트 툴바(M3 #15)를
         # 폐지하고 그 안의 타입 전용 액션을 여기로 이관 — 사용자 피드백: 우측 속성 dock과
@@ -2698,6 +2698,45 @@ class _UIBuildMixin:
         self._pf_rotation.setToolTip("회전 각도")
         self._pf_rotation.valueChanged.connect(self._edit_rotation)
         form.addRow("회전", self._pf_rotation)
+
+        # [실사용 피드백 2026-10-11, 시안 T1] 「글자」 구역 — 도형·선 안 글자(라벨)와 독립 글자의 크기·색. 예전 「폰트」 줄은
+        # 독립 글자를 고를 때만 켜져, 도형 안 글자 크기는 바꿀 길이 없었다. 글자가 하나도 없으면 구역째 숨김(`_refresh_properties`).
+        self._pf_text_sep = QFrame()
+        self._pf_text_sep.setFrameShape(QFrame.Shape.HLine)
+        self._pf_text_sep.setFrameShadow(QFrame.Shadow.Plain)
+        self._pf_text_sep.setForegroundRole(QPalette.ColorRole.Mid)
+        form.addRow(self._pf_text_sep)
+        self._pf_text_head = QWidget()
+        th = QHBoxLayout(self._pf_text_head)
+        th.setContentsMargins(0, 0, 0, 0); th.setSpacing(6)
+        head_lbl = QLabel("글자")
+        _thf = head_lbl.font(); _thf.setWeight(QFont.Weight.DemiBold); head_lbl.setFont(_thf)   # 스타일시트 금지 — 팔레트 색 유지
+        self._pf_text_preview = QLabel()
+        _tpf = self._pf_text_preview.font(); _tpf.setPixelSize(11); self._pf_text_preview.setFont(_tpf)
+        self._pf_text_preview.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+        th.addWidget(head_lbl); th.addWidget(self._pf_text_preview, 1)
+        form.addRow(self._pf_text_head)
+        form.addRow("크기", self._pf_font)
+        # 글자 색 — 선 색과 같은 견본(같은 사용자 지정 칸) + 「⋯」 다른 색.
+        text_color_row = QWidget(); tch = QHBoxLayout(text_color_row)
+        tch.setContentsMargins(0, 0, 0, 0); tch.setSpacing(3)
+        self._pf_text_color_presets: list[QToolButton] = []
+        for i in range(8):
+            b = QToolButton(); b.setFixedSize(QSize(18, 18))
+            b.clicked.connect(lambda _c=False, i=i: self._apply_text_color_preset(i))
+            tch.addWidget(b); self._pf_text_color_presets.append(b)
+        more = QToolButton(); more.setText("…"); more.setFixedSize(QSize(22, 20))
+        more.setToolTip("다른 글자 색 고르기")
+        more.clicked.connect(lambda: (self._pf_text_color_pop.hide(), self._edit_text_color()))
+        tch.addWidget(more); tch.addStretch(1)
+        self._pf_text_color_pop = _PropPopup(self, text_color_row, self._on_prop_popup_visible)
+        self._pf_text_color_btn = value_btn("글자 색", self._pf_text_color_pop)
+        self._pf_text_color_btn.setIconSize(QSize(16, 16)); self._pf_text_color_btn.setText("▾")
+        self._pf_text_color_btn.setFixedWidth(38)
+        self._pf_text_color_row = QWidget(); tcr = QHBoxLayout(self._pf_text_color_row)
+        tcr.setContentsMargins(0, 0, 0, 0)
+        tcr.addWidget(self._pf_text_color_btn); tcr.addStretch(1)
+        form.addRow("색", self._pf_text_color_row)
 
         self._pf_hint = QLabel("객체를 선택하면 속성을 편집할 수 있습니다.")
         _hf = self._pf_hint.font(); _hf.setPixelSize(12); self._pf_hint.setFont(_hf)   # 스타일시트 금지 — _section_label 주석

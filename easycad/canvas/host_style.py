@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 
 from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
-    _ArrowItem, _PolyArrowItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _SYMBOL_KINDS, _pen_style_icon,
+    _ArrowItem, _PolyArrowItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon, _SYMBOL_KINDS, _pen_style_icon,
     _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
 )
 from easycad.canvas.host_widgets import (
@@ -403,10 +403,36 @@ class _StyleMixin:
         self._view.viewport().update()
 
 
+    @staticmethod
+    def _text_targets(sel) -> list:
+        """[시안 T1 2026-10-11] 속성 카드 「글자」 구역이 다루는 글자 — 독립 글자(화살표 라벨을 직접 고른 것 포함)는 그 자신,
+        도형·선·화살표는 안에 붙은 글자(라벨) 전부. 같은 글자가 두 번 들어가지 않게(라벨과 주인을 같이 고른 경우)."""
+        out, seen = [], set()
+        for it in sel:
+            for t in ([it] if isinstance(it, _TextItem) else
+                      (it._live_labels() if hasattr(it, "_live_labels") else [])):
+                if id(t) not in seen:
+                    seen.add(id(t)); out.append(t)
+        return out
+
     def _edit_font(self, val):
-        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_font_size")]
-        self._edit_items(sel, lambda it: it.apply_font_size(int(val)),
-                         key=("font", tuple(sorted(id(it) for it in sel))))
+        tgt = self._text_targets(self._scene.selectedItems())
+        self._edit_items(tgt, lambda it: it.apply_font_size(int(val)),
+                         key=("font", tuple(sorted(id(it) for it in tgt))))
+
+    def _apply_text_color_preset(self, i: int):
+        col = self._line_presets()[i]
+        self._edit_items(self._text_targets(self._scene.selectedItems()), lambda it: it.apply_color(QColor(col)))
+
+    def _edit_text_color(self):
+        tgt = self._text_targets(self._scene.selectedItems())
+        if not tgt:
+            return
+        col = _pick_custom_color(self, QColor(tgt[0].defaultTextColor()), False, "글자 색")
+        if col is None:
+            return
+        self._remember_recent_color(col)
+        self._edit_items(tgt, lambda it: it.apply_color(QColor(col)))
 
     @staticmethod
     def _read_props(item) -> dict:
@@ -574,6 +600,9 @@ class _StyleMixin:
             t.timeout.connect(self._refresh_properties)
         t.start()
 
+    def _pf_text_rows(self) -> tuple:
+        return (self._pf_text_sep, self._pf_text_head, self._pf_font, self._pf_text_color_row)
+
     def _refresh_properties(self):
         """선택에 맞춰 편집 컨트롤 값·활성 상태를 채운다. _pf_updating로 편집 시그널을 막아
         프로그램적 세팅이 다시 편집 핸들러를 트리거하지 않게 한다(피드백 차단)."""
@@ -591,8 +620,9 @@ class _StyleMixin:
                 self._pf_fill_val.setText("—")
                 self._pf_hint.setText("객체를 선택하면 속성을 편집할 수 있습니다.")
                 for w in (self._pf_head_btn, self._pf_head_scale, self._pf_radius,
-                         self._pf_dir_btn, self._pf_rotation, self._pf_fill_row):
+                         self._pf_dir_btn, self._pf_rotation, self._pf_fill_row) + self._pf_text_rows():
                     self._props_form.setRowVisible(w, False)
+                self._props_form.setRowVisible(self._pf_line_row, True)
                 self._sync_props_presets(None, None, False)
                 self._sync_prop_value_buttons()
                 # [첫 화면 재디자인 2026-10-07, 시안 1라운드 A] 아무것도 선택 안 했으면 카드를 숨긴다(안내문만
@@ -672,11 +702,26 @@ class _StyleMixin:
                 b.setEnabled(bool(styles))
                 b.setChecked(bool(styles) and i == self._pf_style.currentIndex())
 
-            # 폰트 — 텍스트/라벨만.
-            fonts = [p["font"] for p in props if p["font"] is not None]
-            self._pf_font.setEnabled(bool(fonts))
-            if fonts:
-                self._pf_font.setValue(int(round(fonts[0])))
+            # [시안 T1 2026-10-11] 「글자」 구역 — 독립 글자와 도형·선 안 글자. 하나도 없으면 구역째 숨김.
+            # 독립 글자만 골랐으면 「선」 줄(글자에선 색만 의미 있었음)을 숨기고 글자 색은 이 구역에서.
+            texts = self._text_targets(sel)
+            for w in self._pf_text_rows():
+                self._props_form.setRowVisible(w, bool(texts))
+            self._props_form.setRowVisible(self._pf_line_row, not all(isinstance(it, _TextItem) for it in sel))
+            self._pf_font.setEnabled(bool(texts))
+            tcol = None
+            if texts:
+                self._pf_font.setValue(int(getattr(texts[0], "_base_pt", texts[0].font().pointSize())))
+                names = {t.defaultTextColor().name() for t in texts}
+                tcol = QColor(texts[0].defaultTextColor()) if len(names) == 1 else None
+                first = next((t.toPlainText().strip() for t in texts if t.toPlainText().strip()), "")
+                first = first.splitlines()[0] if first else ""
+                self._pf_text_preview.setText(f"「{first[:10]}{'…' if len(first) > 10 else ''}」" if first else "")
+            for b, c in zip(self._pf_text_color_presets, self._line_presets()):
+                b.setStyleSheet(self._preset_css(c, tcol is not None and c.name() == tcol.name()))
+                b.setToolTip(c.name())
+            self._pf_text_color_btn.setIcon(_swatch_icon(tcol if tcol is not None else QColor("#8a96a4")))
+            self._pf_text_color_btn.setToolTip(f"글자 색 — {tcol.name() if tcol is not None else '혼합'}")
 
             # [미니패널 통합] 타입 전용 행 노출 — 옛 _reposition_floating_toolbar의 판정을 그대로.
             show_swap = len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem))

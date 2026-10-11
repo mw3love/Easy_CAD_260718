@@ -2405,7 +2405,7 @@ def test_arrow_head_dxf_export_no_crash():
 
 def test_properties_panel_row_order():
     """[실사용 피드백 2026-08-21] 기본 항목 순서. [2026-10-11, 시안 2-4] 색·선 모양·두께가 「선」 한 줄의
-    현재 값 버튼으로 합쳐져 종류→선→채움→폰트."""
+    현재 값 버튼으로 합쳐져 종류→선→채움→폰트. [같은 날, 시안 T1] 「폰트」는 맨 아래 「글자」 구역의 「크기」·「색」으로."""
     w = CanvasWindow()
     form = w._props_form
     order = []
@@ -2413,9 +2413,9 @@ def test_properties_panel_row_order():
         label_item = form.itemAt(i, form.ItemRole.LabelRole)
         if label_item is not None and label_item.widget() is not None:
             order.append(label_item.widget().text())
-    idx = {name: order.index(name) for name in ("종류", "선", "채움", "폰트")}
-    assert idx["종류"] < idx["선"] < idx["채움"] < idx["폰트"]
-    assert "색" not in order and "두께" not in order
+    idx = {name: order.index(name) for name in ("종류", "선", "채움", "회전", "크기", "색")}
+    assert idx["종류"] < idx["선"] < idx["채움"] < idx["회전"] < idx["크기"] < idx["색"]
+    assert "폰트" not in order and "두께" not in order
 
 
 def test_properties_panel_arrow_head_row_and_undo():

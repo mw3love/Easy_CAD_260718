@@ -5676,6 +5676,11 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         f = self.font()
         f.setPointSize(int(size))
         self.setFont(f)
+        # [우리 확장 2026-10-11] 도형·선 안 글자면 주인이 다시 맞추고 자리 잡게 — 속성 카드 「글자」 크기·되돌리기가 이 경로로
+        # 오는데, 글꼴만 바꾸면 중앙 맞춤·도형 폭 맞춤 축소가 안 돌았다(`_fit_label_to_shape`는 setFont만 써 되부르지 않음).
+        owner = self.parentItem()
+        if owner is not None and hasattr(owner, "_sync_label") and self in getattr(owner, "_labels", ()):
+            owner._sync_label()
 
     def set_bg(self, color):
         # color: QColor 또는 None(투명). 둥근 사각 배경으로 자막/스티커 느낌.

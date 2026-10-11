@@ -308,3 +308,33 @@ def test_type_button_icon_and_rotation_field_follows_handle_rotation():
     assert r.rotation() == 0.0 and w._pf_rotation.value() == 0.0
     w._active_doc.dirty = False
     w.close()
+
+
+def test_text_section_edits_shape_label_and_standalone_text():
+    """[시안 T1 2026-10-11] 속성 카드 「글자」 구역 — 도형 안 글자(라벨)의 크기·색을 도형을 고른 채로 바꾼다(예전 「폰트」는
+    도형 선택 때 늘 꺼짐). 글자 없는 도형은 구역 숨김, 독립 글자만 고르면 「선」 줄 숨김. 되돌리기 1번에 원래대로."""
+    w = CanvasWindow(); w.show()
+    form = w._props_form
+    r = _RectItem(QRectF(0, 0, 200, 80))
+    r.setFlags(r.GraphicsItemFlag.ItemIsSelectable | r.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(r); r.setSelected(True); _app.processEvents()
+    assert not form.isRowVisible(w._pf_font) and not form.isRowVisible(w._pf_text_head)   # 글자 없음 → 숨김
+    lbl = r.ensure_label(); lbl.setPlainText("처리 A")
+    w._refresh_properties()
+    assert form.isRowVisible(w._pf_font) and w._pf_font.isEnabled() and form.isRowVisible(w._pf_line_row)
+    assert w._pf_font.value() == 16 and "처리 A" in w._pf_text_preview.text()
+    pen_before = r.pen().color().name()
+    w._pf_font.setValue(24)
+    assert lbl._base_pt == 24 and r.isSelected()
+    w._apply_text_color_preset(1)
+    assert lbl.defaultTextColor().name() == w._line_presets()[1].name()
+    assert r.pen().color().name() == pen_before   # 도형 선 색은 그대로
+    w.undo(); w.undo()
+    assert lbl._base_pt == 16
+    w._scene.clearSelection()
+    t = _TextItem(QColor("#000000")); t.setPlainText("메모")
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable | t.GraphicsItemFlag.ItemIsMovable)
+    w._scene.addItem(t); t.setSelected(True); _app.processEvents()
+    assert form.isRowVisible(w._pf_font) and not form.isRowVisible(w._pf_line_row)
+    w._active_doc.dirty = False
+    w.close()
