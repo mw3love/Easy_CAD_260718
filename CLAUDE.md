@@ -93,7 +93,7 @@ docs/
 ├── perf_plan_500_1000.md    500~1000개 부하 감소 계획·최종 수치·남은 항목(2-D)
 └── reference/                참고 이미지
 symbol_library/
-└── symbol_library.json     "내 심볼" 팔레트 데이터(폴더·즐겨찾기·썸네일 포함) — 2026-08-20
+└── symbol_library.json     "내 심볼" 팔레트 데이터(폴더·폴더 색·즐겨찾기·썸네일 포함) — 2026-08-20
                              까지 OS AppData에 있던 것을 리포로 이관해 git으로 PC 간 동기화
                              (`easycad/fileio/symbol_library.py._library_path()`, 사용자
                              요청 — 다른 작업산출물과 반대로 이건 의도적으로 커밋 대상).
