@@ -1,6 +1,6 @@
 """[실사용 피드백 2026-10-11] 도형·심볼 카드 정리 — 스크롤 위치 유지 · 폴더마다 처음 보이는 개수(손잡이)·
 「더 보기」·크게 보기 창 · 카드 높이(창 절반·손잡이·제목 더블클릭) · 레이어 카드 버튼 아이콘."""
-from PyQt6.QtCore import QEvent, QPointF, Qt
+from PyQt6.QtCore import QEvent, QPointF, QSize, Qt
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QInputDialog, QToolButton
@@ -36,6 +36,16 @@ def _drag(grip, dy):
     grip.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, dy, buttons=Qt.MouseButton.NoButton))
 
 
+def _drag_h(grip, dx):
+    def ev(kind, x, button=Qt.MouseButton.LeftButton, buttons=Qt.MouseButton.LeftButton):
+        p = QPointF(2, 20)
+        g = QPointF(grip.mapToGlobal(p.toPoint())) + QPointF(x, 0)
+        return QMouseEvent(kind, p, g, button, buttons, Qt.KeyboardModifier.NoModifier)
+    grip.mousePressEvent(ev(QEvent.Type.MouseButtonPress, 0))
+    grip.mouseMoveEvent(ev(QEvent.Type.MouseMove, dx, Qt.MouseButton.NoButton))
+    grip.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, dx, buttons=Qt.MouseButton.NoButton))
+
+
 def test_folder_shows_first_six_then_more_button_and_grip_changes_count():
     with _isolated_symbol_library():
         ents = _fill("장비", 10)
@@ -47,7 +57,7 @@ def test_folder_shows_first_six_then_more_button_and_grip_changes_count():
             btns = [w._custom_sym_buttons[e["id"]][0] for e in ents]
             sec = _folder_section(w, "장비")
             assert [b.isVisibleTo(sec) for b in btns] == [True] * _FOLDER_ROWS_DEFAULT + [False] * 4
-            more = next(b for b in w._folder_more_btns if b.isVisibleTo(sec))
+            more = next(b for b in w._folder_more_btns if b.isVisibleTo(sec) and b.text().startswith("더 보기"))
             assert more.text() == "더 보기 (+4)" and not more.icon().isNull()
             grip = sec.findChild(_DragGrip)
             _drag(grip, 2 * btns[0].height())                      # 두 줄 아래로 → 8개
@@ -74,39 +84,102 @@ def test_small_folder_has_no_grip_or_more_button():
         _fill("하나", 1)
         w = CanvasWindow()
         sec = _folder_section(w, "하나")
-        assert sec.findChild(_DragGrip) is None and not w._folder_more_btns
+        assert sec.findChild(_DragGrip) is None
+        assert not [b for b in w._folder_more_btns if b.text().startswith("더 보기")]
 
 
 def test_more_button_opens_big_browser_with_all_symbols():
+    """[2026-10-11 후속] 크게 보기 = 도형·심볼 카드 오른쪽 패널(따로 뜨는 창 아님), 폴더 고르기 없음."""
     with _isolated_symbol_library():
         ents = _fill("장비", 10)
         _fill("전원", 2)
         w = CanvasWindow()
         w.show()
         sec = _folder_section(w, "장비")
-        more = next(b for b in w._folder_more_btns if b.isVisibleTo(sec))
+        more = next(b for b in w._folder_more_btns if b.isVisibleTo(sec) and b.text().startswith("더 보기"))
         more.click()
         b = w._symbol_browser
-        assert b.isVisible() and not b.isModal() and b.folder == "장비"
+        assert b.isVisible() and b.parent() is w and b.folder == "장비"
+        assert b._title_lbl.text() == "장비" and not hasattr(b, "_combo")
         assert len(b._buttons) == 10 and b._count.text() == "10개"
-        assert all(x.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon and x.text() for x in b._buttons)
-        b.resize(700, 400); QApplication.instance().processEvents(); b._cols = 0; b._reflow()
-        assert b._cols >= 5                                         # 넓히면 줄당 칸이 늘어난다
+        # 위치: 도형·심볼 카드 바로 오른쪽, 위는 같은 높이, 아래는 레이어 카드 아래까지
+        assert b.x() > w._left_panel.geometry().right() and b.y() == w._left_panel.y()
+        assert b.geometry().bottom() >= w._layers_panel.geometry().bottom() - 2
         # 칸 클릭 = 도구로 쥐기, 패널과 체크 상태 같이
         b._buttons[3].click()
         assert w.current_tool == f"customsym:{ents[3]['id']}" and b._buttons[3].isChecked()
         w.set_tool(None)
         assert not b._buttons[3].isChecked()
-        # 폴더 바꾸기·라이브러리 바뀌면 따라 다시 그림
-        b._combo.setCurrentText("전원")
-        assert len(b._buttons) == 2
+        # 라이브러리가 바뀌면 따라 다시 그림
         with patch.object(QInputDialog, "getText", return_value=("새이름", True)):
-            w._rename_custom_symbol_prompt(symbol_library.load_library()[-1]["id"])
+            w._rename_custom_symbol_prompt(ents[0]["id"])
         assert "새이름" in [x._full_name for x in b._buttons]
-        # 폴더 ⋯ 메뉴의 「크게 보기」도 같은 창
-        w._open_symbol_browser("장비")
-        assert w._symbol_browser is b and b.folder == "장비"
-        b.close()
+        # 다른 폴더의 ⤢ → 그 폴더로, 같은 ⤢ 다시 → 닫힘
+        big = next(x for x in w._folder_more_btns if getattr(x, "_faint", False) and x.isVisibleTo(_folder_section(w, "전원")))
+        big.click()
+        assert b.isVisible() and b.folder == "전원" and len(b._buttons) == 2
+        big.click()
+        assert not b.isVisible()
+        w._active_doc.dirty = False
+        w.close()
+
+
+def test_browser_view_modes_width_grip_and_cell_shaped_thumbs():
+    st = app_settings()
+    for k in ("symbol_browser_view", "symbol_browser_width"):
+        st.remove(k)
+    try:
+        with _isolated_symbol_library():
+            rect = [{"type": "rect", "rect": [0, 0, 120, 30], "pen": "#ff000000", "width": 1.0, "fill": None,
+                     "pos": [0, 0], "scale": 1.0, "rotation": 0.0, "z": 0, "origin": [0, 0]}]
+            symbol_library.create_folder("긴것")
+            symbol_library.add_symbol("가로로 긴 심볼", rect, "", folder="긴것")
+            w = CanvasWindow()
+            w.show()
+            w._open_symbol_browser("긴것")
+            b = w._symbol_browser
+            assert b._view_mode == "text"                                   # 기본 = 그림 아래 이름
+            btn = b._buttons[0]
+            assert btn.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+            iw, ih = b.CELLS["text"][2:]
+            pm = btn.icon().pixmap(QSize(iw, ih))
+            assert (pm.width(), pm.height()) == (iw, ih)                     # 칸 모양 그대로(정사각 아님)
+            img = pm.toImage()
+            xs = [x for x in range(img.width()) if any(img.pixelColor(x, y).alpha() for y in range(img.height()))]
+            assert xs[0] <= 4 and xs[-1] >= iw - 5                           # 긴 심볼이 칸 가로를 끝까지 쓴다
+            b._view_btns["icon"].click()
+            assert b._view_mode == "icon" and st.value("symbol_browser_view") == "icon"
+            assert b._buttons[0].toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+            assert all(not x.icon().isNull() and x.text() for x in b._view_btns.values())
+            w0 = b.width()
+            _drag_h(b._grip, 120)
+            assert b.width() == w0 + 120 and st.value("symbol_browser_width", type=int) == w0 + 120
+            b._grip.mouseDoubleClickEvent(QMouseEvent(QEvent.Type.MouseButtonDblClick, QPointF(2, 2), QPointF(2, 2),
+                                                      Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                                                      Qt.KeyboardModifier.NoModifier))
+            assert b.width() == b.DEFAULT_W
+            b._close_btn.click()
+            assert not b.isVisible()
+            w._active_doc.dirty = False
+            w.close()
+    finally:
+        for k in ("symbol_browser_view", "symbol_browser_width"):
+            st.remove(k)
+
+
+def test_folder_title_has_always_visible_big_view_button_and_no_collapse_arrow():
+    with _isolated_symbol_library():
+        _fill("장비", 3)
+        symbol_library.create_folder("빈폴더")
+        w = CanvasWindow()
+        w.show()
+        sec = _folder_section(w, "장비")
+        assert sec._tail_btn.isVisibleTo(sec) and sec._tail_btn._icon_name == "menu_expand"
+        assert "▾" not in [b.text() for b in sec.findChildren(QToolButton)]
+        assert getattr(_folder_section(w, "빈폴더"), "_tail_btn", None) is None   # 빈 폴더엔 없음
+        QTest.mouseClick(sec._title_lbl, Qt.MouseButton.LeftButton)            # 제목 눌러 접기
+        assert sec.body.isHidden()
+        app_settings().remove("symfolder_collapsed_장비")
         w._active_doc.dirty = False
         w.close()
 

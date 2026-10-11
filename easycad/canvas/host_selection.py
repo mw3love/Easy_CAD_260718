@@ -66,7 +66,8 @@ def _group_scene_rect(items) -> QRectF:
     return box
 
 
-def _render_symbol_thumbnail(items, box: QRectF, size: int = _PALETTE_SYM_ICON_PX) -> str:
+def _render_symbol_thumbnail(items, box: QRectF, size: int = _PALETTE_SYM_ICON_PX,
+                             height: int | None = None) -> str:
     """items(아직 scene 미소속인 임시 인스턴스)를 정사각 PNG로 렌더해 base64로 반환.
     팔레트 아이콘·호버 미리보기가 공유하는 저해상도 렌더라 임시 QGraphicsScene을 그때그때
     만든다. [실사용 버그 수정 2026-08-19] 예전엔 64px로 렌더한 뒤 팔레트가 그 PNG를 다시
@@ -82,15 +83,19 @@ def _render_symbol_thumbnail(items, box: QRectF, size: int = _PALETTE_SYM_ICON_P
     scene = QGraphicsScene()
     for it in items:
         scene.addItem(it)
-    pm = QPixmap(size, size)
+    # [2026-10-11] height를 주면 그 직사각형(크게 보기 칸 모양)에 꽉 맞춰 그린다 — 정사각형이면 옆으로 긴 심볼이
+    # 칸 안에서 작게 줄고 양옆이 비었다(사용자 지적). 큰 칸은 여백도 줄인다(2px).
+    height = size if height is None else height
+    pm = QPixmap(size, height)
     pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    margin = 4.0   # `_shape_icon`(host_ui.py)과 동일 — 팔레트에서 같은 크기로 보이게.
-    avail = size - 2 * margin
-    scale = min(avail / box.width(), avail / box.height()) if box.width() > 0 and box.height() > 0 else 1.0
+    margin = 4.0 if height == size else 2.0   # 정사각형은 `_shape_icon`(host_ui.py)과 동일 — 팔레트에서 같은 크기로
+    avail_w, avail_h = size - 2 * margin, height - 2 * margin
+    scale = (min(avail_w / box.width(), avail_h / box.height())
+             if box.width() > 0 and box.height() > 0 else 1.0)
     w, h = box.width() * scale, box.height() * scale
-    target = QRectF(margin + (avail - w) / 2, margin + (avail - h) / 2, w, h)
+    target = QRectF(margin + (avail_w - w) / 2, margin + (avail_h - h) / 2, w, h)
     # 목표 최종 두께(1.6px)는 `_shape_icon`의 `pen.setWidthF(1.6)`과 맞춘 값 — 심볼마다
     # box 크기(=scale)가 달라 씬 단위 최소두께를 매번 역산해야 한 값으로 고정 못 한다.
     target_px = 1.6
@@ -441,9 +446,19 @@ class _SelectionMixin:
         저렴하다(디스크의 옛 썸네일은 그대로 남지만 팔레트에는 항상 최신 렌더가 보인다)."""
         pm = _b64_to_pixmap(entry.get("thumb", ""))
         size_ok = pm.width() == _PALETTE_SYM_ICON_PX and pm.height() == _PALETTE_SYM_ICON_PX
-        items = [it for it in (dict_to_item(d) for d in entry.get("items", [])) if it is not None]
+        items, needs_retint = self._symbol_items_for_theme(entry)
         if not items:
             return entry
+        if size_ok and not needs_retint:
+            return entry
+        box = _group_scene_rect(items)
+        new_thumb = _render_symbol_thumbnail(items, box)
+        return {**entry, "thumb": new_thumb}
+
+    def _symbol_items_for_theme(self, entry: dict):
+        """저장된 심볼 레시피(items)를 지금 테마 잉크색으로 되살린다 → (items, 바꾼 게 있었나).
+        팔레트 썸네일(`_ensure_symbol_thumb_current`)과 크게 보기 그림(`_symbol_big_thumb_b64`)이 함께 쓴다."""
+        items = [it for it in (dict_to_item(d) for d in entry.get("items", [])) if it is not None]
         # [실사용 피드백 2026-08-26] 등록 당시 테마의 기본 잉크색 그대로인 조각은 현재
         # 테마에 맞게 반전 — 캔버스 도형 반전(host_ui._apply_theme)과 같은 규칙을 여기
         # 저장된 심볼 '레시피'(items)에도 적용한다. 사용자가 직접 고른 색은 매칭 안 돼
@@ -458,11 +473,7 @@ class _SelectionMixin:
             if cur is not None and cur.name().lower() == wrong_ink.lower():
                 it.apply_color(QColor(right_ink))
                 needs_retint = True
-        if size_ok and not needs_retint:
-            return entry
-        box = _group_scene_rect(items)
-        new_thumb = _render_symbol_thumbnail(items, box)
-        return {**entry, "thumb": new_thumb}
+        return items, needs_retint
 
     def _symbol_preview_html(self, entry: dict) -> str:
         """[실사용 피드백 2026-08-19] '내 심볼' 버튼 호버 확대 미리보기 — 팔레트 아이콘을
@@ -482,13 +493,14 @@ class _SelectionMixin:
         b64 = _render_symbol_thumbnail(items, box, size=_SYMBOL_PREVIEW_PX)
         return f'<div>{name}<br><img src="data:image/png;base64,{b64}"></div>'
 
-    def _symbol_big_thumb_b64(self, entry: dict, size: int) -> str:
-        """[실사용 피드백 2026-10-11] 폴더 「크게 보기」 창의 큰 그림 — 저장된 썸네일(28px)을 키우면 작게만 나와
-        (QIcon은 원본보다 키우지 않는다) 미리보기처럼 items에서 그 크기로 다시 그린다. 없으면 저장된 썸네일."""
-        items = [it for it in (dict_to_item(d) for d in entry.get("items", [])) if it is not None]
+    def _symbol_big_thumb_b64(self, entry: dict, w: int, h: int) -> str:
+        """[실사용 피드백 2026-10-11] 폴더 「크게 보기」의 큰 그림 — 저장된 썸네일(28px)을 키우면 작게만 나와
+        (QIcon은 원본보다 키우지 않는다) 미리보기처럼 items에서 칸 모양(w×h) 그대로 꽉 채워 다시 그린다.
+        없으면 저장된 썸네일. 지금 테마 잉크색으로(라이트에서 흰 그림이 안 보이던 것)."""
+        items, _ = self._symbol_items_for_theme(entry)
         if not items:
             return entry.get("thumb", "")
-        return _render_symbol_thumbnail(items, _group_scene_rect(items), size=size)
+        return _render_symbol_thumbnail(items, _group_scene_rect(items), size=w, height=h)
 
     # ---- [편의기능] 객체 잠금 ---------------------------------------------
 

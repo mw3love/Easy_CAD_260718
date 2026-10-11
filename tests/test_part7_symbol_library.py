@@ -573,11 +573,11 @@ def test_symbol_folder_right_click_opens_rename_delete_menu():
             title_lbl.customContextMenuRequested.emit(QPointF(1, 1).toPoint())
         assert len(created_menus) == 1
         acts = [a for a in created_menus[0].actions() if not a.isSeparator()]
-        assert [a.text() for a in acts] == ["크게 보기", "폴더 색 바꾸기…", "이름변경…", "삭제…"]   # [2026-10-11]
+        assert [a.text() for a in acts] == ["폴더 색 바꾸기…", "이름변경…", "삭제…"]   # [2026-10-11] 크게 보기는 ⤢ 버튼으로
         assert all(not a.icon().isNull() for a in acts)
 
         with patch.object(QInputDialog, "getText", return_value=("안테나", True)):
-            acts[2].trigger()   # 이름변경…
+            acts[1].trigger()   # 이름변경…
         assert symbol_library.load_folders() == ["안테나"]
 
 

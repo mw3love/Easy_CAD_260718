@@ -117,7 +117,7 @@ def _symbol_name_matches(name: str, query: str) -> bool:
                for i in range(len(n) - len(q) + 1))
 
 # [실사용 피드백 2026-10-11] 폴더마다 처음 보이는 심볼 수 — 폴더 칸 아래 손잡이로 폴더마다 바꿀 수 있고
-# (`symfolder_rows_<폴더>` 설정), 넘치는 것은 「더 보기 (+N)」 → 크게 보기 창.
+# (`symfolder_rows_<폴더>` 설정), 넘치는 것은 「더 보기 (+N)」 → 크게 보기 패널.
 _FOLDER_ROWS_DEFAULT = 6
 
 
@@ -617,6 +617,15 @@ class _UIBuildMixin:
         props_panel.move(vx + vw - m - props_panel.width(), vy + m)
         props_panel.raise_()
 
+        # [2026-10-11] 폴더 크게 보기 — 도형·심볼 카드 오른쪽, 왼쪽 세로 공간(카드 위 ~ 레이어 카드 아래) 전체 높이
+        browser = getattr(self, "_symbol_browser", None)
+        if browser is not None:
+            bx = left_panel.x() + left_panel.width() + m
+            bw = max(browser.MIN_W, min(browser.panel_w, vx + vw - m - bx))
+            browser.setFixedSize(bw, max(200, vh - 2 * m))
+            browser.move(bx, vy + m)
+            browser.raise_()
+
         # ⚠ 속성 패널이 접히면 폭이 헤더만큼 좁아지는데, 그 순간값을 그대로 따라가면 미니맵도
         # 함께 쪼그라들어 "접기 버튼이 미니맵까지 반응한다"는 착시가 생긴다(2026-08-01 사용자
         # 지적). 펼쳐졌을 때 폭만 캐시해 접힘 중엔 그 값을 유지 — 접기는 속성 패널 자기 자신만의
@@ -911,23 +920,21 @@ class _UIBuildMixin:
             if panel is not None:
                 panel._refresh_collapse_color()
         self._refresh_layer_icons()
-        # [2026-08-19 재개편] "기본도형"/"내 심볼" 최상단 접기 화살표는 없어졌다 — 남은 접기
-        # 버튼은 폴더별(`_refresh_custom_symbol_section.add_group`가 만드는 것)뿐이라 그
-        # 목록을 대신 재도색한다.
-        section_btns = [getattr(self, a).collapse_btn for a in ("_fav_section", "_basic_section")
-                        if getattr(self, a, None) is not None]   # [2026-10-11] 다시 생긴 섹션 접기
+        # [2026-10-11] 섹션·폴더 접기 ▾ 버튼은 없앴다(제목을 눌러 접음) — 남은 건 폴더 ⋯ 버튼.
         self._restyle_palette_boxes()
-        for btn in getattr(self, "_symfolder_collapse_btns", []) + section_btns:
+        for btn in getattr(self, "_symfolder_collapse_btns", []):
             btn.setStyleSheet(
                 f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
         # [2026-10-11] 패널 버튼 아이콘(새 폴더·더 보기·레이어 버튼)도 테마 아이콘 색으로 다시
         for btn in [getattr(self, "_add_folder_btn", None), getattr(self, "_layer_add_btn", None),
                     getattr(self, "_layer_move_btn", None)] + getattr(self, "_folder_more_btns", []):
             if btn is not None and getattr(btn, "_icon_name", None):
-                btn.setIcon(_menu_icon(btn._icon_name))
+                btn.setIcon(_menu_icon(btn._icon_name, faint=getattr(btn, "_faint", False)))
         browser = getattr(self, "_symbol_browser", None)
-        if browser is not None and browser.isVisible():
-            browser.refresh()   # 따로 뜬 창이라 열려 있을 때만(심볼 그림이 테마 잉크색)
+        if browser is not None:
+            browser.restyle()
+            if browser.isVisible():
+                browser.refresh()   # 열려 있을 때만 칸 다시(심볼 그림이 테마 잉크색)
         # [실사용 피드백 2026-08-26] '내 심볼' 팔레트 아이콘은 등록 당시 테마 잉크색으로
         # 박제된 정지 이미지라(캔버스 도형과 달리 QGraphicsItem이 아니라 반영 안 됨) —
         # 저장된 레시피(items)로 재렌더하는 기존 자동치유 경로(`_ensure_symbol_thumb_
@@ -1015,10 +1022,11 @@ class _UIBuildMixin:
 )
         for panel in (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
                       getattr(self, "_minimap_panel", None), getattr(self, "_layers_panel", None),
-                      getattr(self, "_ai_panel", None)):
+                      getattr(self, "_ai_panel", None), getattr(self, "_symbol_browser", None)):
             if panel is not None:
                 panel._head.setStyleSheet(head_qss)
                 panel.update()
+        self._panel_head_qss = head_qss   # 나중에 만들어지는 카드(폴더 크게 보기)도 같은 제목 줄
         ai_panel = getattr(self, "_ai_panel", None)
         if ai_panel is not None:
             ai_panel.refresh_theme(dark)
@@ -1625,7 +1633,7 @@ class _UIBuildMixin:
                 zv = QVBoxLayout(zone)
                 zv.setContentsMargins(0, 0, 0, 0); zv.setSpacing(0)
                 # [패널 통일 2라운드 2026-10-11, 시안 C] 폴더 = 색 점 + 그 색으로 옅게 물든 테두리 칸 + 개수,
-                # ⋯(색·이름변경·크게 보기·삭제)는 마우스를 올렸을 때만.
+                # ⋯(색·이름변경·삭제)는 마우스를 올렸을 때만, 「크게 보기」 ⤢는 늘(옛 접기 ▾ 자리 — 2026-10-11).
                 sec = _StaticSection(folder_name)
                 sec.set_count(str(len(group_entries)))
                 self._palette_folder_boxes.append((sec, colors.get(folder_name)))
@@ -1645,11 +1653,23 @@ class _UIBuildMixin:
                     self._custom_sym_section.updateGeometry()
                     self._relayout_left_panel()
                 sec.make_collapsible(app_settings().value(collapse_key, False, type=bool), on_toggle)
-                self._symfolder_collapse_btns.append(sec.collapse_btn)
+                if group_entries:
+                    # [실사용 피드백 2026-10-11] 「크게 보기」는 ⋯ 메뉴 밖, 제목 줄 오른쪽 끝에 늘 흐리게(유일한 진입로라
+                    # 찾기 쉽게). 같은 버튼을 다시 누르면 닫힌다. 빈 폴더엔 없음.
+                    big = QToolButton()
+                    big._icon_name, big._faint = "menu_expand", True
+                    big.setIcon(_menu_icon(big._icon_name, faint=True))
+                    big.setIconSize(QSize(13, 13))
+                    big.setAutoRaise(True)
+                    big.setFixedSize(QSize(18, 16))
+                    big.setToolTip(f"「{folder_name}」 크게 보기")
+                    big.clicked.connect(lambda _c=False, f=folder_name: self._open_symbol_browser(f, toggle=True))
+                    sec.add_tail_button(big)
+                    self._folder_more_btns.append(big)
                 more = QToolButton()
                 more.setText("⋯"); more.setAutoRaise(True)
                 more.setFixedSize(QSize(18, 16))
-                more.setToolTip("폴더 메뉴 — 색·이름변경·크게 보기·삭제")
+                more.setToolTip("폴더 메뉴 — 색·이름변경·삭제")
                 more.setStyleSheet(
                     f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
                 more.clicked.connect(lambda _c=False, n=folder_name, w=more:
@@ -1710,7 +1730,7 @@ class _UIBuildMixin:
 
     def _add_folder_rows_control(self, sec, zone, folder: str, btns: list):
         """[실사용 피드백 2026-10-11] 폴더 칸 — 처음 n개만(기본 `_FOLDER_ROWS_DEFAULT`), 나머지는 「더 보기 (+N)」
-        (→ 크게 보기 창). 칸 맨 아래 손잡이를 위아래로 끌면 n이 한 줄씩 바뀌고 폴더마다 기억, 더블클릭하면 기본값.
+        (→ 크게 보기 패널). 칸 맨 아래 손잡이를 위아래로 끌면 n이 한 줄씩 바뀌고 폴더마다 기억, 더블클릭하면 기본값.
         끝까지 끌면 전부 보이고 「더 보기」는 사라진다. 손잡이와 카드 높이 손잡이는 자리가 다르다(이건 칸 안쪽)."""
         key = f"symfolder_rows_{folder}"
         more = QToolButton()
@@ -1719,7 +1739,7 @@ class _UIBuildMixin:
         more.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         more.setAutoRaise(True)
         more.setIconSize(QSize(14, 14))
-        more.setToolTip(f"「{folder}」 폴더를 큰 창으로 보기")
+        more.setToolTip(f"「{folder}」 폴더를 크게 보기")
         more.clicked.connect(lambda _c=False, f=folder: self._open_symbol_browser(f))
         self._folder_more_btns.append(more)
         sec.body_layout.addWidget(more)
@@ -1759,25 +1779,28 @@ class _UIBuildMixin:
         sec.body_layout.addWidget(grip)
         apply(state["n"], relayout=False)
 
-    def _open_symbol_browser(self, folder: str):
-        """폴더 「크게 보기」 창 — 하나만 두고 다시 부르면 그 폴더로 바꿔 앞으로."""
+    def _open_symbol_browser(self, folder: str, toggle: bool = False):
+        """폴더 「크게 보기」 패널(도형·심볼 카드 오른쪽) — 하나만 두고 다른 폴더면 그 폴더로 바꾼다.
+        toggle=True(폴더 제목 줄 ⤢)면 같은 폴더가 이미 열려 있을 때 닫는다."""
         browser = getattr(self, "_symbol_browser", None)
+        if browser is not None and toggle and browser.isVisible() and browser.folder == folder:
+            browser.hide()
+            return
         if browser is None:
             browser = _SymbolFolderBrowser(
-                self, folder, symbol_library.load_folders,
-                lambda f: [e for e in symbol_library.load_library() if e.get("folder") == f],
+                self, folder, lambda f: [e for e in symbol_library.load_library() if e.get("folder") == f],
                 self._make_browser_button)
             self._symbol_browser = browser
+            browser._head.setStyleSheet(getattr(self, "_panel_head_qss", ""))
         else:
             browser.set_folder(folder)
         browser.show()
-        browser.raise_()
-        browser.activateWindow()
+        self._reposition_panels()
 
-    def _make_browser_button(self, entry):
+    def _make_browser_button(self, entry, w: int, h: int):
         entry = self._ensure_symbol_thumb_current(entry)
         key = f"customsym:{entry['id']}"
-        btn = self._palette_button(entry["name"], QIcon(_b64_to_pixmap(self._symbol_big_thumb_b64(entry, 48))),
+        btn = self._palette_button(entry["name"], QIcon(_b64_to_pixmap(self._symbol_big_thumb_b64(entry, w, h))),
                                    entry["name"], key, icon_px=_PALETTE_SYM_ICON_PX,
                                    tooltip_html_fn=lambda e=entry: self._symbol_preview_html(e))
         btn.setStyleSheet(self._palette_accent_qss(self._dark))
@@ -1827,8 +1850,6 @@ class _UIBuildMixin:
         `_show_custom_symbol_context_menu`와 같은 관례)."""
         menu = QMenu(self)
         _style_menu_separators(menu)
-        menu.addAction(_menu_icon("menu_expand"), "크게 보기", lambda: self._open_symbol_browser(folder_name))
-        menu.addSeparator()
         menu.addAction(_menu_icon("menu_color"), "폴더 색 바꾸기…",
                        lambda: self._pick_symbol_folder_color(label_widget, folder_name))
         menu.addAction(_menu_icon("menu_rename"), "이름변경…", lambda: self._rename_symbol_folder_prompt(folder_name))

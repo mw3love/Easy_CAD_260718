@@ -289,6 +289,17 @@ def test_left_panel_top_sections_no_longer_collapsible():
     w.close()
 
 
+class _TitleToggle:
+    """폴더 칸 제목 누르기 — 옛 ▾ 버튼 `.click()` 자리를 그대로 대신한다."""
+
+    def __init__(self, zone):
+        self._sec = zone.layout().itemAt(0).widget()
+
+    def click(self):
+        from PyQt6.QtTest import QTest
+        QTest.mouseClick(self._sec._title_lbl, Qt.MouseButton.LeftButton)
+
+
 @contextmanager
 def _roomy_left_panel():
     """[2026-10-11] 도형·심볼 카드는 이제 창 절반 높이에서 스크롤로 멈춘다 — 폴더 접기로 카드가 줄어드는지 보려면
@@ -345,9 +356,7 @@ def test_symbol_folder_collapse_expand_round_trips_panel_size():
         body = w._custom_sym_body
         zones = [body.layout().itemAt(i).widget() for i in range(body.layout().count())]
         wireless_zone = zones[1]   # 0=내 심볼(폴더 없이 등록하면 생김 — 미분류 대신), 1=무선
-        collapse_btn = next(
-            b for b in wireless_zone.findChildren(QToolButton)
-            if not isinstance(b, _PaletteButton))
+        collapse_btn = _TitleToggle(wireless_zone)   # [2026-10-11] ▾ 버튼 없음 — 제목을 눌러 접는다
 
         expanded_size = w._left_panel.size()
         collapse_btn.click()
@@ -457,9 +466,7 @@ def test_symbol_folder_full_row_does_not_widen_panel():
         body = w._custom_sym_body
         zones = [body.layout().itemAt(i).widget() for i in range(body.layout().count())]
         full_zone = zones[0]   # [2026-10-11] 미분류 칸이 없어 첫 폴더가 0번
-        collapse_btn = next(
-            b for b in full_zone.findChildren(QToolButton)
-            if not isinstance(b, _PaletteButton))
+        collapse_btn = _TitleToggle(full_zone)   # [2026-10-11] ▾ 버튼 없음 — 제목을 눌러 접는다
         collapse_btn.click()
         QApplication.instance().processEvents()
         collapsed_width = w._left_panel.width()

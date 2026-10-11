@@ -204,8 +204,9 @@ def test_favorites_and_basic_sections_collapse_and_persist():
         w = CanvasWindow()
         w.show()
         h0 = w._left_panel.height()
-        w._basic_section.collapse_btn.click()
-        assert w._basic_section.body.isHidden() and w._basic_section.collapse_btn.text() == "▸"
+        assert not hasattr(w._basic_section, "collapse_btn")     # [2026-10-11] ▾ 버튼 없음 — 제목을 눌러 접는다
+        QTest.mouseClick(w._basic_section._title_lbl, Qt.MouseButton.LeftButton)
+        assert w._basic_section.body.isHidden()
         assert w._left_panel.height() < h0                       # 패널이 줄어든다
         assert st.value(keys[1], False, type=bool) is True
         w._custom_sym_search.setText("판단")
@@ -214,11 +215,11 @@ def test_favorites_and_basic_sections_collapse_and_persist():
         w._custom_sym_search.clear()
         QTest.qWait(50)                                          # 내 심볼 다시 그리기는 한 틱 뒤에 크기가 맞는다
         assert w._basic_section.body.isHidden()
-        w._fav_section.collapse_btn.click()
+        w._fav_section.toggle()
         assert w._fav_section.body.isHidden() and st.value(keys[0], False, type=bool) is True
         w2 = CanvasWindow()                                      # 다음 창에도 접힌 채
         assert w2._fav_section.body.isHidden() and w2._basic_section.body.isHidden()
-        w._basic_section.collapse_btn.click(); w._fav_section.collapse_btn.click()
+        w._basic_section.toggle(); w._fav_section.toggle()
         assert w._left_panel.height() == h0, (w._left_panel.height(), h0)   # 다 펴면 원래 높이
     finally:
         iso.__exit__(None, None, None)
