@@ -4365,7 +4365,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
             # [Stage2] 장애물(양끝 바인딩 도형 제외)을 피하는 직교 경로. 장애물이 없거나 Stage1
             # 엘보가 이미 안전하면 Stage1과 동일 결과 → 아래 무변경 가드가 되먹임 루프를 끊는다.
             mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
-                                conn_rects=self._connected_rects(), fast=fast)
+                                conn_rects=self._connected_rects(), fast=fast,
+                                min_stub=self._route_min_stubs())
             new_scene = _dedup_pts([s] + mids + [e])
             new_local = [self.mapFromScene(p) for p in new_scene]
         if len(new_local) == len(self._pts) and all(
@@ -4423,7 +4424,8 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
                 # 한쪽만 붙어도 build_elbow과 같은 _route_ortho로 회피(재진입·장애물·화살표) — 그리기
                 # 라이브 미리보기(set_ortho_preview가 이 경로 위임)와 릴리스 결과를 일치시킨다.
                 mids = _route_ortho(s, e, ns, ne, self._obstacle_rects(), self._ROUTE_CLEARANCE,
-                                    conn_rects=self._connected_rects(), fast=fast)
+                                    conn_rects=self._connected_rects(), fast=fast,
+                                    min_stub=self._route_min_stubs())
             else:
                 mids = _ortho_elbow(s, e, ns, ne)   # 완전 자유(무바인딩) = 단순 엘보(기존 유지)
             new_scene = _dedup_pts([s] + mids + [e])
@@ -4664,10 +4666,13 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         norms = [ns] + [None] * len(hint_scenes) + [ne]
         scene_pts = [s]
         flags = [False]
+        stub_s, stub_e = self._route_min_stubs()   # [2026-10-11] 진짜 양끝 구간에만
+        last = len(waypts) - 2
         for i in range(len(waypts) - 1):
             a, b = waypts[i], waypts[i + 1]
             mids = _route_ortho(a, b, norms[i], norms[i + 1], obst, self._ROUTE_CLEARANCE,
-                                conn_rects=self._connected_rects(), fast=fast)
+                                conn_rects=self._connected_rects(), fast=fast,
+                                min_stub=(stub_s if i == 0 else 0.0, stub_e if i == last else 0.0))
             for m in mids:
                 scene_pts.append(m)
                 flags.append(False)
@@ -4960,6 +4965,19 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
     def _head_size(self) -> float:
         # [실사용 피드백 2026-08-21] _ArrowItem._head_size와 동일 상향 공식 + 배율.
         return max(self._width * 3.2, 11.0) * self._head_scale
+
+    _STUB_MARGIN = 4.0   # 화살촉과 꺾임 곡선 사이 숨 쉴 틈(scene 단위)
+
+    @classmethod
+    def _min_stub_for(cls, head_size: float, corner_r: float) -> float:
+        """[실사용 피드백 2026-10-11] 화살촉 쪽 부착점→첫 꺾임 최소 직선 길이. 화살촉+모서리 곡선+
+        여유가 다 들어가야 머리가 꺾임에 겹치지 않는다(기본 굵기 11+10+4=25)."""
+        return head_size + corner_r + cls._STUB_MARGIN
+
+    def _route_min_stubs(self):
+        """(시작, 끝) 라우터 스텁 바닥 — 화살촉 있는 끝만, 없으면 0(기존 동작)."""
+        floor = self._min_stub_for(self._head_size(), self._corner_radius())
+        return (floor if self._head_at_start else 0.0, floor if self._head_at_end else 0.0)
 
     def _head_points_at(self, at_end: bool):
         tip, ang = self._tip_and_angle_at(at_end)

@@ -2409,6 +2409,17 @@ class _AnnotatorView(QGraphicsView):
                 bestd2, best2 = d, (sh, sp, n)
         return (*best2, False) if best2 is not None else None
 
+    def _qc_ghost_min_stubs(self):
+        """[2026-10-11] 고스트용 스텁 바닥 — `_hp_create_arrow`가 만들 화살표와 같은 sticky 값
+        (굵기·머리 배율·양끝 머리·모서리 반경)으로 `_PolyArrowItem._route_min_stubs`를 재현해
+        미리보기와 확정 경로를 일치시킨다."""
+        owner = self._owner
+        head = max(owner.current_width * 3.2, 11.0) * owner.current_head_scale
+        r = float(getattr(owner, "current_curve_r", _PolyArrowItem._CORNER_R))
+        floor = _PolyArrowItem._min_stub_for(head, r)
+        return (floor if owner.current_head_at_start else 0.0,
+                floor if owner.arrow_head_at_end else 0.0)
+
     def _hp_paint_ghost(self, painter, src, port_pt, port_normal, cursor_scene):
         """[하나의 시스템으로 통합 2026-08-01] 접속점 드래그 중 커넥터 고스트 — 선택 여부와
         무관하게(qc-dot·hover-port 공통) 이 하나로 그린다. 빈 캔버스에 드롭해도(아래
@@ -2426,7 +2437,7 @@ class _AnnotatorView(QGraphicsView):
         target = snap[2] if snap is not None else None
         obstacles, conn_rects = self._qc_route_context(src, target)
         mids = _route_ortho(port_pt, end, port_normal, ne, obstacles, _PolyArrowItem._ROUTE_CLEARANCE,
-                            conn_rects=conn_rects)
+                            conn_rects=conn_rects, min_stub=self._qc_ghost_min_stubs())
         pts = _dedup_pts([port_pt] + mids + [end])
         for i in range(len(pts) - 1):
             painter.drawLine(pts[i], pts[i + 1])

@@ -1726,7 +1726,7 @@ def test_qc_drag_ghost_matches_final_route():
     target = snap[2] if snap is not None else None
     obstacles, conn_rects = view._qc_route_context(a, target)
     mids = _route_ortho(p_src, end, ns, ne, obstacles, _PolyArrowItem._ROUTE_CLEARANCE,
-                        conn_rects=conn_rects)
+                        conn_rects=conn_rects, min_stub=view._qc_ghost_min_stubs())
     ghost_pts = _dedup_pts([p_src] + mids + [end])
 
     arrow = view._qc_create_arrow_only(a, side, cursor)
@@ -2528,3 +2528,21 @@ def test_text_item_participates_in_connection_system():
     assert not lbl._qc_capable()
     assert lbl not in view._conn_shapes()
     assert lbl not in view._conn_shapes_near(QPointF(0, 0), 1_000_000.0)
+
+
+def test_ortho_arrow_head_keeps_min_straight_before_bend():
+    # [실사용 피드백 2026-10-11] 오른쪽 네모를 위로 올려 같은 방향(E→E) 포트로 이으면, 사다리가
+    # 꺾임 수를 줄이려 좁은 여유(12)를 골라 도착 스텁이 13으로 줄고 화살촉이 꺾임 곡선에 겹쳤다.
+    # 화살촉 쪽 마지막 직선은 머리+모서리 반경+여유(_route_min_stubs) 이상이어야 한다.
+    from easycad.canvas.annotator_core import _PolyArrowItem
+    w = CanvasWindow(); w.set_tool("select")
+    a = _mk_rect(w._scene, w.make_pen(), 0, 0, 120, 120)
+    b = _mk_rect(w._scene, w.make_pen(), 194, 87, 120, 120)
+    a.setSelected(True)
+    arrow = w._view._qc_create_arrow_only(a, "r", QPointF(314, 147))
+    pts = [arrow.mapToScene(p) for p in arrow._pts]
+    floor = arrow._route_min_stubs()[1]
+    assert floor >= 25.0 - 1e-6
+    last = abs(pts[-1].x() - pts[-2].x()) + abs(pts[-1].y() - pts[-2].y())
+    assert last >= floor - 0.5, (pts, floor)
+    assert len(pts) == 4, pts   # 꺾임 수는 그대로(우회 혹 없음)

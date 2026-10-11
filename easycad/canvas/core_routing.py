@@ -434,9 +434,25 @@ def _path_manhattan_len(pts) -> float:
                for i in range(len(pts) - 1))
 
 
-def _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, rung=0):
+def _short_stub_count(full, ns, ne, min_stub):
+    """[실사용 피드백 2026-10-11] 화살촉 쪽 마지막(또는 첫) 직선이 min_stub보다 짧은 끝의 개수.
+    짧으면 화살촉이 꺾임 곡선에 겹쳐 답답해 보인다. 법선 없는 끝(무바인딩)·바닥 0은 판정 안 함."""
+    n = 0
+    for i, (nrm, floor) in enumerate(((ns, min_stub[0]), (ne, min_stub[1]))):
+        if nrm is None or floor <= 0 or len(full) < 3:
+            continue
+        a, b = (full[0], full[1]) if i == 0 else (full[-1], full[-2])
+        if abs(a.x() - b.x()) + abs(a.y() - b.y()) < floor - 0.5:
+            n += 1
+    return n
+
+
+def _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, rung=0,
+                 min_stub=(0.0, 0.0)):
     """경로 품질 점수 — 작을수록 좋다(사전식 비교).
-      (도형관통, 연결도형재진입, 타기길이, 화살표교차, 정점수, 여유칸, 총길이)
+      (도형관통, 연결도형재진입, 타기길이, 화살표교차, 짧은화살촉구간, 정점수, 여유칸, 총길이)
+    [2026-10-11] '짧은화살촉구간'을 정점수 앞에 둬, 꺾임 하나 줄이자고 화살촉 앞 직선을
+    min_stub 밑으로 줄인 후보가 이기지 못하게 한다.
     여유칸(rung)을 총길이보다 앞에 둬, 결함 없는 후보들 중에서는 '넉넉한 여유'를 고른다
     (_CONN_CLEAR_MULT의 실조건 피드백 '변에 바짝 붙으면 답답' 유지)."""
     full = _dedup_pts([s] + list(mids) + [e])
@@ -448,6 +464,7 @@ def _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, ru
         1 if (conn_orig and _path_hits_rects(full, conn_orig)) else 0,
         round(_path_ride_len(full, conn_pairs, ns, ne), 1) if conn_pairs else 0.0,
         crossings,
+        _short_stub_count(full, ns, ne, min_stub),
         len(full),
         rung,
         round(_path_manhattan_len(full), 1),
@@ -455,7 +472,8 @@ def _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, ru
 
 
 def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
-                 avoid_segs=(), cross_penalty=0.0, conn_rects=(), fast=False):
+                 avoid_segs=(), cross_penalty=0.0, conn_rects=(), fast=False,
+                 min_stub=(0.0, 0.0)):
     """[Stage2 승격] Stage1 엘보(_ortho_elbow)를 우선하되, 그 경로가 장애물을 관통하면
     Hanan 그리드 A*(_astar_ortho)로 우회로를 찾아 '중간 정점'을 반환.
       · 장애물 없음 또는 Stage1이 이미 안전(도형·화살표 모두) → Stage1 그대로(무변경·되먹임 없음).
@@ -488,7 +506,13 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
     넉넉해 실사용 규모에서 드문 것으로 추정). 이 체크는 이미 계산된 값 재사용이라 추가 비용이
     없어, 실증은 못 했어도 방어적으로 남겨뒀다. 기본값 False(기존 동작 무변경) — 호출부가
     "이번엔 배선 폭주 상황"이라고 판단할 때만(`host_canvas._on_scene_changed`, 다건 변경 시)
-    명시적으로 켠다."""
+    명시적으로 켠다.
+
+    [실사용 피드백 2026-10-11] min_stub: (시작, 끝) 끝마다 '부착점에서 첫 꺾임까지' 최소 직선
+    길이(보통 화살촉 길이+모서리 반경+여유, 호출부 `_PolyArrowItem._route_min_stubs`). 클리어런스
+    사다리가 꺾임 수를 줄이려 좁은 rung(12·1·0)을 고르면 스텁도 같이 줄어 화살촉이 꺾임에 겹쳤다
+    (재현: 같은 방향 포트 둘, 도착 스텁 36→13). 장애물 팽창(여유)과 스텁 길이를 분리해, 스텁만
+    이 바닥 밑으로 안 내려가게 한다. 기본 (0,0)=기존 동작 그대로."""
     infl = ([r.adjusted(-clearance, -clearance, clearance, clearance) for r in obstacles]
             if obstacles else [])
     # [§8 항목19 F2 수정, 2026-08-14] 회랑 밖 장애물까지 infl에 그대로 들고 있으면, 뒤에서
@@ -530,14 +554,18 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
         if ns_h == ne_h:
             gap = abs(e.x() - s.x()) if ns_h else abs(e.y() - s.y())
             own_push = min(conn_clear, gap / 2.0)
+    # [2026-10-11] 스텁 바닥 — 단 위 '마주보는 좁은 간격' 상한(gap/2)은 넘지 않는다(하이핀 방지 우선).
+    stub_cap = own_push if own_push < conn_clear else float("inf")
+    floor_s = min(float(min_stub[0]), stub_cap)
+    floor_e = min(float(min_stub[1]), stub_cap)
 
-    def _own_stub(p, n, rect):
+    def _own_stub(p, n, rect, floor):
         if rect is None:
-            return _normal_stub(p, n, clearance)
+            return _normal_stub(p, n, max(clearance, floor))
         infl_rect = rect.adjusted(-own_push, -own_push, own_push, own_push)
-        return _normal_stub(p, n, own_push, infl_rect)
-    s_stub = _own_stub(s, ns, own_s)
-    e_stub = _own_stub(e, ne, own_e)
+        return _normal_stub(p, n, max(own_push, floor), infl_rect)
+    s_stub = _own_stub(s, ns, own_s, floor_s)
+    e_stub = _own_stub(e, ne, own_e, floor_e)
     elbow_mid = _ortho_elbow(s_stub, e_stub, ns, ne)
     preferred = (([] if s_stub == s else [s_stub]) + elbow_mid
                  + ([] if e_stub == e else [e_stub]))
@@ -566,8 +594,8 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
             if r is None or cc is None:
                 return None
             return r.adjusted(-cc, -cc, cc, cc)
-        s2 = _normal_stub(s, ns, push, own(0))
-        e2 = _normal_stub(e, ne, push, own(1))
+        s2 = _normal_stub(s, ns, max(push, floor_s), own(0))
+        e2 = _normal_stub(e, ne, max(push, floor_e), own(1))
         for a, b, pre, post in ((s2, e2, [] if s2 == s else [s2], [] if e2 == e else [e2]),
                                 (s, e, [], [])):
             interior = _astar_ortho(a, b, obst, clearance,
@@ -604,7 +632,9 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
             if c < best_cross:
                 base, best_cross = mids, c
 
-    base_score = _route_score(base, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs)
+    eff_stub = (floor_s, floor_e)
+    base_score = _route_score(base, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs,
+                              min_stub=eff_stub)
 
     # --- (2) 연결도형 clearance 사다리 — base를 '엄격히 이기는' 후보만 교체 -------
     # 넉넉한 여유부터 좁은 여유까지 훑되, 채택 기준은 점수뿐이라 오늘보다 나쁜 경로는 구조적으로
@@ -638,7 +668,8 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
     for rung, cc in enumerate((conn_clear, clearance, 1.0, 0.0)):
         cinfl = [r.adjusted(-cc, -cc, cc, cc) for r in conn_orig]
         for mids in _candidates(infl + cinfl, cc, cc):
-            sc = _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, rung)
+            sc = _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, rung,
+                              eff_stub)
             if sc < best_score:
                 best, best_score = mids, sc
 
