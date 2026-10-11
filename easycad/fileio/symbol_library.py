@@ -46,20 +46,71 @@ def _library_path() -> str:
     return os.path.join(d, _FILE_NAME)
 
 
+# [실사용 피드백 2026-10-11] 미분류 폐지 — 심볼은 늘 어느 폴더엔가 들어간다. 폴더를 안 정하고 등록하면
+# 마지막에 쓴 폴더 → 첫 폴더 → (폴더가 하나도 없으면) 이 이름으로 새로 만든 폴더 순으로 들어간다.
+DEFAULT_FOLDER = "내 심볼"
+
+# [실사용 피드백 2026-10-11] 즐겨찾기 = 사용자가 직접 넣고 빼는 tool_key 목록(순서 그대로, 기본 도형
+# "rect"/"sym:decision"과 내 심볼 "customsym:<id>"를 함께). 옛 「자주 쓰는 것」(최근 8개 자동)과 심볼마다
+# 붙던 "favorite" 표식을 이 목록 하나로 합쳤다. 목록이 없는 파일은 이 기본 4개 + 옛 표식 심볼로 시작.
+DEFAULT_FAVORITES = ["rect", "ellipse", "sym:decision", "sym:terminal"]
+
+
+def _default_folder(data: dict) -> str:
+    """폴더를 안 정한 등록·옛 미분류 심볼이 들어갈 폴더 — 없으면 `DEFAULT_FOLDER`를 만들어서."""
+    last = data.get("last_folder")
+    if last in data["folders"]:
+        return last
+    if data["folders"]:
+        return data["folders"][0]
+    data["folders"].append(DEFAULT_FOLDER)
+    return DEFAULT_FOLDER
+
+
+def _migrate(data: dict) -> bool:
+    """옛 파일을 지금 규칙으로 — 미분류(folder 없음) 심볼은 기본 폴더로, "favorite" 표식은 즐겨찾기 목록으로.
+    바뀐 게 있으면 True(부르는 쪽이 한 번 저장해 다음부터는 그냥 읽히게)."""
+    changed = False
+    if "favorites" not in data:
+        data["favorites"] = list(DEFAULT_FAVORITES) + [
+            f"customsym:{e['id']}" for e in data["symbols"] if e.get("favorite") and e.get("id")]
+        changed = True
+    for e in data["symbols"]:
+        if "favorite" in e:
+            del e["favorite"]
+            changed = True
+        if not e.get("folder"):
+            # 옛 미분류는 남의 폴더에 섞지 않고 「내 심볼」 폴더로 모은다(없으면 만든다)
+            if DEFAULT_FOLDER not in data["folders"]:
+                data["folders"].append(DEFAULT_FOLDER)
+            e["folder"] = DEFAULT_FOLDER
+            changed = True
+    return changed
+
+
 def _load_raw() -> dict:
     path = _library_path()
     if not os.path.exists(path):
-        return {"folders": [], "symbols": []}
+        return {"folders": [], "symbols": [], "favorites": list(DEFAULT_FAVORITES)}
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
-        return {"folders": [], "symbols": []}
+        return {"folders": [], "symbols": [], "favorites": list(DEFAULT_FAVORITES)}
     if not isinstance(data, dict):
-        return {"folders": [], "symbols": []}
+        return {"folders": [], "symbols": [], "favorites": list(DEFAULT_FAVORITES)}
     raw = {"folders": data.get("folders", []), "symbols": data.get("symbols", [])}
     if isinstance(data.get("folder_colors"), dict):   # [2026-10-11] 폴더 색 칩 — 없던 파일엔 키가 없다
         raw["folder_colors"] = data["folder_colors"]
+    if isinstance(data.get("favorites"), list):
+        raw["favorites"] = data["favorites"]
+    if isinstance(data.get("last_folder"), str):
+        raw["last_folder"] = data["last_folder"]
+    if _migrate(raw):
+        try:
+            _save_raw(raw)
+        except OSError:
+            pass   # 읽기 전용이어도 화면엔 옮긴 결과로 보인다 — 다음 저장 때 같이 써진다
     return raw
 
 
@@ -95,6 +146,35 @@ def load_library() -> list[dict]:
 
 def load_folders() -> list[str]:
     return _load_raw()["folders"]
+
+
+def load_favorites() -> list[str]:
+    """즐겨찾기 tool_key 목록(넣은 순서)."""
+    return list(_load_raw().get("favorites", []))
+
+
+def is_favorite(key: str) -> bool:
+    return key in _load_raw().get("favorites", [])
+
+
+def toggle_favorite_key(key: str):
+    """즐겨찾기에 넣기/빼기 — 넣을 때는 맨 뒤에."""
+    data = _load_raw()
+    favs = data.setdefault("favorites", [])
+    if key in favs:
+        favs.remove(key)
+    else:
+        favs.append(key)
+    _save_raw(data)
+
+
+def preferred_folder() -> str | None:
+    """폴더를 고르는 창의 처음 값 — 마지막에 쓴 폴더, 없으면 첫 폴더, 폴더가 없으면 None."""
+    data = _load_raw()
+    last = data.get("last_folder")
+    if last in data["folders"]:
+        return last
+    return data["folders"][0] if data["folders"] else None
 
 
 def load_folder_colors() -> dict[str, str]:
@@ -136,7 +216,9 @@ def delete_folder(name: str):
         return
     data["folders"].remove(name)
     data.get("folder_colors", {}).pop(name, None)
+    gone = {f"customsym:{e.get('id')}" for e in data["symbols"] if e.get("folder") == name}
     data["symbols"] = [e for e in data["symbols"] if e.get("folder") != name]
+    data["favorites"] = [k for k in data.get("favorites", []) if k not in gone]
     _save_raw(data)
 
 
@@ -158,14 +240,20 @@ def rename_folder(old_name: str, new_name: str):
     for e in data["symbols"]:
         if e.get("folder") == old_name:
             e["folder"] = new_name
+    if data.get("last_folder") == old_name:
+        data["last_folder"] = new_name
     _save_raw(data)
 
 
 def add_symbol(name: str, item_dicts: list[dict], thumb_b64: str, folder: str | None = None) -> dict:
-    """새 항목을 등록하고 그 항목(id 포함)을 반환. folder 생략 시 미분류."""
+    """새 항목을 등록하고 그 항목(id 포함)을 반환. folder 생략 시 `_default_folder`(미분류는 없다)."""
     data = _load_raw()
+    if folder and folder not in data["folders"]:
+        data["folders"].append(folder)
+    folder = folder or _default_folder(data)
+    data["last_folder"] = folder
     entry = {"id": uuid.uuid4().hex[:8], "name": name, "thumb": thumb_b64, "items": item_dicts,
-              "folder": folder, "favorite": False}
+              "folder": folder}
     data["symbols"].append(entry)
     _save_raw(data)
     return entry
@@ -188,28 +276,24 @@ def rename_symbol(symbol_id: str, new_name: str):
 
 
 def toggle_favorite(symbol_id: str):
-    """[신규기능, 2026-08-20, deep-interview] 즐겨찾기 on/off를 뒤집는다 — `folder`와 같이
-    심볼 엔트리 자체의 필드라 원본 삭제·폴더 완전삭제 시 자동으로 함께 사라진다(별도 정리
-    코드 불필요). 이중표시(원래 폴더+즐겨찾기 섹션 둘 다에 노출)라 별도 목록 동기화도 없다."""
-    data = _load_raw()
-    for e in data["symbols"]:
-        if e.get("id") == symbol_id:
-            e["favorite"] = not e.get("favorite", False)
-            break
-    else:
-        return
-    _save_raw(data)
+    """[신규기능, 2026-08-20 → 2026-10-11 즐겨찾기 목록으로 통합] 내 심볼 하나의 즐겨찾기 넣기/빼기."""
+    if any(e.get("id") == symbol_id for e in load_library()):
+        toggle_favorite_key(f"customsym:{symbol_id}")
 
 
 def delete_symbol(symbol_id: str):
     data = _load_raw()
     data["symbols"] = [e for e in data["symbols"] if e.get("id") != symbol_id]
+    data["favorites"] = [k for k in data.get("favorites", []) if k != f"customsym:{symbol_id}"]
     _save_raw(data)
 
 
 def move_symbol(symbol_id: str, folder: str | None):
-    """심볼을 다른 폴더(또는 미분류=None)로 옮긴다 — 좌측 패널 드래그앤드롭이 호출."""
+    """심볼을 다른 폴더로 옮긴다 — 좌측 패널 드래그앤드롭이 호출. [2026-10-11] 미분류가 없어져
+    없는 폴더(None 포함)로는 안 옮긴다."""
     data = _load_raw()
+    if folder not in data["folders"]:
+        return
     for e in data["symbols"]:
         if e.get("id") == symbol_id:
             e["folder"] = folder

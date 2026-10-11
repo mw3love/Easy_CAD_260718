@@ -215,7 +215,8 @@ def test_custom_symbol_context_menu_has_rename_and_delete_actions():
             w._show_custom_symbol_context_menu(btn, QPointF(1, 1).toPoint(), sym_id)
         assert len(created_menus) == 1
         texts = [a.text() for a in created_menus[0].actions() if not a.isSeparator()]
-        assert texts == ["즐겨찾기 추가", "이름변경…", "SVG로 내보내기…", "삭제…"]
+        assert texts == ["즐겨찾기에 넣기", "이름변경…", "SVG로 내보내기…", "삭제…"]   # [2026-10-11] 문구 통일
+        assert all(not a.icon().isNull() for a in created_menus[0].actions() if not a.isSeparator())   # 아이콘 병행
 
 
 # ---- [실사용 요청 2026-08-21] 심볼 우클릭 → SVG로 내보내기 --------------------------------
@@ -249,13 +250,38 @@ def test_export_custom_symbol_svg_missing_id_is_noop():
 
 # ---- [신규기능, 2026-08-12 좌측 패널 아코디언 개편] 내 심볼 폴더 -----------------------
 
-def test_new_symbol_defaults_to_unclassified():
+def test_new_symbol_without_folder_goes_to_default_folder():
+    """[실사용 피드백 2026-10-11] 미분류 폐지 — 폴더를 안 정하고 등록하면 폴더가 없을 땐 「내 심볼」을 만들어
+    거기로, 그 다음부터는 마지막에 쓴 폴더로."""
     with _isolated_symbol_library():
         w = CanvasWindow()
         r = _mk_pen_rect(w); r.setSelected(True)
         with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
             w.register_selection_as_symbol()
-        assert symbol_library.load_library()[0]["folder"] is None
+        assert symbol_library.load_library()[0]["folder"] == symbol_library.DEFAULT_FOLDER == "내 심볼"
+        assert symbol_library.load_folders() == ["내 심볼"]
+        symbol_library.create_folder("장비")
+        symbol_library.add_symbol("앰프", [], "", folder="장비")
+        assert symbol_library.add_symbol("커넥터", [], "")["folder"] == "장비"   # 마지막에 쓴 폴더
+        assert symbol_library.preferred_folder() == "장비"
+
+
+def test_old_library_file_migrates_unfiled_and_favorite_flags():
+    """옛 파일(미분류 심볼·심볼마다 "favorite" 표식, 즐겨찾기 목록 없음)을 처음 읽을 때 한 번 옮겨 저장한다 —
+    미분류는 남의 폴더에 섞지 않고 「내 심볼」로, 표식은 기본 4개 뒤 즐겨찾기 목록으로."""
+    import json
+    with _isolated_symbol_library():
+        path = symbol_library._library_path()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"folders": ["Ant"], "symbols": [
+                {"id": "a1", "name": "Zigbee", "thumb": "", "items": [], "folder": None, "favorite": True},
+                {"id": "b2", "name": "34", "thumb": "", "items": [], "folder": "Ant", "favorite": False}]}, f)
+        assert symbol_library.load_folders() == ["Ant", "내 심볼"]
+        assert [(e["id"], e["folder"]) for e in symbol_library.load_library()] == [("a1", "내 심볼"), ("b2", "Ant")]
+        assert symbol_library.load_favorites() == ["rect", "ellipse", "sym:decision", "sym:terminal", "customsym:a1"]
+        with open(path, encoding="utf-8") as f:
+            saved = json.load(f)
+        assert "favorites" in saved and all("favorite" not in e for e in saved["symbols"])   # 저장까지 됨
 
 
 def test_create_folder_persists_even_when_empty():
@@ -321,8 +347,8 @@ def test_build_register_symbol_menu_lists_unclassified_folders_and_new_folder():
 
 
 def test_register_symbol_menu_favorite_action_registers_unfiled_and_favorited():
-    # [실사용 요청 2026-08-25 후속] "(미분류)"를 대체한 "즐겨찾기로 등록" — folder=None +
-    # favorite=True로 등록돼야 함(별도 폴더가 아니라 이중표시 섹션에 뜨는 표식).
+    # [실사용 요청 2026-08-25 후속] "(미분류)"를 대체한 "즐겨찾기로 등록" — [2026-10-11] 폴더는 기본 폴더로,
+    # 즐겨찾기 목록에도 들어간다.
     with _isolated_symbol_library():
         w = CanvasWindow()
         r = _mk_pen_rect(w); r.setSelected(True)
@@ -331,8 +357,8 @@ def test_register_symbol_menu_favorite_action_registers_unfiled_and_favorited():
         with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
             fav_action.trigger()
         entry = symbol_library.load_library()[0]
-        assert entry["folder"] is None
-        assert entry["favorite"] is True
+        assert entry["folder"] == "내 심볼"
+        assert symbol_library.is_favorite(f"customsym:{entry['id']}")
 
 
 def test_register_selection_as_symbol_favorite_arg_sets_favorite_flag():
@@ -342,8 +368,9 @@ def test_register_selection_as_symbol_favorite_arg_sets_favorite_flag():
         with patch.object(QInputDialog, "getText", return_value=("증폭기", True)):
             w.register_selection_as_symbol(folder=None, favorite=True)
         entry = symbol_library.load_library()[0]
-        assert entry["folder"] is None
-        assert entry["favorite"] is True
+        assert entry["folder"] == "내 심볼"
+        assert symbol_library.is_favorite(f"customsym:{entry['id']}")
+        assert f"customsym:{entry['id']}" in w._fav_palette_buttons
 
 
 def test_register_symbol_menu_folder_action_registers_directly_with_one_popup():
@@ -385,8 +412,9 @@ def test_move_symbol_between_folders():
         entry = symbol_library.add_symbol("증폭기", [], "")
         symbol_library.move_symbol(entry["id"], "무선")
         assert symbol_library.load_library()[0]["folder"] == "무선"
-        symbol_library.move_symbol(entry["id"], None)   # 미분류로 되돌리기
-        assert symbol_library.load_library()[0]["folder"] is None
+        symbol_library.move_symbol(entry["id"], None)   # [2026-10-11] 미분류가 없어 무시
+        symbol_library.move_symbol(entry["id"], "없는 폴더")
+        assert symbol_library.load_library()[0]["folder"] == "무선"
 
 
 def test_delete_folder_deletes_member_symbols_too():
@@ -399,8 +427,10 @@ def test_delete_folder_deletes_member_symbols_too():
         symbol_library.create_folder("전원")
         deleted = symbol_library.add_symbol("증폭기", [], "", folder="무선")
         kept_other_folder = symbol_library.add_symbol("변압기", [], "", folder="전원")
-        kept_unfiled = symbol_library.add_symbol("커넥터", [], "", folder=None)
+        kept_unfiled = symbol_library.add_symbol("커넥터", [], "", folder=None)   # → 마지막에 쓴 「전원」
+        symbol_library.toggle_favorite(deleted["id"])
         symbol_library.delete_folder("무선")
+        assert f"customsym:{deleted['id']}" not in symbol_library.load_favorites()   # 즐겨찾기에서도 빠짐
         assert symbol_library.load_folders() == ["전원"]
         remaining_ids = {e["id"] for e in symbol_library.load_library()}
         assert deleted["id"] not in remaining_ids
@@ -476,7 +506,7 @@ def test_left_panel_new_folder_and_drag_move_wiring():
 
         with patch.object(QInputDialog, "getText", return_value=("무선", True)):
             w._prompt_create_symbol_folder()
-        assert symbol_library.load_folders() == ["무선"]
+        assert symbol_library.load_folders() == ["내 심볼", "무선"]   # 처음 등록 때 「내 심볼」이 생겼다
 
         w._move_custom_symbol(sym_id, "무선")
         assert symbol_library.load_library()[0]["folder"] == "무선"
@@ -484,7 +514,7 @@ def test_left_panel_new_folder_and_drag_move_wiring():
 
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
             w._delete_symbol_folder_prompt("무선")
-        assert symbol_library.load_folders() == []
+        assert symbol_library.load_folders() == ["내 심볼"]
         assert symbol_library.load_library() == []   # [정책 전환 2026-08-19] 소속 심볼도 함께 삭제
 
 
@@ -508,11 +538,11 @@ def test_delete_symbol_folder_prompt_warns_with_member_count():
 
 
 def _folder_zone_and_label(w, folder_name):
-    """폴더 이름으로 `_SymbolFolderDropZone`과 그 안 제목 QLabel을 찾는다(폴더 목록 순서 —
-    미분류가 항상 0번, 이후 `symbol_library.load_folders()` 순서)."""
+    """폴더 이름으로 `_SymbolFolderDropZone`과 그 안 제목 QLabel을 찾는다(`symbol_library.load_folders()` 순서 —
+    [2026-10-11] 미분류 칸은 없다)."""
     body = w._custom_sym_body
     zones = [body.layout().itemAt(i).widget() for i in range(body.layout().count())]
-    idx = 0 if folder_name is None else 1 + symbol_library.load_folders().index(folder_name)
+    idx = symbol_library.load_folders().index(folder_name)
     zone = zones[idx]
     title_lbl = zone.layout().itemAt(0).widget()._title_lbl   # [2026-10-11] 폴더 = 테두리 칸(_StaticSection)
     return zone, title_lbl
@@ -542,20 +572,32 @@ def test_symbol_folder_right_click_opens_rename_delete_menu():
         with patch("easycad.canvas.host_ui.QMenu", _CapturingMenu):
             title_lbl.customContextMenuRequested.emit(QPointF(1, 1).toPoint())
         assert len(created_menus) == 1
-        assert [a.text() for a in created_menus[0].actions()] == ["폴더 색 바꾸기…", "이름변경…", "삭제…"]   # [2026-10-11] 폴더 색 칩
+        acts = [a for a in created_menus[0].actions() if not a.isSeparator()]
+        assert [a.text() for a in acts] == ["크게 보기", "폴더 색 바꾸기…", "이름변경…", "삭제…"]   # [2026-10-11]
+        assert all(not a.icon().isNull() for a in acts)
 
         with patch.object(QInputDialog, "getText", return_value=("안테나", True)):
-            created_menus[0].actions()[1].trigger()   # 이름변경…
+            acts[2].trigger()   # 이름변경…
         assert symbol_library.load_folders() == ["안테나"]
 
 
-def test_unfiled_group_has_no_right_click_menu():
-    """미분류는 이름변경·삭제 대상이 아니므로 우클릭 메뉴 자체가 안 걸려야 한다
-    (`add_group`의 `deletable=False` 분기)."""
+def test_no_unfiled_group_and_new_folder_button_is_last():
+    """[실사용 피드백 2026-10-11] 미분류 칸이 없고(공간 차지), 「＋ 새 폴더」는 마지막 폴더 아래 — 카드 제목 줄 ＋는 없다."""
+    from easycad.canvas.host_widgets import _SymbolFolderDropZone
     with _isolated_symbol_library():
+        symbol_library.create_folder("무선")
+        symbol_library.create_folder("전원")
         w = CanvasWindow()
-        _, title_lbl = _folder_zone_and_label(w, None)
-        assert title_lbl.contextMenuPolicy() != Qt.ContextMenuPolicy.CustomContextMenu
+        lay = w._custom_sym_body.layout()
+        items = [lay.itemAt(i).widget() for i in range(lay.count())]
+        assert [z._folder for z in items[:-1]] == ["무선", "전원"]
+        assert all(isinstance(z, _SymbolFolderDropZone) for z in items[:-1])
+        assert items[-1] is w._add_folder_btn and w._add_folder_btn.text() == "새 폴더"
+        assert not w._add_folder_btn.icon().isNull()
+        assert not any(b.toolTip() == "새 폴더" for b in w._left_panel._head.findChildren(QToolButton))
+        with patch.object(QInputDialog, "getText", return_value=("송신", True)):
+            w._add_folder_btn.click()
+        assert symbol_library.load_folders() == ["무선", "전원", "송신"]
 
 
 # ---- [실사용 버그 수정 2026-08-19] 팔레트 버튼 스타일 + 썸네일 선명도 --------------------
@@ -1035,89 +1077,56 @@ def test_custom_symbol_button_dispatches_real_qevent_tooltip_to_qtooltip_showtex
         assert not mock_show2.called   # 기본도형은 정적 setToolTip 경로 그대로
 
 
-# ---- [신규기능, 2026-08-20, deep-interview] '내 심볼' 즐겨찾기 -------------------------
-# 확정 스코프: favorite 불리언 필드(folder와 같은 패턴, 별도 id목록 아님) · UI 위치는 '내
-# 심볼' 최상단(미분류보다 위) · 표시방식은 이중표시(원래 폴더+즐겨찾기 둘 다) · 폴더
-# 완전삭제 시 자동 정리(별도 코드 불필요, entry 자체가 지워지므로) · 우클릭 메뉴는 토글
-# 액션 1개 · 드래그 대상 아님(우클릭 전용).
+# ---- [신규기능, 2026-08-20 → 2026-10-11 통합] 즐겨찾기 -------------------------------
+# 2026-10-11: 심볼마다 붙던 "favorite" 표식 + 폴더 안 이중표시 섹션 → 카드 위쪽 「즐겨찾기」 칸 하나
+# (`symbol_library.load_favorites()` — 기본 도형과 내 심볼 tool_key 목록, 넣은 순서). 옛 「자주 쓰는 것」을 대신한다.
 
-def test_add_symbol_defaults_favorite_false():
+def test_toggle_favorite_adds_and_removes_key():
     with _isolated_symbol_library():
         entry = symbol_library.add_symbol("증폭기", [], "")
-        assert entry["favorite"] is False
-        assert symbol_library.load_library()[0]["favorite"] is False
-
-
-def test_toggle_favorite_sets_and_unsets_flag():
-    with _isolated_symbol_library():
-        entry = symbol_library.add_symbol("증폭기", [], "")
+        key = f"customsym:{entry['id']}"
+        assert "favorite" not in entry and not symbol_library.is_favorite(key)
         symbol_library.toggle_favorite(entry["id"])
-        assert symbol_library.load_library()[0]["favorite"] is True
+        assert symbol_library.load_favorites()[-1] == key
         symbol_library.toggle_favorite(entry["id"])
-        assert symbol_library.load_library()[0]["favorite"] is False
-
-
-def test_toggle_favorite_unknown_id_is_noop():
-    with _isolated_symbol_library():
-        symbol_library.add_symbol("증폭기", [], "")
-        symbol_library.toggle_favorite("doesnotexist")
-        assert symbol_library.load_library()[0]["favorite"] is False
+        assert not symbol_library.is_favorite(key)
+        symbol_library.toggle_favorite("doesnotexist")          # 없는 심볼은 무시
+        assert "customsym:doesnotexist" not in symbol_library.load_favorites()
 
 
 def test_delete_folder_drops_favorited_member_from_favorites_too():
-    # favorite는 심볼 엔트리 자체의 필드라 폴더 완전삭제(2026-08-19 정책) 시 별도 정리
-    # 코드 없이 엔트리와 함께 자동으로 사라진다 — deep-interview에서 확정한 전제 검증.
     with _isolated_symbol_library():
         symbol_library.create_folder("무선")
         entry = symbol_library.add_symbol("증폭기", [], "", folder="무선")
         symbol_library.toggle_favorite(entry["id"])
         symbol_library.delete_folder("무선")
         assert symbol_library.load_library() == []
+        assert f"customsym:{entry['id']}" not in symbol_library.load_favorites()
 
 
-def test_favorites_dual_display_button_count_tracks_toggle():
-    # 즐겨찾기 안 된 상태 = 원래 폴더(미분류) 버튼 1개. 즐겨찾기하면 이중표시로 2개
-    # (미분류+즐겨찾기 섹션)가 되고, 해제하면 다시 1개로 돌아온다.
+def test_favorite_symbol_shows_in_favorites_section_not_twice_in_folder():
     with _isolated_symbol_library():
         w = CanvasWindow()
         sym_id = _register_two_shape_symbol(w)
-        assert len(w._custom_sym_buttons[sym_id]) == 1
-
+        key = f"customsym:{sym_id}"
+        assert len(w._custom_sym_buttons[sym_id]) == 1 and key not in w._fav_palette_buttons
         w._toggle_custom_symbol_favorite(sym_id)
-        assert len(w._custom_sym_buttons[sym_id]) == 2
-
+        assert len(w._custom_sym_buttons[sym_id]) == 1               # 폴더 안엔 그대로 하나
+        assert key in w._fav_palette_buttons                          # 즐겨찾기 칸에 하나 더
         w._toggle_custom_symbol_favorite(sym_id)
-        assert len(w._custom_sym_buttons[sym_id]) == 1
+        assert key not in w._fav_palette_buttons
 
 
-def test_favorites_group_absent_from_panel_when_empty():
-    # 즐겨찾기 섹션은 항목이 하나도 없으면 아예 그려지지 않는다(add_group의 early return).
-    with _isolated_symbol_library():
-        w = CanvasWindow()
-        sym_id = _register_two_shape_symbol(w)
-        body_count_before = w._custom_sym_body.layout().count()   # 미분류 1개 그룹뿐
-
-        w._toggle_custom_symbol_favorite(sym_id)
-        body_count_after = w._custom_sym_body.layout().count()   # 즐겨찾기+미분류 2개 그룹
-        assert body_count_after == body_count_before + 1
-
-        w._toggle_custom_symbol_favorite(sym_id)
-        assert w._custom_sym_body.layout().count() == body_count_before
-
-
-def test_set_tool_syncs_checked_state_across_dual_display_buttons():
-    # host_canvas.set_tool이 sid당 버튼 전부(이중표시 2개)의 체크상태를 함께 동기화하는지.
+def test_set_tool_syncs_checked_state_across_folder_and_favorites_buttons():
     with _isolated_symbol_library():
         w = CanvasWindow()
         sym_id = _register_two_shape_symbol(w)
         w._toggle_custom_symbol_favorite(sym_id)
-        assert len(w._custom_sym_buttons[sym_id]) == 2
-
-        w.set_tool(f"customsym:{sym_id}")
-        assert all(b.isChecked() for b in w._custom_sym_buttons[sym_id])
-
+        key = f"customsym:{sym_id}"
+        w.set_tool(key)
+        assert w._custom_sym_buttons[sym_id][0].isChecked() and w._fav_palette_buttons[key].isChecked()
         w.set_tool("select")
-        assert not any(b.isChecked() for b in w._custom_sym_buttons[sym_id])
+        assert not w._custom_sym_buttons[sym_id][0].isChecked() and not w._fav_palette_buttons[key].isChecked()
 
 
 def test_context_menu_favorite_action_label_toggles_with_state():
@@ -1138,42 +1147,39 @@ def test_context_menu_favorite_action_label_toggles_with_state():
         btn = w._custom_sym_buttons[sym_id][0]
         with patch("easycad.canvas.host_ui.QMenu", _CapturingMenu):
             w._show_custom_symbol_context_menu(btn, QPointF(1, 1).toPoint(), sym_id)
-        assert [a.text() for a in created_menus[0].actions()][0] == "즐겨찾기 추가"
+        assert [a.text() for a in created_menus[0].actions()][0] == "즐겨찾기에 넣기"
+        created_menus[0].actions()[0].trigger()                      # 메뉴 항목이 실제로 넣는다
+        assert symbol_library.is_favorite(f"customsym:{sym_id}")
 
-        w._toggle_custom_symbol_favorite(sym_id)
         created_menus.clear()
         btn = w._custom_sym_buttons[sym_id][0]
         with patch("easycad.canvas.host_ui.QMenu", _CapturingMenu):
             w._show_custom_symbol_context_menu(btn, QPointF(1, 1).toPoint(), sym_id)
-        assert [a.text() for a in created_menus[0].actions()][0] == "즐겨찾기 해제"
+        assert [a.text() for a in created_menus[0].actions()][0] == "즐겨찾기에서 빼기"
 
 
-def test_context_menu_toggle_action_invokes_toggle_favorite():
+def test_basic_shape_right_click_menu_toggles_favorite():
+    """[실사용 피드백 2026-10-11] 기본 도형 칸도 우클릭 → 즐겨찾기 넣기/빼기(예전엔 우클릭 메뉴가 없었다)."""
     with _isolated_symbol_library():
         w = CanvasWindow()
-        sym_id = _register_two_shape_symbol(w)
-        btn = w._custom_sym_buttons[sym_id][0]
+        btn = w._sym_buttons["prep"]
+        assert btn.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+        created_menus = []
 
-        with patch("easycad.canvas.host_ui.QMenu.exec", return_value=None):
-            w._show_custom_symbol_context_menu(btn, QPointF(1, 1).toPoint(), sym_id)
-            # exec()는 no-op이라 메뉴가 실제로 안 뜨므로, 핸들러를 직접 호출해 배선 확인.
-            w._toggle_custom_symbol_favorite(sym_id)
-        assert symbol_library.load_library()[0]["favorite"] is True
+        class _CapturingMenu(QMenu):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                created_menus.append(self)
 
+            def exec(self, *a, **kw):
+                return None
 
-def test_favorites_zone_is_not_a_symbol_folder_drop_target():
-    # deep-interview 확정: 즐겨찾기 섹션은 드롭 대상이 아니라 우클릭 전용 — 다른 폴더처럼
-    # _SymbolFolderDropZone(acceptDrops=True)로 감싸지 않는다.
-    with _isolated_symbol_library():
-        w = CanvasWindow()
-        sym_id = _register_two_shape_symbol(w)
-        w._toggle_custom_symbol_favorite(sym_id)
-        zones = [w._custom_sym_body.layout().itemAt(i).widget()
-                 for i in range(w._custom_sym_body.layout().count())]
-        drop_zones = [z for z in zones if z.acceptDrops()]
-        # 즐겨찾기(비-드롭) + 미분류(드롭) 2그룹 중 드롭 가능한 건 미분류 하나뿐.
-        assert len(zones) == 2
-        assert len(drop_zones) == 1
+        with patch("easycad.canvas.host_ui.QMenu", _CapturingMenu):
+            btn.customContextMenuRequested.emit(QPointF(1, 1).toPoint())
+        acts = created_menus[0].actions()
+        assert [a.text() for a in acts] == ["즐겨찾기에 넣기"] and not acts[0].icon().isNull()
+        acts[0].trigger()
+        assert "sym:prep" in w._fav_palette_buttons
 
 
 # ---- [실사용 요청 2026-08-21] '종류' 드롭다운 — 내 심볼(폴더별 구분선) + 그룹 삽입 --------
@@ -1182,7 +1188,7 @@ def test_swap_menu_includes_custom_symbol_folders_with_separators():
     with _isolated_symbol_library():
         w = CanvasWindow()
         r = _mk_pen_rect(w); r.setSelected(True)
-        with patch.object(QInputDialog, "getText", return_value=("미분류심볼", True)):
+        with patch.object(QInputDialog, "getText", return_value=("기본폴더심볼", True)):
             w.register_selection_as_symbol()
         w._scene.clearSelection()
 
@@ -1196,14 +1202,14 @@ def test_swap_menu_includes_custom_symbol_folders_with_separators():
 
         actions = w._build_swap_menu().actions()
         texts = [a.text() for a in actions if not a.isSeparator()]
-        # 기본 8종 뒤로 구분선 + 미분류 그룹 + 구분선 + "장비" 그룹이 이어진다.
+        # 기본 8종 뒤로 구분선 + 「내 심볼」 그룹 + 구분선 + "장비" 그룹이 이어진다(2026-10-11 미분류 없음).
         assert texts[:8] == ["사각형", "원", "삼각형", "판단", "시작/끝", "입출력", "준비", "저장소"]
-        assert "미분류심볼" in texts and "장비심볼" in texts
+        assert "기본폴더심볼" in texts and "장비심볼" in texts
         sep_count = sum(1 for a in actions if a.isSeparator())
         # [실사용 피드백 2026-08-21] 사각형·원~저장소는 전부 "기본도형" 한 섹션이라
         # 그 사이엔 구분선 없음(위 texts[:8] 순서 검증이 이미 확인) — 구분선은 "내 심볼"
         # 앞 1 + 폴더 그룹마다 1개씩만.
-        assert sep_count >= 2   # 기본도형→내심볼 1 + 폴더 그룹(미분류·"장비") 2 = 최소 2 이어짐
+        assert sep_count >= 2   # 기본도형→내심볼 1 + 폴더 그룹(「내 심볼」·"장비") 2 = 최소 2 이어짐
 
 
 def test_swap_to_single_item_custom_symbol_replaces_and_rebinds():

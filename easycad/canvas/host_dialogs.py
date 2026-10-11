@@ -2279,17 +2279,23 @@ class _SaveToSymbolsFolderDialog(QDialog):
 
         lay.addWidget(QLabel("저장할 폴더:", self))
         self._folder_combo = QComboBox(self)
-        self._folder_combo.addItem("(미분류)", None)
+        # [실사용 피드백 2026-10-11] 「(미분류)」 없음 — 늘 폴더를 고른다. 처음엔 마지막에 쓴 폴더, 폴더가 하나도
+        # 없으면 「새 폴더…」에 기본 이름을 채워 둔다.
         for f in symbol_library.load_folders():
             self._folder_combo.addItem(f, f)
         self._folder_combo.addItem("새 폴더…", "__new__")
+        pref = symbol_library.preferred_folder()
+        if pref is not None:
+            self._folder_combo.setCurrentIndex(self._folder_combo.findData(pref))
         self._folder_combo.setStyleSheet(_ROUNDED_COMBO_QSS)
         self._folder_combo.currentIndexChanged.connect(self._on_combo_changed)
         lay.addWidget(self._folder_combo)
 
         self._new_folder_edit = QLineEdit(self)
         self._new_folder_edit.setPlaceholderText("새 폴더 이름")
-        self._new_folder_edit.setVisible(False)
+        if pref is None:
+            self._new_folder_edit.setText(symbol_library.DEFAULT_FOLDER)
+        self._new_folder_edit.setVisible(self._folder_combo.currentData() == "__new__")
         lay.addWidget(self._new_folder_edit)
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok

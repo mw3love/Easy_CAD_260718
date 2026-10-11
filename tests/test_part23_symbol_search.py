@@ -48,7 +48,7 @@ def test_search_filters_and_hides_empty_folders():
         ant, amp, zig = _lib("폴더A", "폴더B")
         w = CanvasWindow()
         body = w._custom_sym_body.layout()
-        assert body.count() == 3                               # 미분류 + 폴더 2개(즐겨찾기 없음)
+        assert body.count() == 3                               # 폴더 2개 + 「새 폴더」(미분류 없음 — Zigbee는 폴더B로)
         w._custom_sym_search.setText("ㅇㅌ")
         assert set(w._custom_sym_buttons) == {ant["id"]}
         assert body.count() == 1                               # 폴더A만 남음
@@ -59,6 +59,7 @@ def test_search_filters_and_hides_empty_folders():
         assert body.itemAt(0).widget().text() == "일치하는 도형·심볼 없음"
         w._custom_sym_search.clear()
         assert set(w._custom_sym_buttons) == {ant["id"], amp["id"], zig["id"]} and body.count() == 3
+        assert zig["folder"] == "폴더B"                        # 폴더 없이 등록 → 마지막에 쓴 폴더
 
 
 def test_search_shows_collapsed_folder_without_changing_saved_state():
@@ -96,11 +97,11 @@ def test_rebuild_during_search_keeps_query_and_esc_clears():
 
 
 def test_search_box_sits_at_top_of_shape_symbol_card():
-    """[첫 화면 재디자인 2026-10-07, 시안 3라운드 S3] 검색칸은 카드 맨 위(「자주 쓰는 것」 위)."""
+    """[첫 화면 재디자인 2026-10-07, 시안 3라운드 S3] 검색칸은 카드 맨 위(「즐겨찾기」 위)."""
     w = CanvasWindow()
     outer = w._left_container.layout()
     assert outer.itemAt(0).widget().isAncestorOf(w._custom_sym_search)
-    assert outer.itemAt(1).widget() is w._recent_section
+    assert outer.itemAt(1).widget() is w._fav_section
     assert outer.itemAt(2).widget() is w._basic_section
     assert w._custom_sym_search.isClearButtonEnabled()
     assert w._left_panel._title_lbl.text() == "도형 · 심볼"
@@ -108,13 +109,12 @@ def test_search_box_sits_at_top_of_shape_symbol_card():
 
 def test_search_shows_flat_list_with_basic_shapes_and_folder_names():
     """[패널 통일 2라운드 2026-10-11, 시안 2-3] 검색 결과는 폴더로 나누지 않은 한 줄 목록 — 기본 도형도 함께,
-    줄 오른쪽에 어느 폴더인지. 그동안 「자주 쓰는 것」·「기본 도형」 칸은 숨긴다. 아이콘 보기여도 목록으로."""
+    줄 오른쪽에 어느 폴더인지. 그동안 「즐겨찾기」·「기본 도형」 칸은 숨긴다."""
     from PyQt6.QtWidgets import QLabel
     with _isolated_symbol_library():
         ant, _amp, _zig = _lib("폴더A", "폴더B")
         w = CanvasWindow()
         w.show()
-        w._set_palette_view("icon")
         w._custom_sym_search.setText("ㅅ")          # 사각형·삼각형·시작/끝·저장소 (심볼은 없음)
         body = w._custom_sym_body.layout()
         assert body.count() == 1
@@ -123,79 +123,83 @@ def test_search_shows_flat_list_with_basic_shapes_and_folder_names():
         assert list(w._search_result_buttons) == ["rect", "sym:triangle", "sym:terminal", "sym:database"]
         assert all(b.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
                    for b in w._search_result_buttons.values())
-        assert not w._recent_section.isVisibleTo(w._left_container)
+        assert not w._fav_section.isVisibleTo(w._left_container)
         assert not w._basic_section.isVisibleTo(w._left_container)
         w._custom_sym_search.setText("안테")
         assert set(w._custom_sym_buttons) == {ant["id"]}
         tags = [l.text() for l in body.itemAt(0).widget().findChildren(QLabel)]
         assert "폴더A" in tags                                          # 어느 폴더인지 줄 오른쪽에
         w._custom_sym_search.clear()
-        assert w._recent_section.isVisibleTo(w._left_container)
+        assert w._fav_section.isVisibleTo(w._left_container)
         assert w._basic_section.isVisibleTo(w._left_container)
-        app_settings().remove("palette_view")
 
 
-def test_recent_palette_slots_keep_position_and_replace_oldest():
-    from easycad.canvas.host_ui import _recent_palette_note
-    s = [["a", 1], ["b", 2]]
-    s = _recent_palette_note(s, "a")                        # 있던 것 → 자리 그대로, 도장만 새로
-    assert [k for k, _ in s] == ["a", "b"] and s[0][1] == 3
-    s = _recent_palette_note(s, "c", max_n=3)               # 빈칸이면 뒤에
-    assert [k for k, _ in s] == ["a", "b", "c"]
-    s = _recent_palette_note(s, "d", max_n=3)               # 꽉 차면 가장 오래 안 쓴(b) 자리에
-    assert [k for k, _ in s] == ["a", "d", "c"]
-
-
-def test_recent_section_defaults_and_records_palette_use():
-    st = app_settings()
-    st.remove("recent_palette")
-    try:
+def test_favorites_start_with_four_basics_and_toggle_from_any_palette_item():
+    """[실사용 피드백 2026-10-11] 옛 「자주 쓰는 것」(최근 8개 자동) → 사용자가 넣고 빼는 「즐겨찾기」(제목 ★).
+    기본 도형도 내 심볼도 우클릭 메뉴로 넣고 빼며, 쓰기만 해서는 안 바뀐다. 라이브러리 파일에 저장(PC 간 동기화)."""
+    from PyQt6.QtWidgets import QMenu
+    from unittest.mock import patch
+    with _isolated_symbol_library():
+        ant, _amp, _zig = _lib("폴더A", "폴더B")
         w = CanvasWindow()
-        assert [b.text() for b in w._recent_palette_buttons.values()] == ["사각형", "원", "판단", "시작/끝"]
-        w._shape_tool_buttons["triangle"].click()           # 팔레트에서 꺼냄 → 기록
-        assert list(w._recent_palette_buttons) == ["rect", "ellipse", "sym:decision", "sym:terminal",
-                                                   "sym:triangle"]
-        assert w._recent_palette_buttons["sym:triangle"].isChecked()   # 무장 표시도 같이
-        w._recent_palette_buttons["rect"].click()           # 이미 있는 것 → 자리 그대로
-        assert list(w._recent_palette_buttons)[0] == "rect"
-        w2 = CanvasWindow()                                 # 저장돼 다음 창에도
-        assert "sym:triangle" in w2._recent_palette_buttons
-    finally:
-        st.remove("recent_palette")
+        assert "★" in w._fav_section._title_lbl.text() and "즐겨찾기" in w._fav_section._title_lbl.text()
+        assert [b.text() for b in w._fav_palette_buttons.values()] == ["사각형", "원", "판단", "시작/끝"]
+        w._shape_tool_buttons["triangle"].click()               # 쓰기만 해서는 안 들어간다
+        assert "sym:triangle" not in w._fav_palette_buttons
+        assert w._fav_palette_buttons["rect"].isChecked() is False
+
+        def run_menu(btn, key, label):
+            seen = []
+
+            def fake_exec(menu, *_a):
+                acts = [a for a in menu.actions() if a.text()]
+                seen.extend(a.text() for a in acts)
+                assert all(not a.icon().isNull() for a in acts)      # 메뉴는 늘 아이콘+글자
+                next(a for a in acts if a.text() == label).trigger()
+            with patch.object(QMenu, "exec", fake_exec):
+                w._show_palette_item_menu(btn, btn.rect().center(), key)
+            return seen
+        assert run_menu(w._shape_tool_buttons["triangle"], "sym:triangle", "즐겨찾기에 넣기") == ["즐겨찾기에 넣기"]
+        assert list(w._fav_palette_buttons)[-1] == "sym:triangle"        # 맨 뒤에
+        seen = run_menu(w._custom_sym_buttons[ant["id"]][0], f"customsym:{ant['id']}", "즐겨찾기에 넣기")
+        assert seen[0] == "즐겨찾기에 넣기" and "이름변경…" in seen and "삭제…" in seen
+        assert f"customsym:{ant['id']}" in w._fav_palette_buttons
+        assert w._fav_section.count_lbl.text() == "6"
+        # 즐겨찾기 칸 안에서 빼기
+        run_menu(w._fav_palette_buttons["rect"], "rect", "즐겨찾기에서 빼기")
+        assert "rect" not in w._fav_palette_buttons
+        assert symbol_library.load_favorites() == ["ellipse", "sym:decision", "sym:terminal", "sym:triangle",
+                                                   f"customsym:{ant['id']}"]
+        assert list(CanvasWindow()._fav_palette_buttons) == symbol_library.load_favorites()   # 다음 창에도
+        symbol_library.delete_symbol(ant["id"])                  # 지운 심볼은 즐겨찾기에서도 빠진다
+        assert f"customsym:{ant['id']}" not in symbol_library.load_favorites()
 
 
-def test_palette_view_list_shows_full_names_and_persists():
+def test_palette_items_always_show_icon_and_name():
+    """[실사용 피드백 2026-10-11] 큰 아이콘 보기 없앰("글자가 같이 있는 게 가독성이 좋음") — 늘 아이콘 옆 이름 한 줄,
+    긴 이름은 …로, 보기 전환 버튼도 없다."""
     from PyQt6.QtCore import Qt as _Qt
-    st = app_settings()
     with _isolated_symbol_library():
         ant, _amp, _zig = _lib("폴더A", "폴더B")
         symbol_library.rename_symbol(ant["id"], "야기 안테나 3소자 긴 이름")
-        try:
-            st.remove("palette_view")
-            w = CanvasWindow()
-            assert w._palette_view_btns["list"].isChecked()   # [2026-10-11] 기본은 「목록」(사용자 결정)
-            b = w._custom_sym_buttons[ant["id"]][0]
-            assert b._full_name == "야기 안테나 3소자 긴 이름"
-            assert b.toolButtonStyle() == _Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-            assert b.text() == b.fontMetrics().elidedText(b._full_name, _Qt.TextElideMode.ElideRight, 118)
-            w._palette_view_btns["icon"].click()
-            b = w._custom_sym_buttons[ant["id"]][0]
-            assert b.toolButtonStyle() == _Qt.ToolButtonStyle.ToolButtonIconOnly   # 아이콘 보기는 이름 없이
-            assert b.accessibleName() == "야기 안테나 3소자 긴 이름"
-            assert st.value("palette_view") == "icon"
-            assert CanvasWindow()._palette_view == "icon"
-            w._palette_view_btns["list"].click()
-            assert w._custom_sym_buttons[ant["id"]][0].toolButtonStyle() == \
-                _Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        finally:
-            st.remove("palette_view")
+        w = CanvasWindow()
+        assert not hasattr(w, "_palette_view_btns") and not hasattr(w, "_palette_view")
+        b = w._custom_sym_buttons[ant["id"]][0]
+        assert b._full_name == "야기 안테나 3소자 긴 이름" and b.accessibleName() == b._full_name
+        assert b.toolButtonStyle() == _Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        assert b.text() == b.fontMetrics().elidedText(b._full_name, _Qt.TextElideMode.ElideRight, 118)
+        for btn in list(w._shape_tool_buttons.values()) + list(w._fav_palette_buttons.values()):
+            assert btn.toolButtonStyle() == _Qt.ToolButtonStyle.ToolButtonTextBesideIcon and btn.text()
 
 
-def test_recent_and_basic_sections_collapse_and_persist():
-    """[실사용 피드백 2026-10-11] 「자주 쓰는 것」·「기본 도형」도 제목 줄에서 접는다 — 접힘 저장, 접었다 펴면
+def test_favorites_and_basic_sections_collapse_and_persist():
+    """[실사용 피드백 2026-10-11] 「즐겨찾기」·「기본 도형」도 제목 줄에서 접는다 — 접힘 저장, 접었다 펴면
     패널 높이가 원래대로, 접어 둔 기본 도형도 검색 중엔 펼쳐 보이고 결과로 센다."""
     st = app_settings()
-    keys = ("palette_section_collapsed_recent", "palette_section_collapsed_basic")
+    keys = ("palette_section_collapsed_fav", "palette_section_collapsed_basic")
+    st.setValue("left_panel_height", 5000)   # 카드 높이 상한(창 절반)에 안 걸리게
+    iso = _isolated_symbol_library()   # 실제 라이브러리의 폴더들까지 들어가면 레이어 카드 위 상한에 닿는다
+    iso.__enter__()
     try:
         w = CanvasWindow()
         w.show()
@@ -210,12 +214,13 @@ def test_recent_and_basic_sections_collapse_and_persist():
         w._custom_sym_search.clear()
         QTest.qWait(50)                                          # 내 심볼 다시 그리기는 한 틱 뒤에 크기가 맞는다
         assert w._basic_section.body.isHidden()
-        w._recent_section.collapse_btn.click()
-        assert w._recent_section.body.isHidden() and st.value(keys[0], False, type=bool) is True
+        w._fav_section.collapse_btn.click()
+        assert w._fav_section.body.isHidden() and st.value(keys[0], False, type=bool) is True
         w2 = CanvasWindow()                                      # 다음 창에도 접힌 채
-        assert w2._recent_section.body.isHidden() and w2._basic_section.body.isHidden()
-        w._basic_section.collapse_btn.click(); w._recent_section.collapse_btn.click()
+        assert w2._fav_section.body.isHidden() and w2._basic_section.body.isHidden()
+        w._basic_section.collapse_btn.click(); w._fav_section.collapse_btn.click()
         assert w._left_panel.height() == h0, (w._left_panel.height(), h0)   # 다 펴면 원래 높이
     finally:
-        for k in keys:
+        iso.__exit__(None, None, None)
+        for k in keys + ("left_panel_height",):
             st.remove(k)

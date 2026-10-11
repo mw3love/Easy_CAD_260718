@@ -398,9 +398,12 @@ class _CanvasMixin:
         for k, blist in getattr(self, "_custom_sym_buttons", {}).items():   # [신규기능 §8-8]
             for b in blist:
                 b.setChecked(f"customsym:{k}" == key)
-        # [첫 화면 재디자인 2026-10-07] 「자주 쓰는 것」 칸은 tool_key 그대로 키.
-        for k, b in getattr(self, "_recent_palette_buttons", {}).items():
+        # [2026-10-11] 「즐겨찾기」 칸·크게 보기 창 칸은 tool_key 그대로 키.
+        for k, b in getattr(self, "_fav_palette_buttons", {}).items():
             b.setChecked(k == key)
+        browser = getattr(self, "_symbol_browser", None)
+        for b in (browser._buttons if browser is not None else ()):
+            b.setChecked(b._drag_tool_key == key)
         for k, b in getattr(self, "_search_result_buttons", {}).items():   # [2026-10-11] 검색 결과의 기본 도형
             b.setChecked(k == key)
 

@@ -270,8 +270,7 @@ class _ContextMixin:
             for e in entries:
                 by_folder.setdefault(e.get("folder"), []).append(e)
             folders = symbol_library.load_folders()
-            groups = [("미분류", by_folder.get(None, []))] + [
-                (name, by_folder.get(name, [])) for name in folders]
+            groups = [(name, by_folder.get(name, [])) for name in folders]   # [2026-10-11] 미분류 없음
             for name, group_entries in groups:
                 if not group_entries:
                     continue

@@ -1527,3 +1527,6 @@
   때 `setPalette(QApplication.palette())`+스타일시트 재적용(`_PropPopup._follow_app_palette`). 매번 새로 만드는 팝업은 무관.
 - ⚠ (2026-10-11) **고정 폭 카드는 안쪽 폭 예산을 계산할 것** — 카드 192 = 여백 6 + 스크롤바 6 + 안쪽 180. 넘치는 자식(긴 이름
   버튼)은 카드를 넓히지 못하고 오른쪽이 잘린다. 긴 글자는 `fontMetrics().elidedText`로 미리 줄인다.
+- ⚠ (2026-10-11) **목록을 지었다 부수면 스크롤 범위가 몇 틱 동안 짧다** — 위치를 한 번만 되돌리면 그 짧은 범위에 깎인다(966→882).
+  잠깐 동안 `verticalScrollBar().rangeChanged`마다 다시 맞춘다(`_relayout_left_panel_keep_scroll`).
+- ⚠ (2026-10-11) **QIcon은 원본 픽스맵보다 키워 그리지 않는다** — 28px 썸네일을 48px 칸에 넣으면 28px로 작게 나온다. 큰 자리엔 그 크기로 다시 렌더.

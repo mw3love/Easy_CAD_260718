@@ -1207,7 +1207,8 @@ def test_save_to_symbols_folder_dialog_lists_existing_folders_and_new_folder_fie
         symbol_library.create_folder("기존폴더")
         d = _SaveToSymbolsFolderDialog()
         texts = [d._folder_combo.itemText(i) for i in range(d._folder_combo.count())]
-        assert texts == ["(미분류)", "기존폴더", "새 폴더…"]
+        assert texts == ["기존폴더", "새 폴더…"]   # [2026-10-11] 「(미분류)」 없음
+        assert d._folder_combo.currentText() == "기존폴더"   # 처음 값 = 마지막에 쓴(없으면 첫) 폴더
         assert d._new_folder_edit.isHidden()
 
         d._folder_combo.setCurrentIndex(texts.index("기존폴더"))
@@ -1219,8 +1220,15 @@ def test_save_to_symbols_folder_dialog_lists_existing_folders_and_new_folder_fie
         d._new_folder_edit.setText("만드는 중인 폴더")
         assert d.chosen_folder() == "만드는 중인 폴더"
 
-        d._folder_combo.setCurrentIndex(texts.index("(미분류)"))
-        assert d.chosen_folder() is None
+        d.deleteLater()
+
+
+def test_save_to_symbols_folder_dialog_without_folders_offers_default_name():
+    """[2026-10-11] 폴더가 하나도 없으면 「새 폴더…」가 골라진 채 기본 이름 「내 심볼」이 채워져 있다."""
+    with _isolated_symbol_library():
+        d = _SaveToSymbolsFolderDialog()
+        assert d._folder_combo.currentData() == "__new__"
+        assert not d._new_folder_edit.isHidden() and d.chosen_folder() == "내 심볼"
         d.deleteLater()
 
 
@@ -1342,7 +1350,7 @@ def test_save_svg_candidates_to_symbols_creates_normalized_entries():
         entries = symbol_library.load_library()
         assert len(entries) == 1
         assert entries[0]["name"] == "BNC 커넥터 — gpt-5.4-mini"
-        assert entries[0]["folder"] is None
+        assert entries[0]["folder"] == "내 심볼"   # [2026-10-11] 폴더 없이 저장하면 기본 폴더
         restored = [it for it in (dict_to_item(d) for d in entries[0]["items"]) if it is not None]
         box = _group_scene_rect(restored)
         assert abs(box.left()) < 2.0 and abs(box.top()) < 2.0

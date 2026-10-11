@@ -482,6 +482,14 @@ class _SelectionMixin:
         b64 = _render_symbol_thumbnail(items, box, size=_SYMBOL_PREVIEW_PX)
         return f'<div>{name}<br><img src="data:image/png;base64,{b64}"></div>'
 
+    def _symbol_big_thumb_b64(self, entry: dict, size: int) -> str:
+        """[실사용 피드백 2026-10-11] 폴더 「크게 보기」 창의 큰 그림 — 저장된 썸네일(28px)을 키우면 작게만 나와
+        (QIcon은 원본보다 키우지 않는다) 미리보기처럼 items에서 그 크기로 다시 그린다. 없으면 저장된 썸네일."""
+        items = [it for it in (dict_to_item(d) for d in entry.get("items", [])) if it is not None]
+        if not items:
+            return entry.get("thumb", "")
+        return _render_symbol_thumbnail(items, _group_scene_rect(items), size=size)
+
     # ---- [편의기능] 객체 잠금 ---------------------------------------------
 
     def _set_item_lock_flags(self, it, locked: bool):

@@ -65,8 +65,8 @@ def test_toolbar_icons_and_actions():
 
 def test_toolbar_labels_toggles_and_ai_button():
     """[첫 화면 재디자인 2026-10-07, 시안 2라운드 T3] 상단바 버튼은 아이콘 밑 짧은 이름,
-    「100%」「전체 보기」는 상단바에서 빠지고(미니맵 확대 줄로), 보기 토글 4종은 「체크박스+글자」
-    2×2 묶음, 「AI로 만들기」는 강조 버튼, 테마·도움말은 아이콘만."""
+    「100%」「전체 보기」는 상단바에서 빠지고(미니맵 확대 줄로), 보기 토글 4종은 「뜻 아이콘+글자」
+    2×2 묶음(2026-10-11, 체크박스에서 바꿈), 「AI로 만들기」는 강조 버튼, 테마·도움말은 아이콘만."""
     w = CanvasWindow()
     tb = w._toolbar
     assert tb.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
@@ -82,14 +82,24 @@ def test_toolbar_labels_toggles_and_ai_button():
     grid = next(iter(bs.values())).parentWidget().layout()
     assert grid.itemAtPosition(0, 1).widget() is bs[w._act_ortho]       # 윗줄 스냅·직교
     assert grid.itemAtPosition(1, 0).widget() is bs[w._act_grid]        # 아랫줄 격자·정렬선
+    # [2026-10-11] 체크박스 대신 뜻 아이콘(snap/ortho/grid/align) — 켜짐은 버튼 checked(코랄 바탕)
     for a, b in bs.items():
-        assert not b.isCheckable() and not b.icon().isNull()
-    # 버튼 클릭 → 액션·실제 상태, 액션 트리거(메뉴·단축키) → 버튼 아이콘·툴팁
+        assert b.isCheckable() and not b.icon().isNull() and b.isChecked() == a.isChecked()
+    assert [b._icon_name for b in bs.values()] == ["snap", "ortho", "grid", "align"]
+    # 버튼 클릭 → 액션·실제 상태, 액션 트리거(메뉴·단축키) → 버튼 켜짐·툴팁
     was = w._act_grid.isChecked()
     bs[w._act_grid].click()
     assert w._act_grid.isChecked() is (not was) and w.grid_enabled is (not was)
+    assert bs[w._act_grid].isChecked() is (not was)
+    w._act_grid.trigger()
+    assert bs[w._act_grid].isChecked() is was
     w._act_align.setToolTip("x")
-    assert bs[w._act_align].toolTip() == "x"
+    assert bs[w._act_align].toolTip().endswith("x")
+    # 창이 좁으면 아이콘만, 넓히면 다시 글자
+    w.resize(700, 800); w._fit_view_toggles()
+    assert all(b.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly for b in bs.values())
+    w.resize(3000, 800); w._fit_view_toggles()
+    assert all(b.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon for b in bs.values())
     ai = tb.widgetForAction(w._act_ai_make)
     assert ai.objectName() == "aiMakeBtn"
     assert ai.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
@@ -202,18 +212,12 @@ def test_floating_panels_and_zoom_readout():
     # [패널 통일 2라운드 2026-10-11] 기본은 「목록」 보기 — 한 줄에 하나(8번째는 7행 0열).
     r, c, _rs, _cs = basic_grid.getItemPosition(basic_grid.indexOf(last))
     assert (r, c) == (7, 0)
-    # 「아이콘」 보기는 이름 없는 그림 칸 5열 — 8번째(저장소)는 (row1, col2).
-    w._set_palette_view("icon")
-    r, c, _rs, _cs = basic_grid.getItemPosition(basic_grid.indexOf(last))
-    assert (r, c) == (1, 2)
+    # [2026-10-11] 「아이콘」 보기는 없앴다 — 보기 전환 버튼도 없다(늘 아이콘+이름 한 줄).
+    assert not hasattr(w, "_set_palette_view") and not hasattr(w, "_palette_view_btns")
+    assert last.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon and last.text()
     # 팔레트 버튼 키가 보존(테스트 계약).
     assert set(w._shape_tool_buttons) == {"rect", "ellipse", "triangle"}
     assert set(w._sym_buttons) == {"decision", "terminal", "data", "prep", "database"}
-    # 버튼 고정 크기 — 패널이 넓어져도 커지거나 벌어지지 않는다(좌측 뭉침).
-    b = w._shape_tool_buttons["rect"]
-    from easycad.canvas.host_ui import _PALETTE_BTN_WIDTH
-    assert b.minimumWidth() == b.maximumWidth() == _PALETTE_BTN_WIDTH   # [2026-10-11] 이름 없는 34px 칸
-    w._set_palette_view("list")
     # 속성 패널은 값(hex)이 안 잘리는 최소폭 바닥을 가진다(슬랙 없이 그 아래로 못 좁힘).
     # [2026-08-20] 170→190 — 힌트 라벨 최대폭과 맞춰 선택 유무에 따른 패널 폭 요동을 없앰.
     from easycad.canvas.host_ui import _LEFT_PANEL_W
@@ -285,6 +289,22 @@ def test_left_panel_top_sections_no_longer_collapsible():
     w.close()
 
 
+@contextmanager
+def _roomy_left_panel():
+    """[2026-10-11] 도형·심볼 카드는 이제 창 절반 높이에서 스크롤로 멈춘다 — 폴더 접기로 카드가 줄어드는지 보려면
+    즐겨찾기·기본 도형 칸을 접어 두고 손잡이 높이도 넉넉히(상한에 안 걸리게) 둔다."""
+    st = app_settings()
+    keys = ("palette_section_collapsed_fav", "palette_section_collapsed_basic")
+    for k in keys:
+        st.setValue(k, True)
+    st.setValue("left_panel_height", 5000)
+    try:
+        yield
+    finally:
+        for k in keys + ("left_panel_height",):
+            st.remove(k)
+
+
 def test_symbol_folder_collapse_expand_round_trips_panel_size():
     # [실사용 버그 수정 2026-08-19] 위 최상단 접기를 없앤 자리에 폴더별 접기를 새로 넣었다 —
     # 옛 `_AccordionSection` 시절 "customsym은 폴더 드롭존 등 동적 콘텐츠라 접기 왕복 시
@@ -301,7 +321,7 @@ def test_symbol_folder_collapse_expand_round_trips_panel_size():
     from easycad.fileio import symbol_library
     from easycad.canvas.host_widgets import _PaletteButton
 
-    with _isolated_symbol_library():
+    with _isolated_symbol_library(), _roomy_left_panel():
         app_settings().remove("symfolder_collapsed_무선")
         w = CanvasWindow(); w.show()
         r = _mk_pen_rect(w); r.setSelected(True)
@@ -324,7 +344,7 @@ def test_symbol_folder_collapse_expand_round_trips_panel_size():
 
         body = w._custom_sym_body
         zones = [body.layout().itemAt(i).widget() for i in range(body.layout().count())]
-        wireless_zone = zones[1]   # 0=미분류, 1=무선
+        wireless_zone = zones[1]   # 0=내 심볼(폴더 없이 등록하면 생김 — 미분류 대신), 1=무선
         collapse_btn = next(
             b for b in wireless_zone.findChildren(QToolButton)
             if not isinstance(b, _PaletteButton))
@@ -354,7 +374,7 @@ def test_symbol_folder_collapse_expand_round_trips_panel_size():
 
 def test_left_panel_scrolls_instead_of_growing_unbounded_with_many_folders():
     # [실사용 피드백 2026-08-25] "새폴더 추가하면 계속 길어질텐데 어딘가서부터는 스크롤로
-    # 작동되나?" — 폴더가 소수일 땐 그대로(스크롤 없음), 많이 쌓이면 `_LEFT_PANEL_MAX_H`에서
+    # 작동되나?" — 폴더가 소수일 땐 그대로(스크롤 없음), 많이 쌓이면 상한(`_left_panel_max_h`)에서
     # 멈추고 내부 스크롤바가 뜬다(패널이 화면 밖으로 무한정 잘려나가지 않음).
     #
     # [Phase 1 재작성, 2026-08-25 후속(최종 검수)] 원래 이 시나리오를 40회 실제 UI 액션
@@ -371,9 +391,11 @@ def test_left_panel_scrolls_instead_of_growing_unbounded_with_many_folders():
     from easycad.fileio import symbol_library
 
     with _isolated_symbol_library():
+        app_settings().remove("left_panel_height")
+        app_settings().setValue("palette_section_collapsed_basic", True)   # 칸이 적을 때 스크롤 없음을 보려고
         w = CanvasWindow(); w.show()
-        w._set_palette_view("icon")   # [2026-10-11] 목록 보기(기본)는 기본 도형만으로도 길어 아이콘 보기로 잰다
-        assert w._left_scroll.height() <= w._LEFT_PANEL_MAX_H
+        cap = w._left_panel_max_h()
+        assert w._left_scroll.height() <= cap
         assert not w._left_scroll.verticalScrollBar().isVisible()   # 폴더 없을 때 스크롤 없음
 
         for i in range(40):
@@ -385,11 +407,13 @@ def test_left_panel_scrolls_instead_of_growing_unbounded_with_many_folders():
         w._relayout_left_panel()
         QApplication.instance().processEvents()
 
-        assert w._left_container.sizeHint().height() > w._LEFT_PANEL_MAX_H
-        assert w._left_scroll.height() == w._LEFT_PANEL_MAX_H   # 상한에서 멈춤
-        assert w._left_panel.height() <= w._LEFT_PANEL_MAX_H + 40   # 패널 자체도 화면 안에 머묾
+        assert w._left_container.sizeHint().height() > cap
+        assert w._left_scroll.height() == cap   # 상한에서 멈춤
+        assert w._left_panel.height() <= cap + 50   # 패널 자체도 화면 안에 머묾(제목 줄+손잡이)
         assert w._left_scroll.verticalScrollBar().isVisible()
-        app_settings().remove("palette_view")
+        # [2026-10-11] 기본 상한은 도면 칸 높이의 절반 — 레이어 카드와 겹치기 전까지
+        assert cap == max(w._LEFT_PANEL_MIN_H, min(w._view.height() // 2, cap))
+        app_settings().remove("palette_section_collapsed_basic")
         w.close()
 
 
@@ -406,14 +430,13 @@ def test_symbol_folder_full_row_does_not_widen_panel():
     from PyQt6.QtTest import QTest
     from easycad.fileio import symbol_library
     from easycad.canvas.host_widgets import _PaletteButton
-    from easycad.canvas.host_ui import _PALETTE_COLS
 
     with _isolated_symbol_library():
         app_settings().remove("symfolder_collapsed_풀로우")
         w = CanvasWindow(); w.show()
         with patch.object(QInputDialog, "getText", return_value=("풀로우", True)):
             w._prompt_create_symbol_folder()
-        for i in range(_PALETTE_COLS + 2):   # 한 줄을 꽉 채우고 다음 줄까지 넘기게(실사용 사례)
+        for i in range(8):   # 처음 보이는 6개를 넘기게(「더 보기」·손잡이까지 생기는 경우)
             r = _mk_pen_rect(w); r.setSelected(True)
             with patch.object(QInputDialog, "getText", return_value=(f"심볼{i}", True)):
                 w.register_selection_as_symbol()
@@ -433,7 +456,7 @@ def test_symbol_folder_full_row_does_not_widen_panel():
 
         body = w._custom_sym_body
         zones = [body.layout().itemAt(i).widget() for i in range(body.layout().count())]
-        full_zone = zones[1]
+        full_zone = zones[0]   # [2026-10-11] 미분류 칸이 없어 첫 폴더가 0번
         collapse_btn = next(
             b for b in full_zone.findChildren(QToolButton)
             if not isinstance(b, _PaletteButton))

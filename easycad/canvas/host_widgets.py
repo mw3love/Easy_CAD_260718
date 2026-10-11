@@ -15,13 +15,13 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication, QGraphicsView, QWidget, QVBoxLayout, QToolButton, QLabel, QGridLayout, QDialog,
-    QColorDialog, QHBoxLayout, QMenu, QFrame, QToolTip,
+    QColorDialog, QHBoxLayout, QMenu, QFrame, QToolTip, QScrollArea, QComboBox,
 )
 
 from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _ArrowItem, _PolyArrowItem, _COLOR_PRESETS, _pixmap_from_data, _svg_icon_pixmap,
-    _min_stroke_render,
+    _min_stroke_render, _svg_icon,
 )
 
 
@@ -419,6 +419,12 @@ def _set_menu_sep_color(dark: bool) -> None:
 def _style_menu_separators(menu) -> None:
     menu.setStyleSheet(
         f"QMenu::separator {{ background:{_MENU_SEP_COLOR}; height:1px; margin:4px 8px; }}")
+
+
+def _menu_icon(name: str) -> QIcon:
+    """[실사용 피드백 2026-10-11] 우클릭 메뉴·패널 버튼 아이콘("버튼·메뉴는 늘 아이콘과 글자 함께") —
+    `resources/icons/<name>.svg`를 지금 테마 아이콘 색으로. 메뉴는 열 때마다 새로 만들어 테마를 따로 안 챙겨도 된다."""
+    return _svg_icon(name, 16, _current_icon_color())
 
 
 def _dark_palette() -> QPalette:
@@ -920,7 +926,7 @@ class _FloatingPanel(QFrame):
         """[2026-10-07] 제목 줄을 숨긴 카드(미니맵 M2)도 다른 자리에서 같은 「닫기」 메뉴를 띄우게."""
         menu = QMenu(self)
         _style_menu_separators(menu)
-        menu.addAction("닫기", self._close_panel)
+        menu.addAction(_menu_icon("menu_close"), "닫기", self._close_panel)
         menu.exec(global_pos)
 
     def _close_panel(self):
@@ -965,10 +971,20 @@ class _FloatingPanel(QFrame):
         self._title_click = handler
         self._title_lbl.installEventFilter(self)
 
+    def set_title_double_click(self, handler):
+        """[실사용 피드백 2026-10-11] 제목 줄 더블클릭 — 도형·심볼 카드는 끌어서 바꾼 높이를 원래대로."""
+        self._title_dbl = handler
+        self._head.installEventFilter(self)
+        self._title_lbl.installEventFilter(self)
+
     def eventFilter(self, obj, event):
         if obj is self._title_lbl and event.type() == QEvent.Type.MouseButtonPress \
                 and getattr(self, "_title_click", None) is not None:
             self._title_click()
+            return True
+        if obj in (self._head, self._title_lbl) and event.type() == QEvent.Type.MouseButtonDblClick \
+                and getattr(self, "_title_dbl", None) is not None:
+            self._title_dbl()
             return True
         return super().eventFilter(obj, event)
 
@@ -1062,12 +1078,17 @@ class _StaticSection(QWidget):
         self.count_lbl.setText(text)
         self.count_lbl.setVisible(bool(text))
 
-    def set_box(self, color, dark: bool):
-        """테두리 칸으로 그린다. color(QColor)가 있으면 그 색 점 + 옅게 물든 칸(폴더), 없으면 중립 칸."""
+    def set_box(self, color, dark: bool, dot: bool = True):
+        """테두리 칸으로 그린다. color(QColor)가 있으면 그 색 점 + 옅게 물든 칸(폴더), 없으면 중립 칸.
+        dot=False면 칸만 물들이고 점은 안 그린다(즐겨찾기 — 제목의 ★가 그 자리를 맡음)."""
         self.setStyleSheet(_palette_box_qss("palSec", color, dark))
         if color is not None:
             self._dot.setStyleSheet(f"background:{color.name()}; border-radius:4px;")
-        self._dot.setVisible(color is not None)
+        self._dot.setVisible(color is not None and dot)
+
+    def set_title_html(self, html: str):
+        self._title_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._title_lbl.setText(html)
 
     def add_hover_button(self, btn):
         """마우스가 이 칸 위에 있을 때만 보이는 제목 줄 버튼(Lucid 방식 — 평소 제목 줄을 조용하게).
@@ -1117,6 +1138,164 @@ class _StaticSection(QWidget):
             self.collapse_btn.setText("▸" if collapsed else "▾")
             self.collapse_btn.setToolTip("펼치기" if collapsed else "접기")
         self.updateGeometry()
+
+
+class _DragGrip(QWidget):
+    """[실사용 피드백 2026-10-11] 위아래로 끄는 얇은 손잡이 — 도형·심볼 카드 높이(카드 아래 끝)와 폴더마다
+    보이는 줄 수(폴더 칸 안쪽 아래)에 쓴다. 누르면 `on_press()`, 끄는 동안 `on_move(누른 곳에서 내려간 px)`,
+    놓으면 `on_release()`, 더블클릭하면 `on_reset()`. 가운데 짧은 막대만 그려 평소엔 조용하다."""
+
+    def __init__(self, tooltip: str, on_press, on_move, on_release, on_reset, height: int = 8):
+        super().__init__()
+        self.setFixedHeight(height)
+        self.setCursor(Qt.CursorShape.SizeVerCursor)
+        self.setToolTip(tooltip)
+        self._cbs = (on_press, on_move, on_release, on_reset)
+        self._y0 = None
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        c = QColor(self.palette().color(QPalette.ColorRole.PlaceholderText))
+        c.setAlpha(170 if self.underMouse() else 90)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(c)
+        w = 28
+        p.drawRoundedRect(QRectF((self.width() - w) / 2, self.height() / 2 - 1.5, w, 3), 1.5, 1.5)
+        p.end()
+
+    def enterEvent(self, e):
+        self.update()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self.update()
+        super().leaveEvent(e)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._y0 = e.globalPosition().y()
+            self._cbs[0]()
+
+    def mouseMoveEvent(self, e):
+        if self._y0 is not None:
+            self._cbs[1](e.globalPosition().y() - self._y0)
+
+    def mouseReleaseEvent(self, e):
+        if self._y0 is not None and e.button() == Qt.MouseButton.LeftButton:
+            self._y0 = None
+            self._cbs[2]()
+
+    def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._y0 = None
+            self._cbs[3]()
+
+
+class _SymbolFolderBrowser(QDialog):
+    """[실사용 피드백 2026-10-11] 폴더 「크게 보기」 — 따로 뜨는 창에 한 폴더의 심볼을 큰 그림+이름으로 한꺼번에
+    (50개 이상도). 열어 둔 채 도면에서 일할 수 있고(모달 아님), 칸을 눌러 도구로 쥐거나 도면으로 끌어 놓는다
+    (칸은 패널과 같은 팔레트 버튼 — `make_button(entry)`가 만들어 준다). 창 크기를 바꾸면 줄당 칸 수가 따라 바뀐다."""
+
+    CELL_W, CELL_H = 92, 84
+
+    def __init__(self, host, folder: str, folders_fn, entries_fn, make_button):
+        super().__init__(host)
+        self.setWindowFlag(Qt.WindowType.Tool, True)
+        self.setWindowTitle("심볼 크게 보기")
+        self._folders_fn, self._entries_fn, self._make_button = folders_fn, entries_fn, make_button
+        self._buttons: list = []
+        v = QVBoxLayout(self)
+        v.setContentsMargins(8, 8, 8, 8)
+        v.setSpacing(6)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("폴더"))
+        self._combo = QComboBox()
+        self._combo.currentIndexChanged.connect(self._on_combo)
+        top.addWidget(self._combo, 1)
+        self._count = QLabel()
+        self._count.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+        top.addWidget(self._count)
+        v.addLayout(top)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._grid_host = QWidget()
+        self._grid = QGridLayout(self._grid_host)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setSpacing(4)
+        self._scroll.setWidget(self._grid_host)
+        v.addWidget(self._scroll, 1)
+        self._cols = 0
+        geo = app_settings().value("symbol_browser_geometry")
+        if geo is None or not self.restoreGeometry(geo):
+            self.resize(560, 460)
+        self.set_folder(folder)
+
+    @property
+    def folder(self) -> str:
+        return self._combo.currentText()
+
+    def _on_combo(self, _i):
+        self.refresh()
+
+    def _fill_combo(self, folders, want):
+        self._combo.blockSignals(True)
+        self._combo.clear()
+        self._combo.addItems(folders)
+        self._combo.setCurrentIndex(max(0, self._combo.findText(want)))
+        self._combo.blockSignals(False)
+
+    def set_folder(self, folder: str):
+        self._fill_combo(self._folders_fn(), folder)
+        self.refresh()
+
+    def refresh(self):
+        """라이브러리가 바뀌면(이름변경·이동·삭제) 패널과 함께 다시 그린다."""
+        folders = self._folders_fn()
+        if [self._combo.itemText(i) for i in range(self._combo.count())] != folders:
+            self._fill_combo(folders, self.folder)
+        for b in self._buttons:
+            self._grid.removeWidget(b)
+            b.hide()
+            b.deleteLater()
+        self._buttons = [self._make_button(e) for e in self._entries_fn(self.folder)]
+        for b in self._buttons:
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            b.setIconSize(QSize(48, 48))
+            b.setText(b.fontMetrics().elidedText(b._full_name, Qt.TextElideMode.ElideRight, self.CELL_W - 8))
+            b.setFixedSize(self.CELL_W, self.CELL_H)
+        self._count.setText(f"{len(self._buttons)}개")
+        self._cols = 0
+        self._reflow()
+
+    def _reflow(self):
+        cols = max(1, (self._scroll.viewport().width() + 4) // (self.CELL_W + 4))
+        if cols == self._cols:
+            return
+        self._cols = cols
+        for b in self._buttons:
+            self._grid.removeWidget(b)
+        for i, b in enumerate(self._buttons):
+            self._grid.addWidget(b, i // cols, i % cols)
+        for c in range(cols + 1):
+            self._grid.setColumnStretch(c, 0)
+        self._grid.setColumnStretch(cols, 1)
+        self._grid.setRowStretch(len(self._buttons) // cols + 1, 1)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._reflow()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._cols = 0
+        self._reflow()
+
+    def done(self, r):
+        app_settings().setValue("symbol_browser_geometry", self.saveGeometry())
+        super().done(r)
 
 
 class _SymbolFolderDropZone(QWidget):
