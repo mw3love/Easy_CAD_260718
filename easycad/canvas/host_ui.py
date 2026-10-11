@@ -669,8 +669,10 @@ class _UIBuildMixin:
         "new": "새로", "open": "열기", "save": "저장", "pdf": "PDF",
         "undo": "되돌리기", "redo": "다시", "titleblock": "표제란", "table": "표", "image": "이미지",
         "select": "선택", "arrow": "화살표", "text": "글자", "line": "선", "polygon": "다각형",
-        "pen": "펜", "badge": "번호", "trim": "자르기", "pin": "고정",
+        "pen": "펜", "badge": "번호", "trim": "Trim", "pin": "고정",
     }
+    # [실사용 피드백 2026-10-11 후속] 「자르기」 → 「Trim」(사용자 선택) — 늘이기(Extend)도 하는 도구라 "자르기"로는 다 설명이 안 되고
+    # AutoCAD 명령 이름이라 익숙하다. 상단바 이름만 바꾸고 메뉴·툴팁(`_TOOLS`)은 「자르기」 그대로(뜻 풀이 역할).
 
     def _build_toolbar(self):
         # 파이썬에서 만든다 — `addToolBar("이름")`이 C++에서 만든 툴바는 아래 paintEvent 덮어쓰기가 안 먹는다(묶음 바탕용)
@@ -2312,7 +2314,9 @@ class _UIBuildMixin:
         add_layer_btn.setToolTip("레이어를 하나 더 만들어요")
         add_layer_btn.clicked.connect(lambda: self.add_layer())
         move_btn = QToolButton()
-        move_btn.setText("선택 옮기기")   # [2026-10-11] 아이콘이 붙어도 192px 카드에 둘 다 글자째 들어가게
+        # [2026-10-11] 아이콘이 붙어도 192px 카드에 둘 다 글자째 들어가게 → [같은 날 후속] 「선택 옮기기」는 어디로 옮기는지
+        # 안 보여 「Move to layer」(사용자 선택). 자리가 모자라면 `_sync_layers_panel_width`가 아이콘만 남긴다.
+        move_btn.setText("Move to layer")
         move_btn._icon_name = "menu_move_layer"
         move_btn.setToolTip("선택한 도형을 「그리는 중」 레이어로 옮겨요")
         move_btn.clicked.connect(self._move_selection_to_active_layer)
