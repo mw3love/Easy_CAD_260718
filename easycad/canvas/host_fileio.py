@@ -39,7 +39,7 @@ from easycad.fileio import symbol_library
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions, MermaidError,
 )
-from easycad.canvas.host_widgets import _border_attach
+from easycad.canvas.host_widgets import _border_attach, _FloatingPanel
 from easycad.canvas.host_selection import _group_scene_rect, _render_symbol_thumbnail
 from easycad.canvas.host_dialogs import (
     _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _MermaidDialog, _PdfExportDialog,
@@ -1060,8 +1060,7 @@ class _FileIOMixin:
         items = group if group else [it]
         vp = self._view.viewport()
         local = vp.mapFromGlobal(global_pos)
-        inside = vp.rect().contains(local)
-        if not inside:
+        if not self._palette_drop_point_ok(global_pos):
             if items[0].isVisible():
                 for x in items:
                     x.setVisible(False)
@@ -1088,6 +1087,17 @@ class _FileIOMixin:
         self._view.viewport().update()
 
 
+    def _palette_drop_point_ok(self, global_pos: QPoint) -> bool:
+        """팔레트 끌기에서 도형을 보이고 놓아도 되는 자리인가 — 도면 영역 안이면서 떠 있는 패널 위가 아닐 때.
+        [실사용 피드백 2026-10-11] 패널들은 도면 위에 떠 있어 그 아래도 도면 영역이라, 왼쪽 패널에서 끌면
+        패널 뒤에서부터 도형이 생겨 정렬선이 바로 떴고 패널 위에 놓으면 뒤에 숨어 놓였다 — 패널 위는 밖으로 친다."""
+        vp = self._view.viewport()
+        if not vp.rect().contains(vp.mapFromGlobal(global_pos)):
+            return False
+        return not any(p.isVisible() and p.rect().contains(p.mapFromGlobal(global_pos))
+                       for p in self.findChildren(_FloatingPanel))
+
+
     def _palette_drag_end(self, tool_key: str, global_pos: QPoint):
         """[신규기능 2026-08-19] 팔레트 드래그 release — 캔버스 위면 확정(undo 등록·불투명
         복원), 밖이면 임시 도형을 그냥 지운다(=취소, 드롭 안 함과 동일한 관례).
@@ -1103,9 +1113,7 @@ class _FileIOMixin:
         if it is None and not group:
             return
         items = group if group else [it]
-        vp = self._view.viewport()
-        inside = vp.rect().contains(vp.mapFromGlobal(global_pos))
-        if not inside:
+        if not self._palette_drop_point_ok(global_pos):
             for x in items:
                 self._scene.removeItem(x)
             self._view.viewport().update()

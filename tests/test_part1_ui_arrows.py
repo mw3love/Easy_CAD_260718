@@ -1542,6 +1542,25 @@ def test_palette_drag_cancel_when_released_outside_viewport():
     assert len(w._undo) == d0                      # undo에도 안 남음
 
 
+def test_palette_drag_hidden_over_floating_panel_and_cancel_on_release():
+    # [실사용 피드백 2026-10-11] 떠 있는 패널 아래도 도면 영역이라 패널 뒤에서부터 도형이 생기고 정렬선이 떴다 —
+    # 패널 위에선 숨기고 정렬선도 없이, 거기서 놓으면 취소.
+    w = CanvasWindow(); w.resize(1200, 760); w.show()
+    n0 = len(w._scene.items())
+    _mk_pen_rect(w, 0, 0, 40, 30)                   # 정렬선이 생길 상대
+    assert w._palette_drag_begin("rect") is True
+    panel = w._left_panel
+    over_panel = panel.mapToGlobal(panel.rect().center())
+    w._palette_drag_move("rect", over_panel)
+    assert w._palette_drag_item.isVisible() is False
+    assert w._view._align_guides == []
+    free = panel.mapToGlobal(panel.rect().topRight()) + QPoint(200, 150)   # 패널 오른쪽 빈 도면
+    w._palette_drag_move("rect", free)
+    assert w._palette_drag_item.isVisible() is True
+    w._palette_drag_end("rect", over_panel)
+    assert len(w._scene.items()) == n0 + 1          # 임시 도형은 지워지고 상대 사각형만 남음
+
+
 def test_palette_drag_begin_falls_back_for_port_tool_keys():
     # [2026-08-19] 포트는 호스트 테두리 부착이라는 별도 배치 로직(_create_port_at)이라
     # 실시간 정렬 스냅 대상이 아니다 — begin이 False를 돌려줘야 _PaletteButton이 기존
@@ -1584,12 +1603,14 @@ def test_palette_drag_customsym_moves_as_group_and_commits_with_group_id():
         vp = w._view.viewport()
         def scene_to_global(sp):
             return vp.mapToGlobal(w._view.mapFromScene(sp))
-        w._palette_drag_move(tool_key, scene_to_global(QPointF(400.0, 300.0)))
+        # 도면 한가운데 — 떠 있는 패널 위는 놓을 수 없는 자리라(2026-10-11) 미니맵 아래였던 (400,300) 대신
+        target = w._view.mapToScene(vp.rect().center())
+        w._palette_drag_move(tool_key, scene_to_global(target))
         rel1 = group[1].pos() - group[0].pos()
         assert (rel1 - rel0).manhattanLength() < 0.01, "이동 중에도 그룹 내 상대 배치가 유지돼야 함"
 
         d0 = len(w._undo)
-        gp = scene_to_global(QPointF(400.0, 300.0))
+        gp = scene_to_global(target)
         w._palette_drag_end(tool_key, gp)
         assert len(w._scene.items()) == n0 + 2
         assert len(w._undo) == d0 + 1                 # 여러 아이템이어도 undo는 1스텝
