@@ -62,9 +62,9 @@ SHORTCUT_DEFS: list[tuple[str, str, str, str]] = [
     ("insert_titleblock", "삽입", "표제란/용지틀 삽입", "Ctrl+Shift+T"),
     ("insert_table",      "삽입", "표 삽입",            "Ctrl+Shift+B"),
     ("insert_image",      "삽입", "이미지/SVG 삽입",      "Ctrl+Shift+M"),
-    ("insert_mermaid",    "삽입", "Mermaid 가져오기",     "Ctrl+Shift+F"),
-    ("insert_ai_svg",     "삽입", "AI SVG 에셋 생성",     "Ctrl+Shift+A"),
-    ("insert_photo",      "삽입", "사진→도면",            "Ctrl+Shift+P"),
+    ("insert_mermaid",    "삽입", "AI 패널: 흐름도 열기", "Ctrl+Shift+F"),
+    ("insert_ai_svg",     "삽입", "AI 패널: 심볼 열기",   "Ctrl+Shift+A"),
+    ("insert_photo",      "삽입", "AI 패널: 베끼기 열기", "Ctrl+Shift+P"),
     # ---- 보기 (QAction) ----
     ("zoom_100",     "보기", "100%(1:1)",     "Ctrl+0"),
     ("zoom_fit",     "보기", "전체 맞춤",      "Ctrl+9"),

@@ -1,7 +1,7 @@
 """Mermaid flowchart import — 순서도 텍스트를 편집가능 도형+화살표로.
 
 Phase 4 마지막 조각. 이 모듈은 **순수 Python(Qt 비의존)** 으로 파싱과 계층 배치만
-담당한다 — 실제 도형 생성(Qt 아이템)과 지속연결 바인딩은 host._insert_mermaid가 이 결과를
+담당한다 — 실제 도형 생성(Qt 아이템)과 지속연결 바인딩은 host_fileio._build_mermaid_items가 이 결과를
 받아서 한다. 그래야 스모크가 씬 없이도 파싱·배치를 검증할 수 있고, 규칙 2(손안의 카드)대로
 외부 레이아웃 의존성 없이 자체 BFS 계층 배치로 초안을 만든다(엣지 라우팅은 _PolyArrowItem의
 기존 직교 자동라우팅이 담당).

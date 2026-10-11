@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import math
 import os
 import uuid
 
@@ -37,15 +36,15 @@ from easycad.fileio.document import (
 from easycad.fileio.photo_ops import SCALE as _PHOTO_SCALE, ops_to_sketch
 from easycad.fileio import symbol_library
 from easycad.fileio.mermaid_import import (
-    parse_mermaid, layout_positions, MermaidError,
+    parse_mermaid, layout_positions,
 )
 from easycad.canvas.host_widgets import _border_attach, _FloatingPanel
 from easycad.canvas.host_selection import _group_scene_rect, _render_symbol_thumbnail
 from easycad.canvas.host_dialogs import (
-    _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _MermaidDialog, _PdfExportDialog,
-    _SvgAssetDialog, _AIGatewaySettingsDialog,
+    _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _PdfExportDialog,
+    _AIGatewaySettingsDialog,
 )
-from easycad.canvas.photo_dialog import _PhotoToDrawingDialog, _pil_to_pixmap
+from easycad.canvas.photo_dialog import _pil_to_pixmap
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
@@ -815,9 +814,8 @@ class _FileIOMixin:
     # ---- AI SVG 에셋 생성 (§8 항목20 B단계, 2026-08-14) ----------------------
     # 위 SVG 가져오기(파일)와 소스만 다르다 — AI 게이트웨이 응답 문자열을 파일 없이
     # 바로 파싱(`parse_svg_string`)해 같은 펜 관례(텍스트 제외 현재 그리기색, NoBrush)로
-    # 아이템을 만든다. 씬 추가·undo는 호출부(삽입 vs 대체)가 각자 처리 — 대체 경로
-    # (`host_context._generate_svg_replace`)는 remove+create를 한 undo 엔트리로 묶어야
-    # 해서 이 헬퍼는 아이템만 만들고 씬에는 안 넣는다.
+    # 아이템을 만든다. 씬 추가·undo는 호출부(「AI로 만들기」 패널, `host_aimake`)가 처리 —
+    # 이 헬퍼는 아이템만 만들고 씬에는 안 넣는다.
 
     def _svg_text_to_items(self, svg_text: str, long_side: float, center: QPointF):
         """AI가 생성한 SVG 문자열 → 우리 네이티브 아이템 리스트(펜·플래그 적용, 씬 미추가)."""
@@ -836,95 +834,11 @@ class _FileIOMixin:
         창 안의 설정 버튼과 같은 `_AIGatewaySettingsDialog`를 독립적으로 연다."""
         _AIGatewaySettingsDialog(self).exec()
 
-    def _get_svg_asset_dialog(self) -> "_SvgAssetDialog":
-        """[실사용 피드백 2026-08-25] "닫았다 다시 열어도 이전 결과가 살아있으면 좋겠다"
-        — 매번 새로 `_SvgAssetDialog(self)`를 만들면 후보·코드·첨부이미지·프롬프트가
-        닫는 순간 통째로 버려졌다. 이제 창당 인스턴스 하나만 지연 생성해 재사용한다(
-        `dlg.exec()`만 다시 호출 — QDialog는 재실행 가능). "다시 AI로 생성할 때만
-        기존 걸 날린다"는 요구는 이미 `_on_generate_clicked`→`_clear_candidates()`
-        흐름이 그 정책이라(생성 버튼을 눌러야만 후보 초기화) 별도 로직이 필요 없다.
-        deep-interview로 확정: 삽입(새 도형)과 대체(`host_context._generate_svg_
-        replace`, 기존 도형 1개 대체) 두 진입점이 **하나의 서랍을 공유**한다(사용자
-        선택 — 분리안도 검토했으나 "방금 만든 후보를 다른 자리에도 써보고 싶다"는
-        재사용 의도를 우선). 부수 이득: 모델 목록 재조회(`_populate_models`, 최초
-        오픈만 느렸던 비동기 호출)도 두 번째부턴 아예 안 일어나 재오픈이 더 빠르다."""
-        dlg = getattr(self, "_svg_asset_dialog", None)
-        if dlg is None:
-            dlg = _SvgAssetDialog(self)
-            self._svg_asset_dialog = dlg
-        return dlg
-
-    def _insert_ai_svg_asset(self):
-        """메뉴 진입점(삽입(&I) 메뉴 「AI SVG 에셋 생성…」) — 뷰 중심에 새로 삽입.
-        우클릭 「SVG로 생성」(기존 도형 대체)은 `host_context._generate_svg_replace`가
-        `_get_svg_asset_dialog()`로 같은 인스턴스를 공유하되 별도 undo 경로를 쓴다.
-        [실사용 피드백 2026-08-25] "체크한 후보 여러 개를 다 넣어달라" — 예전엔 체크박스로
-        몇 개를 골라도 코드칸(`selected_svg()`, 클릭 단일선택 1개)만 삽입됐다.
-        `svgs_for_insert()`(체크됨 있으면 체크된 전부, 없으면 기존처럼 코드칸 1개)로
-        바꾸고, 2개 이상이면 `_place_svg_groups_no_overlap`으로 서로 안 겹치게 격자
-        배치한다. "도형 대체"(위 `_generate_svg_replace`, 대상이 기존 도형 1개)는 다중
-        삽입 개념 자체가 안 맞아 그대로 `selected_svg()` 단일 경로를 유지한다."""
-        dlg = self._get_svg_asset_dialog()
-        dlg.set_confirm_label("확인 (도형 삽입)")
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        svg_texts = dlg.svgs_for_insert()
-        if not svg_texts:
-            return
-        center = self._view.mapToScene(self._view.viewport().rect().center())
-        groups = []
-        for svg_text in svg_texts:
-            try:
-                items = self._svg_text_to_items(svg_text, self._SVG_LONG, QPointF(0.0, 0.0))
-            except Exception:  # noqa: BLE001 — 후보 하나 실패해도 나머지는 계속 삽입
-                continue
-            if items:
-                groups.append(items)
-        if not groups:
-            QMessageBox.warning(self, "AI SVG 에셋 생성", "가져올 도형이 없습니다.")
-            return
-        all_items = self._place_svg_groups_no_overlap(groups, center)
-        self._scene.clearSelection()
-        for it in all_items:
-            self._scene.addItem(it)
-            it.setSelected(True)
-        self.push_undo_add_many(all_items)
-        self.set_tool("select")
-        msg = (f"AI SVG 에셋 삽입: 도형 {len(all_items)}개" if len(groups) <= 1 else
-               f"AI SVG 에셋 삽입: 후보 {len(groups)}개, 도형 {len(all_items)}개")
-        self.statusBar().showMessage(msg, 4000)
-
-    def _place_svg_groups_no_overlap(self, groups: list, center: QPointF) -> list:
-        """[2026-08-25] 체크한 SVG 후보 여러 개를 한 번에 삽입할 때 서로 안 겹치도록
-        정사각형에 가까운 격자로 나눠 놓는다 — 칸 크기는 후보 중 가장 큰 bbox+여백에
-        맞춰 전부 통일(후보마다 크기가 달라도 겹칠 일이 없다), 격자 전체를 뷰 중심에
-        맞춘다. 단일 후보(len==1)도 같은 경로를 타되 격자가 1칸이라 기존 "뷰 중심에
-        바로 삽입" 동작과 결과가 같다."""
-        boxes = [_group_scene_rect(items) for items in groups]
-        gap = 24.0
-        cell_w = max(b.width() for b in boxes) + gap
-        cell_h = max(b.height() for b in boxes) + gap
-        cols = max(1, math.ceil(math.sqrt(len(groups))))
-        rows = math.ceil(len(groups) / cols)
-        origin_x = center.x() - (cols * cell_w) / 2.0
-        origin_y = center.y() - (rows * cell_h) / 2.0
-        all_items = []
-        for i, (items, box) in enumerate(zip(groups, boxes)):
-            r, c = divmod(i, cols)
-            cell_cx = origin_x + c * cell_w + cell_w / 2.0
-            cell_cy = origin_y + r * cell_h + cell_h / 2.0
-            dx, dy = cell_cx - box.center().x(), cell_cy - box.center().y()
-            for it in items:
-                it.moveBy(dx, dy)
-            all_items.extend(items)
-        return all_items
-
     def _save_svg_candidates_to_symbols(self, entries: list[tuple[str, str]],
                                         subject: str, folder: str | None) -> int:
         """SVG 후보(체크된 카드) 여러 개를 한 번에 내 심볼 팔레트에 등록 — §8 항목20 후속
-        Stage 4(2026-08-19). `_SvgAssetDialog`가 `getattr(self, ...)`로 이름만 보고
-        호출한다(그 다이얼로그는 순환 임포트를 피하는 잎 모듈이라 이 파일을 직접 import
-        못 함, `host_dialogs._on_save_to_symbols_clicked` 참조). `register_selection_
+        Stage 4(2026-08-19). 지금은 「AI로 만들기」 패널의 심볼 후보 저장(`host_aimake`)이
+        부른다(옛 `_SvgAssetDialog`는 §8 항목36 6단계에서 지움). `register_selection_
         as_symbol`(host_selection.py)과 같은 관례(위치를 bbox 좌상단 기준으로 정규화,
         실제 렌더 캡처 썸네일)를 따르되, 소스가 캔버스 선택이 아니라 아직 씬에 없는 SVG
         파싱 결과라는 점만 다르다 — `_svg_text_to_items`로 만든 임시 아이템을 그대로
@@ -1473,33 +1387,6 @@ class _FileIOMixin:
         return best[1] if best else text
 
 
-    def _get_mermaid_dialog(self) -> "_MermaidDialog":
-        """[실사용 피드백 2026-08-25] SVG와 같은 이유로 인스턴스 하나를 재사용 —
-        `_get_svg_asset_dialog()` 참조. Mermaid는 진입점이 이거 하나뿐이라 공유 범위
-        고민 없이 창당 싱글턴 1개면 된다."""
-        dlg = getattr(self, "_mermaid_dialog", None)
-        if dlg is None:
-            dlg = _MermaidDialog(self)
-            self._mermaid_dialog = dlg
-        return dlg
-
-    def _insert_mermaid(self):
-        """Mermaid flowchart 코드를 붙여넣어 편집가능 도형+화살표로 자동배치(뷰 중앙 기준).
-        노드는 _RectItem/_EllipseItem/_SymbolItem, 엣지는 _PolyArrowItem 직교 라우팅으로 연결."""
-        dlg = self._get_mermaid_dialog()
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        try:
-            n_nodes, n_arrows, direction = self._build_mermaid(dlg.text())
-        except MermaidError as ex:
-            QMessageBox.warning(self, "Mermaid 가져오기", str(ex))
-            return
-        self.set_tool("select")
-        self.statusBar().showMessage(
-            f"Mermaid 가져오기: 노드 {n_nodes} · 화살표 {n_arrows} "
-            f"(방향 {direction}) — 도형을 개별 이동·편집 가능", 6000)
-
-
     def _build_mermaid(self, text):
         """텍스트 → 도형·화살표를 씬에 배치(한 번의 undo). (노드수, 화살표수, 방향) 반환.
         파싱 실패 시 MermaidError를 올린다(UI 없음 — 스모크에서 그대로 호출 가능)."""
@@ -1560,29 +1447,6 @@ class _FileIOMixin:
 
     # ---- 사진→도면 (§8 항목28, 2026-10-01) -----------------------------------
     _PHOTO_UNDERLAY_ALPHA = 90   # 밑에 까는 원본 사진 투명도(0~255) — 픽스맵에 구워 저장 후에도 유지
-
-    def _get_photo_dialog(self) -> "_PhotoToDrawingDialog":
-        """Mermaid 창과 같은 이유로 창당 하나를 재사용 — 결과·첨부 사진이 닫았다 열어도 남는다."""
-        dlg = getattr(self, "_photo_dialog", None)
-        if dlg is None:
-            dlg = _PhotoToDrawingDialog(self)
-            self._photo_dialog = dlg
-        return dlg
-
-    def _insert_photo_drawing(self):
-        """사진 → AI ops → 편집가능 도형을 원본 배치 그대로 뷰 중앙에 넣는다(한 번의 undo)."""
-        dlg = self._get_photo_dialog()
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        spec, photo = dlg.result_spec(), dlg.photo()
-        if spec is None or photo is None:
-            return
-        added, skipped = self._build_photo_drawing(spec, photo, underlay=dlg.underlay())
-        self.set_tool("select")
-        msg = f"사진→도면: 아이템 {len(added)}개 삽입"
-        if skipped:
-            msg += f" (읽지 못한 항목 {skipped}개 건너뜀)"
-        self.statusBar().showMessage(msg + " — Ctrl+Z로 한 번에 취소", 8000)
 
     def _build_photo_drawing(self, spec: dict, photo, *, underlay: bool = True, center=None) -> tuple[list, int]:
         """ops 명세 → 씬(원본 사진 픽셀 × _PHOTO_SCALE, 사진 중심 = 뷰 중앙). 반환 (넣은 아이템, 건너뛴 op 수).

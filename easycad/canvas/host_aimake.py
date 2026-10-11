@@ -315,6 +315,16 @@ class _AIMakeMixin:
     def _close_ai_panel(self):
         self._set_ai_panel_visible(False)
 
+    # 삽입 메뉴·단축키(Ctrl+Shift+F/A/P) — 옛 세 생성 창 자리(§8 항목36 6단계)
+    def _open_ai_flow(self):
+        self._set_ai_panel_visible(True, kind="flow")
+
+    def _open_ai_symbol(self):
+        self._set_ai_panel_visible(True, kind="symbol")
+
+    def _open_ai_trace(self):
+        self._set_ai_panel_visible(True, kind="trace")
+
     def _set_ai_panel_visible(self, visible: bool, kind: str | None = None):
         """켜기/끄기의 단일 경로(메뉴·상단바·패널 ✕). 켜고 끄면 뷰 폭이 바뀌는데 창 크기는 그대로라
         `resizeEvent`가 안 온다 — 레이아웃을 즉시 다시 잡고 플로팅 카드·미니맵 사각형을 직접 갱신한다."""

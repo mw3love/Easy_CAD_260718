@@ -273,9 +273,8 @@ class _UIBuildMixin:
 
         # [2026-08-12 재피드백] "파일" 메뉴가 파일 I/O(새로만들기·열기·저장·내보내기)와
         # 문서에 콘텐츠를 끼워넣는 "삽입" 계열(표제란·표·Mermaid)이 섞여 있어 분리 —
-        # 새 "삽입(&I)" 메뉴로 옮긴다. AI 게이트웨이 설정은 여기에도 안 남고 Mermaid
-        # 가져오기 창 안으로 되돌아갔다(`host_dialogs._MermaidDialog._open_gateway_settings`,
-        # 예전 방식 — 상위 메뉴/툴바 상시노출은 실사용 결과 되돌림).
+        # 새 "삽입(&I)" 메뉴로 옮긴다. AI 게이트웨이 설정은 이 메뉴 맨 아래 항목과 「AI로 만들기」
+        # 패널 안에서 연다(옛 Mermaid 창 안 버튼은 §8 항목36 6단계에서 창과 함께 사라짐).
         i = self.menuBar().addMenu("삽입(&I)")
         self._act_tb = self._make_action("표제란 / 용지틀 삽입…", "titleblock",
             self._insert_titleblock, shortcut_id="insert_titleblock")
@@ -291,20 +290,15 @@ class _UIBuildMixin:
         # 위치만 이동).
         self._act_img = self._make_action("이미지/SVG 삽입…", "image",
             self._insert_image_or_svg, shortcut_id="insert_image")
-        # [§8 항목18 후속, 2026-08-12] "Mermaid 가져오기"가 AI 보조 생성까지 흡수 —
-        # 옛 "AI 이미지→도면…"(이미지 입력, Ctrl+Shift+A)은 실사용 결과 이미지 경로를
-        # 폐기하기로 하며 이 메뉴로 통합됐다(_MermaidDialog 안 프롬프트칸+AI버튼 참조).
-        self._act_mmd = self._make_action("Mermaid 가져오기…", "mermaid",
-            self._insert_mermaid, shortcut_id="insert_mermaid")
-        # [§8 항목20 B단계, 2026-08-14] AI SVG 에셋 생성 — 옛 "AI 이미지→도면…"이 쓰던
-        # Ctrl+Shift+A는 그 기능 폐기(위 주석 참조)로 비어 있던 것을 재사용.
-        self._act_ai_svg = self._make_action("AI SVG 에셋 생성…", "generate",
-            self._insert_ai_svg_asset, shortcut_id="insert_ai_svg")
-        # [§8 항목28, 2026-10-01] 사진→도면 — 원본 좌표 그대로(Mermaid의 자동배치와 결과가 달라 따로 창).
-        self._act_photo = self._make_action("사진→도면…", "photo",
-            self._insert_photo_drawing, shortcut_id="insert_photo")
-        # [§8 항목36, 2026-10-05] 세 생성 창을 합칠 오른쪽 「AI로 만들기」 패널(켜기/끄기). 위 세 항목은
-        # 종류별 생성이 패널로 옮겨질 때까지(3~5단계) 남기고 6단계에서 지운다. 상단바엔 이것 하나만.
+        # [§8 항목36 6단계, 2026-10-11] 옛 Mermaid·AI SVG·사진→도면 창은 지웠다 — 세 항목과 그 단축키
+        # (id는 재사용 금지 규칙대로 그대로)는 이제 「AI로 만들기」 패널을 그 종류로 연다.
+        self._act_mmd = self._make_action("AI 흐름도…", "mermaid",
+            self._open_ai_flow, shortcut_id="insert_mermaid")
+        self._act_ai_svg = self._make_action("AI 심볼…", "generate",
+            self._open_ai_symbol, shortcut_id="insert_ai_svg")
+        self._act_photo = self._make_action("AI 베끼기(사진→도면)…", "photo",
+            self._open_ai_trace, shortcut_id="insert_photo")
+        # [§8 항목36, 2026-10-05] 오른쪽 「AI로 만들기」 패널(켜기/끄기). 상단바엔 이것 하나만.
         self._act_ai_make = self._make_action("AI로 만들기", "generate",
             self._toggle_ai_panel, checkable=True)
         i.addAction(self._act_img)

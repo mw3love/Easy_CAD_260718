@@ -14,7 +14,7 @@ from PyQt6.QtGui import (
     QPen, QColor, QBrush, QIcon,
 )
 from PyQt6.QtWidgets import (
-    QMessageBox, QDialog, QMenu,
+    QDialog, QMenu,
 )
 
 from easycad.canvas.annotator_core import (
@@ -563,47 +563,6 @@ class _ContextMixin:
             it.setSelected(True)
         self._refresh_properties()
 
-
-    def _generate_svg_replace(self, item):
-        """[§8 항목20 B단계] 선택 도형을 AI SVG로 대체 — 대체 도형 바운딩박스 긴 변 기준
-        리스케일(SVG 자체 종횡비는 유지, 2026-08-14 deep-interview 확정), 중심 위치 유지.
-        연결 화살표는 `_swap_shape`와 달리 재바인딩하지 않는다 — 계획서 확정 스코프:
-        `delete_selection()`이 이미 "도형만 지우면 화살표가 `sh.scene() is not None`
-        가드에 걸려 그 자리에 얼어붙는다"는 동작을 공짜로 제공하므로, 여기선 단순
-        remove+create만 하나의 undo 엔트리로 묶으면 같은 결과가 난다(별도 언바인드 불필요).
-        `item.rect()` 기반 bbox 계산은 `_make_swapped`와 동일 관례 — `sceneBoundingRect()`
-        대신 쓰는 이유는 그쪽이 펜 두께만큼 부풀려진 값이라 실제 도형 크기가 아니기
-        때문(`docs/pitfalls.md` "좌표계·변환" 참조).
-        [2026-08-25] 삽입 진입점(`host_fileio._insert_ai_svg_asset`)과 같은 다이얼로그
-        인스턴스를 공유한다(`_get_svg_asset_dialog()`, 사용자 선택 — "방금 만든 후보를
-        다른 자리에도 재사용" 우선)."""
-        rect_scene = item.mapToScene(QRectF(item.rect())).boundingRect()
-        long_side = max(rect_scene.width(), rect_scene.height())
-        center = rect_scene.center()
-        dlg = self._get_svg_asset_dialog()
-        dlg.set_confirm_label("확인 (도형 대체)")
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        svg_text = dlg.selected_svg()
-        if not svg_text:
-            return
-        try:
-            new_items = self._svg_text_to_items(svg_text, long_side, center)
-        except Exception as e:  # noqa: BLE001 — AI 응답 파싱 실패(구조 손상 등)
-            QMessageBox.warning(self, "SVG로 생성", f"생성 실패: {e}")
-            return
-        if not new_items:
-            QMessageBox.information(self, "SVG로 생성", "가져올 도형이 없습니다.")
-            return
-        self._scene.removeItem(item)
-        for it in new_items:
-            self._scene.addItem(it)
-        ops = [("remove", item)] + [("create", it) for it in new_items]
-        self._push_entry(ops)
-        self._scene.clearSelection()
-        for it in new_items:
-            it.setSelected(True)
-        self._refresh_properties()
 
     # ---- [Phase 6 M5] 정렬 / 분배 -------------------------------------------
     # 계획서 §5 #4 흡수. 선택 bbox를 기준으로 붙이고(정렬), 양 끝을 고정한 채 사이 여백을

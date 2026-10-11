@@ -53,6 +53,27 @@ def test_panel_hidden_by_default_and_toggle_shrinks_view():
     w.close()
 
 
+def test_kind_actions_open_panel_on_that_kind():
+    """[§8 항목36 6단계] 옛 세 생성 창을 지우고, 삽입 메뉴 세 항목·단축키(Ctrl+Shift+F/A/P, id 그대로)는
+    패널을 그 종류로 연다. 이미 열려 있으면 닫지 않고 종류만 바꾼다."""
+    import easycad.canvas.host_dialogs as hd
+    import easycad.canvas.photo_dialog as pd
+    for gone in ("_MermaidDialog", "_SvgAssetDialog"):
+        assert not hasattr(hd, gone)
+    assert not hasattr(pd, "_PhotoToDrawingDialog")
+    w = _shown_window()
+    p = w._ai_panel
+    for act, kind, key in ((w._act_mmd, "flow", "Ctrl+Shift+F"), (w._act_ai_svg, "symbol", "Ctrl+Shift+A"),
+                           (w._act_photo, "trace", "Ctrl+Shift+P")):
+        assert act.shortcut().toString() == key
+        act.trigger()
+        _app.processEvents()
+        assert p.isVisible() and w._act_ai_make.isChecked() and p._kind == kind
+    for gone in ("_insert_mermaid", "_insert_ai_svg_asset", "_insert_photo_drawing", "_generate_svg_replace"):
+        assert not hasattr(w, gone)
+    w.close()
+
+
 def test_close_button_hides_and_unchecks_action():
     w = _shown_window()
     w._set_ai_panel_visible(True)
@@ -68,7 +89,7 @@ def test_toolbar_has_one_ai_icon_instead_of_three():
     assert w._act_ai_make in acts
     for old in (w._act_mmd, w._act_ai_svg, w._act_photo):
         assert old not in acts
-    # 옛 창은 종류별 생성이 패널로 옮겨질 때까지 삽입 메뉴에 남는다
+    # 삽입 메뉴엔 종류별 항목 셋이 남는다 — 6단계부터 옛 창 대신 패널을 그 종류로 연다(아래 테스트)
     menu_acts = [a for m in w.menuBar().actions() if m.menu() for a in m.menu().actions()]
     for a in (w._act_ai_make, w._act_mmd, w._act_ai_svg, w._act_photo):
         assert a in menu_acts
