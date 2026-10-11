@@ -15,7 +15,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QApplication, QGraphicsView, QWidget, QVBoxLayout, QToolButton, QLabel, QGridLayout, QDialog,
-    QColorDialog, QHBoxLayout, QMenu, QFrame, QToolTip, QScrollArea, QComboBox,
+    QColorDialog, QHBoxLayout, QMenu, QFrame, QToolTip, QScrollArea, QSizePolicy,
 )
 
 from easycad.app_settings import app_settings
@@ -1205,16 +1205,30 @@ class _DragGrip(QWidget):
             self._cbs[3]()
 
 
-class _SymbolFolderBrowser(_FloatingPanel):
-    """[실사용 피드백 2026-10-11] 폴더 「크게 보기」 — 도형·심볼 카드 오른쪽에 붙는 패널(처음엔 따로 뜨는 창이었으나
-    "앱 안 카드 규칙·창 관리 없음·끌어 놓기 확실"로 바꿈, 사용자 결정). 폴더마다 제목 줄 ⤢로 들어오고(폴더 고르기 없음),
-    같은 ⤢를 다시 누르거나 ✕로 닫는다. 「아이콘」(그림만 바둑판, 이름은 호버) / 「아이콘+글자」(그림 아래 이름) 보기,
-    오른쪽 끝 손잡이로 너비. 칸은 패널과 같은 팔레트 버튼(`make_button(entry, w, h)` — 칸 모양대로 꽉 채운 그림)이라
-    클릭=도구 쥐기, 끌기=도면에 놓기, 우클릭 메뉴가 그대로 된다. 위치·높이는 `CanvasWindow._reposition_panels`가 정한다."""
+def _wrap_two_lines(fm, text: str, width: int) -> str:
+    """이름을 폭 `width`에 맞춰 두 줄까지 접는다(넘치면 둘째 줄 끝을 …). 공백에서 끊을 수 있으면 공백에서."""
+    if fm.horizontalAdvance(text) <= width:
+        return text
+    cut = 1
+    while cut < len(text) and fm.horizontalAdvance(text[:cut + 1]) <= width:
+        cut += 1
+    sp = text.rfind(" ", 0, cut + 1)
+    if sp > 0:
+        cut = sp
+    first, rest = text[:cut].rstrip(), text[cut:].lstrip()
+    return first + "\n" + fm.elidedText(rest, Qt.TextElideMode.ElideRight, width)
 
-    # 보기별 (칸 너비, 칸 높이, 그림 너비, 그림 높이) — 그림은 칸 안쪽(버튼 여백 3px씩)을 꽉 채운다
-    CELLS = {"icon": (84, 64, 76, 56), "text": (96, 88, 88, 58)}
-    MIN_W, DEFAULT_W = 240, 420
+
+class _SymbolFolderBrowser(_FloatingPanel):
+    """[실사용 피드백 2026-10-11] 폴더 「크게 보기」 — 도형·심볼 카드 오른쪽에 붙는 패널. 폴더 안 목록을 그대로 확대한 것
+    (사용자: "기존 폴더에서 잘 안 보이는 걸 크게 확대했다고 생각") — 큰 그림(76×56, 칸 모양대로 꽉 채움) 옆에 이름,
+    한 줄에 하나씩 아래로. 긴 이름은 두 줄까지 접는다. 폴더마다 제목 줄 ⤢로 들어오고(폴더 고르기 없음), 같은 ⤢를
+    다시 누르거나 ✕로 닫는다. 오른쪽 끝 손잡이로 너비. 줄은 패널과 같은 팔레트 버튼(`make_button(entry, w, h)`)이라
+    클릭=도구 쥐기, 끌기=도면에 놓기, 우클릭 메뉴가 그대로 된다. 위치·높이는 `CanvasWindow._reposition_panels`가 정한다.
+    [같은 날] 처음 만든 「아이콘 / 그림 아래 이름」 바둑판 두 보기는 뜻을 잘못 읽은 것이라 이 목록 하나로 바꿨다."""
+
+    ICON_W, ICON_H, ROW_H = 76, 56, 62
+    MIN_W, DEFAULT_W = 200, 260
 
     def __init__(self, host, folder: str, entries_fn, make_button):
         super().__init__(host, folder, "symbol_browser")
@@ -1222,25 +1236,10 @@ class _SymbolFolderBrowser(_FloatingPanel):
         self._entries_fn, self._make_button = entries_fn, make_button
         self.folder = folder
         self._buttons: list = []
-        self._view_mode = "text" if app_settings().value("symbol_browser_view", "text") == "text" else "icon"
         hl = self._head.layout()
         self._count = QLabel()
         self._count.setForegroundRole(QPalette.ColorRole.PlaceholderText)
         hl.insertWidget(1, self._count)
-        self._view_btns: dict = {}
-        for mode, icon, text, tip in (("icon", "view_icons", "아이콘", "그림만 크게(이름은 마우스를 올리면)"),
-                                      ("text", "view_labeled", "이름", "그림 아래 이름")):
-            b = QToolButton()
-            b._icon_name = icon
-            b.setIcon(_menu_icon(icon))
-            b.setText(text)
-            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-            b.setCheckable(True); b.setAutoExclusive(True); b.setAutoRaise(True)
-            b.setChecked(mode == self._view_mode)
-            b.setToolTip(tip)
-            b.clicked.connect(lambda _c=False, m=mode: self.set_view(m))
-            hl.insertWidget(hl.indexOf(self._collapse_btn), b)
-            self._view_btns[mode] = b
         close = QToolButton()
         close._icon_name = "menu_close"
         close.setIcon(_menu_icon("menu_close"))
@@ -1252,22 +1251,22 @@ class _SymbolFolderBrowser(_FloatingPanel):
 
         body = QWidget()
         row = QHBoxLayout(body)
-        row.setContentsMargins(6, 4, 0, 6); row.setSpacing(0)
+        row.setContentsMargins(4, 4, 0, 6); row.setSpacing(0)
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._grid_host = QWidget()
-        self._grid = QGridLayout(self._grid_host)
-        self._grid.setContentsMargins(0, 0, 0, 0); self._grid.setSpacing(4)
-        self._scroll.setWidget(self._grid_host)
+        self._list_host = QWidget()
+        self._list = QVBoxLayout(self._list_host)
+        self._list.setContentsMargins(0, 0, 0, 0); self._list.setSpacing(2)
+        self._list.addStretch(1)
+        self._scroll.setWidget(self._list_host)
         row.addWidget(self._scroll, 1)
         self._w0 = 0
         self._grip = _DragGrip("끌어서 너비 조절 · 더블클릭하면 원래대로", self._grip_press, self._grip_move,
                                self._grip_release, self._grip_reset, height=8, horizontal=True)
         row.addWidget(self._grip)
         self.set_content(body)
-        self._cols = 0
         self.panel_w = app_settings().value("symbol_browser_width", self.DEFAULT_W, type=int)
         self.set_folder(folder)
 
@@ -1292,63 +1291,42 @@ class _SymbolFolderBrowser(_FloatingPanel):
         self._title_lbl.setText(folder)
         self.refresh()
 
-    def set_view(self, mode: str):
-        if mode == self._view_mode:
-            return
-        self._view_mode = mode
-        app_settings().setValue("symbol_browser_view", mode)
-        for m, b in self._view_btns.items():
-            b.setChecked(m == mode)
-        self.refresh()
-
     def refresh(self):
         """라이브러리가 바뀌면(이름변경·이동·삭제) 패널과 함께 다시 그린다."""
         for b in self._buttons:
-            self._grid.removeWidget(b)
+            self._list.removeWidget(b)
             b.hide()
             b.deleteLater()
-        cw, ch, iw, ih = self.CELLS[self._view_mode]
-        self._buttons = [self._make_button(e, iw, ih) for e in self._entries_fn(self.folder)]
-        for b in self._buttons:
-            b.setIconSize(QSize(iw, ih))
-            if self._view_mode == "icon":
-                b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-            else:
-                b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-                b.setText(b.fontMetrics().elidedText(b._full_name, Qt.TextElideMode.ElideRight, cw - 8))
-            b.setFixedSize(cw, ch)
-        self._count.setText(f"{len(self._buttons)}개")
-        self._cols = 0
-        self._reflow()
-
-    def _reflow(self):
-        cw = self.CELLS[self._view_mode][0]
-        cols = max(1, (self._scroll.viewport().width() + 4) // (cw + 4))
-        if cols == self._cols:
-            return
-        self._cols = cols
-        for b in self._buttons:
-            self._grid.removeWidget(b)
+        self._buttons = [self._make_button(e, self.ICON_W, self.ICON_H) for e in self._entries_fn(self.folder)]
         for i, b in enumerate(self._buttons):
-            self._grid.addWidget(b, i // cols, i % cols)
-        for c in range(cols + 1):
-            self._grid.setColumnStretch(c, 0)
-        self._grid.setColumnStretch(cols, 1)
-        self._grid.setRowStretch(len(self._buttons) // cols + 1, 1)
+            b.setIconSize(QSize(self.ICON_W, self.ICON_H))
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            b.setFixedHeight(self.ROW_H)
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self._list.insertWidget(i, b)
+        self._count.setText(f"{len(self._buttons)}개")
+        self._rewrap()
+
+    def _name_width(self) -> int:
+        # 줄 폭 − 그림 − 버튼 안 여백·그림과 글자 사이(실측 약 16) − 스크롤바 자리
+        return max(60, self._scroll.viewport().width() - self.ICON_W - 22)
+
+    def _rewrap(self):
+        w = self._name_width()
+        for b in self._buttons:
+            b.setText(_wrap_two_lines(b.fontMetrics(), b._full_name, w))
 
     def restyle(self):
-        """테마 전환 — 머리줄 아이콘만 다시(칸은 `refresh`)."""
-        for b in list(self._view_btns.values()) + [self._close_btn]:
-            b.setIcon(_menu_icon(b._icon_name))
+        """테마 전환 — 머리줄 아이콘만 다시(줄은 `refresh`)."""
+        self._close_btn.setIcon(_menu_icon(self._close_btn._icon_name))
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        self._reflow()
+        self._rewrap()
 
     def showEvent(self, e):
         super().showEvent(e)
-        self._cols = 0
-        self._reflow()
+        self._rewrap()
 
 
 class _SymbolFolderDropZone(QWidget):

@@ -124,33 +124,37 @@ def test_more_button_opens_big_browser_with_all_symbols():
         w.close()
 
 
-def test_browser_view_modes_width_grip_and_cell_shaped_thumbs():
+def test_browser_is_one_column_list_of_big_icon_and_name():
+    """[2026-10-11 후속] 크게 보기 = 폴더 목록을 확대한 것 — 큰 그림(76×56, 칸 모양대로 꽉) 옆에 이름, 한 줄에 하나씩 아래로.
+    보기 전환 없음, 긴 이름은 두 줄까지 접음, 오른쪽 끝 손잡이로 너비."""
+    from easycad.canvas.host_widgets import _wrap_two_lines
     st = app_settings()
-    for k in ("symbol_browser_view", "symbol_browser_width"):
-        st.remove(k)
+    st.remove("symbol_browser_width")
     try:
         with _isolated_symbol_library():
             rect = [{"type": "rect", "rect": [0, 0, 120, 30], "pen": "#ff000000", "width": 1.0, "fill": None,
                      "pos": [0, 0], "scale": 1.0, "rotation": 0.0, "z": 0, "origin": [0, 0]}]
             symbol_library.create_folder("긴것")
             symbol_library.add_symbol("가로로 긴 심볼", rect, "", folder="긴것")
+            symbol_library.add_symbol("야옹이 — gemini-3.5-flash-lite 아주 긴 이름입니다", rect, "", folder="긴것")
             w = CanvasWindow()
             w.show()
             w._open_symbol_browser("긴것")
             b = w._symbol_browser
-            assert b._view_mode == "text"                                   # 기본 = 그림 아래 이름
-            btn = b._buttons[0]
-            assert btn.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
-            iw, ih = b.CELLS["text"][2:]
-            pm = btn.icon().pixmap(QSize(iw, ih))
-            assert (pm.width(), pm.height()) == (iw, ih)                     # 칸 모양 그대로(정사각 아님)
+            assert not hasattr(b, "_view_btns") and b.width() == b.DEFAULT_W
+            b0, b1 = b._buttons
+            assert b0.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            assert b1.y() > b0.y() and b1.x() == b0.x()                      # 한 줄에 하나, 아래로
+            pm = b0.icon().pixmap(QSize(b.ICON_W, b.ICON_H))
+            assert (pm.width(), pm.height()) == (b.ICON_W, b.ICON_H)         # 칸 모양 그대로(정사각 아님)
             img = pm.toImage()
             xs = [x for x in range(img.width()) if any(img.pixelColor(x, y).alpha() for y in range(img.height()))]
-            assert xs[0] <= 4 and xs[-1] >= iw - 5                           # 긴 심볼이 칸 가로를 끝까지 쓴다
-            b._view_btns["icon"].click()
-            assert b._view_mode == "icon" and st.value("symbol_browser_view") == "icon"
-            assert b._buttons[0].toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
-            assert all(not x.icon().isNull() and x.text() for x in b._view_btns.values())
+            assert xs[0] <= 4 and xs[-1] >= b.ICON_W - 5                      # 긴 심볼이 칸 가로를 끝까지 쓴다
+            assert b1.text().count("\n") == 1                                 # 긴 이름은 두 줄
+            assert b0.text() == "가로로 긴 심볼"
+            fm = b1.fontMetrics()
+            assert all(fm.horizontalAdvance(line) <= b._name_width() for line in b1.text().split("\n"))
+            assert _wrap_two_lines(fm, "짧음", 100) == "짧음"
             w0 = b.width()
             _drag_h(b._grip, 120)
             assert b.width() == w0 + 120 and st.value("symbol_browser_width", type=int) == w0 + 120
@@ -163,8 +167,7 @@ def test_browser_view_modes_width_grip_and_cell_shaped_thumbs():
             w._active_doc.dirty = False
             w.close()
     finally:
-        for k in ("symbol_browser_view", "symbol_browser_width"):
-            st.remove(k)
+        st.remove("symbol_browser_width")
 
 
 def test_folder_title_has_always_visible_big_view_button_and_no_collapse_arrow():
