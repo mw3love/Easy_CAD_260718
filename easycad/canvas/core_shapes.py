@@ -1190,9 +1190,10 @@ class _HandleResizeMixin:
             # (release) 다시 전부 보인다 — 이건 이 순간의 동작 힌트일 뿐 영구 상태가 아니다.
             if not self._qc_dragging_now():
                 # [2c→2026-07-30] 꼭짓점 4 = 파란 사각(리사이즈 전용), 좌상단 회전 = 코랄 원.
-                for i, r in self._box_corner_rects():
-                    self._set_handle_paint(painter, s, _BLUE, hv == ("corner", i))
-                    painter.drawRect(r)
+                if not _style_preview_active(self):   # [2026-10-11] 색 고르는 동안 꼭짓점 사각 숨김(Lucid)
+                    for i, r in self._box_corner_rects():
+                        self._set_handle_paint(painter, s, _BLUE, hv == ("corner", i))
+                        painter.drawRect(r)
                 rh = self._handle_px() * 0.5
                 self._set_handle_paint(painter, s, _PEACH, hv == ("rot", None))
                 painter.drawEllipse(self._box_rot_center(), rh, rh)
@@ -1720,6 +1721,14 @@ def _paint_selection_centerline(painter: QPainter, it, scale: float = 1.0, path:
     painter.drawPath(path)
 
 
+def _style_preview_active(it) -> bool:
+    """[실사용 피드백 2026-10-11, 우리 확장 — Lucid 방식] 속성 카드에서 색·선·두께 목록이나 「다른 색」 창이 열려 있는 동안은
+    선택 강조선과 꼭짓점 사각을 숨긴다 — 파란 선택선이 도형 테두리에 겹쳐 바꾼 선 색이 안 보였다. 큐닷·회전 점은 그대로.
+    호스트가 장면에 `_style_preview` 표시를 켜고 끈다(`host_style._set_style_preview`)."""
+    sc = it.scene()
+    return bool(sc is not None and getattr(sc, "_style_preview", False))
+
+
 def _paint_selection_highlight(painter: QPainter, it, scale: float = 1.0, band: QPainterPath | None = None):
     """[선택 표시 통일 2026-08-01 → 2026-08-03 Lucid 대조 갈래] 개별 아이템 선택 강조의 공통
     렌더. 화살표거나 단일선택이면 얇은 중심선(`_paint_selection_centerline`), 다중선택 중인
@@ -1731,6 +1740,8 @@ def _paint_selection_highlight(painter: QPainter, it, scale: float = 1.0, band: 
     # [성능계획 2-C(b)] 드래그 중 다중선택이면 개별 강조를 생략한다 — 어차피 그룹 변형
     # 오버레이(_GroupTransform)가 바운딩박스를 그려 "무엇이 선택됐나"는 계속 보인다.
     if _drag_decor_suppressed(it):
+        return
+    if _style_preview_active(it):
         return
     is_connector = isinstance(it, (_ArrowItem, _PolyArrowItem))
     if is_connector or _selection_is_solo(it):

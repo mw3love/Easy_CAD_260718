@@ -1276,7 +1276,7 @@ def test_swap_to_multi_item_custom_symbol_inserts_as_group_and_rebinds():
 
 
 def test_symbol_folder_color_box_count_and_hover_menu():
-    """[패널 통일 2라운드 2026-10-11, 시안 C] 폴더 = 색 점 + 옅게 물든 테두리 칸 + 개수. ⋯는 마우스를 올렸을 때만,
+    """[패널 통일 2라운드 2026-10-11, 시안 C → 같은 날 F3] 폴더 = 제목 줄 색 띠 + 중립 테두리 칸 + 개수 칩. ⋯는 마우스를 올렸을 때만,
     색은 ⋯/우클릭 「폴더 색 바꾸기」로 라이브러리 파일에 저장(이름변경·삭제 때 따라감)."""
     from PyQt6.QtCore import QEvent
     from PyQt6.QtGui import QEnterEvent
@@ -1287,9 +1287,10 @@ def test_symbol_folder_color_box_count_and_hover_menu():
         zone, _title = _folder_zone_and_label(w, "무선")
         sec = zone.layout().itemAt(0).widget()
         assert sec.count_lbl.text() == "1"
-        assert sec._dot.isVisibleTo(sec)
-        default = w._FOLDER_DEFAULT_COLORS[0]
-        assert default in sec._dot.styleSheet() and "#palSec" in sec.styleSheet()
+        # [2026-10-11 시안 F3] 색 점·칸 물들임 대신 제목 줄만 색 띠(칸은 중립)
+        assert not sec._dot.isVisibleTo(sec)
+        dc = QColor(w._FOLDER_DEFAULT_COLORS[0])
+        assert f"rgba({dc.red()},{dc.green()},{dc.blue()}" in sec.head.styleSheet() and "#palSec" in sec.styleSheet()
         more = sec._hover_btns[0]
         assert more.isHidden()                                  # 평소엔 숨김
         QApplication.sendEvent(sec, QEnterEvent(QPointF(5, 5), QPointF(5, 5), QPointF(5, 5)))
@@ -1299,7 +1300,7 @@ def test_symbol_folder_color_box_count_and_hover_menu():
         symbol_library.set_folder_color("무선", "#123456")
         w._refresh_custom_symbol_section()
         zone, _t = _folder_zone_and_label(w, "무선")
-        assert "#123456" in zone.layout().itemAt(0).widget()._dot.styleSheet()
+        assert "rgba(18,52,86" in zone.layout().itemAt(0).widget().head.styleSheet()
         symbol_library.rename_folder("무선", "유선")
         assert symbol_library.load_folder_colors() == {"유선": "#123456"}
         symbol_library.delete_folder("유선")

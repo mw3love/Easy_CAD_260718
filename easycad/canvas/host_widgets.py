@@ -895,8 +895,12 @@ class _FloatingPanel(QFrame):
         head.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         head.customContextMenuRequested.connect(self._show_header_menu)
         hl = QHBoxLayout(head)
-        hl.setContentsMargins(9, 4, 4, 4); hl.setSpacing(4)
+        hl.setContentsMargins(10, 8, 4, 5); hl.setSpacing(4)
         self._title_lbl = QLabel(title)
+        # [실사용 피드백 2026-10-11, 시안 H3] 카드 제목이 폴더 제목과 같은 크기라 "가장 큰 제목" 위계가 안 느껴졌다 —
+        # 카드 제목 15px 굵게 > 칸 제목 12px 굵게 > 항목 12px. 띠 배경 없이 글자 크기·여백으로 구분(`_apply_theme` head_qss).
+        tf = self._title_lbl.font(); tf.setPixelSize(15); tf.setWeight(QFont.Weight.Bold)
+        self._title_lbl.setFont(tf)
         hl.addWidget(self._title_lbl, 1)
         self._collapse_btn = QToolButton()
         self._collapse_btn.setAutoRaise(True)
@@ -1080,13 +1084,25 @@ class _StaticSection(QWidget):
         self.count_lbl.setText(text)
         self.count_lbl.setVisible(bool(text))
 
-    def set_box(self, color, dark: bool, dot: bool = True):
-        """테두리 칸으로 그린다. color(QColor)가 있으면 그 색 점 + 옅게 물든 칸(폴더), 없으면 중립 칸.
-        dot=False면 칸만 물들이고 점은 안 그린다(즐겨찾기 — 제목의 ★가 그 자리를 맡음)."""
-        self.setStyleSheet(_palette_box_qss("palSec", color, dark))
+    def set_box(self, color, dark: bool):
+        """테두리 칸으로 그린다. 칸은 늘 중립, color(QColor)가 있으면 제목 줄만 그 색 띠(폴더·고른 칸).
+        [실사용 피드백 2026-10-11, 시안 F3 채택] 예전엔 색 점 + 칸 전체를 옅게 물들였다(F1) — 폴더가 많으면 알록달록.
+        개수는 작은 칩(시안 H3)."""
+        self.setStyleSheet(_palette_box_qss("palSec", None, dark))
+        self.head.setObjectName("palSecHead")
+        self.head.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         if color is not None:
-            self._dot.setStyleSheet(f"background:{color.name()}; border-radius:4px;")
-        self._dot.setVisible(color is not None and dot)
+            r, g, b = color.red(), color.green(), color.blue()
+            self.head.setStyleSheet(
+                f"#palSecHead {{ background:rgba({r},{g},{b},{52 if dark else 42});"
+                f" border-bottom:1px solid rgba({r},{g},{b},{95 if dark else 110});"
+                " border-top-left-radius:7px; border-top-right-radius:7px; }")
+        else:
+            self.head.setStyleSheet("")
+        self._dot.hide()
+        chip_bg, chip_fg = (("rgba(255,255,255,22)", "#aab4bf") if dark else ("rgba(0,0,0,16)", "#5d6976"))
+        self.count_lbl.setStyleSheet(
+            f"QLabel {{ background:{chip_bg}; color:{chip_fg}; border-radius:8px; padding:0px 6px; }}")
 
     def set_title_html(self, html: str):
         self._title_lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -1531,10 +1547,11 @@ class _PropPopup(QWidget):
     (색 견본·선 모양·굵기 등). 안의 위젯은 예전에 카드에 펼쳐 두던 것 그대로 — 자주 안 바꾸는 속성은
     카드엔 지금 값만 보이고(사용자 요청 "굳이 펼쳐둘 필요 없음"), 바꿀 때만 연다. 바깥 클릭이면 닫히는 Qt.Popup."""
 
-    def __init__(self, parent: QWidget, content: QWidget):
+    def __init__(self, parent: QWidget, content: QWidget, on_visible=None):
         super().__init__(parent, Qt.WindowType.Popup)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("propPopup")
+        self._on_visible = on_visible   # 열림/닫힘 알림(True/False) — 선택 강조 숨김(Lucid)용
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.addWidget(content)
@@ -1548,6 +1565,23 @@ class _PropPopup(QWidget):
         self.setStyleSheet(
             "#propPopup { background-color: palette(window);"
             " border: 1px solid palette(mid); border-radius: 6px; }")
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._notify_visible(True)
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        self._notify_visible(False)
+
+    def _notify_visible(self, on: bool):
+        # ⚠ 창을 닫을 때도 hideEvent가 온다 — 그때 장면이 이미 지워졌으면 RuntimeError가 나고, 가상 함수 안의
+        # 처리 안 된 예외는 PyQt6가 앱을 강제 종료(exit 127)시킨다. 알림 실패는 삼킨다(선택 강조 숨김은 장식).
+        if self._on_visible:
+            try:
+                self._on_visible(on)
+            except RuntimeError:
+                pass
 
     def open_below(self, anchor: QWidget):
         self._anchor = anchor

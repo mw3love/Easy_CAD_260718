@@ -133,7 +133,7 @@ class _StyleMixin:
         init = self._read_props(sel[0])["color"] or QColor("#000000")
         # [실사용 피드백 2026-10-11 후속] 「⋯」는 중간 그리드 팝업 없이 바로 「다른 색」 창 — 자주 쓰는 색은
         # 견본 칸을 사용자가 직접 정한다(견본 우클릭, `_customize_preset`).
-        col = _pick_custom_color(self, init, False, "선 색")
+        col = self._pick_custom_color_previewing(init, False, "선 색")
         if col is None:
             return
         self._remember_recent_color(col)   # 레이어·폴더 색 팝업의 「최근 사용한 색」에도 남긴다
@@ -154,7 +154,7 @@ class _StyleMixin:
             return
         init = self._read_props(sel[0])["fill"] or QColor("#ffffff")
         # [2026-10-11 후속] 「⋯」 = 바로 「다른 색」 창(투명도 포함). 「없음」은 견본 첫 칸.
-        col = _pick_custom_color(self, init, True, "채움 색")
+        col = self._pick_custom_color_previewing(init, True, "채움 색")
         if col is None:
             return
         self._remember_recent_color(col)
@@ -203,7 +203,7 @@ class _StyleMixin:
             self._refresh_properties()
 
         def pick():
-            col = _pick_custom_color(self, cur, kind == "fill", "견본 칸 색")
+            col = self._pick_custom_color_previewing(cur, kind == "fill", "견본 칸 색")
             if col is not None:
                 set_to(col)
         menu.addAction("이 칸 색 바꾸기…", pick)
@@ -216,9 +216,9 @@ class _StyleMixin:
         if color is None:
             bg, border = "transparent", "1px dashed #8a98a8"
         else:
+            # [실사용 피드백 2026-10-11, 시안 C2 채택] 반투명 채움도 견본은 진하게(불투명) — 흐린 견본은 색 구분이 어려웠다.
+            # 실제로 칠해지는 건 그대로 반투명(글자가 읽히게). 정확한 값은 툴팁(#AARRGGBB).
             bg, border = color.name(), "1px solid #5d6976"
-            if color.alpha() < 255:   # 반투명은 rgba로(#RRGGBB엔 투명도가 없다)
-                bg = f"rgba({color.red()},{color.green()},{color.blue()},{color.alpha()})"
         if selected:
             border = f"2px solid {ring}"
         return f"QToolButton {{ background:{bg}; border:{border}; border-radius:3px; }}"
@@ -243,6 +243,24 @@ class _StyleMixin:
         self._edit_items(sel, lambda it: it.apply_fill(QColor(col))
                          if hasattr(it, "apply_fill") else it.set_bg(QColor(col)))
         self.current_fill = QColor(col)   # sticky
+
+    def _set_style_preview(self, on: bool):
+        """[실사용 피드백 2026-10-11, 시안 S1 + Lucid] 색·선·두께를 고르는 동안(펼침 목록·「다른 색」 창) 선택 강조선과
+        꼭짓점 사각을 숨긴다 — 그리는 쪽은 `core_shapes._style_preview_active`."""
+        sc = getattr(self, "_scene", None)
+        if sc is None or bool(getattr(sc, "_style_preview", False)) == on:
+            return
+        sc._style_preview = on
+        for it in sc.selectedItems():
+            it.update()
+
+    def _pick_custom_color_previewing(self, initial, show_alpha: bool, title: str):
+        """「다른 색」 창 — 열린 동안 선택 강조를 숨긴다(목록과 같은 규칙)."""
+        self._set_style_preview(True)
+        try:
+            return _pick_custom_color(self, initial, show_alpha, title)
+        finally:
+            self._set_style_preview(False)
 
     def _set_props_auto_visible(self, show: bool):
         """선택 유무로 속성 카드를 보이고 숨긴다 — 사용자가 닫아 둔 카드(보기 메뉴·우클릭 「닫기」)는

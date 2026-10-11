@@ -1929,15 +1929,16 @@ def test_favorites_and_basic_sections_have_color_menu():
     with _isolated_symbol_library():
         w = CanvasWindow()
         assert len(w._section_more_btns) == 2
-        assert w._basic_section._dot.isHidden()                            # 처음엔 중립 칸(점 없음)
+        assert w._basic_section.head.styleSheet() == ""                   # 처음엔 띠 없음
         w._set_section_color("basic", "#123456")
-        assert "rgba(18,52,86" in w._basic_section.styleSheet() and not w._basic_section._dot.isHidden()
+        assert "rgba(18,52,86" in w._basic_section.head.styleSheet()        # 제목 줄만 색 띠(시안 F3)
+        assert "rgba(18,52,86" not in w._basic_section.styleSheet()          # 칸은 중립
         w._set_section_color("favorites", "#00ff00")
-        assert "#00ff00" in w._fav_section._title_lbl.text() and "rgba(0,255,0" in w._fav_section.styleSheet()
+        assert "#00ff00" in w._fav_section._title_lbl.text() and "rgba(0,255,0" in w._fav_section.head.styleSheet()
         assert symbol_library.load_section_colors() == {"basic": "#123456", "favorites": "#00ff00"}
         assert symbol_library.load_folders() == []                         # 폴더로 새지 않음
         w._set_section_color("basic", None)
-        assert "rgba(18,52,86" not in w._basic_section.styleSheet() and w._basic_section._dot.isHidden()
+        assert w._basic_section.head.styleSheet() == ""
         symbol_library.set_section_color("nope", "#ffffff")                # 모르는 칸은 무시
         assert "nope" not in symbol_library.load_section_colors()
 
@@ -1971,3 +1972,34 @@ def test_label_edit_keeps_owner_selected_and_props_card_visible():
     lbl = r.ensure_label()
     assert lbl.textInteractionFlags() == Qt.TextInteractionFlag.TextEditorInteraction
     # 키가 도형이 아니라 글자로 가는 것(Delete 포함)은 실제 창에서 확인(오프스크린은 창 포커스가 없어 키 경로 재현 불가)
+
+
+def test_toolbar_groups_light_background_and_short_ai_label():
+    """[실사용 피드백 2026-10-11, 시안 T3·A2] 상단바 묶음은 세로선 대신 옅은 바탕(마지막 묶음 — AI·테마·도움말 — 제외),
+    AI 버튼 글자는 「AI」(메뉴는 「AI로 만들기」 그대로)."""
+    w = CanvasWindow(); w.resize(1500, 900); w.show(); QApplication.processEvents()
+    tb = w._toolbar
+    rects = w._toolbar_group_rects(tb)
+    assert len(rects) == 5                                   # 파일·편집·삽입·그리기·보기
+    assert all(a.right() < b.left() for a, b in zip(rects, rects[1:]))   # 묶음끼리 안 붙음
+    img = tb.grab().toImage()
+    inside = img.pixelColor(rects[0].left() + 2, rects[0].center().y()).name()
+    gap = img.pixelColor((rects[0].right() + rects[1].left()) // 2, rects[0].center().y()).name()
+    assert inside != gap                                    # 바탕이 실제로 칠해짐
+    assert tb.widgetForAction(w._act_ai_make).text() == "AI" and w._act_ai_make.text() == "AI로 만들기"
+
+
+def test_style_preview_hides_selection_chrome_while_picking():
+    """[실사용 피드백 2026-10-11, 시안 S1 + Lucid] 색·선·두께 목록이 열린 동안 선택 강조선·꼭짓점 사각을 숨긴다(바꾼 선 색이
+    보이게) — 닫으면 다시. 채움 견본은 진하게(C2), 실제 채움은 반투명 그대로."""
+    w = CanvasWindow(); w.show()
+    r = _mk_pen_rect(w); r.setSelected(True); w._refresh_properties()
+    from easycad.canvas.core_shapes import _style_preview_active
+    assert not _style_preview_active(r)
+    w._pf_color_btn.click()
+    assert _style_preview_active(r)
+    w._pf_color_pop.hide()
+    assert not _style_preview_active(r)
+    w._pf_fill_btn.click(); assert _style_preview_active(r); w._pf_fill_pop.hide()
+    css = w._pf_fill_presets[1].styleSheet()
+    assert "rgba(" not in css and w._fill_presets()[1].alpha() < 255

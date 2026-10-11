@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 
-from PyQt6.QtCore import Qt, QPoint, QRectF, QSize, QTimer
+from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QSize, QTimer
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QAction, QKeySequence, QIcon, QPixmap, QPainter, QFont, QPalette,
 )
@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QApplication, QGraphicsScene, QWidget, QVBoxLayout, QToolButton, QLabel, QFileDialog,
     QInputDialog, QMessageBox, QGridLayout, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QSizePolicy, QHBoxLayout, QMenu,
-    QFrame, QListWidget, QStackedWidget, QScrollArea,
+    QFrame, QListWidget, QStackedWidget, QScrollArea, QToolBar,
 )
 
 from easycad.app_settings import app_settings
@@ -673,7 +673,9 @@ class _UIBuildMixin:
     }
 
     def _build_toolbar(self):
-        tb = self.addToolBar("주 도구모음")
+        # 파이썬에서 만든다 — `addToolBar("이름")`이 C++에서 만든 툴바는 아래 paintEvent 덮어쓰기가 안 먹는다(묶음 바탕용)
+        tb = QToolBar("주 도구모음", self)
+        self.addToolBar(tb)
         tb.setMovable(False)
         tb.setIconSize(QSize(20, 20))
         # [첫 화면 재디자인 2026-10-07, 시안 2라운드 T3 채택] 아이콘만(T1)은 "알아보기 힘듦",
@@ -783,6 +785,9 @@ class _UIBuildMixin:
         ai_btn = tb.widgetForAction(self._act_ai_make)
         ai_btn.setObjectName("aiMakeBtn")
         ai_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        # [실사용 피드백 2026-10-11, 시안 A2] 혼자 너무 커서 글자만 「AI」로 줄인다(강조 모양은 그대로).
+        # 메뉴·툴팁은 「AI로 만들기」 그대로라 무엇인지는 알 수 있다.
+        self._act_ai_make.setIconText("AI")
 
         # 우측 정렬 스페이서 → 테마 → 도움말 (여백이 있을 때만 밀어냄 — 좁은 창에서는 그냥 이어짐).
         spacer = QWidget()
@@ -793,6 +798,45 @@ class _UIBuildMixin:
         for a in (self._act_theme, self._act_help):   # 오른쪽 끝 둘은 아이콘만(시안 그대로)
             tb.widgetForAction(a).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self._toolbar = tb
+        # [실사용 피드백 2026-10-11, 시안 T3 채택] 세로 구분선 대신 묶음(파일·편집·삽입·그리기·보기)마다 옅은 바탕.
+        # QToolBar엔 "버튼 묶음 바탕"이 없어 툴바를 그린 뒤 구분선 사이 버튼들의 범위를 둥근 사각으로 칠한다.
+        # ⚠ 반드시 None을 돌려주는 함수로 — 람다로 튜플을 돌려주면 PyQt6가 가상 함수 결과 오류로 앱을 강제 종료한다(실측 exit 127).
+        def _tb_paint(e, tb=tb):
+            QToolBar.paintEvent(tb, e)
+            try:
+                self._paint_toolbar_groups(tb)
+            except RuntimeError:   # 창이 닫히는 중(지워진 위젯) — 가상 함수 예외는 앱 강제 종료라 삼킨다
+                pass
+        tb.paintEvent = _tb_paint
+
+    def _toolbar_group_rects(self, tb) -> list:
+        """구분선으로 나뉜 묶음마다 보이는 버튼들을 감싸는 사각(툴바 좌표). 마지막 구분선 뒤(AI·테마·도움말)는 제외."""
+        groups, cur = [], []
+        for a in tb.actions():
+            if a.isSeparator():
+                groups.append(cur); cur = []
+                continue
+            w = tb.widgetForAction(a)
+            if w is not None and w.isVisible():
+                cur.append(w.geometry())
+        rects = []
+        for g in groups:
+            if g:
+                r = g[0]
+                for q in g[1:]:
+                    r = r.united(q)
+                r = r.adjusted(-3, 0, 3, 0)
+                rects.append(QRect(r.left(), max(r.top(), 3), r.width(), min(r.bottom(), tb.height() - 4) - max(r.top(), 3) + 1))
+        return rects
+
+    def _paint_toolbar_groups(self, tb):
+        p = QPainter(tb)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255, 13) if getattr(self, "_dark", True) else QColor(0, 0, 0, 11))
+        for r in self._toolbar_group_rects(tb):
+            p.drawRoundedRect(QRectF(r), 8, 8)
+        p.end()
 
     def _sync_view_toggle(self, act: QAction, btn: QToolButton):
         """보기 토글 버튼을 액션 상태에 맞춘다 — 뜻 아이콘(테마 중립색)·켜짐(코랄 바탕)·툴팁."""
@@ -1002,9 +1046,8 @@ class _UIBuildMixin:
         # 아이콘이 이미 양쪽 다 코랄로 확정돼(2라운드) 라이트만 블루로 남겨두면 아이콘·강조선
         # 색이 어긋난다(예전엔 "라이트는 스코프 밖"으로 블루 유지했던 결정을 여기서 통일).
         accent = "#da7756"
-        title_bg = "#232f3d" if dark else "#e8eef5"
+        title_bg = "#232f3d" if dark else "#e8eef5"   # 토스트 바탕(카드 제목 줄은 2026-10-11부터 띠 없음)
         # [첫 화면 재디자인 2026-10-07] 카드 제목 줄 밑줄은 코랄 대신 옅은 중립선(강조색은 의미 있는 상태에만)
-        sep_line = "#2f3a46" if dark else "#d3dbe3"
         # ⚠ [2026-07-31, 스턱루프 규칙 11-b — 3차 접근 전환] 속성 dock의 QSpinBox/QDoubleSpinBox
         # ("두께"·"폰트"·"반경")만 텍스트 디센더가 잘리는 버그 + (2차 시도인 setMinimumHeight
         # 이후) 그 행이 다음 행과 겹치는 새 증상까지 — 둘 다 근본원인은 같았다: `panel.
@@ -1017,8 +1060,8 @@ class _UIBuildMixin:
         # 그림) body 전체가 순정 Fusion 계산을 쓰게 하고, 제목줄 강조만 `_head`(body의 조상이
         # 아니라 형제)에 스타일시트로 남긴다.
         head_qss = (
-            f"#floatPanelHead {{ background:{title_bg}; border-top-left-radius:5px;"
-            f" border-top-right-radius:5px; border-bottom:1px solid {sep_line}; font-weight:600; }}"
+            # [실사용 피드백 2026-10-11, 시안 H3] 제목 띠 배경·밑줄 없이 큰 제목 글자(`_FloatingPanel`)로 위계
+            "#floatPanelHead { background:transparent; font-weight:600; }"
 )
         for panel in (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
                       getattr(self, "_minimap_panel", None), getattr(self, "_layers_panel", None),
@@ -1063,7 +1106,6 @@ class _UIBuildMixin:
         btn_qss = self._palette_accent_qss(dark)
         toolbar = getattr(self, "_toolbar", None)
         if toolbar is not None:
-            sep_color = "#3d4b5c" if dark else "#c9d3dc"
             # [2026-08-13 피드백] 패널 헤더의 코랄 하단선(위 head_qss)과 같은 언어를 상단
             # 툴바에도 — "이 아래부터 캔버스"를 앱 전체 크롬에 통일.
             # [첫 화면 재디자인 2026-10-07] 코랄 하단선은 뺀다 — 강조색은 "의미 있는 상태"에만
@@ -1074,7 +1116,8 @@ class _UIBuildMixin:
                                    else ("#fbefe9", "#e3b9a6", "#7a3a22"))
             toolbar.setStyleSheet(
                 "QToolBar { border:none; spacing:1px; }"
-                f"QToolBar::separator {{ background:{sep_color}; width:1px; margin:8px 6px; }}"
+                # [2026-10-11 시안 T3] 구분선 대신 묶음마다 옅은 바탕(`_paint_toolbar_groups`) — 구분선은 투명한 틈
+                "QToolBar::separator { background:transparent; width:12px; }"
                 + btn_qss
                 + "QToolBar QToolButton { font-size:11px; padding:2px 3px; }"
                 + 'QToolButton[viewToggle="true"] { font-size:12.5px; padding:1px 6px 1px 3px; }'
@@ -1828,7 +1871,7 @@ class _UIBuildMixin:
         fav = getattr(self, "_fav_section", None)
         if fav is not None:   # [2026-10-11] 즐겨찾기 칸은 옅은 코랄(★가 점 자리를 맡음) — 고른 색이 있으면 그 색(★도)
             c = QColor(chosen.get("favorites") or _ACCENT_CORAL)
-            fav.set_box(c, dark, dot=False)
+            fav.set_box(c, dark)
             fav.set_title_html(f"<span style='color:{c.name()}'>★</span> 즐겨찾기")
         for sec in (getattr(self, "_basic_section", None),):
             if sec is not None:   # 안 고르면 중립 칸(점 없음), 고르면 폴더처럼 색 점 + 옅은 칸
@@ -2521,10 +2564,11 @@ class _UIBuildMixin:
         # 바로 적용된다. 「선」 한 줄에 색 | 선 모양 | 두께.
         # [실사용 피드백 2026-10-11 후속] 골라도 목록은 열린 채 — 하나씩 바꿔 보며 비교하려면 닫히면 불편.
         # 닫기는 바깥 클릭·Esc·연 버튼 다시 누르기(`_PropPopup.mousePressEvent`).
-        self._pf_color_pop = _PropPopup(self, color_row)
-        self._pf_fill_pop = _PropPopup(self, fill_presets)
-        self._pf_style_pop = _PropPopup(self, style_row)
-        self._pf_width_pop = _PropPopup(self, width_row)
+        # [2026-10-11, 시안 S1+Lucid] 목록이 열린 동안은 선택 강조선을 숨겨 바꾼 선 색이 그대로 보이게.
+        self._pf_color_pop = _PropPopup(self, color_row, self._set_style_preview)
+        self._pf_fill_pop = _PropPopup(self, fill_presets, self._set_style_preview)
+        self._pf_style_pop = _PropPopup(self, style_row, self._set_style_preview)
+        self._pf_width_pop = _PropPopup(self, width_row, self._set_style_preview)
 
         def value_btn(tip, pop):
             b = QToolButton()
@@ -2697,6 +2741,7 @@ class _UIBuildMixin:
         if panel._collapsed:
             panel._set_collapsed(False, persist=False)   # 접기 버튼이 없으니 예전에 접어 둔 상태는 펼쳐 둔다
         head_l = panel._head.layout()
+        head_l.setSpacing(0)   # [2026-10-11 시안 H3] 카드 제목이 15px로 커져 192px 안에 넣으려고 버튼 사이 틈을 없앰(버튼 자체 여백이 있음)
 
         def _zbtn(text, tip, slot, w=20):
             b = QToolButton(); b.setText(text); b.setToolTip(tip)
