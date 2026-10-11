@@ -17,13 +17,13 @@ from PyQt6.QtWidgets import (
 
 from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
-    _ArrowItem, _PolyArrowItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _SYMBOL_KINDS,
+    _ArrowItem, _PolyArrowItem, _RectItem, _EllipseItem, _SymbolItem, _tool_icon, _SYMBOL_KINDS, _pen_style_icon,
     _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
 )
 from easycad.canvas.host_widgets import (
     _current_icon_color, _arrow_kind_of, _arrow_head_of, _apply_arrow_head, _is_rotatable,
 )
-from easycad.canvas.host_widgets import _TYPE_NAMES, _RECENT_COLOR_MAX, _ARROW_KIND_TOOL, _ColorGridPopup
+from easycad.canvas.host_widgets import _TYPE_NAMES, _RECENT_COLOR_MAX, _ARROW_KIND_TOOL, _ColorGridPopup, _place_popup, _swatch_icon
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
@@ -103,20 +103,7 @@ class _StyleMixin:
         둘의 인터페이스가 달라 보였다)."""
         pop = _ColorGridPopup(self, initial, allow_none, show_alpha, title, on_pick,
                               recent=self._recent_colors, on_custom_picked=self._remember_recent_color)
-        pop.adjustSize()
-        # [실사용 피드백 2026-10-11] 속성 카드가 화면 오른쪽 끝이라 「⋯」 아래 왼쪽 맞춤으로 띄우면
-        # 팝업 대부분이 화면 밖으로 나갔다 — 그 화면 안으로 밀어 넣고, 아래 자리가 없으면 위로 띄운다.
-        pos = anchor.mapToGlobal(QPoint(0, anchor.height() + 2))
-        screen = anchor.screen()
-        if screen is not None:
-            area = screen.availableGeometry()
-            x = max(area.left(), min(pos.x(), area.right() + 1 - pop.width()))
-            y = pos.y()
-            if y + pop.height() > area.bottom() + 1:
-                y = anchor.mapToGlobal(QPoint(0, 0)).y() - pop.height() - 2
-            pos = QPoint(x, max(area.top(), y))
-        pop.move(pos)
-        pop.show()
+        _place_popup(pop, anchor)   # 화면 밖으로 안 나가게(2026-10-11)
         self._last_color_popup = pop   # 테스트 훅 — 실사용 흐름엔 영향 없음
 
 
@@ -139,12 +126,13 @@ class _StyleMixin:
             "recent_colors", [c.name(QColor.NameFormat.HexArgb) for c in self._recent_colors])
 
 
-    def _edit_color(self):
+    def _edit_color(self, anchor: QWidget | None = None):
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_color")]
         if not sel:
             return
         init = self._read_props(sel[0])["color"] or QColor("#000000")
-        anchor = self.sender() if isinstance(self.sender(), QWidget) else self._pf_color
+        # [2026-10-11] 「다른 색…」은 펼침 목록 안에 있어 목록이 닫힌 뒤 열린다 — 카드의 현재 값 버튼 아래로
+        anchor = anchor or getattr(self, "_pf_color_btn", None) or self._pf_color
 
         def on_pick(col):
             if col is None:   # 선 색은 "없음" 미지원 — 팝업이 allow_none=False라 실제로 안 옴
@@ -155,7 +143,7 @@ class _StyleMixin:
         self._show_color_grid_popup(anchor, init, False, False, "색 선택", on_pick)
 
 
-    def _edit_fill(self):
+    def _edit_fill(self, anchor: QWidget | None = None):
         """[신규기능] 채움색 선택 — 스와치 클릭. 그리드 팝업의 "다른 색…"은 알파 채널 허용
         (반투명 채움, .ecad가 이미 HexArgb로 왕복 지원 — document.py 무변경).
         [버그 수정] 텍스트(_TextItem/_ConnectorLabel)는 apply_fill이 없어 이 스와치가 항상
@@ -176,7 +164,7 @@ class _StyleMixin:
                              if hasattr(it, "apply_fill") else it.set_bg(QColor(col)))
             self.current_fill = QColor(col)   # sticky
 
-        self._show_color_grid_popup(self._pf_fill, init, True, True, "채움색 선택", on_pick)
+        self._show_color_grid_popup(anchor or getattr(self, "_pf_fill_btn", None) or self._pf_fill, init, True, True, "채움색 선택", on_pick)
 
 
     # ---- [첫 화면 재디자인 2026-10-07, 시안 4라운드 P2] 색·채움 견본 ----
@@ -246,6 +234,31 @@ class _StyleMixin:
             ckey = c.name(QColor.NameFormat.HexArgb) if c is not None else None
             b.setStyleSheet(self._preset_css(c, fill_known and ckey == fkey))
             b.setToolTip("없음" if c is None else ckey)
+
+    def _sync_prop_value_buttons(self):
+        """[패널 통일 2라운드 2026-10-11] 카드의 「현재 값 버튼」(색·선 모양·두께·채움)을 펼침 목록 안 컨트롤 값에 맞춘다
+        — 값의 원본은 예전 그대로 그 컨트롤들(_pf_color_val·_pf_style·_pf_width·_pf_fill_val)."""
+        if not hasattr(self, "_pf_color_btn"):
+            return
+
+        def col_of(txt):
+            if txt.startswith("#"):
+                return QColor(txt), txt
+            if txt == "없음":
+                return None, "없음"
+            return QColor("#8a96a4"), txt   # 혼합·— 은 회색 견본
+        c, tip = col_of(self._pf_color_val.text())
+        self._pf_color_btn.setIcon(_swatch_icon(c)); self._pf_color_btn.setToolTip(f"선 색 — {tip}")
+        self._pf_color_btn.setEnabled(self._pf_color.isEnabled())
+        f, tip = col_of(self._pf_fill_val.text())
+        self._pf_fill_btn.setIcon(_swatch_icon(f)); self._pf_fill_btn.setToolTip(f"채움 — {tip}")
+        self._pf_fill_btn.setEnabled(self._pf_fill.isEnabled())
+        st = self._PEN_STYLE_ITEMS[max(0, self._pf_style.currentIndex())]
+        self._pf_style_btn.setIcon(_pen_style_icon(st[0], _current_icon_color(), 26, 10))
+        self._pf_style_btn.setToolTip(f"선 모양 — {st[1]}")
+        self._pf_style_btn.setEnabled(self._pf_style.isEnabled())
+        self._pf_width_btn.setText(f"{self._pf_width.value():g}px ▾")
+        self._pf_width_btn.setEnabled(self._pf_width.isEnabled())
 
     def _clear_fill(self):
         """채움을 투명으로(None) — 그리드 팝업의 "없음" 항목이 호출(요청③: 별도 외부 버튼
@@ -516,6 +529,7 @@ class _StyleMixin:
                          self._pf_dir_btn, self._pf_rotation, self._pf_fill_row):
                     self._props_form.setRowVisible(w, False)
                 self._sync_props_presets(None, None, False)
+                self._sync_prop_value_buttons()
                 # [첫 화면 재디자인 2026-10-07, 시안 1라운드 A] 아무것도 선택 안 했으면 카드를 숨긴다(안내문만
                 # 떠 있던 자리를 도면에). 사용자가 닫아 둔 경우(보기 메뉴)는 선택해도 계속 닫힌 채.
                 self._set_props_auto_visible(False)
@@ -662,6 +676,7 @@ class _StyleMixin:
             # 로 옮겼다 — 축소 방향(화살표→선택해제)에선 `_props_form.activate()`만으론 조상
             # 레이아웃(`_body_layout`·패널 자체 레이아웃) 캐시가 안 갱신돼 큰 크기에 눌어붙는
             # 별도 버그가 있었다(상세는 `_resize_props_panel` docstring).
+            self._sync_prop_value_buttons()
             self._resize_props_panel()
             self._reposition_panels()
             if curved:

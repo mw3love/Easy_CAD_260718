@@ -1244,6 +1244,72 @@ def _strip_color_dialog_left_column(dlg: QColorDialog):
         w.hide()
 
 
+def _place_popup(pop: QWidget, anchor: QWidget):
+    """팝업을 anchor 바로 아래 왼쪽 맞춤으로 띄우되 그 화면 안으로 밀어 넣고, 아래 자리가 없으면 위로.
+    [실사용 피드백 2026-10-11] 오른쪽 끝 속성 카드에서 색 「⋯」 팝업이 화면 밖으로 나갔다 — 팝업 공용으로 뺌."""
+    pop.adjustSize()
+    pos = anchor.mapToGlobal(QPoint(0, anchor.height() + 2))
+    screen = anchor.screen()
+    if screen is not None:
+        area = screen.availableGeometry()
+        x = max(area.left(), min(pos.x(), area.right() + 1 - pop.width()))
+        y = pos.y()
+        if y + pop.height() > area.bottom() + 1:
+            y = anchor.mapToGlobal(QPoint(0, 0)).y() - pop.height() - 2
+        pos = QPoint(x, max(area.top(), y))
+    pop.move(pos)
+    pop.show()
+
+
+class _PropPopup(QWidget):
+    """[패널 통일 2라운드 2026-10-11, 시안 2-4] 속성 카드의 「현재 값 버튼」을 누르면 펼쳐지는 작은 목록
+    (색 견본·선 모양·굵기 등). 안의 위젯은 예전에 카드에 펼쳐 두던 것 그대로 — 자주 안 바꾸는 속성은
+    카드엔 지금 값만 보이고(사용자 요청 "굳이 펼쳐둘 필요 없음"), 바꿀 때만 연다. 바깥 클릭이면 닫히는 Qt.Popup."""
+
+    def __init__(self, parent: QWidget, content: QWidget):
+        super().__init__(parent, Qt.WindowType.Popup)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setObjectName("propPopup")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.addWidget(content)
+        content.show()
+        self._follow_app_palette()
+
+    def _follow_app_palette(self):
+        # ⚠ 팝업은 별도 창이라 앱 팔레트 변경(테마 전환)이 부모를 타고 내려오지 않고, 스타일시트의 palette(window)도
+        # 걸 때 값으로 굳는다 — 라이트로 바꿔도 다크 배경·검정 보조 글씨로 남았다(실측). `_apply_theme`가 다시 부른다.
+        self.setPalette(QApplication.palette())
+        self.setStyleSheet(
+            "#propPopup { background-color: palette(window);"
+            " border: 1px solid palette(mid); border-radius: 6px; }")
+
+    def open_below(self, anchor: QWidget):
+        _place_popup(self, anchor)
+
+
+def _swatch_icon(color, w: int = 16, h: int = 16) -> QIcon:
+    """현재 값 버튼용 색 견본 — None이면 「없음」(빗금 한 줄), 반투명은 체크무늬 위에."""
+    pm = QPixmap(w, h); pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    r = QRectF(0.5, 0.5, w - 1, h - 1)
+    if color is not None and color.alpha() < 255:
+        for i in range(0, w, 4):
+            for j in range(0, h, 4):
+                if (i + j) // 4 % 2 == 0:
+                    p.fillRect(i, j, 4, 4, QColor("#9aa4ae"))
+    if color is not None:
+        p.setBrush(QBrush(color))
+    p.setPen(QPen(QColor("#6f7b88"), 1))
+    p.drawRoundedRect(r, 3, 3)
+    if color is None:
+        p.setPen(QPen(QColor("#e04848"), 1.6))
+        p.drawLine(QPointF(w - 3, 3), QPointF(3, h - 3))
+    p.end()
+    return QIcon(pm)
+
+
 class _ColorGridPopup(QWidget):
     """Office류 색 선택 팝업 — 무채색+기본색 그리드(밝기 3단) + 최근 사용한 색(다른 색에서
     고른 색, 최대 3개) + '다른 색…'(왼쪽 열을 숨긴 비-네이티브 QColorDialog, 선·채움 공통) +

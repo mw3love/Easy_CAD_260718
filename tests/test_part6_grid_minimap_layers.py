@@ -1808,12 +1808,16 @@ def test_props_card_hidden_without_selection_and_respects_closed():
         panel.set_panel_visible(True)
 
 
-def test_minimap_card_zoom_row_without_title():
-    """[첫 화면 재디자인 2026-10-07, 시안 4라운드 M2] 미니맵 카드는 제목 줄 없이 지도가 위, 아래 확대 줄
-    「− % ＋ · 전체 보기 · 100%」. %는 실제 배율을 따라가고, 누르면 100%. 닫기는 확대 줄 우클릭."""
+def test_minimap_card_zoom_buttons_in_title_row():
+    """[패널 통일 2라운드 2026-10-11, 시안 2-5] 미니맵도 제목 줄을 두고 그 옆에 「− % ＋ ⤢ 1:1」(4라운드 M2의
+    "제목 없이 아래 확대 줄"을 사용자 요청으로 바꿈). %는 실제 배율을 따라가고, 누르면 100%. 닫기는 제목 줄 우클릭."""
     w = CanvasWindow()
     w.show()
-    assert w._minimap_panel._head.isHidden()
+    head = w._minimap_panel._head
+    assert not head.isHidden() and w._minimap_panel._collapse_btn.isHidden()
+    assert all(head.isAncestorOf(b) for b in (w._zoom_out_btn, w._zoom_pct_lbl, w._zoom_in_btn,
+                                               w._zoom_fit_btn, w._zoom_100_btn))
+    assert w._minimap_panel.width() == w._props_panel.width()
     assert w._zoom_pct_lbl.text() == "100%"
     w._zoom_in_btn.click()
     assert w._zoom_pct_lbl.text() == f"{round(w._view.transform().m11() * 100)}%" != "100%"
@@ -1825,6 +1829,31 @@ def test_minimap_card_zoom_row_without_title():
     w._zoom_in_btn.click()
     w._zoom_pct_lbl.click()                              # % 누름 = 100%+가운데
     assert abs(w._view.transform().m11() - 1.0) < 1e-6
-    assert w._zoom_row.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+    assert w._zoom_row is head
     assert hasattr(w._minimap_panel, "_show_header_menu_at")
 
+
+
+def test_props_value_buttons_open_list_apply_and_close():
+    """[패널 통일 2라운드 2026-10-11, 시안 2-4] 색·선 모양·두께·채움은 카드에 지금 값만 보이는 버튼 — 누르면 견본·버튼
+    목록이 열리고, 하나 고르면 바로 적용되고 닫힌다. 버튼은 바뀐 값을 다시 보여 준다."""
+    w = CanvasWindow(); w.show()
+    r = _mk_pen_rect(w); r.setSelected(True)
+    w._refresh_properties()
+    assert not w._pf_color_pop.isVisible()
+    w._pf_width_btn.click()
+    assert w._pf_width_pop.isVisible()
+    w._pf_width_presets[3.0].click()
+    assert w._read_props(r)["width"] == 3.0
+    assert not w._pf_width_pop.isVisible()
+    assert w._pf_width_btn.text().startswith("3px")
+    w._pf_style_btn.click()
+    w._pf_style_btns[2].click()
+    assert not w._pf_style_pop.isVisible() and "점선" in w._pf_style_btn.toolTip()
+    w._pf_fill_btn.click()
+    w._pf_fill_presets[0].click()                          # 없음
+    assert w._read_props(r)["fill"] is None and "없음" in w._pf_fill_btn.toolTip()
+    w._pf_color_btn.click()
+    w._pf_color.click()                                    # 「…」 → 목록 닫고 색 그리드 팝업(값 버튼 아래)
+    assert not w._pf_color_pop.isVisible() and w._last_color_popup.isVisible()
+    w._last_color_popup.close()

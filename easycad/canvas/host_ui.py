@@ -31,6 +31,7 @@ from easycad.fileio.document import (
 from easycad.fileio import symbol_library
 from easycad.canvas import shortcuts
 from easycad.canvas.host_widgets import (
+    _PropPopup, _swatch_icon,
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
     _StaticSection, _SymbolFolderDropZone, _apply_native_titlebar_scheme,
@@ -466,11 +467,8 @@ class _UIBuildMixin:
         panel = getattr(self, "_minimap_panel", None)
         if panel is not None:
             pct = round(self._view.transform().m11() * 100)
-            full = f"미니맵 ({pct}%)"
-            avail_w = max(40, (self._props_panel.width() or 228) - 57)  # 57≈전체맞춤+접기 버튼·여백
-            elided = panel._title_lbl.fontMetrics().elidedText(
-                full, Qt.TextElideMode.ElideRight, avail_w)
-            panel._title_lbl.setText(elided)   # [2026-10-07] 제목 줄은 숨겼지만 글자는 유지(테스트·접근성)
+            # [2026-10-11] 배율은 제목 옆 % 버튼이 보여 준다 — 제목은 「미니맵」만.
+            panel._title_lbl.setText("미니맵")
             pct_lbl = getattr(self, "_zoom_pct_lbl", None)
             if pct_lbl is not None:
                 pct_lbl.setText(f"{pct}%")
@@ -857,6 +855,8 @@ class _UIBuildMixin:
             # 패널·버튼·제목/토스트 텍스트는 다크 색 그대로 남아 안 보이던 원인. `_dark_palette()`처럼
             # 고정 색 팔레트(`_light_palette()`)로 OS 설정과 무관하게 만들어 해결.
             app.setPalette(_dark_palette() if dark else _light_palette())
+        for pop in self.findChildren(_PropPopup):   # [2026-10-11] 별도 창이라 앱 팔레트가 안 내려온다(실측)
+            pop._follow_app_palette()
         # [§8 항목10 실사용 버그 수정, 2026-08-18] self._scene(활성 탭만)이 아니라 열려 있는
         # 모든 탭의 씬을 칠한다 — 안 그러면 배경 탭들은 테마를 토글해도 여전히 예전 색으로
         # 남는다(활성 탭에서 토글해도 다른 탭까지 정상화되어야 함). _apply_theme가 처음 불릴
@@ -967,9 +967,11 @@ class _UIBuildMixin:
                    f"QToolButton:checked {{ background:{seg_on}; border-color:{seg_ring}; }}")
         for b in (list(getattr(self, "_pf_style_btns", []))
                   + list(getattr(self, "_pf_width_presets", {}).values())
-                  + [getattr(self, n) for n in ("_zoom_out_btn", "_zoom_in_btn", "_zoom_fit_btn",
-                                                 "_zoom_100_btn") if hasattr(self, n)]):
+                  + [getattr(self, n) for n in ("_pf_color_btn", "_pf_style_btn", "_pf_width_btn", "_pf_fill_btn")
+                     if hasattr(self, n)]):
             b.setStyleSheet(seg_qss)
+        if hasattr(self, "_zoom_fit_btn"):   # [2026-10-11] 미니맵 제목 줄의 확대 버튼은 테두리 없이, 아이콘만 다시 칠함
+            self._zoom_fit_btn.setIcon(_svg_icon("zoom_fit", 14, _current_icon_color()))
         # 견본 첫 칸(기본 잉크색)과 고리 색이 테마를 따르므로 선택 중이면 속성 카드를 다시 채운다.
         if getattr(self, "_pf_color_presets", None) and getattr(self, "_props_form", None) is not None:
             self._refresh_properties()
@@ -2226,11 +2228,12 @@ class _UIBuildMixin:
         # 재현됐다(실측: 폭170→avail_w 113px vs 필요 120px). 190이면 여유(avail_w 133px)가
         # 넉넉해 오프스크린·네이티브 폰트 모두 안전. 힌트 라벨의 최대폭도 이 값과 맞춰야
         # 한다(다음 줄 주석 참조), 그래서 매직넘버를 한 곳에만 둔다.
-        _PROPS_MIN_W = 190
+        # [패널 통일 2라운드 2026-10-11] 왼쪽 카드와 같은 192px — 자주 안 바꾸는 속성을 「현재 값 버튼」으로 접어 들어간다.
+        _PROPS_MIN_W = _LEFT_PANEL_W - 3   # 카드 테두리·여백 3px를 빼야 바깥 폭이 왼쪽 카드와 같은 192(실측)
         content = QWidget()
         content.setMinimumWidth(_PROPS_MIN_W)
         form = QFormLayout(content)
-        form.setContentsMargins(10, 10, 10, 10); form.setSpacing(8)
+        form.setContentsMargins(8, 8, 8, 8); form.setSpacing(7)
 
         # [실사용 피드백 2026-08-20] '종류'(읽기전용 라벨)와 '도형 바꾸기' 버튼을 한 행으로
         # 통합 — 바꿀 수 있는 도형(사각형/원/심볼)이 단일선택되면 이 행 자체가 현재 종류를
@@ -2258,7 +2261,7 @@ class _UIBuildMixin:
         self._pf_color.setText("…")
         self._pf_color.setFixedSize(QSize(22, 20))
         self._pf_color.setToolTip("다른 색 고르기")
-        self._pf_color.clicked.connect(self._edit_color)
+        self._pf_color.clicked.connect(lambda: (self._pf_color_pop.hide(), self._edit_color()))
         self._pf_color_val = QLabel("—")
         self._pf_color_val.setForegroundRole(QPalette.ColorRole.PlaceholderText)   # [UI 검토 2026-09-25] #888 대비 미달
         self._pf_color_val.hide()
@@ -2279,11 +2282,11 @@ class _UIBuildMixin:
         self._pf_fill.setText("…")
         self._pf_fill.setFixedSize(QSize(22, 20))
         self._pf_fill.setToolTip("다른 채움색 고르기")
-        self._pf_fill.clicked.connect(self._edit_fill)
+        self._pf_fill.clicked.connect(lambda: (self._pf_fill_pop.hide(), self._edit_fill()))
         self._pf_fill_val = QLabel("—")
         self._pf_fill_val.setForegroundRole(QPalette.ColorRole.PlaceholderText)
         self._pf_fill_val.hide()
-        self._pf_fill_row = fill_row = QWidget(); fh = QHBoxLayout(fill_row)
+        fill_presets = QWidget(); fh = QHBoxLayout(fill_presets)
         fh.setContentsMargins(0, 0, 0, 0); fh.setSpacing(3)
         self._pf_fill_presets: list[QToolButton] = []
         for i in range(8):
@@ -2350,11 +2353,50 @@ class _UIBuildMixin:
         # [실사용 피드백 2026-08-21] 항목 순서 — 종류(무엇인지) → 채움·색(같은 '색' 계열,
         # 면적이 넓은 채움을 먼저) → 선(선의 형태부터 정한 뒤) → 두께(그 선을 얼마나 굵게,
         # 연속값 다듬기라 선 바로 다음) → 폰트(텍스트 전용, 도형 축과 무관해 맨 뒤).
+        # [패널 통일 2라운드 2026-10-11, 시안 2-4] 색·채움·선 모양·두께는 자주 바꾸지 않아(사용자) 카드엔 지금 값만 보이는
+        # 버튼으로 두고, 누르면 예전에 펼쳐 두던 견본·버튼 줄이 작은 목록(`_PropPopup`)으로 열린다. 견본 하나를 고르면
+        # 바로 적용되고 목록이 닫힌다. 「선」 한 줄에 색 | 선 모양 | 두께.
+        self._pf_color_pop = _PropPopup(self, color_row)
+        self._pf_fill_pop = _PropPopup(self, fill_presets)
+        self._pf_style_pop = _PropPopup(self, style_row)
+        self._pf_width_pop = _PropPopup(self, width_row)
+        for pop, btns in ((self._pf_color_pop, self._pf_color_presets),
+                          (self._pf_fill_pop, self._pf_fill_presets),
+                          (self._pf_style_pop, self._pf_style_btns),
+                          (self._pf_width_pop, list(self._pf_width_presets.values()))):
+            for b in btns:
+                b.clicked.connect(pop.hide)
+
+        def value_btn(tip, pop):
+            b = QToolButton()
+            b.setToolTip(tip)
+            b.setFixedHeight(24)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            b.setProperty("propSeg", True)
+            b.clicked.connect(lambda _c=False, b=b, pop=pop: pop.open_below(b))
+            return b
+        self._pf_color_btn = value_btn("선 색", self._pf_color_pop)
+        self._pf_color_btn.setIconSize(QSize(16, 16)); self._pf_color_btn.setText("▾")
+        self._pf_style_btn = value_btn("선 모양", self._pf_style_pop)
+        self._pf_style_btn.setIconSize(QSize(26, 10)); self._pf_style_btn.setText("▾")
+        self._pf_width_btn = value_btn("두께", self._pf_width_pop)
+        self._pf_width_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._pf_fill_btn = value_btn("채움", self._pf_fill_pop)
+        self._pf_fill_btn.setIconSize(QSize(16, 16)); self._pf_fill_btn.setText("▾")
+        # 폭 고정 — 글꼴이 넓게 잡히는 환경에서 버튼이 카드를 밀어 넓히지 않게(오프스크린 실측 227px 줄)
+        for b, bw in ((self._pf_color_btn, 38), (self._pf_style_btn, 52), (self._pf_width_btn, 50),
+                      (self._pf_fill_btn, 38)):
+            b.setFixedWidth(bw)
+        line_row = QWidget(); lh = QHBoxLayout(line_row)
+        lh.setContentsMargins(0, 0, 0, 0); lh.setSpacing(3)
+        lh.addWidget(self._pf_color_btn); lh.addWidget(self._pf_style_btn); lh.addWidget(self._pf_width_btn)
+        lh.addStretch(1)
+        self._pf_fill_row = QWidget(); frh = QHBoxLayout(self._pf_fill_row)
+        frh.setContentsMargins(0, 0, 0, 0)
+        frh.addWidget(self._pf_fill_btn); frh.addStretch(1)
         form.addRow("종류", self._pf_type_stack)
-        form.addRow("채움", fill_row)
-        form.addRow("색", color_row)
-        form.addRow("선", style_row)
-        form.addRow("두께", width_row)
+        form.addRow("선", line_row)
+        form.addRow("채움", self._pf_fill_row)
         form.addRow("폰트", self._pf_font)
 
         # [미니패널 통합, 2026-07-31] 선택 위를 따라다니던 플로팅 컨텍스트 툴바(M3 #15)를
@@ -2471,24 +2513,13 @@ class _UIBuildMixin:
         """메인과 같은 scene을 공유하는 축소 뷰. 내용 갱신은 Qt가 자동(멀티뷰) — 여기선 메인
         뷰의 줌/팬/리사이즈(scene.changed를 안 타는 순수 뷰 변환) 시점에만 명시적으로 미니맵을
         다시 그리도록 훅을 건다."""
-        panel = _FloatingPanel(self, "미니맵 (100%)", "minimap")
+        panel = _FloatingPanel(self, "미니맵", "minimap")
         self._minimap_panel = panel
         # [줌 배지 통합 2026-08-01, 사용자 요청 2차] 처음엔 독립 배지 → 미니맵 하단 푸터 행으로
         # 옮겼다가, "숫자를 '미니맵(50%)'처럼 제목에 표기하고 그 %를 클릭하면 100%+정중앙
         # 이동"이라는 후속 요청으로 한 번 더 바뀌었다 — 별도 배지 위젯 없이 제목 자체가 표기와
         # 클릭을 겸한다(`set_title_click`). 지도 위 오버레이로 그리지 않는 이유는 그대로다:
         # 2026-07-28 미니맵 인디케이터 이중변환 사고 같은 좌표계 버그를 또 만들 여지를 피한다.
-        panel.set_title_click(self._zoom_reset)
-        # [사용자 요청 2026-08-01] 전체 맞춤(Ctrl+9)을 상단바에서 빼고 여기로 이관 — 공간
-        # 개요라는 같은 맥락(미니맵도 "전체가 어디 있나"를 보여주는 도구). 기존 `_act_fit`을
-        # 그대로 재사용해(아이콘·툴팁·단축키 동기화 유지) 제목과 접기버튼 사이에 끼운다.
-        fit_btn = QToolButton()
-        fit_btn.setDefaultAction(self._act_fit)
-        fit_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        fit_btn.setAutoRaise(True)
-        fit_btn.setFixedSize(QSize(18, 18))
-        fit_btn.setIconSize(QSize(14, 14))
-        panel._head.layout().insertWidget(1, fit_btn)
         self._minimap = _MinimapView(self, self._scene)
         # [폭 통일 2026-08-01, 사용자 요청] 옛 228×128 고정폭이 속성 패널(콘텐츠 기준 ~200px대)
         # 보다 넓어 두 패널이 나란히 있을 때 튀어 보였다 — 미니맵 폭을 속성 패널 폭에 맞춘다.
@@ -2500,43 +2531,37 @@ class _UIBuildMixin:
         self._minimap.setFixedSize(QSize(w0, round(w0 * 9 / 16)))
         panel.set_content(self._minimap)
 
-        # [첫 화면 재디자인 2026-10-07, 시안 4라운드 M2] 제목 줄 없이 지도가 맨 위(지도 클릭이 제목 줄을 안 거침),
-        # 아래에 확대 줄 「− % ＋ · 전체 보기 · 100%」(상단바에서 뺀 둘이 여기로, 사용자 결정). 제목 줄과 함께
-        # 접기 버튼·헤더 우클릭 「닫기」가 사라지므로 닫기는 확대 줄 우클릭으로 옮긴다(보기 메뉴로 다시 열기는 그대로).
-        panel._head.hide()
+        # [패널 통일 2라운드 2026-10-11, 시안 2-5] 다른 카드처럼 제목 줄을 두고 그 옆에 확대 버튼 「− % ＋ ⤢ 1:1」
+        # (4라운드 M2의 "제목 없이 지도 위·확대 줄 아래"를 사용자 요청으로 바꿈 — 한 줄이 줄어 지도 칸이 그대로).
+        # 192px에 들어가게 「전체 보기」·「100%」 글자는 아이콘·「1:1」로, 접기 버튼은 뺀다(M2부터 없던 것).
+        panel._collapse_btn.hide()
         if panel._collapsed:
             panel._set_collapsed(False, persist=False)   # 접기 버튼이 없으니 예전에 접어 둔 상태는 펼쳐 둔다
-        zoom_row = QWidget()
-        # 확대 줄이 카드 폭을 정하지 않게(폭은 지도 = 속성 카드 폭) — 도형·심볼 카드 제목 줄과 같은 이유.
-        zoom_row.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        zr = QHBoxLayout(zoom_row)
-        zr.setContentsMargins(6, 4, 6, 6); zr.setSpacing(3)
+        head_l = panel._head.layout()
 
-        def _zbtn(text, tip, slot):
+        def _zbtn(text, tip, slot, w=20):
             b = QToolButton(); b.setText(text); b.setToolTip(tip)
-            b.setFixedHeight(24); b.setProperty("propSeg", True)
+            b.setAutoRaise(True); b.setFixedSize(QSize(w, 20))
             b.clicked.connect(slot)
             return b
         self._zoom_out_btn = _zbtn("−", "축소", lambda: self._on_wheel_zoom(-1))
         self._zoom_pct_lbl = QToolButton()
         self._zoom_pct_lbl.setAutoRaise(True)
         self._zoom_pct_lbl.setToolTip("누르면 100% + 내용 가운데로")
-        self._zoom_pct_lbl.setMinimumWidth(44)
-        _f = self._zoom_pct_lbl.font(); _f.setBold(True); self._zoom_pct_lbl.setFont(_f)
+        self._zoom_pct_lbl.setFixedSize(QSize(38, 20))
+        _f = self._zoom_pct_lbl.font(); _f.setBold(True); _f.setPixelSize(11); self._zoom_pct_lbl.setFont(_f)
         self._zoom_pct_lbl.clicked.connect(self._zoom_reset)
         self._zoom_pct_lbl.setText(f"{round(self._view.transform().m11() * 100)}%")   # 첫 표시(이후는 _update_zoom_label)
         self._zoom_in_btn = _zbtn("＋", "확대", lambda: self._on_wheel_zoom(1))
-        self._zoom_fit_btn = _zbtn("전체 보기", "도면 전체가 보이게(Ctrl+9)", self._act_fit.trigger)
-        self._zoom_100_btn = _zbtn("100%", "실제 크기(1:1)", self._act_zoom100.trigger)
-        for b in (self._zoom_out_btn, self._zoom_pct_lbl, self._zoom_in_btn):
-            zr.addWidget(b)
-        zr.addStretch(1)
-        zr.addWidget(self._zoom_fit_btn); zr.addWidget(self._zoom_100_btn)
-        zoom_row.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        zoom_row.customContextMenuRequested.connect(
-            lambda pos, z=zoom_row: panel._show_header_menu_at(z.mapToGlobal(pos)))
-        self._zoom_row = zoom_row
-        panel.set_content(zoom_row)
+        self._zoom_fit_btn = _zbtn("", "전체 보기 — 도면 전체가 보이게(Ctrl+9)", self._act_fit.trigger, 22)
+        self._zoom_fit_btn.setIcon(_svg_icon("zoom_fit", 14, _current_icon_color()))
+        self._zoom_fit_btn.setIconSize(QSize(14, 14))
+        self._zoom_100_btn = _zbtn("1:1", "실제 크기(100%)", self._act_zoom100.trigger, 24)
+        _f2 = self._zoom_100_btn.font(); _f2.setPixelSize(10); _f2.setBold(True); self._zoom_100_btn.setFont(_f2)
+        for i, b in enumerate((self._zoom_out_btn, self._zoom_pct_lbl, self._zoom_in_btn,
+                               self._zoom_fit_btn, self._zoom_100_btn)):
+            head_l.insertWidget(1 + i, b)
+        self._zoom_row = panel._head   # 확대 버튼 줄 = 제목 줄(우클릭 「닫기」도 제목 줄 메뉴 그대로)
 
         self._view.horizontalScrollBar().valueChanged.connect(self._refresh_minimap)
         self._view.verticalScrollBar().valueChanged.connect(self._refresh_minimap)

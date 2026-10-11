@@ -216,7 +216,8 @@ def test_floating_panels_and_zoom_readout():
     w._set_palette_view("list")
     # 속성 패널은 값(hex)이 안 잘리는 최소폭 바닥을 가진다(슬랙 없이 그 아래로 못 좁힘).
     # [2026-08-20] 170→190 — 힌트 라벨 최대폭과 맞춰 선택 유무에 따른 패널 폭 요동을 없앰.
-    assert w._props_panel._body_layout.itemAt(0).widget().minimumWidth() == 190
+    from easycad.canvas.host_ui import _LEFT_PANEL_W
+    assert w._props_panel._body_layout.itemAt(0).widget().minimumWidth() == _LEFT_PANEL_W - 3   # [2026-10-11] 192px 카드
     # 패널은 창 리사이즈 후에도 뷰 영역 안쪽에 고정 위치(자유 드래그 없음의 반대증거).
     w.resize(1400, 900)
     w._reposition_panels()
@@ -225,13 +226,13 @@ def test_floating_panels_and_zoom_readout():
     assert w._layers_panel.pos().y() > w._left_panel.pos().y()    # 도형 아래(하단)
     assert w._layers_panel.width() == w._left_panel.width()       # 폭 동기화(사용자 요청)
     assert w._props_panel.pos().x() < w.width()
-    # 줌 % 리드아웃 — 독립 배지가 아니라 미니맵 패널 제목에 "미니맵 (100%)"로 표기된다
-    # (2026-08-01, 사용자 요청 — 제목 클릭이 곧 100%+정중앙 이동, test_zoom_title_click_recenters).
-    assert w._minimap_panel._title_lbl.text() == "미니맵 (100%)"
+    # 줌 % 리드아웃 — [2026-10-11] 미니맵 제목 줄의 % 버튼(제목은 「미니맵」만, 시안 2-5).
+    assert w._minimap_panel._title_lbl.text() == "미니맵"
+    assert w._zoom_pct_lbl.text() == "100%"
     w._on_wheel_zoom(120)
-    assert w._minimap_panel._title_lbl.text() != "미니맵 (100%)"
+    assert w._zoom_pct_lbl.text() != "100%"
     w._zoom_reset()
-    assert w._minimap_panel._title_lbl.text() == "미니맵 (100%)"
+    assert w._zoom_pct_lbl.text() == "100%"
 
 
 
@@ -1848,7 +1849,8 @@ def test_properties_panel_grows_when_row_count_increases():
     rect.setFlags(rect.GraphicsItemFlag.ItemIsSelectable | rect.GraphicsItemFlag.ItemIsMovable)
     w._scene.addItem(rect); rect.setSelected(True)
     rect_h = w._props_panel.height()
-    assert w._pf_width.geometry().height() >= 20   # 잘림 없는 정상 높이
+    # [2026-10-11] 두께는 「현재 값 버튼」(숫자칸은 펼침 목록 안) — 버튼이 짓눌리지 않는지 본다
+    assert w._pf_width_btn.geometry().height() >= 20   # 잘림 없는 정상 높이
 
     w._scene.clearSelection()
     ar = _PolyArrowItem(QColor("#111111"), 3.0, True)
@@ -1856,7 +1858,7 @@ def test_properties_panel_grows_when_row_count_increases():
     w._scene.addItem(ar); ar.setSelected(True)
     arrow_h = w._props_panel.height()
     assert arrow_h > rect_h   # 화살표는 행이 2개 더 많아 패널이 더 커야 한다
-    assert w._pf_width.geometry().height() >= 20   # 행이 늘어도 두께 행은 짓눌리지 않는다
+    assert w._pf_width_btn.geometry().height() >= 20   # 행이 늘어도 두께 버튼은 짓눌리지 않는다
 
     # [2026-08-01, 실사용자 스크린샷 재현] 화살표(9행)를 본 뒤 선택을 해제하면, 그 큰 크기가
     # 그대로 눌어붙어 빈 공간만 길게 남는 축소 방향 회귀가 있었다 — 반드시 선택 없는 기본
@@ -2372,7 +2374,8 @@ def test_arrow_head_dxf_export_no_crash():
 
 
 def test_properties_panel_row_order():
-    """[실사용 피드백 2026-08-21] 기본 6항목 순서 — 종류→채움→색→선→두께→폰트."""
+    """[실사용 피드백 2026-08-21] 기본 항목 순서. [2026-10-11, 시안 2-4] 색·선 모양·두께가 「선」 한 줄의
+    현재 값 버튼으로 합쳐져 종류→선→채움→폰트."""
     w = CanvasWindow()
     form = w._props_form
     order = []
@@ -2380,8 +2383,9 @@ def test_properties_panel_row_order():
         label_item = form.itemAt(i, form.ItemRole.LabelRole)
         if label_item is not None and label_item.widget() is not None:
             order.append(label_item.widget().text())
-    idx = {name: order.index(name) for name in ("종류", "채움", "색", "선", "두께", "폰트")}
-    assert idx["종류"] < idx["채움"] < idx["색"] < idx["선"] < idx["두께"] < idx["폰트"]
+    idx = {name: order.index(name) for name in ("종류", "선", "채움", "폰트")}
+    assert idx["종류"] < idx["선"] < idx["채움"] < idx["폰트"]
+    assert "색" not in order and "두께" not in order
 
 
 def test_properties_panel_arrow_head_row_and_undo():
