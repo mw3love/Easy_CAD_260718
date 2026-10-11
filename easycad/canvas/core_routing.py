@@ -450,9 +450,10 @@ def _short_stub_count(full, ns, ne, min_stub):
 def _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, rung=0,
                  min_stub=(0.0, 0.0)):
     """경로 품질 점수 — 작을수록 좋다(사전식 비교).
-      (도형관통, 연결도형재진입, 타기길이, 화살표교차, 짧은화살촉구간, 정점수, 여유칸, 총길이)
-    [2026-10-11] '짧은화살촉구간'을 정점수 앞에 둬, 꺾임 하나 줄이자고 화살촉 앞 직선을
-    min_stub 밑으로 줄인 후보가 이기지 못하게 한다.
+      (도형관통, 연결도형재진입, 타기길이, 화살표교차, 정점수, 짧은스텁, 여유칸, 총길이)
+    [2026-10-11] '짧은스텁'을 여유칸 앞에 둬, 꺾임 수가 같으면 스텁이 min_stub을 채운 후보가 이긴다.
+    정점수보다는 뒤 — 두 도형 사이가 좁아 스텁을 다 채우면 나갔다 되돌아오는 꺾임이 생기는
+    배치에선 짧은 스텁 Z자가 이겨야 한다(test_sarrow_no_unnecessary_hump_on_reenter_fix).
     여유칸(rung)을 총길이보다 앞에 둬, 결함 없는 후보들 중에서는 '넉넉한 여유'를 고른다
     (_CONN_CLEAR_MULT의 실조건 피드백 '변에 바짝 붙으면 답답' 유지)."""
     full = _dedup_pts([s] + list(mids) + [e])
@@ -464,8 +465,8 @@ def _route_score(mids, s, e, ns, ne, infl, conn_orig, conn_pairs, avoid_segs, ru
         1 if (conn_orig and _path_hits_rects(full, conn_orig)) else 0,
         round(_path_ride_len(full, conn_pairs, ns, ne), 1) if conn_pairs else 0.0,
         crossings,
-        _short_stub_count(full, ns, ne, min_stub),
         len(full),
+        _short_stub_count(full, ns, ne, min_stub),
         rung,
         round(_path_manhattan_len(full), 1),
     )
@@ -555,9 +556,11 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
             gap = abs(e.x() - s.x()) if ns_h else abs(e.y() - s.y())
             own_push = min(conn_clear, gap / 2.0)
     # [2026-10-11] 스텁 바닥 — 단 위 '마주보는 좁은 간격' 상한(gap/2)은 넘지 않는다(하이핀 방지 우선).
+    # [같은 날 2차 피드백] 도형에 붙은 끝은 사다리 rung과 무관하게 늘 conn_clear — 좁은 rung(12·1·0)은
+    # 장애물 여유만 줄이고 스텁은 안 줄인다. 그래야 배치를 조금 옮겨도 꺾임 위치가 36↔25로 튀지 않는다.
     stub_cap = own_push if own_push < conn_clear else float("inf")
-    floor_s = min(float(min_stub[0]), stub_cap)
-    floor_e = min(float(min_stub[1]), stub_cap)
+    floor_s = min(max(float(min_stub[0]), conn_clear if own_s is not None else 0.0), stub_cap)
+    floor_e = min(max(float(min_stub[1]), conn_clear if own_e is not None else 0.0), stub_cap)
 
     def _own_stub(p, n, rect, floor):
         if rect is None:
@@ -594,10 +597,15 @@ def _route_ortho(s: QPointF, e: QPointF, ns, ne, obstacles, clearance=12.0,
             if r is None or cc is None:
                 return None
             return r.adjusted(-cc, -cc, cc, cc)
-        s2 = _normal_stub(s, ns, max(push, floor_s), own(0))
-        e2 = _normal_stub(e, ne, max(push, floor_e), own(1))
-        for a, b, pre, post in ((s2, e2, [] if s2 == s else [s2], [] if e2 == e else [e2]),
-                                (s, e, [], [])):
+        # [2026-10-11] 바닥(floor)을 채운 스텁부터, 바닥이 push보다 크면 예전 짧은 스텁도 후보로 —
+        # 자리가 있으면 점수(짧은스텁)가 긴 쪽을, 없으면(되돌아오는 꺾임) 정점수가 짧은 쪽을 고른다.
+        tries = []
+        for fs, fe in ((floor_s, floor_e), (0.0, 0.0)):
+            s2 = _normal_stub(s, ns, max(push, fs), own(0))
+            e2 = _normal_stub(e, ne, max(push, fe), own(1))
+            if (s2, e2) not in [(x, y) for x, y, _p, _q in tries]:
+                tries.append((s2, e2, [] if s2 == s else [s2], [] if e2 == e else [e2]))
+        for a, b, pre, post in tries + [(s, e, [], [])]:
             interior = _astar_ortho(a, b, obst, clearance,
                                     avoid_segs=avoid_segs, cross_penalty=cross_penalty)
             if interior is not None:

@@ -2546,3 +2546,17 @@ def test_ortho_arrow_head_keeps_min_straight_before_bend():
     last = abs(pts[-1].x() - pts[-2].x()) + abs(pts[-1].y() - pts[-2].y())
     assert last >= floor - 0.5, (pts, floor)
     assert len(pts) == 4, pts   # 꺾임 수는 그대로(우회 혹 없음)
+
+
+def test_ortho_arrow_head_stub_constant_across_positions():
+    # [같은 날 2차 피드백] 도착 도형을 위아래로 옮길 때 여유 구역 경계를 넘나들면 스텁이 36↔25로
+    # 튀었다 — 도형에 붙은 끝의 스텁은 사다리 rung과 무관하게 늘 conn_clear(36)여야 한다.
+    from easycad.canvas.annotator_core import _route_ortho, _dedup_pts
+    a = QRectF(0, 0, 120, 120)
+    for by in range(20, 160, 10):
+        b = QRectF(194, by, 120, 120)
+        s, e = QPointF(120, 60), QPointF(314, by + 60)
+        mids = _route_ortho(s, e, QPointF(1, 0), QPointF(1, 0), [], 12.0,
+                            conn_rects=(a, b), min_stub=(0.0, 25.0))
+        pts = _dedup_pts([s] + mids + [e])
+        assert abs((pts[-2].x() - e.x()) - 36.0) < 0.5, (by, pts)
