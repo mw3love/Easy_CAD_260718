@@ -1408,9 +1408,8 @@ def test_properties_panel_fill_row():
 
 
 def test_edit_fill_and_clear_fill_sticky():
-    # _edit_fill이 그리드 팝업을 띄우고, "다른 색…"(알파 지원 QColorDialog, 실제 exec는
-    # 모킹) 경로가 undo 저널 + sticky current_fill 둘 다 갱신. _clear_fill은 팝업 "없음"
-    # 항목이 호출하는 메서드.
+    # [2026-10-11 후속] 속성 카드 「⋯」(_edit_fill) = 바로 「다른 색」 창(알파 지원 QColorDialog, 실제 exec는
+    # 모킹) — undo 저널 + sticky current_fill 둘 다 갱신. _clear_fill은 견본 첫 칸 「없음」이 호출하는 메서드.
     from PyQt6.QtCore import QSettings
     from PyQt6.QtWidgets import QColorDialog
     app_settings().remove("recent_colors")
@@ -1419,8 +1418,7 @@ def test_edit_fill_and_clear_fill_sticky():
     orig_exec = QColorDialog.exec
     try:
         QColorDialog.exec = _mock_color_dialog_exec(QColor("#123456"))
-        w._edit_fill()
-        w._last_color_popup._pick_other()   # "다른 색…" 클릭 시뮬레이션
+        w._edit_fill()                       # 중간 그리드 팝업 없이 바로 창
     finally:
         QColorDialog.exec = orig_exec
     assert r.brush().color().name() == "#123456"
@@ -1467,12 +1465,12 @@ def test_color_dialog_left_column_stripped_for_alpha():
 
 def test_color_grid_popup_fill_has_none_item_color_does_not():
     # [요청③] "없음"은 채움 전용 — 팝업 안 항목으로만 존재, 선 색 팝업엔 안 뜬다.
+    # [2026-10-11 후속] 속성 카드는 더 이상 그리드 팝업을 안 쓰지만(「⋯」=바로 창) 팝업 자체의 계약은 유지.
     w = CanvasWindow()
-    r = _mk_pen_rect(w); r.setSelected(True)
-    w._edit_fill()
+    w._show_color_grid_popup(w, QColor("#fff"), True, True, "채움", lambda c: None)
     fill_pop = w._last_color_popup
     assert any(b.text() == "Ø" for b in fill_pop.findChildren(QToolButton))
-    w._edit_color()
+    w._show_color_grid_popup(w, QColor("#000"), False, False, "색", lambda c: None)
     color_pop = w._last_color_popup
     assert not any(b.text() == "Ø" for b in color_pop.findChildren(QToolButton))
 
@@ -1501,28 +1499,25 @@ def test_color_grid_popup_swatch_click_applies_immediately():
     # 열 구성: 무채색 1 + 유채색 6 + 최근색 1 = 8열 x 3행. 각 열은 위→아래 표준→연한→어두움
     # 순(2026-07-31 재배치) — 무채색 열의 "표준"은 회색.
     w = CanvasWindow()
-    r = _mk_pen_rect(w); r.setSelected(True)
-    w._edit_fill()
+    picked = []
+    w._show_color_grid_popup(w, QColor("#fff"), True, True, "채움", picked.append)
     pop = w._last_color_popup
     swatches = [b for b in pop.findChildren(QToolButton) if b.text() not in ("Ø", "다른 색…")]
     assert len(swatches) == 8 * 3
     swatches[0].click()   # 무채색 열의 첫 행 = 표준(회색)
-    assert r.brush().color().name() == QColor("#9E9E9E").name()
-    assert w.current_fill.name() == QColor("#9E9E9E").name()
+    assert picked[0].name() == QColor("#9E9E9E").name()
 
 
 
 
 def test_color_grid_popup_none_item_clears_fill():
     w = CanvasWindow()
-    r = _mk_pen_rect(w); r.setSelected(True)
-    r.apply_fill(QColor("#123456"))
-    w._edit_fill()
+    picked = []
+    w._show_color_grid_popup(w, QColor("#123456"), True, True, "채움", picked.append)
     pop = w._last_color_popup
     none_btn = next(b for b in pop.findChildren(QToolButton) if b.text() == "Ø")
     none_btn.click()
-    assert r.brush().style() == Qt.BrushStyle.NoBrush
-    assert w.current_fill is None
+    assert picked == [None]
 
 
 
@@ -1538,12 +1533,11 @@ def test_color_grid_popup_recent_column_shows_and_persists():
     orig_exec = QColorDialog.exec
     try:
         QColorDialog.exec = _mock_color_dialog_exec(QColor("#abcdef"))
-        w._edit_fill()
-        w._last_color_popup._pick_other()
+        w._edit_fill()                     # 속성 카드 「⋯」의 「다른 색」 창에서 고른 색도 최근색으로
     finally:
         QColorDialog.exec = orig_exec
 
-    w._edit_fill()
+    w._show_color_grid_popup(w, QColor("#fff"), True, True, "채움", lambda c: None)   # 레이어·폴더 색 팝업
     pop = w._last_color_popup
     swatches = [b for b in pop.findChildren(QToolButton) if b.text() not in ("Ø", "다른 색…")]
     recent_col = swatches[-3:]   # 맨 오른쪽 열
@@ -1836,7 +1830,9 @@ def test_minimap_card_zoom_buttons_in_title_row():
 
 def test_props_value_buttons_open_list_apply_and_close():
     """[패널 통일 2라운드 2026-10-11, 시안 2-4] 색·선 모양·두께·채움은 카드에 지금 값만 보이는 버튼 — 누르면 견본·버튼
-    목록이 열리고, 하나 고르면 바로 적용되고 닫힌다. 버튼은 바뀐 값을 다시 보여 준다."""
+    목록이 열리고, 하나 고르면 바로 적용된다. 버튼은 바뀐 값을 다시 보여 준다.
+    [같은 날 후속] 골라도 목록은 열린 채(비교용) — 닫기는 바깥 클릭·연 버튼 다시 누르기."""
+    from PyQt6.QtWidgets import QColorDialog
     w = CanvasWindow(); w.show()
     r = _mk_pen_rect(w); r.setSelected(True)
     w._refresh_properties()
@@ -1845,15 +1841,133 @@ def test_props_value_buttons_open_list_apply_and_close():
     assert w._pf_width_pop.isVisible()
     w._pf_width_presets[3.0].click()
     assert w._read_props(r)["width"] == 3.0
-    assert not w._pf_width_pop.isVisible()
+    assert w._pf_width_pop.isVisible()                    # 열린 채
     assert w._pf_width_btn.text().startswith("3px")
+    w._pf_width_presets[5.0].click()
+    assert w._read_props(r)["width"] == 5.0 and w._pf_width_btn.text().startswith("5px")
+    w._pf_width_pop.hide()
     w._pf_style_btn.click()
     w._pf_style_btns[2].click()
-    assert not w._pf_style_pop.isVisible() and "점선" in w._pf_style_btn.toolTip()
+    assert w._pf_style_pop.isVisible() and "점선" in w._pf_style_btn.toolTip()
+    w._pf_style_pop.hide()
     w._pf_fill_btn.click()
     w._pf_fill_presets[0].click()                          # 없음
     assert w._read_props(r)["fill"] is None and "없음" in w._pf_fill_btn.toolTip()
+    w._pf_fill_pop.hide()
     w._pf_color_btn.click()
-    w._pf_color.click()                                    # 「…」 → 목록 닫고 색 그리드 팝업(값 버튼 아래)
-    assert not w._pf_color_pop.isVisible() and w._last_color_popup.isVisible()
-    w._last_color_popup.close()
+    orig_exec = QColorDialog.exec
+    try:
+        QColorDialog.exec = _mock_color_dialog_exec(QColor("#654321"))
+        w._last_color_popup = None
+        w._pf_color.click()                                # 「…」 → 목록 닫고 바로 「다른 색」 창(그리드 팝업 없음)
+    finally:
+        QColorDialog.exec = orig_exec
+    assert not w._pf_color_pop.isVisible() and w._last_color_popup is None
+    assert w._read_props(r)["color"].name() == "#654321"
+
+
+def test_prop_popup_click_on_its_button_closes_without_reopening():
+    """[실사용 피드백 2026-10-11 후속] 펼침 목록을 연 버튼을 다시 누르면 닫히기만 한다 — Qt.Popup은 바깥 클릭을
+    아래 위젯에 다시 보내(replay) 버튼이 곧바로 또 열었다. 그 버튼 위 클릭만 replay를 끈다(다른 곳 클릭은 그대로)."""
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    w = CanvasWindow(); w.show()
+    r = _mk_pen_rect(w); r.setSelected(True); w._refresh_properties()
+    pop, btn = w._pf_width_pop, w._pf_width_btn
+
+    def press_at(global_pt):
+        local = QPointF(pop.mapFromGlobal(global_pt))
+        ev = QMouseEvent(QEvent.Type.MouseButtonPress, local, QPointF(global_pt), Qt.MouseButton.LeftButton,
+                         Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(pop, ev)
+
+    btn.click()
+    assert pop.isVisible()
+    press_at(btn.mapToGlobal(btn.rect().center()))
+    assert not pop.isVisible() and pop.testAttribute(Qt.WidgetAttribute.WA_NoMouseReplay)
+    btn.click()                                        # 다시 열면 replay 끔 표시는 풀린다
+    assert pop.isVisible() and not pop.testAttribute(Qt.WidgetAttribute.WA_NoMouseReplay)
+    press_at(w._view.viewport().mapToGlobal(QPoint(5, 5)))   # 다른 곳 클릭 — 닫히되 클릭은 그대로 전달
+    assert not pop.isVisible() and not pop.testAttribute(Qt.WidgetAttribute.WA_NoMouseReplay)
+
+
+def test_color_presets_user_customizable_by_right_click():
+    """[실사용 피드백 2026-10-11 후속] 선·채움 견본 2~8번째 칸은 우클릭 「이 칸 색 바꾸기…」로 내 색 — 앱 설정에 저장,
+    「기본 색으로」로 되돌림. 첫 칸(테마 잉크색·없음)은 고정."""
+    from PyQt6.QtWidgets import QColorDialog, QMenu
+    app_settings().remove("line_presets"); app_settings().remove("fill_presets")
+    w = CanvasWindow()
+    r = _mk_pen_rect(w); r.setSelected(True); w._refresh_properties()
+    assert w._pf_color_presets[0].contextMenuPolicy() != Qt.ContextMenuPolicy.CustomContextMenu
+    assert w._pf_fill_presets[0].contextMenuPolicy() != Qt.ContextMenuPolicy.CustomContextMenu
+    orig_exec, orig_menu = QColorDialog.exec, QMenu.exec
+    chosen = {"i": 0}
+    try:
+        QColorDialog.exec = _mock_color_dialog_exec(QColor("#123456"))
+        QMenu.exec = lambda self, *a: self.actions()[chosen["i"]].trigger()
+        w._customize_preset("line", 3)
+        w._customize_preset("fill", 1)
+        assert w._line_presets()[3].name() == "#123456"
+        assert w._fill_presets()[1].name() == "#123456"
+        assert "#123456" in w._pf_color_presets[3].styleSheet().lower()
+        w._pf_color_presets[3].click()
+        assert w._read_props(r)["color"].name() == "#123456"
+        w2 = CanvasWindow()                                   # 재시작해도 유지
+        assert w2._line_presets()[3].name() == "#123456"
+        chosen["i"] = 1                                       # 「기본 색으로」
+        w._customize_preset("line", 3)
+        assert w._line_presets()[3].name() == QColor(w._DEFAULT_LINE_PRESETS[2]).name()
+    finally:
+        QColorDialog.exec, QMenu.exec = orig_exec, orig_menu
+        app_settings().remove("line_presets"); app_settings().remove("fill_presets")
+
+
+def test_favorites_and_basic_sections_have_color_menu():
+    """[실사용 피드백 2026-10-11] 「즐겨찾기」·「기본 도형」도 폴더처럼 ⋯로 칸 색 — 즐겨찾기는 ★도 그 색,
+    기본 도형은 고르면 색 점+옅은 칸. 같은 이름의 사용자 폴더와 안 섞이게 따로 저장(`section_colors`)."""
+    from easycad.fileio import symbol_library
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        assert len(w._section_more_btns) == 2
+        assert w._basic_section._dot.isHidden()                            # 처음엔 중립 칸(점 없음)
+        w._set_section_color("basic", "#123456")
+        assert "rgba(18,52,86" in w._basic_section.styleSheet() and not w._basic_section._dot.isHidden()
+        w._set_section_color("favorites", "#00ff00")
+        assert "#00ff00" in w._fav_section._title_lbl.text() and "rgba(0,255,0" in w._fav_section.styleSheet()
+        assert symbol_library.load_section_colors() == {"basic": "#123456", "favorites": "#00ff00"}
+        assert symbol_library.load_folders() == []                         # 폴더로 새지 않음
+        w._set_section_color("basic", None)
+        assert "rgba(18,52,86" not in w._basic_section.styleSheet() and w._basic_section._dot.isHidden()
+        symbol_library.set_section_color("nope", "#ffffff")                # 모르는 칸은 무시
+        assert "nope" not in symbol_library.load_section_colors()
+
+
+def test_swap_menu_items_have_shape_icons_and_refresh_on_open():
+    """[실사용 피드백 2026-10-11] 속성 「종류」(도형 바꾸기) 메뉴 — 글자만 있던 항목에 팔레트와 같은 그림. 열 때마다
+    다시 채워 새로 등록한 심볼이 바로 보인다."""
+    with _isolated_symbol_library():
+        w = CanvasWindow()
+        m = w._pf_swap_btn.menu()
+        acts = [a for a in m.actions() if not a.isSeparator()]
+        assert [a.text() for a in acts[:3]] == ["사각형", "원", "삼각형"]
+        assert all(not a.icon().isNull() for a in acts)
+        from easycad.fileio import symbol_library
+        symbol_library.add_symbol("새심볼", [], "")
+        m.aboutToShow.emit()
+        assert "새심볼" in [a.text() for a in m.actions()]
+
+
+def test_label_edit_keeps_owner_selected_and_props_card_visible():
+    """[실사용 피드백 2026-10-11] 도형을 더블클릭해 글자를 치면 속성 카드가 사라졌다 — 편집 시작이 선택을 전부 지워
+    "선택 없음 → 카드 숨김"(2026-10-07)에 걸렸다. 주인 도형만 선택된 채 편집하고, 키는 글자가 받는다."""
+    w = CanvasWindow(); w.show()
+    r = _mk_pen_rect(w); r.setSelected(True); w._refresh_properties()
+    other = _mk_pen_rect(w); other.setSelected(True)
+    assert w._props_panel.isVisible()
+    w._view._begin_label_edit(r)
+    QApplication.processEvents()
+    assert r.isSelected() and not other.isSelected()
+    assert w._props_panel.isVisible()
+    lbl = r.ensure_label()
+    assert lbl.textInteractionFlags() == Qt.TextInteractionFlag.TextEditorInteraction
+    # 키가 도형이 아니라 글자로 가는 것(Delete 포함)은 실제 창에서 확인(오프스크린은 창 포커스가 없어 키 경로 재현 불가)

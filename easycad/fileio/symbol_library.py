@@ -102,6 +102,8 @@ def _load_raw() -> dict:
     raw = {"folders": data.get("folders", []), "symbols": data.get("symbols", [])}
     if isinstance(data.get("folder_colors"), dict):   # [2026-10-11] 폴더 색 칩 — 없던 파일엔 키가 없다
         raw["folder_colors"] = data["folder_colors"]
+    if isinstance(data.get("section_colors"), dict):   # 즐겨찾기·기본 도형 칸 색(폴더가 아니라 따로)
+        raw["section_colors"] = data["section_colors"]
     if isinstance(data.get("favorites"), list):
         raw["favorites"] = data["favorites"]
     if isinstance(data.get("last_folder"), str):
@@ -192,6 +194,27 @@ def set_folder_color(name: str, color: str | None):
         colors[name] = color
     else:
         colors.pop(name, None)
+    _save_raw(data)
+
+
+SECTION_KEYS = ("favorites", "basic")   # 「즐겨찾기」·「기본 도형」 칸
+
+
+def load_section_colors() -> dict[str, str]:
+    """[실사용 피드백 2026-10-11] 「즐겨찾기」·「기본 도형」 칸 색 — 폴더 색과 같은 ⋯ 메뉴로 고른 것만 들어 있다.
+    폴더 색(`folder_colors`)과 저장소를 나눈 건 같은 이름의 사용자 폴더(예: 「즐겨찾기」 폴더)와 안 섞이게."""
+    return {k: v for k, v in _load_raw().get("section_colors", {}).items() if k in SECTION_KEYS}
+
+
+def set_section_color(key: str, color: str | None):
+    if key not in SECTION_KEYS:
+        return
+    data = _load_raw()
+    colors = data.setdefault("section_colors", {})
+    if color:
+        colors[key] = color
+    else:
+        colors.pop(key, None)
     _save_raw(data)
 
 

@@ -922,7 +922,7 @@ class _UIBuildMixin:
         self._refresh_layer_icons()
         # [2026-10-11] 섹션·폴더 접기 ▾ 버튼은 없앴다(제목을 눌러 접음) — 남은 건 폴더 ⋯ 버튼.
         self._restyle_palette_boxes()
-        for btn in getattr(self, "_symfolder_collapse_btns", []):
+        for btn in getattr(self, "_symfolder_collapse_btns", []) + getattr(self, "_section_more_btns", []):
             btn.setStyleSheet(
                 f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
         # [2026-10-11] 패널 버튼 아이콘(새 폴더·더 보기·레이어 버튼)도 테마 아이콘 색으로 다시
@@ -1824,12 +1824,15 @@ class _UIBuildMixin:
     def _restyle_palette_boxes(self):
         """도형·심볼 카드의 테두리 칸들을 지금 테마로 다시 칠한다(만들 때·테마 바꿀 때)."""
         dark = getattr(self, "_dark", True)
+        chosen = symbol_library.load_section_colors()   # [2026-10-11] 즐겨찾기·기본 도형도 ⋯로 색을 고른다
         fav = getattr(self, "_fav_section", None)
-        if fav is not None:   # [2026-10-11] 즐겨찾기 칸은 옅은 코랄(★가 점 자리를 맡음)
-            fav.set_box(QColor(_ACCENT_CORAL), dark, dot=False)
+        if fav is not None:   # [2026-10-11] 즐겨찾기 칸은 옅은 코랄(★가 점 자리를 맡음) — 고른 색이 있으면 그 색(★도)
+            c = QColor(chosen.get("favorites") or _ACCENT_CORAL)
+            fav.set_box(c, dark, dot=False)
+            fav.set_title_html(f"<span style='color:{c.name()}'>★</span> 즐겨찾기")
         for sec in (getattr(self, "_basic_section", None),):
-            if sec is not None:
-                sec.set_box(None, dark)
+            if sec is not None:   # 안 고르면 중립 칸(점 없음), 고르면 폴더처럼 색 점 + 옅은 칸
+                sec.set_box(QColor(chosen["basic"]) if chosen.get("basic") else None, dark)
         for sec, color in getattr(self, "_palette_folder_boxes", []):
             sec.set_box(color, dark)
 
@@ -1843,6 +1846,39 @@ class _UIBuildMixin:
             self._refresh_custom_symbol_section()
 
         self._show_color_grid_popup(anchor, current, False, False, "폴더 색", on_pick)
+
+    def _add_section_color_menu(self, sec, key: str):
+        """[실사용 피드백 2026-10-11] 「즐겨찾기」·「기본 도형」에도 폴더처럼 마우스를 올리면 ⋯ — 칸 색 바꾸기·기본 색으로.
+        이름변경·삭제는 없다(고정 칸). 제목 우클릭도 같은 메뉴."""
+        more = QToolButton()
+        more.setText("⋯"); more.setAutoRaise(True)
+        more.setFixedSize(QSize(18, 16))
+        more.setToolTip("칸 메뉴 — 색")
+        more.setStyleSheet(f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
+        more.clicked.connect(lambda _c=False, w=more: self._show_section_color_menu(w, QPoint(0, w.height()), key))
+        sec.add_hover_button(more)
+        self._section_more_btns.append(more)
+        sec._title_lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        sec._title_lbl.customContextMenuRequested.connect(
+            lambda pos, w=sec._title_lbl: self._show_section_color_menu(w, pos, key))
+
+    def _show_section_color_menu(self, widget: QWidget, pos, key: str):
+        menu = QMenu(self)
+        _style_menu_separators(menu)
+        menu.addAction(_menu_icon("menu_color"), "칸 색 바꾸기…", lambda: self._pick_section_color(widget, key))
+        reset = menu.addAction("기본 색으로", lambda: self._set_section_color(key, None))
+        reset.setEnabled(key in symbol_library.load_section_colors())
+        menu.exec(widget.mapToGlobal(pos))
+
+    def _pick_section_color(self, anchor: QWidget, key: str):
+        chosen = symbol_library.load_section_colors().get(key)
+        current = QColor(chosen or (_ACCENT_CORAL if key == "favorites" else self._FOLDER_DEFAULT_COLORS[0]))
+        self._show_color_grid_popup(anchor, current, False, False, "칸 색",
+                                    lambda col: col is not None and self._set_section_color(key, QColor(col).name()))
+
+    def _set_section_color(self, key: str, color):
+        symbol_library.set_section_color(key, color)
+        self._restyle_palette_boxes()
 
     def _show_symbol_folder_context_menu(self, label_widget: QLabel, pos, folder_name: str):
         """[실사용 피드백 2026-08-19 재개편] 폴더 이름 우클릭 → 이름변경/삭제 메뉴 — 옛
@@ -2164,6 +2200,10 @@ class _UIBuildMixin:
             setting = f"palette_section_collapsed_{key}"
             sec.make_collapsible(app_settings().value(setting, False, type=bool),
                                  lambda c, s=setting: self._on_palette_section_toggled(s, c))
+        self._section_more_btns: list[QToolButton] = []   # `_apply_theme` 재도색용
+        self._add_section_color_menu(fav_section, "favorites")
+        self._add_section_color_menu(basic_section, "basic")
+        self._restyle_palette_boxes()
         self._refresh_fav_section()
         self._relayout_left_panel()
 
@@ -2377,7 +2417,7 @@ class _UIBuildMixin:
         self._pf_color = QToolButton()
         self._pf_color.setText("…")
         self._pf_color.setFixedSize(QSize(22, 20))
-        self._pf_color.setToolTip("다른 색 고르기")
+        self._pf_color.setToolTip("다른 색 고르기 — 견본 칸은 우클릭으로 내 색으로 바꿀 수 있어요")
         self._pf_color.clicked.connect(lambda: (self._pf_color_pop.hide(), self._edit_color()))
         self._pf_color_val = QLabel("—")
         self._pf_color_val.setForegroundRole(QPalette.ColorRole.PlaceholderText)   # [UI 검토 2026-09-25] #888 대비 미달
@@ -2388,6 +2428,9 @@ class _UIBuildMixin:
         for i in range(8):
             b = QToolButton(); b.setFixedSize(QSize(18, 18))
             b.clicked.connect(lambda _c=False, i=i: self._apply_line_preset(i))
+            if i:   # [2026-10-11 후속] 2~8번째 칸은 우클릭으로 사용자가 색을 정한다(첫 칸 = 테마 잉크색 고정)
+                b.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                b.customContextMenuRequested.connect(lambda _p, i=i: self._customize_preset("line", i))
             ch.addWidget(b); self._pf_color_presets.append(b)
         ch.addWidget(self._pf_color); ch.addWidget(self._pf_color_val); ch.addStretch(1)
 
@@ -2398,7 +2441,7 @@ class _UIBuildMixin:
         self._pf_fill = QToolButton()
         self._pf_fill.setText("…")
         self._pf_fill.setFixedSize(QSize(22, 20))
-        self._pf_fill.setToolTip("다른 채움색 고르기")
+        self._pf_fill.setToolTip("다른 채움색 고르기 — 견본 칸은 우클릭으로 내 색으로 바꿀 수 있어요")
         self._pf_fill.clicked.connect(lambda: (self._pf_fill_pop.hide(), self._edit_fill()))
         self._pf_fill_val = QLabel("—")
         self._pf_fill_val.setForegroundRole(QPalette.ColorRole.PlaceholderText)
@@ -2409,6 +2452,9 @@ class _UIBuildMixin:
         for i in range(8):
             b = QToolButton(); b.setFixedSize(QSize(18, 18))
             b.clicked.connect(lambda _c=False, i=i: self._apply_fill_preset(i))
+            if i:   # 첫 칸 = 없음 고정
+                b.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                b.customContextMenuRequested.connect(lambda _p, i=i: self._customize_preset("fill", i))
             fh.addWidget(b); self._pf_fill_presets.append(b)
         fh.addWidget(self._pf_fill); fh.addWidget(self._pf_fill_val); fh.addStretch(1)
 
@@ -2472,17 +2518,13 @@ class _UIBuildMixin:
         # 연속값 다듬기라 선 바로 다음) → 폰트(텍스트 전용, 도형 축과 무관해 맨 뒤).
         # [패널 통일 2라운드 2026-10-11, 시안 2-4] 색·채움·선 모양·두께는 자주 바꾸지 않아(사용자) 카드엔 지금 값만 보이는
         # 버튼으로 두고, 누르면 예전에 펼쳐 두던 견본·버튼 줄이 작은 목록(`_PropPopup`)으로 열린다. 견본 하나를 고르면
-        # 바로 적용되고 목록이 닫힌다. 「선」 한 줄에 색 | 선 모양 | 두께.
+        # 바로 적용된다. 「선」 한 줄에 색 | 선 모양 | 두께.
+        # [실사용 피드백 2026-10-11 후속] 골라도 목록은 열린 채 — 하나씩 바꿔 보며 비교하려면 닫히면 불편.
+        # 닫기는 바깥 클릭·Esc·연 버튼 다시 누르기(`_PropPopup.mousePressEvent`).
         self._pf_color_pop = _PropPopup(self, color_row)
         self._pf_fill_pop = _PropPopup(self, fill_presets)
         self._pf_style_pop = _PropPopup(self, style_row)
         self._pf_width_pop = _PropPopup(self, width_row)
-        for pop, btns in ((self._pf_color_pop, self._pf_color_presets),
-                          (self._pf_fill_pop, self._pf_fill_presets),
-                          (self._pf_style_pop, self._pf_style_btns),
-                          (self._pf_width_pop, list(self._pf_width_presets.values()))):
-            for b in btns:
-                b.clicked.connect(pop.hide)
 
         def value_btn(tip, pop):
             b = QToolButton()

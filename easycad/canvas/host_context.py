@@ -11,7 +11,7 @@ import uuid
 
 from PyQt6.QtCore import QPointF, QRectF
 from PyQt6.QtGui import (
-    QPen, QColor, QBrush,
+    QPen, QColor, QBrush, QIcon,
 )
 from PyQt6.QtWidgets import (
     QMessageBox, QDialog, QMenu,
@@ -27,6 +27,7 @@ from easycad.canvas.host_widgets import (
 )
 from easycad.canvas.host_dialogs import _CableNumberDialog
 from easycad.fileio import symbol_library
+from easycad.fileio.document import _b64_to_pixmap
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
@@ -253,17 +254,25 @@ class _ContextMixin:
         """도형 교체 대상 메뉴 — 기본도형 8종(네모·원 + 팔레트 심볼 6종) + 내 심볼(폴더별
         구분선). [실사용 요청 2026-08-21] "내 심볼"도 전부 노출 — 다중 아이템 심볼은
         "그룹으로 삽입" 방식(`_swap_to_custom_symbol`)이라 단일/다중을 가릴 필요가 없다
-        (사용자 결정: 그룹이니까 일단 바꾸고, 낱개 편집이 필요하면 그룹 해제)."""
+        (사용자 결정: 그룹이니까 일단 바꾸고, 낱개 편집이 필요하면 그룹 해제).
+        [실사용 피드백 2026-10-11] 글자만 있던 항목에 팔레트와 같은 그림을 붙인다. 열 때마다 다시 채워
+        새로 등록한 심볼·테마 색(그림 잉크색)이 바로 반영된다(예전엔 앱을 켤 때 한 번만 만들었다)."""
         m = QMenu(self)
         _style_menu_separators(m)
-        m.addAction("사각형", lambda: self._swap_selected("rect"))
-        m.addAction("원", lambda: self._swap_selected("ellipse"))
+        m.aboutToShow.connect(lambda m=m: self._fill_swap_menu(m))
+        self._fill_swap_menu(m)
+        return m
+
+    def _fill_swap_menu(self, m):
+        m.clear()
+        m.addAction(self._shape_icon("rect"), "사각형", lambda: self._swap_selected("rect"))
+        m.addAction(self._shape_icon("ellipse"), "원", lambda: self._swap_selected("ellipse"))
         # [실사용 피드백 2026-08-21] 사각형·원~저장소까지 전부 좌측 팔레트의 "기본도형"
         # 한 섹션이라(참고: host_ui.py의 basic_section) 구분선으로 나눌 이유가 없다 —
         # 여기서 끊지 말고 "내 심볼" 앞에서만 끊는다(아래).
         for kind in self._SWAP_SYMBOL_KINDS:
             label = _SYMBOL_KINDS[kind][0]
-            m.addAction(label, lambda k=kind: self._swap_selected(f"sym:{k}"))
+            m.addAction(self._shape_icon(kind), label, lambda k=kind: self._swap_selected(f"sym:{k}"))
         entries = symbol_library.load_library()
         if entries:
             by_folder: dict = {}
@@ -277,8 +286,8 @@ class _ContextMixin:
                 m.addSeparator()
                 for e in group_entries:
                     sym_id, sym_name = e["id"], e.get("name", "심볼")
-                    m.addAction(sym_name, lambda s=sym_id: self._swap_selected(f"customsym:{s}"))
-        return m
+                    m.addAction(QIcon(_b64_to_pixmap(e.get("thumb", ""))), sym_name,
+                                lambda s=sym_id: self._swap_selected(f"customsym:{s}"))
 
 
     def _swap_selected(self, target_kind):

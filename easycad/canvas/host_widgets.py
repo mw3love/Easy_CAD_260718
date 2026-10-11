@@ -1550,7 +1550,18 @@ class _PropPopup(QWidget):
             " border: 1px solid palette(mid); border-radius: 6px; }")
 
     def open_below(self, anchor: QWidget):
+        self._anchor = anchor
+        self.setAttribute(Qt.WidgetAttribute.WA_NoMouseReplay, False)
         _place_popup(self, anchor)
+
+    def mousePressEvent(self, e):
+        # [실사용 피드백 2026-10-11] 연 버튼을 다시 누르면 닫기만 한다. Qt.Popup은 바깥 클릭에 닫힌 뒤 그 클릭을
+        # 아래 위젯에 다시 보내(replay) 버튼이 목록을 곧바로 또 열었다 — 그 버튼 위 클릭만 다시 보내지 않는다(QMenu 방식).
+        anchor = getattr(self, "_anchor", None)
+        if anchor is not None and not self.rect().contains(e.position().toPoint()):
+            if anchor.rect().contains(anchor.mapFromGlobal(e.globalPosition().toPoint())):
+                self.setAttribute(Qt.WidgetAttribute.WA_NoMouseReplay, True)
+        super().mousePressEvent(e)
 
 
 def _swatch_icon(color, w: int = 16, h: int = 16) -> QIcon:
@@ -1650,18 +1661,27 @@ class _ColorGridPopup(QWidget):
         # 항상 비-네이티브 인스턴스를 만들어 왼쪽 열을 숨긴다(오른쪽 그라디언트+필드는 동일 재사용).
         parent = self._anchor_parent
         self.close()
-        dlg = QColorDialog(parent)
-        dlg.setWindowTitle(self._title)
-        if self._show_alpha:
-            dlg.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
-        dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
-        dlg.setCurrentColor(self._initial or QColor("#ffffff"))
-        dlg.adjustSize()
-        _strip_color_dialog_left_column(dlg)
-        dlg.adjustSize()
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            col = dlg.selectedColor()
-            if col.isValid():
-                if self._on_custom_picked:
-                    self._on_custom_picked(col)
-                self._on_pick(col)
+        col = _pick_custom_color(parent, self._initial, self._show_alpha, self._title)
+        if col is not None:
+            if self._on_custom_picked:
+                self._on_custom_picked(col)
+            self._on_pick(col)
+
+
+def _pick_custom_color(parent: QWidget, initial, show_alpha: bool, title: str) -> QColor | None:
+    """「다른 색」 창(왼쪽 기본색 열을 숨긴 비-네이티브 QColorDialog) — 고른 색, 취소면 None.
+    [2026-10-11] 그리드 팝업의 「다른 색…」과 속성 카드의 「⋯」(바로 이 창)가 함께 쓴다."""
+    dlg = QColorDialog(parent)
+    dlg.setWindowTitle(title)
+    if show_alpha:
+        dlg.setOption(QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
+    dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+    dlg.setCurrentColor(initial or QColor("#ffffff"))
+    dlg.adjustSize()
+    _strip_color_dialog_left_column(dlg)
+    dlg.adjustSize()
+    if dlg.exec() == QDialog.DialogCode.Accepted:
+        col = dlg.selectedColor()
+        if col.isValid():
+            return col
+    return None

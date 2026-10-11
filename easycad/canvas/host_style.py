@@ -12,7 +12,7 @@ from PyQt6.QtGui import (
     QColor,
 )
 from PyQt6.QtWidgets import (
-    QWidget,
+    QMenu, QWidget,
 )
 
 from easycad.app_settings import app_settings
@@ -23,7 +23,7 @@ from easycad.canvas.annotator_core import (
 from easycad.canvas.host_widgets import (
     _current_icon_color, _arrow_kind_of, _arrow_head_of, _apply_arrow_head, _is_rotatable,
 )
-from easycad.canvas.host_widgets import _TYPE_NAMES, _RECENT_COLOR_MAX, _ARROW_KIND_TOOL, _ColorGridPopup, _place_popup, _swatch_icon
+from easycad.canvas.host_widgets import _TYPE_NAMES, _RECENT_COLOR_MAX, _ARROW_KIND_TOOL, _ColorGridPopup, _place_popup, _swatch_icon, _pick_custom_color
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
 # deep-interview 2026-07-21 확정 매핑. 둥근사각형은 사각형으로(라운딩 손실), 미인식은 사각형 폴백.
@@ -131,16 +131,14 @@ class _StyleMixin:
         if not sel:
             return
         init = self._read_props(sel[0])["color"] or QColor("#000000")
-        # [2026-10-11] 「다른 색…」은 펼침 목록 안에 있어 목록이 닫힌 뒤 열린다 — 카드의 현재 값 버튼 아래로
-        anchor = anchor or getattr(self, "_pf_color_btn", None) or self._pf_color
-
-        def on_pick(col):
-            if col is None:   # 선 색은 "없음" 미지원 — 팝업이 allow_none=False라 실제로 안 옴
-                return
-            self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
-            self._set_current_color(col)   # [M2 #A] 다음 도형 기본 색으로(sticky)
-
-        self._show_color_grid_popup(anchor, init, False, False, "색 선택", on_pick)
+        # [실사용 피드백 2026-10-11 후속] 「⋯」는 중간 그리드 팝업 없이 바로 「다른 색」 창 — 자주 쓰는 색은
+        # 견본 칸을 사용자가 직접 정한다(견본 우클릭, `_customize_preset`).
+        col = _pick_custom_color(self, init, False, "선 색")
+        if col is None:
+            return
+        self._remember_recent_color(col)   # 레이어·폴더 색 팝업의 「최근 사용한 색」에도 남긴다
+        self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
+        self._set_current_color(col)   # [M2 #A] 다음 도형 기본 색으로(sticky)
 
 
     def _edit_fill(self, anchor: QWidget | None = None):
@@ -155,31 +153,63 @@ class _StyleMixin:
         if not sel:
             return
         init = self._read_props(sel[0])["fill"] or QColor("#ffffff")
-
-        def on_pick(col):
-            if col is None:
-                self._clear_fill()
-                return
-            self._edit_items(sel, lambda it: it.apply_fill(QColor(col))
-                             if hasattr(it, "apply_fill") else it.set_bg(QColor(col)))
-            self.current_fill = QColor(col)   # sticky
-
-        self._show_color_grid_popup(anchor or getattr(self, "_pf_fill_btn", None) or self._pf_fill, init, True, True, "채움색 선택", on_pick)
+        # [2026-10-11 후속] 「⋯」 = 바로 「다른 색」 창(투명도 포함). 「없음」은 견본 첫 칸.
+        col = _pick_custom_color(self, init, True, "채움 색")
+        if col is None:
+            return
+        self._remember_recent_color(col)
+        self._edit_items(sel, lambda it: it.apply_fill(QColor(col))
+                         if hasattr(it, "apply_fill") else it.set_bg(QColor(col)))
+        self.current_fill = QColor(col)   # sticky
 
 
     # ---- [첫 화면 재디자인 2026-10-07, 시안 4라운드 P2] 색·채움 견본 ----
+    _DEFAULT_LINE_PRESETS = ("#5aa9ff", "#e02424", "#2e9e5b", "#e8a23a", "#8b5cf6", "#da7756", "#7f8c99")
+    _DEFAULT_FILL_PRESETS = ("#555aa9ff", "#555fbf8a", "#55e8c15a", "#55e0646a", "#55b48cf2", "#55da7756",
+                             "#558a98a8")
+
+    @staticmethod
+    def _user_presets(key: str, defaults) -> list:
+        """[실사용 피드백 2026-10-11 후속] 견본 2~8번째 칸(7개)은 사용자가 정한다(견본 우클릭) — 앱 설정에 저장,
+        안 정한 칸은 기본 색. 첫 칸(선=테마 잉크색, 채움=없음)은 고정."""
+        raw = app_settings().value(key, [], type=list) or []
+        out = []
+        for i, d in enumerate(defaults):
+            c = QColor(raw[i]) if i < len(raw) and raw[i] else QColor()
+            out.append(c if c.isValid() else QColor(d))
+        return out
+
     def _line_presets(self) -> list:
         """선 색 견본 8개 — 첫 칸은 지금 테마의 기본 잉크색(다크=밝은 회색, 라이트=진한 회색)."""
         ink = QColor(_DEFAULT_INK_DARK if getattr(self, "_dark", True) else _DEFAULT_INK_LIGHT)
-        return [ink] + [QColor(c) for c in
-                        ("#5aa9ff", "#e02424", "#2e9e5b", "#e8a23a", "#8b5cf6", "#da7756", "#7f8c99")]
+        return [ink] + self._user_presets("line_presets", self._DEFAULT_LINE_PRESETS)
 
-    @staticmethod
-    def _fill_presets() -> list:
-        """채움 견본 8개 — 첫 칸 없음, 나머지는 약 1/3 불투명(캔버스·종이 모두에서 글자가 읽힘)."""
-        return [None] + [QColor(c) for c in
-                         ("#555aa9ff", "#555fbf8a", "#55e8c15a", "#55e0646a", "#55b48cf2", "#55da7756",
-                          "#558a98a8")]
+    def _fill_presets(self) -> list:
+        """채움 견본 8개 — 첫 칸 없음, 기본은 약 1/3 불투명(캔버스·종이 모두에서 글자가 읽힘)."""
+        return [None] + self._user_presets("fill_presets", self._DEFAULT_FILL_PRESETS)
+
+    def _customize_preset(self, kind: str, i: int):
+        """견본 우클릭 → 「이 칸 색 바꾸기…」(`kind` = "line"|"fill", i = 1~7). 「기본 색으로」는 None."""
+        key, defaults = (("line_presets", self._DEFAULT_LINE_PRESETS) if kind == "line"
+                         else ("fill_presets", self._DEFAULT_FILL_PRESETS))
+        btn = (self._pf_color_presets if kind == "line" else self._pf_fill_presets)[i]
+        menu = QMenu(self)
+        cur = self._user_presets(key, defaults)[i - 1]
+
+        def set_to(col):
+            raw = [c.name(QColor.NameFormat.HexArgb) for c in self._user_presets(key, defaults)]
+            raw[i - 1] = col.name(QColor.NameFormat.HexArgb) if col is not None else defaults[i - 1]
+            app_settings().setValue(key, raw)
+            self._refresh_properties()
+
+        def pick():
+            col = _pick_custom_color(self, cur, kind == "fill", "견본 칸 색")
+            if col is not None:
+                set_to(col)
+        menu.addAction("이 칸 색 바꾸기…", pick)
+        reset = menu.addAction("기본 색으로", lambda: set_to(None))
+        reset.setEnabled(cur.name(QColor.NameFormat.HexArgb) != QColor(defaults[i - 1]).name(QColor.NameFormat.HexArgb))
+        menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
 
     def _preset_css(self, color, selected: bool) -> str:
         ring = _current_icon_color().name()

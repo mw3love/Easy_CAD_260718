@@ -4367,7 +4367,12 @@ class _AnnotatorView(QGraphicsView):
             lbl = item.ensure_label()
         if new:
             self._owner.push_undo_add(lbl)   # 라벨 생성 되돌리기(빈 채 나가면 자동 폐기됨)
+        # [실사용 피드백 2026-10-11, 우리 확장] 예전엔 선택을 모두 지웠다 — 그래서 "선택 없음 → 속성 카드 숨김"
+        # (2026-10-07)에 걸려 글자를 치는 동안 카드가 사라졌다. 주인(도형·선)만 선택된 채로 둔다 — 편집이 끝나면
+        # 어차피 주인이 선택되므로(`_TextItem.focusOutEvent`) 편집 전후 상태가 같아진다. 키는 편집 중 글자가 먼저 받는다.
         self.scene().clearSelection()
+        if item.flags() & item.GraphicsItemFlag.ItemIsSelectable:
+            item.setSelected(True)
         lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
         lbl.setFocus()
         cur = lbl.textCursor()               # 기존 텍스트 전체 선택(빠른 교체)
