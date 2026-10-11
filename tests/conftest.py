@@ -47,3 +47,14 @@ def _isolate_gateway_settings(monkeypatch):
         "easycad.ai.gateway.SECRETS_FILE",
         pathlib.Path(tempfile.gettempdir()) / "easycad-pytest-no-such-secrets.key",
     )
+
+
+@pytest.fixture(autouse=True)
+def _reset_theme_setting():
+    """[2026-10-11] 테스트 설정 저장소(`EasyCAD-pytest`)에 `dark=false`가 남아 "다크 기본" 테스트 2개
+    (`test_part1_ui_arrows::test_dark_mode_toggle`, `test_part10_multi_doc::test_new_tab_inherits_current_theme_background`)가
+    실패한 일이 있었다. 지금 스위트에는 그 값을 남기는 테스트가 없지만(전체 실행 2회 감시로 확인) 출처는 못 찾았다 —
+    테마는 `_toggle_theme`만 저장하므로, 매 테스트 전에 그 값 하나만 지워 기본(다크)에서 시작하게 한다."""
+    from easycad.app_settings import app_settings
+    app_settings().remove("dark")
+    yield

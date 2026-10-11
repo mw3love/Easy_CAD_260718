@@ -56,6 +56,10 @@ class _PaletteButton(QToolButton):
     되돌릴 수 없어 이 체감을 못 냈다). False면(포트·커스텀심볼처럼 별도 배치 로직이
     있는 tool_key) 기존 네이티브 `QDrag` 경로로 폴백한다."""
     _DRAG_THRESH = 6
+    # [2026-10-11] 클래스 기본값 — Python GC가 순환 정리 중 이 버튼의 인스턴스 속성(__dict__)을 먼저 비우고
+    # C++ 버튼은 아직 살아 Hide 이벤트를 받으면, `event()`가 없는 속성을 읽다 예외 → PyQt6가 출력 없이 앱을 끝냈다
+    # (전체 pytest exit 127, GC 시점에 따라 꺼지는 테스트가 매번 달랐음). 기본값이 있으면 평소 처리로 넘어간다.
+    _tooltip_html_fn = None
 
     def __init__(self, tool_key: str, parent=None, preview_fn=None,
                  drag_begin_fn=None, drag_move_fn=None, drag_end_fn=None,

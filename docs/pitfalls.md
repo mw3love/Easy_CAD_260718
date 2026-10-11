@@ -1542,3 +1542,9 @@
   또 `addToolBar("이름")`처럼 C++이 만든 위젯은 인스턴스 속성 덮어쓰기가 안 먹는다 — 파이썬에서 생성해 넘길 것.
 - ⚠ (2026-10-11) **테스트 설정 저장소(`HKCU\Software\EasyCAD-pytest`)에 값이 남아 다른 테스트를 깬다** — `dark=false`가 남아 "다크 기본"
   테스트 2개가 실패했다(코드 변경과 무관). 다크·테마 테스트가 갑자기 실패하면 `reg query "HKCU\Software\EasyCAD-pytest\EasyCAD"`부터.
+  → 같은 날 `tests/conftest.py`가 매 테스트 전 `dark`를 지우게 함(출처는 못 찾음 — 전체 실행 2회 감시로 지금 테스트는 안 남김 확인).
+- ⚠ (2026-10-11) **Python GC가 위젯의 인스턴스 속성을 먼저 비운 뒤 C++ 위젯이 이벤트(Hide 등)를 받는다** — 덮어쓴 `event()`가
+  `self._속성`을 읽으면 AttributeError → 위 항목대로 exit 127. 전체 pytest가 실행마다 다른 테스트에서 꺼지던 원인
+  (`_PaletteButton._tooltip_html_fn`, 감시해 보니 `__dict__`는 비었는데 `sip.isdeleted`는 False). 정리 중에도 불리는 `event()`·
+  `hideEvent()`가 읽는 속성은 **클래스 기본값**을 둘 것. 원인 불명 127은 pytest 플러그인으로 `sys.excepthook`을 걸어 돌리면
+  예외가 찍힌다(걸면 안 죽으니 재현 확인은 훅 없이).
