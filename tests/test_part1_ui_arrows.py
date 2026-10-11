@@ -199,17 +199,21 @@ def test_floating_panels_and_zoom_readout():
     assert w._minimap_panel.parent() is w
     basic_grid, basic_btns = w._shape_sections[0]
     last = basic_btns[-1]
+    # [패널 통일 2라운드 2026-10-11] 기본은 「목록」 보기 — 한 줄에 하나(8번째는 7행 0열).
     r, c, _rs, _cs = basic_grid.getItemPosition(basic_grid.indexOf(last))
-    # [2026-08-13] 기본도형(네모·원·삼각형)+순서도(판단·시작/끝·입출력·준비·저장소) 8종이
-    # 이제 한 그리드(4열 고정)에 고르게 줄바꿈된다 — 마지막 버튼(저장소, 8번째)은 (row1, col3).
-    assert (r, c) == (1, 3)
+    assert (r, c) == (7, 0)
+    # 「아이콘」 보기는 이름 없는 그림 칸 5열 — 8번째(저장소)는 (row1, col2).
+    w._set_palette_view("icon")
+    r, c, _rs, _cs = basic_grid.getItemPosition(basic_grid.indexOf(last))
+    assert (r, c) == (1, 2)
     # 팔레트 버튼 키가 보존(테스트 계약).
     assert set(w._shape_tool_buttons) == {"rect", "ellipse", "triangle"}
     assert set(w._sym_buttons) == {"decision", "terminal", "data", "prep", "database"}
     # 버튼 고정 크기 — 패널이 넓어져도 커지거나 벌어지지 않는다(좌측 뭉침).
     b = w._shape_tool_buttons["rect"]
     from easycad.canvas.host_ui import _PALETTE_BTN_WIDTH
-    assert b.minimumWidth() == b.maximumWidth() == _PALETTE_BTN_WIDTH   # [2026-10-07] 48→56(시안 S3)
+    assert b.minimumWidth() == b.maximumWidth() == _PALETTE_BTN_WIDTH   # [2026-10-11] 이름 없는 34px 칸
+    w._set_palette_view("list")
     # 속성 패널은 값(hex)이 안 잘리는 최소폭 바닥을 가진다(슬랙 없이 그 아래로 못 좁힘).
     # [2026-08-20] 170→190 — 힌트 라벨 최대폭과 맞춰 선택 유무에 따른 패널 폭 요동을 없앰.
     assert w._props_panel._body_layout.itemAt(0).widget().minimumWidth() == 190
@@ -367,6 +371,7 @@ def test_left_panel_scrolls_instead_of_growing_unbounded_with_many_folders():
 
     with _isolated_symbol_library():
         w = CanvasWindow(); w.show()
+        w._set_palette_view("icon")   # [2026-10-11] 목록 보기(기본)는 기본 도형만으로도 길어 아이콘 보기로 잰다
         assert w._left_scroll.height() <= w._LEFT_PANEL_MAX_H
         assert not w._left_scroll.verticalScrollBar().isVisible()   # 폴더 없을 때 스크롤 없음
 
@@ -383,6 +388,7 @@ def test_left_panel_scrolls_instead_of_growing_unbounded_with_many_folders():
         assert w._left_scroll.height() == w._LEFT_PANEL_MAX_H   # 상한에서 멈춤
         assert w._left_panel.height() <= w._LEFT_PANEL_MAX_H + 40   # 패널 자체도 화면 안에 머묾
         assert w._left_scroll.verticalScrollBar().isVisible()
+        app_settings().remove("palette_view")
         w.close()
 
 
@@ -421,7 +427,7 @@ def test_symbol_folder_full_row_does_not_widen_panel():
         w._relayout_left_panel()
         QApplication.instance().processEvents()
 
-        basic_width = w._left_accordion_sections["basic"].sizeHint().width()
+        from easycad.canvas.host_ui import _LEFT_PANEL_W
         expanded_width = w._left_panel.width()
 
         body = w._custom_sym_body
@@ -435,7 +441,9 @@ def test_symbol_folder_full_row_does_not_widen_panel():
         collapsed_width = w._left_panel.width()
 
         assert expanded_width == collapsed_width   # 접어도 펼쳐도 폭이 그대로여야 함
-        assert expanded_width <= basic_width + 8    # 기본도형 기준폭을 크게 넘지 않음(여유 8px)
+        # [패널 통일 2라운드 2026-10-11] 카드 폭은 이제 고정 192px — 내용이 밀어 넓히지 못하고, 안쪽도 넘치지 않는다
+        assert expanded_width == _LEFT_PANEL_W
+        assert w._left_container.sizeHint().width() <= w._left_scroll.viewport().width()
 
         w._active_doc.dirty = False
         w.close()

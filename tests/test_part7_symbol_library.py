@@ -514,7 +514,7 @@ def _folder_zone_and_label(w, folder_name):
     zones = [body.layout().itemAt(i).widget() for i in range(body.layout().count())]
     idx = 0 if folder_name is None else 1 + symbol_library.load_folders().index(folder_name)
     zone = zones[idx]
-    title_lbl = zone.layout().itemAt(0).layout().itemAt(0).widget()
+    title_lbl = zone.layout().itemAt(0).widget()._title_lbl   # [2026-10-11] 폴더 = 테두리 칸(_StaticSection)
     return zone, title_lbl
 
 
@@ -542,10 +542,10 @@ def test_symbol_folder_right_click_opens_rename_delete_menu():
         with patch("easycad.canvas.host_ui.QMenu", _CapturingMenu):
             title_lbl.customContextMenuRequested.emit(QPointF(1, 1).toPoint())
         assert len(created_menus) == 1
-        assert [a.text() for a in created_menus[0].actions()] == ["이름변경…", "삭제…"]
+        assert [a.text() for a in created_menus[0].actions()] == ["폴더 색 바꾸기…", "이름변경…", "삭제…"]   # [2026-10-11] 폴더 색 칩
 
         with patch.object(QInputDialog, "getText", return_value=("안테나", True)):
-            created_menus[0].actions()[0].trigger()
+            created_menus[0].actions()[1].trigger()   # 이름변경…
         assert symbol_library.load_folders() == ["안테나"]
 
 
@@ -1267,3 +1267,36 @@ def test_swap_to_multi_item_custom_symbol_inserts_as_group_and_rebinds():
         assert target.scene() is not None
         assert all(it.scene() is None for it in new_items)
         assert arr._bind_end is target
+
+
+def test_symbol_folder_color_box_count_and_hover_menu():
+    """[패널 통일 2라운드 2026-10-11, 시안 C] 폴더 = 색 점 + 옅게 물든 테두리 칸 + 개수. ⋯는 마우스를 올렸을 때만,
+    색은 ⋯/우클릭 「폴더 색 바꾸기」로 라이브러리 파일에 저장(이름변경·삭제 때 따라감)."""
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QEnterEvent
+    with _isolated_symbol_library():
+        symbol_library.create_folder("무선")
+        symbol_library.add_symbol("안테나", [], "", folder="무선")
+        w = CanvasWindow(); w.show()
+        zone, _title = _folder_zone_and_label(w, "무선")
+        sec = zone.layout().itemAt(0).widget()
+        assert sec.count_lbl.text() == "1"
+        assert sec._dot.isVisibleTo(sec)
+        default = w._FOLDER_DEFAULT_COLORS[0]
+        assert default in sec._dot.styleSheet() and "#palSec" in sec.styleSheet()
+        more = sec._hover_btns[0]
+        assert more.isHidden()                                  # 평소엔 숨김
+        QApplication.sendEvent(sec, QEnterEvent(QPointF(5, 5), QPointF(5, 5), QPointF(5, 5)))
+        assert not more.isHidden()                              # 마우스를 올리면 보임
+        QApplication.sendEvent(sec, QEvent(QEvent.Type.Leave))
+        assert more.isHidden()
+        symbol_library.set_folder_color("무선", "#123456")
+        w._refresh_custom_symbol_section()
+        zone, _t = _folder_zone_and_label(w, "무선")
+        assert "#123456" in zone.layout().itemAt(0).widget()._dot.styleSheet()
+        symbol_library.rename_folder("무선", "유선")
+        assert symbol_library.load_folder_colors() == {"유선": "#123456"}
+        symbol_library.delete_folder("유선")
+        assert symbol_library.load_folder_colors() == {}
+        w._active_doc.dirty = False
+        w.close()

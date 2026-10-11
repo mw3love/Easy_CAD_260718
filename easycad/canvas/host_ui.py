@@ -86,7 +86,12 @@ _PALETTE_ICON_PX = 24
 # 조합은 이 크기에서도 한계가 있어(2:1 이상이면 세로가 다시 눌린다) 호버 확대 미리보기
 # (`host_selection._symbol_preview_html`)로 보완한다.
 _PALETTE_SYM_ICON_PX = 28
-_PALETTE_COLS = 4
+# [패널 통일 2라운드 2026-10-11] 아이콘 보기는 이름 없이 그림만 5칸(폭 192px 카드 — 시안 2-1), 이름은 마우스를 올리면.
+_PALETTE_COLS = 5
+_PALETTE_LIST_ICON_PX = 18   # 「목록」 보기(기본) 줄 아이콘
+_PALETTE_LIST_TEXT_W = 118   # 「목록」 보기 이름 칸 — 넘치면 …로 줄인다(카드 폭을 밀지 않게)
+# [패널 통일 2라운드 2026-10-11] 왼쪽 카드 폭 — 예전 240px에서 20% 줄임("작업영역이 쾌적하게", 사용자 요청).
+_LEFT_PANEL_W = 192
 
 # [§8 항목34, 2026-10-03] '내 심볼' 검색 — 이름 일부(대소문자 무시) 또는 한글 초성("ㅇㅌ" → "안테나").
 # 초성과 글자를 섞어 써도 된다("안ㅌ"). 사용자 결정: 이름만(폴더 이름은 검색 대상 아님).
@@ -137,7 +142,7 @@ _PALETTE_FONT_SHRINK = 1   # pt만큼 기본 폰트에서 뺀다 — [2026-08-12
 # [2026-08-12 6차] 폰트를 키운 뒤 버튼 높이(40)가 실제 sizeHint(48)보다 작아 라벨 아래가
 # 잘렸다 — 고정 크기가 자연 sizeHint 밑으로 내려가면 항상 이 클래스 버그가 재발하므로,
 # 폭만 고정하고 높이는 버튼이 실제로 요구하는 sizeHint를 그대로 쓴다(아래 _palette_button).
-_PALETTE_BTN_WIDTH = 56
+_PALETTE_BTN_WIDTH = 34   # [2026-10-11] 이름 없는 아이콘 칸(정사각) — 56(이름 아래)에서 줄임
 
 
 
@@ -909,6 +914,9 @@ class _UIBuildMixin:
         # 목록을 대신 재도색한다.
         section_btns = [getattr(self, a).collapse_btn for a in ("_recent_section", "_basic_section")
                         if getattr(self, a, None) is not None]   # [2026-10-11] 다시 생긴 섹션 접기
+        self._restyle_palette_boxes()
+        for m, vb in getattr(self, "_palette_view_btns", {}).items():
+            vb.setIcon(self._palette_view_icon(m))
         for btn in getattr(self, "_symfolder_collapse_btns", []) + section_btns:
             btn.setStyleSheet(
                 f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
@@ -1312,31 +1320,38 @@ class _UIBuildMixin:
                               drag_move_fn=self._palette_drag_move,
                               drag_end_fn=self._palette_drag_end,
                               tooltip_html_fn=tooltip_html_fn)
-        btn.setText(label)
+        btn._full_name = label
+        btn.setAccessibleName(label)
         btn.setIcon(icon_kind if isinstance(icon_kind, QIcon) else self._shape_icon(icon_kind, px=icon_px))
-        btn.setIconSize(QSize(icon_px, icon_px))
-        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        btn._icon_px = icon_px
         if tooltip_html_fn is None:
             btn.setToolTip(tooltip)
         btn.setCheckable(True)
         # [2026-08-12 3차 피드백] 라벨 폰트도 축소 — QFont로(추후 _apply_theme가 setStyleSheet로
         # checked/hover 배경색을 다시 씌워도 폰트는 별도 채널이라 안 덮임, 스타일시트로 넣으면
-        # 그 재적용에 지워질 것). 높이 계산보다 먼저 적용해야 아래 sizeHint가 이 폰트를 반영한다.
+        # 그 재적용에 지워질 것).
         f = btn.font(); f.setPointSize(max(1, f.pointSize() - _PALETTE_FONT_SHRINK)); btn.setFont(f)
-        # [2026-08-12 6차] 폭만 고정하고 높이는 sizeHint를 그대로 — 폰트를 키운 뒤 고정 높이가
-        # sizeHint보다 낮아 라벨 아래가 잘렸다(실사용 스크린샷). 폭을 고정폭으로 강제한 채
-        # sizeHint를 물으면 Qt가 그 폭 기준으로 줄바꿈까지 반영한 진짜 필요 높이를 돌려준다.
-        if list_mode:
-            # [첫 화면 재디자인 2026-10-07, 시안 3라운드 S4] 「목록」 보기 — 아이콘 옆에 전체 이름 한 줄.
-            # 폭을 고정하지 않는다(QToolButton은 글자를 가운데 정렬해서, 넓게 고정하면 줄이 들쭉날쭉
-            # 가운데로 몰린다) — 1열 그리드에서 자기 폭만큼 왼쪽에 붙는다.
-            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        else:
-            btn.setFixedWidth(_PALETTE_BTN_WIDTH)
-        btn.setFixedHeight(btn.sizeHint().height())
+        self._style_palette_button(btn, list_mode)
         btn.clicked.connect(
             lambda _c=False, k=tool_key: self._on_palette_click(k))
         return btn
+
+    @staticmethod
+    def _style_palette_button(btn, list_mode: bool):
+        """[패널 통일 2라운드 2026-10-11, 시안 2-1·2-2] 「목록」(기본) = 작은 아이콘 옆에 이름 한 줄(넘치면 …),
+        「아이콘」 = 이름 없이 그림만 정사각 칸. 이름 전체는 `_full_name`(툴팁·접근성 이름에도)."""
+        name = btn._full_name
+        if list_mode:
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            btn.setIconSize(QSize(_PALETTE_LIST_ICON_PX, _PALETTE_LIST_ICON_PX))
+            btn.setText(btn.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, _PALETTE_LIST_TEXT_W))
+            btn.setMinimumWidth(0); btn.setMaximumWidth(16777215)
+            btn.setFixedHeight(26)
+        else:
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            btn.setText(name)
+            btn.setIconSize(QSize(btn._icon_px, btn._icon_px))
+            btn.setFixedSize(_PALETTE_BTN_WIDTH, _PALETTE_BTN_WIDTH)
 
     def _on_palette_click(self, key: str):
         arming = self.current_tool != key
@@ -1406,8 +1421,7 @@ class _UIBuildMixin:
             if info is None:
                 continue
             name, icon, px, tip_fn = info
-            btn = self._palette_button(name if list_mode else name[:6], icon, name, key,
-                                       icon_px=20 if list_mode else px, tooltip_html_fn=tip_fn,
+            btn = self._palette_button(name, icon, name, key, icon_px=px, tooltip_html_fn=tip_fn,
                                        list_mode=list_mode)
             btn.setStyleSheet(self._palette_accent_qss(self._dark))
             btn.setChecked(self.current_tool == key)
@@ -1416,7 +1430,9 @@ class _UIBuildMixin:
             grid.addWidget(btn, n // cols, n % cols)
             n += 1
         grid.setColumnStretch(1 if list_mode else _PALETTE_COLS, 1)
+        grid.setSpacing(0 if list_mode else 1)
         lay.addLayout(grid)
+        section.set_count(f"{n}/{_RECENT_PALETTE_MAX}")   # [2026-10-11] 제목 줄 개수(시안 C)
         section.updateGeometry()
         if hasattr(self, "_left_container"):
             self._relayout_left_panel()
@@ -1446,7 +1462,8 @@ class _UIBuildMixin:
         grid = QGridLayout(); grid.setSpacing(2)   # [2026-08-12 3차] 4→2, 패널 폭 축소에 맞춤
         btns = []
         for label, icon_kind, tooltip, tool_key, store in entries:
-            btn = self._palette_button(label, icon_kind, tooltip, tool_key)
+            btn = self._palette_button(label, icon_kind, tooltip, tool_key,
+                                       list_mode=self._palette_view == "list")
             store[icon_kind] = btn   # 기본=rect/ellipse, 심볼=kind(=icon_kind)로 키
             btns.append(btn)
         self._shape_sections.append((grid, btns))
@@ -1461,7 +1478,8 @@ class _UIBuildMixin:
         for grid, btns in self._shape_sections:
             for b in btns:
                 grid.removeWidget(b)
-            cols = len(btns) if horiz else _PALETTE_COLS
+            cols = len(btns) if horiz else (1 if self._palette_view == "list" else _PALETTE_COLS)
+            grid.setSpacing(0 if cols == 1 else 1)
             for i, b in enumerate(btns):
                 grid.addWidget(b, i // cols, i % cols)
             # 스트레치 초기화 후 실제 열 다음 빈 열에만 1 → 넓어져도 버튼은 좌측 정렬 유지.
@@ -1485,154 +1503,152 @@ class _UIBuildMixin:
 
         entries = symbol_library.load_library()
         folders = symbol_library.load_folders()
-        # [§8 항목34] 검색 중이면 맞는 심볼만, 빈 폴더는 숨기고, 접어 둔 폴더도 펼쳐 보인다
-        # (저장된 접힘 상태는 그대로 — 검색을 지우면 원래대로). 사용자 결정 2026-10-03.
         search = getattr(self, "_custom_sym_search", None)
         query = search.text().strip() if search is not None else ""
-        if query:
-            entries = [e for e in entries if _symbol_name_matches(e["name"], query)]
         self._custom_sym_buttons: dict[str, list[QToolButton]] = {}
         self._symfolder_collapse_btns: list[QToolButton] = []   # `_apply_theme` 재도색용
+        self._palette_folder_boxes: list = []                   # (상자, 색) — `_restyle_palette_boxes`
+        list_mode = self._palette_view == "list"
+        colors = self._symbol_folder_colors(folders)
 
-        def add_group(folder_name, title, deletable, favorites=False):
-            # [신규기능 2026-08-20, deep-interview] 즐겨찾기는 진짜 폴더가 아니라 심볼
-            # 엔트리의 "favorite" 표식만 모아 보여주는 이중표시 섹션 — 드롭 대상이 아니므로
-            # (우클릭 토글만 지원, deep-interview 확정) `_SymbolFolderDropZone` 대신 평범한
-            # QWidget을 쓰고, 즐겨찾기 항목이 하나도 없으면 섹션 자체를 만들지 않는다.
-            if favorites:
-                group_entries = [e for e in entries if e.get("favorite")]
-                if not group_entries:
-                    return
-            else:
-                group_entries = [e for e in entries if e.get("folder") == folder_name]
-            if query and not group_entries:
-                return None
-            zone = QWidget() if favorites else _SymbolFolderDropZone(
-                folder_name, self._move_custom_symbol)
-            zv = QVBoxLayout(zone)
-            # [실사용 버그 수정 2026-08-19] 좌우 여백을 0으로 — `custom_section.body_layout`
-            # (이 zone의 부모)이 이미 좌우 2px 여백을 갖고 있어, zone에도 좌우 여백을 또
-            # 주면 이중으로 겹쳐 "폭 흔들림" 수정(그리드 자체 여백 0)을 적용해도 4px가
-            # 남았다(실측). 상하 여백은 폴더 사이 구분감을 위해 유지.
-            zv.setContentsMargins(0, 2, 0, 2); zv.setSpacing(2)
-            head = QHBoxLayout()
-            title_lbl = self._section_label(title)
-            head.addWidget(title_lbl, 1)
-            if deletable:
-                # [실사용 피드백 2026-08-19 재개편] 이름변경(✎)·삭제(×) 버튼 2개를 없애고
-                # 폴더 이름 우클릭 메뉴로 통합(탐색기 관례, 심볼 버튼 우클릭과 같은 패턴) —
-                # 비워진 자리는 아래 폴더 접기 버튼이 대신 차지한다. 미분류는 이름변경·삭제
-                # 대상이 아니라 메뉴를 안 건다(우클릭해도 반응 없음).
-                title_lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                title_lbl.customContextMenuRequested.connect(
-                    lambda pos, n=folder_name, w=title_lbl:
-                        self._show_symbol_folder_context_menu(w, pos, n))
-            # [실사용 피드백 2026-08-19 재개편] 폴더별 접기 — 예전엔 "내 심볼" 섹션 전체를
-            # 한 번에 접었지만(옛 `_AccordionSection`), 폴더가 늘어날수록 그 방식은 원하는
-            # 폴더 하나만 잠깐 접어두는 용도로 안 맞았다. "미분류"를 포함해 모든 그룹이 같은
-            # 자격으로 접힌다(add_group가 공유하는 한 코드 경로).
-            collapse_slug = "__favorites__" if favorites else (folder_name or "__unfiled__")
-            collapse_key = f"symfolder_collapsed_{collapse_slug}"
-            collapsed = app_settings().value(collapse_key, False, type=bool)
-            if query:
-                collapsed = False   # [§8 항목34] 검색 결과는 접힌 폴더도 보이게(저장값은 안 바꿈)
-            collapse_btn = QToolButton()
-            collapse_btn.setAutoRaise(True)
-            collapse_btn.setFixedSize(QSize(16, 16))
-            collapse_btn.setText("▸" if collapsed else "▾")
-            collapse_btn.setToolTip("펼치기" if collapsed else "접기")
-            # [2026-08-19] `_FloatingPanel`/`_StaticSection` 접기 화살표와 같은 테마 적응
-            # 중립색 관례(코랄은 버튼 "선택" 상태 전용) — `_apply_theme`가 재도색할 수
-            # 있게 목록에도 등록해둔다.
-            collapse_btn.setStyleSheet(
-                f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
-            self._symfolder_collapse_btns.append(collapse_btn)
-            head.addWidget(collapse_btn)
-            zv.addLayout(head)
-            grid_container = QWidget()   # 접기 대상 — QLayout은 setVisible이 없어 래핑 필요
-            grid = QGridLayout(grid_container); grid.setSpacing(2)   # [2026-08-12 3차] 4→2
-            # [실사용 버그 수정 2026-08-19] `QGridLayout(grid_container)`처럼 위젯 생성자로
-            # 곧바로 건 레이아웃은 그 위젯의 "자기 레이아웃"이 되어 Qt 기본 여백(플랫폼별
-            # ~9px×4방향)을 그대로 물려받는다 — "기본도형" 그리드(`_make_shape_grid`)는
-            # `addLayout()`으로 중첩돼 있어 여백이 0이라 이 그리드만 조용히 더 넓었다(4열이
-            # 꽉 찬 폴더를 펼치면 패널 전체 폭이 여백만큼 늘어났다 접으면 줄어드는 "폭 흔들림"
-            # 버그의 원인, 실측: 여백 있는 채로 216px, 0으로 하면 198px — 기본도형 기준폭
-            # 208px보다도 작아져 어느 폴더를 펼쳐도 폭이 안 늘어난다).
+        def make_symbol_button(entry, list_mode):
+            # [실사용 버그 수정 2026-08-19] 2026-08-19 이전에 등록된 심볼의 옛 흐린
+            # 썸네일을 재등록 없이 자동 치유(host_selection._ensure_symbol_thumb_current).
+            entry = self._ensure_symbol_thumb_current(entry)
+            sid = entry["id"]
+            # [실사용 피드백 2026-08-19] 정적 tooltip 대신 호버 시에만 계산되는 확대 미리보기.
+            btn = self._palette_button(
+                entry["name"], QIcon(_b64_to_pixmap(entry["thumb"])), entry["name"], f"customsym:{sid}",
+                icon_px=_PALETTE_SYM_ICON_PX,
+                tooltip_html_fn=lambda e=entry: self._symbol_preview_html(e), list_mode=list_mode)
+            # [실사용 버그 수정 2026-08-19] 버튼을 매번 새로 만드므로 만든 즉시 같은 스타일을 건다.
+            btn.setStyleSheet(self._palette_accent_qss(self._dark))
+            btn.setChecked(self.current_tool == f"customsym:{sid}")
+            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            btn.customContextMenuRequested.connect(
+                lambda pos, b=btn, sid=sid: self._show_custom_symbol_context_menu(b, pos, sid))
+            # [신규기능 2026-08-20] 즐겨찾기 이중표시라 sid당 버튼이 2개일 수 있어 리스트로 보관.
+            self._custom_sym_buttons.setdefault(sid, []).append(btn)
+            return btn
+
+        def fill_grid(sec, btns, cols):
+            grid = QGridLayout(); grid.setSpacing(1 if cols > 1 else 0)
+            # [실사용 버그 수정 2026-08-19] 그리드 여백 0 — 기본 여백이 패널 폭을 흔들었다.
             grid.setContentsMargins(0, 0, 0, 0)
-            btns = []
-            for entry in group_entries:
-                # [실사용 버그 수정 2026-08-19] 2026-08-19 이전에 등록된 심볼의 옛 흐린
-                # 썸네일을 재등록 없이 자동 치유(host_selection._ensure_symbol_thumb_current).
-                entry = self._ensure_symbol_thumb_current(entry)
-                icon = QIcon(_b64_to_pixmap(entry["thumb"]))
-                sid = entry["id"]
-                key = f"customsym:{sid}"
-                # [실사용 피드백 2026-08-19] icon_px를 기본도형보다 큰 전용 상수로, 정적
-                # tooltip 대신 호버 시에만 계산되는 확대 미리보기(tooltip_html_fn)로.
-                list_mode = self._palette_view == "list"
-                btn = self._palette_button(
-                    entry["name"] if list_mode else entry["name"][:6], icon, entry["name"], key,
-                    icon_px=20 if list_mode else _PALETTE_SYM_ICON_PX,
-                    tooltip_html_fn=lambda e=entry: self._symbol_preview_html(e),
-                    list_mode=list_mode)
-                # [실사용 버그 수정 2026-08-19] 이 섹션은 등록/삭제/이름변경/이동마다 버튼을
-                # 새로 만든다 — `_apply_theme`의 접근 목록(`_accent_btns`)이 다음 테마 전환
-                # 때나 이 새 버튼을 보므로, 만든 즉시 같은 스타일을 걸어 일반 도형 버튼과
-                # 바로 동일하게 보이게 한다.
-                btn.setStyleSheet(self._palette_accent_qss(self._dark))
-                btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-                btn.customContextMenuRequested.connect(
-                    lambda pos, b=btn, sid=sid: self._show_custom_symbol_context_menu(b, pos, sid))
-                # [신규기능 2026-08-20] 이중표시라 즐겨찾기된 심볼은 버튼이 2개(원래 폴더+
-                # 즐겨찾기 섹션) 생길 수 있어 sid당 리스트로 보관 — set_tool 체크상태 동기화
-                # (host_canvas.set_tool)·테마 재도색(_accent_btns) 둘 다 전부를 봐야 한다.
-                self._custom_sym_buttons.setdefault(sid, []).append(btn)
-                btns.append(btn)
-            cols = 1 if self._palette_view == "list" else _PALETTE_COLS
-            for i, b in enumerate(btns):
-                grid.addWidget(b, i // cols, i % cols)
+            for i, bt in enumerate(btns):
+                grid.addWidget(bt, i // cols, i % cols)
             grid.setColumnStretch(cols, 1)
-            grid_container.setVisible(not collapsed)
-            zv.addWidget(grid_container)
-            body.layout().addWidget(zone)
+            sec.body_layout.addLayout(grid)
 
-            def _toggle_folder(_checked=False, zone=zone, gc=grid_container,
-                                btn=collapse_btn, key=collapse_key):
-                now_collapsed = gc.isVisible()   # 지금 보이면 → 이 클릭으로 접는다
-                gc.setVisible(not now_collapsed)
-                btn.setText("▸" if now_collapsed else "▾")
-                btn.setToolTip("펼치기" if now_collapsed else "접기")
-                app_settings().setValue(key, now_collapsed)
-                # [실사용 버그 수정 2026-08-19] `gc`(grid_container)의 가시성 변화는 `zv`
-                # (zone의 own 레이아웃)까지만 자동 반영된다 — 그 위로 위젯 경계를 넘을 때마다
-                # (zone→body_layout, body→customsym 섹션 자신의 레이아웃, custom_section→
-                # container의 outer) `QWidgetItem`이 부모 레이아웃에 캐시해 둔 옛 sizeHint가
-                # `updateGeometry()` 없이는 갱신되지 않아, 두 번째 접기부터 패널이 줄어들지
-                # 않고 부풀어 보이는 버그가 있었다(옛 `_AccordionSection`이 겪던 것과 같은
-                # Qt 함정, 이번엔 폴더가 한 단 더 중첩돼 있어 경계가 3개 — 실측으로 하나씩
-                # 확인: 이 셋 중 하나라도 빠지면 그 지점에서 다시 막힌다).
-                zone.updateGeometry()
-                self._custom_sym_body.updateGeometry()
-                self._custom_sym_section.updateGeometry()
-                self._relayout_left_panel()
-            collapse_btn.clicked.connect(_toggle_folder)
-            return zone
+        if query:
+            # [패널 통일 2라운드 2026-10-11, 시안 2-3] 검색 결과는 폴더로 나누지 않고 한 줄 목록 — 기본 도형과
+            # 심볼을 함께, 줄 오른쪽에 어느 폴더인지 흐린 글자. 보기 방식(아이콘/목록)과 무관하게 늘 목록
+            # (이름으로 찾는 중이라 이름이 보여야 한다). 2026-10-03 "검색 중에도 폴더 유지"를 사용자 결정으로 바꿈.
+            hits = [(v[0], k) for k, v in self._basic_palette_entries.items()
+                    if _symbol_name_matches(v[0], query)]
+            sym_hits = [e for e in entries if _symbol_name_matches(e["name"], query)]
+            if not hits and not sym_hits:
+                none_lbl = self._section_label("일치하는 도형·심볼 없음")
+                body.layout().addWidget(none_lbl)
+                zones = [none_lbl]
+            else:
+                sec = _StaticSection("검색 결과")
+                sec.set_count(str(len(hits) + len(sym_hits)))
+                sec.body_layout.setSpacing(0)
+                self._palette_folder_boxes.append((sec, None))
+                self._search_result_buttons: dict[str, QToolButton] = {}
+                rows = []
+                for name, key in hits:
+                    kind = self._basic_palette_entries[key][1]
+                    bt = self._palette_button(name, kind, name, key, list_mode=True)
+                    bt.setStyleSheet(self._palette_accent_qss(self._dark))
+                    bt.setChecked(self.current_tool == key)
+                    self._search_result_buttons[key] = bt
+                    rows.append((bt, "기본 도형"))
+                for e in sym_hits:
+                    rows.append((make_symbol_button(e, True), e.get("folder") or "미분류"))
+                for bt, where in rows:
+                    # 오른쪽 폴더 이름 자리만큼 이름을 더 짧게 줄인다 — 안 그러면 줄이 카드 밖으로 밀렸다(실측)
+                    bt.setText(bt.fontMetrics().elidedText(bt._full_name, Qt.TextElideMode.ElideRight, 92))
+                    row = QHBoxLayout(); row.setContentsMargins(0, 0, 2, 0); row.setSpacing(4)
+                    row.addWidget(bt)
+                    row.addStretch(1)
+                    tag = QLabel()
+                    tf = tag.font(); tf.setPixelSize(10); tag.setFont(tf)
+                    tag.setText(tag.fontMetrics().elidedText(where, Qt.TextElideMode.ElideRight, 48))
+                    tag.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+                    tag.setMaximumWidth(56)
+                    tag.setToolTip(where)
+                    row.addWidget(tag)
+                    sec.body_layout.addLayout(row)
+                body.layout().addWidget(sec)
+                zones = [sec]
+        else:
+            self._search_result_buttons = {}
 
-        # [실사용 버그 수정 2026-08-25] 빈 폴더에 첫 심볼을 등록하면(=이 섹션 전체를 처음부터
-        # 다시 짓는 이 경로) 아이콘은 보이는데 라벨 텍스트만 안 보이던 버그 — `_toggle_folder`
-        # 가 겪던 것과 같은 Qt 함정(위 주석 참조)이 "새로 지어 넣는" 이 경로에도 그대로
-        # 있었다: 새로 추가된 `zone`들의 크기 변화가 `body`→`custom_sym_section` 두 위젯
-        # 경계를 넘어 즉시 반영되지 않아, 패널이 새 줄을 담을 만큼 안 자라 텍스트 행이 잘려
-        # 나갔다(실측: 강제 `updateGeometry()` 전엔 안 보이고, 건 뒤엔 보임). `_toggle_folder`
-        # 와 동일하게 각 zone + body + section 세 겹 모두 `updateGeometry()`를 걸어야 한다.
-        zones = [add_group(None, "즐겨찾기", deletable=False, favorites=True),
-                 add_group(None, "미분류", deletable=False)]
-        zones += [add_group(name, name, deletable=True) for name in folders]
-        basic_hit = query and any(not b.isHidden() for _g, bs in self._shape_sections for b in bs)
-        if query and not any(zones) and not basic_hit:
-            none_lbl = self._section_label("일치하는 도형·심볼 없음")
-            body.layout().addWidget(none_lbl)
-            zones.append(none_lbl)
+            def add_group(folder_name, title, deletable, favorites=False):
+                # [신규기능 2026-08-20, deep-interview] 즐겨찾기는 진짜 폴더가 아니라 심볼
+                # 엔트리의 "favorite" 표식만 모아 보여주는 이중표시 섹션 — 드롭 대상이 아니고,
+                # 즐겨찾기 항목이 하나도 없으면 섹션 자체를 만들지 않는다.
+                if favorites:
+                    group_entries = [e for e in entries if e.get("favorite")]
+                    if not group_entries:
+                        return None
+                else:
+                    group_entries = [e for e in entries if e.get("folder") == folder_name]
+                zone = QWidget() if favorites else _SymbolFolderDropZone(
+                    folder_name, self._move_custom_symbol)
+                zv = QVBoxLayout(zone)
+                zv.setContentsMargins(0, 0, 0, 0); zv.setSpacing(0)
+                # [패널 통일 2라운드 2026-10-11, 시안 C] 폴더 = 색 점 + 그 색으로 옅게 물든 테두리 칸 + 개수,
+                # ⋯(색·이름변경·삭제)는 마우스를 올렸을 때만. 미분류·즐겨찾기는 중립 칸.
+                sec = _StaticSection(title)
+                sec.set_count(str(len(group_entries)))
+                color = colors.get(folder_name) if deletable else None
+                self._palette_folder_boxes.append((sec, color))
+                if deletable:
+                    # [실사용 피드백 2026-08-19 재개편] 폴더 이름 우클릭 메뉴(탐색기 관례)는 그대로.
+                    sec._title_lbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                    sec._title_lbl.customContextMenuRequested.connect(
+                        lambda pos, n=folder_name, w=sec._title_lbl:
+                            self._show_symbol_folder_context_menu(w, pos, n))
+                # [실사용 피드백 2026-08-19 재개편] 폴더별 접기 — "미분류"를 포함해 모든 그룹이 같은 자격으로.
+                collapse_slug = "__favorites__" if favorites else (folder_name or "__unfiled__")
+                collapse_key = f"symfolder_collapsed_{collapse_slug}"
+
+                def on_toggle(collapsed, key=collapse_key, zone=zone):
+                    app_settings().setValue(key, collapsed)
+                    # [실사용 버그 수정 2026-08-19] 위젯 경계마다 updateGeometry — 하나라도 빠지면
+                    # 두 번째 접기부터 패널이 줄지 않고 부풀어 보였다(실측).
+                    zone.updateGeometry()
+                    self._custom_sym_body.updateGeometry()
+                    self._custom_sym_section.updateGeometry()
+                    self._relayout_left_panel()
+                sec.make_collapsible(app_settings().value(collapse_key, False, type=bool), on_toggle)
+                self._symfolder_collapse_btns.append(sec.collapse_btn)
+                if deletable:
+                    more = QToolButton()
+                    more.setText("⋯"); more.setAutoRaise(True)
+                    more.setFixedSize(QSize(18, 16))
+                    more.setToolTip("폴더 메뉴 — 색·이름변경·삭제")
+                    more.setStyleSheet(
+                        f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
+                    more.clicked.connect(lambda _c=False, n=folder_name, w=more:
+                                         self._show_symbol_folder_context_menu(w, QPoint(0, w.height()), n))
+                    sec.add_hover_button(more)
+                    self._symfolder_collapse_btns.append(more)
+                cols = 1 if list_mode else _PALETTE_COLS
+                fill_grid(sec, [make_symbol_button(e, list_mode) for e in group_entries], cols)
+                zv.addWidget(sec)
+                body.layout().addWidget(zone)
+                return zone
+
+            # [실사용 버그 수정 2026-08-25] 빈 폴더에 첫 심볼을 등록하면 라벨이 잘리던 버그 — 새로 지은
+            # zone + body + section 세 겹 모두 updateGeometry를 걸어야 한다(아래).
+            zones = [add_group(None, "즐겨찾기", deletable=False, favorites=True),
+                     add_group(None, "미분류", deletable=False)]
+            zones += [add_group(name, name, deletable=True) for name in folders]
+        self._restyle_palette_boxes()
         for z in zones:
             if z is not None:
                 z.updateGeometry()
@@ -1658,6 +1674,39 @@ class _UIBuildMixin:
         QTimer.singleShot(0, self._relayout_left_panel)
 
 
+    # [패널 통일 2라운드 2026-10-11, 시안 C] 폴더 색 — 사용자가 ⋯ 메뉴로 고른 색, 안 고른 폴더는 순서대로 이 색들.
+    # 다크·라이트 어느 쪽에서도 점이 보이고 서로 밝기도 다르게(파랑·초록·보라·주황·…).
+    _FOLDER_DEFAULT_COLORS = ("#5aa2e8", "#4fb37c", "#b77fe0", "#e8a93a", "#e0805e", "#3fbcbc", "#d46a8c")
+
+    def _symbol_folder_colors(self, folders=None) -> dict:
+        folders = symbol_library.load_folders() if folders is None else folders
+        chosen = symbol_library.load_folder_colors()
+        out = {}
+        for i, name in enumerate(folders):
+            c = QColor(chosen.get(name) or self._FOLDER_DEFAULT_COLORS[i % len(self._FOLDER_DEFAULT_COLORS)])
+            out[name] = c if c.isValid() else QColor(self._FOLDER_DEFAULT_COLORS[0])
+        return out
+
+    def _restyle_palette_boxes(self):
+        """도형·심볼 카드의 테두리 칸들을 지금 테마로 다시 칠한다(만들 때·테마 바꿀 때)."""
+        dark = getattr(self, "_dark", True)
+        for sec in (getattr(self, "_recent_section", None), getattr(self, "_basic_section", None)):
+            if sec is not None:
+                sec.set_box(None, dark)
+        for sec, color in getattr(self, "_palette_folder_boxes", []):
+            sec.set_box(color, dark)
+
+    def _pick_symbol_folder_color(self, anchor: QWidget, folder_name: str):
+        current = self._symbol_folder_colors().get(folder_name)
+
+        def on_pick(col):
+            if col is None:
+                return
+            symbol_library.set_folder_color(folder_name, QColor(col).name())
+            self._refresh_custom_symbol_section()
+
+        self._show_color_grid_popup(anchor, current, False, False, "폴더 색", on_pick)
+
     def _show_symbol_folder_context_menu(self, label_widget: QLabel, pos, folder_name: str):
         """[실사용 피드백 2026-08-19 재개편] 폴더 이름 우클릭 → 이름변경/삭제 메뉴 — 옛
         헤더의 "✎"/"×" 버튼 2개를 대체한다(심볼 버튼 우클릭 메뉴, 아래
@@ -1665,6 +1714,7 @@ class _UIBuildMixin:
         (`add_group`의 `deletable=False` 분기)."""
         menu = QMenu(self)
         _style_menu_separators(menu)
+        menu.addAction("폴더 색 바꾸기…", lambda: self._pick_symbol_folder_color(label_widget, folder_name))
         menu.addAction("이름변경…", lambda: self._rename_symbol_folder_prompt(folder_name))
         menu.addAction("삭제…", lambda: self._delete_symbol_folder_prompt(folder_name))
         menu.exec(label_widget.mapToGlobal(pos))
@@ -1840,12 +1890,17 @@ class _UIBuildMixin:
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._left_scroll = scroll
+        # [패널 통일 2라운드 2026-10-11] 스크롤바는 얇게(6px), 마우스를 카드에 올렸을 때만 손잡이가 보인다
+        # (자리는 늘 같아 나타날 때 내용이 밀리지 않음 — `_set_left_scroll_hover`).
+        scroll.installEventFilter(self)
+        self._set_left_scroll_hover(False)
         panel.set_content(scroll)
 
         self._shape_tool_buttons: dict[str, QToolButton] = {}
         self._sym_buttons: dict[str, QToolButton] = {}
         self._shape_sections: list = []   # (grid, buttons) — 기본도형·순서도
-        self._palette_view = "list" if app_settings().value("palette_view", "icon") == "list" else "icon"
+        # [패널 통일 2라운드 2026-10-11] 기본은 「목록」(사용자: "목록보기가 더 마음에 듦")
+        self._palette_view = "icon" if app_settings().value("palette_view", "list") == "icon" else "list"
 
         # ---- 제목 줄: 「아이콘 | 목록」 + 새 폴더 ＋ ----
         # 제목 줄이 카드 폭을 정하지 않게(폭은 아래 칸 그리드가 정함) — 버튼 묶음은 크기 계산에서 빼고
@@ -1862,8 +1917,11 @@ class _UIBuildMixin:
         for i, (mode, text) in enumerate((("icon", "아이콘"), ("list", "목록"))):
             vb = QToolButton()
             vb.setText(text)
+            # [패널 통일 2라운드 2026-10-11] 192px 카드에선 글자 버튼 둘이 「…」로 잘렸다(실측) — 칸/줄 모양 아이콘으로
+            vb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            vb.setIcon(self._palette_view_icon(mode))
+            vb.setFixedSize(QSize(24, 20)); vb.setIconSize(QSize(15, 15))
             vb.setCheckable(True); vb.setAutoExclusive(True)
-            vb.setFixedHeight(20)
             vb.setChecked(self._palette_view == mode)
             vb.setProperty("paletteView", True)   # _apply_theme의 작은 분절 버튼 규칙
             vb.setToolTip("큰 아이콘으로 보기" if mode == "icon" else "아이콘 옆에 전체 이름으로 보기")
@@ -1906,8 +1964,6 @@ class _UIBuildMixin:
 
         # ---- 자주 쓰는 것(최근 8개, 칸 자리 고정 — `_recent_palette_note`) ----
         recent_section = _StaticSection("자주 쓰는 것")
-        hint = self._section_label("최근 8개")
-        recent_section.header_layout.addWidget(hint)
         self._recent_section = recent_section
         outer.addWidget(recent_section)
 
@@ -1938,6 +1994,7 @@ class _UIBuildMixin:
         # 「자주 쓰는 것」이 기본 도형 칸을 다시 만들 때 쓰는 표(tool_key → 이름·아이콘 종류).
         self._basic_palette_entries = {e[3]: (e[0], e[1]) for e in basic_entries}
         basic_grid = self._make_shape_grid(basic_entries)
+        basic_section.set_count(str(len(basic_entries)))
         self._basic_section = basic_section
         basic_section.body_layout.addLayout(basic_grid)
         outer.addWidget(basic_section)
@@ -1978,36 +2035,51 @@ class _UIBuildMixin:
         app_settings().setValue(setting, collapsed)
         self._relayout_left_panel()
 
+    @staticmethod
+    def _palette_view_icon(mode: str) -> QIcon:
+        """「아이콘 | 목록」 보기 전환 버튼 그림 — 네 칸(아이콘 보기) / 줄 세 개(목록 보기). 지금 테마 아이콘 색."""
+        pm = QPixmap(28, 28); pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(QPen(_current_icon_color(), 2.2))
+        if mode == "icon":
+            for x, y in ((5, 5), (16, 5), (5, 16), (16, 16)):
+                p.drawRect(QRectF(x, y, 7, 7))
+        else:
+            for y in (7, 14, 21):
+                p.drawLine(4, y, 7, y); p.drawLine(11, y, 24, y)
+        p.end()
+        return QIcon(pm)
+
+    def _set_left_scroll_hover(self, hover: bool):
+        handle = ("rgba(255,255,255,70)" if getattr(self, "_dark", True) else "rgba(0,0,0,70)") if hover else "transparent"
+        self._left_scroll.verticalScrollBar().setStyleSheet(
+            "QScrollBar:vertical { width:6px; background:transparent; margin:0; }"
+            f"QScrollBar::handle:vertical {{ background:{handle}; border-radius:3px; min-height:24px; }}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:transparent; }")
+
     def _set_palette_view(self, mode: str):
-        """「아이콘 | 목록」 전환(시안 3라운드 — 사용자 요청 "둘 다 제공"). 기본 도형 8개는 이름이
-        짧아 늘 아이콘 칸으로 두고, 자주 쓰는 것·내 심볼만 바꾼다(AI로 만든 심볼은 이름이 길다)."""
+        """「아이콘 | 목록」 전환(시안 3라운드 — 사용자 요청 "둘 다 제공"). [2026-10-11] 기본 도형도 같이
+        바꾼다 — 아이콘 보기가 이름 없는 그림 칸이 되면서 기본 도형만 예외로 둘 이유가 없어졌다."""
         if mode == self._palette_view:
             return
         self._palette_view = mode
         app_settings().setValue("palette_view", mode)
         for m, b in self._palette_view_btns.items():
             b.setChecked(m == mode)
+        for _grid, btns in self._shape_sections:   # [2026-10-11] 기본 도형도 보기 방식을 따른다
+            for b in btns:
+                self._style_palette_button(b, mode == "list")
+        self._relayout_sections(horiz=False)
         self._refresh_recent_section()
         self._refresh_custom_symbol_section()
 
     def _on_palette_search(self):
-        """검색어가 있으면 기본 도형도 이름·초성으로 거르고, 「자주 쓰는 것」은 숨긴다(결과만 보이게)."""
+        """[패널 통일 2라운드 2026-10-11, 시안 2-3] 검색 중엔 「자주 쓰는 것」·「기본 도형」을 숨기고, 기본 도형까지
+        함께 한 줄 목록으로 보인다(`_refresh_custom_symbol_section`의 검색 결과 칸)."""
         query = self._custom_sym_search.text().strip()
-        for grid, btns in self._shape_sections:
-            # 맞는 칸만 앞에서부터 다시 채운다(숨긴 칸 자리가 빈칸으로 남지 않게).
-            for b in btns:
-                grid.removeWidget(b)
-            shown = [b for b in btns if _symbol_name_matches(b.text(), query)]
-            for b in btns:
-                b.setVisible(b in shown)
-            for i, b in enumerate(shown):
-                grid.addWidget(b, i // _PALETTE_COLS, i % _PALETTE_COLS)
-        # isVisible이 아니라 isHidden — 섹션을 접어 두면 칸이 다 "안 보임"이라 결과 없음으로 잘못 셌다
-        any_basic = any(not b.isHidden() for _g, btns in self._shape_sections for b in btns) or not query
-        self._basic_section.setVisible(any_basic)
-        # 접어 둔 기본 도형도 검색 중엔 펼쳐 보인다(내 심볼 폴더와 같은 규칙, 저장값은 그대로)
-        self._basic_section.set_collapsed(
-            not query and app_settings().value("palette_section_collapsed_basic", False, type=bool))
+        self._basic_section.setVisible(not query)
         self._recent_section.setVisible(not query)
         for sec in (self._basic_section, self._recent_section):
             sec.updateGeometry()
@@ -2043,7 +2115,7 @@ class _UIBuildMixin:
         btn_row = QHBoxLayout(btn_wrap)
         btn_row.setContentsMargins(2, 2, 2, 2); btn_row.setSpacing(6)
         add_layer_btn = QToolButton()
-        add_layer_btn.setText("＋ 새 레이어")
+        add_layer_btn.setText("＋ 새로")   # [2026-10-11] 192px 카드에 두 버튼이 다 들어가게(「＋ 새 레이어」에서 줄임)
         add_layer_btn.setToolTip("레이어를 하나 더 만들어요")
         add_layer_btn.clicked.connect(lambda: self.add_layer())
         move_btn = QToolButton()
@@ -2113,11 +2185,10 @@ class _UIBuildMixin:
         # 내부 스크롤바가 뜬다.
         content_h = self._left_container.sizeHint().height()
         self._left_scroll.setFixedHeight(min(content_h, self._LEFT_PANEL_MAX_H))
+        # [패널 통일 2라운드 2026-10-11] 카드 폭은 고정 192px(내용이 정하지 않음) — 긴 이름은 …로 줄인다.
+        self._left_scroll.setFixedWidth(_LEFT_PANEL_W)
         # [첫 화면 재디자인 2026-10-07] 스크롤바가 생기면 그 폭만큼 카드를 넓힌다 — 안 그러면 스크롤바가
         # 안쪽 폭을 먹어 오른쪽 글자(「최근 8개」·4열 끝 칸)가 잘렸다(「목록」 보기에서 실측).
-        sb_w = (self._left_scroll.verticalScrollBar().sizeHint().width()
-                if content_h > self._LEFT_PANEL_MAX_H else 0)
-        self._left_scroll.setFixedWidth(self._left_container.sizeHint().width() + sb_w)
         self._left_panel._body_layout.invalidate()
         self._left_panel._body_layout.activate()
         self._left_panel.layout().invalidate()

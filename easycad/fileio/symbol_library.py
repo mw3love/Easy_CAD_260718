@@ -57,7 +57,10 @@ def _load_raw() -> dict:
         return {"folders": [], "symbols": []}
     if not isinstance(data, dict):
         return {"folders": [], "symbols": []}
-    return {"folders": data.get("folders", []), "symbols": data.get("symbols", [])}
+    raw = {"folders": data.get("folders", []), "symbols": data.get("symbols", [])}
+    if isinstance(data.get("folder_colors"), dict):   # [2026-10-11] 폴더 색 칩 — 없던 파일엔 키가 없다
+        raw["folder_colors"] = data["folder_colors"]
+    return raw
 
 
 def _save_raw(data: dict):
@@ -94,6 +97,24 @@ def load_folders() -> list[str]:
     return _load_raw()["folders"]
 
 
+def load_folder_colors() -> dict[str, str]:
+    """[패널 통일 2라운드 2026-10-11] 폴더 이름 → 색(#rrggbb). 사용자가 ⋯ 메뉴로 고른 것만 들어 있다
+    (안 고른 폴더는 화면 쪽이 순서대로 기본 색을 준다). 이름이 곧 폴더 식별자라 이름변경·삭제가 함께 고친다."""
+    return dict(_load_raw().get("folder_colors", {}))
+
+
+def set_folder_color(name: str, color: str | None):
+    data = _load_raw()
+    if name not in data["folders"]:
+        return
+    colors = data.setdefault("folder_colors", {})
+    if color:
+        colors[name] = color
+    else:
+        colors.pop(name, None)
+    _save_raw(data)
+
+
 def create_folder(name: str):
     name = name.strip()
     if not name:
@@ -114,6 +135,7 @@ def delete_folder(name: str):
     if name not in data["folders"]:
         return
     data["folders"].remove(name)
+    data.get("folder_colors", {}).pop(name, None)
     data["symbols"] = [e for e in data["symbols"] if e.get("folder") != name]
     _save_raw(data)
 
@@ -130,6 +152,9 @@ def rename_folder(old_name: str, new_name: str):
     if old_name not in data["folders"] or new_name in data["folders"]:
         return
     data["folders"][data["folders"].index(old_name)] = new_name
+    colors = data.get("folder_colors", {})
+    if old_name in colors:
+        colors[new_name] = colors.pop(old_name)
     for e in data["symbols"]:
         if e.get("folder") == old_name:
             e["folder"] = new_name

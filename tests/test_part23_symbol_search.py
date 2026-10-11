@@ -106,23 +106,33 @@ def test_search_box_sits_at_top_of_shape_symbol_card():
     assert w._left_panel._title_lbl.text() == "도형 · 심볼"
 
 
-def test_search_also_filters_basic_shapes_and_hides_recent():
+def test_search_shows_flat_list_with_basic_shapes_and_folder_names():
+    """[패널 통일 2라운드 2026-10-11, 시안 2-3] 검색 결과는 폴더로 나누지 않은 한 줄 목록 — 기본 도형도 함께,
+    줄 오른쪽에 어느 폴더인지. 그동안 「자주 쓰는 것」·「기본 도형」 칸은 숨긴다. 아이콘 보기여도 목록으로."""
+    from PyQt6.QtWidgets import QLabel
     with _isolated_symbol_library():
-        _lib("폴더A", "폴더B")
+        ant, _amp, _zig = _lib("폴더A", "폴더B")
         w = CanvasWindow()
         w.show()
-        basic = [b for _g, bs in w._shape_sections for b in bs]
-        w._custom_sym_search.setText("ㅅ")          # 사각형·삼각형·시작/끝·저장소
-        shown = [b.text() for b in basic if b.isVisibleTo(w._left_container)]
-        assert shown == ["사각형", "삼각형", "시작/끝", "저장소"]
-        grid = w._shape_sections[0][0]
-        assert grid.itemAtPosition(0, 1).widget().text() == "삼각형"   # 빈칸 없이 앞에서부터
+        w._set_palette_view("icon")
+        w._custom_sym_search.setText("ㅅ")          # 사각형·삼각형·시작/끝·저장소 (심볼은 없음)
+        body = w._custom_sym_body.layout()
+        assert body.count() == 1
+        sec = body.itemAt(0).widget()
+        assert sec._title_lbl.text() == "검색 결과" and sec.count_lbl.text() == "4"
+        assert list(w._search_result_buttons) == ["rect", "sym:triangle", "sym:terminal", "sym:database"]
+        assert all(b.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+                   for b in w._search_result_buttons.values())
         assert not w._recent_section.isVisibleTo(w._left_container)
-        w._custom_sym_search.setText("판단")
-        assert w._custom_sym_body.layout().count() == 0               # 심볼은 없고 도형만 맞음 → 안내 없음
+        assert not w._basic_section.isVisibleTo(w._left_container)
+        w._custom_sym_search.setText("안테")
+        assert set(w._custom_sym_buttons) == {ant["id"]}
+        tags = [l.text() for l in body.itemAt(0).widget().findChildren(QLabel)]
+        assert "폴더A" in tags                                          # 어느 폴더인지 줄 오른쪽에
         w._custom_sym_search.clear()
-        assert all(b.isVisibleTo(w._left_container) for b in basic)
         assert w._recent_section.isVisibleTo(w._left_container)
+        assert w._basic_section.isVisibleTo(w._left_container)
+        app_settings().remove("palette_view")
 
 
 def test_recent_palette_slots_keep_position_and_replace_oldest():
@@ -161,18 +171,22 @@ def test_palette_view_list_shows_full_names_and_persists():
         ant, _amp, _zig = _lib("폴더A", "폴더B")
         symbol_library.rename_symbol(ant["id"], "야기 안테나 3소자 긴 이름")
         try:
+            st.remove("palette_view")
             w = CanvasWindow()
-            assert w._palette_view_btns["icon"].isChecked()
+            assert w._palette_view_btns["list"].isChecked()   # [2026-10-11] 기본은 「목록」(사용자 결정)
             b = w._custom_sym_buttons[ant["id"]][0]
-            assert b.text() == "야기 안테나"                 # 아이콘 보기는 앞 6글자
-            w._palette_view_btns["list"].click()
-            b = w._custom_sym_buttons[ant["id"]][0]
-            assert b.text() == "야기 안테나 3소자 긴 이름"
+            assert b._full_name == "야기 안테나 3소자 긴 이름"
             assert b.toolButtonStyle() == _Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-            assert st.value("palette_view") == "list"
-            assert CanvasWindow()._palette_view == "list"
+            assert b.text() == b.fontMetrics().elidedText(b._full_name, _Qt.TextElideMode.ElideRight, 118)
             w._palette_view_btns["icon"].click()
-            assert w._custom_sym_buttons[ant["id"]][0].toolButtonStyle() ==                 _Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+            b = w._custom_sym_buttons[ant["id"]][0]
+            assert b.toolButtonStyle() == _Qt.ToolButtonStyle.ToolButtonIconOnly   # 아이콘 보기는 이름 없이
+            assert b.accessibleName() == "야기 안테나 3소자 긴 이름"
+            assert st.value("palette_view") == "icon"
+            assert CanvasWindow()._palette_view == "icon"
+            w._palette_view_btns["list"].click()
+            assert w._custom_sym_buttons[ant["id"]][0].toolButtonStyle() == \
+                _Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         finally:
             st.remove("palette_view")
 
@@ -191,8 +205,7 @@ def test_recent_and_basic_sections_collapse_and_persist():
         assert w._left_panel.height() < h0                       # 패널이 줄어든다
         assert st.value(keys[1], False, type=bool) is True
         w._custom_sym_search.setText("판단")
-        assert w._basic_section.isVisibleTo(w._left_container)   # 접혀 있어도 결과로 센다
-        assert not w._basic_section.body.isHidden()              # 검색 중엔 펼침
+        assert "sym:decision" in w._search_result_buttons        # 접혀 있어도 결과 목록엔 나온다(2026-10-11 한 줄 목록)
         assert st.value(keys[1], False, type=bool) is True       # 저장값 그대로
         w._custom_sym_search.clear()
         QTest.qWait(50)                                          # 내 심볼 다시 그리기는 한 틱 뒤에 크기가 맞는다

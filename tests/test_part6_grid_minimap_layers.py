@@ -1718,7 +1718,7 @@ def test_active_layer_receives_new_items_and_falls_back():
     QTest.mouseClick(row, Qt.MouseButton.LeftButton)          # 줄 클릭 → 그리는 중
     assert w._current_active_layer() == cab["id"]
     row = w._layers_list.itemWidget(w._layers_list.item(1))
-    assert any(l.text() == "그리는 중" and not l.isHidden() for l in row.findChildren(QLabel))
+    assert any(l.accessibleName() == "그리는 중" and not l.isHidden() for l in row.findChildren(QLabel))   # 연필 아이콘(2026-10-11)
     r = _mk_pen_rect(w, x=0, y=0)
     w.push_undo_add(r)
     assert w._item_layer_id(r) == cab["id"]

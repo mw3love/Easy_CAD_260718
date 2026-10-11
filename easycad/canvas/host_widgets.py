@@ -996,6 +996,19 @@ class _FloatingPanel(QFrame):
             f"QToolButton {{ color: {_current_icon_color().name()}; font-size: 13px; }}")
 
 
+def _palette_box_qss(name: str, color, dark: bool) -> str:
+    """[패널 통일 2라운드 2026-10-11, 시안 C] 레이어 줄 같은 테두리 칸 — 색이 있으면(폴더 색) 그 색으로 옅게
+    물들이고 테두리도 그 색, 없으면 중립. ID 선택자만 써서 안쪽 버튼·글자 모양엔 번지지 않게 한다."""
+    if color is None:
+        bg, bd = (("rgba(255,255,255,10)", "rgba(255,255,255,30)") if dark
+                  else ("rgba(0,0,0,6)", "rgba(0,0,0,38)"))
+    else:
+        r, g, b = color.red(), color.green(), color.blue()
+        bg = f"rgba({r},{g},{b},{22 if dark else 24})"
+        bd = f"rgba({r},{g},{b},{120 if dark else 150})"
+    return f"#{name} {{ background:{bg}; border:1px solid {bd}; border-radius:8px; }}"
+
+
 class _StaticSection(QWidget):
     """[좌측 패널 개편, 2026-08-19 실사용 피드백] 옛 `_AccordionSection`에서 접기 기능만 뺀
     정적 섹션 — "기본도형"·"내 심볼" 최상단은 더 이상 접지 않는다(실사용 보고: 이 최상단
@@ -1006,19 +1019,33 @@ class _StaticSection(QWidget):
 
     def __init__(self, title: str):
         super().__init__()
+        # [패널 통일 2라운드 2026-10-11, 시안 C] 레이어 줄처럼 테두리 칸으로 묶을 수 있다(`set_box`) —
+        # 색 점(폴더 색)·개수·마우스를 올릴 때만 보이는 버튼(`add_hover_button`, 폴더 ⋯)도 제목 줄에.
+        self.setObjectName("palSec")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0); v.setSpacing(0)
 
         head = QWidget()
         hl = QHBoxLayout(head)
-        hl.setContentsMargins(2, 4, 2, 2); hl.setSpacing(4)
+        hl.setContentsMargins(4, 3, 2, 1); hl.setSpacing(5)
+        self._dot = QLabel()
+        self._dot.setFixedSize(8, 8)
+        self._dot.hide()
+        hl.addWidget(self._dot)
         # [2026-08-13 버그 수정, 옛 _AccordionSection에서 이관] 색을 안 정한 `setStyleSheet()`는
         # QLabel을 QStyleSheetStyle로 전환해 앱 다크 팔레트(WindowText)를 안 따르고 검정으로
         # 렌더됐다 — 폰트는 스타일시트 대신 QFont로 걸어 팔레트 색 상속을 그대로 유지한다.
         title_lbl = QLabel(title)
         f = title_lbl.font(); f.setWeight(QFont.Weight.DemiBold); title_lbl.setFont(f)
         hl.addWidget(title_lbl, 1)
+        self.count_lbl = QLabel()
+        cf = self.count_lbl.font(); cf.setPixelSize(11); self.count_lbl.setFont(cf)
+        self.count_lbl.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+        self.count_lbl.hide()
+        hl.addWidget(self.count_lbl)
         self.header_layout = hl   # 확장 지점 — insertWidget(1, ...)으로 제목 옆에 버튼 삽입
+        self.head = head
         v.addWidget(head)
 
         self.body = QWidget()
@@ -1029,6 +1056,40 @@ class _StaticSection(QWidget):
         v.addWidget(self.body)
         self._title_lbl = title_lbl
         self.collapse_btn = None
+        self._hover_btns: list = []
+
+    def set_count(self, text: str):
+        self.count_lbl.setText(text)
+        self.count_lbl.setVisible(bool(text))
+
+    def set_box(self, color, dark: bool):
+        """테두리 칸으로 그린다. color(QColor)가 있으면 그 색 점 + 옅게 물든 칸(폴더), 없으면 중립 칸."""
+        self.setStyleSheet(_palette_box_qss("palSec", color, dark))
+        if color is not None:
+            self._dot.setStyleSheet(f"background:{color.name()}; border-radius:4px;")
+        self._dot.setVisible(color is not None)
+
+    def add_hover_button(self, btn):
+        """마우스가 이 칸 위에 있을 때만 보이는 제목 줄 버튼(Lucid 방식 — 평소 제목 줄을 조용하게).
+        숨어도 자리는 남겨 둬 나타날 때 제목 글자가 밀리지 않게 한다."""
+        sp = btn.sizePolicy(); sp.setRetainSizeWhenHidden(True); btn.setSizePolicy(sp)
+        btn.hide()
+        idx = self.header_layout.indexOf(self.collapse_btn) if self.collapse_btn is not None else -1
+        if idx >= 0:
+            self.header_layout.insertWidget(idx, btn)
+        else:
+            self.header_layout.addWidget(btn)
+        self._hover_btns.append(btn)
+
+    def enterEvent(self, e):
+        for b in self._hover_btns:
+            b.show()
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        for b in self._hover_btns:
+            b.hide()
+        super().leaveEvent(e)
 
     def make_collapsible(self, collapsed: bool, on_toggle):
         """[실사용 피드백 2026-10-11] 「자주 쓰는 것」·「기본 도형」도 내 심볼 폴더처럼 제목 줄에서 접는다

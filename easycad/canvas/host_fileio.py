@@ -1285,6 +1285,11 @@ class _FileIOMixin:
         # dropEvent(아래)까지 이벤트가 아예 안 왔다(실측: `event.isAccepted()`가 dragEnter는
         # True, dragMove는 False로 갈림 — 커서는 dragMove 기준이라 이게 실제로 보인 증상).
         # 팔레트와 동일하게 여기서 파일 URL도 직접 가로채 처리해야 한다.
+        if obj is getattr(self, "_left_scroll", None):
+            # [패널 통일 2라운드 2026-10-11] 도형·심볼 카드 스크롤바 손잡이는 마우스를 올렸을 때만
+            if event.type() in (QEvent.Type.Enter, QEvent.Type.Leave):
+                self._set_left_scroll_hover(event.type() == QEvent.Type.Enter)
+            return False
         if obj is getattr(self, "_custom_sym_search", None):
             # [§8 항목34] '내 심볼' 검색칸에서 Esc → 검색어 지우기
             if (event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape

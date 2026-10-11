@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from easycad.canvas.annotator_core import (
-    _svg_icon,
+    _svg_icon, _svg_icon_pixmap,
 )
 from easycad.canvas.host_widgets import _style_menu_separators, _current_icon_color
 
@@ -150,9 +150,11 @@ class _LayersMixin:
         count = len(self._items_in_layer(lid))
         name_lbl = QLabel(layer["name"])
         name_lbl.setWordWrap(False)
-        tag = QLabel("그리는 중")
-        f = tag.font(); f.setPixelSize(11); tag.setFont(f)
-        tag.setForegroundRole(QPalette.ColorRole.Link)   # 강조색(코랄) — "지금 활성"이라는 의미 있는 상태
+        # [패널 통일 2라운드 2026-10-11] 「그리는 중」 글자 → 코랄 연필 아이콘(폭 192px 카드에 맞춤, 이름은 툴팁·접근성)
+        tag = QLabel()
+        tag.setPixmap(_svg_icon_pixmap("pen", 14, QColor("#da7756")))   # 강조색(코랄) — "지금 활성"이라는 의미 있는 상태
+        tag.setToolTip("그리는 중 — 새 도형이 이 레이어로 들어가요")
+        tag.setAccessibleName("그리는 중")
         tag.setVisible(active)
         count_lbl = QLabel(str(count))
         count_lbl.setForegroundRole(QPalette.ColorRole.PlaceholderText)

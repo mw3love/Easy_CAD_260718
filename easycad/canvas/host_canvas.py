@@ -401,6 +401,8 @@ class _CanvasMixin:
         # [첫 화면 재디자인 2026-10-07] 「자주 쓰는 것」 칸은 tool_key 그대로 키.
         for k, b in getattr(self, "_recent_palette_buttons", {}).items():
             b.setChecked(k == key)
+        for k, b in getattr(self, "_search_result_buttons", {}).items():   # [2026-10-11] 검색 결과의 기본 도형
+            b.setChecked(k == key)
 
 
     def next_badge_number(self) -> int:
