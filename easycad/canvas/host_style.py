@@ -99,14 +99,15 @@ class _StyleMixin:
 
 
     def _show_color_grid_popup(self, anchor: QWidget, initial, allow_none: bool,
-                                show_alpha: bool, title: str, on_pick):
+                                show_alpha: bool, title: str, on_pick, swatches=None):
         """[신규기능 · 색 선택 UX 단순화] 스와치 클릭 시 무거운 QColorDialog 대신 먼저 이
         그리드 팝업(무채색+기본색 3단 + '다른 색…')을 anchor 아래에 띄운다. '다른 색…'을
         고르면 그 안에서 왼쪽 열(기본색 그리드)만 숨긴 QColorDialog로 폴백한다(선·채움 동일 UI,
         2026-07-31 통일 — 이전엔 채움만 이렇게 하고 선 색은 OS 네이티브 다이얼로그를 그대로 써서
         둘의 인터페이스가 달라 보였다)."""
         pop = _ColorGridPopup(self, initial, allow_none, show_alpha, title, on_pick,
-                              recent=self._recent_colors, on_custom_picked=self._remember_recent_color)
+                              recent=self._recent_colors, on_custom_picked=self._remember_recent_color,
+                              swatches=swatches)
         _place_popup(pop, anchor)   # 화면 밖으로 안 나가게(2026-10-11)
         self._last_color_popup = pop   # 테스트 훅 — 실사용 흐름엔 영향 없음
 

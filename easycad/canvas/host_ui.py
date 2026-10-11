@@ -35,7 +35,7 @@ from easycad.canvas.host_widgets import (
     _CANVAS_BG, _set_icon_color, _current_icon_color,
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
     _StaticSection, _SymbolFolderDropZone, _apply_native_titlebar_scheme,
-    _DragGrip, _SymbolFolderBrowser, _menu_icon, _ACCENT_CORAL,
+    _DragGrip, _SymbolFolderBrowser, _menu_icon, _ACCENT_CORAL, _SECTION_COLOR_SWATCHES,
     _ARROW_KIND_LABELS, _ARROW_HEAD_LABELS, _set_menu_sep_color, _style_menu_separators,
 )
 
@@ -1859,18 +1859,25 @@ class _UIBuildMixin:
         return btn
 
 
-    # [패널 통일 2라운드 2026-10-11, 시안 C] 폴더 색 — 사용자가 ⋯ 메뉴로 고른 색.
-    # [2026-10-12] 안 고른 폴더는 중립(색 없음) — 예전엔 순서대로 아래 색을 돌려 칠했는데 고른 색이 하나도 없어 뜻 없는
-    # 무지개였다. 이 색들은 이제 색 고르기 창을 처음 열 때의 기본 선택값으로만 쓴다.
-    _FOLDER_DEFAULT_COLORS = ("#5aa2e8", "#4fb37c", "#b77fe0", "#e8a93a", "#e0805e", "#3fbcbc", "#d46a8c")
+    # [패널 통일 2라운드 2026-10-11, 시안 C] 폴더 색 — 사용자가 ⋯ 메뉴로 고른 색. 처음엔 안 고른 폴더에 기본색 7개를 돌려
+    # 칠했고(뜻 없는 무지개), 2026-10-12 오전엔 중립(띠 없음), 같은 날 오후 아래 기본색(회색)으로.
+    # [실사용 피드백 2026-10-12] 안 고른 칸의 기본 — 폴더는 회색 띠, 「기본 도형」은 연한 파랑(둘 다 제목 줄 색 목록에 있는 색).
+    # 파일엔 저장하지 않고 그릴 때만 쓴다(기본을 바꾸면 안 고른 칸이 모두 따라오게).
+    _FOLDER_BASE_COLOR = _SECTION_COLOR_SWATCHES[0]
+    _BASIC_BASE_COLOR = _SECTION_COLOR_SWATCHES[5]
+
+    @staticmethod
+    def _section_icon_color(color: QColor, dark: bool) -> QColor:
+        """제목 앞 그림 색 — 띠는 연한색 그대로, 그림은 라이트 테마에서 한 단계 진하게(연한 파랑·회색 그림이 묻혔다, 실측)."""
+        return QColor(color) if dark else QColor(color).darker(150)
 
     def _symbol_folder_colors(self, folders=None) -> dict:
         folders = symbol_library.load_folders() if folders is None else folders
         chosen = symbol_library.load_folder_colors()
         out = {}
-        for name in folders:   # 고른 색만 — 없으면 None(중립 칸)
+        for name in folders:   # 고른 색, 없으면 기본 회색(2026-10-12 — 그 전엔 None=띠 없음)
             c = QColor(chosen[name]) if chosen.get(name) else None
-            out[name] = c if c is not None and c.isValid() else None
+            out[name] = c if c is not None and c.isValid() else QColor(self._FOLDER_BASE_COLOR)
         return out
 
     def _restyle_palette_boxes(self):
@@ -1884,15 +1891,15 @@ class _UIBuildMixin:
             fav.set_title_html(f"<span style='color:{c.name()}'>★</span> 즐겨찾기")
         for sec in (getattr(self, "_basic_section", None),):
             if sec is not None:   # 안 고르면 중립 칸(점 없음), 고르면 폴더처럼 색 점 + 옅은 칸
-                sec.set_box(QColor(chosen["basic"]) if chosen.get("basic") else None, dark)
-                # [2026-10-12] 즐겨찾기 ★과 짝 — 제목 앞 □○△ 그림, 고른 칸 색이 있으면 그 색(★처럼)
-                lead = QColor(chosen["basic"]) if chosen.get("basic") else _current_icon_color()
-                sec.set_lead_pixmap(_svg_icon_pixmap("shapes", 15, lead))
+                # [2026-10-12] 안 고르면 연한 파랑(그 전엔 중립). 제목 앞 □○△ 그림도 그 색(★처럼)
+                c = QColor(chosen.get("basic") or self._BASIC_BASE_COLOR)
+                sec.set_box(c, dark)
+                sec.set_lead_pixmap(_svg_icon_pixmap("shapes", 15, self._section_icon_color(c, dark)))
         for sec, color in getattr(self, "_palette_folder_boxes", []):
             sec.set_box(color, dark)
             # [2026-10-12] 폴더 제목 앞 폴더 그림 — ★·□○△와 줄을 맞추고, 고른 색이 있으면 그 색
             if getattr(sec, "_is_folder", False):
-                sec.set_lead_pixmap(_svg_icon_pixmap("folder", 15, color if color is not None else _current_icon_color()))
+                sec.set_lead_pixmap(_svg_icon_pixmap("folder", 15, self._section_icon_color(color, dark)))
         add_btn = getattr(self, "_add_folder_btn", None)
         if add_btn is not None:   # [2026-10-12] 새 폴더 = 점선 테두리 칸(폴더 칸과 같은 모서리, 중립색)
             bd, hover = (("rgba(255,255,255,55)", "rgba(255,255,255,18)") if dark
@@ -1902,7 +1909,7 @@ class _UIBuildMixin:
                 f"#addFolderBtn:hover {{ background:{hover}; }}")
 
     def _pick_symbol_folder_color(self, anchor: QWidget, folder_name: str):
-        current = self._symbol_folder_colors().get(folder_name) or QColor(self._FOLDER_DEFAULT_COLORS[0])
+        current = self._symbol_folder_colors().get(folder_name)
 
         def on_pick(col):
             if col is None:
@@ -1910,7 +1917,7 @@ class _UIBuildMixin:
             symbol_library.set_folder_color(folder_name, QColor(col).name())
             self._refresh_custom_symbol_section()
 
-        self._show_color_grid_popup(anchor, current, False, False, "폴더 색", on_pick)
+        self._show_color_grid_popup(anchor, current, False, False, "폴더 색", on_pick, swatches=_SECTION_COLOR_SWATCHES)
 
     def _add_section_color_menu(self, sec, key: str):
         """[실사용 피드백 2026-10-11] 「즐겨찾기」·「기본 도형」에도 폴더처럼 마우스를 올리면 ⋯ — 칸 색 바꾸기·기본 색으로.
@@ -1937,9 +1944,10 @@ class _UIBuildMixin:
 
     def _pick_section_color(self, anchor: QWidget, key: str):
         chosen = symbol_library.load_section_colors().get(key)
-        current = QColor(chosen or (_ACCENT_CORAL if key == "favorites" else self._FOLDER_DEFAULT_COLORS[0]))
+        current = QColor(chosen or (_ACCENT_CORAL if key == "favorites" else self._BASIC_BASE_COLOR))
         self._show_color_grid_popup(anchor, current, False, False, "칸 색",
-                                    lambda col: col is not None and self._set_section_color(key, QColor(col).name()))
+                                    lambda col: col is not None and self._set_section_color(key, QColor(col).name()),
+                                    swatches=_SECTION_COLOR_SWATCHES)
 
     def _set_section_color(self, key: str, color):
         symbol_library.set_section_color(key, color)

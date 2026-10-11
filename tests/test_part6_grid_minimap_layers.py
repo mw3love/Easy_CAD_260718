@@ -1929,7 +1929,7 @@ def test_favorites_and_basic_sections_have_color_menu():
     with _isolated_symbol_library():
         w = CanvasWindow()
         assert len(w._section_more_btns) == 2
-        assert w._basic_section.head.styleSheet() == ""                   # 처음엔 띠 없음
+        assert "rgba(127,189,255" in w._basic_section.head.styleSheet()   # [2026-10-12] 처음엔 연한 파랑 띠(기본색)
         w._set_section_color("basic", "#123456")
         assert "rgba(18,52,86" in w._basic_section.head.styleSheet()        # 제목 줄만 색 띠(시안 F3)
         assert "rgba(18,52,86" not in w._basic_section.styleSheet()          # 칸은 중립
@@ -1938,7 +1938,7 @@ def test_favorites_and_basic_sections_have_color_menu():
         assert symbol_library.load_section_colors() == {"basic": "#123456", "favorites": "#00ff00"}
         assert symbol_library.load_folders() == []                         # 폴더로 새지 않음
         w._set_section_color("basic", None)
-        assert w._basic_section.head.styleSheet() == ""
+        assert "rgba(127,189,255" in w._basic_section.head.styleSheet()   # 기본 색으로 = 연한 파랑
         symbol_library.set_section_color("nope", "#ffffff")                # 모르는 칸은 무시
         assert "nope" not in symbol_library.load_section_colors()
 

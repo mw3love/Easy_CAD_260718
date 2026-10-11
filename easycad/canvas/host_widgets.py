@@ -1491,6 +1491,9 @@ class _ToastLabel(QLabel):
 # "최근 사용한 색" 열로 대체). Apple 시스템 색상 관례를 그대로 잇는다(_COLOR_PRESETS와 동일 톤).
 _COLOR_GRID_HUES = _COLOR_PRESETS[:5] + ["#AF52DE"]
 _RECENT_COLOR_MAX = 3   # 그리드 한 열의 행 수와 맞춘 값 — 열 하나를 통째로 이 용도로 씀
+# [실사용 피드백 2026-10-12] 도형·심볼 카드 제목 줄(폴더·기본 도형·즐겨찾기) 색은 회색 + 그리드 2번째 줄(연한색) 6개만 —
+# 폴더 구분엔 많은 색이 필요 없다. 검정(다크에서 묻힘)·흰색(라이트에서 묻힘)·다른 색·최근 색은 뺐다.
+_SECTION_COLOR_SWATCHES = ["#9e9e9e"] + [QColor(h).lighter(150).name() for h in _COLOR_GRID_HUES]
 
 
 def _color_grid_columns() -> list[list[QColor]]:
@@ -1646,7 +1649,7 @@ class _ColorGridPopup(QWidget):
 
     def __init__(self, parent: QWidget, initial: QColor | None, allow_none: bool,
                  show_alpha: bool, title: str, on_pick, recent: list[QColor] | None = None,
-                 on_custom_picked=None):
+                 on_custom_picked=None, swatches: list[QColor] | None = None):
         super().__init__(parent, Qt.WindowType.Popup)
         self._initial = QColor(initial) if initial is not None else None
         self._show_alpha = show_alpha
@@ -1663,6 +1666,18 @@ class _ColorGridPopup(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8); outer.setSpacing(6)
 
+        if swatches is not None:   # [2026-10-12] 정해진 색 한 줄만(제목 줄 색) — 다른 색·최근 색·없음 없음
+            row = QHBoxLayout(); row.setSpacing(4)
+            for color in swatches:
+                color = QColor(color)
+                b = QToolButton()
+                b.setFixedSize(QSize(self._SW, self._SW))
+                b.setToolTip(color.name())
+                b.setStyleSheet(f"background:{color.name()}; border:1px solid #0006; border-radius:3px;")
+                b.clicked.connect(lambda _c=False, c=QColor(color): self._pick(c))
+                row.addWidget(b)
+            outer.addLayout(row)
+            return
         top = QHBoxLayout(); top.setSpacing(6)
         if allow_none:   # [요청③] "없음"을 별도 외부 버튼이 아니라 팝업 안 항목으로
             none_btn = QToolButton(); none_btn.setText("Ø")

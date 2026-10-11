@@ -1291,8 +1291,8 @@ def test_symbol_folder_color_box_count_and_hover_menu():
         assert sec.count_lbl.text() == "1"
         # [2026-10-11 시안 F3] 색 점·칸 물들임 대신 제목 줄만 색 띠(칸은 중립)
         assert not sec._dot.isVisibleTo(sec)
-        # [2026-10-12] 안 고른 폴더는 띠 없이 중립 + 제목 앞 폴더 그림(예전엔 순서대로 기본색을 돌려 칠함)
-        assert sec.head.styleSheet() == "" and "#palSec" in sec.styleSheet()
+        # [2026-10-12] 안 고른 폴더는 회색 띠(기본색) + 제목 앞 폴더 그림(예전엔 순서대로 7색을 돌려 칠함)
+        assert "rgba(158,158,158" in sec.head.styleSheet() and "#palSec" in sec.styleSheet()
         assert sec._lead.isVisibleTo(sec) and not sec._lead.pixmap().isNull()
         more = sec._hover_btns[0]
         assert more.isHidden()                                  # 평소엔 숨김
@@ -1307,10 +1307,18 @@ def test_symbol_folder_color_box_count_and_hover_menu():
         w._reset_symbol_folder_color("무선")                    # 「기본 색으로」 → 다시 중립
         assert symbol_library.load_folder_colors() == {}
         zone, _t = _folder_zone_and_label(w, "무선")
-        assert zone.layout().itemAt(0).widget().head.styleSheet() == ""
+        assert "rgba(158,158,158" in zone.layout().itemAt(0).widget().head.styleSheet()
         symbol_library.set_folder_color("무선", "#123456")
+        # [2026-10-12] 폴더 색 창 = 회색 + 연한색 6칸 한 줄(다른 색·최근 색 없음)
+        from PyQt6.QtWidgets import QToolButton
+        w._pick_symbol_folder_color(w, "무선")
+        pop = w._last_color_popup
+        sw = [b.toolTip() for b in pop.findChildren(QToolButton)]
+        assert sw == ["#9e9e9e", "#ffb4af", "#ffca7f", "#ffe57f", "#6eff93", "#7fbdff", "#e3acff"]
+        pop.findChildren(QToolButton)[5].click()
+        assert symbol_library.load_folder_colors() == {"무선": "#7fbdff"}
         symbol_library.rename_folder("무선", "유선")
-        assert symbol_library.load_folder_colors() == {"유선": "#123456"}
+        assert symbol_library.load_folder_colors() == {"유선": "#7fbdff"}
         symbol_library.delete_folder("유선")
         assert symbol_library.load_folder_colors() == {}
         w._active_doc.dirty = False
