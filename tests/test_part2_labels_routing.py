@@ -590,6 +590,33 @@ def test_sarrow_label_gap_breaks_line():
     assert sa._polyline_path().elementCount() == 2
 
 
+def test_side_label_does_not_cut_line():
+    # [실사용 버그 2026-10-12] 라벨을 옆으로 빼면(off≠0) 선을 비우지 않는다 — 전엔 갭 끝이 선 한가운데에
+    # 걸려 그 구간 선 굵기 절반이 지워졌다(둥근 모서리 클립 경로 포함, 두 화살표 종류 모두).
+    from PyQt6.QtWidgets import QGraphicsScene
+    sc = QGraphicsScene()
+    for cls in (_ArrowItem, _PolyArrowItem):
+        ar = cls(QColor("#000000ff"), 3, True)
+        ar.set_points(QPointF(0, 0), QPointF(0, 200))       # 세로선
+        sc.addItem(ar)
+        lbl = ar.ensure_label(); lbl.setPlainText("3"); ar._sync_label()
+        assert ar._label_gap_rects()                         # 선 위 = 갭 있음
+        br = lbl._content_rect()
+        ar._reproject_label(lbl, QPointF(40 - br.width() / 2, 100 - br.height() / 2))
+        assert ar._label_off != 0.0
+        assert ar._label_gap_rects() == []                   # 옆으로 뺌 = 선 그대로
+        sc.removeItem(ar)
+
+
+def test_canvas_view_and_tabs_have_no_frame():
+    # [실사용 피드백 2026-10-12] 탭 pane 테두리 + 뷰 테두리가 겹쳐 라이트 모드에서 굵은 띠로 보였다.
+    from PyQt6.QtWidgets import QFrame
+    w = CanvasWindow()
+    assert w._tabs.documentMode()
+    assert w._active_doc.view.frameShape() == QFrame.Shape.NoFrame
+    # 도형·심볼 카드: 스크롤 영역이 카드가 직접 그린 왼쪽 테두리를 덮지 않게 배경을 안 칠함
+    assert not w._left_scroll.viewport().autoFillBackground()
+    assert not w._left_scroll.widget().autoFillBackground()
 
 
 def test_sarrow_label_drag_slides_and_offsets():

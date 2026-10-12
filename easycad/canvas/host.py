@@ -20,7 +20,7 @@ from PyQt6.QtGui import (
     QColor, QBrush,
 )
 from PyQt6.QtWidgets import (
-    QMainWindow, QGraphicsView, QMessageBox, QTabWidget, QWidget, QHBoxLayout,
+    QMainWindow, QGraphicsView, QMessageBox, QTabWidget, QWidget, QHBoxLayout, QFrame,
 )
 
 from easycad.app_settings import app_settings
@@ -131,6 +131,9 @@ class CanvasWindow(
         self._tabs = QTabWidget()
         self._tabs.setTabsClosable(True)
         self._tabs.setMovable(True)
+        # [실사용 피드백 2026-10-12] 탭 묶음 테두리(pane) + 뷰 테두리가 1px 틈을 두고 겹쳐 라이트 모드에서
+        # 탭 아래·도면 가장자리가 굵은 띠로 보였다 — 둘 다 없앤다(뷰 쪽은 `_create_doc`의 NoFrame).
+        self._tabs.setDocumentMode(True)
         doc = self._create_doc()
         self._active_doc = doc
         self._tabs.addTab(doc.view, self._tab_title_for(doc))
@@ -208,6 +211,7 @@ class CanvasWindow(
         # 시점엔 self._dark가 아직 없어서(그 줄이 이보다 뒤에 있음) 필요.
         doc.scene.setBackgroundBrush(QBrush(_CANVAS_BG["dark" if getattr(self, "_dark", True) else "light"]))
         doc.view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+        doc.view.setFrameShape(QFrame.Shape.NoFrame)   # 테두리 없는 도면 위에 카드가 뜸(위 setDocumentMode 참조)
         doc.view.centerOn(0, 0)
         # [M3 #17] 팔레트 드롭이 캔버스 뷰 위에서 무시되던 문제 — 뷰(QGraphicsView)가 드래그를
         # 먼저 가로채 우리 mime를 거부(금지 커서)하므로, 뷰포트에 이벤트 필터를 걸어 직접 받는다.

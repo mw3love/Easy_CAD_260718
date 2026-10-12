@@ -2172,6 +2172,11 @@ class _UIBuildMixin:
         scroll.setWidget(container)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # [실사용 피드백 2026-10-12] 스크롤 영역이 카드 끝까지 붙어 불투명 배경으로 카드 왼쪽 테두리(카드가
+        # 직접 그리는 1px)를 덮었다 — 배경을 칠하지 않게 해 카드 바탕·테두리가 그대로 보이게.
+        # (setWidget이 내용 위젯의 autoFillBackground를 켜므로 그 뒤에 끈다.)
+        scroll.viewport().setAutoFillBackground(False)
+        container.setAutoFillBackground(False)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._left_scroll = scroll

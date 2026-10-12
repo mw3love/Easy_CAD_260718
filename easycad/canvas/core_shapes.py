@@ -3445,6 +3445,11 @@ class _ArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         for lbl in self._live_labels():
             if not lbl.toPlainText().strip():
                 continue
+            # [실사용 버그 2026-10-12] 옆으로 뺀 라벨(off≠0)은 선을 비우지 않는다 — 옆 자리 거리
+            # (`_snap_label_off`: 반폭+_LABEL_SIDE_GAP)와 갭 가로 패딩(_LABEL_GAP_PAD)이 같아
+            # 갭 끝이 선 한가운데에 걸려, 그 구간만 선 굵기 절반이 지워져 가늘게 보였다.
+            if getattr(lbl, "_conn_off", 0.0) != 0.0:
+                continue
             br = lbl._content_rect()
             pos = lbl.pos()
             ink_top, ink_bot = _ink_vertical_span(lbl)
@@ -5129,6 +5134,11 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         rects = []
         for lbl in self._live_labels():
             if not lbl.toPlainText().strip():
+                continue
+            # [실사용 버그 2026-10-12] 옆으로 뺀 라벨(off≠0)은 선을 비우지 않는다 — 옆 자리 거리
+            # (`_snap_label_off`: 반폭+_LABEL_SIDE_GAP)와 갭 가로 패딩(_LABEL_GAP_PAD)이 같아
+            # 갭 끝이 선 한가운데에 걸려, 그 구간만 선 굵기 절반이 지워져 가늘게 보였다.
+            if getattr(lbl, "_conn_off", 0.0) != 0.0:
                 continue
             br = lbl._content_rect()
             pos = lbl.pos()
