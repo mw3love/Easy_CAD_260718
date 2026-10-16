@@ -167,17 +167,30 @@ class _BoardMixin:
     # 색은 역할마다 하나 — 잉크(#1f1f1f, 어두운 보드면 잉크 맞추기가 밝게)·흐린 글(쪽 번호)·코랄(강조)·회색 알파 카드.
     _PB_M, _PB_GAP = 64.0, 48.0
     _PB_MUTED = "#6b7a8f"
+    # 글자 크기 단계(pt, §8 항목58 ①) — 보드 글은 이 다섯 단계만 쓴다(숫자 큰 글씨는 블록이 따로).
+    _PB_SIZE = {"title": 30, "headline": 16, "heading": 13, "body": 11, "small": 9}
+
+    def _pb_small_font(self):
+        from easycad.canvas.annotator_core import _TextItem
+        f = _TextItem(QColor(INK_ON_LIGHT)).font()
+        f.setPointSize(self._PB_SIZE["small"])
+        return f
     _PB_TAG = {"의의": "#2a9fb0", "한계": "#c9a227", "outside": "#8a6fd1"}
     _PB_CARD = QColor(128, 128, 128, 26)
     _pb_part_cur = None   # 지금 놓는 칸의 설계서 자리("concepts[1]"·"figure" …) — 아이템에 `_pb_part`로 붙는다(보드 안 「선택 N개」)
     _PB_EDGE = QColor(128, 128, 128, 80)
 
-    def _pb_text(self, added, text, x, y, w, pt, color=INK_ON_LIGHT):
-        """글 하나(_TextItem) — 폭 `w`에 맞춰 줄을 나눠 넣는다(줄바꿈은 글에 직접 — 저장해도 그대로). 반환 (아이템, 높이)."""
+    def _pb_text(self, added, text, x, y, w, pt, color=INK_ON_LIGHT, bold=False):
+        """글 하나(_TextItem) — 폭 `w`에 맞춰 줄을 나눠 넣는다(줄바꿈은 글에 직접 — 저장해도 그대로). 반환 (아이템, 높이).
+        `bold` = 굵게(§8 항목58 ① — 제목·블록 제목·숫자처럼 강약을 줄 곳)."""
         from PyQt6.QtGui import QFontMetricsF
         from easycad.canvas.annotator_core import _TextItem
         t = _TextItem(QColor(color))
         t.apply_font_size(pt)
+        if bold:
+            f = t.font()
+            f.setBold(True)
+            t.setFont(f)
         fm = QFontMetricsF(t.font())
         room = max(10.0, w - 2 * t.document().documentMargin())
         t.setPlainText(_wrap(text, fm, room))
@@ -211,9 +224,13 @@ class _BoardMixin:
 
     def _pb_heading(self, added, title, pages, x, y, w):
         """칸 제목 + 오른쪽 쪽 번호. 반환 높이."""
-        _t, h = self._pb_text(added, title, x, y, w, 13)
+        room = w
+        if pages:   # 쪽 번호 자리를 제목 폭에서 뺀다(§8 항목58 ④ — 긴 제목이 쪽 번호와 겹쳤다)
+            from PyQt6.QtGui import QFontMetricsF
+            room = max(w * 0.5, w - QFontMetricsF(self._pb_small_font()).horizontalAdvance(pages) - 16.0)
+        _t, h = self._pb_text(added, title, x, y, room, self._PB_SIZE["heading"], bold=True)
         if pages:
-            tag, _h = self._pb_text(added, pages, x, y + 3, w, 9, self._PB_MUTED)
+            tag, _h = self._pb_text(added, pages, x, y + 3, w, self._PB_SIZE["small"], self._PB_MUTED)
             tag.setPos(x + w - tag.document().size().width(), y + 3)
         return h
 

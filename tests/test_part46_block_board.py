@@ -273,3 +273,24 @@ def test_many_blocks_split_into_more_pages_within_max_width():
     notes = [it.toPlainText() for it in added if hasattr(it, "toPlainText") and "장에 이어서" in it.toPlainText()]
     assert any("→ 3장에 이어서" in t for t in notes)
     _close(w)
+
+
+def test_board_title_and_headings_bold_and_kept_in_file(tmp_path):
+    """[§8 항목58 ①] 보드 제목·블록 제목은 굵게 — .ecad에 저장해 다시 열어도 굵게(옛 파일은 키가 없어 보통)."""
+    from easycad.fileio.document import dict_to_item, item_to_dict
+    w = _window()
+    _n, _a, _d, added = w._build_paper_board(json.dumps(MEETING, ensure_ascii=False))
+    texts = {it.toPlainText(): it for it in added if hasattr(it, "toPlainText")}
+    title = texts[MEETING["title"]]
+    assert title.font().bold() and title.font().pointSize() == w._PB_SIZE["title"]
+    assert texts["결정한 것"].font().bold() and not texts["송신기 2대 교체(11월)".join(["• ", ""])].font().bold()
+    d = item_to_dict(title)
+    assert d["bold"] is True and "bold" not in item_to_dict(texts["• 송신기 2대 교체(11월)"])
+    assert dict_to_item(d).font().bold()
+    path = str(tmp_path / "b.ecad")
+    w._do_save_ecad(path)
+    w._open_new_tab()
+    w._do_open_ecad(path)
+    again = next(it for it in w._scene.items() if hasattr(it, "toPlainText") and it.toPlainText() == MEETING["title"])
+    assert again.font().bold()
+    _close(w)

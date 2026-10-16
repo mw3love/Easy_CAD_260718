@@ -97,9 +97,9 @@ class _BlockBoardMixin:
         eyebrow = "한 장 정리 · Magic Board"
         if srcs:
             eyebrow += " · 자료 " + " · ".join(f"{k} {v.get('name', '')}" for k, v in sorted(srcs.items()))
-        _t, h = self._pb_text(added, eyebrow, M, y, content_w, 9, self._PB_MUTED)
+        _t, h = self._pb_text(added, eyebrow, M, y, content_w, self._PB_SIZE["small"], self._PB_MUTED)
         y += h
-        _t, h = self._pb_text(added, spec["title"] or "(제목 없음)", M, y, content_w, 22)
+        _t, h = self._pb_text(added, spec["title"] or "(제목 없음)", M, y, content_w, self._PB_SIZE["title"], bold=True)
         y += h
         if spec.get("meta"):
             _t, h = self._pb_text(added, spec["meta"], M, y, content_w, 10, self._PB_MUTED)
@@ -107,7 +107,7 @@ class _BlockBoardMixin:
         if spec.get("subtitle"):
             self._pb_part_cur = "subtitle"
             y += 6
-            sub, h = self._pb_text(added, spec["subtitle"], M, y, content_w, 15)
+            sub, h = self._pb_text(added, spec["subtitle"], M, y, content_w, self._PB_SIZE["headline"])
             if spec.get("highlight"):
                 self._pb_mark(added, sub, spec["highlight"])
             y += h
@@ -196,7 +196,7 @@ class _BlockBoardMixin:
             for v in blk["items"]:
                 tag = "문서 밖 맥락" if v["outside"] else v["type"]
                 col = self._PB_TAG["outside"] if v["outside"] else self._PB_TAG[v["type"]]
-                tg, _h = self._pb_text(added, tag, x, y + 2, 140, 9, col)
+                tg, _h = self._pb_text(added, tag, x, y + 2, 140, 9, col, bold=True)
                 tw = tg.document().size().width()
                 body = v["text"] + (f"  ({v['pages']})" if v["pages"] and not v["outside"] else "")
                 _i, h = self._pb_text(added, body, x + tw + 2, y, w - tw - 2, 10 * s)
@@ -213,7 +213,7 @@ class _BlockBoardMixin:
             for k, it in enumerate(items[r:r + cols]):
                 cx = x + k * (cw + g)
                 start = len(added)
-                _t, h1 = self._pb_text(added, it["name"], cx + 12, y + 8, cw - 24 - 44, 12 * s)
+                _t, h1 = self._pb_text(added, it["name"], cx + 12, y + 8, cw - 24 - 44, 12 * s, bold=True)
                 if it.get("pages"):
                     tag, _h = self._pb_text(added, it["pages"], cx, y + 11, 60, 9, self._PB_MUTED)
                     tag.setPos(cx + cw - 12 - tag.document().size().width(), y + 11)
@@ -252,7 +252,7 @@ class _BlockBoardMixin:
             for k, num in enumerate(items[r:r + per]):
                 nx = x + k * (nw + g)
                 start = len(added)
-                _t, h1 = self._pb_text(added, num["value"], nx + 14, y + 10, nw - 28, 26 * s, _ACCENT)
+                _t, h1 = self._pb_text(added, num["value"], nx + 14, y + 10, nw - 28, 26 * s, _ACCENT, bold=True)
                 _t, h2 = self._pb_text(added, num["label"], nx + 14, y + 10 + h1, nw - 28, 11 * s)
                 foot = " · ".join(p for p in (num.get("note", ""), num.get("pages", "")) if p)
                 h3 = 0.0
@@ -289,13 +289,13 @@ class _BlockBoardMixin:
         cw = w / len(cols)
         line = self._PB_EDGE
 
-        def row(cells, pt, yy):
+        def row(cells, pt, yy, bold=False):
             hs = []
             for k, c in enumerate(cells):
-                _t, h = self._pb_text(added, c, x + k * cw, yy, cw - 6, pt)
+                _t, h = self._pb_text(added, c, x + k * cw, yy, cw - 6, pt, bold=bold)
                 hs.append(h)
             return max(hs) if hs else 0.0
-        y += row(cols, 11 * s, y) + 4
+        y += row(cols, 11 * s, y, bold=True) + 4
         self._pb_card(added, x, y, w, 1.0, fill=line, edge=line, width=0.5)
         y += 4
         for r in blk["rows"]:
@@ -317,7 +317,7 @@ class _BlockBoardMixin:
                     self._pb_card(added, cx - seg + 10, ly - 1, seg - 20, 2.0, fill=self._PB_EDGE, edge=self._PB_EDGE)
                 col = _ACCENT if k == 0 else self._PB_MUTED
                 self._pb_card(added, cx - 6, ly - 6, 12, 12, fill=col, edge=col)
-                _t, h1 = self._pb_text(added, it["when"], cx - seg / 2 + 4, ly + 12, seg - 8, 11 * s)
+                _t, h1 = self._pb_text(added, it["when"], cx - seg / 2 + 4, ly + 12, seg - 8, 11 * s, bold=True)
                 _t, h2 = self._pb_text(added, it["text"], cx - seg / 2 + 4, ly + 12 + h1, seg - 8, 10 * s)
                 hs.append(h1 + h2)
             return ly + 12 + max(hs)

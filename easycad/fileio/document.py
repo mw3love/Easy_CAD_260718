@@ -295,6 +295,8 @@ def item_to_dict(it) -> dict | None:
         d.update(type="text", text=it.toPlainText(),
                  color=_col(it.defaultTextColor()), font=it.font().pointSize(),
                  bg=None if bg is None else [bg.red(), bg.green(), bg.blue(), bg.alpha()])
+        if it.font().bold():   # [§8 항목58 ①] 굵게 — 없으면 키 생략(하위호환)
+            d["bold"] = True
     elif isinstance(it, _BadgeItem):
         d.update(type="badge", number=it._number, color=_col(it._color))
     else:
@@ -385,6 +387,8 @@ def dict_to_item(d: dict):
         it._freehand = bool(d.get("freehand", False))
     elif t == "text":
         it = _TextItem(QColor(d["color"])); it.apply_font_size(d.get("font", 16))
+        if d.get("bold"):
+            f = it.font(); f.setBold(True); it.setFont(f)
         it.setPlainText(d.get("text", ""))
         if d.get("bg") is not None:
             it.set_bg(QColor(*d["bg"]))
