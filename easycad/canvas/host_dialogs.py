@@ -915,7 +915,7 @@ class _ModelListWorker(QThread):
 
 
 class _ModelInfoWorker(QThread):
-    """[§8 항목51] 글 모델 + 가격 1회 조회(`gw.list_text_models_info`) — 모델 「자동 ▾」 목록. `_ModelListWorker`와 같은 이유로
+    """[§8 항목51] 글 모델 + 가격 1회 조회(`gw.list_text_models_info`) — 모델 고르기 목록(§8 항목56 `model_picker`). `_ModelListWorker`와 같은 이유로
     메인 스레드 밖에서."""
 
     succeeded = pyqtSignal(list)

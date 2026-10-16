@@ -6,7 +6,10 @@
 - **잉크 맞추기** — 보드 위에 놓이거나 옮겨진 아이템의 잉크(흰색/검정에 가까운 선·글자 색)를 보드 바탕 밝기에 맞춘다.
   다크 화면의 기본 잉크는 흰색이라 흰 보드 위에 그리면 안 보인다. 되돌리기 기록 한 칸 안에 같이 실어(`_push_entry` 길목)
   Ctrl+Z 한 번에 함께 돌아간다. 다른 색(띠 색·강조 코랄 등)은 뜻이 있는 색이라 건드리지 않는다.
-- 「보드 색」(우클릭) — 화이트·블랙·견본 8(계획서 §8 항목53, 사용자 확정)·직접 고르기. 바꾸면 안의 잉크도 같이.
+- 「보드 색」(우클릭·보드 막대) — 화이트·블랙 + 「다른 색」 견본 8(계획서 §8 항목53, 사용자 확정). 바꾸면 안의 잉크도 같이.
+  직접 고르는 색 창은 뺐다(§8 항목56 — 사용자 "세부 색상창은 굳이, 정 필요하면 나중에").
+- 보드 막대 세 상태(§8 항목56): 테두리를 고르면 「보드 · PDF로 새로」(원본 자료 + 처음 쓴 말로 새 보드), 보드 빈 곳을 더블클릭해
+  들어가면 「보드 안 · 전체 고치기」(이 보드 내용을 바탕으로), 보드 안 글·그림을 고르면 「보드 안 · 선택 N개」(고른 것만).
 출력은 늘 흰 종이: `pdf_export._swap_white_to_black_for_print`가 보드 바탕을 잠깐 흰색으로 바꾸고, 밝은 잉크(#fafafa)는
 같은 함수의 "흰 잉크 → 검정" 규칙에 걸린다.
 """
@@ -14,7 +17,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QPointF, QRectF
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QColorDialog, QMenu
+from PyQt6.QtWidgets import QMenu
 
 from easycad.canvas.annotator_core import _BoardItem, _TitleBlockItem, BOARD_ASPECT, BOARD_W
 
@@ -141,14 +144,7 @@ class _BoardMixin:
         sub = menu.addMenu("다른 색")
         for name, hexv in BOARD_SWATCHES:
             sub.addAction(name, lambda h=hexv: self._set_board_color(board, h))
-        sub.addSeparator()
-        sub.addAction("직접 고르기…", lambda: self._pick_board_color(board))
         return menu
-
-    def _pick_board_color(self, board):
-        c = QColorDialog.getColor(board.bg(), self, "보드 색")
-        if c.isValid():
-            self._set_board_color(board, c.name())
 
     def _set_board_color(self, board, color):
         """보드 바탕색을 바꾸고 안 잉크를 새 밝기에 맞춘다(되돌리기 한 칸)."""
@@ -173,6 +169,7 @@ class _BoardMixin:
     _PB_MUTED = "#6b7a8f"
     _PB_TAG = {"의의": "#2a9fb0", "한계": "#c9a227", "outside": "#8a6fd1"}
     _PB_CARD = QColor(128, 128, 128, 26)
+    _pb_part_cur = None   # 지금 놓는 칸의 설계서 자리("concepts[1]"·"figure" …) — 아이템에 `_pb_part`로 붙는다(보드 안 「선택 N개」)
     _PB_EDGE = QColor(128, 128, 128, 80)
 
     def _pb_text(self, added, text, x, y, w, pt, color=INK_ON_LIGHT):
@@ -186,6 +183,7 @@ class _BoardMixin:
         t.setPlainText(_wrap(text, fm, room))
         t.setPos(x, y)
         t.setFlags(t.GraphicsItemFlag.ItemIsMovable | t.GraphicsItemFlag.ItemIsSelectable)
+        t._pb_part = self._pb_part_cur
         self._scene.addItem(t)
         added.append(t)
         return t, t.document().size().height()   # 글 크기는 문서로 — boundingRect는 줌에 따라 손잡이 여유가 달라짐
@@ -198,6 +196,8 @@ class _BoardMixin:
         r.setBrush(QBrush(QColor(fill) if fill is not None else self._PB_CARD))
         r.setPos(x, y)
         r.setFlags(r.GraphicsItemFlag.ItemIsMovable | r.GraphicsItemFlag.ItemIsSelectable)
+        r._pb_part = self._pb_part_cur
+        r._pb_card = True   # 보드 칸 바탕 — 더블클릭하면 보드 안으로(라벨 달기 대신, `_board_enter_at`)
         self._scene.addItem(r)
         added.append(r)
         return r
@@ -271,6 +271,7 @@ class _BoardMixin:
             mark.setPos(x, y)
             mark.setZValue(-0.4)
             mark.setFlags(mark.GraphicsItemFlag.ItemIsMovable | mark.GraphicsItemFlag.ItemIsSelectable)
+            mark._pb_part, mark._pb_card = self._pb_part_cur, True
             self._scene.addItem(mark)
             added.append(mark)
             return mark
@@ -425,6 +426,7 @@ class _BoardMixin:
         eyebrow = "논문 한 장 정리 · Magic Board"
         if srcs:   # 여러 자료 — 이름표 목록(근거 「A p.3」를 읽을 수 있게)
             eyebrow = "한 장 정리 · Magic Board · 자료 " + " · ".join(f"{k} {v.get('name', '')}" for k, v in sorted(srcs.items()))
+        self._pb_part_cur = "title"
         _t, h = self._pb_text(added, eyebrow, x0, y, left_w, 9, self._PB_MUTED)
         y += h
         _t, h = self._pb_text(added, spec["title"] or "(제목 없음)", x0, y, left_w, 22)
@@ -434,16 +436,19 @@ class _BoardMixin:
             y += h
         y += 10
         if spec["one_line"]:
+            self._pb_part_cur = "one_line"
             one, h = self._pb_text(added, spec["one_line"], x0, y, left_w, 15)
             if spec["highlight"]:
                 self._pb_mark(added, one, spec["highlight"])
             y += h
+        self._pb_part_cur = None
         if spec.get("_note"):   # 여러 장 — 「→ 2장에 이어서: …」 / 「생략(한 장으로): …」
             _t, h = self._pb_text(added, spec["_note"], x0, y + 6, left_w, 10, self._PB_MUTED)
             y += h + 6
         left_bottom = y
         ry = 48.0
         if spec["three_lines"]:
+            self._pb_part_cur = "three_lines"
             start = len(added)
             yy = ry + 12 + self._pb_heading(added, "세 줄 요약", "", right_x + 16, ry + 12, side_w - 32) + 4
             for i, row in enumerate(spec["three_lines"]):   # 쪽 번호는 줄 오른쪽에(따로 한 줄을 쓰면 보드가 길어짐)
@@ -461,9 +466,11 @@ class _BoardMixin:
         # ── 가운데: 핵심 개념 | 어떻게 작동하나 | 결과
         cx, fx, rx = x0, x0 + concept_w + G, x0 + concept_w + G + mid_w + G
         cy = top
+        self._pb_part_cur = "concepts"
         if spec["concepts"]:
             cy = top + self._pb_heading(added, f"핵심 개념 {len(spec['concepts'])}가지", "", cx, top, concept_w) + 8
-        for c in spec["concepts"]:
+        for ci, c in enumerate(spec["concepts"]):
+            self._pb_part_cur = f"concepts[{ci}]"
             start = len(added)
             _t, h1 = self._pb_text(added, c["name"], cx + 14, cy + 10, concept_w - 28, 12)
             if c["pages"]:
@@ -475,14 +482,18 @@ class _BoardMixin:
         fy = top
         n_steps = n_arrows = 0
         if flow_json:
+            self._pb_part_cur = "flow"
             fy = top + self._pb_heading(added, spec["flow"].get("title") or "어떻게 작동하나",
                                         spec["flow"].get("pages", ""), fx, top, mid_w) + 8
             n_steps, n_arrows, _d, flow_items = self._build_flowspec_items(
                 flow_json, QPointF(fx + mid_w / 2.0, fy + flow_h / 2.0), push_undo=False, compact=True)
+            for it in flow_items:
+                it._pb_part = "flow"
             added += flow_items
             fy += flow_h
         res = spec["results"]
         ryy = top
+        self._pb_part_cur = "results"
         if res["bars"] or spec["numbers"]:
             ryy = top + self._pb_heading(added, "결과", res["pages"], rx, top, result_w) + 8
         if res["bars"]:
@@ -511,6 +522,7 @@ class _BoardMixin:
             hs = []
             for i, num in enumerate(spec["numbers"]):
                 nx = rx + i * (nw + 16)
+                self._pb_part_cur = f"numbers[{i}]"
                 start = len(added)
                 _t, h1 = self._pb_text(added, num["label"], nx + 14, ryy + 10, nw - 28, 10)
                 _t, h2 = self._pb_text(added, num["value"], nx + 14, ryy + 10 + h1, nw - 28, 24, _ACCENT)
@@ -528,6 +540,7 @@ class _BoardMixin:
         bw3 = content_w - bw1 - bw2 - 2 * G
         bx1, bx2, bx3 = x0, x0 + bw1 + G, x0 + bw1 + G + bw2 + G
         bottom = y
+        self._pb_part_cur = "figure"
         if big_fig:
             # 「그림 크게·가운데」(2026-10-16 사용자 요청) — 아래 줄 가운데 칸(용어 | 그림 | 의의와 한계)에, 보드가 1장 폭 바닥
             # (`BOARD_MAX_W`)을 넘지 않는 데까지 크게. 맨 위 큰 띠로 놓아 봤더니 실제 길이 내용에선 나머지 칸이 전부 2장으로 밀렸다.
@@ -554,6 +567,7 @@ class _BoardMixin:
                 img = _ImageItem(pm, QRectF(0.0, 0.0, pm.width() * k, pm.height() * k))
                 img.setPos(bx1, fy2)
                 img.setFlags(img.GraphicsItemFlag.ItemIsMovable | img.GraphicsItemFlag.ItemIsSelectable)
+                img._pb_part = self._pb_part_cur
                 self._scene.addItem(img)
                 added.append(img)
                 fy2 += pm.height() * k
@@ -563,14 +577,17 @@ class _BoardMixin:
                 fy2 += h
             bottom = max(bottom, fy2)
         if spec["terms"]:
+            self._pb_part_cur = "terms"
             ty = y + self._pb_heading(added, "용어 풀이", "", bx2, y, bw2) + 6
             for t in spec["terms"]:
                 _t, h = self._pb_text(added, f"{t['term']} — {t['meaning']}", bx2, ty, bw2, 10)
                 ty += h + 2
             bottom = max(bottom, ty)
         if spec["verdict"]:
+            self._pb_part_cur = "verdict"
             vy = y + self._pb_heading(added, "의의와 한계", "", bx3, y, bw3) + 6
-            for v in spec["verdict"]:
+            for vi, v in enumerate(spec["verdict"]):
+                self._pb_part_cur = f"verdict[{vi}]"
                 tag = "논문 밖 맥락" if v["outside"] else v["type"]
                 col = self._PB_TAG["outside"] if v["outside"] else self._PB_TAG[v["type"]]
                 tg, _h = self._pb_text(added, tag, bx3, vy + 2, 120, 9, col)
@@ -580,6 +597,7 @@ class _BoardMixin:
                 vy += max(h, 20.0) + 2
             bottom = max(bottom, vy)
 
+        self._pb_part_cur = None
         return content_w + 2 * M, bottom + 48.0, n_steps, n_arrows, added
 
     def _pb_big_figure(self, added, fig, pm, x, y, w, limit):
@@ -598,6 +616,7 @@ class _BoardMixin:
         img = _ImageItem(pm, QRectF(0.0, 0.0, pm.width() * s, pm.height() * s))
         img.setPos(x + (w - pm.width() * s) / 2.0, y)
         img.setFlags(img.GraphicsItemFlag.ItemIsMovable | img.GraphicsItemFlag.ItemIsSelectable)
+        img._pb_part = self._pb_part_cur
         self._scene.addItem(img)
         added.append(img)
         return y + pm.height() * s
@@ -637,19 +656,6 @@ class _BoardMixin:
         self._scene.clearSelection()
         return n_steps, n_arrows, "board", added
 
-    # ---- 보드 막대 · 내보내기(§8 항목53 3단계 → 2026-10-16 사용자 피드백으로 하나로) ------------------------------------
-    # 보드 하나를 고르면 그 위에 뜬다. 옛날엔 만든 직후(채택 전)의 결과 막대와 채택 뒤의 보드 막대가 달랐다 — 사용자: "항상 같은 창".
-    # 이제 AI 보드는 만들면 바로 넣고(채택·버리기 없음, 아니면 골라서 Del) 새 보드를 골라 두어 이 막대가 바로 뜬다.
-    # 윗줄: 보드 이름 · 「지시 · 모델 · 초」 · 색 견본(아이콘만 — 이름은 툴팁) · 「⋯」 직접 고르기 · 내보내기 ▾
-    # 아랫줄: 고칠 점 입력 칸(여러 줄, AI 보드일 때만 — 설계서를 보드에 적어 둠 `_ai`). 이어 고친 보드는 오른쪽에 새로 놓는다.
-    # 「출력 미리보기」는 뺐다 — 미리보기 동안 실제 도형 색을 바꿔 둬야 해서 그 사이 편집·저장하면 색이 섞인다.
-    # 내보내기는 기존 길(그림 복사·PNG·PDF·HTML)을 보드 범위로: 보드와 그 안(가운데 기준)을 잠깐 골라 "선택만" 내보내고 되돌린다.
-    _BOARD_EXPORTS = (("copy", "그림으로 복사", "한글·PPT에 바로 붙여 넣기"),
-                      ("png", "PNG 그림 파일", "메신저·메일로 보내기"),
-                      ("pdf", "PDF 한 쪽", "인쇄·보고 — A3 가로에 맞춰 넣기"),
-                      ("html", "HTML 공유", "받는 사람이 확대해서 읽기 · 앱 설치 필요 없음"))
-    _SWATCH_PX = 18
-
     def _board_selected(self):
         sel = [it for it in self._scene.selectedItems() if it.parentItem() is None]
         return sel[0] if len(sel) == 1 and isinstance(sel[0], _BoardItem) else None
@@ -661,80 +667,246 @@ class _BoardMixin:
             out += [m for m in self._board_scope(b) if m not in out and not getattr(m, "_locked", False)]
         return out
 
+    # ---- 보드 안(§8 항목56) — 더블클릭으로 들어가 이 보드를 바탕으로 고친다 --------------------------------------------
+    _board_inside = None
+
+    @staticmethod
+    def _board_is_ai(board) -> bool:
+        return bool((getattr(board, "_ai", None) or {}).get("spec"))
+
+    def _board_inside_alive(self):
+        b = self._board_inside
+        if b is not None and b.scene() is self._scene:
+            return b
+        self._board_inside = None
+        return None
+
+    def _board_enter(self, board):
+        self._board_inside = board
+        self._scene.clearSelection()
+        self._view.viewport().update()   # 안내는 막대 이름표·아랫줄·코랄 점선이 한다(알약은 막대 아랫줄을 가려서 안 띄움 — 실제 창)
+
+    def _board_enter_at(self, view, pos) -> bool:
+        """더블클릭 — 맨 위 고를 수 있는 것이 AI 보드 바탕이거나 그 보드의 칸 바탕이면 보드 안으로. 글자 위면 False(글 고치기)."""
+        if view is not self._view:
+            return False
+        for it in view.items(pos):
+            if it is getattr(self, "_bg_item", None) or it.parentItem() is not None:
+                continue
+            if not (it.flags() & it.GraphicsItemFlag.ItemIsSelectable):
+                continue
+            board = it if isinstance(it, _BoardItem) else (self._board_at(it) if getattr(it, "_pb_card", False) else None)
+            if board is not None and self._board_is_ai(board):
+                self._board_enter(board)
+                return True
+            return False
+        return False
+
+    def _board_exit_inside(self) -> bool:
+        if self._board_inside_alive() is None:
+            return False
+        self._board_inside = None
+        self._view.viewport().update()
+        return True
+
+    def _board_view_press(self, view, pos):
+        b = self._board_inside_alive()
+        if b is not None and view is self._view and not b.mapRectToScene(b.rect()).contains(view.mapToScene(pos)):
+            self._board_exit_inside()
+
+    def _board_bar_target(self):
+        """막대를 띄울 (보드, 상태, 고른 것) — 상태 "outer"(테두리 골랐음) | "inner_all"(보드 안, 고른 것 없음) |
+        "inner_sel"(AI 보드 안의 글·그림을 골랐음). 해당 없으면 None."""
+        sel = [it for it in self._scene.selectedItems() if it.parentItem() is None]
+        inside = self._board_inside_alive()
+        if len(sel) == 1 and isinstance(sel[0], _BoardItem):
+            return sel[0], ("inner_all" if sel[0] is inside else "outer"), []
+        if not sel:
+            return (inside, "inner_all", []) if inside is not None else None
+        if any(isinstance(it, _BoardItem) for it in sel):
+            return None
+        boards = self._boards()
+        owners = {self._board_at(it, boards) for it in sel}
+        if len(owners) == 1:
+            b = owners.pop()
+            if b is not None and self._board_is_ai(b):
+                return b, "inner_sel", sel
+        return None
+
+    # ---- 보드 막대 · 내보내기(§8 항목53 3단계 → 54 하나로 → 56 세 상태) ------------------------------------------------
+    # 윗줄: 상태 이름표 · 「지시 · 모델 · 초」 · 색(화이트·블랙·무지개 = 다른 색 8 펼침, 아이콘만) · 내보내기 ▾
+    # 가운데: 입력 칸(5줄로 시작 → 12줄까지 자람 → 그다음 스크롤 — 사용자 2026-10-16)
+    # 아랫줄: 안내 한 줄 · 모델 고르기(가운데 칸과 같은 것) · 「새로 만들기」/「고치기」
+    # 「출력 미리보기」는 뺐다 — 미리보기 동안 실제 도형 색을 바꿔 둬야 해서 그 사이 편집·저장하면 색이 섞인다.
+    # 내보내기는 기존 길(그림 복사·PNG·PDF·HTML)을 보드 범위로: 보드와 그 안(가운데 기준)을 잠깐 골라 "선택만" 내보내고 되돌린다.
+    _BOARD_EXPORTS = (("copy", "그림으로 복사", "한글·PPT에 바로 붙여 넣기"),
+                      ("png", "PNG 그림 파일", "메신저·메일로 보내기"),
+                      ("pdf", "PDF 한 쪽", "인쇄·보고 — A3 가로에 맞춰 넣기"),
+                      ("html", "HTML 공유", "받는 사람이 확대해서 읽기 · 앱 설치 필요 없음"))
+    _SWATCH_PX = 18
+    _BOARD_LINE_ROWS = (5, 12)
+    _BOARD_HINT = {"outer": "처음 쓴 말을 채워 두었어요 — 그대로 또는 고쳐서. 결과는 오른쪽에 새 보드로",
+                   "inner_all": "이 보드 내용을 바탕으로 고쳐요 — 결과는 오른쪽에 새 보드로 · 나가기 Esc",
+                   "inner_sel": "고른 것만 고쳐요(나머지는 그대로) — 결과는 오른쪽에 새 보드로"}
+    _BOARD_EXAMPLES = {"outer": ("예: 중학생이 읽을 수 있게 정리해 줘",),
+                       "inner_all": ("예: 용어 칸을 빼고 숫자를 더 크게", "예: 의의와 한계를 짧게"),
+                       "inner_sel": ("예: 이걸 더 쉽게 풀어 써 줘", "예: 이 그림을 크게")}
+    _BOARD_PART_NAME = {"title": "제목", "one_line": "한 줄 요약", "three_lines": "세 줄 요약", "concepts": "핵심 개념",
+                        "flow": "작동 흐름", "results": "결과", "numbers": "숫자", "figure": "그림", "terms": "용어 풀이",
+                        "verdict": "의의와 한계"}
+
+    def _board_part_label(self, part: str) -> str:
+        base, _, idx = part.partition("[")
+        name = self._BOARD_PART_NAME.get(base, base)
+        return f"{name} {int(idx.rstrip(']')) + 1}" if idx else name
+
+    def _board_sel_parts(self, items) -> list:
+        """고른 아이템들의 설계서 자리(차례 유지, 중복 없음). 다시 연 파일처럼 자리 표시가 없으면 빈 목록."""
+        return list(dict.fromkeys(p for p in (getattr(it, "_pb_part", None) for it in items) if p))
+
     def _board_bar_sync(self, view):
-        """`_draw_ai_staging`(그리기 마지막 단계 훅)가 부른다 — 보드 하나를 골랐으면 막대를 그 위에, 아니면 숨김."""
+        """`_draw_ai_staging`(그리기 마지막 단계 훅)가 부른다 — 대상 보드가 있으면 막대를 그 위에, 아니면 숨김."""
         from PyQt6 import sip
         bar = getattr(self, "_board_bar", None)
-        board = self._board_selected() if view is self._view else None
-        if board is None:
+        target = self._board_bar_target() if view is self._view else None
+        if view is self._view and self._board_inside is not None and (target is None or target[0] is not self._board_inside):
+            self._board_inside = None   # 다른 보드·보드 밖을 골랐다 — 보드 안에서 나온다
+        if target is None:
             if bar is not None and not sip.isdeleted(bar) and bar.parent() is view.viewport():
                 bar.hide()
             return
+        board, mode, items = target
         if bar is None or sip.isdeleted(bar) or bar.parent() is not view.viewport():
             bar = self._board_bar = self._make_board_bar(view)
-        if bar.board is not board:
-            bar.board = board
-            self._board_bar_fill(bar, board)
+        key = (board, mode, tuple(id(it) for it in items))
+        if bar.key != key:
+            changed_mode = bar.key is None or bar.key[0] is not board or bar.key[1] != mode
+            bar.key, bar.board, bar.mode, bar.items = key, board, mode, list(items)
+            self._board_bar_fill(bar, board, reset_line=changed_mode)
         else:   # 색은 우클릭 메뉴·속성 카드로도 바뀐다 — 견본 표시만 맞춘다(그릴 때마다라 가볍게)
-            cur = board.bg().name().lower()
-            for chip in bar.chips:
-                if chip.isChecked() != (chip.property("boardColor") == cur):
-                    chip.setChecked(not chip.isChecked())
+            self._board_bar_mark_color(bar, board)
         s = view.transform().m11() or 1.0
         pad = 6.0 / s
         self._ai_place_widget(view, bar, board.mapRectToScene(board.rect()).adjusted(-pad, -pad, pad, pad))
         bar.show()
 
-    def _board_bar_fill(self, bar, board):
-        """막대 글·견본 표시를 이 보드에 맞춘다(고른 보드가 바뀔 때·색을 바꾼 뒤)."""
+    def _board_bar_mark_color(self, bar, board):
+        cur = board.bg().name().lower()
+        for chip in bar.chips:
+            on = chip.property("boardColor") == cur if chip is not bar.rainbow \
+                else cur in {QColor(h).name().lower() for _n, h in BOARD_SWATCHES}
+            if chip.isChecked() != on:
+                chip.setChecked(on)
+
+    def _board_bar_fill(self, bar, board, reset_line=True):
+        """막대 글·견본 표시를 이 보드·상태에 맞춘다(고른 보드·상태가 바뀔 때·색을 바꾼 뒤)."""
         pages = self._board_set(board)
         n = len(pages)
-        bar.name_label.setText(f"보드 {pages.index(board) + 1}/{n}" if n > 1 else "보드")
+        mode = bar.mode
+        info = getattr(board, "_ai", None) or {}
+        ai = self._board_is_ai(board)
+        page = f" {pages.index(board) + 1}/{n}" if n > 1 else ""
+        src = self._board_source_name(info)
+        if mode == "outer":
+            tag = f"보드{page}" + ((" · 자료로 새로" if src.startswith("자료 ") else " · PDF로 새로") if ai else "")
+        elif mode == "inner_all":
+            tag = "보드 안 · 전체 고치기"
+        else:
+            parts = self._board_sel_parts(bar.items)
+            names = " · ".join(self._board_part_label(p) for p in parts[:3]) + (" …" if len(parts) > 3 else "")
+            tag = f"보드 안 · 선택 {len(bar.items)}개" + (f"  ({names})" if names else "")
+        bar.name_label.setText(tag)
+        inner = mode != "outer"
+        bar.name_label.setStyleSheet("font-weight:700; font-size:12px; border-radius:5px; padding:2px 8px;"
+                                     + (" background:rgba(218,119,86,70);" if inner else " background:rgba(128,128,128,60);"))
         bar.pdf_action.setText(f"PDF {n}쪽  —  인쇄·보고 — A3 가로, 장마다 한 쪽" if n > 1
                                else "PDF 한 쪽  —  인쇄·보고 — A3 가로에 맞춰 넣기")
-        info = getattr(board, "_ai", None) or {}
         caption, tip = _board_caption(info)
+        if mode == "outer" and src:   # 새로 만들 때 쓸 원본 자료를 앞에(시안 ①), 「지시 · 모델 · 초」는 그 뒤에 그대로
+            caption, tip = " · ".join(filter(None, [src, caption])), f"원본 자료: {src}\n" + tip
         bar.caption_label.setText(caption)
         bar.caption_label.setToolTip(tip)
         bar.caption_label.setVisible(bool(caption))
-        bar.line.setVisible(bool(info.get("spec")))   # 손으로 넣은 보드는 AI 설계서가 없어 고칠 수 없다
-        cur = board.bg().name().lower()
-        for chip in bar.chips:
-            chip.setChecked(chip.property("boardColor") == cur)
+        for w in (bar.line, bar.bottom):
+            w.setVisible(ai)   # 손으로 넣은 보드는 AI 설계서가 없어 고칠 수 없다
+        bar.exit_btn.setVisible(inner)
+        bar.hint.setText(self._BOARD_HINT[mode])
+        bar.go_btn.setText("새로 만들기" if mode == "outer" else "고치기")
+        bar.line._examples = self._BOARD_EXAMPLES[mode]
+        bar.line.setPlaceholderText(bar.line._examples[0])
+        if reset_line:
+            bar.line.setText((info.get("origin") or info.get("text", "")) if mode == "outer" else "")
+        self._board_bar_mark_color(bar, board)
         bar.adjustSize()
+
+    @staticmethod
+    def _board_source_name(info: dict) -> str:
+        """「attention.pdf」·「자료 3개」 — 보드 설계서에 적힌 원본 자료 이름. 없으면 빈 글."""
+        import os
+        from easycad.ai.pdf_to_board import parse_board
+        try:
+            spec = parse_board(info.get("spec", ""))
+        except ValueError:
+            return ""
+        srcs = spec.get("_sources") or {}
+        if srcs:
+            return f"자료 {len(srcs)}개"
+        return os.path.basename(spec["_pdf"]) if spec.get("_pdf") else ""
 
     def _make_board_bar(self, view):
         from PyQt6.QtCore import QSize, Qt
-        from PyQt6.QtWidgets import QLabel, QToolButton
-        from easycad.canvas.host_aimake import BAR_EXAMPLES, _BAR_BTN_QSS, _StagingBar
+        from PyQt6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QPushButton, QToolButton, QWidget, QWidgetAction
+        from easycad.canvas.host_aimake import _BAR_BTN_QSS, _StagingBar
+        from easycad.canvas.host_dialogs import _CORAL_BTN_QSS
+        from easycad.canvas.model_picker import _ModelPickerButton
         name = QLabel("보드")
-        name.setStyleSheet("font-weight:600; padding:0 4px 0 2px;")
         caption = QLabel("")
         caption.setObjectName("aiBarInfo")
         caption.setStyleSheet("color:#8a96a3; font-size:11px; padding:0 4px;")   # 결과 막대 「지시 · 모델 · 초」와 같은 글
         chips = []
         chip_qss = ("QToolButton { border:2px solid transparent; border-radius:%dpx; padding:1px; background:transparent; }"
                     "QToolButton:hover { border-color:rgba(128,128,128,150); }"
-                    "QToolButton:checked { border-color:#da7756; }") % ((self._SWATCH_PX + 6) // 2)
+                    "QToolButton:checked { border-color:#da7756; }"
+                    "QToolButton::menu-indicator { image:none; width:0; }") % ((self._SWATCH_PX + 6) // 2)
 
-        def chip(label, hexv):
+        def chip(tip, icon, hexv=None):
             b = QToolButton()
-            b.setIcon(_swatch_icon(hexv, self._SWATCH_PX))
+            b.setIcon(icon)
             b.setIconSize(QSize(self._SWATCH_PX, self._SWATCH_PX))
             b.setCheckable(True)
-            b.setToolTip(f"보드 색: {label} — 안 글자·선 색은 밝기에 맞춰 자동")
-            b.setProperty("boardColor", QColor(hexv).name().lower())
+            b.setToolTip(tip)
             b.setStyleSheet(chip_qss)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _c=False, h=hexv: self._board_bar_color(h))
+            if hexv is not None:
+                b.setProperty("boardColor", QColor(hexv).name().lower())
+                b.clicked.connect(lambda _c=False, h=hexv: self._board_bar_color(h))
             chips.append(b)
             return b
-        widgets = [name, caption] + [chip(lb, hx) for lb, hx in BOARD_COLORS + BOARD_SWATCHES]
-        more = QToolButton()
-        more.setText("⋯")
-        more.setToolTip("다른 색 직접 고르기")
-        more.setStyleSheet(_BAR_BTN_QSS)
-        more.clicked.connect(self._board_bar_pick)
+        widgets = [name, caption]
+        widgets += [chip(f"보드 색: {lb} — 안 글자·선 색은 밝기에 맞춰 자동", _swatch_icon(hx, self._SWATCH_PX), hx)
+                    for lb, hx in BOARD_COLORS]
+        rainbow = chip("다른 색 — 밝은 4 · 어두운 4", _rainbow_icon(self._SWATCH_PX))
+        rainbow.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        rmenu = QMenu(rainbow)
+        grid_w = QWidget()
+        grid = QGridLayout(grid_w)
+        grid.setContentsMargins(10, 8, 10, 8)
+        grid.setSpacing(6)
+        for i, (lb, hx) in enumerate(BOARD_SWATCHES):
+            sw = QToolButton(grid_w)
+            sw.setIcon(_swatch_icon(hx, 24))
+            sw.setIconSize(QSize(24, 24))
+            sw.setToolTip(lb)
+            sw.setAutoRaise(True)
+            sw.setCursor(Qt.CursorShape.PointingHandCursor)
+            sw.setProperty("boardColor", QColor(hx).name().lower())
+            sw.clicked.connect(lambda _c=False, h=hx, m=rmenu: (m.close(), self._board_bar_color(h)))
+            grid.addWidget(sw, i // 4, i % 4)
+        wa = QWidgetAction(rmenu)
+        wa.setDefaultWidget(grid_w)
+        rmenu.addAction(wa)
+        rainbow.setMenu(rmenu)
+        widgets.append(rainbow)
         out = QToolButton()
         out.setText("내보내기 ▾")
         out.setToolTip("블랙·다른 색 보드도 출력은 흰 종이로")
@@ -747,18 +919,50 @@ class _BoardMixin:
             if key == "pdf":
                 pdf_action = act
         out.setMenu(em)
-        bar = _StagingBar(view.viewport(), None, None, None, extras=widgets + [more, out],
-                          on_line=self._board_on_line, examples=BAR_EXAMPLES["explain"])
+        exit_btn = QToolButton()
+        exit_btn.setText("나가기 Esc")
+        exit_btn.setToolTip("보드 밖으로 — 테두리를 고른 상태(「PDF로 새로」)로")
+        exit_btn.setStyleSheet(_BAR_BTN_QSS)
+        exit_btn.clicked.connect(self._board_bar_exit)
+        bar = _StagingBar(view.viewport(), None, None, None, extras=widgets + [out, exit_btn],
+                          on_line=self._board_on_line, examples=self._BOARD_EXAMPLES["outer"],
+                          line_rows=self._BOARD_LINE_ROWS)
         bar.setStyleSheet(self._AI_BAR_QSS)   # 결과 막대와 같은 모양(테마 전환 때 같이 다시 칠해짐)
-        bar.board = None
+        bottom = QWidget(bar)
+        bl = QHBoxLayout(bottom)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(6)
+        hint = QLabel("", bottom)
+        hint.setStyleSheet("color:#8a96a3; font-size:11px;")
+        bl.addWidget(hint, 1)
+        picker = _ModelPickerButton(self._ai_ctrl, bottom)
+        picker.setStyleSheet(_BAR_BTN_QSS + "QToolButton::menu-indicator { image:none; width:0; }")
+        bl.addWidget(picker)
+        go = QPushButton("새로 만들기", bottom)
+        go.setStyleSheet(_CORAL_BTN_QSS)
+        go.setCursor(Qt.CursorShape.PointingHandCursor)
+        go.clicked.connect(self._board_on_line)
+        bl.addWidget(go)
+        bar.layout().addWidget(bottom)
+        bar.key = bar.board = bar.mode = None
+        bar.items = []
         bar.name_label, bar.caption_label, bar.chips, bar.pdf_action = name, caption, chips, pdf_action
-        bar.color_more, bar.export_menu = more, em
+        bar.rainbow, bar.rainbow_menu, bar.export_menu = rainbow, rmenu, em
+        bar.bottom, bar.hint, bar.picker, bar.go_btn, bar.exit_btn = bottom, hint, picker, go, exit_btn
         bar.line.heightChanged.connect(self._board_bar_resized)   # 막대가 위로 자라게 — 자리는 그리기 훅이 다시 잡는다
         bar.adjustSize()
         return bar
 
     def _board_bar_resized(self):
         self._view.viewport().update()
+
+    def _board_bar_exit(self):
+        bar = getattr(self, "_board_bar", None)
+        board = bar.board if bar is not None else None
+        self._board_exit_inside()
+        if board is not None and board.scene() is self._scene:
+            self._scene.clearSelection()
+            board.setSelected(True)
 
     def _board_bar_export(self, kind):
         bar = getattr(self, "_board_bar", None)
@@ -771,25 +975,61 @@ class _BoardMixin:
         if bar is None or bar.board is None:
             return
         self._set_board_color(bar.board, hexv)
-        self._board_bar_fill(bar, bar.board)
-
-    def _board_bar_pick(self):
-        bar = getattr(self, "_board_bar", None)
-        if bar is None or bar.board is None:
-            return
-        self._pick_board_color(bar.board)
-        self._board_bar_fill(bar, bar.board)
+        self._board_bar_mark_color(bar, bar.board)
 
     def _board_on_line(self):
-        """보드 막대 입력 칸의 Enter."""
+        """보드 막대 Enter·「새로 만들기」/「고치기」 — 상태에 따라."""
         bar = getattr(self, "_board_bar", None)
         if bar is None or bar.board is None:
             return None
-        return self._board_say(bar.board, bar.line.text(), bar.line)
+        text = bar.line.text()
+        if bar.mode == "outer":
+            return self._board_redo(bar.board, text, bar.line)
+        return self._board_say(bar.board, text, bar.line, picked=bar.items if bar.mode == "inner_sel" else None)
 
-    def _board_say(self, board, text, line=None):
-        """보드 막대 입력 칸에 쓴 말 — 「한 장으로」·「나눠서」·「그림 크게」는 AI 없이 다시 배치, 「흐름도로」·「심볼로」는 그 PDF로
-        새로 만들기, 그 밖엔 이 보드 설계서를 바탕으로 AI가 고친 새 보드를 오른쪽에(원래 보드는 그대로)."""
+    def _board_redo(self, board, text, line=None):
+        """「보드 · PDF로 새로」 — 원본 자료(PDF 또는 여러 자료) + 지금 입력 칸의 말로 새 보드를 만들어 오른쪽에(원래 보드는 그대로).
+        자료 파일이 옮겨졌거나 지워졌으면 안내만."""
+        import os
+        from easycad.ai.pdf_to_board import parse_board
+        info = getattr(board, "_ai", None) or {}
+        try:
+            spec = parse_board(info.get("spec", ""))
+        except ValueError:
+            return None
+        text = (text or "").strip()
+        self._ai_ctrl.clear_followup()
+        switch = self._ai_switch_kind_word(text)
+        if switch in ("flow", "symbol") and spec.get("_pdf") and os.path.exists(spec["_pdf"]):   # 같은 PDF로 다른 종류
+            return self._ai_ctrl.request_make(info.get("origin") or info.get("text", "") or text, kind=switch,
+                                              pdf_path=spec["_pdf"])
+        srcs = spec.get("_sources") or {}
+        if srcs:
+            from PIL import Image
+            sources = []
+            for label, s in sorted(srcs.items()):
+                path = s.get("path", "")
+                if not path or not os.path.exists(path):
+                    self._on_ai_notice(f"원본 자료를 찾을 수 없어요: {s.get('name', label)} — 가운데 칸에 다시 넣어 주세요")
+                    return None
+                one = {"label": label, "kind": s.get("kind", "pdf"), "name": s.get("name", ""), "path": path}
+                if one["kind"] != "pdf":
+                    one["image"] = Image.open(path).convert("RGB")
+                sources.append(one)
+            req = self._ai_ctrl.request_make(text, kind="explain", sources=sources, near=board)
+        else:
+            pdf = spec.get("_pdf", "")
+            if not pdf or not os.path.exists(pdf):
+                name = os.path.basename(pdf) if pdf else "원본 PDF"
+                self._on_ai_notice(f"원본 자료를 찾을 수 없어요: {name} — 가운데 칸에 다시 넣어 주세요")
+                return None
+            req = self._ai_ctrl.request_make(text, kind="explain", pdf_path=pdf, near=board)
+        return req
+
+    def _board_say(self, board, text, line=None, picked=None):
+        """보드 안에서 쓴 말 — 「한 장으로」·「나눠서」·「그림 크게」는 AI 없이 다시 배치, 「흐름도로」·「심볼로」는 그 PDF로
+        새로 만들기, 그 밖엔 이 보드 설계서를 바탕으로 AI가 고친 새 보드를 오른쪽에(원래 보드는 그대로).
+        `picked` = 보드 안에서 고른 아이템(「선택 N개」) — 그 칸만 고치라고 AI에 알린다(자리 표시 + 고른 글)."""
         from easycad.ai.pdf_to_board import dump_board, parse_board
         from easycad.canvas.host_aimake import _figure_word
         text = (text or "").strip()
@@ -809,22 +1049,36 @@ class _BoardMixin:
             spec = parse_board(code)
         except ValueError:
             return None
+        parts = self._board_sel_parts(picked or [])
         switch = self._ai_switch_kind_word(text)
-        if switch in ("flow", "symbol") and spec.get("_pdf"):   # 같은 PDF로 다른 종류 — 보드는 그대로 둔다
+        if not picked and switch in ("flow", "symbol") and spec.get("_pdf"):   # 같은 PDF로 다른 종류 — 보드는 그대로 둔다
             return done(self._ai_ctrl.request_make(info.get("text", "") or text, kind=switch, pdf_path=spec["_pdf"]))
-        if len(text) <= 16:
-            pages = "one" if ("한 장" in text or "한장" in text) else ("auto" if ("나눠" in text or "여러 장" in text) else None)
-            if pages is not None:   # §8 항목53 4단계 — AI 없이 다시 배치(넘치는 칸을 빼거나 2장으로)
-                return done(self._board_relayout(board, "_pages", pages))
-            fig = _figure_word(text)
-            if fig is not None:   # 「그림 크게」 — 배치는 앱 몫이라 AI 없이 다시 배치(2026-10-16)
-                return done(self._board_relayout(board, "_figure", fig))
         fig = _figure_word(text)
-        if fig is not None:   # 긴 지시에 「그림을 가운데」가 섞여 있으면 배치는 앱이 — 바탕 설계서에 표시해 결과에 이어진다
-            spec["_figure"] = fig
-            code = dump_board(spec)
-        self._ai_ctrl.set_followup("explain", "지금 보드", base_code=code, base=board, base_text=info.get("text", ""))
-        return done(self._ai_ctrl.request_make(text))
+        if not picked or "figure" in parts:
+            if len(text) <= 16 and not picked:
+                pages = "one" if ("한 장" in text or "한장" in text) else ("auto" if ("나눠" in text or "여러 장" in text) else None)
+                if pages is not None:   # §8 항목53 4단계 — AI 없이 다시 배치(넘치는 칸을 빼거나 2장으로)
+                    return done(self._board_relayout(board, "_pages", pages))
+            if fig is not None and (len(text) <= 16 or parts == ["figure"]):   # 「그림 크게」 — 배치는 앱 몫이라 AI 없이
+                return done(self._board_relayout(board, "_figure", fig))
+            if fig is not None:   # 긴 지시에 「그림을 가운데」가 섞여 있으면 배치는 앱이 — 바탕 설계서에 표시해 결과에 이어진다
+                spec["_figure"] = fig
+                code = dump_board(spec)
+        say = text
+        if picked:
+            snippets = [" ".join(it.toPlainText().split())[:80] for it in picked if hasattr(it, "toPlainText")]
+            snippets = [s for s in snippets if s]
+            where = ", ".join(f"{self._board_part_label(p)}({p})" for p in parts)
+            say = ("[보드 안에서 고른 것만 고칠 것 — 나머지 칸은 글자 하나도 바꾸지 말 것]\n"
+                   + (f"고른 칸: {where}\n" if where else "")
+                   + (f"고른 글: {' / '.join(snippets[:8])}\n" if snippets else "")
+                   + f"지시: {text}")
+        self._ai_ctrl.set_followup("explain", "지금 보드", base_code=code, base=board,
+                                   base_text=info.get("origin") or info.get("text", ""))
+        req = self._ai_ctrl.request_make(say)
+        for r in self._ai_ctrl.last_requests if req is not None else ():
+            r.display_text = text   # 보드에 적어 둘 말은 사용자가 쓴 그대로(AI에 보낸 안내 글 빼고)
+        return done(req)
 
     _BOARD_FLAG_SAME = {("_pages", "one"): "이미 한 장이에요", ("_pages", "auto"): "이미 넘치면 나눠요",
                         ("_figure", "big"): "이미 그림이 크게 있어요", ("_figure", "small"): "이미 그림이 아래 칸에 있어요"}
@@ -866,9 +1120,11 @@ class _BoardMixin:
 
     def _ai_place_board(self, req, code):
         """AI 한 장 보드 결과 → 바로 넣는다(2026-10-16 사용자: 채택·버리기 없이, 아니면 골라서 Del). 이어 고친 결과면 바탕 보드
-        (여러 장이면 묶음)는 그대로 두고 오른쪽 빈 자리에 놓고, 글이 바뀐 칸을 주황으로(새 보드를 골랐을 때 보인다).
-        보드엔 설계서·요청 정보(`_ai`)를 적어 둔다 — 보드 막대 입력 칸으로 이어 고치기·저장 뒤에도 이어서."""
-        from easycad.canvas.host_aimake import _COMPARE_GAP, _board_diff_items
+        (여러 장이면 묶음)는 그대로 두고 오른쪽 빈 자리에 놓는다(「PDF로 새로」·다른 모델로 만든 것도 같은 자리 규칙 — 나란히 비교).
+        바뀐 칸 주황 표시는 없앴다(§8 항목56 — 사용자: 보드는 AI가 다채롭게 고쳐 써서 거의 다 바뀌므로 뜻이 없다).
+        보드엔 설계서·요청 정보(`_ai`)를 적어 둔다 — 보드 막대로 이어 고치기·저장 뒤에도 이어서. `origin`은 처음 쓴 말
+        (이어 고친 보드도 바탕의 것을 물려받는다 — 「PDF로 새로」가 입력 칸에 채운다)."""
+        from easycad.canvas.host_aimake import _COMPARE_GAP
         base = getattr(req, "followup_of", None)
         base_items = []
         if isinstance(base, _BoardItem) and base.scene() is self._scene:
@@ -892,14 +1148,14 @@ class _BoardMixin:
             _n, _a, _d, added = self._build_paper_board(code, req.center + (spot - box.center()))
         req.result_text = code
         self._ai_ctrl.show_flow_code(code)
-        info = {"spec": code, "text": req.text, "model": getattr(req, "model_used", "") or req.model,
+        followup = bool(getattr(req, "base_code", ""))
+        said = getattr(req, "display_text", "") or req.text
+        info = {"spec": code, "text": said, "model": getattr(req, "model_used", "") or req.model,
                 "asked": req.model, "sec": round(float(getattr(req, "elapsed", 0.0) or 0.0), 1),
-                "followup": bool(getattr(req, "base_code", ""))}
+                "followup": followup, "origin": req.base_text if followup else said}
         boards = [it for it in added if isinstance(it, _BoardItem)]
-        marks = _board_diff_items([it for it in added if not isinstance(it, _BoardItem)], base_items) if base_items else []
         for b in boards:
             b._ai = dict(info)
-            b._ai_marks = marks
         self.set_tool("select")
         self._sync_start_prompt()   # 빈 도면 칸은 결과가 놓이는 순간 걷는다
         self._scene.clearSelection()
@@ -910,20 +1166,27 @@ class _BoardMixin:
             rect = rect.united(self._ai_items_rect(base_boards))
         self._ai_ensure_visible(view, rect)
         if req.entry is not None:
-            req.entry.set_status(f"✓ 보드를 넣음 — 원래 보드 오른쪽, 바뀐 칸 {len(marks)}곳 주황" if base_items
+            req.entry.set_status("✓ 보드를 넣음 — 원래 보드 오른쪽에" if base_items
                                  else "✓ 보드를 넣음 — 위 막대에서 색·내보내기·고칠 점")
         self._check_ai_result(added)   # §8 항목48 — AI 결과 자동 검사(문제 있으면 알림 한 줄)
         view.viewport().update()
         return boards[0]
 
-    def _draw_board_marks(self, view, painter):
-        """고른 보드의 「바뀐 칸」 주황 표시(이어 고친 보드만 — 만든 그 세션 동안)."""
-        board = self._board_selected() if view is self._view else None
-        marks = [it for it in (getattr(board, "_ai_marks", None) or ()) if it.scene() is self._scene]
-        if marks:
-            painter.save()
-            self._ai_draw_marks(painter, marks, view.transform().m11() or 1.0)
-            painter.restore()
+    def _draw_board_inside(self, view, painter):
+        """보드 안에 들어가 있으면 그 보드 둘레에 코랄 점선(지금 「보드 안」이라는 표시 — 시안 ①)."""
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QPen
+        board = self._board_inside_alive() if view is self._view else None
+        if board is None:
+            return
+        s = view.transform().m11() or 1.0
+        pen = QPen(QColor(_ACCENT), 2.0 / s, Qt.PenStyle.DashLine)
+        painter.save()
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        pad = 4.0 / s
+        painter.drawRect(board.mapRectToScene(board.rect()).adjusted(-pad, -pad, pad, pad))
+        painter.restore()
 
     def _board_set(self, board) -> list:
         """같은 여러 장 묶음의 보드들(장 순서) — 묶음이 없으면 [board]."""
@@ -1004,6 +1267,25 @@ def _swatch_icon(hexv: str, px: int):
     p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     p.setPen(QPen(QColor(128, 128, 128, 200), 1.0))
     p.setBrush(QColor(hexv))
+    p.drawEllipse(QRectF(1.0, 1.0, px - 2.0, px - 2.0))
+    p.end()
+    return QIcon(pm)
+
+
+def _rainbow_icon(px: int):
+    """「다른 색」 무지개 동그라미 — 누르면 견본 8개가 펼쳐진다(사용자 2026-10-16 "무지개 버튼으로 나머지 색")."""
+    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtGui import QBrush, QConicalGradient, QIcon, QPainter, QPen, QPixmap
+    pm = QPixmap(px * 2, px * 2)
+    pm.setDevicePixelRatio(2.0)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    g = QConicalGradient(QPointF(px / 2.0, px / 2.0), 90.0)
+    for i, c in enumerate(("#e86a5c", "#f0b44c", "#8fd16a", "#4fb3d9", "#8a7be0", "#d96ab5", "#e86a5c")):
+        g.setColorAt(i / 6.0, QColor(c))
+    p.setPen(QPen(QColor(128, 128, 128, 200), 1.0))
+    p.setBrush(QBrush(g))
     p.drawEllipse(QRectF(1.0, 1.0, px - 2.0, px - 2.0))
     p.end()
     return QIcon(pm)

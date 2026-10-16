@@ -10,6 +10,7 @@ Magic Board 개편(`docs/EasyCAD_계획.md` §8 항목51): 입구는 가운데 �
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import time
@@ -36,16 +37,11 @@ PLACEHOLDER = {
 SYMBOL_COUNT_DEFAULT = 6
 SYMBOL_COUNT_MAX = 10
 _SYMBOL_COUNT_KEY = "ai_panel/symbol_count"      # 옛 패널 「후보 수」 값 — 남아 있으면 그대로 쓴다
-_MODEL_CHOICE_KEY = "ai/model_choice"            # "auto" | 모델 id
+_MODEL_CHOICE_KEY = "ai/model_choice"            # 기본 모델 — "auto"(앱이 정함, `gw.default_model_id`) | 「기본으로」 고른 모델 id
 _MODEL_INFO_KEY = "ai/model_info"                # 마지막으로 받은 가격표(JSON) — 키를 넣을 때 받아 둔다
 AUTO = "auto"
-# 종류별 추천 모델 — 「자동」일 때 쓴다.
-DEFAULT_MODEL = {
-    "symbol": gw.TEXT_RECOMMEND_1,
-    "flow": gw.TEXT_RECOMMEND_MERMAID,
-    "trace": PHOTO_MODELS[0][0],
-    "explain": gw.TEXT_RECOMMEND_EXPLAIN,
-}
+# 여러 모델로 한 번에 만들어 나란히 비교할 수 있는 종류(§8 항목56) — 심볼(후보 고르기)·베끼기(사진 위 단계)는 첫 모델 하나만.
+MULTI_MODEL_KINDS = ("flow", "explain")
 PENDING_TEXT = "준비 중"
 
 # 종류 짐작(§8 항목39 → 51). 사용자는 종류를 고르지 않는다 — 틀리면 결과 막대 한 줄로 바꾼다.
@@ -131,6 +127,7 @@ class AIRequest:
     sources: list = None                              # 여러 자료 A·B·C(§8 항목53 4단계) — [{"label","kind","name","path","image"}]
     model_used: str = ""                              # 실제로 답한 모델(폴백이면 고른 것과 다름) — 결과 막대에 보인다(2026-10-16)
     elapsed: float = 0.0                              # 보내고 답을 받기까지 초
+    display_text: str = ""                            # 보드에 적어 둘 말(보드 안 「선택」은 AI에 안내 글을 붙여 보낸다 — §8 항목56)
 
 
 class _RequestRecord(QObject):
@@ -176,6 +173,7 @@ class _AIController(QObject):
     status_changed = pyqtSignal(object)   # _RequestRecord — 새 요청·상태가 바뀜(상태 알약)
     credit_changed = pyqtSignal(str)      # 「남은 크레딧 …」 한 줄(리치 글 — 키 넣기 링크 포함)
     models_changed = pyqtSignal()         # 가격표를 새로 받음
+    picks_changed = pyqtSignal()          # 고른 모델·기본 모델이 바뀜(모델 버튼 글을 맞춘다 — 가운데 칸·보드 막대)
     notice = pyqtSignal(str)              # 한 줄 안내(빈 입력·첨부 필요 등) — 가운데 칸이나 상태 알약에
 
     def __init__(self, host):
@@ -188,28 +186,51 @@ class _AIController(QObject):
         self._model_worker = None
         self.credit_text = ""
         self._model_choice = str(app_settings().value(_MODEL_CHOICE_KEY, AUTO) or AUTO)
+        self._picks: list = []   # 다음 만들기에 쓸 모델들(목록에서 체크) — 비어 있으면 기본 모델 하나. 앱을 다시 켜면 비움
+        self.last_requests: list = []   # 마지막 `_send`가 보낸 요청들(모델마다 하나)
         try:
             self._model_info = json.loads(app_settings().value(_MODEL_INFO_KEY, "[]") or "[]")
         except (TypeError, ValueError):
             self._model_info = []
 
-    # ---- 모델(「자동 ▾」) -------------------------------------------------------------
+    # ---- 모델(§8 항목56 — 「기본 · gpt-6.1-sol ▾」, 여러 개 고르면 나란히) -----------------------------------
 
     def model_choice(self) -> str:
+        """저장된 기본 — "auto"(앱이 정함) 또는 「기본으로」 고른 모델 id."""
         return self._model_choice
 
     def set_model_choice(self, mid: str):
+        """「기본으로」(또는 "auto" = 앱이 정하는 기본으로 되돌리기)."""
         self._model_choice = mid or AUTO
         app_settings().setValue(_MODEL_CHOICE_KEY, self._model_choice)
+        self.picks_changed.emit()
+
+    def default_model(self) -> str:
+        """지금의 기본 모델 id. 고른 기본이 가격표에서 사라졌으면(은퇴) 앱이 정하는 기본으로."""
+        choice = self._model_choice
+        ids = {m["id"] for m in self._model_info}
+        if choice != AUTO and (not ids or choice in ids):
+            return choice
+        return gw.default_model_id(self._model_info)
+
+    def picks(self) -> list:
+        """다음 만들기에 쓸 모델들(체크한 차례) — 체크가 없으면 [기본]."""
+        return list(self._picks) or [self.default_model()]
+
+    def set_picks(self, ids):
+        self._picks = [m for m in dict.fromkeys(ids) if m]
+        self.picks_changed.emit()
 
     def model_for(self, kind: str) -> str:
-        """「자동」이면 종류별 추천. 고른 모델은 글 종류에 쓰고, 베끼기는 사진용 모델을 골랐을 때만(다른 모델은 사진→도면 검증 안 됨)."""
-        choice = self._model_choice
-        if choice == AUTO:
-            return DEFAULT_MODEL[kind]
-        if kind == "trace" and choice not in {m for m, _ in PHOTO_MODELS}:
-            return DEFAULT_MODEL["trace"]
-        return choice
+        """이 종류에 쓸 첫 모델. 베끼기는 사진용 모델을 골랐을 때만 그 모델(다른 모델은 사진→도면 검증 안 됨)."""
+        mid = self.picks()[0]
+        if kind == "trace" and mid not in {m for m, _ in PHOTO_MODELS}:
+            return PHOTO_MODELS[0][0]
+        return mid
+
+    def models_for(self, kind: str) -> list:
+        """이 종류로 한 번에 보낼 모델들 — 흐름도·보드만 여러 개(나란히 비교), 나머지는 첫 모델 하나."""
+        return self.picks() if kind in MULTI_MODEL_KINDS else [self.model_for(kind)]
 
     def model_info(self) -> list:
         return list(self._model_info)
@@ -233,14 +254,7 @@ class _AIController(QObject):
         self._model_info = list(models)
         app_settings().setValue(_MODEL_INFO_KEY, json.dumps(self._model_info))
         self.models_changed.emit()
-
-    @staticmethod
-    def model_label(info: dict) -> str:
-        """「gemini-3.6-flash   보통 · $0.75 / 3.75」 — 100만 토큰당 달러(입력 / 출력)."""
-        tier = gw.price_tier(info.get("output"))
-        if info.get("input") is None or info.get("output") is None:
-            return info["id"]
-        return f"{info['id']}   {tier} · ${info['input']:g} / {info['output']:g}"
+        self.picks_changed.emit()   # 앱이 정하는 기본이 새 목록으로 바뀌었을 수 있다
 
     # ---- 남은 크레딧(§8 항목41) ---------------------------------------------------------
 
@@ -316,10 +330,26 @@ class _AIController(QObject):
     def symbol_count(self) -> int:
         return max(1, min(SYMBOL_COUNT_MAX, app_settings().value(_SYMBOL_COUNT_KEY, SYMBOL_COUNT_DEFAULT, type=int)))
 
+    def _send(self, req: AIRequest, near=None) -> AIRequest:
+        """기록에 남기고 `make_requested`로 넘긴다 — 흐름도·보드는 체크한 모델마다 같은 요청을 하나씩(§8 항목56, 결과는 나란히).
+        `near` = 결과를 그 옆에 놓을 바탕(보드 — `followup_of`). 반환: 첫 요청(나머지는 `last_requests`)."""
+        sent = []
+        for mid in self.models_for(req.kind):
+            one = dataclasses.replace(req, model=mid, entry=None)
+            if near is not None:
+                one.followup_of = near
+            self._add_entry(one)
+            sent.append(one)
+        self.last_requests = sent
+        for one in sent:
+            self.make_requested.emit(one)
+        return sent[0]
+
     def request_make(self, text: str = "", *, kind: str | None = None, image=None, image_name: str = "",
-                     pdf_path: str = "", sources=None):
-        """요청 하나를 만들어 기록에 남기고 `make_requested`로 넘긴다. 이어 만들기 바탕이 걸려 있으면 그 이어 만들기.
-        입력이 모자라면 `notice`로 알리고 None. 종류를 안 주면 짐작한다(§8 항목51 — 사용자는 종류를 고르지 않음)."""
+                     pdf_path: str = "", sources=None, near=None):
+        """요청을 만들어 기록에 남기고 `make_requested`로 넘긴다. 이어 만들기 바탕이 걸려 있으면 그 이어 만들기.
+        입력이 모자라면 `notice`로 알리고 None. 종류를 안 주면 짐작한다(§8 항목51 — 사용자는 종류를 고르지 않음).
+        `near` = 새로 만든 결과를 놓을 자리의 바탕(보드 막대 「PDF로 새로」 — 그 보드 오른쪽에)."""
         text = (text or "").strip()
         fu = self._followup
         if fu is not None:
@@ -327,27 +357,20 @@ class _AIController(QObject):
                 self.notice.emit("어떻게 고칠지 적어 주세요. 예: 감시장치를 아래로")
                 return None
             req = AIRequest(kind=fu["kind"], text=text,   # 보드 이어 고치기도 "explain"(§8 항목53 — 바탕 설계서로 `_FlowGenWorker`)
-                            model=self.model_for(fu["kind"]), count=self.symbol_count(),
+                            count=self.symbol_count(),
                             refs=fu["refs"], base_code=fu["base_code"], base_text=fu["base_text"])
-            req.followup_of = fu["base"]
             self.clear_followup()
-            self._add_entry(req)
-            self.make_requested.emit(req)
-            return req
+            return self._send(req, near=fu["base"])
         if kind is None:
             kind = guess_kind(text, image is not None, bool(pdf_path))
         if sources and len(sources) >= 2:   # 여러 자료 → 한 장 보드
-            req = AIRequest(kind="explain", text=text, model=self.model_for("explain"), sources=list(sources),
-                            image_name=f"자료 {len(sources)}개")
-            self._add_entry(req)
-            self.make_requested.emit(req)
-            return req
+            req = AIRequest(kind="explain", text=text, sources=list(sources), image_name=f"자료 {len(sources)}개")
+            return self._send(req, near=near)
         if kind == "explain":
             if not pdf_path:
                 self.notice.emit("한 장 보드는 PDF가 필요해요. PDF를 끌어다 놓거나 + 로 골라 주세요.")
                 return None
-            req = AIRequest(kind="explain", text=text, model=self.model_for("explain"), pdf_path=pdf_path,
-                            image_name=os.path.basename(pdf_path))
+            req = AIRequest(kind="explain", text=text, pdf_path=pdf_path, image_name=os.path.basename(pdf_path))
         else:
             if kind == "trace" and image is None:
                 self.notice.emit("베끼기는 도면 사진이 필요해요. 사진을 끌어다 놓거나 Ctrl+V로 붙여 주세요.")
@@ -356,13 +379,11 @@ class _AIController(QObject):
                 self.notice.emit("먼저 무엇을 그릴지 쓰거나 그림을 붙여 주세요.")
                 return None
             req = AIRequest(kind=kind, text=text, image=image, image_name=image_name if image is not None else "",
-                            model=self.model_for(kind), count=self.symbol_count(),
+                            count=self.symbol_count(),
                             pdf_path=pdf_path if kind in ("flow", "symbol") else "")   # PDF + 「흐름도로」·「그림 하나」
             if req.pdf_path and not req.image_name:
                 req.image_name = os.path.basename(pdf_path)
-        self._add_entry(req)
-        self.make_requested.emit(req)
-        return req
+        return self._send(req, near=near)
 
     def resubmit(self, req: AIRequest) -> AIRequest:
         """결과 막대 「다시」 — 같은 입력(종류·글·그림·모델)으로 새 기록을 만들어 다시 보낸다."""

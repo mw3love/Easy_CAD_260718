@@ -2800,6 +2800,11 @@ class _AnnotatorView(QGraphicsView):
 
     # ---- 그리기 ------------------------------------------------------------
     def mousePressEvent(self, event):
+        # [우리 확장 · §8 항목56] 보드 안에 들어가 있을 때 보드 밖을 누르면 보드 밖으로(누름 자체는 그대로 처리).
+        if event.button() == Qt.MouseButton.LeftButton:
+            press = getattr(self._owner, "_board_view_press", None)
+            if press is not None:
+                press(self, event.position().toPoint())
         # 휠(가운데) 버튼 드래그 = 창(이미지) 이동 — 편집/뷰어 모두. 좌클릭은 그리기에 쓰이므로.
         if event.button() == Qt.MouseButton.MiddleButton:
             self._owner._win_drag_start(event.globalPosition().toPoint())
@@ -4430,6 +4435,13 @@ class _AnnotatorView(QGraphicsView):
                 self._finish_csym_place(event)
                 event.accept()
             return
+        # [우리 확장 · §8 항목56] AI 보드의 빈 곳(보드 바탕·칸 바탕) 더블클릭 = 보드 안으로(이 보드 기준 AI 고치기).
+        # 글자 위 더블클릭은 아래 기본 동작(글 고치기) 그대로.
+        if event.button() == Qt.MouseButton.LeftButton:
+            enter = getattr(self._owner, "_board_enter_at", None)
+            if enter is not None and enter(self, event.position().toPoint()):
+                event.accept()
+                return
         # [우리 확장 · Phase 4] 표제란 프레임 더블클릭 = 필드 편집 폼(host가 소유).
         if event.button() == Qt.MouseButton.LeftButton:
             tb = self._titleblock_at(event.position().toPoint())
@@ -4578,6 +4590,10 @@ class _AnnotatorView(QGraphicsView):
             # 선택이 없을 때만 편집기 종료로 넘어간다(주석 → 뷰어 → 닫기 단계적 취소).
             if self.scene().selectedItems():
                 self.scene().clearSelection()
+                return
+            # [우리 확장 · §8 항목56] 보드 안에 들어가 있으면 Esc = 보드 밖으로(편집기 닫기보다 먼저)
+            exit_inside = getattr(self._owner, "_board_exit_inside", None)
+            if exit_inside is not None and exit_inside():
                 return
             self._owner._on_escape()
             return

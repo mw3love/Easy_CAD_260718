@@ -98,56 +98,123 @@ def test_toolbar_has_one_ai_icon_instead_of_three():
         assert a in menu_acts
 
 
-def test_model_auto_by_kind_and_chosen_model():
+# 2026-10-16 실측 목록 일부(§8 항목56) — 등록 시각은 차례만 맞춘 값
+_MODELS = [
+    {"id": "gpt-6-astra", "input": 10.0, "output": 50.0, "created": 70},
+    {"id": "gpt-5.5", "input": 5.0, "output": 30.0, "created": 10},
+    {"id": "gpt-5.6-sol", "input": 4.0, "output": 20.0, "created": 30},
+    {"id": "gpt-6.1-sol", "input": 2.0, "output": 10.0, "created": 90},
+    {"id": "gpt-6-sol", "input": 2.0, "output": 10.0, "created": 80},
+    {"id": "gpt-6-luna", "input": 0.1, "output": 0.5, "created": 80},
+    {"id": "gpt-5.6-luna", "input": 0.2, "output": 1.2, "created": 30},
+    {"id": "gemini-3.1-pro-preview", "input": 2.0, "output": 12.0, "created": 5},
+    {"id": "gemini-4-argon", "input": 2.0, "output": 10.0, "created": 99},
+    {"id": "gemini-3.5-flash", "input": 1.5, "output": 9.0, "created": 20},
+    {"id": "gemini-3.8-flash", "input": 0.75, "output": 3.75, "created": 85},
+    {"id": "gemini-3.6-flash", "input": 0.75, "output": 3.75, "created": 40},
+    {"id": "gemini-3.5-flash-lite", "input": 0.3, "output": 2.5, "created": 40},
+    {"id": "claude-fable-5-1", "input": 10.0, "output": 50.0, "created": 82},
+    {"id": "claude-fable-5", "input": 10.0, "output": 50.0, "created": 15},
+    {"id": "claude-opus-5", "input": 5.0, "output": 25.0, "created": 35},
+    {"id": "claude-opus-5-5", "input": 4.0, "output": 20.0, "created": 83},
+    {"id": "claude-sonnet-5-5", "input": 2.0, "output": 10.0, "created": 84},
+    {"id": "claude-haiku-5-5", "input": 0.1, "output": 0.5, "created": 95},
+]
+
+
+def test_featured_models_hide_old_and_default_is_second_gpt():
+    feat = gw.featured_models(_MODELS)
+    assert [m["id"] for m in feat["gpt"]] == ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"]   # 옛 5.5·5.6·6-sol은 빠짐
+    assert [m["id"] for m in feat["gemini"]] == ["gemini-4-argon", "gemini-3.8-flash", "gemini-3.5-flash-lite"]
+    assert [m["id"] for m in feat["claude"]] == ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]
+    assert gw.default_model_id(_MODELS) == "gpt-6.1-sol"
+    assert gw.default_model_id([]) == gw.FALLBACK_DEFAULT_MODEL
+    newer = _MODELS + [{"id": "gpt-7-sol", "input": 2.0, "output": 10.0, "created": 120}]   # 새 모델이 오면 따라간다
+    assert gw.default_model_id(newer) == "gpt-7-sol"
+    assert gw.price_text({"input": 0.75, "output": 3.75}) == "$0.75 / 3.75" and gw.price_text({"input": None}) == ""
+
+
+def test_default_model_and_picks():
     w = CanvasWindow()
     c = w._ai_ctrl
+    c._model_info = list(_MODELS)
     c.set_model_choice("auto")
-    assert c.model_for("symbol") == gw.TEXT_RECOMMEND_1 and c.model_for("flow") == gw.TEXT_RECOMMEND_MERMAID
-    assert c.model_for("trace") == "gpt-6.1-sol" and c.model_for("explain") == gw.TEXT_RECOMMEND_EXPLAIN
-    c.set_model_choice("gpt-6-sol")
-    assert c.model_for("flow") == "gpt-6-sol" and c.model_for("symbol") == "gpt-6-sol"
-    assert c.model_for("trace") == "gpt-6.1-sol"      # 사진→도면은 검증한 사진 모델만
-    assert CanvasWindow()._ai_ctrl.model_choice() == "gpt-6-sol"   # 기억
+    c.set_picks([])
+    assert c.default_model() == "gpt-6.1-sol" and c.picks() == ["gpt-6.1-sol"]
+    assert c.model_for("flow") == "gpt-6.1-sol" and c.model_for("symbol") == "gpt-6.1-sol"
+    c.set_model_choice("gemini-3.8-flash")   # 「기본으로」
+    assert c.default_model() == "gemini-3.8-flash"
+    assert c.model_for("trace") == "gpt-6.1-sol"       # 사진→도면은 검증한 사진 모델만
+    assert CanvasWindow()._ai_ctrl.model_choice() == "gemini-3.8-flash"   # 기억
+    c.set_model_choice("gone-model")                  # 은퇴해 목록에서 사라진 기본 → 앱이 정하는 기본
+    assert c.default_model() == "gpt-6.1-sol"
+    c.set_picks(["gpt-6.1-sol", "gemini-3.8-flash"])
+    assert c.models_for("explain") == ["gpt-6.1-sol", "gemini-3.8-flash"] and c.models_for("symbol") == ["gpt-6.1-sol"]
+    c.set_picks([])
     c.set_model_choice("auto")
 
 
-def test_model_menu_shows_prices_and_picks():
+def test_model_picker_rows_prices_and_default_button():
+    from easycad.canvas.model_picker import picker_text
     w = CanvasWindow()
     c, sp = w._ai_ctrl, w._start_prompt
+    c._model_info = list(_MODELS)
     c.set_model_choice("auto")
-    c._model_info = [{"id": "gemini-3.5-flash-lite", "input": 0.3, "output": 2.5},
-                     {"id": "gpt-5.5", "input": 5.0, "output": 30.0}]
-    assert sp._model_btn.text() == "모델 자동 ▾"
-    sp._fill_model_menu()
-    texts = [a.text() for a in sp._model_menu.actions()]
-    assert texts[0].startswith("자동 (추천)")
-    assert any("gemini-3.5-flash-lite" in t and "저렴" in t and "$0.3 / 2.5" in t for t in texts)
-    assert any("gpt-5.5" in t and "아주 비쌈" in t for t in texts)
-    pick = next(a for a in sp._model_menu.actions() if a.data() == "gpt-5.5")
-    pick.trigger()
-    assert c.model_choice() == "gpt-5.5" and sp._model_btn.text() == "모델 gpt-5.5 ▾"
+    c.set_picks([])
+    btn = sp._model_btn
+    assert btn.text() == "기본 · gpt-6.1-sol ▾"
+    btn.fill()
+    ids = [r.model_id for r in btn.rows]
+    assert ids[:9] == ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna", "gemini-4-argon", "gemini-3.8-flash",
+                       "gemini-3.5-flash-lite", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]
+    assert "gpt-5.5" in ids[9:]                         # 「모델 더 보기」
+    row = btn.rows[ids.index("gemini-3.8-flash")]
+    row.check.setChecked(True)                          # 여러 개 고르기
+    assert c.picks() == ["gpt-6.1-sol", "gemini-3.8-flash"] and btn.text() == "gpt-6.1-sol 외 1개 ▾"
+    assert w._ai_ctrl.picks_changed is not None and picker_text(c) == btn.text()
+    row.default_btn.click()                             # 「기본으로」
+    assert c.default_model() == "gemini-3.8-flash"
+    c.set_picks([])
+    assert btn.text() == "기본 · gemini-3.8-flash ▾"
     c.set_model_choice("auto")
 
 
-def test_price_tier_and_model_info_filter():
-    assert gw.price_tier(0.5) == "아주 저렴" and gw.price_tier(2.5) == "저렴" and gw.price_tier(3.75) == "보통"
-    assert gw.price_tier(10) == "비쌈" and gw.price_tier(30) == "아주 비쌈" and gw.price_tier(None) == ""
+def test_multi_model_makes_one_request_per_model():
+    w = CanvasWindow()
+    c = w._ai_ctrl
+    got = []
+    c.make_requested.connect(got.append)
+    c.set_picks(["gpt-6.1-sol", "gemini-3.8-flash"])
+    first = c.request_make("휴가 신청부터 결재까지 흐름도", kind="flow")
+    assert [r.model for r in got] == ["gpt-6.1-sol", "gemini-3.8-flash"] and first is got[0]
+    assert all(r.entry is not None and r.text == first.text for r in got) and got[0].entry is not got[1].entry
+    got.clear()
+    c.request_make("파라볼라 안테나 아이콘", kind="symbol")   # 심볼은 첫 모델 하나
+    assert [r.model for r in got] == ["gpt-6.1-sol"]
+    c.set_picks([])
 
+
+def test_model_info_filter_includes_claude_and_created():
     class _Resp:
         def raise_for_status(self):
             pass
 
         def json(self):
             return {"data": [
-                {"id": "gpt-6-sol", "type": "llm", "lifecycle": "current", "pricing": {"input": 2.0, "output": 10.0}},
+                {"id": "gpt-6-sol", "type": "llm", "lifecycle": "current", "created": 5,
+                 "pricing": {"input": 2.0, "output": 10.0}},
                 {"id": "gpt-5.4-mini", "type": "llm", "lifecycle": "legacy", "pricing": {"input": 0.75, "output": 4.5}},
                 {"id": "gemini-3.1-flash-lite-image", "type": "image", "pricing": {}},
+                {"id": "claude-sonnet-5-5", "type": "llm", "lifecycle": "current", "created": 7,
+                 "pricing": {"input": 2.0, "output": 10.0}},
+                {"id": "gpt-audio-1.5", "type": "llm", "lifecycle": "current", "pricing": {"input": 1, "output": 2}},
                 {"id": "gemini-3.5-flash-lite", "type": "llm", "lifecycle": "current",
                  "pricing": {"input": 0.3, "output": 2.5}}]}
     from unittest.mock import patch
     with patch("httpx.get", return_value=_Resp()):
         got = gw.list_text_models_info("k")
-    assert [m["id"] for m in got] == ["gemini-3.5-flash-lite", "gpt-6-sol"]   # 은퇴·그림 모델 빼고 싼 것부터
+    assert [m["id"] for m in got] == ["gemini-3.5-flash-lite", "claude-sonnet-5-5", "gpt-6-sol"]   # 은퇴·그림·음성 빼고 싼 것부터
+    assert got[2]["created"] == 5
 
 
 def test_make_validates_input_and_records_history():

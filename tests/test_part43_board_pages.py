@@ -151,6 +151,7 @@ def test_bar_line_one_page_and_split_without_ai(tmp_path):
     assert len(_boards(w._scene.items())) == 2
 
     def say(text):
+        w._board_enter(w._board_selected())   # 다시 배치 말은 보드 안에서(§8 항목56 — 테두리를 고르면 「PDF로 새로」)
         w._board_bar_sync(w._view)
         w._board_bar.line.setText(text)
         w._board_bar.line.returnPressed.emit()

@@ -5,8 +5,8 @@ Magic Board 개편(§8 항목51): 빈 도면이면 저절로 뜨고(첫 획을 �
 고르지 않는다 — `ai_control.guess_kind`가 짐작하고, 틀리면 결과 막대 한 줄로 바꾼다. 메뉴로 종류를 정해 열었을 때만 안내글이
 그 종류로 바뀐다(칩·버튼 없음).
 
-파일은 끌어다 놓기·Ctrl+V·「+」(누르면 바로 파일 선택 창). 못 읽는 파일은 "되는 것: …" 안내. 모델은 「자동 ▾」(펼치면 모델마다
-가격), 아래 줄에 남은 크레딧.
+파일은 끌어다 놓기·Ctrl+V·「+」(누르면 바로 파일 선택 창). 못 읽는 파일은 "되는 것: …" 안내. 모델은 「기본 · gpt-6.1-sol ▾」(§8 항목56 —
+`model_picker.py`, 여러 개 고르면 나란히), 아래 줄에 남은 크레딧.
 
 ⚠ 칸 자체엔 스타일시트를 걸지 않는다(조상 QSS가 자손 sizeHint를 바꾸는 함정). 배경·테두리는 paintEvent, QSS는 잎 위젯에만.
 """
@@ -15,14 +15,15 @@ from __future__ import annotations
 import os
 
 from PyQt6.QtCore import QEvent, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QActionGroup, QBrush, QColor, QPainter, QPen
+from PyQt6.QtGui import QBrush, QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QFileDialog, QFrame, QHBoxLayout, QLabel, QMenu, QPlainTextEdit, QPushButton, QToolButton, QVBoxLayout,
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QToolButton, QVBoxLayout,
 )
 
 from easycad.canvas.ai_control import (
-    AUTO, IMAGE_EXTS, KIND_LABEL, PLACEHOLDER, _AIController, guess_kind, unsupported_file_text,
+    IMAGE_EXTS, KIND_LABEL, PLACEHOLDER, _AIController, guess_kind, unsupported_file_text,
 )
+from easycad.canvas.model_picker import _ModelPickerButton
 from easycad.canvas.host_dialogs import _CORAL_BTN_QSS, _ImageAttachMixin, _attach_button_qss
 from easycad.canvas.host_widgets import _ACCENT_CORAL, _current_icon_color
 
@@ -102,12 +103,7 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         row.addWidget(self._attach_btn)
         row.addWidget(self._build_image_chip(self._card))
         row.addStretch(1)
-        self._model_btn = QToolButton(self._card)
-        self._model_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._model_btn.setToolTip("AI 모델 — 「자동」이면 만들 것에 맞춰 골라요. 펼치면 모델마다 가격이 보여요")
-        self._model_menu = QMenu(self._model_btn)
-        self._model_menu.aboutToShow.connect(self._fill_model_menu)
-        self._model_btn.setMenu(self._model_menu)
+        self._model_btn = _ModelPickerButton(controller, self._card) if controller is not None else QToolButton(self._card)
         row.addWidget(self._model_btn)
         self._make_btn = QPushButton("만들기", self._card)
         self._make_btn.setStyleSheet(_CORAL_BTN_QSS)
@@ -134,7 +130,6 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
             controller.notice.connect(self._on_ctrl_notice)
             self._credit_lbl.setText(controller.credit_text)
         self.set_kind_hint(None)
-        self._sync_model_btn()
         self.refresh_theme(True)
 
     # ---- 그리기 -----------------------------------------------------------------
@@ -200,47 +195,6 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         if self._kind_hint is not None:
             return self._kind_hint
         return guess_kind(self._edit.toPlainText(), self._attached_image is not None, bool(self._attached_pdf))
-
-    # ---- 모델 「자동 ▾」 ----------------------------------------------------------------
-
-    def _sync_model_btn(self):
-        choice = self._ctrl.model_choice() if self._ctrl is not None else AUTO
-        self._model_btn.setText(f"모델 {'자동' if choice == AUTO else choice} ▾")
-
-    def _fill_model_menu(self):
-        """펼칠 때마다 다시 채운다 — 「자동(추천)」 + 받아 둔 가격표(없으면 받아 오는 중 안내)."""
-        menu = self._model_menu
-        menu.clear()
-        ctrl = self._ctrl
-        if ctrl is None:
-            return
-        group = QActionGroup(menu)
-        choice = ctrl.model_choice()
-        auto = menu.addAction("자동 (추천) — 만들 것에 맞춰 골라요")
-        auto.setCheckable(True)
-        auto.setChecked(choice == AUTO)
-        auto.setData(AUTO)
-        group.addAction(auto)
-        info = ctrl.model_info()
-        if info:
-            head = menu.addAction("직접 고르기 — 100만 토큰당 $ (입력 / 출력)")
-            head.setEnabled(False)
-            for m in info:
-                act = menu.addAction(ctrl.model_label(m))
-                act.setCheckable(True)
-                act.setChecked(m["id"] == choice)
-                act.setData(m["id"])
-                group.addAction(act)
-        else:
-            wait = menu.addAction("모델 목록·가격을 받아 오는 중… (KAIROS 키가 있어야 해요)")
-            wait.setEnabled(False)
-            ctrl.fetch_models()
-        group.triggered.connect(self._on_model_picked)
-
-    def _on_model_picked(self, act: QAction):
-        if self._ctrl is not None:
-            self._ctrl.set_model_choice(act.data())
-        self._sync_model_btn()
 
     # ---- 크레딧·안내 -------------------------------------------------------------------
 

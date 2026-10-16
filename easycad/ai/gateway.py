@@ -249,13 +249,24 @@ def list_text_models(api_key: str, base_url: str = BASE_URL, timeout: float = 8.
                  and "image" not in m.lower() and "tts" not in m.lower())
 
 
+MODEL_VENDORS = ("gpt", "gemini", "claude")   # 모델 목록에 보이는 차례(§8 항목56 — 사용자 확정 2026-10-16)
+FALLBACK_DEFAULT_MODEL = "gpt-6.1-sol"         # 가격표를 아직 못 받았을 때의 기본(받으면 `default_model_id`가 정함)
+SUCCESSOR_PRICE_FLOOR = 0.5                    # 이름이 다른 후속 모델로 볼 가격 하한(옛 모델 출력 가격의 몇 배 초과) — `_is_successor`
+
+
+def model_vendor(mid: str) -> str:
+    """"gpt" | "gemini" | "claude" | "" — 이름 앞부분으로."""
+    low = (mid or "").lower()
+    return next((v for v in MODEL_VENDORS if low.startswith(v)), "")
+
+
 def list_text_models_info(api_key: str, base_url: str = BASE_URL, timeout: float = 8.0) -> list[dict]:
-    """[§8 항목51, 2026-10-16] 글 모델 + 가격 — 모델 「자동 ▾」 목록용. `/models`의 각 항목에 `pricing`(USD/100만 토큰
-    `input`·`output`)·`lifecycle`(current/legacy)이 온다(2026-10-16 실호출 확인, 글 모델 60개). openai SDK의 `models.list`는
+    """[§8 항목51, 2026-10-16] 글 모델 + 가격 — 모델 목록용. `/models`의 각 항목에 `pricing`(USD/100만 토큰
+    `input`·`output`)·`lifecycle`(current/legacy)·`created`(등록 시각)가 온다(2026-10-16 실호출 확인). openai SDK의 `models.list`는
     이 확장 필드를 보장하지 않아 `get_credit_balance`처럼 httpx로 직접 읽는다.
 
-    반환 [{"id", "input", "output"}] — `list_text_models`와 같은 거르기(gpt·gemini, 이미지·음성 전용 제외) + 은퇴(legacy) 제외,
-    가격이 없는 모델은 input/output이 None. 출력 가격 오름차순(싼 것부터)."""
+    반환 [{"id", "input", "output", "created"}] — gpt·gemini·claude(§8 항목56에서 claude도 — 사용자 요청), 이미지·음성 전용과
+    은퇴(legacy) 제외, 가격이 없는 모델은 input/output이 None. 출력 가격 오름차순(싼 것부터)."""
     import httpx
 
     url = _normalize_base_url(base_url) + "/models"
@@ -273,26 +284,66 @@ def list_text_models_info(api_key: str, base_url: str = BASE_URL, timeout: float
         low = mid.lower()
         if m.get("type", "llm") != "llm" or m.get("lifecycle") == "legacy":
             continue
-        if not ("gpt" in low or "gemini" in low) or "image" in low or "tts" in low or "audio" in low:
+        if not model_vendor(mid) or "image" in low or "tts" in low or "audio" in low:
             continue
         p = m.get("pricing") or {}
-        out.append({"id": mid, "input": p.get("input"), "output": p.get("output")})
+        out.append({"id": mid, "input": p.get("input"), "output": p.get("output"), "created": int(m.get("created") or 0)})
     out.sort(key=lambda d: (d["output"] is None, d["output"] or 0.0, d["id"]))
     return out
 
 
-# 출력 가격(USD/100만 토큰) → 쉬운 말 등급. 경계는 2026-10-16 목록(0.5·1.2·2.5·3.75·9·10·12·20·30·50)이 고르게 갈리도록.
-PRICE_TIERS = ((0.6, "아주 저렴"), (3.0, "저렴"), (5.0, "보통"), (15.0, "비쌈"))
+def model_line(mid: str) -> str:
+    """버전 숫자를 뺀 계열 이름 — "gpt-6.1-sol" → "gpt-sol", "claude-haiku-4-5-20251001" → "claude-haiku",
+    "gemini-3.5-flash-lite" → "gemini-flash-lite"(숫자가 든 마디를 모두 뺀다)."""
+    return "-".join(t for t in (mid or "").lower().split("-") if not any(ch.isdigit() for ch in t))
 
 
-def price_tier(output_price) -> str:
-    """모델 목록 옆에 붙일 등급 글. 가격을 모르면 빈 글."""
-    if output_price is None:
+def _is_successor(n: dict, m: dict) -> bool:
+    """`n`이 `m`의 후속 모델인가(추정) — 같은 회사에서 더 늦게 나왔고, ① 같은 계열(버전만 다름)이거나 ② 출력 가격이 같거나
+    조금 싸다(0.5배 초과 ~ 1배 — 이름을 바꾼 후속: gpt-5.5 $30 → gpt-5.6-sol $20). 가격 하한이 없으면 최고급(gpt-6-astra $50)이
+    훨씬 싼 새 모델 때문에 빠지고, 0.5배를 넣으면 한 급 아래(claude-opus $20 → sonnet $10)를 후속으로 잘못 본다(2026-10-16 실측 목록)."""
+    if n is m or n.get("created", 0) <= m.get("created", 0):
+        return False
+    if model_line(n["id"]) == model_line(m["id"]):
+        return True
+    return SUCCESSOR_PRICE_FLOOR * m["output"] < n["output"] <= m["output"]
+
+
+def featured_models(info: list, per: int = 3) -> dict:
+    """[§8 항목56] 회사별로 먼저 보여 줄 모델 — {"gpt": [...], "gemini": [...], "claude": [...]}, 각각 출력 가격 비싼 것부터 `per`개.
+    KAIROS는 새 모델을 빨리 올리지만 옛 모델도 옛 가격 그대로 남긴다(2026-10-16 실측: 비싼 순 3개면 gpt-5.5·gpt-5.6-sol 같은
+    옛 모델이 위로). 그래서 후속 모델이 있는 옛 모델은 먼저 뺀다(`_is_successor`). 2026-10-16 실제 목록에선 회사마다 기대한 3개가
+    정확히 남는다(테스트 `_MODELS`). 버전 숫자로 "더 좋은 모델"을 판단하지 않으니 새 모델이 오면 앱을 안 고쳐도 따라간다.
+    가격 모르는 모델은 빠진다(「모델 더 보기」에만)."""
+    out = {}
+    for v in MODEL_VENDORS:
+        rows = [m for m in info if model_vendor(m["id"]) == v and m.get("output") is not None]
+        keep = [m for m in rows if not any(_is_successor(n, m) for n in rows)]
+        keep.sort(key=lambda m: (-m["output"], -m.get("created", 0), m["id"]))
+        out[v] = keep[:per]
+    return out
+
+
+def default_model_id(info: list) -> str:
+    """[§8 항목56] 기본 모델 = 위 거르기를 한 gpt 가운데 두 번째로 비싼 것(사용자 제안 2026-10-16 — 맨 위 최고가는 피하고 최신
+    주력. 2026-10-16 목록에선 gpt-6.1-sol, 베끼기 시험에서 품질·비용으로 뽑힌 모델과 같다). 목록이 없으면 `FALLBACK_DEFAULT_MODEL`."""
+    feat = featured_models(info)
+    gpt = feat.get("gpt") or []
+    if len(gpt) >= 2:
+        return gpt[1]["id"]
+    if gpt:
+        return gpt[0]["id"]
+    for v in MODEL_VENDORS:
+        if feat.get(v):
+            return feat[v][0]["id"]
+    return FALLBACK_DEFAULT_MODEL
+
+
+def price_text(info: dict) -> str:
+    """「$2 / 10」 — 100만 토큰당 달러(입력 / 출력). 모르면 빈 글. 등급 말(「비쌈」 등)은 쓰지 않는다(사용자: 숫자로 비교)."""
+    if info.get("input") is None or info.get("output") is None:
         return ""
-    for limit, label in PRICE_TIERS:
-        if output_price <= limit:
-            return label
-    return "아주 비쌈"
+    return f"${info['input']:g} / {info['output']:g}"
 
 
 def get_credit_balance(api_key: str, base_url: str = BASE_URL) -> tuple[float, float]:

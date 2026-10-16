@@ -94,7 +94,7 @@ def test_board_color_change_recolors_ink_and_undoes_together():
     names = [a.text() for a in menu.actions()]
     assert names[:2] == ["화이트", "블랙"] and "다른 색" in names
     sub = [a for a in menu.actions() if a.menu() is not None][0].menu()
-    assert len([a for a in sub.actions() if not a.isSeparator()]) == 9   # 견본 8 + 직접 고르기
+    assert len([a for a in sub.actions() if not a.isSeparator()]) == 8   # 견본 8(직접 고르기는 뺌 — §8 항목56)
     _close(w)
 
 

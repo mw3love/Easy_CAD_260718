@@ -196,9 +196,13 @@ def test_pdf_request_places_board_and_followup_puts_new_board_beside(figure_pdf)
     bar = _bar(w)
     assert bar.isVisible() and bar.line is not None and bar.line.isVisibleTo(bar)
     assert bar.accept_btn is None and bar.discard_btn is None and bar.history_btn is None   # 채택·버리기·기록 없음
-    assert len(bar.chips) == 10 and all(not c.text() and not c.icon().isNull() for c in bar.chips)   # 색은 아이콘만
+    assert len(bar.chips) == 3 and all(not c.text() and not c.icon().isNull() for c in bar.chips)   # 화이트·블랙·무지개
     assert [c for c in bar.chips if c.isChecked()][0].property("boardColor") == "#ffffff"
+    assert bar.mode == "outer" and "PDF로 새로" in bar.name_label.text() and bar.go_btn.text() == "새로 만들기"
     seen = []
+    w._board_enter(board)                                     # 보드 안 → 이 보드를 바탕으로 고치기
+    bar = _bar(w)
+    assert bar.mode == "inner_all" and bar.line.text() == "" and bar.go_btn.text() == "고치기"
 
     def gen(*_a, base_code="", **_k):
         seen.append(base_code)
@@ -214,9 +218,8 @@ def test_pdf_request_places_board_and_followup_puts_new_board_beside(figure_pdf)
     assert req.kind == "explain" and "흐름도" not in w._ai_pill.text()   # 보드로 이어 감(막대 예시·알약 이름)
     assert all(it.scene() is w._scene for it in _scope(w, board))           # 원래 보드는 그대로
     assert new.mapRectToScene(new.rect()).left() > board.mapRectToScene(board.rect()).right()   # 새 보드는 오른쪽
-    # 글이 달라진 칸을 주황으로(바꾼 문장 하나 = 한 곳), 막대 앞에 「지시 · 모델 · 초」
-    assert "1곳" in req.entry.status_text() and len(new._ai_marks) == 1
-    assert "학습이빠르다" in "".join(new._ai_marks[0].toPlainText().split())
+    assert not hasattr(new, "_ai_marks") and "주황" not in req.entry.status_text()   # 바뀐 칸 표시는 없앰(§8 항목56)
+    assert w._board_inside is None and new._ai["origin"] == ""   # 새 보드를 골랐으니 보드 밖, 처음 쓴 말은 바탕 것을 물려받음
     bar = _bar(w)
     assert "의의를 더 짧게" in bar.caption_label.text() and "m" in bar.caption_label.text()
     _close(w)
@@ -309,6 +312,7 @@ def _place_board(w, pdf):
 
 
 def _say_board(w, text):
+    w._board_enter(_sel_board(w))   # 보드 안에서 말하기(§8 항목56)
     bar = _bar(w)
     bar.line.setText(text)
     bar.line.returnPressed.emit()

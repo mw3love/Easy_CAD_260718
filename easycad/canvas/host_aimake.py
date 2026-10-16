@@ -241,10 +241,15 @@ class _BarLine(QPlainTextEdit):
 
     returnPressed = pyqtSignal()
     heightChanged = pyqtSignal()
+    _MIN_LINES = 1
     _MAX_LINES = 5
 
-    def __init__(self, examples, parent=None):
+    def __init__(self, examples, parent=None, min_lines=None, max_lines=None):
         super().__init__(parent)
+        if min_lines is not None:   # 보드 막대는 5줄로 시작 → 12줄까지(§8 항목56, 사용자 2026-10-16), 넘으면 칸 안 스크롤
+            self._MIN_LINES = min_lines
+        if max_lines is not None:
+            self._MAX_LINES = max_lines
         self._examples = tuple(examples) or ("하고 싶은 것을 적어 주세요",)
         self._i = 0
         self.setPlaceholderText(self._examples[0])
@@ -269,12 +274,12 @@ class _BarLine(QPlainTextEdit):
         self.setPlainText(text)
 
     def _fit_height(self):
-        """글 줄 수(감긴 줄 포함)만큼 키를 맞춘다 — 1줄 ~ `_MAX_LINES`줄, 넘으면 칸 안에서 굴린다."""
+        """글 줄 수(감긴 줄 포함)만큼 키를 맞춘다 — `_MIN_LINES`줄 ~ `_MAX_LINES`줄, 넘으면 칸 안에서 굴린다."""
         fm = self.fontMetrics()
         lines = 1
         if self.toPlainText():
             lines = max(1, int(self.document().size().height()))   # 평문 문서 크기 = 줄 수(감긴 줄 포함)
-        lines = min(lines, self._MAX_LINES)
+        lines = max(self._MIN_LINES, min(lines, self._MAX_LINES))
         m = self.contentsMargins()
         h = lines * fm.lineSpacing() + int(2 * self.document().documentMargin()) + m.top() + m.bottom() + 6
         if h != self.height():
@@ -302,7 +307,7 @@ class _StagingBar(QFrame):
     None이면 그 버튼이 없다. 「기록」도 흐름도·보드 막대엔 없다(상태 알약에 남음). 보드 막대(`host_board`)도 이 막대를 쓴다."""
 
     def __init__(self, parent, on_accept, on_retry, on_discard, extras=(), discard_text="버리기",
-                 on_line=None, examples=(), history_menu=None, request=None, caption=None):
+                 on_line=None, examples=(), history_menu=None, request=None, caption=None, line_rows=None):
         super().__init__(parent)
         self.setObjectName("aiStagingBar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -350,7 +355,8 @@ class _StagingBar(QFrame):
             lay.addWidget(self.discard_btn)
         self.line = None
         if on_line is not None:
-            self.line = _BarLine(examples, self)
+            lo, hi = line_rows or (None, None)
+            self.line = _BarLine(examples, self, min_lines=lo, max_lines=hi)
             self.line.setProperty("aiSide", "new")
             self.line.returnPressed.connect(on_line)   # 받는 쪽이 `sender()`로 이 줄을 찾는다(QObject를 붙잡는 람다 금지)
             outer.addWidget(self.line)
@@ -468,27 +474,6 @@ def _ai_info_label(parent, req, caption=None):
     lbl.setToolTip(tip)
     lbl.setStyleSheet("color:#8a96a3; font-size:11px; padding:0 4px;")   # 두 테마 모두에서 읽히는 옅은 회색
     return lbl
-
-
-def _board_diff_items(items, other_items) -> list:
-    """한 장 보드 비교 — `items`의 글 칸 가운데 `other_items`에 똑같은 글이 없는 것(줄바꿈은 무시: 같은 글도 칸 폭이 달라지면
-    줄이 달리 나뉜다). 칸 제목·쪽 번호처럼 양쪽에 같은 글은 빠진다."""
-    from collections import Counter
-
-    def key(it):
-        f = getattr(it, "toPlainText", None)
-        return "".join(f().split()) if f is not None else None   # 빈칸·줄바꿈 모두 빼고 — 줄은 글자 사이에서도 나뉜다
-    left = Counter(k for k in map(key, other_items) if k)
-    out = []
-    for it in items:
-        k = key(it)
-        if not k:
-            continue
-        if left[k] > 0:
-            left[k] -= 1
-        else:
-            out.append(it)
-    return out
 
 
 def _flow_diff_items(code, other_code, items) -> list:
@@ -1388,7 +1373,7 @@ class _AIMakeMixin:
         """`core_view.drawForeground`가 부른다(우리 확장 훅)."""
         self._draw_check_marks(view, painter)   # §8 항목48 도면 검사 표시
         self._board_bar_sync(view)              # §8 항목53 보드 막대(보드 하나를 골랐을 때 그 위에)
-        self._draw_board_marks(view, painter)   # 이어 고친 보드의 바뀐 칸(그 보드를 골랐을 때)
+        self._draw_board_inside(view, painter)  # §8 항목56 보드 안에 들어가 있으면 그 보드 둘레 코랄 점선
         self._draw_ai_trace_overlay(view, painter)
         st = getattr(self, "_ai_staged", None)
         if st is None or st.doc.view is not view:
