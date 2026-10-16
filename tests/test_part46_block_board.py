@@ -319,3 +319,30 @@ def test_block_roles_hero_face_strips_and_flow_face():
     assert any(isinstance(it, _PathItem) and getattr(it, "_pb_part", "") == "blocks[1]" for it in added)   # 흐름도 면
     assert check_drawing(w._scene, items=[it for it in w._board_scope(board) if it is not board]) == []
     _close(w)
+
+
+def test_masonry_stacks_under_short_block_and_fits_one_page():
+    """[§8 항목58 ③] 벽돌 쌓기 — 줄 높이를 맞추지 않아 짧은 블록 아래로 다음 블록이 붙고, 조이면 한 장에 드는 분량은 한 장(전엔 2장)."""
+    w = _window()
+    long = "긴 설명 문장이 이어진다. " * 10
+    blocks = [
+        {"type": "text", "title": "짧은 글", "row": 1, "span": 6, "body": "짧다."},
+        {"type": "list", "title": "긴 목록", "row": 1, "span": 6, "items": [long] * 4},
+        {"type": "text", "title": "둘째 줄", "row": 2, "span": 6, "body": long},
+        {"type": "text", "title": "둘째 줄 둘", "row": 2, "span": 6, "body": "짧다."},
+        {"type": "list", "title": "셋째 줄", "row": 3, "span": 6, "items": [long] * 3},
+        {"type": "terms", "title": "용어", "row": 3, "span": 6, "items": [{"term": "A", "meaning": long}] * 3},
+        {"type": "text", "title": "넷째 줄", "row": 4, "span": 6, "body": long * 2},
+        {"type": "list", "title": "넷째 줄 둘", "row": 4, "span": 6, "items": [long] * 3},
+    ]
+    spec = pb.parse_board(json.dumps({"kind": "block-board", "title": "T", "subtitle": "S", "blocks": blocks}, ensure_ascii=False))
+    res = w._bb_layout(dict(spec, blocks=[dict(b, _i=i) for i, b in enumerate(spec["blocks"])]), 1920.0)
+    w._pb_discard(res[4])
+    cell = {part: (x, y, h) for part, _b, x, _w, y, h, _below in res[5]}
+    assert cell["blocks[2]"][1] < cell["blocks[1]"][1] + cell["blocks[1]"][2]   # 짧은 글 바로 아래(긴 목록 끝을 기다리지 않음)
+    _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
+    boards = [it for it in added if isinstance(it, _BoardItem)]
+    assert len(boards) == 1 and boards[0].rect().width() <= w.BOARD_MAX_W + 1
+    assert check_drawing(w._scene, items=[it for it in w._board_scope(boards[0]) if it is not boards[0]]) == []
+    assert (w._bb_k, w._bb_figk, w._bb_tight) == w._BB_FIT_STEPS[0]   # 만든 뒤엔 기본으로
+    _close(w)

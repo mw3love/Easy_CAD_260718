@@ -42,6 +42,14 @@ class _BlockBoardMixin:
     _BB_HERO_MUTED = "#aebccc"
     _BB_BLUE = "#3d7fb8"
     _BB_FLOW_FACE = QColor(218, 119, 86, 30)
+    # 한 장 채우기(§8 항목58 ③) — 넘치면 2장으로 나누기 전에 이 차례로 조여 본다: (본문 배율, 그림 높이 배율, 간격 좁힘).
+    # 본문 11pt → 10 → 9(출력해서 읽히는 바닥). 실측(1706.03762 보드 3개): 글자 크기보다 그림 높이·간격이 높이를 훨씬 많이 줄였다.
+    _BB_FIT_STEPS = ((1.0, 1.0, False), (1.0, 0.7, True), (0.92, 0.6, True), (0.85, 0.5, True))
+    _BB_TIGHT = (48.0, 28.0, 12.0)   # 좁힌 바깥 여백 · 칸 사이 · 카드 안쪽 여백
+    _bb_k = 1.0
+    _bb_figk = 1.0
+    _bb_tight = False
+    _bb_fig_extra: dict = {}
     _BB_FIG_H = {"small": 200.0, "normal": 300.0, "big": 460.0}   # big은 머리글 + 한 줄 + 그림이 1장 높이(BOARD_MAX_W/16:9) 안에
 
     # ---- 줄 짜기 -----------------------------------------------------------------------------
@@ -95,8 +103,9 @@ class _BlockBoardMixin:
     # ---- 배치 한 번 ------------------------------------------------------------------------------
 
     def _bb_layout(self, spec, width):
-        """보드 왼쪽 위 (0,0) 기준으로 한 번 놓는다 — 반환 (폭, 필요 높이, 단계 수, 화살표 수, 넣은 아이템, 줄마다 아래 끝 y)."""
-        M, G, P = self._BB_M, self._BB_G, self._BB_P
+        """보드 왼쪽 위 (0,0) 기준으로 한 번 놓는다 — 반환 (폭, 필요 높이, 단계 수, 화살표 수, 넣은 아이템, 칸 목록).
+        칸 목록 = [(설계서 자리, 블록, x, 폭, 위 y, 높이, 아래에 다른 블록이 있나)]."""
+        M, G, P = self._BB_TIGHT if self._bb_tight else (self._BB_M, self._BB_G, self._BB_P)
         content_w = width - 2 * M
         col = (content_w - 11 * G) / 12.0
         added: list = []
@@ -130,47 +139,63 @@ class _BlockBoardMixin:
         if spec.get("_note"):   # 여러 장 — 「→ 2장에 이어서: …」 / 「생략(한 장으로): …」
             _t, h = self._pb_text(added, spec["_note"], M, y + 6, content_w, 10, self._PB_MUTED)
             y += h + 6
-        y += 28.0
+        y_top = y + 28.0
         n_steps = n_arrows = 0
-        row_bottoms = []
+        # 벽돌 쌓기(§8 항목58 ③) — 줄마다 높이를 맞추던 것(짧은 블록 아래가 텅 빔, 키 큰 블록이 한 기둥에 몰려 2장)을: 블록마다 12칸 중
+        # 지금 가장 낮은 자리에 놓는다(같으면 AI가 줄에서 정한 자리). 차례·칸 수는 AI 그대로, 줄에 혼자인 좁은 블록은 가운데(「가운데로」 지시).
+        cells, sky = [], [y_top] * 12   # cells: [start, end, x, w, blk, idx, y, h] · sky: 칸마다 다음 블록이 놓일 y
         for row in self._bb_rows(spec, col):
-            used = sum(span for _i, _b, span in row)
-            x = M + (12 - used) / 2.0 * (col + G)   # 칸이 남는 줄은 가운데로
-            cells, hs = [], []
+            want = 0
             for idx, blk, span in row:
                 w = span * col + (span - 1) * G
+                if len(row) == 1 and span < 12:   # 가운데(칸 경계에 안 맞아도 됨 — 걸치는 칸 모두 막음)
+                    c0 = (12 - span) / 2.0
+                    covered = range(int(c0), min(12, int(math.ceil(c0 + span))))
+                    by = max(sky[c] for c in covered)
+                else:
+                    c0 = min(range(0, 13 - span), key=lambda c: (max(sky[c:c + span]), abs(c - want)))
+                    covered = range(c0, c0 + span)
+                    by = max(sky[c] for c in covered)
+                want += span
+                x = M + c0 * (col + G)
                 self._pb_part_cur = f"blocks[{idx}]"
                 start = len(added)
                 hero = bool(blk.get("hero"))
                 inset = P if (hero or blk["type"] == "flow") else 0.0   # 면이 있는 블록만 안쪽 여백
-                h, ns, na = self._bb_block(added, spec, blk, x + inset, y + P, w - 2 * inset)
+                h, ns, na = self._bb_block(added, spec, blk, x + inset, by + P, w - 2 * inset)
                 n_steps += ns
                 n_arrows += na
-                cells.append((start, len(added), x, w, blk, idx))
-                hs.append(h + 2 * P)
-                x += w + G
-            rh = max(hs)
-            for start, end, bx, bw, blk, idx in reversed(cells):   # 뒤 칸부터(앞 칸의 자리 번호가 안 밀리게)
-                self._pb_part_cur = f"blocks[{idx}]"
-                if blk.get("hero"):
-                    self._bb_hero_ink(added[start:end])
-                    self._pb_card_under(added, start, bx, y, bw, rh, fill=self._BB_HERO_BG, edge=self._BB_HERO_BG)
-                elif blk["type"] == "flow":
-                    # 흐름도는 상자 대신 채운 패스 — 상자면 그 안을 지나는 화살표가 「도면 검사」의 "상자를 지나가는 선"(옛 틀과 같은 이유)
-                    self._bb_face(added, start, bx, y, bw, rh, self._BB_FLOW_FACE)
-                elif blk["type"] not in ("numbers", "cards"):   # 숫자·카드는 안의 선·띠가 모양을 맡는다
-                    self._pb_card(added, bx, y, bw, 1.5, fill=self._PB_EDGE, edge=self._PB_EDGE, width=0.0)
-            y += rh
-            row_bottoms.append(y)
-            y += G
+                cells.append([start, len(added), x, w, blk, idx, by, h + 2 * P])
+                for c in covered:
+                    sky[c] = by + h + 2 * P + G
+        bottom = max((c[6] + c[7] for c in cells), default=y_top)
+        info = []
+        for c in cells:
+            _s, _e, bx, bw, blk, idx, by, bh = c
+            below = [d[6] for d in cells if d[6] > by + 1 and d[2] < bx + bw - 1 and d[2] + d[3] > bx + 1]
+            room = (min(below) - G if below else bottom) - by
+            if blk.get("hero") or blk["type"] == "flow":   # 면은 아래 이웃(또는 내용 끝)까지 — 너무 길어지면(텅 빈 큰 면) 그대로
+                if room <= bh * 1.6:
+                    c[7] = max(bh, room)
+            info.append((f"blocks[{idx}]", blk, bx, bw, by, c[7], bool(below)))
+        for start, end, bx, bw, blk, idx, by, bh in reversed(cells):   # 뒤 칸부터(앞 칸의 자리 번호가 안 밀리게)
+            self._pb_part_cur = f"blocks[{idx}]"
+            if blk.get("hero"):
+                self._bb_hero_ink(added[start:end])
+                self._pb_card_under(added, start, bx, by, bw, bh, fill=self._BB_HERO_BG, edge=self._BB_HERO_BG)
+            elif blk["type"] == "flow":
+                # 흐름도는 상자 대신 채운 패스 — 상자면 그 안을 지나는 화살표가 「도면 검사」의 "상자를 지나가는 선"(옛 틀과 같은 이유)
+                self._bb_face(added, start, bx, by, bw, bh, self._BB_FLOW_FACE)
+            elif blk["type"] not in ("numbers", "cards"):   # 숫자·카드는 안의 선·띠가 모양을 맡는다
+                self._pb_card(added, bx, by, bw, 1.5, fill=self._PB_EDGE, edge=self._PB_EDGE, width=0.0)
         self._pb_part_cur = None
-        return width, y - G + 48.0, n_steps, n_arrows, added, row_bottoms
+        return width, bottom + 48.0, n_steps, n_arrows, added, info
 
     # ---- 블록 하나 -------------------------------------------------------------------------------
 
     def _bb_block(self, added, spec, blk, x, y, w):
         """블록 내용(카드 안쪽 x, y, w) — 반환 (높이, 단계 수, 화살표 수)."""
-        s = _SCALE.get(blk.get("size"), 1.0)
+        s = _SCALE.get(blk.get("size"), 1.0) * self._bb_k   # 넘칠 때 본문 한 단계 줄이기(§8 항목58 ③)
         t = blk["type"]
         y0 = y
         if blk.get("title") or blk.get("pages"):
@@ -300,7 +325,10 @@ class _BlockBoardMixin:
         if pm is None or pm.isNull():
             _t, h = self._pb_text(added, f"[그림 자리 — 원문 p.{blk['page']}]", x, y, w, 10, self._PB_MUTED)
             return y + h
-        k = min(w / pm.width(), self._BB_FIG_H.get(blk.get("size"), 300.0) / pm.height())
+        # 사용자가 시킨 「그림 크게」는 한 장 맞추기에서도 줄이지 않는다(그 대신 다른 블록이 2장으로 — 옛 틀과 같은 원칙)
+        base = self._BB_FIG_H.get(blk.get("size"), 300.0) * (1.0 if spec.get("_figure") == "big" else self._bb_figk)
+        limit = base + min(base * 0.6, self._bb_fig_extra.get(self._pb_part_cur, 0.0))   # 아래가 비면 크게(③ — 1.6배까지)
+        k = min(w / pm.width(), limit / pm.height())
         img = _ImageItem(pm, QRectF(0.0, 0.0, pm.width() * k, pm.height() * k))
         img.setPos(x + (w - pm.width() * k) / 2.0, y)
         img.setFlags(img.GraphicsItemFlag.ItemIsMovable | img.GraphicsItemFlag.ItemIsSelectable)
@@ -384,17 +412,40 @@ class _BlockBoardMixin:
     # ---- 크기 맞추기 · 여러 장 ---------------------------------------------------------------------
 
     def _bb_fit(self, spec):
-        """배치 한 번(+ 세로로 길면 넓혀서 한 번 더) — 반환 (_bb_layout 결과, 보드 폭)."""
+        """배치 한 번(+ 세로로 길면 넓혀서 한 번 더, + 아래가 빈 그림은 크게 한 번 더) — 반환 (_bb_layout 결과, 보드 폭)."""
+        self._bb_fig_extra = {}
         res = self._bb_layout(spec, 1920.0)
         if res[1] * BOARD_ASPECT > res[0] * 1.05:
             self._pb_discard(res[4])
             res = self._bb_layout(spec, min(res[1] * BOARD_ASPECT * 0.92, self.BOARD_MAX_W))
+        width = res[0]
+        floor = max(res[1], width / BOARD_ASPECT) - 48.0   # 보드(16:9) 안 내용 아래 끝
+        extra = {part: floor - (y + h) for part, blk, _x, _w, y, h, below in res[5]
+                 if blk["type"] == "figure" and not below and floor - (y + h) > 60.0}
+        if extra:
+            self._pb_discard(res[4])
+            self._bb_fig_extra = extra
+            res = self._bb_layout(spec, width)
+            self._bb_fig_extra = {}
         return res, max(res[0], res[1] * BOARD_ASPECT)
+
+    def _bb_fit_steps(self, spec):
+        """`_bb_fit`을 조이는 차례(`_BB_FIT_STEPS`)로 — 1장 폭(`BOARD_MAX_W`)에 처음 들어가는 것. 다 넘치면 첫 단계(장을 나눌 때는
+        조이지 않은 크기로 — 넘쳐서 어차피 나눌 거면 글을 줄일 까닭이 없다)."""
+        for step in self._BB_FIT_STEPS:
+            self._bb_k, self._bb_figk, self._bb_tight = step
+            res, bw = self._bb_fit(spec)
+            if bw <= self.BOARD_MAX_W:
+                return res, bw
+            self._pb_discard(res[4])
+        self._bb_k, self._bb_figk, self._bb_tight = self._BB_FIT_STEPS[0]
+        return self._bb_fit(spec)
 
     def _build_block_board(self, spec, center=None, bg=None):
         """블록 설계서 → 보드(넘치면 2장) + 블록들(한 번의 되돌리기). 반환 모양은 흐름도와 같다."""
         import uuid
         blocks = [dict(b, _i=i) for i, b in enumerate(spec["blocks"])]
+        self._bb_k, self._bb_figk, self._bb_tight = self._BB_FIT_STEPS[0]
         one = spec.get("_pages") == "one"
         moved: list = []   # 2장(또는 생략)으로 보낸 블록(뒤쪽 줄부터)
         # 넘치면 먼저 AI가 고른 "big"을 보통으로(실제 KAIROS: 큰 그림 하나 때문에 마지막 줄만 2장으로 가 2장이 텅 빔). 사용자가 고른
@@ -420,8 +471,8 @@ class _BlockBoardMixin:
                 if moved:
                     names = " · ".join(block_label(b) for b in moved)
                     s1["_note"] = f"생략(한 장으로): {names}" if one else f"→ {k + 1}장에 이어서: {names}"
-                res, bw = self._bb_fit(s1)
-                rows = self._bb_rows(s1, (bw - 2 * self._BB_M - 11 * self._BB_G) / 12.0)
+                res, bw = self._bb_fit_steps(s1)
+                rows = self._bb_rows(s1, (bw - 2 * self._BB_M - 11 * self._BB_G) / 12.0)   # 나눌 자리만 보므로 간격은 기본으로
                 big_fig = s1.get("_figure") == "big"
                 movable = [r for r in rows[1:] if not (big_fig and any(b["type"] == "figure" for _i, b, _s in r))]
                 if bw <= self.BOARD_MAX_W or not movable:   # 「그림 크게」 줄은 1장에 남긴다(사용자가 고른 것 — 옛 틀과 같음)
@@ -451,6 +502,7 @@ class _BlockBoardMixin:
             n_steps += r[2]
             n_arrows += r[3]
             x += bw + 120.0
+        self._bb_k, self._bb_figk, self._bb_tight = self._BB_FIT_STEPS[0]
         self.push_undo_add_many(added)
         self._scene.clearSelection()
         return n_steps, n_arrows, "board", added
