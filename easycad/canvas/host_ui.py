@@ -611,6 +611,9 @@ class _UIBuildMixin:
         props_panel.move(vx + vw - m - props_panel.width(), vy + m)
         props_panel.raise_()
 
+        if getattr(self, "_start_prompt", None) is not None:
+            self._place_start_prompt()   # §8 항목39 가운데 입구 — 뷰 가운데
+
         # [2026-10-11] 폴더 크게 보기 — 도형·심볼 카드 오른쪽, 왼쪽 세로 공간(카드 위 ~ 레이어 카드 아래) 전체 높이
         browser = getattr(self, "_symbol_browser", None)
         if browser is not None:
@@ -1075,6 +1078,8 @@ class _UIBuildMixin:
         if ai_panel is not None:
             ai_panel.refresh_theme(dark)
             self._ai_refresh_theme()   # 떠 있는 결과·준비 막대도(host_aimake)
+        if getattr(self, "_start_prompt", None) is not None:
+            self._start_prompt.refresh_theme(dark)   # §8 항목39 가운데 입구
         # [그룹 구분 디자인 2026-08-01, 사용자 요청] 기본 QToolBar 구분선은 Fusion에서 거의
         # 안 보일 정도로 옅다 — 파일(새로 만들기~저장) / 도구(선택~핀) / 편집·보기(되돌리기~격자)
         # 3그룹이 한눈에 갈리도록 구분선을 굵고 여백 있게 강조.

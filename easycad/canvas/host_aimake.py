@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 from easycad.ai import gateway as gw
 from easycad.canvas.ai_panel import _AIPanel, PENDING_TEXT, _ai_icon
+from easycad.canvas.start_prompt import _StartPrompt
 from easycad.canvas.host_widgets import _current_icon_color
 from easycad.canvas.host_dialogs import (
     _MERMAID_HEADER_RE, _MermaidGenWorker, _SaveToSymbolsFolderDialog, _SvgGenWorker, _detach_worker,
@@ -342,8 +343,70 @@ class _AIMakeMixin:
             lay.activate()
         self._reposition_panels()
         self._refresh_minimap()
+        self._sync_start_prompt()   # §8 항목39 — 패널이 켜져 있는 동안 가운데 입구는 숨김(같은 입구가 둘)
         if visible:
             panel.focus_prompt()
+
+    # ---- 빈 도면 가운데 입구(§8 항목39, 2026-10-16) ----------------------------------------
+
+    def _build_start_prompt(self):
+        """`CanvasWindow.__init__`이 플로팅 카드들 다음에 부른다. 보이기는 `_sync_start_prompt`가 정한다."""
+        sp = _StartPrompt(self)
+        sp.submitted.connect(self._on_start_prompt_submitted)
+        sp.dismissed.connect(self._on_start_prompt_dismissed)
+        sp.hide()
+        self._start_prompt = sp
+        self._sync_start_prompt()
+        return sp
+
+    def _sync_start_prompt(self, *_):
+        """보이는 조건 = 이 문서가 아직 빈 도면 + ✕로 닫지 않음 + AI 패널이 꺼짐. 첫 획(아이템이 하나라도 생김)이면
+        그 문서는 끝(`start_prompt_done`) — 다 지워도 다시 안 뜬다(숙련자를 귀찮게 하지 않음). 끝난 문서는 O(1)이라
+        모든 `scene.changed`에 걸어도 큰 도면에서 비용이 없다."""
+        sp = getattr(self, "_start_prompt", None)
+        doc = getattr(self, "_active_doc", None)
+        if sp is None or doc is None:
+            return
+        show = False
+        if not getattr(doc, "start_prompt_done", False):
+            if doc.scene.items():
+                doc.start_prompt_done = True
+            else:
+                show = not self._ai_panel.isVisible()
+        if show:
+            self._place_start_prompt()
+        if sp.isVisible() != show:
+            sp.setVisible(show)
+        if show:
+            sp.raise_()
+
+    def _place_start_prompt(self):
+        sp = getattr(self, "_start_prompt", None)
+        if sp is None:
+            return
+        view = self._view
+        o = view.mapTo(self, QPoint(0, 0))
+        sp.adjustSize()
+        x = o.x() + (view.width() - sp.width()) // 2
+        y = o.y() + int((view.height() - sp.height()) * 0.45)
+        sp.move(max(o.x(), x), max(o.y(), y))
+
+    def _on_start_prompt_dismissed(self):
+        self._active_doc.start_prompt_done = True
+        self._sync_start_prompt()
+
+    def _on_start_prompt_submitted(self, kind, text, image, name):
+        """가운데 입구의 「만들기」 → 오른쪽 AI 패널로 넘긴다(생성·임시 결과·기록이 패널과 같은 경로).
+        베끼기는 사진이 도면에 깔리고 사진 위 막대 「만들기」로 진행(모서리 맞추기 단계가 있음)."""
+        panel = self._ai_panel
+        self._set_ai_panel_visible(True, kind=kind)
+        if panel.followup() is not None:
+            panel.clear_followup()
+        panel._prompt_edit.setPlainText(text)
+        if image is not None:
+            panel._set_attached_image(image, name)
+        if kind != "trace":
+            panel.request_make()
 
     # ---- 요청 ------------------------------------------------------------------
 

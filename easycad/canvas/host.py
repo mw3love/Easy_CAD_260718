@@ -161,6 +161,7 @@ class CanvasWindow(
         self._build_properties_panel()    # 속성, 우상단(도형바꾸기·화살표종류·반경·방향도 여기 포함)
         self._build_minimap_panel()       # [신규기능] 미니맵 — 우하단, 제목에 줌%까지 표기(클릭 가능)
         self._build_panel_menu()          # [2026-08-19] 보기(V)→패널 — 표시/숨김(모든 패널 생성 후)
+        self._build_start_prompt()        # [§8 항목39, 2026-10-16] 빈 도면 가운데 입구 「무엇을 그릴까요?」
         self.set_tool("select")
         self._apply_theme(self._dark)   # 저장된 테마 적용(아이콘·배경·팔레트 일괄)
         self._reposition_panels()
@@ -181,6 +182,7 @@ class CanvasWindow(
         탭에서만 발화함을 조사로 확인해 `self._active_doc` 포워딩만으로 충분하다
         (host_selection.py 주석 참조 — 로드는 selectionChanged를 발화하지 않음)."""
         doc.scene.changed.connect(self._on_scene_changed)
+        doc.scene.changed.connect(self._sync_start_prompt)   # §8 항목39 — 첫 획이면 가운데 입구를 닫음
         doc.scene.selectionChanged.connect(self._sync_selection_count_cache)
         doc.scene.selectionChanged.connect(self._sync_group_selection)
         doc.scene.selectionChanged.connect(self._refresh_properties)
@@ -268,6 +270,7 @@ class CanvasWindow(
         self._refresh_properties()
         self._refresh_history_actions()
         self._update_zoom_label()
+        self._sync_start_prompt()   # §8 항목39 — 탭마다 빈 도면이면 가운데 입구
 
     def _close_tab_at(self, index):
         """[§8 항목10 Stage B→C] 탭 X 버튼. dirty면 `_confirm_close_doc`이 저장/버리기/취소를
