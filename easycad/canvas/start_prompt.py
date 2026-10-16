@@ -79,7 +79,7 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         title_box.setSpacing(2)
         self._title = QLabel("무엇을 그릴까요?", self)
         title_box.addWidget(self._title)
-        self._sub = QLabel("말로 쓰거나 사진을 끌어다 놓으면, 고칠 수 있는 도형으로 만들어 드려요.", self)
+        self._sub = QLabel("말로 쓰거나 사진을 끌어다 놓으면, KAIROS가 고칠 수 있는 도형으로 만들어 드려요.", self)
         self._sub.setWordWrap(True)
         title_box.addWidget(self._sub)
         top.addLayout(title_box, 1)

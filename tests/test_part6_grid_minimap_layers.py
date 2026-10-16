@@ -1986,7 +1986,7 @@ def test_toolbar_groups_light_background_and_short_ai_label():
     inside = img.pixelColor(rects[0].left() + 2, rects[0].center().y()).name()
     gap = img.pixelColor((rects[0].right() + rects[1].left()) // 2, rects[0].center().y()).name()
     assert inside != gap                                    # 바탕이 실제로 칠해짐
-    assert tb.widgetForAction(w._act_ai_make).text() == "AI" and w._act_ai_make.text() == "AI로 만들기"
+    assert tb.widgetForAction(w._act_ai_make).text() == "AI" and w._act_ai_make.text() == "KAIROS로 만들기"   # §8 항목40
 
 
 def test_style_preview_hides_selection_chrome_while_picking():

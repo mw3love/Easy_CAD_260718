@@ -273,7 +273,7 @@ def test_generate_mermaid_uses_text_prompt_when_no_image():
 def test_ai_gateway_settings_action_in_insert_menu_opens_dialog():
     w = CanvasWindow()
     assert hasattr(w, "_act_ai_settings")
-    assert w._act_ai_settings.text() == "AI 게이트웨이 설정…"
+    assert w._act_ai_settings.text() == "KAIROS 연결 설정…"   # §8 항목41(2026-10-16) 이름
     assert w._act_ai_settings not in w._toolbar.actions()   # 메뉴 전용, 툴바엔 없음
     opened = {}
 
@@ -340,8 +340,8 @@ def test_gateway_settings_dialog_test_reports_models_and_credit():
     text = dlg._test_result_label.text()
     assert "GPT 2개" in text
     assert "Gemini 1개" in text
-    assert "잔여" in text
-    assert "380" in text and "1000" in text
+    assert "남은 크레딧" in text   # [§8 항목41 2026-10-16] "잔여" → 쉬운 말 "남은 크레딧", 천 단위 쉼표
+    assert "380" in text and "1,000" in text
     assert dlg._test_btn.isEnabled()
 
 
@@ -357,7 +357,7 @@ def test_gateway_settings_dialog_test_reports_model_failure_but_still_checks_cre
     text = dlg._test_result_label.text()
     assert "모델 조회 실패" in text
     assert "401" in text
-    assert "잔여 5" in text   # 모델 조회가 실패해도 크레딧 확인은 그대로 성공
+    assert "남은 크레딧 5" in text   # 모델 조회가 실패해도 크레딧 확인은 그대로 성공
 
 
 def test_gateway_settings_dialog_test_reports_credit_failure():
@@ -379,7 +379,7 @@ def test_gateway_settings_dialog_test_requires_key():
         dlg._on_test_clicked()
     assert not list_text_models.called
     assert not get_credit.called
-    assert "키를 입력" in dlg._test_result_label.text()
+    assert "키를 붙여 넣어" in dlg._test_result_label.text()   # [§8 항목41] 쉬운 말
 
 
 def test_gateway_settings_dialog_accept_persists_url_and_key():

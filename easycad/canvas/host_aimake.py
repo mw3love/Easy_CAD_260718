@@ -1,4 +1,4 @@
-"""CanvasWindow 믹스인 — 「AI로 만들기」 패널(§8 항목36) 호스트 쪽: 켜기/끄기, 요청 받기, 임시 결과.
+"""CanvasWindow 믹스인 — 「KAIROS로 만들기」(옛 「AI로 만들기」) 패널(§8 항목36) 호스트 쪽: 켜기/끄기, 요청 받기, 임시 결과.
 
 임시 결과(2단계, 2026-10-05): AI 결과는 **실제 도형으로 캔버스에 넣고(되돌리기 한 칸)** 주황 점선 + 결과 막대만
 덧씌운다 — 캔버스가 곧 미리보기(사용자 확정). 채택하면 표시만 지우고, 버리면 그 한 칸을 되돌린다.
@@ -27,7 +27,8 @@ from easycad.canvas.ai_panel import _AIPanel, PENDING_TEXT, _ai_icon
 from easycad.canvas.start_prompt import _StartPrompt
 from easycad.canvas.host_widgets import _current_icon_color
 from easycad.canvas.host_dialogs import (
-    _MERMAID_HEADER_RE, _MermaidGenWorker, _SaveToSymbolsFolderDialog, _SvgGenWorker, _detach_worker,
+    _AIGatewaySettingsDialog, _MERMAID_HEADER_RE, _MermaidGenWorker, _SaveToSymbolsFolderDialog, _SvgGenWorker,
+    _detach_worker,
 )
 from easycad.canvas.photo_dialog import _PhotoOpsWorker, _pil_to_pixmap
 from easycad.fileio import symbol_library
@@ -40,7 +41,7 @@ STAGED_TEXT = "캔버스에 임시로 놓음 — 채택하거나 버리세요"
 ACCEPTED_TEXT = "✓ 넣음"
 DISCARDED_TEXT = "버림"
 UNDONE_TEXT = "되돌림"
-NO_KEY_TEXT = "게이트웨이 키가 없어요 — 고급 ▸ ⚙ 설정에서 넣어 주세요"
+NO_KEY_TEXT = "KAIROS 키가 없어요 — 키를 넣으면 이어서 만들어요"
 TAB_CLOSED_TEXT = "만드는 사이 그 탭이 닫혀서 버렸어요"
 # 흐름도 결과 막대의 방향 고르기 — 옛 Mermaid 창 `_DIRECTIONS`와 같은 네 가지.
 FLOW_DIRECTIONS = (("가로 →", "LR"), ("세로 ↓", "TD"), ("세로 ↑", "BT"), ("가로 ←", "RL"))
@@ -345,6 +346,7 @@ class _AIMakeMixin:
         self._refresh_minimap()
         self._sync_start_prompt()   # §8 항목39 — 패널이 켜져 있는 동안 가운데 입구는 숨김(같은 입구가 둘)
         if visible:
+            panel.refresh_credit()   # §8 항목41 — 켤 때마다 남은 크레딧(키 없으면 「키 넣기」)
             panel.focus_prompt()
 
     # ---- 빈 도면 가운데 입구(§8 항목39, 2026-10-16) ----------------------------------------
@@ -452,7 +454,7 @@ class _AIMakeMixin:
         `self.sender()`로 자기 작업을 찾는다(QObject를 붙잡는 람다 연결 금지 — host_ui `_build_panel_menu` 주석의 크래시)."""
         key = gw.resolve_api_key()
         if not key:
-            req.entry.set_status(NO_KEY_TEXT)
+            self._ai_ask_key(req)   # §8 항목41 — 키 넣기 창, 넣으면 이 요청을 이어서
             return None
         worker = worker_cls(key, *args, parent=self, **kw)
         self._ai_jobs[worker] = _AIJob(req, worker, time.monotonic())
@@ -504,8 +506,38 @@ class _AIMakeMixin:
             self._ai_symbol_job_done(job.request)
         if not self._ai_jobs:
             self._ai_tick_timer.stop()
+            self._ai_panel.refresh_credit()   # §8 항목41 — 다 끝나면 남은 크레딧 다시
         if worker is not None:
             worker.deleteLater()
+
+    # ---- 키 넣기(§8 항목41, 2026-10-16) -------------------------------------------------------
+
+    _NO_KEY_REASON = "만들려면 KAIROS 키가 필요해요. 키를 넣고 확인을 누르면 방금 요청을 이어서 만들어요."
+
+    def _ai_ask_key(self, req):
+        """키 없이 「만들기」를 눌렀을 때 — 기록에 한 줄 남기고 「KAIROS 연결」 창을 띄운다. 모달이 아니다(`show`) —
+        `exec`면 오프스크린 테스트가 멈추고, 창 모달이면 뒤 창 입력이 막힌다. 확인하면 그 요청을 그대로 다시 보낸다."""
+        req.entry.set_status(NO_KEY_TEXT)
+        self._ai_key_pending = req
+        dlg = getattr(self, "_ai_key_dialog", None)
+        if dlg is not None and not sip.isdeleted(dlg) and dlg.isVisible():
+            dlg.raise_()
+            dlg.activateWindow()
+            return
+        dlg = _AIGatewaySettingsDialog(self, reason=self._NO_KEY_REASON)
+        dlg.setModal(False)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.accepted.connect(self._on_ai_key_accepted)
+        self._ai_key_dialog = dlg
+        dlg.show()
+
+    def _on_ai_key_accepted(self):
+        self._ai_key_dialog = None
+        req, self._ai_key_pending = getattr(self, "_ai_key_pending", None), None
+        self._ai_panel.refresh_credit()
+        if req is not None and gw.resolve_api_key() and getattr(req, "doc", None) in self._docs:
+            req.entry.set_status("")
+            self._on_ai_make_requested(req)
 
     def _ai_detach_jobs(self):
         """창이 닫힐 때 — 돌고 있는 생성은 떼어 내 결과를 버린다(`_detach_worker`가 끝날 때까지 살려 둠).
@@ -1253,7 +1285,7 @@ class _AIMakeMixin:
     def _ai_start_symbol(self, req):
         key = gw.resolve_api_key()
         if not key:
-            req.entry.set_status(NO_KEY_TEXT)
+            self._ai_ask_key(req)   # §8 항목41 — 키 넣기 창, 넣으면 이 요청을 이어서
             return None
         L = self._SVG_LONG
         n = max(1, int(getattr(req, "count", SYMBOL_COUNT) or SYMBOL_COUNT))
@@ -1794,7 +1826,7 @@ class _AIMakeMixin:
             return None
         key = gw.resolve_api_key()
         if not key:
-            req.entry.set_status(NO_KEY_TEXT)
+            self._ai_ask_key(req)   # §8 항목41 — 키 넣기 창, 넣으면 이 요청을 이어서
             return None
         from easycad.ai.photo_to_ops import fit_for_ai, rectify
         k = tr.original.size[0] / tr.fitted.size[0]

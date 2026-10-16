@@ -299,7 +299,7 @@ class _UIBuildMixin:
         self._act_photo = self._make_action("AI 베끼기(사진→도면)…", "photo",
             self._open_ai_trace, shortcut_id="insert_photo")
         # [§8 항목36, 2026-10-05] 오른쪽 「AI로 만들기」 패널(켜기/끄기). 상단바엔 이것 하나만.
-        self._act_ai_make = self._make_action("AI로 만들기", "generate",
+        self._act_ai_make = self._make_action("KAIROS로 만들기", "generate",   # §8 항목40(2026-10-16)
             self._toggle_ai_panel, checkable=True)
         i.addAction(self._act_img)
         i.addAction(self._act_ai_make)
@@ -308,7 +308,7 @@ class _UIBuildMixin:
         i.addSeparator()   # [2026-08-20 피드백] 위(가져오기·AI) vs 아래(AI 연결 설정) 구분
         # Mermaid/SVG 창 안의 설정 버튼과 같은 다이얼로그를 독립적으로 여는 진입점 — 그
         # 안에서 열면 해당 창을 그대로 같이 쓴다(호출부는 무변경).
-        self._act_ai_settings = self._make_action("AI 게이트웨이 설정…", "settings",
+        self._act_ai_settings = self._make_action("KAIROS 연결 설정…", "settings",
             self._open_ai_gateway_settings)
         i.addAction(self._act_ai_settings)
 
@@ -785,7 +785,7 @@ class _UIBuildMixin:
         ai_btn.setObjectName("aiMakeBtn")
         ai_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         # [실사용 피드백 2026-10-11, 시안 A2] 혼자 너무 커서 글자만 「AI」로 줄인다(강조 모양은 그대로).
-        # 메뉴·툴팁은 「AI로 만들기」 그대로라 무엇인지는 알 수 있다.
+        # 메뉴·툴팁은 「KAIROS로 만들기」라 무엇인지는 알 수 있다(§8 항목40 — 상단바 글자는 10-11 결정대로 짧게 유지).
         self._act_ai_make.setIconText("AI")
 
         # 우측 정렬 스페이서 → 테마 → 도움말 (여백이 있을 때만 밀어냄 — 좁은 창에서는 그냥 이어짐).

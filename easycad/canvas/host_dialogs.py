@@ -30,7 +30,7 @@ from easycad.canvas.annotator_core import (
     PAPER_SIZES_MM, TB_FIELD_KEYS, TB_FIELD_LABELS,
 )
 from easycad.canvas.host_widgets import (
-    _act_icon, _current_icon_color,
+    _ACCENT_CORAL, _act_icon, _current_icon_color,
 )
 from easycad.fileio.pdf_export import (
     render_preview, _list_title_frames, _reading_order, _DEFAULT_MARGINS_MM,
@@ -796,6 +796,27 @@ class _ModelListWorker(QThread):
         self.succeeded.emit(models)
 
 
+class _CreditWorker(QThread):
+    """남은 크레딧 1회 조회(§8 항목41, 2026-10-16) — AI 패널 아래 「남은 크레딧」 줄. 패널을 켤 때·생성이 끝날 때 부른다.
+    네트워크 호출이라 메인 스레드 밖에서(`_ModelListWorker`와 같은 이유)."""
+
+    succeeded = pyqtSignal(float, float)   # 남은 양, 이번 달 배정
+    failed = pyqtSignal(str)
+
+    def __init__(self, api_key, base_url, parent=None):
+        super().__init__(parent)
+        self._api_key = api_key
+        self._base_url = base_url
+
+    def run(self):
+        try:
+            remaining, quota = gw.get_credit_balance(self._api_key, self._base_url)
+        except Exception as e:  # noqa: BLE001 — 조회 실패는 줄에 짧게만
+            self.failed.emit(str(e))
+            return
+        self.succeeded.emit(float(remaining), float(quota))
+
+
 _ORPHANED_WORKERS: set[QThread] = set()   # 아래 _detach_worker가 채움 — GC 방지용 임시 보관
 
 
@@ -979,20 +1000,28 @@ class _AIGatewaySettingsDialog(QDialog):
     한때 CanvasWindow 상단 메뉴/툴바로 나갔다가 되돌아온 뒤 다시 자리를 옮긴 것) 하나뿐
     이지만, 클래스 자체는 어느 부모에서 열든 무관하게 재사용 가능."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, reason: str = ""):
         super().__init__(parent)
-        self.setWindowTitle("AI 게이트웨이 설정")
+        # [§8 항목41, 2026-10-16] 처음 쓰는 직원(심사위원 포함)이 자기 KAIROS 키를 넣는 창 — 쉬운 말로, 키 칸을 맨 위에.
+        # 게이트웨이 주소는 바꿀 일이 거의 없어 「주소 바꾸기」 아래로 접는다. `reason`은 "만들려는데 키가 없어서" 연 경우의 한 줄.
+        self.setWindowTitle("KAIROS 연결")
         self.setMinimumWidth(420)   # 기본 주소 전문(50자)이 스크롤 없이 한눈에 보이게
         lay = QVBoxLayout(self)
 
-        lay.addWidget(QLabel("게이트웨이 주소:"))
-        self._url_edit = QLineEdit(self)
-        self._url_edit.setText(gw.resolve_base_url())   # 저장값 없으면 gw.BASE_URL 기본값이 그대로 채워짐
-        lay.addWidget(self._url_edit)
+        if reason:
+            why = QLabel(reason, self)
+            why.setWordWrap(True)
+            why.setStyleSheet(f"color:{_ACCENT_CORAL}; font-weight:600;")
+            lay.addWidget(why)
+        intro = QLabel("KAIROS에서 받은 내 API 키를 붙여 넣어 주세요. 키는 이 PC에만 저장되고, "
+                       "AI를 쓸 때마다 내 몫의 크레딧에서 빠져요.", self)
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
 
-        lay.addWidget(QLabel("API 키:"))
+        lay.addWidget(QLabel("내 KAIROS API 키:"))
         self._key_edit = QLineEdit(self)
         self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._key_edit.setPlaceholderText("여기에 붙여 넣기(Ctrl+V)")
         self._key_edit.setText(gw.resolve_api_key())
         lay.addWidget(self._key_edit)
 
@@ -1003,11 +1032,17 @@ class _AIGatewaySettingsDialog(QDialog):
         self._test_btn = QToolButton(self)
         self._test_btn.setIcon(_act_icon("refresh"))
         self._test_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._test_btn.setText("연결 테스트")
-        self._test_btn.setToolTip("모델 목록 새로고침 + 크레딧 확인")
+        self._test_btn.setText("연결 확인")
+        self._test_btn.setToolTip("키가 맞는지, 남은 크레딧이 얼마인지 확인")
         self._test_btn.clicked.connect(self._on_test_clicked)
         test_row.addWidget(self._test_btn)
         test_row.addStretch(1)
+        self._url_toggle = QToolButton(self)
+        self._url_toggle.setText("주소 바꾸기 ▸")
+        self._url_toggle.setAutoRaise(True)
+        self._url_toggle.setCheckable(True)
+        self._url_toggle.setToolTip("게이트웨이 주소 — 보통은 바꿀 필요가 없어요")
+        test_row.addWidget(self._url_toggle)
         lay.addLayout(test_row)
 
         self._test_result_label = QLabel("", self)
@@ -1015,11 +1050,27 @@ class _AIGatewaySettingsDialog(QDialog):
         self._test_result_label.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(self._test_result_label)
 
+        self._url_box = QWidget(self)
+        ul = QVBoxLayout(self._url_box)
+        ul.setContentsMargins(0, 0, 0, 0)
+        ul.addWidget(QLabel("게이트웨이 주소:", self._url_box))
+        self._url_edit = QLineEdit(self._url_box)
+        self._url_edit.setText(gw.resolve_base_url())   # 저장값 없으면 gw.BASE_URL 기본값이 그대로 채워짐
+        ul.addWidget(self._url_edit)
+        self._url_box.setVisible(False)
+        self._url_toggle.toggled.connect(self._on_url_toggled)
+        lay.addWidget(self._url_box)
+
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                 | QDialogButtonBox.StandardButton.Cancel, self)
         btns.accepted.connect(self._on_accept)
         btns.rejected.connect(self.reject)
         lay.addWidget(btns)
+
+    def _on_url_toggled(self, on: bool):
+        self._url_toggle.setText("주소 바꾸기 ▾" if on else "주소 바꾸기 ▸")
+        self._url_box.setVisible(on)
+        self.adjustSize()
 
     def base_url(self) -> str:
         return self._url_edit.text().strip() or gw.BASE_URL
@@ -1035,7 +1086,7 @@ class _AIGatewaySettingsDialog(QDialog):
         key = self.api_key()
         if not key:
             self._test_result_label.setText(
-                f"<span style='color:{_STATUS_FAIL_COLOR};'>API 키를 입력하세요.</span>")
+                f"<span style='color:{_STATUS_FAIL_COLOR};'>먼저 키를 붙여 넣어 주세요.</span>")
             return
         self._test_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -1055,8 +1106,8 @@ class _AIGatewaySettingsDialog(QDialog):
             try:
                 remaining, quota = gw.get_credit_balance(key, self.base_url())
                 lines.append(
-                    f"<span style='color:{_STATUS_OK_COLOR};'>크레딧 잔여 "
-                    f"{remaining:.0f} / {quota:.0f}</span>")
+                    f"<span style='color:{_STATUS_OK_COLOR};'>남은 크레딧 "
+                    f"{remaining:,.0f} / {quota:,.0f}</span>")
             except Exception as e:
                 lines.append(
                     f"<span style='color:{_STATUS_FAIL_COLOR};'>크레딧 확인 실패: "

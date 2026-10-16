@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 from easycad.ai import gateway as gw
 from easycad.app_settings import app_settings
 from easycad.canvas.host_dialogs import (
-    _AIGatewaySettingsDialog, _CORAL_BTN_QSS, _ImageAttachMixin, _ModelListWorker, _ROUNDED_COMBO_QSS,
+    _AIGatewaySettingsDialog, _CORAL_BTN_QSS, _CreditWorker, _ImageAttachMixin, _ModelListWorker, _ROUNDED_COMBO_QSS,
     _attach_button_qss, _combo_selected_model, _detach_worker, _fill_model_combo_grouped,
 )
 from easycad.canvas.host_widgets import _ACCENT_CORAL, _act_icon, _current_icon_color
@@ -269,7 +269,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         hl = QHBoxLayout(head)
         hl.setContentsMargins(9, 4, 4, 4)
         hl.setSpacing(4)
-        self._title_lbl = QLabel("AI로 만들기", head)
+        self._title_lbl = QLabel("KAIROS로 만들기", head)   # §8 항목40 — AI 기능에 KAIROS 이름(앱 이름은 그대로)
         hl.addWidget(self._title_lbl, 1)
         self._close_btn = QToolButton(head)
         self._close_btn.setAutoRaise(True)
@@ -362,6 +362,15 @@ class _AIPanel(_ImageAttachMixin, QFrame):
 
         # ---- 고급(접힘): 모델 + 게이트웨이 설정. 코드 칸은 흐름도 단계(3단계)에서 여기에 붙는다.
         # 피드백 4차: 회색 글자뿐이라 눌리는 항목으로 안 보임 → 톱니 아이콘 + 테두리 + 마우스 올림 효과가 있는 한 줄 버튼.
+        # ---- 남은 크레딧(§8 항목41, 2026-10-16) — 직원마다 자기 키·월 배정이라 "얼마 남았나"가 늘 보이게.
+        # 키가 없으면 「키 넣기」 링크(처음 쓰는 직원·심사위원의 첫 관문).
+        self._credit_lbl = QLabel("", body)
+        self._credit_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._credit_lbl.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        self._credit_lbl.linkActivated.connect(self._on_credit_link)
+        self._credit_worker = None
+        bl.addWidget(self._credit_lbl)
+
         self._adv_btn = QPushButton(body)
         self._adv_btn.setCheckable(True)
         self._adv_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -382,7 +391,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         al.addWidget(self._model_combo, 1)
         self._settings_btn = QToolButton(self._adv_box)
         self._settings_btn.setAutoRaise(True)
-        self._settings_btn.setToolTip("AI 게이트웨이 설정(주소·키·연결 테스트)")
+        self._settings_btn.setToolTip("KAIROS 연결 설정(키·연결 확인)")
         self._settings_btn.clicked.connect(self._open_gateway_settings)
         al.addWidget(self._settings_btn)
         # 심볼 후보 수(사용자 결정: 고급 안) — 마지막 값 기억.
@@ -677,6 +686,8 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         """창이 닫힐 때 호스트가 부른다 — 도는 목록 조회는 떼어 내 결과를 버린다."""
         _detach_worker(self._model_list_worker)
         self._model_list_worker = None
+        _detach_worker(self._credit_worker)
+        self._credit_worker = None
 
     def _on_model_changed(self, _i):
         self._models[self._kind] = self.model()
@@ -746,6 +757,40 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     def _open_gateway_settings(self):
         if _AIGatewaySettingsDialog(self).exec() == QDialog.DialogCode.Accepted:
             self._fill_models()
+            self.refresh_credit()
+
+    # ---- 남은 크레딧(§8 항목41) ----------------------------------------------------------
+
+    def _credit_link(self, text: str) -> str:
+        return f"<a href='key' style='color:{_ACCENT_CORAL}; text-decoration:none;'>{text}</a>"
+
+    def refresh_credit(self):
+        """호스트가 패널을 켤 때·생성이 끝날 때 부른다. 키가 없으면 「키 넣기」, 있으면 백그라운드로 조회."""
+        key = gw.resolve_api_key()
+        if not key:
+            self._credit_lbl.setText("KAIROS 키가 아직 없어요 · " + self._credit_link("키 넣기"))
+            return
+        w = self._credit_worker
+        try:
+            if w is not None and w.isRunning():
+                return
+        except RuntimeError:   # 떼어 낸 뒤 지워진 워커(`_detach_worker` 주석의 죽은 래퍼)
+            pass
+        if "남은 크레딧 " not in self._credit_lbl.text():
+            self._credit_lbl.setText("남은 크레딧 확인 중…")
+        self._credit_worker = _CreditWorker(key, gw.resolve_base_url(), self)
+        self._credit_worker.succeeded.connect(self._on_credit)
+        self._credit_worker.failed.connect(self._on_credit_failed)
+        self._credit_worker.start()
+
+    def _on_credit(self, remaining: float, quota: float):
+        self._credit_lbl.setText(f"남은 크레딧 {remaining:,.0f} / {quota:,.0f} · " + self._credit_link("키 설정"))
+
+    def _on_credit_failed(self, _err: str):
+        self._credit_lbl.setText("남은 크레딧을 못 읽었어요 · " + self._credit_link("키 확인"))
+
+    def _on_credit_link(self, _href: str):
+        self._open_gateway_settings()
 
     # ---- 입력·만들기 ------------------------------------------------------------
 

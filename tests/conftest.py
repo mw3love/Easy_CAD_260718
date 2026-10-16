@@ -58,3 +58,10 @@ def _reset_theme_setting():
     from easycad.app_settings import app_settings
     app_settings().remove("dark")
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_network_credit(monkeypatch):
+    """[§8 항목41 2026-10-16] AI 패널은 켤 때·생성이 끝날 때 남은 크레딧을 백그라운드로 조회한다 — 가짜 키로 도는
+    테스트가 진짜 네트워크를 부르지 않게 고정값으로. 크레딧 줄 자체를 시험하는 테스트는 이 위에 다시 덮는다."""
+    monkeypatch.setattr("easycad.ai.gateway.get_credit_balance", lambda *_a, **_k: (1234.0, 40000.0))
