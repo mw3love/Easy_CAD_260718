@@ -75,7 +75,7 @@ def test_chunk_pages_by_size():
 
 def test_prompt_asks_page_tags_and_user_view():
     p = pb.build_board_prompt("[p.1] body", note="IP 전환 이유 중심")
-    assert '"pages"' in p and "IP 전환 이유 중심" in p and "paper-board" in p and "[p.1] body" in p
+    assert '"pages"' in p and "IP 전환 이유 중심" in p and "block-board" in p and "[p.1] body" in p
 
 
 def test_short_doc_is_one_call(sample_pdf):
@@ -97,7 +97,7 @@ def test_long_doc_summarizes_chunks_first(sample_pdf, monkeypatch):
 
     def fake(_key, prompt, **_k):
         calls.append(prompt)
-        return GatewayResult(_FLOW if "paper-board" in prompt else "- 요약 (p.1)", "m1", None, 0.1)
+        return GatewayResult(_FLOW if "block-board" in prompt else "- 요약 (p.1)", "m1", None, 0.1)
     steps = []
     with _patch("easycad.ai.gateway.call_text_with_fallback", side_effect=fake):
         pb.generate_board("k", sample_pdf, model="m1", progress=steps.append)

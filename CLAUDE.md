@@ -72,6 +72,7 @@ easycad/
 │   ├── ai_control.py       AI 요청 관리(위젯 없음) — 요청·종류 짐작(`guess_kind`)·기록·이어 만들기·모델 「자동」+가격·크레딧(§8 항목51, 2026-10-16 —
 │   │                       옛 오른쪽 패널 `ai_panel.py`의 몸통. 패널 화면은 없앰)
 │   ├── host_aimake.py      AI 만들기의 CanvasWindow 쪽 믹스인 — 가운데 칸 열기·요청·임시 결과(점선 + 막대: 채택·입력 한 줄·기록·버리기)·상태 알약
+│   ├── host_blocks.py      블록 조립식 보드 배치(§8 항목57) — 12칸 격자·줄 가운데·흐름도 꺾기·넘치면 2장, `_pb_part="blocks[i]"`
 │   ├── host_board.py       보드 틀 믹스인 — 삽입·잉크 맞추기(`_push_entry` 길목)·「보드 색」(§8 항목53 1단계, 틀 자체는 core_shapes `_BoardItem`)
 │   ├── drawing_check.py / host_check.py   「도면 검사」 찾기 / 결과 카드·표시 믹스인(§8 항목48, 2026-10-16)
 │   ├── model_picker.py     모델 고르기 버튼 「기본 · gpt-6.1-sol ▾」 — 회사별 3개·숫자 가격·「기본으로」·여러 개 체크(§8 항목56, 가운데 칸·보드 막대 공용)
@@ -84,7 +85,7 @@ easycad/
 │   ├── text_to_mermaid.py  프롬프트 빌더·코드펜스 벗기기·generate_mermaid (§8 항목18 — 이제 「풀어 그리기」 결과 이어 고치기·설치 점검 밖엔 안 씀)
 │   ├── text_to_flow.py     AI 흐름도 「내용 설계서」 JSON 지시문·generate_flow (§8 항목52, 2026-10-16 — AI는 내용만, 배치·색은 앱)
 │   ├── pdf_to_mermaid.py   PDF 쪽 글 뽑기·긴 문서 나눠 요약(§8 항목45 — 흐름도 그리기는 지움, 이제 pdf_to_board가 씀, Qt 비의존)
-│   ├── pdf_to_board.py     논문 PDF → 「한 장 보드」 설계서 JSON·이어 고치기(§8 항목53 2단계 — 옛 「풀어 그리기」 대체, 배치는 host_board)
+│   ├── pdf_to_board.py     PDF → 「한 장 보드」 블록 설계서 JSON·이어 고치기(§8 항목53 → 57 `block-board`, 옛 `paper-board`는 읽기만, 배치는 host_blocks)
 │   ├── drawing_explain.py  도면 상자·연결 → 단계별 설명 JSON — 「설명 페이지 만들기」(§8 항목47, Qt 비의존)
 │   └── photo_to_ops.py     사진→도면 프롬프트·구역 동시 생성 generate_ops_tiled(앱)·부분 다시 generate_ops_region(앱)·수정 루프 generate_ops(도구) (§8 항목28, Qt 비의존)
 ├── fileio/
@@ -107,7 +108,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~45_*.py      테마별 회귀 스모크 1350종(2026-10-16 밤 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~46_*.py      테마별 회귀 스모크 1358종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -165,10 +166,12 @@ symbol_library/
   그리기)는 측정상 −20%뿐이라 보류(바닥 183ms는 Qt 아이템별 기본 비용). 더 가려면 '스냅샷 방식'(멀리서 볼 때 화면을
   한 장 그림으로 저장) — 실사용에서 답답하면 계획. 상세: `docs/history/2026-10.md` "LOD ②".
 
-**최근 항목**(2026-10-16, 상세는 `docs/history/2026-10.md`):
+**최근 항목**(2026-10-16 ~ 10-17, 상세는 `docs/history/2026-10.md`):
+- **§8 항목57 블록 조립식 보드**(2026-10-17 새벽) — AI가 블록 12종·줄·12칸 span·size(`pdf_to_board._BLOCK_FORMAT`, `block-board`), 앱이 배치
+  (`host_blocks.py`). 논문 → 카드·흐름·숫자·그림, 회의록 → 결정·할 일 표·일정(실제 KAIROS 각 1장). 「가운데로 크게」는 AI가 row·span으로. 옛 `paper-board`는 읽기만.
 - **§8 항목56 보드 막대 세 상태·모델 고르기**(2026-10-16 밤 3) — 테두리 = 「보드 · PDF로 새로」(처음 말 채움), 빈 곳 더블클릭 = 「보드 안 · 전체 고치기」
   (Esc·밖 클릭 나옴), 안 글·그림 선택 = 「선택 N개」(`_pb_part` + 글을 AI에). 색 화이트·블랙·무지개, 입력 5→12줄, 보드 주황 표시 없앰. 모델 「자동」 →
-  「기본 · gpt-6.1-sol ▾」(`model_picker.py`, 회사별 3개 `gw.featured_models` — 후속 있는 옛 모델 거름, 숫자 가격, 여러 개 = 나란히). 다음: §8 항목57 블록 조립식 보드.
+  「기본 · gpt-6.1-sol ▾」(`model_picker.py`, 회사별 3개 `gw.featured_models` — 후속 있는 옛 모델 거름, 숫자 가격, 여러 개 = 나란히). 
 - **§8 항목54 AI 결과 바로 넣기·막대 하나**(2026-10-16 밤 2) — 흐름도·보드는 채택·버리기 없이 바로 넣음(아니면 Del, 보드는 안의 것도 같이).
   보드는 만든 직후·나중 모두 같은 막대(색 견본 아이콘·내보내기·여러 줄 고칠 점, 설계서는 보드 `_ai`·.ecad에), 이어 고치면 오른쪽에 새로·바뀐 곳 주황.
   입력 칸 여러 줄(`_BarLine`), 가운데 칸 예시 버튼 없앰(→ §8 항목55 설명 카드, AI 고치기 끝난 뒤). PDF + 말: 없으면 보드, 「흐름도로」·「그림 하나」면 그대로.
@@ -199,12 +202,6 @@ symbol_library/
 - **1과 100 다잡기**(2026-10-16, 코드 변경 없음) — 끝난 모습을 "나에게 맞춤"에서 "두 층 한 앱"(처음 쓰는 직원은 KAIROS AI로
   시작, 나는 지금 그대로)으로 넓힘 — 맨 위 `## 목표`. 시안 Artifact로 A(두 층)·B(범용 전환)·C(내 도구+대회) 중 A. 사내 AI 경진대회
   (2주 안, 기획서·영상·발표·심사위원 직접 사용) 범위를 계획서 §8 항목39~49로. 이름은 앱 유지 + 「KAIROS로 만들기」.
-- **사내 AI 경진대회 라운드 §8 항목39~49**(2026-10-16) — 가운데 입구 「무엇을 그릴까요?」(`start_prompt.py`, 종류 짐작 → 패널로) ·
-  「KAIROS로 만들기」 이름·키 없을 때 연결 창+이어서 만들기·남은 크레딧 · 「그림으로 복사(한글·PPT)」 Ctrl+Shift+C · exe 첫 실제 빌드에서
-  아이콘 경로·내 심볼 위치(exe는 `%APPDATA%/EasyCAD/EasyCAD`) 수정 + `EasyCAD.exe --selftest` · 「풀어 그리기」(PDF → 쪽 번호 흐름도,
-  `pdf_to_mermaid.py`, 기본 `gemini-3.6-flash`) · 「HTML로 공유」(`html_share.py`) · 「설명 페이지 만들기(KAIROS)」(`drawing_explain.py`) ·
-  「도면 검사」 Ctrl+Shift+K(`drawing_check.py`·`host_check.py`) · 10월분 제안서·캡처·시연 대본(`대회/`, git 제외). 대회는 8~12월 매달 3팀,
-  8월분 낙선. 남은 것: 다른 PC 설치·동료 시험·영상(사용자). 전체 pytest `-q` 가끔 exit 127은 같은 날 원인 확정·수정(테스트가 진짜 게이트웨이를 부르던 작업자, 5회 연속 통과).
 
 ## UI 원칙
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·

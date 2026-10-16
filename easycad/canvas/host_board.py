@@ -313,8 +313,10 @@ class _BoardMixin:
         """보드 설계서 → 보드 틀 + 칸들(한 번의 되돌리기). 반환 모양은 흐름도와 같다: (단계 수, 화살표 수, "board", 넣은 아이템).
         내용이 세로로 길어 16:9 보드가 옆으로 넓어지면, 넓어진 만큼 칸들을 넓혀 한 번 더 배치한다(첫 시도는 양옆이 비었다 — 실제 창).
         그래도 `BOARD_MAX_W`를 넘으면 덜 중요한 칸부터 2장(오른쪽 보드)으로 — 설계서의 `_pages`가 "one"("한 장으로")이면 2장 대신 뺀다."""
-        from easycad.ai.pdf_to_board import parse_board
+        from easycad.ai.pdf_to_board import is_block_spec, parse_board
         spec = parse_board(text)
+        if is_block_spec(spec):   # §8 항목57 블록 조립식(새 보드는 모두) — 아래는 옛 논문 틀
+            return self._build_block_board(spec, center, bg)
         one = spec.get("_pages") == "one"
         moved = []
         if spec.get("flow") and self._pb_flow_too_big(spec["flow"]):
@@ -751,14 +753,27 @@ class _BoardMixin:
     _BOARD_EXAMPLES = {"outer": ("예: 중학생이 읽을 수 있게 정리해 줘",),
                        "inner_all": ("예: 용어 칸을 빼고 숫자를 더 크게", "예: 의의와 한계를 짧게"),
                        "inner_sel": ("예: 이걸 더 쉽게 풀어 써 줘", "예: 이 그림을 크게")}
-    _BOARD_PART_NAME = {"title": "제목", "one_line": "한 줄 요약", "three_lines": "세 줄 요약", "concepts": "핵심 개념",
+    _BOARD_PART_NAME = {"title": "제목", "subtitle": "한 줄 요약", "one_line": "한 줄 요약", "three_lines": "세 줄 요약", "concepts": "핵심 개념",
                         "flow": "작동 흐름", "results": "결과", "numbers": "숫자", "figure": "그림", "terms": "용어 풀이",
                         "verdict": "의의와 한계"}
 
-    def _board_part_label(self, part: str) -> str:
+    def _board_part_label(self, part: str, spec=None) -> str:
         base, _, idx = part.partition("[")
+        if base == "blocks" and idx:   # §8 항목57 블록 — 블록 제목(없으면 종류)
+            from easycad.canvas.host_blocks import block_label
+            i = int(idx.rstrip("]"))
+            blocks = (spec or {}).get("blocks") or []
+            return block_label(blocks[i]) if i < len(blocks) else f"블록 {i + 1}"
         name = self._BOARD_PART_NAME.get(base, base)
         return f"{name} {int(idx.rstrip(']')) + 1}" if idx else name
+
+    @staticmethod
+    def _board_spec_of(info: dict):
+        from easycad.ai.pdf_to_board import parse_board
+        try:
+            return parse_board(info.get("spec", ""))
+        except ValueError:
+            return None
 
     def _board_sel_parts(self, items) -> list:
         """고른 아이템들의 설계서 자리(차례 유지, 중복 없음). 다시 연 파일처럼 자리 표시가 없으면 빈 목록."""
@@ -813,7 +828,8 @@ class _BoardMixin:
             tag = "보드 안 · 전체 고치기"
         else:
             parts = self._board_sel_parts(bar.items)
-            names = " · ".join(self._board_part_label(p) for p in parts[:3]) + (" …" if len(parts) > 3 else "")
+            spec = self._board_spec_of(info)
+            names = " · ".join(self._board_part_label(p, spec) for p in parts[:3]) + (" …" if len(parts) > 3 else "")
             tag = f"보드 안 · 선택 {len(bar.items)}개" + (f"  ({names})" if names else "")
         bar.name_label.setText(tag)
         inner = mode != "outer"
@@ -1030,7 +1046,7 @@ class _BoardMixin:
         """보드 안에서 쓴 말 — 「한 장으로」·「나눠서」·「그림 크게」는 AI 없이 다시 배치, 「흐름도로」·「심볼로」는 그 PDF로
         새로 만들기, 그 밖엔 이 보드 설계서를 바탕으로 AI가 고친 새 보드를 오른쪽에(원래 보드는 그대로).
         `picked` = 보드 안에서 고른 아이템(「선택 N개」) — 그 칸만 고치라고 AI에 알린다(자리 표시 + 고른 글)."""
-        from easycad.ai.pdf_to_board import dump_board, parse_board
+        from easycad.ai.pdf_to_board import dump_board, is_block_spec, parse_board
         from easycad.canvas.host_aimake import _figure_word
         text = (text or "").strip()
         info = getattr(board, "_ai", None) or {}
@@ -1054,22 +1070,30 @@ class _BoardMixin:
         if not picked and switch in ("flow", "symbol") and spec.get("_pdf"):   # 같은 PDF로 다른 종류 — 보드는 그대로 둔다
             return done(self._ai_ctrl.request_make(info.get("text", "") or text, kind=switch, pdf_path=spec["_pdf"]))
         fig = _figure_word(text)
-        if not picked or "figure" in parts:
+        blocky = is_block_spec(spec)
+        kinds = parts
+        if blocky:   # 블록 보드: 고른 블록을 종류로(그림 블록 하나만 골라 「그림 크게」면 AI 없이)
+            blocks = spec["blocks"]
+            kinds = [blocks[int(p[7:-1])]["type"] if p.startswith("blocks[") and int(p[7:-1]) < len(blocks) else p
+                     for p in parts]
+        if not picked or "figure" in kinds:
             if len(text) <= 16 and not picked:
                 pages = "one" if ("한 장" in text or "한장" in text) else ("auto" if ("나눠" in text or "여러 장" in text) else None)
                 if pages is not None:   # §8 항목53 4단계 — AI 없이 다시 배치(넘치는 칸을 빼거나 2장으로)
                     return done(self._board_relayout(board, "_pages", pages))
-            if fig is not None and (len(text) <= 16 or parts == ["figure"]):   # 「그림 크게」 — 배치는 앱 몫이라 AI 없이
+            if fig is not None and (len(text) <= 16 or (kinds == ["figure"] and not blocky)):   # 「그림 크게」 — AI 없이
                 return done(self._board_relayout(board, "_figure", fig))
-            if fig is not None:   # 긴 지시에 「그림을 가운데」가 섞여 있으면 배치는 앱이 — 바탕 설계서에 표시해 결과에 이어진다
+            if fig is not None and not blocky:   # 옛 틀: 긴 지시의 「그림을 가운데」는 앱이(설계서 표시) — 블록 보드는 AI가 row·span으로
                 spec["_figure"] = fig
                 code = dump_board(spec)
         say = text
         if picked:
             snippets = [" ".join(it.toPlainText().split())[:80] for it in picked if hasattr(it, "toPlainText")]
             snippets = [s for s in snippets if s]
-            where = ", ".join(f"{self._board_part_label(p)}({p})" for p in parts)
-            say = ("[보드 안에서 고른 것만 고칠 것 — 나머지 칸은 글자 하나도 바꾸지 말 것]\n"
+            where = ", ".join(f"{self._board_part_label(p, spec)}({p})" for p in parts)
+            keep = ("나머지 블록의 글은 글자 하나도 바꾸지 말 것(배치 때문에 row·span은 바뀌어도 됨)" if blocky
+                    else "나머지 칸은 글자 하나도 바꾸지 말 것")
+            say = (f"[보드 안에서 고른 것만 고칠 것 — {keep}]\n"
                    + (f"고른 칸: {where}\n" if where else "")
                    + (f"고른 글: {' / '.join(snippets[:8])}\n" if snippets else "")
                    + f"지시: {text}")

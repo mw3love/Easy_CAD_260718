@@ -1687,7 +1687,7 @@ class _FileIOMixin:
             return self._build_flowspec_items(text, center)
         return self._build_mermaid_items(text, center)
 
-    def _build_flowspec_items(self, text, center=None, push_undo=True, compact=False):
+    def _build_flowspec_items(self, text, center=None, push_undo=True, compact=False, wrap_target=None):
         """설계서 → 띠·이름표·상자·아이콘·화살표를 `center`(없으면 화면 가운데)에 놓는다(한 번의 undo). 반환 모양은
         `_build_mermaid_items`와 같다: (단계 수, 화살표 수, 방향, 넣은 아이템). 못 읽으면 FlowSpecError.
         상자·화살표엔 `_flow_key`(이어 고친 결과와 비교할 열쇠 — `flow_spec.all_keys`와 같은 값)를 단다."""
@@ -1717,7 +1717,10 @@ class _FileIOMixin:
         # 꺾어 내리기(2026-10-16) — 흐름이 옆(세로 흐름이면 아래)으로 아주 길면 16:9에 가깝게 덩어리로 꺾는다
         # (실제 KAIROS 결과: 담당이 바뀌며 15단계가 이어져 한 줄로 아주 길었다).
         size_fn = lambda s: sizes[s.id]   # noqa: E731
-        wrap = best_wrap(spec, size_fn, head=head, icon_h=self._FLOW_ICON_H, min_len=520.0 if compact else 1600.0, **gaps)
+        # `wrap_target` = 원하는 폭/높이(§8 항목57 블록 보드 — 흐름도 블록 칸 모양에 맞춰 꺾는다, 이때는 짧아도 꺾어 본다)
+        wrap = best_wrap(spec, size_fn, head=head, icon_h=self._FLOW_ICON_H,
+                         target=wrap_target or 16.0 / 9.0,
+                         min_len=(360.0 if wrap_target else 520.0) if compact else 1600.0, **gaps)
         lay = layout(spec, size_fn, head=head, icon_h=self._FLOW_ICON_H, wrap=wrap, **gaps)
 
         title_h = 0.0
