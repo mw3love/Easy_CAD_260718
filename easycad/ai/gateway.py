@@ -35,6 +35,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import re
 import time
 from pathlib import Path
 from typing import Literal, NamedTuple, Optional
@@ -292,20 +293,34 @@ def list_text_models_info(api_key: str, base_url: str = BASE_URL, timeout: float
     return out
 
 
+_SIZE_TOKEN = re.compile(r"\d+(\.\d+)?[bm]")   # 크기 마디 "120b"·"8b" — `model_line`
+
+
 def model_line(mid: str) -> str:
     """버전 숫자를 뺀 계열 이름 — "gpt-6.1-sol" → "gpt-sol", "claude-haiku-4-5-20251001" → "claude-haiku",
-    "gemini-3.5-flash-lite" → "gemini-flash-lite"(숫자가 든 마디를 모두 뺀다)."""
-    return "-".join(t for t in (mid or "").lower().split("-") if not any(ch.isdigit() for ch in t))
+    "gemini-3.5-flash-lite" → "gemini-flash-lite"(숫자가 든 마디를 모두 뺀다). 단 크기 마디("120b"·"20b")는 남긴다 —
+    버전이 아니라 급이라 "gpt-oss-20b"가 "gpt-oss-120b"의 후속이 되면 안 된다(2026-10-17 검토)."""
+    return "-".join(t for t in (mid or "").lower().split("-")
+                    if not any(ch.isdigit() for ch in t) or _SIZE_TOKEN.fullmatch(t))
 
 
-def _is_successor(n: dict, m: dict) -> bool:
-    """`n`이 `m`의 후속 모델인가(추정) — 같은 회사에서 더 늦게 나왔고, ① 같은 계열(버전만 다름)이거나 ② 출력 가격이 같거나
-    조금 싸다(0.5배 초과 ~ 1배 — 이름을 바꾼 후속: gpt-5.5 $30 → gpt-5.6-sol $20). 가격 하한이 없으면 최고급(gpt-6-astra $50)이
-    훨씬 싼 새 모델 때문에 빠지고, 0.5배를 넣으면 한 급 아래(claude-opus $20 → sonnet $10)를 후속으로 잘못 본다(2026-10-16 실측 목록)."""
+
+def _is_successor(n: dict, m: dict, rows=()) -> bool:
+    """`n`이 `m`의 후속 모델인가(추정) — 같은 회사에서 더 늦게 나왔고, ① 같은 계열(버전만 다름)이거나 ② `n`이 새 이름 계열의
+    첫 모델이고 출력 가격이 같거나 조금 싸다(0.5배 초과 ~ 1배 — 이름을 바꾼 후속: gpt-5.5 $30 → gpt-5.6-sol $20). 가격 하한이 없으면
+    최고급(gpt-6-astra $50)이 훨씬 싼 새 모델 때문에 빠지고, 0.5배를 넣으면 한 급 아래(claude-opus $20 → sonnet $10)를 후속으로 잘못
+    본다(2026-10-16 실측 목록).
+    ②의 「이미 있던 계열이면 그 계열의 직전 모델이 `m`보다 싸지 않았을 때만」은 2026-10-17 검토 — 원래 아래 급이던 계열이 값만 올라
+    (가상 claude-sonnet $10 → 6 $15) 위 급(claude-opus-5-5 $20)을 지웠다. 위 급이 값을 내려 아래 급 자리를 덮은 것(gpt-5.6-sol $20 →
+    6-sol $10이 5.6-terra $12를 대신, 실제 목록)은 그대로 후속. `rows` = 같은 회사 목록(직전 모델 찾기용, 없으면 ②는 가격만 본다)."""
     if n is m or n.get("created", 0) <= m.get("created", 0):
         return False
-    if model_line(n["id"]) == model_line(m["id"]):
+    line = model_line(n["id"])
+    if line == model_line(m["id"]):
         return True
+    prev = [r for r in rows if r is not n and model_line(r["id"]) == line and r.get("created", 0) < n.get("created", 0)]
+    if prev and max(prev, key=lambda r: r.get("created", 0))["output"] < m["output"]:
+        return False   # 원래 `m`보다 아래 급이던 계열 — 값이 올랐을 뿐 `m`의 후속이 아니다
     return SUCCESSOR_PRICE_FLOOR * m["output"] < n["output"] <= m["output"]
 
 
@@ -318,7 +333,7 @@ def featured_models(info: list, per: int = 3) -> dict:
     out = {}
     for v in MODEL_VENDORS:
         rows = [m for m in info if model_vendor(m["id"]) == v and m.get("output") is not None]
-        keep = [m for m in rows if not any(_is_successor(n, m) for n in rows)]
+        keep = [m for m in rows if not any(_is_successor(n, m, rows) for n in rows)]
         keep.sort(key=lambda m: (-m["output"], -m.get("created", 0), m["id"]))
         out[v] = keep[:per]
     return out

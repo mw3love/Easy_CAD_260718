@@ -108,7 +108,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~46_*.py      테마별 회귀 스모크 1360종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~46_*.py      테마별 회귀 스모크 1361종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -168,7 +168,8 @@ symbol_library/
 
 **최근 항목**(2026-10-16 ~ 10-17, 상세는 `docs/history/2026-10.md`):
 - **항목56·57 백지 검토**(2026-10-17) — 고침 2건: 붙여 넣은 그림 자료를 `ai_sources`에 파일로 남김(`ai_control.keep_pasted_images` — 전엔 그림 블록 빈칸·「PDF로 새로」 실패),
-  `_pb_part`·`_pb_card`를 .ecad에 저장(다시 연 보드의 「선택 N개」). 남은 것(재현됨): 모델 가격 규칙이 새 모델에 급 다른 모델을 숨김, 블록 많으면 2장째가 최대 폭 2.5배.
+  `_pb_part`·`_pb_card`를 .ecad에 저장(다시 연 보드의 「선택 N개」), 모델 가격 규칙(`gateway._is_successor` — 아래 급 계열이 값만 올라 위 급을 숨기던 것).
+  남은 것(재현됨): 블록 많으면 2장째가 최대 폭 2.5배(3장으로 안 나눔).
 - **§8 항목57 블록 조립식 보드**(2026-10-17 새벽) — AI가 블록 12종·줄·12칸 span·size(`pdf_to_board._BLOCK_FORMAT`, `block-board`), 앱이 배치
   (`host_blocks.py`). 논문 → 카드·흐름·숫자·그림, 회의록 → 결정·할 일 표·일정(실제 KAIROS 각 1장). 「가운데로 크게」는 AI가 row·span으로. 옛 `paper-board`는 읽기만.
 - **§8 항목56 보드 막대 세 상태·모델 고르기**(2026-10-16 밤 3) — 테두리 = 「보드 · PDF로 새로」(처음 말 채움), 빈 곳 더블클릭 = 「보드 안 · 전체 고치기」

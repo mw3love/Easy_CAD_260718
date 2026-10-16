@@ -134,6 +134,24 @@ def test_featured_models_hide_old_and_default_is_second_gpt():
     assert gw.price_text({"input": 0.75, "output": 3.75}) == "$0.75 / 3.75" and gw.price_text({"input": None}) == ""
 
 
+
+def test_featured_models_new_version_does_not_hide_other_tier():
+    """[2026-10-17 검토] 원래 아래 급이던 계열의 다음 버전은 값이 올라도(0.5~1배) 위 급을 지우지 않는다.
+    크기 마디(120b·20b)는 버전이 아니라 급."""
+    def ids(extra, v):
+        return [m["id"] for m in gw.featured_models(_MODELS + extra)[v]]
+    sonnet6 = [{"id": "claude-sonnet-6", "input": 3.0, "output": 15.0, "created": 200}]
+    assert ids(sonnet6, "claude") == ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-6"]   # 전엔 opus-5-5가 빠짐
+    luna7 = [{"id": "gpt-7-luna", "input": 1.0, "output": 6.0, "created": 200}]
+    assert ids(luna7, "gpt") == ["gpt-6-astra", "gpt-6.1-sol", "gpt-7-luna"]                     # 전엔 6.1-sol이 빠짐
+    assert gw.default_model_id(_MODELS + luna7) == "gpt-6.1-sol"
+    terra = [{"id": "gpt-5.6-terra", "input": 2.0, "output": 12.0, "created": 30}]   # 실제 목록 — 6세대에 안 이어진 급
+    assert "gpt-5.6-terra" not in ids(terra, "gpt")   # 값을 내린 위 급(5.6-sol $20 → 6-sol $10)이 대신한다
+    oss = [{"id": "gpt-oss-120b", "input": 0.5, "output": 2.0, "created": 100},
+           {"id": "gpt-oss-20b", "input": 0.1, "output": 0.6, "created": 101}]
+    assert {"gpt-oss-120b", "gpt-oss-20b"} <= {m["id"] for m in gw.featured_models(_MODELS + oss, per=9)["gpt"]}
+    assert gw.model_line("gpt-oss-120b") == "gpt-oss-120b" and gw.model_line("gpt-6.1-sol") == "gpt-sol"
+
 def test_default_model_and_picks():
     w = CanvasWindow()
     c = w._ai_ctrl
