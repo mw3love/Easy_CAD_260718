@@ -194,6 +194,7 @@ class FlowLayout:
     ranks: dict[str, int]
     width: float
     height: float
+    segments: dict[str, int] = field(default_factory=dict)   # 단계 id → 꺾은 덩어리 번호(0부터)
 
 
 def _back_links(spec: FlowSpec) -> set[int]:
@@ -255,10 +256,11 @@ def ranks_of(spec: FlowSpec) -> dict[str, int]:
 
 
 def layout(spec: FlowSpec, size_of, *, gap_major: float = 72.0, gap_minor: float = 34.0,
-           lane_pad: float = 22.0, lane_gap: float = 10.0, head: float = 0.0, icon_h: float = 0.0) -> FlowLayout:
+           lane_pad: float = 22.0, lane_gap: float = 10.0, head: float = 0.0, icon_h: float = 0.0,
+           wrap: int | None = None) -> FlowLayout:
     """단계 자리 계산. `size_of(step) → (w, h)` 상자 크기. `head` = 띠 이름표 자리 두께(가로 흐름이면 띠 왼쪽 폭, 세로
     흐름이면 띠 위 높이). `icon_h` = 아이콘이 있는 단계 위에 비워 둘 높이(있는 단계가 하나라도 있으면 모든 줄에).
-    좌표는 왼쪽 위가 (0, 0)."""
+    `wrap`(칸 수)을 주면 그만큼씩 꺾어 내린다(`best_wrap`이 고른다). 좌표는 왼쪽 위가 (0, 0)."""
     horizontal = spec.direction in ("LR", "RL")
     rank = ranks_of(spec)
     n_ranks = max(rank.values(), default=0) + 1
@@ -291,9 +293,14 @@ def layout(spec: FlowSpec, size_of, *, gap_major: float = 72.0, gap_minor: float
     cells: dict[tuple[int, int], list[str]] = {}
     for s in spec.steps:
         cells.setdefault((lane_ix[s.lane if s.lane in lane_ix else lane_names[0]], rank[s.id]), []).append(s.id)
-    tracks = [1] * len(lane_names)
-    for (li, _r), ids in cells.items():
-        tracks[li] = max(tracks[li], len(ids))
+    # 꺾어 내리기(2026-10-16) — 칸을 `wrap`개씩 덩어리로 나눠 다음 덩어리는 교차축으로(가로 흐름이면 아래 줄, 세로 흐름이면
+    # 오른쪽 열) 처음부터 다시 — 책 읽는 순서. 덩어리마다 띠·이름표를 다시 그린다.
+    per = max(1, int(wrap)) if wrap else n_ranks
+    seg_of = [r // per for r in range(n_ranks)]
+    n_seg = (n_ranks + per - 1) // per
+    tracks = [[1] * len(lane_names) for _ in range(n_seg)]
+    for (li, r), ids in cells.items():
+        tracks[seg_of[r]][li] = max(tracks[seg_of[r]][li], len(ids))
     pos_cross: dict[str, float] = {}   # 줄 위치(띠 안 0..tracks-1, 가운데 맞춤 반영) — 정렬 기준
     for r in range(n_ranks):
         for li in range(len(lane_names)):
@@ -305,25 +312,41 @@ def layout(spec: FlowSpec, size_of, *, gap_major: float = 72.0, gap_minor: float
                 ps = [pos_cross[p] + 1000 * lane_ix.get(_lane_of(spec, p), 0) for p in preds[sid] if p in pos_cross]
                 return (sum(ps) / len(ps) - 1000 * li if ps else 1e9, order[sid])
             ids.sort(key=key)
-            off = (tracks[li] - len(ids)) / 2.0
+            off = (tracks[seg_of[r]][li] - len(ids)) / 2.0
             for t, sid in enumerate(ids):
                 pos_cross[sid] = off + t
 
-    # 띠 두께와 시작 자리
+    # 띠 두께와 시작 자리(덩어리마다)
     lanes_on = bool(spec.lanes)
     pad = lane_pad if lanes_on else 0.0
     hd = head if lanes_on else 0.0
-    lane_len = [pad * 2 + tracks[i] * cell + (tracks[i] - 1) * gap_minor for i in range(len(lane_names))]
-    lane_at, acc = [], 0.0
-    for i in range(len(lane_names)):
-        lane_at.append(acc)
-        acc += lane_len[i] + (lane_gap if lanes_on else 0.0)
-    cross_total = acc - (lane_gap if lanes_on else 0.0)
-    col_at, acc = [], hd + pad
-    for r in range(n_ranks):
-        col_at.append(acc)
-        acc += col[r] + gap_major
-    flow_total = acc - gap_major + pad
+    seg_gap = gap_major * 1.3
+    lane_len, lane_at, seg_at = [], [], []
+    acc = 0.0
+    present = []   # 덩어리마다 단계가 있는 띠만(꺾으면 계단 모양 흐름에서 빈 띠가 줄줄이 남았다 — 실제 창)
+    for sg in range(n_seg):
+        rs = range(sg * per, min(n_ranks, (sg + 1) * per))
+        here = [i for i in range(len(lane_names)) if any(cells.get((i, r)) for r in rs)] if n_seg > 1 else []
+        present.append(here or list(range(len(lane_names))))
+    for sg in range(n_seg):
+        seg_at.append(acc)
+        ll = {i: pad * 2 + tracks[sg][i] * cell + (tracks[sg][i] - 1) * gap_minor for i in present[sg]}
+        la, a2 = {}, acc
+        for i in present[sg]:
+            la[i] = a2
+            a2 += ll[i] + (lane_gap if lanes_on else 0.0)
+        lane_len.append(ll)
+        lane_at.append(la)
+        acc = a2 - (lane_gap if lanes_on else 0.0) + seg_gap
+    cross_total = acc - seg_gap
+    col_at = [0.0] * n_ranks
+    flow_total = 0.0
+    for sg in range(n_seg):
+        a2 = hd + pad
+        for r in range(sg * per, min(n_ranks, (sg + 1) * per)):
+            col_at[r] = a2
+            a2 += col[r] + gap_major
+        flow_total = max(flow_total, a2 - gap_major + pad)
     flip = spec.direction in ("RL", "BT")
 
     boxes: dict[str, tuple[float, float, float, float]] = {}
@@ -331,11 +354,12 @@ def layout(spec: FlowSpec, size_of, *, gap_major: float = 72.0, gap_minor: float
         w, h = sizes[s.id]
         li = lane_ix[s.lane if s.lane in lane_ix else lane_names[0]]
         r = rank[s.id]
+        sg = seg_of[r]
         f0 = col_at[r]
         flen = col[r]
         if flip:   # 흐름축 뒤집기(이름표 자리는 그대로 앞쪽)
             f0 = hd + (flow_total - hd) - (f0 - hd) - flen
-        c0 = lane_at[li] + pad + pos_cross[s.id] * (cell + gap_minor)
+        c0 = lane_at[sg][li] + pad + pos_cross[s.id] * (cell + gap_minor)
         if horizontal:
             x = f0 + (flen - w) / 2.0
             y = c0 + extra + (cell - extra - h) / 2.0
@@ -346,16 +370,41 @@ def layout(spec: FlowSpec, size_of, *, gap_major: float = 72.0, gap_minor: float
 
     lanes: list[LaneBox] = []
     if lanes_on:
-        for i, name in enumerate(lane_names):
-            if horizontal:
-                rect = (0.0, lane_at[i], flow_total, lane_len[i])
-                hrect = (0.0, lane_at[i], hd, lane_len[i])
-            else:
-                rect = (lane_at[i], 0.0, lane_len[i], flow_total)
-                hrect = (lane_at[i], 0.0, lane_len[i], hd)
-            lanes.append(LaneBox(name, rect, hrect))
+        for sg in range(n_seg):
+            for i in present[sg]:
+                name = lane_names[i]
+                at, ln = lane_at[sg][i], lane_len[sg][i]
+                if horizontal:
+                    rect = (0.0, at, flow_total, ln)
+                    hrect = (0.0, at, hd, ln)
+                else:
+                    rect = (at, 0.0, ln, flow_total)
+                    hrect = (at, 0.0, ln, hd)
+                lanes.append(LaneBox(name, rect, hrect))
     width, height = (flow_total, cross_total) if horizontal else (cross_total, flow_total)
-    return FlowLayout(boxes, lanes, rank, width, height)
+    return FlowLayout(boxes, lanes, rank, width, height, {sid: seg_of[r] for sid, r in rank.items()})
+
+
+def best_wrap(spec: FlowSpec, size_of, *, target: float = 16.0 / 9.0, min_len: float = 1600.0, **kw):
+    """꺾어 내릴 덩어리 크기(칸 수) — 안 꺾으면 None. 흐름 방향 길이가 `min_len`을 넘고 모양이 `target`(폭/높이)보다
+    훨씬 길 때만, 덩어리 1~6개를 다 배치해 보고 모양이 `target`에 가장 가까운 것을 고른다(같으면 덜 꺾는 쪽)."""
+    import math
+    base = layout(spec, size_of, **kw)
+    n = max(base.ranks.values(), default=0) + 1
+    horizontal = spec.direction in ("LR", "RL")
+    long_side = base.width if horizontal else base.height
+    if n < 4 or long_side <= min_len:
+        return None
+
+    def score(lay):
+        return abs(math.log(max(lay.width, 1.0) / max(lay.height, 1.0) / target))
+    best, best_s = None, score(base)
+    for segs in range(2, min(6, n // 2) + 1):
+        per = (n + segs - 1) // segs
+        sc = score(layout(spec, size_of, wrap=per, **kw))
+        if sc < best_s - 0.05:
+            best, best_s = per, sc
+    return best
 
 
 def _lane_of(spec: FlowSpec, sid: str) -> str:

@@ -283,3 +283,48 @@ def test_followup_sends_spec_and_marks_only_changed():
     assert marked == ["경보 기록", "장애 보고서"]                    # 새 상자 + 새 화살표(앞 상자 글)
     assert new.alt_marks == []
     _close(w)
+
+
+# ── 꺾어 내리기(2026-10-16) ─────────────────────────────────────────────────────────
+
+def _chain(n, lanes=()):
+    steps = [{"id": f"s{i}", "text": f"단계 {i}", **({"lane": lanes[(i - 1) * len(lanes) // n]} if lanes else {})}
+             for i in range(1, n + 1)]
+    return fs.parse_spec(json.dumps({"direction": "LR", "lanes": list(lanes), "steps": steps,
+                                     "links": [{"from": f"s{i}", "to": f"s{i + 1}"} for i in range(1, n)]},
+                                    ensure_ascii=False))
+
+
+def test_best_wrap_only_for_long_flows():
+    size = lambda s: (150.0, 56.0)   # noqa: E731
+    assert fs.best_wrap(_chain(5), size) is None
+    per = fs.best_wrap(_chain(18), size)
+    assert per is not None and 3 <= per < 18
+    flat, folded = fs.layout(_chain(18), size), fs.layout(_chain(18), size, wrap=per)
+    assert abs(folded.width / folded.height - 16 / 9) < abs(flat.width / flat.height - 16 / 9)
+    assert max(folded.segments.values()) == (17 // per)
+    boxes = list(folded.boxes.values())
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1:]:
+            assert a[0] + a[2] <= b[0] or b[0] + b[2] <= a[0] or a[1] + a[3] <= b[1] or b[1] + b[3] <= a[1]
+
+
+def test_fold_draws_only_lanes_used_in_each_segment():
+    spec = _chain(15, lanes=("가", "나", "다", "라", "마"))
+    lay = fs.layout(spec, lambda s: (150.0, 56.0), head=60.0, wrap=8)
+    per_seg = {}
+    for lb in lay.lanes:
+        per_seg.setdefault(round(lb.rect[1]), []).append(lb.name)
+    assert len(lay.lanes) < 2 * 5                                    # 덩어리마다 다섯 띠를 다 그리지 않음
+    assert {s.lane for s in spec.steps} <= {lb.name for lb in lay.lanes}
+
+
+def test_long_flow_builds_folded_with_clean_check():
+    w = _window()
+    spec = {"direction": "LR", "steps": [{"id": f"s{i}", "text": f"처리 단계 {i}"} for i in range(1, 19)],
+            "links": [{"from": f"s{i}", "to": f"s{i + 1}"} for i in range(1, 18)]}
+    _n, _a, _d, added = w._build_flow_items(json.dumps(spec, ensure_ascii=False))
+    r = w._ai_items_rect(added)
+    assert r.width() / r.height() < 4                                # 한 줄(18칸)이면 10배 넘게 길다
+    assert check_drawing(w._scene, items=added) == []
+    _close(w)

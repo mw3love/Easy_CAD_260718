@@ -23,11 +23,14 @@ BASE = {
 }
 
 
+N = 40   # 꺾어 내려도(2026-10-16) 1장 가운데 칸에 안 들어가는 긴 흐름도
+
+
 def _heavy(pages=None):
     d = json.loads(json.dumps(BASE))
     d["flow"] = {"direction": "TD", "lanes": ["앞", "뒤"],
-                 "steps": [{"id": f"s{i}", "text": f"단계 {i}", "lane": "앞" if i < 6 else "뒤"} for i in range(1, 12)],
-                 "links": [{"from": f"s{i}", "to": f"s{i + 1}"} for i in range(1, 11)]}
+                 "steps": [{"id": f"s{i}", "text": f"단계 {i}", "lane": "앞" if i < N // 2 else "뒤"} for i in range(1, N + 1)],
+                 "links": [{"from": f"s{i}", "to": f"s{i + 1}"} for i in range(1, N)]}
     if pages:
         d["_pages"] = pages
     return json.dumps(d, ensure_ascii=False)
@@ -75,7 +78,7 @@ def test_big_flow_goes_to_page_two():
     on2 = [it for it in added if w._board_at(it) is b2]
     assert any("→ 2장에 이어서: 작동 흐름" in t for t in _texts(on1))
     assert not [it for it in on1 if getattr(it, "_flow_key", None)]          # 흐름도는 1장에 없음
-    assert len([it for it in on2 if getattr(it, "_flow_key", None)]) == 21   # 단계 11 + 연결 10
+    assert len([it for it in on2 if getattr(it, "_flow_key", None)]) == 2 * N - 1   # 단계 N + 연결 N-1
     assert any("2장 · 자세히" in t for t in _texts(on2))
     assert len(w._undo) == 1                                                  # 두 장이 한 번의 되돌리기
     _close(w)

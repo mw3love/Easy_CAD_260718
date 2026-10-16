@@ -1694,7 +1694,7 @@ class _FileIOMixin:
         from PyQt6.QtGui import QPainterPath, QFont
         from easycad.canvas.annotator_core import _PathItem
         from easycad.canvas.host_widgets import _ACCENT_CORAL
-        from easycad.fileio.flow_spec import parse_spec, layout, step_keys, link_key
+        from easycad.fileio.flow_spec import parse_spec, layout, step_keys, link_key, best_wrap
         from easycad.fileio.mermaid_import import MEdge
 
         spec = parse_spec(text)
@@ -1714,7 +1714,11 @@ class _FileIOMixin:
             head = hfm.lineSpacing() + 26.0
         # compact = 보드 안 흐름도(§8 항목53) — 간격을 좁혀 한 장에 들어가게(보드가 커지면 출력 때 글자가 작아짐)
         gaps = dict(gap_major=40.0, gap_minor=22.0, lane_pad=14.0) if compact else {}
-        lay = layout(spec, lambda s: sizes[s.id], head=head, icon_h=self._FLOW_ICON_H, **gaps)
+        # 꺾어 내리기(2026-10-16) — 흐름이 옆(세로 흐름이면 아래)으로 아주 길면 16:9에 가깝게 덩어리로 꺾는다
+        # (실제 KAIROS 결과: 담당이 바뀌며 15단계가 이어져 한 줄로 아주 길었다).
+        size_fn = lambda s: sizes[s.id]   # noqa: E731
+        wrap = best_wrap(spec, size_fn, head=head, icon_h=self._FLOW_ICON_H, min_len=520.0 if compact else 1600.0, **gaps)
+        lay = layout(spec, size_fn, head=head, icon_h=self._FLOW_ICON_H, wrap=wrap, **gaps)
 
         title_h = 0.0
         if spec.title:
@@ -1743,7 +1747,9 @@ class _FileIOMixin:
         z_floor = max(z_floor, max((it.zValue() for it in tops if isinstance(it, _BoardItem)), default=-1e9) + 1.5)
         added: list = []
         # 띠 — 채운 패스(사각형). 상자가 아니라 길찾기 장애물·「도면 검사」 상자에서 빠진다(`_obstacle_rects`·`BOX_TYPES`).
-        for lb, name in zip(lay.lanes, names):
+        shown = dict(zip(spec.lanes, names))   # 꺾으면 같은 담당 띠가 덩어리마다 다시 나온다
+        for lb in lay.lanes:
+            name = shown[lb.name]
             x, y, w, h = lb.rect
             c = lane_color[lb.name]
             path = QPainterPath()
@@ -1816,6 +1822,11 @@ class _FileIOMixin:
         for k in spec.links:
             src, dst = items_by_id[k.src], items_by_id[k.dst]
             arr = self._make_mermaid_edge(MEdge(k.src, k.dst, k.text), src, dst, spec.direction)
+            if lay.segments.get(k.dst, 0) > lay.segments.get(k.src, 0):
+                # 꺾은 덩어리를 넘어가는 연결 — 가로 흐름이면 아래 변 → 다음 줄 위 변(세로 흐름이면 오른쪽 → 왼쪽)
+                d = spec.direction.upper()
+                sides = ("bottom", "top") if d in ("LR", "RL") else ("right", "left")
+                self._flow_attach(arr, src, dst, *sides)
             arr._flow_key = lkeys[len(arrows)]
             self._scene.addItem(arr)
             arrows.append(arr)
@@ -1863,6 +1874,14 @@ class _FileIOMixin:
             self.push_undo_add_many(added)
         self._scene.clearSelection()
         return len(items_by_id), len(arrows), spec.direction, added
+
+    def _flow_attach(self, arr, src, dst, s_side, d_side):
+        """화살표 양 끝을 두 상자의 정해진 변 가운데로 다시 붙인다."""
+        a_src = self._rect_side_mid(src.mapRectToScene(src.rect()), s_side)
+        a_dst = self._rect_side_mid(dst.mapRectToScene(dst.rect()), d_side)
+        arr.set_points(a_src, a_dst)
+        arr.set_bound(0, src, src.mapFromScene(a_src))
+        arr.set_bound(len(arr._pts) - 1, dst, dst.mapFromScene(a_dst))
 
     def _flow_branch_from_side(self, arr, src, dst, direction, side):
         """갈림길(마름모)에서 나가는 연결을 옆 꼭짓점 `side`("top"·"bottom"·"left"·"right")에서 출발하게 다시 붙인다
