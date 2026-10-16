@@ -236,6 +236,52 @@ def list_text_models(api_key: str, base_url: str = BASE_URL, timeout: float = 8.
                  and "image" not in m.lower() and "tts" not in m.lower())
 
 
+def list_text_models_info(api_key: str, base_url: str = BASE_URL, timeout: float = 8.0) -> list[dict]:
+    """[§8 항목51, 2026-10-16] 글 모델 + 가격 — 모델 「자동 ▾」 목록용. `/models`의 각 항목에 `pricing`(USD/100만 토큰
+    `input`·`output`)·`lifecycle`(current/legacy)이 온다(2026-10-16 실호출 확인, 글 모델 60개). openai SDK의 `models.list`는
+    이 확장 필드를 보장하지 않아 `get_credit_balance`처럼 httpx로 직접 읽는다.
+
+    반환 [{"id", "input", "output"}] — `list_text_models`와 같은 거르기(gpt·gemini, 이미지·음성 전용 제외) + 은퇴(legacy) 제외,
+    가격이 없는 모델은 input/output이 None. 출력 가격 오름차순(싼 것부터)."""
+    import httpx
+
+    url = _normalize_base_url(base_url) + "/models"
+    try:
+        resp = httpx.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(f"HTTP {e.response.status_code}") from e
+    except httpx.HTTPError as e:
+        raise RuntimeError(str(e)) from e
+    out = []
+    for m in data:
+        mid = str(m.get("id", ""))
+        low = mid.lower()
+        if m.get("type", "llm") != "llm" or m.get("lifecycle") == "legacy":
+            continue
+        if not ("gpt" in low or "gemini" in low) or "image" in low or "tts" in low or "audio" in low:
+            continue
+        p = m.get("pricing") or {}
+        out.append({"id": mid, "input": p.get("input"), "output": p.get("output")})
+    out.sort(key=lambda d: (d["output"] is None, d["output"] or 0.0, d["id"]))
+    return out
+
+
+# 출력 가격(USD/100만 토큰) → 쉬운 말 등급. 경계는 2026-10-16 목록(0.5·1.2·2.5·3.75·9·10·12·20·30·50)이 고르게 갈리도록.
+PRICE_TIERS = ((0.6, "아주 저렴"), (3.0, "저렴"), (5.0, "보통"), (15.0, "비쌈"))
+
+
+def price_tier(output_price) -> str:
+    """모델 목록 옆에 붙일 등급 글. 가격을 모르면 빈 글."""
+    if output_price is None:
+        return ""
+    for limit, label in PRICE_TIERS:
+        if output_price <= limit:
+            return label
+    return "아주 비쌈"
+
+
 def get_credit_balance(api_key: str, base_url: str = BASE_URL) -> tuple[float, float]:
     """크레딧 잔액 조회 — GET {base_url}/credits/ (Mindlogic 게이트웨이 전용 raw REST).
 

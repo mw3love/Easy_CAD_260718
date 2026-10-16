@@ -1567,3 +1567,9 @@
   파이썬 예외가 아니라 `sys.excepthook` 장치엔 안 잡힌다 — **`qInstallMessageHandler`로 Qt 메시지를 파일에** 남기고 `QThread.start`를 감싸
   "다음 테스트 시작 때 아직 도는 작업자"를 찍으면 바로 보인다. AI 작업자를 시작하는 테스트는 가짜 안에서 결과까지 기다릴 것.
   (지난 "장치를 걸면 재현 안 됨"은 장치가 아니라 그 실행들이 `-v`였기 때문 — 조건을 하나씩만 바꿀 것.)
+- ⚠ (2026-10-16, §8 항목51) **창마다 시작하는 백그라운드 조회(크레딧·가격표)는 창에 매달지 말 것** — 테스트는 창을 닫지 않고 GC로 지우는데,
+  그때 자식 QThread가 돌고 있으면 `QThread: Destroyed while thread is still running`으로 출력 없이 꺼진다(exit 127). "따로 돌리면 통과,
+  묶어 돌리면 꺼짐"이면 이것부터. `ai_control._start_detached`처럼 부모 없이 시작하고 끝날 때까지 모듈이 붙잡는다.
+- ⚠ (2026-10-16) **`clicked` 시그널은 눌림 여부(bool)를 첫 인자로 넘긴다** — 기본값 인자가 있는 메서드(`def f(self, note=None)`)에 바로 이으면
+  `note=False`가 들어간다. 인자 종류로 가르거나(`isinstance(note, str)`) 인자 없는 슬롯을 따로 둔다.
+

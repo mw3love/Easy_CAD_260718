@@ -1,6 +1,7 @@
 """§8 항목40·41(2026-10-16) — 「KAIROS로 만들기」 이름 + 처음 실행 때 키 넣기 + 남은 크레딧.
 
-키 없이 만들기 → 「KAIROS 연결」 창(모달 아님) → 키를 넣고 확인하면 같은 요청을 이어서. 패널 아래 남은 크레딧 줄.
+키 없이 만들기 → 「KAIROS 연결」 창(모달 아님) → 키를 넣고 확인하면 같은 요청을 이어서. 가운데 칸 아래 남은 크레딧 줄
+(§8 항목51 — 옛 오른쪽 패널 자리).
 """
 from contextlib import contextmanager
 from unittest.mock import patch as _patch
@@ -39,7 +40,6 @@ def _key(value):
 
 def test_names_say_kairos_and_toolbar_stays_short():
     w = _shown_window()
-    assert w._ai_panel._title_lbl.text() == "KAIROS로 만들기"
     assert w._act_ai_make.text() == "KAIROS로 만들기"
     assert w._toolbar.widgetForAction(w._act_ai_make).text() == "AI"   # 10-11 결정(혼자 너무 큼) 유지
     assert w._act_ai_settings.text() == "KAIROS 연결 설정…"
@@ -48,13 +48,14 @@ def test_names_say_kairos_and_toolbar_stays_short():
 
 def test_credit_line_without_and_with_key():
     w = _shown_window()
+    lbl = w._start_prompt._credit_lbl
     with _key(""):
-        w._set_ai_panel_visible(True)
-        assert "키 넣기" in w._ai_panel._credit_lbl.text()
-        w._set_ai_panel_visible(False)
+        w._open_ai_prompt()
+        assert "키 넣기" in lbl.text()
+        w._close_ai_prompt()
     with _key("k"):   # conftest가 get_credit_balance를 (1234, 40000)으로 고정
-        w._set_ai_panel_visible(True)
-        assert _wait_until(lambda: "1,234 / 40,000" in w._ai_panel._credit_lbl.text())
+        w._open_ai_prompt()
+        assert _wait_until(lambda: "1,234 / 40,000" in lbl.text())
 
 
 def test_credit_failure_shows_short_line():
@@ -63,18 +64,16 @@ def test_credit_failure_shows_short_line():
     def boom(*_a, **_k):
         raise RuntimeError("401")
     with _key("k"), _patch("easycad.ai.gateway.get_credit_balance", side_effect=boom):
-        w._set_ai_panel_visible(True)
-        assert _wait_until(lambda: "못 읽었어요" in w._ai_panel._credit_lbl.text())
+        w._open_ai_prompt()
+        assert _wait_until(lambda: "못 읽었어요" in w._start_prompt._credit_lbl.text())
 
 
 def test_make_without_key_opens_dialog_and_continues_after_key():
     from easycad.canvas.host_aimake import NO_KEY_TEXT
     w = _shown_window()
-    p = w._ai_panel
+    p = w._ai_ctrl
     with _key(""):
-        p.set_kind("flow")
-        p._prompt_edit.setPlainText("휴가 신청부터 팀장 결재까지")
-        req = p.request_make()
+        req = p.request_make("휴가 신청부터 팀장 결재까지", kind="flow")
     assert req.entry.status_text() == NO_KEY_TEXT and not w._ai_jobs
     dlg = w._ai_key_dialog
     assert dlg is not None and dlg.isVisible() and not dlg.isModal()
@@ -88,14 +87,11 @@ def test_make_without_key_opens_dialog_and_continues_after_key():
 
 def test_second_make_without_key_reuses_open_dialog():
     w = _shown_window()
-    p = w._ai_panel
+    p = w._ai_ctrl
     with _key(""):
-        p.set_kind("flow")
-        p._prompt_edit.setPlainText("하나")
-        p.request_make()
+        p.request_make("하나", kind="flow")
         first = w._ai_key_dialog
-        p._prompt_edit.setPlainText("둘")
-        p.request_make()
+        p.request_make("둘", kind="flow")
     assert w._ai_key_dialog is first
 
 

@@ -964,10 +964,12 @@ class _FileIOMixin:
     def _open_ai_gateway_settings(self):
         """삽입(&I) 메뉴 「AI 게이트웨이 설정…」 진입점(2026-08-20 피드백) — Mermaid/SVG
         창 안의 설정 버튼과 같은 `_AIGatewaySettingsDialog`를 독립적으로 연다. [§8 항목41] 이름은 「KAIROS 연결 설정…」,
-        닫으면 AI 패널의 남은 크레딧 줄도 다시."""
+        닫으면 남은 크레딧 줄·모델 가격표도 다시(§8 항목51 — 키를 넣을 때 가격표를 받아 둔다)."""
         _AIGatewaySettingsDialog(self).exec()
-        if getattr(self, "_ai_panel", None) is not None and self._ai_panel.isVisible():
-            self._ai_panel.refresh_credit()
+        ctrl = getattr(self, "_ai_ctrl", None)
+        if ctrl is not None:
+            ctrl.refresh_credit()
+            ctrl.fetch_models()
 
     def _save_svg_candidates_to_symbols(self, entries: list[tuple[str, str]],
                                         subject: str, folder: str | None) -> int:

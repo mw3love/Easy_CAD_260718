@@ -143,14 +143,13 @@ class CanvasWindow(
 
         # [Phase 6 M1] 메뉴(=액션)를 먼저 만들고 → 상단 QToolBar가 그 액션을 재사용(setDefaultAction).
         self._build_menu()
-        # [§8 항목36, 2026-10-05] 중앙 = 탭 | AI 만들기 패널(오른쪽 기둥, 켰을 때만 보임). 패널이 켜지면
-        # 뷰가 좁아지고, 플로팅 카드는 뷰 기준으로 자리를 잡으므로(`_reposition_panels`) 저절로 비켜난다.
+        # [§8 항목51, 2026-10-16] 중앙 = 탭(옛 오른쪽 AI 패널은 없앰 — 입구는 가운데 칸 하나, `host_aimake`).
         central = QWidget()
         central_lay = QHBoxLayout(central)
         central_lay.setContentsMargins(0, 0, 0, 0)
         central_lay.setSpacing(0)
         central_lay.addWidget(self._tabs, 1)
-        central_lay.addWidget(self._build_ai_panel())
+        self._build_ai_control()
         self.setCentralWidget(central)
         self._build_toolbar()
         # [캔버스-퍼스트 레이아웃, deep-interview 2026-07-29] 좌/우 QDockWidget(칼럼 전체를

@@ -300,18 +300,21 @@ class _UIBuildMixin:
         # 위치만 이동).
         self._act_img = self._make_action("이미지/SVG 삽입…", "image",
             self._insert_image_or_svg, shortcut_id="insert_image")
-        # [§8 항목36 6단계, 2026-10-11] 옛 Mermaid·AI SVG·사진→도면 창은 지웠다 — 세 항목과 그 단축키
-        # (id는 재사용 금지 규칙대로 그대로)는 이제 「AI로 만들기」 패널을 그 종류로 연다.
+        # [§8 항목36 6단계 → 51] 옛 Mermaid·AI SVG·사진→도면 창 자리 — 세 항목과 그 단축키(id는 재사용 금지 규칙대로
+        # 그대로)는 가운데 칸을 그 종류 안내글로 연다.
         self._act_mmd = self._make_action("AI 흐름도…", "mermaid",
             self._open_ai_flow, shortcut_id="insert_mermaid")
         self._act_ai_svg = self._make_action("AI 심볼…", "generate",
             self._open_ai_symbol, shortcut_id="insert_ai_svg")
         self._act_photo = self._make_action("AI 베끼기(사진→도면)…", "photo",
             self._open_ai_trace, shortcut_id="insert_photo")
-        # [§8 항목36, 2026-10-05] 오른쪽 「AI로 만들기」 패널(켜기/끄기). 상단바엔 이것 하나만.
+        # [§8 항목51, 2026-10-16] 가운데 칸 「무엇을 그릴까요?」를 연다(옛 오른쪽 패널 켜기/끄기). 상단바엔 이것 하나만.
         self._act_ai_make = self._make_action("KAIROS로 만들기", "generate",   # §8 항목40(2026-10-16)
-            self._toggle_ai_panel, checkable=True)
+            lambda: self._open_ai_prompt())
+        # [§8 항목51] Mermaid는 AI 화면에서 빼고 「외부 소스 가져오기」 묶음에만 — 코드를 직접 쓰는 사람용(옛 「코드로 넣기」).
+        self._act_mmd_code = self._make_action("Mermaid 코드 가져오기…", "mermaid", self._import_mermaid_code)
         i.addAction(self._act_img)
+        i.addAction(self._act_mmd_code)
         i.addAction(self._act_ai_make)
         for a in (self._act_mmd, self._act_ai_svg, self._act_photo):
             i.addAction(a)
@@ -626,7 +629,7 @@ class _UIBuildMixin:
         props_panel.raise_()
 
         if getattr(self, "_start_prompt", None) is not None:
-            self._place_start_prompt()   # §8 항목39 가운데 입구 — 뷰 가운데
+            self._place_start_prompt()   # §8 항목39 가운데 입구 — 뷰 가운데(§8 항목51 상태 알약도 같이)
         if getattr(self, "_check_card", None) is not None:
             self._place_check_card()     # §8 항목48 도면 검사 카드 — 뷰 위쪽 가운데
 
@@ -1086,15 +1089,13 @@ class _UIBuildMixin:
 )
         for panel in (getattr(self, "_left_panel", None), getattr(self, "_props_panel", None),
                       getattr(self, "_minimap_panel", None), getattr(self, "_layers_panel", None),
-                      getattr(self, "_ai_panel", None), getattr(self, "_symbol_browser", None)):
+                      getattr(self, "_symbol_browser", None)):
             if panel is not None:
                 panel._head.setStyleSheet(head_qss)
                 panel.update()
         self._panel_head_qss = head_qss   # 나중에 만들어지는 카드(폴더 크게 보기)도 같은 제목 줄
-        ai_panel = getattr(self, "_ai_panel", None)
-        if ai_panel is not None:
-            ai_panel.refresh_theme(dark)
-            self._ai_refresh_theme()   # 떠 있는 결과·준비 막대도(host_aimake)
+        if getattr(self, "_ai_ctrl", None) is not None:
+            self._ai_refresh_theme()   # 떠 있는 결과·준비 막대·상태 알약도(host_aimake)
         if getattr(self, "_start_prompt", None) is not None:
             self._start_prompt.refresh_theme(dark)   # §8 항목39 가운데 입구
         if getattr(self, "_check_card", None) is not None:

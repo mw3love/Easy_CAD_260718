@@ -885,6 +885,27 @@ class _ModelListWorker(QThread):
         self.succeeded.emit(models)
 
 
+class _ModelInfoWorker(QThread):
+    """[§8 항목51] 글 모델 + 가격 1회 조회(`gw.list_text_models_info`) — 모델 「자동 ▾」 목록. `_ModelListWorker`와 같은 이유로
+    메인 스레드 밖에서."""
+
+    succeeded = pyqtSignal(list)
+    failed = pyqtSignal(str)
+
+    def __init__(self, api_key, base_url, parent=None):
+        super().__init__(parent)
+        self._api_key = api_key
+        self._base_url = base_url
+
+    def run(self):
+        try:
+            models = gw.list_text_models_info(self._api_key, self._base_url, timeout=8.0)
+        except Exception as e:  # noqa: BLE001 — 실패하면 추천(자동)만 보인다
+            self.failed.emit(str(e))
+            return
+        self.succeeded.emit(models)
+
+
 class _CreditWorker(QThread):
     """남은 크레딧 1회 조회(§8 항목41, 2026-10-16) — AI 패널 아래 「남은 크레딧」 줄. 패널을 켤 때·생성이 끝날 때 부른다.
     네트워크 호출이라 메인 스레드 밖에서(`_ModelListWorker`와 같은 이유)."""
@@ -1070,6 +1091,76 @@ class _ShortcutSettingsDialog(QDialog):
                 shortcuts.reset_sequence(sid)
             else:
                 shortcuts.set_sequence(sid, seq_str)
+        self.accept()
+
+
+class _MermaidCodeDialog(QDialog):
+    """「삽입 › Mermaid 코드 가져오기…」(§8 항목51, 2026-10-16) — 옛 AI 패널 「고급 › 코드로 넣기」 자리. Mermaid는 AI 화면에서
+    뺐고(사용자 결정 — 코드를 직접 쓰는 사람만 쓰는 길), 붙여 넣거나 파일(.mmd·.md·.txt)에서 읽어 흐름도로 넣는다.
+    넣기 전에 읽어 보고 틀리면 창을 닫지 않고 알려 준다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mermaid 코드 가져오기")
+        self.resize(520, 360)
+        v = QVBoxLayout(self)
+        tip = QLabel("flowchart 코드를 붙여 넣거나 파일에서 읽으세요. 넣으면 캔버스에 임시로 놓여요(채택·버리기).", self)
+        tip.setWordWrap(True)
+        v.addWidget(tip)
+        from PyQt6.QtWidgets import QPlainTextEdit
+        self._edit = QPlainTextEdit(self)
+        self._edit.setPlaceholderText("flowchart LR\n    A[시작] --> B{조건?}\n    B -->|예| C[처리]")
+        v.addWidget(self._edit, 1)
+        self._error = QLabel("", self)
+        self._error.setStyleSheet("color:#da7756;")
+        self._error.setWordWrap(True)
+        self._error.setVisible(False)
+        v.addWidget(self._error)
+        row = QHBoxLayout()
+        load = QToolButton(self)
+        load.setText("파일에서…")
+        load.clicked.connect(self._load_file)
+        row.addWidget(load)
+        row.addStretch(1)
+        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        box.button(QDialogButtonBox.StandardButton.Ok).setText("넣기")
+        box.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
+        box.accepted.connect(self._on_accept)
+        box.rejected.connect(self.reject)
+        row.addWidget(box)
+        v.addLayout(row)
+
+    def code(self) -> str:
+        return self._edit.toPlainText().strip()
+
+    def _load_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Mermaid 파일", "", "Mermaid·글 (*.mmd *.mermaid *.md *.txt);;모든 파일 (*)")
+        if path:
+            try:
+                with open(path, encoding="utf-8") as f:
+                    text = f.read()
+            except (OSError, UnicodeDecodeError) as e:
+                self._show_error(f"파일을 읽지 못했어요: {e}")
+                return
+            # 마크다운이면 ```mermaid 펜스 안만
+            m = re.search(r"```(?:mermaid)?\s*\n(.*?)```", text, re.DOTALL)
+            self._edit.setPlainText((m.group(1) if m else text).strip())
+
+    def _show_error(self, text: str):
+        self._error.setText(text)
+        self._error.setVisible(True)
+
+    def _on_accept(self):
+        from easycad.fileio.mermaid_import import MermaidError, parse_mermaid
+        code = self.code()
+        if not _MERMAID_HEADER_RE.match(code):
+            self._show_error("첫 줄이 flowchart LR(또는 TD) 같은 형식이어야 해요.")
+            return
+        try:
+            parse_mermaid(code)
+        except MermaidError as e:
+            self._show_error(f"코드를 읽지 못했어요: {e}")
+            return
         self.accept()
 
 

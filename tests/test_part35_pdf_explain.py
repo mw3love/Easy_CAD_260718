@@ -103,40 +103,41 @@ def test_long_doc_summarizes_chunks_first(sample_pdf, monkeypatch):
     assert steps[-1] == "그리는 중"
 
 
-# ---- 패널 ----------------------------------------------------------------------
+# ---- 요청(§8 항목51 — 옛 패널 자리는 관리 객체·가운데 칸) -----------------------------------------
 
-def test_panel_has_fourth_kind_and_needs_pdf():
+def test_explain_needs_pdf():
     w = CanvasWindow()
-    p = w._ai_panel
-    assert "explain" in p._kind_buttons and p._kind_buttons["explain"].text() == "풀어 그리기"
-    p.set_kind("explain")
-    assert p.request_make() is None and "PDF" in p._notice.text()
+    notes = []
+    w._ai_ctrl.notice.connect(notes.append)
+    assert w._ai_ctrl.request_make("요약", kind="explain") is None and "PDF" in notes[-1]
 
 
-def test_attaching_pdf_switches_to_explain(sample_pdf):
+def test_attaching_pdf_makes_explain(sample_pdf):
     w = CanvasWindow()
-    p = w._ai_panel
-    p.set_kind("flow")
-    p._set_attached_pdf(sample_pdf)
-    assert p.kind() == "explain" and p._attached_pdf == sample_pdf and p._attached_image is None
-    assert p._image_chip.isVisibleTo(p)
+    sp = w._start_prompt
+    sp._edit.setPlainText("흐름도로")
+    sp._set_attached_pdf(sample_pdf)
+    assert sp.kind() == "explain" and sp._attached_pdf == sample_pdf and sp._attached_image is None
+    assert sp._image_chip.isVisibleTo(sp)
 
 
 def test_explain_generates_and_stages_like_flow(sample_pdf):
     w = CanvasWindow()
     w.resize(1400, 900)
     w.show()
-    p = w._ai_panel
-    w._set_ai_panel_visible(True, kind="explain")
-    p._set_attached_pdf(sample_pdf)
-    p._prompt_edit.setPlainText("처음 보는 사람용")
+    p = w._ai_ctrl
+    sp = w._start_prompt
+    w._open_ai_prompt("explain")
+    sp._set_attached_pdf(sample_pdf)
+    sp._edit.setPlainText("처음 보는 사람용")
     with _fake() as gen:
-        req = p.request_make()
+        assert sp.submit() == "explain"
+        req = p.entries()[-1].request
         assert req.kind == "explain" and req.pdf_path == sample_pdf
         assert _wait_until(lambda: w._ai_staged is not None)
         assert gen.call_args.args[1] == sample_pdf and gen.call_args.args[2] == "처음 보는 사람용"
         assert w._ai_staged.request.kind == "explain"
-        assert p._attached_pdf == "", "보낸 뒤 첨부 칩은 비움"
+        assert sp._attached_pdf == "", "보낸 뒤 첨부 칩은 비움"
         # 「다시」도 가짜 안에서 끝까지 기다린다 — 밖에서 부르면 작업자가 진짜 게이트웨이에 접속해 몇 초 돌고, 그 사이 GC가
         # 창을 지우면 "QThread: Destroyed while thread is still running"으로 전체 pytest가 exit 127(2026-10-16 원인).
         again = p.resubmit(req)
@@ -159,4 +160,5 @@ def test_start_prompt_pdf_goes_to_explain(sample_pdf):
     with _fake():
         assert sp.submit() == "explain"
         assert _wait_until(lambda: w._ai_staged is not None)
-    assert w._ai_panel.kind() == "explain" and len(w._ai_panel.entries()) == 1
+    ents = w._ai_ctrl.entries()
+    assert len(ents) == 1 and ents[0].kind == "explain"

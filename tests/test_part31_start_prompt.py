@@ -1,6 +1,6 @@
-"""§8 항목39(2026-10-16) — 빈 도면 가운데 입구 「무엇을 그릴까요?」.
+"""§8 항목39 → 51(2026-10-16) — 가운데 칸 「무엇을 그릴까요?」(AI의 하나뿐인 입구).
 
-짐작 규칙·보이는 조건(빈 도면·✕·AI 패널)·첫 획이면 사라짐·패널로 넘기기(흐름도는 바로 요청, 베끼기는 사진만).
+짐작 규칙·보이는 조건(빈 도면·✕·「AI」로 열기)·첫 획이면 사라짐·요청 넘기기(흐름도는 바로 요청, 베끼기는 사진만 깔기).
 """
 from _shared import *  # noqa: F401,F403
 
@@ -64,53 +64,56 @@ def test_dismiss_is_per_doc_and_new_tab_shows_again():
     assert not sp.isVisible()
 
 
-def test_hidden_while_ai_panel_open():
+def test_ai_button_opens_even_on_dismissed_or_full_doc():
     w = _shown_window()
     sp = w._start_prompt
-    w._set_ai_panel_visible(True)
+    sp.dismissed.emit()
     assert not sp.isVisible()
-    w._set_ai_panel_visible(False)
-    assert sp.isVisible()
+    w._open_ai_prompt()
+    assert sp.isVisible(), "「AI」로 열면 ✕로 닫은 문서에서도 뜬다"
+    w._close_ai_prompt()
+    assert not sp.isVisible()
 
 
-def test_typing_guesses_kind_until_user_picks():
+def test_typing_guesses_kind_and_menu_hint_wins():
     w = _shown_window()
     sp = w._start_prompt
     sp._edit.setPlainText("카메라 아이콘")
     assert sp.kind() == "symbol"
     sp._edit.setPlainText("결재 흐름도")
     assert sp.kind() == "flow"
-    sp._kind_actions["symbol"].trigger()   # 사용자가 버튼으로 고름
+    sp.set_kind_hint("symbol")   # 메뉴·단축키로 종류를 정해 열었을 때
     sp._edit.setPlainText("결재 흐름도 다시")
-    assert sp.kind() == "symbol", "고른 뒤엔 짐작이 덮어쓰지 않음"
+    assert sp.kind() == "symbol", "정해 연 종류는 짐작이 덮어쓰지 않음"
+    assert "심볼" in sp._sub.text()
 
 
-def test_submit_flow_goes_to_panel_as_request():
+def test_submit_flow_goes_to_controller_as_request():
     w = _shown_window()
     sp = w._start_prompt
     assert sp.submit() is None and not sp._notice.isHidden()   # 빈 입력은 안내만
     sp._edit.setPlainText("휴가 신청부터 결재까지 흐름도")
     assert sp.submit() == "flow"
-    p = w._ai_panel
-    assert p.isVisible() and p.kind() == "flow"
-    assert len(p.entries()) == 1, "패널 기록에 요청 한 칸(생성 경로가 패널과 같음)"
+    ents = w._ai_ctrl.entries()
+    assert len(ents) == 1 and ents[0].kind == "flow", "기록에 요청 하나"
     assert not sp.isVisible()
     assert sp._edit.toPlainText() == ""
 
 
-def test_submit_trace_needs_photo_and_only_attaches_it():
+def test_submit_trace_needs_photo_and_only_lays_it():
     w = _shown_window()
     sp = w._start_prompt
-    sp.set_kind("trace", manual=True)
+    sp.set_kind_hint("trace")
     assert sp.submit() is None and "사진" in sp._notice.text()
     img = Image.new("RGB", (64, 48), "white")
     sp._set_attached_image(img, "drawing.png")
     assert sp.kind() == "trace"
+    sp._edit.setPlainText("표 칸 주의")
     assert sp.submit() == "trace"
-    p = w._ai_panel
-    assert p.kind() == "trace" and p._attached_image is img
-    assert len(p.entries()) == 0, "베끼기는 사진 위 막대 「만들기」로 진행(모서리 맞추기)"
-    assert w._ai_trace is not None, "사진이 도면에 깔림"
+    assert len(w._ai_ctrl.entries()) == 0, "베끼기는 사진 위 막대 「만들기」로 진행(모서리 맞추기)"
+    tr = w._ai_trace
+    assert tr is not None and tr.original is img and tr.name == "drawing.png" and tr.note == "표 칸 주의", "사진이 도면에 깔림"
+    assert not sp.isVisible()
 
 
 def test_theme_toggle_keeps_prompt():
