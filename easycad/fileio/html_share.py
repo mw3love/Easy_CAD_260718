@@ -72,8 +72,14 @@ def render_layers(scene, groups, source: QRectF) -> list[str]:
     return out
 
 
-def build_html(title: str, width: int, height: int, layers, shapes, made: str = "") -> str:
-    """`layers` = [(이름, SVG 안쪽, 보임 여부)], `shapes` = [{"x","y","w","h","text"}](SVG 좌표) → HTML 문자열."""
+def _js(value) -> str:
+    """스크립트 안에 넣을 JSON — 글자에 `</script>`가 있어도 페이지가 끊기지 않게 `</`를 `<\\/`로."""
+    return json.dumps(value, ensure_ascii=False).replace("</", "<\\/")
+
+
+def build_html(title: str, width: int, height: int, layers, shapes, made: str = "", guide: dict | None = None) -> str:
+    """`layers` = [(이름, SVG 안쪽, 보임 여부)], `shapes` = [{"x","y","w","h","text"}](SVG 좌표) → HTML 문자열.
+    `guide`(§8 항목47 설명 페이지) = {"title","summary","steps":[{"title","body","boxes":[shapes 번호]}]} — 있으면 오른쪽 설명 칸."""
     groups = "\n".join(
         f'<g class="layer" data-layer="{i}"{"" if vis else " style=\"display:none\""}>{svg}</g>'
         for i, (_n, svg, vis) in enumerate(layers))
@@ -82,11 +88,10 @@ def build_html(title: str, width: int, height: int, layers, shapes, made: str = 
         .replace("__MADE__", html.escape(made or time.strftime("%Y-%m-%d"))) \
         .replace("__W__", str(width)).replace("__H__", str(height)) \
         .replace("__GROUPS__", groups) \
-        .replace("__LAYERS__", json.dumps(layer_list, ensure_ascii=False)) \
-        .replace("__SHAPES__", json.dumps(shapes, ensure_ascii=False))
+        .replace("__LAYERS__", _js(layer_list)).replace("__SHAPES__", _js(shapes)).replace("__GUIDE__", _js(guide))
 
 
-def export_html(scene, path: str, title: str, groups, shape_items) -> bool:
+def export_html(scene, path: str, title: str, groups, shape_items, guide: dict | None = None) -> bool:
     """도면 전체를 HTML 한 파일로. `groups` = [(레이어 이름, 아이템 목록, 보임 여부)], `shape_items` = [(아이템, 글자)].
     내용이 없으면 False. 안전 저장(임시 파일 → 바꿔치기)."""
     source = scene.itemsBoundingRect()
@@ -100,7 +105,7 @@ def export_html(scene, path: str, title: str, groups, shape_items) -> bool:
         r = it.sceneBoundingRect()
         shapes.append({"x": round(r.x() - source.x(), 1), "y": round(r.y() - source.y(), 1),
                        "w": round(r.width(), 1), "h": round(r.height(), 1), "text": text})
-    doc = build_html(title, round(source.width()), round(source.height()), layers, shapes)
+    doc = build_html(title, round(source.width()), round(source.height()), layers, shapes, guide=guide)
     data = doc.encode("utf-8")
 
     def _write(tmp):
@@ -142,6 +147,21 @@ _TEMPLATE = """<!doctype html>
   aside label { display:flex; gap:6px; align-items:center; cursor:pointer; }
   #tip { position:absolute; pointer-events:none; background:var(--bar); border:1px solid var(--line); border-radius:7px;
          padding:3px 8px; font-size:12px; display:none; white-space:pre-wrap; max-width:280px; box-shadow:0 2px 8px rgba(0,0,0,.15); }
+  .body { flex:1 1 auto; display:flex; min-height:0; }
+  #guide { width:340px; flex:0 0 auto; background:var(--bar); border-left:1px solid var(--line); display:flex; flex-direction:column;
+           padding:16px 18px; gap:10px; overflow:auto; }
+  #guide h2 { font-size:17px; margin:0; text-wrap:balance; }
+  #guide .sum { color:var(--muted); margin:0; }
+  #guide .count { font-size:12px; color:var(--accent); font-weight:700; letter-spacing:.04em; }
+  #guide h3 { font-size:15px; margin:0; }
+  #guide .txt { margin:0; white-space:pre-wrap; }
+  #guide .nav { display:flex; gap:8px; margin-top:auto; padding-top:8px; }
+  #guide .nav button { flex:1; padding:8px 10px; }
+  #guide .nav .next { background:#da7756; color:#fff; border-color:#da7756; font-weight:700; }
+  #guide ol { margin:0; padding-left:20px; color:var(--muted); font-size:13px; }
+  #guide ol li { cursor:pointer; padding:2px 0; } #guide ol li.cur { color:var(--ink); font-weight:700; }
+  .hit.step { fill:rgba(218,119,86,.22); stroke:#da7756; stroke-width:4; }
+  @media (max-width: 760px) { .body { flex-direction:column; } #guide { width:auto; max-height:45%; border-left:0; border-top:1px solid var(--line); } }
   footer { padding:4px 16px; font-size:11px; color:var(--muted); background:var(--bar); border-top:1px solid var(--line); }
 </style>
 </head>
@@ -153,6 +173,7 @@ _TEMPLATE = """<!doctype html>
     <button id="fit" title="전체 보기">맞춤</button>
   </div>
 </header>
+<div class="body">
 <main id="view">
   <svg id="sheet" xmlns="http://www.w3.org/2000/svg">
     <g id="cam">
@@ -164,7 +185,14 @@ _TEMPLATE = """<!doctype html>
   <aside id="layers" hidden><h2>레이어</h2><div id="layerList"></div></aside>
   <div id="tip"></div>
 </main>
-<footer>Easy CAD로 만든 도면 · __MADE__ · 휠·두 손가락으로 확대, 끌어서 이동, 상자를 누르면 그 상자로</footer>
+<section id="guide" hidden>
+  <h2 id="gTitle"></h2><p class="sum" id="gSum"></p>
+  <div class="count" id="gCount"></div><h3 id="gStepTitle"></h3><p class="txt" id="gBody"></p>
+  <ol id="gList"></ol>
+  <div class="nav"><button id="gPrev">◀ 이전</button><button class="next" id="gNext">다음 ▶</button></div>
+</section>
+</div>
+<footer>Easy CAD로 만든 도면 · __MADE__ · 휠·두 손가락으로 확대, 끌어서 이동, 상자를 누르면 그 상자로 · 설명은 ←/→ 키로도 넘겨요</footer>
 <script>
 (function () {
   var W = __W__, H = __H__;
@@ -233,8 +261,51 @@ _TEMPLATE = """<!doctype html>
       lab.appendChild(cb); lab.appendChild(document.createTextNode(ly.name)); list.appendChild(lab);
     });
   }
-  window.addEventListener("resize", fit);
+  // 설명 페이지(§8 항목47) — 단계마다 그 상자들을 강조하고 화면을 옮긴다. 0 = 전체 보기(요약).
+  var GUIDE = __GUIDE__;
+  var cur = 0, hitEls = hits.querySelectorAll(".hit");
+  function showStep(k) {
+    if (!GUIDE) return;
+    var n = GUIDE.steps.length; cur = Math.max(0, Math.min(k, n));
+    hitEls.forEach(function (el) { el.classList.remove("step"); });
+    var lis = document.querySelectorAll("#gList li");
+    lis.forEach(function (li, i) { li.classList.toggle("cur", i + 1 === cur); });
+    document.getElementById("gPrev").disabled = cur === 0;
+    document.getElementById("gNext").textContent = cur === n ? "처음으로" : (cur === 0 ? "시작 ▶" : "다음 ▶");
+    if (cur === 0) {
+      document.getElementById("gCount").textContent = "전체 " + n + "단계";
+      document.getElementById("gStepTitle").textContent = ""; document.getElementById("gBody").textContent = "";
+      fit(); return;
+    }
+    var st = GUIDE.steps[cur - 1];
+    document.getElementById("gCount").textContent = cur + " / " + n;
+    document.getElementById("gStepTitle").textContent = st.title;
+    document.getElementById("gBody").textContent = st.body;
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    st.boxes.forEach(function (i) {
+      var sh = SHAPES[i]; if (!sh) return; if (hitEls[i]) hitEls[i].classList.add("step");
+      x0 = Math.min(x0, sh.x); y0 = Math.min(y0, sh.y); x1 = Math.max(x1, sh.x + sh.w); y1 = Math.max(y1, sh.y + sh.h);
+    });
+    if (x0 < Infinity) { var w = x1 - x0, h = y1 - y0, m = Math.max(w, h) * 0.6 + 60; fitTo(x0 - m / 2, y0 - m / 2, w + m, h + m); }
+  }
+  if (GUIDE) {
+    document.getElementById("guide").hidden = false;
+    document.getElementById("gTitle").textContent = GUIDE.title || document.title;
+    document.getElementById("gSum").textContent = GUIDE.summary || "";
+    GUIDE.steps.forEach(function (st, i) {
+      var li = document.createElement("li"); li.textContent = st.title || ("단계 " + (i + 1));
+      li.onclick = function () { showStep(i + 1); }; document.getElementById("gList").appendChild(li);
+    });
+    document.getElementById("gPrev").onclick = function () { showStep(cur - 1); };
+    document.getElementById("gNext").onclick = function () { showStep(cur === GUIDE.steps.length ? 0 : cur + 1); };
+    window.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); showStep(cur === GUIDE.steps.length ? 0 : cur + 1); }
+      if (e.key === "ArrowLeft") { e.preventDefault(); showStep(cur - 1); }
+    });
+  }
+  window.addEventListener("resize", function () { if (GUIDE && cur) showStep(cur); else fit(); });
   fit();
+  if (GUIDE) showStep(0);
 })();
 </script>
 </body>

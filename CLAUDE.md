@@ -74,6 +74,7 @@ easycad/
 │   │                       조회·텍스트 호출(폴백 포함)
 │   ├── text_to_mermaid.py  프롬프트 빌더·코드펜스 벗기기·generate_mermaid (§8 항목18)
 │   ├── pdf_to_mermaid.py   PDF → 핵심을 풀어 그린 흐름도(쪽 번호 · p.N, 긴 문서 나눠 요약) — 「풀어 그리기」(§8 항목45, Qt 비의존)
+│   ├── drawing_explain.py  도면 상자·연결 → 단계별 설명 JSON — 「설명 페이지 만들기」(§8 항목47, Qt 비의존)
 │   └── photo_to_ops.py     사진→도면 프롬프트·구역 동시 생성 generate_ops_tiled(앱)·부분 다시 generate_ops_region(앱)·수정 루프 generate_ops(도구) (§8 항목28, Qt 비의존)
 ├── fileio/
 │   ├── pdf_export.py       PDF 출력(A4~A0, 전체/선택영역)
@@ -94,7 +95,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~36_*.py      테마별 회귀 스모크 1260종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~37_*.py      테마별 회귀 스모크 1268종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문

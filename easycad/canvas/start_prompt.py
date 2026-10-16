@@ -62,6 +62,13 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
     """빈 도면 가운데 카드. 호스트가 자리·보이기를 정한다(`host_aimake._sync_start_prompt`)."""
 
     WIDTH = 470
+    # [2026-10-16, 추정 예방] 클래스 기본값 — 10-11 `_PaletteButton`과 같은 함정: Python GC가 순환 정리 중 인스턴스 속성을 먼저
+    # 비우고 C++ 위젯은 살아 이벤트를 받으면 `eventFilter`·`paintEvent`가 없는 속성을 읽다 예외 → 출력 없이 앱(pytest)이 끝난다.
+    # 이 칸은 창마다 생겨 전체 테스트에서 수백 번 지워진다. 같은 날 전체 실행 9회 중 2회 exit 127(재현 안 됨)이라 넣어 둠.
+    _edit = None
+    _dark = True
+    _kind = "flow"
+    _kind_manual = False
     _ACCEPT_PDF = True   # §8 항목45 — PDF를 끌어다 놓으면 「풀어 그리기」
     submitted = pyqtSignal(str, str, object, str)   # 종류, 글, 첨부(그림 PIL | 풀어 그리기면 PDF 경로 | None), 이름
     dismissed = pyqtSignal()                        # ✕ — 이 문서에선 다시 안 띄움

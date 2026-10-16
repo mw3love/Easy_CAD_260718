@@ -27,6 +27,7 @@ from easycad.canvas.annotator_core import (
 from easycad.fileio.pdf_export import export_pdf, export_pdf_pages, export_image, export_svg, render_content_image
 from easycad.fileio.dxf_export import export_dxf, export_dwg
 from easycad.fileio.html_share import export_html
+from easycad.ai import gateway as gw
 from easycad.fileio import autosave
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.pdf_import import import_pdf, PdfImportError
@@ -43,7 +44,7 @@ from easycad.canvas.host_widgets import _border_attach, _FloatingPanel
 from easycad.canvas.host_selection import _group_scene_rect, _render_symbol_thumbnail
 from easycad.canvas.host_dialogs import (
     _PaperSizeDialog, _TitleBlockDialog, _TableSizeDialog, _PdfExportDialog,
-    _AIGatewaySettingsDialog,
+    _AIGatewaySettingsDialog, _StepsGenWorker,
 )
 from easycad.canvas.photo_dialog import _pil_to_pixmap
 
@@ -628,7 +629,85 @@ class _FileIOMixin:
         else:
             QMessageBox.warning(self, "내보내기", "저장에 실패했습니다.")
 
-    def _share_html(self, path: str | None = None, open_after: bool = True):
+    def _share_boxes(self):
+        """HTML `SHAPES`·설명 페이지 상자 번호가 함께 쓰는 목록 — 보이는 상자(사각·원·심볼·다각형) [(아이템, 글자)]."""
+        bg = getattr(self, "_bg_item", None)
+        out = []
+        for it in self._scene.items():
+            if it.parentItem() is None and it is not bg and it.isVisible() \
+                    and isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PolygonItem)):
+                text = " ".join(c.toPlainText().strip() for c in it.childItems()
+                                if hasattr(c, "toPlainText") and c.toPlainText().strip())
+                out.append((it, text))
+        out.sort(key=lambda p: (round(p[0].sceneBoundingRect().y() / 40), p[0].sceneBoundingRect().x()))   # 읽는 순서
+        return out
+
+    def _share_links(self, boxes):
+        """화살표 연결 [(상자 번호, 상자 번호, 라벨)] — 양 끝이 다 상자에 붙은 것만(`_bind1/_bind2`, 직각은 `_bind_start/_end`)."""
+        index = {it: i for i, (it, _t) in enumerate(boxes)}
+        links = []
+        for it in self._scene.items():
+            a = getattr(it, "_bind1", None) or getattr(it, "_bind_start", None)
+            b = getattr(it, "_bind2", None) or getattr(it, "_bind_end", None)
+            if a in index and b in index:
+                label = " ".join(c.toPlainText().strip() for c in it.childItems()
+                                 if hasattr(c, "toPlainText") and c.toPlainText().strip())
+                links.append((index[a], index[b], label))
+        return links
+
+    def _make_explain_page(self):
+        """[§8 항목47, 2026-10-16] 「설명 페이지 만들기(KAIROS)…」 — 도면 상자·연결을 KAIROS에 보내 단계별 설명을 받고,
+        「HTML로 공유」 페이지에 오른쪽 설명 칸으로 붙인다(단계마다 그 상자 강조·화면 이동). 생성은 백그라운드."""
+        boxes = [(it, t) for it, t in self._share_boxes()]
+        if not any(t for _it, t in boxes):
+            self.statusBar().showMessage("설명할 상자가 없어요 — 글자가 있는 상자가 필요해요", 4000)
+            return None
+        w = getattr(self, "_steps_worker", None)
+        try:
+            if w is not None and w.isRunning():
+                self.statusBar().showMessage("설명을 쓰는 중이에요 — 끝나면 브라우저로 열려요", 4000)
+                return None
+        except RuntimeError:
+            pass
+        key = gw.resolve_api_key()
+        if not key:
+            dlg = _AIGatewaySettingsDialog(self, reason="설명 페이지를 만들려면 KAIROS 키가 필요해요. 키를 넣은 뒤 다시 눌러 주세요.")
+            dlg.setModal(False)
+            dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            dlg.show()
+            return None
+        doc = self._active_doc
+        title = os.path.splitext(self._tab_title_for(doc).lstrip("*"))[0]
+        base = os.path.dirname(doc.doc_path or doc.external_path or "") or os.path.expanduser("~")
+        path, _ = QFileDialog.getSaveFileName(self, "설명 페이지 저장", os.path.join(base, title + " 설명.html"),
+                                              "웹 페이지 (*.html)")
+        if not path:
+            return None
+        return self._start_explain_page(key, path, title, boxes)
+
+    def _start_explain_page(self, key, path, title, boxes, open_after: bool = True):
+        links = self._share_links(boxes)
+        self._steps_pending = (path, open_after, title)
+        self._steps_worker = _StepsGenWorker(key, title, [(i, t or "(글자 없음)") for i, (_it, t) in enumerate(boxes)],
+                                             links, gw.TEXT_RECOMMEND_EXPLAIN, gw.resolve_base_url(), self)
+        self._steps_worker.succeeded.connect(self._on_steps_ready)
+        self._steps_worker.failed.connect(self._on_steps_failed)
+        self._steps_worker.start()
+        self.statusBar().showMessage("KAIROS가 설명을 쓰는 중이에요(10~30초) — 끝나면 브라우저로 열려요", 30000)
+        return self._steps_worker
+
+    def _on_steps_ready(self, guide, _model):
+        path, open_after, title = getattr(self, "_steps_pending", None) or (None, True, None)
+        self._steps_pending = None
+        if path:
+            self._share_html(path=path, open_after=open_after, guide=guide, title=title)
+
+    def _on_steps_failed(self, err):
+        self._steps_pending = None
+        self.statusBar().showMessage(f"설명을 만들지 못했어요: {err}", 8000)
+
+    def _share_html(self, path: str | None = None, open_after: bool = True, guide: dict | None = None,
+                    title: str | None = None):
         """[§8 항목46, 2026-10-16] 「HTML로 공유…」 — 도면을 브라우저로 여는 파일 하나로(받는 사람은 앱 불필요).
         레이어마다 따로 그려 켜고 끌 수 있게, 글자가 있는 상자는 위치·글자를 함께(설명 페이지 §8 항목47의 바탕).
         저장하면 기본 브라우저로 연다. `path`·`open_after`는 테스트용."""
@@ -636,7 +715,7 @@ class _FileIOMixin:
             self.statusBar().showMessage("공유할 도형이 없어요", 3000)
             return None
         doc = self._active_doc
-        title = os.path.splitext(self._tab_title_for(doc).lstrip("*"))[0]
+        title = title or os.path.splitext(self._tab_title_for(doc).lstrip("*"))[0]
         if path is None:
             base = os.path.dirname(doc.doc_path or doc.external_path or "") or os.path.expanduser("~")
             path, _ = QFileDialog.getSaveFileName(self, "HTML로 공유", os.path.join(base, title + ".html"),
@@ -658,16 +737,12 @@ class _FileIOMixin:
                 groups[0] = (groups[0][0], groups[0][1] + rest, groups[0][2])
             else:
                 groups.append(("기본", rest, True))
-        shapes = []
-        for it in tops:
-            if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PolygonItem)) and it.isVisible():
-                text = " ".join(c.toPlainText().strip() for c in it.childItems()
-                                if hasattr(c, "toPlainText") and c.toPlainText().strip())
-                shapes.append((it, text))
-        if not export_html(self._scene, path, title, groups, shapes):
+        shapes = self._share_boxes()   # 설명 페이지의 상자 번호와 같은 순서
+        if not export_html(self._scene, path, title, groups, shapes, guide=guide):
             self.statusBar().showMessage("HTML로 저장하지 못했어요", 4000)
             return None
-        self.statusBar().showMessage(f"HTML로 저장했어요 — 받는 사람은 브라우저로 열면 돼요: {path}", 5000)
+        what = "설명 페이지를" if guide else "HTML로"
+        self.statusBar().showMessage(f"{what} 저장했어요 — 받는 사람은 브라우저로 열면 돼요: {path}", 5000)
         if open_after:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
         return path

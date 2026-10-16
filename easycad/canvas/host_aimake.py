@@ -559,6 +559,10 @@ class _AIMakeMixin:
             _detach_worker(worker)
         self._ai_jobs.clear()
         self._ai_tick_timer.stop()
+        steps = getattr(self, "_steps_worker", None)   # §8 항목47 설명 페이지 생성
+        if steps is not None:
+            _detach_worker(steps)
+            self._steps_worker = None
         self._ai_panel.detach_workers()
 
     def _ai_goto_request_doc(self, req) -> bool:

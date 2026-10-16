@@ -255,6 +255,9 @@ class _UIBuildMixin:
         # [§8 항목46, 2026-10-16] 받는 사람은 앱이 없어도 되는 공유 — 브라우저로 여는 HTML 한 파일.
         self._act_share_html = self._make_action("HTML로 공유…", "menu_export", self._share_html)
         m.addAction(self._act_share_html)
+        # [§8 항목47, 2026-10-16] 같은 페이지 + KAIROS가 쓴 단계별 설명(단계마다 그 상자 강조) — 교육·발표·대회 시연용.
+        self._act_explain_page = self._make_action("설명 페이지 만들기(KAIROS)…", "generate", self._make_explain_page)
+        m.addAction(self._act_explain_page)
 
         # 편집(상단 툴바와 액션 공유. Ctrl+Z/Ctrl+Y 키는 여전히 뷰가 직접 처리하므로 QAction엔
         # 단축키를 안 건다 — 여기에 같은 단축키를 걸면 Qt 전역 단축키가 뷰의 keyPressEvent보다

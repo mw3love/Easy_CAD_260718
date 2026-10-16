@@ -812,6 +812,28 @@ class _MermaidGenWorker(QThread):
         self.succeeded.emit(text, used)
 
 
+class _StepsGenWorker(QThread):
+    """「설명 페이지 만들기」(§8 항목47) — 도면 상자·연결 → 단계별 설명 JSON 1회."""
+
+    succeeded = pyqtSignal(object, str)   # (guide dict, 실제 사용된 모델)
+    failed = pyqtSignal(str)
+
+    def __init__(self, api_key, title, boxes, links, model, base_url, parent=None):
+        super().__init__(parent)
+        self._args = (api_key, title, boxes, links)
+        self._model = model
+        self._base_url = base_url
+
+    def run(self):
+        try:
+            from easycad.ai.drawing_explain import generate_steps
+            guide, used = generate_steps(*self._args, model=self._model, base_url=self._base_url)
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(str(e))
+            return
+        self.succeeded.emit(guide, used)
+
+
 class _ExplainGenWorker(QThread):
     """「풀어 그리기」(§8 항목45) — PDF → 설명 흐름도 1회(긴 문서는 안에서 나눠 요약). 결과 모양은 `_MermaidGenWorker`와 같아
     호스트가 흐름도와 같은 수신자(`_on_flow_generated`)로 받는다."""
