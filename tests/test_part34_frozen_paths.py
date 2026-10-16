@@ -64,3 +64,18 @@ def test_selftest_reports_kairos_failure(monkeypatch, tmp_path):
         assert selftest.run(quiet=True) == 1
     text = (tmp_path / "easycad_selftest.txt").read_text(encoding="utf-8")
     assert "[FAIL] KAIROS 크레딧" in text and "CERTIFICATE" in text and "개발자에게" in text
+
+
+def test_outer_name_is_magic_board_inner_stays_easycad():
+    """§8 항목50(2026-10-16) — 겉 이름(창 제목·exe·아이콘)만 Magic Board, 설정 조직·.ecad는 EasyCAD 그대로."""
+    import os
+    from easycad.app_settings import APP_NAME, APP_TITLE
+    from easycad.canvas.core_constants import _icons_dir
+    w = CanvasWindow()
+    assert w.windowTitle() == APP_TITLE == "Magic Board" and APP_NAME == "EasyCAD"
+    for ext in (".svg", ".ico"):
+        assert (_icons_dir() / f"app_magic_board{ext}").exists()
+    spec = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "EasyCAD.spec"),
+                encoding="utf-8").read()
+    assert "name='MagicBoard'" in spec and "app_magic_board.ico" in spec
+    assert "Magic Board 문서 (*.ecad)" in w._DOC_FILTER

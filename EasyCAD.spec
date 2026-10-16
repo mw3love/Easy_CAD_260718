@@ -1,14 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller 빌드 스펙 — 최종 검수 Phase 7(릴리스 준비), 2026-08-26.
 
-빌드: `pyinstaller EasyCAD.spec` (repo 루트에서). 결과는 `dist/EasyCAD/EasyCAD.exe`
+빌드: `pyinstaller EasyCAD.spec` (repo 루트에서). 결과는 `dist/MagicBoard/MagicBoard.exe`
+([§8 항목50, 2026-10-16] 겉 이름만 Magic Board — 스펙 파일 이름·설정·`%APPDATA%/EasyCAD`는 그대로)
 (onedir — PyQt6은 리소스가 많아 onefile은 시작이 느려짐, 배포는 폴더째 zip).
 
 ⚠ 알려진 한계(코드는 안 고침, 이 스펙만으로는 못 푸는 문제):
 - (해결 2026-10-16, §8 항목43) "내 심볼"은 exe에서 `%APPDATA%/EasyCAD/EasyCAD/symbol_library.json`
   (`symbol_library._library_dir`), 아이콘 경로도 `_MEIPASS/easycad/resources/icons`로 바로잡음.
-- 앱 아이콘(.ico)이 아직 없어 PyInstaller 기본 아이콘으로 빌드된다. `icon=` 파라미터에
-  준비되면 경로를 채워 넣을 것.
+- (해결 2026-10-16, §8 항목50) 앱 아이콘 `easycad/resources/icons/app_magic_board.ico`(같은 이름 .svg에서 만듦).
 """
 import os
 
@@ -38,7 +38,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='EasyCAD',
+    name='MagicBoard',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -49,7 +49,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon='easycad/resources/icons/app_magic_board.ico',
 )
 
 coll = COLLECT(
@@ -59,5 +59,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='EasyCAD',
+    name='MagicBoard',
 )

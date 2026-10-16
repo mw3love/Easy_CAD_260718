@@ -427,7 +427,7 @@ def export_svg(scene, path: str, page: str = "A4", selection_only: bool = False,
     # `setResolution` 없이는 Qt가 72dpi로 가정해 SVG의 물리 크기(width/height mm) 속성이
     # `dpi`(기본 200)만큼 실제보다 커진다 — 뷰어 화면에선 안 보여도 "실척 인쇄" 시 어긋난다.
     generator.setResolution(dpi)
-    generator.setTitle("Easy CAD")
+    generator.setTitle("Magic Board")
 
     painter = QPainter(generator)
     try:
@@ -480,7 +480,7 @@ def export_svg_symbol(scene, path: str, pad: float = 6.0) -> bool:
     generator.setFileName(path)
     generator.setSize(QSize(px_w, px_h))
     generator.setViewBox(target)
-    generator.setTitle("Easy CAD Symbol")
+    generator.setTitle("Magic Board Symbol")
 
     painter = QPainter(generator)
     try:

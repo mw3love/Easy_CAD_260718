@@ -506,8 +506,8 @@ class _UIBuildMixin:
     # 파일의 확장자로 분기한다. 저장 다이얼로그의 기본 필터는 DXF를 열었던 직후라도
     # 항상 .ecad(무손실)가 먼저 뜨도록 유지 — DXF 가져오기/내보내기는 _doc_path를
     # 갱신하지 않는다(기존 동작 그대로).
-    _DOC_FILTER = "Easy CAD 문서 (*.ecad);;DXF 파일 (*.dxf);;DWG 파일 (*.dwg)"
-    _OPEN_FILTER = ("지원 파일 (*.ecad *.dxf *.dwg *.pdf);;Easy CAD 문서 (*.ecad);;"
+    _DOC_FILTER = "Magic Board 문서 (*.ecad);;DXF 파일 (*.dxf);;DWG 파일 (*.dwg)"
+    _OPEN_FILTER = ("지원 파일 (*.ecad *.dxf *.dwg *.pdf);;Magic Board 문서 (*.ecad);;"
                     "DXF 파일 (*.dxf);;DWG 파일 (*.dwg);;PDF 도면 (*.pdf)")
 
 
@@ -1249,7 +1249,7 @@ class _UIBuildMixin:
         dlg = QDialog(self)
         dlg.setWindowTitle("단축키 도움말")
         lay = QVBoxLayout(dlg)
-        title = QLabel("Easy CAD 단축키")
+        title = QLabel("Magic Board 단축키")
         title.setStyleSheet("font-weight:bold;")
         lay.addWidget(title)
         text = QPlainTextEdit(dlg)
@@ -1282,8 +1282,8 @@ class _UIBuildMixin:
         from PyQt6.QtCore import QT_VERSION_STR, PYQT_VERSION_STR
         from easycad import __version__ as easycad_version
         box = QMessageBox(self)
-        box.setWindowTitle("Easy CAD 정보")
-        box.setText(f"Easy CAD v{easycad_version}")
+        box.setWindowTitle("Magic Board 정보")
+        box.setText(f"Magic Board v{easycad_version}\n말하면 그려지고, 그린 것은 끝까지 고칠 수 있다.\n(도면 엔진: Easy CAD)")
         box.setInformativeText(
             "빠르고 쉬운 순서도/간단도면 작성기\n\n"
             f"문의: jjrftech@gmail.com\n\n"

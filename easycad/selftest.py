@@ -1,4 +1,4 @@
-"""설치 점검 `EasyCAD.exe --selftest`(§8 항목43, 2026-10-16) — exe 안에서 아이콘·라이브러리 묶음·KAIROS 연결을 확인한다.
+"""설치 점검 `MagicBoard.exe --selftest`(§8 항목43, 2026-10-16) — exe 안에서 아이콘·라이브러리 묶음·KAIROS 연결을 확인한다.
 
 exe는 콘솔이 없고(`console=False`) 내부 파이썬을 따로 부를 수 없어서, 다른 PC(동료·심사위원)에서 "AI가 안 돼요"가 나오면
 이걸로 원인을 가른다. 결과는 `%TEMP%/easycad_selftest.txt`에 쓰고, `--quiet`가 없으면 창으로도 보여 준다.
@@ -29,7 +29,7 @@ def run(quiet: bool = False) -> int:
     from PyQt6.QtWidgets import QApplication, QMessageBox
     app = QApplication.instance() or QApplication(sys.argv)
 
-    lines = [f"Easy CAD 설치 점검 — {time.strftime('%Y-%m-%d %H:%M:%S')}",
+    lines = [f"Magic Board 설치 점검 — {time.strftime('%Y-%m-%d %H:%M:%S')}",
              f"exe: {getattr(sys, 'frozen', False)}  python: {sys.version.split()[0]}  위치: {sys.executable}", ""]
 
     def icons():
@@ -91,6 +91,6 @@ def run(quiet: bool = False) -> int:
     with open(out, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     if not quiet:
-        QMessageBox.information(None, "Easy CAD 설치 점검", "\n".join(lines) + f"\n\n저장: {out}")
+        QMessageBox.information(None, "Magic Board 설치 점검", "\n".join(lines) + f"\n\n저장: {out}")
     del app
     return 0 if ok else 1

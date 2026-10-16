@@ -501,7 +501,7 @@ def load_document(scene, path: str, info: dict | None = None) -> int:
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
     if doc.get("format") != FORMAT:
-        raise ValueError("Easy CAD 문서가 아닙니다.")
+        raise ValueError("Magic Board 문서(.ecad)가 아닙니다.")
     if info is not None:
         ver = doc.get("version", 1)
         info["version"] = ver

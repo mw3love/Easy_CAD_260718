@@ -239,7 +239,7 @@ class _FileIOMixin:
             # 만큼 열되, 모르는 정보가 빠졌을 수 있음을 알린다(그대로 저장하면 그 정보는 사라짐).
             QMessageBox.warning(
                 self, "새 버전 파일",
-                f"이 파일은 더 새로운 Easy CAD(형식 버전 {info.get('version')})에서 만들어졌습니다.\n"
+                f"이 파일은 더 새로운 Magic Board(형식 버전 {info.get('version')})에서 만들어졌습니다.\n"
                 "이 프로그램이 모르는 정보는 빠진 채로 열렸을 수 있고, 이대로 저장하면 그 정보는 "
                 "사라집니다.")
 
@@ -526,7 +526,7 @@ class _FileIOMixin:
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle("도면 복구")
-        box.setText(f"지난번에 Easy CAD가 비정상 종료되어 저장하지 않은 도면 {len(orphans)}개가 "
+        box.setText(f"지난번에 Magic Board가 비정상 종료되어 저장하지 않은 도면 {len(orphans)}개가 "
                     f"남아 있습니다.\n\n{names}\n\n복구할까요?")
         b_restore = box.addButton("복구", QMessageBox.ButtonRole.AcceptRole)
         b_delete = box.addButton("지우기", QMessageBox.ButtonRole.DestructiveRole)
@@ -577,7 +577,7 @@ class _FileIOMixin:
         resp = QMessageBox.warning(
             self, "DXF/DWG로 저장",
             "DXF·DWG는 다른 CAD 프로그램과 호환되는 교환 포맷입니다.\n"
-            "화살표 지속연결·라벨 위치·심볼 종류·레이어 소속·포트 부착 관계 등 Easy CAD "
+            "화살표 지속연결·라벨 위치·심볼 종류·레이어 소속·포트 부착 관계 등 Magic Board "
             "전용 정보는 저장되지 않습니다(도형·텍스트·색상·두께·좌표는 보존 — 포트가 "
             "만든 테두리 끊김도 실제 선분으로는 보존되지만, 다시 열면 개별 선·도형일 뿐 "
             "포트로 인식되지 않습니다). 심볼·다각형은 다시 열면 일반 선으로 바뀝니다."
@@ -824,7 +824,7 @@ class _FileIOMixin:
             QMessageBox.warning(
                 self, title,
                 f"저장은 됐지만 객체 {failed}개는 변환하지 못해 파일에서 빠졌습니다.\n"
-                "Easy CAD 형식(.ecad)으로도 저장해 두면 원본을 잃지 않습니다.")
+                "Magic Board 형식(.ecad)으로도 저장해 두면 원본을 잃지 않습니다.")
 
 
     def _export_dwg_waited(self, path: str, stats: dict | None = None):

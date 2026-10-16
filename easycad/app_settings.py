@@ -12,6 +12,9 @@ from PyQt6.QtCore import QSettings
 
 ORG_ENV = "EASYCAD_SETTINGS_ORG"
 APP_NAME = "EasyCAD"
+# [§8 항목50, 2026-10-16] 사람 눈에 보이는 이름 — 창 제목·안내 글·exe·내보낸 파일. 내부 이름(`APP_NAME`·설정 조직·
+# `%APPDATA%/EasyCAD`·`.ecad`)은 바꾸면 저장된 키·내 심볼 위치가 끊겨 그대로 둔다(계획서 §8 항목50).
+APP_TITLE = "Magic Board"
 
 
 def settings_org() -> str:

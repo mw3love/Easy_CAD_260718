@@ -500,7 +500,9 @@ Phase 0~6 로드맵과 §5 제안기능이 전부 완료된 뒤, 실사용자 DX
 오른쪽 패널 둘, 종류 네 개를 사용자가 고름, 흐름도는 네모 나열, 풀어 그리기는 흐름도 하나뿐). 목표: "사용자는 쉽고 단순하게, 결과는
 대단하게". 시안 Artifact https://claude.ai/artifact/81avA5GPjgcGjdaLsbcbQR (① 입구 ② 결과 막대 ③ 새 흐름도 ④ 논문 보드 ⑤ 보드 틀·색·출력).
 **10월분 영상 전에** 51 → 52 → 53 순서(사용자 선택). 50은 아무 때나(작음).
-50. **이름 Magic Board** — 앱 겉 이름(창 제목·exe·아이콘·시작 화면)만 바꾸고 내부 이름(QSettings 조직 `EasyCAD`, `%APPDATA%/EasyCAD`,
+50. **이름 Magic Board** — **완료**(2026-10-16 — 창 제목·안내 글·파일 창 「Magic Board 문서 (*.ecad)」·정보 창·내보낸 PDF/HTML 표시·
+    설치 점검 글·exe `dist/MagicBoard/MagicBoard.exe`·새 앱 아이콘(`app_magic_board.svg/.ico`, 코랄 바탕 흰 보드+반짝임 — 첫 시안). 실제 빌드 후
+    `--selftest` 8개 정상·exe 아이콘 확인. 남은 것: 아이콘 디자인 판단(사용자), 외부 배포 땐 상표 확인). 앱 겉 이름(창 제목·exe·아이콘·시작 화면)만 바꾸고 내부 이름(QSettings 조직 `EasyCAD`, `%APPDATA%/EasyCAD`,
     `.ecad`)은 그대로 — 바꾸면 저장된 키·내 심볼 위치가 끊긴다(`gateway.py` `_SETTINGS_ORG` 확인). 철학: **"말하면 그려지고, 그린 것은
     끝까지 고칠 수 있다"** — 그림을 만들어 주는 AI와 다른 점이 "고칠 수 있는 상자·선"이고, 그걸 되게 하는 Easy CAD 엔진은 숙련자 층으로
     남는다. 40의 "앱 이름은 유지"를 뒤집음(그때 이유 중 "게이트웨이가 바뀌면 틀린 말"은 Magic Board엔 해당 없음). 외부 배포 땐 상표 확인 필요.

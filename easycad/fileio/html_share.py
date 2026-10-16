@@ -120,7 +120,7 @@ _TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="generator" content="Easy CAD">
+<meta name="generator" content="Magic Board">
 <title>__TITLE__</title>
 <style>
   :root { --bg:#eef1f4; --bar:#ffffff; --ink:#1b222b; --muted:#5d6876; --line:#d8dde3; --accent:#c25a37; --hl:rgba(218,119,86,.18); }
@@ -192,7 +192,7 @@ _TEMPLATE = """<!doctype html>
   <div class="nav"><button id="gPrev">◀ 이전</button><button class="next" id="gNext">다음 ▶</button></div>
 </section>
 </div>
-<footer>Easy CAD로 만든 도면 · __MADE__ · 휠·두 손가락으로 확대, 끌어서 이동, 상자를 누르면 그 상자로 · 설명은 ←/→ 키로도 넘겨요</footer>
+<footer>Magic Board로 만든 도면 · __MADE__ · 휠·두 손가락으로 확대, 끌어서 이동, 상자를 누르면 그 상자로 · 설명은 ←/→ 키로도 넘겨요</footer>
 <script>
 (function () {
   var W = __W__, H = __H__;

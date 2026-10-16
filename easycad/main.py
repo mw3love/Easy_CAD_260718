@@ -1,4 +1,4 @@
-"""Easy CAD 진입점 — 무한 캔버스 편집기를 띄운다."""
+"""Magic Board(내부 이름 Easy CAD) 진입점 — 무한 캔버스 편집기를 띄운다."""
 import sys
 
 from PyQt6.QtCore import QTimer
@@ -13,6 +13,9 @@ def main():
         from easycad.selftest import run
         sys.exit(run(quiet="--quiet" in sys.argv))
     app = QApplication(sys.argv)
+    from PyQt6.QtGui import QIcon
+    from easycad.canvas.core_constants import _icons_dir
+    app.setWindowIcon(QIcon(str(_icons_dir() / "app_magic_board.svg")))   # §8 항목50 — 창·작업 표시줄 아이콘
     init_crash_reporting()
     win = CanvasWindow()
     # [첫 화면 재디자인 2026-10-07, 사용자 결정] 새 상단바(아이콘+글자)는 약 1,300px라 기본 창

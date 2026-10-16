@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsView, QMessageBox, QTabWidget, QWidget, QHBoxLayout, QFrame,
 )
 
-from easycad.app_settings import app_settings
+from easycad.app_settings import app_settings, APP_TITLE
 from easycad.canvas.annotator_core import (
     _PolyArrowItem, _DEFAULT_WIDTH, _DEFAULT_FONT, _DEFAULT_BADGE, _DEFAULT_INK_DARK,
     _DEFAULT_INK_LIGHT,
@@ -76,7 +76,7 @@ class CanvasWindow(
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Easy CAD")
+        self.setWindowTitle(APP_TITLE)   # §8 항목50 — 겉 이름만 Magic Board(설정·.ecad는 EasyCAD 그대로)
         self.resize(1200, 800)
         # [캔버스-퍼스트] statusBar()를 QMainWindow 실제 상태바가 아니라 하단중앙 토스트로
         # 프록시 — 창 전체 폭을 가로지르는 항상-보이는 행을 없앤다. 다른 초기화보다 먼저 만들어

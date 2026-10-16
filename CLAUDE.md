@@ -106,7 +106,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~44_*.py      테마별 회귀 스모크 1333종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~44_*.py      테마별 회귀 스모크 1334종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -177,7 +177,9 @@ symbol_library/
   같은 날 ③ 보드 막대(보드 하나를 고르면 위에 [색][내보내기 ▾]) — 그림 복사·PNG·PDF A3 한 쪽·HTML을 보드 범위·흰 종이로.
   ④ 여러 장(보드 폭 바닥 2176 넘으면 덜 중요한 칸부터 2장, 「한 장으로」/「나눠서」, PDF 여러 쪽)·여러 자료(가운데 칸에 파일 여럿 → A·B·C, 근거 「A p.3」,
   그림 여러 장 한 번에). 53 끝. 같은 날 긴 흐름도 꺾어 내리기(`flow_spec.best_wrap` — 16:9에 가깝게 덩어리로, 덩어리마다 쓰인 띠만).
-  남은 것: 크레딧 실측, 바닥값 인쇄 확인, 50 이름 Magic Board.
+  남은 것: 크레딧 실측, 바닥값 인쇄 확인.
+- **§8 항목50 이름 Magic Board**(2026-10-16) — 겉 이름만(`app_settings.APP_TITLE`, 창 제목·안내 글·파일 창·정보 창·PDF/HTML 표시·exe
+  `MagicBoard.exe`·새 아이콘 `app_magic_board.svg/.ico`), 내부 `EasyCAD`·`.ecad` 그대로. 실제 빌드 `--selftest` 8개 정상.
 - **Magic Board 개편 결정**(2026-10-16 오후, 코드 변경 없음) — "AI가 너무 복잡해졌다" 검토 → 시안 2라운드
   (https://claude.ai/artifact/81avA5GPjgcGjdaLsbcbQR)로 확정, 계획서 §8 항목50~53: 이름 Magic Board(겉만)·입구 가운데 칸 하나(오른쪽
   패널 없앰, 종류 칩 없음, 「+」=파일 선택, 결과 막대=입력 한 줄)·모델 「자동 ▾」+가격(`/models` pricing)·흐름도는 Mermaid 대신 내용
