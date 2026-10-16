@@ -193,7 +193,11 @@ def test_pdf_request_stages_board_and_followup_sends_board(figure_pdf):
     new = w._ai_staged
     assert new.alt is st and isinstance(new.items[0], _BoardItem)
     assert new.request.kind == "explain" and "흐름도" not in w._ai_pill.text()   # 보드로 이어 감(막대 예시·알약 이름)
-    assert "나란히" in new.request.entry.status_text()
+    # 2026-10-16: 보드도 글이 달라진 칸을 주황으로(바꾼 문장 하나 = 한 군데), 막대 앞에 「지시 · 모델 · 초」
+    assert "1군데" in new.request.entry.status_text()
+    assert [it.toPlainText() for it in new.marks if hasattr(it, "toPlainText")] and len(new.marks) == 1
+    assert "학습이빠르다" in "".join(new.marks[0].toPlainText().split())
+    assert new.bar.info is not None and "의의를 더 짧게" in new.bar.info.text() and "m" in new.bar.info.text()
     assert w._ai_items_rect(new.items).left() > w._ai_items_rect(st.items).right()   # 원본 옆에 나란히
     _close(w)
 
@@ -215,3 +219,92 @@ def test_tick_does_not_overwrite_status_after_answer(figure_pdf):
     assert req.entry.status_text().startswith(STAGED_TEXT)
     w._ai_jobs.clear()
     _close(w)
+
+
+# ── 2026-10-16 사용자 테스트 피드백 — 「그림을 가운데·크게」·막대 앞 「지시 · 모델 · 초」 ──────────────────────────
+
+@pytest.fixture
+def tall_figure_pdf(tmp_path):
+    """세로로 긴 논문 그림(트랜스포머 구조도처럼) — 아래 칸(높이 240)에선 손톱만 해졌다."""
+    from PyQt6.QtGui import QImage
+    img = QImage(200, 600, QImage.Format.Format_RGB32)
+    img.fill(QColor("#3366cc"))
+    png = str(tmp_path / "tall.png")
+    img.save(png)
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_image(fitz.Rect(150, 80, 350, 680), filename=png)
+    path = str(tmp_path / "tall.pdf")
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def _stage_board(w, pdf):
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.pdf_to_board.generate_board",
+                   return_value=(json.dumps(dict(SPEC, _pdf=pdf), ensure_ascii=False), "gemini-x")):   # 진짜도 _pdf를 붙인다
+        w._ai_ctrl.request_make("", kind="explain", pdf_path=pdf)
+        assert _wait_until(lambda: w._ai_staged is not None)
+    return w._ai_staged
+
+
+def test_bar_figure_big_relayouts_without_ai(tall_figure_pdf):
+    w = _window()
+    st = _stage_board(w, tall_figure_pdf)
+    small = [it for it in st.items if isinstance(it, _ImageItem)]
+    assert len(small) == 1 and small[0].rect().height() <= 240.5
+    with _patch("easycad.ai.text_to_flow.generate_flow", side_effect=AssertionError("AI 부르면 안 됨")):
+        st.bar.line.setText("그림 크게")
+        st.bar.line.returnPressed.emit()
+        _app.processEvents()
+    st = w._ai_staged
+    assert pb.parse_board(st.request.result_text)["_figure"] == "big"
+    board = next(it for it in st.items if isinstance(it, _BoardItem))
+    img = next(it for it in st.items if isinstance(it, _ImageItem))
+    assert img.rect().height() > 300                                   # 크게(1장에 남는 데까지)
+    assert len([it for it in st.items if isinstance(it, _BoardItem)]) == 1   # 다른 칸을 2장으로 밀어내지 않는다
+    b, r = board.sceneBoundingRect(), img.sceneBoundingRect()
+    assert abs(r.center().x() - b.center().x()) < 2.0                  # 가운데
+    assert check_drawing(w._scene, items=st.items) == []               # 아래 칸과 겹치지 않음
+    with _patch("easycad.ai.text_to_flow.generate_flow", side_effect=AssertionError("AI 부르면 안 됨")):
+        st.bar.line.setText("그림 원래대로")
+        st.bar.line.returnPressed.emit()
+        _app.processEvents()
+    assert [it for it in w._ai_staged.items if isinstance(it, _ImageItem)][0].rect().height() <= 240.5
+    _close(w)
+
+
+def test_long_followup_with_figure_words_keeps_layout_flag(tall_figure_pdf):
+    """「논문 그림을 가운데 배치하고 중학생 독자로 다시 써 줘」 — 배치는 앱이(바탕 설계서에 표시), 글은 AI로. 결과도 그림 크게."""
+    w = _window()
+    st = _stage_board(w, tall_figure_pdf)
+    seen = []
+
+    def gen(_key, text, *_a, base_code="", **_k):
+        seen.append((text, base_code))
+        return base_code, "gemini-y"   # 글은 그대로 — 표시가 결과까지 이어지는지만 본다
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.text_to_flow.generate_flow", side_effect=gen):
+        st.bar.line.setText("논문 그림을 가운데 배치하고 중학생 독자를 대상으로 다시 작성해줘")
+        st.bar.line.returnPressed.emit()
+        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not st)
+    text, base = seen[0]
+    assert "중학생" in text and pb.parse_board(base)["_figure"] == "big"
+    new = w._ai_staged
+    assert [it for it in new.items if isinstance(it, _ImageItem)][0].rect().height() > 300
+    cap = new.bar.info.text()
+    assert "gemini-y" in cap and "논문 그림을" in cap and "초" in cap   # 막대 앞 「지시 · 모델 · 초」
+    assert "중학생" in new.bar.info.toolTip()                          # 전체 지시는 툴팁
+    assert "gemini-x" in st.request.entry.title() and "gemini-y" in new.request.entry.title()   # 기록 메뉴에도 모델
+    _close(w)
+
+
+def test_refine_keeps_figure_flag_and_hides_it_from_ai():
+    spec = dict(SPEC, _figure="big", _pdf="C:/secret/paper.pdf")
+    code = json.dumps(spec, ensure_ascii=False)
+    prompt = pb.build_refine_prompt("중학생용으로", code)
+    assert "_figure" not in prompt and "secret" not in prompt and "모든 글 칸" in prompt
+    with _patch("easycad.ai.gateway.call_text_with_fallback", return_value=GatewayResult(SPEC_TEXT, "m", None, 0.1)):
+        out, _m = pb.refine_board("k", "중학생용으로", code, model="m")
+    assert pb.parse_board(out)["_figure"] == "big"

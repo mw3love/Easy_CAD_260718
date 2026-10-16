@@ -9,6 +9,7 @@ import io
 import math
 import os
 import struct
+import time
 import uuid
 
 from PyQt6.QtCore import (
@@ -208,6 +209,7 @@ class _AnnotatorView(QGraphicsView):
         # 세운 아이템들(그 목록 그대로 되돌린다). 자세한 근거는 `_ensure_drag_proxy` 참조.
         self._drag_proxy = None
         self._drag_proxy_set = frozenset()
+        self._last_full_paint_ms = 0.0   # [우리 확장 2026-10-16] 직전 화면 전체 그리기 시간 — `_DRAG_PROXY_SLOW_MS` 참조
         # [성능 후속 2026-08-24 v2] 순수 팬/줌(아이템은 안 움직이고 뷰 변환만 바뀌는 세션)은
         # 외곽선을 한 번만 지어 재사용 — None이면 매 프레임 라이브 재스캔(기존 동작, 진짜
         # 아이템 드래그용), (outline, labels) 튜플이면 캐시 재생. `_ensure_drag_proxy` 참조.
@@ -834,6 +836,10 @@ class _AnnotatorView(QGraphicsView):
     # (씬 전체 프록시는 -53~-61%). 그래서 대상은 씬 전체다.
 
     _DRAG_PROXY_MIN_ITEMS = 200   # 이보다 작은 씬은 이미 60fps 예산 안 — 화면을 바꿀 이유가 없다
+    # [우리 확장 2026-10-16] 개수만으론 부족하다 — 한 장 보드 3장(246개)만 넣어도 켜져 끌 때마다 색이 빠졌다(사용자 보고).
+    # 실측(실제 창 1900×1000): 보드 3장 전체 보기 ~30ms, 1:1 ~13ms / 이 장치를 만든 1000개 문서는 74ms. 그래서 직전 화면을
+    # 이보다 오래 그렸을 때만 켠다(`paintEvent`가 잰다) — 그 아래는 조금 덜 매끄러워도 색 그대로가 낫다.
+    _DRAG_PROXY_SLOW_MS = 45.0
     _DRAG_PROXY_MIN_TEXT_PX = 6.0   # 이보다 작게 렌더될 라벨 글자는 못 읽으므로 안 그린다
 
     def _is_panning(self) -> bool:
@@ -914,7 +920,7 @@ class _AnnotatorView(QGraphicsView):
         if sc is None:
             return
         items = sc.items()
-        if len(items) < self._DRAG_PROXY_MIN_ITEMS:
+        if len(items) < self._DRAG_PROXY_MIN_ITEMS or self._last_full_paint_ms < self._DRAG_PROXY_SLOW_MS:
             return
         flag = QGraphicsItem.GraphicsItemFlag.ItemHasNoContents
         # 원래부터 이 플래그를 갖고 있던 아이템은 건드리지 않는다 — 우리가 세운 것만
@@ -2524,6 +2530,18 @@ class _AnnotatorView(QGraphicsView):
             self._table_col_add = None
             self.viewport().update()
         super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        """[우리 확장 2026-10-16] 화면을 거의 다 다시 그린 시간을 잰다 — 드래그 프록시를 켤지 정하는 근거(`_DRAG_PROXY_SLOW_MS`).
+        프록시 중엔 외곽선만 그려 빠르므로 재지 않는다(재면 다음 드래그에 색 그대로로 돌아갔다 다시 느려짐을 되풀이)."""
+        if self._drag_proxy is not None:
+            return super().paintEvent(event)
+        t0 = time.perf_counter()
+        super().paintEvent(event)
+        vp = self.viewport().rect()
+        r = event.rect()
+        if r.width() * r.height() * 2 >= vp.width() * vp.height():   # 호버 같은 작은 조각 다시 그리기는 빼고
+            self._last_full_paint_ms = (time.perf_counter() - t0) * 1000.0
 
     def drawBackground(self, painter, rect):
         """[그리드/스냅투그리드] 점 격자 — 씬 단위 고정 간격, 화면 밀도가 너무 촘촘해지면

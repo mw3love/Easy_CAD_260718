@@ -2132,6 +2132,8 @@ def test_box_handles_cache_matches_type():
 def _big_scene(w, n=None):
     """프록시 게이트(`_DRAG_PROXY_MIN_ITEMS`)를 넘기는 최소 규모 씬."""
     n = n or (w._view._DRAG_PROXY_MIN_ITEMS + 10)
+    # 2026-10-16부터 프록시는 "느린 화면"에서만 켜진다 — 이 테스트들은 프록시 자체를 보므로 시간 문턱을 없앤다.
+    w._view._DRAG_PROXY_SLOW_MS = 0.0
     rects = []
     for i in range(n):
         # ⚠ 도형을 충분히 크게 만든다 — 작으면 중심을 눌러도 테두리 접속점 margin에 걸려
@@ -2247,6 +2249,26 @@ def test_drag_proxy_not_armed_for_small_scene():
     assert v.is_drag_session() is True, "테스트 전제: 드래그 세션은 켜져 있어야 한다"
     assert v._drag_proxy is None, "작은 씬인데 프록시가 켜졌다"
     release(target + QPointF(10, 8))
+
+
+def test_drag_proxy_not_armed_when_paint_is_fast():
+    """[2026-10-16] 아이템이 200개를 넘어도 직전 화면을 빨리 그렸으면 켜지지 않는다 — 한 장 보드 3장(246개)만 넣어도
+    끌 때마다 색이 빠지던 것(사용자 보고). 느렸으면(문턱 이상) 그대로 켜진다."""
+    w = CanvasWindow()
+    w.show()
+    _big_scene(w)
+    v = w._view
+    v._DRAG_PROXY_SLOW_MS = 45.0
+    v._move_active = True
+    v._last_full_paint_ms = 20.0
+    v._ensure_drag_proxy()
+    assert v._drag_proxy is None, "빨리 그리는 화면인데 프록시가 켜졌다(색이 빠진다)"
+    v._last_full_paint_ms = 60.0
+    v._ensure_drag_proxy()
+    assert v._drag_proxy is not None, "느린 화면인데 프록시가 안 켜졌다"
+    v._end_drag_proxy()
+    v._move_active = False
+    _drain_and_close(w)
 
 
 def test_drag_proxy_restored_on_early_return_release_path():

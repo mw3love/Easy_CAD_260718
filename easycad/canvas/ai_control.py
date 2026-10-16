@@ -121,6 +121,8 @@ class AIRequest:
     followup_of: object = field(default=None, repr=False)   # 이어 만든 바탕 임시 결과(_StagedResult)
     pdf_path: str = ""                                # 「풀어 그리기」의 PDF(§8 항목45)
     sources: list = None                              # 여러 자료 A·B·C(§8 항목53 4단계) — [{"label","kind","name","path","image"}]
+    model_used: str = ""                              # 실제로 답한 모델(폴백이면 고른 것과 다름) — 결과 막대에 보인다(2026-10-16)
+    elapsed: float = 0.0                              # 보내고 답을 받기까지 초
 
 
 class _RequestRecord(QObject):
@@ -154,7 +156,8 @@ class _RequestRecord(QObject):
             body = "[이어서] " + (req.text or "다듬기")
         if len(body) > 28:
             body = body[:27] + "…"
-        return f"{KIND_LABEL.get(req.kind, req.kind)} · {body}" if body else KIND_LABEL.get(req.kind, req.kind)
+        head = f"{KIND_LABEL.get(req.kind, req.kind)} · {body}" if body else KIND_LABEL.get(req.kind, req.kind)
+        return f"{head} · {req.model_used}" if req.model_used else head
 
 
 class _AIController(QObject):

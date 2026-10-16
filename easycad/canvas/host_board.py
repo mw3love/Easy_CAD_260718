@@ -328,7 +328,8 @@ class _BoardMixin:
                 s1["_note"] = (f"생략(한 장으로): {' · '.join(names)}{tail}" if one
                                else f"→ 2장에 이어서: {' · '.join(names)}")
             res, bw = self._pb_fit(s1)
-            left = [k for k in self._PB_MOVE_ORDER if k not in moved and self._pb_has(spec, k)]
+            left = [k for k in self._PB_MOVE_ORDER if k not in moved and self._pb_has(spec, k)
+                    and not (k == "figure" and spec.get("_figure") == "big")]   # 「그림 크게」면 그림은 1장에 남긴다(사용자가 고른 것)
             if bw <= self.BOARD_MAX_W or not left:
                 break
             self._pb_discard(res[4])
@@ -452,6 +453,8 @@ class _BoardMixin:
             self._pb_card_under(added, start, right_x, ry, side_w, yy - ry + 8)
             ry = yy + 8
         top = max(left_bottom, ry) + 32.0
+        fig = spec.get("figure")
+        big_fig = bool(fig) and spec.get("_figure") == "big"
 
         # ── 가운데: 핵심 개념 | 어떻게 작동하나 | 결과
         cx, fx, rx = x0, x0 + concept_w + G, x0 + concept_w + G + mid_w + G
@@ -523,8 +526,21 @@ class _BoardMixin:
         bw3 = content_w - bw1 - bw2 - 2 * G
         bx1, bx2, bx3 = x0, x0 + bw1 + G, x0 + bw1 + G + bw2 + G
         bottom = y
-        fig = spec.get("figure")
-        if fig:
+        if big_fig:
+            # 「그림 크게·가운데」(2026-10-16 사용자 요청) — 아래 줄 가운데 칸(용어 | 그림 | 의의와 한계)에, 보드가 1장 폭 바닥
+            # (`BOARD_MAX_W`)을 넘지 않는 데까지 크게. 맨 위 큰 띠로 놓아 봤더니 실제 길이 내용에선 나머지 칸이 전부 2장으로 밀렸다.
+            pm = self._pb_figure_source(spec, fig)
+            fh = max(240.0, self.BOARD_MAX_W / BOARD_ASPECT - 48.0 - y - 60.0)   # 60 = 칸 제목·설명 자리
+            colw = 560.0 * k
+            if pm is not None and not pm.isNull():
+                colw = min(max(pm.width() * fh / pm.height(), 320.0), 900.0 * k)
+            side = (content_w - colw - 2 * G) / 2.0
+            bx2, bw2 = x0, side
+            bx1, bw1 = x0 + side + G, colw
+            bx3, bw3 = x0 + side + G + colw + G, content_w - side - colw - 2 * G
+            limit = self.BOARD_MAX_W / BOARD_ASPECT - 48.0 - 4.0   # 그림 아래 끝 상한(4 = 반올림 여유)
+            bottom = max(bottom, self._pb_big_figure(added, fig, pm, bx1, y, bw1, limit))
+        if fig and not big_fig:
             where = f"{fig['source']} p.{fig['page']}" if fig.get("source") else f"p.{fig['page']}"
             fy2 = y + self._pb_heading(added, "논문 속 그림", where, bx1, y, bw1) + 6
             if fig["caption"]:
@@ -563,6 +579,26 @@ class _BoardMixin:
             bottom = max(bottom, vy)
 
         return content_w + 2 * M, bottom + 48.0, n_steps, n_arrows, added
+
+    def _pb_big_figure(self, added, fig, pm, x, y, w, limit):
+        """「그림 크게」 — 칸(x, w) 가운데에 제목·설명·그림을, 그림 아래 끝이 `limit`(보드 안 y)을 넘지 않게(최소 높이 240).
+        설명 글은 좁은 칸에서 여러 줄이 되므로 높이는 글을 놓은 뒤에 정한다. 반환 아래 끝 y."""
+        from easycad.canvas.annotator_core import _ImageItem
+        where = f"{fig['source']} p.{fig['page']}" if fig.get("source") else f"p.{fig['page']}"
+        y += self._pb_heading(added, "논문 속 그림", where, x, y, w) + 6
+        if fig["caption"]:
+            _t, h = self._pb_text(added, fig["caption"], x, y, w, 10, self._PB_MUTED)
+            y += h + 4
+        if pm is None or pm.isNull():
+            _t, h = self._pb_text(added, f"[논문 그림 자리 — 원문 p.{fig['page']}]", x, y, w, 10, self._PB_MUTED)
+            return y + h
+        s = min(w / pm.width(), max(240.0, limit - y) / pm.height())
+        img = _ImageItem(pm, QRectF(0.0, 0.0, pm.width() * s, pm.height() * s))
+        img.setPos(x + (w - pm.width() * s) / 2.0, y)
+        img.setFlags(img.GraphicsItemFlag.ItemIsMovable | img.GraphicsItemFlag.ItemIsSelectable)
+        self._scene.addItem(img)
+        added.append(img)
+        return y + pm.height() * s
 
     def _pb_place(self, need_w, need_h, n_steps, n_arrows, added, center, push=True):
         """보드 틀(16:9)을 만들고 칸들을 보드 가운데로 옮긴다. `push`면 한 번의 되돌리기로 기록하고 흐름도 모양으로 돌려주고,

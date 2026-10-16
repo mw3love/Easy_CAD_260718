@@ -67,6 +67,8 @@ _REFINE_TEMPLATE = """아래는 논문 「한 장 보드」의 내용 설계서�
 
 규칙:
 - 지시와 관계없는 칸은 그대로 둘 것. 원문을 다시 볼 수 없으니 새 숫자·사실을 지어내지 말 것(필요하면 "논문 밖 맥락"으로 표시).
+- 배치·위치·크기(「그림을 가운데」 등)는 앱이 맡으니 무시하고, 글 내용에 대한 지시만 따를 것.
+- 독자·말투를 바꾸라는 지시(예: 중학생용으로)면 모든 글 칸(요약·개념·단계·결과 설명·용어·의의와 한계)을 그 독자에 맞게 다시 쓸 것.
 - 고친 전체 설계서를 같은 형식으로 출력하라.
 
 {format}
@@ -241,6 +243,8 @@ def parse_board(raw: str) -> dict:
         out["_pdf"] = s(d.get("_pdf"))
     if d.get("_pages") in ("one", "auto"):   # 결과 막대 「한 장으로」(앱이 붙임, §8 항목53 4단계)
         out["_pages"] = d["_pages"]
+    if d.get("_figure") in ("big", "small"):   # 결과 막대 「그림 크게」(앱이 붙임, 2026-10-16)
+        out["_figure"] = d["_figure"]
     if isinstance(d.get("_sources"), dict):   # 여러 자료 목록(앱이 붙임)
         out["_sources"] = d["_sources"]
     return out
@@ -260,6 +264,7 @@ def build_refine_prompt(instruction: str, code: str) -> str:
     spec = parse_board(code)
     spec.pop("_pdf", None)
     spec.pop("_pages", None)
+    spec.pop("_figure", None)
     spec.pop("_sources", None)   # 파일 경로가 든 목록 — AI에 안 보냄   # 이 PC의 파일 경로는 AI에 보내지 않는다
     return _REFINE_TEMPLATE.format(code=dump_board(spec), instruction=instruction.strip(), format=_FORMAT.format())
 
@@ -299,7 +304,7 @@ def refine_board(api_key: str, instruction: str, code: str, *, model: str, base_
     res = gw.call_text_with_fallback(api_key, build_refine_prompt(instruction, code), model=model, base_url=base_url,
                                      timeout=120.0)
     spec = parse_board(res.content)
-    for k in ("_pdf", "_pages", "_sources"):   # 앱이 붙인 칸은 이어 붙인다
+    for k in ("_pdf", "_pages", "_figure", "_sources"):   # 앱이 붙인 칸은 이어 붙인다
         if old.get(k):
             spec[k] = old[k]
     return dump_board(spec), res.model_used

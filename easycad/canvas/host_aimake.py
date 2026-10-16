@@ -58,10 +58,24 @@ FLOW_DIRECTION_WORDS = (("아래에서 위", "BT"), ("오른쪽에서 왼쪽", "
 # 결과 막대 한 줄로 종류 바꾸기 — "심볼로 바꿔 줘" 같은 말.
 KIND_SWITCH_WORDS = (("심볼로", "symbol"), ("아이콘으로", "symbol"), ("흐름도로", "flow"), ("순서도로", "flow"),
                      ("베끼기로", "trace"), ("그대로 베껴", "trace"))
+
+
+def _figure_word(text: str):
+    """한 장 보드 막대의 「그림 크게·그림을 가운데」 → "big", 「그림 작게·그림 원래대로」 → "small", 아니면 None(2026-10-16)."""
+    if "그림" not in text:
+        return None
+    if any(w in text for w in ("작게", "원래", "아래로")):
+        return "small"
+    if any(w in text for w in ("크게", "가운데", "중앙", "키워")):
+        return "big"
+    return None
+
+
 # 결과 막대 한 줄의 돌아가는 예시(시안 ② — "마법의 칠판").
 BAR_EXAMPLES = {
     "flow": ("예: 감시장치를 아래로, 전원부도 추가해 줘", "예: 세로로", "예: 더 자세하게", "예: 심볼로 바꿔 줘"),
-    "explain": ("예: 개념 카드를 더 쉽게", "예: 한 장으로", "예: 결과에 학습 시간도 넣어 줘", "예: 의의와 한계를 짧게"),   # §8 항목53 한 장 보드
+    "explain": ("예: 개념 카드를 더 쉽게", "예: 한 장으로", "예: 결과에 학습 시간도 넣어 줘", "예: 의의와 한계를 짧게",
+                "예: 그림 크게"),   # §8 항목53 한 장 보드
     "symbol": ("예: 선을 더 단순하게", "예: 고른 두 개를 섞어서", "예: 흐름도로 바꿔 줘"),
     "trace": ("예: 표 칸이 빠졌어요 — 「부분 다시」로 고른 곳을", "예: 글자가 틀렸어요"),
 }
@@ -252,7 +266,7 @@ class _StagingBar(QFrame):
     """임시 결과 바로 위에 뜨는 막대 — 「채택 … 버리기」 공통, 가운데는 종류별 조절(extras) + 입력 한 줄 + 기록(§8 항목51)."""
 
     def __init__(self, parent, on_accept, on_retry, on_discard, extras=(), discard_text="버리기",
-                 on_line=None, examples=(), history_menu=None):
+                 on_line=None, examples=(), history_menu=None, request=None):
         super().__init__(parent)
         self.setObjectName("aiStagingBar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -262,6 +276,9 @@ class _StagingBar(QFrame):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(6, 4, 6, 4)
         lay.setSpacing(5)
+        self.info = _ai_info_label(self, request)
+        if self.info is not None:
+            lay.addWidget(self.info)
         self.accept_btn = self._btn("채택", on_accept, coral=True, icon="ai_check")
         lay.addWidget(self.accept_btn)
         for w in extras:
@@ -375,6 +392,58 @@ def _icon_button(parent, text, icon, coral=False, tip=None):
     if tip:
         b.setToolTip(tip)
     return b
+
+
+def _ai_req_caption(req) -> tuple[str, str]:
+    """결과 막대 맨 앞 작은 글 — (짧은 글, 툴팁 전체 글). 「지시 앞부분」 · 실제 모델 · 몇 초. 모델을 모르면(심볼·베끼기 등) 빈 글.
+    여러 결과를 나란히 볼 때 어느 것이 어떤 말·모델로 나왔는지 가르려고(2026-10-16 사용자 요청)."""
+    used = getattr(req, "model_used", "") if req is not None else ""
+    if not used:
+        return "", ""
+    text = (req.text or "").strip()
+    if not text and getattr(req, "image_name", ""):
+        text = req.image_name
+    follow = bool(getattr(req, "base_code", "") or getattr(req, "refs", None))
+    sec = f"{getattr(req, 'elapsed', 0.0):.0f}초"
+    short = text if len(text) <= 16 else text[:15] + "…"
+    parts = [f"「{short}」"] if short else []
+    caption = " · ".join(parts + [used, sec])
+    tip = "\n".join(filter(None, [("이어서 고친 말: " if follow else "요청: ") + text if text else "",
+                                  f"모델: {used}" + ("" if used == req.model else f" (고른 모델 {req.model}이 안 돼 바꿈)"),
+                                  f"걸린 시간: {sec}"]))
+    return caption, tip
+
+
+def _ai_info_label(parent, req):
+    caption, tip = _ai_req_caption(req)
+    if not caption:
+        return None
+    lbl = QLabel(caption, parent)
+    lbl.setObjectName("aiBarInfo")
+    lbl.setToolTip(tip)
+    lbl.setStyleSheet("color:#8a96a3; font-size:11px; padding:0 4px;")   # 두 테마 모두에서 읽히는 옅은 회색
+    return lbl
+
+
+def _board_diff_items(items, other_items) -> list:
+    """한 장 보드 비교 — `items`의 글 칸 가운데 `other_items`에 똑같은 글이 없는 것(줄바꿈은 무시: 같은 글도 칸 폭이 달라지면
+    줄이 달리 나뉜다). 칸 제목·쪽 번호처럼 양쪽에 같은 글은 빠진다."""
+    from collections import Counter
+
+    def key(it):
+        f = getattr(it, "toPlainText", None)
+        return "".join(f().split()) if f is not None else None   # 빈칸·줄바꿈 모두 빼고 — 줄은 글자 사이에서도 나뉜다
+    left = Counter(k for k in map(key, other_items) if k)
+    out = []
+    for it in items:
+        k = key(it)
+        if not k:
+            continue
+        if left[k] > 0:
+            left[k] -= 1
+        else:
+            out.append(it)
+    return out
 
 
 def _flow_diff_items(code, other_code, items) -> list:
@@ -847,9 +916,11 @@ class _AIMakeMixin:
 
     # ---- 흐름도 ------------------------------------------------------------------
 
-    def _on_flow_generated(self, code, _used_model):
+    def _on_flow_generated(self, code, used_model):
         job = self._ai_job_of_sender()
         if job is not None:
+            job.request.model_used = used_model or job.request.model   # 결과 막대에 「모델 · 몇 초」(2026-10-16 사용자 요청)
+            job.request.elapsed = time.monotonic() - job.t0
             self._ai_place_flow(job.request, code)
 
     def _ai_place_flow(self, req, code, alt=None):
@@ -943,8 +1014,15 @@ class _AIMakeMixin:
         alt = st.alt
         old_code = getattr(alt.request, "result_text", "")
         new_code = st.request.result_text
-        st.marks = _flow_diff_items(new_code, old_code, [it for it in st.items if it.scene() is not None])
-        st.alt_marks = _flow_diff_items(old_code, new_code, [it for it in alt.items if it.scene() is not None])
+        new_items = [it for it in st.items if it.scene() is not None]
+        old_items = [it for it in alt.items if it.scene() is not None]
+        from easycad.ai.pdf_to_board import is_board_spec
+        if is_board_spec(new_code) and is_board_spec(old_code):
+            # [2026-10-16] 보드는 배치가 늘 같아 멀리서 보면 바뀐 게 안 보였다(사용자 "내용이 안 바뀐다") — 글이 달라진 칸을 표시
+            st.marks, st.alt_marks = _board_diff_items(new_items, old_items), _board_diff_items(old_items, new_items)
+            return
+        st.marks = _flow_diff_items(new_code, old_code, new_items)
+        st.alt_marks = _flow_diff_items(old_code, new_code, old_items)
 
     def _ai_make_alt_bar(self, st):
         """원본 위 막대 — 「원본」 이름표 + 새 결과 막대와 같은 조절(방향·이어 고치기는 원본 쪽에 걸린다)."""
@@ -962,6 +1040,9 @@ class _AIMakeMixin:
         lbl = QLabel("원본", bar)
         lbl.setStyleSheet("font-weight:600; padding:0 4px;")
         lay.addWidget(lbl)
+        info = _ai_info_label(bar, st.alt.request)
+        if info is not None:
+            lay.addWidget(info)
         pick = _icon_button(bar, "이걸로", "ai_check", tip="원본을 쓰고 새 결과는 버리기")
         pick.clicked.connect(self._ai_choose_original)
         lay.addWidget(pick)
@@ -1192,6 +1273,11 @@ class _AIMakeMixin:
                 if line is not None:
                     line.clear()
                 return self._ai_board_pages(pages)
+            fig = _figure_word(text)
+            if fig is not None:   # 「그림 크게」 — 배치는 앱 몫이라 AI 없이 다시 배치(2026-10-16)
+                if line is not None:
+                    line.clear()
+                return self._ai_board_flag("_figure", fig)
         if kind in _FLOW_KINDS:
             alt = alt and st.alt is not None
             tok = self._ai_direction_word(text)
@@ -1209,6 +1295,12 @@ class _AIMakeMixin:
                 n = f"단계 {len(parse_spec(code).steps)}개" if looks_like_spec(code) and not is_board_spec(code) else                     f"{sum(1 for ln in code.splitlines()[1:] if ln.strip())}줄"
             except FlowSpecError:
                 n = "?"
+            fig = _figure_word(text) if is_board_spec(code) else None
+            if fig is not None:   # 긴 지시에 「그림을 가운데」가 섞여 있으면 배치는 앱이 — 바탕 설계서에 표시해 결과에 이어진다
+                from easycad.ai.pdf_to_board import dump_board, parse_board
+                spec = parse_board(code)
+                spec["_figure"] = fig
+                code = dump_board(spec)
             what = "보드" if is_board_spec(code) else "흐름도"
             label = f"원본 {what}" if alt else f"지금 {what}"
             if what == "흐름도":
@@ -1237,6 +1329,14 @@ class _AIMakeMixin:
 
     def _ai_board_pages(self, mode: str):
         """한 장 보드 「한 장으로」(넘치는 칸은 빼고 「생략 — 원문 p.N」) / 「나눠서」(넘치면 2장) — 설계서의 `_pages`만 바꿔 다시 그린다."""
+        return self._ai_board_flag("_pages", mode)
+
+    _BOARD_FLAG_SAME = {("_pages", "one"): "이미 한 장이에요", ("_pages", "auto"): "이미 넘치면 나눠요",
+                        ("_figure", "big"): "이미 그림이 크게 있어요", ("_figure", "small"): "이미 그림이 아래 칸에 있어요"}
+    _BOARD_FLAG_DEFAULT = {"_pages": "auto", "_figure": "small"}
+
+    def _ai_board_flag(self, key: str, value: str):
+        """한 장 보드 배치 표시(`_pages`·`_figure`)만 바꿔 AI 없이 다시 그린다."""
         from easycad.ai.pdf_to_board import dump_board, parse_board
         st = self._ai_staged
         code = getattr(st.request, "result_text", "") if st is not None else ""
@@ -1244,10 +1344,10 @@ class _AIMakeMixin:
             spec = parse_board(code)
         except ValueError:
             return None
-        if spec.get("_pages", "auto") == mode:
-            self._on_ai_notice("이미 한 장이에요" if mode == "one" else "이미 넘치면 나눠요")
+        if spec.get(key, self._BOARD_FLAG_DEFAULT[key]) == value:
+            self._on_ai_notice(self._BOARD_FLAG_SAME[(key, value)])
             return None
-        spec["_pages"] = mode
+        spec[key] = value
         return self._ai_replace_flow(dump_board(spec))
 
     def _ai_switch_kind(self, st, kind: str):
@@ -1307,7 +1407,8 @@ class _AIMakeMixin:
         view = self._view
         st = _StagedResult(doc=self._active_doc, items=items, undo_entry=self._undo[-1], request=req)
         st.bar = _StagingBar(view.viewport(), self._ai_accept_staged, self._ai_retry_staged if retry else None,
-                             self._ai_discard_staged, extras, **self._ai_bar_kwargs(req.kind if req is not None else ""))
+                             self._ai_discard_staged, extras, request=req,
+                             **self._ai_bar_kwargs(req.kind if req is not None else ""))
         self._ai_staged = st
         self._sync_start_prompt()   # 빈 도면 칸은 결과가 놓이는 순간 걷는다
         if req is not None and getattr(req, "entry", None) is not None:
