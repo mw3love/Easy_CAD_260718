@@ -34,7 +34,7 @@ EXAMPLES = (
     ("휴가 신청 결재 흐름도", "휴가 신청부터 결재까지 흐름도를 그려줘", None),
     ("카메라 아이콘", "방송용 카메라 아이콘", None),
     ("손그림 사진 베끼기", "", "trace"),
-    ("논문 PDF 풀어 그리기", "", "explain"),
+    ("논문 PDF → 한 장 보드", "", "explain"),
 )
 _DEFAULT_PLACEHOLDER = "예: 휴가 신청부터 결재까지 흐름도를 그려줘"
 
@@ -364,7 +364,7 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         if kind == "explain":
             pdf = self._attached_pdf
             if not pdf:
-                self._show_notice("풀어 그리기는 PDF가 필요해요. PDF를 끌어다 놓거나 + 로 골라 주세요.")
+                self._show_notice("한 장 보드는 PDF가 필요해요. PDF를 끌어다 놓거나 + 로 골라 주세요.")
                 return None
             self._reset_input()
             self.submitted.emit(kind, text, pdf, os.path.basename(pdf))

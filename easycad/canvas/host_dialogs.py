@@ -854,7 +854,7 @@ class _StepsGenWorker(QThread):
 
 
 class _ExplainGenWorker(QThread):
-    """「풀어 그리기」(§8 항목45) — PDF → 설명 흐름도 1회(긴 문서는 안에서 나눠 요약). 결과 모양은 `_MermaidGenWorker`와 같아
+    """논문 PDF → 「한 장 보드」 설계서(§8 항목53, 옛 「풀어 그리기」 §8 항목45 자리). 결과 모양은 `_MermaidGenWorker`와 같아
     호스트가 흐름도와 같은 수신자(`_on_flow_generated`)로 받는다."""
 
     succeeded = pyqtSignal(str, str)   # (mermaid 텍스트, 실제 사용된 모델)
@@ -870,9 +870,9 @@ class _ExplainGenWorker(QThread):
 
     def run(self):
         try:
-            from easycad.ai.pdf_to_mermaid import generate_explain
-            text, used = generate_explain(self._api_key, self._pdf_path, self._note, model=self._model,
-                                          base_url=self._base_url)
+            from easycad.ai.pdf_to_board import generate_board   # §8 항목53 — 흐름도 하나 대신 한 장 보드
+            text, used = generate_board(self._api_key, self._pdf_path, self._note, model=self._model,
+                                        base_url=self._base_url)
         except Exception as e:  # noqa: BLE001 — 실패 사유(글자 없는 PDF 등)를 그대로 기록 칸에
             self.failed.emit(str(e))
             return

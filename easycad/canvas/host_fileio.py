@@ -1629,7 +1629,7 @@ class _FileIOMixin:
                 return kind, ref
         return None
 
-    def _flow_box_sizes(self, spec):
+    def _flow_box_sizes(self, spec, label_pt=None):
         """단계마다 상자 크기 — 보통 상자는 모두 같게(가장 긴 글에 맞춤), 마름모끼리 같게. 긴 글은 두 줄로(`_mermaid_wrap`)
         단계 글을 고친다. 반환: {단계 id: (w, h)}."""
         from PyQt6.QtGui import QFont, QFontMetricsF
@@ -1637,9 +1637,9 @@ class _FileIOMixin:
         lbl = probe.ensure_label()
         margin = 2 * lbl.document().documentMargin()
         base = QFont(lbl.font())
-        base.setPointSize(max(self._FLOW_LABEL_PT, int(getattr(lbl, "_base_pt", base.pointSize() or 16))))
+        base.setPointSize(max((label_pt or self._FLOW_LABEL_PT), int(getattr(lbl, "_base_pt", base.pointSize() or 16))))
         small = QFont(lbl.font())
-        small.setPointSize(self._FLOW_LABEL_PT)
+        small.setPointSize((label_pt or self._FLOW_LABEL_PT))
         fm = QFontMetricsF(small)
         line_h = QFontMetricsF(base).lineSpacing()
         groups = {"box": [], "decision": []}
@@ -1673,13 +1673,17 @@ class _FileIOMixin:
         return out
 
     def _build_flow_items(self, text, center=None):
-        """AI 흐름도 결과 글 → 도형. 설계서(JSON)면 새 규칙(`_build_flowspec_items`), 아니면 Mermaid(가져오기·「풀어 그리기」)."""
+        """AI 흐름도 결과 글 → 도형. 논문 보드 설계서면 보드(§8 항목53, `_build_paper_board`), 흐름도 설계서(JSON)면 새 규칙
+        (`_build_flowspec_items`), 아니면 Mermaid(가져오기)."""
         from easycad.fileio.flow_spec import looks_like_spec
+        from easycad.ai.pdf_to_board import is_board_spec
+        if is_board_spec(text):
+            return self._build_paper_board(text, center)
         if looks_like_spec(text):
             return self._build_flowspec_items(text, center)
         return self._build_mermaid_items(text, center)
 
-    def _build_flowspec_items(self, text, center=None):
+    def _build_flowspec_items(self, text, center=None, push_undo=True, compact=False):
         """설계서 → 띠·이름표·상자·아이콘·화살표를 `center`(없으면 화면 가운데)에 놓는다(한 번의 undo). 반환 모양은
         `_build_mermaid_items`와 같다: (단계 수, 화살표 수, 방향, 넣은 아이템). 못 읽으면 FlowSpecError.
         상자·화살표엔 `_flow_key`(이어 고친 결과와 비교할 열쇠 — `flow_spec.all_keys`와 같은 값)를 단다."""
@@ -1692,7 +1696,7 @@ class _FileIOMixin:
         spec = parse_spec(text)
         keys = step_keys(spec)   # 비교 열쇠는 원래 글로 — 아래 크기 재기가 긴 글을 두 줄로 고친다
         lkeys = [link_key(spec, k) for k in spec.links]
-        sizes = self._flow_box_sizes(spec)
+        sizes = self._flow_box_sizes(spec, label_pt=10 if compact else None)   # 보드 안은 글자 한 단계 작게
         head_font = QFont(_TextItem(QColor("black")).font())
         head_font.setPointSize(self._FLOW_HEAD_PT)
         from PyQt6.QtGui import QFontMetricsF
@@ -1704,7 +1708,9 @@ class _FileIOMixin:
         else:
             names = list(spec.lanes)
             head = hfm.lineSpacing() + 26.0
-        lay = layout(spec, lambda s: sizes[s.id], head=head, icon_h=self._FLOW_ICON_H)
+        # compact = 보드 안 흐름도(§8 항목53) — 간격을 좁혀 한 장에 들어가게(보드가 커지면 출력 때 글자가 작아짐)
+        gaps = dict(gap_major=40.0, gap_minor=22.0, lane_pad=14.0) if compact else {}
+        lay = layout(spec, lambda s: sizes[s.id], head=head, icon_h=self._FLOW_ICON_H, **gaps)
 
         title_h = 0.0
         if spec.title:
@@ -1849,7 +1855,8 @@ class _FileIOMixin:
                         lb._conn_t = min(0.5, 34.0 / length)
             arr._sync_label()
 
-        self.push_undo_add_many(added)
+        if push_undo:   # 보드 안 흐름도(§8 항목53)는 보드가 한 칸으로 묶어 기록한다
+            self.push_undo_add_many(added)
         self._scene.clearSelection()
         return len(items_by_id), len(arrows), spec.direction, added
 

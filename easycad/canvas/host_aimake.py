@@ -61,7 +61,7 @@ KIND_SWITCH_WORDS = (("심볼로", "symbol"), ("아이콘으로", "symbol"), ("�
 # 결과 막대 한 줄의 돌아가는 예시(시안 ② — "마법의 칠판").
 BAR_EXAMPLES = {
     "flow": ("예: 감시장치를 아래로, 전원부도 추가해 줘", "예: 세로로", "예: 더 자세하게", "예: 심볼로 바꿔 줘"),
-    "explain": ("예: 결론 부분을 더 자세히", "예: 가로로", "예: 처음 보는 사람용으로 쉽게"),
+    "explain": ("예: 개념 카드를 더 쉽게", "예: 결과에 학습 시간도 넣어 줘", "예: 의의와 한계를 짧게"),   # §8 항목53 한 장 보드
     "symbol": ("예: 선을 더 단순하게", "예: 고른 두 개를 섞어서", "예: 흐름도로 바꿔 줘"),
     "trace": ("예: 표 칸이 빠졌어요 — 「부분 다시」로 고른 곳을", "예: 글자가 틀렸어요"),
 }
@@ -427,7 +427,14 @@ def _flow_diff_items(code, other_code, items) -> list:
 
 
 def _flow_code_error(code: str) -> str:
-    """흐름도 결과 글(설계서 JSON 또는 Mermaid)을 그리기 전에 검사 — 문제가 있으면 한 줄, 없으면 빈 글."""
+    """흐름도 결과 글(보드·흐름도 설계서 JSON 또는 Mermaid)을 그리기 전에 검사 — 문제가 있으면 한 줄, 없으면 빈 글."""
+    from easycad.ai.pdf_to_board import BoardSpecError, is_board_spec, parse_board
+    if is_board_spec(code):
+        try:
+            parse_board(code)
+        except BoardSpecError as ex:
+            return str(ex)
+        return ""
     if looks_like_spec(code):
         try:
             parse_spec(code)
@@ -686,7 +693,7 @@ class _AIMakeMixin:
         if req.kind == "symbol" and target is not None and target.scene() is self._scene \
                 and getattr(req, "replace_target", None) is None:
             req.replace_target = target   # 우클릭 「AI로 바꾸기」로 연 요청 — 고르면 그 도형 자리에 바뀜
-        if req.kind == "flow":   # §8 항목52 — AI는 「내용 설계서」, 배치·색은 앱(`_build_flowspec_items`)
+        if req.kind == "flow" or (req.kind == "explain" and getattr(req, "base_code", "")):   # §8 항목52·53 — 설계서, 배치·색은 앱
             self._ai_start_job(req, _FlowGenWorker, (req.text, req.model, gw.resolve_base_url(), req.image),
                                self._on_flow_generated, base_code=getattr(req, "base_code", "") or "",
                                icons=self._flow_icon_names())
@@ -912,7 +919,9 @@ class _AIMakeMixin:
         n = len(st.marks)
         if st.request.entry is not None:
             st.request.entry.set_status(
-                f"원본과 다른 곳 {n}군데 주황 표시 — 「이걸로」로 고르세요" if n else "원본과 같아요 — 「이걸로」로 고르세요",
+                f"원본과 다른 곳 {n}군데 주황 표시 — 「이걸로」로 고르세요" if n
+                else ("원본과 나란히 놓음 — 「이걸로」로 고르세요" if st.request.kind == "explain"   # 보드는 다른 곳 표시 없음
+                      else "원본과 같아요 — 「이걸로」로 고르세요"),
                 running=True)
         self._ai_ensure_visible(view, self._ai_staged_scene_rect().united(self._ai_items_rect(alt.items)))
         self._ai_place_bar()
@@ -945,7 +954,7 @@ class _AIMakeMixin:
         pick.clicked.connect(self._ai_choose_original)
         lay.addWidget(pick)
         # 원본 쪽에도 같은 입력 한 줄(피드백 6차 2회 — 원본도 방향을 바꾸거나 이어 고칠 수 있게, §8 항목51에서 버튼 → 한 줄)
-        line = _BarLine(BAR_EXAMPLES["flow"], bar)
+        line = _BarLine(BAR_EXAMPLES.get(st.alt.request.kind, BAR_EXAMPLES["flow"]), bar)
         line.setProperty("aiSide", "alt")
         line.setMinimumWidth(220)
         line.returnPressed.connect(self._ai_on_bar_line)
@@ -1177,12 +1186,17 @@ class _AIMakeMixin:
                 return None
             base = st.alt if alt else st
             code = getattr(base.request, "result_text", "")
+            from easycad.ai.pdf_to_board import is_board_spec
             try:
-                n = f"단계 {len(parse_spec(code).steps)}개" if looks_like_spec(code) else                     f"{sum(1 for ln in code.splitlines()[1:] if ln.strip())}줄"
+                n = f"단계 {len(parse_spec(code).steps)}개" if looks_like_spec(code) and not is_board_spec(code) else                     f"{sum(1 for ln in code.splitlines()[1:] if ln.strip())}줄"
             except FlowSpecError:
                 n = "?"
-            label = f"원본 흐름도({n})" if alt else f"지금 흐름도({n})"
-            self._ai_ctrl.set_followup("flow", label, base_code=code, base=base, base_text=base.request.text)
+            what = "보드" if is_board_spec(code) else "흐름도"
+            label = f"원본 {what}" if alt else f"지금 {what}"
+            if what == "흐름도":
+                label += f"({n})"
+            # 한 장 보드(§8 항목53)는 종류를 "explain"으로 이어 간다 — 막대 예시·알약 이름이 보드 것으로 남게
+            self._ai_ctrl.set_followup(kind, label, base_code=code, base=base, base_text=base.request.text)
         elif kind == "symbol" and st.slots is not None:
             idx = sorted(st.picked)[:4]
             refs = [st.cands[i].svg for i in idx]

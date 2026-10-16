@@ -1,4 +1,7 @@
-"""논문·보고서 PDF → 핵심을 풀어 그린 Mermaid flowchart(§8 항목45, 2026-10-16) — AI 패널 「풀어 그리기」.
+"""논문·보고서 PDF 읽기 — 쪽 글 뽑기·긴 문서 나눠 요약(§8 항목45, 2026-10-16).
+
+[§8 항목53, 2026-10-16] 이 파일의 흐름도 그리기(옛 「풀어 그리기」 — PDF → Mermaid 하나)는 「한 장 보드」(`pdf_to_board.py`)로
+바뀌어 지웠다. 아래 옛 설명 중 그리기 부분은 경위 기록으로만 남는다.
 
 처음 보는 사람이 문서의 핵심을 한눈에 보게 하는 "설명 그림". 상자마다 원문 쪽 번호(`· p.N`)를 붙여 AI 요약을 원문과
 대조할 수 있게 한다(AI 요약은 틀릴 수 있음 — 다잡기 2026-10-16). 결과는 흐름도와 같은 Mermaid라 캔버스 임시 결과·이어
@@ -14,7 +17,6 @@ from __future__ import annotations
 import re
 
 from easycad.ai import gateway as gw
-from easycad.ai.text_to_mermaid import extract_mermaid
 
 # 한 번에 보낼 본문 상한(글자). 넘으면 쪽 묶음별 요약 후 그린다. 160쪽 세미나 자료가 5.6만 자(2026-10-16 실측) — 한 번에 가는 크기.
 SINGLE_PASS_CHARS = 90_000
@@ -69,60 +71,5 @@ _SUMMARY_TEMPLATE = """다음은 PDF 문서의 일부다(각 줄 앞 [p.N]은 �
 {body}
 """
 
-_EXPLAIN_TEMPLATE = """다음은 PDF 문서의 내용이다({kind_note}, 각 줄 앞 [p.N]은 원문 쪽 번호).
-이 문서를 처음 보는 사람이 핵심을 한눈에 이해하도록 Mermaid flowchart로 풀어 그려라.
-{request_line}
-그리는 순서:
-1. 먼저 문서의 핵심 주제와 중요한 개념·단계를 8~15개 고른다(머릿속으로만 — 출력하지 말 것).
-2. 그것들 사이의 관계(순서, 원인→결과, 구성·포함, 비교)를 화살표로 잇고, 관계가 분명하지 않으면 화살표에 짧은 라벨(2~6자)을 단다.
-   단, 한 노드에서 화살표가 2개 이상 갈라져 나가면 그 화살표들에는 라벨을 달지 말 것(갈래 라벨은 한 줄에 겹쳐 보임).
-
-규칙:
-- 반드시 `flowchart TD` 또는 `flowchart LR`로 시작할 것 — 단계가 차례로 이어지는 절차면 LR, 주제에서 하위 개념으로 갈라지는 구조면 TD.
-- 노드는 반드시 `ID[라벨]` 형식(ID는 영문·숫자 A, B, C…) — 라벨을 ID 자리에 바로 쓰지 말 것.
-- 노드 라벨은 짧은 한글(필요하면 영문 약어 병기) 뒤에 ` · p.N` 형식으로 근거 쪽을 붙일 것(예: `A[IP 전환 이유 · p.2]`).
-  괄호 ( ) 는 라벨 안에 쓰지 말 것.
-- 문서에 없는 내용을 지어내지 말 것.
-- subgraph·style·classDef는 쓰지 말고 노드와 화살표만 평평하게. 모든 노드는 화살표로 어딘가에 이어질 것.
-- 다른 설명 없이 Mermaid 코드만 출력하라(```mermaid 코드블록으로 감싸도 되고 안 감싸도 됨).
-
-문서:
-{body}
-"""
-
-
 def build_summary_prompt(chunk) -> str:
     return _SUMMARY_TEMPLATE.format(body=pages_to_text(chunk))
-
-
-def build_explain_prompt(body: str, note: str = "", summarized: bool = False) -> str:
-    request_line = f"사용자 요청(이 관점으로 그릴 것): {note.strip()}\n" if note.strip() else ""
-    kind_note = "쪽 묶음별 요약" if summarized else "원문에서 뽑은 글"
-    return _EXPLAIN_TEMPLATE.format(body=body, request_line=request_line, kind_note=kind_note)
-
-
-def generate_explain(api_key: str, pdf_path: str, note: str = "", *, model: str,
-                     base_url: str = gw.BASE_URL, progress=None) -> tuple[str, str]:
-    """PDF → (Mermaid 텍스트, 실제 사용된 모델). `progress(text)`가 있으면 단계마다 한 줄 알린다(긴 문서 요약 중 등).
-    실패는 예외 그대로(호출부가 기록 칸에 보여 줌). 글자가 없으면 `PdfTextError`."""
-    pages = extract_pdf_pages(pdf_path)
-    total = sum(len(t) for _n, t in pages)
-    used = model
-    if total <= SINGLE_PASS_CHARS:
-        body, summarized = pages_to_text(pages), False
-    else:
-        chunks = chunk_pages(pages)
-        parts = []
-        for i, ch in enumerate(chunks, start=1):
-            if progress:
-                progress(f"긴 문서라 나눠 읽는 중 {i}/{len(chunks)}")
-            res = gw.call_text_with_fallback(api_key, build_summary_prompt(ch), model=model, base_url=base_url,
-                                             timeout=120.0)
-            parts.append(res.content.strip())
-            used = res.model_used
-        body, summarized = "\n".join(parts), True
-    if progress:
-        progress("그리는 중")
-    res = gw.call_text_with_fallback(api_key, build_explain_prompt(body, note, summarized), model=model,
-                                     base_url=base_url, timeout=180.0)
-    return extract_mermaid(res.content), res.model_used or used

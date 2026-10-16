@@ -102,6 +102,9 @@ def generate_flow(api_key: str, description: str, *, model: str, base_url: str =
     """설명(및/또는 그림) → (설계서 JSON 글, 실제 쓴 모델). 응답은 `parse_spec`으로 한 번 읽어 다듬은 글로 돌려준다
     (못 읽으면 FlowSpecError — 호출부가 실패로 보여 준다). `base_code`가 Mermaid면(「풀어 그리기」 결과 이어 고치기) 옛 Mermaid
     지시문으로 보내고 Mermaid 글을 그대로 돌려준다."""
+    from easycad.ai.pdf_to_board import is_board_spec, refine_board
+    if is_board_spec(base_code):   # §8 항목53 — 한 장 보드 이어 고치기
+        return refine_board(api_key, description, base_code, model=model, base_url=base_url)
     if base_code.strip() and not looks_like_spec(base_code):
         from easycad.ai.text_to_mermaid import generate_mermaid
         return generate_mermaid(api_key, description, model=model, base_url=base_url, image=image, base_code=base_code)

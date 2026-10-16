@@ -1,4 +1,4 @@
-"""§8 항목45(2026-10-16) — 「풀어 그리기」: 논문·보고서 PDF → 핵심을 풀어 그린 흐름도(쪽 번호 붙음).
+"""§8 항목45(2026-10-16) — 논문 PDF 입력. §8 항목53(같은 날)부터 결과는 흐름도 하나가 아니라 「한 장 보드」(`pdf_to_board`).
 
 엔진(`pdf_to_mermaid`: 쪽 글 뽑기·긴 문서 나눠 요약·지시문)·패널(네 번째 종류·PDF 첨부)·가운데 입구(PDF면 풀어 그리기)·
 결과(흐름도와 같은 임시 결과·방향 막대).
@@ -11,10 +11,12 @@ from _shared import *  # noqa: F401,F403
 import fitz
 import pytest
 
+from easycad.ai import pdf_to_board as pb
 from easycad.ai import pdf_to_mermaid as pm
 from easycad.ai.gateway import GatewayResult
 
-_FLOW = "flowchart TD\n    A[IP 전환 이유 · p.1] -->|핵심 표준| B[ST 2110 · p.2]"
+_FLOW = ('{"kind": "paper-board", "title": "IP 전환", "one_line": "IP로 바꾸는 이유",'
+         ' "three_lines": [{"text": "선이 준다", "pages": "p.1"}]}')
 
 
 def _make_pdf(path, pages):
@@ -46,7 +48,7 @@ def _wait_until(cond, ms=5000):
 @contextmanager
 def _fake(result=_FLOW):
     with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
-            _patch("easycad.ai.pdf_to_mermaid.generate_explain", return_value=(result, "fake-model")) as gen:
+            _patch("easycad.ai.pdf_to_board.generate_board", return_value=(result, "fake-model")) as gen:
         yield gen
 
 
@@ -72,8 +74,8 @@ def test_chunk_pages_by_size():
 
 
 def test_prompt_asks_page_tags_and_user_view():
-    p = pm.build_explain_prompt("[p.1] body", note="IP 전환 이유 중심")
-    assert "· p.N" in p and "IP 전환 이유 중심" in p and "ID[라벨]" in p and "[p.1] body" in p
+    p = pb.build_board_prompt("[p.1] body", note="IP 전환 이유 중심")
+    assert '"pages"' in p and "IP 전환 이유 중심" in p and "paper-board" in p and "[p.1] body" in p
 
 
 def test_short_doc_is_one_call(sample_pdf):
@@ -81,26 +83,27 @@ def test_short_doc_is_one_call(sample_pdf):
 
     def fake(_key, prompt, **_k):
         calls.append(prompt)
-        return GatewayResult("```mermaid\n" + _FLOW + "\n```", "m1", None, 0.1)
+        return GatewayResult("```json\n" + _FLOW + "\n```", "m1", None, 0.1)
     with _patch("easycad.ai.gateway.call_text_with_fallback", side_effect=fake):
-        code, used = pm.generate_explain("k", sample_pdf, model="m1")
-    assert len(calls) == 1 and code.startswith("flowchart TD") and used == "m1"
+        code, used = pb.generate_board("k", sample_pdf, model="m1")
+    assert len(calls) == 1 and pb.is_board_spec(code) and used == "m1"
+    assert pb.parse_board(code)["_pdf"] == sample_pdf
 
 
 def test_long_doc_summarizes_chunks_first(sample_pdf, monkeypatch):
-    monkeypatch.setattr(pm, "SINGLE_PASS_CHARS", 10)
+    monkeypatch.setattr(pb, "SINGLE_PASS_CHARS", 10)
     monkeypatch.setattr(pm, "CHUNK_CHARS", 20)
     calls = []
 
     def fake(_key, prompt, **_k):
         calls.append(prompt)
-        return GatewayResult(_FLOW if "flowchart" in prompt else "- 요약 (p.1)", "m1", None, 0.1)
+        return GatewayResult(_FLOW if "paper-board" in prompt else "- 요약 (p.1)", "m1", None, 0.1)
     steps = []
     with _patch("easycad.ai.gateway.call_text_with_fallback", side_effect=fake):
-        pm.generate_explain("k", sample_pdf, model="m1", progress=steps.append)
-    assert len(calls) == 3, "쪽 묶음 2개 요약 + 그리기 1번"
+        pb.generate_board("k", sample_pdf, model="m1", progress=steps.append)
+    assert len(calls) == 3, "쪽 묶음 2개 요약 + 보드 1번"
     assert "쪽 묶음별 요약" in calls[-1] and "- 요약 (p.1)" in calls[-1]
-    assert steps[-1] == "그리는 중"
+    assert steps[-1] == "보드 정리하는 중"
 
 
 # ---- 요청(§8 항목51 — 옛 패널 자리는 관리 객체·가운데 칸) -----------------------------------------

@@ -25,7 +25,7 @@ from easycad.canvas.host_dialogs import _AIGatewaySettingsDialog, _CreditWorker,
 from easycad.canvas.photo_dialog import PHOTO_MODELS
 
 # 종류 이름(결과 기준 — 기술 이름 Mermaid·SVG를 쓰지 않음). 사용자는 고르지 않고 기록·상태 알약에만 보인다.
-KIND_LABEL = {"symbol": "심볼", "flow": "흐름도", "trace": "베끼기", "explain": "풀어 그리기"}
+KIND_LABEL = {"symbol": "심볼", "flow": "흐름도", "trace": "베끼기", "explain": "한 장 보드"}   # §8 항목53 — 옛 「풀어 그리기」
 # 메뉴·단축키로 종류를 정해 가운데 칸을 열 때의 안내글(종류 칩 대신 — §8 항목51 "종류 칩 없음").
 PLACEHOLDER = {
     "symbol": "만들 부품을 적어 주세요 — 예: 파라볼라 안테나",
@@ -313,7 +313,7 @@ class _AIController(QObject):
             if fu["kind"] in ("flow", "explain") and not text:
                 self.notice.emit("어떻게 고칠지 적어 주세요. 예: 감시장치를 아래로")
                 return None
-            req = AIRequest(kind="flow" if fu["kind"] == "explain" else fu["kind"], text=text,
+            req = AIRequest(kind=fu["kind"], text=text,   # 보드 이어 고치기도 "explain"(§8 항목53 — 바탕 설계서로 `_FlowGenWorker`)
                             model=self.model_for(fu["kind"]), count=self.symbol_count(),
                             refs=fu["refs"], base_code=fu["base_code"], base_text=fu["base_text"])
             req.followup_of = fu["base"]
@@ -325,7 +325,7 @@ class _AIController(QObject):
             kind = guess_kind(text, image is not None, bool(pdf_path))
         if kind == "explain":
             if not pdf_path:
-                self.notice.emit("풀어 그리기는 PDF가 필요해요. PDF를 끌어다 놓거나 + 로 골라 주세요.")
+                self.notice.emit("한 장 보드는 PDF가 필요해요. PDF를 끌어다 놓거나 + 로 골라 주세요.")
                 return None
             req = AIRequest(kind="explain", text=text, model=self.model_for("explain"), pdf_path=pdf_path,
                             image_name=os.path.basename(pdf_path))
