@@ -246,3 +246,30 @@ def test_pasted_image_source_kept_as_file(figure_pdf):
         assert w._board_redo(board, "다시") == "sent"
     assert [s["path"] for s in rm.call_args.kwargs["sources"]][1] == src_b["path"]
     _close(w)
+
+
+def test_many_blocks_split_into_more_pages_within_max_width():
+    """[2026-10-17 검토] 블록이 많으면 2장에서 멈추지 않고 3장 이상으로 — 전엔 2장째 폭이 `BOARD_MAX_W`의 2.5배(글자가 아주 작게 인쇄)."""
+    w = _window()
+    long = "긴 설명 문장이 이어집니다. " * 40
+    blocks = []
+    for i in range(12):
+        if i % 3 == 0:
+            b = {"type": "text", "title": f"글 {i}", "body": long}
+        elif i % 3 == 1:
+            b = {"type": "table", "title": f"표 {i}", "columns": ["할 일", "담당", "기한", "메모"],
+                 "rows": [[f"일 {k} " * 5, "팀", "10/30", "메모 " * 10] for k in range(8)]}
+        else:
+            b = {"type": "list", "title": f"목록 {i}", "items": ["항목 " * 15] * 8}
+        blocks.append(dict(b, row=i + 1, span=12))
+    spec = json.dumps({"kind": "block-board", "title": "큰 보드", "subtitle": "요약", "blocks": blocks}, ensure_ascii=False)
+    _n, _a, _d, added = w._build_paper_board(spec)
+    boards = [it for it in added if isinstance(it, _BoardItem)]
+    assert len(boards) >= 3
+    assert all(b.rect().width() <= w.BOARD_MAX_W + 1 for b in boards)
+    assert sorted(b._page for b in boards) == list(range(1, len(boards) + 1))
+    parts = {it._pb_part for it in added if getattr(it, "_pb_part", None)}
+    assert {f"blocks[{i}]" for i in range(12)} <= parts   # 빠진 블록 없음
+    notes = [it.toPlainText() for it in added if hasattr(it, "toPlainText") and "장에 이어서" in it.toPlainText()]
+    assert any("→ 3장에 이어서" in t for t in notes)
+    _close(w)

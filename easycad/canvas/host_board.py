@@ -305,9 +305,12 @@ class _BoardMixin:
         return res, max(res[0], res[1] * BOARD_ASPECT)
 
     def _pb_discard(self, items):
+        """재 보려고 놓았던 배치를 걷는다 — 되돌리기로 돌아올 일이 없어 `_DocScene.removeItem`의 겹침 순서 기록을 건너뛴다
+        (2026-10-17 검토: 블록 12개 보드에서 이 기록이 걸린 시간의 70% — 지울 때마다 주변 아이템을 훑었다)."""
+        from PyQt6.QtWidgets import QGraphicsScene
         for it in items:
             if it.scene() is not None:
-                self._scene.removeItem(it)
+                QGraphicsScene.removeItem(it.scene(), it)
 
     def _build_paper_board(self, text, center=None, bg=None):
         """보드 설계서 → 보드 틀 + 칸들(한 번의 되돌리기). 반환 모양은 흐름도와 같다: (단계 수, 화살표 수, "board", 넣은 아이템).

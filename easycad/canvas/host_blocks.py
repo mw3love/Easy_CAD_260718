@@ -353,24 +353,30 @@ class _BlockBoardMixin:
             self._pb_discard(res[4])
             if bw <= self.BOARD_MAX_W:
                 blocks = smaller
-        while True:
-            s1 = dict(spec, blocks=[b for b in blocks if b["_i"] not in {m["_i"] for m in moved}])
-            if moved:
-                names = " · ".join(block_label(b) for b in moved)
-                s1["_note"] = f"생략(한 장으로): {names}" if one else f"→ 2장에 이어서: {names}"
-            res, bw = self._bb_fit(s1)
-            rows = self._bb_rows(s1, (bw - 2 * self._BB_M - 11 * self._BB_G) / 12.0)
-            big_fig = s1.get("_figure") == "big"
-            movable = [r for r in rows[1:] if not (big_fig and any(b["type"] == "figure" for _i, b, _s in r))]
-            if bw <= self.BOARD_MAX_W or not movable:   # 「그림 크게」 줄은 1장에 남긴다(사용자가 고른 것 — 옛 틀과 같음)
+        # 장마다: 넘치면 뒤쪽 줄부터 다음 장으로 — 다음 장도 넘치면 또 그다음 장으로(2026-10-17 검토: 블록 12개·표 8줄에서 2장째가
+        # `BOARD_MAX_W`의 2.5배였다). 장마다 첫 줄은 남기니 반드시 끝난다.
+        pages, rest, k = [], blocks, 1
+        while rest:
+            base = spec if k == 1 else dict(spec, subtitle="", highlight="",
+                                            meta=(spec.get("meta") + " · " if spec.get("meta") else "") + f"{k}장 · 자세히")
+            moved: list = []   # 다음 장(또는 생략)으로 보낸 블록(뒤쪽 줄부터)
+            while True:
+                s1 = dict(base, blocks=[b for b in rest if b["_i"] not in {m["_i"] for m in moved}])
+                if moved:
+                    names = " · ".join(block_label(b) for b in moved)
+                    s1["_note"] = f"생략(한 장으로): {names}" if one else f"→ {k + 1}장에 이어서: {names}"
+                res, bw = self._bb_fit(s1)
+                rows = self._bb_rows(s1, (bw - 2 * self._BB_M - 11 * self._BB_G) / 12.0)
+                big_fig = s1.get("_figure") == "big"
+                movable = [r for r in rows[1:] if not (big_fig and any(b["type"] == "figure" for _i, b, _s in r))]
+                if bw <= self.BOARD_MAX_W or not movable:   # 「그림 크게」 줄은 1장에 남긴다(사용자가 고른 것 — 옛 틀과 같음)
+                    break
+                self._pb_discard(res[4])
+                moved = [b for _i, b, _s in movable[-1]] + moved   # 뒤쪽 줄을 통째로
+            pages.append(res[:5])
+            if one:
                 break
-            self._pb_discard(res[4])
-            moved = [b for _i, b, _s in movable[-1]] + moved   # 뒤쪽 줄을 통째로
-        pages = [res[:5]]
-        if moved and not one:
-            s2 = dict(spec, blocks=moved, subtitle="", highlight="",
-                      meta=(spec.get("meta") + " · " if spec.get("meta") else "") + "2장 · 자세히")
-            pages.append(self._bb_fit(s2)[0][:5])
+            rest, k = moved, k + 1
         set_id = uuid.uuid4().hex[:8] if len(pages) > 1 else None
         added, n_steps, n_arrows = [], 0, 0
         c = center if center is not None else self._view.mapToScene(self._view.viewport().rect().center())
