@@ -402,11 +402,12 @@ def export_svg(scene, path: str, page: str = "A4", selection_only: bool = False,
 
 
 def render_content_image(scene, selection_only: bool = False, scale: float = 3.0, pad: float = 16.0,
-                         max_side: int = 8000) -> QImage:
+                         max_side: int = 8000, source=None) -> QImage:
     """[§8 항목42, 2026-10-16] 「그림으로 복사」(한글·PPT에 붙여 넣기)용 — 용지 없이 내용 크기에 맞춘 흰 바탕 그림.
     `export_svg_symbol`처럼 페이지 로직을 건너뛰고, 문서에 붙였을 때 또렷하도록 기본 3배(긴 변이 `max_side`를
     넘으면 그만큼 줄임). 인쇄와 같은 흰 바탕·흰 잉크→검정 규칙(`_paint_scene`). 내용이 없으면 빈 QImage."""
-    source = _selection_rect(scene) if selection_only else scene.itemsBoundingRect()
+    if source is None:   # [§8 항목53] 보드 내보내기는 보드 사각형을 그대로(선택 손잡이 여유가 섞이지 않게)
+        source = _selection_rect(scene) if selection_only else scene.itemsBoundingRect()
     if source.isEmpty():
         return QImage()
     source = source.adjusted(-pad, -pad, pad, pad)

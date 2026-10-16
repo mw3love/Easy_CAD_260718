@@ -474,6 +474,134 @@ class _BoardMixin:
         self._scene.clearSelection()
         return n_steps, n_arrows, "board", added
 
+    # ---- 보드 막대 · 내보내기(§8 항목53 3단계) -------------------------------------------------------------
+    # 시안 ④ 보드 위 막대: [보드 · 16:9] [화이트·블랙·다른 색 ▾] [내보내기 ▾]. 보드 하나만 골랐을 때 그 위에 뜬다.
+    # 「출력 미리보기」는 뺐다 — 미리보기 동안 실제 도형 색을 바꿔 둬야 해서 그 사이 편집·저장하면 색이 섞인다.
+    # 내보내기는 기존 길(그림 복사·PNG·PDF·HTML)을 보드 범위로: 보드와 그 안(가운데 기준)을 잠깐 골라 "선택만" 내보내고 되돌린다.
+    _BOARD_EXPORTS = (("copy", "그림으로 복사", "한글·PPT에 바로 붙여 넣기"),
+                      ("png", "PNG 그림 파일", "메신저·메일로 보내기"),
+                      ("pdf", "PDF 한 쪽", "인쇄·보고 — A3 가로에 맞춰 넣기"),
+                      ("html", "HTML 공유", "받는 사람이 확대해서 읽기 · 앱 설치 필요 없음"))
+
+    def _board_selected(self):
+        sel = [it for it in self._scene.selectedItems() if it.parentItem() is None]
+        return sel[0] if len(sel) == 1 and isinstance(sel[0], _BoardItem) else None
+
+    def _board_bar_sync(self, view):
+        """`_draw_ai_staging`(그리기 마지막 단계 훅)가 부른다 — 보드 하나를 골랐으면 막대를 그 위에, 아니면 숨김."""
+        from PyQt6 import sip
+        bar = getattr(self, "_board_bar", None)
+        board = self._board_selected() if view is self._view else None
+        if board is None:
+            if bar is not None and not sip.isdeleted(bar) and bar.parent() is view.viewport():
+                bar.hide()
+            return
+        if bar is None or sip.isdeleted(bar) or bar.parent() is not view.viewport():
+            bar = self._board_bar = self._make_board_bar(view)
+        bar.board = board
+        s = view.transform().m11() or 1.0
+        pad = 6.0 / s
+        self._ai_place_widget(view, bar, board.mapRectToScene(board.rect()).adjusted(-pad, -pad, pad, pad))
+        bar.show()
+
+    def _make_board_bar(self, view):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QToolButton
+        from easycad.canvas.host_aimake import _BAR_BTN_QSS
+        bar = QFrame(view.viewport())
+        bar.setObjectName("aiStagingBar")   # 결과 막대와 같은 모양(테마 전환 때 같이 다시 칠해짐)
+        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        bar.setStyleSheet(self._AI_BAR_QSS)
+        bar.board = None
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(8, 4, 6, 4)
+        lay.setSpacing(5)
+        name = QLabel("보드 · 16:9", bar)
+        name.setStyleSheet("font-weight:600; padding:0 6px 0 2px;")
+        lay.addWidget(name)
+
+        def button(text, slot=None, tip=""):
+            b = QToolButton(bar)
+            b.setText(text)
+            b.setStyleSheet(_BAR_BTN_QSS)
+            if tip:
+                b.setToolTip(tip)
+            if slot is not None:
+                b.clicked.connect(slot)
+            lay.addWidget(b)
+            return b
+        for label, hexv in BOARD_COLORS:
+            button(label, lambda _c=False, h=hexv: bar.board is not None and self._set_board_color(bar.board, h),
+                   "보드 바탕색 — 안 글자·선 색은 밝기에 맞춰 자동")
+        more = button("다른 색 ▾")
+        more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        cm = QMenu(more)
+        for label, hexv in BOARD_SWATCHES:
+            cm.addAction(label, lambda h=hexv: bar.board is not None and self._set_board_color(bar.board, h))
+        cm.addSeparator()
+        cm.addAction("직접 고르기…", lambda: bar.board is not None and self._pick_board_color(bar.board))
+        more.setMenu(cm)
+        out = button("내보내기 ▾", tip="블랙·다른 색 보드도 출력은 흰 종이로")
+        out.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        em = QMenu(out)
+        for key, label, note in self._BOARD_EXPORTS:
+            em.addAction(f"{label}  —  {note}", lambda k=key: bar.board is not None and self._board_export(bar.board, k))
+        out.setMenu(em)
+        bar.color_menu, bar.export_menu = cm, em
+        bar.adjustSize()
+        return bar
+
+    def _board_scope(self, board) -> list:
+        """보드와 그 안(가운데 기준)의 최상위 아이템 — 내보내기 범위."""
+        return [board] + [it for it in self._scene.items()
+                          if it.parentItem() is None and it is not board and not isinstance(it, _TitleBlockItem)
+                          and self._board_at(it) is board]
+
+    def _board_export(self, board, kind: str, path: str | None = None, open_after: bool = True):
+        """보드 「내보내기」 — kind = copy | png | pdf | html. `path`·`open_after`는 테스트용(없으면 저장 창). 반환: 저장 경로·True."""
+        import os
+        from PyQt6.QtWidgets import QApplication, QFileDialog
+        from easycad.fileio.pdf_export import export_pdf, render_content_image
+        if board.scene() is not self._scene:
+            return None
+        scope = self._board_scope(board)
+        if kind == "html":
+            return self._share_html(path=path, open_after=open_after, scope=scope,
+                                    source=board.mapRectToScene(board.rect()))
+        if kind != "copy" and path is None:
+            doc = self._active_doc
+            base = os.path.dirname(doc.doc_path or doc.external_path or "") or os.path.expanduser("~")
+            title = os.path.splitext(self._tab_title_for(doc).lstrip("*"))[0] + " 보드"
+            ext, filt = {"png": (".png", "PNG 그림 (*.png)"), "pdf": (".pdf", "PDF (*.pdf)")}[kind]
+            path, _ = QFileDialog.getSaveFileName(self, "보드 내보내기", os.path.join(base, title + ext), filt)
+            if not path:
+                return None
+        saved = list(self._scene.selectedItems())
+        self._scene.clearSelection()
+        self._bulk_select(scope)
+        try:
+            if kind == "copy" or kind == "png":
+                img = render_content_image(self._scene, selection_only=True, scale=2.0, pad=0.0,
+                                           source=board.mapRectToScene(board.rect()))
+                if img.isNull():
+                    return None
+                if kind == "copy":
+                    QApplication.clipboard().setImage(img)
+                    self.statusBar().showMessage("보드를 그림으로 복사했어요 — 한글·PPT에서 Ctrl+V로 붙여 넣으세요", 4000)
+                    return True
+                ok = img.save(path, "PNG")
+            else:
+                ok = export_pdf(self._scene, path, page="A3", selection_only=True, margins_mm=(8.0, 8.0, 8.0, 8.0),
+                                orientation="landscape")
+        finally:
+            self._scene.clearSelection()
+            self._bulk_select(saved)
+        if not ok:
+            self.statusBar().showMessage("보드를 저장하지 못했어요", 4000)
+            return None
+        self.statusBar().showMessage(f"보드를 저장했어요(흰 종이 기준): {path}", 5000)
+        return path
+
 
 _ACCENT = "#da7756"
 

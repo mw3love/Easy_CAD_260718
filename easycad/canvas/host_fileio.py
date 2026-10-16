@@ -708,10 +708,10 @@ class _FileIOMixin:
         self.statusBar().showMessage(f"설명을 만들지 못했어요: {err}", 8000)
 
     def _share_html(self, path: str | None = None, open_after: bool = True, guide: dict | None = None,
-                    title: str | None = None):
+                    title: str | None = None, scope=None, source=None):
         """[§8 항목46, 2026-10-16] 「HTML로 공유…」 — 도면을 브라우저로 여는 파일 하나로(받는 사람은 앱 불필요).
         레이어마다 따로 그려 켜고 끌 수 있게, 글자가 있는 상자는 위치·글자를 함께(설명 페이지 §8 항목47의 바탕).
-        저장하면 기본 브라우저로 연다. `path`·`open_after`는 테스트용."""
+        저장하면 기본 브라우저로 연다. `path`·`open_after`는 테스트용. `scope`(아이템 목록)·`source`를 주면 그 범위만(§8 항목53 보드 내보내기)."""
         if self._scene.itemsBoundingRect().isEmpty():
             self.statusBar().showMessage("공유할 도형이 없어요", 3000)
             return None
@@ -726,7 +726,8 @@ class _FileIOMixin:
         if not path.lower().endswith(".html"):
             path += ".html"
         bg = getattr(self, "_bg_item", None)
-        tops = [it for it in self._scene.items() if it.parentItem() is None and it is not bg]
+        tops = [it for it in self._scene.items() if it.parentItem() is None and it is not bg
+                and (scope is None or it in scope)]
         groups, seen = [], set()
         for ly in self._layers:
             items = [it for it in tops if self._item_layer_id(it) == ly["id"]]
@@ -739,7 +740,9 @@ class _FileIOMixin:
             else:
                 groups.append(("기본", rest, True))
         shapes = self._share_boxes()   # 설명 페이지의 상자 번호와 같은 순서
-        if not export_html(self._scene, path, title, groups, shapes, guide=guide):
+        if scope is not None:
+            shapes = [(it, t) for it, t in shapes if it in scope]
+        if not export_html(self._scene, path, title, groups, shapes, guide=guide, source=source):
             self.statusBar().showMessage("HTML로 저장하지 못했어요", 4000)
             return None
         what = "설명 페이지를" if guide else "HTML로"

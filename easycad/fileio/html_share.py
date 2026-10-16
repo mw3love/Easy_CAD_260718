@@ -91,10 +91,10 @@ def build_html(title: str, width: int, height: int, layers, shapes, made: str = 
         .replace("__LAYERS__", _js(layer_list)).replace("__SHAPES__", _js(shapes)).replace("__GUIDE__", _js(guide))
 
 
-def export_html(scene, path: str, title: str, groups, shape_items, guide: dict | None = None) -> bool:
+def export_html(scene, path: str, title: str, groups, shape_items, guide: dict | None = None, source=None) -> bool:
     """도면 전체를 HTML 한 파일로. `groups` = [(레이어 이름, 아이템 목록, 보임 여부)], `shape_items` = [(아이템, 글자)].
-    내용이 없으면 False. 안전 저장(임시 파일 → 바꿔치기)."""
-    source = scene.itemsBoundingRect()
+    `source`(씬 사각형)를 주면 그 범위만(§8 항목53 보드 내보내기). 내용이 없으면 False. 안전 저장(임시 파일 → 바꿔치기)."""
+    source = scene.itemsBoundingRect() if source is None else source
     if source.isEmpty():
         return False
     source = source.adjusted(-PAD, -PAD, PAD, PAD)
