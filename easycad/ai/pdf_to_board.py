@@ -77,6 +77,77 @@ class BoardSpecError(ValueError):
     pass
 
 
+_SOURCES_NOTE = """
+여러 자료(§ 자료마다 이름표): {listing}
+- 근거 칸 "pages"는 자료 이름표를 붙여 "A p.3"·"B p.2–4"·"C 사진"처럼 쓴다(이름표 없이 쪽 번호만 쓰지 말 것).
+- figure는 {{"caption": ..., "source": "A", "page": 3}}처럼 어느 자료의 몇 쪽인지(그림 자료면 "page": 1).
+- 자료끼리 말이 다르면 의의와 한계(verdict)에 그 차이를 적어라."""
+
+MAX_SOURCES = 10   # 한 번에 넣을 자료 수 상한(계획서 §8 항목53 "예: 파일 10개" — 크레딧은 실측 전)
+
+
+def sources_body(sources) -> tuple[str, list, str]:
+    """여러 자료 → (글 본문 — 줄마다 [A p.N], 그림 목록 [(이름표, PIL)], 자료 목록 한 줄). PDF는 글로, 그림은 그림으로.
+    `sources` = [{"label", "kind": "pdf"|"image", "name", "path"?, "image"?}]."""
+    lines, images, listing = [], [], []
+    for s in sources:
+        if s["kind"] == "pdf":
+            for n, t in extract_pdf_pages(s["path"]):
+                lines.append(f"[{s['label']} p.{n}] {t}")
+            listing.append(f"{s['label']} = {s['name']}(글)")
+        else:
+            images.append((s["label"], s["image"]))
+            listing.append(f"{s['label']} = {s['name']}(그림으로 첨부)")
+    return "\n".join(lines), images, ", ".join(listing)
+
+
+def generate_board_sources(api_key: str, sources, note: str = "", *, model: str, base_url: str = gw.BASE_URL,
+                           progress=None) -> tuple[str, str]:
+    """여러 자료(A·B·C — PDF 글 + 그림) → 보드 설계서 하나. 근거는 「A p.3」·「B 사진」. 긴 글은 한 자료 때처럼 묶음별 요약
+    (줄 앞 [A p.N] 표시가 남는다). 설계서에 자료 목록(`_sources` — 이름표 → 파일 경로·이름)을 넣어 앱이 그림을 잘라 온다."""
+    from easycad.ai.pdf_to_mermaid import CHUNK_CHARS
+    sources = list(sources)[:MAX_SOURCES]
+    body, images, listing = sources_body(sources)
+    used = model
+    summarized = False
+    if len(body) > SINGLE_PASS_CHARS:
+        chunks, cur = [], []
+        size = 0
+        for ln in body.split("\n"):
+            if cur and size + len(ln) > CHUNK_CHARS:
+                chunks.append(cur)
+                cur, size = [], 0
+            cur.append(ln)
+            size += len(ln)
+        if cur:
+            chunks.append(cur)
+        parts = []
+        for i, ch in enumerate(chunks, start=1):
+            if progress:
+                progress(f"긴 자료라 나눠 읽는 중 {i}/{len(chunks)}")
+            res = gw.call_text_with_fallback(api_key, _SUMMARY_MULTI.format(body="\n".join(ch)), model=model,
+                                             base_url=base_url, timeout=120.0)
+            parts.append(res.content.strip())
+            used = res.model_used
+        body, summarized = "\n".join(parts), True
+    if progress:
+        progress("보드 정리하는 중")
+    prompt = build_board_prompt(body or "(글 자료 없음 — 첨부한 그림만 보고 정리)", note, summarized)
+    prompt += _SOURCES_NOTE.format(listing=listing)
+    res = gw.call_text_with_fallback(api_key, prompt, model=model, base_url=base_url, images=images or None,
+                                     timeout=240.0)
+    spec = parse_board(res.content)
+    spec["_sources"] = {s["label"]: {"name": s["name"], "kind": s["kind"], "path": s.get("path", "")} for s in sources}
+    return dump_board(spec), res.model_used or used
+
+
+_SUMMARY_MULTI = """다음은 여러 자료의 일부다(각 줄 앞 [A p.N]은 자료 이름표와 원문 쪽 번호).
+핵심 내용을 글머리표 15줄 이내로 요약하라. 줄마다 끝에 근거를 (A p.N) 형식으로 붙일 것. 자료에 없는 내용은 쓰지 말 것. 요약만 출력하라.
+
+{body}
+"""
+
+
 def is_board_spec(text: str) -> bool:
     t = (text or "").lstrip()
     if t.startswith("```"):
@@ -154,6 +225,8 @@ def parse_board(raw: str) -> dict:
         except ValueError:
             page = None
     out["figure"] = {"caption": s(fig.get("caption")), "page": page} if fig is not None and page else None
+    if out["figure"] and s(fig.get("source")):
+        out["figure"]["source"] = s(fig.get("source"))
     out["terms"] = rows("terms", ("term", "meaning"), 5)
     verdict = []
     for v in d.get("verdict") or []:
@@ -165,6 +238,10 @@ def parse_board(raw: str) -> dict:
     out["verdict"] = verdict[:5]
     if s(d.get("_pdf")):
         out["_pdf"] = s(d.get("_pdf"))
+    if d.get("_pages") in ("one", "auto"):   # 결과 막대 「한 장으로」(앱이 붙임, §8 항목53 4단계)
+        out["_pages"] = d["_pages"]
+    if isinstance(d.get("_sources"), dict):   # 여러 자료 목록(앱이 붙임)
+        out["_sources"] = d["_sources"]
     return out
 
 
@@ -180,7 +257,9 @@ def build_board_prompt(body: str, note: str = "", summarized: bool = False) -> s
 
 def build_refine_prompt(instruction: str, code: str) -> str:
     spec = parse_board(code)
-    spec.pop("_pdf", None)   # 이 PC의 파일 경로는 AI에 보내지 않는다
+    spec.pop("_pdf", None)
+    spec.pop("_pages", None)
+    spec.pop("_sources", None)   # 파일 경로가 든 목록 — AI에 안 보냄   # 이 PC의 파일 경로는 AI에 보내지 않는다
     return _REFINE_TEMPLATE.format(code=dump_board(spec), instruction=instruction.strip(), format=_FORMAT.format())
 
 
@@ -219,6 +298,7 @@ def refine_board(api_key: str, instruction: str, code: str, *, model: str, base_
     res = gw.call_text_with_fallback(api_key, build_refine_prompt(instruction, code), model=model, base_url=base_url,
                                      timeout=120.0)
     spec = parse_board(res.content)
-    if old.get("_pdf"):
-        spec["_pdf"] = old["_pdf"]
+    for k in ("_pdf", "_pages", "_sources"):   # 앱이 붙인 칸은 이어 붙인다
+        if old.get(k):
+            spec[k] = old[k]
     return dump_board(spec), res.model_used

@@ -65,6 +65,7 @@ _RUNNING_WORKERS: set = set()
 
 
 def _start_detached(worker):
+    gw.preload_network()   # 작업자끼리 첫 import 경합(교착) 막기
     _RUNNING_WORKERS.add(worker)
 
     def _reap():
@@ -119,6 +120,7 @@ class AIRequest:
     base_text: str = ""                               # 원래 요청 글(지시가 비면 이걸로)
     followup_of: object = field(default=None, repr=False)   # 이어 만든 바탕 임시 결과(_StagedResult)
     pdf_path: str = ""                                # 「풀어 그리기」의 PDF(§8 항목45)
+    sources: list = None                              # 여러 자료 A·B·C(§8 항목53 4단계) — [{"label","kind","name","path","image"}]
 
 
 class _RequestRecord(QObject):
@@ -304,7 +306,7 @@ class _AIController(QObject):
         return max(1, min(SYMBOL_COUNT_MAX, app_settings().value(_SYMBOL_COUNT_KEY, SYMBOL_COUNT_DEFAULT, type=int)))
 
     def request_make(self, text: str = "", *, kind: str | None = None, image=None, image_name: str = "",
-                     pdf_path: str = ""):
+                     pdf_path: str = "", sources=None):
         """요청 하나를 만들어 기록에 남기고 `make_requested`로 넘긴다. 이어 만들기 바탕이 걸려 있으면 그 이어 만들기.
         입력이 모자라면 `notice`로 알리고 None. 종류를 안 주면 짐작한다(§8 항목51 — 사용자는 종류를 고르지 않음)."""
         text = (text or "").strip()
@@ -323,6 +325,12 @@ class _AIController(QObject):
             return req
         if kind is None:
             kind = guess_kind(text, image is not None, bool(pdf_path))
+        if sources and len(sources) >= 2:   # 여러 자료 → 한 장 보드
+            req = AIRequest(kind="explain", text=text, model=self.model_for("explain"), sources=list(sources),
+                            image_name=f"자료 {len(sources)}개")
+            self._add_entry(req)
+            self.make_requested.emit(req)
+            return req
         if kind == "explain":
             if not pdf_path:
                 self.notice.emit("한 장 보드는 PDF가 필요해요. PDF를 끌어다 놓거나 + 로 골라 주세요.")
@@ -347,7 +355,7 @@ class _AIController(QObject):
         again = AIRequest(kind=req.kind, text=req.text, image=req.image, image_name=req.image_name,
                           model=req.model, replace_target=req.replace_target, count=req.count,
                           refs=req.refs, base_code=req.base_code, base_text=req.base_text,
-                          pdf_path=req.pdf_path)
+                          pdf_path=req.pdf_path, sources=req.sources)
         self._add_entry(again)
         self.make_requested.emit(again)
         return again

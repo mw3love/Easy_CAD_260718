@@ -202,6 +202,8 @@ def item_to_dict(it) -> dict | None:
     elif isinstance(it, _BoardItem):   # [§8 항목53] 보드 틀
         r = it.rect()
         d.update(type="board", rect=[r.x(), r.y(), r.width(), r.height()], bg=_col(it.bg()))
+        if getattr(it, "_set_id", None):   # 여러 장 묶음(4단계) — PDF 여러 쪽 순서
+            d.update(set=it._set_id, page=it._page)
     elif isinstance(it, _TableItem):
         r = it.rect()
         d.update(type="table", rows=it._rows, cols=it._cols, header=it._header,
@@ -329,6 +331,8 @@ def dict_to_item(d: dict):
         _apply_arrow_style(it, d)   # [M2 #3] 하위호환: 없으면 solid 유지
     elif t == "board":
         it = _BoardItem(QRectF(*d["rect"]), QColor(d.get("bg", "#ffffffff")))
+        if d.get("set"):
+            it._set_id, it._page = d["set"], int(d.get("page", 1))
     elif t == "symbol":
         it = _SymbolItem(d.get("kind", "decision"), QRectF(*d["rect"]))
         it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))

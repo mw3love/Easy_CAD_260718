@@ -61,7 +61,7 @@ KIND_SWITCH_WORDS = (("심볼로", "symbol"), ("아이콘으로", "symbol"), ("�
 # 결과 막대 한 줄의 돌아가는 예시(시안 ② — "마법의 칠판").
 BAR_EXAMPLES = {
     "flow": ("예: 감시장치를 아래로, 전원부도 추가해 줘", "예: 세로로", "예: 더 자세하게", "예: 심볼로 바꿔 줘"),
-    "explain": ("예: 개념 카드를 더 쉽게", "예: 결과에 학습 시간도 넣어 줘", "예: 의의와 한계를 짧게"),   # §8 항목53 한 장 보드
+    "explain": ("예: 개념 카드를 더 쉽게", "예: 한 장으로", "예: 결과에 학습 시간도 넣어 줘", "예: 의의와 한계를 짧게"),   # §8 항목53 한 장 보드
     "symbol": ("예: 선을 더 단순하게", "예: 고른 두 개를 섞어서", "예: 흐름도로 바꿔 줘"),
     "trace": ("예: 표 칸이 빠졌어요 — 「부분 다시」로 고른 곳을", "예: 글자가 틀렸어요"),
 }
@@ -563,7 +563,9 @@ class _AIMakeMixin:
             self._close_ai_prompt()
             return
         self._close_ai_prompt()
-        if kind == "explain":
+        if kind == "explain" and isinstance(attached, list):   # 여러 자료(§8 항목53 4단계)
+            self._ai_ctrl.request_make(text, kind="explain", sources=attached)
+        elif kind == "explain":
             self._ai_ctrl.request_make(text, kind="explain", pdf_path=attached)   # 첨부 자리에 PDF 경로(§8 항목45)
         else:
             self._ai_ctrl.request_make(text, kind=kind, image=attached, image_name=name)
@@ -698,7 +700,7 @@ class _AIMakeMixin:
                                self._on_flow_generated, base_code=getattr(req, "base_code", "") or "",
                                icons=self._flow_icon_names())
         elif req.kind == "explain":   # §8 항목45 — PDF → 설명 흐름도, 결과는 흐름도와 같은 수신자·임시 결과
-            self._ai_start_job(req, _ExplainGenWorker, (req.pdf_path, req.text, req.model, gw.resolve_base_url()),
+            self._ai_start_job(req, _ExplainGenWorker, (req.sources or req.pdf_path, req.text, req.model, gw.resolve_base_url()),
                                self._on_flow_generated)
         elif req.kind == "symbol":
             self._ai_start_symbol(req)
@@ -720,6 +722,7 @@ class _AIMakeMixin:
             self._ai_ask_key(req)   # §8 항목41 — 키 넣기 창, 넣으면 이 요청을 이어서
             return None
         worker = worker_cls(key, *args, parent=self, **kw)
+        gw.preload_network()   # 다른 작업자(크레딧 조회 등)와 첫 import가 겹쳐 교착되던 것 — 메인 스레드에서 먼저
         self._ai_jobs[worker] = _AIJob(req, worker, time.monotonic())
         worker.succeeded.connect(on_success)
         worker.failed.connect(self._on_ai_job_failed)
@@ -1174,6 +1177,12 @@ class _AIMakeMixin:
         switch = self._ai_switch_kind_word(text)
         if switch is not None and switch != ("flow" if kind == "explain" else kind):
             return self._ai_switch_kind(st, switch)
+        if kind == "explain" and len(text) <= 16 and not (alt and st.alt is not None):
+            pages = "one" if ("한 장" in text or "한장" in text) else ("auto" if ("나눠" in text or "여러 장" in text) else None)
+            if pages is not None:   # §8 항목53 4단계 — AI 없이 다시 배치(넘치는 칸을 빼거나 2장으로)
+                if line is not None:
+                    line.clear()
+                return self._ai_board_pages(pages)
         if kind in _FLOW_KINDS:
             alt = alt and st.alt is not None
             tok = self._ai_direction_word(text)
@@ -1216,6 +1225,21 @@ class _AIMakeMixin:
         if req is not None and line is not None and not sip.isdeleted(line):
             line.clear()
         return req
+
+    def _ai_board_pages(self, mode: str):
+        """한 장 보드 「한 장으로」(넘치는 칸은 빼고 「생략 — 원문 p.N」) / 「나눠서」(넘치면 2장) — 설계서의 `_pages`만 바꿔 다시 그린다."""
+        from easycad.ai.pdf_to_board import dump_board, parse_board
+        st = self._ai_staged
+        code = getattr(st.request, "result_text", "") if st is not None else ""
+        try:
+            spec = parse_board(code)
+        except ValueError:
+            return None
+        if spec.get("_pages", "auto") == mode:
+            self._on_ai_notice("이미 한 장이에요" if mode == "one" else "이미 넘치면 나눠요")
+            return None
+        spec["_pages"] = mode
+        return self._ai_replace_flow(dump_board(spec))
 
     def _ai_switch_kind(self, st, kind: str):
         """결과 막대 「심볼로 바꿔 줘」 같은 말 — 지금 결과를 버리고 처음 요청(글·그림)을 그 종류로 다시 만든다."""
@@ -1669,6 +1693,7 @@ class _AIMakeMixin:
             worker.candidate.connect(self._on_symbol_candidate)
             worker.model_failed.connect(self._on_symbol_failed)
             worker.finished.connect(self._on_ai_job_finished)
+            gw.preload_network()   # 작업자끼리 첫 import 교착 막기
             worker.start()
         self._ai_staged.pending = n
         self._ai_tick()
@@ -2213,6 +2238,7 @@ class _AIMakeMixin:
         tr.req, tr.worker, tr.sent = req, worker, sent
         req.trace_quad = list(tr.quad)   # 결과 막대 「다시」가 같은 모서리로 되살리게
         self._ai_trace_set_running(True)
+        gw.preload_network()   # 작업자끼리 첫 import 교착 막기
         worker.start()
         self._ai_tick()
         self._ai_tick_timer.start()

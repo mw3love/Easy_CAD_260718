@@ -870,9 +870,13 @@ class _ExplainGenWorker(QThread):
 
     def run(self):
         try:
-            from easycad.ai.pdf_to_board import generate_board   # §8 항목53 — 흐름도 하나 대신 한 장 보드
-            text, used = generate_board(self._api_key, self._pdf_path, self._note, model=self._model,
-                                        base_url=self._base_url)
+            from easycad.ai.pdf_to_board import generate_board, generate_board_sources   # §8 항목53 — 한 장 보드
+            if isinstance(self._pdf_path, list):   # 여러 자료 A·B·C(4단계) — 첫 인자 자리에 자료 목록
+                text, used = generate_board_sources(self._api_key, self._pdf_path, self._note, model=self._model,
+                                                    base_url=self._base_url)
+            else:
+                text, used = generate_board(self._api_key, self._pdf_path, self._note, model=self._model,
+                                            base_url=self._base_url)
         except Exception as e:  # noqa: BLE001 — 실패 사유(글자 없는 PDF 등)를 그대로 기록 칸에
             self.failed.emit(str(e))
             return

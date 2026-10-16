@@ -59,6 +59,9 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         self.setFixedWidth(self.WIDTH)
         self.setAcceptDrops(True)
         self._init_image_attach_state()
+        self._sources: list = []          # §8 항목53 4단계 여러 자료 — [{"label","kind","name","path","image"}], 둘 이상일 때만
+        self._next_image_path = ""        # 파일로 넣은 그림의 경로(그림 자료를 보드에 붙일 때)
+        self._filling = False
         self._dark = True
         self._kind_hint = None     # 메뉴·단축키로 종류를 정해 열었을 때(안내글만 바뀜)
         self._ctrl = controller
@@ -218,7 +221,9 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         self._edit.viewport().update()
 
     def kind(self) -> str:
-        """지금 입력이면 무엇을 만들지(정해 연 종류가 있으면 그것, 아니면 짐작)."""
+        """지금 입력이면 무엇을 만들지(정해 연 종류가 있으면 그것, 아니면 짐작). 자료가 둘 이상이면 한 장 보드."""
+        if len(self._sources) >= 2:
+            return "explain"
         if self._kind_hint is not None:
             return self._kind_hint
         return guess_kind(self._edit.toPlainText(), self._attached_image is not None, bool(self._attached_pdf))
@@ -308,18 +313,58 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
             self._set_attached_pdf(path)
             return True
         if low.endswith(IMAGE_EXTS):
+            self._next_image_path = path
             self._load_image_path(path)
+            self._next_image_path = ""
             return True
         self._show_notice(unsupported_file_text(os.path.basename(path)))
         return False
 
     def _set_attached_image(self, pil_img, name: str):
+        if self._add_source_if_more("image", name, path=self._next_image_path, image=pil_img):
+            return
         super()._set_attached_image(pil_img, name)
         self._hide_notice()
 
     def _set_attached_pdf(self, path: str):
+        if self._add_source_if_more("pdf", os.path.basename(path), path=path):
+            return
         super()._set_attached_pdf(path)
         self._hide_notice()
+
+    # ---- 여러 자료(§8 항목53 4단계) — 이미 무엇이 붙어 있는데 또 넣으면 자료 A·B·C로 ----------------------
+    def _add_source_if_more(self, kind, name, path="", image=None) -> bool:
+        """이미 붙은 것이 있으면 여러 자료 목록에 더하고 True(칩은 「A 첫 이름 외 N개」). 처음 하나면 False(보통 첨부)."""
+        if self._filling:
+            return False
+        if not self._sources:
+            if self._attached_pdf:
+                self._sources.append({"kind": "pdf", "name": os.path.basename(self._attached_pdf), "path": self._attached_pdf})
+            elif self._attached_image is not None:
+                self._sources.append({"kind": "image", "name": self._attached_image_name or "그림",
+                                      "path": getattr(self, "_first_image_path", ""), "image": self._attached_image})
+            else:
+                if kind == "image":
+                    self._first_image_path = path
+                return False
+        from easycad.ai.pdf_to_board import MAX_SOURCES
+        if len(self._sources) >= MAX_SOURCES:
+            self._show_notice(f"자료는 한 번에 {MAX_SOURCES}개까지예요")
+            return True
+        self._sources.append({"kind": kind, "name": name, "path": path, "image": image})
+        for i, s in enumerate(self._sources):
+            s["label"] = chr(ord("A") + i)
+        # 칩 글 칸이 좁다(140px) — 「A 긴이름 외 2개」는 잘렸다(실제 창). 개수와 이름표만, 파일 이름은 툴팁에.
+        self._image_name_label.setText(f"자료 {len(self._sources)}개 " + "·".join(s["label"] for s in self._sources))
+        self._image_name_label.setToolTip("<br>".join(f"{s['label']}  {s['name']}" for s in self._sources))
+        self._image_chip.setVisible(True)
+        self._hide_notice()
+        return True
+
+    def _clear_image(self):
+        self._sources = []
+        self._first_image_path = ""
+        super()._clear_image()
 
     def dragEnterEvent(self, e):
         """지원하는 파일만이 아니라 아무 파일이나 받는다 — 못 읽는 건 놓았을 때 안내(§8 항목51)."""
@@ -347,17 +392,26 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
     def fill(self, text: str = "", image=None, image_name: str = "", pdf_path: str = ""):
         """기록 메뉴에서 고른 요청을 다시 채운다."""
         self._edit.setPlainText(text)
-        super()._clear_image()
-        if pdf_path:
-            self._set_attached_pdf(pdf_path)
-        elif image is not None:
-            self._set_attached_image(image, image_name or "그림")
+        self._clear_image()
+        self._filling = True
+        try:
+            if pdf_path:
+                self._set_attached_pdf(pdf_path)
+            elif image is not None:
+                self._set_attached_image(image, image_name or "그림")
+        finally:
+            self._filling = False
 
     def submit(self):
         """「만들기」·Enter — 입력을 검사해 `submitted`로 넘기고 칸을 비운다. 돌려준 값(종류)은 테스트용."""
         text = self._edit.toPlainText().strip()
         image = self._attached_image
         kind = self.kind()
+        if len(self._sources) >= 2:   # 여러 자료 → 한 장 보드(§8 항목53 4단계)
+            sources = [dict(s) for s in self._sources]
+            self._reset_input()
+            self.submitted.emit("explain", text, sources, f"자료 {len(sources)}개")
+            return "explain"
         if kind == "trace" and image is None:
             self._show_notice("베끼기는 도면 사진이 필요해요. 사진을 끌어다 놓거나 Ctrl+V로 붙여 주세요.")
             return None
@@ -379,7 +433,7 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
 
     def _reset_input(self):
         self._edit.clear()
-        super()._clear_image()
+        self._clear_image()
         self.set_kind_hint(None)
 
     def eventFilter(self, obj, event):

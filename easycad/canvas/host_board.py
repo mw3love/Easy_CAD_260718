@@ -12,7 +12,7 @@
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import QRectF
+from PyQt6.QtCore import QPointF, QRectF
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QColorDialog, QMenu
 
@@ -179,7 +179,7 @@ class _BoardMixin:
         t.setFlags(t.GraphicsItemFlag.ItemIsMovable | t.GraphicsItemFlag.ItemIsSelectable)
         self._scene.addItem(t)
         added.append(t)
-        return t, t.boundingRect().height()
+        return t, t.document().size().height()   # 글 크기는 문서로 — boundingRect는 줌에 따라 손잡이 여유가 달라짐
 
     def _pb_card(self, added, x, y, w, h, fill=None, edge=None, width=1.0):
         from PyQt6.QtGui import QBrush, QPen
@@ -205,7 +205,7 @@ class _BoardMixin:
         _t, h = self._pb_text(added, title, x, y, w, 13)
         if pages:
             tag, _h = self._pb_text(added, pages, x, y + 3, w, 9, self._PB_MUTED)
-            tag.setPos(x + w - tag.boundingRect().width(), y + 3)
+            tag.setPos(x + w - tag.document().size().width(), y + 3)
         return h
 
     def _pb_figure_pixmap(self, pdf_path, page_no):
@@ -226,6 +226,20 @@ class _BoardMixin:
                 return QPixmap.fromImage(img)
         except Exception:   # noqa: BLE001 — 그림을 못 얻으면 자리 표시만
             return None
+
+    def _pb_figure_source(self, spec, fig):
+        """그림 칸의 원본 — 한 자료면 `_pdf`의 그 쪽, 여러 자료면 `figure.source` 자료(PDF는 그 쪽, 그림 파일은 그 그림)."""
+        from PyQt6.QtGui import QPixmap
+        srcs = spec.get("_sources") or {}
+        src = srcs.get(fig.get("source", "")) if srcs else None
+        if src is not None:
+            if src.get("kind") == "pdf" and src.get("path"):
+                return self._pb_figure_pixmap(src["path"], fig["page"])
+            if src.get("path"):
+                pm = QPixmap(src["path"])
+                return pm if not pm.isNull() else None
+            return None
+        return self._pb_figure_pixmap(spec["_pdf"], fig["page"]) if spec.get("_pdf") else None
 
     def _pb_mark(self, added, text_item, phrase):
         """한 줄 요약 안의 가장 중요한 구절 밑에 코랄 형광펜(옅은 사각형) — 강조는 보드에 하나(시안 ④)."""
@@ -253,19 +267,107 @@ class _BoardMixin:
             return mark
         return None
 
-    def _build_paper_board(self, text, center=None):
-        """보드 설계서 → 보드 틀 + 칸들(한 번의 되돌리기). 반환 모양은 흐름도와 같다: (단계 수, 화살표 수, "board", 넣은 아이템).
-        내용이 세로로 길어 16:9 보드가 옆으로 넓어지면, 넓어진 만큼 칸들을 넓혀 한 번 더 배치한다(첫 시도는 양옆이 비었다 — 실제 창)."""
-        from easycad.ai.pdf_to_board import parse_board
-        spec = parse_board(text)
+    # [4단계 — 여러 장] 보드가 이 폭보다 커지면(= 출력 글자가 바닥보다 작아지면) 덜 중요한 칸부터 2장으로 보낸다(사용자 확정 2026-10-16:
+    # "글자·그림은 출력해서 읽히는 바닥까지만 줄이고, 넘치면 장을 나눈다"). 바닥 = A3 가로(여백 8mm → 폭 404mm)에 넣었을 때 본문
+    # 10pt(13.3px)가 7pt(2.47mm) 이상: 13.3 × 404 / 2.47 ≈ 2176px. 계산값 — 실제 인쇄물로 다시 보기는 사용자 몫.
+    BOARD_MAX_W = 2176.0
+    _PB_MOVE_ORDER = ("terms", "figure", "verdict", "numbers", "concepts", "results", "flow")
+    _PB_SECTION_NAME = {"terms": "용어 풀이", "figure": "논문 속 그림", "verdict": "의의와 한계", "numbers": "숫자",
+                        "concepts": "핵심 개념", "results": "결과", "flow": "작동 흐름"}
+
+    @staticmethod
+    def _pb_strip(spec, drop):
+        """`drop` 칸을 비운 사본(제목·요약은 그대로)."""
+        empty = {"terms": [], "figure": None, "verdict": [], "numbers": [], "concepts": [], "flow": None,
+                 "results": {"title": "", "pages": "", "bars": [], "note": ""}}
+        out = dict(spec)
+        for k in drop:
+            out[k] = empty[k]
+        return out
+
+    def _pb_fit(self, spec):
+        """배치 한 번(+ 세로로 길면 넓혀서 한 번 더) — 반환 (_pb_layout 결과, 보드 폭)."""
         res = self._pb_layout(spec, None)
         need_w, need_h = res[0], res[1]
         if need_h * BOARD_ASPECT > need_w * 1.05:
-            for it in res[4]:
-                if it.scene() is not None:
-                    self._scene.removeItem(it)
-            res = self._pb_layout(spec, need_h * BOARD_ASPECT * 0.92)
-        return self._pb_place(*res, center)
+            self._pb_discard(res[4])
+            res = self._pb_layout(spec, min(need_h * BOARD_ASPECT * 0.92, self.BOARD_MAX_W))
+        return res, max(res[0], res[1] * BOARD_ASPECT)
+
+    def _pb_discard(self, items):
+        for it in items:
+            if it.scene() is not None:
+                self._scene.removeItem(it)
+
+    def _build_paper_board(self, text, center=None):
+        """보드 설계서 → 보드 틀 + 칸들(한 번의 되돌리기). 반환 모양은 흐름도와 같다: (단계 수, 화살표 수, "board", 넣은 아이템).
+        내용이 세로로 길어 16:9 보드가 옆으로 넓어지면, 넓어진 만큼 칸들을 넓혀 한 번 더 배치한다(첫 시도는 양옆이 비었다 — 실제 창).
+        그래도 `BOARD_MAX_W`를 넘으면 덜 중요한 칸부터 2장(오른쪽 보드)으로 — 설계서의 `_pages`가 "one"("한 장으로")이면 2장 대신 뺀다."""
+        from easycad.ai.pdf_to_board import parse_board
+        spec = parse_board(text)
+        one = spec.get("_pages") == "one"
+        moved = []
+        if spec.get("flow") and self._pb_flow_too_big(spec["flow"]):
+            # 흐름도 혼자 한 장 몫이면 그것부터 — 덜 중요한 칸부터 빼면 흐름도 때문에 1장이 텅 비었다(실측: 11단계 흐름도)
+            moved.append("flow")
+        while True:
+            names = [self._PB_SECTION_NAME[k] for k in moved]
+            s1 = self._pb_strip(spec, moved)
+            if moved:
+                fig = spec.get("figure")
+                tail = f" — 원문 p.{fig['page']}" if one and "figure" in moved and fig else ""
+                s1["_note"] = (f"생략(한 장으로): {' · '.join(names)}{tail}" if one
+                               else f"→ 2장에 이어서: {' · '.join(names)}")
+            res, bw = self._pb_fit(s1)
+            left = [k for k in self._PB_MOVE_ORDER if k not in moved and self._pb_has(spec, k)]
+            if bw <= self.BOARD_MAX_W or not left:
+                break
+            self._pb_discard(res[4])
+            moved.append(left[0])
+        pages = [res]
+        if moved and not one:   # 2장 = 같은 제목 + 옮긴 칸만
+            keep = set(moved)
+            s2 = self._pb_strip(spec, [k for k in self._PB_MOVE_ORDER if k not in keep])
+            s2.update(one_line="", highlight="", three_lines=[], meta=(spec.get("meta") + " · " if spec.get("meta") else "") + "2장 · 자세히")
+            pages.append(self._pb_fit(s2)[0])
+        import uuid
+        set_id = uuid.uuid4().hex[:8] if len(pages) > 1 else None
+        added, n_steps, n_arrows = [], 0, 0
+        c = center if center is not None else self._view.mapToScene(self._view.viewport().rect().center())
+        sizes = [max(r[0], r[1] * BOARD_ASPECT) for r in pages]
+        top = c.y() - max(sizes) / BOARD_ASPECT / 2.0   # 장들의 위를 맞춘다
+        x = c.x() - (sum(sizes) + 120.0 * (len(pages) - 1)) / 2.0
+        for i, res in enumerate(pages):
+            bw = sizes[i]
+            items = self._pb_place(*res, QPointF(x + bw / 2.0, top + bw / BOARD_ASPECT / 2.0), push=False)
+            board = items[0]
+            if set_id:
+                board._set_id, board._page = set_id, i + 1
+            added += items
+            n_steps += res[2]
+            n_arrows += res[3]
+            x += bw + 120.0
+        self.push_undo_add_many(added)
+        self._scene.clearSelection()
+        return n_steps, n_arrows, "board", added
+
+    _PB_FLOW_MAX = (1000.0, 520.0)   # 1장 가운데 칸에 흐름도가 들어갈 크기(폭·높이) — 넘으면 흐름도는 2장으로
+
+    def _pb_flow_too_big(self, flow) -> bool:
+        import json
+        f = dict(flow)
+        f.pop("pages", None)
+        f["title"] = ""
+        _n, _a, _d, probe = self._build_flowspec_items(json.dumps(f, ensure_ascii=False), QPointF(-1e6, -1e6),
+                                                       push_undo=False, compact=True)
+        box = _outline_rect(probe)
+        self._pb_discard(probe)
+        return box.width() > self._PB_FLOW_MAX[0] or box.height() > self._PB_FLOW_MAX[1]
+
+    @staticmethod
+    def _pb_has(spec, k) -> bool:
+        v = spec.get(k)
+        return bool(v.get("bars")) if k == "results" else bool(v)
 
     def _pb_layout(self, spec, want_w):
         """칸 배치 한 번(보드 왼쪽 위 (0,0) 기준) — 반환 (필요 폭, 필요 높이, 단계 수, 화살표 수, 넣은 아이템). `want_w`가 있으면
@@ -284,7 +386,7 @@ class _BoardMixin:
             f["title"] = ""
             flow_json = json.dumps(f, ensure_ascii=False)
             _n, _a, _d, probe = self._build_flowspec_items(flow_json, QPointF(-1e6, -1e6), push_undo=False, compact=True)
-            box = self._ai_items_rect([it for it in probe if not hasattr(it, "build_elbow")])   # 화살표 영역 캐시는 믿지 않음(아래 주석)
+            box = _outline_rect(probe)   # 화살표 영역 캐시는 믿지 않음(아래 주석)
             flow_w, flow_h = box.width(), box.height()
             for it in probe:
                 if it.scene() is not None:
@@ -296,6 +398,9 @@ class _BoardMixin:
         mid_w = max(600.0 * k, flow_w)
         content_w = max(1920.0 - 2 * M, concept_w + mid_w + result_w + 2 * G, (want_w or 0) - 2 * M)
         mid_w = content_w - concept_w - result_w - 2 * G   # 남는 폭은 가운데 칸에
+        if not flow_json:   # 흐름도가 2장으로 갔으면 가운데 칸 없이 개념·결과가 반씩(빈 칸이 남았다 — 실제 창)
+            mid_w = -G
+            concept_w = result_w = (content_w - G) / 2.0
 
         # 좌표는 보드 왼쪽 위(0,0) 기준으로 놓고, 마지막에 보드와 함께 옮긴다.
         x0 = M
@@ -304,7 +409,11 @@ class _BoardMixin:
         right_x = x0 + content_w - side_w
         left_w = right_x - G - x0
         y = 48.0
-        _t, h = self._pb_text(added, "논문 한 장 정리 · Magic Board", x0, y, left_w, 9, self._PB_MUTED)
+        srcs = spec.get("_sources") or {}
+        eyebrow = "논문 한 장 정리 · Magic Board"
+        if srcs:   # 여러 자료 — 이름표 목록(근거 「A p.3」를 읽을 수 있게)
+            eyebrow = "한 장 정리 · Magic Board · 자료 " + " · ".join(f"{k} {v.get('name', '')}" for k, v in sorted(srcs.items()))
+        _t, h = self._pb_text(added, eyebrow, x0, y, left_w, 9, self._PB_MUTED)
         y += h
         _t, h = self._pb_text(added, spec["title"] or "(제목 없음)", x0, y, left_w, 22)
         y += h
@@ -317,6 +426,9 @@ class _BoardMixin:
             if spec["highlight"]:
                 self._pb_mark(added, one, spec["highlight"])
             y += h
+        if spec.get("_note"):   # 여러 장 — 「→ 2장에 이어서: …」 / 「생략(한 장으로): …」
+            _t, h = self._pb_text(added, spec["_note"], x0, y + 6, left_w, 10, self._PB_MUTED)
+            y += h + 6
         left_bottom = y
         ry = 48.0
         if spec["three_lines"]:
@@ -326,7 +438,7 @@ class _BoardMixin:
                 _t, h = self._pb_text(added, f"{'①②③'[i]} {row['text']}", right_x + 16, yy, side_w - 32 - 72, 11)
                 if row["pages"]:
                     tag, _h = self._pb_text(added, row["pages"], right_x, yy + 3, 72, 9, self._PB_MUTED)
-                    tag.setPos(right_x + side_w - 16 - tag.boundingRect().width(), yy + 3)
+                    tag.setPos(right_x + side_w - 16 - tag.document().size().width(), yy + 3)
                 yy += h + 4
             self._pb_card_under(added, start, right_x, ry, side_w, yy - ry + 8)
             ry = yy + 8
@@ -342,7 +454,7 @@ class _BoardMixin:
             _t, h1 = self._pb_text(added, c["name"], cx + 14, cy + 10, concept_w - 28, 12)
             if c["pages"]:
                 tag, _h = self._pb_text(added, c["pages"], cx, cy + 13, concept_w - 14, 9, self._PB_MUTED)
-                tag.setPos(cx + concept_w - 14 - tag.boundingRect().width(), cy + 13)
+                tag.setPos(cx + concept_w - 14 - tag.document().size().width(), cy + 13)
             _t, h2 = self._pb_text(added, c["body"], cx + 14, cy + 10 + h1, concept_w - 28, 10)
             self._pb_card_under(added, start, cx, cy, concept_w, h1 + h2 + 22)
             cy += h1 + h2 + 22 + 12
@@ -404,11 +516,12 @@ class _BoardMixin:
         bottom = y
         fig = spec.get("figure")
         if fig:
-            fy2 = y + self._pb_heading(added, "논문 속 그림", f"p.{fig['page']}", bx1, y, bw1) + 6
+            where = f"{fig['source']} p.{fig['page']}" if fig.get("source") else f"p.{fig['page']}"
+            fy2 = y + self._pb_heading(added, "논문 속 그림", where, bx1, y, bw1) + 6
             if fig["caption"]:
                 _t, h = self._pb_text(added, fig["caption"], bx1, fy2, bw1, 10, self._PB_MUTED)
                 fy2 += h + 4
-            pm = self._pb_figure_pixmap(spec.get("_pdf", ""), fig["page"]) if spec.get("_pdf") else None
+            pm = self._pb_figure_source(spec, fig)
             if pm is not None and not pm.isNull():
                 k = min(bw1 / pm.width(), 240.0 / pm.height())   # 세로로 긴 그림이 아래 줄(보드)을 늘리지 않게
                 img = _ImageItem(pm, QRectF(0.0, 0.0, pm.width() * k, pm.height() * k))
@@ -434,7 +547,7 @@ class _BoardMixin:
                 tag = "논문 밖 맥락" if v["outside"] else v["type"]
                 col = self._PB_TAG["outside"] if v["outside"] else self._PB_TAG[v["type"]]
                 tg, _h = self._pb_text(added, tag, bx3, vy + 2, 120, 9, col)
-                tw = tg.boundingRect().width()
+                tw = tg.document().size().width()
                 body = v["text"] + (f"  ({v['pages']})" if v["pages"] and not v["outside"] else "")
                 _t, h = self._pb_text(added, body, bx3 + tw + 2, vy, bw3 - tw - 2, 10)
                 vy += max(h, 20.0) + 2
@@ -442,8 +555,9 @@ class _BoardMixin:
 
         return content_w + 2 * M, bottom + 48.0, n_steps, n_arrows, added
 
-    def _pb_place(self, need_w, need_h, n_steps, n_arrows, added, center):
-        """보드 틀(16:9)을 만들고 칸들을 보드 가운데로 옮겨 한 번의 되돌리기로 기록."""
+    def _pb_place(self, need_w, need_h, n_steps, n_arrows, added, center, push=True):
+        """보드 틀(16:9)을 만들고 칸들을 보드 가운데로 옮긴다. `push`면 한 번의 되돌리기로 기록하고 흐름도 모양으로 돌려주고,
+        아니면 [보드] + 칸 목록만(여러 장을 한 칸으로 묶는 `_build_paper_board`)."""
         bw = max(need_w, need_h * BOARD_ASPECT)
         bh = bw / BOARD_ASPECT
         if center is None:
@@ -470,6 +584,8 @@ class _BoardMixin:
                     pass
                 it._sync_label()
         added.insert(0, board)
+        if not push:
+            return added
         self.push_undo_add_many(added)
         self._scene.clearSelection()
         return n_steps, n_arrows, "board", added
@@ -499,6 +615,12 @@ class _BoardMixin:
         if bar is None or sip.isdeleted(bar) or bar.parent() is not view.viewport():
             bar = self._board_bar = self._make_board_bar(view)
         bar.board = board
+        pages = self._board_set(board)
+        n = len(pages)
+        bar.name_label.setText(f"보드 {pages.index(board) + 1}/{n} · 16:9" if n > 1 else "보드 · 16:9")
+        bar.pdf_action.setText(f"PDF {n}쪽  —  인쇄·보고 — A3 가로, 장마다 한 쪽" if n > 1
+                               else "PDF 한 쪽  —  인쇄·보고 — A3 가로에 맞춰 넣기")
+        bar.adjustSize()
         s = view.transform().m11() or 1.0
         pad = 6.0 / s
         self._ai_place_widget(view, bar, board.mapRectToScene(board.rect()).adjusted(-pad, -pad, pad, pad))
@@ -516,7 +638,7 @@ class _BoardMixin:
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(8, 4, 6, 4)
         lay.setSpacing(5)
-        name = QLabel("보드 · 16:9", bar)
+        name = bar.name_label = QLabel("보드 · 16:9", bar)
         name.setStyleSheet("font-weight:600; padding:0 6px 0 2px;")
         lay.addWidget(name)
 
@@ -545,11 +667,21 @@ class _BoardMixin:
         out.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         em = QMenu(out)
         for key, label, note in self._BOARD_EXPORTS:
-            em.addAction(f"{label}  —  {note}", lambda k=key: bar.board is not None and self._board_export(bar.board, k))
+            act = em.addAction(f"{label}  —  {note}", lambda k=key: bar.board is not None and self._board_export(bar.board, k))
+            if key == "pdf":
+                bar.pdf_action = act
         out.setMenu(em)
         bar.color_menu, bar.export_menu = cm, em
         bar.adjustSize()
         return bar
+
+    def _board_set(self, board) -> list:
+        """같은 여러 장 묶음의 보드들(장 순서) — 묶음이 없으면 [board]."""
+        sid = getattr(board, "_set_id", None)
+        if not sid:
+            return [board]
+        boards = [b for b in self._scene.items() if isinstance(b, _BoardItem) and getattr(b, "_set_id", None) == sid]
+        return sorted(boards, key=lambda b: b._page) or [board]
 
     def _board_scope(self, board) -> list:
         """보드와 그 안(가운데 기준)의 최상위 아이템 — 내보내기 범위."""
@@ -590,6 +722,10 @@ class _BoardMixin:
                     self.statusBar().showMessage("보드를 그림으로 복사했어요 — 한글·PPT에서 Ctrl+V로 붙여 넣으세요", 4000)
                     return True
                 ok = img.save(path, "PNG")
+            elif len(self._board_set(board)) > 1:   # 여러 장 — 장마다 한 쪽(4단계)
+                from easycad.fileio.pdf_export import export_pdf_regions
+                ok = export_pdf_regions(self._scene, path, [(b.mapRectToScene(b.rect()), self._board_scope(b))
+                                                            for b in self._board_set(board)])
             else:
                 ok = export_pdf(self._scene, path, page="A3", selection_only=True, margins_mm=(8.0, 8.0, 8.0, 8.0),
                                 orientation="landscape")
@@ -604,6 +740,18 @@ class _BoardMixin:
 
 
 _ACCENT = "#da7756"
+
+
+def _outline_rect(items) -> QRectF:
+    """흐름도 크기 — 화살표는 빼고(상자를 옮긴 직후 영역 값이 옛 자리라 믿지 않음) 도형의 보이는 외곽(`_content_rect`)으로.
+    `sceneBoundingRect`는 선택 손잡이 여유(화면 px 고정)가 들어가 멀리서 볼수록 커졌다 — 같은 설계서가 줌에 따라 1장/2장이 갈림(실측)."""
+    r = QRectF()
+    for it in items:
+        if it.scene() is None or hasattr(it, "build_elbow"):
+            continue
+        cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
+        r = r.united(it.mapRectToScene(cr))
+    return r
 
 
 def _wrap(text: str, fm, width: float) -> str:

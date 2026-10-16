@@ -326,6 +326,43 @@ def export_pdf_pages(scene, path: str, frames) -> bool:
     return True
 
 
+def export_pdf_regions(scene, path: str, regions, page: str = "A3", landscape: bool = True,
+                       margins_mm: tuple[float, float, float, float] = (8.0, 8.0, 8.0, 8.0)) -> bool:
+    """[§8 항목53 4단계, 2026-10-16] 보드 여러 장을 **PDF 1개의 여러 쪽**으로 — `regions` = [(씬 사각형, 그 쪽에 넣을 아이템들)].
+    쪽마다 그 아이템들만 골라(다른 것은 숨김 — `_paint_scene`의 선택 격리) 같은 용지·방향에 맞춰 넣는다. 성공 True."""
+    regions = list(regions)
+    if not regions:
+        return False
+    printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+    printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+    printer.setOutputFileName(path)
+    top, right, bottom, left = margins_mm
+    printer.setPageLayout(QPageLayout(
+        QPageSize(PAGE_SIZES.get(page, QPageSize.PageSizeId.A3)),
+        QPageLayout.Orientation.Landscape if landscape else QPageLayout.Orientation.Portrait,
+        QMarginsF(left, top, right, bottom), QPageLayout.Unit.Millimeter))
+    saved = list(scene.selectedItems())
+    painter = QPainter()
+    if not painter.begin(printer):
+        return False
+    try:
+        for i, (source, items) in enumerate(regions):
+            if i:
+                printer.newPage()
+            scene.clearSelection()
+            for it in items:
+                it.setSelected(True)
+            paint_rect = printer.pageLayout().paintRectPixels(printer.resolution())
+            target = QRectF(0, 0, paint_rect.width(), paint_rect.height())
+            _paint_scene(scene, painter, target, source, isolate_selection=True)
+    finally:
+        painter.end()
+        scene.clearSelection()
+        for it in saved:
+            it.setSelected(True)
+    return True
+
+
 def _page_pixel_geometry(page_id, landscape: bool,
                          margins_mm: tuple[float, float, float, float], dpi: int):
     """(px_w, px_h, target) — mm 단위 용지를 `dpi` 해상도의 픽셀 사각형으로 환산.

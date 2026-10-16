@@ -190,6 +190,19 @@ def store_base_url(url: str) -> None:
 _client_cache: dict[tuple[str, str, float], object] = {}
 
 
+def preload_network() -> None:
+    """[2026-10-16] 통신 부품(httpx·openai)을 **메인 스레드에서** 먼저 불러 둔다 — 작업자 스레드를 띄우기 직전에 부른다.
+    두 작업자(가운데 칸을 열 때 도는 크레딧 조회 + 바로 누른 만들기 등)가 같은 모듈을 처음으로 동시에 불러오면 파이썬이
+    "deadlock detected by _ModuleLock('asyncio.windows_utils')"로 한쪽을 실패시켰다(실제 창, 여러 자료 보드 — 오류 문구가 증거).
+    이미 불렀으면 곧바로 끝난다."""
+    import importlib
+    for name in ("httpx", "openai"):
+        try:
+            importlib.import_module(name)
+        except ImportError:
+            pass
+
+
 def _client(api_key: str, base_url: str = BASE_URL, timeout: float = 600.0):
     try:
         from openai import OpenAI
@@ -392,12 +405,18 @@ def strip_code_fence(raw: str) -> str:
     return txt
 
 
-def call_text(client, model: str, prompt: str, *, image=None,
+def call_text(client, model: str, prompt: str, *, image=None, images=None,
               max_tokens: int = DEFAULT_MAX_TOKENS) -> tuple[str, float]:
     """텍스트 전용 또는 이미지+텍스트 호출(단일, 폴백 없음). `image`(PIL Image)를 주면
     vision 콘텐츠 배열로, 안 주면 문자열 하나만 보낸다(이름은 `call_text`로 남겨둔다 —
     text_to_mermaid.py 등 기존 호출부가 이 이름을 그대로 쓴다). 반환 (본문 문자열, 소요초)."""
-    if image is not None:
+    if images:   # [§8 항목53 4단계] 여러 자료 — (이름표, PIL) 여러 장을 이름표 글과 함께(2026-10-16 실호출로 받는 것 확인)
+        content = []
+        for label, img in images:
+            content.append({"type": "text", "text": f"자료 {label}(그림):"})
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_b64_png(img)}"}})
+        content.append({"type": "text", "text": prompt})
+    elif image is not None:
         content = [
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_b64_png(image)}"}},
             {"type": "text", "text": prompt},
@@ -412,7 +431,7 @@ def call_text(client, model: str, prompt: str, *, image=None,
     return (resp.choices[0].message.content or ""), time.time() - t0
 
 
-def call_text_with_fallback(api_key: str, prompt: str, *, model: str, image=None,
+def call_text_with_fallback(api_key: str, prompt: str, *, model: str, image=None, images=None,
                              fallback_chain: tuple = (), base_url: str = BASE_URL,
                              max_tokens: int = DEFAULT_MAX_TOKENS,
                              timeout: float = 60.0) -> GatewayResult:
@@ -427,7 +446,8 @@ def call_text_with_fallback(api_key: str, prompt: str, *, model: str, image=None
     client = _client(api_key, base_url, timeout=timeout)
 
     def _try(m: str) -> tuple[str, float]:
-        return call_text(client, m, prompt, image=image, max_tokens=max_tokens)
+        extra = {"images": images} if images else {}   # 그림 여러 장일 때만 — 예전 호출 모양 그대로 두기
+        return call_text(client, m, prompt, image=image, max_tokens=max_tokens, **extra)
 
     try:
         content, dt = _try(model)

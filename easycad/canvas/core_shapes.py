@@ -2369,6 +2369,7 @@ class _BoardItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
         self._init_resize()
         self._followers = None
         self._follow_pos = None
+        self._set_id, self._page = None, 1   # 여러 장 묶음(§8 항목53 4단계 — 같은 묶음은 PDF 한 파일 여러 쪽)
         self.setFlags(self.flags())
 
     def setFlags(self, flags):

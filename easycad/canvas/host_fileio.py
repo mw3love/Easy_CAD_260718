@@ -693,6 +693,7 @@ class _FileIOMixin:
                                              links, gw.TEXT_RECOMMEND_EXPLAIN, gw.resolve_base_url(), self)
         self._steps_worker.succeeded.connect(self._on_steps_ready)
         self._steps_worker.failed.connect(self._on_steps_failed)
+        gw.preload_network()   # 작업자끼리 첫 import 교착 막기
         self._steps_worker.start()
         self.statusBar().showMessage("KAIROS가 설명을 쓰는 중이에요(10~30초) — 끝나면 브라우저로 열려요", 30000)
         return self._steps_worker
@@ -1758,7 +1759,7 @@ class _FileIOMixin:
             t.apply_font_size(self._FLOW_HEAD_PT)
             t.setPlainText(name)
             hx, hy, hw, hh = lb.head
-            br = t.boundingRect()
+            br = t.document().size()   # 줌과 무관한 글 크기(boundingRect는 손잡이 여유가 줌 따라 바뀜)
             t.setPos(ox + hx + (hw - br.width()) / 2.0, oy + hy + (hh - br.height()) / 2.0)
             self._scene.addItem(t)
             added.append(t)
