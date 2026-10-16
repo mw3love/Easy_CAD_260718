@@ -134,10 +134,13 @@ def test_explain_generates_and_stages_like_flow(sample_pdf):
         req = p.request_make()
         assert req.kind == "explain" and req.pdf_path == sample_pdf
         assert _wait_until(lambda: w._ai_staged is not None)
-    assert gen.call_args.args[1] == sample_pdf and gen.call_args.args[2] == "처음 보는 사람용"
-    assert w._ai_staged.request.kind == "explain"
-    assert p._attached_pdf == "", "보낸 뒤 첨부 칩은 비움"
-    again = p.resubmit(req)
+        assert gen.call_args.args[1] == sample_pdf and gen.call_args.args[2] == "처음 보는 사람용"
+        assert w._ai_staged.request.kind == "explain"
+        assert p._attached_pdf == "", "보낸 뒤 첨부 칩은 비움"
+        # 「다시」도 가짜 안에서 끝까지 기다린다 — 밖에서 부르면 작업자가 진짜 게이트웨이에 접속해 몇 초 돌고, 그 사이 GC가
+        # 창을 지우면 "QThread: Destroyed while thread is still running"으로 전체 pytest가 exit 127(2026-10-16 원인).
+        again = p.resubmit(req)
+        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged.request is again)
     assert again.pdf_path == sample_pdf, "「다시」도 같은 PDF로"
 
 
