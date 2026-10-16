@@ -53,6 +53,8 @@ class _UndoMixin:
         새 변이가 실리면 redo 스택은 무효화된다(표준 undo 시맨틱)."""
         if not ops:
             return
+        # [§8 항목53] 보드 위에 놓이거나 옮겨진 것의 잉크를 보드 밝기에 맞춤 — 같은 기록 칸에 실어 Ctrl+Z 한 번에 같이
+        ops = list(ops) + self._board_ink_ops(ops)
         self._assign_new_items_to_active_layer(ops)   # [2026-10-07] 새 도형은 「그리는 중」 레이어로
         top = self._undo[-1] if self._undo else None
         if key is not None and top is not None and top.key == key:

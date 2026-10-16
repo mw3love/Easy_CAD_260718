@@ -2324,6 +2324,130 @@ class _ImageItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
 
 
 # ---------------------------------------------------------------------------
+# [우리 확장 · §8 항목53 1단계, 2026-10-16] 보드 — 작업영역 안의 16:9 틀(Magic Board 논문 한 장 보드의 바탕)
+# ---------------------------------------------------------------------------
+# 소속은 위치로 정한다(사용자 확정): 가운데가 틀 안에 있는 최상위 아이템이 그 보드 것 — 따로 부모·자식으로 묶지 않아서
+# 끌어 빼기·다른 보드로 옮기기·복사가 평소 그대로다. 보드를 끌 때만 그 순간의 소속을 같이 옮긴다(`_board_members`).
+# 상자 종류(_RectItem 등)가 아니라서 길찾기 장애물·「도면 검사」 상자에서 저절로 빠진다(띠 `_PathItem`과 같은 이유).
+BOARD_ASPECT = 16.0 / 9.0
+BOARD_W = 1600.0
+
+
+def _board_members(board) -> list:
+    """보드 안에 있는 최상위 아이템(가운데 기준). 다른 보드·용지틀·잠긴 것·선택된 것(Qt가 이미 같이 옮김)은 빼고,
+    끝이 상자에 붙은 화살표도 뺀다 — 붙은 상자를 따라 저절로 다시 그려진다."""
+    sc = board.scene()
+    if sc is None:
+        return []
+    area = board.mapRectToScene(board.rect())
+    out = []
+    for it in sc.items():
+        if it is board or it.parentItem() is not None or isinstance(it, (_BoardItem, _TitleBlockItem)):
+            continue
+        if it.isSelected() or getattr(it, "_locked", False) \
+                or not (it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsMovable):
+            continue
+        if any(getattr(it, name, None) is not None for name in ("_bind_start", "_bind_end", "_bind1", "_bind2")):
+            continue
+        cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
+        if area.contains(it.mapRectToScene(cr).center()):
+            out.append(it)
+    return out
+
+
+class _BoardItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
+    """보드 틀 — 바탕색(`_color` — 화살표처럼 이 이름이라 속성 되돌리기(capture_state)를 그대로 탄다)을 칠한 16:9 둥근 사각형. 크기를 바꿔도 16:9(꼭짓점·변 모두). 출력 때는 흰 종이로
+    칠한다(`pdf_export._swap_white_to_black_for_print`가 `apply_color`로 바탕을 잠깐 바꿈)."""
+
+    _RADIUS = 14.0
+
+    def __init__(self, rect: QRectF, bg=None):
+        super().__init__(rect)
+        self._color = QColor(bg) if bg is not None else QColor("#ffffff")
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self._init_resize()
+        self._followers = None
+        self._follow_pos = None
+        self.setFlags(self.flags())
+
+    def setFlags(self, flags):
+        # 위치가 바뀐 뒤 알림(ItemPositionHasChanged)은 이 깃발이 있어야 온다 — 호스트·불러오기가 setFlags로 덮어써도 남게
+        super().setFlags(flags | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
+
+    def clone(self):
+        c = _BoardItem(QRectF(self.rect()), self._color)
+        return self._copy_common_to(c)
+
+    def bg(self) -> QColor:
+        return QColor(self._color)
+
+    def apply_color(self, color):
+        """바탕색 — 속성 카드 「색」과 출력 때 흰 종이 바꿔치기가 이 길로 온다. 안 글자 색 맞추기는 호스트 몫."""
+        self._color = QColor(color)
+        self.update()
+
+    def is_dark(self) -> bool:
+        c = self._color
+        return (0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()) < 128
+
+    def _content_rect(self) -> QRectF:
+        return QRectF(self.rect())
+
+    def _constrain_box_rect(self, new: QRectF, kind: str, key, shift: bool = False) -> QRectF:
+        o = self._box_orig_rect
+        if kind == "corner":
+            opp = [o.bottomRight(), o.bottomLeft(), o.topLeft(), o.topRight()][key]
+            w = max(new.width(), new.height() * BOARD_ASPECT)
+            h = w / BOARD_ASPECT
+            sx = 1.0 if key in (1, 2) else -1.0
+            sy = 1.0 if key in (2, 3) else -1.0
+            return QRectF(opp, QPointF(opp.x() + sx * w, opp.y() + sy * h)).normalized()
+        if abs(new.width() - o.width()) >= abs(new.height() - o.height()):   # 변 — 바뀐 쪽에 맞춰 나머지를 가운데 기준으로
+            h = new.width() / BOARD_ASPECT
+            return QRectF(new.left(), new.center().y() - h / 2.0, new.width(), h)
+        w = new.height() * BOARD_ASPECT
+        return QRectF(new.center().x() - w / 2.0, new.top(), w, new.height())
+
+    # ---- 보드를 끌면 안의 것도 같이 ----------------------------------------------------------
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        busy = getattr(self, "_box_resize", None) is not None or getattr(self, "_resizing", False) \
+            or getattr(self, "_rotating", False)
+        self._followers = None if busy else _board_members(self)
+        self._follow_pos = QPointF(self.pos())
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self._followers = None
+
+    def itemChange(self, change, value):
+        out = super().itemChange(change, value)
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged and self._followers \
+                and self._follow_pos is not None:
+            d = self.pos() - self._follow_pos
+            self._follow_pos = QPointF(self.pos())
+            if d.x() or d.y():
+                for it in self._followers:
+                    if it.scene() is self.scene() and not it.isSelected():
+                        it.moveBy(d.x(), d.y())
+        return out
+
+    def paint(self, painter, option, widget=None):
+        r = self.rect()
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        edge = QColor(self._color.lighter(135) if self.is_dark() else self._color.darker(118))
+        painter.setPen(QPen(edge, 1.2))
+        painter.setBrush(QBrush(self._color))
+        painter.drawRoundedRect(r, self._RADIUS, self._RADIUS)
+        painter.restore()
+        if self.isSelected():
+            self._paint_selection_outline(painter, self._scale_or_1())
+        self._paint_handle(painter)
+
+
+# ---------------------------------------------------------------------------
 # [우리 확장 · Phase 4] 표제란 / 용지틀 — 도면번호·축척·발주처가 들어가는 우하단 표 + A-size 용지경계
 # ---------------------------------------------------------------------------
 # 설계(deep-interview 2026-07-20): 진짜 paper space(뷰포트·이중좌표계)를 도입하지 않고,

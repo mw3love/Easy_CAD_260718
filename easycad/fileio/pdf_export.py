@@ -84,8 +84,15 @@ def _swap_white_to_black_for_print(scene):
     전부 — 타입 무관하게 흰색이면 바꾼다(화면-표시용 색과 인쇄용 색을 분리 관리하지 않으므로
     되돌리기 전제로만 임시 변경)."""
     swapped = []
+    from easycad.canvas.annotator_core import _BoardItem
     for it in scene.items():
         if not hasattr(it, "apply_color"):
+            continue
+        if isinstance(it, _BoardItem):
+            # [§8 항목53, 2026-10-16] 보드는 무슨 색이든 출력은 흰 종이(사용자 확정) — 안 글자는 보드 색에 맞춰 흰색/검정
+            # 잉크라(`host_board`), 흰 잉크는 아래 규칙으로 검정이 된다.
+            swapped.append((it, it.bg()))
+            it.apply_color(QColor("#ffffff"))
             continue
         col = _current_ink_color(it)
         if _is_near_white(col):

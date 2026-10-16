@@ -17,7 +17,7 @@ from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QPixmap
 from easycad.canvas.annotator_core import (
     _RectItem, _EllipseItem, _LineItem, _PathItem, _ArrowItem, _TextItem, _BadgeItem,
     _PolyArrowItem, _SymbolItem, _ImageItem, _TitleBlockItem, _TableItem, _PolygonItem,
-    _ConnectorLabel, _reposition_port_from_frac, _TEXT, _GroupBindProxy,
+    _ConnectorLabel, _reposition_port_from_frac, _TEXT, _GroupBindProxy, _BoardItem,
 )
 
 FORMAT = "easycad-doc"
@@ -199,6 +199,9 @@ def item_to_dict(it) -> dict | None:
                  fields=dict(it._fields))
         if getattr(it, "_plain", False):   # [§8 항목33] 빈 용지틀 — 없으면 키 생략(하위호환)
             d["plain"] = True
+    elif isinstance(it, _BoardItem):   # [§8 항목53] 보드 틀
+        r = it.rect()
+        d.update(type="board", rect=[r.x(), r.y(), r.width(), r.height()], bg=_col(it.bg()))
     elif isinstance(it, _TableItem):
         r = it.rect()
         d.update(type="table", rows=it._rows, cols=it._cols, header=it._header,
@@ -324,6 +327,8 @@ def dict_to_item(d: dict):
             it._ctrl1 = QPointF(*d["ctrl1"])
             it._ctrl2 = QPointF(*d["ctrl2"])
         _apply_arrow_style(it, d)   # [M2 #3] 하위호환: 없으면 solid 유지
+    elif t == "board":
+        it = _BoardItem(QRectF(*d["rect"]), QColor(d.get("bg", "#ffffffff")))
     elif t == "symbol":
         it = _SymbolItem(d.get("kind", "decision"), QRectF(*d["rect"]))
         it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))

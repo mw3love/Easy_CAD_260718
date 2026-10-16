@@ -72,6 +72,7 @@ easycad/
 │   ├── ai_control.py       AI 요청 관리(위젯 없음) — 요청·종류 짐작(`guess_kind`)·기록·이어 만들기·모델 「자동」+가격·크레딧(§8 항목51, 2026-10-16 —
 │   │                       옛 오른쪽 패널 `ai_panel.py`의 몸통. 패널 화면은 없앰)
 │   ├── host_aimake.py      AI 만들기의 CanvasWindow 쪽 믹스인 — 가운데 칸 열기·요청·임시 결과(점선 + 막대: 채택·입력 한 줄·기록·버리기)·상태 알약
+│   ├── host_board.py       보드 틀 믹스인 — 삽입·잉크 맞추기(`_push_entry` 길목)·「보드 색」(§8 항목53 1단계, 틀 자체는 core_shapes `_BoardItem`)
 │   ├── drawing_check.py / host_check.py   「도면 검사」 찾기 / 결과 카드·표시 믹스인(§8 항목48, 2026-10-16)
 │   ├── start_prompt.py     가운데 칸 「무엇을 그릴까요?」 — AI의 하나뿐인 입구(§8 항목39 → 51): 빈 도면이면 저절로, 「AI」로는 언제든. 「+」·모델 「자동 ▾」
 │   └── shortcuts.py        단축키 레지스트리(2026-08-21) — QAction·뷰 raw-key 통합(`SHORTCUT_DEFS`),
@@ -104,7 +105,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~39_*.py      테마별 회귀 스모크 1294종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~40_*.py      테마별 회귀 스모크 1304종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -166,7 +167,10 @@ symbol_library/
 - **§8 항목52 새 흐름도 엔진**(2026-10-16) — AI 흐름도는 Mermaid 대신 「내용 설계서」 JSON(담당·단계·갈림길·강조 하나·아이콘 이름, `text_to_flow.py`),
   배치·색은 앱(`flow_spec.layout` 담당 띠·가장 긴 길 칸 → `_build_flowspec_items`: 띠는 채운 패스라 길찾기·검사에서 빠짐, 알파 채움이라 두 테마·인쇄
   모두 읽힘, 강조만 코랄, 갈림길 가지는 다른 꼭짓점). 막대 한 줄(「세로로」·이어 고치기·비교 표시 `_flow_key`) 그대로, Mermaid 가져오기·「풀어 그리기」는
-  옛 길. 실제 KAIROS 결과 2건·이어 고치기 1건·실제 창 캡처 확인. 남은 것: 긴 일직선 흐름이 옆으로 아주 길어짐, 사용자 화면 확인. 다음은 53 논문 보드.
+  옛 길. 실제 KAIROS 결과 2건·이어 고치기 1건·실제 창 캡처 확인. 남은 것: 긴 일직선 흐름이 옆으로 아주 길어짐, 사용자 화면 확인.
+- **§8 항목53 1단계 보드 틀**(2026-10-16) — 53을 ① 틀 ② 논문 내용 ③ 내보내기 ④ 여러 자료·장으로(사용자 "틀부터"). `_BoardItem`(16:9, 상자 종류 아님) +
+  `host_board.py`: 삽입 › 보드, 끌면 가운데가 안에 있는 것도 같이(되돌리기 한 칸), 보드 위 무채색 잉크를 바탕 밝기에 맞춤(`_push_entry` 길목), 우클릭
+  「보드 색」(화이트·블랙·견본 8·직접), 출력은 흰 종이(`_swap_white_to_black_for_print`). 다음은 ② 논문 → 보드 내용.
 - **Magic Board 개편 결정**(2026-10-16 오후, 코드 변경 없음) — "AI가 너무 복잡해졌다" 검토 → 시안 2라운드
   (https://claude.ai/artifact/81avA5GPjgcGjdaLsbcbQR)로 확정, 계획서 §8 항목50~53: 이름 Magic Board(겉만)·입구 가운데 칸 하나(오른쪽
   패널 없앰, 종류 칩 없음, 「+」=파일 선택, 결과 막대=입력 한 줄)·모델 「자동 ▾」+가격(`/models` pricing)·흐름도는 Mermaid 대신 내용

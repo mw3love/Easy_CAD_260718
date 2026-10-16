@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from easycad.canvas.annotator_core import (
-    _ArrowItem, _PolyArrowItem, _TitleBlockItem, _RectItem, _EllipseItem, _SymbolItem, _PolygonItem,
+    _ArrowItem, _PolyArrowItem, _TitleBlockItem, _RectItem, _EllipseItem, _SymbolItem, _PolygonItem, _BoardItem,
     _nearest_border, _destructive_trim_result, _symbol_hard_vertices_by_subpath,
     _normalize_pt_to_rect, _SYMBOL_KINDS, _smart_snap_srect,
 )
@@ -79,6 +79,8 @@ class _ContextMixin:
                 if isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem)):
                     # [§8 항목36 4단계] 옛 「SVG로 생성...」(옛 SVG 창) → AI 만들기 패널(심볼, 고르면 그 자리에 바뀜).
                     menu.addAction("AI로 바꾸기…", lambda it=sel[0]: self._ai_open_for_replace(it))
+                if isinstance(sel[0], _BoardItem):   # [§8 항목53] 보드 색(안 잉크도 같이)
+                    menu.addMenu(self._build_board_color_menu(sel[0], menu))
             if has_sel and has_style_clip:
                 menu.addAction("스타일 붙여넣기\tCtrl+Alt+V", self.paste_style_to_selection)
         if len(self._align_targets()) >= 2 or self._has_distribute_candidates():

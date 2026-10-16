@@ -1726,7 +1726,11 @@ class _FileIOMixin:
             t.setAlpha(a)
             return t
 
-        z_floor = min((it.zValue() for it in self._scene.items() if it.parentItem() is None), default=0.0)
+        # 띠는 다른 도형 뒤, 단 보드·용지틀(§8 항목53)보다는 앞 — 보드 위에 놓으면 띠가 보드 바탕에 가려졌다(실제 창 캡처).
+        from easycad.canvas.annotator_core import _BoardItem, _TitleBlockItem
+        tops = [it for it in self._scene.items() if it.parentItem() is None]
+        z_floor = min((it.zValue() for it in tops if not isinstance(it, (_BoardItem, _TitleBlockItem))), default=0.0)
+        z_floor = max(z_floor, max((it.zValue() for it in tops if isinstance(it, _BoardItem)), default=-1e9) + 1.5)
         added: list = []
         # 띠 — 채운 패스(사각형). 상자가 아니라 길찾기 장애물·「도면 검사」 상자에서 빠진다(`_obstacle_rects`·`BOX_TYPES`).
         for lb, name in zip(lay.lanes, names):
