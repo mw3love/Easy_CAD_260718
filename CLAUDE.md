@@ -76,7 +76,7 @@ easycad/
 │   ├── host_board.py       보드 틀 믹스인 — 삽입·잉크 맞추기(`_push_entry` 길목)·「보드 색」(§8 항목53 1단계, 틀 자체는 core_shapes `_BoardItem`)
 │   ├── drawing_check.py / host_check.py   「도면 검사」 찾기 / 결과 카드·표시 믹스인(§8 항목48, 2026-10-16)
 │   ├── model_picker.py     모델 고르기 버튼 「기본 · gpt-6.1-sol ▾」 — 회사별 3개·숫자 가격·「기본으로」·여러 개 체크(§8 항목56, 가운데 칸·보드 막대 공용)
-│   ├── start_prompt.py     가운데 칸 「무엇을 그릴까요?」 — AI의 하나뿐인 입구(§8 항목39 → 51): 빈 도면이면 저절로, 「AI」로는 언제든. 「+」·모델 「자동 ▾」·파일 여럿이면 자료 A·B·C(§8 항목53)
+│   ├── start_prompt.py     가운데 칸 「무엇을 그릴까요?」 — AI의 하나뿐인 입구(§8 항목39 → 51): 빈 도면이면 저절로, 「AI」로는 언제든. 「+」·모델 「기본 · gpt-6.1-sol ▾」(§8 항목56 `model_picker`)·파일 여럿이면 자료 A·B·C(§8 항목53)
 │   └── shortcuts.py        단축키 레지스트리(2026-08-21) — QAction·뷰 raw-key 통합(`SHORTCUT_DEFS`),
 │                            설정 창에서 재할당 시 QSettings에 저장(기본값은 이 파일)
 ├── ai/
