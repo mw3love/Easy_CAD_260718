@@ -125,6 +125,25 @@ def test_dragging_board_moves_members_and_one_undo_restores():
     _close(w)
 
 
+def test_arrow_keys_move_board_members_and_one_undo_restores():
+    """방향키로 보드를 옮겨도 안의 것이 같이 — 끌 때와 같게(2026-10-16 백지 검토). 밖의 것은 그대로, 되돌리기 한 번에 함께."""
+    w = _window()
+    b = w._insert_board()
+    inside = _rect(w, b, 300, 300)
+    outside = _rect(w, b, -500, 0)
+    b_from, in_from, out_from = QPointF(b.pos()), QPointF(inside.pos()), QPointF(outside.pos())
+    w._scene.clearSelection()
+    b.setSelected(True)
+    w._view.setFocus()
+    QTest.keyClick(w._view, Qt.Key.Key_Right)
+    QTest.keyClick(w._view, Qt.Key.Key_Down)
+    d = b.pos() - b_from
+    assert (d - QPointF(10, 10)).manhattanLength() < 0.5
+    assert (inside.pos() - in_from - d).manhattanLength() < 0.5 and (outside.pos() - out_from).manhattanLength() < 0.5
+    w.undo()
+    assert (b.pos() - b_from).manhattanLength() < 0.5 and (inside.pos() - in_from).manhattanLength() < 0.5
+    _close(w)
+
 def test_members_skip_bound_arrows_and_other_boards():
     from easycad.canvas.annotator_core import _board_members
     w = _window()
@@ -186,4 +205,31 @@ def test_insert_menu_and_toolbar_have_board():
     w = _window()
     assert w._act_board.iconText() == "보드"
     assert any(a is w._act_board for a in w.findChildren(type(w._act_board)))
+    _close(w)
+
+
+def test_props_card_board_color_is_background_and_fixes_ink():
+    """속성 카드에서 보드를 고르면 그 칸 이름이 「바탕」(선 모양·두께는 숨김), 색을 바꾸면 안 잉크도 같이 맞고(한 번에 되돌림),
+    다음 도형 기본 색은 그대로 — 2026-10-16 백지 검토."""
+    w = _window(dark=False)
+    b = w._insert_board()
+    inside = _rect(w, b, 300, 300)
+    assert inside.pen().color().lightness() < 60   # 밝은 화면 기본 잉크(어두움) 그대로
+    cur = QColor(w.current_color).name()
+    w._scene.clearSelection()
+    b.setSelected(True)
+    w._refresh_properties()
+    assert w._props_form.labelForField(w._pf_line_row).text() == "바탕"
+    assert w._pf_style_btn.isHidden() and w._pf_width_btn.isHidden()
+    presets = w._line_presets()
+    dark_i = min(range(len(presets)), key=lambda i: QColor(presets[i]).lightness())
+    w._apply_line_preset(dark_i)
+    assert b.is_dark() and inside.pen().color().name() == INK_ON_DARK
+    assert QColor(w.current_color).name() == cur
+    w.undo()
+    assert not b.is_dark() and inside.pen().color().lightness() < 60
+    w._scene.clearSelection()
+    inside.setSelected(True)
+    w._refresh_properties()
+    assert w._props_form.labelForField(w._pf_line_row).text() == "선" and not w._pf_style_btn.isHidden()
     _close(w)

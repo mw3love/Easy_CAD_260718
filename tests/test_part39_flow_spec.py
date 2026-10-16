@@ -68,6 +68,12 @@ def test_parse_spec_single_lane_means_no_bands_and_errors():
     assert fs.looks_like_spec("```json\n{}\n```") and not fs.looks_like_spec("flowchart LR\n A-->B")
 
 
+def test_lanes_as_plain_string_are_ignored():
+    """`lanes`가 목록이 아니라 글 한 줄이면 글자마다 띠가 되지 않게 무시(단계의 lane으로만) — 2026-10-16 백지 검토."""
+    spec = fs.parse_spec(json.dumps({"lanes": "송신부", "steps": [{"id": "a", "text": "A"}, {"id": "b", "text": "B"}]},
+                                    ensure_ascii=False))
+    assert spec.lanes == []
+
 def test_to_json_roundtrips_and_direction_change():
     spec = fs.parse_spec(SPEC_TEXT)
     again = fs.parse_spec(spec.to_json())

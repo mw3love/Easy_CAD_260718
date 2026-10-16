@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _ArrowItem, _PolyArrowItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon, _SYMBOL_KINDS, _pen_style_icon,
-    _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT,
+    _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT, _BoardItem,
 )
 from easycad.canvas.host_widgets import (
     _current_icon_color, _arrow_kind_of, _arrow_head_of, _apply_arrow_head, _is_rotatable,
@@ -143,7 +143,8 @@ class _StyleMixin:
             return
         self._remember_recent_color(col)   # 레이어·폴더 색 팝업의 「최근 사용한 색」에도 남긴다
         self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
-        self._set_current_color(col)   # [M2 #A] 다음 도형 기본 색으로(sticky)
+        if not all(isinstance(it, _BoardItem) for it in sel):   # 보드 바탕색은 다음 도형 색이 아니다
+            self._set_current_color(col)   # [M2 #A] 다음 도형 기본 색으로(sticky)
 
 
     def _edit_fill(self, anchor: QWidget | None = None):
@@ -234,7 +235,8 @@ class _StyleMixin:
         if not sel:
             return
         self._edit_items(sel, lambda it: it.apply_color(QColor(col)))
-        self._set_current_color(col)   # 다음 도형 기본 색으로(sticky) — ⋯ 팝업과 같은 규칙
+        if not all(isinstance(it, _BoardItem) for it in sel):   # 보드 바탕색은 다음 도형 색이 아니다
+            self._set_current_color(col)   # 다음 도형 기본 색으로(sticky) — ⋯ 팝업과 같은 규칙
 
     def _apply_fill_preset(self, i: int):
         col = self._fill_presets()[i]
@@ -725,6 +727,13 @@ class _StyleMixin:
             for w in self._pf_text_rows():
                 self._props_form.setRowVisible(w, bool(texts))
             self._props_form.setRowVisible(self._pf_line_row, not all(isinstance(it, _TextItem) for it in sel))
+            # [§8 항목53] 보드만 골랐으면 그 칸은 「바탕」 색(보드는 선이 없다 — 모양·두께는 숨김). 안 글자는 잉크 맞추기가 같이 바꾼다.
+            boards_only = all(isinstance(it, _BoardItem) for it in sel)
+            lab = self._props_form.labelForField(self._pf_line_row)
+            if lab is not None:
+                lab.setText("바탕" if boards_only else "선")
+            self._pf_style_btn.setVisible(not boards_only)
+            self._pf_width_btn.setVisible(not boards_only)
             self._pf_font.setEnabled(bool(texts))
             tcol = None
             if texts:

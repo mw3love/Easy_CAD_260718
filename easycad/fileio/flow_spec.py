@@ -109,7 +109,8 @@ def parse_spec(raw: str) -> FlowSpec:
     if direction not in DIRECTIONS:
         direction = "LR"
     lanes: list[str] = []
-    for v in data.get("lanes") or []:
+    raw_lanes = data.get("lanes")
+    for v in raw_lanes if isinstance(raw_lanes, list) else []:   # 글 한 줄이면 글자마다 띠가 됐다
         name = str((v.get("name") or v.get("id") or "") if isinstance(v, dict) else v).strip()
         if name and name not in lanes:
             lanes.append(name)

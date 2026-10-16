@@ -76,6 +76,11 @@ def test_parse_board_is_lenient():
     assert pb.is_board_spec(pb.dump_board(pb.parse_board(SPEC_TEXT))) and not pb.is_board_spec('{"steps": []}')
 
 
+def test_figure_page_range_takes_first_page():
+    """「p.3–5」 같은 쪽 범위를 35쪽으로 읽지 않는다(첫 숫자) — 2026-10-16 백지 검토."""
+    spec = pb.parse_board(json.dumps(dict(SPEC, figure={"caption": "그림", "page": "p.3–5"}), ensure_ascii=False))
+    assert spec["figure"]["page"] == 3
+
 def test_refine_hides_local_path_and_keeps_it():
     code = pb.dump_board(dict(pb.parse_board(SPEC_TEXT), _pdf="C:/비밀/논문.pdf"))
     assert "C:/비밀" not in pb.build_refine_prompt("더 쉽게", code)
@@ -190,4 +195,23 @@ def test_pdf_request_stages_board_and_followup_sends_board(figure_pdf):
     assert new.request.kind == "explain" and "흐름도" not in w._ai_pill.text()   # 보드로 이어 감(막대 예시·알약 이름)
     assert "나란히" in new.request.entry.status_text()
     assert w._ai_items_rect(new.items).left() > w._ai_items_rect(st.items).right()   # 원본 옆에 나란히
+    _close(w)
+
+
+def test_tick_does_not_overwrite_status_after_answer(figure_pdf):
+    """결과를 받은 뒤 작업자가 끝나기 전 틈에 1초 시계가 돌아도 「임시로 놓음」이 「만드는 중… N초」로 덮이지 않는다
+    (실제 창 두 논문 보드에서 남았던 것 — 2026-10-16 백지 검토). 틈은 재현이 들쭉날쭉해 답 받은 작업을 직접 넣어 본다."""
+    import time
+    from easycad.canvas.host_aimake import STAGED_TEXT, _AIJob
+    w = _window()
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.pdf_to_board.generate_board", return_value=(SPEC_TEXT, "m")):
+        w._ai_ctrl.request_make("", kind="explain", pdf_path=figure_pdf)
+        assert _wait_until(lambda: w._ai_staged is not None and not w._ai_jobs)
+    req = w._ai_staged.request
+    assert req.entry.status_text().startswith(STAGED_TEXT)
+    w._ai_jobs[object()] = _AIJob(req, None, time.monotonic() - 81, answered=True)
+    w._ai_tick()
+    assert req.entry.status_text().startswith(STAGED_TEXT)
+    w._ai_jobs.clear()
     _close(w)

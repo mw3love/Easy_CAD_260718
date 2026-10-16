@@ -1582,3 +1582,6 @@
   글 크기는 `document().size()`, 도형은 `_content_rect()`로.
 - ⚠ (2026-10-16) **작업자 스레드 둘이 같은 모듈을 처음으로 동시에 import하면 교착**(`_ModuleLock` deadlock) — 작업자를 띄우기 전 메인 스레드에서
   `gateway.preload_network()`.
+- ⚠ (2026-10-16) **작업자 `succeeded` 처리와 `finished` 사이 틈** — 그 사이 도는 시계(`_ai_tick`)가 「만드는 중」으로 상태를 덮는다. 답을 받은 순간 표시(`answered`).
+- ⚠ (2026-10-16) **`_push_entry` 길목에 끼우는 검사는 아이템당 O(1)로** — 아이템마다 `scene.items()`를 훑으면 1000개 이동이 수백 ms(보드 잉크 맞추기).
+

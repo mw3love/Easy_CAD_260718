@@ -154,6 +154,7 @@ class _AIJob:
     worker: object
     t0: float
     progress: tuple = None      # 베끼기 (끝난 구역, 전체)
+    answered: bool = False      # 결과·실패를 받음 — 끝나기 전 틈에 시계가 「만드는 중」으로 덮지 않게
 
 
 @dataclass
@@ -724,6 +725,8 @@ class _AIMakeMixin:
         worker = worker_cls(key, *args, parent=self, **kw)
         gw.preload_network()   # 다른 작업자(크레딧 조회 등)와 첫 import가 겹쳐 교착되던 것 — 메인 스레드에서 먼저
         self._ai_jobs[worker] = _AIJob(req, worker, time.monotonic())
+        worker.succeeded.connect(self._ai_mark_answered)   # 수신자보다 먼저(연결 순서 = 부르는 순서)
+        worker.failed.connect(self._ai_mark_answered)
         worker.succeeded.connect(on_success)
         worker.failed.connect(self._on_ai_job_failed)
         worker.finished.connect(self._on_ai_job_finished)
@@ -735,12 +738,18 @@ class _AIMakeMixin:
     def _ai_job_of_sender(self):
         return self._ai_jobs.get(self.sender())
 
+    def _ai_mark_answered(self, *_a):
+        job = self._ai_job_of_sender()
+        if job is not None:
+            job.answered = True
+
     def _ai_tick(self):
         now = time.monotonic()
         st = self._ai_staged
         for job in self._ai_jobs.values():
             entry = job.request.entry
-            if entry is None or sip.isdeleted(entry):
+            if entry is None or sip.isdeleted(entry) or job.answered:
+                # 답을 받은 뒤 작업자가 끝나기 전 틈에 덮으면 「임시로 놓음」·「실패」가 「만드는 중… N초」로 남았다(실제 창, 두 논문 보드)
                 continue
             sec = int(now - job.t0)
             tr = self._ai_trace

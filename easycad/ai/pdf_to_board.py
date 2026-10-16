@@ -221,7 +221,8 @@ def parse_board(raw: str) -> dict:
     page = None
     if fig is not None:
         try:
-            page = int(re.sub(r"[^0-9]", "", str(fig.get("page"))) or "x")
+            m = re.search(r"\d+", str(fig.get("page")))   # 첫 숫자 — "p.3–5"를 35쪽으로 읽지 않게
+            page = int(m.group()) if m else None
         except ValueError:
             page = None
     out["figure"] = {"caption": s(fig.get("caption")), "page": page} if fig is not None and page else None

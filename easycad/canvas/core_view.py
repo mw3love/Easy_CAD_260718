@@ -4608,11 +4608,15 @@ class _AnnotatorView(QGraphicsView):
                     # undo 폭주를 막는다(coalesce_key=선택 집합).
                     # [점검 2단계 2026-10-03] 옮긴 **뒤에** 기록한다 — 예전엔 옮기기 전에 기록해
                     # after가 이동 전 값으로 실려, 되돌린 뒤 다시실행이 한 칸 덜 갔다(1칸이면 제자리).
-                    pairs = [(it, QPointF(it.pos())) for it in sel]
+                    # [§8 항목53] 보드는 방향키로 옮겨도 안의 것이 같이(끌 때와 같게 — 같은 기록 칸)
+                    moving = list(sel)
+                    for b in [it for it in sel if isinstance(it, _BoardItem)]:
+                        moving += [m for m in _board_members(b) if m not in moving]
+                    pairs = [(it, QPointF(it.pos())) for it in moving]
                     fine = mods & (Qt.KeyboardModifier.ShiftModifier
                                    | Qt.KeyboardModifier.ControlModifier)
                     step = 1 if fine else 10
-                    for it in sel:
+                    for it in moving:
                         it.moveBy(arrow[0] * step, arrow[1] * step)
                     self._owner.push_undo_move(pairs, coalesce_key=frozenset(sel))
                     return

@@ -71,13 +71,18 @@ class _BoardMixin:
 
     # ---- 잉크 맞추기 -------------------------------------------------------------------------
 
-    def _board_at(self, it):
-        """아이템 가운데가 들어 있는 보드(겹치면 위에 있는 것). 없으면 None."""
+    def _boards(self) -> list:
+        """장면의 보드와 그 씬 사각형 — `_board_at`에 넘겨 아이템마다 장면 전체를 다시 훑지 않게(1000개 문서에서 보드 안 전체
+        이동 +273ms·보드 이동 +492ms였다 — 실측 2026-10-16)."""
+        return [(b, b.mapRectToScene(b.rect())) for b in self._scene.items() if isinstance(b, _BoardItem)]
+
+    def _board_at(self, it, boards=None):
+        """아이템 가운데가 들어 있는 보드(겹치면 위에 있는 것). 없으면 None. `boards`는 `_boards()` 결과(없으면 지금 셈)."""
         cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
         p = it.mapRectToScene(cr).center()
         best = None
-        for b in self._scene.items():
-            if isinstance(b, _BoardItem) and b is not it and b.mapRectToScene(b.rect()).contains(p):
+        for b, area in (self._boards() if boards is None else boards):
+            if b is not it and area.contains(p):
                 if best is None or b.zValue() > best.zValue():
                     best = b
         return best
@@ -85,14 +90,17 @@ class _BoardMixin:
     def _board_ink_ops(self, ops) -> list:
         """`_push_entry` 길목 — 이번에 생기거나 옮겨진 아이템 중 보드 위에서 안 보이는 잉크를 고친 "state" 변이 목록.
         보드가 생기거나 옮겨졌으면 그 안의 것 전부를 본다."""
-        if not any(isinstance(it, _BoardItem) for it in self._scene.items()):
+        boards = self._boards()
+        if not boards:
             return []
         seen, cands = set(), []
         for o in ops:
-            if o[0] == "create" or (o[0] == "mut" and o[2] in ("pos", "geom")):
-                it = o[1]
+            it = o[1]
+            # 보드는 바탕색이 바뀌어도("state" — 속성 카드 색 칸 길) 안을 다시 본다(2026-10-16 백지 검토: 카드로 바꾸면 안 잉크가 그대로였다)
+            if o[0] == "create" or (o[0] == "mut" and (o[2] in ("pos", "geom")
+                                                      or (o[2] == "state" and isinstance(it, _BoardItem)))):
                 if isinstance(it, _BoardItem):
-                    cands += [m for m in self._scene.items() if m.parentItem() is None and self._board_at(m) is it]
+                    cands += [m for m in self._scene.items() if m.parentItem() is None and self._board_at(m, boards) is it]
                 else:
                     cands.append(it)
         out = []
@@ -101,7 +109,7 @@ class _BoardMixin:
                     or isinstance(it, (_BoardItem, _TitleBlockItem)):
                 continue
             seen.add(id(it))
-            board = self._board_at(it)
+            board = self._board_at(it, boards)
             if board is not None:
                 out += self._ink_fix_ops(it, board.is_dark())
         return out
@@ -149,8 +157,9 @@ class _BoardMixin:
         before = board.capture_state()
         board.apply_color(QColor(color))
         ops = [("mut", board, "state", before, board.capture_state())]
+        boards = self._boards()
         for it in self._scene.items():
-            if it.parentItem() is None and not isinstance(it, (_BoardItem, _TitleBlockItem)) and self._board_at(it) is board:
+            if it.parentItem() is None and not isinstance(it, (_BoardItem, _TitleBlockItem))                     and self._board_at(it, boards) is board:
                 ops += self._ink_fix_ops(it, board.is_dark())
         self._push_entry(ops)
         board.update()
@@ -685,9 +694,10 @@ class _BoardMixin:
 
     def _board_scope(self, board) -> list:
         """보드와 그 안(가운데 기준)의 최상위 아이템 — 내보내기 범위."""
+        boards = self._boards()
         return [board] + [it for it in self._scene.items()
                           if it.parentItem() is None and it is not board and not isinstance(it, _TitleBlockItem)
-                          and self._board_at(it) is board]
+                          and self._board_at(it, boards) is board]
 
     def _board_export(self, board, kind: str, path: str | None = None, open_after: bool = True):
         """보드 「내보내기」 — kind = copy | png | pdf | html. `path`·`open_after`는 테스트용(없으면 저장 창). 반환: 저장 경로·True."""
