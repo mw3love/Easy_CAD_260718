@@ -294,3 +294,28 @@ def test_board_title_and_headings_bold_and_kept_in_file(tmp_path):
     again = next(it for it in w._scene.items() if hasattr(it, "toPlainText") and it.toPlainText() == MEETING["title"])
     assert again.font().bold()
     _close(w)
+
+
+def test_block_roles_hero_face_strips_and_flow_face():
+    """[§8 항목58 ②] 블록 역할별 모양 — 주인공 하나만 진한 면(그 위 헤드라인·크림 글), 카드는 왼쪽 띠, 숫자는 위 선, 흐름도는 채운 패스 면,
+    회색 상자는 없음. 「도면 검사」 문제 0."""
+    from easycad.canvas.annotator_core import _PathItem, _RectItem
+    w = _window()
+    blocks = [dict(b) for b in PAPER["blocks"]]
+    blocks[0]["hero"] = True
+    blocks[2]["hero"] = True   # 둘째 주인공은 버린다
+    spec = pb.parse_board(json.dumps(dict(PAPER, blocks=blocks, headline="모든 단어를 한 번에 보자"), ensure_ascii=False))
+    assert [b.get("hero", False) for b in spec["blocks"]][:3] == [True, False, False] and spec["headline"] == "모든 단어를 한 번에 보자"
+    _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
+    board = next(it for it in added if isinstance(it, _BoardItem))
+    rects = [it for it in added if isinstance(it, _RectItem)]
+    hero = [r for r in rects if r.brush().color().name() == w._BB_HERO_BG]
+    assert len(hero) == 1
+    head = next(it for it in added if hasattr(it, "toPlainText") and it.toPlainText() == "모든 단어를 한 번에 보자")
+    assert hero[0].mapRectToScene(hero[0].rect()).contains(head.sceneBoundingRect().center())
+    cards_text = next(it for it in added if hasattr(it, "toPlainText") and it.toPlainText().startswith("단어마다"))
+    assert cards_text.defaultTextColor().name() == QColor(w._BB_HERO_INK).name()
+    assert not [r for r in rects if r.brush().color() == w._PB_CARD]   # 회색 상자 없음
+    assert any(isinstance(it, _PathItem) and getattr(it, "_pb_part", "") == "blocks[1]" for it in added)   # 흐름도 면
+    assert check_drawing(w._scene, items=[it for it in w._board_scope(board) if it is not board]) == []
+    _close(w)

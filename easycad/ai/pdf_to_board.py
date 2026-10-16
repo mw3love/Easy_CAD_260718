@@ -29,6 +29,7 @@ BLOCK_KIND = "block-board"   # §8 항목57 블록 조립식 — 새로 만드�
 BLOCK_TYPES = ("text", "list", "cards", "flow", "bars", "numbers", "figure", "table", "terms", "timeline", "quote", "verdict")
 BLOCK_SIZES = ("small", "normal", "big")
 MAX_BLOCKS = 12
+HERO_TYPES = ("text", "list", "cards", "numbers", "quote")   # 주인공(진한 면)이 될 수 있는 블록 — §8 항목58 ②
 
 # [§8 항목57, 2026-10-16] 블록 조립식 — AI가 문서에 맞는 블록 종류·차례·자리(12칸 격자의 줄·칸 수)·크기를 고르고, 앱이 글 크기를 재서
 # 겹치지 않게 놓는다(좌표는 앱 — "좌표를 맡기면 겹친다" 원칙 유지). 논문이면 개념·흐름·결과·그림, 회의 자료면 결정·할 일 표·일정처럼.
@@ -36,10 +37,12 @@ _BLOCK_FORMAT = """출력 형식 — 아래 JSON 하나만 출력하라(다른 �
 {{"kind": "block-board",
  "title": "문서 제목(원문 그대로)", "meta": "저자·부서·날짜 등 한 줄(없으면 \\"\\")",
  "subtitle": "처음 보는 사람용 한 문장 요약(60자 안팎)", "highlight": "subtitle 안에서 가장 중요한 짧은 구절(그대로 복사, 없으면 \\"\\")",
+ "headline": "이 문서의 핵심을 말하듯 던지는 짧은 문장(25자 안팎, 포스터 문구처럼 — 예: \\"사고 없이, 11월 안에 송신기를 바꾼다\\")",
  "blocks": [ 블록 4~9개, 아래 종류 중 이 문서에 맞는 것만 골라 ] }}
 
 블록 공통 칸: "type", "title"(칸 제목), "pages"(근거 쪽 — "p.3"·"p.2–5"·"p.8 · 표 2", 없으면 ""),
- "row"(몇째 줄, 1부터), "span"(12칸 격자에서 차지할 칸 수 1~12 — 한 줄의 span 합은 12 이하), "size"("small"|"normal"|"big").
+ "row"(몇째 줄, 1부터), "span"(12칸 격자에서 차지할 칸 수 1~12 — 한 줄의 span 합은 12 이하), "size"("small"|"normal"|"big"),
+ "hero"(이 보드의 주인공 블록 하나에만 true — text·list·cards·numbers·quote 중 첫 줄에 두는 것. 앱이 진한 면으로 돋보이게 하고 headline을 그 위에 크게 쓴다).
 블록 종류별 칸:
 - text: "body"(2~4문장)
 - list: "items": ["한 줄", ...] 3~6개 (근거가 있으면 줄 끝에 (p.N))
@@ -355,7 +358,8 @@ def _parse_blocks(d: dict) -> dict:
         return out[:limit]
 
     out = {"kind": BLOCK_KIND, "title": s(d.get("title")), "meta": s(d.get("meta")),
-           "subtitle": s(d.get("subtitle") or d.get("one_line")), "highlight": s(d.get("highlight"))}
+           "subtitle": s(d.get("subtitle") or d.get("one_line")), "highlight": s(d.get("highlight")),
+           "headline": s(d.get("headline"))[:60]}
     if out["highlight"] and out["highlight"] not in out["subtitle"]:
         out["highlight"] = ""
     blocks = []
@@ -433,6 +437,8 @@ def _parse_blocks(d: dict) -> dict:
             blk["items"] = ver[:6]
             ok = bool(ver)
         if ok:
+            if b.get("hero") is True and t in HERO_TYPES and not any(x.get("hero") for x in blocks):
+                blk["hero"] = True   # 주인공은 하나만(§8 항목58 ②)
             blocks.append(blk)
     out["blocks"] = blocks[:MAX_BLOCKS]
     if not (out["title"] or out["subtitle"] or out["blocks"]):

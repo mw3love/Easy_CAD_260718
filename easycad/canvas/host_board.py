@@ -215,9 +215,9 @@ class _BoardMixin:
         added.append(r)
         return r
 
-    def _pb_card_under(self, added, start, x, y, w, h):
+    def _pb_card_under(self, added, start, x, y, w, h, fill=None, edge=None):
         """`start`부터 넣은 글들 밑에 카드 — 목록에서도 글 앞으로(먼저 = 아래)."""
-        card = self._pb_card(added, x, y, w, h)
+        card = self._pb_card(added, x, y, w, h, fill=fill, edge=edge)
         card.setZValue(-0.5)
         added.insert(start, added.pop())
         return card

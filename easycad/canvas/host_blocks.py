@@ -17,9 +17,10 @@ import json
 import math
 
 from PyQt6.QtCore import QPointF
+from PyQt6.QtGui import QColor
 
 from easycad.canvas.annotator_core import BOARD_ASPECT
-from easycad.canvas.host_board import _ACCENT, _outline_rect
+from easycad.canvas.host_board import INK_ON_LIGHT, _ACCENT, _outline_rect
 
 _BLOCK_NAME = {"text": "글", "list": "목록", "cards": "카드", "flow": "흐름", "bars": "막대", "numbers": "숫자", "figure": "그림",
                "table": "표", "terms": "용어", "timeline": "일정", "quote": "인용", "verdict": "의의와 한계"}
@@ -33,6 +34,14 @@ def block_label(blk: dict) -> str:
 
 class _BlockBoardMixin:
     _BB_M, _BB_G, _BB_P = 64.0, 40.0, 16.0   # 바깥 여백 · 칸 사이 · 카드 안쪽 여백
+    # 블록 역할별 모양(§8 항목58 ②) — 모든 블록을 같은 회색 상자로 그리던 것을: 주인공 하나는 진한 면, 숫자는 위 색 선, 카드는 왼쪽 색 띠,
+    # 흐름도는 옅은 강조 면, 나머지는 상자 없이 위 가는 선. 진한 면·그 위 글은 일부러 무채색이 아니다 — 보드 잉크 맞추기(`_is_ink`)가
+    # 흰/검정에 가까운 색만 바꾸므로, 무채색이면 흰 보드에서 크림 글자가 검정으로 뒤집혔다.
+    _BB_HERO_BG = "#22303f"
+    _BB_HERO_INK = "#fff4dd"
+    _BB_HERO_MUTED = "#aebccc"
+    _BB_BLUE = "#3d7fb8"
+    _BB_FLOW_FACE = QColor(218, 119, 86, 30)
     _BB_FIG_H = {"small": 200.0, "normal": 300.0, "big": 460.0}   # big은 머리글 + 한 줄 + 그림이 1장 높이(BOARD_MAX_W/16:9) 안에
 
     # ---- 줄 짜기 -----------------------------------------------------------------------------
@@ -111,6 +120,12 @@ class _BlockBoardMixin:
             if spec.get("highlight"):
                 self._pb_mark(added, sub, spec["highlight"])
             y += h
+        has_hero = any(b.get("hero") for b in spec["blocks"])
+        if spec.get("headline") and not has_hero:   # 주인공 블록이 없으면 헤드라인은 머리에(있으면 주인공 면 위에 크게)
+            self._pb_part_cur = "headline"
+            y += 6
+            _t, h = self._pb_text(added, spec["headline"], M, y, content_w, 20, _ACCENT, bold=True)
+            y += h
         self._pb_part_cur = None
         if spec.get("_note"):   # 여러 장 — 「→ 2장에 이어서: …」 / 「생략(한 장으로): …」
             _t, h = self._pb_text(added, spec["_note"], M, y + 6, content_w, 10, self._PB_MUTED)
@@ -126,18 +141,25 @@ class _BlockBoardMixin:
                 w = span * col + (span - 1) * G
                 self._pb_part_cur = f"blocks[{idx}]"
                 start = len(added)
-                h, ns, na = self._bb_block(added, spec, blk, x + P, y + P, w - 2 * P)
+                hero = bool(blk.get("hero"))
+                inset = P if (hero or blk["type"] == "flow") else 0.0   # 면이 있는 블록만 안쪽 여백
+                h, ns, na = self._bb_block(added, spec, blk, x + inset, y + P, w - 2 * inset)
                 n_steps += ns
                 n_arrows += na
-                cells.append((start, x, w, blk, idx))
+                cells.append((start, len(added), x, w, blk, idx))
                 hs.append(h + 2 * P)
                 x += w + G
             rh = max(hs)
-            for start, bx, bw, blk, idx in reversed(cells):   # 같은 줄 카드는 높이를 맞춘다(먼저 넣은 것 = 아래)
-                # 숫자는 숫자마다 카드, 흐름도는 카드 없이(카드 안을 지나는 화살표가 「도면 검사」의 "상자를 지나가는 선" — 옛 틀도 같음)
-                if blk["type"] not in ("numbers", "flow"):
-                    self._pb_part_cur = f"blocks[{idx}]"
-                    self._pb_card_under(added, start, bx, y, bw, rh)
+            for start, end, bx, bw, blk, idx in reversed(cells):   # 뒤 칸부터(앞 칸의 자리 번호가 안 밀리게)
+                self._pb_part_cur = f"blocks[{idx}]"
+                if blk.get("hero"):
+                    self._bb_hero_ink(added[start:end])
+                    self._pb_card_under(added, start, bx, y, bw, rh, fill=self._BB_HERO_BG, edge=self._BB_HERO_BG)
+                elif blk["type"] == "flow":
+                    # 흐름도는 상자 대신 채운 패스 — 상자면 그 안을 지나는 화살표가 「도면 검사」의 "상자를 지나가는 선"(옛 틀과 같은 이유)
+                    self._bb_face(added, start, bx, y, bw, rh, self._BB_FLOW_FACE)
+                elif blk["type"] not in ("numbers", "cards"):   # 숫자·카드는 안의 선·띠가 모양을 맡는다
+                    self._pb_card(added, bx, y, bw, 1.5, fill=self._PB_EDGE, edge=self._PB_EDGE, width=0.0)
             y += rh
             row_bottoms.append(y)
             y += G
@@ -153,6 +175,9 @@ class _BlockBoardMixin:
         y0 = y
         if blk.get("title") or blk.get("pages"):
             y += self._pb_heading(added, blk.get("title") or _BLOCK_NAME[t], blk.get("pages", ""), x, y, w) + 6
+        if blk.get("hero") and spec.get("headline"):   # 주인공 면 위 헤드라인(§8 항목58 ②)
+            _i, h = self._pb_text(added, spec["headline"], x, y + 4, w, 20, _ACCENT, bold=True)
+            y += h + 12
         ns = na = 0
         if t == "text":
             _i, h = self._pb_text(added, blk["body"], x, y, w, 11 * s)
@@ -175,7 +200,7 @@ class _BlockBoardMixin:
         elif t == "bars":
             y = self._bb_bars(added, blk, x, y, w, s)
         elif t == "numbers":
-            y = self._bb_numbers(added, blk["items"], x - self._BB_P, y, w + 2 * self._BB_P, s)
+            y = self._bb_numbers(added, blk["items"], x, y, w, s)
         elif t == "figure":
             y = self._bb_figure(added, spec, blk, x, y, w)
         elif t == "table":
@@ -220,8 +245,8 @@ class _BlockBoardMixin:
                 _t, h2 = self._pb_text(added, it["body"], cx + 12, y + 8 + h1, cw - 24, 10 * s)
                 cells.append((start, cx, h1 + h2 + 18))
             hmax = max(h for _s, _x, h in cells)
-            for start, cx, _h in reversed(cells):
-                self._pb_card_under(added, start, cx, y, cw, hmax)
+            for _start, cx, _h in cells:   # 상자 대신 왼쪽 색 띠(§8 항목58 ②)
+                self._pb_card(added, cx, y + 4, 4.0, hmax - 8, fill=self._BB_BLUE, edge=self._BB_BLUE, width=0.0)
             y += hmax + g
         return y - g
 
@@ -260,8 +285,8 @@ class _BlockBoardMixin:
                     _t, h3 = self._pb_text(added, foot, nx + 14, y + 10 + h1 + h2, nw - 28, 9, self._PB_MUTED)
                 cells.append((start, nx, h1 + h2 + h3 + 20))
             hmax = max(h for _s, _x, h in cells)
-            for start, nx, _h in reversed(cells):
-                self._pb_card_under(added, start, nx, y, nw, hmax)
+            for _start, nx, _h in cells:   # 타일 상자 대신 위 색 선(§8 항목58 ②)
+                self._pb_card(added, nx, y, nw, 4.0, fill=_ACCENT, edge=_ACCENT, width=0.0)
             y += hmax + g
         return y - g
 
@@ -326,6 +351,36 @@ class _BlockBoardMixin:
             y += h + 2
         return y
 
+    def _bb_hero_ink(self, items):
+        """주인공 면 위 글 — 잉크는 크림, 흐린 글은 밝은 회청(강조색은 그대로)."""
+        muted, ink = QColor(self._PB_MUTED).name(), QColor(INK_ON_LIGHT).name()
+        for it in items:
+            if not hasattr(it, "defaultTextColor"):
+                continue
+            c = it.defaultTextColor().name()
+            if c == muted:
+                it.apply_color(QColor(self._BB_HERO_MUTED))
+            elif c == ink:
+                it.apply_color(QColor(self._BB_HERO_INK))
+
+    def _bb_face(self, added, start, x, y, w, h, color):
+        """채운 패스 면(상자 아님 — 길찾기·「도면 검사」에서 빠짐) — `start`부터 넣은 것 밑에."""
+        from PyQt6.QtCore import QRectF
+        from PyQt6.QtGui import QBrush, QPainterPath, QPen
+        from easycad.canvas.annotator_core import _PathItem
+        path = QPainterPath()
+        path.addRect(QRectF(0.0, 0.0, w, h))
+        face = _PathItem(path)
+        face.setPen(QPen(QColor(color), 0.0))
+        face.setBrush(QBrush(QColor(color)))
+        face.setPos(x, y)
+        face.setZValue(-0.5)
+        face.setFlags(face.GraphicsItemFlag.ItemIsMovable | face.GraphicsItemFlag.ItemIsSelectable)
+        face._pb_part, face._pb_card = self._pb_part_cur, True
+        self._scene.addItem(face)
+        added.insert(start, face)
+        return face
+
     # ---- 크기 맞추기 · 여러 장 ---------------------------------------------------------------------
 
     def _bb_fit(self, spec):
@@ -357,7 +412,7 @@ class _BlockBoardMixin:
         # `BOARD_MAX_W`의 2.5배였다). 장마다 첫 줄은 남기니 반드시 끝난다.
         pages, rest, k = [], blocks, 1
         while rest:
-            base = spec if k == 1 else dict(spec, subtitle="", highlight="",
+            base = spec if k == 1 else dict(spec, subtitle="", highlight="", headline="",
                                             meta=(spec.get("meta") + " · " if spec.get("meta") else "") + f"{k}장 · 자세히")
             moved: list = []   # 다음 장(또는 생략)으로 보낸 블록(뒤쪽 줄부터)
             while True:
