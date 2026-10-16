@@ -9,6 +9,9 @@ from easycad.crash_report import init_crash_reporting
 
 
 def main():
+    if "--selftest" in sys.argv:   # [§8 항목43, 2026-10-16] 설치 점검 — easycad/selftest.py
+        from easycad.selftest import run
+        sys.exit(run(quiet="--quiet" in sys.argv))
     app = QApplication(sys.argv)
     init_crash_reporting()
     win = CanvasWindow()

@@ -181,10 +181,10 @@ def _pixmap_from_data(data: bytes) -> QPixmap | None:
 # ---------------------------------------------------------------------------
 
 def _icons_dir() -> Path:
-    """resources/icons 폴더 경로 — 개발 실행과 (미래) PyInstaller 프리즌 빌드 양쪽 대응.
-    현재 이 프로젝트는 PyInstaller로 패키징하지 않는다(스펙 파일 없음) — sys._MEIPASS
-    분기는 나중에 패키징이 붙을 때를 위한 최소 대비일 뿐, 지금은 else 경로만 실제로 탄다."""
-    base = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(__file__).resolve().parents[1]
+    """resources/icons 폴더 경로 — 개발 실행과 PyInstaller 빌드(`EasyCAD.spec`) 양쪽 대응.
+    [§8 항목43, 2026-10-16] 빌드는 아이콘을 `easycad/resources/icons`로 싣는다(spec `datas`) — 예전 분기는
+    `_MEIPASS/resources/icons`를 봐서 exe의 SVG 아이콘이 전부 빠졌다(처음 실제로 빌드해 보고 발견)."""
+    base = Path(sys._MEIPASS) / "easycad" if hasattr(sys, "_MEIPASS") else Path(__file__).resolve().parents[1]
     return base / "resources" / "icons"
 
 

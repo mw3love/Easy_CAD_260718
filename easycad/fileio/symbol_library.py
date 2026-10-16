@@ -32,6 +32,7 @@ deep-interview 2026-08-03 확정 스코프: 등록 대상=현재 선택 전부(1
 """
 import json
 import os
+import sys
 import uuid
 
 _FILE_NAME = "symbol_library.json"
@@ -40,8 +41,19 @@ _FILE_NAME = "symbol_library.json"
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def _library_dir() -> str:
+    """개발 실행은 리포의 `symbol_library/`(git으로 PC 간 동기화 — 사용자 요청 2026-08-20). [§8 항목43, 2026-10-16]
+    exe(PyInstaller)는 그 PC의 앱 데이터(`%APPDATA%/EasyCAD/EasyCAD`, 자동 저장·크래시 로그와 같은 곳) — 리포 기준
+    3단계 위는 exe 설치 폴더 안쪽이라 새 버전을 깔면 사라진다. exe는 빈 「내 심볼」로 시작한다(리포 파일엔 시험용
+    폴더가 섞여 있어 나눠 줄 기본 세트로 싣지 않음)."""
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "EasyCAD", "EasyCAD")
+    return os.path.join(_REPO_ROOT, "symbol_library")
+
+
 def _library_path() -> str:
-    d = os.path.join(_REPO_ROOT, "symbol_library")
+    d = _library_dir()
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, _FILE_NAME)
 

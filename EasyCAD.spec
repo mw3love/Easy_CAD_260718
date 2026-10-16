@@ -5,12 +5,8 @@
 (onedir — PyQt6은 리소스가 많아 onefile은 시작이 느려짐, 배포는 폴더째 zip).
 
 ⚠ 알려진 한계(코드는 안 고침, 이 스펙만으로는 못 푸는 문제):
-- `easycad/fileio/symbol_library.py._library_path()`가 `__file__` 기준 3단계 상위
-  (리포 루트)를 심볼 라이브러리 저장 위치로 계산한다 — 이 계산은 PyInstaller가 만드는
-  `dist/EasyCAD/` 폴더 구조에서는 리포 루트가 아닌 엉뚱한 경로를 가리킨다("내 심볼"
-  기능이 frozen 빌드에서 깨짐, 개발 중 `python run.py` 실행에는 영향 없음). 고치려면
-  "frozen 빌드에서 심볼 라이브러리를 어디에 저장할지"(exe 옆? AppData?) 설계 결정이
-  필요해 별도 deep-interview로 넘긴다 — 이 스펙은 패키징만 담당.
+- (해결 2026-10-16, §8 항목43) "내 심볼"은 exe에서 `%APPDATA%/EasyCAD/EasyCAD/symbol_library.json`
+  (`symbol_library._library_dir`), 아이콘 경로도 `_MEIPASS/easycad/resources/icons`로 바로잡음.
 - 앱 아이콘(.ico)이 아직 없어 PyInstaller 기본 아이콘으로 빌드된다. `icon=` 파라미터에
   준비되면 경로를 채워 넣을 것.
 """

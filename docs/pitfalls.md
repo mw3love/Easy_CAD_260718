@@ -1558,3 +1558,7 @@
   카드에서 글자가 사라진다(가운데 입구 제목, 실제 창 캡처로 발견). 새 카드는 글자색을 테마별 QSS로 직접 건다(`start_prompt.refresh_theme`).
 - ⚠ (2026-10-16) **클립보드 그림을 PowerShell 7로 확인하면 늘 비어 보인다** — pwsh 기본 MTA라 `Windows.Forms.Clipboard.GetImage()`가 null.
   `powershell.exe -STA -Command ...`로 읽는다(「그림으로 복사」 검증 때 앱 종료 시 클립보드가 비는 걸로 오해할 뻔).
+- ⚠ (2026-10-16) **"나중 대비"로만 있던 exe 분기는 실제 빌드 전엔 틀려도 모른다** — `_icons_dir`의 `_MEIPASS` 경로가 spec `datas`와
+  어긋나 exe 아이콘이 전부 빠졌다. 경로를 바꾸면 `tests/test_part34_frozen_paths.py`(spec 문자열까지 대조)를 같이 고칠 것.
+- ⚠ (2026-10-16) **GUI 자체확인 캡처는 화면 전체가 아니라 그 창만**(PrintWindow) — 같은 데스크톱 세션이라 화면 전체를 찍으면 사용자 작업
+  화면이 찍힌다.
