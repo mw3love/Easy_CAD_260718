@@ -110,7 +110,7 @@ def test_set_exports_pdf_pages_and_bar_label(tmp_path):
     w._scene.clearSelection()
     b2.setSelected(True)
     w._board_bar_sync(w._view)
-    assert w._board_bar.name_label.text() == "보드 2/2 · 16:9" and "PDF 2쪽" in w._board_bar.pdf_action.text()
+    assert w._board_bar.name_label.text() == "보드 2/2" and "PDF 2쪽" in w._board_bar.pdf_action.text()
     path = w._board_export(b2, "pdf", path=str(tmp_path / "set.pdf"))
     with fitz.open(path) as doc:
         assert doc.page_count == 2
@@ -147,17 +147,18 @@ def test_bar_line_one_page_and_split_without_ai(tmp_path):
     with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
             _patch("easycad.ai.pdf_to_board.generate_board", return_value=(_heavy(), "m")):
         w._ai_ctrl.request_make("", kind="explain", pdf_path=str(tmp_path / "x.pdf"))
-        assert _wait_until(lambda: w._ai_staged is not None)
-    assert len(_boards(w._ai_staged.items)) == 2
+        assert _wait_until(lambda: w._board_selected() is not None)
+    assert len(_boards(w._scene.items())) == 2
+
+    def say(text):
+        w._board_bar_sync(w._view)
+        w._board_bar.line.setText(text)
+        w._board_bar.line.returnPressed.emit()
+        _app.processEvents()
     with _patch("easycad.ai.text_to_flow.generate_flow", side_effect=AssertionError("AI 부르면 안 됨")):
-        line = w._ai_staged.bar.line
-        line.setText("한 장으로")
-        line.returnPressed.emit()
-        _app.processEvents()
-        st = w._ai_staged
-        assert len(_boards(st.items)) == 1 and pb.parse_board(st.request.result_text)["_pages"] == "one"
-        st.bar.line.setText("나눠서")
-        st.bar.line.returnPressed.emit()
-        _app.processEvents()
-        assert len(_boards(w._ai_staged.items)) == 2
+        say("한 장으로")
+        assert len(_boards(w._scene.items())) == 1
+        assert pb.parse_board(w._board_selected()._ai["spec"])["_pages"] == "one"
+        say("나눠서")
+        assert len(_boards(w._scene.items())) == 2
     _close(w)

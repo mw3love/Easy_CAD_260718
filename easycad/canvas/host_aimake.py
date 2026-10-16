@@ -23,8 +23,8 @@ from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import (
-    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QSizePolicy, QSlider, QToolButton,
-    QWidget,
+    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMenu, QMessageBox, QPlainTextEdit, QSizePolicy, QSlider, QToolButton,
+    QVBoxLayout, QWidget,
 )
 
 from easycad.ai import gateway as gw
@@ -37,6 +37,7 @@ from easycad.canvas.host_dialogs import (
     _detach_worker,
 )
 from easycad.canvas.photo_dialog import _PhotoOpsWorker, _pil_to_pixmap
+from easycad.canvas.annotator_core import _BoardItem
 from easycad.fileio import symbol_library
 from easycad.fileio.photo_ops import SCALE as _PHOTO_SCALE, ops_to_sketch
 from easycad.fileio.document import insert_items
@@ -45,6 +46,7 @@ from easycad.fileio.mermaid_import import MermaidError, parse_mermaid
 from easycad.fileio.flow_spec import FlowSpecError, all_keys, looks_like_spec, parse_spec, with_direction
 
 STAGED_TEXT = "캔버스에 임시로 놓음 — 채택하거나 버리세요"
+PLACED_TEXT = "넣음 — 막대에 고칠 점을 쓰면 오른쪽에 새로 만들어요(필요 없으면 골라서 Del)"
 ACCEPTED_TEXT = "✓ 넣음"
 DISCARDED_TEXT = "버림"
 UNDONE_TEXT = "되돌림"
@@ -191,13 +193,8 @@ class _StagedResult:
     clearing_sel: bool = False
     row_start: int = 0          # 이어 만들기로 붙인 지금 줄의 첫 칸 번호(앞 줄들은 그대로 남는다)
     base_marks: set = field(default_factory=set)   # 지금 줄의 바탕이 된 후보 번호(「바탕」 표시)
-    # ---- 흐름도 이어 고치기 비교(피드백 6차) — alt는 왼쪽에 남겨 둔 원본(_StagedResult), marks는 상대편과 다른 도형.
-    alt: object = None
-    alt_bar: QWidget = None
-    alt_line: QWidget = None       # 비교 중 원본 막대의 입력 한 줄(§8 항목51)
-    both_btn: QToolButton = None   # 비교 중 새 결과 막대의 「둘 다 넣기」
+    # ---- 흐름도 이어 고치기(피드백 6차 → 2026-10-16 바로 넣기) — 바탕과 다른 도형(주황 표시).
     marks: list = field(default_factory=list)
-    alt_marks: list = field(default_factory=list)
     # ---- 베끼기 결과(2026-10-06) — 고르는 동안만 바닥에 겹쳐 보는 원본 사진(도형 아님 — 채택해도 도면에 안 남는다).
     photo: object = None        # QPixmap(원본 해상도로 편 것)
     photo_rect: QRectF = None   # 씬 좌표
@@ -237,50 +234,94 @@ class _TraceRegionWorker(QThread):
         self.succeeded.emit(spec, log)
 
 
-class _BarLine(QLineEdit):
-    """결과 막대의 입력 한 줄(§8 항목51 — "마법의 칠판"). 비어 있는 동안 예시 문구가 몇 초마다 바뀐다."""
+class _BarLine(QPlainTextEdit):
+    """결과 막대의 입력 칸(§8 항목51 — "마법의 칠판"). 비어 있는 동안 예시 문구가 몇 초마다 바뀐다.
+    2026-10-16 사용자 피드백("한 줄이라 길게 쓰면 앞 글이 안 보인다") — 한 줄 칸(QLineEdit)에서 여러 줄 칸으로: 쓰는 만큼
+    `_MAX_LINES`줄까지 늘어나고, Enter = 보내기, Shift+Enter = 줄 바꿈. 받는 쪽 모양(`returnPressed`·`text()`)은 그대로."""
+
+    returnPressed = pyqtSignal()
+    heightChanged = pyqtSignal()
+    _MAX_LINES = 5
 
     def __init__(self, examples, parent=None):
         super().__init__(parent)
         self._examples = tuple(examples) or ("하고 싶은 것을 적어 주세요",)
         self._i = 0
         self.setPlaceholderText(self._examples[0])
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(420)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setToolTip("하고 싶은 것을 적고 Enter — 고치기·더하기·종류 바꾸기(「심볼로」)·방향(「세로로」)")
-        self.setStyleSheet("QLineEdit { border:1px solid rgba(128,128,128,140); border-radius:7px; padding:3px 8px; }"
-                           f"QLineEdit:focus {{ border-color:{_ACCENT_CORAL}; }}")
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setTabChangesFocus(True)
+        self.setToolTip("하고 싶은 것을 적고 Enter(줄 바꿈은 Shift+Enter) — 고치기·더하기·종류 바꾸기(「심볼로」)·방향(「세로로」)")
+        self.setStyleSheet("QPlainTextEdit { border:1px solid rgba(128,128,128,140); border-radius:7px; padding:2px 4px; }"
+                           f"QPlainTextEdit:focus {{ border-color:{_ACCENT_CORAL}; }}")
+        self.textChanged.connect(self._fit_height)
+        self._fit_height()
         self._timer = QTimer(self)
         self._timer.setInterval(_BAR_EXAMPLE_MS)
         self._timer.timeout.connect(self._next_example)
         self._timer.start()
 
+    def text(self) -> str:
+        return self.toPlainText()
+
+    def setText(self, text: str):
+        self.setPlainText(text)
+
+    def _fit_height(self):
+        """글 줄 수(감긴 줄 포함)만큼 키를 맞춘다 — 1줄 ~ `_MAX_LINES`줄, 넘으면 칸 안에서 굴린다."""
+        fm = self.fontMetrics()
+        lines = 1
+        if self.toPlainText():
+            lines = max(1, int(self.document().size().height()))   # 평문 문서 크기 = 줄 수(감긴 줄 포함)
+        lines = min(lines, self._MAX_LINES)
+        m = self.contentsMargins()
+        h = lines * fm.lineSpacing() + int(2 * self.document().documentMargin()) + m.top() + m.bottom() + 6
+        if h != self.height():
+            self.setFixedHeight(h)
+            if self.parentWidget() is not None:
+                self.parentWidget().adjustSize()
+            self.heightChanged.emit()   # 막대가 커졌다 — 호스트가 자리를 다시 잡는다(위로 자라게)
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (e.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            self.returnPressed.emit()
+            return
+        super().keyPressEvent(e)
+
     def _next_example(self):
-        if self.text():
+        if self.toPlainText():
             return
         self._i = (self._i + 1) % len(self._examples)
         self.setPlaceholderText(self._examples[self._i])
 
 
 class _StagingBar(QFrame):
-    """임시 결과 바로 위에 뜨는 막대 — 「채택 … 버리기」 공통, 가운데는 종류별 조절(extras) + 입력 한 줄 + 기록(§8 항목51)."""
+    """임시 결과 바로 위에 뜨는 막대 — 윗줄은 「채택」·종류별 조절(extras)·「버리기」, 아랫줄은 막대 폭 그대로의 입력 칸(§8 항목51).
+    2026-10-16 사용자 피드백: 흐름도·보드는 만들면 바로 넣는다(채택·버리기 없음 — 아니면 골라서 Del) → `on_accept`·`on_discard`가
+    None이면 그 버튼이 없다. 「기록」도 흐름도·보드 막대엔 없다(상태 알약에 남음). 보드 막대(`host_board`)도 이 막대를 쓴다."""
 
     def __init__(self, parent, on_accept, on_retry, on_discard, extras=(), discard_text="버리기",
-                 on_line=None, examples=(), history_menu=None, request=None):
+                 on_line=None, examples=(), history_menu=None, request=None, caption=None):
         super().__init__(parent)
         self.setObjectName("aiStagingBar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
             "QFrame#aiStagingBar { background:palette(window); border:1px solid rgba(128,128,128,140);"
             " border-radius:8px; }")
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(6, 4, 6, 4)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(6, 4, 6, 5)
+        outer.setSpacing(4)
+        lay = self.top_layout = QHBoxLayout()
         lay.setSpacing(5)
-        self.info = _ai_info_label(self, request)
+        outer.addLayout(lay)
+        self.info = _ai_info_label(self, request, caption)
         if self.info is not None:
             lay.addWidget(self.info)
-        self.accept_btn = self._btn("채택", on_accept, coral=True, icon="ai_check")
-        lay.addWidget(self.accept_btn)
+        self.accept_btn = None
+        if on_accept is not None:
+            self.accept_btn = self._btn("채택", on_accept, coral=True, icon="ai_check")
+            lay.addWidget(self.accept_btn)
         for w in extras:
             w.setParent(self)
             lay.addWidget(w)
@@ -289,12 +330,7 @@ class _StagingBar(QFrame):
             self.retry_btn = self._btn("다시", on_retry, icon="refresh")
             self.retry_btn.setToolTip("같은 요청으로 다시 만들어 바꿔치기")
             lay.addWidget(self.retry_btn)
-        self.line = None
-        if on_line is not None:
-            self.line = _BarLine(examples, self)
-            self.line.setProperty("aiSide", "new")
-            self.line.returnPressed.connect(on_line)   # 받는 쪽이 `sender()`로 이 줄을 찾는다(QObject를 붙잡는 람다 금지)
-            lay.addWidget(self.line, 1)
+        lay.addStretch(1)
         self.history_btn = None
         if history_menu is not None:
             self.history_btn = QToolButton(self)
@@ -304,12 +340,20 @@ class _StagingBar(QFrame):
             self.history_btn.setMenu(history_menu)   # 메뉴는 창이 가진 하나(상태 알약과 같이 씀) — 막대가 지워져도 남는다
             self.history_btn.setStyleSheet(_BAR_BTN_QSS + "QToolButton::menu-indicator { image:none; width:0; }")
             lay.addWidget(self.history_btn)
-        sep = QFrame(self)
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet("color:rgba(128,128,128,120);")
-        lay.addWidget(sep)
-        self.discard_btn = self._btn(discard_text, on_discard, icon="ai_trash")
-        lay.addWidget(self.discard_btn)
+        self.discard_btn = None
+        if on_discard is not None:
+            sep = QFrame(self)
+            sep.setFrameShape(QFrame.Shape.VLine)
+            sep.setStyleSheet("color:rgba(128,128,128,120);")
+            lay.addWidget(sep)
+            self.discard_btn = self._btn(discard_text, on_discard, icon="ai_trash")
+            lay.addWidget(self.discard_btn)
+        self.line = None
+        if on_line is not None:
+            self.line = _BarLine(examples, self)
+            self.line.setProperty("aiSide", "new")
+            self.line.returnPressed.connect(on_line)   # 받는 쪽이 `sender()`로 이 줄을 찾는다(QObject를 붙잡는 람다 금지)
+            outer.addWidget(self.line)
         self.adjustSize()
 
     def _btn(self, text, slot, coral=False, icon=None):
@@ -414,8 +458,9 @@ def _ai_req_caption(req) -> tuple[str, str]:
     return caption, tip
 
 
-def _ai_info_label(parent, req):
-    caption, tip = _ai_req_caption(req)
+def _ai_info_label(parent, req, caption=None):
+    """`caption` = (짧은 글, 툴팁) — 요청 없이 보드에 적어 둔 정보로 보일 때(보드 막대)."""
+    caption, tip = caption if caption is not None else _ai_req_caption(req)
     if not caption:
         return None
     lbl = QLabel(caption, parent)
@@ -635,8 +680,8 @@ class _AIMakeMixin:
         self._close_ai_prompt()
         if kind == "explain" and isinstance(attached, list):   # 여러 자료(§8 항목53 4단계)
             self._ai_ctrl.request_make(text, kind="explain", sources=attached)
-        elif kind == "explain":
-            self._ai_ctrl.request_make(text, kind="explain", pdf_path=attached)   # 첨부 자리에 PDF 경로(§8 항목45)
+        elif kind == "explain" or isinstance(attached, str):   # 첨부 자리에 PDF 경로(§8 항목45 — 흐름도·심볼도, 2026-10-16)
+            self._ai_ctrl.request_make(text, kind=kind, pdf_path=attached)
         else:
             self._ai_ctrl.request_make(text, kind=kind, image=attached, image_name=name)
 
@@ -749,16 +794,16 @@ class _AIMakeMixin:
         base = getattr(req, "followup_of", None)
         center = None
         cur = self._ai_staged
-        if base is not None and cur is not None and base is cur.alt:
-            center = self._ai_items_rect(base.items).center()   # 비교 중인 원본 쪽에서 이어 고침 — 비교는 결과가 올 때 정리
-        elif base is not None and base is self._ai_staged:
+        if base is not None and base is cur:
             # 이어 만들기 — 바탕 결과는 지우지 않는다(피드백 6차). 심볼은 후보 줄 아래에 새 줄을 붙이고
-            # (`_ai_extend_candidates`), 흐름도는 새 결과가 오면 원본 옆에 나란히 놓아 고르게 한다(`_ai_place_flow`).
+            # (`_ai_extend_candidates`), 흐름도는 새 결과가 오면 바탕 오른쪽에 놓는다(`_ai_place_flow`).
             center = self._ai_staged_scene_rect().center()
             if base.slots is not None and getattr(req, "replace_target", None) is None:
                 req.replace_target = getattr(base.request, "replace_target", None)   # 「AI로 바꾸기」 줄이면 이어서도
         else:
             self._ai_accept_staged()
+            if isinstance(base, _BoardItem) and base.scene() is self._scene:   # 보드 막대에서 이어 고침(2026-10-16)
+                center = self._ai_items_rect(self._board_set(base)).center()
         req.doc = self._active_doc
         req.center = center if center is not None else self._view.mapToScene(self._view.viewport().rect().center())
         target, self._ai_replace_target = getattr(self, "_ai_replace_target", None), None
@@ -768,7 +813,7 @@ class _AIMakeMixin:
         if req.kind == "flow" or (req.kind == "explain" and getattr(req, "base_code", "")):   # §8 항목52·53 — 설계서, 배치·색은 앱
             self._ai_start_job(req, _FlowGenWorker, (req.text, req.model, gw.resolve_base_url(), req.image),
                                self._on_flow_generated, base_code=getattr(req, "base_code", "") or "",
-                               icons=self._flow_icon_names())
+                               icons=self._flow_icon_names(), pdf_path=getattr(req, "pdf_path", "") or "")
         elif req.kind == "explain":   # §8 항목45 — PDF → 설명 흐름도, 결과는 흐름도와 같은 수신자·임시 결과
             self._ai_start_job(req, _ExplainGenWorker, (req.sources or req.pdf_path, req.text, req.model, gw.resolve_base_url()),
                                self._on_flow_generated)
@@ -923,46 +968,32 @@ class _AIMakeMixin:
             job.request.elapsed = time.monotonic() - job.t0
             self._ai_place_flow(job.request, code)
 
-    def _ai_place_flow(self, req, code, alt=None):
-        """흐름도 결과 글 → 도형·화살표를 요청 자리에 임시로 놓는다(`_build_flow_items` — 설계서 JSON이면 §8 항목52 새 규칙,
-        Mermaid면 옛 배치).
-        이어 고치기 결과면 바탕(원본)을 지우지 않고 왼쪽에 남겨 새 결과를 그 오른쪽에 나란히 놓는다(피드백 6차 — 끝에만
-        붙여 달라 해도 AI가 가운데를 고칠 수 있어 눈으로 비교). `alt`는 비교 중인 새 결과를 다시 그릴 때 넘기는 원본."""
+    def _ai_place_flow(self, req, code):
+        """흐름도 결과 글 → 도형·화살표를 요청 자리에 놓는다(`_build_flow_items` — 설계서 JSON이면 §8 항목52 새 규칙,
+        Mermaid면 옛 배치). 한 장 보드 설계서면 보드(`_ai_place_board`).
+        2026-10-16 사용자 피드백: 만든 것은 바로 넣는다(채택·버리기·「이걸로」 비교 없음). 이어 고친 결과는 바탕을 지우지 않고
+        그 오른쪽에 놓고, 바탕과 다른 곳을 주황으로 표시한다(피드백 6차 — AI가 고친 곳을 눈으로). 필요 없는 쪽은 골라서 Del."""
         if not self._ai_goto_request_doc(req):
             return None
+        from easycad.ai.pdf_to_board import is_board_spec
+        if is_board_spec(code):
+            return self._ai_place_board(req, code)
         base = getattr(req, "followup_of", None)
-        cur = self._ai_staged
-        if alt is None and base is not None and cur is not None and cur.slots is None \
-                and base.doc is self._active_doc:
-            # 이어 고치기를 거듭해도 비교는 늘 「바탕 ↔ 새 결과」 둘. 비교에 안 끼는 쪽은 지우지 않고 캔버스에 남긴다(사용자 결정).
-            if base is cur and self._undo and self._undo[-1] is base.undo_entry:
-                self._ai_end_alt(base, LEFT_TEXT)
-                self._ai_staged = None           # 바탕은 임시 결과에서 내려 원본 자리로(막대는 아래에서 바꿔 단다)
-                if base.bar is not None and not sip.isdeleted(base.bar):
-                    base.bar.hide()
-                    base.bar.deleteLater()
-                base.bar = None
-                alt = base
-            elif base is cur.alt and base.undo_entry in self._undo:   # 원본 쪽에서 이어 고침 — 새 결과 쪽이 빠진다
-                self._ai_end_alt(cur)
-                self._ai_finish_staging(LEFT_TEXT)
-                alt = base
-            if alt is not None and base.request.entry is not None and not sip.isdeleted(base.request.entry):
-                base.request.entry.set_status(ORIGINAL_TEXT, running=True)
+        base_items = []
+        if base is not None and getattr(base, "doc", None) is self._active_doc:
+            base_items = [it for it in getattr(base, "items", ()) if it.scene() is self._scene]
         self._ai_accept_staged()
         try:
             _n, _a, direction, added = self._build_flow_items(code, req.center)
         except (MermaidError, FlowSpecError) as ex:
             req.entry.set_status(f"코드를 읽지 못했어요: {ex}")
-            if alt is not None:
-                self._ai_restage_flow(alt)
             return None
         # 기존 도면과 겹치면 가장 가까운 빈 자리로 다시 놓는다(배치는 결정적이라 옮겨 다시 그려도 같은 모양).
-        # 비교 중이면 원본 오른쪽부터 찾는다.
+        # 이어 고친 결과면 바탕 오른쪽부터 찾는다.
         box = self._ai_items_rect(added)
         near = box.center()
-        if alt is not None:
-            ar = self._ai_items_rect(alt.items)
+        if base_items:
+            ar = self._ai_items_rect(base_items)
             near = QPointF(ar.right() + _COMPARE_GAP + box.width() / 2, ar.center().y())
         spot = self._ai_find_free_center(self._scene, box.width(), box.height(), near, exclude=added)
         if (spot - box.center()).manhattanLength() > 1.0:
@@ -971,243 +1002,28 @@ class _AIMakeMixin:
         req.result_text = code
         self._ai_ctrl.show_flow_code(code)
         self.set_tool("select")
-        # 흐름도 막대엔 「다시」가 없다(2026-10-05 피드백 5차 — 같은 요청은 기록 칸을 눌러 다시 채우면 됨).
         st = self._ai_stage(added, req, extras=self._ai_flow_extras(direction), retry=False)
-        if st is not None and alt is not None:
-            self._ai_begin_compare(st, alt, added)
-        return st
-
-    # ---- 흐름도 이어 고치기 비교(피드백 6차) ------------------------------------------------
-
-    def _ai_begin_compare(self, st, alt, added):
-        """새 결과(st) 왼쪽에 원본(alt)을 남겨 둔 비교 상태. 두 막대가 같은 조절(이걸로·방향·이어 고치기·버리기)을 갖고
-        (피드백 6차 2회: 원본도 방향을 바꿔 보거나 이어 고칠 수 있게), 새 결과 막대엔 「둘 다 넣기」가 더 있다.
-        서로 다른 도형은 주황으로 표시."""
-        st.alt = alt
-        self._ai_update_marks(st)
-        st.bar.accept_btn.clicked.disconnect()
-        st.bar.accept_btn.clicked.connect(self._ai_choose_new)
-        st.bar.accept_btn.setText("이걸로")
-        st.bar.accept_btn.setToolTip("새 결과를 쓰고 왼쪽 원본은 지우기")
-        st.bar.discard_btn.setToolTip("새 결과를 버리고 원본으로 돌아가기")
-        both = _icon_button(st.bar, "둘 다 넣기", "ai_check", tip="원본과 새 결과를 둘 다 캔버스에 넣기")
-        both.clicked.connect(self._ai_keep_both)
-        lay = st.bar.layout()
-        lay.insertWidget(lay.count() - 2, both)   # 구분선·버리기 앞
-        both.show()   # 떠 있는 막대에 넣은 버튼은 나중에 보여져 폭 계산에서 빠진다 — 글이 「이…기」로 잘림(실제 창)
-        st.bar.adjustSize()
-        st.both_btn = both
-        view = st.doc.view
-        self._ai_make_alt_bar(st)
-        n = len(st.marks)
-        if st.request.entry is not None:
-            st.request.entry.set_status(
-                f"원본과 다른 곳 {n}군데 주황 표시 — 「이걸로」로 고르세요" if n
-                else ("원본과 나란히 놓음 — 「이걸로」로 고르세요" if st.request.kind == "explain"   # 보드는 다른 곳 표시 없음
-                      else "원본과 같아요 — 「이걸로」로 고르세요"),
-                running=True)
-        self._ai_ensure_visible(view, self._ai_staged_scene_rect().united(self._ai_items_rect(alt.items)))
-        self._ai_place_bar()
-        view.viewport().update()
-
-    def _ai_update_marks(self, st):
-        alt = st.alt
-        old_code = getattr(alt.request, "result_text", "")
-        new_code = st.request.result_text
-        new_items = [it for it in st.items if it.scene() is not None]
-        old_items = [it for it in alt.items if it.scene() is not None]
-        from easycad.ai.pdf_to_board import is_board_spec
-        if is_board_spec(new_code) and is_board_spec(old_code):
-            # [2026-10-16] 보드는 배치가 늘 같아 멀리서 보면 바뀐 게 안 보였다(사용자 "내용이 안 바뀐다") — 글이 달라진 칸을 표시
-            st.marks, st.alt_marks = _board_diff_items(new_items, old_items), _board_diff_items(old_items, new_items)
-            return
-        st.marks = _flow_diff_items(new_code, old_code, new_items)
-        st.alt_marks = _flow_diff_items(old_code, new_code, old_items)
-
-    def _ai_make_alt_bar(self, st):
-        """원본 위 막대 — 「원본」 이름표 + 새 결과 막대와 같은 조절(방향·이어 고치기는 원본 쪽에 걸린다)."""
-        if st.alt_bar is not None and not sip.isdeleted(st.alt_bar):
-            st.alt_bar.hide()
-            st.alt_bar.deleteLater()
-        view = st.doc.view
-        bar = QFrame(view.viewport())
-        bar.setObjectName("aiStagingBar")
-        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        bar.setStyleSheet(self._AI_BAR_QSS)
-        lay = QHBoxLayout(bar)
-        lay.setContentsMargins(6, 4, 6, 4)
-        lay.setSpacing(5)
-        lbl = QLabel("원본", bar)
-        lbl.setStyleSheet("font-weight:600; padding:0 4px;")
-        lay.addWidget(lbl)
-        info = _ai_info_label(bar, st.alt.request)
-        if info is not None:
-            lay.addWidget(info)
-        pick = _icon_button(bar, "이걸로", "ai_check", tip="원본을 쓰고 새 결과는 버리기")
-        pick.clicked.connect(self._ai_choose_original)
-        lay.addWidget(pick)
-        # 원본 쪽에도 같은 입력 한 줄(피드백 6차 2회 — 원본도 방향을 바꾸거나 이어 고칠 수 있게, §8 항목51에서 버튼 → 한 줄)
-        line = _BarLine(BAR_EXAMPLES.get(st.alt.request.kind, BAR_EXAMPLES["flow"]), bar)
-        line.setProperty("aiSide", "alt")
-        line.setMinimumWidth(220)
-        line.returnPressed.connect(self._ai_on_bar_line)
-        lay.addWidget(line, 1)
-        st.alt_line = line
-        sep = QFrame(bar)
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet("color:rgba(128,128,128,120);")
-        lay.addWidget(sep)
-        drop = _icon_button(bar, "버리기", "ai_trash", tip="원본만 버리고 새 결과는 남기기")
-        drop.clicked.connect(self._ai_discard_alt)
-        lay.addWidget(drop)
-        bar.adjustSize()
-        st.alt_bar = bar
-        bar.show()
-        return bar
-
-    def _ai_end_alt(self, st, status=None):
-        """비교 상태를 걷는다(원본 막대·「둘 다 넣기」 치우고 새 결과 막대를 보통으로). `status`가 있으면 원본 기록 칸에
-        적는다. 원본 도형은 건드리지 않는다."""
-        alt, st.alt = st.alt, None
-        if st.alt_bar is not None and not sip.isdeleted(st.alt_bar):
-            st.alt_bar.hide()
-            st.alt_bar.deleteLater()
-        st.alt_bar = None
-        if st.both_btn is not None and not sip.isdeleted(st.both_btn):
-            st.both_btn.hide()
-            st.both_btn.deleteLater()
-        st.both_btn = None
-        if alt is not None and st.bar is not None and not sip.isdeleted(st.bar):
-            st.bar.accept_btn.clicked.disconnect()
-            st.bar.accept_btn.clicked.connect(self._ai_accept_staged)
-            st.bar.accept_btn.setText("채택")
-            st.bar.accept_btn.setToolTip("")
-            st.bar.discard_btn.setToolTip("")
-            st.bar.adjustSize()
-        st.marks, st.alt_marks = [], []
-        if alt is not None and status is not None:
-            entry = getattr(alt.request, "entry", None)
-            if entry is not None and not sip.isdeleted(entry):
-                entry.set_status(status)
-        return alt
-
-    def _ai_keep_both(self):
-        """새 결과 막대 「둘 다 넣기」 — 원본·새 결과 모두 채택(자동 채택과 같은 결과)."""
-        if self._ai_staged is not None:
-            self._ai_finish_staging(ACCEPTED_TEXT)
-
-    def _ai_discard_alt(self):
-        """원본 막대 「버리기」 — 원본만 지우고 새 결과는 보통 임시 결과로 남는다."""
-        st = self._ai_staged
-        if st is not None and st.alt is not None:
-            self._ai_drop_alt(st, DISCARDED_TEXT)
-            if st.request.entry is not None and not sip.isdeleted(st.request.entry):
-                st.request.entry.set_status(STAGED_TEXT, running=True)
+        if st is not None and base_items:
+            st.marks = _flow_diff_items(code, getattr(base.request, "result_text", ""), added)
+            if req.entry is not None:
+                n = len(st.marks)
+                req.entry.set_status(f"원래 것 오른쪽에 놓음 — 바뀐 곳 {n}군데 주황" if n
+                                     else "원래 것 오른쪽에 놓음 — 바뀐 곳 없음", running=True)
+            self._ai_ensure_visible(st.doc.view, self._ai_staged_scene_rect().united(self._ai_items_rect(base_items)))
             self._ai_place_bar()
-            st.doc.view.viewport().update()
-
-    def _ai_redraw_alt(self, code):
-        """원본 쪽 방향 바꾸기 — 원본을 제자리에서 다시 그린다. 원본 기록 칸은 새 결과 칸 밑이라, 다시 그린 기록을 같은
-        자리에 바꿔 끼운다(기록 칸 수 그대로). 넓어져 새 결과에 닿으면 왼쪽으로 민다."""
-        st = self._ai_staged
-        alt = st.alt if st is not None else None
-        if alt is None or alt.doc is not self._active_doc or alt.undo_entry not in self._undo:
-            return None
-        err = _flow_code_error(code)
-        if err:
-            alt.request.entry.set_status(f"코드 오류 — 원본 유지: {err}", running=True)
-            return None
-        undo = self._undo
-        idx = undo.index(alt.undo_entry)
-        old = self._ai_items_rect(alt.items)
-        limit = self._ai_staged_scene_rect().left() - _COMPARE_GAP
-        st.discarding = True   # 다시 그리는 동안 기록이 바뀌어도 자동 채택하지 않게
-        try:
-            for it in alt.items:
-                if it.scene() is not None:
-                    it.scene().removeItem(it)
-            center = old.center()
-            _n, _a, _d, added = self._build_flow_items(code, center)
-            box = self._ai_items_rect(added)
-            if box.right() > limit:
-                self._ai_undo_top_silently()
-                _n, _a, _d, added = self._build_flow_items(code, QPointF(center.x() - (box.right() - limit), center.y()))
-            entry = undo.pop()
-            undo[idx] = entry
-        finally:
-            st.discarding = False
-        alt.items, alt.undo_entry = added, entry
-        alt.request.result_text = code
-        self._ai_update_marks(st)
-        self._ai_make_alt_bar(st)
-        self._refresh_history_actions()
-        self._ai_ensure_visible(st.doc.view, self._ai_staged_scene_rect().united(self._ai_items_rect(added)))
-        self._ai_place_bar()
-        st.doc.view.viewport().update()
-        return alt
-
-    def _ai_drop_alt(self, st, status=None):
-        """비교 중인 원본을 지운다. 그 기록 칸은 지금 결과 바로 밑이라(다른 편집이 끼면 자동 채택으로 비교가 끝난다)
-        기록 목록에서 그 칸째 뺀다 — 지우기 기록을 새로 쌓으면 Ctrl+Z 한 번에 원본이 되살아나 헷갈린다."""
-        alt = self._ai_end_alt(st, status or CHOSE_NEW_TEXT)
-        if alt is None:
-            return
-        undo = alt.doc.undo
-        for it in alt.items:
-            if it.scene() is not None:
-                it.scene().removeItem(it)
-        if alt.undo_entry in undo:
-            undo.remove(alt.undo_entry)
-        else:
-            self.push_undo_delete([it for it in alt.items])
-        self._refresh_history_actions()
-
-    def _ai_restage_flow(self, alt):
-        """원본을 다시 임시 결과로(새 결과를 버렸거나 Ctrl+Z로 빠졌을 때) — 원본 기록 칸이 맨 위일 때만."""
-        if alt.doc is not self._active_doc or not self._undo or self._undo[-1] is not alt.undo_entry:
-            entry = getattr(alt.request, "entry", None)
-            if entry is not None and not sip.isdeleted(entry):
-                entry.set_status(ACCEPTED_TEXT)
-            return None
-        m = _MERMAID_HEADER_RE.match(getattr(alt.request, "result_text", ""))
-        self._ai_ctrl.show_flow_code(getattr(alt.request, "result_text", ""))
-        return self._ai_stage(alt.items, alt.request, extras=self._ai_flow_extras(m.group(1) if m else "TD"),
-                              retry=False)
-
-    def _ai_choose_new(self):
-        """비교 막대 「이걸로」(새 결과) — 원본을 지우고 새 결과를 채택."""
-        st = self._ai_staged
-        if st is None:
-            return
-        if st.alt is not None:
-            self._ai_drop_alt(st)
-        self._ai_finish_staging(ACCEPTED_TEXT)
-
-    def _ai_choose_original(self):
-        """원본 막대 「이걸로」 — 새 결과를 버리고 원본을 채택."""
-        st = self._ai_staged
-        if st is None or st.alt is None:
-            return
-        alt = self._ai_end_alt(st)
-        self._ai_drop_staged(st)
-        self._ai_finish_staging(CHOSE_ORIGINAL_TEXT)
-        entry = getattr(alt.request, "entry", None)
-        if entry is not None and not sip.isdeleted(entry):
-            entry.set_status(ACCEPTED_TEXT)
-        self._ai_ctrl.show_flow_code(getattr(alt.request, "result_text", ""))
+        return st
 
     def _ai_flow_extras(self, direction, side="new"):
         """[§8 항목51] 흐름도 막대의 따로 붙는 조절 — 없음. 방향 버튼·「이어 고치기」는 막대의 입력 한 줄로 옮겼다
         (「세로로」 같은 말은 그 자리에서 바로, 나머지는 이어 고치기). 호출부 모양을 지키려 빈 묶음을 돌려준다."""
         return ()
 
-    def _ai_set_flow_direction(self, tok: str, on_alt: bool = False):
+    def _ai_set_flow_direction(self, tok: str):
         """흐름도 방향 바꾸기(AI 호출 없음) — 결과 코드 머리줄의 방향만 바꿔 제자리에서 다시 그린다. 이미 그 방향이면 None."""
         st = self._ai_staged
         if st is None or st.request.kind not in _FLOW_KINDS:
             return None
-        on_alt = on_alt and st.alt is not None
-        code = getattr((st.alt if on_alt else st).request, "result_text", "")
+        code = getattr(st.request, "result_text", "")
         if looks_like_spec(code):   # [§8 항목52] 설계서는 direction 칸만 바꿔 다시 그린다
             try:
                 spec = parse_spec(code)
@@ -1216,20 +1032,19 @@ class _AIMakeMixin:
             if spec.direction == tok:
                 return None
             new = with_direction(code, tok)
-            return self._ai_redraw_alt(new) if on_alt else self._ai_replace_flow(new)
+            return self._ai_replace_flow(new)
         m = _MERMAID_HEADER_RE.match(code)
         if not m or m.group(1).upper() == tok or (tok == "TD" and m.group(1).upper() == "TB"):
             return None
         a, b = m.span(1)
-        if on_alt:
-            return self._ai_redraw_alt(code[:a] + tok + code[b:])
         return self._ai_replace_flow(code[:a] + tok + code[b:])
 
     # ---- 결과 막대 한 줄(§8 항목51 — "마법의 칠판") --------------------------------------------
 
     def _ai_bar_kwargs(self, kind: str) -> dict:
+        # 흐름도 막대엔 「기록」이 없다(2026-10-16 사용자 — 보드 막대와 같은 모양, 기록은 상태 알약에)
         return {"on_line": self._ai_on_bar_line, "examples": BAR_EXAMPLES.get(kind, ()),
-                "history_menu": self._ai_history_menu}
+                "history_menu": None if kind in _FLOW_KINDS else self._ai_history_menu}
 
     @staticmethod
     def _ai_direction_word(text: str):
@@ -1249,64 +1064,39 @@ class _AIMakeMixin:
         return None
 
     def _ai_on_bar_line(self):
-        """결과 막대(또는 비교 중 원본 막대) 한 줄의 Enter."""
+        """결과 막대 입력 칸의 Enter."""
         line = self.sender()
-        if not isinstance(line, QLineEdit):
+        if not isinstance(line, _BarLine):
             return None
-        return self._ai_bar_say(line.text(), alt=line.property("aiSide") == "alt", line=line)
+        return self._ai_bar_say(line.text(), line=line)
 
-    def _ai_bar_say(self, text: str, alt: bool = False, line=None):
-        """결과 막대 한 줄에 쓴 말. 무엇을 할지는 말로 가른다 — ① 종류 바꾸기(「심볼로」) ② 흐름도 방향(「세로로」, 바로)
+    def _ai_bar_say(self, text: str, line=None):
+        """결과 막대 입력 칸에 쓴 말. 무엇을 할지는 말로 가른다 — ① 종류 바꾸기(「심볼로」) ② 흐름도 방향(「세로로」, 바로)
         ③ 그 밖엔 지금 결과를 바탕으로 이어 고치기(흐름도=그 결과 코드, 심볼=고른 후보, 베끼기=고른 부분).
-        `alt`면 비교 중인 왼쪽 원본이 바탕(흐름도만)."""
+        한 장 보드는 이 막대가 아니라 보드 막대(`host_board._board_say`)."""
         st = self._ai_staged
         text = (text or "").strip()
         if st is None:
             return None
         kind = st.request.kind
         switch = self._ai_switch_kind_word(text)
-        if switch is not None and switch != ("flow" if kind == "explain" else kind):
+        if switch is not None and switch != kind:
             return self._ai_switch_kind(st, switch)
-        if kind == "explain" and len(text) <= 16 and not (alt and st.alt is not None):
-            pages = "one" if ("한 장" in text or "한장" in text) else ("auto" if ("나눠" in text or "여러 장" in text) else None)
-            if pages is not None:   # §8 항목53 4단계 — AI 없이 다시 배치(넘치는 칸을 빼거나 2장으로)
-                if line is not None:
-                    line.clear()
-                return self._ai_board_pages(pages)
-            fig = _figure_word(text)
-            if fig is not None:   # 「그림 크게」 — 배치는 앱 몫이라 AI 없이 다시 배치(2026-10-16)
-                if line is not None:
-                    line.clear()
-                return self._ai_board_flag("_figure", fig)
         if kind in _FLOW_KINDS:
-            alt = alt and st.alt is not None
             tok = self._ai_direction_word(text)
             if tok is not None:
                 if line is not None:
                     line.clear()
-                return self._ai_set_flow_direction(tok, on_alt=alt)
+                return self._ai_set_flow_direction(tok)
             if not text:
                 self._on_ai_notice("어떻게 고칠지 적어 주세요. 예: 감시장치를 아래로")
                 return None
-            base = st.alt if alt else st
-            code = getattr(base.request, "result_text", "")
-            from easycad.ai.pdf_to_board import is_board_spec
+            code = getattr(st.request, "result_text", "")
             try:
-                n = f"단계 {len(parse_spec(code).steps)}개" if looks_like_spec(code) and not is_board_spec(code) else                     f"{sum(1 for ln in code.splitlines()[1:] if ln.strip())}줄"
+                n = f"단계 {len(parse_spec(code).steps)}개" if looks_like_spec(code) else                     f"{sum(1 for ln in code.splitlines()[1:] if ln.strip())}줄"
             except FlowSpecError:
                 n = "?"
-            fig = _figure_word(text) if is_board_spec(code) else None
-            if fig is not None:   # 긴 지시에 「그림을 가운데」가 섞여 있으면 배치는 앱이 — 바탕 설계서에 표시해 결과에 이어진다
-                from easycad.ai.pdf_to_board import dump_board, parse_board
-                spec = parse_board(code)
-                spec["_figure"] = fig
-                code = dump_board(spec)
-            what = "보드" if is_board_spec(code) else "흐름도"
-            label = f"원본 {what}" if alt else f"지금 {what}"
-            if what == "흐름도":
-                label += f"({n})"
-            # 한 장 보드(§8 항목53)는 종류를 "explain"으로 이어 간다 — 막대 예시·알약 이름이 보드 것으로 남게
-            self._ai_ctrl.set_followup(kind, label, base_code=code, base=base, base_text=base.request.text)
+            self._ai_ctrl.set_followup(kind, f"지금 흐름도({n})", base_code=code, base=st, base_text=st.request.text)
         elif kind == "symbol" and st.slots is not None:
             idx = sorted(st.picked)[:4]
             refs = [st.cands[i].svg for i in idx]
@@ -1326,29 +1116,6 @@ class _AIMakeMixin:
         if req is not None and line is not None and not sip.isdeleted(line):
             line.clear()
         return req
-
-    def _ai_board_pages(self, mode: str):
-        """한 장 보드 「한 장으로」(넘치는 칸은 빼고 「생략 — 원문 p.N」) / 「나눠서」(넘치면 2장) — 설계서의 `_pages`만 바꿔 다시 그린다."""
-        return self._ai_board_flag("_pages", mode)
-
-    _BOARD_FLAG_SAME = {("_pages", "one"): "이미 한 장이에요", ("_pages", "auto"): "이미 넘치면 나눠요",
-                        ("_figure", "big"): "이미 그림이 크게 있어요", ("_figure", "small"): "이미 그림이 아래 칸에 있어요"}
-    _BOARD_FLAG_DEFAULT = {"_pages": "auto", "_figure": "small"}
-
-    def _ai_board_flag(self, key: str, value: str):
-        """한 장 보드 배치 표시(`_pages`·`_figure`)만 바꿔 AI 없이 다시 그린다."""
-        from easycad.ai.pdf_to_board import dump_board, parse_board
-        st = self._ai_staged
-        code = getattr(st.request, "result_text", "") if st is not None else ""
-        try:
-            spec = parse_board(code)
-        except ValueError:
-            return None
-        if spec.get(key, self._BOARD_FLAG_DEFAULT[key]) == value:
-            self._on_ai_notice(self._BOARD_FLAG_SAME[(key, value)])
-            return None
-        spec[key] = value
-        return self._ai_replace_flow(dump_board(spec))
 
     def _ai_switch_kind(self, st, kind: str):
         """결과 막대 「심볼로 바꿔 줘」 같은 말 — 지금 결과를 버리고 처음 요청(글·그림)을 그 종류로 다시 만든다."""
@@ -1375,10 +1142,9 @@ class _AIMakeMixin:
         if err:
             req.entry.set_status(f"코드 오류 — 이전 결과 유지: {err}", running=True)
             return None
-        alt = self._ai_end_alt(st)   # 비교 중이면 원본은 남긴 채 새 결과만 다시 그린다
         self._ai_drop_staged(st)
         self._ai_finish_staging("")
-        return self._ai_place_flow(req, code, alt=alt)
+        return self._ai_place_flow(req, code)
 
     def _import_mermaid_code(self):
         """「삽입 › Mermaid 코드 가져오기…」 — 창에서 코드를 받아 임시 결과로."""
@@ -1406,13 +1172,17 @@ class _AIMakeMixin:
             return None
         view = self._view
         st = _StagedResult(doc=self._active_doc, items=items, undo_entry=self._undo[-1], request=req)
-        st.bar = _StagingBar(view.viewport(), self._ai_accept_staged, self._ai_retry_staged if retry else None,
-                             self._ai_discard_staged, extras, request=req,
-                             **self._ai_bar_kwargs(req.kind if req is not None else ""))
+        kind = req.kind if req is not None else ""
+        keep = kind in _FLOW_KINDS   # 흐름도는 만들면 바로 넣는다 — 채택·버리기 없음(2026-10-16 사용자, 아니면 골라서 Del)
+        st.bar = _StagingBar(view.viewport(), None if keep else self._ai_accept_staged,
+                             self._ai_retry_staged if retry else None,
+                             None if keep else self._ai_discard_staged, extras, request=req, **self._ai_bar_kwargs(kind))
+        if st.bar.line is not None:
+            st.bar.line.heightChanged.connect(self._ai_place_bar)   # 입력 칸이 여러 줄로 자라면 막대를 다시 놓는다
         self._ai_staged = st
         self._sync_start_prompt()   # 빈 도면 칸은 결과가 놓이는 순간 걷는다
         if req is not None and getattr(req, "entry", None) is not None:
-            req.entry.set_status(STAGED_TEXT, running=True)
+            req.entry.set_status(PLACED_TEXT if keep else STAGED_TEXT, running=True)
         self._ai_ensure_visible()
         self._ai_place_bar()
         st.bar.show()
@@ -1477,11 +1247,6 @@ class _AIMakeMixin:
         if st is None:
             return
         self._ai_staged = None
-        if st.alt is not None:
-            # 비교 중에 자동 채택(다른 편집·새 만들기·저장)되면 둘 다 남긴다 — Ctrl+Z로 지울 수 있으니 잃는 게 없다.
-            self._ai_end_alt(st, ACCEPTED_TEXT)
-            if status == ACCEPTED_TEXT:
-                status = KEPT_BOTH_TEXT
         if st.slots is not None:
             try:
                 st.doc.scene.selectionChanged.disconnect(self._ai_on_cand_selection)
@@ -1548,11 +1313,8 @@ class _AIMakeMixin:
         if st.slots is not None:
             self._ai_discard_candidates(DISCARDED_TEXT)
             return
-        alt = self._ai_end_alt(st)
         self._ai_drop_staged(st)
         self._ai_finish_staging(DISCARDED_TEXT)
-        if alt is not None:
-            self._ai_restage_flow(alt)   # 이어 고친 새 결과를 버림 — 원본이 다시 임시 결과로
 
     def _ai_drop_staged(self, st):
         """임시 결과의 도형을 걷어 낸다(점선·막대는 그대로 — 호출부가 `_ai_finish_staging`한다)."""
@@ -1602,10 +1364,7 @@ class _AIMakeMixin:
         if st.slots is not None:                # 후보 줄은 다른 편집에도 남는다(피드백 3차) — 채택·버리기·저장 때 정리
             return
         if st.undo_entry not in undo:           # Ctrl+Z로 결과가 빠졌다
-            alt = self._ai_end_alt(st)
             self._ai_finish_staging(UNDONE_TEXT)
-            if alt is not None:
-                self._ai_restage_flow(alt)      # 이어 고친 결과가 빠짐 — 원본을 다시 임시 결과로
         elif undo[-1] is not st.undo_entry:     # 다른 편집이 기록됐다 → 자동 채택
             self._ai_finish_staging(ACCEPTED_TEXT)
 
@@ -1629,6 +1388,7 @@ class _AIMakeMixin:
         """`core_view.drawForeground`가 부른다(우리 확장 훅)."""
         self._draw_check_marks(view, painter)   # §8 항목48 도면 검사 표시
         self._board_bar_sync(view)              # §8 항목53 보드 막대(보드 하나를 골랐을 때 그 위에)
+        self._draw_board_marks(view, painter)   # 이어 고친 보드의 바뀐 칸(그 보드를 골랐을 때)
         self._draw_ai_trace_overlay(view, painter)
         st = getattr(self, "_ai_staged", None)
         if st is None or st.doc.view is not view:
@@ -1672,14 +1432,7 @@ class _AIMakeMixin:
             pen.setCosmetic(True)
             painter.setPen(pen)
             painter.drawRoundedRect(rect, 6 / s, 6 / s)
-            if st.alt is not None:   # 비교 중인 원본 — 회색 점선
-                ar = self._ai_items_rect(st.alt.items)
-                if not ar.isNull():
-                    pen = QPen(QColor(128, 128, 128, 200), 2.0, Qt.PenStyle.DashLine)
-                    pen.setCosmetic(True)
-                    painter.setPen(pen)
-                    painter.drawRoundedRect(ar.adjusted(-pad, -pad, pad, pad), 6 / s, 6 / s)
-            self._ai_draw_marks(painter, list(st.marks) + list(st.alt_marks), s)
+            self._ai_draw_marks(painter, list(st.marks), s)
         painter.restore()
         vp = view.mapFromScene(rect).boundingRect()
         if vp != st.last_vp:
@@ -1697,13 +1450,6 @@ class _AIMakeMixin:
         s = view.transform().m11() or 1.0
         pad = self._AI_STAGE_PAD_PX / s
         st.last_vp = self._ai_place_widget(view, st.bar, rect.adjusted(-pad, -pad, pad, pad))
-        if st.alt is not None and st.alt_bar is not None and not sip.isdeleted(st.alt_bar):
-            ar = self._ai_items_rect(st.alt.items)
-            if not ar.isNull():
-                self._ai_place_widget(view, st.alt_bar, ar.adjusted(-pad, -pad, pad, pad))
-                if st.alt_bar.geometry().intersects(st.bar.geometry()):   # 멀리서 보면 두 막대가 겹친다 — 원본 막대를 한 칸 위로
-                    y = st.bar.y() - st.alt_bar.height() - 4
-                    st.alt_bar.move(st.alt_bar.x(), y if y >= 4 else st.bar.geometry().bottom() + 4)
 
     def _ai_place_widget(self, view, bar, scene_rect) -> QRect:
         """막대 위젯을 씬 사각형 위(자리가 없으면 아래)에, 떠 있는 카드 밑에 깔리지 않게 놓는다."""
@@ -1796,8 +1542,10 @@ class _AIMakeMixin:
             self._ai_stage_candidates(req, slots)
         base_url = gw.resolve_base_url()
         now = time.monotonic()
+        subject = req.text or getattr(req, "base_text", "")   # 이어 만들기에서 지시를 비우면 원래 대상으로
+        if getattr(req, "pdf_path", "") and not getattr(req, "refs", None):
+            subject = self._ai_pdf_subject(subject, req.pdf_path)
         for _ in range(n):
-            subject = req.text or getattr(req, "base_text", "")   # 이어 만들기에서 지시를 비우면 원래 대상으로
             worker = _SvgGenWorker(key, subject, req.model, base_url, req.image, self, refs=getattr(req, "refs", None))
             self._ai_jobs[worker] = _AIJob(req, worker, now)
             worker.candidate.connect(self._on_symbol_candidate)
@@ -1809,6 +1557,17 @@ class _AIMakeMixin:
         self._ai_tick()
         self._ai_tick_timer.start()
         return self._ai_staged
+
+    _PDF_SUBJECT_CHARS = 3000
+
+    def _ai_pdf_subject(self, subject: str, pdf_path: str) -> str:
+        """PDF + 「그림 하나」(2026-10-16) — 심볼 지시에 PDF 앞부분 글을 자료로 붙인다(후보마다 요약을 부르지 않게 AI 없이 잘라서)."""
+        from easycad.ai.pdf_to_mermaid import PdfTextError, extract_pdf_pages
+        try:
+            body = " ".join(t for _n, t in extract_pdf_pages(pdf_path))
+        except (PdfTextError, OSError, RuntimeError):
+            return subject
+        return f"{subject}\n\n참고 자료(PDF 앞부분 — 이 내용을 나타내는 그림으로):\n{body[:self._PDF_SUBJECT_CHARS]}"
 
     def _ai_extend_candidates(self, req, n):
         """이어 만들기(피드백 6차) — 지금 후보 줄은 그대로 두고 그 아래에 새 줄을 붙인다(고를 거리가 늘어남). 앞 요청에서
@@ -2781,8 +2540,6 @@ class _AIMakeMixin:
         st = getattr(self, "_ai_staged", None)
         if st is not None and st.bar is not None:
             bars.append(st.bar)
-        if st is not None and st.alt_bar is not None:
-            bars.append(st.alt_bar)
         tr = getattr(self, "_ai_trace", None)
         if tr is not None and tr.bar is not None:
             bars.append(tr.bar)

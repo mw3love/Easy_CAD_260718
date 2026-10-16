@@ -284,10 +284,9 @@ def test_followup_sends_spec_and_marks_only_changed():
         assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not st)
     assert seen == [SPEC_TEXT]
     new = w._ai_staged
-    assert new.alt is st
+    assert all(it.scene() is w._scene for it in st.items)          # 바탕은 그대로 넣은 채(2026-10-16 — 비교 「이걸로」 없음)
     marked = sorted(getattr(it, "_flow_key", ("?",))[0] for it in new.marks)
     assert marked == ["경보 기록", "장애 보고서"]                    # 새 상자 + 새 화살표(앞 상자 글)
-    assert new.alt_marks == []
     _close(w)
 
 

@@ -16,7 +16,7 @@ import re
 
 from easycad.ai import gateway as gw
 from easycad.ai.pdf_to_mermaid import (
-    SINGLE_PASS_CHARS, build_summary_prompt, chunk_pages, extract_pdf_pages, pages_to_text,
+    SINGLE_PASS_CHARS, extract_pdf_pages,
 )
 from easycad.fileio.flow_spec import FlowSpecError, parse_spec
 
@@ -273,22 +273,8 @@ def generate_board(api_key: str, pdf_path: str, note: str = "", *, model: str, b
                    progress=None) -> tuple[str, str]:
     """PDF → (보드 설계서 JSON 글, 실제 쓴 모델). 긴 문서는 쪽 묶음별 요약 뒤(옛 「풀어 그리기」와 같은 길). 글자 없는 PDF는
     `PdfTextError`, 응답을 못 읽으면 `BoardSpecError`. 설계서에 PDF 경로(`_pdf`)를 넣어 앱이 논문 그림을 잘라 오게 한다."""
-    pages = extract_pdf_pages(pdf_path)
-    total = sum(len(t) for _n, t in pages)
-    used = model
-    if total <= SINGLE_PASS_CHARS:
-        body, summarized = pages_to_text(pages), False
-    else:
-        parts = []
-        chunks = chunk_pages(pages)
-        for i, ch in enumerate(chunks, start=1):
-            if progress:
-                progress(f"긴 문서라 나눠 읽는 중 {i}/{len(chunks)}")
-            res = gw.call_text_with_fallback(api_key, build_summary_prompt(ch), model=model, base_url=base_url,
-                                             timeout=120.0)
-            parts.append(res.content.strip())
-            used = res.model_used
-        body, summarized = "\n".join(parts), True
+    from easycad.ai.pdf_to_mermaid import pdf_body
+    body, summarized, used = pdf_body(api_key, pdf_path, model=model, base_url=base_url, progress=progress)
     if progress:
         progress("보드 정리하는 중")
     res = gw.call_text_with_fallback(api_key, build_board_prompt(body, note, summarized), model=model,

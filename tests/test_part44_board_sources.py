@@ -162,8 +162,8 @@ def test_sources_request_stages_board(files):
                    return_value=(json.dumps(SPEC, ensure_ascii=False), "m")) as gen:
         req = w._ai_ctrl.request_make("비교", kind="explain", sources=srcs)
         assert req.kind == "explain" and req.sources == srcs
-        assert _wait_until(lambda: w._ai_staged is not None)
-    assert gen.call_args.args[1] == srcs and isinstance(w._ai_staged.items[0], _BoardItem)
+        assert _wait_until(lambda: w._board_selected() is not None)
+    assert gen.call_args.args[1] == srcs and isinstance(w._board_selected(), _BoardItem)
     again = w._ai_ctrl.resubmit(req)
     assert again.sources == srcs
     w._ai_detach_jobs()

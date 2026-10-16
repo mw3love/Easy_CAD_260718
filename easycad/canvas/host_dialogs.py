@@ -816,15 +816,21 @@ class _FlowGenWorker(_MermaidGenWorker):
     """[§8 항목52, 2026-10-16] AI 흐름도 — Mermaid 대신 「내용 설계서」 JSON(`text_to_flow.generate_flow`). 받는 쪽 모양은
     `_MermaidGenWorker`와 같다(글, 모델). `icons` = 설계서에 쓸 수 있는 아이콘 이름(내 심볼·안테나 심볼)."""
 
-    def __init__(self, api_key, desc, model, base_url, image, parent=None, base_code="", icons=()):
+    def __init__(self, api_key, desc, model, base_url, image, parent=None, base_code="", icons=(), pdf_path=""):
         super().__init__(api_key, desc, model, base_url, image, parent=parent, base_code=base_code)
         self._icons = tuple(icons)
+        self._pdf_path = pdf_path   # 가운데 칸에 PDF + 「흐름도로」(2026-10-16) — 그 PDF 본문을 자료로
 
     def run(self):
         try:
             from easycad.ai.text_to_flow import generate_flow
+            material = ""
+            if self._pdf_path:
+                from easycad.ai.pdf_to_mermaid import pdf_body
+                material = pdf_body(self._api_key, self._pdf_path, model=self._model, base_url=self._base_url)[0]
             text, used = generate_flow(self._api_key, self._desc, model=self._model, base_url=self._base_url,
-                                       image=self._image, base_code=self._base_code, icons=self._icons)
+                                       image=self._image, base_code=self._base_code, icons=self._icons,
+                                       material=material)
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
             return

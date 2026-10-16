@@ -4714,6 +4714,8 @@ class _AnnotatorView(QGraphicsView):
                 # Backspace는 삭제의 고정 별칭(운영체제 관례) — 설정 창에서 "삭제"를
                 # 다른 키로 바꿔도 계속 동작한다(사용자가 놀라지 않게 하는 의도적 예외).
                 selected = list(self.scene().selectedItems())
+                if hasattr(self._owner, "_board_delete_scope"):   # [§8 항목53] 보드를 지우면 안의 것도 같이(2026-10-16 사용자)
+                    selected = self._owner._board_delete_scope(selected)
                 if selected:
                     # [점검 2단계 후속 2026-10-03] 개당 selectionChanged → 속성 패널 재계산(O(n²)) 방지
                     paused = getattr(self._owner, "_bulk_scene_edit", None)

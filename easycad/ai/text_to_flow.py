@@ -82,7 +82,17 @@ _REFINE_TEMPLATE = """아래 흐름도 「내용 설계서」를 지시대로 �
 """
 
 
-def build_prompt(description: str, icons=()) -> str:
+_MATERIAL_NOTE = """
+
+참고 자료(사용자가 넣은 PDF에서 뽑은 글 — 줄 앞 [p.N]은 원문 쪽 번호). 흐름도의 단계·담당은 이 자료 내용으로만 쓰고, 단계 이름 끝에
+근거 쪽을 「· p.N」으로 붙여라. 자료에 없는 단계는 지어내지 말 것.
+{material}"""
+
+
+def build_prompt(description: str, icons=(), material: str = "") -> str:
+    """`material` — 가운데 칸에 PDF와 함께 「흐름도로」 같은 말을 넣었을 때 그 PDF 본문(2026-10-16 사용자 요청: PDF는 말대로)."""
+    if material.strip():
+        description = description.strip() + _MATERIAL_NOTE.format(material=material.strip())
     return _PROMPT_TEMPLATE.format(description=description.strip(),
                                    format=_FORMAT.format(icon_rule=_icon_rule(icons)))
 
@@ -98,7 +108,7 @@ def build_refine_prompt(instruction: str, code: str, icons=()) -> str:
 
 
 def generate_flow(api_key: str, description: str, *, model: str, base_url: str = gw.BASE_URL, image=None,
-                  base_code: str = "", icons=()) -> tuple[str, str]:
+                  base_code: str = "", icons=(), material: str = "") -> tuple[str, str]:
     """설명(및/또는 그림) → (설계서 JSON 글, 실제 쓴 모델). 응답은 `parse_spec`으로 한 번 읽어 다듬은 글로 돌려준다
     (못 읽으면 FlowSpecError — 호출부가 실패로 보여 준다). `base_code`가 Mermaid면(「풀어 그리기」 결과 이어 고치기) 옛 Mermaid
     지시문으로 보내고 Mermaid 글을 그대로 돌려준다."""
@@ -111,7 +121,7 @@ def generate_flow(api_key: str, description: str, *, model: str, base_url: str =
     if base_code.strip():
         prompt = build_refine_prompt(description, base_code, icons)
     else:
-        prompt = build_image_prompt(description, icons) if image is not None else build_prompt(description, icons)
+        prompt = build_image_prompt(description, icons) if image is not None else build_prompt(description, icons, material)
     timeout = 120.0 if image is not None else 60.0
     res = gw.call_text_with_fallback(api_key, prompt, model=model, base_url=base_url, image=image, timeout=timeout)
     return parse_spec(res.content).to_json(), res.model_used

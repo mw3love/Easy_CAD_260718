@@ -173,6 +173,7 @@ class _SelectionMixin:
     def delete_selection(self):
         """선택 객체 삭제 + undo. 뷰의 Del 키 핸들러와 동일 동작(메뉴 재사용용)."""
         sel = list(self._scene.selectedItems())
+        sel = self._board_delete_scope(sel)   # [§8 항목53] 보드를 지우면 안의 것도 같이(2026-10-16 사용자)
         if not sel:
             return
         with self._bulk_scene_edit():   # [점검 2단계 후속] 개당 속성 패널 재계산·겹침 검사 방지

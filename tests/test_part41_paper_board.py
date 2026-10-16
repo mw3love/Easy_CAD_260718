@@ -170,14 +170,34 @@ def _wait_until(cond, ms=5000):
     return False
 
 
-def test_pdf_request_stages_board_and_followup_sends_board(figure_pdf):
+def _sel_board(w):
+    b = w._board_selected()
+    return b if b is not None and getattr(b, "_ai", None) else None
+
+
+def _bar(w):
+    w._board_bar_sync(w._view)
+    return w._board_bar
+
+
+def _scope(w, board):
+    return [board] + w._board_scope(board)
+
+
+def test_pdf_request_places_board_and_followup_puts_new_board_beside(figure_pdf):
+    # 2026-10-16 사용자 피드백: 만들면 바로 넣고(채택·버리기 없음) 새 보드를 골라 두어 보드 막대(하나로 통합)가 바로 뜬다.
     w = _window()
     with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
             _patch("easycad.ai.pdf_to_board.generate_board", return_value=(SPEC_TEXT, "m")):
         w._ai_ctrl.request_make("", kind="explain", pdf_path=figure_pdf)
-        assert _wait_until(lambda: w._ai_staged is not None)
-    st = w._ai_staged
-    assert isinstance(st.items[0], _BoardItem) and st.request.result_text == SPEC_TEXT
+        assert _wait_until(lambda: _sel_board(w) is not None)
+    board = _sel_board(w)
+    assert w._ai_staged is None and board._ai["spec"] == SPEC_TEXT
+    bar = _bar(w)
+    assert bar.isVisible() and bar.line is not None and bar.line.isVisibleTo(bar)
+    assert bar.accept_btn is None and bar.discard_btn is None and bar.history_btn is None   # 채택·버리기·기록 없음
+    assert len(bar.chips) == 10 and all(not c.text() and not c.icon().isNull() for c in bar.chips)   # 색은 아이콘만
+    assert [c for c in bar.chips if c.isChecked()][0].property("boardColor") == "#ffffff"
     seen = []
 
     def gen(*_a, base_code="", **_k):
@@ -185,38 +205,77 @@ def test_pdf_request_stages_board_and_followup_sends_board(figure_pdf):
         return SPEC_TEXT.replace("빨리 배운다.", "학습이 빠르다."), "m"
     with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
             _patch("easycad.ai.text_to_flow.generate_flow", side_effect=gen):
-        line = st.bar.line
-        line.setText("의의를 더 짧게")
-        line.returnPressed.emit()
-        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not st)
+        bar.line.setText("의의를 더 짧게")
+        bar.line.returnPressed.emit()
+        assert _wait_until(lambda: _sel_board(w) is not None and _sel_board(w) is not board)
     assert seen == [SPEC_TEXT]
-    new = w._ai_staged
-    assert new.alt is st and isinstance(new.items[0], _BoardItem)
-    assert new.request.kind == "explain" and "흐름도" not in w._ai_pill.text()   # 보드로 이어 감(막대 예시·알약 이름)
-    # 2026-10-16: 보드도 글이 달라진 칸을 주황으로(바꾼 문장 하나 = 한 군데), 막대 앞에 「지시 · 모델 · 초」
-    assert "1군데" in new.request.entry.status_text()
-    assert [it.toPlainText() for it in new.marks if hasattr(it, "toPlainText")] and len(new.marks) == 1
-    assert "학습이빠르다" in "".join(new.marks[0].toPlainText().split())
-    assert new.bar.info is not None and "의의를 더 짧게" in new.bar.info.text() and "m" in new.bar.info.text()
-    assert w._ai_items_rect(new.items).left() > w._ai_items_rect(st.items).right()   # 원본 옆에 나란히
+    new = _sel_board(w)
+    req = w._ai_ctrl.entries()[-1].request
+    assert req.kind == "explain" and "흐름도" not in w._ai_pill.text()   # 보드로 이어 감(막대 예시·알약 이름)
+    assert all(it.scene() is w._scene for it in _scope(w, board))           # 원래 보드는 그대로
+    assert new.mapRectToScene(new.rect()).left() > board.mapRectToScene(board.rect()).right()   # 새 보드는 오른쪽
+    # 글이 달라진 칸을 주황으로(바꾼 문장 하나 = 한 곳), 막대 앞에 「지시 · 모델 · 초」
+    assert "1곳" in req.entry.status_text() and len(new._ai_marks) == 1
+    assert "학습이빠르다" in "".join(new._ai_marks[0].toPlainText().split())
+    bar = _bar(w)
+    assert "의의를 더 짧게" in bar.caption_label.text() and "m" in bar.caption_label.text()
     _close(w)
 
 
-def test_tick_does_not_overwrite_status_after_answer(figure_pdf):
-    """결과를 받은 뒤 작업자가 끝나기 전 틈에 1초 시계가 돌아도 「임시로 놓음」이 「만드는 중… N초」로 덮이지 않는다
-    (실제 창 두 논문 보드에서 남았던 것 — 2026-10-16 백지 검토). 틈은 재현이 들쭉날쭉해 답 받은 작업을 직접 넣어 본다."""
-    import time
-    from easycad.canvas.host_aimake import STAGED_TEXT, _AIJob
+def test_board_bar_same_for_new_and_reopened_board(figure_pdf, tmp_path):
+    """만든 직후와 저장했다 다시 연 뒤에 같은 막대(색·내보내기·고칠 점) — 설계서를 보드에 적어 둔다."""
     w = _window()
     with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
             _patch("easycad.ai.pdf_to_board.generate_board", return_value=(SPEC_TEXT, "m")):
         w._ai_ctrl.request_make("", kind="explain", pdf_path=figure_pdf)
-        assert _wait_until(lambda: w._ai_staged is not None and not w._ai_jobs)
-    req = w._ai_staged.request
-    assert req.entry.status_text().startswith(STAGED_TEXT)
+        assert _wait_until(lambda: _sel_board(w) is not None)
+    path = str(tmp_path / "board.ecad")
+    w._doc_path = path
+    w._save_doc()
+    _close(w)
+    w2 = _window()
+    w2._open_path(path)
+    b2 = [it for it in w2._scene.items() if isinstance(it, _BoardItem)][0]
+    assert b2._ai["spec"] == SPEC_TEXT and b2._ai["model"] == "m"
+    w2._scene.clearSelection()
+    b2.setSelected(True)
+    bar = _bar(w2)
+    assert bar.line.isVisibleTo(bar) and "m" in bar.caption_label.text()
+    _close(w2)
+
+
+def test_board_delete_takes_its_contents(figure_pdf):
+    """보드를 골라 Del — 안의 것도 같이 지운다(되돌리기 한 칸으로 전부 돌아옴)."""
+    w = _window()
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.pdf_to_board.generate_board", return_value=(SPEC_TEXT, "m")):
+        w._ai_ctrl.request_make("", kind="explain", pdf_path=figure_pdf)
+        assert _wait_until(lambda: _sel_board(w) is not None)
+    board = _sel_board(w)
+    items = _scope(w, board)
+    assert len(items) > 5
+    w.delete_selection()
+    assert all(it.scene() is None for it in items)
+    w.undo()
+    assert all(it.scene() is w._scene for it in items)
+    _close(w)
+
+
+def test_tick_does_not_overwrite_status_after_answer(figure_pdf):
+    """결과를 받은 뒤 작업자가 끝나기 전 틈에 1초 시계가 돌아도 「넣음」이 「만드는 중… N초」로 덮이지 않는다
+    (실제 창 두 논문 보드에서 남았던 것 — 2026-10-16 백지 검토). 틈은 재현이 들쭉날쭉해 답 받은 작업을 직접 넣어 본다."""
+    import time
+    from easycad.canvas.host_aimake import _AIJob
+    w = _window()
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.pdf_to_board.generate_board", return_value=(SPEC_TEXT, "m")):
+        w._ai_ctrl.request_make("", kind="explain", pdf_path=figure_pdf)
+        assert _wait_until(lambda: _sel_board(w) is not None and not w._ai_jobs)
+    req = w._ai_ctrl.entries()[-1].request
+    assert req.entry.status_text().startswith("✓ 보드를 넣음")
     w._ai_jobs[object()] = _AIJob(req, None, time.monotonic() - 81, answered=True)
     w._ai_tick()
-    assert req.entry.status_text().startswith(STAGED_TEXT)
+    assert req.entry.status_text().startswith("✓ 보드를 넣음")
     w._ai_jobs.clear()
     _close(w)
 
@@ -240,45 +299,55 @@ def tall_figure_pdf(tmp_path):
     return path
 
 
-def _stage_board(w, pdf):
+def _place_board(w, pdf):
     with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
             _patch("easycad.ai.pdf_to_board.generate_board",
                    return_value=(json.dumps(dict(SPEC, _pdf=pdf), ensure_ascii=False), "gemini-x")):   # 진짜도 _pdf를 붙인다
         w._ai_ctrl.request_make("", kind="explain", pdf_path=pdf)
-        assert _wait_until(lambda: w._ai_staged is not None)
-    return w._ai_staged
+        assert _wait_until(lambda: _sel_board(w) is not None)
+    return _sel_board(w)
+
+
+def _say_board(w, text):
+    bar = _bar(w)
+    bar.line.setText(text)
+    bar.line.returnPressed.emit()
+    _app.processEvents()
 
 
 def test_bar_figure_big_relayouts_without_ai(tall_figure_pdf):
     w = _window()
-    st = _stage_board(w, tall_figure_pdf)
-    small = [it for it in st.items if isinstance(it, _ImageItem)]
+    board = _place_board(w, tall_figure_pdf)
+    w._set_board_color(board, "#1d1d1f")                               # 다시 배치해도 고른 보드 색 그대로
+    small = [it for it in _scope(w, board) if isinstance(it, _ImageItem)]
     assert len(small) == 1 and small[0].rect().height() <= 240.5
+    old_items, n_undo = _scope(w, board), len(w._undo)
     with _patch("easycad.ai.text_to_flow.generate_flow", side_effect=AssertionError("AI 부르면 안 됨")):
-        st.bar.line.setText("그림 크게")
-        st.bar.line.returnPressed.emit()
-        _app.processEvents()
-    st = w._ai_staged
-    assert pb.parse_board(st.request.result_text)["_figure"] == "big"
-    board = next(it for it in st.items if isinstance(it, _BoardItem))
-    img = next(it for it in st.items if isinstance(it, _ImageItem))
+        _say_board(w, "그림 크게")
+    board = _sel_board(w)
+    items = _scope(w, board)
+    assert pb.parse_board(board._ai["spec"])["_figure"] == "big" and len(w._undo) == n_undo + 1   # 되돌리기 한 칸
+    assert all(it.scene() is None for it in old_items) and board.bg().name() == "#1d1d1f"
+    img = next(it for it in items if isinstance(it, _ImageItem))
     assert img.rect().height() > 300                                   # 크게(1장에 남는 데까지)
-    assert len([it for it in st.items if isinstance(it, _BoardItem)]) == 1   # 다른 칸을 2장으로 밀어내지 않는다
+    assert len([it for it in w._scene.items() if isinstance(it, _BoardItem)]) == 1   # 다른 칸을 2장으로 밀어내지 않는다
     b, r = board.sceneBoundingRect(), img.sceneBoundingRect()
     assert abs(r.center().x() - b.center().x()) < 2.0                  # 가운데
-    assert check_drawing(w._scene, items=st.items) == []               # 아래 칸과 겹치지 않음
+    assert check_drawing(w._scene, items=items) == []                  # 아래 칸과 겹치지 않음
     with _patch("easycad.ai.text_to_flow.generate_flow", side_effect=AssertionError("AI 부르면 안 됨")):
-        st.bar.line.setText("그림 원래대로")
-        st.bar.line.returnPressed.emit()
-        _app.processEvents()
-    assert [it for it in w._ai_staged.items if isinstance(it, _ImageItem)][0].rect().height() <= 240.5
+        _say_board(w, "그림 원래대로")
+    assert [it for it in _scope(w, _sel_board(w)) if isinstance(it, _ImageItem)][0].rect().height() <= 240.5
+    w.undo()
+    w.undo()
+    assert all(it.scene() is w._scene for it in old_items)             # Ctrl+Z로 처음 보드가 돌아옴
     _close(w)
 
 
 def test_long_followup_with_figure_words_keeps_layout_flag(tall_figure_pdf):
     """「논문 그림을 가운데 배치하고 중학생 독자로 다시 써 줘」 — 배치는 앱이(바탕 설계서에 표시), 글은 AI로. 결과도 그림 크게."""
     w = _window()
-    st = _stage_board(w, tall_figure_pdf)
+    board = _place_board(w, tall_figure_pdf)
+    first_req = w._ai_ctrl.entries()[-1].request
     seen = []
 
     def gen(_key, text, *_a, base_code="", **_k):
@@ -286,17 +355,31 @@ def test_long_followup_with_figure_words_keeps_layout_flag(tall_figure_pdf):
         return base_code, "gemini-y"   # 글은 그대로 — 표시가 결과까지 이어지는지만 본다
     with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
             _patch("easycad.ai.text_to_flow.generate_flow", side_effect=gen):
-        st.bar.line.setText("논문 그림을 가운데 배치하고 중학생 독자를 대상으로 다시 작성해줘")
-        st.bar.line.returnPressed.emit()
-        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not st)
+        _say_board(w, "논문 그림을 가운데 배치하고 중학생 독자를 대상으로 다시 작성해줘")
+        assert _wait_until(lambda: _sel_board(w) is not None and _sel_board(w) is not board)
     text, base = seen[0]
     assert "중학생" in text and pb.parse_board(base)["_figure"] == "big"
-    new = w._ai_staged
-    assert [it for it in new.items if isinstance(it, _ImageItem)][0].rect().height() > 300
-    cap = new.bar.info.text()
+    new = _sel_board(w)
+    assert [it for it in _scope(w, new) if isinstance(it, _ImageItem)][0].rect().height() > 300
+    bar = _bar(w)
+    cap = bar.caption_label.text()
     assert "gemini-y" in cap and "논문 그림을" in cap and "초" in cap   # 막대 앞 「지시 · 모델 · 초」
-    assert "중학생" in new.bar.info.toolTip()                          # 전체 지시는 툴팁
-    assert "gemini-x" in st.request.entry.title() and "gemini-y" in new.request.entry.title()   # 기록 메뉴에도 모델
+    assert "중학생" in bar.caption_label.toolTip()                      # 전체 지시는 툴팁
+    new_req = w._ai_ctrl.entries()[-1].request
+    assert "gemini-x" in first_req.entry.title() and "gemini-y" in new_req.entry.title()   # 기록 메뉴에도 모델
+    _close(w)
+
+
+def test_board_bar_switch_to_flow_uses_same_pdf(tall_figure_pdf):
+    """보드 막대에 「흐름도로」 — 같은 PDF로 흐름도를 새로 만든다(보드는 그대로)."""
+    w = _window()
+    board = _place_board(w, tall_figure_pdf)
+    got = []
+    w._ai_ctrl.make_requested.connect(got.append)
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value=""):   # 키 없음 — 요청 모양만 본다
+        _say_board(w, "흐름도로 바꿔 줘")
+    assert got and got[-1].kind == "flow" and got[-1].pdf_path == tall_figure_pdf
+    assert board.scene() is w._scene
     _close(w)
 
 

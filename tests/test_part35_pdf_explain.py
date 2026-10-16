@@ -91,7 +91,7 @@ def test_short_doc_is_one_call(sample_pdf):
 
 
 def test_long_doc_summarizes_chunks_first(sample_pdf, monkeypatch):
-    monkeypatch.setattr(pb, "SINGLE_PASS_CHARS", 10)
+    monkeypatch.setattr(pm, "SINGLE_PASS_CHARS", 10)   # 글 뽑기·나눠 요약은 `pdf_to_mermaid.pdf_body`(보드·흐름도 같이 씀)
     monkeypatch.setattr(pm, "CHUNK_CHARS", 20)
     calls = []
 
@@ -118,10 +118,51 @@ def test_explain_needs_pdf():
 def test_attaching_pdf_makes_explain(sample_pdf):
     w = CanvasWindow()
     sp = w._start_prompt
-    sp._edit.setPlainText("흐름도로")
     sp._set_attached_pdf(sample_pdf)
     assert sp.kind() == "explain" and sp._attached_pdf == sample_pdf and sp._attached_image is None
     assert sp._image_chip.isVisibleTo(sp)
+
+
+def test_pdf_with_words_follows_the_words():
+    """2026-10-16 사용자: PDF만 넣으면 보드, 말을 쓰면 그 말대로("간단한 그림 하나만" → 심볼, "흐름도로" → 흐름도)."""
+    from easycad.canvas.ai_control import guess_kind
+    assert guess_kind("", False, True) == "explain"
+    assert guess_kind("흐름도로", False, True) == "flow"
+    assert guess_kind("간단한 그림 하나만", False, True) == "symbol"
+    assert guess_kind("핵심 아이콘", False, True) == "symbol"
+    assert guess_kind("작동 흐름을 한 장 보드로 정리", False, True) == "explain"   # 「보드·정리」가 먼저
+
+
+def test_pdf_flow_request_sends_pdf_text_as_material(sample_pdf):
+    w = CanvasWindow()
+    w.resize(1400, 900)
+    w.show()
+    sp = w._start_prompt
+    w._open_ai_prompt()
+    sp._set_attached_pdf(sample_pdf)
+    sp._edit.setPlainText("흐름도로 그려 줘")
+    prompts = []
+
+    def fake(_key, prompt, **_k):
+        prompts.append(prompt)
+        return GatewayResult('{"direction":"LR","steps":[{"id":"a","text":"A"},{"id":"b","text":"B"}],'
+                             '"links":[{"from":"a","to":"b"}]}', "m", None, 0.1)
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.gateway.call_text_with_fallback", side_effect=fake):
+        assert sp.submit() == "flow"
+        req = w._ai_ctrl.entries()[-1].request
+        assert req.kind == "flow" and req.pdf_path == sample_pdf
+        assert _wait_until(lambda: w._ai_staged is not None)
+    assert len(prompts) == 1 and "흐름도로 그려 줘" in prompts[0] and "[p.1]" in prompts[0] and "ST 2110" in prompts[0]
+    for d in w._docs:
+        d.dirty = False
+    w.close()
+
+
+def test_pdf_symbol_request_adds_pdf_text_to_subject(sample_pdf):
+    w = CanvasWindow()
+    out = w._ai_pdf_subject("핵심 그림 하나", sample_pdf)
+    assert out.startswith("핵심 그림 하나") and "ST 2110" in out
 
 
 def test_explain_generates_and_stages_like_flow(sample_pdf):
@@ -137,14 +178,15 @@ def test_explain_generates_and_stages_like_flow(sample_pdf):
         assert sp.submit() == "explain"
         req = p.entries()[-1].request
         assert req.kind == "explain" and req.pdf_path == sample_pdf
-        assert _wait_until(lambda: w._ai_staged is not None)
+        assert _wait_until(lambda: w._board_selected() is not None)   # 보드는 바로 넣고 골라 둔다(2026-10-16)
         assert gen.call_args.args[1] == sample_pdf and gen.call_args.args[2] == "처음 보는 사람용"
-        assert w._ai_staged.request.kind == "explain"
+        first = w._board_selected()
         assert sp._attached_pdf == "", "보낸 뒤 첨부 칩은 비움"
         # 「다시」도 가짜 안에서 끝까지 기다린다 — 밖에서 부르면 작업자가 진짜 게이트웨이에 접속해 몇 초 돌고, 그 사이 GC가
         # 창을 지우면 "QThread: Destroyed while thread is still running"으로 전체 pytest가 exit 127(2026-10-16 원인).
         again = p.resubmit(req)
-        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged.request is again)
+        assert _wait_until(lambda: w._board_selected() is not None and w._board_selected() is not first
+                           and not w._ai_jobs)
     assert again.pdf_path == sample_pdf, "「다시」도 같은 PDF로"
 
 
@@ -162,6 +204,6 @@ def test_start_prompt_pdf_goes_to_explain(sample_pdf):
     assert sp.kind() == "explain"
     with _fake():
         assert sp.submit() == "explain"
-        assert _wait_until(lambda: w._ai_staged is not None)
+        assert _wait_until(lambda: w._board_selected() is not None)
     ents = w._ai_ctrl.entries()
     assert len(ents) == 1 and ents[0].kind == "explain"

@@ -52,6 +52,9 @@ PENDING_TEXT = "준비 중"
 _SYMBOL_WORDS = ("아이콘", "심볼", "기호", "부품", "로고", "픽토그램", "그림 하나")
 _FLOW_WORDS = ("흐름", "순서도", "절차", "단계", "관계", "구조", "과정", "결재", "다시 배치")
 _TRACE_WORDS = ("베끼", "그대로", "따라 그", "옮겨")
+# PDF와 같이 쓴 말(2026-10-16 사용자 요청: "간단한 이미지만 만들어 달라고 할 수도") — 말이 없으면 지금처럼 한 장 보드.
+_BOARD_WORDS = ("보드", "한 장", "한장", "정리", "요약")
+_PICTURE_WORDS = ("그림", "이미지", "일러스트")
 
 # 가운데 칸이 받는 파일(§8 항목51 ③) — 나머지는 "아직 못 읽어요" 안내.
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
@@ -78,11 +81,16 @@ def _start_detached(worker):
 def guess_kind(text: str, has_image: bool, has_pdf: bool = False) -> str:
     """말·첨부로 종류를 짐작한다 — "trace"(베끼기) | "symbol"(심볼) | "flow"(흐름도) | "explain"(풀어 그리기).
 
-    PDF가 있으면 풀어 그리기. 사진이 있으면 기본은 베끼기(모양 그대로), "흐름·관계" 같은 말이 있으면 흐름도(관계만 읽어
+    PDF가 있으면 기본은 한 장 보드, 말이 "그림·아이콘"이면 심볼, "흐름·절차"면 흐름도(PDF 내용으로 — 2026-10-16, "보드·정리"가
+    먼저 맞는다). 사진이 있으면 기본은 베끼기(모양 그대로), "흐름·관계" 같은 말이 있으면 흐름도(관계만 읽어
     다시 배치). 사진이 없으면 "아이콘·부품" 같은 말이 있으면 심볼, 나머지는 흐름도."""
     t = (text or "").strip()
     if has_pdf:
-        return "explain"
+        if any(w in t for w in _BOARD_WORDS):
+            return "explain"
+        if any(w in t for w in _SYMBOL_WORDS + _PICTURE_WORDS):
+            return "symbol"
+        return "flow" if any(w in t for w in _FLOW_WORDS) else "explain"
     if has_image:
         if any(w in t for w in _TRACE_WORDS):
             return "trace"
@@ -348,7 +356,10 @@ class _AIController(QObject):
                 self.notice.emit("먼저 무엇을 그릴지 쓰거나 그림을 붙여 주세요.")
                 return None
             req = AIRequest(kind=kind, text=text, image=image, image_name=image_name if image is not None else "",
-                            model=self.model_for(kind), count=self.symbol_count())
+                            model=self.model_for(kind), count=self.symbol_count(),
+                            pdf_path=pdf_path if kind in ("flow", "symbol") else "")   # PDF + 「흐름도로」·「그림 하나」
+            if req.pdf_path and not req.image_name:
+                req.image_name = os.path.basename(pdf_path)
         self._add_entry(req)
         self.make_requested.emit(req)
         return req

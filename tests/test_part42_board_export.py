@@ -49,7 +49,11 @@ def test_bar_shows_only_for_one_selected_board():
     bar = w._board_bar
     assert bar.isVisible() and bar.board is board
     texts = [b.text() for b in bar.findChildren(QToolButton)]
-    assert "내보내기 ▾" in texts and "화이트" in texts and "블랙" in texts
+    assert "내보내기 ▾" in texts and "화이트" not in texts                 # 색은 아이콘 견본(이름은 툴팁) — 2026-10-16
+    tips = [c.toolTip() for c in bar.chips]
+    assert any("화이트" in t for t in tips) and any("블랙" in t for t in tips)
+    assert not bar.line.isVisibleTo(bar)                                      # 손으로 넣은 보드는 AI 설계서가 없어 입력 칸 없음
+    assert bar.accept_btn is None and bar.discard_btn is None and bar.history_btn is None
     assert [a.text().split("  —  ")[0] for a in bar.export_menu.actions()] == ["그림으로 복사", "PNG 그림 파일", "PDF 한 쪽", "HTML 공유"]
     inside.setSelected(True)                       # 둘을 고르면 숨김
     w._board_bar_sync(w._view)
@@ -65,9 +69,10 @@ def test_bar_color_button_changes_board():
     w._scene.clearSelection()
     board.setSelected(True)
     w._board_bar_sync(w._view)
-    black = [b for b in w._board_bar.findChildren(QToolButton) if b.text() == "블랙"][0]
+    black = [b for b in w._board_bar.chips if "블랙" in b.toolTip()][0]
     black.click()
     assert board.is_dark() and inside.pen().color().name() == "#fafafa"
+    assert black.isChecked() and sum(c.isChecked() for c in w._board_bar.chips) == 1   # 지금 색 표시
     _close(w)
 
 

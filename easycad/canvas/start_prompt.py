@@ -17,8 +17,7 @@ import os
 from PyQt6.QtCore import QEvent, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QBrush, QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QPlainTextEdit, QPushButton, QToolButton, QVBoxLayout,
-    QWidget,
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QMenu, QPlainTextEdit, QPushButton, QToolButton, QVBoxLayout,
 )
 
 from easycad.canvas.ai_control import (
@@ -27,15 +26,8 @@ from easycad.canvas.ai_control import (
 from easycad.canvas.host_dialogs import _CORAL_BTN_QSS, _ImageAttachMixin, _attach_button_qss
 from easycad.canvas.host_widgets import _ACCENT_CORAL, _current_icon_color
 
-__all__ = ["_StartPrompt", "guess_kind", "EXAMPLES"]
+__all__ = ["_StartPrompt", "guess_kind"]
 
-# (보이는 글, 넣을 글, 종류 고정 | None) — 지금 엔진이 실제로 잘 만드는 것만.
-EXAMPLES = (
-    ("휴가 신청 결재 흐름도", "휴가 신청부터 결재까지 흐름도를 그려줘", None),
-    ("카메라 아이콘", "방송용 카메라 아이콘", None),
-    ("손그림 사진 베끼기", "", "trace"),
-    ("논문 PDF → 한 장 보드", "", "explain"),
-)
 _DEFAULT_PLACEHOLDER = "예: 휴가 신청부터 결재까지 흐름도를 그려줘"
 
 
@@ -130,21 +122,7 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         self._notice.setVisible(False)
         v.addWidget(self._notice)
 
-        # 예시(누르면 칸에 채움 — 베끼기·풀어 그리기는 파일 고르기)
-        ex = QWidget(self)
-        el = QGridLayout(ex)   # 2×2 — 한 줄이면 칸 폭이 모자라 글자가 잘림(2026-10-16 실제 창 확인)
-        el.setContentsMargins(0, 0, 0, 0)
-        el.setHorizontalSpacing(6)
-        el.setVerticalSpacing(6)
-        self._example_btns: list[QPushButton] = []
-        for i, (label, text, kind) in enumerate(EXAMPLES):
-            b = QPushButton(label, ex)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _c=False, t=text, k=kind: self._use_example(t, k))
-            el.addWidget(b, i // 2, i % 2)
-            self._example_btns.append(b)
-        v.addWidget(ex)
-
+        # 예시 버튼은 없앴다(2026-10-16 사용자: "버튼이라기엔 빈약하고 기능적이지도 않다") — 사용법은 나중에 첫 실행 설명 카드로(계획서 §8)
         self._credit_lbl = QLabel("", self)
         self._credit_lbl.setTextFormat(Qt.TextFormat.RichText)
         self._credit_lbl.linkActivated.connect(self._on_credit_link)
@@ -197,11 +175,6 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
             f"QToolButton {{ color:{fg}; border:1px solid rgba(128,128,128,120); border-radius:7px; padding:5px 9px; font-size:12px; }}"
             f"QToolButton:hover {{ background:{hover}; }}"
             "QToolButton::menu-indicator { image:none; width:0; }")
-        for b in self._example_btns:
-            b.setStyleSheet(
-                f"QPushButton {{ color:{fg}; border:1px solid rgba(128,128,128,110); border-radius:12px; padding:4px 10px;"
-                " font-size:12px; background:transparent; }"
-                f"QPushButton:hover {{ background:{hover}; border-color:rgba(218,119,86,170); }}")
         self.update()
 
     # ---- 종류 안내(칩 없음) -----------------------------------------------------------
@@ -227,14 +200,6 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         if self._kind_hint is not None:
             return self._kind_hint
         return guess_kind(self._edit.toPlainText(), self._attached_image is not None, bool(self._attached_pdf))
-
-    def _use_example(self, text: str, kind):
-        if kind in ("trace", "explain"):
-            self.set_kind_hint(kind)
-            self._browse_image()
-            return
-        self._edit.setPlainText(text)
-        self._edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
     # ---- 모델 「자동 ▾」 ----------------------------------------------------------------
 
@@ -415,6 +380,11 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         if kind == "trace" and image is None:
             self._show_notice("베끼기는 도면 사진이 필요해요. 사진을 끌어다 놓거나 Ctrl+V로 붙여 주세요.")
             return None
+        if kind in ("flow", "symbol") and self._attached_pdf and image is None:   # PDF + 「흐름도로」·「그림 하나」(2026-10-16)
+            pdf = self._attached_pdf
+            self._reset_input()
+            self.submitted.emit(kind, text, pdf, os.path.basename(pdf))
+            return kind
         if kind == "explain":
             pdf = self._attached_pdf
             if not pdf:

@@ -32,10 +32,10 @@ def _shown_window():
     return w
 
 
-def _say(w, text, alt=False):
-    """결과 막대(또는 비교 중 원본 막대) 한 줄에 쓰고 Enter."""
+def _say(w, text):
+    """결과 막대 입력 칸에 쓰고 Enter."""
     st = w._ai_staged
-    line = st.alt_line if alt else st.bar.line
+    line = st.bar.line
     line.setText(text)
     line.returnPressed.emit()
     _app.processEvents()
@@ -234,7 +234,7 @@ def test_theme_toggle_keeps_card_pill_and_history():
 
 # ── 2단계(2026-10-05): 임시 결과 — 캔버스에 실제로 넣고 점선·결과 막대만 덧씌움 ───────────────
 
-from easycad.canvas.host_aimake import ACCEPTED_TEXT, DISCARDED_TEXT, STAGED_TEXT, UNDONE_TEXT
+from easycad.canvas.host_aimake import ACCEPTED_TEXT, DISCARDED_TEXT, PLACED_TEXT, STAGED_TEXT, UNDONE_TEXT
 
 
 def _close_clean(w):
@@ -408,9 +408,12 @@ def test_flow_generates_and_stages_at_request_center():
         req = _make_flow(w)
         assert _wait_until(lambda: w._ai_staged is not None)
     st = w._ai_staged
-    assert st.request is req and req.entry.status_text() == STAGED_TEXT
+    assert st.request is req and req.entry.status_text() == PLACED_TEXT
     assert len(st.items) == 7   # 상자 4 + 화살표 3
     assert st.bar.retry_btn is None   # 피드백 5차: 흐름도 막대엔 「다시」 없음(기록 칸으로 다시 채움)
+    # 2026-10-16: 흐름도는 바로 넣는다 — 채택·버리기·기록 없음, 입력 칸만
+    assert st.bar.accept_btn is None and st.bar.discard_btn is None and st.bar.history_btn is None
+    assert st.bar.line is not None
     c = w._ai_staged_scene_rect().center()
     assert abs(c.x() - req.center.x()) < 2 and abs(c.y() - req.center.y()) < 60
     assert w._ai_ctrl.flow_code() == _FLOW
@@ -1027,7 +1030,7 @@ def test_flow_result_avoids_existing_drawing():
     assert not r.intersects(block.mapToScene(block.rect()).boundingRect())
     assert len(st.items) == 7 and all(it.scene() is w._scene for it in st.items)
     n = len(w._undo)
-    st.bar.discard_btn.click()                         # 옮겨 다시 그린 것도 기록 한 칸
+    w.undo()                                           # 옮겨 다시 그린 것도 기록 한 칸
     assert len(w._undo) == n - 1 and block.scene() is w._scene
     _close_clean(w)
 
@@ -1204,18 +1207,19 @@ def test_symbol_followup_cuts_unfinished_jobs_of_previous_row():
 
 def test_flow_followup_keeps_original_beside_new_result():
     # 피드백 6차: 끝에만 붙여 달라 해도 AI가 가운데를 고칠 수 있다 → 원본을 왼쪽에 남기고 새 결과를 오른쪽에, 다른 곳 표시.
-    w, st, new, n_undo = _flow_compare()
+    # 2026-10-16: 둘 다 바로 넣는다(「이걸로」·「둘 다 넣기」·「버리기」 없음 — 필요 없는 쪽은 골라서 Del).
+    w, st, new, n_undo = _flow_followup()
     _close_clean(w)
 
 
-def _flow_compare():
+def _flow_followup():
     w = _shown_window()
     with _fake_gateway():
         _make_flow(w)
         assert _wait_until(lambda: w._ai_staged is not None)
     st = w._ai_staged
     n_undo = len(w._undo)
-    assert not [b for b in st.bar.findChildren(QToolButton) if b.text() == "이어 고치기"]   # 버튼 대신 막대 한 줄
+    assert not [b for b in st.bar.findChildren(QToolButton) if b.text() == "이어 고치기"]   # 버튼 대신 막대 입력 칸
     _say(w, "")
     assert "어떻게 고칠지" in w._ai_pill.text() and w._ai_staged is st   # 흐름도는 지시가 필요
     seen = []
@@ -1231,145 +1235,49 @@ def _flow_compare():
         assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not st)
     assert seen == [_FLOW]
     new = w._ai_staged
-    assert new.request is req and new.alt is st and len(new.items) == 9
-    assert all(it.scene() is w._scene for it in st.items)                       # 원본은 그대로
+    assert new.request is req and len(new.items) == 9
+    assert all(it.scene() is w._scene for it in st.items)                       # 원본은 그대로(넣은 채)
     assert len(w._undo) == n_undo + 1
     assert w._ai_items_rect(new.items).left() > w._ai_items_rect(st.items).right()   # 새 결과는 오른쪽
-    assert len(new.marks) == 2 and new.alt_marks == []                           # 경보 상자 + 화살표
-    assert new.alt_bar is not None and not new.alt_bar.isHidden()
-    assert new.bar.accept_btn.text() == "이걸로" and "2군데" in req.entry.status_text()
-    assert "원본" in st.request.entry.status_text()
+    assert len(new.marks) == 2                                                   # 경보 상자 + 화살표
+    assert new.bar.accept_btn is None and new.bar.discard_btn is None and new.bar.history_btn is None
+    assert "2군데" in req.entry.status_text() and st.request.entry.status_text() == ACCEPTED_TEXT
     return w, st, new, n_undo
 
 
-def test_flow_compare_choose_new_removes_original_and_its_history():
-    w, st, new, n_undo = _flow_compare()
-    new.bar.accept_btn.click()
-    assert w._ai_staged is None and new.alt_bar is None
-    assert all(it.scene() is None for it in st.items) and all(it.scene() is w._scene for it in new.items)
-    assert len(w._undo) == n_undo and st.undo_entry not in w._undo              # 원본 기록 칸째 빠짐
-    assert new.request.entry.status_text() == ACCEPTED_TEXT
-    _close_clean(w)
-
-
-def test_flow_compare_choose_original_drops_new():
-    w, st, new, n_undo = _flow_compare()
-    pick = [b for b in new.alt_bar.findChildren(QToolButton) if b.text() == "이걸로"][0]
-    pick.click()
-    assert w._ai_staged is None
-    assert all(it.scene() is w._scene for it in st.items) and all(it.scene() is None for it in new.items)
-    assert len(w._undo) == n_undo and st.request.entry.status_text() == ACCEPTED_TEXT
-    assert w._ai_ctrl.flow_code() == _FLOW
-    _close_clean(w)
-
-
-def test_flow_compare_discard_or_undo_restages_original():
-    for how in ("discard", "undo"):
-        w, st, new, n_undo = _flow_compare()
-        if how == "discard":
-            new.bar.discard_btn.click()
-        else:
-            w.undo()
-        cur = w._ai_staged
-        assert cur is not None and cur.items == st.items and cur.alt is None, how   # 원본이 다시 임시 결과
-        assert all(it.scene() is None for it in new.items) and len(w._undo) == n_undo, how
-        assert cur.request.entry.status_text() == STAGED_TEXT, how
-        _close_clean(w)
-
-
-def test_flow_compare_auto_accept_keeps_both():
-    w, st, new, n_undo = _flow_compare()
-    w._ai_accept_staged()                                                         # 새 만들기·저장의 자동 채택 길목
-    assert w._ai_staged is None
-    assert all(it.scene() is w._scene for it in st.items + new.items)
-    assert new.request.entry.status_text() == "✓ 넣음(원본도 남김)"
-    _close_clean(w)
-
-
-def test_flow_compare_direction_change_keeps_original():
-    w, st, new, n_undo = _flow_compare()
+def test_flow_followup_direction_change_keeps_original():
+    w, st, new, n_undo = _flow_followup()
     _say(w, "세로로")
     cur = w._ai_staged
-    assert cur is not new and cur.alt is st and cur.request.result_text.startswith("flowchart TD")
+    assert cur is not new and cur.request.result_text.startswith("flowchart TD")
     assert all(it.scene() is w._scene for it in st.items) and len(w._undo) == n_undo + 1
     assert w._ai_items_rect(cur.items).left() > w._ai_items_rect(st.items).right()
+    assert len(cur.marks) == 2                                                   # 다시 그려도 원본 대비 표시
     _close_clean(w)
 
 
-def _followup_from(w, alt, third):
-    before = w._ai_staged
-    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
-            _patch("easycad.ai.text_to_flow.generate_flow", return_value=(third, "m")):
-        _say(w, "기록 추가", alt=alt)
-        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not before)
-    return w._ai_staged
+def test_flow_followup_undo_removes_only_new():
+    w, st, new, n_undo = _flow_followup()
+    w.undo()
+    assert w._ai_staged is None
+    assert all(it.scene() is None for it in new.items) and all(it.scene() is w._scene for it in st.items)
+    assert len(w._undo) == n_undo
+    _close_clean(w)
 
 
 _THIRD = _FLOW + "\n  D --> E[경보]\n  E --> F[기록]"
 
 
-def test_flow_followup_again_from_new_keeps_older_original_on_canvas():
-    # 피드백 6차 2회(사용자 결정): 비교에 안 끼는 쪽은 지우지 않고 캔버스에 남긴다.
-    w, st, new, n_undo = _flow_compare()
-    cur = _followup_from(w, False, _THIRD)
-    assert cur.alt is new and all(it.scene() is w._scene for it in st.items)   # 가장 앞 원본은 캔버스에 남음
-    assert st.undo_entry in w._undo and len(w._undo) == n_undo + 2
-    assert "남김" in st.request.entry.status_text()
-    assert len(cur.marks) == 2
-    _close_clean(w)
-
-
-def test_flow_followup_from_original_side():
-    w, st, new, n_undo = _flow_compare()
-    cur = _followup_from(w, True, _THIRD)
-    assert cur.alt is st and cur is not new                                       # 원본이 바탕
-    assert all(it.scene() is w._scene for it in new.items) and "남김" in new.request.entry.status_text()
-    assert len(cur.marks) == 4                                                    # 원본 대비 상자 2 + 화살표 2
-    _close_clean(w)
-
-
-def test_flow_compare_bars_have_same_controls():
-    w, st, new, n_undo = _flow_compare()
-    alt_texts = [b.text() for b in new.alt_bar.findChildren(QToolButton) if b.text()]
-    new_texts = [b.text() for b in new.bar.findChildren(QToolButton) if b.text()]
-    for t in ("이걸로", "버리기"):
-        assert t in alt_texts and t in new_texts, t
-    assert "둘 다 넣기" in new_texts
-    assert new.alt_line is not None and new.bar.line is not None   # 양쪽 다 입력 한 줄(방향·이어 고치기)
-    _close_clean(w)
-
-
-def test_flow_compare_keep_both_button():
-    w, st, new, n_undo = _flow_compare()
-    [b for b in new.bar.findChildren(QToolButton) if b.text() == "둘 다 넣기"][0].click()
-    assert w._ai_staged is None and len(w._undo) == n_undo + 1
-    assert all(it.scene() is w._scene for it in st.items + new.items)
-    assert st.request.entry.status_text() == ACCEPTED_TEXT
-    _close_clean(w)
-
-
-def test_flow_compare_discard_original_only():
-    w, st, new, n_undo = _flow_compare()
-    [b for b in new.alt_bar.findChildren(QToolButton) if b.text() == "버리기"][0].click()
-    assert w._ai_staged is new and new.alt is None and new.alt_bar is None and new.both_btn is None
-    assert all(it.scene() is None for it in st.items) and len(w._undo) == n_undo
-    assert new.bar.accept_btn.text() == "채택" and new.request.entry.status_text() == STAGED_TEXT
-    new.bar.accept_btn.click()                                                    # 보통 채택으로 돌아옴
-    assert w._ai_staged is None and new.request.entry.status_text() == ACCEPTED_TEXT
-    _close_clean(w)
-
-
-def test_flow_compare_original_direction_change_redraws_in_place():
-    w, st, new, n_undo = _flow_compare()
-    _say(w, "세로로", alt=True)
+def test_flow_followup_again_keeps_every_result_on_canvas():
+    w, st, new, n_undo = _flow_followup()
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.text_to_flow.generate_flow", return_value=(_THIRD, "m")):
+        _say(w, "기록 추가")
+        assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not new)
     cur = w._ai_staged
-    assert cur is new and cur.alt is st and st.request.result_text.startswith("flowchart TD")
-    assert len(w._undo) == n_undo + 1 and w._undo[-1] is new.undo_entry and st.undo_entry in w._undo
-    assert all(it.scene() is w._scene for it in st.items)
-    assert w._ai_items_rect(st.items).right() < w._ai_items_rect(new.items).left()   # 새 결과와 안 겹침
-    pick = [b for b in new.alt_bar.findChildren(QToolButton) if b.text() == "이걸로"][0]
-    pick.click()                                                                  # 바꾼 원본을 고르면 그대로 남음
-    assert all(it.scene() is w._scene for it in st.items) and all(it.scene() is None for it in new.items)
+    assert all(it.scene() is w._scene for it in st.items + new.items)
+    assert len(w._undo) == n_undo + 2 and len(cur.marks) == 2                    # 바로 앞 결과 대비
+    assert w._ai_items_rect(cur.items).left() > w._ai_items_rect(new.items).right()
     _close_clean(w)
 
 

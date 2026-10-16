@@ -73,3 +73,20 @@ _SUMMARY_TEMPLATE = """다음은 PDF 문서의 일부다(각 줄 앞 [p.N]은 �
 
 def build_summary_prompt(chunk) -> str:
     return _SUMMARY_TEMPLATE.format(body=pages_to_text(chunk))
+
+
+def pdf_body(api_key: str, pdf_path: str, *, model: str, base_url: str = gw.BASE_URL, progress=None) -> tuple[str, bool, str]:
+    """PDF → (AI에 보낼 본문 — 줄마다 [p.N], 요약했나, 실제 쓴 모델). 짧으면 원문 그대로, 길면 쪽 묶음별 요약.
+    한 장 보드와 「PDF로 흐름도」(2026-10-16 — 가운데 칸 말에 따라)가 같이 쓴다."""
+    pages = extract_pdf_pages(pdf_path)
+    if sum(len(t) for _n, t in pages) <= SINGLE_PASS_CHARS:
+        return pages_to_text(pages), False, model
+    parts, used = [], model
+    chunks = chunk_pages(pages)
+    for i, ch in enumerate(chunks, start=1):
+        if progress:
+            progress(f"긴 문서라 나눠 읽는 중 {i}/{len(chunks)}")
+        res = gw.call_text_with_fallback(api_key, build_summary_prompt(ch), model=model, base_url=base_url, timeout=120.0)
+        parts.append(res.content.strip())
+        used = res.model_used
+    return "\n".join(parts), True, used
