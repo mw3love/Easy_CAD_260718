@@ -252,6 +252,9 @@ class _UIBuildMixin:
         self._act_copy_img = self._make_action("그림으로 복사(한글·PPT)", "copy_image", self._copy_as_image,
                                                shortcut_id="copy_image")
         m.addAction(self._act_copy_img)
+        # [§8 항목46, 2026-10-16] 받는 사람은 앱이 없어도 되는 공유 — 브라우저로 여는 HTML 한 파일.
+        self._act_share_html = self._make_action("HTML로 공유…", "menu_export", self._share_html)
+        m.addAction(self._act_share_html)
 
         # 편집(상단 툴바와 액션 공유. Ctrl+Z/Ctrl+Y 키는 여전히 뷰가 직접 처리하므로 QAction엔
         # 단축키를 안 건다 — 여기에 같은 단축키를 걸면 Qt 전역 단축키가 뷰의 keyPressEvent보다

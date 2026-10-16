@@ -84,6 +84,7 @@ easycad/
 │   ├── safe_write.py       안전 저장(임시 파일에 쓰고 바꿔치기) — .ecad·DXF·자동 저장 공용
 │   ├── autosave.py         자동 저장·복구 파일 관리(앱 데이터 `recovery` 폴더, 2026-10-03)
 │   ├── photo_ops.py        사진→도면 ops JSON → Sketch 아이템(글자 회전 rot, Qt 비의존)
+│   ├── html_share.py       「HTML로 공유」 — 레이어별 SVG + 확대·이동 + 상자 정보(SHAPES)를 HTML 한 파일로(§8 항목46)
 │   └── pdf_import.py       벡터 PDF 열기(PyMuPDF, 쪽마다 빈 용지틀, §8 항목33)
 ├── app_settings.py       앱 설정(QSettings) 여는 한 곳 — `EASYCAD_SETTINGS_ORG`로 테스트 격리(2026-10-03).
 │                         `QSettings("EasyCAD", ...)` 직접 열기 금지(테스트가 grep으로 잡음)
@@ -93,7 +94,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~35_*.py      테마별 회귀 스모크 1254종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~36_*.py      테마별 회귀 스모크 1260종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문

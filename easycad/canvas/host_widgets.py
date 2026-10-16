@@ -220,6 +220,8 @@ _SVG_ACT_ICON_NAMES = frozenset({
     "photo",
     # [§8 항목42, 2026-10-16] 「그림 복사」 — 같은 A2 규칙(겹친 종이 외곽선 + 그림만 채움).
     "copy_image",
+    # [§8 항목46] 파일 메뉴 「HTML로 공유…」 — 내 심볼 「SVG로 내보내기」와 같은 그림(테마 전환 재칠을 받으려고 여기에).
+    "menu_export",
     # ["attach" 2026-08-20 제거 — 첨부 버튼이 이 SVG 클립 아이콘 대신 "+" 정사각 버튼으로
     # 바뀌어(`_ImageAttachMixin._build_attach_button`) 마지막 참조가 사라짐, `attach.svg`도 삭제.]
 })

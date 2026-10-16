@@ -10,10 +10,10 @@ import os
 import uuid
 
 from PyQt6.QtCore import (
-    Qt, QPoint, QPointF, QRectF, QTimer, QEvent,
+    Qt, QPoint, QPointF, QRectF, QTimer, QEvent, QUrl,
 )
 from PyQt6.QtGui import (
-    QPen, QBrush, QPixmap,
+    QPen, QBrush, QPixmap, QDesktopServices,
 )
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QMessageBox, QDialog, QProgressDialog,
@@ -21,11 +21,12 @@ from PyQt6.QtWidgets import (
 
 from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
-    _PolyArrowItem, _ImageItem, _TitleBlockItem, _TableItem, _RectItem, _EllipseItem, _SymbolItem,
+    _PolyArrowItem, _ImageItem, _TitleBlockItem, _TableItem, _RectItem, _EllipseItem, _SymbolItem, _PolygonItem,
     _TextItem, _attach_port_to_host, _find_port_host_near, _is_closed_trim_shape,
 )
 from easycad.fileio.pdf_export import export_pdf, export_pdf_pages, export_image, export_svg, render_content_image
 from easycad.fileio.dxf_export import export_dxf, export_dwg
+from easycad.fileio.html_share import export_html
 from easycad.fileio import autosave
 from easycad.fileio.dxf_import import import_dxf
 from easycad.fileio.pdf_import import import_pdf, PdfImportError
@@ -626,6 +627,50 @@ class _FileIOMixin:
             QMessageBox.information(self, "내보내기", f"저장 완료:\n{path}")
         else:
             QMessageBox.warning(self, "내보내기", "저장에 실패했습니다.")
+
+    def _share_html(self, path: str | None = None, open_after: bool = True):
+        """[§8 항목46, 2026-10-16] 「HTML로 공유…」 — 도면을 브라우저로 여는 파일 하나로(받는 사람은 앱 불필요).
+        레이어마다 따로 그려 켜고 끌 수 있게, 글자가 있는 상자는 위치·글자를 함께(설명 페이지 §8 항목47의 바탕).
+        저장하면 기본 브라우저로 연다. `path`·`open_after`는 테스트용."""
+        if self._scene.itemsBoundingRect().isEmpty():
+            self.statusBar().showMessage("공유할 도형이 없어요", 3000)
+            return None
+        doc = self._active_doc
+        title = os.path.splitext(self._tab_title_for(doc).lstrip("*"))[0]
+        if path is None:
+            base = os.path.dirname(doc.doc_path or doc.external_path or "") or os.path.expanduser("~")
+            path, _ = QFileDialog.getSaveFileName(self, "HTML로 공유", os.path.join(base, title + ".html"),
+                                                  "웹 페이지 (*.html)")
+            if not path:
+                return None
+        if not path.lower().endswith(".html"):
+            path += ".html"
+        bg = getattr(self, "_bg_item", None)
+        tops = [it for it in self._scene.items() if it.parentItem() is None and it is not bg]
+        groups, seen = [], set()
+        for ly in self._layers:
+            items = [it for it in tops if self._item_layer_id(it) == ly["id"]]
+            seen.update(items)
+            groups.append((ly["name"], items, ly.get("visible", True)))
+        rest = [it for it in tops if it not in seen]   # 모르는 레이어 id(옛 파일 등) — 첫 레이어에 함께
+        if rest:
+            if groups:
+                groups[0] = (groups[0][0], groups[0][1] + rest, groups[0][2])
+            else:
+                groups.append(("기본", rest, True))
+        shapes = []
+        for it in tops:
+            if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PolygonItem)) and it.isVisible():
+                text = " ".join(c.toPlainText().strip() for c in it.childItems()
+                                if hasattr(c, "toPlainText") and c.toPlainText().strip())
+                shapes.append((it, text))
+        if not export_html(self._scene, path, title, groups, shapes):
+            self.statusBar().showMessage("HTML로 저장하지 못했어요", 4000)
+            return None
+        self.statusBar().showMessage(f"HTML로 저장했어요 — 받는 사람은 브라우저로 열면 돼요: {path}", 5000)
+        if open_after:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        return path
 
     def _copy_as_image(self):
         """[§8 항목42, 2026-10-16] 「그림으로 복사(한글·PPT)」 — 선택이 있으면 선택만, 없으면 도면 전체를 내용 크기에 맞춘
