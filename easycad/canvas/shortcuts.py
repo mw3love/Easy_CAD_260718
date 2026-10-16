@@ -59,6 +59,7 @@ SHORTCUT_DEFS: list[tuple[str, str, str, str]] = [
     ("save_doc_as", "파일", "다른 이름으로 저장", "Ctrl+Shift+S"),
     ("export_pdf",  "파일", "내보내기", "Ctrl+P"),
     ("copy_image",  "파일", "그림으로 복사(한글·PPT)", "Ctrl+Shift+C"),   # §8 항목42(2026-10-16)
+    ("check_drawing", "파일", "도면 검사", "Ctrl+Shift+K"),   # §8 항목48(2026-10-16) — 도구 메뉴에 있음
     # ---- 삽입 (QAction) ----
     ("insert_titleblock", "삽입", "표제란/용지틀 삽입", "Ctrl+Shift+T"),
     ("insert_table",      "삽입", "표 삽입",            "Ctrl+Shift+B"),

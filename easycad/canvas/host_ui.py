@@ -346,6 +346,10 @@ class _UIBuildMixin:
                     lambda _c=False, k=key: self.set_tool(None if self.current_tool == k else k))
             t.addAction(act)
             self._tool_menu_actions[key] = act
+        # [§8 항목48, 2026-10-16] 도면 검사 — 연결 안 된 화살표 끝·넘친 글자·겹친 상자·상자를 지나가는 선.
+        t.addSeparator()
+        self._act_check = self._make_action("도면 검사", "align", self._run_drawing_check, shortcut_id="check_drawing")
+        t.addAction(self._act_check)
 
         # ---- 보기 메뉴 (기준 zoom / 스냅 토글) ----
         v = self.menuBar().addMenu("보기(&V)")
@@ -623,6 +627,8 @@ class _UIBuildMixin:
 
         if getattr(self, "_start_prompt", None) is not None:
             self._place_start_prompt()   # §8 항목39 가운데 입구 — 뷰 가운데
+        if getattr(self, "_check_card", None) is not None:
+            self._place_check_card()     # §8 항목48 도면 검사 카드 — 뷰 위쪽 가운데
 
         # [2026-10-11] 폴더 크게 보기 — 도형·심볼 카드 오른쪽, 왼쪽 세로 공간(카드 위 ~ 레이어 카드 아래) 전체 높이
         browser = getattr(self, "_symbol_browser", None)
@@ -1091,6 +1097,8 @@ class _UIBuildMixin:
             self._ai_refresh_theme()   # 떠 있는 결과·준비 막대도(host_aimake)
         if getattr(self, "_start_prompt", None) is not None:
             self._start_prompt.refresh_theme(dark)   # §8 항목39 가운데 입구
+        if getattr(self, "_check_card", None) is not None:
+            self._check_card.refresh_theme(dark)     # §8 항목48 도면 검사 카드
         # [그룹 구분 디자인 2026-08-01, 사용자 요청] 기본 QToolBar 구분선은 Fusion에서 거의
         # 안 보일 정도로 옅다 — 파일(새로 만들기~저장) / 도구(선택~핀) / 편집·보기(되돌리기~격자)
         # 3그룹이 한눈에 갈리도록 구분선을 굵고 여백 있게 강조.

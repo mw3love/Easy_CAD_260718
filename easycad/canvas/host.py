@@ -40,6 +40,7 @@ from easycad.canvas.host_context import _ContextMixin
 from easycad.canvas.host_canvas import _CanvasMixin
 from easycad.canvas.host_mindmap import _MindMapMixin
 from easycad.canvas.host_aimake import _AIMakeMixin
+from easycad.canvas.host_check import _CheckMixin
 
 from easycad.canvas.host_widgets import (
     _MinimapView, _ToastLabel, _SharedClipboard, _CANVAS_BG,
@@ -50,7 +51,7 @@ from easycad.canvas.document import CanvasDocument
 class CanvasWindow(
     _AIMakeMixin,   # [§8 항목36] 맨 앞 — `_refresh_history_actions`를 덮어 임시 결과를 맞춘다(super로 원래 것 호출)
     _UIBuildMixin, _FileIOMixin, _LayersMixin, _StyleMixin, _UndoMixin,
-    _SelectionMixin, _ContextMixin, _CanvasMixin, _MindMapMixin, QMainWindow,
+    _SelectionMixin, _ContextMixin, _CanvasMixin, _MindMapMixin, _CheckMixin, QMainWindow,
 ):
     _PANEL_MARGIN = 10      # [캔버스-퍼스트] 플로팅 패널·줌배지·토스트와 창/뷰 경계 사이 여백(px)
 
@@ -271,6 +272,8 @@ class CanvasWindow(
         self._refresh_history_actions()
         self._update_zoom_label()
         self._sync_start_prompt()   # §8 항목39 — 탭마다 빈 도면이면 가운데 입구
+        if self._check_card is not None and self._check and self._check[0] is not self._active_doc:
+            self._check_card.hide()   # §8 항목48 — 검사 표시는 그 탭에만
 
     def _close_tab_at(self, index):
         """[§8 항목10 Stage B→C] 탭 X 버튼. dirty면 `_confirm_close_doc`이 저장/버리기/취소를

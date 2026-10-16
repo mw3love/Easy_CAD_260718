@@ -66,6 +66,7 @@ easycad/
 │   ├── photo_dialog.py     사진→도면 워커·ops 렌더(§8 항목28, 2026-10-01 — 입력 창은 2026-10-11 AI 패널로 대체돼 지움)
 │   ├── ai_panel.py         「KAIROS로 만들기」(옛 「AI로 만들기」) 오른쪽 기둥 패널(§8 항목36, 2026-10-05~11) — 옛 Mermaid·SVG·사진→도면 세 창을 대체
 │   ├── host_aimake.py      위 패널의 CanvasWindow 쪽 믹스인 — 켜기/끄기·요청·임시 결과(점선·채택/버리기 막대)
+│   ├── drawing_check.py / host_check.py   「도면 검사」 찾기 / 결과 카드·표시 믹스인(§8 항목48, 2026-10-16)
 │   ├── start_prompt.py     빈 도면 가운데 입구 「무엇을 그릴까요?」(§8 항목39, 2026-10-16) — 종류 짐작(`guess_kind`) 후 위 패널로 넘김
 │   └── shortcuts.py        단축키 레지스트리(2026-08-21) — QAction·뷰 raw-key 통합(`SHORTCUT_DEFS`),
 │                            설정 창에서 재할당 시 QSettings에 저장(기본값은 이 파일)
@@ -95,7 +96,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~37_*.py      테마별 회귀 스모크 1268종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~38_*.py      테마별 회귀 스모크 1277종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문

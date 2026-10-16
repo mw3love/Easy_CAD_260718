@@ -944,6 +944,8 @@ class _AIMakeMixin:
         self._ai_place_bar()
         st.bar.show()
         view.viewport().update()
+        if req is not None and req.kind in _FLOW_KINDS:
+            self._check_ai_result(items)   # §8 항목48 — AI 흐름도 결과 자동 검사(문제 있으면 알림 한 줄)
         return st
 
     def _ai_free_viewport_rect(self, view) -> QRect:
@@ -1152,6 +1154,7 @@ class _AIMakeMixin:
 
     def _draw_ai_staging(self, view, painter):
         """`core_view.drawForeground`가 부른다(우리 확장 훅)."""
+        self._draw_check_marks(view, painter)   # §8 항목48 도면 검사 표시
         self._draw_ai_trace_overlay(view, painter)
         st = getattr(self, "_ai_staged", None)
         if st is None or st.doc.view is not view:
