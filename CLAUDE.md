@@ -74,7 +74,7 @@ easycad/
 │   ├── host_aimake.py      AI 만들기의 CanvasWindow 쪽 믹스인 — 가운데 칸 열기·요청·임시 결과(점선 + 막대: 채택·입력 한 줄·기록·버리기)·상태 알약
 │   ├── host_board.py       보드 틀 믹스인 — 삽입·잉크 맞추기(`_push_entry` 길목)·「보드 색」(§8 항목53 1단계, 틀 자체는 core_shapes `_BoardItem`)
 │   ├── drawing_check.py / host_check.py   「도면 검사」 찾기 / 결과 카드·표시 믹스인(§8 항목48, 2026-10-16)
-│   ├── start_prompt.py     가운데 칸 「무엇을 그릴까요?」 — AI의 하나뿐인 입구(§8 항목39 → 51): 빈 도면이면 저절로, 「AI」로는 언제든. 「+」·모델 「자동 ▾」
+│   ├── start_prompt.py     가운데 칸 「무엇을 그릴까요?」 — AI의 하나뿐인 입구(§8 항목39 → 51): 빈 도면이면 저절로, 「AI」로는 언제든. 「+」·모델 「자동 ▾」·파일 여럿이면 자료 A·B·C(§8 항목53)
 │   └── shortcuts.py        단축키 레지스트리(2026-08-21) — QAction·뷰 raw-key 통합(`SHORTCUT_DEFS`),
 │                            설정 창에서 재할당 시 QSettings에 저장(기본값은 이 파일)
 ├── ai/
@@ -100,7 +100,7 @@ easycad/
 │   └── pdf_import.py       벡터 PDF 열기(PyMuPDF, 쪽마다 빈 용지틀, §8 항목33)
 ├── app_settings.py       앱 설정(QSettings) 여는 한 곳 — `EASYCAD_SETTINGS_ORG`로 테스트 격리(2026-10-03).
 │                         `QSettings("EasyCAD", ...)` 직접 열기 금지(테스트가 grep으로 잡음)
-├── selftest.py           설치 점검 `EasyCAD.exe --selftest`(§8 항목43, 2026-10-16) — 아이콘·라이브러리·KAIROS 호출
+├── selftest.py           설치 점검 `MagicBoard.exe --selftest`(§8 항목43, 2026-10-16 — exe 이름은 §8 항목50부터 MagicBoard) — 아이콘·라이브러리·KAIROS 호출
 └── main.py · run.py        진입점
 tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
