@@ -32,7 +32,7 @@ from easycad.canvas.ai_control import AIRequest, _AIController, KIND_LABEL, PEND
 from easycad.canvas.start_prompt import _StartPrompt
 from easycad.canvas.host_widgets import _current_icon_color
 from easycad.canvas.host_dialogs import (
-    _AIGatewaySettingsDialog, _ExplainGenWorker, _MERMAID_HEADER_RE, _MermaidCodeDialog, _MermaidGenWorker,
+    _AIGatewaySettingsDialog, _ExplainGenWorker, _FlowGenWorker, _MERMAID_HEADER_RE, _MermaidCodeDialog,
     _SaveToSymbolsFolderDialog, _SvgGenWorker,
     _detach_worker,
 )
@@ -42,6 +42,7 @@ from easycad.fileio.photo_ops import SCALE as _PHOTO_SCALE, ops_to_sketch
 from easycad.fileio.document import insert_items
 from easycad.canvas.host_widgets import _ACCENT_CORAL
 from easycad.fileio.mermaid_import import MermaidError, parse_mermaid
+from easycad.fileio.flow_spec import FlowSpecError, all_keys, looks_like_spec, parse_spec, with_direction
 
 STAGED_TEXT = "캔버스에 임시로 놓음 — 채택하거나 버리세요"
 ACCEPTED_TEXT = "✓ 넣음"
@@ -380,6 +381,21 @@ def _flow_diff_items(code, other_code, items) -> list:
     짝이 없는 것. 노드는 (글, 모양), 화살표는 (앞 노드 글, 뒤 노드 글, 화살표 글)로 맞춘다 — AI가 노드 id만 바꿔
     붙여도 글이 같으면 같은 것으로 본다. 코드를 못 읽거나 개수가 안 맞으면 빈 목록(표시만 안 할 뿐)."""
     from collections import Counter
+    if looks_like_spec(code):   # [§8 항목52] 설계서 결과 — 상자·화살표에 단 `_flow_key`로 맞춘다(띠·이름표·아이콘은 표시 안 함)
+        try:
+            left = Counter(all_keys(parse_spec(other_code))) if looks_like_spec(other_code) else Counter()
+        except FlowSpecError:
+            return []
+        out = []
+        for it in items:
+            key = getattr(it, "_flow_key", None)
+            if key is None:
+                continue
+            if left[key] > 0:
+                left[key] -= 1
+            else:
+                out.append(it)
+        return out
     try:
         g, h = parse_mermaid(code), parse_mermaid(other_code)
     except MermaidError:
@@ -408,6 +424,24 @@ def _flow_diff_items(code, other_code, items) -> list:
         else:
             out.append(it)
     return out
+
+
+def _flow_code_error(code: str) -> str:
+    """흐름도 결과 글(설계서 JSON 또는 Mermaid)을 그리기 전에 검사 — 문제가 있으면 한 줄, 없으면 빈 글."""
+    if looks_like_spec(code):
+        try:
+            parse_spec(code)
+        except FlowSpecError as ex:
+            return str(ex)
+        return ""
+    # 파서는 머리줄 없는 글도 상자 하나로 받아 준다 — 고치는 도중의 반쪽 글로 결과가 갈아엎히지 않게 머리줄을 요구.
+    if not _MERMAID_HEADER_RE.match(code):
+        return "첫 줄이 flowchart LR 같은 형식이어야 해요"
+    try:
+        parse_mermaid(code)
+    except MermaidError as ex:
+        return str(ex)
+    return ""
 
 
 class _AIMakeMixin:
@@ -652,9 +686,10 @@ class _AIMakeMixin:
         if req.kind == "symbol" and target is not None and target.scene() is self._scene \
                 and getattr(req, "replace_target", None) is None:
             req.replace_target = target   # 우클릭 「AI로 바꾸기」로 연 요청 — 고르면 그 도형 자리에 바뀜
-        if req.kind == "flow":
-            self._ai_start_job(req, _MermaidGenWorker, (req.text, req.model, gw.resolve_base_url(), req.image),
-                               self._on_flow_generated, base_code=getattr(req, "base_code", "") or "")
+        if req.kind == "flow":   # §8 항목52 — AI는 「내용 설계서」, 배치·색은 앱(`_build_flowspec_items`)
+            self._ai_start_job(req, _FlowGenWorker, (req.text, req.model, gw.resolve_base_url(), req.image),
+                               self._on_flow_generated, base_code=getattr(req, "base_code", "") or "",
+                               icons=self._flow_icon_names())
         elif req.kind == "explain":   # §8 항목45 — PDF → 설명 흐름도, 결과는 흐름도와 같은 수신자·임시 결과
             self._ai_start_job(req, _ExplainGenWorker, (req.pdf_path, req.text, req.model, gw.resolve_base_url()),
                                self._on_flow_generated)
@@ -799,7 +834,8 @@ class _AIMakeMixin:
             self._ai_place_flow(job.request, code)
 
     def _ai_place_flow(self, req, code, alt=None):
-        """Mermaid 코드 → 도형·화살표(옛 Mermaid 창과 같은 배치 `_build_mermaid_items`)를 요청 자리에 임시로 놓는다.
+        """흐름도 결과 글 → 도형·화살표를 요청 자리에 임시로 놓는다(`_build_flow_items` — 설계서 JSON이면 §8 항목52 새 규칙,
+        Mermaid면 옛 배치).
         이어 고치기 결과면 바탕(원본)을 지우지 않고 왼쪽에 남겨 새 결과를 그 오른쪽에 나란히 놓는다(피드백 6차 — 끝에만
         붙여 달라 해도 AI가 가운데를 고칠 수 있어 눈으로 비교). `alt`는 비교 중인 새 결과를 다시 그릴 때 넘기는 원본."""
         if not self._ai_goto_request_doc(req):
@@ -825,8 +861,8 @@ class _AIMakeMixin:
                 base.request.entry.set_status(ORIGINAL_TEXT, running=True)
         self._ai_accept_staged()
         try:
-            _n, _a, direction, added = self._build_mermaid_items(code, req.center)
-        except MermaidError as ex:
+            _n, _a, direction, added = self._build_flow_items(code, req.center)
+        except (MermaidError, FlowSpecError) as ex:
             req.entry.set_status(f"코드를 읽지 못했어요: {ex}")
             if alt is not None:
                 self._ai_restage_flow(alt)
@@ -841,7 +877,7 @@ class _AIMakeMixin:
         spot = self._ai_find_free_center(self._scene, box.width(), box.height(), near, exclude=added)
         if (spot - box.center()).manhattanLength() > 1.0:
             self._ai_undo_top_silently()
-            _n, _a, direction, added = self._build_mermaid_items(code, req.center + (spot - box.center()))
+            _n, _a, direction, added = self._build_flow_items(code, req.center + (spot - box.center()))
         req.result_text = code
         self._ai_ctrl.show_flow_code(code)
         self.set_tool("select")
@@ -975,10 +1011,9 @@ class _AIMakeMixin:
         alt = st.alt if st is not None else None
         if alt is None or alt.doc is not self._active_doc or alt.undo_entry not in self._undo:
             return None
-        try:
-            parse_mermaid(code)
-        except MermaidError as ex:
-            alt.request.entry.set_status(f"코드 오류 — 원본 유지: {ex}", running=True)
+        err = _flow_code_error(code)
+        if err:
+            alt.request.entry.set_status(f"코드 오류 — 원본 유지: {err}", running=True)
             return None
         undo = self._undo
         idx = undo.index(alt.undo_entry)
@@ -990,11 +1025,11 @@ class _AIMakeMixin:
                 if it.scene() is not None:
                     it.scene().removeItem(it)
             center = old.center()
-            _n, _a, _d, added = self._build_mermaid_items(code, center)
+            _n, _a, _d, added = self._build_flow_items(code, center)
             box = self._ai_items_rect(added)
             if box.right() > limit:
                 self._ai_undo_top_silently()
-                _n, _a, _d, added = self._build_mermaid_items(code, QPointF(center.x() - (box.right() - limit), center.y()))
+                _n, _a, _d, added = self._build_flow_items(code, QPointF(center.x() - (box.right() - limit), center.y()))
             entry = undo.pop()
             undo[idx] = entry
         finally:
@@ -1071,6 +1106,15 @@ class _AIMakeMixin:
             return None
         on_alt = on_alt and st.alt is not None
         code = getattr((st.alt if on_alt else st).request, "result_text", "")
+        if looks_like_spec(code):   # [§8 항목52] 설계서는 direction 칸만 바꿔 다시 그린다
+            try:
+                spec = parse_spec(code)
+            except FlowSpecError:
+                return None
+            if spec.direction == tok:
+                return None
+            new = with_direction(code, tok)
+            return self._ai_redraw_alt(new) if on_alt else self._ai_replace_flow(new)
         m = _MERMAID_HEADER_RE.match(code)
         if not m or m.group(1).upper() == tok or (tok == "TD" and m.group(1).upper() == "TB"):
             return None
@@ -1133,8 +1177,11 @@ class _AIMakeMixin:
                 return None
             base = st.alt if alt else st
             code = getattr(base.request, "result_text", "")
-            n = sum(1 for ln in code.splitlines()[1:] if ln.strip())
-            label = f"원본 흐름도({n}줄)" if alt else f"지금 흐름도({n}줄)"
+            try:
+                n = f"단계 {len(parse_spec(code).steps)}개" if looks_like_spec(code) else                     f"{sum(1 for ln in code.splitlines()[1:] if ln.strip())}줄"
+            except FlowSpecError:
+                n = "?"
+            label = f"원본 흐름도({n})" if alt else f"지금 흐름도({n})"
             self._ai_ctrl.set_followup("flow", label, base_code=code, base=base, base_text=base.request.text)
         elif kind == "symbol" and st.slots is not None:
             idx = sorted(st.picked)[:4]
@@ -1177,14 +1224,9 @@ class _AIMakeMixin:
         if st is None or st.request.kind not in _FLOW_KINDS:
             return None
         req = st.request
-        # 파서는 머리줄 없는 글도 상자 하나로 받아 준다 — 고치는 도중의 반쪽 글로 결과가 갈아엎히지 않게 머리줄을 요구.
-        if not _MERMAID_HEADER_RE.match(code):
-            req.entry.set_status("코드 오류 — 이전 결과 유지: 첫 줄이 flowchart LR 같은 형식이어야 해요", running=True)
-            return None
-        try:
-            parse_mermaid(code)
-        except MermaidError as ex:
-            req.entry.set_status(f"코드 오류 — 이전 결과 유지: {ex}", running=True)
+        err = _flow_code_error(code)
+        if err:
+            req.entry.set_status(f"코드 오류 — 이전 결과 유지: {err}", running=True)
             return None
         alt = self._ai_end_alt(st)   # 비교 중이면 원본은 남긴 채 새 결과만 다시 그린다
         self._ai_drop_staged(st)

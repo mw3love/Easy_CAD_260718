@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import math
 import os
 import uuid
 
@@ -13,7 +14,7 @@ from PyQt6.QtCore import (
     Qt, QPoint, QPointF, QRectF, QTimer, QEvent, QUrl,
 )
 from PyQt6.QtGui import (
-    QPen, QBrush, QPixmap, QDesktopServices,
+    QPen, QBrush, QColor, QPixmap, QDesktopServices,
 )
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QMessageBox, QDialog, QProgressDialog,
@@ -1583,6 +1584,313 @@ class _FileIOMixin:
         self.push_undo_add_many(added)
         self._scene.clearSelection()
         return len(items_by_id), len(arrows), graph.direction, added
+
+    # ---- AI 흐름도 「내용 설계서」 그리기 (§8 항목52, 2026-10-16) ------------------------------
+    # 색은 띠(담당)마다 하나 — 바탕은 옅게(알파), 상자는 조금 진하게, 테두리는 그 색. 알파 덕에 다크 캔버스(흰 글자)·흰 종이
+    # (인쇄 때 흰 잉크→검정, `pdf_export._swap_white_to_black_for_print`) 둘 다 글자가 읽힌다. 코랄은 강조 하나에만 —
+    # 그래서 띠 색에서 뺐다(UI 원칙 「강조색은 의미 있는 상태에만」과 같은 결).
+    _FLOW_LANE_COLORS = ("#4a8fd9", "#3ea37a", "#8a6fd1", "#c9a227", "#2a9fb0", "#c2577f")
+    _FLOW_BAND_ALPHA, _FLOW_BOX_ALPHA, _FLOW_FOCUS_ALPHA = 30, 56, 80
+    _FLOW_KIND_ITEM = {"start": ("symbol", "terminal"), "end": ("symbol", "terminal"), "decision": ("symbol", "decision"),
+                       "data": ("symbol", "data"), "document": ("symbol", "document"),
+                       "database": ("symbol", "database"), "step": ("rect", None)}
+    _FLOW_ICON_H = 30.0          # 아이콘 칸 높이(상자 위)
+    _FLOW_WRAP_BOX, _FLOW_WRAP_DECISION = 190.0, 250.0   # 한 줄이면 상자가 이 폭을 넘을 때만 두 줄로(마름모는 줄이 늘면 키가 커져 덜 접음)
+    _FLOW_HEAD_PT = 11           # 띠 이름표 글자
+    _FLOW_LABEL_PT = 12          # 상자 글자(Mermaid 가져오기 10보다 한 단계 크게 — 상자를 그만큼 넓힌다)
+    _FLOW_TITLE_PT = 15
+    # 아이콘으로 쓸 수 있는 기본 심볼(순서도 모양 말고 그림인 것) — 내 심볼 이름과 함께 AI에 목록으로 준다.
+    _FLOW_BUILTIN_ICONS = ("mw_side", "mw_front", "cp_dipole", "cp_ring", "dtv", "mesh_filled", "mesh_hollow", "lightning")
+
+    def _flow_icon_names(self) -> list[str]:
+        """설계서 `icon`에 쓸 수 있는 이름 — 내 심볼(이름이 글자인 것) + 안테나 등 기본 그림 심볼."""
+        from easycad.canvas.core_symbols import _SYMBOL_KINDS
+        names = []
+        for e in symbol_library.load_library():
+            n = str(e.get("name") or "").strip()
+            if n and not n.isdigit() and n not in names:
+                names.append(n)
+        names += [_SYMBOL_KINDS[k][0] for k in self._FLOW_BUILTIN_ICONS if k in _SYMBOL_KINDS]
+        return names
+
+    def _flow_find_icon(self, name: str):
+        """아이콘 이름 → ("custom", 내 심볼 id) | ("builtin", 심볼 종류) | None. 같은 이름이 먼저, 없으면 한쪽이 다른 쪽을 품을 때."""
+        from easycad.canvas.core_symbols import _SYMBOL_KINDS
+        key = name.strip().lower()
+        if not key:
+            return None
+        cands = [("custom", e.get("id"), str(e.get("name") or "").strip().lower()) for e in symbol_library.load_library()]
+        cands += [("builtin", k, _SYMBOL_KINDS[k][0].lower()) for k in self._FLOW_BUILTIN_ICONS if k in _SYMBOL_KINDS]
+        for kind, ref, n in cands:
+            if n and n == key:
+                return kind, ref
+        for kind, ref, n in cands:
+            if n and len(n) >= 2 and (n in key or key in n):
+                return kind, ref
+        return None
+
+    def _flow_box_sizes(self, spec):
+        """단계마다 상자 크기 — 보통 상자는 모두 같게(가장 긴 글에 맞춤), 마름모끼리 같게. 긴 글은 두 줄로(`_mermaid_wrap`)
+        단계 글을 고친다. 반환: {단계 id: (w, h)}."""
+        from PyQt6.QtGui import QFont, QFontMetricsF
+        probe = _RectItem(QRectF(0.0, 0.0, self._MMD_NODE_W, self._MMD_NODE_H))
+        lbl = probe.ensure_label()
+        margin = 2 * lbl.document().documentMargin()
+        base = QFont(lbl.font())
+        base.setPointSize(max(self._FLOW_LABEL_PT, int(getattr(lbl, "_base_pt", base.pointSize() or 16))))
+        small = QFont(lbl.font())
+        small.setPointSize(self._FLOW_LABEL_PT)
+        fm = QFontMetricsF(small)
+        line_h = QFontMetricsF(base).lineSpacing()
+        groups = {"box": [], "decision": []}
+        for s in spec.steps:
+            shape, kind = self._FLOW_KIND_ITEM.get(s.kind, ("rect", None))
+            ratio = (_SymbolItem(kind, QRectF(0, 0, 10, 10))._label_inset_ratio() if shape == "symbol"
+                     else probe._label_inset_ratio())
+            text = s.text
+            limit = self._FLOW_WRAP_DECISION if s.kind == "decision" else self._FLOW_WRAP_BOX
+            if "\n" not in text and (fm.horizontalAdvance(text) + margin) / ratio > limit:
+                text = s.text = self._mermaid_wrap(text, fm)
+            parts = text.split("\n")
+            need_w = (max(fm.horizontalAdvance(t) for t in parts) + margin) / ratio + 2.0
+            groups["decision" if s.kind == "decision" else "box"].append((s.id, need_w, len(parts)))
+        out = {}
+        for name, rows in groups.items():
+            if not rows:
+                continue
+            lines = max(n for _i, _w, n in rows)
+            if name == "decision":   # 마름모는 가운데 줄에서만 넓다 — 높이를 넉넉히(글 줄 수 × 2)
+                w = min(self._MMD_NODE_W_MAX * 1.25, max(self._MMD_NODE_W * 1.2, max(w for _i, w, _n in rows)))
+                h = max(self._MMD_NODE_H * 1.35, lines * line_h * 2 + margin)
+            else:
+                w = min(self._MMD_NODE_W_MAX, max(self._MMD_NODE_W, max(w for _i, w, _n in rows)))
+                h = max(self._MMD_NODE_H, lines * line_h + margin + 8)
+                # 원기둥(위 타원)·문서(아래 물결)는 글 자리가 위아래로 밀린다 — 두 줄이면 넘쳤다(실제 KAIROS 결과 「도면 검사」).
+                if lines >= 2 and any(s.kind in ("database", "document") for s in spec.steps):
+                    h += line_h * 0.6
+            for sid, _w, _n in rows:
+                out[sid] = (w, h)
+        return out
+
+    def _build_flow_items(self, text, center=None):
+        """AI 흐름도 결과 글 → 도형. 설계서(JSON)면 새 규칙(`_build_flowspec_items`), 아니면 Mermaid(가져오기·「풀어 그리기」)."""
+        from easycad.fileio.flow_spec import looks_like_spec
+        if looks_like_spec(text):
+            return self._build_flowspec_items(text, center)
+        return self._build_mermaid_items(text, center)
+
+    def _build_flowspec_items(self, text, center=None):
+        """설계서 → 띠·이름표·상자·아이콘·화살표를 `center`(없으면 화면 가운데)에 놓는다(한 번의 undo). 반환 모양은
+        `_build_mermaid_items`와 같다: (단계 수, 화살표 수, 방향, 넣은 아이템). 못 읽으면 FlowSpecError.
+        상자·화살표엔 `_flow_key`(이어 고친 결과와 비교할 열쇠 — `flow_spec.all_keys`와 같은 값)를 단다."""
+        from PyQt6.QtGui import QPainterPath, QFont
+        from easycad.canvas.annotator_core import _PathItem
+        from easycad.canvas.host_widgets import _ACCENT_CORAL
+        from easycad.fileio.flow_spec import parse_spec, layout, step_keys, link_key
+        from easycad.fileio.mermaid_import import MEdge
+
+        spec = parse_spec(text)
+        keys = step_keys(spec)   # 비교 열쇠는 원래 글로 — 아래 크기 재기가 긴 글을 두 줄로 고친다
+        lkeys = [link_key(spec, k) for k in spec.links]
+        sizes = self._flow_box_sizes(spec)
+        head_font = QFont(_TextItem(QColor("black")).font())
+        head_font.setPointSize(self._FLOW_HEAD_PT)
+        from PyQt6.QtGui import QFontMetricsF
+        hfm = QFontMetricsF(head_font)
+        horizontal = spec.direction in ("LR", "RL")
+        if horizontal:   # 이름표는 띠 왼쪽 칸 — 가장 긴 이름 폭(긴 이름은 두 줄)
+            names = [self._mermaid_wrap(n, hfm) if hfm.horizontalAdvance(n) > 110 else n for n in spec.lanes]
+            head = max((max(hfm.horizontalAdvance(t) for t in n.split("\n")) for n in names), default=0.0) + 28.0
+        else:
+            names = list(spec.lanes)
+            head = hfm.lineSpacing() + 26.0
+        lay = layout(spec, lambda s: sizes[s.id], head=head, icon_h=self._FLOW_ICON_H)
+
+        title_h = 0.0
+        if spec.title:
+            tfont = QFont(head_font)
+            tfont.setPointSize(self._FLOW_TITLE_PT)
+            title_h = QFontMetricsF(tfont).lineSpacing() + 16.0
+        if center is None:
+            center = self._view.mapToScene(self._view.viewport().rect().center())
+        ox = center.x() - lay.width / 2.0
+        oy = center.y() - (lay.height + title_h) / 2.0 + title_h
+
+        ink = QColor(self.current_color)
+        lane_color = {name: QColor(self._FLOW_LANE_COLORS[i % len(self._FLOW_LANE_COLORS)])
+                      for i, name in enumerate(spec.lanes)}
+        default_color = QColor(self._FLOW_LANE_COLORS[0])
+
+        def tint(c, a):
+            t = QColor(c)
+            t.setAlpha(a)
+            return t
+
+        z_floor = min((it.zValue() for it in self._scene.items() if it.parentItem() is None), default=0.0)
+        added: list = []
+        # 띠 — 채운 패스(사각형). 상자가 아니라 길찾기 장애물·「도면 검사」 상자에서 빠진다(`_obstacle_rects`·`BOX_TYPES`).
+        for lb, name in zip(lay.lanes, names):
+            x, y, w, h = lb.rect
+            c = lane_color[lb.name]
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(ox + x, oy + y, w, h), 10.0, 10.0)
+            band = _PathItem(path)
+            band.setPen(QPen(tint(c, 120), 1.0))
+            band.setBrush(QBrush(tint(c, self._FLOW_BAND_ALPHA)))
+            band.setZValue(z_floor - 1.0)
+            band.setFlags(band.GraphicsItemFlag.ItemIsMovable | band.GraphicsItemFlag.ItemIsSelectable)
+            self._scene.addItem(band)
+            added.append(band)
+            t = _TextItem(c)
+            t.apply_font_size(self._FLOW_HEAD_PT)
+            t.setPlainText(name)
+            hx, hy, hw, hh = lb.head
+            br = t.boundingRect()
+            t.setPos(ox + hx + (hw - br.width()) / 2.0, oy + hy + (hh - br.height()) / 2.0)
+            self._scene.addItem(t)
+            added.append(t)
+        if spec.title:
+            t = _TextItem(ink)
+            t.apply_font_size(self._FLOW_TITLE_PT)
+            t.setPlainText(spec.title)
+            t.setPos(ox, oy - title_h)
+            self._scene.addItem(t)
+            added.append(t)
+
+        pen0 = self.make_pen()
+        items_by_id: dict[str, object] = {}
+        for s in spec.steps:
+            x, y, w, h = lay.boxes[s.id]
+            shape, kind = self._FLOW_KIND_ITEM.get(s.kind, ("rect", None))
+            rect = QRectF(0.0, 0.0, w, h)
+            it = _SymbolItem(kind, rect) if shape == "symbol" else _RectItem(rect)
+            c = lane_color.get(s.lane, default_color)
+            pen = QPen(pen0)
+            if s.id == spec.focus:
+                pen.setColor(QColor(_ACCENT_CORAL))
+                pen.setWidthF(max(3.0, pen0.widthF() * 1.5))
+                it.setBrush(QBrush(tint(_ACCENT_CORAL, self._FLOW_FOCUS_ALPHA)))
+            else:
+                pen.setColor(c)
+                pen.setWidthF(max(2.0, pen0.widthF()))
+                it.setBrush(QBrush(tint(c, self._FLOW_BOX_ALPHA)))
+            it.setPen(pen)
+            it.setPos(ox + x, oy + y)
+            it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
+            lbl = it.ensure_label()
+            lbl.setPlainText(s.text)
+            lbl.apply_color(ink)   # 글자는 테마 잉크(띠 색 글자는 옅은 바탕에서 안 읽힘)
+            it._flow_key = keys[s.id]
+            self._scene.addItem(it)
+            it._sync_label()
+            items_by_id[s.id] = it
+            added.append(it)
+            if s.icon:
+                added += self._flow_place_icon(s.icon, QRectF(ox + x, oy + y - self._FLOW_ICON_H,
+                                                              self._FLOW_ICON_H - 4.0, self._FLOW_ICON_H - 4.0), c)
+
+        # 글자 크기를 모두 같게 — 상자마다 들어가는 만큼 줄면(`_fit_label_to_shape`) 크기가 들쭉날쭉해 보인다.
+        labels = [it._label for it in items_by_id.values() if it._label_alive()]
+        pt = min((lb.font().pointSize() for lb in labels), default=0)
+        if pt > 0:
+            for lb in labels:
+                if lb.font().pointSize() != pt or getattr(lb, "_base_pt", pt) != pt:
+                    lb.apply_font_size(pt)
+
+        kinds = {s.id: s.kind for s in spec.steps}
+        arrows: list = []
+        for k in spec.links:
+            src, dst = items_by_id[k.src], items_by_id[k.dst]
+            arr = self._make_mermaid_edge(MEdge(k.src, k.dst, k.text), src, dst, spec.direction)
+            arr._flow_key = lkeys[len(arrows)]
+            self._scene.addItem(arr)
+            arrows.append(arr)
+            added.append(arr)
+        # 갈림길에서 앞으로 나가는 연결이 둘 이상이면 하나(바로 다음 칸·가장 가까운 줄)만 앞 꼭짓점, 나머지는 옆 꼭짓점으로 —
+        # 모두 앞으로 나가면 「예」「아니오」가 한 점에서 겹친다(실제 창 캡처: "아예오").
+        horizontal = spec.direction in ("LR", "RL")
+        for sid in [s.id for s in spec.steps if s.kind == "decision"]:
+            outs = [(arr, k) for arr, k in zip(arrows, spec.links) if k.src == sid and lay.ranks[k.dst] > lay.ranks[sid]]
+            src = items_by_id[sid]
+            sc = src.mapRectToScene(src.rect()).center()
+
+            def off(o):
+                c = o[0]._bind_end.mapRectToScene(o[0]._bind_end.rect()).center()
+                return c.y() - sc.y() if horizontal else c.x() - sc.x()
+            main = min(outs, key=lambda o: (lay.ranks[o[1].dst] - lay.ranks[sid] != 1, abs(off(o))), default=None)
+            spare = 1
+            for o in outs:
+                d = off(o)
+                if o is main and abs(d) <= (sizes[sid][1] if horizontal else sizes[sid][0]) / 2.0:
+                    continue
+                if abs(d) < 1.0:
+                    sign, spare = spare, -spare   # 같은 줄로 건너뛰는 연결 — 위·아래(왼·오른) 번갈아
+                else:
+                    sign = 1 if d > 0 else -1
+                side = ("bottom" if sign > 0 else "top") if horizontal else ("right" if sign > 0 else "left")
+                self._flow_branch_from_side(o[0], src, items_by_id[o[1].dst], spec.direction, side)
+        for arr, k in zip(arrows, spec.links):
+            try:
+                arr.build_elbow()
+            except Exception:
+                pass
+            if k.text and arr._label_alive():
+                lb = arr._label
+                if pt > 0:
+                    lb.apply_font_size(pt)   # 연결 글도 상자 글과 같은 크기(기본 16은 상자 글보다 커 보임)
+                if kinds[k.src] == "decision":   # 「예」「아니오」는 갈림길 바로 옆에(가운데면 긴 선 한복판에 뜸)
+                    pts = arr._pts
+                    length = sum(math.hypot(b.x() - a.x(), b.y() - a.y()) for a, b in zip(pts, pts[1:]))
+                    if length > 0:
+                        lb._conn_t = min(0.5, 34.0 / length)
+            arr._sync_label()
+
+        self.push_undo_add_many(added)
+        self._scene.clearSelection()
+        return len(items_by_id), len(arrows), spec.direction, added
+
+    def _flow_branch_from_side(self, arr, src, dst, direction, side):
+        """갈림길(마름모)에서 나가는 연결을 옆 꼭짓점 `side`("top"·"bottom"·"left"·"right")에서 출발하게 다시 붙인다
+        (들어가는 쪽은 흐름 방향 변 그대로)."""
+        rs = src.mapRectToScene(src.rect())
+        rd = dst.mapRectToScene(dst.rect())
+        d = (direction or "LR").upper()
+        a_src = self._rect_side_mid(rs, side)
+        a_dst = self._rect_side_mid(rd, self._MMD_FLOW_SIDES.get(d, ("right", "left"))[1])
+        arr.set_points(a_src, a_dst)
+        arr.set_bound(0, src, src.mapFromScene(a_src))
+        arr.set_bound(len(arr._pts) - 1, dst, dst.mapFromScene(a_dst))
+
+    def _flow_place_icon(self, name, box: QRectF, color) -> list:
+        """단계 상자 위 왼쪽에 아이콘 하나 — 내 심볼은 비율 그대로 줄여(`_csym_drag`와 같은 pos·scale 방식), 기본 그림 심볼은
+        그 칸 크기로. 못 찾으면 빈 목록."""
+        found = self._flow_find_icon(name)
+        if found is None:
+            return []
+        kind, ref = found
+        if kind == "builtin":
+            it = _SymbolItem(ref, QRectF(0.0, 0.0, box.width(), box.height()))
+            it.setPen(QPen(QColor(color), 1.5))
+            it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            it.setPos(box.topLeft())
+            it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
+            self._scene.addItem(it)
+            return [it]
+        built = self._build_custom_symbol_items(ref)
+        if built is None:
+            return []
+        items, box0 = built
+        k = min(box.width() / max(box0.width(), 1.0), box.height() / max(box0.height(), 1.0))
+        for it in items:
+            rel = it.pos() - box0.topLeft()
+            it.setPos(box.topLeft() + rel * k)
+            it.setScale(it.scale() * k)
+            self._scene.addItem(it)
+        if len(items) >= 2:
+            gid = uuid.uuid4().hex[:8]
+            for it in items:
+                it._group_id = gid
+        return items
 
 
     # ---- 사진→도면 (§8 항목28, 2026-10-01) -----------------------------------

@@ -34,7 +34,7 @@ def _wait_until(cond, ms=5000):
 @contextmanager
 def _key(value):
     with _patch("easycad.ai.gateway.resolve_api_key", return_value=value), \
-            _patch("easycad.ai.text_to_mermaid.generate_mermaid", return_value=(_FLOW, "fake-model")):
+            _patch("easycad.ai.text_to_flow.generate_flow", return_value=(_FLOW, "fake-model")):
         yield
 
 

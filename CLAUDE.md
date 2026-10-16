@@ -79,7 +79,8 @@ easycad/
 ├── ai/
 │   ├── gateway.py          AI 게이트웨이(Mindlogic) 클라이언트 — 키/주소 저장·모델 목록·크레딧
 │   │                       조회·텍스트 호출(폴백 포함)
-│   ├── text_to_mermaid.py  프롬프트 빌더·코드펜스 벗기기·generate_mermaid (§8 항목18)
+│   ├── text_to_mermaid.py  프롬프트 빌더·코드펜스 벗기기·generate_mermaid (§8 항목18 — 이제 「풀어 그리기」 결과 이어 고치기·설치 점검 밖엔 안 씀)
+│   ├── text_to_flow.py     AI 흐름도 「내용 설계서」 JSON 지시문·generate_flow (§8 항목52, 2026-10-16 — AI는 내용만, 배치·색은 앱)
 │   ├── pdf_to_mermaid.py   PDF → 핵심을 풀어 그린 흐름도(쪽 번호 · p.N, 긴 문서 나눠 요약) — 「풀어 그리기」(§8 항목45, Qt 비의존)
 │   ├── drawing_explain.py  도면 상자·연결 → 단계별 설명 JSON — 「설명 페이지 만들기」(§8 항목47, Qt 비의존)
 │   └── photo_to_ops.py     사진→도면 프롬프트·구역 동시 생성 generate_ops_tiled(앱)·부분 다시 generate_ops_region(앱)·수정 루프 generate_ops(도구) (§8 항목28, Qt 비의존)
@@ -87,7 +88,8 @@ easycad/
 │   ├── pdf_export.py       PDF 출력(A4~A0, 전체/선택영역)
 │   ├── document.py         .ecad(JSON) 저장/열기 — 문서모델 씨앗(DXF 매핑 기반)
 │   ├── dxf_export.py / dxf_import.py   DXF 왕복
-│   ├── mermaid_import.py   Mermaid flowchart → .ecad
+│   ├── mermaid_import.py   Mermaid flowchart → .ecad(「삽입 › Mermaid 코드 가져오기」·「풀어 그리기」 결과)
+│   ├── flow_spec.py        흐름도 설계서 읽기·배치 규칙(담당 띠·칸·줄, Qt 비의존) — 그리기는 `host_fileio._build_flowspec_items`(§8 항목52)
 │   ├── sketch_build.py     이미지→도면 빌더(Qt 비의존)
 │   ├── safe_write.py       안전 저장(임시 파일에 쓰고 바꿔치기) — .ecad·DXF·자동 저장 공용
 │   ├── autosave.py         자동 저장·복구 파일 관리(앱 데이터 `recovery` 폴더, 2026-10-03)
@@ -102,7 +104,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~38_*.py      테마별 회귀 스모크 1281종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~39_*.py      테마별 회귀 스모크 1294종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -160,7 +162,11 @@ symbol_library/
   그리기)는 측정상 −20%뿐이라 보류(바닥 183ms는 Qt 아이템별 기본 비용). 더 가려면 '스냅샷 방식'(멀리서 볼 때 화면을
   한 장 그림으로 저장) — 실사용에서 답답하면 계획. 상세: `docs/history/2026-10.md` "LOD ②".
 
-**최근 항목**(2026-10-07 ~ 10-16, 상세는 `docs/history/2026-10.md`):
+**최근 항목**(2026-10-11 ~ 10-16, 상세는 `docs/history/2026-10.md`):
+- **§8 항목52 새 흐름도 엔진**(2026-10-16) — AI 흐름도는 Mermaid 대신 「내용 설계서」 JSON(담당·단계·갈림길·강조 하나·아이콘 이름, `text_to_flow.py`),
+  배치·색은 앱(`flow_spec.layout` 담당 띠·가장 긴 길 칸 → `_build_flowspec_items`: 띠는 채운 패스라 길찾기·검사에서 빠짐, 알파 채움이라 두 테마·인쇄
+  모두 읽힘, 강조만 코랄, 갈림길 가지는 다른 꼭짓점). 막대 한 줄(「세로로」·이어 고치기·비교 표시 `_flow_key`) 그대로, Mermaid 가져오기·「풀어 그리기」는
+  옛 길. 실제 KAIROS 결과 2건·이어 고치기 1건·실제 창 캡처 확인. 남은 것: 긴 일직선 흐름이 옆으로 아주 길어짐, 사용자 화면 확인. 다음은 53 논문 보드.
 - **Magic Board 개편 결정**(2026-10-16 오후, 코드 변경 없음) — "AI가 너무 복잡해졌다" 검토 → 시안 2라운드
   (https://claude.ai/artifact/81avA5GPjgcGjdaLsbcbQR)로 확정, 계획서 §8 항목50~53: 이름 Magic Board(겉만)·입구 가운데 칸 하나(오른쪽
   패널 없앰, 종류 칩 없음, 「+」=파일 선택, 결과 막대=입력 한 줄)·모델 「자동 ▾」+가격(`/models` pricing)·흐름도는 Mermaid 대신 내용
@@ -176,10 +182,6 @@ symbol_library/
   `pdf_to_mermaid.py`, 기본 `gemini-3.6-flash`) · 「HTML로 공유」(`html_share.py`) · 「설명 페이지 만들기(KAIROS)」(`drawing_explain.py`) ·
   「도면 검사」 Ctrl+Shift+K(`drawing_check.py`·`host_check.py`) · 10월분 제안서·캡처·시연 대본(`대회/`, git 제외). 대회는 8~12월 매달 3팀,
   8월분 낙선. 남은 것: 다른 PC 설치·동료 시험·영상(사용자). 전체 pytest `-q` 가끔 exit 127은 같은 날 원인 확정·수정(테스트가 진짜 게이트웨이를 부르던 작업자, 5회 연속 통과).
-- **§8 항목37 첫 화면 재디자인**(2026-10-07) — Artifact 시안 4라운드(사용자 판정)로 확정 후 5단계 반영: 상단바 아이콘+이름(보기 토글
-  체크박스 2×2·AI 강조 버튼·100%/전체 보기는 미니맵으로), 도형·심볼 카드(검색 맨 위·「자주 쓰는 것」·아이콘/목록), 레이어 색 점·
-  **「그리는 중」 레이어(새 기능 — 새 도형이 그 레이어로)**, 속성 견본 펼침·굵기/선 모양 버튼·선택 없으면 숨김, 미니맵 확대 줄.
-  카드 제목 코랄 밑줄 제거, 처음엔 창 최대화. 남은 것: 실사용 피드백, 겉모습(아이콘·색) 판단, §8 항목38(DXF를 앱 레이어 기준으로).
 - **패널 통일**(2026-10-11) — 시안 2라운드 확정 후 반영: 네 카드 192px(20% 축소), 「도형·심볼」은 「목록」 보기가 기본(아이콘 보기는
   이름 없이 5칸)·섹션/폴더는 레이어 줄 같은 테두리 칸+개수, 폴더 색(⋯로 고름, 호버 때만 보임 — 같은 날 시안 F3로 색 점+옅은 칸 → 제목 줄 띠만)·검색 결과는 한 줄 목록,
   속성은 색·선 모양·두께·채움을 「현재 값 버튼 → 펼침 목록」으로, 미니맵은 제목 줄에 「− % ＋ ⤢ 1:1」. 같은 날 앞서: 섹션 접기, 색 팝업이

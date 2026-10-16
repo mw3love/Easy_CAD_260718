@@ -78,11 +78,9 @@ def run(quiet: bool = False) -> int:
             return f"글 모델 {len(gw.list_text_models(key, url, timeout=15.0))}개"
 
         def generate():
-            from easycad.ai.text_to_mermaid import generate_mermaid
-            code, used = generate_mermaid(key, "신청에서 승인까지 두 단계 흐름도", model=gw.TEXT_RECOMMEND_MERMAID,
-                                          base_url=url)
-            if "flowchart" not in code and "graph" not in code:
-                raise RuntimeError(f"흐름도 코드가 아님: {code[:60]!r}")
+            from easycad.ai.text_to_flow import generate_flow   # §8 항목52 — 앱이 실제로 쓰는 설계서 경로(못 읽으면 예외)
+            _code, used = generate_flow(key, "신청에서 승인까지 두 단계 흐름도", model=gw.TEXT_RECOMMEND_MERMAID,
+                                        base_url=url)
             return f"흐름도 생성({used})"
 
         ok = all([_check(lines, "KAIROS 크레딧", credit), _check(lines, "KAIROS 모델 목록", models),

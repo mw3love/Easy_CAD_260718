@@ -812,6 +812,25 @@ class _MermaidGenWorker(QThread):
         self.succeeded.emit(text, used)
 
 
+class _FlowGenWorker(_MermaidGenWorker):
+    """[§8 항목52, 2026-10-16] AI 흐름도 — Mermaid 대신 「내용 설계서」 JSON(`text_to_flow.generate_flow`). 받는 쪽 모양은
+    `_MermaidGenWorker`와 같다(글, 모델). `icons` = 설계서에 쓸 수 있는 아이콘 이름(내 심볼·안테나 심볼)."""
+
+    def __init__(self, api_key, desc, model, base_url, image, parent=None, base_code="", icons=()):
+        super().__init__(api_key, desc, model, base_url, image, parent=parent, base_code=base_code)
+        self._icons = tuple(icons)
+
+    def run(self):
+        try:
+            from easycad.ai.text_to_flow import generate_flow
+            text, used = generate_flow(self._api_key, self._desc, model=self._model, base_url=self._base_url,
+                                       image=self._image, base_code=self._base_code, icons=self._icons)
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(str(e))
+            return
+        self.succeeded.emit(text, used)
+
+
 class _StepsGenWorker(QThread):
     """「설명 페이지 만들기」(§8 항목47) — 도면 상자·연결 → 단계별 설명 JSON 1회."""
 

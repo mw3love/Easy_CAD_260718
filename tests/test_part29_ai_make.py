@@ -384,7 +384,7 @@ def _fake_gateway(result=_FLOW, error=None, key="k"):
             raise RuntimeError(error)
         return result, "fake-model"
     with _patch("easycad.ai.gateway.resolve_api_key", return_value=key), \
-            _patch("easycad.ai.text_to_mermaid.generate_mermaid", side_effect=gen):
+            _patch("easycad.ai.text_to_flow.generate_flow", side_effect=gen):
         yield
 
 
@@ -1003,7 +1003,7 @@ def test_removing_running_entry_cancels_generation():
         gate.wait(5)
         return _FLOW, "m"
     w = _shown_window()
-    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"),             _patch("easycad.ai.text_to_mermaid.generate_mermaid", side_effect=slow):
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"),             _patch("easycad.ai.text_to_flow.generate_flow", side_effect=slow):
         req = _make_flow(w)
         assert w._ai_jobs
         w._ai_ctrl.remove_entry(req.entry)
@@ -1225,7 +1225,7 @@ def _flow_compare():
         seen.append(base_code)
         return new_code, "m"
     with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
-            _patch("easycad.ai.text_to_mermaid.generate_mermaid", side_effect=gen):
+            _patch("easycad.ai.text_to_flow.generate_flow", side_effect=gen):
         _say(w, "감시장치 뒤에 경보 추가")
         req = w._ai_ctrl.entries()[-1].request
         assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not st)
@@ -1299,7 +1299,7 @@ def test_flow_compare_direction_change_keeps_original():
 def _followup_from(w, alt, third):
     before = w._ai_staged
     with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
-            _patch("easycad.ai.text_to_mermaid.generate_mermaid", return_value=(third, "m")):
+            _patch("easycad.ai.text_to_flow.generate_flow", return_value=(third, "m")):
         _say(w, "기록 추가", alt=alt)
         assert _wait_until(lambda: w._ai_staged is not None and w._ai_staged is not before)
     return w._ai_staged

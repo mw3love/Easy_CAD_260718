@@ -60,7 +60,7 @@ def test_selftest_reports_kairos_failure(monkeypatch, tmp_path):
     with patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
             patch("easycad.ai.gateway.get_credit_balance", side_effect=boom), \
             patch("easycad.ai.gateway.list_text_models", return_value=["gpt-x"]), \
-            patch("easycad.ai.text_to_mermaid.generate_mermaid", return_value=("flowchart LR\n A-->B", "m")):
+            patch("easycad.ai.text_to_flow.generate_flow", return_value=("{}", "m")):
         assert selftest.run(quiet=True) == 1
     text = (tmp_path / "easycad_selftest.txt").read_text(encoding="utf-8")
     assert "[FAIL] KAIROS 크레딧" in text and "CERTIFICATE" in text and "개발자에게" in text
