@@ -12,6 +12,8 @@ paintEvent, QSS는 잎 위젯에만.
 """
 from __future__ import annotations
 
+import os
+
 from PyQt6.QtCore import QEvent, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QBrush, QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
@@ -30,19 +32,23 @@ _TRACE_WORDS = ("베끼", "그대로", "따라 그", "옮겨")
 # (보이는 글, 넣을 글, 종류 고정 | None) — 지금 엔진이 실제로 잘 만드는 것만(직군별 문구는 항목44 동료 시험 뒤 정함).
 EXAMPLES = (
     ("휴가 신청 결재 흐름도", "휴가 신청부터 결재까지 흐름도를 그려줘", None),
-    ("방송 신호 흐름", "카메라에서 송출까지 방송 신호 흐름을 그려줘", None),
     ("카메라 아이콘", "방송용 카메라 아이콘", None),
     ("손그림 사진 베끼기", "", "trace"),
+    ("논문 PDF 풀어 그리기", "", "explain"),   # §8 항목45 — 「방송 신호 흐름」 자리(흐름도 예시가 둘이었음)
 )
 
 
-def guess_kind(text: str, has_image: bool) -> str:
-    """말·첨부로 종류를 짐작한다 — "trace"(베끼기) | "symbol"(심볼) | "flow"(흐름도).
+def guess_kind(text: str, has_image: bool, has_pdf: bool = False) -> str:
+    """말·첨부로 종류를 짐작한다 — "trace"(베끼기) | "symbol"(심볼) | "flow"(흐름도) | "explain"(풀어 그리기).
+
+    PDF가 있으면 풀어 그리기(§8 항목45 — PDF로 할 수 있는 게 이것뿐).
 
     사진이 있으면 기본은 베끼기(모양 그대로), 다만 "흐름·관계" 같은 말이 있으면 흐름도(관계만 읽어 다시 배치).
     사진이 없으면 "아이콘·부품" 같은 말이 있으면 심볼, 나머지는 흐름도.
     """
     t = (text or "").strip()
+    if has_pdf:
+        return "explain"
     if has_image:
         if any(w in t for w in _TRACE_WORDS):
             return "trace"
@@ -56,7 +62,8 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
     """빈 도면 가운데 카드. 호스트가 자리·보이기를 정한다(`host_aimake._sync_start_prompt`)."""
 
     WIDTH = 470
-    submitted = pyqtSignal(str, str, object, str)   # 종류, 글, 그림(PIL | None), 그림 이름
+    _ACCEPT_PDF = True   # §8 항목45 — PDF를 끌어다 놓으면 「풀어 그리기」
+    submitted = pyqtSignal(str, str, object, str)   # 종류, 글, 첨부(그림 PIL | 풀어 그리기면 PDF 경로 | None), 이름
     dismissed = pyqtSignal()                        # ✕ — 이 문서에선 다시 안 띄움
 
     def __init__(self, parent=None):
@@ -117,7 +124,7 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         menu = QMenu(self._kind_btn)
         self._kind_actions: dict[str, QAction] = {}
         for key, hint in (("flow", "말을 읽어 상자·화살표로"), ("symbol", "부품 그림 후보 여러 개"),
-                          ("trace", "도면 사진을 모양 그대로")):
+                          ("trace", "도면 사진을 모양 그대로"), ("explain", "PDF 핵심을 흐름도로")):
             act = menu.addAction(f"{KIND_LABEL[key]} — {hint}")
             act.triggered.connect(lambda _c=False, k=key: self.set_kind(k, manual=True))
             self._kind_actions[key] = act
@@ -222,7 +229,7 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
 
     def _regues(self):
         if not self._kind_manual:
-            self.set_kind(guess_kind(self._edit.toPlainText(), self._attached_image is not None))
+            self.set_kind(guess_kind(self._edit.toPlainText(), self._attached_image is not None, bool(self._attached_pdf)))
         self._notice.setVisible(False)
 
     def _set_attached_image(self, pil_img, name: str):
@@ -233,9 +240,16 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         super()._clear_image()
         self._regues()
 
+    def _set_attached_pdf(self, path: str):
+        super()._set_attached_pdf(path)
+        self._regues()
+
+    def _wants_pdf_first(self) -> bool:
+        return self._kind == "explain"
+
     def _use_example(self, text: str, kind):
-        if kind == "trace":
-            self.set_kind("trace", manual=True)
+        if kind in ("trace", "explain"):
+            self.set_kind(kind, manual=True)
             self._browse_image()
             return
         self._kind_manual = False
@@ -252,6 +266,17 @@ class _StartPrompt(_ImageAttachMixin, QFrame):
         if kind == "trace" and image is None:
             self._show_notice("베끼기는 도면 사진이 필요해요. 사진을 끌어다 놓거나 Ctrl+V로 붙여 주세요.")
             return None
+        if kind == "explain":
+            pdf = self._attached_pdf
+            if not pdf:
+                self._show_notice("풀어 그리기는 PDF가 필요해요. PDF를 끌어다 놓거나 + 로 골라 주세요.")
+                return None
+            self._edit.clear()
+            super()._clear_image()
+            self._kind_manual = False
+            self.set_kind("flow")
+            self.submitted.emit(kind, text, pdf, os.path.basename(pdf))
+            return kind
         if not text and image is None:
             self._show_notice("먼저 무엇을 그릴지 쓰거나 사진을 붙여 주세요.")
             return None

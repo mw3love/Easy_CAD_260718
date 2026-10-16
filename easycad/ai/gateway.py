@@ -93,6 +93,10 @@ TEXT_RECOMMEND_2 = "gemini-3.6-flash"       # SVG 슬롯 B 전용(기본 off, op
 # 좁게 수렴 — gpt-5.6-luna보다 조금 비싸지만(약 4~5배) gpt-5.5(3.23)의 1/7 수준이면서
 # 품질은 gpt-5.5와 대등했다.
 TEXT_RECOMMEND_MERMAID = "gemini-3.5-flash-lite"
+# [§8 항목45, 2026-10-16] 「풀어 그리기」(PDF → 설명 흐름도) 기본. 160쪽 세미나 자료(5.6만 자) 실측: flash-lite는 3초·5.4크레딧이지만
+# 상자 11개를 한 줄로만 잇고 문법도 엉성(대괄호 없는 노드), 3.6-flash는 17초·24크레딧에 가지치는 구조 + 화살표 관계 라벨.
+# "처음 보는 사람이 이해하게"가 목적이라 구조가 보이는 쪽을 기본으로(고급에서 바꿀 수 있음).
+TEXT_RECOMMEND_EXPLAIN = "gemini-3.6-flash"
 
 
 def _normalize_base_url(base_url: str) -> str:

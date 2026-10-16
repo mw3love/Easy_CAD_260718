@@ -476,10 +476,13 @@ class _ImageAttachMixin:
     믹스인을 상속한 QDialog가 `setAcceptDrops(True)`만 해두면 그대로 작동한다."""
 
     _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif")
+    # [§8 항목45, 2026-10-16] PDF도 받는 쪽(AI 패널·가운데 입구)만 True — 「풀어 그리기」. PDF는 그림이 아니라 경로만 든다.
+    _ACCEPT_PDF = False
 
     def _init_image_attach_state(self):
         self._attached_image = None       # PIL.Image.Image | None
         self._attached_image_name = ""
+        self._attached_pdf = ""           # PDF 경로(`_ACCEPT_PDF`일 때만)
         self._drop_frame = None           # QFrame | None — 드래그 오버 시 강조할 카드
         self._drop_frame_normal_qss = ""
         self._drop_frame_active_qss = ""
@@ -545,10 +548,41 @@ class _ImageAttachMixin:
         return btn
 
     def _browse_image(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "이미지 선택", "", "이미지 (*.png *.jpg *.jpeg *.bmp *.webp *.gif)")
+        filt = "이미지 (*.png *.jpg *.jpeg *.bmp *.webp *.gif)"
+        if self._ACCEPT_PDF:
+            filt = "이미지·PDF (*.png *.jpg *.jpeg *.bmp *.webp *.gif *.pdf);;PDF (*.pdf);;" + filt
+            if self._wants_pdf_first():
+                filt = "PDF (*.pdf);;" + filt
+        path, _ = QFileDialog.getOpenFileName(self, "그림·PDF 선택" if self._ACCEPT_PDF else "이미지 선택", "", filt)
         if path:
-            self._load_image_path(path)
+            if path.lower().endswith(".pdf") and self._ACCEPT_PDF:
+                self._set_attached_pdf(path)
+            else:
+                self._load_image_path(path)
+
+    def _wants_pdf_first(self) -> bool:
+        """찾아보기 창에서 PDF를 맨 앞 형식으로 둘지 — 「풀어 그리기」 종류일 때(쓰는 쪽이 덮어씀)."""
+        return False
+
+    def _set_attached_pdf(self, path: str):
+        """PDF 첨부(그림 첨부와 둘 중 하나) — 칩에 첫 쪽 작은 그림 + 파일 이름. 쓰는 쪽이 덮어써 종류를 바꾼다."""
+        self._attached_image = None
+        self._attached_image_name = ""
+        self._attached_pdf = path
+        pm = QPixmap()
+        try:
+            import fitz
+            with fitz.open(path) as doc:
+                pix = doc[0].get_pixmap(matrix=fitz.Matrix(0.3, 0.3))
+                pm.loadFromData(pix.tobytes("png"))
+        except Exception:  # noqa: BLE001 — 첫 쪽 그림은 꾸밈일 뿐(못 그려도 이름은 보임)
+            pass
+        self._image_thumb.setPixmap(pm)
+        name = os.path.basename(path)
+        fm = QFontMetrics(self._image_name_label.font())
+        self._image_name_label.setText(fm.elidedText(name, Qt.TextElideMode.ElideMiddle, 130))
+        self._image_name_label.setToolTip(path)
+        self._image_chip.setVisible(True)
 
     def _load_image_path(self, path: str):
         from PIL import Image, ImageOps
@@ -574,6 +608,7 @@ class _ImageAttachMixin:
     def _set_attached_image(self, pil_img, name: str):
         self._attached_image = pil_img
         self._attached_image_name = name
+        self._attached_pdf = ""
         buf = io.BytesIO()
         pil_img.save(buf, format="PNG")
         pm = QPixmap()
@@ -590,13 +625,15 @@ class _ImageAttachMixin:
     def _clear_image(self):
         self._attached_image = None
         self._attached_image_name = ""
+        self._attached_pdf = ""
         self._image_thumb.clear()
         self._image_chip.setVisible(False)
 
     def dragEnterEvent(self, e):
         md = e.mimeData()
+        exts = self._IMG_EXTS + ((".pdf",) if self._ACCEPT_PDF else ())
         if md.hasImage() or (md.hasUrls() and any(
-                u.toLocalFile().lower().endswith(self._IMG_EXTS) for u in md.urls())):
+                u.toLocalFile().lower().endswith(exts) for u in md.urls())):
             e.acceptProposedAction()
             self._set_drop_active(True)
 
@@ -614,6 +651,10 @@ class _ImageAttachMixin:
                 p = u.toLocalFile()
                 if p.lower().endswith(self._IMG_EXTS):
                     self._load_image_path(p)
+                    e.acceptProposedAction()
+                    return
+                if self._ACCEPT_PDF and p.lower().endswith(".pdf"):
+                    self._set_attached_pdf(p)
                     e.acceptProposedAction()
                     return
         if md.hasImage():
@@ -766,6 +807,32 @@ class _MermaidGenWorker(QThread):
             text, used = generate_mermaid(self._api_key, self._desc, model=self._model,
                                           base_url=self._base_url, image=self._image, **extra)
         except Exception as e:  # noqa: BLE001 — 실패 사유를 그대로 다이얼로그에 전달
+            self.failed.emit(str(e))
+            return
+        self.succeeded.emit(text, used)
+
+
+class _ExplainGenWorker(QThread):
+    """「풀어 그리기」(§8 항목45) — PDF → 설명 흐름도 1회(긴 문서는 안에서 나눠 요약). 결과 모양은 `_MermaidGenWorker`와 같아
+    호스트가 흐름도와 같은 수신자(`_on_flow_generated`)로 받는다."""
+
+    succeeded = pyqtSignal(str, str)   # (mermaid 텍스트, 실제 사용된 모델)
+    failed = pyqtSignal(str)
+
+    def __init__(self, api_key, pdf_path, note, model, base_url, parent=None):
+        super().__init__(parent)
+        self._api_key = api_key
+        self._pdf_path = pdf_path
+        self._note = note
+        self._model = model
+        self._base_url = base_url
+
+    def run(self):
+        try:
+            from easycad.ai.pdf_to_mermaid import generate_explain
+            text, used = generate_explain(self._api_key, self._pdf_path, self._note, model=self._model,
+                                          base_url=self._base_url)
+        except Exception as e:  # noqa: BLE001 — 실패 사유(글자 없는 PDF 등)를 그대로 기록 칸에
             self.failed.emit(str(e))
             return
         self.succeeded.emit(text, used)

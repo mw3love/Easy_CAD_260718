@@ -64,7 +64,7 @@ easycad/
 │   ├── host_widgets.py     독립 위젯(팔레트버튼·미니맵뷰·플로팅패널·토스트·색상팝업) + 공유 상수
 │   ├── host_dialogs.py     입력 다이얼로그(용지·표제란·표·케이블채번·단축키·AI 게이트웨이 설정) + AI 패널이 쓰는 생성 워커·모델 목록 도우미
 │   ├── photo_dialog.py     사진→도면 워커·ops 렌더(§8 항목28, 2026-10-01 — 입력 창은 2026-10-11 AI 패널로 대체돼 지움)
-│   ├── ai_panel.py         「AI로 만들기」 오른쪽 기둥 패널(§8 항목36, 2026-10-05~11) — 옛 Mermaid·SVG·사진→도면 세 창을 대체
+│   ├── ai_panel.py         「KAIROS로 만들기」(옛 「AI로 만들기」) 오른쪽 기둥 패널(§8 항목36, 2026-10-05~11) — 옛 Mermaid·SVG·사진→도면 세 창을 대체
 │   ├── host_aimake.py      위 패널의 CanvasWindow 쪽 믹스인 — 켜기/끄기·요청·임시 결과(점선·채택/버리기 막대)
 │   ├── start_prompt.py     빈 도면 가운데 입구 「무엇을 그릴까요?」(§8 항목39, 2026-10-16) — 종류 짐작(`guess_kind`) 후 위 패널로 넘김
 │   └── shortcuts.py        단축키 레지스트리(2026-08-21) — QAction·뷰 raw-key 통합(`SHORTCUT_DEFS`),
@@ -73,6 +73,7 @@ easycad/
 │   ├── gateway.py          AI 게이트웨이(Mindlogic) 클라이언트 — 키/주소 저장·모델 목록·크레딧
 │   │                       조회·텍스트 호출(폴백 포함)
 │   ├── text_to_mermaid.py  프롬프트 빌더·코드펜스 벗기기·generate_mermaid (§8 항목18)
+│   ├── pdf_to_mermaid.py   PDF → 핵심을 풀어 그린 흐름도(쪽 번호 · p.N, 긴 문서 나눠 요약) — 「풀어 그리기」(§8 항목45, Qt 비의존)
 │   └── photo_to_ops.py     사진→도면 프롬프트·구역 동시 생성 generate_ops_tiled(앱)·부분 다시 generate_ops_region(앱)·수정 루프 generate_ops(도구) (§8 항목28, Qt 비의존)
 ├── fileio/
 │   ├── pdf_export.py       PDF 출력(A4~A0, 전체/선택영역)
@@ -92,7 +93,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~34_*.py      테마별 회귀 스모크 1244종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~35_*.py      테마별 회귀 스모크 1254종(2026-10-16 기준, 개별·전체 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문

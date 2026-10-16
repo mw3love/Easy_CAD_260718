@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -41,14 +42,19 @@ KINDS = (
      "예: 송신기 내부 증폭 구조를 상세하게 그려줘"),
     ("trace", "베끼기", "그대로 베끼기",
      "도면 사진 속 위치 그대로 선·글자로 옮겨요. 사진이 필요하고 2~3분 걸려요.", "사진을 끌어다 놓기 · Ctrl+V"),
+    # [§8 항목45, 2026-10-16] 논문·보고서 PDF → 핵심을 풀어 그린 흐름도(결과는 흐름도와 같은 임시 결과·이어 고치기).
+    ("explain", "풀어 그리기", "PDF 풀어 그리기",
+     "논문·보고서·강의 자료 PDF의 핵심을 흐름도로 풀어 그려요. 상자마다 원문 쪽 번호가 붙어 맞는지 확인할 수 있어요.",
+     "PDF를 끌어다 놓기 · 어떤 관점으로 그릴지 써도 돼요"),
 )
 KIND_LABEL = {k[0]: k[1] for k in KINDS}
 PLACEHOLDER = {
     "symbol": "만들 부품을 적어 주세요 — 예: 파라볼라 안테나",
     "flow": "말하듯 써도 돼요 — 예: 송신기 내부 증폭 구조를 상세하게 그려줘",
     "trace": "도면 사진을 끌어다 놓기 · Ctrl+V",
+    "explain": "PDF를 끌어다 놓고, 원하면 관점을 써 주세요 — 예: 처음 보는 사람용으로 IP 전환 이유 중심",
 }
-INPUT_HINT = {"symbol": "후보 {n}", "flow": "", "trace": "약 2~3분"}
+INPUT_HINT = {"symbol": "후보 {n}", "flow": "", "trace": "약 2~3분", "explain": "약 20초~1분"}
 SYMBOL_COUNT_DEFAULT = 6
 SYMBOL_COUNT_MAX = 10      # 옛 SVG 창 최대(모델 A 5 + B 5)와 같은 상한
 _SYMBOL_COUNT_KEY = "ai_panel/symbol_count"
@@ -57,6 +63,7 @@ DEFAULT_MODEL = {
     "symbol": gw.TEXT_RECOMMEND_1,
     "flow": gw.TEXT_RECOMMEND_MERMAID,
     "trace": PHOTO_MODELS[0][0],
+    "explain": gw.TEXT_RECOMMEND_EXPLAIN,
 }
 PENDING_TEXT = "준비 중 — 지금은 삽입 메뉴의 옛 창을 쓰세요"   # 1단계 임시 문구(3~5단계에서 종류별로 사라짐)
 
@@ -104,6 +111,18 @@ _ILLUS = {
   <path d="M112 47h14M120 42l6 5-6 5" stroke="#da7756" stroke-width="1.6"/>
   <use xlink:href="#d" stroke="{ink}" transform="translate(134,8)"/>
 </svg>""",
+    # 풀어 그리기: 왼쪽 여러 쪽 문서(줄글) → 오른쪽 쪽 번호가 붙은 가지치는 흐름도.
+    "explain": """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 92" fill="none" stroke="{ink}" stroke-width="1.4">
+  <rect x="14" y="8" width="58" height="74" rx="3" fill="#e7e0d6" stroke="none"/>
+  <rect x="8" y="14" width="58" height="74" rx="3" fill="#e7e0d6" stroke="#8a847c" stroke-width="1"/>
+  <text x="37" y="30" fill="#241a15" stroke="none" font-size="9" text-anchor="middle" font-family="Malgun Gothic">PDF</text>
+  <g stroke="#8a847c" stroke-width="1"><path d="M16 40h42M16 47h36M16 54h42M16 61h30M16 68h40M16 75h24"/></g>
+  <path d="M80 48h18M92 43l6 5-6 5" stroke="#da7756" stroke-width="1.6"/>
+  <rect x="106" y="38" width="38" height="20" rx="2"/>
+  <rect x="164" y="10" width="40" height="18" rx="2"/><rect x="164" y="39" width="40" height="18" rx="2"/><rect x="164" y="68" width="40" height="18" rx="2"/>
+  <path d="M144 48h8V19h12M152 48h12M152 48v29h12"/>
+  <g fill="#da7756" stroke="none" font-size="7.5" font-family="Malgun Gothic"><text x="208" y="22">p.2</text><text x="208" y="51">p.7</text><text x="208" y="80">p.31</text></g>
+</svg>""",
 }
 
 
@@ -147,6 +166,7 @@ class AIRequest:
     base_code: str = ""
     base_text: str = ""                               # 원래 요청 글(지시가 비면 이걸로)
     followup_of: object = field(default=None, repr=False)   # 이어 만든 바탕 임시 결과(_StagedResult)
+    pdf_path: str = ""                                # 「풀어 그리기」의 PDF(§8 항목45)
 
 
 class _HistoryEntry(QFrame):
@@ -188,7 +208,8 @@ class _HistoryEntry(QFrame):
         lay.addLayout(head)
         body = text
         if image_name:
-            body = f"[그림] {image_name}" + (f"\n{text}" if text else "")
+            tag = "[PDF]" if kind == "explain" else "[그림]"   # §8 항목45
+            body = f"{tag} {image_name}" + (f"\n{text}" if text else "")
         self._text_lbl = QLabel(body, self)
         self._text_lbl.setWordWrap(True)   # 글 고르기(드래그 선택)는 끔 — 칸 누르기와 겹친다
         lay.addWidget(self._text_lbl)
@@ -238,6 +259,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     (`host_ui._set_ai_panel_visible`). 켜져 있는 동안 기록은 모든 탭 공통(사용자 확정), 앱을 끄면 사라진다."""
 
     WIDTH = 300
+    _ACCEPT_PDF = True   # §8 항목45 「풀어 그리기」 — 그림 첨부와 같은 칩·끌어놓기로 PDF도
     make_requested = pyqtSignal(object)   # AIRequest
     close_requested = pyqtSignal()
     code_insert_requested = pyqtSignal(object)   # AIRequest — 고급 「코드로 넣기」(AI 없이 Mermaid 코드 그대로)
@@ -724,7 +746,7 @@ class _AIPanel(_ImageAttachMixin, QFrame):
     # ---- 고급 코드 칸(흐름도) -------------------------------------------------------
 
     def _sync_code_box(self):
-        self._code_box.setVisible(self._adv_btn.isChecked() and self._kind == "flow")
+        self._code_box.setVisible(self._adv_btn.isChecked() and self._kind in ("flow", "explain"))   # 풀어 그리기도 결과가 흐름도
 
     def flow_code(self) -> str:
         return self._code_edit.toPlainText()
@@ -833,6 +855,20 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         if self._kind == "trace":
             self.trace_photo_changed.emit(None)
 
+    def _wants_pdf_first(self) -> bool:
+        return self._kind == "explain"
+
+    def _set_attached_pdf(self, path: str):
+        """PDF 첨부 — 종류가 「풀어 그리기」가 아니면 그쪽으로 바꾼다(PDF로 할 수 있는 게 이것뿐)."""
+        if self._kind == "trace" and self._attached_image is not None:
+            self.trace_photo_changed.emit(None)
+        super()._set_attached_pdf(path)
+        fm = self._image_name_label.fontMetrics()
+        self._image_name_label.setText(fm.elidedText(os.path.basename(path), Qt.TextElideMode.ElideMiddle, 80))
+        self._hide_notice()
+        if self._kind != "explain":
+            self.set_kind("explain")
+
     def clear_attached_image(self):
         """호스트가 베끼기를 끝냈을 때 첨부 칩을 비운다."""
         if self._attached_image is not None:
@@ -895,6 +931,18 @@ class _AIPanel(_ImageAttachMixin, QFrame):
             self._prompt_edit.clear()
             self.make_requested.emit(req)
             return req
+        if self._kind == "explain":
+            pdf = self._attached_pdf
+            if not pdf:
+                self._show_notice("풀어 그리기는 PDF가 필요해요. PDF를 끌어다 놓거나 + 로 골라 주세요.")
+                return None
+            req = AIRequest(kind="explain", text=text, model=self.model(), pdf_path=pdf,
+                            image_name=os.path.basename(pdf))
+            req.entry = self._add_entry(req)
+            self._prompt_edit.clear()
+            self._clear_image()
+            self.make_requested.emit(req)
+            return req
         if self._kind == "trace" and image is None:
             self._show_notice("베끼기는 도면 사진이 필요해요. 사진을 끌어다 놓거나 Ctrl+V로 붙여 주세요.")
             return None
@@ -915,7 +963,8 @@ class _AIPanel(_ImageAttachMixin, QFrame):
         """결과 막대 「다시」 — 같은 입력(종류·글·그림·모델)으로 새 기록 칸을 만들어 다시 보낸다."""
         again = AIRequest(kind=req.kind, text=req.text, image=req.image, image_name=req.image_name,
                           model=req.model, replace_target=req.replace_target, count=req.count,
-                          refs=req.refs, base_code=req.base_code, base_text=req.base_text)
+                          refs=req.refs, base_code=req.base_code, base_text=req.base_text,
+                          pdf_path=req.pdf_path)
         again.entry = self._add_entry(again)
         self.make_requested.emit(again)
         return again

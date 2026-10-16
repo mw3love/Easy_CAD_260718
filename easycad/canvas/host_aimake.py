@@ -27,7 +27,7 @@ from easycad.canvas.ai_panel import _AIPanel, PENDING_TEXT, _ai_icon
 from easycad.canvas.start_prompt import _StartPrompt
 from easycad.canvas.host_widgets import _current_icon_color
 from easycad.canvas.host_dialogs import (
-    _AIGatewaySettingsDialog, _MERMAID_HEADER_RE, _MermaidGenWorker, _SaveToSymbolsFolderDialog, _SvgGenWorker,
+    _AIGatewaySettingsDialog, _ExplainGenWorker, _MERMAID_HEADER_RE, _MermaidGenWorker, _SaveToSymbolsFolderDialog, _SvgGenWorker,
     _detach_worker,
 )
 from easycad.canvas.photo_dialog import _PhotoOpsWorker, _pil_to_pixmap
@@ -42,6 +42,8 @@ ACCEPTED_TEXT = "✓ 넣음"
 DISCARDED_TEXT = "버림"
 UNDONE_TEXT = "되돌림"
 NO_KEY_TEXT = "KAIROS 키가 없어요 — 키를 넣으면 이어서 만들어요"
+# 결과가 흐름도(Mermaid)인 종류 — 「풀어 그리기」(§8 항목45)도 흐름도와 같은 막대·코드 칸·이어 고치기를 쓴다.
+_FLOW_KINDS = ("flow", "explain")
 TAB_CLOSED_TEXT = "만드는 사이 그 탭이 닫혀서 버렸어요"
 # 흐름도 결과 막대의 방향 고르기 — 옛 Mermaid 창 `_DIRECTIONS`와 같은 네 가지.
 FLOW_DIRECTIONS = (("가로 →", "LR"), ("세로 ↓", "TD"), ("세로 ↑", "BT"), ("가로 ←", "RL"))
@@ -405,7 +407,9 @@ class _AIMakeMixin:
         if panel.followup() is not None:
             panel.clear_followup()
         panel._prompt_edit.setPlainText(text)
-        if image is not None:
+        if kind == "explain":
+            panel._set_attached_pdf(image)   # 풀어 그리기는 첨부 자리에 PDF 경로가 온다(§8 항목45)
+        elif image is not None:
             panel._set_attached_image(image, name)
         if kind != "trace":
             panel.request_make()
@@ -437,6 +441,9 @@ class _AIMakeMixin:
         if req.kind == "flow":
             self._ai_start_job(req, _MermaidGenWorker, (req.text, req.model, gw.resolve_base_url(), req.image),
                                self._on_flow_generated, base_code=getattr(req, "base_code", "") or "")
+        elif req.kind == "explain":   # §8 항목45 — PDF → 설명 흐름도, 결과는 흐름도와 같은 수신자·임시 결과
+            self._ai_start_job(req, _ExplainGenWorker, (req.pdf_path, req.text, req.model, gw.resolve_base_url()),
+                               self._on_flow_generated)
         elif req.kind == "symbol":
             self._ai_start_symbol(req)
         elif req.kind == "trace":
@@ -865,7 +872,7 @@ class _AIMakeMixin:
     def _on_flow_direction_clicked(self):
         st = self._ai_staged
         btn = self.sender()
-        if st is None or st.request.kind != "flow" or btn is None:
+        if st is None or st.request.kind not in _FLOW_KINDS or btn is None:
             return
         on_alt = btn.property("aiSide") == "alt" and st.alt is not None
         code = getattr((st.alt if on_alt else st).request, "result_text", "")
@@ -884,7 +891,7 @@ class _AIMakeMixin:
         """임시 흐름도를 새 코드로 다시 그린다(방향 바꾸기·코드 칸 고치기) — 되돌리기 기록은 늘지 않는다.
         코드가 틀리면 지금 결과를 그대로 두고 기록 칸에만 알린다."""
         st = self._ai_staged
-        if st is None or st.request.kind != "flow":
+        if st is None or st.request.kind not in _FLOW_KINDS:
             return None
         req = st.request
         # 파서는 머리줄 없는 글도 상자 하나로 받아 준다 — 고치는 도중의 반쪽 글로 결과가 갈아엎히지 않게 머리줄을 요구.
@@ -910,7 +917,7 @@ class _AIMakeMixin:
 
     def _on_ai_code_edited(self, code):
         st = self._ai_staged
-        if st is not None and st.request.kind == "flow" and code.strip() \
+        if st is not None and st.request.kind in _FLOW_KINDS and code.strip() \
                 and code != getattr(st.request, "result_text", ""):
             self._ai_replace_flow(code)
 
@@ -2327,7 +2334,7 @@ class _AIMakeMixin:
     def _ai_followup_flow(self):
         """흐름도 막대 「이어 고치기」 — 지금 결과 코드를 바탕으로 패널 입력칸에 붙인다. 새 결과는 원본 옆에 나란히."""
         st = self._ai_staged
-        if st is None or st.slots is not None or st.request.kind != "flow":
+        if st is None or st.slots is not None or st.request.kind not in _FLOW_KINDS:
             return
         btn = self.sender()
         base = st.alt if (btn is not None and btn.property("aiSide") == "alt" and st.alt is not None) else st
