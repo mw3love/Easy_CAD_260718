@@ -66,6 +66,7 @@ class _ContextMixin:
             menu.addAction("잘라내기", self._cut_selection)
             menu.addAction("복제\tCtrl+D", self.duplicate_selection)
             menu.addAction("삭제\tDel", self.delete_selection)
+            menu.addAction("그림으로 복사(한글·PPT)\tCtrl+Shift+C", self._copy_as_image)   # §8 항목42
         # [신규기능 · 스타일 복사] 단일 선택=복사 진입점, 스타일 클립 있으면=붙여넣기 진입점.
         has_style_clip = getattr(self, "_style_clip", None) is not None
         if len(sel) == 1 or has_style_clip:

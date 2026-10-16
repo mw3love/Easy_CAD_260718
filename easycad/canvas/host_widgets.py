@@ -218,6 +218,8 @@ _SVG_ACT_ICON_NAMES = frozenset({
     "pdf", "titleblock", "table", "image", "mermaid", "zoom_100", "zoom_fit",
     # [§8 항목28, 2026-10-01] 사진→도면 — 같은 A2 규칙(카메라 외곽선 + 렌즈만 채움).
     "photo",
+    # [§8 항목42, 2026-10-16] 「그림 복사」 — 같은 A2 규칙(겹친 종이 외곽선 + 그림만 채움).
+    "copy_image",
     # ["attach" 2026-08-20 제거 — 첨부 버튼이 이 SVG 클립 아이콘 대신 "+" 정사각 버튼으로
     # 바뀌어(`_ImageAttachMixin._build_attach_button`) 마지막 참조가 사라짐, `attach.svg`도 삭제.]
 })

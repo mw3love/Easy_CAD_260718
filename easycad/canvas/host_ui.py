@@ -248,6 +248,10 @@ class _UIBuildMixin:
         self._act_pdf = self._make_action("내보내기…", "pdf", self._export_pdf,
                                           shortcut_id="export_pdf")
         m.addAction(self._act_pdf)
+        # [§8 항목42, 2026-10-16] 엔지니어가 아닌 직원의 출구 — 도면(또는 선택)을 그림으로 클립보드에, 한글·PPT에 Ctrl+V.
+        self._act_copy_img = self._make_action("그림으로 복사(한글·PPT)", "copy_image", self._copy_as_image,
+                                               shortcut_id="copy_image")
+        m.addAction(self._act_copy_img)
 
         # 편집(상단 툴바와 액션 공유. Ctrl+Z/Ctrl+Y 키는 여전히 뷰가 직접 처리하므로 QAction엔
         # 단축키를 안 건다 — 여기에 같은 단축키를 걸면 Qt 전역 단축키가 뷰의 keyPressEvent보다
@@ -663,7 +667,7 @@ class _UIBuildMixin:
     # [첫 화면 재디자인 2026-10-07, 시안 2라운드 T3] 상단바 버튼 밑에 붙는 짧은 이름 — 메뉴 글자
     # (`text()`)는 그대로 두고 `iconText`만 바꾼다. 그리기 도구(액션 없는 QToolButton)도 여기서.
     _TOOLBAR_LABELS = {
-        "new": "새로", "open": "열기", "save": "저장", "pdf": "PDF",
+        "new": "새로", "open": "열기", "save": "저장", "pdf": "PDF", "copy_image": "그림 복사",
         "undo": "되돌리기", "redo": "다시", "titleblock": "표제란", "table": "표", "image": "이미지",
         "select": "선택", "arrow": "화살표", "text": "글자", "line": "선", "polygon": "다각형",
         "pen": "펜", "badge": "번호", "trim": "Trim", "pin": "고정",
@@ -682,7 +686,8 @@ class _UIBuildMixin:
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         lbl = self._TOOLBAR_LABELS
         for a, key in ((self._act_new, "new"), (self._act_open, "open"), (self._act_save, "save"),
-                       (self._act_pdf, "pdf"), (self._act_undo, "undo"), (self._act_redo, "redo"),
+                       (self._act_pdf, "pdf"), (self._act_copy_img, "copy_image"),
+                       (self._act_undo, "undo"), (self._act_redo, "redo"),
                        (self._act_tb, "titleblock"), (self._act_tbl, "table"),
                        (self._act_img, "image"), (self._act_pin, "pin")):
             a.setIconText(lbl[key])
@@ -695,7 +700,7 @@ class _UIBuildMixin:
         # Insert 다음, View 앞에 그대로 둔다.
 
         # 파일(&F)
-        for a in (self._act_new, self._act_open, self._act_save, self._act_pdf):
+        for a in (self._act_new, self._act_open, self._act_save, self._act_pdf, self._act_copy_img):
             tb.addAction(a)
         tb.addSeparator()
 

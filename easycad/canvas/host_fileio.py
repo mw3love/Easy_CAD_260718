@@ -24,7 +24,7 @@ from easycad.canvas.annotator_core import (
     _PolyArrowItem, _ImageItem, _TitleBlockItem, _TableItem, _RectItem, _EllipseItem, _SymbolItem,
     _TextItem, _attach_port_to_host, _find_port_host_near, _is_closed_trim_shape,
 )
-from easycad.fileio.pdf_export import export_pdf, export_pdf_pages, export_image, export_svg
+from easycad.fileio.pdf_export import export_pdf, export_pdf_pages, export_image, export_svg, render_content_image
 from easycad.fileio.dxf_export import export_dxf, export_dwg
 from easycad.fileio import autosave
 from easycad.fileio.dxf_import import import_dxf
@@ -626,6 +626,18 @@ class _FileIOMixin:
             QMessageBox.information(self, "내보내기", f"저장 완료:\n{path}")
         else:
             QMessageBox.warning(self, "내보내기", "저장에 실패했습니다.")
+
+    def _copy_as_image(self):
+        """[§8 항목42, 2026-10-16] 「그림으로 복사(한글·PPT)」 — 선택이 있으면 선택만, 없으면 도면 전체를 내용 크기에 맞춘
+        흰 바탕 그림으로 클립보드에. 대화상자 없이 한 번에(직원이 결과를 문서로 가져가는 출구라 단계가 적어야 함)."""
+        selection_only = bool(self._scene.selectedItems())
+        img = render_content_image(self._scene, selection_only=selection_only)
+        if img.isNull():
+            self.statusBar().showMessage("복사할 도형이 없어요", 3000)
+            return
+        QApplication.clipboard().setImage(img)
+        what = "선택한 것을" if selection_only else "도면 전체를"
+        self.statusBar().showMessage(f"{what} 그림으로 복사했어요 — 한글·PPT에서 Ctrl+V로 붙여 넣으세요", 4000)
 
     def _export_pdf(self):
         """File 메뉴 「PDF 내보내기…」(Ctrl+P·툴바 버튼) — 항상 PDF·전체 도면 기본."""

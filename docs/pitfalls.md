@@ -1556,3 +1556,5 @@
   넣으면 그 테두리를 덮는다. 끄려면 `setWidget` *뒤에* 뷰포트·내용 위젯 둘 다 False.
 - ⚠ (2026-10-16) **라이트 테마에서도 앱 팔레트 글자색은 흰색** — 카드 위젯 안 `QLabel`·버튼에 글자색 QSS를 안 걸면 라이트 테마의 흰
   카드에서 글자가 사라진다(가운데 입구 제목, 실제 창 캡처로 발견). 새 카드는 글자색을 테마별 QSS로 직접 건다(`start_prompt.refresh_theme`).
+- ⚠ (2026-10-16) **클립보드 그림을 PowerShell 7로 확인하면 늘 비어 보인다** — pwsh 기본 MTA라 `Windows.Forms.Clipboard.GetImage()`가 null.
+  `powershell.exe -STA -Command ...`로 읽는다(「그림으로 복사」 검증 때 앱 종료 시 클립보드가 비는 걸로 오해할 뻔).
