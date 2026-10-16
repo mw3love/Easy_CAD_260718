@@ -96,6 +96,38 @@ def guess_kind(text: str, has_image: bool, has_pdf: bool = False) -> str:
     return "flow"
 
 
+def pasted_sources_dir() -> str:
+    """붙여 넣은 그림 자료를 남겨 둘 폴더 — 앱 데이터 `ai_sources`(테스트는 `EASYCAD_AI_SOURCES_DIR`)."""
+    base = os.environ.get("EASYCAD_AI_SOURCES_DIR")
+    if not base:
+        from PyQt6.QtCore import QCoreApplication, QStandardPaths
+        QCoreApplication.setOrganizationName("EasyCAD")   # autosave.recovery_dir와 같은 이유(dev·배포 경로 통일)
+        QCoreApplication.setApplicationName("EasyCAD")
+        root = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation) \
+            or os.path.join(os.path.expanduser("~"), ".easycad")
+        base = os.path.join(root, "ai_sources")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def keep_pasted_images(sources) -> list:
+    """[§8 항목56 검토 2026-10-17] 경로 없는 그림 자료(Ctrl+V로 붙인 것)를 PNG로 남겨 경로를 붙인 사본 목록. 경로가 없으면
+    보드 그림 블록이 「그림 자리」 빈칸이 되고, 「PDF로 새로」가 원본을 못 찾았다. 같은 그림은 같은 파일(내용 해시)."""
+    import hashlib
+    out = []
+    for s in sources:
+        s = dict(s)
+        img = s.get("image")
+        if s.get("kind") != "pdf" and img is not None and not (s.get("path") and os.path.exists(s["path"])):
+            img = img.convert("RGB")
+            path = os.path.join(pasted_sources_dir(), hashlib.sha1(img.tobytes()).hexdigest()[:16] + ".png")
+            if not os.path.exists(path):
+                img.save(path, "PNG")
+            s["path"] = path
+        out.append(s)
+    return out
+
+
 def unsupported_file_text(name: str) -> str:
     return f"이 파일은 아직 못 읽어요: {name} — 되는 것: {SUPPORTED_TEXT}"
 
@@ -364,7 +396,7 @@ class _AIController(QObject):
         if kind is None:
             kind = guess_kind(text, image is not None, bool(pdf_path))
         if sources and len(sources) >= 2:   # 여러 자료 → 한 장 보드
-            req = AIRequest(kind="explain", text=text, sources=list(sources), image_name=f"자료 {len(sources)}개")
+            req = AIRequest(kind="explain", text=text, sources=keep_pasted_images(sources), image_name=f"자료 {len(sources)}개")
             return self._send(req, near=near)
         if kind == "explain":
             if not pdf_path:

@@ -49,7 +49,7 @@ def _label_to_dict(lbl) -> dict:
 # ---- 공통 변환 -------------------------------------------------------------
 def _common(it) -> dict:
     o = it.transformOriginPoint()
-    return {
+    d = {
         "pos": [it.pos().x(), it.pos().y()],
         "scale": it.scale(),
         "rotation": it.rotation(),
@@ -61,6 +61,13 @@ def _common(it) -> dict:
         "group_id": getattr(it, "_group_id", None),
         "layer_id": getattr(it, "_layer_id", None),   # [신규기능] 레이어 — None=기본 레이어
     }
+    # [§8 항목56 검토 2026-10-17] AI 보드 안 아이템의 설계서 자리·칸 바탕 표시 — 없으면 키 생략(하위호환).
+    # 저장 안 하면 다시 연 보드에서 「선택 N개」가 무엇을 골랐는지 AI에 못 알리고, 칸 바탕 더블클릭으로 보드 안에 못 들어갔다.
+    if getattr(it, "_pb_part", None):
+        d["pb_part"] = it._pb_part
+    if getattr(it, "_pb_card", False):
+        d["pb_card"] = True
+    return d
 
 
 def _apply_common(it, d: dict):
@@ -72,6 +79,10 @@ def _apply_common(it, d: dict):
     it.setZValue(d.get("z", 0))
     it._group_id = d.get("group_id")
     it._layer_id = d.get("layer_id")
+    if d.get("pb_part"):   # [§8 항목56 검토] AI 보드 안 설계서 자리 — `_common` 참조
+        it._pb_part = d["pb_part"]
+    if d.get("pb_card"):
+        it._pb_card = True
     locked = d.get("locked", False)
     it._locked = locked
     it.setFlags(

@@ -16,6 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("EASYCAD_RECOVERY_DIR", os.path.join(tempfile.gettempdir(), "easycad-pytest-recovery"))
 # [§8 항목32 2026-10-03] 최근 파일 목록(QSettings)도 실사용자 레지스트리 대신 별도 조직명으로.
 os.environ.setdefault("EASYCAD_SETTINGS_ORG", "EasyCAD-pytest")
+os.environ.setdefault("EASYCAD_AI_SOURCES_DIR", os.path.join(tempfile.gettempdir(), "easycad-pytest-ai-sources"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtWidgets import QApplication, QToolButton

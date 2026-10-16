@@ -187,3 +187,62 @@ def test_inside_selection_names_block_title(figure_pdf):
         assert _wait_until(lambda: _sel_board(w) is not None and _sel_board(w) is not board and not w._ai_jobs)
     assert "blocks[1]" in seen[0] and "row·span" in seen[0] and "할 일" in seen[0]
     _close(w)
+
+
+def test_reopened_board_keeps_block_parts(figure_pdf, tmp_path):
+    """[§8 항목56 검토 2026-10-17] 다시 연 .ecad에서도 블록 자리(`_pb_part`)·칸 바탕(`_pb_card`)이 남아 — 그림을 골라
+    「그림 크게」면 AI 없이 다시 배치(전엔 자리가 사라져 무엇을 골랐는지 없이 AI로 갔다)."""
+    w = _window()
+    spec = json.dumps(dict(PAPER, _pdf=figure_pdf), ensure_ascii=False)
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.pdf_to_board.generate_board", return_value=(spec, "m")):
+        w._ai_ctrl.request_make("", kind="explain", pdf_path=figure_pdf)
+        assert _wait_until(lambda: _sel_board(w) is not None and not w._ai_jobs)
+    board = _sel_board(w)
+    parts = sorted(str(getattr(it, "_pb_part", "")) for it in w._board_scope(board))
+    path = str(tmp_path / "board.ecad")
+    w._do_save_ecad(path)
+    w._open_new_tab()
+    w._do_open_ecad(path)
+    b2 = next(it for it in w._scene.items() if isinstance(it, _BoardItem))
+    assert sorted(str(getattr(it, "_pb_part", "")) for it in w._board_scope(b2)) == parts
+    assert any(getattr(it, "_pb_card", False) for it in w._board_scope(b2))
+    img = next(it for it in w._board_scope(b2) if isinstance(it, _ImageItem))
+    w._scene.clearSelection()
+    img.setSelected(True)
+    bar = _bar(w)
+    assert bar.mode == "inner_sel" and "Transformer 구조" in bar.name_label.text()
+    with _patch("easycad.ai.text_to_flow.generate_flow", side_effect=AssertionError("AI를 부르면 안 됨")):
+        bar.line.setText("그림 크게")
+        bar.line.returnPressed.emit()
+    nb = _sel_board(w)
+    assert nb is not None and nb is not b2 and pb.parse_board(nb._ai["spec"]).get("_figure") == "big"
+    _close(w)
+
+
+def test_pasted_image_source_kept_as_file(figure_pdf):
+    """[§8 항목56 검토 2026-10-17] Ctrl+V로 붙인 그림 자료(경로 없음)도 파일로 남아 — 보드 그림 블록에 그 그림이 들어가고
+    「PDF로 새로」가 원본을 다시 연다(전엔 「그림 자리」 빈칸 + "원본 자료를 찾을 수 없어요")."""
+    from PIL import Image
+    w = _window()
+    sources = [{"label": "A", "kind": "pdf", "name": "paper.pdf", "path": figure_pdf},
+               {"label": "B", "kind": "image", "name": "그림", "path": "", "image": Image.new("RGB", (300, 200), "#3366cc")}]
+    ans = json.dumps({"kind": "block-board", "title": "T", "subtitle": "S", "blocks": [
+        {"type": "text", "title": "글", "body": "본문", "row": 1, "span": 6},
+        {"type": "figure", "title": "붙인 그림", "source": "B", "page": 1, "row": 1, "span": 6}]}, ensure_ascii=False)
+
+    class _Res:
+        content, model_used = ans, "m"
+    with _patch("easycad.ai.gateway.resolve_api_key", return_value="k"), \
+            _patch("easycad.ai.gateway.call_text_with_fallback", return_value=_Res()):
+        w._ai_ctrl.request_make("", sources=sources)
+        assert _wait_until(lambda: _sel_board(w) is not None and not w._ai_jobs)
+    board = _sel_board(w)
+    assert sources[1]["path"] == ""   # 넘긴 목록은 그대로(사본에 경로)
+    assert any(isinstance(it, _ImageItem) for it in w._board_scope(board))
+    src_b = pb.parse_board(board._ai["spec"])["_sources"]["B"]
+    assert src_b["path"] and os.path.exists(src_b["path"])
+    with _patch.object(w._ai_ctrl, "request_make", return_value="sent") as rm:
+        assert w._board_redo(board, "다시") == "sent"
+    assert [s["path"] for s in rm.call_args.kwargs["sources"]][1] == src_b["path"]
+    _close(w)
