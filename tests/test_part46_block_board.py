@@ -346,3 +346,16 @@ def test_masonry_stacks_under_short_block_and_fits_one_page():
     assert check_drawing(w._scene, items=[it for it in w._board_scope(boards[0]) if it is not boards[0]]) == []
     assert (w._bb_k, w._bb_figk, w._bb_tight) == w._BB_FIT_STEPS[0]   # 만든 뒤엔 기본으로
     _close(w)
+
+
+def test_numbers_one_line_and_card_pages_do_not_wrap():
+    """[§8 항목58 ④] 좁은 숫자 칸 — 「12시간」이 두 줄로 접히지 않게 글자를 줄이고, 카드 쪽 번호는 한 줄(이름 폭에서 뺌)."""
+    w = _window()
+    blocks = [{"type": "numbers", "title": "숫자", "row": 1, "span": 4, "items": [{"label": "학습", "value": "12시간"}] * 4},
+              {"type": "cards", "title": "개념", "row": 1, "span": 8, "items": [
+                  {"name": "인코더-디코더 스택 아주 긴 이름", "body": "설명", "pages": "p.2 · p.5–6"}] * 3}]
+    spec = json.dumps({"kind": "block-board", "title": "T", "subtitle": "S", "blocks": blocks}, ensure_ascii=False)
+    _n, _a, _d, added = w._build_paper_board(spec)
+    texts = [it for it in added if hasattr(it, "toPlainText")]
+    assert all("\n" not in it.toPlainText() for it in texts if it.toPlainText() in ("12시간", "p.2 · p.5–6"))
+    _close(w)

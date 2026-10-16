@@ -263,10 +263,12 @@ class _BlockBoardMixin:
             for k, it in enumerate(items[r:r + cols]):
                 cx = x + k * (cw + g)
                 start = len(added)
-                _t, h1 = self._pb_text(added, it["name"], cx + 12, y + 8, cw - 24 - 44, 12 * s, bold=True)
-                if it.get("pages"):
-                    tag, _h = self._pb_text(added, it["pages"], cx, y + 11, 60, 9, self._PB_MUTED)
-                    tag.setPos(cx + cw - 12 - tag.document().size().width(), y + 11)
+                tag_w = 0.0
+                if it.get("pages"):   # 쪽 번호를 먼저 재고 이름 폭에서 뺀다(§8 항목58 ④ — 폭 60에 갇혀 두 줄로 접혀 본문과 겹쳤다)
+                    tag, _h = self._pb_text(added, it["pages"], cx, y + 11, cw * 0.45, 9, self._PB_MUTED)
+                    tag_w = tag.document().size().width()
+                    tag.setPos(cx + cw - 12 - tag_w, y + 11)
+                _t, h1 = self._pb_text(added, it["name"], cx + 12, y + 8, cw - 24 - tag_w - 6, 12 * s, bold=True)
                 _t, h2 = self._pb_text(added, it["body"], cx + 12, y + 8 + h1, cw - 24, 10 * s)
                 cells.append((start, cx, h1 + h2 + 18))
             hmax = max(h for _s, _x, h in cells)
@@ -302,7 +304,8 @@ class _BlockBoardMixin:
             for k, num in enumerate(items[r:r + per]):
                 nx = x + k * (nw + g)
                 start = len(added)
-                _t, h1 = self._pb_text(added, num["value"], nx + 14, y + 10, nw - 28, 26 * s, _ACCENT, bold=True)
+                _t, h1 = self._pb_text(added, num["value"], nx + 14, y + 10, nw - 28, self._bb_num_pt(num["value"], nw - 28, 26 * s),
+                                       _ACCENT, bold=True)
                 _t, h2 = self._pb_text(added, num["label"], nx + 14, y + 10 + h1, nw - 28, 11 * s)
                 foot = " · ".join(p for p in (num.get("note", ""), num.get("pages", "")) if p)
                 h3 = 0.0
@@ -378,6 +381,19 @@ class _BlockBoardMixin:
             _t, h = self._pb_text(added, f"{it['when']} — {it['text']}", x, y, w, 10 * s)
             y += h + 2
         return y
+
+    def _bb_num_pt(self, value, room, pt):
+        """큰 숫자 글자 크기 — 한 줄에 안 들면 들 때까지 줄인다(§8 항목58 ④ — 좁은 칸에서 「12시/간」으로 접혔다). 바닥 14pt."""
+        from PyQt6.QtGui import QFontMetricsF
+        f = self._pb_small_font()
+        f.setBold(True)
+        size = int(pt)
+        while size > 14:
+            f.setPointSize(size)
+            if QFontMetricsF(f).horizontalAdvance(value) + 12.0 <= room:   # 12 = 글 상자 안 여백
+                break
+            size -= 1
+        return size
 
     def _bb_hero_ink(self, items):
         """주인공 면 위 글 — 잉크는 크림, 흐린 글은 밝은 회청(강조색은 그대로)."""
