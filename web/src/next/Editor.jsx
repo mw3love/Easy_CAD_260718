@@ -75,9 +75,9 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       const g = (HANDLE * 1.6) / z / s
       out.push({ key: 'rot', p: toScene(it, { x: x - g, y: y - g }), cursor: 'grab', round: true })   // 좌상단 대각(데스크톱 `_box_rot_center`)
     } else if (it.type === 'text') {
-      const b = textBox(it), r = HANDLE / 2 / z
+      const b = textBox(it), g = (HANDLE * 1.6) / z / (it.scale || 1)
       out.push({ key: 'scale', p: toScene(it, { x: b.w, y: b.h }), cursor: 'nwse-resize' })
-      out.push({ key: 'rot', p: toScene(it, { x: b.w - r, y: r }), cursor: 'grab', round: true })   // 우상단 안쪽(데스크톱 `_rot_handle_center`)
+      out.push({ key: 'rot', p: toScene(it, { x: -g, y: -g }), cursor: 'grab', round: true })   // 좌상단 대각 — 상자와 같은 자리(데스크톱 `_rot_handle_center`, 2026-10-17 통일)
     } else if (it.type === 'line') {
       out.push({ key: 'e0', p: toScene(it, { x: it.line[0], y: it.line[1] }), cursor: 'crosshair' }, { key: 'e1', p: toScene(it, { x: it.line[2], y: it.line[3] }), cursor: 'crosshair' })
     }
@@ -118,16 +118,17 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     const edge = edgeAt(single, p)
     if (edge) { st.current = { ...st.current, kind: 'resize', handle: edge, id: single._id, start: p, orig: m.items }; return }
     const hit = topHit(m.items, p, HIT_PX / z, textBox)
+    const add = e.shiftKey || e.ctrlKey || e.metaKey   // 더해 고르기 — Ctrl(데스크톱 손버릇)·Shift(웹 관례) 둘 다
     if (hit) {
       let ids = R.current.sel
-      if (e.shiftKey) ids = ids.includes(hit._id) ? ids.filter(i => i !== hit._id && !(hit.group_id && m.items.find(x => x._id === i)?.group_id === hit.group_id)) : expandGroups(m.items, [...ids, hit._id])
+      if (add) ids = ids.includes(hit._id) ? ids.filter(i => i !== hit._id && !(hit.group_id && m.items.find(x => x._id === i)?.group_id === hit.group_id)) : expandGroups(m.items, [...ids, hit._id])
       else if (!ids.includes(hit._id)) ids = expandGroups(m.items, [hit._id])
       setSel(ids)
       if (ids.includes(hit._id)) st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: movingSet(ids), sel: ids, moved: false }
       return
     }
-    if (!e.shiftKey) setSel([])
-    st.current = { ...st.current, kind: 'rubber', start: p, add: e.shiftKey ? R.current.sel : [] }
+    if (!add) setSel([])
+    st.current = { ...st.current, kind: 'rubber', start: p, add: add ? R.current.sel : [] }
   }
 
   function onPointerMove(e) {

@@ -693,7 +693,11 @@ class _HandleResizeMixin:
         # 타서, 1000개 문서 드래그 10프레임에 `_rot_handle_rect`가 49,990회 불렸다.
         if not self._handle_active():
             return self._content_rect().adjusted(-pad, -pad, pad, pad)
-        return self._content_rect().united(self._rot_handle_rect().adjusted(-pad, -pad, pad, pad))
+        # 회전 핸들이 좌상단 바깥이라 그대로 union하면 중심이 쏠린다 — 박스 분기와 같이 네 변에 똑같이 준다.
+        cr = self._content_rect()
+        rot_r = self._rot_handle_rect()
+        extra = max(cr.left() - rot_r.left(), cr.top() - rot_r.top(), 0.0) + pad
+        return cr.adjusted(-extra, -extra, extra, extra)
 
     def _handle_local_rect(self) -> QRectF:
         h = self._handle_px()
@@ -701,10 +705,11 @@ class _HandleResizeMixin:
         return QRectF(c.x() - h, c.y() - h, h, h)
 
     def _rot_handle_center(self) -> QPointF:
-        # 우상단 코너 안쪽 — 우하단 크기조절 점과 오른쪽 변에 위아래로 대칭인 점(줄기 없음).
+        # [2026-10-17 통일] 좌상단서 대각으로 살짝 뗌 — 상자(`_box_rot_center`)와 같은 자리.
+        # 전엔 우상단 안쪽(pasteflow 시절 자리)이라 글과 상자의 회전점이 따로 놀았다(사용자 지적).
         cr = self._content_rect()
-        r = self._handle_px() * 0.5  # 원 반지름(= 크기조절 사각 변의 절반 → 같은 지름)
-        return QPointF(cr.right() - r, cr.top() + r)
+        gap = self._handle_px() * 1.6
+        return QPointF(cr.left() - gap, cr.top() - gap)
 
     def _rot_handle_rect(self) -> QRectF:
         d = self._handle_px()  # 원 지름 = 크기조절 사각 변

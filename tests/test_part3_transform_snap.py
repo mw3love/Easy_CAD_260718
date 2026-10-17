@@ -1965,6 +1965,22 @@ def test_unselected_label_bbox_has_no_handle_padding():
     assert QRectF(label.boundingRect()) == expected, "미선택 라벨이 회전 핸들 자리를 예약한다"
 
 
+def test_text_rot_handle_top_left_like_box():
+    """[2026-10-17 통일] 글의 회전점도 상자처럼 좌상단서 대각으로 뗀 자리(전엔 우상단 안쪽 — 사용자 지적),
+    선택 시 boundingRect가 그 점을 담고 중심이 쏠리지 않아야 한다."""
+    from easycad.canvas.annotator_core import _TextItem
+    w = CanvasWindow()
+    t = _TextItem(QColor("#000")); t.setPlainText("Text sample")
+    t.setFlags(t.GraphicsItemFlag.ItemIsSelectable); w._scene.addItem(t)
+    t.setSelected(True)
+    cr, c = t._content_rect(), t._rot_handle_center()
+    gap = t._handle_px() * 1.6
+    assert abs(c.x() - (cr.left() - gap)) < 1e-6 and abs(c.y() - (cr.top() - gap)) < 1e-6
+    br = t.boundingRect()
+    assert br.contains(t._rot_handle_rect())
+    assert abs(br.center().x() - cr.center().x()) < 1e-6 and abs(br.center().y() - cr.center().y()) < 1e-6
+
+
 # --- 드래그 종료 뒷정리가 모든 return 경로에서 보장되는가(실사용 버그 2026-08-15) ---
 # mouseReleaseEvent는 조기 return이 13곳이라 종료 처리를 끝에 두면 경로에 따라 실행이 안 됐다.
 # 사용자 보고: "드래그가 끝났는데 어쩔 땐 파란 밴드가 다시 나타나고 어쩔 땐 안 나타남".
