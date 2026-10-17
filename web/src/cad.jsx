@@ -1,84 +1,112 @@
-// Magic Board 웹 칠판의 CAD 층 — 직각 화살표(sarrow: 구간 손잡이·지속 연결), 큐닷·포트점, 장애물 피하기, TRIM.
-// web_bakeoff/src/sarrow.jsx(2026-10-17 시험)에서 옮김. 데스크톱 core_shapes `_PolyArrowItem`·core_routing에 해당.
-import { Tldraw, ShapeUtil, BindingUtil, OverlayUtil, StateNode, SVGContainer, Polyline2d, Circle2d, Vec, T, createShapeId } from 'tldraw'
+// Magic Board 웹 칠판의 CAD 층 — 직각 화살표(sarrow: 구간 손잡이·끝점 다시 붙이기·지속 연결), 큐닷·포트점, TRIM.
+// web_bakeoff/src/sarrow.jsx(2026-10-17 시험)에서 옮김. 데스크톱 core_shapes `_PolyArrowItem`·core_view `_border_snap_at`에 해당.
+// 2026-10-17 사용자 요청("기본 도형 기능은 magic board를 많이 참고") — 붙는 규칙·길 찾기를 데스크톱과 같게:
+//  - 끄는 끝은 포트(변 가운데)에 18px 안이면 그 포트로, 아니면 테두리 14px 안이면 그 자리로, 아니면 떠 있는 끝(안 붙음).
+//  - 붙은 자리는 도형 안 고정점(비율 nx·ny) — 상자를 옮기거나 키워도 같은 자리.
+//  - 미선택 상자는 테두리에 다가가면 포트점(예고), 선택한 상자는 큐닷. 둘 다 끌면 화살표.
+//  - 끝점 손잡이를 끌어 다시 붙이거나 떼기. 길 찾기는 route.js(데스크톱 _route_ortho 그대로).
+import { ShapeUtil, BindingUtil, OverlayUtil, StateNode, SVGContainer, Polyline2d, Circle2d, Vec, T, createShapeId } from 'tldraw'
 import { getIndices } from '@tldraw/utils'
-import { routeAStar } from './astar.js'
+import { routeOrtho } from './route.js'
 import { ink } from './shapes.jsx'
 
 const DIR = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] }
-const STUB = 24
-const isH = side => side === 'left' || side === 'right'
-const port = (b, side) => ({ left: { x: b.minX, y: b.midY }, right: { x: b.maxX, y: b.midY },
-  top: { x: b.midX, y: b.minY }, bottom: { x: b.midX, y: b.maxY } })[side]
-// 점이 상자의 어느 변에 가장 가까운가(포트점 고르기)
-const nearestSide = (b, p) => Object.keys(DIR).reduce((best, s) => {
-  const d = Vec.Dist(port(b, s), p); return d < best[1] ? [s, d] : best }, [null, Infinity])[0]
+const RATIO = { left: [0, 0.5], right: [1, 0.5], top: [0.5, 0], bottom: [0.5, 1] }
+export const PORT_SNAP_PX = 18     // 데스크톱 _PORT_SNAP_PX(화면 px)
+export const BORDER_SNAP_PX = 14   // 데스크톱 _BORDER_SNAP_PX
+const CORNER_R = 10                // 꺾인 곳 둥글기(데스크톱 화살표 모서리 반경)
+const STUB_MARGIN = 4              // 화살촉 + 모서리 + 여유 = 첫 꺾임까지 최소 직선(데스크톱 _min_stub_for)
+const headLen = width => 8 + width * 2.4
 
-// 직각 경로: 양 끝에서 STUB만큼 수직으로 나온 뒤 ㄱ 또는 ㄹ 자로 잇는다. manual = 사용자가 끈 구간 {k, axis, value}
-export function route(p0, s0, p1, s1, manual) {
-  const a = { x: p0.x + DIR[s0][0] * STUB, y: p0.y + DIR[s0][1] * STUB }
-  const b = { x: p1.x + DIR[s1][0] * STUB, y: p1.y + DIR[s1][1] * STUB }
-  let mid
-  if (isH(s0) && isH(s1)) { const mx = (a.x + b.x) / 2; mid = [{ x: mx, y: a.y }, { x: mx, y: b.y }] }
-  else if (!isH(s0) && !isH(s1)) { const my = (a.y + b.y) / 2; mid = [{ x: a.x, y: my }, { x: b.x, y: my }] }
-  else if (isH(s0)) mid = [{ x: b.x, y: a.y }]
-  else mid = [{ x: a.x, y: b.y }]
-  const pts = simplify([p0, a, ...mid, b, p1])
-  if (manual && manual.k > 0 && manual.k < pts.length - 2) {           // 끈 구간 다시 적용(안쪽 구간·같은 방향일 때만)
-    const [q, r] = [pts[manual.k], pts[manual.k + 1]]
-    const axis = Math.abs(q.y - r.y) < 0.01 ? 'y' : 'x'
-    if (axis === manual.axis) { q[axis] = manual.value; r[axis] = manual.value }
-  }
-  return pts
+const isBox = s => s && (s.type === 'geo' || s.type === 'esym')
+const rectOf = b => ({ l: b.minX, t: b.minY, r: b.maxX, b: b.maxY })
+// 붙은 자리(페이지 좌표) — nx·ny(도형 안 비율)가 있으면 그 자리, 없으면 변 가운데(옛 저장본)
+export function anchorOf(bounds, props) {
+  const [nx, ny] = props.nx != null ? [props.nx, props.ny] : RATIO[props.side]
+  return { x: bounds.minX + nx * bounds.w, y: bounds.minY + ny * bounds.h }
 }
-function simplify(pts) {
-  const out = []
-  for (const p of pts) {
-    if (out.length && Vec.Dist(out[out.length - 1], p) < 0.01) continue
-    if (out.length >= 2) {
-      const [a, b] = [out[out.length - 2], out[out.length - 1]]
-      if ((Math.abs(a.x - b.x) < 0.01 && Math.abs(b.x - p.x) < 0.01) || (Math.abs(a.y - b.y) < 0.01 && Math.abs(b.y - p.y) < 0.01)) out.pop()
+const normalOf = side => (side ? { x: DIR[side][0], y: DIR[side][1] } : null)
+
+// 테두리 위 가장 가까운 점과 그 변
+export function nearestBorder(b, p) {
+  const cx = Math.min(Math.max(p.x, b.minX), b.maxX), cy = Math.min(Math.max(p.y, b.minY), b.maxY)
+  const opts = [['left', { x: b.minX, y: cy }], ['right', { x: b.maxX, y: cy }], ['top', { x: cx, y: b.minY }], ['bottom', { x: cx, y: b.maxY }]]
+  return opts.reduce((best, o) => (Vec.Dist(o[1], p) < Vec.Dist(best[1], p) ? o : best))
+}
+
+// 끄는 끝이 붙을 곳 — 데스크톱 _border_snap_at: ① 포트 18px ② 테두리 14px ③ 없음. 같은 거리면 앞의 것(포트).
+// → { shapeId, side, nx, ny, p } | null
+export function snapAt(editor, pt, { exclude } = {}) {
+  const z = editor.getZoomLevel(), boxes = editor.getCurrentPageShapes().filter(s => isBox(s) && s.id !== exclude)
+  let best = null, bd = PORT_SNAP_PX
+  for (const s of boxes) {
+    const b = editor.getShapePageBounds(s.id); if (!b) continue
+    for (const side of Object.keys(DIR)) {
+      const [nx, ny] = RATIO[side], p = { x: b.minX + nx * b.w, y: b.minY + ny * b.h }, d = Vec.Dist(p, pt) * z
+      if (d <= bd) { bd = d; best = { shapeId: s.id, side, nx, ny, p, port: true } }
     }
-    out.push({ ...p })
   }
-  return out
+  if (best) return best
+  bd = BORDER_SNAP_PX
+  for (const s of boxes) {
+    const b = editor.getShapePageBounds(s.id); if (!b) continue
+    const [side, p] = nearestBorder(b, pt), d = Vec.Dist(p, pt) * z
+    if (d <= bd) { bd = d; best = { shapeId: s.id, side, nx: b.w ? (p.x - b.minX) / b.w : 0.5, ny: b.h ? (p.y - b.minY) / b.h : 0.5, p, port: false } }
+  }
+  return best
 }
 
-// 화살표 다시 그리기 — 묶인 상자(또는 떠 있는 끝점)에서 경로를 계산
+// 화살표 다시 그리기 — 붙은 끝은 도형의 고정점, 떠 있는 끝은 props.free0(시작)·free(끝) {x,y,side?}
 export function reroute(editor, arrowId) {
   const arrow = editor.getShape(arrowId); if (!arrow) return
-  const ends = {}
+  const ends = {}, conn = [null, null], bound = new Set()
   for (const b of editor.getBindingsFromShape(arrowId, 'sarrow')) {
-    const bounds = editor.getShapePageBounds(b.toId)
-    if (bounds) ends[b.props.terminal] = { p: port(bounds, b.props.side), s: b.props.side }
+    const bounds = editor.getShapePageBounds(b.toId); if (!bounds) continue
+    ends[b.props.terminal] = { p: anchorOf(bounds, b.props), n: normalOf(b.props.side) }
+    conn[b.props.terminal === 'start' ? 0 : 1] = rectOf(bounds); bound.add(b.toId)
   }
-  if (!ends.start) return
-  if (!ends.end) {                                                      // 떠 있는 끝: 출발 방향에서 마주 보는 쪽으로 들어가게
-    const f = arrow.props.free ?? ends.start.p
-    ends.end = { p: f, s: isH(ends.start.s) ? (f.x < ends.start.p.x ? 'right' : 'left') : (f.y < ends.start.p.y ? 'bottom' : 'top') }
+  for (const [t, key] of [['start', 'free0'], ['end', 'free']]) {
+    const f = arrow.props[key]
+    if (ends[t] || !f) continue
+    ends[t] = { p: { x: f.x, y: f.y }, n: normalOf(f.side) }
+    const fb = f.shapeId && editor.getShapePageBounds(f.shapeId)   // 끄는 동안 붙을 상자 = 연결 도형으로(장애물로 두면 길이 출발 상자를 뚫음)
+    if (fb) { conn[t === 'start' ? 0 : 1] = rectOf(fb); bound.add(f.shapeId) }
   }
-  let pts = route(ends.start.p, ends.start.s, ends.end.p, ends.end.s, arrow.props.manual)
-  // 장애물: 묶인 두 상자를 뺀 나머지 상자. 기본 경로가 하나라도 뚫고 지나가면 A*로(끈 구간은 이때 무시)
-  const bound = new Set(editor.getBindingsFromShape(arrowId, 'sarrow').map(b => b.toId))
-  const obstacles = editor.getCurrentPageShapes().filter(sh => isBox(sh) && !bound.has(sh.id)).map(sh => editor.getShapePageBounds(sh.id))
-  if (obstacles.some(o => pts.some((q, i) => i && segHitsRect(pts[i - 1], q, o)))) {
-    const a = routeAStar(ends.start.p, DIR[ends.start.s], ends.end.p, DIR[ends.end.s], obstacles)
-    if (a) pts = simplify(a)
+  if (!ends.start || !ends.end) return
+  const obstacles = editor.getCurrentPageShapes().filter(sh => isBox(sh) && !bound.has(sh.id)).map(sh => rectOf(editor.getShapePageBounds(sh.id)))
+  let pts = routeOrtho(ends.start.p, ends.start.n, ends.end.p, ends.end.n, obstacles,
+    { conn, minStub: [0, headLen(arrow.props.width) + CORNER_R + STUB_MARGIN] })
+  const m = arrow.props.manual                                        // 끈 구간(안쪽, 같은 방향일 때만)
+  if (m && m.k > 0 && m.k < pts.length - 2) {
+    const [q, r] = [pts[m.k], pts[m.k + 1]], axis = Math.abs(q.y - r.y) < 0.01 ? 'y' : 'x'
+    if (axis === m.axis) { q[axis] = m.value; r[axis] = m.value }
   }
   const o = pts[0], local = editor.getPointInParentSpace(arrowId, o)   // 보드 안 화살표는 x·y가 보드 기준
   editor.updateShape({ id: arrowId, type: 'sarrow', x: local.x, y: local.y, props: { pts: pts.map(p => ({ x: p.x - o.x, y: p.y - o.y })) } })
 }
 
-// 축정렬 선분이 상자(여유 4)를 지나가나
-function segHitsRect(a, b, r) {
-  const [x0, x1, y0, y1] = [Math.min(a.x, b.x), Math.max(a.x, b.x), Math.min(a.y, b.y), Math.max(a.y, b.y)]
-  return x1 >= r.minX - 4 && x0 <= r.maxX + 4 && y1 >= r.minY - 4 && y0 <= r.maxY + 4
+// 꺾인 곳을 둥글게(데스크톱 화살표 모양) — 반경은 이웃 구간 절반을 넘지 않게
+export function roundedPath(p, r = CORNER_R) {
+  let d = `M${p[0].x},${p[0].y}`
+  for (let i = 1; i < p.length - 1; i++) {
+    const a = p[i - 1], b = p[i], c = p[i + 1], rr = Math.min(r, Vec.Dist(a, b) / 2, Vec.Dist(b, c) / 2)
+    const u = Vec.Sub(a, b).uni(), v = Vec.Sub(c, b).uni()
+    d += ` L${b.x + u.x * rr},${b.y + u.y * rr} Q${b.x},${b.y} ${b.x + v.x * rr},${b.y + v.y * rr}`
+  }
+  const z = p[p.length - 1]
+  return d + ` L${z.x},${z.y}`
 }
+
+// 끄는 동안 상태(포트점 그리기용) — 끄는 곳이 붙을 상자와 붙을 자리
+const drag = { on: false, target: null, snap: null }
+const setDrag = snap => { drag.on = true; drag.snap = snap; drag.target = snap?.shapeId ?? null }
+const freeOf = (snap, pt) => (snap ? { x: snap.p.x, y: snap.p.y, side: snap.side, shapeId: snap.shapeId } : { x: pt.x, y: pt.y })   // shapeId: 끄는 동안 붙을 상자(장애물 아님)
+const bindProps = (terminal, snap) => ({ terminal, side: snap.side, nx: snap.nx, ny: snap.ny })
 
 export class SArrowUtil extends ShapeUtil {
   static type = 'sarrow'
-  static props = { pts: T.arrayOf(T.object({ x: T.number, y: T.number })), manual: T.any, free: T.any, color: T.string, width: T.number }
-  getDefaultProps() { return { pts: [{ x: 0, y: 0 }, { x: 100, y: 0 }], manual: null, free: null, color: '#1e2b45', width: 2.5 } }
+  static props = { pts: T.arrayOf(T.object({ x: T.number, y: T.number })), manual: T.any, free: T.any, free0: T.any, color: T.string, width: T.number }
+  getDefaultProps() { return { pts: [{ x: 0, y: 0 }, { x: 100, y: 0 }], manual: null, free: null, free0: null, color: '#1e2b45', width: 2.5 } }
   getGeometry(s) { return new Polyline2d({ points: s.props.pts.map(p => new Vec(p.x, p.y)) }) }
   canResize() { return false }
   hideResizeHandles() { return true }
@@ -86,24 +114,46 @@ export class SArrowUtil extends ShapeUtil {
   hideSelectionBoundsFg() { return true }
   hideSelectionBoundsBg() { return true }
   canBind({ fromShape, bindingType }) { return bindingType === 'sarrow' && fromShape.type === 'sarrow' }   // 화살표가 다른 것에 묶일 땐 ok, 화살표에 묶이는 건 x
-  // 알약: 양 끝 구간을 뺀 안쪽 구간마다 가운데에 손잡이
+  // 끝점 손잡이 둘(다시 붙이기) + 알약: 양 끝 구간을 뺀 안쪽 구간마다 가운데에 손잡이
   getHandles(s) {
-    const p = s.props.pts, out = [], idx = getIndices(p.length)
+    const p = s.props.pts, idx = getIndices(p.length + 1)
+    const out = [{ id: 'end0', type: 'vertex', index: idx[0], x: p[0].x, y: p[0].y },
+      { id: 'end1', type: 'vertex', index: idx[p.length], x: p[p.length - 1].x, y: p[p.length - 1].y }]
     for (let k = 1; k < p.length - 2; k++)
       out.push({ id: 'seg' + k, type: 'vertex', index: idx[k], x: (p[k].x + p[k + 1].x) / 2, y: (p[k].y + p[k + 1].y) / 2 })
     return out
   }
+  onHandleDragStart(s, { handle }) {
+    if (!handle.id.startsWith('end')) return
+    const terminal = handle.id === 'end0' ? 'start' : 'end'
+    for (const b of this.editor.getBindingsFromShape(s.id, 'sarrow')) if (b.props.terminal === terminal) this.editor.deleteBinding(b.id)
+  }
   onHandleDrag(s, { handle }) {
+    if (handle.id.startsWith('end')) {
+      const e = this.editor, pt = e.getShapePageTransform(s.id).applyToPoint(handle)
+      const snap = snapAt(e, pt)
+      setDrag(snap)
+      e.updateShape({ id: s.id, type: 'sarrow', props: { [handle.id === 'end0' ? 'free0' : 'free']: freeOf(snap, pt), manual: null } })
+      reroute(e, s.id)
+      return
+    }
     const k = +handle.id.slice(3), pts = s.props.pts.map(p => ({ ...p }))
     const axis = Math.abs(pts[k].y - pts[k + 1].y) < 0.01 ? 'y' : 'x'
     pts[k][axis] = pts[k + 1][axis] = handle[axis]                       // 그 구간만 평행 이동, 이웃 구간은 길이만 바뀜
     return { props: { pts, manual: { k, axis, value: handle[axis] + s[axis] } } }
   }
+  onHandleDragEnd(s, { handle }) {
+    if (!handle.id.startsWith('end')) return
+    const e = this.editor, terminal = handle.id === 'end0' ? 'start' : 'end', snap = drag.snap
+    drag.on = false; drag.snap = null; drag.target = null
+    if (snap) e.createBinding({ type: 'sarrow', fromId: s.id, toId: snap.shapeId, props: bindProps(terminal, snap) })
+    reroute(e, s.id)
+  }
   component(s) {
-    const { pts: p, width } = s.props, color = ink(this.editor, s, s.props.color), d = 'M' + p.map(q => `${q.x},${q.y}`).join(' L')
-    const [a, b] = [p[p.length - 2], p[p.length - 1]], ang = Math.atan2(b.y - a.y, b.x - a.x), L = 8 + width * 2.4
+    const { pts: p, width } = s.props, color = ink(this.editor, s, s.props.color)
+    const [a, b] = [p[p.length - 2], p[p.length - 1]], ang = Math.atan2(b.y - a.y, b.x - a.x), L = headLen(width)
     const h = t => `${b.x - L * Math.cos(ang + t)},${b.y - L * Math.sin(ang + t)}`
-    return <SVGContainer><path d={d} fill="none" stroke={color} strokeWidth={width} strokeLinejoin="round" />
+    return <SVGContainer><path d={roundedPath(p)} fill="none" stroke={color} strokeWidth={width} strokeLinejoin="round" />
       <polygon points={`${b.x},${b.y} ${h(0.45)} ${h(-0.45)}`} fill={color} /></SVGContainer>
   }
   getIndicatorPath(s) { const path = new Path2D(); s.props.pts.forEach((q, i) => i ? path.lineTo(q.x, q.y) : path.moveTo(q.x, q.y)); return path }
@@ -111,32 +161,41 @@ export class SArrowUtil extends ShapeUtil {
 
 export class SArrowBindingUtil extends BindingUtil {
   static type = 'sarrow'
-  static props = { terminal: T.string, side: T.string }
-  getDefaultProps() { return { terminal: 'start', side: 'right' } }
+  static props = { terminal: T.string, side: T.string, nx: T.any, ny: T.any }
+  getDefaultProps() { return { terminal: 'start', side: 'right', nx: null, ny: null } }
   onAfterChangeToShape({ binding }) { reroute(this.editor, binding.fromId) }       // 상자가 움직이면 다시 꺾기
   onBeforeDeleteToShape({ binding }) { this.editor.deleteShape(binding.fromId) }
 }
 
-// 큐닷(선택한 상자 네 변 가운데 밖) + 끄는 동안 대상 상자의 포트점
-const drag = { on: false, target: null }
-const isBox = s => s && (s.type === 'geo' || s.type === 'esym')
+// 큐닷(선택한 상자 네 변 가운데 밖) · 포트점 예고(미선택 상자 테두리에 다가가면) · 끄는 동안 대상 상자의 포트점
 export class QcDotOverlayUtil extends OverlayUtil {
   static type = 'qcdot'
   options = { zIndex: 300 }
-  isActive() { const e = this.editor; return drag.on || (e.isIn('select.idle') && isBox(e.getOnlySelectedShape())) }
+  isActive() { const e = this.editor; return drag.on || e.isIn('select.idle') }
   getOverlays() {
     const e = this.editor
-    if (drag.on) return drag.target ? Object.keys(DIR).map(side => ({ id: 'port:' + side, type: 'qcdot', props: { side, kind: 'port', shapeId: drag.target } })) : []
-    const s = e.getOnlySelectedShape()
-    return Object.keys(DIR).map(side => ({ id: 'qc:' + side, type: 'qcdot', props: { side, kind: 'qc', shapeId: s.id } }))
+    if (drag.on) {
+      if (!drag.target) return []
+      const ports = Object.keys(DIR).map(side => ({ id: 'port:' + side, type: 'qcdot', props: { side, kind: 'port', shapeId: drag.target } }))
+      return [...ports, { id: 'snap', type: 'qcdot', props: { kind: 'snap', at: drag.snap.p } }]
+    }
+    const out = [], sel = e.getOnlySelectedShape()
+    if (isBox(sel)) out.push(...Object.keys(DIR).map(side => ({ id: 'qc:' + side, type: 'qcdot', props: { side, kind: 'qc', shapeId: sel.id } })))
+    const pt = e.inputs.getCurrentPagePoint(), hov = snapAt(e, pt, { exclude: isBox(sel) ? sel.id : undefined })
+    // 고른 것의 손잡이(화살표 끝점 등) 곁에선 예고점을 안 띄운다 — 안 그러면 끝점을 끌려다 새 화살표가 생긴다(손잡이가 먼저)
+    const z = e.getZoomLevel(), nearHandle = e.getSelectedShapes().some(s => (e.getShapeHandles(s) || []).some(h =>
+      Vec.Dist(e.getShapePageTransform(s.id).applyToPoint(h), pt) * z <= PORT_SNAP_PX))
+    if (hov && !nearHandle) out.push({ id: 'hover', type: 'qcdot', props: { kind: 'hover', at: hov.p, snap: hov } })
+    return out
   }
   pos(o) {
-    const b = this.editor.getShapePageBounds(o.props.shapeId), p = port(b, o.props.side), z = this.editor.getZoomLevel()
+    if (o.props.at) return o.props.at
+    const b = this.editor.getShapePageBounds(o.props.shapeId), [nx, ny] = RATIO[o.props.side], z = this.editor.getZoomLevel()
     const off = o.props.kind === 'qc' ? 18 / z : 0
-    return { x: p.x + DIR[o.props.side][0] * off, y: p.y + DIR[o.props.side][1] * off }
+    return { x: b.minX + nx * b.w + DIR[o.props.side][0] * off, y: b.minY + ny * b.h + DIR[o.props.side][1] * off }
   }
   getGeometry(o) {
-    if (o.props.kind !== 'qc') return null
+    if (o.props.kind !== 'qc' && o.props.kind !== 'hover') return null
     const r = 7 / this.editor.getZoomLevel(), p = this.pos(o)
     return new Circle2d({ x: p.x - r, y: p.y - r, radius: r, isFilled: true })
   }
@@ -144,30 +203,32 @@ export class QcDotOverlayUtil extends OverlayUtil {
   render(ctx, overlays) {
     const z = this.editor.getZoomLevel()
     for (const o of overlays) {
-      const p = this.pos(o)
-      ctx.beginPath(); ctx.arc(p.x, p.y, (o.props.kind === 'qc' ? 5 : 6) / z, 0, Math.PI * 2)
-      if (o.props.kind === 'qc') { ctx.fillStyle = '#2f80ed'; ctx.fill() }
+      const p = this.pos(o), k = o.props.kind
+      ctx.beginPath(); ctx.arc(p.x, p.y, (k === 'qc' ? 5 : k === 'snap' ? 7 : 6) / z, 0, Math.PI * 2)
+      if (k === 'qc' || k === 'snap') { ctx.fillStyle = '#2f80ed'; ctx.fill() }
       else { ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 2 / z; ctx.strokeStyle = '#2f80ed'; ctx.stroke() }
     }
   }
   onPointerDown(o) {
-    const e = this.editor, from = o.props.shapeId, id = createShapeId()
+    const e = this.editor, id = createShapeId()
+    // 시작: 큐닷이면 그 변 가운데, 포트점 예고면 그 자리
+    const start = o.props.kind === 'qc' ? { shapeId: o.props.shapeId, side: o.props.side, nx: RATIO[o.props.side][0], ny: RATIO[o.props.side][1] } : o.props.snap
     e.markHistoryStoppingPoint('qcdot')
-    e.createShape({ id, type: 'sarrow', props: { free: e.inputs.getCurrentPagePoint().toJson() } })
-    e.createBinding({ type: 'sarrow', fromId: id, toId: from, props: { terminal: 'start', side: o.props.side } })
-    reroute(e, id); drag.on = true
+    e.createShape({ id, type: 'sarrow', props: { free: freeOf(null, e.inputs.getCurrentPagePoint()) } })
+    e.createBinding({ type: 'sarrow', fromId: id, toId: start.shapeId, props: bindProps('start', start) })
+    reroute(e, id); setDrag(null)
     const onEvent = ev => {
       if (ev.type !== 'pointer') return
       const pt = e.inputs.getCurrentPagePoint()
       if (ev.name === 'pointer_move') {
-        const hit = e.getShapeAtPoint(pt, { hitInside: true, margin: 10, filter: s => isBox(s) && s.id !== from })
-        drag.target = hit?.id ?? null
-        e.updateShape({ id, type: 'sarrow', props: { free: pt.toJson() } }); reroute(e, id)
+        const snap = snapAt(e, pt)
+        const ok = snap && !(snap.shapeId === start.shapeId && Math.abs(snap.nx - start.nx) < 1e-3 && Math.abs(snap.ny - start.ny) < 1e-3)
+        setDrag(ok ? snap : null)
+        e.updateShape({ id, type: 'sarrow', props: { free: freeOf(drag.snap, pt) } }); reroute(e, id)
       } else if (ev.name === 'pointer_up') {
         e.off('event', onEvent)
-        if (drag.target) e.createBinding({ type: 'sarrow', fromId: id, toId: drag.target,
-          props: { terminal: 'end', side: nearestSide(e.getShapePageBounds(drag.target), pt) } })
-        drag.on = false; drag.target = null; reroute(e, id); e.select(id)
+        if (drag.snap) e.createBinding({ type: 'sarrow', fromId: id, toId: drag.snap.shapeId, props: bindProps('end', drag.snap) })
+        drag.on = false; drag.target = null; drag.snap = null; reroute(e, id); e.select(id)
       }
     }
     e.on('event', onEvent)

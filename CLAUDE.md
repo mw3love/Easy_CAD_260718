@@ -113,7 +113,8 @@ tests/
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
 └── test_part1~50_*.py      테마별 회귀 스모크 1405종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + tldraw 5.5.2(버전 고정). src/main.jsx(앱)·shapes.jsx(.ecad 도형:
-│                          글·상자 정확한 색/크기, esym 심볼, eboard 보드)·cad.jsx(직각 화살표·큐닷·TRIM)·ecad.js(.ecad 열기)·ecadExport.js(.ecad 저장)·ecadFormat.js(순수 변환,
+│                          글·상자 정확한 색/크기, esym 심볼, eboard 보드)·cad.jsx(직각 화살표·큐닷·포트점·끝점 다시 붙이기·TRIM — 붙는 규칙은 데스크톱과 같게)·route.js(길 찾기 = 데스크톱
+│                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecad.js(.ecad 열기)·ecadExport.js(.ecad 저장)·ecadFormat.js(순수 변환,
 │                          `npm test`)·symbols.json(`tools/export_web_symbols.py`가 데스크톱 심볼에서 뽑음)·boardStore.js(서버 저장)·chat.jsx(오른쪽 KAIROS
 │                          대화창·「칠판에 붙이기」)·chatFormat.js(답 글→카드 글·빈자리, 순수)·server.py(감시 PC용 저장 서버 + 대화 길목 `/api/chat`·`/api/models`·
 │                          `/api/chatlog`). web_bakeoff/는 바탕 부품 비교 시험(보존용)

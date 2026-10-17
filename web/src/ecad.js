@@ -90,7 +90,7 @@ export function importEcad(editor, doc, at = { x: 0, y: 0 }) {
       if (it.type === 'polygon') Object.assign(keep, { _type: 'polygon', closed: !!it.closed })
       if (Object.keys(keep).length) { const sh = editor.getShape(id); editor.updateShape({ id, type: sh.type, meta: { ...sh.meta, keep: J(keep) } }) }
     }
-    // 화살표 지속 연결: bind1/bind2 = 저장 목록 순번, bindN_pt = 그 도형 안 부착점 → 가장 가까운 변
+    // 화살표 지속 연결: bind1/bind2 = 저장 목록 순번, bindN_pt = 그 도형 안 부착점 → 그 자리(비율 nx·ny) + 가장 가까운 변(나가는 방향)
     for (const [it, idx] of order) {
       if (it.type !== 'sarrow' || !idOf.has(idx)) continue
       for (const [k, terminal] of [['bind1', 'start'], ['bind2', 'end']]) {
@@ -98,7 +98,8 @@ export function importEcad(editor, doc, at = { x: 0, y: 0 }) {
         const b = editor.getShapePageBounds(to), [lx, ly] = it[k + '_pt'] || [b.w / 2, b.h / 2]
         const dist = { left: lx, right: b.w - lx, top: ly, bottom: b.h - ly }
         const side = Object.keys(dist).reduce((a, c) => (dist[c] < dist[a] ? c : a))
-        editor.createBinding({ type: 'sarrow', fromId: idOf.get(idx), toId: to, props: { terminal, side } })
+        editor.createBinding({ type: 'sarrow', fromId: idOf.get(idx), toId: to,
+          props: { terminal, side, nx: b.w ? lx / b.w : 0.5, ny: b.h ? ly / b.h : 0.5 } })
       }
     }
     // 보드 안에 가운데가 들어간 것은 보드 소속으로(데스크톱 "소속은 위치로"와 같음)

@@ -2,7 +2,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { cssColor, pathD, runsToRichText } from '../src/ecadFormat.js'
-import { routeAStar } from '../src/astar.js'
 
 test('Qt ARGB 색 → CSS (불투명은 #rrggbb, 반투명은 rgba)', () => {
   assert.equal(cssColor('#ff1f1f1f'), '#1f1f1f')
@@ -36,16 +35,6 @@ test('pathD — 닫힌 사각형만 사각형, 열린 ㄷ자·빗금은 아님',
   const p = pathD([['M', 100, 50], ['C', 110, 50, 120, 60, 120, 70]])
   assert.deepEqual([p.x0, p.y0, p.w, p.h], [100, 50, 20, 20])
   assert.equal(p.d, 'M0.00,0.00 C10.00,0.00 20.00,10.00 20.00,20.00')
-})
-
-test('A* — 장애물을 피해 축정렬로, 끝은 포트에 정확히', () => {
-  const obs = [{ minX: 80, maxX: 160, minY: -40, maxY: 40 }]
-  const pts = routeAStar({ x: 0, y: 0 }, [1, 0], { x: 240, y: 0 }, [-1, 0], obs)
-  assert.deepEqual(pts[0], { x: 0, y: 0 })
-  assert.deepEqual(pts.at(-1), { x: 240, y: 0 })
-  for (let i = 1; i < pts.length; i++) assert.ok(pts[i].x === pts[i - 1].x || pts[i].y === pts[i - 1].y, '대각선 없음')
-  const hits = pts.some((q, i) => i && Math.min(q.x, pts[i - 1].x) < 160 && Math.max(q.x, pts[i - 1].x) > 80 && Math.min(q.y, pts[i - 1].y) < 40 && Math.max(q.y, pts[i - 1].y) > -40)
-  assert.equal(hits, false, '장애물을 지나가지 않음')
 })
 
 import { cssToArgb, parseD, richTextToRuns } from '../src/ecadFormat.js'

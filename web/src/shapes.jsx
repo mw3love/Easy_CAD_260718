@@ -48,7 +48,7 @@ export const EText = TextShapeUtil.configure({
     return { color: ink(e, s, m.color, mode), fontSize: m.px, fontFamily: m.family ? BOARD_FONT : undefined, fontWeight: String(m.weight ?? 400), lineHeight: LINE_HEIGHT }
   },
 })
-export const EGeo = GeoShapeUtil.configure({
+const EGeoBase = GeoShapeUtil.configure({
   getCustomDisplayValues(e, s, _t, mode) {
     const m = ec(s); if (!m) return {}
     const v = { strokeColor: ink(e, s, m.stroke, mode), fillColor: m.fill ?? 'transparent', strokeWidth: m.sw, strokeRoundness: 0 }
@@ -58,6 +58,11 @@ export const EGeo = GeoShapeUtil.configure({
     return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined))
   },
 })
+// 속이 빈 상자도 안쪽을 누르면 그 상자(데스크톱 "몸통 = 이동"과 같음, 2026-10-17 — tldraw 기본은 빈 상자 안쪽이 바탕이라
+// 누른 채 3px만 움직여도 선택 대신 범위 끌기가 됐다. 판정 모양만 채운 것으로 보고 그림은 그대로)
+export class EGeo extends EGeoBase {
+  getGeometry(s) { const g = super.getGeometry(s); g.children[0].isFilled = true; return g }
+}
 
 // 경로 d를 상자(w,h)에 맞춰 늘리기 — fit: stretch(그냥 늘림) / keep(비율 지키고 가운데) / rect(시작/끝·지연: 상자 비율로 다시 그림)
 function symbolPath(kind, d, fit, vw, vh, w, h) {
@@ -76,7 +81,7 @@ export class ESymUtil extends BaseBoxShapeUtil {
     richText: toRichText(''), labelColor: '#1f1f1f', labelPx: 18, labelFamily: false } }
   canEdit() { return true }
   onResize(s, info) { return resizeBox(s, info) }
-  getGeometry(s) { return new Rectangle2d({ width: s.props.w, height: s.props.h, isFilled: s.props.fill !== 'transparent' || !!s.props.d }) }
+  getGeometry(s) { return new Rectangle2d({ width: s.props.w, height: s.props.h, isFilled: true }) }   // 안쪽 = 몸통(EGeo와 같은 이유)
   component(s) {
     const p = s.props, sym = SYMBOLS[p.kind]
     const path = symbolPath(p.kind, p.d || sym?.d || `M0,0 H100 V100 H0 Z`, p.d ? 'stretch' : sym?.fit, p.d ? p.vw : 100, p.d ? p.vh : 100, p.w, p.h)

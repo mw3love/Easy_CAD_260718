@@ -79,6 +79,7 @@ function App() {
       onMount={e => {
         window.editor = e
         setEditor(e)
+        e.user.updateUserPreferences({ isSnapMode: true })   // 정렬선·같은 간격선 늘 켬(데스크톱처럼 — tldraw 기본은 Ctrl 누를 때만)
         window.openEcad = t => openEcad(e, t)
         window.exportEcad = () => exportEcad(e)
         if (loaded.server) window.boardSaver = startAutosave(e, setStatus)

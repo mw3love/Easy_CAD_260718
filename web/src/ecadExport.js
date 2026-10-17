@@ -141,13 +141,14 @@ export async function exportEcad(editor, ids = null) {
       indexOf.set(s.id, items.length); items.push(d)
     }
   }
-  // 직각 화살표 연결: 붙은 도형의 저장 순번 + 그 도형 안 부착점(변 가운데)
+  // 직각 화살표 연결: 붙은 도형의 저장 순번 + 그 도형 안 부착점(비율 nx·ny, 없으면 변 가운데)
   for (const [d, id] of pending) {
     for (const [k, terminal] of [['bind1', 'start'], ['bind2', 'end']]) {
       const b = editor.getBindingsFromShape(id, 'sarrow').find(x => x.props.terminal === terminal)
       const to = b && indexOf.get(b.toId), bb = b && editor.getShapePageBounds(b.toId)
       if (to == null || !bb) { Object.assign(d, { [k]: null, [k + '_group']: null, [k + '_pt']: null }); continue }
-      const local = { left: [0, bb.h / 2], right: [bb.w, bb.h / 2], top: [bb.w / 2, 0], bottom: [bb.w / 2, bb.h] }[b.props.side]
+      const local = b.props.nx != null ? [b.props.nx * bb.w, b.props.ny * bb.h]
+        : { left: [0, bb.h / 2], right: [bb.w, bb.h / 2], top: [bb.w / 2, 0], bottom: [bb.w / 2, bb.h] }[b.props.side]
       Object.assign(d, { [k]: to, [k + '_group']: null, [k + '_pt']: local })
     }
   }
