@@ -133,3 +133,41 @@ def test_wide_figure_stays_in_row():
     img = next(it for it in added if isinstance(it, _ImageItem))
     assert img.sceneBoundingRect().height() < board.sceneBoundingRect().height() * 0.5
     _close(w)
+
+
+STEPS = {"type": "steps", "title": "어텐션은 어떻게 정보를 고르나", "pages": "p.3", "row": 2, "span": 8,
+         "items": [{"text": "질의·키·값 준비", "sym": "Q K V"}, {"text": "질의와 키를 곱함", "sym": "QKᵀ"},
+                   {"text": "softmax로 비중 결정", "sym": "softmax"}, {"text": "값을 가중합", "sym": "× V"}],
+         "focus": 3, "note": "관련 깊은 단어에 더 큰 비중."}
+
+
+def test_steps_block_parses():
+    spec = pb.parse_board(json.dumps(dict(PAPER, blocks=PAPER["blocks"] + [STEPS]), ensure_ascii=False))
+    blk = next(b for b in spec["blocks"] if b["type"] == "steps")
+    assert [i["sym"] for i in blk["items"]] == ["Q K V", "QKᵀ", "softmax", "× V"] and blk["focus"] == 3 and blk["note"]
+    bad = pb.parse_board(json.dumps(dict(PAPER, blocks=PAPER["blocks"] + [dict(STEPS, focus=9, items=STEPS["items"][:1])]), ensure_ascii=False))
+    assert not any(b["type"] == "steps" for b in bad["blocks"])   # 한 단계뿐이면 버린다
+    assert "steps" in pb._BLOCK_FORMAT
+
+
+def test_steps_block_one_row_left_to_right_focus_accent():
+    """④ 가로 단계 — 꺾이지 않고 한 줄(왼쪽→오른쪽), 핵심 단계 하나만 코랄 면. 「도면 검사」 문제 0."""
+    from easycad.canvas.annotator_core import _BoardItem, _RectItem
+    from easycad.canvas.drawing_check import check_drawing
+    w = _window()
+    blocks = [b for b in PAPER["blocks"] if b["type"] != "flow"] + [STEPS]
+    spec = pb.parse_board(json.dumps(dict(PAPER, blocks=blocks), ensure_ascii=False))
+    _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
+    part = f"blocks[{next(i for i, b in enumerate(spec['blocks']) if b['type'] == 'steps')}]"
+    texts = [next(it for it in added if hasattr(it, "toPlainText") and it.toPlainText().replace("\n", " ") == s["text"])
+             for s in STEPS["items"]]
+    ys = {round(t.sceneBoundingRect().top()) for t in texts}
+    xs = [t.sceneBoundingRect().left() for t in texts]
+    assert len(ys) == 1 and xs == sorted(xs)
+    cards = [it for it in added if isinstance(it, _RectItem) and getattr(it, "_pb_part", None) == part and it.rect().height() > 20]
+    accent = [c for c in cards if c.brush().color().name() == QColor(_ACCENT).name()]
+    assert len(cards) == 4 and len(accent) == 1
+    assert accent[0].sceneBoundingRect().contains(texts[2].sceneBoundingRect().center())
+    board = next(it for it in added if isinstance(it, _BoardItem))
+    assert check_drawing(w._scene, items=[it for it in w._board_scope(board) if it is not board]) == []
+    _close(w)

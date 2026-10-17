@@ -23,7 +23,7 @@ from PyQt6.QtGui import QColor
 from easycad.canvas.annotator_core import BOARD_ASPECT
 from easycad.canvas.host_board import INK_ON_LIGHT, _ACCENT, _outline_rect
 
-_BLOCK_NAME = {"text": "글", "list": "목록", "cards": "카드", "flow": "흐름", "bars": "막대", "numbers": "숫자", "figure": "그림",
+_BLOCK_NAME = {"text": "글", "list": "목록", "cards": "카드", "flow": "흐름", "steps": "단계", "bars": "막대", "numbers": "숫자", "figure": "그림",
                "table": "표", "terms": "용어", "timeline": "일정", "quote": "인용", "verdict": "의의와 한계"}
 _SCALE = {"small": 0.9, "normal": 1.0, "big": 1.25}
 
@@ -234,7 +234,7 @@ class _BlockBoardMixin:
                 self._pb_part_cur = f"blocks[{idx}]"
                 start = len(added)
                 hero = bool(blk.get("hero"))
-                inset = P if (hero or blk["type"] == "flow") else 0.0   # 면이 있는 블록만 안쪽 여백
+                inset = P if (hero or blk["type"] in self._BB_FACE_TYPES) else 0.0   # 면이 있는 블록만 안쪽 여백
                 h, ns, na = self._bb_block(added, spec, blk, x + inset, by + P, w - 2 * inset)
                 n_steps += ns
                 n_arrows += na
@@ -255,12 +255,12 @@ class _BlockBoardMixin:
             below = [d[6] for d in cells if d[6] > by + 1 and d[2] < bx + bw - 1 and d[2] + d[3] > bx + 1]
             if masonry:
                 room = (min(below) - G if below else bottom) - by
-                if blk.get("hero") or blk["type"] == "flow":   # 면은 아래 이웃(또는 내용 끝)까지 — 너무 길어지면(텅 빈 큰 면) 그대로
+                if blk.get("hero") or blk["type"] in self._BB_FACE_TYPES:   # 면은 아래 이웃(또는 내용 끝)까지 — 너무 길어지면(텅 빈 큰 면) 그대로
                     if room <= bh * 1.6:
                         c[7] = max(bh, room)
             else:
                 room = rh
-                if blk.get("hero") or blk["type"] == "flow":   # 면은 줄 높이만큼(같은 줄 블록과 아래 끝이 맞게)
+                if blk.get("hero") or blk["type"] in self._BB_FACE_TYPES:   # 면은 줄 높이만큼(같은 줄 블록과 아래 끝이 맞게)
                     c[7] = rh
             # (자리, 블록, x, 폭, y, 높이, 아래에 다른 블록이 있나, 이 칸에서 쓸 수 있는 높이)
             info.append((f"blocks[{idx}]", blk, bx, bw, by, c[7], bool(below), room))
@@ -269,7 +269,7 @@ class _BlockBoardMixin:
             if blk.get("hero"):
                 self._bb_hero_ink(added[start:end])
                 self._pb_card_under(added, start, bx, by, bw, bh, fill=self._BB_HERO_BG, edge=self._BB_HERO_BG)
-            elif blk["type"] == "flow":
+            elif blk["type"] in self._BB_FACE_TYPES:
                 # 흐름도는 상자 대신 채운 패스 — 상자면 그 안을 지나는 화살표가 「도면 검사」의 "상자를 지나가는 선"(옛 틀과 같은 이유)
                 self._bb_face(added, start, bx, by, bw, bh, self._BB_FLOW_FACE)
             elif blk["type"] not in ("numbers", "cards"):   # 숫자·카드는 안의 선·띠가 모양을 맡는다
@@ -310,6 +310,8 @@ class _BlockBoardMixin:
                 it._pb_part = self._pb_part_cur
             added += items
             y += fh
+        elif t == "steps":
+            y = self._bb_steps(added, blk, x, y, w, s)
         elif t == "bars":
             y = self._bb_bars(added, blk, x, y, w, s)
         elif t == "numbers":
@@ -340,6 +342,49 @@ class _BlockBoardMixin:
                 _i, h = self._pb_text(added, body, x + tw + 2, y, w - tw - 2, 10 * s)
                 y += max(h, 20.0) + 2
         return y - y0, ns, na
+
+    _BB_FACE_TYPES = ("flow", "steps")   # 옅은 강조 면을 까는 블록
+
+    def _bb_steps(self, added, blk, x, y, w, s):
+        """가로 단계 카드(§8 항목60 ④) — 왼쪽→오른쪽 한 줄, 번호·글·아래 기호. 핵심 단계(`focus`) 하나만 코랄 면·크림 글.
+        흐름도 엔진은 16:9에 맞추려 꺾어 내리므로(`best_wrap`) 짧은 계산 순서가 꺾인 화살표로 읽혔다(사용자 2026-10-17)."""
+        items = blk["items"]
+        n = len(items)
+        g = 10.0
+        per_row = n if (w - g * (n - 1)) / n >= 96.0 else math.ceil(n / 2)   # 너무 좁으면 두 줄(그래도 왼쪽→오른쪽)
+        cw = (w - g * (per_row - 1)) / per_row
+        pad = 10.0
+        rows = [items[i:i + per_row] for i in range(0, n, per_row)]
+        for r, row in enumerate(rows):
+            heights = []
+            for it in row:
+                h = self._bb_text_h(it["text"], cw - 2 * pad, 11 * s, True) + 18.0
+                if it.get("sym"):
+                    h += self._bb_text_h(it["sym"], cw - 2 * pad, 12 * s, True) + 14.0
+                heights.append(h)
+            ch = max(heights) + 2 * pad
+            for k, it in enumerate(row):
+                i = r * per_row + k
+                cx = x + k * (cw + g)
+                focus = blk.get("focus") == i + 1
+                start = len(added)
+                ink = self._BB_HERO_INK if focus else INK_ON_LIGHT
+                self._pb_text(added, str(i + 1), cx + pad, y + pad, cw - 2 * pad, 9, self._BB_HERO_INK if focus else self._PB_MUTED, bold=True)
+                self._pb_text(added, it["text"], cx + pad, y + pad + 16.0, cw - 2 * pad, 11 * s, ink, bold=True)
+                if it.get("sym"):
+                    sh = self._bb_text_h(it["sym"], cw - 2 * pad, 12 * s, True)
+                    self._pb_text(added, it["sym"], cx + pad, y + ch - pad - sh, cw - 2 * pad, 12 * s, ink, bold=800)
+                if focus:
+                    self._pb_card_under(added, start, cx, y, cw, ch, fill=_ACCENT, edge=_ACCENT)
+                else:
+                    self._pb_card_under(added, start, cx, y, cw, ch)   # 회색 알파 — 흰·검정 보드 둘 다
+                if k:   # 카드 사이 가는 선 — 차례를 잇는다
+                    self._pb_card(added, cx - g, y + ch / 2.0, g, 1.5, fill=_ACCENT, edge=_ACCENT, width=0.0)
+            y += ch + (g if r < len(rows) - 1 else 0.0)
+        if blk.get("note"):
+            _t, h = self._pb_text(added, blk["note"], x, y + 8, w, 10 * s, self._PB_MUTED)
+            y += h + 8
+        return y
 
     def _bb_cards(self, added, items, x, y, w, s, bottom=None, spec=None):
         """카드 여러 개 — 넓으면 2~3열 격자(행마다 높이 맞춤). `bottom`이 있으면 행을 고르게 늘려 그 높이까지 채운다."""

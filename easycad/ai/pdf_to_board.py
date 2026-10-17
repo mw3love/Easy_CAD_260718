@@ -26,7 +26,7 @@ from easycad.fileio.flow_spec import FlowSpecError, parse_spec
 
 BOARD_KIND = "paper-board"   # 옛(§8 항목53) 논문 틀 설계서 표식 — 흐름도 설계서와 가르는 열쇠(`is_board_spec`). 다시 연 옛 보드용으로 남김
 BLOCK_KIND = "block-board"   # §8 항목57 블록 조립식 — 새로 만드는 보드는 모두 이것
-BLOCK_TYPES = ("text", "list", "cards", "flow", "bars", "numbers", "figure", "table", "terms", "timeline", "quote", "verdict")
+BLOCK_TYPES = ("text", "list", "cards", "flow", "steps", "bars", "numbers", "figure", "table", "terms", "timeline", "quote", "verdict")
 BLOCK_SIZES = ("small", "normal", "big")
 MAX_BLOCKS = 12
 MAX_MORE = 12   # 조각 후보 상한(§8 항목59 ②)
@@ -53,6 +53,8 @@ _BLOCK_FORMAT = """출력 형식 — 아래 JSON 하나만 출력하라(다른 �
 - cards: "items": [{{"name": "이름", "body": "쉬운 설명 1~2문장", "pages": "p.3", "group": "groups 중 하나(없으면 \\"\\")"}}, ...] 2~6개 — 핵심 개념·주요 항목
 - flow: "flow": {{"direction": "TD", "lanes": [], "steps": [{{"id": "s1", "text": "단계(12자 안팎)", "kind": "step"}}, ... 3~9개],
          "links": [{{"from": "s1", "to": "s2", "text": ""}}, ...], "focus": "가장 중요한 단계 id"}} — 일이 진행되는 순서·작동 원리
+- steps: "items": [{{"text": "단계(14자 안팎)", "sym": "그 단계의 기호·수식(없으면 \\"\\" — 예: \\"QKᵀ\\")"}}, ... 3~6개], "focus": 가장 중요한 단계 번호(1부터),
+         "note": "단계를 읽는 법 한 줄(없으면 \\"\\")" — 갈림길 없이 한 방향으로 가는 짧은 계산·작동 순서(앱이 왼쪽→오른쪽 카드 한 줄로 그린다)
 - bars: "bars": [{{"label": "비교 대상", "value": 27.3, "mine": true}}, ... 3~6개], "note": "막대 읽는 법 한 줄" — 숫자 비교 하나
 - numbers: "items": [{{"label": "숫자 이름", "value": "41.8", "note": "한 줄 설명", "pages": "p.1", "group": "groups 중 하나"}}, ... 1~4개] — 꼭 기억할 숫자
   (value는 숫자와 단위만 — "3.5일"·"28.4". 단위 말고 다른 말을 붙이지 말 것)
@@ -72,7 +74,8 @@ _BLOCK_FORMAT = """출력 형식 — 아래 JSON 하나만 출력하라(다른 �
 - groups는 블록 종류(구조·결과…)가 아니라 문서를 가로지르는 내용 줄기다. 같은 블록 안에서도 줄기가 다르면 group을 다르게 단다 —
   예: 숫자 블록에서 번역 점수 둘은 "성능", 학습 시간은 "비용" / 개념 카드에서 어텐션 관련 둘은 "어텐션", 나머지는 "순서 정보".
   한 블록의 항목이 모두 같은 group이면 색 구분이 사라지니, 나눌 수 있으면 나눈다.
-- 논문이면 flow는 이 논문의 핵심 원리(제안한 방법이 실제로 계산·작동하는 단계)로 — 일반적인 처리 순서가 아니라. 단계 글 끝에 그 단계의
+- 갈림길·담당이 없는 짧은 순서(계산 단계·작동 원리 3~6단계)는 flow 말고 steps로 — flow는 갈림길·되돌아감·담당이 있을 때만(꺾인 화살표가 읽기 어렵다).
+- 논문이면 flow(또는 steps)는 이 논문의 핵심 원리(제안한 방법이 실제로 계산·작동하는 단계)로 — 일반적인 처리 순서가 아니라. 단계 글 끝에 그 단계의
   기호·수식이 있으면 괄호로(예: "질의와 키를 곱함 (QKᵀ)").
 - 문서 종류에 맞는 블록을 고른다. 논문: cards(핵심 개념)·flow(작동 순서)·bars/numbers(결과)·figure·terms·verdict. 회의록·보고: list(결정한 것)·
   table(할 일·담당·기한)·timeline(일정)·numbers. 매뉴얼·절차: flow·list·table·figure. 맞지 않는 블록은 넣지 말 것.
@@ -416,6 +419,12 @@ def _parse_blocks(d: dict) -> dict:
                     ok = True
                 except FlowSpecError:
                     ok = False
+        elif t == "steps":   # 가로 단계 카드(§8 항목60 ④)
+            blk["items"] = items(b.get("items") or b.get("steps"), ("text", "sym"), 6)
+            focus = _num(b.get("focus"))
+            blk["focus"] = int(focus) if focus is not None and 1 <= focus <= len(blk["items"]) else 0
+            blk["note"] = s(b.get("note"))
+            ok = len(blk["items"]) >= 2
         elif t == "bars":
             bars = []
             for v in b.get("bars") or b.get("items") or []:
