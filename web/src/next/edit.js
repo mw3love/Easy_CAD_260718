@@ -4,21 +4,8 @@ import { newId } from './model.js'
 import { itemBounds } from './doc.js'
 import { resolveRoutes } from './arrows.js'
 
-const rad = d => (d * Math.PI) / 180
-
-// 칠판 좌표 → 아이템 안 좌표(pos 다음 origin 중심 회전·배율의 역)
-export function toLocal(it, p) {
-  const [x, y] = it.pos || [0, 0], [ox, oy] = it.origin || [0, 0], r = rad(-(it.rotation || 0)), s = it.scale || 1
-  let qx = p.x - x - ox, qy = p.y - y - oy
-  ;[qx, qy] = [qx * Math.cos(r) - qy * Math.sin(r), qx * Math.sin(r) + qy * Math.cos(r)]
-  return { x: qx / s + ox, y: qy / s + oy }
-}
-export function toScene(it, p) {
-  const [x, y] = it.pos || [0, 0], [ox, oy] = it.origin || [0, 0], r = rad(it.rotation || 0), s = it.scale || 1
-  let qx = (p.x - ox) * s, qy = (p.y - oy) * s
-  ;[qx, qy] = [qx * Math.cos(r) - qy * Math.sin(r), qx * Math.sin(r) + qy * Math.cos(r)]
-  return { x: qx + ox + x, y: qy + oy + y }
-}
+export { toLocal, toScene } from './xform.js'
+import { toLocal, toScene } from './xform.js'
 
 const segDist = (p, a, b) => {
   const dx = b.x - a.x, dy = b.y - a.y, L = dx * dx + dy * dy
@@ -213,8 +200,8 @@ export function mirror(items, ids, horizontal, textBox) {
 }
 
 // 화살표 따라가기 — 편집 뒤 붙은 화살표 꼭짓점을 문서에 반영(「자동 길」은 다시 꺾고, 아니면 양 끝만 따라감 — 데스크톱 reroute)
-export function followArrows(items) {
-  const routes = resolveRoutes(items)
+export function followArrows(items, rectOf) {
+  const routes = resolveRoutes(items, rectOf)
   const byId = new Map(items.map(it => [it._id, it]))
   return items.map((it, i) => {
     if (it.type !== 'sarrow') return it

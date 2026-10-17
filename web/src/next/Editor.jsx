@@ -5,8 +5,10 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { Item, layoutText } from './render.jsx'
 import { boardMembership, drawOrder, itemBounds } from './doc.js'
 import { PT, TEXT_MARGIN, labelAnchor } from './geom.js'
-import { resolveRoutes } from './arrows.js'
+import { applyRouting, minStubs, resolveRoutes, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
+import { ROUTE_BOX, bindPt, dropTarget, edgeMid, isConnHost, OPP, qcDelta, qcDots, shapePorts, snapAt } from './connect.js'
+import { routeOrtho } from '../route.js'
 import { newId } from './model.js'
 import {
   applyRect, boardContents, duplicate, expandGroups, followArrows, groupItems, localRect, mirror, moveItems, removeItems, resizeRect,
@@ -29,6 +31,18 @@ export function textBox(it) {
   return b
 }
 
+// 붙는 계산이 쓰는 도형 안 바탕 사각형(글 상자는 화면에서 잰 크기)
+const rectOf = it => { if (it.type === 'text') { const b = textBox(it); return [0, 0, b.w, b.h] } return localRect(it) }
+const QC_BLUE = 'rgb(90,150,235)'   // 데스크톱 큐닷·포트점 색
+const HP_MARGIN = 30, CONN_DRAG_PX = 8, CONN_STRAIGHT_PX = 10   // 포트점 후보 범위·끌기 시작·출구 축 맞추기(데스크톱 `_hover_port_at`·`_hp_*`)
+// 도형 '속'에 있나(데스크톱 `_shape_interior_contains` — 원은 타원 안, 나머지는 바탕 사각형 안)
+function inside(it, p) {
+  const q = toLocal(it, p), [x, y, w, h] = rectOf(it)
+  if (it.type === 'ellipse') { const dx = (q.x - x - w / 2) / (w / 2 || 1), dy = (q.y - y - h / 2) / (h / 2 || 1); return dx * dx + dy * dy <= 1 }
+  return q.x >= x && q.x <= x + w && q.y >= y && q.y <= y + h
+}
+const sceneRectOf = it => { const b = sceneBox(it, textBox); return { l: b.x, t: b.y, r: b.x + b.w, b: b.y + b.h } }
+
 const topZ = items => Math.max(0, ...items.map(it => it.z ?? 0))
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
@@ -40,14 +54,14 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   const [cursor, setCursor] = useState('default')
   const st = useRef({}), hist = useRef({ past: [], future: [] }), clip = useRef({ items: [], seq: 0 }), svg = useRef(null)
   const items = live || model.items
-  const R = useRef(); R.current = { model, sel, cam, tool, items, editing }
+  const R = useRef(); R.current = { ...R.current, model, sel, cam, tool, items, editing, hp: overlay.hp }
 
   const toSceneP = useCallback(e => { const r = svg.current.getBoundingClientRect(), c = R.current.cam; return { x: (e.clientX - r.left - c.x) / c.z, y: (e.clientY - r.top - c.y) / c.z } }, [])
   const scr = p => ({ x: p.x * cam.z + cam.x, y: p.y * cam.z + cam.y })
 
   // 확정 — 붙은 화살표 따라가기 + 되돌리기 칸
   const commit = useCallback((next, nextSel, label = '') => {
-    const prev = R.current.model.items, fixed = followArrows(next)
+    const prev = R.current.model.items, fixed = followArrows(next, rectOf)
     hist.current.past.push({ items: prev, sel: R.current.sel }); hist.current.future = []
     if (hist.current.past.length > 200) hist.current.past.shift()
     setModel(m => ({ ...m, items: fixed })); setLive(null)
@@ -80,7 +94,12 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       out.push({ key: 'rot', p: toScene(it, { x: -g, y: -g }), cursor: 'grab', round: true })   // 좌상단 대각 — 상자와 같은 자리(데스크톱 `_rot_handle_center`, 2026-10-17 통일)
     } else if (it.type === 'line') {
       out.push({ key: 'e0', p: toScene(it, { x: it.line[0], y: it.line[1] }), cursor: 'crosshair' }, { key: 'e1', p: toScene(it, { x: it.line[2], y: it.line[3] }), cursor: 'crosshair' })
+    } else if (it.type === 'sarrow' && it.pts?.length >= 2) {   // 끝점 손잡이 — 끌어 다시 붙이기·떼기(데스크톱 endpoint handle)
+      const a = it.pts[0], b = it.pts[it.pts.length - 1]
+      out.push({ key: 'a0', p: toScene(it, { x: a[0], y: a[1] }), cursor: 'pointer' }, { key: 'a1', p: toScene(it, { x: b[0], y: b[1] }), cursor: 'pointer' })
     }
+    // 큐닷 — 포트에서 바깥 24px(클릭 = 복제+연결, 끌기 = 화살표). 다른 도형을 가리키는 중이면 숨김(`_qc_dots_hover_suppressed`)
+    if (isConnHost(it) && !R.current.hp) for (const q of qcDots(it, rectOf, z)) out.push({ key: 'qc:' + q.side, p: q.p, cursor: 'crosshair', qc: true, port: { p: q.port, n: q.n } })
     return out
   }
   const handleAt = p => { const z = R.current.cam.z; return handlesOf(single).find(h => Math.hypot(h.p.x - p.x, h.p.y - p.y) * z <= HANDLE * 0.75) || null }
@@ -96,6 +115,8 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     return null
   }
   const edgeCursor = { l: 'ew-resize', r: 'ew-resize', t: 'ns-resize', b: 'ns-resize' }
+  // 포트점 예고 바꾸기(같으면 다시 그리지 않음)
+  const setHp = hp => { const a = R.current.hp, same = (!a && !hp) || (a && hp && a.id === hp.id && a.target?.p.x === hp.target?.p.x && a.target?.p.y === hp.target?.p.y); if (!same) { R.current.hp = hp; setOverlay(o => ({ ...o, hp })) } }
 
   // 끄는 것 + 함께 움직일 것(보드 안 것·같은 묶음)
   const movingSet = ids => [...new Set([...ids, ...boardContents(R.current.model.items, ids, textBox)])]
@@ -107,9 +128,12 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     svg.current.setPointerCapture(e.pointerId)
     if (e.button === 1 || (e.button === 0 && st.current.space)) { st.current = { ...st.current, kind: 'pan', sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }
     if (e.button !== 0) return
+    setHp(null)
     const t = R.current.tool
     if (t !== 'select') return startDraw(t, p, e)
     const h = handleAt(p)
+    if (h?.qc) { st.current = { ...st.current, kind: 'conn', src: single._id, side: h.key.slice(3), port: h.port, start: p, cur: p, fromQc: true, moved: false }; return }
+    if (h && (h.key === 'a0' || h.key === 'a1')) { st.current = { ...st.current, kind: 'aend', id: single._id, idx: h.key === 'a0' ? 0 : 1, orig: m.items }; setOverlay(o => ({ ...o, hp: null })); return }
     if (h) {
       const it = single
       st.current = { ...st.current, kind: h.key === 'rot' ? 'rotate' : h.key === 'scale' ? 'tscale' : h.key.startsWith('e') ? 'lineend' : 'resize', handle: h.key, id: it._id, start: p, orig: m.items }
@@ -117,8 +141,10 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     }
     const edge = edgeAt(single, p)
     if (edge) { st.current = { ...st.current, kind: 'resize', handle: edge, id: single._id, start: p, orig: m.items }; return }
-    const hit = topHit(m.items, p, HIT_PX / z, textBox)
     const add = e.shiftKey || e.ctrlKey || e.metaKey   // 더해 고르기 — Ctrl(데스크톱 손버릇)·Shift(웹 관례) 둘 다
+    // 미선택 도형의 포트점·테두리(14px)를 누르면 화살표 잇기 대기 — 끌면 화살표, 그냥 놓으면 그 도형 선택(데스크톱 `_hover_port_at`→`_hp_*`)
+    if (!add && !e.altKey) { const hp = hoverPort(p); if (hp?.target) { st.current = { ...st.current, kind: 'conn', src: hp.target.id, port: { p: hp.target.p, n: hp.target.n }, start: p, cur: p, fromQc: false, moved: false }; return } }
+    const hit = topHit(m.items, p, HIT_PX / z, textBox)
     if (hit) {
       let ids = R.current.sel
       if (add) ids = ids.includes(hit._id) ? ids.filter(i => i !== hit._id && !(hit.group_id && m.items.find(x => x._id === i)?.group_id === hit.group_id)) : expandGroups(m.items, [...ids, hit._id])
@@ -145,10 +171,31 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       const others = s.orig.filter(it => !movedIds.has(it._id) && !it.locked && !(it.type === 'sarrow' && (movedIds.has(it._bind1) || movedIds.has(it._bind2)))).map(it => sceneBox(it, textBox))
       const a = alignSnap({ x: box.x + dx, y: box.y + dy, w: box.w, h: box.h }, others, z)
       if (!e.shiftKey || dx) dx += a.dx; if (!e.shiftKey || dy) dy += a.dy
-      setLive(followArrows(moveItems(s.orig, s.ids, dx, dy))); setOverlay(o => ({ ...o, guides: a.guides }))
+      setLive(followArrows(moveItems(s.orig, s.ids, dx, dy), rectOf)); setOverlay(o => ({ ...o, guides: a.guides }))
       return
     }
     if (s.kind === 'rubber') { setOverlay(o => ({ ...o, rubber: { a: s.start, b: p } })); return }
+    if (s.kind === 'conn') {
+      if (!s.moved && Math.hypot(p.x - s.start.x, p.y - s.start.y) * z <= CONN_DRAG_PX) return
+      s.moved = true
+      let cur = p; const n = s.port.n, o = s.port.p   // 출구 축에 10px 안이면 곧게(데스크톱)
+      if (Math.abs(n.x) >= Math.abs(n.y)) { if (Math.abs(cur.y - o.y) * z <= CONN_STRAIGHT_PX) cur = { x: cur.x, y: o.y } }
+      else if (Math.abs(cur.x - o.x) * z <= CONN_STRAIGHT_PX) cur = { x: o.x, y: cur.y }
+      s.cur = cur
+      const tgt = connTarget(s.src, s.port, cur)
+      setOverlay(o2 => ({ ...o2, conn: connRoute(s.src, s.port, tgt, cur), hp: tgt ? { id: tgt.id, target: tgt } : null }))
+      return
+    }
+    if (s.kind === 'aend') {
+      const it = s.orig.find(x => x._id === s.id), tgt = snapAt(hostsNear(p), p, z, rectOf), end = tgt ? tgt.p : p
+      const k = s.idx ? 'bind2' : 'bind1', last = it.pts.length - 1, [px, py] = it.pos || [0, 0], lp = [end.x - px, end.y - py]
+      const host = tgt && s.orig.find(x => x._id === tgt.id)
+      let next = { ...it, ['_' + k]: tgt ? tgt.id : null, [k + '_pt']: tgt ? bindPt(host, tgt.p) : null, [k + '_group']: null, route_hints: [] }
+      next.pts = s.idx ? [it.pts[0], lp] : [lp, it.pts[last]]   // 끝점 끌기 = 새로 그리기처럼 길 전체 다시(데스크톱 `_move_endpoint_with_snap`)
+      next = { ...next, pts: applyRouting(next, s.orig.map(x => (x._id === s.id ? next : x)), rectOf) }
+      setLive(s.orig.map(x => (x._id === s.id ? next : x))); setOverlay(o => ({ ...o, hp: tgt ? { id: tgt.id, target: tgt } : null }))
+      return
+    }
     if (s.kind === 'resize' || s.kind === 'rotate' || s.kind === 'tscale' || s.kind === 'lineend') {
       const it = s.orig.find(x => x._id === s.id); let next
       if (s.kind === 'resize') next = applyRect(it, resizeRect(localRect(it), s.handle, toLocal(it, p), { keepRatio: it.type === 'image' || e.shiftKey }))
@@ -156,7 +203,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
         next = rotateTo(it, (it.rotation || 0) + ((a1 - a0) * 180) / Math.PI, e.shiftKey) }
       else if (s.kind === 'tscale') { const b = textBox(it), q = toLocal(it, p), k = Math.max(0.2, Math.max(q.x / b.w, q.y / b.h)); next = { ...it, font: Math.max(4, Math.round((it.font || 12) * k)) } }
       else { const q = toLocal(it, p), L = [...it.line]; if (s.handle === 'e0') { L[0] = q.x; L[1] = q.y } else { L[2] = q.x; L[3] = q.y }; next = { ...it, line: L } }
-      setLive(followArrows(s.orig.map(x => (x._id === s.id ? next : x))))
+      setLive(followArrows(s.orig.map(x => (x._id === s.id ? next : x)), rectOf))
       return
     }
     if (s.kind === 'draw') { s.cur = p; s.shift = e.shiftKey; setOverlay(o => ({ ...o, draw: { tool: s.tool, a: s.start, b: p, shift: e.shiftKey, pts: s.pts } })); if (s.tool === 'pen') { const last = s.pts[s.pts.length - 1]; if (Math.hypot(p.x - last.x, p.y - last.y) * z >= 2) s.pts.push(p) } return }
@@ -166,6 +213,12 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     const s = st.current, p = toSceneP(e)
     st.current = { space: s.space }
     setCursor('default')
+    if (s.kind === 'conn') {
+      setOverlay(o => ({ ...o, conn: null, hp: null }))
+      if (!s.moved) { if (s.fromQc) qcCreate(s.src, s.side); else setSel(expandGroups(R.current.model.items, [s.src])); return }
+      return newArrow(s.src, s.port, connTarget(s.src, s.port, s.cur), s.cur)
+    }
+    if (s.kind === 'aend') { setOverlay(o => ({ ...o, hp: null })); if (live) commit(live, [s.id], '화살표 끝 옮김'); return }
     if (s.kind === 'move') { setOverlay(o => ({ ...o, guides: null })); if (s.moved && live) commit(live.filter(it => it), s.sel, '옮김'); else setLive(null); return }
     if (s.kind === 'rubber') {
       setOverlay(o => ({ ...o, rubber: null }))
@@ -176,10 +229,68 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     if (s.kind === 'draw') return finishDraw(s, p)
   }
 
+  // ── 화살표 잇기(3단계, 데스크톱 `core_view` `_hover_port_at`·`_qc_snap_target`·`_hp_create_arrow`·`_qc_create`) ──
+  // 칠판 점 근처(화면 30px)의 붙는 도형 — 그리는 차례(위에 그린 것이 뒤)
+  function hostsNear(p, skip) {
+    const m = HP_MARGIN / R.current.cam.z, out = []
+    for (const [it] of R.current.order || []) {
+      if (!isConnHost(it) || it.locked || skip?.has(it._id)) continue
+      const b = sceneBox(it, textBox)
+      if (p.x >= b.x - m && p.x <= b.x + b.w + m && p.y >= b.y - m && p.y <= b.y + b.h + m) out.push(it)
+    }
+    return out
+  }
+  // 미선택 도형 포트점 예고 → { id(점 보일 도형), target(누르면 화살표가 시작될 자리 | null) } | null
+  function hoverPort(p) {
+    const sel = new Set(R.current.sel), items = R.current.model.items
+    if (items.some(it => sel.has(it._id) && isConnHost(it) && inside(it, p))) return null   // 고른 도형 속 = 그 도형 몫(이동)
+    let near = hostsNear(p, sel)
+    const occ = near.filter(it => inside(it, p))
+    if (occ.length) near = [occ[occ.length - 1]]   // 도형 속이면 맨 위 그것만(밑에 가려진 도형 점은 안 뜸)
+    if (!near.length) return null
+    const d = it => { const b = sceneBox(it, textBox); return Math.hypot(b.x + b.w / 2 - p.x, b.y + b.h / 2 - p.y) }
+    const host = near.reduce((a, b) => (d(b) < d(a) ? b : a))
+    return { id: host._id, target: snapAt(near, p, R.current.cam.z, rectOf) }
+  }
+  // 끌어 놓을 자리 — 붙을 곳(포트·테두리, 다른 도형 속이면 그 도형 가장 가까운 포트). 같은 도형은 다른 자리일 때만(자기 연결)
+  function connTarget(srcId, port, cur) {
+    const t = dropTarget(hostsNear(cur), cur, R.current.cam.z, rectOf, srcId)
+    return t && (t.id !== srcId || Math.hypot(t.p.x - port.p.x, t.p.y - port.p.y) > 1) ? t : null
+  }
+  const PROTO = { width: 2, head: true, head_start: false, head_scale: 1, curve_r: 10 }   // 새 화살표(웹 그리기 굵기 2 — 데스크톱 기본 1)
+  function connRoute(srcId, port, tgt, cur) {
+    const items = R.current.model.items, src = items.find(x => x._id === srcId), dst = tgt && items.find(x => x._id === tgt.id)
+    const box = it => (it && ROUTE_BOX.has(it.type) && it.rect ? sceneRect(it) : null)
+    const obstacles = items.filter(it => ROUTE_BOX.has(it.type) && it.rect && it._id !== srcId && it._id !== tgt?.id).map(sceneRect)
+    return routeOrtho(port.p, port.n, tgt ? tgt.p : cur, tgt ? tgt.n : null, obstacles, { conn: [box(src), box(dst)], minStub: minStubs(PROTO) })
+  }
+  const arrowItem = (srcId, a, dstId, b, extra) => {
+    const items = R.current.model.items, src = items.find(x => x._id === srcId), dst = dstId && items.find(x => x._id === dstId)
+    return base([0, 0], { type: 'sarrow', color: INK, style: 1, routing: 'ortho', route_hints: [], ...PROTO, ...extra,
+      _bind1: srcId, bind1_pt: bindPt(src, a), bind1_group: null, _bind2: dst ? dstId : null, bind2_pt: dst ? bindPt(dst, b) : null, bind2_group: null, z: topZ(items) + 1 })
+  }
+  // 끌어 놓음 = 화살표만(빈 곳이면 끝이 떠 있는 화살표). 「자동 길」로 — 도형을 옮겨도 다시 꺾임
+  function newArrow(srcId, port, tgt, cur) {
+    const pts = connRoute(srcId, port, tgt, cur), it = arrowItem(srcId, port.p, tgt?.id, tgt?.p, { auto_route: true, pts: pts.map(q => [q.x, q.y]) })
+    commit([...R.current.model.items, it], [it._id], '화살표')
+  }
+  // 큐닷 클릭 = 그 방향으로 (크기 + 40) 옆에 같은 도형 복제(라벨·묶음 없이) + 변 가운데끼리 잇는 화살표
+  function qcCreate(srcId, side) {
+    const items = R.current.model.items, src = items.find(x => x._id === srcId), box = sceneBox(src, textBox), [dx, dy] = qcDelta(box, side)
+    const r = duplicate(items, [srcId], dx, dy), dup = { ...r.items.find(x => x._id === r.ids[0]), group_id: null, z: src.z ?? 0 }
+    delete dup.label
+    const all = r.items.map(x => (x._id === dup._id ? dup : x)), a = edgeMid(box, side), b = edgeMid(sceneBox(dup, textBox), OPP[side])
+    R.current.model = { ...R.current.model, items: all }   // arrowItem이 복제본을 찾게
+    const ar = arrowItem(srcId, a, dup._id, b, { auto_route: false, pts: [[a.x, a.y], [b.x, b.y]] })
+    commit([...all, ar], [dup._id], '복제 + 화살표')
+  }
+
   function hoverCursor(p) {
     const t = R.current.tool
     if (t !== 'select') { setCursor(t === 'text' ? 'text' : 'crosshair'); return }
-    const h = handleAt(p); if (h) { setCursor(h.cursor); return }
+    const h = handleAt(p); if (h) { setHp(null); setCursor(h.cursor); return }
+    const hp = hoverPort(p); setHp(hp)
+    if (hp?.target && (!inside(R.current.model.items.find(x => x._id === hp.target.id) || {}, p) || (hp.target.port && Math.hypot(hp.target.p.x - p.x, hp.target.p.y - p.y) * R.current.cam.z <= 5))) { setCursor('crosshair'); return }
     const ed = edgeAt(single, p); if (ed) { setCursor(edgeCursor[ed]); return }
     setCursor(topHit(R.current.model.items, p, HIT_PX / R.current.cam.z, textBox) ? 'move' : 'default')
   }
@@ -313,9 +424,9 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   }, [setCam])
 
   // ── 그리기 차례·화면 밖 빼기 ──
-  const order = useMemo(() => drawOrder(items), [items])
+  const order = useMemo(() => drawOrder(items), [items]); R.current.order = order
   const onBoard = useMemo(() => boardMembership(items), [items])
-  const routes = useMemo(() => resolveRoutes(items), [items])
+  const routes = useMemo(() => resolveRoutes(items, rectOf), [items])
   const bounds = useMemo(() => items.map(itemBounds), [items])
   const view = { x: -cam.x / cam.z, y: -cam.y / cam.z, w: size.w / cam.z, h: size.h / cam.z }, mg = 40 / cam.z
   const visible = order.filter(([it, i]) => { const b = bounds[i]; return it.type === 'board' || (b.x < view.x + view.w + mg && b.x + b.w > view.x - mg && b.y < view.y + view.h + mg && b.y + b.h > view.y - mg) })
@@ -335,6 +446,14 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   const handles = single && !editing && !live ? handlesOf(single) : []
   const multiBox = selItems.length > 1 ? unionBox(selItems.map(it => sceneBox(it, textBox))) : null
   const rb = overlay.rubber, dr = overlay.draw
+  // 포트점 예고 — 가장 가까운 도형 하나의 포트 넷(속 빈 점), 누르면 시작될 자리는 채운 점(데스크톱 `_draw_port_dots`)
+  const portDots = (() => {
+    const hp = overlay.hp, host = hp && byId.get(hp.id); if (!host || editing) return null
+    const r = 5 / z, tp = hp.target?.id === hp.id ? hp.target.p : null, dots = shapePorts(host, rectOf).map(q => q.p)
+    const hit = q => tp && Math.abs(q.x - tp.x) < 0.5 && Math.abs(q.y - tp.y) < 0.5
+    return <g>{dots.map((q, i) => <circle key={i} cx={q.x} cy={q.y} r={r} fill={hit(q) ? BLUE : '#fff'} stroke={hit(q) ? '#fff' : BLUE} strokeWidth={(hit(q) ? 1.5 : 1.4) / z} />)}
+      {tp && !dots.some(hit) && <circle cx={tp.x} cy={tp.y} r={r} fill={BLUE} stroke="#fff" strokeWidth={1.5 / z} />}</g>
+  })()
 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
@@ -346,8 +465,11 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
           {selItems.map(outline)}
           {multiBox && <rect x={multiBox.x} y={multiBox.y} width={multiBox.w} height={multiBox.h} fill="none" stroke={BLUE} strokeWidth={1 / z} strokeDasharray={`${4 / z} ${3 / z}`} />}
           {selItems.filter(it => it.locked).map(it => { const b = sceneBox(it, textBox); return <text key={'lk' + it._id} x={b.x + b.w} y={b.y} fontSize={12 / z} fill={BLUE}>🔒</text> })}
-          {handles.map(h => (h.round ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={HANDLE / 2 / z} fill={PEACH} stroke="#fff" strokeWidth={1 / z} />
+          {handles.map(h => (h.qc ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={(HANDLE * 0.45) / z} fill={QC_BLUE} stroke="#fff" strokeWidth={1 / z} />
+            : h.round ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={HANDLE / 2 / z} fill={PEACH} stroke="#fff" strokeWidth={1 / z} />
             : <rect key={h.key} x={h.p.x - HANDLE / 2 / z} y={h.p.y - HANDLE / 2 / z} width={HANDLE / z} height={HANDLE / z} fill={BLUE} stroke="#fff" strokeWidth={1 / z} />))}
+          {overlay.conn && <polyline points={overlay.conn.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={BLUE} strokeWidth={2 / z} strokeDasharray={`${6 / z} ${4 / z}`} />}
+          {portDots}
           {overlay.guides?.map((g, i) => {
             const [x1, y1, x2, y2] = g.axis === 'v' ? [g.at, g.from, g.at, g.to] : [g.from, g.at, g.to, g.at], dash = g.role === 'center' ? undefined : `${6 / z} ${4 / z}`
             return <g key={i}><line x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(0,0,0,.7)" strokeWidth={3 / z} strokeDasharray={dash} /><line x1={x1} y1={y1} x2={x2} y2={y2} stroke={GUIDE} strokeWidth={1.5 / z} strokeDasharray={dash} /></g>
