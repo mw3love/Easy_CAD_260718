@@ -14,7 +14,7 @@ import uuid
 from PyQt6.QtCore import QPointF, QRectF
 from PyQt6.QtGui import QColor
 
-from easycad.canvas.annotator_core import _BoardItem
+from easycad.canvas.annotator_core import BOARD_ASPECT, _BoardItem
 from easycad.canvas.host_board import _outline_rect
 
 
@@ -322,6 +322,83 @@ class _PiecesMixin:
         finally:
             self._pc_busy = False
 
+    # ---- 「종이로」(§8 항목59 ④) — 손으로 놓은 조각을 놓인 차례대로 쪽(16:9 보드 틀)에 나눠 담기 -----------------------------
+
+    _PG_W, _PG_M = 1920.0, 64.0   # 쪽 폭 · 쪽 안 여백
+
+    def _piece_groups(self, frames) -> list:
+        """고른 조각 틀마다 (틀, 그 묶음 아이템들, 묶음 범위) — 읽는 차례(위→아래, 같은 높이면 왼→오)."""
+        out = []
+        for f in frames:
+            gid = getattr(f, "_group_id", None)
+            members = [it for it in self._scene.items() if it.parentItem() is None and gid and getattr(it, "_group_id", None) == gid] or [f]
+            out.append((f, members, _outline_rect(members)))
+        return sorted(out, key=lambda t: (round(t[2].top() / 60.0), t[2].left()))
+
+    def _pieces_to_pages(self):
+        """「종이로」 — 고른 조각을 지금 놓인 상대 위치 그대로 쪽마다 담는다(조각은 자르지 않고, 넘치면 다음 쪽). 쪽 = 16:9 보드 틀,
+        여러 쪽이면 한 묶음(보드 막대 「내보내기 ▾」가 PDF 여러 쪽). 쪽들은 고른 곳 오른쪽에. 되돌리기 한 칸. 반환: 쪽 보드들."""
+        frames = [it for it in self._scene.selectedItems() if it.parentItem() is None and getattr(it, "_pb_piece", None)]
+        groups = self._piece_groups(frames)
+        if not groups:
+            return []
+        cw = self._PG_W - 2 * self._PG_M
+        ch = self._PG_W / BOARD_ASPECT - 2 * self._PG_M
+        left = min(r.left() for _f, _m, r in groups)
+        pages, cur, oy = [], [], None
+        for g in groups:
+            r = g[2]
+            if cur and (r.right() - left > cw or r.bottom() - oy > ch or r.top() < oy - 60.0):
+                pages.append((oy, cur))
+                cur, oy = [], None
+            if oy is None:
+                oy = r.top()
+            cur.append(g)
+        if cur:
+            pages.append((oy, cur))
+        area = _outline_rect([it for _f, m, _r in groups for it in m])
+        # 쪽 묶음은 빈 자리에 — 다른 보드 위에 겹쳐 놓으면 옮긴 조각이 그 보드에 「끌어다 넣기」로 들어갔다(실제 창)
+        total_w = len(pages) * self._PG_W + (len(pages) - 1) * 120.0
+        total_h = self._PG_W / BOARD_ASPECT
+        moving = [it for _f, m, _r in groups for it in m]
+        spot = self._ai_find_free_center(self._scene, total_w, total_h,
+                                         QPointF(area.right() + 240.0 + total_w / 2.0, area.top() + total_h / 2.0), exclude=moving)
+        x = spot.x() - total_w / 2.0
+        top = spot.y() - total_h / 2.0
+        set_id = uuid.uuid4().hex[:8] if len(pages) > 1 else None
+        ops, boards = [], []
+        zs = [it.zValue() for it in self._scene.items() if it.parentItem() is None and not isinstance(it, _BoardItem)]
+        z = max(-999.0, min(zs, default=0.0) - 1.0)
+        for k, (oy, gs) in enumerate(pages):
+            h = self._PG_W / BOARD_ASPECT
+            board = _BoardItem(QRectF(0.0, 0.0, self._PG_W, h), QColor("#ffffff"))
+            board.setPos(x, top)
+            board.setZValue(z)
+            board.setFlags(board.GraphicsItemFlag.ItemIsMovable | board.GraphicsItemFlag.ItemIsSelectable)
+            if set_id:
+                board._set_id, board._page = set_id, k + 1
+            self._scene.addItem(board)
+            ops.append(("create", board))
+            boards.append(board)
+            d = QPointF(x + self._PG_M - left, top + self._PG_M - oy)
+            for _f, members, _r in gs:
+                for it in members:
+                    old = QPointF(it.pos())
+                    it.setPos(old + d)
+                    ops.append(("mut", it, "pos", old, QPointF(it.pos())))
+            x += self._PG_W + 120.0
+        self._pc_busy = True   # 이 옮기기는 「끌어다 넣기」가 아니다
+        try:
+            self._push_entry(ops)
+        finally:
+            self._pc_busy = False
+        self._scene.clearSelection()
+        boards[0].setSelected(True)   # 보드 막대(색·내보내기 ▾ — PDF N쪽)가 바로 뜬다
+        self._ai_ensure_visible(self._view, self._ai_items_rect(boards))
+        self._refresh_minimap()
+        self.statusBar().showMessage(f"조각을 {len(pages)}쪽에 담았어요 — 위 막대 「내보내기 ▾」에서 PDF로", 5000)
+        return boards
+
     # ---- 조각 막대(고른 조각 위) ----------------------------------------------------------------------
 
     def _piece_bar_sync(self, view):
@@ -344,6 +421,7 @@ class _PiecesMixin:
     def _make_piece_bar(self, view):
         from PyQt6.QtCore import Qt
         from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
+        from easycad.canvas.host_aimake import _BAR_BTN_QSS
         from easycad.canvas.host_dialogs import _CORAL_BTN_QSS
         bar = QFrame(view.viewport())
         bar.setObjectName("aiStagingBar")
@@ -360,6 +438,12 @@ class _PiecesMixin:
         go.setCursor(Qt.CursorShape.PointingHandCursor)
         go.clicked.connect(self._pieces_to_board)
         lay.addWidget(go)
-        bar.label, bar.go_btn = label, go
+        paper = QPushButton("종이로", bar)
+        paper.setToolTip("고른 조각을 지금 놓인 차례 그대로 쪽(16:9)에 나눠 담기 — 조각은 자르지 않음, 「내보내기 ▾」로 PDF 여러 쪽")
+        paper.setStyleSheet(_BAR_BTN_QSS)
+        paper.setCursor(Qt.CursorShape.PointingHandCursor)
+        paper.clicked.connect(self._pieces_to_pages)
+        lay.addWidget(paper)
+        bar.label, bar.go_btn, bar.paper_btn = label, go, paper
         bar.adjustSize()
         return bar

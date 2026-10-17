@@ -6,6 +6,7 @@ import json
 from unittest.mock import patch as _patch
 
 from _shared import *  # noqa: F401,F403
+from PyQt6.QtCore import QPointF
 
 from easycad.ai import pdf_to_board as pb
 from easycad.canvas.annotator_core import _BoardItem
@@ -106,4 +107,39 @@ def test_drop_piece_into_board_and_take_block_out(figure_pdf):
     nb = next(b for b in w._scene.items() if isinstance(b, _BoardItem) and b.isSelected())
     assert not any(b["type"] == "table" for b in pb.parse_board(nb._ai["spec"])["blocks"])
     assert any(json.loads(f._pb_piece)["type"] == "table" for f in _frames(w))
+    _close(w)
+
+
+def test_pieces_to_pages_keeps_hand_layout_and_splits(figure_pdf):
+    """[§8 항목59 ④] 「종이로」 — 고른 조각을 놓인 상대 위치 그대로 16:9 쪽에 담고, 넘치면 다음 쪽(조각은 안 자름). 쪽들은 한 묶음."""
+    w = _window()
+    _make(w, figure_pdf)
+    frames = _frames(w)
+    # 손으로 세로 한 줄로 길게 늘어놓은 것처럼(쪽 하나에 다 안 들어가게)
+    y = 0.0
+    for f in sorted(frames, key=lambda f: f.sceneBoundingRect().top()):
+        members = [it for it in w._scene.items() if getattr(it, "_group_id", None) == f._group_id]
+        d = QPointF(5000.0, y) - f.sceneBoundingRect().topLeft()
+        for it in members:
+            it.setPos(it.pos() + d)
+        y += f.sceneBoundingRect().height() + 400.0
+    w._scene.clearSelection()
+    for f in frames:
+        f.setSelected(True)
+    rel = {id(f): f.sceneBoundingRect().topLeft() for f in frames}
+    pages = w._pieces_to_pages()
+    assert len(pages) >= 2 and len({b._set_id for b in pages}) == 1 and [b._page for b in pages] == list(range(1, len(pages) + 1))
+    for f in frames:   # 조각마다 어느 한 쪽 안에 통째로
+        assert sum(b.mapRectToScene(b.rect()).contains(f.sceneBoundingRect()) for b in pages) == 1
+    first = [f for f in frames if pages[0].mapRectToScene(pages[0].rect()).contains(f.sceneBoundingRect())]
+    if len(first) >= 2:   # 같은 쪽 안에선 손으로 놓은 간격 그대로
+        a, b = first[0], first[1]
+        assert abs((b.sceneBoundingRect().top() - a.sceneBoundingRect().top()) - (rel[id(b)].y() - rel[id(a)].y())) < 0.5
+    ai_board = next(b for b in w._scene.items() if isinstance(b, _BoardItem) and (getattr(b, "_ai", None) or {}).get("spec"))
+    assert not any(p.mapRectToScene(p.rect()).intersects(ai_board.mapRectToScene(ai_board.rect())) for p in pages)   # 빈 자리에
+    for _ in range(5):
+        _app.processEvents()
+    assert all(p.scene() is w._scene for p in pages)   # 옮긴 조각이 「끌어다 넣기」로 처리돼 쪽이 사라지지 않음(실제 창 버그)
+    w.undo()
+    assert all(p.scene() is None for p in pages)
     _close(w)
