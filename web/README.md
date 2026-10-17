@@ -36,4 +36,6 @@ npm run dev          # http://localhost:5190 — 저장은 python web/server.py(
 npm test             # 순수 함수 시험
 ```
 
+직접 만드는 칠판(tldraw 대체, 만드는 중)은 `http://localhost:5190/next.html` — 문서는 `.ecad` 그대로, 서버 저장은 `/api/doc/<이름>`.
+
 tldraw는 5.5.2로 고정. `http://` 주소에선 라이선스 키 없이 개발 모드로 돌지만, 실제로 쓰려면 약관상 키가 필요(취미 라이선스는 표시가 남음).

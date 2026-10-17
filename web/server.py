@@ -48,14 +48,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ── API ──
     def _board_path(self):
-        """칠판(`/api/board/<이름>` → `<이름>.json`)·대화 기록(`/api/chatlog/<이름>` → `<이름>.chat.json`) 파일 자리.
+        """칠판(`/api/board/<이름>` → `<이름>.json`)·대화 기록(`/api/chatlog/<이름>` → `<이름>.chat.json`)·
+        직접 만드는 칠판 문서(`/api/doc/<이름>` → `<이름>.ecad`, §8 항목61 「바뀐 결정」) 파일 자리.
         API 경로가 아니면 None, 이름이 나쁘면 ""."""
-        m = re.match(r"^/api/(board|chatlog)/([^/?#]+)$", self.path)
+        m = re.match(r"^/api/(board|chatlog|doc)/([^/?#]+)$", self.path)
         if not m:
             return None
         from urllib.parse import unquote
         name = unquote(m.group(2))
-        ext = ".json" if m.group(1) == "board" else ".chat.json"
+        ext = {"board": ".json", "chatlog": ".chat.json", "doc": ".ecad"}[m.group(1)]
         return os.path.join(self.data_dir, name + ext) if NAME_RE.match(name) else ""
 
     def _json(self, code: int, obj):
@@ -138,7 +139,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(400, b'{"error":"json"}')
         os.makedirs(self.data_dir, exist_ok=True)
         if os.path.exists(p):
-            prev = p[:-5] + ".prev.json"
+            root, ext = os.path.splitext(p)
+            prev = root + ".prev" + ext
             write_via_temp(prev, lambda tmp: _copy(p, tmp))
         write_via_temp(p, lambda tmp: _write(tmp, raw))
         self._send(200, b'{"ok":true}')

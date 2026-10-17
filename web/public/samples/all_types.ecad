@@ -1,0 +1,1037 @@
+{
+ "format": "easycad-doc",
+ "version": 1,
+ "items": [
+  {
+   "pos": [
+    1100.0,
+    300.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": -1.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "board",
+   "rect": [
+    0.0,
+    0.0,
+    400.0,
+    225.0
+   ],
+   "bg": "#ff1f2f4d"
+  },
+  {
+   "pos": [
+    40.0,
+    40.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0.0,
+    0.0,
+    160.0,
+    80.0
+   ],
+   "pen": "#ff1e2b45",
+   "width": 2.0,
+   "fill": null,
+   "style": 1,
+   "label": {
+    "text": "상자 라벨",
+    "color": "#ff1e2b45",
+    "font": 12,
+    "bg": null
+   }
+  },
+  {
+   "pos": [
+    260.0,
+    40.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "ellipse",
+   "rect": [
+    0.0,
+    0.0,
+    140.0,
+    80.0
+   ],
+   "pen": "#ffda7756",
+   "width": 2.0,
+   "fill": "#ffffeedd",
+   "style": 2,
+   "label": {
+    "text": "원",
+    "color": "#ffda7756",
+    "font": 12,
+    "bg": null
+   }
+  },
+  {
+   "pos": [
+    460.0,
+    30.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "symbol",
+   "kind": "decision",
+   "rect": [
+    0.0,
+    0.0,
+    140.0,
+    100.0
+   ],
+   "pen": "#ff1e2b45",
+   "width": 2.0,
+   "fill": null,
+   "style": 1,
+   "label": {
+    "text": "판단?",
+    "color": "#ff1e2b45",
+    "font": 12,
+    "bg": null
+   }
+  },
+  {
+   "pos": [
+    660.0,
+    50.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "symbol",
+   "kind": "terminal",
+   "rect": [
+    0.0,
+    0.0,
+    150.0,
+    60.0
+   ],
+   "pen": "#ff2563eb",
+   "width": 2.0,
+   "fill": "#ffdbeafe",
+   "style": 1,
+   "label": {
+    "text": "시작",
+    "color": "#ff1e2b45",
+    "font": 12,
+    "bg": null
+   }
+  },
+  {
+   "pos": [
+    860.0,
+    40.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0.0,
+    0.0,
+    120.0,
+    80.0
+   ],
+   "pen": "#00000000",
+   "width": 0.0,
+   "fill": "#ff1f2f4d",
+   "style": 0,
+   "label": {
+    "text": "채운 면",
+    "color": "#ffffffff",
+    "font": 14,
+    "bg": null,
+    "family": "Pretendard"
+   }
+  },
+  {
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "arrow",
+   "p1": [
+    40.0,
+    200.0
+   ],
+   "p2": [
+    240.0,
+    200.0
+   ],
+   "ctrl1": null,
+   "ctrl2": null,
+   "color": "#ff1e2b45",
+   "width": 2,
+   "head": true,
+   "head_start": true,
+   "head_scale": 1.0,
+   "style": 1,
+   "labels": [
+    {
+     "text": "양쪽",
+     "color": "#ff1e2b45",
+     "font": 12,
+     "bg": null,
+     "t": 0.5,
+     "off": 0.0
+    }
+   ],
+   "bind1": null,
+   "bind1_group": null,
+   "bind1_pt": null,
+   "bind2": null,
+   "bind2_group": null,
+   "bind2_pt": null
+  },
+  {
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "arrow",
+   "p1": [
+    280.0,
+    240.0
+   ],
+   "p2": [
+    520.0,
+    200.0
+   ],
+   "ctrl1": [
+    340.0,
+    140.0
+   ],
+   "ctrl2": [
+    460.0,
+    300.0
+   ],
+   "color": "#ffda7756",
+   "width": 3,
+   "head": true,
+   "head_start": false,
+   "head_scale": 1.4,
+   "style": 1,
+   "labels": [
+    {
+     "text": "곡선 앞",
+     "color": "#ff1e2b45",
+     "font": 12,
+     "bg": null,
+     "t": 0.25,
+     "off": 0.0
+    },
+    {
+     "text": "뒤",
+     "color": "#ff1e2b45",
+     "font": 12,
+     "bg": null,
+     "t": 0.8,
+     "off": -14.0
+    }
+   ],
+   "bind1": null,
+   "bind1_group": null,
+   "bind1_pt": null,
+   "bind2": null,
+   "bind2_group": null,
+   "bind2_pt": null
+  },
+  {
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "sarrow",
+   "pts": [
+    [
+     560.0,
+     200.0
+    ],
+    [
+     640.0,
+     200.0
+    ],
+    [
+     640.0,
+     260.0
+    ],
+    [
+     760.0,
+     260.0
+    ]
+   ],
+   "color": "#ff1e2b45",
+   "width": 2,
+   "head": true,
+   "head_start": false,
+   "head_scale": 1.0,
+   "style": 1,
+   "auto_route": false,
+   "routing": "ortho",
+   "curve_r": 10.0,
+   "route_hints": [],
+   "labels": [
+    {
+     "text": "직각",
+     "color": "#ff1e2b45",
+     "font": 12,
+     "bg": null,
+     "t": 0.5,
+     "off": 0.0
+    }
+   ],
+   "bind1": null,
+   "bind1_group": null,
+   "bind1_pt": null,
+   "bind2": null,
+   "bind2_group": null,
+   "bind2_pt": null
+  },
+  {
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "sarrow",
+   "pts": [
+    [
+     800.0,
+     200.0
+    ],
+    [
+     900.0,
+     200.0
+    ],
+    [
+     900.0,
+     280.0
+    ]
+   ],
+   "color": "#ff2563eb",
+   "width": 3,
+   "head": false,
+   "head_start": true,
+   "head_scale": 1.0,
+   "style": 2,
+   "auto_route": false,
+   "routing": "ortho",
+   "curve_r": 0.0,
+   "route_hints": [],
+   "bind1": null,
+   "bind1_group": null,
+   "bind1_pt": null,
+   "bind2": null,
+   "bind2_group": null,
+   "bind2_pt": null
+  },
+  {
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "line",
+   "line": [
+    40.0,
+    330.0,
+    240.0,
+    380.0
+   ],
+   "pen": "#ff16a34a",
+   "width": 2.0,
+   "style": 1,
+   "label": {
+    "text": "선 라벨",
+    "color": "#ff16a34a",
+    "font": 12,
+    "bg": null
+   }
+  },
+  {
+   "pos": [
+    280.0,
+    320.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "polygon",
+   "closed": true,
+   "rect": [
+    0.0,
+    0.0,
+    120.0,
+    80.0
+   ],
+   "pts": [
+    [
+     0.0,
+     80.0
+    ],
+    [
+     60.0,
+     0.0
+    ],
+    [
+     120.0,
+     80.0
+    ]
+   ],
+   "pen": "#ff1e2b45",
+   "width": 2.0,
+   "fill": "#ffe0e7ff",
+   "style": 1
+  },
+  {
+   "pos": [
+    440.0,
+    320.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "polygon",
+   "closed": false,
+   "rect": [
+    0.0,
+    0.0,
+    120.0,
+    80.0
+   ],
+   "pts": [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     40.0,
+     80.0
+    ],
+    [
+     80.0,
+     0.0
+    ],
+    [
+     120.0,
+     80.0
+    ]
+   ],
+   "pen": "#ffda7756",
+   "width": 2.0,
+   "fill": null,
+   "style": 1
+  },
+  {
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "path",
+   "elements": [
+    [
+     "M",
+     600.0,
+     330.0
+    ],
+    [
+     "C",
+     640.0,
+     280.0,
+     700.0,
+     420.0,
+     760.0,
+     340.0
+    ],
+    [
+     "L",
+     800.0,
+     380.0
+    ]
+   ],
+   "pen": "#ff7c3aed",
+   "width": 3.0,
+   "freehand": true,
+   "style": 1
+  },
+  {
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "path",
+   "elements": [
+    [
+     "M",
+     840.0,
+     320.0
+    ],
+    [
+     "L",
+     960.0,
+     320.0
+    ],
+    [
+     "L",
+     960.0,
+     420.0
+    ],
+    [
+     "L",
+     840.0,
+     420.0
+    ],
+    [
+     "L",
+     840.0,
+     320.0
+    ],
+    [
+     "M",
+     870.0,
+     350.0
+    ],
+    [
+     "L",
+     930.0,
+     350.0
+    ],
+    [
+     "L",
+     930.0,
+     390.0
+    ],
+    [
+     "L",
+     870.0,
+     390.0
+    ],
+    [
+     "L",
+     870.0,
+     350.0
+    ]
+   ],
+   "pen": "#00000000",
+   "width": 0.0,
+   "fill": "#ff94a3b8",
+   "style": 1
+  },
+  {
+   "pos": [
+    40.0,
+    450.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "첫 줄 보통\n둘째 줄 강조와 형광펜",
+   "color": "#ff1f1f1f",
+   "font": 12,
+   "bg": null,
+   "runs": [
+    [
+     7,
+     1,
+     "#da7756",
+     true
+    ],
+    [
+     10,
+     3,
+     null,
+     false,
+     "#80ffeb3b"
+    ]
+   ]
+  },
+  {
+   "pos": [
+    300.0,
+    450.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "보드 글꼴 26pt",
+   "color": "#ff1f2f4d",
+   "font": 26,
+   "bg": null,
+   "bold": true,
+   "weight": 800,
+   "family": "Pretendard"
+  },
+  {
+   "pos": [
+    620.0,
+    450.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "image",
+   "rect": [
+    0.0,
+    0.0,
+    120.0,
+    80.0
+   ],
+   "data": "iVBORw0KGgoAAAANSUhEUgAAADwAAAAoCAIAAAAt2Q6oAAAACXBIWXMAAA9hAAAPYQGoP6dpAAAAWUlEQVRYhe3XQQ0AIAzAQIYQDKADm7jBFkEDPLqQ9BT025hrl9/U7IAXRlOMphhNMZpiNMVoitEUoylGU6L1kd1wLRxbiNEUoylGU4ymGE0xmmI0xWjKl9EHez4FnorK0GAAAAAASUVORK5CYII="
+  },
+  {
+   "pos": [
+    40.0,
+    560.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "table",
+   "rows": 3,
+   "cols": 3,
+   "header": true,
+   "rect": [
+    0.0,
+    0.0,
+    300.0,
+    90.0
+   ],
+   "cells": [
+    [
+     "항목",
+     "값",
+     "비고"
+    ],
+    [
+     "전력",
+     "220V",
+     ""
+    ],
+    [
+     "대역",
+     "6MHz",
+     "UHD"
+    ]
+   ],
+   "col_widths": [
+    0.4,
+    0.3,
+    0.3
+   ]
+  },
+  {
+   "pos": [
+    420.0,
+    600.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "badge",
+   "number": 7,
+   "color": "#ffda7756"
+  },
+  {
+   "pos": [
+    520.0,
+    560.0
+   ],
+   "scale": 1.0,
+   "rotation": 20.0,
+   "z": 0.0,
+   "origin": [
+    60.0,
+    30.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0.0,
+    0.0,
+    120.0,
+    60.0
+   ],
+   "pen": "#ff1e2b45",
+   "width": 2.0,
+   "fill": "#ffffffff",
+   "style": 1,
+   "label": {
+    "text": "회전 20°",
+    "color": "#ff1e2b45",
+    "font": 12,
+    "bg": null
+   }
+  },
+  {
+   "pos": [
+    720.0,
+    560.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0.0,
+    0.0,
+    120.0,
+    80.0
+   ],
+   "pen": "#ff1e2b45",
+   "width": 2.0,
+   "fill": null,
+   "style": 1,
+   "cuts": [
+    [
+     0,
+     0.3,
+     0.7
+    ]
+   ]
+  },
+  {
+   "pos": [
+    900.0,
+    560.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0.0,
+    0.0,
+    100.0,
+    80.0
+   ],
+   "pen": "#ff1e2b45",
+   "width": 2.0,
+   "fill": null,
+   "style": 1,
+   "ports": [
+    {
+     "shape": "rect",
+     "size": [
+      14.0,
+      14.0
+     ],
+     "pen": "#ff1e2b45",
+     "width": 1.5,
+     "fill": "#ffffffff",
+     "frac": [
+      1.0,
+      0.5
+     ]
+    },
+    {
+     "shape": "circle",
+     "size": [
+      14.0,
+      14.0
+     ],
+     "pen": "#ffda7756",
+     "width": 1.5,
+     "fill": null,
+     "frac": [
+      0.5,
+      1.0
+     ]
+    }
+   ]
+  },
+  {
+   "pos": [
+    1100.0,
+    40.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "titleblock",
+   "size": "A4",
+   "orient": "landscape",
+   "fields": {
+    "client": "KBS 전주",
+    "number": "EC-001",
+    "title": "모든 종류 시험",
+    "scale": "1:1",
+    "author": "mw",
+    "reviewer": "",
+    "date": "2026-10-17"
+   }
+  },
+  {
+   "pos": [
+    1130.0,
+    330.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "보드 안 흰 글",
+   "color": "#ffffffff",
+   "font": 18,
+   "bg": null,
+   "bold": true,
+   "weight": 600,
+   "family": "Pretendard"
+  },
+  {
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "scale": 1.0,
+   "rotation": 0.0,
+   "z": 0.0,
+   "origin": [
+    0.0,
+    0.0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "sarrow",
+   "pts": [
+    [
+     200.0,
+     80.0
+    ],
+    [
+     231.0,
+     80.0
+    ],
+    [
+     229.0,
+     80.0
+    ],
+    [
+     260.0,
+     80.0
+    ]
+   ],
+   "color": "#ff1e2b45",
+   "width": 2,
+   "head": true,
+   "head_start": false,
+   "head_scale": 1.0,
+   "style": 1,
+   "auto_route": true,
+   "routing": "ortho",
+   "curve_r": 10.0,
+   "route_hints": [],
+   "bind1": 1,
+   "bind1_group": null,
+   "bind1_pt": [
+    160.0,
+    40.0
+   ],
+   "bind2": 2,
+   "bind2_group": null,
+   "bind2_pt": [
+    0.0,
+    40.0
+   ]
+  }
+ ]
+}

@@ -117,7 +117,9 @@ web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + Reac
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecad.js(.ecad 열기)·ecadExport.js(.ecad 저장)·ecadFormat.js(순수 변환,
 │                          `npm test`)·symbols.json(`tools/export_web_symbols.py`가 데스크톱 심볼에서 뽑음)·boardStore.js(서버 저장)·chat.jsx(오른쪽 KAIROS
 │                          대화창·「칠판에 붙이기」)·chatFormat.js(답 글→카드 글·빈자리, 순수)·server.py(감시 PC용 저장 서버 + 대화 길목 `/api/chat`·`/api/models`·
-│                          `/api/chatlog`). web_bakeoff/는 바탕 부품 비교 시험(보존용)
+│                          `/api/chatlog`·`/api/doc`). web_bakeoff/는 바탕 부품 비교 시험(보존용).
+│                          **직접 만드는 칠판**(tldraw 대체, 5단계에 갈아탐): `next.html` + `src/next/`(geom.js 그리기 계산·render.jsx 종류별 SVG·doc.js .ecad 문서·
+│                          arrows.js 열 때 길 다시 찾기) — 데스크톱 paint 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
