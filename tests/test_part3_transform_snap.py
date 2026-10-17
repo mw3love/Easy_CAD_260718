@@ -2503,3 +2503,18 @@ def test_drag_proxy_zoom_session_not_ended_while_still_panning():
     _mid_btn(v, "release", QPointF(60, 58))
     assert v._drag_proxy is None
     _drain_and_close(w)
+
+
+def test_qc_dot_grows_on_hover():
+    """[2026-10-17 웹 칠판에서 옮김] 커서를 올린 큐닷은 0.12초 동안 1.67배로 커지고, 손잡이 여백 안이라 boundingRect에 들어간다."""
+    import time as _t
+    w = CanvasWindow()
+    r = _mk_pen_rect(w, x=0, y=0, ww=160, hh=90)
+    r.setSelected(True)
+    dr = dict(r._qc_dot_rects())["b"]
+    assert r._qc_draw_rect("r", dict(r._qc_dot_rects())["r"], ("qc", "b")) == dict(r._qc_dot_rects())["r"]   # 다른 점은 그대로
+    r._qc_draw_rect("b", dr, ("qc", "b"))          # 막 올라옴
+    r._qc_grow_t0 = _t.monotonic() - 1.0           # 시간이 지남
+    big = r._qc_draw_rect("b", dr, ("qc", "b"))
+    assert abs(big.width() / dr.width() - r._QC_GROW) < 1e-6 and big.center() == dr.center()
+    assert r.boundingRect().contains(big)

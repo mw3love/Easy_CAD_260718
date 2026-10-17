@@ -111,7 +111,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~51_*.py      테마별 회귀 스모크 1409종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~51_*.py      테마별 회귀 스모크 1410종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + tldraw 5.5.2(버전 고정). src/main.jsx(앱)·shapes.jsx(.ecad 도형:
 │                          글·상자 정확한 색/크기, esym 심볼, eboard 보드)·cad.jsx(직각 화살표·큐닷·포트점·끝점 다시 붙이기·TRIM — 붙는 규칙은 데스크톱과 같게)·route.js(길 찾기 = 데스크톱
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecad.js(.ecad 열기)·ecadExport.js(.ecad 저장)·ecadFormat.js(순수 변환,

@@ -19,6 +19,7 @@ import io
 import math
 import os
 import struct
+import time
 import uuid
 
 from PyQt6.QtCore import (
@@ -1175,6 +1176,31 @@ class _HandleResizeMixin:
                     return ("qc", side)
         return None
 
+    # [2026-10-17 웹 칠판에서 옮김 — 사용자 요청] 커서를 올린 큐닷은 0.12초 동안 1.67배로 커진다(Lucid). 지름 9 → 15라
+    # boundingRect의 손잡이 여백(h=10) 안이라 잘리지 않는다.
+    _QC_GROW = 1.67
+    _QC_GROW_MS = 120.0
+    _qc_grow_key = None
+    _qc_grow_t0 = 0.0
+
+    def _qc_draw_rect(self, k, dr, hv):
+        if hv != ("qc", k):
+            return dr
+        now = time.monotonic()
+        if self._qc_grow_key != hv:   # 막 올라옴 — 커지기 시작
+            self._qc_grow_key, self._qc_grow_t0 = hv, now
+        p = min(1.0, (now - self._qc_grow_t0) * 1000.0 / self._QC_GROW_MS)
+        if p < 1.0:
+            def _again(item=self):
+                try:
+                    item.update()
+                except RuntimeError:   # 그 사이 지워진 도형
+                    pass
+            QTimer.singleShot(16, _again)
+        f = 1.0 + (self._QC_GROW - 1.0) * (1.0 - (1.0 - p) ** 2)   # 끝으로 갈수록 천천히(ease-out)
+        c, half = dr.center(), dr.width() * f / 2.0
+        return QRectF(c.x() - half, c.y() - half, 2 * half, 2 * half)
+
     def _set_handle_paint(self, painter: QPainter, s: float, base_color, hovered: bool):
         """[호버 강조] 핸들 하나의 펜/브러시 세팅 — 평소=흰 테두리+색 채움, hover=색 테두리(굵게)+흰 채움
         (반전 강조, Figma류 hover 관례)."""
@@ -1211,9 +1237,11 @@ class _HandleResizeMixin:
             # 호버 시 뷰가 고스트 미리보기.
             # [신규기능 2026-08-13] 다른 도형을 호버 중이면 감춘다(_qc_dots_hover_suppressed).
             if not self._qc_dots_hover_suppressed():
+                if not (hv and hv[0] == "qc"):
+                    self._qc_grow_key = None   # 큐닷에서 벗어남 — 다음에 올리면 다시 커짐
                 for k, dr in self._qc_dot_rects():
                     self._set_handle_paint(painter, s, QColor(90, 150, 235), hv == ("qc", k))
-                    painter.drawEllipse(dr)
+                    painter.drawEllipse(self._qc_draw_rect(k, dr, hv))
             # [신규기능 2026-08-10] TRIM 자국 경계 핸들 — 마름모(다이아몬드)로 사각(리사이즈)·
             # 원(qc-dot)과 확실히 구별하고, 색은 TRIM 미리보기(빨강 점선)와 같은 계열(_RED)로
             # "이건 잘린 자국과 관련된 점"이라는 의미를 잇는다.
@@ -1236,9 +1264,11 @@ class _HandleResizeMixin:
         # [실사용 요청 2026-08-22] 텍스트 — 회전·크기 핸들과 별개로 화살표 접속용 qc-dot도
         # 그린다(`_qc_capable()` 참조, 박스 리사이즈 핸들은 그대로 없음).
         if self._qc_capable() and not self._qc_dots_hover_suppressed():
+            if not (hv and hv[0] == "qc"):
+                self._qc_grow_key = None
             for k, dr in self._qc_dot_rects():
                 self._set_handle_paint(painter, s, QColor(90, 150, 235), hv == ("qc", k))
-                painter.drawEllipse(dr)
+                painter.drawEllipse(self._qc_draw_rect(k, dr, hv))
 
     def _paint_base(self, painter, option, widget):
         # Qt 기본 paint의 자동 선택 점선(회전 핸들까지 확장된 boundingRect 둘레)을 막고
