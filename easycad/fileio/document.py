@@ -67,6 +67,8 @@ def _common(it) -> dict:
         d["pb_part"] = it._pb_part
     if getattr(it, "_pb_card", False):
         d["pb_card"] = True
+    if getattr(it, "_pb_piece", None):   # [§8 항목59 ②] 펼친 조각 틀의 블록 설계서 — 다시 열어도 「보드로 정리」
+        d["pb_piece"] = it._pb_piece
     return d
 
 
@@ -83,6 +85,8 @@ def _apply_common(it, d: dict):
         it._pb_part = d["pb_part"]
     if d.get("pb_card"):
         it._pb_card = True
+    if d.get("pb_piece"):
+        it._pb_piece = d["pb_piece"]
     locked = d.get("locked", False)
     it._locked = locked
     it.setFlags(

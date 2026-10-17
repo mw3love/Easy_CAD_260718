@@ -1213,6 +1213,17 @@ class _BoardMixin:
             req.entry.set_status("✓ 보드를 넣음 — 원래 보드 오른쪽에" if base_items
                                  else "✓ 보드를 넣음 — 위 막대에서 색·내보내기·고칠 점")
         self._check_ai_result(added)   # §8 항목48 — AI 결과 자동 검사(문제 있으면 알림 한 줄)
+        if not followup:   # §8 항목59 ② — 새로 만든 보드면 오른쪽에 조각(AI 후보 + 원문 그림)을 펼친다(이어 고친 보드는 바탕 것 그대로)
+            from easycad.ai.pdf_to_board import is_block_spec, parse_board
+            try:
+                spec = parse_board(code)
+            except ValueError:
+                spec = None
+            if spec is not None and is_block_spec(spec):
+                pieces = self._pieces_place(spec, self._ai_items_rect(boards))
+                if pieces:
+                    self._ai_ensure_visible(view, self._ai_items_rect(boards).united(_outline_rect(pieces)))
+                    self.set_tool("select")
         view.viewport().update()
         return boards[0]
 

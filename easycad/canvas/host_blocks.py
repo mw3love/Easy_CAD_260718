@@ -53,6 +53,7 @@ class _BlockBoardMixin:
     _BB_FLOW_FACE = QColor(218, 119, 86, 30)
     # 한 장 채우기(§8 항목58 ③) — 넘치면 2장으로 나누기 전에 이 차례로 조여 본다: (본문 배율, 그림 높이 배율, 간격 좁힘).
     # 본문 11pt → 10 → 9(출력해서 읽히는 바닥). 실측(1706.03762 보드 3개): 글자 크기보다 그림 높이·간격이 높이를 훨씬 많이 줄였다.
+    _BB_MIN_W = 1280.0   # 내용이 적을 때 보드 폭 바닥
     _BB_FIT_STEPS = ((1.0, 1.0, False), (1.0, 0.7, True), (0.92, 0.6, True), (0.85, 0.5, True))
     _BB_TIGHT = (48.0, 28.0, 12.0)   # 좁힌 바깥 여백 · 칸 사이 · 카드 안쪽 여백
     _bb_k = 1.0
@@ -528,6 +529,10 @@ class _BlockBoardMixin:
         줄 사이에 고르게. 채운 뒤 보드가 넘치면(소수점 차이 포함) 채우기 전으로 — 실제 KAIROS Sonnet 보드가 이 때문에 한 장에 들 것을 2장으로 갔다."""
         self._bb_fig_extra, self._bb_row_extra = {}, 0.0
         res = self._bb_layout(spec, 1920.0)
+        if res[1] * BOARD_ASPECT < 1920.0 * 0.7:
+            # 내용이 적으면 보드를 작게(바닥 1280) — 블록 3개로 「보드로 정리」한 보드가 1920폭에서 위만 차고 아래가 텅 비었다(실제 창)
+            self._pb_discard(res[4])
+            res = self._bb_layout(spec, max(self._BB_MIN_W, res[1] * BOARD_ASPECT * 1.15))
         if res[1] * BOARD_ASPECT > res[0] * 1.05:
             self._pb_discard(res[4])
             res = self._bb_layout(spec, min(res[1] * BOARD_ASPECT * 0.92, self.BOARD_MAX_W))
@@ -559,7 +564,7 @@ class _BlockBoardMixin:
                 extra[part] = extra.get(part, 0.0) + spare
             elif spare > 30.0:
                 rows = len({y for _p, _b, _x, _w, y, *_r in res[5]})
-                row_extra = spare / max(1, rows - 1) if rows > 1 else 0.0
+                row_extra = min(48.0, spare / max(1, rows - 1)) if rows > 1 else 0.0   # 줄 사이는 조금만(다 주면 블록이 흩어짐)
         if extra or row_extra or cards_cols or cards_room or grow:
             self._pb_discard(res[4])
             self._bb_fig_extra, self._bb_row_extra, self._bb_cards_cols, self._bb_cards_room, self._bb_grow =                 extra, row_extra, cards_cols, cards_room, grow

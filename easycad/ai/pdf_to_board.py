@@ -29,6 +29,7 @@ BLOCK_KIND = "block-board"   # §8 항목57 블록 조립식 — 새로 만드�
 BLOCK_TYPES = ("text", "list", "cards", "flow", "bars", "numbers", "figure", "table", "terms", "timeline", "quote", "verdict")
 BLOCK_SIZES = ("small", "normal", "big")
 MAX_BLOCKS = 12
+MAX_MORE = 12   # 조각 후보 상한(§8 항목59 ②)
 HERO_TYPES = ("text", "list", "cards", "numbers", "quote")   # 주인공(진한 면)이 될 수 있는 블록 — §8 항목58 ②
 
 # [§8 항목57, 2026-10-16] 블록 조립식 — AI가 문서에 맞는 블록 종류·차례·자리(12칸 격자의 줄·칸 수)·크기를 고르고, 앱이 글 크기를 재서
@@ -39,7 +40,9 @@ _BLOCK_FORMAT = """출력 형식 — 아래 JSON 하나만 출력하라(다른 �
  "subtitle": "처음 보는 사람용 한 문장 요약(60자 안팎)", "highlight": "subtitle 안에서 가장 중요한 짧은 구절(그대로 복사, 없으면 \\"\\")",
  "groups": ["이 문서의 큰 줄기 이름 2~3개(6자 안팎) — 예: 논문이면 \\"어텐션\\"·\\"학습\\". 같은 줄기 항목엔 같은 group을 달아 앱이 같은 색으로 묶는다"],
  "headline": "이 문서의 핵심을 말하듯 던지는 짧은 문장(25자 안팎, 포스터 문구처럼 — 예: \\"사고 없이, 11월 안에 송신기를 바꾼다\\")",
- "blocks": [ 블록 5~7개, 아래 종류 중 이 문서에 맞는 것만 골라 ] }}
+ "blocks": [ 블록 5~7개, 아래 종류 중 이 문서에 맞는 것만 골라 ],
+ "more": [ 보드에 못 넣었지만 쓸 만한 블록 후보 5~10개 — 같은 형식(row·span·size·hero는 빼도 됨). 보드 블록과 겹치지 않는 내용으로:
+           다른 숫자·용어·인용(원문 그대로 한 문장)·표·한계·응용 등. 사람이 골라 보드에 넣는다 ] }}
 
 블록 공통 칸: "type", "title"(칸 제목), "pages"(근거 쪽 — "p.3"·"p.2–5"·"p.8 · 표 2", 없으면 ""),
  "row"(몇째 줄, 1부터), "span"(12칸 격자에서 차지할 칸 수 1~12 — 한 줄의 span 합은 12 이하), "size"("small"|"normal"|"big"),
@@ -459,7 +462,10 @@ def _parse_blocks(d: dict) -> dict:
                 blk["hero"] = True   # 주인공은 하나만(§8 항목58 ②)
             blocks.append(blk)
     out["blocks"] = blocks[:MAX_BLOCKS]
-    for blk in out["blocks"]:   # 무리 이름은 groups 안의 것만(§8 항목59 ① — 앱이 무리마다 색)
+    if isinstance(d.get("more"), list) and d["more"] and not d.get("_more_inner"):   # 조각 후보(§8 항목59 ②) — 같은 블록 규칙으로 다듬는다
+        more = _parse_blocks({"title": "-", "blocks": d["more"], "_more_inner": True})["blocks"]
+        out["more"] = [{k: v for k, v in b.items() if k != "hero"} for b in more][:MAX_MORE]
+    for blk in out["blocks"] + out.get("more", []):   # 무리 이름은 groups 안의 것만(§8 항목59 ① — 앱이 무리마다 색)
         for it in blk.get("items") or []:
             if isinstance(it, dict) and "group" in it and it["group"] not in out["groups"]:
                 it["group"] = ""

@@ -1373,6 +1373,7 @@ class _AIMakeMixin:
         """`core_view.drawForeground`가 부른다(우리 확장 훅)."""
         self._draw_check_marks(view, painter)   # §8 항목48 도면 검사 표시
         self._board_bar_sync(view)              # §8 항목53 보드 막대(보드 하나를 골랐을 때 그 위에)
+        self._piece_bar_sync(view)              # §8 항목59 조각 막대(조각을 골랐을 때 「보드로 정리」)
         self._draw_board_inside(view, painter)  # §8 항목56 보드 안에 들어가 있으면 그 보드 둘레 코랄 점선
         self._draw_ai_trace_overlay(view, painter)
         st = getattr(self, "_ai_staged", None)
