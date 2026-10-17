@@ -103,13 +103,15 @@ class _BlockBoardMixin:
             cache[key] = (box.width(), box.height())
         return cache[key]
 
-    def _bb_rows(self, spec, col) -> list:
-        """블록 → 줄 목록 [[(설계서 자리, 블록, 칸 수), …], …]. `col` = 한 칸 폭(흐름도 칸 수 늘리기에 씀)."""
+    def _bb_rows(self, spec, col, skip=None) -> list:
+        """블록 → 줄 목록 [[(설계서 자리, 블록, 칸 수), …], …]. `col` = 한 칸 폭(흐름도 칸 수 늘리기에 씀), `skip` = 옆 칸으로 뺀 블록 자리."""
         G, P = self._BB_G, self._BB_P
         big_fig = spec.get("_figure") == "big"
         keyed = []
         for order, blk in enumerate(spec["blocks"]):
             idx = blk.get("_i", order)
+            if skip is not None and idx == skip:
+                continue
             span = blk["span"]
             alone = False
             if blk["type"] == "flow":
@@ -190,12 +192,31 @@ class _BlockBoardMixin:
         masonry = self._bb_masonry
         cells, sky = [], [y_top] * 12   # cells: [start, end, x, w, blk, idx, y, h, 줄 높이] · sky: 칸마다 다음 블록이 놓일 y
         y_row = y_top
-        for row in self._bb_rows(spec, col):
+        # 세로로 긴 그림은 오른쪽 옆 칸에 여러 줄에 걸쳐 크게(§8 항목60 ③ — 시안처럼). 옆 칸과 나란한 줄은 왼쪽 좁은 12칸 격자에 놓고,
+        # 그림 아래로 내려간 줄부터 다시 보드 폭 전체. 줄 맞춤에서만(벽돌 쌓기는 칸 하나하나를 쓰므로 옆 칸과 섞지 않는다).
+        side = None if masonry else self._bb_side_figure(spec, width, col, y_top)
+        side_bottom = y_top
+        ncol = col
+        if side is not None:
+            s_idx, s_blk, s_w, s_h = side
+            ncol = (content_w - s_w - G - 11 * G) / 12.0
+            x_s = M + content_w - s_w
+            self._pb_part_cur = f"blocks[{s_idx}]"
+            start = len(added)
+            h, _ns, _na = self._bb_block(added, spec, dict(s_blk, _side_h=s_h), x_s, y_top + P, s_w)
+            cells.append([start, len(added), x_s, s_w, dict(s_blk, _side_h=s_h), s_idx, y_top, h + 2 * P, 0.0])
+            side_bottom = y_top + h + 2 * P
+        for row in self._bb_rows(spec, ncol, skip=side[0] if side else None):
+            narrow = side is not None and y_row < side_bottom
+            cw = ncol if narrow else col
             want = 0
             used = sum(span for _i, _b, span in row)
+            if narrow and used < 12:   # 옆 칸으로 그림을 뺀 줄 — 남은 블록이 좁은 격자를 채우게
+                row = [(i, b, sp * 12.0 / used) for i, b, sp in row]
+                used = 12
             rcells = []
             for idx, blk, span in row:
-                w = span * col + (span - 1) * G
+                w = span * cw + (span - 1) * G
                 if not masonry:   # 줄 맞춤 — 줄의 칸 합이 12보다 작으면 줄 전체를 가운데로(옛 배치와 같음)
                     c0 = (12 - used) / 2.0 + want
                     covered = range(int(c0), min(12, int(math.ceil(c0 + span))))
@@ -209,7 +230,7 @@ class _BlockBoardMixin:
                     covered = range(c0, c0 + span)
                     by = max(sky[c] for c in covered)
                 want += span
-                x = M + c0 * (col + G)
+                x = M + c0 * (cw + G)
                 self._pb_part_cur = f"blocks[{idx}]"
                 start = len(added)
                 hero = bool(blk.get("hero"))
@@ -397,12 +418,40 @@ class _BlockBoardMixin:
             y += hmax + g
         return y - g
 
+    _BB_SIDE_RATIO = 1.15   # 그림 높이/폭이 이보다 크면 세로 그림 — 옆 칸으로
+
+    def _bb_fig_ratio(self, spec, blk):
+        """그림 높이/폭(못 읽으면 None) — 배치를 여러 번 재므로 자료·쪽마다 한 번만 읽는다."""
+        src = (spec.get("_sources") or {}).get(blk.get("source", ""), {})
+        key = (src.get("path") or spec.get("_pdf") or "", blk.get("page"))
+        cache = self.__dict__.setdefault("_bb_ratio_cache", {})
+        if key not in cache:
+            pm = self._pb_figure_source(spec, blk)
+            cache[key] = pm.height() / pm.width() if pm is not None and not pm.isNull() and pm.width() else None
+        return cache[key]
+
+    def _bb_side_figure(self, spec, width, col, y_top):
+        """옆 칸에 놓을 세로 그림 — (설계서 자리, 블록, 옆 칸 폭, 그림 높이 한도) 또는 None.
+        사용자가 고른 「그림 크게」(`_figure: big`, 가운데 한 줄)는 그대로 둔다."""
+        if spec.get("_figure") == "big":
+            return None
+        M, G, P = self._BB_TIGHT if self._bb_tight else (self._BB_M, self._BB_G, self._BB_P)
+        for order, blk in enumerate(spec["blocks"]):
+            if blk["type"] != "figure":
+                continue
+            ratio = self._bb_fig_ratio(spec, blk)
+            if not ratio or ratio < self._BB_SIDE_RATIO:
+                return None
+            cap = 28.0 if blk.get("caption") else 0.0
+            room_h = width / BOARD_ASPECT - y_top - 48.0 - 2 * P - cap - self._bb_text_h(blk.get("title") or "", 300, self._PB_SIZE["heading"], True)
+            h = max(260.0, room_h) * self._bb_figk
+            n = min(5, max(3, math.ceil((h / ratio + 2 * P + G) / (col + G))))
+            return blk.get("_i", order), blk, n * col + (n - 1) * G, h
+        return None
+
     def _bb_figure(self, added, spec, blk, x, y, w):
         from PyQt6.QtCore import QRectF
         from easycad.canvas.annotator_core import _ImageItem
-        if blk.get("caption"):
-            _t, h = self._pb_text(added, blk["caption"], x, y, w, 10, self._PB_MUTED)
-            y += h + 4
         pm = self._pb_figure_source(spec, blk)
         if pm is None or pm.isNull():
             _t, h = self._pb_text(added, f"[그림 자리 — 원문 p.{blk['page']}]", x, y, w, 10, self._PB_MUTED)
@@ -411,6 +460,8 @@ class _BlockBoardMixin:
         base = self._BB_FIG_H.get(blk.get("size"), 300.0) * (1.0 if spec.get("_figure") == "big" else self._bb_figk)
         more = self._bb_fig_extra.get(self._pb_part_cur, 0.0)
         limit = base + (min(base * 0.6, more) if self._bb_masonry else more)   # 칸의 남는 높이만큼(벽돌 쌓기는 1.6배까지)
+        if blk.get("_side_h"):   # 옆 칸 세로 그림 — 칸 폭과 보드 높이 안에서 가장 크게
+            limit = blk["_side_h"]
         k = min(w / pm.width(), limit / pm.height())
         img = _ImageItem(pm, QRectF(0.0, 0.0, pm.width() * k, pm.height() * k))
         img.setPos(x + (w - pm.width() * k) / 2.0, y)
@@ -418,7 +469,11 @@ class _BlockBoardMixin:
         img._pb_part = self._pb_part_cur
         self._scene.addItem(img)
         added.append(img)
-        return y + pm.height() * k
+        y += pm.height() * k
+        if blk.get("caption"):   # 설명은 그림 아래(§8 항목60 ③ — 읽는 차례: 그림 → 설명)
+            _t, h = self._pb_text(added, blk["caption"], x, y + 6, w, 10, self._PB_MUTED)
+            y += h + 6
+        return y
 
     def _bb_table(self, added, blk, x, y, w, s):
         cols = blk["columns"]
@@ -558,7 +613,8 @@ class _BlockBoardMixin:
                     if blk["type"] in self._BB_GROW_TYPES and not blk.get("hero") and h > 0 and room / h > 1.3}
         else:
             cards_room, grow = {}, {}
-        figs = [(part, y, h, below, room) for part, blk, _x, _w, y, h, below, room in res[5] if blk["type"] == "figure"]
+        figs = [(part, y, h, below, room) for part, blk, _x, _w, y, h, below, room in res[5]
+                if blk["type"] == "figure" and not blk.get("_side_h")]   # 옆 칸 그림은 이미 보드 높이만큼
         if self._bb_masonry:
             extra = {part: floor - (y + h) for part, y, h, below, _r in figs if not below and floor - (y + h) > 60.0}
         else:

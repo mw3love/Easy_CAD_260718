@@ -91,3 +91,45 @@ def test_board_font_pretendard_weights_survive_save():
         again = dict_to_item(json.loads(json.dumps(item_to_dict(it))))
         assert (again.font().family(), again.font().weight()) == (BOARD_FONT, it.font().weight())
     _close(w)
+
+
+def _fake_figure(w_px, h_px):
+    from PyQt6.QtGui import QPixmap
+    pm = QPixmap(w_px, h_px)
+    pm.fill(QColor("#88aacc"))
+    return pm
+
+
+def test_tall_figure_goes_to_side_column_full_height():
+    """③ 세로로 긴 그림은 오른쪽 옆 칸에 여러 줄에 걸쳐 크게 — 옆 칸과 나란한 블록은 그림 왼쪽에, 설명은 그림 아래."""
+    from unittest.mock import patch
+    from easycad.canvas.annotator_core import _BoardItem, _ImageItem
+    w = _window()
+    spec = pb.parse_board(json.dumps(PAPER, ensure_ascii=False))
+    with patch.object(type(w), "_pb_figure_source", lambda self, s, f: _fake_figure(300, 500)):
+        _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
+    board = next(it for it in added if isinstance(it, _BoardItem))
+    img = next(it for it in added if isinstance(it, _ImageItem))
+    ir, br = img.sceneBoundingRect(), board.sceneBoundingRect()
+    assert ir.height() > br.height() * 0.5                     # 보드 높이의 절반 넘게
+    assert ir.right() > br.left() + br.width() * 0.7           # 오른쪽 옆 칸
+    beside = [it for it in added if getattr(it, "_pb_part", None) not in (None, "title", "blocks[3]") and not isinstance(it, _BoardItem)
+              and it.sceneBoundingRect().top() < ir.bottom() and it.sceneBoundingRect().bottom() > ir.top()]
+    assert beside and all(it.sceneBoundingRect().right() <= ir.left() + 1 for it in beside)
+    cap = next(it for it in added if hasattr(it, "toPlainText") and it.toPlainText() == "그림 1")
+    assert cap.sceneBoundingRect().top() >= ir.bottom() - 1
+    _close(w)
+
+
+def test_wide_figure_stays_in_row():
+    """가로 그림은 옛 배치 그대로(그 줄 안)."""
+    from unittest.mock import patch
+    from easycad.canvas.annotator_core import _BoardItem, _ImageItem
+    w = _window()
+    spec = pb.parse_board(json.dumps(PAPER, ensure_ascii=False))
+    with patch.object(type(w), "_pb_figure_source", lambda self, s, f: _fake_figure(600, 300)):
+        _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
+    board = next(it for it in added if isinstance(it, _BoardItem))
+    img = next(it for it in added if isinstance(it, _ImageItem))
+    assert img.sceneBoundingRect().height() < board.sceneBoundingRect().height() * 0.5
+    _close(w)
