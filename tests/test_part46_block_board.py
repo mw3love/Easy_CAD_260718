@@ -336,9 +336,11 @@ def test_masonry_stacks_under_short_block_and_fits_one_page():
         {"type": "list", "title": "넷째 줄 둘", "row": 4, "span": 6, "items": [long] * 3},
     ]
     spec = pb.parse_board(json.dumps({"kind": "block-board", "title": "T", "subtitle": "S", "blocks": blocks}, ensure_ascii=False))
+    w._bb_masonry = True   # 벽돌 쌓기(예비 배치) 자체를 본다
     res = w._bb_layout(dict(spec, blocks=[dict(b, _i=i) for i, b in enumerate(spec["blocks"])]), 1920.0)
+    w._bb_masonry = False
     w._pb_discard(res[4])
-    cell = {part: (x, y, h) for part, _b, x, _w, y, h, _below in res[5]}
+    cell = {part: (x, y, h) for part, _b, x, _w, y, h, _below, _room in res[5]}
     assert cell["blocks[2]"][1] < cell["blocks[1]"][1] + cell["blocks[1]"][2]   # 짧은 글 바로 아래(긴 목록 끝을 기다리지 않음)
     _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
     boards = [it for it in added if isinstance(it, _BoardItem)]
@@ -358,4 +360,23 @@ def test_numbers_one_line_and_card_pages_do_not_wrap():
     _n, _a, _d, added = w._build_paper_board(spec)
     texts = [it for it in added if hasattr(it, "toPlainText")]
     assert all("\n" not in it.toPlainText() for it in texts if it.toPlainText() in ("12시간", "p.2 · p.5–6"))
+    _close(w)
+
+
+def test_rows_aligned_and_faces_fill_row():
+    """[§8 항목58 격자 맞춤] 기본은 줄 맞춤 — 같은 줄 블록은 위 끝이 같고, 면(주인공·흐름도)은 줄 높이만큼."""
+    w = _window()
+    blocks = [dict(b) for b in PAPER["blocks"]]
+    blocks[0]["hero"] = True
+    spec = pb.parse_board(json.dumps(dict(PAPER, blocks=blocks), ensure_ascii=False))
+    res = w._bb_layout(dict(spec, blocks=[dict(b, _i=i) for i, b in enumerate(spec["blocks"])]), 1920.0)
+    w._pb_discard(res[4])
+    by_row = {}
+    for _part, blk, _x, _w, y, h, _below, room in res[5]:
+        by_row.setdefault(blk["row"], []).append((y, h, room, blk))
+    for cells in by_row.values():
+        assert len({round(y) for y, *_ in cells}) == 1   # 위 끝이 같다
+        for y, h, room, blk in cells:
+            if blk.get("hero") or blk["type"] == "flow":
+                assert abs(h - room) < 0.5             # 면은 줄 높이만큼
     _close(w)

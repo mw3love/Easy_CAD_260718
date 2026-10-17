@@ -50,19 +50,45 @@ class _BlockBoardMixin:
     _bb_figk = 1.0
     _bb_tight = False
     _bb_fig_extra: dict = {}
+    _bb_masonry = False
+    _bb_cards_cols: dict = {}
+    _bb_cards_room: dict = {}   # 카드 블록이 채울 칸 높이(줄 맞춤 채우기)
+    _bb_grow: dict = {}         # 블록 글 배율(줄 맞춤 채우기 — 줄보다 많이 낮은 글 블록, 최대 1.25배)
+    _BB_GROW_TYPES = ("text", "list", "cards", "terms", "verdict", "timeline", "quote")
+
+    def _bb_pad(self) -> float:
+        return (self._BB_TIGHT if self._bb_tight else (self._BB_M, self._BB_G, self._BB_P))[2]
+
+    def _bb_text_h(self, text, w, pt, bold=False) -> float:
+        """글 높이만 잰다(그리지 않음) — `_pb_text`와 같은 줄바꿈."""
+        from PyQt6.QtGui import QFontMetricsF
+        from easycad.canvas.annotator_core import _TextItem
+        from easycad.canvas.host_board import _wrap
+        t = _TextItem(QColor(INK_ON_LIGHT))
+        t.apply_font_size(pt)
+        if bold:
+            f = t.font(); f.setBold(True); t.setFont(f)
+        room = max(10.0, w - 2 * t.document().documentMargin())
+        t.setPlainText(_wrap(text, QFontMetricsF(t.font()), room))
+        return t.document().size().height()   # 카드 블록 열 수 상한(줄 맞춤 채우기 — 줄보다 많이 낮은 카드 4개는 2×2로)
+    _bb_row_extra = 0.0   # 줄 사이에 더할 높이(세로 채우기 — 그림이 없을 때 남는 높이를 줄 사이에 고르게)
     _BB_FIG_H = {"small": 200.0, "normal": 300.0, "big": 460.0}   # big은 머리글 + 한 줄 + 그림이 1장 높이(BOARD_MAX_W/16:9) 안에
 
     # ---- 줄 짜기 -----------------------------------------------------------------------------
 
     _BB_FLOW_TARGET = 1.6   # 흐름도 블록이 바라는 모양(폭/높이) — 8단계 세로 흐름이 한 줄로 아주 길어 보드가 2장이 됐다(실제 KAIROS)
+    _BB_FLOW_TARGET_TIGHT = 2.6   # 조이는 단계에선 더 가로로(§8 항목58 — 세로 흐름도 줄이 조여도 안 줄어 Sonnet 보드가 2장)
+
+    def _bb_flow_target(self) -> float:
+        return self._BB_FLOW_TARGET_TIGHT if self._bb_tight else self._BB_FLOW_TARGET
 
     def _bb_flow_size(self, flow) -> tuple:
         """흐름도 블록 크기(폭, 높이) — 멀리서 한 번 그려 재고 지운다(같은 설계서는 한 번만)."""
-        key = json.dumps(flow, ensure_ascii=False, sort_keys=True)
+        key = (json.dumps(flow, ensure_ascii=False, sort_keys=True), self._bb_flow_target())
         cache = self.__dict__.setdefault("_bb_flow_cache", {})
         if key not in cache:
             _n, _a, _d, probe = self._build_flowspec_items(json.dumps(flow, ensure_ascii=False), QPointF(-1e6, -1e6),
-                                                           push_undo=False, compact=True, wrap_target=self._BB_FLOW_TARGET)
+                                                           push_undo=False, compact=True, wrap_target=self._bb_flow_target())
             box = _outline_rect(probe)
             self._pb_discard(probe)
             cache[key] = (box.width(), box.height())
@@ -141,14 +167,26 @@ class _BlockBoardMixin:
             y += h + 6
         y_top = y + 28.0
         n_steps = n_arrows = 0
-        # 벽돌 쌓기(§8 항목58 ③) — 줄마다 높이를 맞추던 것(짧은 블록 아래가 텅 빔, 키 큰 블록이 한 기둥에 몰려 2장)을: 블록마다 12칸 중
-        # 지금 가장 낮은 자리에 놓는다(같으면 AI가 줄에서 정한 자리). 차례·칸 수는 AI 그대로, 줄에 혼자인 좁은 블록은 가운데(「가운데로」 지시).
-        cells, sky = [], [y_top] * 12   # cells: [start, end, x, w, blk, idx, y, h] · sky: 칸마다 다음 블록이 놓일 y
+        # 두 가지 쌓기(§8 항목58 ③ → 2026-10-17 「격자 맞춤」):
+        # - 줄 맞춤(기본) — 같은 줄 블록의 위 끝을 맞추고 줄 높이 = 가장 큰 블록. 면(주인공·흐름도)은 줄 높이만큼, 그림은 줄의 남는 높이만큼
+        #   커진다(`_bb_fit`). 시안(아티팩트)과 나란히 보니 들쭉날쭉한 위 끝이 "정리 안 됨"으로 읽혔다(사용자 2026-10-17).
+        # - 벽돌 쌓기(예비, `_bb_masonry`) — 블록마다 12칸 중 지금 가장 낮은 자리(같으면 AI가 줄에서 정한 자리). 줄 맞춤으로는 어느 조임 단계에서도
+        #   한 장이 안 될 때만(키 큰 블록이 한 기둥에 몰린 경우 줄 맞춤보다 낮다).
+        # 둘 다 차례·칸 수는 AI 그대로, 줄에 혼자인 좁은 블록은 가운데(「가운데로」 지시).
+        masonry = self._bb_masonry
+        cells, sky = [], [y_top] * 12   # cells: [start, end, x, w, blk, idx, y, h, 줄 높이] · sky: 칸마다 다음 블록이 놓일 y
+        y_row = y_top
         for row in self._bb_rows(spec, col):
             want = 0
+            used = sum(span for _i, _b, span in row)
+            rcells = []
             for idx, blk, span in row:
                 w = span * col + (span - 1) * G
-                if len(row) == 1 and span < 12:   # 가운데(칸 경계에 안 맞아도 됨 — 걸치는 칸 모두 막음)
+                if not masonry:   # 줄 맞춤 — 줄의 칸 합이 12보다 작으면 줄 전체를 가운데로(옛 배치와 같음)
+                    c0 = (12 - used) / 2.0 + want
+                    covered = range(int(c0), min(12, int(math.ceil(c0 + span))))
+                    by = y_row
+                elif len(row) == 1 and span < 12:   # 가운데(칸 경계에 안 맞아도 됨 — 걸치는 칸 모두 막음)
                     c0 = (12 - span) / 2.0
                     covered = range(int(c0), min(12, int(math.ceil(c0 + span))))
                     by = max(sky[c] for c in covered)
@@ -165,20 +203,33 @@ class _BlockBoardMixin:
                 h, ns, na = self._bb_block(added, spec, blk, x + inset, by + P, w - 2 * inset)
                 n_steps += ns
                 n_arrows += na
-                cells.append([start, len(added), x, w, blk, idx, by, h + 2 * P])
+                cell = [start, len(added), x, w, blk, idx, by, h + 2 * P, 0.0]
+                cells.append(cell)
+                rcells.append(cell)
                 for c in covered:
                     sky[c] = by + h + 2 * P + G
-        bottom = max((c[6] + c[7] for c in cells), default=y_top)
+            if not masonry:
+                rh = max(c[7] for c in rcells)
+                for c in rcells:
+                    c[8] = rh
+                y_row += rh + G + self._bb_row_extra
+        bottom = max((c[6] + max(c[7], c[8]) for c in cells), default=y_top)
         info = []
         for c in cells:
-            _s, _e, bx, bw, blk, idx, by, bh = c
+            _s, _e, bx, bw, blk, idx, by, bh, rh = c
             below = [d[6] for d in cells if d[6] > by + 1 and d[2] < bx + bw - 1 and d[2] + d[3] > bx + 1]
-            room = (min(below) - G if below else bottom) - by
-            if blk.get("hero") or blk["type"] == "flow":   # 면은 아래 이웃(또는 내용 끝)까지 — 너무 길어지면(텅 빈 큰 면) 그대로
-                if room <= bh * 1.6:
-                    c[7] = max(bh, room)
-            info.append((f"blocks[{idx}]", blk, bx, bw, by, c[7], bool(below)))
-        for start, end, bx, bw, blk, idx, by, bh in reversed(cells):   # 뒤 칸부터(앞 칸의 자리 번호가 안 밀리게)
+            if masonry:
+                room = (min(below) - G if below else bottom) - by
+                if blk.get("hero") or blk["type"] == "flow":   # 면은 아래 이웃(또는 내용 끝)까지 — 너무 길어지면(텅 빈 큰 면) 그대로
+                    if room <= bh * 1.6:
+                        c[7] = max(bh, room)
+            else:
+                room = rh
+                if blk.get("hero") or blk["type"] == "flow":   # 면은 줄 높이만큼(같은 줄 블록과 아래 끝이 맞게)
+                    c[7] = rh
+            # (자리, 블록, x, 폭, y, 높이, 아래에 다른 블록이 있나, 이 칸에서 쓸 수 있는 높이)
+            info.append((f"blocks[{idx}]", blk, bx, bw, by, c[7], bool(below), room))
+        for start, end, bx, bw, blk, idx, by, bh, _rh in reversed(cells):   # 뒤 칸부터(앞 칸의 자리 번호가 안 밀리게)
             self._pb_part_cur = f"blocks[{idx}]"
             if blk.get("hero"):
                 self._bb_hero_ink(added[start:end])
@@ -196,6 +247,7 @@ class _BlockBoardMixin:
     def _bb_block(self, added, spec, blk, x, y, w):
         """블록 내용(카드 안쪽 x, y, w) — 반환 (높이, 단계 수, 화살표 수)."""
         s = _SCALE.get(blk.get("size"), 1.0) * self._bb_k   # 넘칠 때 본문 한 단계 줄이기(§8 항목58 ③)
+        s *= self._bb_grow.get(self._pb_part_cur, 1.0)          # 칸이 남으면 그 블록 글을 키운다(줄 맞춤 채우기)
         t = blk["type"]
         y0 = y
         if blk.get("title") or blk.get("pages"):
@@ -212,12 +264,13 @@ class _BlockBoardMixin:
                 _i, h = self._pb_text(added, f"• {it}", x, y, w, 11 * s)
                 y += h + 2
         elif t == "cards":
-            y = self._bb_cards(added, blk["items"], x, y, w, s)
+            room = self._bb_cards_room.get(self._pb_part_cur)   # 줄 맞춤 채우기 — 카드 행을 칸 아래 끝까지 늘린다
+            y = self._bb_cards(added, blk["items"], x, y, w, s, bottom=(y0 + room - 2 * self._bb_pad()) if room else None)
         elif t == "flow":
             fw, fh = self._bb_flow_size(blk["flow"])
             ns, na, _d, items = self._build_flowspec_items(json.dumps(blk["flow"], ensure_ascii=False),
                                                            QPointF(x + w / 2.0, y + fh / 2.0), push_undo=False, compact=True,
-                                                           wrap_target=self._BB_FLOW_TARGET)
+                                                           wrap_target=self._bb_flow_target())
             for it in items:
                 it._pb_part = self._pb_part_cur
             added += items
@@ -253,11 +306,21 @@ class _BlockBoardMixin:
                 y += max(h, 20.0) + 2
         return y - y0, ns, na
 
-    def _bb_cards(self, added, items, x, y, w, s):
-        """카드 여러 개 — 넓으면 2~3열 격자(행마다 높이 맞춤)."""
+    def _bb_cards(self, added, items, x, y, w, s, bottom=None):
+        """카드 여러 개 — 넓으면 2~3열 격자(행마다 높이 맞춤). `bottom`이 있으면 행을 고르게 늘려 그 높이까지 채운다."""
         g = 12.0
         cols = max(1, min(len(items), int((w + g) // 250)))
+        cols = min(cols, self._bb_cards_cols.get(self._pb_part_cur, cols))   # 줄이 남으면 열을 줄여 키를 키운다(`_bb_fit`)
         cw = (w - g * (cols - 1)) / cols
+        n_rows = (len(items) + cols - 1) // cols
+        if bottom is not None:   # 먼저 재 보고(그리지 않고) 남는 높이를 행마다 나눈다
+            natural = 0.0
+            for r in range(0, len(items), cols):
+                natural += max(self._bb_text_h(it["name"], cw - 24 - 60, 12 * s, True) + self._bb_text_h(it["body"], cw - 24, 10 * s) + 18
+                               for it in items[r:r + cols]) + g
+            add = max(0.0, (bottom - y - (natural - g)) / n_rows)
+        else:
+            add = 0.0
         for r in range(0, len(items), cols):
             cells = []
             for k, it in enumerate(items[r:r + cols]):
@@ -271,7 +334,7 @@ class _BlockBoardMixin:
                 _t, h1 = self._pb_text(added, it["name"], cx + 12, y + 8, cw - 24 - tag_w - 6, 12 * s, bold=True)
                 _t, h2 = self._pb_text(added, it["body"], cx + 12, y + 8 + h1, cw - 24, 10 * s)
                 cells.append((start, cx, h1 + h2 + 18))
-            hmax = max(h for _s, _x, h in cells)
+            hmax = max(h for _s, _x, h in cells) + add
             for _start, cx, _h in cells:   # 상자 대신 왼쪽 색 띠(§8 항목58 ②)
                 self._pb_card(added, cx, y + 4, 4.0, hmax - 8, fill=self._BB_BLUE, edge=self._BB_BLUE, width=0.0)
             y += hmax + g
@@ -330,7 +393,8 @@ class _BlockBoardMixin:
             return y + h
         # 사용자가 시킨 「그림 크게」는 한 장 맞추기에서도 줄이지 않는다(그 대신 다른 블록이 2장으로 — 옛 틀과 같은 원칙)
         base = self._BB_FIG_H.get(blk.get("size"), 300.0) * (1.0 if spec.get("_figure") == "big" else self._bb_figk)
-        limit = base + min(base * 0.6, self._bb_fig_extra.get(self._pb_part_cur, 0.0))   # 아래가 비면 크게(③ — 1.6배까지)
+        more = self._bb_fig_extra.get(self._pb_part_cur, 0.0)
+        limit = base + (min(base * 0.6, more) if self._bb_masonry else more)   # 칸의 남는 높이만큼(벽돌 쌓기는 1.6배까지)
         k = min(w / pm.width(), limit / pm.height())
         img = _ImageItem(pm, QRectF(0.0, 0.0, pm.width() * k, pm.height() * k))
         img.setPos(x + (w - pm.width() * k) / 2.0, y)
@@ -428,32 +492,69 @@ class _BlockBoardMixin:
     # ---- 크기 맞추기 · 여러 장 ---------------------------------------------------------------------
 
     def _bb_fit(self, spec):
-        """배치 한 번(+ 세로로 길면 넓혀서 한 번 더, + 아래가 빈 그림은 크게 한 번 더) — 반환 (_bb_layout 결과, 보드 폭)."""
-        self._bb_fig_extra = {}
+        """배치 한 번(+ 세로로 길면 넓혀서 한 번 더) + 채우기 한 번 — 반환 (_bb_layout 결과, 보드 폭).
+        채우기: 그림은 자기 칸의 남는 높이만큼(줄 맞춤) 또는 아래가 비면 끝까지(벽돌), 그리고 보드 아래에 남는 높이는 그림 줄이 먹거나(줄 맞춤)
+        줄 사이에 고르게. 채운 뒤 보드가 넘치면(소수점 차이 포함) 채우기 전으로 — 실제 KAIROS Sonnet 보드가 이 때문에 한 장에 들 것을 2장으로 갔다."""
+        self._bb_fig_extra, self._bb_row_extra = {}, 0.0
         res = self._bb_layout(spec, 1920.0)
         if res[1] * BOARD_ASPECT > res[0] * 1.05:
             self._pb_discard(res[4])
             res = self._bb_layout(spec, min(res[1] * BOARD_ASPECT * 0.92, self.BOARD_MAX_W))
-        width = res[0]
-        floor = max(res[1], width / BOARD_ASPECT) - 48.0   # 보드(16:9) 안 내용 아래 끝
-        extra = {part: floor - (y + h) for part, blk, _x, _w, y, h, below in res[5]
-                 if blk["type"] == "figure" and not below and floor - (y + h) > 60.0}
-        if extra:
+        if res[1] * BOARD_ASPECT > self.BOARD_MAX_W and res[0] < self.BOARD_MAX_W - 1.0:
+            # 그래도 넘치면 폭을 끝(`BOARD_MAX_W`)까지 — 넓으면 글이 덜 접혀 낮아진다(실제 KAIROS Sonnet 보드: 2031폭에서 1.3% 넘침)
             self._pb_discard(res[4])
-            self._bb_fig_extra = extra
-            res = self._bb_layout(spec, width)
-            self._bb_fig_extra = {}
+            res = self._bb_layout(spec, self.BOARD_MAX_W)
+        width = res[0]
+        bw0 = max(res[0], res[1] * BOARD_ASPECT)
+        floor = max(res[1], width / BOARD_ASPECT) - 48.0 - 4.0   # 보드(16:9) 안 내용 아래 끝(4 = 반올림 여유)
+        spare = max(0.0, floor - (res[1] - 48.0))               # 보드 아래에 남는 높이
+        extra, row_extra, cards_cols = {}, 0.0, {}
+        if not self._bb_masonry:   # 줄보다 많이 낮은 카드 블록(4개 이상)은 2열로 — 시안처럼 2×2로 칸을 채운다
+            cards_cols = {part: 2 for part, blk, _x, _w, _y, h, _b, room in res[5]
+                          if blk["type"] == "cards" and len(blk["items"]) >= 4 and room - h > 80.0}
+            cards_room = {part: room for part, blk, _x, _w, _y, h, _b, room in res[5] if blk["type"] == "cards" and room - h > 30.0}
+            # 글 높이는 배율의 제곱쯤으로 는다(줄 수 × 줄 높이) — 넘지 않게 제곱근에 여유 0.95
+            grow = {part: min(1.25, 0.95 * (room / h) ** 0.5) for part, blk, _x, _w, _y, h, _b, room in res[5]
+                    if blk["type"] in self._BB_GROW_TYPES and not blk.get("hero") and h > 0 and room / h > 1.3}
+        else:
+            cards_room, grow = {}, {}
+        figs = [(part, y, h, below, room) for part, blk, _x, _w, y, h, below, room in res[5] if blk["type"] == "figure"]
+        if self._bb_masonry:
+            extra = {part: floor - (y + h) for part, y, h, below, _r in figs if not below and floor - (y + h) > 60.0}
+        else:
+            extra = {part: room - h for part, y, h, below, room in figs if room - h > 30.0}
+            if figs and spare > 30.0:   # 남는 높이는 마지막 그림이 먹는다(그 줄이 커지는 만큼만 보드 안)
+                part = figs[-1][0]
+                extra[part] = extra.get(part, 0.0) + spare
+            elif spare > 30.0:
+                rows = len({y for _p, _b, _x, _w, y, *_r in res[5]})
+                row_extra = spare / max(1, rows - 1) if rows > 1 else 0.0
+        if extra or row_extra or cards_cols or cards_room or grow:
+            self._pb_discard(res[4])
+            self._bb_fig_extra, self._bb_row_extra, self._bb_cards_cols, self._bb_cards_room, self._bb_grow =                 extra, row_extra, cards_cols, cards_room, grow
+            res2 = self._bb_layout(spec, width)
+            self._bb_fig_extra, self._bb_row_extra, self._bb_cards_cols, self._bb_cards_room, self._bb_grow = {}, 0.0, {}, {}, {}
+            # 채운 뒤에도 한 장(`BOARD_MAX_W`) 안이면 받는다 — 이미 넘치던 보드는 더 커지지 않을 때만
+            if max(res2[0], res2[1] * BOARD_ASPECT) <= (self.BOARD_MAX_W if bw0 <= self.BOARD_MAX_W else bw0) + 0.5:
+                res = res2
+            else:   # 채우다 넘쳤다 — 채우기 전으로
+                self._pb_discard(res2[4])
+                res = self._bb_layout(spec, width)
         return res, max(res[0], res[1] * BOARD_ASPECT)
 
     def _bb_fit_steps(self, spec):
         """`_bb_fit`을 조이는 차례(`_BB_FIT_STEPS`)로 — 1장 폭(`BOARD_MAX_W`)에 처음 들어가는 것. 다 넘치면 첫 단계(장을 나눌 때는
         조이지 않은 크기로 — 넘쳐서 어차피 나눌 거면 글을 줄일 까닭이 없다)."""
-        for step in self._BB_FIT_STEPS:
-            self._bb_k, self._bb_figk, self._bb_tight = step
-            res, bw = self._bb_fit(spec)
-            if bw <= self.BOARD_MAX_W:
-                return res, bw
-            self._pb_discard(res[4])
+        for masonry in (False, True):   # 줄 맞춤으로 모든 단계를 먼저, 안 되면 벽돌 쌓기로
+            self._bb_masonry = masonry
+            for step in self._BB_FIT_STEPS:
+                self._bb_k, self._bb_figk, self._bb_tight = step
+                res, bw = self._bb_fit(spec)
+                if bw <= self.BOARD_MAX_W:
+                    self._bb_masonry = False
+                    return res, bw
+                self._pb_discard(res[4])
+        self._bb_masonry = False
         self._bb_k, self._bb_figk, self._bb_tight = self._BB_FIT_STEPS[0]
         return self._bb_fit(spec)
 
