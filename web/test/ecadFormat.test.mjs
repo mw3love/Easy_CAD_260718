@@ -47,3 +47,28 @@ test('A* — 장애물을 피해 축정렬로, 끝은 포트에 정확히', () =
   const hits = pts.some((q, i) => i && Math.min(q.x, pts[i - 1].x) < 160 && Math.max(q.x, pts[i - 1].x) > 80 && Math.min(q.y, pts[i - 1].y) < 40 && Math.max(q.y, pts[i - 1].y) > -40)
   assert.equal(hits, false, '장애물을 지나가지 않음')
 })
+
+import { cssToArgb, parseD, richTextToRuns } from '../src/ecadFormat.js'
+
+test('CSS 색 → Qt ARGB', () => {
+  assert.equal(cssToArgb('#1f1f1f'), '#ff1f1f1f')
+  assert.equal(cssToArgb('rgba(218,119,86,0.314)'), '#50da7756')
+  assert.equal(cssToArgb('#fff'), '#ffffffff')
+  assert.equal(cssToArgb('transparent'), '#00000000')
+  assert.equal(cssToArgb('var(--x)'), null)
+})
+
+test('서식 글 왕복 — runs → 서식 글 → runs가 같다(바탕 굵기 800은 조각으로 안 셈)', () => {
+  const text = '앞 단어를 기다리지 말고,\n모든 단어를 한 번에 보자'
+  const runs = [[15, 11, '#da7756', true], [27, 2, null, false, '#80ffeb3b']]   // 둘째 줄 「모든 단어를 한 번에」·「보자」
+  for (const base of [400, 800]) {
+    const back = richTextToRuns(runsToRichText(text, runs, base), base)
+    assert.equal(back.text, text)
+    assert.deepEqual(back.runs, runs)
+  }
+})
+
+test('esym 경로 d → .ecad 요소(늘림·옮김)', () => {
+  assert.deepEqual(parseD('M0.00,0.00 L100.00,50.00 C1,2 3,4 5,6', 2, 1, 10, 20),
+    [['M', 10, 20], ['L', 210, 70], ['C', 12, 22, 16, 24, 20, 26]])
+})

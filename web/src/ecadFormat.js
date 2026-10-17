@@ -28,6 +28,7 @@ export function runsToRichText(text, runs = [], weight = null) {
       const node = { type: 'text', text: line.slice(i, j) }, marks = []
       // 굵은 조각은 바탕 굵기보다 가늘어지지 않게(800 제목 안 굵은 조각이 700으로 내려가지 않도록)
       const w = a?.bold ? Math.max(700, weight || 0) : weight
+      if (a?.bold) marks.push({ type: 'bold' })   // 굵게 표시는 늘 남긴다(내보낼 때 되살림) — 안쪽 textStyle 굵기가 실제 굵기를 정함
       if (w && w !== 400) marks.push({ type: 'textStyle', attrs: { color: a?.color ?? null, backgroundColor: a?.bg ? cssColor(a.bg) : null, fontWeight: String(w) } })
       else if (a?.color || a?.bg) marks.push({ type: 'textStyle', attrs: { color: a.color ?? null, backgroundColor: a.bg ? cssColor(a.bg) : null, fontWeight: null } })
       if (marks.length) node.marks = marks
@@ -52,3 +53,60 @@ export function pathD(elems) {
   return { x0, y0, w, h, d, isRect }
 }
 
+
+// ── 웹 → .ecad(내보내기) ──
+
+// CSS 색(#rgb·#rrggbb·#rrggbbaa·rgb()·rgba()·transparent) → Qt '#AARRGGBB'. 못 읽으면 null
+export function cssToArgb(c) {
+  if (!c || c === 'transparent' || c === 'none') return c === 'transparent' ? '#00000000' : null
+  const h2 = n => Math.round(n).toString(16).padStart(2, '0')
+  let m = /^#([0-9a-f]{3})$/i.exec(c)
+  if (m) return '#ff' + m[1].split('').map(x => x + x).join('').toLowerCase()
+  if ((m = /^#([0-9a-f]{6})$/i.exec(c))) return '#ff' + m[1].toLowerCase()
+  if ((m = /^#([0-9a-f]{6})([0-9a-f]{2})$/i.exec(c))) return '#' + m[2].toLowerCase() + m[1].toLowerCase()
+  if ((m = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+%?))?\s*\)$/i.exec(c))) {
+    let a = m[4] == null ? 1 : m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4])
+    return '#' + h2(a * 255) + h2(+m[1]) + h2(+m[2]) + h2(+m[3])
+  }
+  return null
+}
+const argbToRgbHex = c => (c && c.length === 9 ? '#' + c.slice(3) : c)
+
+// tldraw 서식 글 → { text(줄은 \n), runs: [시작, 길이, 색, 굵게, 배경?] } — runsToRichText의 반대.
+// baseWeight보다 굵은 조각만 "굵게"로 센다(바탕이 800인 제목 전체를 굵게 조각으로 만들지 않게).
+export function richTextToRuns(doc, baseWeight = 400) {
+  const lines = [], runs = []
+  let pos = 0
+  const walk = (node, out) => {
+    if (node.type === 'text') { out.push(node); return }
+    if (node.type === 'hardBreak') { out.push({ type: 'text', text: '\n' }); return }
+    for (const c of node.content || []) walk(c, out)
+  }
+  for (const block of doc?.content || []) {
+    const nodes = []; walk(block, nodes)
+    let line = ''
+    for (const n of nodes) {
+      const ts = n.marks?.find(m => m.type === 'textStyle')?.attrs || {}
+      const w = ts.fontWeight ? parseInt(ts.fontWeight, 10) : null
+      const bold = !!n.marks?.some(m => m.type === 'bold') || (w != null && w > baseWeight && w >= 600)   // 웹에서 Ctrl+B로 굵게 한 것도
+      const color = ts.color ? argbToRgbHex(cssToArgb(ts.color)) : null
+      const bg = ts.backgroundColor ? cssToArgb(ts.backgroundColor) : (n.marks?.find(m => m.type === 'highlight') ? '#80ffeb3b' : null)
+      if (color || bold || bg) runs.push([pos + line.length, n.text.length, color, bold, ...(bg ? [bg] : [])])
+      line += n.text
+    }
+    lines.push(line); pos += line.length + 1
+  }
+  return { text: lines.join('\n'), runs }
+}
+
+// 우리 esym 경로 d("M0.00,0.00 L.. C..") → .ecad 경로 요소, 상자(w,h)에 맞춰 늘림
+export function parseD(d, sx = 1, sy = 1, ox = 0, oy = 0) {
+  const out = []
+  for (const m of d.matchAll(/([MLC])([^MLCZ]*)/g)) {
+    const nums = m[2].trim().split(/[\s,]+/).filter(Boolean).map(Number)
+    const e = [m[1]]
+    for (let i = 0; i < nums.length; i += 2) e.push(ox + nums[i] * sx, oy + nums[i + 1] * sy)
+    out.push(e)
+  }
+  return out
+}

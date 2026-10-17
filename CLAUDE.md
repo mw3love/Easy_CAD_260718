@@ -110,9 +110,9 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~48_*.py      테마별 회귀 스모크 1399종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~49_*.py      테마별 회귀 스모크 1401종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + tldraw 5.5.2(버전 고정). src/main.jsx(앱)·shapes.jsx(.ecad 도형:
-│                          글·상자 정확한 색/크기, esym 심볼, eboard 보드)·cad.jsx(직각 화살표·큐닷·TRIM)·ecad.js(.ecad 열기)·ecadFormat.js(순수 변환,
+│                          글·상자 정확한 색/크기, esym 심볼, eboard 보드)·cad.jsx(직각 화살표·큐닷·TRIM)·ecad.js(.ecad 열기)·ecadExport.js(.ecad 저장)·ecadFormat.js(순수 변환,
 │                          `npm test`)·symbols.json(`tools/export_web_symbols.py`가 데스크톱 심볼에서 뽑음)·boardStore.js(서버 저장)·server.py
 │                          (감시 PC용 저장 서버, 기본 라이브러리만). web_bakeoff/는 바탕 부품 비교 시험(보존용)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
@@ -176,7 +176,7 @@ symbol_library/
 - **§8 항목61 웹 칠판 트랙**(2026-10-17, 심층 인터뷰로 **목표가 바뀜** — `## 목표`) — 바탕 부품 비교(`web_bakeoff/`) → **tldraw 5.5.2 확정**(CAD 확장 시험:
   직각 화살표·구간 손잡이·큐닷·포트점·A*·TRIM 통과). ⓑ 칠판 바탕 `web/`: .ecad 열기(보드·순서도·계통도 — 데스크톱 그림과 나란히 맞춤, 흰 잉크→검정),
   글 색·굵기·형광펜은 tldraw 글 편집기(TipTap)에 TextStyle 확장, 정확한 색·크기는 기본 도형의 `getCustomDisplayValues`+`meta.ecad`. 실행 `cd web && npm run dev`,
-  시험 `npm test`. 서버 저장 `python web/server.py`(감시 PC용, 켜는 법 `web/README.md`). 남은 것: 웹 → .ecad 내보내기, 표·곡선 화살표·회전 등 미지원, 감시 PC 실제 배포.
+  시험 `npm test`. 서버 저장 `python web/server.py`(감시 PC용, 켜는 법 `web/README.md`). 「.ecad 저장」으로 데스크톱 왕복(AI 보드 칸 표시·연결·다각형 유지, `tests/test_part49`). 남은 것: 표·곡선 화살표·회전 등 미지원, 감시 PC 실제 배포.
 - **§8 항목60 보드 디자인 2차**(2026-10-17) — 아티팩트 시안과 나란히 본 지적 10건 → 원인은 Qt가 아니라 그리기 어휘(HTML 가져오기는 설계서가 끊겨 버림).
   ① `**구절**` 부분 강조(.ecad `runs`) ② Pretendard 싣기(`easycad/fonts.py`, 보드 글만, .ecad `family`·`weight`) ③ 세로 그림 오른쪽 옆 칸
   ④ 가로 단계 블록 `steps` ⑤ 단위 다른 숫자 다른 색·의의/한계 칩. 2라운드(위계): 주인공 = 글만(`HERO_TYPES`), 숫자 note = 비교 기준·막대·그림 필수,

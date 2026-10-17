@@ -8,6 +8,7 @@ import { bgCss, cssColor, pathD, runsToRichText } from './ecadFormat.js'
 const PT = 96 / 72                         // Qt 글자 pt → 화면 px(96dpi)
 const QT_TEXT_MARGIN = 4                   // QGraphicsTextItem 문서 여백
 
+const KEEP = ['pb_part', 'pb_card', 'pb_piece', 'ai', 'set', 'page', 'group_id', 'layer_id', 'locked', 'labels', 'cuts', 'ports', 'head_start', 'head_scale']
 const J = o => JSON.parse(JSON.stringify(o))   // tldraw meta는 순수 JSON만(undefined 금지)
 const labelMeta = l => l && { color: cssColor(l.color), px: (l.font || 12) * PT, family: !!l.family }
 const DASH = st => (st === 2 ? 'dashed' : st === 3 ? 'dotted' : st === 4 || st === 5 ? 'dashed' : 'solid')   // Qt 펜 모양 → tldraw 선
@@ -35,7 +36,7 @@ export function importEcad(editor, doc, at = { x: 0, y: 0 }) {
           const color = cssColor(it.color)
           editor.createShape({ id, type: 'text', x: X + QT_TEXT_MARGIN, y: Y + QT_TEXT_MARGIN,
             props: { richText: runsToRichText(it.text || '', it.runs, it.weight ?? (it.bold ? 700 : 400)), autoSize: true, textAlign: 'start', font: 'sans' },
-            meta: { ecad: J({ color, px: (it.font || 12) * PT, weight: it.weight ?? (it.bold ? 700 : 400), family: !!it.family, bg: it.bg ? bgCss(it.bg) : null }) } })
+            meta: { ecad: J({ color, px: (it.font || 12) * PT, weight: it.weight ?? (it.bold ? 700 : 400), family: !!it.family, bg: it.bg ? bgCss(it.bg) : null, bgRaw: it.bg ?? null }) } })
           break
         }
         case 'rect': case 'ellipse': {
@@ -84,6 +85,10 @@ export function importEcad(editor, doc, at = { x: 0, y: 0 }) {
         default: skip(it.type); continue
       }
       idOf.set(idx, id)
+      // 웹이 쓰지 않는 데스크톱 값(AI 보드 설계서·보드 칸 표시·레이어·그룹·잠금·화살표 라벨·다각형 여부)은 그대로 들고 다니다가 내보낼 때 돌려준다
+      const keep = Object.fromEntries(KEEP.filter(k => it[k] != null && it[k] !== false).map(k => [k, it[k]]))
+      if (it.type === 'polygon') Object.assign(keep, { _type: 'polygon', closed: !!it.closed })
+      if (Object.keys(keep).length) { const sh = editor.getShape(id); editor.updateShape({ id, type: sh.type, meta: { ...sh.meta, keep: J(keep) } }) }
     }
     // 화살표 지속 연결: bind1/bind2 = 저장 목록 순번, bindN_pt = 그 도형 안 부착점 → 가장 가까운 변
     for (const [it, idx] of order) {

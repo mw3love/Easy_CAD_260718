@@ -1,0 +1,1611 @@
+{
+ "format": "easycad-doc",
+ "version": 1,
+ "items": [
+  {
+   "pos": [
+    13515.5,
+    8433.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": -2.5,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "board",
+   "rect": [
+    0,
+    0,
+    1920,
+    1080
+   ],
+   "bg": "#ffffffff"
+  },
+  {
+   "pos": [
+    15092.166666666668,
+    8738.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.001,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    279.33333333333337,
+    132
+   ],
+   "pen": "#50808080",
+   "width": 1,
+   "fill": "#00000000",
+   "style": 1,
+   "pb_part": "blocks[2]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    14800.833333333334,
+    8738.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.002,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    279.33333333333337,
+    132
+   ],
+   "pen": "#50808080",
+   "width": 1,
+   "fill": "#00000000",
+   "style": 1,
+   "pb_part": "blocks[2]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    13579.5,
+    9283.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.003,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    78,
+    21
+   ],
+   "pen": "#288a6fd1",
+   "width": 1,
+   "fill": "#288a6fd1",
+   "style": 1,
+   "pb_part": "blocks[5]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    13579.5,
+    9311.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.004,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    38,
+    21
+   ],
+   "pen": "#28c9a227",
+   "width": 1,
+   "fill": "#28c9a227",
+   "style": 1,
+   "pb_part": "blocks[5]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    14190.166666666666,
+    8688.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.005,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    570.6666666666667,
+    316
+   ],
+   "pen": "#00000000",
+   "width": 0,
+   "fill": "#1eda7756",
+   "style": 0,
+   "pb_part": "blocks[1]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    13806.5,
+    8581.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.006,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    136,
+    12.5
+   ],
+   "pen": "#00000000",
+   "width": 0,
+   "fill": "#50da7756",
+   "style": 0,
+   "pb_part": "subtitle",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    13579.5,
+    8481.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.007,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "한 장 정리 · Magic Board",
+   "color": "#ffda7756",
+   "font": 10,
+   "bg": null,
+   "weight": 600,
+   "family": "Pretendard",
+   "pb_part": "title"
+  },
+  {
+   "pos": [
+    13579.5,
+    8504.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.008,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "Attention Is All You Need",
+   "color": "#ff1f1f1f",
+   "font": 30,
+   "bg": null,
+   "bold": true,
+   "weight": 800,
+   "family": "Pretendard",
+   "pb_part": "title"
+  },
+  {
+   "pos": [
+    15250.5,
+    8528.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.009000000000000001,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "Vaswani 외, 2017",
+   "color": "#ff1f1f1f",
+   "font": 11,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "title"
+  },
+  {
+   "pos": [
+    13579.5,
+    8566.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.01,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "문장 안 모든 단어가 서로를 한 번에 바라보게 해 번역을 빠르고 정확하게 만든 방법",
+   "color": "#ff1f1f1f",
+   "font": 16,
+   "bg": null,
+   "weight": 600,
+   "family": "Pretendard",
+   "pb_part": "subtitle"
+  },
+  {
+   "pos": [
+    13579.5,
+    8605.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.011,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "앞 단어를 기다리지 말고, 모든 단어를 한 번에 보자",
+   "color": "#ff1f1f1f",
+   "font": 20,
+   "bg": null,
+   "bold": true,
+   "weight": 800,
+   "family": "Pretendard",
+   "runs": [
+    [
+     15,
+     11,
+     "#da7756",
+     true
+    ]
+   ],
+   "pb_part": "headline"
+  },
+  {
+   "pos": [
+    13579.5,
+    8656.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.012,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    1792,
+    2
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 0,
+   "fill": "#ff1f1f1f",
+   "style": 0,
+   "pb_part": "title",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    13579.5,
+    8704.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.013000000000000001,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "핵심 개념",
+   "color": "#ff1f1f1f",
+   "font": 13,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[0]"
+  },
+  {
+   "pos": [
+    13819.833333333334,
+    8749.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.014,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "p.3",
+   "color": "#ff6b7a8f",
+   "font": 10,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[0]"
+  },
+  {
+   "pos": [
+    13591.5,
+    8746.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.015,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "셀프 어텐션",
+   "color": "#ff1f1f1f",
+   "font": 15,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[0]"
+  },
+  {
+   "pos": [
+    13591.5,
+    8778.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.016,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "단어마다 관련 깊은 단어에 점수를\n준다.",
+   "color": "#ff1f1f1f",
+   "font": 12,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[0]"
+  },
+  {
+   "pos": [
+    14111.166666666666,
+    8749.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.017,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "p.4",
+   "color": "#ff6b7a8f",
+   "font": 10,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[0]"
+  },
+  {
+   "pos": [
+    13882.833333333334,
+    8746.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.018000000000000002,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "멀티 헤드",
+   "color": "#ff1f1f1f",
+   "font": 15,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[0]"
+  },
+  {
+   "pos": [
+    13882.833333333334,
+    8778.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.019,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "여러 관점으로 동시에 본다.",
+   "color": "#ff1f1f1f",
+   "font": 12,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[0]"
+  },
+  {
+   "pos": [
+    13579.5,
+    8742.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.02,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    4,
+    242
+   ],
+   "pen": "#ff3d7fb8",
+   "width": 0,
+   "fill": "#ff3d7fb8",
+   "style": 0,
+   "pb_part": "blocks[0]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    13870.833333333334,
+    8742.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.021,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    4,
+    242
+   ],
+   "pen": "#ff3d7fb8",
+   "width": 0,
+   "fill": "#ff3d7fb8",
+   "style": 0,
+   "pb_part": "blocks[0]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    14206.166666666666,
+    8704.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.022,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "어떻게 작동하나",
+   "color": "#ff1f1f1f",
+   "font": 13,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[1]"
+  },
+  {
+   "pos": [
+    14703.833333333334,
+    8707.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.023,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "p.2–5",
+   "color": "#ff6b7a8f",
+   "font": 10,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[1]"
+  },
+  {
+   "pos": [
+    14415.5,
+    8739.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.024,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "symbol",
+   "kind": "terminal",
+   "rect": [
+    0,
+    0,
+    120,
+    56
+   ],
+   "pen": "#ff4a8fd9",
+   "width": 2,
+   "fill": "#384a8fd9",
+   "style": 1,
+   "label": {
+    "text": "문장 입력",
+    "color": "#ff1f1f1f",
+    "font": 15,
+    "bg": null,
+    "family": "Pretendard"
+   },
+   "pb_part": "blocks[1]"
+  },
+  {
+   "pos": [
+    14415.5,
+    8835.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.025,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    120,
+    56
+   ],
+   "pen": "#ffda7756",
+   "width": 3,
+   "fill": "#50da7756",
+   "style": 1,
+   "label": {
+    "text": "셀프 어텐션",
+    "color": "#ff1f1f1f",
+    "font": 15,
+    "bg": null,
+    "family": "Pretendard"
+   },
+   "pb_part": "blocks[1]"
+  },
+  {
+   "pos": [
+    14415.5,
+    8931.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.026000000000000002,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "symbol",
+   "kind": "terminal",
+   "rect": [
+    0,
+    0,
+    120,
+    56
+   ],
+   "pen": "#ff4a8fd9",
+   "width": 2,
+   "fill": "#384a8fd9",
+   "style": 1,
+   "label": {
+    "text": "다음 단어",
+    "color": "#ff1f1f1f",
+    "font": 15,
+    "bg": null,
+    "family": "Pretendard"
+   },
+   "pb_part": "blocks[1]"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.027,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "sarrow",
+   "pts": [
+    [
+     14475.5,
+     8795.5
+    ],
+    [
+     14475.5,
+     8835.5
+    ]
+   ],
+   "color": "#ff1f1f1f",
+   "width": 1.5,
+   "head": true,
+   "head_start": false,
+   "head_scale": 1,
+   "style": 1,
+   "auto_route": true,
+   "routing": "ortho",
+   "curve_r": 0,
+   "route_hints": [],
+   "pb_part": "blocks[1]",
+   "bind1": 24,
+   "bind1_group": null,
+   "bind1_pt": [
+    60,
+    56
+   ],
+   "bind2": 25,
+   "bind2_group": null,
+   "bind2_pt": [
+    60,
+    0
+   ]
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.028,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "sarrow",
+   "pts": [
+    [
+     14475.5,
+     8891.5
+    ],
+    [
+     14475.5,
+     8931.5
+    ]
+   ],
+   "color": "#ff1f1f1f",
+   "width": 1.5,
+   "head": true,
+   "head_start": false,
+   "head_scale": 1,
+   "style": 1,
+   "auto_route": true,
+   "routing": "ortho",
+   "curve_r": 0,
+   "route_hints": [],
+   "pb_part": "blocks[1]",
+   "bind1": 25,
+   "bind1_group": null,
+   "bind1_pt": [
+    60,
+    56
+   ],
+   "bind2": 26,
+   "bind2_group": null,
+   "bind2_pt": [
+    60,
+    0
+   ]
+  },
+  {
+   "pos": [
+    14800.833333333334,
+    8704.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.029,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "결과",
+   "color": "#ff1f1f1f",
+   "font": 13,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[2]"
+  },
+  {
+   "pos": [
+    14814.833333333334,
+    8750.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.03,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "28.4",
+   "color": "#ffda7756",
+   "font": 31,
+   "bg": null,
+   "bold": true,
+   "weight": 800,
+   "family": "Pretendard",
+   "pb_part": "blocks[2]"
+  },
+  {
+   "pos": [
+    14814.833333333334,
+    8805.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.031,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "영→독 BLEU",
+   "color": "#ff1f1f1f",
+   "font": 13,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[2]"
+  },
+  {
+   "pos": [
+    14814.833333333334,
+    8833.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.032,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "당시 최고 · p.8",
+   "color": "#ff6b7a8f",
+   "font": 10,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[2]"
+  },
+  {
+   "pos": [
+    15106.166666666668,
+    8750.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.033,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "3.5",
+   "color": "#ff3d7fb8",
+   "font": 31,
+   "bg": null,
+   "bold": true,
+   "weight": 800,
+   "family": "Pretendard",
+   "pb_part": "blocks[2]"
+  },
+  {
+   "pos": [
+    15172.166666666668,
+    8768.66
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.034,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "일",
+   "color": "#ff3d7fb8",
+   "font": 15,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[2]"
+  },
+  {
+   "pos": [
+    15106.166666666668,
+    8805.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.035,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "학습",
+   "color": "#ff1f1f1f",
+   "font": 13,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[2]"
+  },
+  {
+   "pos": [
+    15106.166666666668,
+    8833.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.036000000000000004,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "GPU 8장 · p.7",
+   "color": "#ff6b7a8f",
+   "font": 10,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[2]"
+  },
+  {
+   "pos": [
+    15093.166666666668,
+    8739.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.037,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    277.33333333333337,
+    4
+   ],
+   "pen": "#ff3d7fb8",
+   "width": 0,
+   "fill": "#ff3d7fb8",
+   "style": 0,
+   "pb_part": "blocks[2]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    14801.833333333334,
+    8739.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.038,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    277.33333333333337,
+    4
+   ],
+   "pen": "#ffda7756",
+   "width": 0,
+   "fill": "#ffda7756",
+   "style": 0,
+   "pb_part": "blocks[2]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    13579.5,
+    9060.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.039,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "Transformer 구조",
+   "color": "#ff1f1f1f",
+   "font": 13,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[3]"
+  },
+  {
+   "pos": [
+    13579.5,
+    9094.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.04,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "[그림 자리 — 원문 p.1]",
+   "color": "#ff6b7a8f",
+   "font": 11,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[3]"
+  },
+  {
+   "pos": [
+    14495.5,
+    9060.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.041,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "BLEU 비교",
+   "color": "#ff1f1f1f",
+   "font": 13,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[4]"
+  },
+  {
+   "pos": [
+    14495.5,
+    9095.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.042,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "ConvS2S",
+   "color": "#ff1f1f1f",
+   "font": 11,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[4]"
+  },
+  {
+   "pos": [
+    14665.5,
+    9100.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.043000000000000003,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    568.7577464788733,
+    16
+   ],
+   "pen": "#ff6b7a8f",
+   "width": 1,
+   "fill": "#ff6b7a8f",
+   "style": 1,
+   "pb_part": "blocks[4]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    15240.257746478874,
+    9095.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.044,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "25.16",
+   "color": "#ff1f1f1f",
+   "font": 11,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[4]"
+  },
+  {
+   "pos": [
+    14495.5,
+    9123.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.045,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "Transformer",
+   "color": "#ff1f1f1f",
+   "font": 11,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[4]"
+  },
+  {
+   "pos": [
+    14665.5,
+    9128.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.046,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    642,
+    16
+   ],
+   "pen": "#ffda7756",
+   "width": 1,
+   "fill": "#ffda7756",
+   "style": 1,
+   "pb_part": "blocks[4]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    15313.5,
+    9123.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.047,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "28.4",
+   "color": "#ff1f1f1f",
+   "font": 11,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[4]"
+  },
+  {
+   "pos": [
+    14495.5,
+    9152.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.048,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "0부터",
+   "color": "#ff6b7a8f",
+   "font": 10,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[4]"
+  },
+  {
+   "pos": [
+    13579.5,
+    9247.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.049,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "의의와 한계",
+   "color": "#ff1f1f1f",
+   "font": 13,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[5]"
+  },
+  {
+   "pos": [
+    13583.5,
+    9282.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.05,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "문서 밖 맥락",
+   "color": "#ff8a6fd1",
+   "font": 10,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[5]"
+  },
+  {
+   "pos": [
+    13665.5,
+    9281.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.051000000000000004,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "이후 대형 언어 모델의 바탕.",
+   "color": "#ff1f1f1f",
+   "font": 11,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[5]"
+  },
+  {
+   "pos": [
+    13583.5,
+    9310.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.052000000000000005,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "한계",
+   "color": "#ffc9a227",
+   "font": 10,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[5]"
+  },
+  {
+   "pos": [
+    13625.5,
+    9309.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.053,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "긴 문장은 계산이 많다.  (p.6)",
+   "color": "#ff1f1f1f",
+   "font": 11,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[5]"
+  },
+  {
+   "pos": [
+    14800.833333333334,
+    9247.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.054,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "용어",
+   "color": "#ff1f1f1f",
+   "font": 13,
+   "bg": null,
+   "bold": true,
+   "family": "Pretendard",
+   "pb_part": "blocks[6]"
+  },
+  {
+   "pos": [
+    14800.833333333334,
+    9281.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.055,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "text",
+   "text": "BLEU — 번역 점수",
+   "color": "#ff1f1f1f",
+   "font": 11,
+   "bg": null,
+   "family": "Pretendard",
+   "pb_part": "blocks[6]"
+  },
+  {
+   "pos": [
+    14800.833333333334,
+    9231.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.056,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    570.6666666666667,
+    1.5
+   ],
+   "pen": "#50808080",
+   "width": 0,
+   "fill": "#50808080",
+   "style": 0,
+   "pb_part": "blocks[6]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    13579.5,
+    9231.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.057,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    1181.3333333333335,
+    1.5
+   ],
+   "pen": "#50808080",
+   "width": 0,
+   "fill": "#50808080",
+   "style": 0,
+   "pb_part": "blocks[5]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    14495.5,
+    9044.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.058,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    876,
+    1.5
+   ],
+   "pen": "#50808080",
+   "width": 0,
+   "fill": "#50808080",
+   "style": 0,
+   "pb_part": "blocks[4]",
+   "pb_card": true
+  },
+  {
+   "pos": [
+    13579.5,
+    9044.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 0.059000000000000004,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    876,
+    1.5
+   ],
+   "pen": "#50808080",
+   "width": 0,
+   "fill": "#50808080",
+   "style": 0,
+   "pb_part": "blocks[3]",
+   "pb_card": true
+  }
+ ]
+}

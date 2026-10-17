@@ -6,6 +6,7 @@ import { Tldraw } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { QcDotOverlayUtil, SArrowBindingUtil, SArrowUtil, TrimTool, reroute } from './cad.jsx'
 import { importEcad } from './ecad.js'
+import { downloadEcad, exportEcad } from './ecadExport.js'
 import { shapeUtils, textOptions } from './shapes.jsx'
 import { BOARD, loadBoard, startAutosave } from './boardStore.js'
 
@@ -41,6 +42,7 @@ function TopBar() {
   return (
     <div style={{ position: 'fixed', left: 320, top: 8, zIndex: 1000, display: 'flex', gap: 6 }}>
       <button style={btn} onClick={() => file.current.click()}>.ecad 열기</button>
+      <button style={btn} onClick={async () => { const r = await downloadEcad(ed(), BOARD); window.lastExport = r }}>.ecad 저장</button>
       <button style={btn} onClick={async () => openEcad(ed(), await (await fetch('/samples/paper_board.ecad')).text())}>보드 샘플</button>
       <button style={btn} onClick={() => ed().setCurrentTool('trim')}>TRIM</button>
       <SaveLabel />
@@ -73,6 +75,7 @@ createRoot(document.getElementById('root')).render(
       onMount={e => {
         window.editor = e
         window.openEcad = t => openEcad(e, t)
+        window.exportEcad = () => exportEcad(e)
         if (loaded.server) window.boardSaver = startAutosave(e, setStatus)
         // 묶이지 않은 상자(장애물)가 움직여도 화살표 길을 다시 찾는다 — 상자 크기·자리가 바뀐 경우만
         e.sideEffects.registerAfterChangeHandler('shape', (prev, next) => {
