@@ -36,7 +36,7 @@ HERO_TYPES = ("text", "list", "quote")   # 주인공(진한 면)이 될 수 있�
 # 겹치지 않게 놓는다(좌표는 앱 — "좌표를 맡기면 겹친다" 원칙 유지). 논문이면 개념·흐름·결과·그림, 회의 자료면 결정·할 일 표·일정처럼.
 _BLOCK_FORMAT = """출력 형식 — 아래 JSON 하나만 출력하라(다른 설명 없이, 코드펜스는 있어도 됨).
 {{"kind": "block-board",
- "title": "문서 제목(원문 그대로)", "meta": "출처 정보 — 논문이면 저자(첫 저자 외 N명)·소속·발표처·연도·식별 번호(arXiv 등), 보고·회의면 부서·작성자·날짜(없으면 \\"\\")",
+ "title": "문서 제목(원문 그대로 — 단 원문 제목이 「SYNC GENERATOR SYSTEM」처럼 일반명사뿐이면 제조사·모델명을 붙여 알아보게: 「Leader 동기신호 시스템 LT4611·LT4448」)", "meta": "출처 정보 — 논문이면 저자(첫 저자 외 N명)·소속·발표처·연도·식별 번호(arXiv 등), 보고·회의면 부서·작성자·날짜(없으면 \\"\\")",
  "subtitle": "처음 보는 사람용 한 문장 요약(60자 안팎)", "highlight": "subtitle 안에서 가장 중요한 짧은 구절(그대로 복사, 없으면 \\"\\")",
  "groups": ["이 문서의 큰 줄기 이름 2개(6자 안팎) — 예: 논문이면 \\"어텐션\\"·\\"학습\\". 같은 줄기 항목엔 같은 group을 달아 앱이 같은 색으로 묶는다"],
  "headline": "이 문서의 핵심을 말하듯 던지는 짧은 문장(25자 안팎, 포스터 문구처럼 — 예: \\"사고 없이, 11월 안에 송신기를 바꾼다\\")",
@@ -78,6 +78,8 @@ _BLOCK_FORMAT = """출력 형식 — 아래 JSON 하나만 출력하라(다른 �
 - 회의록이면 결정한 것·할 일(담당·기한)·미해결로 남은 것·다음 회의(날짜·안건)는 빠뜨리지 않는다 — 다음에 할 일을 잡는 문서다.
 - 문서에 전체 구조·장비 배치처럼 대표 그림이 있으면 figure 블록을 꼭 넣는다(사람은 그림부터 본다 — 논문이면 구조 그림).
 - 결과를 기존 방법과 비교한 숫자가 문서에 있으면 bars 블록을 꼭 넣는다(비교 대상 3~5개, 이 문서의 것만 "mine": true) — 주장의 증거를 눈으로.
+- 「이럴 때 → 이렇게」 규칙이 2~5개뿐이면(장애 시 주→예비 절체·복구 등) flow 말고 steps로 — 단계 text = 상황, sym = 결과(짧게).
+  되돌아가는 화살표가 있는 흐름도는 읽기 어렵다.
 - 갈림길·담당이 없는 짧은 순서(계산 단계·작동 원리 3~6단계)는 flow 말고 steps로 — flow는 갈림길·되돌아감·담당이 있을 때만(꺾인 화살표가 읽기 어렵다).
 - 논문이면 flow(또는 steps)는 이 논문의 핵심 원리(제안한 방법이 실제로 계산·작동하는 단계)로 — 일반적인 처리 순서가 아니라. 단계 글 끝에 그 단계의
   기호·수식이 있으면 괄호로(예: "질의와 키를 곱함 (QKᵀ)").
@@ -191,6 +193,25 @@ def sources_body(sources) -> tuple[str, list, str]:
     return "\n".join(lines), images, ", ".join(listing)
 
 
+def figure_hint(pdfs) -> str:
+    """AI에게 알릴 「그림이 있는 쪽」 목록 — AI는 글만 받아 그림이 어디 있는지 몰라, 진짜 구성도(4쪽) 대신 「LT4611·LT4448」
+    글이 있는 요약 쪽(12쪽)을 대표 그림으로 골랐다(§8 항목60, Leader 소개 자료). `pdfs` = [(자료 이름표 또는 None, 경로)]."""
+    from easycad.fileio.pdf_figure import figure_pages
+    lines = []
+    for label, path in pdfs:
+        try:
+            pages = figure_pages(path)
+        except Exception:   # noqa: BLE001 — 못 읽으면 알리지 않는다(예전처럼 글만)
+            continue
+        for n, labels in pages:
+            where = f"{label} p.{n}" if label else f"p.{n}"
+            lines.append(f"- {where}: {labels or '(글 없는 그림)'}")
+    if not lines:
+        return ""
+    return ("\n\n[그림이 있는 쪽 — 앱이 그 쪽의 그림 자리를 잘라 붙인다. figure의 page는 이 중에서 고르고, 이름표 글을 보고 "
+            "문서의 대표 그림(전체 구성도·구조도·계통도)을 고를 것. 요약·목차 쪽보다 그림이 주인공인 쪽]\n" + "\n".join(lines[:30]))
+
+
 def generate_board_sources(api_key: str, sources, note: str = "", *, model: str, base_url: str = gw.BASE_URL,
                            progress=None) -> tuple[str, str]:
     """여러 자료(A·B·C — PDF 글 + 그림) → 보드 설계서 하나. 근거는 「A p.3」·「B 사진」. 긴 글은 한 자료 때처럼 묶음별 요약
@@ -222,6 +243,7 @@ def generate_board_sources(api_key: str, sources, note: str = "", *, model: str,
         body, summarized = "\n".join(parts), True
     if progress:
         progress("보드 정리하는 중")
+    body += figure_hint([(s["label"], s["path"]) for s in sources if s["kind"] == "pdf" and s.get("path")])
     prompt = build_board_prompt(body or "(글 자료 없음 — 첨부한 그림만 보고 정리)", note, summarized)
     prompt += _SOURCES_NOTE.format(listing=listing)
     res = gw.call_text_with_fallback(api_key, prompt, model=model, base_url=base_url, images=images or None,
@@ -518,6 +540,7 @@ def generate_board(api_key: str, pdf_path: str, note: str = "", *, model: str, b
     body, summarized, used = pdf_body(api_key, pdf_path, model=model, base_url=base_url, progress=progress)
     if progress:
         progress("보드 정리하는 중")
+    body += figure_hint([(None, pdf_path)])
     res = gw.call_text_with_fallback(api_key, build_board_prompt(body, note, summarized), model=model,
                                      base_url=base_url, timeout=180.0)
     spec = parse_board(res.content)

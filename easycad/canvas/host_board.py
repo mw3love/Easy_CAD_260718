@@ -237,18 +237,17 @@ class _BoardMixin:
         return h
 
     def _pb_figure_pixmap(self, pdf_path, page_no):
-        """논문 그림 — 그 쪽에서 가장 큰 그림 자리를 잘라(없으면 쪽 전체) 그림으로. 못 읽으면 None."""
+        """그 쪽의 그림 자리(`pdf_figure.figure_rect` — 논문은 가장 큰 그림, 슬라이드는 사진·선·이름표를 감싼 범위)를 잘라
+        그림으로(없으면 쪽 전체). 못 읽으면 None."""
         try:
             import fitz
             from PyQt6.QtGui import QImage, QPixmap
             with fitz.open(pdf_path) as doc:
                 if not (1 <= page_no <= doc.page_count):
                     return None
+                from easycad.fileio.pdf_figure import figure_rect
                 page = doc[page_no - 1]
-                area = page.rect.width * page.rect.height
-                boxes = [fitz.Rect(i["bbox"]) for i in page.get_image_info()]
-                boxes = [b for b in boxes if b.width * b.height > area * 0.04]
-                clip = max(boxes, key=lambda b: b.width * b.height) if boxes else page.rect
+                clip = figure_rect(page) or page.rect
                 pix = page.get_pixmap(clip=clip, dpi=150, alpha=False)
                 img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
                 return QPixmap.fromImage(img)

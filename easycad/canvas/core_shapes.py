@@ -491,6 +491,8 @@ class _HandleResizeMixin:
             st["font_pt"] = getattr(self, "_base_pt", self.font().pointSize())
             st["text"] = self.toPlainText()
             st["bg"] = QColor(self._bg) if getattr(self, "_bg", None) is not None else None
+            if hasattr(self, "text_runs"):   # [§8 항목60 ③] 부분 강조·형광펜도 되돌리기에
+                st["runs"] = self.text_runs()
         return st
 
     def apply_state(self, st: dict):
@@ -524,6 +526,9 @@ class _HandleResizeMixin:
             self.setPlainText(st["text"])
         if "bg" in st and hasattr(self, "set_bg"):
             self.set_bg(st["bg"])
+        if "runs" in st and hasattr(self, "apply_runs"):
+            self.clear_runs()
+            self.apply_runs(st["runs"])
         self.update()
 
     def _capture_geom_local(self):
@@ -1853,8 +1858,13 @@ class _LabelMixin:
     def restore_label(self, d: dict):
         """문서 로드용 — 저장된 라벨(dict, 단수 하위호환 포맷)을 자식으로 복원."""
         lbl = self.ensure_label()
+        if d.get("family"):   # [§8 항목60] 보드 흐름도 상자 글꼴
+            from easycad.fonts import ensure_fonts
+            ensure_fonts()
+            f = lbl.font(); f.setFamily(d["family"]); lbl.setFont(f)
         lbl.apply_font_size(d.get("font", 16))
         lbl.setPlainText(d.get("text", ""))
+        lbl.apply_runs(d.get("runs"))
         lbl.apply_color(QColor(d.get("color", _TEXT)))
         if d.get("bg") is not None:
             lbl.set_bg(QColor(*d["bg"]))
@@ -5826,7 +5836,8 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         self.update()
 
     # [우리 확장 2026-10-17 §8 항목60 ①] 글 안 부분 강조 — 한 글 상자 안에서 구절만 다른 색·굵게(보드의 「**구절**」).
-    # 구간은 [시작, 길이, 색 "#rrggbb" 또는 None, 굵게] — 글자 서식에 색·굵기를 따로 준 조각만 센다(나머지는 상자 기본값).
+    # 구간은 [시작, 길이, 색 "#rrggbb" 또는 None, 굵게(, 형광펜 "#aarrggbb")] — 글자 서식에 색·굵기·배경을 따로 준 조각만 센다
+    # (나머지는 상자 기본값). 형광펜(§8 항목60 ③, 글자 배경)이 없으면 넷째까지만 — 옛 .ecad와 같은 모양.
     def text_runs(self) -> list:
         from PyQt6.QtGui import QTextFormat
         runs = []
@@ -5838,8 +5849,11 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
                 fmt = frag.charFormat()
                 color = fmt.foreground().color().name() if fmt.hasProperty(QTextFormat.Property.ForegroundBrush) else None
                 bold = fmt.hasProperty(QTextFormat.Property.FontWeight) and fmt.fontWeight() >= 600
-                if color or bold:
-                    runs.append([frag.position(), frag.length(), color, bold])
+                bg = (fmt.background().color().name(QColor.NameFormat.HexArgb)
+                      if fmt.hasProperty(QTextFormat.Property.BackgroundBrush) and fmt.background().style() != Qt.BrushStyle.NoBrush
+                      else None)
+                if color or bold or bg:
+                    runs.append([frag.position(), frag.length(), color, bold] + ([bg] if bg else []))
                 it += 1
             block = block.next()
         return runs
@@ -5847,7 +5861,9 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
     def apply_runs(self, runs):
         from PyQt6.QtGui import QTextCharFormat, QTextCursor
         n = len(self.toPlainText())
-        for start, length, color, bold in runs or ():
+        for run in runs or ():
+            start, length, color, bold = run[:4]
+            bg = run[4] if len(run) > 4 else None
             start, end = max(0, int(start)), min(n, int(start) + int(length))
             if end <= start:
                 continue
@@ -5859,7 +5875,58 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
                 fmt.setForeground(QColor(color))
             if bold:
                 fmt.setFontWeight(QFont.Weight.Bold)
+            if bg:
+                fmt.setBackground(QColor(bg))
             cur.mergeCharFormat(fmt)
+
+    def clear_runs(self):
+        """글자 서식(부분 강조·형광펜)을 모두 지운다 — 되돌리기가 서식을 다시 칠하기 전에."""
+        from PyQt6.QtGui import QTextCharFormat, QTextCursor
+        cur = QTextCursor(self.document())
+        cur.select(QTextCursor.SelectionType.Document)
+        cur.setCharFormat(QTextCharFormat())
+
+    def set_highlight(self, start, end, color):
+        """[§8 항목60 ③] 형광펜 — [start, end) 글자 배경을 `color`로(None이면 지움). 글을 고쳐도 글자와 함께 움직인다."""
+        from PyQt6.QtGui import QTextCharFormat, QTextCursor, QTextFormat
+        cur = QTextCursor(self.document())
+        cur.setPosition(max(0, start))
+        cur.setPosition(min(len(self.toPlainText()), end), QTextCursor.MoveMode.KeepAnchor)
+        if color is None:   # 구간 안 조각마다 배경만 지운다(색·굵기는 그대로)
+            for a, b in self._fragments_in(start, end):
+                c = QTextCursor(self.document()); c.setPosition(a); c.setPosition(b, QTextCursor.MoveMode.KeepAnchor)
+                f = c.charFormat(); f.clearProperty(QTextFormat.Property.BackgroundBrush); c.setCharFormat(f)
+            return
+        fmt = QTextCharFormat()
+        fmt.setBackground(QColor(color))
+        cur.mergeCharFormat(fmt)
+
+    def has_highlight(self, start, end) -> bool:
+        """[start, end) 글자가 모두 형광펜이면 True(누르면 지우기)."""
+        from PyQt6.QtGui import QTextCursor, QTextFormat
+        if end <= start:
+            return False
+        for a, b in self._fragments_in(start, end):
+            c = QTextCursor(self.document()); c.setPosition(b)
+            f = c.charFormat()
+            if not (f.hasProperty(QTextFormat.Property.BackgroundBrush) and f.background().style() != Qt.BrushStyle.NoBrush):
+                return False
+        return True
+
+    def _fragments_in(self, start, end):
+        """[start, end)를 글자 조각 경계로 나눈 구간들."""
+        out = []
+        block = self.document().begin()
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                frag = it.fragment()
+                a, b = max(start, frag.position()), min(end, frag.position() + frag.length())
+                if b > a:
+                    out.append((a, b))
+                it += 1
+            block = block.next()
+        return out
 
     def clone(self):
         c = _TextItem(self.defaultTextColor())

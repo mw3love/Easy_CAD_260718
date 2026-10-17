@@ -40,10 +40,26 @@ def _label_to_dict(lbl) -> dict:
         "font": getattr(lbl, "_base_pt", lbl.font().pointSize()),
         "bg": None if bg is None else [bg.red(), bg.green(), bg.blue(), bg.alpha()],
     }
+    runs = lbl.text_runs() if hasattr(lbl, "text_runs") else []
+    if runs:   # [§8 항목60] 라벨 안 부분 강조·형광펜 — 없으면 키 생략(하위호환)
+        d["runs"] = runs
+    from easycad.fonts import BOARD_FONT
+    if lbl.font().family() == BOARD_FONT:   # [§8 항목60] 보드 흐름도 상자 글꼴 — 다시 열면 앱 기본으로 돌아갔다
+        d["family"] = BOARD_FONT
     if isinstance(lbl, _ConnectorLabel):
         d["t"] = getattr(lbl, "_conn_t", 0.5)
         d["off"] = getattr(lbl, "_conn_off", 0.0)
     return d
+
+
+def _label_family(lbl, d: dict):
+    """저장된 라벨 글꼴(보드 글꼴만 저장됨)을 되살린다."""
+    if d.get("family"):
+        from easycad.fonts import ensure_fonts
+        ensure_fonts()
+        f = lbl.font()
+        f.setFamily(d["family"])
+        lbl.setFont(f)
 
 
 # ---- 공통 변환 -------------------------------------------------------------
@@ -518,8 +534,10 @@ def insert_items(scene, items: list[dict]) -> list:
         if isinstance(it, (_ArrowItem, _PolyArrowItem)) and d.get("labels"):
             for ld in d["labels"]:
                 lbl = it.add_label_at_t(ld.get("t", 0.5), ld.get("off", 0.0))
+                _label_family(lbl, ld)
                 lbl.apply_font_size(ld.get("font", 16))
                 lbl.setPlainText(ld.get("text", ""))
+                lbl.apply_runs(ld.get("runs"))
                 lbl.apply_color(QColor(ld.get("color", _TEXT)))
                 if ld.get("bg") is not None:
                     lbl.set_bg(QColor(*ld["bg"]))

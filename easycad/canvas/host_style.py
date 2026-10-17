@@ -163,6 +163,20 @@ class _StyleMixin:
         col = _pick_custom_color(self, init, True, "채움 색")
         if col is None:
             return
+        self._apply_fill_color(sel, col)
+
+    def _apply_fill_hex(self):
+        """속성 카드 채움 코드 칸 — 「#d9703f」·「d9703f」·「#abc」·「#80d9703f」(앞 두 자리 = 투명도). 틀리면 지금 값으로 되돌린다."""
+        txt = self._pf_fill_hex.text().strip()
+        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_fill") or hasattr(it, "set_bg")]
+        col = QColor(txt if txt.startswith("#") else "#" + txt) if txt else QColor()
+        cur = self._pf_fill_val.text()
+        if not sel or not col.isValid() or txt.lower() == cur.lower():
+            self._sync_prop_value_buttons()
+            return
+        self._apply_fill_color(sel, col)
+
+    def _apply_fill_color(self, sel, col):
         self._remember_recent_color(col)
         self._edit_items(sel, lambda it: it.apply_fill(QColor(col))
                          if hasattr(it, "apply_fill") else it.set_bg(QColor(col)))
@@ -309,6 +323,11 @@ class _StyleMixin:
         f, tip = col_of(self._pf_fill_val.text())
         self._pf_fill_btn.setIcon(_swatch_icon(f)); self._pf_fill_btn.setToolTip(f"채움 — {tip}")
         self._pf_fill_btn.setEnabled(self._pf_fill.isEnabled())
+        hexe = getattr(self, "_pf_fill_hex", None)
+        if hexe is not None:
+            hexe.setEnabled(self._pf_fill.isEnabled())
+            if not hexe.hasFocus():   # 치는 중엔 덮어쓰지 않는다
+                hexe.setText(tip if tip.startswith("#") else "")
         st = self._PEN_STYLE_ITEMS[max(0, self._pf_style.currentIndex())]
         self._pf_style_btn.setIcon(_pen_style_icon(st[0], _current_icon_color(), 26, 10))
         self._pf_style_btn.setToolTip(f"선 모양 — {st[1]}")
@@ -422,6 +441,25 @@ class _StyleMixin:
         tgt = self._text_targets(self._scene.selectedItems())
         self._edit_items(tgt, lambda it: it.apply_font_size(int(val)),
                          key=("font", tuple(sorted(id(it) for it in tgt))))
+
+    _HIGHLIGHT = "#99ffd54f"   # 형광펜 — 반투명 노랑(표준 형광펜, 글자 전체 높이). 보드 부제목의 「반 높이」 줄은 `_pb_mark` 그대로
+
+    def _text_highlight(self):
+        """[§8 항목60 ③] 형광펜 — 글 고치는 중 드래그한 구절, 아니면 고른 글(도형 안 글 포함) 전체. 모두 칠해져 있으면 지운다."""
+        focus = self._scene.focusItem()
+        if isinstance(focus, _TextItem) and focus.textCursor().hasSelection():
+            c = focus.textCursor()
+            targets = [(focus, c.selectionStart(), c.selectionEnd())]
+        else:
+            targets = [(t, 0, len(t.toPlainText())) for t in self._text_targets(self._scene.selectedItems())
+                       if t.toPlainText() and hasattr(t, "set_highlight")]   # 화살표 라벨 등 서식 없는 글은 빼고
+        if not targets:
+            return
+        on = not all(t.has_highlight(a, b) for t, a, b in targets)
+        snaps = [(t, t.capture_state()) for t, _a, _b in targets]
+        for t, a, b in targets:
+            t.set_highlight(a, b, self._HIGHLIGHT if on else None)
+        self.push_undo_state(snaps)
 
     def _apply_text_color_preset(self, i: int):
         col = self._line_presets()[i]

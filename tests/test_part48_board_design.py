@@ -300,3 +300,113 @@ def test_wide_flow_cell_shrinks_and_neighbor_takes_columns():
     labels = [it._label for it in added if getattr(it, "_flow_key", None) and hasattr(it, "_label_alive") and it._label_alive()]
     assert labels and all(lb.font().family() == BOARD_FONT for lb in labels)
     _close(w)
+
+
+# ---- 작은 것 셋 + 슬라이드 그림(§8 항목60 5라운드) ---------------------------------------------------------------------
+
+def _slide_pdf(path):
+    """가로 슬라이드 한 쪽 — 제목 줄 옆 아이콘(본문에 살짝 걸침), 작은 사진 셋을 잇는 선, 짧은 이름표, 강조 상자가 든 긴 문단."""
+    import fitz
+    from PyQt6.QtGui import QImage
+    img = QImage(40, 30, QImage.Format.Format_RGB32); img.fill(QColor("#336699"))
+    png = str(path) + ".png"; img.save(png)
+    doc = fitz.open(); p = doc.new_page(width=720, height=540)
+    font = r"C:\Windows\Fonts\malgun.ttf"
+    p.insert_text((40, 30), "SLIDE TITLE", fontsize=20)
+    p.insert_image(fitz.Rect(400, 15, 520, 105), filename=png)            # 제목 줄 장식(가운데가 제목 줄)
+    for x, y in ((60, 300), (300, 330), (600, 300)):
+        p.insert_image(fitz.Rect(x, y, x + 60, y + 40), filename=png)
+    p.draw_line((120, 320), (300, 350), color=(0.2, 0.5, 0.8), width=3)
+    p.draw_line((360, 350), (600, 320), color=(0.2, 0.5, 0.8), width=3)
+    p.insert_text((60, 290), "메인 장비", fontsize=10, fontname="malgun", fontfile=font)
+    p.insert_text((300, 395), "체인지오버", fontsize=10, fontname="malgun", fontfile=font)
+    p.draw_rect(fitz.Rect(60, 131, 200, 146), color=None, fill=(1, 0.6, 0.2))   # 문단 안 강조 상자(글 줄 위)
+    p.insert_textbox(fitz.Rect(40, 130, 680, 200), "이 장비는 외부 기준 신호에 맞춰 안정적인 동기 신호를 만들고, 이상이 생기면 예비로 절체하는 기능을 갖추고 있습니다.",
+                     fontsize=11, fontname="malgun", fontfile=font)
+    doc.save(str(path))
+    return str(path)
+
+
+def test_slide_figure_rect_wraps_photos_lines_labels_only(tmp_path):
+    """슬라이드 그림 자리 = 본문의 사진·선·이름표만 — 제목 줄 장식·문단(과 그 안 강조 상자)은 빼고, 이름표는 반쯤 자르지 않는다."""
+    import fitz
+    from easycad.fileio.pdf_figure import figure_labels, figure_rect
+    pdf = _slide_pdf(tmp_path / "slide.pdf")
+    with fitz.open(pdf) as doc:
+        r = figure_rect(doc[0])
+        assert r is not None
+        assert r.y0 > 200                      # 제목 줄 아이콘·문단(130~200)·강조 상자는 안 들어감
+        assert r.x0 <= 60 and r.x1 >= 660      # 왼쪽 사진 ~ 오른쪽 사진
+        assert r.y1 >= 395                     # 아래 이름표까지 통째로
+        labels = figure_labels(doc[0], r)
+        assert "메인 장비" in labels and "체인지오버" in labels and "기준 신호" not in labels
+
+
+def test_figure_hint_lists_figure_pages(tmp_path):
+    hint = pb.figure_hint([(None, _slide_pdf(tmp_path / "s.pdf"))])
+    assert "p.1:" in hint and "체인지오버" in hint and "대표 그림" in hint
+    assert pb.figure_hint([(None, str(tmp_path / "없는.pdf"))]) == ""
+
+
+def test_pieces_do_not_land_on_other_pieces():
+    """두 보드의 조각이 같은 자리로 펼쳐져도 겹치지 않는다(세 모델 보드: 조각 40개 중 17쌍이 겹쳤다)."""
+    from PyQt6.QtCore import QRectF
+    w = _window()
+    spec = pb.parse_board(json.dumps(dict(PAPER, more=[{"type": "quote", "text": "인용 하나", "row": 1, "span": 6},
+                                                       {"type": "list", "items": ["하나", "둘"], "row": 1, "span": 6}]),
+                                     ensure_ascii=False))
+    near = QRectF(0, 0, 1000, 600)
+    a = w._pieces_place(spec, near)
+    b = w._pieces_place(spec, near)
+    ra = w._ai_items_rect(a); rb = w._ai_items_rect(b)
+    assert not ra.intersects(rb)
+    _close(w)
+
+
+def test_fill_hex_input_applies_and_shows_current():
+    w = _window()
+    from easycad.canvas.annotator_core import _RectItem
+    from PyQt6.QtCore import QRectF
+    r = _RectItem(QRectF(0, 0, 100, 60)); w._scene.addItem(r)
+    r.setFlag(r.GraphicsItemFlag.ItemIsSelectable); r.setSelected(True)
+    w._refresh_properties()
+    w._pf_fill_hex.setText("d9703f"); w._apply_fill_hex()
+    assert r.brush().color().name() == "#d9703f"
+    w._refresh_properties()
+    assert w._pf_fill_hex.text().lower().startswith("#") and "d9703f" in w._pf_fill_hex.text().lower()
+    w._pf_fill_hex.setText("이상한값"); w._apply_fill_hex()   # 틀린 값은 무시하고 지금 값으로
+    assert r.brush().color().name() == "#d9703f"
+    w.undo()
+    assert r.brush().color().name() != "#d9703f"
+    _close(w)
+
+
+def test_highlighter_selection_toggle_save_undo():
+    """형광펜 — 글 고치는 중 드래그한 구절만, 다시 누르면 지움, .ecad·되돌리기 유지. 도형 안 글(라벨)도 저장된다."""
+    from PyQt6.QtGui import QTextCursor
+    from easycad.canvas.annotator_core import _RectItem, _TextItem
+    from PyQt6.QtCore import QRectF
+    w = _window()
+    t = _TextItem(QColor("#202020")); t.setPlainText("어텐션으로 단어 관계를 연결"); w._scene.addItem(t)
+    t.setTextInteractionFlags(t.textInteractionFlags().__class__.TextEditorInteraction); t.setFocus()
+    w._scene.setFocusItem(t)
+    c = t.textCursor(); c.setPosition(0); c.setPosition(5, QTextCursor.MoveMode.KeepAnchor); t.setTextCursor(c)
+    w._text_highlight()
+    runs = t.text_runs()
+    assert len(runs) == 1 and runs[0][:2] == [0, 5] and runs[0][4].lower() == w._HIGHLIGHT
+    again = dict_to_item(json.loads(json.dumps(item_to_dict(t))))
+    assert again.text_runs() == runs
+    w._text_highlight()                       # 같은 구절 다시 → 지움
+    assert t.text_runs() == []
+    w.undo()                                   # 지운 것 되돌리기 → 다시 칠해짐
+    assert t.text_runs() == runs
+    # 도형 안 글(라벨)
+    box = _RectItem(QRectF(0, 0, 160, 60)); w._scene.addItem(box)
+    lbl = box.ensure_label(); lbl.setPlainText("라벨 글"); lbl.set_highlight(0, 2, w._HIGHLIGHT)
+    d = json.loads(json.dumps(item_to_dict(box)))
+    box2 = dict_to_item(d)
+    if box2._label_alive():
+        assert box2._label.text_runs() == lbl.text_runs()
+    else:   # 라벨 복원은 씬에 넣은 뒤(insert_items) — 저장 dict에 서식이 있는지만
+        assert d["label"]["runs"] == lbl.text_runs()
+    _close(w)

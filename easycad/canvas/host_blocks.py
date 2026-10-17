@@ -281,7 +281,9 @@ class _BlockBoardMixin:
                         c[7] = max(bh, room)
             else:
                 room = rh
-                if blk.get("hero") or blk["type"] in self._BB_FACE_TYPES:   # 면은 줄 높이만큼(같은 줄 블록과 아래 끝이 맞게)
+                # 면은 줄 높이만큼(같은 줄 블록과 아래 끝이 맞게) — 단계 카드는 내용 높이 그대로(옆 그림 칸만큼 늘면 아래가 텅 빈
+                # 주황 면이 됐다 — Leader 보드, §8 항목60). 카드가 위에 한 줄이라 늘린 면을 채울 것이 없다.
+                if blk.get("hero") or (blk["type"] in self._BB_FACE_TYPES and not (blk["type"] == "steps" and rh > bh * 1.3)):
                     c[7] = rh
             # (자리, 블록, x, 폭, y, 높이, 아래에 다른 블록이 있나, 이 칸에서 쓸 수 있는 높이)
             info.append((f"blocks[{idx}]", blk, bx, bw, by, c[7], bool(below), room))

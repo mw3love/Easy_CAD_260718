@@ -72,6 +72,16 @@ class _PiecesMixin:
             added += items
             tops[c] = y + h + self._PC_GAP
         self._pb_part_cur = None
+        # 그 자리가 이미 다른 것(다른 AI 보드의 조각 등)과 겹치면 묶음째 가장 가까운 빈자리로(§8 항목60 — 세 모델로 만든 보드의
+        # 조각 40개 중 17쌍이 겹쳤다: 보드는 빈자리를 찾는데 조각은 「보드 오른쪽 +160」에 무조건 놓였다)
+        box = self._ai_items_rect(added)
+        if not box.isNull():
+            spot = self._ai_find_free_center(self._scene, box.width(), box.height(), box.center(), exclude=added)
+            dx, dy = spot.x() - box.center().x(), spot.y() - box.center().y()
+            if abs(dx) > 0.5 or abs(dy) > 0.5:
+                for it in added:
+                    if it.parentItem() is None:
+                        it.moveBy(dx, dy)
         if push:
             self.push_undo_add_many(added)
         return added
