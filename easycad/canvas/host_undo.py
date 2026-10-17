@@ -68,6 +68,7 @@ class _UndoMixin:
         self._mark_dirty()   # [§8 항목10 Stage C]
         self._schedule_layer_counts()   # 레이어 패널 「이름 (개수)」 갱신
         self._schedule_props_refresh()   # 속성 카드 값(회전 손잡이로 돌린 각도 등)
+        getattr(self, "_pieces_after_push", lambda _o: None)(ops)   # [§8 항목59 ③] 조각을 보드에 놓았나·보드 블록을 밖으로 꺼냈나(다음 이벤트에서 다시 배치)
 
     # [§8 항목35, 2026-10-03] 되돌리기 기록 상한 — 사용자 결정: 그림 메모리만 제한.
     # 실측: 도형 5만 개를 지워 쌓아도 +80MB, 한 도형 5,000번 이동 +4MB인데, 1,200만 화소 사진은

@@ -65,28 +65,34 @@ class _PiecesMixin:
         head, hh = self._pb_text(added, f"조각 {len(blocks)}개 — 골라서 「보드로 정리」", x0, y0, self._PC_W * 2, 13,
                                  self._PB_MUTED, bold=True)   # 흐린 회청 — 밝은·어두운 캔버스 둘 다 읽힘
         tops = [y0 + hh + 16.0] * self._PC_COLS
-        for i, blk in enumerate(blocks):
+        for blk in blocks:
             c = min(range(self._PC_COLS), key=lambda k: tops[k])
             x, y = x0 + c * (self._PC_W + self._PC_GAP), tops[c]
-            self._pb_part_cur = f"more[{i}]"
-            start = len(added)
-            h, _ns, _na = self._bb_block(added, spec, dict(blk, hero=False), x + self._PC_PAD, y + self._PC_PAD,
-                                         self._PC_W - 2 * self._PC_PAD)
-            # 종이색 틀(포스트잇) — 조각은 보드 밖 캔버스 위라 어두운 테마에서 검정 글이 안 보였다(실제 창). 흰색에 가까운
-            # 무채색은 인쇄 때 흰→검정 바꾸기에 걸리므로 살짝 미색.
-            frame = self._pb_card_under(added, start, x, y, self._PC_W, h + 2 * self._PC_PAD,
-                                        fill=self._PC_PAPER, edge=self._PB_EDGE)
-            piece = {k: v for k, v in blk.items() if k not in ("row", "span", "_i")}
-            frame._pb_piece = json.dumps(piece, ensure_ascii=False)
-            gid = uuid.uuid4().hex[:8]
-            for it in added[start:]:
-                it._group_id = gid
-                it._pb_part = None   # 조각은 보드의 설계서 자리가 아니다
-            tops[c] = y + h + 2 * self._PC_PAD + self._PC_GAP
+            items, h = self._piece_make(spec, blk, x, y)
+            added += items
+            tops[c] = y + h + self._PC_GAP
         self._pb_part_cur = None
         if push:
             self.push_undo_add_many(added)
         return added
+
+    def _piece_make(self, spec, blk, x, y):
+        """조각 하나(종이색 틀 + 블록 내용, 한 묶음)를 (x, y) 왼쪽 위에 — 반환 (아이템들, 높이). 되돌리기는 부르는 쪽이."""
+        added: list = []
+        self._pb_part_cur = "piece"
+        h, _ns, _na = self._bb_block(added, spec, dict(blk, hero=False), x + self._PC_PAD, y + self._PC_PAD,
+                                     self._PC_W - 2 * self._PC_PAD)
+        # 종이색 틀(포스트잇) — 조각은 보드 밖 캔버스 위라 어두운 테마에서 검정 글이 안 보였다(실제 창). 흰색에 가까운
+        # 무채색은 인쇄 때 흰→검정 바꾸기에 걸리므로 살짝 미색.
+        frame = self._pb_card_under(added, 0, x, y, self._PC_W, h + 2 * self._PC_PAD, fill=self._PC_PAPER, edge=self._PB_EDGE)
+        piece = {k: v for k, v in blk.items() if k not in ("row", "span", "_i", "hero")}
+        frame._pb_piece = json.dumps(piece, ensure_ascii=False)
+        gid = uuid.uuid4().hex[:8]
+        for it in added:
+            it._group_id = gid
+            it._pb_part = None   # 조각은 보드의 설계서 자리가 아니다
+        self._pb_part_cur = None
+        return added, h + 2 * self._PC_PAD
 
     # ---- 고르기 · 「보드로 정리」 -------------------------------------------------------------------
 
@@ -150,6 +156,171 @@ class _PiecesMixin:
             self._ai_ensure_visible(self._view, self._ai_items_rect(new_boards))
         self._refresh_minimap()
         return new_boards[0] if new_boards else None
+
+    # ---- 끌어다 놓기(§8 항목59 ③) — 조각을 보드에 넣기 · 보드 블록을 밖으로 꺼내기 ------------------------------------
+    # `_push_entry` 길목(옮긴 기록이 쌓인 직후)에서 보고, 실제 바꾸기는 다음 이벤트에서(옮기기 기록과 따로 한 칸 — Ctrl+Z 한 번이면 넣기/꺼내기만 취소).
+
+    def _pieces_after_push(self, ops):
+        from PyQt6.QtCore import QTimer
+        if getattr(self, "_pc_busy", False):
+            return
+        moves = [o for o in ops if o[0] == "mut" and o[2] == "pos"]
+        if not moves:
+            return
+        boards = [(b, r) for b, r in self._boards() if self._board_block_spec(b) is not None]
+        if not boards:
+            return
+        task = None
+        for o in moves:   # 조각 틀이 보드 안에 떨어졌나
+            f = o[1]
+            if getattr(f, "_pb_piece", None):
+                c = f.sceneBoundingRect().center()
+                hit = [b for b, r in boards if r.contains(c)]
+                if hit:
+                    task = ("in", f, hit[0], c)
+                    break
+        if task is None:   # 보드 블록이 보드 밖으로 나갔나
+            for o in moves:
+                it, part = o[1], getattr(o[1], "_pb_part", None) or ""
+                if not part.startswith("blocks[") or not hasattr(o[3], "x"):
+                    continue
+                c_new = it.sceneBoundingRect().center()
+                c_old = c_new - (o[4] - o[3])
+                for b, r in boards:
+                    if r.contains(c_old) and not r.contains(c_new):
+                        task = ("out", b, part, c_new)
+                        break
+                if task:
+                    break
+        if task is not None:
+            QTimer.singleShot(0, lambda t=task: self._pieces_apply(t))
+
+    def _board_block_spec(self, board):
+        from easycad.ai.pdf_to_board import is_block_spec, parse_board
+        info = getattr(board, "_ai", None) or {}
+        if not info.get("spec"):
+            return None
+        try:
+            spec = parse_board(info["spec"])
+        except ValueError:
+            return None
+        return spec if is_block_spec(spec) else None
+
+    def _pieces_apply(self, task):
+        if task[0] == "in":
+            _k, frame, board, c = task
+            if frame.scene() is self._scene and board.scene() is self._scene:
+                return self._piece_drop_into(frame, board, c)
+        else:
+            _k, board, part, c = task
+            if board.scene() is self._scene:
+                return self._piece_take_out(board, part, c)
+        return None
+
+    def _board_block_rects(self, board) -> dict:
+        """보드 안 블록 자리 → 씬 사각형(그 블록 아이템들을 합친 것)."""
+        rects = {}
+        for b in self._board_set(board):
+            for it in self._board_scope(b):
+                p = getattr(it, "_pb_part", None) or ""
+                if p.startswith("blocks["):
+                    r = it.sceneBoundingRect()
+                    rects[p] = rects[p].united(r) if p in rects else r
+        return rects
+
+    @staticmethod
+    def _renumber_rows(blocks):
+        """줄 번호를 1부터 차례로(빈 번호 없이) — 블록 차례는 그대로."""
+        order = sorted({b["row"] for b in blocks})
+        m = {r: i + 1 for i, r in enumerate(order)}
+        for b in blocks:
+            b["row"] = m[b["row"]]
+
+    @staticmethod
+    def _fit_row_spans(blocks, row):
+        """한 줄의 칸 합이 12를 넘으면 고르게 나눈다(바닥 3칸)."""
+        rb = [b for b in blocks if b["row"] == row]
+        if sum(b["span"] for b in rb) > 12:
+            for b in rb:
+                b["span"] = max(3, 12 // len(rb))
+
+    def _piece_drop_into(self, frame, board, c):
+        """조각을 보드에 넣는다 — 놓은 높이의 블록과 같은 줄(그 블록 앞/뒤), 맨 위·맨 아래면 새 줄. 보드는 제자리에 다시 배치."""
+        spec = self._board_block_spec(board)
+        try:
+            piece = json.loads(frame._pb_piece)
+        except ValueError:
+            return None
+        blocks = [dict(b) for b in spec["blocks"]]
+        rects = self._board_block_rects(board)
+        blk = {k: v for k, v in piece.items() if not k.startswith("_")}
+        blk.update(span=6, size=blk.get("size") or "normal")
+        same = [(int(p[7:-1]), r) for p, r in rects.items() if r.top() <= c.y() <= r.bottom() and int(p[7:-1]) < len(blocks)]
+        if same:
+            j, r = min(same, key=lambda t: abs(t[1].center().x() - c.x()))
+            blk["row"] = blocks[j]["row"]
+            blocks.insert(j + 1 if c.x() > r.center().x() else j, blk)
+            self._fit_row_spans(blocks, blk["row"])
+        else:
+            tops = [r.top() for r in rects.values()] or [c.y()]
+            first = c.y() < min(tops)
+            rows = [b["row"] for b in blocks] or [1]
+            blk["row"] = (min(rows) - 0.5) if first else (max(rows) + 1)
+            blocks.insert(0 if first else len(blocks), blk)
+        self._renumber_rows(blocks)
+        spec["blocks"] = blocks
+        group = [it for it in self._scene.items() if it.parentItem() is None
+                 and getattr(it, "_group_id", None) == getattr(frame, "_group_id", None)]
+        new_boards = self._board_rebuild(board, spec, extra_remove=group or [frame])
+        self.statusBar().showMessage("조각을 보드에 넣었어요 — 되돌리기 Ctrl+Z", 4000)
+        return new_boards[0] if new_boards else None
+
+    def _piece_take_out(self, board, part, c):
+        """보드 블록을 밖으로 — 설계서에서 빼고 보드를 다시 배치, 놓은 자리에 조각으로(되돌리기 한 칸)."""
+        spec = self._board_block_spec(board)
+        i = int(part[7:-1])
+        if i >= len(spec["blocks"]) or len(spec["blocks"]) <= 1:
+            return None
+        blk = spec["blocks"].pop(i)
+        self._renumber_rows(spec["blocks"])
+        stray = [it for it in self._scene.items() if it.parentItem() is None and getattr(it, "_pb_part", None) == part
+                 and self._board_at(it) is None]   # 밖으로 끌어낸 그 블록 조각들(보드 안 범위에 안 들어 따로 걷는다)
+        new_boards = self._board_rebuild(board, spec, extra_remove=stray)
+        items, _h = self._piece_make(spec, blk, c.x() - self._PC_W / 2.0, c.y() - 20.0)
+        self._undo[-1].ops += [("create", it) for it in items]
+        self.statusBar().showMessage("블록을 보드에서 꺼냈어요(조각으로) — 되돌리기 Ctrl+Z", 4000)
+        return items
+
+    def _board_rebuild(self, board, spec, extra_remove=()) -> list:
+        """보드(여러 장이면 묶음)를 새 설계서로 제자리에 다시 그린다 — 옛 것 걷기 + 새로 놓기를 되돌리기 한 칸으로. 색·`_ai`는 이어받는다."""
+        from easycad.ai.pdf_to_board import dump_board
+        self._pc_busy = True
+        try:
+            info = dict(getattr(board, "_ai", None) or {})
+            boards = self._board_set(board)
+            old = []
+            for b in boards:
+                old += [b] + self._board_scope(b)
+            old = list(dict.fromkeys(old + list(extra_remove)))   # 한 번씩만(보드 범위에 보드 자신이 또 들어 있을 수 있다)
+            center = self._ai_items_rect(boards).center()
+            bg = board.bg().name()
+            for it in old:
+                if it.scene() is not None:
+                    it.scene().removeItem(it)
+            code = dump_board(spec)
+            _n, _a, _d, added = self._build_paper_board(code, center, bg=bg)
+            self._undo[-1].ops[0:0] = [("remove", it) for it in old]
+            info["spec"] = code
+            new_boards = [it for it in added if isinstance(it, _BoardItem)]
+            for b in new_boards:
+                b._ai = dict(info)
+            self._scene.clearSelection()
+            if new_boards:
+                new_boards[0].setSelected(True)
+            self._refresh_minimap()
+            return new_boards
+        finally:
+            self._pc_busy = False
 
     # ---- 조각 막대(고른 조각 위) ----------------------------------------------------------------------
 

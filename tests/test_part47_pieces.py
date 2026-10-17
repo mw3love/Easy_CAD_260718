@@ -63,3 +63,47 @@ def test_new_board_spreads_pieces_and_pieces_make_board(figure_pdf, tmp_path):
     w._do_open_ecad(path)
     assert len(_frames(w)) == 4
     _close(w)
+
+
+def _drag(w, items, dx, dy):
+    """끌어 놓기와 같은 길 — 옮기고 `push_undo_move`(마우스 놓을 때 뷰가 부르는 것), 다음 이벤트(다시 배치)까지 돌린다."""
+    from PyQt6.QtCore import QPointF
+    pairs = [(it, QPointF(it.pos())) for it in items]
+    for it in items:
+        it.setPos(it.pos() + QPointF(dx, dy))
+    w.push_undo_move(pairs)
+    for _ in range(5):
+        _app.processEvents()
+
+
+def test_drop_piece_into_board_and_take_block_out(figure_pdf):
+    """[§8 항목59 ③] 조각을 보드 위에 놓으면 보드 설계서에 들어가 제자리에서 다시 배치, 보드 블록을 밖으로 끌면 설계서에서 빠져 조각으로.
+    각각 되돌리기 한 번이면 취소."""
+    w = _window()
+    board = _make(w, figure_pdf)
+    n0 = len(pb.parse_board(board._ai["spec"])["blocks"])
+    quote = next(f for f in _frames(w) if json.loads(f._pb_piece)["type"] == "quote")
+    group = [it for it in w._scene.items() if getattr(it, "_group_id", None) == quote._group_id]
+    br = board.mapRectToScene(board.rect())
+    c = quote.sceneBoundingRect().center()
+    _drag(w, group, br.center().x() - c.x(), br.bottom() - 60 - c.y())   # 보드 아래쪽에 놓기
+    nb = next(b for b in w._scene.items() if isinstance(b, _BoardItem) and b.isSelected())
+    spec = pb.parse_board(nb._ai["spec"])
+    assert len(spec["blocks"]) == n0 + 1 and any(b["type"] == "quote" for b in spec["blocks"])
+    assert quote.scene() is None and not [f for f in _frames(w) if json.loads(f._pb_piece)["type"] == "quote"]
+    assert check_drawing(w._scene, items=[it for it in w._board_scope(nb) if it is not nb]) == []
+    w.undo()
+    for _ in range(3):
+        _app.processEvents()
+    assert any(json.loads(f._pb_piece)["type"] == "quote" for f in _frames(w))   # 넣기 취소 → 조각이 돌아옴
+    # 꺼내기: 표 블록의 글 하나를 보드 밖으로
+    board = next(b for b in w._scene.items() if isinstance(b, _BoardItem) and (b._ai or {}).get("spec"))
+    spec = pb.parse_board(board._ai["spec"])
+    ti = next(i for i, b in enumerate(spec["blocks"]) if b["type"] == "table")
+    cell = next(it for it in w._board_scope(board) if getattr(it, "_pb_part", None) == f"blocks[{ti}]" and hasattr(it, "toPlainText"))
+    br = board.mapRectToScene(board.rect())
+    _drag(w, [cell], 0, br.bottom() + 300 - cell.sceneBoundingRect().center().y())
+    nb = next(b for b in w._scene.items() if isinstance(b, _BoardItem) and b.isSelected())
+    assert not any(b["type"] == "table" for b in pb.parse_board(nb._ai["spec"])["blocks"])
+    assert any(json.loads(f._pb_piece)["type"] == "table" for f in _frames(w))
+    _close(w)
