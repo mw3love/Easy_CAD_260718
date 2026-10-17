@@ -1,0 +1,23 @@
+{
+  "name": "magic-board-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5190",
+    "build": "vite build",
+    "serve": "vite preview --host --port 5190",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "@tiptap/core": "3.32.0",
+    "@tiptap/extension-text-style": "3.32.0",
+    "@tldraw/utils": "5.5.2",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tldraw": "5.5.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.1.2",
+    "vite": "8.3.4"
+  }
+}
