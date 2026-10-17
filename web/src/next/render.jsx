@@ -88,6 +88,21 @@ function arrowLabels(it, at, onBoard) {
     return { el: <TextLines key={'l' + i} lay={lay} left={box.left} top={box.top} color={ink(L.color, onBoard)} />, gap }
   })
 }
+// 화살표 라벨 자리(화살표 안 좌표) — 편집 화면이 누르기·끌기·글 편집에 씀. → [{ i, left, top, w, h, a(앵커), n(왼쪽 법선) }]
+export const arrowPath = (it, route) => it.type === 'sarrow' ? (route || it.pts).map(([x, y]) => ({ x, y })) : null
+export function arrowAt(it, route) {
+  if (it.type === 'sarrow') { const pts = arrowPath(it, route); return t => polylineAt(pts, t) }
+  const p0 = { x: it.p1[0], y: it.p1[1] }, p3 = { x: it.p2[0], y: it.p2[1] }
+  return it.ctrl1 ? t => curveAt(p0, { x: it.ctrl1[0], y: it.ctrl1[1] }, { x: it.ctrl2[0], y: it.ctrl2[1] }, p3, t) : t => polylineAt([p0, p3], t)
+}
+export function arrowLabelBoxes(it, route) {
+  const at = arrowAt(it, route), labels = it.labels || (it.label ? [it.label] : [])
+  return labels.map((L, i) => {
+    const lay = layoutText(L.text || ' ', L.runs, (L.font || 16) * PT, L.family ? 'board' : 'app'), { p, n } = at(L.t ?? 0.5), off = L.off || 0
+    const a = { x: p.x + n.x * off, y: p.y + n.y * off }, box = centeredBox(lay, a)
+    return { i, left: box.left, top: box.top, w: box.w, h: lay.h + 2 * TEXT_MARGIN, a, n, empty: !L.text?.trim() }
+  })
+}
 function GapMask({ id, gaps }) {
   return <mask id={id} maskUnits="userSpaceOnUse" x={-1e6} y={-1e6} width={2e6} height={2e6}>
     <rect x={-1e6} y={-1e6} width={2e6} height={2e6} fill="#fff" />

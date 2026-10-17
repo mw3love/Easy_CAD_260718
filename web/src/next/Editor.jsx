@@ -2,13 +2,14 @@
 // 되돌리기·복사/붙여넣기/복제·삭제·묶기·잠금·순서·반전·방향키, 그리기 도구(상자·원·글·선·펜·다각형), 글 편집(TipTap).
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { Item, layoutText } from './render.jsx'
+import { arrowAt, arrowLabelBoxes, Item, layoutText } from './render.jsx'
 import { boardMembership, drawOrder, itemBounds } from './doc.js'
 import { PT, TEXT_MARGIN, labelAnchor } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
 import { ROUTE_BOX, bindPt, dropTarget, edgeMid, isConnHost, nearestBorder, OPP, qcDelta, qcDots, shapePorts, snapAt } from './connect.js'
 import { routeOrtho } from '../route.js'
+import { projectToCurve, projectToPath, snapLabelOff } from './arrowedit.js'
 import { beginSegment, beginSubdivide, bendCurve, BEND_TS, curvePoint, dragSegment, endSegment, nearestSegment, onPill, SEG_HANDLE_PX, SEG_HIT_PX, segmentHandles, setCurveEnd, snapCurve, subdividePreview } from './arrowedit.js'
 import { sarrowRouting } from './arrows.js'
 import { newId } from './model.js'
@@ -46,6 +47,12 @@ function inside(it, p) {
 const sceneRectOf = it => { const b = sceneBox(it, textBox); return { l: b.x, t: b.y, r: b.x + b.w, b: b.y + b.h } }
 
 const topZ = items => Math.max(0, ...items.map(it => it.z ?? 0))
+// 화살표 라벨 — 옛 파일의 단수 label은 고칠 때 labels 하나로(데스크톱도 저장할 땐 labels만)
+const isArrow = it => it?.type === 'sarrow' || it?.type === 'arrow'
+const labelsOf = it => (it.labels ? it.labels.map(L => ({ ...L })) : it.label ? [{ t: 0.5, off: 0, ...it.label }] : [])
+const withLabels = (it, labels) => { const o = { ...it, labels }; delete o.label; return o }
+// 화살표 안 점 → 길 위 t·옆 거리(직각 = 꺾은선 길이 비율, 곡선 = 매개변수 — 데스크톱 `_project_to_path`·`_project_to_curve`)
+const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([x, y]) => ({ x, y })), q) : projectToCurve(it, q))
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
 export const Editor = forwardRef(function Editor({ model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus }, ref) {
@@ -109,6 +116,16 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     return out
   }
   const handleAt = p => { const z = R.current.cam.z; return handlesOf(single).find(h => !h.pill && Math.hypot(h.p.x - p.x, h.p.y - p.y) * z <= HANDLE * 0.75) || null }
+  // 누른 곳의 화살표 라벨(맨 위부터) → { it, i, box }
+  function labelAt(p) {
+    const ord = R.current.order || []
+    for (let k = ord.length - 1; k >= 0; k--) {
+      const it = ord[k][0]; if (!isArrow(it) || it.locked) continue
+      const q = toLocal(it, p), b = arrowLabelBoxes(it).find(b => !b.empty && q.x >= b.left && q.x <= b.left + b.w && q.y >= b.top && q.y <= b.top + b.h)
+      if (b) return { it, i: b.i, box: b }
+    }
+    return null
+  }
   // 고른 직각 화살표의 구간 위(화면 10px) → { i, proj(화살표 안), pill(알약 위인가) } — 알약 = 구간 통째 평행 이동, 아니면 나눠 끌기(데스크톱 `_segment_add_at`)
   function segAt(p) {
     const it = single
@@ -153,6 +170,12 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     if (h) {
       const it = single
       st.current = { ...st.current, kind: h.key === 'rot' ? 'rotate' : h.key === 'scale' ? 'tscale' : h.key.startsWith('e') ? 'lineend' : 'resize', handle: h.key, id: it._id, start: p, orig: m.items }
+      return
+    }
+    const lb = !h && labelAt(p)
+    if (lb) {   // 라벨 끌기 = 길 따라 미끄러짐 + 옆으로 당기면 선 위/양옆 세 자리(데스크톱 `_reproject_label`)
+      const q = toLocal(lb.it, p)
+      setSel([lb.it._id]); st.current = { ...st.current, kind: 'label', id: lb.it._id, i: lb.i, box: lb.box, grab: { x: lb.box.a.x - q.x, y: lb.box.a.y - q.y }, orig: m.items, start: p, moved: false }
       return
     }
     const sg = !h && segAt(p)
@@ -205,6 +228,15 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       s.cur = cur
       const tgt = connTarget(s.src, s.port, cur)
       setOverlay(o2 => ({ ...o2, conn: connRoute(s.src, s.port, tgt, cur), hp: tgt ? { id: tgt.id, target: tgt } : null }))
+      return
+    }
+    if (s.kind === 'label') {
+      if (!s.moved && Math.hypot(p.x - s.start.x, p.y - s.start.y) * z < 3) return
+      s.moved = true
+      const it = s.orig.find(x => x._id === s.id), q = toLocal(it, p), c = { x: q.x + s.grab.x, y: q.y + s.grab.y }, pr = projectOn(it, c)
+      const n = arrowAt(it)(pr.t).n, labels = labelsOf(it)
+      labels[s.i] = { ...labels[s.i], t: pr.t, off: snapLabelOff(n, pr.off, s.box.w, s.box.h) }
+      setLive(s.orig.map(x => (x._id === s.id ? withLabels(it, labels) : x)))
       return
     }
     if (s.kind === 'seg') {
@@ -265,6 +297,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     }
     if (s.kind === 'aend') { setOverlay(o => ({ ...o, hp: null })); if (live) commit(live, [s.id], '화살표 끝 옮김'); return }
     if (s.kind === 'bend') { if (live) commit(live, [s.id], '곡선 휨'); return }
+    if (s.kind === 'label') { if (s.moved && live) commit(live, [s.id], '라벨 옮김'); else setLive(null); return }
     if (s.kind === 'seg') { if (s.moved && live) commit(live.map(x => (x._id === s.id ? { ...x, pts: endSegment(x.pts) } : x)), [s.id], '구간 옮김'); else setLive(null); return }
     if (s.kind === 'move') { setOverlay(o => ({ ...o, guides: null })); if (s.moved && live) commit(live.filter(it => it), s.sel, '옮김'); else setLive(null); return }
     if (s.kind === 'rubber') {
@@ -393,8 +426,16 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   // ── 두 번 누르기 = 글 편집(글 상자) / 도형 라벨 ──
   function onDoubleClick(e) {
     if (R.current.tool === 'polygon') { finishPoly(overlay.poly || [], false); return }
-    const p = toSceneP(e), hit = topHit(R.current.model.items, p, HIT_PX / R.current.cam.z, textBox)
+    const p = toSceneP(e), lb = labelAt(p)
+    if (lb) { setSel([lb.it._id]); setEditing({ id: lb.it._id, kind: 'alabel', i: lb.i }); return }
+    const hit = topHit(R.current.model.items, p, HIT_PX / R.current.cam.z, textBox)
     if (!hit || hit.locked) return
+    if (isArrow(hit)) {   // 화살표 빈 자리 더블클릭 = 그 자리에 새 라벨(여러 개 — 데스크톱 `add_label_at_scene_pos`)
+      const labels = labelsOf(hit), pr = projectOn(hit, toLocal(hit, p))
+      labels.push({ text: '', color: hit.color || INK, font: 16, bg: null, t: pr.t, off: 0 })
+      commit(R.current.model.items.map(x => (x._id === hit._id ? withLabels(hit, labels) : x)), [hit._id], '라벨')
+      setEditing({ id: hit._id, kind: 'alabel', i: labels.length - 1, fresh: true }); return
+    }
     if (hit.type === 'text') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'text' }) }
     else if (['rect', 'ellipse', 'symbol'].includes(hit.type) || (hit.type === 'polygon' && hit.closed)) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'label' }) }
   }
@@ -402,6 +443,12 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     const ed = R.current.editing; setEditing(null); if (!ed) return
     const m = R.current.model, it = m.items.find(x => x._id === ed.id); if (!it) return
     let next
+    if (ed.kind === 'alabel') {
+      const labels = labelsOf(it)
+      if (!text.trim()) labels.splice(ed.i, 1)
+      else { labels[ed.i] = { ...labels[ed.i], text, runs: runs.length ? runs : undefined }; if (!labels[ed.i].runs) delete labels[ed.i].runs }
+      commit(m.items.map(x => (x._id === it._id ? withLabels(it, labels) : x)), [it._id], text.trim() ? '라벨 고침' : '빈 라벨 지움'); return
+    }
     if (ed.kind === 'text') {
       if (!text.trim()) { commit(removeItems(m.items, [it._id]), [], '빈 글 지움'); return }
       next = { ...it, text, runs: runs.length ? runs : undefined }
@@ -420,6 +467,10 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       const o = scr(toScene(it, { x: 0, y: 0 }))
       return { left: o.x, top: o.y, px: (it.font || 12) * PT * (it.scale || 1), zoom: cam.z, family: it.family ? 'board' : 'app', weight: it.weight ?? (it.bold ? 700 : 400),
         color: cssColor(it.color) || '#1f1f1f', rotation: it.rotation || 0, origin: scr(toScene(it, { x: it.origin?.[0] || 0, y: it.origin?.[1] || 0 })), text: it.text, runs: it.runs }
+    }
+    if (editing.kind === 'alabel') {
+      const b = arrowLabelBoxes(it)[editing.i], L = labelsOf(it)[editing.i]; if (!b || !L) return null
+      return { center: scr(toScene(it, b.a)), px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: cssColor(L.color || it.color) || '#1f1f1f', align: 'center', text: L.text || '', runs: L.runs }
     }
     const a = scr(toScene(it, labelAnchor(it.type, it.kind, it.rect))), L = it.label || {}
     return { center: a, px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: cssColor(L.color || it.pen) || '#1f1f1f', align: 'center', text: L.text || '', runs: L.runs }

@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { beginSegment, beginSubdivide, bendCurve, dragSegment, endSegment, nearestSegment, onPill, segmentHandles, snapCurve } from '../src/next/arrowedit.js'
+import { beginSegment, beginSubdivide, bendCurve, dragSegment, endSegment, nearestSegment, onPill, projectToCurve, projectToPath, segmentHandles, snapCurve, snapLabelOff } from '../src/next/arrowedit.js'
 import { resolveRoutes } from '../src/next/arrows.js'
 
 const C = JSON.parse(readFileSync(new URL('./fixtures/arrow_cases.json', import.meta.url)))
@@ -43,5 +43,15 @@ test('곡선 휨 손잡이·붙을 때 S자가 데스크톱과 같다', () => {
     same(b.ctrl1 ? [b.ctrl1, b.ctrl2] : [], c.bend, 1e-3, `휨 ${n}`)
     const s = snapCurve(it, c.n0 && { x: c.n0[0], y: c.n0[1] }, c.n1 && { x: c.n1[0], y: c.n1[1] })
     same(s.ctrl1 ? [s.ctrl1, s.ctrl2] : [], c.snap || [], 1e-3, `S자 ${n}`)
+  })
+})
+
+test('라벨 길 투영·세 자리 붙기가 데스크톱과 같다', () => {
+  const L = C.labels, poly = L.poly.map(([x, y]) => ({ x, y }))
+  L.cases.forEach((c, n) => {
+    const q = { x: c.q[0], y: c.q[1] }, a = projectToPath(poly, q), b = projectToCurve(L.curve, q)
+    assert.ok(Math.abs(a.t - c.poly[0]) < 1e-3 && Math.abs(a.off - c.poly[1]) < 1e-3, `꺾은선 ${n}: ${a.t},${a.off} vs ${c.poly}`)
+    assert.ok(Math.abs(b.t - c.curve[0]) < 1e-3 && Math.abs(b.off - c.curve[1]) < 1e-2, `곡선 ${n}: ${b.t},${b.off} vs ${c.curve}`)
+    assert.ok(Math.abs(snapLabelOff({ x: c.n[0], y: c.n[1] }, c.poly[1], c.w, c.h) - c.snap) < 1e-3, `세 자리 ${n}`)
   })
 })

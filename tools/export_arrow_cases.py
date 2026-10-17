@@ -108,6 +108,26 @@ def curve_cases(rnd):
     return out
 
 
+def label_cases(rnd):
+    from PyQt6.QtCore import QRectF
+    from easycad.canvas.core_shapes import _snap_label_off
+    out = []
+    poly = [[0, 0], [120, 0], [120, 90], [260, 90]]
+    pa = _PolyArrowItem(QColor("#111"), 2, True, False, 1.0)
+    pa._pts = [QPointF(*q) for q in poly]
+    ca = _ArrowItem(QColor("#111"), 2, True, False, 1.0)
+    ca.set_points(QPointF(0, 0), QPointF(240, 60)); ca._ctrl1 = QPointF(60, -80); ca._ctrl2 = QPointF(200, 140)
+    for _ in range(16):
+        q = QPointF(rnd.uniform(-20, 280), rnd.uniform(-60, 140))
+        t, off = pa._project_to_path(q)
+        ct, coff = ca._project_to_curve(q)
+        w, h = rnd.choice([40, 80]), rnd.choice([20, 30])
+        n = rnd.choice([[0, -1], [1, 0], [0.6, 0.8]])
+        snap = _snap_label_off(QPointF(*n), off, QRectF(0, 0, w, h))
+        out.append({"q": [q.x(), q.y()], "poly": [R(t), R(off)], "curve": [R(ct), R(coff)], "n": n, "w": w, "h": h, "snap": R(snap)})
+    return {"poly": poly, "curve": {"p1": [0, 0], "p2": [240, 60], "ctrl1": [60, -80], "ctrl2": [200, 140]}, "cases": out}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=7)
@@ -116,7 +136,7 @@ def main(argv=None):
     _app = QApplication.instance() or QApplication(sys.argv)
     w = CanvasWindow()
     sc = w._scene
-    data = {"hints": hint_cases(rnd, sc), "segments": seg_cases(rnd, sc), "curves": curve_cases(rnd)}
+    data = {"hints": hint_cases(rnd, sc), "segments": seg_cases(rnd, sc), "curves": curve_cases(rnd), "labels": label_cases(rnd)}
     out = os.path.join(ROOT, "web", "test", "fixtures", "arrow_cases.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
