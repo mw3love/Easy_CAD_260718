@@ -84,7 +84,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
 
-  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, reset: () => { hist.current = { past: [], future: [] }; setSel([]) },
+  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live }) }))
 
@@ -390,6 +390,28 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     setCursor(topHit(R.current.model.items, p, HIT_PX / R.current.cam.z, textBox) ? 'move' : 'default')
   }
 
+  // ── 도형 카드에서 끌어다 놓기(데스크톱 `_PaletteButton` 6px 넘게 끌기) — 진짜 도형이 손에 붙어 따라오고 정렬선도 걸림, 칠판 밖(카드 위 등)에 놓으면 취소 ──
+  function startPaletteDrag(t) {
+    const m = R.current.model, w = t === 'ellipse' ? 100 : 120, h = t === 'ellipse' ? 100 : 60   // 클릭만 해 놓을 때와 같은 기본 크기
+    const proto = base([0, 0], { type: t, rect: [0, 0, w, h], pen: INK, width: 2, fill: null, style: 1, z: topZ(m.items) + 1 })
+    const others = m.items.filter(it => !it.locked).map(it => sceneBox(it, textBox))
+    let last = null
+    const place = e => {
+      const el = document.elementFromPoint(e.clientX, e.clientY), over = !!el && (el === svg.current || svg.current.contains(el))
+      const p = toSceneP(e), a = alignSnap({ x: p.x - w / 2, y: p.y - h / 2, w, h }, others, R.current.cam.z)
+      return { over, it: { ...proto, pos: [p.x - w / 2 + a.dx, p.y - h / 2 + a.dy] }, guides: a.guides }
+    }
+    const move = e => { last = place(e); setLive(last.over ? [...m.items, last.it] : null); setOverlay(o => ({ ...o, guides: last.over ? last.guides : null })) }
+    const up = e => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.style.cursor = ''; st.current = { space: st.current.space }
+      setOverlay(o => ({ ...o, guides: null }))
+      last = place(e)
+      if (last.over) commit([...m.items, last.it], [last.it._id], '도형'); else setLive(null)
+    }
+    document.body.style.cursor = 'copy'; st.current = { ...st.current, kind: 'pdrag' }; setHp(null)   // 끄는 동안 포트점 예고 끔(데스크톱도 드래그 중 억제)
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
+  }
+
   // ── 그리기 ──
   function startDraw(t, p) {
     const m = R.current.model
@@ -586,7 +608,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     <div style={{ position: 'absolute', inset: 0 }}>
       <svg ref={svg} width={size.w} height={size.h} style={{ display: 'block', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }} data-testid="board"
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onDoubleClick={onDoubleClick} onContextMenu={e => e.preventDefault()}>
-        <g transform={`translate(${cam.x},${cam.y}) scale(${z})`}>
+        <g transform={`translate(${cam.x},${cam.y}) scale(${z})`} style={{ '--z': z }}>
           {visible.map(([it, i]) => (it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} /></g>
             : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} />))}
           {selItems.map(outline)}

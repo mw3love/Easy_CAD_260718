@@ -34,8 +34,9 @@ test('포트 넷(상·우·하·좌)이 데스크톱과 같다', () => {
     const it = { ...c.item, _id: 'x' }, ports = shapePorts(it, rectOf)
     c.ports.forEach(([px, py, nx, ny], i) => {
       const tag = `${it.type}${it.kind ? ':' + it.kind : ''} port${i}`
-      near(ports[i].p.x, px, 1, tag + ' x'); near(ports[i].p.y, py, 1, tag + ' y')
-      near(ports[i].n.x, nx, 0.05, tag + ' nx'); near(ports[i].n.y, ny, 0.05, tag + ' ny')
+      const cv = CURVED.has(it.kind ?? it.type), pt = cv ? 3 : 1, nt = cv ? 0.2 : 0.05   // 곡선 끝(표시 심볼 왼쪽 등)은 토막 차이로 흔들림 — 외곽선 시험과 같은 허용
+      near(ports[i].p.x, px, pt, tag + ' x'); near(ports[i].p.y, py, pt, tag + ' y')
+      near(ports[i].n.x, nx, nt, tag + ' nx'); near(ports[i].n.y, ny, nt, tag + ' ny')
     })
   }
 })

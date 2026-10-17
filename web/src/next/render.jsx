@@ -64,7 +64,9 @@ function shade(css, f) {
 const isDark = css => { const m = /^#([0-9a-f]{6})$/i.exec(css || ''); if (!m) return false; const n = parseInt(m[1], 16); return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255) < 128 }
 
 const stroke = (it, onBoard) => (it.style === 0 || !it.pen ? 'none' : ink(it.pen, onBoard))
-const strokeProps = (it, onBoard) => ({ stroke: stroke(it, onBoard), strokeWidth: it.width || 1, strokeDasharray: dashArray(it.style, it.width), strokeLinecap: 'round', strokeLinejoin: 'round' })
+// 선 굵기 — 아무리 줄여도 화면에서 1px 아래로는 안 가늘어짐(CAD식). 저장 굵기는 그대로, --z = 화면 배율(Editor가 칠판 묶음에 줌)
+export const minStroke = w => ({ strokeWidth: `max(${w}px, calc(1px / var(--z, 1)))` })
+const strokeProps = (it, onBoard) => ({ stroke: stroke(it, onBoard), style: minStroke(it.width || 1), strokeDasharray: dashArray(it.style, it.width), strokeLinecap: 'round', strokeLinejoin: 'round' })
 
 // ── 도형 안 라벨(한 줄씩, 넘치면 글자를 줄임 — `_fit_label_to_shape`) ──
 function CenterLabel({ it, onBoard }) {
@@ -142,7 +144,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route }) {
         ? <><rect x={x} y={y} width={w} height={h} fill={fill} stroke="none" /><path d={cutRectPath(it.rect, it.cuts)} fill="none" {...strokeProps(it, onBoard)} /></>
         : <rect x={x} y={y} width={w} height={h} fill={fill} {...strokeProps(it, onBoard)} />
       else if (it.type === 'ellipse') body = <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} fill={fill} {...strokeProps(it, onBoard)} />
-      else { const sp = symbolPath(it.kind, w, h); body = <g transform={`translate(${x},${y})`}><path d={sp.d} transform={sp.transform} fill={fill} {...strokeProps(it, onBoard)} vectorEffect={sp.transform ? 'non-scaling-stroke' : undefined} /></g> }
+      else body = <g transform={`translate(${x},${y})`}><path d={symbolPath(it.kind, w, h).d} fill={fill} {...strokeProps(it, onBoard)} /></g>
       return <g transform={T}>{body}<Ports it={it} onBoard={onBoard} /><CenterLabel it={it} onBoard={onBoard} /></g>
     }
     case 'polygon': {
@@ -230,7 +232,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route }) {
       const tri = (a, b) => headTriangle(b, Math.atan2(b.y - a.y, b.x - a.x), size)
       const body = cutPolyline(trimmedPts(pts, size, end, start), gaps).map(q => roundedPath(q, sarrowRadius(it))).join(' ')   // 라벨 자리는 계산으로 잘라 비움
       return <g transform={T}>
-        <path d={body} fill="none" stroke={color} strokeWidth={it.width}
+        <path d={body} fill="none" stroke={color} style={minStroke(it.width)}
           strokeDasharray={dashArray(it.style, it.width)} strokeLinecap="round" strokeLinejoin="round" />
         {end && <Head tri={tri(pts[pts.length - 2], pts[pts.length - 1])} color={color} />}
         {start && <Head tri={tri(pts[1], pts[0])} color={color} />}
@@ -260,7 +262,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route }) {
       const angEnd = curved ? Math.atan2(p3.y - c2.y, p3.x - c2.x) : Math.atan2(p3.y - p0.y, p3.x - p0.x)
       const angStart = curved ? Math.atan2(p0.y - c1.y, p0.x - c1.x) : Math.atan2(p0.y - p3.y, p0.x - p3.x)
       return <g transform={T}>
-        <path d={body} fill="none" stroke={color} strokeWidth={it.width} strokeDasharray={dashArray(it.style, it.width)} strokeLinecap="round" strokeLinejoin="round" />
+        <path d={body} fill="none" stroke={color} style={minStroke(it.width)} strokeDasharray={dashArray(it.style, it.width)} strokeLinecap="round" strokeLinejoin="round" />
         {end && <Head tri={headTriangle(p3, angEnd, size)} color={color} />}
         {start && <Head tri={headTriangle(p0, angStart, size)} color={color} />}
         {labels.map(l => l.el)}

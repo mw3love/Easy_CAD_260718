@@ -42,7 +42,11 @@ function App() {
     const pad = 40, z = Math.min(ZMAX, Math.max(ZMIN, Math.min((s.w - 2 * pad) / Math.max(b.w, 1), (s.h - 2 * pad) / Math.max(b.h, 1), 1)))
     setCam({ z, x: s.w / 2 - (b.x + b.w / 2) * z, y: s.h / 2 - (b.y + b.h / 2) * z })
   }, [size])
-  const open = useCallback((doc, how) => { const m = fromEcad(doc); setModel(m); ed.current?.reset(); fit(m.items); setStatus(`${how} · ${m.items.length}개`) }, [fit])
+  // 서버 칠판을 다시 열면 이 브라우저에서 마지막에 보던 자리·배율로(없거나 못 읽으면 전체 맞추기). 파일·샘플은 늘 전체 맞추기
+  const camKey = `mb.cam.${DOC_NAME}`, camReady = useRef(false)
+  const savedCam = () => { try { const c = JSON.parse(localStorage.getItem(camKey)); return c && [c.x, c.y, c.z].every(Number.isFinite) ? c : null } catch { return null } }
+  const open = useCallback((doc, how, keepCam = false) => { const m = fromEcad(doc); setModel(m); ed.current?.reset(); const c = keepCam && savedCam(); if (c) setCam(c); else fit(m.items); camReady.current = true; setStatus(`${how} · ${m.items.length}개`) }, [fit])   // eslint-disable-line
+  useEffect(() => { if (!camReady.current) return; const t = setTimeout(() => { try { localStorage.setItem(camKey, JSON.stringify(cam)) } catch { /* 저장 못 해도 그만 */ } }, 300); return () => clearTimeout(t) }, [cam])   // eslint-disable-line
 
   // 고칠 때마다 0.8초 쉬면 서버에 저장(서버 없으면 「내려받기」로)
   const onCommit = useCallback(() => {
@@ -53,7 +57,16 @@ function App() {
 
   // 시험·자체확인용 손잡이(Playwright)
   useEffect(() => { window.__mb = { setCam, getCam: () => cam, open: async u => open(parseDoc(await (await fetch(u)).text()), u), model, toEcad: () => toEcad(model), get ed() { return ed.current }, setTool } })
-  useEffect(() => { loadServerDoc().then(r => { setServer(r.server); if (r.doc) open(r.doc, `서버 「${DOC_NAME}」`); else setStatus(r.server ? `서버 「${DOC_NAME}」 · 새 칠판` : '서버 없음 — 파일로 열고 저장') }) }, [])   // eslint-disable-line
+  useEffect(() => { loadServerDoc().then(r => { setServer(r.server); if (r.doc) open(r.doc, `서버 「${DOC_NAME}」`, true); else setStatus(r.server ? `서버 「${DOC_NAME}」 · 새 칠판` : '서버 없음 — 파일로 열고 저장') }) }, [])   // eslint-disable-line
+
+  // 카드 버튼: 클릭 = 그리기 도구, 6px 넘게 끌면 도형을 칠판에 바로 놓기(데스크톱 `_PaletteButton._DRAG_THRESH`)
+  const paletteDown = (e, t) => {
+    if (e.button !== 0) return
+    const sx = e.clientX, sy = e.clientY
+    const move = ev => { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) <= 6) return; done(); ed.current?.startPaletteDrag(t) }
+    const done = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', done) }
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', done)
+  }
 
   const saveFile = () => {
     const a = document.createElement('a')
@@ -95,8 +108,8 @@ function App() {
         <div style={{ position: 'absolute', left: 12, top: 12, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, boxShadow: '0 2px 8px rgba(0,0,0,.06)', width: 150 }}>
           <div style={{ font: "700 13px 'Pretendard', sans-serif", marginBottom: 6 }}>도형</div>
           <div style={{ display: 'flex', gap: 4 }}>
-            <Btn icon="□" label="사각형" on={tool === 'rect'} onClick={() => setTool('rect')} />
-            <Btn icon="○" label="원" on={tool === 'ellipse'} onClick={() => setTool('ellipse')} />
+            {[['rect', '□', '사각형'], ['ellipse', '○', '원']].map(([t, icon, label]) => <div key={t} onPointerDown={e => paletteDown(e, t)}>
+              <Btn icon={icon} label={label} on={tool === t} onClick={() => setTool(t)} title={`${label} — 클릭하면 그리기, 칠판으로 끌면 바로 놓기`} /></div>)}
           </div>
         </div>
       </div>

@@ -94,11 +94,7 @@ export function symbolPolys(kind, [x, y, w, h]) {
     return [off([...arcPts(w - r, r, r, -H, 0), ...arcPts(w - r, h - r, r, 0, H), ...arcPts(r, h - r, r, H, 2 * H), ...arcPts(r, r, r, 2 * H, 3 * H), { x: w - r, y: 0 }])] }
   if (kind === 'delay') { const sx = w * 0.62, r = h / 2
     return [off([{ x: 0, y: 0 }, { x: sx, y: 0 }, ...arcPts(sx, h / 2, r, -Math.PI / 2, Math.PI / 2), { x: 0, y: h }, { x: 0, y: 0 }])] }
-  const sp = symbolPath(kind, w, h)
-  let k = [1, 1], t = [0, 0]
-  const m = sp.transform?.match(/translate\(([-\d.e]+),([-\d.e]+)\) scale\(([-\d.e]+)\)/), s = sp.transform?.match(/^scale\(([-\d.e]+),([-\d.e]+)\)/)
-  if (m) { t = [+m[1], +m[2]]; k = [+m[3], +m[3]] } else if (s) k = [+s[1], +s[2]]
-  return parsePath(sp.d).map(poly => off(poly.map(p => ({ x: t[0] + p.x * k[0], y: t[1] + p.y * k[1] }))))
+  return parsePath(symbolPath(kind, w, h).d).map(off)
 }
 
 function nearestLocal(it, rect, q) {
