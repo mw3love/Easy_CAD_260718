@@ -104,7 +104,10 @@ def curve_cases(rnd):
         ar2._endpoint_border_normal = lambda idx, n1=n1: None if n1 is None else QPointF(*n1)
         ar2._recompute_snap_curve(0, None if n0 is None else QPointF(*n0))
         snap = None if ar2._ctrl1 is None else [[R(ar2._ctrl1.x()), R(ar2._ctrl1.y())], [R(ar2._ctrl2.x()), R(ar2._ctrl2.y())]]
-        out.append({"p1": [p1.x(), p1.y()], "p2": [p2.x(), p2.y()], "which": which, "target": [tgt.x(), tgt.y()], "bend": bend, "n0": n0, "n1": n1, "snap": snap})
+        ar3 = _ArrowItem(QColor("#111"), 2, True, False, 1.0)
+        ar3.set_points(p1, p2); ar3.apply_curved()
+        bow = [[R(ar3._ctrl1.x()), R(ar3._ctrl1.y())], [R(ar3._ctrl2.x()), R(ar3._ctrl2.y())]]
+        out.append({"bow": bow, "p1": [p1.x(), p1.y()], "p2": [p2.x(), p2.y()], "which": which, "target": [tgt.x(), tgt.y()], "bend": bend, "n0": n0, "n1": n1, "snap": snap})
     return out
 
 

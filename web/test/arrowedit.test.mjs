@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { beginSegment, beginSubdivide, bendCurve, dragSegment, endSegment, nearestSegment, onPill, projectToCurve, projectToPath, segmentHandles, snapCurve, snapLabelOff } from '../src/next/arrowedit.js'
 import { resolveRoutes } from '../src/next/arrows.js'
+import { applyCurved, swapArrowKind } from '../src/next/arrowkind.js'
 
 const C = JSON.parse(readFileSync(new URL('./fixtures/arrow_cases.json', import.meta.url)))
 const same = (got, exp, tol, msg) => {
@@ -54,4 +55,16 @@ test('라벨 길 투영·세 자리 붙기가 데스크톱과 같다', () => {
     assert.ok(Math.abs(b.t - c.curve[0]) < 1e-3 && Math.abs(b.off - c.curve[1]) < 1e-2, `곡선 ${n}: ${b.t},${b.off} vs ${c.curve}`)
     assert.ok(Math.abs(snapLabelOff({ x: c.n[0], y: c.n[1] }, c.poly[1], c.w, c.h) - c.snap) < 1e-3, `세 자리 ${n}`)
   })
+})
+
+test('안 붙은 화살표 「곡선」(`apply_curved` 활)이 데스크톱과 같고, 종류 바꾸기가 연결·라벨을 지킨다', () => {
+  C.curves.forEach((c, n) => { const r = applyCurved({ _id: 'x', type: 'arrow', p1: c.p1, p2: c.p2, ctrl1: null, ctrl2: null }, [], it => it.rect); same([r.ctrl1, r.ctrl2], c.bow, 1e-3, `활 ${n}`) })
+  const a = { _id: 'a', type: 'rect', rect: [0, 0, 100, 60], pos: [0, 0] }, b = { _id: 'b', type: 'rect', rect: [0, 0, 100, 60], pos: [300, 0] }
+  const ar = { _id: 'r', type: 'arrow', pos: [0, 0], p1: [100, 30], p2: [300, 30], ctrl1: null, ctrl2: null, width: 2, head: true, color: '#f00', labels: [{ text: '가', t: 0.3, off: 0 }],
+    _bind1: 'a', bind1_pt: [100, 30], _bind2: 'b', bind2_pt: [0, 30] }
+  const o = swapArrowKind(ar, 'ortho', [a, b, ar], it => it.rect)
+  assert.equal(o.type, 'sarrow'); assert.equal(o._id, 'r'); assert.equal(o._bind2, 'b'); assert.deepEqual(o.labels, ar.labels); assert.equal(o.color, '#f00')
+  assert.deepEqual(o.pts[0], [100, 30]); assert.deepEqual(o.pts[o.pts.length - 1], [300, 30])
+  const back = swapArrowKind(o, 'straight', [a, b, o], it => it.rect)
+  assert.equal(back.type, 'arrow'); assert.equal(back.ctrl1, null); assert.deepEqual(back.p2, [300, 30])
 })

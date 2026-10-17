@@ -18,6 +18,8 @@ import {
   rotateTo, rubberSelect, sceneBox, toLocal, toScene, toggleLock, topHit, ungroupItems, unionBox, zOrder,
 } from './edit.js'
 import { TextEditor } from './text.jsx'
+import { ArrowProps } from './props.jsx'
+import { arrowKindOf, swapArrowKind } from './arrowkind.js'
 import { cssColor } from '../ecadFormat.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
@@ -69,16 +71,18 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   const scr = p => ({ x: p.x * cam.z + cam.x, y: p.y * cam.z + cam.y })
 
   // 확정 — 붙은 화살표 따라가기 + 되돌리기 칸
-  const commit = useCallback((next, nextSel, label = '') => {
-    const prev = R.current.model.items, fixed = followArrows(next, rectOf)
-    hist.current.past.push({ items: prev, sel: R.current.sel }); hist.current.future = []
+  // merge = 같은 열쇠로 1.5초 안에 또 고치면 되돌리기 한 칸으로 묶음(−/+ 연타·색 고르기 끌기)
+  const commit = useCallback((next, nextSel, label = '', merge = null) => {
+    const prev = R.current.model.items, fixed = followArrows(next, rectOf), h = hist.current, now = Date.now()
+    if (!(merge && h.mergeKey === merge && now - h.mergeT < 1500)) { h.past.push({ items: prev, sel: R.current.sel }); h.future = [] }
+    h.mergeKey = merge; h.mergeT = now
     if (hist.current.past.length > 200) hist.current.past.shift()
     setModel(m => ({ ...m, items: fixed })); setLive(null)
     if (nextSel) setSel(nextSel.filter(id => fixed.some(it => it._id === id)))
     onCommit?.(label)
   }, [setModel, onCommit])
-  const undo = () => { const h = hist.current, p = h.past.pop(); if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
-  const redo = () => { const h = hist.current, f = h.future.pop(); if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
+  const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
+  const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
 
   useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, reset: () => { hist.current = { past: [], future: [] }; setSel([]) },
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
@@ -337,16 +341,17 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     const t = dropTarget(hostsNear(cur), cur, R.current.cam.z, rectOf, srcId)
     return t && (t.id !== srcId || Math.hypot(t.p.x - port.p.x, t.p.y - port.p.y) > 1) ? t : null
   }
-  const PROTO = { width: 2, head: true, head_start: false, head_scale: 1, curve_r: 10 }   // 새 화살표(웹 그리기 굵기 2 — 데스크톱 기본 1)
+  // 새 화살표 기본값 — 속성 카드에서 바꾼 값이 다음 화살표에 이어짐(데스크톱 sticky: 색·굵기·선 모양·화살촉·모서리). 굵기 2 = 웹 그리기 도구와 같게(데스크톱 기본 1)
+  const sticky = useRef({ color: INK, style: 1, width: 2, head: true, head_start: false, head_scale: 1, curve_r: 10 })
   function connRoute(srcId, port, tgt, cur) {
     const items = R.current.model.items, src = items.find(x => x._id === srcId), dst = tgt && items.find(x => x._id === tgt.id)
     const box = it => (it && ROUTE_BOX.has(it.type) && it.rect ? sceneRect(it) : null)
     const obstacles = items.filter(it => ROUTE_BOX.has(it.type) && it.rect && it._id !== srcId && it._id !== tgt?.id).map(sceneRect)
-    return routeOrtho(port.p, port.n, tgt ? tgt.p : cur, tgt ? tgt.n : null, obstacles, { conn: [box(src), box(dst)], minStub: minStubs(PROTO) })
+    return routeOrtho(port.p, port.n, tgt ? tgt.p : cur, tgt ? tgt.n : null, obstacles, { conn: [box(src), box(dst)], minStub: minStubs(sticky.current) })
   }
   const arrowItem = (srcId, a, dstId, b, extra) => {
     const items = R.current.model.items, src = items.find(x => x._id === srcId), dst = dstId && items.find(x => x._id === dstId)
-    return base([0, 0], { type: 'sarrow', color: INK, style: 1, routing: 'ortho', route_hints: [], ...PROTO, ...extra,
+    return base([0, 0], { type: 'sarrow', routing: 'ortho', route_hints: [], ...sticky.current, ...extra,
       _bind1: srcId, bind1_pt: bindPt(src, a), bind1_group: null, _bind2: dst ? dstId : null, bind2_pt: dst ? bindPt(dst, b) : null, bind2_group: null, z: topZ(items) + 1 })
   }
   // 끌어 놓음 = 화살표만(빈 곳이면 끝이 떠 있는 화살표). 「자동 길」로 — 도형을 옮겨도 다시 꺾임
@@ -549,6 +554,14 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     return <polygon key={it._id} points={cs.map(c => `${c.x},${c.y}`).join(' ')} fill="none" stroke={BLUE} strokeWidth={sw} />
   }
   const handles = single && !editing && !live ? handlesOf(single) : []
+  // 속성 카드 — 고른 화살표 모두에 같이(데스크톱: 고른 화살표 전부). 모서리는 직각만
+  const selArrows = selItems.filter(isArrow), selArrowIds = new Set(selArrows.map(x => x._id))
+  function setArrows(patch, label, merge) {
+    const m = R.current.model
+    Object.assign(sticky.current, patch)
+    commit(m.items.map(x => { if (!selArrowIds.has(x._id)) return x; const pt = { ...patch }; if (x.type !== 'sarrow') delete pt.curve_r; return { ...x, ...pt } }), sel, label, merge ? merge + [...selArrowIds].join() : null)
+  }
+  const flipArrows = () => { const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? { ...x, head: !!x.head_start, head_start: x.head !== false } : x)), sel, '방향 뒤집기') }
   const multiBox = selItems.length > 1 ? unionBox(selItems.map(it => sceneBox(it, textBox))) : null
   const rb = overlay.rubber, dr = overlay.draw
   // 알약(구간 가운데, 변 방향으로 길쭉) — 채움 = 실제 알약, 속 빈 = 나눠 끌 자리 미리보기(데스크톱 `_paint_segment_handles`)
@@ -596,6 +609,8 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       </svg>
       {editing && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={s} onDone={finishEdit} /> })()}
+      {selArrows.length > 0 && !editing && <ArrowProps a={selArrows[0]} kind={arrowKindOf(selArrows[0])} set={setArrows} onFlip={flipArrows}
+        onKind={k => { const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )
 })
