@@ -73,13 +73,14 @@ class _BlockBoardMixin:
         """글 높이만 잰다(그리지 않음) — `_pb_text`와 같은 줄바꿈."""
         from PyQt6.QtGui import QFontMetricsF
         from easycad.canvas.annotator_core import _TextItem
-        from easycad.canvas.host_board import _wrap
+        from easycad.canvas.host_board import _emph_font, _wrap, split_emph
         t = _TextItem(QColor(INK_ON_LIGHT))
         t.apply_font_size(pt)
         if bold:
             f = t.font(); f.setBold(True); t.setFont(f)
         room = max(10.0, w - 2 * t.document().documentMargin())
-        t.setPlainText(_wrap(text, QFontMetricsF(t.font()), room))
+        plain, spans = split_emph(text)
+        t.setPlainText(_wrap(plain, QFontMetricsF(_emph_font(t.font()) if spans else t.font()), room))
         return t.document().size().height()   # 카드 블록 열 수 상한(줄 맞춤 채우기 — 줄보다 많이 낮은 카드 4개는 2×2로)
     _bb_row_extra = 0.0   # 줄 사이에 더할 높이(세로 채우기 — 그림이 없을 때 남는 높이를 줄 사이에 고르게)
     _BB_FIG_H = {"small": 200.0, "normal": 300.0, "big": 460.0}   # big은 머리글 + 한 줄 + 그림이 1장 높이(BOARD_MAX_W/16:9) 안에
@@ -170,7 +171,7 @@ class _BlockBoardMixin:
         if spec.get("headline") and not has_hero:   # 주인공 블록이 없으면 헤드라인은 머리에(있으면 주인공 면 위에 크게)
             self._pb_part_cur = "headline"
             y += 6
-            _t, h = self._pb_text(added, spec["headline"], M, y, content_w, 20, _ACCENT, bold=True)
+            _t, h = self._pb_text(added, spec["headline"], M, y, content_w, 20, self._bb_headline_ink(spec), bold=True)
             y += h
         self._pb_part_cur = "title"
         y += 10   # 머리 아래 굵은 구분선(시안 머리)
@@ -268,7 +269,7 @@ class _BlockBoardMixin:
         if blk.get("title") or blk.get("pages"):
             y += self._pb_heading(added, blk.get("title") or _BLOCK_NAME[t], blk.get("pages", ""), x, y, w) + 6
         if blk.get("hero") and spec.get("headline"):   # 주인공 면 위 헤드라인(§8 항목58 ②)
-            _i, h = self._pb_text(added, spec["headline"], x, y + 4, w, 20, _ACCENT, bold=True)
+            _i, h = self._pb_text(added, spec["headline"], x, y + 4, w, 20, self._bb_headline_ink(spec), bold=True)
             y += h + 12
         ns = na = 0
         if t == "text":
@@ -490,6 +491,11 @@ class _BlockBoardMixin:
                 break
             size -= 1
         return size
+
+    @staticmethod
+    def _bb_headline_ink(spec) -> str:
+        """헤드라인 글색 — 「**구절**」이 있으면 잉크(그 구절만 코랄), 없으면 옛 보드처럼 전체 코랄(§8 항목60 ①)."""
+        return INK_ON_LIGHT if "**" in (spec.get("headline") or "") else _ACCENT
 
     def _bb_hero_ink(self, items):
         """주인공 면 위 글 — 잉크는 크림, 흐린 글은 밝은 회청(강조색은 그대로)."""

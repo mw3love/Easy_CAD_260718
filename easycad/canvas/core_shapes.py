@@ -5825,10 +5825,47 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         self._bg = QColor(color) if color is not None else None
         self.update()
 
+    # [우리 확장 2026-10-17 §8 항목60 ①] 글 안 부분 강조 — 한 글 상자 안에서 구절만 다른 색·굵게(보드의 「**구절**」).
+    # 구간은 [시작, 길이, 색 "#rrggbb" 또는 None, 굵게] — 글자 서식에 색·굵기를 따로 준 조각만 센다(나머지는 상자 기본값).
+    def text_runs(self) -> list:
+        from PyQt6.QtGui import QTextFormat
+        runs = []
+        block = self.document().begin()
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                frag = it.fragment()
+                fmt = frag.charFormat()
+                color = fmt.foreground().color().name() if fmt.hasProperty(QTextFormat.Property.ForegroundBrush) else None
+                bold = fmt.hasProperty(QTextFormat.Property.FontWeight) and fmt.fontWeight() >= 600
+                if color or bold:
+                    runs.append([frag.position(), frag.length(), color, bold])
+                it += 1
+            block = block.next()
+        return runs
+
+    def apply_runs(self, runs):
+        from PyQt6.QtGui import QTextCharFormat, QTextCursor
+        n = len(self.toPlainText())
+        for start, length, color, bold in runs or ():
+            start, end = max(0, int(start)), min(n, int(start) + int(length))
+            if end <= start:
+                continue
+            cur = QTextCursor(self.document())
+            cur.setPosition(start)
+            cur.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            fmt = QTextCharFormat()
+            if color:
+                fmt.setForeground(QColor(color))
+            if bold:
+                fmt.setFontWeight(QFont.Weight.Bold)
+            cur.mergeCharFormat(fmt)
+
     def clone(self):
         c = _TextItem(self.defaultTextColor())
         c.setFont(QFont(self.font()))
         c.setPlainText(self.toPlainText())
+        c.apply_runs(self.text_runs())
         c.set_bg(self._bg)
         return self._copy_common_to(c)
 

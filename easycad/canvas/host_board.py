@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from PyQt6.QtCore import QPointF, QRectF
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QMenu
@@ -191,9 +193,13 @@ class _BoardMixin:
             f = t.font()
             f.setBold(True)
             t.setFont(f)
-        fm = QFontMetricsF(t.font())
+        plain, spans = split_emph(text)
+        fm = QFontMetricsF(_emph_font(t.font()) if spans else t.font())   # 강조가 있으면 굵은 글자 폭으로 재서 줄이 넘치지 않게
         room = max(10.0, w - 2 * t.document().documentMargin())
-        t.setPlainText(_wrap(text, fm, room))
+        wrapped = _wrap(plain, fm, room)
+        t.setPlainText(wrapped)
+        if spans:   # 「**구절**」만 코랄·굵게(§8 항목60 ① — 문장 전체를 칠하면 강조가 흐려졌다)
+            t.apply_runs([[a, b - a, _ACCENT, True] for a, b in _map_spans(plain, wrapped, spans)])
         t.setPos(x, y)
         t.setFlags(t.GraphicsItemFlag.ItemIsMovable | t.GraphicsItemFlag.ItemIsSelectable)
         t._pb_part = self._pb_part_cur
@@ -1372,6 +1378,51 @@ def _outline_rect(items) -> QRectF:
         cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
         r = r.united(it.mapRectToScene(cr))
     return r
+
+
+_EMPH = re.compile(r"\*\*(.+?)\*\*", re.S)
+
+
+def split_emph(text: str):
+    """「**구절**」 표시를 벗기고 (글, [(시작, 끝), …]) — 짝 없는 「**」는 지운다(§8 항목60 ①)."""
+    text = str(text or "")
+    plain, spans, last = [], [], 0
+    n = 0
+    for m in _EMPH.finditer(text):
+        before = text[last:m.start()].replace("**", "")
+        plain.append(before)
+        n += len(before)
+        inner = m.group(1).replace("**", "")
+        if inner.strip():
+            spans.append((n, n + len(inner)))
+        plain.append(inner)
+        n += len(inner)
+        last = m.end()
+    plain.append(text[last:].replace("**", ""))
+    return "".join(plain), spans
+
+
+def strip_emph(text: str) -> str:
+    return split_emph(text)[0]
+
+
+def _emph_font(font):
+    from PyQt6.QtGui import QFont
+    f = QFont(font)
+    f.setBold(True)
+    return f
+
+
+def _map_spans(plain: str, wrapped: str, spans):
+    """줄바꿈 전 글의 구간 → 줄바꿈 뒤 글의 구간. `_wrap`은 띄어쓰기를 줄바꿈으로 바꾸거나(같은 길이) 긴 낱말 사이에 줄바꿈을 넣는다."""
+    pos, j = [], 0
+    for ch in plain:
+        while j < len(wrapped) and wrapped[j] == "\n" and ch not in (" ", "\n"):
+            j += 1   # 넣은 줄바꿈
+        pos.append(j)
+        j += 1
+    pos.append(min(j, len(wrapped)))
+    return [(pos[a], pos[b - 1] + 1) for a, b in spans if b > a]
 
 
 def _wrap(text: str, fm, width: float) -> str:

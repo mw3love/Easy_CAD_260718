@@ -301,6 +301,9 @@ def item_to_dict(it) -> dict | None:
                  bg=None if bg is None else [bg.red(), bg.green(), bg.blue(), bg.alpha()])
         if it.font().bold():   # [§8 항목58 ①] 굵게 — 없으면 키 생략(하위호환)
             d["bold"] = True
+        runs = it.text_runs()
+        if runs:   # [§8 항목60 ①] 부분 강조 — 없으면 키 생략(하위호환)
+            d["runs"] = runs
     elif isinstance(it, _BadgeItem):
         d.update(type="badge", number=it._number, color=_col(it._color))
     else:
@@ -394,6 +397,7 @@ def dict_to_item(d: dict):
         if d.get("bold"):
             f = it.font(); f.setBold(True); it.setFont(f)
         it.setPlainText(d.get("text", ""))
+        it.apply_runs(d.get("runs"))
         if d.get("bg") is not None:
             it.set_bg(QColor(*d["bg"]))
     elif t == "badge":
