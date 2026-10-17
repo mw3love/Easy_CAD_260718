@@ -87,6 +87,7 @@ class _PiecesMixin:
         frame = self._pb_card_under(added, 0, x, y, self._PC_W, h + 2 * self._PC_PAD, fill=self._PC_PAPER, edge=self._PB_EDGE)
         piece = {k: v for k, v in blk.items() if k not in ("row", "span", "_i", "hero")}
         frame._pb_piece = json.dumps(piece, ensure_ascii=False)
+        frame.setZValue(-1.0)   # 안쪽 카드 면(-0.5)보다 아래 — 같은 높이면 나중에 놓인 틀이 단계 카드·칩을 덮었다(§8 항목60, 실제 창)
         gid = uuid.uuid4().hex[:8]
         for it in added:
             it._group_id = gid

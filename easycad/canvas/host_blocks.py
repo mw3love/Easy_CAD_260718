@@ -68,7 +68,8 @@ class _BlockBoardMixin:
     _bb_cards_cols: dict = {}
     _bb_cards_room: dict = {}   # 카드 블록이 채울 칸 높이(줄 맞춤 채우기)
     _bb_grow: dict = {}         # 블록 글 배율(줄 맞춤 채우기 — 줄보다 많이 낮은 글 블록, 최대 1.25배)
-    _BB_GROW_TYPES = ("text", "list", "cards", "terms", "verdict", "timeline", "quote")
+    _BB_GROW_TYPES = ("text", "list", "cards", "terms", "verdict", "timeline", "quote", "bars", "numbers")
+    _BB_HERO_HEADLINE_PT = 26   # 주인공 면 위 헤드라인 — 20이면 제목 다음으로 밀려 주장이 약했다(시안은 두 줄로 크게, §8 항목60)
 
     def _bb_pad(self) -> float:
         return (self._BB_TIGHT if self._bb_tight else (self._BB_M, self._BB_G, self._BB_P))[2]
@@ -194,6 +195,7 @@ class _BlockBoardMixin:
         #   한 장이 안 될 때만(키 큰 블록이 한 기둥에 몰린 경우 줄 맞춤보다 낮다).
         # 둘 다 차례·칸 수는 AI 그대로, 줄에 혼자인 좁은 블록은 가운데(「가운데로」 지시).
         masonry = self._bb_masonry
+        hero_h = 0.0
         cells, sky = [], [y_top] * 12   # cells: [start, end, x, w, blk, idx, y, h, 줄 높이] · sky: 칸마다 다음 블록이 놓일 y
         y_row = y_top
         # 세로로 긴 그림은 오른쪽 옆 칸에 여러 줄에 걸쳐 크게(§8 항목60 ③ — 시안처럼). 옆 칸과 나란한 줄은 왼쪽 좁은 12칸 격자에 놓고,
@@ -243,6 +245,8 @@ class _BlockBoardMixin:
                 n_steps += ns
                 n_arrows += na
                 cell = [start, len(added), x, w, blk, idx, by, h + 2 * P, 0.0]
+                if hero:
+                    hero_h = h + 2 * P   # 면이 줄 높이만큼 늘어나도 내용은 가운데로(아래)
                 cells.append(cell)
                 rcells.append(cell)
                 for c in covered:
@@ -272,6 +276,10 @@ class _BlockBoardMixin:
             self._pb_part_cur = f"blocks[{idx}]"
             if blk.get("hero"):
                 self._bb_hero_ink(added[start:end])
+                dy = (bh - hero_h) / 2.0
+                if dy > 4.0:   # 옆 줄 높이만큼 늘어난 진한 면의 아래가 텅 비었다(§8 항목60, 실제 KAIROS) — 내용을 세로 가운데로
+                    for it in added[start:end]:
+                        it.moveBy(0.0, dy)
                 self._pb_card_under(added, start, bx, by, bw, bh, fill=self._BB_HERO_BG, edge=self._BB_HERO_BG)
             elif blk["type"] in self._BB_FACE_TYPES:
                 # 흐름도는 상자 대신 채운 패스 — 상자면 그 안을 지나는 화살표가 「도면 검사」의 "상자를 지나가는 선"(옛 틀과 같은 이유)
@@ -292,7 +300,7 @@ class _BlockBoardMixin:
         if blk.get("title") or blk.get("pages"):
             y += self._pb_heading(added, blk.get("title") or _BLOCK_NAME[t], blk.get("pages", ""), x, y, w) + 6
         if blk.get("hero") and spec.get("headline"):   # 주인공 면 위 헤드라인(§8 항목58 ②)
-            _i, h = self._pb_text(added, spec["headline"], x, y + 4, w, 20, self._bb_headline_ink(spec), bold=800)
+            _i, h = self._pb_text(added, spec["headline"], x, y + 4, w, self._BB_HERO_HEADLINE_PT, self._bb_headline_ink(spec), bold=800)
             y += h + 12
         ns = na = 0
         if t == "text":
@@ -400,6 +408,8 @@ class _BlockBoardMixin:
         g = 12.0
         cols = max(1, min(len(items), int((w + g) // 250)))
         cols = min(cols, self._bb_cards_cols.get(self._pb_part_cur, cols))   # 줄이 남으면 열을 줄여 키를 키운다(`_bb_fit`)
+        if len(items) == 3 and cols == 2:   # 셋을 2×2에 넣으면 한 칸이 빈다(§8 항목60) — 좁지 않으면 한 줄에 셋, 아니면 세로로
+            cols = 3 if (w - 2 * g) / 3 >= 165.0 else 1
         cw = (w - g * (cols - 1)) / cols
         n_rows = (len(items) + cols - 1) // cols
         if bottom is not None:   # 먼저 재 보고(그리지 않고) 남는 높이를 행마다 나눈다
@@ -517,7 +527,7 @@ class _BlockBoardMixin:
         left = min(150.0, w * 0.42)
         for num, col in zip(items, cols):
             start = len(added)
-            h1 = self._bb_number_value(added, num["value"], x + 14, y + 8, left - 18, 24 * s, col)
+            h1 = self._bb_number_value(added, num["value"], x + 14, y + 8, left - 18, 28 * s, col)
             _t, h2 = self._pb_text(added, num["label"], x + left, y + 10, w - left - 10, 11 * s, bold=True)
             foot = " · ".join(p for p in (num.get("note", ""), num.get("pages", "")) if p)
             h3 = 0.0
@@ -641,7 +651,7 @@ class _BlockBoardMixin:
         t, h = self._pb_text(added, num, x, y, w, big, color, bold=800)
         nw = t.document().idealWidth() if hasattr(t.document(), "idealWidth") else t.document().size().width()
         small = max(10, int(big * 0.5))
-        u, uh = self._pb_text(added, unit, x + nw - 6, y, max(40.0, w - nw), small, color, bold=True)
+        u, uh = self._pb_text(added, unit, x + nw - 6, y, 400.0, small, color, bold=True)   # 단위는 꺾지 않는다(「BLE / U」 — 좁은 누운 타일)
         u.setPos(x + nw - 6, y + h - uh - h * 0.12)   # 숫자 아래쪽에 맞춤(대략 밑줄 맞춤)
         return h
 
@@ -723,7 +733,7 @@ class _BlockBoardMixin:
             cards_room = {part: room for part, blk, _x, _w, _y, h, _b, room in res[5] if blk["type"] == "cards" and room - h > 30.0}
             # 글 높이는 배율의 제곱쯤으로 는다(줄 수 × 줄 높이) — 넘지 않게 제곱근에 여유 0.95
             grow = {part: min(1.25, 0.95 * (room / h) ** 0.5) for part, blk, _x, _w, _y, h, _b, room in res[5]
-                    if blk["type"] in self._BB_GROW_TYPES and not blk.get("hero") and h > 0 and room / h > 1.3}
+                    if blk["type"] in self._BB_GROW_TYPES and (not blk.get("hero") or blk["type"] == "text") and h > 0 and room / h > 1.3}
         else:
             cards_room, grow = {}, {}
         figs = [(part, y, h, below, room) for part, blk, _x, _w, y, h, below, room in res[5]
@@ -737,7 +747,16 @@ class _BlockBoardMixin:
                 extra[part] = extra.get(part, 0.0) + spare
             elif spare > 30.0:
                 rows = len({y for _p, _b, _x, _w, y, *_r in res[5]})
-                row_extra = min(48.0, spare / max(1, rows - 1)) if rows > 1 else 0.0   # 줄 사이는 조금만(다 주면 블록이 흩어짐)
+                row_extra = min(24.0, spare / max(1, rows - 1)) if rows > 1 else 0.0   # 줄 사이는 조금만(48이면 줄 사이가 헐거웠다 — §8 항목60)
+                # 그래도 남는 높이는 마지막 줄 블록이 키워 먹는다(§8 항목60 — 아래 띠가 보드의 15%쯤 비었다, 실제 KAIROS).
+                # 넘치면 아래 「채우기 전으로」가 되돌린다.
+                left = spare - row_extra * max(0, rows - 1)
+                cells = [c for c in res[5] if not c[1].get("_side_h")]
+                if left > 30.0 and cells:
+                    last_y = max(c[4] for c in cells)
+                    for part, blk, _x, _w, y, h, _b, _room in cells:
+                        if y == last_y and blk["type"] in self._BB_GROW_TYPES and h > 0:
+                            grow[part] = max(grow.get(part, 1.0), min(1.25, 0.95 * ((h + left) / h) ** 0.5))
         if extra or row_extra or cards_cols or cards_room or grow:
             self._pb_discard(res[4])
             self._bb_fig_extra, self._bb_row_extra, self._bb_cards_cols, self._bb_cards_room, self._bb_grow =                 extra, row_extra, cards_cols, cards_room, grow

@@ -82,7 +82,7 @@ _BLOCK_FORMAT = """출력 형식 — 아래 JSON 하나만 출력하라(다른 �
   기호·수식이 있으면 괄호로(예: "질의와 키를 곱함 (QKᵀ)").
 - 문서 종류에 맞는 블록을 고른다. 논문: cards(핵심 개념)·flow(작동 순서)·bars/numbers(결과)·figure·terms·verdict. 회의록·보고: list(결정한 것)·
   table(할 일·담당·기한)·timeline(일정)·numbers. 매뉴얼·절차: flow·list·table·figure. 맞지 않는 블록은 넣지 말 것.
-- 자리: 첫 줄엔 이 문서의 요점(요약 list·cards 등), 가장 중요한 블록은 크게("big" 또는 span 6 이상). flow는 span 4 이상, table은 span 6 이상.
+- 자리: 첫 줄엔 이 문서의 요점(요약 list·cards 등), 가장 중요한 블록은 크게("big" 또는 span 6 이상). flow는 span 4 이상, table은 span 6 이상, numbers는 span 4 이상(큰 숫자가 눈에 띄게).
   한 줄에 블록 2~3개(span 합 12)가 보통이다. 가운데에 두고 싶은 것은 그 줄에 혼자 두고 span을 12보다 작게(앱이 가운데로 놓는다).
 - 쉬운 한국어로, 전문 용어는 cards·terms에서 풀어 쓴다. 숫자·이름·결과는 문서에 있는 그대로 — 지어내지 말 것.
 - 문서에 없는 내용(일반 상식·이후 평가 등)을 쓸 땐 그 항목에 "outside": true(verdict) 또는 pages를 "문서 밖 맥락"으로.

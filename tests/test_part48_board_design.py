@@ -218,3 +218,42 @@ def test_numbers_narrow_stack_lying_tiles_without_breaking_words():
                 {i["label"] for i in items}}) == 1
     w._pb_discard(added + wide)
     _close(w)
+
+
+def test_piece_frame_stays_under_inner_card_faces():
+    """조각 틀(종이색)은 안쪽 카드 면 아래 — 같은 높이면 나중에 놓인 틀이 단계 카드·칩을 덮어 크림 글이 종이 위에 떴다(실제 창)."""
+    from easycad.canvas.annotator_core import _RectItem
+    w = _window()
+    items, _h = w._piece_make({}, dict(STEPS), 0.0, 0.0)
+    frame = next(it for it in items if getattr(it, "_pb_piece", None))
+    faces = [it for it in items if isinstance(it, _RectItem) and it is not frame and it.rect().height() > 20]
+    assert faces and all(f.zValue() > frame.zValue() for f in faces)
+    w._pb_discard(items)
+    _close(w)
+
+
+def test_number_unit_never_wraps_in_lying_tile():
+    """누운 숫자 타일의 단위는 한 줄(「2.04 BLEU」가 「BLE / U」로 꺾였다)."""
+    w = _window()
+    added = []
+    items = [{"label": "번역 향상", "value": "2.04BLEU"}, {"label": "base 학습", "value": "12시간"}, {"label": "big 학습", "value": "3.5일"}]
+    w._bb_numbers(added, items, 0.0, 0.0, 300.0, 1.0)
+    unit = next(it for it in added if hasattr(it, "toPlainText") and it.toPlainText().replace("\n", "") == "BLEU")
+    assert "\n" not in unit.toPlainText()
+    w._pb_discard(added)
+    _close(w)
+
+
+def test_three_cards_never_leave_a_hole():
+    """카드 셋은 2×2(한 칸 빔) 대신 한 줄에 셋 또는 세로로."""
+    w = _window()
+    cards = [{"name": f"카드{i}", "body": "짧은 설명.", "pages": "", "group": ""} for i in range(3)]
+    for width in (560.0, 360.0):
+        added = []
+        w._bb_cards(added, cards, 0.0, 0.0, width, 1.0)
+        names = [next(it for it in added if hasattr(it, "toPlainText") and it.toPlainText() == f"카드{i}") for i in range(3)]
+        tops = {round(t.sceneBoundingRect().top()) for t in names}
+        lefts = {round(t.sceneBoundingRect().left()) for t in names}
+        assert len(tops) == 1 or len(lefts) == 1, (width, tops, lefts)
+        w._pb_discard(added)
+    _close(w)
