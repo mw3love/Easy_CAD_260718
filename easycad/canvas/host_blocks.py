@@ -336,8 +336,13 @@ class _BlockBoardMixin:
             for v in blk["items"]:
                 tag = "문서 밖 맥락" if v["outside"] else v["type"]
                 col = self._PB_TAG["outside"] if v["outside"] else self._PB_TAG[v["type"]]
-                tg, _h = self._pb_text(added, tag, x, y + 2, 140, 9, col, bold=True)
-                tw = tg.document().size().width()
+                start = len(added)
+                tg, th = self._pb_text(added, tag, x + 4, y + 1, 140, 9, col, bold=True)
+                tw = tg.document().size().width() + 8
+                chip = QColor(col)
+                chip.setAlpha(40)   # 색 딱지(칩) — 옅은 바탕 + 같은 색 글(§8 항목60 ⑤, 시안처럼)
+                self._pb_card_under(added, start, x, y + 2, tw, th - 2, fill=chip, edge=chip)
+                tw += 6
                 body = v["text"] + (f"  ({v['pages']})" if v["pages"] and not v["outside"] else "")
                 _i, h = self._pb_text(added, body, x + tw + 2, y, w - tw - 2, 10 * s)
                 y += max(h, 20.0) + 2
@@ -438,17 +443,29 @@ class _BlockBoardMixin:
             y += h + 2
         return y
 
+    def _bb_number_colors(self, spec, items) -> list:
+        """숫자마다 색 — AI가 정한 무리 색, 그런데 모두 같은 색이고 단위가 다른 숫자가 섞였으면 많은 쪽 단위만 그 색, 나머지는 다른 색
+        (§8 항목60 ⑤ — BLEU 둘과 「3.5일」이 같은 색이라 셋이 한 묶음으로 읽혔다. 시안은 점수 코랄·일수 파랑)."""
+        cols = [self._bb_group_color(spec, num, _ACCENT) for num in items]
+        units = [re.sub(r"^[\s\d.,+\-−~≈%]+", "", str(num.get("value", ""))).strip() for num in items]
+        if len(set(cols)) == 1 and len(set(units)) > 1:
+            main = max(set(units), key=units.count)
+            other = self._BB_BLUE if cols[0] != self._BB_BLUE else _ACCENT
+            cols = [c if u == main else other for c, u in zip(cols, units)]
+        return cols
+
     def _bb_numbers(self, added, items, x, y, w, s, spec=None):
         """큰 숫자 타일들 — 숫자마다 얇은 테두리 타일 + 안쪽 위 색 선(무리 색), 단위는 작게(§8 항목59 ①). 좁으면 두 줄."""
         g = 12.0
         per = len(items) if w / len(items) >= 150 else max(1, int((w + g) // 150))
         nw = (w - g * (per - 1)) / per
+        cols = self._bb_number_colors(spec or {}, items)
         for r in range(0, len(items), per):
             cells = []
             for k, num in enumerate(items[r:r + per]):
                 nx = x + k * (nw + g)
                 start = len(added)
-                col = self._bb_group_color(spec or {}, num, _ACCENT)
+                col = cols[r + k]
                 h1 = self._bb_number_value(added, num["value"], nx + 14, y + 12, nw - 28, 26 * s, col)
                 _t, h2 = self._pb_text(added, num["label"], nx + 14, y + 10 + h1, nw - 28, 11 * s)
                 foot = " · ".join(p for p in (num.get("note", ""), num.get("pages", "")) if p)

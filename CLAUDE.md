@@ -101,6 +101,7 @@ easycad/
 │   ├── photo_ops.py        사진→도면 ops JSON → Sketch 아이템(글자 회전 rot, Qt 비의존)
 │   ├── html_share.py       「HTML로 공유」 — 레이어별 SVG + 확대·이동 + 상자 정보(SHAPES)를 HTML 한 파일로(§8 항목46)
 │   └── pdf_import.py       벡터 PDF 열기(PyMuPDF, 쪽마다 빈 용지틀, §8 항목33)
+├── fonts.py              보드 글꼴 Pretendard 등록(`resources/fonts/`, OFL — §8 항목60 ②)
 ├── app_settings.py       앱 설정(QSettings) 여는 한 곳 — `EASYCAD_SETTINGS_ORG`로 테스트 격리(2026-10-03).
 │                         `QSettings("EasyCAD", ...)` 직접 열기 금지(테스트가 grep으로 잡음)
 ├── selftest.py           설치 점검 `MagicBoard.exe --selftest`(§8 항목43, 2026-10-16 — exe 이름은 §8 항목50부터 MagicBoard) — 아이콘·라이브러리·KAIROS 호출
@@ -109,7 +110,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~46_*.py      테마별 회귀 스모크 1362종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~48_*.py      테마별 회귀 스모크 1383종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -168,6 +169,9 @@ symbol_library/
   한 장 그림으로 저장) — 실사용에서 답답하면 계획. 상세: `docs/history/2026-10.md` "LOD ②".
 
 **최근 항목**(2026-10-16 ~ 10-17, 상세는 `docs/history/2026-10.md`):
+- **§8 항목60 보드 디자인 2차**(2026-10-17) — 아티팩트 시안과 나란히 본 지적 10건 → 원인은 Qt가 아니라 그리기 어휘(HTML 가져오기는 설계서가 끊겨 버림).
+  ① `**구절**` 부분 강조(.ecad `runs`) ② Pretendard 싣기(`easycad/fonts.py`, 보드 글만, .ecad `family`·`weight`) ③ 세로 그림 오른쪽 옆 칸
+  ④ 가로 단계 블록 `steps` ⑤ 단위 다른 숫자 다른 색·의의/한계 칩. 남은 것: 실제 KAIROS·사용자 판정·exe 글꼴.
 - **§8 항목59 펼친 조각 + 다시 정리**(2026-10-17, 심층 인터뷰) — 첫 모습 = 한 장 보드 + 오른쪽 조각(AI `more` + PDF 원문 그림, `host_pieces.py`).
   ① 무리 색(`groups`/`group` → 코랄·파랑·자두)·숫자 타일·핵심 원리 흐름·머리 구분선 ② 조각 펼치기 + 「보드로 정리」(AI 없이) ③ 조각 끌어다 넣기·블록 꺼내기
   (`_push_entry` 길목 → `_board_rebuild`) ④ 「종이로」(놓인 차례대로 16:9 쪽에, PDF 여러 쪽). 완료 기준 흐름 실제 창 확인, 사용자 판정 남음.
@@ -191,9 +195,6 @@ symbol_library/
   배치·색은 앱(`flow_spec.layout` 담당 띠·가장 긴 길 칸 → `_build_flowspec_items`: 띠는 채운 패스라 길찾기·검사에서 빠짐, 알파 채움이라 두 테마·인쇄
   모두 읽힘, 강조만 코랄, 갈림길 가지는 다른 꼭짓점). 막대 한 줄(「세로로」·이어 고치기·비교 표시 `_flow_key`) 그대로, Mermaid 가져오기·「풀어 그리기」는
   옛 길. 실제 KAIROS 결과 2건·이어 고치기 1건·실제 창 캡처 확인. 남은 것: 긴 일직선 흐름이 옆으로 아주 길어짐, 사용자 화면 확인.
-- **§8 항목53 1단계 보드 틀**(2026-10-16) — 53을 ① 틀 ② 논문 내용 ③ 내보내기 ④ 여러 자료·장으로(사용자 "틀부터"). `_BoardItem`(16:9, 상자 종류 아님) +
-  `host_board.py`: 삽입 › 보드, 끌면 가운데가 안에 있는 것도 같이(되돌리기 한 칸), 보드 위 무채색 잉크를 바탕 밝기에 맞춤(`_push_entry` 길목), 우클릭
-  「보드 색」(화이트·블랙·견본 8·직접), 출력은 흰 종이(`_swap_white_to_black_for_print`).
 - **§8 항목53 2단계 한 장 보드**(2026-10-16) — PDF → AI 보드 설계서(`pdf_to_board.py`, 옛 「풀어 그리기」 대체) → 앱이 시안 ④ 세 줄 배치(`host_board._pb_layout`):
   요약·개념 카드·52 흐름도(compact)·결과 막대·숫자·PDF에서 잘라 붙인 그림·용어·의의/한계, 쪽 번호. 이어 고치기 = 바탕 설계서. 실제 논문 KAIROS 25초.
   같은 날 ③ 보드 막대(보드 하나를 고르면 위에 [색][내보내기 ▾]) — 그림 복사·PNG·PDF A3 한 쪽·HTML을 보드 범위·흰 종이로.

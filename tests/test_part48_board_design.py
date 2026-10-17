@@ -171,3 +171,30 @@ def test_steps_block_one_row_left_to_right_focus_accent():
     board = next(it for it in added if isinstance(it, _BoardItem))
     assert check_drawing(w._scene, items=[it for it in w._board_scope(board) if it is not board]) == []
     _close(w)
+
+
+def test_number_with_other_unit_gets_other_color():
+    """⑤ 숫자 — 모두 같은 무리 색인데 단위가 다른 숫자(「3.5일」)는 다른 색. 무리를 AI가 나눴으면 그대로."""
+    w = _window()
+    same = [{"label": "BLEU", "value": "28.4"}, {"label": "BLEU", "value": "41.8"}, {"label": "학습", "value": "3.5일"}]
+    cols = w._bb_number_colors({}, same)
+    assert cols[0] == cols[1] == _ACCENT and cols[2] == w._BB_BLUE
+    spec = {"groups": ["성능", "비용"]}
+    grouped = [dict(same[0], group="비용"), dict(same[1], group="비용"), dict(same[2], group="성능")]
+    assert w._bb_number_colors(spec, grouped) == [w._BB_GROUP_COLORS[1], w._BB_GROUP_COLORS[1], w._BB_GROUP_COLORS[0]]
+    assert w._bb_number_colors({}, same[:2]) == [_ACCENT, _ACCENT]
+    _close(w)
+
+
+def test_verdict_tags_are_chips():
+    """⑤ 의의·한계 — 색 글자만이 아니라 옅은 색 딱지(칩) 위에."""
+    from easycad.canvas.annotator_core import _RectItem
+    w = _window()
+    spec = pb.parse_board(json.dumps(PAPER, ensure_ascii=False))
+    _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
+    for tag in ("한계", "문서 밖 맥락"):
+        t = next(it for it in added if hasattr(it, "toPlainText") and it.toPlainText() == tag)
+        chips = [r for r in added if isinstance(r, _RectItem) and r.brush().color().alpha() == 40
+                 and r.sceneBoundingRect().contains(t.sceneBoundingRect().center())]
+        assert chips and chips[0].brush().color().rgb() == t.defaultTextColor().rgb()
+    _close(w)
