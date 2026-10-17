@@ -111,7 +111,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~50_*.py      테마별 회귀 스모크 1405종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~51_*.py      테마별 회귀 스모크 1408종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + tldraw 5.5.2(버전 고정). src/main.jsx(앱)·shapes.jsx(.ecad 도형:
 │                          글·상자 정확한 색/크기, esym 심볼, eboard 보드)·cad.jsx(직각 화살표·큐닷·포트점·끝점 다시 붙이기·TRIM — 붙는 규칙은 데스크톱과 같게)·route.js(길 찾기 = 데스크톱
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecad.js(.ecad 열기)·ecadExport.js(.ecad 저장)·ecadFormat.js(순수 변환,
@@ -182,6 +182,8 @@ symbol_library/
   시험 `npm test`. 서버 저장 `python web/server.py`(감시 PC용, 켜는 법 `web/README.md`). 「.ecad 저장」으로 데스크톱 왕복(AI 보드 칸 표시·연결·다각형 유지, `tests/test_part49`). 남은 것: 표·곡선 화살표·회전 등 미지원, 감시 PC 실제 배포.
   ⓒ 대화 1판(앱 안 KAIROS — 사용자 선택, 범위는 시안 보고 A만): 오른쪽 대화창 → 서버 `/api/chat`(키는 서버 PC에만), 답마다 「칠판에 붙이기」 = 카드,
   고른 것의 글 같이 보냄, 대화 기록은 칠판마다 서버에, 실제 KAIROS로 확인(`tests/test_part50`). 다음 후보: 카드 고쳐 쓰기·한 장 보드로 정리·크롬 확장.
+  ⚠ **같은 날 바탕을 tldraw → 직접 만들기로 바꿈**(사용자 선택, 근거: 회사 배포 라이선스·데스크톱 규칙 덮어쓰기·문서 형식 둘) — 문서 = `.ecad` 그대로,
+  데스크톱 규칙을 옮기고 대조 시험으로 묶음. 순서 1)뼈대 2)기본 편집 3)화살표 4)일상 도구 5)갈아타기 — 계획서 §8 항목61 「바뀐 결정」. 데스크톱: 이미지·표에도 화살표(`_is_conn_host`).
 - **§8 항목60 보드 디자인 2차**(2026-10-17) — 아티팩트 시안과 나란히 본 지적 10건 → 원인은 Qt가 아니라 그리기 어휘(HTML 가져오기는 설계서가 끊겨 버림).
   ① `**구절**` 부분 강조(.ecad `runs`) ② Pretendard 싣기(`easycad/fonts.py`, 보드 글만, .ecad `family`·`weight`) ③ 세로 그림 오른쪽 옆 칸
   ④ 가로 단계 블록 `steps` ⑤ 단위 다른 숫자 다른 색·의의/한계 칩. 2라운드(위계): 주인공 = 글만(`HERO_TYPES`), 숫자 note = 비교 기준·막대·그림 필수,

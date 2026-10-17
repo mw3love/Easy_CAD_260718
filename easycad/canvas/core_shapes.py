@@ -4927,7 +4927,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         for it in sc.items():
             if it is self._bind_start or it is self._bind_end:
                 continue
-            if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem)):
+            if isinstance(it, _ROUTE_BOX_TYPES):   # [2026-10-17] 이미지·표도 피한다
                 out.append(it.mapRectToScene(it.rect()))
         return out
 
@@ -4940,7 +4940,7 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         rect가 출발/도착인지 알아야 한다(한쪽만 도형이면 그 자리는 None). 원·심볼은 bbox 근사라
         판정이 보수적: 실제 외곽선이 bbox 안으로 든 도형은 스텁이 팽창 bbox 안이면 base 유지."""
         return tuple(sh.mapRectToScene(sh.rect())
-                     if isinstance(sh, (_RectItem, _EllipseItem, _SymbolItem)) else None
+                     if isinstance(sh, _ROUTE_BOX_TYPES) else None
                      for sh in (self._bind_start, self._bind_end))
 
     # [경유지 힌트 — 2026-07-20 실측] 씬 단위 고정값(8.0)은 줌아웃 시 화면상 몇 px밖에 안 돼
@@ -7806,6 +7806,21 @@ def _path_endpoint_ports(item):
         L = math.hypot(nd.x(), nd.y()) or 1.0
         out.append((sp, QPointF(nd.x() / L, nd.y() / L)))
     return out
+
+
+# [2026-10-17 사용자 지적 "이미지만 안 붙는다는 건 말이 안 됨"] 화살표가 붙는 도형 종류를 한 곳에 —
+# 전엔 같은 목록이 core_view 여러 곳·core_shapes에 따로 적혀 있어 이미지·표가 조용히 빠져 있었다
+# (일부러 막은 결정 기록은 없음 — 이미지를 occluder로만 넣은 2026-08-11 수정이 "접속점 도형 아님"을 가정했을 뿐).
+# 길 찾기에서 피하는 상자(장애물)·연결 도형 사각형도 같은 이유로 이미지·표를 포함한다.
+_ROUTE_BOX_TYPES = (_RectItem, _EllipseItem, _SymbolItem, _ImageItem, _TableItem)
+
+
+def _is_conn_host(it) -> bool:
+    """화살표 끝이 붙을 수 있는 도형인가 — 상자·원·심볼·이미지·표·닫힌 다각형·독립 글.
+    (펜 궤적 `_PathItem`은 4변 포트가 없어 호출부가 따로 다룬다 — `_conn_paths`.)"""
+    return (isinstance(it, _ROUTE_BOX_TYPES)
+            or (isinstance(it, _PolygonItem) and it._closed)
+            or (isinstance(it, _TextItem) and it.parentItem() is None))
 
 
 def _shape_ports(item):

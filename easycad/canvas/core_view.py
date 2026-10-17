@@ -598,12 +598,12 @@ class _AnnotatorView(QGraphicsView):
                     continue
                 if excl_gids and getattr(it, "_group_id", None) in excl_gids:
                     continue
-                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem)):
+                if isinstance(it, _ROUTE_BOX_TYPES):   # [2026-10-17] 이미지·표 포함(core_shapes 주석)
                     obstacles.append(it.mapRectToScene(it.rect()))
 
         def _rect_of(sh):
             return (sh.mapRectToScene(sh.rect())
-                    if isinstance(sh, (_RectItem, _EllipseItem, _SymbolItem)) else None)
+                    if isinstance(sh, _ROUTE_BOX_TYPES) else None)
         return obstacles, (_rect_of(src), _rect_of(target))
 
     def _rot_handle_at(self, view_pos) -> bool:
@@ -1491,10 +1491,7 @@ class _AnnotatorView(QGraphicsView):
         도형 선택이 아예 안 되던 회귀의 원인. "독립"의 실제 기준은 부모가 없다는 것이므로
         `parentItem() is None`으로 직접 검사한다(`_ConnectorLabel` 여부와 무관하게 부모 있는
         `_TextItem`은 전부 배제 — 더 일반적이라 `_ConnectorLabel` 특례 없이도 같은 결과)."""
-        return [it for it in self.scene().items()
-                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem))
-                or (isinstance(it, _PolygonItem) and it._closed)
-                or (isinstance(it, _TextItem) and it.parentItem() is None)]
+        return [it for it in self.scene().items() if _is_conn_host(it)]   # [2026-10-17] 종류 목록은 core_shapes 한 곳
 
     def _conn_paths(self):
         """[외부 DXF 폴백/펜] _PathItem — 연속 폴백(Pass 2, 궤적 어디든)에 더해 [실사용 요청
@@ -2035,8 +2032,8 @@ class _AnnotatorView(QGraphicsView):
         _hover_port_at의 occluders 계산). 빠져 있으면 이미지가 화면 맨 위에 그려져도 그
         존재 자체가 완전히 무시돼, 뒤에 깔린 도형의 예고점·포트 히트테스트가 이미지를
         투명한 유리처럼 뚫고 그대로 반응했다(호버 예고점 잔상 + 이미지 드래그가 뒤 도형의
-        커넥터 뽑기로 새는 버그). 포트 후보로는 여전히 제외해야 하므로 호출부(두 함수)가
-        각자의 후보 루프에서 `isinstance(sh, _ImageItem)`을 걸러낸다.
+        커넥터 뽑기로 새는 버그). [2026-10-17] 이제 이미지·표도 포트 후보다(`_is_conn_host`) —
+        전엔 호출부가 이미지를 걸렀다(occluder 판정은 그대로).
         [실사용 요청 2026-08-22] 독립 텍스트(`_TextItem`, `_ConnectorLabel` 제외)도 포함 —
         `_conn_shapes()`와 같은 사유(위 참조).
         [버그 수정 2026-08-25] `_conn_shapes()`와 동일한 회귀 — `parentItem() is None`으로
@@ -2051,9 +2048,7 @@ class _AnnotatorView(QGraphicsView):
         경로)는 조용히 작동하지 않았다(`docs/pitfalls.md` "히트테스트·후보목록 누락" 참조)."""
         rect = QRectF(scene_pt.x() - margin, scene_pt.y() - margin, margin * 2, margin * 2)
         return [it for it in self.scene().items(rect)
-                if isinstance(it, (_RectItem, _EllipseItem, _SymbolItem, _PathItem, _ImageItem))
-                or (isinstance(it, _TextItem) and it.parentItem() is None)
-                or (isinstance(it, _PolygonItem) and it._closed)]
+                if _is_conn_host(it) or isinstance(it, _PathItem)]   # [2026-10-17] 이미지·표도 접속점 도형
 
     def _port_dot_target(self, scene_c):
         """[2026-08-03 분리 — _draw_port_dots·mouseMoveEvent 공용] 지금 커서 아래(또는 근처)
@@ -2089,12 +2084,7 @@ class _AnnotatorView(QGraphicsView):
         best_sh, best_d, best_member = None, None, None
         seen_group_ids = set()
         for sh in near:
-            # [실사용 버그 수정 2026-08-11] 이미지는 occluder 후보일 뿐 접속점을 제공하는
-            # 도형이 아니다 — 여기서 걸러야 위 occluders 계산(이미지가 다른 도형을 가리는
-            # 판정)엔 그대로 참여하면서, 이미지 자신이 best_sh(예고점을 그릴 대상)가 되는
-            # 건 막는다.
-            if isinstance(sh, _ImageItem):
-                continue
+            # [2026-10-17] 이미지도 이제 접속점 도형이다(전엔 여기서 걸렀음 — occluder 판정은 그대로).
             if sh.isSelected():
                 continue
             # [그룹 프레임 2026-08-25 deep-interview] Ctrl+G로 묶인 멤버는 이제 "한 덩어리"의
@@ -2355,7 +2345,7 @@ class _AnnotatorView(QGraphicsView):
         for sh in near:
             # [실사용 요청 2026-08-19] _PathItem은 더 이상 이산 포트에서 제외하지 않는다 —
             # `_shape_ports`가 이제 펜 궤적의 양 끝 2점을 돌려준다(`_path_endpoint_ports`).
-            if isinstance(sh, _ImageItem) or _occluded(sh):
+            if _occluded(sh):   # [2026-10-17] 이미지 제외 해제 — 이미지도 접속점 도형
                 continue
             # [그룹 프레임 2026-08-25] 그룹 멤버는 그룹 bbox를 가진 가상 호스트로 치환 —
             # 같은 그룹이 near에 여러 번 나와도 그룹당 한 번만 계산(중복 방지).
@@ -2388,7 +2378,7 @@ class _AnnotatorView(QGraphicsView):
         bestd2 = self._BORDER_SNAP_PX
         seen_gids_2 = set()
         for sh in near:
-            if isinstance(sh, _ImageItem) or _occluded(sh):
+            if _occluded(sh):   # [2026-10-17] 이미지 제외 해제 — 이미지도 접속점 도형
                 continue
             gid = getattr(sh, "_group_id", None)
             if gid:
