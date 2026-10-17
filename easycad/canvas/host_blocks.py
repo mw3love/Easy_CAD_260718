@@ -121,7 +121,10 @@ class _BlockBoardMixin:
             alone = False
             if blk["type"] == "flow":
                 fw, _fh = self._bb_flow_size(blk["flow"])
-                span = max(span, min(12, math.ceil((fw + 2 * P + G) / (col + G))))
+                need = min(12, math.ceil((fw + 2 * P + G) / (col + G)))
+                # 칸이 흐름도보다 많이 넓으면 흐름도 크기로(최소 4칸) — 남는 칸은 같은 줄 다른 블록이 받는다(아래). 회의록 보드에서
+                # 8칸 면 가운데에 작은 흐름도만 있어 양옆이 텅 비었다(§8 항목60).
+                span = max(need, 4) if need < span else need
             if blk["type"] == "figure" and big_fig:
                 span, alone = max(span, 8), True
                 blk = dict(blk, size="big")
@@ -140,6 +143,16 @@ class _BlockBoardMixin:
                 cur, used, cur_key = [], 0, None
         if cur:
             rows.append(cur)
+        for r, row in enumerate(rows):   # 흐름도가 줄인 칸은 같은 줄의 가장 넓은 다른 블록에(줄 합은 AI가 정한 그대로)
+            given = {i: b["span"] for i, b, _sp in row}
+            spare = sum(given[i] - sp for i, b, sp in row if b["type"] == "flow" and sp < given[i])
+            others = [k for k, (_i, b, _sp) in enumerate(row) if b["type"] != "flow"]
+            if spare > 0 and others:
+                k = max(others, key=lambda k: row[k][2])
+                i, b, sp = row[k]
+                row = list(row)
+                row[k] = (i, b, min(12, sp + spare))
+                rows[r] = row
         return rows
 
     # ---- 배치 한 번 ------------------------------------------------------------------------------
@@ -325,7 +338,8 @@ class _BlockBoardMixin:
         elif t == "steps":
             y = self._bb_steps(added, blk, x, y, w, s)
         elif t == "bars":
-            y = self._bb_bars(added, blk, x, y, w, s)
+            room = self._bb_cards_room.get(self._pb_part_cur)   # 줄 맞춤 채우기 — 막대 간격·두께를 칸 아래 끝까지
+            y = self._bb_bars(added, blk, x, y, w, s, bottom=(y0 + room - 2 * self._bb_pad()) if room else None)
         elif t == "numbers":
             y = self._bb_numbers(added, blk["items"], x, y, w, s, spec=spec)
         elif t == "figure":
@@ -440,18 +454,28 @@ class _BlockBoardMixin:
             y += hmax + g
         return y - g
 
-    def _bb_bars(self, added, blk, x, y, w, s):
+    def _bb_bars(self, added, blk, x, y, w, s, bottom=None):
         bars = blk["bars"]
+        pitch, thick = 28.0 * s, 16.0 * s
+        if bottom is not None:   # 칸이 남으면 막대 사이·두께를 늘려 채운다(§8 항목60 — 넓은 막대 칸 아래가 텅 비었다, 회의록)
+            note_h = 24.0 if blk.get("note") else 0.0
+            pitch = min(64.0 * s, max(pitch, (bottom - y - note_h) / len(bars)))
+            thick = min(32.0 * s, max(thick, pitch * 0.55))
         vmax = max(b["value"] for b in bars) or 1.0
+        mine_any = any(b["mine"] for b in bars)
         label_w, val_w = min(170.0, w * 0.32), 64.0
         room = max(20.0, w - label_w - val_w)
         for b in bars:
-            _t, h = self._pb_text(added, b["label"], x, y, label_w, 10 * s)
+            lt, h = self._pb_text(added, b["label"], x, y, label_w, 10 * s)
+            mid = y + 6 + thick / 2.0   # 이름·값은 막대 높이 가운데에(막대가 두꺼워지면 위에 떠 보였다)
+            lt.setPos(x, mid - h / 2.0)
             bw = max(2.0, room * max(0.0, b["value"]) / vmax)   # 막대는 0부터
-            col = _ACCENT if b["mine"] else self._PB_MUTED
-            self._pb_card(added, x + label_w, y + 6, bw, 16.0 * s, fill=col, edge=col)
-            self._pb_text(added, f"{b['value']:g}", x + label_w + bw + 6, y, val_w, 10 * s)
-            y += max(h, 28.0 * s)
+            # 「우리 것」이 없는 막대(예산 구성 등)는 모두 파랑 — 전부 회색이면 꺼진 화면처럼 보였다(§8 항목60, 회의록)
+            col = _ACCENT if b["mine"] else (self._PB_MUTED if mine_any else self._BB_BLUE)
+            self._pb_card(added, x + label_w, y + 6, bw, thick, fill=col, edge=col)
+            vt, vh = self._pb_text(added, f"{b['value']:,g}", x + label_w + bw + 6, y, val_w, 10 * s)   # 천 단위 쉼표(「11800」은 읽기 어려웠다)
+            vt.setPos(x + label_w + bw + 6, mid - vh / 2.0)
+            y += max(h, pitch)
         if blk.get("note"):
             _t, h = self._pb_text(added, blk["note"], x, y + 2, w, 9, self._PB_MUTED)
             y += h + 2
@@ -643,7 +667,7 @@ class _BlockBoardMixin:
     def _bb_number_value(self, added, value, x, y, w, pt, color) -> float:
         """큰 숫자 — 숫자는 크게, 뒤 단위(「일」·「시간」·「%」·「BLEU」)는 절반 크기로 바로 옆 아래 맞춤. 반환 높이."""
         m = re.match(r"^\s*([+\-−]?[\d][\d.,]*)\s*(\S.*)?$", value or "")
-        if not m or not m.group(2):
+        if not m or not m.group(2) or re.search(r"\d", m.group(2)):   # 「1억 4,200만 원」은 「1」 + 단위가 아니다 — 통째로 크게(§8 항목60, 회의록)
             _t, h = self._pb_text(added, value, x, y, w, self._bb_num_pt(value, w, pt), color, bold=800)
             return h
         num, unit = m.group(1), m.group(2)
@@ -730,7 +754,7 @@ class _BlockBoardMixin:
         if not self._bb_masonry:   # 줄보다 많이 낮은 카드 블록(4개 이상)은 2열로 — 시안처럼 2×2로 칸을 채운다
             cards_cols = {part: 2 for part, blk, _x, _w, _y, h, _b, room in res[5]
                           if blk["type"] == "cards" and len(blk["items"]) >= 4 and room - h > 80.0}
-            cards_room = {part: room for part, blk, _x, _w, _y, h, _b, room in res[5] if blk["type"] == "cards" and room - h > 30.0}
+            cards_room = {part: room for part, blk, _x, _w, _y, h, _b, room in res[5] if blk["type"] in ("cards", "bars") and room - h > 30.0}
             # 글 높이는 배율의 제곱쯤으로 는다(줄 수 × 줄 높이) — 넘지 않게 제곱근에 여유 0.95
             grow = {part: min(1.25, 0.95 * (room / h) ** 0.5) for part, blk, _x, _w, _y, h, _b, room in res[5]
                     if blk["type"] in self._BB_GROW_TYPES and (not blk.get("hero") or blk["type"] == "text") and h > 0 and room / h > 1.3}

@@ -1698,6 +1698,14 @@ class _FileIOMixin:
         from easycad.fileio.mermaid_import import MEdge
 
         spec = parse_spec(text)
+
+        def _board_font(lbl):
+            from easycad.fonts import board_family
+            fam = board_family()
+            if fam:
+                f = lbl.font()
+                f.setFamily(fam)
+                lbl.setFont(f)
         keys = step_keys(spec)   # 비교 열쇠는 원래 글로 — 아래 크기 재기가 긴 글을 두 줄로 고친다
         lkeys = [link_key(spec, k) for k in spec.links]
         sizes = self._flow_box_sizes(spec, label_pt=10 if compact else None)   # 보드 안은 글자 한 단계 작게
@@ -1801,6 +1809,8 @@ class _FileIOMixin:
             it.setPos(ox + x, oy + y)
             it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
             lbl = it.ensure_label()
+            if compact:   # 보드 안 흐름도는 보드 글꼴로(§8 항목60 — 상자 글만 앱 기본 글꼴이라 한 보드에 글꼴이 섞였다)
+                _board_font(lbl)
             lbl.setPlainText(s.text)
             lbl.apply_color(ink)   # 글자는 테마 잉크(띠 색 글자는 옅은 바탕에서 안 읽힘)
             it._flow_key = keys[s.id]
@@ -1864,6 +1874,8 @@ class _FileIOMixin:
                 pass
             if k.text and arr._label_alive():
                 lb = arr._label
+                if compact:
+                    _board_font(lb)
                 if pt > 0:
                     lb.apply_font_size(pt)   # 연결 글도 상자 글과 같은 크기(기본 16은 상자 글보다 커 보임)
                 if kinds[k.src] == "decision":   # 「예」「아니오」는 갈림길 바로 옆에(가운데면 긴 선 한복판에 뜸)

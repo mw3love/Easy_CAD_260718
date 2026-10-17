@@ -257,3 +257,46 @@ def test_three_cards_never_leave_a_hole():
         assert len(tops) == 1 or len(lefts) == 1, (width, tops, lefts)
         w._pb_discard(added)
     _close(w)
+
+
+def test_bars_commas_and_blue_when_no_mine():
+    """막대 — 천 단위 쉼표, 「우리 것」이 없으면 모두 파랑(전부 회색이면 꺼진 화면 같았다 — 회의록 예산)."""
+    from easycad.canvas.annotator_core import _RectItem
+    w = _window()
+    added = []
+    blk = {"bars": [{"label": "서버", "value": 11800, "mine": False}, {"label": "전원", "value": 1800, "mine": False}], "note": ""}
+    w._bb_bars(added, blk, 0.0, 0.0, 500.0, 1.0)
+    assert any(hasattr(it, "toPlainText") and it.toPlainText() == "11,800" for it in added)
+    bars = [it for it in added if isinstance(it, _RectItem)]
+    assert bars and all(b.brush().color().name() == QColor(w._BB_BLUE).name() for b in bars)
+    w._pb_discard(added)
+    _close(w)
+
+
+def test_compound_korean_amount_drawn_whole():
+    """「1억 4,200만 원」은 「1」 + 작은 단위가 아니라 통째로 한 크기."""
+    w = _window()
+    added = []
+    w._bb_number_value(added, "1억 4,200만 원", 0.0, 0.0, 300.0, 26, "#3d7fb8")
+    texts = [it for it in added if hasattr(it, "toPlainText")]
+    assert len(texts) == 1 and texts[0].toPlainText().replace("\n", " ") == "1억 4,200만 원"
+    w._pb_discard(added)
+    _close(w)
+
+
+def test_wide_flow_cell_shrinks_and_neighbor_takes_columns():
+    """흐름도보다 많이 넓은 칸은 흐름도 크기로(최소 4칸) 줄이고, 남는 칸은 같은 줄 다른 블록이 받는다. 상자 글은 보드 글꼴."""
+    from easycad.fonts import BOARD_FONT
+    w = _window()
+    flow = {"direction": "TD", "lanes": [], "steps": [{"id": "a", "text": "시작"}, {"id": "b", "text": "끝"}],
+            "links": [{"from": "a", "to": "b"}], "focus": "b"}
+    blocks = [{"type": "flow", "title": "흐름", "row": 1, "span": 8, "flow": flow},
+              {"type": "list", "title": "목록", "row": 1, "span": 4, "items": ["하나", "둘"]}]
+    spec = pb.parse_board(json.dumps({"kind": "block-board", "title": "T", "blocks": blocks}, ensure_ascii=False))
+    rows = w._bb_rows(dict(spec, blocks=[dict(b, _i=i) for i, b in enumerate(spec["blocks"])]), 112.0)
+    spans = {b["type"]: sp for _i, b, sp in rows[0]}
+    assert spans["flow"] < 8 and spans["flow"] + spans["list"] == 12
+    _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
+    labels = [it._label for it in added if getattr(it, "_flow_key", None) and hasattr(it, "_label_alive") and it._label_alive()]
+    assert labels and all(lb.font().family() == BOARD_FONT for lb in labels)
+    _close(w)
