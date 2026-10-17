@@ -2309,6 +2309,11 @@ class _AnnotatorView(QGraphicsView):
         # Pass가 그룹 멤버를 만나면 그룹 bbox 기준 가상 호스트(`_group_proxy`)로 치환해 예고
         # 점·클릭/드래그 연결 둘 다 그룹 기준으로 통일한다(더 이상 제외할 필요가 없다).
         near = [sh for sh in all_near if not sh.isSelected()]
+        # [우리 확장 · §8 항목60] 들어가지 않은 AI 보드 안의 도형은 포트점도 없다 — 처음 클릭은 보드 통째로라
+        # (안 그러면 보드 안 글을 누르는 순간 화살표 뽑기가 먼저 잡혔다). 보드 안에 들어가면 평소대로.
+        closed = getattr(self._owner, "_in_closed_board", None)
+        if closed is not None:
+            near = [sh for sh in near if not closed(sh)]
         # [실사용 버그 수정 2026-08-11] 커서가 실제로 놓인 지점(scene_pt)에서 Qt 화면 스택
         # 맨 위 아이템을 확인 — 그게 이번 후보(sh)도, sh의 포트↔호스트 가족(부모-자식 체인)도
         # 아니면 sh는 뭔가 다른 것(전형적으로 붙여넣은 이미지)에 시각적으로 가려진 것이므로
@@ -3084,6 +3089,20 @@ class _AnnotatorView(QGraphicsView):
                 self._apply_rubber_selection()
                 self.viewport().update()
                 return
+            # [우리 확장 · §8 항목60] 묶음(AI 보드·그룹) 안을 누르면 묶음 통째로 고르고 끌면 통째로 — 이미 고른 묶음 안을
+            # 끌지 않고 다시 클릭하면 그 안으로(놓을 때 `_container_pending`). Shift·Ctrl·Alt는 예전 그대로(바로 안의 것).
+            if event.button() == Qt.MouseButton.LeftButton and not (event.modifiers() & (
+                    Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier
+                    | Qt.KeyboardModifier.AltModifier)):
+                cpress = getattr(self._owner, "_container_press", None)
+                res = cpress(self, vpos) if cpress is not None else None
+                if res is not None:
+                    self._snapshot_movable()
+                    self._group_body_drag = True
+                    self._group_body_anchor = self.mapToScene(vpos)
+                    self._container_pending = (None if res is False else res, QPoint(vpos))
+                    self.viewport().update()
+                    return
             self._maybe_alt_drag_copy(event)   # [편의기능] Alt+드래그 = 제자리 복제 후 드래그
             self._snapshot_movable()   # 아이템 드래그 이동을 undo로 되돌리기 위해
             return super().mousePressEvent(event)
@@ -4237,6 +4256,12 @@ class _AnnotatorView(QGraphicsView):
         if self._group_body_drag:  # [편의기능] 그룹 바운딩박스 빈틈 드래그 종료 — 이동 undo 커밋
             self._group_body_drag = False
             self._commit_move()
+            pend, self._container_pending = getattr(self, "_container_pending", None), None
+            if pend is not None and hasattr(self._owner, "_container_release"):
+                self._owner._container_release()
+            moved = pend is not None and (event.position().toPoint() - pend[1]).manhattanLength() >= 4
+            if pend is not None and pend[0] is not None and not moved:   # 끌지 않은 클릭 — 묶음 안으로
+                self._owner._container_enter(self, pend[0])
             self.viewport().update()
             return
         if self._hp_dragging:  # [하나의 시스템으로 통합] 종료 — 드래그했으면 커넥터, 클릭이면 선택만

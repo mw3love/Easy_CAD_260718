@@ -307,12 +307,90 @@ class _SelectionMixin:
 
     # ---- [편의기능] Group / Ungroup --------------------------------------
 
+    # ---- [§8 항목60, 2026-10-17] 묶음 안으로 — 첫 클릭은 묶음(AI 보드·그룹) 통째로, 고른 묶음 안을 한 번 더 클릭하면 그 안의 것 ----
+    # 사용자: 보드·조각 안의 글·그림이 바로 집혀 실수로 옮기거나, 겹친 조각을 끌면 안의 것이 선택돼 조각 이동이 어려웠다.
+    # 더블클릭으로 들어가게 하면 빈 화면 더블클릭(새 글)·글 더블클릭(고치기)과 뜻이 겹쳐 PowerPoint·Figma처럼 「두 번째 클릭」으로.
+    _group_inside = None   # 들어가 있는 그룹(그 그룹은 멤버 하나만 골라도 전체를 함께 고르지 않는다)
+
+    def _container_at(self, view, vpos):
+        """누른 자리의 맨 위 물체가 묶음 안의 것이면 (종류 "board"|"group", 묶음, 누른 물체). 아니면 None.
+        AI 보드가 먼저(보드 안 흐름도가 그룹이어도 처음엔 보드 통째로), 들어가 있는 보드·그룹은 묶음으로 안 본다."""
+        from easycad.canvas.annotator_core import _BoardItem
+        hit = None
+        for it in view.items(vpos):
+            top = it.topLevelItem()
+            if top is getattr(self, "_bg_item", None) or not (top.flags() & top.GraphicsItemFlag.ItemIsSelectable):
+                continue
+            hit = top
+            break
+        if hit is None or isinstance(hit, _BoardItem):
+            return None
+        if hasattr(self, "_board_at"):
+            b = self._board_at(hit)
+            if b is not None and self._board_is_ai(b) and b is not self._board_inside_alive():
+                return "board", b, hit
+        gid = getattr(hit, "_group_id", None)
+        if gid and gid != self._group_inside:
+            return "group", gid, hit
+        return None
+
+    def _in_closed_board(self, it) -> bool:
+        """`it`이 들어가지 않은 AI 보드 안에 있나 — 포트점·화살표 뽑기를 막는다."""
+        if not hasattr(self, "_board_at"):
+            return False
+        top = it.topLevelItem()
+        b = self._board_at(top)
+        return b is not None and b is not top and self._board_is_ai(b) and b is not self._board_inside_alive()
+
+    def _container_press(self, view, vpos):
+        """묶음 안을 눌렀다 — None(묶음 아님, 평소대로) | False(이제 묶음을 골랐다) | 누른 물체(묶음이 이미 골라져 있었다 —
+        끌지 않고 놓으면 그 안으로). 어느 쪽이든 끌면 묶음이 통째로 움직인다."""
+        c = self._container_at(view, vpos)
+        if c is None:
+            return None
+        kind, key, hit = c
+        if kind == "board":
+            sel = [it for it in self._scene.selectedItems() if it.parentItem() is None]
+            if sel != [key]:
+                self._scene.clearSelection()
+                key.setSelected(True)
+            key.start_carry()   # 끌면 안의 것도 같이(보드를 직접 누를 때와 같게)
+            self._container_carry = key
+            return hit if sel == [key] else False
+        members = [it for it in self._zorder_pool() if getattr(it, "_group_id", None) == key]
+        if members and all(m.isSelected() for m in members):
+            return hit
+        self._scene.clearSelection()
+        hit.setSelected(True)   # 그룹 맞추기(`_sync_group_selection`)가 나머지를 함께
+        return False
+
+    def _container_release(self):
+        b, self._container_carry = getattr(self, "_container_carry", None), None
+        if b is not None:
+            b.end_carry()
+
+    def _container_enter(self, view, hit):
+        """고른 묶음 안의 `hit`을 다시 클릭(끌지 않음) — 그 묶음 안으로 들어가 `hit` 하나만."""
+        if hit.scene() is not self._scene:
+            return
+        b = self._board_at(hit) if hasattr(self, "_board_at") else None
+        if b is not None and self._board_is_ai(b) and b is not self._board_inside_alive():
+            self._board_enter(b)
+        elif getattr(hit, "_group_id", None):
+            self._scene.clearSelection()
+            self._group_inside = hit._group_id
+        hit.setSelected(True)
+
     def _sync_group_selection(self):
-        """그룹 멤버 하나가 선택되면 같은 그룹 전체를 함께 선택(재진입 가드로 무한루프 방지)."""
+        """그룹 멤버 하나가 선택되면 같은 그룹 전체를 함께 선택(재진입 가드로 무한루프 방지).
+        들어가 있는 그룹(`_group_inside`)은 빼고 — 그 그룹 밖을 고르거나 선택을 다 풀면 나온다."""
         if self._group_sync_active:
             return
         sel = self._scene.selectedItems()
-        gids = {getattr(it, "_group_id", None) for it in sel} - {None}
+        gi = self._group_inside
+        if gi is not None and gi not in {getattr(it, "_group_id", None) for it in sel}:
+            self._group_inside = gi = None
+        gids = {getattr(it, "_group_id", None) for it in sel} - {None, gi}
         if not gids:
             return
         missing = [it for it in self._zorder_pool()

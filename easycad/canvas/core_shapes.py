@@ -2432,6 +2432,14 @@ class _BoardItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
         super().mouseReleaseEvent(event)
         self._followers = None
 
+    def start_carry(self):
+        """[§8 항목60] 보드를 직접 누르지 않고 끌 때(보드 안 글을 눌러 보드 통째로) — 안의 것을 따라오게 한다."""
+        self._followers = _board_members(self)
+        self._follow_pos = QPointF(self.pos())
+
+    def end_carry(self):
+        self._followers = None
+
     def itemChange(self, change, value):
         out = super().itemChange(change, value)
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged and self._followers \

@@ -410,3 +410,90 @@ def test_highlighter_selection_toggle_save_undo():
     else:   # 라벨 복원은 씬에 넣은 뒤(insert_items) — 저장 dict에 서식이 있는지만
         assert d["label"]["runs"] == lbl.text_runs()
     _close(w)
+
+
+# ---- 묶음 안으로(첫 클릭 = 묶음 통째로, 두 번째 클릭 = 안의 것) ---------------------------------------------------------
+
+def _vp(w, item):
+    from PyQt6.QtWidgets import QApplication
+    QApplication.processEvents()
+    c = item.mapToScene(item._content_rect().center() if hasattr(item, "_content_rect") else item.boundingRect().center())
+    return w._view.mapFromScene(c)
+
+
+def _click(w, pt, mods=None):
+    from PyQt6.QtTest import QTest
+    QTest.mouseClick(w._view.viewport(), Qt.MouseButton.LeftButton, mods or Qt.KeyboardModifier.NoModifier, pt)
+
+
+def _board_window():
+    from PyQt6.QtWidgets import QApplication
+    from easycad.canvas.annotator_core import _BoardItem
+    w = _window(); w.resize(1400, 900); w.show(); w.set_tool("select")
+    spec = pb.parse_board(json.dumps(PAPER, ensure_ascii=False))
+    _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
+    board = next(it for it in added if isinstance(it, _BoardItem))
+    board._ai = {"spec": pb.dump_board(spec)}   # 실제로는 AI 요청이 붙인다(`_board_is_ai`)
+    w._view.fitInView(board.sceneBoundingRect()); QApplication.processEvents()
+    text = next(it for it in added if hasattr(it, "toPlainText") and it.toPlainText().startswith("단어마다"))
+    return w, board, text
+
+
+def test_click_inside_ai_board_selects_board_then_second_click_enters():
+    w, board, text = _board_window()
+    pt = _vp(w, text)
+    _click(w, pt)
+    assert board.isSelected() and not text.isSelected()            # 첫 클릭 = 보드 통째로
+    _click(w, pt)
+    assert text.isSelected() and not board.isSelected()            # 두 번째 클릭 = 그 안의 것
+    assert w._board_inside is board
+    _click(w, _vp(w, text))                                        # 안에서는 평소대로
+    assert text.isSelected()
+    _close(w)
+
+
+def test_drag_inside_ai_board_moves_whole_board():
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtTest import QTest
+    w, board, text = _board_window()
+    pt = _vp(w, text)
+    b0, t0 = board.pos(), text.pos()
+    vp = w._view.viewport()
+    QTest.mousePress(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pt)
+    for k in range(1, 6):
+        QTest.mouseMove(vp, pt + QPoint(12 * k, 6 * k))
+    QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, pt + QPoint(60, 30))
+    db, dt = board.pos() - b0, text.pos() - t0
+    assert db.x() > 1 and abs(db.x() - dt.x()) < 0.5 and abs(db.y() - dt.y()) < 0.5   # 보드와 안의 글이 같이
+    assert w._board_inside is None                                                      # 끌었으면 안으로 안 들어감
+    w.undo()                                                                            # 되돌리면 보드와 안의 것이 같이
+    assert (board.pos() - b0).manhattanLength() < 0.5 and (text.pos() - t0).manhattanLength() < 0.5
+    _close(w)
+
+
+def test_group_click_selects_group_second_click_one_member():
+    from PyQt6.QtCore import QRectF
+    from PyQt6.QtWidgets import QApplication
+    w = _window(); w.resize(1400, 900); w.show(); w.set_tool("select")
+    spec = pb.parse_board(json.dumps(dict(PAPER, more=[{"type": "list", "title": "조각", "items": ["하나", "둘"], "row": 1, "span": 6}]),
+                                     ensure_ascii=False))
+    items = w._pieces_place(spec, QRectF(0, 0, 400, 300))
+    w._view.fitInView(w._ai_items_rect(items)); QApplication.processEvents()
+    member = next(it for it in items if hasattr(it, "toPlainText") and it.toPlainText() == "• 하나")
+    gid = member._group_id
+    group = [it for it in items if getattr(it, "_group_id", None) == gid]
+    _click(w, _vp(w, member))
+    assert all(it.isSelected() for it in group)                    # 첫 클릭 = 조각 통째로
+    _click(w, _vp(w, member))
+    assert member.isSelected() and sum(it.isSelected() for it in group) == 1 and w._group_inside == gid
+    w._scene.clearSelection()                                      # 선택을 다 풀면 나온다
+    assert w._group_inside is None
+    _close(w)
+
+
+def test_double_click_text_in_board_still_edits():
+    from PyQt6.QtTest import QTest
+    w, board, text = _board_window()
+    QTest.mouseDClick(w._view.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, _vp(w, text))
+    assert w._scene.focusItem() is text
+    _close(w)
