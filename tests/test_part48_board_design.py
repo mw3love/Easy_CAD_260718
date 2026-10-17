@@ -183,6 +183,8 @@ def test_number_with_other_unit_gets_other_color():
     grouped = [dict(same[0], group="비용"), dict(same[1], group="비용"), dict(same[2], group="성능")]
     assert w._bb_number_colors(spec, grouped) == [w._BB_GROUP_COLORS[1], w._BB_GROUP_COLORS[1], w._BB_GROUP_COLORS[0]]
     assert w._bb_number_colors({}, same[:2]) == [_ACCENT, _ACCENT]
+    times = [{"label": "기본", "value": "12시간"}, {"label": "대형", "value": "3.5일"}]   # 시간 단위끼리는 한 무리(실제 KAIROS)
+    assert w._bb_number_colors({}, times) == [_ACCENT, _ACCENT]
     _close(w)
 
 

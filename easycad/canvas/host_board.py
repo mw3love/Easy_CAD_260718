@@ -1380,6 +1380,8 @@ def _pb_style(t, pt, bold):
     """보드 글 글꼴 — 앱에 실은 Pretendard(§8 항목60 ②, 없으면 앱 기본) · 크기 · 굵기(False / True=700 / 숫자)."""
     from PyQt6.QtGui import QFont
     from easycad.fonts import board_family
+    if pt < 12.5:   # 작은 글은 한 단계 크게(§8 항목60 — 9~11pt는 보드를 화면·문서에 맞춰 넣으면 안 읽혔다). 제목·큰 숫자는 그대로
+        pt += 1
     t.apply_font_size(pt)
     f = t.font()
     fam = board_family()

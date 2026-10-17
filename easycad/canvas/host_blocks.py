@@ -33,6 +33,10 @@ def block_label(blk: dict) -> str:
     return (blk.get("title") or _BLOCK_NAME.get(blk.get("type"), "블록"))[:14]
 
 
+def content_w_of(width, margin) -> float:
+    return width - 2 * margin
+
+
 class _BlockBoardMixin:
     _BB_M, _BB_G, _BB_P = 64.0, 40.0, 16.0   # 바깥 여백 · 칸 사이 · 카드 안쪽 여백
     # 블록 역할별 모양(§8 항목58 ②) — 모든 블록을 같은 회색 상자로 그리던 것을: 주인공 하나는 진한 면, 숫자는 위 색 선, 카드는 왼쪽 색 띠,
@@ -44,12 +48,12 @@ class _BlockBoardMixin:
     _BB_BLUE = "#3d7fb8"
     _BB_PLUM = "#b0527a"
     # 무리 색(§8 항목59 ① — 시안처럼 같은 줄기 항목은 블록을 건너 같은 색). AI가 정한 groups 차례대로.
-    _BB_GROUP_COLORS = (_ACCENT, "#3d7fb8", "#b0527a")
+    _BB_GROUP_COLORS = (_ACCENT, "#3d7fb8")   # 두 색만(§8 항목60 — 셋째 자두색은 뜻이 안 읽혔다)
 
     def _bb_group_color(self, spec, item, default):
         g = (item or {}).get("group") if isinstance(item, dict) else ""
         groups = spec.get("groups") or []
-        return self._BB_GROUP_COLORS[groups.index(g) % 3] if g and g in groups else default
+        return self._BB_GROUP_COLORS[groups.index(g) % len(self._BB_GROUP_COLORS)] if g and g in groups else default
     _BB_FLOW_FACE = QColor(218, 119, 86, 30)
     # 한 장 채우기(§8 항목58 ③) — 넘치면 2장으로 나누기 전에 이 차례로 조여 본다: (본문 배율, 그림 높이 배율, 간격 좁힘).
     # 본문 11pt → 10 → 9(출력해서 읽히는 바닥). 실측(1706.03762 보드 3개): 글자 크기보다 그림 높이·간격이 높이를 훨씬 많이 줄였다.
@@ -443,11 +447,18 @@ class _BlockBoardMixin:
             y += h + 2
         return y
 
+    _BB_TIME_UNITS = ("초", "분", "시간", "일", "주", "개월", "달", "년", "s", "sec", "min", "h", "hr", "hours", "day", "days", "week", "weeks")
+
+    def _bb_unit_kind(self, value) -> str:
+        """숫자 뒤 단위의 종류 — 시간 단위(「12시간」·「3.5일」)는 하나로 본다(실제 KAIROS: 둘이 다른 색으로 갈렸다)."""
+        unit = re.sub(r"^[\s\d.,+\-−~≈%]+", "", str(value or "")).strip()
+        return "time" if unit.lower() in self._BB_TIME_UNITS else unit
+
     def _bb_number_colors(self, spec, items) -> list:
         """숫자마다 색 — AI가 정한 무리 색, 그런데 모두 같은 색이고 단위가 다른 숫자가 섞였으면 많은 쪽 단위만 그 색, 나머지는 다른 색
         (§8 항목60 ⑤ — BLEU 둘과 「3.5일」이 같은 색이라 셋이 한 묶음으로 읽혔다. 시안은 점수 코랄·일수 파랑)."""
         cols = [self._bb_group_color(spec, num, _ACCENT) for num in items]
-        units = [re.sub(r"^[\s\d.,+\-−~≈%]+", "", str(num.get("value", ""))).strip() for num in items]
+        units = [self._bb_unit_kind(num.get("value", "")) for num in items]
         if len(set(cols)) == 1 and len(set(units)) > 1:
             main = max(set(units), key=units.count)
             other = self._BB_BLUE if cols[0] != self._BB_BLUE else _ACCENT
@@ -518,6 +529,7 @@ class _BlockBoardMixin:
             y += h + g
         return y - g
 
+    _BB_SIDE_MAX = 0.28   # 옆 칸 폭 상한(내용 폭 비율) — 3분의 1이면 눈이 주장보다 그림에 먼저 갔다(§8 항목60)
     _BB_SIDE_RATIO = 1.15   # 그림 높이/폭이 이보다 크면 세로 그림 — 옆 칸으로
 
     def _bb_fig_ratio(self, spec, blk):
@@ -545,7 +557,8 @@ class _BlockBoardMixin:
             cap = 28.0 if blk.get("caption") else 0.0
             room_h = width / BOARD_ASPECT - y_top - 48.0 - 2 * P - cap - self._bb_text_h(blk.get("title") or "", 300, self._PB_SIZE["heading"], True)
             h = max(260.0, room_h) * self._bb_figk
-            n = min(5, max(3, math.ceil((h / ratio + 2 * P + G) / (col + G))))
+            most = max(3, int((content_w_of(width, M) * self._BB_SIDE_MAX + G) // (col + G)))   # 그림이 보드에서 가장 큰 덩어리가 되지 않게
+            n = min(5, most, max(3, math.ceil((h / ratio + 2 * P + G) / (col + G))))
             return blk.get("_i", order), blk, n * col + (n - 1) * G, h
         return None
 

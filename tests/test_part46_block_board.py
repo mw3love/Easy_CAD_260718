@@ -302,10 +302,14 @@ def test_block_roles_hero_face_strips_and_flow_face():
     from easycad.canvas.annotator_core import _PathItem, _RectItem
     w = _window()
     blocks = [dict(b) for b in PAPER["blocks"]]
-    blocks[0]["hero"] = True
-    blocks[2]["hero"] = True   # 둘째 주인공은 버린다
+    # [§8 항목60] 주인공은 글(왜 2~3문장)만 — 카드·숫자 주인공은 버린다(면 안이 붐벼 주장이 묻혔다)
+    blocks[0] = {"type": "text", "title": "핵심 주장", "row": 1, "span": 4, "hero": True, "body": "단어마다 관련 깊은 단어에 점수를 준다."}
+    blocks[2]["hero"] = True   # 숫자 주인공은 버린다
     spec = pb.parse_board(json.dumps(dict(PAPER, blocks=blocks, headline="모든 단어를 한 번에 보자"), ensure_ascii=False))
     assert [b.get("hero", False) for b in spec["blocks"]][:3] == [True, False, False] and spec["headline"] == "모든 단어를 한 번에 보자"
+    cards_hero = [dict(b) for b in PAPER["blocks"]]
+    cards_hero[0]["hero"] = True
+    assert not any(b.get("hero") for b in pb.parse_board(json.dumps(dict(PAPER, blocks=cards_hero), ensure_ascii=False))["blocks"])
     _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
     board = next(it for it in added if isinstance(it, _BoardItem))
     rects = [it for it in added if isinstance(it, _RectItem)]
