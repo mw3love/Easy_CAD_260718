@@ -454,12 +454,31 @@ class _BlockBoardMixin:
             cols = [c if u == main else other for c, u in zip(cols, units)]
         return cols
 
+    def _bb_number_per_row(self, items, w, g, s) -> int:
+        """한 줄 타일 수 — 많을수록 좋지만 타일이 115 이상이고 이름의 가장 긴 낱말이 안 끊길 때만(§8 항목60 — 옆 칸 옆 좁은 칸에서
+        150 기준이면 셋이 두 줄로 줄이 높아져 진한 면이 텅 비었고, 그냥 줄이면 「영어→독일 / 어」처럼 낱말이 끊겼다 — 실제 KAIROS)."""
+        from PyQt6.QtGui import QFontMetricsF
+        from easycad.canvas.annotator_core import _TextItem
+        from easycad.canvas.host_board import _pb_style
+        t = _TextItem(QColor(INK_ON_LIGHT))
+        _pb_style(t, 11 * s, False)
+        fm = QFontMetricsF(t.font())
+        longest = max((fm.horizontalAdvance(word) for num in items for word in str(num.get("label", "")).split()), default=0.0)
+        margin = 2 * t.document().documentMargin() + 28.0   # 타일 안 여백(양쪽 14) + 글 상자 여백
+        for per in range(len(items), 1, -1):
+            nw = (w - g * (per - 1)) / per
+            if nw >= 115.0 and longest + margin <= nw:
+                return per
+        return 1 if w < 230.0 else min(len(items), 2) if (w - g) / 2 >= longest + margin else 1
+
     def _bb_numbers(self, added, items, x, y, w, s, spec=None):
         """큰 숫자 타일들 — 숫자마다 얇은 테두리 타일 + 안쪽 위 색 선(무리 색), 단위는 작게(§8 항목59 ①). 좁으면 두 줄."""
         g = 12.0
-        per = len(items) if w / len(items) >= 150 else max(1, int((w + g) // 150))
-        nw = (w - g * (per - 1)) / per
+        per = self._bb_number_per_row(items, w, g, s)
         cols = self._bb_number_colors(spec or {}, items)
+        if per < len(items) and len(items) > 1 and w >= 260.0:
+            return self._bb_numbers_stacked(added, items, cols, x, y, w, s)
+        nw = (w - g * (per - 1)) / per
         for r in range(0, len(items), per):
             cells = []
             for k, num in enumerate(items[r:r + per]):
@@ -478,6 +497,25 @@ class _BlockBoardMixin:
                 self._pb_card_under(added, start, nx, y, nw, hmax, fill=QColor(0, 0, 0, 0), edge=self._PB_EDGE)
                 self._pb_card(added, nx + 1, y + 1, nw - 2, 4.0, fill=col, edge=col, width=0.0)
             y += hmax + g
+        return y - g
+
+    def _bb_numbers_stacked(self, added, items, cols, x, y, w, s):
+        """좁은 칸의 숫자 — 한 줄에 다 안 들면 누운 타일을 세로로(왼쪽 큰 숫자, 오른쪽 이름·설명, 왼쪽 무리 색 띠).
+        세운 타일을 두 줄로 꺾으면 줄이 높아져 옆 진한 면이 텅 비었다(§8 항목60, 실제 KAIROS)."""
+        g = 10.0
+        left = min(150.0, w * 0.42)
+        for num, col in zip(items, cols):
+            start = len(added)
+            h1 = self._bb_number_value(added, num["value"], x + 14, y + 8, left - 18, 24 * s, col)
+            _t, h2 = self._pb_text(added, num["label"], x + left, y + 10, w - left - 10, 11 * s, bold=True)
+            foot = " · ".join(p for p in (num.get("note", ""), num.get("pages", "")) if p)
+            h3 = 0.0
+            if foot:
+                _t, h3 = self._pb_text(added, foot, x + left, y + 10 + h2, w - left - 10, 9, self._PB_MUTED)
+            h = max(h1 + 16, h2 + h3 + 20)
+            self._pb_card_under(added, start, x, y, w, h, fill=QColor(0, 0, 0, 0), edge=self._PB_EDGE)
+            self._pb_card(added, x + 1, y + 1, 4.0, h - 2, fill=col, edge=col, width=0.0)
+            y += h + g
         return y - g
 
     _BB_SIDE_RATIO = 1.15   # 그림 높이/폭이 이보다 크면 세로 그림 — 옆 칸으로

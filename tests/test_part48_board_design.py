@@ -198,3 +198,21 @@ def test_verdict_tags_are_chips():
                  and r.sceneBoundingRect().contains(t.sceneBoundingRect().center())]
         assert chips and chips[0].brush().color().rgb() == t.defaultTextColor().rgb()
     _close(w)
+
+
+def test_numbers_narrow_stack_lying_tiles_without_breaking_words():
+    """좁은 칸의 숫자 — 세운 타일을 두 줄로 꺾지 않고(줄이 높아져 옆 진한 면이 텅 빔) 누운 타일을 세로로, 이름 낱말이 안 끊긴다."""
+    w = _window()
+    items = [{"label": "영어→독일어", "value": "28.4", "note": "BLEU"}, {"label": "영어→프랑스어", "value": "41.8", "note": "BLEU"},
+             {"label": "big 모델 학습", "value": "3.5일", "note": "GPU 8장"}]
+    added = []
+    w._bb_numbers(added, items, 0.0, 0.0, 360.0, 1.0)
+    labels = [next(it for it in added if hasattr(it, "toPlainText") and it.toPlainText() == i["label"]) for i in items]
+    ys = [t.sceneBoundingRect().top() for t in labels]
+    assert ys == sorted(ys) and len(set(round(y) for y in ys)) == 3          # 세로로 하나씩
+    wide = []
+    w._bb_numbers(wide, items, 0.0, 0.0, 900.0, 1.0)                           # 넓으면 옛처럼 한 줄
+    assert len({round(it.sceneBoundingRect().top()) for it in wide if hasattr(it, "toPlainText") and it.toPlainText() in
+                {i["label"] for i in items}}) == 1
+    w._pb_discard(added + wide)
+    _close(w)
