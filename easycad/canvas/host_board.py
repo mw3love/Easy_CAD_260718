@@ -174,9 +174,9 @@ class _BoardMixin:
 
     def _pb_small_font(self):
         from easycad.canvas.annotator_core import _TextItem
-        f = _TextItem(QColor(INK_ON_LIGHT)).font()
-        f.setPointSize(self._PB_SIZE["small"])
-        return f
+        t = _TextItem(QColor(INK_ON_LIGHT))
+        _pb_style(t, self._PB_SIZE["small"], False)
+        return t.font()
     _PB_TAG = {"의의": "#2a9fb0", "한계": "#c9a227", "outside": "#8a6fd1"}
     _PB_CARD = QColor(128, 128, 128, 26)
     _pb_part_cur = None   # 지금 놓는 칸의 설계서 자리("concepts[1]"·"figure" …) — 아이템에 `_pb_part`로 붙는다(보드 안 「선택 N개」)
@@ -184,15 +184,11 @@ class _BoardMixin:
 
     def _pb_text(self, added, text, x, y, w, pt, color=INK_ON_LIGHT, bold=False):
         """글 하나(_TextItem) — 폭 `w`에 맞춰 줄을 나눠 넣는다(줄바꿈은 글에 직접 — 저장해도 그대로). 반환 (아이템, 높이).
-        `bold` = 굵게(§8 항목58 ① — 제목·블록 제목·숫자처럼 강약을 줄 곳)."""
+        `bold` = 굵게(§8 항목58 ① — 제목·블록 제목·숫자처럼 강약을 줄 곳). True = 굵게(700), 숫자면 그 굵기(600 약간 굵게·800 아주 굵게)."""
         from PyQt6.QtGui import QFontMetricsF
         from easycad.canvas.annotator_core import _TextItem
         t = _TextItem(QColor(color))
-        t.apply_font_size(pt)
-        if bold:
-            f = t.font()
-            f.setBold(True)
-            t.setFont(f)
+        _pb_style(t, pt, bold)
         plain, spans = split_emph(text)
         fm = QFontMetricsF(_emph_font(t.font()) if spans else t.font())   # 강조가 있으면 굵은 글자 폭으로 재서 줄이 넘치지 않게
         room = max(10.0, w - 2 * t.document().documentMargin())
@@ -1378,6 +1374,20 @@ def _outline_rect(items) -> QRectF:
         cr = it._content_rect() if hasattr(it, "_content_rect") else it.boundingRect()
         r = r.united(it.mapRectToScene(cr))
     return r
+
+
+def _pb_style(t, pt, bold):
+    """보드 글 글꼴 — 앱에 실은 Pretendard(§8 항목60 ②, 없으면 앱 기본) · 크기 · 굵기(False / True=700 / 숫자)."""
+    from PyQt6.QtGui import QFont
+    from easycad.fonts import board_family
+    t.apply_font_size(pt)
+    f = t.font()
+    fam = board_family()
+    if fam:
+        f.setFamily(fam)
+    if bold:
+        f.setWeight(QFont.Weight(700 if bold is True else int(bold)))
+    t.setFont(f)
 
 
 _EMPH = re.compile(r"\*\*(.+?)\*\*", re.S)

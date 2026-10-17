@@ -20,6 +20,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('easycad/resources/icons', 'easycad/resources/icons'),
+        ('easycad/resources/fonts', 'easycad/resources/fonts'),   # 보드 글꼴 Pretendard(OFL, §8 항목60 ②)
     ],
     hiddenimports=[],
     hookspath=[],

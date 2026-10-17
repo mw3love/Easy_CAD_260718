@@ -301,6 +301,12 @@ def item_to_dict(it) -> dict | None:
                  bg=None if bg is None else [bg.red(), bg.green(), bg.blue(), bg.alpha()])
         if it.font().bold():   # [§8 항목58 ①] 굵게 — 없으면 키 생략(하위호환)
             d["bold"] = True
+        w = it.font().weight()
+        if w not in (400, 700):   # [§8 항목60 ②] 약간 굵게(600)·아주 굵게(800) — 보통·굵게는 위 bold로 충분
+            d["weight"] = int(w)
+        from easycad.fonts import BOARD_FONT
+        if it.font().family() == BOARD_FONT:   # [§8 항목60 ②] 앱에 실은 보드 글꼴 — 다른 글꼴은 앱 기본이라 생략(하위호환)
+            d["family"] = BOARD_FONT
         runs = it.text_runs()
         if runs:   # [§8 항목60 ①] 부분 강조 — 없으면 키 생략(하위호환)
             d["runs"] = runs
@@ -394,8 +400,18 @@ def dict_to_item(d: dict):
         it._freehand = bool(d.get("freehand", False))
     elif t == "text":
         it = _TextItem(QColor(d["color"])); it.apply_font_size(d.get("font", 16))
-        if d.get("bold"):
-            f = it.font(); f.setBold(True); it.setFont(f)
+        if d.get("bold") or d.get("weight") or d.get("family"):
+            from PyQt6.QtGui import QFont
+            f = it.font()
+            if d.get("family"):
+                from easycad.fonts import ensure_fonts
+                ensure_fonts()
+                f.setFamily(d["family"])
+            if d.get("bold"):
+                f.setBold(True)
+            if d.get("weight"):
+                f.setWeight(QFont.Weight(int(d["weight"])))
+            it.setFont(f)
         it.setPlainText(d.get("text", ""))
         it.apply_runs(d.get("runs"))
         if d.get("bg") is not None:

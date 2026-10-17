@@ -73,11 +73,9 @@ class _BlockBoardMixin:
         """글 높이만 잰다(그리지 않음) — `_pb_text`와 같은 줄바꿈."""
         from PyQt6.QtGui import QFontMetricsF
         from easycad.canvas.annotator_core import _TextItem
-        from easycad.canvas.host_board import _emph_font, _wrap, split_emph
+        from easycad.canvas.host_board import _emph_font, _pb_style, _wrap, split_emph
         t = _TextItem(QColor(INK_ON_LIGHT))
-        t.apply_font_size(pt)
-        if bold:
-            f = t.font(); f.setBold(True); t.setFont(f)
+        _pb_style(t, pt, bold)
         room = max(10.0, w - 2 * t.document().documentMargin())
         plain, spans = split_emph(text)
         t.setPlainText(_wrap(plain, QFontMetricsF(_emph_font(t.font()) if spans else t.font()), room))
@@ -152,18 +150,18 @@ class _BlockBoardMixin:
         eyebrow = "한 장 정리 · Magic Board"
         if srcs:
             eyebrow += " · 자료 " + " · ".join(f"{k} {v.get('name', '')}" for k, v in sorted(srcs.items()))
-        _t, h = self._pb_text(added, eyebrow, M, y, content_w, self._PB_SIZE["small"], self._PB_MUTED)
+        _t, h = self._pb_text(added, eyebrow, M, y, content_w, self._PB_SIZE["small"], _ACCENT, bold=600)   # 머리말은 코랄(§8 항목60 ②)
         y += h
         meta_w = content_w * 0.34 if spec.get("meta") else 0.0
-        title_t, h = self._pb_text(added, spec["title"] or "(제목 없음)", M, y, content_w - meta_w - 24, self._PB_SIZE["title"], bold=True)
+        title_t, h = self._pb_text(added, spec["title"] or "(제목 없음)", M, y, content_w - meta_w - 24, self._PB_SIZE["title"], bold=800)
         if spec.get("meta"):   # 저자·출처는 오른쪽(§8 항목59 ① 시안 머리 — 제목은 왼쪽, 정보는 오른쪽)
-            mt, mh = self._pb_text(added, spec["meta"], M, y, meta_w, 10, self._PB_MUTED)
+            mt, mh = self._pb_text(added, spec["meta"], M, y, meta_w, 10, INK_ON_LIGHT)   # 흐린 회청은 "너무 흐릿"(§8 항목60 ②)
             mt.setPos(M + content_w - mt.document().size().width(), y + h - mh - 6)
         y += h
         if spec.get("subtitle"):
             self._pb_part_cur = "subtitle"
             y += 6
-            sub, h = self._pb_text(added, spec["subtitle"], M, y, content_w, self._PB_SIZE["headline"])
+            sub, h = self._pb_text(added, spec["subtitle"], M, y, content_w, self._PB_SIZE["headline"], bold=600)
             if spec.get("highlight"):
                 self._pb_mark(added, sub, spec["highlight"])
             y += h
@@ -171,7 +169,7 @@ class _BlockBoardMixin:
         if spec.get("headline") and not has_hero:   # 주인공 블록이 없으면 헤드라인은 머리에(있으면 주인공 면 위에 크게)
             self._pb_part_cur = "headline"
             y += 6
-            _t, h = self._pb_text(added, spec["headline"], M, y, content_w, 20, self._bb_headline_ink(spec), bold=True)
+            _t, h = self._pb_text(added, spec["headline"], M, y, content_w, 20, self._bb_headline_ink(spec), bold=800)
             y += h
         self._pb_part_cur = "title"
         y += 10   # 머리 아래 굵은 구분선(시안 머리)
@@ -269,7 +267,7 @@ class _BlockBoardMixin:
         if blk.get("title") or blk.get("pages"):
             y += self._pb_heading(added, blk.get("title") or _BLOCK_NAME[t], blk.get("pages", ""), x, y, w) + 6
         if blk.get("hero") and spec.get("headline"):   # 주인공 면 위 헤드라인(§8 항목58 ②)
-            _i, h = self._pb_text(added, spec["headline"], x, y + 4, w, 20, self._bb_headline_ink(spec), bold=True)
+            _i, h = self._pb_text(added, spec["headline"], x, y + 4, w, 20, self._bb_headline_ink(spec), bold=800)
             y += h + 12
         ns = na = 0
         if t == "text":
@@ -468,11 +466,11 @@ class _BlockBoardMixin:
         """큰 숫자 — 숫자는 크게, 뒤 단위(「일」·「시간」·「%」·「BLEU」)는 절반 크기로 바로 옆 아래 맞춤. 반환 높이."""
         m = re.match(r"^\s*([+\-−]?[\d][\d.,]*)\s*(\S.*)?$", value or "")
         if not m or not m.group(2):
-            _t, h = self._pb_text(added, value, x, y, w, self._bb_num_pt(value, w, pt), color, bold=True)
+            _t, h = self._pb_text(added, value, x, y, w, self._bb_num_pt(value, w, pt), color, bold=800)
             return h
         num, unit = m.group(1), m.group(2)
         big = self._bb_num_pt(num + unit[:2], w, pt)
-        t, h = self._pb_text(added, num, x, y, w, big, color, bold=True)
+        t, h = self._pb_text(added, num, x, y, w, big, color, bold=800)
         nw = t.document().idealWidth() if hasattr(t.document(), "idealWidth") else t.document().size().width()
         small = max(10, int(big * 0.5))
         u, uh = self._pb_text(added, unit, x + nw - 6, y, max(40.0, w - nw), small, color, bold=True)

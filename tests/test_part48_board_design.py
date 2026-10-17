@@ -72,3 +72,22 @@ def test_headline_without_markers_stays_all_accent():
     assert plain.text_runs() == [] and "runs" not in item_to_dict(plain)
     assert plain.defaultTextColor().name() == QColor(INK_ON_LIGHT).name()
     _close(w)
+
+
+def test_board_font_pretendard_weights_survive_save():
+    """② 보드 글꼴 — 앱에 실은 Pretendard, 제목 아주 굵게(800)·부제 약간 굵게(600)·본문 보통. 저장·다시 열기에도 같은 글꼴·굵기."""
+    from easycad.fonts import BOARD_FONT, ensure_fonts
+    assert ensure_fonts()
+    w = _window()
+    spec = pb.parse_board(json.dumps(PAPER, ensure_ascii=False))
+    _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
+    texts = _texts(added)
+    title = next(it for it in texts if it.toPlainText() == "Attention Is All You Need")
+    sub = next(it for it in texts if it.toPlainText().replace("\n", " ").startswith("문장 안 모든"))
+    body = next(it for it in texts if it.toPlainText().startswith("단어마다"))
+    assert {it.font().family() for it in (title, sub, body)} == {BOARD_FONT}
+    assert (title.font().weight(), sub.font().weight(), body.font().weight()) == (800, 600, 400)
+    for it in (title, sub, body):
+        again = dict_to_item(json.loads(json.dumps(item_to_dict(it))))
+        assert (again.font().family(), again.font().weight()) == (BOARD_FONT, it.font().weight())
+    _close(w)
