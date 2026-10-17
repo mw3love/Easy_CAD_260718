@@ -1,6 +1,6 @@
 // Magic Board 웹 칠판 — 2026-10-17 §8 항목61 ⓑ 칠판 바탕.
 // tldraw 5.5.2(버전 고정) 위에 .ecad 도형(shapes.jsx)·CAD 층(cad.jsx: 직각 화살표·큐닷·TRIM)을 얹는다.
-import { useRef, useSyncExternalStore } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Tldraw } from 'tldraw'
 import 'tldraw/tldraw.css'
@@ -9,6 +9,7 @@ import { importEcad } from './ecad.js'
 import { downloadEcad, exportEcad } from './ecadExport.js'
 import { shapeUtils, textOptions } from './shapes.jsx'
 import { BOARD, loadBoard, startAutosave } from './boardStore.js'
+import { CHAT_W, ChatPanel } from './chat.jsx'
 
 // 저장 상태 — 위 막대에 한 줄로(서버 없음이면 "이 브라우저에만")
 let saveStatus = 'idle'
@@ -60,10 +61,13 @@ const fontsReady = Promise.all(['400', '600', '700', '800'].map(w => document.fo
 await fontsReady
 const loaded = await loadBoard()
 if (!loaded.server) setStatus('local')
-createRoot(document.getElementById('root')).render(
-  <>
+// 화면: 왼쪽 칠판 + 오른쪽 KAIROS 대화창(§8 항목61 ⓒ — 웹 칠판은 기본 2분할)
+function App() {
+  const [editor, setEditor] = useState(null)
+  return <>
     <style>{`.tl-container{--tl-font-sans:'Pretendard',sans-serif}`}</style>
     <TopBar />
+    <div style={{ position: 'fixed', left: 0, top: 0, bottom: 0, right: CHAT_W }}>
     <Tldraw
       {...(loaded.server ? (loaded.snapshot ? { snapshot: loaded.snapshot } : {}) : { persistenceKey: 'magic-board' })}
       cameraOptions={{ wheelBehavior: 'zoom' }}
@@ -74,6 +78,7 @@ createRoot(document.getElementById('root')).render(
       textOptions={textOptions}
       onMount={e => {
         window.editor = e
+        setEditor(e)
         window.openEcad = t => openEcad(e, t)
         window.exportEcad = () => exportEcad(e)
         if (loaded.server) window.boardSaver = startAutosave(e, setStatus)
@@ -84,5 +89,8 @@ createRoot(document.getElementById('root')).render(
         })
       }}
     />
+    </div>
+    <ChatPanel editor={editor} />
   </>
-)
+}
+createRoot(document.getElementById('root')).render(<App />)

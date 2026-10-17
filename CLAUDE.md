@@ -88,6 +88,7 @@ easycad/
 │   ├── pdf_to_mermaid.py   PDF 쪽 글 뽑기·긴 문서 나눠 요약(§8 항목45 — 흐름도 그리기는 지움, 이제 pdf_to_board가 씀, Qt 비의존)
 │   ├── pdf_to_board.py     PDF → 「한 장 보드」 블록 설계서 JSON·이어 고치기(§8 항목53 → 57 `block-board`, 옛 `paper-board`는 읽기만, 배치는 host_blocks)
 │   ├── drawing_explain.py  도면 상자·연결 → 단계별 설명 JSON — 「설명 페이지 만들기」(§8 항목47, Qt 비의존)
+│   ├── board_chat.py       웹 칠판 KAIROS 대화 — 앞 대화 + 칠판에서 고른 글 → messages·모델 목록(§8 항목61 ⓒ, `web/server.py`가 부름, Qt 비의존)
 │   └── photo_to_ops.py     사진→도면 프롬프트·구역 동시 생성 generate_ops_tiled(앱)·부분 다시 generate_ops_region(앱)·수정 루프 generate_ops(도구) (§8 항목28, Qt 비의존)
 ├── fileio/
 │   ├── pdf_export.py       PDF 출력(A4~A0, 전체/선택영역)
@@ -110,11 +111,12 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~49_*.py      테마별 회귀 스모크 1401종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~50_*.py      테마별 회귀 스모크 1405종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + tldraw 5.5.2(버전 고정). src/main.jsx(앱)·shapes.jsx(.ecad 도형:
 │                          글·상자 정확한 색/크기, esym 심볼, eboard 보드)·cad.jsx(직각 화살표·큐닷·TRIM)·ecad.js(.ecad 열기)·ecadExport.js(.ecad 저장)·ecadFormat.js(순수 변환,
-│                          `npm test`)·symbols.json(`tools/export_web_symbols.py`가 데스크톱 심볼에서 뽑음)·boardStore.js(서버 저장)·server.py
-│                          (감시 PC용 저장 서버, 기본 라이브러리만). web_bakeoff/는 바탕 부품 비교 시험(보존용)
+│                          `npm test`)·symbols.json(`tools/export_web_symbols.py`가 데스크톱 심볼에서 뽑음)·boardStore.js(서버 저장)·chat.jsx(오른쪽 KAIROS
+│                          대화창·「칠판에 붙이기」)·chatFormat.js(답 글→카드 글·빈자리, 순수)·server.py(감시 PC용 저장 서버 + 대화 길목 `/api/chat`·`/api/models`·
+│                          `/api/chatlog`). web_bakeoff/는 바탕 부품 비교 시험(보존용)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -172,11 +174,13 @@ symbol_library/
   그리기)는 측정상 −20%뿐이라 보류(바닥 183ms는 Qt 아이템별 기본 비용). 더 가려면 '스냅샷 방식'(멀리서 볼 때 화면을
   한 장 그림으로 저장) — 실사용에서 답답하면 계획. 상세: `docs/history/2026-10.md` "LOD ②".
 
-**최근 항목**(2026-10-16 ~ 10-17, 상세는 `docs/history/2026-10.md`):
+**최근 항목**(2026-10-16 밤 2 ~ 10-17, 상세는 `docs/history/2026-10.md`):
 - **§8 항목61 웹 칠판 트랙**(2026-10-17, 심층 인터뷰로 **목표가 바뀜** — `## 목표`) — 바탕 부품 비교(`web_bakeoff/`) → **tldraw 5.5.2 확정**(CAD 확장 시험:
   직각 화살표·구간 손잡이·큐닷·포트점·A*·TRIM 통과). ⓑ 칠판 바탕 `web/`: .ecad 열기(보드·순서도·계통도 — 데스크톱 그림과 나란히 맞춤, 흰 잉크→검정),
   글 색·굵기·형광펜은 tldraw 글 편집기(TipTap)에 TextStyle 확장, 정확한 색·크기는 기본 도형의 `getCustomDisplayValues`+`meta.ecad`. 실행 `cd web && npm run dev`,
   시험 `npm test`. 서버 저장 `python web/server.py`(감시 PC용, 켜는 법 `web/README.md`). 「.ecad 저장」으로 데스크톱 왕복(AI 보드 칸 표시·연결·다각형 유지, `tests/test_part49`). 남은 것: 표·곡선 화살표·회전 등 미지원, 감시 PC 실제 배포.
+  ⓒ 대화 1판(앱 안 KAIROS — 사용자 선택, 범위는 시안 보고 A만): 오른쪽 대화창 → 서버 `/api/chat`(키는 서버 PC에만), 답마다 「칠판에 붙이기」 = 카드,
+  고른 것의 글 같이 보냄, 대화 기록은 칠판마다 서버에, 실제 KAIROS로 확인(`tests/test_part50`). 다음 후보: 카드 고쳐 쓰기·한 장 보드로 정리·크롬 확장.
 - **§8 항목60 보드 디자인 2차**(2026-10-17) — 아티팩트 시안과 나란히 본 지적 10건 → 원인은 Qt가 아니라 그리기 어휘(HTML 가져오기는 설계서가 끊겨 버림).
   ① `**구절**` 부분 강조(.ecad `runs`) ② Pretendard 싣기(`easycad/fonts.py`, 보드 글만, .ecad `family`·`weight`) ③ 세로 그림 오른쪽 옆 칸
   ④ 가로 단계 블록 `steps` ⑤ 단위 다른 숫자 다른 색·의의/한계 칩. 2라운드(위계): 주인공 = 글만(`HERO_TYPES`), 숫자 note = 비교 기준·막대·그림 필수,
@@ -200,9 +204,6 @@ symbol_library/
 - **§8 항목54 AI 결과 바로 넣기·막대 하나**(2026-10-16 밤 2) — 흐름도·보드는 채택·버리기 없이 바로 넣음(아니면 Del, 보드는 안의 것도 같이).
   보드는 만든 직후·나중 모두 같은 막대(색 견본 아이콘·내보내기·여러 줄 고칠 점, 설계서는 보드 `_ai`·.ecad에), 이어 고치면 오른쪽에 새로·바뀐 곳 주황.
   입력 칸 여러 줄(`_BarLine`), 가운데 칸 예시 버튼 없앰(→ §8 항목55 설명 카드, AI 고치기 끝난 뒤). PDF + 말: 없으면 보드, 「흐름도로」·「그림 하나」면 그대로.
-- **논문 보드 실사용 피드백 3건**(2026-10-16 밤) — 움직이면 색 빠짐 = 드래그 프록시가 보드 3장(246개·25ms)에 켜진 것 → 직전 화면 45ms 넘을 때만(`core_view._DRAG_PROXY_SLOW_MS`). 결과·원본 막대 앞 「지시 · 실제 모델 · 초」(`_ai_req_caption`). 보드 비교도 글 바뀐 칸 주황(`_board_diff_items`) —
-  AI는 실제로 고쳐 썼는데(실측 24칸 중 16) 배치가 같아 안 보였음. 막대 「그림 크게·가운데」 → AI 없이 `_figure: big`, 아래 줄 가운데 칸에 1장 폭까지.
-  남은 것: 실제 KAIROS로 사용자 재시험.
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·
   곡선·직각 같은 *종류*는 캔버스에서 객체를 선택한 뒤 **플로팅 미니툴바의 하위목록**에서
   고르게 한다(Lucid·FigJam 방식). 세부 조절값은 그 종류를 골랐을 때만 노출.

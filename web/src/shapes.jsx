@@ -52,7 +52,8 @@ export const EGeo = GeoShapeUtil.configure({
   getCustomDisplayValues(e, s, _t, mode) {
     const m = ec(s); if (!m) return {}
     const v = { strokeColor: ink(e, s, m.stroke, mode), fillColor: m.fill ?? 'transparent', strokeWidth: m.sw, strokeRoundness: 0 }
-    if (m.label) Object.assign(v, { labelColor: ink(e, s, m.label.color, mode), labelFontSize: m.label.px, labelLineHeight: LINE_HEIGHT, labelPadding: 4, labelEdgeMargin: 0,
+    if (m.label) Object.assign(v, { labelColor: ink(e, s, m.label.color, mode), labelFontSize: m.label.px, labelLineHeight: LINE_HEIGHT, labelPadding: m.label.pad ?? 4,   // pad: 대화 카드(chat.jsx)만 넉넉히
+      labelEdgeMargin: 0,
       labelFontFamily: m.label.family ? BOARD_FONT : undefined })
     return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined))
   },
