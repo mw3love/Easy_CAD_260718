@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 
 from PyQt6.QtCore import QPointF
 from PyQt6.QtGui import QColor
@@ -41,6 +42,14 @@ class _BlockBoardMixin:
     _BB_HERO_INK = "#fff4dd"
     _BB_HERO_MUTED = "#aebccc"
     _BB_BLUE = "#3d7fb8"
+    _BB_PLUM = "#b0527a"
+    # 무리 색(§8 항목59 ① — 시안처럼 같은 줄기 항목은 블록을 건너 같은 색). AI가 정한 groups 차례대로.
+    _BB_GROUP_COLORS = (_ACCENT, "#3d7fb8", "#b0527a")
+
+    def _bb_group_color(self, spec, item, default):
+        g = (item or {}).get("group") if isinstance(item, dict) else ""
+        groups = spec.get("groups") or []
+        return self._BB_GROUP_COLORS[groups.index(g) % 3] if g and g in groups else default
     _BB_FLOW_FACE = QColor(218, 119, 86, 30)
     # 한 장 채우기(§8 항목58 ③) — 넘치면 2장으로 나누기 전에 이 차례로 조여 본다: (본문 배율, 그림 높이 배율, 간격 좁힘).
     # 본문 11pt → 10 → 9(출력해서 읽히는 바닥). 실측(1706.03762 보드 3개): 글자 크기보다 그림 높이·간격이 높이를 훨씬 많이 줄였다.
@@ -143,11 +152,12 @@ class _BlockBoardMixin:
             eyebrow += " · 자료 " + " · ".join(f"{k} {v.get('name', '')}" for k, v in sorted(srcs.items()))
         _t, h = self._pb_text(added, eyebrow, M, y, content_w, self._PB_SIZE["small"], self._PB_MUTED)
         y += h
-        _t, h = self._pb_text(added, spec["title"] or "(제목 없음)", M, y, content_w, self._PB_SIZE["title"], bold=True)
+        meta_w = content_w * 0.34 if spec.get("meta") else 0.0
+        title_t, h = self._pb_text(added, spec["title"] or "(제목 없음)", M, y, content_w - meta_w - 24, self._PB_SIZE["title"], bold=True)
+        if spec.get("meta"):   # 저자·출처는 오른쪽(§8 항목59 ① 시안 머리 — 제목은 왼쪽, 정보는 오른쪽)
+            mt, mh = self._pb_text(added, spec["meta"], M, y, meta_w, 10, self._PB_MUTED)
+            mt.setPos(M + content_w - mt.document().size().width(), y + h - mh - 6)
         y += h
-        if spec.get("meta"):
-            _t, h = self._pb_text(added, spec["meta"], M, y, content_w, 10, self._PB_MUTED)
-            y += h
         if spec.get("subtitle"):
             self._pb_part_cur = "subtitle"
             y += 6
@@ -161,6 +171,10 @@ class _BlockBoardMixin:
             y += 6
             _t, h = self._pb_text(added, spec["headline"], M, y, content_w, 20, _ACCENT, bold=True)
             y += h
+        self._pb_part_cur = "title"
+        y += 10   # 머리 아래 굵은 구분선(시안 머리)
+        self._pb_card(added, M, y, content_w, 2.0, fill=INK_ON_LIGHT, edge=INK_ON_LIGHT, width=0.0)
+        y += 4
         self._pb_part_cur = None
         if spec.get("_note"):   # 여러 장 — 「→ 2장에 이어서: …」 / 「생략(한 장으로): …」
             _t, h = self._pb_text(added, spec["_note"], M, y + 6, content_w, 10, self._PB_MUTED)
@@ -265,7 +279,7 @@ class _BlockBoardMixin:
                 y += h + 2
         elif t == "cards":
             room = self._bb_cards_room.get(self._pb_part_cur)   # 줄 맞춤 채우기 — 카드 행을 칸 아래 끝까지 늘린다
-            y = self._bb_cards(added, blk["items"], x, y, w, s, bottom=(y0 + room - 2 * self._bb_pad()) if room else None)
+            y = self._bb_cards(added, blk["items"], x, y, w, s, bottom=(y0 + room - 2 * self._bb_pad()) if room else None, spec=spec)
         elif t == "flow":
             fw, fh = self._bb_flow_size(blk["flow"])
             ns, na, _d, items = self._build_flowspec_items(json.dumps(blk["flow"], ensure_ascii=False),
@@ -278,7 +292,7 @@ class _BlockBoardMixin:
         elif t == "bars":
             y = self._bb_bars(added, blk, x, y, w, s)
         elif t == "numbers":
-            y = self._bb_numbers(added, blk["items"], x, y, w, s)
+            y = self._bb_numbers(added, blk["items"], x, y, w, s, spec=spec)
         elif t == "figure":
             y = self._bb_figure(added, spec, blk, x, y, w)
         elif t == "table":
@@ -306,7 +320,7 @@ class _BlockBoardMixin:
                 y += max(h, 20.0) + 2
         return y - y0, ns, na
 
-    def _bb_cards(self, added, items, x, y, w, s, bottom=None):
+    def _bb_cards(self, added, items, x, y, w, s, bottom=None, spec=None):
         """카드 여러 개 — 넓으면 2~3열 격자(행마다 높이 맞춤). `bottom`이 있으면 행을 고르게 늘려 그 높이까지 채운다."""
         g = 12.0
         cols = max(1, min(len(items), int((w + g) // 250)))
@@ -335,8 +349,9 @@ class _BlockBoardMixin:
                 _t, h2 = self._pb_text(added, it["body"], cx + 12, y + 8 + h1, cw - 24, 10 * s)
                 cells.append((start, cx, h1 + h2 + 18))
             hmax = max(h for _s, _x, h in cells) + add
-            for _start, cx, _h in cells:   # 상자 대신 왼쪽 색 띠(§8 항목58 ②)
-                self._pb_card(added, cx, y + 4, 4.0, hmax - 8, fill=self._BB_BLUE, edge=self._BB_BLUE, width=0.0)
+            for k, (_start, cx, _h) in enumerate(cells):   # 상자 대신 왼쪽 색 띠(§8 항목58 ②) — 색은 무리(§8 항목59 ①)
+                col = self._bb_group_color(spec or {}, items[r + k], self._BB_BLUE)
+                self._pb_card(added, cx, y + 4, 4.0, hmax - 8, fill=col, edge=col, width=0.0)
             y += hmax + g
         return y - g
 
@@ -357,8 +372,8 @@ class _BlockBoardMixin:
             y += h + 2
         return y
 
-    def _bb_numbers(self, added, items, x, y, w, s):
-        """큰 숫자 카드들 — 블록 바깥 카드 없이 숫자마다 카드(시안 ③). 좁으면 두 줄."""
+    def _bb_numbers(self, added, items, x, y, w, s, spec=None):
+        """큰 숫자 타일들 — 숫자마다 얇은 테두리 타일 + 안쪽 위 색 선(무리 색), 단위는 작게(§8 항목59 ①). 좁으면 두 줄."""
         g = 12.0
         per = len(items) if w / len(items) >= 150 else max(1, int((w + g) // 150))
         nw = (w - g * (per - 1)) / per
@@ -367,17 +382,18 @@ class _BlockBoardMixin:
             for k, num in enumerate(items[r:r + per]):
                 nx = x + k * (nw + g)
                 start = len(added)
-                _t, h1 = self._pb_text(added, num["value"], nx + 14, y + 10, nw - 28, self._bb_num_pt(num["value"], nw - 28, 26 * s),
-                                       _ACCENT, bold=True)
+                col = self._bb_group_color(spec or {}, num, _ACCENT)
+                h1 = self._bb_number_value(added, num["value"], nx + 14, y + 12, nw - 28, 26 * s, col)
                 _t, h2 = self._pb_text(added, num["label"], nx + 14, y + 10 + h1, nw - 28, 11 * s)
                 foot = " · ".join(p for p in (num.get("note", ""), num.get("pages", "")) if p)
                 h3 = 0.0
                 if foot:
                     _t, h3 = self._pb_text(added, foot, nx + 14, y + 10 + h1 + h2, nw - 28, 9, self._PB_MUTED)
-                cells.append((start, nx, h1 + h2 + h3 + 20))
-            hmax = max(h for _s, _x, h in cells)
-            for _start, nx, _h in cells:   # 타일 상자 대신 위 색 선(§8 항목58 ②)
-                self._pb_card(added, nx, y, nw, 4.0, fill=_ACCENT, edge=_ACCENT, width=0.0)
+                cells.append((start, nx, h1 + h2 + h3 + 24, col))
+            hmax = max(c[2] for c in cells)
+            for start, nx, _h, col in reversed(cells):   # 타일(얇은 테두리, 바탕 없음) + 안쪽 위 색 선 — 선이 타일 안에 쏙(「도면 검사」 묶음)
+                self._pb_card_under(added, start, nx, y, nw, hmax, fill=QColor(0, 0, 0, 0), edge=self._PB_EDGE)
+                self._pb_card(added, nx + 1, y + 1, nw - 2, 4.0, fill=col, edge=col, width=0.0)
             y += hmax + g
         return y - g
 
@@ -445,6 +461,21 @@ class _BlockBoardMixin:
             _t, h = self._pb_text(added, f"{it['when']} — {it['text']}", x, y, w, 10 * s)
             y += h + 2
         return y
+
+    def _bb_number_value(self, added, value, x, y, w, pt, color) -> float:
+        """큰 숫자 — 숫자는 크게, 뒤 단위(「일」·「시간」·「%」·「BLEU」)는 절반 크기로 바로 옆 아래 맞춤. 반환 높이."""
+        m = re.match(r"^\s*([+\-−]?[\d][\d.,]*)\s*(\S.*)?$", value or "")
+        if not m or not m.group(2):
+            _t, h = self._pb_text(added, value, x, y, w, self._bb_num_pt(value, w, pt), color, bold=True)
+            return h
+        num, unit = m.group(1), m.group(2)
+        big = self._bb_num_pt(num + unit[:2], w, pt)
+        t, h = self._pb_text(added, num, x, y, w, big, color, bold=True)
+        nw = t.document().idealWidth() if hasattr(t.document(), "idealWidth") else t.document().size().width()
+        small = max(10, int(big * 0.5))
+        u, uh = self._pb_text(added, unit, x + nw - 6, y, max(40.0, w - nw), small, color, bold=True)
+        u.setPos(x + nw - 6, y + h - uh - h * 0.12)   # 숫자 아래쪽에 맞춤(대략 밑줄 맞춤)
+        return h
 
     def _bb_num_pt(self, value, room, pt):
         """큰 숫자 글자 크기 — 한 줄에 안 들면 들 때까지 줄인다(§8 항목58 ④ — 좁은 칸에서 「12시/간」으로 접혔다). 바닥 14pt."""

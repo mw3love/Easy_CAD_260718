@@ -37,6 +37,7 @@ _BLOCK_FORMAT = """출력 형식 — 아래 JSON 하나만 출력하라(다른 �
 {{"kind": "block-board",
  "title": "문서 제목(원문 그대로)", "meta": "저자·부서·날짜 등 한 줄(없으면 \\"\\")",
  "subtitle": "처음 보는 사람용 한 문장 요약(60자 안팎)", "highlight": "subtitle 안에서 가장 중요한 짧은 구절(그대로 복사, 없으면 \\"\\")",
+ "groups": ["이 문서의 큰 줄기 이름 2~3개(6자 안팎) — 예: 논문이면 \\"어텐션\\"·\\"학습\\". 같은 줄기 항목엔 같은 group을 달아 앱이 같은 색으로 묶는다"],
  "headline": "이 문서의 핵심을 말하듯 던지는 짧은 문장(25자 안팎, 포스터 문구처럼 — 예: \\"사고 없이, 11월 안에 송신기를 바꾼다\\")",
  "blocks": [ 블록 5~7개, 아래 종류 중 이 문서에 맞는 것만 골라 ] }}
 
@@ -46,11 +47,12 @@ _BLOCK_FORMAT = """출력 형식 — 아래 JSON 하나만 출력하라(다른 �
 블록 종류별 칸:
 - text: "body"(2~4문장)
 - list: "items": ["한 줄", ...] 3~6개 (근거가 있으면 줄 끝에 (p.N))
-- cards: "items": [{{"name": "이름", "body": "쉬운 설명 1~2문장", "pages": "p.3"}}, ...] 2~6개 — 핵심 개념·주요 항목
+- cards: "items": [{{"name": "이름", "body": "쉬운 설명 1~2문장", "pages": "p.3", "group": "groups 중 하나(없으면 \\"\\")"}}, ...] 2~6개 — 핵심 개념·주요 항목
 - flow: "flow": {{"direction": "TD", "lanes": [], "steps": [{{"id": "s1", "text": "단계(12자 안팎)", "kind": "step"}}, ... 3~9개],
          "links": [{{"from": "s1", "to": "s2", "text": ""}}, ...], "focus": "가장 중요한 단계 id"}} — 일이 진행되는 순서·작동 원리
 - bars: "bars": [{{"label": "비교 대상", "value": 27.3, "mine": true}}, ... 3~6개], "note": "막대 읽는 법 한 줄" — 숫자 비교 하나
-- numbers: "items": [{{"label": "숫자 이름", "value": "41.8", "note": "한 줄 설명", "pages": "p.1"}}, ... 1~4개] — 꼭 기억할 숫자
+- numbers: "items": [{{"label": "숫자 이름", "value": "41.8", "note": "한 줄 설명", "pages": "p.1", "group": "groups 중 하나"}}, ... 1~4개] — 꼭 기억할 숫자
+  (value는 숫자와 단위만 — "3.5일"·"28.4". 단위 말고 다른 말을 붙이지 말 것)
 - figure: "caption": "무엇을 보여 주는 그림", "page": 3 — 문서 속 대표 그림이 있는 쪽(정수). 앱이 그 쪽에서 그림을 잘라 붙인다
 - table: "columns": ["열", ...] 2~5개, "rows": [["칸", ...], ...] 2~8줄 — 할 일·담당·기한, 항목 비교 등
 - terms: "items": [{{"term": "용어", "meaning": "쉬운 풀이 한 줄"}}, ...] 3~6개
@@ -64,6 +66,11 @@ _BLOCK_FORMAT = """출력 형식 — 아래 JSON 하나만 출력하라(다른 �
 - figure는 하나만, flow 단계는 6개 이내.
 
 고르는 규칙:
+- groups는 블록 종류(구조·결과…)가 아니라 문서를 가로지르는 내용 줄기다. 같은 블록 안에서도 줄기가 다르면 group을 다르게 단다 —
+  예: 숫자 블록에서 번역 점수 둘은 "성능", 학습 시간은 "비용" / 개념 카드에서 어텐션 관련 둘은 "어텐션", 나머지는 "순서 정보".
+  한 블록의 항목이 모두 같은 group이면 색 구분이 사라지니, 나눌 수 있으면 나눈다.
+- 논문이면 flow는 이 논문의 핵심 원리(제안한 방법이 실제로 계산·작동하는 단계)로 — 일반적인 처리 순서가 아니라. 단계 글 끝에 그 단계의
+  기호·수식이 있으면 괄호로(예: "질의와 키를 곱함 (QKᵀ)").
 - 문서 종류에 맞는 블록을 고른다. 논문: cards(핵심 개념)·flow(작동 순서)·bars/numbers(결과)·figure·terms·verdict. 회의록·보고: list(결정한 것)·
   table(할 일·담당·기한)·timeline(일정)·numbers. 매뉴얼·절차: flow·list·table·figure. 맞지 않는 블록은 넣지 말 것.
 - 자리: 첫 줄엔 이 문서의 요점(요약 list·cards 등), 가장 중요한 블록은 크게("big" 또는 span 6 이상). flow는 span 4 이상, table은 span 6 이상.
@@ -365,6 +372,12 @@ def _parse_blocks(d: dict) -> dict:
     out = {"kind": BLOCK_KIND, "title": s(d.get("title")), "meta": s(d.get("meta")),
            "subtitle": s(d.get("subtitle") or d.get("one_line")), "highlight": s(d.get("highlight")),
            "headline": s(d.get("headline"))[:60]}
+    groups = []
+    for g in d.get("groups") or []:
+        g = s(g)[:12]
+        if g and g not in groups:
+            groups.append(g)
+    out["groups"] = groups[:3]
     if out["highlight"] and out["highlight"] not in out["subtitle"]:
         out["highlight"] = ""
     blocks = []
@@ -385,7 +398,7 @@ def _parse_blocks(d: dict) -> dict:
             blk["items"] = [x["text"] for x in items(b.get("items"), ("text",), 8)]
             ok = bool(blk["items"])
         elif t == "cards":
-            blk["items"] = items(b.get("items"), ("name", "body", "pages"), 6)
+            blk["items"] = items(b.get("items"), ("name", "body", "pages", "group"), 6)
             ok = bool(blk["items"])
         elif t == "flow":
             flow = b.get("flow") if isinstance(b.get("flow"), dict) else b
@@ -406,7 +419,7 @@ def _parse_blocks(d: dict) -> dict:
             blk["bars"], blk["note"] = bars[:6], s(b.get("note"))
             ok = bool(bars)
         elif t == "numbers":
-            blk["items"] = items(b.get("items"), ("label", "value", "note", "pages"), 4)
+            blk["items"] = items(b.get("items"), ("label", "value", "note", "pages", "group"), 4)
             ok = bool(blk["items"])
         elif t == "figure":
             page = _page_no(b.get("page"))
@@ -446,6 +459,10 @@ def _parse_blocks(d: dict) -> dict:
                 blk["hero"] = True   # 주인공은 하나만(§8 항목58 ②)
             blocks.append(blk)
     out["blocks"] = blocks[:MAX_BLOCKS]
+    for blk in out["blocks"]:   # 무리 이름은 groups 안의 것만(§8 항목59 ① — 앱이 무리마다 색)
+        for it in blk.get("items") or []:
+            if isinstance(it, dict) and "group" in it and it["group"] not in out["groups"]:
+                it["group"] = ""
     if not (out["title"] or out["subtitle"] or out["blocks"]):
         raise BoardSpecError("보드 제목·요약·블록이 비어 있어요")
     _copy_app_keys(d, out)

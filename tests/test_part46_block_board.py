@@ -380,3 +380,30 @@ def test_rows_aligned_and_faces_fill_row():
             if blk.get("hero") or blk["type"] == "flow":
                 assert abs(h - room) < 0.5             # 면은 줄 높이만큼
     _close(w)
+
+
+def test_groups_color_items_across_blocks_and_number_tiles():
+    """[§8 항목59 ①] 무리 색 — 같은 무리 항목은 블록을 건너 같은 색(카드 띠·숫자), 모르는 무리는 버림, 숫자는 테두리 타일 + 작은 단위,
+    머리 아래 굵은 구분선. 「도면 검사」 0."""
+    from easycad.canvas.annotator_core import _RectItem
+    w = _window()
+    raw = {"kind": "block-board", "title": "T", "meta": "저자 · 2017", "subtitle": "S", "groups": ["어텐션", "효율", "어텐션"],
+           "blocks": [
+               {"type": "cards", "title": "개념", "row": 1, "span": 7, "items": [
+                   {"name": "셀프 어텐션", "body": "설명", "group": "어텐션"}, {"name": "병렬화", "body": "설명", "group": "효율"},
+                   {"name": "기타", "body": "설명", "group": "없는 무리"}]},
+               {"type": "numbers", "title": "숫자", "row": 1, "span": 5, "items": [
+                   {"label": "BLEU", "value": "28.4", "group": "어텐션"}, {"label": "학습", "value": "3.5일", "group": "효율"}]}]}
+    spec = pb.parse_board(json.dumps(raw, ensure_ascii=False))
+    assert spec["groups"] == ["어텐션", "효율"] and spec["blocks"][0]["items"][2]["group"] == ""
+    _n, _a, _d, added = w._build_paper_board(pb.dump_board(spec))
+    texts = {it.toPlainText(): it for it in added if hasattr(it, "toPlainText")}
+    blue = QColor(w._BB_GROUP_COLORS[1]).name()
+    assert texts["3.5"].defaultTextColor().name() == blue and texts["일"].font().pointSize() < texts["3.5"].font().pointSize()
+    assert texts["28.4"].defaultTextColor().name() == QColor(w._BB_GROUP_COLORS[0]).name()
+    strips = [r for r in added if isinstance(r, _RectItem) and r.rect().width() == 4.0]
+    assert blue in {r.brush().color().name() for r in strips}   # 「병렬화」 카드 띠 = 숫자 「3.5일」과 같은 색
+    assert any(isinstance(r, _RectItem) and r.rect().height() == 2.0 and r.rect().width() > 1000 for r in added)   # 머리 구분선
+    board = next(it for it in added if isinstance(it, _BoardItem))
+    assert check_drawing(w._scene, items=[it for it in w._board_scope(board) if it is not board]) == []
+    _close(w)
