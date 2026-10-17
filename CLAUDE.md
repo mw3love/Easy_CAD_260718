@@ -110,7 +110,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~48_*.py      테마별 회귀 스모크 1384종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~48_*.py      테마별 회귀 스모크 1387종(2026-10-17 기준, 개별·전체 pytest 실행 가능)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -172,7 +172,8 @@ symbol_library/
 - **§8 항목60 보드 디자인 2차**(2026-10-17) — 아티팩트 시안과 나란히 본 지적 10건 → 원인은 Qt가 아니라 그리기 어휘(HTML 가져오기는 설계서가 끊겨 버림).
   ① `**구절**` 부분 강조(.ecad `runs`) ② Pretendard 싣기(`easycad/fonts.py`, 보드 글만, .ecad `family`·`weight`) ③ 세로 그림 오른쪽 옆 칸
   ④ 가로 단계 블록 `steps` ⑤ 단위 다른 숫자 다른 색·의의/한계 칩. 2라운드(위계): 주인공 = 글만(`HERO_TYPES`), 숫자 note = 비교 기준·막대·그림 필수,
-  작은 글 +1pt, 그림 폭 상한 28%, 무리 색 둘. 실제 KAIROS 3회 확인. 남은 것: 사용자 판정·exe 글꼴·주장 면 아래 여백.
+  작은 글 +1pt, 그림 폭 상한 28%, 무리 색 둘. 3라운드: 조각 틀 z −1(안쪽 카드 가려짐), 단위 안 꺾음, 주장 26pt·면 안 세로 가운데, 카드 셋 한 줄.
+  남은 것: 사용자 판정·exe 글꼴.
 - **§8 항목59 펼친 조각 + 다시 정리**(2026-10-17, 심층 인터뷰) — 첫 모습 = 한 장 보드 + 오른쪽 조각(AI `more` + PDF 원문 그림, `host_pieces.py`).
   ① 무리 색(`groups`/`group` → 코랄·파랑, 항목60에서 자두 뺌)·숫자 타일·핵심 원리 흐름·머리 구분선 ② 조각 펼치기 + 「보드로 정리」(AI 없이) ③ 조각 끌어다 넣기·블록 꺼내기
   (`_push_entry` 길목 → `_board_rebuild`) ④ 「종이로」(놓인 차례대로 16:9 쪽에, PDF 여러 쪽). 완료 기준 흐름 실제 창 확인, 사용자 판정 남음.
