@@ -25,11 +25,12 @@ export const sarrowRadius = it => it.curve_r ?? ((it.routing ?? (it.auto_route ?
 // 문서 → 화살표마다 다시 찾은 꼭짓점(칠판 좌표 [[x,y],…]) 표. 다시 찾을 게 없으면 표에 없음.
 export function resolveRoutes(items) {
   const out = new Map()
+  const byId = new Map(items.map((it, i) => [it._id, i]))   // 편집 모델(model.js)은 연결을 _id로(_bind1/_bind2), 갓 연 .ecad는 순번으로(bind1/bind2)
   const boxes = items.map((it, i) => (ROUTE_BOX.has(it.type) && it.rect ? { i, r: sceneRect(it) } : null)).filter(Boolean)
   items.forEach((it, i) => {
     if (it.type !== 'sarrow' || !it.auto_route || it.route_hints?.length || sarrowRouting(it) !== 'ortho') return
     const end = k => {
-      const j = it[k], pt = it[k + '_pt'], host = items[j]
+      const j = it['_' + k] !== undefined ? byId.get(it['_' + k]) : it[k], pt = it[k + '_pt'], host = items[j]
       if (j == null || !pt || !host?.rect) return null
       const [px, py] = host.pos || [0, 0], s = host.scale || 1, r = sceneRect(host)
       const p = { x: px + pt[0] * s, y: py + pt[1] * s }
