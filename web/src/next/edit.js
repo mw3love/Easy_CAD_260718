@@ -2,7 +2,7 @@
 // 아이템은 model.js 형식(.ecad + _id). 바꿀 땐 늘 새 배열·새 객체(되돌리기가 옛 배열을 그대로 들고 있게).
 import { newId } from './model.js'
 import { itemBounds } from './doc.js'
-import { resolveRoutes } from './arrows.js'
+import { resolveRoutes, sarrowRouting } from './arrows.js'
 import { setCurveEnd } from './arrowedit.js'
 
 export { toLocal, toScene } from './xform.js'
@@ -218,11 +218,16 @@ export function followArrows(items, rectOf) {
     if (it.type !== 'sarrow') return it
     if (routes.has(i)) return { ...it, pts: routes.get(i) }
     let pts = it.pts, changed = false
+    const manual = sarrowRouting(it) === 'ortho' && !it.auto_route && it.pts.length >= 3   // 손으로 그린 직각 길(데스크톱 `reroute` manual_ortho)
     for (const [k, idx] of [['_bind1', 0], ['_bind2', it.pts.length - 1]]) {
       const host = it[k] && byId.get(it[k]), pt = it[k.slice(1) + '_pt']
       if (!host || !pt) continue
       const sp = toScene(host, { x: pt[0], y: pt[1] }), lp = [sp.x - (it.pos?.[0] || 0), sp.y - (it.pos?.[1] || 0)]
-      if (Math.abs(lp[0] - pts[idx][0]) > 1e-6 || Math.abs(lp[1] - pts[idx][1]) > 1e-6) { pts = pts.map((p, j) => (j === idx ? lp : p)); changed = true }
+      if (Math.abs(lp[0] - pts[idx][0]) > 1e-6 || Math.abs(lp[1] - pts[idx][1]) > 1e-6) {
+        const nb = idx ? pts.length - 2 : 1, cur = pts[idx], q = pts[nb]
+        const nq = manual ? (Math.abs(cur[0] - q[0]) <= Math.abs(cur[1] - q[1]) ? [lp[0], q[1]] : [q[0], lp[1]]) : q   // 세로 끝 구간이면 x를, 가로면 y를 같이 → 직각 유지
+        pts = pts.map((p, j) => (j === idx ? lp : j === nb ? nq : p)); changed = true
+      }
     }
     return changed ? { ...it, pts } : it
   })

@@ -71,3 +71,11 @@ test('그리는 차례·보드 소속·전체 범위', () => {
   const b = docBounds(items)
   assert.ok(b.w > 1000 && b.h > 500)
 })
+
+test('라벨 자리 비우기 — 계산으로 잘라 꺾인 곳은 이어짐', async () => {
+  const { cutPolyline } = await import('../src/next/geom.js')
+  const P = (x, y) => ({ x, y })
+  assert.deepEqual(cutPolyline([P(0, 0), P(100, 0), P(100, 100)], [{ x: 40, y: -5, w: 20, h: 10 }]), [[P(0, 0), P(40, 0)], [P(60, 0), P(100, 0), P(100, 100)]])
+  assert.deepEqual(cutPolyline([P(0, 0), P(100, 0)], []), [[P(0, 0), P(100, 0)]])
+  assert.deepEqual(cutPolyline([P(0, 0), P(100, 0)], [{ x: -10, y: -5, w: 200, h: 10 }]), [])
+})

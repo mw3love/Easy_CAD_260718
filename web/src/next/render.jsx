@@ -3,7 +3,7 @@
 import { memo } from 'react'
 import { cssColor, bgCss } from '../ecadFormat.js'
 import {
-  APP_FONT, BOARD_FONT, METRICS, PT, TEXT_MARGIN, TB_ROWS, bezierAt, bezierSub, colEdges, curveAt, dashArray, headSize, headTriangle,
+  APP_FONT, BOARD_FONT, METRICS, PT, TEXT_MARGIN, TB_ROWS, bezierAt, bezierSub, colEdges, curveAt, cutPolyline, dashArray, headSize, headTriangle,
   itemTransform, labelAnchor, labelInset, paperWH, polylineAt, roundedPath, runsToLines, trimmedPts,
 } from './geom.js'
 import { symbolPath } from './symbols.js'
@@ -100,14 +100,9 @@ export function arrowLabelBoxes(it, route) {
   return labels.map((L, i) => {
     const lay = layoutText(L.text || ' ', L.runs, (L.font || 16) * PT, L.family ? 'board' : 'app'), { p, n } = at(L.t ?? 0.5), off = L.off || 0
     const a = { x: p.x + n.x * off, y: p.y + n.y * off }, box = centeredBox(lay, a)
-    return { i, left: box.left, top: box.top, w: box.w, h: lay.h + 2 * TEXT_MARGIN, a, n, empty: !L.text?.trim() }
+    return { i, left: box.left, top: box.top, w: box.w, h: lay.h + 2 * TEXT_MARGIN, a, n, empty: !L.text?.trim(),
+      gap: off || !L.text?.trim() ? null : { x: box.left - 2, y: box.inkTop - 7, w: box.w + 4, h: box.inkBot - box.inkTop + 14 } }   // 그릴 때 비우는 자리와 같게
   })
-}
-function GapMask({ id, gaps }) {
-  return <mask id={id} maskUnits="userSpaceOnUse" x={-1e6} y={-1e6} width={2e6} height={2e6}>
-    <rect x={-1e6} y={-1e6} width={2e6} height={2e6} fill="#fff" />
-    {gaps.map((g, i) => <rect key={i} x={g.x} y={g.y} width={g.w} height={g.h} fill="#000" />)}
-  </mask>
 }
 const Head = ({ tri, color }) => <polygon points={tri.map(p => `${p.x},${p.y}`).join(' ')} fill={color} stroke={color} strokeWidth={1} strokeLinejoin="round" />
 
@@ -232,12 +227,11 @@ export const Item = memo(function Item({ it, idx, onBoard, route }) {
       const pts = (route || it.pts).map(([x, y]) => ({ x, y })), color = ink(it.color, onBoard), size = headSize(it.width, it.head_scale)   // route = 열 때 다시 찾은 길(arrows.js)
       const end = it.head !== false, start = !!it.head_start
       const labels = arrowLabels(it, t => polylineAt(pts, t), onBoard), gaps = labels.map(l => l.gap).filter(Boolean)
-      const maskId = gaps.length ? `gap-${idx}` : null
       const tri = (a, b) => headTriangle(b, Math.atan2(b.y - a.y, b.x - a.x), size)
+      const body = cutPolyline(trimmedPts(pts, size, end, start), gaps).map(q => roundedPath(q, sarrowRadius(it))).join(' ')   // 라벨 자리는 계산으로 잘라 비움
       return <g transform={T}>
-        {maskId && <defs><GapMask id={maskId} gaps={gaps} /></defs>}
-        <path d={roundedPath(trimmedPts(pts, size, end, start), sarrowRadius(it))} fill="none" stroke={color} strokeWidth={it.width}
-          strokeDasharray={dashArray(it.style, it.width)} strokeLinecap="round" strokeLinejoin="round" mask={maskId ? `url(#${maskId})` : undefined} />
+        <path d={body} fill="none" stroke={color} strokeWidth={it.width}
+          strokeDasharray={dashArray(it.style, it.width)} strokeLinecap="round" strokeLinejoin="round" />
         {end && <Head tri={tri(pts[pts.length - 2], pts[pts.length - 1])} color={color} />}
         {start && <Head tri={tri(pts[1], pts[0])} color={color} />}
         {labels.map(l => l.el)}
@@ -248,23 +242,25 @@ export const Item = memo(function Item({ it, idx, onBoard, route }) {
       const end = it.head !== false, start = !!it.head_start, curved = !!it.ctrl1
       const c1 = curved ? { x: it.ctrl1[0], y: it.ctrl1[1] } : null, c2 = curved ? { x: it.ctrl2[0], y: it.ctrl2[1] } : null
       const at = curved ? t => curveAt(p0, c1, c2, p3, t) : t => polylineAt([p0, p3], t)
-      const labels = arrowLabels(it, at, onBoard), gaps = labels.map(l => l.gap).filter(Boolean), maskId = gaps.length ? `gap-${idx}` : null
+      const labels = arrowLabels(it, at, onBoard), gaps = labels.map(l => l.gap).filter(Boolean)
+      const line = q => q.map((v, k) => `${k ? 'L' : 'M'}${v.x},${v.y}`).join(' ')
       let body
       if (!curved) {
         const L = Math.hypot(p3.x - p0.x, p3.y - p0.y) || 1
         const t0 = start ? Math.min(0.9, (size * 0.85) / L) : 0, t1 = end ? Math.max(t0 + 0.05, 1 - (size * 0.85) / L) : 1
-        body = `M${p0.x + (p3.x - p0.x) * t0},${p0.y + (p3.y - p0.y) * t0} L${p0.x + (p3.x - p0.x) * t1},${p0.y + (p3.y - p0.y) * t1}`
+        const q = [{ x: p0.x + (p3.x - p0.x) * t0, y: p0.y + (p3.y - p0.y) * t0 }, { x: p0.x + (p3.x - p0.x) * t1, y: p0.y + (p3.y - p0.y) * t1 }]
+        body = gaps.length ? cutPolyline(q, gaps).map(line).join(' ') : line(q)
       } else {   // 곡선: 화살촉 길이만큼 떨어진 곡선 매개변수를 찾아 그 구간만 그림
         const cut = size * 0.85, findT = (from, dir) => { let t = from; for (let i = 0; i < 200; i++) { const q = bezierAt(p0, c1, c2, p3, t); const tip = from === 1 ? p3 : p0; if (Math.hypot(q.x - tip.x, q.y - tip.y) >= cut) return t; t += dir * 0.005 } return from }
         const t0 = start ? findT(0, 1) : 0, t1 = end ? findT(1, -1) : 1
         const [a, b, c, d] = bezierSub(p0, c1, c2, p3, t0, t1)
-        body = `M${a.x},${a.y} C${b.x},${b.y} ${c.x},${c.y} ${d.x},${d.y}`
+        body = gaps.length ? cutPolyline(Array.from({ length: 65 }, (_, k) => bezierAt(a, b, c, d, k / 64)), gaps).map(line).join(' ')   // 라벨 있으면 잘게 나눠 자름
+          : `M${a.x},${a.y} C${b.x},${b.y} ${c.x},${c.y} ${d.x},${d.y}`
       }
       const angEnd = curved ? Math.atan2(p3.y - c2.y, p3.x - c2.x) : Math.atan2(p3.y - p0.y, p3.x - p0.x)
       const angStart = curved ? Math.atan2(p0.y - c1.y, p0.x - c1.x) : Math.atan2(p0.y - p3.y, p0.x - p3.x)
       return <g transform={T}>
-        {maskId && <defs><GapMask id={maskId} gaps={gaps} /></defs>}
-        <path d={body} fill="none" stroke={color} strokeWidth={it.width} strokeDasharray={dashArray(it.style, it.width)} strokeLinecap="round" mask={maskId ? `url(#${maskId})` : undefined} />
+        <path d={body} fill="none" stroke={color} strokeWidth={it.width} strokeDasharray={dashArray(it.style, it.width)} strokeLinecap="round" strokeLinejoin="round" />
         {end && <Head tri={headTriangle(p3, angEnd, size)} color={color} />}
         {start && <Head tri={headTriangle(p0, angStart, size)} color={color} />}
         {labels.map(l => l.el)}

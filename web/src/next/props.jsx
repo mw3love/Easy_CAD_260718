@@ -3,7 +3,9 @@
 import { useState } from 'react'
 
 const C = { ink: '#27272a', muted: '#71717a', line: '#e4e4e7', card: '#ffffff', seg: '#f4f4f5', on: '#da7756', onBg: '#fbeee8' }
-export const ARROW_COLORS = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#000000', '#1f1f1f']   // 데스크톱 `_COLOR_PRESETS`(흰색 빼고 칠판 잉크 더함)
+// 두 줄 꽉 채움(8+8) — 데스크톱 색 창과 같은 짜임: 진한 6색(`_COLOR_GRID_HUES`) + 검정 + 다른 색 / 같은 6색의 연한 색(Qt lighter(150)) + 회색 + 흰색
+export const ARROW_COLORS = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#AF52DE', '#000000', null,
+  '#ffb4af', '#ffca7f', '#ffe57f', '#6eff93', '#7fbdff', '#e3acff', '#9e9e9e', '#ffffff']
 const STYLES = [[1, '실선'], [2, '점선'], [3, '도트'], [4, '일점쇄선'], [5, '이점쇄선']]
 const DASH = { 1: undefined, 2: '6 3', 3: '1.5 3', 4: '6 3 1.5 3', 5: '6 3 1.5 3 1.5 3' }
 
@@ -12,13 +14,12 @@ const Svg = ({ children, w = 18, h = 16 }) => <svg width={w} height={h} viewBox=
 const tip = (x, y, a) => { const s = 4.5, r = d => (d * Math.PI) / 180; return `M${x + s * Math.cos(a + r(150))},${y + s * Math.sin(a + r(150))} L${x},${y} L${x + s * Math.cos(a - r(150))},${y + s * Math.sin(a - r(150))}` }
 export const ICONS = {
   straight: <Svg><path d="M3 13 L15 3" /><path d={tip(15, 3, -0.69)} /></Svg>,
-  curved: <Svg><path d="M3 13 C3 5, 15 11, 15 3" /><path d={tip(15, 3, -1.57)} /></Svg>,
+  curved: <Svg><path d="M3 13 Q4 4 15 4" /><path d={tip(15, 4, 0)} /></Svg>,
   ortho: <Svg><path d="M3 13 H9 V3 H15" /><path d={tip(15, 3, 0)} /></Svg>,
   none: <Svg><path d="M3 8 H15" /></Svg>,
   end: <Svg><path d="M3 8 H15" /><path d={tip(15, 8, 0)} /></Svg>,
   both: <Svg><path d="M3 8 H15" /><path d={tip(15, 8, 0)} /><path d={tip(3, 8, Math.PI)} /></Svg>,
   start: <Svg><path d="M3 8 H15" /><path d={tip(3, 8, Math.PI)} /></Svg>,
-  flip: <Svg><path d="M3 5 H14" /><path d={tip(14, 5, 0)} /><path d="M15 11 H4" /><path d={tip(4, 11, Math.PI)} /></Svg>,
 }
 const dashIcon = st => <svg width="44" height="10"><line x1="2" y1="5" x2="42" y2="5" stroke="currentColor" strokeWidth="2" strokeDasharray={DASH[st]} strokeLinecap="round" /></svg>
 
@@ -43,7 +44,7 @@ function Stepper({ value, min, max, step = 1, fmt = v => v, onChange, title }) {
 }
 
 // a = 첫 화살표(보여 줄 값), kind = 'straight'|'curved'|'ortho', set(patch|kind, 이름, 묶음 열쇠)
-export function ArrowProps({ a, kind, set, onKind, onFlip }) {
+export function ArrowProps({ a, kind, set, onKind }) {
   const [openDash, setOpenDash] = useState(false)
   const head = a.head !== false ? (a.head_start ? 'both' : 'end') : a.head_start ? 'start' : 'none'
   const color = (a.color || '').replace(/^#ff(?=[0-9a-f]{6}$)/i, '#')
@@ -53,14 +54,13 @@ export function ArrowProps({ a, kind, set, onKind, onFlip }) {
     <Row label="종류"><Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} /></Row>
     <Row label="화살촉"><Seg value={head} onPick={h => set({ head: h === 'end' || h === 'both', head_start: h === 'start' || h === 'both' }, '화살촉')}
       items={[['none', ICONS.none, '없음'], ['end', ICONS.end, '끝만'], ['both', ICONS.both, '양쪽'], ['start', ICONS.start, '시작만']]} /></Row>
-    <Row label="머리"><Stepper title="화살촉 크기 배율" value={a.head_scale ?? 1} min={0.5} max={3} step={0.1} fmt={v => v.toFixed(1) + '×'} onChange={v => set({ head_scale: v }, '머리 크기', 'head_scale')} />
-      <button title="방향 뒤집기" onClick={onFlip} style={btn(false, { width: 28, background: C.seg })}>{ICONS.flip}</button></Row>
-    <Row label="색"><div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-      {ARROW_COLORS.map(c => { const on = color.toLowerCase() === c.toLowerCase()
-        return <button key={c} title={c} aria-pressed={on} onClick={() => set({ color: c }, '색')} style={{ all: 'unset', cursor: 'pointer', width: 16, height: 16, borderRadius: 4, background: c,
+    <Row label="머리"><Stepper title="화살촉 크기 배율" value={a.head_scale ?? 1} min={0.5} max={3} step={0.1} fmt={v => v.toFixed(1) + '×'} onChange={v => set({ head_scale: v }, '머리 크기', 'head_scale')} /></Row>
+    <Row label="색"><div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 14px)', gap: 3 }}>
+      {ARROW_COLORS.map((c, i) => { if (!c) return <label key={i} title="다른 색" style={{ width: 14, height: 14, borderRadius: 4, cursor: 'pointer', background: 'conic-gradient(#f33,#fc0,#3c6,#39f,#c3f,#f33)', position: 'relative', overflow: 'hidden' }}>
+          <input type="color" value={/^#[0-9a-f]{6}$/i.test(color) ? color : '#1f1f1f'} onChange={e => set({ color: e.target.value }, '색', 'color')} style={{ opacity: 0, position: 'absolute', inset: 0, cursor: 'pointer' }} /></label>
+        const on = color.toLowerCase() === c.toLowerCase()
+        return <button key={i} title={c} aria-pressed={on} onClick={() => set({ color: c }, '색')} style={{ all: 'unset', cursor: 'pointer', width: 14, height: 14, borderRadius: 4, background: c,
           boxShadow: on ? `0 0 0 2px #fff, 0 0 0 3.5px ${C.on}` : 'inset 0 0 0 1px rgba(0,0,0,.15)' }} /> })}
-      <label title="다른 색" style={{ width: 16, height: 16, borderRadius: 4, cursor: 'pointer', background: 'conic-gradient(#f33,#fc0,#3c6,#39f,#c3f,#f33)', position: 'relative', overflow: 'hidden' }}>
-        <input type="color" value={/^#[0-9a-f]{6}$/i.test(color) ? color : '#1f1f1f'} onChange={e => set({ color: e.target.value }, '색', 'color')} style={{ opacity: 0, position: 'absolute', inset: 0, cursor: 'pointer' }} /></label>
     </div></Row>
     <Row label="굵기"><Stepper title="선 굵기" value={a.width ?? 2} min={1} max={40} onChange={v => set({ width: v }, '굵기', 'width')} fmt={v => v + 'px'} /></Row>
     <Row label="선"><div style={{ position: 'relative', flex: 1 }}>

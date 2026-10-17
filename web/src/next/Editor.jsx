@@ -4,7 +4,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { arrowAt, arrowLabelBoxes, Item, layoutText } from './render.jsx'
 import { boardMembership, drawOrder, itemBounds } from './doc.js'
-import { PT, TEXT_MARGIN, labelAnchor } from './geom.js'
+import { PT, TEXT_MARGIN, cutPolyline, labelAnchor } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
 import { ROUTE_BOX, bindPt, dropTarget, edgeMid, isConnHost, nearestBorder, OPP, qcDelta, qcDots, shapePorts, snapAt } from './connect.js'
@@ -150,6 +150,9 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     return null
   }
   const edgeCursor = { l: 'ew-resize', r: 'ew-resize', t: 'ns-resize', b: 'ns-resize' }
+  // 커서 아래 손잡이(큐닷은 살짝 커짐 — Lucid)
+  const [hoverKey, setHoverKeyS] = useState(null)
+  const setHoverKey = k => { if (R.current.hoverKey !== k) { R.current.hoverKey = k; setHoverKeyS(k) } }
   const setSegPrev = v => { const a = R.current.segPrev; if ((!a && !v) || (a && v && a.p.x === v.p.x && a.p.y === v.p.y)) return; R.current.segPrev = v; setOverlay(o => ({ ...o, segPrev: v })) }
   // 포트점 예고 바꾸기(같으면 다시 그리지 않음)
   const setHp = hp => { const a = R.current.hp, same = (!a && !hp) || (a && hp && a.id === hp.id && a.target?.p.x === hp.target?.p.x && a.target?.p.y === hp.target?.p.y); if (!same) { R.current.hp = hp; setOverlay(o => ({ ...o, hp })) } }
@@ -271,7 +274,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       const it = s.orig.find(x => x._id === s.id), tgt = snapAt(hostsNear(p), p, z, rectOf), end = tgt ? tgt.p : p
       const k = s.idx ? 'bind2' : 'bind1', last = it.pts.length - 1, [px, py] = it.pos || [0, 0], lp = [end.x - px, end.y - py]
       const host = tgt && s.orig.find(x => x._id === tgt.id)
-      let next = { ...it, ['_' + k]: tgt ? tgt.id : null, [k + '_pt']: tgt ? bindPt(host, tgt.p) : null, [k + '_group']: null, route_hints: [] }
+      let next = { ...it, ['_' + k]: tgt ? tgt.id : null, [k + '_pt']: tgt ? bindPt(host, tgt.p) : null, [k + '_group']: null, route_hints: [], auto_route: tgt ? true : it.auto_route }   // 다시 붙이면 자동 길(데스크톱은 안 켬 — 옮길 후보)
       next.pts = s.idx ? [it.pts[0], lp] : [lp, it.pts[last]]   // 끝점 끌기 = 새로 그리기처럼 길 전체 다시(데스크톱 `_move_endpoint_with_snap`)
       next = { ...next, pts: applyRouting(next, s.orig.map(x => (x._id === s.id ? next : x)), rectOf) }
       setLive(s.orig.map(x => (x._id === s.id ? next : x))); setOverlay(o => ({ ...o, hp: tgt ? { id: tgt.id, target: tgt } : null }))
@@ -373,7 +376,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   function hoverCursor(p) {
     const t = R.current.tool
     if (t !== 'select') { setCursor(t === 'text' ? 'text' : 'crosshair'); return }
-    const h = handleAt(p); if (h) { setHp(null); setSegPrev(null); setCursor(h.cursor); return }
+    const h = handleAt(p); setHoverKey(h?.key || null); if (h) { setHp(null); setSegPrev(null); setCursor(h.cursor); return }
     const sg = segAt(p)
     if (sg) {   // 직각 화살표 구간 위 — 알약이 아니면 나눠 끌 자리에 속 빈 알약 미리보기(`_draw_segment_preview_pill`)
       const it = single, a = it.pts[sg.i], b = it.pts[sg.i + 1], horizontal = Math.abs(b[1] - a[1]) <= Math.abs(b[0] - a[0])
@@ -547,7 +550,10 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   const outline = it => {
     const [x, y, w, h] = it.type === 'text' ? [0, 0, textBox(it).w, textBox(it).h] : localRect(it)
     if (it.type === 'line') { const a = toScene(it, { x: it.line[0], y: it.line[1] }), b = toScene(it, { x: it.line[2], y: it.line[3] }); return <line key={it._id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={BLUE} strokeWidth={sw} /> }
-    if (it.type === 'sarrow') return <polyline key={it._id} points={it.pts.map(([px, py]) => { const q = toScene(it, { x: px, y: py }); return `${q.x},${q.y}` }).join(' ')} fill="none" stroke={BLUE} strokeWidth={sw} />
+    if (it.type === 'sarrow') {   // 선택 선도 라벨 자리는 비움(글자 위로 지나가지 않게)
+      const gaps = arrowLabelBoxes(it).map(b => b.gap).filter(Boolean), pieces = cutPolyline(it.pts.map(([x, y]) => ({ x, y })), gaps)
+      return <g key={it._id}>{pieces.map((pc, k) => <polyline key={k} points={pc.map(v => { const q = toScene(it, v); return `${q.x},${q.y}` }).join(' ')} fill="none" stroke={BLUE} strokeWidth={sw} />)}</g>
+    }
     if (it.type === 'ellipse') return <ellipse key={it._id} cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} transform={transformOf(it)} fill="none" stroke={BLUE} strokeWidth={sw / (it.scale || 1)} />
     if (it.type === 'badge') { const c = toScene(it, { x: 0, y: 0 }); return <circle key={it._id} cx={c.x} cy={c.y} r={17} fill="none" stroke={BLUE} strokeWidth={sw} /> }
     const cs = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].map(([a, b]) => toScene(it, { x: a, y: b }))
@@ -561,7 +567,6 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     Object.assign(sticky.current, patch)
     commit(m.items.map(x => { if (!selArrowIds.has(x._id)) return x; const pt = { ...patch }; if (x.type !== 'sarrow') delete pt.curve_r; return { ...x, ...pt } }), sel, label, merge ? merge + [...selArrowIds].join() : null)
   }
-  const flipArrows = () => { const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? { ...x, head: !!x.head_start, head_start: x.head !== false } : x)), sel, '방향 뒤집기') }
   const multiBox = selItems.length > 1 ? unionBox(selItems.map(it => sceneBox(it, textBox))) : null
   const rb = overlay.rubber, dr = overlay.draw
   // 알약(구간 가운데, 변 방향으로 길쭉) — 채움 = 실제 알약, 속 빈 = 나눠 끌 자리 미리보기(데스크톱 `_paint_segment_handles`)
@@ -588,7 +593,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
           {multiBox && <rect x={multiBox.x} y={multiBox.y} width={multiBox.w} height={multiBox.h} fill="none" stroke={BLUE} strokeWidth={1 / z} strokeDasharray={`${4 / z} ${3 / z}`} />}
           {selItems.filter(it => it.locked).map(it => { const b = sceneBox(it, textBox); return <text key={'lk' + it._id} x={b.x + b.w} y={b.y} fontSize={12 / z} fill={BLUE}>🔒</text> })}
           {handles.map(h => (h.pill ? pill(h.key, h.p, h.horizontal, true) : h.bend ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={HANDLE / 2 / z} fill={BEND_GREEN} stroke="#fff" strokeWidth={1 / z} />
-            : h.qc ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={(HANDLE * 0.45) / z} fill={QC_BLUE} stroke="#fff" strokeWidth={1 / z} />
+            : h.qc ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={(HANDLE * (hoverKey === h.key ? 0.75 : 0.45)) / z} fill={QC_BLUE} stroke="#fff" strokeWidth={1 / z} style={{ transition: 'r .12s ease-out' }} />
             : h.round ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={HANDLE / 2 / z} fill={PEACH} stroke="#fff" strokeWidth={1 / z} />
             : <rect key={h.key} x={h.p.x - HANDLE / 2 / z} y={h.p.y - HANDLE / 2 / z} width={HANDLE / z} height={HANDLE / z} fill={BLUE} stroke="#fff" strokeWidth={1 / z} />))}
           {overlay.conn && <polyline points={overlay.conn.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={BLUE} strokeWidth={2 / z} strokeDasharray={`${6 / z} ${4 / z}`} />}
@@ -609,7 +614,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       </svg>
       {editing && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={s} onDone={finishEdit} /> })()}
-      {selArrows.length > 0 && !editing && <ArrowProps a={selArrows[0]} kind={arrowKindOf(selArrows[0])} set={setArrows} onFlip={flipArrows}
+      {selArrows.length > 0 && !editing && <ArrowProps a={selArrows[0]} kind={arrowKindOf(selArrows[0])} set={setArrows}
         onKind={k => { const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )

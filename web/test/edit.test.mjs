@@ -103,3 +103,11 @@ test('스마트 정렬 — 임계 안이면 당김 + 같은 거리 역할은 선
   assert.equal(alignSnap({ x: 0, y: 170, w: 100, h: 50 }, [{ x: 300, y: 100, w: 100, h: 50 }], 1).dy, 0)    // 가장 가까운 후보도 20 — 안 당김
   assert.equal(alignSnap({ x: 0, y: 170, w: 100, h: 50 }, [{ x: 300, y: 100, w: 100, h: 50 }], 0.3).dy, -20) // 멀리서 보면(30%) 임계가 칠판 33 — 마주 보는 변
 })
+
+test('손으로 그린 직각 길은 붙은 도형이 움직여도 직각 유지(데스크톱 reroute manual_ortho와 같은 꼭짓점)', () => {
+  const a = { _id: 'a', type: 'rect', rect: [0, 0, 160, 80], pos: [40, 40] }, e = { _id: 'e', type: 'ellipse', rect: [0, 0, 140, 80], pos: [260, 40] }
+  const ar = { _id: 'r', type: 'sarrow', pos: [0, 0], routing: 'ortho', auto_route: false, pts: [[120, 120], [120, 133], [330, 133], [330, 120]],
+    _bind1: 'a', bind1_pt: [80, 80], _bind2: 'e', bind2_pt: [70, 80] }
+  const out = followArrows([a, { ...e, pos: [320, 160] }, ar]).find(x => x._id === 'r')
+  assert.deepEqual(out.pts, [[120, 120], [120, 133], [390, 133], [390, 240]])   // 데스크톱 엔진 실측 답(2026-10-17)
+})

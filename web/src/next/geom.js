@@ -158,3 +158,32 @@ export function labelAnchor(type, kind, r) {
   if (kind === 'triangle') return { x: x + w / 3, y: c.y }
   return c
 }
+
+// 라벨 자리 비우기 — 꺾은선에서 사각형들({x,y,w,h})과 겹치는 구간을 빼고 남은 조각들(데스크톱 `_visible_polyline_path`·`_seg_rect_interval`).
+// 색을 바꾸는 마스크 대신 계산으로 자르므로 브라우저 다크 모드가 색을 바꿔도 늘 끊김. → [[{x,y},…], …]
+function segRect(a, b, r) {   // Liang-Barsky: 선분 a→b가 r 안을 지나는 t 구간 | null
+  const dx = b.x - a.x, dy = b.y - a.y; let t0 = 0, t1 = 1
+  for (const [p, q] of [[-dx, a.x - r.x], [dx, r.x + r.w - a.x], [-dy, a.y - r.y], [dy, r.y + r.h - a.y]]) {
+    if (Math.abs(p) < 1e-12) { if (q < 0) return null; continue }
+    const t = q / p
+    if (p < 0) { if (t > t1) return null; if (t > t0) t0 = t } else { if (t < t0) return null; if (t < t1) t1 = t }
+  }
+  return t0 > t1 ? null : [t0, t1]
+}
+export function cutPolyline(pts, rects) {
+  if (!rects?.length) return [pts]
+  const out = []; let cur = null
+  const at = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1], iv = rects.map(r => segRect(a, b, r)).filter(Boolean).sort((u, v) => u[0] - v[0])
+    const merged = []
+    for (const v of iv) { const m = merged[merged.length - 1]; if (m && v[0] <= m[1]) m[1] = Math.max(m[1], v[1]); else merged.push([...v]) }
+    let c = 0
+    for (const [i0, i1] of merged) {
+      if (i0 > c + 1e-6) { const s = at(a, b, c); if (!cur || c > 1e-6) { cur = [s]; out.push(cur) } cur.push(at(a, b, i0)) }
+      cur = null; c = Math.max(c, i1)
+    }
+    if (c < 1 - 1e-6) { if (!cur || c > 1e-6) { cur = [at(a, b, c)]; out.push(cur) } cur.push(b) }
+  }
+  return out.filter(q => q.length >= 2)
+}
