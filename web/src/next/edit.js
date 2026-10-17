@@ -3,6 +3,7 @@
 import { newId } from './model.js'
 import { itemBounds } from './doc.js'
 import { resolveRoutes } from './arrows.js'
+import { setCurveEnd } from './arrowedit.js'
 
 export { toLocal, toScene } from './xform.js'
 import { toLocal, toScene } from './xform.js'
@@ -204,6 +205,16 @@ export function followArrows(items, rectOf) {
   const routes = resolveRoutes(items, rectOf)
   const byId = new Map(items.map(it => [it._id, it]))
   return items.map((it, i) => {
+    if (it.type === 'arrow') {   // 곡선: 붙은 끝만 따라가고 제어점도 같은 만큼(그린 곡선 보존, 데스크톱 `_ArrowItem.reroute`)
+      let o = it
+      for (const [k, idx] of [['_bind1', 0], ['_bind2', 1]]) {
+        const host = it[k] && byId.get(it[k]), pt = it[k.slice(1) + '_pt']
+        if (!host || !pt) continue
+        const q = toLocal(o, toScene(host, { x: pt[0], y: pt[1] })), cur = idx ? o.p2 : o.p1
+        if (Math.abs(q.x - cur[0]) > 1e-6 || Math.abs(q.y - cur[1]) > 1e-6) o = setCurveEnd(o, idx, [q.x, q.y])
+      }
+      return o
+    }
     if (it.type !== 'sarrow') return it
     if (routes.has(i)) return { ...it, pts: routes.get(i) }
     let pts = it.pts, changed = false

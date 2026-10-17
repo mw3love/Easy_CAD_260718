@@ -4,6 +4,7 @@ import { dedup, elbow, routeOrtho } from '../route.js'
 import { headSize } from './geom.js'
 import { toScene } from './xform.js'
 import { ROUTE_BOX, isConnHost, nearestBorder } from './connect.js'
+import { dedupHint } from './arrowedit.js'
 
 const STUB_MARGIN = 4
 const defaultRect = it => it.rect || [0, 0, 0, 0]
@@ -39,21 +40,33 @@ function routeWith(it, ctx) {
     return { p, n: nearestBorder(host, p, rectOf).n, r: ROUTE_BOX.has(host.type) && host.rect ? sceneRect(host) : null, j }
   }
   const a = end('bind1'), b = end('bind2'), A = a || { p: at(0), n: null, r: null, j: -1 }, B = b || { p: at(last), n: null, r: null, j: -1 }
+  const obstacles = () => boxes.filter(o => o.i !== A.j && o.i !== B.j).map(o => o.r)
   let pts
   if (sarrowRouting(it) === 'straight') pts = [A.p, B.p]
+  else if (a && b && it.route_hints?.length) {   // 경유지(`build_elbow`→`_route_with_hints`): 두 끝 가운데 + 상대 좌표를 지나게 구간마다 길 찾기
+    const m = { x: (A.p.x + B.p.x) / 2, y: (A.p.y + B.p.y) / 2 }, hints = it.route_hints.map(([hx, hy]) => ({ x: m.x + hx, y: m.y + hy }))
+    const way = [A.p, ...hints, B.p], norms = [A.n, ...hints.map(() => null), B.n], [ss, se] = minStubs(it), obst = obstacles(), last = way.length - 2
+    const all = [A.p], flags = [false]
+    for (let i = 0; i < way.length - 1; i++) {
+      const seg = routeOrtho(way[i], norms[i], way[i + 1], norms[i + 1], obst, { conn: [A.r, B.r], minStub: [i === 0 ? ss : 0, i === last ? se : 0] })
+      seg.slice(1, -1).forEach(q => { all.push(q); flags.push(false) })
+      all.push(way[i + 1]); flags.push(i + 1 <= hints.length)
+    }
+    pts = dedupHint(all, flags)
+  }
   else if (!a && !b) pts = dedup([A.p, ...elbow(A.p, B.p, null, null), B.p])
-  else pts = routeOrtho(A.p, A.n, B.p, B.n, boxes.filter(o => o.i !== A.j && o.i !== B.j).map(o => o.r), { conn: [A.r, B.r], minStub: minStubs(it) })
+  else pts = routeOrtho(A.p, A.n, B.p, B.n, obstacles(), { conn: [A.r, B.r], minStub: minStubs(it) })
   return pts.map(q => [q.x - px, q.y - py])
 }
 export const applyRouting = (it, items, rectOf = defaultRect) => routeWith(it, routeCtx(items, rectOf))
 
 // 문서 → 화살표마다 다시 찾은 꼭짓점(화살표 안 좌표 [[x,y],…]) 표. 다시 찾을 게 없으면 표에 없음.
-// 데스크톱 `reroute`: 「자동 길」 직각이고 한쪽이라도 붙었으면 다시 찾는다(경유지 있는 것은 아직 — 3-2단계).
+// 데스크톱 `reroute`: 「자동 길」 직각이고 한쪽이라도 붙었으면 다시 찾는다(경유지는 두 끝 다 붙었을 때만 지킴).
 // rectOf(it) = 도형 안 바탕 사각형(글 상자는 화면에서 잰 크기 — 편집 화면이 줌, 없으면 rect)
 export function resolveRoutes(items, rectOf = defaultRect) {
   const out = new Map(), ctx = routeCtx(items, rectOf)
   items.forEach((it, i) => {
-    if (it.type !== 'sarrow' || !it.auto_route || it.route_hints?.length || sarrowRouting(it) !== 'ortho' || !(it.pts?.length >= 2)) return
+    if (it.type !== 'sarrow' || !it.auto_route || sarrowRouting(it) !== 'ortho' || !(it.pts?.length >= 2)) return
     const bound = k => (it['_' + k] !== undefined ? it['_' + k] != null : it[k] != null) && it[k + '_pt']
     if (!bound('bind1') && !bound('bind2')) return
     out.set(i, routeWith(it, ctx))

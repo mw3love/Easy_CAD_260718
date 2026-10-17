@@ -7,8 +7,10 @@ import { boardMembership, drawOrder, itemBounds } from './doc.js'
 import { PT, TEXT_MARGIN, labelAnchor } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
-import { ROUTE_BOX, bindPt, dropTarget, edgeMid, isConnHost, OPP, qcDelta, qcDots, shapePorts, snapAt } from './connect.js'
+import { ROUTE_BOX, bindPt, dropTarget, edgeMid, isConnHost, nearestBorder, OPP, qcDelta, qcDots, shapePorts, snapAt } from './connect.js'
 import { routeOrtho } from '../route.js'
+import { beginSegment, beginSubdivide, bendCurve, BEND_TS, curvePoint, dragSegment, endSegment, nearestSegment, onPill, SEG_HANDLE_PX, SEG_HIT_PX, segmentHandles, setCurveEnd, snapCurve, subdividePreview } from './arrowedit.js'
+import { sarrowRouting } from './arrows.js'
 import { newId } from './model.js'
 import {
   applyRect, boardContents, duplicate, expandGroups, followArrows, groupItems, localRect, mirror, moveItems, removeItems, resizeRect,
@@ -33,7 +35,7 @@ export function textBox(it) {
 
 // 붙는 계산이 쓰는 도형 안 바탕 사각형(글 상자는 화면에서 잰 크기)
 const rectOf = it => { if (it.type === 'text') { const b = textBox(it); return [0, 0, b.w, b.h] } return localRect(it) }
-const QC_BLUE = 'rgb(90,150,235)'   // 데스크톱 큐닷·포트점 색
+const QC_BLUE = 'rgb(90,150,235)', BEND_GREEN = '#a6e3a1'   // 데스크톱 큐닷·포트점 색, 곡선 휨 손잡이(theme GREEN)
 const HP_MARGIN = 30, CONN_DRAG_PX = 8, CONN_STRAIGHT_PX = 10   // 포트점 후보 범위·끌기 시작·출구 축 맞추기(데스크톱 `_hover_port_at`·`_hp_*`)
 // 도형 '속'에 있나(데스크톱 `_shape_interior_contains` — 원은 타원 안, 나머지는 바탕 사각형 안)
 function inside(it, p) {
@@ -94,15 +96,27 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       out.push({ key: 'rot', p: toScene(it, { x: -g, y: -g }), cursor: 'grab', round: true })   // 좌상단 대각 — 상자와 같은 자리(데스크톱 `_rot_handle_center`, 2026-10-17 통일)
     } else if (it.type === 'line') {
       out.push({ key: 'e0', p: toScene(it, { x: it.line[0], y: it.line[1] }), cursor: 'crosshair' }, { key: 'e1', p: toScene(it, { x: it.line[2], y: it.line[3] }), cursor: 'crosshair' })
-    } else if (it.type === 'sarrow' && it.pts?.length >= 2) {   // 끝점 손잡이 — 끌어 다시 붙이기·떼기(데스크톱 endpoint handle)
+    } else if (it.type === 'sarrow' && it.pts?.length >= 2) {   // 끝점 손잡이 — 끌어 다시 붙이기·떼기(데스크톱 endpoint handle) + 알약(직각 구간 가운데)
       const a = it.pts[0], b = it.pts[it.pts.length - 1]
       out.push({ key: 'a0', p: toScene(it, { x: a[0], y: a[1] }), cursor: 'pointer' }, { key: 'a1', p: toScene(it, { x: b[0], y: b[1] }), cursor: 'pointer' })
+      if (sarrowRouting(it) === 'ortho') for (const h of segmentHandles(it.pts, z, it.scale || 1)) out.push({ key: 'seg:' + h.i, p: toScene(it, { x: h.mid[0], y: h.mid[1] }), pill: true, horizontal: h.horizontal })
+    } else if (it.type === 'arrow') {   // 곡선: 끝점 둘 + 휨 손잡이 둘(t 1/3·2/3, 초록)
+      out.push({ key: 'a0', p: toScene(it, { x: it.p1[0], y: it.p1[1] }), cursor: 'pointer' }, { key: 'a1', p: toScene(it, { x: it.p2[0], y: it.p2[1] }), cursor: 'pointer' })
+      BEND_TS.forEach((t, k) => { const q = curvePoint(it, t); out.push({ key: 'b' + (k + 1), p: toScene(it, { x: q[0], y: q[1] }), cursor: 'pointer', bend: true }) })
     }
     // 큐닷 — 포트에서 바깥 24px(클릭 = 복제+연결, 끌기 = 화살표). 다른 도형을 가리키는 중이면 숨김(`_qc_dots_hover_suppressed`)
     if (isConnHost(it) && !R.current.hp) for (const q of qcDots(it, rectOf, z)) out.push({ key: 'qc:' + q.side, p: q.p, cursor: 'crosshair', qc: true, port: { p: q.port, n: q.n } })
     return out
   }
-  const handleAt = p => { const z = R.current.cam.z; return handlesOf(single).find(h => Math.hypot(h.p.x - p.x, h.p.y - p.y) * z <= HANDLE * 0.75) || null }
+  const handleAt = p => { const z = R.current.cam.z; return handlesOf(single).find(h => !h.pill && Math.hypot(h.p.x - p.x, h.p.y - p.y) * z <= HANDLE * 0.75) || null }
+  // 고른 직각 화살표의 구간 위(화면 10px) → { i, proj(화살표 안), pill(알약 위인가) } — 알약 = 구간 통째 평행 이동, 아니면 나눠 끌기(데스크톱 `_segment_add_at`)
+  function segAt(p) {
+    const it = single
+    if (!it || it.locked || it.type !== 'sarrow' || sarrowRouting(it) !== 'ortho') return null
+    const z = R.current.cam.z, sc = it.scale || 1, q = toLocal(it, p), n = nearestSegment(it.pts, q)
+    if (!n || n.d * z * sc > SEG_HIT_PX) return null
+    return { ...n, pill: onPill(it.pts, n.i, n.proj, z, sc) }
+  }
   // 변 가까이(선택한 상자류) — 한 축 크기 바꾸기
   function edgeAt(it, p) {
     if (!it || it.locked || !BOXY.has(it.type)) return null
@@ -115,6 +129,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     return null
   }
   const edgeCursor = { l: 'ew-resize', r: 'ew-resize', t: 'ns-resize', b: 'ns-resize' }
+  const setSegPrev = v => { const a = R.current.segPrev; if ((!a && !v) || (a && v && a.p.x === v.p.x && a.p.y === v.p.y)) return; R.current.segPrev = v; setOverlay(o => ({ ...o, segPrev: v })) }
   // 포트점 예고 바꾸기(같으면 다시 그리지 않음)
   const setHp = hp => { const a = R.current.hp, same = (!a && !hp) || (a && hp && a.id === hp.id && a.target?.p.x === hp.target?.p.x && a.target?.p.y === hp.target?.p.y); if (!same) { R.current.hp = hp; setOverlay(o => ({ ...o, hp })) } }
 
@@ -133,11 +148,17 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     if (t !== 'select') return startDraw(t, p, e)
     const h = handleAt(p)
     if (h?.qc) { st.current = { ...st.current, kind: 'conn', src: single._id, side: h.key.slice(3), port: h.port, start: p, cur: p, fromQc: true, moved: false }; return }
+    if (h?.bend) { st.current = { ...st.current, kind: 'bend', id: single._id, which: +h.key.slice(1), orig: m.items }; return }
     if (h && (h.key === 'a0' || h.key === 'a1')) { st.current = { ...st.current, kind: 'aend', id: single._id, idx: h.key === 'a0' ? 0 : 1, orig: m.items }; setOverlay(o => ({ ...o, hp: null })); return }
     if (h) {
       const it = single
       st.current = { ...st.current, kind: h.key === 'rot' ? 'rotate' : h.key === 'scale' ? 'tscale' : h.key.startsWith('e') ? 'lineend' : 'resize', handle: h.key, id: it._id, start: p, orig: m.items }
       return
+    }
+    const sg = !h && segAt(p)
+    if (sg) {
+      const it = single, sc = it.scale || 1, seg = sg.pill ? beginSegment(it.pts, sg.i) : beginSubdivide(it.pts, sg.i, sg.proj, z, sc)
+      if (seg) { st.current = { ...st.current, kind: 'seg', id: it._id, seg, orig: m.items, start: p, moved: false }; setSegPrev(null); return }
     }
     const edge = edgeAt(single, p)
     if (edge) { st.current = { ...st.current, kind: 'resize', handle: edge, id: single._id, start: p, orig: m.items }; return }
@@ -186,6 +207,30 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       setOverlay(o2 => ({ ...o2, conn: connRoute(s.src, s.port, tgt, cur), hp: tgt ? { id: tgt.id, target: tgt } : null }))
       return
     }
+    if (s.kind === 'seg') {
+      if (!s.moved && Math.hypot(p.x - s.start.x, p.y - s.start.y) * z < 3) return
+      s.moved = true
+      const it = s.orig.find(x => x._id === s.id), next = { ...it, pts: dragSegment(s.seg, toLocal(it, p), z, it.scale || 1), auto_route: false, route_hints: [] }   // 구간을 만지면 손으로 그린 길(자동 길 끔)
+      setLive(s.orig.map(x => (x._id === s.id ? next : x)))
+      return
+    }
+    if (s.kind === 'bend') {
+      const it = s.orig.find(x => x._id === s.id), q = toLocal(it, p), next = bendCurve(it, s.which, [q.x, q.y], it.width || 2, (it.scale || 1) * z)
+      setLive(s.orig.map(x => (x._id === s.id ? next : x)))
+      return
+    }
+    if (s.kind === 'aend' && s.orig.find(x => x._id === s.id)?.type === 'arrow') {   // 곡선 끝점: 붙으면 S자로 다시 휨, 떼면 그 쪽 제어점만 같이(데스크톱 `_ArrowItem._move_endpoint_with_snap`)
+      const it = s.orig.find(x => x._id === s.id), tgt = snapAt(hostsNear(p), p, z, rectOf), end = tgt ? tgt.p : p, k = s.idx ? 'bind2' : 'bind1'
+      const host = tgt && s.orig.find(x => x._id === tgt.id), q = toLocal(it, end)
+      let next = { ...setCurveEnd(it, s.idx, [q.x, q.y]), ['_' + k]: tgt ? tgt.id : null, [k + '_pt']: tgt ? bindPt(host, tgt.p) : null, [k + '_group']: null }
+      if (tgt) {
+        const ok = s.idx ? 'bind1' : 'bind2', oh = next['_' + ok] && s.orig.find(x => x._id === next['_' + ok]), opt = next[ok + '_pt']
+        const on = oh && opt ? nearestBorder(oh, toScene(oh, { x: opt[0], y: opt[1] }), rectOf).n : null
+        next = s.idx ? snapCurve(next, on, tgt.n) : snapCurve(next, tgt.n, on)
+      }
+      setLive(s.orig.map(x => (x._id === s.id ? next : x))); setOverlay(o => ({ ...o, hp: tgt ? { id: tgt.id, target: tgt } : null }))
+      return
+    }
     if (s.kind === 'aend') {
       const it = s.orig.find(x => x._id === s.id), tgt = snapAt(hostsNear(p), p, z, rectOf), end = tgt ? tgt.p : p
       const k = s.idx ? 'bind2' : 'bind1', last = it.pts.length - 1, [px, py] = it.pos || [0, 0], lp = [end.x - px, end.y - py]
@@ -219,6 +264,8 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       return newArrow(s.src, s.port, connTarget(s.src, s.port, s.cur), s.cur)
     }
     if (s.kind === 'aend') { setOverlay(o => ({ ...o, hp: null })); if (live) commit(live, [s.id], '화살표 끝 옮김'); return }
+    if (s.kind === 'bend') { if (live) commit(live, [s.id], '곡선 휨'); return }
+    if (s.kind === 'seg') { if (s.moved && live) commit(live.map(x => (x._id === s.id ? { ...x, pts: endSegment(x.pts) } : x)), [s.id], '구간 옮김'); else setLive(null); return }
     if (s.kind === 'move') { setOverlay(o => ({ ...o, guides: null })); if (s.moved && live) commit(live.filter(it => it), s.sel, '옮김'); else setLive(null); return }
     if (s.kind === 'rubber') {
       setOverlay(o => ({ ...o, rubber: null }))
@@ -288,7 +335,14 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   function hoverCursor(p) {
     const t = R.current.tool
     if (t !== 'select') { setCursor(t === 'text' ? 'text' : 'crosshair'); return }
-    const h = handleAt(p); if (h) { setHp(null); setCursor(h.cursor); return }
+    const h = handleAt(p); if (h) { setHp(null); setSegPrev(null); setCursor(h.cursor); return }
+    const sg = segAt(p)
+    if (sg) {   // 직각 화살표 구간 위 — 알약이 아니면 나눠 끌 자리에 속 빈 알약 미리보기(`_draw_segment_preview_pill`)
+      const it = single, a = it.pts[sg.i], b = it.pts[sg.i + 1], horizontal = Math.abs(b[1] - a[1]) <= Math.abs(b[0] - a[0])
+      setHp(null); setSegPrev(sg.pill ? null : { p: (q => toScene(it, { x: q[0], y: q[1] }))(subdividePreview(it.pts, sg.i, sg.proj)), horizontal })
+      setCursor(horizontal ? 'ns-resize' : 'ew-resize'); return
+    }
+    setSegPrev(null)
     const hp = hoverPort(p); setHp(hp)
     if (hp?.target && (!inside(R.current.model.items.find(x => x._id === hp.target.id) || {}, p) || (hp.target.port && Math.hypot(hp.target.p.x - p.x, hp.target.p.y - p.y) * R.current.cam.z <= 5))) { setCursor('crosshair'); return }
     const ed = edgeAt(single, p); if (ed) { setCursor(edgeCursor[ed]); return }
@@ -446,6 +500,10 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   const handles = single && !editing && !live ? handlesOf(single) : []
   const multiBox = selItems.length > 1 ? unionBox(selItems.map(it => sceneBox(it, textBox))) : null
   const rb = overlay.rubber, dr = overlay.draw
+  // 알약(구간 가운데, 변 방향으로 길쭉) — 채움 = 실제 알약, 속 빈 = 나눠 끌 자리 미리보기(데스크톱 `_paint_segment_handles`)
+  const pill = (key, p, horizontal, filled) => { const half = SEG_HANDLE_PX / z, th = 3.5 / z
+    return <rect key={key} x={p.x - (horizontal ? half : th)} y={p.y - (horizontal ? th : half)} width={2 * (horizontal ? half : th)} height={2 * (horizontal ? th : half)} rx={th} ry={th}
+      fill={filled ? BLUE : '#fff'} stroke={filled ? '#fff' : BLUE} strokeWidth={(filled ? 1 : 1.4) / z} /> }
   // 포트점 예고 — 가장 가까운 도형 하나의 포트 넷(속 빈 점), 누르면 시작될 자리는 채운 점(데스크톱 `_draw_port_dots`)
   const portDots = (() => {
     const hp = overlay.hp, host = hp && byId.get(hp.id); if (!host || editing) return null
@@ -465,11 +523,13 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
           {selItems.map(outline)}
           {multiBox && <rect x={multiBox.x} y={multiBox.y} width={multiBox.w} height={multiBox.h} fill="none" stroke={BLUE} strokeWidth={1 / z} strokeDasharray={`${4 / z} ${3 / z}`} />}
           {selItems.filter(it => it.locked).map(it => { const b = sceneBox(it, textBox); return <text key={'lk' + it._id} x={b.x + b.w} y={b.y} fontSize={12 / z} fill={BLUE}>🔒</text> })}
-          {handles.map(h => (h.qc ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={(HANDLE * 0.45) / z} fill={QC_BLUE} stroke="#fff" strokeWidth={1 / z} />
+          {handles.map(h => (h.pill ? pill(h.key, h.p, h.horizontal, true) : h.bend ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={HANDLE / 2 / z} fill={BEND_GREEN} stroke="#fff" strokeWidth={1 / z} />
+            : h.qc ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={(HANDLE * 0.45) / z} fill={QC_BLUE} stroke="#fff" strokeWidth={1 / z} />
             : h.round ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={HANDLE / 2 / z} fill={PEACH} stroke="#fff" strokeWidth={1 / z} />
             : <rect key={h.key} x={h.p.x - HANDLE / 2 / z} y={h.p.y - HANDLE / 2 / z} width={HANDLE / z} height={HANDLE / z} fill={BLUE} stroke="#fff" strokeWidth={1 / z} />))}
           {overlay.conn && <polyline points={overlay.conn.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={BLUE} strokeWidth={2 / z} strokeDasharray={`${6 / z} ${4 / z}`} />}
           {portDots}
+          {overlay.segPrev && !live && pill('segprev', overlay.segPrev.p, overlay.segPrev.horizontal, false)}
           {overlay.guides?.map((g, i) => {
             const [x1, y1, x2, y2] = g.axis === 'v' ? [g.at, g.from, g.at, g.to] : [g.from, g.at, g.to, g.at], dash = g.role === 'center' ? undefined : `${6 / z} ${4 / z}`
             return <g key={i}><line x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(0,0,0,.7)" strokeWidth={3 / z} strokeDasharray={dash} /><line x1={x1} y1={y1} x2={x2} y2={y2} stroke={GUIDE} strokeWidth={1.5 / z} strokeDasharray={dash} /></g>
