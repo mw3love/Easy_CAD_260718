@@ -244,14 +244,22 @@ export function followArrows(items, rectOf) {
     if (routes.has(i)) return { ...it, pts: routes.get(i) }
     let pts = it.pts, changed = false
     const manual = sarrowRouting(it) === 'ortho' && !it.auto_route && it.pts.length >= 3   // 손으로 그린 직각 길(데스크톱 `reroute` manual_ortho)
-    for (const [k, idx] of [['_bind1', 0], ['_bind2', it.pts.length - 1]]) {
-      const e = bindEnd(it, k.slice(1), items, rectOf, byId); if (!e) continue   // 도형 또는 묶음(비율 자리)
-      const sp = e.p, lp = [sp.x - (it.pos?.[0] || 0), sp.y - (it.pos?.[1] || 0)]
-      if (Math.abs(lp[0] - pts[idx][0]) > 1e-6 || Math.abs(lp[1] - pts[idx][1]) > 1e-6) {
-        const nb = idx ? pts.length - 2 : 1, cur = pts[idx], q = pts[nb]
-        const nq = manual ? (Math.abs(cur[0] - q[0]) <= Math.abs(cur[1] - q[1]) ? [lp[0], q[1]] : [q[0], lp[1]]) : q   // 세로 끝 구간이면 x를, 가로면 y를 같이 → 직각 유지
-        pts = pts.map((p, j) => (j === idx ? lp : j === nb ? nq : p)); changed = true
+    const last = it.pts.length - 1, local = e => e && [e.p.x - (it.pos?.[0] || 0), e.p.y - (it.pos?.[1] || 0)]
+    const e0 = local(bindEnd(it, 'bind1', items, rectOf, byId)), e1 = local(bindEnd(it, 'bind2', items, rectOf, byId))
+    // 양끝이 같은 만큼 움직였으면(같은 도형·같이 옮긴 두 도형) 길 전체를 평행이동 — 모양 그대로(데스크톱 `reroute`의 지름길)
+    if (e0 && e1) {
+      const d0 = [e0[0] - pts[0][0], e0[1] - pts[0][1]], d1 = [e1[0] - pts[last][0], e1[1] - pts[last][1]]
+      if ((d0[0] || d0[1]) && Math.abs(d0[0] - d1[0]) < 1e-6 && Math.abs(d0[1] - d1[1]) < 1e-6) return { ...it, pts: pts.map(([x, y]) => [x + d0[0], y + d0[1]]) }
+    }
+    for (const [lp, idx] of [[e0, 0], [e1, last]]) {
+      if (!lp || (Math.abs(lp[0] - pts[idx][0]) <= 1e-6 && Math.abs(lp[1] - pts[idx][1]) <= 1e-6)) continue
+      const step = idx ? -1 : 1, nb = idx + step, cur = pts[idx], q = pts[nb]
+      const next = pts.map(p => [...p]); next[idx] = lp
+      if (manual) {   // 세로 끝 구간이면 x를, 가로면 y를 같이 → 직각 유지. 같은 줄에 선 점들은 다 같이(옆 점만 밀면 그다음 구간이 사선이 됐다 — 2026-10-18 사용자 화면)
+        const ax = Math.abs(cur[0] - q[0]) <= Math.abs(cur[1] - q[1]) ? 0 : 1, old = q[ax]
+        for (let j = nb; j !== last - idx && j >= 0 && j <= last && Math.abs(pts[j][ax] - old) < 1e-6; j += step) next[j][ax] = lp[ax]
       }
+      pts = next; changed = true
     }
     return changed ? { ...it, pts } : it
   })

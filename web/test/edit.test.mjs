@@ -131,3 +131,18 @@ test('묶음에 붙은 끝은 저장해도 남음(bindN = null, bindN_group + �
   assert.equal(back.bind2, null); assert.equal(back.bind2_group, 'G'); assert.deepEqual(back.bind2_pt, [1, 0.5])
 })
 
+test('손으로 놓은 직각 길이 끝을 따라가도 사선이 안 생김 — 양끝 같이 움직이면 평행이동, 한 줄 점은 같이(2026-10-18 사용자 화면)', () => {
+  const rectOf = it => it.rect || [0, 0, 0, 0]
+  const A = rect('A', 0, 0, 100, 60), B = rect('B', 400, 0, 100, 60)
+  // 끝 구간이 세로, 그 위 점도 같은 세로줄(한 줄 점 셋) — 옛 규칙은 옆 점만 밀어 그다음 구간이 사선이 됐다
+  const ar = { _id: 'r', type: 'sarrow', pos: [0, 0], routing: 'ortho', auto_route: false, width: 1, head: true,
+    pts: [[50, 60], [50, 100], [50, 140], [450, 140], [450, 60]], _bind1: 'A', bind1_pt: [50, 60], bind1_group: null, _bind2: 'B', bind2_pt: [50, 60], bind2_group: null }
+  const ortho = pts => pts.every((p, i) => !i || Math.abs(p[0] - pts[i - 1][0]) < 1e-6 || Math.abs(p[1] - pts[i - 1][1]) < 1e-6)
+  // 한쪽(A)만 오른쪽으로 20 → 한 줄 점이 다 같이 x 70
+  let out = followArrows(moveItems([A, B, ar], ['A'], 20, 0), rectOf)[2]
+  assert.ok(ortho(out.pts), JSON.stringify(out.pts)); assert.deepEqual(out.pts.slice(0, 3), [[70, 60], [70, 100], [70, 140]])
+  // 둘 다 같이 (15, 25) → 길 전체 평행이동
+  out = followArrows(moveItems([A, B, ar], ['A', 'B'], 15, 25), rectOf)[2]
+  assert.deepEqual(out.pts, ar.pts.map(([x, y]) => [x + 15, y + 25]))
+})
+

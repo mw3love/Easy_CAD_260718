@@ -166,7 +166,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (R.current.editing) return
     const p = toSceneP(e), m = R.current.model, z = R.current.cam.z
     svg.current.setPointerCapture(e.pointerId)
-    if (e.button === 1 || (e.button === 0 && st.current.space)) { st.current = { ...st.current, kind: 'pan', sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }
+    // 가운데·오른쪽 끌기 = 화면 이동(데스크톱 우클릭 끌기 = 팬, 제자리 우클릭 메뉴는 나중)
+    if (e.button === 1 || e.button === 2 || (e.button === 0 && st.current.space)) { st.current = { ...st.current, kind: 'pan', sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }
     if (e.button !== 0) return
     setHp(null)
     const t = R.current.tool
@@ -625,7 +626,14 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     Object.assign(sticky.current, per(selArrows[0]))   // 다음 화살표 기본값 = 첫 화살표에 들어간 값
     commit(m.items.map(x => { if (!selArrowIds.has(x._id)) return x; const pt = { ...per(x) }; if (x.type !== 'sarrow') delete pt.curve_r; return { ...x, ...pt } }), sel, label, merge ? merge + [...selArrowIds].join() : null)
   }
-  const multiBox = selItems.length > 1 ? unionBox(selItems.map(it => sceneBox(it, textBox))) : null
+  // 여러 개 선택 틀 — 화살촉까지 감쌈(데스크톱 `_GroupTransform.bbox` = 꼭짓점 + 화살촉 끝, 2026-10-18 사용자와 맞춤)
+  const selBoxOf = it => {
+    const b = sceneBox(it, textBox); if (it.type !== 'sarrow' && it.type !== 'arrow') return b
+    const hs = (selShape(it, textBox).heads || []).flat().map(q => toScene(it, q)); if (!hs.length) return b
+    const xs = [b.x, b.x + b.w, ...hs.map(q => q.x)], ys = [b.y, b.y + b.h, ...hs.map(q => q.y)]
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }
+  }
+  const multiBox = selItems.length > 1 ? unionBox(selItems.map(selBoxOf)) : null
   const rb = overlay.rubber, dr = overlay.draw
   // 알약(구간 가운데, 변 방향으로 길쭉) — 채움 = 실제 알약, 속 빈 = 나눠 끌 자리 미리보기(데스크톱 `_paint_segment_handles`)
   const pill = (key, p, horizontal, filled) => { const half = SEG_HANDLE_PX / z, th = 3.5 / z
