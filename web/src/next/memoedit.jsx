@@ -14,7 +14,9 @@ import HorizontalRule from '@tiptap/extension-horizontal-rule'
 import { BulletList, ListItem, ListKeymap, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
 import { BackgroundColor, Color, TextStyle } from '@tiptap/extension-text-style'
 import { UndoRedo } from '@tiptap/extensions'
-import { BOARD_FONT, METRICS, PT, TEXT_MARGIN } from './geom.js'
+import { Plugin } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
+import { BOARD_FONT, METRICS, PT, TEXT_MARGIN, urlSpans } from './geom.js'
 import { CODE_BAND, MONO_FONT } from './render.jsx'
 import { LINE_KINDS, MEMO, MEMO_KIND, MUTED, caretLine, docToLines, lineBlocks, linesToDoc } from './memo.js'
 
@@ -26,6 +28,25 @@ const Finish = Extension.create({
   addKeyboardShortcuts() { return { Escape: () => { this.options.onDone(true); return true }, 'Mod-Enter': () => { if (!toggleTaskItems(this.editor)) this.options.onDone(false); return true }, 'Mod-/': () => this.options.onTurn() } },
 })
 
+// 고치는 중에도 주소는 파란 밑줄(어디까지가 주소인지 — 2026-10-18 사용자). 누르면 열리지는 않음(그냥 글), 코드 블록·「링크 끔」 줄은 칠하지 않음
+const UrlPaint = Extension.create({
+  name: 'memoUrl',
+  addOptions() { return { off: new Set() } },
+  addProseMirrorPlugins() {
+    const off = this.options.off
+    return [new Plugin({ props: { decorations: state => {
+      const ds = []
+      state.doc.descendants((n, pos) => {
+        if (n.type.name === 'codeBlock') return false
+        if (!n.isTextblock) return true
+        if (off.has(n.textContent)) return false
+        n.forEach((t, o) => { if (t.isText && !t.marks.some(m => m.type.name === 'code')) for (const [s, len] of urlSpans(t.text)) ds.push(Decoration.inline(pos + 1 + o + s, pos + 1 + o + s + len, { class: 'mb-url' })) })
+        return false
+      })
+      return DecorationSet.create(state.doc, ds)
+    } } })]
+  },
+})
 // 고른 글에 걸친 할 일(또는 커서가 든 할 일) 체크/해제 — 하나라도 안 끝났으면 모두 끝, 모두 끝났으면 모두 풂. 할 일이 없으면 false
 function toggleTaskItems(editor) {
   const { state, view } = editor, { from, to, $from } = state.selection, items = new Map()
@@ -60,7 +81,7 @@ export function MemoEditor({ spec, onDone }) {
     const editor = new Editor({
       element: host.current,
       extensions: [Document, Paragraph, Text, Bold, Code, TextStyle, Color, BackgroundColor, Heading.configure({ levels: [1, 2, 3] }), Blockquote, CodeBlock, HorizontalRule,
-        BulletList, OrderedList, ListItem, TaskList, TaskItem.configure({ nested: true }), ListKeymap, UndoRedo,
+        BulletList, OrderedList, ListItem, TaskList, TaskItem.configure({ nested: true }), ListKeymap, UndoRedo, UrlPaint.configure({ off: new Set((spec.lines || []).filter(l => l.nolink).map(l => l.t)) }),
         Finish.configure({ onDone: sel => (turnR.current ? setTurn(null) : finish(sel ? { caret: caretLine(ed.current.state) } : null)), onTurn: openTurn })],
       content: linesToDoc(spec.lines),
       editorProps: {
@@ -130,10 +151,11 @@ ${S} blockquote{border-left:${P(3)} solid #d4d4d8;padding:${P(TEXT_MARGIN)} 0 ${
 ${S} pre{font-family:${MONO_FONT};font-size:${fs('code')};background:${CODE_BAND};padding:${P(TEXT_MARGIN)} 0;line-height:${ls}}${S} pre code{font:inherit;background:none}
 ${S} hr{border:0;margin:0;height:${P(MEMO.HR * 2)};position:relative;overflow:visible}${S} hr::after{content:'';position:absolute;left:0;right:0;top:50%;border-top:1px solid #d4d4d8}
 ${S} hr.ProseMirror-selectednode{background:rgba(137,180,250,.25)}
-${S} code{font-family:${MONO_FONT};font-size:inherit;background:${CODE_BAND}}${S} ::selection{background:rgba(137,180,250,.35)}`
+${S} .mb-url{color:#2f80ed;text-decoration:underline}${S} code{font-family:${MONO_FONT};font-size:inherit;background:${CODE_BAND}}${S} ::selection{background:rgba(137,180,250,.35)}`
   const item = { all: 'unset', boxSizing: 'border-box', display: 'block', width: '100%', padding: '5px 10px', borderRadius: 5, cursor: 'pointer' }
+  // 바탕은 투명 — 칠판이 고치는 메모의 바탕(채움·테두리)만 그려 줌(겹쳐 칠하면 투명한 채움이 진해졌음 — 2026-10-18)
   return <div ref={box} data-testid="memo-editor" onPointerDown={e => { e.stopPropagation(); if (e.button === 1) sp.current.onPan?.(e) }} onMouseDown={e => { if (e.button === 1) e.preventDefault() }} onWheel={e => e.stopPropagation()} onMouseMove={onMove} onMouseLeave={() => setHov(null)}
-    style={{ position: 'absolute', left: spec.left, top: spec.top, width: spec.width, boxSizing: 'border-box', padding: `${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.LPAD)}`, background: spec.fill || '#fff', borderRadius: P(10), outline: '1.5px solid #89b4fa', zIndex: 20, colorScheme: 'light' }}>
+    style={{ position: 'absolute', left: spec.left, top: spec.top, width: spec.width, boxSizing: 'border-box', padding: `${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.LPAD)}`, background: 'transparent', borderRadius: P(10), outline: '1.5px solid #89b4fa', zIndex: 20, colorScheme: 'light' }}>
     <style>{css}</style>
     <div ref={host} />
     {hov && !turn && <div data-testid="memo-edit-handle" title="끌기 = 옮기기 · 누르기 = 메뉴"

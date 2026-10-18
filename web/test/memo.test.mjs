@@ -98,3 +98,12 @@ test('할 일 한꺼번에: 하나라도 안 끝났으면 모두 끝, 모두 끝
   assert.deepEqual(toggleTodos(on, [0, 2]).map(l => !!l.done), [false, false, false])
   assert.equal(toggleTodos(L, [1]), null)
 })
+
+// 2026-10-18 — 메모 속 주소(파란 밑줄·Ctrl+클릭)
+import { urlSpans } from '../src/next/geom.js'
+test('주소 구간: 문장부호·괄호 빼고, 마크다운 [이름](주소)는 주소만', () => {
+  assert.deepEqual(urlSpans('보기: https://a.com/x?q=1.'), [[4, 19, 'https://a.com/x?q=1']])
+  const t = '[네이버](https://search.naver.com/s?q=전주)에서'
+  assert.deepEqual(urlSpans(t).map(s => s[2]), ['https://search.naver.com/s?q=전주'])
+  assert.deepEqual(urlSpans('주소 없음'), [])
+})

@@ -5,6 +5,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { DOC_NAME } from './doc.js'
 import { contextText, parseAnswer } from '../chatFormat.js'
+import { urlSpans } from './geom.js'
+const LINK_CHAT = '#4f8fe8'   // 대화창 주소(어두운·밝은 화면 둘 다 읽히는 파랑)
 
 export const CHAT_W = 360
 const LOG_URL = `/api/chatlog/${encodeURIComponent(DOC_NAME)}`
@@ -33,7 +35,11 @@ const css = {
 function Answer({ text }) {
   return <div>{parseAnswer(text).map((ln, i) => {
     if (ln.kind === 'gap') return <div key={i} style={{ height: 6 }} />
-    const parts = ln.parts.map((p, j) => (p.bold || ln.kind === 'h' ? <b key={j}>{p.text}</b> : <span key={j}>{p.text}</span>))
+    // 답 속 주소 = 누르면 새 탭(대화창은 읽기만 해서 그냥 클릭 — 2026-10-18 사용자)
+    const linked = (t, j) => { if (ln.kind === 'code') return t; const sp = urlSpans(t); if (!sp.length) return t; const out = []; let at = 0
+      sp.forEach(([s, n, u], k) => { if (s > at) out.push(t.slice(at, s)); out.push(<a key={`${j}-${k}`} href={u} target="_blank" rel="noopener noreferrer" style={{ color: LINK_CHAT, textDecoration: 'underline', wordBreak: 'break-all' }} onPointerDown={e => e.stopPropagation()}>{u}</a>); at = s + n })
+      if (at < t.length) out.push(t.slice(at)); return out }
+    const parts = ln.parts.map((p, j) => (p.bold || ln.kind === 'h' ? <b key={j}>{linked(p.text, j)}</b> : <span key={j}>{linked(p.text, j)}</span>))
     if (ln.kind === 'code') return <div key={i} style={{ fontFamily: 'ui-monospace,monospace', fontSize: 12, whiteSpace: 'pre-wrap', background: C.seg }}>{parts}</div>
     if (ln.kind === 'li') return <div key={i} style={{ paddingLeft: 14, textIndent: -12 }}>{ln.mark} {parts}</div>
     return <div key={i} style={ln.kind === 'h' ? { fontWeight: 700, marginTop: 2 } : null}>{parts}</div>

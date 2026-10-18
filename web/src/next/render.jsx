@@ -4,7 +4,7 @@ import { memo } from 'react'
 import { cssColor, bgCss } from '../ecadFormat.js'
 import {
   APP_FONT, BOARD_FONT, METRICS, PT, TEXT_MARGIN, TB_ROWS, bezierAt, bezierSub, colEdges, curveAt, cutPolyline, dashArray, headSize, headTriangle,
-  colFracs, frameTag, frameTagFs, itemTransform, labelAnchor, rowEdges, labelInset, paperWH, polylineAt, roundedPath, runsToLines, trimmedPts,
+  colFracs, frameTag, frameTagFs, itemTransform, labelAnchor, rowEdges, labelInset, paperWH, polylineAt, roundedPath, runsToLines, trimmedPts, urlSpans,
 } from './geom.js'
 import { symbolPath } from './symbols.js'
 import { sarrowRadius } from './arrows.js'
@@ -27,9 +27,9 @@ export function measure(text, px, family, weight) { const c = ctx(); c.font = fo
 
 // 글 배치 — 줄마다 조각(굵게·색·형광펜) 위치까지. 반환 { lines: [{parts:[{text,x,w,…}], w}], w, h, px, family, weight }
 // maxW(px)를 주면 그 폭에서 줄을 바꾼다 — 띄어쓰기에서, 띄어쓰기 없는 긴 덩어리(주소·코드)는 글자 단위로(왼쪽 위 라벨 = AI 카드·메모)
-export function layoutText(text, runs, px, family, weight = 400, maxW = 0) {
+export function layoutText(text, runs, px, family, weight = 400, maxW = 0, links = null) {   // links = 주소 구간(메모만 — 파란 밑줄·Ctrl+클릭)
   const wOf = p => measure(p.text, px, p.mono ? 'mono' : family, p.mono ? 400 : p.bold ? Math.max(700, weight) : weight)
-  let src = runsToLines(text || '', runs)
+  let src = runsToLines(text || '', runs, links)
   if (maxW > 0) src = src.flatMap(parts => wrapParts(parts, maxW, wOf))
   const lines = src.map(parts => {
     let x = 0
@@ -131,7 +131,8 @@ export function memoLayout(it) {
       y += h - TEXT_MARGIN; return }
     const ind = LISTY.has(ln.k) ? ((ln.lv || 0) + 1) * MEMO.INDENT : ln.k === 'quote' ? MEMO.QUOTE : 0
     const runs = K.mono ? [[0, (ln.t || '').length, null, false, null, true]] : ln.runs
-    const lay = layoutText(ln.t || '', runs, px, 'board', K.bold ? 700 : 400, Math.max(10, inner - ind - 2 * TEXT_MARGIN))
+    const links = ln.k === 'code' || ln.nolink ? null : urlSpans(ln.t)   // 주소 = 파란 밑줄(줄 메뉴 「링크 끄기」면 보통 글)
+    const lay = layoutText(ln.t || '', runs, px, 'board', K.bold ? 700 : 400, Math.max(10, inner - ind - 2 * TEXT_MARGIN), links?.length ? links : null)
     const x = MEMO.LPAD + ind, lh = METRICS.board.lineSpacing * px, cy = y + TEXT_MARGIN + lh / 2
     const marker = ln.k === 'ul' ? ['•◦▪'[(ln.lv || 0) % 3]] : ln.k === 'ol' ? [`${nums[i]}.`] : null
     const box = ln.k === 'todo' ? { x: x - MEMO.INDENT + 2, y: cy - TEXT_MARGIN - px * 0.45, s: px * 0.9 } : null   // 글 줄 가운데(cy엔 TEXT_MARGIN이 한 번 더 들어 있어 상자가 처졌음 — 2026-10-18 사용자)
@@ -141,8 +142,18 @@ export function memoLayout(it) {
   r = { rows, h: Math.ceil(y + MEMO.PAD) }; _ml.set(it, r); return r
 }
 export const memoHeight = it => memoLayout(it).h
+// 메모 안 좌표(아이템 기준) q에 있는 주소(없으면 null) — Ctrl+클릭으로 열기
+export function memoLinkAt(it, q) {
+  const [x0, y0] = it.rect
+  for (const r of memoLayout(it).rows) { if (!r.lay?.lines || !r.lay.m) continue
+    const lh = r.lay.m.lineSpacing * r.px
+    for (let i = 0; i < r.lay.lines.length; i++) { const top = y0 + r.y + TEXT_MARGIN + i * lh; if (q.y < top || q.y > top + lh) continue
+      for (const p of r.lay.lines[i].parts) if (p.link && q.x >= x0 + r.x + p.x && q.x <= x0 + r.x + p.x + p.w) return p.link } }
+  return null
+}
 
 // 글 그리기 — (left, top) = 문서 상자 왼쪽 위(여백 포함). color = 기본 글 색
+export const LINK = '#2f80ed'   // 메모 속 주소 색(밝은 메모 바탕 위)
 function TextLines({ lay, left, top, color, halo }) {   // halo = 글자 둘레를 칠할 바탕색(화살표 라벨 — 다른 선이 지나가도 읽히게)
   const { px, m, family, weight } = lay
   const out = []
@@ -150,10 +161,11 @@ function TextLines({ lay, left, top, color, halo }) {   // halo = 글자 둘레�
     const base = top + TEXT_MARGIN + m.ascent * px + i * m.lineSpacing * px
     if (ln.code) out.push(<rect key={`c${i}`} x={left + TEXT_MARGIN - 4} y={base - m.ascent * px} width={(lay.maxW || lay.w) + 8} height={m.lineSpacing * px} fill={CODE_BAND} />)
     if (!ln.code) for (const p of ln.parts) if (p.mono && !p.bg) out.push(<rect key={`m${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={CODE_BAND} />)   // 글 속 짧은 코드
+    for (const p of ln.parts) if (p.link) out.push(<rect key={`u${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base + px * 0.12} width={p.w} height={Math.max(0.6, px * 0.06)} fill={LINK} />)   // 주소 밑줄
     for (const p of ln.parts) if (p.bg) out.push(<rect key={`b${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={bgCss(p.bg)} />)
     out.push(<text key={`t${i}`} y={base} fontSize={px} fontFamily={family === 'board' ? BOARD_FONT : APP_FONT} fontWeight={weight} fill={color} style={{ whiteSpace: 'pre' }}
       {...(halo ? { stroke: halo, strokeWidth: px * 0.14, strokeLinejoin: 'round', paintOrder: 'stroke' } : {})}>   {/* 얇게 — 두꺼우면 자기 선 끝도 숫자 모양대로 곡선으로 파였음(2026-10-18) */}
-      {ln.parts.map((p, j) => <tspan key={j} x={left + TEXT_MARGIN + p.x} fill={p.color ? cssColor(p.color) : undefined} fontWeight={p.mono ? 400 : p.bold ? Math.max(700, weight) : undefined} fontFamily={p.mono ? MONO_FONT : undefined}>{p.text}</tspan>)}
+      {ln.parts.map((p, j) => <tspan key={j} x={left + TEXT_MARGIN + p.x} fill={p.link ? LINK : p.color ? cssColor(p.color) : undefined} fontWeight={p.mono ? 400 : p.bold ? Math.max(700, weight) : undefined} fontFamily={p.mono ? MONO_FONT : undefined}>{p.text}</tspan>)}
     </text>)
   })
   return out

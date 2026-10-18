@@ -4,6 +4,9 @@
 import { useEffect, useState } from 'react'
 import SYMBOLS from '../symbols.json' with { type: 'json' }
 import { symbolPath } from './symbols.js'
+import { Item } from './render.jsx'
+import { drawOrder, itemBounds } from './doc.js'
+import { fromEcad } from './model.js'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', on: '#da7756' }
 export const BASIC = [['rect', '사각형'], ['ellipse', '원'], ['sym:triangle', '삼각형'], ['sym:decision', '판단'], ['sym:terminal', '시작/끝'], ['sym:data', '입출력'], ['sym:prep', '준비'], ['sym:database', '저장소']]
@@ -15,6 +18,20 @@ export const nameMatch = (name, q) => { const n = name.toLowerCase(), k = q.trim
 
 export async function loadLibrary() {
   try { const r = await fetch('/api/symbols'); if (!r.ok) return null; return await r.json() } catch { return null }
+}
+
+// 내 심볼 아이콘 = 저장된 실제 도형으로 그림(2026-10-18 사용자: 야옹이 등이 두 화면 모두 안 보임 — 저장된 그림은 데스크톱 어두운 화면에서 찍은 28px 흰 선이라
+// 밝은 화면에선 흰 바탕에, 어두운 화면에선 색 뒤집기로 검게 묻혔음). 잉크 색은 칠판 규칙(ink)대로 화면 밝기에 맞춤, 선은 1px 아래로 안 가늘어짐(--z)
+const iconCache = new Map()
+function SymIcon({ e, dark }) {
+  let v = iconCache.get(e.id)
+  if (!v) { let items = []; try { items = fromEcad({ items: structuredClone(e.items || []) }).items } catch { /* 못 읽으면 그림으로 */ }
+    const bs = items.map(itemBounds).filter(b => Number.isFinite(b.x)), x0 = Math.min(...bs.map(b => b.x)), y0 = Math.min(...bs.map(b => b.y)), x1 = Math.max(...bs.map(b => b.x + b.w)), y1 = Math.max(...bs.map(b => b.y + b.h))
+    v = bs.length ? { items, x0, y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) } : null; iconCache.set(e.id, v) }
+  if (!v) return <img alt="" src={'data:image/png;base64,' + e.thumb} width="24" height="24" />
+  const S = Math.max(v.w, v.h), pad = S * 0.06, k = 24 / (S + 2 * pad)
+  return <svg key={dark ? 'd' : 'l'} width="24" height="24" viewBox={`${v.x0 + v.w / 2 - S / 2 - pad} ${v.y0 + v.h / 2 - S / 2 - pad} ${S + 2 * pad} ${S + 2 * pad}`} style={{ '--z': k, overflow: 'visible' }}>
+    {drawOrder(v.items).map(([it, i]) => <Item key={i} it={it} idx={i} dark={dark} />)}</svg>
 }
 
 const shapeIcon = key => { const k = key.replace(/^sym:/, '')
@@ -43,7 +60,7 @@ export function Palette({ lib, tool, onDown, onClick, dark }) {
   const [q, setQ] = useState('')
   const syms = lib?.symbols || [], folders = lib?.folders || [], fav = lib?.favorites || []
   const basicName = Object.fromEntries(BASIC)
-  const thumb = e => <img alt="" src={'data:image/png;base64,' + e.thumb} width="24" height="24" style={{ filter: dark ? 'invert(1) hue-rotate(180deg)' : undefined }} />   // 그림은 밝은 칠판 기준으로 찍혀 있음
+  const thumb = e => <SymIcon e={e} dark={dark} />
   const cellOf = key => {
     if (key.startsWith('customsym:')) { const e = syms.find(s => 'customsym:' + s.id === key); return e && <Cell key={key} k={key} name={e.name} icon={thumb(e)} on={tool === key} onDown={onDown} onClick={onClick} /> }
     const name = basicName[key] || SYMBOLS[key.replace(/^sym:/, '')]?.name; return name && <Cell key={key} k={key} name={name} icon={shapeIcon(key)} on={tool === key} onDown={onDown} onClick={onClick} />

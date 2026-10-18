@@ -1,5 +1,5 @@
 // 우하 「미니맵」 카드 — 데스크톱 `_MinimapView`·`_build_minimap_panel`: 문서 전체를 작게(바뀌면 0.15초 몰아서 한 번 다시 그림), 지금 보는 범위 = 네모(즉시 따라감),
-// 누르거나 끌면 그 자리가 화면 가운데로. 제목 줄 = 미니맵 · − · % · ＋ · 전체 · 1:1(% 누르면 100% + 내용 가운데).
+// 누르거나 끌면 그 자리가 화면 가운데로. 제목 줄 = 미니맵 · − · % · ＋(% 누르면 전체 보기 — 2026-10-18 사용자 선택, 「전체」·1:1 버튼은 뺌. 100%는 휠로).
 // 보는 범위 네모 = 데스크톱과 같은 고정 시안 #22d3ee 테두리만. 데스크톱은 실제 그림을 축소하지만, 웹은 9천 개 도면에서도 가볍게 도형 윤곽만 캔버스에 그린다(보드는 바탕색 면).
 import { useEffect, useRef } from 'react'
 import { docBounds, itemBounds } from './doc.js'
@@ -50,17 +50,15 @@ export function Minimap({ items, cam, size, setCam, onFit, dark }) {
     const sx = ((e.clientX - r.left) - fr.ox) / fr.k, sy = ((e.clientY - r.top) - fr.oy) / fr.k
     setCam(c => ({ ...c, x: size.w / 2 - sx * c.z, y: size.h / 2 - sy * c.z })) }
   const zoomBy = k => setCam(c => { const z = Math.min(ZMAX, Math.max(ZMIN, c.z * k)), q = z / c.z; return { z, x: size.w / 2 - (size.w / 2 - c.x) * q, y: size.h / 2 - (size.h / 2 - c.y) * q } })
-  const zoomReset = () => { const b = docBounds(items); setCam(b ? { z: 1, x: size.w / 2 - (b.x + b.w / 2), y: size.h / 2 - (b.y + b.h / 2) } : { z: 1, x: 0, y: 0 }) }   // 데스크톱 `_zoom_reset`: 100% + 내용 가운데
-  const hb = { all: 'unset', cursor: 'pointer', height: 20, minWidth: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: C.ink, font: "600 11px 'Pretendard', sans-serif" }
+  // 버튼처럼 보이게 — 옅은 바탕 + 테두리(2026-10-18 사용자: %·전체가 버튼인지 몰랐음)
+  const hb = { all: 'unset', boxSizing: 'border-box', cursor: 'pointer', height: 20, minWidth: 20, padding: '0 4px', marginLeft: 3, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, border: `1px solid ${C.line}`, background: 'var(--mb-seg)', color: C.ink, font: "600 11px 'Pretendard', sans-serif" }
   return <div onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 12, bottom: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
     padding: '6px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', color: C.ink, userSelect: 'none' }}>
     <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
       <span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>미니맵</span>
       <button title="축소" onClick={() => zoomBy(1 / ZOOM_STEP)} style={hb}>−</button>
-      <button title="누르면 100% + 내용 가운데로" onClick={zoomReset} style={{ ...hb, minWidth: 38 }}>{Math.round(cam.z * 100)}%</button>
+      <button title="전체 보기 — 도면 전체가 보이게(Ctrl+9)" onClick={onFit} style={{ ...hb, minWidth: 38 }}>{Math.round(cam.z * 100)}%</button>
       <button title="확대" onClick={() => zoomBy(ZOOM_STEP)} style={hb}>＋</button>
-      <button title="전체 보기 — 도면 전체가 보이게(Ctrl+9)" onClick={onFit} style={hb}>⤢</button>
-      <button title="실제 크기(100%)" onClick={() => zoomBy(1 / cam.z)} style={{ ...hb, fontSize: 10 }}>1:1</button>
     </div>
     <div style={{ position: 'relative', width: W, height: H, borderRadius: 4, overflow: 'hidden', background: 'var(--mb-board, transparent)', outline: `1px solid ${C.line}`, cursor: 'pointer' }}
       onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); goTo(e) }} onPointerMove={e => { if (e.buttons & 1) goTo(e) }}>

@@ -3,9 +3,9 @@
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, rr } from './render.jsx'
+import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr } from './render.jsx'
 import { boardMembership, drawOrder, itemBounds } from './doc.js'
-import { paperWH, PT, TEXT_MARGIN, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
+import { paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
 import { ROUTE_BOX, bindPt, dropTarget, edgeMid, bindEnd, groupFrac, groupHost, hostPorts, isBindHost, isConnHost, isSnapLine, nearestBorder, OPP, qcDelta, qcDots, snapAt } from './connect.js'
@@ -228,6 +228,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     }
     const lk = frameLockAt(p); if (lk) { setLoose(l => (l === lk._id ? null : lk._id)); return }   // 이름표 옆 자물쇠 — 잠깐 틀만
     const wo = webOpenAt(p); if (wo) { window.open(wo.url, '_blank', 'noopener'); return }   // 웹 카드 오른쪽 위 ↗ = 새 탭
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) { const u = memoLinkHit(p); if (u) { window.open(u, '_blank', 'noopener'); return } }   // 메모 속 주소 Ctrl+클릭 = 새 탭(그냥 클릭은 고르기·고치기 — 2026-10-18 사용자 선택)
     // 줄을 고른 채 Shift·Ctrl+클릭은 손잡이가 아니라 줄 글자 위여도 같음(2026-10-18 사용자: 글자 위를 눌러 고른 것이 다 풀렸음 — 노션은 블록 아무 데나)
     const mh = memoHandleHit(p) || ((e.shiftKey || e.ctrlKey || e.metaKey) && lineSel ? (hv => (hv && hv.it._id === lineSel.id ? hv : null))(memoRowAt(p, 0)) : null)
     // ⠿ — 연속 = Shift·Ctrl+Shift 클릭, 개별 = Ctrl·Alt+Shift 클릭(노션 + 흔한 방식 둘 다 — 2026-10-18 사용자), 고른 줄 안을 끌면 고른 줄 전부, Alt 끌기 = 복사
@@ -271,7 +272,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     // 미선택 도형의 포트점·테두리(14px)를 누르면 화살표 잇기 대기 — 끌면 화살표, 그냥 놓으면 그 도형 선택(데스크톱 `_hover_port_at`→`_hp_*`)
     // 프레임 이름표는 근처 도형의 포트점보다 먼저(이름표 옆 상자에서 화살표가 뽑혀 프레임이 안 끌렸음 — 2026-10-18 시험)
     const tagHit = hitPool().find(it => it.type === 'frame' && !it.locked && (b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h)(frameTagBox(it)))
-    if (tagHit) { const ids = add ? [...new Set([...R.current.sel, tagHit._id])] : R.current.sel.includes(tagHit._id) ? R.current.sel : [tagHit._id]; setSel(ids)
+    if (tagHit) { if (add && R.current.sel.includes(tagHit._id)) { setSel(R.current.sel.filter(i => i !== tagHit._id)); return }   // 고른 프레임 이름표를 Shift·Ctrl+클릭 = 빼기(2026-10-18 사용자: 더하기만 됐음)
+      const ids = add ? [...new Set([...R.current.sel, tagHit._id])] : R.current.sel.includes(tagHit._id) ? R.current.sel : [tagHit._id]; setSel(ids)
       st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: e.altKey ? ids : movingSet(ids), sel: ids, moved: false }; return }
     if (!add && !e.altKey && !inMemoGutter(p)) { const hp = hoverPort(p); if (hp?.target) { st.current = { ...st.current, kind: 'conn', src: hp.target.id, port: { p: hp.target.p, n: hp.target.n }, start: p, cur: p, fromQc: false, moved: false }; return } }
     const hit = topHit(hitPool(), p, HIT_PX / z, textBox) || groupAt(p)
@@ -289,7 +291,9 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       return
     }
     if (!add) setSel([])
-    st.current = { ...st.current, kind: 'rubber', start: p, add: add ? R.current.sel : [] }
+    // 끌어 고르기 — Ctrl = 더하기, Shift = 빼기(2026-10-18 사용자 선택 — 클릭은 둘 다 뒤집기 그대로). 방향 규칙(왼→오 다 들어간 것, 오→왼 걸친 것)은 빼기에도 같음
+    const sub = e.shiftKey && !(e.ctrlKey || e.metaKey)
+    st.current = { ...st.current, kind: 'rubber', start: p, add: add && !sub ? R.current.sel : [], sub, base: R.current.sel }
   }
 
   function onPointerMove(e) {
@@ -312,8 +316,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       return
     }
     if (s.kind === 'rubber') {   // 끄는 동안 걸릴 것을 바로 보여 줌(데스크톱 `_rb_preview_hits` — 실제 선택은 놓을 때)
-      const sel0 = new Set(R.current.sel), hitIds = Math.hypot(p.x - s.start.x, p.y - s.start.y) * z > 3 ? expandGroups(R.current.model.items, rubberSelect(hitPool(), s.start, p, textBox)).filter(id => !sel0.has(id)) : []
-      setOverlay(o => ({ ...o, rubber: { a: s.start, b: p, hits: hitIds } })); return
+      const sel0 = new Set(R.current.sel), hitIds = Math.hypot(p.x - s.start.x, p.y - s.start.y) * z > 3 ? expandGroups(R.current.model.items, rubberSelect(hitPool(), s.start, p, textBox)).filter(id => (s.sub ? sel0.has(id) : !sel0.has(id))) : []
+      setOverlay(o => ({ ...o, rubber: { a: s.start, b: p, hits: hitIds, sub: s.sub } })); return
     }
     if (s.kind === 'conn') {
       if (!s.moved && Math.hypot(p.x - s.start.x, p.y - s.start.y) * z <= CONN_DRAG_PX) return
@@ -442,7 +446,9 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (s.moved && live) commit(live.filter(it => it), s.sel, '옮김'); else setLive(null); return }
     if (s.kind === 'rubber') {
       setOverlay(o => ({ ...o, rubber: null }))
-      if (Math.hypot(p.x - s.start.x, p.y - s.start.y) * R.current.cam.z > 3) setSel(expandGroups(R.current.model.items, [...new Set([...s.add, ...rubberSelect(hitPool(), s.start, p, textBox)])]))
+      if (Math.hypot(p.x - s.start.x, p.y - s.start.y) * R.current.cam.z > 3) {
+        const hits = expandGroups(R.current.model.items, rubberSelect(hitPool(), s.start, p, textBox))
+        if (s.sub) { const out = new Set(hits); setSel(s.base.filter(id => !out.has(id))) } else setSel(expandGroups(R.current.model.items, [...new Set([...s.add, ...hits])])) }
       return
     }
     if (['resize', 'rotate', 'tscale', 'lineend'].includes(s.kind)) { if (live) commit(live, R.current.sel, '바꿈'); return }
@@ -575,7 +581,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (k !== (R.current.memoHov ? `${R.current.memoHov.id}:${R.current.memoHov.s}:${R.current.memoHov.e}` : null)) setMemoHov(hv ? { id: hv.it._id, s: hv.s, e: hv.e } : null)
       if (hv && memoHandleHit(p)) { setHp(null); setCursor('grab'); return }
       if (hv && inMemoGutter(p)) { setHp(null); setCursor('default'); return }
-      if (hv && memoCheckAt(p)) { setHp(null); setCursor('pointer'); return } }   // 할 일 상자 = 누르는 것(2026-10-18 사용자: 이동 커서였음)
+      if (hv && memoCheckAt(p)) { setHp(null); setCursor('pointer'); return }
+      if (hv && memoLinkHit(p)) { setHp(null); setCursor('pointer'); return } }   // 주소 위 = 손가락(Ctrl+클릭으로 열림 — 2026-10-18 사용자: 이동 커서였음)   // 할 일 상자 = 누르는 것(2026-10-18 사용자: 이동 커서였음)
     if (t === 'arrow') { const near = hostsNear(p), lines = linesNear(p), tg = snapAt(near, p, R.current.cam.z, rectOf, lines); setHp(near.length || tg ? { id: tg?.id ?? near.at(-1)?._id ?? null, target: tg } : null); setCursor('crosshair'); return }   // 붙을 자리 예고
     if (t !== 'select') { setCursor(t === 'text' ? 'text' : 'crosshair'); return }
     if (!single && R.current.sel.length > 1) { const mb = multiBoxNow(); if (mb) { const cs = [[mb.x, mb.y, 'nwse-resize'], [mb.x + mb.w, mb.y, 'nesw-resize'], [mb.x + mb.w, mb.y + mb.h, 'nwse-resize'], [mb.x, mb.y + mb.h, 'nesw-resize']]
@@ -741,6 +748,12 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     commit([...m.items, it], [it._id], '메모'); setTool('select'); setEditing({ id: it._id, kind: 'memo' })
   }
   // 칠판 위 할 일 체크 상자 = 바로 누르기(2026-10-18 사용자: 노션처럼) — 맨 위 메모부터
+  function memoLinkHit(p) {   // 맨 위 메모의 그 자리 주소(없으면 null)
+    for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'memo') continue
+      const q = toLocal(it, p); if (q.x < it.rect[0] || q.x > it.rect[0] + it.rect[2] || q.y < it.rect[1] || q.y > it.rect[1] + it.rect[3]) continue
+      return memoLinkAt(it, q) }
+    return null
+  }
   const memoCheckAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'memo' || it.locked) continue
     const q = toLocal(it, p), [x0, y0] = it.rect, pad = 3 / z / (it.scale || 1)
     for (const r of memoLayout(it).rows) if (r.box && q.x >= x0 + r.box.x - pad && q.x <= x0 + r.box.x + r.box.s + pad && q.y >= y0 + r.box.y - pad && q.y <= y0 + r.box.y + r.box.s + pad) return { it, i: r.i } } return null }
@@ -806,6 +819,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       ['전환', 'Ctrl+/', null, kinds],
       ['색', '', null, [...LINE_COLORS.map(([n, c]) => [sw(c, `${n} 텍스트`), apply(each(l => recolorLine(l, { color: c })), '줄 색')]), '-',
         ...LINE_COLORS.map(([n, , b]) => [sw(null, `${n} 배경`, b), apply(each(l => recolorLine(l, { bg: b })), '줄 배경')])]],
+      ...(idx.some(i => urlSpans(L[i]?.t).length) ? [(() => { const on2 = idx.some(i => urlSpans(L[i]?.t).length && !L[i].nolink)   // 링크 끄기/켜기(고칠 때 자꾸 열려 불편할 때 — 2026-10-18 사용자)
+        return [on2 ? '링크 끄기' : '링크 켜기', '', apply(each(l => (on2 ? { ...l, nolink: true } : (({ nolink, ...r }) => r)(l))), on2 ? '링크 끔' : '링크 켬')] })()] : []),
       '-',
       ['복제', 'Ctrl+D', () => { apply(lines => [...lines.slice(0, last), ...idx.map(i => structuredClone(lines[i])), ...lines.slice(last)], '줄 복제')(); setLineSel({ id: it._id, s: last, e: last + idx.length }) }],
       ['삭제', 'Del', () => { apply(lines => lines.filter((_, j) => !on.has(j)), '줄 지움')(); setLineSel(null) }],
@@ -814,6 +829,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   function finishMemo(lines, extra) {   // extra = { caret }(Esc — 그 줄 고르기) | { grab }(고치는 중 ⠿ — 끝내고 그 줄 끌기·메뉴로)
     const ed = R.current.editing; setEditing(null); if (!ed || !lines) return
     const m = R.current.model, it = m.items.find(x => x._id === ed.id); if (!it) return
+    const nol = new Set((it.lines || []).filter(l => l.nolink).map(l => l.t)); lines = lines.map(l => (nol.has(l.t) ? { ...l, nolink: true } : l))   // 고친 뒤에도 「링크 끔」 유지(같은 글의 줄)
     commit(m.items.map(x => (x._id === it._id ? { ...it, lines } : x)), [it._id], '메모 고침')
     if (extra?.caret != null && lines[extra.caret]) { const [s, e] = lineUnit(lines, extra.caret); setLineSel({ id: it._id, s, e }) }
     else if (extra?.pick && lines[extra.pick.cur] && lines[extra.pick.clicked]) {   // 고치는 중 단축키 + 다른 줄 클릭 = 줄 고르기
@@ -852,7 +868,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // 감싸기: 고른 것을 여백 두고 감싸는 프레임(자유 비율)
   function wrapFrame() {
     const m = R.current.model, ids = new Set(movingSet(R.current.sel)), its = m.items.filter(it => ids.has(it._id) && it.type !== 'titleblock' && it.type !== 'frame'); if (!its.length) return
-    const b = unionBox(its.map(it => sceneBox(it, textBox))), pad = Math.max(b.w, b.h) * 0.06
+    const b = unionBox(its.map(it => sceneBox(it, textBox))), pad = 16   // 작고 일정한 여백(2026-10-18 사용자 선택 — 전엔 내용의 6%라 큰 묶음일수록 여백이 컸음)
     const it = base([b.x - pad, b.y - pad], { type: 'frame', rect: [0, 0, b.w + 2 * pad, b.h + 2 * pad], name: '', no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
     commit([...m.items, it], [it._id], '프레임으로 감싸기'); setStatus(`프레임 ${it.no} — 내보내기 하면 이 틀이 한 쪽이 돼요`)
   }
@@ -1190,12 +1206,28 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (readOnly) return
       const ae = document.activeElement
       if (R.current.editing || /INPUT|TEXTAREA|SELECT/.test(ae?.tagName || '') || ae?.isContentEditable) return   // 글 고치는 중이면 그 칸에
+      const img = [...(e.clipboardData?.items || [])].find(x => x.kind === 'file' && x.type.startsWith('image/'))?.getAsFile()   // 그림 복사 = 이미지로(2026-10-18 사용자: 안 붙었음)
+      if (img) { e.preventDefault(); insertImage(img); return }
       const url = normalizeUrl(e.clipboardData?.getData('text/plain')); e.preventDefault()
       if (url) insertWeb(url); else paste()
     }
     window.addEventListener('paste', onPaste); return () => window.removeEventListener('paste', onPaste)
   })
   // 웹 카드 넣기 — 서버가 주소를 확인한 뒤(칸 안에 넣어도 되나·제목·대표 그림) 커서 자리(화면 밖이면 가운데)에
+  // 그림 파일·클립보드 그림 → 이미지 도형(.ecad image = PNG base64 — 다른 형식도 PNG로 바꿔 넣음, 데스크톱도 그대로 열림). 커서 자리(없으면 화면 가운데), 긴 변 최대 화면의 60%
+  async function insertImage(file) {
+    const url = URL.createObjectURL(file)
+    try {
+      const im = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = url })
+      const cv = document.createElement('canvas'); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext('2d').drawImage(im, 0, 0)
+      const data = cv.toDataURL('image/png').split(',')[1]
+      const c = R.current.cam, mp = R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
+      const at = mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2 }
+      const k = Math.min(1, (Math.min(vw.w, vw.h) * 0.6) / Math.max(im.naturalWidth, im.naturalHeight)), w = im.naturalWidth * k, h = im.naturalHeight * k, m = R.current.model
+      const it = base([at.x - w / 2, at.y - h / 2], { type: 'image', rect: [0, 0, w, h], data, z: topZ(m.items) + 1 })
+      commit([...m.items, it], [it._id], '그림 붙여넣기'); setTool('select')
+    } catch { setStatus('그림을 읽지 못했어요') } finally { URL.revokeObjectURL(url) }
+  }
   async function insertWeb(url) {
     const c = R.current.cam, mp = R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
     const at = mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2 }
@@ -1324,14 +1356,15 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         onMouseDown={e => { if (R.current.editing && e.button !== 0) e.preventDefault() }}>
         <g transform={`translate(${cam.x},${cam.y}) scale(${z})`} style={{ '--z': z }}>
           {visible.map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
+            : it._id === editingId && it.type === 'memo' ? <Item key={it._id} it={{ ...it, lines: [] }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />   // 고치는 메모 = 바탕만(흐린 글자가 투명한 채움 사이로 잔상처럼 비쳤음 — 2026-10-18 사용자)
             : it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
             : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
-          {selItems.map(outline)}
+          {(overlay.rubber?.sub ? selItems.filter(it => !overlay.rubber.hits?.includes(it._id)) : selItems).map(outline)}   {/* Shift 끌기 빼기 = 걸린 것의 파란 띠를 바로 지움(2026-10-18 사용자: 빨강 대신) */}
           {cellSel && byId.get(cellSel.id) && (() => { const t = byId.get(cellSel.id), g = cellRange(cellSel), a = cellRect(t, g.r0, g.c0), b = cellRect(t, g.r1, g.c1)
             return <g transform={transformOf(t)}><rect x={a.x} y={a.y} width={b.x + b.w - a.x} height={b.y + b.h - a.y} fill="rgba(137,180,250,.18)" stroke={BLUE} strokeWidth={2 / z} /></g> })()}
-          {overlay.rubber?.hits?.map(id => byId.get(id)).filter(Boolean).map(preview)}
+          {!overlay.rubber?.sub && overlay.rubber?.hits?.map(id => byId.get(id)).filter(Boolean).map(preview)}
           {single?.type === 'frame' && !single.locked && !tagEdit && (() => { const b = frameTagBox(single), sz = b.h, x = b.x + b.w + b.fs * 0.3, open = loose === single._id   // 이름표 옆 자물쇠 — 잠김 = 안의 것 같이, 풀림 = 잠깐 틀만
             return <g style={{ cursor: 'pointer' }}><title>{open ? '틀만 옮겨요 — 누르면 다시 같이(고른 게 풀리면 저절로)' : '안의 것과 같이 움직여요 — 누르면 잠깐 틀만 · Alt+끌기도 틀만'}</title>
               <rect x={x} y={b.y} width={sz} height={sz} rx={sz * 0.25} fill={open ? '#da7756' : '#3f3f46'} />
@@ -1363,7 +1396,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
             return <g key={i}><line x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(0,0,0,.7)" strokeWidth={3 / z} strokeDasharray={dash} /><line x1={x1} y1={y1} x2={x2} y2={y2} stroke={GUIDE} strokeWidth={1.5 / z} strokeDasharray={dash} /></g>
           })}
           {rb && (() => { const x = Math.min(rb.a.x, rb.b.x), y = Math.min(rb.a.y, rb.b.y), w = Math.abs(rb.b.x - rb.a.x), h = Math.abs(rb.b.y - rb.a.y), win = rb.b.x >= rb.a.x
-            return <rect x={x} y={y} width={w} height={h} fill={win ? RB_BLUE : RB_GREEN} fillOpacity={45 / 255} stroke={win ? RB_BLUE : RB_GREEN} strokeWidth={1 / z} strokeDasharray={win ? undefined : `${4 / z} ${3 / z}`} /> })()}
+            const col = win ? RB_BLUE : RB_GREEN
+            return <rect x={x} y={y} width={w} height={h} fill={col} fillOpacity={45 / 255} stroke={col} strokeWidth={1 / z} strokeDasharray={win ? undefined : `${4 / z} ${3 / z}`} /> })()}
           {dr && (dr.tool === 'rect' || dr.tool === 'frame' || dr.tool.startsWith('sym:') ? <rect x={Math.min(dr.a.x, dr.b.x)} y={Math.min(dr.a.y, dr.b.y)} width={Math.abs(dr.b.x - dr.a.x)} height={Math.abs(dr.b.y - dr.a.y)} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />
             : dr.tool === 'ellipse' ? <ellipse cx={(dr.a.x + dr.b.x) / 2} cy={(dr.a.y + dr.b.y) / 2} rx={Math.abs(dr.b.x - dr.a.x) / 2} ry={Math.abs(dr.b.y - dr.a.y) / 2} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />
             : dr.tool === 'line' ? <line x1={dr.a.x} y1={dr.a.y} x2={dr.b.x} y2={dr.b.y} stroke={BLUE} strokeWidth={1.5 / z} />
