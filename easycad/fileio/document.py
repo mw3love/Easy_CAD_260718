@@ -280,6 +280,8 @@ def item_to_dict(it) -> dict | None:
                  pen=_col(it.pen().color()), width=it.pen().widthF(),
                  fill=None if it.brush().style() == Qt.BrushStyle.NoBrush
                  else _col(it.brush().color()))
+        if getattr(it, "_radius", 0):   # [2026-10-18] 모서리 둥글기 — 없으면 키 생략(하위호환)
+            d["radius"] = it._radius
     elif isinstance(it, _EllipseItem):
         r = it.rect()
         d.update(type="ellipse", rect=[r.x(), r.y(), r.width(), r.height()],
@@ -362,7 +364,7 @@ def item_to_dict(it) -> dict | None:
 
 
 _WEB_ONLY_KEYS_ALL = ("fit_text", "chat_at")
-_WEB_ONLY_KEYS = {"table": ("font", "color", "pen")}
+_WEB_ONLY_KEYS = {"table": ("font", "color", "pen", "cell_styles")}
 
 
 def dict_to_item(d: dict):
@@ -401,6 +403,7 @@ def dict_to_item(d: dict):
             it.setBrush(_mkbrush(d))
     elif t == "rect":
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
+        it._radius = float(d.get("radius") or 0)
     elif t == "ellipse":
         it = _EllipseItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
     elif t == "sarrow":

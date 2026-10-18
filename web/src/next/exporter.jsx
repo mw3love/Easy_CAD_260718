@@ -53,11 +53,14 @@ export async function exportPng(res, name, dpi = 200) { download(await pngBlob(r
 export const exportSvg = ({ svg }, name) => download(new Blob([svg], { type: 'image/svg+xml' }), name)
 
 // PDF — 숨은 틀에 용지 크기로 놓고 인쇄 창(「PDF로 저장」). 글꼴은 화면이 이미 불러 둔 fonts.css를 그대로 씀
-export function exportPdf({ svg, pw, ph }, title) {
+export function exportPdf(res, title) {   // res = 한 쪽 { svg, pw, ph } 또는 여러 쪽 [..] — 쪽마다 용지 크기가 달라도 됨(CSS named page)
+  const pages = Array.isArray(res) ? res : [res]
   const f = document.createElement('iframe'); f.style.cssText = 'position:fixed;width:0;height:0;border:0;left:-9999px'; document.body.appendChild(f)
   const d = f.contentDocument
+  const css = pages.map((p, i) => `@page p${i}{size:${p.pw}mm ${p.ph}mm;margin:0}.p${i}{page:p${i};width:${p.pw}mm;height:${p.ph}mm}`).join('')
+  const body = pages.map((p, i) => `<div class="p${i}" style="${i < pages.length - 1 ? 'break-after:page;' : ''}">${p.svg.replace('<svg ', `<svg style="display:block;width:${p.pw}mm;height:${p.ph}mm" `)}</div>`).join('')
   d.open(); d.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><link rel="stylesheet" href="${location.origin}/fonts.css">
-    <style>@page{size:${pw}mm ${ph}mm;margin:0}html,body{margin:0;padding:0}svg{display:block;width:${pw}mm;height:${ph}mm}</style></head><body>${svg}</body></html>`); d.close()
+    <style>@page{margin:0}${css}html,body{margin:0;padding:0}</style></head><body>${body}</body></html>`); d.close()
   const go = () => { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(() => f.remove(), 60000) }
   ;(d.fonts?.ready || Promise.resolve()).then(() => setTimeout(go, 100))
 }

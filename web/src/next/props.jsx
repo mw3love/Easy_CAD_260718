@@ -174,7 +174,7 @@ function RotInput({ value, onSet }) {
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark }) {   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
+export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells }) {   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
   const [openDash, setOpenDash] = useState(false), [openSwap, setOpenSwap] = useState(false)
   const one = v => (v.length && v.every(x => x === v[0]) ? v[0] : null)
   const arrows = items.filter(isArrow), allArrows = arrows.length === items.length
@@ -244,16 +244,41 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
       <Row label="머리"><Stepper title="화살촉 크기 배율" {...num(arrows, a => a.head_scale, 1, 0.5, 3, 0.1, '머리 크기', (a, v) => ({ head_scale: v }))} fmt={v => v.toFixed(1) + '×'} /></Row>
       {kind === 'ortho' && <Row label="모서리"><Stepper title="꺾인 곳 둥글기(0 = 각짐)" {...num(arrows, a => a.curve_r, 10, 0, 40, 1, '모서리', (a, v) => ({ curve_r: v }))} /></Row>}
     </>}
+    {items.some(it => it.type === 'rect') && <Row label="모서리"><Stepper title="네모 모서리 둥글기(0 = 각짐)" {...num(items.filter(it => it.type === 'rect'), it => it.radius, 0, 0, 60, 2, '모서리 둥글기', (it, v) => ({ radius: v || undefined }))} /></Row>}
+    {items.length > 0 && items.every(it => it.type === 'titleblock') && <>
+      <Row label="용지"><Seg value={one(items.map(it => it.size))} onPick={s => set(it => ({ size: s }), '용지')} items={['A4', 'A3', 'A2', 'A1', 'A0'].map(s => [s, <span key={s} style={{ fontSize: 11 }}>{s}</span>, s])} /></Row>
+      <Row label="방향"><Seg value={one(items.map(it => it.orient))} onPick={o => set(it => ({ orient: o }), '방향')} items={[['landscape', <span key="l">가로</span>, '가로'], ['portrait', <span key="p">세로</span>, '세로']]} /></Row>
+      <Row label="크기"><Stepper title="틀 크기(배율) — 출력하면 이 틀이 종이 한 장에 꽉 차요" {...num(items, it => Math.round((it.scale || 1) * 100), 100, 5, 2000, 5, '틀 크기', (it, v) => ({ scale: v / 100 }))} fmt={x => x + '%'} /></Row>
+    </>}
     {rotItems.length > 0 && <Row label="회전"><RotInput value={rot} onSet={a => set(it => (ROTATABLE.has(it.type) ? rotate(it, a) : null), '회전', '회전')} /></Row>}
-    {texts.length > 0 && <>
+    {cells && (() => {   // 고른 칸(들)의 꾸밈 — 표 전체 값 위에 덮음
+      const { table: t, r0, r1, c0, c1 } = cells, list = []
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) list.push({ r, c, s: t.cell_styles?.[`${r},${c}`] || {} })
+      const v = f => one(list.map(f)), n = list.length
+      const fontV = list.map(e => e.s.font ?? t.font ?? 10), auto = list.every(e => e.s.font == null && !t.font)
+      return <>
+        <div style={{ borderTop: `1px solid ${C.line}`, margin: '4px 0 0' }} />
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}><span style={{ fontWeight: 600 }}>칸</span><span style={{ fontSize: 11, color: C.muted }}>{n}개 · Shift+클릭으로 넓히기</span></div>
+        <Row label="크기"><Stepper title="칸 글자 크기" values={fontV} onStep={d => setCells(s => ({ font: stepClamp(s.px ? s.px / (96 / 72) : 10, d, 2, 200, 1) }), '칸 글자 크기', 'cfont')} fmt={x => x + 'pt'} />
+          {auto ? <span style={{ fontSize: 11, color: C.muted }}>자동</span> : <button title="칸 글자 크기를 칸에 맞춰 자동으로" onClick={() => setCells(() => ({ font: undefined }), '칸 글자 크기 자동')} style={btn(false, { padding: '0 6px', background: C.seg, fontSize: 11 })}>자동 크기</button>}</Row>
+        <Row label="굵게"><Seg value={v(e => e.s.bold ?? !!(t.header && e.r === 0))} onPick={b => setCells(() => ({ bold: b }), '칸 굵게')} items={[[true, <b key="b">굵게</b>, '굵게'], [false, <span key="n">보통</span>, '보통']]} /></Row>
+        <Row label="정렬"><Seg value={v(e => e.s.align || 'center')} onPick={a => setCells(() => ({ align: a === 'center' ? undefined : a }), '칸 정렬')}
+          items={[['left', <span key="l">왼쪽</span>, '왼쪽'], ['center', <span key="c">가운데</span>, '가운데'], ['right', <span key="r">오른쪽</span>, '오른쪽']]} /></Row>
+        <Row label="색"><ColorGrid value={norm(v(e => e.s.color ?? t.color ?? '#111111') || '')} onPick={(c, drag) => setCells(() => ({ color: c }), '칸 글자 색', drag ? 'ccolor' : null)} /></Row>
+        <Row label="채움"><FillGrid value={v(e => fillArgb(e.s.fill) ?? null)} onPick={c => setCells(() => ({ fill: c || undefined }), '칸 채움')} /></Row>
+      </>
+    })()}
+    {texts.length > 0 && !cells && <>
       <div style={{ borderTop: `1px solid ${C.line}`, margin: '4px 0 0' }} />
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}><span style={{ fontWeight: 600 }}>글자</span>
         {firstText && <span style={{ fontSize: 11, color: C.muted, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>「{firstText.slice(0, 10)}{firstText.length > 10 ? '…' : ''}」</span>}</div>
-      <Row label="크기"><Stepper title="글자 크기" values={texts.map(t => t.font)} onStep={d => set(it => patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })), '글자 크기', '글자 크기')} fmt={v => v + 'pt'} /></Row>
+      <Row label="크기"><Stepper title="글자 크기" values={texts.map(t => t.font)} onStep={d => set(it => patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })), '글자 크기', '글자 크기')} fmt={v => v + 'pt'} />
+        {items.some(it => it.type === 'table') && (items.some(it => it.type === 'table' && it.font)
+          ? <button title="표 글자 크기를 칸에 맞춰 자동으로 되돌려요" onClick={() => set(it => (it.type === 'table' ? { font: undefined } : null), '글자 크기 자동')} style={btn(false, { padding: '0 6px', background: C.seg, fontSize: 11 })}>자동 크기</button>
+          : <span title="표 글자 크기는 지금 칸에 맞춰 자동이에요 — ± 로 직접 정할 수 있어요" style={{ fontSize: 11, color: C.muted }}>자동</span>)}</Row>
       <Row label="색"><ColorGrid value={tColor} onPick={(c, drag) => set(it => patchTexts(it, () => ({ color: c })), '글자 색', drag ? 'tcolor' : null)} /></Row>
       {items.some(it => it.type === 'table') && <Row label="첫 행">
         <Seg value={one(items.filter(it => it.type === 'table').map(it => !!it.header))} onPick={v => set(it => (it.type === 'table' ? { header: v } : null), '머리 행')} items={[[true, <b key="b">굵게</b>, '첫 행을 머리로(굵게)'], [false, <span key="n">보통</span>, '첫 행도 보통']]} />
-        {items.some(it => it.type === 'table' && it.font) && <button title="글자 크기를 칸에 맞춰 자동으로" onClick={() => set(it => (it.type === 'table' ? { font: undefined } : null), '글자 크기 자동')} style={btn(false, { padding: '0 6px', background: C.seg, fontSize: 11 })}>자동</button>}
       </Row>}
       {hlItems.length > 0 && <Row label=""><button title="형광펜 — 고른 글 전체. 다시 누르면 지워요" aria-pressed={hlOn} onClick={() => set(it => patchHl(it, !hlOn), '형광펜')}
         style={btn(hlOn, { padding: '0 10px', background: hlOn ? C.onBg : C.seg, fontSize: 12, gap: 6 })}><span style={{ width: 14, height: 10, borderRadius: 2, background: 'rgba(255,213,79,.6)' }} />형광펜</button></Row>}

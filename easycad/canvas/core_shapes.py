@@ -2091,11 +2091,17 @@ class _RectItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGrap
         super().__init__(*args)
         self._init_resize()
         self._init_label()
+        self._radius = 0.0   # [우리 확장 2026-10-18] 모서리 둥글기(.ecad `radius`) — 웹 칠판 AI 카드·메모. 0 = 각짐
+
+    def _round_r(self) -> float:
+        r = self.rect()
+        return min(self._radius, abs(r.width()) / 2, abs(r.height()) / 2) if self._radius else 0.0
 
     def clone(self):
         c = _RectItem(QRectF(self.rect()))
         c.setPen(QPen(self.pen()))
         c.setBrush(QBrush(self.brush()))
+        c._radius = self._radius
         return self._copy_common_to(c)
 
     def apply_fill(self, color):
@@ -2109,10 +2115,15 @@ class _RectItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGrap
     def _base_shape(self):
         # 속 빈 네모(NoBrush)는 '테두리 링'만 클릭 영역으로 — 내부를 통과시켜 네모 안에서
         # 다른 주석을 잡거나 새 도형(화살표 등)을 그릴 수 있게. 채움이 있으면 기본대로 전체.
-        if self.brush().style() != Qt.BrushStyle.NoBrush:
+        if self.brush().style() != Qt.BrushStyle.NoBrush and not self._round_r():
             return super()._base_shape()
         path = QPainterPath()
-        path.addRect(self.rect())
+        if self._round_r():   # 둥근 네모 — 모서리 바깥은 클릭 영역에서 뺌
+            path.addRoundedRect(self.rect(), self._round_r(), self._round_r())
+            if self.brush().style() != Qt.BrushStyle.NoBrush:
+                return path
+        else:
+            path.addRect(self.rect())
         stroker = QPainterPathStroker()
         stroker.setWidth(max(self.pen().widthF(), self._EDGE_HIT_MIN / self._scale_or_1()))
         return stroker.createStroke(path)
@@ -2122,10 +2133,20 @@ class _RectItem(_CenterLabelMixin, _RectGeometryMixin, _HandleResizeMixin, QGrap
         if self.brush().style() != Qt.BrushStyle.NoBrush:
             return None
         p = QPainterPath()
-        p.addRect(self.rect())
+        if self._round_r():
+            p.addRoundedRect(self.rect(), self._round_r(), self._round_r())
+        else:
+            p.addRect(self.rect())
         return p
 
     def paint(self, painter, option, widget=None):
+        if self._round_r() and not (getattr(self, "_ports", None) or getattr(self, "_cuts", None)):   # [2026-10-18] 둥근 네모
+            painter.setPen(self.pen()); painter.setBrush(self.brush())
+            painter.drawRoundedRect(self.rect(), self._round_r(), self._round_r())
+            if self.isSelected():
+                self._paint_selection_outline(painter, self._scale_or_1())
+            self._paint_handle(painter)
+            return
         # [§8 항목17 7단계, 2026-08-10] 포트도 TRIM cut과 같은 렌더 경로(_paint_filled_
         # trimmed_border, build_trimmed_border_path가 _ports·_cuts 둘 다 이미 병합해 읽음)를
         # 탄다 — 옛 _paint_port_cover_if_needed(배경색 덮어그리기)는 폐지.

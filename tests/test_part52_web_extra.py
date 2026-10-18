@@ -35,3 +35,16 @@ def test_unknown_keys_are_not_resurrected():
     it = dict_to_item(d)
     out = item_to_dict(it)
     assert "mystery" not in out and "label" not in out
+
+
+def test_rect_radius_roundtrip_and_paint():
+    # 2026-10-18 네모 모서리 둥글기(.ecad `radius`) — 데스크톱도 그리고(둥근 클릭 영역) 저장한다
+    d = dict(_BASE, type="rect", rect=[0.0, 0.0, 100.0, 60.0], pen="#ff000000", width=1.0, fill="#ffffffff", style=1, radius=12)
+    sc = QGraphicsScene()
+    it = insert_items(sc, [d])[0]
+    assert it._radius == 12 and item_to_dict(it)["radius"] == 12
+    from PyQt6.QtCore import QPointF
+    assert not it._base_shape().contains(QPointF(0.5, 0.5))      # 둥근 모서리 바깥은 클릭 안 됨
+    assert it._base_shape().contains(QPointF(50, 30))
+    plain = insert_items(sc, [dict(d, radius=None)])[0]
+    assert "radius" not in item_to_dict(plain)                   # 각진 네모는 키 생략(하위호환)

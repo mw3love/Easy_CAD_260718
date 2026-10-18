@@ -159,3 +159,18 @@ test('tableOp — 행·열 넣기·지우기(크기는 행 높이·열 폭만큼
   assert.deepEqual(d.cells[0], ['', 'b']); assert.equal(Math.round(d.rect[2]), 120)
   assert.equal(tableOp({ ...t, rows: 1, cells: [['a', 'b']] }, 'delRow', 0, 0).rows, 1)   // 마지막 한 줄은 못 지움
 })
+
+test('tableOp — 칸 꾸밈(cell_styles)도 행·열을 따라 밀리고, 지운 줄 것은 사라짐', () => {
+  const t = { type: 'table', rows: 2, cols: 2, rect: [0, 0, 80, 28], cells: [['a', 'b'], ['c', 'd']], cell_styles: { '0,1': { bold: true }, '1,0': { fill: '#ff00ff00' } } }
+  assert.deepEqual(tableOp(t, 'rowAbove', 0, 0).cell_styles, { '1,1': { bold: true }, '2,0': { fill: '#ff00ff00' } })
+  assert.deepEqual(tableOp(t, 'colLeft', 0, 1).cell_styles, { '0,2': { bold: true }, '1,0': { fill: '#ff00ff00' } })
+  assert.deepEqual(tableOp(t, 'delRow', 1, 0).cell_styles, { '0,1': { bold: true } })
+})
+
+import { readingOrder } from '../src/next/edit.js'
+test('readingOrder — 줄 우선(지그재그)·칸 우선, 조금 어긋나도 같은 줄', () => {
+  const b = (id, x, y) => ({ id, x, y, w: 100, h: 70 })
+  const pages = [b('C', 0, 100), b('B', 120, 5), b('A', 0, 0), b('D', 120, 110)]   // B는 A보다 5 낮아도 같은 줄
+  assert.deepEqual(readingOrder(pages, 'rows').map(p => p.id), ['A', 'B', 'C', 'D'])
+  assert.deepEqual(readingOrder(pages, 'cols').map(p => p.id), ['A', 'C', 'B', 'D'])
+})

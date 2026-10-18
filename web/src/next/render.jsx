@@ -56,6 +56,11 @@ export function cellFontPx(txt, cw, ch, bold, fixedPx = 0) {   // fixedPx = 표�
   if (w > room) fs = Math.max(2, fs * room / w)
   return fs
 }
+// 칸 하나의 꾸밈 = 표 전체 값(font·color·머리 행 굵게) 위에 칸 꾸밈(.ecad 표 `cell_styles` "r,c" → { font, bold, color, align, fill } — 2026-10-18 웹 먼저)
+export function cellStyle(it, r, c) {
+  const s = it.cell_styles?.[`${r},${c}`] || {}, font = s.font ?? it.font
+  return { px: font ? font * PT : 0, bold: s.bold ?? !!(it.header && r === 0), color: s.color ?? it.color, align: s.align || 'center', fill: s.fill || null }
+}
 // 왼쪽 위 라벨(.ecad label.align = "left") — 상자 안 여백, 상자 폭에서 줄바꿈. fit_text 상자는 높이를 글에 맞춤
 export const LABEL_PAD = 12
 export function leftLabelLayout(it) {
@@ -72,7 +77,7 @@ function TextLines({ lay, left, top, color, halo }) {   // halo = 글자 둘레�
     const base = top + TEXT_MARGIN + m.ascent * px + i * m.lineSpacing * px
     for (const p of ln.parts) if (p.bg) out.push(<rect key={`b${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={bgCss(p.bg)} />)
     out.push(<text key={`t${i}`} y={base} fontSize={px} fontFamily={family === 'board' ? BOARD_FONT : APP_FONT} fontWeight={weight} fill={color} style={{ whiteSpace: 'pre' }}
-      {...(halo ? { stroke: halo, strokeWidth: px * 0.3, strokeLinejoin: 'round', paintOrder: 'stroke' } : {})}>
+      {...(halo ? { stroke: halo, strokeWidth: px * 0.14, strokeLinejoin: 'round', paintOrder: 'stroke' } : {})}>   {/* 얇게 — 두꺼우면 자기 선 끝도 숫자 모양대로 곡선으로 파였음(2026-10-18) */}
       {ln.parts.map((p, j) => <tspan key={j} x={left + TEXT_MARGIN + p.x} fill={p.color ? cssColor(p.color) : undefined} fontWeight={p.bold ? Math.max(700, weight) : undefined}>{p.text}</tspan>)}
     </text>)
   })
@@ -167,6 +172,9 @@ function cutRectPath([x, y, w, h], cuts) {
   return d
 }
 
+// 네모 모서리 둥글기 — .ecad rect `radius`(2026-10-18, 반 변 넘지 않게)
+export const rr = it => (it.radius ? Math.min(it.radius, Math.abs(it.rect[2]) / 2, Math.abs(it.rect[3]) / 2) : undefined)
+
 // 포트(도형 테두리에 붙은 작은 상자·원) — 가운데 = 테두리 위 비율 자리
 function Ports({ it, onBoard }) {
   const [x, y, w, h] = it.rect
@@ -179,7 +187,7 @@ function Ports({ it, onBoard }) {
 
 // ── 아이템 하나 ── (memo: 확대·이동만 바뀌면 다시 그리지 않음 — 9천 개 도면에서 휠 한 칸이 340ms였다)
 // labels = 'inline'(기본 — 내보내기) | 'skip'(화살표 라벨은 빼고) | 'only'(화살표 라벨만 — 편집 화면이 모든 선 위에 한 번 더 그림)
-export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode = 'inline' }) {   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
+export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode = 'inline', page }) {   // page = 종이틀 쪽 번호(편집 화면만)   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
   const T = itemTransform(it), fill = it.fill ? cssColor(it.fill) : 'none'
   if (lmode === 'only' && it.type !== 'sarrow' && it.type !== 'arrow') return null
   switch (it.type) {
@@ -188,7 +196,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
       let body
       if (it.type === 'rect') body = it.cuts?.length
         ? <><rect x={x} y={y} width={w} height={h} fill={fill} stroke="none" /><path d={cutRectPath(it.rect, it.cuts)} fill="none" {...strokeProps(it, onBoard)} /></>
-        : <rect x={x} y={y} width={w} height={h} fill={fill} {...strokeProps(it, onBoard)} />
+        : <rect x={x} y={y} width={w} height={h} rx={rr(it)} ry={rr(it)} fill={fill} {...strokeProps(it, onBoard)} />
       else if (it.type === 'ellipse') body = <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} fill={fill} {...strokeProps(it, onBoard)} />
       else body = <g transform={`translate(${x},${y})`}><path d={symbolPath(it.kind, w, h).d} fill={fill} {...strokeProps(it, onBoard)} /></g>
       return <g transform={T}>{body}<Ports it={it} onBoard={onBoard} /><CenterLabel it={it} onBoard={onBoard} /></g>
@@ -237,10 +245,12 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
       const [x, y, w, h] = it.rect, rows = it.rows, ch = h / rows, edges = colEdges(x, w, it.col_widths || Array(it.cols).fill(1 / it.cols))
       const cells = []
       for (let r = 0; r < rows; r++) for (let c = 0; c < it.cols; c++) {
-        const txt = it.cells?.[r]?.[c]; if (!txt) continue
-        const cw = edges[c + 1] - edges[c], fs = cellFontPx(txt, cw, ch, it.header && r === 0, it.font ? it.font * PT : 0)
-        cells.push(<text key={`${r}-${c}`} x={(edges[c] + edges[c + 1]) / 2} y={y + (r + 0.5) * ch} textAnchor="middle" dominantBaseline="central"
-          fontSize={fs} fontWeight={it.header && r === 0 ? 700 : 400} fontFamily={APP_FONT} fill={ink(it.color || '#111111', onBoard)}>{txt}</text>)
+        const txt = it.cells?.[r]?.[c], cs = cellStyle(it, r, c), cw = edges[c + 1] - edges[c]
+        if (cs.fill) cells.push(<rect key={`f${r}-${c}`} x={edges[c]} y={y + r * ch} width={cw} height={ch} fill={cssColor(cs.fill)} />)   // 칸 채움(글 밑)
+        if (!txt) continue
+        const fs = cellFontPx(txt, cw, ch, cs.bold, cs.px), al = cs.align
+        cells.push(<text key={`${r}-${c}`} x={al === 'left' ? edges[c] + 3 : al === 'right' ? edges[c + 1] - 3 : (edges[c] + edges[c + 1]) / 2} y={y + (r + 0.5) * ch} textAnchor={al === 'left' ? 'start' : al === 'right' ? 'end' : 'middle'} dominantBaseline="central"
+          fontSize={fs} fontWeight={cs.bold ? 700 : 400} fontFamily={APP_FONT} fill={ink(cs.color || '#111111', onBoard || !!cs.fill)}>{txt}</text>)   // 채운 칸 안 글 = 제 색(채운 도형 라벨과 같은 규칙)
       }
       const lines = [...edges.slice(1, -1).map(ex => `M${ex},${y} V${y + h}`), ...Array.from({ length: rows - 1 }, (_, j) => `M${x},${y + (j + 1) * ch} H${x + w}`)]
       const tl = ink(it.pen || '#333333', onBoard)
@@ -250,7 +260,11 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
     }
     case 'titleblock': {
       const [W, H] = paperWH(it.size, it.orient), M = 10, line = ink('#333333', onBoard), inkC = ink('#111111', onBoard)
-      if (it.plain) return <g transform={T}><rect width={W} height={H} fill="none" stroke={line} strokeWidth={0.5} /></g>
+      if (it.plain) return <g transform={T}>   {/* 종이틀(2026-10-18) — 화면에선 옅은 종이 면 + 쪽 이름, 내보내기 그림엔 테두리만 */}
+        {page != null && <rect width={W} height={H} fill="var(--mb-paper, rgba(127,127,127,.06))" stroke="none" />}
+        <rect width={W} height={H} fill="none" stroke={page != null ? 'var(--mb-muted, #8a98a8)' : line} style={page != null ? minStroke(0.4) : undefined} strokeWidth={0.5} strokeDasharray={page != null ? '4 3' : undefined} />
+        {page != null && <text x={0} y={-3} fontSize={Math.min(W, H) * 0.035} fontFamily={APP_FONT} fill="var(--mb-muted, #8a98a8)">{page}쪽 · {it.size} {it.orient === 'landscape' ? '가로' : '세로'}</text>}
+      </g>
       const tbw = Math.min(180, W - 2 * M), tb = { x: W - M - tbw, y: H - M - 33, w: tbw, h: 33 }
       const hW = TB_ROWS.reduce((s, r) => s + r[0], 0), out = []
       let yy = tb.y

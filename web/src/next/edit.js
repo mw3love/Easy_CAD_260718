@@ -268,6 +268,19 @@ export function followArrows(items, rectOf) {
 // ── 표 행·열 넣기·지우기(2026-10-18, 데스크톱에도 아직 없음 — 웹 먼저) ──
 // op = 'rowAbove'|'rowBelow'|'colLeft'|'colRight'|'delRow'|'delCol', (r, c) = 기준 칸. 행 높이·열 폭은 그대로 두고 표가 늘거나 줄어든다(넣는 열 = 기준 열 폭)
 export function tableOp(it, op, r, c) {
+  const out = tableOpBody(it, op, r, c)
+  if (out === it || !it.cell_styles) return out
+  const shift = (i, at, del) => (del ? (i === at ? -1 : i > at ? i - 1 : i) : i >= at ? i + 1 : i)   // 넣은/지운 줄 뒤는 한 칸 밀림, 지운 줄은 사라짐
+  const ns = {}
+  for (const [k, v] of Object.entries(it.cell_styles)) {
+    let [rr, cc] = k.split(',').map(Number)
+    if (op === 'rowAbove') rr = shift(rr, r); else if (op === 'rowBelow') rr = shift(rr, r + 1); else if (op === 'delRow') rr = shift(rr, r, true)
+    else if (op === 'colLeft') cc = shift(cc, c); else if (op === 'colRight') cc = shift(cc, c + 1); else if (op === 'delCol') cc = shift(cc, c, true)
+    if (rr >= 0 && cc >= 0) ns[`${rr},${cc}`] = v
+  }
+  return { ...out, cell_styles: ns }
+}
+function tableOpBody(it, op, r, c) {
   const [x, y, w, h] = it.rect, rows = it.rows, cols = it.cols, ch = h / rows
   const fr = it.col_widths?.length === cols ? it.col_widths : Array(cols).fill(1 / cols), cw = fr.map(f => f * w)
   let cells = Array.from({ length: rows }, (_, i) => Array.from({ length: cols }, (_, j) => it.cells?.[i]?.[j] || ''))
@@ -284,4 +297,20 @@ export function tableOp(it, op, r, c) {
     return { ...it, cols: cols - 1, cells, col_widths: ws.map(v => v / W), rect: [x, y, W, h] }
   }
   return it
+}
+
+// ── 종이틀 쪽 순서(데스크톱 `pdf_export._reading_order` 옮김 + 칸 우선) ──
+// boxes = [{ x, y, w, h, ... }] → 순서대로. 'rows' = 줄 우선(위 줄부터 왼쪽 → 오른쪽, 위 가장자리가 앞 줄 높이의 절반 안이면 같은 줄 — CAD 리습의 지그재그),
+// 'cols' = 칸 우선(왼쪽 칸부터 위 → 아래, 왼쪽 가장자리가 앞 칸 폭의 절반 안이면 같은 칸)
+export function readingOrder(boxes, mode = 'rows') {
+  const R = mode === 'cols', a = b => (R ? b.x : b.y), s = b => (R ? b.w : b.h), o = b => (R ? b.y : b.x)
+  const sorted = [...boxes].sort((p, q) => a(p) - a(q) || o(p) - o(q))
+  const lines = []; let line = [], top = 0, size = 0
+  for (const b of sorted) {
+    if (line.length && a(b) > top + size * 0.5) { lines.push(line); line = [] }
+    if (!line.length) { top = a(b); size = s(b) } else size = Math.min(size, s(b))
+    line.push(b)
+  }
+  if (line.length) lines.push(line)
+  return lines.flatMap(l => l.sort((p, q) => o(p) - o(q)))
 }
