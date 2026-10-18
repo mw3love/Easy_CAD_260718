@@ -1648,3 +1648,4 @@
 - 웹 칠판 입력 칸(TipTap)에서 Esc로 끝내며 칠판 상태를 바꾸면(줄 고르기), 같은 keydown이 window의 칠판 Esc(= 고르기 풀기)까지 올라가 바로 풀어 버림 — 리액트가 리스너 사이에 렌더를 끝내 `editing`이 이미 null. 입력 칸 `handleKeyDown`에서 `stopPropagation`.
 - 웹 칠판 TipTap 편집기: `autofocus: 'end'`는 한 박자 늦게 돌아, 만든 직후 `setTextSelection`으로 둔 커서(두 번 누른 자리)를 끝으로 덮어씀 — 자리를 직접 둘 땐 autofocus를 끔.
 - 웹 칠판: 시험 창(Playwright 등)이 가려져 있으면 requestAnimationFrame 콜백이 안 옴 — "다음 그림 뒤에" 할 일은 setTimeout 0으로.
+- 웹 칠판: 첫 effect(`[]`)에서 부른 `useCallback` 함수는 처음 그린 때의 값(화면 크기 1×1)을 붙잡고 있음 — 서버 답이 늦게 와도 그 옛 함수로 전체 맞추기가 돌아 배율 2%, 그 값이 「마지막 자리」로 저장돼 계속 2%. 맞추기 직전에 `getBoundingClientRect`로 직접 잼.
