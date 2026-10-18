@@ -29,3 +29,17 @@ test('블록 묶기·쉬운 글', () => {
   assert.deepEqual(memoBlocks(L).map(b => [b.k, b.lines.length]), [['code', 2], ['p', 1], ['quote', 2]])
   assert.equal(memoText([{ k: 'h2', t: '제목' }, { k: 'todo', t: '할 일', done: true }, { k: 'ol', t: '하나' }, { k: 'ul', t: '안', lv: 1 }]), '## 제목\n☑ 할 일\n1. 하나\n  • 안')
 })
+
+test('2차 — 끌 단위(하위 항목·코드 덩어리)·옮기기·꺼내기·전환·줄 색', async () => {
+  const { convertLine, lineUnit, moveUnit, recolorLine, takeUnit } = await import('../src/next/memo.js')
+  const L = [{ k: 'p', t: 'a' }, { k: 'ul', t: 'b' }, { k: 'ul', t: 'b1', lv: 1 }, { k: 'ul', t: 'b2', lv: 2 }, { k: 'ul', t: 'c' }, { k: 'code', t: 'x' }, { k: 'code', t: 'y' }]
+  assert.deepEqual(lineUnit(L, 1), [1, 4]); assert.deepEqual(lineUnit(L, 2), [2, 4]); assert.deepEqual(lineUnit(L, 6), [5, 7]); assert.deepEqual(lineUnit(L, 0), [0, 1])
+  assert.deepEqual(moveUnit(L, [1, 4], 0).map(l => l.t), ['b', 'b1', 'b2', 'a', 'c', 'x', 'y'])
+  assert.deepEqual(moveUnit(L, [0, 1], 5).map(l => l.t), ['b', 'b1', 'b2', 'c', 'a', 'x', 'y'])
+  assert.equal(moveUnit(L, [1, 4], 2), L)   // 자기 자리 안
+  const { rest, unit } = takeUnit(L, [2, 4])
+  assert.deepEqual(unit, [{ k: 'ul', t: 'b1' }, { k: 'ul', t: 'b2', lv: 1 }]); assert.equal(rest.length, 5)
+  assert.deepEqual(convertLine({ k: 'todo', t: 't', done: true, lv: 1, runs: [[0, 1, null, true]] }, 'code'), { k: 'code', t: 't' })
+  assert.deepEqual(recolorLine({ k: 'p', t: 'abc', runs: [[1, 1, null, true]] }, { color: '#d44c47' }).runs, [[0, 1, '#d44c47', false], [1, 1, '#d44c47', true], [2, 1, '#d44c47', false]])
+  assert.equal(recolorLine({ k: 'p', t: 'ab', runs: [[0, 2, '#d44c47', false]] }, { color: null }).runs, undefined)
+})

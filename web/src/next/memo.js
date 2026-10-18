@@ -117,3 +117,50 @@ export function docToLines(doc) {
   }
   return out.map(ln => { const o = { k: ln.k, t: ln.t }; if (ln.runs) o.runs = ln.runs; if (ln.done) o.done = true; if (ln.lv) o.lv = ln.lv; return o })
 }
+
+// ── 2차: 줄 손잡이(⠿) — 끌 단위·옮기기·꺼내기·전환·색 ──
+// 끌 단위 [시작, 끝) — 코드·인용 = 이어진 덩어리 전체, 목록 줄 = 그 아래 더 깊은 줄까지(노션처럼 하위 항목이 따라옴), 나머지 = 그 줄
+export function lineUnit(lines, i) {
+  const ln = lines[i]; if (!ln) return [i, i]
+  if (ln.k === 'code' || ln.k === 'quote') { let s = i, e = i + 1; while (s > 0 && lines[s - 1].k === ln.k) s--; while (e < lines.length && lines[e].k === ln.k) e++; return [s, e] }
+  let e = i + 1
+  if (LISTY.has(ln.k)) while (e < lines.length && LISTY.has(lines[e].k) && (lines[e].lv || 0) > (ln.lv || 0)) e++
+  return [i, e]
+}
+// 단위 떼어 내기 — 떼어 낸 줄은 깊이를 맨 앞 줄 기준 0부터로
+export function takeUnit(lines, [s, e]) {
+  const base = lines[s]?.lv || 0
+  const unit = lines.slice(s, e).map(ln => { const o = { ...ln }, lv = (ln.lv || 0) - base; if (lv > 0) o.lv = lv; else delete o.lv; return o })
+  return { rest: [...lines.slice(0, s), ...lines.slice(e)], unit }
+}
+// 같은 메모 안에서 옮기기 — to = 원래 줄 번호 기준으로 끼워 넣을 자리(0…길이). 자기 자리 안이면 그대로
+export function moveUnit(lines, [s, e], to) {
+  if (to >= s && to <= e) return lines
+  const { rest, unit } = takeUnit(lines, [s, e])
+  const at = to > e ? to - (e - s) : to
+  return [...rest.slice(0, at), ...unit, ...rest.slice(at)]
+}
+// 줄 종류 바꾸기(전환) — 코드는 부분 서식 없이, 할 일이 아니면 체크 없음, 목록이 아니면 깊이 없음
+export function convertLine(ln, k) {
+  const o = { ...ln, k }
+  if (k === 'code') delete o.runs
+  if (k !== 'todo') delete o.done
+  if (!LISTY.has(k)) delete o.lv
+  return o
+}
+// 줄 전체 색(글자 color · 배경 bg — 둘 다 null = 기본) — 부분 서식(굵게·코드)은 지키고 색만 줄 전체에
+export function recolorLine(ln, { color, bg }) {
+  const n = (ln.t || '').length; if (!n || ln.k === 'code') return ln
+  const at = Array.from({ length: n }, () => ({ color: null, bold: false, bg: null, mono: false }))
+  for (const [s, len, c, b, g, m] of ln.runs || []) for (let i = Math.max(0, s); i < Math.min(n, s + len); i++) at[i] = { color: c || null, bold: !!b, bg: g || null, mono: !!m }
+  for (const a of at) { if (color !== undefined) a.color = color; if (bg !== undefined) a.bg = bg }
+  const runs = []
+  for (let i = 0; i < n;) { const a = at[i]; let j = i + 1; while (j < n && JSON.stringify(at[j]) === JSON.stringify(a)) j++
+    if (a.mono) runs.push([i, j - i, a.color, a.bold, a.bg, true]); else if (a.color || a.bold || a.bg) runs.push([i, j - i, a.color, a.bold, ...(a.bg ? [a.bg] : [])]); i = j }
+  const o = { ...ln }; if (runs.length) o.runs = runs; else delete o.runs; return o
+}
+// 전환 메뉴 차례(노션 「전환」에서 메모에 맞는 것만 — 2026-10-18 사용자와 정함)
+export const LINE_KINDS = [['p', '텍스트'], ['h1', '제목1'], ['h2', '제목2'], ['h3', '제목3'], ['ul', '글머리 기호 목록'], ['ol', '번호 매기기 목록'], ['todo', '할 일 목록'], ['code', '코드'], ['quote', '인용']]
+// 색(노션 「색」 — 글자 / 배경). 배경은 옅게(형광펜처럼 글자 뒤)
+export const LINE_COLORS = [['기본', null, null], ['회색', '#787774', '#55e3e2e0'], ['갈색', '#9f6b53', '#55eee0da'], ['주황', '#d9730d', '#55fadec9'], ['노랑', '#cb912f', '#66fdecc8'],
+  ['초록', '#448361', '#55dbeddb'], ['파랑', '#337ea9', '#55d3e5ef'], ['보라', '#9065b0', '#55e8deee'], ['분홍', '#c14c8a', '#55f5e0e9'], ['빨강', '#d44c47', '#55ffe2dd']]

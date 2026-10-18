@@ -33,7 +33,7 @@ import { ContextMenu } from './ctxmenu.jsx'
 import { freeSpot, sourceLine } from '../chatFormat.js'
 import { fetchLinkInfo, normalizeUrl, openBtnRect, siteOf, webCardFields } from './webcard.js'
 import { buildLegend, isLegendPart, legendEntries, legendState } from './legend.js'
-import { MEMO, memoFromAnswer, memoText } from './memo.js'
+import { LINE_COLORS, LINE_KINDS, MEMO, convertLine, lineUnit, memoFromAnswer, memoText, moveUnit, recolorLine, takeUnit } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
@@ -221,6 +221,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     }
     const lk = frameLockAt(p); if (lk) { setLoose(l => (l === lk._id ? null : lk._id)); return }   // 이름표 옆 자물쇠 — 잠깐 틀만
     const wo = webOpenAt(p); if (wo) { window.open(wo.url, '_blank', 'noopener'); return }   // 웹 카드 오른쪽 위 ↗ = 새 탭
+    const mh = memoHandleHit(p); if (mh) { setSel([mh.it._id]); st.current = { ...st.current, kind: 'mline', id: mh.it._id, unit: [mh.s, mh.e], start: p, moved: false }; return }   // ⠿
     const mc = memoCheckAt(p); if (mc) { const ln = mc.it.lines[mc.i]; commit(m.items.map(x => (x._id === mc.it._id ? { ...x, lines: x.lines.map((l, j) => (j === mc.i ? (l.done ? (({ done, ...r }) => r)(l) : { ...l, done: true }) : l)) } : x)), R.current.sel, ln.done ? '할 일 풂' : '할 일 끝'); return }
     const h = handleAt(p)
     if (h?.qc) { st.current = { ...st.current, kind: 'conn', src: single._id, side: h.key.slice(3), port: h.port, start: p, cur: p, fromQc: true, moved: false }; return }
@@ -252,7 +253,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const tagHit = hitPool().find(it => it.type === 'frame' && !it.locked && (b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h)(frameTagBox(it)))
     if (tagHit) { const ids = add ? [...new Set([...R.current.sel, tagHit._id])] : R.current.sel.includes(tagHit._id) ? R.current.sel : [tagHit._id]; setSel(ids)
       st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: e.altKey ? ids : movingSet(ids), sel: ids, moved: false }; return }
-    if (!add && !e.altKey) { const hp = hoverPort(p); if (hp?.target) { st.current = { ...st.current, kind: 'conn', src: hp.target.id, port: { p: hp.target.p, n: hp.target.n }, start: p, cur: p, fromQc: false, moved: false }; return } }
+    if (!add && !e.altKey && !inMemoGutter(p)) { const hp = hoverPort(p); if (hp?.target) { st.current = { ...st.current, kind: 'conn', src: hp.target.id, port: { p: hp.target.p, n: hp.target.n }, start: p, cur: p, fromQc: false, moved: false }; return } }
     const hit = topHit(hitPool(), p, HIT_PX / z, textBox) || groupAt(p)
     // 이미 고른 표를 한 번 더 누르면 그 칸을 고름(놓을 때 — 끌면 표 이동), Shift = 범위로 늘림(2026-10-18 사용자: 어느 칸을 눌렀는지 알 수 없음)
     if (hit?.type === 'table' && R.current.sel.length === 1 && R.current.sel[0] === hit._id) {
@@ -276,6 +277,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     R.current.mouse = p   // 주소 붙여넣기 = 커서 자리에
     if (!s.kind) { hoverCursor(p); return }
     if (s.kind === 'pan') { setCam({ ...s.cam, x: s.cam.x + e.clientX - s.sx, y: s.cam.y + e.clientY - s.sy }); return }
+    if (s.kind === 'mline') { if (!s.moved && Math.hypot(p.x - s.start.x, p.y - s.start.y) * z < 4) return; s.moved = true; setCursor('grabbing'); setOverlay(o => ({ ...o, mdrop: { ...memoDropAt(p), from: s.id } })); return }
     if (s.kind === 'move') {
       let dx = p.x - s.start.x, dy = p.y - s.start.y
       if (!s.moved && Math.hypot(dx, dy) * z < 3) return
@@ -396,6 +398,9 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       const r = svg.current.getBoundingClientRect(), one = R.current.sel.length === 1 && R.current.model.items.find(x => x._id === R.current.sel[0])
       const cell = one?.type === 'table' ? (cellAt(one, toLocal(one, p)) || (cellSel?.id === one._id ? { r: cellSel.r1, c: cellSel.c1 } : null)) : null   // 고른 표의 칸 위에서 우클릭 = 그 칸 기준 행·열 메뉴
       setMenu({ x: e.clientX - r.left, y: e.clientY - r.top, cell }); return }
+    if (s.kind === 'mline') { setOverlay(o => ({ ...o, mdrop: null }))
+      if (!s.moved) { const r = svg.current.getBoundingClientRect(); setLineMenu({ x: e.clientX - r.left + 6, y: e.clientY - r.top - 6, id: s.id, s: s.unit[0], e: s.unit[1] }); return }   // 제자리 = 그 줄 메뉴
+      memoLineDrop(s, p); return }
     if (s.kind === 'conn') {
       setOverlay(o => ({ ...o, conn: null, hp: null }))
       if (!s.moved) { if (s.tool === 'arrow') return; if (s.fromQc) qcCreate(s.src, s.side); else setSel(expandGroups(R.current.model.items, [s.src])); return }
@@ -475,6 +480,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     return { x: (it.pos?.[0] || 0) + x, y: (it.pos?.[1] || 0) + y - fs * 1.7, w, h: fs * 1.45, fs } }
   const frameLockAt = p => { const it = single?.type === 'frame' && !single.locked ? single : null; if (!it) return null
     const b = frameTagBox(it), s = b.h; return p.x >= b.x + b.w + b.fs * 0.3 && p.x <= b.x + b.w + b.fs * 0.3 + s && p.y >= b.y && p.y <= b.y + s ? it : null }
+  const [memoHov, setMemoHov] = useState(null); R.current.memoHov = memoHov   // 마우스를 올린 메모 줄 { id, s, e } — 왼쪽에 ⠿ 손잡이(2026-10-18 사용자: 노션처럼)
+  const [lineMenu, setLineMenu] = useState(null)   // ⠿를 누르면 그 줄 메뉴 { x, y, id, s, e }
   const [webOn, setWebOn] = useState(null); R.current.webOn = webOn   // 칸 안을 조작 중인 웹 카드 _id(두 번 누르기 — 2026-10-18 사용자)
   const [tagEdit, setTagEdit] = useState(null)   // 이름표를 두 번 눌러 고치는 중인 프레임 _id
   const [present, setPresent] = useState(null)   // 발표 중이면 시작 장 번호
@@ -540,6 +547,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
 
   function hoverCursor(p) {
     const t = R.current.tool
+    if (t === 'select' && !R.current.editing) { const hv = memoRowAt(p), k = hv ? `${hv.it._id}:${hv.s}:${hv.e}` : null   // 메모 줄 위 = 왼쪽 ⠿
+      if (k !== (R.current.memoHov ? `${R.current.memoHov.id}:${R.current.memoHov.s}:${R.current.memoHov.e}` : null)) setMemoHov(hv ? { id: hv.it._id, s: hv.s, e: hv.e } : null)
+      if (hv && memoHandleHit(p)) { setHp(null); setCursor('grab'); return }
+      if (hv && inMemoGutter(p)) { setHp(null); setCursor('default'); return } }
     if (t === 'arrow') { const near = hostsNear(p), lines = linesNear(p), tg = snapAt(near, p, R.current.cam.z, rectOf, lines); setHp(near.length || tg ? { id: tg?.id ?? near.at(-1)?._id ?? null, target: tg } : null); setCursor('crosshair'); return }   // 붙을 자리 예고
     if (t !== 'select') { setCursor(t === 'text' ? 'text' : 'crosshair'); return }
     if (!single && R.current.sel.length > 1) { const mb = multiBoxNow(); if (mb) { const cs = [[mb.x, mb.y, 'nwse-resize'], [mb.x + mb.w, mb.y, 'nesw-resize'], [mb.x + mb.w, mb.y + mb.h, 'nwse-resize'], [mb.x, mb.y + mb.h, 'nesw-resize']]
@@ -694,6 +705,67 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const memoCheckAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'memo' || it.locked) continue
     const q = toLocal(it, p), [x0, y0] = it.rect, pad = 3 / z / (it.scale || 1)
     for (const r of memoLayout(it).rows) if (r.box && q.x >= x0 + r.box.x - pad && q.x <= x0 + r.box.x + r.box.s + pad && q.y >= y0 + r.box.y - pad && q.y <= y0 + r.box.y + r.box.s + pad) return { it, i: r.i } } return null }
+  // ── 메모 2차: 줄 손잡이(⠿) — 끌기 = 줄 순서(다른 메모로도), 메모 밖에 놓기 = 새 메모(칠판으로 꺼내기), 누르기 = 메뉴 ──
+  const rowBottom = (rows, k, h) => (rows[k + 1] ? rows[k + 1].y : h - MEMO.PAD)
+  function memoRowAt(p, margin = 28) {   // 메모 줄 위(또는 그 왼쪽 손잡이 자리) — 맨 위 메모부터
+    const z = R.current.cam.z
+    for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'memo' || it.locked) continue
+      const q = toLocal(it, p), [x0, y0, w, h] = it.rect, mg = margin / z / (it.scale || 1)
+      if (q.x < x0 - mg || q.x > x0 + w || q.y < y0 || q.y > y0 + h) continue
+      const rows = memoLayout(it).rows; let r = rows[0]
+      for (const row of rows) if (q.y >= y0 + row.y) r = row
+      const [s, e] = lineUnit(it.lines || [], r.i); return { it, s, e } }
+    return null
+  }
+  function memoHandleRect(it, s) {   // ⠿ 자리(아이템 안 좌표) — 메모 왼쪽 바깥, 화면에서 늘 같은 크기
+    const k = R.current.cam.z * (it.scale || 1), r = memoLayout(it).rows.find(x => x.i === s) || memoLayout(it).rows[0], w = 16 / k, h = 22 / k
+    return { x: it.rect[0] - w - 4 / k, y: it.rect[1] + r.cy - h / 2, w, h }
+  }
+  function memoHandleHit(p) {
+    const hv = R.current.memoHov, it = hv && R.current.model.items.find(x => x._id === hv.id); if (!it) return null
+    const q = toLocal(it, p), b = memoHandleRect(it, hv.s); return q.x >= b.x && q.x <= b.x + b.w && q.y >= b.y && q.y <= b.y + b.h ? { it, s: hv.s, e: hv.e } : null
+  }
+  function inMemoGutter(p) {   // ⠿가 뜨는 메모 왼쪽 띠 — 여기선 화살표 뽑기(포트점)를 안 함(손잡이를 조금 빗나가도 화살표가 생기지 않게)
+    const hv = R.current.memoHov, it = hv && R.current.model.items.find(x => x._id === hv.id); if (!it) return false
+    const q = toLocal(it, p), mg = 28 / R.current.cam.z / (it.scale || 1); return q.x >= it.rect[0] - mg && q.x <= it.rect[0] + MEMO.PAD && q.y >= it.rect[1] && q.y <= it.rect[1] + it.rect[3]
+  }
+  function memoDropAt(p) {   // 끌어 놓을 자리 — 메모 위면 { id, to(줄 번호), y(안 좌표) }, 아니면 { out: p }
+    const hit = memoRowAt(p, 0); if (!hit) return { out: p }
+    const it = hit.it, q = toLocal(it, p), rows = memoLayout(it).rows, h = it.rect[3], y0 = it.rect[1]
+    for (let k = 0; k < rows.length; k++) { const r = rows[k]; if (r.joinPrev) continue
+      if (q.y < y0 + (r.y + rowBottom(rows, k, h)) / 2) return { id: it._id, to: r.i, y: y0 + r.y - MEMO.GAP / 2 } }
+    return { id: it._id, to: (it.lines || []).length, y: y0 + h - MEMO.PAD + 2 }
+  }
+  const withLines = (it, lines) => ({ ...it, lines: lines.length ? lines : [{ k: 'p', t: '' }] })
+  function memoLineDrop(s, p) {   // 놓기 — 같은 메모 = 순서, 다른 메모 = 옮겨 넣기, 밖 = 새 메모
+    const m = R.current.model, src = m.items.find(x => x._id === s.id); if (!src) return
+    const tg = memoDropAt(p)
+    if (tg.id === src._id) { commit(m.items.map(x => (x._id === src._id ? withLines(x, moveUnit(x.lines, s.unit, tg.to)) : x)), [src._id], '줄 옮김'); return }
+    const { rest, unit } = takeUnit(src.lines, s.unit)
+    if (tg.id) { const dst = m.items.find(x => x._id === tg.id)
+      commit(m.items.map(x => (x._id === src._id ? withLines(x, rest) : x._id === dst._id ? withLines(x, [...x.lines.slice(0, tg.to), ...unit, ...x.lines.slice(tg.to)]) : x)), [dst._id], '줄 옮김'); return }
+    const sc = src.scale || 1, it = base([p.x - 24 * sc, p.y - 16 * sc], { type: 'memo', rect: [0, 0, src.rect[2], 40], fill: src.fill, lines: unit, scale: sc, z: topZ(m.items) + 1 })
+    const nw = { ...it, rect: [0, 0, src.rect[2], memoHeight(it)] }
+    commit([...m.items.map(x => (x._id === src._id ? withLines(x, rest) : x)), nw], [nw._id], '칠판으로 꺼냄')
+  }
+  function lineMenuEntries(lm) {
+    const m = R.current.model, it = m.items.find(x => x._id === lm.id); if (!it) return []
+    const L = it.lines, { s, e } = lm, cur = L[s], close = () => setLineMenu(null)
+    const apply = (f, label) => () => { close(); const mm = R.current.model, x0 = mm.items.find(x => x._id === it._id); if (!x0) return; commit(mm.items.map(x => (x._id === it._id ? withLines(x, f(x.lines)) : x)), [it._id], label) }
+    const each = f => lines => lines.map((l, j) => (j >= s && j < e ? f(l) : l))
+    const sw = (c, txt, bg) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ display: 'inline-flex', width: 18, height: 18, alignItems: 'center', justifyContent: 'center', borderRadius: 4, border: '1px solid var(--mb-line)', color: c || 'inherit', background: bg ? cssColor(bg) : 'transparent', fontWeight: 600 }}>A</span>{txt}</span>
+    return [
+      ['전환', '', null, LINE_KINDS.map(([k, name]) => [(cur.k === k ? '✓ ' : '') + name, apply(each(l => convertLine(l, k)), '줄 전환')])],
+      ['색', '', null, [...LINE_COLORS.map(([n, c]) => [sw(c, `${n} 텍스트`), apply(each(l => recolorLine(l, { color: c })), '줄 색')]), '-',
+        ...LINE_COLORS.map(([n, , b]) => [sw(null, `${n} 배경`, b), apply(each(l => recolorLine(l, { bg: b })), '줄 배경')])]],
+      '-',
+      ['복제', '', apply(lines => [...lines.slice(0, e), ...structuredClone(lines.slice(s, e)), ...lines.slice(e)], '줄 복제')],
+      ['삭제', '', apply(lines => [...lines.slice(0, s), ...lines.slice(e)], '줄 지움')],
+      '-',
+      ['칠판으로 꺼내기', '', () => { close(); const mm = R.current.model, x0 = mm.items.find(x => x._id === it._id); if (!x0) return; const b = sceneBox(x0, textBox)
+        memoLineDrop({ id: it._id, unit: [s, e] }, { x: b.x + b.w + 40 * (x0.scale || 1) + 24 * (x0.scale || 1), y: b.y + 16 * (x0.scale || 1) }) }],
+    ]
+  }
   function finishMemo(lines) {
     const ed = R.current.editing; setEditing(null); if (!ed || !lines) return
     const m = R.current.model, it = m.items.find(x => x._id === ed.id); if (!it) return
@@ -1190,6 +1262,12 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
             : h.qc ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={(HANDLE * (hoverKey === h.key ? 0.75 : 0.45)) / z} fill={QC_BLUE} stroke="#fff" strokeWidth={1 / z} style={{ transition: 'r .12s ease-out' }} />
             : h.round ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={HANDLE / 2 / z} fill={PEACH} stroke="#fff" strokeWidth={1 / z} />
             : <rect key={h.key} x={h.p.x - HANDLE / 2 / z} y={h.p.y - HANDLE / 2 / z} width={HANDLE / z} height={HANDLE / z} fill={BLUE} stroke="#fff" strokeWidth={1 / z} />))}
+          {memoHov && !editing && !live && (() => { const it = byId.get(memoHov.id); if (!it || it.type !== 'memo') return null; const b = memoHandleRect(it, memoHov.s), k = z * (it.scale || 1)
+            return <g transform={transformOf(it)} style={{ pointerEvents: 'none' }}><rect x={b.x} y={b.y} width={b.w} height={b.h} rx={4 / k} fill="rgba(127,127,127,.16)" />
+              {[0, 1, 2].flatMap(r => [0, 1].map(c => <circle key={`${r}${c}`} cx={b.x + b.w * (c ? 0.66 : 0.34)} cy={b.y + b.h * (0.28 + r * 0.22)} r={1.5 / k} fill="#8a8f98" />))}</g> })()}
+          {overlay.mdrop && (overlay.mdrop.out
+            ? <rect x={overlay.mdrop.out.x - 24 / z} y={overlay.mdrop.out.y - 16 / z} width={200 / z} height={34 / z} rx={8 / z} fill="rgba(137,180,250,.12)" stroke={BLUE} strokeWidth={1.5 / z} strokeDasharray={`${5 / z} ${3 / z}`} />
+            : (() => { const it = byId.get(overlay.mdrop.id); return it && <g transform={transformOf(it)}><line x1={it.rect[0] + MEMO.PAD} x2={it.rect[0] + it.rect[2] - MEMO.PAD} y1={overlay.mdrop.y} y2={overlay.mdrop.y} stroke={BLUE} strokeWidth={3 / z / (it.scale || 1)} strokeLinecap="round" /></g> })())}
           {overlay.conn && <polyline points={overlay.conn.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={BLUE} strokeWidth={2 / z} strokeDasharray={`${6 / z} ${4 / z}`} />}
           {portDots}
           {overlay.segPrev && !live && pill('segprev', overlay.segPrev.p, overlay.segPrev.horizontal, false)}
@@ -1206,6 +1284,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
           {overlay.poly && <polyline points={overlay.poly.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />}
         </g>
       </svg>
+      {lineMenu && <ContextMenu at={lineMenu} onClose={() => setLineMenu(null)} entries={lineMenuEntries(lineMenu)} />}
       {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} entries={(() => {
         const m = R.current.model, ids = R.current.sel, has = ids.length > 0, selIt = m.items.filter(it => ids.includes(it._id)), act = f => () => { setMenu(null); f() }
         const out = []
