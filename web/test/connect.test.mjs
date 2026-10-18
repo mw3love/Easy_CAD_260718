@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { nearestBorder, shapePorts, snapAt, dropTarget, isConnHost } from '../src/next/connect.js'
+import { nearestBorder, shapePorts, snapAt, dropTarget, isConnHost, isBindHost, pathEndPorts } from '../src/next/connect.js'
 
 const cases = JSON.parse(readFileSync(new URL('./fixtures/connect_cases.json', import.meta.url)))
 const rectOf = it => it.rect
@@ -56,4 +56,29 @@ test('붙는 도형 종류(데스크톱 `_is_conn_host`)', () => {
   for (const t of ['rect', 'ellipse', 'symbol', 'image', 'table', 'text']) assert.ok(isConnHost({ type: t }), t)
   assert.ok(isConnHost({ type: 'polygon', closed: true })); assert.ok(!isConnHost({ type: 'polygon', closed: false }))
   for (const t of ['line', 'sarrow', 'arrow', 'board', 'path']) assert.ok(!isConnHost({ type: t }), t)
+})
+
+test('선·화살표에 붙기(좌표만) · 펜 궤적에 붙기(연결) — 데스크톱 `_border_snap_at` Pass 1·2', () => {
+  const rectOf = it => it.rect || [0, 0, 0, 0]
+  const line = { _id: 'L', type: 'line', pos: [0, 0], line: [0, 0, 100, 0] }
+  const pen = { _id: 'P', type: 'path', pos: [0, 200], elements: [['M', 0, 0], ['L', 50, 0], ['L', 100, 50]], freehand: true }
+  const box = { _id: 'B', type: 'rect', pos: [0, 0], rect: [100, -20, 60, 40] }   // 왼쪽 변 가운데 = (100,0) = 선 끝점과 같은 자리
+  // 선 끝점 근처 → 좌표만(id 없음), 바깥 방향
+  let s = snapAt([], { x: 105, y: 3 }, 1, rectOf, [line])
+  assert.equal(s.id, null); assert.deepEqual(s.p, { x: 100, y: 0 }); assert.deepEqual(s.n, { x: 1, y: 0 })
+  // 같은 거리면 도형 포트가 이김
+  s = snapAt([box], { x: 100, y: 5 }, 1, rectOf, [line])
+  assert.equal(s.id, 'B')
+  // 선 몸통 → 가장 가까운 점, 법선은 커서 쪽
+  s = snapAt([], { x: 50, y: -10 }, 1, rectOf, [line])
+  assert.equal(s.id, null); assert.deepEqual(s.p, { x: 50, y: 0 }); assert.equal(s.n.y, -1)
+  // 펜 궤적: 양 끝이 포트, 몸통에도 붙고 연결됨
+  assert.ok(isBindHost(pen) && !isConnHost(pen))
+  const ends = pathEndPorts(pen)
+  assert.deepEqual(ends.map(e => e.p), [{ x: 0, y: 200 }, { x: 100, y: 250 }])
+  assert.deepEqual(ends[0].n, { x: -1, y: 0 })
+  s = snapAt([pen], { x: 4, y: 206 }, 1, it => [0, 0, 100, 50]); assert.equal(s.id, 'P'); assert.ok(s.port)
+  s = snapAt([pen], { x: 25, y: 192 }, 1, it => [0, 0, 100, 50]); assert.equal(s.id, 'P'); assert.ok(!s.port); assert.deepEqual(s.p, { x: 25, y: 200 })
+  // 펜 궤적엔 '안'이 없어 다른 도형 속 포트 고르기에서 빠짐
+  assert.equal(dropTarget([pen], { x: 50, y: 230 }, 1, it => [0, 0, 100, 50], null), null)
 })

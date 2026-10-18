@@ -7,7 +7,7 @@ import { boardMembership, drawOrder, itemBounds } from './doc.js'
 import { PT, TEXT_MARGIN, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
-import { ROUTE_BOX, bindPt, dropTarget, edgeMid, isConnHost, nearestBorder, OPP, qcDelta, qcDots, shapePorts, snapAt } from './connect.js'
+import { ROUTE_BOX, bindPt, dropTarget, edgeMid, hostPorts, isBindHost, isConnHost, isSnapLine, nearestBorder, OPP, qcDelta, qcDots, snapAt } from './connect.js'
 import { routeOrtho } from '../route.js'
 import { projectToCurve, projectToPath, snapLabelOff } from './arrowedit.js'
 import { beginSegment, beginSubdivide, bendCurve, BEND_TS, curvePoint, dragSegment, endSegment, nearestSegment, onPill, SEG_HANDLE_PX, SEG_HIT_PX, segmentHandles, setCurveEnd, snapCurve, subdividePreview } from './arrowedit.js'
@@ -263,9 +263,9 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       return
     }
     if (s.kind === 'aend' && s.orig.find(x => x._id === s.id)?.type === 'arrow') {   // 곡선 끝점: 붙으면 S자로 다시 휨, 떼면 그 쪽 제어점만 같이(데스크톱 `_ArrowItem._move_endpoint_with_snap`)
-      const it = s.orig.find(x => x._id === s.id), tgt = snapAt(hostsNear(p), p, z, rectOf), end = tgt ? tgt.p : p, k = s.idx ? 'bind2' : 'bind1'
-      const host = tgt && s.orig.find(x => x._id === tgt.id), q = toLocal(it, end)
-      let next = { ...setCurveEnd(it, s.idx, [q.x, q.y]), ['_' + k]: tgt ? tgt.id : null, [k + '_pt']: tgt ? bindPt(host, tgt.p) : null, [k + '_group']: null }
+      const it = s.orig.find(x => x._id === s.id), tgt = snapAt(hostsNear(p), p, z, rectOf, linesNear(p, s.id)), end = tgt ? tgt.p : p, k = s.idx ? 'bind2' : 'bind1'
+      const host = tgt?.id && s.orig.find(x => x._id === tgt.id), q = toLocal(it, end)   // 선·화살표에 붙으면 host 없음 = 좌표만
+      let next = { ...setCurveEnd(it, s.idx, [q.x, q.y]), ['_' + k]: host ? tgt.id : null, [k + '_pt']: host ? bindPt(host, tgt.p) : null, [k + '_group']: null }
       if (tgt) {
         const ok = s.idx ? 'bind1' : 'bind2', oh = next['_' + ok] && s.orig.find(x => x._id === next['_' + ok]), opt = next[ok + '_pt']
         const on = oh && opt ? nearestBorder(oh, toScene(oh, { x: opt[0], y: opt[1] }), rectOf).n : null
@@ -275,10 +275,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       return
     }
     if (s.kind === 'aend') {
-      const it = s.orig.find(x => x._id === s.id), tgt = snapAt(hostsNear(p), p, z, rectOf), end = tgt ? tgt.p : p
+      const it = s.orig.find(x => x._id === s.id), tgt = snapAt(hostsNear(p), p, z, rectOf, linesNear(p, s.id)), end = tgt ? tgt.p : p
       const k = s.idx ? 'bind2' : 'bind1', last = it.pts.length - 1, [px, py] = it.pos || [0, 0], lp = [end.x - px, end.y - py]
-      const host = tgt && s.orig.find(x => x._id === tgt.id)
-      let next = { ...it, ['_' + k]: tgt ? tgt.id : null, [k + '_pt']: tgt ? bindPt(host, tgt.p) : null, [k + '_group']: null, route_hints: [], auto_route: tgt ? true : it.auto_route }   // 다시 붙이면 자동 길(데스크톱은 안 켬 — 옮길 후보)
+      const host = tgt?.id && s.orig.find(x => x._id === tgt.id)   // 선·화살표에 붙으면 host 없음 = 좌표만
+      let next = { ...it, ['_' + k]: host ? tgt.id : null, [k + '_pt']: host ? bindPt(host, tgt.p) : null, [k + '_group']: null, route_hints: [], auto_route: host ? true : it.auto_route }   // 다시 붙이면 자동 길(데스크톱은 안 켬 — 옮길 후보)
       next.pts = s.idx ? [it.pts[0], lp] : [lp, it.pts[last]]   // 끝점 끌기 = 새로 그리기처럼 길 전체 다시(데스크톱 `_move_endpoint_with_snap`)
       next = { ...next, pts: applyRouting(next, s.orig.map(x => (x._id === s.id ? next : x)), rectOf) }
       setLive(s.orig.map(x => (x._id === s.id ? next : x))); setOverlay(o => ({ ...o, hp: tgt ? { id: tgt.id, target: tgt } : null }))
@@ -324,21 +324,23 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
 
   // ── 화살표 잇기(3단계, 데스크톱 `core_view` `_hover_port_at`·`_qc_snap_target`·`_hp_create_arrow`·`_qc_create`) ──
   // 칠판 점 근처(화면 30px)의 붙는 도형 — 그리는 차례(위에 그린 것이 뒤)
-  function hostsNear(p, skip) {
+  function hostsNear(p, skip, test = isBindHost) {
     const m = HP_MARGIN / R.current.cam.z, out = []
     for (const [it] of R.current.order || []) {
-      if (!isConnHost(it) || it.locked || skip?.has(it._id)) continue
+      if (!test(it) || it.locked || skip?.has(it._id)) continue
       const b = sceneBox(it, textBox)
       if (p.x >= b.x - m && p.x <= b.x + b.w + m && p.y >= b.y - m && p.y <= b.y + b.h + m) out.push(it)
     }
     return out
   }
+  // 끝이 좌표로만 붙는 선·화살표(자기 자신은 빼고)
+  const linesNear = (p, skipId) => hostsNear(p, skipId ? new Set([skipId]) : null, isSnapLine)
   // 미선택 도형 포트점 예고 → { id(점 보일 도형), target(누르면 화살표가 시작될 자리 | null) } | null
   function hoverPort(p) {
     const sel = new Set(R.current.sel), items = R.current.model.items
     if (items.some(it => sel.has(it._id) && isConnHost(it) && inside(it, p))) return null   // 고른 도형 속 = 그 도형 몫(이동)
-    let near = hostsNear(p, sel)
-    const occ = near.filter(it => inside(it, p))
+    let near = hostsNear(p, sel, it => isConnHost(it) || (it.type === 'path' && !it.freehand))   // 펜으로 그린 궤적은 선택 도구 호버에서 뺌(데스크톱 `_freehand` — 아니면 궤적을 끌 때마다 화살표가 나옴)
+    const occ = near.filter(it => it.type !== 'path' && inside(it, p))
     if (occ.length) near = [occ[occ.length - 1]]   // 도형 속이면 맨 위 그것만(밑에 가려진 도형 점은 안 뜸)
     if (!near.length) return null
     const d = it => { const b = sceneBox(it, textBox); return Math.hypot(b.x + b.w / 2 - p.x, b.y + b.h / 2 - p.y) }
@@ -347,7 +349,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
   // 끌어 놓을 자리 — 붙을 곳(포트·테두리, 다른 도형 속이면 그 도형 가장 가까운 포트). 같은 도형은 다른 자리일 때만(자기 연결)
   function connTarget(srcId, port, cur) {
-    const t = dropTarget(hostsNear(cur), cur, R.current.cam.z, rectOf, srcId)
+    const t = dropTarget(hostsNear(cur), cur, R.current.cam.z, rectOf, srcId, linesNear(cur))
     return t && (t.id !== srcId || Math.hypot(t.p.x - port.p.x, t.p.y - port.p.y) > 1) ? t : null
   }
   // 새 화살표 기본값 — 속성 카드에서 바꾼 값이 다음 화살표에 이어짐(데스크톱 sticky: 색·굵기·선 모양·화살촉·모서리). 굵기 1 = 데스크톱 `_DEFAULT_WIDTH`·웹 그리기 도구와 같게(2026-10-18 — 2였을 땐 같은 화살표인데 선택 띠가 얇아 보였다)
@@ -367,7 +369,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // 끌어 놓음 = 화살표만(빈 곳이면 끝이 떠 있는 화살표). 「자동 길」로 — 도형을 옮겨도 다시 꺾임
   function newArrow(srcId, port, tgt, cur) {
     const items = R.current.model.items, pts = connRoute(srcId, port, tgt, cur)
-    let it = arrowItem(srcId, port.p, tgt?.id, tgt?.p, { auto_route: !!(srcId || tgt), pts: pts.map(q => [q.x, q.y]) })   // 양끝이 다 떠 있으면 손으로 놓은 길(데스크톱도 붙은 끝이 있을 때만 자동 길)
+    let it = arrowItem(srcId, port.p, tgt?.id, tgt?.p, { auto_route: !!(srcId || tgt?.id), pts: pts.map(q => [q.x, q.y]) })   // 양끝이 다 떠 있으면 손으로 놓은 길(데스크톱도 붙은 끝이 있을 때만 자동 길)
     if (stickyKind.current !== 'ortho') it = swapArrowKind(it, stickyKind.current, items, rectOf, sticky.current.curve_r)   // 화살표 종류 = 마지막에 고른 것(데스크톱 `current_arrow_kind`)
     commit([...items, it], [it._id], '화살표')
   }
@@ -384,7 +386,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
 
   function hoverCursor(p) {
     const t = R.current.tool
-    if (t === 'arrow') { const near = hostsNear(p); setHp(near.length ? { id: near[near.length - 1]._id, target: snapAt(near, p, R.current.cam.z, rectOf) } : null); setCursor('crosshair'); return }   // 붙을 자리 예고
+    if (t === 'arrow') { const near = hostsNear(p), lines = linesNear(p), tg = snapAt(near, p, R.current.cam.z, rectOf, lines); setHp(near.length || tg ? { id: tg?.id ?? near.at(-1)?._id ?? null, target: tg } : null); setCursor('crosshair'); return }   // 붙을 자리 예고
     if (t !== 'select') { setCursor(t === 'text' ? 'text' : 'crosshair'); return }
     const h = handleAt(p); setHoverKey(h?.key || null); if (h) { setHp(null); setSegPrev(null); setCursor(h.cursor); return }
     const sg = segAt(p)
@@ -426,7 +428,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   function startDraw(t, p) {
     const m = R.current.model
     if (t === 'arrow') {   // 화살표 도구(데스크톱 「화살표」 — 종류는 속성 카드): 시작이 도형 근처면 붙고, 빈 곳이면 떠 있는 끝. 끄는 건 큐닷·포트점 잇기와 같은 길
-      const snap = snapAt(hostsNear(p), p, R.current.cam.z, rectOf)
+      const snap = snapAt(hostsNear(p), p, R.current.cam.z, rectOf, linesNear(p))
       st.current = { ...st.current, kind: 'conn', tool: 'arrow', src: snap?.id ?? null, port: snap ? { p: snap.p, n: snap.n } : { p, n: null }, start: p, cur: p, fromQc: false, moved: false }
       return
     }
@@ -620,7 +622,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // 포트점 예고 — 가장 가까운 도형 하나의 포트 넷(속 빈 점), 누르면 시작될 자리는 채운 점(데스크톱 `_draw_port_dots`)
   const portDots = (() => {
     const hp = overlay.hp, host = hp && byId.get(hp.id); if (!host || editing) return null
-    const r = 5 / z, tp = hp.target?.id === hp.id ? hp.target.p : null, dots = shapePorts(host, rectOf).map(q => q.p)
+    const r = 5 / z, tp = hp.target?.id === hp.id ? hp.target.p : null, dots = hostPorts(host, rectOf).map(q => q.p)
     const hit = q => tp && Math.abs(q.x - tp.x) < 0.5 && Math.abs(q.y - tp.y) < 0.5
     return <g>{dots.map((q, i) => <circle key={i} cx={q.x} cy={q.y} r={r} fill={hit(q) ? BLUE : '#fff'} stroke={hit(q) ? '#fff' : BLUE} strokeWidth={(hit(q) ? 1.5 : 1.4) / z} />)}
       {tp && !dots.some(hit) && <circle cx={tp.x} cy={tp.y} r={r} fill={BLUE} stroke="#fff" strokeWidth={1.5 / z} />}</g>

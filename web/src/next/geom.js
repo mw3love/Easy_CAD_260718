@@ -224,3 +224,19 @@ export function cutPolyline(pts, rects) {
   }
   return out.filter(q => q.length >= 2)
 }
+
+// 경로 요소를 점열로(곡선은 12토막)
+export function flatten(elements) {
+  const out = []; let cur = null, sub = []
+  for (const e of elements) {
+    if (e[0] === 'M') { if (sub.length) out.push(sub); sub = [cur = { x: e[1], y: e[2] }] }
+    else if (e[0] === 'L') sub.push(cur = { x: e[1], y: e[2] })
+    else if (e[0] === 'C') {
+      const p0 = cur, c1 = { x: e[1], y: e[2] }, c2 = { x: e[3], y: e[4] }, p3 = { x: e[5], y: e[6] }
+      for (let k = 1; k <= 12; k++) { const t = k / 12, u = 1 - t; sub.push({ x: u * u * u * p0.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * p3.x, y: u * u * u * p0.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * p3.y }) }
+      cur = p3
+    }
+  }
+  if (sub.length) out.push(sub)
+  return out
+}

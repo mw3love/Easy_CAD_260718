@@ -16,21 +16,8 @@ const segDist = (p, a, b) => {
 const polyDist = (p, pts) => { let d = Infinity; for (let i = 1; i < pts.length; i++) d = Math.min(d, segDist(p, pts[i - 1], pts[i])); return d }
 const inPoly = (p, pts) => { let c = false; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) { const a = pts[i], b = pts[j]; if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) c = !c } return c }
 const P = ([x, y]) => ({ x, y })
-// 경로 요소를 점열로(곡선은 12토막)
-export function flatten(elements) {
-  const out = []; let cur = null, sub = []
-  for (const e of elements) {
-    if (e[0] === 'M') { if (sub.length) out.push(sub); sub = [cur = { x: e[1], y: e[2] }] }
-    else if (e[0] === 'L') sub.push(cur = { x: e[1], y: e[2] })
-    else if (e[0] === 'C') {
-      const p0 = cur, c1 = { x: e[1], y: e[2] }, c2 = { x: e[3], y: e[4] }, p3 = { x: e[5], y: e[6] }
-      for (let k = 1; k <= 12; k++) { const t = k / 12, u = 1 - t; sub.push({ x: u * u * u * p0.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * p3.x, y: u * u * u * p0.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * p3.y }) }
-      cur = p3
-    }
-  }
-  if (sub.length) out.push(sub)
-  return out
-}
+export { flatten } from './geom.js'   // 경로 요소 → 점열(geom.js로 옮김 — connect.js도 씀)
+import { flatten } from './geom.js'
 
 // 이 아이템이 칠판 점 p를 덮나 — tol = 화면 몇 px에 해당하는 칠판 길이. textBox(it) = 글 상자 {w,h}(화면 재기, 호출부가 줌)
 // 속 빈 도형도 안쪽이 몸통(데스크톱 `_INTERIOR_HIT_TOOLS` = 선택 도구에서 안쪽 클릭 = 그 도형)

@@ -3,7 +3,7 @@
 import { dedup, elbow, routeOrtho } from '../route.js'
 import { headSize } from './geom.js'
 import { toScene } from './xform.js'
-import { ROUTE_BOX, isConnHost, nearestBorder } from './connect.js'
+import { ROUTE_BOX, isBindHost, nearestBorder } from './connect.js'
 import { dedupHint } from './arrowedit.js'
 
 const STUB_MARGIN = 4
@@ -35,7 +35,7 @@ function routeWith(it, ctx) {
   const at = idx => ({ x: it.pts[idx][0] + px, y: it.pts[idx][1] + py })
   const end = k => {
     const j = it['_' + k] !== undefined ? byId.get(it['_' + k]) : it[k], pt = it[k + '_pt'], host = j == null ? null : items[j]
-    if (!host || !pt || !isConnHost(host)) return null
+    if (!host || !pt || !isBindHost(host)) return null
     const p = toScene(host, { x: pt[0], y: pt[1] })
     return { p, n: nearestBorder(host, p, rectOf).n, r: ROUTE_BOX.has(host.type) && host.rect ? sceneRect(host) : null, j }
   }

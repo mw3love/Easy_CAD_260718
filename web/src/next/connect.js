@@ -3,6 +3,7 @@
 // rectOf(it) = 도형 안 좌표의 바탕 사각형 [x,y,w,h] — 글 상자는 화면에서 잰 크기라 호출부가 준다(Editor의 textBox).
 import { toLocal, toScene } from './xform.js'
 import { symbolPath } from './symbols.js'
+import { flatten } from './geom.js'
 
 export const PORT_SNAP_PX = 18     // 데스크톱 `_PORT_SNAP_PX`(화면 px) — 포트(변 가운데) 먼저
 export const BORDER_SNAP_PX = 14   // `_BORDER_SNAP_PX` — 없으면 테두리 아무 자리
@@ -14,6 +15,10 @@ export const OPP = { t: 'b', b: 't', l: 'r', r: 'l' }
 // 화살표가 붙는 도형인가(`_is_conn_host`) — 상자·원·심볼·이미지·표·닫힌 다각형·글
 export const ROUTE_BOX = new Set(['rect', 'ellipse', 'symbol', 'image', 'table'])   // `_ROUTE_BOX_TYPES`(길 찾기 장애물·연결 상자)
 export const isConnHost = it => !!it && (ROUTE_BOX.has(it.type) || (it.type === 'polygon' && it.closed) || it.type === 'text')
+// 화살표 끝이 붙어 따라다닐 수 있는 것 = 위 도형 + 펜 궤적(데스크톱 `_conn_paths` — 양 끝 포트·궤적 어디든, 지속 연결 됨)
+export const isBindHost = it => isConnHost(it) || it?.type === 'path'
+// 끝이 '좌표로만' 붙는 것 = 선·화살표·열린 다각형(데스크톱 `_conn_lines` — 연결은 안 걸림)
+export const isSnapLine = it => !!it && (it.type === 'line' || it.type === 'arrow' || it.type === 'sarrow' || (it.type === 'polygon' && !it.closed))
 
 // ── 도형 안 좌표에서 가장 가까운 외곽선 점 + 바깥 법선 ──
 function rectNearest([l, t, w, h], p) {
@@ -99,6 +104,7 @@ export function symbolPolys(kind, [x, y, w, h]) {
 
 function nearestLocal(it, rect, q) {
   const [l, t, w, h] = rect, c = { x: l + w / 2, y: t + h / 2 }
+  if (it.type === 'path') { const r = polysNearest(flatten(it.elements), q, c); if (r) return r }   // 펜 궤적(`_path_nearest` — 기준 = 궤적 바탕 상자 가운데)
   if (it.type === 'ellipse') { const [p, n] = ellipseNearest(rect, q); return [p, axisForce(it, rect, p, n)] }
   if (it.type === 'symbol') { const r = polysNearest(symbolPolys(it.kind, rect), q, c); if (r) return [r[0], axisForce(it, rect, r[0], r[1])] }
   if (it.type === 'polygon' && it.closed && it.pts?.length > 2) { const pts = it.pts.map(([x, y]) => ({ x, y })); const r = polysNearest([[...pts, pts[0]]], q, c); if (r) return r }
@@ -119,30 +125,59 @@ export function shapePorts(it, rectOf) {
     : [{ x: cx, y: t }, { x: l + w, y: cy }, { x: cx, y: t + h }, { x: l, y: cy }]
   return pts.map((q, i) => ({ side: SIDES[i], ...nearestBorder(it, toScene(it, q), rectOf) }))
 }
-// 큐닷 자리(칠판) — 포트에서 바깥 법선으로 화면 24px(`_qc_dot_rects`)
-export const qcDots = (it, rectOf, z) => shapePorts(it, rectOf).map(({ side, p, n }) => ({ side, p: { x: p.x + (n.x * QC_GAP_PX) / z, y: p.y + (n.y * QC_GAP_PX) / z }, port: p, n }))
-
-// 끄는 끝이 붙을 곳(`_border_snap_at`) — ① 포트 18px(같으면 나중 것) ② 외곽선 14px ③ 없음. z = 화면 배율.
-// → { id, p, n, port } | null.  hosts = 후보 도형(위에 그린 것이 뒤)
-export function snapAt(hosts, sp, z, rectOf) {
-  let best = null, bd = PORT_SNAP_PX
-  for (const it of hosts) for (const q of shapePorts(it, rectOf)) {
-    const d = Math.hypot(q.p.x - sp.x, q.p.y - sp.y) * z
-    if (d <= bd) { bd = d; best = { id: it._id, p: q.p, n: q.n, port: true } }
-  }
-  if (best) return best
-  bd = BORDER_SNAP_PX
-  for (const it of hosts) {
-    const q = nearestBorder(it, sp, rectOf), d = Math.hypot(q.p.x - sp.x, q.p.y - sp.y) * z
-    if (d <= bd) { bd = d; best = { id: it._id, p: q.p, n: q.n, port: false } }
+// 펜 궤적의 포트 = 양 끝 2점, 법선 = 바로 옆 점에서 바깥(`_path_endpoint_ports`)
+export function pathEndPorts(it) {
+  const pts = flatten(it.elements).flat(); if (pts.length < 2) return []
+  const out = (p, ref, side) => { const a = toScene(it, p), b = toScene(it, ref), L = Math.hypot(a.x - b.x, a.y - b.y) || 1; return { side, p: a, n: { x: (a.x - b.x) / L, y: (a.y - b.y) / L } } }
+  return [out(pts[0], pts[1], 's'), out(pts[pts.length - 1], pts[pts.length - 2], 'e')]
+}
+export const hostPorts = (it, rectOf) => (it.type === 'path' ? pathEndPorts(it) : shapePorts(it, rectOf))
+// 선·화살표의 몸통 점열(칠판) — `_conn_polyline_scene`
+export function linePolyline(it) {
+  const S = v => toScene(it, v), P = ([x, y]) => ({ x, y })
+  if (it.type === 'line') return [S({ x: it.line[0], y: it.line[1] }), S({ x: it.line[2], y: it.line[3] })]
+  if (it.type === 'arrow') return it.ctrl1 ? flatten([['M', ...it.p1], ['C', ...it.ctrl1, ...it.ctrl2, ...it.p2]])[0].map(S) : [S(P(it.p1)), S(P(it.p2))]
+  return (it.pts || []).map(P).map(S)
+}
+// 끝점 둘 + 바깥 방향(`_conn_endpoint_dirs`)
+function lineEnds(it) {
+  const pl = linePolyline(it); if (pl.length < 2) return []
+  const u = (a, b) => { const L = Math.hypot(a.x - b.x, a.y - b.y) || 1; return { x: (a.x - b.x) / L, y: (a.y - b.y) / L } }
+  return [{ p: pl[0], n: u(pl[0], pl[1]) }, { p: pl[pl.length - 1], n: u(pl[pl.length - 1], pl[pl.length - 2]) }]
+}
+// 몸통 가장 가까운 점 + 커서 쪽 수직(`_nearest_on_polyline`)
+function onPolyline(pl, sp) {
+  let best = null, bd = Infinity
+  for (let i = 0; i < pl.length - 1; i++) {
+    const a = pl[i], b = pl[i + 1], dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy
+    const t = L2 < 1e-12 ? 0 : Math.max(0, Math.min(1, ((sp.x - a.x) * dx + (sp.y - a.y) * dy) / L2)), q = { x: a.x + dx * t, y: a.y + dy * t }
+    const d = (sp.x - q.x) ** 2 + (sp.y - q.y) ** 2
+    if (d < bd) { const L = Math.sqrt(L2) || 1; let n = L2 < 1e-12 ? { x: 0, y: -1 } : { x: -dy / L, y: dx / L }; if (n.x * (sp.x - q.x) + n.y * (sp.y - q.y) < 0) n = { x: -n.x, y: -n.y }; bd = d; best = { p: q, n } }
   }
   return best
 }
+// 큐닷 자리(칠판) — 포트에서 바깥 법선으로 화면 24px(`_qc_dot_rects`)
+export const qcDots = (it, rectOf, z) => shapePorts(it, rectOf).map(({ side, p, n }) => ({ side, p: { x: p.x + (n.x * QC_GAP_PX) / z, y: p.y + (n.y * QC_GAP_PX) / z }, port: p, n }))
+
+// 끄는 끝이 붙을 곳(`_border_snap_at`) — ① 포트 18px(도형·펜 궤적 끝, 같으면 나중 것) → 선·화살표 끝점(같으면 도형이 이김)
+// ② 외곽선·궤적 14px → 선·화살표 몸통 ③ 없음. z = 화면 배율.
+// → { id, p, n, port } | null — 선·화살표에 붙으면 id = null(좌표만, 연결 없음). hosts = 붙는 도형·펜 궤적(위에 그린 것이 뒤), lines = 선·화살표
+export function snapAt(hosts, sp, z, rectOf, lines = []) {
+  const dist = q => Math.hypot(q.x - sp.x, q.y - sp.y) * z
+  let best = null, bd = PORT_SNAP_PX
+  for (const it of hosts) for (const q of hostPorts(it, rectOf)) { const d = dist(q.p); if (d <= bd) { bd = d; best = { id: it._id, p: q.p, n: q.n, port: true } } }
+  for (const it of lines) for (const q of lineEnds(it)) { const d = dist(q.p); if (d < bd) { bd = d; best = { id: null, p: q.p, n: q.n, port: true } } }   // ⚠ 동점은 도형(연결 정보가 더 많음)
+  if (best) return best
+  bd = BORDER_SNAP_PX
+  for (const it of hosts) { const q = nearestBorder(it, sp, rectOf), d = dist(q.p); if (d <= bd) { bd = d; best = { id: it._id, p: q.p, n: q.n, port: false } } }
+  for (const it of lines) { const q = onPolyline(linePolyline(it), sp); if (q) { const d = dist(q.p); if (d <= bd) { bd = d; best = { id: null, p: q.p, n: q.n, port: false } } } }
+  return best
+}
 // 큐닷·포트점을 끌어 놓을 때(`_qc_snap_target`): 붙을 곳이 없으면 다른 도형 '안'에 놓은 것도 그 도형의 가장 가까운 포트로
-export function dropTarget(hosts, sp, z, rectOf, srcId) {
-  const s = snapAt(hosts, sp, z, rectOf); if (s) return s
+export function dropTarget(hosts, sp, z, rectOf, srcId, lines = []) {
+  const s = snapAt(hosts, sp, z, rectOf, lines); if (s) return s
   for (let i = hosts.length - 1; i >= 0; i--) {
-    const it = hosts[i]; if (it._id === srcId) continue
+    const it = hosts[i]; if (it._id === srcId || it.type === 'path') continue   // 펜 궤적엔 '안'이 없음
     const [l, t, w, h] = rectOf(it), q = toLocal(it, sp)
     if (q.x < l || q.x > l + w || q.y < t || q.y > t + h) continue
     let best = null, bd = Infinity
