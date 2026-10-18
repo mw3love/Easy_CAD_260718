@@ -34,7 +34,7 @@ import { ContextMenu } from './ctxmenu.jsx'
 import { freeSpot, sourceLine } from '../chatFormat.js'
 import { fetchLinkInfo, normalizeUrl, openBtnRect, siteOf, webCardFields } from './webcard.js'
 import { buildLegend, isLegendPart, legendEntries, legendState } from './legend.js'
-import { LINE_COLORS, LINE_KINDS, MEMO, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits } from './memo.js'
+import { LINE_COLORS, LINE_KINDS, MEMO, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
@@ -574,7 +574,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (t === 'select' && !R.current.editing) { const hv = memoRowAt(p), k = hv ? `${hv.it._id}:${hv.s}:${hv.e}` : null   // 메모 줄 위 = 왼쪽 ⠿
       if (k !== (R.current.memoHov ? `${R.current.memoHov.id}:${R.current.memoHov.s}:${R.current.memoHov.e}` : null)) setMemoHov(hv ? { id: hv.it._id, s: hv.s, e: hv.e } : null)
       if (hv && memoHandleHit(p)) { setHp(null); setCursor('grab'); return }
-      if (hv && inMemoGutter(p)) { setHp(null); setCursor('default'); return } }
+      if (hv && inMemoGutter(p)) { setHp(null); setCursor('default'); return }
+      if (hv && memoCheckAt(p)) { setHp(null); setCursor('pointer'); return } }   // 할 일 상자 = 누르는 것(2026-10-18 사용자: 이동 커서였음)
     if (t === 'arrow') { const near = hostsNear(p), lines = linesNear(p), tg = snapAt(near, p, R.current.cam.z, rectOf, lines); setHp(near.length || tg ? { id: tg?.id ?? near.at(-1)?._id ?? null, target: tg } : null); setCursor('crosshair'); return }   // 붙을 자리 예고
     if (t !== 'select') { setCursor(t === 'text' ? 'text' : 'crosshair'); return }
     if (!single && R.current.sel.length > 1) { const mb = multiBoxNow(); if (mb) { const cs = [[mb.x, mb.y, 'nwse-resize'], [mb.x + mb.w, mb.y, 'nesw-resize'], [mb.x + mb.w, mb.y + mb.h, 'nwse-resize'], [mb.x, mb.y + mb.h, 'nesw-resize']]
@@ -814,7 +815,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const ed = R.current.editing; setEditing(null); if (!ed || !lines) return
     const m = R.current.model, it = m.items.find(x => x._id === ed.id); if (!it) return
     commit(m.items.map(x => (x._id === it._id ? { ...it, lines } : x)), [it._id], '메모 고침')
-    if (extra?.caret != null && lines[extra.caret]) { const [s, e] = lineUnit(lines, extra.caret); setLineSel({ id: it._id, s, e }) } else setLineSel(null)
+    if (extra?.caret != null && lines[extra.caret]) { const [s, e] = lineUnit(lines, extra.caret); setLineSel({ id: it._id, s, e }) }
+    else if (extra?.pick && lines[extra.pick.cur] && lines[extra.pick.clicked]) {   // 고치는 중 단축키 + 다른 줄 클릭 = 줄 고르기
+      const [s1, e1] = lineUnit(lines, extra.pick.cur), [s2, e2] = lineUnit(lines, extra.pick.clicked)
+      setLineSel(extra.pick.range ? { id: it._id, s: Math.min(s1, s2), e: Math.max(e1, e2) } : s1 === s2 ? { id: it._id, s: s2, e: e2 } : { id: it._id, s: s2, e: e2, more: [[s1, e1]] }) }
+    else setLineSel(null)
     if (extra?.grab && lines[extra.grab.i]) { const [s, e] = lineUnit(lines, extra.grab.i), p = toSceneP(extra.grab)
       st.current = { ...st.current, kind: 'mline', id: it._id, units: [[s, e]], copy: false, start: p, moved: false } }
   }
@@ -1072,6 +1077,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         else if (k === 'Delete' || k === 'Backspace') return act(() => { const on = new Set(selIdx(ls)); put(L.filter((_, j) => !on.has(j)), '줄 지움'); setLineSel(null) })
         else if (mod && k.toLowerCase() === 'd') return act(() => { const idx = selIdx(ls), last = idx[idx.length - 1] + 1; put([...L.slice(0, last), ...idx.map(i => structuredClone(L[i])), ...L.slice(last)], '줄 복제'); setLineSel({ id: it._id, s: last, e: last + idx.length }) })
         else if (mod && (k === '/' || e.code === 'Slash')) return act(() => { const us = selUnits(ls), b = memoHandleRect(it, us[0][0]), o = scr(toScene(it, { x: b.x + b.w, y: b.y + b.h })); setLineMenu({ x: o.x + 4, y: o.y, id: it._id, units: us, kinds: true }) })
+        else if (k === 'Enter' && mod) return act(() => { const nx = toggleTodos(L, selIdx(ls)); if (nx) put(nx, '할 일') })   // 고른 할 일 한꺼번에 체크/해제
         else if (k === 'Enter' && !mod) return act(() => { setLineSel(null); setEditing({ id: it._id, kind: 'memo', caret: selUnits(ls)[0][0] }) })   // 고른 줄 끝에 커서(2026-10-18 사용자: 맨 아래로 내려갔음)
         else if (k === 'ArrowUp' || k === 'ArrowDown') return act(() => {
           if (k === 'ArrowDown') { if (ls.e >= L.length) return; const [, ne] = lineUnit(L, ls.e); setLineSel(e.shiftKey ? { ...ls, e: ne } : { id: ls.id, s: ls.e, e: ne }) }   // 개별로 고른 것(more)은 화살표에선 풀림(Shift는 유지)

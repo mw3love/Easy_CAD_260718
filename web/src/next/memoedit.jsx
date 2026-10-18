@@ -22,9 +22,20 @@ const Finish = Extension.create({
   name: 'memoFinish',
   addOptions() { return { onDone: () => {}, onTurn: () => false } },
   // Esc = 끝내고 커서 줄 고르기(노션 — 그 상태에서 Ctrl+D·Del·Ctrl+/), Ctrl+Enter = 그냥 끝, Ctrl+/ = 전환 메뉴
-  addKeyboardShortcuts() { return { Escape: () => { this.options.onDone(true); return true }, 'Mod-Enter': () => { this.options.onDone(false); return true }, 'Mod-/': () => this.options.onTurn() } },
+  // Ctrl+Enter: 커서(또는 고른 글)가 할 일 줄이면 체크/해제(노션), 아니면 끝내기 — 2026-10-18 사용자 선택
+  addKeyboardShortcuts() { return { Escape: () => { this.options.onDone(true); return true }, 'Mod-Enter': () => { if (!toggleTaskItems(this.editor)) this.options.onDone(false); return true }, 'Mod-/': () => this.options.onTurn() } },
 })
 
+// 고른 글에 걸친 할 일(또는 커서가 든 할 일) 체크/해제 — 하나라도 안 끝났으면 모두 끝, 모두 끝났으면 모두 풂. 할 일이 없으면 false
+function toggleTaskItems(editor) {
+  const { state, view } = editor, { from, to, $from } = state.selection, items = new Map()
+  state.doc.nodesBetween(from, to, (n, pos) => { if (n.type.name === 'taskItem') items.set(pos, n) })
+  for (let d = $from.depth; d > 0; d--) if ($from.node(d).type.name === 'taskItem') items.set($from.before(d), $from.node(d))
+  if (!items.size) return false
+  const all = [...items.values()].every(n => n.attrs.checked); let tr = state.tr
+  for (const [pos, n] of items) tr = tr.setNodeMarkup(pos, undefined, { ...n.attrs, checked: !all })
+  view.dispatch(tr); return true
+}
 // 전환(Ctrl+/) — 커서 줄 종류 바꾸기. 목록·인용에서 빠져나온 뒤 바꿈(clearNodes)
 function turnInto(editor, k) {
   const c = editor.chain().focus().clearNodes()
@@ -33,7 +44,7 @@ function turnInto(editor, k) {
 }
 
 // spec: { left, top(화면 px — 메모 왼쪽 위), width(화면 px), zoom(칠판 배율 × 아이템 배율), fill(바탕 CSS), lines, caret?(처음 커서 줄), onChange(lines), onWheel(e) }
-// onDone(lines, extra) — extra = { caret: 줄 번호 }(Esc — 그 줄 고르기) | { grab: { i, clientX, clientY } }(⠿를 눌러 끌기 시작) | null
+// onDone(lines, extra) — extra = { caret: 줄 번호 }(Esc — 그 줄 고르기) | { grab: { i, clientX, clientY } }(⠿를 눌러 끌기 시작) | { pick: { cur, clicked, range } }(단축키 + 다른 줄 클릭 = 줄 고르기) | null
 export function MemoEditor({ spec, onDone }) {
   const box = useRef(null), host = useRef(null), ed = useRef(null), done = useRef(false), sp = useRef(spec), od = useRef(onDone)
   const [hov, setHov] = useState(null), [turn, setTurn] = useState(null), turnR = useRef(null)   // 손잡이를 띄울 줄 { i, y(칸 안 px) } · 전환 메뉴 { x, y, at }
@@ -54,6 +65,16 @@ export function MemoEditor({ spec, onDone }) {
       content: linesToDoc(spec.lines),
       editorProps: {
         attributes: { spellcheck: 'false' },
+        // 고치는 중 Shift+다른 줄 클릭 = 커서 줄부터 그 줄까지 줄 고르기, Ctrl·Alt+Shift 클릭 = 커서 줄 + 그 줄 따로(노션 — 2026-10-18 사용자). 같은 줄 Shift = 글자 고르기 그대로
+        handleDOMEvents: { mousedown: (v, e) => {
+          if (e.button !== 0) return false
+          const range = e.shiftKey && !e.altKey, pick = ((e.ctrlKey || e.metaKey) && !e.shiftKey) || (e.altKey && e.shiftKey)
+          if (!range && !pick) return false
+          const hit = v.posAtCoords({ left: e.clientX, top: e.clientY }); if (!hit) return false
+          const cur = caretLine(v.state), clicked = caretLine(v.state, hit.pos)
+          if (range && clicked === cur) return false
+          e.preventDefault(); finishR.current?.({ pick: { cur, clicked, range } }); return true
+        } },
         handleKeyDown: (_v, e) => {   // 전환 메뉴가 떠 있으면 ↑↓ Enter가 메뉴를 움직임
           const t = turnR.current
           if (!t) { if (e.key === 'Escape') e.stopPropagation(); return false }   // 끝내며 고른 줄을 칠판의 Esc(= 고르기 풀기)가 바로 풀지 않게

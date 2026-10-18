@@ -153,6 +153,12 @@ export function convertLine(ln, k) {
   if (!LISTY.has(k)) delete o.lv
   return o
 }
+// 할 일 한꺼번에 — 고른 줄 중 할 일만, 하나라도 안 끝났으면 모두 끝, 모두 끝났으면 모두 풂(2026-10-18 사용자: 여러 개 고르고 Ctrl+Enter)
+export function toggleTodos(lines, idx) {
+  const todo = idx.filter(i => lines[i]?.k === 'todo'); if (!todo.length) return null
+  const all = todo.every(i => lines[i].done), on = new Set(todo)
+  return lines.map((l, j) => (!on.has(j) ? l : all ? (({ done, ...r }) => r)(l) : { ...l, done: true }))
+}
 // 같은 메모 안 여러 단위를 한 번에 옮기기·복사 — [s, e) 범위(고른 줄들), copy = 원래 줄은 둠
 export function moveRange(lines, [s, e], to, copy = false) {
   if (!copy) return moveUnit(lines, [s, e], to)
@@ -174,8 +180,7 @@ export function pickLines(lines, idx) {
   return idx.map(i => { const o = structuredClone(lines[i]), lv = (o.lv || 0) - base; if (lv > 0) o.lv = lv; else delete o.lv; return o })
 }
 // TipTap 문서에서 커서가 있는 줄 번호(docToLines 차례와 같음 — 글 블록마다 한 줄, 코드 블록은 \n마다, 구분선 한 줄)
-export function caretLine(state) {
-  const pos = state.selection.from
+export function caretLine(state, pos = state.selection.from) {   // pos = 그 자리의 줄(누른 자리 등)
   let idx = 0, found = null
   state.doc.descendants((node, at) => {
     if (found != null) return false

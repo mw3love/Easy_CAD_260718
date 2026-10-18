@@ -89,3 +89,12 @@ test('떨어진 줄 고르기 → 번호·옮기기·복사·떼어 내기', () 
   assert.deepEqual(moveLines(L, [0, 3], 2, true).map(l => l.t), ['a', 'b', 'a', 'd', 'c', 'd', 'e'])
   assert.deepEqual(pickLines([{ k: 'ul', t: 'x', lv: 1 }, { k: 'ul', t: 'y', lv: 2 }], [0, 1]), [{ k: 'ul', t: 'x' }, { k: 'ul', t: 'y', lv: 1 }])
 })
+
+// 2026-10-18 손맛 5차 — 고른 할 일 한꺼번에(Ctrl+Enter)
+import { toggleTodos } from '../src/next/memo.js'
+test('할 일 한꺼번에: 하나라도 안 끝났으면 모두 끝, 모두 끝이면 모두 풂, 다른 줄은 그대로', () => {
+  const L = [{ k: 'todo', t: 'a' }, { k: 'p', t: 'b' }, { k: 'todo', t: 'c', done: true }]
+  const on = toggleTodos(L, [0, 1, 2]); assert.deepEqual(on.map(l => !!l.done), [true, false, true]); assert.equal(on[1], L[1])
+  assert.deepEqual(toggleTodos(on, [0, 2]).map(l => !!l.done), [false, false, false])
+  assert.equal(toggleTodos(L, [1]), null)
+})
