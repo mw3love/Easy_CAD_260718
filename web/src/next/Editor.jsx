@@ -26,6 +26,7 @@ import { symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
 import { colEdges, colFracs, frameTag, frameTagFs, rowEdges } from './geom.js'
 import { orderedFrames, setFrameOrder } from './edit.js'
+import { Presenter } from './present.jsx'
 import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, exportPdf, exportPng, exportSvg, pngBlob } from './exporter.jsx'
 import { ContextMenu } from './ctxmenu.jsx'
@@ -101,7 +102,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
 
-  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, moveSelToLayer, exportDoc, exportPages, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -465,6 +466,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const frameLockAt = p => { const it = single?.type === 'frame' && !single.locked ? single : null; if (!it) return null
     const b = frameTagBox(it), s = b.h; return p.x >= b.x + b.w + b.fs * 0.3 && p.x <= b.x + b.w + b.fs * 0.3 + s && p.y >= b.y && p.y <= b.y + s ? it : null }
   const [tagEdit, setTagEdit] = useState(null)   // 이름표를 두 번 눌러 고치는 중인 프레임 _id
+  const [present, setPresent] = useState(null)   // 발표 중이면 시작 장 번호
+  function startPresent(fromId) {   // 발표 — 고른 프레임(또는 fromId)부터, 없으면 1번부터
+    const fr = orderedFrames(hitPool()); if (!fr.length) { setStatus('프레임이 없어요 — 상단 「프레임」으로 보여 줄 영역을 감싸 보세요'); return }
+    const id = fromId || R.current.sel.find(s => fr.some(f => f._id === s)); setEditing(null); setPresent(Math.max(0, fr.findIndex(f => f._id === id)))
+  }
   const cellRange = cs => ({ r0: Math.min(cs.r0, cs.r1), r1: Math.max(cs.r0, cs.r1), c0: Math.min(cs.c0, cs.c1), c1: Math.max(cs.c0, cs.c1) })
   // 고른 칸들 꾸밈 고치기 — per(지금 꾸밈, r, c) → 고칠 값(undefined = 그 칸 지움)
   function setCells(per, label, merge) {
@@ -1147,6 +1153,9 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))])
           if (m.items.some(it => it.locked)) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked ? { ...it, locked: false } : it)), [], '잠금 해제'))]) }
         return out })()} />}
+      {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))
+        return <Presenter frames={fr.map(f => ({ id: f._id, name: f.name, box: sceneBox(f, textBox) }))} order={order.filter(([it]) => it.type !== 'frame')} onBoard={onBoard} routes={routes}
+          start={Math.min(present, fr.length - 1)} onClose={() => setPresent(null)} /> })()}
       {tagEdit && (() => { const it = byId.get(tagEdit); if (!it) return null; const b = frameTagBox(it), o = scr({ x: b.x, y: b.y })   // 프레임 이름표 바로 고치기(치는 대로 — 2026-10-19 사용자)
         return <input key={tagEdit} autoFocus defaultValue={it.name || ''} placeholder="이름" onPointerDown={e => e.stopPropagation()} onChange={e => renameFrame(it._id, e.target.value)}
           onBlur={() => setTagEdit(null)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') setTagEdit(null) }}
