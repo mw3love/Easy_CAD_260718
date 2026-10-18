@@ -31,12 +31,13 @@ import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, exportPdf, exportPng, exportSvg, pngBlob } from './exporter.jsx'
 import { ContextMenu } from './ctxmenu.jsx'
 import { answerToEcadText, freeSpot, sourceLine } from '../chatFormat.js'
+import { fetchLinkInfo, normalizeUrl, openBtnRect, siteOf, webCardFields } from './webcard.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
 const HANDLE = 10, HIT_PX = 4, EDGE_PX = 5
 const INK = '#ff1f1f1f'   // 새로 그리는 선·글 기본색(밝은 칠판)
-const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame'])
+const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web'])
 
 // 글 상자 크기(아이템 안 단위) — 그릴 때와 같은 재기, 아이템 객체마다 한 번
 const _tb = new WeakMap()
@@ -103,7 +104,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
 
-  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, insertWeb, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -125,7 +126,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       const [x, y, w, h] = localRect(it), s = it.scale || 1
       for (const [k, px, py, c] of [['tl', x, y, 'nwse-resize'], ['tr', x + w, y, 'nesw-resize'], ['br', x + w, y + h, 'nwse-resize'], ['bl', x, y + h, 'nesw-resize']]) out.push({ key: k, p: toScene(it, { x: px, y: py }), cursor: c })
       const g = (HANDLE * 1.6) / z / s
-      if (it.type !== 'frame') out.push({ key: 'rot', p: toScene(it, { x: x - g, y: y - g }), cursor: 'grab', round: true })   // 좌상단 대각(데스크톱 `_box_rot_center`) — 프레임은 안 돌림
+      if (it.type !== 'frame' && it.type !== 'web') out.push({ key: 'rot', p: toScene(it, { x: x - g, y: y - g }), cursor: 'grab', round: true })   // 좌상단 대각(데스크톱 `_box_rot_center`) — 프레임은 안 돌림
     } else if (it.type === 'text') {
       const b = textBox(it), g = (HANDLE * 1.6) / z / (it.scale || 1)
       out.push({ key: 'scale', p: toScene(it, { x: b.w, y: b.h }), cursor: 'nwse-resize' })
@@ -199,6 +200,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // ── 포인터 ──
   function onPointerDown(e) {
     if (R.current.editing) return
+    if (R.current.webOn) setWebOn(null)   // 웹 카드 조작 중 바깥을 누름 = 끝(칸 안 누르기는 페이지가 받아 여기 안 옴)
     const p = toSceneP(e), m = R.current.model, z = R.current.cam.z
     svg.current.setPointerCapture(e.pointerId)
     // 가운데·오른쪽 끌기 = 화면 이동(데스크톱 우클릭 끌기 = 팬, 제자리 우클릭 메뉴는 나중)
@@ -214,6 +216,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (i >= 0) { const [ax, ay] = cs[(i + 2) % 4]; st.current = { ...st.current, kind: 'mscale', A: { x: ax, y: ay }, box: mb, start: p, orig: m.items, ids: new Set(movingSet(R.current.sel)) }; return }
     }
     const lk = frameLockAt(p); if (lk) { setLoose(l => (l === lk._id ? null : lk._id)); return }   // 이름표 옆 자물쇠 — 잠깐 틀만
+    const wo = webOpenAt(p); if (wo) { window.open(wo.url, '_blank', 'noopener'); return }   // 웹 카드 오른쪽 위 ↗ = 새 탭
     const h = handleAt(p)
     if (h?.qc) { st.current = { ...st.current, kind: 'conn', src: single._id, side: h.key.slice(3), port: h.port, start: p, cur: p, fromQc: true, moved: false }; return }
     if (h?.bend) { st.current = { ...st.current, kind: 'bend', id: single._id, which: +h.key.slice(1), orig: m.items }; return }
@@ -265,6 +268,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
 
   function onPointerMove(e) {
     const s = st.current, p = toSceneP(e), z = R.current.cam.z
+    R.current.mouse = p   // 주소 붙여넣기 = 커서 자리에
     if (!s.kind) { hoverCursor(p); return }
     if (s.kind === 'pan') { setCam({ ...s.cam, x: s.cam.x + e.clientX - s.sx, y: s.cam.y + e.clientY - s.sy }); return }
     if (s.kind === 'move') {
@@ -466,6 +470,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     return { x: (it.pos?.[0] || 0) + x, y: (it.pos?.[1] || 0) + y - fs * 1.7, w, h: fs * 1.45, fs } }
   const frameLockAt = p => { const it = single?.type === 'frame' && !single.locked ? single : null; if (!it) return null
     const b = frameTagBox(it), s = b.h; return p.x >= b.x + b.w + b.fs * 0.3 && p.x <= b.x + b.w + b.fs * 0.3 + s && p.y >= b.y && p.y <= b.y + s ? it : null }
+  const [webOn, setWebOn] = useState(null); R.current.webOn = webOn   // 칸 안을 조작 중인 웹 카드 _id(두 번 누르기 — 2026-10-18 사용자)
   const [tagEdit, setTagEdit] = useState(null)   // 이름표를 두 번 눌러 고치는 중인 프레임 _id
   const [present, setPresent] = useState(null)   // 발표 중이면 시작 장 번호
   // 판서(발표 중 그린 것) — 칠판 「판서」 레이어에 진짜 도형으로(나중에 레이어 카드에서 숨기기·지우기). 레이어가 없거나 숨겨져 있으면 보이게 만듦
@@ -836,6 +841,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const hit = topHit(hitPool(), p, HIT_PX / R.current.cam.z, textBox)
     if (!hit || hit.locked) return
     if (hit.type === 'frame') { const b = frameTagBox(hit); if (p.y <= b.y + b.h + 2 / R.current.cam.z) { setSel([hit._id]); setTagEdit(hit._id) } return }   // 이름표 = 그 자리에서 이름 고치기
+    if (hit.type === 'web') { setSel([hit._id]); if (hit.frameable) { setWebOn(hit._id); setStatus('웹 카드 안을 조작하는 중 — 바깥을 누르면 끝') } else window.open(hit.url, '_blank', 'noopener'); return }   // 막는 사이트 = 새 탭
     if (hit.type === 'table') { const cell = cellAt(hit, toLocal(hit, p)); if (cell) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'cell', ...cell }) } return }
     if (isArrow(hit)) {   // 화살표 빈 자리 더블클릭 = 그 자리에 새 라벨(여러 개 — 데스크톱 `add_label_at_scene_pos`)
       const labels = labelsOf(hit), pr = projectOn(hit, toLocal(hit, p))
@@ -925,14 +931,14 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       }
       const TOOL_KEYS = { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen', 7: 'badge' }   // 데스크톱 `SHORTCUT_DEFS` 도구 1~7
       if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[k]) return act(() => setTool(TOOL_KEYS[k]))
-      if (!ids.length) { if (mod && k.toLowerCase() === 'v') return act(paste); return }
+      if (mod && k.toLowerCase() === 'v') return   // 붙여넣기는 브라우저 붙여넣기 신호에서(주소면 웹 카드, 아니면 칠판 붙여넣기 — 아래 onPaste). 여기서 막으면 그 신호가 안 옴
+      if (!ids.length) return
       if (k === 'Delete' || k === 'Backspace') return act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))
       // 스타일 복사·붙여넣기(데스크톱 Ctrl+Alt+C/V) — 일반 복사보다 먼저. 글쇠 이름은 한글 입력·Alt에 따라 바뀌어 자리(code)로 봄
       if (mod && e.altKey && e.code === 'KeyC') return act(styleCopy)
       if (mod && e.altKey && e.code === 'KeyV') return act(stylePaste)
       if (mod && k.toLowerCase() === 'c') return act(copy)
       if (mod && k.toLowerCase() === 'x') return act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })
-      if (mod && k.toLowerCase() === 'v') return act(paste)
       if (mod && k.toLowerCase() === 'd') return act(dupSel)
       if (mod && k.toLowerCase() === 'g') return act(() => commit(e.shiftKey ? ungroupItems(m.items, ids) : groupItems(m.items, ids), ids, e.shiftKey ? '묶음 풂' : '묶음'))
       if (mod && k.toLowerCase() === 'l') return act(() => commit(toggleLock(m.items, ids), ids, '잠금'))
@@ -1007,6 +1013,28 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     imageToClipboard(ids)
     setStatus?.(`${ids.size}개 복사 — 칠판에 붙이면 도형, 한글·PPT에 붙이면 그림`)
   }
+  // 붙여넣기 신호 — 클립보드 글이 주소 하나면 웹 카드(2026-10-18 사용자: 주소 붙여넣기 + 「웹」 버튼), 아니면 칠판 안 붙여넣기
+  useEffect(() => {
+    const onPaste = e => {
+      const ae = document.activeElement
+      if (R.current.editing || /INPUT|TEXTAREA|SELECT/.test(ae?.tagName || '') || ae?.isContentEditable) return   // 글 고치는 중이면 그 칸에
+      const url = normalizeUrl(e.clipboardData?.getData('text/plain')); e.preventDefault()
+      if (url) insertWeb(url); else paste()
+    }
+    window.addEventListener('paste', onPaste); return () => window.removeEventListener('paste', onPaste)
+  })
+  // 웹 카드 넣기 — 서버가 주소를 확인한 뒤(칸 안에 넣어도 되나·제목·대표 그림) 커서 자리(화면 밖이면 가운데)에
+  async function insertWeb(url) {
+    const c = R.current.cam, mp = R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
+    const at = mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2 }
+    setStatus(`웹 주소 확인 중… ${siteOf(url)}`)
+    const info = await fetchLinkInfo(url), f = webCardFields(info), m = R.current.model
+    const it = base([at.x - f.rect[2] / 2, at.y - f.rect[3] / 2], { ...f, z: topZ(m.items) + 1 })
+    commit([...m.items, it], [it._id], '웹 카드'); setTool('select')
+    setStatus(info.frameable ? '웹 카드 — 두 번 누르면 안을 조작(바깥을 누르면 끝)' : `웹 카드 — ${siteOf(url)}는 칸 안에 넣기를 막아요. 오른쪽 위 ↗나 두 번 누르기 = 새 탭`)
+  }
+  const webOpenAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'web') continue
+    const q = toLocal(it, p), b = openBtnRect(it), pad = 2 / z; if (q.x >= b.x - pad && q.x <= b.x + b.w + pad && q.y >= b.y - pad && q.y <= b.y + b.h + pad) return it } return null }
   function paste() {
     const c = clip.current; if (!c.items.length) return
     c.seq += 1
@@ -1098,7 +1126,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         <g transform={`translate(${cam.x},${cam.y}) scale(${z})`} style={{ '--z': z }}>
           {visible.map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
             : it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
-            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} />))}
+            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
           {selItems.map(outline)}

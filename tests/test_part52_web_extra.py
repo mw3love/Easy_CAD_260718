@@ -59,3 +59,15 @@ def test_web_frame_survives_desktop_save():
     out = _roundtrip(d)
     assert out["type"] == "frame" and out["rect"] == [0.0, 0.0, 640.0, 360.0]
     assert (out["name"], out["no"], out["ratio"], out["magnet"]) == ("표지", 2, "16:9", False)
+
+
+def test_web_card_survives_desktop_save():
+    """웹 카드(2026-10-18 — 유튜브·웹페이지)는 데스크톱이 제목·주소를 적은 네모로 열고, 저장하면 다시 web으로(보여 주려고 붙인 라벨은 뺌)"""
+    d = dict(_BASE, type="web", rect=[0.0, 0.0, 480.0, 310.0], url="https://www.youtube.com/watch?v=dQw4w9WgXcQ", title="노래",
+             embed="https://www.youtube.com/embed/dQw4w9WgXcQ", thumb="data:image/jpeg;base64,AAAA", frameable=True)
+    sc = QGraphicsScene()
+    it = insert_items(sc, [d])[0]
+    assert it._label is not None and "youtube.com" in it._label.toPlainText()   # 데스크톱에선 주소가 보임
+    out = item_to_dict(it)
+    assert out["type"] == "web" and out["rect"] == [0.0, 0.0, 480.0, 310.0] and "label" not in out
+    assert (out["url"], out["title"], out["embed"], out["thumb"], out["frameable"]) == (d["url"], "노래", d["embed"], d["thumb"], True)

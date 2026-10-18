@@ -53,6 +53,22 @@ function TableForm({ onInsert, onClose }) {
   </div>
 }
 
+// 웹 카드 넣기 — 주소 한 줄(칠판에 주소를 Ctrl+V 해도 같음)
+function WebForm({ onInsert, onClose }) {
+  const [u, setU] = useState('')
+  const go = () => { if (u.trim()) onInsert(u.trim()) }
+  return <div style={{ position: 'absolute', top: 48, left: 0, zIndex: 20, width: 300, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: '0 4px 14px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif" }}>
+    <div style={{ font: "700 13px 'Pretendard', sans-serif" }}>웹 카드 넣기</div>
+    <input autoFocus value={u} onChange={e => setU(e.target.value)} placeholder="https://… (유튜브·웹페이지 주소)" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') go(); if (e.key === 'Escape') onClose() }}
+      style={{ height: 26, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: 'inherit' }} />
+    <div style={{ fontSize: 11, color: C.muted }}>들어가는 사이트는 칸 안에 페이지, 막는 사이트는 제목·그림 카드 + 새 탭. 칠판에 주소를 Ctrl+V 해도 돼요</div>
+    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+      <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, color: C.muted }}>취소</button>
+      <button onClick={go} style={{ all: 'unset', cursor: 'pointer', padding: '4px 12px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>넣기</button>
+    </div>
+  </div>
+}
+
 // 내보내기 — 형식·범위·용지·방향·여백·투명(데스크톱 `_PdfExportDialog`; 여백은 네 변 한 값으로)
 // 쪽 미리보기 그림 하나(svg → img). 프레임 쪽이면 끌어서 순서 바꾸기
 const Thumb = ({ pg, i, drag, onDrag, onDrop }) => <div draggable={!!pg.frameId} onDragStart={() => onDrag(i)} onDragOver={e => pg.frameId && e.preventDefault()} onDrop={e => { e.preventDefault(); onDrop(i) }}
@@ -103,7 +119,7 @@ function ExportForm({ hasSel, selFrames, frameCount, items, onExport, onPreview,
 }
 
 function App() {
-  const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false)
+  const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [webOpen, setWebOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(() => { try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창)
   useEffect(() => { try { localStorage.setItem('mb-chat-open', chatOpen ? '1' : '0') } catch { /* 기억 못 해도 그만 */ } }, [chatOpen])
   const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
@@ -184,6 +200,9 @@ function App() {
         </div><div style={{ position: 'relative' }}>
           <Btn icon="▦" label="표" on={tableOpen} onClick={() => setTableOpen(o => !o)} title="표 넣기 — 행·열을 고르면 화면 가운데에" />
           {tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); ed.current?.insertTable(r, c, h) }} onClose={() => setTableOpen(false)} />}
+        </div><div style={{ position: 'relative' }}>
+          <Btn icon="🌐" label="웹" on={webOpen} onClick={() => setWebOpen(o => !o)} title="웹 카드 — 유튜브·웹페이지 주소를 칠판에(칠판에 주소를 Ctrl+V 해도 돼요)" />
+          {webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url) }} onClose={() => setWebOpen(false)} />}
         </div></Group>
         <Group>
           <Btn icon="⤢" label="전체" onClick={() => fit(model.items)} title="전체 보기 (Ctrl+9)" />

@@ -8,11 +8,18 @@ import {
 } from './geom.js'
 import { symbolPath } from './symbols.js'
 import { sarrowRadius } from './arrows.js'
+import { WEB_HEAD, frameSrc, openBtnRect, siteOf } from './webcard.js'
 
 // ── 글자 재기(캔버스) ──
 let _ctx = null
 const ctx = () => (_ctx ||= document.createElement('canvas').getContext('2d'))
 const fontCss = (px, family, weight = 400) => `${weight} ${px}px ${family === 'board' ? BOARD_FONT : APP_FONT}`
+// 폭을 넘으면 끝을 「…」로(웹 카드 제목·주소 한 줄)
+export function ellipsis(text, px, weight, maxW) {
+  const t = String(text || ''); if (maxW <= 0) return ''; if (measure(t, px, 'app', weight) <= maxW) return t
+  let lo = 0, hi = t.length; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (measure(t.slice(0, m) + '…', px, 'app', weight) <= maxW) lo = m; else hi = m - 1 }
+  return t.slice(0, lo) + '…'
+}
 export function measure(text, px, family, weight) { const c = ctx(); c.font = fontCss(px, family, weight); return c.measureText(text).width }
 
 // 글 배치 — 줄마다 조각(굵게·색·형광펜) 위치까지. 반환 { lines: [{parts:[{text,x,w,…}], w}], w, h, px, family, weight }
@@ -225,7 +232,7 @@ function Ports({ it, onBoard }) {
 // labels = 'inline'(기본 — 내보내기) | 'skip'(화살표 라벨은 빼고) | 'only'(화살표 라벨만 — 편집 화면이 모든 선 위에 한 번 더 그림)
 // 종이틀 축척 — 틀이 용지의 k배 크기면 종이엔 1/k로 찍힘(「1:2.9」), 작으면 「2:1」. 1배 근처면 안 씀
 export const scaleText = k => { k = k || 1; if (Math.abs(k - 1) < 0.01) return ''; return k > 1 ? ` · 1:${+k.toFixed(1)}` : ` · ${+(1 / k).toFixed(1)}:1` }
-export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode = 'inline', page }) {   // page = 종이틀 쪽 번호(편집 화면만)   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
+export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode = 'inline', page, web }) {   // web = 웹 카드 칸 안 페이지: 없음 = 그림 카드(내보내기·장 목록), 'view' = 보이기만(누르면 칠판이 받음), 'on' = 조작 중   // page = 종이틀 쪽 번호(편집 화면만)   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
   const T = itemTransform(it), fill = it.fill ? cssColor(it.fill) : 'none'
   if (lmode === 'only' && it.type !== 'sarrow' && it.type !== 'arrow') return null
   switch (it.type) {
@@ -306,6 +313,31 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
       return <g transform={T}>{cells}<path d={lines.join(' ')} stroke={tl} strokeWidth={0.5} fill="none" />
         {it.header && rows > 1 && <path d={`M${x},${re[1]} H${x + w}`} stroke={tl} strokeWidth={1} />}
         <rect x={x} y={y} width={w} height={h} fill="none" stroke={tl} strokeWidth={1} /></g>
+    }
+    case 'web': {   // 웹 카드 — 위 띠(제목·주소·새 탭 단추) + 칸 안 페이지(들어가는 사이트, 편집·발표 화면만) 또는 대표 그림
+      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'wc-' + (it._id || idx), ob = openBtnRect(it), tw = w - ob.w - 26
+      const live = !!web && it.frameable && bh > 4
+      return <g transform={T}>
+        <clipPath id={cid}><rect x={x} y={y} width={w} height={h} rx={8} ry={8} /></clipPath>
+        <g clipPath={`url(#${cid})`}>
+          <rect x={x} y={y} width={w} height={h} fill="#ffffff" />
+          <rect x={x} y={y} width={w} height={H} fill="#f4f4f5" />
+          {bh > 0 && (live
+            ? <foreignObject x={x} y={y + H} width={w} height={bh}>
+                <iframe src={frameSrc(it)} title={it.title || it.url} allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
+                  sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-presentation" style={{ border: 0, width: '100%', height: '100%', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
+              </foreignObject>   // sandbox = 칠판 화면을 통째로 다른 주소로 넘기지 못하게(일부 사이트의 「틀 벗어나기」)
+            : it.thumb ? <image href={it.thumb} x={x} y={y + H} width={w} height={bh} preserveAspectRatio="xMidYMid slice" />
+            : <><rect x={x} y={y + H} width={w} height={bh} fill="#e4e4e7" />
+              <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(28, bh / 3)} fontFamily={APP_FONT} fill="#71717a">{it.embed ? '▶' : siteOf(it.url)}</text></>)}
+        </g>
+        {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#d4d4d8" strokeWidth={1} />}
+        <rect x={x} y={y} width={w} height={h} rx={8} ry={8} fill="none" stroke="#a1a1aa" strokeWidth={1} />
+        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis(it.title || siteOf(it.url), 13, 700, tw)}</text>
+        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.url, 10, 400, tw)}</text>
+        <g><title>새 탭에서 열기</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
+          <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
+      </g>
     }
     case 'frame': {   // 프레임 — 얇은 테두리 + 위 왼쪽 이름표(Lucid Frame·Figma Section). 안은 비움(위에 그림)
       const [x, y, w, h] = it.rect, fs = frameTagFs(it), tag = frameTag({ ...it, no: page ?? it.no }), tw = measure(tag, fs, 'app', 600) + fs

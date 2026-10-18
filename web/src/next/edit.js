@@ -27,7 +27,7 @@ export function hits(it, p, tol, textBox) {
   const q = toLocal(it, p)
   const edge = (it.width || 1) / 2 + tol
   switch (it.type) {
-    case 'rect': case 'ellipse': case 'symbol': case 'image': case 'table': case 'board': {
+    case 'rect': case 'ellipse': case 'symbol': case 'image': case 'table': case 'board': case 'web': {
       const [x, y, w, h] = it.rect
       if (it.type === 'ellipse') { const rx = w / 2 + edge, ry = h / 2 + edge, dx = q.x - x - w / 2, dy = q.y - y - h / 2; return (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1 }
       return q.x >= x - edge && q.x <= x + w + edge && q.y >= y - edge && q.y <= y + h + edge

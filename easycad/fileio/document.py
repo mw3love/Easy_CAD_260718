@@ -358,15 +358,26 @@ def item_to_dict(it) -> dict | None:
         if k == "label.align":
             if "label" in d:
                 d["label"]["align"] = v
-        elif k == "type":   # 웹 프레임 — 네모로 열었던 것을 다시 frame으로
+        elif k == "type":   # 웹 프레임·웹 카드 — 네모로 열었던 것을 다시 frame·web으로
             d["type"] = v
+            if v == "web":   # 카드에 보이려고 붙인 라벨(제목·주소)은 웹에선 안 씀
+                d.pop("label", None)
         elif k not in d:
             d[k] = v
     return d
 
 
 _WEB_ONLY_KEYS_ALL = ("fit_text", "chat_at")
-_WEB_ONLY_KEYS = {"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights")}  # row_heights = 행 높이 비율(웹 2026-10-18, 데스크톱은 같은 높이로 그림)
+
+
+def _web_card_label(d: dict):
+    """웹 카드를 데스크톱에서 볼 때 네모 안 글(제목·주소) — 저장할 땐 빼고 다시 web으로(`item_to_dict`)."""
+    if d.get("type") != "web":
+        return None
+    return {"text": ((d.get("title") or "") + "\n" + (d.get("url") or "")).strip(), "color": "#ff18181b", "font": 10, "bg": None}
+
+
+_WEB_ONLY_KEYS ={"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights")}  # row_heights = 행 높이 비율(웹 2026-10-18, 데스크톱은 같은 높이로 그림)
 
 
 def dict_to_item(d: dict):
@@ -406,6 +417,9 @@ def dict_to_item(d: dict):
     elif t == "frame":   # [웹 칠판 2026-10-18] 프레임(출력 한 쪽·슬라이드 영역) — 데스크톱은 아직 모름: 점선 네모로 보이고, 저장할 때 다시 frame으로(`_web_extra["type"]`)
         fd = {"pen": "#ff8a98a8", "width": 1.5, "style": 2, "fill": None}
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(fd)); it.setBrush(_mkbrush(fd))
+    elif t == "web":   # [웹 칠판 2026-10-18] 웹 카드(유튜브·웹페이지) — 데스크톱은 아직 모름: 제목·주소를 적은 네모로 보이고, 저장할 때 다시 web으로
+        wd = {"pen": "#ffa1a1aa", "width": 1.0, "style": 1, "fill": "#fff4f4f5"}
+        it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(wd)); it.setBrush(_mkbrush(wd)); it._radius = 8.0
     elif t == "rect":
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
         it._radius = float(d.get("radius") or 0)
@@ -463,6 +477,8 @@ def dict_to_item(d: dict):
         extra["label.align"] = d["label"]["align"]
     if t == "frame":
         extra.update({"type": "frame", **{k: d[k] for k in ("name", "no", "ratio", "magnet") if k in d}})
+    if t == "web":
+        extra.update({"type": "web", **{k: d[k] for k in ("url", "title", "thumb", "embed", "frameable") if k in d}})
     if extra:
         it._web_extra = extra
     for pd in d.get("ports", []):
@@ -570,8 +586,8 @@ def insert_items(scene, items: list[dict]) -> list:
                 if ld.get("bg") is not None:
                     lbl.set_bg(QColor(*ld["bg"]))
             it._sync_label()
-        elif d.get("label") and hasattr(it, "restore_label"):
-            it.restore_label(d["label"])
+        elif (d.get("label") or _web_card_label(d)) and hasattr(it, "restore_label"):
+            it.restore_label(d.get("label") or _web_card_label(d))
             # [우리 확장] 화살표 라벨의 경로/곡선 위 위치(t·off) 복원 후 재배치(없으면 기본 중점).
             if isinstance(it, (_ArrowItem, _PolyArrowItem)):
                 it._label_t = d["label"].get("t", 0.5)

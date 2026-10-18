@@ -8,6 +8,7 @@
 - KAIROS 대화(§8 항목61 ⓒ): POST `/api/chat`(앞 대화 + 칠판에서 고른 글 → 답, `easycad/ai/board_chat.py`), GET `/api/models`,
   GET/PUT `/api/chatlog/<이름>` — 칠판마다 대화 기록(`<이름>.chat.json`). 게이트웨이 키는 이 서버 PC에만 있다(브라우저로 안 감 —
   키 찾는 순서는 데스크톱과 같다, `gateway.resolve_api_key`).
+- 웹 카드: GET `/api/link?url=…&embed=…` — 주소를 대신 열어 제목·대표 그림·「칸 안에 넣어도 되나」(`link_info`). http(s)만.
 
 지금은 "마지막에 저장한 쪽이 이김" — 두 PC에서 동시에 고치면 나중 저장이 앞 저장을 덮는다(실시간 공동작업은 §8 항목61 ⓕ).
 접근 제한 없음: 같은 네트워크의 누구나 열 수 있다 — 회사 보안 정책 확인 전엔 내 PC에서만(`--host 127.0.0.1`).
@@ -95,6 +96,14 @@ class Handler(SimpleHTTPRequestHandler):
         sys.stderr.write("[대화] %s %.1f초\n" % (out["model"], out["elapsed"]))
         return self._json(200, out)
 
+    def _link(self):
+        from urllib.parse import parse_qs, urlparse
+        q = parse_qs(urlparse(self.path).query)
+        url, embed = (q.get("url") or [""])[0], (q.get("embed") or [""])[0]
+        if not re.match(r"^https?://", url):
+            return self._json(400, {"error": "http(s) 주소만"})
+        return self._json(200, link_info(url, embed if re.match(r"^https?://", embed) else ""))
+
     def _send(self, code: int, body: bytes = b"", ctype: str = "application/json; charset=utf-8"):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -107,6 +116,8 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/models":
             return self._models()
+        if self.path.startswith("/api/link?"):
+            return self._link()
         if self.path == "/api/symbols":   # 「내 심볼」 — 데스크톱과 같은 파일(git으로 PC 간 동기화), 웹은 읽기만
             lib = os.path.join(os.path.dirname(HERE), "symbol_library", "symbol_library.json")
             if not os.path.exists(lib):
@@ -154,6 +165,86 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):   # 저장 요청만 짧게(대화는 `_chat`이 따로 남김)
         if self.command == "PUT":
             sys.stderr.write("[저장] %s %s\n" % (self.path, args[1] if len(args) > 1 else ""))
+
+
+# ── 웹 카드(§8 항목61 4-b ①', 2026-10-18) — 주소를 서버가 대신 열어 「칸 안에 넣어도 되나·제목·대표 그림」을 알려 준다.
+# 브라우저는 남의 사이트가 넣기를 막았는지 알 수 없다(막힌 페이지도 「다 불러옴」 신호가 똑같이 옴) → 응답 머리말로 판단.
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"
+_THUMB_MAX = 400 * 1024   # 대표 그림은 문서에 data 주소로 들어가니(서버 없이도·내보내기에도 보이게) 크기 상한
+
+
+def frame_blocked(headers) -> bool:
+    """X-Frame-Options(DENY·SAMEORIGIN) 또는 CSP frame-ancestors(별표 없음)면 남의 페이지 안에 못 넣는다."""
+    xfo = " ".join(headers.get_all("X-Frame-Options") or []).lower()
+    if "deny" in xfo or "sameorigin" in xfo:
+        return True
+    for csp in headers.get_all("Content-Security-Policy") or []:
+        for part in csp.split(";"):
+            p = part.strip().lower()
+            if p.startswith("frame-ancestors") and "*" not in p.split()[1:]:
+                return True
+    return False
+
+
+def _meta(html: str, *names) -> str:
+    import html as _h
+    for n in names:   # <meta property="og:title" content="…"> — 속성 차례는 사이트마다 다름
+        for pat in (rf'<meta[^>]+(?:property|name)=["\']{re.escape(n)}["\'][^>]*content=["\']([^"\']*)',
+                    rf'<meta[^>]+content=["\']([^"\']*)["\'][^>]*(?:property|name)=["\']{re.escape(n)}["\']'):
+            m = re.search(pat, html, re.I)
+            if m and m.group(1).strip():
+                return _h.unescape(m.group(1).strip())
+    return ""
+
+
+def _decode(raw: bytes, headers) -> str:
+    cs = headers.get_content_charset()
+    if not cs:
+        m = re.search(rb'<meta[^>]+charset=["\']?([\w-]+)', raw[:4096], re.I)
+        cs = m.group(1).decode("ascii", "ignore") if m else "utf-8"
+    try:
+        return raw.decode(cs, errors="replace")
+    except LookupError:
+        return raw.decode("utf-8", errors="replace")
+
+
+def _open(url: str, limit: int):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept-Language": "ko,en;q=0.8"})
+    r = urllib.request.urlopen(req, timeout=6)
+    return r, r.read(limit + 1)
+
+
+def link_info(url: str, embed: str = "") -> dict:
+    """주소 → { url, title, thumb(data 주소|""), frameable, embed }. 못 열어도 오류 대신 「모름」(칸 안에 넣지 않고 새 탭으로)."""
+    import base64
+    import html as _h
+    from urllib.parse import urljoin
+    out = {"url": url, "embed": embed, "title": "", "thumb": "", "frameable": False}
+    try:
+        r, raw = _open(url, 1024 * 1024)
+        page = _decode(raw, r.headers)
+        out["title"] = _meta(page, "og:title", "twitter:title") or _h.unescape(
+            (re.search(r"<title[^>]*>([^<]*)", page, re.I) or [None, ""])[1].strip())
+        img = _meta(page, "og:image", "twitter:image")
+        out["frameable"] = not frame_blocked(r.headers)
+    except Exception as e:   # 사내망·로그인 필요·없는 주소 — 카드는 주소만으로
+        sys.stderr.write("[웹 카드] %s 열기 실패: %s\n" % (url, e))
+        return out
+    if embed:   # 재생용 주소(유튜브 embed 등)는 그 주소의 머리말로 다시 판단
+        try:
+            out["frameable"] = not frame_blocked(_open(embed, 0)[0].headers)
+        except Exception:
+            out["frameable"] = False
+    if img:
+        try:
+            ri, data = _open(urljoin(url, img), _THUMB_MAX)
+            ct = (ri.headers.get_content_type() or "")
+            if ct.startswith("image/") and len(data) <= _THUMB_MAX:
+                out["thumb"] = "data:%s;base64,%s" % (ct, base64.b64encode(data).decode("ascii"))
+        except Exception:
+            pass
+    return out
 
 
 def _write(path: str, raw: bytes):

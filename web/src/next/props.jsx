@@ -35,7 +35,7 @@ const PEN = new Set(['rect', 'ellipse', 'symbol', 'polygon', 'path', 'line'])
 const lineKey = it => (isArrow(it) || it.type === 'badge' ? 'color' : PEN.has(it.type) || it.type === 'table' ? 'pen' : it.type === 'board' ? 'bg' : null)   // 표 선 색 = .ecad 표의 새 칸 pen(웹 먼저)   // 보드는 「바탕」 색
 const hasWidth = it => isArrow(it) || PEN.has(it.type)
 const fillKey = it => (['rect', 'ellipse', 'symbol'].includes(it.type) || (it.type === 'polygon' && it.closed) ? 'fill' : it.type === 'text' ? 'bg' : null)
-const TYPE_NAMES = { rect: '사각형', ellipse: '원', line: '선', arrow: '화살표', sarrow: '화살표', text: '텍스트', badge: '번호', path: '펜', image: '이미지', table: '표', titleblock: '표제란', polygon: '다각형', board: '보드', frame: '프레임' }
+const TYPE_NAMES = { rect: '사각형', ellipse: '원', line: '선', arrow: '화살표', sarrow: '화살표', text: '텍스트', badge: '번호', path: '펜', image: '이미지', table: '표', titleblock: '표제란', polygon: '다각형', board: '보드', frame: '프레임', web: '웹 카드' }
 const typeName = it => (it.type === 'symbol' ? SYMBOLS[it.kind]?.name || '심볼' : TYPE_NAMES[it.type] || '객체')
 
 // 색 비교용 — '#ffrrggbb'(불투명 ARGB)와 '#rrggbb'를 같게
@@ -282,6 +282,14 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
       {kind === 'ortho' && <Row label="모서리"><Stepper title="꺾인 곳 둥글기(0 = 각짐)" {...num(arrows, a => a.curve_r, 10, 0, 40, 1, '모서리', (a, v) => ({ curve_r: v }))} /></Row>}
     </>}
     {items.some(it => it.type === 'rect') && <Row label="모서리"><Stepper title="네모 모서리 둥글기(0 = 각짐)" {...num(items.filter(it => it.type === 'rect'), it => it.radius, 0, 0, 60, 2, '모서리 둥글기', (it, v) => ({ radius: v || undefined }))} /></Row>}
+    {items.length === 1 && items[0].type === 'web' && (() => { const w = items[0]   // 웹 카드 — 제목(카드 위 띠·PDF에 나옴)·새 탭
+      return <>
+        <Row label="제목"><input key={w._id} defaultValue={w.title || ''} placeholder="페이지 제목" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur() }}
+          onChange={e => set(() => ({ title: e.target.value }), '웹 카드 제목', 'wtitle')}
+          style={{ flex: 1, minWidth: 0, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} /></Row>
+        <Row label="주소"><button title={w.url} onClick={() => window.open(w.url, '_blank', 'noopener')} style={{ all: 'unset', cursor: 'pointer', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#3b82f6', fontSize: 11 }}>↗ 새 탭에서 열기</button></Row>
+        <div style={{ fontSize: 11, color: C.muted }}>{w.frameable ? '두 번 누르면 칸 안을 조작(바깥을 누르면 끝)' : '이 사이트는 칸 안에 넣기를 막아요 — 두 번 누르면 새 탭'}</div>
+      </> })()}
     {items.length === 1 && items[0].type === 'frame' && (() => { const f = items[0]   // 프레임 — 이름·비율(순서는 좌하 「프레임」 카드, 틀만 옮기기는 이름표 옆 자물쇠·Alt+끌기)
       return <>
         <Row label="이름"><input key={f._id} defaultValue={f.name || ''} placeholder="예: 표지" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur() }}

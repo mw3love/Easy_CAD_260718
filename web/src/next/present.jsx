@@ -25,6 +25,21 @@ const TOOLS = [
 ]
 const IDLE_MS = 2000
 
+// 넘길 때 미끄러짐 — SVG transform 속성을 직접 움직임(requestAnimationFrame). CSS transform 아래에선 크롬이 웹 카드 칸 안 페이지(iframe)를
+// 그리지 않아(검은·흰 칸 — 2026-10-18 실험: 같은 자리를 속성으로 바꾸자 바로 보임) CSS 전환을 못 씀. ms = 0이면 바로
+function useGlide(target, ms) {
+  const [cur, setCur] = useState(target), from = useRef(target), raf = useRef(0), key = target.join(',')
+  useEffect(() => {
+    cancelAnimationFrame(raf.current)
+    if (!ms) { from.current = target; setCur(target); return }
+    const a = from.current, t0 = performance.now()
+    const step = now => { const u = Math.min(1, (now - t0) / ms), e = u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2   // ease-in-out
+      const v = target.map((t, j) => a[j] + (t - a[j]) * e); from.current = v; setCur(v); if (u < 1) raf.current = requestAnimationFrame(step) }
+    raf.current = requestAnimationFrame(step); return () => cancelAnimationFrame(raf.current)
+  }, [key, ms])   // eslint-disable-line react-hooks/exhaustive-deps
+  return cur
+}
+
 // frames = [{ id, name, box }] 순서대로, order = 그릴 [아이템, 순번](프레임 자신은 뺀 것), start = 시작 장, dark = 칠판 화면이 어두운가
 // onAdd(아이템 설계[]) = 판서 레이어에 넣기, onErase(칠판 점, 허용 거리) = 그 자리 판서 지우기, onUndo = 되돌리기
 export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dark0 = false, onAdd, onErase, onUndo, onClearNotes, onFlipArrow, onClose }) {   // onClearNotes(칠판 상자) = 그 안 판서 지우기
@@ -109,12 +124,12 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   }, [n])   // eslint-disable-line react-hooks/exhaustive-deps
   listRef.current = list
   setInkDark(dark)   // 그리기 전에 — effect에서 바꾸면 한 박자 늦어 어둡게 되돌린 뒤 글이 검은 잉크로 남았음(2026-10-18 사용자)
-  const f = frames[i]; if (!f) return null
-  const { w: W, h: H } = vw, b = f.box, k = Math.min(W / b.w, H / b.h), hw = b.w * k, hh = b.h * k, hx = (W - hw) / 2, hy = (H - hh) / 2
+  const f = frames[i]
+  const { w: W, h: H } = vw, b = f?.box || { x: 0, y: 0, w: 1, h: 1 }, k = Math.min(W / b.w, H / b.h), hw = b.w * k, hh = b.h * k, hx = (W - hw) / 2, hy = (H - hh) / 2
   const tx = hx - b.x * k, ty = hy - b.y * k, unz = (x, y) => (zoom ? [(x - zoom.ox) / zoom.s, (y - zoom.oy) / zoom.s] : [x, y])
+  const [gx, gy, gk] = useGlide([tx, ty, k], glide && !draft ? 400 : 0), [zx, zy, zs] = useGlide([zoom?.ox || 0, zoom?.oy || 0, zoom?.s || 1], pan.current?.moved ? 0 : 150)
+  if (!f) return null
   const toScene = (x, y) => { const [ux, uy] = unz(x, y); return { x: (ux - tx) / k, y: (uy - ty) / k } }
-  const ztf = zoom ? `translate(${zoom.ox}px, ${zoom.oy}px) scale(${zoom.s})` : 'none'
-  const tf = `translate(${tx}px, ${ty}px) scale(${k})`
   // ── 판서 ──
   const down = e => {
     e.stopPropagation(); wake()
@@ -165,8 +180,8 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     style={{ position: 'fixed', inset: 0, zIndex: 1000, background: '#000', cursor: laserShown ? 'none' : show ? (tool && tool !== 'erase' ? 'crosshair' : 'default') : 'none', ...th }}>
     <svg width={W} height={H} style={{ display: 'block' }}>
       <rect x={hx} y={hy} width={hw} height={hh} fill={th['--mb-board']} />
-      <g style={{ transform: ztf, transformOrigin: '0 0', transition: pan.current?.moved ? 'none' : 'transform .15s' }}><g style={{ transform: tf, transformOrigin: '0 0', transition: glide && !draft ? 'transform .4s ease-in-out' : 'none', '--z': k * (zoom?.s || 1) }}>
-        {order.map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} />)}
+      <g transform={`translate(${zx},${zy}) scale(${zs})`}><g transform={`translate(${gx},${gy}) scale(${gk})`} style={{ '--z': k * (zoom?.s || 1) }}>
+        {order.map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} web={it.type === 'web' ? (tool ? 'view' : 'on') : undefined} />)}
       </g></g>
       {/* 프레임 밖 가림(구멍 뚫린 검은 판) — 출력한 쪽과 같은 범위만 보임 */}
       <path d={`M0,0 H${W} V${H} H0 Z M${hx},${hy} V${hy + hh} H${hx + hw} V${hy} Z`} fill="#000" fillRule="evenodd" />
