@@ -7,6 +7,7 @@ import { Editor } from './Editor.jsx'
 import { DOC_NAME, docBounds, emptyDoc, loadServerDoc, parseDoc, saveServerDoc } from './doc.js'
 import { fromEcad, toEcad } from './model.js'
 import { setInkDark } from './render.jsx'
+import { Palette, useLibrary } from './palette.jsx'
 
 const ZMIN = 0.02, ZMAX = 40
 // 화면 색은 next.html의 CSS 변수(밝은/어두운 화면 — 어두운 쪽은 데스크톱과 같은 값)
@@ -67,6 +68,7 @@ function App() {
   useEffect(() => { loadServerDoc().then(r => { setServer(r.server); if (r.doc) open(r.doc, `서버 「${DOC_NAME}」`, true); else setStatus(r.server ? `서버 「${DOC_NAME}」 · 새 칠판` : '서버 없음 — 파일로 열고 저장') }) }, [])   // eslint-disable-line
 
   // 카드 버튼: 클릭 = 그리기 도구, 6px 넘게 끌면 도형을 칠판에 바로 놓기(데스크톱 `_PaletteButton._DRAG_THRESH`)
+  const lib = useLibrary()   // 「내 심볼」(서버 `/api/symbols`)
   const paletteDown = (e, t) => {
     if (e.button !== 0) return
     const sx = e.clientX, sy = e.clientY
@@ -111,15 +113,9 @@ function App() {
         }} />
       </div>
       <div ref={box} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        <Editor ref={ed} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} />
-        {/* 좌상 도형 카드(데스크톱 첫 화면: 좌상 도형·심볼) — 심볼·내 심볼은 4단계 */}
-        <div style={{ position: 'absolute', left: 12, top: 12, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, boxShadow: '0 2px 8px rgba(0,0,0,.06)', width: 150 }}>
-          <div style={{ font: "700 13px 'Pretendard', sans-serif", marginBottom: 6 }}>도형</div>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {[['rect', '□', '사각형'], ['ellipse', '○', '원']].map(([t, icon, label]) => <div key={t} onPointerDown={e => paletteDown(e, t)}>
-              <Btn icon={icon} label={label} on={tool === t} onClick={() => setTool(t)} title={`${label} — 클릭하면 그리기, 칠판으로 끌면 바로 놓기`} /></div>)}
-          </div>
-        </div>
+        <Editor ref={ed} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} />
+        {/* 좌상 도형·심볼 카드(데스크톱 첫 화면: 좌상 도형·심볼) */}
+        <Palette lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} />
       </div>
     </div>
   )

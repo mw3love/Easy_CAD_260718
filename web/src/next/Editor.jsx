@@ -12,7 +12,7 @@ import { routeOrtho } from '../route.js'
 import { projectToCurve, projectToPath, snapLabelOff } from './arrowedit.js'
 import { beginSegment, beginSubdivide, bendCurve, BEND_TS, curvePoint, dragSegment, endSegment, nearestSegment, onPill, SEG_HANDLE_PX, SEG_HIT_PX, segmentHandles, setCurveEnd, snapCurve, subdividePreview } from './arrowedit.js'
 import { sarrowRouting } from './arrows.js'
-import { newId } from './model.js'
+import { fromEcad, newId } from './model.js'
 import {
   applyRect, boardContents, duplicate, expandGroups, flatten, followArrows, groupItems, localRect, mirror, moveItems, removeItems, resizeRect,
   rotateTo, rubberSelect, sceneBox, toLocal, toScene, toggleLock, topHit, ungroupItems, unionBox, zOrder,
@@ -58,7 +58,7 @@ const withLabels = (it, labels) => { const o = { ...it, labels }; delete o.label
 const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([x, y]) => ({ x, y })), q) : projectToCurve(it, q))
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
-export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus }, ref) {
+export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library }, ref) {
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -420,22 +420,35 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
 
   // ── 도형 카드에서 끌어다 놓기(데스크톱 `_PaletteButton` 6px 넘게 끌기) — 진짜 도형이 손에 붙어 따라오고 정렬선도 걸림, 칠판 밖(카드 위 등)에 놓으면 취소 ──
+  // 도형·심볼 카드 도구 — 'rect'·'ellipse'·'sym:<종류>'는 상자처럼 끌어 그리기, 'customsym:<id>'(내 심볼)는 원래 모양 그대로 놓기
+  const boxDefault = t => (t === 'ellipse' ? [100, 100] : t === 'rect' ? [120, 60] : [120, 72])   // 심볼 기본 크기 = 데스크톱 `_PALETTE_SYM_WH`
+  const boxItem = (t, x0, y0, w, h) => base([x0, y0], { ...(t.startsWith('sym:') ? { type: 'symbol', kind: t.slice(4) } : { type: t }), rect: [0, 0, w, h], ...penOf(true) })
+  // 내 심볼 아이템들(새 _id, 안의 화살표 연결은 그대로, 둘 이상이면 새 묶음 — 데스크톱 `_finish_custom_symbol_placement`). 칠판 위 맨 앞, 안의 앞뒤 차례는 유지
+  function customItems(key) {
+    const e = (library || []).find(s => 'customsym:' + s.id === key); if (!e) return null
+    const items = fromEcad({ items: structuredClone(e.items) }).items, gid = items.length >= 2 ? newId() : null, top = topZ(R.current.model.items) + 1
+    return items.map(it => ({ ...it, group_id: gid, z: top + (it.z || 0) }))
+  }
+  // protos를 왼쪽 위가 (x, y)인 자리로
+  const placeAt = (protos, x, y) => { const b = unionBox(protos.map(it => sceneBox(it, textBox))); return moveItems(protos, protos.map(it => it._id), x - b.x, y - b.y) }
   function startPaletteDrag(t) {
-    const m = R.current.model, w = t === 'ellipse' ? 100 : 120, h = t === 'ellipse' ? 100 : 60   // 클릭만 해 놓을 때와 같은 기본 크기
-    const proto = base([0, 0], { type: t, rect: [0, 0, w, h], ...penOf(true), z: topZ(m.items) + 1 })
+    const m = R.current.model
+    const protos = t.startsWith('customsym:') ? customItems(t) : [{ ...boxItem(t, 0, 0, ...boxDefault(t)), z: topZ(m.items) + 1 }]   // 클릭만 해 놓을 때와 같은 기본 크기
+    if (!protos) return
+    const b0 = unionBox(protos.map(it => sceneBox(it, textBox))), w = b0.w, h = b0.h
     const others = m.items.filter(it => !it.locked).map(it => sceneBox(it, textBox))
     let last = null
     const place = e => {
       const el = document.elementFromPoint(e.clientX, e.clientY), over = !!el && (el === svg.current || svg.current.contains(el))
       const p = toSceneP(e), a = alignSnap({ x: p.x - w / 2, y: p.y - h / 2, w, h }, others, R.current.cam.z)
-      return { over, it: { ...proto, pos: [p.x - w / 2 + a.dx, p.y - h / 2 + a.dy] }, guides: a.guides }
+      return { over, its: placeAt(protos, p.x - w / 2 + a.dx, p.y - h / 2 + a.dy), guides: a.guides }
     }
-    const move = e => { last = place(e); setLive(last.over ? [...m.items, last.it] : null); setOverlay(o => ({ ...o, guides: last.over ? last.guides : null })) }
+    const move = e => { last = place(e); setLive(last.over ? [...m.items, ...last.its] : null); setOverlay(o => ({ ...o, guides: last.over ? last.guides : null })) }
     const up = e => {
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.style.cursor = ''; st.current = { space: st.current.space }
       setOverlay(o => ({ ...o, guides: null }))
       last = place(e)
-      if (last.over) commit([...m.items, last.it], [last.it._id], '도형'); else setLive(null)
+      if (last.over) commit([...m.items, ...last.its], last.its.map(it => it._id), '도형'); else setLive(null)
     }
     document.body.style.cursor = 'copy'; st.current = { ...st.current, kind: 'pdrag' }; setHp(null)   // 끄는 동안 포트점 예고 끔(데스크톱도 드래그 중 억제)
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
@@ -450,6 +463,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       return
     }
     if (t === 'text') { const it = base([p.x - TEXT_MARGIN, p.y - TEXT_MARGIN], { type: 'text', text: '', color: INK, font: 12, bg: null, z: topZ(m.items) + 1 }); commit([...m.items, it], [it._id], '글'); setEditing({ id: it._id, kind: 'text', fresh: true }); setTool('select'); return }
+    if (t.startsWith('customsym:')) {   // 내 심볼 도구 — 누른 자리에 원래 크기로(데스크톱 `_create_custom_symbol_at`: 왼쪽 위 = 누른 자리)
+      const protos = customItems(t); if (!protos) return
+      const its = placeAt(protos, p.x, p.y); commit([...m.items, ...its], its.map(it => it._id), '심볼'); setTool('select'); return
+    }
     if (t === 'polygon') {
       const poly = overlay.poly || []
       if (poly.length >= 3 && Math.hypot(p.x - poly[0].x, p.y - poly[0].y) * R.current.cam.z <= 8) return finishPoly(poly, true)
@@ -468,11 +485,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     setOverlay(o => ({ ...o, draw: null }))
     const m = R.current.model, z = R.current.cam.z, click = Math.hypot(p.x - s.start.x, p.y - s.start.y) * z < 3
     let it
-    if (s.tool === 'rect' || s.tool === 'ellipse') {
+    if (s.tool === 'rect' || s.tool === 'ellipse' || s.tool.startsWith('sym:')) {
       let x0 = Math.min(s.start.x, p.x), y0 = Math.min(s.start.y, p.y), w = Math.abs(p.x - s.start.x), h = Math.abs(p.y - s.start.y)
       if (s.shift) { const d = Math.max(w, h); w = h = d; x0 = p.x < s.start.x ? s.start.x - d : s.start.x; y0 = p.y < s.start.y ? s.start.y - d : s.start.y }
-      if (click) { w = s.tool === 'ellipse' ? 100 : 120; h = s.tool === 'ellipse' ? 100 : 60; x0 = p.x - w / 2; y0 = p.y - h / 2 }   // 클릭만 = 기본 크기로 그 자리에
-      it = base([x0, y0], { type: s.tool, rect: [0, 0, w, h], ...penOf(true) })
+      if (click) { [w, h] = boxDefault(s.tool); x0 = p.x - w / 2; y0 = p.y - h / 2 }   // 클릭만 = 기본 크기로 그 자리에
+      it = boxItem(s.tool, x0, y0, w, h)
     } else if (s.tool === 'line') {
       if (click) return
       let { x, y } = p
@@ -688,7 +705,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
           })}
           {rb && (() => { const x = Math.min(rb.a.x, rb.b.x), y = Math.min(rb.a.y, rb.b.y), w = Math.abs(rb.b.x - rb.a.x), h = Math.abs(rb.b.y - rb.a.y), win = rb.b.x >= rb.a.x
             return <rect x={x} y={y} width={w} height={h} fill={win ? RB_BLUE : RB_GREEN} fillOpacity={45 / 255} stroke={win ? RB_BLUE : RB_GREEN} strokeWidth={1 / z} strokeDasharray={win ? undefined : `${4 / z} ${3 / z}`} /> })()}
-          {dr && (dr.tool === 'rect' ? <rect x={Math.min(dr.a.x, dr.b.x)} y={Math.min(dr.a.y, dr.b.y)} width={Math.abs(dr.b.x - dr.a.x)} height={Math.abs(dr.b.y - dr.a.y)} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />
+          {dr && (dr.tool === 'rect' || dr.tool.startsWith('sym:') ? <rect x={Math.min(dr.a.x, dr.b.x)} y={Math.min(dr.a.y, dr.b.y)} width={Math.abs(dr.b.x - dr.a.x)} height={Math.abs(dr.b.y - dr.a.y)} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />
             : dr.tool === 'ellipse' ? <ellipse cx={(dr.a.x + dr.b.x) / 2} cy={(dr.a.y + dr.b.y) / 2} rx={Math.abs(dr.b.x - dr.a.x) / 2} ry={Math.abs(dr.b.y - dr.a.y) / 2} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />
             : dr.tool === 'line' ? <line x1={dr.a.x} y1={dr.a.y} x2={dr.b.x} y2={dr.b.y} stroke={BLUE} strokeWidth={1.5 / z} />
             : <polyline points={dr.pts.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />)}

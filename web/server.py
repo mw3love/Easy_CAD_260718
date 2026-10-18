@@ -107,6 +107,12 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/models":
             return self._models()
+        if self.path == "/api/symbols":   # 「내 심볼」 — 데스크톱과 같은 파일(git으로 PC 간 동기화), 웹은 읽기만
+            lib = os.path.join(os.path.dirname(HERE), "symbol_library", "symbol_library.json")
+            if not os.path.exists(lib):
+                return self._send(404, b'{"error":"none"}')
+            with open(lib, "rb") as f:
+                return self._send(200, f.read())
         p = self._board_path()
         if p is None:
             # 화면: 없는 경로는 index.html(한 페이지 앱)
