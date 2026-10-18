@@ -364,7 +364,7 @@ def item_to_dict(it) -> dict | None:
 
 
 _WEB_ONLY_KEYS_ALL = ("fit_text", "chat_at")
-_WEB_ONLY_KEYS = {"table": ("font", "color", "pen", "cell_styles")}
+_WEB_ONLY_KEYS = {"table": ("font", "color", "pen", "cell_styles", "cell_runs")}
 
 
 def dict_to_item(d: dict):

@@ -269,16 +269,17 @@ export function followArrows(items, rectOf) {
 // op = 'rowAbove'|'rowBelow'|'colLeft'|'colRight'|'delRow'|'delCol', (r, c) = 기준 칸. 행 높이·열 폭은 그대로 두고 표가 늘거나 줄어든다(넣는 열 = 기준 열 폭)
 export function tableOp(it, op, r, c) {
   const out = tableOpBody(it, op, r, c)
-  if (out === it || !it.cell_styles) return out
+  if (out === it || (!it.cell_styles && !it.cell_runs)) return out
   const shift = (i, at, del) => (del ? (i === at ? -1 : i > at ? i - 1 : i) : i >= at ? i + 1 : i)   // 넣은/지운 줄 뒤는 한 칸 밀림, 지운 줄은 사라짐
-  const ns = {}
-  for (const [k, v] of Object.entries(it.cell_styles)) {
-    let [rr, cc] = k.split(',').map(Number)
-    if (op === 'rowAbove') rr = shift(rr, r); else if (op === 'rowBelow') rr = shift(rr, r + 1); else if (op === 'delRow') rr = shift(rr, r, true)
-    else if (op === 'colLeft') cc = shift(cc, c); else if (op === 'colRight') cc = shift(cc, c + 1); else if (op === 'delCol') cc = shift(cc, c, true)
-    if (rr >= 0 && cc >= 0) ns[`${rr},${cc}`] = v
-  }
-  return { ...out, cell_styles: ns }
+  const move = map => { if (!map) return undefined; const ns = {}
+    for (const [k, v] of Object.entries(map)) {
+      let [rr, cc] = k.split(',').map(Number)
+      if (op === 'rowAbove') rr = shift(rr, r); else if (op === 'rowBelow') rr = shift(rr, r + 1); else if (op === 'delRow') rr = shift(rr, r, true)
+      else if (op === 'colLeft') cc = shift(cc, c); else if (op === 'colRight') cc = shift(cc, c + 1); else if (op === 'delCol') cc = shift(cc, c, true)
+      if (rr >= 0 && cc >= 0) ns[`${rr},${cc}`] = v
+    }
+    return ns }
+  return { ...out, ...(it.cell_styles ? { cell_styles: move(it.cell_styles) } : {}), ...(it.cell_runs ? { cell_runs: move(it.cell_runs) } : {}) }   // 칸 꾸밈·칸 부분 서식
 }
 function tableOpBody(it, op, r, c) {
   const [x, y, w, h] = it.rect, rows = it.rows, cols = it.cols, ch = h / rows

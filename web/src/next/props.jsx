@@ -1,9 +1,10 @@
 // 오른쪽 위 「속성」 카드(고를 때만) — 고른 것 모두의 선 색·굵기·선 모양·채움, 화살표 칸(종류·화살촉·머리 크기·모서리), 글자 크기·색.
 // 데스크톱 `host_style._refresh_properties`와 같은 자리·같은 항목·같은 차례(종류 → 선 → 채움 → 화살표 → 글자). 섞어 고르면 해당하는 것에만.
 // 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import SYMBOLS from '../symbols.json' with { type: 'json' }
 import { symbolPath } from './symbols.js'
+import { paperWH } from './geom.js'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', seg: 'var(--mb-seg)', on: '#da7756', onBg: 'var(--mb-onbg)' }   // 화면 색 = next.html CSS 변수
 // 두 줄 꽉 채움(8+8) — 데스크톱 색 창과 같은 짜임: 진한 6색(`_COLOR_GRID_HUES`) + 검정 + 다른 색 / 같은 6색의 연한 색(Qt lighter(150)) + 회색 + 흰색
@@ -171,6 +172,24 @@ function RotInput({ value, onSet }) {
   </div>
 }
 
+// 글을 고치는 중 「글자」 카드(2026-10-18 사용자: 고칠 때도 속성이 보여야 — 칸 안 일부만 색 바꾸기) — 드래그한 부분에(없으면 그 자리부터) 굵게·색·형광펜.
+// 누를 때 편집기 포커스·선택을 잃지 않게 mousedown 기본 동작을 막고, data-keep-edit로 편집이 안 끝나게 함. 크기는 .ecad 부분 서식에 없어 글 전체 단위(편집을 끝낸 뒤 속성 카드)
+export function EditProps({ ed }) {
+  const [, tick] = useState(0)
+  useEffect(() => { const f = () => tick(n => n + 1); ed.on('selectionUpdate', f); ed.on('transaction', f); return () => { ed.off('selectionUpdate', f); ed.off('transaction', f) } }, [ed])
+  const bold = ed.isActive('bold'), ts = ed.getAttributes('textStyle'), color = (ts.color || '').toLowerCase(), hl = !!ts.backgroundColor
+  const run = f => f(ed.chain().focus()).run()
+  return <div data-keep-edit onMouseDown={e => e.preventDefault()} onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 12, top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
+    padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', zIndex: 25 }}>
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}><span style={{ font: "700 15px 'Pretendard', sans-serif" }}>글자</span><span style={{ fontSize: 11, color: C.muted }}>드래그한 부분에</span></div>
+    <Row label="굵게"><Seg value={bold} onPick={b => run(c => (b ? c.setBold() : c.unsetBold()))} items={[[true, <b key="b">굵게</b>, '굵게 (Ctrl+B)'], [false, <span key="n">보통</span>, '보통']]} /></Row>
+    <Row label="색"><ColorGrid value={/^#[0-9a-f]{6}$/.test(color) ? color : ''} onPick={c => run(ch => ch.setColor(c))} /></Row>
+    <Row label=""><button title="형광펜 — 다시 누르면 지워요" aria-pressed={hl} onClick={() => run(c => (hl ? c.unsetBackgroundColor() : c.setBackgroundColor('rgba(255,213,79,0.6)')))}
+      style={btn(hl, { padding: '0 10px', background: hl ? C.onBg : C.seg, fontSize: 12, gap: 6 })}><span style={{ width: 14, height: 10, borderRadius: 2, background: 'rgba(255,213,79,.6)' }} />형광펜</button>
+      <button title="색 되돌리기(기본 글 색)" onClick={() => run(c => c.unsetColor())} style={btn(false, { padding: '0 8px', background: C.seg, fontSize: 12 })}>기본 색</button></Row>
+  </div>
+}
+
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
@@ -248,7 +267,9 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
     {items.length > 0 && items.every(it => it.type === 'titleblock') && <>
       <Row label="용지"><Seg value={one(items.map(it => it.size))} onPick={s => set(it => ({ size: s }), '용지')} items={['A4', 'A3', 'A2', 'A1', 'A0'].map(s => [s, <span key={s} style={{ fontSize: 11 }}>{s}</span>, s])} /></Row>
       <Row label="방향"><Seg value={one(items.map(it => it.orient))} onPick={o => set(it => ({ orient: o }), '방향')} items={[['landscape', <span key="l">가로</span>, '가로'], ['portrait', <span key="p">세로</span>, '세로']]} /></Row>
-      <Row label="크기"><Stepper title="틀 크기(배율) — 출력하면 이 틀이 종이 한 장에 꽉 차요" {...num(items, it => Math.round((it.scale || 1) * 100), 100, 5, 2000, 5, '틀 크기', (it, v) => ({ scale: v / 100 }))} fmt={x => x + '%'} /></Row>
+      <Row label="크기"><Stepper title="틀 크기(배율) — 출력하면 이 틀이 종이 한 장에 꽉 차요" {...num(items, it => Math.round((it.scale || 1) * 100), 100, 5, 2000, 5, '틀 크기', (it, v) => ({ scale: v / 100 }))} fmt={x => x + '%'} />
+        <button title="틀을 용지 실제 크기(1:1)로 — 가운데 그대로" onClick={() => set(it => { const k = it.scale || 1, [W, H] = paperWH(it.size, it.orient), cx = it.pos[0] + W * k / 2, cy = it.pos[1] + H * k / 2; return { scale: 1, pos: [cx - W / 2, cy - H / 2] } }, '1:1로')}
+          style={btn(false, { padding: '0 6px', background: C.seg, fontSize: 11 })}>1:1로</button></Row>
     </>}
     {rotItems.length > 0 && <Row label="회전"><RotInput value={rot} onSet={a => set(it => (ROTATABLE.has(it.type) ? rotate(it, a) : null), '회전', '회전')} /></Row>}
     {cells && (() => {   // 고른 칸(들)의 꾸밈 — 표 전체 값 위에 덮음

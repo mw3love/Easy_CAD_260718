@@ -24,9 +24,11 @@ def test_web_card_keys_survive_desktop_save():
 
 def test_web_table_style_keys_survive_desktop_save():
     d = dict(_BASE, type="table", rows=2, cols=2, header=True, rect=[0.0, 0.0, 80.0, 28.0], cells=[["a", "b"], ["c", "d"]],
-             col_widths=[0.5, 0.5], font=9, color="#ff0055aa", pen="#ff888888")
+             col_widths=[0.5, 0.5], font=9, color="#ff0055aa", pen="#ff888888",
+             cell_styles={"0,1": {"bold": True, "fill": "#55e8c15a"}}, cell_runs={"1,0": [[0, 1, "#ff3b30", False]]})
     out = _roundtrip(d)
     assert (out["font"], out["color"], out["pen"]) == (9, "#ff0055aa", "#ff888888")
+    assert out["cell_styles"] == {"0,1": {"bold": True, "fill": "#55e8c15a"}} and out["cell_runs"] == {"1,0": [[0, 1, "#ff3b30", False]]}
 
 
 def test_unknown_keys_are_not_resurrected():

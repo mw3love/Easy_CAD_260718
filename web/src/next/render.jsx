@@ -50,8 +50,9 @@ function wrapParts(parts, maxW, wOf) {
 }
 // 표 칸 글자 크기(px) — 데스크톱 기본식(칸 높이 50%·칸 폭 30% 중 작은 값)에, 글이 칸 폭을 넘으면 넘지 않을 만큼 줄임(2026-10-18 사용자 지적: 다 쓰면 칸 밖으로 넘침).
 // 편집 칸도 이 크기로 띄워 「치는 대로가 결과」
-export function cellFontPx(txt, cw, ch, bold, fixedPx = 0) {   // fixedPx = 표에 정한 글자 크기(px, 없으면 자동)
-  let fs = fixedPx > 0 ? fixedPx : Math.max(2, Math.min(ch * 0.5, cw * 0.3))
+export function cellFontPx(txt, cw, ch, bold, fixedPx = 0) {   // fixedPx = 직접 정한 글자 크기(px) — 그대로 씀(칸이 늘어남, `fitTable`). 없으면 자동 = 칸에 맞춰 줄임
+  if (fixedPx > 0) return fixedPx   // 숫자 = 실제 크기(2026-10-18 사용자: 숫자만 늘고 글은 안 커지던 것)
+  let fs = Math.max(2, Math.min(ch * 0.5, cw * 0.3))
   const w = txt ? measure(txt, fs, 'app', bold ? 700 : 400) : 0, room = Math.max(1, cw - 4)
   if (w > room) fs = Math.max(2, fs * room / w)
   return fs
@@ -60,6 +61,21 @@ export function cellFontPx(txt, cw, ch, bold, fixedPx = 0) {   // fixedPx = 표�
 export function cellStyle(it, r, c) {
   const s = it.cell_styles?.[`${r},${c}`] || {}, font = s.font ?? it.font
   return { px: font ? font * PT : 0, bold: s.bold ?? !!(it.header && r === 0), color: s.color ?? it.color, align: s.align || 'center', fill: s.fill || null }
+}
+// 직접 정한 글자가 칸보다 크면 칸을 늘림(워드·한글 표처럼) — 행은 모두 같은 높이(데스크톱 표), 열은 그 열만 넓힘. 줄이지는 않음
+export function fitTable(it) {
+  const [x, y, w, h] = it.rect, rows = it.rows, cols = it.cols, ch = h / rows
+  const fr = it.col_widths?.length === cols ? it.col_widths : Array(cols).fill(1 / cols), cw = fr.map(f => f * w)
+  let needH = 0; const needW = [...cw]
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const s = cellStyle(it, r, c); if (!s.px) continue
+    needH = Math.max(needH, s.px * 1.35 + 4)
+    const txt = it.cells?.[r]?.[c]; if (txt) needW[c] = Math.max(needW[c], measure(txt, s.px, 'app', s.bold ? 700 : 400) + 8)
+  }
+  const grewW = needW.some((v, i) => v > cw[i] + 0.5), grewH = needH > ch + 0.5
+  if (!grewW && !grewH) return it
+  const W = needW.reduce((a, b) => a + b, 0)
+  return { ...it, rect: [x, y, grewW ? W : w, grewH ? needH * rows : h], col_widths: grewW ? needW.map(v => v / W) : it.col_widths }
 }
 // 왼쪽 위 라벨(.ecad label.align = "left") — 상자 안 여백, 상자 폭에서 줄바꿈. fit_text 상자는 높이를 글에 맞춤
 export const LABEL_PAD = 12
@@ -187,6 +203,8 @@ function Ports({ it, onBoard }) {
 
 // ── 아이템 하나 ── (memo: 확대·이동만 바뀌면 다시 그리지 않음 — 9천 개 도면에서 휠 한 칸이 340ms였다)
 // labels = 'inline'(기본 — 내보내기) | 'skip'(화살표 라벨은 빼고) | 'only'(화살표 라벨만 — 편집 화면이 모든 선 위에 한 번 더 그림)
+// 종이틀 축척 — 틀이 용지의 k배 크기면 종이엔 1/k로 찍힘(「1:2.9」), 작으면 「2:1」. 1배 근처면 안 씀
+export const scaleText = k => { k = k || 1; if (Math.abs(k - 1) < 0.01) return ''; return k > 1 ? ` · 1:${+k.toFixed(1)}` : ` · ${+(1 / k).toFixed(1)}:1` }
 export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode = 'inline', page }) {   // page = 종이틀 쪽 번호(편집 화면만)   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
   const T = itemTransform(it), fill = it.fill ? cssColor(it.fill) : 'none'
   if (lmode === 'only' && it.type !== 'sarrow' && it.type !== 'arrow') return null
@@ -248,9 +266,17 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         const txt = it.cells?.[r]?.[c], cs = cellStyle(it, r, c), cw = edges[c + 1] - edges[c]
         if (cs.fill) cells.push(<rect key={`f${r}-${c}`} x={edges[c]} y={y + r * ch} width={cw} height={ch} fill={cssColor(cs.fill)} />)   // 칸 채움(글 밑)
         if (!txt) continue
-        const fs = cellFontPx(txt, cw, ch, cs.bold, cs.px), al = cs.align
+        const fs = cellFontPx(txt, cw, ch, cs.bold, cs.px), al = cs.align, base = ink(cs.color || '#111111', onBoard || !!cs.fill), runs = it.cell_runs?.[`${r},${c}`]
+        if (runs?.length) {   // 부분 서식 — 조각마다 자리를 재서 그림(형광펜 바탕 포함)
+          const parts = runsToLines(txt, runs)[0] || [], ws = parts.map(p => measure(p.text, fs, 'app', p.bold || cs.bold ? 700 : 400)), tw = ws.reduce((a, b) => a + b, 0)
+          let px = al === 'left' ? edges[c] + 3 : al === 'right' ? edges[c + 1] - 3 - tw : (edges[c] + edges[c + 1]) / 2 - tw / 2
+          const cy = y + (r + 0.5) * ch
+          parts.forEach((p, j) => { if (p.bg) cells.push(<rect key={`h${r}-${c}-${j}`} x={px} y={cy - fs * 0.6} width={ws[j]} height={fs * 1.2} fill={bgCss(p.bg)} />)
+            cells.push(<text key={`${r}-${c}-${j}`} x={px} y={cy} dominantBaseline="central" fontSize={fs} fontWeight={p.bold || cs.bold ? 700 : 400} fontFamily={APP_FONT} fill={p.color ? cssColor(p.color) : base} style={{ whiteSpace: 'pre' }}>{p.text}</text>); px += ws[j] })
+          continue
+        }
         cells.push(<text key={`${r}-${c}`} x={al === 'left' ? edges[c] + 3 : al === 'right' ? edges[c + 1] - 3 : (edges[c] + edges[c + 1]) / 2} y={y + (r + 0.5) * ch} textAnchor={al === 'left' ? 'start' : al === 'right' ? 'end' : 'middle'} dominantBaseline="central"
-          fontSize={fs} fontWeight={cs.bold ? 700 : 400} fontFamily={APP_FONT} fill={ink(cs.color || '#111111', onBoard || !!cs.fill)}>{txt}</text>)   // 채운 칸 안 글 = 제 색(채운 도형 라벨과 같은 규칙)
+          fontSize={fs} fontWeight={cs.bold ? 700 : 400} fontFamily={APP_FONT} fill={base}>{txt}</text>)   // 채운 칸 안 글 = 제 색(채운 도형 라벨과 같은 규칙)
       }
       const lines = [...edges.slice(1, -1).map(ex => `M${ex},${y} V${y + h}`), ...Array.from({ length: rows - 1 }, (_, j) => `M${x},${y + (j + 1) * ch} H${x + w}`)]
       const tl = ink(it.pen || '#333333', onBoard)
@@ -263,7 +289,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
       if (it.plain) return <g transform={T}>   {/* 종이틀(2026-10-18) — 화면에선 옅은 종이 면 + 쪽 이름, 내보내기 그림엔 테두리만 */}
         {page != null && <rect width={W} height={H} fill="var(--mb-paper, rgba(127,127,127,.06))" stroke="none" />}
         <rect width={W} height={H} fill="none" stroke={page != null ? 'var(--mb-muted, #8a98a8)' : line} style={page != null ? minStroke(0.4) : undefined} strokeWidth={0.5} strokeDasharray={page != null ? '4 3' : undefined} />
-        {page != null && <text x={0} y={-3} fontSize={Math.min(W, H) * 0.035} fontFamily={APP_FONT} fill="var(--mb-muted, #8a98a8)">{page}쪽 · {it.size} {it.orient === 'landscape' ? '가로' : '세로'}</text>}
+        {page != null && <text x={0} y={-3} fontSize={Math.min(W, H) * 0.035} fontFamily={APP_FONT} fill="var(--mb-muted, #8a98a8)">{page}쪽 · {it.size} {it.orient === 'landscape' ? '가로' : '세로'}{scaleText(it.scale)}</text>}
       </g>
       const tbw = Math.min(180, W - 2 * M), tb = { x: W - M - tbw, y: H - M - 33, w: tbw, h: 33 }
       const hW = TB_ROWS.reduce((s, r) => s + r[0], 0), out = []

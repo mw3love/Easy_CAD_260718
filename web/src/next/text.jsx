@@ -1,7 +1,7 @@
 // 글 편집(2단계) — 칠판 위에 TipTap 편집기를 겹쳐 띄우고, 끝나면 .ecad 글(text + runs)로 돌려준다.
 // 글 + runs ↔ TipTap 문서는 이미 시험된 규칙(ecadFormat.js runsToRichText/richTextToRuns) 그대로. 한글 조합 입력은 TipTap(ProseMirror)이 맡는다.
 // Enter = 줄바꿈(데스크톱 글 상자와 같음), Esc·Ctrl+Enter·바깥 클릭 = 끝. Ctrl+B = 굵게.
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Editor, Extension } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
@@ -22,41 +22,67 @@ const FontWeight = Extension.create({
 })
 const Finish = Extension.create({
   name: 'finish',
-  addKeyboardShortcuts() { return { Escape: () => { this.options.onDone(); return true }, 'Mod-Enter': () => { this.options.onDone(); return true } } },
-  addOptions() { return { onDone: () => {} } },
+  addKeyboardShortcuts() {
+    const o = this.options
+    const keys = { Escape: () => { (o.onCancel || o.onDone)(); return true }, 'Mod-Enter': () => { o.onDone(); return true } }
+    if (o.onMove) Object.assign(keys, { Enter: () => { o.onMove([1, 0]); return true }, Tab: () => { o.onMove([0, 1]); return true }, 'Shift-Tab': () => { o.onMove([0, -1]); return true } })   // 표 칸(데스크톱 `_CellEditor`)
+    return keys
+  },
+  addOptions() { return { onDone: () => {}, onCancel: null, onMove: null } },
 })
+
+// 바로 포커스 + 커서를 끝으로 — TipTap focus 명령은 다음 그리기 때 돌아서(창이 가려지면 0.6초까지 늦음 — 2026-10-18 실측) 두 번 누르자마자 친 글자가 빠질 수 있음
+const focusNow = editor => { try { editor.commands.setTextSelection(editor.state.doc.content.size); editor.view.focus() } catch { editor.commands.focus('end') } }
 
 // spec: { left, top (화면 px — 문서 상자 왼쪽 위) 또는 center(화면 px — 도형 라벨 가운데), px(글자 px, 화면 배율 적용 전), zoom, family('app'|'board'), weight, color, align('left'|'center'),
 //         rotation, origin(화면 px 회전 중심), text, runs, width(화면 px — 주면 그 폭에서 줄바꿈: 왼쪽 위 라벨), flat(테두리 없이 그 자리에 겹침), onChange(치는 동안 { text, runs }) } — onDone({ text, runs })
 export function TextEditor({ spec, onDone }) {
-  const host = useRef(null), ed = useRef(null), done = useRef(false)
-  useEffect(() => {
-    const finish = () => {
+  const host = useRef(null), ed = useRef(null), done = useRef(false), sp = useRef(spec), od = useRef(onDone), firstKey = useRef(spec.cellKey)
+  sp.current = spec; od.current = onDone   // 표 칸은 같은 편집기를 다음 칸으로 옮겨 씀 — 늘 지금 칸의 값으로
+  useLayoutEffect(() => {   // 그리기 전에 만들고 포커스 — 두 번 누르자마자 친 글자도 받게
+    const finish = move => {
       if (done.current) return
       done.current = true
-      const { text, runs } = richTextToRuns(ed.current.getJSON(), spec.weight || 400)
-      onDone({ text, runs })
+      try { ed.current.view.domObserver?.flush?.() } catch { /* 없어도 그만 */ }   // 방금 친 글자(화면엔 있고 아직 안 읽힌 것)를 먼저 읽음 — 빠르게 치고 Tab 하면 앞 글자가 빠졌음
+      const s = sp.current, { text, runs } = richTextToRuns(ed.current.getJSON(), s.weight || 400)
+      const nx = od.current({ text: s.cell ? text.replace(/\n/g, ' ') : text, runs, move: Array.isArray(move) ? move : null })   // 표 칸은 한 줄
+      if (s.cell && nx) {   // 표 칸 Tab·Enter — 다시 그리기를 기다리지 않고 그 자리에서 다음 칸 내용으로(빠르게 이어 쳐도 안 섞임)
+        firstKey.current = nx.key; done.current = false
+        ed.current.commands.setContent(runsToRichText(nx.text, nx.runs, null), { emitUpdate: false }); focusNow(ed.current)
+      }
     }
+    const cancel = () => { if (done.current) return; done.current = true; od.current(null) }
     const editor = new Editor({
       element: host.current,
-      extensions: [Document, Paragraph, Text, Bold, TextStyle, Color, BackgroundColor, FontWeight, UndoRedo, Finish.configure({ onDone: finish })],
+      extensions: [Document, Paragraph, Text, Bold, TextStyle, Color, BackgroundColor, FontWeight, UndoRedo, Finish.configure({ onDone: finish, onCancel: spec.cell ? cancel : null, onMove: spec.cell ? finish : null })],
       content: runsToRichText(spec.text || '', spec.runs, spec.weight && spec.weight !== 400 ? spec.weight : null),
       autofocus: 'end',
       editorProps: { attributes: { spellcheck: 'false' } },
     })
     ed.current = editor
-    if (spec.onChange) editor.on('update', () => spec.onChange(richTextToRuns(editor.getJSON(), spec.weight || 400)))   // 치는 동안 칠판에 바로(왼쪽 위 라벨 상자 높이)
-    const onDown = e => { if (!host.current.contains(e.target)) finish() }
+    focusNow(editor)   // 기본 autofocus는 한 박자 늦어 두 번 누르자마자 친 글자가 빠질 수 있음 — 바로
+    if (spec.onChange) editor.on('update', () => sp.current.onChange?.(richTextToRuns(editor.getJSON(), sp.current.weight || 400)))   // 치는 동안 칠판에 바로(왼쪽 위 라벨 상자 높이)
+    if (spec.pxFor) editor.on('update', () => setPx(sp.current.pxFor(editor.getText())))   // 치는 동안 글자 크기(표 자동 크기 칸 — 칸에 맞춰 줄어듦)
+    spec.onReady?.(editor)
+    const onDown = e => { if (!host.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }   // 「글자」 카드를 누를 땐 계속
     setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)
-    return () => { window.removeEventListener('pointerdown', onDown, true); finish(); editor.destroy() }
+    return () => { window.removeEventListener('pointerdown', onDown, true); finish(); spec.onReady?.(null); editor.destroy() }
   }, [])   // eslint-disable-line
-  const m = METRICS[spec.family === 'board' ? 'board' : 'app'], fs = spec.px * spec.zoom
+  const [px, setPx] = useState(spec.px)
+  // 표 칸: Tab·Enter로 다음 칸 — 편집기를 새로 만들지 않고 내용만 바꿈(새로 만들면 포커스가 끊겨 바로 친 글자가 사라졌음, 2026-10-18 시험)
+  useLayoutEffect(() => {   // 그리기 전에 바꿈 — 바로 이어 친 글자가 옛 칸 내용에 섞이지 않게
+    if (!spec.cell || spec.cellKey === firstKey.current || !ed.current) return
+    firstKey.current = spec.cellKey; done.current = false
+    ed.current.commands.setContent(runsToRichText(spec.text || '', spec.runs, spec.weight && spec.weight !== 400 ? spec.weight : null), { emitUpdate: false })
+    focusNow(ed.current); setPx(spec.px)
+  }, [spec.cellKey])   // eslint-disable-line
+  const m = METRICS[spec.family === 'board' ? 'board' : 'app'], fs = px * spec.zoom
   return <div ref={host} data-testid="text-editor" onPointerDown={e => e.stopPropagation()} onWheel={e => e.stopPropagation()}
     style={{ position: 'absolute', left: spec.center ? spec.center.x : spec.left, top: spec.center ? spec.center.y : spec.top, minWidth: 8, padding: TEXT_MARGIN * spec.zoom, boxSizing: 'border-box',
       transform: spec.center ? 'translate(-50%,-50%)' : spec.rotation ? `rotate(${spec.rotation}deg)` : undefined,   // center = 도형 라벨(가운데 기준)
       transformOrigin: !spec.center && spec.origin ? `${spec.origin.x - spec.left}px ${spec.origin.y - spec.top}px` : undefined,
-      font: `${spec.weight || 400} ${fs}px ${spec.family === 'board' ? BOARD_FONT : APP_FONT}`, lineHeight: m.lineSpacing, color: spec.color, textAlign: spec.align || 'left',
-      whiteSpace: spec.width ? 'pre-wrap' : 'pre', width: spec.width, overflowWrap: spec.width ? 'anywhere' : undefined, outline: spec.flat ? 'none' : '1.5px solid #89b4fa', background: spec.bg || 'rgba(255,255,255,.9)', zIndex: 20 }}>
+      fontWeight: spec.weight || 400, fontSize: fs, fontFamily: spec.family === 'board' ? BOARD_FONT : APP_FONT, lineHeight: m.lineSpacing,   // 낱개로(한 줄짜리 font와 섞으면 다시 그릴 때 경고) color: spec.color, textAlign: spec.align || 'left',
+      whiteSpace: spec.width && !spec.cell ? 'pre-wrap' : 'pre', width: spec.width, height: spec.height, display: spec.cell ? 'flex' : undefined, alignItems: spec.cell ? 'center' : undefined, justifyContent: spec.cell ? ({ left: 'flex-start', right: 'flex-end' }[spec.align] || 'center') : undefined, overflowWrap: spec.width ? 'anywhere' : undefined, outline: spec.flat ? 'none' : '1.5px solid #89b4fa', background: spec.bg || 'rgba(255,255,255,.9)', zIndex: 20 }}>
     <style>{`[data-testid=text-editor] .ProseMirror{outline:none;white-space:${spec.width ? 'pre-wrap' : 'pre'};overflow-wrap:${spec.width ? 'anywhere' : 'normal'}}[data-testid=text-editor] p{margin:0}`}</style>
   </div>
 }
