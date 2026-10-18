@@ -688,7 +688,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       </svg>
       {editing && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={s} onDone={finishEdit} /> })()}
-      {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps}
+      {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )

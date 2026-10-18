@@ -3,6 +3,7 @@
 // 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄.
 import { useState } from 'react'
 import SYMBOLS from '../symbols.json' with { type: 'json' }
+import { symbolPath } from './symbols.js'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', seg: 'var(--mb-seg)', on: '#da7756', onBg: 'var(--mb-onbg)' }   // 화면 색 = next.html CSS 변수
 // 두 줄 꽉 채움(8+8) — 데스크톱 색 창과 같은 짜임: 진한 6색(`_COLOR_GRID_HUES`) + 검정 + 다른 색 / 같은 6색의 연한 색(Qt lighter(150)) + 회색 + 흰색
@@ -46,6 +47,33 @@ function patchTexts(it, f) {
   if (isArrow(it)) { let k = 0; return { labels: arrowLabels(it).map(L => (L.text?.trim() ? { ...L, ...f(slots[k++]) } : L)), label: undefined } }
   return { label: { ...it.label, ...f(slots[0]) } }
 }
+
+// 형광펜(데스크톱 `_text_highlight` — 글 전체, 모두 칠해져 있으면 지움). 독립 글과 도형·선 안 글만(화살표 라벨은 데스크톱도 뺌)
+// .ecad runs = [시작, 길이, 색, 굵게, 바탕?] — 글자마다 풀었다가 바탕만 바꿔 다시 묶음
+const HL = '#99ffd54f'
+const hlHost = it => (it.type === 'text' ? (it.text ? it : null) : ['rect', 'ellipse', 'symbol', 'polygon', 'line'].includes(it.type) && it.label?.text?.trim() ? it.label : null)
+const charAttrs = (text, runs) => { const a = Array.from({ length: text.length }, () => [null, false, null])
+  for (const [st, len, c, b, g] of runs || []) for (let i = Math.max(0, st); i < Math.min(text.length, st + len); i++) a[i] = [c || null, !!b, g || null]
+  return a }
+const hasHl = h => { const a = charAttrs(h.text, h.runs); return [...h.text].every((ch, i) => ch === '\n' || !!a[i][2]) }
+function runsWithBg(text, runs, bg) {
+  const a = charAttrs(text, runs).map(([c, b]) => [c, b, bg]), out = []
+  for (let i = 0; i < a.length;) { let j = i + 1; while (j < a.length && a[j].every((v, k) => v === a[i][k])) j++
+    const [c, b, g] = a[i]; if (c || b || g) out.push([i, j - i, c, b, ...(g ? [g] : [])]); i = j }
+  return out
+}
+const patchHl = (it, on) => { const h = hlHost(it); if (!h) return null; const runs = runsWithBg(h.text, h.runs, on ? HL : null)
+  return it.type === 'text' ? { runs } : { label: { ...it.label, runs } } }
+
+// 도형 바꾸기(데스크톱 `_fill_swap_menu` 기본도형 8종 — 「내 심볼」은 심볼 팔레트를 옮길 때). 같은 _id라 붙은 화살표·라벨·색은 그대로
+const SWAP_KINDS = ['rect', 'ellipse', 'triangle', 'decision', 'terminal', 'data', 'prep', 'database']
+const kindOf = it => (it.type === 'symbol' ? it.kind : it.type)
+const swapPatch = k => (k === 'rect' || k === 'ellipse' ? { type: k, kind: undefined, cuts: undefined } : { type: 'symbol', kind: k, cuts: undefined })
+const kindName = k => (k === 'rect' ? '사각형' : k === 'ellipse' ? '원' : SYMBOLS[k]?.name || k)
+const shapeIcon = k => <svg width="22" height="14" viewBox="-1 -1 24 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+  {k === 'rect' ? <rect x="0" y="0" width="22" height="14" /> : k === 'ellipse' ? <ellipse cx="11" cy="7" rx="11" ry="7" /> : <path d={symbolPath(k, 22, 14).d} />}</svg>
+// 회전 대상 — 회전 손잡이가 있는 것(데스크톱 `_is_rotatable`: 끝점으로 모양을 정하는 화살표·선·펜은 뺌)
+const ROTATABLE = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'text'])
 
 // 아이콘(16×16, 선 굵기 1.6) — 글자 대신 뜻이 보이게
 const Svg = ({ children, w = 18, h = 16 }) => <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
@@ -110,11 +138,23 @@ function FillGrid({ value, onPick }) {
   </div>
 }
 
+// 회전 각도 — 쳐서 Enter(또는 칸을 벗어나면), 휠·↑↓는 1°씩. 서로 다르면 빈칸(쳐 넣으면 전부 그 각도 — 데스크톱과 같음)
+function RotInput({ value, onSet }) {
+  const [txt, setTxt] = useState(null), shown = txt ?? (value == null ? '' : String(value))
+  const commit = v => { setTxt(null); const n = parseFloat(v); if (Number.isFinite(n)) onSet(((n % 360) + 360) % 360) }
+  return <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: C.seg, borderRadius: 8, padding: '2px 8px' }}>
+    <input value={shown} placeholder="서로 다름" title="회전 각도" onChange={e => setTxt(e.target.value)} onBlur={e => txt != null && commit(e.target.value)}
+      onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') commit(e.currentTarget.value); else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); commit((value ?? 0) + (e.key === 'ArrowUp' ? 1 : -1)) } }}
+      onWheel={e => commit((value ?? 0) + (e.deltaY < 0 ? 1 : -1))}
+      style={{ all: 'unset', width: 64, height: 22, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: C.ink }} /><span style={{ color: C.muted, fontSize: 12 }}>°</span>
+  </div>
+}
+
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function Props({ items, kind, set, onKind }) {
-  const [openDash, setOpenDash] = useState(false)
+export function Props({ items, kind, set, onKind, rotate }) {   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
+  const [openDash, setOpenDash] = useState(false), [openSwap, setOpenSwap] = useState(false)
   const one = v => (v.length && v.every(x => x === v[0]) ? v[0] : null)
   const arrows = items.filter(isArrow), allArrows = arrows.length === items.length
   const lineItems = items.filter(lineKey), wItems = items.filter(hasWidth), fillItems = items.filter(fillKey)
@@ -130,6 +170,9 @@ export function Props({ items, kind, set, onKind }) {
   const fillMixed = fillItems.length > 1 && !fillItems.every(it => fillArgb(it[fillKey(it)]) === fillArgb(fillItems[0][fillKey(fillItems[0])]))
   const head = one(arrows.map(a => (a.head !== false ? (a.head_start ? 'both' : 'end') : a.head_start ? 'start' : 'none')))
   const tColor = one(texts.map(t => norm(t.color))) ?? ''
+  const swapOne = items.length === 1 && ['rect', 'ellipse', 'symbol'].includes(items[0].type) ? items[0] : null
+  const rotItems = items.filter(it => ROTATABLE.has(it.type)), rot = one(rotItems.map(it => +(it.rotation || 0).toFixed(1)))
+  const hlItems = items.filter(hlHost), hlOn = hlItems.length > 0 && hlItems.every(it => hasHl(hlHost(it)))
   const firstText = (texts.find(t => t.text.trim())?.text.trim().split('\n')[0]) || ''
   // 숫자 칸 — 각자에 d만큼(범위 안으로)
   const num = (list, get, d0, min, max, step, name, write) => ({ values: list.map(it => get(it) ?? d0), step,
@@ -141,10 +184,23 @@ export function Props({ items, kind, set, onKind }) {
     <div style={{ font: "700 15px 'Pretendard', sans-serif", marginBottom: 2 }}>속성</div>
     <Row label="종류">{allArrows
       ? <Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} />
+      : swapOne ? <div style={{ position: 'relative', flex: 1 }}>
+        <button title="클릭: 다른 도형으로 바꾸기(크기·연결 유지)" onClick={() => setOpenSwap(o => !o)} style={btn(false, { width: '100%', background: C.seg, justifyContent: 'space-between', padding: '0 8px' })}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>{shapeIcon(kindOf(swapOne))}<span data-testid="prop-type" style={{ fontSize: 13 }}>{title}</span></span><span style={{ color: C.muted }}>▾</span></button>
+        {openSwap && <div style={{ position: 'absolute', zIndex: 3, top: 28, left: 0, right: 0, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 4px 12px rgba(0,0,0,.1)' }}>
+          {SWAP_KINDS.map(k => <button key={k} onClick={() => { if (k !== kindOf(swapOne)) set(it => (it._id === swapOne._id ? swapPatch(k) : null), '도형 바꾸기'); setOpenSwap(false) }}
+            style={btn(k === kindOf(swapOne), { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>{shapeIcon(k)}<span style={{ fontSize: 12 }}>{kindName(k)}</span></button>)}
+        </div>}
+      </div>
       : <span data-testid="prop-type" style={{ fontSize: 13 }}>{title}</span>}</Row>
     {allArrows && items.length > 1 && <div style={{ fontSize: 12, color: C.muted, margin: '-4px 0 0 46px' }}>화살표 {items.length}개</div>}
     {showLine && <Row label={boardsOnly ? '바탕' : '색'}><ColorGrid value={color} onPick={(c, drag) => set(it => (lineKey(it) ? { [lineKey(it)]: c } : null), boardsOnly ? '바탕 색' : '색', drag ? 'color' : null)} /></Row>}
-    {showLine && wItems.length > 0 && <Row label="굵기"><Stepper title="선 굵기" {...num(wItems, it => it.width, 1, 1, 40, 1, '굵기', (it, v) => ({ width: v }))} fmt={v => v + 'px'} /></Row>}
+    {showLine && wItems.length > 0 && <Row label="굵기"><div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <Stepper title="선 굵기" {...num(wItems, it => it.width, 1, 1, 40, 1, '굵기', (it, v) => ({ width: v }))} fmt={v => v + 'px'} />
+      {/* 자주 쓰는 굵기 — 섞였어도 전부 그 값(데스크톱 `_set_width_all`) */}
+      <div style={{ display: 'flex', gap: 2 }}>{[1, 2, 3, 5].map(v => { const on = wItems.every(it => (it.width ?? 1) === v)
+        return <button key={v} title={v + ' px'} aria-pressed={on} onClick={() => set(it => (hasWidth(it) ? { width: v } : null), '굵기')} style={btn(on, { width: 24, height: 22, background: on ? C.onBg : C.seg, fontSize: 12 })}>{v}</button> })}</div>
+    </div></Row>}
     {showLine && wItems.length > 0 && <Row label="선"><div style={{ position: 'relative', flex: 1 }}>
       <button title="선 모양" onClick={() => setOpenDash(o => !o)} style={btn(false, { width: '100%', background: C.seg, justifyContent: 'space-between', padding: '0 8px' })}>{style ? dashIcon(style) : <span style={{ fontSize: 12, color: C.muted }}>서로 다름</span>}<span style={{ color: C.muted }}>▾</span></button>
       {openDash && <div style={{ position: 'absolute', zIndex: 2, top: 28, left: 0, right: 0, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 4px 12px rgba(0,0,0,.1)' }}>
@@ -159,12 +215,15 @@ export function Props({ items, kind, set, onKind }) {
       <Row label="머리"><Stepper title="화살촉 크기 배율" {...num(arrows, a => a.head_scale, 1, 0.5, 3, 0.1, '머리 크기', (a, v) => ({ head_scale: v }))} fmt={v => v.toFixed(1) + '×'} /></Row>
       {kind === 'ortho' && <Row label="모서리"><Stepper title="꺾인 곳 둥글기(0 = 각짐)" {...num(arrows, a => a.curve_r, 10, 0, 40, 1, '모서리', (a, v) => ({ curve_r: v }))} /></Row>}
     </>}
+    {rotItems.length > 0 && <Row label="회전"><RotInput value={rot} onSet={a => set(it => (ROTATABLE.has(it.type) ? rotate(it, a) : null), '회전', '회전')} /></Row>}
     {texts.length > 0 && <>
       <div style={{ borderTop: `1px solid ${C.line}`, margin: '4px 0 0' }} />
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}><span style={{ fontWeight: 600 }}>글자</span>
         {firstText && <span style={{ fontSize: 11, color: C.muted, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>「{firstText.slice(0, 10)}{firstText.length > 10 ? '…' : ''}」</span>}</div>
       <Row label="크기"><Stepper title="글자 크기" values={texts.map(t => t.font)} onStep={d => set(it => patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })), '글자 크기', '글자 크기')} fmt={v => v + 'pt'} /></Row>
       <Row label="색"><ColorGrid value={tColor} onPick={(c, drag) => set(it => patchTexts(it, () => ({ color: c })), '글자 색', drag ? 'tcolor' : null)} /></Row>
+      {hlItems.length > 0 && <Row label=""><button title="형광펜 — 고른 글 전체. 다시 누르면 지워요" aria-pressed={hlOn} onClick={() => set(it => patchHl(it, !hlOn), '형광펜')}
+        style={btn(hlOn, { padding: '0 10px', background: hlOn ? C.onBg : C.seg, fontSize: 12, gap: 6 })}><span style={{ width: 14, height: 10, borderRadius: 2, background: 'rgba(255,213,79,.6)' }} />형광펜</button></Row>}
     </>}
   </div>
 }
