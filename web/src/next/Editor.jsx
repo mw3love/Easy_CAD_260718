@@ -25,6 +25,8 @@ import { cssColor } from '../ecadFormat.js'
 import { colEdges } from './geom.js'
 import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, exportPdf, exportPng, exportSvg } from './exporter.jsx'
+import { answerToEcadText, freeSpot, sourceLine, wrapText } from '../chatFormat.js'
+import { measure } from './render.jsx'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
@@ -61,7 +63,7 @@ const withLabels = (it, labels) => { const o = { ...it, labels }; delete o.label
 const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([x, y]) => ({ x, y })), q) : projectToCurve(it, q))
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
-export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer }, ref) {
+export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel }, ref) {
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -93,10 +95,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
 
-  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, moveSelToLayer, exportDoc, reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, moveSelToLayer, exportDoc, selTexts, pinCard, showCard, reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live }) }))
 
+  useEffect(() => { onSel?.(sel) }, [sel])   // eslint-disable-line react-hooks/exhaustive-deps — 대화창 칩(고른 것 N개)
   const byId = useMemo(() => new Map(items.map(it => [it._id, it])), [items])
   const selItems = sel.map(id => byId.get(id)).filter(Boolean)
   const single = selItems.length === 1 ? selItems[0] : null
@@ -485,6 +488,42 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     else if (o.format === 'svg') exportSvg(res, o.name + '.svg')
     else exportPdf(res, o.name)
     setStatus(o.format === 'pdf' ? '인쇄 창에서 「PDF로 저장」을 고르세요' : `${o.name}.${o.format} 내려받음`)
+    return true
+  }
+  // ── KAIROS 대화창 길목(chat.jsx) ──
+  // 고른 것(보드면 안의 것까지)의 글 — 질문에 같이 보냄
+  function selTexts() {
+    const m = R.current.model, ids = new Set(movingSet(R.current.sel)), out = []
+    for (const it of m.items) {
+      if (!ids.has(it._id)) continue
+      if (it.type === 'text' && it.text?.trim()) out.push(it.text)
+      if (it.label?.text?.trim()) out.push(it.label.text)
+      for (const L of it.labels || []) if (L.text?.trim()) out.push(L.text)
+      if (it.type === 'table') { const t = (it.cells || []).map(r => r.filter(Boolean).join(' | ')).filter(Boolean).join('\n'); if (t) out.push(t) }
+    }
+    return out
+  }
+  // 답 → 카드 = 흰 보드 + 보드 글꼴 글(굵게·목록·회색 출처 줄). 지금 화면에서 다른 것과 안 겹치는 자리(왼쪽 카드·오른쪽 속성 카드 자리는 뺌), 카드에 `chat_at` = 답 시각
+  const CARD_W = 340, CARD_PAD = 16, CARD_PT = 10.5   // 14px — 옛 tldraw 카드와 같은 크기
+  function pinCard(msg) {
+    const m = R.current.model, c = R.current.cam, px = CARD_PT * PT
+    const { text, runs } = answerToEcadText(msg.content, sourceLine(msg.model, msg.at))
+    const wrapped = wrapText(text, CARD_W - 2 * CARD_PAD - 2 * TEXT_MARGIN, s => measure(s, px, 'board', 700))   // 굵은 글 기준으로 재야 넘치지 않음
+    const lay = layoutText(wrapped, runs, px, 'board'), h = Math.ceil(lay.h + 2 * TEXT_MARGIN + 2 * CARD_PAD)
+    const left = 220 / c.z, right = 220 / c.z, view = { x: -c.x / c.z + left, y: -c.y / c.z, w: Math.max(CARD_W, size.w / c.z - left - right), h: size.h / c.z }
+    const boxes = m.items.map(it => sceneBox(it, textBox))
+    const at = freeSpot(view, boxes, CARD_W, h)
+    const z = topZ(m.items) + 1
+    const board = base([at.x, at.y], { type: 'board', rect: [0, 0, CARD_W, h], bg: '#ffffffff', chat_at: msg.at, z })
+    const txt = base([at.x + CARD_PAD, at.y + CARD_PAD], { type: 'text', text: wrapped, runs, color: '#ff1f1f1f', font: CARD_PT, family: 'Pretendard', bg: null, z: z + 1 })
+    commit([...m.items, board, txt], [board._id], '칠판에 붙이기')
+    return true
+  }
+  // 이미 붙인 카드로 — 고르고 화면 가운데로. 없으면(지웠으면) false
+  function showCard(at) {
+    const m = R.current.model, b = m.items.find(it => it.chat_at === at); if (!b) return false
+    const s = sceneBox(b, textBox); setSel([b._id])
+    setCam(cc => ({ ...cc, x: size.w / 2 - (s.x + s.w / 2) * cc.z, y: size.h / 2 - (s.y + s.h / 2) * cc.z }))
     return true
   }
   function insertTable(rows, cols, header) {

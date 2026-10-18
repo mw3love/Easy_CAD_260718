@@ -79,3 +79,31 @@ export function contextText(texts, max = 20000) {
   }
   return out.map(s => `- ${s.replace(/\n+/g, ' / ')}`).join('\n').slice(0, max)
 }
+
+// ── 직접 만드는 칠판(.ecad) 카드 글 — 답 글 → { text, runs }(.ecad runs = [시작, 길이, 색, 굵게]). 맨 끝 회색 출처 줄.
+export function answerToEcadText(md, source = '') {
+  let text = ''
+  const runs = []
+  const add = (s, bold, color = null) => { if (!s) return; if (bold || color) runs.push([text.length, s.length, color, !!bold]); text += s }
+  const lines = parseAnswer(md)
+  lines.forEach((ln, i) => {
+    if (i) text += '\n'
+    if (ln.kind === 'gap') return
+    if (ln.kind === 'li') add(ln.mark + ' ', false)
+    for (const p of ln.parts) add(p.text, p.bold || ln.kind === 'h')
+  })
+  if (source) { if (text) text += '\n'; add(source, false, '#8a8f98') }
+  return { text, runs }
+}
+
+// 카드 폭에 맞춰 줄바꿈 — 띄어쓰기를 줄바꿈으로 바꾼다(글자 수가 그대로라 runs 자리가 안 어긋남). measure(글) → 폭. 띄어쓰기 없는 긴 낱말은 그대로 둔다.
+export function wrapText(text, maxW, measure) {
+  const ch = [...text]
+  let lineStart = 0, lastSpace = -1
+  for (let i = 0; i <= ch.length; i++) {
+    if (i === ch.length || ch[i] === '\n') { lineStart = i + 1; lastSpace = -1; continue }
+    if (ch[i] === ' ') lastSpace = i
+    if (lastSpace > lineStart && measure(ch.slice(lineStart, i + 1).join('')) > maxW) { ch[lastSpace] = '\n'; lineStart = lastSpace + 1; lastSpace = -1 }
+  }
+  return ch.join('')
+}

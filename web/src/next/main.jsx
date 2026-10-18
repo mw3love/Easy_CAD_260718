@@ -10,6 +10,7 @@ import { setInkDark } from './render.jsx'
 import { Palette, useLibrary } from './palette.jsx'
 import { Layers, layersOf, layerIdOf } from './layers.jsx'
 import { Minimap } from './minimap.jsx'
+import { ChatPanel } from './chat.jsx'
 
 const ZMIN = 0.02, ZMAX = 40
 // 화면 색은 next.html의 CSS 변수(밝은/어두운 화면 — 어두운 쪽은 데스크톱과 같은 값)
@@ -77,6 +78,8 @@ function ExportForm({ hasSel, onExport, onClose }) {
 
 function App() {
   const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false)
+  const [chatOpen, setChatOpen] = useState(() => { try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창)
+  useEffect(() => { try { localStorage.setItem('mb-chat-open', chatOpen ? '1' : '0') } catch { /* 기억 못 해도 그만 */ } }, [chatOpen])
   const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
   const [model, setModel] = useState(() => fromEcad(emptyDoc()))
   const [cam, setCam] = useState({ x: 0, y: 0, z: 1 })   // 화면 = 칠판 × z + (x, y)
@@ -161,14 +164,16 @@ function App() {
           <option value="">샘플 열기…</option>{SAMPLES.map(([n, u]) => <option key={u} value={u}>{n}</option>)}
         </select>
         <span style={{ marginLeft: 'auto', color: C.muted, fontSize: 12 }}>{status} · {Math.round(cam.z * 100)}%</span>
+        <Btn icon="💬" label="KAIROS" on={chatOpen} onClick={() => setChatOpen(o => !o)} title="KAIROS 대화창 열기/닫기 — 답을 칠판에 카드로 붙여요" />
         <Btn icon={dark ? '☀' : '☾'} label={dark ? '밝게' : '어둡게'} onClick={toggleDark} title="밝은 화면 / 어두운 화면" />
         <input ref={file} type="file" accept=".ecad,application/json" hidden onChange={async e => {
           const f = e.target.files?.[0]; e.target.value = ''; if (!f) return
           try { open(parseDoc(await f.text()), f.name) } catch (err) { setStatus('열기 실패: ' + err.message) }
         }} />
       </div>
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>   {/* 작업공간 + 오른쪽 KAIROS 대화창(2분할) */}
       <div ref={box} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        <Editor ref={ed} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} />
+        <Editor ref={ed} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} />
         {/* 좌상 도형·심볼 카드(데스크톱 첫 화면: 좌상 도형·심볼) */}
         {/* 왼쪽 세로 줄 — 위 도형·심볼 카드, 아래 레이어 카드(데스크톱 첫 화면: 좌상·좌하 따로, 통합 금지). 줄 자체는 칠판 누르기를 막지 않음 */}
         <div style={{ position: 'absolute', left: 12, top: 12, bottom: 12, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 8, pointerEvents: 'none' }}>
@@ -178,6 +183,8 @@ function App() {
         {/* 우하 미니맵(데스크톱 첫 화면: 우하) — 숨긴 레이어는 뺌 */}
         <Minimap items={mapItems}
           cam={cam} size={size} setCam={setCam} onFit={() => fit(model.items)} dark={dark} />
+      </div>
+      {chatOpen && <ChatPanel ed={ed} selKey={selKey} onClose={() => setChatOpen(false)} />}
       </div>
     </div>
   )
