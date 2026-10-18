@@ -620,10 +620,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const handles = single && !editing && !live ? handlesOf(single) : []
   // 속성 카드 — 고른 화살표 모두에 같이(데스크톱: 고른 화살표 전부). 모서리는 직각만
   const selArrows = selItems.filter(isArrow), selArrowIds = new Set(selArrows.map(x => x._id))
-  function setArrows(patch, label, merge) {
-    const m = R.current.model
-    Object.assign(sticky.current, patch)
-    commit(m.items.map(x => { if (!selArrowIds.has(x._id)) return x; const pt = { ...patch }; if (x.type !== 'sarrow') delete pt.curve_r; return { ...x, ...pt } }), sel, label, merge ? merge + [...selArrowIds].join() : null)
+  function setArrows(patch, label, merge) {   // patch = 모두에 같은 값, 또는 화살표 → 값(각자 ±)
+    const m = R.current.model, per = typeof patch === 'function' ? patch : () => patch
+    Object.assign(sticky.current, per(selArrows[0]))   // 다음 화살표 기본값 = 첫 화살표에 들어간 값
+    commit(m.items.map(x => { if (!selArrowIds.has(x._id)) return x; const pt = { ...per(x) }; if (x.type !== 'sarrow') delete pt.curve_r; return { ...x, ...pt } }), sel, label, merge ? merge + [...selArrowIds].join() : null)
   }
   const multiBox = selItems.length > 1 ? unionBox(selItems.map(it => sceneBox(it, textBox))) : null
   const rb = overlay.rubber, dr = overlay.draw
@@ -673,7 +673,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       </svg>
       {editing && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={s} onDone={finishEdit} /> })()}
-      {selArrows.length > 0 && !editing && <ArrowProps a={selArrows[0]} kind={arrowKindOf(selArrows[0])} set={setArrows}
+      {selArrows.length > 0 && !editing && <ArrowProps arrows={selArrows} kind={selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setArrows}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )

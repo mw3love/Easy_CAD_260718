@@ -2591,7 +2591,7 @@ class _UIBuildMixin:
             b = QToolButton(); b.setText(f"{v:g}"); b.setCheckable(True)
             b.setFixedSize(QSize(24, 22)); b.setToolTip(f"{v:g} px")
             b.setProperty("propSeg", True)
-            b.clicked.connect(lambda _c=False, v=v: self._pf_width.setValue(v))
+            b.clicked.connect(lambda _c=False, v=v: self._set_width_all(v))   # [2026-10-18] 프리셋 = 전부 그 값(숫자칸 ±는 섞였을 때 각자 더하기)
             wh.addWidget(b); self._pf_width_presets[v] = b
         self._pf_width.setFixedWidth(70)
         wh.addSpacing(4); wh.addWidget(self._pf_width); wh.addStretch(1)
@@ -2717,6 +2717,7 @@ class _UIBuildMixin:
         # [양방향 화살표, 2026-08-21] 화살촉 위치(없음/끝만/양쪽/시작만) — 화살표 전용 행.
         self._pf_head_btn = QComboBox()
         self._pf_head_btn.setToolTip("화살촉 위치(없음·끝만·양쪽·시작만)")
+        self._pf_head_btn.setPlaceholderText("혼합")   # [2026-10-18] 고른 화살표들의 화살촉이 서로 다르면(아무것도 안 고름) 빈칸 대신
         self._pf_head_btn.setIconSize(QSize(self._PROPS_ICON_W, self._PROPS_ARROW_ICON_H))
         for i, (kind, label) in enumerate(_ARROW_HEAD_LABELS):
             self._pf_head_btn.addItem(

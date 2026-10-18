@@ -33,43 +33,51 @@ function Seg({ items, value, onPick }) {
     {items.map(([k, icon, name]) => <button key={k} title={name} aria-pressed={value === k} onClick={() => onPick(k)} style={btn(value === k, { flex: 1 })}>{icon}</button>)}
   </div>
 }
-// − 값 + (휠로도)
-function Stepper({ value, min, max, step = 1, fmt = v => v, onChange, title }) {
-  const set = v => onChange(Math.round(Math.min(max, Math.max(min, v)) / step) * step)
-  return <div title={title} onWheel={e => set(value + (e.deltaY < 0 ? step : -step))} style={{ display: 'flex', alignItems: 'center', background: C.seg, borderRadius: 8, padding: 2 }}>
-    <button onClick={() => set(value - step)} style={btn(false, { width: 22 })}>−</button>
-    <span style={{ minWidth: 34, textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{fmt(value)}</span>
-    <button onClick={() => set(value + step)} style={btn(false, { width: 22 })}>+</button>
+// − 값 + (휠로도). 여러 개를 골라 값이 다르면 「1~3px」처럼 범위로 보이고, ±는 각자에 같은 만큼 더함(차이 유지 — 2026-10-18 사용자 선택)
+// values = 고른 것들의 값, onStep(d) = 각자 d만큼(부르는 쪽이 범위 안으로 자름)
+export const stepClamp = (v, d, min, max, step) => +(Math.round(Math.min(max, Math.max(min, v + d)) / step) * step).toFixed(6)   // 0.1 단위의 떠다니는 소수 자리(1.2000000000000002) 없앰
+function Stepper({ values, step = 1, fmt = v => v, onStep, title }) {
+  const lo = Math.min(...values), hi = Math.max(...values), mixed = hi - lo > 1e-9
+  const text = mixed ? `${String(fmt(lo)).replace(/[^\d.]+$/, '')}~${fmt(hi)}` : fmt(lo)
+  return <div title={mixed ? `${title} — 서로 다름(±는 각자에 더함)` : title} onWheel={e => onStep(e.deltaY < 0 ? step : -step)} style={{ display: 'flex', alignItems: 'center', background: C.seg, borderRadius: 8, padding: 2 }}>
+    <button onClick={() => onStep(-step)} style={btn(false, { width: 22 })}>−</button>
+    <span style={{ minWidth: 34, textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontSize: 12, whiteSpace: 'nowrap', padding: '0 2px' }}>{text}</span>
+    <button onClick={() => onStep(step)} style={btn(false, { width: 22 })}>+</button>
   </div>
 }
 
-// a = 첫 화살표(보여 줄 값), kind = 'straight'|'curved'|'ortho', set(patch|kind, 이름, 묶음 열쇠)
-export function ArrowProps({ a, kind, set, onKind }) {
+// arrows = 고른 화살표 전부, kind = 모두 같은 종류면 그것('straight'|'curved'|'ortho'), 다르면 null
+// set(patch | (화살표 → patch), 이름, 묶음 열쇠) — 함수면 화살표마다 따로(각자 ±)
+// 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
+export function ArrowProps({ arrows, kind, set, onKind }) {
   const [openDash, setOpenDash] = useState(false)
-  const head = a.head !== false ? (a.head_start ? 'both' : 'end') : a.head_start ? 'start' : 'none'
-  const color = (a.color || '').replace(/^#ff(?=[0-9a-f]{6}$)/i, '#')
+  const one = f => { const v = arrows.map(f); return v.every(x => x === v[0]) ? v[0] : null }
+  const head = one(a => (a.head !== false ? (a.head_start ? 'both' : 'end') : a.head_start ? 'start' : 'none'))
+  const color = one(a => (a.color || '').replace(/^#ff(?=[0-9a-f]{6}$)/i, '#').toLowerCase()) ?? ''
+  const style = one(a => a.style || 1)
+  const num = (k, d0, min, max, step, name) => ({ values: arrows.map(a => a[k] ?? d0), step, onStep: d => set(a => ({ [k]: stepClamp(a[k] ?? d0, d, min, max, step) }), name, k) })
   return <div onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 12, top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
     padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none' }}>
-    <div style={{ font: "700 15px 'Pretendard', sans-serif", marginBottom: 2 }}>속성</div>
+    <div style={{ font: "700 15px 'Pretendard', sans-serif", marginBottom: 2 }}>속성{arrows.length > 1 && <span style={{ font: "400 12px 'Pretendard', sans-serif", color: C.muted }}> · 화살표 {arrows.length}개</span>}</div>
     <Row label="종류"><Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} /></Row>
     <Row label="화살촉"><Seg value={head} onPick={h => set({ head: h === 'end' || h === 'both', head_start: h === 'start' || h === 'both' }, '화살촉')}
       items={[['none', ICONS.none, '없음'], ['end', ICONS.end, '끝만'], ['both', ICONS.both, '양쪽'], ['start', ICONS.start, '시작만']]} /></Row>
-    <Row label="머리"><Stepper title="화살촉 크기 배율" value={a.head_scale ?? 1} min={0.5} max={3} step={0.1} fmt={v => v.toFixed(1) + '×'} onChange={v => set({ head_scale: v }, '머리 크기', 'head_scale')} /></Row>
+    <Row label="머리"><Stepper title="화살촉 크기 배율" {...num('head_scale', 1, 0.5, 3, 0.1, '머리 크기')} fmt={v => v.toFixed(1) + '×'} /></Row>
     <Row label="색"><div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 14px)', gap: 3 }}>
       {ARROW_COLORS.map((c, i) => { if (!c) return <label key={i} title="다른 색" style={{ width: 14, height: 14, borderRadius: 4, cursor: 'pointer', background: 'conic-gradient(#f33,#fc0,#3c6,#39f,#c3f,#f33)', position: 'relative', overflow: 'hidden' }}>
-          <input type="color" value={/^#[0-9a-f]{6}$/i.test(color) ? color : '#1f1f1f'} onChange={e => set({ color: e.target.value }, '색', 'color')} style={{ opacity: 0, position: 'absolute', inset: 0, cursor: 'pointer' }} /></label>
-        const on = color.toLowerCase() === c.toLowerCase()
+          <input type="color" value={/^#[0-9a-f]{6}$/.test(color) ? color : '#1f1f1f'} onChange={e => set({ color: e.target.value }, '색', 'color')} style={{ opacity: 0, position: 'absolute', inset: 0, cursor: 'pointer' }} /></label>
+        const on = color === c.toLowerCase()   // 색이 서로 다르면 아무것도 안 켬
         return <button key={i} title={c} aria-pressed={on} onClick={() => set({ color: c }, '색')} style={{ all: 'unset', cursor: 'pointer', width: 14, height: 14, borderRadius: 4, background: c,
           boxShadow: on ? `0 0 0 2px #fff, 0 0 0 3.5px ${C.on}` : 'inset 0 0 0 1px rgba(0,0,0,.15)' }} /> })}
     </div></Row>
-    <Row label="굵기"><Stepper title="선 굵기" value={a.width ?? 2} min={1} max={40} onChange={v => set({ width: v }, '굵기', 'width')} fmt={v => v + 'px'} /></Row>
+    <Row label="굵기"><Stepper title="선 굵기" {...num('width', 1, 1, 40, 1, '굵기')} fmt={v => v + 'px'} /></Row>
     <Row label="선"><div style={{ position: 'relative', flex: 1 }}>
-      <button title="선 모양" onClick={() => setOpenDash(o => !o)} style={btn(false, { width: '100%', background: C.seg, justifyContent: 'space-between', padding: '0 8px' })}>{dashIcon(a.style || 1)}<span style={{ color: C.muted }}>▾</span></button>
+      <button title="선 모양" onClick={() => setOpenDash(o => !o)} style={btn(false, { width: '100%', background: C.seg, justifyContent: 'space-between', padding: '0 8px' })}>{style ? dashIcon(style) : <span style={{ fontSize: 12, color: C.muted }}>서로 다름</span>}<span style={{ color: C.muted }}>▾</span></button>
       {openDash && <div style={{ position: 'absolute', zIndex: 2, top: 28, left: 0, right: 0, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 4px 12px rgba(0,0,0,.1)' }}>
-        {STYLES.map(([st, name]) => <button key={st} title={name} onClick={() => { set({ style: st }, '선 모양'); setOpenDash(false) }} style={btn((a.style || 1) === st, { width: '100%', justifyContent: 'space-between', padding: '0 8px' })}>
+        {STYLES.map(([st, name]) => <button key={st} title={name} onClick={() => { set({ style: st }, '선 모양'); setOpenDash(false) }} style={btn(style === st, { width: '100%', justifyContent: 'space-between', padding: '0 8px' })}>
           {dashIcon(st)}<span style={{ fontSize: 11, color: C.muted }}>{name}</span></button>)}
       </div>}
     </div></Row>
-    {kind === 'ortho' && <Row label="모서리"><Stepper title="꺾인 곳 둥글기(0 = 각짐)" value={a.curve_r ?? 10} min={0} max={40} onChange={v => set({ curve_r: v }, '모서리', 'curve_r')} /></Row>}
+    {kind === 'ortho' && <Row label="모서리"><Stepper title="꺾인 곳 둥글기(0 = 각짐)" {...num('curve_r', 10, 0, 40, 1, '모서리')} /></Row>}
   </div>
 }

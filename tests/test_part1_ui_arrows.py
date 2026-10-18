@@ -582,6 +582,27 @@ def test_properties_dock_readout():
     assert w._pf_type.text() == "사각형 2개"
 
 
+def test_properties_mixed_values_show_range_and_step_each():
+    # [2026-10-18 사용자 선택, 웹과 같은 규칙] 고른 것들 값이 서로 다르면 — 숫자칸은 「작은~큰」, ±는 각자에 같은 만큼(차이 유지),
+    # 프리셋은 전부 그 값, 선 모양은 하나도 안 켜고 버튼은 「혼합」.
+    from PyQt6.QtGui import QPen
+    w = CanvasWindow()
+    p1 = QPen(QColor("#000000")); p1.setWidthF(1.0)
+    p2 = QPen(QColor("#000000")); p2.setWidthF(3.0); p2.setStyle(Qt.PenStyle.DashLine)
+    r1 = _mk_rect(w._scene, p1, 0, 0, 100, 50); r2 = _mk_rect(w._scene, p2, 200, 0, 100, 50)
+    r1.setSelected(True); r2.setSelected(True); w._refresh_properties()
+    assert w._pf_width.prefix() == "1~" and abs(w._pf_width.value() - 3.0) < 1e-6
+    assert w._pf_width_btn.text() == "1~3px ▾"
+    assert not any(b.isChecked() for b in w._pf_style_btns)
+    assert w._pf_style_btn.text() == "혼합 ▾"
+    w._pf_width.setValue(3.5)   # 칸에서 +0.5 → 각자 +0.5
+    assert abs(r1.pen().widthF() - 1.5) < 1e-6 and abs(r2.pen().widthF() - 3.5) < 1e-6
+    assert w._pf_width.prefix() == "1.5~"
+    w._pf_width_presets[2.0].click()   # 프리셋 = 전부 그 값
+    assert abs(r1.pen().widthF() - 2.0) < 1e-6 and abs(r2.pen().widthF() - 2.0) < 1e-6
+    assert w._pf_width.prefix() == "" and w._pf_width_btn.text() == "2px ▾"
+
+
 def test_properties_type_shows_real_symbol_kind_not_generic_bucket():
     # [실사용 피드백 2026-08-21] `_TYPE_NAMES`가 `_SymbolItem` 전부를 "심볼" 한 단어로
     # 뭉개던 버그 — 삼각형·판단 등 실제 종류(_kind)가 "종류" 콤보에 그대로 보여야 한다.
@@ -626,13 +647,19 @@ def test_props_edit_width_color_font_undoable():
 
 
 def test_props_multiselect_width_single_undo():
-    # 다중선택 두께 편집 = 전체 적용 + undo 1스텝(각자 원값으로 복원).
+    # 다중선택 두께 편집 = undo 1스텝(각자 원값으로 복원).
+    # [2026-10-18 사용자 선택] 두께가 서로 다르면 숫자칸은 「2~3」(칸 값 = 큰 값 3)이고 고친 만큼 각자 더함 — 8을 넣으면 +5 → 7·8.
+    # 전부 같은 값은 프리셋 단추(`_set_width_all`).
     w = CanvasWindow()
     a = _mk_pen_rect(w, width=2.0); b = _mk_pen_rect(w, x=200, width=3.0)
-    a.setSelected(True); b.setSelected(True)
+    a.setSelected(True); b.setSelected(True); w._refresh_properties()
     d0 = len(w._undo)
     w._edit_width(8.0)
     assert len(w._undo) == d0 + 1
+    assert abs(a.pen().widthF() - 7.0) < 1e-6 and abs(b.pen().widthF() - 8.0) < 1e-6
+    w.undo()
+    assert abs(a.pen().widthF() - 2.0) < 1e-6 and abs(b.pen().widthF() - 3.0) < 1e-6
+    w._refresh_properties(); w._set_width_all(8.0)
     assert abs(a.pen().widthF() - 8.0) < 1e-6 and abs(b.pen().widthF() - 8.0) < 1e-6
     w.undo()
     assert abs(a.pen().widthF() - 2.0) < 1e-6 and abs(b.pen().widthF() - 3.0) < 1e-6

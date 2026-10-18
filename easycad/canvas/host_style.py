@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QPoint, QTimer
 from PyQt6.QtGui import (
-    QColor,
+    QColor, QIcon,
 )
 from PyQt6.QtWidgets import (
     QMenu, QWidget,
@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _ArrowItem, _PolyArrowItem, _RectItem, _EllipseItem, _SymbolItem, _TextItem, _tool_icon, _SYMBOL_KINDS, _pen_style_icon,
-    _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT, _BoardItem,
+    _DEFAULT_INK_DARK, _DEFAULT_INK_LIGHT, _BoardItem, _MIN_FONT, _MAX_FONT,
 )
 from easycad.canvas.host_widgets import (
     _current_icon_color, _arrow_kind_of, _arrow_head_of, _apply_arrow_head, _is_rotatable,
@@ -329,11 +329,34 @@ class _StyleMixin:
             if not hexe.hasFocus():   # 치는 중엔 덮어쓰지 않는다
                 hexe.setText(tip if tip.startswith("#") else "")
         st = self._PEN_STYLE_ITEMS[max(0, self._pf_style.currentIndex())]
-        self._pf_style_btn.setIcon(_pen_style_icon(st[0], _current_icon_color(), 26, 10))
-        self._pf_style_btn.setToolTip(f"선 모양 — {st[1]}")
+        mix = getattr(self, "_pf_mix", {})
+        if mix.get("style"):   # [2026-10-18] 선 모양이 서로 다르면 그림 없이 「혼합」(첫 값을 보여 주면 다 같은 줄 안다)
+            self._pf_style_btn.setIcon(QIcon()); self._pf_style_btn.setText("혼합 ▾")
+            self._pf_style_btn.setToolTip("선 모양 — 혼합")
+        else:
+            self._pf_style_btn.setIcon(_pen_style_icon(st[0], _current_icon_color(), 26, 10)); self._pf_style_btn.setText("▾")
+            self._pf_style_btn.setToolTip(f"선 모양 — {st[1]}")
         self._pf_style_btn.setEnabled(self._pf_style.isEnabled())
-        self._pf_width_btn.setText(f"{self._pf_width.value():g}px ▾")
+        wl = mix.get("width_lo")
+        self._pf_width_btn.setText(f"{wl:g}~{self._pf_width.value():g}px ▾" if wl is not None else f"{self._pf_width.value():g}px ▾")
         self._pf_width_btn.setEnabled(self._pf_width.isEnabled())
+
+    def _set_mixed_spin(self, spin, values, key, lo_key=None):
+        """[2026-10-18 사용자 선택, 웹과 같은 규칙] 숫자칸 — 고른 것들 값이 같으면 그 값, 다르면 「작은값~큰값」(앞 글자 = 작은 값,
+        칸의 값 = 큰 값)으로 보이고 `_pf_mix[key]`에 큰 값을 적어 둔다. 편집 핸들러가 그걸 보고 ±를 각자에 같은 만큼 더한다(차이 유지)."""
+        if not values:
+            spin.setPrefix("")
+            return
+        lo, hi = min(values), max(values)
+        if hi - lo > 1e-6:
+            spin.setPrefix(f"{lo:g}~")
+            spin.setValue(hi)
+            self._pf_mix[key] = float(spin.value())
+            if lo_key:
+                self._pf_mix[lo_key] = lo
+        else:
+            spin.setPrefix("")
+            spin.setValue(values[0])
 
     def _clear_fill(self):
         """채움을 투명으로(None) — 그리드 팝업의 "없음" 항목이 호출(요청③: 별도 외부 버튼
@@ -349,10 +372,24 @@ class _StyleMixin:
 
     def _edit_width(self, val):
         sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_width")]
-        self._edit_items(sel, lambda it: it.apply_width(float(val)),
-                         key=("width", tuple(sorted(id(it) for it in sel))))
+        base = getattr(self, "_pf_mix", {}).get("width")
+        if base is not None:   # [2026-10-18 웹과 같은 규칙] 두께가 서로 다르면 ±는 각자에 같은 만큼(차이 유지)
+            d = float(val) - base
+            olds = {id(it): (self._read_props(it)["width"] or 0.0) for it in sel}
+            self._edit_items(sel, lambda it: it.apply_width(min(50.0, max(0.5, olds[id(it)] + d))),
+                             key=("width", tuple(sorted(id(it) for it in sel))))
+        else:
+            self._edit_items(sel, lambda it: it.apply_width(float(val)),
+                             key=("width", tuple(sorted(id(it) for it in sel))))
         if sel:
-            self.current_width = float(val)   # [M2 #A] 다음 도형 기본 두께로(sticky)
+            self.current_width = float(self._read_props(sel[0])["width"] or val)   # [M2 #A] 다음 도형 기본 두께로(sticky)
+
+    def _set_width_all(self, val):
+        """[2026-10-18] 두께 프리셋(1·2·3·5) — 섞였어도 전부 그 값. 숫자칸(`_edit_width`)은 섞였으면 각자 더하기라 따로."""
+        sel = [it for it in self._scene.selectedItems() if hasattr(it, "apply_width")]
+        self._edit_items(sel, lambda it: it.apply_width(float(val)))
+        if sel:
+            self.current_width = float(val)
 
 
     def _edit_style(self, _idx):
@@ -401,10 +438,17 @@ class _StyleMixin:
     def _edit_head_scale(self, val):
         """[실사용 피드백 2026-08-21] 화살촉 크기 배율 — 색·두께와 같은 '겉모습' 속성이라
         `_edit_items`(capture_state 경로)를 그대로 쓴다(회전과 달리 기하 undo가 아님)."""
-        self.current_head_scale = float(val)   # [실사용 피드백 2026-08-26] sticky
         sel = [it for it in self._scene.selectedItems() if isinstance(it, (_ArrowItem, _PolyArrowItem))]
-        self._edit_items(sel, lambda it: it.set_head_scale(val),
-                         key=("head_scale", tuple(sorted(id(it) for it in sel))))
+        base = getattr(self, "_pf_mix", {}).get("head_scale")
+        if base is not None:   # [2026-10-18] 서로 다르면 각자 더하기
+            d = float(val) - base
+            olds = {id(it): it._head_scale for it in sel}
+            self._edit_items(sel, lambda it: it.set_head_scale(round(min(3.0, max(0.5, olds[id(it)] + d)), 2)),
+                             key=("head_scale", tuple(sorted(id(it) for it in sel))))
+        else:
+            self._edit_items(sel, lambda it: it.set_head_scale(val),
+                             key=("head_scale", tuple(sorted(id(it) for it in sel))))
+        self.current_head_scale = float(sel[0]._head_scale) if sel else float(val)   # [실사용 피드백 2026-08-26] sticky
 
 
     def _edit_rotation(self, val):
@@ -439,6 +483,13 @@ class _StyleMixin:
 
     def _edit_font(self, val):
         tgt = self._text_targets(self._scene.selectedItems())
+        base = getattr(self, "_pf_mix", {}).get("font")
+        if base is not None:   # [2026-10-18] 글자 크기가 서로 다르면 각자 더하기
+            d = int(val) - base
+            olds = {id(t): int(getattr(t, "_base_pt", t.font().pointSize())) for t in tgt}
+            self._edit_items(tgt, lambda it: it.apply_font_size(min(_MAX_FONT, max(_MIN_FONT, olds[id(it)] + d))),
+                             key=("font", tuple(sorted(id(it) for it in tgt))))
+            return
         self._edit_items(tgt, lambda it: it.apply_font_size(int(val)),
                          key=("font", tuple(sorted(id(it) for it in tgt))))
 
@@ -664,6 +715,7 @@ class _StyleMixin:
         """선택에 맞춰 편집 컨트롤 값·활성 상태를 채운다. _pf_updating로 편집 시그널을 막아
         프로그램적 세팅이 다시 편집 핸들러를 트리거하지 않게 한다(피드백 차단)."""
         self._pf_updating = True
+        self._pf_mix = {}   # [2026-10-18] 고른 것들 값이 서로 다른 칸 — 숫자 = 지금 보이는 큰 값(±의 기준), 고르는 칸 = True
         try:
             sel = self._scene.selectedItems()
             has = bool(sel)
@@ -742,9 +794,8 @@ class _StyleMixin:
             # 두께 — 균일하면 값, 아니면 대상 있음만 활성(값은 첫 대상).
             widths = [p["width"] for p in props if p["width"] is not None]
             self._pf_width.setEnabled(bool(widths))
-            if widths:
-                self._pf_width.setValue(widths[0])
             same_w = widths[0] if widths and len({round(x, 2) for x in widths}) == 1 else None
+            self._set_mixed_spin(self._pf_width, widths, "width", lo_key="width_lo")
             for v, b in self._pf_width_presets.items():
                 b.setEnabled(bool(widths))
                 b.setChecked(same_w is not None and abs(same_w - v) < 1e-6)
@@ -755,9 +806,14 @@ class _StyleMixin:
             if styles:
                 i = self._pf_style.findData(styles[0])
                 self._pf_style.setCurrentIndex(i if i >= 0 else 0)
+            style_mixed = len(set(styles)) > 1
+            if style_mixed:
+                self._pf_mix["style"] = True
             for i, b in enumerate(self._pf_style_btns):
                 b.setEnabled(bool(styles))
-                b.setChecked(bool(styles) and i == self._pf_style.currentIndex())
+                b.setAutoExclusive(False)   # 하나도 안 켠 상태를 허용하려고 잠깐 풂
+                b.setChecked(bool(styles) and not style_mixed and i == self._pf_style.currentIndex())
+                b.setAutoExclusive(True)
 
             # [시안 T1 2026-10-11] 「글자」 구역 — 독립 글자와 도형·선 안 글자. 하나도 없으면 구역째 숨김.
             # 독립 글자만 골랐으면 「선」 줄(글자에선 색만 의미 있었음)을 숨기고 글자 색은 이 구역에서.
@@ -775,7 +831,7 @@ class _StyleMixin:
             self._pf_font.setEnabled(bool(texts))
             tcol = None
             if texts:
-                self._pf_font.setValue(int(getattr(texts[0], "_base_pt", texts[0].font().pointSize())))
+                self._set_mixed_spin(self._pf_font, [int(getattr(t, "_base_pt", t.font().pointSize())) for t in texts], "font")
                 names = {t.defaultTextColor().name() for t in texts}
                 tcol = QColor(texts[0].defaultTextColor()) if len(names) == 1 else None
                 first = next((t.toPlainText().strip() for t in texts if t.toPlainText().strip()), "")
@@ -827,13 +883,13 @@ class _StyleMixin:
                     self._pf_routing_btn.setCurrentIndex(i)
             if show_head:   # [양방향 화살표] 콤보 현재 선택을 첫 화살표의 화살촉 상태로 동기화
                 first_arrow = arrows_sel[0]
-                i = self._pf_head_btn.findData(_arrow_head_of(first_arrow))
-                if i >= 0:
-                    self._pf_head_btn.setCurrentIndex(i)
+                heads = {_arrow_head_of(a) for a in arrows_sel}
+                i = self._pf_head_btn.findData(_arrow_head_of(first_arrow)) if len(heads) == 1 else -1   # [2026-10-18] 서로 다르면 아무것도 안 고름
+                self._pf_head_btn.setCurrentIndex(i)
             if show_head_scale:   # [화살촉 크기 배율] 값 동기화 — 균일하면 그 값, 아니면 첫 값
                 scales = [it._head_scale for it in arrows_sel]
                 self._pf_head_scale.blockSignals(True)
-                self._pf_head_scale.setValue(scales[0])
+                self._set_mixed_spin(self._pf_head_scale, scales, "head_scale")
                 self._pf_head_scale.blockSignals(False)
             if show_rotation:   # [신규기능 2026-08-21] 값 동기화 — 균일하면 그 값, 아니면 0
                 rotatable = [it for it in sel if _is_rotatable(it)]
