@@ -209,7 +209,7 @@ function App() {
         <div style={{ position: 'absolute', left: 12, top: 12, bottom: 12, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 8, pointerEvents: 'none' }}>
           <Palette lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <Frames items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={() => ed.current?.startPresent()} dark={dark} />
+            <Frames items={model.items} sel={selKey ? selKey.split(',') : []} onReorder={ids => ed.current?.reorderFrames(ids)} onRename={(id, n) => ed.current?.renameFrame(id, n)} onGo={id => ed.current?.goFrame(id)} onPresent={id => ed.current?.startPresent(id)} dark={dark} />
             <Layers model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} onMoveSel={id => ed.current?.moveSelToLayer(id)} dark={dark} />
           </div>
         </div>

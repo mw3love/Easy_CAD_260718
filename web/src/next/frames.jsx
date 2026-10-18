@@ -8,7 +8,7 @@ const GRIP = <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor"
 
 // items = 문서 아이템, sel = 고른 것 _id, onReorder(ids 새 순서), onRename(id, 이름), onGo(id), dark
 export function Frames({ items, sel, onReorder, onRename, onGo, onPresent, dark }) {
-  const frames = orderedFrames(items), [drag, setDrag] = useState(null), [over, setOver] = useState(null), [renaming, setRenaming] = useState(null)
+  const frames = orderedFrames(items), [hover, setHover] = useState(null), [drag, setDrag] = useState(null), [over, setOver] = useState(null), [renaming, setRenaming] = useState(null)
   if (!frames.length) return null
   const drop = to => {
     if (drag == null || drag === to) return
@@ -19,13 +19,14 @@ export function Frames({ items, sel, onReorder, onRename, onGo, onPresent, dark 
     boxShadow: '0 2px 8px rgba(0,0,0,.06)', color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', flex: 'none' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span style={{ font: "700 15px 'Pretendard', sans-serif" }}>프레임</span>
       <span style={{ flex: 1 }} />
-      <button onClick={onPresent} title="발표 — 프레임 순서대로 한 장씩(고른 프레임부터) · → 다음 · ← 이전 · Esc 끝" style={{ all: 'unset', cursor: 'pointer', padding: '2px 8px', borderRadius: 6, background: C.on, color: '#fff', font: "600 11px 'Pretendard', sans-serif" }}>▶ 발표</button></div>
+      <button onClick={() => onPresent()} title="발표 — 프레임 순서대로 한 장씩(고른 프레임부터) · → 다음 · ← 이전 · Esc 끝" style={{ all: 'unset', cursor: 'pointer', padding: '2px 8px', borderRadius: 6, background: C.on, color: '#fff', font: "600 11px 'Pretendard', sans-serif" }}>▶ 발표</button></div>
     <span style={{ fontSize: 11, color: C.muted }}>끌어서 순서 = 출력·발표 순서</span>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 200, overflowY: 'auto' }}>
       {frames.map((f, i) => <div key={f._id} draggable={renaming !== f._id} data-testid="frame-row"
         onDragStart={e => { setDrag(i); e.dataTransfer.effectAllowed = 'move' }} onDragEnd={() => { setDrag(null); setOver(null) }}
         onDragOver={e => { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setOver(e.clientY < r.top + r.height / 2 ? i : i + 1) }}
         onDrop={e => { e.preventDefault(); drop(over ?? i); setDrag(null); setOver(null) }}
+        onMouseEnter={() => setHover(f._id)} onMouseLeave={() => setHover(h => (h === f._id ? null : h))}
         onClick={() => onGo(f._id)} title="누르면 이 프레임으로 · 두 번 누르면 이름 고치기 · 끌어서 순서"
         style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 4px', borderRadius: 4, cursor: 'pointer', font: "400 12px 'Pretendard', sans-serif",
           background: sel.includes(f._id) ? selBg : 'transparent', opacity: drag === i ? 0.4 : 1,
@@ -37,6 +38,8 @@ export function Frames({ items, sel, onReorder, onRename, onGo, onPresent, dark 
             onBlur={() => setRenaming(null)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') setRenaming(null) }}
             style={{ flex: 1, minWidth: 0, height: 20, border: `1px solid ${C.line}`, borderRadius: 4, background: 'transparent', color: C.ink, font: 'inherit', padding: '0 4px' }} />
           : <span onDoubleClick={e => { e.stopPropagation(); setRenaming(f._id) }} style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', color: f.name ? C.ink : C.muted }}>{f.name || '이름 없음'}</span>}
+        {hover === f._id && renaming !== f._id && <button data-testid="frame-play" title="이 장부터 발표" onClick={e => { e.stopPropagation(); onPresent(f._id) }}
+          style={{ all: 'unset', cursor: 'pointer', flex: 'none', width: 20, height: 18, borderRadius: 4, background: C.on, color: '#fff', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>▶</button>}
       </div>)}
     </div>
   </div>

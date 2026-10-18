@@ -65,6 +65,7 @@ const labelsOf = it => (it.labels ? it.labels.map(L => ({ ...L })) : it.label ? 
 const withLabels = (it, labels) => { const o = { ...it, labels }; delete o.label; return o }
 // 화살표 안 점 → 길 위 t·옆 거리(직각 = 꺾은선 길이 비율, 곡선 = 매개변수 — 데스크톱 `_project_to_path`·`_project_to_curve`)
 const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([x, y]) => ({ x, y })), q) : projectToCurve(it, q))
+const PEN_LAYER = 'pen-notes'   // 발표 판서 레이어
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
 export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel }, ref) {
@@ -467,6 +468,13 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const b = frameTagBox(it), s = b.h; return p.x >= b.x + b.w + b.fs * 0.3 && p.x <= b.x + b.w + b.fs * 0.3 + s && p.y >= b.y && p.y <= b.y + s ? it : null }
   const [tagEdit, setTagEdit] = useState(null)   // 이름표를 두 번 눌러 고치는 중인 프레임 _id
   const [present, setPresent] = useState(null)   // 발표 중이면 시작 장 번호
+  // 판서(발표 중 그린 것) — 칠판 「판서」 레이어에 진짜 도형으로(나중에 레이어 카드에서 숨기기·지우기). 레이어가 없거나 숨겨져 있으면 보이게 만듦
+  function addPenNotes(specs) {
+    const ly = layersOf(R.current.model).find(l => l.id === PEN_LAYER)
+    if (!ly || !ly.visible || ly.locked) setModel(m => ({ ...m, layers: ly ? layersOf(m).map(l => (l.id === PEN_LAYER ? { ...l, visible: true, locked: false } : l)) : [...layersOf(m), { id: PEN_LAYER, name: '판서', visible: true, locked: false, color: '#e0646a' }] }))
+    const m = R.current.model, z = topZ(m.items) + 1, its = specs.map((s, j) => base(s.pos, { ...s, layer_id: PEN_LAYER, z: z + j }))
+    commit([...m.items, ...its], R.current.sel, '판서')
+  }
   function startPresent(fromId) {   // 발표 — 고른 프레임(또는 fromId)부터, 없으면 1번부터
     const fr = orderedFrames(hitPool()); if (!fr.length) { setStatus('프레임이 없어요 — 상단 「프레임」으로 보여 줄 영역을 감싸 보세요'); return }
     const id = fromId || R.current.sel.find(s => fr.some(f => f._id === s)); setEditing(null); setPresent(Math.max(0, fr.findIndex(f => f._id === id)))
@@ -1155,7 +1163,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         return out })()} />}
       {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))
         return <Presenter frames={fr.map(f => ({ id: f._id, name: f.name, box: sceneBox(f, textBox) }))} order={order.filter(([it]) => it.type !== 'frame')} onBoard={onBoard} routes={routes}
-          start={Math.min(present, fr.length - 1)} onClose={() => setPresent(null)} /> })()}
+          start={Math.min(present, fr.length - 1)} dark={dark} onClose={() => setPresent(null)} onAdd={addPenNotes} onUndo={undo} onFlipArrow={() => { const m = R.current.model, a = m.items.filter(it => it.layer_id === PEN_LAYER && it.type === 'sarrow').sort((p, q) => (q.z ?? 0) - (p.z ?? 0))[0]   // 방금(맨 위) 그린 판서 화살표 방향 뒤집기
+            if (a) commit(m.items.map(it => (it._id === a._id ? { ...it, pts: [...it.pts].reverse() } : it)), R.current.sel, '화살표 뒤집기') }} onClearNotes={box => { const m = R.current.model, inBox = it => { const b = sceneBox(it, textBox), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h }   // 이 장(프레임) 안 판서만
+            const ids = m.items.filter(it => it.layer_id === PEN_LAYER && inBox(it)).map(it => it._id); if (ids.length) commit(removeItems(m.items, ids), R.current.sel, '이 장 판서 지움') }}
+          onErase={(p, tol, key) => { const m = R.current.model, hit = topHit(m.items.filter(it => it.layer_id === PEN_LAYER), p, tol, textBox); if (hit) commit(removeItems(m.items, [hit._id]), R.current.sel, '판서 지움', key) }} /> })()}
       {tagEdit && (() => { const it = byId.get(tagEdit); if (!it) return null; const b = frameTagBox(it), o = scr({ x: b.x, y: b.y })   // 프레임 이름표 바로 고치기(치는 대로 — 2026-10-19 사용자)
         return <input key={tagEdit} autoFocus defaultValue={it.name || ''} placeholder="이름" onPointerDown={e => e.stopPropagation()} onChange={e => renameFrame(it._id, e.target.value)}
           onBlur={() => setTagEdit(null)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') setTagEdit(null) }}
