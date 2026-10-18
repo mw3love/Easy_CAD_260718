@@ -32,7 +32,7 @@ function turnInto(editor, k) {
     todo: () => c.toggleTaskList(), code: () => c.setCodeBlock(), quote: () => c.setBlockquote() }[k] || (() => c))().run()
 }
 
-// spec: { left, top(화면 px — 메모 왼쪽 위), width(화면 px), zoom(칠판 배율 × 아이템 배율), fill(바탕 CSS), lines, onChange(lines), onWheel(e) }
+// spec: { left, top(화면 px — 메모 왼쪽 위), width(화면 px), zoom(칠판 배율 × 아이템 배율), fill(바탕 CSS), lines, caret?(처음 커서 줄), onChange(lines), onWheel(e) }
 // onDone(lines, extra) — extra = { caret: 줄 번호 }(Esc — 그 줄 고르기) | { grab: { i, clientX, clientY } }(⠿를 눌러 끌기 시작) | null
 export function MemoEditor({ spec, onDone }) {
   const box = useRef(null), host = useRef(null), ed = useRef(null), done = useRef(false), sp = useRef(spec), od = useRef(onDone)
@@ -65,7 +65,10 @@ export function MemoEditor({ spec, onDone }) {
       },
     })
     ed.current = editor
-    try { editor.commands.setTextSelection(editor.state.doc.content.size); editor.view.focus() } catch { editor.commands.focus('end') }
+    try {   // 커서 = 고른 줄 끝(Enter로 들어옴) 아니면 맨 끝
+      const b = spec.caret != null ? lineBlocks(editor.state.doc)[spec.caret] : null
+      editor.commands.setTextSelection(b ? (b.node.isTextblock ? b.at + b.node.nodeSize - 1 : b.at) : editor.state.doc.content.size); editor.view.focus()
+    } catch { editor.commands.focus('end') }
     editor.on('update', () => sp.current.onChange?.(docToLines(editor.getJSON())))   // 치는 동안 메모 높이(칠판에 바로)
     const onDown = e => { if (!box.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }
     setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)

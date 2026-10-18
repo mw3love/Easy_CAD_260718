@@ -159,6 +159,20 @@ export function moveRange(lines, [s, e], to, copy = false) {
   const unit = structuredClone(lines.slice(s, e))
   return [...lines.slice(0, to), ...unit, ...lines.slice(to)]
 }
+// 고른 줄(떨어진 덩어리 여럿 — 노션 Ctrl·Alt+Shift 클릭) { s, e, more: [[s, e], …] } → 덩어리 목록(차례대로)·줄 번호 목록
+export const selUnits = ls => [...(ls.more || []), [ls.s, ls.e]].sort((a, b) => a[0] - b[0])
+export const selIdx = ls => selUnits(ls).flatMap(([s, e]) => Array.from({ length: e - s }, (_, k) => s + k))
+// 고른 줄들을 to 자리로(같은 메모) — copy = 원래 줄은 둠. 끼울 자리는 원래 줄 번호 기준
+export function moveLines(lines, idx, to, copy = false) {
+  const set = new Set(idx), picked = idx.map(i => (copy ? structuredClone(lines[i]) : lines[i]))
+  const rest = copy ? lines : lines.filter((_, i) => !set.has(i)), at = copy ? to : to - idx.filter(i => i < to).length
+  return [...rest.slice(0, at), ...picked, ...rest.slice(at)]
+}
+// 고른 줄들 떼어 내기(다른 메모·새 메모로) — 깊이는 맨 앞 줄 기준 0부터
+export function pickLines(lines, idx) {
+  const base = lines[idx[0]]?.lv || 0
+  return idx.map(i => { const o = structuredClone(lines[i]), lv = (o.lv || 0) - base; if (lv > 0) o.lv = lv; else delete o.lv; return o })
+}
 // TipTap 문서에서 커서가 있는 줄 번호(docToLines 차례와 같음 — 글 블록마다 한 줄, 코드 블록은 \n마다, 구분선 한 줄)
 export function caretLine(state) {
   const pos = state.selection.from

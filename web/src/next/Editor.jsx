@@ -34,7 +34,7 @@ import { ContextMenu } from './ctxmenu.jsx'
 import { freeSpot, sourceLine } from '../chatFormat.js'
 import { fetchLinkInfo, normalizeUrl, openBtnRect, siteOf, webCardFields } from './webcard.js'
 import { buildLegend, isLegendPart, legendEntries, legendState } from './legend.js'
-import { LINE_COLORS, LINE_KINDS, MEMO, convertLine, lineUnit, memoFromAnswer, memoText, moveRange, recolorLine, takeUnit } from './memo.js'
+import { LINE_COLORS, LINE_KINDS, MEMO, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
@@ -229,10 +229,17 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const lk = frameLockAt(p); if (lk) { setLoose(l => (l === lk._id ? null : lk._id)); return }   // 이름표 옆 자물쇠 — 잠깐 틀만
     const wo = webOpenAt(p); if (wo) { window.open(wo.url, '_blank', 'noopener'); return }   // 웹 카드 오른쪽 위 ↗ = 새 탭
     const mh = memoHandleHit(p)
-    if (mh) { setSel([mh.it._id]); const ls = lineSel?.id === mh.it._id ? lineSel : null   // ⠿ — Shift = 고른 줄 넓히기, 고른 줄 안을 끌면 고른 줄 전부, Alt = 복사
-      if (e.shiftKey && ls) { setLineSel({ id: ls.id, s: Math.min(ls.s, mh.s), e: Math.max(ls.e, mh.e) }); return }
-      const unit = ls && mh.s >= ls.s && mh.e <= ls.e ? [ls.s, ls.e] : [mh.s, mh.e]
-      st.current = { ...st.current, kind: 'mline', id: mh.it._id, unit, copy: e.altKey, start: p, moved: false }; return }
+    // ⠿ — 연속 = Shift·Ctrl+Shift 클릭, 개별 = Ctrl·Alt+Shift 클릭(노션 + 흔한 방식 둘 다 — 2026-10-18 사용자), 고른 줄 안을 끌면 고른 줄 전부, Alt 끌기 = 복사
+    if (mh) { setSel([mh.it._id]); const ls = lineSel?.id === mh.it._id ? lineSel : null, mod = e.ctrlKey || e.metaKey
+      const toggle = (mod && !e.shiftKey) || (e.altKey && e.shiftKey), range = e.shiftKey && !e.altKey
+      if (toggle) { if (!ls) { setLineSel({ id: mh.it._id, s: mh.s, e: mh.e }); return }
+        const us = selUnits(ls), has = us.findIndex(([s0, e0]) => mh.s >= s0 && mh.e <= e0)
+        if (has < 0) { setLineSel({ id: ls.id, s: mh.s, e: mh.e, more: us }); return }
+        const left = us.filter((_, j) => j !== has); if (!left.length) { setLineSel(null); return }
+        const [a0, ...rest] = left.slice().reverse(); setLineSel({ id: ls.id, s: a0[0], e: a0[1], more: rest }); return }
+      if (range) { if (ls) setLineSel({ id: ls.id, s: Math.min(ls.s, mh.s), e: Math.max(ls.e, mh.e), more: ls.more }); else setLineSel({ id: mh.it._id, s: mh.s, e: mh.e }); return }
+      const inSel = ls && selUnits(ls).some(([s0, e0]) => mh.s >= s0 && mh.e <= e0)
+      st.current = { ...st.current, kind: 'mline', id: mh.it._id, units: inSel ? selUnits(ls) : [[mh.s, mh.e]], copy: e.altKey, start: p, moved: false }; return }
     if (lineSel) setLineSel(null)
     const mc = memoCheckAt(p); if (mc) { const ln = mc.it.lines[mc.i]; commit(m.items.map(x => (x._id === mc.it._id ? { ...x, lines: x.lines.map((l, j) => (j === mc.i ? (l.done ? (({ done, ...r }) => r)(l) : { ...l, done: true }) : l)) } : x)), R.current.sel, ln.done ? '할 일 풂' : '할 일 끝'); return }
     const h = handleAt(p)
@@ -411,7 +418,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       const cell = one?.type === 'table' ? (cellAt(one, toLocal(one, p)) || (cellSel?.id === one._id ? { r: cellSel.r1, c: cellSel.c1 } : null)) : null   // 고른 표의 칸 위에서 우클릭 = 그 칸 기준 행·열 메뉴
       setMenu({ x: e.clientX - r.left, y: e.clientY - r.top, cell }); return }
     if (s.kind === 'mline') { setOverlay(o => ({ ...o, mdrop: null }))
-      if (!s.moved) { const r = svg.current.getBoundingClientRect(); setLineSel({ id: s.id, s: s.unit[0], e: s.unit[1] }); setLineMenu({ x: e.clientX - r.left + 6, y: e.clientY - r.top - 6, id: s.id, s: s.unit[0], e: s.unit[1] }); return }   // 제자리 = 그 줄 고르기 + 메뉴
+      if (!s.moved) { const r = svg.current.getBoundingClientRect(), [a0, ...rest] = s.units.slice().reverse()   // 제자리 = 그 줄 고르기(고른 줄 안이면 그대로) + 메뉴
+        setLineSel({ id: s.id, s: a0[0], e: a0[1], ...(rest.length ? { more: rest } : {}) }); setLineMenu({ x: e.clientX - r.left + 6, y: e.clientY - r.top - 6, id: s.id, units: s.units }); return }
       setLineSel(null); memoLineDrop(s, p); return }
     if (s.kind === 'conn') {
       setOverlay(o => ({ ...o, conn: null, hp: null }))
@@ -771,8 +779,9 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   function memoLineDrop(s, p) {   // 놓기 — 같은 메모 = 순서, 다른 메모 = 옮겨 넣기, 밖 = 새 메모
     const m = R.current.model, src = m.items.find(x => x._id === s.id); if (!src) return
     const tg = memoDropAt(p)
-    if (tg.id === src._id) { commit(m.items.map(x => (x._id === src._id ? withLines(x, moveRange(x.lines, s.unit, tg.to, s.copy)) : x)), [src._id], s.copy ? '줄 복사' : '줄 옮김'); return }
-    const took = takeUnit(src.lines, s.unit), unit = s.copy ? structuredClone(took.unit) : took.unit, rest = s.copy ? src.lines : took.rest   // Alt = 복사(원래 줄은 둠)
+    const idx = selIdx({ s: s.units[s.units.length - 1][0], e: s.units[s.units.length - 1][1], more: s.units.slice(0, -1) })
+    if (tg.id === src._id) { commit(m.items.map(x => (x._id === src._id ? withLines(x, moveLines(x.lines, idx, tg.to, s.copy)) : x)), [src._id], s.copy ? '줄 복사' : '줄 옮김'); return }
+    const set = new Set(idx), unit = pickLines(src.lines, idx), rest = s.copy ? src.lines : src.lines.filter((_, i) => !set.has(i))   // Alt = 복사(원래 줄은 둠)
     // 끌어내다 비게 된 메모는 지움(직접 글을 지워 빈 메모는 남김 — 2026-10-18 사용자 선택)
     const gone = !s.copy && rest.every(l => !(l.t || '').trim())
     const srcOut = items => (gone ? items.filter(x => x._id !== src._id) : items.map(x => (x._id === src._id ? withLines(x, rest) : x)))
@@ -784,19 +793,19 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
   function lineMenuEntries(lm) {
     const m = R.current.model, it = m.items.find(x => x._id === lm.id); if (!it) return []
-    const L = it.lines, { s, e } = lm, cur = L[s], close = () => setLineMenu(null)
-    const kinds = LINE_KINDS.map(([k, name]) => [(cur.k === k ? '✓ ' : '') + name, () => { close(); const mm = R.current.model; commit(mm.items.map(x => (x._id === it._id ? withLines(x, x.lines.map((l, j) => (j >= s && j < e ? convertLine(l, k) : l))) : x)), [it._id], '줄 전환') }, ''])
+    const L = it.lines, us = lm.units, idx = us.flatMap(([a, b]) => Array.from({ length: b - a }, (_, k) => a + k)), on = new Set(idx), cur = L[idx[0]], close = () => setLineMenu(null)
+    const kinds = LINE_KINDS.map(([k, name]) => [(cur.k === k ? '✓ ' : '') + name, () => { close(); const mm = R.current.model; commit(mm.items.map(x => (x._id === it._id ? withLines(x, x.lines.map((l, j) => (on.has(j) ? convertLine(l, k) : l))) : x)), [it._id], '줄 전환') }, ''])
     if (lm.kinds) return kinds.map(([n, f]) => [n, '', f])   // Ctrl+/ = 전환 목록만 바로
     const apply = (f, label) => () => { close(); const mm = R.current.model, x0 = mm.items.find(x => x._id === it._id); if (!x0) return; commit(mm.items.map(x => (x._id === it._id ? withLines(x, f(x.lines)) : x)), [it._id], label) }
-    const each = f => lines => lines.map((l, j) => (j >= s && j < e ? f(l) : l))
+    const each = f => lines => lines.map((l, j) => (on.has(j) ? f(l) : l)), last = idx[idx.length - 1] + 1
     const sw = (c, txt, bg) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ display: 'inline-flex', width: 18, height: 18, alignItems: 'center', justifyContent: 'center', borderRadius: 4, border: '1px solid var(--mb-line)', color: c || 'inherit', background: bg ? cssColor('#ff' + bg.slice(3)) : 'transparent', fontWeight: 600, ...(bg ? { color: '#1f1f1f' } : {}) }}>A</span>{txt}</span>
     return [
       ['전환', 'Ctrl+/', null, kinds],
       ['색', '', null, [...LINE_COLORS.map(([n, c]) => [sw(c, `${n} 텍스트`), apply(each(l => recolorLine(l, { color: c })), '줄 색')]), '-',
         ...LINE_COLORS.map(([n, , b]) => [sw(null, `${n} 배경`, b), apply(each(l => recolorLine(l, { bg: b })), '줄 배경')])]],
       '-',
-      ['복제', 'Ctrl+D', () => { apply(lines => [...lines.slice(0, e), ...structuredClone(lines.slice(s, e)), ...lines.slice(e)], '줄 복제')(); setLineSel({ id: it._id, s: e, e: e + (e - s) }) }],
-      ['삭제', 'Del', () => { apply(lines => [...lines.slice(0, s), ...lines.slice(e)], '줄 지움')(); setLineSel(null) }],
+      ['복제', 'Ctrl+D', () => { apply(lines => [...lines.slice(0, last), ...idx.map(i => structuredClone(lines[i])), ...lines.slice(last)], '줄 복제')(); setLineSel({ id: it._id, s: last, e: last + idx.length }) }],
+      ['삭제', 'Del', () => { apply(lines => lines.filter((_, j) => !on.has(j)), '줄 지움')(); setLineSel(null) }],
     ]   // 「칠판으로 꺼내기」는 뺌(2026-10-18 사용자: 손잡이로 끌어내는 게 더 직관적)
   }
   function finishMemo(lines, extra) {   // extra = { caret }(Esc — 그 줄 고르기) | { grab }(고치는 중 ⠿ — 끝내고 그 줄 끌기·메뉴로)
@@ -805,7 +814,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     commit(m.items.map(x => (x._id === it._id ? { ...it, lines } : x)), [it._id], '메모 고침')
     if (extra?.caret != null && lines[extra.caret]) { const [s, e] = lineUnit(lines, extra.caret); setLineSel({ id: it._id, s, e }) } else setLineSel(null)
     if (extra?.grab && lines[extra.grab.i]) { const [s, e] = lineUnit(lines, extra.grab.i), p = toSceneP(extra.grab)
-      st.current = { ...st.current, kind: 'mline', id: it._id, unit: [s, e], copy: false, start: p, moved: false } }
+      st.current = { ...st.current, kind: 'mline', id: it._id, units: [[s, e]], copy: false, start: p, moved: false } }
   }
   function liveMemo(id, lines) { const m = R.current.model; setLive(m.items.map(x => { if (x._id !== id) return x; const n = { ...x, lines }; return { ...n, rect: [n.rect[0], n.rect[1], n.rect[2], memoHeight(n)] } })) }
   function pinCard(msg, drop) {   // drop = 칠판 좌표(끌어 놓은 자리 — 왼쪽 위), 없으면 빈자리
@@ -1057,12 +1066,12 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         if (!it) setLineSel(null)
         else if (k === 'Escape' && lineMenu) return act(() => setLineMenu(null))   // 메뉴만 닫음(고른 줄은 그대로 — 노션)
         else if (k === 'Escape') return act(() => setLineSel(null))
-        else if (k === 'Delete' || k === 'Backspace') return act(() => { put([...L.slice(0, ls.s), ...L.slice(ls.e)], '줄 지움'); setLineSel(null) })
-        else if (mod && k.toLowerCase() === 'd') return act(() => { put([...L.slice(0, ls.e), ...structuredClone(L.slice(ls.s, ls.e)), ...L.slice(ls.e)], '줄 복제'); setLineSel({ id: it._id, s: ls.e, e: ls.e + (ls.e - ls.s) }) })
-        else if (mod && (k === '/' || e.code === 'Slash')) return act(() => { const b = memoHandleRect(it, ls.s), o = scr(toScene(it, { x: b.x + b.w, y: b.y + b.h })); setLineMenu({ x: o.x + 4, y: o.y, id: it._id, s: ls.s, e: ls.e, kinds: true }) })
-        else if (k === 'Enter' && !mod) return act(() => { setLineSel(null); setEditing({ id: it._id, kind: 'memo' }) })
+        else if (k === 'Delete' || k === 'Backspace') return act(() => { const on = new Set(selIdx(ls)); put(L.filter((_, j) => !on.has(j)), '줄 지움'); setLineSel(null) })
+        else if (mod && k.toLowerCase() === 'd') return act(() => { const idx = selIdx(ls), last = idx[idx.length - 1] + 1; put([...L.slice(0, last), ...idx.map(i => structuredClone(L[i])), ...L.slice(last)], '줄 복제'); setLineSel({ id: it._id, s: last, e: last + idx.length }) })
+        else if (mod && (k === '/' || e.code === 'Slash')) return act(() => { const us = selUnits(ls), b = memoHandleRect(it, us[0][0]), o = scr(toScene(it, { x: b.x + b.w, y: b.y + b.h })); setLineMenu({ x: o.x + 4, y: o.y, id: it._id, units: us, kinds: true }) })
+        else if (k === 'Enter' && !mod) return act(() => { setLineSel(null); setEditing({ id: it._id, kind: 'memo', caret: selUnits(ls)[0][0] }) })   // 고른 줄 끝에 커서(2026-10-18 사용자: 맨 아래로 내려갔음)
         else if (k === 'ArrowUp' || k === 'ArrowDown') return act(() => {
-          if (k === 'ArrowDown') { if (ls.e >= L.length) return; const [, ne] = lineUnit(L, ls.e); setLineSel(e.shiftKey ? { ...ls, e: ne } : { id: ls.id, s: ls.e, e: ne }) }
+          if (k === 'ArrowDown') { if (ls.e >= L.length) return; const [, ne] = lineUnit(L, ls.e); setLineSel(e.shiftKey ? { ...ls, e: ne } : { id: ls.id, s: ls.e, e: ne }) }   // 개별로 고른 것(more)은 화살표에선 풀림(Shift는 유지)
           else { if (ls.s <= 0) return; const s0 = lineUnit(L, ls.s - 1)[0]; setLineSel(e.shiftKey ? { ...ls, s: s0 } : { id: ls.id, s: s0, e: lineUnit(L, s0)[1] }) } })   // 위 줄(코드·인용은 그 덩어리 처음)
       }
       if (k === 'Escape') { setOverlay(o => ({ ...o, poly: null, draw: null })); if (R.current.tool !== 'select') setTool('select'); else if (cellSel) setCellSel(null); else setSel([]); return }
@@ -1326,9 +1335,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
           {memoHov && !editing && !live && (() => { const it = byId.get(memoHov.id); if (!it || it.type !== 'memo') return null; const b = memoHandleRect(it, memoHov.s), k = z * (it.scale || 1)
             return <g transform={transformOf(it)} style={{ pointerEvents: 'none' }}><rect x={b.x} y={b.y} width={b.w} height={b.h} rx={4 / k} fill="rgba(127,127,127,.16)" />
               {[0, 1, 2].flatMap(r => [0, 1].map(c => <circle key={`${r}${c}`} cx={b.x + b.w * (c ? 0.66 : 0.34)} cy={b.y + b.h * (0.28 + r * 0.22)} r={1.5 / k} fill="#8a8f98" />))}</g> })()}
-          {lineSel && !editing && (() => { const it = byId.get(lineSel.id); if (!it || it.type !== 'memo') return null; const rows = memoLayout(it).rows, a = rows[lineSel.s]; if (!a) return null
-            const bot = rows[lineSel.e] ? rows[lineSel.e].y - MEMO.GAP / 2 : it.rect[3] - MEMO.PAD + TEXT_MARGIN
-            return <g transform={transformOf(it)} style={{ pointerEvents: 'none' }}><rect x={it.rect[0] + MEMO.LPAD - 4} y={it.rect[1] + a.y} width={it.rect[2] - MEMO.LPAD - MEMO.PAD + 8} height={bot - a.y} rx={4} fill="rgba(137,180,250,.28)" /></g> })()}
+          {lineSel && !editing && (() => { const it = byId.get(lineSel.id); if (!it || it.type !== 'memo') return null; const rows = memoLayout(it).rows
+            return <g transform={transformOf(it)} style={{ pointerEvents: 'none' }}>{selUnits(lineSel).map(([s0, e0]) => { const a = rows[s0]; if (!a) return null
+              const bot = rows[e0] ? rows[e0].y - MEMO.GAP / 2 : it.rect[3] - MEMO.PAD + TEXT_MARGIN
+              return <rect key={s0} x={it.rect[0] + MEMO.LPAD - 4} y={it.rect[1] + a.y} width={it.rect[2] - MEMO.LPAD - MEMO.PAD + 8} height={bot - a.y} rx={4} fill="rgba(137,180,250,.28)" /> })}</g> })()}
           {overlay.mdrop && (overlay.mdrop.out
             ? <rect x={overlay.mdrop.out.x - 24 / z} y={overlay.mdrop.out.y - 16 / z} width={200 / z} height={34 / z} rx={8 / z} fill="rgba(137,180,250,.12)" stroke={BLUE} strokeWidth={1.5 / z} strokeDasharray={`${5 / z} ${3 / z}`} />
             : (() => { const it = byId.get(overlay.mdrop.id); return it && <g transform={transformOf(it)}><line x1={it.rect[0] + MEMO.LPAD} x2={it.rect[0] + it.rect[2] - MEMO.PAD} y1={overlay.mdrop.y} y2={overlay.mdrop.y} stroke={BLUE} strokeWidth={3 / z / (it.scale || 1)} strokeLinecap="round" /></g> })())}
@@ -1401,7 +1411,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
             color: ink(cs.color || '#111111', !!cs.fill), bg: 'var(--mb-editbg)', align: cs.align, text: txt0, runs: editing.fresh || editing.armed ? undefined : it.cell_runs?.[`${editing.r},${editing.c}`], onReady: setLiveEd,
             armed: !!editing.armed, fresh: !!editing.fresh, onArm: () => { const e = { id: editing.id, kind: 'cell', r: editing.r, c: editing.c, fresh: true }; R.current.editing = e; setEditing(e) } }} /> })(editing?.kind === 'cell' ? editing : !editing && cellSel && sel.length === 1 && sel[0] === cellSel.id ? { id: cellSel.id, kind: 'cell', r: cellRange(cellSel).r0, c: cellRange(cellSel).c0, armed: true } : null)}
       {editing?.kind === 'memo' && (() => { const it = byId.get(editing.id); if (!it) return null; const s = it.scale || 1, o = scr(toScene(it, { x: it.rect[0], y: it.rect[1] }))
-        return <MemoEditor key={it._id} spec={{ left: o.x, top: o.y, width: it.rect[2] * s * cam.z, zoom: s * cam.z, fill: it.fill ? cssColor(it.fill) : '#fff', lines: it.lines, onChange: ls => liveMemo(it._id, ls), onWheel: wheelZoom }} onDone={finishMemo} /> })()}
+        return <MemoEditor key={it._id} spec={{ left: o.x, top: o.y, width: it.rect[2] * s * cam.z, zoom: s * cam.z, fill: it.fill ? cssColor(it.fill) : '#fff', lines: it.lines, caret: editing.caret, onChange: ls => liveMemo(it._id, ls), onWheel: wheelZoom }} onDone={finishMemo} /> })()}
       {editing && editing.kind !== 'cell' && editing.kind !== 'memo' && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={{ ...s, onReady: setLiveEd }} onDone={finishEdit} /> })()}
       {editing && liveEd && <EditProps ed={liveEd} />}

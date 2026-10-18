@@ -78,3 +78,14 @@ test('커서 줄 번호 = docToLines 차례(제목·목록·코드 여러 줄·�
   assert.equal(line(at('제목')), 0); assert.equal(line(at('하나')), 1); assert.equal(line(at('x=1')), 2); assert.equal(line(at('y=2')), 3); assert.equal(line(at('끝')), 5)
   assert.equal(lineBlocks(doc).length, lines.length)
 })
+
+// 2026-10-18 손맛 3차 — 떨어진 줄 여러 개 고르기(Ctrl·Alt+Shift 클릭)
+import { moveLines, pickLines, selIdx, selUnits } from '../src/next/memo.js'
+test('떨어진 줄 고르기 → 번호·옮기기·복사·떼어 내기', () => {
+  const ls = { s: 3, e: 4, more: [[0, 1]] }
+  assert.deepEqual(selUnits(ls), [[0, 1], [3, 4]]); assert.deepEqual(selIdx(ls), [0, 3])
+  const L = ['a', 'b', 'c', 'd', 'e'].map(t => ({ k: 'p', t }))
+  assert.deepEqual(moveLines(L, [0, 3], 5).map(l => l.t), ['b', 'c', 'e', 'a', 'd'])
+  assert.deepEqual(moveLines(L, [0, 3], 2, true).map(l => l.t), ['a', 'b', 'a', 'd', 'c', 'd', 'e'])
+  assert.deepEqual(pickLines([{ k: 'ul', t: 'x', lv: 1 }, { k: 'ul', t: 'y', lv: 2 }], [0, 1]), [{ k: 'ul', t: 'x' }, { k: 'ul', t: 'y', lv: 1 }])
+})
