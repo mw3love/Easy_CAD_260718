@@ -24,7 +24,8 @@ import { symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
 import { colEdges } from './geom.js'
 import { layersOf, layerIdOf } from './layers.jsx'
-import { buildSvg, exportPdf, exportPng, exportSvg } from './exporter.jsx'
+import { buildSvg, exportPdf, exportPng, exportSvg, pngBlob } from './exporter.jsx'
+import { ContextMenu } from './ctxmenu.jsx'
 import { answerToEcadText, freeSpot, sourceLine, wrapText } from '../chatFormat.js'
 import { measure } from './render.jsx'
 
@@ -63,7 +64,7 @@ const withLabels = (it, labels) => { const o = { ...it, labels }; delete o.label
 const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([x, y]) => ({ x, y })), q) : projectToCurve(it, q))
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
-export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel }, ref) {
+export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel }, ref) {
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -178,7 +179,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const p = toSceneP(e), m = R.current.model, z = R.current.cam.z
     svg.current.setPointerCapture(e.pointerId)
     // 가운데·오른쪽 끌기 = 화면 이동(데스크톱 우클릭 끌기 = 팬, 제자리 우클릭 메뉴는 나중)
-    if (e.button === 1 || e.button === 2 || (e.button === 0 && st.current.space)) { st.current = { ...st.current, kind: 'pan', sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }
+    setMenu(null)
+    if (e.button === 1 || e.button === 2 || (e.button === 0 && st.current.space)) { st.current = { ...st.current, kind: 'pan', right: e.button === 2, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }
     if (e.button !== 0) return
     setHp(null)
     const t = R.current.tool
@@ -313,6 +315,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const s = st.current, p = toSceneP(e)
     st.current = { space: s.space }
     setCursor('default')
+    if (s.kind === 'pan' && s.right && Math.hypot(e.clientX - s.sx, e.clientY - s.sy) < 4) {   // 제자리 우클릭 = 메뉴(고른 것 그대로 — 데스크톱과 같음)
+      const r = svg.current.getBoundingClientRect(); setMenu({ x: e.clientX - r.left, y: e.clientY - r.top }); return }
     if (s.kind === 'conn') {
       setOverlay(o => ({ ...o, conn: null, hp: null }))
       if (!s.moved) { if (s.tool === 'arrow') return; if (s.fromQc) qcCreate(s.src, s.side); else setSel(expandGroups(R.current.model.items, [s.src])); return }
@@ -378,6 +382,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
   // 새 화살표 기본값 — 속성 카드에서 바꾼 값이 다음 화살표에 이어짐(데스크톱 sticky: 색·굵기·선 모양·화살촉·모서리). 굵기 1 = 데스크톱 `_DEFAULT_WIDTH`·웹 그리기 도구와 같게(2026-10-18 — 2였을 땐 같은 화살표인데 선택 띠가 얇아 보였다)
   const sticky = useRef({ color: INK, style: 1, width: 1, head: true, head_start: false, head_scale: 1, curve_r: 10 })
+  const [menu, setMenu] = useState(null)   // 제자리 우클릭 메뉴 자리(편집 화면 안 px)
   const badgeN = useRef(0)   // 마지막으로 놓은 번호표 번호
   const styleClip = useRef(null)   // 스타일 복사한 서식(데스크톱 `_style_clip`)
   const stickyFill = useRef(null)   // 새 닫힌 도형 채움 — 속성 카드 「채움」(데스크톱 `current_fill`)
@@ -702,13 +707,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (!ids.length) { if (mod && k.toLowerCase() === 'v') return act(paste); return }
       if (k === 'Delete' || k === 'Backspace') return act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))
       // 스타일 복사·붙여넣기(데스크톱 Ctrl+Alt+C/V) — 일반 복사보다 먼저. 글쇠 이름은 한글 입력·Alt에 따라 바뀌어 자리(code)로 봄
-      if (mod && e.altKey && e.code === 'KeyC') return act(() => {
-        if (ids.length !== 1) return setStatus('스타일 복사 — 도형을 하나만 고르세요')
-        styleClip.current = captureStyle(m.items.find(it => it._id === ids[0])); setStatus('스타일 복사됨') })
-      if (mod && e.altKey && e.code === 'KeyV') return act(() => {
-        const sc = styleClip.current; if (!sc) return setStatus('붙여넣을 스타일이 없어요 — 먼저 Ctrl+Alt+C'), undefined
-        const set = new Set(ids); commit(m.items.map(it => { const p = set.has(it._id) && styleFor(it, sc); return p ? { ...it, ...p } : it }), ids, '스타일 붙여넣기')
-        setStatus(`스타일 붙여넣기 — ${ids.length}개`) })
+      if (mod && e.altKey && e.code === 'KeyC') return act(styleCopy)
+      if (mod && e.altKey && e.code === 'KeyV') return act(stylePaste)
       if (mod && k.toLowerCase() === 'c') return act(copy)
       if (mod && k.toLowerCase() === 'x') return act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })
       if (mod && k.toLowerCase() === 'v') return act(paste)
@@ -724,6 +724,48 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     window.addEventListener('keydown', onKey); window.addEventListener('keyup', onUp)
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onUp) }
   })
+  function styleCopy() {
+    const m = R.current.model, ids = R.current.sel
+    if (ids.length !== 1) return setStatus('스타일 복사 — 도형을 하나만 고르세요')
+    styleClip.current = captureStyle(m.items.find(it => it._id === ids[0])); setStatus('스타일 복사됨')
+  }
+  function stylePaste() {
+    const m = R.current.model, ids = R.current.sel, sc = styleClip.current
+    if (!sc) return setStatus('붙여넣을 스타일이 없어요 — 먼저 Ctrl+Alt+C')
+    const set = new Set(ids); commit(m.items.map(it => { const p = set.has(it._id) && styleFor(it, sc); return p ? { ...it, ...p } : it }), ids, '스타일 붙여넣기')
+    setStatus(`스타일 붙여넣기 — ${ids.length}개`)
+  }
+  // ── 정렬·분배(데스크톱 `align_selection`·`distribute_selection`) — 대상 = 고른 것에서 붙은 화살표·용지틀 뺀 것, 기준 = 고른 것 전체 상자 ──
+  const alignTargets = () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && !it.locked && it.type !== 'titleblock' && !(isArrow(it) && (it._bind1 || it._bind2 || it.bind1_group || it.bind2_group))) }
+  function alignSel(mode) {
+    const ts = alignTargets(); if (ts.length < 2) return
+    const bs = new Map(ts.map(it => [it._id, sceneBox(it, textBox)])), u = unionBox([...bs.values()])
+    let items = R.current.model.items
+    for (const it of ts) { const b = bs.get(it._id)
+      const dx = mode === 'left' ? u.x - b.x : mode === 'right' ? u.x + u.w - b.x - b.w : mode === 'hcenter' ? u.x + u.w / 2 - b.x - b.w / 2 : 0
+      const dy = mode === 'top' ? u.y - b.y : mode === 'bottom' ? u.y + u.h - b.y - b.h : mode === 'vcenter' ? u.y + u.h / 2 - b.y - b.h / 2 : 0
+      if (dx || dy) items = moveItems(items, [it._id], dx, dy) }
+    commit(items, R.current.sel, '정렬')
+  }
+  // 균등 분배(양 끝 그대로, 사이 여백을 같게) / 첫 간격 반복(첫 두 개 사이 여백을 뒤로 반복). 붙은 화살표 구간 분배는 아직(데스크톱은 함)
+  function distributeSel(axis, firstGap) {
+    const ts = alignTargets(); if (ts.length < 3) return
+    const H = axis === 'x', st0 = b => (H ? b.x : b.y), sz = b => (H ? b.w : b.h)
+    const list = ts.map(it => ({ it, b: sceneBox(it, textBox) })).sort((a, b) => st0(a.b) - st0(b.b))
+    const first = list[0].b, last = list[list.length - 1].b
+    const gap = firstGap ? st0(list[1].b) - st0(first) - sz(first) : (st0(last) + sz(last) - st0(first) - list.reduce((s, e) => s + sz(e.b), 0)) / (list.length - 1)
+    let items = R.current.model.items, cur = st0(first) + sz(first)
+    for (const { it, b } of list.slice(1, firstGap ? undefined : -1)) { const d = cur + gap - st0(b); items = moveItems(items, [it._id], H ? d : 0, H ? 0 : d); cur += gap + sz(b) }
+    commit(items, R.current.sel, '분배')
+  }
+  // 그림으로 복사(데스크톱 `_copy_as_image`, 한글·PPT에 붙여 넣기) — 고른 것을 용지 없이 2배 해상도 PNG로 클립보드에
+  async function copyAsImage() {
+    const m = R.current.model, ids = new Set(movingSet(R.current.sel)), ents = drawOrder(m.items).filter(([it]) => ids.has(it._id)); if (!ents.length) return
+    const src = unionBox(ents.map(([it]) => sceneBox(it, textBox))), pad = 8
+    const res = await buildSvg(ents, { x: src.x - pad, y: src.y - pad, w: src.w + 2 * pad, h: src.h + 2 * pad }, { tight: true, frame: null }, boardMembership(m.items), resolveRoutes(m.items, rectOf))
+    try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': await pngBlob(res, 192) })]); setStatus('그림으로 복사함 — 한글·PPT에 붙여 넣으세요') }
+    catch { setStatus('그림 복사 실패 — 브라우저가 클립보드 쓰기를 막았어요') }
+  }
   function copy() {
     const m = R.current.model, ids = new Set(movingSet(R.current.sel))
     clip.current = { items: structuredClone(m.items.filter(it => ids.has(it._id))), seq: 0 }
@@ -841,6 +883,29 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
           {overlay.poly && <polyline points={overlay.poly.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />}
         </g>
       </svg>
+      {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} entries={(() => {
+        const m = R.current.model, ids = R.current.sel, has = ids.length > 0, selIt = m.items.filter(it => ids.includes(it._id)), act = f => () => { setMenu(null); f() }
+        const out = []
+        if (has) out.push(['복사', 'Ctrl+C', act(copy)], ['잘라내기', '', act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })],
+          ['복제', 'Ctrl+D', act(() => { const r = duplicate(m.items, movingSet(ids), 0, 0); commit(r.items, r.ids, '제자리 복제') })],
+          ['삭제', 'Del', act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))], ['그림으로 복사(한글·PPT)', '', act(copyAsImage)])
+        if (ids.length === 1 || styleClip.current) { out.push('-'); if (ids.length === 1) out.push(['스타일 복사', 'Ctrl+Alt+C', act(styleCopy)]); if (has && styleClip.current) out.push(['스타일 붙여넣기', 'Ctrl+Alt+V', act(stylePaste)]) }
+        if (alignTargets().length >= 2) out.push('-', ['정렬 / 분배', '', null, [['왼쪽 맞춤', act(() => alignSel('left'))], ['가로 가운데', act(() => alignSel('hcenter'))], ['오른쪽 맞춤', act(() => alignSel('right'))], '-',
+          ['위쪽 맞춤', act(() => alignSel('top'))], ['세로 가운데', act(() => alignSel('vcenter'))], ['아래쪽 맞춤', act(() => alignSel('bottom'))], '-',
+          ['가로 균등 분배', act(() => distributeSel('x')), alignTargets().length < 3], ['세로 균등 분배', act(() => distributeSel('y')), alignTargets().length < 3],
+          ['가로 첫 간격 반복', act(() => distributeSel('x', true)), alignTargets().length < 3], ['세로 첫 간격 반복', act(() => distributeSel('y', true)), alignTargets().length < 3]]])
+        if (has) {
+          out.push('-', ['맨 앞으로 보내기', 'Ctrl+]', act(() => commit(zOrder(m.items, ids, true), ids, '맨 앞으로'))], ['맨 뒤로 보내기', 'Ctrl+[', act(() => commit(zOrder(m.items, ids, false), ids, '맨 뒤로'))],
+            ['잠금 전환', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))])
+          if (ids.length >= 2) out.push(['그룹', 'Ctrl+G', act(() => commit(groupItems(m.items, ids), ids, '묶음'))])
+          if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
+          out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
+          out.push('-', ['내보내기…', '', act(() => onExportSel?.())])
+        }
+        if (clip.current?.items?.length) { if (has) out.push('-'); out.push(['붙여넣기', 'Ctrl+V', act(paste)]) }
+        if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))])
+          if (m.items.some(it => it.locked)) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked ? { ...it, locked: false } : it)), [], '잠금 해제'))]) }
+        return out })()} />}
       {editing?.kind === 'cell' && (() => { const it = byId.get(editing.id); if (!it) return null
         const r = cellRect(it, editing.r, editing.c), pts = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].map(([x, y]) => scr(toScene(it, { x, y })))
         const xs = pts.map(q => q.x), ys = pts.map(q => q.y), h = Math.max(...ys) - Math.min(...ys)

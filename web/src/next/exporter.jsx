@@ -21,11 +21,12 @@ const weightsOf = items => { const s = new Set([400, 700]); for (const it of ite
 
 // entries = [[아이템, 순번]] 그리는 차례, src = 칠판 상자, opts = { page, orient, margin, transparent, frame }
 // → { svg 글, pw, ph (mm) }
-export async function buildSvg(entries, src, { page = 'A4', orient = null, margin = 10, transparent = false, frame = null }, onBoard, routes, embedFonts = true) {
+export async function buildSvg(entries, src, { page = 'A4', orient = null, margin = 10, transparent = false, frame = null, tight = false }, onBoard, routes, embedFonts = true) {
   let pageKey = page, land, m = margin, box = src
   if (frame) { pageKey = frame.size in PAPERS ? frame.size : 'A4'; land = frame.orient === 'landscape'; m = 0; box = frame.box }   // 용지틀 = 정확한 용지 경계
   else { const pad = Math.max(src.w, src.h) * 0.02; box = { x: src.x - pad, y: src.y - pad, w: src.w + 2 * pad, h: src.h + 2 * pad }; land = orient ? orient === 'landscape' : box.w >= box.h }
-  const [a, b] = PAPERS[pageKey] || PAPERS.A4, pw = land ? b : a, ph = land ? a : b
+  let [a, b] = PAPERS[pageKey] || PAPERS.A4, pw = land ? b : a, ph = land ? a : b
+  if (tight) { m = 0; pw = box.w * 25.4 / 96; ph = box.h * 25.4 / 96 }   // 그림으로 복사 — 용지 없이 화면 100% 크기(96dpi)
   const aw = pw - 2 * m, ah = ph - 2 * m, k = Math.min(aw / box.w, ah / box.h), tx = m + (aw - box.w * k) / 2, ty = m + (ah - box.h * k) / 2
   const wasDark = document.documentElement.dataset.theme === 'dark'
   setInkDark(false)   // 종이 = 밝은 칠판 잉크(데스크톱 `_swap_white_to_black_for_print`와 같은 뜻)
@@ -41,13 +42,14 @@ export async function buildSvg(entries, src, { page = 'A4', orient = null, margi
 
 const download = (blob, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000) }
 
-export async function exportPng({ svg, pw, ph }, name, dpi = 200) {
-  const W = Math.round(pw / 25.4 * dpi), H = Math.round(ph / 25.4 * dpi)
+export async function pngBlob({ svg, pw, ph }, dpi = 200) {
+  const W = Math.max(1, Math.round(pw / 25.4 * dpi)), H = Math.max(1, Math.round(ph / 25.4 * dpi))
   const img = new Image(), url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
   await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = url })
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H; cv.getContext('2d').drawImage(img, 0, 0, W, H); URL.revokeObjectURL(url)
-  await new Promise(r => cv.toBlob(b => { download(b, name); r() }, 'image/png'))
+  return new Promise(r => cv.toBlob(r, 'image/png'))
 }
+export async function exportPng(res, name, dpi = 200) { download(await pngBlob(res, dpi), name) }
 export const exportSvg = ({ svg }, name) => download(new Blob([svg], { type: 'image/svg+xml' }), name)
 
 // PDF — 숨은 틀에 용지 크기로 놓고 인쇄 창(「PDF로 저장」). 글꼴은 화면이 이미 불러 둔 fonts.css를 그대로 씀

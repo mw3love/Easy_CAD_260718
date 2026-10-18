@@ -53,8 +53,8 @@ function TableForm({ onInsert, onClose }) {
 }
 
 // 내보내기 — 형식·범위·용지·방향·여백·투명(데스크톱 `_PdfExportDialog`; 여백은 네 변 한 값으로)
-function ExportForm({ hasSel, onExport, onClose }) {
-  const [f, setF] = useState('pdf'), [sel, setSel] = useState(false), [page, setPage] = useState('A4'), [orient, setOrient] = useState(''), [margin, setMargin] = useState(10), [tr, setTr] = useState(false), [busy, setBusy] = useState(false)
+function ExportForm({ hasSel, initSel, onExport, onClose }) {
+  const [f, setF] = useState('pdf'), [sel, setSel] = useState(!!(initSel && hasSel)), [page, setPage] = useState('A4'), [orient, setOrient] = useState(''), [margin, setMargin] = useState(10), [tr, setTr] = useState(false), [busy, setBusy] = useState(false)
   const seg = (v, cur, set, label, dis) => <button key={v} disabled={dis} onClick={() => set(v)} style={{ all: 'unset', cursor: dis ? 'default' : 'pointer', opacity: dis ? 0.4 : 1, flex: 1, textAlign: 'center', padding: '3px 0', borderRadius: 6,
     background: cur === v ? 'rgba(218,119,86,.22)' : 'transparent', color: cur === v ? '#da7756' : C.ink, fontWeight: cur === v ? 600 : 400 }}>{label}</button>
   const row = (label, el) => <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 34, color: C.muted }}>{label}</span><div style={{ flex: 1, display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>{el}</div></div>
@@ -77,7 +77,7 @@ function ExportForm({ hasSel, onExport, onClose }) {
 }
 
 function App() {
-  const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false)
+  const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [exportSel, setExportSel] = useState(false)   // 우클릭 「내보내기…」는 범위 기본 = 고른 것(데스크톱과 같음)
   const [chatOpen, setChatOpen] = useState(() => { try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창)
   useEffect(() => { try { localStorage.setItem('mb-chat-open', chatOpen ? '1' : '0') } catch { /* 기억 못 해도 그만 */ } }, [chatOpen])
   const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
@@ -142,8 +142,8 @@ function App() {
           <Btn icon="💾" label="저장" onClick={server ? saveServer : saveFile} title={server ? `서버 「${DOC_NAME}」에 저장` : '.ecad로 내려받기'} />
           <Btn icon="⬇" label="내려받기" onClick={saveFile} title=".ecad 파일로 내려받기" />
           <div style={{ position: 'relative' }}>
-            <Btn icon="🖨" label="내보내기" on={exportOpen} onClick={() => setExportOpen(o => !o)} title="PDF·PNG·SVG로 내보내기 — 전체 또는 고른 것" />
-            {exportOpen && <ExportForm hasSel={!!ed.current?.getSel().length} onClose={() => setExportOpen(false)} onExport={async o => { const ok = await ed.current?.exportDoc({ ...o, name: DOC_NAME || 'magic-board' }); if (ok) setExportOpen(false) }} />}
+            <Btn icon="🖨" label="내보내기" on={exportOpen} onClick={() => { setExportSel(false); setExportOpen(o => !o) }} title="PDF·PNG·SVG로 내보내기 — 전체 또는 고른 것" />
+            {exportOpen && <ExportForm hasSel={!!ed.current?.getSel().length} initSel={exportSel} onClose={() => { setExportOpen(false); setExportSel(false) }} onExport={async o => { const ok = await ed.current?.exportDoc({ ...o, name: DOC_NAME || 'magic-board' }); if (ok) { setExportOpen(false); setExportSel(false) } }} />}
           </div>
         </Group>
         <Group>
@@ -173,7 +173,7 @@ function App() {
       </div>
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>   {/* 작업공간 + 오른쪽 KAIROS 대화창(2분할) */}
       <div ref={box} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        <Editor ref={ed} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} />
+        <Editor ref={ed} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} onExportSel={() => { setExportSel(true); setExportOpen(true) }} />
         {/* 좌상 도형·심볼 카드(데스크톱 첫 화면: 좌상 도형·심볼) */}
         {/* 왼쪽 세로 줄 — 위 도형·심볼 카드, 아래 레이어 카드(데스크톱 첫 화면: 좌상·좌하 따로, 통합 금지). 줄 자체는 칠판 누르기를 막지 않음 */}
         <div style={{ position: 'absolute', left: 12, top: 12, bottom: 12, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 8, pointerEvents: 'none' }}>
