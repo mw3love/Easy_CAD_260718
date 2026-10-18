@@ -394,7 +394,19 @@ def link_info(url: str, embed: str = "") -> dict:
             out["icon"] = data_url(src, _ICON_MAX)
             if out["icon"]:
                 break
-    if not page:
+    # 유튜브 — 서버가 열면 진짜 페이지 대신 다른 화면이 와서 제목이 「- YouTube」·그림 없음(2026-10-19 확인) → 공식 oEmbed로 제목·썸네일
+    if embed.startswith("https://www.youtube.com/embed/"):
+        try:
+            from urllib.parse import quote
+            _, oe = _open("https://www.youtube.com/oembed?format=json&url=" + quote(url, safe=""), 64 * 1024)
+            j = json.loads(oe.decode("utf-8"))
+            out["title"] = j.get("title") or out["title"]
+            if j.get("author_name"):
+                out["desc"] = j["author_name"]
+            img = j.get("thumbnail_url") or img
+        except Exception:
+            pass
+    if not page and not img:
         return out
     if embed:   # 재생용 주소(유튜브 embed 등)는 그 주소의 머리말로 다시 판단
         try:
