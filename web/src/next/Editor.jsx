@@ -22,6 +22,7 @@ import { Props, captureStyle, styleFor } from './props.jsx'
 import { arrowKindOf, swapArrowKind } from './arrowkind.js'
 import { symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
+import { colEdges } from './geom.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
@@ -85,7 +86,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
 
-  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live }) }))
 
@@ -367,6 +368,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
   // 새 화살표 기본값 — 속성 카드에서 바꾼 값이 다음 화살표에 이어짐(데스크톱 sticky: 색·굵기·선 모양·화살촉·모서리). 굵기 1 = 데스크톱 `_DEFAULT_WIDTH`·웹 그리기 도구와 같게(2026-10-18 — 2였을 땐 같은 화살표인데 선택 띠가 얇아 보였다)
   const sticky = useRef({ color: INK, style: 1, width: 1, head: true, head_start: false, head_scale: 1, curve_r: 10 })
+  const badgeN = useRef(0)   // 마지막으로 놓은 번호표 번호
   const styleClip = useRef(null)   // 스타일 복사한 서식(데스크톱 `_style_clip`)
   const stickyFill = useRef(null)   // 새 닫힌 도형 채움 — 속성 카드 「채움」(데스크톱 `current_fill`)
   // 새 도형 선 = 화살표와 같은 색·굵기·선 모양(데스크톱 `current_color`·`current_width`·`current_style`은 도형·화살표 공용)
@@ -455,6 +457,32 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     })
     commit(rebound, its.map(it => it._id), '내 심볼로 바꾸기')
   }
+  function insertTable(rows, cols, header) {
+    const m = R.current.model, c = R.current.cam, W = cols * 40, H = rows * 14
+    const cx = (size.w / 2 - c.x) / c.z, cy = (size.h / 2 - c.y) / c.z
+    const it = base([cx - W / 2, cy - H / 2], { type: 'table', rows, cols, header, rect: [0, 0, W, H], cells: Array.from({ length: rows }, () => Array(cols).fill('')), col_widths: Array(cols).fill(1 / cols), z: topZ(m.items) + 1 })
+    commit([...m.items, it], [it._id], '표'); setTool('select')
+    setStatus(`표 넣음: ${rows}×${cols} — 칸을 두 번 눌러 고치기(Enter 아래·Tab 오른쪽)`)
+  }
+  // 표 칸(안 좌표) — 데스크톱 `cell_rect`/`cell_at`
+  const cellRect = (it, r, c) => { const [x, y, w, h] = it.rect, ch = h / it.rows, e = colEdges(x, w, it.col_widths || Array(it.cols).fill(1 / it.cols)); return { x: e[c], y: y + r * ch, w: e[c + 1] - e[c], h: ch } }
+  const cellAt = (it, q) => { const [x, y, w, h] = it.rect; if (q.x < x || q.y < y || q.x > x + w || q.y > y + h) return null
+    const e = colEdges(x, w, it.col_widths || Array(it.cols).fill(1 / it.cols)); let c = e.findIndex((v, i) => i > 0 && q.x <= v) - 1; if (c < 0) c = it.cols - 1
+    return { r: Math.min(it.rows - 1, Math.floor((q.y - y) / (h / it.rows))), c } }
+  // 칸 고치기 끝 — text = 새 글(null = 취소), move = [dr, dc] 다음 칸으로(데스크톱 `_CellEditor._move`: Tab 줄넘김)
+  function finishCell(text, move) {
+    const ed = R.current.editing; if (!ed || ed.kind !== 'cell') return
+    const m = R.current.model, it = m.items.find(x => x._id === ed.id)
+    // 다음 칸은 같은 순간에 열어야 함 — 한 박자 늦게 열면 Tab 뒤 바로 친 글자가 사라짐(시험에서 겪음)
+    let next = null
+    if (it && move) { let r = ed.r + move[0], c = ed.c + move[1]; while (c >= it.cols) { c -= it.cols; r++ } while (c < 0) { c += it.cols; r-- }
+      if (r >= 0 && r < it.rows) next = { id: it._id, kind: 'cell', r, c } }
+    setEditing(next); if (!it) return
+    if (text != null && text !== (it.cells?.[ed.r]?.[ed.c] || '')) {
+      const cells = Array.from({ length: it.rows }, (_, r) => Array.from({ length: it.cols }, (_, c) => it.cells?.[r]?.[c] || ''))
+      cells[ed.r][ed.c] = text; commit(m.items.map(x => (x._id === it._id ? { ...x, cells } : x)), [it._id], '표 칸')
+    }
+  }
   function startPaletteDrag(t) {
     const m = R.current.model
     const protos = t.startsWith('customsym:') ? customItems(t) : [{ ...boxItem(t, 0, 0, ...boxDefault(t)), z: topZ(m.items) + 1 }]   // 클릭만 해 놓을 때와 같은 기본 크기
@@ -487,6 +515,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       return
     }
     if (t === 'text') { const it = base([p.x - TEXT_MARGIN, p.y - TEXT_MARGIN], { type: 'text', text: '', color: INK, font: 12, bg: null, z: topZ(m.items) + 1 }); commit([...m.items, it], [it._id], '글'); setEditing({ id: it._id, kind: 'text', fresh: true }); setTool('select'); return }
+    if (t === 'badge') {   // 번호표 — 누른 자리에 다음 번호(데스크톱 `next_badge_number`: 연 문서의 가장 큰 번호부터 하나씩, 지워도 되돌리지 않음), 색 = 고른 선 색
+      const n = Math.max(badgeN.current, ...m.items.filter(it => it.type === 'badge').map(it => it.number || 0)) + 1; badgeN.current = n
+      const it = base([p.x, p.y], { type: 'badge', number: n, color: sticky.current.color === INK ? '#ffda7756' : sticky.current.color, z: topZ(m.items) + 1 })   // 선 색을 안 골랐으면 코랄(기본 잉크로 칠하면 어두운 화면에서 묻힘)
+      commit([...m.items, it], [it._id], '번호표'); setTool('select'); return
+    }
     if (t.startsWith('customsym:')) {   // 내 심볼 도구 — 누른 자리에 원래 크기로(데스크톱 `_create_custom_symbol_at`: 왼쪽 위 = 누른 자리)
       const protos = customItems(t); if (!protos) return
       const its = placeAt(protos, p.x, p.y); commit([...m.items, ...its], its.map(it => it._id), '심볼'); setTool('select'); return
@@ -535,6 +568,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (lb) { setSel([lb.it._id]); setEditing({ id: lb.it._id, kind: 'alabel', i: lb.i }); return }
     const hit = topHit(R.current.model.items, p, HIT_PX / R.current.cam.z, textBox)
     if (!hit || hit.locked) return
+    if (hit.type === 'table') { const cell = cellAt(hit, toLocal(hit, p)); if (cell) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'cell', ...cell }) } return }
     if (isArrow(hit)) {   // 화살표 빈 자리 더블클릭 = 그 자리에 새 라벨(여러 개 — 데스크톱 `add_label_at_scene_pos`)
       const labels = labelsOf(hit), pr = projectOn(hit, toLocal(hit, p))
       labels.push({ text: '', color: hit.color || INK, font: 16, bg: null, t: pr.t, off: 0 })
@@ -594,7 +628,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (mod && k.toLowerCase() === 'a') return act(() => setSel(m.items.filter(it => !it.locked).map(it => it._id)))
       if (k === 'Escape') { setOverlay(o => ({ ...o, poly: null, draw: null })); if (R.current.tool !== 'select') setTool('select'); else setSel([]); return }
       if (k === 'Enter' && overlay.poly) return act(() => finishPoly(overlay.poly, false))
-      if (!mod && !e.altKey && !e.shiftKey && { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen' }[k]) return act(() => setTool({ 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen' }[k]))
+      const TOOL_KEYS = { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen', 7: 'badge' }   // 데스크톱 `SHORTCUT_DEFS` 도구 1~7
+      if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[k]) return act(() => setTool(TOOL_KEYS[k]))
       if (!ids.length) { if (mod && k.toLowerCase() === 'v') return act(paste); return }
       if (k === 'Delete' || k === 'Backspace') return act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))
       // 스타일 복사·붙여넣기(데스크톱 Ctrl+Alt+C/V) — 일반 복사보다 먼저. 글쇠 이름은 한글 입력·Alt에 따라 바뀌어 자리(code)로 봄
@@ -736,13 +771,27 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
           {overlay.poly && <polyline points={overlay.poly.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />}
         </g>
       </svg>
-      {editing && (() => { const s = editSpec(); if (!s) return null
+      {editing?.kind === 'cell' && (() => { const it = byId.get(editing.id); if (!it) return null
+        const r = cellRect(it, editing.r, editing.c), pts = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].map(([x, y]) => scr(toScene(it, { x, y })))
+        const xs = pts.map(q => q.x), ys = pts.map(q => q.y), h = Math.max(...ys) - Math.min(...ys)
+        return <CellInput key={`${editing.id}-${editing.r}-${editing.c}`} init={it.cells?.[editing.r]?.[editing.c] || ''} onDone={finishCell}
+          style={{ left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: h, fontSize: Math.max(10, Math.min(h * 0.6, 18)), fontWeight: it.header && editing.r === 0 ? 700 : 400 }} /> })()}
+      {editing && editing.kind !== 'cell' && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={s} onDone={finishEdit} /> })()}
       {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapCustom={swapToCustom} dark={dark}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )
 })
+
+// 표 칸 한 줄 편집기(데스크톱 `_CellEditor`) — Enter 아래 칸, Tab 오른쪽(줄 끝이면 다음 줄), Shift+Tab 왼쪽, Esc 취소, 밖을 누르면 확정
+function CellInput({ init, onDone, style }) {
+  const done = useRef(false), fin = (v, mv) => { if (done.current) return; done.current = true; onDone(v, mv) }
+  return <input autoFocus defaultValue={init} onFocus={e => e.target.select()} onBlur={e => fin(e.target.value, null)} onPointerDown={e => e.stopPropagation()}
+    onKeyDown={e => { e.stopPropagation(); if (e.nativeEvent.isComposing) return
+      if (e.key === 'Enter') { e.preventDefault(); fin(e.target.value, [1, 0]) } else if (e.key === 'Tab') { e.preventDefault(); fin(e.target.value, [0, e.shiftKey ? -1 : 1]) } else if (e.key === 'Escape') fin(null, null) }}
+    style={{ position: 'absolute', boxSizing: 'border-box', textAlign: 'center', border: '2px solid #89b4fa', borderRadius: 2, background: 'var(--mb-editbg, #fff)', color: 'var(--mb-ink)', padding: 0, outline: 'none', fontFamily: "'Pretendard', sans-serif", ...style }} />
+}
 
 // ── 선택 표시 모양 — 데스크톱 `_paint_selection_highlight`: 하나 선택·화살표 = 1.6px 중심선, 여러 개 중 닫힌 도형 = 바깥 띠 ──
 const BAND_ALPHA = 110 / 255, PREVIEW_ALPHA = 90 / 255
