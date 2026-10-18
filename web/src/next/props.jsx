@@ -18,7 +18,7 @@ const INK = '#1f1f1f'
 // ── 종류마다 무엇을 갖나(데스크톱 `_read_props`·`_text_targets`와 같은 판정, .ecad 칸 이름) ──
 export const isArrow = it => it?.type === 'sarrow' || it?.type === 'arrow'
 const PEN = new Set(['rect', 'ellipse', 'symbol', 'polygon', 'path', 'line'])
-const lineKey = it => (isArrow(it) || it.type === 'badge' ? 'color' : PEN.has(it.type) ? 'pen' : it.type === 'board' ? 'bg' : null)   // 보드는 「바탕」 색
+const lineKey = it => (isArrow(it) || it.type === 'badge' ? 'color' : PEN.has(it.type) || it.type === 'table' ? 'pen' : it.type === 'board' ? 'bg' : null)   // 표 선 색 = .ecad 표의 새 칸 pen(웹 먼저)   // 보드는 「바탕」 색
 const hasWidth = it => isArrow(it) || PEN.has(it.type)
 const fillKey = it => (['rect', 'ellipse', 'symbol'].includes(it.type) || (it.type === 'polygon' && it.closed) ? 'fill' : it.type === 'text' ? 'bg' : null)
 const TYPE_NAMES = { rect: '사각형', ellipse: '원', line: '선', arrow: '화살표', sarrow: '화살표', text: '텍스트', badge: '번호', path: '펜', image: '이미지', table: '표', titleblock: '표제란', polygon: '다각형', board: '보드' }
@@ -36,6 +36,7 @@ const argbCss = c => { if (!c) return 'transparent'; const a = parseInt(c.slice(
 const arrowLabels = it => it.labels || (it.label ? [it.label] : [])   // 옛 파일은 단수 label
 function textSlots(it) {
   if (it.type === 'text') return [{ font: it.font || 12, color: it.color || INK, text: it.text || '' }]
+  if (it.type === 'table') return [{ font: it.font || 10, color: it.color || '#111111', text: (it.cells || []).flat().find(Boolean) || '' }]   // 표 글자 = 표 전체 하나(크기 없으면 자동 — 크기 칸은 10에서 시작)
   if (isArrow(it)) return arrowLabels(it).filter(L => L.text?.trim()).map(L => ({ font: L.font || 16, color: L.color || it.color || INK, text: L.text }))
   if (['rect', 'ellipse', 'symbol', 'polygon', 'line'].includes(it.type) && it.label?.text?.trim()) return [{ font: it.label.font || 16, color: it.label.color || it.pen || INK, text: it.label.text }]
   return []
@@ -43,7 +44,7 @@ function textSlots(it) {
 // 그 글들에 f(글) → { font?, color? }를 입힌 아이템 고칠 값(없으면 null)
 function patchTexts(it, f) {
   const slots = textSlots(it); if (!slots.length) return null
-  if (it.type === 'text') return f(slots[0])
+  if (it.type === 'text' || it.type === 'table') return f(slots[0])
   if (isArrow(it)) { let k = 0; return { labels: arrowLabels(it).map(L => (L.text?.trim() ? { ...L, ...f(slots[k++]) } : L)), label: undefined } }
   return { label: { ...it.label, ...f(slots[0]) } }
 }
@@ -173,7 +174,7 @@ function RotInput({ value, onSet }) {
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function Props({ items, kind, set, onKind, rotate, library, onSwapCustom, dark }) {   // library = 내 심볼(서버 파일), onSwapCustom(아이템, 'customsym:<id>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
+export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark }) {   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
   const [openDash, setOpenDash] = useState(false), [openSwap, setOpenSwap] = useState(false)
   const one = v => (v.length && v.every(x => x === v[0]) ? v[0] : null)
   const arrows = items.filter(isArrow), allArrows = arrows.length === items.length
@@ -191,6 +192,8 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapCustom,
   const head = one(arrows.map(a => (a.head !== false ? (a.head_start ? 'both' : 'end') : a.head_start ? 'start' : 'none')))
   const tColor = one(texts.map(t => norm(t.color))) ?? ''
   const swapOne = items.length === 1 && ['rect', 'ellipse', 'symbol'].includes(items[0].type) ? items[0] : null
+  // 묶음 하나를 통째로 골랐으면(내 심볼에서 온 것 등) 그것도 바꿀 수 있음 — 기본 도형으로 돌아가기·다른 내 심볼로
+  const swapGrp = !swapOne && items.length >= 2 && items[0].group_id && items.every(it => it.group_id === items[0].group_id && !isArrow(it)) ? items.map(it => it._id) : null
   const rotItems = items.filter(it => ROTATABLE.has(it.type)), rot = one(rotItems.map(it => +(it.rotation || 0).toFixed(1)))
   const hlItems = items.filter(hlHost), hlOn = hlItems.length > 0 && hlItems.every(it => hasHl(hlHost(it)))
   const firstText = (texts.find(t => t.text.trim())?.text.trim().split('\n')[0]) || ''
@@ -204,16 +207,16 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapCustom,
     <div style={{ font: "700 15px 'Pretendard', sans-serif", marginBottom: 2 }}>속성</div>
     <Row label="종류">{allArrows
       ? <Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} />
-      : swapOne ? <div style={{ position: 'relative', flex: 1 }}>
+      : swapOne || swapGrp ? <div style={{ position: 'relative', flex: 1 }}>
         <button title="클릭: 다른 도형으로 바꾸기(크기·연결 유지)" onClick={() => setOpenSwap(o => !o)} style={btn(false, { width: '100%', background: C.seg, justifyContent: 'space-between', padding: '0 8px' })}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>{shapeIcon(kindOf(swapOne))}<span data-testid="prop-type" style={{ fontSize: 13 }}>{title}</span></span><span style={{ color: C.muted }}>▾</span></button>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>{swapOne ? shapeIcon(kindOf(swapOne)) : null}<span data-testid="prop-type" style={{ fontSize: 13 }}>{swapOne ? title : `묶음 ${items.length}개`}</span></span><span style={{ color: C.muted }}>▾</span></button>
         {openSwap && <div style={{ position: 'absolute', zIndex: 3, top: 28, left: 0, right: 0, maxHeight: 360, overflowY: 'auto', background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 4px 12px rgba(0,0,0,.1)' }}>
-          {SWAP_KINDS.map(k => <button key={k} onClick={() => { if (k !== kindOf(swapOne)) set(it => (it._id === swapOne._id ? swapPatch(k) : null), '도형 바꾸기'); setOpenSwap(false) }}
-            style={btn(k === kindOf(swapOne), { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>{shapeIcon(k)}<span style={{ fontSize: 12 }}>{kindName(k)}</span></button>)}
+          {SWAP_KINDS.map(k => <button key={k} onClick={() => { if (swapGrp) onSwapTo(swapGrp, k === 'rect' || k === 'ellipse' ? k : 'sym:' + k); else if (k !== kindOf(swapOne)) set(it => (it._id === swapOne._id ? swapPatch(k) : null), '도형 바꾸기'); setOpenSwap(false) }}
+            style={btn(!!swapOne && k === kindOf(swapOne), { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>{shapeIcon(k)}<span style={{ fontSize: 12 }}>{kindName(k)}</span></button>)}
           {/* 내 심볼 — 폴더마다 구분선(데스크톱 `_fill_swap_menu`). 묶음으로 바뀌고 라벨은 안 옮김(여러 조각 중 어디에 둘지 애매 — 데스크톱과 같음) */}
           {(library?.folders || []).map(f => { const list = (library.symbols || []).filter(s => s.folder === f); if (!list.length) return null
             return <div key={f}><div style={{ borderTop: `1px solid ${C.line}`, margin: '3px 0', padding: '3px 8px 0', fontSize: 11, color: C.muted }}>{f}</div>
-              {list.map(s => <button key={s.id} onClick={() => { onSwapCustom(swapOne, 'customsym:' + s.id); setOpenSwap(false) }} style={btn(false, { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>
+              {list.map(s => <button key={s.id} onClick={() => { onSwapTo(swapGrp || [swapOne._id], 'customsym:' + s.id); setOpenSwap(false) }} style={btn(false, { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>
                 <img alt="" src={'data:image/png;base64,' + s.thumb} width="20" height="20" style={{ filter: dark ? 'invert(1) hue-rotate(180deg)' : undefined }} />
                 <span style={{ fontSize: 12, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.name}</span></button>)}</div> })}
         </div>}
@@ -248,6 +251,10 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapCustom,
         {firstText && <span style={{ fontSize: 11, color: C.muted, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>「{firstText.slice(0, 10)}{firstText.length > 10 ? '…' : ''}」</span>}</div>
       <Row label="크기"><Stepper title="글자 크기" values={texts.map(t => t.font)} onStep={d => set(it => patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })), '글자 크기', '글자 크기')} fmt={v => v + 'pt'} /></Row>
       <Row label="색"><ColorGrid value={tColor} onPick={(c, drag) => set(it => patchTexts(it, () => ({ color: c })), '글자 색', drag ? 'tcolor' : null)} /></Row>
+      {items.some(it => it.type === 'table') && <Row label="첫 행">
+        <Seg value={one(items.filter(it => it.type === 'table').map(it => !!it.header))} onPick={v => set(it => (it.type === 'table' ? { header: v } : null), '머리 행')} items={[[true, <b key="b">굵게</b>, '첫 행을 머리로(굵게)'], [false, <span key="n">보통</span>, '첫 행도 보통']]} />
+        {items.some(it => it.type === 'table' && it.font) && <button title="글자 크기를 칸에 맞춰 자동으로" onClick={() => set(it => (it.type === 'table' ? { font: undefined } : null), '글자 크기 자동')} style={btn(false, { padding: '0 6px', background: C.seg, fontSize: 11 })}>자동</button>}
+      </Row>}
       {hlItems.length > 0 && <Row label=""><button title="형광펜 — 고른 글 전체. 다시 누르면 지워요" aria-pressed={hlOn} onClick={() => set(it => patchHl(it, !hlOn), '형광펜')}
         style={btn(hlOn, { padding: '0 10px', background: hlOn ? C.onBg : C.seg, fontSize: 12, gap: 6 })}><span style={{ width: 14, height: 10, borderRadius: 2, background: 'rgba(255,213,79,.6)' }} />형광펜</button></Row>}
     </>}

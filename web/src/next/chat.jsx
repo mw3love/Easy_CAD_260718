@@ -83,6 +83,17 @@ export function ChatPanel({ ed, selKey, onClose }) {
     if (ed.current?.showCard(m.at)) return   // 이미 붙인 카드 → 그리로
     if (ed.current?.pinCard(m)) update(msgs.map((x, j) => (j === i ? { ...x, pinned: true } : x)))
   }
+  // 버튼을 6px 넘게 끌면 카드가 손에 붙어 칠판으로(팔레트 버튼과 같은 방식) — 놓은 자리에 붙음
+  const dragged = useRef(false)
+  function dragDown(e, i) {
+    if (e.button !== 0) return
+    dragged.current = false   // 끌어 놓고 나면 버튼 위가 아니라 click이 안 올 수 있어 매번 처음부터
+    const sx = e.clientX, sy = e.clientY, m = msgs[i]
+    const move = ev => { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) <= 6) return; done(); dragged.current = true
+      ed.current?.dragCard(m, () => setMsgs(cur => { const next = cur.map((x, j) => (j === i ? { ...x, pinned: true } : x)); save(next); return next })) }
+    const done = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', done) }
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', done)
+  }
   function retry() {
     const last = [...msgs].reverse().find(m => m.role === 'user'); if (!last) return
     setMsgs(msgs.filter(m => m.role !== 'error').slice(0, -1)); setDraft(last.content)
@@ -114,7 +125,8 @@ export function ChatPanel({ ed, selKey, onClose }) {
             : <div key={i} style={css.ai}>
               <Answer text={m.content} />
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-                <button style={m.pinned ? css.ghost : css.pin} onClick={() => pin(i)} title={m.pinned ? '붙인 카드로 가기(지웠으면 다시 붙임)' : '이 답을 칠판에 카드로'}>
+                <button style={{ ...(m.pinned ? css.ghost : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
+                  title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
                   {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>
                 <button style={css.ghost} onClick={() => navigator.clipboard?.writeText(m.content).catch(() => {})}>복사</button>
                 <span style={{ ...css.meta, marginLeft: 'auto' }}>{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}</span>

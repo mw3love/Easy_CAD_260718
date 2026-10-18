@@ -38,7 +38,7 @@ test('고른 것 글 — 빈 것·겹친 것 빼고 줄마다 하나', () => {
   assert.equal(contextText(['가\n나', '', '가\n나', ' 다 ']), '- 가 / 나\n- 다')
 })
 
-import { answerToEcadText, wrapText } from '../src/chatFormat.js'
+import { answerToEcadText } from '../src/chatFormat.js'
 
 test('answerToEcadText — 굵게·제목·목록·출처 줄이 .ecad runs로', () => {
   const { text, runs } = answerToEcadText('# 제목\n\n- **핵심** 하나\n보통', 'KAIROS · m · 10-18 12:00')
@@ -48,11 +48,3 @@ test('answerToEcadText — 굵게·제목·목록·출처 줄이 .ecad runs로',
   assert.deepEqual(runs.at(-1), [text.indexOf('KAIROS'), 'KAIROS · m · 10-18 12:00'.length, '#8a8f98', false])
 })
 
-test('wrapText — 폭을 넘으면 앞 띄어쓰기를 줄바꿈으로, 글자 수는 그대로', () => {
-  const w = s => s.length * 10
-  const out = wrapText('가나 다라 마바 사아', 50, w)
-  assert.equal(out.length, '가나 다라 마바 사아'.length)
-  assert.ok(out.split('\n').every(l => w(l) <= 50))
-  assert.equal(wrapText('짧음\n두 줄', 1000, w), '짧음\n두 줄')
-  assert.equal(wrapText('띄어쓰기없는아주긴낱말', 30, w), '띄어쓰기없는아주긴낱말')
-})

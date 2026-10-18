@@ -16,24 +16,63 @@ const fontCss = (px, family, weight = 400) => `${weight} ${px}px ${family === 'b
 export function measure(text, px, family, weight) { const c = ctx(); c.font = fontCss(px, family, weight); return c.measureText(text).width }
 
 // 글 배치 — 줄마다 조각(굵게·색·형광펜) 위치까지. 반환 { lines: [{parts:[{text,x,w,…}], w}], w, h, px, family, weight }
-export function layoutText(text, runs, px, family, weight = 400) {
-  const lines = runsToLines(text || '', runs).map(parts => {
+// maxW(px)를 주면 그 폭에서 줄을 바꾼다 — 띄어쓰기에서, 띄어쓰기 없는 긴 덩어리(주소·코드)는 글자 단위로(왼쪽 위 라벨 = AI 카드·메모)
+export function layoutText(text, runs, px, family, weight = 400, maxW = 0) {
+  const wOf = p => measure(p.text, px, family, p.bold ? Math.max(700, weight) : weight)
+  let src = runsToLines(text || '', runs)
+  if (maxW > 0) src = src.flatMap(parts => wrapParts(parts, maxW, wOf))
+  const lines = src.map(parts => {
     let x = 0
-    const placed = parts.map(p => { const w = measure(p.text, px, family, p.bold ? Math.max(700, weight) : weight); const o = { ...p, x, w }; x += w; return o })
+    const placed = parts.map(p => { const w = wOf(p); const o = { ...p, x, w }; x += w; return o })
     return { parts: placed, w: x }
   })
   const m = METRICS[family === 'board' ? 'board' : 'app']
   return { lines, w: Math.max(0, ...lines.map(l => l.w)), h: lines.length * m.lineSpacing * px, px, family, weight, m }
 }
 
+// 한 줄(조각들)을 폭 안으로 — 낱말(띄어쓰기 포함 덩어리) 단위로 채우고, 한 낱말이 폭보다 길면 글자 단위로 자름. 줄 첫머리 띄어쓰기는 버림
+function wrapParts(parts, maxW, wOf) {
+  const toks = []
+  for (const p of parts) for (const t of p.text.split(/(\s+)/)) if (t) toks.push({ ...p, text: t })
+  const out = [[]]; let cur = 0
+  const push = t => { out[out.length - 1].push(t); cur += wOf(t) }
+  const brk = () => { out.push([]); cur = 0 }
+  for (const t of toks) {
+    const sp = /^\s+$/.test(t.text), w = wOf(t)
+    if (sp) { if (cur > 0) push(t); continue }
+    if (cur > 0 && cur + w > maxW) { const ln = out[out.length - 1]; while (ln.length && /^\s+$/.test(ln[ln.length - 1].text)) ln.pop(); brk() }
+    if (w <= maxW) { push(t); continue }
+    let acc = ''   // 긴 덩어리 — 글자 단위
+    for (const ch of t.text) { const nx = acc + ch; if (cur + wOf({ ...t, text: nx }) > maxW && (acc || cur > 0)) { if (acc) push({ ...t, text: acc }); brk(); acc = ch } else acc = nx }
+    if (acc) push({ ...t, text: acc })
+  }
+  return out
+}
+// 표 칸 글자 크기(px) — 데스크톱 기본식(칸 높이 50%·칸 폭 30% 중 작은 값)에, 글이 칸 폭을 넘으면 넘지 않을 만큼 줄임(2026-10-18 사용자 지적: 다 쓰면 칸 밖으로 넘침).
+// 편집 칸도 이 크기로 띄워 「치는 대로가 결과」
+export function cellFontPx(txt, cw, ch, bold, fixedPx = 0) {   // fixedPx = 표에 정한 글자 크기(px, 없으면 자동)
+  let fs = fixedPx > 0 ? fixedPx : Math.max(2, Math.min(ch * 0.5, cw * 0.3))
+  const w = txt ? measure(txt, fs, 'app', bold ? 700 : 400) : 0, room = Math.max(1, cw - 4)
+  if (w > room) fs = Math.max(2, fs * room / w)
+  return fs
+}
+// 왼쪽 위 라벨(.ecad label.align = "left") — 상자 안 여백, 상자 폭에서 줄바꿈. fit_text 상자는 높이를 글에 맞춤
+export const LABEL_PAD = 12
+export function leftLabelLayout(it) {
+  const L = it.label || {}, w = it.rect?.[2] || 0, family = L.family ? 'board' : 'app'
+  return layoutText(L.text || '', L.runs, (L.font || 16) * PT, family, 400, Math.max(10, w - 2 * LABEL_PAD - 2 * TEXT_MARGIN))
+}
+export const fitTextHeight = it => Math.ceil(leftLabelLayout(it).h + 2 * TEXT_MARGIN + 2 * LABEL_PAD)
+
 // 글 그리기 — (left, top) = 문서 상자 왼쪽 위(여백 포함). color = 기본 글 색
-function TextLines({ lay, left, top, color }) {
+function TextLines({ lay, left, top, color, halo }) {   // halo = 글자 둘레를 칠할 바탕색(화살표 라벨 — 다른 선이 지나가도 읽히게)
   const { px, m, family, weight } = lay
   const out = []
   lay.lines.forEach((ln, i) => {
     const base = top + TEXT_MARGIN + m.ascent * px + i * m.lineSpacing * px
     for (const p of ln.parts) if (p.bg) out.push(<rect key={`b${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={bgCss(p.bg)} />)
-    out.push(<text key={`t${i}`} y={base} fontSize={px} fontFamily={family === 'board' ? BOARD_FONT : APP_FONT} fontWeight={weight} fill={color} style={{ whiteSpace: 'pre' }}>
+    out.push(<text key={`t${i}`} y={base} fontSize={px} fontFamily={family === 'board' ? BOARD_FONT : APP_FONT} fontWeight={weight} fill={color} style={{ whiteSpace: 'pre' }}
+      {...(halo ? { stroke: halo, strokeWidth: px * 0.3, strokeLinejoin: 'round', paintOrder: 'stroke' } : {})}>
       {ln.parts.map((p, j) => <tspan key={j} x={left + TEXT_MARGIN + p.x} fill={p.color ? cssColor(p.color) : undefined} fontWeight={p.bold ? Math.max(700, weight) : undefined}>{p.text}</tspan>)}
     </text>)
   })
@@ -76,6 +115,7 @@ const strokeProps = (it, onBoard) => ({ stroke: stroke(it, onBoard), style: minS
 function CenterLabel({ it, onBoard }) {
   const L = it.label; if (!L?.text) return null
   const [x, y, w] = it.rect, family = L.family ? 'board' : 'app'
+  if (L.align === 'left') return <TextLines lay={leftLabelLayout(it)} left={x + LABEL_PAD} top={y + LABEL_PAD} color={ink(L.color, onBoard || !!it.fill)} />   // 왼쪽 위·줄바꿈(줄이지 않음)
   const inner = Math.max(1, w * labelInset(it.type, it.kind))
   let pt = Math.max(5, Math.round(L.font || 16)), lay = layoutText(L.text, L.runs, pt * PT, family)
   while (pt > 5 && lay.w + 2 * TEXT_MARGIN > inner) { pt -= 1; lay = layoutText(L.text, L.runs, pt * PT, family) }
@@ -91,7 +131,7 @@ function arrowLabels(it, at, onBoard) {
     const { p, n } = at(L.t ?? 0.5), off = L.off || 0
     const box = centeredBox(lay, { x: p.x + n.x * off, y: p.y + n.y * off })
     const gap = off ? null : { x: box.left - 2, y: box.inkTop - 7, w: box.w + 4, h: box.inkBot - box.inkTop + 14 }   // 옆으로 뺀 라벨은 선을 안 비움
-    return { el: <TextLines key={'l' + i} lay={lay} left={box.left} top={box.top} color={ink(L.color, onBoard)} />, gap }
+    return { el: <TextLines key={'l' + i} lay={lay} left={box.left} top={box.top} color={ink(L.color, onBoard)} halo={onBoard ? null : 'var(--mb-board, #ffffff)'} />, gap }
   })
 }
 // 화살표 라벨 자리(화살표 안 좌표) — 편집 화면이 누르기·끌기·글 편집에 씀. → [{ i, left, top, w, h, a(앵커), n(왼쪽 법선) }]
@@ -138,8 +178,10 @@ function Ports({ it, onBoard }) {
 }
 
 // ── 아이템 하나 ── (memo: 확대·이동만 바뀌면 다시 그리지 않음 — 9천 개 도면에서 휠 한 칸이 340ms였다)
-export const Item = memo(function Item({ it, idx, onBoard, route }) {   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
+// labels = 'inline'(기본 — 내보내기) | 'skip'(화살표 라벨은 빼고) | 'only'(화살표 라벨만 — 편집 화면이 모든 선 위에 한 번 더 그림)
+export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode = 'inline' }) {   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
   const T = itemTransform(it), fill = it.fill ? cssColor(it.fill) : 'none'
+  if (lmode === 'only' && it.type !== 'sarrow' && it.type !== 'arrow') return null
   switch (it.type) {
     case 'rect': case 'ellipse': case 'symbol': {
       const [x, y, w, h] = it.rect
@@ -196,12 +238,12 @@ export const Item = memo(function Item({ it, idx, onBoard, route }) {   // props
       const cells = []
       for (let r = 0; r < rows; r++) for (let c = 0; c < it.cols; c++) {
         const txt = it.cells?.[r]?.[c]; if (!txt) continue
-        const cw = edges[c + 1] - edges[c], fs = Math.max(2, Math.min(ch * 0.5, cw * 0.3))
+        const cw = edges[c + 1] - edges[c], fs = cellFontPx(txt, cw, ch, it.header && r === 0, it.font ? it.font * PT : 0)
         cells.push(<text key={`${r}-${c}`} x={(edges[c] + edges[c + 1]) / 2} y={y + (r + 0.5) * ch} textAnchor="middle" dominantBaseline="central"
-          fontSize={fs} fontWeight={it.header && r === 0 ? 700 : 400} fontFamily={APP_FONT} fill={ink('#111111', onBoard)}>{txt}</text>)
+          fontSize={fs} fontWeight={it.header && r === 0 ? 700 : 400} fontFamily={APP_FONT} fill={ink(it.color || '#111111', onBoard)}>{txt}</text>)
       }
       const lines = [...edges.slice(1, -1).map(ex => `M${ex},${y} V${y + h}`), ...Array.from({ length: rows - 1 }, (_, j) => `M${x},${y + (j + 1) * ch} H${x + w}`)]
-      const tl = ink('#333333', onBoard)
+      const tl = ink(it.pen || '#333333', onBoard)
       return <g transform={T}>{cells}<path d={lines.join(' ')} stroke={tl} strokeWidth={0.5} fill="none" />
         {it.header && rows > 1 && <path d={`M${x},${y + ch} H${x + w}`} stroke={tl} strokeWidth={1} />}
         <rect x={x} y={y} width={w} height={h} fill="none" stroke={tl} strokeWidth={1} /></g>
@@ -236,12 +278,13 @@ export const Item = memo(function Item({ it, idx, onBoard, route }) {   // props
       const labels = arrowLabels(it, t => polylineAt(pts, t), onBoard), gaps = labels.map(l => l.gap).filter(Boolean)
       const tri = (a, b) => headTriangle(b, Math.atan2(b.y - a.y, b.x - a.x), size)
       const body = cutPolyline(trimmedPts(pts, size, end, start), gaps).map(q => roundedPath(q, sarrowRadius(it))).join(' ')   // 라벨 자리는 계산으로 잘라 비움
+      if (lmode === 'only') return <g transform={T}>{labels.map(l => l.el)}</g>
       return <g transform={T}>
         <path d={body} fill="none" stroke={color} style={minStroke(it.width)}
           strokeDasharray={dashArray(it.style, it.width)} strokeLinecap="round" strokeLinejoin="round" />
         {end && <Head tri={tri(pts[pts.length - 2], pts[pts.length - 1])} color={color} />}
         {start && <Head tri={tri(pts[1], pts[0])} color={color} />}
-        {labels.map(l => l.el)}
+        {lmode === 'inline' && labels.map(l => l.el)}
       </g>
     }
     case 'arrow': {
@@ -266,11 +309,12 @@ export const Item = memo(function Item({ it, idx, onBoard, route }) {   // props
       }
       const angEnd = curved ? Math.atan2(p3.y - c2.y, p3.x - c2.x) : Math.atan2(p3.y - p0.y, p3.x - p0.x)
       const angStart = curved ? Math.atan2(p0.y - c1.y, p0.x - c1.x) : Math.atan2(p0.y - p3.y, p0.x - p3.x)
+      if (lmode === 'only') return <g transform={T}>{labels.map(l => l.el)}</g>
       return <g transform={T}>
         <path d={body} fill="none" stroke={color} style={minStroke(it.width)} strokeDasharray={dashArray(it.style, it.width)} strokeLinecap="round" strokeLinejoin="round" />
         {end && <Head tri={headTriangle(p3, angEnd, size)} color={color} />}
         {start && <Head tri={headTriangle(p0, angStart, size)} color={color} />}
-        {labels.map(l => l.el)}
+        {lmode === 'inline' && labels.map(l => l.el)}
       </g>
     }
     default: return null

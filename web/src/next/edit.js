@@ -264,3 +264,24 @@ export function followArrows(items, rectOf) {
     return changed ? { ...it, pts } : it
   })
 }
+
+// ── 표 행·열 넣기·지우기(2026-10-18, 데스크톱에도 아직 없음 — 웹 먼저) ──
+// op = 'rowAbove'|'rowBelow'|'colLeft'|'colRight'|'delRow'|'delCol', (r, c) = 기준 칸. 행 높이·열 폭은 그대로 두고 표가 늘거나 줄어든다(넣는 열 = 기준 열 폭)
+export function tableOp(it, op, r, c) {
+  const [x, y, w, h] = it.rect, rows = it.rows, cols = it.cols, ch = h / rows
+  const fr = it.col_widths?.length === cols ? it.col_widths : Array(cols).fill(1 / cols), cw = fr.map(f => f * w)
+  let cells = Array.from({ length: rows }, (_, i) => Array.from({ length: cols }, (_, j) => it.cells?.[i]?.[j] || ''))
+  if (op === 'rowAbove' || op === 'rowBelow') { const at = op === 'rowAbove' ? r : r + 1; cells.splice(at, 0, Array(cols).fill('')); return { ...it, rows: rows + 1, cells, rect: [x, y, w, h + ch] } }
+  if (op === 'delRow') { if (rows <= 1) return it; cells.splice(r, 1); return { ...it, rows: rows - 1, cells, rect: [x, y, w, h - ch] } }
+  if (op === 'colLeft' || op === 'colRight') {
+    const at = op === 'colLeft' ? c : c + 1, nw = cw[c]; cells = cells.map(row => { const n = [...row]; n.splice(at, 0, ''); return n })
+    const ws = [...cw]; ws.splice(at, 0, nw); const W = w + nw
+    return { ...it, cols: cols + 1, cells, col_widths: ws.map(v => v / W), rect: [x, y, W, h] }
+  }
+  if (op === 'delCol') {
+    if (cols <= 1) return it
+    cells = cells.map(row => row.filter((_, j) => j !== c)); const ws = cw.filter((_, j) => j !== c), W = w - cw[c]
+    return { ...it, cols: cols - 1, cells, col_widths: ws.map(v => v / W), rect: [x, y, W, h] }
+  }
+  return it
+}

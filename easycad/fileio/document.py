@@ -351,7 +351,18 @@ def item_to_dict(it) -> dict | None:
     # JSON 배열로. 없으면(하위호환) 키 자체를 생략 — 로드 시 getattr 기본(None)과 동일.
     if getattr(it, "_cuts", None):
         d["cuts"] = [[edge_i, t0, t1] for edge_i, t0, t1 in it._cuts]
+    # [웹 칠판 2026-10-18] 웹만 아는 칸은 받은 그대로 돌려 쓴다(`dict_to_item` 참조) — 데스크톱이 열었다 저장해도 웹 카드·표 꾸밈이 안 망가지게
+    for k, v in (getattr(it, "_web_extra", None) or {}).items():
+        if k == "label.align":
+            if "label" in d:
+                d["label"]["align"] = v
+        elif k not in d:
+            d[k] = v
     return d
+
+
+_WEB_ONLY_KEYS_ALL = ("fit_text", "chat_at")
+_WEB_ONLY_KEYS = {"table": ("font", "color", "pen")}
 
 
 def dict_to_item(d: dict):
@@ -437,6 +448,13 @@ def dict_to_item(d: dict):
     else:
         return None
     it = _apply_common(it, d)
+    # [웹 칠판 2026-10-18] 웹 칠판만 아는 칸(AI 카드 `fit_text`·`chat_at`·라벨 `align`, 표 `font`·`color`·`pen`) — 데스크톱은 아직 그리지 않지만
+    # 저장할 때 그대로 돌려 쓴다(`item_to_dict` 끝). 알려진 칸만 골라 담는다 — 아무 칸이나 되살리면 데스크톱에서 지운 라벨 등이 되살아남.
+    extra = {k: d[k] for k in _WEB_ONLY_KEYS.get(t, ()) + _WEB_ONLY_KEYS_ALL if k in d}
+    if (d.get("label") or {}).get("align"):
+        extra["label.align"] = d["label"]["align"]
+    if extra:
+        it._web_extra = extra
     for pd in d.get("ports", []):
         _port_from_dict(pd, it)
     # [§8 항목17 6단계] TRIM cut 구간 복원 — _add_border_cut을 안 쓰고 직접 대입한다(그

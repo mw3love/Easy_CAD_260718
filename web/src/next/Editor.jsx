@@ -2,7 +2,7 @@
 // 되돌리기·복사/붙여넣기/복제·삭제·묶기·잠금·순서·반전·방향키, 그리기 도구(상자·원·글·선·펜·다각형), 글 편집(TipTap).
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { arrowAt, arrowLabelBoxes, ink, Item, layoutText } from './render.jsx'
+import { arrowAt, arrowLabelBoxes, cellFontPx, fitTextHeight, ink, Item, LABEL_PAD, layoutText } from './render.jsx'
 import { boardMembership, drawOrder, itemBounds } from './doc.js'
 import { PT, TEXT_MARGIN, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
@@ -14,7 +14,7 @@ import { beginSegment, beginSubdivide, bendCurve, BEND_TS, curvePoint, dragSegme
 import { sarrowRouting } from './arrows.js'
 import { fromEcad, newId } from './model.js'
 import {
-  applyRect, boardContents, duplicate, expandGroups, flatten, followArrows, groupItems, localRect, mirror, moveItems, removeItems, resizeRect,
+  applyRect, boardContents, duplicate, tableOp, expandGroups, flatten, followArrows, groupItems, localRect, mirror, moveItems, removeItems, resizeRect,
   rotateTo, rubberSelect, sceneBox, toLocal, toScene, toggleLock, topHit, ungroupItems, unionBox, zOrder,
 } from './edit.js'
 import { TextEditor } from './text.jsx'
@@ -26,8 +26,7 @@ import { colEdges } from './geom.js'
 import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, exportPdf, exportPng, exportSvg, pngBlob } from './exporter.jsx'
 import { ContextMenu } from './ctxmenu.jsx'
-import { answerToEcadText, freeSpot, sourceLine, wrapText } from '../chatFormat.js'
-import { measure } from './render.jsx'
+import { answerToEcadText, freeSpot, sourceLine } from '../chatFormat.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
@@ -85,6 +84,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const prev = R.current.model.items, h = hist.current, now = Date.now()
     const al = R.current.activeLayer, ly = al && al !== 'default' && layersOf(R.current.model).find(l => l.id === al)
     if (ly && ly.visible && !ly.locked) { const had = new Set(prev.map(it => it._id)); next = next.map(it => (had.has(it._id) || it.layer_id ? it : { ...it, layer_id: al })) }
+    next = next.map(it => (it.fit_text && it.label?.align === 'left' && it.rect && Math.abs(fitTextHeight(it) - it.rect[3]) > 0.5 ? applyRect(it, [it.rect[0], it.rect[1], it.rect[2], fitTextHeight(it)]) : it))   // 글에 맞춘 상자(AI 카드·메모)
     const fixed = followArrows(next, rectOf)
     if (!(merge && h.mergeKey === merge && now - h.mergeT < 1500)) { h.past.push({ items: prev, sel: R.current.sel }); h.future = [] }
     h.mergeKey = merge; h.mergeT = now
@@ -96,7 +96,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
 
-  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, moveSelToLayer, exportDoc, selTexts, pinCard, showCard, reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, moveSelToLayer, exportDoc, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live }) }))
 
@@ -210,7 +210,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const add = e.shiftKey || e.ctrlKey || e.metaKey   // 더해 고르기 — Ctrl(데스크톱 손버릇)·Shift(웹 관례) 둘 다
     // 미선택 도형의 포트점·테두리(14px)를 누르면 화살표 잇기 대기 — 끌면 화살표, 그냥 놓으면 그 도형 선택(데스크톱 `_hover_port_at`→`_hp_*`)
     if (!add && !e.altKey) { const hp = hoverPort(p); if (hp?.target) { st.current = { ...st.current, kind: 'conn', src: hp.target.id, port: { p: hp.target.p, n: hp.target.n }, start: p, cur: p, fromQc: false, moved: false }; return } }
-    const hit = topHit(hitPool(), p, HIT_PX / z, textBox)
+    const hit = topHit(hitPool(), p, HIT_PX / z, textBox) || groupAt(p)
     if (hit) {
       let ids = R.current.sel
       if (add) ids = ids.includes(hit._id) ? ids.filter(i => i !== hit._id && !(hit.group_id && m.items.find(x => x._id === i)?.group_id === hit.group_id)) : expandGroups(m.items, [...ids, hit._id])
@@ -316,7 +316,9 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     st.current = { space: s.space }
     setCursor('default')
     if (s.kind === 'pan' && s.right && Math.hypot(e.clientX - s.sx, e.clientY - s.sy) < 4) {   // 제자리 우클릭 = 메뉴(고른 것 그대로 — 데스크톱과 같음)
-      const r = svg.current.getBoundingClientRect(); setMenu({ x: e.clientX - r.left, y: e.clientY - r.top }); return }
+      const r = svg.current.getBoundingClientRect(), one = R.current.sel.length === 1 && R.current.model.items.find(x => x._id === R.current.sel[0])
+      const cell = one?.type === 'table' ? cellAt(one, toLocal(one, p)) : null   // 고른 표의 칸 위에서 우클릭 = 그 칸 기준 행·열 메뉴
+      setMenu({ x: e.clientX - r.left, y: e.clientY - r.top, cell }); return }
     if (s.kind === 'conn') {
       setOverlay(o => ({ ...o, conn: null, hp: null }))
       if (!s.moved) { if (s.tool === 'arrow') return; if (s.fromQc) qcCreate(s.src, s.side); else setSel(expandGroups(R.current.model.items, [s.src])); return }
@@ -450,27 +452,45 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const placeAt = (protos, x, y) => { const b = unionBox(protos.map(it => sceneBox(it, textBox))); return moveItems(protos, protos.map(it => it._id), x - b.x, y - b.y) }
   // 도형 → 내 심볼(데스크톱 `_swap_to_custom_symbol`): 긴 변을 옛 도형 긴 변에 맞춰 늘이고(비율 유지) 가운데 맞춤, 옛 도형은 지움.
   // 붙어 있던 화살표 끝은 다시 붙임 — 조각 하나면 그 외곽선 가장 가까운 곳, 여럿이면 묶음 통째(데스크톱은 가장 가까운 조각 — 웹은 묶음을 옮겨도 덜 꼬이게)
-  function swapToCustom(old, key) {
-    const m = R.current.model, protos = customItems(key); if (!protos) return
-    const ob = sceneBox(old, textBox), b = unionBox(protos.map(it => sceneBox(it, textBox)))
-    const lo = Math.max(ob.w, ob.h), lc = Math.max(b.w, b.h); if (lc < 1e-6) return
-    const k = lo / lc, bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 }
-    let its = protos.map(it => ({ ...it, scale: (it.scale || 1) * k, pos: [bc.x + ((it.pos?.[0] || 0) - bc.x) * k, bc.y + ((it.pos?.[1] || 0) - bc.y) * k] }))
-    const nb = unionBox(its.map(it => sceneBox(it, textBox)))
-    its = moveItems(its, its.map(it => it._id), ob.x + ob.w / 2 - (nb.x + nb.w / 2), ob.y + ob.h / 2 - (nb.y + nb.h / 2))
-    const rest = m.items.filter(x => x._id !== old._id), all = [...rest, ...its]
+  // 바꾸기 — 옛것(도형 하나 또는 묶음 전체, oldIds)을 key로: 'customsym:<id>'(내 심볼) 또는 'rect'·'ellipse'·'sym:<종류>'(기본 도형 — 묶음에서 돌아갈 때, 2026-10-18 사용자 지적: 한 번 바꾸면 못 돌아옴)
+  // 붙어 있던 화살표(그 도형 또는 묶음 통째에 붙은 끝)는 새것에 다시 붙임
+  // 누른 자리가 묶음의 바깥 상자 안이면 그 묶음의 맨 위 조각(빈 상자 안쪽을 눌러도 골라지듯 — 2026-10-18 사용자 지적: 내 심볼은 선을 정확히 눌러야 했음)
+  function groupAt(p) {
+    const boxes = new Map()
+    for (const it of hitPool()) { if (!it.group_id || it.locked) continue; const b = sceneBox(it, textBox), g = boxes.get(it.group_id)
+      boxes.set(it.group_id, g ? { box: unionBox([g.box, b]), top: (it.z ?? 0) >= (g.top.z ?? 0) ? it : g.top } : { box: b, top: it }) }
+    let best = null
+    for (const { box, top } of boxes.values()) if (p.x >= box.x && p.x <= box.x + box.w && p.y >= box.y && p.y <= box.y + box.h && (!best || (top.z ?? 0) > (best.z ?? 0))) best = top
+    return best
+  }
+  function swapShape(oldIds, key) {
+    const m = R.current.model, set = new Set(oldIds), olds = m.items.filter(x => set.has(x._id)); if (!olds.length) return
+    const ob = unionBox(olds.map(it => sceneBox(it, textBox))), oldGid = olds.every(o => o.group_id && o.group_id === olds[0].group_id) ? olds[0].group_id : null
+    let its
+    if (key.startsWith('customsym:')) {
+      const protos = customItems(key); if (!protos) return
+      const b = unionBox(protos.map(it => sceneBox(it, textBox))), lo = Math.max(ob.w, ob.h), lc = Math.max(b.w, b.h); if (lc < 1e-6) return
+      const k = lo / lc, bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 }
+      its = protos.map(it => ({ ...it, scale: (it.scale || 1) * k, pos: [bc.x + ((it.pos?.[0] || 0) - bc.x) * k, bc.y + ((it.pos?.[1] || 0) - bc.y) * k] }))
+      const nb = unionBox(its.map(it => sceneBox(it, textBox)))
+      its = moveItems(its, its.map(it => it._id), ob.x + ob.w / 2 - (nb.x + nb.w / 2), ob.y + ob.h / 2 - (nb.y + nb.h / 2))
+    } else {
+      const s0 = olds.find(o => o.pen !== undefined)   // 선 색·굵기는 옛 조각에서
+      its = [{ ...boxItem(key, ob.x, ob.y, ob.w, ob.h), ...(s0 ? { pen: s0.pen, width: s0.width, style: s0.style } : {}), z: Math.max(...olds.map(o => o.z ?? 0)) }]
+    }
+    const all = [...m.items.filter(x => !set.has(x._id)), ...its]
     const host = its.length === 1 ? its[0] : groupHost(all, its[0].group_id, rectOf)
     const rebound = all.map(a => {
       if (!isArrow(a)) return a
       let o = a
       for (const kk of ['bind1', 'bind2']) {
-        if (a['_' + kk] !== old._id) continue
+        if (!set.has(a['_' + kk]) && !(oldGid && a[kk + '_group'] === oldGid)) continue
         const e = bindEnd(a, kk, m.items, rectOf); if (!e) continue
         o = { ...o, ...bindOf(kk, host, nearestBorder(host, e.p, rectOf).p) }
       }
       return o
     })
-    commit(rebound, its.map(it => it._id), '내 심볼로 바꾸기')
+    commit(rebound, its.map(it => it._id), key.startsWith('customsym:') ? '내 심볼로 바꾸기' : '도형 바꾸기')
   }
   // 고른 도형을 레이어로(데스크톱 `move_selection_to_layer`) — 그 레이어의 잠금을 물려받음, 되돌리기 한 칸
   function moveSelToLayer(id) {
@@ -482,10 +502,13 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // 내보내기 — o = { format: 'png'|'pdf'|'svg', selection, page, orient, margin, transparent, name }. 숨긴 레이어는 안 냄(데스크톱: 안 보이는 것은 안 그림)
   async function exportDoc(o) {
     const m = R.current.model, hid = new Set(layersOf(m).filter(l => !l.visible).map(l => l.id))
-    let ents = drawOrder(m.items).filter(([it]) => !hid.has(layerIdOf(it)))
-    if (o.selection) { const ids = new Set(movingSet(R.current.sel)); ents = ents.filter(([it]) => ids.has(it._id)) }
+    // 칠판 규칙(2026-10-18 사용자와 정함 — 데스크톱 「틀이 있으면 전체 = 틀」을 바꿈): 용지틀도 보통 도형. 틀을 골라 내보낼 때만 그 틀이 종이(틀 안의 것 전부)
+    const all = drawOrder(m.items).filter(([it]) => !hid.has(layerIdOf(it)))
+    let ents = all
+    if (o.selection) { const ids = new Set(movingSet(R.current.sel)); ents = all.filter(([it]) => ids.has(it._id)) }
     if (!ents.length) { setStatus(o.selection ? '내보낼 도형을 먼저 고르세요' : '내보낼 도형이 없어요'); return false }
-    const ft = !o.selection && ents.find(([it]) => it.type === 'titleblock')?.[0]   // 전체 + 용지틀 = 그 틀이 용지(데스크톱 `_find_title_frame` — 첫 틀)
+    const ft = o.selection && ents.find(([it]) => it.type === 'titleblock')?.[0]
+    if (ft) ents = all   // 틀 = 종이 — 틀 밖은 종이 밖이라 안 보임
     const frame = ft && { size: ft.size, orient: ft.orient, box: sceneBox(ft, textBox) }
     const src = unionBox(ents.map(([it]) => sceneBox(it, textBox)))
     const res = await buildSvg(ents, src, { ...o, frame, transparent: o.format !== 'pdf' && o.transparent }, boardMembership(m.items), resolveRoutes(m.items, rectOf), o.format !== 'pdf')
@@ -508,20 +531,22 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     }
     return out
   }
-  // 답 → 카드 = 흰 보드 + 보드 글꼴 글(굵게·목록·회색 출처 줄). 지금 화면에서 다른 것과 안 겹치는 자리(왼쪽 카드·오른쪽 속성 카드 자리는 뺌), 카드에 `chat_at` = 답 시각
-  const CARD_W = 340, CARD_PAD = 16, CARD_PT = 10.5   // 14px — 옛 tldraw 카드와 같은 크기
-  function pinCard(msg) {
-    const m = R.current.model, c = R.current.cam, px = CARD_PT * PT
+  // 답 → 카드 = 채운 네모 하나 + 왼쪽 위 라벨(상자 폭에서 줄바꿈) + 글에 맞춘 높이(`fit_text`) — 한 덩어리라 글이 넘칠 수 없음(2026-10-18 사용자 지적: 보드 + 글 두 덩어리는 넘침)
+  // 지금 화면에서 다른 것과 안 겹치는 자리(왼쪽 카드·오른쪽 속성 카드 자리는 뺌), 카드에 `chat_at` = 답 시각
+  const CARD_W = 340, CARD_PT = 10.5   // 14px — 옛 tldraw 카드와 같은 크기
+  function cardItem(msg, x, y, z) {
     const { text, runs } = answerToEcadText(msg.content, sourceLine(msg.model, msg.at))
-    const wrapped = wrapText(text, CARD_W - 2 * CARD_PAD - 2 * TEXT_MARGIN, s => measure(s, px, 'board', 700))   // 굵은 글 기준으로 재야 넘치지 않음
-    const lay = layoutText(wrapped, runs, px, 'board'), h = Math.ceil(lay.h + 2 * TEXT_MARGIN + 2 * CARD_PAD)
+    const it = base([x, y], { type: 'rect', rect: [0, 0, CARD_W, 40], pen: '#ffd4d4d8', width: 1, fill: '#ffffffff', style: 1, fit_text: true, chat_at: msg.at, z,
+      label: { text, runs, color: '#ff1f1f1f', font: CARD_PT, family: 'Pretendard', bg: null, align: 'left' } })
+    return { ...it, rect: [0, 0, CARD_W, fitTextHeight(it)] }
+  }
+  function pinCard(msg, drop) {   // drop = 칠판 좌표(끌어 놓은 자리 — 왼쪽 위), 없으면 빈자리
+    const m = R.current.model, c = R.current.cam, h = cardItem(msg, 0, 0, 0).rect[3]
     const left = 220 / c.z, right = 220 / c.z, view = { x: -c.x / c.z + left, y: -c.y / c.z, w: Math.max(CARD_W, size.w / c.z - left - right), h: size.h / c.z }
     const boxes = m.items.map(it => sceneBox(it, textBox))
-    const at = freeSpot(view, boxes, CARD_W, h)
-    const z = topZ(m.items) + 1
-    const board = base([at.x, at.y], { type: 'board', rect: [0, 0, CARD_W, h], bg: '#ffffffff', chat_at: msg.at, z })
-    const txt = base([at.x + CARD_PAD, at.y + CARD_PAD], { type: 'text', text: wrapped, runs, color: '#ff1f1f1f', font: CARD_PT, family: 'Pretendard', bg: null, z: z + 1 })
-    commit([...m.items, board, txt], [board._id], '칠판에 붙이기')
+    const at = drop || freeSpot(view, boxes, CARD_W, h)
+    const card = cardItem(msg, at.x, at.y, topZ(m.items) + 1)
+    commit([...m.items, card], [card._id], '칠판에 붙이기')
     return true
   }
   // 이미 붙인 카드로 — 고르고 화면 가운데로. 없으면(지웠으면) false
@@ -546,20 +571,25 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // 칸 고치기 끝 — text = 새 글(null = 취소), move = [dr, dc] 다음 칸으로(데스크톱 `_CellEditor._move`: Tab 줄넘김)
   function finishCell(text, move) {
     const ed = R.current.editing; if (!ed || ed.kind !== 'cell') return
-    const m = R.current.model, it = m.items.find(x => x._id === ed.id)
+    const m = R.current.model, it0 = m.items.find(x => x._id === ed.id)
+    let it = it0
     // 다음 칸은 같은 순간에 열어야 함 — 한 박자 늦게 열면 Tab 뒤 바로 친 글자가 사라짐(시험에서 겪음)
     let next = null
     if (it && move) { let r = ed.r + move[0], c = ed.c + move[1]; while (c >= it.cols) { c -= it.cols; r++ } while (c < 0) { c += it.cols; r-- }
+      if (r === it.rows && move[1] === 1) it = tableOp(it, 'rowBelow', it.rows - 1, 0)   // 마지막 칸에서 Tab = 새 행(엑셀·한글 방식)
       if (r >= 0 && r < it.rows) next = { id: it._id, kind: 'cell', r, c } }
     setEditing(next); if (!it) return
-    if (text != null && text !== (it.cells?.[ed.r]?.[ed.c] || '')) {
+    const changed = text != null && text !== (it0.cells?.[ed.r]?.[ed.c] || '')
+    if (changed || it !== it0) {
       const cells = Array.from({ length: it.rows }, (_, r) => Array.from({ length: it.cols }, (_, c) => it.cells?.[r]?.[c] || ''))
-      cells[ed.r][ed.c] = text; commit(m.items.map(x => (x._id === it._id ? { ...x, cells } : x)), [it._id], '표 칸')
+      if (changed) cells[ed.r][ed.c] = text
+      commit(m.items.map(x => (x._id === it._id ? { ...it, cells } : x)), [it._id], it !== it0 ? '표 행 넣기' : '표 칸')
     }
   }
-  function startPaletteDrag(t) {
+  // given = 끌어 놓을 아이템(대화창 카드), onPlaced = 놓았을 때 알림
+  function startPaletteDrag(t, given, onPlaced) {
     const m = R.current.model
-    const protos = t.startsWith('customsym:') ? customItems(t) : [{ ...boxItem(t, 0, 0, ...boxDefault(t)), z: topZ(m.items) + 1 }]   // 클릭만 해 놓을 때와 같은 기본 크기
+    const protos = given || (t.startsWith('customsym:') ? customItems(t) : [{ ...boxItem(t, 0, 0, ...boxDefault(t)), z: topZ(m.items) + 1 }])   // 클릭만 해 놓을 때와 같은 기본 크기
     if (!protos) return
     const b0 = unionBox(protos.map(it => sceneBox(it, textBox))), w = b0.w, h = b0.h
     const others = m.items.filter(it => !it.locked).map(it => sceneBox(it, textBox))
@@ -574,7 +604,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.style.cursor = ''; st.current = { space: st.current.space }
       setOverlay(o => ({ ...o, guides: null }))
       last = place(e)
-      if (last.over) commit([...m.items, ...last.its], last.its.map(it => it._id), '도형'); else setLive(null)
+      if (last.over) { commit([...m.items, ...last.its], last.its.map(it => it._id), given ? '칠판에 붙이기' : '도형'); onPlaced?.() } else setLive(null)
     }
     document.body.style.cursor = 'copy'; st.current = { ...st.current, kind: 'pdrag' }; setHp(null)   // 끄는 동안 포트점 예고 끔(데스크톱도 드래그 중 억제)
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
@@ -592,7 +622,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (t === 'badge') {   // 번호표 — 누른 자리에 다음 번호(데스크톱 `next_badge_number`: 연 문서의 가장 큰 번호부터 하나씩, 지워도 되돌리지 않음), 색 = 고른 선 색
       const n = Math.max(badgeN.current, ...m.items.filter(it => it.type === 'badge').map(it => it.number || 0)) + 1; badgeN.current = n
       const it = base([p.x, p.y], { type: 'badge', number: n, color: sticky.current.color === INK ? '#ffda7756' : sticky.current.color, z: topZ(m.items) + 1 })   // 선 색을 안 골랐으면 코랄(기본 잉크로 칠하면 어두운 화면에서 묻힘)
-      commit([...m.items, it], [it._id], '번호표'); setTool('select'); return
+      commit([...m.items, it], [it._id], '번호표'); return   // 도구는 켜 둔 채 — 누를 때마다 다음 번호, Esc·다른 도구로 끝(2026-10-18 사용자 선택, 데스크톱은 한 번 찍고 돌아감)
     }
     if (t.startsWith('customsym:')) {   // 내 심볼 도구 — 누른 자리에 원래 크기로(데스크톱 `_create_custom_symbol_at`: 왼쪽 위 = 누른 자리)
       const protos = customItems(t); if (!protos) return
@@ -686,7 +716,13 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       const b = arrowLabelBoxes(it)[editing.i], L = labelsOf(it)[editing.i]; if (!b || !L) return null
       return { center: scr(toScene(it, b.a)), px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: col(L.color || it.color), bg, align: 'center', text: L.text || '', runs: L.runs }
     }
-    const a = scr(toScene(it, labelAnchor(it.type, it.kind, it.rect))), L = it.label || {}
+    const L = it.label || {}
+    if (L.align === 'left') {   // 왼쪽 위·상자 폭에서 줄바꿈 — 그릴 때와 같은 자리·폭
+      const [x, y, w] = it.rect, o = scr(toScene(it, { x: x + LABEL_PAD, y: y + LABEL_PAD })), s = it.scale || 1
+      return { left: o.x, top: o.y, width: (w - 2 * LABEL_PAD) * s * cam.z, px: (L.font || 16) * PT * s, zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: col(L.color || it.pen), bg, align: 'left',
+        rotation: it.rotation || 0, origin: scr(toScene(it, { x: it.origin?.[0] || 0, y: it.origin?.[1] || 0 })), text: L.text || '', runs: L.runs }
+    }
+    const a = scr(toScene(it, labelAnchor(it.type, it.kind, it.rect)))
     return { center: a, px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: col(L.color || it.pen), bg, align: 'center', text: L.text || '', runs: L.runs }
   }
 
@@ -758,18 +794,19 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     for (const { it, b } of list.slice(1, firstGap ? undefined : -1)) { const d = cur + gap - st0(b); items = moveItems(items, [it._id], H ? d : 0, H ? 0 : d); cur += gap + sz(b) }
     commit(items, R.current.sel, '분배')
   }
-  // 그림으로 복사(데스크톱 `_copy_as_image`, 한글·PPT에 붙여 넣기) — 고른 것을 용지 없이 2배 해상도 PNG로 클립보드에
-  async function copyAsImage() {
-    const m = R.current.model, ids = new Set(movingSet(R.current.sel)), ents = drawOrder(m.items).filter(([it]) => ids.has(it._id)); if (!ents.length) return
+  // 복사 = 칠판용(도형 그대로) + 그림(시스템 클립보드 — 한글·PPT에 붙이면 그림, 데스크톱 `_copy_as_image`). 2026-10-18 사용자: 「그림으로 복사」를 따로 두면 불편 → 하나로.
+  // 브라우저는 누른 순간에만 클립보드 쓰기를 허락하므로, 그림은 「만들어질 약속」(Promise)으로 바로 넘긴다. 고른 것을 용지 없이 2배 해상도 PNG로
+  function imageToClipboard(ids) {
+    const m = R.current.model, ents = drawOrder(m.items).filter(([it]) => ids.has(it._id)); if (!ents.length || typeof ClipboardItem === 'undefined') return
     const src = unionBox(ents.map(([it]) => sceneBox(it, textBox))), pad = 8
-    const res = await buildSvg(ents, { x: src.x - pad, y: src.y - pad, w: src.w + 2 * pad, h: src.h + 2 * pad }, { tight: true, frame: null }, boardMembership(m.items), resolveRoutes(m.items, rectOf))
-    try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': await pngBlob(res, 192) })]); setStatus('그림으로 복사함 — 한글·PPT에 붙여 넣으세요') }
-    catch { setStatus('그림 복사 실패 — 브라우저가 클립보드 쓰기를 막았어요') }
+    const png = buildSvg(ents, { x: src.x - pad, y: src.y - pad, w: src.w + 2 * pad, h: src.h + 2 * pad }, { tight: true, frame: null }, boardMembership(m.items), resolveRoutes(m.items, rectOf)).then(res => pngBlob(res, 192))
+    navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]).catch(() => setStatus('도형은 복사함 — 그림 복사는 브라우저가 막았어요'))
   }
   function copy() {
     const m = R.current.model, ids = new Set(movingSet(R.current.sel))
     clip.current = { items: structuredClone(m.items.filter(it => ids.has(it._id))), seq: 0 }
-    setStatus?.(`${ids.size}개 복사`)
+    imageToClipboard(ids)
+    setStatus?.(`${ids.size}개 복사 — 칠판에 붙이면 도형, 한글·PPT에 붙이면 그림`)
   }
   function paste() {
     const c = clip.current; if (!c.items.length) return
@@ -857,8 +894,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       <svg ref={svg} width={size.w} height={size.h} style={{ display: 'block', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }} data-testid="board"
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onDoubleClick={onDoubleClick} onContextMenu={e => e.preventDefault()}>
         <g transform={`translate(${cam.x},${cam.y}) scale(${z})`} style={{ '--z': z }}>
-          {visible.map(([it, i]) => (it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} /></g>
-            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} />))}
+          {visible.map(([it, i]) => (it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
+            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />))}
+          {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
+          {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
           {selItems.map(outline)}
           {overlay.rubber?.hits?.map(id => byId.get(id)).filter(Boolean).map(preview)}
           {multiBox && <rect x={multiBox.x} y={multiBox.y} width={multiBox.w} height={multiBox.h} fill="none" stroke={BLUE} strokeWidth={1 / z} strokeDasharray={`${4 / z} ${3 / z}`} />}
@@ -888,8 +927,13 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         const out = []
         if (has) out.push(['복사', 'Ctrl+C', act(copy)], ['잘라내기', '', act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })],
           ['복제', 'Ctrl+D', act(() => { const r = duplicate(m.items, movingSet(ids), 0, 0); commit(r.items, r.ids, '제자리 복제') })],
-          ['삭제', 'Del', act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))], ['그림으로 복사(한글·PPT)', '', act(copyAsImage)])
+          ['삭제', 'Del', act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))])
         if (ids.length === 1 || styleClip.current) { out.push('-'); if (ids.length === 1) out.push(['스타일 복사', 'Ctrl+Alt+C', act(styleCopy)]); if (has && styleClip.current) out.push(['스타일 붙여넣기', 'Ctrl+Alt+V', act(stylePaste)]) }
+        if (menu.cell && selIt.length === 1 && selIt[0].type === 'table') {   // 표 칸 — 행·열 넣기·지우기
+          const t = selIt[0], { r, c } = menu.cell, op = (o, label) => act(() => commit(m.items.map(x => (x._id === t._id ? tableOp(t, o, r, c) : x)), ids, label))
+          out.push('-', ['행 · 열', '', null, [['위에 행 넣기', op('rowAbove', '행 넣기')], ['아래에 행 넣기', op('rowBelow', '행 넣기')], ['왼쪽에 열 넣기', op('colLeft', '열 넣기')], ['오른쪽에 열 넣기', op('colRight', '열 넣기')], '-',
+            ['이 행 지우기', op('delRow', '행 지우기'), t.rows <= 1], ['이 열 지우기', op('delCol', '열 지우기'), t.cols <= 1]]])
+        }
         if (alignTargets().length >= 2) out.push('-', ['정렬 / 분배', '', null, [['왼쪽 맞춤', act(() => alignSel('left'))], ['가로 가운데', act(() => alignSel('hcenter'))], ['오른쪽 맞춤', act(() => alignSel('right'))], '-',
           ['위쪽 맞춤', act(() => alignSel('top'))], ['세로 가운데', act(() => alignSel('vcenter'))], ['아래쪽 맞춤', act(() => alignSel('bottom'))], '-',
           ['가로 균등 분배', act(() => distributeSel('x')), alignTargets().length < 3], ['세로 균등 분배', act(() => distributeSel('y')), alignTargets().length < 3],
@@ -908,24 +952,25 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         return out })()} />}
       {editing?.kind === 'cell' && (() => { const it = byId.get(editing.id); if (!it) return null
         const r = cellRect(it, editing.r, editing.c), pts = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].map(([x, y]) => scr(toScene(it, { x, y })))
-        const xs = pts.map(q => q.x), ys = pts.map(q => q.y), h = Math.max(...ys) - Math.min(...ys)
-        return <CellInput key={`${editing.id}-${editing.r}-${editing.c}`} init={it.cells?.[editing.r]?.[editing.c] || ''} onDone={finishCell}
-          style={{ left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: h, fontSize: Math.max(10, Math.min(h * 0.6, 18)), fontWeight: it.header && editing.r === 0 ? 700 : 400 }} /> })()}
+        const xs = pts.map(q => q.x), ys = pts.map(q => q.y), h = Math.max(...ys) - Math.min(...ys), txt0 = it.cells?.[editing.r]?.[editing.c] || ''
+        return <CellInput key={`${editing.id}-${editing.r}-${editing.c}`} init={txt0} onDone={finishCell} fontFor={v => cellFontPx(v, r.w, r.h, it.header && editing.r === 0, it.font ? it.font * PT : 0) * (it.scale || 1) * cam.z}
+          style={{ left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: h, fontWeight: it.header && editing.r === 0 ? 700 : 400 }} /> })()}
       {editing && editing.kind !== 'cell' && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={s} onDone={finishEdit} /> })()}
-      {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapCustom={swapToCustom} dark={dark}
+      {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )
 })
 
 // 표 칸 한 줄 편집기(데스크톱 `_CellEditor`) — Enter 아래 칸, Tab 오른쪽(줄 끝이면 다음 줄), Shift+Tab 왼쪽, Esc 취소, 밖을 누르면 확정
-function CellInput({ init, onDone, style }) {
+function CellInput({ init, onDone, style, fontFor }) {   // fontFor(글) = 그 글이 칸에 그려질 크기 — 치는 동안 같이 줄어듦
   const done = useRef(false), fin = (v, mv) => { if (done.current) return; done.current = true; onDone(v, mv) }
-  return <input autoFocus defaultValue={init} onFocus={e => e.target.select()} onBlur={e => fin(e.target.value, null)} onPointerDown={e => e.stopPropagation()}
+  const [val, setVal] = useState(init)
+  return <input autoFocus value={val} onChange={e => setVal(e.target.value)} onFocus={e => e.target.select()} onBlur={e => fin(e.target.value, null)} onPointerDown={e => e.stopPropagation()}
     onKeyDown={e => { e.stopPropagation(); if (e.nativeEvent.isComposing) return
       if (e.key === 'Enter') { e.preventDefault(); fin(e.target.value, [1, 0]) } else if (e.key === 'Tab') { e.preventDefault(); fin(e.target.value, [0, e.shiftKey ? -1 : 1]) } else if (e.key === 'Escape') fin(null, null) }}
-    style={{ position: 'absolute', boxSizing: 'border-box', textAlign: 'center', border: '2px solid #89b4fa', borderRadius: 2, background: 'var(--mb-editbg, #fff)', color: 'var(--mb-ink)', padding: 0, outline: 'none', fontFamily: "'Pretendard', sans-serif", ...style }} />
+    style={{ position: 'absolute', boxSizing: 'border-box', textAlign: 'center', border: '2px solid #89b4fa', borderRadius: 2, background: 'var(--mb-editbg, #fff)', color: 'var(--mb-ink)', padding: 0, outline: 'none', fontFamily: "'Segoe UI', 'Malgun Gothic', sans-serif", ...style, fontSize: fontFor(val) }} />   // 글꼴도 칸 그림과 같게(APP_FONT)
 }
 
 // ── 선택 표시 모양 — 데스크톱 `_paint_selection_highlight`: 하나 선택·화살표 = 1.6px 중심선, 여러 개 중 닫힌 도형 = 바깥 띠 ──

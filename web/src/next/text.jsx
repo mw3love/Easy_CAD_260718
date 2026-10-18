@@ -27,7 +27,7 @@ const Finish = Extension.create({
 })
 
 // spec: { left, top (화면 px — 문서 상자 왼쪽 위) 또는 center(화면 px — 도형 라벨 가운데), px(글자 px, 화면 배율 적용 전), zoom, family('app'|'board'), weight, color, align('left'|'center'),
-//         rotation, origin(화면 px 회전 중심), text, runs } — onDone({ text, runs })
+//         rotation, origin(화면 px 회전 중심), text, runs, width(화면 px — 주면 그 폭에서 줄바꿈: 왼쪽 위 라벨) } — onDone({ text, runs })
 export function TextEditor({ spec, onDone }) {
   const host = useRef(null), ed = useRef(null), done = useRef(false)
   useEffect(() => {
@@ -55,7 +55,7 @@ export function TextEditor({ spec, onDone }) {
       transform: spec.center ? 'translate(-50%,-50%)' : spec.rotation ? `rotate(${spec.rotation}deg)` : undefined,   // center = 도형 라벨(가운데 기준)
       transformOrigin: !spec.center && spec.origin ? `${spec.origin.x - spec.left}px ${spec.origin.y - spec.top}px` : undefined,
       font: `${spec.weight || 400} ${fs}px ${spec.family === 'board' ? BOARD_FONT : APP_FONT}`, lineHeight: m.lineSpacing, color: spec.color, textAlign: spec.align || 'left',
-      whiteSpace: 'pre', outline: '1.5px solid #89b4fa', background: spec.bg || 'rgba(255,255,255,.9)', zIndex: 20 }}>
-    <style>{`[data-testid=text-editor] .ProseMirror{outline:none;white-space:pre}[data-testid=text-editor] p{margin:0}`}</style>
+      whiteSpace: spec.width ? 'pre-wrap' : 'pre', width: spec.width, overflowWrap: spec.width ? 'anywhere' : undefined, outline: '1.5px solid #89b4fa', background: spec.bg || 'rgba(255,255,255,.9)', zIndex: 20 }}>
+    <style>{`[data-testid=text-editor] .ProseMirror{outline:none;white-space:${spec.width ? 'pre-wrap' : 'pre'};overflow-wrap:${spec.width ? 'anywhere' : 'normal'}}[data-testid=text-editor] p{margin:0}`}</style>
   </div>
 }

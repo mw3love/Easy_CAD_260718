@@ -146,3 +146,16 @@ test('손으로 놓은 직각 길이 끝을 따라가도 사선이 안 생김 �
   assert.deepEqual(out.pts, ar.pts.map(([x, y]) => [x + 15, y + 25]))
 })
 
+
+import { tableOp } from '../src/next/edit.js'
+test('tableOp — 행·열 넣기·지우기(크기는 행 높이·열 폭만큼)', () => {
+  const t = { type: 'table', rows: 2, cols: 2, rect: [0, 0, 80, 28], col_widths: [0.25, 0.75], cells: [['a', 'b'], ['c', 'd']] }
+  const r1 = tableOp(t, 'rowBelow', 0, 0)
+  assert.equal(r1.rows, 3); assert.deepEqual(r1.cells, [['a', 'b'], ['', ''], ['c', 'd']]); assert.equal(r1.rect[3], 42)
+  const c1 = tableOp(t, 'colLeft', 0, 1)
+  assert.equal(c1.cols, 3); assert.deepEqual(c1.cells[0], ['a', '', 'b']); assert.equal(c1.rect[2], 140)
+  assert.deepEqual(c1.col_widths.map(v => Math.round(v * 140)), [20, 60, 60])
+  const d = tableOp(c1, 'delCol', 0, 0)
+  assert.deepEqual(d.cells[0], ['', 'b']); assert.equal(Math.round(d.rect[2]), 120)
+  assert.equal(tableOp({ ...t, rows: 1, cells: [['a', 'b']] }, 'delRow', 0, 0).rows, 1)   // 마지막 한 줄은 못 지움
+})

@@ -96,14 +96,3 @@ export function answerToEcadText(md, source = '') {
   return { text, runs }
 }
 
-// 카드 폭에 맞춰 줄바꿈 — 띄어쓰기를 줄바꿈으로 바꾼다(글자 수가 그대로라 runs 자리가 안 어긋남). measure(글) → 폭. 띄어쓰기 없는 긴 낱말은 그대로 둔다.
-export function wrapText(text, maxW, measure) {
-  const ch = [...text]
-  let lineStart = 0, lastSpace = -1
-  for (let i = 0; i <= ch.length; i++) {
-    if (i === ch.length || ch[i] === '\n') { lineStart = i + 1; lastSpace = -1; continue }
-    if (ch[i] === ' ') lastSpace = i
-    if (lastSpace > lineStart && measure(ch.slice(lineStart, i + 1).join('')) > maxW) { ch[lastSpace] = '\n'; lineStart = lastSpace + 1; lastSpace = -1 }
-  }
-  return ch.join('')
-}
