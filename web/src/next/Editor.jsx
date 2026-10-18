@@ -948,9 +948,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // 복제(Ctrl+D) — 오른쪽 아래로 20(제자리면 겹쳐 안 보임 — 2026-10-18 사용자 지적). 방금 만든 복제본을 옮기고 또 누르면 그 옮긴 만큼 되풀이(같은 간격으로 늘어놓기)
   const lastDup = useRef(null)   // { ids: 복제본, src: 원본 첫 조각, dup: 복제본 첫 조각 }
   function dupSel() {
-    const m = R.current.model, ids = movingSet(R.current.sel); if (!ids.length) return
+    const m = R.current.model, sel = R.current.sel, ld = lastDup.current
+    // 방금 만든 복제본을 그대로 고른 채면 그 복제본만 — 다시 「안의 것」을 모으면 20 비켜 겹친 앞 복제본까지 딸려 와 개수가 배로 붙어남(2026-10-18 사용자: 프레임 번호 133·197·229…)
+    const live = ld && ld.ids.filter(id => m.items.some(x => x._id === id)), same = !!live?.length && sel.length > 0 && sel.every(id => live.includes(id))
+    const ids = same ? live : movingSet(sel); if (!ids.length) return
     let dx = 20, dy = 20
-    const ld = lastDup.current, same = ld && ld.ids.length === ids.length && ld.ids.every(id => ids.includes(id))
     if (same) { const a = m.items.find(x => x._id === ld.src), b = m.items.find(x => x._id === ld.dup)
       if (a && b) { const sa = sceneBox(a, textBox), sb = sceneBox(b, textBox); dx = sb.x - sa.x; dy = sb.y - sa.y } }
     const set = new Set(ids), first = m.items.find(it => set.has(it._id)), r = duplicate(m.items, ids, dx, dy)

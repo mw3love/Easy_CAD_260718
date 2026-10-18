@@ -134,7 +134,8 @@ export function boardContents(items, boardIds, textBox) {
   if (!boxes.length) return []
   return items.filter(it => !boardIds.includes(it._id) && !it.locked).filter(it => {
     const s = sceneBox(it, textBox), cx = s.x + s.w / 2, cy = s.y + s.h / 2
-    return boxes.some(({ r, board }) => !(board && it.type === 'board') && cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h)   // 보드 안 보드는 따로(전과 같음), 프레임 안 보드·프레임은 같이
+    if (it.type === 'frame') return boxes.some(({ r }) => s.x >= r.x && s.y >= r.y && s.x + s.w <= r.x + r.w && s.y + s.h <= r.y + r.h)   // 프레임 안 프레임은 통째로 들어 있을 때만(겹친 이웃 프레임까지 딸려 오지 않게)
+    return boxes.some(({ r, board }) => !(board && it.type === 'board') && cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h)   // 보드 안 보드는 따로(전과 같음), 프레임 안 보드는 같이
   }).map(it => it._id)
 }
 
