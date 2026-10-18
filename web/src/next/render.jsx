@@ -9,6 +9,7 @@ import {
 import { symbolPath } from './symbols.js'
 import { sarrowRadius } from './arrows.js'
 import { WEB_HEAD, frameSrc, openBtnRect, siteOf } from './webcard.js'
+import { LISTY, MEMO, MEMO_KIND, MUTED, olNumbers } from './memo.js'
 
 // ── 글자 재기(캔버스) ──
 let _ctx = null
@@ -113,6 +114,30 @@ export function leftLabelLayout(it) {
   return layoutText(L.text || '', L.runs, (L.font || 16) * PT, family, 400, Math.max(10, w - 2 * LABEL_PAD - 2 * TEXT_MARGIN))
 }
 export const fitTextHeight = it => Math.ceil(leftLabelLayout(it).h + 2 * TEXT_MARGIN + 2 * LABEL_PAD)
+
+// 메모 배치(아이템 안 좌표) — 줄마다 { ln, x(글 왼쪽), y(글 위), lay, marker, box(할 일 체크 상자) }, h = 메모 전체 높이. 고치기 CSS(memoedit.jsx)와 같은 치수
+const _ml = new WeakMap()
+export function memoLayout(it) {
+  let r = _ml.get(it); if (r) return r
+  const lines = it.lines?.length ? it.lines : [{ k: 'p', t: '' }], w = it.rect?.[2] || MEMO.W, inner = Math.max(20, w - 2 * MEMO.PAD), nums = olNumbers(lines), rows = []
+  let y = MEMO.PAD
+  lines.forEach((ln, i) => {
+    const K = MEMO_KIND[ln.k] || MEMO_KIND.p, px = K.pt * PT, prev = lines[i - 1], next = lines[i + 1]
+    const joinPrev = i > 0 && (ln.k === 'code' || ln.k === 'quote') && prev.k === ln.k, joinNext = next && (ln.k === 'code' || ln.k === 'quote') && next.k === ln.k   // 이어진 코드·인용 줄 = 한 덩어리(위아래 여백은 덩어리 끝에만)
+    if (i > 0 && !joinPrev) y += K.gap ?? MEMO.GAP
+    if (!joinPrev) y += TEXT_MARGIN
+    const ind = LISTY.has(ln.k) ? ((ln.lv || 0) + 1) * MEMO.INDENT : ln.k === 'quote' ? MEMO.QUOTE : 0
+    const runs = K.mono ? [[0, (ln.t || '').length, null, false, null, true]] : ln.runs
+    const lay = layoutText(ln.t || '', runs, px, 'board', K.bold ? 700 : 400, Math.max(10, inner - ind - 2 * TEXT_MARGIN))
+    const x = MEMO.PAD + ind, lh = METRICS.board.lineSpacing * px, cy = y + TEXT_MARGIN + lh / 2
+    const marker = ln.k === 'ul' ? ['•◦▪'[(ln.lv || 0) % 3]] : ln.k === 'ol' ? [`${nums[i]}.`] : null
+    const box = ln.k === 'todo' ? { x: x - MEMO.INDENT + 2, y: cy - px * 0.45, s: px * 0.9 } : null
+    rows.push({ ln, i, x, y: y - TEXT_MARGIN, lay, px, marker, box, cy: cy - TEXT_MARGIN, lh, joinPrev, joinNext })
+    y += lay.h + (joinNext ? 0 : TEXT_MARGIN)
+  })
+  r = { rows, h: Math.ceil(y + MEMO.PAD) }; _ml.set(it, r); return r
+}
+export const memoHeight = it => memoLayout(it).h
 
 // 글 그리기 — (left, top) = 문서 상자 왼쪽 위(여백 포함). color = 기본 글 색
 function TextLines({ lay, left, top, color, halo }) {   // halo = 글자 둘레를 칠할 바탕색(화살표 라벨 — 다른 선이 지나가도 읽히게)
@@ -341,6 +366,22 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.url, 10, 400, tw)}</text>
         <g><title>새 탭에서 열기</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
+      </g>
+    }
+    case 'memo': {   // 메모 — 채운 둥근 네모 + 줄마다 글(제목·목록 표·할 일 상자·인용 막대·코드)
+      const [x, y, w, h] = it.rect, ml = memoLayout(it), ink0 = ink('#ff1f1f1f', true), fillC = it.fill ? cssColor(it.fill) : '#ffffff'
+      return <g transform={T}>
+        <rect x={x} y={y} width={w} height={h} rx={10} ry={10} fill={fillC} stroke={it.pen ? cssColor(it.pen) : '#d4d4d8'} strokeWidth={1} />
+        {ml.rows.map(({ ln, i, x: lx, y: ly, lay, px, marker, box, cy, lh }) => {
+          const done = ln.k === 'todo' && ln.done, col = done ? MUTED : ln.k === 'quote' ? '#52525b' : ink0
+          return <g key={i}>
+            {ln.k === 'quote' && <rect x={x + MEMO.PAD} y={y + ly + (ml.rows[i].joinPrev ? TEXT_MARGIN : 0)} width={3} height={lay.h + (ml.rows[i].joinPrev ? 0 : TEXT_MARGIN) + (ml.rows[i].joinNext ? 0 : TEXT_MARGIN)} fill="#d4d4d8" />}
+            {marker && <text x={x + lx - 6} y={y + cy} textAnchor="end" dominantBaseline="central" fontSize={px} fontFamily={BOARD_FONT} fill={ink0}>{marker[0]}</text>}
+            {box && <g><rect x={x + box.x} y={y + box.y} width={box.s} height={box.s} rx={box.s * 0.18} fill={ln.done ? '#2f80ed' : '#ffffff'} stroke={ln.done ? '#2f80ed' : '#a1a1aa'} strokeWidth={1.2} />
+              {ln.done && <path d={`M${x + box.x + box.s * 0.22},${y + box.y + box.s * 0.52} L${x + box.x + box.s * 0.43},${y + box.y + box.s * 0.72} L${x + box.x + box.s * 0.8},${y + box.y + box.s * 0.3}`} fill="none" stroke="#fff" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />}</g>}
+            <TextLines lay={lay} left={x + lx - TEXT_MARGIN} top={y + ly} color={col} />
+            {done && lay.lines.map((l, j) => <path key={'s' + j} d={`M${x + lx},${y + ly + TEXT_MARGIN + (j + 0.55) * lh} H${x + lx + l.w}`} stroke={MUTED} strokeWidth={1} />)}
+          </g> })}
       </g>
     }
     case 'frame': {   // 프레임 — 얇은 테두리 + 위 왼쪽 이름표(Lucid Frame·Figma Section). 안은 비움(위에 그림)

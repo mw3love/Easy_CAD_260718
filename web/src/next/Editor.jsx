@@ -3,7 +3,7 @@
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, rr } from './render.jsx'
+import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, rr } from './render.jsx'
 import { boardMembership, drawOrder, itemBounds } from './doc.js'
 import { paperWH, PT, TEXT_MARGIN, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
@@ -30,15 +30,17 @@ import { Presenter } from './present.jsx'
 import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, exportPdf, exportPng, exportSvg, pngBlob } from './exporter.jsx'
 import { ContextMenu } from './ctxmenu.jsx'
-import { answerToEcadText, freeSpot, sourceLine } from '../chatFormat.js'
+import { freeSpot, sourceLine } from '../chatFormat.js'
 import { fetchLinkInfo, normalizeUrl, openBtnRect, siteOf, webCardFields } from './webcard.js'
 import { buildLegend, isLegendPart, legendEntries, legendState } from './legend.js'
+import { MEMO, memoFromAnswer, memoText } from './memo.js'
+import { MemoEditor } from './memoedit.jsx'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
 const HANDLE = 10, HIT_PX = 4, EDGE_PX = 5
 const INK = '#ff1f1f1f'   // 새로 그리는 선·글 기본색(밝은 칠판)
-const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web'])
+const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web', 'memo'])
 
 // 글 상자 크기(아이템 안 단위) — 그릴 때와 같은 재기, 아이템 객체마다 한 번
 const _tb = new WeakMap()
@@ -92,6 +94,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const al = R.current.activeLayer, ly = al && al !== 'default' && layersOf(R.current.model).find(l => l.id === al)
     if (ly && ly.visible && !ly.locked) { const had = new Set(prev.map(it => it._id)); next = next.map(it => (had.has(it._id) || it.layer_id ? it : { ...it, layer_id: al })) }
     next = next.map(it => (it.type === 'table' && (it.font || it.cell_styles) ? fitTable(it) : it))   // 직접 정한 표 글자 = 그대로, 칸이 늘어남
+    next = next.map(it => (it.type === 'memo' && it.rect && Math.abs(memoHeight(it) - it.rect[3]) > 0.5 ? applyRect(it, [it.rect[0], it.rect[1], it.rect[2], memoHeight(it)]) : it))   // 메모 높이 = 줄에 맞춤
     next = next.map(it => (it.fit_text && it.label?.align === 'left' && it.rect && Math.abs(fitTextHeight(it) - it.rect[3]) > 0.5 ? applyRect(it, [it.rect[0], it.rect[1], it.rect[2], fitTextHeight(it)]) : it))   // 글에 맞춘 상자(AI 카드·메모)
     const fixed = followArrows(next, rectOf)
     if (!(merge && h.mergeKey === merge && now - h.mergeT < 1500)) { h.past.push({ items: prev, sel: R.current.sel }); h.future = [] }
@@ -105,7 +108,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
 
-  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, insertWeb, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -218,6 +221,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     }
     const lk = frameLockAt(p); if (lk) { setLoose(l => (l === lk._id ? null : lk._id)); return }   // 이름표 옆 자물쇠 — 잠깐 틀만
     const wo = webOpenAt(p); if (wo) { window.open(wo.url, '_blank', 'noopener'); return }   // 웹 카드 오른쪽 위 ↗ = 새 탭
+    const mc = memoCheckAt(p); if (mc) { const ln = mc.it.lines[mc.i]; commit(m.items.map(x => (x._id === mc.it._id ? { ...x, lines: x.lines.map((l, j) => (j === mc.i ? (l.done ? (({ done, ...r }) => r)(l) : { ...l, done: true }) : l)) } : x)), R.current.sel, ln.done ? '할 일 풂' : '할 일 끝'); return }
     const h = handleAt(p)
     if (h?.qc) { st.current = { ...st.current, kind: 'conn', src: single._id, side: h.key.slice(3), port: h.port, start: p, cur: p, fromQc: true, moved: false }; return }
     if (h?.bend) { st.current = { ...st.current, kind: 'bend', id: single._id, which: +h.key.slice(1), orig: m.items }; return }
@@ -667,18 +671,35 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (it.label?.text?.trim()) out.push(it.label.text)
       for (const L of it.labels || []) if (L.text?.trim()) out.push(L.text)
       if (it.type === 'table') { const t = (it.cells || []).map(r => r.filter(Boolean).join(' | ')).filter(Boolean).join('\n'); if (t) out.push(t) }
+      if (it.type === 'memo') { const t = memoText(it.lines); if (t.trim()) out.push(t) }
     }
     return out
   }
   // 답 → 카드 = 채운 네모 하나 + 왼쪽 위 라벨(상자 폭에서 줄바꿈) + 글에 맞춘 높이(`fit_text`) — 한 덩어리라 글이 넘칠 수 없음(2026-10-18 사용자 지적: 보드 + 글 두 덩어리는 넘침)
   // 지금 화면에서 다른 것과 안 겹치는 자리(왼쪽 카드·오른쪽 속성 카드 자리는 뺌), 카드에 `chat_at` = 답 시각
-  const CARD_W = 340, CARD_PT = 10.5   // 14px — 옛 tldraw 카드와 같은 크기
+  const CARD_W = MEMO.W   // 답 메모 폭(옛 카드와 같은 340)
+  // 2026-10-18 사용자: 답도 메모로 — 제목·목록·할 일·코드·인용이 줄 단위(정리하기 쉽게). 옛 카드(네모 + 왼쪽 위 라벨)는 그대로 열림
   function cardItem(msg, x, y, z) {
-    const { text, runs } = answerToEcadText(msg.content, sourceLine(msg.model, msg.at))
-    const it = base([x, y], { type: 'rect', rect: [0, 0, CARD_W, 40], pen: '#ffd4d4d8', width: 1, fill: '#ffffffff', style: 1, radius: 12, fit_text: true, chat_at: msg.at, z,   // 둥근 모서리 12(옛 카드처럼 — 사용자)
-      label: { text, runs, color: '#ff1f1f1f', font: CARD_PT, family: 'Pretendard', bg: null, align: 'left' } })
-    return { ...it, rect: [0, 0, CARD_W, fitTextHeight(it)] }
+    const it = base([x, y], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines: memoFromAnswer(msg.content, sourceLine(msg.model, msg.at)), chat_at: msg.at, z })
+    return { ...it, rect: [0, 0, MEMO.W, memoHeight(it)] }
   }
+  // 새 빈 메모(상단 「메모」 — 포스트잇 자리) — 화면 가운데에 놓고 바로 고치기
+  function insertMemo() {
+    const m = R.current.model, c = R.current.cam, cx = (size.w / 2 - c.x) / c.z, cy = (size.h / 2 - c.y) / c.z, s = +(1 / c.z).toPrecision(2)
+    let it = base([cx - MEMO.W * s / 2, cy - 40 * s], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffff8c5', lines: [{ k: 'p', t: '' }], scale: s, z: topZ(m.items) + 1 })
+    it = { ...it, rect: [0, 0, MEMO.W, memoHeight(it)] }
+    commit([...m.items, it], [it._id], '메모'); setTool('select'); setEditing({ id: it._id, kind: 'memo' })
+  }
+  // 칠판 위 할 일 체크 상자 = 바로 누르기(2026-10-18 사용자: 노션처럼) — 맨 위 메모부터
+  const memoCheckAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'memo' || it.locked) continue
+    const q = toLocal(it, p), [x0, y0] = it.rect, pad = 3 / z / (it.scale || 1)
+    for (const r of memoLayout(it).rows) if (r.box && q.x >= x0 + r.box.x - pad && q.x <= x0 + r.box.x + r.box.s + pad && q.y >= y0 + r.box.y - pad && q.y <= y0 + r.box.y + r.box.s + pad) return { it, i: r.i } } return null }
+  function finishMemo(lines) {
+    const ed = R.current.editing; setEditing(null); if (!ed || !lines) return
+    const m = R.current.model, it = m.items.find(x => x._id === ed.id); if (!it) return
+    commit(m.items.map(x => (x._id === it._id ? { ...it, lines } : x)), [it._id], '메모 고침')
+  }
+  function liveMemo(id, lines) { const m = R.current.model; setLive(m.items.map(x => { if (x._id !== id) return x; const n = { ...x, lines }; return { ...n, rect: [n.rect[0], n.rect[1], n.rect[2], memoHeight(n)] } })) }
   function pinCard(msg, drop) {   // drop = 칠판 좌표(끌어 놓은 자리 — 왼쪽 위), 없으면 빈자리
     const m = R.current.model, c = R.current.cam, h = cardItem(msg, 0, 0, 0).rect[3]
     const left = 220 / c.z, right = 220 / c.z, view = { x: -c.x / c.z + left, y: -c.y / c.z, w: Math.max(CARD_W, size.w / c.z - left - right), h: size.h / c.z }
@@ -842,6 +863,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const hit = topHit(hitPool(), p, HIT_PX / R.current.cam.z, textBox)
     if (!hit || hit.locked) return
     if (hit.type === 'frame') { const b = frameTagBox(hit); if (p.y <= b.y + b.h + 2 / R.current.cam.z) { setSel([hit._id]); setTagEdit(hit._id) } return }   // 이름표 = 그 자리에서 이름 고치기
+    if (hit.type === 'memo') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'memo' }); return }
     if (hit.type === 'web') { setSel([hit._id]); if (hit.frameable) { setWebOn(hit._id); setStatus('웹 카드 안을 조작하는 중 — 바깥을 누르면 끝') } else window.open(hit.url, '_blank', 'noopener'); return }   // 막는 사이트 = 새 탭
     if (hit.type === 'table') { const cell = cellAt(hit, toLocal(hit, p)); if (cell) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'cell', ...cell }) } return }
     if (isArrow(hit)) {   // 화살표 빈 자리 더블클릭 = 그 자리에 새 라벨(여러 개 — 데스크톱 `add_label_at_scene_pos`)
@@ -1235,7 +1257,9 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
           spec={{ cell: true, cellKey: `${editing.r},${editing.c}`, left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: h, px: pxFor(txt0), pxFor, zoom: cam.z, family: 'app', weight: cs.bold ? 700 : 400,
             color: ink(cs.color || '#111111', !!cs.fill), bg: 'var(--mb-editbg)', align: cs.align, text: txt0, runs: editing.fresh || editing.armed ? undefined : it.cell_runs?.[`${editing.r},${editing.c}`], onReady: setLiveEd,
             armed: !!editing.armed, fresh: !!editing.fresh, onArm: () => { const e = { id: editing.id, kind: 'cell', r: editing.r, c: editing.c, fresh: true }; R.current.editing = e; setEditing(e) } }} /> })(editing?.kind === 'cell' ? editing : !editing && cellSel && sel.length === 1 && sel[0] === cellSel.id ? { id: cellSel.id, kind: 'cell', r: cellRange(cellSel).r0, c: cellRange(cellSel).c0, armed: true } : null)}
-      {editing && editing.kind !== 'cell' && (() => { const s = editSpec(); if (!s) return null
+      {editing?.kind === 'memo' && (() => { const it = byId.get(editing.id); if (!it) return null; const s = it.scale || 1, o = scr(toScene(it, { x: it.rect[0], y: it.rect[1] }))
+        return <MemoEditor key={it._id} spec={{ left: o.x, top: o.y, width: it.rect[2] * s * cam.z, zoom: s * cam.z, fill: it.fill ? cssColor(it.fill) : '#fff', lines: it.lines, onChange: ls => liveMemo(it._id, ls) }} onDone={finishMemo} /> })()}
+      {editing && editing.kind !== 'cell' && editing.kind !== 'memo' && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={{ ...s, onReady: setLiveEd }} onDone={finishEdit} /> })()}
       {editing && liveEd && <EditProps ed={liveEd} />}
       {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}

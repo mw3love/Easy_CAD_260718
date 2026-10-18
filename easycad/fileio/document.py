@@ -360,7 +360,7 @@ def item_to_dict(it) -> dict | None:
                 d["label"]["align"] = v
         elif k == "type":   # 웹 프레임·웹 카드 — 네모로 열었던 것을 다시 frame·web으로
             d["type"] = v
-            if v == "web":   # 카드에 보이려고 붙인 라벨(제목·주소)은 웹에선 안 씀
+            if v in ("web", "memo"):   # 보이려고 붙인 라벨(제목·주소 / 메모 줄 글)은 웹에선 안 씀
                 d.pop("label", None)
         elif k not in d:
             d[k] = v
@@ -372,6 +372,15 @@ _WEB_ONLY_KEYS_ALL = ("fit_text", "chat_at", "legend", "legend_key")   # legend�
 
 def _web_card_label(d: dict):
     """웹 카드를 데스크톱에서 볼 때 네모 안 글(제목·주소) — 저장할 땐 빼고 다시 web으로(`item_to_dict`)."""
+    if d.get("type") == "memo":   # 메모 줄 → 쉬운 글(웹 memo.js `memoText`와 같은 표시)
+        marks = {"h1": "# ", "h2": "## ", "h3": "### ", "ul": "• ", "quote": "│ "}
+        n, out = 0, []
+        for ln in d.get("lines") or []:
+            k = ln.get("k", "p")
+            n = n + 1 if k == "ol" else 0
+            mk = f"{n}. " if k == "ol" else ("☑ " if ln.get("done") else "☐ ") if k == "todo" else marks.get(k, "")
+            out.append("  " * int(ln.get("lv") or 0) + mk + (ln.get("t") or ""))
+        return {"text": "\n".join(out), "color": "#ff1f1f1f", "font": 10, "bg": None, "align": "left"}
     if d.get("type") != "web":
         return None
     return {"text": ((d.get("title") or "") + "\n" + (d.get("url") or "")).strip(), "color": "#ff18181b", "font": 10, "bg": None}
@@ -420,6 +429,9 @@ def dict_to_item(d: dict):
     elif t == "web":   # [웹 칠판 2026-10-18] 웹 카드(유튜브·웹페이지) — 데스크톱은 아직 모름: 제목·주소를 적은 네모로 보이고, 저장할 때 다시 web으로
         wd = {"pen": "#ffa1a1aa", "width": 1.0, "style": 1, "fill": "#fff4f4f5"}
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(wd)); it.setBrush(_mkbrush(wd)); it._radius = 8.0
+    elif t == "memo":   # [웹 칠판 2026-10-18] 메모(줄마다 제목·목록·할 일·코드·인용) — 데스크톱은 아직 모름: 줄 글을 적은 둥근 네모로 보이고, 저장할 때 다시 memo로
+        md = {"pen": "#ffd4d4d8", "width": 1.0, "style": 1, "fill": d.get("fill") or "#ffffffff"}
+        it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(md)); it.setBrush(_mkbrush(md)); it._radius = 10.0
     elif t == "rect":
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
         it._radius = float(d.get("radius") or 0)
@@ -479,6 +491,8 @@ def dict_to_item(d: dict):
         extra.update({"type": "frame", **{k: d[k] for k in ("name", "no", "ratio", "magnet") if k in d}})
     if t == "web":
         extra.update({"type": "web", **{k: d[k] for k in ("url", "title", "thumb", "embed", "frameable") if k in d}})
+    if t == "memo":
+        extra.update({"type": "memo", **{k: d[k] for k in ("lines",) if k in d}})
     if extra:
         it._web_extra = extra
     for pd in d.get("ports", []):

@@ -25,8 +25,10 @@ export function parseAnswer(md) {
     if (!t) { if (lines.length && !blank) { lines.push({ kind: 'gap', parts: [] }); blank = true } continue }
     blank = false
     let m
-    if ((m = /^#{1,6}\s+(.*)$/.exec(t))) lines.push({ kind: 'h', parts: inlineParts(m[1].replace(/\*\*/g, '')) })
-    else if ((m = /^([-*•]|\d+[.)])\s+(.*)$/.exec(t))) lines.push({ kind: 'li', mark: /\d/.test(m[1]) ? m[1] : '•', parts: inlineParts(m[2]) })
+    if ((m = /^(#{1,6})\s+(.*)$/.exec(t))) lines.push({ kind: 'h', level: m[1].length, parts: inlineParts(m[2].replace(/\*\*/g, '')) })
+    else if ((m = /^([-*•]|\d+[.)])\s+(.*)$/.exec(t))) { const lv = Math.min(3, Math.floor((raw.length - raw.trimStart().length) / 2))   // 목록 깊이 = 앞 띄어쓰기 둘마다(메모)
+      lines.push({ kind: 'li', mark: /\d/.test(m[1]) ? m[1] : '•', parts: inlineParts(m[2]), ...(lv ? { lv } : {}) }) }
+    else if ((m = /^>\s?(.*)$/.exec(t))) lines.push({ kind: 'quote', parts: inlineParts(m[1]) })
     else lines.push({ kind: 'p', parts: inlineParts(t) })
   }
   while (lines.length && lines[lines.length - 1].kind === 'gap') lines.pop()
