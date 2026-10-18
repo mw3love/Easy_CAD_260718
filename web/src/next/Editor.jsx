@@ -233,8 +233,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (s.kind === 'conn') {
       if (!s.moved && Math.hypot(p.x - s.start.x, p.y - s.start.y) * z <= CONN_DRAG_PX) return
       s.moved = true
-      let cur = p; const n = s.port.n, o = s.port.p   // 출구 축에 10px 안이면 곧게(데스크톱)
-      if (Math.abs(n.x) >= Math.abs(n.y)) { if (Math.abs(cur.y - o.y) * z <= CONN_STRAIGHT_PX) cur = { x: cur.x, y: o.y } }
+      let cur = p; const n = s.port.n, o = s.port.p   // 출구 축에 10px 안이면 곧게(데스크톱) — 빈 곳에서 시작한 화살표는 출구가 없음
+      if (!n) { /* 자유 시작 */ } else if (Math.abs(n.x) >= Math.abs(n.y)) { if (Math.abs(cur.y - o.y) * z <= CONN_STRAIGHT_PX) cur = { x: cur.x, y: o.y } }
       else if (Math.abs(cur.x - o.x) * z <= CONN_STRAIGHT_PX) cur = { x: o.x, y: cur.y }
       s.cur = cur
       const tgt = connTarget(s.src, s.port, cur)
@@ -303,8 +303,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     setCursor('default')
     if (s.kind === 'conn') {
       setOverlay(o => ({ ...o, conn: null, hp: null }))
-      if (!s.moved) { if (s.fromQc) qcCreate(s.src, s.side); else setSel(expandGroups(R.current.model.items, [s.src])); return }
-      return newArrow(s.src, s.port, connTarget(s.src, s.port, s.cur), s.cur)
+      if (!s.moved) { if (s.tool === 'arrow') return; if (s.fromQc) qcCreate(s.src, s.side); else setSel(expandGroups(R.current.model.items, [s.src])); return }
+      newArrow(s.src, s.port, connTarget(s.src, s.port, s.cur), s.cur)
+      if (s.tool === 'arrow') setTool('select')
+      return
     }
     if (s.kind === 'aend') { setOverlay(o => ({ ...o, hp: null })); if (live) commit(live, [s.id], '화살표 끝 옮김'); return }
     if (s.kind === 'bend') { if (live) commit(live, [s.id], '곡선 휨'); return }
@@ -350,6 +352,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
   // 새 화살표 기본값 — 속성 카드에서 바꾼 값이 다음 화살표에 이어짐(데스크톱 sticky: 색·굵기·선 모양·화살촉·모서리). 굵기 1 = 데스크톱 `_DEFAULT_WIDTH`·웹 그리기 도구와 같게(2026-10-18 — 2였을 땐 같은 화살표인데 선택 띠가 얇아 보였다)
   const sticky = useRef({ color: INK, style: 1, width: 1, head: true, head_start: false, head_scale: 1, curve_r: 10 })
+  const stickyKind = useRef('ortho')   // 새 화살표 종류(직각·직선·곡선) — 속성 카드 「종류」로 바꾼 것이 이어짐
   function connRoute(srcId, port, tgt, cur) {
     const items = R.current.model.items, src = items.find(x => x._id === srcId), dst = tgt && items.find(x => x._id === tgt.id)
     const box = it => (it && ROUTE_BOX.has(it.type) && it.rect ? sceneRect(it) : null)
@@ -359,12 +362,14 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const arrowItem = (srcId, a, dstId, b, extra) => {
     const items = R.current.model.items, src = items.find(x => x._id === srcId), dst = dstId && items.find(x => x._id === dstId)
     return base([0, 0], { type: 'sarrow', routing: 'ortho', route_hints: [], ...sticky.current, ...extra,
-      _bind1: srcId, bind1_pt: bindPt(src, a), bind1_group: null, _bind2: dst ? dstId : null, bind2_pt: dst ? bindPt(dst, b) : null, bind2_group: null, z: topZ(items) + 1 })
+      _bind1: src ? srcId : null, bind1_pt: src ? bindPt(src, a) : null, bind1_group: null, _bind2: dst ? dstId : null, bind2_pt: dst ? bindPt(dst, b) : null, bind2_group: null, z: topZ(items) + 1 })
   }
   // 끌어 놓음 = 화살표만(빈 곳이면 끝이 떠 있는 화살표). 「자동 길」로 — 도형을 옮겨도 다시 꺾임
   function newArrow(srcId, port, tgt, cur) {
-    const pts = connRoute(srcId, port, tgt, cur), it = arrowItem(srcId, port.p, tgt?.id, tgt?.p, { auto_route: true, pts: pts.map(q => [q.x, q.y]) })
-    commit([...R.current.model.items, it], [it._id], '화살표')
+    const items = R.current.model.items, pts = connRoute(srcId, port, tgt, cur)
+    let it = arrowItem(srcId, port.p, tgt?.id, tgt?.p, { auto_route: !!(srcId || tgt), pts: pts.map(q => [q.x, q.y]) })   // 양끝이 다 떠 있으면 손으로 놓은 길(데스크톱도 붙은 끝이 있을 때만 자동 길)
+    if (stickyKind.current !== 'ortho') it = swapArrowKind(it, stickyKind.current, items, rectOf, sticky.current.curve_r)   // 화살표 종류 = 마지막에 고른 것(데스크톱 `current_arrow_kind`)
+    commit([...items, it], [it._id], '화살표')
   }
   // 큐닷 클릭 = 그 방향으로 (크기 + 40) 옆에 같은 도형 복제(라벨·묶음 없이) + 변 가운데끼리 잇는 화살표
   function qcCreate(srcId, side) {
@@ -379,6 +384,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
 
   function hoverCursor(p) {
     const t = R.current.tool
+    if (t === 'arrow') { const near = hostsNear(p); setHp(near.length ? { id: near[near.length - 1]._id, target: snapAt(near, p, R.current.cam.z, rectOf) } : null); setCursor('crosshair'); return }   // 붙을 자리 예고
     if (t !== 'select') { setCursor(t === 'text' ? 'text' : 'crosshair'); return }
     const h = handleAt(p); setHoverKey(h?.key || null); if (h) { setHp(null); setSegPrev(null); setCursor(h.cursor); return }
     const sg = segAt(p)
@@ -419,6 +425,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // ── 그리기 ──
   function startDraw(t, p) {
     const m = R.current.model
+    if (t === 'arrow') {   // 화살표 도구(데스크톱 「화살표」 — 종류는 속성 카드): 시작이 도형 근처면 붙고, 빈 곳이면 떠 있는 끝. 끄는 건 큐닷·포트점 잇기와 같은 길
+      const snap = snapAt(hostsNear(p), p, R.current.cam.z, rectOf)
+      st.current = { ...st.current, kind: 'conn', tool: 'arrow', src: snap?.id ?? null, port: snap ? { p: snap.p, n: snap.n } : { p, n: null }, start: p, cur: p, fromQc: false, moved: false }
+      return
+    }
     if (t === 'text') { const it = base([p.x - TEXT_MARGIN, p.y - TEXT_MARGIN], { type: 'text', text: '', color: INK, font: 12, bg: null, z: topZ(m.items) + 1 }); commit([...m.items, it], [it._id], '글'); setEditing({ id: it._id, kind: 'text', fresh: true }); setTool('select'); return }
     if (t === 'polygon') {
       const poly = overlay.poly || []
@@ -523,7 +534,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (mod && k.toLowerCase() === 'a') return act(() => setSel(m.items.filter(it => !it.locked).map(it => it._id)))
       if (k === 'Escape') { setOverlay(o => ({ ...o, poly: null, draw: null })); if (R.current.tool !== 'select') setTool('select'); else setSel([]); return }
       if (k === 'Enter' && overlay.poly) return act(() => finishPoly(overlay.poly, false))
-      if (!mod && !e.altKey && !e.shiftKey && { 1: 'select', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen' }[k]) return act(() => setTool({ 1: 'select', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen' }[k]))
+      if (!mod && !e.altKey && !e.shiftKey && { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen' }[k]) return act(() => setTool({ 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen' }[k]))
       if (!ids.length) { if (mod && k.toLowerCase() === 'v') return act(paste); return }
       if (k === 'Delete' || k === 'Backspace') return act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))
       if (mod && k.toLowerCase() === 'c') return act(copy)
@@ -649,7 +660,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       {editing && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={s} onDone={finishEdit} /> })()}
       {selArrows.length > 0 && !editing && <ArrowProps a={selArrows[0]} kind={arrowKindOf(selArrows[0])} set={setArrows}
-        onKind={k => { const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
+        onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )
 })

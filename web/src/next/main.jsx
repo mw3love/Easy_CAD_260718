@@ -29,7 +29,7 @@ const Btn = ({ icon, label, onClick, title, on, disabled }) => (
   </button>
 )
 const Group = ({ children }) => <div style={{ display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>{children}</div>
-const TOOLS = [['select', '↖', '선택', '1'], ['text', 'T', '글자', '3'], ['line', '╱', '선', '4'], ['polygon', '⬠', '다각형', '5'], ['pen', '✎', '펜', '6']]
+const TOOLS = [['select', '↖', '선택', '1'], ['arrow', '⤷', '화살표', '2'], ['text', 'T', '글자', '3'], ['line', '╱', '선', '4'], ['polygon', '⬠', '다각형', '5'], ['pen', '✎', '펜', '6']]
 
 function App() {
   const [model, setModel] = useState(() => fromEcad(emptyDoc()))
