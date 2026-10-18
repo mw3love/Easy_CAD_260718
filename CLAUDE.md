@@ -114,16 +114,16 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~52_*.py      테마별 회귀 스모크 1418종(2026-10-18 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~54_*.py      테마별 회귀 스모크 1429종(2026-10-18 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + TipTap 3.32.0(글 편집, 버전 고정). **2026-10-18 5단계 갈아탐: tldraw 뺌**(옛 tldraw 화면
 │                          src/main.jsx·shapes.jsx·cad.jsx·chat.jsx·boardStore.js·ecad.js·ecadExport.js는 지움 — git에 있음). 남은 공용: route.js(길 찾기 = 데스크톱
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecadFormat.js(순수 변환, `npm test`)·symbols.json(`tools/export_web_symbols.py`가
 │                          데스크톱 심볼에서 뽑음)·chatFormat.js(답 글 읽기·빈자리, 순수)·server.py(감시 PC용 저장 서버 `/api/doc`(.ecad) + 대화 `/api/chat`·`/api/models`·
-│                          `/api/chatlog` + 웹 카드 `/api/link`). web_bakeoff/는 바탕 부품 비교 시험(보존용). 주소 `/`(옛 `next.html`은 `/`로 넘기는 안내판).
+│                          `/api/chatlog` + 웹 카드 `/api/link` + 공동작업 `/api/login`·`patch`·`since`·`presence`·`publish`·`pub` — 계산은 `web/collab.py`). web_bakeoff/는 바탕 부품 비교 시험(보존용). 주소 `/`(옛 `next.html`은 `/`로 넘기는 안내판).
 │                          **칠판**(직접 만든 것): `index.html` + `src/next/`(geom.js 그리기 계산·render.jsx 종류별 SVG·doc.js .ecad 문서·
 │                          arrows.js 길 다시 찾기 + 2단계 Editor.jsx 편집 화면·edit.js 편집 계산·align.js 정렬선·model.js _id 모델·text.jsx TipTap 글 편집 + 3단계 connect.js 붙는 규칙·arrowedit.js 알약·곡선·라벨·
 │                          arrowkind.js 종류 바꾸기·xform.js 좌표 + 4단계 props.jsx 우상 속성 카드·palette.jsx 좌상 도형·심볼·layers.jsx 좌하 레이어·minimap.jsx 우하 미니맵·
-│                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿)) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
+│                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿) + ⓕ sync.js 부분 저장·받아 오기·도형 단위 되돌리기·viewer.jsx 게시 화면 + ⓔ htmlshare.js HTML 한 파일) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
 │                          데스크톱 대조 시험 `tools/export_route_cases.py`·`export_connect_cases.py`·`export_arrow_cases.py` → `web/test/fixtures/`(규칙 고치면 다시 돌림)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
@@ -194,13 +194,16 @@ symbol_library/
   1~3단계 완료(3단계 손맛 사용자 확인 10-18) — 화살표 설정은 오른쪽 위 「속성」 카드(사용자 선택, 4단계 속성 칸의 씨앗). 10-18: 선택 표시 데스크톱과 같게,
   화살표 도구(2)·선/펜 궤적/묶음에 붙기, 값이 섞이면 「1~3px」+각자 더하기(두 앱), **어두운 화면은 앱이 직접**(사용자 크롬 Dark Reader가 덮어쓰던 것), 새 도형 1px. 데스크톱도 글 회전점을 상자처럼 좌상 대각으로.
   **4단계 완료**(10-18, 프록시검증 — 사용자 손맛 남음): 속성 카드 모든 도형(도형 바꾸기·내 심볼로 바꾸기·회전·형광펜)·스타일 복사 Ctrl+Alt+C/V·좌상 팔레트(서버 `/api/symbols` = 데스크톱
-  `symbol_library.json`, 검색 초성)·번호표(7)·표(칸 편집)·좌하 레이어·우하 미니맵·내보내기(PDF는 인쇄 창 「PDF로 저장」)·KAIROS 대화창(카드 = 채운 둥근 네모 + 왼쪽 위 라벨 `label.align`·`fit_text`, 끌어 붙이기)·우클릭 메뉴(정렬·분배, `Ctrl+C` = 칠판용 + 클립보드 그림).
+  `symbol_library.json`, 검색 초성)·번호표(7)·표(칸 편집)·좌하 레이어·우하 미니맵·내보내기(PDF는 인쇄 창 「PDF로 저장」)·KAIROS 대화창(옛 카드 = 채운 둥근 네모 + 왼쪽 위 라벨 `label.align`·`fit_text` — 10-18 밤부터 답은 메모로, 끌어 붙이기)·우클릭 메뉴(정렬·분배, `Ctrl+C` = 칠판용 + 클립보드 그림).
   같은 날 사용자 지적 3차 반영(원칙 **고치는 모습 = 결과**): 표 칸 고르기·칸 꾸밈·부분 서식(`cell_styles`·`cell_runs`, 직접 글자 크기 = 칸이 늘어남), 여러 개 한 번에 크기, 고치는 중 「글자」 카드.
   웹 전용 .ecad 칸은 데스크톱 `document._WEB_ONLY_KEYS`가 보존만(rect `radius`는 그림까지, 새 종류 `frame`은 점선 네모로 열고 저장 때 다시 frame).
   **판정 4~13차**(10-18 저녁): 화살표 배율 녹이기(`xform.bakeSarrow`), 표 행·열 공통선(`row_heights`)·자동 크기 켜고 끄기·칸 고르고 바로 입력(보이지 않는 편집기 미리 포커스 — 한글 첫 글자),
   **종이틀 → 프레임**(사용자: 종이 비율은 의미 없음 — 드래그로 감싼 영역 = 출력 한 쪽, 이름표, 안의 것 같이 움직임·Alt/자물쇠 = 틀만, 순서 = 좌하 프레임 카드, 내보내기 「프레임만」·미리보기,
   옛 종이틀은 열리기만), **발표**(슬라이드형 + 0.4초 이동, 판서 → 「판서」 레이어, 레이저 `, 장 목록 Tab, 클릭으론 안 넘김, 마지막 장에서 멈춤, 우클릭·휠 클릭 끌기 = 이동). 계획서 §8 항목61 4-b.
-  다음 = 데스크톱 맞추기 → 5단계 갈아타기, 그리고 4-b 웹 카드·코드 블록·범례·메모장(인계 `.claude/handoff/pending/` 2건).
+  **10-18 밤(4-b ~ 5단계 ~ ⓕ)**: 데스크톱 맞추기는 웹 마무리 뒤로 미룸(사용자 결정 — 그동안 웹 새 칸은 `_WEB_ONLY_KEYS`에 보존만). 웹 카드(`web` — 주소 Ctrl+V·「웹」, 들어가는 사이트는 칸 안·막는 사이트는
+  그림 카드, 서버 `/api/link`가 머리말로 판단), 코드 블록(runs 여섯째 칸 = 고정폭), 범례(우클릭 「범례 만들기」·「다시 모으기」), 메모(`memo` — KAIROS 답 = 메모, 마크다운 입력, 칠판 위 체크, 줄 손잡이 ⠿ =
+  끌기·전환·색·칠판으로 꺼내기), **5단계 갈아타기**(tldraw 뺌, 새 칠판 = `/`), **공동작업 1단계**(`## 목표` 순서 바뀜 — 공용 비밀번호 + 이름·게시 링크 `/?view=`·도형 단위 합치기·되돌리기, `web/collab.py`·`sync.js`),
+  **HTML 공유**(인터넷 없이 열리는 파일 하나 — 방송 예비본). 다음 후보: 크롬 확장(완료 기준)·발표자 화면·웹 카드 QR·공동작업 2단계·감시 PC 배포(회사 보안 확인 먼저).
 - **§8 항목60 보드 디자인 2차**(2026-10-17) — 아티팩트 시안과 나란히 본 지적 10건 → 원인은 Qt가 아니라 그리기 어휘(HTML 가져오기는 설계서가 끊겨 버림).
   ① `**구절**` 부분 강조(.ecad `runs`) ② Pretendard 싣기(`easycad/fonts.py`, 보드 글만, .ecad `family`·`weight`) ③ 세로 그림 오른쪽 옆 칸
   ④ 가로 단계 블록 `steps` ⑤ 단위 다른 숫자 다른 색·의의/한계 칩. 2라운드(위계): 주인공 = 글만(`HERO_TYPES`), 숫자 note = 비교 기준·막대·그림 필수,
@@ -208,12 +211,6 @@ symbol_library/
   4라운드: 회의록·기술 문서로 시험(규칙 통함) → 막대 쉼표·파랑, 흐름도 보드 글꼴·칸 맞춤, 회의록 필수 항목. 5라운드: 채움 색 코드 칸, 형광펜(글자 배경, 되돌리기·라벨 저장), 조각 빈자리,
   슬라이드 그림 범위(`fileio/pdf_figure.py`)·AI에 그림 쪽 목록. 6라운드: 선택 「묶음 안으로」(첫 클릭 = AI 보드·그룹 통째로, 다시 클릭 = 안의 것).
   남은 것: 대화창 개편(심층 인터뷰), exe 글꼴.
-- **§8 항목59 펼친 조각 + 다시 정리**(2026-10-17, 심층 인터뷰) — 첫 모습 = 한 장 보드 + 오른쪽 조각(AI `more` + PDF 원문 그림, `host_pieces.py`).
-  ① 무리 색(`groups`/`group` → 코랄·파랑, 항목60에서 자두 뺌)·숫자 타일·핵심 원리 흐름·머리 구분선 ② 조각 펼치기 + 「보드로 정리」(AI 없이) ③ 조각 끌어다 넣기·블록 꺼내기
-  (`_push_entry` 길목 → `_board_rebuild`) ④ 「종이로」(놓인 차례대로 16:9 쪽에, PDF 여러 쪽). 완료 기준 흐름 실제 창 확인, 사용자 판정 남음.
-- **§8 항목58 보드 디자인 개편**(2026-10-17) — 세 모델 보드가 "잘 만든 PPT보다 못함" → 한계는 모델이 아니라 앱의 그리기(시안 https://claude.ai/artifact/XhRKRh4BUjVb8hXstQb6Cw).
-  ① 굵게·글자 크기 단계(`_PB_SIZE`, .ecad `bold`) ② 역할별 모양(주인공 남청 면 `hero`+`headline`, 카드 왼쪽 띠, 숫자 위 선, 흐름도 채운 패스 면, 나머지 위 선)
-  ③ 벽돌 쌓기(가장 낮은 칸)·면/그림 늘리기·넘치면 `_BB_FIT_STEPS`로 조인 뒤 나누기·지시문 분량 예산 ④ 숫자 한 줄·카드 쪽 번호. 남은 것: 실제 KAIROS로 사용자 판정.
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·
   곡선·직각 같은 *종류*는 캔버스에서 객체를 선택한 뒤 **플로팅 미니툴바의 하위목록**에서
   고르게 한다(Lucid·FigJam 방식). 세부 조절값은 그 종류를 골랐을 때만 노출.
