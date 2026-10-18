@@ -6763,6 +6763,30 @@ def _tight_scene_bbox(item) -> QRectF | None:
     return QRectF(QPointF(min(xs), min(ys)), QPointF(max(xs), max(ys)))
 
 
+def _open_tight_scene_bbox(item) -> QRectF | None:
+    """[우리 확장 2026-10-18, 사용자 대조] 여러 개 선택 틀(`_GroupTransform.bbox`) 전용 — 화살표·선은 꼭짓점(곡선은 실제 곡선)과
+    화살촉 끝까지만. `_content_rect()`는 클릭·다시 그리기용 여유(선 두께 절반 + 1~2)가 있어 상자(`_tight_scene_bbox`, 여유 없음)와 섞이면
+    틀이 화살표 쪽만 떠 보였다 — 웹 칠판과 같게 딱 맞춘다. `_content_rect` 자체는 그대로(클릭 범위·다시 그리기에 필요)."""
+    if isinstance(item, _PolyArrowItem):
+        pts = list(item._pts)
+        r = QRectF(QPointF(min(p.x() for p in pts), min(p.y() for p in pts)), QPointF(max(p.x() for p in pts), max(p.y() for p in pts))) if pts else None
+    elif isinstance(item, _ArrowItem):
+        r = QRectF(item._p1, item._p2).normalized() if item._ctrl1 is None else _cubic_bezier_bbox(item._p1, item._ctrl1, item._ctrl2, item._p2)
+    elif isinstance(item, _LineItem):
+        ln = item.line()
+        r = QRectF(ln.p1(), ln.p2()).normalized()
+    else:
+        return None
+    if r is None:
+        return None
+    if isinstance(item, (_PolyArrowItem, _ArrowItem)):
+        hs = [p for tri in item._head_points() for p in tri]   # ⚠ QRectF(p, p)는 크기 0이라 united()가 무시 — 좌표로 직접 넓힘
+        if hs:
+            r = QRectF(QPointF(min([r.left()] + [p.x() for p in hs]), min([r.top()] + [p.y() for p in hs])),
+                       QPointF(max([r.right()] + [p.x() for p in hs]), max([r.bottom()] + [p.y() for p in hs])))
+    return item.mapToScene(r).boundingRect()
+
+
 def _open_item_local_pts(item) -> list:
     """[§8 항목17 5단계, 2026-08-28 다각형 도구 추가, 2026-08-30 _PathItem 추가] 열린 도형
     (_LineItem/_PolyArrowItem/열린 _PolygonItem/열린 _PathItem)의 로컬좌표 정점열 —
@@ -8263,7 +8287,7 @@ class _GroupTransform:
             # `_content_rect()`(패딩된 자기 bbox)를 쓰면 그룹 점선 테두리가 실제 변보다
             # 바깥으로 떠 보였다(`_apply_smart_snap.srect()`와 같은 병, `_tight_scene_bbox`
             # 주석 참조) — 재사용해 통일.
-            br = _tight_scene_bbox(it) or it.mapToScene(it._content_rect()).boundingRect()
+            br = _tight_scene_bbox(it) or _open_tight_scene_bbox(it) or it.mapToScene(it._content_rect()).boundingRect()
             r = br if r is None else r.united(br)
         if r is not None and self._cache_key() is not None:
             self._cached_bbox = QRectF(r)

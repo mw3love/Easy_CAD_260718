@@ -2675,3 +2675,19 @@ def test_ortho_arrow_head_stub_constant_across_positions():
                             conn_rects=(a, b), min_stub=(0.0, 25.0))
         pts = _dedup_pts([s] + mids + [e])
         assert abs((pts[-2].x() - e.x()) - 36.0) < 0.5, (by, pts)
+
+
+def test_group_frame_tight_around_arrows():
+    # [2026-10-18 사용자 대조] 여러 개 선택 틀은 화살표·선도 상자처럼 딱 맞게(꼭짓점·화살촉 끝까지) — 전엔 `_content_rect`의 여유(선 두께 절반 + 2)로 떠 보였다.
+    from PyQt6.QtGui import QPen
+    from easycad.canvas.annotator_core import _PolyArrowItem, _GroupTransform
+    w = CanvasWindow()
+    r = _mk_rect(w._scene, QPen(QColor("#000000")), 0, 0, 100, 50)
+    a = _PolyArrowItem(QColor("#000000"), 1, True, False, 1.0)
+    a.set_points(QPointF(50, 50), QPointF(50, 200)); w._scene.addItem(a)
+    a.setFlags(a.flags() | a.GraphicsItemFlag.ItemIsSelectable)
+    r.setSelected(True); a.setSelected(True)
+    b = _GroupTransform(w._view).bbox()
+    assert abs(b.top() - 0) < 1e-6 and abs(b.left() - 0) < 1e-6 and abs(b.right() - 100) < 1e-6
+    assert abs(b.bottom() - 200) < 1e-6   # 화살촉 끝 = 마지막 꼭짓점(아래 여유 없음)
+
