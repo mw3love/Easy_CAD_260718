@@ -18,7 +18,7 @@ import {
   rotateTo, rubberSelect, sceneBox, toLocal, toScene, toggleLock, topHit, ungroupItems, unionBox, zOrder,
 } from './edit.js'
 import { TextEditor } from './text.jsx'
-import { Props } from './props.jsx'
+import { Props, captureStyle, styleFor } from './props.jsx'
 import { arrowKindOf, swapArrowKind } from './arrowkind.js'
 import { symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
@@ -367,6 +367,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
   // 새 화살표 기본값 — 속성 카드에서 바꾼 값이 다음 화살표에 이어짐(데스크톱 sticky: 색·굵기·선 모양·화살촉·모서리). 굵기 1 = 데스크톱 `_DEFAULT_WIDTH`·웹 그리기 도구와 같게(2026-10-18 — 2였을 땐 같은 화살표인데 선택 띠가 얇아 보였다)
   const sticky = useRef({ color: INK, style: 1, width: 1, head: true, head_start: false, head_scale: 1, curve_r: 10 })
+  const styleClip = useRef(null)   // 스타일 복사한 서식(데스크톱 `_style_clip`)
   const stickyFill = useRef(null)   // 새 닫힌 도형 채움 — 속성 카드 「채움」(데스크톱 `current_fill`)
   // 새 도형 선 = 화살표와 같은 색·굵기·선 모양(데스크톱 `current_color`·`current_width`·`current_style`은 도형·화살표 공용)
   const penOf = closed => ({ pen: sticky.current.color, width: sticky.current.width, style: sticky.current.style, ...(closed ? { fill: stickyFill.current } : {}) })
@@ -555,6 +556,14 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (!mod && !e.altKey && !e.shiftKey && { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen' }[k]) return act(() => setTool({ 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen' }[k]))
       if (!ids.length) { if (mod && k.toLowerCase() === 'v') return act(paste); return }
       if (k === 'Delete' || k === 'Backspace') return act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))
+      // 스타일 복사·붙여넣기(데스크톱 Ctrl+Alt+C/V) — 일반 복사보다 먼저. 글쇠 이름은 한글 입력·Alt에 따라 바뀌어 자리(code)로 봄
+      if (mod && e.altKey && e.code === 'KeyC') return act(() => {
+        if (ids.length !== 1) return setStatus('스타일 복사 — 도형을 하나만 고르세요')
+        styleClip.current = captureStyle(m.items.find(it => it._id === ids[0])); setStatus('스타일 복사됨') })
+      if (mod && e.altKey && e.code === 'KeyV') return act(() => {
+        const sc = styleClip.current; if (!sc) return setStatus('붙여넣을 스타일이 없어요 — 먼저 Ctrl+Alt+C'), undefined
+        const set = new Set(ids); commit(m.items.map(it => { const p = set.has(it._id) && styleFor(it, sc); return p ? { ...it, ...p } : it }), ids, '스타일 붙여넣기')
+        setStatus(`스타일 붙여넣기 — ${ids.length}개`) })
       if (mod && k.toLowerCase() === 'c') return act(copy)
       if (mod && k.toLowerCase() === 'x') return act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })
       if (mod && k.toLowerCase() === 'v') return act(paste)

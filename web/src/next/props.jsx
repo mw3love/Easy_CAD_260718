@@ -48,6 +48,26 @@ function patchTexts(it, f) {
   return { label: { ...it.label, ...f(slots[0]) } }
 }
 
+// 스타일 복사·붙여넣기(데스크톱 `_capture_paint_style`·`_apply_paint_style`) — 서식만(글 내용·라벨은 안 옮김), 종류가 달라도 있는 칸만 옮김
+export function captureStyle(it) {
+  const st = {}, lk = lineKey(it), fk = fillKey(it)
+  if (lk) st.color = it[lk]
+  if (it.type === 'text') { st.color = st.tcolor = it.color || INK; st.font = it.font || 12; st.bg = it.bg ?? null }   // 데스크톱: 글의 「색」 = 글자 색
+  if (hasWidth(it)) { st.width = it.width ?? 1; st.style = it.style || 1 }
+  if (fk) st.fill = fillArgb(it[fk])   // 채움 없음(null)도 서식 — 채움 되는 것끼리는 그대로 옮김
+  if (isArrow(it)) { st.head = it.head !== false; st.head_start = !!it.head_start; st.head_scale = it.head_scale ?? 1 }
+  return st
+}
+export function styleFor(it, st) {
+  const p = {}, lk = lineKey(it)
+  if (st.color != null) { if (lk) p[lk] = st.color; else if (it.type === 'text') p.color = st.color }
+  if (hasWidth(it)) { if (st.width != null) p.width = st.width; if (st.style != null) p.style = st.style }
+  if (fillKey(it) === 'fill' && 'fill' in st) p.fill = st.fill
+  if (it.type === 'text') { if (st.font != null) p.font = st.font; if ('tcolor' in st) p.color = st.tcolor; if ('bg' in st) p.bg = st.bg }
+  if (isArrow(it) && 'head' in st) Object.assign(p, { head: st.head, head_start: st.head_start, head_scale: st.head_scale })
+  return Object.keys(p).length ? p : null
+}
+
 // 형광펜(데스크톱 `_text_highlight` — 글 전체, 모두 칠해져 있으면 지움). 독립 글과 도형·선 안 글만(화살표 라벨은 데스크톱도 뺌)
 // .ecad runs = [시작, 길이, 색, 굵게, 바탕?] — 글자마다 풀었다가 바탕만 바꿔 다시 묶음
 const HL = '#99ffd54f'
