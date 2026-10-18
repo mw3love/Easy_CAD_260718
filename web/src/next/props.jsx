@@ -173,7 +173,7 @@ function RotInput({ value, onSet }) {
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function Props({ items, kind, set, onKind, rotate }) {   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
+export function Props({ items, kind, set, onKind, rotate, library, onSwapCustom, dark }) {   // library = 내 심볼(서버 파일), onSwapCustom(아이템, 'customsym:<id>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
   const [openDash, setOpenDash] = useState(false), [openSwap, setOpenSwap] = useState(false)
   const one = v => (v.length && v.every(x => x === v[0]) ? v[0] : null)
   const arrows = items.filter(isArrow), allArrows = arrows.length === items.length
@@ -207,9 +207,15 @@ export function Props({ items, kind, set, onKind, rotate }) {   // rotate(아이
       : swapOne ? <div style={{ position: 'relative', flex: 1 }}>
         <button title="클릭: 다른 도형으로 바꾸기(크기·연결 유지)" onClick={() => setOpenSwap(o => !o)} style={btn(false, { width: '100%', background: C.seg, justifyContent: 'space-between', padding: '0 8px' })}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>{shapeIcon(kindOf(swapOne))}<span data-testid="prop-type" style={{ fontSize: 13 }}>{title}</span></span><span style={{ color: C.muted }}>▾</span></button>
-        {openSwap && <div style={{ position: 'absolute', zIndex: 3, top: 28, left: 0, right: 0, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 4px 12px rgba(0,0,0,.1)' }}>
+        {openSwap && <div style={{ position: 'absolute', zIndex: 3, top: 28, left: 0, right: 0, maxHeight: 360, overflowY: 'auto', background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 4px 12px rgba(0,0,0,.1)' }}>
           {SWAP_KINDS.map(k => <button key={k} onClick={() => { if (k !== kindOf(swapOne)) set(it => (it._id === swapOne._id ? swapPatch(k) : null), '도형 바꾸기'); setOpenSwap(false) }}
             style={btn(k === kindOf(swapOne), { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>{shapeIcon(k)}<span style={{ fontSize: 12 }}>{kindName(k)}</span></button>)}
+          {/* 내 심볼 — 폴더마다 구분선(데스크톱 `_fill_swap_menu`). 묶음으로 바뀌고 라벨은 안 옮김(여러 조각 중 어디에 둘지 애매 — 데스크톱과 같음) */}
+          {(library?.folders || []).map(f => { const list = (library.symbols || []).filter(s => s.folder === f); if (!list.length) return null
+            return <div key={f}><div style={{ borderTop: `1px solid ${C.line}`, margin: '3px 0', padding: '3px 8px 0', fontSize: 11, color: C.muted }}>{f}</div>
+              {list.map(s => <button key={s.id} onClick={() => { onSwapCustom(swapOne, 'customsym:' + s.id); setOpenSwap(false) }} style={btn(false, { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>
+                <img alt="" src={'data:image/png;base64,' + s.thumb} width="20" height="20" style={{ filter: dark ? 'invert(1) hue-rotate(180deg)' : undefined }} />
+                <span style={{ fontSize: 12, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.name}</span></button>)}</div> })}
         </div>}
       </div>
       : <span data-testid="prop-type" style={{ fontSize: 13 }}>{title}</span>}</Row>

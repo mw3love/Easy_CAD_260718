@@ -113,7 +113,7 @@ function App() {
         }} />
       </div>
       <div ref={box} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        <Editor ref={ed} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} />
+        <Editor ref={ed} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} />
         {/* 좌상 도형·심볼 카드(데스크톱 첫 화면: 좌상 도형·심볼) */}
         <Palette lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} />
       </div>

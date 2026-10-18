@@ -8,6 +8,10 @@ import { symbolPath } from './symbols.js'
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', on: '#da7756' }
 export const BASIC = [['rect', '사각형'], ['ellipse', '원'], ['sym:triangle', '삼각형'], ['sym:decision', '판단'], ['sym:terminal', '시작/끝'], ['sym:data', '입출력'], ['sym:prep', '준비'], ['sym:database', '저장소']]
 const FOLDER_GRAY = '#9e9e9e', BASIC_BLUE = '#7fbdff'
+// 초성(데스크톱 검색 「이름·초성」, 예: ㅇㅌ) — 한글 음절은 첫소리로, 나머지는 그대로
+const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ'
+const chosung = s => [...s].map(ch => { const c = ch.charCodeAt(0) - 0xac00; return c >= 0 && c < 11172 ? CHO[Math.floor(c / 588)] : ch }).join('')
+export const nameMatch = (name, q) => { const n = name.toLowerCase(), k = q.trim().toLowerCase(); return !k || n.includes(k) || chosung(n).includes(k) }
 
 export async function loadLibrary() {
   try { const r = await fetch('/api/symbols'); if (!r.ok) return null; return await r.json() } catch { return null }
@@ -36,6 +40,7 @@ function Section({ title, color, count, children }) {
 
 // lib = 서버 심볼 파일(없으면 기본 도형만), tool = 지금 도구, onDown/onClick = 끌기 시작/클릭(main.jsx paletteDown·setTool)
 export function Palette({ lib, tool, onDown, onClick, dark }) {
+  const [q, setQ] = useState('')
   const syms = lib?.symbols || [], folders = lib?.folders || [], fav = lib?.favorites || []
   const basicName = Object.fromEntries(BASIC)
   const thumb = e => <img alt="" src={'data:image/png;base64,' + e.thumb} width="24" height="24" style={{ filter: dark ? 'invert(1) hue-rotate(180deg)' : undefined }} />   // 그림은 밝은 칠판 기준으로 찍혀 있음
@@ -46,9 +51,15 @@ export function Palette({ lib, tool, onDown, onClick, dark }) {
   return <div onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', left: 12, top: 12, width: 192, boxSizing: 'border-box', maxHeight: 'calc(100% - 24px)', overflowY: 'auto',
     background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 8px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', color: C.ink, display: 'flex', flexDirection: 'column', gap: 8, userSelect: 'none' }}>
     <div style={{ font: "700 15px 'Pretendard', sans-serif" }}>도형·심볼</div>
+    <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') setQ('') }} placeholder="도형·심볼 검색 (이름·초성)"
+      title="이름 일부나 초성(예: ㅇㅌ)으로 찾기 — Esc로 지우기" style={{ boxSizing: 'border-box', width: '100%', height: 30, border: `1px solid ${C.line}`, borderRadius: 7, background: 'transparent', color: C.ink, font: "400 12px 'Pretendard', sans-serif", padding: '0 8px' }} />
+    {/* 검색 중엔 즐겨찾기·기본 도형·폴더를 숨기고 기본 도형까지 한 목록으로(데스크톱 `_on_palette_search`) */}
+    {q.trim() ? (() => { const hits = [...BASIC.filter(([, n]) => nameMatch(n, q)).map(([k]) => k), ...syms.filter(s => nameMatch(s.name, q)).map(s => 'customsym:' + s.id)]
+      return hits.length ? <Section title="검색 결과" count={hits.length}>{hits.map(cellOf)}</Section> : <div style={{ fontSize: 12, color: C.muted }}>찾는 도형·심볼이 없어요</div> })() : <>
     {fav.length > 0 && <Section title={<><span style={{ color: C.on }}>★</span> 즐겨찾기</>} count={fav.length}>{fav.map(cellOf)}</Section>}
     <Section title="□○△ 기본 도형" color={lib?.section_colors?.basic || BASIC_BLUE} count={BASIC.length}>{BASIC.map(([k]) => cellOf(k))}</Section>
     {folders.map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={f} color={lib?.folder_colors?.[f] || FOLDER_GRAY} count={list.length}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
+    </>}
     {!lib && <div style={{ fontSize: 11, color: C.muted }}>내 심볼은 저장 서버를 켜면 보여요</div>}
   </div>
 }

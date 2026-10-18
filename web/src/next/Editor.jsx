@@ -58,7 +58,7 @@ const withLabels = (it, labels) => { const o = { ...it, labels }; delete o.label
 const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([x, y]) => ({ x, y })), q) : projectToCurve(it, q))
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
-export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library }, ref) {
+export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders }, ref) {
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -431,6 +431,30 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
   // protos를 왼쪽 위가 (x, y)인 자리로
   const placeAt = (protos, x, y) => { const b = unionBox(protos.map(it => sceneBox(it, textBox))); return moveItems(protos, protos.map(it => it._id), x - b.x, y - b.y) }
+  // 도형 → 내 심볼(데스크톱 `_swap_to_custom_symbol`): 긴 변을 옛 도형 긴 변에 맞춰 늘이고(비율 유지) 가운데 맞춤, 옛 도형은 지움.
+  // 붙어 있던 화살표 끝은 다시 붙임 — 조각 하나면 그 외곽선 가장 가까운 곳, 여럿이면 묶음 통째(데스크톱은 가장 가까운 조각 — 웹은 묶음을 옮겨도 덜 꼬이게)
+  function swapToCustom(old, key) {
+    const m = R.current.model, protos = customItems(key); if (!protos) return
+    const ob = sceneBox(old, textBox), b = unionBox(protos.map(it => sceneBox(it, textBox)))
+    const lo = Math.max(ob.w, ob.h), lc = Math.max(b.w, b.h); if (lc < 1e-6) return
+    const k = lo / lc, bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 }
+    let its = protos.map(it => ({ ...it, scale: (it.scale || 1) * k, pos: [bc.x + ((it.pos?.[0] || 0) - bc.x) * k, bc.y + ((it.pos?.[1] || 0) - bc.y) * k] }))
+    const nb = unionBox(its.map(it => sceneBox(it, textBox)))
+    its = moveItems(its, its.map(it => it._id), ob.x + ob.w / 2 - (nb.x + nb.w / 2), ob.y + ob.h / 2 - (nb.y + nb.h / 2))
+    const rest = m.items.filter(x => x._id !== old._id), all = [...rest, ...its]
+    const host = its.length === 1 ? its[0] : groupHost(all, its[0].group_id, rectOf)
+    const rebound = all.map(a => {
+      if (!isArrow(a)) return a
+      let o = a
+      for (const kk of ['bind1', 'bind2']) {
+        if (a['_' + kk] !== old._id) continue
+        const e = bindEnd(a, kk, m.items, rectOf); if (!e) continue
+        o = { ...o, ...bindOf(kk, host, nearestBorder(host, e.p, rectOf).p) }
+      }
+      return o
+    })
+    commit(rebound, its.map(it => it._id), '내 심볼로 바꾸기')
+  }
   function startPaletteDrag(t) {
     const m = R.current.model
     const protos = t.startsWith('customsym:') ? customItems(t) : [{ ...boxItem(t, 0, 0, ...boxDefault(t)), z: topZ(m.items) + 1 }]   // 클릭만 해 놓을 때와 같은 기본 크기
@@ -714,7 +738,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       </svg>
       {editing && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={s} onDone={finishEdit} /> })()}
-      {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)}
+      {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapCustom={swapToCustom} dark={dark}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )
