@@ -1,14 +1,15 @@
 // 직접 만드는 Magic Board 웹 칠판(§8 항목61 「바뀐 결정」, 2026-10-17).
 // 1단계 뼈대(무한 칠판·.ecad 열기/저장·모든 종류 그리기) + 2단계 기본 편집(Editor.jsx).
 // 화면 틀(사용자 선택): 위 막대는 데스크톱처럼 아이콘 밑 짧은 이름, 칠판 위 떠 있는 카드(좌상 도형), 오른쪽 KAIROS 대화창(4단계).
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Editor } from './Editor.jsx'
 import { DOC_NAME, docBounds, emptyDoc, loadServerDoc, parseDoc, saveServerDoc } from './doc.js'
 import { fromEcad, toEcad } from './model.js'
 import { setInkDark } from './render.jsx'
 import { Palette, useLibrary } from './palette.jsx'
-import { Layers } from './layers.jsx'
+import { Layers, layersOf, layerIdOf } from './layers.jsx'
+import { Minimap } from './minimap.jsx'
 
 const ZMIN = 0.02, ZMAX = 40
 // 화면 색은 next.html의 CSS 변수(밝은/어두운 화면 — 어두운 쪽은 데스크톱과 같은 값)
@@ -88,6 +89,8 @@ function App() {
   useEffect(() => { loadServerDoc().then(r => { setServer(r.server); if (r.doc) open(r.doc, `서버 「${DOC_NAME}」`, true); else setStatus(r.server ? `서버 「${DOC_NAME}」 · 새 칠판` : '서버 없음 — 파일로 열고 저장') }) }, [])   // eslint-disable-line
 
   // 카드 버튼: 클릭 = 그리기 도구, 6px 넘게 끌면 도형을 칠판에 바로 놓기(데스크톱 `_PaletteButton._DRAG_THRESH`)
+  // 미니맵에 그릴 것 — 숨긴 레이어 뺌(화면을 옮길 때마다 다시 그리지 않게 문서가 바뀔 때만)
+  const mapItems = useMemo(() => { const hid = new Set(layersOf(model).filter(l => !l.visible).map(l => l.id)); return hid.size ? model.items.filter(it => !hid.has(layerIdOf(it))) : model.items }, [model])
   const lib = useLibrary()   // 「내 심볼」(서버 `/api/symbols`)
   const paletteDown = (e, t) => {
     if (e.button !== 0) return
@@ -144,6 +147,9 @@ function App() {
           <Palette lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} />
           <Layers model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} onMoveSel={id => ed.current?.moveSelToLayer(id)} dark={dark} />
         </div>
+        {/* 우하 미니맵(데스크톱 첫 화면: 우하) — 숨긴 레이어는 뺌 */}
+        <Minimap items={mapItems}
+          cam={cam} size={size} setCam={setCam} onFit={() => fit(model.items)} dark={dark} />
       </div>
     </div>
   )
