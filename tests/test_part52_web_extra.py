@@ -84,3 +84,14 @@ def test_web_code_runs_survive_desktop_save():
     mono = [text[s:s + n] for s, n, *rest in runs if len(rest) > 3 and rest[3]]
     assert mono == ["def add(a, b):", "    return a + b"]
     assert [0, 2, "#ff0000", True] in runs                       # 다른 조각은 그대로
+
+
+def test_web_legend_marks_survive_desktop_save():
+    """웹 범례(2026-10-18)는 보통 선·글·네모 — 데스크톱에서도 그대로 보이고, 다시 모을 때 쓰는 표시(legend·legend_key)는 저장해도 남는다"""
+    frame = dict(_BASE, type="rect", rect=[0.0, 0.0, 200.0, 80.0], pen="#ffa1a1aa", width=1.0, fill=None, style=1, radius=8, legend=1.5, group_id="legend-ab12")
+    line = dict(_BASE, type="line", line=[0.0, 0.0, 44.0, 0.0], pen="#ffff7f00", width=2.9, style=1, legend_key="ffff7f00|1|2.9", group_id="legend-ab12")
+    text = dict(_BASE, type="text", text="SDI 케이블", color="#ff1f1f1f", font=10, bg=None, legend_key="ffff7f00|1|2.9", group_id="legend-ab12")
+    sc = QGraphicsScene()
+    outs = [item_to_dict(it) for it in insert_items(sc, [frame, line, text])]
+    assert outs[0]["legend"] == 1.5 and outs[1]["legend_key"] == outs[2]["legend_key"] == "ffff7f00|1|2.9"
+    assert outs[2]["text"] == "SDI 케이블" and all(o["group_id"] == "legend-ab12" for o in outs)

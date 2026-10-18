@@ -32,6 +32,7 @@ import { buildSvg, exportPdf, exportPng, exportSvg, pngBlob } from './exporter.j
 import { ContextMenu } from './ctxmenu.jsx'
 import { answerToEcadText, freeSpot, sourceLine } from '../chatFormat.js'
 import { fetchLinkInfo, normalizeUrl, openBtnRect, siteOf, webCardFields } from './webcard.js'
+import { buildLegend, isLegendPart, legendEntries, legendState } from './legend.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
@@ -1035,6 +1036,27 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
   const webOpenAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'web') continue
     const q = toLocal(it, p), b = openBtnRect(it), pad = 2 / z; if (q.x >= b.x - pad && q.x <= b.x + b.w + pad && q.y >= b.y - pad && q.y <= b.y + b.h + pad) return it } return null }
+  // 범례(2026-10-18 사용자: 모아서 한 번 만들기 · 선·화살표만) — 고른 것이 있으면 그 안에서, 없으면 보이는 칠판 전체에서
+  const mkItem = x => base(x.pos, x)
+  function makeLegend() {
+    const m = R.current.model, ids = new Set(movingSet(R.current.sel)), src = ids.size ? m.items.filter(it => ids.has(it._id)) : hitPool()
+    const es = legendEntries(src); if (!es.length) { setStatus('범례에 모을 선이 없어요 — 색이 있는 선·화살표를 그린 뒤에'); return }
+    const c = R.current.cam, s = +(1 / c.z).toPrecision(2), fr = buildLegend(es, { x: 0, y: 0 }, s, null, mkItem)[0], [, , w, h] = fr.rect
+    const view = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }, inView = b => b.x < view.x + view.w && b.x + b.w > view.x && b.y < view.y + view.h && b.y + b.h > view.y
+    const at = freeSpot(view, m.items.map(it => sceneBox(it, textBox)).filter(inView), w, h, { pad: 24 * s, step: 24 * s })
+    const its = buildLegend(es, at, s, null, mkItem, topZ(m.items) + 1)
+    commit([...m.items, ...its], its.map(it => it._id), '범례')
+    if (!(at.x >= view.x && at.y >= view.y && at.x + w <= view.x + view.w && at.y + h <= view.y + view.h)) setCam(cc => ({ ...cc, x: size.w / 2 - (at.x + w / 2) * cc.z, y: size.h / 2 - (at.y + h / 2) * cc.z }))   // 화면에 빈자리가 없어 (조금이라도) 밖에 놓였으면 그쪽으로
+    setStatus(`범례 ${es.length}줄 — 이름 글을 두 번 눌러 고쳐 적으세요(도면이 바뀌면 우클릭 「범례 다시 모으기」)`)
+  }
+  function refreshLegend() {
+    const m = R.current.model, part = m.items.find(it => R.current.sel.includes(it._id) && isLegendPart(it) && it.group_id); if (!part) return
+    const st = legendState(m.items, part.group_id); if (!st.at) return
+    const es = legendEntries(hitPool()), rest = m.items.filter(it => it.group_id !== part.group_id)
+    const its = buildLegend(es, st.at, st.scale, st.names, mkItem, st.z)
+    commit([...rest, ...its], its.map(it => it._id), '범례 다시 모음')
+    setStatus(`범례 다시 모음 — ${es.length}줄(적어 둔 이름은 그대로)`)
+  }
   function paste() {
     const c = clip.current; if (!c.items.length) return
     c.seq += 1
@@ -1185,10 +1207,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
           if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', '', act(wrapFrame)])
+          out.push(selIt.some(isLegendPart) ? ['범례 다시 모으기', '', act(refreshLegend)] : ['범례 만들기 (고른 것의 선)', '', act(makeLegend)])
           out.push('-', ['내보내기…', '', act(() => onExportSel?.())])
         }
         if (clip.current?.items?.length) { if (has) out.push('-'); out.push(['붙여넣기', 'Ctrl+V', act(paste)]) }
-        if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))])
+        if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))], ['범례 만들기', '', act(makeLegend)])
           if (m.items.some(it => it.locked)) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked ? { ...it, locked: false } : it)), [], '잠금 해제'))]) }
         return out })()} />}
       {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))

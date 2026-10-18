@@ -367,7 +367,7 @@ def item_to_dict(it) -> dict | None:
     return d
 
 
-_WEB_ONLY_KEYS_ALL = ("fit_text", "chat_at")
+_WEB_ONLY_KEYS_ALL = ("fit_text", "chat_at", "legend", "legend_key")   # legend·legend_key = 웹 범례 표시(다시 모을 때 이름 지키기, 2026-10-18)
 
 
 def _web_card_label(d: dict):
