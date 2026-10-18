@@ -77,7 +77,7 @@ export function TextEditor({ spec, onDone }) {
   }, [])   // eslint-disable-line
   const [px, setPx] = useState(spec.px)
   const wasArmed = useRef(!!spec.armed)
-  useLayoutEffect(() => {   // 표 칸 대기(엑셀처럼 칸을 고르면 보이지 않는 편집기가 미리 포커스 — 첫 키부터 한글 입력기가 켜져 있게, 2026-10-19 사용자: 「ㅎ」이 「g」로 들어감)
+  useLayoutEffect(() => {   // 표 칸 대기(엑셀처럼 칸을 고르면 보이지 않는 편집기가 미리 포커스 — 첫 키부터 한글 입력기가 켜져 있게, 2026-10-18 사용자: 「ㅎ」이 「g」로 들어감)
     const e = ed.current; if (!e) return
     if (spec.armed) { done.current = false; if (e.getText()) e.commands.setContent('', { emitUpdate: false }); focusNow(e) }
     else if (wasArmed.current) {   // 대기 → 고치기: 바로 친 글(fresh)은 그대로 이어 받고, Enter·F2·두 번 누르기는 있는 글을 불러옴
@@ -100,7 +100,7 @@ export function TextEditor({ spec, onDone }) {
       transformOrigin: !spec.center && spec.origin ? `${spec.origin.x - spec.left}px ${spec.origin.y - spec.top}px` : undefined,
       fontWeight: spec.weight || 400, fontSize: fs, fontFamily: spec.family === 'board' ? BOARD_FONT : APP_FONT, lineHeight: m.lineSpacing,   // 낱개로(한 줄짜리 font와 섞으면 다시 그릴 때 경고) color: spec.color, textAlign: spec.align || 'left',
       whiteSpace: spec.width && !spec.cell ? 'pre-wrap' : 'pre', width: spec.width, height: spec.height, display: spec.cell ? 'flex' : undefined, alignItems: spec.cell ? 'center' : undefined, justifyContent: spec.cell ? ({ left: 'flex-start', right: 'flex-end' }[spec.align] || 'center') : undefined, overflowWrap: spec.width ? 'anywhere' : undefined, outline: spec.flat || spec.armed ? 'none' : '1.5px solid #89b4fa', background: spec.bg || 'rgba(255,255,255,.9)', zIndex: 20, ...(spec.armed ? { opacity: 0, pointerEvents: 'none' } : {}) }}>
-    {/* 고른 글의 색·형광펜이 고른 채로 보이게 — 브라우저 기본 선택은 글자색을 덮음(2026-10-19 사용자: 드래그를 풀어야 바뀐 색이 보임). 바탕만 옅게 */}
+    {/* 고른 글의 색·형광펜이 고른 채로 보이게 — 브라우저 기본 선택은 글자색을 덮음(2026-10-18 사용자: 드래그를 풀어야 바뀐 색이 보임). 바탕만 옅게 */}
     <style>{`[data-testid=text-editor] .ProseMirror{outline:none;white-space:${spec.width ? 'pre-wrap' : 'pre'};overflow-wrap:${spec.width ? 'anywhere' : 'normal'}}[data-testid=text-editor] p{margin:0}[data-testid=text-editor] ::selection{background:rgba(137,180,250,.35)}`}</style>
   </div>
 }

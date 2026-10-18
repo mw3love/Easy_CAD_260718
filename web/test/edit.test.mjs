@@ -175,7 +175,7 @@ test('readingOrder — 줄 우선(지그재그)·칸 우선, 조금 어긋나도
   assert.deepEqual(readingOrder(pages, 'cols').map(p => p.id), ['A', 'C', 'B', 'D'])
 })
 
-// 프레임(2026-10-19): 옮기면 가운데가 안에 있는 것이 같이(Lucid Magnetize), 「틀만」(magnet:false)이면 따로. 안의 보드·프레임도 같이
+// 프레임(2026-10-18): 옮기면 가운데가 안에 있는 것이 같이(Lucid Magnetize), 「틀만」(magnet:false)이면 따로. 안의 보드·프레임도 같이
 test('프레임 안의 것 같이 움직임', async () => {
   const { boardContents } = await import('../src/next/edit.js')
   const tb = it => ({ w: 10, h: 10 }), R = (id, x, y, w = 20, h = 20, extra = {}) => ({ _id: id, type: 'rect', pos: [x, y], rect: [0, 0, w, h], ...extra })
@@ -185,7 +185,7 @@ test('프레임 안의 것 같이 움직임', async () => {
   assert.deepEqual(boardContents(items.map(it => (it._id === 'f' ? { ...it, magnet: false } : it)), ['f'], tb), [])
 })
 
-// 프레임 순서(2026-10-19): no 오름차순·같으면 문서 순서, 번호 없는 건 끝 — 다시 매기면 1..n(겹침 없음)
+// 프레임 순서(2026-10-18): no 오름차순·같으면 문서 순서, 번호 없는 건 끝 — 다시 매기면 1..n(겹침 없음)
 test('프레임 순서', async () => {
   const { orderedFrames, setFrameOrder } = await import('../src/next/edit.js')
   const F = (id, no) => ({ _id: id, type: 'frame', rect: [0, 0, 10, 10], ...(no != null ? { no } : {}) })

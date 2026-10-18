@@ -1,4 +1,4 @@
-// 발표(슬라이드쇼, 2026-10-19 사용자와 정함 — 계획서 §8 항목61 4-b ②): 프레임 순서대로 한 장씩 화면에 꽉 차게, 밖은 가림(출력한 쪽과 같은 범위).
+// 발표(슬라이드쇼, 2026-10-18 사용자와 정함 — 계획서 §8 항목61 4-b ②): 프레임 순서대로 한 장씩 화면에 꽉 차게, 밖은 가림(출력한 쪽과 같은 범위).
 // 넘길 때 0.4초 카메라 이동(실제 칠판 위를 옮겨 감) — M으로 「바로 넘김」. 레이저 = 따로 켜는 커서(` · L, 도구와 같이). 우클릭·휠 클릭 끌기 = 화면 이동(편집 화면과 같음). 마지막 장에서 멈춤(끝 = Esc). → · 스페이스 · 휠 = 다음(클릭으로는 안 넘김), ← = 이전, Esc = 끝, D = 밝게/어둡게(기본 = 칠판 화면).
 // 판서(2차): 마우스를 움직이면 아래 막대(◀ ▶ · 네모 · 펜 · 형광펜 · 화살표 · 글자 · 지우개) — 도구를 고르면 클릭·끌기 = 그리기, 그린 것은 칠판 「판서」 레이어에 진짜 도형으로(Ctrl+Z 되돌리기).
 import { useEffect, useRef, useState } from 'react'
@@ -9,7 +9,7 @@ const THEMES = {
   light: { '--mb-ink': '#27272a', '--mb-muted': '#71717a', '--mb-board': '#ffffff', '--mb-line': '#e4e4e7', '--mb-card': '#ffffff' },
   dark: { '--mb-ink': '#ffffff', '--mb-muted': '#8a98a8', '--mb-board': '#1e2731', '--mb-line': '#2a3542', '--mb-card': '#171e26' },   // next.html 어두운 값
 }
-// 판서 색 다섯(2026-10-19 사용자: 「빨 초 파 검 흰, 5개 이내」 — 칠판 잉크 규칙상 검·흰은 화면 따라 서로 바뀌어 한 칸 「검/흰」, 대신 형광펜용 노랑)
+// 판서 색 다섯(2026-10-18 사용자: 「빨 초 파 검 흰, 5개 이내」 — 칠판 잉크 규칙상 검·흰은 화면 따라 서로 바뀌어 한 칸 「검/흰」, 대신 형광펜용 노랑)
 const COLORS = [['#ef4444', '빨강', 'KeyR'], ['#22c55e', '초록', 'KeyG'], ['#3b82f6', '파랑', 'KeyB'], ['#facc15', '노랑', 'KeyY'], ['#1f1f1f', '검정(어두운 화면에선 흰색)', 'KeyK']]
 const argb = (hex, a = 'ff') => '#' + a + hex.slice(1)
 const SIZES = { line: [2, 4, 8], hl: [12, 20, 32] }   // 굵기 세 단계(화면 px) — 펜·네모·화살표 / 형광펜
@@ -28,7 +28,7 @@ const IDLE_MS = 2000
 // frames = [{ id, name, box }] 순서대로, order = 그릴 [아이템, 순번](프레임 자신은 뺀 것), start = 시작 장, dark = 칠판 화면이 어두운가
 // onAdd(아이템 설계[]) = 판서 레이어에 넣기, onErase(칠판 점, 허용 거리) = 그 자리 판서 지우기, onUndo = 되돌리기
 export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dark0 = false, onAdd, onErase, onUndo, onClearNotes, onFlipArrow, onClose }) {   // onClearNotes(칠판 상자) = 그 안 판서 지우기
-  const [list, setList] = useState(null), listRef = useRef(null)   // 장 목록(Tab — 2026-10-19 사용자: 발표 중 특정 장으로 바로) = { typed: 입력 중 번호 }
+  const [list, setList] = useState(null), listRef = useRef(null)   // 장 목록(Tab — 2026-10-18 사용자: 발표 중 특정 장으로 바로) = { typed: 입력 중 번호 }
   const [i, setI] = useState(start), [glide, setGlide] = useState(true), [vw, setVw] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }))
   const [dark, setDark] = useState(dark0), [wasDark] = useState(() => { setInkDark(dark0); return document.documentElement.dataset.theme === 'dark' })   // 첫 그리기 전에 잉크
   const [penColor, setPenColor] = useState('#ef4444'), [hlColor, setHlColor] = useState('#facc15'), [size, setSize] = useState(1)   // 펜·형광펜 색은 따로(펜 = 빨강, 형광펜 = 노랑에서 시작), 굵기 = 0·1·2
@@ -42,13 +42,13 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   }, [])   // eslint-disable-line react-hooks/exhaustive-deps
   const n = frames.length
   const iRef = useRef(i); iRef.current = i
-  const go = d => { const k = iRef.current; if (k + d >= n) { flash('마지막 장이에요 — 끝내려면 Esc'); return } if (k + d < 0) { flash('첫 장이에요'); return } setI(k + d) }   // 마지막 장에서 멈춤(2026-10-19 사용자: 휠로 넘기다 꺼지지 않게)
+  const go = d => { const k = iRef.current; if (k + d >= n) { flash('마지막 장이에요 — 끝내려면 Esc'); return } if (k + d < 0) { flash('첫 장이에요'); return } setI(k + d) }   // 마지막 장에서 멈춤(2026-10-18 사용자: 휠로 넘기다 꺼지지 않게)
   const toolRef = useRef(tool); toolRef.current = tool
-  // 레이저 포인터(2026-10-19 사용자) — ` · L로 켜고 끔(휠 클릭은 편집 화면처럼 화면 이동)
+  // 레이저 포인터(2026-10-18 사용자) — ` · L로 켜고 끔(휠 클릭은 편집 화면처럼 화면 이동)
   const [mpos, setMpos] = useState(null), mouse = useRef({ x: -99, y: -99 })
-  const [laserOn, setLaserOn] = useState(false)   // 레이저 = 도구와 따로 켜는 커서 — 켠 채로 펜·네모 등도 씀(2026-10-19 사용자)
+  const [laserOn, setLaserOn] = useState(false)   // 레이저 = 도구와 따로 켜는 커서 — 켠 채로 펜·네모 등도 씀(2026-10-18 사용자)
   const laserShown = laserOn, laserRef = useRef(false); laserRef.current = laserShown
-  // 막대 = 화면 아래 근처(100px)에서만(2026-10-19 사용자 — 판서할 때 그림을 안 가리게), 시작 때 3초 보여 줌
+  // 막대 = 화면 아래 근처(100px)에서만(2026-10-18 사용자 — 판서할 때 그림을 안 가리게), 시작 때 3초 보여 줌
   const [nearBottom, setNearBottom] = useState(false), [intro, setIntro] = useState(true)   // intro = 시작 3초는 마우스가 어디 있든 보여 줌
   useEffect(() => { const t = setTimeout(() => setIntro(false), 3000); return () => clearTimeout(t) }, [])
   const eraseKey = useRef({ t: 0, prev: null }), [toast, setToast] = useState(null), iNow = useRef(i); iNow.current = i
@@ -61,10 +61,10 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   useEffect(() => {   // 칠판 글쇠보다 먼저(capture) — 발표 중엔 칠판 단축키가 안 돎. 글자 칸에 치는 중이면 그대로 둠
     const onKey = e => {
       if (e.target?.tagName === 'INPUT') return
-      const k = e.key, code = /^Numpad\d$/.test(e.code) ? 'Digit' + e.code.slice(6) : e.code; e.stopPropagation()   // 오른쪽 숫자 키(넘패드)도 숫자로(2026-10-19 사용자)
+      const k = e.key, code = /^Numpad\d$/.test(e.code) ? 'Digit' + e.code.slice(6) : e.code; e.stopPropagation()   // 오른쪽 숫자 키(넘패드)도 숫자로(2026-10-18 사용자)
       if (code === 'Tab') { e.preventDefault(); setList(l => (l ? null : { typed: '', pick: iRef.current })); return }   // 장 목록 열기/닫기(고른 칸 = 지금 장)
       if (listRef.current) { e.preventDefault()   // 목록 안: 번호 + Enter = 그 장, Esc = 닫기(숫자 키가 판서 도구로 가지 않음)
-        const cols = Math.max(1, Math.floor((window.innerWidth * 0.86 + 14) / 214)), mv = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -cols, ArrowDown: cols }[k]   // 방향키 = 고른 칸 옮기기(2026-10-19 사용자)
+        const cols = Math.max(1, Math.floor((window.innerWidth * 0.86 + 14) / 214)), mv = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -cols, ArrowDown: cols }[k]   // 방향키 = 고른 칸 옮기기(2026-10-18 사용자)
         if (/^Digit\d$/.test(code)) setList(l => ({ ...l, typed: (l.typed + code.slice(5)).slice(-3) }))
         else if (mv) setList(l => ({ typed: '', pick: Math.max(0, Math.min(n - 1, l.pick + mv)) }))
         else if (k === 'Backspace') setList(l => ({ ...l, typed: l.typed.slice(0, -1) }))
@@ -83,7 +83,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       else if (code === 'Backquote' || code === 'KeyL') setLaserOn(v => !v)   // 레이저 켜기/끄기(도구는 그대로)
       else if (code === 'BracketLeft') setSize(v => Math.max(0, v - 1)); else if (code === 'BracketRight') setSize(v => Math.min(2, v + 1))
       else if (code === 'KeyX') onFlipArrow()   // 방금 그린 화살표 방향 뒤집기
-      else if ((code === 'Digit6' || code === 'KeyE') && Date.now() - eraseKey.current.t < 400) {   // 지우개 키 두 번 = 이 장 판서 지우기(2026-10-19 사용자) — 첫 번째로 바뀐 도구는 되돌림
+      else if ((code === 'Digit6' || code === 'KeyE') && Date.now() - eraseKey.current.t < 400) {   // 지우개 키 두 번 = 이 장 판서 지우기(2026-10-18 사용자) — 첫 번째로 바뀐 도구는 되돌림
         eraseKey.current.t = 0; setTool(eraseKey.current.prev); clearSlide() }
       else { const t = TOOLS.find(t => t[4].includes(code)); if (t?.[0] === 'erase') eraseKey.current = { t: Date.now(), prev: toolRef.current }
         if (t) setTool(v => (v === t[0] ? null : t[0]))
@@ -94,13 +94,13 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   const [zoom, setZoom] = useState(null), [menu, setMenu] = useState(null), root = useRef(null), wheelAt = useRef(0), pan = useRef(null)   // zoom = { s, ox, oy } 지금 장 화면 = o + s·원래 화면(장 넘기면 풀림), pan = 우클릭 끌기
   const menuRef = useRef(null); menuRef.current = menu
   useEffect(() => { setZoom(null) }, [i])
-  useEffect(() => {   // 휠 = 장 넘기기(파워포인트 손버릇), Ctrl+휠 = 커서 자리 확대 — 2026-10-19 사용자
+  useEffect(() => {   // 휠 = 장 넘기기(파워포인트 손버릇), Ctrl+휠 = 커서 자리 확대 — 2026-10-18 사용자
     const el = root.current; if (!el) return
     const onWheel = e => {
       if (listRef.current || e.target.closest?.('[data-testid=present-bar],[data-testid=present-menu]')) return   // 장 목록은 그 안에서 굴림
       e.preventDefault()
       if (e.ctrlKey || e.metaKey) { const f = e.deltaY < 0 ? 1.25 : 1 / 1.25
-        setZoom(z => { const s0 = z?.s || 1, s = Math.max(0.25, Math.min(16, s0 * f)), g = s / s0, ox = z?.ox || 0, oy = z?.oy || 0   // 0.25~16배(2026-10-19 사용자), 커서 자리 고정
+        setZoom(z => { const s0 = z?.s || 1, s = Math.max(0.25, Math.min(16, s0 * f)), g = s / s0, ox = z?.ox || 0, oy = z?.oy || 0   // 0.25~16배(2026-10-18 사용자), 커서 자리 고정
           return { s, ox: e.clientX - g * (e.clientX - ox), oy: e.clientY - g * (e.clientY - oy) } }); return }
       const now = Date.now(); if (now - wheelAt.current < 350) return; wheelAt.current = now   // 터치패드가 한 번에 여러 장 넘기지 않게
       go(e.deltaY > 0 ? 1 : -1)
@@ -108,7 +108,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     el.addEventListener('wheel', onWheel, { passive: false }); return () => el.removeEventListener('wheel', onWheel)
   }, [n])   // eslint-disable-line react-hooks/exhaustive-deps
   listRef.current = list
-  setInkDark(dark)   // 그리기 전에 — effect에서 바꾸면 한 박자 늦어 어둡게 되돌린 뒤 글이 검은 잉크로 남았음(2026-10-19 사용자)
+  setInkDark(dark)   // 그리기 전에 — effect에서 바꾸면 한 박자 늦어 어둡게 되돌린 뒤 글이 검은 잉크로 남았음(2026-10-18 사용자)
   const f = frames[i]; if (!f) return null
   const { w: W, h: H } = vw, b = f.box, k = Math.min(W / b.w, H / b.h), hw = b.w * k, hh = b.h * k, hx = (W - hw) / 2, hy = (H - hh) / 2
   const tx = hx - b.x * k, ty = hy - b.y * k, unz = (x, y) => (zoom ? [(x - zoom.ox) / zoom.s, (y - zoom.oy) / zoom.s] : [x, y])
@@ -120,8 +120,8 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     e.stopPropagation(); wake()
     if (textAt) { document.activeElement?.blur?.(); return }   // 쓰던 글자 칸 밖을 누르면 그 글을 넣고 끝(blur → commitText)
     if (menu) { setMenu(null); return }
-    if (e.button === 2 || e.button === 1) { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); pan.current = { x: e.clientX, y: e.clientY, moved: false, z0: zoom }; return }   // 우클릭: 끌면 화면 이동, 제자리면 메뉴(편집 화면과 같음 — 2026-10-19 사용자)
-    if (!tool) return   // 클릭으로 장을 넘기지 않음(2026-10-19 사용자: 글 선택을 풀거나 판서를 보다가 넘어감) — 끌면 글 선택(기본 동작)
+    if (e.button === 2 || e.button === 1) { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); pan.current = { x: e.clientX, y: e.clientY, moved: false, z0: zoom }; return }   // 우클릭: 끌면 화면 이동, 제자리면 메뉴(편집 화면과 같음 — 2026-10-18 사용자)
+    if (!tool) return   // 클릭으로 장을 넘기지 않음(2026-10-18 사용자: 글 선택을 풀거나 판서를 보다가 넘어감) — 끌면 글 선택(기본 동작)
     if (e.button !== 0) return
     const p = { x: e.clientX, y: e.clientY }
     if (tool === 'erase') { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); const key = 'erase' + Date.now(); setDraft({ tool, key, a: p, b: p, pts: [p] }); onErase(toScene(p.x, p.y), 8 / k, key); return }   // 스치면 지움(TRIM처럼) — 한 번 끌기 = 되돌리기 한 칸
@@ -137,7 +137,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       setDraft(d => ({ ...d, pts: [...d.pts, p] })); return }
     setDraft(d => ({ ...d, b: d.tool === 'arrow' && e.shiftKey ? snap45(d.a, p) : p, pts: d.tool === 'pen' || d.tool === 'hl' ? (Math.hypot(p.x - d.pts.at(-1).x, p.y - d.pts.at(-1).y) >= 2 ? [...d.pts, p] : d.pts) : d.pts })) }
   const up = e => {
-    setTimeout(() => { const sl = getSelection(); if (sl?.isCollapsed) sl.removeAllRanges() }, 0)   // 글자 위 클릭이 남긴 빈 선택(깜빡이는 세로 막대)을 지움 — 끌어 고른 글은 그대로(2026-10-19 사용자)
+    setTimeout(() => { const sl = getSelection(); if (sl?.isCollapsed) sl.removeAllRanges() }, 0)   // 글자 위 클릭이 남긴 빈 선택(깜빡이는 세로 막대)을 지움 — 끌어 고른 글은 그대로(2026-10-18 사용자)
     if ((e.button === 2 || e.button === 1) && pan.current) { const pn = pan.current; pan.current = null; if (!pn.moved && e.button === 2) setMenu({ x: e.clientX, y: e.clientY }); return }   // 휠 클릭은 이동만(메뉴 없음)
     const d = draft; setDraft(null); if (!d || d.tool === 'erase') return
     if (d.tool === 'arrow' && e.shiftKey) d.b = snap45(d.a, d.b)
@@ -146,7 +146,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     if (d.tool === 'arrow' && !small) onAdd([{ pos: [0, 0], type: 'sarrow', pts: [[A.x, A.y], [B.x, B.y]], color: PEN, width: w, head: true, head_start: false, head_scale: +(((10 + SIZES.line[size] * 2) / (k * zs)) / Math.max(w * 3.2, 11)).toFixed(4), style: 1, auto_route: false, routing: 'straight', curve_r: 0, route_hints: [], bind1: null, bind2: null }])
     if ((d.tool === 'pen' || d.tool === 'hl') && d.pts.length >= 2) onAdd([{ pos: [0, 0], type: 'path', elements: d.pts.map((q, j) => { const s = toScene(q.x, q.y); return [j ? 'L' : 'M', s.x, s.y] }), pen: d.tool === 'hl' ? argb(hlColor, '73') : PEN, width: d.tool === 'hl' ? SIZES.hl[size] / (k * zs) : w, style: 1, freehand: true }])
   }
-  // 글자 칸 = 넣을 글과 같은 자리·크기(칠판 글 규칙: 위 왼쪽 + 여백 TEXT_MARGIN + 줄 높이) — 전엔 칸 가운데에 쓰고 넣으면 아래로 내려갔음(2026-10-19 사용자)
+  // 글자 칸 = 넣을 글과 같은 자리·크기(칠판 글 규칙: 위 왼쪽 + 여백 TEXT_MARGIN + 줄 높이) — 전엔 칸 가운데에 쓰고 넣으면 아래로 내려갔음(2026-10-18 사용자)
   const textBoxAt = p => { const F = [16, 22, 32][size], pad = TEXT_MARGIN * k * (zoom?.s || 1); return { F, pad, x: p.x - pad, y: p.y - F * 0.7 - pad, h: F * METRICS.app.lineSpacing + 2 * pad } }
   const commitText = v => { const p = textAt; setTextAt(null); if (!p || !v.trim()) return; const b = textBoxAt(p), s = toScene(b.x, b.y)
     onAdd([{ pos: [s.x, s.y], type: 'text', text: v, color: argb(penColor), font: +(b.F / (k * (zoom?.s || 1) * PT)).toFixed(3), bg: null }]) }
@@ -156,7 +156,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   const th = THEMES[dark ? 'dark' : 'light']
   const sep = <span style={{ width: 1, height: 28, background: 'rgba(255,255,255,.2)', margin: '0 4px' }} />
   const tbtn = on => ({ ...btn(on), flexDirection: 'column', gap: 1, height: 40, minWidth: 40, padding: '2px 4px' })
-  // 두 칸 고르기 — 지금 상태가 켜진 칸(2026-10-19 사용자: 「이동」 버튼이 지금 상태인지 누르면 바뀐다는 뜻인지 모르겠음)
+  // 두 칸 고르기 — 지금 상태가 켜진 칸(2026-10-18 사용자: 「이동」 버튼이 지금 상태인지 누르면 바뀐다는 뜻인지 모르겠음)
   const seg = (label, opts, cur, set, key) => <div title={`${label} (${key})`} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, margin: '0 2px' }}>
     <div style={{ display: 'flex', background: 'rgba(255,255,255,.08)', borderRadius: 6, padding: 1 }}>{opts.map(([v, name, tip]) => <button key={name} title={tip || name} onClick={() => set(v)}
       style={{ all: 'unset', cursor: 'pointer', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', font: "600 11px 'Pretendard', sans-serif", color: cur === v ? '#fff' : 'rgba(255,255,255,.6)', background: cur === v ? '#da7756' : 'transparent' }}>{name}</button>)}</div>

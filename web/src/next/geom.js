@@ -241,7 +241,7 @@ export function flatten(elements) {
   return out
 }
 
-// 표 행 경계(길이 rows+1) — .ecad 표 `row_heights`(표 높이 대비 비율, 웹 먼저 2026-10-19 — 데스크톱은 보존만, 행 같은 높이로 그림). 없으면 같은 높이
+// 표 행 경계(길이 rows+1) — .ecad 표 `row_heights`(표 높이 대비 비율, 웹 먼저 2026-10-18 — 데스크톱은 보존만, 행 같은 높이로 그림). 없으면 같은 높이
 export function rowEdges(y, h, it) {
   const n = it.rows, fr = it.row_heights?.length === n ? it.row_heights : null, out = [y]; let acc = y
   for (let i = 0; i < n; i++) { acc += (fr ? fr[i] : 1 / n) * h; out.push(acc) }
@@ -250,7 +250,7 @@ export function rowEdges(y, h, it) {
 }
 export const colFracs = it => (it.col_widths?.length === it.cols ? it.col_widths : Array(it.cols).fill(1 / it.cols))
 
-// 프레임(.ecad `frame`, 웹 먼저 2026-10-19 — 「종이틀」 대신: 드래그로 감싼 영역 = 출력 한 쪽·슬라이드 한 장). ratio = 가로:세로(긴 쪽 기준 — 세로로 길면 뒤집어 씀)
+// 프레임(.ecad `frame`, 웹 먼저 2026-10-18 — 「종이틀」 대신: 드래그로 감싼 영역 = 출력 한 쪽·슬라이드 한 장). ratio = 가로:세로(긴 쪽 기준 — 세로로 길면 뒤집어 씀)
 export const FRAME_RATIOS = { '16:9': 16 / 9, '4:3': 4 / 3, A4: 297 / 210, '1:1': 1 }
 export const frameTagFs = it => Math.max(12, Math.min(it.rect[2], it.rect[3]) * 0.03)   // 틀 위 이름표 글자 크기(틀 크기 따라)
 export const frameTag = it => `${it.no ?? ''}${it.name ? ' · ' + it.name : ''}` || '프레임'

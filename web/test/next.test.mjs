@@ -93,7 +93,7 @@ test('선 띠 윤곽 — 폭 2·hw, 직각 꺾임은 맞댐, 끝은 반원/잘�
   assert.ok(r.length > 3 && r.every(p => p.x <= 100 && p.y <= 50), '둥근 꺾임 점열은 원래 꺾은선 안쪽')
 })
 
-// 여러 개 크기 조절이 직각 화살표에 배율을 남기면 끝 끌기·붙는 끝이 어긋남 — 점에 녹이고, 옛 파일도 열 때 바로잡음(2026-10-19)
+// 여러 개 크기 조절이 직각 화살표에 배율을 남기면 끝 끌기·붙는 끝이 어긋남 — 점에 녹이고, 옛 파일도 열 때 바로잡음(2026-10-18)
 test('직각 화살표 배율은 점에 녹인다', async () => {
   const { bakeSarrow } = await import('../src/next/xform.js')
   const { fromEcad } = await import('../src/next/model.js')

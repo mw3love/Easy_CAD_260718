@@ -10,7 +10,7 @@ const frameRatio = (it, ratio) => { const [x, y, w, h] = it.rect; if (!ratio) re
 import { cellPt, tableAutoPt } from './render.jsx'
 // 글 있는 칸들의 지금 크기(pt)
 const tableCellPts = it => { const out = []; for (let r = 0; r < it.rows; r++) for (let c = 0; c < it.cols; c++) if (it.cells?.[r]?.[c]) out.push(cellPt(it, r, c)); return out.length ? out : [tableAutoPt(it)] }
-// 표 전체 크기를 안 정한 표의 ± = 칸마다 지금 크기에 각자 더함(값이 섞이면 각자 더하기 — 다른 도형과 같은 규칙, 2026-10-19 사용자: 10에서 시작해 「뻥」 커지던 것)
+// 표 전체 크기를 안 정한 표의 ± = 칸마다 지금 크기에 각자 더함(값이 섞이면 각자 더하기 — 다른 도형과 같은 규칙, 2026-10-18 사용자: 10에서 시작해 「뻥」 커지던 것)
 function stepTableCells(it, d) {
   const styles = { ...(it.cell_styles || {}) }
   for (let r = 0; r < it.rows; r++) for (let c = 0; c < it.cols; c++) if (it.cells?.[r]?.[c]) { const k = `${r},${c}`; styles[k] = { ...(styles[k] || {}), font: d ? stepClamp(cellPt(it, r, c), d, 1, 200, 1) : cellPt(it, r, c, true) } }   // d = 0 = 「자동」 끄기 — 지금 크기 그대로
@@ -128,7 +128,7 @@ const Row = ({ label, children }) => <div style={{ display: 'flex', alignItems: 
   <span style={{ width: 40, flex: 'none', color: C.muted, fontSize: 12 }}>{label}</span>{children}</div>
 const btn = (on, extra) => ({ all: 'unset', boxSizing: 'border-box', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, height: 26, borderRadius: 6,
   color: on ? C.on : C.ink, background: on ? C.onBg : 'transparent', outline: on ? `1px solid ${C.on}` : 'none', ...extra })
-// 표 글자 「자동」 켜고 끄기(2026-10-19 사용자: 끄려고 크기를 일부러 바꿔야 했음) — 켜짐 = 칸에 맞춰 줄어듦, 끄면 지금 보이는 크기 그대로 고정
+// 표 글자 「자동」 켜고 끄기(2026-10-18 사용자: 끄려고 크기를 일부러 바꿔야 했음) — 켜짐 = 칸에 맞춰 줄어듦, 끄면 지금 보이는 크기 그대로 고정
 function AutoToggle({ on, onClick }) {
   return <button title={on ? '자동 — 칸에 맞춰 글자 크기가 바뀌어요. 누르면 지금 크기로 고정' : '고정 — 누르면 칸에 맞춰 자동으로'} onClick={onClick}
     style={btn(on, { padding: '0 6px', fontSize: 11, ...(on ? {} : { background: C.seg }) })}>자동</button>

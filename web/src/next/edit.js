@@ -129,7 +129,7 @@ export function expandGroups(items, ids) {
 
 // 보드 안에 든 것(가운데가 보드 안) — 보드를 옮기거나 지우면 같이(데스크톱 `_board_delete_scope`·끌 때)
 export function boardContents(items, boardIds, textBox) {
-  // 담는 틀 = AI 보드 + 프레임(「안의 것 같이 움직임」 켠 것 — 기본 켬, 2026-10-19 사용자: Lucid Magnetize). 가운데가 틀 안이면 안의 것
+  // 담는 틀 = AI 보드 + 프레임(「안의 것 같이 움직임」 켠 것 — 기본 켬, 2026-10-18 사용자: Lucid Magnetize). 가운데가 틀 안이면 안의 것
   const boxes = items.filter(it => boardIds.includes(it._id) && (it.type === 'board' || (it.type === 'frame' && it.magnet !== false))).map(it => ({ r: sceneBox(it, textBox), board: it.type === 'board' }))
   if (!boxes.length) return []
   return items.filter(it => !boardIds.includes(it._id) && !it.locked).filter(it => {

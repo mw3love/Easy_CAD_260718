@@ -366,7 +366,7 @@ def item_to_dict(it) -> dict | None:
 
 
 _WEB_ONLY_KEYS_ALL = ("fit_text", "chat_at")
-_WEB_ONLY_KEYS = {"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights")}  # row_heights = 행 높이 비율(웹 2026-10-19, 데스크톱은 같은 높이로 그림)
+_WEB_ONLY_KEYS = {"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights")}  # row_heights = 행 높이 비율(웹 2026-10-18, 데스크톱은 같은 높이로 그림)
 
 
 def dict_to_item(d: dict):
@@ -403,7 +403,7 @@ def dict_to_item(d: dict):
         it.setPen(_mkpen(d))
         if it._closed:
             it.setBrush(_mkbrush(d))
-    elif t == "frame":   # [웹 칠판 2026-10-19] 프레임(출력 한 쪽·슬라이드 영역) — 데스크톱은 아직 모름: 점선 네모로 보이고, 저장할 때 다시 frame으로(`_web_extra["type"]`)
+    elif t == "frame":   # [웹 칠판 2026-10-18] 프레임(출력 한 쪽·슬라이드 영역) — 데스크톱은 아직 모름: 점선 네모로 보이고, 저장할 때 다시 frame으로(`_web_extra["type"]`)
         fd = {"pen": "#ff8a98a8", "width": 1.5, "style": 2, "fill": None}
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(fd)); it.setBrush(_mkbrush(fd))
     elif t == "rect":

@@ -164,7 +164,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     return { ...n, pill: onPill(it.pts, n.i, n.proj, z, sc) }
   }
   // 변 가까이(선택한 상자류) — 한 축 크기 바꾸기
-  // 고른 표의 안쪽 경계선(행·열 공통선 — 엑셀처럼 그 선만 끌기, 2026-10-19 사용자). 바깥 테두리는 표 크기(edgeAt)
+  // 고른 표의 안쪽 경계선(행·열 공통선 — 엑셀처럼 그 선만 끌기, 2026-10-18 사용자). 바깥 테두리는 표 크기(edgeAt)
   function tableLineAt(it, p) {
     if (!it || it.type !== 'table' || it.locked) return null
     const q = toLocal(it, p), [x, y, w, h] = it.rect, t = EDGE_PX / R.current.cam.z / (it.scale || 1)
@@ -192,7 +192,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const setHp = hp => { const a = R.current.hp, same = (!a && !hp) || (a && hp && a.id === hp.id && a.target?.p.x === hp.target?.p.x && a.target?.p.y === hp.target?.p.y); if (!same) { R.current.hp = hp; setOverlay(o => ({ ...o, hp })) } }
 
   // 끄는 것 + 함께 움직일 것(보드 안 것·같은 묶음)
-  const [loose, setLoose] = useState(null); R.current.loose = loose   // 자물쇠를 잠깐 푼 프레임(틀만 옮김 — 고른 게 풀리면 다시 같이, 2026-10-19 사용자: 「자물쇠 개념」)
+  const [loose, setLoose] = useState(null); R.current.loose = loose   // 자물쇠를 잠깐 푼 프레임(틀만 옮김 — 고른 게 풀리면 다시 같이, 2026-10-18 사용자: 「자물쇠 개념」)
   const movingSet = ids => { const its = R.current.model.items, lz = R.current.loose
     return [...new Set([...ids, ...boardContents(lz ? its.map(it => (it._id === lz ? { ...it, magnet: false } : it)) : its, ids, textBox)])] }
 
@@ -240,7 +240,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (edge) { st.current = { ...st.current, kind: 'resize', handle: edge, id: single._id, start: p, orig: m.items }; return }
     const add = e.shiftKey || e.ctrlKey || e.metaKey   // 더해 고르기 — Ctrl(데스크톱 손버릇)·Shift(웹 관례) 둘 다
     // 미선택 도형의 포트점·테두리(14px)를 누르면 화살표 잇기 대기 — 끌면 화살표, 그냥 놓으면 그 도형 선택(데스크톱 `_hover_port_at`→`_hp_*`)
-    // 프레임 이름표는 근처 도형의 포트점보다 먼저(이름표 옆 상자에서 화살표가 뽑혀 프레임이 안 끌렸음 — 2026-10-19 시험)
+    // 프레임 이름표는 근처 도형의 포트점보다 먼저(이름표 옆 상자에서 화살표가 뽑혀 프레임이 안 끌렸음 — 2026-10-18 시험)
     const tagHit = hitPool().find(it => it.type === 'frame' && !it.locked && (b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h)(frameTagBox(it)))
     if (tagHit) { const ids = add ? [...new Set([...R.current.sel, tagHit._id])] : R.current.sel.includes(tagHit._id) ? R.current.sel : [tagHit._id]; setSel(ids)
       st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: e.altKey ? ids : movingSet(ids), sel: ids, moved: false }; return }
@@ -346,7 +346,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         next = { ...it, scale: +k.toFixed(4), pos: [SA.x - A[0] * k, SA.y - A[1] * k] }
       } else if (s.kind === 'resize') {
         next = applyRect(it, resizeRect(localRect(it), s.handle, toLocal(it, p), { keepRatio: it.type === 'image' || (it.type === 'frame' && !!it.ratio) || e.shiftKey }))
-        if (next.type === 'table' && (next.font || next.cell_styles)) {   // 끄는 동안에도 확정과 같게 — 글보다 작아지지 않음(2026-10-19 사용자: 놓기 전엔 글이 넘침). 왼쪽·위 손잡이면 맞은편 변 고정
+        if (next.type === 'table' && (next.font || next.cell_styles)) {   // 끄는 동안에도 확정과 같게 — 글보다 작아지지 않음(2026-10-18 사용자: 놓기 전엔 글이 넘침). 왼쪽·위 손잡이면 맞은편 변 고정
           const [x0, y0, w0, h0] = next.rect, f = fitTable(next), [, , w1, h1] = f.rect
           next = f === next ? next : { ...f, rect: [/l/.test(s.handle) ? x0 + w0 - w1 : x0, /t/.test(s.handle) ? y0 + h0 - h1 : y0, w1, h1] }
         }
@@ -620,7 +620,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     setStatus(o.format === 'pdf' ? `${pages.length > 1 ? pages.length + '쪽 — ' : ''}인쇄 창에서 「PDF로 저장」을 고르세요` : pages.length > 1 ? `${pages.length}쪽 내려받음` : `${o.name}.${o.format} 내려받음`)
     return true
   }
-  // 내보낼 쪽들(내려받지 않음 — 내보내기 창 미리보기도 씀). o.scope: 'frames' = 프레임만(순서대로, 2026-10-19 사용자: 「프레임 모두 고르기」를 내보내기 범위로). 쪽마다 frameId(순서 끌기)
+  // 내보낼 쪽들(내려받지 않음 — 내보내기 창 미리보기도 씀). o.scope: 'frames' = 프레임만(순서대로, 2026-10-18 사용자: 「프레임 모두 고르기」를 내보내기 범위로). 쪽마다 frameId(순서 끌기)
   async function exportPages(o) {
     const m = R.current.model, hid = new Set(layersOf(m).filter(l => !l.visible).map(l => l.id))
     // 칠판 규칙(2026-10-18 사용자와 정함 — 데스크톱 「틀이 있으면 전체 = 틀」을 바꿈): 용지틀도 보통 도형
@@ -630,7 +630,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const isFrame = it => it.type === 'frame' || (it.type === 'titleblock' && (it.plain || !onlyFrames))
     const selFrames = onlyFrames ? all.filter(([it]) => it.type === 'frame' || (it.type === 'titleblock' && it.plain)) : selIds ? all.filter(([it]) => selIds.has(it._id) && isFrame(it)) : []   // 프레임은 순서대로, 종이틀은 줄/칸 우선
     if (onlyFrames && !selFrames.length) return { error: '프레임이 없어요 — 상단 「프레임」으로 영역을 감싸 보세요' }
-    if (selFrames.length && !o.onePage) {   // onePage = 「고른 것 한 쪽에」 — 틀도 보통 도형처럼 고른 것 전체를 감싼 한 쪽(2026-10-19 사용자: 보이지 않는 종이틀)
+    if (selFrames.length && !o.onePage) {   // onePage = 「고른 것 한 쪽에」 — 틀도 보통 도형처럼 고른 것 전체를 감싼 한 쪽(2026-10-18 사용자: 보이지 않는 종이틀)
       const rank = new Map(orderedFrames(m.items).map((f, i) => [f._id, i]))
       const frames = [...selFrames.filter(([it]) => it.type === 'frame').sort((a, b) => rank.get(a[0]._id) - rank.get(b[0]._id)).map(([it]) => ({ ...sceneBox(it, textBox), it })),
         ...readingOrder(selFrames.filter(([it]) => it.type === 'titleblock').map(([it]) => ({ ...sceneBox(it, textBox), it })), o.order || 'rows')]
@@ -689,7 +689,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     setCam(cc => ({ ...cc, x: size.w / 2 - (s.x + s.w / 2) * cc.z, y: size.h / 2 - (s.y + s.h / 2) * cc.z }))
     return true
   }
-  // ── 프레임(2026-10-19 사용자와 정함 — 「종이틀」을 바꿈: 종이 비율은 큰 의미 없음) — 번호 = 출력 쪽·슬라이드 순서 ──
+  // ── 프레임(2026-10-18 사용자와 정함 — 「종이틀」을 바꿈: 종이 비율은 큰 의미 없음) — 번호 = 출력 쪽·슬라이드 순서 ──
   const nextFrameNo = items => orderedFrames(items).length + 1   // 새 프레임 = 맨 끝
   function reorderFrames(ids) { const m = R.current.model; commit(setFrameOrder(m.items, ids), R.current.sel, '프레임 순서') }
   function renameFrame(id, name) { const m = R.current.model; commit(m.items.map(it => (it._id === id ? { ...it, name } : it)), R.current.sel, '프레임 이름', 'fname' + id) }   // 치는 대로 — 되돌리기는 한 칸
@@ -803,7 +803,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     setOverlay(o => ({ ...o, draw: null }))
     const m = R.current.model, z = R.current.cam.z, click = Math.hypot(p.x - s.start.x, p.y - s.start.y) * z < 3
     let it
-    if (s.tool === 'frame') {   // 프레임 — 드래그로 감싼 영역(2026-10-19 사용자: 「클릭하고 원하는 영역을 감싸게 드래그」), 클릭만 = 화면 40% 16:9. 맨 뒤
+    if (s.tool === 'frame') {   // 프레임 — 드래그로 감싼 영역(2026-10-18 사용자: 「클릭하고 원하는 영역을 감싸게 드래그」), 클릭만 = 화면 40% 16:9. 맨 뒤
       let x0 = Math.min(s.start.x, p.x), y0 = Math.min(s.start.y, p.y), w = Math.abs(p.x - s.start.x), h = Math.abs(p.y - s.start.y)
       if (click) { w = size.w * 0.4 / z; h = w * 9 / 16; x0 = p.x - w / 2; y0 = p.y - h / 2 }
       it = base([x0, y0], { type: 'frame', rect: [0, 0, w, h], name: '', no: nextFrameNo(m.items), ...(click ? { ratio: '16:9' } : {}), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
@@ -908,7 +908,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (mod && k.toLowerCase() === 'a') return act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))
       if (k === 'Escape') { setOverlay(o => ({ ...o, poly: null, draw: null })); if (R.current.tool !== 'select') setTool('select'); else if (cellSel) setCellSel(null); else setSel([]); return }
       if (k === 'Enter' && overlay.poly) return act(() => finishPoly(overlay.poly, false))
-      // 칸을 고른 채로 — 엑셀처럼: 글자를 치면 바로 그 칸에 새로 씀(두 번 누르지 않아도 — 2026-10-19 사용자), Enter·F2 = 있는 글 이어 고치기, Delete = 칸 글만 지움(표는 그대로)
+      // 칸을 고른 채로 — 엑셀처럼: 글자를 치면 바로 그 칸에 새로 씀(두 번 누르지 않아도 — 2026-10-18 사용자), Enter·F2 = 있는 글 이어 고치기, Delete = 칸 글만 지움(표는 그대로)
       if (cellSel && ids.length === 1 && ids[0] === cellSel.id && !mod && !e.altKey) {
         const { r0, r1, c0, c1 } = cellRange(cellSel)
         if (k === 'Delete' || k === 'Backspace') return act(() => { const t = m.items.find(x => x._id === cellSel.id); if (!t) return
@@ -1167,7 +1167,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
             if (a) commit(m.items.map(it => (it._id === a._id ? { ...it, pts: [...it.pts].reverse() } : it)), R.current.sel, '화살표 뒤집기') }} onClearNotes={box => { const m = R.current.model, inBox = it => { const b = sceneBox(it, textBox), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h }   // 이 장(프레임) 안 판서만
             const ids = m.items.filter(it => it.layer_id === PEN_LAYER && inBox(it)).map(it => it._id); if (ids.length) commit(removeItems(m.items, ids), R.current.sel, '이 장 판서 지움') }}
           onErase={(p, tol, key) => { const m = R.current.model, hit = topHit(m.items.filter(it => it.layer_id === PEN_LAYER), p, tol, textBox); if (hit) commit(removeItems(m.items, [hit._id]), R.current.sel, '판서 지움', key) }} /> })()}
-      {tagEdit && (() => { const it = byId.get(tagEdit); if (!it) return null; const b = frameTagBox(it), o = scr({ x: b.x, y: b.y })   // 프레임 이름표 바로 고치기(치는 대로 — 2026-10-19 사용자)
+      {tagEdit && (() => { const it = byId.get(tagEdit); if (!it) return null; const b = frameTagBox(it), o = scr({ x: b.x, y: b.y })   // 프레임 이름표 바로 고치기(치는 대로 — 2026-10-18 사용자)
         return <input key={tagEdit} autoFocus defaultValue={it.name || ''} placeholder="이름" onPointerDown={e => e.stopPropagation()} onChange={e => renameFrame(it._id, e.target.value)}
           onBlur={() => setTagEdit(null)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') setTagEdit(null) }}
           style={{ position: 'absolute', left: o.x, top: o.y, height: Math.max(20, b.h * cam.z), minWidth: 120, width: Math.max(120, b.w * cam.z + 40), boxSizing: 'border-box', zIndex: 20,

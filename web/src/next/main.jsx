@@ -66,11 +66,11 @@ function ExportForm({ hasSel, selFrames, frameCount, items, onExport, onPreview,
   const seg = (v, cur, set, label, dis) => <button key={v} disabled={dis} onClick={() => set(v)} style={{ all: 'unset', cursor: dis ? 'default' : 'pointer', opacity: dis ? 0.4 : 1, flex: 1, textAlign: 'center', padding: '3px 0', borderRadius: 6,
     background: cur === v ? 'rgba(218,119,86,.22)' : 'transparent', color: cur === v ? '#da7756' : C.ink, fontWeight: cur === v ? 600 : 400 }}>{label}</button>
   const row = (label, el) => <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 34, color: C.muted }}>{label}</span><div style={{ flex: 1, display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>{el}</div></div>
-  const [split, setSplit] = useState('frames')   // 고른 것에 종이틀이 있을 때 — 틀마다 쪽 / 고른 것 전체를 한 쪽에(2026-10-19 사용자)
+  const [split, setSplit] = useState('frames')   // 고른 것에 종이틀이 있을 때 — 틀마다 쪽 / 고른 것 전체를 한 쪽에(2026-10-18 사용자)
   const [order, setOrder] = useState('rows')   // 종이틀 쪽 순서 — 줄 우선(위 줄 왼→오, 지그재그) / 칸 우선(왼 칸 위→아래)
   const opts = { format: f, scope, selection: scope === 'sel', onePage: split === 'one', order, page, orient: orient || null, margin, transparent: tr }
   const go = async () => { setBusy(true); try { await onExport(opts) } finally { setBusy(false) } }
-  // 미리보기(2026-10-19 사용자: 인쇄 창 전에 보고 옵션 고르기) — 옵션·칠판이 바뀌면 다시
+  // 미리보기(2026-10-18 사용자: 인쇄 창 전에 보고 옵션 고르기) — 옵션·칠판이 바뀌면 다시
   const [prev, setPrev] = useState(null), [drag, setDrag] = useState(null), key = JSON.stringify(opts)
   useEffect(() => { let live = true; const t = setTimeout(async () => { const r = await onPreview({ ...opts, preview: true }); if (live) setPrev(r) }, 200); return () => { live = false; clearTimeout(t) } }, [key, items])   // eslint-disable-line react-hooks/exhaustive-deps
   const dropAt = to => { const pg = prev?.pages; if (drag == null || !pg || drag === to) return setDrag(null)

@@ -62,11 +62,11 @@ export function cellStyle(it, r, c) {
   const s = it.cell_styles?.[`${r},${c}`] || {}, font = s.font ?? it.font
   return { px: font ? font * PT : 0, bold: s.bold ?? !!(it.header && r === 0), color: s.color ?? it.color, align: s.align || 'center', fill: s.fill || null }
 }
-// 직접 정한 글자가 칸보다 크면 칸을 늘림(워드·한글 표처럼) — 그 행·그 열만 넓힘(2026-10-19: 행도 따로, 엑셀처럼). 줄이지는 않음
+// 직접 정한 글자가 칸보다 크면 칸을 늘림(워드·한글 표처럼) — 그 행·그 열만 넓힘(2026-10-18: 행도 따로, 엑셀처럼). 줄이지는 않음
 export const MIN_COL = 16, MIN_ROW = 8
-// 칸 하나의 글을 칸 크기 창 안에 — 아주 좁은 칸에서 글이 옆 칸으로 넘어가지 않게(2026-10-19 사용자). viewBox = 칸 자리라 안 좌표는 그대로
+// 칸 하나의 글을 칸 크기 창 안에 — 아주 좁은 칸에서 글이 옆 칸으로 넘어가지 않게(2026-10-18 사용자). viewBox = 칸 자리라 안 좌표는 그대로
 const clipCell = (els, x, y, w, h, k) => <svg key={`c${k}`} x={x} y={y} width={Math.max(0, w)} height={Math.max(0, h)} viewBox={`${x} ${y} ${Math.max(0.001, w)} ${Math.max(0.001, h)}`} overflow="hidden">{els}</svg>
-// 열·행마다 가장 좁게 될 수 있는 크기 — 직접 정한 글자가 들어갈 만큼(자동 칸은 최소값). 공통선 끌기가 여기서 멈춤(넘어서 표가 커지지 않게, 2026-10-19 사용자)
+// 열·행마다 가장 좁게 될 수 있는 크기 — 직접 정한 글자가 들어갈 만큼(자동 칸은 최소값). 공통선 끌기가 여기서 멈춤(넘어서 표가 커지지 않게, 2026-10-18 사용자)
 export function tableMins(it) {
   const minW = Array(it.cols).fill(MIN_COL), minH = Array(it.rows).fill(MIN_ROW)   // 표를 줄여 끌기를 되풀이해도 글 없는 열이 사라지지 않게
   for (let r = 0; r < it.rows; r++) for (let c = 0; c < it.cols; c++) {
@@ -76,9 +76,9 @@ export function tableMins(it) {
   }
   return { minW, minH }
 }
-// 칸 글자의 지금 크기(pt) — 자동 칸은 칸에 맞춰 줄어든 실제 크기(속성 카드가 늘 10으로 보여 ±하면 「뻥」 커지던 것, 2026-10-19 사용자)
+// 칸 글자의 지금 크기(pt) — 자동 칸은 칸에 맞춰 줄어든 실제 크기(속성 카드가 늘 10으로 보여 ±하면 「뻥」 커지던 것, 2026-10-18 사용자)
 export function cellPt(it, r, c, exact = false) {   // exact = 반올림 없이(「자동」 끌 때 고정할 값 — 크기가 하나도 안 바뀌게)
-  const s = cellStyle(it, r, c), d1 = v => (exact ? v : Math.round(v * 10) / 10)   // 소수 첫째 자리 — 정수로 반올림하면 「자동」을 끌 때 글이 살짝 작아졌음(2026-10-19 사용자)
+  const s = cellStyle(it, r, c), d1 = v => (exact ? v : Math.round(v * 10) / 10)   // 소수 첫째 자리 — 정수로 반올림하면 「자동」을 끌 때 글이 살짝 작아졌음(2026-10-18 사용자)
   if (s.px) return d1(s.px / PT)
   const [x, y, w, h] = it.rect, e = colEdges(x, w, colFracs(it)), re = rowEdges(y, h, it)
   return Math.max(1, d1(cellFontPx(it.cells?.[r]?.[c] || '가', e[c + 1] - e[c], re[r + 1] - re[r], s.bold, 0) / PT))
