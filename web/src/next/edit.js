@@ -321,3 +321,9 @@ export function readingOrder(boxes, mode = 'rows') {
   if (line.length) lines.push(line)
   return lines.flatMap(l => l.sort((p, q) => o(p) - o(q)))
 }
+
+// 프레임 순서(출력 쪽·슬라이드) — `no` 오름차순, 같으면 문서 순서. 화면 번호는 늘 1..n(지운 자리·겹친 번호가 남지 않게)
+export function orderedFrames(items) {
+  return items.map((it, i) => [it, i]).filter(([it]) => it.type === 'frame').sort((a, b) => (a[0].no ?? 1e9) - (b[0].no ?? 1e9) || a[1] - b[1]).map(([it]) => it)
+}
+export function setFrameOrder(items, ids) { const no = new Map(ids.map((id, i) => [id, i + 1])); return items.map(it => (no.has(it._id) ? { ...it, no: no.get(it._id) } : it)) }

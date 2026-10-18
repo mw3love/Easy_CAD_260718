@@ -282,16 +282,13 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
       {kind === 'ortho' && <Row label="모서리"><Stepper title="꺾인 곳 둥글기(0 = 각짐)" {...num(arrows, a => a.curve_r, 10, 0, 40, 1, '모서리', (a, v) => ({ curve_r: v }))} /></Row>}
     </>}
     {items.some(it => it.type === 'rect') && <Row label="모서리"><Stepper title="네모 모서리 둥글기(0 = 각짐)" {...num(items.filter(it => it.type === 'rect'), it => it.radius, 0, 0, 60, 2, '모서리 둥글기', (it, v) => ({ radius: v || undefined }))} /></Row>}
-    {items.length === 1 && items[0].type === 'frame' && (() => { const f = items[0]   // 프레임 — 이름·번호(쪽·슬라이드 순서)·비율·안의 것 같이 움직임
+    {items.length === 1 && items[0].type === 'frame' && (() => { const f = items[0]   // 프레임 — 이름·비율(순서는 좌하 「프레임」 카드, 틀만 옮기기는 이름표 옆 자물쇠·Alt+끌기)
       return <>
         <Row label="이름"><input key={f._id} defaultValue={f.name || ''} placeholder="예: 표지" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur() }}
-          onBlur={e => { const v = e.currentTarget.value.trim(); if (v !== (f.name || '')) set(() => ({ name: v }), '프레임 이름') }}
+          onChange={e => set(() => ({ name: e.target.value }), '프레임 이름', 'fname')}
           style={{ flex: 1, minWidth: 0, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} /></Row>
-        <Row label="번호"><Stepper title="쪽·슬라이드 순서" values={[f.no ?? 1]} onStep={d => set(() => ({ no: Math.max(1, (f.no ?? 1) + d) }), '프레임 번호', 'fno')} /></Row>
         <Row label="비율"><Seg value={f.ratio || ''} onPick={r => set(it => frameRatio(it, r || null), '프레임 비율')}
           items={[['', <span key="f" style={{ fontSize: 11 }}>자유</span>, '자유'], ...['16:9', '4:3', 'A4', '1:1'].map(r => [r, <span key={r} style={{ fontSize: 11 }}>{r}</span>, r])]} /></Row>
-        <Row label="안의 것"><Seg value={f.magnet !== false} onPick={v => set(() => ({ magnet: v ? undefined : false }), '프레임 같이 움직임')}
-          items={[[true, <span key="y" style={{ fontSize: 11 }}>같이 움직임</span>, '프레임을 옮기면 안의 것도 같이'], [false, <span key="n" style={{ fontSize: 11 }}>틀만</span>, '프레임만 옮김']]} /></Row>
       </> })()}
     {items.length > 0 && items.every(it => it.type === 'titleblock') && <>
       <Row label="용지"><Seg value={one(items.map(it => it.size))} onPick={s => set(it => ({ size: s }), '용지')} items={['A4', 'A3', 'A2', 'A1', 'A0'].map(s => [s, <span key={s} style={{ fontSize: 11 }}>{s}</span>, s])} /></Row>

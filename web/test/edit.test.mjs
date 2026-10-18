@@ -184,3 +184,13 @@ test('프레임 안의 것 같이 움직임', async () => {
   assert.deepEqual(boardContents(items, ['f'], tb).sort(), ['a', 'g'])
   assert.deepEqual(boardContents(items.map(it => (it._id === 'f' ? { ...it, magnet: false } : it)), ['f'], tb), [])
 })
+
+// 프레임 순서(2026-10-19): no 오름차순·같으면 문서 순서, 번호 없는 건 끝 — 다시 매기면 1..n(겹침 없음)
+test('프레임 순서', async () => {
+  const { orderedFrames, setFrameOrder } = await import('../src/next/edit.js')
+  const F = (id, no) => ({ _id: id, type: 'frame', rect: [0, 0, 10, 10], ...(no != null ? { no } : {}) })
+  const items = [F('a', 2), { _id: 'r', type: 'rect' }, F('b', 2), F('c'), F('d', 1)]
+  assert.deepEqual(orderedFrames(items).map(f => f._id), ['d', 'a', 'b', 'c'])
+  const re = setFrameOrder(items, ['c', 'd', 'a', 'b'])
+  assert.deepEqual(orderedFrames(re).map(f => [f._id, f.no]), [['c', 1], ['d', 2], ['a', 3], ['b', 4]])
+})
