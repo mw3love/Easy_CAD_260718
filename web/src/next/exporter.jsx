@@ -7,7 +7,7 @@ import { Item, setInkDark } from './render.jsx'
 export const PAPERS = { A4: [210, 297], A3: [297, 420], A2: [420, 594], A1: [594, 841], A0: [841, 1189] }   // 세로 기준 mm
 const FONT_FILES = { 400: 'Regular', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold' }
 
-async function fontFaces(weights) {   // 보드 글꼴(Pretendard)은 그림으로 바꿀 때 글꼴을 못 찾아서 파일째 넣음(윈도우 글꼴은 그대로 찾음)
+export async function fontFaces(weights) {   // 보드 글꼴(Pretendard)은 그림으로 바꿀 때 글꼴을 못 찾아서 파일째 넣음(윈도우 글꼴은 그대로 찾음)
   const out = []
   for (const w of weights) {
     const blob = await (await fetch(`/fonts/Pretendard-${FONT_FILES[w]}.otf`)).blob()
@@ -16,8 +16,8 @@ async function fontFaces(weights) {   // 보드 글꼴(Pretendard)은 그림으�
   }
   return out.join('')
 }
-const usesBoardFont = it => it.family || it.label?.family || (it.labels || []).some(L => L.family)
-const weightsOf = items => { const s = new Set([400, 700]); for (const it of items) if (it.weight && FONT_FILES[it.weight]) s.add(it.weight); return [...s] }
+export const usesBoardFont = it => it.type === 'memo' || it.family || it.label?.family || (it.labels || []).some(L => L.family)   // 메모 = 보드 글꼴로 그림
+export const weightsOf = items => { const s = new Set([400, 700]); for (const it of items) if (it.weight && FONT_FILES[it.weight]) s.add(it.weight); return [...s] }
 
 // entries = [[아이템, 순번]] 그리는 차례, src = 칠판 상자, opts = { page, orient, margin, transparent, frame }
 // → { svg 글, pw, ph (mm) }
@@ -41,7 +41,7 @@ export async function buildSvg(entries, src, { page = 'A4', orient = null, margi
   return { svg, pw, ph }
 }
 
-const download = (blob, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000) }
+export const download = (blob, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000) }
 
 export async function pngBlob({ svg, pw, ph }, dpi = 200) {
   const W = Math.max(1, Math.round(pw / 25.4 * dpi)), H = Math.max(1, Math.round(ph / 25.4 * dpi))

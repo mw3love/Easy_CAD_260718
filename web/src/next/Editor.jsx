@@ -28,7 +28,8 @@ import { colEdges, colFracs, frameTag, frameTagFs, rowEdges } from './geom.js'
 import { orderedFrames, setFrameOrder } from './edit.js'
 import { Presenter } from './present.jsx'
 import { layersOf, layerIdOf } from './layers.jsx'
-import { buildSvg, exportPdf, exportPng, exportSvg, pngBlob } from './exporter.jsx'
+import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob, usesBoardFont, weightsOf } from './exporter.jsx'
+import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
 import { freeSpot, sourceLine } from '../chatFormat.js'
 import { fetchLinkInfo, normalizeUrl, openBtnRect, siteOf, webCardFields } from './webcard.js'
@@ -640,12 +641,26 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
   // 내보내기 — o = { format: 'png'|'pdf'|'svg', selection, page, orient, margin, transparent, name }. 숨긴 레이어는 안 냄(데스크톱: 안 보이는 것은 안 그림)
   async function exportDoc(o) {
+    if (o.format === 'html') return exportHtml(o)
     const r = await exportPages(o); if (r.error) { setStatus(r.error); return false }
     const pages = r.pages
     if (o.format === 'pdf') exportPdf(pages.length === 1 ? pages[0] : pages, o.name)
     else if (pages.length === 1) { if (o.format === 'png') await exportPng(pages[0], o.name + '.png'); else exportSvg(pages[0], o.name + '.svg') }
     else for (let i = 0; i < pages.length; i++) { const nm = `${o.name}-${i + 1}`; if (o.format === 'png') await exportPng(pages[i], nm + '.png'); else exportSvg(pages[i], nm + '.svg') }
     setStatus(o.format === 'pdf' ? `${pages.length > 1 ? pages.length + '쪽 — ' : ''}인쇄 창에서 「PDF로 저장」을 고르세요` : pages.length > 1 ? `${pages.length}쪽 내려받음` : `${o.name}.${o.format} 내려받음`)
+    return true
+  }
+  // HTML 한 파일(2026-10-18 — 방송본 고정·예비본): 범위의 전체 그림 + 칠판의 프레임 = 발표 장, 글꼴은 맨 위에 한 번만(그림마다 넣지 않음 — preview = 글꼴 빼고 그림)
+  async function exportHtml(o) {
+    const ov = await exportPages({ ...o, format: 'svg', preview: true, transparent: false, onePage: true, scope: o.scope === 'frames' ? 'all' : o.scope })
+    if (ov.error || !ov.pages?.length) { setStatus(ov.error || '내보낼 것이 없어요'); return false }
+    const hasFrames = R.current.model.items.some(it => it.type === 'frame')
+    const sl = hasFrames ? await exportPages({ ...o, format: 'svg', preview: true, transparent: false, scope: 'frames', onePage: false }) : { pages: [] }
+    const its = R.current.model.items, fonts = its.some(usesBoardFont) ? await fontFaces(weightsOf(its)) : ''
+    const d = new Date(), p2 = v => String(v).padStart(2, '0'), made = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
+    const html = buildHtml({ title: o.name, made, overview: ov.pages[0].svg, slides: (sl.pages || []).map(pg => ({ svg: pg.svg, name: pg.name })), fonts })
+    download(new Blob([html], { type: 'text/html' }), `${o.name}.html`)
+    setStatus(`${o.name}.html 내려받음 — 전체 그림${sl.pages?.length ? ` + 발표 ${sl.pages.length}장` : ''}, 인터넷 없이 열려요`)
     return true
   }
   // 내보낼 쪽들(내려받지 않음 — 내보내기 창 미리보기도 씀). o.scope: 'frames' = 프레임만(순서대로, 2026-10-18 사용자: 「프레임 모두 고르기」를 내보내기 범위로). 쪽마다 frameId(순서 끌기)
