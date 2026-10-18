@@ -1,13 +1,13 @@
 // KAIROS 대화창의 순수 함수(§8 항목61 ⓒ) — 답 글(가벼운 마크다운) 읽기·카드 글 만들기·빈자리 찾기. `npm test`로 시험.
 
-// **굵게** 조각 나누기 → [{ text, bold }]
+// **굵게**·`코드` 조각 나누기 → [{ text, bold, code? }] — 글 속 `코드`는 고정폭 조각(2026-10-18 코드 블록)
 export function inlineParts(line) {
   const out = []
-  const re = /\*\*(.+?)\*\*/g
+  const re = /\*\*(.+?)\*\*|`([^`]+)`/g
   let i = 0, m
   while ((m = re.exec(line))) {
     if (m.index > i) out.push({ text: line.slice(i, m.index), bold: false })
-    out.push({ text: m[1], bold: true })
+    out.push(m[2] != null ? { text: m[2], bold: false, code: true } : { text: m[1], bold: true })
     i = m.index + m[0].length
   }
   if (i < line.length) out.push({ text: line.slice(i), bold: false })
@@ -84,13 +84,14 @@ export function contextText(texts, max = 20000) {
 export function answerToEcadText(md, source = '') {
   let text = ''
   const runs = []
-  const add = (s, bold, color = null) => { if (!s) return; if (bold || color) runs.push([text.length, s.length, color, !!bold]); text += s }
+  const add = (s, bold, color = null, mono = false) => { if (!s) return; if (mono) runs.push([text.length, s.length, null, false, null, true]); else if (bold || color) runs.push([text.length, s.length, color, !!bold]); text += s }
   const lines = parseAnswer(md)
   lines.forEach((ln, i) => {
     if (i) text += '\n'
     if (ln.kind === 'gap') return
+    if (ln.kind === 'code') { add(ln.parts[0].text.replace(/\t/g, '    ') || ' ', false, null, true); return }   // 코드 = 고정폭 줄(2026-10-18 사용자: 카드 안에)
     if (ln.kind === 'li') add(ln.mark + ' ', false)
-    for (const p of ln.parts) add(p.text, p.bold || ln.kind === 'h')
+    for (const p of ln.parts) add(p.text, p.bold || ln.kind === 'h', null, !!p.code)
   })
   if (source) { if (text) text += '\n'; add(source, false, '#8a8f98') }
   return { text, runs }

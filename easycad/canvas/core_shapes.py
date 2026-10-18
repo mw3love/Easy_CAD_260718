@@ -82,6 +82,7 @@ def _dbg2(msg: str) -> None:
 # 도형 두께가 1px(기본값)면 축소 후 소수점 이하로 사라져 안 보인다. 사용자가 실측으로 확인한
 # 값("1px는 안 보이고 3px부터 보인다")을 그대로 최소 두께 상수로 쓴다.
 _MIN_RENDER_STROKE_SCENE = 3.0
+_MONO_FAMILY = "Consolas"   # [웹 칠판 2026-10-18] .ecad runs 여섯째 칸(코드·고정폭) 조각의 글꼴 — 읽고 쓸 때 이 이름으로 알아봄
 
 
 @contextlib.contextmanager
@@ -5922,7 +5923,10 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
                 bg = (fmt.background().color().name(QColor.NameFormat.HexArgb)
                       if fmt.hasProperty(QTextFormat.Property.BackgroundBrush) and fmt.background().style() != Qt.BrushStyle.NoBrush
                       else None)
-                if color or bold or bg:
+                mono = _MONO_FAMILY in (fmt.fontFamilies() or [])   # [웹 칠판 2026-10-18] 코드(고정폭) 조각 — 여섯째 칸
+                if mono:
+                    runs.append([frag.position(), frag.length(), color, bold, bg, True])
+                elif color or bold or bg:
                     runs.append([frag.position(), frag.length(), color, bold] + ([bg] if bg else []))
                 it += 1
             block = block.next()
@@ -5934,6 +5938,7 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
         for run in runs or ():
             start, length, color, bold = run[:4]
             bg = run[4] if len(run) > 4 else None
+            mono = bool(run[5]) if len(run) > 5 else False
             start, end = max(0, int(start)), min(n, int(start) + int(length))
             if end <= start:
                 continue
@@ -5947,6 +5952,8 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
                 fmt.setFontWeight(QFont.Weight.Bold)
             if bg:
                 fmt.setBackground(QColor(bg))
+            if mono:
+                fmt.setFontFamilies([_MONO_FAMILY])
             cur.mergeCharFormat(fmt)
 
     def clear_runs(self):

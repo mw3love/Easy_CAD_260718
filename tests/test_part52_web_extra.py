@@ -71,3 +71,16 @@ def test_web_card_survives_desktop_save():
     out = item_to_dict(it)
     assert out["type"] == "web" and out["rect"] == [0.0, 0.0, 480.0, 310.0] and "label" not in out
     assert (out["url"], out["title"], out["embed"], out["thumb"], out["frameable"]) == (d["url"], "노래", d["embed"], d["thumb"], True)
+
+
+def test_web_code_runs_survive_desktop_save():
+    """AI 카드 안 코드 줄(2026-10-18 — .ecad runs 여섯째 칸 = 고정폭)은 데스크톱이 Consolas로 보이고, 저장하면 다시 고정폭 표시로"""
+    text = "합:\ndef add(a, b):\n    return a + b"
+    d = dict(_BASE, type="rect", rect=[0.0, 0.0, 340.0, 120.0], pen="#ffd4d4d8", width=1.0, fill="#ffffffff", style=1, fit_text=True,
+             label={"text": text, "color": "#ff1f1f1f", "font": 10.5, "bg": None, "align": "left",
+                    "runs": [[0, 2, "#ff0000", True], [3, 14, None, False, None, True], [18, 16, None, False, None, True]]})
+    out = _roundtrip(d)
+    runs = out["label"]["runs"]
+    mono = [text[s:s + n] for s, n, *rest in runs if len(rest) > 3 and rest[3]]
+    assert mono == ["def add(a, b):", "    return a + b"]
+    assert [0, 2, "#ff0000", True] in runs                       # 다른 조각은 그대로

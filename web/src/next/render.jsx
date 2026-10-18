@@ -13,7 +13,9 @@ import { WEB_HEAD, frameSrc, openBtnRect, siteOf } from './webcard.js'
 // ── 글자 재기(캔버스) ──
 let _ctx = null
 const ctx = () => (_ctx ||= document.createElement('canvas').getContext('2d'))
-const fontCss = (px, family, weight = 400) => `${weight} ${px}px ${family === 'board' ? BOARD_FONT : APP_FONT}`
+const fontCss = (px, family, weight = 400) => `${weight} ${px}px ${family === 'mono' ? MONO_FONT : family === 'board' ? BOARD_FONT : APP_FONT}`
+// 코드(고정폭 조각, 2026-10-18 코드 블록) — 윈도우 기본 Consolas, 한글은 다음 글꼴로. 코드 줄 바탕은 밝기와 상관없이 보이는 반투명 회색
+export const MONO_FONT = "Consolas, 'Cascadia Mono', 'D2Coding', monospace", CODE_BAND = 'rgba(127,127,127,.14)'
 // 폭을 넘으면 끝을 「…」로(웹 카드 제목·주소 한 줄)
 export function ellipsis(text, px, weight, maxW) {
   const t = String(text || ''); if (maxW <= 0) return ''; if (measure(t, px, 'app', weight) <= maxW) return t
@@ -25,16 +27,16 @@ export function measure(text, px, family, weight) { const c = ctx(); c.font = fo
 // 글 배치 — 줄마다 조각(굵게·색·형광펜) 위치까지. 반환 { lines: [{parts:[{text,x,w,…}], w}], w, h, px, family, weight }
 // maxW(px)를 주면 그 폭에서 줄을 바꾼다 — 띄어쓰기에서, 띄어쓰기 없는 긴 덩어리(주소·코드)는 글자 단위로(왼쪽 위 라벨 = AI 카드·메모)
 export function layoutText(text, runs, px, family, weight = 400, maxW = 0) {
-  const wOf = p => measure(p.text, px, family, p.bold ? Math.max(700, weight) : weight)
+  const wOf = p => measure(p.text, px, p.mono ? 'mono' : family, p.mono ? 400 : p.bold ? Math.max(700, weight) : weight)
   let src = runsToLines(text || '', runs)
   if (maxW > 0) src = src.flatMap(parts => wrapParts(parts, maxW, wOf))
   const lines = src.map(parts => {
     let x = 0
     const placed = parts.map(p => { const w = wOf(p); const o = { ...p, x, w }; x += w; return o })
-    return { parts: placed, w: x }
+    return { parts: placed, w: x, code: parts.length > 0 && parts.every(p => p.mono) }   // 코드 줄 = 줄 전체 바탕
   })
   const m = METRICS[family === 'board' ? 'board' : 'app']
-  return { lines, w: Math.max(0, ...lines.map(l => l.w)), h: lines.length * m.lineSpacing * px, px, family, weight, m }
+  return { lines, w: Math.max(0, ...lines.map(l => l.w)), h: lines.length * m.lineSpacing * px, px, family, weight, m, maxW }
 }
 
 // 한 줄(조각들)을 폭 안으로 — 낱말(띄어쓰기 포함 덩어리) 단위로 채우고, 한 낱말이 폭보다 길면 글자 단위로 자름. 줄 첫머리 띄어쓰기는 버림
@@ -46,7 +48,7 @@ function wrapParts(parts, maxW, wOf) {
   const brk = () => { out.push([]); cur = 0 }
   for (const t of toks) {
     const sp = /^\s+$/.test(t.text), w = wOf(t)
-    if (sp) { if (cur > 0) push(t); continue }
+    if (sp) { if (cur > 0 || t.mono) push(t); continue }   // 코드 줄 앞 띄어쓰기 = 들여쓰기(지키기)
     if (cur > 0 && cur + w > maxW) { const ln = out[out.length - 1]; while (ln.length && /^\s+$/.test(ln[ln.length - 1].text)) ln.pop(); brk() }
     if (w <= maxW) { push(t); continue }
     let acc = ''   // 긴 덩어리 — 글자 단위
@@ -118,10 +120,12 @@ function TextLines({ lay, left, top, color, halo }) {   // halo = 글자 둘레�
   const out = []
   lay.lines.forEach((ln, i) => {
     const base = top + TEXT_MARGIN + m.ascent * px + i * m.lineSpacing * px
+    if (ln.code) out.push(<rect key={`c${i}`} x={left + TEXT_MARGIN - 4} y={base - m.ascent * px} width={(lay.maxW || lay.w) + 8} height={m.lineSpacing * px} fill={CODE_BAND} />)
+    if (!ln.code) for (const p of ln.parts) if (p.mono && !p.bg) out.push(<rect key={`m${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={CODE_BAND} />)   // 글 속 짧은 코드
     for (const p of ln.parts) if (p.bg) out.push(<rect key={`b${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={bgCss(p.bg)} />)
     out.push(<text key={`t${i}`} y={base} fontSize={px} fontFamily={family === 'board' ? BOARD_FONT : APP_FONT} fontWeight={weight} fill={color} style={{ whiteSpace: 'pre' }}
       {...(halo ? { stroke: halo, strokeWidth: px * 0.14, strokeLinejoin: 'round', paintOrder: 'stroke' } : {})}>   {/* 얇게 — 두꺼우면 자기 선 끝도 숫자 모양대로 곡선으로 파였음(2026-10-18) */}
-      {ln.parts.map((p, j) => <tspan key={j} x={left + TEXT_MARGIN + p.x} fill={p.color ? cssColor(p.color) : undefined} fontWeight={p.bold ? Math.max(700, weight) : undefined}>{p.text}</tspan>)}
+      {ln.parts.map((p, j) => <tspan key={j} x={left + TEXT_MARGIN + p.x} fill={p.color ? cssColor(p.color) : undefined} fontWeight={p.mono ? 400 : p.bold ? Math.max(700, weight) : undefined} fontFamily={p.mono ? MONO_FONT : undefined}>{p.text}</tspan>)}
     </text>)
   })
   return out

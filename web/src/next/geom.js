@@ -137,9 +137,9 @@ export function bezierSub(p0, c1, c2, p3, t0, t1) {
 // 글 + runs([시작, 길이, 색, 굵게, 배경?]) → 줄마다 조각 [{text, color, bold, bg}]
 export function runsToLines(text, runs) {
   const n = text.length, attr = new Array(n).fill(null)
-  for (const [s, len, color, bold, bg] of runs || [])
-    for (let i = Math.max(0, s); i < Math.min(n, s + len); i++) attr[i] = { color: color || null, bold: !!bold, bg: bg || null }
-  const same = (a, b) => (a?.color ?? null) === (b?.color ?? null) && !!a?.bold === !!b?.bold && (a?.bg ?? null) === (b?.bg ?? null)
+  for (const [s, len, color, bold, bg, mono] of runs || [])
+    for (let i = Math.max(0, s); i < Math.min(n, s + len); i++) attr[i] = { color: color || null, bold: !!bold, bg: bg || null, mono: !!mono }
+  const same = (a, b) => (a?.color ?? null) === (b?.color ?? null) && !!a?.bold === !!b?.bold && (a?.bg ?? null) === (b?.bg ?? null) && !!a?.mono === !!b?.mono
   const lines = []
   let pos = 0
   for (const line of text.split('\n')) {
@@ -147,7 +147,7 @@ export function runsToLines(text, runs) {
     for (let i = 0; i < line.length;) {
       const a = attr[pos + i]; let j = i + 1
       while (j < line.length && same(attr[pos + j], a)) j++
-      parts.push({ text: line.slice(i, j), color: a?.color ?? null, bold: !!a?.bold, bg: a?.bg ?? null }); i = j
+      parts.push({ text: line.slice(i, j), color: a?.color ?? null, bold: !!a?.bold, bg: a?.bg ?? null, ...(a?.mono ? { mono: true } : {}) }); i = j
     }
     lines.push(parts)
     pos += line.length + 1

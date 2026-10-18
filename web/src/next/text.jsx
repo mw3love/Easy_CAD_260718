@@ -7,10 +7,12 @@ import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import Bold from '@tiptap/extension-bold'
+import Code from '@tiptap/extension-code'
 import { BackgroundColor, Color, TextStyle } from '@tiptap/extension-text-style'
 import { UndoRedo } from '@tiptap/extensions'
 import { richTextToRuns, runsToRichText } from '../ecadFormat.js'
 import { APP_FONT, BOARD_FONT, METRICS, TEXT_MARGIN } from './geom.js'
+import { CODE_BAND, MONO_FONT } from './render.jsx'   // 고치는 모습 = 결과(칠판과 같은 고정폭 글꼴·바탕)
 
 // 글 굵기(400·600·800) — textStyle 안에(데스크톱 weight·보드 글꼴 굵기)
 const FontWeight = Extension.create({
@@ -55,7 +57,7 @@ export function TextEditor({ spec, onDone }) {
     const cancel = () => { if (sp.current.armed || done.current) return; done.current = true; od.current(null) }
     const editor = new Editor({
       element: host.current,
-      extensions: [Document, Paragraph, Text, Bold, TextStyle, Color, BackgroundColor, FontWeight, UndoRedo, Finish.configure({ onDone: finish, onCancel: spec.cell ? cancel : null, onMove: spec.cell ? finish : null, isArmed: () => !!sp.current.armed })],
+      extensions: [Document, Paragraph, Text, Bold, Code, TextStyle, Color, BackgroundColor, FontWeight, UndoRedo, Finish.configure({ onDone: finish, onCancel: spec.cell ? cancel : null, onMove: spec.cell ? finish : null, isArmed: () => !!sp.current.armed })],
       content: runsToRichText(spec.text || '', spec.runs, spec.weight && spec.weight !== 400 ? spec.weight : null),
       autofocus: 'end',
       editorProps: { attributes: { spellcheck: 'false' }, handlePaste: () => !!sp.current.armed },   // 대기 중 Ctrl+V = 칠판 붙여넣기(편집기에 글이 숨어 들어가지 않게)
@@ -101,6 +103,6 @@ export function TextEditor({ spec, onDone }) {
       fontWeight: spec.weight || 400, fontSize: fs, fontFamily: spec.family === 'board' ? BOARD_FONT : APP_FONT, lineHeight: m.lineSpacing,   // 낱개로(한 줄짜리 font와 섞으면 다시 그릴 때 경고) color: spec.color, textAlign: spec.align || 'left',
       whiteSpace: spec.width && !spec.cell ? 'pre-wrap' : 'pre', width: spec.width, height: spec.height, display: spec.cell ? 'flex' : undefined, alignItems: spec.cell ? 'center' : undefined, justifyContent: spec.cell ? ({ left: 'flex-start', right: 'flex-end' }[spec.align] || 'center') : undefined, overflowWrap: spec.width ? 'anywhere' : undefined, outline: spec.flat || spec.armed ? 'none' : '1.5px solid #89b4fa', background: spec.bg || 'rgba(255,255,255,.9)', zIndex: 20, ...(spec.armed ? { opacity: 0, pointerEvents: 'none' } : {}) }}>
     {/* 고른 글의 색·형광펜이 고른 채로 보이게 — 브라우저 기본 선택은 글자색을 덮음(2026-10-18 사용자: 드래그를 풀어야 바뀐 색이 보임). 바탕만 옅게 */}
-    <style>{`[data-testid=text-editor] .ProseMirror{outline:none;white-space:${spec.width ? 'pre-wrap' : 'pre'};overflow-wrap:${spec.width ? 'anywhere' : 'normal'}}[data-testid=text-editor] p{margin:0}[data-testid=text-editor] ::selection{background:rgba(137,180,250,.35)}`}</style>
+    <style>{`[data-testid=text-editor] .ProseMirror{outline:none;white-space:${spec.width ? 'pre-wrap' : 'pre'};overflow-wrap:${spec.width ? 'anywhere' : 'normal'}}[data-testid=text-editor] p{margin:0}[data-testid=text-editor] code{font-family:${MONO_FONT};font-size:inherit;background:${CODE_BAND};padding:0;border-radius:0;word-break:keep-all}[data-testid=text-editor] ::selection{background:rgba(137,180,250,.35)}`}</style>
   </div>
 }
