@@ -8,6 +8,7 @@ import { DOC_NAME, docBounds, emptyDoc, loadServerDoc, parseDoc, saveServerDoc }
 import { fromEcad, toEcad } from './model.js'
 import { setInkDark } from './render.jsx'
 import { Palette, useLibrary } from './palette.jsx'
+import { Layers } from './layers.jsx'
 
 const ZMIN = 0.02, ZMAX = 40
 // 화면 색은 next.html의 CSS 변수(밝은/어두운 화면 — 어두운 쪽은 데스크톱과 같은 값)
@@ -51,6 +52,7 @@ function TableForm({ onInsert, onClose }) {
 
 function App() {
   const [tableOpen, setTableOpen] = useState(false)
+  const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
   const [model, setModel] = useState(() => fromEcad(emptyDoc()))
   const [cam, setCam] = useState({ x: 0, y: 0, z: 1 })   // 화면 = 칠판 × z + (x, y)
   const [tool, setTool] = useState('select')
@@ -71,7 +73,7 @@ function App() {
   // 서버 칠판을 다시 열면 이 브라우저에서 마지막에 보던 자리·배율로(없거나 못 읽으면 전체 맞추기). 파일·샘플은 늘 전체 맞추기
   const camKey = `mb.cam.${DOC_NAME}`, camReady = useRef(false)
   const savedCam = () => { try { const c = JSON.parse(localStorage.getItem(camKey)); return c && [c.x, c.y, c.z].every(Number.isFinite) ? c : null } catch { return null } }
-  const open = useCallback((doc, how, keepCam = false) => { const m = fromEcad(doc); setModel(m); ed.current?.reset(); const c = keepCam && savedCam(); if (c) setCam(c); else fit(m.items); camReady.current = true; setStatus(`${how} · ${m.items.length}개`) }, [fit])   // eslint-disable-line
+  const open = useCallback((doc, how, keepCam = false) => { const m = fromEcad(doc); setModel(m); setActiveLayer('default'); ed.current?.reset(); const c = keepCam && savedCam(); if (c) setCam(c); else fit(m.items); camReady.current = true; setStatus(`${how} · ${m.items.length}개`) }, [fit])   // eslint-disable-line
   useEffect(() => { if (!camReady.current) return; const t = setTimeout(() => { try { localStorage.setItem(camKey, JSON.stringify(cam)) } catch { /* 저장 못 해도 그만 */ } }, 300); return () => clearTimeout(t) }, [cam])   // eslint-disable-line
 
   // 고칠 때마다 0.8초 쉬면 서버에 저장(서버 없으면 「내려받기」로)
@@ -135,9 +137,13 @@ function App() {
         }} />
       </div>
       <div ref={box} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        <Editor ref={ed} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} />
+        <Editor ref={ed} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} />
         {/* 좌상 도형·심볼 카드(데스크톱 첫 화면: 좌상 도형·심볼) */}
-        <Palette lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} />
+        {/* 왼쪽 세로 줄 — 위 도형·심볼 카드, 아래 레이어 카드(데스크톱 첫 화면: 좌상·좌하 따로, 통합 금지). 줄 자체는 칠판 누르기를 막지 않음 */}
+        <div style={{ position: 'absolute', left: 12, top: 12, bottom: 12, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 8, pointerEvents: 'none' }}>
+          <Palette lib={lib} tool={tool} dark={dark} onDown={paletteDown} onClick={setTool} />
+          <Layers model={model} setModel={setModel} active={activeLayer} setActive={setActiveLayer} onChanged={onCommit} onMoveSel={id => ed.current?.moveSelToLayer(id)} dark={dark} />
+        </div>
       </div>
     </div>
   )

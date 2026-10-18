@@ -23,6 +23,7 @@ import { arrowKindOf, swapArrowKind } from './arrowkind.js'
 import { symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
 import { colEdges } from './geom.js'
+import { layersOf, layerIdOf } from './layers.jsx'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
@@ -59,7 +60,7 @@ const withLabels = (it, labels) => { const o = { ...it, labels }; delete o.label
 const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([x, y]) => ({ x, y })), q) : projectToCurve(it, q))
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
-export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders }, ref) {
+export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer }, ref) {
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -67,7 +68,9 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const [cursor, setCursor] = useState('default')
   const st = useRef({}), hist = useRef({ past: [], future: [] }), clip = useRef({ items: [], seq: 0 }), svg = useRef(null)
   const items = live || model.items
-  const R = useRef(); R.current = { vhosts: new Map(), ...R.current, model, sel, cam, tool, items, editing, hp: overlay.hp }   // vhosts = 묶음 가상 상자('g:…', hostsNear가 채움)
+  const R = useRef(); R.current = { vhosts: new Map(), ...R.current, model, sel, cam, tool, items, editing, hp: overlay.hp, activeLayer }
+  // 누를 수 있는 것 = 숨긴 레이어 밖(데스크톱 setVisible(False)는 눌리지도 않음)
+  const hitPool = () => { const m = R.current.model, hid = new Set(layersOf(m).filter(l => !l.visible).map(l => l.id)); return hid.size ? m.items.filter(it => !hid.has(layerIdOf(it))) : m.items }   // vhosts = 묶음 가상 상자('g:…', hostsNear가 채움)
 
   const toSceneP = useCallback(e => { const r = svg.current.getBoundingClientRect(), c = R.current.cam; return { x: (e.clientX - r.left - c.x) / c.z, y: (e.clientY - r.top - c.y) / c.z } }, [])
   const scr = p => ({ x: p.x * cam.z + cam.x, y: p.y * cam.z + cam.y })
@@ -75,7 +78,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // 확정 — 붙은 화살표 따라가기 + 되돌리기 칸
   // merge = 같은 열쇠로 1.5초 안에 또 고치면 되돌리기 한 칸으로 묶음(−/+ 연타·색 고르기 끌기)
   const commit = useCallback((next, nextSel, label = '', merge = null) => {
-    const prev = R.current.model.items, fixed = followArrows(next, rectOf), h = hist.current, now = Date.now()
+    const prev = R.current.model.items, h = hist.current, now = Date.now()
+    const al = R.current.activeLayer, ly = al && al !== 'default' && layersOf(R.current.model).find(l => l.id === al)
+    if (ly && ly.visible && !ly.locked) { const had = new Set(prev.map(it => it._id)); next = next.map(it => (had.has(it._id) || it.layer_id ? it : { ...it, layer_id: al })) }
+    const fixed = followArrows(next, rectOf)
     if (!(merge && h.mergeKey === merge && now - h.mergeT < 1500)) { h.past.push({ items: prev, sel: R.current.sel }); h.future = [] }
     h.mergeKey = merge; h.mergeT = now
     if (hist.current.past.length > 200) hist.current.past.shift()
@@ -86,7 +92,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
 
-  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, moveSelToLayer, reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live }) }))
 
@@ -198,7 +204,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const add = e.shiftKey || e.ctrlKey || e.metaKey   // 더해 고르기 — Ctrl(데스크톱 손버릇)·Shift(웹 관례) 둘 다
     // 미선택 도형의 포트점·테두리(14px)를 누르면 화살표 잇기 대기 — 끌면 화살표, 그냥 놓으면 그 도형 선택(데스크톱 `_hover_port_at`→`_hp_*`)
     if (!add && !e.altKey) { const hp = hoverPort(p); if (hp?.target) { st.current = { ...st.current, kind: 'conn', src: hp.target.id, port: { p: hp.target.p, n: hp.target.n }, start: p, cur: p, fromQc: false, moved: false }; return } }
-    const hit = topHit(m.items, p, HIT_PX / z, textBox)
+    const hit = topHit(hitPool(), p, HIT_PX / z, textBox)
     if (hit) {
       let ids = R.current.sel
       if (add) ids = ids.includes(hit._id) ? ids.filter(i => i !== hit._id && !(hit.group_id && m.items.find(x => x._id === i)?.group_id === hit.group_id)) : expandGroups(m.items, [...ids, hit._id])
@@ -229,7 +235,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       return
     }
     if (s.kind === 'rubber') {   // 끄는 동안 걸릴 것을 바로 보여 줌(데스크톱 `_rb_preview_hits` — 실제 선택은 놓을 때)
-      const sel0 = new Set(R.current.sel), hitIds = Math.hypot(p.x - s.start.x, p.y - s.start.y) * z > 3 ? expandGroups(R.current.model.items, rubberSelect(R.current.model.items, s.start, p, textBox)).filter(id => !sel0.has(id)) : []
+      const sel0 = new Set(R.current.sel), hitIds = Math.hypot(p.x - s.start.x, p.y - s.start.y) * z > 3 ? expandGroups(R.current.model.items, rubberSelect(hitPool(), s.start, p, textBox)).filter(id => !sel0.has(id)) : []
       setOverlay(o => ({ ...o, rubber: { a: s.start, b: p, hits: hitIds } })); return
     }
     if (s.kind === 'conn') {
@@ -317,7 +323,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (s.kind === 'move') { setOverlay(o => ({ ...o, guides: null })); if (s.moved && live) commit(live.filter(it => it), s.sel, '옮김'); else setLive(null); return }
     if (s.kind === 'rubber') {
       setOverlay(o => ({ ...o, rubber: null }))
-      if (Math.hypot(p.x - s.start.x, p.y - s.start.y) * R.current.cam.z > 3) setSel(expandGroups(R.current.model.items, [...new Set([...s.add, ...rubberSelect(R.current.model.items, s.start, p, textBox)])]))
+      if (Math.hypot(p.x - s.start.x, p.y - s.start.y) * R.current.cam.z > 3) setSel(expandGroups(R.current.model.items, [...new Set([...s.add, ...rubberSelect(hitPool(), s.start, p, textBox)])]))
       return
     }
     if (['resize', 'rotate', 'tscale', 'lineend'].includes(s.kind)) { if (live) commit(live, R.current.sel, '바꿈'); return }
@@ -418,7 +424,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const hp = hoverPort(p); setHp(hp)
     if (hp?.target && (!inside(R.current.model.items.find(x => x._id === hp.target.id) || {}, p) || (hp.target.port && Math.hypot(hp.target.p.x - p.x, hp.target.p.y - p.y) * R.current.cam.z <= 5))) { setCursor('crosshair'); return }
     const ed = edgeAt(single, p); if (ed) { setCursor(edgeCursor[ed]); return }
-    setCursor(topHit(R.current.model.items, p, HIT_PX / R.current.cam.z, textBox) ? 'move' : 'default')
+    setCursor(topHit(hitPool(), p, HIT_PX / R.current.cam.z, textBox) ? 'move' : 'default')
   }
 
   // ── 도형 카드에서 끌어다 놓기(데스크톱 `_PaletteButton` 6px 넘게 끌기) — 진짜 도형이 손에 붙어 따라오고 정렬선도 걸림, 칠판 밖(카드 위 등)에 놓으면 취소 ──
@@ -456,6 +462,13 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       return o
     })
     commit(rebound, its.map(it => it._id), '내 심볼로 바꾸기')
+  }
+  // 고른 도형을 레이어로(데스크톱 `move_selection_to_layer`) — 그 레이어의 잠금을 물려받음, 되돌리기 한 칸
+  function moveSelToLayer(id) {
+    const m = R.current.model, ly = layersOf(m).find(l => l.id === id), ids = new Set(movingSet(R.current.sel))
+    if (!ly) return; if (!ids.size) return setStatus('옮길 도형을 먼저 고르세요')
+    commit(m.items.map(it => (ids.has(it._id) ? { ...it, layer_id: id === 'default' ? null : id, locked: ly.locked } : it)), [...ids], '레이어 옮김')
+    setStatus(`레이어 옮김: ${ids.size}개 → ${ly.name}`)
   }
   function insertTable(rows, cols, header) {
     const m = R.current.model, c = R.current.cam, W = cols * 40, H = rows * 14
@@ -566,7 +579,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (R.current.tool === 'polygon') { finishPoly(overlay.poly || [], false); return }
     const p = toSceneP(e), lb = labelAt(p)
     if (lb) { setSel([lb.it._id]); setEditing({ id: lb.it._id, kind: 'alabel', i: lb.i }); return }
-    const hit = topHit(R.current.model.items, p, HIT_PX / R.current.cam.z, textBox)
+    const hit = topHit(hitPool(), p, HIT_PX / R.current.cam.z, textBox)
     if (!hit || hit.locked) return
     if (hit.type === 'table') { const cell = cellAt(hit, toLocal(hit, p)); if (cell) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'cell', ...cell }) } return }
     if (isArrow(hit)) {   // 화살표 빈 자리 더블클릭 = 그 자리에 새 라벨(여러 개 — 데스크톱 `add_label_at_scene_pos`)
@@ -625,7 +638,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       const act = (f, label) => { e.preventDefault(); f(label) }
       if (mod && k.toLowerCase() === 'z' && !e.shiftKey) return act(undo)
       if (mod && (k.toLowerCase() === 'y' || (k.toLowerCase() === 'z' && e.shiftKey))) return act(redo)
-      if (mod && k.toLowerCase() === 'a') return act(() => setSel(m.items.filter(it => !it.locked).map(it => it._id)))
+      if (mod && k.toLowerCase() === 'a') return act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))
       if (k === 'Escape') { setOverlay(o => ({ ...o, poly: null, draw: null })); if (R.current.tool !== 'select') setTool('select'); else setSel([]); return }
       if (k === 'Enter' && overlay.poly) return act(() => finishPoly(overlay.poly, false))
       const TOOL_KEYS = { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen', 7: 'badge' }   // 데스크톱 `SHORTCUT_DEFS` 도구 1~7
@@ -678,7 +691,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }, [setCam])
 
   // ── 그리기 차례·화면 밖 빼기 ──
-  const order = useMemo(() => drawOrder(items), [items]); R.current.order = order
+  const hiddenL = useMemo(() => new Set(layersOf(model).filter(l => !l.visible).map(l => l.id)), [model])
+  const order = useMemo(() => drawOrder(items).filter(([it]) => !hiddenL.has(layerIdOf(it))), [items, hiddenL]); R.current.order = order
   const onBoard = useMemo(() => boardMembership(items), [items])
   const routes = useMemo(() => resolveRoutes(items, rectOf), [items])
   const bounds = useMemo(() => items.map(itemBounds), [items])
