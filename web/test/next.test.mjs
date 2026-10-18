@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { colEdges, dashArray, headSize, headTriangle, itemTransform, labelAnchor, labelInset, paperWH, polylineAt, roundedPath, runsToLines, trimmedPts, bezierSub, bezierAt } from '../src/next/geom.js'
+import { colEdges, dashArray, headSize, headTriangle, itemTransform, labelAnchor, labelInset, paperWH, polylineAt, roundedPath, roundedPts, runsToLines, strokeOutline, trimmedPts, bezierSub, bezierAt } from '../src/next/geom.js'
 import { resolveRoutes, sarrowRadius } from '../src/next/arrows.js'
 import { boardMembership, docBounds, drawOrder } from '../src/next/doc.js'
 
@@ -78,4 +78,17 @@ test('라벨 자리 비우기 — 계산으로 잘라 꺾인 곳은 이어짐', 
   assert.deepEqual(cutPolyline([P(0, 0), P(100, 0), P(100, 100)], [{ x: 40, y: -5, w: 20, h: 10 }]), [[P(0, 0), P(40, 0)], [P(60, 0), P(100, 0), P(100, 100)]])
   assert.deepEqual(cutPolyline([P(0, 0), P(100, 0)], []), [[P(0, 0), P(100, 0)]])
   assert.deepEqual(cutPolyline([P(0, 0), P(100, 0)], [{ x: -10, y: -5, w: 200, h: 10 }]), [])
+})
+
+test('선 띠 윤곽 — 폭 2·hw, 직각 꺾임은 맞댐, 끝은 반원/잘라냄(범위 미리보기 테두리)', () => {
+  const L = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 50 }]
+  const o = strokeOutline(L, 2, false, false)
+  const xs = o.map(p => p.x), ys = o.map(p => p.y)
+  assert.equal(Math.min(...xs), 0); assert.equal(Math.max(...xs), 102); assert.equal(Math.min(...ys), -2); assert.equal(Math.max(...ys), 50)
+  assert.ok(o.some(p => Math.abs(p.x - 102) < 1e-9 && Math.abs(p.y + 2) < 1e-9), '바깥 모서리 맞댐점')
+  assert.ok(o.some(p => Math.abs(p.x - 98) < 1e-9 && Math.abs(p.y - 2) < 1e-9), '안쪽 모서리 맞댐점')
+  const c = strokeOutline(L, 2, true, true), cy = c.map(p => p.y), cx = c.map(p => p.x)
+  assert.ok(Math.abs(Math.max(...cy) - 52) < 1e-9 && Math.abs(Math.min(...cx) + 2) < 1e-9, '반원 끝은 hw만큼 더 나감')
+  const r = roundedPts(L, 10)
+  assert.ok(r.length > 3 && r.every(p => p.x <= 100 && p.y <= 50), '둥근 꺾임 점열은 원래 꺾은선 안쪽')
 })

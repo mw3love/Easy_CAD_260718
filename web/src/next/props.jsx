@@ -2,7 +2,7 @@
 // 데스크톱 `host_ui` 속성 카드와 같은 자리·같은 항목. 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄, 자주 안 바꾸는 값은 현재 값 버튼 → 펼침.
 import { useState } from 'react'
 
-const C = { ink: '#27272a', muted: '#71717a', line: '#e4e4e7', card: '#ffffff', seg: '#f4f4f5', on: '#da7756', onBg: '#fbeee8' }
+const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', seg: 'var(--mb-seg)', on: '#da7756', onBg: 'var(--mb-onbg)' }   // 화면 색 = next.html CSS 변수
 // 두 줄 꽉 채움(8+8) — 데스크톱 색 창과 같은 짜임: 진한 6색(`_COLOR_GRID_HUES`) + 검정 + 다른 색 / 같은 6색의 연한 색(Qt lighter(150)) + 회색 + 흰색
 export const ARROW_COLORS = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#AF52DE', '#000000', null,
   '#ffb4af', '#ffca7f', '#ffe57f', '#6eff93', '#7fbdff', '#e3acff', '#9e9e9e', '#ffffff']

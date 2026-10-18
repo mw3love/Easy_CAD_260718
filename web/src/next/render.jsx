@@ -53,7 +53,11 @@ function centeredBox(lay, a) {
 // ── 색 ──
 const near = (c, white) => { const m = /^#([0-9a-f]{6})$/i.exec(c || ''); if (!m) return false
   const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255; return white ? r >= 250 && g >= 250 && b >= 250 : false }
-export const ink = (c, onBoard) => { const css = cssColor(c); return !onBoard && near(css, true) ? '#1f1f1f' : css }
+// 칠판 바탕 기본 잉크 — 밝은 화면은 흰 잉크를 검정으로, 어두운 화면은 검정 잉크를 흰색으로(데스크톱 `_DEFAULT_INK_DARK` #FFFFFF). 보드 안은 보드 색 기준이라 그대로
+let DARK = false
+export const setInkDark = v => { DARK = !!v }
+const nearBlack = c => { const m = /^#([0-9a-f]{6})$/i.exec(c || ''); if (!m) return false; const n = parseInt(m[1], 16); return (n >> 16) <= 0x40 && ((n >> 8) & 255) <= 0x40 && (n & 255) <= 0x40 }
+export const ink = (c, onBoard) => { const css = cssColor(c); if (onBoard) return css; return DARK ? (nearBlack(css) ? '#ffffff' : css) : (near(css, true) ? '#1f1f1f' : css) }
 // Qt QColor.darker(118)/lighter(135) — HSV 명도만
 function shade(css, f) {
   const m = /^#([0-9a-f]{6})$/i.exec(css || ''); if (!m) return css
@@ -134,7 +138,7 @@ function Ports({ it, onBoard }) {
 }
 
 // ── 아이템 하나 ── (memo: 확대·이동만 바뀌면 다시 그리지 않음 — 9천 개 도면에서 휠 한 칸이 340ms였다)
-export const Item = memo(function Item({ it, idx, onBoard, route }) {
+export const Item = memo(function Item({ it, idx, onBoard, route }) {   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
   const T = itemTransform(it), fill = it.fill ? cssColor(it.fill) : 'none'
   switch (it.type) {
     case 'rect': case 'ellipse': case 'symbol': {
@@ -194,15 +198,16 @@ export const Item = memo(function Item({ it, idx, onBoard, route }) {
         const txt = it.cells?.[r]?.[c]; if (!txt) continue
         const cw = edges[c + 1] - edges[c], fs = Math.max(2, Math.min(ch * 0.5, cw * 0.3))
         cells.push(<text key={`${r}-${c}`} x={(edges[c] + edges[c + 1]) / 2} y={y + (r + 0.5) * ch} textAnchor="middle" dominantBaseline="central"
-          fontSize={fs} fontWeight={it.header && r === 0 ? 700 : 400} fontFamily={APP_FONT} fill="#111111">{txt}</text>)
+          fontSize={fs} fontWeight={it.header && r === 0 ? 700 : 400} fontFamily={APP_FONT} fill={ink('#111111', onBoard)}>{txt}</text>)
       }
       const lines = [...edges.slice(1, -1).map(ex => `M${ex},${y} V${y + h}`), ...Array.from({ length: rows - 1 }, (_, j) => `M${x},${y + (j + 1) * ch} H${x + w}`)]
-      return <g transform={T}>{cells}<path d={lines.join(' ')} stroke="#333333" strokeWidth={0.5} fill="none" />
-        {it.header && rows > 1 && <path d={`M${x},${y + ch} H${x + w}`} stroke="#333333" strokeWidth={1} />}
-        <rect x={x} y={y} width={w} height={h} fill="none" stroke="#333333" strokeWidth={1} /></g>
+      const tl = ink('#333333', onBoard)
+      return <g transform={T}>{cells}<path d={lines.join(' ')} stroke={tl} strokeWidth={0.5} fill="none" />
+        {it.header && rows > 1 && <path d={`M${x},${y + ch} H${x + w}`} stroke={tl} strokeWidth={1} />}
+        <rect x={x} y={y} width={w} height={h} fill="none" stroke={tl} strokeWidth={1} /></g>
     }
     case 'titleblock': {
-      const [W, H] = paperWH(it.size, it.orient), M = 10, line = '#333333', inkC = '#111111'
+      const [W, H] = paperWH(it.size, it.orient), M = 10, line = ink('#333333', onBoard), inkC = ink('#111111', onBoard)
       if (it.plain) return <g transform={T}><rect width={W} height={H} fill="none" stroke={line} strokeWidth={0.5} /></g>
       const tbw = Math.min(180, W - 2 * M), tb = { x: W - M - tbw, y: H - M - 33, w: tbw, h: 33 }
       const hW = TB_ROWS.reduce((s, r) => s + r[0], 0), out = []

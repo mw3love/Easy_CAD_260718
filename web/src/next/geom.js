@@ -54,6 +54,43 @@ export function roundedPath(pts, radius) {
   return d + ` L${pts[pts.length - 1].x},${pts[pts.length - 1].y}`
 }
 
+// roundedPath와 같은 둥근 꺾임을 점열로(모서리마다 steps 토막) — 띠 테두리 계산용
+export function roundedPts(pts, radius, steps = 8) {
+  if (pts.length < 3 || !radius) return pts
+  const out = [pts[0]]
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1], c = pts[i], b = pts[i + 1]
+    const la = Math.hypot(c.x - a.x, c.y - a.y), lb = Math.hypot(b.x - c.x, b.y - c.y), r = Math.min(radius, la / 2, lb / 2)
+    if (r < 1e-3) { out.push(c); continue }
+    const s0 = { x: c.x + ((a.x - c.x) / la) * r, y: c.y + ((a.y - c.y) / la) * r }, e0 = { x: c.x + ((b.x - c.x) / lb) * r, y: c.y + ((b.y - c.y) / lb) * r }
+    for (let k = 0; k <= steps; k++) { const t = k / steps, u = 1 - t; out.push({ x: u * u * s0.x + 2 * u * t * c.x + t * t * e0.x, y: u * u * s0.y + 2 * u * t * c.y + t * t * e0.y }) }
+  }
+  out.push(pts[pts.length - 1])
+  return out
+}
+
+// 꺾은선을 폭 2·hw로 그었을 때의 바깥 윤곽 다각형(꺾임 = 맞댐, 끝 = 반원 또는 잘라냄) — 선 띠의 테두리(데스크톱 QPainterPathStroker 띠).
+// 마스크(흰·검정)를 쓰지 않고 모양을 계산한다 — 어두운 화면 확장이 마스크 색을 바꿔 깨진 적이 있다(pitfalls).
+export function strokeOutline(pts, hw, capStart = true, capEnd = true, steps = 8) {
+  const p = pts.filter((q, i) => i === 0 || Math.hypot(q.x - pts[i - 1].x, q.y - pts[i - 1].y) > 1e-6)
+  const ring = (c, from, to, u, v) => { const o = []; for (let k = 0; k <= steps; k++) { const t = from + ((to - from) * k) / steps; o.push({ x: c.x + hw * (Math.cos(t) * u.x + Math.sin(t) * v.x), y: c.y + hw * (Math.cos(t) * u.y + Math.sin(t) * v.y) }) } return o }
+  if (p.length < 2) return p.length ? ring(p[0], 0, 2 * Math.PI, { x: 1, y: 0 }, { x: 0, y: 1 }).slice(0, -1) : []
+  const n = p.length, nor = [], dir = []
+  for (let i = 0; i < n - 1; i++) { const dx = p[i + 1].x - p[i].x, dy = p[i + 1].y - p[i].y, L = Math.hypot(dx, dy); dir.push({ x: dx / L, y: dy / L }); nor.push({ x: -dy / L, y: dx / L }) }
+  const side = sg => p.map((q, i) => {
+    const a = nor[Math.max(0, i - 1)], b = nor[Math.min(n - 2, i)]
+    let mx = a.x + b.x, my = a.y + b.y; const ml = Math.hypot(mx, my)
+    if (ml < 1e-6) { mx = a.x; my = a.y } else { mx /= ml; my /= ml }
+    const k = Math.min(hw / Math.max(mx * a.x + my * a.y, 0.25), hw * 4)   // 맞댐 길이(되꺾이면 4배까지만)
+    return { x: q.x + mx * k * sg, y: q.y + my * k * sg }
+  })
+  const L = side(1), R = side(-1), last = n - 2
+  const neg = v => ({ x: -v.x, y: -v.y })
+  const endCap = capEnd ? ring(p[n - 1], 0, Math.PI, nor[last], dir[last]).slice(1, -1) : []
+  const startCap = capStart ? ring(p[0], 0, Math.PI, neg(nor[0]), neg(dir[0])).slice(1, -1) : []
+  return [...L, ...endCap, ...R.reverse(), ...startCap]
+}
+
 // 꺾은선 위 길이 비율 t 지점과 왼쪽 단위 법선(`_PolyArrowItem._point_at_t`)
 export function polylineAt(pts, t) {
   const segs = []; let total = 0

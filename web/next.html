@@ -4,8 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Magic Board</title>
+  <!-- 어두운 화면을 앱이 직접 그린다 — 브라우저 자동 다크·다크 확장이 흰 페이지를 강제로 바꾸지 않게(바꾸면 바탕·선 색이 데스크톱과 달라진다) -->
+  <meta name="color-scheme" content="light dark">
+  <meta name="darkreader-lock">
   <link rel="stylesheet" href="/fonts.css">
-  <style>html,body,#root{margin:0;height:100%;overflow:hidden}</style>
+  <style>
+    html,body,#root{margin:0;height:100%;overflow:hidden}
+    /* 화면 색 — 어두운 쪽은 데스크톱 `_dark_palette`·`_CANVAS_BG["dark"]`와 같은 값 */
+    :root{color-scheme:light;--mb-bar:#f4f4f5;--mb-group:#e9e9ec;--mb-ink:#27272a;--mb-muted:#71717a;--mb-board:#ffffff;--mb-line:#e4e4e7;--mb-card:#ffffff;--mb-seg:#f4f4f5;--mb-onbg:#fbeee8;--mb-editbg:rgba(255,255,255,.9)}
+    :root[data-theme=dark]{color-scheme:dark;--mb-bar:#171e26;--mb-group:#1d2632;--mb-ink:#ffffff;--mb-muted:#8a98a8;--mb-board:#1e2731;--mb-line:#2a3542;--mb-card:#171e26;--mb-seg:#1d2632;--mb-onbg:#4a2c22;--mb-editbg:rgba(30,39,49,.92)}
+  </style>
+  <script>/* 첫 화면부터 맞는 색(깜빡임 없이) — 고른 값이 없으면 시스템 설정을 따름 */
+    try { const t = localStorage.getItem('mb.theme'); document.documentElement.dataset.theme = t || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') } catch { document.documentElement.dataset.theme = 'light' }</script>
 </head>
 <body><div id="root"></div><script type="module" src="/src/next/main.jsx"></script></body>
 </html>

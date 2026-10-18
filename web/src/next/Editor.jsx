@@ -2,10 +2,10 @@
 // 되돌리기·복사/붙여넣기/복제·삭제·묶기·잠금·순서·반전·방향키, 그리기 도구(상자·원·글·선·펜·다각형), 글 편집(TipTap).
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { arrowAt, arrowLabelBoxes, Item, layoutText } from './render.jsx'
+import { arrowAt, arrowLabelBoxes, ink, Item, layoutText } from './render.jsx'
 import { boardMembership, drawOrder, itemBounds } from './doc.js'
-import { PT, TEXT_MARGIN, cutPolyline, labelAnchor } from './geom.js'
-import { applyRouting, minStubs, resolveRoutes, sceneRect } from './arrows.js'
+import { PT, TEXT_MARGIN, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
+import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
 import { ROUTE_BOX, bindPt, dropTarget, edgeMid, isConnHost, nearestBorder, OPP, qcDelta, qcDots, shapePorts, snapAt } from './connect.js'
 import { routeOrtho } from '../route.js'
@@ -14,12 +14,13 @@ import { beginSegment, beginSubdivide, bendCurve, BEND_TS, curvePoint, dragSegme
 import { sarrowRouting } from './arrows.js'
 import { newId } from './model.js'
 import {
-  applyRect, boardContents, duplicate, expandGroups, followArrows, groupItems, localRect, mirror, moveItems, removeItems, resizeRect,
+  applyRect, boardContents, duplicate, expandGroups, flatten, followArrows, groupItems, localRect, mirror, moveItems, removeItems, resizeRect,
   rotateTo, rubberSelect, sceneBox, toLocal, toScene, toggleLock, topHit, ungroupItems, unionBox, zOrder,
 } from './edit.js'
 import { TextEditor } from './text.jsx'
 import { ArrowProps } from './props.jsx'
 import { arrowKindOf, swapArrowKind } from './arrowkind.js'
+import { symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
@@ -57,7 +58,7 @@ const withLabels = (it, labels) => { const o = { ...it, labels }; delete o.label
 const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([x, y]) => ({ x, y })), q) : projectToCurve(it, q))
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
-export const Editor = forwardRef(function Editor({ model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus }, ref) {
+export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus }, ref) {
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -225,7 +226,10 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       setLive(followArrows(moveItems(s.orig, s.ids, dx, dy), rectOf)); setOverlay(o => ({ ...o, guides: a.guides }))
       return
     }
-    if (s.kind === 'rubber') { setOverlay(o => ({ ...o, rubber: { a: s.start, b: p } })); return }
+    if (s.kind === 'rubber') {   // 끄는 동안 걸릴 것을 바로 보여 줌(데스크톱 `_rb_preview_hits` — 실제 선택은 놓을 때)
+      const sel0 = new Set(R.current.sel), hitIds = Math.hypot(p.x - s.start.x, p.y - s.start.y) * z > 3 ? expandGroups(R.current.model.items, rubberSelect(R.current.model.items, s.start, p, textBox)).filter(id => !sel0.has(id)) : []
+      setOverlay(o => ({ ...o, rubber: { a: s.start, b: p, hits: hitIds } })); return
+    }
     if (s.kind === 'conn') {
       if (!s.moved && Math.hypot(p.x - s.start.x, p.y - s.start.y) * z <= CONN_DRAG_PX) return
       s.moved = true
@@ -344,8 +348,8 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     const t = dropTarget(hostsNear(cur), cur, R.current.cam.z, rectOf, srcId)
     return t && (t.id !== srcId || Math.hypot(t.p.x - port.p.x, t.p.y - port.p.y) > 1) ? t : null
   }
-  // 새 화살표 기본값 — 속성 카드에서 바꾼 값이 다음 화살표에 이어짐(데스크톱 sticky: 색·굵기·선 모양·화살촉·모서리). 굵기 2 = 웹 그리기 도구와 같게(데스크톱 기본 1)
-  const sticky = useRef({ color: INK, style: 1, width: 2, head: true, head_start: false, head_scale: 1, curve_r: 10 })
+  // 새 화살표 기본값 — 속성 카드에서 바꾼 값이 다음 화살표에 이어짐(데스크톱 sticky: 색·굵기·선 모양·화살촉·모서리). 굵기 1 = 데스크톱 `_DEFAULT_WIDTH`·웹 그리기 도구와 같게(2026-10-18 — 2였을 땐 같은 화살표인데 선택 띠가 얇아 보였다)
+  const sticky = useRef({ color: INK, style: 1, width: 1, head: true, head_start: false, head_scale: 1, curve_r: 10 })
   function connRoute(srcId, port, tgt, cur) {
     const items = R.current.model.items, src = items.find(x => x._id === srcId), dst = tgt && items.find(x => x._id === tgt.id)
     const box = it => (it && ROUTE_BOX.has(it.type) && it.rect ? sceneRect(it) : null)
@@ -393,7 +397,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   // ── 도형 카드에서 끌어다 놓기(데스크톱 `_PaletteButton` 6px 넘게 끌기) — 진짜 도형이 손에 붙어 따라오고 정렬선도 걸림, 칠판 밖(카드 위 등)에 놓으면 취소 ──
   function startPaletteDrag(t) {
     const m = R.current.model, w = t === 'ellipse' ? 100 : 120, h = t === 'ellipse' ? 100 : 60   // 클릭만 해 놓을 때와 같은 기본 크기
-    const proto = base([0, 0], { type: t, rect: [0, 0, w, h], pen: INK, width: 2, fill: null, style: 1, z: topZ(m.items) + 1 })
+    const proto = base([0, 0], { type: t, rect: [0, 0, w, h], pen: INK, width: 1, fill: null, style: 1, z: topZ(m.items) + 1 })
     const others = m.items.filter(it => !it.locked).map(it => sceneBox(it, textBox))
     let last = null
     const place = e => {
@@ -427,7 +431,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     setOverlay(o => ({ ...o, poly: null }))
     if (pts.length < 2) return
     const xs = pts.map(q => q.x), ys = pts.map(q => q.y), x0 = Math.min(...xs), y0 = Math.min(...ys)
-    const it = base([x0, y0], { type: 'polygon', closed, rect: [0, 0, Math.max(...xs) - x0, Math.max(...ys) - y0], pts: pts.map(q => [q.x - x0, q.y - y0]), pen: INK, width: 2, fill: null, style: 1, z: topZ(R.current.model.items) + 1 })
+    const it = base([x0, y0], { type: 'polygon', closed, rect: [0, 0, Math.max(...xs) - x0, Math.max(...ys) - y0], pts: pts.map(q => [q.x - x0, q.y - y0]), pen: INK, width: 1, fill: null, style: 1, z: topZ(R.current.model.items) + 1 })
     commit([...R.current.model.items, it], [it._id], '다각형'); setTool('select')
   }
   function finishDraw(s, p) {
@@ -438,15 +442,15 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       let x0 = Math.min(s.start.x, p.x), y0 = Math.min(s.start.y, p.y), w = Math.abs(p.x - s.start.x), h = Math.abs(p.y - s.start.y)
       if (s.shift) { const d = Math.max(w, h); w = h = d; x0 = p.x < s.start.x ? s.start.x - d : s.start.x; y0 = p.y < s.start.y ? s.start.y - d : s.start.y }
       if (click) { w = s.tool === 'ellipse' ? 100 : 120; h = s.tool === 'ellipse' ? 100 : 60; x0 = p.x - w / 2; y0 = p.y - h / 2 }   // 클릭만 = 기본 크기로 그 자리에
-      it = base([x0, y0], { type: s.tool, rect: [0, 0, w, h], pen: INK, width: 2, fill: null, style: 1 })
+      it = base([x0, y0], { type: s.tool, rect: [0, 0, w, h], pen: INK, width: 1, fill: null, style: 1 })
     } else if (s.tool === 'line') {
       if (click) return
       let { x, y } = p
       if (s.shift) { const a = Math.round(Math.atan2(y - s.start.y, x - s.start.x) / (Math.PI / 4)) * (Math.PI / 4), L = Math.hypot(x - s.start.x, y - s.start.y); x = s.start.x + L * Math.cos(a); y = s.start.y + L * Math.sin(a) }
-      it = base([0, 0], { type: 'line', line: [s.start.x, s.start.y, x, y], pen: INK, width: 2, style: 1 })
+      it = base([0, 0], { type: 'line', line: [s.start.x, s.start.y, x, y], pen: INK, width: 1, style: 1 })
     } else if (s.tool === 'pen') {
       if (s.pts.length < 2) return
-      it = base([0, 0], { type: 'path', elements: s.pts.map((q, i) => [i ? 'L' : 'M', q.x, q.y]), pen: INK, width: 2, style: 1, freehand: true })
+      it = base([0, 0], { type: 'path', elements: s.pts.map((q, i) => [i ? 'L' : 'M', q.x, q.y]), pen: INK, width: 1, style: 1, freehand: true })
     }
     if (!it) return
     it.z = topZ(m.items) + 1
@@ -493,17 +497,18 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
   }
   function editSpec() {
     const it = editing && byId.get(editing.id); if (!it) return null
+    const ob = onBoard[items.indexOf(it)], col = c => ink(c || '#ff1f1f1f', ob), bg = ob ? 'rgba(255,255,255,.9)' : 'var(--mb-editbg)'   // 글 고치는 칸도 칠판과 같은 잉크·바탕
     if (editing.kind === 'text') {
       const o = scr(toScene(it, { x: 0, y: 0 }))
       return { left: o.x, top: o.y, px: (it.font || 12) * PT * (it.scale || 1), zoom: cam.z, family: it.family ? 'board' : 'app', weight: it.weight ?? (it.bold ? 700 : 400),
-        color: cssColor(it.color) || '#1f1f1f', rotation: it.rotation || 0, origin: scr(toScene(it, { x: it.origin?.[0] || 0, y: it.origin?.[1] || 0 })), text: it.text, runs: it.runs }
+        color: col(it.color), bg, rotation: it.rotation || 0, origin: scr(toScene(it, { x: it.origin?.[0] || 0, y: it.origin?.[1] || 0 })), text: it.text, runs: it.runs }
     }
     if (editing.kind === 'alabel') {
       const b = arrowLabelBoxes(it)[editing.i], L = labelsOf(it)[editing.i]; if (!b || !L) return null
-      return { center: scr(toScene(it, b.a)), px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: cssColor(L.color || it.color) || '#1f1f1f', align: 'center', text: L.text || '', runs: L.runs }
+      return { center: scr(toScene(it, b.a)), px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: col(L.color || it.color), bg, align: 'center', text: L.text || '', runs: L.runs }
     }
     const a = scr(toScene(it, labelAnchor(it.type, it.kind, it.rect))), L = it.label || {}
-    return { center: a, px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: cssColor(L.color || it.pen) || '#1f1f1f', align: 'center', text: L.text || '', runs: L.runs }
+    return { center: a, px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: col(L.color || it.pen), bg, align: 'center', text: L.text || '', runs: L.runs }
   }
 
   // ── 글쇠 ──
@@ -569,18 +574,24 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
 
   // ── 덧그림(칠판 좌표, 굵기는 ÷z) ──
   const z = cam.z, sw = 1.6 / z
+  const multi = selItems.length > 1
   const outline = it => {
-    const [x, y, w, h] = it.type === 'text' ? [0, 0, textBox(it).w, textBox(it).h] : localRect(it)
-    if (it.type === 'line') { const a = toScene(it, { x: it.line[0], y: it.line[1] }), b = toScene(it, { x: it.line[2], y: it.line[3] }); return <line key={it._id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={BLUE} strokeWidth={sw} /> }
-    if (it.type === 'sarrow') {   // 선택 선도 라벨 자리는 비움(글자 위로 지나가지 않게)
+    // 중심선 = 화면 1.6px, 선 가운데를 지나감(데스크톱과 통일 — 선 원래 색이 가장자리로 보임, 2026-10-18 사용자 선택)
+    const s = it.scale || 1, cw = sw / s
+    if (it.type === 'line') { const a = toScene(it, { x: it.line[0], y: it.line[1] }), b = toScene(it, { x: it.line[2], y: it.line[3] }); return <line key={it._id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={BLUE} strokeWidth={cw * s} strokeLinecap="round" /> }
+    if (it.type === 'sarrow') {   // 선택 선도 라벨 자리는 비움(글자 위로 지나가지 않게), 모서리는 화살표처럼 둥글게
       const gaps = arrowLabelBoxes(it).map(b => b.gap).filter(Boolean), pieces = cutPolyline(it.pts.map(([x, y]) => ({ x, y })), gaps)
-      return <g key={it._id}>{pieces.map((pc, k) => <polyline key={k} points={pc.map(v => { const q = toScene(it, v); return `${q.x},${q.y}` }).join(' ')} fill="none" stroke={BLUE} strokeWidth={sw} />)}</g>
+      return <g key={it._id} transform={transformOf(it)}>{pieces.map((pc, k) => <path key={k} d={roundedPath(pc, sarrowRadius(it))} fill="none" stroke={BLUE} strokeWidth={cw} strokeLinecap="round" strokeLinejoin="round" />)}</g>
     }
-    if (it.type === 'ellipse') return <ellipse key={it._id} cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} transform={transformOf(it)} fill="none" stroke={BLUE} strokeWidth={sw / (it.scale || 1)} />
-    if (it.type === 'badge') { const c = toScene(it, { x: 0, y: 0 }); return <circle key={it._id} cx={c.x} cy={c.y} r={17} fill="none" stroke={BLUE} strokeWidth={sw} /> }
-    const cs = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]].map(([a, b]) => toScene(it, { x: a, y: b }))
-    return <polygon key={it._id} points={cs.map(c => `${c.x},${c.y}`).join(' ')} fill="none" stroke={BLUE} strokeWidth={sw} />
+    const g = selShape(it, textBox)
+    return <g key={it._id} transform={transformOf(it)}><g transform={g.off ? `translate(${g.off[0]},${g.off[1]})` : undefined}>
+      {multi && g.closed ? selBand(it._id, g, it, z, BAND_ALPHA, BLUE)
+        : <path d={g.d} fill="none" stroke={BLUE} strokeWidth={cw} strokeLinejoin="round" strokeLinecap="round" />}</g></g>
   }
+  // 범위 선택 미리보기 — 걸릴 것마다 띠(데스크톱 drawForeground: 닫힌 도형은 바깥, 선은 양옆, 채움 알파 90)
+  const pvColor = overlay.rubber && overlay.rubber.b.x < overlay.rubber.a.x ? RB_GREEN : RB_BLUE
+  const preview = it => { const g = selShape(it, textBox)
+    return <g key={'pv' + it._id} transform={transformOf(it)}><g transform={g.off ? `translate(${g.off[0]},${g.off[1]})` : undefined}>{selBand('pv' + it._id, g, it, z, PREVIEW_ALPHA, pvColor)}</g></g> }
   const handles = single && !editing && !live ? handlesOf(single) : []
   // 속성 카드 — 고른 화살표 모두에 같이(데스크톱: 고른 화살표 전부). 모서리는 직각만
   const selArrows = selItems.filter(isArrow), selArrowIds = new Set(selArrows.map(x => x._id))
@@ -609,9 +620,10 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
       <svg ref={svg} width={size.w} height={size.h} style={{ display: 'block', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }} data-testid="board"
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onDoubleClick={onDoubleClick} onContextMenu={e => e.preventDefault()}>
         <g transform={`translate(${cam.x},${cam.y}) scale(${z})`} style={{ '--z': z }}>
-          {visible.map(([it, i]) => (it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} /></g>
-            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} />))}
+          {visible.map(([it, i]) => (it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} /></g>
+            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} />))}
           {selItems.map(outline)}
+          {overlay.rubber?.hits?.map(id => byId.get(id)).filter(Boolean).map(preview)}
           {multiBox && <rect x={multiBox.x} y={multiBox.y} width={multiBox.w} height={multiBox.h} fill="none" stroke={BLUE} strokeWidth={1 / z} strokeDasharray={`${4 / z} ${3 / z}`} />}
           {selItems.filter(it => it.locked).map(it => { const b = sceneBox(it, textBox); return <text key={'lk' + it._id} x={b.x + b.w} y={b.y} fontSize={12 / z} fill={BLUE}>🔒</text> })}
           {handles.map(h => (h.pill ? pill(h.key, h.p, h.horizontal, true) : h.bend ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={HANDLE / 2 / z} fill={BEND_GREEN} stroke="#fff" strokeWidth={1 / z} />
@@ -626,7 +638,7 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
             return <g key={i}><line x1={x1} y1={y1} x2={x2} y2={y2} stroke="rgba(0,0,0,.7)" strokeWidth={3 / z} strokeDasharray={dash} /><line x1={x1} y1={y1} x2={x2} y2={y2} stroke={GUIDE} strokeWidth={1.5 / z} strokeDasharray={dash} /></g>
           })}
           {rb && (() => { const x = Math.min(rb.a.x, rb.b.x), y = Math.min(rb.a.y, rb.b.y), w = Math.abs(rb.b.x - rb.a.x), h = Math.abs(rb.b.y - rb.a.y), win = rb.b.x >= rb.a.x
-            return <rect x={x} y={y} width={w} height={h} fill={win ? 'rgba(137,180,250,.15)' : 'rgba(166,227,161,.15)'} stroke={win ? BLUE : '#40a02b'} strokeWidth={1 / z} strokeDasharray={win ? undefined : `${4 / z} ${3 / z}`} /> })()}
+            return <rect x={x} y={y} width={w} height={h} fill={win ? RB_BLUE : RB_GREEN} fillOpacity={45 / 255} stroke={win ? RB_BLUE : RB_GREEN} strokeWidth={1 / z} strokeDasharray={win ? undefined : `${4 / z} ${3 / z}`} /> })()}
           {dr && (dr.tool === 'rect' ? <rect x={Math.min(dr.a.x, dr.b.x)} y={Math.min(dr.a.y, dr.b.y)} width={Math.abs(dr.b.x - dr.a.x)} height={Math.abs(dr.b.y - dr.a.y)} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />
             : dr.tool === 'ellipse' ? <ellipse cx={(dr.a.x + dr.b.x) / 2} cy={(dr.a.y + dr.b.y) / 2} rx={Math.abs(dr.b.x - dr.a.x) / 2} ry={Math.abs(dr.b.y - dr.a.y) / 2} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />
             : dr.tool === 'line' ? <line x1={dr.a.x} y1={dr.a.y} x2={dr.b.x} y2={dr.b.y} stroke={BLUE} strokeWidth={1.5 / z} />
@@ -641,6 +653,76 @@ export const Editor = forwardRef(function Editor({ model, setModel, onCommit, si
     </div>
   )
 })
+
+// ── 선택 표시 모양 — 데스크톱 `_paint_selection_highlight`: 하나 선택·화살표 = 1.6px 중심선, 여러 개 중 닫힌 도형 = 바깥 띠 ──
+const BAND_ALPHA = 110 / 255, PREVIEW_ALPHA = 90 / 255
+const RB_BLUE = 'rgb(70,130,220)', RB_GREEN = 'rgb(90,190,90)'   // 범위 상자·미리보기 색(데스크톱 drawForeground: 왼→오 파랑, 오→왼 초록, 상자 채움 알파 45)
+const rectD = (x, y, w, h) => `M${x},${y} H${x + w} V${y + h} H${x} Z`
+const ellipseD = (x, y, w, h) => { const rx = w / 2, ry = h / 2; return `M${x},${y + ry} A${rx},${ry} 0 1 0 ${x + w},${y + ry} A${rx},${ry} 0 1 0 ${x},${y + ry} Z` }
+const roundRectD = (x, y, w, h, r) => `M${x + r},${y} H${x + w - r} A${r},${r} 0 0 1 ${x + w},${y + r} V${y + h - r} A${r},${r} 0 0 1 ${x + w - r},${y + h} H${x + r} A${r},${r} 0 0 1 ${x},${y + h - r} V${y + r} A${r},${r} 0 0 1 ${x + r},${y} Z`
+// 아이템 안 좌표의 외곽선 d + 닫힘 여부 + (상자·원이면) 바탕 상자 — 상자·원은 띠를 계산으로, 나머지는 잘라 내기로
+function selShape(it, textBox) {
+  const line = pts => pts.map(([x, y], k) => `${k ? 'L' : 'M'}${x},${y}`).join(' ')
+  switch (it.type) {
+    case 'line': { const [x1, y1, x2, y2] = it.line; return { d: line([[x1, y1], [x2, y2]]), closed: false, lines: [{ pts: [{ x: x1, y: y1 }, { x: x2, y: y2 }], capS: true, capE: true }] } }
+    case 'sarrow': {   // 둥근 모서리·라벨 자리 비움(화살표 그림과 같게)
+      const pts = it.pts.map(([x, y]) => ({ x, y })), gaps = arrowLabelBoxes(it).map(l => l.gap).filter(Boolean), size = headSize(it.width, it.head_scale), end = it.head !== false, start = !!it.head_start
+      const r = sarrowRadius(it), n = pts.length, pieces = cutPolyline(trimmedPts(pts, size, end, start), gaps)
+      const lines = pieces.map((pc, k) => ({ pts: roundedPts(pc, r), capS: k > 0 || !start, capE: k < pieces.length - 1 || !end }))   // 화살촉 쪽 끝은 반원 없이(촉이 덮음)
+      return { d: cutPolyline(pts, gaps).map(pc => roundedPath(pc, r)).join(' '), lines, closed: false, heads: arrowHeads(pts[n - 2], pts[n - 1], pts[1], pts[0], size, end, start), labels: labelRects(it) }
+    }
+    case 'arrow': {
+      const P = ([x, y]) => ({ x, y }), p0 = P(it.p1), p3 = P(it.p2), c1 = it.ctrl1 ? P(it.ctrl1) : p3, c2 = it.ctrl2 ? P(it.ctrl2) : p0, size = headSize(it.width, it.head_scale), end = it.head !== false, start = !!it.head_start
+      const pts = it.ctrl1 ? Array.from({ length: 33 }, (_, k) => { const t = k / 32, u = 1 - t; return { x: u * u * u * p0.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * p3.x, y: u * u * u * p0.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * p3.y } }) : [p0, p3]
+      const cut = q => { let a = 0, b = q.length; const L = size * 0.85, far = (i, tip) => Math.hypot(q[i].x - tip.x, q[i].y - tip.y) >= L
+        if (end) while (b > a + 2 && !far(b - 2, p3)) b--; if (start) while (a < b - 2 && !far(a + 1, p0)) a++
+        return trimmedPts(q.slice(a, b), 0, false, false) }
+      const body = pts.length > 2 ? cut(pts) : trimmedPts(pts, size, end, start)
+      return { d: it.ctrl1 ? `M${it.p1} C${it.ctrl1} ${it.ctrl2} ${it.p2}` : line([it.p1, it.p2]), lines: [{ pts: body, capS: !start, capE: !end }], closed: false, heads: arrowHeads(c2, p3, c1, p0, size, end, start), labels: labelRects(it) }
+    }
+    case 'path': return { d: it.elements.map(e => e[0] + e.slice(1).join(' ')).join(' '), closed: !!it.fill, lines: flatten(it.elements).map(pc => ({ pts: pc, capS: true, capE: true })) }
+    case 'polygon': return { d: line(it.pts) + (it.closed ? ' Z' : ''), closed: !!it.closed, lines: [{ pts: it.pts.map(([x, y]) => ({ x, y })), capS: true, capE: true }] }
+    case 'badge': return { d: ellipseD(-17, -17, 34, 34), closed: true, box: [-17, -17, 34, 34], round: true }   // 데스크톱 `_BadgeItem._content_rect`(반지름 15 + 2)
+    case 'ellipse': return { d: ellipseD(...it.rect), closed: true, box: it.rect, round: true }
+    case 'symbol': { const [x, y, w, h] = it.rect; return { d: symbolPath(it.kind, w, h).d, closed: true, off: [x, y] } }
+    default: { const b = it.type === 'text' ? [0, 0, textBox(it).w, textBox(it).h] : localRect(it); return { d: rectD(...b), closed: true, box: b } }
+  }
+}
+// 화살표 라벨 상자(글 있는 것만) — 데스크톱은 라벨이 따로 고를 수 있는 아이템이라 범위 미리보기에 라벨 상자 띠도 뜬다
+const labelRects = it => arrowLabelBoxes(it).filter(l => !l.empty).map(l => [l.left, l.top, l.w, l.h])
+// 화살촉 삼각형(있는 끝만) — 끝 = (바로 앞 점, 끝점), 시작 = (두 번째 점, 첫 점)
+function arrowHeads(a1, tip1, a0, tip0, size, end, start) {
+  const tri = (a, b) => headTriangle(b, Math.atan2(b.y - a.y, b.x - a.x), size)
+  return [...(end ? [tri(a1, tip1)] : []), ...(start ? [tri(a0, tip0)] : [])]
+}
+// 띠 — 폭 = 도형 선 굵기 + 3(칠판 단위, 줌 따라 커짐), 닫힌 도형은 바깥 절반만, 1px 테두리(데스크톱 `_highlight_band`)
+function selBand(key, g, it, z, alpha, color) {
+  const s = it.scale || 1, hw = (Math.max(it.width || 1, 1) + 3) / 2
+  if (g.closed && g.box) {
+    const [x, y, w, h] = g.box, outer = g.round ? ellipseD(x - hw, y - hw, w + 2 * hw, h + 2 * hw) : roundRectD(x - hw, y - hw, w + 2 * hw, h + 2 * hw, hw)
+    return <path d={`${outer} ${g.round ? ellipseD(x, y, w, h) : rectD(x, y, w, h)}`} fillRule="evenodd" fill={color} fillOpacity={alpha} stroke={color} strokeWidth={1 / z / s} />
+  }
+  if (!g.closed) {   // 선 띠 = 윤곽 다각형(계산) + 키운 화살촉, 채움은 한 겹(무리 투명도 — 겹친 자리가 두 번 진해지지 않게), 테두리는 서로의 안쪽을 잘라 하나로 보이게
+    const ew = 1 / z / s, P = q => q.map(v => `${v.x},${v.y}`).join(' '), polyD = q => 'M' + q.map(v => `${v.x},${v.y}`).join(' L') + ' Z', BIG = 'M-1e7,-1e7 H1e7 V1e7 H-1e7 Z'
+    const grow = tri => { const cx = (tri[0].x + tri[1].x + tri[2].x) / 3, cy = (tri[0].y + tri[1].y + tri[2].y) / 3
+      return tri.map(v => { const d = Math.hypot(v.x - cx, v.y - cy) || 1; return { x: v.x + ((v.x - cx) / d) * 3, y: v.y + ((v.y - cy) / d) * 3 } }) }   // 데스크톱 `_expand_polygon(tri, 3)`
+    const outs = (g.lines || []).filter(l => l.pts.length).map(l => strokeOutline(l.pts, hw, l.capS, l.capE)), heads = (g.heads || []).map(grow)
+    const idH = 'selh-' + key, idB = 'selb-' + key
+    return <>
+      <g opacity={alpha}>{outs.map((o, i) => <polygon key={i} points={P(o)} fill={color} />)}{heads.map((h, i) => <polygon key={'h' + i} points={P(h)} fill={color} />)}</g>
+      {heads.length > 0 && <clipPath id={idH}><path d={`${BIG} ${heads.map(polyD).join(' ')}`} clipRule="evenodd" /></clipPath>}
+      {heads.length > 0 && <clipPath id={idB}><path d={`${BIG} ${outs.map(polyD).join(' ')}`} clipRule="evenodd" /></clipPath>}
+      <g clipPath={heads.length ? `url(#${idH})` : undefined}>{outs.map((o, i) => <polygon key={i} points={P(o)} fill="none" stroke={color} strokeWidth={ew} strokeLinejoin="round" />)}</g>
+      <g clipPath={`url(#${idB})`}>{heads.map((h, i) => <polygon key={i} points={P(h)} fill="none" stroke={color} strokeWidth={ew} />)}</g>
+      {g.labels?.map(([x, y, w, h], i) => <path key={'l' + i} d={`${roundRectD(x - 2, y - 2, w + 4, h + 4, 2)} ${rectD(x, y, w, h)}`} fillRule="evenodd" fill={color} fillOpacity={alpha} stroke={color} strokeWidth={ew} />)}
+    </>
+  }
+  // 심볼·다각형: 굵게 그은 외곽선 중 도형 밖만 남김(clipPath = 모양으로 자름, 색은 안 씀 — 마스크는 다크 확장이 색을 바꿔 깨졌다)
+  const id = 'selclip-' + key
+  return <><clipPath id={id}><path d={`M-1e7,-1e7 H1e7 V1e7 H-1e7 Z ${g.d}`} clipRule="evenodd" /></clipPath>
+    <path d={g.d} fill="none" stroke={color} strokeOpacity={alpha} strokeWidth={2 * hw} strokeLinejoin="round" clipPath={`url(#${id})`} />
+    <path d={g.d} fill="none" stroke={color} strokeWidth={1 / z / s} /></>
+}
 
 const transformOf = it => {
   const [x, y] = it.pos || [0, 0], r = it.rotation || 0, s = it.scale || 1, [ox, oy] = it.origin || [0, 0]

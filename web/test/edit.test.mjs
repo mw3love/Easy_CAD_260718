@@ -46,6 +46,17 @@ test('범위 선택 — 왼→오는 완전 포함, 오→왼은 걸침', () => 
   assert.deepEqual(rubberSelect(items, { x: 250, y: 100 }, { x: 50, y: -10 }, tb).sort(), ['a', 'b'])
 })
 
+test('걸침 선택 — 감싼 사각형이 아니라 실제 선과 겹칠 때(데스크톱 `_base_shape().intersects`)', () => {
+  const diag = { _id: 'd', type: 'sarrow', pos: [0, 0], pts: [[0, 0], [200, 0], [200, 200]], width: 2 }   // ┐ 모양 — 왼쪽 아래는 빈 자리
+  const ring = { _id: 'e', type: 'ellipse', pos: [400, 0], rect: [0, 0, 200, 200], width: 2 }
+  const big = rect('r', 700, 0, 300, 300)
+  const items = [diag, ring, big]
+  assert.deepEqual(rubberSelect(items, { x: 60, y: 190 }, { x: 10, y: 140 }, tb), [], '빈 모서리만 스치면 안 걸림')
+  assert.deepEqual(rubberSelect(items, { x: 210, y: 190 }, { x: 190, y: 140 }, tb), ['d'], '꺾인 선에 닿으면 걸림')
+  assert.deepEqual(rubberSelect(items, { x: 415, y: 15 }, { x: 405, y: 5 }, tb), [], '원의 바깥 모서리 자리는 안 걸림')
+  assert.deepEqual(rubberSelect(items, { x: 860, y: 160 }, { x: 840, y: 140 }, tb), ['r'], '닫힌 도형 안쪽에 통째로 들어도 걸림')
+})
+
 test('크기 — 모서리·변·이미지 비율 고정', () => {
   assert.deepEqual(resizeRect([0, 0, 100, 50], 'br', { x: 150, y: 80 }), [0, 0, 150, 80])
   assert.deepEqual(resizeRect([0, 0, 100, 50], 'l', { x: 20, y: 999 }), [20, 0, 80, 50])

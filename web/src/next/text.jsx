@@ -55,7 +55,7 @@ export function TextEditor({ spec, onDone }) {
       transform: spec.center ? 'translate(-50%,-50%)' : spec.rotation ? `rotate(${spec.rotation}deg)` : undefined,   // center = 도형 라벨(가운데 기준)
       transformOrigin: !spec.center && spec.origin ? `${spec.origin.x - spec.left}px ${spec.origin.y - spec.top}px` : undefined,
       font: `${spec.weight || 400} ${fs}px ${spec.family === 'board' ? BOARD_FONT : APP_FONT}`, lineHeight: m.lineSpacing, color: spec.color, textAlign: spec.align || 'left',
-      whiteSpace: 'pre', outline: '1.5px solid #89b4fa', background: 'rgba(255,255,255,.9)', zIndex: 20 }}>
+      whiteSpace: 'pre', outline: '1.5px solid #89b4fa', background: spec.bg || 'rgba(255,255,255,.9)', zIndex: 20 }}>
     <style>{`[data-testid=text-editor] .ProseMirror{outline:none;white-space:pre}[data-testid=text-editor] p{margin:0}`}</style>
   </div>
 }

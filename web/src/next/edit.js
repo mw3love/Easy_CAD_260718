@@ -81,14 +81,52 @@ export const unionBox = boxes => {
 }
 
 // 범위 선택(데스크톱): 왼→오 끌기 = 완전히 안에 든 것, 오→왼 = 걸친 것. 잠긴 것 제외
+// 걸침은 감싼 사각형이 아니라 실제 선이 범위와 겹칠 때(데스크톱 `_base_shape().intersects`) — 대각·꺾인 화살표의 빈 모서리만 스쳐선 안 걸림
 export function rubberSelect(items, a, b, textBox) {
   const r = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) }, window = b.x >= a.x
   return items.filter(it => {
     if (it.locked) return false
     const s = sceneBox(it, textBox)
     return window ? s.x >= r.x && s.y >= r.y && s.x + s.w <= r.x + r.w && s.y + s.h <= r.y + r.h
-      : s.x <= r.x + r.w && s.x + s.w >= r.x && s.y <= r.y + r.h && s.y + s.h >= r.y
+      : s.x <= r.x + r.w && s.x + s.w >= r.x && s.y <= r.y + r.h && s.y + s.h >= r.y && crossesRect(outlinePieces(it, textBox), r)
   }).map(it => it._id)
+}
+
+// 보이는 외형(데스크톱 `_item_center_path`)을 칠판 좌표 점열 조각으로 + 닫힘(안쪽도 몸통) 여부. 심볼은 바탕 상자로 어림
+export function outlinePieces(it, textBox) {
+  const S = v => toScene(it, v), ring = (cx, cy, rx, ry) => Array.from({ length: 32 }, (_, k) => S({ x: cx + rx * Math.cos(k * Math.PI / 16), y: cy + ry * Math.sin(k * Math.PI / 16) }))
+  switch (it.type) {
+    case 'line': { const [x1, y1, x2, y2] = it.line; return { closed: false, pieces: [[S({ x: x1, y: y1 }), S({ x: x2, y: y2 })]] } }
+    case 'sarrow': return { closed: false, pieces: [it.pts.map(P).map(S)] }
+    case 'arrow': return { closed: false, pieces: flatten(it.ctrl1 ? [['M', ...it.p1], ['C', ...it.ctrl1, ...it.ctrl2, ...it.p2]] : [['M', ...it.p1], ['L', ...it.p2]]).map(pc => pc.map(S)) }
+    case 'path': return { closed: !!it.fill, pieces: flatten(it.elements).map(pc => pc.map(S)) }
+    case 'polygon': return { closed: !!it.closed, pieces: [it.pts.map(P).map(S)] }
+    case 'badge': return { closed: true, pieces: [ring(0, 0, 17, 17)] }   // 데스크톱 `_BadgeItem._base_shape`(15 + 2)
+    case 'ellipse': { const [x, y, w, h] = it.rect; return { closed: true, pieces: [ring(x + w / 2, y + h / 2, w / 2, h / 2)] } }
+    default: {
+      const [x, y, w, h] = it.type === 'text' ? [0, 0, textBox(it).w, textBox(it).h] : localRect(it)
+      return { closed: true, pieces: [[[x, y], [x + w, y], [x + w, y + h], [x, y + h]].map(P).map(S)] }
+    }
+  }
+}
+// 선분이 사각형과 겹치나(Liang–Barsky)
+function segHitsRect(a, b, r) {
+  let t0 = 0, t1 = 1; const dx = b.x - a.x, dy = b.y - a.y
+  for (const [p, q] of [[-dx, a.x - r.x], [dx, r.x + r.w - a.x], [-dy, a.y - r.y], [dy, r.y + r.h - a.y]]) {
+    if (p === 0) { if (q < 0) return false; continue }
+    const t = q / p
+    if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t } else { if (t < t0) return false; if (t < t1) t1 = t }
+  }
+  return true
+}
+export function crossesRect(o, r) {
+  for (const pc of o.pieces) {
+    const pts = o.closed && pc.length > 2 ? [...pc, pc[0]] : pc
+    if (pts.length === 1 && segHitsRect(pts[0], pts[0], r)) return true
+    for (let i = 1; i < pts.length; i++) if (segHitsRect(pts[i - 1], pts[i], r)) return true
+    if (o.closed && pc.length > 2 && inPoly({ x: r.x, y: r.y }, pc)) return true   // 범위가 닫힌 도형 안쪽에 통째로 든 경우
+  }
+  return false
 }
 
 // 묶음(group_id) 넓히기 — 하나를 고르면 같은 묶음 전부(데스크톱 `_sync_group_selection`)
