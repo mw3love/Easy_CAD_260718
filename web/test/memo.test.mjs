@@ -43,3 +43,38 @@ test('2차 — 끌 단위(하위 항목·코드 덩어리)·옮기기·꺼내기
   assert.deepEqual(recolorLine({ k: 'p', t: 'abc', runs: [[1, 1, null, true]] }, { color: '#d44c47' }).runs, [[0, 1, '#d44c47', false], [1, 1, '#d44c47', true], [2, 1, '#d44c47', false]])
   assert.equal(recolorLine({ k: 'p', t: 'ab', runs: [[0, 2, '#d44c47', false]] }, { color: null }).runs, undefined)
 })
+
+// 2026-10-18 손맛 2차 — 구분선(---), 고른 줄 복사 옮기기, 커서 줄(Esc = 그 줄 고르기)
+import { caretLine, lineBlocks, moveRange } from '../src/next/memo.js'
+import { getSchema } from '@tiptap/core'
+import { EditorState, TextSelection } from '@tiptap/pm/state'
+import Document from '@tiptap/extension-document'
+import Paragraph from '@tiptap/extension-paragraph'
+import Text from '@tiptap/extension-text'
+import Heading from '@tiptap/extension-heading'
+import CodeBlock from '@tiptap/extension-code-block'
+import HorizontalRule from '@tiptap/extension-horizontal-rule'
+import { BulletList, ListItem } from '@tiptap/extension-list'
+
+test('구분선 --- : 답에서 읽기·편집기 문서 왕복·쉬운 글', () => {
+  const L = memoFromAnswer('위\n\n---\n\n아래')
+  assert.deepEqual(L.map(l => l.k), ['p', 'hr', 'p'])
+  assert.deepEqual(docToLines(linesToDoc(L)), L)
+  assert.equal(memoText(L).split('\n')[1], '────────')
+})
+
+test('고른 줄 옮기기·복사(Alt)', () => {
+  const L = ['a', 'b', 'c', 'd'].map(t => ({ k: 'p', t }))
+  assert.deepEqual(moveRange(L, [0, 2], 4).map(l => l.t), ['c', 'd', 'a', 'b'])
+  assert.deepEqual(moveRange(L, [0, 2], 4, true).map(l => l.t), ['a', 'b', 'c', 'd', 'a', 'b'])
+})
+
+test('커서 줄 번호 = docToLines 차례(제목·목록·코드 여러 줄·구분선)', () => {
+  const schema = getSchema([Document, Paragraph, Text, Heading, CodeBlock, HorizontalRule, BulletList, ListItem])
+  const lines = [{ k: 'h1', t: '제목' }, { k: 'ul', t: '하나' }, { k: 'code', t: 'x=1' }, { k: 'code', t: 'y=2' }, { k: 'hr', t: '' }, { k: 'p', t: '끝' }]
+  const doc = schema.nodeFromJSON(linesToDoc(lines))
+  const at = (needle, off = 0) => { let pos = null; doc.descendants((n, p) => { if (pos == null && n.isText && n.text.includes(needle)) pos = p + n.text.indexOf(needle) + off }); return pos }
+  const line = pos => caretLine(EditorState.create({ doc, selection: TextSelection.create(doc, pos) }))
+  assert.equal(line(at('제목')), 0); assert.equal(line(at('하나')), 1); assert.equal(line(at('x=1')), 2); assert.equal(line(at('y=2')), 3); assert.equal(line(at('끝')), 5)
+  assert.equal(lineBlocks(doc).length, lines.length)
+})

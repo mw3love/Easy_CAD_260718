@@ -119,17 +119,20 @@ export const fitTextHeight = it => Math.ceil(leftLabelLayout(it).h + 2 * TEXT_MA
 const _ml = new WeakMap()
 export function memoLayout(it) {
   let r = _ml.get(it); if (r) return r
-  const lines = it.lines?.length ? it.lines : [{ k: 'p', t: '' }], w = it.rect?.[2] || MEMO.W, inner = Math.max(20, w - 2 * MEMO.PAD), nums = olNumbers(lines), rows = []
+  const lines = it.lines?.length ? it.lines : [{ k: 'p', t: '' }], w = it.rect?.[2] || MEMO.W, inner = Math.max(20, w - MEMO.LPAD - MEMO.PAD), nums = olNumbers(lines), rows = []
   let y = MEMO.PAD
   lines.forEach((ln, i) => {
     const K = MEMO_KIND[ln.k] || MEMO_KIND.p, px = K.pt * PT, prev = lines[i - 1], next = lines[i + 1]
     const joinPrev = i > 0 && (ln.k === 'code' || ln.k === 'quote') && prev.k === ln.k, joinNext = next && (ln.k === 'code' || ln.k === 'quote') && next.k === ln.k   // 이어진 코드·인용 줄 = 한 덩어리(위아래 여백은 덩어리 끝에만)
     if (i > 0 && !joinPrev) y += K.gap ?? MEMO.GAP
     if (!joinPrev) y += TEXT_MARGIN
+    if (ln.k === 'hr') { const x = MEMO.LPAD, h = MEMO.HR * 2   // 구분선 = 가는 줄 하나(위아래 여백 포함 높이 HR*2)
+      rows.push({ ln, i, x, y: y - TEXT_MARGIN, lay: { h, lines: [] }, px: 0, marker: null, box: null, cy: y - TEXT_MARGIN + h / 2, lh: h, joinPrev: false, joinNext: false, hr: true })
+      y += h - TEXT_MARGIN; return }
     const ind = LISTY.has(ln.k) ? ((ln.lv || 0) + 1) * MEMO.INDENT : ln.k === 'quote' ? MEMO.QUOTE : 0
     const runs = K.mono ? [[0, (ln.t || '').length, null, false, null, true]] : ln.runs
     const lay = layoutText(ln.t || '', runs, px, 'board', K.bold ? 700 : 400, Math.max(10, inner - ind - 2 * TEXT_MARGIN))
-    const x = MEMO.PAD + ind, lh = METRICS.board.lineSpacing * px, cy = y + TEXT_MARGIN + lh / 2
+    const x = MEMO.LPAD + ind, lh = METRICS.board.lineSpacing * px, cy = y + TEXT_MARGIN + lh / 2
     const marker = ln.k === 'ul' ? ['•◦▪'[(ln.lv || 0) % 3]] : ln.k === 'ol' ? [`${nums[i]}.`] : null
     const box = ln.k === 'todo' ? { x: x - MEMO.INDENT + 2, y: cy - TEXT_MARGIN - px * 0.45, s: px * 0.9 } : null   // 글 줄 가운데(cy엔 TEXT_MARGIN이 한 번 더 들어 있어 상자가 처졌음 — 2026-10-18 사용자)
     rows.push({ ln, i, x, y: y - TEXT_MARGIN, lay, px, marker, box, cy: cy - TEXT_MARGIN, lh, joinPrev, joinNext })
@@ -372,10 +375,11 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
       const [x, y, w, h] = it.rect, ml = memoLayout(it), ink0 = ink('#ff1f1f1f', true), fillC = it.fill ? cssColor(it.fill) : '#ffffff'
       return <g transform={T}>
         <rect x={x} y={y} width={w} height={h} rx={10} ry={10} fill={fillC} stroke={it.pen ? cssColor(it.pen) : '#d4d4d8'} strokeWidth={1} />
-        {ml.rows.map(({ ln, i, x: lx, y: ly, lay, px, marker, box, cy, lh }) => {
+        {ml.rows.map(({ ln, i, x: lx, y: ly, lay, px, marker, box, cy, lh, hr }) => {
+          if (hr) return <line key={i} x1={x + lx} x2={x + w - MEMO.PAD} y1={y + cy} y2={y + cy} stroke="#d4d4d8" strokeWidth={1} />
           const done = ln.k === 'todo' && ln.done, col = done ? MUTED : ln.k === 'quote' ? '#52525b' : ink0
           return <g key={i}>
-            {ln.k === 'quote' && <rect x={x + MEMO.PAD} y={y + ly + (ml.rows[i].joinPrev ? TEXT_MARGIN : 0)} width={3} height={lay.h + (ml.rows[i].joinPrev ? 0 : TEXT_MARGIN) + (ml.rows[i].joinNext ? 0 : TEXT_MARGIN)} fill="#d4d4d8" />}
+            {ln.k === 'quote' && <rect x={x + MEMO.LPAD} y={y + ly + (ml.rows[i].joinPrev ? TEXT_MARGIN : 0)} width={3} height={lay.h + (ml.rows[i].joinPrev ? 0 : TEXT_MARGIN) + (ml.rows[i].joinNext ? 0 : TEXT_MARGIN)} fill="#d4d4d8" />}
             {marker && <text x={x + lx - 6} y={y + cy} textAnchor="end" dominantBaseline="central" fontSize={px} fontFamily={BOARD_FONT} fill={ink0} style={{ fontVariantNumeric: 'tabular-nums' }}>{marker[0]}</text>}
             {box && <g><rect x={x + box.x} y={y + box.y} width={box.s} height={box.s} rx={box.s * 0.18} fill={ln.done ? '#2f80ed' : '#ffffff'} stroke={ln.done ? '#2f80ed' : '#a1a1aa'} strokeWidth={1.2} />
               {ln.done && <path d={`M${x + box.x + box.s * 0.22},${y + box.y + box.s * 0.52} L${x + box.x + box.s * 0.43},${y + box.y + box.s * 0.72} L${x + box.x + box.s * 0.8},${y + box.y + box.s * 0.3}`} fill="none" stroke="#fff" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />}</g>}

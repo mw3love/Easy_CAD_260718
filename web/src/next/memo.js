@@ -1,13 +1,14 @@
 // 메모(§8 항목61 4-b ⑤ 1차, 2026-10-18 사용자: 노션 같은 메모장 · KAIROS 답도 메모로) — 줄 목록 하나가 칠판 위 네모 하나.
-// .ecad 새 종류 `memo` = { rect, fill, lines: [{ k, t, runs?, done?, lv? }] } — k = p·h1·h2·h3·ul·ol·todo·code·quote, lv = 목록 깊이(0부터).
+// .ecad 새 종류 `memo` = { rect, fill, lines: [{ k, t, runs?, done?, lv? }] } — k = p·h1·h2·h3·ul·ol·todo·code·quote·hr(구분선, 글 없음), lv = 목록 깊이(0부터).
 // 그리기(render.jsx `memoLayout`)와 고치기(memoedit.jsx CSS)가 같은 치수(MEMO)를 읽는다 — 고치는 모습 = 결과. 데스크톱은 보존만.
 import { answerToEcadText, parseAnswer } from '../chatFormat.js'
 import { richTextToRuns, runsToRichText } from '../ecadFormat.js'
 
-export const MEMO = { W: 340, PAD: 14, GAP: 5, INDENT: 18, QUOTE: 14 }
+// LPAD = 왼쪽 여백 — 줄 손잡이 ⠿가 메모 안쪽에 들어가는 자리(2026-10-18 사용자: 바깥 손잡이는 글과 너무 떨어짐)
+export const MEMO = { W: 340, PAD: 14, LPAD: 26, GAP: 5, INDENT: 18, QUOTE: 14, HR: 9 }
 export const MEMO_KIND = {
   p: { pt: 10.5 }, ul: { pt: 10.5 }, ol: { pt: 10.5 }, todo: { pt: 10.5 }, quote: { pt: 10.5 },
-  h1: { pt: 16, bold: true, gap: 10 }, h2: { pt: 13.5, bold: true, gap: 8 }, h3: { pt: 11.5, bold: true, gap: 6 }, code: { pt: 10, mono: true },
+  h1: { pt: 16, bold: true, gap: 10 }, h2: { pt: 13.5, bold: true, gap: 8 }, h3: { pt: 11.5, bold: true, gap: 6 }, code: { pt: 10, mono: true }, hr: { pt: 10.5 },
 }
 export const LISTY = new Set(['ul', 'ol', 'todo'])
 export const MUTED = '#8a8f98'
@@ -41,6 +42,7 @@ export function memoFromAnswer(md, source = '') {
   for (const ln of parseAnswer(md)) {
     if (ln.kind === 'gap') continue
     if (ln.kind === 'code') { lines.push({ k: 'code', t: ln.parts[0].text.replace(/\t/g, '    ') }); continue }
+    if (ln.kind === 'p' && /^\s*([-*_])(\s*\1){2,}\s*$/.test(ln.parts.map(p => p.text).join(''))) { lines.push({ k: 'hr', t: '' }); continue }   // --- · *** · ___ = 구분선
     const src = ln.parts.map(p => (p.code ? '`' + p.text + '`' : p.bold ? `**${p.text}**` : p.text)).join('')
     const { text, runs } = answerToEcadText(src)
     const L = { k: 'p', t: text, ...(runs.length ? { runs } : {}) }
@@ -59,7 +61,7 @@ function cutFront(L, n) { L.t = L.t.slice(n); if (L.runs) { L.runs = L.runs.map(
 // 줄 → 쉬운 글(대화창에 같이 보낼 글·데스크톱 네모 안 글)
 export function memoText(lines) {
   const nums = olNumbers(lines)
-  return (lines || []).map((ln, i) => '  '.repeat(ln.lv || 0) + ({ h1: '# ', h2: '## ', h3: '### ', ul: '• ', ol: `${nums[i]}. `, todo: ln.done ? '☑ ' : '☐ ', quote: '│ ' }[ln.k] || '') + ln.t).join('\n')
+  return (lines || []).map((ln, i) => (ln.k === 'hr' ? '────────' : '  '.repeat(ln.lv || 0) + ({ h1: '# ', h2: '## ', h3: '### ', ul: '• ', ol: `${nums[i]}. `, todo: ln.done ? '☑ ' : '☐ ', quote: '│ ' }[ln.k] || '') + ln.t)).join('\n')
 }
 
 // ── 줄 ↔ TipTap 문서(고치기) ──
@@ -72,6 +74,7 @@ export function linesToDoc(lines) {
     const b = blocks[i]
     if (b.k === 'code') { const t = b.lines.map(l => l.t).join('\n'); content.push(t ? { type: 'codeBlock', content: [{ type: 'text', text: t }] } : { type: 'codeBlock' }); i++; continue }
     if (b.k === 'quote') { content.push({ type: 'blockquote', content: b.lines.map(para) }); i++; continue }
+    if (b.k === 'hr') { content.push({ type: 'horizontalRule' }); i++; continue }
     if (b.k[0] === 'h') { content.push({ type: 'heading', attrs: { level: +b.k[1] }, content: para(b.lines[0]).content }); i++; continue }
     if (!LISTY.has(b.k)) { content.push(para(b.lines[0])); i++; continue }
     let j = i; const run = []
@@ -112,6 +115,7 @@ export function docToLines(doc) {
     if (n.type === 'heading') out.push(lineOf({ type: 'paragraph', content: n.content }, { k: 'h' + Math.min(3, n.attrs?.level || 1) }))
     else if (n.type === 'codeBlock') for (const t of (n.content || []).map(c => c.text).join('').split('\n')) out.push({ k: 'code', t })
     else if (n.type === 'blockquote') for (const p of n.content || []) out.push(lineOf(p, { k: 'quote' }))
+    else if (n.type === 'horizontalRule') out.push({ k: 'hr', t: '' })
     else if (/List$/.test(n.type)) walkList(n, 0)
     else out.push(lineOf(n, { k: 'p' }))
   }
@@ -142,15 +146,53 @@ export function moveUnit(lines, [s, e], to) {
 }
 // 줄 종류 바꾸기(전환) — 코드는 부분 서식 없이, 할 일이 아니면 체크 없음, 목록이 아니면 깊이 없음
 export function convertLine(ln, k) {
+  if (ln.k === 'hr') return ln   // 구분선은 글이 없어 바꾸지 않음
   const o = { ...ln, k }
   if (k === 'code') delete o.runs
   if (k !== 'todo') delete o.done
   if (!LISTY.has(k)) delete o.lv
   return o
 }
+// 같은 메모 안 여러 단위를 한 번에 옮기기·복사 — [s, e) 범위(고른 줄들), copy = 원래 줄은 둠
+export function moveRange(lines, [s, e], to, copy = false) {
+  if (!copy) return moveUnit(lines, [s, e], to)
+  const unit = structuredClone(lines.slice(s, e))
+  return [...lines.slice(0, to), ...unit, ...lines.slice(to)]
+}
+// TipTap 문서에서 커서가 있는 줄 번호(docToLines 차례와 같음 — 글 블록마다 한 줄, 코드 블록은 \n마다, 구분선 한 줄)
+export function caretLine(state) {
+  const pos = state.selection.from
+  let idx = 0, found = null
+  state.doc.descendants((node, at) => {
+    if (found != null) return false
+    if (node.type.name === 'horizontalRule') { if (pos >= at && pos <= at + node.nodeSize) found = idx; idx++; return false }
+    if (!node.isTextblock) return true
+    const end = at + node.nodeSize
+    if (node.type.name === 'codeBlock') {
+      const n = node.textContent.split('\n').length
+      if (pos >= at && pos <= end) { found = idx + node.textBetween(0, Math.max(0, Math.min(node.content.size, pos - at - 1)), '\n').split('\n').length - 1; return false }
+      idx += n; return false
+    }
+    if (pos >= at && pos <= end) { found = idx; return false }
+    idx++; return false
+  })
+  return found ?? Math.max(0, idx - 1)
+}
+// 줄 번호 → 그 줄의 TipTap 글 블록 위치(손잡이 자리 찾기) — caretLine의 거꾸로
+export function lineBlocks(doc) {
+  const out = []
+  doc.descendants((node, at) => {
+    if (node.type.name === 'horizontalRule') { out.push({ at, node }); return false }
+    if (!node.isTextblock) return true
+    if (node.type.name === 'codeBlock') { node.textContent.split('\n').forEach(() => out.push({ at, node })); return false }
+    out.push({ at, node }); return false
+  })
+  return out
+}
+
 // 줄 전체 색(글자 color · 배경 bg — 둘 다 null = 기본) — 부분 서식(굵게·코드)은 지키고 색만 줄 전체에
 export function recolorLine(ln, { color, bg }) {
-  const n = (ln.t || '').length; if (!n || ln.k === 'code') return ln
+  const n = (ln.t || '').length; if (!n || ln.k === 'code' || ln.k === 'hr') return ln
   const at = Array.from({ length: n }, () => ({ color: null, bold: false, bg: null, mono: false }))
   for (const [s, len, c, b, g, m] of ln.runs || []) for (let i = Math.max(0, s); i < Math.min(n, s + len); i++) at[i] = { color: c || null, bold: !!b, bg: g || null, mono: !!m }
   for (const a of at) { if (color !== undefined) a.color = color; if (bg !== undefined) a.bg = bg }
