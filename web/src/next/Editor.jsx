@@ -35,6 +35,7 @@ import { fetchLinkInfo, normalizeUrl, openBtnRect, siteOf, webCardFields } from 
 import { buildLegend, isLegendPart, legendEntries, legendState } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, convertLine, lineUnit, memoFromAnswer, memoText, moveUnit, recolorLine, takeUnit } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
+import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
@@ -72,7 +73,7 @@ const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([
 const PEN_LAYER = 'pen-notes'   // 발표 판서 레이어
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
-export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel }, ref) {
+export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -80,7 +81,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const [cursor, setCursor] = useState('default')
   const st = useRef({}), hist = useRef({ past: [], future: [] }), clip = useRef({ items: [], seq: 0 }), svg = useRef(null)
   const items = live || model.items
-  const R = useRef(); R.current = { vhosts: new Map(), ...R.current, model, sel, cam, tool, items, editing, hp: overlay.hp, activeLayer }
+  const R = useRef(); R.current = { vhosts: new Map(), ...R.current, model, sel, cam, tool, items, editing, hp: overlay.hp, activeLayer, live: !!live, poly: !!overlay.poly }
   // 누를 수 있는 것 = 숨긴 레이어 밖(데스크톱 setVisible(False)는 눌리지도 않음)
   const hitPool = () => { const m = R.current.model, hid = new Set(layersOf(m).filter(l => !l.visible).map(l => l.id)); return hid.size ? m.items.filter(it => !hid.has(layerIdOf(it))) : m.items }   // vhosts = 묶음 가상 상자('g:…', hostsNear가 채움)
 
@@ -97,7 +98,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     next = next.map(it => (it.type === 'memo' && it.rect && Math.abs(memoHeight(it) - it.rect[3]) > 0.5 ? applyRect(it, [it.rect[0], it.rect[1], it.rect[2], memoHeight(it)]) : it))   // 메모 높이 = 줄에 맞춤
     next = next.map(it => (it.fit_text && it.label?.align === 'left' && it.rect && Math.abs(fitTextHeight(it) - it.rect[3]) > 0.5 ? applyRect(it, [it.rect[0], it.rect[1], it.rect[2], fitTextHeight(it)]) : it))   // 글에 맞춘 상자(AI 카드·메모)
     const fixed = followArrows(next, rectOf)
-    if (!(merge && h.mergeKey === merge && now - h.mergeT < 1500)) { h.past.push({ items: prev, sel: R.current.sel }); h.future = [] }
+    // 되돌리기 칸 = 바뀐 도형만(2026-10-18 공동작업 — 통째로 되돌리면 그사이 남이 고친 것까지 지워짐, `sync.itemDelta`)
+    const delta = itemDelta(prev, fixed)
+    if (merge && h.mergeKey === merge && now - h.mergeT < 1500 && h.past.length) mergeDelta(h.past[h.past.length - 1], delta)
+    else if (delta.before.size) { h.past.push({ ...delta, sel: R.current.sel }); h.future = [] }
     h.mergeKey = merge; h.mergeT = now
     if (hist.current.past.length > 200) hist.current.past.shift()
     R.current.model = { ...R.current.model, items: fixed }   // 다시 그리기 전에 또 고쳐도(표 칸 Tab 연타) 앞 고침 위에서
@@ -105,10 +109,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (nextSel) setSel(nextSel.filter(id => fixed.some(it => it._id === id)))
     onCommit?.(label)
   }, [setModel, onCommit])
-  const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
-  const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
+  const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push(p); const items = applyDelta(R.current.model.items, p.before); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); setSel(p.sel.filter(id => items.some(it => it._id === id))); onCommit?.('되돌림') }
+  const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
-  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
+  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, setSel, insertTable, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -203,6 +208,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
 
   // ── 포인터 ──
   function onPointerDown(e) {
+    if (readOnly) { svg.current.setPointerCapture(e.pointerId); st.current = { ...st.current, kind: 'pan', right: false, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }   // 보기 전용 = 끌면 화면 이동
     if (R.current.editing) return
     if (R.current.webOn) setWebOn(null)   // 웹 카드 조작 중 바깥을 누름 = 끝(칸 안 누르기는 페이지가 받아 여기 안 옴)
     const p = toSceneP(e), m = R.current.model, z = R.current.cam.z
@@ -546,6 +552,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
 
   function hoverCursor(p) {
+    if (readOnly) { setCursor('grab'); return }
     const t = R.current.tool
     if (t === 'select' && !R.current.editing) { const hv = memoRowAt(p), k = hv ? `${hv.it._id}:${hv.s}:${hv.e}` : null   // 메모 줄 위 = 왼쪽 ⠿
       if (k !== (R.current.memoHov ? `${R.current.memoHov.id}:${R.current.memoHov.s}:${R.current.memoHov.e}` : null)) setMemoHov(hv ? { id: hv.it._id, s: hv.s, e: hv.e } : null)
@@ -929,6 +936,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
 
   // ── 두 번 누르기 = 글 편집(글 상자) / 도형 라벨 ──
   function onDoubleClick(e) {
+    if (readOnly) return
     if (R.current.tool === 'polygon') { finishPoly(overlay.poly || [], false); return }
     const p = toSceneP(e), lb = labelAt(p)
     if (lb) { setSel([lb.it._id]); setEditing({ id: lb.it._id, kind: 'alabel', i: lb.i }); return }
@@ -1000,7 +1008,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // ── 글쇠 ──
   useEffect(() => {
     const onKey = e => {
-      if (R.current.editing || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '')) return
+      if (readOnly || R.current.editing || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '')) return
       const m = R.current.model, ids = R.current.sel, mod = e.ctrlKey || e.metaKey, k = e.key
       if (k === ' ') { st.current.space = true; return }
       const act = (f, label) => { e.preventDefault(); f(label) }
@@ -1111,6 +1119,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // 붙여넣기 신호 — 클립보드 글이 주소 하나면 웹 카드(2026-10-18 사용자: 주소 붙여넣기 + 「웹」 버튼), 아니면 칠판 안 붙여넣기
   useEffect(() => {
     const onPaste = e => {
+      if (readOnly) return
       const ae = document.activeElement
       if (R.current.editing || /INPUT|TEXTAREA|SELECT/.test(ae?.tagName || '') || ae?.isContentEditable) return   // 글 고치는 중이면 그 칸에
       const url = normalizeUrl(e.clipboardData?.getData('text/plain')); e.preventDefault()

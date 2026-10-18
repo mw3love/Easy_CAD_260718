@@ -1,13 +1,14 @@
 // 편집용 문서 모델(2단계) — .ecad 아이템마다 변하지 않는 _id를 달고, 화살표 연결(bind1/bind2 = 저장 목록 순번)을 _id로 바꿔 든다.
 // 편집하면 목록 순서가 바뀌므로(삭제·앞으로·복제) 순번은 저장할 때 다시 매긴다. 저장 파일은 데스크톱 .ecad 그대로(_로 시작하는 키는 빼고).
 import { bakeSarrow } from './xform.js'
+// _id = .ecad `uid`(2026-10-18 공동작업 — 여러 브라우저가 같은 도형을 같은 이름으로 알아보게 파일에 저장). 겹치지 않게 시각 + 무작위
 let _seq = 0
-export const newId = () => 'i' + (++_seq).toString(36) + Math.random().toString(36).slice(2, 6)
+export const newId = () => 'i' + Date.now().toString(36) + (++_seq).toString(36) + Math.random().toString(36).slice(2, 8)
 
 export function fromEcad(doc) {
-  const ids = doc.items.map(() => newId())
+  const seen = new Set(), ids = doc.items.map(it => { const u = typeof it.uid === 'string' && it.uid && !seen.has(it.uid) ? it.uid : newId(); seen.add(u); return u })   // 저장된 uid(겹치면 새로)
   const items = doc.items.map((it, i) => {
-    const o = { ...bakeSarrow(it), _id: ids[i] }   // 옛 판(여러 개 크기 조절이 배율을 남김)에서 저장된 화살표도 열 때 바로잡음
+    const o = { ...bakeSarrow(it), _id: ids[i] }; delete o.uid   // 옛 판(여러 개 크기 조절이 배율을 남김)에서 저장된 화살표도 열 때 바로잡음
     for (const k of ['bind1', 'bind2']) if (it[k] != null) { o['_' + k] = ids[it[k]] ?? null; delete o[k] }
     return o
   })
@@ -19,6 +20,7 @@ export function toEcad(model) {
   const items = model.items.map(it => {
     const o = {}
     for (const [k, v] of Object.entries(it)) if (!k.startsWith('_')) o[k] = v
+    o.uid = it._id
     for (const k of ['bind1', 'bind2']) {
       const ref = it['_' + k]
       if (ref === undefined) continue

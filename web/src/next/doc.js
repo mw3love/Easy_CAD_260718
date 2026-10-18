@@ -59,5 +59,21 @@ export async function loadServerDoc() {
 }
 export async function saveServerDoc(doc) {
   const r = await fetch(URL_, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) })
-  return r.ok
+  if (!r.ok) return false
+  try { return (await r.json()).rev ?? true } catch { return true }   // 통째 저장 = 판 번호 +1(다른 브라우저가 받아 감)
+}
+
+// ── 공동작업 1단계(§8 항목61 ⓕ, 2026-10-18) — 공용 비밀번호·부분 저장·받아 오기·접속자·게시(서버 `web/server.py`·`collab.py`) ──
+const B = encodeURIComponent(DOC_NAME), J = { 'Content-Type': 'application/json' }
+const post = (u, body) => fetch(u, { method: 'POST', headers: J, body: JSON.stringify(body) })
+export const VIEW_TOKEN = (new URLSearchParams(typeof location === 'undefined' ? '' : location.search).get('view') || '').replace(/[^\w-]/g, '').slice(0, 64)
+export const api = {
+  session: async () => { try { const r = await fetch('/api/session', { cache: 'no-store' }); return r.ok ? await r.json() : { auth: false, ok: true, none: true } } catch { return { auth: false, ok: true, none: true } } },
+  login: async password => (await post('/api/login', { password })).ok,
+  patch: async body => { const r = await post(`/api/patch/${B}`, body); return r.ok ? (await r.json()).rev : null },
+  since: async rev => { const r = await fetch(`/api/since/${B}?rev=${rev}`, { cache: 'no-store' }); return r.status === 200 ? parseDoc(await r.text()) : null },
+  presence: async (id, name) => { try { const r = await post(`/api/presence/${B}`, { id, name }); return r.ok ? (await r.json()).people : null } catch { return null } },
+  getPublish: async () => { try { const r = await fetch(`/api/publish/${B}`, { cache: 'no-store' }); return r.ok ? (await r.json()).token : null } catch { return null } },
+  setPublish: async (on, renew = false) => { const r = await post(`/api/publish/${B}`, { on, renew }); return r.ok ? (await r.json()).token : null },
+  pub: async (token, rev = -1) => { const r = await fetch(`/api/pub/${token}?rev=${rev}`, { cache: 'no-store' }); if (r.status === 204) return { same: true }; if (!r.ok) return { gone: true }; const d = parseDoc(await r.text()); return { doc: d } },
 }

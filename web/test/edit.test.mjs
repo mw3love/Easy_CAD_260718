@@ -12,7 +12,9 @@ const rect = (id, x, y, w = 100, h = 60, extra = {}) => ({ _id: id, type: 'rect'
 
 test('모델 왕복 — .ecad 그대로(연결 순번은 _id로 들었다 되돌림, _ 키는 안 나감)', () => {
   const m = fromEcad(raw), back = toEcad(m)
-  assert.deepEqual(back, raw)
+  assert.deepEqual({ ...back, items: back.items.map(({ uid, ...r }) => r) }, raw)   // 더해지는 건 uid(2026-10-18 공동작업 이름표)뿐
+  assert.deepEqual(fromEcad(back).items.map(it => it._id), back.items.map(it => it.uid))   // 다시 열어도 같은 이름표
+  assert.equal(new Set(back.items.map(it => it.uid)).size, back.items.length)
   const a = m.items.find(it => it.type === 'sarrow' && it._bind1)
   assert.equal(m.items.find(it => it._id === a._bind1).type, 'rect')
 })

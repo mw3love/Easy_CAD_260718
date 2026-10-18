@@ -11,8 +11,11 @@
   키 찾는 순서는 데스크톱과 같다, `gateway.resolve_api_key`).
 - 웹 카드: GET `/api/link?url=…&embed=…` — 주소를 대신 열어 제목·대표 그림·「칸 안에 넣어도 되나」(`link_info`). http(s)만.
 
-지금은 "마지막에 저장한 쪽이 이김" — 두 PC에서 동시에 고치면 나중 저장이 앞 저장을 덮는다(실시간 공동작업은 §8 항목61 ⓕ).
-접근 제한 없음: 같은 네트워크의 누구나 열 수 있다 — 회사 보안 정책 확인 전엔 내 PC에서만(`--host 127.0.0.1`).
+- 공동작업 1단계(§8 항목61 ⓕ, 2026-10-18): 공용 비밀번호(`--password`·`MB_PASSWORD`·데이터 폴더 `edit_password.txt`) → POST `/api/login` = 편집 열쇠 쿠키.
+  열쇠가 없으면 편집·대화·웹 카드 길목은 401(비밀번호를 안 정하면 누구나 — 내 PC 개발). 부분 저장 POST `/api/patch/<이름>`(도형 단위, 판 번호 rev),
+  받아 오기 GET `/api/since/<이름>?rev=N`(바뀐 게 없으면 204), 접속자 POST `/api/presence/<이름>`, 게시 POST `/api/publish/<이름>` {on, renew} →
+  로그인 없이 보기만 GET `/api/pub/<토큰>`(데이터 폴더 `publish.json`). 계산은 `web/collab.py`.
+⚠ 사내망 `http`라 비밀번호·열쇠가 암호화 없이 오간다 — 회사 보안 확인 전엔 내 PC에서만(`--host 127.0.0.1`).
 
 실행: python web/server.py [--host 0.0.0.0] [--port 5191] [--data 폴더]
 데이터 폴더 기본값: %APPDATA%/EasyCAD/web_boards (데스크톱 앱 설정·자동 저장과 같은 곳 — git에 안 들어감)
@@ -23,7 +26,9 @@ import argparse
 import json
 import os
 import re
+import secrets
 import sys
+import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -31,6 +36,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
 from easycad.ai import board_chat, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+sys.path.insert(0, HERE)
+import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 
 NAME_RE = re.compile(r"^[\w\-가-힣]{1,64}$")
 MAX_BYTES = 200 * 1024 * 1024   # 그림이 든 칠판도 넉넉히, 하지만 끝없이는 아니게
@@ -44,6 +51,9 @@ def default_data_dir() -> str:
 
 class Handler(SimpleHTTPRequestHandler):
     data_dir = default_data_dir()
+    password = ""                 # 공용 편집 비밀번호(없으면 누구나 — 내 PC 개발)
+    presence = collab.Presence()
+    lock = threading.Lock()       # 부분 저장·게시 표를 한 번에 하나씩
 
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=os.path.join(HERE, "dist"), **kw)
@@ -97,33 +107,122 @@ class Handler(SimpleHTTPRequestHandler):
         return self._json(200, out)
 
     def _link(self):
-        from urllib.parse import parse_qs, urlparse
-        q = parse_qs(urlparse(self.path).query)
+        _, q = self._route()
         url, embed = (q.get("url") or [""])[0], (q.get("embed") or [""])[0]
         if not re.match(r"^https?://", url):
             return self._json(400, {"error": "http(s) 주소만"})
         return self._json(200, link_info(url, embed if re.match(r"^https?://", embed) else ""))
 
-    def _send(self, code: int, body: bytes = b"", ctype: str = "application/json; charset=utf-8"):
+    def _send(self, code: int, body: bytes = b"", ctype: str = "application/json; charset=utf-8", headers: dict | None = None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         if body:
             self.wfile.write(body)
 
+    # ── 공동작업 1단계(§8 항목61 ⓕ, 2026-10-18) — 공용 비밀번호·부분 저장·게시·접속자(계산은 `collab.py`) ──
+    def _authed(self) -> bool:
+        """편집 열쇠(쿠키)가 맞나 — 비밀번호를 안 정했으면(내 PC 개발) 누구나."""
+        return not self.password or collab.cookie_value(self.headers.get("Cookie")) == collab.edit_key(self.password)
+
+    def _body(self, limit: int = MAX_BYTES):
+        n = int(self.headers.get("Content-Length") or 0)
+        if n <= 0 or n > limit:
+            return None
+        try:
+            return json.loads(self.rfile.read(n))
+        except ValueError:
+            return None
+
+    def _name(self, raw: str) -> str:
+        from urllib.parse import unquote
+        name = unquote(raw)
+        return name if NAME_RE.match(name) else ""
+
+    def _doc_path(self, name: str) -> str:
+        return os.path.join(self.data_dir, name + ".ecad")
+
+    def _doc_load(self, name: str):
+        """칠판 문서 — uid가 없으면 붙여 저장(모든 브라우저가 같은 이름표를 받게). 없으면 None."""
+        path = self._doc_path(name)
+        if not os.path.exists(path):
+            return None
+        with open(path, "rb") as f:
+            doc = json.loads(f.read())
+        if collab.ensure_uids(doc):
+            self._doc_save(name, doc)
+        return doc
+
+    def _doc_save(self, name: str, doc: dict):
+        os.makedirs(self.data_dir, exist_ok=True)
+        path = self._doc_path(name)
+        if os.path.exists(path):
+            root, ext = os.path.splitext(path)
+            write_via_temp(root + ".prev" + ext, lambda tmp: _copy(path, tmp))
+        raw = json.dumps(doc, ensure_ascii=False).encode("utf-8")
+        write_via_temp(path, lambda tmp: _write(tmp, raw))
+
+    def _publish_map(self) -> dict:
+        path = os.path.join(self.data_dir, "publish.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
+    def _publish_save(self, mp: dict):
+        os.makedirs(self.data_dir, exist_ok=True)
+        raw = json.dumps(mp, ensure_ascii=False).encode("utf-8")
+        write_via_temp(os.path.join(self.data_dir, "publish.json"), lambda tmp: _write(tmp, raw))
+
+    def _route(self):
+        from urllib.parse import parse_qs, urlparse
+        u = urlparse(self.path)
+        return u.path, parse_qs(u.query)
+
     def do_GET(self):
-        if self.path == "/api/models":
+        path, q = self._route()
+        if path == "/api/session":   # 비밀번호가 필요한가·이미 들어왔나
+            return self._json(200, {"auth": bool(self.password), "ok": self._authed()})
+        m = re.match(r"^/api/pub/([\w\-]{8,64})$", path)
+        if m:   # 게시 링크 — 로그인 없이 보기만
+            board = next((b for b, t in self._publish_map().items() if t == m.group(1)), None)
+            doc = board and self._doc_load(board)
+            if not doc:
+                return self._send(404, b'{"error":"none"}')
+            rev = int((q.get("rev") or ["-1"])[0])
+            if rev >= int(doc.get("rev") or 0) and rev >= 0:
+                return self._send(204)
+            return self._json(200, dict(doc, board=board))
+        if path.startswith("/api/") and not self._authed():
+            return self._send(401, b'{"error":"login"}')
+        if path == "/api/models":
             return self._models()
-        if self.path.startswith("/api/link?"):
+        if path == "/api/link":
             return self._link()
-        if self.path == "/api/symbols":   # 「내 심볼」 — 데스크톱과 같은 파일(git으로 PC 간 동기화), 웹은 읽기만
+        if path == "/api/symbols":   # 「내 심볼」 — 데스크톱과 같은 파일(git으로 PC 간 동기화), 웹은 읽기만
             lib = os.path.join(os.path.dirname(HERE), "symbol_library", "symbol_library.json")
             if not os.path.exists(lib):
                 return self._send(404, b'{"error":"none"}')
             with open(lib, "rb") as f:
                 return self._send(200, f.read())
+        m = re.match(r"^/api/(doc|since|publish)/([^/]+)$", path)
+        if m:
+            name = self._name(m.group(2))
+            if not name:
+                return self._send(400, b'{"error":"bad name"}')
+            if m.group(1) == "publish":
+                return self._json(200, {"token": self._publish_map().get(name)})
+            doc = self._doc_load(name)
+            if doc is None:
+                return self._send(404, b'{"error":"none"}')
+            if m.group(1) == "since" and int((q.get("rev") or ["0"])[0]) >= int(doc.get("rev") or 0):
+                return self._send(204)   # 그 뒤로 바뀐 것 없음
+            return self._json(200, doc)
         p = self._board_path()
         if p is None:
             # 화면: 없는 경로는 index.html(한 페이지 앱)
@@ -138,11 +237,47 @@ class Handler(SimpleHTTPRequestHandler):
             self._send(200, f.read())
 
     def do_POST(self):
-        if self.path == "/api/chat":
+        path, _ = self._route()
+        if path == "/api/login":
+            req = self._body(64 * 1024) or {}
+            if not self.password:
+                return self._json(200, {"ok": True})
+            if req.get("password") != self.password:
+                time.sleep(0.5)   # 마구 넣어 보기 늦추기
+                return self._send(403, b'{"error":"password"}')
+            key = collab.edit_key(self.password)
+            return self._send(200, b'{"ok":true}', headers={"Set-Cookie": f"mb_key={key}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"})
+        if not self._authed():
+            return self._send(401, b'{"error":"login"}')
+        if path == "/api/chat":
             return self._chat()
-        return self._send(404, b'{"error":"none"}')
+        m = re.match(r"^/api/(patch|presence|publish)/([^/]+)$", path)
+        if not m:
+            return self._send(404, b'{"error":"none"}')
+        name = self._name(m.group(2))
+        req = self._body()
+        if not name or not isinstance(req, dict):
+            return self._send(400, b'{"error":"bad request"}')
+        if m.group(1) == "presence":
+            return self._json(200, {"people": self.presence.ping(name, str(req.get("id") or ""), str(req.get("name") or ""))})
+        if m.group(1) == "publish":
+            with self.lock:
+                mp = self._publish_map()
+                if not req.get("on"):
+                    mp.pop(name, None)
+                elif req.get("renew") or name not in mp:
+                    mp[name] = secrets.token_urlsafe(12)
+                self._publish_save(mp)
+            return self._json(200, {"token": mp.get(name)})
+        with self.lock:   # 부분 저장 — 도형 단위로 덮어씀(서로 다른 도형이면 둘 다 남음)
+            doc = self._doc_load(name) or {"format": "easycad-doc", "version": 1, "items": []}
+            out = collab.apply_patch(doc, req)
+            self._doc_save(name, out)
+        return self._json(200, {"rev": out["rev"]})
 
     def do_PUT(self):
+        if not self._authed():
+            return self._send(401, b'{"error":"login"}')
         p = self._board_path()
         if not p:
             return self._send(400, b'{"error":"bad name"}')
@@ -151,9 +286,17 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(413, b'{"error":"size"}')
         raw = self.rfile.read(n)
         try:
-            json.loads(raw)   # 깨진 내용으로 좋은 저장본을 덮지 않게
+            doc = json.loads(raw)   # 깨진 내용으로 좋은 저장본을 덮지 않게
         except ValueError:
             return self._send(400, b'{"error":"json"}')
+        if p.endswith(".ecad"):   # 통째 저장(파일 열기 등) — 판 번호를 올려 다른 브라우저가 받아 가게
+            name = os.path.basename(p)[:-5]
+            with self.lock:
+                old = self._doc_load(name) or {}
+                collab.ensure_uids(doc)
+                doc["rev"] = int(old.get("rev") or 0) + 1
+                self._doc_save(name, doc)
+            return self._json(200, {"ok": True, "rev": doc["rev"]})
         os.makedirs(self.data_dir, exist_ok=True)
         if os.path.exists(p):
             root, ext = os.path.splitext(p)
@@ -262,12 +405,16 @@ def main(argv=None):
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=5191)
     ap.add_argument("--data", default=default_data_dir())
+    ap.add_argument("--password", default=os.environ.get("MB_PASSWORD", ""), help="공용 편집 비밀번호(없으면 데이터 폴더의 edit_password.txt, 그것도 없으면 누구나 편집)")
     a = ap.parse_args(argv)
     Handler.data_dir = a.data
+    pw_file = os.path.join(a.data, "edit_password.txt")
+    Handler.password = a.password or (open(pw_file, encoding="utf-8").read().strip() if os.path.exists(pw_file) else "")
     gw.preload_network()   # 통신 부품을 먼저 — 두 요청이 동시에 처음 부르면 모듈 잠금 교착(gateway.preload_network 참조)
     if not os.path.isdir(os.path.join(HERE, "dist")):
         print("web/dist가 없습니다 — 먼저 `cd web && npm run build` (API만 씁니다)")
     print(f"Magic Board 칠판: http://{'localhost' if a.host in ('0.0.0.0', '127.0.0.1') else a.host}:{a.port}  · 저장 폴더: {a.data}")
+    print("편집: " + ("공용 비밀번호 필요" if Handler.password else "누구나(비밀번호 없음 — --password 또는 edit_password.txt로 정함)"))
     ThreadingHTTPServer((a.host, a.port), Handler).serve_forever()
 
 

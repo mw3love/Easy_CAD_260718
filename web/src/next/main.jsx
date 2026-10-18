@@ -4,7 +4,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Editor } from './Editor.jsx'
-import { DOC_NAME, docBounds, emptyDoc, loadServerDoc, parseDoc, saveServerDoc } from './doc.js'
+import { DOC_NAME, VIEW_TOKEN, api, docBounds, emptyDoc, loadServerDoc, parseDoc, saveServerDoc } from './doc.js'
+import { diffModel, rebase, snapshotModel } from './sync.js'
+import { Viewer } from './viewer.jsx'
 import { fromEcad, toEcad } from './model.js'
 import { setInkDark } from './render.jsx'
 import { Palette, useLibrary } from './palette.jsx'
@@ -118,6 +120,45 @@ function ExportForm({ hasSel, selFrames, frameCount, items, onExport, onPreview,
   </div>
 }
 
+// 공동작업 1단계(§8 항목61 ⓕ, 2026-10-18) — 공용 비밀번호 + 이름(사람별 계정 아님, 사용자 결정)
+function LoginForm({ onDone }) {
+  const [pw, setPw] = useState(''), [name, setName] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [err, setErr] = useState('')
+  const go = async () => { if (!name.trim()) { setErr('이름을 적어 주세요(누가 접속했는지 보여요)'); return }
+    if (!(await api.login(pw))) { setErr('비밀번호가 맞지 않아요'); return }
+    try { localStorage.setItem('mb.name', name.trim()) } catch { /* 기억 못 해도 그만 */ } onDone(name.trim()) }
+  const inp = { height: 30, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 10px', font: 'inherit' }
+  return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
+    <div style={{ width: 300, display: 'flex', flexDirection: 'column', gap: 10, padding: 20, borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, boxShadow: '0 6px 20px rgba(0,0,0,.12)' }}>
+      <div style={{ font: "700 16px 'Pretendard', sans-serif" }}>Magic Board · 「{DOC_NAME}」</div>
+      <div style={{ color: C.muted, fontSize: 12 }}>같이 쓰는 칠판이에요. 팀 비밀번호와 내 이름을 적어 주세요.</div>
+      <input autoFocus placeholder="이름 (예: 김기자)" value={name} onChange={e => setName(e.target.value)} style={inp} />
+      <input type="password" placeholder="팀 비밀번호" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') go() }} style={inp} />
+      {err && <div style={{ color: '#d44c47', fontSize: 12 }}>{err}</div>}
+      <button onClick={go} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '7px 0', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>들어가기</button>
+    </div></div>
+}
+// 「공유」 — 노션 게시처럼: 로그인 없이 보기·발표만 되는 링크(켜고 끄기, 새 링크로 바꾸면 옛 링크 막힘)
+function ShareForm({ onClose }) {
+  const [tok, setTok] = useState(undefined), [msg, setMsg] = useState('')
+  useEffect(() => { api.getPublish().then(setTok) }, [])
+  const link = tok ? `${location.origin}/?view=${tok}` : ''
+  const set = async (on, renew) => { const t = await api.setPublish(on, renew); setTok(on ? t : null); setMsg(on ? (renew ? '새 링크 — 옛 링크는 이제 안 열려요' : '게시했어요') : '게시를 껐어요 — 링크가 안 열려요') }
+  const b = (bg, fg = '#fff') => ({ all: 'unset', cursor: 'pointer', padding: '5px 10px', borderRadius: 6, background: bg, color: fg, fontWeight: 600, fontSize: 12 })
+  return <div onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ position: 'absolute', top: 48, right: 0, zIndex: 20, width: 320, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, boxShadow: '0 4px 14px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
+    <div style={{ font: "700 13px 'Pretendard', sans-serif" }}>게시 — 보기·발표 전용 링크</div>
+    <div style={{ color: C.muted }}>로그인 없이 열려요. 고치기·대화는 안 되고, 여기서 고친 건 몇 초 안에 보여요(큰 TV 발표용).</div>
+    {tok === undefined ? <span style={{ color: C.muted }}>확인 중…</span> : tok ? <>
+      <input readOnly value={link} onFocus={e => e.target.select()} style={{ height: 26, border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} />
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button style={b('#da7756')} onClick={() => navigator.clipboard?.writeText(link).then(() => setMsg('링크를 복사했어요'), () => setMsg('복사가 막혔어요 — 칸을 눌러 직접 복사'))}>링크 복사</button>
+        <button style={b('transparent', C.ink)} onClick={() => window.open(link, '_blank', 'noopener')}>열어 보기</button>
+        <button style={b('transparent', C.ink)} onClick={() => set(true, true)}>새 링크로 바꾸기</button>
+        <button style={b('transparent', '#d44c47')} onClick={() => set(false)}>게시 끄기</button>
+      </div></> : <button style={b('#da7756')} onClick={() => set(true)}>게시하기</button>}
+    {msg && <div style={{ color: '#da7756' }}>{msg}</div>}
+  </div>
+}
+
 function App() {
   const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [webOpen, setWebOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(() => { try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창)
@@ -133,6 +174,8 @@ function App() {
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light' }, [dark])
   const toggleDark = () => setDark(d => { try { localStorage.setItem('mb.theme', d ? 'light' : 'dark') } catch { /* 기억 못 해도 그만 */ } return !d })
   const [server, setServer] = useState(false)
+  const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [people, setPeople] = useState([]), [shareOpen, setShareOpen] = useState(false)
+  const sync = useRef({ base: null, rev: 0, busy: false, again: false, id: Math.random().toString(36).slice(2, 10) }), modelRef = useRef(model); modelRef.current = model
   const box = useRef(null), size = useSize(box), file = useRef(null), ed = useRef(null), saveT = useRef(null)
 
   const fit = useCallback((items, s = size) => {
@@ -143,19 +186,47 @@ function App() {
   // 서버 칠판을 다시 열면 이 브라우저에서 마지막에 보던 자리·배율로(없거나 못 읽으면 전체 맞추기). 파일·샘플은 늘 전체 맞추기
   const camKey = `mb.cam.${DOC_NAME}`, camReady = useRef(false)
   const savedCam = () => { try { const c = JSON.parse(localStorage.getItem(camKey)); return c && [c.x, c.y, c.z].every(Number.isFinite) ? c : null } catch { return null } }
-  const open = useCallback((doc, how, keepCam = false) => { const m = fromEcad(doc); setModel(m); setActiveLayer('default'); ed.current?.reset(); const c = keepCam && savedCam(); if (c) setCam(c); else fit(m.items); camReady.current = true; setStatus(`${how} · ${m.items.length}개`) }, [fit])   // eslint-disable-line
+  const open = useCallback((doc, how, keepCam = false, fromServer = false) => { const m = { ...fromEcad(doc), rev: doc.rev || 0 }; setModel(m); modelRef.current = m
+    if (fromServer) { sync.current.base = snapshotModel(m); sync.current.rev = doc.rev || 0 }   // 서버에서 받은 것 = 맞춘 기준
+    else if (sync.current.base) saveServerDoc(toEcad(m)).then(rev => { if (typeof rev === 'number') { sync.current.base = snapshotModel(m); sync.current.rev = rev } })   // 파일·샘플을 이 칠판에 열기 = 통째 바꿈
+    setActiveLayer('default'); ed.current?.reset(); const c = keepCam && savedCam(); if (c) setCam(c); else fit(m.items); camReady.current = true; setStatus(`${how} · ${m.items.length}개`) }, [fit])   // eslint-disable-line
   useEffect(() => { if (!camReady.current) return; const t = setTimeout(() => { try { localStorage.setItem(camKey, JSON.stringify(cam)) } catch { /* 저장 못 해도 그만 */ } }, 300); return () => clearTimeout(t) }, [cam])   // eslint-disable-line
 
-  // 고칠 때마다 0.8초 쉬면 서버에 저장(서버 없으면 「내려받기」로)
+  // 공동작업 맞추기(2026-10-18) — 고친 뒤 0.6초 쉬면 바뀐 도형만 보내고(부분 저장), 2초마다 남이 바꾼 것을 받아 내 안 보낸 변경을 그 위에 다시 얹음
+  const pull = useCallback(async (since = null) => {
+    const S = sync.current; if (!S.base || S.busy || ed.current?.busy?.()) return
+    const doc = await api.since(since ?? S.rev).catch(() => null); if (!doc) return
+    if (S.busy || ed.current?.busy?.()) return   // 받는 사이 고치기 시작했으면 다음 차례에
+    const remote = { ...fromEcad(doc), rev: doc.rev || 0 }, base = S.base
+    const merged = rebase(remote, modelRef.current, base)
+    S.base = snapshotModel(remote); S.rev = remote.rev; modelRef.current = merged; setModel(merged)
+    if (diffModel(S.base, merged)) flush()   // 안 보낸 내 변경이 남아 있으면 이어서 보냄
+  }, [])   // eslint-disable-line
+  const flush = useCallback(async () => {
+    const S = sync.current; if (!S.base) return
+    if (S.busy) { S.again = true; return }
+    const m = modelRef.current, p = diffModel(S.base, m); if (!p) return
+    S.busy = true; const rev0 = S.rev
+    try {
+      const rev = await api.patch({ base: rev0, ...p })
+      if (rev == null) { setStatus('서버 저장 실패 — 다시 들어가야 할 수도(비밀번호)'); return }
+      S.base = snapshotModel(m); S.rev = rev; setStatus(`서버 「${DOC_NAME}」에 저장됨`)
+      if (rev > rev0 + 1) { S.busy = false; await pull(rev0) }   // 그사이 남도 고쳤음 — 바로 받아 옴
+    } catch { setStatus('서버 연결 끊김') } finally { S.busy = false; if (S.again) { S.again = false; flush() } }
+  }, [pull])
   const onCommit = useCallback(() => {
     if (!server) { setStatus('고침 — 서버 없음, 「내려받기」로 저장'); return }
     setStatus('고치는 중…'); clearTimeout(saveT.current)
-    saveT.current = setTimeout(() => setModel(m => { saveServerDoc(toEcad(m)).then(ok => setStatus(ok ? `서버 「${DOC_NAME}」에 저장됨` : '서버 저장 실패')).catch(() => setStatus('서버 연결 끊김')); return m }), 800)
-  }, [server])
+    saveT.current = setTimeout(flush, 600)
+  }, [server, flush])
+  useEffect(() => { if (!server) return; const t = setInterval(() => pull(), 2000); return () => clearInterval(t) }, [server, pull])
+  useEffect(() => { if (!server) return   // 접속자 — 5초마다 이름 신호
+    const ping = () => api.presence(sync.current.id, me || '이름 없음').then(p => p && setPeople(p)); ping(); const t = setInterval(ping, 5000); return () => clearInterval(t) }, [server, me])
 
   // 시험·자체확인용 손잡이(Playwright)
   useEffect(() => { window.__mb = { setCam, getCam: () => cam, open: async u => open(parseDoc(await (await fetch(u)).text()), u), model, toEcad: () => toEcad(model), get ed() { return ed.current }, setTool } })
-  useEffect(() => { loadServerDoc().then(r => { setServer(r.server); if (r.doc) open(r.doc, `서버 「${DOC_NAME}」`, true); else setStatus(r.server ? `서버 「${DOC_NAME}」 · 새 칠판` : '서버 없음 — 파일로 열고 저장') }) }, [])   // eslint-disable-line
+  useEffect(() => {
+    loadServerDoc().then(r => { setServer(r.server); if (r.doc) open(r.doc, `서버 「${DOC_NAME}」`, true, true); else { if (r.server) { const m = modelRef.current; sync.current.base = snapshotModel(m); sync.current.rev = 0 } setStatus(r.server ? `서버 「${DOC_NAME}」 · 새 칠판` : '서버 없음 — 파일로 열고 저장') } }) }, [])   // eslint-disable-line
 
   // 카드 버튼: 클릭 = 그리기 도구, 6px 넘게 끌면 도형을 칠판에 바로 놓기(데스크톱 `_PaletteButton._DRAG_THRESH`)
   // 미니맵에 그릴 것 — 숨긴 레이어 뺌(화면을 옮길 때마다 다시 그리지 않게 문서가 바뀔 때만)
@@ -174,7 +245,7 @@ function App() {
     a.href = URL.createObjectURL(new Blob([JSON.stringify(toEcad(model), null, 1)], { type: 'application/json' }))
     a.download = `${DOC_NAME}.ecad`; a.click(); URL.revokeObjectURL(a.href)
   }
-  const saveServer = async () => setStatus((await saveServerDoc(toEcad(model)).catch(() => false)) ? `서버 「${DOC_NAME}」에 저장함` : '서버 저장 실패')
+  const saveServer = () => { clearTimeout(saveT.current); flush() }   // 지금 바로 보내기(바뀐 도형만)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
@@ -214,6 +285,11 @@ function App() {
           <option value="">샘플 열기…</option>{SAMPLES.map(([n, u]) => <option key={u} value={u}>{n}</option>)}
         </select>
         <span style={{ marginLeft: 'auto', color: C.muted, fontSize: 12 }}>{status} · {Math.round(cam.z * 100)}%</span>
+        {server && <span title={people.length ? `지금 이 칠판에: ${people.join(', ')}` : ''} style={{ fontSize: 12, color: C.muted, whiteSpace: 'nowrap', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>👥 {people.length ? people.join(' · ') : (me || '나')}</span>}
+        {server && <div style={{ position: 'relative' }}>
+          <Btn icon="🔗" label="공유" on={shareOpen} onClick={() => setShareOpen(o => !o)} title="게시 — 로그인 없이 보기·발표만 되는 링크(큰 TV 발표용)" />
+          {shareOpen && <ShareForm onClose={() => setShareOpen(false)} />}
+        </div>}
         <Btn icon="💬" label="KAIROS" on={chatOpen} onClick={() => setChatOpen(o => !o)} title="KAIROS 대화창 열기/닫기 — 답을 칠판에 카드로 붙여요" />
         <Btn icon={dark ? '☀' : '☾'} label={dark ? '밝게' : '어둡게'} onClick={toggleDark} title="밝은 화면 / 어두운 화면" />
         <input ref={file} type="file" accept=".ecad,application/json" hidden onChange={async e => {
@@ -244,4 +320,12 @@ function App() {
 }
 
 await document.fonts.load("400 16px 'Pretendard'", '가A').catch(() => {})
-createRoot(document.getElementById('root')).render(<App />)
+// 들어가기 전 — 비밀번호가 필요한 서버면 먼저 로그인 창(칠판 화면은 그 뒤에 만들어야 크기 재기 등이 바로 돎)
+function Gate() {
+  const [gate, setGate] = useState('check')
+  useEffect(() => { api.session().then(s => setGate(s.auth && !s.ok ? 'login' : 'ok')) }, [])
+  if (gate === 'check') return null
+  if (gate === 'login') return <LoginForm onDone={() => setGate('ok')} />
+  return <App />
+}
+createRoot(document.getElementById('root')).render(VIEW_TOKEN ? <Viewer token={VIEW_TOKEN} /> : <Gate />)   // ?view= = 게시 링크(보기·발표만)
