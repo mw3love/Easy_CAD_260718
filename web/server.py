@@ -314,6 +314,7 @@ class Handler(SimpleHTTPRequestHandler):
 # 브라우저는 남의 사이트가 넣기를 막았는지 알 수 없다(막힌 페이지도 「다 불러옴」 신호가 똑같이 옴) → 응답 머리말로 판단.
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"
 _THUMB_MAX = 400 * 1024   # 대표 그림은 문서에 data 주소로 들어가니(서버 없이도·내보내기에도 보이게) 크기 상한
+_ICON_MAX = 64 * 1024   # 사이트 아이콘(대표 그림 없는 막힌 사이트 카드 — 2026-10-19 사용자: ChatGPT 카드가 제목 띠만)
 
 
 def frame_blocked(headers) -> bool:
@@ -359,20 +360,41 @@ def _open(url: str, limit: int):
 
 
 def link_info(url: str, embed: str = "") -> dict:
-    """주소 → { url, title, thumb(data 주소|""), frameable, embed }. 못 열어도 오류 대신 「모름」(칸 안에 넣지 않고 새 탭으로)."""
+    """주소 → { url, title, desc, icon(data 주소|""), thumb(data 주소|""), frameable, embed }. 못 열어도 오류 대신 「모름」(칸 안에 넣지 않고 새 탭으로)."""
     import base64
     import html as _h
     from urllib.parse import urljoin
-    out = {"url": url, "embed": embed, "title": "", "thumb": "", "frameable": False}
+    out = {"url": url, "embed": embed, "title": "", "desc": "", "icon": "", "thumb": "", "frameable": False}
+
+    def data_url(src, limit):   # 그림 주소 → data 주소(그림이 아니거나 크면 "")
+        try:
+            ri, data = _open(src, limit)
+            ct = ri.headers.get_content_type() or ""
+            if (ct.startswith("image/") or src.lower().endswith(".ico")) and len(data) <= limit:
+                return "data:%s;base64,%s" % (ct if ct.startswith("image/") else "image/x-icon", base64.b64encode(data).decode("ascii"))
+        except Exception:
+            pass
+        return ""
+    page, img = "", ""
     try:
         r, raw = _open(url, 1024 * 1024)
         page = _decode(raw, r.headers)
         out["title"] = _meta(page, "og:title", "twitter:title") or _h.unescape(
             (re.search(r"<title[^>]*>([^<]*)", page, re.I) or [None, ""])[1].strip())
+        out["desc"] = _meta(page, "og:description", "description", "twitter:description")[:200]
         img = _meta(page, "og:image", "twitter:image")
         out["frameable"] = not frame_blocked(r.headers)
-    except Exception as e:   # 사내망·로그인 필요·없는 주소 — 카드는 주소만으로
+    except Exception as e:   # 사내망·로그인 필요·없는 주소 — 카드는 주소(+ 잡히면 아이콘)만으로
         sys.stderr.write("[웹 카드] %s 열기 실패: %s\n" % (url, e))
+    # 아이콘 — <link rel="icon"> 먼저, 없으면 사이트 뿌리의 /favicon.ico(페이지가 막혀도 이건 열리는 곳이 있음)
+    m = re.search(r'<link[^>]+rel=["\'][^"\']*icon[^"\']*["\'][^>]*href=["\']([^"\']+)', page, re.I) or \
+        re.search(r'<link[^>]+href=["\']([^"\']+)["\'][^>]*rel=["\'][^"\']*icon', page, re.I)
+    for src in ([urljoin(url, _h.unescape(m.group(1)))] if m else []) + [urljoin(url, "/favicon.ico")]:
+        if src.startswith("http") and not src.lower().split("?")[0].endswith(".svg"):
+            out["icon"] = data_url(src, _ICON_MAX)
+            if out["icon"]:
+                break
+    if not page:
         return out
     if embed:   # 재생용 주소(유튜브 embed 등)는 그 주소의 머리말로 다시 판단
         try:
@@ -380,13 +402,7 @@ def link_info(url: str, embed: str = "") -> dict:
         except Exception:
             out["frameable"] = False
     if img:
-        try:
-            ri, data = _open(urljoin(url, img), _THUMB_MAX)
-            ct = (ri.headers.get_content_type() or "")
-            if ct.startswith("image/") and len(data) <= _THUMB_MAX:
-                out["thumb"] = "data:%s;base64,%s" % (ct, base64.b64encode(data).decode("ascii"))
-        except Exception:
-            pass
+        out["thumb"] = data_url(urljoin(url, img), _THUMB_MAX)
     return out
 
 

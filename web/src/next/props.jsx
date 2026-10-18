@@ -8,6 +8,7 @@ import { FRAME_RATIOS, paperWH } from './geom.js'
 // 프레임 비율 바꾸기 — 긴 쪽 방향은 그대로(가로로 길면 폭 유지, 세로로 길면 높이 유지)
 const frameRatio = (it, ratio) => { const [x, y, w, h] = it.rect; if (!ratio) return { ratio: undefined }; const r = FRAME_RATIOS[ratio]; return { ratio, rect: w >= h ? [x, y, w, w / r] : [x, y, h / r, h] } }
 import { cellPt, tableAutoPt } from './render.jsx'
+import { WEB_ZOOMS } from './webcard.js'
 // 글 있는 칸들의 지금 크기(pt)
 const tableCellPts = it => { const out = []; for (let r = 0; r < it.rows; r++) for (let c = 0; c < it.cols; c++) if (it.cells?.[r]?.[c]) out.push(cellPt(it, r, c)); return out.length ? out : [tableAutoPt(it)] }
 // 표 전체 크기를 안 정한 표의 ± = 칸마다 지금 크기에 각자 더함(값이 섞이면 각자 더하기 — 다른 도형과 같은 규칙, 2026-10-18 사용자: 10에서 시작해 「뻥」 커지던 것)
@@ -288,7 +289,11 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
           onChange={e => set(() => ({ title: e.target.value }), '웹 카드 제목', 'wtitle')}
           style={{ flex: 1, minWidth: 0, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} /></Row>
         <Row label="주소"><button title={w.url} onClick={() => window.open(w.url, '_blank', 'noopener')} style={{ all: 'unset', cursor: 'pointer', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#3b82f6', fontSize: 11 }}>↗ 새 탭에서 열기</button></Row>
-        <div style={{ fontSize: 11, color: C.muted }}>{w.frameable ? '두 번 누르면 칸 안을 조작(바깥을 누르면 끝)' : '이 사이트는 칸 안에 넣기를 막아요 — 두 번 누르면 새 탭'}</div>
+        {w.frameable && !w.embed && <Row label="배율"><div style={{ flex: 1, display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>
+          {WEB_ZOOMS.map(v => { const on = (w.zoom || 1) === v
+            return <button key={v} title={v < 1 ? `페이지를 ${v * 100}%로 — 카드 크기는 그대로, 더 많이 보임` : '원래 크기'} onClick={() => set(() => ({ zoom: v < 1 ? v : undefined }), '웹 카드 배율')}
+              style={{ all: 'unset', cursor: 'pointer', flex: 1, textAlign: 'center', padding: '2px 0', borderRadius: 6, fontSize: 11, background: on ? 'rgba(218,119,86,.22)' : 'transparent', color: on ? '#da7756' : C.ink, fontWeight: on ? 600 : 400 }}>{v * 100}%</button> })}</div></Row>}
+        <div style={{ fontSize: 11, color: C.muted }}>{w.frameable ? (w.embed ? '누르면 바로 재생 · 위 띠를 끌면 이동' : '누르면 칸 안을 조작(바깥을 누르면 끝) · 위 띠를 끌면 이동') : '이 사이트는 칸 안에 넣기를 막아요 — 두 번 누르면 새 탭'}</div>
       </> })()}
     {items.length === 1 && items[0].type === 'frame' && (() => { const f = items[0]   // 프레임 — 이름·비율(순서는 좌하 「프레임」 카드, 틀만 옮기기는 이름표 옆 자물쇠·Alt+끌기)
       return <>

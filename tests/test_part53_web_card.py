@@ -61,4 +61,4 @@ def test_link_info_blocked_site_and_unreachable(monkeypatch):
         raise OSError("no network")
     monkeypatch.setattr(srv, "_open", boom)
     out = srv.link_info("https://intra.example")
-    assert out == {"url": "https://intra.example", "embed": "", "title": "", "thumb": "", "frameable": False}   # 못 열어도 오류 없이 「모름」
+    assert out == {"url": "https://intra.example", "embed": "", "title": "", "desc": "", "icon": "", "thumb": "", "frameable": False}   # 못 열어도 오류 없이 「모름」

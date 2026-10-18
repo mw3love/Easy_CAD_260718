@@ -32,7 +32,7 @@ import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob
 import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
 import { freeSpot, sourceLine } from '../chatFormat.js'
-import { fetchLinkInfo, normalizeUrl, openBtnRect, siteOf, webCardFields } from './webcard.js'
+import { WEB_HEAD, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { buildLegend, isLegendPart, legendEntries, legendState } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
@@ -287,7 +287,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (add) ids = ids.includes(hit._id) ? ids.filter(i => i !== hit._id && !(hit.group_id && m.items.find(x => x._id === i)?.group_id === hit.group_id)) : expandGroups(m.items, [...ids, hit._id])
       else if (!ids.includes(hit._id)) ids = expandGroups(m.items, [hit._id])
       setSel(ids)
-      if (ids.includes(hit._id)) st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: e.altKey && hit.type === 'frame' ? ids : movingSet(ids), sel: ids, moved: false }   // Alt+끌기 = 프레임 틀만
+      const webPick = hit.type === 'web' && hit.frameable && !add && !e.altKey && toLocal(hit, p).y > hit.rect[1] + WEB_HEAD ? hit : null   // 웹 카드 몸통 제자리 클릭 = 칸 안 조작 켜기(놓을 때 — 끌면 이동)
+      if (ids.includes(hit._id)) st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: e.altKey && hit.type === 'frame' ? ids : movingSet(ids), sel: ids, moved: false, webPick }   // Alt+끌기 = 프레임 틀만
       return
     }
     if (!add) setSel([])
@@ -443,6 +444,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (s.kind === 'move') {
       setOverlay(o => ({ ...o, guides: null }))
       if (!s.moved && s.cellPick) { const { id, r, c, extend } = s.cellPick; setCellSel(cs => (extend && cs?.id === id ? { ...cs, r1: r, c1: c } : { id, r0: r, c0: c, r1: r, c1: c })) }
+      if (!s.moved && s.webPick) webActivate(s.webPick)
       if (s.moved && live) commit(live.filter(it => it), s.sel, '옮김'); else setLive(null); return }
     if (s.kind === 'rubber') {
       setOverlay(o => ({ ...o, rubber: null }))
@@ -1013,7 +1015,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (!hit || hit.locked) return
     if (hit.type === 'frame') { const b = frameTagBox(hit); if (p.y <= b.y + b.h + 2 / R.current.cam.z) { setSel([hit._id]); setTagEdit(hit._id) } return }   // 이름표 = 그 자리에서 이름 고치기
     if (hit.type === 'memo') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'memo', at }); return }
-    if (hit.type === 'web') { setSel([hit._id]); if (hit.frameable) { setWebOn(hit._id); setStatus('웹 카드 안을 조작하는 중 — 바깥을 누르면 끝') } else window.open(hit.url, '_blank', 'noopener'); return }   // 막는 사이트 = 새 탭
+    if (hit.type === 'web') { setSel([hit._id]); if (hit.frameable) webActivate(hit); else window.open(hit.url, '_blank', 'noopener'); return }   // 막는 사이트 = 새 탭
     if (hit.type === 'table') { const cell = cellAt(hit, toLocal(hit, p)); if (cell) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'cell', ...cell, at }) } return }
     if (isArrow(hit)) {   // 화살표 빈 자리 더블클릭 = 그 자리에 새 라벨(여러 개 — 데스크톱 `add_label_at_scene_pos`)
       const labels = labelsOf(hit), pr = projectOn(hit, toLocal(hit, p))
@@ -1235,7 +1237,13 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const info = await fetchLinkInfo(url), f = webCardFields(info), m = R.current.model
     const it = base([at.x - f.rect[2] / 2, at.y - f.rect[3] / 2], { ...f, z: topZ(m.items) + 1 })
     commit([...m.items, it], [it._id], '웹 카드'); setTool('select')
-    setStatus(info.frameable ? '웹 카드 — 두 번 누르면 안을 조작(바깥을 누르면 끝)' : `웹 카드 — ${siteOf(url)}는 칸 안에 넣기를 막아요. 오른쪽 위 ↗나 두 번 누르기 = 새 탭`)
+    setStatus(info.frameable ? `웹 카드 — 누르면 안을 조작${info.embed ? '(유튜브는 바로 재생)' : ''}, 위 띠를 끌면 이동` : `웹 카드 — ${siteOf(url)}는 칸 안에 넣기를 막아요. 오른쪽 위 ↗나 두 번 누르기 = 새 탭`)
+  }
+  // 웹 카드 칸 안 조작 켜기 — 한 번 누르기(2026-10-19 사용자: 두 번 누르고 또 눌러야 재생). 유튜브는 그 클릭으로 바로 재생, 다음 클릭부터는 유튜브가 받음(멈춤 등)
+  function webActivate(it) {
+    setSel([it._id]); setWebOn(it._id)
+    if (isYoutube(it)) playYoutube(it._id)
+    setStatus(isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
   }
   const webOpenAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'web') continue
     const q = toLocal(it, p), b = openBtnRect(it), pad = 2 / z; if (q.x >= b.x - pad && q.x <= b.x + b.w + pad && q.y >= b.y - pad && q.y <= b.y + b.h + pad) return it } return null }
@@ -1358,7 +1366,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
           {visible.map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
             : it._id === editingId && it.type === 'memo' ? <Item key={it._id} it={{ ...it, lines: [] }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />   // 고치는 메모 = 바탕만(흐린 글자가 투명한 채움 사이로 잔상처럼 비쳤음 — 2026-10-18 사용자)
             : it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
-            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : 'view') : undefined} />))}
+            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
           {(overlay.rubber?.sub ? selItems.filter(it => !overlay.rubber.hits?.includes(it._id)) : selItems).map(outline)}   {/* Shift 끌기 빼기 = 걸린 것의 파란 띠를 바로 지움(2026-10-18 사용자: 빨강 대신) */}

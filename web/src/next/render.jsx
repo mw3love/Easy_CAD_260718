@@ -8,7 +8,7 @@ import {
 } from './geom.js'
 import { symbolPath } from './symbols.js'
 import { sarrowRadius } from './arrows.js'
-import { WEB_HEAD, frameSrc, openBtnRect, siteOf } from './webcard.js'
+import { WEB_HEAD, frameSrc, isYoutube, openBtnRect, siteOf } from './webcard.js'
 import { LISTY, MEMO, MEMO_KIND, MUTED, olNumbers } from './memo.js'
 
 // ── 글자 재기(캔버스) ──
@@ -22,6 +22,14 @@ export function ellipsis(text, px, weight, maxW) {
   const t = String(text || ''); if (maxW <= 0) return ''; if (measure(t, px, 'app', weight) <= maxW) return t
   let lo = 0, hi = t.length; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (measure(t.slice(0, m) + '…', px, 'app', weight) <= maxW) lo = m; else hi = m - 1 }
   return t.slice(0, lo) + '…'
+}
+// 두 줄로 나누기(넘치면 둘째 줄 끝 …) — 웹 카드 설명
+function wrap2(text, px, maxW) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim(); if (!t || maxW <= 0) return []
+  let i = 1; while (i <= t.length && measure(t.slice(0, i), px, 'app', 400) <= maxW) i++
+  if (i > t.length) return [t]
+  const sp = t.lastIndexOf(' ', i - 1), cut = sp > (i - 1) * 0.6 ? sp : i - 1   // 낱말 사이에서 끊되 너무 앞이면 글자 단위
+  return [t.slice(0, cut).trim(), ellipsis(t.slice(cut).trim(), px, 400, maxW)]
 }
 export function measure(text, px, family, weight) { const c = ctx(); c.font = fontCss(px, family, weight); return c.measureText(text).width }
 
@@ -359,8 +367,13 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         <rect x={x} y={y} width={w} height={h} fill="none" stroke={tl} strokeWidth={1} /></g>
     }
     case 'web': {   // 웹 카드 — 위 띠(제목·주소·새 탭 단추) + 칸 안 페이지(들어가는 사이트, 편집·발표 화면만) 또는 대표 그림
-      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'wc-' + (it._id || idx), ob = openBtnRect(it), tw = w - ob.w - 26
-      const live = !!web && it.frameable && bh > 4
+      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'wc-' + (it._id || idx), ob = openBtnRect(it), ic = it.icon ? 16 : 0, tx = x + 10 + (ic && ic + 6), tw = w - ob.w - 26 - (ic && ic + 6)
+      const live = (web === 'on' || web === 'view') && it.frameable && bh > 4   // 'sleep' = 많이 줄여 봄 → 페이지 끔(그림·이름만)
+      const zm = !isYoutube(it) && it.zoom > 0 && it.zoom < 1 ? it.zoom : 1   // 칸 안 페이지 배율 — 큰 판에 띄우고 통째로 줄임
+      const info = () => { const s = Math.min(36, bh - 16), lw = w - s - 34, lines = wrap2(it.desc || siteOf(it.url), 12, lw)   // 막힌 사이트·그림 없음 = 아이콘 + 설명 두 줄
+        return <>{it.icon ? <image href={it.icon} x={x + 12} y={y + H + (bh - s) / 2} width={s} height={s} />
+          : <><rect x={x + 12} y={y + H + (bh - s) / 2} width={s} height={s} rx={s / 4} fill="#e4e4e7" /><text x={x + 12 + s / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={s / 2} fontWeight={700} fontFamily={APP_FONT} fill="#71717a">{siteOf(it.url).slice(0, 1).toUpperCase()}</text></>}
+          {lines.map((t, k) => <text key={k} x={x + s + 22} y={y + H + bh / 2 + (k - (lines.length - 1) / 2) * 17} dominantBaseline="central" fontSize={12} fontFamily={APP_FONT} fill="#52525b">{t}</text>)}</> }
       return <g transform={T}>
         <clipPath id={cid}><rect x={x} y={y} width={w} height={h} rx={8} ry={8} /></clipPath>
         <g clipPath={`url(#${cid})`}>
@@ -368,17 +381,19 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
           <rect x={x} y={y} width={w} height={H} fill="#f4f4f5" />
           {bh > 0 && (live
             ? <foreignObject x={x} y={y + H} width={w} height={bh}>
-                <iframe src={frameSrc(it)} title={it.title || it.url} allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
-                  sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-presentation" style={{ border: 0, width: '100%', height: '100%', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
+                <iframe data-webid={it._id} src={frameSrc(it)} title={it.title || it.url} allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
+                  sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-presentation" style={{ border: 0, width: `${100 / zm}%`, height: `${100 / zm}%`, transform: zm < 1 ? `scale(${zm})` : undefined, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
               </foreignObject>   // sandbox = 칠판 화면을 통째로 다른 주소로 넘기지 못하게(일부 사이트의 「틀 벗어나기」)
             : it.thumb ? <image href={it.thumb} x={x} y={y + H} width={w} height={bh} preserveAspectRatio="xMidYMid slice" />
+            : !it.embed && bh >= 30 ? <><rect x={x} y={y + H} width={w} height={bh} fill="#ffffff" />{info()}</>
             : <><rect x={x} y={y + H} width={w} height={bh} fill="#e4e4e7" />
               <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(28, bh / 3)} fontFamily={APP_FONT} fill="#71717a">{it.embed ? '▶' : siteOf(it.url)}</text></>)}
         </g>
         {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#d4d4d8" strokeWidth={1} />}
         <rect x={x} y={y} width={w} height={h} rx={8} ry={8} fill="none" stroke="#a1a1aa" strokeWidth={1} />
-        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis(it.title || siteOf(it.url), 13, 700, tw)}</text>
-        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.url, 10, 400, tw)}</text>
+        {ic > 0 && <image href={it.icon} x={x + 10} y={y + (Math.min(WEB_HEAD, h) - ic) / 2} width={ic} height={ic} />}
+        <text x={tx} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis(it.title || siteOf(it.url), 13, 700, tw)}</text>
+        <text x={tx} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.url, 10, 400, tw)}</text>
         <g><title>새 탭에서 열기</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
       </g>
