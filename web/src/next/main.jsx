@@ -75,14 +75,16 @@ function ExportForm({ hasSel, selFrames, onExport, onClose }) {   // selFrames =
   const seg = (v, cur, set, label, dis) => <button key={v} disabled={dis} onClick={() => set(v)} style={{ all: 'unset', cursor: dis ? 'default' : 'pointer', opacity: dis ? 0.4 : 1, flex: 1, textAlign: 'center', padding: '3px 0', borderRadius: 6,
     background: cur === v ? 'rgba(218,119,86,.22)' : 'transparent', color: cur === v ? '#da7756' : C.ink, fontWeight: cur === v ? 600 : 400 }}>{label}</button>
   const row = (label, el) => <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 34, color: C.muted }}>{label}</span><div style={{ flex: 1, display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>{el}</div></div>
+  const [split, setSplit] = useState('frames')   // 고른 것에 종이틀이 있을 때 — 틀마다 쪽 / 고른 것 전체를 한 쪽에(2026-10-19 사용자)
   const [order, setOrder] = useState('rows')   // 종이틀 쪽 순서 — 줄 우선(위 줄 왼→오, 지그재그) / 칸 우선(왼 칸 위→아래)
-  const go = async () => { setBusy(true); try { await onExport({ format: f, selection: sel === true, order, page, orient: orient || null, margin, transparent: tr }) } finally { setBusy(false) } }
+  const go = async () => { setBusy(true); try { await onExport({ format: f, selection: sel === true, onePage: split === 'one', order, page, orient: orient || null, margin, transparent: tr }) } finally { setBusy(false) } }
   return <div onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ position: 'absolute', top: 48, left: 0, zIndex: 20, width: 240, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: '0 4px 14px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif" }}>
     <div style={{ font: "700 13px 'Pretendard', sans-serif" }}>내보내기</div>
     {row('형식', [seg('pdf', f, setF, 'PDF'), seg('png', f, setF, 'PNG'), seg('svg', f, setF, 'SVG')])}
     {row('범위', [seg(false, sel, setSel, '전체'), seg(true, sel, setSel, '고른 것', !hasSel)])}
-    {sel === true && selFrames > 0 && <div style={{ fontSize: 11, color: '#da7756' }}>종이틀 {selFrames}개 → 틀마다 한 쪽(틀 밖에 고른 것은 마지막 쪽)</div>}
-    {sel === true && selFrames > 1 && row('순서', [seg('rows', order, setOrder, '줄 우선 →'), seg('cols', order, setOrder, '칸 우선 ↓')])}
+    {sel === true && selFrames > 0 && row('쪽', [seg('frames', split, setSplit, '종이틀마다'), seg('one', split, setSplit, '고른 것 한 쪽에')])}
+    {sel === true && selFrames > 0 && <div style={{ fontSize: 11, color: '#da7756' }}>{split === 'one' ? '고른 것 전체를 감싼 영역이 한 쪽(틀도 그림처럼)' : `종이틀 ${selFrames}개 → 틀마다 한 쪽(틀 밖에 고른 것은 마지막 쪽)`}</div>}
+    {sel === true && selFrames > 1 && split === 'frames' && row('순서', [seg('rows', order, setOrder, '줄 우선 →'), seg('cols', order, setOrder, '칸 우선 ↓')])}
     {row('용지', Object.keys({ A4: 1, A3: 1, A2: 1, A1: 1, A0: 1 }).map(p => seg(p, page, setPage, p)))}
     {row('방향', [seg('', orient, setOrient, '자동'), seg('landscape', orient, setOrient, '가로'), seg('portrait', orient, setOrient, '세로')])}
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 34, color: C.muted }}>여백</span>

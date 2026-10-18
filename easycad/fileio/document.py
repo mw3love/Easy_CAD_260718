@@ -364,7 +364,7 @@ def item_to_dict(it) -> dict | None:
 
 
 _WEB_ONLY_KEYS_ALL = ("fit_text", "chat_at")
-_WEB_ONLY_KEYS = {"table": ("font", "color", "pen", "cell_styles", "cell_runs")}
+_WEB_ONLY_KEYS = {"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights")}  # row_heights = 행 높이 비율(웹 2026-10-19, 데스크톱은 같은 높이로 그림)
 
 
 def dict_to_item(d: dict):

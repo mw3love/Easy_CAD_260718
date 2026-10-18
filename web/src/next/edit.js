@@ -1,6 +1,7 @@
 // 2단계 기본 편집의 순수 계산 — 누른 곳에 무엇이 있나, 크기·회전·이동·복제·삭제·묶기·잠금·순서(데스크톱 `core_view`·`host_selection` 규칙).
 // 아이템은 model.js 형식(.ecad + _id). 바꿀 땐 늘 새 배열·새 객체(되돌리기가 옛 배열을 그대로 들고 있게).
 import { newId } from './model.js'
+import { rowEdges } from './geom.js'
 import { itemBounds } from './doc.js'
 import { resolveRoutes, sarrowRouting } from './arrows.js'
 import { setCurveEnd } from './arrowedit.js'
@@ -282,11 +283,12 @@ export function tableOp(it, op, r, c) {
   return { ...out, ...(it.cell_styles ? { cell_styles: move(it.cell_styles) } : {}), ...(it.cell_runs ? { cell_runs: move(it.cell_runs) } : {}) }   // 칸 꾸밈·칸 부분 서식
 }
 function tableOpBody(it, op, r, c) {
-  const [x, y, w, h] = it.rect, rows = it.rows, cols = it.cols, ch = h / rows
+  const [x, y, w, h] = it.rect, rows = it.rows, cols = it.cols, re = rowEdges(y, h, it), rh = Array.from({ length: rows }, (_, i) => re[i + 1] - re[i])
   const fr = it.col_widths?.length === cols ? it.col_widths : Array(cols).fill(1 / cols), cw = fr.map(f => f * w)
   let cells = Array.from({ length: rows }, (_, i) => Array.from({ length: cols }, (_, j) => it.cells?.[i]?.[j] || ''))
-  if (op === 'rowAbove' || op === 'rowBelow') { const at = op === 'rowAbove' ? r : r + 1; cells.splice(at, 0, Array(cols).fill('')); return { ...it, rows: rows + 1, cells, rect: [x, y, w, h + ch] } }
-  if (op === 'delRow') { if (rows <= 1) return it; cells.splice(r, 1); return { ...it, rows: rows - 1, cells, rect: [x, y, w, h - ch] } }
+  const rowsOut = hs => { const H = hs.reduce((a, b) => a + b, 0); return { rect: [x, y, w, H], ...(it.row_heights ? { row_heights: hs.map(v => v / H) } : {}) } }   // 행 높이를 따로 정한 표만 비율을 들고 감
+  if (op === 'rowAbove' || op === 'rowBelow') { const at = op === 'rowAbove' ? r : r + 1, hs = [...rh]; hs.splice(at, 0, rh[r]); cells.splice(at, 0, Array(cols).fill('')); return { ...it, rows: rows + 1, cells, ...rowsOut(hs) } }   // 새 행 = 기준 행 높이
+  if (op === 'delRow') { if (rows <= 1) return it; const hs = rh.filter((_, i) => i !== r); cells.splice(r, 1); return { ...it, rows: rows - 1, cells, ...rowsOut(hs) } }
   if (op === 'colLeft' || op === 'colRight') {
     const at = op === 'colLeft' ? c : c + 1, nw = cw[c]; cells = cells.map(row => { const n = [...row]; n.splice(at, 0, ''); return n })
     const ws = [...cw]; ws.splice(at, 0, nw); const W = w + nw

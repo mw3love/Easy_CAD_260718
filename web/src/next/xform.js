@@ -14,3 +14,13 @@ export function toScene(it, p) {
   ;[qx, qy] = [qx * Math.cos(r) - qy * Math.sin(r), qx * Math.sin(r) + qy * Math.cos(r)]
   return { x: qx + ox + x, y: qy + oy + y }
 }
+// 직각 화살표의 배율·회전을 점에 녹임 — 화살표 끝 끌기·길 찾기·붙는 끝은 「pts = pos 기준 칠판 좌표」로 계산하므로
+// 배율이 남으면 끝점이 커서와 어긋나고 붙은 도형을 못 따라감(2026-10-19 사용자: 여러 개 크기 조절 뒤 화살표만 따로 놂). 선 굵기도 같은 배율로.
+export function bakeSarrow(it) {
+  const s = it.scale || 1
+  if (it.type !== 'sarrow' || (s === 1 && !it.rotation)) return it
+  const [x, y] = it.pos || [0, 0], pts = it.pts.map(([px, py]) => { const q = toScene(it, { x: px, y: py }); return [q.x - x, q.y - y] })
+  const o = { ...it, pts, scale: 1, rotation: 0, width: +((it.width || 2) * s).toFixed(3) }
+  delete o.origin
+  return o
+}

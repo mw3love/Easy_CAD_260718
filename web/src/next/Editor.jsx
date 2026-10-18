@@ -2,7 +2,8 @@
 // 되돌리기·복사/붙여넣기/복제·삭제·묶기·잠금·순서·반전·방향키, 그리기 도구(상자·원·글·선·펜·다각형), 글 편집(TipTap).
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, fitTextHeight, ink, Item, LABEL_PAD, layoutText, rr } from './render.jsx'
+import { flushSync } from 'react-dom'
+import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, rr } from './render.jsx'
 import { boardMembership, drawOrder, itemBounds } from './doc.js'
 import { paperWH, PT, TEXT_MARGIN, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
@@ -13,6 +14,7 @@ import { projectToCurve, projectToPath, snapLabelOff } from './arrowedit.js'
 import { beginSegment, beginSubdivide, bendCurve, BEND_TS, curvePoint, dragSegment, endSegment, nearestSegment, onPill, SEG_HANDLE_PX, SEG_HIT_PX, segmentHandles, setCurveEnd, snapCurve, subdividePreview } from './arrowedit.js'
 import { sarrowRouting } from './arrows.js'
 import { fromEcad, newId } from './model.js'
+import { bakeSarrow } from './xform.js'
 import {
   applyRect, boardContents, duplicate, readingOrder, tableOp, expandGroups, flatten, followArrows, groupItems, localRect, mirror, moveItems, removeItems, resizeRect,
   rotateTo, rubberSelect, sceneBox, toLocal, toScene, toggleLock, topHit, ungroupItems, unionBox, zOrder,
@@ -22,7 +24,7 @@ import { EditProps, Props, captureStyle, styleFor } from './props.jsx'
 import { arrowKindOf, swapArrowKind } from './arrowkind.js'
 import { symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
-import { colEdges } from './geom.js'
+import { colEdges, colFracs, rowEdges } from './geom.js'
 import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, exportPdf, exportPng, exportSvg, pngBlob } from './exporter.jsx'
 import { ContextMenu } from './ctxmenu.jsx'
@@ -159,6 +161,15 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     return { ...n, pill: onPill(it.pts, n.i, n.proj, z, sc) }
   }
   // 변 가까이(선택한 상자류) — 한 축 크기 바꾸기
+  // 고른 표의 안쪽 경계선(행·열 공통선 — 엑셀처럼 그 선만 끌기, 2026-10-19 사용자). 바깥 테두리는 표 크기(edgeAt)
+  function tableLineAt(it, p) {
+    if (!it || it.type !== 'table' || it.locked) return null
+    const q = toLocal(it, p), [x, y, w, h] = it.rect, t = EDGE_PX / R.current.cam.z / (it.scale || 1)
+    if (q.x < x || q.x > x + w || q.y < y || q.y > y + h) return null
+    const ce = colEdges(x, w, colFracs(it)); for (let i = 1; i < it.cols; i++) if (Math.abs(q.x - ce[i]) <= t) return { axis: 'c', i }
+    const re = rowEdges(y, h, it); for (let i = 1; i < it.rows; i++) if (Math.abs(q.y - re[i]) <= t) return { axis: 'r', i }
+    return null
+  }
   function edgeAt(it, p) {
     if (!it || it.locked || !BOXY.has(it.type)) return null
     const q = toLocal(it, p), [x, y, w, h] = localRect(it), t = EDGE_PX / R.current.cam.z / (it.scale || 1)
@@ -217,6 +228,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       const it = single, sc = it.scale || 1, seg = sg.pill ? beginSegment(it.pts, sg.i) : beginSubdivide(it.pts, sg.i, sg.proj, z, sc)
       if (seg) { st.current = { ...st.current, kind: 'seg', id: it._id, seg, orig: m.items, start: p, moved: false }; setSegPrev(null); return }
     }
+    const tln = tableLineAt(single, p)
+    if (tln) { st.current = { ...st.current, kind: 'tline', id: single._id, ...tln, orig: m.items }; return }
     const edge = edgeAt(single, p)
     if (edge) { st.current = { ...st.current, kind: 'resize', handle: edge, id: single._id, start: p, orig: m.items }; return }
     const add = e.shiftKey || e.ctrlKey || e.metaKey   // 더해 고르기 — Ctrl(데스크톱 손버릇)·Shift(웹 관례) 둘 다
@@ -321,7 +334,13 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         const [W, H] = paperWH(it.size, it.orient), A = { tl: [W, H], tr: [0, H], br: [0, 0], bl: [W, 0] }[s.handle], SA = toScene(it, { x: A[0], y: A[1] })
         const k = Math.max(0.05, Math.max(Math.abs(p.x - SA.x) / W, Math.abs(p.y - SA.y) / H))
         next = { ...it, scale: +k.toFixed(4), pos: [SA.x - A[0] * k, SA.y - A[1] * k] }
-      } else if (s.kind === 'resize') next = applyRect(it, resizeRect(localRect(it), s.handle, toLocal(it, p), { keepRatio: it.type === 'image' || e.shiftKey }))
+      } else if (s.kind === 'resize') {
+        next = applyRect(it, resizeRect(localRect(it), s.handle, toLocal(it, p), { keepRatio: it.type === 'image' || e.shiftKey }))
+        if (next.type === 'table' && (next.font || next.cell_styles)) {   // 끄는 동안에도 확정과 같게 — 글보다 작아지지 않음(2026-10-19 사용자: 놓기 전엔 글이 넘침). 왼쪽·위 손잡이면 맞은편 변 고정
+          const [x0, y0, w0, h0] = next.rect, f = fitTable(next), [, , w1, h1] = f.rect
+          next = f === next ? next : { ...f, rect: [/l/.test(s.handle) ? x0 + w0 - w1 : x0, /t/.test(s.handle) ? y0 + h0 - h1 : y0, w1, h1] }
+        }
+      }
       else if (s.kind === 'rotate') { const [x, y, w, h] = localRect(it), c = toScene(it, { x: x + w / 2, y: y + h / 2 }), a0 = Math.atan2(s.start.y - c.y, s.start.x - c.x), a1 = Math.atan2(p.y - c.y, p.x - c.x)
         next = rotateTo(it, (it.rotation || 0) + ((a1 - a0) * 180) / Math.PI, e.shiftKey) }
       else if (s.kind === 'tscale') { const b = textBox(it), q = toLocal(it, p), k = Math.max(0.2, Math.max(q.x / b.w, q.y / b.h)); next = { ...it, font: Math.max(4, Math.round((it.font || 12) * k)) } }
@@ -329,11 +348,20 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       setLive(followArrows(s.orig.map(x => (x._id === s.id ? next : x)), rectOf))
       return
     }
+    if (s.kind === 'tline') {   // 공통선 하나만 — 양옆 칸이 나눠 가짐(표 전체 크기 그대로, 데스크톱 열 경계 끌기와 같음)
+      const it = s.orig.find(x => x._id === s.id), q = toLocal(it, p), [x, y, w, h] = it.rect, i = s.i
+      let next
+      const { minW, minH } = tableMins(it), lim = (e, mins, v) => { const lo = e[i - 1] + mins[i - 1], hi = e[i + 1] - mins[i]; return lo > hi ? e[i] : Math.max(lo, Math.min(hi, v)) }   // 옆 칸 글이 들어갈 만큼에서 멈춤(표가 커지지 않게)
+      if (s.axis === 'c') { const e = colEdges(x, w, colFracs(it)); e[i] = lim(e, minW, q.x); next = { ...it, col_widths: e.slice(1).map((v, j) => (v - e[j]) / w) } }
+      else { const e = rowEdges(y, h, it); e[i] = lim(e, minH, q.y); next = { ...it, row_heights: e.slice(1).map((v, j) => (v - e[j]) / h) } }
+      setLive(followArrows(s.orig.map(x => (x._id === s.id ? next : x)), rectOf))
+      return
+    }
     if (s.kind === 'mscale') {
       const { A, box } = s, f = Math.max(0.05, Math.max(Math.abs(p.x - A.x) / (box.w || 1), Math.abs(p.y - A.y) / (box.h || 1)))
       setLive(followArrows(s.orig.map(it => { if (!s.ids.has(it._id)) return it
         const [px, py] = it.pos || [0, 0], [ox, oy] = it.origin || [0, 0]   // origin을 가운데로 둔 회전 도형도 제자리(origin만큼 보정)
-        return { ...it, scale: +((it.scale || 1) * f).toFixed(5), pos: [A.x + (px - A.x) * f + ox * (f - 1), A.y + (py - A.y) * f + oy * (f - 1)] } }), rectOf))
+        return bakeSarrow({ ...it, scale: +((it.scale || 1) * f).toFixed(5), pos: [A.x + (px - A.x) * f + ox * (f - 1), A.y + (py - A.y) * f + oy * (f - 1)] }) }), rectOf))   // 직각 화살표는 배율을 점에 녹임
       return
     }
     if (s.kind === 'draw') { s.cur = p; s.shift = e.shiftKey; setOverlay(o => ({ ...o, draw: { tool: s.tool, a: s.start, b: p, shift: e.shiftKey, pts: s.pts } })); if (s.tool === 'pen') { const last = s.pts[s.pts.length - 1]; if (Math.hypot(p.x - last.x, p.y - last.y) * z >= 2) s.pts.push(p) } return }
@@ -361,6 +389,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (s.kind === 'label') { if (s.moved && live) commit(live, [s.id], '라벨 옮김'); else setLive(null); return }
     if (s.kind === 'seg') { if (s.moved && live) commit(live.map(x => (x._id === s.id ? { ...x, pts: endSegment(x.pts) } : x)), [s.id], '구간 옮김'); else setLive(null); return }
     if (s.kind === 'mscale') { if (live) commit(live, R.current.sel, '크기'); return }
+    if (s.kind === 'tline') { if (live) commit(live, [s.id], s.axis === 'c' ? '열 너비' : '행 높이'); return }
     if (s.kind === 'move') {
       setOverlay(o => ({ ...o, guides: null }))
       if (!s.moved && s.cellPick) { const { id, r, c, extend } = s.cellPick; setCellSel(cs => (extend && cs?.id === id ? { ...cs, r1: r, c1: c } : { id, r0: r, c0: c, r1: r, c1: c })) }
@@ -484,6 +513,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       setCursor(horizontal ? 'ns-resize' : 'ew-resize'); return
     }
     setSegPrev(null)
+    const tln = tableLineAt(single, p); if (tln) { setHp(null); setCursor(tln.axis === 'c' ? 'col-resize' : 'row-resize'); return }
     const hp = hoverPort(p); setHp(hp)
     if (hp?.target && (!inside(R.current.model.items.find(x => x._id === hp.target.id) || {}, p) || (hp.target.port && Math.hypot(hp.target.p.x - p.x, hp.target.p.y - p.y) * R.current.cam.z <= 5))) { setCursor('crosshair'); return }
     const ed = edgeAt(single, p); if (ed) { setCursor(edgeCursor[ed]); return }
@@ -559,7 +589,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     // 「고른 것」에 종이틀이 있으면 틀마다 한 쪽(틀 안의 것은 고르지 않아도 전부), 어느 틀에도 안 든 고른 것은 마지막 한 쪽에 모음(2026-10-18 사용자와 정함 — 「고른 것」·「종이틀대로」를 하나로)
     const selIds = o.selection ? new Set(movingSet(R.current.sel)) : null
     const selFrames = selIds ? all.filter(([it]) => selIds.has(it._id) && it.type === 'titleblock') : []
-    if (selFrames.length) {
+    if (selFrames.length && !o.onePage) {   // onePage = 「고른 것 한 쪽에」 — 틀도 보통 도형처럼 고른 것 전체를 감싼 한 쪽(2026-10-19 사용자: 보이지 않는 종이틀)
       const frames = readingOrder(selFrames.map(([it]) => ({ ...sceneBox(it, textBox), it })), o.order || 'rows')
       const body = all.filter(([it]) => !(it.type === 'titleblock' && it.plain)), ob = boardMembership(m.items), rts = resolveRoutes(m.items, rectOf), pages = []
       const tr = o.format !== 'pdf' && o.transparent
@@ -647,10 +677,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     setStatus(`표 넣음: ${rows}×${cols} — 칸을 두 번 눌러 고치기(Enter 아래·Tab 오른쪽)`)
   }
   // 표 칸(안 좌표) — 데스크톱 `cell_rect`/`cell_at`
-  const cellRect = (it, r, c) => { const [x, y, w, h] = it.rect, ch = h / it.rows, e = colEdges(x, w, it.col_widths || Array(it.cols).fill(1 / it.cols)); return { x: e[c], y: y + r * ch, w: e[c + 1] - e[c], h: ch } }
+  const cellRect = (it, r, c) => { const [x, y, w, h] = it.rect, re = rowEdges(y, h, it), e = colEdges(x, w, colFracs(it)); return { x: e[c], y: re[r], w: e[c + 1] - e[c], h: re[r + 1] - re[r] } }
   const cellAt = (it, q) => { const [x, y, w, h] = it.rect; if (q.x < x || q.y < y || q.x > x + w || q.y > y + h) return null
     const e = colEdges(x, w, it.col_widths || Array(it.cols).fill(1 / it.cols)); let c = e.findIndex((v, i) => i > 0 && q.x <= v) - 1; if (c < 0) c = it.cols - 1
-    return { r: Math.min(it.rows - 1, Math.floor((q.y - y) / (h / it.rows))), c } }
+    const re = rowEdges(y, h, it); let r = re.findIndex((v, i) => i > 0 && q.y <= v) - 1; if (r < 0) r = it.rows - 1
+    return { r, c } }
   // 칸 고치기 끝 — text = 새 글(null = 취소), move = [dr, dc] 다음 칸으로(데스크톱 `_CellEditor._move`: Tab 줄넘김)
   function finishCell(text, move, runs) {
     const ed = R.current.editing; if (!ed || ed.kind !== 'cell') return
@@ -662,6 +693,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (r === it.rows && move[1] === 1) it = tableOp(it, 'rowBelow', it.rows - 1, 0)   // 마지막 칸에서 Tab = 새 행(엑셀·한글 방식)
       if (r >= 0 && r < it.rows) next = { id: it._id, kind: 'cell', r, c } }
     setEditing(next); R.current.editing = next; if (!it) return null   // 다시 그리기를 기다리지 않음
+    if (!next) setCellSel({ id: it._id, r0: ed.r, c0: ed.c, r1: ed.r, c1: ed.c })   // 끝내면 그 칸을 고른 채로(엑셀 — 이어서 치거나 화살표로)
     const key = `${ed.r},${ed.c}`, oldRuns = JSON.stringify(it0.cell_runs?.[key] || [])
     const changed = text != null && (text !== (it0.cells?.[ed.r]?.[ed.c] || '') || JSON.stringify(runs || []) !== oldRuns)
     if (changed || it !== it0) {
@@ -832,6 +864,21 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       if (mod && k.toLowerCase() === 'a') return act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))
       if (k === 'Escape') { setOverlay(o => ({ ...o, poly: null, draw: null })); if (R.current.tool !== 'select') setTool('select'); else if (cellSel) setCellSel(null); else setSel([]); return }
       if (k === 'Enter' && overlay.poly) return act(() => finishPoly(overlay.poly, false))
+      // 칸을 고른 채로 — 엑셀처럼: 글자를 치면 바로 그 칸에 새로 씀(두 번 누르지 않아도 — 2026-10-19 사용자), Enter·F2 = 있는 글 이어 고치기, Delete = 칸 글만 지움(표는 그대로)
+      if (cellSel && ids.length === 1 && ids[0] === cellSel.id && !mod && !e.altKey) {
+        const { r0, r1, c0, c1 } = cellRange(cellSel)
+        if (k === 'Delete' || k === 'Backspace') return act(() => { const t = m.items.find(x => x._id === cellSel.id); if (!t) return
+          const cells = t.cells.map((row, r) => row.map((v, c) => (r >= r0 && r <= r1 && c >= c0 && c <= c1 ? '' : v))), cr = { ...(t.cell_runs || {}) }
+          for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) delete cr[`${r},${c}`]
+          commit(m.items.map(x => (x._id === t._id ? { ...t, cells, cell_runs: Object.keys(cr).length ? cr : undefined } : x)), [t._id], '칸 글 지움') })
+        if (k === 'Enter' || k === 'F2') return act(() => setEditing({ id: cellSel.id, kind: 'cell', r: r0, c: c0 }))
+        if (k.length === 1 || k === 'Process' || e.keyCode === 229) {   // 기본 동작은 막지 않음 — 미리 띄운(보이지 않는) 칸 편집기가 이 글쇠를 받음, 여기선 보이게만
+          const ne = { id: cellSel.id, kind: 'cell', r: r0, c: c0, fresh: true }; R.current.editing = ne; flushSync(() => setEditing(ne)); return }
+        const dir = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] }[k]
+        if (dir) return act(() => { const t = m.items.find(x => x._id === cellSel.id); if (!t) return   // 칸 고르기 옮기기(엑셀) — Shift = 넓히기
+          const cl = (v, n) => Math.max(0, Math.min(n - 1, v))
+          setCellSel(cs => (e.shiftKey ? { ...cs, r1: cl(cs.r1 + dir[0], t.rows), c1: cl(cs.c1 + dir[1], t.cols) } : { id: cs.id, r0: cl(r0 + dir[0], t.rows), c0: cl(c0 + dir[1], t.cols), r1: cl(r0 + dir[0], t.rows), c1: cl(c0 + dir[1], t.cols) })) })
+      }
       const TOOL_KEYS = { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen', 7: 'badge' }   // 데스크톱 `SHORTCUT_DEFS` 도구 1~7
       if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[k]) return act(() => setTool(TOOL_KEYS[k]))
       if (!ids.length) { if (mod && k.toLowerCase() === 'v') return act(paste); return }
@@ -1067,14 +1114,16 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))])
           if (m.items.some(it => it.locked)) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked ? { ...it, locked: false } : it)), [], '잠금 해제'))]) }
         return out })()} />}
-      {editing?.kind === 'cell' && (() => { const it = byId.get(editing.id); if (!it) return null
+      {(editing => { if (!editing) return null; const it = byId.get(editing.id); if (!it) return null   // armed = 칸만 고른 대기(보이지 않음) — 고치기와 같은 자리·같은 편집기
+
         const r = cellRect(it, editing.r, editing.c), pts = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].map(([x, y]) => scr(toScene(it, { x, y })))
-        const xs = pts.map(q => q.x), ys = pts.map(q => q.y), h = Math.max(...ys) - Math.min(...ys), txt0 = it.cells?.[editing.r]?.[editing.c] || ''
+        const xs = pts.map(q => q.x), ys = pts.map(q => q.y), h = Math.max(...ys) - Math.min(...ys), txt0 = editing.fresh || editing.armed ? '' : it.cells?.[editing.r]?.[editing.c] || ''   // fresh = 고른 칸에 바로 친 글(엑셀처럼 새로 씀)
         const cs = cellStyle(it, editing.r, editing.c), s = it.scale || 1, pxFor = v => cellFontPx(v, r.w, r.h, cs.bold, cs.px) * s
         // 다른 글과 같은 편집기(부분 색·굵게·형광펜) — Enter 아래·Tab 오른쪽·Esc 취소, 치는 동안 글자 크기도 칸에 맞춰(자동 크기)
         return <TextEditor key={`${editing.id}-cell`} onDone={res => (res ? finishCell(res.text, res.move, res.runs) : finishCell(null, null))}   // 돌려준 다음 칸 내용으로 편집기가 바로 바꿈
           spec={{ cell: true, cellKey: `${editing.r},${editing.c}`, left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: h, px: pxFor(txt0), pxFor, zoom: cam.z, family: 'app', weight: cs.bold ? 700 : 400,
-            color: ink(cs.color || '#111111', !!cs.fill), bg: 'var(--mb-editbg)', align: cs.align, text: txt0, runs: it.cell_runs?.[`${editing.r},${editing.c}`], onReady: setLiveEd }} /> })()}
+            color: ink(cs.color || '#111111', !!cs.fill), bg: 'var(--mb-editbg)', align: cs.align, text: txt0, runs: editing.fresh || editing.armed ? undefined : it.cell_runs?.[`${editing.r},${editing.c}`], onReady: setLiveEd,
+            armed: !!editing.armed, fresh: !!editing.fresh, onArm: () => { const e = { id: editing.id, kind: 'cell', r: editing.r, c: editing.c, fresh: true }; R.current.editing = e; setEditing(e) } }} /> })(editing?.kind === 'cell' ? editing : !editing && cellSel && sel.length === 1 && sel[0] === cellSel.id ? { id: cellSel.id, kind: 'cell', r: cellRange(cellSel).r0, c: cellRange(cellSel).c0, armed: true } : null)}
       {editing && editing.kind !== 'cell' && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={{ ...s, onReady: setLiveEd }} onDone={finishEdit} /> })()}
       {editing && liveEd && <EditProps ed={liveEd} />}

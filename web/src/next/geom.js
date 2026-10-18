@@ -240,3 +240,12 @@ export function flatten(elements) {
   if (sub.length) out.push(sub)
   return out
 }
+
+// 표 행 경계(길이 rows+1) — .ecad 표 `row_heights`(표 높이 대비 비율, 웹 먼저 2026-10-19 — 데스크톱은 보존만, 행 같은 높이로 그림). 없으면 같은 높이
+export function rowEdges(y, h, it) {
+  const n = it.rows, fr = it.row_heights?.length === n ? it.row_heights : null, out = [y]; let acc = y
+  for (let i = 0; i < n; i++) { acc += (fr ? fr[i] : 1 / n) * h; out.push(acc) }
+  out[n] = y + h
+  return out
+}
+export const colFracs = it => (it.col_widths?.length === it.cols ? it.col_widths : Array(it.cols).fill(1 / it.cols))
