@@ -68,3 +68,13 @@ test('안 붙은 화살표 「곡선」(`apply_curved` 활)이 데스크톱과 �
   const back = swapArrowKind(o, 'straight', [a, b, o], it => it.rect)
   assert.equal(back.type, 'arrow'); assert.equal(back.ctrl1, null); assert.deepEqual(back.p2, [300, 30])
 })
+
+test('알약 끌기 — 이웃 구간이 나란하면 꼭짓점을 끼워 직각 유지(되돌아가는 출구, 2026-10-18 사용자 화면)', () => {
+  // 출구가 왼쪽으로 12 나갔다가 같은 줄에서 오른쪽으로 되돌아감 → 둘째 구간(가로)을 위로 끌기
+  const pts = [[500, 700], [488, 700], [696.5, 700], [696.5, 720], [905, 720], [880, 720]]
+  const seg = beginSegment(pts, 1), out = dragSegment(seg, { x: 590, y: 640 }, 1)
+  const ortho = out.every((p, i) => !i || Math.abs(p[0] - out[i - 1][0]) < 1e-6 || Math.abs(p[1] - out[i - 1][1]) < 1e-6)
+  assert.ok(ortho, JSON.stringify(out))
+  assert.deepEqual(out[0], [500, 700]); assert.deepEqual(out.at(-1), [880, 720])
+})
+

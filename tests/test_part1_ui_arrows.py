@@ -2691,3 +2691,15 @@ def test_group_frame_tight_around_arrows():
     assert abs(b.top() - 0) < 1e-6 and abs(b.left() - 0) < 1e-6 and abs(b.right() - 100) < 1e-6
     assert abs(b.bottom() - 200) < 1e-6   # 화살촉 끝 = 마지막 꼭짓점(아래 여유 없음)
 
+
+def test_segment_drag_parallel_neighbor_stays_orthogonal():
+    # [2026-10-18, 웹 칠판에서 사용자 발견] 출구가 같은 줄에서 되돌아가 이웃 변이 나란할 때 알약을 끌면 그 이웃이 사선이 됐다 — 꼭짓점을 끼워 직각 유지.
+    from easycad.canvas.annotator_core import _PolyArrowItem
+    a = _PolyArrowItem(QColor("#000000"), 1, True, False, 1.0)
+    a._pts = [QPointF(x, y) for x, y in [(500, 700), (488, 700), (696.5, 700), (696.5, 720), (905, 720), (880, 720)]]
+    a._begin_segment_drag(1)
+    a._drag_segment_to(QPointF(590, 640))
+    pts = [(p.x(), p.y()) for p in a._pts]
+    assert all(abs(p[0] - q[0]) < 1e-6 or abs(p[1] - q[1]) < 1e-6 for p, q in zip(pts, pts[1:])), pts
+    assert pts[0] == (500, 700) and pts[-1] == (880, 720)
+

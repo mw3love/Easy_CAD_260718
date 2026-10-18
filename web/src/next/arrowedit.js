@@ -45,9 +45,12 @@ export function subdividePreview(pts, i, proj) {
 // 구간 끌기 시작(`_begin_segment_drag`) — 끝점에 닿은 구간이면 끝점을 지키려 복제 꼭짓점을 끼움. → { pts, lo, hi, horizontal }
 export function beginSegment(pts, i) {
   const p = pts.map(q => [...q]), horizontal = horiz(p[i], p[i + 1])
+  // 이웃 구간이 끄는 구간과 나란하면(같은 줄에서 되돌아가는 짧은 출구 등) 끄는 순간 그 이웃이 사선이 된다 — 끝점처럼 꼭짓점을 한 벌 끼워
+  // 직각 연결 구간을 새로 만든다(2026-10-18 사용자 화면: 펜 궤적 출구가 왼쪽 → 오른쪽으로 되돌아간 길의 알약을 끌자 사선)
+  const par = (a, b) => (a[0] !== b[0] || a[1] !== b[1]) && horiz(a, b) === horizontal
   let lo = i, hi = i + 1
-  if (lo === 0) { p.splice(1, 0, [...p[0]]); lo++; hi++ }
-  if (hi === p.length - 1) p.splice(hi, 0, [...p[hi]])
+  if (lo === 0 || par(p[lo - 1], p[lo])) { p.splice(lo, 0, [...p[lo]]); lo++; hi++ }
+  if (hi === p.length - 1 || par(p[hi], p[hi + 1])) p.splice(hi, 0, [...p[hi]])
   return { pts: p, lo, hi, horizontal }
 }
 // 알약 아닌 자리를 끌기(`_begin_subdivide_drag`) — 알약 자리에 꼭짓점 두 벌(고정 + 이동)을 끼우고 가까운 절반만 끎

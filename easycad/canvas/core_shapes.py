@@ -4750,11 +4750,17 @@ class _PolyArrowItem(_LabelMixin, _HandleResizeMixin, QGraphicsItem):
         horizontal = self._segment_orientation(seg_idx)
         lo, hi = seg_idx, seg_idx + 1
         self.prepareGeometryChange()
-        if lo == 0:                                  # 시작 끝점 보호
-            self._pts.insert(1, QPointF(self._pts[0]))
+
+        def parallel(i):
+            # [우리 확장 2026-10-18, 웹 칠판에서 사용자 발견] 이웃 변이 끄는 변과 나란하면(같은 줄에서 되돌아가는 짧은 출구 등)
+            # 끄는 순간 그 이웃이 사선이 된다 — 끝점과 같은 방법(복제 정점)으로 직각 연결 변을 새로 만든다.
+            a, b = self._pts[i], self._pts[i + 1]
+            return (abs(a.x() - b.x()) > 1e-9 or abs(a.y() - b.y()) > 1e-9) and self._segment_orientation(i) == horizontal
+        if lo == 0 or parallel(lo - 1):              # 시작 끝점 보호 / 나란한 이웃
+            self._pts.insert(lo, QPointF(self._pts[lo]))
             lo += 1
             hi += 1
-        if hi == len(self._pts) - 1:                 # 끝 끝점 보호(삽입은 old last를 hi+1로 밀어냄)
+        if hi == len(self._pts) - 1 or parallel(hi):  # 끝 끝점 보호 / 나란한 이웃(삽입은 old hi를 hi+1로 밀어냄)
             self._pts.insert(hi, QPointF(self._pts[hi]))
         self._seg_move = (lo, hi, horizontal)
         self.update()
