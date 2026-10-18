@@ -174,3 +174,13 @@ test('readingOrder — 줄 우선(지그재그)·칸 우선, 조금 어긋나도
   assert.deepEqual(readingOrder(pages, 'rows').map(p => p.id), ['A', 'B', 'C', 'D'])
   assert.deepEqual(readingOrder(pages, 'cols').map(p => p.id), ['A', 'C', 'B', 'D'])
 })
+
+// 프레임(2026-10-19): 옮기면 가운데가 안에 있는 것이 같이(Lucid Magnetize), 「틀만」(magnet:false)이면 따로. 안의 보드·프레임도 같이
+test('프레임 안의 것 같이 움직임', async () => {
+  const { boardContents } = await import('../src/next/edit.js')
+  const tb = it => ({ w: 10, h: 10 }), R = (id, x, y, w = 20, h = 20, extra = {}) => ({ _id: id, type: 'rect', pos: [x, y], rect: [0, 0, w, h], ...extra })
+  const items = [{ _id: 'f', type: 'frame', pos: [0, 0], rect: [0, 0, 200, 100] }, R('a', 10, 10), R('b', 300, 10), { _id: 'g', type: 'board', pos: [100, 20], rect: [0, 0, 50, 50] },
+    R('c', 190, 90, 40, 40)]   // c는 가운데(210,110)가 밖
+  assert.deepEqual(boardContents(items, ['f'], tb).sort(), ['a', 'g'])
+  assert.deepEqual(boardContents(items.map(it => (it._id === 'f' ? { ...it, magnet: false } : it)), ['f'], tb), [])
+})

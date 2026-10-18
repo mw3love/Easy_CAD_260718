@@ -51,3 +51,11 @@ def test_rect_radius_roundtrip_and_paint():
     assert it._base_shape().contains(QPointF(50, 30))
     plain = insert_items(sc, [dict(d, radius=None)])[0]
     assert "radius" not in item_to_dict(plain)                   # 각진 네모는 키 생략(하위호환)
+
+
+def test_web_frame_survives_desktop_save():
+    """웹 프레임(2026-10-19)은 데스크톱이 점선 네모로 열고, 저장하면 다시 frame으로 — 이름·번호·비율·같이 움직임 그대로"""
+    d = dict(_BASE, type="frame", rect=[0.0, 0.0, 640.0, 360.0], name="표지", no=2, ratio="16:9", magnet=False)
+    out = _roundtrip(d)
+    assert out["type"] == "frame" and out["rect"] == [0.0, 0.0, 640.0, 360.0]
+    assert (out["name"], out["no"], out["ratio"], out["magnet"]) == ("표지", 2, "16:9", False)

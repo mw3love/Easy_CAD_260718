@@ -358,6 +358,8 @@ def item_to_dict(it) -> dict | None:
         if k == "label.align":
             if "label" in d:
                 d["label"]["align"] = v
+        elif k == "type":   # 웹 프레임 — 네모로 열었던 것을 다시 frame으로
+            d["type"] = v
         elif k not in d:
             d[k] = v
     return d
@@ -401,6 +403,9 @@ def dict_to_item(d: dict):
         it.setPen(_mkpen(d))
         if it._closed:
             it.setBrush(_mkbrush(d))
+    elif t == "frame":   # [웹 칠판 2026-10-19] 프레임(출력 한 쪽·슬라이드 영역) — 데스크톱은 아직 모름: 점선 네모로 보이고, 저장할 때 다시 frame으로(`_web_extra["type"]`)
+        fd = {"pen": "#ff8a98a8", "width": 1.5, "style": 2, "fill": None}
+        it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(fd)); it.setBrush(_mkbrush(fd))
     elif t == "rect":
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
         it._radius = float(d.get("radius") or 0)
@@ -456,6 +461,8 @@ def dict_to_item(d: dict):
     extra = {k: d[k] for k in _WEB_ONLY_KEYS.get(t, ()) + _WEB_ONLY_KEYS_ALL if k in d}
     if (d.get("label") or {}).get("align"):
         extra["label.align"] = d["label"]["align"]
+    if t == "frame":
+        extra.update({"type": "frame", **{k: d[k] for k in ("name", "no", "ratio", "magnet") if k in d}})
     if extra:
         it._web_extra = extra
     for pd in d.get("ports", []):

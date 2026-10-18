@@ -4,7 +4,9 @@
 import { useEffect, useState } from 'react'
 import SYMBOLS from '../symbols.json' with { type: 'json' }
 import { symbolPath } from './symbols.js'
-import { paperWH } from './geom.js'
+import { FRAME_RATIOS, paperWH } from './geom.js'
+// 프레임 비율 바꾸기 — 긴 쪽 방향은 그대로(가로로 길면 폭 유지, 세로로 길면 높이 유지)
+const frameRatio = (it, ratio) => { const [x, y, w, h] = it.rect; if (!ratio) return { ratio: undefined }; const r = FRAME_RATIOS[ratio]; return { ratio, rect: w >= h ? [x, y, w, w / r] : [x, y, h / r, h] } }
 import { cellPt, tableAutoPt } from './render.jsx'
 // 글 있는 칸들의 지금 크기(pt)
 const tableCellPts = it => { const out = []; for (let r = 0; r < it.rows; r++) for (let c = 0; c < it.cols; c++) if (it.cells?.[r]?.[c]) out.push(cellPt(it, r, c)); return out.length ? out : [tableAutoPt(it)] }
@@ -33,7 +35,7 @@ const PEN = new Set(['rect', 'ellipse', 'symbol', 'polygon', 'path', 'line'])
 const lineKey = it => (isArrow(it) || it.type === 'badge' ? 'color' : PEN.has(it.type) || it.type === 'table' ? 'pen' : it.type === 'board' ? 'bg' : null)   // 표 선 색 = .ecad 표의 새 칸 pen(웹 먼저)   // 보드는 「바탕」 색
 const hasWidth = it => isArrow(it) || PEN.has(it.type)
 const fillKey = it => (['rect', 'ellipse', 'symbol'].includes(it.type) || (it.type === 'polygon' && it.closed) ? 'fill' : it.type === 'text' ? 'bg' : null)
-const TYPE_NAMES = { rect: '사각형', ellipse: '원', line: '선', arrow: '화살표', sarrow: '화살표', text: '텍스트', badge: '번호', path: '펜', image: '이미지', table: '표', titleblock: '표제란', polygon: '다각형', board: '보드' }
+const TYPE_NAMES = { rect: '사각형', ellipse: '원', line: '선', arrow: '화살표', sarrow: '화살표', text: '텍스트', badge: '번호', path: '펜', image: '이미지', table: '표', titleblock: '표제란', polygon: '다각형', board: '보드', frame: '프레임' }
 const typeName = it => (it.type === 'symbol' ? SYMBOLS[it.kind]?.name || '심볼' : TYPE_NAMES[it.type] || '객체')
 
 // 색 비교용 — '#ffrrggbb'(불투명 ARGB)와 '#rrggbb'를 같게
@@ -280,6 +282,17 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
       {kind === 'ortho' && <Row label="모서리"><Stepper title="꺾인 곳 둥글기(0 = 각짐)" {...num(arrows, a => a.curve_r, 10, 0, 40, 1, '모서리', (a, v) => ({ curve_r: v }))} /></Row>}
     </>}
     {items.some(it => it.type === 'rect') && <Row label="모서리"><Stepper title="네모 모서리 둥글기(0 = 각짐)" {...num(items.filter(it => it.type === 'rect'), it => it.radius, 0, 0, 60, 2, '모서리 둥글기', (it, v) => ({ radius: v || undefined }))} /></Row>}
+    {items.length === 1 && items[0].type === 'frame' && (() => { const f = items[0]   // 프레임 — 이름·번호(쪽·슬라이드 순서)·비율·안의 것 같이 움직임
+      return <>
+        <Row label="이름"><input key={f._id} defaultValue={f.name || ''} placeholder="예: 표지" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur() }}
+          onBlur={e => { const v = e.currentTarget.value.trim(); if (v !== (f.name || '')) set(() => ({ name: v }), '프레임 이름') }}
+          style={{ flex: 1, minWidth: 0, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} /></Row>
+        <Row label="번호"><Stepper title="쪽·슬라이드 순서" values={[f.no ?? 1]} onStep={d => set(() => ({ no: Math.max(1, (f.no ?? 1) + d) }), '프레임 번호', 'fno')} /></Row>
+        <Row label="비율"><Seg value={f.ratio || ''} onPick={r => set(it => frameRatio(it, r || null), '프레임 비율')}
+          items={[['', <span key="f" style={{ fontSize: 11 }}>자유</span>, '자유'], ...['16:9', '4:3', 'A4', '1:1'].map(r => [r, <span key={r} style={{ fontSize: 11 }}>{r}</span>, r])]} /></Row>
+        <Row label="안의 것"><Seg value={f.magnet !== false} onPick={v => set(() => ({ magnet: v ? undefined : false }), '프레임 같이 움직임')}
+          items={[[true, <span key="y" style={{ fontSize: 11 }}>같이 움직임</span>, '프레임을 옮기면 안의 것도 같이'], [false, <span key="n" style={{ fontSize: 11 }}>틀만</span>, '프레임만 옮김']]} /></Row>
+      </> })()}
     {items.length > 0 && items.every(it => it.type === 'titleblock') && <>
       <Row label="용지"><Seg value={one(items.map(it => it.size))} onPick={s => set(it => ({ size: s }), '용지')} items={['A4', 'A3', 'A2', 'A1', 'A0'].map(s => [s, <span key={s} style={{ fontSize: 11 }}>{s}</span>, s])} /></Row>
       <Row label="방향"><Seg value={one(items.map(it => it.orient))} onPick={o => set(it => ({ orient: o }), '방향')} items={[['landscape', <span key="l">가로</span>, '가로'], ['portrait', <span key="p">세로</span>, '세로']]} /></Row>

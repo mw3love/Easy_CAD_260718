@@ -1,7 +1,7 @@
 // 2단계 기본 편집의 순수 계산 — 누른 곳에 무엇이 있나, 크기·회전·이동·복제·삭제·묶기·잠금·순서(데스크톱 `core_view`·`host_selection` 규칙).
 // 아이템은 model.js 형식(.ecad + _id). 바꿀 땐 늘 새 배열·새 객체(되돌리기가 옛 배열을 그대로 들고 있게).
 import { newId } from './model.js'
-import { rowEdges } from './geom.js'
+import { frameTag, frameTagFs, rowEdges } from './geom.js'
 import { itemBounds } from './doc.js'
 import { resolveRoutes, sarrowRouting } from './arrows.js'
 import { setCurveEnd } from './arrowedit.js'
@@ -42,6 +42,9 @@ export function hits(it, p, tol, textBox) {
     }
     case 'polygon': { const pts = it.pts.map(P); return (it.closed && inPoly(q, pts)) || polyDist(q, it.closed ? [...pts, pts[0]] : pts) <= edge }
     case 'path': { const subs = flatten(it.elements); return subs.some(s => (it.fill && inPoly(q, s)) || polyDist(q, s) <= edge) }
+    case 'frame': { const [x, y, w, h] = it.rect, band = 3 + tol, fs = frameTagFs(it), tw = frameTag(it).length * fs * 0.75 + fs   // 테두리 띠 + 이름표(안쪽은 통과 — 위의 것을 고르고 그리기)
+      if (q.x >= x && q.x <= x + tw && q.y >= y - fs * 1.8 && q.y <= y) return true
+      return q.x >= x - band && q.x <= x + w + band && q.y >= y - band && q.y <= y + h + band && !(q.x > x + band && q.x < x + w - band && q.y > y + band && q.y < y + h - band) }
     case 'titleblock': { const b = itemBounds(it), loc = { x: q.x, y: q.y }, w = b.w / (it.scale || 1), h = b.h / (it.scale || 1)   // 용지틀은 테두리 띠만(안쪽은 통과 — 위에 그리기)
       const band = 3 + tol; return (loc.x >= -band && loc.x <= w + band && loc.y >= -band && loc.y <= h + band) && !(loc.x > band && loc.x < w - band && loc.y > band && loc.y < h - band - 33) }
     default: return false
@@ -126,11 +129,12 @@ export function expandGroups(items, ids) {
 
 // 보드 안에 든 것(가운데가 보드 안) — 보드를 옮기거나 지우면 같이(데스크톱 `_board_delete_scope`·끌 때)
 export function boardContents(items, boardIds, textBox) {
-  const boards = items.filter(it => boardIds.includes(it._id) && it.type === 'board').map(it => sceneBox(it, textBox))
-  if (!boards.length) return []
-  return items.filter(it => it.type !== 'board' && !boardIds.includes(it._id)).filter(it => {
+  // 담는 틀 = AI 보드 + 프레임(「안의 것 같이 움직임」 켠 것 — 기본 켬, 2026-10-19 사용자: Lucid Magnetize). 가운데가 틀 안이면 안의 것
+  const boxes = items.filter(it => boardIds.includes(it._id) && (it.type === 'board' || (it.type === 'frame' && it.magnet !== false))).map(it => ({ r: sceneBox(it, textBox), board: it.type === 'board' }))
+  if (!boxes.length) return []
+  return items.filter(it => !boardIds.includes(it._id) && !it.locked).filter(it => {
     const s = sceneBox(it, textBox), cx = s.x + s.w / 2, cy = s.y + s.h / 2
-    return boards.some(r => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h)
+    return boxes.some(({ r, board }) => !(board && it.type === 'board') && cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h)   // 보드 안 보드는 따로(전과 같음), 프레임 안 보드·프레임은 같이
   }).map(it => it._id)
 }
 

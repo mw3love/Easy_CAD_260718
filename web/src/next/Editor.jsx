@@ -34,7 +34,7 @@ const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
 const HANDLE = 10, HIT_PX = 4, EDGE_PX = 5
 const INK = '#ff1f1f1f'   // 새로 그리는 선·글 기본색(밝은 칠판)
-const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path'])
+const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame'])
 
 // 글 상자 크기(아이템 안 단위) — 그릴 때와 같은 재기, 아이템 객체마다 한 번
 const _tb = new WeakMap()
@@ -100,7 +100,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
 
-  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, insertPaper, moveSelToLayer, exportDoc, selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && it.type === 'titleblock').length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, moveSelToLayer, exportDoc, selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -122,7 +122,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       const [x, y, w, h] = localRect(it), s = it.scale || 1
       for (const [k, px, py, c] of [['tl', x, y, 'nwse-resize'], ['tr', x + w, y, 'nesw-resize'], ['br', x + w, y + h, 'nwse-resize'], ['bl', x, y + h, 'nesw-resize']]) out.push({ key: k, p: toScene(it, { x: px, y: py }), cursor: c })
       const g = (HANDLE * 1.6) / z / s
-      out.push({ key: 'rot', p: toScene(it, { x: x - g, y: y - g }), cursor: 'grab', round: true })   // 좌상단 대각(데스크톱 `_box_rot_center`)
+      if (it.type !== 'frame') out.push({ key: 'rot', p: toScene(it, { x: x - g, y: y - g }), cursor: 'grab', round: true })   // 좌상단 대각(데스크톱 `_box_rot_center`) — 프레임은 안 돌림
     } else if (it.type === 'text') {
       const b = textBox(it), g = (HANDLE * 1.6) / z / (it.scale || 1)
       out.push({ key: 'scale', p: toScene(it, { x: b.w, y: b.h }), cursor: 'nwse-resize' })
@@ -335,7 +335,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         const k = Math.max(0.05, Math.max(Math.abs(p.x - SA.x) / W, Math.abs(p.y - SA.y) / H))
         next = { ...it, scale: +k.toFixed(4), pos: [SA.x - A[0] * k, SA.y - A[1] * k] }
       } else if (s.kind === 'resize') {
-        next = applyRect(it, resizeRect(localRect(it), s.handle, toLocal(it, p), { keepRatio: it.type === 'image' || e.shiftKey }))
+        next = applyRect(it, resizeRect(localRect(it), s.handle, toLocal(it, p), { keepRatio: it.type === 'image' || (it.type === 'frame' && !!it.ratio) || e.shiftKey }))
         if (next.type === 'table' && (next.font || next.cell_styles)) {   // 끄는 동안에도 확정과 같게 — 글보다 작아지지 않음(2026-10-19 사용자: 놓기 전엔 글이 넘침). 왼쪽·위 손잡이면 맞은편 변 고정
           const [x0, y0, w0, h0] = next.rect, f = fitTable(next), [, , w1, h1] = f.rect
           next = f === next ? next : { ...f, rect: [/l/.test(s.handle) ? x0 + w0 - w1 : x0, /t/.test(s.handle) ? y0 + h0 - h1 : y0, w1, h1] }
@@ -588,14 +588,15 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const all = drawOrder(m.items).filter(([it]) => !hid.has(layerIdOf(it)))
     // 「고른 것」에 종이틀이 있으면 틀마다 한 쪽(틀 안의 것은 고르지 않아도 전부), 어느 틀에도 안 든 고른 것은 마지막 한 쪽에 모음(2026-10-18 사용자와 정함 — 「고른 것」·「종이틀대로」를 하나로)
     const selIds = o.selection ? new Set(movingSet(R.current.sel)) : null
-    const selFrames = selIds ? all.filter(([it]) => selIds.has(it._id) && it.type === 'titleblock') : []
+    const selFrames = selIds ? all.filter(([it]) => selIds.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')) : []   // 프레임은 번호 순서, 종이틀은 줄/칸 우선
     if (selFrames.length && !o.onePage) {   // onePage = 「고른 것 한 쪽에」 — 틀도 보통 도형처럼 고른 것 전체를 감싼 한 쪽(2026-10-19 사용자: 보이지 않는 종이틀)
-      const frames = readingOrder(selFrames.map(([it]) => ({ ...sceneBox(it, textBox), it })), o.order || 'rows')
-      const body = all.filter(([it]) => !(it.type === 'titleblock' && it.plain)), ob = boardMembership(m.items), rts = resolveRoutes(m.items, rectOf), pages = []
+      const frames = [...selFrames.filter(([it]) => it.type === 'frame').sort((a, b) => (a[0].no ?? 0) - (b[0].no ?? 0)).map(([it]) => ({ ...sceneBox(it, textBox), it })),
+        ...readingOrder(selFrames.filter(([it]) => it.type === 'titleblock').map(([it]) => ({ ...sceneBox(it, textBox), it })), o.order || 'rows')]
+      const body = all.filter(([it]) => !(it.type === 'titleblock' && it.plain) && it.type !== 'frame'), ob = boardMembership(m.items), rts = resolveRoutes(m.items, rectOf), pages = []
       const tr = o.format !== 'pdf' && o.transparent
-      for (const f of frames) pages.push(await buildSvg(body, f, { ...o, frame: { size: f.it.size, orient: f.it.orient, box: f }, transparent: tr }, ob, rts, o.format !== 'pdf'))
+      for (const f of frames) pages.push(await buildSvg(body, f, f.it.type === 'frame' ? { ...o, clip: true, transparent: tr } : { ...o, frame: { size: f.it.size, orient: f.it.orient, box: f }, transparent: tr }, ob, rts, o.format !== 'pdf'))   // 프레임 = 틀 안만(밖은 잘림)
       const inFrame = it => { const b = sceneBox(it, textBox), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return frames.some(f => cx >= f.x && cx <= f.x + f.w && cy >= f.y && cy <= f.y + f.h) }
-      const rest = all.filter(([it]) => selIds.has(it._id) && it.type !== 'titleblock' && !inFrame(it))
+      const rest = all.filter(([it]) => selIds.has(it._id) && it.type !== 'titleblock' && it.type !== 'frame' && !inFrame(it))
       if (rest.length) pages.push(await buildSvg(rest, unionBox(rest.map(([it]) => sceneBox(it, textBox))), { ...o, frame: null, transparent: tr }, ob, rts, o.format !== 'pdf'))   // 틀 밖에 고른 것 — 버리지 않음
       if (o.format === 'pdf') exportPdf(pages, o.name)
       else for (let i = 0; i < pages.length; i++) { const nm = `${o.name}-${i + 1}`; if (o.format === 'png') await exportPng(pages[i], nm + '.png'); else exportSvg(pages[i], nm + '.svg') }
@@ -607,7 +608,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (!ents.length) { setStatus(o.selection ? '내보낼 도형을 먼저 고르세요' : '내보낼 도형이 없어요'); return false }
     const frame = null
     const src = unionBox(ents.map(([it]) => sceneBox(it, textBox)))
-    const res = await buildSvg(ents, src, { ...o, frame, transparent: o.format !== 'pdf' && o.transparent }, boardMembership(m.items), resolveRoutes(m.items, rectOf), o.format !== 'pdf')
+    // 프레임 테두리·이름표는 그리지 않음(자리만 — 「고른 것 한 쪽에」)
+    const res = await buildSvg(ents.filter(([it]) => it.type !== 'frame'), src, { ...o, frame, transparent: o.format !== 'pdf' && o.transparent }, boardMembership(m.items), resolveRoutes(m.items, rectOf), o.format !== 'pdf')
     if (o.format === 'png') await exportPng(res, o.name + '.png')
     else if (o.format === 'svg') exportSvg(res, o.name + '.svg')
     else exportPdf(res, o.name)
@@ -652,23 +654,16 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     setCam(cc => ({ ...cc, x: size.w / 2 - (s.x + s.w / 2) * cc.z, y: size.h / 2 - (s.y + s.h / 2) * cc.z }))
     return true
   }
-  // ── 종이틀(2026-10-18 사용자와 정함) = 데스크톱의 빈 용지틀(.ecad titleblock plain) — 틀 비율 = 용지, 크기는 배율(scale)로 ──
-  // 넣기: 지금 화면의 70%쯤 크기로 가운데에
-  const size_w = () => size.w, size_h = () => size.h
-  function insertPaper(size, orient) {
-    const m = R.current.model, c = R.current.cam, [W, H] = paperWH(size, orient)
-    const k = +Math.max(0.05, 0.7 * Math.min(size_w() / W, size_h() / H) / c.z).toFixed(3), cx = (size_w() / 2 - c.x) / c.z, cy = (size_h() / 2 - c.y) / c.z
-    const it = base([cx - W * k / 2, cy - H * k / 2], { type: 'titleblock', size, orient, plain: true, fields: {}, scale: k, z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })   // 맨 뒤(종이 위에 그림)
-    commit([...m.items, it], [it._id], '종이틀'); setTool('select')
+  // ── 프레임(2026-10-19 사용자와 정함 — 「종이틀」을 바꿈: 종이 비율은 큰 의미 없음) — 번호 = 출력 쪽·슬라이드 순서 ──
+  const nextFrameNo = items => Math.max(0, ...items.filter(x => x.type === 'frame').map(x => x.no || 0)) + 1
+  // 감싸기: 고른 것을 여백 두고 감싸는 프레임(자유 비율)
+  function wrapFrame() {
+    const m = R.current.model, ids = new Set(movingSet(R.current.sel)), its = m.items.filter(it => ids.has(it._id) && it.type !== 'titleblock' && it.type !== 'frame'); if (!its.length) return
+    const b = unionBox(its.map(it => sceneBox(it, textBox))), pad = Math.max(b.w, b.h) * 0.06
+    const it = base([b.x - pad, b.y - pad], { type: 'frame', rect: [0, 0, b.w + 2 * pad, b.h + 2 * pad], name: '', no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
+    commit([...m.items, it], [it._id], '프레임으로 감싸기'); setStatus(`프레임 ${it.no} — 내보내기 하면 이 틀이 한 쪽이 돼요`)
   }
-  // 감싸기: 고른 것(종이틀 뺌)을 여백 6% 두고 감싸는 종이 — 방향은 내용 모양대로
-  function wrapPaper(size = 'A4') {
-    const m = R.current.model, ids = new Set(movingSet(R.current.sel)), its = m.items.filter(it => ids.has(it._id) && it.type !== 'titleblock'); if (!its.length) return
-    const b = unionBox(its.map(it => sceneBox(it, textBox))), orient = b.w >= b.h ? 'landscape' : 'portrait', [W, H] = paperWH(size, orient)
-    const k = +(Math.max(b.w / W, b.h / H) * 1.12).toFixed(4)
-    const it = base([b.x + b.w / 2 - W * k / 2, b.y + b.h / 2 - H * k / 2], { type: 'titleblock', size, orient, plain: true, fields: {}, scale: k, z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
-    commit([...m.items, it], [it._id], '종이틀로 감싸기'); setStatus('종이틀로 감쌌어요 — 내보내기 「종이틀대로」로 이 틀이 한 쪽이 돼요')
-  }
+
   function insertTable(rows, cols, header) {
     const m = R.current.model, c = R.current.cam, W = cols * 40, H = rows * 14
     const cx = (size.w / 2 - c.x) / c.z, cy = (size.h / 2 - c.y) / c.z
@@ -766,6 +761,12 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     setOverlay(o => ({ ...o, draw: null }))
     const m = R.current.model, z = R.current.cam.z, click = Math.hypot(p.x - s.start.x, p.y - s.start.y) * z < 3
     let it
+    if (s.tool === 'frame') {   // 프레임 — 드래그로 감싼 영역(2026-10-19 사용자: 「클릭하고 원하는 영역을 감싸게 드래그」), 클릭만 = 화면 40% 16:9. 맨 뒤
+      let x0 = Math.min(s.start.x, p.x), y0 = Math.min(s.start.y, p.y), w = Math.abs(p.x - s.start.x), h = Math.abs(p.y - s.start.y)
+      if (click) { w = size.w * 0.4 / z; h = w * 9 / 16; x0 = p.x - w / 2; y0 = p.y - h / 2 }
+      it = base([x0, y0], { type: 'frame', rect: [0, 0, w, h], name: '', no: nextFrameNo(m.items), ...(click ? { ratio: '16:9' } : {}), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
+      commit([...m.items, it], [it._id], '프레임'); setTool('select'); return
+    }
     if (s.tool === 'rect' || s.tool === 'ellipse' || s.tool.startsWith('sym:')) {
       let x0 = Math.min(s.start.x, p.x), y0 = Math.min(s.start.y, p.y), w = Math.abs(p.x - s.start.x), h = Math.abs(p.y - s.start.y)
       if (s.shift) { const d = Math.max(w, h); w = h = d; x0 = p.x < s.start.x ? s.start.x - d : s.start.x; y0 = p.y < s.start.y ? s.start.y - d : s.start.y }
@@ -1076,7 +1077,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
           })}
           {rb && (() => { const x = Math.min(rb.a.x, rb.b.x), y = Math.min(rb.a.y, rb.b.y), w = Math.abs(rb.b.x - rb.a.x), h = Math.abs(rb.b.y - rb.a.y), win = rb.b.x >= rb.a.x
             return <rect x={x} y={y} width={w} height={h} fill={win ? RB_BLUE : RB_GREEN} fillOpacity={45 / 255} stroke={win ? RB_BLUE : RB_GREEN} strokeWidth={1 / z} strokeDasharray={win ? undefined : `${4 / z} ${3 / z}`} /> })()}
-          {dr && (dr.tool === 'rect' || dr.tool.startsWith('sym:') ? <rect x={Math.min(dr.a.x, dr.b.x)} y={Math.min(dr.a.y, dr.b.y)} width={Math.abs(dr.b.x - dr.a.x)} height={Math.abs(dr.b.y - dr.a.y)} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />
+          {dr && (dr.tool === 'rect' || dr.tool === 'frame' || dr.tool.startsWith('sym:') ? <rect x={Math.min(dr.a.x, dr.b.x)} y={Math.min(dr.a.y, dr.b.y)} width={Math.abs(dr.b.x - dr.a.x)} height={Math.abs(dr.b.y - dr.a.y)} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />
             : dr.tool === 'ellipse' ? <ellipse cx={(dr.a.x + dr.b.x) / 2} cy={(dr.a.y + dr.b.y) / 2} rx={Math.abs(dr.b.x - dr.a.x) / 2} ry={Math.abs(dr.b.y - dr.a.y) / 2} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />
             : dr.tool === 'line' ? <line x1={dr.a.x} y1={dr.a.y} x2={dr.b.x} y2={dr.b.y} stroke={BLUE} strokeWidth={1.5 / z} />
             : <polyline points={dr.pts.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={BLUE} strokeWidth={1.5 / z} />)}
@@ -1105,12 +1106,12 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
           if (ids.length >= 2) out.push(['그룹', 'Ctrl+G', act(() => commit(groupItems(m.items, ids), ids, '묶음'))])
           if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
-          if (selIt.some(it => it.type !== 'titleblock')) out.push('-', ['종이틀로 감싸기', '', null, ['A4', 'A3', 'A2', 'A1', 'A0'].map(s => [s, act(() => wrapPaper(s))])])
+          if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', '', act(wrapFrame)])
           out.push('-', ['내보내기…', '', act(() => onExportSel?.())])
         }
         if (clip.current?.items?.length) { if (has) out.push('-'); out.push(['붙여넣기', 'Ctrl+V', act(paste)]) }
-        const frames = hitPool().filter(it => it.type === 'titleblock')
-        if (frames.length) out.push('-', ['종이틀 모두 고르기', '', act(() => { setSel(frames.map(it => it._id)); setStatus(`종이틀 ${frames.length}개 — 내보내기 하면 틀마다 한 쪽`) })])   // CAD 「같은 블록 한 번에 출력」
+        const frames = hitPool().filter(it => it.type === 'titleblock' || it.type === 'frame')
+        if (frames.length) out.push('-', ['프레임 모두 고르기', '', act(() => { setSel(frames.map(it => it._id)); setStatus(`프레임 ${frames.length}개 — 내보내기 하면 틀마다 한 쪽(번호 순서)`) })])   // CAD 「같은 블록 한 번에 출력」
         if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))])
           if (m.items.some(it => it.locked)) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked ? { ...it, locked: false } : it)), [], '잠금 해제'))]) }
         return out })()} />}

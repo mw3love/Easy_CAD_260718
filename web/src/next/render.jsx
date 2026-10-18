@@ -4,7 +4,7 @@ import { memo } from 'react'
 import { cssColor, bgCss } from '../ecadFormat.js'
 import {
   APP_FONT, BOARD_FONT, METRICS, PT, TEXT_MARGIN, TB_ROWS, bezierAt, bezierSub, colEdges, curveAt, cutPolyline, dashArray, headSize, headTriangle,
-  colFracs, itemTransform, labelAnchor, rowEdges, labelInset, paperWH, polylineAt, roundedPath, runsToLines, trimmedPts,
+  colFracs, frameTag, frameTagFs, itemTransform, labelAnchor, rowEdges, labelInset, paperWH, polylineAt, roundedPath, runsToLines, trimmedPts,
 } from './geom.js'
 import { symbolPath } from './symbols.js'
 import { sarrowRadius } from './arrows.js'
@@ -306,6 +306,12 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
       return <g transform={T}>{cells}<path d={lines.join(' ')} stroke={tl} strokeWidth={0.5} fill="none" />
         {it.header && rows > 1 && <path d={`M${x},${re[1]} H${x + w}`} stroke={tl} strokeWidth={1} />}
         <rect x={x} y={y} width={w} height={h} fill="none" stroke={tl} strokeWidth={1} /></g>
+    }
+    case 'frame': {   // 프레임 — 얇은 테두리 + 위 왼쪽 이름표(Lucid Frame·Figma Section). 안은 비움(위에 그림)
+      const [x, y, w, h] = it.rect, fs = frameTagFs(it), tag = frameTag(it), tw = measure(tag, fs, 'app', 600) + fs
+      return <g transform={T}><rect x={x} y={y} width={w} height={h} fill="none" stroke="var(--mb-muted, #8a98a8)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+        <rect x={x} y={y - fs * 1.7} width={tw} height={fs * 1.45} rx={fs * 0.3} fill="#3f3f46" />
+        <text x={x + fs / 2} y={y - fs * 0.97} dominantBaseline="central" fontSize={fs} fontWeight={600} fontFamily={APP_FONT} fill="#ffffff">{tag}</text></g>
     }
     case 'titleblock': {
       const [W, H] = paperWH(it.size, it.orient), M = 10, line = ink('#333333', onBoard), inkC = ink('#111111', onBoard)

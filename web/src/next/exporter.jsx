@@ -21,18 +21,19 @@ const weightsOf = items => { const s = new Set([400, 700]); for (const it of ite
 
 // entries = [[아이템, 순번]] 그리는 차례, src = 칠판 상자, opts = { page, orient, margin, transparent, frame }
 // → { svg 글, pw, ph (mm) }
-export async function buildSvg(entries, src, { page = 'A4', orient = null, margin = 10, transparent = false, frame = null, tight = false }, onBoard, routes, embedFonts = true) {
+export async function buildSvg(entries, src, { page = 'A4', orient = null, margin = 10, transparent = false, frame = null, tight = false, clip = false, format = 'pdf' }, onBoard, routes, embedFonts = true) {   // clip = 프레임(틀 안만 — 여백 없이 그 영역, PDF는 고른 용지에 맞춤)
   let pageKey = page, land, m = margin, box = src
   if (frame) { pageKey = frame.size in PAPERS ? frame.size : 'A4'; land = frame.orient === 'landscape'; m = 0; box = frame.box }   // 용지틀 = 정확한 용지 경계
+  else if (clip) { box = src; land = orient ? orient === 'landscape' : box.w >= box.h; if (format !== 'pdf') { tight = true } }   // PNG·SVG = 프레임 비율 그대로
   else { const pad = Math.max(src.w, src.h) * 0.02; box = { x: src.x - pad, y: src.y - pad, w: src.w + 2 * pad, h: src.h + 2 * pad }; land = orient ? orient === 'landscape' : box.w >= box.h }
   let [a, b] = PAPERS[pageKey] || PAPERS.A4, pw = land ? b : a, ph = land ? a : b
-  if (tight) { m = 0; pw = box.w * 25.4 / 96; ph = box.h * 25.4 / 96 }   // 그림으로 복사 — 용지 없이 화면 100% 크기(96dpi)
+  if (tight) { m = 0; pw = box.w * 25.4 / 96; ph = box.h * 25.4 / 96; if (clip) { const up = Math.max(1, 297 / Math.max(pw, ph)); pw *= up; ph *= up } }   // 프레임 그림은 긴 변 297mm 이상(작게 그린 틀도 선명하게)   // 그림으로 복사 — 용지 없이 화면 100% 크기(96dpi)
   const aw = pw - 2 * m, ah = ph - 2 * m, k = Math.min(aw / box.w, ah / box.h), tx = m + (aw - box.w * k) / 2, ty = m + (ah - box.h * k) / 2
   const wasDark = document.documentElement.dataset.theme === 'dark'
   setInkDark(false)   // 종이 = 밝은 칠판 잉크(데스크톱 `_swap_white_to_black_for_print`와 같은 뜻)
   let body
-  try { body = renderToStaticMarkup(<g transform={`translate(${tx},${ty}) scale(${k}) translate(${-box.x},${-box.y})`} style={{ '--z': 1000 }}>
-    {entries.map(([it, i]) => <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} />)}</g>) }
+  try { body = renderToStaticMarkup(<svg x={tx} y={ty} width={box.w * k} height={box.h * k} viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`} overflow={clip ? 'hidden' : 'visible'} style={{ '--z': 1000 }}>
+    {entries.map(([it, i]) => <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} />)}</svg>) }   // 안쪽 svg = 틀 자리 창(프레임이면 밖은 잘림)
   finally { setInkDark(wasDark) }
   const fonts = embedFonts && entries.some(([it]) => usesBoardFont(it)) ? await fontFaces(weightsOf(entries.map(e => e[0]))) : ''
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${pw}mm" height="${ph}mm" viewBox="0 0 ${pw} ${ph}">`

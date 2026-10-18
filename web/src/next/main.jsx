@@ -53,23 +53,7 @@ function TableForm({ onInsert, onClose }) {
 }
 
 // 내보내기 — 형식·범위·용지·방향·여백·투명(데스크톱 `_PdfExportDialog`; 여백은 네 변 한 값으로)
-// 종이틀 넣기 — 용지·방향
-function PaperForm({ onInsert, onClose }) {
-  const [s, setS] = useState('A4'), [o, setO] = useState('landscape')
-  const seg = (v, cur, set, label) => <button key={v} onClick={() => set(v)} style={{ all: 'unset', cursor: 'pointer', flex: 1, textAlign: 'center', padding: '3px 0', borderRadius: 6, background: cur === v ? 'rgba(218,119,86,.22)' : 'transparent', color: cur === v ? '#da7756' : C.ink }}>{label}</button>
-  return <div onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ position: 'absolute', top: 48, left: 0, zIndex: 20, width: 200, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: '0 4px 14px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif" }}>
-    <div style={{ font: "700 13px 'Pretendard', sans-serif" }}>종이틀 넣기</div>
-    <div style={{ display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>{['A4', 'A3', 'A2', 'A1', 'A0'].map(v => seg(v, s, setS, v))}</div>
-    <div style={{ display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>{seg('landscape', o, setO, '가로')}{seg('portrait', o, setO, '세로')}</div>
-    <div style={{ fontSize: 11, color: C.muted }}>틀 안이 출력 한 쪽 — 내보내기 「종이틀대로」</div>
-    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-      <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, color: C.muted }}>취소</button>
-      <button onClick={() => onInsert(s, o)} style={{ all: 'unset', cursor: 'pointer', padding: '4px 12px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>넣기</button>
-    </div>
-  </div>
-}
-
-function ExportForm({ hasSel, selFrames, onExport, onClose }) {   // selFrames = 고른 종이틀 수 — 있으면 틀마다 한 쪽
+function ExportForm({ hasSel, selFrames, onExport, onClose }) {   // selFrames = 고른 프레임(옛 종이틀 포함) 수 — 있으면 틀마다 한 쪽
   const [f, setF] = useState('pdf'), [sel, setSel] = useState(!!hasSel),   // 범위 기본 = 고른 게 있으면 그것, 없으면 전체(2026-10-18 사용자와 정함)
   [page, setPage] = useState('A4'), [orient, setOrient] = useState(''), [margin, setMargin] = useState(10), [tr, setTr] = useState(false), [busy, setBusy] = useState(false)
   const seg = (v, cur, set, label, dis) => <button key={v} disabled={dis} onClick={() => set(v)} style={{ all: 'unset', cursor: dis ? 'default' : 'pointer', opacity: dis ? 0.4 : 1, flex: 1, textAlign: 'center', padding: '3px 0', borderRadius: 6,
@@ -82,15 +66,15 @@ function ExportForm({ hasSel, selFrames, onExport, onClose }) {   // selFrames =
     <div style={{ font: "700 13px 'Pretendard', sans-serif" }}>내보내기</div>
     {row('형식', [seg('pdf', f, setF, 'PDF'), seg('png', f, setF, 'PNG'), seg('svg', f, setF, 'SVG')])}
     {row('범위', [seg(false, sel, setSel, '전체'), seg(true, sel, setSel, '고른 것', !hasSel)])}
-    {sel === true && selFrames > 0 && row('쪽', [seg('frames', split, setSplit, '종이틀마다'), seg('one', split, setSplit, '고른 것 한 쪽에')])}
-    {sel === true && selFrames > 0 && <div style={{ fontSize: 11, color: '#da7756' }}>{split === 'one' ? '고른 것 전체를 감싼 영역이 한 쪽(틀도 그림처럼)' : `종이틀 ${selFrames}개 → 틀마다 한 쪽(틀 밖에 고른 것은 마지막 쪽)`}</div>}
+    {sel === true && selFrames > 0 && row('쪽', [seg('frames', split, setSplit, '프레임마다'), seg('one', split, setSplit, '고른 것 한 쪽에')])}
+    {sel === true && selFrames > 0 && <div style={{ fontSize: 11, color: '#da7756' }}>{split === 'one' ? '고른 것 전체를 감싼 영역이 한 쪽(틀도 그림처럼)' : `프레임 ${selFrames}개 → 틀마다 한 쪽, 번호 순서(틀 밖에 고른 것은 마지막 쪽)`}</div>}
     {sel === true && selFrames > 1 && split === 'frames' && row('순서', [seg('rows', order, setOrder, '줄 우선 →'), seg('cols', order, setOrder, '칸 우선 ↓')])}
     {row('용지', Object.keys({ A4: 1, A3: 1, A2: 1, A1: 1, A0: 1 }).map(p => seg(p, page, setPage, p)))}
     {row('방향', [seg('', orient, setOrient, '자동'), seg('landscape', orient, setOrient, '가로'), seg('portrait', orient, setOrient, '세로')])}
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 34, color: C.muted }}>여백</span>
       <input type="number" min={0} max={50} value={margin} onChange={e => setMargin(Math.max(0, Math.min(50, +e.target.value || 0)))} style={{ width: 56, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px' }} />mm</div>
     {f !== 'pdf' && <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={tr} onChange={e => setTr(e.target.checked)} />투명 배경(다른 문서에 얹어 쓰기)</label>}
-    <div style={{ fontSize: 11, color: C.muted }}>{f === 'pdf' ? '인쇄 창이 뜨면 「PDF로 저장」을 고르세요' : f === 'png' ? '200dpi 그림으로 내려받아요' : '선·글이 그대로인 그림 파일'} · 고른 게 있으면 그것만, 없으면 전체 · 종이틀을 고르면 틀마다 한 쪽</div>
+    <div style={{ fontSize: 11, color: C.muted }}>{f === 'pdf' ? '인쇄 창이 뜨면 「PDF로 저장」을 고르세요' : f === 'png' ? '200dpi 그림으로 내려받아요' : '선·글이 그대로인 그림 파일'} · 고른 게 있으면 그것만, 없으면 전체 · 프레임을 고르면 틀마다 한 쪽</div>
     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
       <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, color: C.muted }}>닫기</button>
       <button disabled={busy} onClick={go} style={{ all: 'unset', cursor: 'pointer', padding: '4px 12px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600, opacity: busy ? 0.6 : 1 }}>{busy ? '만드는 중…' : '내보내기'}</button>
@@ -99,7 +83,7 @@ function ExportForm({ hasSel, selFrames, onExport, onClose }) {   // selFrames =
 }
 
 function App() {
-  const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [paperOpen, setPaperOpen] = useState(false)
+  const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(() => { try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창)
   useEffect(() => { try { localStorage.setItem('mb-chat-open', chatOpen ? '1' : '0') } catch { /* 기억 못 해도 그만 */ } }, [chatOpen])
   const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
@@ -174,8 +158,7 @@ function App() {
         </Group>
         <Group>{TOOLS.map(([k, icon, label, key]) => <Btn key={k} icon={icon} label={label} on={tool === k} onClick={() => setTool(k)} title={`${label} (${key})`} />)}</Group>
         <Group><div style={{ position: 'relative' }}>
-          <Btn icon="▭" label="종이" on={paperOpen} onClick={() => setPaperOpen(o => !o)} title="종이틀 넣기 — 이 틀 안이 출력 한 쪽(우클릭 「종이틀로 감싸기」로 그린 뒤 감쌀 수도)" />
-          {paperOpen && <PaperForm onInsert={(s, o) => { setPaperOpen(false); ed.current?.insertPaper(s, o) }} onClose={() => setPaperOpen(false)} />}
+          <Btn icon="▭" label="프레임" on={tool === 'frame'} onClick={() => setTool(t => (t === 'frame' ? 'select' : 'frame'))} title="프레임 — 끌어서 영역을 감싸면 그 안이 출력 한 쪽(번호 순서). 클릭만 = 16:9, 우클릭 「프레임으로 감싸기」도" />
         </div><div style={{ position: 'relative' }}>
           <Btn icon="▦" label="표" on={tableOpen} onClick={() => setTableOpen(o => !o)} title="표 넣기 — 행·열을 고르면 화면 가운데에" />
           {tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); ed.current?.insertTable(r, c, h) }} onClose={() => setTableOpen(false)} />}
