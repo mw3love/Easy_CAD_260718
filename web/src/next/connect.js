@@ -187,6 +187,29 @@ export function dropTarget(hosts, sp, z, rectOf, srcId, lines = []) {
   return null
 }
 
+// ── 묶음 통째 붙기(데스크톱 `_GroupBindProxy`) — 묶음 멤버 전체를 감싼 칠판 사각형을 '가상 상자' 하나로 다룬다.
+// 가상 상자는 pos 0·회전 없음이라 안 좌표 = 칠판 좌표 → 위의 포트·외곽선·붙기 계산을 그대로 쓴다. 저장은 bindN_group + 0~1 비율(bindN_pt).
+export function groupHost(items, gid, rectOf) {
+  let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity
+  for (const m of items) {
+    if (m.group_id !== gid) continue
+    // 데스크톱 `_group_bbox_scene`은 멤버의 `_content_rect`(Qt boundingRect — 선 두께 절반, 원은 +1, 그림·표·보드·글은 0)를 감싼다
+    const e = m.type === 'ellipse' ? (m.width || 0) / 2 + 1 : ['rect', 'symbol', 'polygon', 'path', 'line'].includes(m.type) ? (m.width || 0) / 2 : 0
+    const [x0, y0, w0, h0] = rectOf(m), x = x0 - e, y = y0 - e, w = w0 + 2 * e, h = h0 + 2 * e
+    for (const [a, c] of [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]) { const q = toScene(m, { x: a, y: c }); l = Math.min(l, q.x); t = Math.min(t, q.y); r = Math.max(r, q.x); b = Math.max(b, q.y) }
+  }
+  return l === Infinity ? null : { _id: 'g:' + gid, type: 'group', group: gid, pos: [0, 0], rect: [l, t, r - l, b - t] }
+}
+export const groupFrac = (g, p) => { const [l, t, w, h] = g.rect; return [w > 1e-6 ? (p.x - l) / w : 0.5, h > 1e-6 ? (p.y - t) / h : 0.5] }   // `mapFromScene`
+export const groupPoint = (g, f) => { const [l, t, w, h] = g.rect; return { x: l + f[0] * w, y: t + f[1] * h } }   // `mapToScene`
+// 화살표 끝 하나의 붙은 자리(칠판) — 도형이면 그 안 고정점, 묶음이면 지금 감싼 사각형의 비율 자리. 안 붙었으면 null
+export function bindEnd(it, k, items, rectOf, byId) {
+  const gid = it[k + '_group'], pt = it[k + '_pt']; if (!pt) return null
+  if (gid) { const g = groupHost(items, gid, rectOf); return g && { host: g, p: groupPoint(g, pt) } }
+  const id = it['_' + k], host = id != null && (byId ? byId.get(id) : items.find(x => x._id === id))
+  return host ? { host, p: toScene(host, { x: pt[0], y: pt[1] }) } : null
+}
+
 // 칠판 점 → 도형 안 고정점(.ecad bindN_pt) / 그 반대
 export const bindPt = (it, sp) => { const q = toLocal(it, sp); return [q.x, q.y] }
 export const bindScene = (it, pt) => toScene(it, { x: pt[0], y: pt[1] })

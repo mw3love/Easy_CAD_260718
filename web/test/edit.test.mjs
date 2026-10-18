@@ -122,3 +122,12 @@ test('손으로 그린 직각 길은 붙은 도형이 움직여도 직각 유지
   const out = followArrows([a, { ...e, pos: [320, 160] }, ar]).find(x => x._id === 'r')
   assert.deepEqual(out.pts, [[120, 120], [120, 133], [390, 133], [390, 240]])   // 데스크톱 엔진 실측 답(2026-10-17)
 })
+
+test('묶음에 붙은 끝은 저장해도 남음(bindN = null, bindN_group + 비율) — 데스크톱이 같은 연결로 읽음', () => {
+  const doc = { format: 'easycad-doc', version: 1, items: [
+    { type: 'rect', pos: [0, 0], rect: [0, 0, 40, 40], group_id: 'G' },
+    { type: 'sarrow', pos: [0, 0], pts: [[100, 20], [40, 20]], bind1: null, bind1_pt: null, bind1_group: null, bind2: null, bind2_pt: [1, 0.5], bind2_group: 'G' }] }
+  const back = toEcad(fromEcad(doc)).items[1]
+  assert.equal(back.bind2, null); assert.equal(back.bind2_group, 'G'); assert.deepEqual(back.bind2_pt, [1, 0.5])
+})
+

@@ -3,7 +3,7 @@
 import { dedup, elbow, routeOrtho } from '../route.js'
 import { headSize } from './geom.js'
 import { toScene } from './xform.js'
-import { ROUTE_BOX, isBindHost, nearestBorder } from './connect.js'
+import { ROUTE_BOX, groupHost, groupPoint, isBindHost, nearestBorder } from './connect.js'
 import { dedupHint } from './arrowedit.js'
 
 const STUB_MARGIN = 4
@@ -34,13 +34,20 @@ function routeWith(it, ctx) {
   const { items, rectOf, byId, boxes } = ctx, [px, py] = it.pos || [0, 0], last = it.pts.length - 1
   const at = idx => ({ x: it.pts[idx][0] + px, y: it.pts[idx][1] + py })
   const end = k => {
+    const gid = it[k + '_group'], gpt = it[k + '_pt']
+    if (gid) {   // 묶음에 붙은 끝 — 지금 묶음을 감싼 사각형의 비율 자리, 그 사각형이 연결 상자(데스크톱 `_GroupBindProxy`)
+      const g = gpt && groupHost(items, gid, rectOf); if (!g) return null
+      const p = groupPoint(g, gpt), [l, t, w, h] = g.rect
+      return { p, n: nearestBorder(g, p, rectOf).n, r: { l, t, r: l + w, b: t + h }, j: -1, gid }
+    }
     const j = it['_' + k] !== undefined ? byId.get(it['_' + k]) : it[k], pt = it[k + '_pt'], host = j == null ? null : items[j]
     if (!host || !pt || !isBindHost(host)) return null
     const p = toScene(host, { x: pt[0], y: pt[1] })
     return { p, n: nearestBorder(host, p, rectOf).n, r: ROUTE_BOX.has(host.type) && host.rect ? sceneRect(host) : null, j }
   }
   const a = end('bind1'), b = end('bind2'), A = a || { p: at(0), n: null, r: null, j: -1 }, B = b || { p: at(last), n: null, r: null, j: -1 }
-  const obstacles = () => boxes.filter(o => o.i !== A.j && o.i !== B.j).map(o => o.r)
+  const own = o => o.i === A.j || o.i === B.j || (items[o.i].group_id != null && (items[o.i].group_id === A.gid || items[o.i].group_id === B.gid))   // 붙은 도형·묶음 멤버는 장애물 아님
+  const obstacles = () => boxes.filter(o => !own(o)).map(o => o.r)
   let pts
   if (sarrowRouting(it) === 'straight') pts = [A.p, B.p]
   else if (a && b && it.route_hints?.length) {   // 경유지(`build_elbow`→`_route_with_hints`): 두 끝 가운데 + 상대 좌표를 지나게 구간마다 길 찾기
@@ -67,7 +74,7 @@ export function resolveRoutes(items, rectOf = defaultRect) {
   const out = new Map(), ctx = routeCtx(items, rectOf)
   items.forEach((it, i) => {
     if (it.type !== 'sarrow' || !it.auto_route || sarrowRouting(it) !== 'ortho' || !(it.pts?.length >= 2)) return
-    const bound = k => (it['_' + k] !== undefined ? it['_' + k] != null : it[k] != null) && it[k + '_pt']
+    const bound = k => ((it['_' + k] !== undefined ? it['_' + k] != null : it[k] != null) || it[k + '_group']) && it[k + '_pt']
     if (!bound('bind1') && !bound('bind2')) return
     out.set(i, routeWith(it, ctx))
   })

@@ -2,7 +2,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { nearestBorder, shapePorts, snapAt, dropTarget, isConnHost, isBindHost, pathEndPorts } from '../src/next/connect.js'
+import { nearestBorder, shapePorts, snapAt, dropTarget, isConnHost, isBindHost, pathEndPorts, groupHost, groupFrac, bindEnd } from '../src/next/connect.js'
+import { resolveRoutes } from '../src/next/arrows.js'
+import { followArrows, moveItems } from '../src/next/edit.js'
 
 const cases = JSON.parse(readFileSync(new URL('./fixtures/connect_cases.json', import.meta.url)))
 const rectOf = it => it.rect
@@ -82,3 +84,30 @@ test('선·화살표에 붙기(좌표만) · 펜 궤적에 붙기(연결) — �
   // 펜 궤적엔 '안'이 없어 다른 도형 속 포트 고르기에서 빠짐
   assert.equal(dropTarget([pen], { x: 50, y: 230 }, 1, it => [0, 0, 100, 50], null), null)
 })
+
+test('묶음 통째 붙기 — 감싼 사각형 = 가상 상자, bindN_group + 0~1 비율, 묶음을 옮기면 따라감(데스크톱 `_GroupBindProxy`)', () => {
+  const rectOf = it => it.rect || [0, 0, 0, 0]
+  const a = { _id: 'a', type: 'image', pos: [0, 0], rect: [0, 0, 40, 40], group_id: 'G' }   // 그림·표는 선 두께 여유 없음
+  const b = { _id: 'b', type: 'table', pos: [60, 20], rect: [0, 0, 40, 40], group_id: 'G' }
+  const g = groupHost([a, b], 'G', rectOf)
+  assert.deepEqual(g.rect, [0, 0, 100, 60])
+  // 묶음 틀의 포트(오른쪽 변 가운데)에 붙음 — 낱개 원이 아니라 틀
+  const s = snapAt([g], { x: 103, y: 31 }, 1, rectOf)
+  assert.equal(s.id, 'g:G'); assert.deepEqual(s.p, { x: 100, y: 30 })
+  assert.deepEqual(groupFrac(g, s.p), [1, 0.5])
+  const ar = { _id: 'r', type: 'sarrow', pos: [0, 0], pts: [[300, 30], [100, 30]], auto_route: true, routing: 'ortho', head: true, width: 1,
+    _bind1: null, bind1_pt: null, bind1_group: null, _bind2: null, bind2_pt: [1, 0.5], bind2_group: 'G' }
+  assert.deepEqual(bindEnd(ar, 'bind2', [a, b, ar], rectOf).p, { x: 100, y: 30 })
+  assert.ok(resolveRoutes([a, b, ar], rectOf).has(2), '묶음에 붙은 자동 길 화살표는 다시 찾음')
+  // 묶음을 오른쪽 아래로 옮기면 끝이 따라감
+  const moved = followArrows(moveItems([a, b, ar], ['a', 'b'], 50, 10), rectOf)
+  const end = moved[2].pts.at(-1)
+  assert.deepEqual(end, [150, 40])
+})
+
+test('묶음 틀 = 데스크톱 `_content_rect` 합(선 두께 절반, 원은 +1)', () => {
+  const rectOf = it => it.rect
+  const g = groupHost([{ type: 'rect', pos: [0, 0], rect: [0, 0, 40, 40], width: 2, group_id: 'G' }, { type: 'ellipse', pos: [100, 0], rect: [0, 0, 40, 40], width: 2, group_id: 'G' }], 'G', rectOf)
+  assert.deepEqual(g.rect, [-1, -2, 143, 44])
+})
+

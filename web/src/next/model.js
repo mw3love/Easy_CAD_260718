@@ -22,7 +22,8 @@ export function toEcad(model) {
       const ref = it['_' + k]
       if (ref === undefined) continue
       const j = ref == null ? undefined : index.get(ref)
-      if (j == null) { o[k] = null; o[k + '_pt'] = null; o[k + '_group'] = null }   // 붙은 도형이 지워짐 — 데스크톱처럼 끊긴 끝
+      if (j == null && it[k + '_group'] && it[k + '_pt']) o[k] = null   // 묶음에 붙은 끝 — 순번 없이 group_id + 비율(데스크톱 `_GroupBindProxy` 저장)
+      else if (j == null) { o[k] = null; o[k + '_pt'] = null; o[k + '_group'] = null }   // 붙은 도형이 지워짐 — 데스크톱처럼 끊긴 끝
       else o[k] = j
     }
     return o

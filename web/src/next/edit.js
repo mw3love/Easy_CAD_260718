@@ -4,6 +4,7 @@ import { newId } from './model.js'
 import { itemBounds } from './doc.js'
 import { resolveRoutes, sarrowRouting } from './arrows.js'
 import { setCurveEnd } from './arrowedit.js'
+import { bindEnd } from './connect.js'
 
 export { toLocal, toScene } from './xform.js'
 import { toLocal, toScene } from './xform.js'
@@ -233,9 +234,8 @@ export function followArrows(items, rectOf) {
     if (it.type === 'arrow') {   // 곡선: 붙은 끝만 따라가고 제어점도 같은 만큼(그린 곡선 보존, 데스크톱 `_ArrowItem.reroute`)
       let o = it
       for (const [k, idx] of [['_bind1', 0], ['_bind2', 1]]) {
-        const host = it[k] && byId.get(it[k]), pt = it[k.slice(1) + '_pt']
-        if (!host || !pt) continue
-        const q = toLocal(o, toScene(host, { x: pt[0], y: pt[1] })), cur = idx ? o.p2 : o.p1
+        const e = bindEnd(it, k.slice(1), items, rectOf, byId); if (!e) continue   // 도형 또는 묶음(비율 자리)
+        const q = toLocal(o, e.p), cur = idx ? o.p2 : o.p1
         if (Math.abs(q.x - cur[0]) > 1e-6 || Math.abs(q.y - cur[1]) > 1e-6) o = setCurveEnd(o, idx, [q.x, q.y])
       }
       return o
@@ -245,9 +245,8 @@ export function followArrows(items, rectOf) {
     let pts = it.pts, changed = false
     const manual = sarrowRouting(it) === 'ortho' && !it.auto_route && it.pts.length >= 3   // 손으로 그린 직각 길(데스크톱 `reroute` manual_ortho)
     for (const [k, idx] of [['_bind1', 0], ['_bind2', it.pts.length - 1]]) {
-      const host = it[k] && byId.get(it[k]), pt = it[k.slice(1) + '_pt']
-      if (!host || !pt) continue
-      const sp = toScene(host, { x: pt[0], y: pt[1] }), lp = [sp.x - (it.pos?.[0] || 0), sp.y - (it.pos?.[1] || 0)]
+      const e = bindEnd(it, k.slice(1), items, rectOf, byId); if (!e) continue   // 도형 또는 묶음(비율 자리)
+      const sp = e.p, lp = [sp.x - (it.pos?.[0] || 0), sp.y - (it.pos?.[1] || 0)]
       if (Math.abs(lp[0] - pts[idx][0]) > 1e-6 || Math.abs(lp[1] - pts[idx][1]) > 1e-6) {
         const nb = idx ? pts.length - 2 : 1, cur = pts[idx], q = pts[nb]
         const nq = manual ? (Math.abs(cur[0] - q[0]) <= Math.abs(cur[1] - q[1]) ? [lp[0], q[1]] : [q[0], lp[1]]) : q   // 세로 끝 구간이면 x를, 가로면 y를 같이 → 직각 유지
