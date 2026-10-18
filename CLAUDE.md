@@ -120,7 +120,8 @@ web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + Reac
 │                          `/api/chatlog`·`/api/doc`). web_bakeoff/는 바탕 부품 비교 시험(보존용).
 │                          **직접 만드는 칠판**(tldraw 대체, 5단계에 갈아탐): `next.html` + `src/next/`(geom.js 그리기 계산·render.jsx 종류별 SVG·doc.js .ecad 문서·
 │                          arrows.js 길 다시 찾기 + 2단계 Editor.jsx 편집 화면·edit.js 편집 계산·align.js 정렬선·model.js _id 모델·text.jsx TipTap 글 편집 + 3단계 connect.js 붙는 규칙·arrowedit.js 알약·곡선·라벨·
-│                          arrowkind.js 종류 바꾸기·props.jsx 오른쪽 위 속성 카드·xform.js 좌표) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
+│                          arrowkind.js 종류 바꾸기·xform.js 좌표 + 4단계 props.jsx 우상 속성 카드·palette.jsx 좌상 도형·심볼·layers.jsx 좌하 레이어·minimap.jsx 우하 미니맵·
+│                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
 │                          데스크톱 대조 시험 `tools/export_route_cases.py`·`export_connect_cases.py`·`export_arrow_cases.py` → `web/test/fixtures/`(규칙 고치면 다시 돌림)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
@@ -179,7 +180,7 @@ symbol_library/
   그리기)는 측정상 −20%뿐이라 보류(바닥 183ms는 Qt 아이템별 기본 비용). 더 가려면 '스냅샷 방식'(멀리서 볼 때 화면을
   한 장 그림으로 저장) — 실사용에서 답답하면 계획. 상세: `docs/history/2026-10.md` "LOD ②".
 
-**최근 항목**(2026-10-16 밤 2 ~ 10-18, 상세는 `docs/history/2026-10.md`):
+**최근 항목**(2026-10-17 ~ 10-18, 상세는 `docs/history/2026-10.md`):
 - **§8 항목61 웹 칠판 트랙**(2026-10-17, 심층 인터뷰로 **목표가 바뀜** — `## 목표`) — 바탕 부품 비교(`web_bakeoff/`) → **tldraw 5.5.2 확정**(CAD 확장 시험:
   직각 화살표·구간 손잡이·큐닷·포트점·A*·TRIM 통과). ⓑ 칠판 바탕 `web/`: .ecad 열기(보드·순서도·계통도 — 데스크톱 그림과 나란히 맞춤, 흰 잉크→검정),
   글 색·굵기·형광펜은 tldraw 글 편집기(TipTap)에 TextStyle 확장, 정확한 색·크기는 기본 도형의 `getCustomDisplayValues`+`meta.ecad`. 실행 `cd web && npm run dev`,
@@ -189,7 +190,10 @@ symbol_library/
   ⚠ **같은 날 바탕을 tldraw → 직접 만들기로 바꿈**(사용자 선택, 근거: 회사 배포 라이선스·데스크톱 규칙 덮어쓰기·문서 형식 둘) — 문서 = `.ecad` 그대로,
   데스크톱 규칙을 옮기고 대조 시험으로 묶음. 순서 1)뼈대 2)기본 편집 3)화살표 4)일상 도구 5)갈아타기 — 계획서 §8 항목61 「바뀐 결정」. 데스크톱: 이미지·표에도 화살표(`_is_conn_host`).
   1~3단계 완료(3단계 손맛 사용자 확인 10-18) — 화살표 설정은 오른쪽 위 「속성」 카드(사용자 선택, 4단계 속성 칸의 씨앗). 10-18: 선택 표시 데스크톱과 같게,
-  화살표 도구(2)·선/펜 궤적/묶음에 붙기, 값이 섞이면 「1~3px」+각자 더하기(두 앱), **어두운 화면은 앱이 직접**(사용자 크롬 Dark Reader가 덮어쓰던 것), 새 도형 1px. 다음 = 4단계. 데스크톱도 글 회전점을 상자처럼 좌상 대각으로.
+  화살표 도구(2)·선/펜 궤적/묶음에 붙기, 값이 섞이면 「1~3px」+각자 더하기(두 앱), **어두운 화면은 앱이 직접**(사용자 크롬 Dark Reader가 덮어쓰던 것), 새 도형 1px. 데스크톱도 글 회전점을 상자처럼 좌상 대각으로.
+  **4단계 완료**(10-18, 프록시검증 — 사용자 손맛 남음): 속성 카드 모든 도형(도형 바꾸기·내 심볼로 바꾸기·회전·형광펜)·스타일 복사 Ctrl+Alt+C/V·좌상 팔레트(서버 `/api/symbols` = 데스크톱
+  `symbol_library.json`, 검색 초성)·번호표(7)·표(칸 편집)·좌하 레이어·우하 미니맵·내보내기(PDF는 인쇄 창 「PDF로 저장」)·KAIROS 대화창(카드 = 흰 보드 + 글)·우클릭 메뉴(정렬·분배·그림으로 복사).
+  다음 = 5단계 갈아타기(tldraw 빼기·옛 칠판 옮기기). 데스크톱 옮길 후보: 내 심볼로 바꾸면 화살표를 묶음 통째에 붙이기.
 - **§8 항목60 보드 디자인 2차**(2026-10-17) — 아티팩트 시안과 나란히 본 지적 10건 → 원인은 Qt가 아니라 그리기 어휘(HTML 가져오기는 설계서가 끊겨 버림).
   ① `**구절**` 부분 강조(.ecad `runs`) ② Pretendard 싣기(`easycad/fonts.py`, 보드 글만, .ecad `family`·`weight`) ③ 세로 그림 오른쪽 옆 칸
   ④ 가로 단계 블록 `steps` ⑤ 단위 다른 숫자 다른 색·의의/한계 칩. 2라운드(위계): 주인공 = 글만(`HERO_TYPES`), 숫자 note = 비교 기준·막대·그림 필수,
@@ -207,12 +211,6 @@ symbol_library/
   `_pb_part`·`_pb_card`를 .ecad에 저장(다시 연 보드의 「선택 N개」), 모델 가격 규칙(`gateway._is_successor` — 아래 급 계열이 값만 올라 위 급을 숨기던 것)., 블록 많으면 3장 이상으로(전엔 2장째가 최대 폭 2.5배) + 시험 배치 걷기 빠르게.
 - **§8 항목57 블록 조립식 보드**(2026-10-17 새벽) — AI가 블록 12종·줄·12칸 span·size(`pdf_to_board._BLOCK_FORMAT`, `block-board`), 앱이 배치
   (`host_blocks.py`). 논문 → 카드·흐름·숫자·그림, 회의록 → 결정·할 일 표·일정(실제 KAIROS 각 1장). 「가운데로 크게」는 AI가 row·span으로. 옛 `paper-board`는 읽기만.
-- **§8 항목56 보드 막대 세 상태·모델 고르기**(2026-10-16 밤 3) — 테두리 = 「보드 · PDF로 새로」(처음 말 채움), 빈 곳 더블클릭 = 「보드 안 · 전체 고치기」
-  (Esc·밖 클릭 나옴), 안 글·그림 선택 = 「선택 N개」(`_pb_part` + 글을 AI에). 색 화이트·블랙·무지개, 입력 5→12줄, 보드 주황 표시 없앰. 모델 「자동」 →
-  「기본 · gpt-6.1-sol ▾」(`model_picker.py`, 회사별 3개 `gw.featured_models` — 후속 있는 옛 모델 거름, 숫자 가격, 여러 개 = 나란히). 
-- **§8 항목54 AI 결과 바로 넣기·막대 하나**(2026-10-16 밤 2) — 흐름도·보드는 채택·버리기 없이 바로 넣음(아니면 Del, 보드는 안의 것도 같이).
-  보드는 만든 직후·나중 모두 같은 막대(색 견본 아이콘·내보내기·여러 줄 고칠 점, 설계서는 보드 `_ai`·.ecad에), 이어 고치면 오른쪽에 새로·바뀐 곳 주황.
-  입력 칸 여러 줄(`_BarLine`), 가운데 칸 예시 버튼 없앰(→ §8 항목55 설명 카드, AI 고치기 끝난 뒤). PDF + 말: 없으면 보드, 「흐름도로」·「그림 하나」면 그대로.
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·
   곡선·직각 같은 *종류*는 캔버스에서 객체를 선택한 뒤 **플로팅 미니툴바의 하위목록**에서
   고르게 한다(Lucid·FigJam 방식). 세부 조절값은 그 종류를 골랐을 때만 노출.
