@@ -18,7 +18,7 @@ import {
   rotateTo, rubberSelect, sceneBox, toLocal, toScene, toggleLock, topHit, ungroupItems, unionBox, zOrder,
 } from './edit.js'
 import { TextEditor } from './text.jsx'
-import { ArrowProps } from './props.jsx'
+import { Props } from './props.jsx'
 import { arrowKindOf, swapArrowKind } from './arrowkind.js'
 import { symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
@@ -367,6 +367,9 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
   // 새 화살표 기본값 — 속성 카드에서 바꾼 값이 다음 화살표에 이어짐(데스크톱 sticky: 색·굵기·선 모양·화살촉·모서리). 굵기 1 = 데스크톱 `_DEFAULT_WIDTH`·웹 그리기 도구와 같게(2026-10-18 — 2였을 땐 같은 화살표인데 선택 띠가 얇아 보였다)
   const sticky = useRef({ color: INK, style: 1, width: 1, head: true, head_start: false, head_scale: 1, curve_r: 10 })
+  const stickyFill = useRef(null)   // 새 닫힌 도형 채움 — 속성 카드 「채움」(데스크톱 `current_fill`)
+  // 새 도형 선 = 화살표와 같은 색·굵기·선 모양(데스크톱 `current_color`·`current_width`·`current_style`은 도형·화살표 공용)
+  const penOf = closed => ({ pen: sticky.current.color, width: sticky.current.width, style: sticky.current.style, ...(closed ? { fill: stickyFill.current } : {}) })
   const stickyKind = useRef('ortho')   // 새 화살표 종류(직각·직선·곡선) — 속성 카드 「종류」로 바꾼 것이 이어짐
   function connRoute(srcId, port, tgt, cur) {
     const items = R.current.model.items, src = hostOf(srcId), dst = tgt && hostOf(tgt.id)
@@ -418,7 +421,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // ── 도형 카드에서 끌어다 놓기(데스크톱 `_PaletteButton` 6px 넘게 끌기) — 진짜 도형이 손에 붙어 따라오고 정렬선도 걸림, 칠판 밖(카드 위 등)에 놓으면 취소 ──
   function startPaletteDrag(t) {
     const m = R.current.model, w = t === 'ellipse' ? 100 : 120, h = t === 'ellipse' ? 100 : 60   // 클릭만 해 놓을 때와 같은 기본 크기
-    const proto = base([0, 0], { type: t, rect: [0, 0, w, h], pen: INK, width: 1, fill: null, style: 1, z: topZ(m.items) + 1 })
+    const proto = base([0, 0], { type: t, rect: [0, 0, w, h], ...penOf(true), z: topZ(m.items) + 1 })
     const others = m.items.filter(it => !it.locked).map(it => sceneBox(it, textBox))
     let last = null
     const place = e => {
@@ -457,7 +460,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     setOverlay(o => ({ ...o, poly: null }))
     if (pts.length < 2) return
     const xs = pts.map(q => q.x), ys = pts.map(q => q.y), x0 = Math.min(...xs), y0 = Math.min(...ys)
-    const it = base([x0, y0], { type: 'polygon', closed, rect: [0, 0, Math.max(...xs) - x0, Math.max(...ys) - y0], pts: pts.map(q => [q.x - x0, q.y - y0]), pen: INK, width: 1, fill: null, style: 1, z: topZ(R.current.model.items) + 1 })
+    const it = base([x0, y0], { type: 'polygon', closed, rect: [0, 0, Math.max(...xs) - x0, Math.max(...ys) - y0], pts: pts.map(q => [q.x - x0, q.y - y0]), ...penOf(closed), ...(closed ? {} : { fill: null }), z: topZ(R.current.model.items) + 1 })
     commit([...R.current.model.items, it], [it._id], '다각형'); setTool('select')
   }
   function finishDraw(s, p) {
@@ -468,15 +471,15 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       let x0 = Math.min(s.start.x, p.x), y0 = Math.min(s.start.y, p.y), w = Math.abs(p.x - s.start.x), h = Math.abs(p.y - s.start.y)
       if (s.shift) { const d = Math.max(w, h); w = h = d; x0 = p.x < s.start.x ? s.start.x - d : s.start.x; y0 = p.y < s.start.y ? s.start.y - d : s.start.y }
       if (click) { w = s.tool === 'ellipse' ? 100 : 120; h = s.tool === 'ellipse' ? 100 : 60; x0 = p.x - w / 2; y0 = p.y - h / 2 }   // 클릭만 = 기본 크기로 그 자리에
-      it = base([x0, y0], { type: s.tool, rect: [0, 0, w, h], pen: INK, width: 1, fill: null, style: 1 })
+      it = base([x0, y0], { type: s.tool, rect: [0, 0, w, h], ...penOf(true) })
     } else if (s.tool === 'line') {
       if (click) return
       let { x, y } = p
       if (s.shift) { const a = Math.round(Math.atan2(y - s.start.y, x - s.start.x) / (Math.PI / 4)) * (Math.PI / 4), L = Math.hypot(x - s.start.x, y - s.start.y); x = s.start.x + L * Math.cos(a); y = s.start.y + L * Math.sin(a) }
-      it = base([0, 0], { type: 'line', line: [s.start.x, s.start.y, x, y], pen: INK, width: 1, style: 1 })
+      it = base([0, 0], { type: 'line', line: [s.start.x, s.start.y, x, y], ...penOf(false) })
     } else if (s.tool === 'pen') {
       if (s.pts.length < 2) return
-      it = base([0, 0], { type: 'path', elements: s.pts.map((q, i) => [i ? 'L' : 'M', q.x, q.y]), pen: INK, width: 1, style: 1, freehand: true })
+      it = base([0, 0], { type: 'path', elements: s.pts.map((q, i) => [i ? 'L' : 'M', q.x, q.y]), ...penOf(false), freehand: true })
     }
     if (!it) return
     it.z = topZ(m.items) + 1
@@ -619,12 +622,16 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const preview = it => { const g = selShape(it, textBox)
     return <g key={'pv' + it._id} transform={transformOf(it)}><g transform={g.off ? `translate(${g.off[0]},${g.off[1]})` : undefined}>{selBand('pv' + it._id, g, it, z, PREVIEW_ALPHA, pvColor)}</g></g> }
   const handles = single && !editing && !live ? handlesOf(single) : []
-  // 속성 카드 — 고른 화살표 모두에 같이(데스크톱: 고른 화살표 전부). 모서리는 직각만
-  const selArrows = selItems.filter(isArrow), selArrowIds = new Set(selArrows.map(x => x._id))
-  function setArrows(patch, label, merge) {   // patch = 모두에 같은 값, 또는 화살표 → 값(각자 ±)
-    const m = R.current.model, per = typeof patch === 'function' ? patch : () => patch
-    Object.assign(sticky.current, per(selArrows[0]))   // 다음 화살표 기본값 = 첫 화살표에 들어간 값
-    commit(m.items.map(x => { if (!selArrowIds.has(x._id)) return x; const pt = { ...per(x) }; if (x.type !== 'sarrow') delete pt.curve_r; return { ...x, ...pt } }), sel, label, merge ? merge + [...selArrowIds].join() : null)
+  // 속성 카드 — 고른 것 모두에(해당하는 것만, 데스크톱 `_edit_items`). 모서리는 직각만
+  const selArrows = selItems.filter(isArrow), selArrowIds = new Set(selArrows.map(x => x._id)), selIds = new Set(selItems.map(x => x._id))
+  function setProps(per, label, merge) {   // per(아이템) → 고칠 값 | null(해당 없음)
+    const m = R.current.model, cur = m.items.filter(x => selIds.has(x._id))
+    // 다음에 그릴 것의 기본값 = 처음 고친 것에 들어간 값(데스크톱 sticky — 보드 바탕·글 색은 아님)
+    const a0 = cur.find(isArrow), pa = a0 && per(a0)
+    if (pa) for (const k of ['color', 'width', 'style', 'head', 'head_start', 'head_scale', 'curve_r']) if (pa[k] !== undefined) sticky.current[k] = pa[k]
+    const s0 = cur.find(x => x.pen !== undefined), ps = s0 && per(s0)
+    if (ps) { if (ps.pen !== undefined) sticky.current.color = ps.pen; if (ps.width !== undefined) sticky.current.width = ps.width; if (ps.style !== undefined) sticky.current.style = ps.style; if (ps.fill !== undefined) stickyFill.current = ps.fill }
+    commit(m.items.map(x => { if (!selIds.has(x._id)) return x; const p = per(x); if (!p) return x; const pt = { ...p }; if (x.type !== 'sarrow') delete pt.curve_r; return { ...x, ...pt } }), sel, label, merge ? merge + [...selIds].join() : null)
   }
   // 여러 개 선택 틀 — 화살촉까지 감쌈(데스크톱 `_GroupTransform.bbox` = 꼭짓점 + 화살촉 끝, 2026-10-18 사용자와 맞춤)
   const selBoxOf = it => {
@@ -681,7 +688,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       </svg>
       {editing && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={s} onDone={finishEdit} /> })()}
-      {selArrows.length > 0 && !editing && <ArrowProps arrows={selArrows} kind={selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setArrows}
+      {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )

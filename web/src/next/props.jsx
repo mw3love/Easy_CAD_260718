@@ -1,13 +1,51 @@
-// 오른쪽 위 「속성」 카드(고를 때만) — 3단계는 화살표 칸만(종류·화살촉·머리 크기·선 색·굵기·점선·모서리). 4단계 속성 칸이 여기서 넓어진다.
-// 데스크톱 `host_ui` 속성 카드와 같은 자리·같은 항목. 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄, 자주 안 바꾸는 값은 현재 값 버튼 → 펼침.
+// 오른쪽 위 「속성」 카드(고를 때만) — 고른 것 모두의 선 색·굵기·선 모양·채움, 화살표 칸(종류·화살촉·머리 크기·모서리), 글자 크기·색.
+// 데스크톱 `host_style._refresh_properties`와 같은 자리·같은 항목·같은 차례(종류 → 선 → 채움 → 화살표 → 글자). 섞어 고르면 해당하는 것에만.
+// 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄.
 import { useState } from 'react'
+import SYMBOLS from '../symbols.json' with { type: 'json' }
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', seg: 'var(--mb-seg)', on: '#da7756', onBg: 'var(--mb-onbg)' }   // 화면 색 = next.html CSS 변수
 // 두 줄 꽉 채움(8+8) — 데스크톱 색 창과 같은 짜임: 진한 6색(`_COLOR_GRID_HUES`) + 검정 + 다른 색 / 같은 6색의 연한 색(Qt lighter(150)) + 회색 + 흰색
 export const ARROW_COLORS = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#AF52DE', '#000000', null,
   '#ffb4af', '#ffca7f', '#ffe57f', '#6eff93', '#7fbdff', '#e3acff', '#9e9e9e', '#ffffff']
+// 채움 견본 — 데스크톱 `_DEFAULT_FILL_PRESETS`(첫 칸 없음, 나머지는 약 1/3 불투명이라 밝은·어두운 칠판과 흰 종이 모두에서 글이 읽힘)
+const FILL_PRESETS = [null, '#555aa9ff', '#555fbf8a', '#55e8c15a', '#55e0646a', '#55b48cf2', '#55da7756', '#558a98a8']
 const STYLES = [[1, '실선'], [2, '점선'], [3, '도트'], [4, '일점쇄선'], [5, '이점쇄선']]
 const DASH = { 1: undefined, 2: '6 3', 3: '1.5 3', 4: '6 3 1.5 3', 5: '6 3 1.5 3 1.5 3' }
+const INK = '#1f1f1f'
+
+// ── 종류마다 무엇을 갖나(데스크톱 `_read_props`·`_text_targets`와 같은 판정, .ecad 칸 이름) ──
+export const isArrow = it => it?.type === 'sarrow' || it?.type === 'arrow'
+const PEN = new Set(['rect', 'ellipse', 'symbol', 'polygon', 'path', 'line'])
+const lineKey = it => (isArrow(it) || it.type === 'badge' ? 'color' : PEN.has(it.type) ? 'pen' : it.type === 'board' ? 'bg' : null)   // 보드는 「바탕」 색
+const hasWidth = it => isArrow(it) || PEN.has(it.type)
+const fillKey = it => (['rect', 'ellipse', 'symbol'].includes(it.type) || (it.type === 'polygon' && it.closed) ? 'fill' : it.type === 'text' ? 'bg' : null)
+const TYPE_NAMES = { rect: '사각형', ellipse: '원', line: '선', arrow: '화살표', sarrow: '화살표', text: '텍스트', badge: '번호', path: '펜', image: '이미지', table: '표', titleblock: '표제란', polygon: '다각형', board: '보드' }
+const typeName = it => (it.type === 'symbol' ? SYMBOLS[it.kind]?.name || '심볼' : TYPE_NAMES[it.type] || '객체')
+
+// 색 비교용 — '#ffrrggbb'(불투명 ARGB)와 '#rrggbb'를 같게
+const norm = c => (c || '').replace(/^#ff(?=[0-9a-f]{6}$)/i, '#').toLowerCase()
+// 채움 비교용 ARGB — 글 바탕(.ecad `bg`)은 [r,g,b,a] 배열(데스크톱 document.py), 도형 채움은 '#aarrggbb'
+const hex2 = n => Math.round(n).toString(16).padStart(2, '0')
+const fillArgb = v => (v == null ? null : Array.isArray(v) ? '#' + hex2(v[3]) + hex2(v[0]) + hex2(v[1]) + hex2(v[2]) : (v.length === 7 ? '#ff' + v.slice(1) : v).toLowerCase())
+const argbToBg = c => (c == null ? null : [parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16), parseInt(c.slice(7, 9), 16), parseInt(c.slice(1, 3), 16)])
+const argbCss = c => { if (!c) return 'transparent'; const a = parseInt(c.slice(1, 3), 16) / 255; return `rgba(${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${parseInt(c.slice(7, 9), 16)},${a.toFixed(3)})` }
+
+// 글자 — 독립 글은 그 자신, 도형·선·화살표는 안에 붙은 글(라벨) 전부. → [{ font, color, text }]
+const arrowLabels = it => it.labels || (it.label ? [it.label] : [])   // 옛 파일은 단수 label
+function textSlots(it) {
+  if (it.type === 'text') return [{ font: it.font || 12, color: it.color || INK, text: it.text || '' }]
+  if (isArrow(it)) return arrowLabels(it).filter(L => L.text?.trim()).map(L => ({ font: L.font || 16, color: L.color || it.color || INK, text: L.text }))
+  if (['rect', 'ellipse', 'symbol', 'polygon', 'line'].includes(it.type) && it.label?.text?.trim()) return [{ font: it.label.font || 16, color: it.label.color || it.pen || INK, text: it.label.text }]
+  return []
+}
+// 그 글들에 f(글) → { font?, color? }를 입힌 아이템 고칠 값(없으면 null)
+function patchTexts(it, f) {
+  const slots = textSlots(it); if (!slots.length) return null
+  if (it.type === 'text') return f(slots[0])
+  if (isArrow(it)) { let k = 0; return { labels: arrowLabels(it).map(L => (L.text?.trim() ? { ...L, ...f(slots[k++]) } : L)), label: undefined } }
+  return { label: { ...it.label, ...f(slots[0]) } }
+}
 
 // 아이콘(16×16, 선 굵기 1.6) — 글자 대신 뜻이 보이게
 const Svg = ({ children, w = 18, h = 16 }) => <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
@@ -45,39 +83,88 @@ function Stepper({ values, step = 1, fmt = v => v, onStep, title }) {
     <button onClick={() => onStep(step)} style={btn(false, { width: 22 })}>+</button>
   </div>
 }
+// 색 견본 8+8(마지막 칸 = 다른 색). value = 지금 색(서로 다르면 '' — 아무것도 안 켬)
+function ColorGrid({ value, onPick }) {   // onPick(색, 끌기 중이면 true — 되돌리기 한 칸으로 묶음)
+  return <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 14px)', gap: 2 }}>
+    {ARROW_COLORS.map((c, i) => { if (!c) return <label key={i} title="다른 색" style={{ width: 14, height: 14, borderRadius: 4, cursor: 'pointer', background: 'conic-gradient(#f33,#fc0,#3c6,#39f,#c3f,#f33)', position: 'relative', overflow: 'hidden' }}>
+        <input type="color" value={/^#[0-9a-f]{6}$/.test(value) ? value : '#1f1f1f'} onChange={e => onPick(e.target.value, true)} style={{ opacity: 0, position: 'absolute', inset: 0, cursor: 'pointer' }} /></label>
+      const on = value === c.toLowerCase()
+      return <button key={i} title={c} aria-pressed={on} onClick={() => onPick(c)} style={{ all: 'unset', cursor: 'pointer', width: 14, height: 14, borderRadius: 4, background: c,
+        boxShadow: on ? `0 0 0 2px #fff, 0 0 0 3.5px ${C.on}` : 'inset 0 0 0 1px rgba(0,0,0,.15)' }} /> })}
+  </div>
+}
+// 채움 견본(없음 + 7) + 색 코드 칸(데스크톱 「#코드」 — Enter로 적용)
+function FillGrid({ value, onPick }) {
+  const [code, setCode] = useState('')
+  const swatch = (c, on) => ({ all: 'unset', cursor: 'pointer', width: 14, height: 14, borderRadius: 4, position: 'relative', overflow: 'hidden',
+    background: c ? `linear-gradient(${argbCss(c)},${argbCss(c)}), #fff` : '#fff',
+    boxShadow: on ? `0 0 0 2px #fff, 0 0 0 3.5px ${C.on}` : 'inset 0 0 0 1px rgba(0,0,0,.2)' })
+  const apply = () => { const m = /^#?([0-9a-f]{6}|[0-9a-f]{8})$/i.exec(code.trim()); if (!m) return; onPick(m[1].length === 6 ? '#ff' + m[1].toLowerCase() : '#' + m[1].toLowerCase()); setCode('') }
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 14px)', gap: 2 }}>
+      {FILL_PRESETS.map((c, i) => <button key={i} title={c ? c : '없음'} aria-pressed={value === c} onClick={() => onPick(c)} style={swatch(c, value === c)}>
+        {!c && <svg width="14" height="14" style={{ position: 'absolute', inset: 0 }}><line x1="2" y1="12" x2="12" y2="2" stroke="#e02424" strokeWidth="1.4" /></svg>}</button>)}
+    </div>
+    <input value={code} placeholder="#코드" title="채움색 코드 — 예: #d9703f (Enter로 적용)" onChange={e => setCode(e.target.value)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') apply() }}
+      style={{ width: 84, height: 22, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: C.seg, color: C.ink, font: '12px monospace', padding: '0 6px' }} />
+  </div>
+}
 
-// arrows = 고른 화살표 전부, kind = 모두 같은 종류면 그것('straight'|'curved'|'ortho'), 다르면 null
-// set(patch | (화살표 → patch), 이름, 묶음 열쇠) — 함수면 화살표마다 따로(각자 ±)
+// items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
+// kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function ArrowProps({ arrows, kind, set, onKind }) {
+export function Props({ items, kind, set, onKind }) {
   const [openDash, setOpenDash] = useState(false)
-  const one = f => { const v = arrows.map(f); return v.every(x => x === v[0]) ? v[0] : null }
-  const head = one(a => (a.head !== false ? (a.head_start ? 'both' : 'end') : a.head_start ? 'start' : 'none'))
-  const color = one(a => (a.color || '').replace(/^#ff(?=[0-9a-f]{6}$)/i, '#').toLowerCase()) ?? ''
-  const style = one(a => a.style || 1)
-  const num = (k, d0, min, max, step, name) => ({ values: arrows.map(a => a[k] ?? d0), step, onStep: d => set(a => ({ [k]: stepClamp(a[k] ?? d0, d, min, max, step) }), name, k) })
+  const one = v => (v.length && v.every(x => x === v[0]) ? v[0] : null)
+  const arrows = items.filter(isArrow), allArrows = arrows.length === items.length
+  const lineItems = items.filter(lineKey), wItems = items.filter(hasWidth), fillItems = items.filter(fillKey)
+  const texts = items.flatMap(textSlots)
+  const boardsOnly = items.every(it => it.type === 'board'), allText = items.every(it => it.type === 'text')
+  const showLine = lineItems.length > 0 && !allText   // 독립 글만 골랐으면 「선」 줄을 숨김(글 색은 「글자」에서)
+  const types = new Set(items.map(typeName))
+  const title = items.length === 1 ? typeName(items[0]) : types.size === 1 ? `${[...types][0]} ${items.length}개` : `${items.length}개 · 혼합`
+
+  const color = one(lineItems.map(it => norm(it[lineKey(it)]))) ?? ''
+  const style = one(wItems.map(it => it.style || 1))
+  const fill = fillItems.length ? one(fillItems.map(it => fillArgb(it[fillKey(it)]))) : undefined   // null = 없음, undefined = 서로 다름
+  const fillMixed = fillItems.length > 1 && !fillItems.every(it => fillArgb(it[fillKey(it)]) === fillArgb(fillItems[0][fillKey(fillItems[0])]))
+  const head = one(arrows.map(a => (a.head !== false ? (a.head_start ? 'both' : 'end') : a.head_start ? 'start' : 'none')))
+  const tColor = one(texts.map(t => norm(t.color))) ?? ''
+  const firstText = (texts.find(t => t.text.trim())?.text.trim().split('\n')[0]) || ''
+  // 숫자 칸 — 각자에 d만큼(범위 안으로)
+  const num = (list, get, d0, min, max, step, name, write) => ({ values: list.map(it => get(it) ?? d0), step,
+    onStep: d => { const ids = new Set(list.map(it => it._id)); set(it => (ids.has(it._id) ? write(it, stepClamp(get(it) ?? d0, d, min, max, step)) : null), name, name) } })
+  const onArrows = f => it => (isArrow(it) ? f(it) : null)
+
   return <div onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 12, top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
-    padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none' }}>
-    <div style={{ font: "700 15px 'Pretendard', sans-serif", marginBottom: 2 }}>속성{arrows.length > 1 && <span style={{ font: "400 12px 'Pretendard', sans-serif", color: C.muted }}> · 화살표 {arrows.length}개</span>}</div>
-    <Row label="종류"><Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} /></Row>
-    <Row label="화살촉"><Seg value={head} onPick={h => set({ head: h === 'end' || h === 'both', head_start: h === 'start' || h === 'both' }, '화살촉')}
-      items={[['none', ICONS.none, '없음'], ['end', ICONS.end, '끝만'], ['both', ICONS.both, '양쪽'], ['start', ICONS.start, '시작만']]} /></Row>
-    <Row label="머리"><Stepper title="화살촉 크기 배율" {...num('head_scale', 1, 0.5, 3, 0.1, '머리 크기')} fmt={v => v.toFixed(1) + '×'} /></Row>
-    <Row label="색"><div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 14px)', gap: 3 }}>
-      {ARROW_COLORS.map((c, i) => { if (!c) return <label key={i} title="다른 색" style={{ width: 14, height: 14, borderRadius: 4, cursor: 'pointer', background: 'conic-gradient(#f33,#fc0,#3c6,#39f,#c3f,#f33)', position: 'relative', overflow: 'hidden' }}>
-          <input type="color" value={/^#[0-9a-f]{6}$/.test(color) ? color : '#1f1f1f'} onChange={e => set({ color: e.target.value }, '색', 'color')} style={{ opacity: 0, position: 'absolute', inset: 0, cursor: 'pointer' }} /></label>
-        const on = color === c.toLowerCase()   // 색이 서로 다르면 아무것도 안 켬
-        return <button key={i} title={c} aria-pressed={on} onClick={() => set({ color: c }, '색')} style={{ all: 'unset', cursor: 'pointer', width: 14, height: 14, borderRadius: 4, background: c,
-          boxShadow: on ? `0 0 0 2px #fff, 0 0 0 3.5px ${C.on}` : 'inset 0 0 0 1px rgba(0,0,0,.15)' }} /> })}
-    </div></Row>
-    <Row label="굵기"><Stepper title="선 굵기" {...num('width', 1, 1, 40, 1, '굵기')} fmt={v => v + 'px'} /></Row>
-    <Row label="선"><div style={{ position: 'relative', flex: 1 }}>
+    padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: 'calc(100% - 24px)', overflowY: 'auto' }}>
+    <div style={{ font: "700 15px 'Pretendard', sans-serif", marginBottom: 2 }}>속성</div>
+    <Row label="종류">{allArrows
+      ? <Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} />
+      : <span data-testid="prop-type" style={{ fontSize: 13 }}>{title}</span>}</Row>
+    {allArrows && items.length > 1 && <div style={{ fontSize: 12, color: C.muted, margin: '-4px 0 0 46px' }}>화살표 {items.length}개</div>}
+    {showLine && <Row label={boardsOnly ? '바탕' : '색'}><ColorGrid value={color} onPick={(c, drag) => set(it => (lineKey(it) ? { [lineKey(it)]: c } : null), boardsOnly ? '바탕 색' : '색', drag ? 'color' : null)} /></Row>}
+    {showLine && wItems.length > 0 && <Row label="굵기"><Stepper title="선 굵기" {...num(wItems, it => it.width, 1, 1, 40, 1, '굵기', (it, v) => ({ width: v }))} fmt={v => v + 'px'} /></Row>}
+    {showLine && wItems.length > 0 && <Row label="선"><div style={{ position: 'relative', flex: 1 }}>
       <button title="선 모양" onClick={() => setOpenDash(o => !o)} style={btn(false, { width: '100%', background: C.seg, justifyContent: 'space-between', padding: '0 8px' })}>{style ? dashIcon(style) : <span style={{ fontSize: 12, color: C.muted }}>서로 다름</span>}<span style={{ color: C.muted }}>▾</span></button>
       {openDash && <div style={{ position: 'absolute', zIndex: 2, top: 28, left: 0, right: 0, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 4px 12px rgba(0,0,0,.1)' }}>
-        {STYLES.map(([st, name]) => <button key={st} title={name} onClick={() => { set({ style: st }, '선 모양'); setOpenDash(false) }} style={btn(style === st, { width: '100%', justifyContent: 'space-between', padding: '0 8px' })}>
+        {STYLES.map(([st, name]) => <button key={st} title={name} onClick={() => { set(it => (hasWidth(it) ? { style: st } : null), '선 모양'); setOpenDash(false) }} style={btn(style === st, { width: '100%', justifyContent: 'space-between', padding: '0 8px' })}>
           {dashIcon(st)}<span style={{ fontSize: 11, color: C.muted }}>{name}</span></button>)}
       </div>}
-    </div></Row>
-    {kind === 'ortho' && <Row label="모서리"><Stepper title="꺾인 곳 둥글기(0 = 각짐)" {...num('curve_r', 10, 0, 40, 1, '모서리')} /></Row>}
+    </div></Row>}
+    {fillItems.length > 0 && <Row label="채움"><FillGrid value={fillMixed ? undefined : fill} onPick={c => set(it => { const k = fillKey(it); return k ? { [k]: k === 'bg' ? argbToBg(c) : c } : null }, '채움')} /></Row>}
+    {arrows.length > 0 && <>
+      <Row label="화살촉"><Seg value={head} onPick={h => set(onArrows(() => ({ head: h === 'end' || h === 'both', head_start: h === 'start' || h === 'both' })), '화살촉')}
+        items={[['none', ICONS.none, '없음'], ['end', ICONS.end, '끝만'], ['both', ICONS.both, '양쪽'], ['start', ICONS.start, '시작만']]} /></Row>
+      <Row label="머리"><Stepper title="화살촉 크기 배율" {...num(arrows, a => a.head_scale, 1, 0.5, 3, 0.1, '머리 크기', (a, v) => ({ head_scale: v }))} fmt={v => v.toFixed(1) + '×'} /></Row>
+      {kind === 'ortho' && <Row label="모서리"><Stepper title="꺾인 곳 둥글기(0 = 각짐)" {...num(arrows, a => a.curve_r, 10, 0, 40, 1, '모서리', (a, v) => ({ curve_r: v }))} /></Row>}
+    </>}
+    {texts.length > 0 && <>
+      <div style={{ borderTop: `1px solid ${C.line}`, margin: '4px 0 0' }} />
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}><span style={{ fontWeight: 600 }}>글자</span>
+        {firstText && <span style={{ fontSize: 11, color: C.muted, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>「{firstText.slice(0, 10)}{firstText.length > 10 ? '…' : ''}」</span>}</div>
+      <Row label="크기"><Stepper title="글자 크기" values={texts.map(t => t.font)} onStep={d => set(it => patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })), '글자 크기', '글자 크기')} fmt={v => v + 'pt'} /></Row>
+      <Row label="색"><ColorGrid value={tColor} onPick={(c, drag) => set(it => patchTexts(it, () => ({ color: c })), '글자 색', drag ? 'tcolor' : null)} /></Row>
+    </>}
   </div>
 }
