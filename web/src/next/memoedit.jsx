@@ -66,11 +66,11 @@ export function MemoEditor({ spec, onDone }) {
     })
     ed.current = editor
     try {   // 커서 = 고른 줄 끝(Enter로 들어옴) 아니면 맨 끝
-      const b = spec.caret != null ? lineBlocks(editor.state.doc)[spec.caret] : null
-      editor.commands.setTextSelection(b ? (b.node.isTextblock ? b.at + b.node.nodeSize - 1 : b.at) : editor.state.doc.content.size); editor.view.focus()
+      const b = spec.caret != null ? lineBlocks(editor.state.doc)[spec.caret] : null, hit = spec.at && editor.view.posAtCoords({ left: spec.at.x, top: spec.at.y })   // 두 번 누른 자리가 먼저
+      editor.commands.setTextSelection(hit ? hit.pos : b ? (b.node.isTextblock ? b.at + b.node.nodeSize - 1 : b.at) : editor.state.doc.content.size); editor.view.focus()
     } catch { editor.commands.focus('end') }
     editor.on('update', () => sp.current.onChange?.(docToLines(editor.getJSON())))   // 치는 동안 메모 높이(칠판에 바로)
-    const onDown = e => { if (box.current && !box.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }
+    const onDown = e => { if (e.button === 0 && box.current && !box.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }
     const tm = setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)   // 0초 안에 닫히면(개발 모드 두 번 띄우기) 감시가 남아 오류를 쌓던 것 — 타이머도 지움
     // 치는 중에도 휠 = 칠판 확대(입력 칸은 배율 따라 같이 커짐 — 2026-10-18 사용자)
     const el = box.current, onWheel = e => { if (!sp.current.onWheel) return; e.preventDefault(); e.stopPropagation(); sp.current.onWheel(e) }
@@ -111,7 +111,7 @@ ${S} hr{border:0;margin:0;height:${P(MEMO.HR * 2)};position:relative;overflow:vi
 ${S} hr.ProseMirror-selectednode{background:rgba(137,180,250,.25)}
 ${S} code{font-family:${MONO_FONT};font-size:inherit;background:${CODE_BAND}}${S} ::selection{background:rgba(137,180,250,.35)}`
   const item = { all: 'unset', boxSizing: 'border-box', display: 'block', width: '100%', padding: '5px 10px', borderRadius: 5, cursor: 'pointer' }
-  return <div ref={box} data-testid="memo-editor" onPointerDown={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} onMouseMove={onMove} onMouseLeave={() => setHov(null)}
+  return <div ref={box} data-testid="memo-editor" onPointerDown={e => { e.stopPropagation(); if (e.button === 1) sp.current.onPan?.(e) }} onMouseDown={e => { if (e.button === 1) e.preventDefault() }} onWheel={e => e.stopPropagation()} onMouseMove={onMove} onMouseLeave={() => setHov(null)}
     style={{ position: 'absolute', left: spec.left, top: spec.top, width: spec.width, boxSizing: 'border-box', padding: `${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.LPAD)}`, background: spec.fill || '#fff', borderRadius: P(10), outline: '1.5px solid #89b4fa', zIndex: 20, colorScheme: 'light' }}>
     <style>{css}</style>
     <div ref={host} />

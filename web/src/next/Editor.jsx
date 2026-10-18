@@ -210,7 +210,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   // ── 포인터 ──
   function onPointerDown(e) {
     if (readOnly) { svg.current.setPointerCapture(e.pointerId); st.current = { ...st.current, kind: 'pan', right: false, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }   // 보기 전용 = 끌면 화면 이동
-    if (R.current.editing) return
+    if (R.current.editing && e.button === 0) return   // 고치는 중에도 휠·오른쪽 끌기 = 화면 이동(입력은 그대로 — 2026-10-18 사용자)
     if (R.current.webOn) setWebOn(null)   // 웹 카드 조작 중 바깥을 누름 = 끝(칸 안 누르기는 페이지가 받아 여기 안 옴)
     const p = toSceneP(e), m = R.current.model, z = R.current.cam.z
     svg.current.setPointerCapture(e.pointerId)
@@ -412,6 +412,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const s = st.current, p = toSceneP(e)
     st.current = { space: s.space }
     setCursor('default')
+    if (s.kind === 'pan' && R.current.editing) return   // 고치는 중 이동 = 메뉴·도구 끝 없이
     if (s.kind === 'pan' && s.right && Math.hypot(e.clientX - s.sx, e.clientY - s.sy) < 4 && R.current.tool !== 'select') {   // 그리는 도구 중 = 도구 끝(번호 연달아 찍다가 우클릭 — 2026-10-18 사용자)
       setOverlay(o => ({ ...o, poly: null, draw: null })); setTool('select'); return }
     if (s.kind === 'pan' && s.right && Math.hypot(e.clientX - s.sx, e.clientY - s.sy) < 4) {   // 제자리 우클릭 = 메뉴(고른 것 그대로 — 데스크톱과 같음)
@@ -985,21 +986,22 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (readOnly) return
     if (R.current.tool === 'polygon') { finishPoly(overlay.poly || [], false); return }
     const p = toSceneP(e), lb = labelAt(p)
-    if (lb) { setSel([lb.it._id]); setEditing({ id: lb.it._id, kind: 'alabel', i: lb.i }); return }
+    const at = { x: e.clientX, y: e.clientY }   // 두 번 누른 자리에 커서(2026-10-18 사용자: 한 번 더 눌러야 했음)
+    if (lb) { setSel([lb.it._id]); setEditing({ id: lb.it._id, kind: 'alabel', i: lb.i, at }); return }
     const hit = topHit(hitPool(), p, HIT_PX / R.current.cam.z, textBox)
     if (!hit || hit.locked) return
     if (hit.type === 'frame') { const b = frameTagBox(hit); if (p.y <= b.y + b.h + 2 / R.current.cam.z) { setSel([hit._id]); setTagEdit(hit._id) } return }   // 이름표 = 그 자리에서 이름 고치기
-    if (hit.type === 'memo') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'memo' }); return }
+    if (hit.type === 'memo') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'memo', at }); return }
     if (hit.type === 'web') { setSel([hit._id]); if (hit.frameable) { setWebOn(hit._id); setStatus('웹 카드 안을 조작하는 중 — 바깥을 누르면 끝') } else window.open(hit.url, '_blank', 'noopener'); return }   // 막는 사이트 = 새 탭
-    if (hit.type === 'table') { const cell = cellAt(hit, toLocal(hit, p)); if (cell) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'cell', ...cell }) } return }
+    if (hit.type === 'table') { const cell = cellAt(hit, toLocal(hit, p)); if (cell) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'cell', ...cell, at }) } return }
     if (isArrow(hit)) {   // 화살표 빈 자리 더블클릭 = 그 자리에 새 라벨(여러 개 — 데스크톱 `add_label_at_scene_pos`)
       const labels = labelsOf(hit), pr = projectOn(hit, toLocal(hit, p))
       labels.push({ text: '', color: hit.color || INK, font: 16, bg: null, t: pr.t, off: 0 })
       commit(R.current.model.items.map(x => (x._id === hit._id ? withLabels(hit, labels) : x)), [hit._id], '라벨')
       setEditing({ id: hit._id, kind: 'alabel', i: labels.length - 1, fresh: true }); return
     }
-    if (hit.type === 'text') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'text' }) }
-    else if (['rect', 'ellipse', 'symbol'].includes(hit.type) || (hit.type === 'polygon' && hit.closed)) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'label' }) }
+    if (hit.type === 'text') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'text', at }) }
+    else if (['rect', 'ellipse', 'symbol'].includes(hit.type) || (hit.type === 'polygon' && hit.closed)) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'label', at }) }
   }
   // 고치는 동안 글에 맞춘 상자 높이를 바로(미리보기 — 끝낼 때 commit이 같은 값으로 확정)
   function liveLabel(id, { text, runs }) {
@@ -1230,6 +1232,9 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
 
   // 휠 = 커서 기준 확대
+  // 고치기 칸 위 휠 클릭 = 칠판 화면 이동(칸이 칠판 svg 밖이라 넘겨받음 — 끄는 동안은 svg가 포인터를 잡음)
+  const startPan = useCallback(e => { try { svg.current.setPointerCapture(e.pointerId) } catch { /* 이미 끝난 포인터 */ }
+    st.current = { ...st.current, kind: 'pan', right: false, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing') }, [])   // eslint-disable-line
   // 메모 입력 칸도 이걸 부름
   const wheelZoom = useCallback(e => { const r = svg.current.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top
     setCam(c => { const z = Math.min(ZMAX, Math.max(ZMIN, c.z * (e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP))), k = z / c.z; return { z, x: mx - (mx - c.x) * k, y: my - (my - c.y) * k } }) }, [setCam])
@@ -1309,7 +1314,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       <svg ref={svg} width={size.w} height={size.h} style={{ display: 'block', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }} data-testid="board"
-        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onDoubleClick={onDoubleClick} onContextMenu={e => e.preventDefault()}>
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onDoubleClick={onDoubleClick} onContextMenu={e => e.preventDefault()}
+        onMouseDown={e => { if (R.current.editing && e.button !== 0) e.preventDefault() }}>
         <g transform={`translate(${cam.x},${cam.y}) scale(${z})`} style={{ '--z': z }}>
           {visible.map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
             : it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
@@ -1410,11 +1416,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         return <TextEditor key={`${editing.id}-cell`} onDone={res => (res ? finishCell(res.text, res.move, res.runs) : finishCell(null, null))}   // 돌려준 다음 칸 내용으로 편집기가 바로 바꿈
           spec={{ cell: true, cellKey: `${editing.r},${editing.c}`, left: Math.min(...xs), top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: h, px: pxFor(txt0), pxFor, zoom: cam.z, family: 'app', weight: cs.bold ? 700 : 400,
             color: ink(cs.color || '#111111', !!cs.fill), bg: 'var(--mb-editbg)', align: cs.align, text: txt0, runs: editing.fresh || editing.armed ? undefined : it.cell_runs?.[`${editing.r},${editing.c}`], onReady: setLiveEd,
-            armed: !!editing.armed, fresh: !!editing.fresh, onArm: () => { const e = { id: editing.id, kind: 'cell', r: editing.r, c: editing.c, fresh: true }; R.current.editing = e; setEditing(e) } }} /> })(editing?.kind === 'cell' ? editing : !editing && cellSel && sel.length === 1 && sel[0] === cellSel.id ? { id: cellSel.id, kind: 'cell', r: cellRange(cellSel).r0, c: cellRange(cellSel).c0, armed: true } : null)}
+            armed: !!editing.armed, fresh: !!editing.fresh, at: editing.at, onPan: startPan, onWheel: wheelZoom, onArm: () => { const e = { id: editing.id, kind: 'cell', r: editing.r, c: editing.c, fresh: true }; R.current.editing = e; setEditing(e) } }} /> })(editing?.kind === 'cell' ? editing : !editing && cellSel && sel.length === 1 && sel[0] === cellSel.id ? { id: cellSel.id, kind: 'cell', r: cellRange(cellSel).r0, c: cellRange(cellSel).c0, armed: true } : null)}
       {editing?.kind === 'memo' && (() => { const it = byId.get(editing.id); if (!it) return null; const s = it.scale || 1, o = scr(toScene(it, { x: it.rect[0], y: it.rect[1] }))
-        return <MemoEditor key={it._id} spec={{ left: o.x, top: o.y, width: it.rect[2] * s * cam.z, zoom: s * cam.z, fill: it.fill ? cssColor(it.fill) : '#fff', lines: it.lines, caret: editing.caret, onChange: ls => liveMemo(it._id, ls), onWheel: wheelZoom }} onDone={finishMemo} /> })()}
+        return <MemoEditor key={it._id} spec={{ left: o.x, top: o.y, width: it.rect[2] * s * cam.z, zoom: s * cam.z, fill: it.fill ? cssColor(it.fill) : '#fff', lines: it.lines, caret: editing.caret, at: editing.at, onChange: ls => liveMemo(it._id, ls), onWheel: wheelZoom, onPan: startPan }} onDone={finishMemo} /> })()}
       {editing && editing.kind !== 'cell' && editing.kind !== 'memo' && (() => { const s = editSpec(); if (!s) return null
-        return <TextEditor key={editing.id} spec={{ ...s, onReady: setLiveEd }} onDone={finishEdit} /> })()}
+        return <TextEditor key={editing.id} spec={{ ...s, onReady: setLiveEd, at: editing.at, onPan: startPan, onWheel: wheelZoom }} onDone={finishEdit} /> })()}
       {editing && liveEd && <EditProps ed={liveEd} />}
       {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}

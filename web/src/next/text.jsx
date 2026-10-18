@@ -36,6 +36,8 @@ const Finish = Extension.create({
 
 // 바로 포커스 + 커서를 끝으로 — TipTap focus 명령은 다음 그리기 때 돌아서(창이 가려지면 0.6초까지 늦음 — 2026-10-18 실측) 두 번 누르자마자 친 글자가 빠질 수 있음
 const focusNow = editor => { try { editor.commands.setTextSelection(editor.state.doc.content.size); editor.view.focus() } catch { editor.commands.focus('end') } }
+// 두 번 누른 자리(화면 px)에 커서 — 글 밖이면 그대로(끝)
+const caretAt = (editor, at) => { if (!at) return; try { const hit = editor.view.posAtCoords({ left: at.x, top: at.y }); if (hit) editor.commands.setTextSelection(hit.pos) } catch { /* 없어도 그만 */ } }
 
 // spec: { left, top (화면 px — 문서 상자 왼쪽 위) 또는 center(화면 px — 도형 라벨 가운데), px(글자 px, 화면 배율 적용 전), zoom, family('app'|'board'), weight, color, align('left'|'center'),
 //         rotation, origin(화면 px 회전 중심), text, runs, width(화면 px — 주면 그 폭에서 줄바꿈: 왼쪽 위 라벨), flat(테두리 없이 그 자리에 겹침), onChange(치는 동안 { text, runs }) } — onDone({ text, runs })
@@ -59,11 +61,11 @@ export function TextEditor({ spec, onDone }) {
       element: host.current,
       extensions: [Document, Paragraph, Text, Bold, Code, TextStyle, Color, BackgroundColor, FontWeight, UndoRedo, Finish.configure({ onDone: finish, onCancel: spec.cell ? cancel : null, onMove: spec.cell ? finish : null, isArmed: () => !!sp.current.armed })],
       content: runsToRichText(spec.text || '', spec.runs, spec.weight && spec.weight !== 400 ? spec.weight : null),
-      autofocus: 'end',
+      autofocus: spec.at ? false : 'end',   // 두 번 누른 자리에 둔 커서를 한 박자 늦은 autofocus가 끝으로 옮기지 않게
       editorProps: { attributes: { spellcheck: 'false' }, handlePaste: () => !!sp.current.armed },   // 대기 중 Ctrl+V = 칠판 붙여넣기(편집기에 글이 숨어 들어가지 않게)
     })
     ed.current = editor
-    focusNow(editor)   // 기본 autofocus는 한 박자 늦어 두 번 누르자마자 친 글자가 빠질 수 있음 — 바로
+    focusNow(editor); if (!spec.armed) caretAt(editor, spec.at)   // 기본 autofocus는 한 박자 늦어 두 번 누르자마자 친 글자가 빠질 수 있음 — 바로
     if (spec.onChange) editor.on('update', () => sp.current.onChange?.(richTextToRuns(editor.getJSON(), sp.current.weight || 400)))   // 치는 동안 칠판에 바로(왼쪽 위 라벨 상자 높이)
     editor.on('update', () => { if (sp.current.armed && editor.getText()) sp.current.onArm?.() })   // 대기 중 글이 들어오면(띄어쓰기 등) 바로 고치기로
     if (spec.pxFor) editor.on('update', () => setPx(sp.current.pxFor(editor.getText())))   // 치는 동안 글자 크기(표 자동 크기 칸 — 칸에 맞춰 줄어듦)
@@ -73,9 +75,12 @@ export function TextEditor({ spec, onDone }) {
     let escWhileEditing = null
     host.current.addEventListener('keydown', e => { if (e.key === 'Escape' && !sp.current.armed) escWhileEditing = e }, true)
     host.current.addEventListener('keydown', e => { if (e === escWhileEditing) e.stopPropagation() })
-    const onDown = e => { if (!host.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }   // 「글자」 카드를 누를 땐 계속
-    setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)
-    return () => { window.removeEventListener('pointerdown', onDown, true); finish(); spec.onReady?.(null); editor.destroy() }
+    const onDown = e => { if (e.button === 0 && host.current && !host.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }   // 「글자」 카드를 누를 땐 계속
+    const tm = setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)   // 휠·오른쪽 바깥 누르기 = 화면 이동(끝내지 않음)
+    // 고치는 중 휠 = 칠판 확대(메모와 같게 — 2026-10-18 사용자)
+    const el = host.current, onWheel = e => { if (!sp.current.onWheel) return; e.preventDefault(); e.stopPropagation(); sp.current.onWheel(e) }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => { clearTimeout(tm); window.removeEventListener('pointerdown', onDown, true); el.removeEventListener('wheel', onWheel); finish(); spec.onReady?.(null); editor.destroy() }
   }, [])   // eslint-disable-line
   const [px, setPx] = useState(spec.px)
   const wasArmed = useRef(!!spec.armed)
@@ -85,6 +90,7 @@ export function TextEditor({ spec, onDone }) {
     else if (wasArmed.current) {   // 대기 → 고치기: 바로 친 글(fresh)은 그대로 이어 받고, Enter·F2·두 번 누르기는 있는 글을 불러옴
       if (!spec.fresh) { e.commands.setContent(runsToRichText(spec.text || '', spec.runs, spec.weight && spec.weight !== 400 ? spec.weight : null), { emitUpdate: false }); setPx(spec.px) }
       if (!e.view.hasFocus()) focusNow(e)
+      if (!spec.fresh && spec.at) { const at = spec.at; setTimeout(() => caretAt(e, at), 0) }   // 두 번 누른 칸 = 누른 자리에 커서(칸 자동 글자 크기가 바뀐 뒤에 재야 맞음 — 그림 차례(rAF)는 가려진 창에서 안 와서 setTimeout)
     }
     wasArmed.current = !!spec.armed
   }, [spec.armed, spec.cellKey])   // eslint-disable-line
@@ -96,7 +102,7 @@ export function TextEditor({ spec, onDone }) {
     focusNow(ed.current); setPx(spec.px)
   }, [spec.cellKey])   // eslint-disable-line
   const m = METRICS[spec.family === 'board' ? 'board' : 'app'], fs = px * spec.zoom
-  return <div ref={host} data-testid="text-editor" onPointerDown={e => e.stopPropagation()} onWheel={e => e.stopPropagation()}
+  return <div ref={host} data-testid="text-editor" onPointerDown={e => { e.stopPropagation(); if (e.button === 1) sp.current.onPan?.(e) }} onMouseDown={e => { if (e.button === 1) e.preventDefault() }} onWheel={e => e.stopPropagation()}
     style={{ position: 'absolute', left: spec.center ? spec.center.x : spec.left, top: spec.center ? spec.center.y : spec.top, minWidth: 8, padding: TEXT_MARGIN * spec.zoom, boxSizing: 'border-box',
       transform: spec.center ? 'translate(-50%,-50%)' : spec.rotation ? `rotate(${spec.rotation}deg)` : undefined,   // center = 도형 라벨(가운데 기준)
       transformOrigin: !spec.center && spec.origin ? `${spec.origin.x - spec.left}px ${spec.origin.y - spec.top}px` : undefined,

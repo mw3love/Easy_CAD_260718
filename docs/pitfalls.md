@@ -1646,3 +1646,5 @@
 - 웹 칠판 공동작업: 브라우저마다 열 때 도형 _id를 새로 만들면 서로 같은 도형을 못 알아봄 — 이름표(uid)를 파일에 저장. 화살표 연결 순번도 사람마다 다르니 합칠 땐 uid로. 되돌리기를 「칠판 통째」로 두면 남의 작업까지 지움 — 도형 단위로(2026-10-18).
 - 웹 칠판: 로그인 창처럼 칠판보다 먼저 뜨는 화면을 같은 컴포넌트 안에서 일찍 return하면, 빈 ref를 재는 effect(ResizeObserver)가 멈춤 — 앞 화면은 바깥 컴포넌트로(2026-10-18).
 - 웹 칠판 입력 칸(TipTap)에서 Esc로 끝내며 칠판 상태를 바꾸면(줄 고르기), 같은 keydown이 window의 칠판 Esc(= 고르기 풀기)까지 올라가 바로 풀어 버림 — 리액트가 리스너 사이에 렌더를 끝내 `editing`이 이미 null. 입력 칸 `handleKeyDown`에서 `stopPropagation`.
+- 웹 칠판 TipTap 편집기: `autofocus: 'end'`는 한 박자 늦게 돌아, 만든 직후 `setTextSelection`으로 둔 커서(두 번 누른 자리)를 끝으로 덮어씀 — 자리를 직접 둘 땐 autofocus를 끔.
+- 웹 칠판: 시험 창(Playwright 등)이 가려져 있으면 requestAnimationFrame 콜백이 안 옴 — "다음 그림 뒤에" 할 일은 setTimeout 0으로.
