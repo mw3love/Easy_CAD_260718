@@ -70,12 +70,12 @@ export function MemoEditor({ spec, onDone }) {
       editor.commands.setTextSelection(b ? (b.node.isTextblock ? b.at + b.node.nodeSize - 1 : b.at) : editor.state.doc.content.size); editor.view.focus()
     } catch { editor.commands.focus('end') }
     editor.on('update', () => sp.current.onChange?.(docToLines(editor.getJSON())))   // 치는 동안 메모 높이(칠판에 바로)
-    const onDown = e => { if (!box.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }
-    setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)
+    const onDown = e => { if (box.current && !box.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }
+    const tm = setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)   // 0초 안에 닫히면(개발 모드 두 번 띄우기) 감시가 남아 오류를 쌓던 것 — 타이머도 지움
     // 치는 중에도 휠 = 칠판 확대(입력 칸은 배율 따라 같이 커짐 — 2026-10-18 사용자)
     const el = box.current, onWheel = e => { if (!sp.current.onWheel) return; e.preventDefault(); e.stopPropagation(); sp.current.onWheel(e) }
     el.addEventListener('wheel', onWheel, { passive: false })
-    return () => { window.removeEventListener('pointerdown', onDown, true); el.removeEventListener('wheel', onWheel); finish(); editor.destroy() }
+    return () => { clearTimeout(tm); window.removeEventListener('pointerdown', onDown, true); el.removeEventListener('wheel', onWheel); finish(); editor.destroy() }
   }, [])   // eslint-disable-line
   const z = spec.zoom, P = v => `${v * z}px`, fs = k => P(MEMO_KIND[k].pt * PT), ls = METRICS.board.lineSpacing, g = k => P(MEMO_KIND[k].gap ?? MEMO.GAP)
   // 치는 중에도 줄 손잡이 ⠿(2026-10-18 사용자) — 마우스가 올라간 줄의 첫 줄 높이에. 누르면 고치기를 끝내고 칠판의 손잡이 끌기·메뉴로 이어짐

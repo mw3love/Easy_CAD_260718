@@ -228,7 +228,8 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     }
     const lk = frameLockAt(p); if (lk) { setLoose(l => (l === lk._id ? null : lk._id)); return }   // 이름표 옆 자물쇠 — 잠깐 틀만
     const wo = webOpenAt(p); if (wo) { window.open(wo.url, '_blank', 'noopener'); return }   // 웹 카드 오른쪽 위 ↗ = 새 탭
-    const mh = memoHandleHit(p)
+    // 줄을 고른 채 Shift·Ctrl+클릭은 손잡이가 아니라 줄 글자 위여도 같음(2026-10-18 사용자: 글자 위를 눌러 고른 것이 다 풀렸음 — 노션은 블록 아무 데나)
+    const mh = memoHandleHit(p) || ((e.shiftKey || e.ctrlKey || e.metaKey) && lineSel ? (hv => (hv && hv.it._id === lineSel.id ? hv : null))(memoRowAt(p, 0)) : null)
     // ⠿ — 연속 = Shift·Ctrl+Shift 클릭, 개별 = Ctrl·Alt+Shift 클릭(노션 + 흔한 방식 둘 다 — 2026-10-18 사용자), 고른 줄 안을 끌면 고른 줄 전부, Alt 끌기 = 복사
     if (mh) { setSel([mh.it._id]); const ls = lineSel?.id === mh.it._id ? lineSel : null, mod = e.ctrlKey || e.metaKey
       const toggle = (mod && !e.shiftKey) || (e.altKey && e.shiftKey), range = e.shiftKey && !e.altKey
@@ -237,7 +238,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
         if (has < 0) { setLineSel({ id: ls.id, s: mh.s, e: mh.e, more: us }); return }
         const left = us.filter((_, j) => j !== has); if (!left.length) { setLineSel(null); return }
         const [a0, ...rest] = left.slice().reverse(); setLineSel({ id: ls.id, s: a0[0], e: a0[1], more: rest }); return }
-      if (range) { if (ls) setLineSel({ id: ls.id, s: Math.min(ls.s, mh.s), e: Math.max(ls.e, mh.e), more: ls.more }); else setLineSel({ id: mh.it._id, s: mh.s, e: mh.e }); return }
+      if (range) { if (ls) { const s1 = Math.min(ls.s, mh.s), e1 = Math.max(ls.e, mh.e), more = (ls.more || []).filter(([a, b]) => b <= s1 || a >= e1); setLineSel({ id: ls.id, s: s1, e: e1, ...(more.length ? { more } : {}) }) } else setLineSel({ id: mh.it._id, s: mh.s, e: mh.e }); return }
       const inSel = ls && selUnits(ls).some(([s0, e0]) => mh.s >= s0 && mh.e <= e0)
       st.current = { ...st.current, kind: 'mline', id: mh.it._id, units: inSel ? selUnits(ls) : [[mh.s, mh.e]], copy: e.altKey, start: p, moved: false }; return }
     if (lineSel) setLineSel(null)
