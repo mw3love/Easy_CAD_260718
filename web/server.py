@@ -2,9 +2,10 @@
 
 하는 일 세 가지(화면·저장은 파이썬 기본 라이브러리만, 대화는 데스크톱 앱과 같은 openai·httpx):
 - 칠판 화면: `web/dist/`(먼저 `cd web && npm run build`)를 그대로 내준다.
-- 칠판 저장: GET/PUT `/api/board/<이름>` — tldraw 문서(JSON)를 데이터 폴더의 `<이름>.json`에.
+- 칠판 저장: GET/PUT `/api/doc/<이름>` — 칠판 문서(.ecad, 데스크톱과 같은 형식)를 데이터 폴더의 `<이름>.ecad`에.
+  (옛 tldraw 칠판 `/api/board/<이름>`·`<이름>.json`은 2026-10-18 갈아타며 지움 — 쌓인 칠판 없음, 사용자 확인.)
   쓰기는 안전 저장(임시 파일 → 바꿔치기, `easycad/fileio/safe_write.py`)이라 도중에 꺼져도 직전 완성본이 남는다.
-  바로 앞 저장본은 `<이름>.prev.json`으로 하나 남긴다(실수로 지웠을 때 손으로 되살리기용).
+  바로 앞 저장본은 `<이름>.prev.ecad`로 하나 남긴다(실수로 지웠을 때 손으로 되살리기용).
 - KAIROS 대화(§8 항목61 ⓒ): POST `/api/chat`(앞 대화 + 칠판에서 고른 글 → 답, `easycad/ai/board_chat.py`), GET `/api/models`,
   GET/PUT `/api/chatlog/<이름>` — 칠판마다 대화 기록(`<이름>.chat.json`). 게이트웨이 키는 이 서버 PC에만 있다(브라우저로 안 감 —
   키 찾는 순서는 데스크톱과 같다, `gateway.resolve_api_key`).
@@ -49,15 +50,14 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ── API ──
     def _board_path(self):
-        """칠판(`/api/board/<이름>` → `<이름>.json`)·대화 기록(`/api/chatlog/<이름>` → `<이름>.chat.json`)·
-        직접 만드는 칠판 문서(`/api/doc/<이름>` → `<이름>.ecad`, §8 항목61 「바뀐 결정」) 파일 자리.
+        """칠판 문서(`/api/doc/<이름>` → `<이름>.ecad`)·대화 기록(`/api/chatlog/<이름>` → `<이름>.chat.json`) 파일 자리.
         API 경로가 아니면 None, 이름이 나쁘면 ""."""
-        m = re.match(r"^/api/(board|chatlog|doc)/([^/?#]+)$", self.path)
+        m = re.match(r"^/api/(chatlog|doc)/([^/?#]+)$", self.path)
         if not m:
             return None
         from urllib.parse import unquote
         name = unquote(m.group(2))
-        ext = {"board": ".json", "chatlog": ".chat.json", "doc": ".ecad"}[m.group(1)]
+        ext = {"chatlog": ".chat.json", "doc": ".ecad"}[m.group(1)]
         return os.path.join(self.data_dir, name + ext) if NAME_RE.match(name) else ""
 
     def _json(self, code: int, obj):

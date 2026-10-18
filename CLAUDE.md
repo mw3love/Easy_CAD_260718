@@ -112,16 +112,15 @@ tests/
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
 └── test_part1~52_*.py      테마별 회귀 스모크 1418종(2026-10-18 기준, 개별·전체 pytest 실행 가능)
-web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + tldraw 5.5.2(버전 고정). src/main.jsx(앱)·shapes.jsx(.ecad 도형:
-│                          글·상자 정확한 색/크기, esym 심볼, eboard 보드)·cad.jsx(직각 화살표·큐닷·포트점·끝점 다시 붙이기·TRIM — 붙는 규칙은 데스크톱과 같게)·route.js(길 찾기 = 데스크톱
-│                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecad.js(.ecad 열기)·ecadExport.js(.ecad 저장)·ecadFormat.js(순수 변환,
-│                          `npm test`)·symbols.json(`tools/export_web_symbols.py`가 데스크톱 심볼에서 뽑음)·boardStore.js(서버 저장)·chat.jsx(오른쪽 KAIROS
-│                          대화창·「칠판에 붙이기」)·chatFormat.js(답 글→카드 글·빈자리, 순수)·server.py(감시 PC용 저장 서버 + 대화 길목 `/api/chat`·`/api/models`·
-│                          `/api/chatlog`·`/api/doc`). web_bakeoff/는 바탕 부품 비교 시험(보존용).
-│                          **직접 만드는 칠판**(tldraw 대체, 5단계에 갈아탐): `next.html` + `src/next/`(geom.js 그리기 계산·render.jsx 종류별 SVG·doc.js .ecad 문서·
+web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + TipTap 3.32.0(글 편집, 버전 고정). **2026-10-18 5단계 갈아탐: tldraw 뺌**(옛 tldraw 화면
+│                          src/main.jsx·shapes.jsx·cad.jsx·chat.jsx·boardStore.js·ecad.js·ecadExport.js는 지움 — git에 있음). 남은 공용: route.js(길 찾기 = 데스크톱
+│                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecadFormat.js(순수 변환, `npm test`)·symbols.json(`tools/export_web_symbols.py`가
+│                          데스크톱 심볼에서 뽑음)·chatFormat.js(답 글 읽기·빈자리, 순수)·server.py(감시 PC용 저장 서버 `/api/doc`(.ecad) + 대화 `/api/chat`·`/api/models`·
+│                          `/api/chatlog` + 웹 카드 `/api/link`). web_bakeoff/는 바탕 부품 비교 시험(보존용). 주소 `/`(옛 `next.html`은 `/`로 넘기는 안내판).
+│                          **칠판**(직접 만든 것): `index.html` + `src/next/`(geom.js 그리기 계산·render.jsx 종류별 SVG·doc.js .ecad 문서·
 │                          arrows.js 길 다시 찾기 + 2단계 Editor.jsx 편집 화면·edit.js 편집 계산·align.js 정렬선·model.js _id 모델·text.jsx TipTap 글 편집 + 3단계 connect.js 붙는 규칙·arrowedit.js 알약·곡선·라벨·
 │                          arrowkind.js 종류 바꾸기·xform.js 좌표 + 4단계 props.jsx 우상 속성 카드·palette.jsx 좌상 도형·심볼·layers.jsx 좌하 레이어·minimap.jsx 우하 미니맵·
-│                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록)) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
+│                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿)) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
 │                          데스크톱 대조 시험 `tools/export_route_cases.py`·`export_connect_cases.py`·`export_arrow_cases.py` → `web/test/fixtures/`(규칙 고치면 다시 돌림)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론

@@ -20,7 +20,7 @@ python web/server.py
 ```
 
 - 다른 PC 크롬에서 `http://<감시 PC 주소>:5191` — 같은 칠판이 보인다. 주소 끝 `?board=이름`으로 칠판을 여러 개.
-- 저장 폴더: `%APPDATA%\EasyCAD\web_boards\<이름>.json` (바로 앞 저장본은 `<이름>.prev.json`). 바꾸려면 `--data 폴더`.
+- 저장 폴더: `%APPDATA%\EasyCAD\web_boards\<이름>.ecad` (데스크톱과 같은 형식, 바로 앞 저장본은 `<이름>.prev.ecad`). 바꾸려면 `--data 폴더`.
 - ⚠ 접근 제한이 없다 — 같은 네트워크의 누구나 열 수 있다. 회사 보안 확인 전엔 `--host 127.0.0.1`(이 PC에서만).
 - 두 PC에서 동시에 고치면 나중에 저장한 쪽이 이긴다(실시간 공동작업은 아직).
 - 코드를 고친 뒤엔 `npm run build`를 다시 하고 서버를 다시 켠다.
@@ -36,6 +36,5 @@ npm run dev          # http://localhost:5190 — 저장은 python web/server.py(
 npm test             # 순수 함수 시험
 ```
 
-직접 만드는 칠판(tldraw 대체, 만드는 중)은 `http://localhost:5190/next.html` — 문서는 `.ecad` 그대로, 서버 저장은 `/api/doc/<이름>`.
-
-tldraw는 5.5.2로 고정. `http://` 주소에선 라이선스 키 없이 개발 모드로 돌지만, 실제로 쓰려면 약관상 키가 필요(취미 라이선스는 표시가 남음).
+칠판은 직접 만든 것(`src/next/`) — 2026-10-18 tldraw에서 갈아탐(§8 항목61 5단계). 문서는 `.ecad` 그대로, 서버 저장은 `/api/doc/<이름>`.
+옛 주소 `next.html?board=…`는 `/`로 넘어간다(즐겨찾기용). 글 편집은 TipTap 3.32.0(MIT), 부품은 `package.json`에 모두 버전 고정.

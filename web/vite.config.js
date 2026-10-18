@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 // 개발 중엔 저장 API를 Python 서버(web/server.py, 5191)로 넘긴다
-// 페이지 둘: index.html(지금 tldraw 칠판) · next.html(직접 만드는 칠판, §8 항목61 「바뀐 결정」 — 5단계에서 index로 갈아탐)
+// 페이지: index.html = 칠판(직접 만든 것, §8 항목61 5단계 2026-10-18 갈아탐 — tldraw 뺌) · next.html = 옛 주소를 /로 넘기는 안내판
 export default defineConfig({
   plugins: [react()],
   server: { proxy: { '/api': 'http://localhost:5191' } },
