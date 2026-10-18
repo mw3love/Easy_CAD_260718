@@ -41,7 +41,10 @@ export function MemoEditor({ spec, onDone }) {
     editor.on('update', () => sp.current.onChange?.(docToLines(editor.getJSON())))   // 치는 동안 메모 높이(칠판에 바로)
     const onDown = e => { if (!host.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }
     setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)
-    return () => { window.removeEventListener('pointerdown', onDown, true); finish(); editor.destroy() }
+    // 치는 중에도 휠 = 칠판 확대(입력 칸은 배율 따라 같이 커짐 — 2026-10-18 사용자)
+    const el = host.current, onWheel = e => { if (!sp.current.onWheel) return; e.preventDefault(); e.stopPropagation(); sp.current.onWheel(e) }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => { window.removeEventListener('pointerdown', onDown, true); el.removeEventListener('wheel', onWheel); finish(); editor.destroy() }
   }, [])   // eslint-disable-line
   const z = spec.zoom, P = v => `${v * z}px`, fs = k => P(MEMO_KIND[k].pt * PT), ls = METRICS.board.lineSpacing, g = k => P(MEMO_KIND[k].gap ?? MEMO.GAP)
   const S = '[data-testid=memo-editor]'
@@ -54,7 +57,7 @@ ${S} h1{font-size:${fs('h1')};font-weight:700}${S} h2{font-size:${fs('h2')};font
 ${S} .ProseMirror>h1:not(:first-child){margin-top:${g('h1')}}${S} .ProseMirror>h2:not(:first-child){margin-top:${g('h2')}}${S} .ProseMirror>h3:not(:first-child){margin-top:${g('h3')}}
 ${S} ul,${S} ol{padding-left:${P(MEMO.INDENT)};list-style:none;counter-reset:n}${S} li{position:relative}
 ${S} ul:not([data-type=taskList])>li::before{content:'•';white-space:nowrap;position:absolute;right:calc(100% + ${P(6)});top:${P(TEXT_MARGIN)}}
-${S} ol>li{counter-increment:n}${S} ol>li::before{content:counter(n) '.';white-space:nowrap;position:absolute;right:calc(100% + ${P(6)});top:${P(TEXT_MARGIN)}}
+${S} ol>li{counter-increment:n}${S} ol>li::before{content:counter(n) '.';white-space:nowrap;font-variant-numeric:tabular-nums;position:absolute;right:calc(100% + ${P(6)});top:${P(TEXT_MARGIN)}}
 ${S} ul[data-type=taskList]>li{display:flex}${S} ul[data-type=taskList]>li>label{position:absolute;right:calc(100% + ${P(MEMO.INDENT - 2 - MEMO_KIND.todo.pt * PT * 0.9)});top:${P(TEXT_MARGIN)};height:${P(MEMO_KIND.todo.pt * PT * ls)};display:flex;align-items:center}
 ${S} ul[data-type=taskList]>li>label input{margin:0;width:${P(MEMO_KIND.todo.pt * PT * 0.9)};height:${P(MEMO_KIND.todo.pt * PT * 0.9)};accent-color:#2f80ed}
 ${S} ul[data-type=taskList]>li>div{flex:1}${S} ul[data-type=taskList]>li[data-checked=true]>div{color:${MUTED};text-decoration:line-through}
@@ -62,7 +65,7 @@ ${S} blockquote{border-left:${P(3)} solid #d4d4d8;padding:${P(TEXT_MARGIN)} 0 ${
 ${S} pre{font-family:${MONO_FONT};font-size:${fs('code')};background:${CODE_BAND};padding:${P(TEXT_MARGIN)} 0;line-height:${ls}}${S} pre code{font:inherit;background:none}
 ${S} code{font-family:${MONO_FONT};font-size:inherit;background:${CODE_BAND}}${S} ::selection{background:rgba(137,180,250,.35)}`
   return <div ref={host} data-testid="memo-editor" onPointerDown={e => e.stopPropagation()} onWheel={e => e.stopPropagation()}
-    style={{ position: 'absolute', left: spec.left, top: spec.top, width: spec.width, boxSizing: 'border-box', padding: P(MEMO.PAD), background: spec.fill || '#fff', borderRadius: P(10), outline: '1.5px solid #89b4fa', zIndex: 20 }}>
+    style={{ position: 'absolute', left: spec.left, top: spec.top, width: spec.width, boxSizing: 'border-box', padding: P(MEMO.PAD), background: spec.fill || '#fff', borderRadius: P(10), outline: '1.5px solid #89b4fa', zIndex: 20, colorScheme: 'light' }}>
     <style>{css}</style>
   </div>
 }

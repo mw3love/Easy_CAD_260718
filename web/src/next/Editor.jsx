@@ -729,11 +729,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     for (const r of memoLayout(it).rows) if (r.box && q.x >= x0 + r.box.x - pad && q.x <= x0 + r.box.x + r.box.s + pad && q.y >= y0 + r.box.y - pad && q.y <= y0 + r.box.y + r.box.s + pad) return { it, i: r.i } } return null }
   // ── 메모 2차: 줄 손잡이(⠿) — 끌기 = 줄 순서(다른 메모로도), 메모 밖에 놓기 = 새 메모(칠판으로 꺼내기), 누르기 = 메뉴 ──
   const rowBottom = (rows, k, h) => (rows[k + 1] ? rows[k + 1].y : h - MEMO.PAD)
-  function memoRowAt(p, margin = 28) {   // 메모 줄 위(또는 그 왼쪽 손잡이 자리) — 맨 위 메모부터
+  function memoRowAt(p, margin = 28, pad = 0) {   // 메모 줄 위(또는 그 왼쪽 손잡이 자리) — 맨 위 메모부터. pad = 위·아래·오른쪽 여유(화면 px)
     const z = R.current.cam.z
     for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'memo' || it.locked) continue
-      const q = toLocal(it, p), [x0, y0, w, h] = it.rect, mg = margin / z / (it.scale || 1)
-      if (q.x < x0 - mg || q.x > x0 + w || q.y < y0 || q.y > y0 + h) continue
+      const q = toLocal(it, p), [x0, y0, w, h] = it.rect, mg = margin / z / (it.scale || 1), pd = pad / z / (it.scale || 1)
+      if (q.x < x0 - mg || q.x > x0 + w + pd || q.y < y0 - pd || q.y > y0 + h + pd) continue
       const rows = memoLayout(it).rows; let r = rows[0]
       for (const row of rows) if (q.y >= y0 + row.y) r = row
       const [s, e] = lineUnit(it.lines || [], r.i); return { it, s, e } }
@@ -751,8 +751,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const hv = R.current.memoHov, it = hv && R.current.model.items.find(x => x._id === hv.id); if (!it) return false
     const q = toLocal(it, p), mg = 28 / R.current.cam.z / (it.scale || 1); return q.x >= it.rect[0] - mg && q.x <= it.rect[0] + MEMO.PAD && q.y >= it.rect[1] && q.y <= it.rect[1] + it.rect[3]
   }
-  function memoDropAt(p) {   // 끌어 놓을 자리 — 메모 위면 { id, to(줄 번호), y(안 좌표) }, 아니면 { out: p }
-    const hit = memoRowAt(p, 0); if (!hit) return { out: p }
+  // 끌어 놓을 자리 — 메모 위(손잡이 띠·가장자리 여유 포함)면 { id, to(줄 번호), y(안 좌표) }, 확실히 벗어나야 { out: p }(새 메모)
+  // 2026-10-18 사용자: 손잡이를 수직으로 내리면 새 메모가 됐음(손잡이가 메모 바깥 띠라 늘 「밖」으로 판정)
+  function memoDropAt(p) {
+    const hit = memoRowAt(p, 48, 20); if (!hit) return { out: p }
     const it = hit.it, q = toLocal(it, p), rows = memoLayout(it).rows, h = it.rect[3], y0 = it.rect[1]
     for (let k = 0; k < rows.length; k++) { const r = rows[k]; if (r.joinPrev) continue
       if (q.y < y0 + (r.y + rowBottom(rows, k, h)) / 2) return { id: it._id, to: r.i, y: y0 + r.y - MEMO.GAP / 2 } }
@@ -764,18 +766,21 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const tg = memoDropAt(p)
     if (tg.id === src._id) { commit(m.items.map(x => (x._id === src._id ? withLines(x, moveUnit(x.lines, s.unit, tg.to)) : x)), [src._id], '줄 옮김'); return }
     const { rest, unit } = takeUnit(src.lines, s.unit)
+    // 끌어내다 비게 된 메모는 지움(직접 글을 지워 빈 메모는 남김 — 2026-10-18 사용자 선택)
+    const gone = rest.every(l => !(l.t || '').trim())
+    const srcOut = items => (gone ? items.filter(x => x._id !== src._id) : items.map(x => (x._id === src._id ? withLines(x, rest) : x)))
     if (tg.id) { const dst = m.items.find(x => x._id === tg.id)
-      commit(m.items.map(x => (x._id === src._id ? withLines(x, rest) : x._id === dst._id ? withLines(x, [...x.lines.slice(0, tg.to), ...unit, ...x.lines.slice(tg.to)]) : x)), [dst._id], '줄 옮김'); return }
+      commit(srcOut(m.items.map(x => (x._id === dst._id ? withLines(x, [...x.lines.slice(0, tg.to), ...unit, ...x.lines.slice(tg.to)]) : x))), [dst._id], '줄 옮김'); return }
     const sc = src.scale || 1, it = base([p.x - 24 * sc, p.y - 16 * sc], { type: 'memo', rect: [0, 0, src.rect[2], 40], fill: src.fill, lines: unit, scale: sc, z: topZ(m.items) + 1 })
     const nw = { ...it, rect: [0, 0, src.rect[2], memoHeight(it)] }
-    commit([...m.items.map(x => (x._id === src._id ? withLines(x, rest) : x)), nw], [nw._id], '칠판으로 꺼냄')
+    commit([...srcOut(m.items), nw], [nw._id], '칠판으로 꺼냄')
   }
   function lineMenuEntries(lm) {
     const m = R.current.model, it = m.items.find(x => x._id === lm.id); if (!it) return []
     const L = it.lines, { s, e } = lm, cur = L[s], close = () => setLineMenu(null)
     const apply = (f, label) => () => { close(); const mm = R.current.model, x0 = mm.items.find(x => x._id === it._id); if (!x0) return; commit(mm.items.map(x => (x._id === it._id ? withLines(x, f(x.lines)) : x)), [it._id], label) }
     const each = f => lines => lines.map((l, j) => (j >= s && j < e ? f(l) : l))
-    const sw = (c, txt, bg) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ display: 'inline-flex', width: 18, height: 18, alignItems: 'center', justifyContent: 'center', borderRadius: 4, border: '1px solid var(--mb-line)', color: c || 'inherit', background: bg ? cssColor(bg) : 'transparent', fontWeight: 600 }}>A</span>{txt}</span>
+    const sw = (c, txt, bg) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ display: 'inline-flex', width: 18, height: 18, alignItems: 'center', justifyContent: 'center', borderRadius: 4, border: '1px solid var(--mb-line)', color: c || 'inherit', background: bg ? cssColor('#ff' + bg.slice(3)) : 'transparent', fontWeight: 600, ...(bg ? { color: '#1f1f1f' } : {}) }}>A</span>{txt}</span>
     return [
       ['전환', '', null, LINE_KINDS.map(([k, name]) => [(cur.k === k ? '✓ ' : '') + name, apply(each(l => convertLine(l, k)), '줄 전환')])],
       ['색', '', null, [...LINE_COLORS.map(([n, c]) => [sw(c, `${n} 텍스트`), apply(each(l => recolorLine(l, { color: c })), '줄 색')]), '-',
@@ -783,10 +788,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       '-',
       ['복제', '', apply(lines => [...lines.slice(0, e), ...structuredClone(lines.slice(s, e)), ...lines.slice(e)], '줄 복제')],
       ['삭제', '', apply(lines => [...lines.slice(0, s), ...lines.slice(e)], '줄 지움')],
-      '-',
-      ['칠판으로 꺼내기', '', () => { close(); const mm = R.current.model, x0 = mm.items.find(x => x._id === it._id); if (!x0) return; const b = sceneBox(x0, textBox)
-        memoLineDrop({ id: it._id, unit: [s, e] }, { x: b.x + b.w + 40 * (x0.scale || 1) + 24 * (x0.scale || 1), y: b.y + 16 * (x0.scale || 1) }) }],
-    ]
+    ]   // 「칠판으로 꺼내기」는 뺌(2026-10-18 사용자: 손잡이로 끌어내는 게 더 직관적)
   }
   function finishMemo(lines) {
     const ed = R.current.editing; setEditing(null); if (!ed || !lines) return
@@ -1185,12 +1187,14 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
 
   // 휠 = 커서 기준 확대
+  // 메모 입력 칸도 이걸 부름
+  const wheelZoom = useCallback(e => { const r = svg.current.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top
+    setCam(c => { const z = Math.min(ZMAX, Math.max(ZMIN, c.z * (e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP))), k = z / c.z; return { z, x: mx - (mx - c.x) * k, y: my - (my - c.y) * k } }) }, [setCam])
   useEffect(() => {
     const el = svg.current
-    const onWheel = e => { e.preventDefault(); const r = el.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top
-      setCam(c => { const z = Math.min(ZMAX, Math.max(ZMIN, c.z * (e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP))), k = z / c.z; return { z, x: mx - (mx - c.x) * k, y: my - (my - c.y) * k } }) }
+    const onWheel = e => { e.preventDefault(); wheelZoom(e) }
     el.addEventListener('wheel', onWheel, { passive: false }); return () => el.removeEventListener('wheel', onWheel)
-  }, [setCam])
+  }, [wheelZoom])
 
   // ── 그리기 차례·화면 밖 빼기 ──
   const hiddenL = useMemo(() => new Set(layersOf(model).filter(l => !l.visible).map(l => l.id)), [model])
@@ -1361,7 +1365,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
             color: ink(cs.color || '#111111', !!cs.fill), bg: 'var(--mb-editbg)', align: cs.align, text: txt0, runs: editing.fresh || editing.armed ? undefined : it.cell_runs?.[`${editing.r},${editing.c}`], onReady: setLiveEd,
             armed: !!editing.armed, fresh: !!editing.fresh, onArm: () => { const e = { id: editing.id, kind: 'cell', r: editing.r, c: editing.c, fresh: true }; R.current.editing = e; setEditing(e) } }} /> })(editing?.kind === 'cell' ? editing : !editing && cellSel && sel.length === 1 && sel[0] === cellSel.id ? { id: cellSel.id, kind: 'cell', r: cellRange(cellSel).r0, c: cellRange(cellSel).c0, armed: true } : null)}
       {editing?.kind === 'memo' && (() => { const it = byId.get(editing.id); if (!it) return null; const s = it.scale || 1, o = scr(toScene(it, { x: it.rect[0], y: it.rect[1] }))
-        return <MemoEditor key={it._id} spec={{ left: o.x, top: o.y, width: it.rect[2] * s * cam.z, zoom: s * cam.z, fill: it.fill ? cssColor(it.fill) : '#fff', lines: it.lines, onChange: ls => liveMemo(it._id, ls) }} onDone={finishMemo} /> })()}
+        return <MemoEditor key={it._id} spec={{ left: o.x, top: o.y, width: it.rect[2] * s * cam.z, zoom: s * cam.z, fill: it.fill ? cssColor(it.fill) : '#fff', lines: it.lines, onChange: ls => liveMemo(it._id, ls), onWheel: wheelZoom }} onDone={finishMemo} /> })()}
       {editing && editing.kind !== 'cell' && editing.kind !== 'memo' && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={{ ...s, onReady: setLiveEd }} onDone={finishEdit} /> })()}
       {editing && liveEd && <EditProps ed={liveEd} />}

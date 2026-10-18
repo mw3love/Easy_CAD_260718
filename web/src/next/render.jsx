@@ -131,7 +131,7 @@ export function memoLayout(it) {
     const lay = layoutText(ln.t || '', runs, px, 'board', K.bold ? 700 : 400, Math.max(10, inner - ind - 2 * TEXT_MARGIN))
     const x = MEMO.PAD + ind, lh = METRICS.board.lineSpacing * px, cy = y + TEXT_MARGIN + lh / 2
     const marker = ln.k === 'ul' ? ['•◦▪'[(ln.lv || 0) % 3]] : ln.k === 'ol' ? [`${nums[i]}.`] : null
-    const box = ln.k === 'todo' ? { x: x - MEMO.INDENT + 2, y: cy - px * 0.45, s: px * 0.9 } : null
+    const box = ln.k === 'todo' ? { x: x - MEMO.INDENT + 2, y: cy - TEXT_MARGIN - px * 0.45, s: px * 0.9 } : null   // 글 줄 가운데(cy엔 TEXT_MARGIN이 한 번 더 들어 있어 상자가 처졌음 — 2026-10-18 사용자)
     rows.push({ ln, i, x, y: y - TEXT_MARGIN, lay, px, marker, box, cy: cy - TEXT_MARGIN, lh, joinPrev, joinNext })
     y += lay.h + (joinNext ? 0 : TEXT_MARGIN)
   })
@@ -376,7 +376,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
           const done = ln.k === 'todo' && ln.done, col = done ? MUTED : ln.k === 'quote' ? '#52525b' : ink0
           return <g key={i}>
             {ln.k === 'quote' && <rect x={x + MEMO.PAD} y={y + ly + (ml.rows[i].joinPrev ? TEXT_MARGIN : 0)} width={3} height={lay.h + (ml.rows[i].joinPrev ? 0 : TEXT_MARGIN) + (ml.rows[i].joinNext ? 0 : TEXT_MARGIN)} fill="#d4d4d8" />}
-            {marker && <text x={x + lx - 6} y={y + cy} textAnchor="end" dominantBaseline="central" fontSize={px} fontFamily={BOARD_FONT} fill={ink0}>{marker[0]}</text>}
+            {marker && <text x={x + lx - 6} y={y + cy} textAnchor="end" dominantBaseline="central" fontSize={px} fontFamily={BOARD_FONT} fill={ink0} style={{ fontVariantNumeric: 'tabular-nums' }}>{marker[0]}</text>}
             {box && <g><rect x={x + box.x} y={y + box.y} width={box.s} height={box.s} rx={box.s * 0.18} fill={ln.done ? '#2f80ed' : '#ffffff'} stroke={ln.done ? '#2f80ed' : '#a1a1aa'} strokeWidth={1.2} />
               {ln.done && <path d={`M${x + box.x + box.s * 0.22},${y + box.y + box.s * 0.52} L${x + box.x + box.s * 0.43},${y + box.y + box.s * 0.72} L${x + box.x + box.s * 0.8},${y + box.y + box.s * 0.3}`} fill="none" stroke="#fff" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />}</g>}
             <TextLines lay={lay} left={x + lx - TEXT_MARGIN} top={y + ly} color={col} />

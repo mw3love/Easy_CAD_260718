@@ -19,6 +19,13 @@ export function ContextMenu({ at, entries, onClose }) {
     window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key)
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key) }
   }, [onClose])
+  // 펼친 하위 목록이 화면 밑·오른쪽을 넘으면 안쪽으로(2026-10-18 사용자: 아래쪽에서 잘림)
+  const fitSub = el => {
+    const P = ref.current?.parentElement; if (!el || !P) return
+    const pr = P.getBoundingClientRect(), r = el.getBoundingClientRect(), over = r.bottom - (pr.bottom - 4)
+    if (over > 0) el.style.top = `${Math.max(-4 - over, pr.top + 4 - r.top - 4)}px`
+    if (r.right > pr.right - 4) { el.style.left = 'auto'; el.style.right = '100%'; el.style.marginLeft = '0'; el.style.marginRight = '2px' }
+  }
   if (!entries.length) return null
   const hover = e => { e.currentTarget.style.background = 'rgba(218,119,86,.14)' }, leave = e => { e.currentTarget.style.background = 'transparent' }
   return <div ref={ref} onContextMenu={e => e.preventDefault()} onPointerDown={e => e.stopPropagation()} style={{ ...box, left: pos.x, top: pos.y }}>
@@ -29,7 +36,7 @@ export function ContextMenu({ at, entries, onClose }) {
           {en[1] && <span style={{ color: C.muted, fontSize: 11 }}>{en[1]}</span>}
           {en[3] && <span style={{ color: C.muted }}>▸</span>}
         </button>
-        {en[3] && sub === i && <div style={{ ...box, left: '100%', top: -4, marginLeft: 2 }}>
+        {en[3] && sub === i && <div ref={fitSub} style={{ ...box, left: '100%', top: -4, marginLeft: 2 }}>
           {en[3].map((s, j) => s === '-' ? <Sep key={j} /> : <button key={j} disabled={!!s[2]} onClick={s[1]} onMouseEnter={s[2] ? undefined : hover} onMouseLeave={leave} style={row(s[2])}>{s[0]}</button>)}
         </div>}
       </div>))}
