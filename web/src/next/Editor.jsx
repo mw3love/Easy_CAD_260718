@@ -24,6 +24,7 @@ import { symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
 import { colEdges } from './geom.js'
 import { layersOf, layerIdOf } from './layers.jsx'
+import { buildSvg, exportPdf, exportPng, exportSvg } from './exporter.jsx'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
@@ -92,7 +93,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const undo = () => { const h = hist.current, p = h.past.pop(); h.mergeKey = null; if (!p) return; h.future.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: p.items })); setSel(p.sel); onCommit?.('되돌림') }
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push({ items: R.current.model.items, sel: R.current.sel }); setModel(m => ({ ...m, items: f.items })); setSel(f.sel); onCommit?.('다시 실행') }
 
-  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, moveSelToLayer, reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, getSel: () => R.current.sel, setSel, insertTable, moveSelToLayer, exportDoc, reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live }) }))
 
@@ -469,6 +470,22 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (!ly) return; if (!ids.size) return setStatus('옮길 도형을 먼저 고르세요')
     commit(m.items.map(it => (ids.has(it._id) ? { ...it, layer_id: id === 'default' ? null : id, locked: ly.locked } : it)), [...ids], '레이어 옮김')
     setStatus(`레이어 옮김: ${ids.size}개 → ${ly.name}`)
+  }
+  // 내보내기 — o = { format: 'png'|'pdf'|'svg', selection, page, orient, margin, transparent, name }. 숨긴 레이어는 안 냄(데스크톱: 안 보이는 것은 안 그림)
+  async function exportDoc(o) {
+    const m = R.current.model, hid = new Set(layersOf(m).filter(l => !l.visible).map(l => l.id))
+    let ents = drawOrder(m.items).filter(([it]) => !hid.has(layerIdOf(it)))
+    if (o.selection) { const ids = new Set(movingSet(R.current.sel)); ents = ents.filter(([it]) => ids.has(it._id)) }
+    if (!ents.length) { setStatus(o.selection ? '내보낼 도형을 먼저 고르세요' : '내보낼 도형이 없어요'); return false }
+    const ft = !o.selection && ents.find(([it]) => it.type === 'titleblock')?.[0]   // 전체 + 용지틀 = 그 틀이 용지(데스크톱 `_find_title_frame` — 첫 틀)
+    const frame = ft && { size: ft.size, orient: ft.orient, box: sceneBox(ft, textBox) }
+    const src = unionBox(ents.map(([it]) => sceneBox(it, textBox)))
+    const res = await buildSvg(ents, src, { ...o, frame, transparent: o.format !== 'pdf' && o.transparent }, boardMembership(m.items), resolveRoutes(m.items, rectOf), o.format !== 'pdf')
+    if (o.format === 'png') await exportPng(res, o.name + '.png')
+    else if (o.format === 'svg') exportSvg(res, o.name + '.svg')
+    else exportPdf(res, o.name)
+    setStatus(o.format === 'pdf' ? '인쇄 창에서 「PDF로 저장」을 고르세요' : `${o.name}.${o.format} 내려받음`)
+    return true
   }
   function insertTable(rows, cols, header) {
     const m = R.current.model, c = R.current.cam, W = cols * 40, H = rows * 14
