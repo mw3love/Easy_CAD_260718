@@ -37,7 +37,12 @@ python web/server.py
 cd web
 npm run dev          # http://localhost:5190 — 저장은 python web/server.py(5191)로 넘김, 서버가 없으면 이 브라우저에만
 npm test             # 순수 함수 시험
+npm run e2e          # 화면 자동 시험 — 빌드 후 깔린 크롬으로 매일 쓰는 흐름(e2e/flow1~10)을 돌림, 약 30초
 ```
+
+화면 시험(2026-10-19 다잡기)은 시험용 서버를 따로 띄운다 — 문 5291·데이터 `web/.e2e-data`(시험 전에 비움, git 밖). 켜 둔 진짜 서버(5191)·칠판과 섞이지 않는다.
+KAIROS는 가짜 답으로 바꿔 끼워 크레딧을 안 쓴다. 글쇠를 바꾸면 `src/next/keys.js`(도움말 F1이 보여 주는 표)와 `e2e/flow9-keys.spec.js`를 같이 고친다.
+실패하면 `web/test-results/`의 trace를 `npx playwright show-trace <경로>`로 본다.
 
 칠판은 직접 만든 것(`src/next/`) — 2026-10-18 tldraw에서 갈아탐(§8 항목61 5단계). 문서는 `.ecad` 그대로, 서버 저장은 `/api/doc/<이름>`.
 옛 주소 `next.html?board=…`는 `/`로 넘어간다(즐겨찾기용). 글 편집은 TipTap 3.32.0(MIT), 부품은 `package.json`에 모두 버전 고정.

@@ -81,7 +81,7 @@ const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0]
 // 뜬 대화창 폭(좁은 창 — main.jsx가 칠판 칸에 `--mb-right-inset`으로 적음) — 「다 보기」·프레임으로 가기·AI 답 자리는 그만큼 오른쪽을 뺌(2026-10-19)
 export const rightInset = el => (el ? parseFloat(getComputedStyle(el).getPropertyValue('--mb-right-inset')) || 0 : 0)
 
-export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
+export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onHelp, readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -335,8 +335,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (!n) { /* 자유 시작 */ } else if (Math.abs(n.x) >= Math.abs(n.y)) { if (Math.abs(cur.y - o.y) * z <= CONN_STRAIGHT_PX) cur = { x: cur.x, y: o.y } }
       else if (Math.abs(cur.x - o.x) * z <= CONN_STRAIGHT_PX) cur = { x: o.x, y: cur.y }
       s.cur = cur
-      const tgt = connTarget(s.src, s.port, cur)
-      setOverlay(o2 => ({ ...o2, conn: connRoute(s.src, s.port, tgt, cur), hp: tgt ? { id: tgt.id, target: tgt } : null }))
+      const [src, port] = arrowStart(s), tgt = connTarget(src, port, cur)
+      setOverlay(o2 => ({ ...o2, conn: connRoute(src, port, tgt, cur), hp: tgt ? { id: tgt.id, target: tgt } : null }))
       return
     }
     if (s.kind === 'label') {
@@ -439,7 +439,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (s.kind === 'conn') {
       setOverlay(o => ({ ...o, conn: null, hp: null }))
       if (!s.moved) { if (s.tool === 'arrow') return; if (s.fromQc) qcCreate(s.src, s.side); else setSel(expandGroups(R.current.model.items, [s.src])); return }
-      newArrow(s.src, s.port, connTarget(s.src, s.port, s.cur), s.cur)
+      const [src, port] = arrowStart(s)
+      newArrow(src, port, connTarget(src, port, s.cur), s.cur)
       if (s.tool === 'arrow') setTool('select')
       return
     }
@@ -503,8 +504,25 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     return { id: host._id, target: snapAt(near, p, R.current.cam.z, rectOf) }
   }
   // 끌어 놓을 자리 — 붙을 곳(포트·테두리, 다른 도형 속이면 그 도형 가장 가까운 포트). 같은 도형은 다른 자리일 때만(자기 연결)
+  // 도형 안에서 시작한 화살표의 시작(arrowStart) — 끝이 그 도형 밖으로 나가면 끝에 가장 가까운 변 가운데(포트)에 붙음, 아직 안이면 떠 있는 시작 그대로
+  function arrowStart(s) {
+    const host = s.inside && R.current.model.items.find(x => x._id === s.inside)
+    if (!host) return [s.src, s.port]
+    const [l, t, w, h] = rectOf(host), q = toLocal(host, s.cur)
+    if (q.x >= l && q.x <= l + w && q.y >= t && q.y <= t + h) return [s.src, s.port]
+    let best = null, bd = Infinity
+    for (const pt of hostPorts(host, rectOf)) { const d = Math.hypot(pt.p.x - s.cur.x, pt.p.y - s.cur.y); if (d < bd) { bd = d; best = pt } }
+    return best ? [host._id, { p: best.p, n: best.n }] : [s.src, s.port]
+  }
   function connTarget(srcId, port, cur) {
-    const t = dropTarget(hostsNear(cur), cur, R.current.cam.z, rectOf, srcId, linesNear(cur))
+    const near = hostsNear(cur), lines = linesNear(cur), z = R.current.cam.z
+    let t = dropTarget(near, cur, z, rectOf, srcId, lines)
+    // 도형 '안'에 놓음(테두리 스냅 아님) = 화살표가 오는 쪽 변(시작에 가장 가까운 포트) — 가운데에 놓으면 위·아래 변이 더 가까워 엉뚱한 쪽으로 돌아 들어갔음(2026-10-19 다잡기, 데스크톱은 놓은 자리에 가까운 포트)
+    if (t?.id && !snapAt(near, cur, z, rectOf, lines)) {
+      const host = R.current.model.items.find(x => x._id === t.id)
+      let bd = Infinity
+      for (const pt of host ? hostPorts(host, rectOf) : []) { const d = Math.hypot(pt.p.x - port.p.x, pt.p.y - port.p.y); if (d < bd) { bd = d; t = { id: host._id, p: pt.p, n: pt.n, port: true } } }
+    }
     return t && (t.id !== srcId || Math.hypot(t.p.x - port.p.x, t.p.y - port.p.y) > 1) ? t : null
   }
   // 새 화살표 기본값 — 속성 카드에서 바꾼 값이 다음 화살표에 이어짐(데스크톱 sticky: 색·굵기·선 모양·화살촉·모서리). 굵기 1 = 데스크톱 `_DEFAULT_WIDTH`·웹 그리기 도구와 같게(2026-10-18 — 2였을 땐 같은 화살표인데 선택 띠가 얇아 보였다)
@@ -963,7 +981,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const m = R.current.model
     if (t === 'arrow') {   // 화살표 도구(데스크톱 「화살표」 — 종류는 속성 카드): 시작이 도형 근처면 붙고, 빈 곳이면 떠 있는 끝. 끄는 건 큐닷·포트점 잇기와 같은 길
       const snap = snapAt(hostsNear(p), p, R.current.cam.z, rectOf, linesNear(p))
-      st.current = { ...st.current, kind: 'conn', tool: 'arrow', src: snap?.id ?? null, port: snap ? { p: snap.p, n: snap.n } : { p, n: null }, start: p, cur: p, fromQc: false, moved: false }
+      // 도형 '안'에서 시작 = 그 도형에 붙음(끝을 도형 안에 놓으면 붙는 것과 같게 — 2026-10-19 다잡기). 어느 변인지는 끄는 쪽으로(arrowStart)
+      const inside = snap ? null : dropTarget(hostsNear(p), p, R.current.cam.z, rectOf, null, [])?.id ?? null
+      st.current = { ...st.current, kind: 'conn', tool: 'arrow', src: snap?.id ?? null, port: snap ? { p: snap.p, n: snap.n } : { p, n: null }, inside, start: p, cur: p, fromQc: false, moved: false }
       return
     }
     if (t === 'text') { const it = base([p.x - TEXT_MARGIN, p.y - TEXT_MARGIN], { type: 'text', text: '', color: INK, font: 12, bg: null, z: topZ(m.items) + 1 }); commit([...m.items, it], [it._id], '글'); setEditing({ id: it._id, kind: 'text', fresh: true }); setTool('select'); return }
@@ -1478,7 +1498,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         }
         if (clip.current?.items?.length) { if (has) out.push('-'); out.push(['붙여넣기', 'Ctrl+V', act(paste)]) }
         if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))])
-          if (m.items.some(it => it.locked)) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked ? { ...it, locked: false } : it)), [], '잠금 해제'))]) }
+          if (m.items.some(it => it.locked)) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked ? { ...it, locked: false } : it)), [], '잠금 해제'))])
+          if (onHelp) out.push('-', ['글쇠 도움말', 'F1', act(onHelp)]) }
         return out })()} />}
       {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))
         return <Presenter frames={fr.map(f => ({ id: f._id, name: f.name, box: sceneBox(f, textBox) }))} order={order.filter(([it]) => it.type !== 'frame')} onBoard={onBoard} routes={routes}

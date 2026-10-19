@@ -57,3 +57,8 @@ node_modules/
 .playwright-mcp/
 web/dist/
 web/public/_local/
+
+# 화면 자동 시험(web/e2e) 산출물
+web/.e2e-data/
+web/test-results/
+web/playwright-report/

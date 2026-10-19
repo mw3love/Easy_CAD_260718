@@ -470,6 +470,14 @@ def _copy(src: str, dst: str):
         b.write(a.read())
 
 
+class _Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        """브라우저가 기다리던 요청을 끊고 떠남(탭 닫기·새로고침 — 롱 폴링이면 늘 생김)은 조용히. 나머지 오류는 그대로 찍는다(2026-10-19 다잡기)."""
+        if isinstance(sys.exc_info()[1], (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def main(argv=None):
     for s in (sys.stdout, sys.stderr):   # 출력을 파일로 돌리면(cp949) 「—」 등에서 바로 꺼졌음(2026-10-19) — 못 쓰는 글자는 ?로
         try: s.reconfigure(errors="replace")
@@ -488,7 +496,7 @@ def main(argv=None):
         print("web/dist가 없습니다 — 먼저 `cd web && npm run build` (API만 씁니다)")
     print(f"Magic Board 칠판: http://{'localhost' if a.host in ('0.0.0.0', '127.0.0.1') else a.host}:{a.port}  · 저장 폴더: {a.data}")
     print("편집: " + ("공용 비밀번호 필요" if Handler.password else "누구나(비밀번호 없음 — --password 또는 edit_password.txt로 정함)"))
-    ThreadingHTTPServer((a.host, a.port), Handler).serve_forever()
+    _Server((a.host, a.port), Handler).serve_forever()
 
 
 if __name__ == "__main__":

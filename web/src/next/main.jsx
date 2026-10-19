@@ -14,6 +14,7 @@ import { Layers, layersOf, layerIdOf } from './layers.jsx'
 import { Frames } from './frames.jsx'
 import { Minimap } from './minimap.jsx'
 import { CHAT_W, ChatPanel } from './chat.jsx'
+import { HelpCard } from './help.jsx'
 
 const ZMIN = 0.02, ZMAX = 40
 // 화면 색은 next.html의 CSS 변수(밝은/어두운 화면 — 어두운 쪽은 데스크톱과 같은 값)
@@ -37,6 +38,8 @@ const Btn = ({ icon, label, onClick, title, on, disabled }) => { const narrow = 
     <span style={{ fontSize: 16, lineHeight: '18px' }}>{icon}</span>{!narrow && label}
   </button>
 ) }
+// 펼침 창(표·웹 등)을 버튼 아래에 붙이는 칸 — 칸 안 버튼도 옆으로(2026-10-19 다잡기: 칸이 버튼을 위아래로 쌓아 위 막대가 95px로 늘고 칠판이 밀렸음)
+const ANCHOR = { position: 'relative', display: 'flex', gap: 2 }
 const Group = ({ children }) => <div style={{ display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>{children}</div>
 const TOOLS = [['select', '↖', '선택', '1'], ['arrow', '⤷', '화살표', '2'], ['text', 'T', '글자', '3'], ['line', '╱', '선', '4'], ['polygon', '⬠', '다각형', '5'], ['pen', '✎', '펜', '6'], ['badge', '①', '번호', '7']]
 
@@ -284,6 +287,22 @@ function App() {
     a.download = `${DOC_NAME}.ecad`; a.click(); URL.revokeObjectURL(a.href)
   }
   const saveServer = () => { clearTimeout(saveT.current); flush() }   // 지금 바로 보내기(바뀐 도형만)
+  // 창 전체 글쇠(2026-10-19 다잡기 — 데스크톱 `SHORTCUT_DEFS`와 같은 뜻, 표는 keys.js): Ctrl+S가 브라우저 「페이지 저장」 창을 띄우던 것·툴팁에만 있던 Ctrl+9.
+  // 글쇠 이름은 한글 입력에 따라 바뀌어 자리(code)로 봄. 발표 중엔 발표 화면이 받음
+  const [helpOpen, setHelpOpen] = useState(false)
+  const keyAct = useRef(null)
+  keyAct.current = { fit: () => fit(modelRef.current.items), save: () => (server ? saveServer() : saveFile()),
+    zoom100: () => setCam(c => { const cx = (size.w - rightInset(box.current)) / 2, cy = size.h / 2; return { z: 1, x: cx - (cx - c.x) / c.z, y: cy - (cy - c.y) / c.z } }) }
+  useEffect(() => {
+    const on = e => {
+      if (document.querySelector('[data-testid=presenter]')) return
+      if (e.key === 'F1') { e.preventDefault(); setHelpOpen(o => !o); return }
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      const k = { Digit9: 'fit', Digit0: 'zoom100', KeyS: 'save', KeyP: 'export' }[e.code]; if (!k || (k === 'save' && e.shiftKey)) return
+      e.preventDefault(); if (k === 'export') setExportOpen(true); else keyAct.current[k]()
+    }
+    window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on)
+  }, [])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
@@ -304,13 +323,13 @@ function App() {
           <Btn icon="↷" label="다시" onClick={() => ed.current?.redo()} title="다시 실행 (Ctrl+Y)" />
         </Group>
         <Group>{TOOLS.map(([k, icon, label, key]) => <Btn key={k} icon={icon} label={label} on={tool === k} onClick={() => setTool(k)} title={`${label} (${key})`} />)}</Group>
-        <Group><div style={{ position: 'relative' }}>
+        <Group><div style={ANCHOR}>
           <Btn icon="▶" label="발표" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면(고른 프레임부터) · → 다음 · ← 이전 · M 이동/바로 · Esc 끝" />
           <Btn icon="▭" label="프레임" on={tool === 'frame'} onClick={() => setTool(t => (t === 'frame' ? 'select' : 'frame'))} title="프레임 — 끌어서 영역을 감싸면 그 안이 출력 한 쪽(번호 순서). 클릭만 = 16:9, 우클릭 「프레임으로 감싸기」도" />
-        </div><div style={{ position: 'relative' }}>
+        </div><div style={ANCHOR}>
           <Btn icon="▦" label="표" on={tableOpen} onClick={() => setTableOpen(o => !o)} title="표 넣기 — 행·열을 고르면 화면 가운데에" />
           {tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); ed.current?.insertTable(r, c, h) }} onLegend={() => { setTableOpen(false); ed.current?.insertLegend() }} onClose={() => setTableOpen(false)} />}
-        </div><div style={{ position: 'relative' }}>
+        </div><div style={ANCHOR}>
           <Btn icon="🗒" label="메모" onClick={() => ed.current?.insertMemo()} title="메모 — 줄마다 제목·목록·할 일·코드·인용(`# `·`- `·`[] `·`> ` 입력), 체크 상자는 칠판에서 바로" />
           <Btn icon="🌐" label="웹" on={webOpen} onClick={() => setWebOpen(o => !o)} title="웹 카드 — 유튜브·웹페이지 주소를 칠판에(칠판에 주소를 Ctrl+V 해도 돼요)" />
           {webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url) }} onClose={() => setWebOpen(false)} />}
@@ -339,7 +358,8 @@ function App() {
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>   {/* 작업공간 + 오른쪽 KAIROS 대화창(2분할 — 좁은 창은 칠판 위에 뜸) */}
       {/* --mb-right-inset = 뜬 대화창 폭 — 우상 속성·우하 미니맵 카드가 그만큼 왼쪽으로 비킴 */}
       <div ref={box} style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${CHAT_W + 12}px` : '0px' }}>
-        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} />
+        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onHelp={() => setHelpOpen(true)} />
+        {helpOpen && <HelpCard onClose={() => setHelpOpen(false)} />}
         {/* 좌상 도형·심볼 카드(데스크톱 첫 화면: 좌상 도형·심볼) */}
         {/* 왼쪽 세로 줄 — 위 도형·심볼 카드, 아래 레이어 카드(데스크톱 첫 화면: 좌상·좌하 따로, 통합 금지). 줄 자체는 칠판 누르기를 막지 않음 */}
         <div style={{ position: 'absolute', left: 12, top: 12, bottom: 12, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 8, pointerEvents: 'none' }}>

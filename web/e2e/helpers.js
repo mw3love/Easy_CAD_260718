@@ -1,0 +1,59 @@
+// 화면 시험 공용 도우미 — 칠판 열기·칠판 좌표 ↔ 화면 좌표·문서 읽기
+import { readFileSync, existsSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { expect } from '@playwright/test'
+
+export const DATA = join(dirname(fileURLToPath(import.meta.url)), '..', '.e2e-data')
+
+let n = 0
+/** 시험마다 새 칠판 이름(같은 서버를 같이 쓰므로) */
+export const boardName = tag => `e2e_${tag}_${Date.now().toString(36)}${n++}`
+
+/** 칠판을 열고 서버 답(「서버 「이름」」 상태 글)까지 기다림. 대화창은 기본 닫음(칠판 넓게) */
+export async function openBoard(page, name, { chat = false, who = '시험' } = {}) {
+  await page.addInitScript(([c, w]) => { try { localStorage.setItem('mb-chat-open', c ? '1' : '0'); localStorage.setItem('mb.name', w) } catch {} }, [chat, who])
+  await page.goto(`/?board=${name}`)
+  await expect(page.getByText(`서버 「${name}」`, { exact: false }).first()).toBeVisible()
+  return page.getByTestId('board')
+}
+
+/** 칠판 좌표 → 페이지 좌표(화면 = 칠판 × z + (x, y), 칠판 svg 기준) */
+export async function toPage(page, x, y) {
+  const box = await page.getByTestId('board').boundingBox()
+  const c = await page.evaluate(() => window.__mb.getCam())
+  return { x: box.x + x * c.z + c.x, y: box.y + y * c.z + c.y }
+}
+
+/** 화면을 정해진 자리·배율로(시험이 좌표를 예측할 수 있게) */
+export async function setCam(page, cam = { x: 400, y: 200, z: 1 }) {
+  await page.evaluate(c => window.__mb.setCam(c), cam)
+}
+
+/** 브라우저가 들고 있는 지금 문서(.ecad 모양) */
+export const liveDoc = page => page.evaluate(() => window.__mb.toEcad())
+
+/** 서버 데이터 폴더에 저장된 문서 — 없으면 null */
+export function savedDoc(name) {
+  const f = join(DATA, `${name}.ecad`)
+  return existsSync(f) ? JSON.parse(readFileSync(f, 'utf-8')) : null
+}
+
+/** 저장까지 기다림(상태 글 「저장됨」) */
+export async function waitSaved(page) {
+  await expect(page.getByText('에 저장됨', { exact: false }).first()).toBeVisible({ timeout: 8_000 })
+}
+
+/** 칠판 위 두 점 사이를 끌기(칠판 좌표) */
+export async function dragScene(page, a, b, steps = 8) {
+  const p = await toPage(page, a.x, a.y), q = await toPage(page, b.x, b.y)
+  await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(q.x, q.y, { steps }); await page.mouse.up()
+}
+
+/** 칠판 좌표 한 점 누르기 */
+export async function clickScene(page, x, y, opts) {
+  const p = await toPage(page, x, y); await page.mouse.click(p.x, p.y, opts)
+}
+
+/** 팔레트(좌상 카드) 기본 도형 고르기 — 이름은 툴팁 앞부분(사각형·원 …) */
+export const pickShape = (page, name) => page.locator(`button[title^="${name} —"]`).first().click()

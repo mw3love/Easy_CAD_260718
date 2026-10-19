@@ -6,7 +6,8 @@
     "dev": "vite --port 5190",
     "build": "vite build",
     "serve": "vite preview --host --port 5190",
-    "test": "node --test \"test/**/*.test.mjs\""
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "e2e": "vite build && playwright test"
   },
   "dependencies": {
     "@tiptap/core": "3.32.0",
@@ -28,6 +29,7 @@
     "react-dom": "18.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@vitejs/plugin-react": "6.1.2",
     "vite": "8.3.4"
   }
