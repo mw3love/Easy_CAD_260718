@@ -35,7 +35,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 
@@ -99,14 +99,44 @@ class Handler(SimpleHTTPRequestHandler):
         if not key:
             return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
         try:
-            out = board_chat.chat(key, req.get("messages") or [], model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL,
-                                  context=req.get("context") or "", kind=req.get("kind") or "", base_url=gw.resolve_base_url())
+            msgs, ctx = req.get("messages") or [], req.get("context") or ""
+            last = next((m for m in reversed(msgs) if isinstance(m, dict) and m.get("role") == "user"), {})
+            kind = req.get("kind") or board_chat.guess_kind(str(last.get("content", "")), bool(ctx or last.get("context")))
+            refs = None
+            if kind == "board":   # 「지난번 ○○ 뭐였지?」 — 이 칠판의 저장된 글에서 찾아 근거로(§8 항목61 ③-2)
+                refs = self._find(self._name(str(req.get("board") or "")), str(last.get("content", "")), key)
+            out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL,
+                                  context=ctx, kind=kind, board_refs=refs, base_url=gw.resolve_base_url())
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:   # 게이트웨이 오류는 대화창에 그대로 보여 준다(조용히 다른 모델로 갈아타지 않음)
             return self._json(502, {"error": f"KAIROS 호출 실패: {e}"})
         sys.stderr.write("[대화] %s %.1f초\n" % (out["model"], out["elapsed"]))
         return self._json(200, out)
+
+    def _find(self, name: str, query: str, key: str, k: int = 8) -> list:
+        """칠판 `name`의 저장된 글에서 뜻으로 찾기(`board_find`) — 뜻 숫자는 칠판 옆 `<이름>.emb.json`에 모아 둔다."""
+        if not name or not os.path.exists(self._doc_path(name)):
+            return []
+        with open(self._doc_path(name), encoding="utf-8") as f:
+            doc = json.load(f)
+        client = gw._client(key, gw.resolve_base_url(), timeout=60)
+        return board_find.find(client, doc, query, k=k, cache_path=os.path.join(self.data_dir, name + ".emb.json"))
+
+    def _find_api(self, name: str):
+        """POST /api/find/<이름> {q, k?} → {"results": [{uid, type, kind, text, score}]} — 칠판 Ctrl+F 「뜻으로 찾기」."""
+        req = self._body(64 * 1024) or {}
+        q = str(req.get("q") or "").strip()[:500]
+        if not q:
+            return self._json(200, {"results": []})
+        key = gw.resolve_api_key()
+        if not key:
+            return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다 — 낱말 찾기만 돼요"})
+        try:
+            res = self._find(name, q, key, k=max(1, min(20, int(req.get("k") or 8))))
+        except Exception as e:
+            return self._json(502, {"error": f"KAIROS 호출 실패: {e}"})
+        return self._json(200, {"results": [{**r, "text": r["text"][:300]} for r in res]})
 
     def _link(self):
         _, q = self._route()
@@ -290,6 +320,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(401, b'{"error":"login"}')
         if path == "/api/chat":
             return self._chat()
+        m = re.match(r"^/api/find/([^/]+)$", path)
+        if m:
+            return self._find_api(self._name(m.group(1)))
         m = re.match(r"^/api/(patch|presence|publish|invite)/([^/]+)$", path)
         if not m:
             return self._send(404, b'{"error":"none"}')

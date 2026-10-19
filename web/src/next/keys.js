@@ -6,6 +6,7 @@ export const KEY_TABLE = [
     ['Ctrl+Z / Ctrl+Y', '되돌리기 / 다시'],
     ['Ctrl+S', '지금 저장(서버 칠판) · 서버가 없으면 .ecad 내려받기'],
     ['Ctrl+P', '내보내기(PDF·PNG·SVG·HTML)'],
+    ['Ctrl+F', '칠판에서 찾기 — 낱말이 달라도 뜻으로(노란 점선 · ↑↓ Enter = 그리로)'],
     ['Ctrl+9 / Ctrl+0', '다 보기 / 100%'],
     ['Space + 끌기 · 우클릭·휠 클릭 끌기', '화면 이동'],
     ['F1', '이 도움말'],

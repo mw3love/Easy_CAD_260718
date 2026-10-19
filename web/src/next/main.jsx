@@ -15,6 +15,7 @@ import { Frames } from './frames.jsx'
 import { Minimap } from './minimap.jsx'
 import { CHAT_W, ChatPanel } from './chat.jsx'
 import { HelpCard } from './help.jsx'
+import { FindBar } from './find.jsx'
 
 const ZMIN = 0.02, ZMAX = 40
 // 화면 색은 next.html의 CSS 변수(밝은/어두운 화면 — 어두운 쪽은 데스크톱과 같은 값)
@@ -290,7 +291,7 @@ function App() {
   const saveServer = () => { clearTimeout(saveT.current); flush() }   // 지금 바로 보내기(바뀐 도형만)
   // 창 전체 글쇠(2026-10-19 다잡기 — 데스크톱 `SHORTCUT_DEFS`와 같은 뜻, 표는 keys.js): Ctrl+S가 브라우저 「페이지 저장」 창을 띄우던 것·툴팁에만 있던 Ctrl+9.
   // 글쇠 이름은 한글 입력에 따라 바뀌어 자리(code)로 봄. 발표 중엔 발표 화면이 받음
-  const [helpOpen, setHelpOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false), [findOpen, setFindOpen] = useState(0), [marks, setMarks] = useState([])   // findOpen = 열 때마다 새 번호(다시 Ctrl+F = 칸에 다시 포커스)
   const keyAct = useRef(null)
   keyAct.current = { fit: () => fit(modelRef.current.items), save: () => (server ? saveServer() : saveFile()),
     zoom100: () => setCam(c => { const cx = (size.w - rightInset(box.current)) / 2, cy = size.h / 2; return { z: 1, x: cx - (cx - c.x) / c.z, y: cy - (cy - c.y) / c.z } }) }
@@ -299,8 +300,8 @@ function App() {
       if (document.querySelector('[data-testid=presenter]')) return
       if (e.key === 'F1') { e.preventDefault(); setHelpOpen(o => !o); return }
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return
-      const k = { Digit9: 'fit', Digit0: 'zoom100', KeyS: 'save', KeyP: 'export' }[e.code]; if (!k || (k === 'save' && e.shiftKey)) return
-      e.preventDefault(); if (k === 'export') setExportOpen(true); else keyAct.current[k]()
+      const k = { Digit9: 'fit', Digit0: 'zoom100', KeyS: 'save', KeyP: 'export', KeyF: 'find' }[e.code]; if (!k || (k === 'save' && e.shiftKey)) return
+      e.preventDefault(); if (k === 'export') setExportOpen(true); else if (k === 'find') setFindOpen(n => n + 1); else keyAct.current[k]()
     }
     window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on)
   }, [])
@@ -359,8 +360,9 @@ function App() {
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>   {/* 작업공간 + 오른쪽 KAIROS 대화창(2분할 — 좁은 창은 칠판 위에 뜸) */}
       {/* --mb-right-inset = 뜬 대화창 폭 — 우상 속성·우하 미니맵 카드가 그만큼 왼쪽으로 비킴 */}
       <div ref={box} style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${CHAT_W + 12}px` : '0px' }}>
-        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onHelp={() => setHelpOpen(true)} />
+        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onHelp={() => setHelpOpen(true)} marks={marks} />
         {helpOpen && <HelpCard onClose={() => setHelpOpen(false)} />}
+        {findOpen > 0 && <FindBar key={findOpen} items={model.items} server={server} onMarks={setMarks} onGo={id => ed.current?.showItem(id)} onClose={() => setFindOpen(0)} />}
         {/* 좌상 도형·심볼 카드(데스크톱 첫 화면: 좌상 도형·심볼) */}
         {/* 왼쪽 세로 줄 — 위 도형·심볼 카드, 아래 레이어 카드(데스크톱 첫 화면: 좌상·좌하 따로, 통합 금지). 줄 자체는 칠판 누르기를 막지 않음 */}
         <div style={{ position: 'absolute', left: 12, top: 12, bottom: 12, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 8, pointerEvents: 'none' }}>

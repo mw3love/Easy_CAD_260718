@@ -81,7 +81,7 @@ const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0]
 // 뜬 대화창 폭(좁은 창 — main.jsx가 칠판 칸에 `--mb-right-inset`으로 적음) — 「다 보기」·프레임으로 가기·AI 답 자리는 그만큼 오른쪽을 뺌(2026-10-19)
 export const rightInset = el => (el ? parseFloat(getComputedStyle(el).getPropertyValue('--mb-right-inset')) || 0 : 0)
 
-export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onHelp, readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
+export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onHelp, marks = [], readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -122,7 +122,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, showItem, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -772,6 +772,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 「어디서 왔는지」가 칠판 위 선으로 보이게(회사 KAIROS 웹은 답과 출처가 따로 놂). 출처가 없으면 메모 하나(cardItem)
   function cardItems(msg, x, y, z) {
     const memo = cardItem(msg, x, y, z), src = msg.sources || []
+    if (msg.refs?.length) return boardRefItems(memo, msg.refs, z)
     if (!src.length) return [memo]
     const g = 'g' + newId(), gap = 14, x2 = x + MEMO.W + 90, ch = WEB_HEAD + WEB_INFO_H
     const cards = src.map((s, i) => base([x2, y + i * (ch + gap)], { ...webCardFields({ url: s.url, title: `[${s.n}] ${s.title || siteOf(s.url)}`, desc: [s.date, siteOf(s.url)].filter(Boolean).join(' · '), frameable: false }), z, group_id: g }))
@@ -904,9 +905,30 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // 이미 붙인 카드로 — 고르고 화면 가운데로. 없으면(지웠으면) false
   function showCard(at) {
-    const m = R.current.model, b = m.items.find(it => it.chat_at === at); if (!b) return false
-    const s = sceneBox(b, textBox); setSel([b._id])
-    setCam(cc => ({ ...cc, x: size.w / 2 - (s.x + s.w / 2) * cc.z, y: size.h / 2 - (s.y + s.h / 2) * cc.z }))
+    const b = R.current.model.items.find(it => it.chat_at === at)
+    return b ? showItem(b._id) : false
+  }
+  // 「칠판에서」 답(§8 항목61 ③-2) = 메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(메모 쪽 변 → 근거 쪽 변, 가까운 포트끼리). 근거 도형은 제자리 그대로 — 메모와 화살표만 한 묶음
+  function boardRefItems(memo, refs, z) {
+    const items = R.current.model.items, hosts = refs.map(r => items.find(it => it._id === r.uid)).filter(it => it && isConnHost(it))
+    if (!hosts.length) return [memo]
+    const g = 'g' + newId(), keep = R.current.model, mb = sceneBox(memo, textBox), mc = { x: mb.x + mb.w / 2, y: mb.y + mb.h / 2 }
+    const near = (it, q) => hostPorts(it, rectOf).reduce((a, p) => (Math.hypot(p.p.x - q.x, p.p.y - q.y) < Math.hypot(a.p.x - q.x, a.p.y - q.y) ? p : a))
+    R.current.model = { ...keep, items: [...keep.items, memo] }
+    try {
+      const arrows = hosts.map(h => {
+        const hb = sceneBox(h, textBox), hc = { x: hb.x + hb.w / 2, y: hb.y + hb.h / 2 }, a = near(memo, hc), t0 = near(h, mc), t = { id: h._id, p: t0.p, n: t0.n }
+        const pts = connRoute(memo._id, { p: a.p, n: a.n }, t, null).map(q => [q.x, q.y])
+        return { ...arrowItem(memo._id, a.p, h._id, t.p, { auto_route: true, pts, color: '#fff59e0b', width: 1, style: 2, head: true, head_start: false }), z, group_id: g }
+      })
+      return [{ ...memo, group_id: g }, ...arrows]
+    } finally { R.current.model = keep }
+  }
+  // 도형 하나로 가기 — 고르고 화면 가운데로(뜬 대화창 밑은 빼고), 너무 작게 보이면 읽을 만큼 키움(찾기·「칠판에서」 고리, 2026-10-19). 없으면 false
+  function showItem(id) {
+    const b = R.current.model.items.find(it => it._id === id); if (!b) return false
+    const s = sceneBox(b, textBox), W = size.w - rightInset(svg.current); setSel([id])
+    setCam(cc => { const z = s.w * cc.z < 120 ? Math.min(1, (W * 0.4) / Math.max(s.w, 1)) : cc.z; return { z, x: W / 2 - (s.x + s.w / 2) * z, y: size.h / 2 - (s.y + s.h / 2) * z } })
     return true
   }
   // ── 프레임(2026-10-18 사용자와 정함 — 「종이틀」을 바꿈: 종이 비율은 큰 의미 없음) — 번호 = 출력 쪽·슬라이드 순서 ──
@@ -1438,6 +1460,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
+          {marks.filter(id => byId.has(id)).map(id => { const b = sceneBox(byId.get(id), textBox), pad = 6 / z   // 찾기 결과에 불 켜기(Ctrl+F — 2026-10-19)
+            return <rect key={'find' + id} data-testid="find-mark" pointerEvents="none" x={b.x - pad} y={b.y - pad} width={b.w + 2 * pad} height={b.h + 2 * pad} rx={6 / z} fill="rgba(250,204,21,.12)" stroke="#f59e0b" strokeWidth={2.5 / z} strokeDasharray={`${6 / z} ${4 / z}`} /> })}
           {others.map(o => { const c = personColor(o.id), ids = [...new Set([...(o.sel || []), ...(o.edit ? [o.edit] : [])])].filter(id => byId.has(id))   // 다른 사람이 고른·고치는 도형 = 그 사람 색 테두리 + 이름표(2026-10-19)
             return ids.map(id => { const b = sceneBox(byId.get(id), textBox), pad = 4 / z, fs = 11 / z, tag = o.name + (o.edit === id ? ' 고치는 중' : ''), tw = measure(tag, 11, 'app', 600) / z + 10 / z
               return <g key={o.id + id} data-testid="other-mark" pointerEvents="none"><rect x={b.x - pad} y={b.y - pad} width={b.w + 2 * pad} height={b.h + 2 * pad} rx={4 / z} fill="none" stroke={c} strokeWidth={2 / z} strokeDasharray={o.edit === id ? undefined : `${6 / z} ${3 / z}`} />

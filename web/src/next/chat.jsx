@@ -4,13 +4,20 @@
 // - 대화 기록: 칠판마다 서버(/api/chatlog/<이름>) — 옛 칠판과 같은 기록을 이어 씀.
 // - 웹 검색(§8 항목61 ② 담는 법, 2026-10-19): 종류는 서버가 짐작(「최신·뉴스·찾아줘」…), 답 위 표시 「🔎 웹 검색 / 💬 대화」 + 반대로 다시 묻기 한 번.
 //   검색 답은 쓰인 번호의 출처를 아래에 보이고, 붙이면 요약 메모 + 출처 카드 + 번호 화살표 한 묶음(Editor `cardItems`).
+// - 칠판에서(§8 항목61 ③-2): 「지난번·저번·정리해 둔」 → 서버가 이 칠판 글을 뜻으로 찾아 근거로 답, [칠판 n] 고리 = 그 도형으로 가기, 붙이면 근거로 가는 점선 화살표.
 import { useEffect, useRef, useState } from 'react'
 import { DOC_NAME } from './doc.js'
 import { contextText, parseAnswer } from '../chatFormat.js'
 import { urlSpans } from './geom.js'
 import { MONO_FONT } from './render.jsx'
 import { siteOf } from './webcard.js'
-const LINK_CHAT = '#4f8fe8'   // 대화창 주소(어두운·밝은 화면 둘 다 읽히는 파랑)
+const LINK_CHAT = '#4f8fe8'
+// 답 종류 — [표시, 표시 꾸밈, 다시 묻기 글, 툴팁] — 서버가 짐작한 것을 답 위에 보이고, 나머지 둘로 한 번에 다시(§8 항목61 ② 원칙 ⓒ)
+const KINDS = {
+  chat: ['💬 대화', null, '대화로 다시', '웹·칠판을 찾지 않고 대화로 다시 물어 이 답을 바꿔요'],
+  search: ['🔎 웹 검색', { color: '#2f80ed', background: 'rgba(47,128,237,.12)' }, '웹 검색으로 다시', '웹을 찾아 출처와 함께 다시 물어 이 답을 바꿔요'],
+  board: ['📌 칠판에서', { color: '#d97706', background: 'rgba(245,158,11,.14)' }, '칠판에서 다시', '이 칠판의 메모·글을 뜻으로 찾아 그것을 근거로 다시 물어요'],
+}   // 대화창 주소(어두운·밝은 화면 둘 다 읽히는 파랑)
 
 export const CHAT_W = 360
 const LOG_URL = `/api/chatlog/${encodeURIComponent(DOC_NAME)}`
@@ -34,7 +41,6 @@ const css = {
   chip: { alignSelf: 'flex-start', font: `500 11.5px ${F}`, color: '#5aa9ff', background: 'rgba(90,169,255,.15)', borderRadius: 99, padding: '2px 9px' },
   input: { font: `400 13.5px/1.5 ${F}`, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 10px', resize: 'none', minHeight: 40, maxHeight: 200, outline: 'none', background: C.card, color: C.ink },
   kind: { font: `600 11px ${F}`, color: C.muted, background: C.seg, borderRadius: 99, padding: '1px 8px' },
-  kindSearch: { color: '#2f80ed', background: 'rgba(47,128,237,.12)' },
   link: { all: 'unset', cursor: 'pointer', font: `500 11px ${F}`, color: C.muted, textDecoration: 'underline' },
   select: { font: `500 12px ${F}`, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 4px', background: C.card, maxWidth: 210 },
 }
@@ -59,7 +65,7 @@ function Answer({ text }) {
 // ed = Editor 손잡이(selTexts·pinCard·showCard), selKey = 고른 것이 바뀔 때 다시 읽게(main이 넘김)
 export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
-  const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true)
+  const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
   const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_KEY) || '' } catch { return '' } })
   const box = useRef(null)
   const sel = ed.current?.selTexts() || []   // eslint-disable-line react-hooks/exhaustive-deps
@@ -81,10 +87,10 @@ export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = �
   // 묻기 — history = 지금까지(마지막이 질문), kind = 'search'·'chat'(비면 서버가 짐작) → 답 한 차례
   async function ask(history, kind = '') {
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: useModel, ...(kind ? { kind } : {}), messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
+      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
-    return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}) }
+    return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}) }
   }
   async function send() {
     const q = draft.trim(); if (!q || busy) return
@@ -149,18 +155,22 @@ export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = �
           : m.role === 'error'
             ? <div key={i} style={css.err}>{m.content}<div style={{ marginTop: 6 }}><button style={css.ghost} onClick={retry}>질문 다시 고치기</button></div></div>
             : <div key={i} style={css.ai}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                <span data-testid="answer-kind" style={{ ...css.kind, ...(m.kind === 'search' ? css.kindSearch : null) }}>{m.kind === 'search' ? '🔎 웹 검색' : '💬 대화'}</span>
-                <button style={css.link} disabled={!!busy} onClick={() => redoAs(i, m.kind === 'search' ? 'chat' : 'search')}
-                  title={m.kind === 'search' ? '웹 검색 없이 대화로 다시 물어 이 답을 바꿔요' : '웹을 찾아 출처와 함께 다시 물어 이 답을 바꿔요'}>{m.kind === 'search' ? '대화로 다시' : '웹 검색으로 다시'}</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                <span data-testid="answer-kind" style={{ ...css.kind, ...(KINDS[m.kind] ? KINDS[m.kind][1] : null) }}>{(KINDS[m.kind] || KINDS.chat)[0]}</span>
+                {Object.entries(KINDS).filter(([k]) => k !== (m.kind || 'chat')).map(([k, [, , again, tip]]) =>
+                  <button key={k} style={css.link} disabled={!!busy} onClick={() => redoAs(i, k)} title={tip}>{again}</button>)}
               </div>
               <Answer text={m.content} />
+              {m.refs?.length > 0 && <div data-testid="answer-refs" style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {m.refs.map(r => <button key={r.n} onClick={() => ed.current?.showItem(r.uid) || setGone(g => ({ ...g, [m.at + ':' + r.n]: true }))} title="칠판의 그 도형으로 가기"
+                  style={{ all: 'unset', cursor: 'pointer', ...css.meta, color: '#d97706', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  📌 [칠판 {r.n}] {r.kind ? `${r.kind} · ` : ''}{(r.text || '').split('\n')[0]}{gone[m.at + ':' + r.n] ? ' — 지워졌어요' : ''}</button>)}</div>}
               {m.sources?.length > 0 && <div data-testid="answer-sources" style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {m.sources.map(s => <a key={s.n} href={s.url} target="_blank" rel="noopener noreferrer" title={s.url} onPointerDown={e => e.stopPropagation()}
                   style={{ ...css.meta, color: LINK_CHAT, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>[{s.n}] {s.title || siteOf(s.url)} · {siteOf(s.url)}</a>)}</div>}
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
                 <button style={{ ...(m.pinned ? css.ghost : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
-                  title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : m.sources?.length ? '요약 메모 + 출처 카드를 번호 화살표로 이어 한 묶음으로(누르면 빈자리, 끌면 놓은 자리)' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
+                  title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : m.refs?.length ? '메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(누르면 빈자리, 끌면 놓은 자리)' : m.sources?.length ? '요약 메모 + 출처 카드를 번호 화살표로 이어 한 묶음으로(누르면 빈자리, 끌면 놓은 자리)' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
                   {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>
                 <button style={css.ghost} onClick={() => navigator.clipboard?.writeText(m.content).catch(() => {})}>복사</button>
                 <span style={{ ...css.meta, marginLeft: 'auto' }}>{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}</span>

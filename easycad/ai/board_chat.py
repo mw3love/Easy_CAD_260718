@@ -24,12 +24,19 @@ SEARCH_SYSTEM = """너는 웹 검색 결과로 답하는 도우미다. 한국어
 - 결론을 첫 문장에 쓰고, 짧은 목록(- )으로 정리한다. 강조는 **굵게**만.
 - 문장 끝에 근거 출처 번호를 [1]처럼 붙인다. 출처 목록은 따로 쓰지 않는다(앱이 붙인다)."""
 _SEARCH_WORDS = re.compile(r"검색|찾아|최신|최근|요즘|오늘|어제|이번\s*(주|달)|올해|뉴스|기사|출처|링크|사이트|홈페이지|동향|현황|시세|가격|환율|날씨|발표했|출시|일정|언제\s*(부터|까지)")
+# 칠판에서 찾아 답하기(§8 항목61 ③-2 뜻으로 찾기) — 「지난번 송신소 점검 뭐였지?」 → 칠판 글(`board_find`)만 근거, [칠판 n]으로 출처
+BOARD_SYSTEM = """너는 사용자의 「웹 칠판」에 쌓인 메모·글을 찾아 답하는 도우미다. 한국어로 답한다.
+- 아래 [칠판 n] 글만 근거로 답한다. 칠판에 없는 내용은 지어내지 말고 「칠판에서 못 찾았어요」라고 말한다.
+- 결론을 첫 문장에 쓰고 짧게 정리한다. 근거가 된 문장 끝에 [칠판 1]처럼 번호를 붙인다. 강조는 **굵게**만."""
+_BOARD_WORDS = re.compile(r"지난번|저번|예전에|아까|칠판에(서)?\s*(찾|있|적)|우리가\s*(정리|적|메모)|(정리|메모|기록|적어)\s*(해\s*)?(둔|놨|뒀|했던|한\s*거)")
 _NO_SEARCH = re.compile(r"칠판에서 고른|이 (메모|글|카드)|위 (내용|글)|요약해|정리해|번역|고쳐|다듬")
 
 
 def guess_kind(text: str, has_context: bool = False) -> str:
-    """질문 → "search"(웹 검색) | "chat"(대화). 낱말 규칙(데스크톱 `guess_kind`처럼) — 칠판에서 고른 글을 다루는 말이면 대화."""
+    """질문 → "board"(칠판에서 찾아 답) | "search"(웹 검색) | "chat"(대화). 낱말 규칙(데스크톱 `guess_kind`처럼) — 칠판에서 고른 글을 다루는 말이면 대화."""
     t = text or ""
+    if _BOARD_WORDS.search(t):
+        return "board"
     if has_context and _NO_SEARCH.search(t):
         return "chat"
     return "search" if _SEARCH_WORDS.search(t) else "chat"
@@ -60,6 +67,17 @@ def _with_context(content: str, ctx: str) -> str:
     return f"[칠판에서 고른 내용]\n{ctx}\n\n[질문]\n{content}" if ctx else content
 
 
+def board_context(refs: list) -> str:
+    """칠판에서 찾은 글 → 질문 앞에 붙일 글([칠판 n] (종류) 글)."""
+    return "\n\n".join(f"[칠판 {i + 1}] ({r.get('kind') or r.get('type', '')}) {r.get('text', '')}" for i, r in enumerate(refs))
+
+
+def cited_board(content: str, refs: list) -> list:
+    """답에 쓰인 [칠판 n]의 글만 → [{"n", "uid", "kind", "text"}]."""
+    used = sorted({int(n) for n in re.findall(r"\[칠판\s*(\d{1,2})\]", content or "") if 1 <= int(n) <= len(refs)})
+    return [{"n": n, "uid": refs[n - 1]["uid"], "kind": refs[n - 1].get("kind", ""), "text": refs[n - 1].get("text", "")[:200]} for n in used]
+
+
 def build_messages(history: list, context: str = "", system: str = SYSTEM) -> list:
     """대화창 기록 [{"role": "user"|"assistant", "content", "context"?}] → 게이트웨이에 보낼 messages.
     사용자 말에 딸린 `context`(그때 칠판에서 고른 글)는 그 말 앞에 붙인다. `context` 인자는 마지막 말에 더 붙일 글."""
@@ -75,14 +93,18 @@ def build_messages(history: list, context: str = "", system: str = SYSTEM) -> li
     return [{"role": "system", "content": system}] + turns
 
 
-def chat(api_key: str, history: list, *, model: str, context: str = "", kind: str = "", base_url: str = gw.BASE_URL,
+def chat(api_key: str, history: list, *, model: str, context: str = "", kind: str = "", board_refs=None, base_url: str = gw.BASE_URL,
          timeout: float = 180.0, client=None) -> dict:
-    """한 차례 답 → {"content", "model", "elapsed", "kind", "sources"?}. `client`는 시험용(가짜 클라이언트).
-    `kind` = "search"·"chat"(대화창에서 바꿔 다시 물을 때), 비면 마지막 질문으로 짐작. 검색은 모델을 `SEARCH_MODEL`로 바꾼다."""
+    """한 차례 답 → {"content", "model", "elapsed", "kind", "sources"?, "refs"?}. `client`는 시험용(가짜 클라이언트).
+    `kind` = "search"·"chat"·"board"(대화창에서 바꿔 다시 물을 때), 비면 마지막 질문으로 짐작. 검색은 모델을 `SEARCH_MODEL`로 바꾼다.
+    "board"는 서버가 칠판에서 찾은 글(`board_refs` — `board_find.find` 결과)을 근거로 붙여 묻고, 답에 쓰인 [칠판 n]을 `refs`로 돌려준다."""
     last = next((m for m in reversed(history) if m.get("role") == "user"), {})
-    kind = kind if kind in ("search", "chat") else guess_kind(str(last.get("content", "")), bool(context or last.get("context")))
-    search = kind == "search"
-    messages = build_messages(history, context, SEARCH_SYSTEM if search else SYSTEM)
+    kind = kind if kind in ("search", "chat", "board") else guess_kind(str(last.get("content", "")), bool(context or last.get("context")))
+    search, board = kind == "search", kind == "board"
+    refs = list(board_refs or [])
+    if board:
+        context = ((context + "\n\n") if context else "") + (board_context(refs) or "(칠판에서 관련 글을 못 찾음)")
+    messages = build_messages(history, context, SEARCH_SYSTEM if search else BOARD_SYSTEM if board else SYSTEM)
     client = client or gw._client(api_key, base_url, timeout=timeout)
     use = SEARCH_MODEL if search else model
     t0 = time.time()
@@ -92,6 +114,8 @@ def chat(api_key: str, history: list, *, model: str, context: str = "", kind: st
     if search:
         raw = resp.model_dump() if hasattr(resp, "model_dump") else dict(getattr(resp, "__dict__", {}))
         out["sources"] = cited_sources(content, raw)
+    if board:
+        out["refs"] = cited_board(content, refs)
     return out
 
 

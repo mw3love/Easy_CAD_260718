@@ -53,7 +53,7 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(srv.gw, "resolve_api_key", lambda explicit="": "test-key")
     calls = []
 
-    def fake_chat(key, messages, *, model, context="", kind="", base_url=""):
+    def fake_chat(key, messages, *, model, context="", kind="", board_refs=None, base_url=""):
         board_chat.build_messages(messages, context)   # 진짜와 같은 검사(질문 없으면 ValueError)
         calls.append((key, messages, model))
         return {"content": f"{len(messages)}번째 답", "model": model, "elapsed": 0.1}
