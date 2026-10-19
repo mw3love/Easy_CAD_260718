@@ -126,7 +126,7 @@ web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + Reac
 │                          **칠판**(직접 만든 것): `index.html` + `src/next/`(geom.js 그리기 계산·render.jsx 종류별 SVG·doc.js .ecad 문서·
 │                          arrows.js 길 다시 찾기 + 2단계 Editor.jsx 편집 화면·edit.js 편집 계산·align.js 정렬선·model.js _id 모델·text.jsx TipTap 글 편집 + 3단계 connect.js 붙는 규칙·arrowedit.js 알약·곡선·라벨·
 │                          arrowkind.js 종류 바꾸기·xform.js 좌표 + 4단계 props.jsx 우상 속성 카드·palette.jsx 좌상 도형·심볼·layers.jsx 좌하 레이어·minimap.jsx 우하 미니맵·
-│                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례(표 모양 `legend`, 줄 자동)·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿)·formatbar.jsx 드래그 꾸미기 막대·marks.js 기울임·밑줄·취소선 + ⓕ sync.js 부분 저장·받아 오기·도형 단위 되돌리기·viewer.jsx 게시 화면 + ⓔ htmlshare.js HTML 한 파일) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
+│                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례(표 모양 `legend`, 줄 자동)·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿)·formatbar.jsx 드래그 꾸미기 막대·marks.js 기울임·밑줄·취소선·fold.jsx 카드 접기(▾/▸) + ⓕ sync.js 부분 저장·받아 오기·도형 단위 되돌리기·viewer.jsx 게시 화면 + ⓔ htmlshare.js HTML 한 파일) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
 │                          데스크톱 대조 시험 `tools/export_route_cases.py`·`export_connect_cases.py`·`export_arrow_cases.py` → `web/test/fixtures/`(규칙 고치면 다시 돌림)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
@@ -208,7 +208,7 @@ symbol_library/
   끌기·전환·색·링크 끄기, 10-18 밤 손맛 1~9차로 노션식 줄 고르기·구분선·주소 Ctrl+클릭 — 계획서 4-b ⑤), **5단계 갈아타기**(tldraw 뺌, 새 칠판 = `/`), **공동작업 1단계**(`## 목표` 순서 바뀜 — 공용 비밀번호 + 이름·게시 링크 `/?view=`·도형 단위 합치기·되돌리기, `web/collab.py`·`sync.js`),
   **HTML 공유**(인터넷 없이 열리는 파일 하나 — 방송 예비본).
   **10-19 손맛 확인 2~5번**: 웹 카드 한 번 눌러 조작·페이지 배율·잠재움, 코드 줄 안 꺾기, HTML 웹 카드 클릭·「칠판 | 발표」 탭, 발표 휠 빠르게, **공동작업 1.5단계**(롱 폴링 0.3~0.4초·「○○ 고치는 중」·부드러운 잠금·
-  공유 | 게시 두 탭 = 편집 초대 링크), **드래그 꾸미기 막대**(runs 일곱째 칸 `deco` — 데스크톱도). 다음: 웹 완성도(10-19 사용자 — 「써 보며 점검」 남은 것은 `docs/history/2026-10.md` 끝). 공동작업 2단계(Yjs)·크롬 웹 클리퍼는 10-19 보류(짜 둔 안은 계획서 §8 항목61 ⓕ). 좁은 창(1440px 미만) = 위 막대 아이콘만 + 대화창 뜸. 그 밖 후보: 발표자 화면·웹 카드 QR·감시 PC 배포(회사 보안 확인 먼저).
+  공유 | 게시 두 탭 = 편집 초대 링크), **드래그 꾸미기 막대**(runs 일곱째 칸 `deco` — 데스크톱도). 다음: 웹 완성도(10-19 사용자 — 「써 보며 점검」 남은 것은 `docs/history/2026-10.md` 끝). 공동작업 2단계(Yjs)·크롬 웹 클리퍼는 10-19 보류(짜 둔 안은 계획서 §8 항목61 ⓕ). 좁은 창(1440px 미만) = 위 막대 아이콘만 + 대화창 뜸. 10-19 오후: 도형 고르고 바로 치면 글(새로 씀·Enter 이어 쓰기)·카드 접기(속성 카드 비키기는 손맛 뒤 되돌림)·발표 화면 95%, 「다 보기」는 그대로(사용자). 그 밖 후보: 발표자 화면·웹 카드 QR·감시 PC 배포(회사 보안 확인 먼저).
 - **§8 항목60 보드 디자인 2차**(2026-10-17) — 아티팩트 시안과 나란히 본 지적 10건 → 원인은 Qt가 아니라 그리기 어휘(HTML 가져오기는 설계서가 끊겨 버림).
   ① `**구절**` 부분 강조(.ecad `runs`) ② Pretendard 싣기(`easycad/fonts.py`, 보드 글만, .ecad `family`·`weight`) ③ 세로 그림 오른쪽 옆 칸
   ④ 가로 단계 블록 `steps` ⑤ 단위 다른 숫자 다른 색·의의/한계 칩. 2라운드(위계): 주인공 = 글만(`HERO_TYPES`), 숫자 note = 비교 기준·막대·그림 필수,
