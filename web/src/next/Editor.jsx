@@ -122,7 +122,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, showItem, dropFiles, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -1318,18 +1318,35 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   })
   // 웹 카드 넣기 — 서버가 주소를 확인한 뒤(칸 안에 넣어도 되나·제목·대표 그림) 커서 자리(화면 밖이면 가운데)에
   // 그림 파일·클립보드 그림 → 이미지 도형(.ecad image = PNG base64 — 다른 형식도 PNG로 바꿔 넣음, 데스크톱도 그대로 열림). 커서 자리(없으면 화면 가운데), 긴 변 최대 화면의 60%
-  async function insertImage(file) {
+  // opts.at = 가운데 자리(칠판 좌표, 없으면 커서·화면 가운데), opts.caption = 그림 밑 작은 회색 글(그림 만들기 요청 — 한 묶음, §8 항목61 ③-4)
+  async function insertImage(file, opts = {}) {
     const url = URL.createObjectURL(file)
     try {
       const im = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = url })
       const cv = document.createElement('canvas'); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext('2d').drawImage(im, 0, 0)
       const data = cv.toDataURL('image/png').split(',')[1]
       const c = R.current.cam, mp = R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
-      const at = mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2 }
+      const at = opts.at || (mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2 })
       const k = Math.min(1, (Math.min(vw.w, vw.h) * 0.6) / Math.max(im.naturalWidth, im.naturalHeight)), w = im.naturalWidth * k, h = im.naturalHeight * k, m = R.current.model
       const it = base([at.x - w / 2, at.y - h / 2], { type: 'image', rect: [0, 0, w, h], data, z: topZ(m.items) + 1 })
-      commit([...m.items, it], [it._id], '그림 붙여넣기'); setTool('select')
+      if (opts.caption) {   // 그림 + 밑 글 = 한 묶음
+        const g = 'g' + newId(), cap = base([at.x - w / 2, at.y + h / 2 + 4], { type: 'text', text: opts.caption, color: '#ff8a8f98', font: 9, bg: null, z: topZ(m.items) + 1, group_id: g })
+        commit([...m.items, { ...it, group_id: g }, cap], [it._id], '그림 붙이기')
+      } else commit([...m.items, it], [it._id], '그림 붙여넣기')
+      setTool('select'); return it._id
     } catch { setStatus('그림을 읽지 못했어요') } finally { URL.revokeObjectURL(url) }
+  }
+  // 그림 후보 붙이기(대화창 🎨 — 누르면 빈자리, 끌어 놓으면 그 자리) — 서버 그림(/api/img/…)을 받아 이미지로 + 밑에 요청 글
+  async function pinImage(url, caption, at) {
+    try { const b = await (await fetch(url)).blob(); if (!at) { const c = R.current.cam; at = { x: (size.w / 2 - rightInset(svg.current) / 2 - c.x) / c.z, y: (size.h / 2 - c.y) / c.z } }
+      return await insertImage(b, { at, caption }) } catch { setStatus('그림을 못 가져왔어요'); return null }
+  }
+  // 칠판에 주소 끌어 놓기 — 대화창 그림 후보면 그 그림, 다른 웹 주소면 웹 카드(주소 Ctrl+V와 같게). 전엔 처리가 없어 브라우저가 그 주소로 떠났음
+  function dropUrl(url, caption, e) {
+    if (readOnly) return
+    const p = toSceneP(e); R.current.mouse = p
+    if (/\/api\/img\//.test(url)) pinImage(url, caption, p)
+    else if (/^https?:\/\//i.test(url)) insertWeb(url)
   }
   // ── 칠판에 파일 끌어 놓기(2026-10-19) — 그림 = 이미지, 녹음 = 회의록(§8 항목61 ③-3). 그 밖 파일은 알림만(전엔 브라우저가 그 파일을 열며 칠판을 떠났음) ──
   const AUDIO_RE = /\.(mp3|m4a|wav|webm|ogg|aac|flac|mp4)$/i

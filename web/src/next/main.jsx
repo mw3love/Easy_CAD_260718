@@ -359,8 +359,10 @@ function App() {
       </Narrow.Provider>
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>   {/* 작업공간 + 오른쪽 KAIROS 대화창(2분할 — 좁은 창은 칠판 위에 뜸) */}
       {/* --mb-right-inset = 뜬 대화창 폭 — 우상 속성·우하 미니맵 카드가 그만큼 왼쪽으로 비킴 */}
-      <div ref={box} onDragOver={e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault() }}
-        onDrop={e => { const fs = [...(e.dataTransfer?.files || [])]; if (!fs.length) return; e.preventDefault(); ed.current?.dropFiles(fs, e) }}   // 파일 끌어 놓기 — 그림·녹음(회의록). 막지 않으면 브라우저가 파일을 열며 칠판을 떠남
+      <div ref={box} onDragOver={e => { const ts = [...(e.dataTransfer?.types || [])]; if (ts.includes('Files') || ts.includes('text/uri-list')) e.preventDefault() }}
+        onDrop={e => { const fs = [...(e.dataTransfer?.files || [])]; e.preventDefault()   // 끌어 놓기 — 파일(그림·녹음 = 회의록) 또는 주소(대화창 그림 후보·웹 주소 = 웹 카드). 막지 않으면 브라우저가 그 파일·주소로 떠남
+          if (fs.length) return ed.current?.dropFiles(fs, e)
+          const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
         style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${CHAT_W + 12}px` : '0px' }}>
         <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onHelp={() => setHelpOpen(true)} marks={marks} />
         {helpOpen && <HelpCard onClose={() => setHelpOpen(false)} />}

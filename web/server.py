@@ -35,7 +35,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, meeting, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_image, meeting, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 
@@ -103,6 +103,8 @@ class Handler(SimpleHTTPRequestHandler):
             last = next((m for m in reversed(msgs) if isinstance(m, dict) and m.get("role") == "user"), {})
             kind = req.get("kind") or board_chat.guess_kind(str(last.get("content", "")), bool(ctx or last.get("context")))
             refs = None
+            if kind == "image":   # 「○○ 그려줘」 — 그림 후보(§8 항목61 ③-4): 칠판 옆 폴더에 두고 주소만 대화 기록에(기록이 그림으로 불지 않게)
+                return self._image(self._name(str(req.get("board") or "")), str(last.get("content", "")), key)
             if kind == "board":   # 「지난번 ○○ 뭐였지?」 — 이 칠판의 저장된 글에서 찾아 근거로(§8 항목61 ③-2)
                 refs = self._find(self._name(str(req.get("board") or "")), str(last.get("content", "")), key)
             out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL,
@@ -113,6 +115,31 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(502, {"error": f"KAIROS 호출 실패: {e}"})
         sys.stderr.write("[대화] %s %.1f초\n" % (out["model"], out["elapsed"]))
         return self._json(200, out)
+
+    def _img_dir(self, name: str) -> str:
+        return os.path.join(self.data_dir, name + ".img")
+
+    def _image(self, name: str, prompt: str, key: str):
+        """그림 후보 → {"kind": "image", "content", "images": [{"url"}], "model", "elapsed", "credits"} — 그림은 `<이름>.img/`에."""
+        if not name:
+            return self._json(400, {"error": "칠판 이름이 없어요"})
+        t0 = time.time()
+        try:
+            out = board_image.generate(key, prompt, base_url=gw.resolve_base_url())
+        except Exception as e:
+            return self._json(502, {"error": f"KAIROS 그림 만들기 실패: {e}"})
+        os.makedirs(self._img_dir(name), exist_ok=True)
+        urls = []
+        for data, ext in out["images"]:
+            fn = f"{int(time.time() * 1000)}_{secrets.token_hex(3)}.{ext}"   # 새 이름이라 덮어쓸 일 없음
+            with open(os.path.join(self._img_dir(name), fn), "wb") as f:
+                f.write(data)
+            from urllib.parse import quote
+            urls.append({"url": f"/api/img/{quote(name)}/{fn}"})
+        el = round(time.time() - t0, 1)
+        sys.stderr.write("[그림] %s %d장 %.1f초 · %s크레딧\n" % (out["model"], len(urls), el, out.get("credits")))
+        return self._json(200, {"kind": "image", "content": f"그림 후보 {len(urls)}장 — 마음에 드는 것을 눌러 칠판에 붙여요", "images": urls,
+                                "model": out["model"], "elapsed": el, "credits": out.get("credits")})
 
     def _find(self, name: str, query: str, key: str, k: int = 8) -> list:
         """칠판 `name`의 저장된 글에서 뜻으로 찾기(`board_find`) — 뜻 숫자는 칠판 옆 `<이름>.emb.json`에 모아 둔다."""
@@ -299,6 +326,14 @@ class Handler(SimpleHTTPRequestHandler):
         m = re.match(r"^/api/meeting/([^/]+)/([0-9a-f]{12})$", path)
         if m:
             return self._meeting_status(self._name(m.group(1)), m.group(2))
+        m = re.match(r"^/api/img/([^/]+)/(\d+_[0-9a-f]{6}\.(png|jpg|webp))$", path)
+        if m:   # 그림 후보(대화창 미리보기·칠판에 붙일 때 가져감)
+            name = self._name(m.group(1))
+            p = os.path.join(self._img_dir(name), m.group(2)) if name else ""
+            if not p or not os.path.exists(p):
+                return self._send(404, b'{"error":"none"}')
+            with open(p, "rb") as f:
+                return self._send(200, f.read(), ctype={"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}[m.group(3)])
         if path == "/api/link":
             return self._link()
         if path == "/api/symbols":   # 「내 심볼」 — 데스크톱과 같은 파일(git으로 PC 간 동기화), 웹은 읽기만

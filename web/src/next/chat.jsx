@@ -17,6 +17,7 @@ const KINDS = {
   chat: ['💬 대화', null, '대화로 다시', '웹·칠판을 찾지 않고 대화로 다시 물어 이 답을 바꿔요'],
   search: ['🔎 웹 검색', { color: '#2f80ed', background: 'rgba(47,128,237,.12)' }, '웹 검색으로 다시', '웹을 찾아 출처와 함께 다시 물어 이 답을 바꿔요'],
   board: ['📌 칠판에서', { color: '#d97706', background: 'rgba(245,158,11,.14)' }, '칠판에서 다시', '이 칠판의 메모·글을 뜻으로 찾아 그것을 근거로 다시 물어요'],
+  image: ['🎨 그림', { color: '#9333ea', background: 'rgba(147,51,234,.12)' }, '그림으로 다시', '그림 후보 2장을 만들어 이 답을 바꿔요(장당 약 34크레딧)'],
 }   // 대화창 주소(어두운·밝은 화면 둘 다 읽히는 파랑)
 
 export const CHAT_W = 360
@@ -90,7 +91,8 @@ export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = �
       body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
-    return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}) }
+    return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
+      ...(d.images?.length ? { images: d.images, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}) }
   }
   async function send() {
     const q = draft.trim(); if (!q || busy) return
@@ -161,6 +163,14 @@ export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = �
                   <button key={k} style={css.link} disabled={!!busy} onClick={() => redoAs(i, k)} title={tip}>{again}</button>)}
               </div>
               <Answer text={m.content} />
+              {m.images?.length > 0 && <div data-testid="answer-images" style={{ marginTop: 6, display: 'grid', gridTemplateColumns: `repeat(${Math.min(2, m.images.length)}, 1fr)`, gap: 6 }}>
+                {m.images.map((g, j) => <button key={g.url} data-testid="image-pick" title="누르면 칠판에 붙여요(끌어 놓으면 그 자리) — 밑에 요청 글이 같이 붙어요"
+                  onClick={async () => { const id = await ed.current?.pinImage(g.url, m.prompt || ''); if (id) update(msgs.map((x, k) => (k === i ? { ...x, picked: [...new Set([...(x.picked || []), j])] } : x))) }}
+                  onDragStart={e => { e.dataTransfer.setData('text/uri-list', location.origin + g.url); e.dataTransfer.setData('text/x-mb-caption', m.prompt || '') }} draggable
+                  style={{ all: 'unset', cursor: 'pointer', position: 'relative', borderRadius: 8, overflow: 'hidden', border: `2px solid ${m.picked?.includes(j) ? '#da7756' : C.line}` }}>
+                  <img src={g.url} alt={`후보 ${j + 1}`} draggable={false} style={{ display: 'block', width: '100%', aspectRatio: '4 / 3', objectFit: 'cover', background: '#fff' }} />
+                  {m.picked?.includes(j) && <span style={{ position: 'absolute', right: 4, bottom: 4, ...css.kind, color: '#fff', background: '#da7756' }}>칠판에 붙임 ✓</span>}
+                </button>)}</div>}
               {m.refs?.length > 0 && <div data-testid="answer-refs" style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {m.refs.map(r => <button key={r.n} onClick={() => ed.current?.showItem(r.uid) || setGone(g => ({ ...g, [m.at + ':' + r.n]: true }))} title="칠판의 그 도형으로 가기"
                   style={{ all: 'unset', cursor: 'pointer', ...css.meta, color: '#d97706', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -169,11 +179,11 @@ export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = �
                 {m.sources.map(s => <a key={s.n} href={s.url} target="_blank" rel="noopener noreferrer" title={s.url} onPointerDown={e => e.stopPropagation()}
                   style={{ ...css.meta, color: LINK_CHAT, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>[{s.n}] {s.title || siteOf(s.url)} · {siteOf(s.url)}</a>)}</div>}
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-                <button style={{ ...(m.pinned ? css.ghost : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
+                {!m.images?.length && <button style={{ ...(m.pinned ? css.ghost : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
                   title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : m.refs?.length ? '메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(누르면 빈자리, 끌면 놓은 자리)' : m.sources?.length ? '요약 메모 + 출처 카드를 번호 화살표로 이어 한 묶음으로(누르면 빈자리, 끌면 놓은 자리)' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
-                  {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>
-                <button style={css.ghost} onClick={() => navigator.clipboard?.writeText(m.content).catch(() => {})}>복사</button>
-                <span style={{ ...css.meta, marginLeft: 'auto' }}>{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}</span>
+                  {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>}
+                {!m.images?.length && <button style={css.ghost} onClick={() => navigator.clipboard?.writeText(m.content).catch(() => {})}>복사</button>}
+                <span style={{ ...css.meta, marginLeft: 'auto' }}>{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</span>
               </div>
             </div>)}
         {busy && <div style={{ ...css.ai, color: C.muted }}>{useModel} 생각 중… {Math.round((Date.now() - busy) / 1000)}초</div>}

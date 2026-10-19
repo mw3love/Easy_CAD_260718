@@ -29,14 +29,19 @@ BOARD_SYSTEM = """너는 사용자의 「웹 칠판」에 쌓인 메모·글을 
 - 아래 [칠판 n] 글만 근거로 답한다. 칠판에 없는 내용은 지어내지 말고 「칠판에서 못 찾았어요」라고 말한다.
 - 결론을 첫 문장에 쓰고 짧게 정리한다. 근거가 된 문장 끝에 [칠판 1]처럼 번호를 붙인다. 강조는 **굵게**만."""
 _BOARD_WORDS = re.compile(r"지난번|저번|예전에|아까|칠판에(서)?\s*(찾|있|적)|우리가\s*(정리|적|메모)|(정리|메모|기록|적어)\s*(해\s*)?(둔|놨|뒀|했던|한\s*거)")
+# 그림(§8 항목61 ③-4) — 「그려줘·일러스트·이미지 만들어」. 흐름도·도면·표처럼 칠판 도형으로 그릴 것은 그림 모델이 아니라 대화로(그림 모델은 글자·선이 엉킴)
+_IMAGE_WORDS = re.compile(r"그려\s*(줘|주세요|봐)|그림\s*(을|으로|좀)?\s*(그려|만들|생성)|이미지\s*(를|로)?\s*(만들|생성|그려)|일러스트|삽화|캐릭터\s*(만들|그려)")
+_DIAGRAM_WORDS = re.compile(r"흐름도|순서도|플로우|도면|계통도|다이어그램|표로|마인드맵|조직도")
 _NO_SEARCH = re.compile(r"칠판에서 고른|이 (메모|글|카드)|위 (내용|글)|요약해|정리해|번역|고쳐|다듬")
 
 
 def guess_kind(text: str, has_context: bool = False) -> str:
-    """질문 → "board"(칠판에서 찾아 답) | "search"(웹 검색) | "chat"(대화). 낱말 규칙(데스크톱 `guess_kind`처럼) — 칠판에서 고른 글을 다루는 말이면 대화."""
+    """질문 → "board"(칠판에서 찾아 답) | "image"(그림 후보) | "search"(웹 검색) | "chat"(대화). 낱말 규칙(데스크톱 `guess_kind`처럼) — 칠판에서 고른 글을 다루는 말이면 대화."""
     t = text or ""
     if _BOARD_WORDS.search(t):
         return "board"
+    if _IMAGE_WORDS.search(t) and not _DIAGRAM_WORDS.search(t):
+        return "image"
     if has_context and _NO_SEARCH.search(t):
         return "chat"
     return "search" if _SEARCH_WORDS.search(t) else "chat"
