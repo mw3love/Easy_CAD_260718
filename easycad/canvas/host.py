@@ -235,7 +235,8 @@ class CanvasWindow(
         # [실사용 피드백 2026-08-26] DXF/DWG는 `doc_path`(Ctrl+S 빠른저장 대상)로 취급하지
         # 않지만, 탭 제목에는 그 파일명을 보여주는 게 자연스러워 `external_path`로 폴백.
         shown = doc.doc_path or doc.external_path
-        name = os.path.basename(shown) if shown else f"제목 없음{doc.untitled_n}"
+        web = getattr(doc, "web_board", None)   # [§8 항목61 ④-2] 웹 칠판에서 연 탭 — 파일 경로 대신 칠판 이름
+        name = os.path.basename(shown) if shown else f"🌐 {web}" if web else f"제목 없음{doc.untitled_n}"
         return f"*{name}" if doc.dirty else name
 
     def _update_tab_title(self, doc=None):

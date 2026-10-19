@@ -323,6 +323,20 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(401, b'{"error":"login"}')
         if path == "/api/models":
             return self._models()
+        if path == "/api/boards":   # 칠판 목록(데스크톱 「웹 칠판 열기」, §8 항목61 ④-2) — 최근에 고친 것부터
+            out = []
+            for fn in os.listdir(self.data_dir) if os.path.isdir(self.data_dir) else []:
+                name = fn[:-5] if fn.endswith(".ecad") else ""
+                if not NAME_RE.match(name):   # `<이름>.prev.ecad`(되돌림용 앞 판) 등은 뺌
+                    continue
+                p = os.path.join(self.data_dir, fn)
+                try:
+                    with open(p, encoding="utf-8") as f:
+                        n = len(json.load(f).get("items") or [])
+                except (OSError, ValueError):
+                    continue
+                out.append({"name": name, "mtime": int(os.path.getmtime(p)), "items": n})
+            return self._json(200, {"boards": sorted(out, key=lambda b: -b["mtime"])})
         m = re.match(r"^/api/meeting/([^/]+)/([0-9a-f]{12})$", path)
         if m:
             return self._meeting_status(self._name(m.group(1)), m.group(2))

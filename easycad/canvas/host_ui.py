@@ -233,6 +233,15 @@ class _UIBuildMixin:
         # [§8 항목32, 2026-10-03] 최근 연 파일 — 열 때마다 다시 채움(host_fileio._fill_recent_menu)
         self._recent_menu = m.addMenu("최근 파일")
         self._recent_menu.aboutToShow.connect(self._fill_recent_menu)
+        # [§8 항목61 ④-2, 2026-10-19] 웹 칠판 — 두 앱의 다리(.ecad 그대로): 서버 칠판을 새 탭으로 열기·지금 도면을 올리기
+        wb = m.addMenu("웹 칠판")
+        self._act_web_open = self._make_action("웹 칠판 열기…", "open", self._web_open)
+        self._act_web_upload = self._make_action("웹 칠판에 올리기…", "menu_export", self._web_upload)
+        self._act_web_settings = self._make_action("웹 칠판 설정…", "open", self._web_board_settings)
+        for a in (self._act_web_open, self._act_web_upload):
+            wb.addAction(a)
+        wb.addSeparator()
+        wb.addAction(self._act_web_settings)
         m.addSeparator()
 
         # [§8 항목14, 2026-08-07] 옛 "전체"/"선택영역" 별도 메뉴 2개를 1개로 통합 —

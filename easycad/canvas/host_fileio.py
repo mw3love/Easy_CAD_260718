@@ -38,6 +38,7 @@ from easycad.fileio.document import (
 )
 from easycad.fileio.photo_ops import SCALE as _PHOTO_SCALE, ops_to_sketch
 from easycad.fileio import symbol_library
+from easycad.fileio import web_board
 from easycad.fileio.mermaid_import import (
     parse_mermaid, layout_positions,
 )
@@ -965,6 +966,121 @@ class _FileIOMixin:
                     it.setBrush(QBrush(Qt.BrushStyle.NoBrush))
             it.setFlags(it.GraphicsItemFlag.ItemIsMovable | it.GraphicsItemFlag.ItemIsSelectable)
         return items
+
+    # ---- [§8 항목61 ④-2, 2026-10-19] 웹 칠판 — 서버 칠판 열기·올리기(두 앱의 다리 = .ecad 그대로, `easycad/fileio/web_board.py`) ----
+    def _web_conf(self) -> tuple:
+        s = app_settings()
+        return str(s.value("web_board/url", "") or web_board.DEFAULT_URL), str(s.value("web_board/password", "") or "")
+
+    def _web_client(self):
+        url, pw = self._web_conf()
+        return web_board.WebBoardClient(url, pw)
+
+    def _web_board_settings(self) -> bool:
+        """서버 주소·팀 비밀번호(이 PC에만 저장 — 비밀번호가 없는 서버면 비워 둠)."""
+        from PyQt6.QtWidgets import QDialogButtonBox, QFormLayout, QLineEdit
+        url, pw = self._web_conf()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("웹 칠판 설정")
+        dlg.setMinimumWidth(460)   # 주소·안내 글이 잘리지 않게(실화면: 기본 폭이면 「ttp://…」로 잘림)
+        lay = QFormLayout(dlg)
+        e_url, e_pw = QLineEdit(url), QLineEdit(pw)
+        e_url.setPlaceholderText(web_board.DEFAULT_URL)
+        e_pw.setEchoMode(QLineEdit.EchoMode.Password)
+        e_pw.setPlaceholderText("비밀번호가 없는 서버면 비워 두세요")
+        lay.addRow("서버 주소", e_url)
+        lay.addRow("팀 비밀번호", e_pw)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addRow(bb)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return False
+        s = app_settings()
+        s.setValue("web_board/url", e_url.text().strip() or web_board.DEFAULT_URL)
+        s.setValue("web_board/password", e_pw.text())
+        return True
+
+    def _web_open(self):
+        """서버 칠판 목록에서 골라 새 탭으로 연다. 그 탭은 파일 경로 없이 칠판 이름(🌐)으로 — Ctrl+S는 파일로 저장할지 묻고, 「웹 칠판에 올리기」는 같은 이름이 기본."""
+        from PyQt6.QtWidgets import QInputDialog
+        import json
+        import tempfile
+        import time as _t
+        cl = self._web_client()
+        try:
+            boards = cl.list_boards()
+        except web_board.WebBoardError as e:
+            QMessageBox.warning(self, "웹 칠판 열기", str(e))
+            return
+        if not boards:
+            QMessageBox.information(self, "웹 칠판 열기", f"서버({cl.base})에 칠판이 아직 없어요.")
+            return
+        rows = [f"{b['name']}   ·  {b['items']}개 · {_t.strftime('%m-%d %H:%M', _t.localtime(b['mtime']))}" for b in boards]
+        pick, ok = QInputDialog.getItem(self, "웹 칠판 열기", f"서버 {cl.base}의 칠판(최근에 고친 것부터)", rows, 0, False)
+        if not ok:
+            return
+        name = boards[rows.index(pick)]["name"]
+        try:
+            doc = cl.get_doc(name)
+        except web_board.WebBoardError as e:
+            QMessageBox.warning(self, "웹 칠판 열기", str(e))
+            return
+        tmp = os.path.join(tempfile.mkdtemp(prefix="mb_web_"), name + ".ecad")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False)
+        self._open_new_tab()
+        self._do_open_ecad(tmp)
+        if self._doc_path != tmp:   # 열기 실패(오류창은 이미 뜸)
+            return
+        self._doc_path = None   # 임시 파일에 Ctrl+S 하지 않게 — 파일로 남기려면 「다른 이름으로 저장」
+        self._active_doc.web_board = name
+        self._active_doc.dirty = False
+        self._update_tab_title()
+        self.statusBar().showMessage(f"웹 칠판 「{name}」을 열었어요 — 고친 뒤 「웹 칠판에 올리기」로 다시 올려요", 8000)
+
+    def _web_upload(self):
+        """지금 도면을 서버 칠판으로 통째로 올린다(같은 이름이 있으면 덮어쓸지 물음). 올린 뒤 브라우저로 열기."""
+        from PyQt6.QtWidgets import QInputDialog
+        import json
+        import tempfile
+        if not self._ai_before_save():   # [§8 항목36] 임시 결과는 채택(저장과 같음)
+            return
+        doc0 = self._active_doc
+        guess = getattr(doc0, "web_board", None) or web_board.clean_name(os.path.splitext(os.path.basename(self._doc_path or self._external_path or ""))[0]) or "도면"
+        name, ok = QInputDialog.getText(self, "웹 칠판에 올리기", "칠판 이름(한글·영문·숫자·_·-)", text=guess)
+        if not ok:
+            return
+        name = web_board.clean_name(name)
+        if not name:
+            QMessageBox.warning(self, "웹 칠판에 올리기", "칠판 이름을 적어 주세요.")
+            return
+        cl = self._web_client()
+        try:
+            exists = any(b["name"] == name for b in cl.list_boards())
+            if exists and name != getattr(doc0, "web_board", None):
+                r = QMessageBox.question(self, "웹 칠판에 올리기", f"서버에 「{name}」 칠판이 이미 있어요.\n지금 도면으로 덮어쓸까요? (같이 쓰는 사람의 내용도 바뀌어요)")
+                if r != QMessageBox.StandardButton.Yes:
+                    return
+            tmp = os.path.join(tempfile.mkdtemp(prefix="mb_up_"), "up.ecad")
+            save_document(self._scene, tmp, layers=self._layers)
+            with open(tmp, encoding="utf-8") as f:
+                rev = cl.put_doc(name, json.load(f))
+        except web_board.WebBoardError as e:
+            QMessageBox.warning(self, "웹 칠판에 올리기", str(e))
+            return
+        doc0.web_board = name
+        self._update_tab_title()
+        url = cl.board_url(name)
+        self.statusBar().showMessage(f"웹 칠판 「{name}」에 올렸어요(판 {rev}) — {url}", 10000)
+        box = QMessageBox(self)
+        box.setWindowTitle("웹 칠판에 올리기")
+        box.setText(f"「{name}」에 올렸어요.\n{url}")
+        open_btn = box.addButton("브라우저로 열기", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("닫기", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            QDesktopServices.openUrl(QUrl(url))
 
     def _open_ai_gateway_settings(self):
         """삽입(&I) 메뉴 「AI 게이트웨이 설정…」 진입점(2026-08-20 피드백) — Mermaid/SVG

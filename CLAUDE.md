@@ -113,6 +113,7 @@ easycad/
 │   ├── mermaid_import.py   Mermaid flowchart → .ecad(「삽입 › Mermaid 코드 가져오기」·「풀어 그리기」 결과)
 │   ├── flow_spec.py        흐름도 설계서 읽기·배치 규칙(담당 띠·칸·줄, Qt 비의존) — 그리기는 `host_fileio._build_flowspec_items`(§8 항목52)
 │   ├── sketch_build.py     이미지→도면 빌더(Qt 비의존)
+│   ├── web_board.py        데스크톱 ↔ 웹 칠판 서버 — 로그인·칠판 목록·받기·올리기(§8 항목61 ④-2, Qt 비의존, 「파일 › 웹 칠판」이 씀)
 │   ├── safe_write.py       안전 저장(임시 파일에 쓰고 바꿔치기) — .ecad·DXF·자동 저장 공용
 │   ├── autosave.py         자동 저장·복구 파일 관리(앱 데이터 `recovery` 폴더, 2026-10-03)
 │   ├── photo_ops.py        사진→도면 ops JSON → Sketch 아이템(글자 회전 rot, Qt 비의존)
@@ -127,7 +128,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~54_*.py      테마별 회귀 스모크 1447종(2026-10-19 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~54_*.py      테마별 회귀 스모크 1450종(2026-10-19 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + TipTap 3.32.0(글 편집, 버전 고정). **2026-10-18 5단계 갈아탐: tldraw 뺌**(옛 tldraw 화면
 │                          src/main.jsx·shapes.jsx·cad.jsx·chat.jsx·boardStore.js·ecad.js·ecadExport.js는 지움 — git에 있음). 남은 공용: route.js(길 찾기 = 데스크톱
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecadFormat.js(순수 변환, `npm test`)·symbols.json(`tools/export_web_symbols.py`가
@@ -221,7 +222,7 @@ symbol_library/
   **10-19 손맛 확인 2~5번**: 웹 카드 한 번 눌러 조작·페이지 배율·잠재움, 코드 줄 안 꺾기, HTML 웹 카드 클릭·「칠판 | 발표」 탭, 발표 휠 빠르게, **공동작업 1.5단계**(롱 폴링 0.3~0.4초·「○○ 고치는 중」·부드러운 잠금·
   공유 | 게시 두 탭 = 편집 초대 링크), **드래그 꾸미기 막대**(runs 일곱째 칸 `deco` — 데스크톱도). 다음: 웹 완성도(10-19 사용자 — 「써 보며 점검」 남은 것은 `docs/history/2026-10.md` 끝). 공동작업 2단계(Yjs)·크롬 웹 클리퍼는 10-19 보류(짜 둔 안은 계획서 §8 항목61 ⓕ). 좁은 창(1440px 미만) = 위 막대 아이콘만 + 대화창 뜸. 10-19 오후: 도형 고르고 바로 치면 글(새로 씀·Enter 이어 쓰기)·카드 접기(속성 카드 비키기는 손맛 뒤 되돌림)·발표 화면 95%, 「다 보기」는 그대로(사용자). 그 밖 후보: 발표자 화면·웹 카드 QR·감시 PC 배포(회사 보안 확인 먼저).
   **10-19 중간점검 → ① 다잡기 1차**: 화면 자동 시험 `web/e2e`(`npm run e2e`)·글쇠 규칙표 `keys.js`(F1 도움말), 화살표가 상자 안에서 시작·끝날 때 붙는 규칙(데스크톱과 다름 — ④ 때)·위 막대 한 줄·Ctrl+9/0/S/P.
-  **② 담는 법 정함 + ③-1 웹 검색**(원칙 넷·순서는 계획서 §8 항목61): 대화창 종류 짐작(🔎/💬/📌, 다른 종류로 다시) → 붙이면 요약 메모 + [n] 출처 카드 묶음. **③-2 뜻으로 찾기**: Ctrl+F(`find.jsx`)·「📌 칠판에서」 답. **③-3 회의록**: 녹음 끌어 놓기 → 프레임 + 요약 + 접힌 전문(메모 `fold`). **③-4 그림**: 「🎨 그림」 후보 2장(대화창) → 고른 한 장 + 요청 글. **④-1 왕복 시험**(`tools/collect_web_fixture.py` → `test_part58`·`roundtrip.test.mjs`·`flow15`) + 데스크톱이 웹 종류 칸 통째 보관. 다음: ④-2 데스크톱 「웹 칠판」 메뉴.
+  **② 담는 법 정함 + ③-1 웹 검색**(원칙 넷·순서는 계획서 §8 항목61): 대화창 종류 짐작(🔎/💬/📌, 다른 종류로 다시) → 붙이면 요약 메모 + [n] 출처 카드 묶음. **③-2 뜻으로 찾기**: Ctrl+F(`find.jsx`)·「📌 칠판에서」 답. **③-3 회의록**: 녹음 끌어 놓기 → 프레임 + 요약 + 접힌 전문(메모 `fold`). **③-4 그림**: 「🎨 그림」 후보 2장(대화창) → 고른 한 장 + 요청 글. **④-1 왕복 시험**(`tools/collect_web_fixture.py` → `test_part58`·`roundtrip.test.mjs`·`flow15`) + 데스크톱이 웹 종류 칸 통째 보관. **④-2 데스크톱 「파일 › 웹 칠판」**(열기·올리기·설정, `fileio/web_board.py`, 서버 `/api/boards`). 다음: ④-3 데스크톱이 웹 종류를 똑같이 그리기 + 글 고치기.
 - **§8 항목60 보드 디자인 2차**(2026-10-17) — 아티팩트 시안과 나란히 본 지적 10건 → 원인은 Qt가 아니라 그리기 어휘(HTML 가져오기는 설계서가 끊겨 버림).
   ① `**구절**` 부분 강조(.ecad `runs`) ② Pretendard 싣기(`easycad/fonts.py`, 보드 글만, .ecad `family`·`weight`) ③ 세로 그림 오른쪽 옆 칸
   ④ 가로 단계 블록 `steps` ⑤ 단위 다른 숫자 다른 색·의의/한계 칩. 2라운드(위계): 주인공 = 글만(`HERO_TYPES`), 숫자 note = 비교 기준·막대·그림 필수,
