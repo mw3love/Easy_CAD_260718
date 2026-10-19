@@ -1,7 +1,7 @@
 // 흐름 14 — 그림(§8 항목61 ③-4): 「그려줘」 → 🎨 후보 2장(대화창에만) → 누르면 그 한 장 + 밑에 요청 글(한 묶음) / 끌어 놓으면 그 자리 / 웹 주소 끌어 놓기 = 웹 카드.
 // KAIROS는 가짜(/api/chat·/api/img·/api/link) — 서버 쪽은 tests/test_part57, 진짜 그림은 손 확인.
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, liveDoc, toPage } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, toPage, waitSaved } from './helpers.js'
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII=', 'base64')
 
@@ -44,4 +44,5 @@ test('그려줘 → 🎨 후보 둘 → 누르면 그림 + 요청 글 묶음 →
   await dropUri(page, 'https://example.com/', '', -100, 300)
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'web').length).toBe(1)
   expect(page.url()).toBe(url0)                                                   // 칠판을 안 떠남
+  await waitSaved(page)                                                           // 웹이 만든 문서 = 데스크톱 왕복 시험 재료(tools/collect_web_fixture.py)
 })

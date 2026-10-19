@@ -364,10 +364,18 @@ def item_to_dict(it) -> dict | None:
                 d.pop("label", None)
         elif k not in d:
             d[k] = v
+    raw = getattr(it, "_web_raw", None)
+    if raw is not None:   # 웹 종류(프레임·웹 카드·메모·범례) = 원래 칸 + 데스크톱이 정하는 자리·크기·묶음만. 데스크톱이 보이려고 붙인 테두리·라벨 칸은 안 남김
+        return {**raw, **{k: d[k] for k in _DESK_KEYS if k in d and k != "type"}}
     return d
 
 
-_WEB_ONLY_KEYS_ALL = ("fit_text", "chat_at", "legend", "legend_key", "uid")   # legend·legend_key = 웹 범례 표시(다시 모을 때 이름 지키기), uid = 웹 공동작업 도형 이름표(2026-10-18)
+# [§8 항목61 ④-1] 웹 종류 — 데스크톱은 아직 대리 네모로 그림(④-3에서 똑같이), 저장은 원래 칸 통째(`_web_raw`)
+_WEB_TYPES = ("frame", "web", "memo", "legend")
+# 데스크톱이 정하는 칸(옮기기·크기·돌리기·쌓는 순서·잠금·묶음·레이어·포트·자국·AI 보드 표시) — 웹 종류도 이것만은 데스크톱 값이 이김
+_DESK_KEYS = ("type", "pos", "scale", "rotation", "z", "origin", "locked", "group_id", "layer_id", "rect", "ports", "cuts", "pb_part", "pb_card", "pb_piece")
+
+_WEB_ONLY_KEYS_ALL =("fit_text", "chat_at", "legend", "legend_key", "uid")   # legend·legend_key = 웹 범례 표시(다시 모을 때 이름 지키기), uid = 웹 공동작업 도형 이름표(2026-10-18)
 
 
 def _web_card_label(d: dict):
@@ -504,6 +512,8 @@ def dict_to_item(d: dict):
         extra.update({"type": "legend", **{k: d[k] for k in ("rows", "names", "title") if k in d}})
     if extra:
         it._web_extra = extra
+    if t in _WEB_TYPES:   # [§8 항목61 ④-1 2026-10-19] 웹 종류는 원래 칸을 통째로 — 칸 목록을 적는 방식은 웹에 새 칸이 생길 때마다 잃었음(메모 `fold`)
+        it._web_raw = {k: v for k, v in d.items() if k not in _DESK_KEYS or k == "type"}
     for pd in d.get("ports", []):
         _port_from_dict(pd, it)
     # [§8 항목17 6단계] TRIM cut 구간 복원 — _add_border_cut을 안 쓰고 직접 대입한다(그

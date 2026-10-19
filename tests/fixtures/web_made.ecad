@@ -1,0 +1,1629 @@
+{
+ "format": "easycad-doc",
+ "version": 1,
+ "items": [
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    120,
+    60
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "uid": "imvewmknk36kdksap"
+  },
+  {
+   "pos": [
+    400,
+    200
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 2,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    120,
+    60
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "uid": "imvewmku637rn5fym"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 3,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "sarrow",
+   "routing": "ortho",
+   "route_hints": [],
+   "color": "#ff1f1f1f",
+   "style": 1,
+   "width": 1,
+   "head": true,
+   "head_start": false,
+   "head_scale": 1,
+   "curve_r": 10,
+   "auto_route": true,
+   "pts": [
+    [
+     120,
+     30
+    ],
+    [
+     260,
+     30
+    ],
+    [
+     260,
+     230
+    ],
+    [
+     400,
+     230
+    ]
+   ],
+   "bind1_pt": [
+    120,
+    30
+   ],
+   "bind1_group": null,
+   "bind2_pt": [
+    0,
+    30
+   ],
+   "bind2_group": null,
+   "uid": "imvewmkzb38ey183x",
+   "bind1": 0,
+   "bind2": 1
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    200,
+    100
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "label": {
+    "text": "안녕 A1",
+    "color": "#ff1f1f1f",
+    "font": 16,
+    "bg": null
+   },
+   "uid": "imvewm6hh36qtgi0a"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    160,
+    80
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "label": {
+    "text": "작가 메모",
+    "color": "#ff1f1f1f",
+    "font": 16,
+    "bg": null
+   },
+   "uid": "imvewmps536aqk0iv"
+  },
+  {
+   "pos": [
+    300,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 2,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    160,
+    80
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "uid": "imvewmq3i37etjuju"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    220,
+    100
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "label": {
+    "text": "송신 계통",
+    "color": "#ff1f1f1f",
+    "font": 16,
+    "bg": null
+   },
+   "uid": "imvewmnxa36lw10xz"
+  },
+  {
+   "pos": [
+    230,
+    183
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "memo",
+   "rect": [
+    0,
+    0,
+    340,
+    53
+   ],
+   "fill": "#fffff8c5",
+   "lines": [
+    {
+     "k": "p",
+     "t": "송신기 이상 보고"
+    }
+   ],
+   "uid": "imvewmaff36tqi2lt"
+  },
+  {
+   "pos": [
+    230,
+    183
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 2,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "memo",
+   "rect": [
+    0,
+    0,
+    340,
+    53
+   ],
+   "fill": "#fffff8c5",
+   "lines": [
+    {
+     "k": "p",
+     "t": "점심 메뉴 김치찌개"
+    }
+   ],
+   "uid": "imvewmajb37beogdr"
+  },
+  {
+   "pos": [
+    49.5,
+    183
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "memo",
+   "rect": [
+    0,
+    0,
+    340,
+    53
+   ],
+   "fill": "#fffff8c5",
+   "lines": [
+    {
+     "k": "p",
+     "t": "송신기 이상 보고 — 2번 출력 저하"
+    }
+   ],
+   "uid": "imvewmc5o36uuf9vu"
+  },
+  {
+   "pos": [
+    -220,
+    -80
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": -1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "frame",
+   "rect": [
+    0,
+    0,
+    640,
+    360
+   ],
+   "name": "",
+   "no": 1,
+   "ratio": "16:9",
+   "uid": "imvewmw4336kfv05b"
+  },
+  {
+   "pos": [
+    217.5,
+    221.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": "gimvewmh993739p4c4",
+   "layer_id": null,
+   "type": "image",
+   "rect": [
+    0,
+    0,
+    4,
+    3
+   ],
+   "data": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAYAAAC09K7GAAAAGUlEQVR4AYTIoQ0AAACDsGX/H43HUNlPOgAAAP//TtzFXAAAAAZJREFUAwAA/wAHlp7KIAAAAABJRU5ErkJggg==",
+   "uid": "imvewmh993618ixet"
+  },
+  {
+   "pos": [
+    217.5,
+    228.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": "gimvewmh993739p4c4",
+   "layer_id": null,
+   "type": "text",
+   "text": "산 위 송신탑 그려줘",
+   "color": "#ff8a8f98",
+   "font": 9,
+   "bg": null,
+   "uid": "imvewmh9938fqujfb"
+  },
+  {
+   "pos": [
+    698,
+    98.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 2,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": "gimvewmhb53adfsgsk",
+   "layer_id": null,
+   "type": "image",
+   "rect": [
+    0,
+    0,
+    4,
+    3
+   ],
+   "data": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAYAAAC09K7GAAAAGUlEQVR4AYTIoQ0AAACDsGX/H43HUNlPOgAAAP//TtzFXAAAAAZJREFUAwAA/wAHlp7KIAAAAABJRU5ErkJggg==",
+   "uid": "imvewmhb5399d6ebb"
+  },
+  {
+   "pos": [
+    698,
+    105.5
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 2,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": "gimvewmhb53adfsgsk",
+   "layer_id": null,
+   "type": "text",
+   "text": "산 위 송신탑 그려줘",
+   "color": "#ff8a8f98",
+   "font": 9,
+   "bg": null,
+   "uid": "imvewmhb53bcmzfrw"
+  },
+  {
+   "pos": [
+    -260,
+    242
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 3,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "web",
+   "url": "https://example.com/",
+   "title": "예시 페이지",
+   "rect": [
+    0,
+    0,
+    320,
+    116
+   ],
+   "frameable": false,
+   "uid": "imvewmhc73c16p577"
+  },
+  {
+   "pos": [
+    40,
+    20
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    160,
+    80
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "uid": "imvewm84336p7lt4a"
+  },
+  {
+   "pos": [
+    340,
+    202
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "table",
+   "rows": 3,
+   "cols": 3,
+   "header": true,
+   "rect": [
+    0,
+    0,
+    120,
+    42
+   ],
+   "cells": [
+    [
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "",
+     ""
+    ],
+    [
+     "",
+     "",
+     ""
+    ]
+   ],
+   "col_widths": [
+    0.3333333333333333,
+    0.3333333333333333,
+    0.3333333333333333
+   ],
+   "uid": "imvewm8ro36dgjb5j"
+  },
+  {
+   "pos": [
+    -156,
+    -128
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "memo",
+   "rect": [
+    0,
+    0,
+    340,
+    206
+   ],
+   "fill": "#ffffffff",
+   "lines": [
+    {
+     "k": "h2",
+     "t": "오늘 할 일"
+    },
+    {
+     "k": "ul",
+     "t": "계통도 고치기"
+    },
+    {
+     "k": "ul",
+     "t": "발표 준비",
+     "runs": [
+      [
+       0,
+       2,
+       null,
+       true
+      ]
+     ]
+    },
+    {
+     "k": "ol",
+     "t": "첫째"
+    },
+    {
+     "k": "ol",
+     "t": "둘째"
+    },
+    {
+     "k": "p",
+     "t": "KAIROS · fake-model · 10-19 15:59",
+     "runs": [
+      [
+       0,
+       33,
+       "#8a8f98",
+       false
+      ]
+     ]
+    }
+   ],
+   "chat_at": 1792393187525,
+   "uid": "imvewmiv537paor2x"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    120,
+    60
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "uid": "imvewmx1936bcgwje"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": true,
+   "group_id": "gimvewmzud38e767r2",
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    120,
+    60
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "uid": "imvewmzr036bnz94y"
+  },
+  {
+   "pos": [
+    20,
+    20
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 2,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": true,
+   "group_id": "gimvewmzud38e767r2",
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    120,
+    60
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "uid": "imvewmztd375jyq00"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    120,
+    60
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "uid": "imvewmz1y366gcdqx"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    120,
+    60
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "uid": "imvewmxq836oqd3ex"
+  },
+  {
+   "pos": [
+    300,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 2,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    120,
+    60
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "uid": "imvewmxun37t898xp"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": -1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "frame",
+   "rect": [
+    0,
+    0,
+    752,
+    352
+   ],
+   "name": "회의 10-19 15:59 · 송신기 교체 회의",
+   "no": 1,
+   "uid": "imvewmgej395p1gpb"
+  },
+  {
+   "pos": [
+    16,
+    16
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "memo",
+   "rect": [
+    0,
+    0,
+    340,
+    320
+   ],
+   "fill": "#ffffffff",
+   "lines": [
+    {
+     "k": "h2",
+     "t": "송신기 교체 회의"
+    },
+    {
+     "k": "p",
+     "t": "2번 송신기 출력 저하로 교체를 논의했어요."
+    },
+    {
+     "k": "h3",
+     "t": "결정"
+    },
+    {
+     "k": "ul",
+     "t": "2번 송신기 교체"
+    },
+    {
+     "k": "h3",
+     "t": "할 일"
+    },
+    {
+     "k": "todo",
+     "t": "김 차장 — 견적 받기 (금요일)"
+    },
+    {
+     "k": "h3",
+     "t": "다음 회의"
+    },
+    {
+     "k": "p",
+     "t": "10월 26일 오후 2시"
+    },
+    {
+     "k": "p",
+     "t": "KAIROS 회의록 · 10월 회의.m4a · 180초 · fake-model · 10-19 15:59",
+     "runs": [
+      [
+       0,
+       57,
+       "#8a8f98",
+       false
+      ]
+     ]
+    }
+   ],
+   "uid": "imvewmgef37m2vtuu"
+  },
+  {
+   "pos": [
+    396,
+    16
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "memo",
+   "rect": [
+    0,
+    0,
+    340,
+    233
+   ],
+   "fill": "#fffafafa",
+   "lines": [
+    {
+     "k": "h3",
+     "t": "전문 · 12구간"
+    },
+    {
+     "k": "p",
+     "t": "[00:00] 화자 1: 1번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    },
+    {
+     "k": "p",
+     "t": "[00:15] 화자 2: 2번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    },
+    {
+     "k": "p",
+     "t": "[00:30] 화자 1: 3번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    },
+    {
+     "k": "p",
+     "t": "[00:45] 화자 2: 4번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    },
+    {
+     "k": "p",
+     "t": "[01:00] 화자 1: 5번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    },
+    {
+     "k": "p",
+     "t": "[01:15] 화자 2: 6번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    },
+    {
+     "k": "p",
+     "t": "[01:30] 화자 1: 7번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    },
+    {
+     "k": "p",
+     "t": "[01:45] 화자 2: 8번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    },
+    {
+     "k": "p",
+     "t": "[02:00] 화자 1: 9번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    },
+    {
+     "k": "p",
+     "t": "[02:15] 화자 2: 10번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    },
+    {
+     "k": "p",
+     "t": "[02:30] 화자 1: 11번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    },
+    {
+     "k": "p",
+     "t": "[02:45] 화자 2: 12번째 발언 — 송신기 교체 이야기",
+     "runs": [
+      [
+       0,
+       14,
+       "#8a8f98",
+       false
+      ]
+     ]
+    }
+   ],
+   "fold": true,
+   "uid": "imvewmgei38j43pe4"
+  },
+  {
+   "pos": [
+    230,
+    183
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "memo",
+   "rect": [
+    0,
+    0,
+    340,
+    121
+   ],
+   "fill": "#fffff8c5",
+   "lines": [
+    {
+     "k": "h1",
+     "t": "회의 정리"
+    },
+    {
+     "k": "ul",
+     "t": "첫째"
+    },
+    {
+     "k": "todo",
+     "t": "할 일"
+    }
+   ],
+   "uid": "imvewmi1i36sk4kx9"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    300,
+    160
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "label": {
+    "text": "1장",
+    "color": "#ff1f1f1f",
+    "font": 16,
+    "bg": null
+   },
+   "uid": "imvewmm1f36b85d21"
+  },
+  {
+   "pos": [
+    600,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 2,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    300,
+    160
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "label": {
+    "text": "2장",
+    "color": "#ff1f1f1f",
+    "font": 16,
+    "bg": null
+   },
+   "uid": "imvewmm8f376w1g4i"
+  },
+  {
+   "pos": [
+    1200,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 3,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    300,
+    160
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "label": {
+    "text": "3장",
+    "color": "#ff1f1f1f",
+    "font": 16,
+    "bg": null
+   },
+   "uid": "imvewmme538tj1sur"
+  },
+  {
+   "pos": [
+    -40,
+    -40
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": -1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "frame",
+   "rect": [
+    0,
+    0,
+    380,
+    240
+   ],
+   "name": "",
+   "no": 1,
+   "uid": "imvewmmkf39z18f74"
+  },
+  {
+   "pos": [
+    560,
+    -40
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": -2,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "frame",
+   "rect": [
+    0,
+    0,
+    380,
+    240
+   ],
+   "name": "",
+   "no": 2,
+   "uid": "imvewmmp43a8xpy4x"
+  },
+  {
+   "pos": [
+    1160,
+    -40
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": -3,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "frame",
+   "rect": [
+    0,
+    0,
+    380,
+    240
+   ],
+   "name": "",
+   "no": 3,
+   "uid": "imvewmmt63badox07"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 4,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": "pen-notes",
+   "type": "path",
+   "elements": [
+    [
+     "M",
+     705.0877192982456,
+     54.73684210526316
+    ],
+    [
+     "L",
+     720.058473821272,
+     58.94736842105263
+    ],
+    [
+     "L",
+     735.0292454769736,
+     63.1578947368421
+    ],
+    [
+     "L",
+     750,
+     67.36842105263158
+    ],
+    [
+     "L",
+     764.9707545230264,
+     71.57894736842105
+    ],
+    [
+     "L",
+     779.941526178728,
+     75.78947368421052
+    ],
+    [
+     "L",
+     794.9122807017544,
+     80
+    ]
+   ],
+   "pen": "#ffef4444",
+   "width": 1.1228070175438596,
+   "style": 1,
+   "freehand": true,
+   "uid": "imvewmmzh3cuj064r"
+  },
+  {
+   "pos": [
+    0,
+    0
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": null,
+   "layer_id": null,
+   "type": "rect",
+   "rect": [
+    0,
+    0,
+    160,
+    80
+   ],
+   "pen": "#ff1f1f1f",
+   "width": 1,
+   "style": 1,
+   "fill": null,
+   "label": {
+    "text": "고친 장",
+    "color": "#ff1f1f1f",
+    "font": 16,
+    "bg": null
+   },
+   "uid": "imvewmsg8362hepw5"
+  },
+  {
+   "pos": [
+    -156,
+    72
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": "gimvewm9hf3dlq31ue",
+   "layer_id": null,
+   "type": "memo",
+   "rect": [
+    0,
+    0,
+    340,
+    147
+   ],
+   "fill": "#ffffffff",
+   "lines": [
+    {
+     "k": "h2",
+     "t": "KBS 소식"
+    },
+    {
+     "k": "ul",
+     "t": "사장 후보가 셋으로 좁혀졌어요.[1]"
+    },
+    {
+     "k": "ul",
+     "t": "감사에서 17건이 나왔어요.[3]"
+    },
+    {
+     "k": "p",
+     "t": "KAIROS · sonar-pro · 10-19 15:59",
+     "runs": [
+      [
+       0,
+       32,
+       "#8a8f98",
+       false
+      ]
+     ]
+    }
+   ],
+   "chat_at": 1792393175362,
+   "uid": "imvewm9hf3cpu4mb1"
+  },
+  {
+   "pos": [
+    274,
+    72
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": "gimvewm9hf3dlq31ue",
+   "layer_id": null,
+   "type": "web",
+   "url": "https://news.kbs.co.kr/a",
+   "title": "[1] 사장 후보 3인",
+   "rect": [
+    0,
+    0,
+    320,
+    116
+   ],
+   "frameable": false,
+   "desc": "2026-10-19 · news.kbs.co.kr",
+   "uid": "imvewm9hf3emgh5ja"
+  },
+  {
+   "pos": [
+    274,
+    202
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": "gimvewm9hf3dlq31ue",
+   "layer_id": null,
+   "type": "web",
+   "url": "https://www.edaily.co.kr/b",
+   "title": "[3] 감사 17건",
+   "rect": [
+    0,
+    0,
+    320,
+    116
+   ],
+   "frameable": false,
+   "desc": "edaily.co.kr",
+   "uid": "imvewm9hf3f9wvksi"
+  },
+  {
+   "pos": [
+    0,
+    200
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": "gimvewm9hf3dlq31ue",
+   "layer_id": null,
+   "type": "sarrow",
+   "routing": "ortho",
+   "route_hints": [],
+   "color": "#ff9aa0a6",
+   "style": 1,
+   "width": 1,
+   "head": true,
+   "head_start": false,
+   "head_scale": 1,
+   "curve_r": 10,
+   "auto_route": true,
+   "pts": [
+    [
+     184,
+     -88
+    ],
+    [
+     229,
+     -88
+    ],
+    [
+     229,
+     -70
+    ],
+    [
+     274,
+     -70
+    ]
+   ],
+   "bind1_pt": [
+    340,
+    40
+   ],
+   "bind1_group": null,
+   "bind2_pt": [
+    0,
+    58
+   ],
+   "bind2_group": null,
+   "uid": "imvewm9hf3gc9xjsr",
+   "bind1": 37,
+   "bind2": 38
+  },
+  {
+   "pos": [
+    0,
+    200
+   ],
+   "scale": 1,
+   "rotation": 0,
+   "z": 1,
+   "origin": [
+    0,
+    0
+   ],
+   "locked": false,
+   "group_id": "gimvewm9hf3dlq31ue",
+   "layer_id": null,
+   "type": "sarrow",
+   "routing": "ortho",
+   "route_hints": [],
+   "color": "#ff9aa0a6",
+   "style": 1,
+   "width": 1,
+   "head": true,
+   "head_start": false,
+   "head_scale": 1,
+   "curve_r": 10,
+   "auto_route": true,
+   "pts": [
+    [
+     184,
+     -88
+    ],
+    [
+     229,
+     -88
+    ],
+    [
+     229,
+     60
+    ],
+    [
+     274,
+     60
+    ]
+   ],
+   "bind1_pt": [
+    340,
+    40
+   ],
+   "bind1_group": null,
+   "bind2_pt": [
+    0,
+    58
+   ],
+   "bind2_group": null,
+   "uid": "imvewm9hf3hrpat30",
+   "bind1": 37,
+   "bind2": 39
+  }
+ ],
+ "layers": [
+  {
+   "id": "default",
+   "name": "기본",
+   "visible": true,
+   "locked": false,
+   "color": "#8a98a8"
+  },
+  {
+   "id": "pen-notes",
+   "name": "판서",
+   "visible": true,
+   "locked": false,
+   "color": "#e0646a"
+  }
+ ]
+}

@@ -73,4 +73,5 @@ test('고른 것 공통 — Ctrl+D 복제 · Ctrl+G 묶기 · Ctrl+L 잠그기',
   d = rects(await liveDoc(page)); expect(d[0].group_id).toBeTruthy(); expect(d[0].group_id).toBe(d[1].group_id)
   await page.keyboard.press('Control+l')
   expect(rects(await liveDoc(page)).every(r => r.locked)).toBe(true)
+  await waitSaved(page)
 })
