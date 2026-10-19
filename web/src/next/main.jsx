@@ -351,7 +351,8 @@ function App() {
   )
 }
 
-await document.fonts.load("400 16px 'Pretendard'", '가A').catch(() => {})
+// 쓰는 굵기를 모두 불러온 뒤 그림 — 400만 기다리면 굵은 글자 폭을 다른 글꼴로 재서(메모 줄 배치는 한 번 재면 그대로) 밑줄·다음 글자 자리가 어긋났음(2026-10-19)
+await Promise.all([400, 600, 700, 800].map(w => document.fonts.load(`${w} 16px 'Pretendard'`, '가A'))).catch(() => {})
 // 들어가기 전 — 비밀번호가 필요한 서버면 먼저 로그인 창(칠판 화면은 그 뒤에 만들어야 크기 재기 등이 바로 돎)
 function Gate() {
   const [gate, setGate] = useState('check')
