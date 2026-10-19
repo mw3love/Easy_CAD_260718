@@ -32,6 +32,7 @@ test('기억한 화면 자리에 아무것도 안 보이면 다시 열 때 전�
   const c = await page.evaluate(() => window.__mb.getCam()), box = await page.getByTestId('board').boundingBox()
   const sx = 100 * c.z + c.x, sy = 50 * c.z + c.y                                     // 사각형 가운데의 화면 자리
   expect(sx > 0 && sx < box.width && sy > 0 && sy < box.height).toBe(true)
+  expect(0 * c.z + c.x).toBeGreaterThanOrEqual(220)                                  // 사각형 왼쪽 끝이 왼쪽 카드(220px) 밑에 안 들어감
 
   await page.evaluate(() => window.__mb.setCam({ x: 300, y: 250, z: 1.5 }))          // 도형이 보이는 자리는 그대로 기억
   await page.waitForTimeout(500); await page.reload(); await expect(page.getByText(`서버 「${name}」`).first()).toBeVisible()

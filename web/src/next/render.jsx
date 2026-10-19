@@ -227,7 +227,10 @@ const near = (c, white) => { const m = /^#([0-9a-f]{6})$/i.exec(c || ''); if (!m
 // 칠판 바탕 기본 잉크 — 밝은 화면은 흰 잉크를 검정으로, 어두운 화면은 검정 잉크를 흰색으로(데스크톱 `_DEFAULT_INK_DARK` #FFFFFF). 보드 안은 보드 색 기준이라 그대로
 let DARK = false
 export const setInkDark = v => { DARK = !!v }
-const nearBlack = c => { const m = /^#([0-9a-f]{6})$/i.exec(c || ''); if (!m) return false; const n = parseInt(m[1], 16); return (n >> 16) <= 0x40 && ((n >> 8) & 255) <= 0x40 && (n & 255) <= 0x40 }
+// 검정 잉크 = 어둡고(밝기 < 64) 색이 옅은(최대−최소 ≤ 64) 색 — 검정·숯색·보드 남색 #1e2b45가 다 들어감. 옛 규칙(세 값 모두 ≤ 0x40)은 남색(파랑 0x45~0x4d)을 놓쳐
+// 어두운 화면에서 판단·화살표·글이 바탕에 묻혔음(2026-10-19 점검). 짙은 빨강·초록처럼 색이 뚜렷한 것은 뜻이 있어 그대로
+const nearBlack = c => { const m = /^#([0-9a-f]{6})$/i.exec(c || ''); if (!m) return false; const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255
+  return 0.299 * r + 0.587 * g + 0.114 * b < 64 && Math.max(r, g, b) - Math.min(r, g, b) <= 64 }
 export const ink = (c, onBoard) => { const css = cssColor(c); if (onBoard) return css; return DARK ? (nearBlack(css) ? '#ffffff' : css) : (near(css, true) ? '#1f1f1f' : css) }
 // Qt QColor.darker(118)/lighter(135) — HSV 명도만
 function shade(css, f) {

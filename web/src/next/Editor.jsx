@@ -974,6 +974,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const at = drop || freeSpot(view, boxes, W, h)
     const its = cardItems(msg, at.x, at.y, topZ(m.items) + 1)
     commit([...m.items, ...its], its.map(it => it._id), '칠판에 붙이기')
+    // 화면 밖으로 나간 만큼만 화면을 옮김(배율 그대로) — 붙였는데 안 보여 아무 일도 없던 것 같았음(2026-10-19 점검). 가운데로 옮기면 옆 메모가 왼쪽 카드 밑으로 갔음
+    if (!drop) {
+      const nb = unionBox(its.map(it => sceneBox(it, textBox))), vx = -c.x / c.z + left, vy = -c.y / c.z + top, vw = (size.w - rightInset(svg.current)) / c.z - left, vh = size.h / c.z - top, pad = 20 / c.z
+      const need = (a, len, v0, vlen) => (len > vlen || a < v0 ? v0 + pad - a : a + len > v0 + vlen ? v0 + vlen - pad - (a + len) : 0)   // 넘치면 앞(왼쪽·위)부터
+      const dx = need(nb.x, nb.w, vx, vw), dy = need(nb.y, nb.h, vy, vh)
+      if (dx || dy) setCam({ z: c.z, x: c.x + dx * c.z, y: c.y + dy * c.z })   // need = 묶음이 화면에서 옮겨 보여야 할 칠판 거리
+    }
     return its.map(it => it._id)   // 고른 채로 둠(어디 붙었나 보이게) — 대화창은 이 고름을 다음 질문에 싣지 않음(chat.jsx `skipSel`)
   }
   // 이미 붙인 카드로 — 고르고 화면 가운데로. 없으면(지웠으면) false

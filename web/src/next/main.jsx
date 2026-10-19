@@ -17,7 +17,7 @@ import { CHAT_W, ChatPanel } from './chat.jsx'
 import { HelpCard } from './help.jsx'
 import { FindBar } from './find.jsx'
 
-const ZMIN = 0.02, ZMAX = 40
+const ZMIN = 0.02, ZMAX = 40, LEFT_CARDS = 220   // LEFT_CARDS = 왼쪽 카드 줄 폭(12 + 192 + 여유)
 // 화면 색은 next.html의 CSS 변수(밝은/어두운 화면 — 어두운 쪽은 데스크톱과 같은 값)
 const C = { bar: 'var(--mb-bar)', group: 'var(--mb-group)', ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', accent: '#da7756', board: 'var(--mb-board)', line: 'var(--mb-line)', card: 'var(--mb-card)' }
 const SAMPLES = [['모든 종류', '/samples/all_types.ecad'], ['보드 샘플', '/samples/paper_board.ecad'], ['login_flow', '/_local/login_flow.ecad'], ['1TV 계통도', '/_local/1TV_계통도_시험.ecad']]
@@ -247,9 +247,10 @@ function App() {
     const b = docBounds(items); if (!b) return
     // 처음 열 때(서버 답)는 화면 크기를 재기 전 값(1×1)을 붙잡은 함수가 불려 배율 2%가 됐다 — 그 자리에서 직접 잰다
     if (!s) { const r = box.current?.getBoundingClientRect(); s = r && r.width > 1 ? { w: r.width, h: r.height } : size }
-    s = { ...s, w: s.w - rightInset(box.current) }   // 좁은 창의 뜬 대화창 밑은 빼고 맞춤(그 자리에서 읽음 — 이 함수는 옛 값을 붙잡고 불릴 수 있음)
+    const L = Math.min(LEFT_CARDS, s.w / 4)   // 왼쪽 카드(도형·심볼·레이어) 밑도 빼고 — 맨 왼쪽 메모가 카드에 가렸음(2026-10-19 점검, Editor `showIds`와 같은 220)
+    s = { ...s, w: s.w - rightInset(box.current) - L }   // 좁은 창의 뜬 대화창 밑은 빼고 맞춤(그 자리에서 읽음 — 이 함수는 옛 값을 붙잡고 불릴 수 있음)
     const pad = 40, z = Math.min(ZMAX, Math.max(ZMIN, Math.min((s.w - 2 * pad) / Math.max(b.w, 1), (s.h - 2 * pad) / Math.max(b.h, 1), 1)))
-    setCam({ z, x: s.w / 2 - (b.x + b.w / 2) * z, y: s.h / 2 - (b.y + b.h / 2) * z })
+    setCam({ z, x: L + s.w / 2 - (b.x + b.w / 2) * z, y: s.h / 2 - (b.y + b.h / 2) * z })
   }, [size])
   // 서버 칠판을 다시 열면 이 브라우저에서 마지막에 보던 자리·배율로(없거나 못 읽으면 전체 맞추기). 파일·샘플은 늘 전체 맞추기
   const camKey = `mb.cam.${DOC_NAME}`, camReady = useRef(false)
