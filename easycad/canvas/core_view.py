@@ -525,7 +525,7 @@ class _AnnotatorView(QGraphicsView):
         arrow.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
                        | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         arrow.set_bound(0, src, src.mapFromScene(p_src))
-        snap = self._qc_snap_target(cursor_scene, src)
+        snap = self._qc_snap_target(cursor_scene, src, p_src)
         end = snap[0] if snap is not None else cursor_scene
         arrow.set_points(p_src, end)
         if snap is not None and snap[2] is not None and (
@@ -539,10 +539,13 @@ class _AnnotatorView(QGraphicsView):
         arrow.setSelected(True)
         return arrow
 
-    def _qc_snap_target(self, cursor_scene, src):
+    def _qc_snap_target(self, cursor_scene, src, src_pt=None):
         """[M4-2] QC 드래그 끝점 스냅 → (scene_pt, exit_unit, shape) 또는 None.
         테두리·포트 스냅(_border_snap_at) 우선, 없으면 커서가 다른 도형 '내부'면 그 도형 최근접
-        포트로 흡수 — 테두리 정밀 조준 없이 도형 위에 놓기만 하면 붙게 한다."""
+        포트로 흡수 — 테두리 정밀 조준 없이 도형 위에 놓기만 하면 붙게 한다.
+        [§8 항목61 ④-4 2026-10-19 — 웹과 같게] `src_pt`(화살표 출발점)를 주면 '내부' 흡수는 놓은 자리가 아니라
+        출발점에 가장 가까운 포트(= 화살표가 오는 쪽 변) — 가운데에 놓으면 위·아래 변이 더 가까워 돌아 들어갔음."""
+        ref = src_pt if src_pt is not None else cursor_scene
         snap = self._border_snap_at(self.mapFromScene(cursor_scene))
         if snap is not None:
             return snap
@@ -563,7 +566,7 @@ class _AnnotatorView(QGraphicsView):
                 probe = self._group_proxy(gid)
                 best, bestd = None, None
                 for sp, n in _shape_ports_visible(probe):
-                    d = QLineF(sp, cursor_scene).length()
+                    d = QLineF(sp, ref).length()
                     if bestd is None or d < bestd:
                         bestd, best = d, (sp, n, probe)
                 return best
@@ -572,7 +575,7 @@ class _AnnotatorView(QGraphicsView):
                 best, bestd = None, None
                 # [§8 항목17 3단계] 포트/cut에 가려 안 보이는 접속점으로는 안 흡수한다.
                 for sp, n in _shape_ports_visible(sh):
-                    d = QLineF(sp, cursor_scene).length()
+                    d = QLineF(sp, ref).length()
                     if bestd is None or d < bestd:
                         bestd, best = d, (sp, n, sh)
                 return best
@@ -2432,7 +2435,7 @@ class _AnnotatorView(QGraphicsView):
         pen.setCosmetic(True)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        snap = self._qc_snap_target(cursor_scene, src)
+        snap = self._qc_snap_target(cursor_scene, src, port_pt)
         end = snap[0] if snap is not None else cursor_scene
         ne = snap[1] if snap is not None else None
         target = snap[2] if snap is not None else None
@@ -2500,7 +2503,7 @@ class _AnnotatorView(QGraphicsView):
         arrow.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsMovable
                        | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         arrow.set_bound(0, src, src.mapFromScene(port_pt))
-        snap = self._qc_snap_target(cursor_scene, src)
+        snap = self._qc_snap_target(cursor_scene, src, port_pt)
         end = snap[0] if snap is not None else cursor_scene
         arrow.set_points(port_pt, end)
         if snap is not None and snap[2] is not None and (
@@ -3602,13 +3605,34 @@ class _AnnotatorView(QGraphicsView):
     def _bind_poly_ends(self, it):
         """[A3] 직선화살표 확정 시 — 시작·끝 정점이 도형 테두리 근처면 그 지점으로 스냅하고
         지속 연결 바인딩(도형 이동 시 추종). o-snap(F3) 꺼짐이면 _border_snap_at이 None → 무바인딩."""
-        for idx in (0, len(it._pts) - 1):
+        # [§8 항목61 ④-4 2026-10-19 — 웹과 같게] 테두리에 안 붙은 끝이 도형 '안'이면 그 도형의, 반대쪽(이웃) 정점에 가장 가까운
+        # 포트에 붙임 — 상자 가운데끼리 그어도 양끝이 붙고(전엔 시작 쪽이 떠 있었음) 오는 쪽 변으로 들어감. 양끝을 먼저 다 정한 뒤 적용(서로 원래 자리를 기준으로)
+        last = len(it._pts) - 1
+        orig = [it.mapToScene(it._pts[0]), it.mapToScene(it._pts[last])]
+        nb = [it.mapToScene(it._pts[1]), it.mapToScene(it._pts[last - 1])]
+        inside = {}
+        for k, idx in enumerate((0, last)):
+            if self._border_snap_at(self.mapFromScene(orig[k]), exclude=it) is not None:
+                continue
+            for sh in self._conn_shapes():   # 위(나중 그린 것)부터
+                if sh is it or not sh.rect().contains(sh.mapFromScene(orig[k])):
+                    continue
+                ports = list(_shape_ports_visible(sh))
+                if ports:
+                    sp = min(ports, key=lambda pn: QLineF(pn[0], nb[k]).length())[0]
+                    inside[idx] = (sp, sh)
+                break
+        for idx in (0, last):
             vscene = it.mapToScene(it._pts[idx])
             snap = self._border_snap_at(self.mapFromScene(vscene), exclude=it)
             if snap is not None:
                 it._set_endpoint(idx, it.mapFromScene(snap[0]))   # [M4-2b] 기하 스냅(선/화살표 끝점 포함)
                 if snap[2] is not None:
                     it.set_bound(idx, snap[2], snap[2].mapFromScene(snap[0]))   # 도형만 지속 바인딩
+            elif idx in inside:
+                sp, sh = inside[idx]
+                it._set_endpoint(idx, it.mapFromScene(sp))
+                it.set_bound(idx, sh, sh.mapFromScene(sp))
         # [M4-4] 드래그로 그린(2정점) 직선화살은 라우팅 스타일대로 확정 — ortho(기본)면 직교 경로 생성
         # (양끝 바인딩=A* 회피 자동라우팅, 자유=단순 엘보), straight면 2점 직선 유지. 멀티정점 클릭배치
         # (3정점↑)는 사용자가 손으로 놓은 경로이므로 건드리지 않는다(수동 폴리라인 보존).
