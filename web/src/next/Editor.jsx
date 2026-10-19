@@ -78,6 +78,9 @@ const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([
 const PEN_LAYER = 'pen-notes'   // 발표 판서 레이어
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
+// 뜬 대화창 폭(좁은 창 — main.jsx가 칠판 칸에 `--mb-right-inset`으로 적음) — 「다 보기」·프레임으로 가기·AI 답 자리는 그만큼 오른쪽을 뺌(2026-10-19)
+export const rightInset = el => (el ? parseFloat(getComputedStyle(el).getPropertyValue('--mb-right-inset')) || 0 : 0)
+
 export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
@@ -855,7 +858,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       commit(m2.items.map(x => (x._id === nx.id ? { ...it, lines: ls } : x)), R.current.sel, '메모 고침', 'memo' + nx.id) }, 300) }
   function pinCard(msg, drop) {   // drop = 칠판 좌표(끌어 놓은 자리 — 왼쪽 위), 없으면 빈자리
     const m = R.current.model, c = R.current.cam, h = cardItem(msg, 0, 0, 0).rect[3]
-    const left = 220 / c.z, right = 220 / c.z, view = { x: -c.x / c.z + left, y: -c.y / c.z, w: Math.max(CARD_W, size.w / c.z - left - right), h: size.h / c.z }
+    const left = 220 / c.z, right = (220 + rightInset(svg.current)) / c.z, top = 48 / c.z   // 위 48px = 감싸도 프레임 이름표가 칠판 밖으로 안 나감(2026-10-19 점검)
+    const view = { x: -c.x / c.z + left, y: -c.y / c.z + top, w: Math.max(CARD_W, size.w / c.z - left - right), h: size.h / c.z - top }
     const boxes = m.items.map(it => sceneBox(it, textBox))
     const at = drop || freeSpot(view, boxes, CARD_W, h)
     const card = cardItem(msg, at.x, at.y, topZ(m.items) + 1)
@@ -875,8 +879,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function renameFrame(id, name) { const m = R.current.model; commit(m.items.map(it => (it._id === id ? { ...it, name } : it)), R.current.sel, '프레임 이름', 'fname' + id) }   // 치는 대로 — 되돌리기는 한 칸
   function goFrame(id) {   // 그 프레임이 화면에 꽉 차게(여백 10%)
     const it = R.current.model.items.find(x => x._id === id); if (!it) return
-    const b = sceneBox(it, textBox), z = Math.min(4, Math.max(0.05, Math.min(size.w / (b.w * 1.2), size.h / (b.h * 1.3))))
-    setSel([id]); setCam({ z, x: size.w / 2 - (b.x + b.w / 2) * z, y: size.h / 2 - (b.y + b.h / 2) * z })
+    const W = size.w - rightInset(svg.current), b = sceneBox(it, textBox), z = Math.min(4, Math.max(0.05, Math.min(W / (b.w * 1.2), size.h / (b.h * 1.3))))
+    setSel([id]); setCam({ z, x: W / 2 - (b.x + b.w / 2) * z, y: size.h / 2 - (b.y + b.h / 2) * z })
   }
   // 감싸기: 고른 것을 여백 두고 감싸는 프레임(자유 비율)
   function wrapFrame() {
