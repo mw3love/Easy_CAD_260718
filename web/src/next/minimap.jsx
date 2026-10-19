@@ -29,7 +29,7 @@ function draw(ctx, items, f, dark) {
     if (it.type === 'path') { for (const e of it.elements) { if (e.length >= 3) ctx[e[0] === 'M' ? 'moveTo' : 'lineTo'](...L(e[e.length - 2], e[e.length - 1])) } ctx.stroke(); continue }
     const b = itemBounds(it), [x, y] = P(b.x, b.y), w = Math.max(1, b.w * f.k), h = Math.max(1, b.h * f.k)
     if (it.type === 'board') { ctx.fillStyle = cssColor(it.bg) || '#ffffff'; ctx.fillRect(x, y, w, h); continue }
-    if (it.type === 'text' || it.type === 'image' || it.type === 'web' || it.type === 'memo') { ctx.fillStyle = dark ? 'rgba(220,226,235,.35)' : 'rgba(40,48,60,.28)'; ctx.fillRect(x, y, w, h); continue }
+    if (it.type === 'text' || it.type === 'image' || it.type === 'web' || it.type === 'memo' || it.type === 'legend') { ctx.fillStyle = dark ? 'rgba(220,226,235,.35)' : 'rgba(40,48,60,.28)'; ctx.fillRect(x, y, w, h); continue }
     if (it.type === 'ellipse') { ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.stroke(); continue }
     if (it.fill) { ctx.fillStyle = cssColor(it.fill); ctx.fillRect(x, y, w, h) }
     ctx.strokeRect(x, y, w, h)
@@ -57,7 +57,7 @@ export function Minimap({ items, cam, size, setCam, onFit, dark }) {
     <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
       <span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>미니맵</span>
       <button title="축소" onClick={() => zoomBy(1 / ZOOM_STEP)} style={hb}>−</button>
-      <button title="전체 보기 — 도면 전체가 보이게(Ctrl+9)" onClick={onFit} style={{ ...hb, minWidth: 38 }}>{Math.round(cam.z * 100)}%</button>
+      <button title="다 보기 — 칠판 전체가 보이게(Ctrl+9)" onClick={onFit} style={{ ...hb, minWidth: 38 }}>{Math.round(cam.z * 100)}%</button>
       <button title="확대" onClick={() => zoomBy(ZOOM_STEP)} style={hb}>＋</button>
     </div>
     <div style={{ position: 'relative', width: W, height: H, borderRadius: 4, overflow: 'hidden', background: 'var(--mb-board, transparent)', outline: `1px solid ${C.line}`, cursor: 'pointer' }}

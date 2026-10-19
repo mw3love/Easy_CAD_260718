@@ -109,3 +109,18 @@ def test_web_memo_survives_desktop_save():
     out = item_to_dict(it)
     assert out["type"] == "memo" and out["lines"] == lines and out["fill"] == "#fffff8c5" and out["chat_at"] == 1792300000000
     assert "label" not in out and out["rect"] == [0.0, 0.0, 340.0, 200.0]
+
+
+def test_web_card_new_keys_and_legend_survive_desktop_save():
+    """2026-10-19 — 웹 카드 새 칸(설명·아이콘·페이지 배율)과 범례 2판(표 모양, 줄은 웹이 도면에서 모음)도 데스크톱을 거쳐 그대로"""
+    w = dict(_BASE, type="web", rect=[0.0, 0.0, 640.0, 460.0], url="https://ko.wikipedia.org/", title="위키", frameable=True,
+             desc="설명", icon="data:image/png;base64,AAAA", zoom=0.5)
+    out = _roundtrip(w)
+    assert (out["desc"], out["icon"], out["zoom"]) == ("설명", "data:image/png;base64,AAAA", 0.5)
+    rows = [{"key": "ff34c759|1|5", "color": "#ff34c759", "style": 1, "width": 5, "count": 2, "arrow": True}]
+    lg = dict(_BASE, type="legend", rect=[0.0, 0.0, 256.0, 87.0], rows=rows, names={"ff34c759|1|5": "주 신호선"}, title="범례")
+    sc = QGraphicsScene()
+    it = insert_items(sc, [lg])[0]
+    assert it._label.toPlainText() == "범례\n주 신호선 · 실선 · 5px"   # 데스크톱에선 줄 글이 보임
+    out = item_to_dict(it)
+    assert out["type"] == "legend" and out["rows"] == rows and out["names"] == lg["names"] and out["title"] == "범례" and "label" not in out

@@ -39,7 +39,7 @@ const Group = ({ children }) => <div style={{ display: 'flex', gap: 2, backgroun
 const TOOLS = [['select', '↖', '선택', '1'], ['arrow', '⤷', '화살표', '2'], ['text', 'T', '글자', '3'], ['line', '╱', '선', '4'], ['polygon', '⬠', '다각형', '5'], ['pen', '✎', '펜', '6'], ['badge', '①', '번호', '7']]
 
 // 표 넣기 — 행·열·첫 행 머리(데스크톱 `_TableSizeDialog`: 기본 3×3, 머리 켬, 행 1~100·열 1~50)
-function TableForm({ onInsert, onClose }) {
+function TableForm({ onInsert, onLegend, onClose }) {   // onLegend = 범례 넣기(2026-10-19 사용자: 표 기반, 자주 안 쓰니 우클릭 메뉴 대신 여기)
   const [r, setR] = useState(3), [c, setC] = useState(3), [h, setH] = useState(true)
   const num = (v, set, max) => <input type="number" min={1} max={max} value={v} onChange={e => set(Math.max(1, Math.min(max, +e.target.value || 1)))} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') onInsert(r, c, h); if (e.key === 'Escape') onClose() }}
     style={{ width: 52, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px' }} />
@@ -51,6 +51,10 @@ function TableForm({ onInsert, onClose }) {
     <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
       <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, color: C.muted }}>취소</button>
       <button onClick={() => onInsert(r, c, h)} style={{ all: 'unset', cursor: 'pointer', padding: '4px 12px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>넣기</button>
+    </div>
+    <div style={{ borderTop: `1px solid ${C.line}`, paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <button data-testid="insert-legend" onClick={onLegend} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '4px 0', borderRadius: 6, background: C.group, fontWeight: 600 }}>범례 넣기</button>
+      <span style={{ fontSize: 11, color: C.muted }}>도면의 선 종류를 표로 — 선이 바뀌면 저절로 따라가요</span>
     </div>
   </div>
 }
@@ -272,14 +276,14 @@ function App() {
           <Btn icon="▭" label="프레임" on={tool === 'frame'} onClick={() => setTool(t => (t === 'frame' ? 'select' : 'frame'))} title="프레임 — 끌어서 영역을 감싸면 그 안이 출력 한 쪽(번호 순서). 클릭만 = 16:9, 우클릭 「프레임으로 감싸기」도" />
         </div><div style={{ position: 'relative' }}>
           <Btn icon="▦" label="표" on={tableOpen} onClick={() => setTableOpen(o => !o)} title="표 넣기 — 행·열을 고르면 화면 가운데에" />
-          {tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); ed.current?.insertTable(r, c, h) }} onClose={() => setTableOpen(false)} />}
+          {tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); ed.current?.insertTable(r, c, h) }} onLegend={() => { setTableOpen(false); ed.current?.insertLegend() }} onClose={() => setTableOpen(false)} />}
         </div><div style={{ position: 'relative' }}>
           <Btn icon="🗒" label="메모" onClick={() => ed.current?.insertMemo()} title="메모 — 줄마다 제목·목록·할 일·코드·인용(`# `·`- `·`[] `·`> ` 입력), 체크 상자는 칠판에서 바로" />
           <Btn icon="🌐" label="웹" on={webOpen} onClick={() => setWebOpen(o => !o)} title="웹 카드 — 유튜브·웹페이지 주소를 칠판에(칠판에 주소를 Ctrl+V 해도 돼요)" />
           {webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url) }} onClose={() => setWebOpen(false)} />}
         </div></Group>
         <Group>
-          <Btn icon="⤢" label="전체" onClick={() => fit(model.items)} title="전체 보기 (Ctrl+9)" />
+          <Btn icon="⤢" label="다 보기" onClick={() => fit(model.items)} title="칠판 전체가 화면에 들어오게 맞춤 (Ctrl+9)" />
         </Group>
         <select onChange={async e => { const u = e.target.value; e.target.value = ''; if (!u) return; try { open(parseDoc(await (await fetch(u)).text()), u.split('/').pop()) } catch (err) { setStatus('샘플 열기 실패: ' + err.message) } }}
           defaultValue="" style={{ font: "500 12px 'Pretendard', sans-serif", padding: '4px 6px', borderRadius: 6, border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>

@@ -360,7 +360,7 @@ def item_to_dict(it) -> dict | None:
                 d["label"]["align"] = v
         elif k == "type":   # 웹 프레임·웹 카드 — 네모로 열었던 것을 다시 frame·web으로
             d["type"] = v
-            if v in ("web", "memo"):   # 보이려고 붙인 라벨(제목·주소 / 메모 줄 글)은 웹에선 안 씀
+            if v in ("web", "memo", "legend"):   # 보이려고 붙인 라벨(제목·주소 / 메모·범례 줄 글)은 웹에선 안 씀
                 d.pop("label", None)
         elif k not in d:
             d[k] = v
@@ -381,6 +381,10 @@ def _web_card_label(d: dict):
             mk = f"{n}. " if k == "ol" else ("☑ " if ln.get("done") else "☐ ") if k == "todo" else marks.get(k, "")
             out.append("  " * int(ln.get("lv") or 0) + mk + (ln.get("t") or ""))
         return {"text": "\n".join(out), "color": "#ff1f1f1f", "font": 10, "bg": None, "align": "left"}
+    if d.get("type") == "legend":   # [웹 칠판 2026-10-19] 범례 2판 — 줄마다 「이름 · 모양」(웹 legend.js `rowName`·`descOf`와 같은 표시)
+        sn = {1: "실선", 2: "파선", 3: "점선", 4: "일점쇄선", 5: "이점쇄선"}
+        rows = [f"{(d.get('names') or {}).get(e.get('key'), '선')} · {sn.get(e.get('style'), '실선')} · {e.get('width')}px" for e in d.get("rows") or []]
+        return {"text": "\n".join([d.get("title") or "범례", *rows]), "color": "#ff1f1f1f", "font": 10, "bg": None, "align": "left"}
     if d.get("type") != "web":
         return None
     return {"text": ((d.get("title") or "") + "\n" + (d.get("url") or "")).strip(), "color": "#ff18181b", "font": 10, "bg": None}
@@ -432,6 +436,9 @@ def dict_to_item(d: dict):
     elif t == "memo":   # [웹 칠판 2026-10-18] 메모(줄마다 제목·목록·할 일·코드·인용) — 데스크톱은 아직 모름: 줄 글을 적은 둥근 네모로 보이고, 저장할 때 다시 memo로
         md = {"pen": "#ffd4d4d8", "width": 1.0, "style": 1, "fill": d.get("fill") or "#ffffffff"}
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(md)); it.setBrush(_mkbrush(md)); it._radius = 10.0
+    elif t == "legend":   # [웹 칠판 2026-10-19] 범례 2판(표 모양, 줄은 도면에서 저절로) — 데스크톱은 아직 모름: 줄 글을 적은 둥근 네모로 보이고, 저장할 때 다시 legend로
+        ld = {"pen": "#ffd4d4d8", "width": 1.0, "style": 1, "fill": "#ffffffff"}
+        it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(ld)); it.setBrush(_mkbrush(ld)); it._radius = 8.0
     elif t == "rect":
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
         it._radius = float(d.get("radius") or 0)
@@ -490,9 +497,11 @@ def dict_to_item(d: dict):
     if t == "frame":
         extra.update({"type": "frame", **{k: d[k] for k in ("name", "no", "ratio", "magnet") if k in d}})
     if t == "web":
-        extra.update({"type": "web", **{k: d[k] for k in ("url", "title", "thumb", "embed", "frameable") if k in d}})
+        extra.update({"type": "web", **{k: d[k] for k in ("url", "title", "thumb", "embed", "frameable", "desc", "icon", "zoom") if k in d}})   # desc·icon·zoom = 2026-10-19
     if t == "memo":
         extra.update({"type": "memo", **{k: d[k] for k in ("lines",) if k in d}})
+    if t == "legend":
+        extra.update({"type": "legend", **{k: d[k] for k in ("rows", "names", "title") if k in d}})
     if extra:
         it._web_extra = extra
     for pd in d.get("ports", []):

@@ -10,6 +10,7 @@ import { symbolPath } from './symbols.js'
 import { sarrowRadius } from './arrows.js'
 import { WEB_HEAD, frameSrc, isYoutube, openBtnRect, siteOf } from './webcard.js'
 import { LISTY, MEMO, MEMO_KIND, MUTED, olNumbers } from './memo.js'
+import { LEGEND, descOf, rowName } from './legend.js'
 
 // ── 글자 재기(캔버스) ──
 let _ctx = null
@@ -155,6 +156,15 @@ function clipMono(t, px, maxW) {
   if (measure(t, px, 'mono', 400) <= maxW) return t
   let lo = 0, hi = t.length; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (measure(t.slice(0, m) + '…', px, 'mono', 400) <= maxW) lo = m; else hi = m - 1 }
   return t.slice(0, lo) + '…'
+}
+// 범례(표 모양) 칸 너비 — 견본 | 이름 | 모양. 크기 = 줄에 맞춤(편집기 commit이 rect를 이 값으로)
+export function legendLayout(it) {
+  const L = LEGEND, rows = it.rows || [], px = L.FONT
+  const nameW = Math.max(measure('이름', px, 'app', 600), ...rows.map(e => measure(rowName(it, e), px, 'app', 400)))
+  const descW = Math.max(measure('모양', px, 'app', 600), ...rows.map(e => measure(descOf(e), px, 'app', 400)))
+  const c0 = L.PAD, c1 = c0 + L.SAMPLE + L.GAP, c2 = c1 + nameW + L.GAP * 2, w = c2 + descW + L.PAD
+  const empty = rows.length ? 0 : measure('색 있는 선·화살표를 그리면 저절로 채워져요', px, 'app', 400) + 2 * L.PAD
+  return { cols: [c0, c1, c2], w: Math.ceil(Math.max(w, empty)), h: L.HEAD + L.ROW * (Math.max(1, rows.length) + 1) + L.PAD / 2, px }
 }
 export const memoHeight = it => memoLayout(it).h
 // 메모 안 좌표(아이템 기준) q에 있는 주소(없으면 null) — Ctrl+클릭으로 열기
@@ -381,7 +391,8 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         return <>{it.icon ? <image href={it.icon} x={x + 12} y={y + H + (bh - s) / 2} width={s} height={s} />
           : <><rect x={x + 12} y={y + H + (bh - s) / 2} width={s} height={s} rx={s / 4} fill="#e4e4e7" /><text x={x + 12 + s / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={s / 2} fontWeight={700} fontFamily={APP_FONT} fill="#71717a">{siteOf(it.url).slice(0, 1).toUpperCase()}</text></>}
           {lines.map((t, k) => <text key={k} x={x + s + 22} y={y + H + bh / 2 + (k - (lines.length - 1) / 2) * 17} dominantBaseline="central" fontSize={12} fontFamily={APP_FONT} fill="#52525b">{t}</text>)}</> }
-      return <g transform={T}>
+      // data-web-* = HTML 공유 파일이 카드를 누르면 그 자리에 실제 페이지를 끼울 때 씀(htmlshare.js — 2026-10-19 사용자)
+      return <g transform={T} data-web-url={it.url} data-web-src={it.frameable && bh > 4 ? frameSrc(it) : undefined} data-web-box={`${x},${y + H},${w},${bh}`} data-web-head={h > 0 ? (H / h).toFixed(3) : 1} data-web-zoom={zm < 1 ? zm : undefined}>
         <clipPath id={cid}><rect x={x} y={y} width={w} height={h} rx={8} ry={8} /></clipPath>
         <g clipPath={`url(#${cid})`}>
           <rect x={x} y={y} width={w} height={h} fill="#ffffff" />
@@ -421,6 +432,24 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
             <TextLines lay={lay} left={x + lx - TEXT_MARGIN} top={y + ly} color={col} band={ln.k !== 'code'} />
             {done && lay.lines.map((l, j) => <path key={'s' + j} d={`M${x + lx},${y + ly + TEXT_MARGIN + (j + 0.55) * lh} H${x + lx + l.w}`} stroke={MUTED} strokeWidth={1} />)}
           </g> })}
+      </g>
+    }
+    case 'legend': {   // 범례(2026-10-19) — 제목 + 표(견본 선 | 이름 | 모양). 줄은 도면에서 저절로(legend.js syncLegends)
+      const [x, y, w, h] = it.rect, L = LEGEND, lo = legendLayout(it), rows = it.rows || [], [c0, c1, c2] = lo.cols, ty = y + L.HEAD, line = '#e4e4e7', mut = '#71717a'
+      const rowY = j => ty + L.ROW * (j + 1)
+      return <g transform={T}>
+        <rect x={x} y={y} width={w} height={h} rx={8} ry={8} fill="#ffffff" stroke="#d4d4d8" strokeWidth={1} />
+        <text x={x + L.PAD} y={y + L.HEAD / 2 + 1} dominantBaseline="central" fontSize={L.TITLE} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{it.title || '범례'}</text>
+        <rect x={x + 1} y={ty} width={w - 2} height={L.ROW} fill="#f4f4f5" />
+        {[['견본', c0], ['이름', c1], ['모양', c2]].map(([t, cx]) => <text key={t} x={x + cx} y={ty + L.ROW / 2} dominantBaseline="central" fontSize={lo.px - 1} fontWeight={600} fontFamily={APP_FONT} fill={mut}>{t}</text>)}
+        <path d={[0, ...rows.map((_, j) => j + 1)].map(j => `M${x},${rowY(j)} H${x + w}`).join(' ') + ` M${x},${ty} H${x + w} M${x + c1 - L.GAP / 2},${ty} V${rowY(rows.length)} M${x + c2 - L.GAP},${ty} V${rowY(rows.length)}`} stroke={line} strokeWidth={1} fill="none" />
+        {rows.map((e, j) => { const cy = rowY(j) + L.ROW / 2, col = e.color, x1 = x + c0, x2 = x + c0 + L.SAMPLE, hw = Math.min(e.width, 4)
+          return <g key={e.key}>
+            <path d={`M${x1},${cy} H${x2 - (e.arrow ? 6 + hw : 0)}`} stroke={cssColor(col)} strokeWidth={Math.min(e.width, 6)} strokeDasharray={dashArray(e.style, Math.min(e.width, 6))} strokeLinecap="round" fill="none" />
+            {e.arrow && <path d={`M${x2},${cy} L${x2 - 8 - hw},${cy - 4 - hw / 2} L${x2 - 8 - hw},${cy + 4 + hw / 2} Z`} fill={cssColor(col)} />}
+            <text x={x + c1} y={cy} dominantBaseline="central" fontSize={lo.px} fontFamily={APP_FONT} fill="#27272a">{rowName(it, e)}</text>
+            <text x={x + c2} y={cy} dominantBaseline="central" fontSize={lo.px} fontFamily={APP_FONT} fill={mut}>{descOf(e)}</text></g> })}
+        {!rows.length && <text x={x + L.PAD} y={rowY(0) + L.ROW / 2} dominantBaseline="central" fontSize={lo.px} fontFamily={APP_FONT} fill={mut}>색 있는 선·화살표를 그리면 저절로 채워져요</text>}
       </g>
     }
     case 'frame': {   // 프레임 — 얇은 테두리 + 위 왼쪽 이름표(Lucid Frame·Figma Section). 안은 비움(위에 그림)

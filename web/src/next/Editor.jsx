@@ -3,7 +3,7 @@
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr } from './render.jsx'
+import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr } from './render.jsx'
 import { boardMembership, drawOrder, itemBounds } from './doc.js'
 import { paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
@@ -33,7 +33,7 @@ import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
 import { freeSpot, sourceLine } from '../chatFormat.js'
 import { WEB_HEAD, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
-import { buildLegend, isLegendPart, legendEntries, legendState } from './legend.js'
+import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
@@ -42,7 +42,7 @@ const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
 const HANDLE = 10, HIT_PX = 4, EDGE_PX = 5
 const INK = '#ff1f1f1f'   // 새로 그리는 선·글 기본색(밝은 칠판)
-const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web', 'memo'])
+const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web', 'memo', 'legend'])
 
 // 글 상자 크기(아이템 안 단위) — 그릴 때와 같은 재기, 아이템 객체마다 한 번
 const _tb = new WeakMap()
@@ -97,6 +97,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (ly && ly.visible && !ly.locked) { const had = new Set(prev.map(it => it._id)); next = next.map(it => (had.has(it._id) || it.layer_id ? it : { ...it, layer_id: al })) }
     next = next.map(it => (it.type === 'table' && (it.font || it.cell_styles) ? fitTable(it) : it))   // 직접 정한 표 글자 = 그대로, 칸이 늘어남
     next = next.map(it => (it.type === 'memo' && it.rect && Math.abs(memoHeight(it) - it.rect[3]) > 0.5 ? applyRect(it, [it.rect[0], it.rect[1], it.rect[2], memoHeight(it)]) : it))   // 메모 높이 = 줄에 맞춤
+    next = syncLegends(next).map(it => { if (it.type !== 'legend') return it; const lo = legendLayout(it); return it.rect && Math.abs(lo.w - it.rect[2]) < 0.5 && Math.abs(lo.h - it.rect[3]) < 0.5 ? it : { ...it, rect: [it.rect?.[0] || 0, it.rect?.[1] || 0, lo.w, lo.h] } })   // 범례 = 줄은 도면에서 저절로, 크기는 줄에 맞춤(2026-10-19 사용자: 부하 없으면 자동)
     next = next.map(it => (it.fit_text && it.label?.align === 'left' && it.rect && Math.abs(fitTextHeight(it) - it.rect[3]) > 0.5 ? applyRect(it, [it.rect[0], it.rect[1], it.rect[2], fitTextHeight(it)]) : it))   // 글에 맞춘 상자(AI 카드·메모)
     const fixed = followArrows(next, rectOf)
     // 되돌리기 칸 = 바뀐 도형만(2026-10-18 공동작업 — 통째로 되돌리면 그사이 남이 고친 것까지 지워짐, `sync.itemDelta`)
@@ -114,7 +115,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, setSel, insertTable, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -125,7 +126,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
 
   // ── 손잡이(단일 선택) — [{ key, p(칠판), cursor }] ──
   function handlesOf(it) {
-    if (!it || it.locked) return []
+    if (!it || it.locked || it.type === 'legend') return []   // 범례 = 크기는 줄에 맞춤(속성 카드 「크기」), 옮기기만
     const z = R.current.cam.z, out = []
     if (it.type === 'titleblock') {   // 종이틀·도면틀 — 꼭짓점 넷, 끌면 비율 그대로 배율만(2026-10-18 사용자: 하마로 바로 키우고 줄이기)
       const [W, H] = paperWH(it.size, it.orient)
@@ -1247,26 +1248,21 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   }
   const webOpenAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'web') continue
     const q = toLocal(it, p), b = openBtnRect(it), pad = 2 / z; if (q.x >= b.x - pad && q.x <= b.x + b.w + pad && q.y >= b.y - pad && q.y <= b.y + b.h + pad) return it } return null }
-  // 범례(2026-10-18 사용자: 모아서 한 번 만들기 · 선·화살표만) — 고른 것이 있으면 그 안에서, 없으면 보이는 칠판 전체에서
-  const mkItem = x => base(x.pos, x)
-  function makeLegend() {
-    const m = R.current.model, ids = new Set(movingSet(R.current.sel)), src = ids.size ? m.items.filter(it => ids.has(it._id)) : hitPool()
-    const es = legendEntries(src); if (!es.length) { setStatus('범례에 모을 선이 없어요 — 색이 있는 선·화살표를 그린 뒤에'); return }
-    const c = R.current.cam, s = +(1 / c.z).toPrecision(2), fr = buildLegend(es, { x: 0, y: 0 }, s, null, mkItem)[0], [, , w, h] = fr.rect
+  // 범례(2026-10-19 사용자: 표 모양 · 자동 갱신 · 「표」 버튼 안) — 줄은 commit이 도면에서 다시 모음, 사람이 적는 건 이름뿐
+  function insertLegend() {
+    const m = R.current.model, c = R.current.cam, s = +(1 / c.z).toPrecision(2)
+    const proto = { type: 'legend', rect: [0, 0, 10, 10], rows: legendEntries(m.items), names: {}, scale: s }, lo = legendLayout(proto), w = lo.w * s, h = lo.h * s
     const view = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }, inView = b => b.x < view.x + view.w && b.x + b.w > view.x && b.y < view.y + view.h && b.y + b.h > view.y
     const at = freeSpot(view, m.items.map(it => sceneBox(it, textBox)).filter(inView), w, h, { pad: 24 * s, step: 24 * s })
-    const its = buildLegend(es, at, s, null, mkItem, topZ(m.items) + 1)
-    commit([...m.items, ...its], its.map(it => it._id), '범례')
-    if (!(at.x >= view.x && at.y >= view.y && at.x + w <= view.x + view.w && at.y + h <= view.y + view.h)) setCam(cc => ({ ...cc, x: size.w / 2 - (at.x + w / 2) * cc.z, y: size.h / 2 - (at.y + h / 2) * cc.z }))   // 화면에 빈자리가 없어 (조금이라도) 밖에 놓였으면 그쪽으로
-    setStatus(`범례 ${es.length}줄 — 이름 글을 두 번 눌러 고쳐 적으세요(도면이 바뀌면 우클릭 「범례 다시 모으기」)`)
+    const it = base([at.x, at.y], { ...proto, rect: [0, 0, lo.w, lo.h], z: topZ(m.items) + 1 })
+    commit([...m.items, it], [it._id], '범례'); setTool('select')
+    setStatus(proto.rows.length ? `범례 ${proto.rows.length}줄 — 선을 바꾸면 저절로 따라가요. 이름·모양은 오른쪽 속성 카드에서` : '빈 범례 — 색 있는 선·화살표를 그리면 저절로 채워져요')
   }
-  function refreshLegend() {
-    const m = R.current.model, part = m.items.find(it => R.current.sel.includes(it._id) && isLegendPart(it) && it.group_id); if (!part) return
-    const st = legendState(m.items, part.group_id); if (!st.at) return
-    const es = legendEntries(hitPool()), rest = m.items.filter(it => it.group_id !== part.group_id)
-    const its = buildLegend(es, st.at, st.scale, st.names, mkItem, st.z)
-    commit([...rest, ...its], its.map(it => it._id), '범례 다시 모음')
-    setStatus(`범례 다시 모음 — ${es.length}줄(적어 둔 이름은 그대로)`)
+  // 범례 줄 하나 — { name } = 이름만, { color·style·width } = 도면 속 그 선 전부 바꿈(2026-10-19 사용자: 드롭다운 one of)
+  function legendEdit(id, key, patch) {
+    const m = R.current.model
+    if (patch.name !== undefined) { commit(m.items.map(it => (it._id === id ? { ...it, names: { ...it.names, [key]: patch.name } } : it)), R.current.sel, '범례 이름', 'lgname' + id + key); return }
+    commit(restyleLegendRow(m.items, key, patch), R.current.sel, '범례로 선 바꿈')
   }
   function paste() {
     const c = clip.current; if (!c.items.length) return
@@ -1437,11 +1433,10 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
           if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', '', act(wrapFrame)])
-          out.push(selIt.some(isLegendPart) ? ['범례 다시 모으기', '', act(refreshLegend)] : ['범례 만들기 (고른 것의 선)', '', act(makeLegend)])
           out.push('-', ['내보내기…', '', act(() => onExportSel?.())])
         }
         if (clip.current?.items?.length) { if (has) out.push('-'); out.push(['붙여넣기', 'Ctrl+V', act(paste)]) }
-        if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))], ['범례 만들기', '', act(makeLegend)])
+        if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))])
           if (m.items.some(it => it.locked)) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked ? { ...it, locked: false } : it)), [], '잠금 해제'))]) }
         return out })()} />}
       {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))
@@ -1470,7 +1465,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
       {editing && editing.kind !== 'cell' && editing.kind !== 'memo' && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={{ ...s, onReady: setLiveEd, at: editing.at, onPan: startPan, onWheel: wheelZoom }} onDone={finishEdit} /> })()}
       {editing && liveEd && <EditProps ed={liveEd} />}
-      {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
+      {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )

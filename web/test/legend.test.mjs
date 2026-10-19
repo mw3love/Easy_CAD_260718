@@ -1,11 +1,9 @@
 // 범례(§8 항목61 4-b ④, 2026-10-18) — 선 종류 모으기·색 이름·만들기·다시 모으기(이름 지킴)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildLegend, colorName, defaultName, legendEntries, legendState } from '../src/next/legend.js'
+import { colorName, legendEntries, restyleLegendRow, syncLegends } from '../src/next/legend.js'
 
 const L = (pen, width = 2, style = 1, extra = {}) => ({ type: 'line', line: [0, 0, 10, 0], pen, width, style, ...extra })
-let n = 0
-const mk = x => ({ _id: 'x' + ++n, scale: 1, rotation: 0, ...x })
 
 test('색 + 모양 + 굵기가 같은 것끼리 한 줄, 많이 쓴 순서 — 투명·채운 도형·판서·범례 자신은 뺌', () => {
   const items = [L('#ffff7f00', 2.9), L('#ffff7f00', 2.94), L('#ff000000', 0.3), L('#ff000000', 0.3, 2),
@@ -17,29 +15,33 @@ test('색 + 모양 + 굵기가 같은 것끼리 한 줄, 많이 쓴 순서 — �
   assert.equal(es[3].arrow, true)
 })
 
-test('색 이름(쉬운 말)·처음 이름', () => {
+test('색 이름(쉬운 말)', () => {
   assert.deepEqual(['#ffff7f00', '#ff000000', '#ffffffff', '#ffbfbfbf', '#ff00ffff', '#ff0000ff', '#ffff00ff', '#ff00ff00', '#ffff0000'].map(colorName),
     ['주황', '검정', '흰색', '회색', '하늘', '파랑', '자홍', '초록', '빨강'])
-  assert.equal(defaultName({ color: '#ff000000', style: 3, width: 0.3 }), '검정 · 점선 · 0.3px')
 })
 
-test('만들기 = 틀 + 제목 + 줄마다 견본 선·이름(한 묶음), 다시 모으면 적어 둔 이름·자리·크기 그대로', () => {
-  const es = legendEntries([L('#ffff7f00', 2.9), L('#ffff7f00', 2.9), L('#ff00ffff', 2.9, 2)])   // 주황 2번 = 첫 줄
-  const its = buildLegend(es, { x: 100, y: 50 }, 2, null, mk, 7)
-  assert.equal(its.length, 2 + 2 * 2)
-  assert.equal(new Set(its.map(i => i.group_id)).size, 1)
-  const [frame, , line0, text0] = its
-  assert.deepEqual(frame.pos, [100, 50]); assert.equal(frame.legend, 2); assert.equal(frame.z, 7)
-  assert.equal(line0.pen, '#ffff7f00'); assert.equal(line0.width, 2.9); assert.equal(text0.text, '주황 · 실선 · 2.9px')
-  const edited = its.map(i => (i === text0 ? { ...i, text: 'SDI 케이블' } : i))
-  const st = legendState(edited, frame.group_id)
-  assert.deepEqual(st.at, { x: 100, y: 50 }); assert.equal(st.scale, 2)
-  const again = buildLegend(legendEntries([L('#ff00ffff', 2.9, 2), L('#ffff7f00', 2.9), L('#ffff7f00', 2.9), L('#ffff0000', 1)]), st.at, st.scale, st.names, mk)
-  assert.deepEqual(again.filter(i => i.type === 'text' && i.legend_key).map(i => i.text), ['SDI 케이블', '하늘 · 파선 · 2.9px', '빨강 · 실선 · 1px'])
-})
-
-test('어두운 주황 = 갈색, 처음 이름이 겹치면 색 코드를 붙여 구별', () => {
+test('어두운 주황 = 갈색', () => {
   assert.equal(colorName('#ffcd6928'), '갈색')
-  const its = buildLegend(legendEntries([L('#ffff0000', 2), L('#ffee1111', 2)]), { x: 0, y: 0 }, 1, null, mk)
-  assert.deepEqual(its.filter(i => i.type === 'text' && i.legend_key).map(i => i.text), ['빨강 · 실선 · 2px #ee1111', '빨강 · 실선 · 2px #ff0000'])
+})
+
+test('범례 2판 — 저장 길목에서 줄을 도면에 맞춤(바뀐 게 없으면 같은 아이템 그대로)', () => {
+  const ln = { _id: 'a', type: 'line', line: [0, 0, 10, 0], pen: '#ffff0000', width: 2, style: 1 }
+  const lg = { _id: 'L', type: 'legend', rect: [0, 0, 10, 10], rows: [], names: {} }
+  const out = syncLegends([ln, lg]), L = out.find(i => i._id === 'L')
+  assert.deepEqual(L.rows.map(r => r.key), ['ffff0000|1|2'])
+  const again = syncLegends(out); assert.equal(again[1], L)   // 같으면 새로 안 만듦(저장할 것도 없음)
+  assert.equal(syncLegends([ln])[0], ln)   // 범례가 없으면 손대지 않음
+})
+
+test('범례 줄 일괄 바꾸기 — 그 선 전부(화살표는 color, 선은 pen), 적어 둔 이름은 새 열쇠로', () => {
+  const items = [
+    { _id: 'a', type: 'line', pen: '#ffff0000', width: 2, style: 1 },
+    { _id: 'b', type: 'sarrow', color: '#ffff0000', width: 2, style: 1 },
+    { _id: 'c', type: 'line', pen: '#ff0000ff', width: 2, style: 1 },
+    { _id: 'L', type: 'legend', names: { 'ffff0000|1|2': '전원' } }]
+  const out = restyleLegendRow(items, 'ffff0000|1|2', { width: 5, style: 2 })
+  assert.deepEqual(out.slice(0, 3).map(i => [i.width, i.style]), [[5, 2], [5, 2], [2, 1]])
+  assert.deepEqual(out[3].names, { 'ffff0000|2|5': '전원' })
+  const col = restyleLegendRow(items, 'ffff0000|1|2', { color: '#ff00ff00' })
+  assert.deepEqual([col[0].pen, col[1].color], ['#ff00ff00', '#ff00ff00'])
 })

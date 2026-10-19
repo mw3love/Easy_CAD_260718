@@ -9,6 +9,8 @@ import { FRAME_RATIOS, paperWH } from './geom.js'
 const frameRatio = (it, ratio) => { const [x, y, w, h] = it.rect; if (!ratio) return { ratio: undefined }; const r = FRAME_RATIOS[ratio]; return { ratio, rect: w >= h ? [x, y, w, w / r] : [x, y, h / r, h] } }
 import { cellPt, tableAutoPt } from './render.jsx'
 import { WEB_ZOOMS } from './webcard.js'
+import { STYLE_NAMES, rowName } from './legend.js'
+const LG_WIDTHS = [0.5, 1, 1.5, 2, 3, 4, 5, 6, 8]
 // 글 있는 칸들의 지금 크기(pt)
 const tableCellPts = it => { const out = []; for (let r = 0; r < it.rows; r++) for (let c = 0; c < it.cols; c++) if (it.cells?.[r]?.[c]) out.push(cellPt(it, r, c)); return out.length ? out : [tableAutoPt(it)] }
 // 표 전체 크기를 안 정한 표의 ± = 칸마다 지금 크기에 각자 더함(값이 섞이면 각자 더하기 — 다른 도형과 같은 규칙, 2026-10-18 사용자: 10에서 시작해 「뻥」 커지던 것)
@@ -36,7 +38,7 @@ const PEN = new Set(['rect', 'ellipse', 'symbol', 'polygon', 'path', 'line'])
 const lineKey = it => (isArrow(it) || it.type === 'badge' ? 'color' : PEN.has(it.type) || it.type === 'table' ? 'pen' : it.type === 'board' ? 'bg' : null)   // 표 선 색 = .ecad 표의 새 칸 pen(웹 먼저)   // 보드는 「바탕」 색
 const hasWidth = it => isArrow(it) || PEN.has(it.type)
 const fillKey = it => (['rect', 'ellipse', 'symbol', 'memo'].includes(it.type) || (it.type === 'polygon' && it.closed) ? 'fill' : it.type === 'text' ? 'bg' : null)
-const TYPE_NAMES = { rect: '사각형', ellipse: '원', line: '선', arrow: '화살표', sarrow: '화살표', text: '텍스트', badge: '번호', path: '펜', image: '이미지', table: '표', titleblock: '표제란', polygon: '다각형', board: '보드', frame: '프레임', web: '웹 카드', memo: '메모' }
+const TYPE_NAMES = { rect: '사각형', ellipse: '원', line: '선', arrow: '화살표', sarrow: '화살표', text: '텍스트', badge: '번호', path: '펜', image: '이미지', table: '표', titleblock: '표제란', polygon: '다각형', board: '보드', frame: '프레임', web: '웹 카드', memo: '메모', legend: '범례' }
 const typeName = it => (it.type === 'symbol' ? SYMBOLS[it.kind]?.name || '심볼' : TYPE_NAMES[it.type] || '객체')
 
 // 색 비교용 — '#ffrrggbb'(불투명 ARGB)와 '#rrggbb'를 같게
@@ -212,7 +214,7 @@ export function EditProps({ ed }) {
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells }) {   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
+export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells, onLegend }) {   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
   const [openDash, setOpenDash] = useState(false), [openSwap, setOpenSwap] = useState(false)
   const one = v => (v.length && v.every(x => x === v[0]) ? v[0] : null)
   const arrows = items.filter(isArrow), allArrows = arrows.length === items.length
@@ -294,6 +296,22 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
             return <button key={v} title={v < 1 ? `페이지를 ${v * 100}%로 — 카드 크기는 그대로, 더 많이 보임` : '원래 크기'} onClick={() => set(() => ({ zoom: v < 1 ? v : undefined }), '웹 카드 배율')}
               style={{ all: 'unset', cursor: 'pointer', flex: 1, textAlign: 'center', padding: '2px 0', borderRadius: 6, fontSize: 11, background: on ? 'rgba(218,119,86,.22)' : 'transparent', color: on ? '#da7756' : C.ink, fontWeight: on ? 600 : 400 }}>{v * 100}%</button> })}</div></Row>}
         <div style={{ fontSize: 11, color: C.muted }}>{w.frameable ? (w.embed ? '누르면 바로 재생 · 위 띠를 끌면 이동' : '누르면 칸 안을 조작(바깥을 누르면 끝) · 위 띠를 끌면 이동') : '이 사이트는 칸 안에 넣기를 막아요 — 두 번 누르면 새 탭'}</div>
+      </> })()}
+    {items.length === 1 && items[0].type === 'legend' && (() => { const L = items[0], rows = L.rows || []   // 범례(2026-10-19) — 줄은 도면에서 저절로. 이름은 적고, 색·모양·굵기를 고르면 도면 속 그 선이 전부 바뀜
+      const sel = { height: 22, border: `1px solid ${C.line}`, borderRadius: 5, background: C.card, color: C.ink, font: 'inherit', fontSize: 11, padding: '0 2px' }
+      const hex6 = c => '#' + (c.length === 9 ? c.slice(3) : c.slice(1))
+      return <>
+        <Row label="제목"><input key={L._id} defaultValue={L.title || '범례'} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur() }} onChange={e => set(() => ({ title: e.target.value }), '범례 제목', 'lgtitle')}
+          style={{ flex: 1, minWidth: 0, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} /></Row>
+        <Row label="크기"><div style={{ display: 'flex', gap: 4 }}>{[['작게', 0.8], ['크게', 1.25]].map(([t, f]) => <button key={t} onClick={() => set(it => ({ scale: +((it.scale || 1) * f).toFixed(3) }), '범례 크기')} style={{ all: 'unset', cursor: 'pointer', padding: '2px 10px', borderRadius: 6, background: C.seg, fontSize: 11 }}>{t}</button>)}</div></Row>
+        <div style={{ fontSize: 11, color: C.muted }}>{rows.length ? '선을 그리거나 바꾸면 저절로 따라가요. 모양·굵기·색을 고르면 도면 속 그 선이 전부 바뀌어요' : '색 있는 선·화살표를 그리면 저절로 채워져요'}</div>
+        {rows.map(e => <div key={e.key} data-testid="legend-row" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, paddingBottom: 4, borderBottom: `1px solid ${C.line}` }}>   {/* 한 줄 = 색·이름 / 모양·굵기(카드 폭이 좁아 이름이 잘렸음) */}
+          <input type="color" title="색 — 이 선 전부" value={hex6(e.color)} onChange={ev => onLegend(L._id, e.key, { color: '#ff' + ev.target.value.slice(1) })} style={{ width: 22, height: 22, padding: 0, border: 0, background: 'none', cursor: 'pointer' }} />
+          <input key={L._id + e.key} defaultValue={rowName(L, e)} title={`이 선 ${e.count}개`} onKeyDown={ev => { ev.stopPropagation(); if (ev.key === 'Enter') ev.currentTarget.blur() }} onChange={ev => onLegend(L._id, e.key, { name: ev.target.value })}
+            style={{ flex: '1 0 calc(100% - 30px)', minWidth: 0, height: 22, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 5, background: 'transparent', color: C.ink, padding: '0 5px', font: 'inherit', fontSize: 11 }} />
+          <select title="선 모양 — 이 선 전부" value={e.style} onChange={ev => onLegend(L._id, e.key, { style: +ev.target.value })} style={{ ...sel, flex: 1, marginLeft: 26 }}>{Object.entries(STYLE_NAMES).map(([v, n]) => <option key={v} value={v}>{n}</option>)}</select>
+          <select title="굵기 — 이 선 전부" value={e.width} onChange={ev => onLegend(L._id, e.key, { width: +ev.target.value })} style={{ ...sel, width: 58 }}>{[...new Set([...LG_WIDTHS, e.width])].sort((a, b) => a - b).map(v => <option key={v} value={v}>{v}px</option>)}</select>
+        </div>)}
       </> })()}
     {items.length === 1 && items[0].type === 'frame' && (() => { const f = items[0]   // 프레임 — 이름·비율(순서는 좌하 「프레임」 카드, 틀만 옮기기는 이름표 옆 자물쇠·Alt+끌기)
       return <>

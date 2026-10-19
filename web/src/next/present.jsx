@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Item, setInkDark } from './render.jsx'
 import { APP_FONT, METRICS, PT, TEXT_MARGIN } from './geom.js'
+import { playYoutube } from './webcard.js'
 
 const THEMES = {
   light: { '--mb-ink': '#27272a', '--mb-muted': '#71717a', '--mb-board': '#ffffff', '--mb-line': '#e4e4e7', '--mb-card': '#ffffff' },
@@ -106,9 +107,10 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     }
     window.addEventListener('keydown', onKey, true); return () => window.removeEventListener('keydown', onKey, true)
   }, [n, tool])   // eslint-disable-line react-hooks/exhaustive-deps
-  const [zoom, setZoom] = useState(null), [menu, setMenu] = useState(null), root = useRef(null), wheelAt = useRef(0), pan = useRef(null)   // zoom = { s, ox, oy } 지금 장 화면 = o + s·원래 화면(장 넘기면 풀림), pan = 우클릭 끌기
+  const [zoom, setZoom] = useState(null), [menu, setMenu] = useState(null), root = useRef(null), wheelAt = useRef({ t: 0, acc: 0, flip: 0, qt: 0 }), [quick, setQuick] = useState(false), pan = useRef(null)   // zoom = { s, ox, oy } 지금 장 화면 = o + s·원래 화면(장 넘기면 풀림), pan = 우클릭 끌기
   const menuRef = useRef(null); menuRef.current = menu
-  useEffect(() => { setZoom(null) }, [i])
+  const [webOn, setWebOn] = useState(null)   // 조작 중인 웹 카드(장을 넘기면 풀림)
+  useEffect(() => { setZoom(null); setWebOn(null) }, [i])
   useEffect(() => {   // 휠 = 장 넘기기(파워포인트 손버릇), Ctrl+휠 = 커서 자리 확대 — 2026-10-18 사용자
     const el = root.current; if (!el) return
     const onWheel = e => {
@@ -117,7 +119,13 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       if (e.ctrlKey || e.metaKey) { const f = e.deltaY < 0 ? 1.25 : 1 / 1.25
         setZoom(z => { const s0 = z?.s || 1, s = Math.max(0.25, Math.min(16, s0 * f)), g = s / s0, ox = z?.ox || 0, oy = z?.oy || 0   // 0.25~16배(2026-10-18 사용자), 커서 자리 고정
           return { s, ox: e.clientX - g * (e.clientX - ox), oy: e.clientY - g * (e.clientY - oy) } }); return }
-      const now = Date.now(); if (now - wheelAt.current < 350) return; wheelAt.current = now   // 터치패드가 한 번에 여러 장 넘기지 않게
+      // 휠 넘기기(2026-10-19 사용자: 빠르게 휘리릭) — 마우스 휠 한 칸(큰 delta) = 바로 한 장, 터치패드(작은 delta가 잇따라 옴)는 모아서 100마다 + 0.3초 간격
+      const now = Date.now(), W = wheelAt.current, notch = Math.abs(e.deltaY) >= 50
+      if (now - W.t > 200) W.acc = 0
+      W.t = now; W.acc += e.deltaY
+      if (Math.abs(W.acc) < 100 && !notch) return
+      if (now - W.flip < (notch ? 30 : 300)) { W.acc = 0; return }
+      W.flip = now; W.acc = 0; setQuick(true); clearTimeout(W.qt); W.qt = setTimeout(() => setQuick(false), 450)
       go(e.deltaY > 0 ? 1 : -1)
     }
     el.addEventListener('wheel', onWheel, { passive: false }); return () => el.removeEventListener('wheel', onWheel)
@@ -127,7 +135,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   const f = frames[i]
   const { w: W, h: H } = vw, b = f?.box || { x: 0, y: 0, w: 1, h: 1 }, k = Math.min(W / b.w, H / b.h), hw = b.w * k, hh = b.h * k, hx = (W - hw) / 2, hy = (H - hh) / 2
   const tx = hx - b.x * k, ty = hy - b.y * k, unz = (x, y) => (zoom ? [(x - zoom.ox) / zoom.s, (y - zoom.oy) / zoom.s] : [x, y])
-  const [gx, gy, gk] = useGlide([tx, ty, k], glide && !draft ? 400 : 0), [zx, zy, zs] = useGlide([zoom?.ox || 0, zoom?.oy || 0, zoom?.s || 1], pan.current?.moved ? 0 : 150)
+  const [gx, gy, gk] = useGlide([tx, ty, k], glide && !draft ? (quick ? 120 : 400) : 0), [zx, zy, zs] = useGlide([zoom?.ox || 0, zoom?.oy || 0, zoom?.s || 1], pan.current?.moved ? 0 : 150)   // 휠로 잇따라 넘기는 중 = 0.12초
   if (!f) return null
   const toScene = (x, y) => { const [ux, uy] = unz(x, y); return { x: (ux - tx) / k, y: (uy - ty) / k } }
   // ── 판서 ──
@@ -136,6 +144,10 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     if (textAt) { document.activeElement?.blur?.(); return }   // 쓰던 글자 칸 밖을 누르면 그 글을 넣고 끝(blur → commitText)
     if (menu) { setMenu(null); return }
     if (e.button === 2 || e.button === 1) { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); pan.current = { x: e.clientX, y: e.clientY, moved: false, z0: zoom }; return }   // 우클릭: 끌면 화면 이동, 제자리면 메뉴(편집 화면과 같음 — 2026-10-18 사용자)
+    if (!tool && e.button === 0) {   // 웹 카드 = 눌러야 칸 안 조작(처음부터 켜 두면 카드 위 휠이 장 넘기기 대신 페이지 스크롤 — 2026-10-19), 유튜브는 바로 재생
+      const g = e.target.closest?.('[data-web-url]'), id = g?.querySelector('iframe[data-webid]')?.getAttribute('data-webid')
+      if (id) { setWebOn(id); if (/youtube\.com\/embed\//.test(g.getAttribute('data-web-src') || '')) playYoutube(id) } else { if (g) window.open(g.getAttribute('data-web-url'), '_blank', 'noopener'); setWebOn(null) }
+    }
     if (!tool) return   // 클릭으로 장을 넘기지 않음(2026-10-18 사용자: 글 선택을 풀거나 판서를 보다가 넘어감) — 끌면 글 선택(기본 동작)
     if (e.button !== 0) return
     const p = { x: e.clientX, y: e.clientY }
@@ -181,7 +193,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     <svg width={W} height={H} style={{ display: 'block' }}>
       <rect x={hx} y={hy} width={hw} height={hh} fill={th['--mb-board']} />
       <g transform={`translate(${zx},${zy}) scale(${zs})`}><g transform={`translate(${gx},${gy}) scale(${gk})`} style={{ '--z': k * (zoom?.s || 1) }}>
-        {order.map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} web={it.type === 'web' ? (tool ? 'view' : 'on') : undefined} />)}
+        {order.map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} web={it.type === 'web' ? (!tool && webOn === it._id ? 'on' : 'view') : undefined} />)}
       </g></g>
       {/* 프레임 밖 가림(구멍 뚫린 검은 판) — 출력한 쪽과 같은 범위만 보임 */}
       <path d={`M0,0 H${W} V${H} H0 Z M${hx},${hy} V${hy + hh} H${hx + hw} V${hy} Z`} fill="#000" fillRule="evenodd" />
