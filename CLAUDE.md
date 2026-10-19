@@ -141,7 +141,7 @@ web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + Reac
 │                          arrowkind.js 종류 바꾸기·xform.js 좌표 + 4단계 props.jsx 우상 속성 카드·palette.jsx 좌상 도형·심볼·layers.jsx 좌하 레이어·minimap.jsx 우하 미니맵·
 │                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례(표 모양 `legend`, 줄 자동)·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿)·formatbar.jsx 드래그 꾸미기 막대·marks.js 기울임·밑줄·취소선·fold.jsx 카드 접기(▾/▸) + ⓕ sync.js 부분 저장·받아 오기·도형 단위 되돌리기·viewer.jsx 게시 화면 + ⓔ htmlshare.js HTML 한 파일) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
 │                          데스크톱 대조 시험 `tools/export_route_cases.py`·`export_connect_cases.py`·`export_arrow_cases.py` → `web/test/fixtures/`(규칙 고치면 다시 돌림)
-│                          + 다잡기(2026-10-19) keys.js 글쇠 규칙표·help.jsx 도움말(F1) · **화면 자동 시험** `web/e2e/`(Playwright 1.63.0, 깔린 크롬) `npm run e2e` — 매일 쓰는 흐름 21개
+│                          + 다잡기(2026-10-19) keys.js 글쇠 규칙표·help.jsx 도움말(F1) · **화면 자동 시험** `web/e2e/`(Playwright 1.63.0, 깔린 크롬) `npm run e2e` — 매일 쓰는 흐름 28개(flow1~16) · find.jsx 찾기 칸(Ctrl+F)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
