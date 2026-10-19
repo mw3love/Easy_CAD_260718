@@ -9,6 +9,7 @@
   <meta name="darkreader-lock">
   <link rel="stylesheet" href="/fonts.css">
   <style>
+    [data-folded]>:not(:first-child){display:none!important}   /* 접은 카드 = 제목 줄만(fold.jsx) */
     html,body,#root{margin:0;height:100%;overflow:hidden}
     /* 화면 색 — 어두운 쪽은 데스크톱 `_dark_palette`·`_CANVAS_BG["dark"]`와 같은 값 */
     :root{color-scheme:light;--mb-bar:#f4f4f5;--mb-group:#e9e9ec;--mb-ink:#27272a;--mb-muted:#71717a;--mb-board:#ffffff;--mb-line:#e4e4e7;--mb-card:#ffffff;--mb-seg:#f4f4f5;--mb-onbg:#fbeee8;--mb-editbg:rgba(255,255,255,.9)}
