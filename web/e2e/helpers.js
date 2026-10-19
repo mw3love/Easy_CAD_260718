@@ -39,8 +39,9 @@ export function savedDoc(name) {
   return existsSync(f) ? JSON.parse(readFileSync(f, 'utf-8')) : null
 }
 
-/** 저장까지 기다림(상태 글 「저장됨」) */
+/** 서버에 다 보낼 때까지 기다림 — 상태 글 「저장됨」만 보면 앞 저장 때 글이 남아 있어 너무 일찍 끝남(2026-10-19 flow4가 가끔 실패) */
 export async function waitSaved(page) {
+  await expect.poll(() => page.evaluate(() => window.__mb.unsaved()), { timeout: 8_000 }).toBe(false)
   await expect(page.getByText('에 저장됨', { exact: false }).first()).toBeVisible({ timeout: 8_000 })
 }
 

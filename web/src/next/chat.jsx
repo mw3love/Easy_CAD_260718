@@ -2,11 +2,14 @@
 // - 묻기: 서버 POST /api/chat(키는 서버 PC에만), 앞 대화를 이어 보냄. 칠판에서 고른 것의 글을 같이 보냄(칩).
 // - 「칠판에 붙이기」: 답 → 카드(흰 보드 + 보드 글꼴 글, Editor.pinCard). 붙인 카드는 「칠판에 붙임 ✓」로 찾아감(카드의 .ecad `chat_at` = 답 시각).
 // - 대화 기록: 칠판마다 서버(/api/chatlog/<이름>) — 옛 칠판과 같은 기록을 이어 씀.
+// - 웹 검색(§8 항목61 ② 담는 법, 2026-10-19): 종류는 서버가 짐작(「최신·뉴스·찾아줘」…), 답 위 표시 「🔎 웹 검색 / 💬 대화」 + 반대로 다시 묻기 한 번.
+//   검색 답은 쓰인 번호의 출처를 아래에 보이고, 붙이면 요약 메모 + 출처 카드 + 번호 화살표 한 묶음(Editor `cardItems`).
 import { useEffect, useRef, useState } from 'react'
 import { DOC_NAME } from './doc.js'
 import { contextText, parseAnswer } from '../chatFormat.js'
 import { urlSpans } from './geom.js'
 import { MONO_FONT } from './render.jsx'
+import { siteOf } from './webcard.js'
 const LINK_CHAT = '#4f8fe8'   // 대화창 주소(어두운·밝은 화면 둘 다 읽히는 파랑)
 
 export const CHAT_W = 360
@@ -30,6 +33,9 @@ const css = {
   foot: { borderTop: `1px solid ${C.line}`, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 },
   chip: { alignSelf: 'flex-start', font: `500 11.5px ${F}`, color: '#5aa9ff', background: 'rgba(90,169,255,.15)', borderRadius: 99, padding: '2px 9px' },
   input: { font: `400 13.5px/1.5 ${F}`, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 10px', resize: 'none', minHeight: 40, maxHeight: 200, outline: 'none', background: C.card, color: C.ink },
+  kind: { font: `600 11px ${F}`, color: C.muted, background: C.seg, borderRadius: 99, padding: '1px 8px' },
+  kindSearch: { color: '#2f80ed', background: 'rgba(47,128,237,.12)' },
+  link: { all: 'unset', cursor: 'pointer', font: `500 11px ${F}`, color: C.muted, textDecoration: 'underline' },
   select: { font: `500 12px ${F}`, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 4px', background: C.card, maxWidth: 210 },
 }
 
@@ -72,20 +78,30 @@ export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = �
     .then(r => setServer(r.ok)).catch(() => setServer(false))
   const update = next => { setMsgs(next); save(next) }
 
+  // 묻기 — history = 지금까지(마지막이 질문), kind = 'search'·'chat'(비면 서버가 짐작) → 답 한 차례
+  async function ask(history, kind = '') {
+    const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: useModel, ...(kind ? { kind } : {}), messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
+    const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
+    if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
+    return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}) }
+  }
   async function send() {
     const q = draft.trim(); if (!q || busy) return
     const ctx = contextText(sel)
     const mine = { role: 'user', content: q, at: Date.now(), ...(ctx ? { context: ctx, ctxCount: sel.length } : {}) }
     const next = [...msgs.filter(m => m.role !== 'error'), mine]
     update(next); setDraft(''); setBusy(Date.now())
-    try {
-      const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: useModel, messages: next.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
-      const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
-      if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
-      update([...next, { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed }])
-    } catch (e) {
+    try { update([...next, await ask(next)]) } catch (e) {
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
+    } finally { setBusy(null) }
+  }
+  // 앱이 짐작한 종류가 틀렸을 때 — 같은 질문을 반대 종류로 다시 물어 그 답을 바꿔 끼움(질문은 그대로, 붙인 표시는 새 답이라 풀림)
+  async function redoAs(i, kind) {
+    if (busy) return
+    const history = msgs.slice(0, i).filter(m => m.role !== 'error'); setBusy(Date.now())
+    try { const a = await ask(history, kind); update(msgs.map((x, j) => (j === i ? a : x))) } catch (e) {
+      setMsgs([...msgs.filter(m => m.role !== 'error'), { role: 'error', content: String(e.message || e) }])
     } finally { setBusy(null) }
   }
   function pin(i) {
@@ -133,10 +149,18 @@ export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = �
           : m.role === 'error'
             ? <div key={i} style={css.err}>{m.content}<div style={{ marginTop: 6 }}><button style={css.ghost} onClick={retry}>질문 다시 고치기</button></div></div>
             : <div key={i} style={css.ai}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <span data-testid="answer-kind" style={{ ...css.kind, ...(m.kind === 'search' ? css.kindSearch : null) }}>{m.kind === 'search' ? '🔎 웹 검색' : '💬 대화'}</span>
+                <button style={css.link} disabled={!!busy} onClick={() => redoAs(i, m.kind === 'search' ? 'chat' : 'search')}
+                  title={m.kind === 'search' ? '웹 검색 없이 대화로 다시 물어 이 답을 바꿔요' : '웹을 찾아 출처와 함께 다시 물어 이 답을 바꿔요'}>{m.kind === 'search' ? '대화로 다시' : '웹 검색으로 다시'}</button>
+              </div>
               <Answer text={m.content} />
+              {m.sources?.length > 0 && <div data-testid="answer-sources" style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {m.sources.map(s => <a key={s.n} href={s.url} target="_blank" rel="noopener noreferrer" title={s.url} onPointerDown={e => e.stopPropagation()}
+                  style={{ ...css.meta, color: LINK_CHAT, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>[{s.n}] {s.title || siteOf(s.url)} · {siteOf(s.url)}</a>)}</div>}
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
                 <button style={{ ...(m.pinned ? css.ghost : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
-                  title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
+                  title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : m.sources?.length ? '요약 메모 + 출처 카드를 번호 화살표로 이어 한 묶음으로(누르면 빈자리, 끌면 놓은 자리)' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
                   {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>
                 <button style={css.ghost} onClick={() => navigator.clipboard?.writeText(m.content).catch(() => {})}>복사</button>
                 <span style={{ ...css.meta, marginLeft: 'auto' }}>{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}</span>

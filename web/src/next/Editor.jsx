@@ -33,7 +33,7 @@ import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob
 import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
 import { freeSpot, sourceLine } from '../chatFormat.js'
-import { WEB_HEAD, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
+import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
@@ -122,7 +122,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -768,6 +768,24 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const it = base([x, y], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines: memoFromAnswer(msg.content, sourceLine(msg.model, msg.at)), chat_at: msg.at, z })
     return { ...it, rect: [0, 0, MEMO.W, memoHeight(it)] }
   }
+  // 웹 검색 답(§8 항목61 ② 담는 법, 2026-10-19) = 요약 메모 + 오른쪽에 출처 웹 카드(본문에 쓰인 번호만, 제목 앞 [n], 가벼운 제목 카드 — 칸 안 페이지 없음) + 메모 → 카드 화살표, 한 묶음.
+  // 「어디서 왔는지」가 칠판 위 선으로 보이게(회사 KAIROS 웹은 답과 출처가 따로 놂). 출처가 없으면 메모 하나(cardItem)
+  function cardItems(msg, x, y, z) {
+    const memo = cardItem(msg, x, y, z), src = msg.sources || []
+    if (!src.length) return [memo]
+    const g = 'g' + newId(), gap = 14, x2 = x + MEMO.W + 90, ch = WEB_HEAD + WEB_INFO_H
+    const cards = src.map((s, i) => base([x2, y + i * (ch + gap)], { ...webCardFields({ url: s.url, title: `[${s.n}] ${s.title || siteOf(s.url)}`, desc: [s.date, siteOf(s.url)].filter(Boolean).join(' · '), frameable: false }), z, group_id: g }))
+    const keep = R.current.model, ay = y + Math.min(memo.rect[3] / 2, 40)
+    R.current.model = { ...keep, items: [...keep.items, memo, ...cards] }   // 길 찾기·붙는 끝이 새 메모·카드를 찾게(아직 칠판엔 안 넣음)
+    try {
+      const arrows = cards.map((c, i) => {
+        const a = { p: { x: x + MEMO.W, y: ay }, n: { x: 1, y: 0 } }, t = { id: c._id, p: { x: x2, y: c.pos[1] + c.rect[3] / 2 }, n: { x: -1, y: 0 } }
+        const pts = connRoute(memo._id, a, t, null).map(q => [q.x, q.y])
+        return { ...arrowItem(memo._id, a.p, c._id, t.p, { auto_route: true, pts, color: '#ff9aa0a6', width: 1, style: 1, head: true, head_start: false }), z, group_id: g }   // 번호는 카드 제목 앞 [n] — 화살표 라벨은 갈래 줄기에 겹쳐 안 읽혔음(실화면)
+      })
+      return [{ ...memo, group_id: g }, ...cards, ...arrows]
+    } finally { R.current.model = keep }
+  }
   // 새 빈 메모(상단 「메모」 — 포스트잇 자리) — 화면 가운데에 놓고 바로 고치기
   function insertMemo() {
     const m = R.current.model, c = R.current.cam, cx = (size.w / 2 - c.x) / c.z, cy = (size.h / 2 - c.y) / c.z, s = +(1 / c.z).toPrecision(2)
@@ -875,13 +893,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const nol = new Set((it.lines || []).filter(l => l.nolink).map(l => l.t)), ls = nx.lines.map(l => (nol.has(l.t) ? { ...l, nolink: true } : l))
       commit(m2.items.map(x => (x._id === nx.id ? { ...it, lines: ls } : x)), R.current.sel, '메모 고침', 'memo' + nx.id) }, 300) }
   function pinCard(msg, drop) {   // drop = 칠판 좌표(끌어 놓은 자리 — 왼쪽 위), 없으면 빈자리
-    const m = R.current.model, c = R.current.cam, h = cardItem(msg, 0, 0, 0).rect[3]
+    const m = R.current.model, c = R.current.cam, b0 = unionBox(cardItems(msg, 0, 0, 0).map(it => sceneBox(it, textBox))), h = b0.h, W = b0.w
     const left = 220 / c.z, right = (220 + rightInset(svg.current)) / c.z, top = 48 / c.z   // 위 48px = 감싸도 프레임 이름표가 칠판 밖으로 안 나감(2026-10-19 점검)
-    const view = { x: -c.x / c.z + left, y: -c.y / c.z + top, w: Math.max(CARD_W, size.w / c.z - left - right), h: size.h / c.z - top }
+    const view = { x: -c.x / c.z + left, y: -c.y / c.z + top, w: Math.max(W, size.w / c.z - left - right), h: size.h / c.z - top }
     const boxes = m.items.map(it => sceneBox(it, textBox))
-    const at = drop || freeSpot(view, boxes, CARD_W, h)
-    const card = cardItem(msg, at.x, at.y, topZ(m.items) + 1)
-    commit([...m.items, card], [card._id], '칠판에 붙이기')
+    const at = drop || freeSpot(view, boxes, W, h)
+    const its = cardItems(msg, at.x, at.y, topZ(m.items) + 1)
+    commit([...m.items, ...its], its.map(it => it._id), '칠판에 붙이기')
     return true
   }
   // 이미 붙인 카드로 — 고르고 화면 가운데로. 없으면(지웠으면) false

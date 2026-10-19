@@ -265,7 +265,8 @@ function App() {
     ping(); const t = setInterval(ping, 1000); return () => clearInterval(t) }, [server, me])
 
   // 시험·자체확인용 손잡이(Playwright)
-  useEffect(() => { window.__mb = { setCam, getCam: () => cam, open: async u => open(parseDoc(await (await fetch(u)).text()), u), model, toEcad: () => toEcad(model), get ed() { return ed.current }, setTool } })
+  useEffect(() => { window.__mb = { setCam, getCam: () => cam, open: async u => open(parseDoc(await (await fetch(u)).text()), u), model, toEcad: () => toEcad(model), get ed() { return ed.current }, setTool,
+    unsaved: () => { const S = sync.current; return !!S.base && !!(S.busy || diffModel(S.base, modelRef.current)) } } })   // unsaved = 서버에 아직 안 보낸 변경(시험 — 상태 글 「저장됨」은 앞 저장 것이 남아 있을 수 있음)
   useEffect(() => {
     loadServerDoc().then(r => { setServer(r.server); if (r.doc) open(r.doc, `서버 「${DOC_NAME}」`, true, true); else { if (r.server) { const m = modelRef.current; sync.current.base = snapshotModel(m); sync.current.rev = 0 } setStatus(r.server ? `서버 「${DOC_NAME}」 · 새 칠판` : '서버 없음 — 파일로 열고 저장') } }) }, [])   // eslint-disable-line
 

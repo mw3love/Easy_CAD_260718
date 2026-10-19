@@ -53,7 +53,7 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(srv.gw, "resolve_api_key", lambda explicit="": "test-key")
     calls = []
 
-    def fake_chat(key, messages, *, model, context="", base_url=""):
+    def fake_chat(key, messages, *, model, context="", kind="", base_url=""):
         board_chat.build_messages(messages, context)   # 진짜와 같은 검사(질문 없으면 ValueError)
         calls.append((key, messages, model))
         return {"content": f"{len(messages)}번째 답", "model": model, "elapsed": 0.1}
@@ -103,3 +103,39 @@ def test_server_chat_errors_are_shown_not_hidden(server, monkeypatch):
     monkeypatch.setattr(srv.gw, "resolve_api_key", lambda explicit="": "")
     code, out = _req(base + "/api/chat", "POST", {"messages": [{"role": "user", "content": "x"}]})
     assert code == 503 and "키" in out["error"]
+
+
+# ── 웹 검색(§8 항목61 ② 담는 법, 2026-10-19) — 종류 짐작·쓰인 번호의 출처만 ──
+def test_guess_kind_search_words_but_board_text_stays_chat():
+    assert board_chat.guess_kind("오늘 KBS 뉴스 알려줘") == "search"
+    assert board_chat.guess_kind("최신 ATSC 3.0 동향") == "search"
+    assert board_chat.guess_kind("PTP가 뭐야") == "chat"
+    assert board_chat.guess_kind("송신소 점검 순서 알려줘") == "chat"
+    assert board_chat.guess_kind("최근 이 메모 정리해 줘", has_context=True) == "chat"   # 칠판에서 고른 글을 다루는 말
+
+
+def test_cited_sources_keeps_only_used_numbers_with_titles():
+    raw = {"citations": ["https://a.kr/1", "https://b.kr/2", "https://c.kr/3", "https://d.kr/4"],
+           "search_results": [{"url": "https://b.kr/2", "title": "둘째 기사", "date": "2026-10-19"}, {"url": "https://d.kr/4", "title": "넷째"}]}
+    out = board_chat.cited_sources("결론이에요.[2] 그리고 또.[4][2] 없는 번호[9]", raw)
+    assert out == [{"n": 2, "url": "https://b.kr/2", "title": "둘째 기사", "date": "2026-10-19"}, {"n": 4, "url": "https://d.kr/4", "title": "넷째", "date": ""}]
+    assert [s["n"] for s in board_chat.cited_sources("번호 없음", raw)] == [1, 2, 3]   # 번호가 없으면 앞 셋
+
+
+def test_chat_search_switches_model_and_returns_sources():
+    seen = {}
+
+    class Resp(SimpleNamespace):
+        def model_dump(self):
+            return {"citations": ["https://x.kr/a", "https://y.kr/b"], "search_results": [{"url": "https://y.kr/b", "title": "B"}]}
+
+    def create(**kw):
+        seen.update(kw)
+        return Resp(choices=[SimpleNamespace(message=SimpleNamespace(content="요약이에요.[2]"))])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    out = board_chat.chat("k", [{"role": "user", "content": "오늘 뉴스 찾아줘"}], model="m-1", client=fake)
+    assert seen["model"] == board_chat.SEARCH_MODEL and out["kind"] == "search" and out["model"] == board_chat.SEARCH_MODEL
+    assert "출처 번호" in seen["messages"][0]["content"]
+    assert out["sources"] == [{"n": 2, "url": "https://y.kr/b", "title": "B", "date": ""}]
+    out = board_chat.chat("k", [{"role": "user", "content": "오늘 뉴스 찾아줘"}], model="m-1", kind="chat", client=fake)   # 대화창에서 바꿔 다시
+    assert seen["model"] == "m-1" and out["kind"] == "chat" and "sources" not in out

@@ -100,7 +100,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
         try:
             out = board_chat.chat(key, req.get("messages") or [], model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL,
-                                  context=req.get("context") or "", base_url=gw.resolve_base_url())
+                                  context=req.get("context") or "", kind=req.get("kind") or "", base_url=gw.resolve_base_url())
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:   # 게이트웨이 오류는 대화창에 그대로 보여 준다(조용히 다른 모델로 갈아타지 않음)
