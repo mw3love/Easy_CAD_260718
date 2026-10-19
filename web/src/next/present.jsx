@@ -133,7 +133,8 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   listRef.current = list
   setInkDark(dark)   // 그리기 전에 — effect에서 바꾸면 한 박자 늦어 어둡게 되돌린 뒤 글이 검은 잉크로 남았음(2026-10-18 사용자)
   const f = frames[i]
-  const { w: W, h: H } = vw, b = f?.box || { x: 0, y: 0, w: 1, h: 1 }, k = Math.min(W / b.w, H / b.h), hw = b.w * k, hh = b.h * k, hx = (W - hw) / 2, hy = (H - hh) / 2
+  const { w: W, h: H } = vw, b = f?.box || { x: 0, y: 0, w: 1, h: 1 }, k = Math.min(W / b.w, H / b.h) * 0.95, hw = b.w * k, hh = b.h * k, hx = (W - hw) / 2, hy = (H - hh) / 2   // 95% — TV 가장자리가 잘려도 내용이 안 붙게(HTML 공유 발표와 같음, 2026-10-19)
+  const g = Math.min(W - hw, H - hh) / 2   // 프레임 둘레 여백 띠(칠판 바탕색 — 슬라이드 여백처럼, 그 밖 검정)
   const tx = hx - b.x * k, ty = hy - b.y * k, unz = (x, y) => (zoom ? [(x - zoom.ox) / zoom.s, (y - zoom.oy) / zoom.s] : [x, y])
   const [gx, gy, gk] = useGlide([tx, ty, k], glide && !draft ? (quick ? 120 : 400) : 0), [zx, zy, zs] = useGlide([zoom?.ox || 0, zoom?.oy || 0, zoom?.s || 1], pan.current?.moved ? 0 : 150)   // 휠로 잇따라 넘기는 중 = 0.12초
   if (!f) return null
@@ -191,12 +192,13 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   return <div ref={root} data-testid="presenter" onPointerDown={down} onPointerMove={move} onPointerUp={up} onContextMenu={e => e.preventDefault()}
     style={{ position: 'fixed', inset: 0, zIndex: 1000, background: '#000', cursor: laserShown ? 'none' : show ? (tool && tool !== 'erase' ? 'crosshair' : 'default') : 'none', ...th }}>
     <svg width={W} height={H} style={{ display: 'block' }}>
-      <rect x={hx} y={hy} width={hw} height={hh} fill={th['--mb-board']} />
+      <rect x={hx - g} y={hy - g} width={hw + 2 * g} height={hh + 2 * g} fill={th['--mb-board']} />
       <g transform={`translate(${zx},${zy}) scale(${zs})`}><g transform={`translate(${gx},${gy}) scale(${gk})`} style={{ '--z': k * (zoom?.s || 1) }}>
         {order.map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} web={it.type === 'web' ? (!tool && webOn === it._id ? 'on' : 'view') : undefined} />)}
       </g></g>
       {/* 프레임 밖 가림(구멍 뚫린 검은 판) — 출력한 쪽과 같은 범위만 보임 */}
-      <path d={`M0,0 H${W} V${H} H0 Z M${hx},${hy} V${hy + hh} H${hx + hw} V${hy} Z`} fill="#000" fillRule="evenodd" />
+      <path d={`M${hx - g},${hy - g} H${hx + hw + g} V${hy + hh + g} H${hx - g} Z M${hx},${hy} V${hy + hh} H${hx + hw} V${hy} Z`} fill={th['--mb-board']} fillRule="evenodd" />
+      <path d={`M0,0 H${W} V${H} H0 Z M${hx - g},${hy - g} V${hy + hh + g} H${hx + hw + g} V${hy - g} Z`} fill="#000" fillRule="evenodd" />
       {draft && (draft.tool === 'rect' ? <rect x={Math.min(draft.a.x, draft.b.x)} y={Math.min(draft.a.y, draft.b.y)} width={Math.abs(draft.b.x - draft.a.x)} height={Math.abs(draft.b.y - draft.a.y)} fill="none" stroke={penColor} strokeWidth={SIZES.line[size]} />
         : draft.tool === 'arrow' ? <line x1={draft.a.x} y1={draft.a.y} x2={draft.b.x} y2={draft.b.y} stroke={penColor} strokeWidth={SIZES.line[size]} />
         : <polyline points={draft.pts.map(q => `${q.x},${q.y}`).join(' ')} fill="none" stroke={draft.tool === 'hl' ? hlColor : draft.tool === 'erase' ? 'rgba(160,160,170,.45)' : penColor} strokeOpacity={draft.tool === 'hl' ? 0.45 : 1} strokeWidth={draft.tool === 'hl' ? SIZES.hl[size] : draft.tool === 'erase' ? 12 : SIZES.line[size]} strokeLinecap="round" strokeLinejoin="round" />)}
