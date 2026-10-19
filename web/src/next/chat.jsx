@@ -16,6 +16,7 @@ const VENDOR = { gpt: 'GPT', gemini: 'Gemini', claude: 'Claude' }
 const F = "'Pretendard', sans-serif"
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', bar: 'var(--mb-bar)', seg: 'var(--mb-seg)' }
 const css = {
+  float: { position: 'absolute', right: 12, top: 12, bottom: 12, zIndex: 5, maxWidth: 'calc(100% - 24px)', border: `1px solid ${C.line}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,.12)' },
   panel: { width: CHAT_W, flex: 'none', display: 'flex', flexDirection: 'column', background: C.bar, borderLeft: `1px solid ${C.line}`, font: `400 13.5px/1.55 ${F}`, color: C.ink, minHeight: 0 },
   head: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 12px', borderBottom: `1px solid ${C.line}` },
   msgs: { flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 },
@@ -50,7 +51,7 @@ function Answer({ text }) {
 }
 
 // ed = Editor 손잡이(selTexts·pinCard·showCard), selKey = 고른 것이 바뀔 때 다시 읽게(main이 넘김)
-export function ChatPanel({ ed, selKey, onClose }) {
+export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true)
   const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_KEY) || '' } catch { return '' } })
@@ -110,7 +111,7 @@ export function ChatPanel({ ed, selKey, onClose }) {
 
   const feat = models?.featured || {}
   return (
-    <aside style={css.panel} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
+    <aside style={floating ? { ...css.panel, ...css.float } : css.panel} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
       <div style={css.head}>
         <b style={{ fontSize: 14 }}>KAIROS</b>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -126,7 +127,7 @@ export function ChatPanel({ ed, selKey, onClose }) {
       </div>
       <div ref={box} style={css.msgs}>
         {loaded && !msgs.length && <div style={{ ...css.meta, fontSize: 12.5, lineHeight: 1.6 }}>
-          무엇이든 물어보세요. 남길 답은 「칠판에 붙이기」로 카드가 됩니다.<br />칠판에서 카드나 글을 고른 채 물으면 그 내용을 같이 보냅니다.</div>}
+          무엇이든 물어보세요. 남길 답은 「칠판에 붙이기」나 끌어다 놓기로 메모가 됩니다.<br />칠판에서 메모나 글을 고른 채 물으면 그 내용을 같이 보냅니다.</div>}
         {msgs.map((m, i) => m.role === 'user'
           ? <div key={i} style={css.me}>{m.ctxCount ? <span style={css.ctx}>칠판에서 고른 것 {m.ctxCount}개와 함께</span> : null}{m.content}</div>
           : m.role === 'error'

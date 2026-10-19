@@ -245,6 +245,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self._wait_rev(name, int((q.get("rev") or ["0"])[0]), q)
             doc = self._doc_load(name)
             if doc is None:
+                if m.group(1) == "since":
+                    return self._send(204)   # 아직 저장 안 한 새 칠판 = 바뀐 것 없음(404면 브라우저 콘솔에 오류가 쌓임)
                 return self._send(404, b'{"error":"none"}')
             if m.group(1) == "since" and int((q.get("rev") or ["0"])[0]) >= int(doc.get("rev") or 0):
                 return self._send(204)   # 그 뒤로 바뀐 것 없음

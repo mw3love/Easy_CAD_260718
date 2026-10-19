@@ -90,6 +90,8 @@ def test_server_password_patch_since_publish(server):
     uid = doc["items"][0]["uid"]                                       # 서버가 처음 열 때 uid를 붙여 저장
     assert code == 200 and uid and json.loads((data / "b1.ecad").read_text(encoding="utf-8"))["items"][0]["uid"] == uid
     assert _req(base + f"/api/since/b1?rev={doc.get('rev', 0)}", cookie=cookie)[0] == 204
+    assert _req(base + "/api/since/new_board?rev=0", cookie=cookie)[0] == 204   # 아직 저장 안 한 칠판 = 바뀐 것 없음(404면 콘솔 오류)
+    assert _req(base + "/api/doc/new_board", cookie=cookie)[0] == 404
     code, out, _ = _req(base + "/api/patch/b1", "POST", {"base": 0, "upsert": [{"uid": "n1", "type": "text", "text": "가"}]}, cookie=cookie)
     assert code == 200 and out["rev"] == doc.get("rev", 0) + 1
     code, doc2, _ = _req(base + f"/api/since/b1?rev={doc.get('rev', 0)}", cookie=cookie)

@@ -224,7 +224,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
     onStep: d => { const ids = new Set(list.map(it => it._id)); set(it => (ids.has(it._id) ? write(it, stepClamp(get(it) ?? d0, d, min, max, step)) : null), name, name) } })
   const onArrows = f => it => (isArrow(it) ? f(it) : null)
 
-  return <div onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 12, top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
+  return <div onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
     padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: 'calc(100% - 180px)', overflowY: 'auto' }}>
     <div style={{ font: "700 15px 'Pretendard', sans-serif", marginBottom: 2 }}>속성</div>
     <Row label="종류">{allArrows
