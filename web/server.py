@@ -35,7 +35,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_image, board_report, meeting, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_image, board_report, board_tidy, meeting, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 
@@ -106,6 +106,8 @@ class Handler(SimpleHTTPRequestHandler):
             prev_html = str(req.get("prev_html") or "")
             if kind == "chat" and prev_html and not req.get("kind"):   # 정리 문서 바로 뒤 「더 짧게」 같은 말 = 그 문서 고치기
                 kind = "report"
+            if kind == "tidy":   # 「정리해 줘」 ② 레고형 정리정돈 — 묶음 목록만 답, 자리는 칠판이 잡음(§8 항목61)
+                return self._tidy(req.get("items") or [], str(last.get("content", "")), key)
             if kind == "report":   # 「정리해 줘」 ① — 고른 것(없으면 칠판 전체)을 정리 문서 한 장으로(§8 항목61)
                 return self._report(self._name(str(req.get("board") or "")), str(last.get("content", "")), ctx or str(last.get("context") or ""), prev_html, key)
             if kind == "image":   # 「○○ 그려줘」 — 그림 후보(§8 항목61 ③-4): 칠판 옆 폴더에 두고 주소만 대화 기록에(기록이 그림으로 불지 않게)
@@ -135,6 +137,17 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(502, {"error": f"KAIROS 정리 문서 실패: {e}"})
         sys.stderr.write("[정리 문서] %s %.1f초 %d자\n" % (out["model"], out["elapsed"], len(out["html"])))
         return self._json(200, {"kind": "report", "content": f"정리 문서 「{out['title']}」 — 칠판에 붙이면 인쇄용 문서 카드가 돼요", **out})
+
+    def _tidy(self, items: list, ask: str, key: str):
+        """정리정돈 → {"kind": "tidy", "content", "plan": {title, sections:[{title, items, note}], opinion}, "model", "elapsed"} — 조각 = 칠판이 보낸 목록."""
+        if not isinstance(items, list) or len(items) < 2:
+            return self._json(400, {"error": "정돈할 조각이 2개 이상 있어야 해요 — 칠판에서 고르거나 화면에 보이게 하고 다시 물어 주세요"})
+        try:
+            out = board_tidy.make(gw._client(key, gw.resolve_base_url(), timeout=300), items, ask)
+        except Exception as e:
+            return self._json(502, {"error": f"KAIROS 정리정돈 실패: {e}"})
+        sys.stderr.write("[정리정돈] %s %.1f초 %d묶음\n" % (out["model"], out["elapsed"], len(out["plan"]["sections"])))
+        return self._json(200, {"kind": "tidy", **out})
 
     def _img_dir(self, name: str) -> str:
         return os.path.join(self.data_dir, name + ".img")

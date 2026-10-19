@@ -38,6 +38,7 @@ import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalize
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
+import { TIDY, clearSpot, tidyLayout } from './tidy.js'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
@@ -123,7 +124,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -751,17 +752,81 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // ── KAIROS 대화창 길목(chat.jsx) ──
   // 고른 것(보드면 안의 것까지)의 글 — 질문에 같이 보냄
   function selTexts() {
-    const m = R.current.model, ids = new Set(movingSet(R.current.sel)), out = []
-    for (const it of m.items) {
-      if (!ids.has(it._id)) continue
-      if (it.type === 'text' && it.text?.trim()) out.push(it.text)
-      if (it.label?.text?.trim()) out.push(it.label.text)
-      for (const L of it.labels || []) if (L.text?.trim()) out.push(L.text)
-      if (it.type === 'table') { const t = (it.cells || []).map(r => r.filter(Boolean).join(' | ')).filter(Boolean).join('\n'); if (t) out.push(t) }
-      if (it.type === 'memo') { const t = memoText(it.lines); if (t.trim()) out.push(t) }
-      if (it.type === 'doc') out.push(`[정리 문서] ${it.title || ''}\n${docText(it.html)}`)   // 정리 문서도 근거·재료로
+    const m = R.current.model, ids = new Set(movingSet(R.current.sel))
+    return m.items.filter(it => ids.has(it._id)).flatMap(itemTexts)
+  }
+  function itemTexts(it) {   // 도형 하나의 글(대화 재료·정리정돈 조각 글)
+    const out = []
+    if (it.type === 'text' && it.text?.trim()) out.push(it.text)
+    if (it.label?.text?.trim()) out.push(it.label.text)
+    for (const L of it.labels || []) if (L.text?.trim()) out.push(L.text)
+    if (it.type === 'table') { const t = (it.cells || []).map(r => r.filter(Boolean).join(' | ')).filter(Boolean).join('\n'); if (t) out.push(t) }
+    if (it.type === 'memo') { const t = memoText(it.lines); if (t.trim()) out.push(t) }
+    if (it.type === 'doc') out.push(`[정리 문서] ${it.title || ''}\n${docText(it.html)}`)   // 정리 문서도 근거·재료로
+    if (it.type === 'web') out.push(`[웹] ${it.title || ''} ${it.url || ''}`.trim())
+    return out
+  }
+  // ── 「정리해 줘」 ② 레고형 정리정돈(§8 항목61, 2026-10-19) — AI는 묶음 목록만(서버 `board_tidy`), 자리는 `tidy.js` ──
+  // 조각 = 옮기는 단위: 묶음(group_id)·보드(안의 것까지)는 통째로 하나, 화살표·선·펜·판서는 빼고(붙은 도형 따라 저절로),
+  // 프레임은 안의 것까지 건너뜀(프레임 안에 프레임을 겹쳐 넣지 않음). 고른 것이 없으면 지금 화면에 가운데가 보이는 것
+  const tidyLine = it => it.type === 'line' || isArrow(it) || (it.type === 'path' && it.freehand) || (it.type === 'polygon' && !it.closed) || it.type === 'titleblock' || it.layer_id === PEN_LAYER
+  const tidyMembers = (items, uid) => movingSet(expandGroups(items, [uid]))
+  function tidyItems() {
+    const m = R.current.model, c = R.current.cam, pool = hitPool().filter(it => !it.locked)
+    let scope
+    if (R.current.sel.length) { const ids = new Set(movingSet(R.current.sel)); scope = pool.filter(it => ids.has(it._id)) }
+    else { const vx = -c.x / c.z, vy = -c.y / c.z, vw = (size.w - rightInset(svg.current)) / c.z, vh = size.h / c.z
+      scope = pool.filter(it => { const b = sceneBox(it, textBox), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= vx && cx <= vx + vw && cy >= vy && cy <= vy + vh }) }
+    const frames = scope.filter(it => it.type === 'frame').map(it => it._id), skip = new Set([...frames, ...boardContents(m.items, frames, textBox)]), used = new Set(), out = []
+    for (const it of scope) {
+      if (used.has(it._id) || skip.has(it._id) || tidyLine(it)) continue
+      const ids = tidyMembers(m.items, it._id).filter(id => !used.has(id) && !skip.has(id)); ids.forEach(id => used.add(id))
+      const its = m.items.filter(x => ids.includes(x._id)), b = unionBox(its.map(x => sceneBox(x, textBox)))
+      out.push({ uid: it._id, type: its.length > 1 ? `${it.type} 외 ${its.length - 1}개 묶음` : it.type, text: its.flatMap(itemTexts).join(' / ').slice(0, 400), w: Math.round(b.w), h: Math.round(b.h) })
     }
     return out
+  }
+  // 답(plan = { title, sections: [{ title, items: [uid], note }], opinion }) → 묶음마다 프레임, 조각 옮김, 핵심 의견 = 노란 메모. 한 번의 commit = Ctrl+Z 한 번. 새 프레임 id들(없으면 null)
+  function applyTidy(plan, model = '') {
+    const m = R.current.model, have = new Set(m.items.map(it => it._id)), used = new Set(), secs = []
+    for (const s of plan?.sections || []) {
+      const units = []
+      for (const uid of s.items || []) {
+        if (!have.has(uid) || used.has(uid)) continue
+        const ids = tidyMembers(m.items, uid).filter(id => !used.has(id)); if (!ids.length) continue; ids.forEach(id => used.add(id))
+        const b = unionBox(m.items.filter(x => ids.includes(x._id)).map(x => sceneBox(x, textBox))); units.push({ ids, box: b, w: b.w, h: b.h })
+      }
+      if (!units.length) continue
+      const note = s.note ? base([0, 0], { type: 'text', text: s.note, color: '#ff8a8f98', font: 10, bg: null }) : null, nb = note && textBox(note)
+      secs.push({ title: s.title || '묶음', units, note, noteW: nb?.w || 0, noteH: nb?.h || 0 })
+    }
+    if (!secs.length) return null
+    const moved = secs.flatMap(s => s.units), all = moved.map(u => u.box), o0 = { x: Math.min(...all.map(b => b.x)), y: Math.min(...all.map(b => b.y)) }
+    const lay0 = tidyLayout(secs, o0), memoH = plan.opinion ? 140 : 0, tag = 40   // 프레임 이름표·의견 메모 자리까지 비우기
+    const others = m.items.filter(it => !used.has(it._id) && !tidyLine(it)).map(it => sceneBox(it, textBox))
+    const o = clearSpot({ x: o0.x, y: o0.y - tag }, lay0.w, lay0.h + tag + memoH, others), lay = tidyLayout(secs, { x: o.x, y: o.y + tag })
+    let next = m.items
+    secs.forEach((s, i) => s.units.forEach((u, k) => { const f = lay.frames[i], to = f.at[k]; next = moveItems(next, u.ids, f.inner.x + to.x - u.box.x, f.inner.y + to.y - u.box.y) }))
+    const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = orderedFrames(m.items).length
+    const frames = secs.map((s, i) => { const f = lay.frames[i]; return base([f.x, f.y], { type: 'frame', rect: [0, 0, f.w, f.h], name: s.title, no: no0 + i + 1, z: zb }) })
+    const notes = secs.flatMap((s, i) => (s.note ? [{ ...s.note, pos: [lay.frames[i].note.x - TEXT_MARGIN, lay.frames[i].note.y - TEXT_MARGIN], z: zt }] : []))
+    const add = [...frames, ...notes]
+    if (plan.opinion) {
+      const src = `KAIROS 정리정돈 · ${model} · ${new Date().toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`
+      let memo = base([lay.frames[0].x, o.y + tag + lay.h + TIDY.FGAP * 0.6], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffff8c5', z: zt,
+        lines: [{ k: 'h3', t: plan.title || '핵심 의견' }, { k: 'p', t: '💡 ' + plan.opinion }, { k: 'p', t: src, runs: [[0, src.length, MUTED, false]] }] })
+      memo = { ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }; add.push(memo)
+    }
+    commit([...next, ...add], frames.map(f => f._id), '정리정돈')
+    setStatus(`정리정돈 — ${secs.length}묶음 · 조각 ${moved.length}개. 마음에 안 들면 Ctrl+Z 한 번에 원래대로`)
+    return frames.map(f => f._id)
+  }
+  // 여러 도형이 한눈에 들어오게(정돈한 곳 보기) — 없으면 false
+  function showIds(ids) {
+    const its = R.current.model.items.filter(it => ids?.includes(it._id)); if (!its.length) return false
+    const L = 220, b = unionBox(its.map(it => sceneBox(it, textBox))), W = size.w - rightInset(svg.current) - L, z = Math.min(1.5, Math.max(ZMIN, Math.min(W / (b.w * 1.1), size.h / (b.h * 1.2))))   // 왼쪽 카드(도형·프레임 목록) 자리는 빼고
+    setSel(its.map(it => it._id)); setCam({ z, x: L + W / 2 - (b.x + b.w / 2) * z, y: size.h / 2 - (b.y + b.h / 2) * z })
+    return true
   }
   // 답 → 카드 = 채운 네모 하나 + 왼쪽 위 라벨(상자 폭에서 줄바꿈) + 글에 맞춘 높이(`fit_text`) — 한 덩어리라 글이 넘칠 수 없음(2026-10-18 사용자 지적: 보드 + 글 두 덩어리는 넘침)
   // 지금 화면에서 다른 것과 안 겹치는 자리(왼쪽 카드·오른쪽 속성 카드 자리는 뺌), 카드에 `chat_at` = 답 시각
@@ -1624,11 +1689,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', '', act(wrapFrame)])
           out.push('-', ['내보내기…', '', act(() => onExportSel?.())])
           if (onAsk) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
+          if (onAsk && ids.length >= 2) out.push(['정리정돈하기 (KAIROS)', '', act(() => onAsk('고른 것을 주제별로 묶어 정돈해 줘', 'tidy'))])   // 「정리해 줘」 ② — 지우지 않고 묶어 옮김
         }
         if (clip.current?.items?.length) { if (has) out.push('-'); out.push(['붙여넣기', 'Ctrl+V', act(paste)]) }
         if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))])
           if (m.items.some(it => it.locked)) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked ? { ...it, locked: false } : it)), [], '잠금 해제'))])
           if (onAsk && m.items.length) out.push('-', ['칠판 전체 정리 문서 만들기 (KAIROS)', '', act(() => onAsk('이 칠판 전체를 정리한 문서 한 장으로 만들어 줘', 'report'))])
+          if (onAsk && m.items.length >= 2) out.push(['보이는 것 정리정돈하기 (KAIROS)', '', act(() => onAsk('화면에 보이는 것을 주제별로 묶어 정돈해 줘', 'tidy'))])
           if (onHelp) out.push('-', ['글쇠 도움말', 'F1', act(onHelp)]) }
         return out })()} />}
       {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))

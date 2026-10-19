@@ -11,6 +11,7 @@ import { contextText, parseAnswer } from '../chatFormat.js'
 import { urlSpans } from './geom.js'
 import { MONO_FONT } from './render.jsx'
 import { siteOf } from './webcard.js'
+import { TIDY_RE } from './tidy.js'
 const LINK_CHAT = '#4f8fe8'
 // 정리 문서 크게 보기 — 새 탭에 그 HTML(인쇄·PDF는 그 탭에서 Ctrl+P)
 const openHtml = html => { const u = URL.createObjectURL(new Blob([html || ''], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
@@ -20,6 +21,7 @@ const KINDS = {
   search: ['🔎 웹 검색', { color: '#2f80ed', background: 'rgba(47,128,237,.12)' }, '웹 검색으로 다시', '웹을 찾아 출처와 함께 다시 물어 이 답을 바꿔요'],
   board: ['📌 칠판에서', { color: '#d97706', background: 'rgba(245,158,11,.14)' }, '칠판에서 다시', '이 칠판의 메모·글을 뜻으로 찾아 그것을 근거로 다시 물어요'],
   report: ['📄 정리 문서', { color: '#7c3aed', background: 'rgba(124,58,237,.12)' }, '정리 문서로 다시', '고른 것(없으면 칠판 전체)을 보고서·인포그래픽 한 장으로 다시 만들어요(약 40초)'],
+  tidy: ['🧩 정리정돈', { color: '#0f766e', background: 'rgba(15,118,110,.12)' }, '정리정돈으로 다시', '고른 것(없으면 화면에 보이는 것)을 지우지 않고 주제별 프레임으로 묶어 옮겨요(Ctrl+Z 한 번에 원래대로)'],
   image: ['🎨 그림', { color: '#9333ea', background: 'rgba(147,51,234,.12)' }, '그림으로 다시', '그림 후보 2장을 만들어 이 답을 바꿔요(장당 약 34크레딧)'],
 }   // 대화창 주소(어두운·밝은 화면 둘 다 읽히는 파랑)
 
@@ -92,13 +94,16 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
 
   // 묻기 — history = 지금까지(마지막이 질문), kind = 'search'·'chat'(비면 서버가 짐작) → 답 한 차례
   async function ask(history, kind = '', prevHtml = '') {   // prevHtml = 바로 앞 답이 정리 문서면 그 HTML(「더 짧게」 = 그 문서 고치기 — 서버가 판단)
+    const q = history.filter(m => m.role === 'user').at(-1)?.content || ''
+    const items = kind === 'tidy' || (!kind && TIDY_RE.test(q)) ? ed.current?.tidyItems() || [] : null   // 정리정돈(「정리해 줘」 ②) — 옮길 조각 목록(uid·종류·글·크기)
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
+      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(items ? { items } : {}), messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
+    const frames = d.kind === 'tidy' && d.plan ? ed.current?.applyTidy(d.plan, d.model) || [] : null   // 답이 도착한 이때 한 번만 칠판에(기록을 다시 열 땐 안 함)
     return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
       ...(d.images?.length ? { images: d.images, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),
-      ...(d.html ? { html: d.html, title: d.title || '정리 문서' } : {}) }
+      ...(d.html ? { html: d.html, title: d.title || '정리 문서' } : {}), ...(frames ? { frames } : {}) }
   }
   async function send(text = null, kind = '') {   // text·kind = 밖에서 시킨 질문(칠판 우클릭 「정리 문서 만들기」 — 입구는 대화창 하나)
     const q = (text ?? draft).trim(); if (!q || busy) return
@@ -193,10 +198,12 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
                 {m.sources.map(s => <a key={s.n} href={s.url} target="_blank" rel="noopener noreferrer" title={s.url} onPointerDown={e => e.stopPropagation()}
                   style={{ ...css.meta, color: LINK_CHAT, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>[{s.n}] {s.title || siteOf(s.url)} · {siteOf(s.url)}</a>)}</div>}
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-                {!m.images?.length && <button style={{ ...(m.pinned ? css.ghost : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
+                {m.kind === 'tidy' && <button style={css.pin} onClick={() => ed.current?.showIds(m.frames) || setGone(g => ({ ...g, [m.at + ':tidy']: true }))} title="정돈해 만든 프레임들이 한눈에 보이게">
+                  {gone[m.at + ':tidy'] ? '프레임이 지워졌어요' : '정돈한 곳 보기'}</button>}
+                {!m.images?.length && m.kind !== 'tidy' && <button style={{ ...(m.pinned ? css.ghost : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
                   title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : m.refs?.length ? '메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(누르면 빈자리, 끌면 놓은 자리)' : m.sources?.length ? '요약 메모 + 출처 카드를 번호 화살표로 이어 한 묶음으로(누르면 빈자리, 끌면 놓은 자리)' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
                   {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>}
-                {!m.images?.length && !m.html && <button style={css.ghost} onClick={() => navigator.clipboard?.writeText(m.content).catch(() => {})}>복사</button>}
+                {!m.images?.length && !m.html && m.kind !== 'tidy' && <button style={css.ghost} onClick={() => navigator.clipboard?.writeText(m.content).catch(() => {})}>복사</button>}
                 <span style={{ ...css.meta, marginLeft: 'auto' }}>{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</span>
               </div>
             </div>)}
