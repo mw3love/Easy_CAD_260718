@@ -126,9 +126,13 @@ export const fitTextHeight = it => Math.ceil(leftLabelLayout(it).h + 2 * TEXT_MA
 
 // 메모 배치(아이템 안 좌표) — 줄마다 { ln, x(글 왼쪽), y(글 위), lay, marker, box(할 일 체크 상자) }, h = 메모 전체 높이. 고치기 CSS(memoedit.jsx)와 같은 치수
 const _ml = new WeakMap()
+// 메모 접기(2026-10-19 회의록 전문 — 긴 메모가 칠판을 넘치지 않게): fold === true면 앞 MEMO_FOLD_N줄 + 「… N줄 더 — 눌러서 펼치기」,
+// fold === false(펼친 것)면 끝에 「▴ 접기」, 없으면 보통. 덧붙인 줄은 rows 끝에 `ln.more`('open'·'close'), i = 줄 수(진짜 줄 차례와 안 겹치게). 고칠 때·찾기·대화 근거는 전체
+export const MEMO_FOLD_N = 6
 export function memoLayout(it) {
   let r = _ml.get(it); if (r) return r
-  const lines = it.lines?.length ? it.lines : [{ k: 'p', t: '' }], w = it.rect?.[2] || MEMO.W, inner = Math.max(20, w - MEMO.LPAD - MEMO.PAD), nums = olNumbers(lines), rows = []
+  const all = it.lines?.length ? it.lines : [{ k: 'p', t: '' }], folded = it.fold === true && all.length > MEMO_FOLD_N + 1
+  const lines = folded ? all.slice(0, MEMO_FOLD_N) : all, w = it.rect?.[2] || MEMO.W, inner = Math.max(20, w - MEMO.LPAD - MEMO.PAD), nums = olNumbers(all), rows = []
   let y = MEMO.PAD
   lines.forEach((ln, i) => {
     const K = MEMO_KIND[ln.k] || MEMO_KIND.p, px = K.pt * PT, prev = lines[i - 1], next = lines[i + 1]
@@ -150,6 +154,13 @@ export function memoLayout(it) {
     rows.push({ ln, i, x, y: y - TEXT_MARGIN, lay, px, marker, box, cy: cy - TEXT_MARGIN, lh, joinPrev, joinNext })
     y += lay.h + (joinNext ? 0 : TEXT_MARGIN)
   })
+  if (folded || (it.fold === false && all.length > MEMO_FOLD_N + 1)) {   // 펼치기·접기 줄
+    const t = folded ? `… ${all.length - MEMO_FOLD_N}줄 더 — 눌러서 펼치기` : '▴ 접기', px = MEMO_KIND.p.pt * PT, lh = METRICS.board.lineSpacing * px
+    y += MEMO.GAP + TEXT_MARGIN
+    const lay = layoutText(t, null, px, 'board', 400, Math.max(10, inner - 2 * TEXT_MARGIN))
+    rows.push({ ln: { k: 'p', t, more: folded ? 'open' : 'close' }, i: all.length, x: MEMO.LPAD, y: y - TEXT_MARGIN, lay, px, marker: null, box: null, cy: y + lh / 2, lh, joinPrev: false, joinNext: false })
+    y += lay.h + TEXT_MARGIN
+  }
   r = { rows, h: Math.ceil(y + MEMO.PAD) }; _ml.set(it, r); return r
 }
 function clipMono(t, px, maxW) {
@@ -430,8 +441,8 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         <rect x={x} y={y} width={w} height={h} rx={10} ry={10} fill={fillC} stroke={it.pen ? cssColor(it.pen) : '#d4d4d8'} strokeWidth={1} />
         {ml.rows.map(({ ln, i, x: lx, y: ly, lay, px, marker, box, cy, lh, hr }) => {
           if (hr) return <line key={i} x1={x + lx} x2={x + w - MEMO.PAD} y1={y + cy} y2={y + cy} stroke="#d4d4d8" strokeWidth={1} />
-          const done = ln.k === 'todo' && ln.done, col = done ? MUTED : ln.k === 'quote' ? '#52525b' : ink0
-          return <g key={i}>
+          const done = ln.k === 'todo' && ln.done, col = done || ln.more ? MUTED : ln.k === 'quote' ? '#52525b' : ink0
+          return <g key={ln.more ? 'more' : i} data-memo-more={ln.more || undefined}>
             {ln.k === 'quote' && <rect x={x + MEMO.LPAD} y={y + ly + (ml.rows[i].joinPrev ? TEXT_MARGIN : 0)} width={3} height={lay.h + (ml.rows[i].joinPrev ? 0 : TEXT_MARGIN) + (ml.rows[i].joinNext ? 0 : TEXT_MARGIN)} fill="#d4d4d8" />}
             {ln.k === 'code' && <rect x={x + lx - 4} y={y + ly + (ml.rows[i].joinPrev ? TEXT_MARGIN : 0)} width={w - MEMO.PAD - lx + 8} height={lay.h + (ml.rows[i].joinPrev ? 0 : TEXT_MARGIN) + (ml.rows[i].joinNext ? 0 : TEXT_MARGIN)} fill={CODE_BAND} />}   {/* 코드 블록 = 한 덩어리 바탕(빈 줄·여백까지 — 줄마다 칠하면 빈 줄에서 끊겨 여러 칸으로 보였음, 2026-10-19 사용자) */}
             {marker && <text x={x + lx - 6} y={y + cy} textAnchor="end" dominantBaseline="central" fontSize={px} fontFamily={BOARD_FONT} fill={ink0} style={{ fontVariantNumeric: 'tabular-nums' }}>{marker[0]}</text>}

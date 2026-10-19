@@ -4,7 +4,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr } from './render.jsx'
-import { boardMembership, drawOrder, itemBounds } from './doc.js'
+import { DOC_NAME, boardMembership, drawOrder, itemBounds } from './doc.js'
 import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
@@ -35,7 +35,7 @@ import { ContextMenu } from './ctxmenu.jsx'
 import { freeSpot, sourceLine } from '../chatFormat.js'
 import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
-import { LINE_COLORS, LINE_KINDS, MEMO, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
+import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
@@ -122,7 +122,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, showItem, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, showItem, dropFiles, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -251,6 +251,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const inSel = ls && selUnits(ls).some(([s0, e0]) => mh.s >= s0 && mh.e <= e0)
       st.current = { ...st.current, kind: 'mline', id: mh.it._id, units: inSel ? selUnits(ls) : [[mh.s, mh.e]], copy: e.altKey, start: p, moved: false }; return }
     if (lineSel) setLineSel(null)
+    const mo = memoMoreAt(p); if (mo) { commit(m.items.map(x => (x._id === mo.it._id ? { ...x, fold: mo.more !== 'open' } : x)), [mo.it._id], mo.more === 'open' ? '메모 펼침' : '메모 접음'); return }
     const mc = memoCheckAt(p); if (mc) { const ln = mc.it.lines[mc.i]; commit(m.items.map(x => (x._id === mc.it._id ? { ...x, lines: x.lines.map((l, j) => (j === mc.i ? (l.done ? (({ done, ...r }) => r)(l) : { ...l, done: true }) : l)) } : x)), R.current.sel, ln.done ? '할 일 풂' : '할 일 끝'); return }
     const h = handleAt(p)
     if (h?.qc) { st.current = { ...st.current, kind: 'conn', src: single._id, side: h.key.slice(3), port: h.port, start: p, cur: p, fromQc: true, moved: false }; return }
@@ -609,7 +610,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (k !== (R.current.memoHov ? `${R.current.memoHov.id}:${R.current.memoHov.s}:${R.current.memoHov.e}` : null)) setMemoHov(hv ? { id: hv.it._id, s: hv.s, e: hv.e } : null)
       if (hv && memoHandleHit(p)) { setHp(null); setCursor('grab'); return }
       if (hv && inMemoGutter(p)) { setHp(null); setCursor('default'); return }
-      if (hv && memoCheckAt(p)) { setHp(null); setCursor('pointer'); return }
+      if (hv && (memoCheckAt(p) || memoMoreAt(p))) { setHp(null); setCursor('pointer'); return }
       if (hv && memoLinkHit(p)) { setHp(null); setCursor('pointer'); return } }   // 주소 위 = 손가락(Ctrl+클릭으로 열림 — 2026-10-18 사용자: 이동 커서였음)   // 할 일 상자 = 누르는 것(2026-10-18 사용자: 이동 커서였음)
     if (t === 'arrow') { const near = hostsNear(p), lines = linesNear(p), tg = snapAt(near, p, R.current.cam.z, rectOf, lines); setHp(near.length || tg ? { id: tg?.id ?? near.at(-1)?._id ?? null, target: tg } : null); setCursor('crosshair'); return }   // 붙을 자리 예고
     if (t !== 'select') { setCursor(t === 'text' ? 'text' : 'crosshair'); return }
@@ -804,6 +805,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const memoCheckAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'memo' || it.locked) continue
     const q = toLocal(it, p), [x0, y0] = it.rect, pad = 3 / z / (it.scale || 1)
     for (const r of memoLayout(it).rows) if (r.box && q.x >= x0 + r.box.x - pad && q.x <= x0 + r.box.x + r.box.s + pad && q.y >= y0 + r.box.y - pad && q.y <= y0 + r.box.y + r.box.s + pad) return { it, i: r.i } } return null }
+  // 메모 「… N줄 더 — 눌러서 펼치기」·「▴ 접기」 줄(render.jsx memoLayout `ln.more`) — 맨 위 메모부터
+  const memoMoreAt = p => { for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'memo' || it.locked) continue
+    const q = toLocal(it, p), [x0, y0, w, h] = it.rect; if (q.x < x0 || q.x > x0 + w || q.y < y0 || q.y > y0 + h) continue
+    const r = memoLayout(it).rows.find(x => x.ln.more); return r && q.y >= y0 + r.y && q.y <= y0 + r.y + r.lay.h + 2 * TEXT_MARGIN ? { it, more: r.ln.more } : null } return null }
   // ── 메모 2차: 줄 손잡이(⠿) — 끌기 = 줄 순서(다른 메모로도), 메모 밖에 놓기 = 새 메모(칠판으로 꺼내기), 누르기 = 메뉴 ──
   const rowBottom = (rows, k, h) => (rows[k + 1] ? rows[k + 1].y : h - MEMO.PAD)
   function memoRowAt(p, margin = 28, pad = 0) {   // 메모 줄 위(또는 그 왼쪽 손잡이 자리) — 맨 위 메모부터. pad = 위·아래·오른쪽 여유(화면 px)
@@ -812,7 +817,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const q = toLocal(it, p), [x0, y0, w, h] = it.rect, mg = margin / z / (it.scale || 1), pd = pad / z / (it.scale || 1)
       if (q.x < x0 - mg || q.x > x0 + w + pd || q.y < y0 - pd || q.y > y0 + h + pd) continue
       const rows = memoLayout(it).rows; let r = rows[0]
-      for (const row of rows) if (q.y >= y0 + row.y) r = row
+      for (const row of rows) if (!row.ln.more && q.y >= y0 + row.y) r = row   // 펼치기·접기 줄은 줄이 아님
       const [s, e] = lineUnit(it.lines || [], r.i); return { it, s, e } }
     return null
   }
@@ -1326,6 +1331,59 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       commit([...m.items, it], [it._id], '그림 붙여넣기'); setTool('select')
     } catch { setStatus('그림을 읽지 못했어요') } finally { URL.revokeObjectURL(url) }
   }
+  // ── 칠판에 파일 끌어 놓기(2026-10-19) — 그림 = 이미지, 녹음 = 회의록(§8 항목61 ③-3). 그 밖 파일은 알림만(전엔 브라우저가 그 파일을 열며 칠판을 떠났음) ──
+  const AUDIO_RE = /\.(mp3|m4a|wav|webm|ogg|aac|flac|mp4)$/i
+  async function dropFiles(files, e) {
+    if (readOnly) return
+    const p = toSceneP(e); R.current.mouse = p
+    for (const f of files) {
+      if (/^image\//.test(f.type)) await insertImage(f)
+      else if (AUDIO_RE.test(f.name) || /^audio\//.test(f.type)) startMeeting(f, p)
+      else setStatus(`${f.name} — 칠판엔 그림·녹음 파일만 끌어 놓을 수 있어요(.ecad는 「열기」)`)
+    }
+  }
+  // 회의록 — 녹음을 서버로(받아쓰기·요약은 서버 뒤 일감, easycad/ai/meeting.py), 그동안 놓을 자리에 「만드는 중」 점선 틀(그리는 과정 보이기 — §8 항목61 ③), 2초마다 확인
+  const [pend, setPend] = useState([])
+  async function startMeeting(file, at) {
+    const id = newId(), say = msg => setPend(ps => ps.map(q => (q.id === id ? { ...q, msg } : q)))
+    setPend(ps => [...ps, { id, x: at.x, y: at.y, msg: `「${file.name}」 올리는 중…` }])
+    const done = () => setPend(ps => ps.filter(q => q.id !== id))
+    let model = ''; try { model = localStorage.getItem('magic-board-model') || '' } catch { /* 없어도 그만 — 서버 기본 모델 */ }
+    try {
+      const r = await fetch(`/api/meeting/${encodeURIComponent(DOC_NAME)}${model ? `?model=${encodeURIComponent(model)}` : ''}`, { method: 'POST', body: file,
+        headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) } })
+      const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
+      if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
+      for (;;) {
+        await new Promise(ok => setTimeout(ok, 2000))
+        const g = await fetch(`/api/meeting/${encodeURIComponent(DOC_NAME)}/${d.job}`, { cache: 'no-store' }), st = await g.json().catch(() => ({ status: 'error', error: `서버 응답 ${g.status}` }))
+        if (st.status === 'run') { say(st.msg || '만드는 중…'); continue }
+        if (st.status !== 'done') throw new Error(st.error || '회의록을 못 만들었어요')
+        done(); insertMeeting(st.result, at, file.name); return
+      }
+    } catch (err) { done(); setStatus(`회의록 실패 — ${err.message || err}`) }
+  }
+  // 회의록 놓기 = 「회의 날짜 · 제목」 프레임 안에 요약 메모(결정·할 일 체크·다음 회의) + 전문 메모(말한 사람·시간, 접힘 — 펼치기). 배치는 앱(AI는 내용만)
+  function insertMeeting(res, at, fname = '') {
+    const m = R.current.model, z = topZ(m.items) + 1, pad = 16, gap = 40, d = new Date(), two = n => String(n).padStart(2, '0')
+    const clock = ms => { const s = Math.floor((ms || 0) / 1000); return s >= 3600 ? `${Math.floor(s / 3600)}:${two(Math.floor(s / 60) % 60)}:${two(s % 60)}` : `${two(Math.floor(s / 60))}:${two(s % 60)}` }
+    const when = `${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`
+    const src = `KAIROS 회의록 · ${fname || '녹음'} · ${Math.round(res.duration || 0)}초 · ${res.model || ''} · ${when}`
+    const lines = [{ k: 'h2', t: res.title || '회의' }, ...(res.summary ? [{ k: 'p', t: res.summary }] : []),
+      ...(res.decisions?.length ? [{ k: 'h3', t: '결정' }, ...res.decisions.map(t => ({ k: 'ul', t }))] : []),
+      ...(res.todos?.length ? [{ k: 'h3', t: '할 일' }, ...res.todos.map(t => ({ k: 'todo', t: `${t.who ? t.who + ' — ' : ''}${t.what}${t.due ? ` (${t.due})` : ''}` }))] : []),
+      ...(res.next ? [{ k: 'h3', t: '다음 회의' }, { k: 'p', t: res.next }] : []),
+      { k: 'p', t: src, runs: [[0, src.length, MUTED, false]] }]
+    let sum = base([at.x + pad, at.y + pad], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines, z })
+    sum = { ...sum, rect: [0, 0, MEMO.W, memoHeight(sum)] }
+    const tl = (res.turns || []).map(t => { const head = `[${clock(t.start_ms)}] ${t.speaker}: `; return { k: 'p', t: head + t.text, runs: [[0, head.length, MUTED, false]] } })
+    let full = base([at.x + pad + MEMO.W + gap, at.y + pad], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffafafa', lines: [{ k: 'h3', t: `전문 · ${tl.length}구간` }, ...tl], fold: true, z })
+    full = { ...full, rect: [0, 0, MEMO.W, memoHeight(full)] }
+    const H = Math.max(sum.rect[3], full.rect[3]) + 2 * pad, W = 2 * MEMO.W + gap + 2 * pad
+    const fr = base([at.x, at.y], { type: 'frame', rect: [0, 0, W, H], name: `회의 ${when} · ${res.title || ''}`.trim(), no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
+    commit([...m.items, fr, sum, full], [sum._id], '회의록')
+    setStatus(`회의록 — ${res.title || '회의'} · ${Math.round(res.duration || 0)}초 녹음 · ${res.credits ?? '?'}크레딧. 전문은 「… 줄 더」를 누르면 펼쳐져요`)
+  }
   async function insertWeb(url) {
     const c = R.current.cam, mp = R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
     const at = mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2 }
@@ -1460,6 +1518,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
+          {pend.map(q => { const w = 2 * MEMO.W + 72, h = 240, fs = 14 / z   // 회의록 만드는 중 — 놓을 자리에 점선 틀(그리는 과정 보이기)
+            return <g key={'pend' + q.id} data-testid="meeting-pending" pointerEvents="none"><rect x={q.x} y={q.y} width={w} height={h} rx={10} fill="rgba(218,119,86,.06)" stroke="#da7756" strokeWidth={1.5 / z} strokeDasharray={`${8 / z} ${5 / z}`} />
+              <text x={q.x + w / 2} y={q.y + h / 2} textAnchor="middle" dominantBaseline="central" fontSize={fs} fontFamily={APP_FONT} fill="#da7756">회의록 만드는 중 · {q.msg}</text></g> })}
           {marks.filter(id => byId.has(id)).map(id => { const b = sceneBox(byId.get(id), textBox), pad = 6 / z   // 찾기 결과에 불 켜기(Ctrl+F — 2026-10-19)
             return <rect key={'find' + id} data-testid="find-mark" pointerEvents="none" x={b.x - pad} y={b.y - pad} width={b.w + 2 * pad} height={b.h + 2 * pad} rx={6 / z} fill="rgba(250,204,21,.12)" stroke="#f59e0b" strokeWidth={2.5 / z} strokeDasharray={`${6 / z} ${4 / z}`} /> })}
           {others.map(o => { const c = personColor(o.id), ids = [...new Set([...(o.sel || []), ...(o.edit ? [o.edit] : [])])].filter(id => byId.has(id))   // 다른 사람이 고른·고치는 도형 = 그 사람 색 테두리 + 이름표(2026-10-19)

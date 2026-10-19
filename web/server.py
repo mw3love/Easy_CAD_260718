@@ -35,7 +35,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, meeting, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 
@@ -122,6 +122,46 @@ class Handler(SimpleHTTPRequestHandler):
             doc = json.load(f)
         client = gw._client(key, gw.resolve_base_url(), timeout=60)
         return board_find.find(client, doc, query, k=k, cache_path=os.path.join(self.data_dir, name + ".emb.json"))
+
+    # ── 회의록(§8 항목61 ③-3) — 녹음은 길어서 뒤 일감으로: POST가 일감 번호를 바로 주고, 브라우저가 GET으로 2초마다 확인 ──
+    MAX_AUDIO = 300 * 1024 * 1024
+    jobs = {}                     # 일감 번호 → {"board", "status": "run"|"done"|"error", "msg", "result"?, "error"?}
+
+    def _meeting_start(self, name: str, q: dict):
+        n = int(self.headers.get("Content-Length") or 0)
+        if not name or n <= 0 or n > self.MAX_AUDIO:
+            return self._json(413 if n > self.MAX_AUDIO else 400, {"error": "녹음 파일이 없거나 너무 커요(300MB까지)"})
+        from urllib.parse import unquote
+        fname = unquote(self.headers.get("X-File-Name") or "meeting.wav")
+        if not fname.lower().endswith(meeting.AUDIO_EXT):
+            return self._json(400, {"error": "녹음 파일(mp3·m4a·wav·webm·ogg·aac·flac·mp4)만 돼요"})
+        data = self.rfile.read(n)
+        key = gw.resolve_api_key()
+        if not key:
+            return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
+        job = secrets.token_hex(6)
+        model = (q.get("model") or [""])[0] or gw.FALLBACK_DEFAULT_MODEL
+        Handler.jobs[job] = {"board": name, "status": "run", "msg": "받아쓰기 올리는 중…"}
+
+        def run():
+            def say(msg):
+                Handler.jobs[job]["msg"] = msg
+            try:
+                res = meeting.make_minutes(key, data, fname, model=model, base_url=gw.resolve_base_url(), on_status=say)
+                Handler.jobs[job].update(status="done", msg="끝", result=res)
+                sys.stderr.write("[회의록] %s %.0f초 녹음 · %.1f크레딧\n" % (name, res["duration"], res["credits"]))
+            except Exception as e:   # 브라우저에 그대로 보여 준다
+                Handler.jobs[job].update(status="error", error=str(e))
+        threading.Thread(target=run, daemon=True).start()
+        return self._json(200, {"job": job})
+
+    def _meeting_status(self, name: str, job: str):
+        j = Handler.jobs.get(job)
+        if not j or j["board"] != name:
+            return self._send(404, b'{"error":"none"}')
+        if j["status"] != "run":
+            Handler.jobs.pop(job, None)   # 한 번 돌려주면 끝(서버 메모리에 안 쌓이게)
+        return self._json(200, {k: v for k, v in j.items() if k != "board"})
 
     def _find_api(self, name: str):
         """POST /api/find/<이름> {q, k?} → {"results": [{uid, type, kind, text, score}]} — 칠판 Ctrl+F 「뜻으로 찾기」."""
@@ -256,6 +296,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(401, b'{"error":"login"}')
         if path == "/api/models":
             return self._models()
+        m = re.match(r"^/api/meeting/([^/]+)/([0-9a-f]{12})$", path)
+        if m:
+            return self._meeting_status(self._name(m.group(1)), m.group(2))
         if path == "/api/link":
             return self._link()
         if path == "/api/symbols":   # 「내 심볼」 — 데스크톱과 같은 파일(git으로 PC 간 동기화), 웹은 읽기만
@@ -323,6 +366,9 @@ class Handler(SimpleHTTPRequestHandler):
         m = re.match(r"^/api/find/([^/]+)$", path)
         if m:
             return self._find_api(self._name(m.group(1)))
+        m = re.match(r"^/api/meeting/([^/]+)$", path)
+        if m:
+            return self._meeting_start(self._name(m.group(1)), self._route()[1])
         m = re.match(r"^/api/(patch|presence|publish|invite)/([^/]+)$", path)
         if not m:
             return self._send(404, b'{"error":"none"}')
