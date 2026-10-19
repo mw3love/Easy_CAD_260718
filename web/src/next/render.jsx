@@ -138,9 +138,11 @@ export function memoLayout(it) {
       rows.push({ ln, i, x, y: y - TEXT_MARGIN, lay: { h, lines: [] }, px: 0, marker: null, box: null, cy: y - TEXT_MARGIN + h / 2, lh: h, joinPrev: false, joinNext: false, hr: true })
       y += h - TEXT_MARGIN; return }
     const ind = LISTY.has(ln.k) ? ((ln.lv || 0) + 1) * MEMO.INDENT : ln.k === 'quote' ? MEMO.QUOTE : 0
-    const runs = K.mono ? [[0, (ln.t || '').length, null, false, null, true]] : ln.runs
     const links = ln.k === 'code' || ln.nolink ? null : urlSpans(ln.t)   // 주소 = 파란 밑줄(줄 메뉴 「링크 끄기」면 보통 글)
-    const lay = layoutText(ln.t || '', runs, px, 'board', K.bold ? 700 : 400, Math.max(10, inner - ind - 2 * TEXT_MARGIN), links?.length ? links : null)
+    const room = Math.max(10, inner - ind - 2 * TEXT_MARGIN)
+    // 코드 줄은 꺾지 않음 — 넘치면 끝을 …로(고치기 칸은 옆으로 스크롤). 꺾는 자리가 칠판·브라우저에서 달랐음(2026-10-19 사용자 선택 A)
+    const ct = K.mono ? clipMono(ln.t || '', px, room) : ''
+    const lay = K.mono ? layoutText(ct, [[0, ct.length, null, false, null, true]], px, 'board', 400, 0) : layoutText(ln.t || '', ln.runs, px, 'board', K.bold ? 700 : 400, room, links?.length ? links : null)
     const x = MEMO.LPAD + ind, lh = METRICS.board.lineSpacing * px, cy = y + TEXT_MARGIN + lh / 2
     const marker = ln.k === 'ul' ? ['•◦▪'[(ln.lv || 0) % 3]] : ln.k === 'ol' ? [`${nums[i]}.`] : null
     const box = ln.k === 'todo' ? { x: x - MEMO.INDENT + 2, y: cy - TEXT_MARGIN - px * 0.45, s: px * 0.9 } : null   // 글 줄 가운데(cy엔 TEXT_MARGIN이 한 번 더 들어 있어 상자가 처졌음 — 2026-10-18 사용자)
@@ -148,6 +150,11 @@ export function memoLayout(it) {
     y += lay.h + (joinNext ? 0 : TEXT_MARGIN)
   })
   r = { rows, h: Math.ceil(y + MEMO.PAD) }; _ml.set(it, r); return r
+}
+function clipMono(t, px, maxW) {
+  if (measure(t, px, 'mono', 400) <= maxW) return t
+  let lo = 0, hi = t.length; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (measure(t.slice(0, m) + '…', px, 'mono', 400) <= maxW) lo = m; else hi = m - 1 }
+  return t.slice(0, lo) + '…'
 }
 export const memoHeight = it => memoLayout(it).h
 // 메모 안 좌표(아이템 기준) q에 있는 주소(없으면 null) — Ctrl+클릭으로 열기

@@ -148,7 +148,7 @@ ${S} ul[data-type=taskList]>li{display:flex}${S} ul[data-type=taskList]>li>label
 ${S} ul[data-type=taskList]>li>label input{margin:0;width:${P(MEMO_KIND.todo.pt * PT * 0.9)};height:${P(MEMO_KIND.todo.pt * PT * 0.9)};accent-color:#2f80ed}
 ${S} ul[data-type=taskList]>li>div{flex:1}${S} ul[data-type=taskList]>li[data-checked=true]>div{color:${MUTED};text-decoration:line-through}
 ${S} blockquote{border-left:${P(3)} solid #d4d4d8;padding:${P(TEXT_MARGIN)} 0 ${P(TEXT_MARGIN)} ${P(MEMO.QUOTE - 3)};color:#52525b}${S} blockquote p{padding:0}${S} blockquote p+p{margin-top:0}
-${S} pre{font-family:${MONO_FONT};font-size:${fs('code')};background:${CODE_BAND};padding:${P(TEXT_MARGIN)} 0;line-height:${ls}}${S} pre code{font:inherit;background:none}
+${S} pre{white-space:pre;overflow-x:auto;scrollbar-width:none;font-family:${MONO_FONT};font-size:${fs('code')};background:${CODE_BAND};padding:${P(TEXT_MARGIN)} 0;line-height:${ls}}${S} pre code{font:inherit;background:none}
 ${S} hr{border:0;margin:0;height:${P(MEMO.HR * 2)};position:relative;overflow:visible}${S} hr::after{content:'';position:absolute;left:0;right:0;top:50%;border-top:1px solid #d4d4d8}
 ${S} hr.ProseMirror-selectednode{background:rgba(137,180,250,.25)}
 ${S} .mb-url{color:#2f80ed;text-decoration:underline}${S} code{font-family:${MONO_FONT};font-size:inherit;background:${CODE_BAND}}${S} ::selection{background:rgba(137,180,250,.35)}`
