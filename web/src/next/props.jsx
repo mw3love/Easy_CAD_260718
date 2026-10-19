@@ -1,7 +1,7 @@
 // 오른쪽 위 「속성」 카드(고를 때만) — 고른 것 모두의 선 색·굵기·선 모양·채움, 화살표 칸(종류·화살촉·머리 크기·모서리), 글자 크기·색.
 // 데스크톱 `host_style._refresh_properties`와 같은 자리·같은 항목·같은 차례(종류 → 선 → 채움 → 화살표 → 글자). 섞어 고르면 해당하는 것에만.
 // 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄.
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import SYMBOLS from '../symbols.json' with { type: 'json' }
 import { symbolPath } from './symbols.js'
 import { FRAME_RATIOS, paperWH } from './geom.js'
@@ -196,7 +196,7 @@ function RotInput({ value, onSet }) {
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells, onLegend }) {   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
+export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells, onLegend, avoid }) {   // avoid = 고른 것의 화면 상자(칠판 칸 기준) — 카드가 덮으면 그 아래로 비킴   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
   const [openDash, setOpenDash] = useState(false), [openSwap, setOpenSwap] = useState(false)
   const one = v => (v.length && v.every(x => x === v[0]) ? v[0] : null)
   const arrows = items.filter(isArrow), allArrows = arrows.length === items.length
@@ -223,9 +223,29 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
   const num = (list, get, d0, min, max, step, name, write) => ({ values: list.map(it => get(it) ?? d0), step,
     onStep: d => { const ids = new Set(list.map(it => it._id)); set(it => (ids.has(it._id) ? write(it, stepClamp(get(it) ?? d0, d, min, max, step)) : null), name, name) } })
   const onArrows = f => it => (isArrow(it) ? f(it) : null)
+  // 고른 것을 덮으면 그 아래로 비킴(2026-10-19 사용자 선택 — 화면은 그대로, 카드도 다 보이게). 미니맵 위까지 자리가 없으면 「속성 ▾」 막대로 접고 누르면 펼침
+  const box = useRef(null), fullH = useRef(280), selKey = items.map(it => it._id).join()
+  const [place, setPlace] = useState({ top: 12, maxH: null, fold: false }), [unfold, setUnfold] = useState(false)
+  useEffect(() => setUnfold(false), [selKey])
+  useLayoutEffect(() => {
+    const c = box.current, p = c?.offsetParent; if (!c || !p) return
+    if (!place.fold) fullH.current = c.scrollHeight
+    const inset = parseFloat(getComputedStyle(p).getPropertyValue('--mb-right-inset')) || 0, x = p.clientWidth - 12 - inset - 192
+    const mm = p.querySelector('[data-mb-minimap]'), bottom = (mm ? mm.offsetTop : p.clientHeight) - 12, h = Math.min(fullH.current, p.clientHeight - 180)
+    let next = { top: 12, maxH: null, fold: false }
+    if (avoid && avoid.x < x + 192 && avoid.x + avoid.w > x && avoid.y < 12 + h && avoid.y + avoid.h > 12) {
+      const t = Math.max(12, Math.round(avoid.y + avoid.h + 12))
+      next = bottom - t >= Math.min(fullH.current, 160) ? { top: t, maxH: bottom - t, fold: false } : { top: 12, maxH: null, fold: true }   // 다 안 들어가도 160px 넘으면 내려서 스크롤
+    }
+    setPlace(pl => (pl.top === next.top && pl.maxH === next.maxH && pl.fold === next.fold ? pl : next))
+  })
+  if (place.fold && !unfold) return <div ref={box} onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: '0 2px 8px rgba(0,0,0,.06)', userSelect: 'none' }}>
+    <button onClick={() => setUnfold(true)} title="고른 것을 가려서 접어 둠 — 누르면 펼침" style={{ all: 'unset', boxSizing: 'border-box', width: '100%', padding: '8px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', font: "700 15px 'Pretendard', sans-serif", color: C.ink }}>
+      <span style={{ flex: 1 }}>속성</span><span style={{ font: "400 12px 'Pretendard', sans-serif", color: C.muted }}>{title} ▾</span></button>
+  </div>
 
-  return <div onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
-    padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: 'calc(100% - 180px)', overflowY: 'auto' }}>
+  return <div ref={box} onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: place.fold ? 12 : place.top, transition: 'top .12s', width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
+    padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: !place.fold && place.maxH ? place.maxH : 'calc(100% - 180px)', overflowY: 'auto' }}>
     <div style={{ font: "700 15px 'Pretendard', sans-serif", marginBottom: 2 }}>속성</div>
     <Row label="종류">{allArrows
       ? <Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} />
