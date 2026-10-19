@@ -1,7 +1,7 @@
 // node --test web/test — KAIROS 대화창 순수 함수(§8 항목61 ⓒ)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { answerToRichText, contextText, freeSpot, parseAnswer, sourceLine } from '../src/chatFormat.js'
+import { answerToRichText, contextText, freeSpot, inlineParts, parseAnswer, sourceLine } from '../src/chatFormat.js'
 
 test('답 글 읽기 — 제목·목록·굵게·빈 줄 한 칸·코드펜스 줄 뺌', () => {
   const ln = parseAnswer('## 결론\n\n\n**PTP**는 시계 규약이다.\n- 하나\n2. 둘\n```\ncode\n```\n')
@@ -48,3 +48,7 @@ test('answerToEcadText — 굵게·제목·목록·출처 줄이 .ecad runs로',
   assert.deepEqual(runs.at(-1), [text.indexOf('KAIROS'), 'KAIROS · m · 10-18 12:00'.length, '#8a8f98', false])
 })
 
+
+test('**굵게 속 `코드`**도 코드 조각 — 백틱이 글자로 남지 않음(2026-10-19)', () => {
+  assert.deepEqual(inlineParts('**`pathlib`로 바꿉니다.** 끝'), [{ text: 'pathlib', bold: true, code: true }, { text: '로 바꿉니다.', bold: true }, { text: ' 끝', bold: false }])
+})

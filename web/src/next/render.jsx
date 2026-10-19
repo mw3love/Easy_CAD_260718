@@ -162,12 +162,12 @@ export function memoLinkAt(it, q) {
 
 // 글 그리기 — (left, top) = 문서 상자 왼쪽 위(여백 포함). color = 기본 글 색
 export const LINK = '#2f80ed'   // 메모 속 주소 색(밝은 메모 바탕 위)
-function TextLines({ lay, left, top, color, halo }) {   // halo = 글자 둘레를 칠할 바탕색(화살표 라벨 — 다른 선이 지나가도 읽히게)
+function TextLines({ lay, left, top, color, halo, band = true }) {   // band = 코드 줄 바탕(메모 코드 블록은 덩어리째 따로 칠함)   // halo = 글자 둘레를 칠할 바탕색(화살표 라벨 — 다른 선이 지나가도 읽히게)
   const { px, m, family, weight } = lay
   const out = []
   lay.lines.forEach((ln, i) => {
     const base = top + TEXT_MARGIN + m.ascent * px + i * m.lineSpacing * px
-    if (ln.code) out.push(<rect key={`c${i}`} x={left + TEXT_MARGIN - 4} y={base - m.ascent * px} width={(lay.maxW || lay.w) + 8} height={m.lineSpacing * px} fill={CODE_BAND} />)
+    if (ln.code && band) out.push(<rect key={`c${i}`} x={left + TEXT_MARGIN - 4} y={base - m.ascent * px} width={(lay.maxW || lay.w) + 8} height={m.lineSpacing * px} fill={CODE_BAND} />)
     if (!ln.code) for (const p of ln.parts) if (p.mono && !p.bg) out.push(<rect key={`m${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={CODE_BAND} />)   // 글 속 짧은 코드
     for (const p of ln.parts) if (p.link) out.push(<rect key={`u${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base + px * 0.12} width={p.w} height={Math.max(0.6, px * 0.06)} fill={LINK} />)   // 주소 밑줄
     for (const p of ln.parts) if (p.bg) out.push(<rect key={`b${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={bgCss(p.bg)} />)
@@ -407,10 +407,11 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
           const done = ln.k === 'todo' && ln.done, col = done ? MUTED : ln.k === 'quote' ? '#52525b' : ink0
           return <g key={i}>
             {ln.k === 'quote' && <rect x={x + MEMO.LPAD} y={y + ly + (ml.rows[i].joinPrev ? TEXT_MARGIN : 0)} width={3} height={lay.h + (ml.rows[i].joinPrev ? 0 : TEXT_MARGIN) + (ml.rows[i].joinNext ? 0 : TEXT_MARGIN)} fill="#d4d4d8" />}
+            {ln.k === 'code' && <rect x={x + lx - 4} y={y + ly + (ml.rows[i].joinPrev ? TEXT_MARGIN : 0)} width={w - MEMO.PAD - lx + 8} height={lay.h + (ml.rows[i].joinPrev ? 0 : TEXT_MARGIN) + (ml.rows[i].joinNext ? 0 : TEXT_MARGIN)} fill={CODE_BAND} />}   {/* 코드 블록 = 한 덩어리 바탕(빈 줄·여백까지 — 줄마다 칠하면 빈 줄에서 끊겨 여러 칸으로 보였음, 2026-10-19 사용자) */}
             {marker && <text x={x + lx - 6} y={y + cy} textAnchor="end" dominantBaseline="central" fontSize={px} fontFamily={BOARD_FONT} fill={ink0} style={{ fontVariantNumeric: 'tabular-nums' }}>{marker[0]}</text>}
             {box && <g><rect x={x + box.x} y={y + box.y} width={box.s} height={box.s} rx={box.s * 0.18} fill={ln.done ? '#2f80ed' : '#ffffff'} stroke={ln.done ? '#2f80ed' : '#a1a1aa'} strokeWidth={1.2} />
               {ln.done && <path d={`M${x + box.x + box.s * 0.22},${y + box.y + box.s * 0.52} L${x + box.x + box.s * 0.43},${y + box.y + box.s * 0.72} L${x + box.x + box.s * 0.8},${y + box.y + box.s * 0.3}`} fill="none" stroke="#fff" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />}</g>}
-            <TextLines lay={lay} left={x + lx - TEXT_MARGIN} top={y + ly} color={col} />
+            <TextLines lay={lay} left={x + lx - TEXT_MARGIN} top={y + ly} color={col} band={ln.k !== 'code'} />
             {done && lay.lines.map((l, j) => <path key={'s' + j} d={`M${x + lx},${y + ly + TEXT_MARGIN + (j + 0.55) * lh} H${x + lx + l.w}`} stroke={MUTED} strokeWidth={1} />)}
           </g> })}
       </g>

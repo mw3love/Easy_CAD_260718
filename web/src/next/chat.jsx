@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { DOC_NAME } from './doc.js'
 import { contextText, parseAnswer } from '../chatFormat.js'
 import { urlSpans } from './geom.js'
+import { MONO_FONT } from './render.jsx'
 const LINK_CHAT = '#4f8fe8'   // 대화창 주소(어두운·밝은 화면 둘 다 읽히는 파랑)
 
 export const CHAT_W = 360
@@ -39,8 +40,10 @@ function Answer({ text }) {
     const linked = (t, j) => { if (ln.kind === 'code') return t; const sp = urlSpans(t); if (!sp.length) return t; const out = []; let at = 0
       sp.forEach(([s, n, u], k) => { if (s > at) out.push(t.slice(at, s)); out.push(<a key={`${j}-${k}`} href={u} target="_blank" rel="noopener noreferrer" style={{ color: LINK_CHAT, textDecoration: 'underline', wordBreak: 'break-all' }} onPointerDown={e => e.stopPropagation()}>{u}</a>); at = s + n })
       if (at < t.length) out.push(t.slice(at)); return out }
-    const parts = ln.parts.map((p, j) => (p.bold || ln.kind === 'h' ? <b key={j}>{linked(p.text, j)}</b> : <span key={j}>{linked(p.text, j)}</span>))
-    if (ln.kind === 'code') return <div key={i} style={{ fontFamily: 'ui-monospace,monospace', fontSize: 12, whiteSpace: 'pre-wrap', background: C.seg }}>{parts}</div>
+    const parts = ln.parts.map((p, j) => { const c = p.code ? <code style={{ fontFamily: MONO_FONT, fontSize: '0.92em', background: C.seg, borderRadius: 3, padding: '0 3px' }}>{p.text}</code> : linked(p.text, j)   // 글 속 `코드`
+      return p.bold || ln.kind === 'h' ? <b key={j}>{c}</b> : <span key={j}>{c}</span> })
+    // 코드 줄 — 글꼴은 메모와 같은 Consolas부터('monospace'만 두면 한글 윈도우 기본 고정폭 글꼴이라 \가 ₩로 보였음 — 2026-10-19 사용자), 빈 줄도 한 줄 높이
+    if (ln.kind === 'code') return <div key={i} style={{ fontFamily: MONO_FONT, fontSize: 12, whiteSpace: 'pre-wrap', background: C.seg }}>{ln.parts[0].text || ' '}</div>
     if (ln.kind === 'li') return <div key={i} style={{ paddingLeft: 14, textIndent: -12 }}>{ln.mark} {parts}</div>
     return <div key={i} style={ln.kind === 'h' ? { fontWeight: 700, marginTop: 2 } : null}>{parts}</div>
   })}</div>

@@ -7,7 +7,8 @@ export function inlineParts(line) {
   let i = 0, m
   while ((m = re.exec(line))) {
     if (m.index > i) out.push({ text: line.slice(i, m.index), bold: false })
-    out.push(m[2] != null ? { text: m[2], bold: false, code: true } : { text: m[1], bold: true })
+    if (m[2] != null) out.push({ text: m[2], bold: false, code: true })
+    else m[1].split(/`([^`]+)`/).forEach((t, k) => { if (t) out.push(k % 2 ? { text: t, bold: true, code: true } : { text: t, bold: true }) })   // **굵게 속 `코드`**도 코드 조각(2026-10-19 사용자: 백틱이 그대로 보임)
     i = m.index + m[0].length
   }
   if (i < line.length) out.push({ text: line.slice(i), bold: false })
