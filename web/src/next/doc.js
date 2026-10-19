@@ -71,9 +71,13 @@ export const api = {
   session: async () => { try { const r = await fetch('/api/session', { cache: 'no-store' }); return r.ok ? await r.json() : { auth: false, ok: true, none: true } } catch { return { auth: false, ok: true, none: true } } },
   login: async password => (await post('/api/login', { password })).ok,
   patch: async body => { const r = await post(`/api/patch/${B}`, body); return r.ok ? (await r.json()).rev : null },
-  since: async rev => { const r = await fetch(`/api/since/${B}?rev=${rev}`, { cache: 'no-store' }); return r.status === 200 ? parseDoc(await r.text()) : null },
+  since: async (rev, wait = 0) => { const r = await fetch(`/api/since/${B}?rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); return r.status === 200 ? parseDoc(await r.text()) : null },   // wait = 바뀔 때까지 서버가 기다림(롱 폴링)
   presence: async (id, name, sel = [], edit = '') => { try { const r = await post(`/api/presence/${B}`, { id, name, sel, edit }); return r.ok ? await r.json() : null } catch { return null } },   // → { people: 이름들, others: [{ id, name, sel, edit }] }
   getPublish: async () => { try { const r = await fetch(`/api/publish/${B}`, { cache: 'no-store' }); return r.ok ? (await r.json()).token : null } catch { return null } },
   setPublish: async (on, renew = false) => { const r = await post(`/api/publish/${B}`, { on, renew }); return r.ok ? (await r.json()).token : null },
-  pub: async (token, rev = -1) => { const r = await fetch(`/api/pub/${token}?rev=${rev}`, { cache: 'no-store' }); if (r.status === 204) return { same: true }; if (!r.ok) return { gone: true }; const d = parseDoc(await r.text()); return { doc: d } },
+  // 편집 초대 링크(2026-10-19 — 노션 「공유」): 얻기 → { token, password(서버에 비밀번호가 있나) }, 켜기·끄기·새 링크, 링크로 들어오기
+  getInvite: async () => { try { const r = await fetch(`/api/invite/${B}`, { cache: 'no-store' }); return r.ok ? await r.json() : null } catch { return null } },
+  setInvite: async (on, renew = false) => { const r = await post(`/api/invite/${B}`, { on, renew }); return r.ok ? (await r.json()).token : null },
+  join: async token => { try { return (await post('/api/join', { board: B, token })).ok } catch { return false } },
+  pub: async (token, rev = -1, wait = 0) => { const r = await fetch(`/api/pub/${token}?rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); if (r.status === 204) return { same: true }; if (!r.ok) return { gone: true }; const d = parseDoc(await r.text()); return { doc: d } },
 }

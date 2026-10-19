@@ -19,6 +19,8 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { BOARD_FONT, METRICS, PT, TEXT_MARGIN, urlSpans } from './geom.js'
 import { CODE_BAND, MONO_FONT } from './render.jsx'
 import { LINE_KINDS, MEMO, MEMO_KIND, MUTED, caretLine, docToLines, lineBlocks, linesToDoc } from './memo.js'
+import { Italic, Strike, Underline } from './marks.js'
+import { FormatBar } from './formatbar.jsx'
 
 const Finish = Extension.create({
   name: 'memoFinish',
@@ -70,7 +72,7 @@ export function MemoEditor({ spec, onDone }) {
   const box = useRef(null), host = useRef(null), ed = useRef(null), done = useRef(false), sp = useRef(spec), od = useRef(onDone)
   const [hov, setHov] = useState(null), [turn, setTurn] = useState(null), turnR = useRef(null)   // 손잡이를 띄울 줄 { i, y(칸 안 px) } · 전환 메뉴 { x, y, at }
   sp.current = spec; od.current = onDone; turnR.current = turn
-  const finishR = useRef(null)
+  const finishR = useRef(null), turnOpenR = useRef(null), [edInst, setEdInst] = useState(null)   // 꾸미기 막대(2026-10-19)가 쓸 편집기·줄 종류 메뉴
   useLayoutEffect(() => {
     const finish = extra => { if (done.current) return; done.current = true; try { ed.current.view.domObserver?.flush?.() } catch { /* 없어도 그만 */ } od.current(docToLines(ed.current.getJSON()), extra || null) }
     finishR.current = finish
@@ -80,7 +82,7 @@ export function MemoEditor({ spec, onDone }) {
     }
     const editor = new Editor({
       element: host.current,
-      extensions: [Document, Paragraph, Text, Bold, Code, TextStyle, Color, BackgroundColor, Heading.configure({ levels: [1, 2, 3] }), Blockquote, CodeBlock, HorizontalRule,
+      extensions: [Document, Paragraph, Text, Bold, Italic, Underline, Strike, Code, TextStyle, Color, BackgroundColor, Heading.configure({ levels: [1, 2, 3] }), Blockquote, CodeBlock, HorizontalRule,
         BulletList, OrderedList, ListItem, TaskList, TaskItem.configure({ nested: true }), ListKeymap, UndoRedo, UrlPaint.configure({ off: new Set((spec.lines || []).filter(l => l.nolink).map(l => l.t)) }),
         Finish.configure({ onDone: sel => (turnR.current ? setTurn(null) : finish(sel ? { caret: caretLine(ed.current.state) } : null)), onTurn: openTurn })],
       content: linesToDoc(spec.lines),
@@ -106,7 +108,7 @@ export function MemoEditor({ spec, onDone }) {
         },
       },
     })
-    ed.current = editor
+    ed.current = editor; setEdInst(editor); turnOpenR.current = openTurn
     try {   // 커서 = 고른 줄 끝(Enter로 들어옴) 아니면 맨 끝
       const b = spec.caret != null ? lineBlocks(editor.state.doc)[spec.caret] : null, hit = spec.at && editor.view.posAtCoords({ left: spec.at.x, top: spec.at.y })   // 두 번 누른 자리가 먼저
       editor.commands.setTextSelection(hit ? hit.pos : b ? (b.node.isTextblock ? b.at + b.node.nodeSize - 1 : b.at) : editor.state.doc.content.size); editor.view.focus()
@@ -161,6 +163,7 @@ ${S} .mb-url{color:#2f80ed;text-decoration:underline}${S} code{font-family:${MON
     {hov && !turn && <div data-testid="memo-edit-handle" title="끌기 = 옮기기 · 누르기 = 메뉴"
       onPointerDown={e => { e.preventDefault(); e.stopPropagation(); finishR.current?.({ grab: { i: hov.i, clientX: e.clientX, clientY: e.clientY } }) }}
       style={{ position: 'absolute', left: hx, top: hov.y - HH / 2, width: HW, height: HH, borderRadius: 4, background: 'rgba(127,127,127,.16)', cursor: 'grab', display: 'grid', placeItems: 'center', color: '#8a8f98', font: '700 12px sans-serif', lineHeight: 1, userSelect: 'none' }}>⠿</div>}
+    {!turn && <FormatBar ed={edInst} onTurn={() => turnOpenR.current?.()} />}
     {turn && <div data-testid="memo-turn" onMouseDown={e => e.preventDefault()}
       style={{ position: 'absolute', left: turn.x, top: turn.y, zIndex: 2, minWidth: 170, background: 'var(--mb-card)', color: 'var(--mb-ink)', border: '1px solid var(--mb-line)', borderRadius: 8, padding: 4, boxShadow: '0 6px 18px rgba(0,0,0,.22)', font: "400 12.5px 'Pretendard', sans-serif", colorScheme: 'normal' }}>
       <div style={{ padding: '3px 10px 5px', color: 'var(--mb-muted)', fontSize: 11 }}>전환 · ↑↓ Enter</div>

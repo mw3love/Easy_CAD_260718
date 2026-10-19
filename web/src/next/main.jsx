@@ -125,40 +125,62 @@ function ExportForm({ hasSel, selFrames, frameCount, items, onExport, onPreview,
 }
 
 // 공동작업 1단계(§8 항목61 ⓕ, 2026-10-18) — 공용 비밀번호 + 이름(사람별 계정 아님, 사용자 결정)
-function LoginForm({ onDone }) {
+function LoginForm({ onDone, nameOnly = false }) {   // nameOnly = 편집 초대 링크로 들어옴(비밀번호 칸 없음)
   const [pw, setPw] = useState(''), [name, setName] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [err, setErr] = useState('')
   const go = async () => { if (!name.trim()) { setErr('이름을 적어 주세요(누가 접속했는지 보여요)'); return }
-    if (!(await api.login(pw))) { setErr('비밀번호가 맞지 않아요'); return }
+    if (!nameOnly && !(await api.login(pw))) { setErr('비밀번호가 맞지 않아요'); return }
     try { localStorage.setItem('mb.name', name.trim()) } catch { /* 기억 못 해도 그만 */ } onDone(name.trim()) }
   const inp = { height: 30, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 10px', font: 'inherit' }
   return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.board, font: "400 13px 'Pretendard', sans-serif", color: C.ink }}>
     <div style={{ width: 300, display: 'flex', flexDirection: 'column', gap: 10, padding: 20, borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, boxShadow: '0 6px 20px rgba(0,0,0,.12)' }}>
       <div style={{ font: "700 16px 'Pretendard', sans-serif" }}>Magic Board · 「{DOC_NAME}」</div>
-      <div style={{ color: C.muted, fontSize: 12 }}>같이 쓰는 칠판이에요. 팀 비밀번호와 내 이름을 적어 주세요.</div>
-      <input autoFocus placeholder="이름 (예: 김기자)" value={name} onChange={e => setName(e.target.value)} style={inp} />
-      <input type="password" placeholder="팀 비밀번호" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') go() }} style={inp} />
+      <div style={{ color: C.muted, fontSize: 12 }}>{nameOnly ? '초대받은 칠판이에요. 내 이름을 적어 주세요(같이 쓰는 사람에게 보여요).' : '같이 쓰는 칠판이에요. 팀 비밀번호와 내 이름을 적어 주세요.'}</div>
+      <input autoFocus placeholder="이름 (예: 김기자)" value={name} onChange={e => setName(e.target.value)} onKeyDown={e => { if (nameOnly && e.key === 'Enter') go() }} style={inp} />
+      {!nameOnly && <input type="password" placeholder="팀 비밀번호" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') go() }} style={inp} />}
       {err && <div style={{ color: '#d44c47', fontSize: 12 }}>{err}</div>}
       <button onClick={go} style={{ all: 'unset', cursor: 'pointer', textAlign: 'center', padding: '7px 0', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>들어가기</button>
     </div></div>
 }
-// 「공유」 — 노션 게시처럼: 로그인 없이 보기·발표만 되는 링크(켜고 끄기, 새 링크로 바꾸면 옛 링크 막힘)
-function ShareForm({ onClose }) {
-  const [tok, setTok] = useState(undefined), [msg, setMsg] = useState('')
-  useEffect(() => { api.getPublish().then(setTok) }, [])
-  const link = tok ? `${location.origin}/?view=${tok}` : ''
-  const set = async (on, renew) => { const t = await api.setPublish(on, renew); setTok(on ? t : null); setMsg(on ? (renew ? '새 링크 — 옛 링크는 이제 안 열려요' : '게시했어요') : '게시를 껐어요 — 링크가 안 열려요') }
+// 「공유」 — 노션처럼 두 탭(2026-10-19 사용자): 공유 = 편집 초대 링크(비밀번호 없이 이름만 적고 편집) + 지금 접속한 사람, 게시 = 로그인 없이 보기·발표만
+function ShareForm({ onClose, people = [], me = '' }) {
+  const [tab, setTab] = useState('share')
+  const [tok, setTok] = useState(undefined), [inv, setInv] = useState(undefined), [msg, setMsg] = useState('')
+  useEffect(() => { api.getPublish().then(setTok); api.getInvite().then(r => setInv(r || { token: null, password: true })) }, [])
+  const viewLink = tok ? `${location.origin}/?view=${tok}` : ''
+  const board = `${location.origin}/?board=${encodeURIComponent(DOC_NAME)}`, editLink = inv?.token ? `${board}&join=${inv.token}` : ''
+  const setPub = async (on, renew) => { const t = await api.setPublish(on, renew); setTok(on ? t : null); setMsg(on ? (renew ? '새 링크 — 옛 링크는 이제 안 열려요' : '게시했어요') : '게시를 껐어요 — 링크가 안 열려요') }
+  const setInvT = async (on, renew) => { const t = await api.setInvite(on, renew); setInv(v => ({ ...v, token: on ? t : null })); setMsg(on ? (renew ? '새 초대 링크 — 옛 링크로는 이제 못 들어와요' : '초대 링크를 켰어요') : '초대 링크를 껐어요 — 이제 팀 비밀번호로만') }
+  const copy = l => navigator.clipboard?.writeText(l).then(() => setMsg('링크를 복사했어요'), () => setMsg('복사가 막혔어요 — 칸을 눌러 직접 복사'))
   const b = (bg, fg = '#fff') => ({ all: 'unset', cursor: 'pointer', padding: '5px 10px', borderRadius: 6, background: bg, color: fg, fontWeight: 600, fontSize: 12 })
-  return <div onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ position: 'absolute', top: 48, right: 0, zIndex: 20, width: 320, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, boxShadow: '0 4px 14px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
-    <div style={{ font: "700 13px 'Pretendard', sans-serif" }}>게시 — 보기·발표 전용 링크</div>
-    <div style={{ color: C.muted }}>로그인 없이 열려요. 고치기·대화는 안 되고, 여기서 고친 건 몇 초 안에 보여요(큰 TV 발표용).</div>
-    {tok === undefined ? <span style={{ color: C.muted }}>확인 중…</span> : tok ? <>
-      <input readOnly value={link} onFocus={e => e.target.select()} style={{ height: 26, border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} />
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <button style={b('#da7756')} onClick={() => navigator.clipboard?.writeText(link).then(() => setMsg('링크를 복사했어요'), () => setMsg('복사가 막혔어요 — 칸을 눌러 직접 복사'))}>링크 복사</button>
-        <button style={b('transparent', C.ink)} onClick={() => window.open(link, '_blank', 'noopener')}>열어 보기</button>
-        <button style={b('transparent', C.ink)} onClick={() => set(true, true)}>새 링크로 바꾸기</button>
-        <button style={b('transparent', '#d44c47')} onClick={() => set(false)}>게시 끄기</button>
-      </div></> : <button style={b('#da7756')} onClick={() => set(true)}>게시하기</button>}
+  const linkBox = l => <input readOnly value={l} onFocus={e => e.target.select()} style={{ height: 26, border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} />
+  const tabBtn = (k, t) => <button key={k} data-testid={'share-tab-' + k} onClick={() => { setTab(k); setMsg('') }} style={{ all: 'unset', cursor: 'pointer', padding: '4px 2px', borderBottom: `2px solid ${tab === k ? C.ink : 'transparent'}`, fontWeight: tab === k ? 700 : 400, color: tab === k ? C.ink : C.muted }}>{t}</button>
+  return <div onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ position: 'absolute', top: 48, right: 0, zIndex: 20, width: 340, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 12, boxShadow: '0 4px 14px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
+    <div style={{ display: 'flex', gap: 14, borderBottom: `1px solid ${C.line}`, fontSize: 13 }}>{tabBtn('share', '공유')}{tabBtn('publish', '게시')}</div>
+    {tab === 'share' ? <>
+      <div style={{ color: C.muted }}>같이 고칠 사람에게 보내는 링크예요. 들어오면 이름만 적고 바로 편집해요.</div>
+      {inv === undefined ? <span style={{ color: C.muted }}>확인 중…</span> : !inv.password ? <>
+        <div style={{ color: '#da7756' }}>이 서버는 비밀번호가 없어요 — 칠판 주소만 있으면 누구나 편집해요</div>{linkBox(board)}
+        <div><button style={b('#da7756')} onClick={() => copy(board)}>주소 복사</button></div></>
+      : inv.token ? <>{linkBox(editLink)}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button style={b('#da7756')} onClick={() => copy(editLink)}>링크 복사</button>
+          <button style={b('transparent', C.ink)} onClick={() => setInvT(true, true)}>새 링크로 바꾸기</button>
+          <button style={b('transparent', '#d44c47')} onClick={() => setInvT(false)}>초대 끄기</button></div>
+        <div style={{ fontSize: 11, color: C.muted }}>링크가 퍼지면 누구나 고칠 수 있어요 — 일이 끝나면 끄거나 새 링크로</div></>
+      : <><div><button data-testid="invite-on" style={b('#da7756')} onClick={() => setInvT(true)}>편집 초대 링크 만들기</button></div>
+        <div style={{ fontSize: 11, color: C.muted }}>링크가 없을 때는 팀 비밀번호로만 들어와요</div></>}
+      <div style={{ borderTop: `1px solid ${C.line}`, paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{ fontWeight: 600 }}>지금 이 칠판에 {people.length}명</span>
+        {people.map(n => <span key={n} style={{ color: n === me ? C.ink : C.muted }}>• {n}{n === me ? ' (나)' : ''}</span>)}</div>
+    </> : <>
+      <div style={{ color: C.muted }}>로그인 없이 열려요. 고치기·대화는 안 되고, 여기서 고친 건 바로 보여요(큰 TV 발표용).</div>
+      {tok === undefined ? <span style={{ color: C.muted }}>확인 중…</span> : tok ? <>{linkBox(viewLink)}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button style={b('#da7756')} onClick={() => copy(viewLink)}>링크 복사</button>
+          <button style={b('transparent', C.ink)} onClick={() => window.open(viewLink, '_blank', 'noopener')}>열어 보기</button>
+          <button style={b('transparent', C.ink)} onClick={() => setPub(true, true)}>새 링크로 바꾸기</button>
+          <button style={b('transparent', '#d44c47')} onClick={() => setPub(false)}>게시 끄기</button></div></> : <div><button style={b('#da7756')} onClick={() => setPub(true)}>게시하기</button></div>}
+    </>}
     {msg && <div style={{ color: '#da7756' }}>{msg}</div>}
   </div>
 }
@@ -199,9 +221,9 @@ function App() {
   useEffect(() => { if (!camReady.current) return; const t = setTimeout(() => { try { localStorage.setItem(camKey, JSON.stringify(cam)) } catch { /* 저장 못 해도 그만 */ } }, 300); return () => clearTimeout(t) }, [cam])   // eslint-disable-line
 
   // 공동작업 맞추기(2026-10-18) — 고친 뒤 0.6초 쉬면 바뀐 도형만 보내고(부분 저장), 2초마다 남이 바꾼 것을 받아 내 안 보낸 변경을 그 위에 다시 얹음
-  const pull = useCallback(async (since = null) => {
+  const pull = useCallback(async (since = null, wait = 0) => {
     const S = sync.current; if (!S.base || S.busy || ed.current?.syncBusy?.()) return   // 글 고치는 중엔 받음(고치는 그 도형은 내 것이 이김 — rebase) — 2026-10-19
-    const doc = await api.since(since ?? S.rev).catch(() => null); if (!doc) return
+    const doc = await api.since(since ?? S.rev, wait).catch(() => null); if (!doc) return
     if (S.busy || ed.current?.syncBusy?.()) return   // 받는 사이 끌기 등을 시작했으면 다음 차례에
     const remote = { ...fromEcad(doc), rev: doc.rev || 0 }, base = S.base
     const merged = rebase(remote, modelRef.current, base)
@@ -223,9 +245,12 @@ function App() {
   const onCommit = useCallback(() => {
     if (!server) { setStatus('고침 — 서버 없음, 「내려받기」로 저장'); return }
     setStatus('고치는 중…'); clearTimeout(saveT.current)
-    saveT.current = setTimeout(flush, 600)
+    saveT.current = setTimeout(flush, 150)   // 0.6 → 0.15초(2026-10-19 사용자: 거의 실시간)
   }, [server, flush])
-  useEffect(() => { if (!server) return; const t = setInterval(() => pull(), 2000); return () => clearInterval(t) }, [server, pull])
+  // 받아 오기 = 롱 폴링 — 서버가 바뀔 때까지 들고 있다가 바로 돌려줌(2초마다 묻던 것 → 0.x초, 2026-10-19). 끌기 등으로 못 받으면 0.3초 뒤 다시
+  useEffect(() => { if (!server) return; let live = true
+    ;(async () => { while (live) { const t0 = Date.now(); await pull(null, 20).catch(() => null); if (live && Date.now() - t0 < 250) await new Promise(r => setTimeout(r, 300)) } })()
+    return () => { live = false } }, [server, pull])
   useEffect(() => { if (!server) return   // 접속자 — 5초마다 이름 신호
     // 1초마다 — 내가 고른·고치는 도형도 같이(2026-10-19 사용자: 누가 어디를 고치는지). 바뀐 게 없어도 보냄(15초 안 오면 나간 것으로)
     const ping = () => api.presence(sync.current.id, me || '이름 없음', ed.current?.getSel?.() || [], ed.current?.editingId?.() || '').then(p => { if (!p) return; setPeople(p.people || []); setOthers(o => (JSON.stringify(o) === JSON.stringify(p.others || []) ? o : p.others || [])) })
@@ -295,7 +320,7 @@ function App() {
         {server && <span title={people.length ? `지금 이 칠판에: ${people.join(', ')}` : ''} style={{ fontSize: 12, color: C.muted, whiteSpace: 'nowrap', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>👥 {people.length ? people.join(' · ') : (me || '나')}</span>}
         {server && <div style={{ position: 'relative' }}>
           <Btn icon="🔗" label="공유" on={shareOpen} onClick={() => setShareOpen(o => !o)} title="게시 — 로그인 없이 보기·발표만 되는 링크(큰 TV 발표용)" />
-          {shareOpen && <ShareForm onClose={() => setShareOpen(false)} />}
+          {shareOpen && <ShareForm people={people} me={me} onClose={() => setShareOpen(false)} />}
         </div>}
         <Btn icon="💬" label="KAIROS" on={chatOpen} onClick={() => setChatOpen(o => !o)} title="KAIROS 대화창 열기/닫기 — 답을 칠판에 카드로 붙여요" />
         <Btn icon={dark ? '☀' : '☾'} label={dark ? '밝게' : '어둡게'} onClick={toggleDark} title="밝은 화면 / 어두운 화면" />
@@ -330,9 +355,16 @@ await document.fonts.load("400 16px 'Pretendard'", '가A').catch(() => {})
 // 들어가기 전 — 비밀번호가 필요한 서버면 먼저 로그인 창(칠판 화면은 그 뒤에 만들어야 크기 재기 등이 바로 돎)
 function Gate() {
   const [gate, setGate] = useState('check')
-  useEffect(() => { api.session().then(s => setGate(s.auth && !s.ok ? 'login' : 'ok')) }, [])
+  useEffect(() => { (async () => {
+    const u = new URL(location.href), join = u.searchParams.get('join')
+    if (join) {   // 편집 초대 링크 — 맞으면 비밀번호 없이 이름만(링크의 열쇠는 주소창에서 지움)
+      const ok = await api.join(join); u.searchParams.delete('join'); history.replaceState(null, '', u.pathname + (u.search || ''))
+      if (ok) { let nm = ''; try { nm = localStorage.getItem('mb.name') || '' } catch { /* 없어도 그만 */ } setGate(nm ? 'ok' : 'name'); return }
+    }
+    const ss = await api.session(); setGate(ss.auth && !ss.ok ? 'login' : 'ok') })() }, [])
   if (gate === 'check') return null
   if (gate === 'login') return <LoginForm onDone={() => setGate('ok')} />
+  if (gate === 'name') return <LoginForm nameOnly onDone={() => setGate('ok')} />
   return <App />
 }
 createRoot(document.getElementById('root')).render(VIEW_TOKEN ? <Viewer token={VIEW_TOKEN} /> : <Gate />)   // ?view= = 게시 링크(보기·발표만)

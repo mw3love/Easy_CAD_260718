@@ -187,11 +187,15 @@ function TextLines({ lay, left, top, color, halo, band = true }) {   // band = �
     if (ln.code && band) out.push(<rect key={`c${i}`} x={left + TEXT_MARGIN - 4} y={base - m.ascent * px} width={(lay.maxW || lay.w) + 8} height={m.lineSpacing * px} fill={CODE_BAND} />)
     if (!ln.code) for (const p of ln.parts) if (p.mono && !p.bg) out.push(<rect key={`m${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={CODE_BAND} />)   // 글 속 짧은 코드
     for (const p of ln.parts) if (p.link) out.push(<rect key={`u${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base + px * 0.12} width={p.w} height={Math.max(0.6, px * 0.06)} fill={LINK} />)   // 주소 밑줄
+    const decoLines = []   // 밑줄·취소선(2026-10-19) — 글자 위에 그려야 해서 글 다음에 넣음. 선 = 얇은 네모(PDF·PNG도 같게)
+    for (const p of ln.parts) if (p.deco && !p.link) { const c = p.color ? cssColor(p.color) : color, th = Math.max(0.6, px * 0.06)
+      if (p.deco.includes('u')) decoLines.push(<rect key={`du${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base + px * 0.12} width={p.w} height={th} fill={c} />)
+      if (p.deco.includes('s')) decoLines.push(<rect key={`ds${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - px * 0.32} width={p.w} height={th} fill={c} />) }
     for (const p of ln.parts) if (p.bg) out.push(<rect key={`b${i}-${p.x}`} x={left + TEXT_MARGIN + p.x} y={base - m.ascent * px} width={p.w} height={m.lineSpacing * px} fill={bgCss(p.bg)} />)
     out.push(<text key={`t${i}`} y={base} fontSize={px} fontFamily={family === 'board' ? BOARD_FONT : APP_FONT} fontWeight={weight} fill={color} style={{ whiteSpace: 'pre' }}
       {...(halo ? { stroke: halo, strokeWidth: px * 0.14, strokeLinejoin: 'round', paintOrder: 'stroke' } : {})}>   {/* 얇게 — 두꺼우면 자기 선 끝도 숫자 모양대로 곡선으로 파였음(2026-10-18) */}
-      {ln.parts.map((p, j) => <tspan key={j} x={left + TEXT_MARGIN + p.x} fill={p.link ? LINK : p.color ? cssColor(p.color) : undefined} fontWeight={p.mono ? 400 : p.bold ? Math.max(700, weight) : undefined} fontFamily={p.mono ? MONO_FONT : undefined}>{p.text}</tspan>)}
-    </text>)
+      {ln.parts.map((p, j) => <tspan key={j} x={left + TEXT_MARGIN + p.x} fill={p.link ? LINK : p.color ? cssColor(p.color) : undefined} fontWeight={p.mono ? 400 : p.bold ? Math.max(700, weight) : undefined} fontFamily={p.mono ? MONO_FONT : undefined} fontStyle={p.deco?.includes('i') ? 'italic' : undefined}>{p.text}</tspan>)}
+    </text>, ...decoLines)
   })
   return out
 }
@@ -369,7 +373,11 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
           let px = al === 'left' ? edges[c] + 3 : al === 'right' ? edges[c + 1] - 3 - tw : (edges[c] + edges[c + 1]) / 2 - tw / 2
           const cy = (re[r] + re[r + 1]) / 2
           parts.forEach((p, j) => { if (p.bg) cells.push(<rect key={`h${r}-${c}-${j}`} x={px} y={cy - fs * 0.6} width={ws[j]} height={fs * 1.2} fill={bgCss(p.bg)} />)
-            cells.push(<text key={`${r}-${c}-${j}`} x={px} y={cy} dominantBaseline="central" fontSize={fs} fontWeight={p.bold || cs.bold ? 700 : 400} fontFamily={APP_FONT} fill={p.color ? cssColor(p.color) : base} style={{ whiteSpace: 'pre' }}>{p.text}</text>); px += ws[j] })
+            const fc = p.color ? cssColor(p.color) : base, th = Math.max(0.6, fs * 0.06)
+            cells.push(<text key={`${r}-${c}-${j}`} x={px} y={cy} dominantBaseline="central" fontSize={fs} fontWeight={p.bold || cs.bold ? 700 : 400} fontStyle={p.deco?.includes('i') ? 'italic' : undefined} fontFamily={APP_FONT} fill={fc} style={{ whiteSpace: 'pre' }}>{p.text}</text>)
+            if (p.deco?.includes('u')) cells.push(<rect key={`du${r}-${c}-${j}`} x={px} y={cy + fs * 0.42} width={ws[j]} height={th} fill={fc} />)   // 밑줄·취소선(2026-10-19 — 칸도 칠판 글과 같게)
+            if (p.deco?.includes('s')) cells.push(<rect key={`ds${r}-${c}-${j}`} x={px} y={cy - th / 2} width={ws[j]} height={th} fill={fc} />)
+            px += ws[j] })
           out.push(clipCell(out.splice(cellsAt), edges[c], re[r], cw, ch, `${r}-${c}`))
           continue
         }

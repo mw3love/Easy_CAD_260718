@@ -15,9 +15,10 @@ export const bgCss = bg => Array.isArray(bg) ? `rgba(${bg[0]},${bg[1]},${bg[2]},
 // 고정폭(여섯째 칸, 2026-10-18 코드 블록) = TipTap code 표시(다른 표시와 같이 안 씀 — 코드는 고정폭만)
 export function runsToRichText(text, runs = [], weight = null) {
   const n = text.length, attr = new Array(n).fill(null)
-  for (const [s, len, color, bold, bg, mono] of runs || [])
-    for (let i = Math.max(0, s); i < Math.min(n, s + len); i++) attr[i] = { color, bold, bg, mono: !!mono }
-  const same = (a, b) => (a?.color ?? null) === (b?.color ?? null) && !!a?.bold === !!b?.bold && (a?.bg ?? null) === (b?.bg ?? null) && !!a?.mono === !!b?.mono
+  for (const [s, len, color, bold, bg, mono, deco] of runs || [])   // deco = 'i' 기울임·'u' 밑줄·'s' 취소선 글자 모음(2026-10-19 — 7번째 칸)
+    for (let i = Math.max(0, s); i < Math.min(n, s + len); i++) attr[i] = { color, bold, bg, mono: !!mono, deco: deco || '' }
+  const same = (a, b) => (a?.color ?? null) === (b?.color ?? null) && !!a?.bold === !!b?.bold && (a?.bg ?? null) === (b?.bg ?? null) && !!a?.mono === !!b?.mono && (a?.deco || '') === (b?.deco || '')
+  const decoMarks = d => [...(d?.includes('i') ? [{ type: 'italic' }] : []), ...(d?.includes('u') ? [{ type: 'underline' }] : []), ...(d?.includes('s') ? [{ type: 'strike' }] : [])]
   const paras = []
   let pos = 0
   for (const line of text.split('\n')) {
@@ -27,12 +28,13 @@ export function runsToRichText(text, runs = [], weight = null) {
       let j = i + 1
       while (j < line.length && same(attr[pos + j], a)) j++
       const node = { type: 'text', text: line.slice(i, j) }, marks = []
-      if (a?.mono) { node.marks = [{ type: 'code' }]; content.push(node); i = j; continue }
+      if (a?.mono) { node.marks = [{ type: 'code' }, ...decoMarks(a.deco)]; content.push(node); i = j; continue }
       // 굵은 조각은 바탕 굵기보다 가늘어지지 않게(800 제목 안 굵은 조각이 700으로 내려가지 않도록)
       const w = a?.bold ? Math.max(700, weight || 0) : weight
       if (a?.bold) marks.push({ type: 'bold' })   // 굵게 표시는 늘 남긴다(내보낼 때 되살림) — 안쪽 textStyle 굵기가 실제 굵기를 정함
       if (w && w !== 400) marks.push({ type: 'textStyle', attrs: { color: a?.color ?? null, backgroundColor: a?.bg ? cssColor(a.bg) : null, fontWeight: String(w) } })
       else if (a?.color || a?.bg) marks.push({ type: 'textStyle', attrs: { color: a.color ?? null, backgroundColor: a.bg ? cssColor(a.bg) : null, fontWeight: null } })
+      marks.push(...decoMarks(a?.deco))
       if (marks.length) node.marks = marks
       content.push(node); i = j
     }
@@ -93,8 +95,10 @@ export function richTextToRuns(doc, baseWeight = 400) {
       const bold = !!n.marks?.some(m => m.type === 'bold') || (w != null && w > baseWeight && w >= 600)   // 웹에서 Ctrl+B로 굵게 한 것도
       const color = ts.color ? argbToRgbHex(cssToArgb(ts.color)) : null
       const bg = ts.backgroundColor ? cssToArgb(ts.backgroundColor) : (n.marks?.find(m => m.type === 'highlight') ? '#80ffeb3b' : null)
-      const mono = !!n.marks?.some(m => m.type === 'code')
-      if (mono) runs.push([pos + line.length, n.text.length, color, bold, bg || null, true])
+      const mono = !!n.marks?.some(m => m.type === 'code'), has = t => n.marks?.some(m => m.type === t)
+      const deco = (has('italic') ? 'i' : '') + (has('underline') ? 'u' : '') + (has('strike') ? 's' : '')
+      if (deco) runs.push([pos + line.length, n.text.length, color, bold, bg || null, mono, deco])   // 7번째 칸 = 꾸밈(데스크톱도 읽음)
+      else if (mono) runs.push([pos + line.length, n.text.length, color, bold, bg || null, true])
       else if (color || bold || bg) runs.push([pos + line.length, n.text.length, color, bold, ...(bg ? [bg] : [])])
       line += n.text
     }

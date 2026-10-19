@@ -124,3 +124,19 @@ def test_web_card_new_keys_and_legend_survive_desktop_save():
     assert it._label.toPlainText() == "범례\n주 신호선 · 실선 · 5px"   # 데스크톱에선 줄 글이 보임
     out = item_to_dict(it)
     assert out["type"] == "legend" and out["rows"] == rows and out["names"] == lg["names"] and out["title"] == "범례" and "label" not in out
+
+
+def test_web_deco_runs_survive_desktop_save():
+    """2026-10-19 — 웹 드래그 꾸미기 막대의 기울임·밑줄·취소선(.ecad runs 일곱째 칸 'i'·'u'·'s')은 데스크톱이 Qt 글자 서식으로 보이고, 저장하면 그대로"""
+    from easycad.fileio.document import insert_items
+    text = "가나다 라마바 차카타"
+    d = dict(_BASE, type="text", text=text, color="#ff111111", font=12, bg=None,
+             runs=[[0, 3, None, False, None, False, "is"], [4, 3, "#337ea9", False], [8, 3, None, True, None, False, "u"]])
+    sc = QGraphicsScene()
+    it = insert_items(sc, [d])[0]
+    from PyQt6.QtGui import QTextCursor
+    c = QTextCursor(it.document()); c.setPosition(1)
+    assert c.charFormat().fontItalic() and c.charFormat().fontStrikeOut()   # 데스크톱에서도 기울임·취소선
+    out = item_to_dict(it)
+    assert [0, 3, None, False, None, False, "is"] in out["runs"] and [8, 3, None, True, None, False, "u"] in out["runs"]
+    assert [4, 3, "#337ea9", False] in out["runs"]

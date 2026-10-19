@@ -144,10 +144,10 @@ export function urlSpans(text) {
 // links = urlSpans 결과(주면 그 구간 조각에 link — 메모만 넘김, 2026-10-18)
 export function runsToLines(text, runs, links) {
   const n = text.length, attr = new Array(n).fill(null)
-  for (const [s, len, color, bold, bg, mono] of runs || [])
-    for (let i = Math.max(0, s); i < Math.min(n, s + len); i++) attr[i] = { color: color || null, bold: !!bold, bg: bg || null, mono: !!mono }
+  for (const [s, len, color, bold, bg, mono, deco] of runs || [])
+    for (let i = Math.max(0, s); i < Math.min(n, s + len); i++) attr[i] = { color: color || null, bold: !!bold, bg: bg || null, mono: !!mono, deco: deco || '' }
   for (const [s, len, url] of links || []) for (let i = Math.max(0, s); i < Math.min(n, s + len); i++) attr[i] = { ...(attr[i] || {}), link: url }
-  const same = (a, b) => (a?.color ?? null) === (b?.color ?? null) && !!a?.bold === !!b?.bold && (a?.bg ?? null) === (b?.bg ?? null) && !!a?.mono === !!b?.mono && (a?.link ?? null) === (b?.link ?? null)
+  const same = (a, b) => (a?.color ?? null) === (b?.color ?? null) && !!a?.bold === !!b?.bold && (a?.bg ?? null) === (b?.bg ?? null) && !!a?.mono === !!b?.mono && (a?.deco || '') === (b?.deco || '') && (a?.link ?? null) === (b?.link ?? null)
   const lines = []
   let pos = 0
   for (const line of text.split('\n')) {
@@ -155,7 +155,7 @@ export function runsToLines(text, runs, links) {
     for (let i = 0; i < line.length;) {
       const a = attr[pos + i]; let j = i + 1
       while (j < line.length && same(attr[pos + j], a)) j++
-      parts.push({ text: line.slice(i, j), color: a?.color ?? null, bold: !!a?.bold, bg: a?.bg ?? null, ...(a?.mono ? { mono: true } : {}), ...(a?.link ? { link: a.link } : {}) }); i = j
+      parts.push({ text: line.slice(i, j), color: a?.color ?? null, bold: !!a?.bold, bg: a?.bg ?? null, ...(a?.mono ? { mono: true } : {}), ...(a?.deco ? { deco: a.deco } : {}), ...(a?.link ? { link: a.link } : {}) }); i = j
     }
     lines.push(parts)
     pos += line.length + 1

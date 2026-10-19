@@ -61,3 +61,11 @@ test('esym 경로 d → .ecad 요소(늘림·옮김)', () => {
   assert.deepEqual(parseD('M0.00,0.00 L100.00,50.00 C1,2 3,4 5,6', 2, 1, 10, 20),
     [['M', 10, 20], ['L', 210, 70], ['C', 12, 22, 16, 24, 20, 26]])
 })
+
+test('꾸밈(기울임·밑줄·취소선) = runs 일곱째 칸 — TipTap 마크와 왕복, 색·굵게와 함께(2026-10-19 드래그 꾸미기 막대)', () => {
+  const runs = [[0, 3, null, false, null, false, 'is'], [4, 3, '#337ea9', false], [8, 3, null, true, null, false, 'u']]
+  const doc = runsToRichText('가나다 라마바 차카타', runs)
+  const marks = doc.content[0].content.map(n => (n.marks || []).map(m => m.type).join('+'))
+  assert.deepEqual(marks, ['italic+strike', '', 'textStyle', '', 'bold+textStyle+underline'])   // 굵게는 굵기 textStyle도 함께(원래 방식)
+  assert.deepEqual(richTextToRuns(doc).runs, runs)
+})

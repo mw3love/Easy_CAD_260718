@@ -54,6 +54,8 @@ class Handler(SimpleHTTPRequestHandler):
     password = ""                 # 공용 편집 비밀번호(없으면 누구나 — 내 PC 개발)
     presence = collab.Presence()
     lock = threading.Lock()       # 부분 저장·게시 표를 한 번에 하나씩
+    changed = threading.Condition()   # 저장되면 깨움 — 받아 오기를 기다리던 요청(롱 폴링, 2026-10-19 사용자: 거의 실시간)
+    revs = {}                     # 칠판 이름 → 마지막 판 번호(기다리는 동안 파일을 다시 읽지 않게)
 
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=os.path.join(HERE, "dist"), **kw)
@@ -165,19 +167,39 @@ class Handler(SimpleHTTPRequestHandler):
             write_via_temp(root + ".prev" + ext, lambda tmp: _copy(path, tmp))
         raw = json.dumps(doc, ensure_ascii=False).encode("utf-8")
         write_via_temp(path, lambda tmp: _write(tmp, raw))
+        with Handler.changed:
+            Handler.revs[name] = int(doc.get("rev") or 0)
+            Handler.changed.notify_all()
 
-    def _publish_map(self) -> dict:
-        path = os.path.join(self.data_dir, "publish.json")
+    def _wait_rev(self, name: str, rev: int, q) -> None:
+        """`wait=N`(초, 최대 25)이면 판 번호가 rev보다 커질 때까지 기다림 — 바뀌는 즉시 돌려줘서 0.x초 안에 보임"""
+        try:
+            secs = min(25.0, float((q.get("wait") or ["0"])[0]))
+        except ValueError:
+            secs = 0
+        if secs <= 0 or rev < 0:
+            return
+        if name not in Handler.revs:   # 서버를 켠 뒤 처음 — 파일에서 한 번
+            d = self._doc_load(name)
+            Handler.revs[name] = int((d or {}).get("rev") or 0)
+        end = time.time() + secs
+        with Handler.changed:
+            while Handler.revs.get(name, 0) <= rev and time.time() < end:
+                Handler.changed.wait(end - time.time())
+
+    def _publish_map(self, kind: str = "publish") -> dict:
+        """칠판 → 토큰 표. publish = 게시(보기) 링크, invite = 편집 초대 링크(2026-10-19 — 노션 「공유」, 비밀번호 대신 링크로 편집)"""
+        path = os.path.join(self.data_dir, f"{kind}.json")
         try:
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
         except (OSError, ValueError):
             return {}
 
-    def _publish_save(self, mp: dict):
+    def _publish_save(self, mp: dict, kind: str = "publish"):
         os.makedirs(self.data_dir, exist_ok=True)
         raw = json.dumps(mp, ensure_ascii=False).encode("utf-8")
-        write_via_temp(os.path.join(self.data_dir, "publish.json"), lambda tmp: _write(tmp, raw))
+        write_via_temp(os.path.join(self.data_dir, f"{kind}.json"), lambda tmp: _write(tmp, raw))
 
     def _route(self):
         from urllib.parse import parse_qs, urlparse
@@ -191,6 +213,8 @@ class Handler(SimpleHTTPRequestHandler):
         m = re.match(r"^/api/pub/([\w\-]{8,64})$", path)
         if m:   # 게시 링크 — 로그인 없이 보기만
             board = next((b for b, t in self._publish_map().items() if t == m.group(1)), None)
+            if board:
+                self._wait_rev(board, int((q.get("rev") or ["-1"])[0]), q)
             doc = board and self._doc_load(board)
             if not doc:
                 return self._send(404, b'{"error":"none"}')
@@ -210,13 +234,15 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send(404, b'{"error":"none"}')
             with open(lib, "rb") as f:
                 return self._send(200, f.read())
-        m = re.match(r"^/api/(doc|since|publish)/([^/]+)$", path)
+        m = re.match(r"^/api/(doc|since|publish|invite)/([^/]+)$", path)
         if m:
             name = self._name(m.group(2))
             if not name:
                 return self._send(400, b'{"error":"bad name"}')
-            if m.group(1) == "publish":
-                return self._json(200, {"token": self._publish_map().get(name)})
+            if m.group(1) in ("publish", "invite"):
+                return self._json(200, {"token": self._publish_map(m.group(1)).get(name), "password": bool(self.password)})
+            if m.group(1) == "since":
+                self._wait_rev(name, int((q.get("rev") or ["0"])[0]), q)
             doc = self._doc_load(name)
             if doc is None:
                 return self._send(404, b'{"error":"none"}')
@@ -247,11 +273,22 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send(403, b'{"error":"password"}')
             key = collab.edit_key(self.password)
             return self._send(200, b'{"ok":true}', headers={"Set-Cookie": f"mb_key={key}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"})
+        if path == "/api/join":   # 편집 초대 링크로 들어옴 — 맞으면 편집 열쇠 쿠키(비밀번호 없이)
+            req = self._body(64 * 1024) or {}
+            board = self._name(str(req.get("board") or ""))
+            tok = self._publish_map("invite").get(board) if board else None
+            if not tok or not secrets.compare_digest(str(req.get("token") or ""), tok):
+                time.sleep(0.5)
+                return self._send(403, b'{"error":"invite"}')
+            if not self.password:
+                return self._json(200, {"ok": True})
+            key = collab.edit_key(self.password)
+            return self._send(200, b'{"ok":true}', headers={"Set-Cookie": f"mb_key={key}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"})
         if not self._authed():
             return self._send(401, b'{"error":"login"}')
         if path == "/api/chat":
             return self._chat()
-        m = re.match(r"^/api/(patch|presence|publish)/([^/]+)$", path)
+        m = re.match(r"^/api/(patch|presence|publish|invite)/([^/]+)$", path)
         if not m:
             return self._send(404, b'{"error":"none"}')
         name = self._name(m.group(2))
@@ -262,14 +299,15 @@ class Handler(SimpleHTTPRequestHandler):
             cid = str(req.get("id") or "")
             people = self.presence.ping(name, cid, str(req.get("name") or ""), sel=req.get("sel") if isinstance(req.get("sel"), list) else None, edit=str(req.get("edit") or ""))
             return self._json(200, {"people": people, "others": self.presence.others(name, cid)})
-        if m.group(1) == "publish":
+        if m.group(1) in ("publish", "invite"):   # 켜기·끄기·새 링크(옛 링크 막힘) — 게시와 초대가 같은 방식
+            kind = m.group(1)
             with self.lock:
-                mp = self._publish_map()
+                mp = self._publish_map(kind)
                 if not req.get("on"):
                     mp.pop(name, None)
                 elif req.get("renew") or name not in mp:
                     mp[name] = secrets.token_urlsafe(12)
-                self._publish_save(mp)
+                self._publish_save(mp, kind)
             return self._json(200, {"token": mp.get(name)})
         with self.lock:   # 부분 저장 — 도형 단위로 덮어씀(서로 다른 도형이면 둘 다 남음)
             doc = self._doc_load(name) or {"format": "easycad-doc", "version": 1, "items": []}

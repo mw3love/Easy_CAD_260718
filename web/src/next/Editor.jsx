@@ -20,7 +20,8 @@ import {
   rotateTo, rubberSelect, sceneBox, toLocal, toScene, toggleLock, topHit, ungroupItems, unionBox, zOrder,
 } from './edit.js'
 import { TextEditor } from './text.jsx'
-import { EditProps, Props, captureStyle, styleFor } from './props.jsx'
+import { Props, captureStyle, styleFor } from './props.jsx'
+import { FormatBar } from './formatbar.jsx'
 import { arrowKindOf, swapArrowKind } from './arrowkind.js'
 import { symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
@@ -836,7 +837,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const ed = R.current.editing; setEditing(null); if (!ed || !lines) return
     const m = R.current.model, it = m.items.find(x => x._id === ed.id); if (!it) return
     const nol = new Set((it.lines || []).filter(l => l.nolink).map(l => l.t)); lines = lines.map(l => (nol.has(l.t) ? { ...l, nolink: true } : l))   // 고친 뒤에도 「링크 끔」 유지(같은 글의 줄)
-    clearTimeout(memoT.current); commit(m.items.map(x => (x._id === it._id ? { ...it, lines } : x)), [it._id], '메모 고침', 'memo' + it._id)
+    clearTimeout(memoT.current); memoT.current = 0; commit(m.items.map(x => (x._id === it._id ? { ...it, lines } : x)), [it._id], '메모 고침', 'memo' + it._id)
     if (extra?.caret != null && lines[extra.caret]) { const [s, e] = lineUnit(lines, extra.caret); setLineSel({ id: it._id, s, e }) }
     else if (extra?.pick && lines[extra.pick.cur] && lines[extra.pick.clicked]) {   // 고치는 중 단축키 + 다른 줄 클릭 = 줄 고르기
       const [s1, e1] = lineUnit(lines, extra.pick.cur), [s2, e2] = lineUnit(lines, extra.pick.clicked)
@@ -845,12 +846,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (extra?.grab && lines[extra.grab.i]) { const [s, e] = lineUnit(lines, extra.grab.i), p = toSceneP(extra.grab)
       st.current = { ...st.current, kind: 'mline', id: it._id, units: [[s, e]], copy: false, start: p, moved: false } }
   }
-  // 치는 동안 — 높이는 바로(live), 글은 0.5초 쉬면 칠판에 넣어 저장까지(2026-10-19 사용자: 입력 중에도 다른 사람에게 보이게). 되돌리기는 1.5초 안 이어 친 것끼리 한 칸
-  const memoT = useRef(0)
+  // 치는 동안 — 높이는 바로(live), 글은 치는 중에도 0.3초마다 칠판에 넣어 저장까지(2026-10-19 사용자: 거의 실시간 — 멈출 때까지 기다리지 않음). 되돌리기는 1.5초 안 이어 친 것끼리 한 칸
+  const memoT = useRef(0), memoNext = useRef(null)
   function liveMemo(id, lines) { const m = R.current.model; setLive(m.items.map(x => { if (x._id !== id) return x; const n = { ...x, lines }; return { ...n, rect: [n.rect[0], n.rect[1], n.rect[2], memoHeight(n)] } }))
-    clearTimeout(memoT.current); memoT.current = setTimeout(() => { if (R.current.editing?.id !== id) return; const m2 = R.current.model, it = m2.items.find(x => x._id === id); if (!it) return
-      const nol = new Set((it.lines || []).filter(l => l.nolink).map(l => l.t)), ls = lines.map(l => (nol.has(l.t) ? { ...l, nolink: true } : l))
-      commit(m2.items.map(x => (x._id === id ? { ...it, lines: ls } : x)), R.current.sel, '메모 고침', 'memo' + id) }, 500) }
+    memoNext.current = { id, lines }; if (memoT.current) return   // 이미 기다리는 중 = 그때 마지막 글로
+    memoT.current = setTimeout(() => { memoT.current = 0; const nx = memoNext.current; if (!nx || R.current.editing?.id !== nx.id) return; const m2 = R.current.model, it = m2.items.find(x => x._id === nx.id); if (!it) return
+      const nol = new Set((it.lines || []).filter(l => l.nolink).map(l => l.t)), ls = nx.lines.map(l => (nol.has(l.t) ? { ...l, nolink: true } : l))
+      commit(m2.items.map(x => (x._id === nx.id ? { ...it, lines: ls } : x)), R.current.sel, '메모 고침', 'memo' + nx.id) }, 300) }
   function pinCard(msg, drop) {   // drop = 칠판 좌표(끌어 놓은 자리 — 왼쪽 위), 없으면 빈자리
     const m = R.current.model, c = R.current.cam, h = cardItem(msg, 0, 0, 0).rect[3]
     const left = 220 / c.z, right = 220 / c.z, view = { x: -c.x / c.z + left, y: -c.y / c.z, w: Math.max(CARD_W, size.w / c.z - left - right), h: size.h / c.z }
@@ -1485,7 +1487,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         return <MemoEditor key={it._id} spec={{ left: o.x, top: o.y, width: it.rect[2] * s * cam.z, zoom: s * cam.z, fill: it.fill ? cssColor(it.fill) : '#fff', lines: it.lines, caret: editing.caret, at: editing.at, onChange: ls => liveMemo(it._id, ls), onWheel: wheelZoom, onPan: startPan }} onDone={finishMemo} /> })()}
       {editing && editing.kind !== 'cell' && editing.kind !== 'memo' && (() => { const s = editSpec(); if (!s) return null
         return <TextEditor key={editing.id} spec={{ ...s, onReady: setLiveEd, at: editing.at, onPan: startPan, onWheel: wheelZoom }} onDone={finishEdit} /> })()}
-      {editing && liveEd && <EditProps ed={liveEd} />}
+      {editing && liveEd && <FormatBar ed={liveEd} />}   {/* 드래그 꾸미기 막대(2026-10-19 — 옛 오른쪽 위 「글자」 카드 대신) */}
       {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>

@@ -212,12 +212,12 @@ export function lineBlocks(doc) {
 // 줄 전체 색(글자 color · 배경 bg — 둘 다 null = 기본) — 부분 서식(굵게·코드)은 지키고 색만 줄 전체에
 export function recolorLine(ln, { color, bg }) {
   const n = (ln.t || '').length; if (!n || ln.k === 'code' || ln.k === 'hr') return ln
-  const at = Array.from({ length: n }, () => ({ color: null, bold: false, bg: null, mono: false }))
-  for (const [s, len, c, b, g, m] of ln.runs || []) for (let i = Math.max(0, s); i < Math.min(n, s + len); i++) at[i] = { color: c || null, bold: !!b, bg: g || null, mono: !!m }
+  const at = Array.from({ length: n }, () => ({ color: null, bold: false, bg: null, mono: false, deco: '' }))
+  for (const [s, len, c, b, g, m, d] of ln.runs || []) for (let i = Math.max(0, s); i < Math.min(n, s + len); i++) at[i] = { color: c || null, bold: !!b, bg: g || null, mono: !!m, deco: d || '' }
   for (const a of at) { if (color !== undefined) a.color = color; if (bg !== undefined) a.bg = bg }
   const runs = []
   for (let i = 0; i < n;) { const a = at[i]; let j = i + 1; while (j < n && JSON.stringify(at[j]) === JSON.stringify(a)) j++
-    if (a.mono) runs.push([i, j - i, a.color, a.bold, a.bg, true]); else if (a.color || a.bold || a.bg) runs.push([i, j - i, a.color, a.bold, ...(a.bg ? [a.bg] : [])]); i = j }
+    if (a.deco) runs.push([i, j - i, a.color, a.bold, a.bg, a.mono, a.deco]); else if (a.mono) runs.push([i, j - i, a.color, a.bold, a.bg, true]); else if (a.color || a.bold || a.bg) runs.push([i, j - i, a.color, a.bold, ...(a.bg ? [a.bg] : [])]); i = j }
   const o = { ...ln }; if (runs.length) o.runs = runs; else delete o.runs; return o
 }
 // 전환 메뉴 차례(노션 「전환」에서 메모에 맞는 것만 — 2026-10-18 사용자와 정함)

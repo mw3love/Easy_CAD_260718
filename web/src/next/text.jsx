@@ -12,7 +12,8 @@ import { BackgroundColor, Color, TextStyle } from '@tiptap/extension-text-style'
 import { UndoRedo } from '@tiptap/extensions'
 import { richTextToRuns, runsToRichText } from '../ecadFormat.js'
 import { APP_FONT, BOARD_FONT, METRICS, TEXT_MARGIN } from './geom.js'
-import { CODE_BAND, MONO_FONT } from './render.jsx'   // 고치는 모습 = 결과(칠판과 같은 고정폭 글꼴·바탕)
+import { CODE_BAND, MONO_FONT } from './render.jsx'
+import { Italic, Strike, Underline } from './marks.js'   // 고치는 모습 = 결과(칠판과 같은 고정폭 글꼴·바탕)
 
 // 글 굵기(400·600·800) — textStyle 안에(데스크톱 weight·보드 글꼴 굵기)
 const FontWeight = Extension.create({
@@ -59,7 +60,7 @@ export function TextEditor({ spec, onDone }) {
     const cancel = () => { if (sp.current.armed || done.current) return; done.current = true; od.current(null) }
     const editor = new Editor({
       element: host.current,
-      extensions: [Document, Paragraph, Text, Bold, Code, TextStyle, Color, BackgroundColor, FontWeight, UndoRedo, Finish.configure({ onDone: finish, onCancel: spec.cell ? cancel : null, onMove: spec.cell ? finish : null, isArmed: () => !!sp.current.armed })],
+      extensions: [Document, Paragraph, Text, Bold, Italic, Underline, Strike, Code, TextStyle, Color, BackgroundColor, FontWeight, UndoRedo, Finish.configure({ onDone: finish, onCancel: spec.cell ? cancel : null, onMove: spec.cell ? finish : null, isArmed: () => !!sp.current.armed })],
       content: runsToRichText(spec.text || '', spec.runs, spec.weight && spec.weight !== 400 ? spec.weight : null),
       autofocus: spec.at ? false : 'end',   // 두 번 누른 자리에 둔 커서를 한 박자 늦은 autofocus가 끝으로 옮기지 않게
       editorProps: { attributes: { spellcheck: 'false' }, handlePaste: () => !!sp.current.armed },   // 대기 중 Ctrl+V = 칠판 붙여넣기(편집기에 글이 숨어 들어가지 않게)

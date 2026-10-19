@@ -193,24 +193,6 @@ function RotInput({ value, onSet }) {
   </div>
 }
 
-// 글을 고치는 중 「글자」 카드(2026-10-18 사용자: 고칠 때도 속성이 보여야 — 칸 안 일부만 색 바꾸기) — 드래그한 부분에(없으면 그 자리부터) 굵게·색·형광펜.
-// 누를 때 편집기 포커스·선택을 잃지 않게 mousedown 기본 동작을 막고, data-keep-edit로 편집이 안 끝나게 함. 크기는 .ecad 부분 서식에 없어 글 전체 단위(편집을 끝낸 뒤 속성 카드)
-export function EditProps({ ed }) {
-  const [, tick] = useState(0)
-  useEffect(() => { const f = () => tick(n => n + 1); ed.on('selectionUpdate', f); ed.on('transaction', f); return () => { ed.off('selectionUpdate', f); ed.off('transaction', f) } }, [ed])
-  const bold = ed.isActive('bold'), ts = ed.getAttributes('textStyle'), color = (ts.color || '').toLowerCase(), hl = !!ts.backgroundColor
-  const run = f => f(ed.chain().focus()).run()
-  return <div data-keep-edit onMouseDown={e => e.preventDefault()} onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 12, top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
-    padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', zIndex: 25 }}>
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}><span style={{ font: "700 15px 'Pretendard', sans-serif" }}>글자</span><span style={{ fontSize: 11, color: C.muted }}>드래그한 부분에</span></div>
-    <Row label="굵게"><Seg value={bold} onPick={b => run(c => (b ? c.setBold() : c.unsetBold()))} items={[[true, <b key="b">굵게</b>, '굵게 (Ctrl+B)'], [false, <span key="n">보통</span>, '보통']]} /></Row>
-    <Row label="색"><ColorGrid value={/^#[0-9a-f]{6}$/.test(color) ? color : ''} onPick={c => run(ch => ch.setColor(c))} /></Row>
-    <Row label=""><button title="형광펜 — 다시 누르면 지워요" aria-pressed={hl} onClick={() => run(c => (hl ? c.unsetBackgroundColor() : c.setBackgroundColor('rgba(255,213,79,0.6)')))}
-      style={btn(hl, { padding: '0 10px', background: hl ? C.onBg : C.seg, fontSize: 12, gap: 6 })}><span style={{ width: 14, height: 10, borderRadius: 2, background: 'rgba(255,213,79,.6)' }} />형광펜</button>
-      <button title="색 되돌리기(기본 글 색)" onClick={() => run(c => c.unsetColor())} style={btn(false, { padding: '0 8px', background: C.seg, fontSize: 12 })}>기본 색</button></Row>
-  </div>
-}
-
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)

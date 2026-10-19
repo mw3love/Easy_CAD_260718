@@ -21,11 +21,12 @@ export function Viewer({ token }) {
     let live = true
     const pull = async () => {
       if (ed.current?.busy?.()) return
-      const r = await api.pub(token, rev.current).catch(() => null); if (!live || !r) return
+      const r = await api.pub(token, rev.current, rev.current > 0 ? 20 : 0).catch(() => null); if (!live || !r) return
       if (r.gone) { setGone(true); return }
       if (r.doc) { rev.current = r.doc.rev || 0; setGone(false); setModel(fromEcad(r.doc)) }
     }
-    pull(); const t = setInterval(pull, 3000); return () => { live = false; clearInterval(t) }
+    ;(async () => { while (live) { const t0 = Date.now(); await pull(); if (live && Date.now() - t0 < 250) await new Promise(r => setTimeout(r, 1000)) } })()   // 롱 폴링(바뀌면 바로) — 실패·같음이 바로 오면 1초 쉼
+    return () => { live = false }
   }, [token])
   useEffect(() => { if (model && !fitted.current && size.w > 1) { fitted.current = true; fit(model.items, size) } }, [model, size, fit])
   if (gone) return <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted, background: C.board, font: "400 14px 'Pretendard', sans-serif" }}>게시가 꺼졌거나 링크가 바뀌었어요 — 칠판을 고치는 분께 새 링크를 받아 주세요.</div>

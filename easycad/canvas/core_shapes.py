@@ -5924,7 +5924,11 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
                       if fmt.hasProperty(QTextFormat.Property.BackgroundBrush) and fmt.background().style() != Qt.BrushStyle.NoBrush
                       else None)
                 mono = _MONO_FAMILY in (fmt.fontFamilies() or [])   # [웹 칠판 2026-10-18] 코드(고정폭) 조각 — 여섯째 칸
-                if mono:
+                # [웹 칠판 2026-10-19] 꾸밈 — 일곱째 칸 'i' 기울임·'u' 밑줄·'s' 취소선(웹 드래그 꾸미기 막대)
+                deco = ("i" if fmt.fontItalic() else "") + ("u" if fmt.fontUnderline() else "") + ("s" if fmt.fontStrikeOut() else "")
+                if deco:
+                    runs.append([frag.position(), frag.length(), color, bold, bg, mono, deco])
+                elif mono:
                     runs.append([frag.position(), frag.length(), color, bold, bg, True])
                 elif color or bold or bg:
                     runs.append([frag.position(), frag.length(), color, bold] + ([bg] if bg else []))
@@ -5939,6 +5943,7 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
             start, length, color, bold = run[:4]
             bg = run[4] if len(run) > 4 else None
             mono = bool(run[5]) if len(run) > 5 else False
+            deco = str(run[6] or "") if len(run) > 6 else ""
             start, end = max(0, int(start)), min(n, int(start) + int(length))
             if end <= start:
                 continue
@@ -5954,6 +5959,12 @@ class _TextItem(_HandleResizeMixin, QGraphicsTextItem):
                 fmt.setBackground(QColor(bg))
             if mono:
                 fmt.setFontFamilies([_MONO_FAMILY])
+            if "i" in deco:
+                fmt.setFontItalic(True)
+            if "u" in deco:
+                fmt.setFontUnderline(True)
+            if "s" in deco:
+                fmt.setFontStrikeOut(True)
             cur.mergeCharFormat(fmt)
 
     def clear_runs(self):
