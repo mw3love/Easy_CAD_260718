@@ -12,11 +12,14 @@ import { urlSpans } from './geom.js'
 import { MONO_FONT } from './render.jsx'
 import { siteOf } from './webcard.js'
 const LINK_CHAT = '#4f8fe8'
+// 정리 문서 크게 보기 — 새 탭에 그 HTML(인쇄·PDF는 그 탭에서 Ctrl+P)
+const openHtml = html => { const u = URL.createObjectURL(new Blob([html || ''], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
 // 답 종류 — [표시, 표시 꾸밈, 다시 묻기 글, 툴팁] — 서버가 짐작한 것을 답 위에 보이고, 나머지 둘로 한 번에 다시(§8 항목61 ② 원칙 ⓒ)
 const KINDS = {
   chat: ['💬 대화', null, '대화로 다시', '웹·칠판을 찾지 않고 대화로 다시 물어 이 답을 바꿔요'],
   search: ['🔎 웹 검색', { color: '#2f80ed', background: 'rgba(47,128,237,.12)' }, '웹 검색으로 다시', '웹을 찾아 출처와 함께 다시 물어 이 답을 바꿔요'],
   board: ['📌 칠판에서', { color: '#d97706', background: 'rgba(245,158,11,.14)' }, '칠판에서 다시', '이 칠판의 메모·글을 뜻으로 찾아 그것을 근거로 다시 물어요'],
+  report: ['📄 정리 문서', { color: '#7c3aed', background: 'rgba(124,58,237,.12)' }, '정리 문서로 다시', '고른 것(없으면 칠판 전체)을 보고서·인포그래픽 한 장으로 다시 만들어요(약 40초)'],
   image: ['🎨 그림', { color: '#9333ea', background: 'rgba(147,51,234,.12)' }, '그림으로 다시', '그림 후보 2장을 만들어 이 답을 바꿔요(장당 약 34크레딧)'],
 }   // 대화창 주소(어두운·밝은 화면 둘 다 읽히는 파랑)
 
@@ -64,7 +67,7 @@ function Answer({ text }) {
 }
 
 // ed = Editor 손잡이(selTexts·pinCard·showCard), selKey = 고른 것이 바뀔 때 다시 읽게(main이 넘김)
-export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
+export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // request = { id, text, kind } — 칠판에서 시킨 질문(바뀔 때마다 한 번 보냄)   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
   const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_KEY) || '' } catch { return '' } })
@@ -78,6 +81,8 @@ export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = �
     fetch('/api/models').then(r => r.json()).then(setModels).catch(() => setModels({ featured: {}, error: '모델 목록 못 받음' }))
   }, [])
   useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight }, [msgs.length, busy])
+  const asked = useRef(null)
+  useEffect(() => { if (!request || !loaded || asked.current === request.id) return; asked.current = request.id; send(request.text, request.kind) }, [request, loaded])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!busy) return; const t = setInterval(() => tick(n => n + 1), 1000); return () => clearInterval(t) }, [busy])
 
   const useModel = model || models?.default || 'gpt-6.1-sol'
@@ -86,21 +91,23 @@ export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = �
   const update = next => { setMsgs(next); save(next) }
 
   // 묻기 — history = 지금까지(마지막이 질문), kind = 'search'·'chat'(비면 서버가 짐작) → 답 한 차례
-  async function ask(history, kind = '') {
+  async function ask(history, kind = '', prevHtml = '') {   // prevHtml = 바로 앞 답이 정리 문서면 그 HTML(「더 짧게」 = 그 문서 고치기 — 서버가 판단)
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
+      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
     return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
-      ...(d.images?.length ? { images: d.images, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}) }
+      ...(d.images?.length ? { images: d.images, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),
+      ...(d.html ? { html: d.html, title: d.title || '정리 문서' } : {}) }
   }
-  async function send() {
-    const q = draft.trim(); if (!q || busy) return
+  async function send(text = null, kind = '') {   // text·kind = 밖에서 시킨 질문(칠판 우클릭 「정리 문서 만들기」 — 입구는 대화창 하나)
+    const q = (text ?? draft).trim(); if (!q || busy) return
     const ctx = contextText(sel)
     const mine = { role: 'user', content: q, at: Date.now(), ...(ctx ? { context: ctx, ctxCount: sel.length } : {}) }
     const next = [...msgs.filter(m => m.role !== 'error'), mine]
-    update(next); setDraft(''); setBusy(Date.now())
-    try { update([...next, await ask(next)]) } catch (e) {
+    update(next); if (text == null) setDraft(''); setBusy(Date.now())
+    const prev = msgs.filter(m => m.role !== 'error').at(-1)
+    try { update([...next, await ask(next, kind, !kind && prev?.role === 'assistant' && prev.html ? prev.html : '')]) } catch (e) {
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
     } finally { setBusy(null) }
   }
@@ -163,6 +170,13 @@ export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = �
                   <button key={k} style={css.link} disabled={!!busy} onClick={() => redoAs(i, k)} title={tip}>{again}</button>)}
               </div>
               <Answer text={m.content} />
+              {m.html && <div data-testid="answer-doc" style={{ marginTop: 6 }}>   {/* 정리 문서 미리보기 — A4 폭 794px를 대화창 폭에 맞춰 줄임(스크립트 없는 iframe) */}
+                <div style={{ height: 300, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', cursor: 'zoom-in' }} title="크게 보기·인쇄" onClick={() => openHtml(m.html)}>
+                  <iframe srcDoc={m.html} title={m.title || '정리 문서'} sandbox="" scrolling="no" style={{ border: 0, width: 794, height: 300 / 0.41, transform: 'scale(0.41)', transformOrigin: '0 0', pointerEvents: 'none' }} />
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}><button style={css.ghost} onClick={() => openHtml(m.html)}>크게 보기 · 인쇄</button>
+                  <span style={{ ...css.meta, alignSelf: 'center' }}>고칠 점을 이어서 말하면 이 문서를 고쳐 써요</span></div>
+              </div>}
               {m.images?.length > 0 && <div data-testid="answer-images" style={{ marginTop: 6, display: 'grid', gridTemplateColumns: `repeat(${Math.min(2, m.images.length)}, 1fr)`, gap: 6 }}>
                 {m.images.map((g, j) => <button key={g.url} data-testid="image-pick" title="누르면 칠판에 붙여요(끌어 놓으면 그 자리) — 밑에 요청 글이 같이 붙어요"
                   onClick={async () => { const id = await ed.current?.pinImage(g.url, m.prompt || ''); if (id) update(msgs.map((x, k) => (k === i ? { ...x, picked: [...new Set([...(x.picked || []), j])] } : x))) }}
@@ -182,7 +196,7 @@ export function ChatPanel({ ed, selKey, floating, onClose }) {   // floating = �
                 {!m.images?.length && <button style={{ ...(m.pinned ? css.ghost : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
                   title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : m.refs?.length ? '메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(누르면 빈자리, 끌면 놓은 자리)' : m.sources?.length ? '요약 메모 + 출처 카드를 번호 화살표로 이어 한 묶음으로(누르면 빈자리, 끌면 놓은 자리)' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
                   {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>}
-                {!m.images?.length && <button style={css.ghost} onClick={() => navigator.clipboard?.writeText(m.content).catch(() => {})}>복사</button>}
+                {!m.images?.length && !m.html && <button style={css.ghost} onClick={() => navigator.clipboard?.writeText(m.content).catch(() => {})}>복사</button>}
                 <span style={{ ...css.meta, marginLeft: 'auto' }}>{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</span>
               </div>
             </div>)}

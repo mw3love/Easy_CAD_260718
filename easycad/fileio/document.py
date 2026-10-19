@@ -360,7 +360,7 @@ def item_to_dict(it) -> dict | None:
                 d["label"]["align"] = v
         elif k == "type":   # 웹 프레임·웹 카드 — 네모로 열었던 것을 다시 frame·web으로
             d["type"] = v
-            if v in ("web", "memo", "legend"):   # 보이려고 붙인 라벨(제목·주소 / 메모·범례 줄 글)은 웹에선 안 씀
+            if v in ("web", "memo", "legend", "doc"):   # 보이려고 붙인 라벨(제목·주소 / 메모·범례 줄 글)은 웹에선 안 씀
                 d.pop("label", None)
         elif k not in d:
             d[k] = v
@@ -371,7 +371,7 @@ def item_to_dict(it) -> dict | None:
 
 
 # [§8 항목61 ④-1] 웹 종류 — 데스크톱은 아직 대리 네모로 그림(④-3에서 똑같이), 저장은 원래 칸 통째(`_web_raw`)
-_WEB_TYPES = ("frame", "web", "memo", "legend")
+_WEB_TYPES = ("frame", "web", "memo", "legend", "doc")   # doc = 정리 문서 카드(「정리해 줘」 ①, 2026-10-19)
 # 데스크톱이 정하는 칸(옮기기·크기·돌리기·쌓는 순서·잠금·묶음·레이어·포트·자국·AI 보드 표시) — 웹 종류도 이것만은 데스크톱 값이 이김
 _DESK_KEYS = ("type", "pos", "scale", "rotation", "z", "origin", "locked", "group_id", "layer_id", "rect", "ports", "cuts", "pb_part", "pb_card", "pb_piece")
 
@@ -393,6 +393,8 @@ def _web_card_label(d: dict):
         sn = {1: "실선", 2: "파선", 3: "점선", 4: "일점쇄선", 5: "이점쇄선"}
         rows = [f"{(d.get('names') or {}).get(e.get('key'), '선')} · {sn.get(e.get('style'), '실선')} · {e.get('width')}px" for e in d.get("rows") or []]
         return {"text": "\n".join([d.get("title") or "범례", *rows]), "color": "#ff1f1f1f", "font": 10, "bg": None, "align": "left"}
+    if d.get("type") == "doc":   # 정리 문서 — 제목 + 안내(본문 HTML은 웹 칠판에서 봄)
+        return {"text": f"📄 {d.get('title') or '정리 문서'}\n(웹 칠판에서 보기·인쇄)", "color": "#ff1f1f1f", "font": 11, "bg": None}
     if d.get("type") != "web":
         return None
     return {"text": ((d.get("title") or "") + "\n" + (d.get("url") or "")).strip(), "color": "#ff18181b", "font": 10, "bg": None}
@@ -444,6 +446,9 @@ def dict_to_item(d: dict):
     elif t == "memo":   # [웹 칠판 2026-10-18] 메모(줄마다 제목·목록·할 일·코드·인용) — 데스크톱은 아직 모름: 줄 글을 적은 둥근 네모로 보이고, 저장할 때 다시 memo로
         md = {"pen": "#ffd4d4d8", "width": 1.0, "style": 1, "fill": d.get("fill") or "#ffffffff"}
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(md)); it.setBrush(_mkbrush(md)); it._radius = 10.0
+    elif t == "doc":   # [웹 칠판 2026-10-19] 정리 문서 카드(AI가 쓴 HTML 한 장) — 데스크톱은 아직 모름: 제목을 적은 네모로 보이고, 저장은 원래 칸 통째(`_web_raw`)
+        dd = {"pen": "#ffa1a1aa", "width": 1.0, "style": 1, "fill": "#ffffffff"}
+        it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(dd)); it.setBrush(_mkbrush(dd)); it._radius = 6.0
     elif t == "legend":   # [웹 칠판 2026-10-19] 범례 2판(표 모양, 줄은 도면에서 저절로) — 데스크톱은 아직 모름: 줄 글을 적은 둥근 네모로 보이고, 저장할 때 다시 legend로
         ld = {"pen": "#ffd4d4d8", "width": 1.0, "style": 1, "fill": "#ffffffff"}
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(ld)); it.setBrush(_mkbrush(ld)); it._radius = 8.0

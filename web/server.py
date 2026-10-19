@@ -35,7 +35,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_image, meeting, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_image, board_report, meeting, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 
@@ -103,6 +103,11 @@ class Handler(SimpleHTTPRequestHandler):
             last = next((m for m in reversed(msgs) if isinstance(m, dict) and m.get("role") == "user"), {})
             kind = req.get("kind") or board_chat.guess_kind(str(last.get("content", "")), bool(ctx or last.get("context")))
             refs = None
+            prev_html = str(req.get("prev_html") or "")
+            if kind == "chat" and prev_html and not req.get("kind"):   # 정리 문서 바로 뒤 「더 짧게」 같은 말 = 그 문서 고치기
+                kind = "report"
+            if kind == "report":   # 「정리해 줘」 ① — 고른 것(없으면 칠판 전체)을 정리 문서 한 장으로(§8 항목61)
+                return self._report(self._name(str(req.get("board") or "")), str(last.get("content", "")), ctx or str(last.get("context") or ""), prev_html, key)
             if kind == "image":   # 「○○ 그려줘」 — 그림 후보(§8 항목61 ③-4): 칠판 옆 폴더에 두고 주소만 대화 기록에(기록이 그림으로 불지 않게)
                 return self._image(self._name(str(req.get("board") or "")), str(last.get("content", "")), key)
             if kind == "board":   # 「지난번 ○○ 뭐였지?」 — 이 칠판의 저장된 글에서 찾아 근거로(§8 항목61 ③-2)
@@ -115,6 +120,21 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(502, {"error": f"KAIROS 호출 실패: {e}"})
         sys.stderr.write("[대화] %s %.1f초\n" % (out["model"], out["elapsed"]))
         return self._json(200, out)
+
+    def _report(self, name: str, ask: str, material: str, prev_html: str, key: str):
+        """정리 문서 → {"kind": "report", "content", "title", "html", "model", "elapsed"} — 자료 = 고른 것의 글, 없으면 이 칠판 전체 글."""
+        if not material.strip() and not prev_html and name and os.path.exists(self._doc_path(name)):
+            with open(self._doc_path(name), encoding="utf-8") as f:
+                items = board_find.board_items(json.load(f))
+            material = "\n\n".join(f"({board_find.KIND_NAME.get(it['type'], it['type'])}) {it['text']}" for it in items)
+        if not material.strip() and not prev_html:
+            return self._json(400, {"error": "정리할 것이 없어요 — 칠판에서 메모·글을 고르고 다시 물어 주세요"})
+        try:
+            out = board_report.make(gw._client(key, gw.resolve_base_url(), timeout=600), material, ask, prev_html=prev_html)
+        except Exception as e:
+            return self._json(502, {"error": f"KAIROS 정리 문서 실패: {e}"})
+        sys.stderr.write("[정리 문서] %s %.1f초 %d자\n" % (out["model"], out["elapsed"], len(out["html"])))
+        return self._json(200, {"kind": "report", "content": f"정리 문서 「{out['title']}」 — 칠판에 붙이면 인쇄용 문서 카드가 돼요", **out})
 
     def _img_dir(self, name: str) -> str:
         return os.path.join(self.data_dir, name + ".img")

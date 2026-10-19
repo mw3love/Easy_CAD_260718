@@ -435,6 +435,31 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
       </g>
     }
+    case 'doc': {   // 정리 문서 카드(「정리해 줘」 ①, 2026-10-19) — 위 띠(📄 제목·↗ 크게 보기) + 칸 안에 AI가 쓴 HTML(A4 폭 794px를 카드 폭에 맞춰 줄임, 스크립트 없는 iframe).
+      // 'sleep'(많이 줄여 봄)·내보내기·HTML 공유는 문서 대신 제목 자리만(iframe은 그림으로 안 찍힘)
+      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'dc-' + (it._id || idx), ob = openBtnRect(it), tw = w - ob.w - 26, k = w / 794
+      const live = (web === 'on' || web === 'view') && bh > 4 && it.html
+      return <g transform={T} data-doc-box={`${x},${y + H},${w},${bh}`}>
+        <clipPath id={cid}><rect x={x} y={y} width={w} height={h} rx={6} ry={6} /></clipPath>
+        <g clipPath={`url(#${cid})`}>
+          <rect x={x} y={y} width={w} height={h} fill="#ffffff" />
+          <rect x={x} y={y} width={w} height={H} fill="#f5f3ff" />
+          {bh > 0 && (live
+            ? <foreignObject x={x} y={y + H} width={w} height={bh}>
+                <iframe data-docid={it._id} srcDoc={it.html} title={it.title || '정리 문서'} sandbox="" scrolling="no"
+                  style={{ border: 0, width: 794, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: 'none' }} />
+              </foreignObject>
+            : <><rect x={x} y={y + H} width={w} height={bh} fill="#fafafa" />
+              <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(16, bh / 6)} fontFamily={APP_FONT} fill="#8a8f98">📄 정리 문서 — ↗로 크게 보기·인쇄</text></>)}
+        </g>
+        {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#ddd6fe" strokeWidth={1} />}
+        <rect x={x} y={y} width={w} height={h} rx={6} ry={6} fill="none" stroke="#a78bfa" strokeWidth={1} />
+        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis('📄 ' + (it.title || '정리 문서'), 13, 700, tw)}</text>
+        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(`정리 문서 · KAIROS ${it.model || ''}`, 10, 400, tw)}</text>
+        <g><title>크게 보기 · 인쇄</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
+          <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
+      </g>
+    }
     case 'memo': {   // 메모 — 채운 둥근 네모 + 줄마다 글(제목·목록 표·할 일 상자·인용 막대·코드)
       const [x, y, w, h] = it.rect, ml = memoLayout(it), ink0 = ink('#ff1f1f1f', true), fillC = it.fill ? cssColor(it.fill) : '#ffffff'
       return <g transform={T}>

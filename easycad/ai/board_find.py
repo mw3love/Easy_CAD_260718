@@ -20,7 +20,7 @@ MAX_TEXT = 2000        # 도형 하나 글 상한(자) — 긴 메모도 앞부�
 MIN_SCORE = 0.42       # 이보다 낮은 뜻 점수는 「관련 없음」(qwen 실측: 정답 최저 0.43, 오답은 대부분 0.40 아래)
 NEAR_TOP = 0.18        # 1등보다 이만큼 넘게 낮으면 뺌(오답이 0.43~0.48까지 올 때가 있어 — 「방송사 경영진」 1등 0.67 · 엉뚱한 2등 0.43)
 WORD_BONUS = 0.25      # 친 낱말이 모두 들어 있으면 더함
-KIND_NAME = {"memo": "메모", "text": "글", "table": "표", "web": "웹 카드", "frame": "프레임", "sarrow": "화살표", "arrow": "화살표",
+KIND_NAME = {"doc": "정리 문서", "memo": "메모", "text": "글", "table": "표", "web": "웹 카드", "frame": "프레임", "sarrow": "화살표", "arrow": "화살표",
              "rect": "상자", "ellipse": "원", "symbol": "심볼", "line": "선", "polygon": "다각형", "titleblock": "표제란"}
 
 
@@ -41,6 +41,9 @@ def item_text(it: dict) -> str:
         out += [str(it.get("title", "")), str(it.get("desc", "")), str(it.get("url", ""))]
     if t == "frame":
         out.append(str(it.get("name", "")))
+    if t == "doc":   # 정리 문서 카드(「정리해 줘」 ①) — 제목 + 문서 글
+        from easycad.ai.board_report import plain_text
+        out += [str(it.get("title", "")), plain_text(str(it.get("html", "")), MAX_TEXT)]
     if t == "titleblock" and isinstance(it.get("fields"), dict):
         out += [str(v) for v in it["fields"].values()]
     return "\n".join(s.strip() for s in out if s and s.strip())[:MAX_TEXT]

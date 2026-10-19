@@ -13,7 +13,7 @@ export const SIDES = ['t', 'r', 'b', 'l']   // `_shape_ports` 차례(상·우·�
 export const OPP = { t: 'b', b: 't', l: 'r', r: 'l' }
 
 // 화살표가 붙는 도형인가(`_is_conn_host`) — 상자·원·심볼·이미지·표·닫힌 다각형·글
-export const ROUTE_BOX = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'web', 'memo'])   // `_ROUTE_BOX_TYPES`(길 찾기 장애물·연결 상자)
+export const ROUTE_BOX = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'web', 'memo', 'doc'])   // `_ROUTE_BOX_TYPES`(길 찾기 장애물·연결 상자)
 export const isConnHost = it => !!it && (ROUTE_BOX.has(it.type) || (it.type === 'polygon' && it.closed) || it.type === 'text')
 // 화살표 끝이 붙어 따라다닐 수 있는 것 = 위 도형 + 펜 궤적(데스크톱 `_conn_paths` — 양 끝 포트·궤적 어디든, 지속 연결 됨)
 export const isBindHost = it => isConnHost(it) || it?.type === 'path'

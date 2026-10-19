@@ -5,6 +5,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { flushSync } from 'react-dom'
 import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr } from './render.jsx'
 import { DOC_NAME, boardMembership, drawOrder, itemBounds } from './doc.js'
+import { docText } from './find.jsx'
 import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
@@ -46,7 +47,7 @@ const INK = '#ff1f1f1f'   // 새로 그리는 선·글 기본색(밝은 칠판)
 // 다른 사람 색 — 접속 id로 늘 같은 색(테두리·이름표)
 const PERSON_COLORS = ['#e8590c', '#7048e8', '#0c8599', '#d6336c', '#2f9e44', '#1971c2']
 const personColor = id => PERSON_COLORS[[...String(id)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % PERSON_COLORS.length]
-const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web', 'memo', 'legend'])
+const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web', 'memo', 'legend', 'doc'])
 
 // 글 상자 크기(아이템 안 단위) — 그릴 때와 같은 재기, 아이템 객체마다 한 번
 const _tb = new WeakMap()
@@ -81,7 +82,7 @@ const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0]
 // 뜬 대화창 폭(좁은 창 — main.jsx가 칠판 칸에 `--mb-right-inset`으로 적음) — 「다 보기」·프레임으로 가기·AI 답 자리는 그만큼 오른쪽을 뺌(2026-10-19)
 export const rightInset = el => (el ? parseFloat(getComputedStyle(el).getPropertyValue('--mb-right-inset')) || 0 : 0)
 
-export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onHelp, marks = [], readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
+export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onHelp, onAsk, marks = [], readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -144,7 +145,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const [x, y, w, h] = localRect(it), s = it.scale || 1
       for (const [k, px, py, c] of [['tl', x, y, 'nwse-resize'], ['tr', x + w, y, 'nesw-resize'], ['br', x + w, y + h, 'nwse-resize'], ['bl', x, y + h, 'nesw-resize']]) out.push({ key: k, p: toScene(it, { x: px, y: py }), cursor: c })
       const g = (HANDLE * 1.6) / z / s
-      if (it.type !== 'frame' && it.type !== 'web') out.push({ key: 'rot', p: toScene(it, { x: x - g, y: y - g }), cursor: 'grab', round: true })   // 좌상단 대각(데스크톱 `_box_rot_center`) — 프레임은 안 돌림
+      if (it.type !== 'frame' && it.type !== 'web' && it.type !== 'doc') out.push({ key: 'rot', p: toScene(it, { x: x - g, y: y - g }), cursor: 'grab', round: true })   // 좌상단 대각(데스크톱 `_box_rot_center`) — 프레임은 안 돌림
     } else if (it.type === 'text') {
       const b = textBox(it), g = (HANDLE * 1.6) / z / (it.scale || 1)
       out.push({ key: 'scale', p: toScene(it, { x: b.w, y: b.h }), cursor: 'nwse-resize' })
@@ -235,7 +236,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (i >= 0) { const [ax, ay] = cs[(i + 2) % 4]; st.current = { ...st.current, kind: 'mscale', A: { x: ax, y: ay }, box: mb, start: p, orig: m.items, ids: new Set(movingSet(R.current.sel)) }; return }
     }
     const lk = frameLockAt(p); if (lk) { setLoose(l => (l === lk._id ? null : lk._id)); return }   // 이름표 옆 자물쇠 — 잠깐 틀만
-    const wo = webOpenAt(p); if (wo) { window.open(wo.url, '_blank', 'noopener'); return }   // 웹 카드 오른쪽 위 ↗ = 새 탭
+    const wo = webOpenAt(p); if (wo) { if (wo.type === 'doc') openDoc(wo); else window.open(wo.url, '_blank', 'noopener'); return }   // 웹 카드 오른쪽 위 ↗ = 새 탭, 정리 문서 ↗ = 크게 보기
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) { const u = memoLinkHit(p); if (u) { window.open(u, '_blank', 'noopener'); return } }   // 메모 속 주소 Ctrl+클릭 = 새 탭(그냥 클릭은 고르기·고치기 — 2026-10-18 사용자 선택)
     // 줄을 고른 채 Shift·Ctrl+클릭은 손잡이가 아니라 줄 글자 위여도 같음(2026-10-18 사용자: 글자 위를 눌러 고른 것이 다 풀렸음 — 노션은 블록 아무 데나)
     const mh = memoHandleHit(p) || ((e.shiftKey || e.ctrlKey || e.metaKey) && lineSel ? (hv => (hv && hv.it._id === lineSel.id ? hv : null))(memoRowAt(p, 0)) : null)
@@ -758,6 +759,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       for (const L of it.labels || []) if (L.text?.trim()) out.push(L.text)
       if (it.type === 'table') { const t = (it.cells || []).map(r => r.filter(Boolean).join(' | ')).filter(Boolean).join('\n'); if (t) out.push(t) }
       if (it.type === 'memo') { const t = memoText(it.lines); if (t.trim()) out.push(t) }
+      if (it.type === 'doc') out.push(`[정리 문서] ${it.title || ''}\n${docText(it.html)}`)   // 정리 문서도 근거·재료로
     }
     return out
   }
@@ -772,6 +774,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 웹 검색 답(§8 항목61 ② 담는 법, 2026-10-19) = 요약 메모 + 오른쪽에 출처 웹 카드(본문에 쓰인 번호만, 제목 앞 [n], 가벼운 제목 카드 — 칸 안 페이지 없음) + 메모 → 카드 화살표, 한 묶음.
   // 「어디서 왔는지」가 칠판 위 선으로 보이게(회사 KAIROS 웹은 답과 출처가 따로 놂). 출처가 없으면 메모 하나(cardItem)
   function cardItems(msg, x, y, z) {
+    if (msg.html) return [docItem(msg, x, y, z)]   // 정리 문서 = 문서 카드 하나
     const memo = cardItem(msg, x, y, z), src = msg.sources || []
     if (msg.refs?.length) return boardRefItems(memo, msg.refs, z)
     if (!src.length) return [memo]
@@ -913,6 +916,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const b = R.current.model.items.find(it => it.chat_at === at)
     return b ? showItem(b._id) : false
   }
+  // 정리 문서(「정리해 줘」 ①) — 크게 보기 = 새 탭에 그 HTML(인쇄·PDF는 그 탭에서 Ctrl+P), 카드 = A4 비율(폭 397 = 문서 폭 794의 절반)
+  function openDoc(it) { const u = URL.createObjectURL(new Blob([it.html || ''], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
+  const DOC_W = 397
+  function docItem(msg, x, y, z) { return base([x, y], { type: 'doc', rect: [0, 0, DOC_W, WEB_HEAD + Math.round(DOC_W * 1.414)], title: msg.title || '정리 문서', html: msg.html, model: msg.model || '', chat_at: msg.at, z }) }
   // 「칠판에서」 답(§8 항목61 ③-2) = 메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(메모 쪽 변 → 근거 쪽 변, 가까운 포트끼리). 근거 도형은 제자리 그대로 — 메모와 화살표만 한 묶음
   function boardRefItems(memo, refs, z) {
     const items = R.current.model.items, hosts = refs.map(r => items.find(it => it._id === r.uid)).filter(it => it && isConnHost(it))
@@ -1100,6 +1107,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (lb) { if (!guardEdit(lb.it._id)) return; setSel([lb.it._id]); setEditing({ id: lb.it._id, kind: 'alabel', i: lb.i, at }); return }
     const hit = topHit(hitPool(), p, HIT_PX / R.current.cam.z, textBox)
     if (!hit || hit.locked) return
+    if (hit.type === 'doc') { setSel([hit._id]); openDoc(hit); return }   // 정리 문서 두 번 누르기 = 크게 보기(고치기는 대화창에 말로)
     if (hit.type !== 'web' && !guardEdit(hit._id)) return
     if (hit.type === 'frame') { const b = frameTagBox(hit); if (p.y <= b.y + b.h + 2 / R.current.cam.z) { setSel([hit._id]); setTagEdit(hit._id) } return }   // 이름표 = 그 자리에서 이름 고치기
     if (hit.type === 'memo') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'memo', at }); return }
@@ -1416,7 +1424,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (isYoutube(it)) playYoutube(it._id)
     setStatus(isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
   }
-  const webOpenAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'web') continue
+  const webOpenAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'web' && it.type !== 'doc') continue
     const q = toLocal(it, p), b = openBtnRect(it), pad = 2 / z; if (q.x >= b.x - pad && q.x <= b.x + b.w + pad && q.y >= b.y - pad && q.y <= b.y + b.h + pad) return it } return null }
   // 범례(2026-10-19 사용자: 표 모양 · 자동 갱신 · 「표」 버튼 안) — 줄은 commit이 도면에서 다시 모음, 사람이 적는 건 이름뿐
   function insertLegend() {
@@ -1532,7 +1540,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           {visible.map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
             : it._id === editingId && it.type === 'memo' ? <Item key={it._id} it={{ ...it, lines: [] }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />   // 고치는 메모 = 바탕만(흐린 글자가 투명한 채움 사이로 잔상처럼 비쳤음 — 2026-10-18 사용자)
             : it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
-            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
+            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
           {pend.map(q => { const w = 2 * MEMO.W + 72, h = 240, fs = 14 / z   // 회의록 만드는 중 — 놓을 자리에 점선 틀(그리는 과정 보이기)
@@ -1615,10 +1623,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', '', act(wrapFrame)])
           out.push('-', ['내보내기…', '', act(() => onExportSel?.())])
+          if (onAsk) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
         }
         if (clip.current?.items?.length) { if (has) out.push('-'); out.push(['붙여넣기', 'Ctrl+V', act(paste)]) }
         if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))])
           if (m.items.some(it => it.locked)) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked ? { ...it, locked: false } : it)), [], '잠금 해제'))])
+          if (onAsk && m.items.length) out.push('-', ['칠판 전체 정리 문서 만들기 (KAIROS)', '', act(() => onAsk('이 칠판 전체를 정리한 문서 한 장으로 만들어 줘', 'report'))])
           if (onHelp) out.push('-', ['글쇠 도움말', 'F1', act(onHelp)]) }
         return out })()} />}
       {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))

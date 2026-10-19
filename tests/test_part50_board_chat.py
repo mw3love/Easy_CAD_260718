@@ -111,7 +111,8 @@ def test_guess_kind_search_words_but_board_text_stays_chat():
     assert board_chat.guess_kind("최신 ATSC 3.0 동향") == "search"
     assert board_chat.guess_kind("PTP가 뭐야") == "chat"
     assert board_chat.guess_kind("송신소 점검 순서 알려줘") == "chat"
-    assert board_chat.guess_kind("최근 이 메모 정리해 줘", has_context=True) == "chat"   # 칠판에서 고른 글을 다루는 말
+    assert board_chat.guess_kind("최근 이 메모 요약해 줘", has_context=True) == "chat"   # 칠판에서 고른 글을 다루는 말
+    assert board_chat.guess_kind("최근 이 메모 정리해 줘", has_context=True) == "report"   # 「정리해 줘」 = 정리 문서(2026-10-19 사용자)
 
 
 def test_cited_sources_keeps_only_used_numbers_with_titles():

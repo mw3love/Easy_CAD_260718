@@ -5,6 +5,9 @@ import { useEffect, useRef, useState } from 'react'
 import { DOC_NAME } from './doc.js'
 import { memoText } from './memo.js'
 
+// 정리 문서 HTML → 쉬운 글(찾기·대화 근거) — 서버 `board_report.plain_text`와 같은 뜻
+export const docText = html => { if (!html) return ''; try { const d = new DOMParser().parseFromString(html, 'text/html'); d.querySelectorAll('style,script').forEach(n => n.remove()); return (d.body?.innerText || d.body?.textContent || '').replace(/[ \t]+/g, ' ').trim().slice(0, 4000) } catch { return '' } }
+
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', group: 'var(--mb-group)' }
 const KIND = { memo: '메모', text: '글', table: '표', web: '웹 카드', frame: '프레임', sarrow: '화살표', arrow: '화살표', rect: '상자', ellipse: '원', symbol: '심볼', line: '선', polygon: '다각형', titleblock: '표제란' }
 
@@ -18,6 +21,7 @@ export function itemText(it) {
   if (it.type === 'table') for (const row of it.cells || []) out.push(row.filter(Boolean).join(' | '))
   if (it.type === 'web') out.push(it.title || '', it.desc || '', it.url || '')
   if (it.type === 'frame') out.push(it.name || '')
+  if (it.type === 'doc') out.push(it.title || '', docText(it.html))
   if (it.type === 'titleblock' && it.fields) out.push(...Object.values(it.fields).map(String))
   return out.map(s => String(s).trim()).filter(Boolean).join('\n')
 }
