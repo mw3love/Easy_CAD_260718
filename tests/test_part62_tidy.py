@@ -30,6 +30,16 @@ def test_guess_kind_tidy_vs_report():
     assert board_chat.guess_kind("송신기 출력 몇이야") == "chat"
 
 
+def test_guess_kind_report_needs_board_material():
+    """「○○ 정리해 줘」 — 주제가 붙고 고른 게 없으면 정리 문서가 아니라 보통 짐작(2026-10-19 사용자 선택)."""
+    for q in ("이거 정리해 줘", "칠판 내용 다 정리해 줘", "지금까지 모은 것 깔끔하게 정리해 주세요", "송신소 점검 결과 보고서로 정리해 줘"):
+        assert board_chat.guess_kind(q) == "report", q
+    assert board_chat.guess_kind("송신소 정전 대비 점검 순서 정리해줘 목록으로") == "chat"
+    assert board_chat.guess_kind("지난번 송신기 회의 정리해 줘") == "board"
+    assert board_chat.guess_kind("오늘 KBS 뉴스 정리해 줘") == "search"
+    assert board_chat.guess_kind("송신소 점검 순서 정리해 줘", has_context=True) == "report"   # 고른 것이 있으면 그것으로 문서
+
+
 def test_tidy_words_same_as_web():
     """칠판이 조각 목록을 같이 보낼지 정하는 말(`tidy.js` TIDY_RE)과 서버가 짐작하는 말이 같아야 한다."""
     js = open(os.path.join(ROOT, "web", "src", "next", "tidy.js"), encoding="utf-8").read()

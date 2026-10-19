@@ -38,6 +38,16 @@ _REPORT_WORDS = re.compile(r"정리해\s*(줘|주세요|봐)|정리\s*(문서|�
 TIDY_WORDS = r"정돈|분류해|묶어\s*(줘|주세요|봐|서|놓)|모아\s*(줘|주세요|놓|서)|주제별|종류별|그룹(으로|별|지어)|끼리\s*(묶|모아)|레고"
 _TIDY_WORDS = re.compile(TIDY_WORDS)
 _DOC_WORDS = re.compile(r"문서|보고서|인포그래픽|브리핑|한\s*장|인쇄")
+# 「○○ 정리해 줘」처럼 칠판에 없는 주제가 붙으면 정리 문서가 아니라 보통 짐작으로(2026-10-19 사용자 선택 — 「송신소 정전 점검 순서 정리해줘」가
+# 칠판의 엉뚱한 자료로 「0건」 빈 틀 문서가 됐음). 그냥 「정리해 줘」·「이거·칠판 정리해 줘」·고른 것이 있을 때·문서 말(보고서·한 장…)이 있으면 그대로 정리 문서
+_REPORT_PLAIN = re.compile(r"정리해\s*(줘|주세요|봐)")
+_BOARD_REF = re.compile(r"이것들|이거|이것|이걸|이게|칠판|여기|위에?|지금까지|고른\s*것|모은\s*것|붙인\s*것|내용|자료|전부|모두|다|좀|싹|깔끔하게|한\s*번|간단히|짧게|잘")
+
+
+def _has_topic(text: str) -> bool:
+    """「정리해 줘」 말과 칠판을 가리키는 말·꾸밈말을 빼고도 낱말이 남으면 주제가 있는 것."""
+    rest = _BOARD_REF.sub(" ", _REPORT_PLAIN.sub(" ", text))
+    return len(re.sub(r"[^\w]|_", "", rest)) >= 2
 _NO_SEARCH = re.compile(r"칠판에서 고른|이 (메모|글|카드)|위 (내용|글)|요약해|정리해|번역|고쳐|다듬")
 
 
@@ -47,7 +57,7 @@ def guess_kind(text: str, has_context: bool = False) -> str:
     t = text or ""
     if _TIDY_WORDS.search(t) and not _DOC_WORDS.search(t):
         return "tidy"
-    if _REPORT_WORDS.search(t):
+    if _REPORT_WORDS.search(t) and (has_context or _DOC_WORDS.search(t) or not _has_topic(t)):
         return "report"
     if _BOARD_WORDS.search(t):
         return "board"
