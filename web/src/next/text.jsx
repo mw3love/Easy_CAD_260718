@@ -30,6 +30,7 @@ const Finish = Extension.create({
     const armed = () => !!o.isArmed?.()   // 표 칸 대기 중(보이지 않게 미리 띄운 편집기) — Esc·Enter 등은 칠판 글쇠가 맡음
     const keys = { Escape: () => { if (armed()) return false; (o.onCancel || o.onDone)(); return true }, 'Mod-Enter': () => { if (armed()) return false; o.onDone(); return true } }
     if (o.onMove) Object.assign(keys, { Enter: () => { if (!armed()) o.onMove([1, 0]); return true }, Tab: () => { if (!armed()) o.onMove([0, 1]); return true }, 'Shift-Tab': () => { if (!armed()) o.onMove([0, -1]); return true } })   // 표 칸(데스크톱 `_CellEditor`)
+    else keys.Enter = () => armed()   // 도형 대기 중 Enter = 칠판이 「있는 글 이어 고치기」로 받음(빈 줄이 들어가 새로 쓰기로 바뀌던 것 — 2026-10-19 시험)
     return keys
   },
   addOptions() { return { onDone: () => {}, onCancel: null, onMove: null, isArmed: null } },
@@ -37,6 +38,8 @@ const Finish = Extension.create({
 
 // 바로 포커스 + 커서를 끝으로 — TipTap focus 명령은 다음 그리기 때 돌아서(창이 가려지면 0.6초까지 늦음 — 2026-10-18 실측) 두 번 누르자마자 친 글자가 빠질 수 있음
 const focusNow = editor => { try { editor.commands.setTextSelection(editor.state.doc.content.size); editor.view.focus() } catch { editor.commands.focus('end') } }
+// 대기 편집기가 포커스를 가져가도 되나 — 다른 입력 칸(대화창·속성 카드 등)에서 치는 중이면 뺏지 않음(고른 것이 저절로 바뀔 때 대화가 끊기지 않게)
+const mayTake = host => { const a = document.activeElement; return !a || a === document.body || !!host?.contains(a) || !(/INPUT|TEXTAREA|SELECT/.test(a.tagName) || a.isContentEditable) }
 // 두 번 누른 자리(화면 px)에 커서 — 글 밖이면 그대로(끝)
 const caretAt = (editor, at) => { if (!at) return; try { const hit = editor.view.posAtCoords({ left: at.x, top: at.y }); if (hit) editor.commands.setTextSelection(hit.pos) } catch { /* 없어도 그만 */ } }
 
@@ -66,7 +69,7 @@ export function TextEditor({ spec, onDone }) {
       editorProps: { attributes: { spellcheck: 'false' }, handlePaste: () => !!sp.current.armed },   // 대기 중 Ctrl+V = 칠판 붙여넣기(편집기에 글이 숨어 들어가지 않게)
     })
     ed.current = editor
-    focusNow(editor); if (!spec.armed) caretAt(editor, spec.at)   // 기본 autofocus는 한 박자 늦어 두 번 누르자마자 친 글자가 빠질 수 있음 — 바로
+    if (!spec.armed || mayTake(host.current)) focusNow(editor); if (!spec.armed) caretAt(editor, spec.at)   // 기본 autofocus는 한 박자 늦어 두 번 누르자마자 친 글자가 빠질 수 있음 — 바로
     if (spec.onChange) editor.on('update', () => sp.current.onChange?.(richTextToRuns(editor.getJSON(), sp.current.weight || 400)))   // 치는 동안 칠판에 바로(왼쪽 위 라벨 상자 높이)
     editor.on('update', () => { if (sp.current.armed && editor.getText()) sp.current.onArm?.() })   // 대기 중 글이 들어오면(띄어쓰기 등) 바로 고치기로
     if (spec.pxFor) editor.on('update', () => setPx(sp.current.pxFor(editor.getText())))   // 치는 동안 글자 크기(표 자동 크기 칸 — 칸에 맞춰 줄어듦)
@@ -78,16 +81,19 @@ export function TextEditor({ spec, onDone }) {
     host.current.addEventListener('keydown', e => { if (e === escWhileEditing) e.stopPropagation() })
     const onDown = e => { if (e.button === 0 && host.current && !host.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }   // 「글자」 카드를 누를 땐 계속
     const tm = setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)   // 휠·오른쪽 바깥 누르기 = 화면 이동(끝내지 않음)
+    // 대기 중 칠판을 누르면 포커스가 빠짐(이미 고른 도형을 다시 눌러 끌 때 등) — 손을 떼면 다시 받음(첫 글자·한글 입력기가 빠지지 않게)
+    const onUp = () => { if (sp.current.armed && !host.current?.contains(document.activeElement) && mayTake(host.current)) focusNow(editor) }   // 버튼을 누른 뒤도(입력 칸만 빼고)
+    window.addEventListener('pointerup', onUp)
     // 고치는 중 휠 = 칠판 확대(메모와 같게 — 2026-10-18 사용자)
     const el = host.current, onWheel = e => { if (!sp.current.onWheel) return; e.preventDefault(); e.stopPropagation(); sp.current.onWheel(e) }
     el.addEventListener('wheel', onWheel, { passive: false })
-    return () => { clearTimeout(tm); window.removeEventListener('pointerdown', onDown, true); el.removeEventListener('wheel', onWheel); finish(); spec.onReady?.(null); editor.destroy() }
+    return () => { clearTimeout(tm); window.removeEventListener('pointerdown', onDown, true); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); finish(); spec.onReady?.(null); editor.destroy() }
   }, [])   // eslint-disable-line
   const [px, setPx] = useState(spec.px)
   const wasArmed = useRef(!!spec.armed)
   useLayoutEffect(() => {   // 표 칸 대기(엑셀처럼 칸을 고르면 보이지 않는 편집기가 미리 포커스 — 첫 키부터 한글 입력기가 켜져 있게, 2026-10-18 사용자: 「ㅎ」이 「g」로 들어감)
     const e = ed.current; if (!e) return
-    if (spec.armed) { done.current = false; if (e.getText()) e.commands.setContent('', { emitUpdate: false }); focusNow(e) }
+    if (spec.armed) { done.current = false; if (e.getText()) e.commands.setContent('', { emitUpdate: false }); if (mayTake(host.current)) focusNow(e) }
     else if (wasArmed.current) {   // 대기 → 고치기: 바로 친 글(fresh)은 그대로 이어 받고, Enter·F2·두 번 누르기는 있는 글을 불러옴
       if (!spec.fresh) { e.commands.setContent(runsToRichText(spec.text || '', spec.runs, spec.weight && spec.weight !== 400 ? spec.weight : null), { emitUpdate: false }); setPx(spec.px) }
       if (!e.view.hasFocus()) focusNow(e)

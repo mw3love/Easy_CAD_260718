@@ -1076,16 +1076,23 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (next.label === undefined) delete next.label
     commit(m.items.map(x => (x._id === it._id ? next : x)), [it._id], '글 고침')
   }
-  function editSpec() {
-    const it = editing && byId.get(editing.id); if (!it) return null
+  // 도형 하나를 고른 채 = 보이지 않는 편집기 대기(표 칸과 같은 방식 — 2026-10-19 사용자: 고르고 바로 치면 글, 기존 글은 새로 씀·숫자·대문자도 글로)
+  function armTarget() {
+    const ids = R.current.sel; if (readOnly || R.current.editing || cellSel || R.current.tool !== 'select' || ids.length !== 1) return null
+    const it = R.current.model.items.find(x => x._id === ids[0]); if (!it || it.locked || R.current.others?.some(o => o.edit === it._id)) return null   // 남이 고치는 중이면 두 번 누르기(부드러운 잠금)로만
+    const kind = it.type === 'text' ? 'text' : ['rect', 'ellipse', 'symbol'].includes(it.type) || (it.type === 'polygon' && it.closed) ? 'label' : null
+    return kind && { id: it._id, kind, armed: true }
+  }
+  function editSpec(ed = editing) {
+    const it = ed && byId.get(ed.id); if (!it) return null
     const ob = onBoard[items.indexOf(it)], col = c => ink(c || '#ff1f1f1f', ob), bg = ob ? 'rgba(255,255,255,.9)' : 'var(--mb-editbg)'   // 글 고치는 칸도 칠판과 같은 잉크·바탕
-    if (editing.kind === 'text') {
+    if (ed.kind === 'text') {
       const o = scr(toScene(it, { x: 0, y: 0 }))
       return { left: o.x, top: o.y, px: (it.font || 12) * PT * (it.scale || 1), zoom: cam.z, family: it.family ? 'board' : 'app', weight: it.weight ?? (it.bold ? 700 : 400),
         color: col(it.color), bg, rotation: it.rotation || 0, origin: scr(toScene(it, { x: it.origin?.[0] || 0, y: it.origin?.[1] || 0 })), text: it.text, runs: it.runs }
     }
-    if (editing.kind === 'alabel') {
-      const b = arrowLabelBoxes(it)[editing.i], L = labelsOf(it)[editing.i]; if (!b || !L) return null
+    if (ed.kind === 'alabel') {
+      const b = arrowLabelBoxes(it)[ed.i], L = labelsOf(it)[ed.i]; if (!b || !L) return null
       return { center: scr(toScene(it, b.a)), px: (L.font || 16) * PT * (it.scale || 1), zoom: cam.z, family: L.family ? 'board' : 'app', weight: 400, color: col(L.color || it.color), bg, align: 'center', text: L.text || '', runs: L.runs }
     }
     const L = it.label || {}
@@ -1104,7 +1111,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const onKey = e => {
       if (readOnly || R.current.editing || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '')) return
       const m = R.current.model, ids = R.current.sel, mod = e.ctrlKey || e.metaKey, k = e.key
-      if (k === ' ') { st.current.space = true; return }
+      if (k === ' ') { st.current.space = true; if (armTarget()) e.preventDefault(); return }   // Space+끌기 = 화면 이동 — 대기 편집기에 빈칸이 들어가 고치기로 바뀌지 않게
       const act = (f, label) => { e.preventDefault(); f(label) }
       if (mod && k.toLowerCase() === 'z' && !e.shiftKey) return act(undo)
       if (mod && (k.toLowerCase() === 'y' || (k.toLowerCase() === 'z' && e.shiftKey))) return act(redo)
@@ -1140,6 +1147,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (dir) return act(() => { const t = m.items.find(x => x._id === cellSel.id); if (!t) return   // 칸 고르기 옮기기(엑셀) — Shift = 넓히기
           const cl = (v, n) => Math.max(0, Math.min(n - 1, v))
           setCellSel(cs => (e.shiftKey ? { ...cs, r1: cl(cs.r1 + dir[0], t.rows), c1: cl(cs.c1 + dir[1], t.cols) } : { id: cs.id, r0: cl(r0 + dir[0], t.rows), c0: cl(c0 + dir[1], t.cols), r1: cl(r0 + dir[0], t.rows), c1: cl(c0 + dir[1], t.cols) })) })
+      }
+      const ta = armTarget()   // 도형 하나 고른 채 — 글자를 치면 바로 그 글로 새로 씀(도구 숫자·Shift+H/V보다 먼저), Enter·F2 = 있는 글 이어 고치기
+      if (ta && !mod && !e.altKey) {
+        if (k === 'Enter' || k === 'F2') return act(() => setEditing({ id: ta.id, kind: ta.kind }))
+        if (k.length === 1 || k === 'Process' || e.keyCode === 229) {   // 기본 동작은 막지 않음 — 대기 편집기가 이 글쇠를 받음, 여기선 보이게만
+          const ne = { id: ta.id, kind: ta.kind, fresh: true }; R.current.editing = ne; flushSync(() => setEditing(ne)); return }
       }
       const TOOL_KEYS = { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen', 7: 'badge' }   // 데스크톱 `SHORTCUT_DEFS` 도구 1~7
       if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[k]) return act(() => setTool(TOOL_KEYS[k]))
@@ -1455,7 +1468,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           ['가로 첫 간격 반복', act(() => distributeSel('x', true)), alignTargets().length < 3], ['세로 첫 간격 반복', act(() => distributeSel('y', true)), alignTargets().length < 3]]])
         if (has) {
           out.push('-', ['맨 앞으로 보내기', 'Ctrl+]', act(() => commit(zOrder(m.items, ids, true), ids, '맨 앞으로'))], ['맨 뒤로 보내기', 'Ctrl+[', act(() => commit(zOrder(m.items, ids, false), ids, '맨 뒤로'))],
-            ['잠금 전환', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))])
+            ['잠금 전환', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))],
+            ['좌우 반전', 'Shift+H', act(() => commit(mirror(m.items, ids, true, textBox), ids, '반전'))], ['상하 반전', 'Shift+V', act(() => commit(mirror(m.items, ids, false, textBox), ids, '반전'))])   // 글 도형을 고른 채 Shift+H/V는 글로 들어가므로 메뉴에도(2026-10-19)
           if (ids.length >= 2) out.push(['그룹', 'Ctrl+G', act(() => commit(groupItems(m.items, ids), ids, '묶음'))])
           if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
@@ -1489,8 +1503,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             armed: !!editing.armed, fresh: !!editing.fresh, at: editing.at, onPan: startPan, onWheel: wheelZoom, onArm: () => { const e = { id: editing.id, kind: 'cell', r: editing.r, c: editing.c, fresh: true }; R.current.editing = e; setEditing(e) } }} /> })(editing?.kind === 'cell' ? editing : !editing && cellSel && sel.length === 1 && sel[0] === cellSel.id ? { id: cellSel.id, kind: 'cell', r: cellRange(cellSel).r0, c: cellRange(cellSel).c0, armed: true } : null)}
       {editing?.kind === 'memo' && (() => { const it = byId.get(editing.id); if (!it) return null; const s = it.scale || 1, o = scr(toScene(it, { x: it.rect[0], y: it.rect[1] }))
         return <MemoEditor key={it._id} spec={{ left: o.x, top: o.y, width: it.rect[2] * s * cam.z, zoom: s * cam.z, fill: it.fill ? cssColor(it.fill) : '#fff', lines: it.lines, caret: editing.caret, at: editing.at, onChange: ls => liveMemo(it._id, ls), onWheel: wheelZoom, onPan: startPan }} onDone={finishMemo} /> })()}
-      {editing && editing.kind !== 'cell' && editing.kind !== 'memo' && (() => { const s = editSpec(); if (!s) return null
-        return <TextEditor key={editing.id} spec={{ ...s, onReady: setLiveEd, at: editing.at, onPan: startPan, onWheel: wheelZoom }} onDone={finishEdit} /> })()}
+      {(ed => { if (!ed) return null; const s = editSpec(ed); if (!s) return null   // armed = 도형만 고른 대기(보이지 않음) — 고치기와 같은 key라 같은 편집기가 그대로 이어 받음
+        return <TextEditor key={ed.id} spec={{ ...s, onReady: setLiveEd, at: ed.at, onPan: startPan, onWheel: wheelZoom, armed: !!ed.armed, fresh: !!ed.fresh,
+          onArm: () => { const ne = { id: ed.id, kind: ed.kind, fresh: true }; R.current.editing = ne; setEditing(ne) } }} onDone={finishEdit} /> })(editing ? (editing.kind !== 'cell' && editing.kind !== 'memo' ? editing : null) : armTarget())}
       {editing && liveEd && <FormatBar ed={liveEd} />}   {/* 드래그 꾸미기 막대(2026-10-19 — 옛 오른쪽 위 「글자」 카드 대신) */}
       {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
