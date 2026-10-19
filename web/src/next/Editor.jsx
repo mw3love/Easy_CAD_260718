@@ -974,7 +974,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const at = drop || freeSpot(view, boxes, W, h)
     const its = cardItems(msg, at.x, at.y, topZ(m.items) + 1)
     commit([...m.items, ...its], its.map(it => it._id), '칠판에 붙이기')
-    return true
+    return its.map(it => it._id)   // 고른 채로 둠(어디 붙었나 보이게) — 대화창은 이 고름을 다음 질문에 싣지 않음(chat.jsx `skipSel`)
   }
   // 이미 붙인 카드로 — 고르고 화면 가운데로. 없으면(지웠으면) false
   function showCard(at) {
@@ -1085,9 +1085,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       setOverlay(o => ({ ...o, guides: null, mdrop: null }))
       const tg = intoMemo(e)
       if (tg) { setLive(null); const add = structuredClone(protos[0].lines || [])
-        commit(m.items.map(x => (x._id === tg.id ? { ...x, lines: [...x.lines.slice(0, tg.to), ...add, ...x.lines.slice(tg.to)] } : x)), [tg.id], '메모에 붙이기'); onPlaced?.(); return }
+        commit(m.items.map(x => (x._id === tg.id ? { ...x, lines: [...x.lines.slice(0, tg.to), ...add, ...x.lines.slice(tg.to)] } : x)), [tg.id], '메모에 붙이기'); onPlaced?.([tg.id]); return }
       last = place(e)
-      if (last.over) { commit([...m.items, ...last.its], last.its.map(it => it._id), given ? '칠판에 붙이기' : '도형'); onPlaced?.() } else setLive(null)
+      if (last.over) { commit([...m.items, ...last.its], last.its.map(it => it._id), given ? '칠판에 붙이기' : '도형'); onPlaced?.(last.its.map(it => it._id)) } else setLive(null)
     }
     document.body.style.cursor = 'copy'; st.current = { ...st.current, kind: 'pdrag' }; setHp(null)   // 끄는 동안 포트점 예고 끔(데스크톱도 드래그 중 억제)
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)

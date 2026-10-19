@@ -79,5 +79,6 @@ export const api = {
   getInvite: async () => { try { const r = await fetch(`/api/invite/${B}`, { cache: 'no-store' }); return r.ok ? await r.json() : null } catch { return null } },
   setInvite: async (on, renew = false) => { const r = await post(`/api/invite/${B}`, { on, renew }); return r.ok ? (await r.json()).token : null },
   join: async token => { try { return (await post('/api/join', { board: B, token })).ok } catch { return false } },
+  boards: async () => { try { const r = await fetch('/api/boards', { cache: 'no-store' }); return r.ok ? (await r.json()).boards || [] : [] } catch { return [] } },   // 칠판 목록(최근 고친 것부터) — 위 막대 「칠판」
   pub: async (token, rev = -1, wait = 0) => { const r = await fetch(`/api/pub/${token}?rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); if (r.status === 204) return { same: true }; if (!r.ok) return { gone: true }; const d = parseDoc(await r.text()); return { doc: d } },
 }

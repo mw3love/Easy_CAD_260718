@@ -48,6 +48,8 @@ test('「지난번 …」 → 📌 칠판에서 · 근거 고리 = 그 메모로
   await page.keyboard.type('지난번 송신기 문제 뭐였지?'); await page.keyboard.press('Enter')
   await expect(page.getByTestId('answer-kind')).toHaveText('📌 칠판에서')
   expect(seen[0].board).toBe(name)
+  await expect(page.getByRole('button', { name: '웹 검색으로 다시' })).toHaveCount(0)   // 평소엔 접혀 있음(2026-10-19)
+  await page.getByTestId('redo-menu').click()
   await expect(page.getByRole('button', { name: '웹 검색으로 다시' })).toBeVisible()
   await expect(page.getByRole('button', { name: '대화로 다시' })).toBeVisible()
   await page.getByTestId('answer-refs').getByRole('button').first().click()

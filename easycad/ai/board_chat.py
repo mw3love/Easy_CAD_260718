@@ -74,6 +74,14 @@ def cited_sources(content: str, raw: dict, keep_if_none: int = 3) -> list:
     return out
 
 
+def renumber_sources(content: str, sources: list) -> tuple:
+    """출처 번호를 1·2·3 차례로 다시 매김(본문 [n]도 같이) — 검색 모델은 찾은 결과 전체 번호를 써서 [1][6][10]처럼 띄엄띄엄 나왔다(2026-10-19 점검).
+    목록에 없는 번호([9] 등)는 그대로 둔다."""
+    new = {s["n"]: i + 1 for i, s in enumerate(sources)}
+    text = re.sub(r"\[(\d{1,2})\]", lambda m: f"[{new[int(m.group(1))]}]" if int(m.group(1)) in new else m.group(0), content or "")
+    return text, [{**s, "n": new[s["n"]]} for s in sources]
+
+
 MAX_TURNS = 40           # 보내는 앞 대화 상한(차례 수) — 오래된 것부터 버린다
 MAX_CONTEXT = 20_000     # 칠판에서 고른 글 상한(자)
 
@@ -129,7 +137,7 @@ def chat(api_key: str, history: list, *, model: str, context: str = "", kind: st
     out = {"content": content, "model": use, "elapsed": round(time.time() - t0, 1), "kind": kind}
     if search:
         raw = resp.model_dump() if hasattr(resp, "model_dump") else dict(getattr(resp, "__dict__", {}))
-        out["sources"] = cited_sources(content, raw)
+        out["content"], out["sources"] = renumber_sources(content, cited_sources(content, raw))
     if board:
         out["refs"] = cited_board(content, refs)
     return out

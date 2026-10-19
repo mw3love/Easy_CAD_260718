@@ -73,9 +73,10 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
   const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_KEY) || '' } catch { return '' } })
-  const box = useRef(null)
-  const sel = ed.current?.selTexts() || []   // eslint-disable-line react-hooks/exhaustive-deps
-  void selKey
+  const box = useRef(null), [redoAt, setRedoAt] = useState(null)   // redoAt = 「다시 ▾」를 펼친 답 차례
+  // 방금 칠판에 붙인 것은 어디 붙었나 보이게 고른 채로 남는데, 그대로 다음 질문에 실려 갔음(2026-10-19 점검) — 고름이 그대로인 동안은 안 실음
+  const [skipSel, setSkipSel] = useState('')
+  const sel = selKey && selKey === skipSel ? [] : ed.current?.selTexts() || []   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     fetch(LOG_URL, { cache: 'no-store' }).then(r => (r.status === 404 ? { messages: [] } : r.ok ? r.json() : Promise.reject(r)))
@@ -127,7 +128,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
   function pin(i) {
     const m = msgs[i]
     if (ed.current?.showCard(m.at)) return   // 이미 붙인 카드 → 그리로
-    if (ed.current?.pinCard(m)) update(msgs.map((x, j) => (j === i ? { ...x, pinned: true } : x)))
+    const ids = ed.current?.pinCard(m); if (ids) { setSkipSel(ids.join()); update(msgs.map((x, j) => (j === i ? { ...x, pinned: true } : x))) }
   }
   // 버튼을 6px 넘게 끌면 카드가 손에 붙어 칠판으로(팔레트 버튼과 같은 방식) — 놓은 자리에 붙음
   const dragged = useRef(false)
@@ -136,7 +137,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
     dragged.current = false   // 끌어 놓고 나면 버튼 위가 아니라 click이 안 올 수 있어 매번 처음부터
     const sx = e.clientX, sy = e.clientY, m = msgs[i]
     const move = ev => { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) <= 6) return; done(); dragged.current = true
-      ed.current?.dragCard(m, () => setMsgs(cur => { const next = cur.map((x, j) => (j === i ? { ...x, pinned: true } : x)); save(next); return next })) }
+      ed.current?.dragCard(m, ids => setSkipSel((ids || []).join()) || setMsgs(cur => { const next = cur.map((x, j) => (j === i ? { ...x, pinned: true } : x)); save(next); return next })) }
     const done = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', done) }
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', done)
   }
@@ -171,9 +172,13 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
             : <div key={i} style={css.ai}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                 <span data-testid="answer-kind" style={{ ...css.kind, ...(KINDS[m.kind] ? KINDS[m.kind][1] : null) }}>{(KINDS[m.kind] || KINDS.chat)[0]}</span>
-                {Object.entries(KINDS).filter(([k]) => k !== (m.kind || 'chat')).map(([k, [, , again, tip]]) =>
-                  <button key={k} style={css.link} disabled={!!busy} onClick={() => redoAs(i, k)} title={tip}>{again}</button>)}
+                {/* 다른 종류로 다시 — 링크 다섯 개가 답 위 두 줄을 차지해 「다시 ▾」 하나로 접음(2026-10-19 점검) */}
+                <button data-testid="redo-menu" style={css.link} disabled={!!busy} aria-expanded={redoAt === i} onClick={() => setRedoAt(r => (r === i ? null : i))} title="앱이 짐작한 종류가 틀렸으면 다른 종류로 다시 물어 이 답을 바꿔요">다시 ▾</button>
               </div>
+              {redoAt === i && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, margin: '2px 0 6px' }}>
+                {Object.entries(KINDS).filter(([k]) => k !== (m.kind || 'chat')).map(([k, [label, look, again, tip]]) =>
+                  <button key={k} aria-label={again} style={{ ...css.kind, ...look, border: 0, cursor: 'pointer' }} disabled={!!busy} onClick={() => { setRedoAt(null); redoAs(i, k) }} title={tip}>{label}</button>)}
+              </div>}
               <Answer text={m.content} />
               {m.html && <div data-testid="answer-doc" style={{ marginTop: 6 }}>   {/* 정리 문서 미리보기 — A4 폭 794px를 대화창 폭에 맞춰 줄임(스크립트 없는 iframe) */}
                 <div style={{ height: 300, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', cursor: 'zoom-in' }} title="크게 보기·인쇄" onClick={() => openHtml(m.html)}>

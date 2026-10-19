@@ -123,6 +123,13 @@ def test_cited_sources_keeps_only_used_numbers_with_titles():
     assert [s["n"] for s in board_chat.cited_sources("번호 없음", raw)] == [1, 2, 3]   # 번호가 없으면 앞 셋
 
 
+def test_renumber_sources_makes_numbers_sequential():
+    src = [{"n": 1, "url": "a"}, {"n": 6, "url": "b"}, {"n": 10, "url": "c"}]
+    text, out = board_chat.renumber_sources("흐림.[1][6][10] 우산.[6] 없는 번호[9]", src)
+    assert text == "흐림.[1][2][3] 우산.[2] 없는 번호[9]"
+    assert [(s["n"], s["url"]) for s in out] == [(1, "a"), (2, "b"), (3, "c")]
+
+
 def test_chat_search_switches_model_and_returns_sources():
     seen = {}
 
@@ -137,6 +144,6 @@ def test_chat_search_switches_model_and_returns_sources():
     out = board_chat.chat("k", [{"role": "user", "content": "오늘 뉴스 찾아줘"}], model="m-1", client=fake)
     assert seen["model"] == board_chat.SEARCH_MODEL and out["kind"] == "search" and out["model"] == board_chat.SEARCH_MODEL
     assert "출처 번호" in seen["messages"][0]["content"]
-    assert out["sources"] == [{"n": 2, "url": "https://y.kr/b", "title": "B", "date": ""}]
+    assert out["sources"] == [{"n": 1, "url": "https://y.kr/b", "title": "B", "date": ""}] and out["content"] == "요약이에요.[1]"   # 번호는 1부터 다시
     out = board_chat.chat("k", [{"role": "user", "content": "오늘 뉴스 찾아줘"}], model="m-1", kind="chat", client=fake)   # 대화창에서 바꿔 다시
     assert seen["model"] == "m-1" and out["kind"] == "chat" and "sources" not in out

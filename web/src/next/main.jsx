@@ -33,7 +33,7 @@ function useSize(ref) {
 const NARROW_W = 1440, Narrow = createContext(false)
 const Btn = ({ icon, label, onClick, title, on, disabled }) => { const narrow = useContext(Narrow); return (
   <button onClick={onClick} title={title || label} aria-label={label} disabled={disabled} aria-pressed={on || undefined} style={{ all: 'unset', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1,
-    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: narrow ? '4px 6px' : '4px 8px', borderRadius: 6, minWidth: narrow ? 26 : 40,
+    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: narrow ? '4px 4px' : '4px 8px', borderRadius: 6, minWidth: narrow ? 24 : 40,   // 좁은 창 옆 여백 6 → 4px: 「칠판」 버튼이 늘며 960px에서 상태 글이 0px로 눌렸음(2026-10-19)
     background: on ? 'rgba(218,119,86,.22)' : 'transparent', font: "500 11px 'Pretendard', sans-serif", color: C.ink }}
     onMouseEnter={e => { if (!disabled && !on) e.currentTarget.style.background = 'rgba(218,119,86,.12)' }} onMouseLeave={e => { e.currentTarget.style.background = on ? 'rgba(218,119,86,.22)' : 'transparent' }}>
     <span style={{ fontSize: 16, lineHeight: '18px' }}>{icon}</span>{!narrow && label}
@@ -78,6 +78,37 @@ function WebForm({ onInsert, onClose }) {
       <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', padding: '4px 10px', borderRadius: 6, color: C.muted }}>취소</button>
       <button onClick={go} style={{ all: 'unset', cursor: 'pointer', padding: '4px 12px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>넣기</button>
     </div>
+  </div>
+}
+
+// 칠판 고르기 — 새 칠판·최근 칠판(2026-10-19 점검: 주소창에 `?board=`를 직접 쳐야만 옮겨 갈 수 있었음). 옮겨 가기 = 그 주소로 다시 열기(칠판 이름은 주소가 정함)
+const TEST_BOARD = /^(claude|e2e)_/   // Claude·화면 시험이 만든 칠판은 목록에서 숨김
+const ago = s => { const d = Date.now() / 1000 - s; return d < 60 ? '방금' : d < 3600 ? `${Math.floor(d / 60)}분 전` : d < 86400 ? `${Math.floor(d / 3600)}시간 전` : `${Math.floor(d / 86400)}일 전` }
+function BoardForm({ onClose }) {
+  const [list, setList] = useState(null), [name, setName] = useState(''), [all, setAll] = useState(false)
+  useEffect(() => { api.boards().then(setList) }, [])
+  const goTo = n => { location.href = `${location.pathname}?board=${encodeURIComponent(n)}` }
+  const clean = name.trim().replace(/[^\w\-가-힣]/g, '').slice(0, 64), taken = !!list?.some(b => b.name === clean)
+  const make = () => { if (clean) goTo(clean) }
+  const shown = (list || []).filter(b => all || !TEST_BOARD.test(b.name)), hidden = (list || []).length - shown.length
+  return <div data-testid="board-form" onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') onClose() }} style={{ position: 'absolute', top: 48, left: 0, zIndex: 20, width: 280, background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 10, boxShadow: '0 4px 14px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 8, font: "400 12px 'Pretendard', sans-serif", color: C.ink }}>
+    <div style={{ font: "700 13px 'Pretendard', sans-serif" }}>칠판</div>
+    <div style={{ display: 'flex', gap: 6 }}>
+      <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="새 칠판 이름 (예: 송신소점검)" onKeyDown={e => { if (e.key === 'Enter') make() }}
+        style={{ flex: 1, minWidth: 0, height: 26, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 8px', font: 'inherit' }} />
+      <button disabled={!clean} onClick={make} style={{ all: 'unset', cursor: clean ? 'pointer' : 'default', opacity: clean ? 1 : 0.5, padding: '4px 10px', borderRadius: 6, background: '#da7756', color: '#fff', fontWeight: 600 }}>{taken ? '열기' : '만들기'}</button>
+    </div>
+    {clean && clean !== name.trim() && <span style={{ fontSize: 11, color: C.muted }}>이름은 「{clean}」(글자·숫자·_·- 만)</span>}
+    <span style={{ color: C.muted }}>최근 칠판</span>
+    <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', margin: '-4px -4px 0' }}>
+      {list === null ? <span style={{ color: C.muted, padding: 4 }}>불러오는 중…</span> : !shown.length ? <span style={{ color: C.muted, padding: 4 }}>아직 없어요</span>
+        : shown.map(b => <button key={b.name} data-testid="board-row" onClick={() => (b.name === DOC_NAME ? onClose() : goTo(b.name))}
+          style={{ all: 'unset', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'baseline', padding: '5px 4px', borderRadius: 6, background: b.name === DOC_NAME ? 'rgba(218,119,86,.18)' : 'transparent' }}
+          onMouseEnter={e => { if (b.name !== DOC_NAME) e.currentTarget.style.background = C.group }} onMouseLeave={e => { e.currentTarget.style.background = b.name === DOC_NAME ? 'rgba(218,119,86,.18)' : 'transparent' }}>
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: b.name === DOC_NAME ? 700 : 500 }}>{b.name}</span>
+          <span style={{ fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{b.items}개 · {ago(b.mtime)}</span></button>)}
+    </div>
+    {hidden > 0 && <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.muted }}><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} />시험 칠판 {hidden}개도 보기</label>}
   </div>
 }
 
@@ -192,7 +223,7 @@ function ShareForm({ onClose, people = [], me = '' }) {
 }
 
 function App() {
-  const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [webOpen, setWebOpen] = useState(false)
+  const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [webOpen, setWebOpen] = useState(false), [boardOpen, setBoardOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(() => { try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창)
   useEffect(() => { try { localStorage.setItem('mb-chat-open', chatOpen ? '1' : '0') } catch { /* 기억 못 해도 그만 */ } }, [chatOpen])
   const [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_W)   // 좁은 창 = 위 막대 아이콘만 + 대화창은 칠판 위에 뜸
@@ -223,10 +254,14 @@ function App() {
   // 서버 칠판을 다시 열면 이 브라우저에서 마지막에 보던 자리·배율로(없거나 못 읽으면 전체 맞추기). 파일·샘플은 늘 전체 맞추기
   const camKey = `mb.cam.${DOC_NAME}`, camReady = useRef(false)
   const savedCam = () => { try { const c = JSON.parse(localStorage.getItem(camKey)); return c && [c.x, c.y, c.z].every(Number.isFinite) && c.z > ZMIN ? c : null } catch { return null } }   // 최저 배율 = 아래 2% 버그로 저장된 값일 수 있음 → 전체 맞추기
+  // 기억한 자리에 도형이 하나도 안 보이면(다른 사람이 옮겼거나 빈 곳을 보다 닫음) 전체 맞추기 — 300%로 빈 칠판처럼 열렸음(2026-10-19 점검)
+  const camShowsAny = (c, items) => { const r = box.current?.getBoundingClientRect(); if (!r || r.width < 2) return true
+    const vx = -c.x / c.z, vy = -c.y / c.z, vw = (r.width - rightInset(box.current)) / c.z, vh = r.height / c.z
+    return items.some(it => { const b = docBounds([it]); return b && b.x < vx + vw && b.x + b.w > vx && b.y < vy + vh && b.y + b.h > vy }) }
   const open = useCallback((doc, how, keepCam = false, fromServer = false) => { const m = { ...fromEcad(doc), rev: doc.rev || 0 }; setModel(m); modelRef.current = m
     if (fromServer) { sync.current.base = snapshotModel(m); sync.current.rev = doc.rev || 0 }   // 서버에서 받은 것 = 맞춘 기준
     else if (sync.current.base) saveServerDoc(toEcad(m)).then(rev => { if (typeof rev === 'number') { sync.current.base = snapshotModel(m); sync.current.rev = rev } })   // 파일·샘플을 이 칠판에 열기 = 통째 바꿈
-    setActiveLayer('default'); ed.current?.reset(); const c = keepCam && savedCam(); if (c) setCam(c); else fit(m.items); camReady.current = true; setStatus(`${how} · ${m.items.length}개`) }, [fit])   // eslint-disable-line
+    setActiveLayer('default'); ed.current?.reset(); const c = keepCam && savedCam(); if (c && camShowsAny(c, m.items)) setCam(c); else fit(m.items); camReady.current = true; setStatus(`${how} · ${m.items.length}개`) }, [fit])   // eslint-disable-line
   useEffect(() => { if (!camReady.current) return; const t = setTimeout(() => { try { localStorage.setItem(camKey, JSON.stringify(cam)) } catch { /* 저장 못 해도 그만 */ } }, 300); return () => clearTimeout(t) }, [cam])   // eslint-disable-line
 
   // 공동작업 맞추기(2026-10-18) — 고친 뒤 0.6초 쉬면 바뀐 도형만 보내고(부분 저장), 2초마다 남이 바꾼 것을 받아 내 안 보낸 변경을 그 위에 다시 얹음
@@ -312,7 +347,11 @@ function App() {
       <Narrow.Provider value={narrow}>
       <div style={{ display: 'flex', alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>
         <Group>
-          <Btn icon="📂" label="열기" onClick={() => file.current.click()} />
+          {server && <div style={ANCHOR}>
+            <Btn icon="🗂" label="칠판" on={boardOpen} onClick={() => setBoardOpen(o => !o)} title={`지금 칠판 「${DOC_NAME}」 — 새 칠판 만들기·다른 칠판 열기`} />
+            {boardOpen && <BoardForm onClose={() => setBoardOpen(false)} />}
+          </div>}
+          <Btn icon="📂" label="열기" onClick={() => file.current.click()} title=".ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)" />
           <Btn icon="💾" label="저장" onClick={server ? saveServer : saveFile} title={server ? `서버 「${DOC_NAME}」에 저장` : '.ecad로 내려받기'} />
           <Btn icon="⬇" label="내려받기" onClick={saveFile} title=".ecad 파일로 내려받기" />
           <div style={{ position: 'relative' }}>

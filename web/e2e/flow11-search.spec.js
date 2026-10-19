@@ -18,6 +18,7 @@ test('검색 답 → 표시·출처 → 붙이면 한 묶음(메모 + [n] 카드
   expect(seen[0].kind).toBeUndefined()                                   // 처음엔 서버가 짐작
 
   await page.getByRole('button', { name: '칠판에 붙이기' }).click()
+  await expect(page.getByText('칠판에서 고른 것', { exact: false })).toHaveCount(0)   // 붙인 묶음은 고른 채로 보이되 다음 질문엔 안 실림(2026-10-19 점검)
   let d = await liveDoc(page)
   const memo = d.items.find(it => it.type === 'memo'), webs = d.items.filter(it => it.type === 'web'), arrows = d.items.filter(it => it.type === 'sarrow')
   expect(webs.map(w => w.title)).toEqual(['[1] 사장 후보 3인', '[3] 감사 17건'])   // 메모 본문의 [n]과 짝
@@ -40,6 +41,7 @@ test('검색 답 → 표시·출처 → 붙이면 한 묶음(메모 + [n] 카드
   expect(d.items.filter(it => it.type === 'sarrow').every(a => a.bind1 != null && a.bind2 != null)).toBe(true)
   await expect(page.getByTestId('answer-sources').locator('a')).toHaveCount(2)   // 대화 기록에도 출처가 남음
 
+  await page.getByTestId('redo-menu').click()                            // 「다시 ▾」를 펼쳐야 다른 종류가 보임
   await page.getByRole('button', { name: '대화로 다시' }).click()
   await expect(page.getByTestId('answer-kind')).toHaveText('💬 대화')
   expect(seen.at(-1).kind).toBe('chat')
