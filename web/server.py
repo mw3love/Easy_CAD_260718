@@ -471,6 +471,9 @@ def _copy(src: str, dst: str):
 
 
 def main(argv=None):
+    for s in (sys.stdout, sys.stderr):   # 출력을 파일로 돌리면(cp949) 「—」 등에서 바로 꺼졌음(2026-10-19) — 못 쓰는 글자는 ?로
+        try: s.reconfigure(errors="replace")
+        except (AttributeError, ValueError): pass
     ap = argparse.ArgumentParser(description="Magic Board 웹 칠판 서버")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=5191)
