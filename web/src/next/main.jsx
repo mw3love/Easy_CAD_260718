@@ -178,7 +178,7 @@ function App() {
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light' }, [dark])
   const toggleDark = () => setDark(d => { try { localStorage.setItem('mb.theme', d ? 'light' : 'dark') } catch { /* 기억 못 해도 그만 */ } return !d })
   const [server, setServer] = useState(false)
-  const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [people, setPeople] = useState([]), [shareOpen, setShareOpen] = useState(false)
+  const [me, setMe] = useState(() => { try { return localStorage.getItem('mb.name') || '' } catch { return '' } }), [people, setPeople] = useState([]), [others, setOthers] = useState([]), [shareOpen, setShareOpen] = useState(false)
   const sync = useRef({ base: null, rev: 0, busy: false, again: false, id: Math.random().toString(36).slice(2, 10) }), modelRef = useRef(model); modelRef.current = model
   const box = useRef(null), size = useSize(box), file = useRef(null), ed = useRef(null), saveT = useRef(null)
 
@@ -200,9 +200,9 @@ function App() {
 
   // 공동작업 맞추기(2026-10-18) — 고친 뒤 0.6초 쉬면 바뀐 도형만 보내고(부분 저장), 2초마다 남이 바꾼 것을 받아 내 안 보낸 변경을 그 위에 다시 얹음
   const pull = useCallback(async (since = null) => {
-    const S = sync.current; if (!S.base || S.busy || ed.current?.busy?.()) return
+    const S = sync.current; if (!S.base || S.busy || ed.current?.syncBusy?.()) return   // 글 고치는 중엔 받음(고치는 그 도형은 내 것이 이김 — rebase) — 2026-10-19
     const doc = await api.since(since ?? S.rev).catch(() => null); if (!doc) return
-    if (S.busy || ed.current?.busy?.()) return   // 받는 사이 고치기 시작했으면 다음 차례에
+    if (S.busy || ed.current?.syncBusy?.()) return   // 받는 사이 끌기 등을 시작했으면 다음 차례에
     const remote = { ...fromEcad(doc), rev: doc.rev || 0 }, base = S.base
     const merged = rebase(remote, modelRef.current, base)
     S.base = snapshotModel(remote); S.rev = remote.rev; modelRef.current = merged; setModel(merged)
@@ -227,7 +227,9 @@ function App() {
   }, [server, flush])
   useEffect(() => { if (!server) return; const t = setInterval(() => pull(), 2000); return () => clearInterval(t) }, [server, pull])
   useEffect(() => { if (!server) return   // 접속자 — 5초마다 이름 신호
-    const ping = () => api.presence(sync.current.id, me || '이름 없음').then(p => p && setPeople(p)); ping(); const t = setInterval(ping, 5000); return () => clearInterval(t) }, [server, me])
+    // 1초마다 — 내가 고른·고치는 도형도 같이(2026-10-19 사용자: 누가 어디를 고치는지). 바뀐 게 없어도 보냄(15초 안 오면 나간 것으로)
+    const ping = () => api.presence(sync.current.id, me || '이름 없음', ed.current?.getSel?.() || [], ed.current?.editingId?.() || '').then(p => { if (!p) return; setPeople(p.people || []); setOthers(o => (JSON.stringify(o) === JSON.stringify(p.others || []) ? o : p.others || [])) })
+    ping(); const t = setInterval(ping, 1000); return () => clearInterval(t) }, [server, me])
 
   // 시험·자체확인용 손잡이(Playwright)
   useEffect(() => { window.__mb = { setCam, getCam: () => cam, open: async u => open(parseDoc(await (await fetch(u)).text()), u), model, toEcad: () => toEcad(model), get ed() { return ed.current }, setTool } })
@@ -289,7 +291,7 @@ function App() {
           defaultValue="" style={{ font: "500 12px 'Pretendard', sans-serif", padding: '4px 6px', borderRadius: 6, border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>
           <option value="">샘플 열기…</option>{SAMPLES.map(([n, u]) => <option key={u} value={u}>{n}</option>)}
         </select>
-        <span style={{ marginLeft: 'auto', color: C.muted, fontSize: 12 }}>{status} · {Math.round(cam.z * 100)}%</span>
+        <span title={status} style={{ marginLeft: 'auto', color: C.muted, fontSize: 12, minWidth: 0, flexShrink: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{status} · {Math.round(cam.z * 100)}%</span>   {/* 한 줄 고정 — 알림이 길면 위 막대가 두 줄로 늘어 칠판이 밀렸음(2026-10-19) */}
         {server && <span title={people.length ? `지금 이 칠판에: ${people.join(', ')}` : ''} style={{ fontSize: 12, color: C.muted, whiteSpace: 'nowrap', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>👥 {people.length ? people.join(' · ') : (me || '나')}</span>}
         {server && <div style={{ position: 'relative' }}>
           <Btn icon="🔗" label="공유" on={shareOpen} onClick={() => setShareOpen(o => !o)} title="게시 — 로그인 없이 보기·발표만 되는 링크(큰 TV 발표용)" />
@@ -304,7 +306,7 @@ function App() {
       </div>
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>   {/* 작업공간 + 오른쪽 KAIROS 대화창(2분할) */}
       <div ref={box} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        <Editor ref={ed} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} />
+        <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} />
         {/* 좌상 도형·심볼 카드(데스크톱 첫 화면: 좌상 도형·심볼) */}
         {/* 왼쪽 세로 줄 — 위 도형·심볼 카드, 아래 레이어 카드(데스크톱 첫 화면: 좌상·좌하 따로, 통합 금지). 줄 자체는 칠판 누르기를 막지 않음 */}
         <div style={{ position: 'absolute', left: 12, top: 12, bottom: 12, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 8, pointerEvents: 'none' }}>

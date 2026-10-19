@@ -35,7 +35,7 @@ export function Viewer({ token }) {
       <b>Magic Board</b><span style={{ color: C.muted, fontSize: 12 }}>보기 전용 · 고치는 내용이 몇 초 안에 보여요</span>
       <span style={{ flex: 1 }} />
       <button style={btn} data-testid="view-present" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면">▶ 발표</button>
-      <button style={btn} onClick={() => fit(model.items, size)}>⤢ 전체</button>
+      <button style={btn} onClick={() => fit(model.items, size)} title="칠판 전체가 화면에 들어오게 맞춤">⤢ 다 보기</button>
       <button style={btn} onClick={() => setDark(d => !d)}>{dark ? '☀ 밝게' : '☾ 어둡게'}</button>
     </div>
     <div ref={box} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>

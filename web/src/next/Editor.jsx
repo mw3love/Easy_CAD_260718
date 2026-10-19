@@ -5,7 +5,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { flushSync } from 'react-dom'
 import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr } from './render.jsx'
 import { boardMembership, drawOrder, itemBounds } from './doc.js'
-import { paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
+import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
 import { ROUTE_BOX, bindPt, dropTarget, edgeMid, bindEnd, groupFrac, groupHost, hostPorts, isBindHost, isConnHost, isSnapLine, nearestBorder, OPP, qcDelta, qcDots, snapAt } from './connect.js'
@@ -42,6 +42,9 @@ const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
 const BLUE = '#89b4fa', PEACH = '#fab387', GUIDE = 'rgb(230,60,160)'   // 데스크톱 theme BLUE·PEACH, 가이드선 마젠타
 const HANDLE = 10, HIT_PX = 4, EDGE_PX = 5
 const INK = '#ff1f1f1f'   // 새로 그리는 선·글 기본색(밝은 칠판)
+// 다른 사람 색 — 접속 id로 늘 같은 색(테두리·이름표)
+const PERSON_COLORS = ['#e8590c', '#7048e8', '#0c8599', '#d6336c', '#2f9e44', '#1971c2']
+const personColor = id => PERSON_COLORS[[...String(id)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % PERSON_COLORS.length]
 const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web', 'memo', 'legend'])
 
 // 글 상자 크기(아이템 안 단위) — 그릴 때와 같은 재기, 아이템 객체마다 한 번
@@ -74,7 +77,7 @@ const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([
 const PEN_LAYER = 'pen-notes'   // 발표 판서 레이어
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
-export const Editor = forwardRef(function Editor({ dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
+export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -82,7 +85,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const [cursor, setCursor] = useState('default')
   const st = useRef({}), hist = useRef({ past: [], future: [] }), clip = useRef({ items: [], seq: 0 }), svg = useRef(null)
   const items = live || model.items
-  const R = useRef(); R.current = { vhosts: new Map(), ...R.current, model, sel, cam, tool, items, editing, hp: overlay.hp, activeLayer, live: !!live, poly: !!overlay.poly }
+  const R = useRef(); R.current = { vhosts: new Map(), ...R.current, model, sel, cam, tool, items, editing, hp: overlay.hp, activeLayer, live: !!live, poly: !!overlay.poly, others }
   // 누를 수 있는 것 = 숨긴 레이어 밖(데스크톱 setVisible(False)는 눌리지도 않음)
   const hitPool = () => { const m = R.current.model, hid = new Set(layersOf(m).filter(l => !l.visible).map(l => l.id)); return hid.size ? m.items.filter(it => !hid.has(layerIdOf(it))) : m.items }   // vhosts = 묶음 가상 상자('g:…', hostsNear가 채움)
 
@@ -115,7 +118,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, pinCard, showCard, dragCard: (msg, onPlaced) => startPaletteDrag('card', [cardItem(msg, 0, 0, topZ(R.current.model.items) + 1)], onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -833,7 +836,7 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     const ed = R.current.editing; setEditing(null); if (!ed || !lines) return
     const m = R.current.model, it = m.items.find(x => x._id === ed.id); if (!it) return
     const nol = new Set((it.lines || []).filter(l => l.nolink).map(l => l.t)); lines = lines.map(l => (nol.has(l.t) ? { ...l, nolink: true } : l))   // 고친 뒤에도 「링크 끔」 유지(같은 글의 줄)
-    commit(m.items.map(x => (x._id === it._id ? { ...it, lines } : x)), [it._id], '메모 고침')
+    clearTimeout(memoT.current); commit(m.items.map(x => (x._id === it._id ? { ...it, lines } : x)), [it._id], '메모 고침', 'memo' + it._id)
     if (extra?.caret != null && lines[extra.caret]) { const [s, e] = lineUnit(lines, extra.caret); setLineSel({ id: it._id, s, e }) }
     else if (extra?.pick && lines[extra.pick.cur] && lines[extra.pick.clicked]) {   // 고치는 중 단축키 + 다른 줄 클릭 = 줄 고르기
       const [s1, e1] = lineUnit(lines, extra.pick.cur), [s2, e2] = lineUnit(lines, extra.pick.clicked)
@@ -842,7 +845,12 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     if (extra?.grab && lines[extra.grab.i]) { const [s, e] = lineUnit(lines, extra.grab.i), p = toSceneP(extra.grab)
       st.current = { ...st.current, kind: 'mline', id: it._id, units: [[s, e]], copy: false, start: p, moved: false } }
   }
-  function liveMemo(id, lines) { const m = R.current.model; setLive(m.items.map(x => { if (x._id !== id) return x; const n = { ...x, lines }; return { ...n, rect: [n.rect[0], n.rect[1], n.rect[2], memoHeight(n)] } })) }
+  // 치는 동안 — 높이는 바로(live), 글은 0.5초 쉬면 칠판에 넣어 저장까지(2026-10-19 사용자: 입력 중에도 다른 사람에게 보이게). 되돌리기는 1.5초 안 이어 친 것끼리 한 칸
+  const memoT = useRef(0)
+  function liveMemo(id, lines) { const m = R.current.model; setLive(m.items.map(x => { if (x._id !== id) return x; const n = { ...x, lines }; return { ...n, rect: [n.rect[0], n.rect[1], n.rect[2], memoHeight(n)] } }))
+    clearTimeout(memoT.current); memoT.current = setTimeout(() => { if (R.current.editing?.id !== id) return; const m2 = R.current.model, it = m2.items.find(x => x._id === id); if (!it) return
+      const nol = new Set((it.lines || []).filter(l => l.nolink).map(l => l.t)), ls = lines.map(l => (nol.has(l.t) ? { ...l, nolink: true } : l))
+      commit(m2.items.map(x => (x._id === id ? { ...it, lines: ls } : x)), R.current.sel, '메모 고침', 'memo' + id) }, 500) }
   function pinCard(msg, drop) {   // drop = 칠판 좌표(끌어 놓은 자리 — 왼쪽 위), 없으면 빈자리
     const m = R.current.model, c = R.current.cam, h = cardItem(msg, 0, 0, 0).rect[3]
     const left = 220 / c.z, right = 220 / c.z, view = { x: -c.x / c.z + left, y: -c.y / c.z, w: Math.max(CARD_W, size.w / c.z - left - right), h: size.h / c.z }
@@ -1005,15 +1013,23 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
     commit([...m.items, it], [it._id], '그림'); setTool('select')
   }
 
+  // 남이 고치는 도형 — 바로 열지 않고 한 번 더 묻기(창 없이 알림 줄 · 5초 안에 다시 두 번 누르면 열림, 2026-10-19 사용자: 덮어쓰기 막기)
+  const lockAsk = useRef(null)
+  function guardEdit(id) {
+    const who = R.current.others?.find(o => o.edit === id); if (!who) return true
+    const a = lockAsk.current; if (a && a.id === id && Date.now() - a.t < 5000) { lockAsk.current = null; return true }
+    lockAsk.current = { id, t: Date.now() }; setStatus(`${who.name}님이 고치는 중 — 한 번 더 두 번 누르면 열려요`); return false   // 짧게(긴 알림은 위 막대를 두 줄로 늘려 칠판을 밀었음)
+  }
   // ── 두 번 누르기 = 글 편집(글 상자) / 도형 라벨 ──
   function onDoubleClick(e) {
     if (readOnly) return
     if (R.current.tool === 'polygon') { finishPoly(overlay.poly || [], false); return }
     const p = toSceneP(e), lb = labelAt(p)
     const at = { x: e.clientX, y: e.clientY }   // 두 번 누른 자리에 커서(2026-10-18 사용자: 한 번 더 눌러야 했음)
-    if (lb) { setSel([lb.it._id]); setEditing({ id: lb.it._id, kind: 'alabel', i: lb.i, at }); return }
+    if (lb) { if (!guardEdit(lb.it._id)) return; setSel([lb.it._id]); setEditing({ id: lb.it._id, kind: 'alabel', i: lb.i, at }); return }
     const hit = topHit(hitPool(), p, HIT_PX / R.current.cam.z, textBox)
     if (!hit || hit.locked) return
+    if (hit.type !== 'web' && !guardEdit(hit._id)) return
     if (hit.type === 'frame') { const b = frameTagBox(hit); if (p.y <= b.y + b.h + 2 / R.current.cam.z) { setSel([hit._id]); setTagEdit(hit._id) } return }   // 이름표 = 그 자리에서 이름 고치기
     if (hit.type === 'memo') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'memo', at }); return }
     if (hit.type === 'web') { setSel([hit._id]); if (hit.frameable) webActivate(hit); else window.open(hit.url, '_blank', 'noopener'); return }   // 막는 사이트 = 새 탭
@@ -1365,6 +1381,11 @@ export const Editor = forwardRef(function Editor({ dark, model, setModel, onComm
             : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
+          {others.map(o => { const c = personColor(o.id), ids = [...new Set([...(o.sel || []), ...(o.edit ? [o.edit] : [])])].filter(id => byId.has(id))   // 다른 사람이 고른·고치는 도형 = 그 사람 색 테두리 + 이름표(2026-10-19)
+            return ids.map(id => { const b = sceneBox(byId.get(id), textBox), pad = 4 / z, fs = 11 / z, tag = o.name + (o.edit === id ? ' 고치는 중' : ''), tw = measure(tag, 11, 'app', 600) / z + 10 / z
+              return <g key={o.id + id} data-testid="other-mark" pointerEvents="none"><rect x={b.x - pad} y={b.y - pad} width={b.w + 2 * pad} height={b.h + 2 * pad} rx={4 / z} fill="none" stroke={c} strokeWidth={2 / z} strokeDasharray={o.edit === id ? undefined : `${6 / z} ${3 / z}`} />
+                <rect x={b.x - pad} y={b.y - pad - fs * 1.7} width={tw} height={fs * 1.6} rx={3 / z} fill={c} />
+                <text x={b.x - pad + 5 / z} y={b.y - pad - fs * 0.9} dominantBaseline="central" fontSize={fs} fontWeight={600} fontFamily={APP_FONT} fill="#fff">{tag}</text></g> }) })}
           {(overlay.rubber?.sub ? selItems.filter(it => !overlay.rubber.hits?.includes(it._id)) : selItems).map(outline)}   {/* Shift 끌기 빼기 = 걸린 것의 파란 띠를 바로 지움(2026-10-18 사용자: 빨강 대신) */}
           {cellSel && byId.get(cellSel.id) && (() => { const t = byId.get(cellSel.id), g = cellRange(cellSel), a = cellRect(t, g.r0, g.c0), b = cellRect(t, g.r1, g.c1)
             return <g transform={transformOf(t)}><rect x={a.x} y={a.y} width={b.x + b.w - a.x} height={b.y + b.h - a.y} fill="rgba(137,180,250,.18)" stroke={BLUE} strokeWidth={2 / z} /></g> })()}

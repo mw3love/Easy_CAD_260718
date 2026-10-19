@@ -107,3 +107,13 @@ def test_server_password_patch_since_publish(server):
     # 접속자
     _req(base + "/api/presence/b1", "POST", {"id": "c1", "name": "기자"}, cookie=cookie)
     assert _req(base + "/api/presence/b1", "POST", {"id": "c2", "name": "작가"}, cookie=cookie)[1]["people"] == ["기자", "작가"]
+
+
+def test_presence_others_carry_selection_and_editing():
+    """2026-10-19 — 접속 신호에 고른·고치는 도형(uid)을 실어, 다른 사람 화면에 그 사람 색 테두리·「고치는 중」 이름표(나는 빼고)"""
+    p = collab.Presence(ttl=10)
+    p.ping("b", "c1", "기자", now=0, sel=["u1", "u2"], edit="u1")
+    p.ping("b", "c2", "작가", now=1)
+    assert p.others("b", "c2") == [{"id": "c1", "name": "기자", "sel": ["u1", "u2"], "edit": "u1"}]
+    assert p.others("b", "c1") == [{"id": "c2", "name": "작가", "sel": [], "edit": ""}]
+    assert p.ping("b", "c2", "작가", now=20) == ["작가"] and p.others("b", "c2") == []   # 15초(여기선 10초) 안 오면 사라짐

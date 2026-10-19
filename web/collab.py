@@ -107,11 +107,16 @@ class Presence:
     def __init__(self, ttl: float = 15.0):
         self.ttl, self.boards = ttl, {}
 
-    def ping(self, board: str, client: str, name: str, now: float | None = None) -> list:
+    def ping(self, board: str, client: str, name: str, now: float | None = None, sel=None, edit: str = "") -> list:
+        """접속 신호 → 지금 접속한 이름들. sel·edit = 이 사람이 고른 도형·고치는 도형 uid(2026-10-19 — 「누가 어디를 고치는지」, `others`로 읽음)."""
         now = time.time() if now is None else now
         b = self.boards.setdefault(board, {})
         if client:
-            b[client] = ((name or "이름 없음")[:30], now)
-        for c in [c for c, (_, t) in b.items() if now - t > self.ttl]:
+            b[client] = ((name or "이름 없음")[:30], now, [str(x)[:64] for x in (sel or [])][:200], str(edit or "")[:64])
+        for c in [c for c, v in b.items() if now - v[1] > self.ttl]:
             del b[c]
-        return sorted({n for n, _ in b.values()})
+        return sorted({v[0] for v in b.values()})
+
+    def others(self, board: str, client: str) -> list:
+        """나를 뺀 접속자 [{ id, name, sel, edit }] — 화면에 그 사람 색 테두리·이름표"""
+        return [{"id": c, "name": v[0], "sel": v[2], "edit": v[3]} for c, v in sorted(self.boards.get(board, {}).items()) if c != client]

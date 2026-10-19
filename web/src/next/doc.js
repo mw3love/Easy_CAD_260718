@@ -72,7 +72,7 @@ export const api = {
   login: async password => (await post('/api/login', { password })).ok,
   patch: async body => { const r = await post(`/api/patch/${B}`, body); return r.ok ? (await r.json()).rev : null },
   since: async rev => { const r = await fetch(`/api/since/${B}?rev=${rev}`, { cache: 'no-store' }); return r.status === 200 ? parseDoc(await r.text()) : null },
-  presence: async (id, name) => { try { const r = await post(`/api/presence/${B}`, { id, name }); return r.ok ? (await r.json()).people : null } catch { return null } },
+  presence: async (id, name, sel = [], edit = '') => { try { const r = await post(`/api/presence/${B}`, { id, name, sel, edit }); return r.ok ? await r.json() : null } catch { return null } },   // → { people: 이름들, others: [{ id, name, sel, edit }] }
   getPublish: async () => { try { const r = await fetch(`/api/publish/${B}`, { cache: 'no-store' }); return r.ok ? (await r.json()).token : null } catch { return null } },
   setPublish: async (on, renew = false) => { const r = await post(`/api/publish/${B}`, { on, renew }); return r.ok ? (await r.json()).token : null },
   pub: async (token, rev = -1) => { const r = await fetch(`/api/pub/${token}?rev=${rev}`, { cache: 'no-store' }); if (r.status === 204) return { same: true }; if (!r.ok) return { gone: true }; const d = parseDoc(await r.text()); return { doc: d } },

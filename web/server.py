@@ -259,7 +259,9 @@ class Handler(SimpleHTTPRequestHandler):
         if not name or not isinstance(req, dict):
             return self._send(400, b'{"error":"bad request"}')
         if m.group(1) == "presence":
-            return self._json(200, {"people": self.presence.ping(name, str(req.get("id") or ""), str(req.get("name") or ""))})
+            cid = str(req.get("id") or "")
+            people = self.presence.ping(name, cid, str(req.get("name") or ""), sel=req.get("sel") if isinstance(req.get("sel"), list) else None, edit=str(req.get("edit") or ""))
+            return self._json(200, {"people": people, "others": self.presence.others(name, cid)})
         if m.group(1) == "publish":
             with self.lock:
                 mp = self._publish_map()
