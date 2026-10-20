@@ -26,7 +26,7 @@ import os
 import sys
 import time
 
-BASE_URL = "https://factchat.mindlogic-kr-api.com/v1/gateway"
+BASE_URL = "https://api.baze.co/v1/gateway"
 KEY_ENV = "EASYCAD_GW_KEY"
 DEFAULT_MODEL = "gemini-3.6-flash"
 DEFAULT_IMAGE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

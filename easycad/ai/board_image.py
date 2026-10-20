@@ -25,6 +25,7 @@ def infographic_prompt(material: str) -> str:
 
 IMAGE_MARK = "그림 후보"   # 서버 그림 답 글에 늘 들어가는 말(`web/server.py` `_image`) — 앞 답이 그림이었나 알아보는 표시
 FACTS_HEAD = "웹에서 찾은 정보로 그렸어요"
+FACTS_HEADS = (FACTS_HEAD, "기상청·천문연 자료로 그렸어요")   # 둘째 = `kr_tools.TOOL_HEAD`(공공 데이터로 그린 그림도 이어 고치기가 그 자료를 다시 씀)
 # 그림 바로 뒤 「날짜도 넣어 줘」 같은 고칠 말 — 이 말이 있으면 길 고르기 없이 그림을 이어서(판단 모델은 앞 대화를 안 봄)
 FOLLOW_WORDS = re.compile(r"그림|이미지|사진|넣어|넣으|반영|바꿔|바꾸|추가|빼|지워|크게|작게|색|날짜|글씨|글자|제목|분위기|느낌|다시")
 
@@ -39,7 +40,7 @@ def followup(msgs: list) -> dict | None:
     i, asks, facts = len(ms) - 2, [], ""
     while i >= 1 and ms[i].get("role") == "assistant" and IMAGE_MARK in str(ms[i].get("content", "")) and ms[i - 1].get("role") == "user":
         c = str(ms[i]["content"])
-        if c.startswith(FACTS_HEAD) and "\n" in c:
+        if c.startswith(FACTS_HEADS) and "\n" in c:
             facts = re.sub(r"\[\d+\]", "", c.split("\n", 1)[1].rsplit("\n\n" + IMAGE_MARK, 1)[0]).strip()
         asks.insert(0, str(ms[i - 1].get("content", "")).strip())
         i -= 2

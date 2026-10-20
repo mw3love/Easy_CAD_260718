@@ -285,3 +285,14 @@ test('표 답 — 대화창엔 표로, 칠판에 붙이면 메모 + 진짜 표 �
   expect(JSON.stringify(memo.lines)).not.toContain('|'); expect(memo.group_id).toBeTruthy(); expect(tbl.group_id).toBe(memo.group_id)
   expect(tbl.pos[1]).toBeGreaterThan(memo.pos[1])                           // 메모 밑
 })
+
+// 2026-10-20 KAIROS 문서 검토 — 대화창 🎤 실시간 받아쓰기. 진짜 소리·KAIROS는 손 확인(가짜 마이크 파일로 크롬에서 글자가 실시간으로 쌓임 확인)
+test('🎤 — 표를 못 받으면 쉬운 말로 알리고 원래 버튼으로', async ({ page }) => {
+  await page.route('**/api/stt-token', r => r.fulfill({ status: 503, json: { error: '이 서버 PC에 KAIROS 키가 없습니다' } }))
+  await openBoard(page, boardName('mic'), { chat: true })
+  const mic = page.getByTestId('mic')
+  await expect(mic).toHaveText('🎤')
+  await mic.click()
+  await expect(page.getByTestId('chat-foot-note')).toHaveText('이 서버 PC에 KAIROS 키가 없습니다')
+  await expect(mic).toHaveText('🎤'); await expect(mic).toBeEnabled()
+})

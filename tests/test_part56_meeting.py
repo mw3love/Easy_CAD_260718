@@ -119,3 +119,69 @@ def test_server_meeting_job_start_poll_done(server):
     with pytest.raises(urllib.error.HTTPError) as e:
         urllib.request.urlopen(bad)
     assert e.value.code == 400
+
+
+# ── [2026-10-20 KAIROS 문서] 받아쓰기는 25MB·120분까지, webm 거절 → 올리기 전에 바꾸거나 쉬운 말로 알림 ──
+
+def test_transcribe_sends_korean_hint():
+    seen = {}
+
+    class H(FakeHttp):
+        def post(self, url, headers, files, data, timeout):
+            seen.update(data)
+            return super().post(url, headers, files, data, timeout)
+    meeting.transcribe("k", b"RIFF", "a.wav", base_url="https://g", http=H(polls=1), sleep=lambda s: None)
+    assert seen["language_hints"] == "ko"
+
+
+def test_prepare_without_ffmpeg_passes_ok_and_explains_bad():
+    assert meeting.prepare(b"x" * 10, "a.m4a", ffmpeg="", ffprobe="") == [(b"x" * 10, "a.m4a", 0)]
+    with pytest.raises(RuntimeError, match="webm"):
+        meeting.prepare(b"x", "녹음.webm", ffmpeg="", ffprobe="")
+    with pytest.raises(RuntimeError, match="25MB"):
+        meeting.prepare(b"x" * (meeting.MAX_UPLOAD + 1), "a.mp3", ffmpeg="", ffprobe="")
+
+
+FFMPEG = __import__("shutil").which("ffmpeg")
+
+
+def _tone(seconds: int, ext: str) -> bytes:
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "t" + ext)
+        subprocess.run([FFMPEG, "-v", "error", "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}", p], check=True)
+        return open(p, "rb").read()
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg 없음")
+def test_prepare_converts_webm_and_splits_long(monkeypatch):
+    parts = meeting.prepare(_tone(2, ".webm"), "회의.webm")
+    assert len(parts) == 1 and parts[0][1] == "회의.mp3" and parts[0][0][:3] in (b"ID3", b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")
+    ok = _tone(1, ".wav")
+    assert meeting.prepare(ok, "a.wav") == [(ok, "a.wav", 0)]                      # 되는 것은 그대로
+    monkeypatch.setattr(meeting, "MAX_SECONDS", 2)
+    monkeypatch.setattr(meeting, "CHUNK_SECONDS", 2)
+    parts = meeting.prepare(_tone(5, ".wav"), "긴.wav")
+    assert [p[2] for p in parts] == [0, 2000, 4000] and [p[1] for p in parts] == ["긴_1.mp3", "긴_2.mp3", "긴_3.mp3"]
+
+
+def test_make_minutes_joins_parts_with_offsets(monkeypatch):
+    monkeypatch.setattr(meeting, "prepare", lambda data, name: [(b"a", "a_1.mp3", 0), (b"b", "a_2.mp3", 6_600_000)])
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **k: SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content='{"title": "t"}'))]))))
+    out = meeting.make_minutes("k", b"x", "a.mp3", model="m", base_url="https://g", http=FakeHttp(polls=1), client=client, sleep=lambda s: None)
+    assert [t["start_ms"] for t in out["turns"]] == [90, 65000, 6_600_090, 6_665_000]
+    assert out["duration"] == 136.8 and out["credits"] == 13.68
+
+
+def test_live_token_builds_wss_url_with_token():
+    seen = {}
+
+    class H:
+        def post(self, url, headers, json, timeout):
+            seen.update(url=url, json=json)
+            return SimpleNamespace(status_code=200, text="", json=lambda: {"token": "T0k", "expires_at": "x", "url": "/v1/gateway/soniox/transcribe-websocket"})
+    out = meeting.live_token("k", base_url="https://api.baze.co/v1/gateway", http=H())
+    assert seen == {"url": "https://api.baze.co/v1/gateway/realtime/sessions/", "json": {"model": "stt-rt-v5"}}
+    assert out["url"] == "wss://api.baze.co/v1/gateway/soniox/transcribe-websocket?token=T0k"

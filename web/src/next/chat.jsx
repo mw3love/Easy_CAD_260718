@@ -15,6 +15,7 @@ import { MONO_FONT } from './render.jsx'
 import { siteOf } from './webcard.js'
 import { TIDY_RE } from './tidy.js'
 import { getKairosKey, KEY_RE, keyHeaders, setKairosKey } from './kairosKey.js'
+import { startMic } from './mic.js'
 const LINK_CHAT = '#4f8fe8'
 // 정리 문서 크게 보기 — 새 탭에 그 HTML(인쇄·PDF는 그 탭에서 Ctrl+P)
 const openHtml = html => { const u = URL.createObjectURL(new Blob([html || ''], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
@@ -190,8 +191,21 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
       ...(d.images?.length ? { images: d.images, prompt: d.caption || history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),   // caption = 이어 고친 그림이면 처음 요청(서버)
       ...(d.html ? { html: d.html, title: d.title || '정리 문서' } : {}), ...(frames ? { frames } : {}) }
   }
+  // 🎤 실시간 받아쓰기(2026-10-20) — 말하는 동안 입력 칸에 글자가 쌓임(누르기 전 글 뒤에), 다시 누르거나 보내면 멈춤. 직접 치면 멈춤
+  const [mic, setMic] = useState('off'), [micErr, setMicErr] = useState(''), micStop = useRef(null), micBase = useRef('')
+  async function toggleMic() {
+    if (mic !== 'off') { micStop.current?.(); return }
+    setMicErr(''); setMic('wait'); micBase.current = draft
+    const join = t => { const b = micBase.current; return b && t && !/\s$/.test(b) ? `${b} ${t}` : b + t }
+    try {
+      micStop.current = await startMic({ headers: keyHeaders(), onText: (fin, non) => setDraft(join(fin + non)), onState: setMic, onError: setMicErr })
+    } catch (e) { setMic('off'); setMicErr(e.message || String(e)) }
+  }
+  useEffect(() => () => micStop.current?.(), [])
+
   async function send(text = null, kind = '', from = null) {   // text·kind = 밖에서 시킨 질문(칠판 우클릭 「정리 문서 만들기」 — 입구는 대화창 하나), from = 「그림으로도」(정리 문서와 같은 자료)
     const q = (text ?? draft).trim(); if (!q || busy) return
+    if (text == null && mic !== 'off') micStop.current?.()   // 말하다 보내면 받아쓰기도 멈춤(지금까지 글로 보냄)
     const ctx = from ? from.context || '' : contextText(sel), n = from ? from.ctxCount : sel.length
     // ↩ 이어 묻기(2026-10-20 사용자 — 특정 답을 토대로) = 그 답까지만 앞 대화로 보냄(화면 기록엔 맨 끝에 쌓임, 무엇에 이었는지 표시)
     const ri = replyTo == null ? -1 : msgs.findIndex(m => m.at === replyTo)
@@ -380,10 +394,14 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
         {sel.length > 0 && <span style={css.chip}>칠판에서 고른 것 {sel.length}개를 같이 보냄</span>}
         {selImgs.length > 0 && <span data-testid="img-chip" style={css.chip}>칠판에서 고른 그림 {selImgs.length}장 — 「날짜 넣어 줘」처럼 말하면 그대로 두고 고쳐요</span>}
         <textarea style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder="물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)"
-          onChange={e => setDraft(e.target.value)}
+          onChange={e => { if (mic === 'listen') micStop.current?.(); setDraft(e.target.value) }}
           onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>   {/* 모델 고르기 = 입력 칸 옆(2026-10-20 사용자 — Gemini·Claude·ChatGPT처럼 묻는 자리에서) */}
-          <span style={{ ...css.meta, flex: 1, minWidth: 0 }} title={server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요` : ''}>{server ? '기록은 이 칠판에 저장' : '서버가 꺼져 있어요 — python web/server.py 를 켜야 물을 수 있어요.'}</span>
+          <button data-testid="mic" onClick={toggleMic} disabled={!server || mic === 'wait' || mic === 'stopping'} aria-pressed={mic === 'listen'}
+            title={mic === 'listen' ? '듣는 중 — 다시 누르면 멈춰요(보내도 멈춤)' : '말로 입력 — 말하는 동안 글자가 바로 떠요(KAIROS 실시간 받아쓰기, 말한 1분에 약 2크레딧)'}
+            style={{ ...css.ghost, padding: '2px 8px', ...(mic === 'listen' ? { color: '#fff', background: '#dc2626', borderColor: '#dc2626' } : null) }}>
+            {mic === 'listen' ? '● 듣는 중' : mic === 'wait' ? '🎤 …' : mic === 'stopping' ? '🎤 마무리…' : '🎤'}</button>
+          <span data-testid="chat-foot-note" style={{ ...css.meta, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', ...(micErr ? { color: '#dc2626' } : null) }} title={micErr || (server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요` : '')}>{micErr || (server ? '기록은 이 칠판에 저장' : '서버가 꺼져 있어요 — python web/server.py 를 켜야 물을 수 있어요.')}</span>
           <select style={css.select} value={useModel} title="대화 답에 쓸 모델(100만 토큰당 입력 / 출력 달러) — 검색·그림·정리정돈은 앱이 일마다 알맞은 모델을 따로 고름" onChange={e => { setModel(e.target.value); try { localStorage.setItem(MODEL_KEY, e.target.value) } catch { /* 기억 못 해도 그만 */ } }}>
             {!Object.values(feat).some(rows => rows.some(m => m.id === useModel)) && <option value={useModel}>기본 · {useModel}</option>}
             {Object.entries(feat).filter(([, rows]) => rows.length).map(([v, rows]) => (

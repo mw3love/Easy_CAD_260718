@@ -36,7 +36,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_image, board_report, board_tidy, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_image, board_report, board_tidy, kr_tools, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 
@@ -124,6 +124,14 @@ class Handler(SimpleHTTPRequestHandler):
                 kind, how = route.route(key, str(last.get("content", "")), bool(ctx or last.get("context")), has_items=bool(req.get("items")), base_url=gw.resolve_base_url())
                 sys.stderr.write("[길] %s (%s)\n" % (kind, how))
             refs = None
+            # 날씨·공휴일·일출 = 기상청·천문연 도구(KAIROS MCP, `kr_tools` — 2026-10-20). 못 쓰면(도시 밖·도구 실패) 지금처럼 웹 검색
+            found = []
+            if kind in ("chat", "search", "image") and not bimgs and not fu and not req.get("infographic") and kr_tools.WORDS.search(str(last.get("content", ""))):
+                try:
+                    found = kr_tools.gather(key, str(last.get("content", "")), base_url=gw.resolve_base_url())
+                    sys.stderr.write("[도구] %s\n" % (", ".join(f"{f['tool']} {f['args']}" for f in found) or "안 씀"))
+                except Exception as e:
+                    sys.stderr.write("[도구 실패] %s\n" % e)
             prev_html = str(req.get("prev_html") or "")
             if kind == "chat" and prev_html and not req.get("kind"):   # 정리 문서 바로 뒤 「더 짧게」 같은 말 = 그 문서 고치기
                 kind = "report"
@@ -145,22 +153,35 @@ class Handler(SimpleHTTPRequestHandler):
                     prompt, note = board_image.edit_prompt(prompt), "고른 그림을 그대로 두고 말한 점만 고쳤어요.\n\n"
                 elif fu and not req.get("infographic"):   # 고칠 그림 파일이 없으면 — 처음 요청·찾은 정보 + 고칠 점으로 새로(다시 검색 안 함)
                     prompt, note = board_image.followup_prompt(fu, prompt), "앞 그림의 요청·정보를 이어서 고친 점만 반영해 새로 그렸어요(조금 달라질 수 있어요).\n\n"
+                elif found:   # 날씨·공휴일 그림 = 기상청·천문연 자료로(웹 검색보다 숫자가 정확, 0크레딧)
+                    facts = board_chat.chat(key, [{"role": "user", "content": prompt + "\n(이 그림에 넣을 사실만 세 줄로)"}], model=gw.FALLBACK_DEFAULT_MODEL, kind="chat",
+                                            data=kr_tools.context_text(found), base_url=gw.resolve_base_url())
+                    facts.update(model=", ".join(s["title"] for s in kr_tools.sources(found)), sources=kr_tools.sources(found), head=kr_tools.TOOL_HEAD)
+                    prompt += "\n\n[그림에 반영할 최신 정보 — 여기와 다른 숫자·날짜는 넣지 마]\n" + re.sub(r"\[\d+\]", "", facts["content"])[:1500]
                 elif not req.get("infographic") and board_chat._SEARCH_WORDS.search(prompt):   # 「내일 날씨를 고흐 느낌으로 그려줘」 = 웹 검색 → 그리기(2026-10-20 사용자 — 대화창 all in one)
                     try:
                         facts = board_chat.chat(key, [{"role": "user", "content": prompt + "\n(이 그림에 넣을 사실만 세 줄로)"}], model=gw.FALLBACK_DEFAULT_MODEL, kind="search", base_url=gw.resolve_base_url())
                         prompt += "\n\n[그림에 반영할 최신 정보 — 여기와 다른 숫자·날짜는 넣지 마]\n" + re.sub(r"\[\d+\]", "", facts["content"])[:1500]
                     except Exception as e:   # 못 찾아도 그림은 그린다
                         sys.stderr.write("[그림 앞 검색 실패] %s\n" % e)
-                today = time.localtime()   # 그림 모델은 오늘을 모름 — 「내일 날짜도」가 11월 9일(일)로 나왔음(2026-10-20 실측)
+                # 그림 모델은 오늘을 모름 — 「내일 날짜도」가 11월 9일(일)로 나왔음(2026-10-20 실측)
                 # 「오늘·내일은 이 기준」이라고만 쓰면 요청에 없는 「오늘」 칸을 지어냈음(같은 날 실측) — 날짜 계산에만 쓰라고.
                 # 날짜 말이 없는 그림(「송신탑을 수채화로」)에도 붙이면 오늘 날짜를 그림에 써 넣었음(같은 날 실측) — 날짜 말이 있을 때만
                 if DATE_WORDS.search(" ".join((fu or {}).get("asks", [])) + " " + str(last.get("content", ""))):
-                    prompt += "\n\n[오늘 날짜: %d년 %d월 %d일(%s) — 날짜를 적어야 할 때 계산용. 요청에 없는 날의 내용은 넣지 마]" % (today.tm_year, today.tm_mon, today.tm_mday, "월화수목금토일"[today.tm_wday])
+                    # 오늘만 주면 「내일 날씨」 그림에 오늘 날짜를 써 넣었음(2026-10-20 실측) — 내일·모레도 계산해 줌
+                    day = lambda k: time.localtime(time.time() + k * 86400)
+                    fmt = lambda t: "%d년 %d월 %d일(%s)" % (t.tm_year, t.tm_mon, t.tm_mday, "월화수목금토일"[t.tm_wday])
+                    prompt += "\n\n[날짜 — 오늘 %s · 내일 %s · 모레 %s. 그림에 적는 날짜는 요청한 그날로. 요청에 없는 날의 내용은 넣지 마]" % (fmt(day(0)), fmt(day(1)), fmt(day(2)))
                 return self._image(name, prompt, key, facts, note, fu["asks"][0] if fu and not req.get("infographic") else "", edit)   # 붙인 그림 밑 글 = 처음 요청
             if kind == "board":   # 「지난번 ○○ 뭐였지?」 — 이 칠판의 저장된 글에서 찾아 근거로(§8 항목61 ③-2)
                 refs = self._find(self._name(str(req.get("board") or "")), str(last.get("content", "")), key)
-            out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL,
-                                  context=ctx, kind=kind, board_refs=refs, base_url=gw.resolve_base_url())
+            if found and kind in ("chat", "search"):   # 날씨·공휴일 답 = 고른 대화 모델 + 기상청·천문연 자료, 출처는 그 기관
+                out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL, context=ctx, kind="chat",
+                                      data=kr_tools.context_text(found), base_url=gw.resolve_base_url())
+                out["sources"] = kr_tools.sources(found)
+            else:
+                out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL,
+                                      context=ctx, kind=kind, board_refs=refs, base_url=gw.resolve_base_url())
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:   # 게이트웨이 오류는 대화창에 그대로 보여 준다(조용히 다른 모델로 갈아타지 않음)
@@ -232,7 +253,7 @@ class Handler(SimpleHTTPRequestHandler):
             urls.append({"url": f"/api/img/{quote(name)}/{fn}"})
         el = round(time.time() - t0, 1)
         sys.stderr.write("[그림] %s %d장 %.1f초 · %s크레딧\n" % (out["model"], len(urls), el, out.get("credits")))
-        head = f"{board_image.FACTS_HEAD}({facts['model']}).\n{facts['content']}\n\n" if facts else note
+        head = f"{facts.get('head') or board_image.FACTS_HEAD}({facts['model']}).\n{facts['content']}\n\n" if facts else note
         return self._json(200, {"kind": "image", "content": head + f"그림 후보 {len(urls)}장 — 마음에 드는 것을 눌러 칠판에 붙여요", "images": urls,
                                 "model": out["model"], "elapsed": el, "credits": out.get("credits"), **({"sources": facts["sources"]} if facts and facts.get("sources") else {}),
                                 **({"caption": caption} if caption else {})})
@@ -508,6 +529,14 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(401, b'{"error":"login"}')
         if path == "/api/chat":
             return self._chat()
+        if path == "/api/stt-token":   # 대화창 🎤 — 실시간 받아쓰기 일회용 표(키는 서버에만, 2026-10-20)
+            key = self._key()
+            if not key:
+                return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다"})
+            try:
+                return self._json(200, meeting.live_token(key, base_url=gw.resolve_base_url()))
+            except Exception as e:
+                return self._json(502, {"error": str(e)})
         m = re.match(r"^/api/find/([^/]+)$", path)
         if m:
             return self._find_api(self._name(m.group(1)))

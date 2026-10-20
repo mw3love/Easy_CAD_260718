@@ -1671,3 +1671,5 @@
 - 웹 개발 서버 Vite 프록시를 `localhost`로 두면 Node 17+는 IPv6(::1)부터 가서, `--host 127.0.0.1`로 켠 Python 서버에 못 닿고 502(서버 없음처럼 보임). 프록시 주소는 `127.0.0.1`.
 - `npx playwright test`만 돌리면 마지막 빌드(`dist`)로 시험한다 — 고친 뒤엔 `npm run e2e`(빌드 포함)로.
 - 웹 버튼에 `all: unset`을 주면 크롬 UA 규칙 `[draggable=true] { -webkit-user-drag: element }`까지 지워져 `draggable`이어도 끌기가 시작되지 않는다(2026-10-20 그림 후보). 합성 `DragEvent('drop')` 시험은 이걸 못 잡으니 진짜 마우스 끌기(`dragTo`·`mouse.down/move/up`)로 시험할 것.
+- KAIROS MCP 날씨 도구(`kr-weather`)는 10개 도시만 알고, 모르는 도시는 오류 없이 서울 날씨를 돌려준다(2026-10-20 「전주」). 돌아온 `city`를 물은 도시와 꼭 비교할 것. MCP 호출은 `Accept: application/json, text/event-stream` 둘 다 없으면 406(httpx 기본 `*/*`도 406).
+- KAIROS 받아쓰기는 본문 25MB·120분까지, webm(브라우저 녹음 기본 형식)은 길이를 못 읽어 400 — 올리기 전에 바꿀 것(`meeting.prepare`). 실시간 받아쓰기 소켓의 끝 신호는 빈 글 `""`(빈 바이너리면 408).

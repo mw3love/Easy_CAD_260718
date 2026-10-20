@@ -119,7 +119,7 @@ def test_server_image_with_live_info_searches_first(server, monkeypatch):
     body = json.dumps({"board": "그림", "kind": "image", "messages": [{"role": "user", "content": "송신탑 그려줘"}]}).encode()   # 최신 정보 말 없음 = 검색 안 함
     with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
         assert "sources" not in json.loads(r.read()) and seen[-1] == "송신탑 그려줘"   # 날짜 말이 없으면 오늘 날짜도 안 붙임(붙이면 그림에 써 넣었음)
-    assert "[오늘 날짜: " in seen[0]   # 「내일의 전주 날씨」 — 날짜 말이 있으면 오늘 날짜(그림 모델은 오늘을 모름)
+    assert "[날짜 — 오늘 " in seen[0] and " · 내일 " in seen[0]   # 「내일의 전주 날씨」 — 날짜 말이 있으면 오늘·내일·모레(그림 모델은 오늘을 모름)
 
 
 def test_followup_keeps_first_request_and_facts():

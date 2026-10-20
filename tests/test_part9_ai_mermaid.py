@@ -296,7 +296,17 @@ def test_ai_gateway_settings_action_in_insert_menu_opens_dialog():
 def test_resolve_base_url_defaults_to_constant_when_nothing_stored():
     _clear_gateway_settings()
     assert gw.resolve_base_url() == gw.BASE_URL
-    assert gw.BASE_URL == "https://factchat.mindlogic-kr-api.com/v1/gateway"
+    assert gw.BASE_URL == "https://api.baze.co/v1/gateway"
+
+
+def test_old_stored_base_url_reads_as_new_default():
+    # [2026-10-20] 옛 공식 주소가 설정에 저장돼 있으면(설정 창이 기본값을 저장) 새 주소로 — 옛 주소가 꺼져도 안 끊기게
+    _clear_gateway_settings()
+    try:
+        gw.store_base_url("https://factchat.mindlogic-kr-api.com/v1/gateway")
+        assert gw.resolve_base_url() == gw.BASE_URL
+    finally:
+        _clear_gateway_settings()
 
 
 def test_store_base_url_then_resolve_reads_it_back():
@@ -322,7 +332,7 @@ def test_resolve_base_url_prefers_explicit_over_stored():
 def test_gateway_settings_dialog_prefills_default_url_when_nothing_stored():
     _clear_gateway_settings()
     dlg = _AIGatewaySettingsDialog()
-    assert dlg.base_url() == "https://factchat.mindlogic-kr-api.com/v1/gateway"
+    assert dlg.base_url() == "https://api.baze.co/v1/gateway"
     assert dlg.api_key() == ""
 
 

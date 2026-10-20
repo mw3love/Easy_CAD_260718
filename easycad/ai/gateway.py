@@ -40,7 +40,8 @@ import time
 from pathlib import Path
 from typing import Literal, NamedTuple, Optional
 
-BASE_URL = "https://factchat.mindlogic-kr-api.com/v1/gateway"
+BASE_URL = "https://api.baze.co/v1/gateway"   # [2026-10-20] KAIROS 문서의 새 공식 주소(옛 주소도 아직 응답 — 아래 OLD_BASE_URLS)
+OLD_BASE_URLS = ("https://factchat.mindlogic-kr-api.com/v1/gateway",)   # 설정에 저장돼 있어도 새 주소로 읽음(설정 창이 기본값을 그대로 저장했을 수 있음)
 KEY_ENV = "EASYCAD_GW_KEY"
 SECRETS_FILE = Path.home() / ".claude" / ".secrets" / "easycad-gateway.key"
 
@@ -171,7 +172,7 @@ def resolve_base_url(explicit: str = "") -> str:
     try:
         from PyQt6.QtCore import QSettings
         stored = QSettings(_SETTINGS_ORG, _SETTINGS_APP).value("ai_gateway_base_url", "", type=str)
-        if stored:
+        if stored and stored.strip().rstrip("/") not in OLD_BASE_URLS:
             return stored.strip()
     except Exception:
         pass
