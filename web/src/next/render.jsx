@@ -406,7 +406,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         <rect x={x} y={y} width={w} height={h} fill="none" stroke={tl} strokeWidth={1} /></g>
     }
     case 'web': {   // 웹 카드 — 위 띠(제목·주소·새 탭 단추) + 칸 안 페이지(들어가는 사이트, 편집·발표 화면만) 또는 대표 그림
-      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'wc-' + (it._id || idx), ob = openBtnRect(it), ic = it.icon ? 16 : 0, tx = x + 10 + (ic && ic + 6), yl = noFs && isYoutube(it) ? 84 : 0, tw = w - ob.w - 26 - (ic && ic + 6) - yl   // yl = 발표의 「⤢ 크게 보기」 자리
+      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'wc-' + (it._id || idx), ob = openBtnRect(it), ic = it.icon ? 16 : 0, tx = x + 10 + (ic && ic + 6), yl = noFs && isYoutube(it) ? 104 : 0, tw = w - ob.w - 26 - (ic && ic + 6) - yl   // yl = 발표의 「⤢ 크게 보기」 자리
       const live = (web === 'on' || web === 'view') && it.frameable && bh > 4   // 'sleep' = 많이 줄여 봄 → 페이지 끔(그림·이름만)
       const zm = !isYoutube(it) && it.zoom > 0 && it.zoom < 1 ? it.zoom : isYoutube(it) && fsScale > 1 ? 1 / fsScale : 1   // 칸 안 페이지 배율 — 큰 판에 띄우고 통째로 줄임.
       // 발표의 유튜브 = 화면에 보이는 크기의 판에 띄우고 줄임(작은 판을 확대하면 유튜브 단추가 몇 배로 커 보였음 — 2026-10-20 사용자)
@@ -437,7 +437,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         <text x={tx} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis(it.title || siteOf(it.url), 13, 700, tw)}</text>
         <text x={tx} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.url, 10, 400, tw)}</text>
         {yl > 0 && <g style={{ cursor: 'pointer' }}><rect x={ob.x - yl} y={ob.y} width={yl - 6} height={ob.h} rx={5} fill={ytBig ? '#da7756' : '#ffffff'} stroke={ytBig ? '#da7756' : '#d4d4d8'} />
-          <text x={ob.x - yl + (yl - 6) / 2} y={ob.y + ob.h / 2} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={600} fontFamily={APP_FONT} fill={ytBig ? '#ffffff' : '#3f3f46'}>{ytBig ? '⤡ 원래대로' : '⤢ 크게 보기'}</text></g>}
+          <text x={ob.x - yl + (yl - 6) / 2} y={ob.y + ob.h / 2} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={600} fontFamily={APP_FONT} fill={ytBig ? '#ffffff' : '#3f3f46'}>{ytBig ? '⤡ 원래대로' : '⤢ 크게 보기 (F)'}</text></g>}
         <g><title>새 탭에서 열기</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
         </>}

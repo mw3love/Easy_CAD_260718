@@ -68,6 +68,15 @@ function ytCommand(target, func) {
   w.postMessage(JSON.stringify({ event: 'command', func, args: [] }), 'https://www.youtube.com')
 }
 export const playYoutube = target => ytCommand(target, 'playVideo')
+// 재생 중인지 — 「듣고 있음」을 보낸 칸은 유튜브가 상태를 알려 줌(infoDelivery.playerState, 1 = 재생 중)
+const ytState = new WeakMap()
+if (typeof window !== 'undefined') window.addEventListener('message', e => {
+  if (e.origin !== 'https://www.youtube.com') return
+  let d; try { d = typeof e.data === 'string' ? JSON.parse(e.data) : e.data } catch { return }
+  const st = d?.info?.playerState; if (st != null && e.source) ytState.set(e.source, st)
+})
+// 재생 ⇄ 일시정지(발표의 Space — 키보드는 발표가 가지므로 유튜브 대신, 2026-10-20)
+export function toggleYoutube(f) { ytCommand(f, ytState.get(f?.contentWindow) === 1 ? 'pauseVideo' : 'playVideo') }
 // 한 영역(칠판 등) 밖의 유튜브 칸을 모두 멈춤 — 발표를 열면 뒤 칠판 영상은 멈춤
 export function pauseYoutubeOutside(root) {
   for (const f of document.querySelectorAll('iframe[data-webid]')) if (!root?.contains(f) && /youtube\.com\/embed\//.test(f.src)) ytCommand(f, 'pauseVideo')
