@@ -3,7 +3,7 @@
 // - 「칠판에 붙이기」: 답 → 카드(흰 보드 + 보드 글꼴 글, Editor.pinCard). 붙인 카드는 「칠판에 붙임 ✓」로 찾아감(카드의 .ecad `chat_at` = 답 시각).
 // - 대화 기록: 칠판마다 서버(/api/chatlog/<이름>) — 옛 칠판과 같은 기록을 이어 씀. 「새 대화」 = 지금 대화를 `past`로 넘기고 빈 대화(앞 대화가 안 실려 주제가 안 섞임),
 //   「지난 대화 ▾」 = 골라 다시 열기(2026-10-20 사용자 — 탭은 360px 칸에 2~3개면 꽉 차서 목록으로). 파일 = { messages, past: [{ at, title, messages }] }.
-// - 웹 검색(§8 항목61 ② 담는 법, 2026-10-19): 종류는 서버가 짐작(「최신·뉴스·찾아줘」…), 답 위 표시 「🔎 웹 검색 / 💬 대화」 + 반대로 다시 묻기 한 번.
+// - 웹 검색(§8 항목61 ② 담는 법, 2026-10-19): 길은 서버가 고름(판단 모델 jev + 규칙 — `easycad/ai/route.py`), 답 위 표시 「🔎 웹 검색 / 💬 대화」만(옛 「다시 ▾」는 2026-10-20 없앰).
 //   검색 답은 쓰인 번호의 출처를 아래에 보이고, 붙이면 요약 메모 + 출처 카드 + 번호 화살표 한 묶음(Editor `cardItems`).
 // - 칠판에서(§8 항목61 ③-2): 「지난번·저번·정리해 둔」 → 서버가 이 칠판 글을 뜻으로 찾아 근거로 답, [칠판 n] 고리 = 그 도형으로 가기, 붙이면 근거로 가는 점선 화살표.
 import { useEffect, useRef, useState } from 'react'
@@ -17,17 +17,16 @@ import { getKairosKey, KEY_RE, keyHeaders, setKairosKey } from './kairosKey.js'
 const LINK_CHAT = '#4f8fe8'
 // 정리 문서 크게 보기 — 새 탭에 그 HTML(인쇄·PDF는 그 탭에서 Ctrl+P)
 const openHtml = html => { const u = URL.createObjectURL(new Blob([html || ''], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
-// 답 종류 — [표시, 표시 꾸밈, 다시 묻기 글, 툴팁] — 서버가 짐작한 것을 답 위에 보이고, 나머지 둘로 한 번에 다시(§8 항목61 ② 원칙 ⓒ)
+// 답 종류 — [표시, 표시 꾸밈] — 서버가 고른 길(판단 모델 jev + 규칙, `easycad/ai/route.py`)을 답 위에 보이기만.
+// 옛 「다시 ▾」(다른 종류로 다시 묻기)는 2026-10-20 없앰(사용자: 대화창 하나로 다 — 길은 앱이 고르고, 틀리면 말로 다시)
 const KINDS = {
-  chat: ['💬 대화', null, '대화로 다시', '웹·칠판을 찾지 않고 대화로 다시 물어 이 답을 바꿔요'],
-  search: ['🔎 웹 검색', { color: '#2f80ed', background: 'rgba(47,128,237,.12)' }, '웹 검색으로 다시', '웹을 찾아 출처와 함께 다시 물어 이 답을 바꿔요'],
-  board: ['📌 칠판에서', { color: '#d97706', background: 'rgba(245,158,11,.14)' }, '칠판에서 다시', '이 칠판의 메모·글을 뜻으로 찾아 그것을 근거로 다시 물어요'],
-  report: ['📄 정리 문서', { color: '#7c3aed', background: 'rgba(124,58,237,.12)' }, '정리 문서로 다시', '고른 것(없으면 칠판 전체)을 보고서·인포그래픽 한 장으로 다시 만들어요(약 40초)'],
-  tidy: ['🧩 정리정돈', { color: '#0f766e', background: 'rgba(15,118,110,.12)' }, '정리정돈으로 다시', '고른 것(없으면 화면에 보이는 것)을 지우지 않고 주제별 프레임으로 묶어 옮겨요(Ctrl+Z 한 번에 원래대로)'],
-  image: ['🎨 그림', { color: '#9333ea', background: 'rgba(147,51,234,.12)' }, '그림으로 다시', '그림 후보 2장을 만들어 이 답을 바꿔요(2장 약 20크레딧)'],
-}   // 대화창 주소(어두운·밝은 화면 둘 다 읽히는 파랑)
-// 「다시 ▾」엔 답하는 방식 셋만 — 정리 문서·정리정돈·그림은 짐작이 틀린 게 아니라 다른 일이라 말(「정리해 줘」「그려 줘」)·칠판 우클릭으로(2026-10-20 사용자: 버튼이 너무 많음)
-const REDO_KINDS = ['chat', 'search', 'board']
+  chat: ['💬 대화', null],
+  search: ['🔎 웹 검색', { color: '#2f80ed', background: 'rgba(47,128,237,.12)' }],
+  board: ['📌 칠판에서', { color: '#d97706', background: 'rgba(245,158,11,.14)' }],
+  report: ['📄 정리 문서', { color: '#7c3aed', background: 'rgba(124,58,237,.12)' }],
+  tidy: ['🧩 정리정돈', { color: '#0f766e', background: 'rgba(15,118,110,.12)' }],
+  image: ['🎨 그림', { color: '#9333ea', background: 'rgba(147,51,234,.12)' }],
+}
 // 기다리는 동안 보일 말 — 일마다 실제로 일하는 모델(서버 /api/models `jobs`)을 같이(2026-10-20 사용자: 정돈인데 고른 gpt가 보여 헷갈림, 칠판엔 아무 표시가 없어 안 되는 줄 알았음)
 const JOB_LABEL = { tidy: '🧩 정리정돈 중', report: '📄 정리 문서 만드는 중', image: '🎨 그림 그리는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
 const BOARD_JOBS = new Set(['tidy', 'report'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
@@ -57,7 +56,6 @@ const css = {
   chip: { alignSelf: 'flex-start', font: `500 11.5px ${F}`, color: '#5aa9ff', background: 'rgba(90,169,255,.15)', borderRadius: 99, padding: '2px 9px' },
   input: { font: `400 13.5px/1.5 ${F}`, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 10px', resize: 'none', minHeight: 40, maxHeight: 200, outline: 'none', background: C.card, color: C.ink },
   kind: { font: `600 11px ${F}`, color: C.muted, background: C.seg, borderRadius: 99, padding: '1px 8px' },
-  link: { all: 'unset', cursor: 'pointer', font: `500 11px ${F}`, color: C.muted, textDecoration: 'underline' },
   bar: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderBottom: `1px solid ${C.line}` },
   drop: { display: 'flex', flexDirection: 'column', maxHeight: 260, overflowY: 'auto', borderBottom: `1px solid ${C.line}`, background: C.card },
   row: { all: 'unset', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'center', padding: '6px 12px', font: `400 12.5px ${F}`, color: C.ink, borderBottom: `1px solid ${C.line}` },
@@ -87,7 +85,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
   const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_KEY) || '' } catch { return '' } })
-  const box = useRef(null), [redoAt, setRedoAt] = useState(null)   // redoAt = 「다시 ▾」를 펼친 답 차례
+  const box = useRef(null)
   const [past, setPastState] = useState([]), pastRef = useRef([]), [pastOpen, setPastOpen] = useState(false)   // 지난 대화(새것부터)
   const setPast = p => { pastRef.current = p; setPastState(p) }
   const [keyOpen, setKeyOpen] = useState(false), [keyDraft, setKeyDraft] = useState(''), [myKey, setMyKey] = useState(() => !!getKairosKey())   // 내 KAIROS 키 칸
@@ -137,14 +135,6 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
     } finally { setBusy(null) }
   }
-  // 앱이 짐작한 종류가 틀렸을 때 — 같은 질문을 반대 종류로 다시 물어 그 답을 바꿔 끼움(질문은 그대로, 붙인 표시는 새 답이라 풀림)
-  async function redoAs(i, kind) {
-    if (busy) return
-    const history = msgs.slice(0, i).filter(m => m.role !== 'error'); setBusy(Date.now()); setBusyJob(kind)
-    try { const a = await ask(history, kind); update(msgs.map((x, j) => (j === i ? a : x))) } catch (e) {
-      setMsgs([...msgs.filter(m => m.role !== 'error'), { role: 'error', content: String(e.message || e) }])
-    } finally { setBusy(null) }
-  }
   function pin(i) {
     const m = msgs[i]
     if (ed.current?.showCard(m.at)) return   // 이미 붙인 카드 → 그리로
@@ -164,7 +154,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   // 새 대화 — 지금 대화를 지난 대화 맨 위로(빈 대화면 그냥 둠). 질문 하나 = 제목
   const shelve = (cur, p) => { const kept = cur.filter(m => m.role !== 'error'); if (!kept.some(m => m.role === 'user')) return p
     return [{ at: kept[0].at || Date.now(), title: (kept.find(m => m.role === 'user').content || '').split(/\r?\n/)[0].slice(0, 40), messages: kept }, ...p] }
-  const reset = () => { setRedoAt(null); setSkipSel(''); setGone({}); setPastOpen(false) }
+  const reset = () => { setSkipSel(''); setGone({}); setPastOpen(false) }
   function newChat() { if (busy) return; const p = shelve(msgs, pastRef.current); setPast(p); reset(); setMsgs([]); save([], p) }
   function openPast(j) { if (busy) return; const pick = pastRef.current[j], p = shelve(msgs, pastRef.current.filter((_, k) => k !== j)); setPast(p); reset(); setMsgs(pick.messages); save(pick.messages, p) }
   function saveKey(v) { setKairosKey(v.trim()); setMyKey(!!v.trim()); setKeyDraft(''); setKeyOpen(false) }
@@ -225,13 +215,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
             : <div key={i} style={css.ai}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                 <span data-testid="answer-kind" style={{ ...css.kind, ...(KINDS[m.kind] ? KINDS[m.kind][1] : null) }}>{(KINDS[m.kind] || KINDS.chat)[0]}</span>
-                {/* 다른 종류로 다시 — 링크 다섯 개가 답 위 두 줄을 차지해 「다시 ▾」 하나로 접음(2026-10-19 점검) */}
-                <button data-testid="redo-menu" style={css.link} disabled={!!busy} aria-expanded={redoAt === i} onClick={() => setRedoAt(r => (r === i ? null : i))} title="앱이 짐작한 종류가 틀렸으면 다른 종류로 다시 물어 이 답을 바꿔요">다시 ▾</button>
               </div>
-              {redoAt === i && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, margin: '2px 0 6px' }}>
-                {REDO_KINDS.filter(k => k !== (m.kind || 'chat')).map(k => [k, KINDS[k]]).map(([k, [label, look, again, tip]]) =>
-                  <button key={k} aria-label={again} style={{ ...css.kind, ...look, border: 0, cursor: 'pointer' }} disabled={!!busy} onClick={() => { setRedoAt(null); redoAs(i, k) }} title={tip}>{label}</button>)}
-              </div>}
               <Answer text={m.content} />
               {m.html && <div data-testid="answer-doc" style={{ marginTop: 6 }}>   {/* 정리 문서 미리보기 — A4 폭 794px를 대화창 폭에 맞춰 줄임(스크립트 없는 iframe) */}
                 <div style={{ height: 300, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', cursor: 'zoom-in' }} title="크게 보기·인쇄" onClick={() => openHtml(m.html)}>

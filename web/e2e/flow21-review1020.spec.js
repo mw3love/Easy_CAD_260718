@@ -54,15 +54,13 @@ test('펜 버튼은 끌어도 아무것도 안 놓임', async ({ page }) => {
   await expect(btn(page, '펜')).not.toHaveAttribute('aria-pressed', 'true')   // 도구도 안 바뀜
 })
 
-test('대화창 — 「다시 ▾」는 답하는 방식 셋만 · 새 대화 = 앞 대화 안 실림 · 지난 대화 다시 열기', async ({ page }) => {
+test('대화창 — 「다시 ▾」 없음 · 새 대화 = 앞 대화 안 실림 · 지난 대화 다시 열기', async ({ page }) => {
   const seen = []
   await fakeKairos(page, seen)
   await openBoard(page, boardName('threads'), { chat: true })
   await ask(page, '첫 대화 질문'); await expect(page.getByText('답 1')).toBeVisible()
-  await page.getByTestId('redo-menu').click()
-  await expect(page.getByRole('button', { name: '웹 검색으로 다시' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '칠판에서 다시' })).toBeVisible()
-  for (const n of ['정리 문서로 다시', '정리정돈으로 다시', '그림으로 다시']) await expect(page.getByRole('button', { name: n })).toHaveCount(0)
+  await expect(page.getByTestId('answer-kind')).toBeVisible()             // 어느 길로 갔는지는 보임
+  await expect(page.getByTestId('redo-menu')).toHaveCount(0)              // 다시 묻는 메뉴는 없음(2026-10-20 사용자)
   await page.getByRole('button', { name: /새 대화/ }).click()
   await expect(page.getByText('첫 대화 질문')).toHaveCount(0)
   await ask(page, '둘째 대화 질문'); await expect(page.getByText('답 2')).toBeVisible()

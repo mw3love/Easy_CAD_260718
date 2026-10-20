@@ -1,4 +1,4 @@
-// 흐름 11 — 웹 검색 답 담기(§8 항목61 ② 담는 법): 종류 표시·반대로 다시 묻기·붙이면 요약 메모 + 출처 카드 + 번호 화살표 한 묶음. KAIROS는 가짜 답.
+// 흐름 11 — 웹 검색 답 담기(§8 항목61 ② 담는 법): 종류 표시·붙이면 요약 메모 + 출처 카드 + 번호 화살표 한 묶음. KAIROS는 가짜 답.
 import { test, expect } from '@playwright/test'
 import { boardName, openBoard, setCam, dragScene, liveDoc, waitSaved } from './helpers.js'
 
@@ -6,7 +6,7 @@ const SEARCH = { content: '## KBS 소식\n- 사장 후보가 셋으로 좁혀졌
   sources: [{ n: 1, url: 'https://news.kbs.co.kr/a', title: '사장 후보 3인', date: '2026-10-19' }, { n: 3, url: 'https://www.edaily.co.kr/b', title: '감사 17건', date: '' }] }
 const CHAT = { content: '검색 없이 답하면 이래요.', model: 'fake-model', elapsed: 0.2, kind: 'chat' }
 
-test('검색 답 → 표시·출처 → 붙이면 한 묶음(메모 + [n] 카드 둘 + 화살표 둘) → 같이 움직이고 새로고침해도 그대로 → 대화로 다시', async ({ page }) => {
+test('검색 답 → 표시·출처 → 붙이면 한 묶음(메모 + [n] 카드 둘 + 화살표 둘) → 같이 움직이고 새로고침해도 그대로', async ({ page }) => {
   const seen = [], name = boardName('search')
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
   await page.route('**/api/chat', async r => { const b = r.request().postDataJSON(); seen.push(b); await r.fulfill({ json: b.kind === 'chat' ? CHAT : SEARCH }) })
@@ -40,11 +40,5 @@ test('검색 답 → 표시·출처 → 붙이면 한 묶음(메모 + [n] 카드
   expect(d.items.filter(it => it.type === 'web')).toHaveLength(2)
   expect(d.items.filter(it => it.type === 'sarrow').every(a => a.bind1 != null && a.bind2 != null)).toBe(true)
   await expect(page.getByTestId('answer-sources').locator('a')).toHaveCount(2)   // 대화 기록에도 출처가 남음
-
-  await page.getByTestId('redo-menu').click()                            // 「다시 ▾」를 펼쳐야 다른 종류가 보임
-  await page.getByRole('button', { name: '대화로 다시' }).click()
-  await expect(page.getByTestId('answer-kind')).toHaveText('💬 대화')
-  expect(seen.at(-1).kind).toBe('chat')
-  await expect(page.getByTestId('answer-sources')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '칠판에 붙이기' })).toBeVisible()   // 새 답이라 붙인 표시가 풀림
+  await expect(page.getByTestId('redo-menu')).toHaveCount(0)              // 「다시 ▾」 없앰(2026-10-20 — 길은 앱이 고름)
 })
