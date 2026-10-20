@@ -25,6 +25,7 @@ const TOOLS = [
   ['erase', I(<><path d="M7 15 L3.5 11.5 L10.5 4.5 L15 9 L9 15 Z" /><path d="M7 15 H15" /></>), '지우개', '6 · E (두 번 = 이 장 판서 지우기)', ['Digit6', 'KeyE']],
 ]
 const IDLE_MS = 2000
+const BIG_BAND = 64   // 영상 크게 보기의 위 검은 띠 — 「⤡ 원래 크기로」가 영상(유튜브 단추)과 겹치지 않게
 // 발표 속 유튜브 크게 보기(2026-10-20 사용자) — 발표 전체 화면 안에서 유튜브 전체 화면을 켜면 크롬·유튜브가 서로 다르게 알아 끝내기 단추·F가 안 먹음(실측).
 // 그래서 유튜브 전체 화면 단추는 숨기고(fs=0), 카드 제목 띠 「⤢ 크게 보기」 = 그 영상만 검은 바탕에 화면 꽉(사진 크게 보기처럼), 영상 밖·띠·「원래대로」 = 돌아옴.
 // 검토한 대안: 영상을 누를 때 발표 전체 화면을 잠깐 풂(B) — 맛본 사용자: 크롬 창·윈도우 막대가 나와 이상함.
@@ -112,6 +113,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   }, [n, tool])   // eslint-disable-line react-hooks/exhaustive-deps
   const [zoom, setZoom] = useState(null), [menu, setMenu] = useState(null), root = useRef(null), wheelAt = useRef({ t: 0, acc: 0, flip: 0, qt: 0 }), [quick, setQuick] = useState(false), pan = useRef(null)   // zoom = { s, ox, oy } 지금 장 화면 = o + s·원래 화면(장 넘기면 풀림), pan = 우클릭 끌기
   const menuRef = useRef(null); menuRef.current = menu
+  const [bigHover, setBigHover] = useState(false)
   const [webOn, setWebOn] = useState(null)   // 조작 중인 웹 카드(장을 넘기면 풀림)
   useEffect(() => { setZoom(null); setWebOn(null) }, [i])
   useEffect(() => {   // 휠 = 장 넘기기(파워포인트 손버릇), Ctrl+휠 = 커서 자리 확대 — 2026-10-18 사용자
@@ -155,7 +157,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
         const gr = g.getBoundingClientRect(), cw = +(g.getAttribute('data-web-box') || '0,0,480').split(',')[2] || 480
         if (gr.right - e.clientX < gr.width * 40 / cw) { window.open(g.getAttribute('data-web-url'), '_blank', 'noopener'); return }
         const r = fr.closest('foreignObject').getBoundingClientRect(), s0 = zoom?.s || 1, x0 = (r.x - (zoom?.ox || 0)) / s0, y0 = (r.y - (zoom?.oy || 0)) / s0, w0 = r.width / s0, h0 = r.height / s0
-        const s = Math.min(W / w0, H / h0) * 0.96; setWebOn(id); setZoom({ s, ox: (W - s * w0) / 2 - s * x0, oy: (H - s * h0) / 2 - s * y0, card: id }); return   // 영상 몸통을 화면에(둘레 4%는 검은 곳 = 눌러 돌아옴)
+        const s = Math.min((W - 32) / w0, (H - BIG_BAND - 16) / h0); setWebOn(id); setZoom({ s, ox: (W - s * w0) / 2 - s * x0, oy: BIG_BAND + (H - BIG_BAND - 16 - s * h0) / 2 - s * y0, card: id }); return   // 영상 몸통을 위 검은 띠(「원래 크기로」 자리) 아래에 꽉 — 둘레 검은 곳 = 눌러 돌아옴
       }
       if (id) { setWebOn(id); if (yt) playYoutube(fr) } else { if (g) window.open(g.getAttribute('data-web-url'), '_blank', 'noopener'); setWebOn(null) }
     }
@@ -188,7 +190,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   const textBoxAt = p => { const F = [16, 22, 32][size], pad = TEXT_MARGIN * k * (zoom?.s || 1); return { F, pad, x: p.x - pad, y: p.y - F * 0.7 - pad, h: F * METRICS.app.lineSpacing + 2 * pad } }
   const commitText = v => { const p = textAt; setTextAt(null); if (!p || !v.trim()) return; const b = textBoxAt(p), s = toScene(b.x, b.y)
     onAdd([{ pos: [s.x, s.y], type: 'text', text: v, color: argb(penColor), font: +(b.F / (k * (zoom?.s || 1) * PT)).toFixed(3), bg: null }]) }
-  const show = awake || !!tool || !!draft, barShow = (intro || nearBottom || barHover.current) && !draft
+  const show = awake || !!tool || !!draft, barShow = (intro || nearBottom || barHover.current) && !draft && !zoom?.card   // 영상 크게 보기 중엔 숨김(유튜브 재생바를 가렸음)
   const btn = on => ({ all: 'unset', cursor: 'pointer', minWidth: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, padding: '0 6px', boxSizing: 'border-box',
     color: on ? '#fff' : 'rgba(255,255,255,.85)', background: on ? '#da7756' : 'transparent', font: "600 14px 'Pretendard', sans-serif" })
   const th = THEMES[dark ? 'dark' : 'light']
@@ -200,11 +202,11 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       style={{ all: 'unset', cursor: 'pointer', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', font: "600 11px 'Pretendard', sans-serif", color: cur === v ? '#fff' : 'rgba(255,255,255,.6)', background: cur === v ? '#da7756' : 'transparent' }}>{name}</button>)}</div>
     <span style={{ fontSize: 10, color: 'rgba(255,255,255,.55)', whiteSpace: 'nowrap' }}>{label}</span></div>
   return <div ref={root} data-testid="presenter" onPointerDown={down} onPointerMove={move} onPointerUp={up} onContextMenu={e => e.preventDefault()}
-    style={{ position: 'fixed', inset: 0, zIndex: 1000, background: '#000', cursor: laserShown ? 'none' : show ? (tool && tool !== 'erase' ? 'crosshair' : 'default') : 'none', ...th }}>
+    style={{ position: 'fixed', inset: 0, zIndex: 1000, background: '#000', cursor: laserShown ? 'none' : show ? (tool && tool !== 'erase' ? 'crosshair' : zoom?.card ? 'zoom-out' : 'default') : 'none', ...th }}>
     <svg width={W} height={H} style={{ display: 'block' }}>
       {!zoom?.card && <rect x={hx - g} y={hy - g} width={hw + 2 * g} height={hh + 2 * g} fill={th['--mb-board']} />}
       <g transform={`translate(${zx},${zy}) scale(${zs})`}><g transform={`translate(${gx},${gy}) scale(${gk})`} style={{ '--z': k * (zoom?.s || 1) }}>
-        {order.filter(([it]) => !zoom?.card || it._id === zoom.card).map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} web={it.type === 'web' ? (!tool && webOn === it._id ? 'on' : 'view') : it.type === 'doc' ? 'view' : undefined} noFs ytBig={zoom?.card === it._id} />)}
+        {order.filter(([it]) => !zoom?.card || it._id === zoom.card).map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} web={it.type === 'web' ? (!tool && webOn === it._id ? 'on' : 'view') : it.type === 'doc' ? 'view' : undefined} noFs ytBig={zoom?.card === it._id} fsScale={it.type === 'web' ? +(k * (zoom?.s || 1) * (it.scale || 1)).toFixed(2) : undefined} />)}   // fsScale = 목표 배율(넘기는 동안 매 장면이 아니라 한 번만 바뀜)
       </g></g>
       {/* 프레임 밖 가림(구멍 뚫린 검은 판) — 출력한 쪽과 같은 범위만 보임 */}
       {!zoom?.card && <path d={`M${hx - g},${hy - g} H${hx + hw + g} V${hy + hh + g} H${hx - g} Z M${hx},${hy} V${hy + hh} H${hx + hw} V${hy} Z`} fill={th['--mb-board']} fillRule="evenodd" />}
@@ -224,9 +226,12 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
               <g style={{ '--z': Math.min(200 / bb.w, 120 / bb.h) }}>{order.map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} />)}</g></svg>
             <span style={{ color: j === i ? '#da7756' : '#fff', font: "500 12px 'Pretendard', sans-serif" }}>{j + 1}{fr.name ? ` · ${fr.name}` : ''}</span></button> })}
       </div></div>}
-    {zoom && <button data-testid="zoom-reset" title="원래 배율로 (Ctrl+0)" onPointerDown={e => e.stopPropagation()} onClick={() => setZoom(null)}
+    {zoom?.card && show && <button data-testid="big-close" title="원래 크기로 (영상 밖을 눌러도 됨)" onPointerDown={e => e.stopPropagation()} onClick={() => { setZoom(null); setBigHover(false) }} onPointerEnter={() => { setBigHover(true); barHover.current = true }} onPointerLeave={() => { setBigHover(false); barHover.current = false; wake() }}
+      style={{ all: 'unset', cursor: 'pointer', position: 'absolute', left: '50%', top: (BIG_BAND - 40) / 2, transform: 'translateX(-50%)', height: 40, padding: '0 18px', display: 'flex', alignItems: 'center', gap: 6, borderRadius: 20,
+        color: '#fff', font: "600 15px 'Pretendard', sans-serif", boxShadow: '0 2px 10px rgba(0,0,0,.4)', transition: 'background .12s', background: bigHover ? '#da7756' : 'rgba(63,63,70,.95)', border: '1px solid rgba(255,255,255,.25)' }}>⤡ 원래 크기로</button>}   {/* 올리면 코랄(2026-10-20 사용자: 알아보게) — 영상 위에선 마우스가 유튜브로 가니 위 띠로 올리면 나타남 */}
+    {zoom && !zoom.card && <button data-testid="zoom-reset" title="원래 배율로 (Ctrl+0)" onPointerDown={e => e.stopPropagation()} onClick={() => setZoom(null)}
       style={{ all: 'unset', cursor: 'pointer', position: 'absolute', right: 16, top: 16, padding: '6px 12px', borderRadius: 16, background: 'rgba(24,24,27,.86)', color: '#fff', font: "600 12px 'Pretendard', sans-serif", boxShadow: '0 2px 10px rgba(0,0,0,.4)' }}>
-      {zoom.card ? '⤡ 원래대로 (영상 밖 누르기)' : `${Math.round(zoom.s * 100)}% · 원래대로`}</button>}
+      {Math.round(zoom.s * 100)}% · 원래대로</button>}
     {toast && <div style={{ position: 'absolute', left: '50%', top: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8, background: 'rgba(24,24,27,.9)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", pointerEvents: 'none' }}>{toast}</div>}
     {laserShown && mpos && <div data-testid="laser" style={{ position: 'absolute', left: mpos.x - 7, top: mpos.y - 7, width: 14, height: 14, borderRadius: 7, background: '#ff2a2a', boxShadow: '0 0 10px 4px rgba(255,40,40,.6)', pointerEvents: 'none' }} />}
     {textAt && <input autoFocus placeholder="글 쓰고 Enter" onPointerDown={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Enter') commitText(e.currentTarget.value); if (e.key === 'Escape') setTextAt(null) }} onBlur={e => commitText(e.currentTarget.value)}
