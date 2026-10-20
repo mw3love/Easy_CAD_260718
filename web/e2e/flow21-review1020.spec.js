@@ -139,3 +139,20 @@ test('정리 문서 답의 「🎨 그림으로도」 = 같은 자료로 그림 
   expect(seen[1]).toMatchObject({ kind: 'image', infographic: true })
   expect(seen[1].messages.at(-1).content).toBe('「점검」 인포그래픽 그림')
 })
+
+test('그림 후보 둘을 차례로 누르면 둘째는 첫째와 안 겹치는 빈자리에(2026-10-20 사용자)', async ({ page }) => {
+  const name = boardName('imgspot')
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII=', 'base64')
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', r => r.fulfill({ json: { kind: 'image', content: '그림 후보 2장', model: 'img-m', elapsed: 1,
+    images: [{ url: `/api/img/${name}/1_aaaaaa.png` }, { url: `/api/img/${name}/2_bbbbbb.png` }] } }))
+  await page.route('**/api/img/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
+  await openBoard(page, name, { chat: true }); await setCam(page, { x: 400, y: 200, z: 0.02 })   // 4×3 그림이 화면에서 크게 보이게 멀리서
+  await ask(page, '송신탑 그려줘')
+  await page.getByTestId('image-pick').nth(0).click(); await expect(page.getByTestId('image-pick').nth(0)).toContainText('칠판에 붙임 ✓')
+  await page.getByTestId('image-pick').nth(1).click(); await expect(page.getByTestId('image-pick').nth(1)).toContainText('칠판에 붙임 ✓')
+  const ims = (await liveDoc(page)).items.filter(it => it.type === 'image').map(it => ({ x: it.pos[0], y: it.pos[1], w: it.rect[2], h: it.rect[3] }))
+  expect(ims).toHaveLength(2)
+  const [a, b] = ims
+  expect(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h).toBe(false)
+})

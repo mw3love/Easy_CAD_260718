@@ -121,7 +121,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
     const frames = d.kind === 'tidy' && d.plan ? ed.current?.applyTidy(d.plan, d.model) || [] : null   // 답이 도착한 이때 한 번만 칠판에(기록을 다시 열 땐 안 함)
     if (frames?.length) setSkipSel(frames.join())   // 정돈한 프레임도 고른 채로 남음 — 붙이기처럼 다음 질문엔 안 실음
     return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
-      ...(d.images?.length ? { images: d.images, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),
+      ...(d.images?.length ? { images: d.images, prompt: d.caption || history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}),   // caption = 이어 고친 그림이면 처음 요청(서버) ...(d.credits != null ? { credits: d.credits } : {}),
       ...(d.html ? { html: d.html, title: d.title || '정리 문서' } : {}), ...(frames ? { frames } : {}) }
   }
   async function send(text = null, kind = '', from = null) {   // text·kind = 밖에서 시킨 질문(칠판 우클릭 「정리 문서 만들기」 — 입구는 대화창 하나), from = 「그림으로도」(정리 문서와 같은 자료)

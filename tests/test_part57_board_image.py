@@ -118,4 +118,32 @@ def test_server_image_with_live_info_searches_first(server, monkeypatch):
     assert out["kind"] == "image" and "12~17도" in out["content"] and out["sources"][0]["url"] == "https://weather.go.kr"
     body = json.dumps({"board": "그림", "kind": "image", "messages": [{"role": "user", "content": "송신탑 그려줘"}]}).encode()   # 최신 정보 말 없음 = 검색 안 함
     with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
-        assert "sources" not in json.loads(r.read()) and seen[-1] == "송신탑 그려줘"
+        assert "sources" not in json.loads(r.read()) and seen[-1].startswith("송신탑 그려줘\n\n[오늘 날짜: ")   # 그림 모델은 오늘을 모름 — 날짜만 붙음
+
+
+def test_followup_keeps_first_request_and_facts():
+    """그림 뒤 「날짜도 넣어 줘」(2026-10-20) — 마지막 말만이 아니라 처음 요청·찾은 정보를 이어서."""
+    ms = [{"role": "user", "content": "내일의 전주 날씨를 고흐 느낌으로 그려줘."},
+          {"role": "assistant", "content": "웹에서 찾은 정보로 그렸어요(sonar-x).\n- 최저 12℃, 최고 20℃ [4]\n\n그림 후보 2장 — 마음에 드는 것을 눌러 칠판에 붙여요"},
+          {"role": "user", "content": "내일 날짜도 같이 그림에 반영하면 좋을듯한데"}]
+    fu = board_image.followup(ms)
+    assert fu["asks"] == ["내일의 전주 날씨를 고흐 느낌으로 그려줘."] and "최저 12℃, 최고 20℃" in fu["facts"] and "[4]" not in fu["facts"]
+    p = board_image.followup_prompt(fu, ms[-1]["content"])
+    assert p.index("고흐") < p.index("날짜도") and "12℃" in p and "그대로" in p
+    ms += [{"role": "assistant", "content": "앞 그림의 …\n\n그림 후보 2장 — …"}, {"role": "user", "content": "제목 더 크게"}]   # 세 번째도 줄기를 이어 감
+    fu = board_image.followup(ms)
+    assert fu["asks"] == ["내일의 전주 날씨를 고흐 느낌으로 그려줘.", "내일 날짜도 같이 그림에 반영하면 좋을듯한데"] and "12℃" in fu["facts"]
+    assert board_image.followup([{"role": "user", "content": "a"}, {"role": "assistant", "content": "그냥 답"}, {"role": "user", "content": "날짜도"}]) is None
+
+
+def test_server_image_followup_routes_and_carries_context(server, monkeypatch):
+    base, _ = server
+    import server as srv
+    seen = []
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="": seen.append(prompt) or {"images": [(JPG, "jpg")], "model": "img-m", "credits": 10.4})
+    msgs = [{"role": "user", "content": "송신탑을 수채화로 그려줘"}, {"role": "assistant", "content": "그림 후보 2장 — 마음에 드는 것을 눌러 칠판에 붙여요"},
+            {"role": "user", "content": "날짜도 넣어 줘"}]   # 종류 없이 — 그림 뒤 고칠 말이면 그림으로
+    body = json.dumps({"board": "그림", "messages": msgs}).encode()
+    with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
+        out = json.loads(r.read())
+    assert out["kind"] == "image" and "수채화" in seen[-1] and "날짜도 넣어 줘" in seen[-1] and out["caption"] == "송신탑을 수채화로 그려줘"

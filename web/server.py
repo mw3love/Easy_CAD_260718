@@ -112,6 +112,9 @@ class Handler(SimpleHTTPRequestHandler):
             msgs, ctx = req.get("messages") or [], req.get("context") or ""
             last = next((m for m in reversed(msgs) if isinstance(m, dict) and m.get("role") == "user"), {})
             kind = req.get("kind") or ""
+            fu = board_image.followup(msgs)   # 바로 앞 답이 그림이면 그 줄기(요청·찾은 정보)
+            if not kind and fu and board_image.FOLLOW_WORDS.search(str(last.get("content", ""))):
+                kind = "image"   # 그림 뒤 「날짜도 넣어 줘」 = 그 그림 고치기(판단 모델은 앞 대화를 안 봄)
             if not kind:   # 길 고르기 = 판단 모델 jev + 낱말 규칙 바닥(`easycad/ai/route.py`, 2026-10-20 사용자 선택)
                 kind, how = route.route(key, str(last.get("content", "")), bool(ctx or last.get("context")), has_items=bool(req.get("items")), base_url=gw.resolve_base_url())
                 sys.stderr.write("[길] %s (%s)\n" % (kind, how))
@@ -127,14 +130,19 @@ class Handler(SimpleHTTPRequestHandler):
                 name, prompt = self._name(str(req.get("board") or "")), str(last.get("content", ""))
                 if req.get("infographic"):   # 정리 문서의 「🎨 그림으로도」 — 같은 자료(고른 것, 없으면 칠판 전체)로 인포그래픽
                     prompt = board_image.infographic_prompt(ctx or str(last.get("context") or "") or self._board_material(name))
-                facts = None
-                if not req.get("infographic") and board_chat._SEARCH_WORDS.search(prompt):   # 「내일 날씨를 고흐 느낌으로 그려줘」 = 웹 검색 → 그리기(2026-10-20 사용자 — 대화창 all in one)
+                facts, note = None, ""
+                if fu and not req.get("infographic"):   # 앞 그림 이어 고치기 — 처음 요청·찾은 정보 + 고칠 점(다시 검색 안 함)
+                    prompt, note = board_image.followup_prompt(fu, prompt), "앞 그림의 요청·정보를 이어서 고친 점만 반영했어요(KAIROS는 그림을 직접 고치지 못해 새로 그려요 — 조금 달라질 수 있어요).\n\n"
+                elif not req.get("infographic") and board_chat._SEARCH_WORDS.search(prompt):   # 「내일 날씨를 고흐 느낌으로 그려줘」 = 웹 검색 → 그리기(2026-10-20 사용자 — 대화창 all in one)
                     try:
                         facts = board_chat.chat(key, [{"role": "user", "content": prompt + "\n(이 그림에 넣을 사실만 세 줄로)"}], model=gw.FALLBACK_DEFAULT_MODEL, kind="search", base_url=gw.resolve_base_url())
                         prompt += "\n\n[그림에 반영할 최신 정보 — 여기와 다른 숫자·날짜는 넣지 마]\n" + re.sub(r"\[\d+\]", "", facts["content"])[:1500]
                     except Exception as e:   # 못 찾아도 그림은 그린다
                         sys.stderr.write("[그림 앞 검색 실패] %s\n" % e)
-                return self._image(name, prompt, key, facts)
+                today = time.localtime()   # 그림 모델은 오늘을 모름 — 「내일 날짜도」가 11월 9일(일)로 나왔음(2026-10-20 실측)
+                # 「오늘·내일은 이 기준」이라고만 쓰면 요청에 없는 「오늘」 칸을 지어냈음(같은 날 실측) — 날짜 계산에만 쓰라고
+                prompt += "\n\n[오늘 날짜: %d년 %d월 %d일(%s) — 날짜를 적어야 할 때 계산용. 요청에 없는 날의 내용은 넣지 마]" % (today.tm_year, today.tm_mon, today.tm_mday, "월화수목금토일"[today.tm_wday])
+                return self._image(name, prompt, key, facts, note, fu["asks"][0] if fu and not req.get("infographic") else "")   # 붙인 그림 밑 글 = 처음 요청
             if kind == "board":   # 「지난번 ○○ 뭐였지?」 — 이 칠판의 저장된 글에서 찾아 근거로(§8 항목61 ③-2)
                 refs = self._find(self._name(str(req.get("board") or "")), str(last.get("content", "")), key)
             out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL,
@@ -181,7 +189,7 @@ class Handler(SimpleHTTPRequestHandler):
     def _img_dir(self, name: str) -> str:
         return os.path.join(self.data_dir, name + ".img")
 
-    def _image(self, name: str, prompt: str, key: str, facts: dict | None = None):
+    def _image(self, name: str, prompt: str, key: str, facts: dict | None = None, note: str = "", caption: str = ""):
         """그림 후보 → {"kind": "image", "content", "images": [{"url"}], "model", "elapsed", "credits"(, "sources")} — 그림은 `<이름>.img/`에.
         `facts` = 그리기 전에 찾은 웹 검색 답(`board_chat.chat` 결과) — 답 글 앞에 그 내용·출처를 같이 보임."""
         if not name:
@@ -201,9 +209,10 @@ class Handler(SimpleHTTPRequestHandler):
             urls.append({"url": f"/api/img/{quote(name)}/{fn}"})
         el = round(time.time() - t0, 1)
         sys.stderr.write("[그림] %s %d장 %.1f초 · %s크레딧\n" % (out["model"], len(urls), el, out.get("credits")))
-        head = f"웹에서 찾은 정보로 그렸어요({facts['model']}).\n{facts['content']}\n\n" if facts else ""
+        head = f"{board_image.FACTS_HEAD}({facts['model']}).\n{facts['content']}\n\n" if facts else note
         return self._json(200, {"kind": "image", "content": head + f"그림 후보 {len(urls)}장 — 마음에 드는 것을 눌러 칠판에 붙여요", "images": urls,
-                                "model": out["model"], "elapsed": el, "credits": out.get("credits"), **({"sources": facts["sources"]} if facts and facts.get("sources") else {})})
+                                "model": out["model"], "elapsed": el, "credits": out.get("credits"), **({"sources": facts["sources"]} if facts and facts.get("sources") else {}),
+                                **({"caption": caption} if caption else {})})
 
     def _find(self, name: str, query: str, key: str, k: int = 8) -> list:
         """칠판 `name`의 저장된 글에서 뜻으로 찾기(`board_find`) — 뜻 숫자는 칠판 옆 `<이름>.emb.json`에 모아 둔다."""

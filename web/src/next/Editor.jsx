@@ -1450,8 +1450,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const cv = document.createElement('canvas'); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext('2d').drawImage(im, 0, 0)
       const data = cv.toDataURL('image/png').split(',')[1]
       const c = R.current.cam, mp = R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
-      const at = opts.at || (mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2 })
       const k = Math.min(1, (Math.min(vw.w, vw.h) * 0.6) / Math.max(im.naturalWidth, im.naturalHeight)), w = im.naturalWidth * k, h = im.naturalHeight * k, m = R.current.model
+      // free = 버튼으로 붙이기(대화창 그림 후보 누르기) — 가운데 먼저, 겹치면 가까운 빈자리(메모·표 버튼과 같은 `spotNear`, 2026-10-20 사용자: 둘째 그림이 첫째 위에 겹침)
+      const fs = opts.free && spotNear(w, h + (opts.caption ? 24 / c.z : 0))
+      const at = fs ? { x: fs.x + w / 2, y: fs.y + h / 2 } : opts.at || (mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2 })
       const it = base([at.x - w / 2, at.y - h / 2], { type: 'image', rect: [0, 0, w, h], data, z: topZ(m.items) + 1 })
       if (opts.caption) {   // 그림 + 밑 글 = 한 묶음
         const g = 'g' + newId(), cap = base([at.x - w / 2, at.y + h / 2 + 4], { type: 'text', text: opts.caption, color: '#ff8a8f98', font: 9, bg: null, z: topZ(m.items) + 1, group_id: g })
@@ -1462,8 +1464,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // 그림 후보 붙이기(대화창 🎨 — 누르면 빈자리, 끌어 놓으면 그 자리) — 서버 그림(/api/img/…)을 받아 이미지로 + 밑에 요청 글
   async function pinImage(url, caption, at) {
-    try { const b = await (await fetch(url)).blob(); if (!at) { const c = R.current.cam; at = { x: (size.w / 2 - rightInset(svg.current) / 2 - c.x) / c.z, y: (size.h / 2 - c.y) / c.z } }
-      return await insertImage(b, { at, caption }) } catch { setStatus('그림을 못 가져왔어요'); return null }
+    try { const b = await (await fetch(url)).blob()
+      return await insertImage(b, at ? { at, caption } : { free: true, caption }) } catch { setStatus('그림을 못 가져왔어요'); return null }
   }
   // 칠판에 주소 끌어 놓기 — 대화창 그림 후보면 그 그림, 다른 웹 주소면 웹 카드(주소 Ctrl+V와 같게). 전엔 처리가 없어 브라우저가 그 주소로 떠났음
   function dropUrl(url, caption, e) {
