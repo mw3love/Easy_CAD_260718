@@ -124,7 +124,7 @@ class Handler(SimpleHTTPRequestHandler):
                 kind, how = route.route(key, str(last.get("content", "")), bool(ctx or last.get("context")), has_items=bool(req.get("items")), base_url=gw.resolve_base_url())
                 sys.stderr.write("[길] %s (%s)\n" % (kind, how))
             refs = None
-            # 날씨·공휴일·일출 = 기상청·천문연 도구(KAIROS MCP, `kr_tools` — 2026-10-20). 못 쓰면(도시 밖·도구 실패) 지금처럼 웹 검색
+            # 날씨·공휴일·법령·통계·특보·대기질·국어 규범 = 공공 데이터 도구(KAIROS MCP, `kr_tools` — 2026-10-20). 못 쓰면(도시 밖·도구 실패) 지금처럼 웹 검색
             found = []
             if kind in ("chat", "search", "image") and not bimgs and not fu and not req.get("infographic") and kr_tools.WORDS.search(str(last.get("content", ""))):
                 try:
@@ -153,7 +153,7 @@ class Handler(SimpleHTTPRequestHandler):
                     prompt, note = board_image.edit_prompt(prompt), "고른 그림을 그대로 두고 말한 점만 고쳤어요.\n\n"
                 elif fu and not req.get("infographic"):   # 고칠 그림 파일이 없으면 — 처음 요청·찾은 정보 + 고칠 점으로 새로(다시 검색 안 함)
                     prompt, note = board_image.followup_prompt(fu, prompt), "앞 그림의 요청·정보를 이어서 고친 점만 반영해 새로 그렸어요(조금 달라질 수 있어요).\n\n"
-                elif found:   # 날씨·공휴일 그림 = 기상청·천문연 자료로(웹 검색보다 숫자가 정확, 0크레딧)
+                elif found:   # 날씨·공휴일·통계 그림 = 공공 데이터로(웹 검색보다 숫자가 정확, 0크레딧)
                     facts = board_chat.chat(key, [{"role": "user", "content": prompt + "\n(이 그림에 넣을 사실만 세 줄로)"}], model=gw.FALLBACK_DEFAULT_MODEL, kind="chat",
                                             data=kr_tools.context_text(found), base_url=gw.resolve_base_url())
                     facts.update(model=", ".join(s["title"] for s in kr_tools.sources(found)), sources=kr_tools.sources(found), head=kr_tools.TOOL_HEAD)
@@ -175,7 +175,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._image(name, prompt, key, facts, note, fu["asks"][0] if fu and not req.get("infographic") else "", edit)   # 붙인 그림 밑 글 = 처음 요청
             if kind == "board":   # 「지난번 ○○ 뭐였지?」 — 이 칠판의 저장된 글에서 찾아 근거로(§8 항목61 ③-2)
                 refs = self._find(self._name(str(req.get("board") or "")), str(last.get("content", "")), key)
-            if found and kind in ("chat", "search"):   # 날씨·공휴일 답 = 고른 대화 모델 + 기상청·천문연 자료, 출처는 그 기관
+            if found and kind in ("chat", "search"):   # 공공 데이터 답 = 고른 대화 모델 + 그 자료, 출처는 그 기관
                 out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL, context=ctx, kind="chat",
                                       data=kr_tools.context_text(found), base_url=gw.resolve_base_url())
                 out["sources"] = kr_tools.sources(found)

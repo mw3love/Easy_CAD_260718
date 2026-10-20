@@ -25,7 +25,7 @@ def infographic_prompt(material: str) -> str:
 
 IMAGE_MARK = "그림 후보"   # 서버 그림 답 글에 늘 들어가는 말(`web/server.py` `_image`) — 앞 답이 그림이었나 알아보는 표시
 FACTS_HEAD = "웹에서 찾은 정보로 그렸어요"
-FACTS_HEADS = (FACTS_HEAD, "기상청·천문연 자료로 그렸어요")   # 둘째 = `kr_tools.TOOL_HEAD`(공공 데이터로 그린 그림도 이어 고치기가 그 자료를 다시 씀)
+FACTS_HEADS = (FACTS_HEAD, "공공 데이터로 그렸어요", "기상청·천문연 자료로 그렸어요")   # 둘째 = `kr_tools.TOOL_HEAD`(공공 데이터로 그린 그림도 이어 고치기가 그 자료를 다시 씀), 셋째 = 10-20 낮까지의 옛 머리
 # 그림 바로 뒤 「날짜도 넣어 줘」 같은 고칠 말 — 이 말이 있으면 길 고르기 없이 그림을 이어서(판단 모델은 앞 대화를 안 봄)
 FOLLOW_WORDS = re.compile(r"그림|이미지|사진|넣어|넣으|반영|바꿔|바꾸|추가|빼|지워|크게|작게|색|날짜|글씨|글자|제목|분위기|느낌|다시")
 

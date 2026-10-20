@@ -36,12 +36,17 @@ class FakeHttp:
         return SimpleNamespace(status_code=200, text=body)
 
 
-def fake_client(calls):
-    tc = [SimpleNamespace(function=SimpleNamespace(name=n, arguments=json.dumps(a, ensure_ascii=False))) for n, a in calls]
-    seen = {}
+def fake_client(calls, *more):
+    """첫 번째 물음엔 `calls`, 그다음 물음엔 `more`를 차례로(다 쓰면 도구 없음 = 끝). `seen`은 첫 물음, `seen["rounds"]`는 물음마다의 messages."""
+    rounds = [calls, *more]
+    seen = {"rounds": []}
 
     def create(**k):
-        seen.update(k)
+        if not seen["rounds"]:
+            seen.update(k)
+        seen["rounds"].append(list(k["messages"]))
+        now = rounds[len(seen["rounds"]) - 1] if len(seen["rounds"]) <= len(rounds) else []
+        tc = [SimpleNamespace(id=f"t{i}", function=SimpleNamespace(name=n, arguments=json.dumps(a, ensure_ascii=False))) for i, (n, a) in enumerate(now)]
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=tc, content=None))])
     return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))), seen
 
@@ -57,6 +62,7 @@ def test_forecast_is_called_whole_and_summarised_per_day():
     client, seen = fake_client([("kr-weather__get_forecast", {"city": "서울", "limit": 8})])
     found = kr_tools.gather("k", "내일 서울 날씨 어때?", base_url="https://g", client=client, http=http, today="2026년 10월 20일(화)")
     assert seen["model"] == kr_tools.TOOL_MODEL and "2026년 10월 20일" in seen["messages"][0]["content"]
+    assert [t["function"]["name"].split("__")[0] for t in seen["tools"]] == ["kr-weather"]   # 날씨 말 = 날씨 묶음 도구만 보냄
     assert seen["tools"][0]["function"]["name"] == "kr-weather__get_forecast" and "$schema" not in seen["tools"][0]["function"]["parameters"]
     assert [c[2]["arguments"]["limit"] for c in http.calls if c[1] == "tools/call"] == [8, 200]   # 모델이 작게 줘도 사흘 치 다시
     day = json.loads(found[0]["text"])["days"][0]
@@ -94,3 +100,71 @@ def test_image_followup_keeps_public_data_facts():
             {"role": "user", "content": "날짜도 넣어 줘"}]
     fu = board_image.followup(msgs)
     assert fu["facts"] == "내일 서울 9~16도, 오전 비" and fu["asks"] == ["내일 서울 날씨 그려줘"]
+
+
+def test_suites_are_picked_by_words():
+    pick = kr_tools.pick_suites
+    assert pick("근로기준법상 연차휴가는 며칠이야?") == ["korean-law"] and pick("방송법에서 재허가 기간은?") == ["korean-law"]
+    assert pick("전북 인구 최근 5년 추이") == ["kr-macro"] and pick("요즘 기준금리 얼마야?") == ["kr-macro"]
+    assert pick("지금 기상특보 있어?") == ["kr-weather", "kr-safety"] and pick("오늘 서울 미세먼지 어때?") == ["airkorea"]
+    assert pick("'플래쉬'가 맞아 '플래시'가 맞아?") == ["kr-language"]
+    for q in ("송신탑 구조 설명해 줘", "이게 맞아?", "좋은 방법은 뭐야?", "회의 내용 정리해 줘"):   # 관계없는 말 = 도구 안 씀(느려지지 않게)
+        assert pick(q) == [] and not kr_tools.WORDS.search(q), q
+
+
+def test_law_search_then_article_in_two_rounds():
+    # 법령은 찾기(search_law → mst) 다음 물음에서 조문(get_law) — 앞 결과를 tool 메시지로 돌려줘야 둘째 물음이 mst를 앎
+    kr_tools._defs.clear()
+    law = {"search_law": '{\n  "items": [{"mst": "285279", "name": "근로기준법"}]\n}', "get_law": '{"name": "근로기준법", "articles": [{"no": "60", "text": "15일의 유급휴가"}]}'}
+    http = FakeHttp(lambda p: law[p["name"]])
+    client, seen = fake_client([("korean-law__search_law", {"query": "근로기준법"})], [("korean-law__get_law", {"mst": "285279", "article": "60"})])
+    found = kr_tools.gather("k", "근로기준법상 연차휴가는 며칠이야?", base_url="https://g4", client=client, http=http)
+    assert [f["tool"] for f in found] == ["search_law", "get_law"] and len(seen["rounds"]) == 3   # 셋째 물음에 도구 없음 = 끝
+    second = seen["rounds"][1]
+    assert second[-2]["tool_calls"][0]["id"] == "t0" and second[-1] == {"role": "tool", "tool_call_id": "t0", "content": found[0]["text"]}
+    assert found[0]["text"] == '{"items":[{"mst":"285279","name":"근로기준법"}]}'   # 들여쓴 JSON을 빽빽하게
+    assert kr_tools.sources(found) == [{"n": 1, "title": "국가법령정보센터", "url": "https://www.law.go.kr"}]
+    assert kr_tools.context_text(found).count("[1] 국가법령정보센터 · ") == 2
+    assert kr_tools.context_text(found).index("get_law") < kr_tools.context_text(found).index("search_law")   # 조문이 앞(재료가 잘려도 남게)
+
+
+def test_sources_per_institution():
+    found = [{"suite": "kr-macro", "tool": "get_statistics_data", "args": {}, "text": "x"},
+             {"suite": "kr-macro", "tool": "get_bok_statistic", "args": {}, "text": "y"},
+             {"suite": "kr-safety", "tool": "get_weather_warnings", "args": {}, "text": "z"},
+             {"suite": "kr-weather", "tool": "get_forecast", "args": {}, "text": "w"}]
+    assert [(s["n"], s["title"]) for s in kr_tools.sources(found)] == [(1, "통계청 KOSIS"), (2, "한국은행 ECOS"), (3, "기상청 날씨누리")]   # 특보·날씨 = 같은 기상청 한 번
+    assert "[3] 기상청 날씨누리 · get_forecast" in kr_tools.context_text(found)
+
+
+def test_tool_error_is_retried_once():
+    # 에어코리아가 가끔 「This operation was aborted」(isError) — 한 번 더 부르면 됨(2026-10-21 실측)
+    kr_tools._defs.clear()
+    n = {"call": 0}
+
+    class Flaky(FakeHttp):
+        def post(self, url, headers, json, timeout):
+            if json["method"] == "tools/call":
+                n["call"] += 1
+                if n["call"] == 1:
+                    body = "data: " + __import__("json").dumps({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": "This operation was aborted"}], "isError": True}})
+                    return SimpleNamespace(status_code=200, text=body)
+            return super().post(url, headers, json, timeout)
+    http = Flaky(lambda p: '{"stations": [{"station": "중구", "pm25": 19}]}')
+    client, _ = fake_client([("airkorea__get_air_quality", {"sido": "서울"})])
+    found = kr_tools.gather("k", "오늘 서울 미세먼지 어때?", base_url="https://g5", client=client, http=http)
+    assert n["call"] == 2 and found[0]["text"] == '{"stations":[{"station":"중구","pm25":19}]}'
+    assert kr_tools.sources(found)[0]["title"] == "에어코리아"
+
+
+def test_finding_only_gets_one_nudge():
+    # 법령을 찾기만 하고 멈추면 한 번 재촉 → 조문을 받음. 재촉은 한 번뿐(또 멈추면 끝)
+    kr_tools._defs.clear()
+    law = {"search_law": '{"items": [{"mst": "285279"}]}', "get_law": '{"articles": [{"no": "60"}]}'}
+    http = FakeHttp(lambda p: law[p["name"]])
+    client, seen = fake_client([("korean-law__search_law", {"query": "근로기준법"})], [], [("korean-law__get_law", {"mst": "285279"})])
+    found = kr_tools.gather("k", "근로기준법 연차", base_url="https://g6", client=client, http=http)
+    assert [f["tool"] for f in found] == ["search_law", "get_law"] and "아직 찾기 결과뿐" in seen["rounds"][2][-1]["content"]
+    client2, seen2 = fake_client([("korean-law__search_law", {"query": "근로기준법"})])
+    assert [f["tool"] for f in kr_tools.gather("k", "근로기준법 연차", base_url="https://g6", client=client2, http=http)] == ["search_law"]
+    assert len(seen2["rounds"]) == 3   # 찾기 → 멈춤 → 재촉 → 또 멈춤 = 끝

@@ -140,7 +140,7 @@ def chat(api_key: str, history: list, *, model: str, context: str = "", kind: st
     if board:
         context = ((context + "\n\n") if context else "") + (board_context(refs) or "(칠판에서 관련 글을 못 찾음)")
     messages = build_messages(history, context, SEARCH_SYSTEM if search else BOARD_SYSTEM if board else SYSTEM)
-    if data:   # 공공 데이터 도구 결과(`kr_tools` — 기상청·천문연, 2026-10-20) — 숫자는 이것만, 출처 번호는 서버가 단 순서([1] 기상청 …)
+    if data:   # 공공 데이터 도구 결과(`kr_tools` — 기상청·천문연·법령·통계 등, 2026-10-20) — 숫자는 이것만, 출처 번호는 서버가 단 순서([1] 기상청 …)
         messages[-1] = {"role": "user", "content": f"[공공 데이터 — 숫자·날짜는 여기 것만 쓰고, 근거 문장 끝에 자료 머리의 번호를 [1]처럼. 출처 목록은 따로 쓰지 않는다(앱이 붙인다)]\n{data[:12000]}\n\n{messages[-1]['content']}"}
     client = client or gw._client(api_key, base_url, timeout=timeout)
     use = SEARCH_MODEL if search else model
