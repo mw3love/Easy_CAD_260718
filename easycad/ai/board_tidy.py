@@ -9,7 +9,8 @@ import json
 import re
 import time
 
-TIDY_MODEL = "claude-sonnet-5-5"
+TIDY_MODEL = "gpt-6-luna"   # 2026-10-20 7종 비교(정답 묶음 있는 칠판 2개, history): 옛 claude-sonnet-5-5는 4번 중 1번 JSON 깨짐·$0.005,
+#   gpt-6-luna는 둘 다 완벽·4~6초·$0.0003(1/18). 사용자 선택
 MAX_ITEMS = 300        # 한 번에 정돈할 도형 상한
 MAX_TEXT = 160         # 도형마다 보내는 글 앞부분(자)
 MAX_SECTIONS = 9
