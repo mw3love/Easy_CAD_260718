@@ -1,7 +1,7 @@
 // 흐름 21 — 10-20 사용자 검토: 번호 = 남은 가장 큰 수 + 1 · 미니맵 % = 100% · Alt+Z 고른 것만 · 펜은 끌기 없음 ·
 // 대화창 「다시 ▾」 셋 · 새 대화·지난 대화 · 🔑 내 키(머리말로만). 진짜 KAIROS는 안 부름(flow3처럼 가짜 답).
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, toPage, clickScene, liveDoc } from './helpers.js'
+import { boardName, openBoard, setCam, toPage, clickScene, liveDoc, waitSaved } from './helpers.js'
 
 const btn = (page, name) => page.getByRole('button', { name, exact: true })
 
@@ -172,4 +172,33 @@ test('그림 뒤 고칠 말 = 고칠 그림 주소를 같이(붙인 것 → 둘�
   expect(seen[1].base_image).toBe(imgs[1].url)                               // 붙인 그림
   await ask(page, '첫 번째 그림에 제목 넣어 줘'); await expect(page.getByTestId('image-pick')).toHaveCount(6)
   expect(seen[2].base_image).toBe(imgs[0].url)                               // 말로 고름
+})
+
+test('↩ 이어 묻기 = 그 답까지만 앞 대화로 + 그 그림을 고칠 그림으로 · 칠판에서 고른 그림 = 요청에만 실림', async ({ page }) => {
+  const name = boardName('reply'), seen = []
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII=', 'base64')
+  let n = 0
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', r => { seen.push(r.request().postDataJSON()); n++
+    return r.fulfill({ json: { kind: 'image', content: `그림 후보 ${n}`, model: 'img-m', elapsed: 1, images: [{ url: `/api/img/${name}/${n}_aaaaaa.png` }, { url: `/api/img/${name}/${n}_bbbbbb.png` }] } }) })
+  await page.route('**/api/img/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
+  await openBoard(page, name, { chat: true }); await setCam(page)
+  await ask(page, '고흐 풍 전주 그려줘'); await expect(page.getByText('그림 후보 1')).toBeVisible()
+  await ask(page, '날짜 넣어 줘'); await expect(page.getByText('그림 후보 2')).toBeVisible()
+  await page.getByTestId('reply-to').first().click()                        // 첫 그림 답에 이어 묻기
+  await expect(page.getByTestId('reply-chip')).toContainText('고흐 풍 전주 그려줘')
+  await ask(page, '날짜 다시 넣어 줘'); await expect(page.getByText('그림 후보 3')).toBeVisible()
+  expect(seen[2].messages.map(m => m.content)).toEqual(['고흐 풍 전주 그려줘', '그림 후보 1', '날짜 다시 넣어 줘'])   // 둘째 대화는 안 실림
+  expect(seen[2].base_image).toBe(`/api/img/${name}/1_aaaaaa.png`)
+  await expect(page.getByTestId('reply-chip')).toHaveCount(0)
+  await expect(page.getByText('↩ 「🎨 고흐 풍 전주 그려줘」에 이어서')).toBeVisible()
+
+  await page.getByTestId('image-pick').nth(0).click()                       // 칠판에 붙임 = 고른 채
+  await expect(page.getByTestId('img-chip')).toBeVisible()
+  await ask(page, '제목 넣어 줘'); await expect(page.getByText('그림 후보 4')).toBeVisible()
+  expect(seen[3].board_images).toHaveLength(1); expect(seen[3].board_images[0]).toMatch(/^data:image\/jpeg;base64,/)
+  await waitSaved(page)
+  const log = await (await page.request.get(`/api/chatlog/${name}`)).text()
+  expect(log).not.toContain('data:image')                                   // 기록엔 그림 데이터 없음(장수만)
+  expect(JSON.parse(log).messages.find(m => m.content === '제목 넣어 줘').imgCount).toBe(1)
 })

@@ -127,7 +127,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -761,6 +761,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function selTexts() {
     const m = R.current.model, ids = new Set(movingSet(R.current.sel))
     return m.items.filter(it => ids.has(it._id)).flatMap(itemTexts)
+  }
+  // 고른 것 속 그림(최대 4장) — 대화창이 「이거 고쳐 줘」의 고칠 그림으로 보냄(서버 `input_images`, 2026-10-20 사용자: 칠판에서 고르고 말하기)
+  function selImages() {
+    const m = R.current.model, ids = new Set(movingSet(R.current.sel))
+    return m.items.filter(it => ids.has(it._id) && it.type === 'image' && it.data).slice(0, 4).map(it => (it.data.startsWith('data:') ? it.data : 'data:image/png;base64,' + it.data))
   }
   function itemTexts(it) {   // 도형 하나의 글(대화 재료·정리정돈 조각 글)
     const out = []

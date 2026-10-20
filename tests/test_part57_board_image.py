@@ -171,3 +171,18 @@ def test_server_image_followup_edits_picked_image(server, monkeypatch):
     assert out["kind"] == "image" and "고른 그림을 그대로" in out["content"]
     ask("/api/img/" + urllib.parse.quote("남의칠판") + "/1_aaaaaa.png")   # 다른 칠판 그림 = 못 씀 → 앞 요청 이어 새로 그리기
     assert "input_images" not in calls[-1][1] and "송신탑을 고흐 풍으로" in calls[-1][0]
+
+
+def test_server_board_images_are_edited_and_not_logged(server, monkeypatch):
+    """칠판에서 고른 그림 고치기(2026-10-20) — 요청에만 실린 data: 그림을 input_images로, 그림 말이 있으면 앞 대화 없이도 그림 길."""
+    base, data = server
+    import server as srv
+    calls = []
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="", **kw: calls.append((prompt, kw)) or {"images": [(JPG, "jpg")], "model": "img-m", "credits": 22.9})
+    img = "data:image/jpeg;base64,/9j/AAAA"
+    body = json.dumps({"board": "그림", "board_images": [img, "javascript:alert(1)"], "messages": [{"role": "user", "content": "날짜 넣어 줘"}]}).encode()
+    with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
+        out = json.loads(r.read())
+    prompt, kw = calls[-1]
+    assert out["kind"] == "image" and kw["input_images"] == [img] and kw["n"] == 1 and "그대로 유지" in prompt and "칠판에서 고른 그림 1장" in out["content"]
+    assert board_image.edit_prompt("둘을 합쳐 줘", 2).startswith("넣은 이미지 2장")

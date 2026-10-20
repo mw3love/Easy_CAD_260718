@@ -34,6 +34,15 @@ const BOARD_JOBS = new Set(['tidy', 'report'])   // 칠판을 바꾸거나 칠�
 export const Spinner = () => <><style>{'@keyframes mb-spin{to{transform:rotate(360deg)}}'}</style>
   <span style={{ display: 'inline-block', flex: 'none', width: 11, height: 11, borderRadius: '50%', border: '2px solid #da7756', borderTopColor: 'transparent', animation: 'mb-spin .8s linear infinite' }} /></>
 
+// 칠판 그림 → 보낼 크기(긴 변 1536px JPEG) — 칠판 그림은 PNG 몇 MB라 그대로면 요청이 무거움(KAIROS 본문 상한 25MB)
+async function shrinkImage(src) {
+  const im = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src })
+  const k = Math.min(1, 1536 / Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement('canvas')
+  cv.width = Math.round(im.naturalWidth * k); cv.height = Math.round(im.naturalHeight * k)
+  const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height); g.drawImage(im, 0, 0, cv.width, cv.height)
+  return cv.toDataURL('image/jpeg', 0.9)
+}
+
 export const CHAT_W = 360
 const LOG_URL = `/api/chatlog/${encodeURIComponent(DOC_NAME)}`
 const MODEL_KEY = 'magic-board-model'   // 고른 모델은 이 브라우저에만 기억(편의)
@@ -92,6 +101,8 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   // 방금 칠판에 붙인 것은 어디 붙었나 보이게 고른 채로 남는데, 그대로 다음 질문에 실려 갔음(2026-10-19 점검) — 고름이 그대로인 동안은 안 실음
   const [skipSel, setSkipSel] = useState('')
   const sel = selKey && selKey === skipSel ? [] : ed.current?.selTexts() || []   // eslint-disable-line react-hooks/exhaustive-deps
+  const selImgs = selKey && selKey === skipSel ? [] : ed.current?.selImages?.() || []   // 고른 것 속 그림(data: 주소)
+  const [replyTo, setReplyTo] = useState(null)   // ↩ 이어 물을 답의 at
 
   useEffect(() => {
     fetch(LOG_URL, { cache: 'no-store' }).then(r => (r.status === 404 ? { messages: [] } : r.ok ? r.json() : Promise.reject(r)))
@@ -111,31 +122,36 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   const update = next => { setMsgs(next); save(next) }
 
   // 묻기 — history = 지금까지(마지막이 질문), kind = 'search'·'chat'(비면 서버가 짐작) → 답 한 차례
-  async function ask(history, kind = '', prevHtml = '') {   // prevHtml = 바로 앞 답이 정리 문서면 그 HTML(「더 짧게」 = 그 문서 고치기 — 서버가 판단)
+  // extra = 대화 기록엔 안 남기고 이번 요청에만 실을 것(칠판에서 고른 그림 data: 주소 — 기록이 그림으로 불지 않게)
+  async function ask(history, kind = '', prevHtml = '', extra = {}) {   // prevHtml = 바로 앞 답이 정리 문서면 그 HTML(「더 짧게」 = 그 문서 고치기 — 서버가 판단)
     const q = history.filter(m => m.role === 'user').at(-1)?.content || ''
     const items = kind === 'tidy' || (!kind && TIDY_RE.test(q)) ? ed.current?.tidyItems() || [] : null   // 정리정돈(「정리해 줘」 ②) — 옮길 조각 목록(uid·종류·글·크기)
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
-      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(items ? { items } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
+      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(items ? { items } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), ...extra, messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
     const frames = d.kind === 'tidy' && d.plan ? ed.current?.applyTidy(d.plan, d.model) || [] : null   // 답이 도착한 이때 한 번만 칠판에(기록을 다시 열 땐 안 함)
     if (frames?.length) setSkipSel(frames.join())   // 정돈한 프레임도 고른 채로 남음 — 붙이기처럼 다음 질문엔 안 실음
     return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
-      ...(d.images?.length ? { images: d.images, prompt: d.caption || history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}),   // caption = 이어 고친 그림이면 처음 요청(서버) ...(d.credits != null ? { credits: d.credits } : {}),
+      ...(d.images?.length ? { images: d.images, prompt: d.caption || history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),   // caption = 이어 고친 그림이면 처음 요청(서버)
       ...(d.html ? { html: d.html, title: d.title || '정리 문서' } : {}), ...(frames ? { frames } : {}) }
   }
   async function send(text = null, kind = '', from = null) {   // text·kind = 밖에서 시킨 질문(칠판 우클릭 「정리 문서 만들기」 — 입구는 대화창 하나), from = 「그림으로도」(정리 문서와 같은 자료)
     const q = (text ?? draft).trim(); if (!q || busy) return
     const ctx = from ? from.context || '' : contextText(sel), n = from ? from.ctxCount : sel.length
-    // 바로 앞 답이 그림 후보면 고칠 그림 — 「두 번째」라 하면 둘째, 아니면 칠판에 마지막으로 붙인 것, 없으면 첫째(서버가 원본 유지 고치기 — input_images, 2026-10-20 사용자)
-    const lastA = msgs.filter(m => m.role !== 'error').at(-1), ims = lastA?.role === 'assistant' ? lastA.images || [] : []
+    // ↩ 이어 묻기(2026-10-20 사용자 — 특정 답을 토대로) = 그 답까지만 앞 대화로 보냄(화면 기록엔 맨 끝에 쌓임, 무엇에 이었는지 표시)
+    const ri = replyTo == null ? -1 : msgs.findIndex(m => m.at === replyTo)
+    const before = (ri >= 0 ? msgs.slice(0, ri + 1) : msgs).filter(m => m.role !== 'error')
+    // 바로 앞(또는 이어 묻는) 답이 그림 후보면 고칠 그림 — 「두 번째」라 하면 둘째, 아니면 칠판에 마지막으로 붙인 것, 없으면 첫째(서버가 원본 유지 고치기 — input_images, 2026-10-20 사용자)
+    const lastA = before.at(-1), ims = lastA?.role === 'assistant' ? lastA.images || [] : []
     const pick = /두\s*번째|둘째|2\s*번째?|오른쪽/.test(q) ? 1 : /첫\s*번째|첫째|1\s*번째?|왼쪽/.test(q) ? 0 : lastA?.picked?.at(-1) ?? 0
     const base = ims[Math.min(pick, ims.length - 1)]?.url
-    const mine = { role: 'user', content: q, at: Date.now(), ...(ctx ? { context: ctx, ctxCount: n } : {}), ...(from ? { infographic: true } : {}), ...(base ? { base_image: base } : {}) }
+    const boardImgs = from || !selImgs.length ? [] : await Promise.all(selImgs.map(shrinkImage))   // 칠판에서 고른 그림 = 고칠 그림(기록엔 장수만)
+    const mine = { role: 'user', content: q, at: Date.now(), ...(ctx ? { context: ctx, ctxCount: n } : {}), ...(from ? { infographic: true } : {}), ...(base ? { base_image: base } : {}),
+      ...(ri >= 0 ? { reply_to: replyTo } : {}), ...(boardImgs.length ? { imgCount: boardImgs.length } : {}) }
     const next = [...msgs.filter(m => m.role !== 'error'), mine]
-    update(next); if (text == null) setDraft(''); setBusy(Date.now()); setBusyJob(kind || (TIDY_RE.test(q) ? 'tidy' : ''))
-    const prev = msgs.filter(m => m.role !== 'error').at(-1)
-    try { update([...next, await ask(next, kind, !kind && prev?.role === 'assistant' && prev.html ? prev.html : '')]) } catch (e) {
+    update(next); setReplyTo(null); if (text == null) setDraft(''); setBusy(Date.now()); setBusyJob(kind || (TIDY_RE.test(q) ? 'tidy' : ''))
+    try { update([...next, await ask([...before, mine], kind, !kind && lastA?.role === 'assistant' && lastA.html ? lastA.html : '', boardImgs.length ? { board_images: boardImgs } : {})]) } catch (e) {
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
     } finally { setBusy(null) }
   }
@@ -158,7 +174,9 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   // 새 대화 — 지금 대화를 지난 대화 맨 위로(빈 대화면 그냥 둠). 질문 하나 = 제목
   const shelve = (cur, p) => { const kept = cur.filter(m => m.role !== 'error'); if (!kept.some(m => m.role === 'user')) return p
     return [{ at: kept[0].at || Date.now(), title: (kept.find(m => m.role === 'user').content || '').split(/\r?\n/)[0].slice(0, 40), messages: kept }, ...p] }
-  const reset = () => { setSkipSel(''); setGone({}); setPastOpen(false) }
+  const reset = () => { setSkipSel(''); setGone({}); setPastOpen(false); setReplyTo(null) }
+  // 이어 묻는 답을 한 줄로(「↩ … 에 이어서」 표시) — 그림 답은 처음 요청
+  const replyLabel = at => { const a = msgs.find(m => m.at === at); if (!a) return '지운 답'; const t = (a.images?.length ? `🎨 ${a.prompt || '그림'}` : a.content || '').split('\n')[0].replace(/[*#>`]/g, '').trim(); return t.length > 26 ? t.slice(0, 26) + '…' : t }
   function newChat() { if (busy) return; const p = shelve(msgs, pastRef.current); setPast(p); reset(); setMsgs([]); save([], p) }
   function openPast(j) { if (busy) return; const pick = pastRef.current[j], p = shelve(msgs, pastRef.current.filter((_, k) => k !== j)); setPast(p); reset(); setMsgs(pick.messages); save(pick.messages, p) }
   function saveKey(v) { setKairosKey(v.trim()); setMyKey(!!v.trim()); setKeyDraft(''); setKeyOpen(false) }
@@ -213,7 +231,8 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
         {loaded && !msgs.length && <div style={{ ...css.meta, fontSize: 12.5, lineHeight: 1.6 }}>
           무엇이든 물어보세요. 남길 답은 「칠판에 붙이기」나 끌어다 놓기로 메모가 됩니다.<br />칠판에서 메모나 글을 고른 채 물으면 그 내용을 같이 보냅니다.</div>}
         {msgs.map((m, i) => m.role === 'user'
-          ? <div key={i} style={css.me}>{m.ctxCount ? <span style={css.ctx}>칠판에서 고른 것 {m.ctxCount}개와 함께</span> : null}{m.content}</div>
+          ? <div key={i} style={css.me}>{m.reply_to ? <span style={css.ctx}>↩ 「{replyLabel(m.reply_to)}」에 이어서</span> : null}
+            {m.ctxCount ? <span style={css.ctx}>칠판에서 고른 것 {m.ctxCount}개와 함께</span> : null}{m.imgCount ? <span style={css.ctx}>칠판에서 고른 그림 {m.imgCount}장을 고쳐 달라고</span> : null}{m.content}</div>
           : m.role === 'error'
             ? <div key={i} style={css.err}>{m.content}<div style={{ marginTop: 6 }}><button style={css.ghost} onClick={retry}>질문 다시 고치기</button></div></div>
             : <div key={i} style={css.ai}>
@@ -251,13 +270,18 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
                   title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : m.refs?.length ? '메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(누르면 빈자리, 끌면 놓은 자리)' : m.sources?.length ? '요약 메모 + 출처 카드를 번호 화살표로 이어 한 묶음으로(누르면 빈자리, 끌면 놓은 자리)' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
                   {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>}
                 {!m.images?.length && !m.html && m.kind !== 'tidy' && <button style={css.ghost} onClick={() => navigator.clipboard?.writeText(m.content).catch(() => {})}>복사</button>}
+                <button data-testid="reply-to" style={{ ...css.ghost, ...(replyTo === m.at ? { color: '#da7756', borderColor: '#da7756' } : null) }} disabled={!!busy} onClick={() => setReplyTo(r => (r === m.at ? null : m.at))}
+                  title="이 답에 이어 묻기 — 다음 질문은 여기까지의 대화를 이어받아요(그림 답이면 그 그림을 고쳐요)">↩</button>
                 <span style={{ ...css.meta, marginLeft: 'auto' }}>{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</span>
               </div>
             </div>)}
         {busy && <div data-testid="chat-busy" style={{ ...css.ai, color: C.muted, display: 'flex', alignItems: 'center', gap: 8 }}><Spinner />{busyLine}</div>}
       </div>
       <div style={css.foot}>
+        {replyTo != null && <span data-testid="reply-chip" style={{ ...css.chip, color: '#da7756', background: 'rgba(218,119,86,.14)', cursor: 'pointer' }} onClick={() => setReplyTo(null)} title="누르면 이어 묻기 취소">
+          ↩ 「{replyLabel(replyTo)}」에 이어서 ✕</span>}
         {sel.length > 0 && <span style={css.chip}>칠판에서 고른 것 {sel.length}개를 같이 보냄</span>}
+        {selImgs.length > 0 && <span data-testid="img-chip" style={css.chip}>칠판에서 고른 그림 {selImgs.length}장 — 「날짜 넣어 줘」처럼 말하면 그대로 두고 고쳐요</span>}
         <textarea style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder="물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)"
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }} />

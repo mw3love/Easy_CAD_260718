@@ -71,8 +71,10 @@ def _bytes_of(item: dict, http) -> tuple:
     raise RuntimeError("그림 응답에서 그림을 못 찾음")
 
 
-def edit_prompt(ask: str) -> str:
-    """고른 그림 고치기 지시 — 그 그림(input_images 첫 번째)을 그대로 두고 말한 것만."""
+def edit_prompt(ask: str, count: int = 1) -> str:
+    """고른 그림 고치기 지시 — 한 장이면 그 그림(input_images 첫 번째)을 그대로 두고 말한 것만, 여러 장이면 넣은 차례로 불러 말한 대로(합치기 등)."""
+    if count > 1:
+        return f"넣은 이미지 {count}장(차례대로 첫 번째·두 번째…)을 바탕으로, 말하지 않은 부분은 원래대로 두고 다음대로 해 줘: {ask.strip()}"
     return f"첫 번째 이미지를 그대로 유지하고(구도·화풍·글자·색 모두), 다음만 고쳐 줘: {ask.strip()}"
 
 

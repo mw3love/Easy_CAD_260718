@@ -102,7 +102,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _chat(self):
         n = int(self.headers.get("Content-Length") or 0)
-        if n <= 0 or n > 4 * 1024 * 1024:
+        if n <= 0 or n > 24 * 1024 * 1024:   # 칠판에서 고른 그림(최대 4장, 긴 변 1536 JPEG)을 실을 수 있게 — KAIROS 본문 상한 25MB
             return self._json(413, {"error": "질문이 너무 큽니다"})
         try:
             req = json.loads(self.rfile.read(n))
@@ -116,8 +116,10 @@ class Handler(SimpleHTTPRequestHandler):
             last = next((m for m in reversed(msgs) if isinstance(m, dict) and m.get("role") == "user"), {})
             kind = req.get("kind") or ""
             fu = board_image.followup(msgs)   # 바로 앞 답이 그림이면 그 줄기(요청·찾은 정보)
-            if not kind and fu and board_image.FOLLOW_WORDS.search(str(last.get("content", ""))):
-                kind = "image"   # 그림 뒤 「날짜도 넣어 줘」 = 그 그림 고치기(판단 모델은 앞 대화를 안 봄)
+            # 칠판에서 고른 그림(대화 기록엔 안 남음, 2026-10-20 사용자 — 칠판에서 고르고 말하기) — data:image만, 4장까지
+            bimgs = [s for s in req.get("board_images") or [] if isinstance(s, str) and s.startswith("data:image/")][:4]
+            if not kind and (fu or bimgs) and (board_image.FOLLOW_WORDS.search(str(last.get("content", ""))) or board_chat._IMAGE_WORDS.search(str(last.get("content", "")))):
+                kind = "image"   # 그림 뒤·그림을 고른 채 「날짜도 넣어 줘」 = 그 그림 고치기(판단 모델은 앞 대화·고른 그림을 안 봄)
             if not kind:   # 길 고르기 = 판단 모델 jev + 낱말 규칙 바닥(`easycad/ai/route.py`, 2026-10-20 사용자 선택)
                 kind, how = route.route(key, str(last.get("content", "")), bool(ctx or last.get("context")), has_items=bool(req.get("items")), base_url=gw.resolve_base_url())
                 sys.stderr.write("[길] %s (%s)\n" % (kind, how))
@@ -135,7 +137,9 @@ class Handler(SimpleHTTPRequestHandler):
                     prompt = board_image.infographic_prompt(ctx or str(last.get("context") or "") or self._board_material(name))
                 facts, note, edit = None, "", None
                 base = self._img_file(name, str(req.get("base_image") or "")) if fu and not req.get("infographic") else ""
-                if base:   # 앞 그림 고치기 — 칠판이 고른 그림(붙인 것, 없으면 첫 후보)을 그대로 두고 말한 것만(input_images, 2026-10-20)
+                if bimgs and not req.get("infographic"):   # 칠판에서 고른 그림이 먼저 — 그 그림을 그대로 두고 말한 것만
+                    edit, prompt, note = bimgs, board_image.edit_prompt(prompt, len(bimgs)), f"칠판에서 고른 그림 {len(bimgs)}장을 그대로 두고 말한 점만 고쳤어요.\n\n"
+                elif base:   # 앞 그림 고치기 — 칠판이 고른 그림(붙인 것, 없으면 첫 후보)을 그대로 두고 말한 것만(input_images, 2026-10-20)
                     with open(base, "rb") as f:
                         edit = ["data:image/%s;base64,%s" % ("jpeg" if base.endswith(".jpg") else base.rsplit(".", 1)[1], base64.b64encode(f.read()).decode())]
                     prompt, note = board_image.edit_prompt(prompt), "고른 그림을 그대로 두고 말한 점만 고쳤어요.\n\n"
