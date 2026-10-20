@@ -157,7 +157,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
         const gr = g.getBoundingClientRect(), cw = +(g.getAttribute('data-web-box') || '0,0,480').split(',')[2] || 480
         if (gr.right - e.clientX < gr.width * 40 / cw) { window.open(g.getAttribute('data-web-url'), '_blank', 'noopener'); return }
         const r = fr.closest('foreignObject').getBoundingClientRect(), s0 = zoom?.s || 1, x0 = (r.x - (zoom?.ox || 0)) / s0, y0 = (r.y - (zoom?.oy || 0)) / s0, w0 = r.width / s0, h0 = r.height / s0
-        const s = Math.min((W - 32) / w0, (H - BIG_BAND - 16) / h0); setWebOn(id); setZoom({ s, ox: (W - s * w0) / 2 - s * x0, oy: BIG_BAND + (H - BIG_BAND - 16 - s * h0) / 2 - s * y0, card: id }); return   // 영상 몸통을 위 검은 띠(「원래 크기로」 자리) 아래에 꽉 — 둘레 검은 곳 = 눌러 돌아옴
+        const s = Math.min((W - 32) / w0, (H - BIG_BAND - 16) / h0); setWebOn(id); setZoom({ s, ox: (W - s * w0) / 2 - s * x0, oy: BIG_BAND + (H - BIG_BAND - 16 - s * h0) / 2 - s * y0, card: id, right: (W + s * w0) / 2, top: BIG_BAND + (H - BIG_BAND - 16 - s * h0) / 2 }); return   // right·top = 영상 오른쪽 위 — 「원래 크기로」를 그 바로 위에(세로 화면이면 영상이 가운데라 화면 맨 위는 멀었음)   // 영상 몸통을 위 검은 띠(「원래 크기로」 자리) 아래에 꽉 — 둘레 검은 곳 = 눌러 돌아옴
       }
       if (id) { setWebOn(id); if (yt) playYoutube(fr) } else { if (g) window.open(g.getAttribute('data-web-url'), '_blank', 'noopener'); setWebOn(null) }
     }
@@ -227,7 +227,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
             <span style={{ color: j === i ? '#da7756' : '#fff', font: "500 12px 'Pretendard', sans-serif" }}>{j + 1}{fr.name ? ` · ${fr.name}` : ''}</span></button> })}
       </div></div>}
     {zoom?.card && show && <button data-testid="big-close" title="원래 크기로 (영상 밖을 눌러도 됨)" onPointerDown={e => e.stopPropagation()} onClick={() => { setZoom(null); setBigHover(false) }} onPointerEnter={() => { setBigHover(true); barHover.current = true }} onPointerLeave={() => { setBigHover(false); barHover.current = false; wake() }}
-      style={{ all: 'unset', cursor: 'pointer', position: 'absolute', left: '50%', top: (BIG_BAND - 40) / 2, transform: 'translateX(-50%)', height: 40, padding: '0 18px', display: 'flex', alignItems: 'center', gap: 6, borderRadius: 20,
+      style={{ all: 'unset', cursor: 'pointer', position: 'absolute', right: Math.max(16, W - (zoom.right || W)), top: Math.max((BIG_BAND - 40) / 2, (zoom.top ?? BIG_BAND) - 52), height: 40, padding: '0 18px', display: 'flex', alignItems: 'center', gap: 6, borderRadius: 20,
         color: '#fff', font: "600 15px 'Pretendard', sans-serif", boxShadow: '0 2px 10px rgba(0,0,0,.4)', transition: 'background .12s', background: bigHover ? '#da7756' : 'rgba(63,63,70,.95)', border: '1px solid rgba(255,255,255,.25)' }}>⤡ 원래 크기로</button>}   {/* 올리면 코랄(2026-10-20 사용자: 알아보게) — 영상 위에선 마우스가 유튜브로 가니 위 띠로 올리면 나타남 */}
     {zoom && !zoom.card && <button data-testid="zoom-reset" title="원래 배율로 (Ctrl+0)" onPointerDown={e => e.stopPropagation()} onClick={() => setZoom(null)}
       style={{ all: 'unset', cursor: 'pointer', position: 'absolute', right: 16, top: 16, padding: '6px 12px', borderRadius: 16, background: 'rgba(24,24,27,.86)', color: '#fff', font: "600 12px 'Pretendard', sans-serif", boxShadow: '0 2px 10px rgba(0,0,0,.4)' }}>

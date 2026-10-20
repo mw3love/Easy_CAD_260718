@@ -436,7 +436,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         {ic > 0 && <image href={it.icon} x={x + 10} y={y + (Math.min(WEB_HEAD, h) - ic) / 2} width={ic} height={ic} />}
         <text x={tx} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis(it.title || siteOf(it.url), 13, 700, tw)}</text>
         <text x={tx} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.url, 10, 400, tw)}</text>
-        {yl > 0 && <g style={{ cursor: 'zoom-in' }}><rect x={ob.x - yl} y={ob.y} width={yl - 6} height={ob.h} rx={5} fill={ytBig ? '#da7756' : '#ffffff'} stroke={ytBig ? '#da7756' : '#d4d4d8'} />
+        {yl > 0 && <g style={{ cursor: 'pointer' }}><rect x={ob.x - yl} y={ob.y} width={yl - 6} height={ob.h} rx={5} fill={ytBig ? '#da7756' : '#ffffff'} stroke={ytBig ? '#da7756' : '#d4d4d8'} />
           <text x={ob.x - yl + (yl - 6) / 2} y={ob.y + ob.h / 2} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={600} fontFamily={APP_FONT} fill={ytBig ? '#ffffff' : '#3f3f46'}>{ytBig ? '⤡ 원래대로' : '⤢ 크게 보기'}</text></g>}
         <g><title>새 탭에서 열기</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
