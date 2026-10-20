@@ -137,7 +137,7 @@ tests/
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + TipTap 3.32.0(글 편집, 버전 고정). **2026-10-18 5단계 갈아탐: tldraw 뺌**(옛 tldraw 화면
 │                          src/main.jsx·shapes.jsx·cad.jsx·chat.jsx·boardStore.js·ecad.js·ecadExport.js는 지움 — git에 있음). 남은 공용: route.js(길 찾기 = 데스크톱
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecadFormat.js(순수 변환, `npm test`)·symbols.json(`tools/export_web_symbols.py`가
-│                          데스크톱 심볼에서 뽑음)·chatFormat.js(답 글 읽기·빈자리, 순수)·server.py(감시 PC용 저장 서버 `/api/doc`(.ecad) + 대화 `/api/chat`·`/api/models`·
+│                          데스크톱 심볼에서 뽑음)·chatFormat.js(답 글 읽기·빈자리, 순수)·server.py(감시 PC용 저장 서버 `/api/doc`(.ecad) + 대화 `/api/chat`·`/api/models`·`/api/credits`(남은 크레딧)·
 │                          `/api/chatlog` + 웹 카드 `/api/link` + 공동작업 `/api/login`·`patch`·`since`(`?wait` = 롱 폴링)·`presence`·`publish`·`pub`·`invite`·`join`(편집 초대 링크) — 계산은 `web/collab.py`). web_bakeoff/는 바탕 부품 비교 시험(보존용). 주소 `/`(옛 `next.html`은 `/`로 넘기는 안내판).
 │                          **칠판**(직접 만든 것): `index.html` + `src/next/`(geom.js 그리기 계산·render.jsx 종류별 SVG·doc.js .ecad 문서·
 │                          arrows.js 길 다시 찾기 + 2단계 Editor.jsx 편집 화면·edit.js 편집 계산·align.js 정렬선·model.js _id 모델·text.jsx TipTap 글 편집 + 3단계 connect.js 붙는 규칙·arrowedit.js 알약·곡선·라벨·
