@@ -232,13 +232,6 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
       <div style={css.head}>
         <b style={{ fontSize: 14 }}>KAIROS</b>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <select style={css.select} value={useModel} title="답할 모델(100만 토큰당 입력 / 출력 달러)" onChange={e => { setModel(e.target.value); try { localStorage.setItem(MODEL_KEY, e.target.value) } catch { /* 기억 못 해도 그만 */ } }}>
-            {!Object.values(feat).some(rows => rows.some(m => m.id === useModel)) && <option value={useModel}>기본 · {useModel}</option>}
-            {Object.entries(feat).filter(([, rows]) => rows.length).map(([v, rows]) => (
-              <optgroup key={v} label={VENDOR[v] || v}>
-                {rows.map(m => <option key={m.id} value={m.id}>{m.id === models.default ? '기본 · ' : ''}{m.id}{m.price ? `  ${m.price}` : ''}</option>)}
-              </optgroup>))}
-          </select>
           <button title="대화창 닫기" onClick={onClose} style={{ ...css.ghost, padding: '0 7px' }}>✕</button>
         </div>
       </div>
@@ -329,7 +322,16 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
         <textarea style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder="물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)"
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }} />
-        <span style={css.meta}>{server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요.` : '서버가 꺼져 있어요 — python web/server.py 를 켜야 물을 수 있어요.'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>   {/* 모델 고르기 = 입력 칸 옆(2026-10-20 사용자 — Gemini·Claude·ChatGPT처럼 묻는 자리에서) */}
+          <span style={{ ...css.meta, flex: 1, minWidth: 0 }} title={server ? `대화 기록은 이 칠판(「${DOC_NAME}」)에 함께 저장돼요` : ''}>{server ? '기록은 이 칠판에 저장' : '서버가 꺼져 있어요 — python web/server.py 를 켜야 물을 수 있어요.'}</span>
+          <select style={css.select} value={useModel} title="대화 답에 쓸 모델(100만 토큰당 입력 / 출력 달러) — 검색·그림·정리정돈은 앱이 일마다 알맞은 모델을 따로 고름" onChange={e => { setModel(e.target.value); try { localStorage.setItem(MODEL_KEY, e.target.value) } catch { /* 기억 못 해도 그만 */ } }}>
+            {!Object.values(feat).some(rows => rows.some(m => m.id === useModel)) && <option value={useModel}>기본 · {useModel}</option>}
+            {Object.entries(feat).filter(([, rows]) => rows.length).map(([v, rows]) => (
+              <optgroup key={v} label={VENDOR[v] || v}>
+                {rows.map(m => <option key={m.id} value={m.id}>{m.id === models.default ? '기본 · ' : ''}{m.id}{m.price ? `  ${m.price}` : ''}</option>)}
+              </optgroup>))}
+          </select>
+        </div>
       </div>
     </aside>
   )
