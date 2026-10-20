@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -42,6 +43,8 @@ import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 NAME_RE = re.compile(r"^[\w\-가-힣]{1,64}$")
 MAX_BYTES = 200 * 1024 * 1024   # 그림이 든 칠판도 넉넉히, 하지만 끝없이는 아니게
 _MODELS = {}                    # 키 지문 → (받은 시각, 모델 목록) — `/api/models`
+# 그림 요청에 날짜 말이 있을 때만 오늘 날짜를 알려 줌(없는데 알려 주면 그림에 오늘 날짜를 써 넣음 — 2026-10-20 실측)
+DATE_WORDS = re.compile(r"오늘|내일|모레|어제|그제|날짜|요일|주말|이번\s*주|다음\s*주|지난\s*주|이번\s*달|다음\s*달|\d+\s*월\s*\d+\s*일")
 
 
 def default_data_dir() -> str:
@@ -130,9 +133,14 @@ class Handler(SimpleHTTPRequestHandler):
                 name, prompt = self._name(str(req.get("board") or "")), str(last.get("content", ""))
                 if req.get("infographic"):   # 정리 문서의 「🎨 그림으로도」 — 같은 자료(고른 것, 없으면 칠판 전체)로 인포그래픽
                     prompt = board_image.infographic_prompt(ctx or str(last.get("context") or "") or self._board_material(name))
-                facts, note = None, ""
-                if fu and not req.get("infographic"):   # 앞 그림 이어 고치기 — 처음 요청·찾은 정보 + 고칠 점(다시 검색 안 함)
-                    prompt, note = board_image.followup_prompt(fu, prompt), "앞 그림의 요청·정보를 이어서 고친 점만 반영했어요(KAIROS는 그림을 직접 고치지 못해 새로 그려요 — 조금 달라질 수 있어요).\n\n"
+                facts, note, edit = None, "", None
+                base = self._img_file(name, str(req.get("base_image") or "")) if fu and not req.get("infographic") else ""
+                if base:   # 앞 그림 고치기 — 칠판이 고른 그림(붙인 것, 없으면 첫 후보)을 그대로 두고 말한 것만(input_images, 2026-10-20)
+                    with open(base, "rb") as f:
+                        edit = ["data:image/%s;base64,%s" % ("jpeg" if base.endswith(".jpg") else base.rsplit(".", 1)[1], base64.b64encode(f.read()).decode())]
+                    prompt, note = board_image.edit_prompt(prompt), "고른 그림을 그대로 두고 말한 점만 고쳤어요.\n\n"
+                elif fu and not req.get("infographic"):   # 고칠 그림 파일이 없으면 — 처음 요청·찾은 정보 + 고칠 점으로 새로(다시 검색 안 함)
+                    prompt, note = board_image.followup_prompt(fu, prompt), "앞 그림의 요청·정보를 이어서 고친 점만 반영해 새로 그렸어요(조금 달라질 수 있어요).\n\n"
                 elif not req.get("infographic") and board_chat._SEARCH_WORDS.search(prompt):   # 「내일 날씨를 고흐 느낌으로 그려줘」 = 웹 검색 → 그리기(2026-10-20 사용자 — 대화창 all in one)
                     try:
                         facts = board_chat.chat(key, [{"role": "user", "content": prompt + "\n(이 그림에 넣을 사실만 세 줄로)"}], model=gw.FALLBACK_DEFAULT_MODEL, kind="search", base_url=gw.resolve_base_url())
@@ -140,9 +148,11 @@ class Handler(SimpleHTTPRequestHandler):
                     except Exception as e:   # 못 찾아도 그림은 그린다
                         sys.stderr.write("[그림 앞 검색 실패] %s\n" % e)
                 today = time.localtime()   # 그림 모델은 오늘을 모름 — 「내일 날짜도」가 11월 9일(일)로 나왔음(2026-10-20 실측)
-                # 「오늘·내일은 이 기준」이라고만 쓰면 요청에 없는 「오늘」 칸을 지어냈음(같은 날 실측) — 날짜 계산에만 쓰라고
-                prompt += "\n\n[오늘 날짜: %d년 %d월 %d일(%s) — 날짜를 적어야 할 때 계산용. 요청에 없는 날의 내용은 넣지 마]" % (today.tm_year, today.tm_mon, today.tm_mday, "월화수목금토일"[today.tm_wday])
-                return self._image(name, prompt, key, facts, note, fu["asks"][0] if fu and not req.get("infographic") else "")   # 붙인 그림 밑 글 = 처음 요청
+                # 「오늘·내일은 이 기준」이라고만 쓰면 요청에 없는 「오늘」 칸을 지어냈음(같은 날 실측) — 날짜 계산에만 쓰라고.
+                # 날짜 말이 없는 그림(「송신탑을 수채화로」)에도 붙이면 오늘 날짜를 그림에 써 넣었음(같은 날 실측) — 날짜 말이 있을 때만
+                if DATE_WORDS.search(" ".join((fu or {}).get("asks", [])) + " " + str(last.get("content", ""))):
+                    prompt += "\n\n[오늘 날짜: %d년 %d월 %d일(%s) — 날짜를 적어야 할 때 계산용. 요청에 없는 날의 내용은 넣지 마]" % (today.tm_year, today.tm_mon, today.tm_mday, "월화수목금토일"[today.tm_wday])
+                return self._image(name, prompt, key, facts, note, fu["asks"][0] if fu and not req.get("infographic") else "", edit)   # 붙인 그림 밑 글 = 처음 요청
             if kind == "board":   # 「지난번 ○○ 뭐였지?」 — 이 칠판의 저장된 글에서 찾아 근거로(§8 항목61 ③-2)
                 refs = self._find(self._name(str(req.get("board") or "")), str(last.get("content", "")), key)
             out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL,
@@ -189,14 +199,23 @@ class Handler(SimpleHTTPRequestHandler):
     def _img_dir(self, name: str) -> str:
         return os.path.join(self.data_dir, name + ".img")
 
-    def _image(self, name: str, prompt: str, key: str, facts: dict | None = None, note: str = "", caption: str = ""):
+    def _img_file(self, name: str, url: str) -> str:
+        """대화창이 보낸 그림 주소(`/api/img/<이 칠판>/<파일>`) → 서버의 그 파일 경로, 이 칠판 그림이 아니거나 없으면 ""."""
+        from urllib.parse import unquote
+        m = re.match(r"^/api/img/([^/]+)/(\d+_[0-9a-f]{6}\.(png|jpg|webp))$", url or "")
+        if not name or not m or self._name(unquote(m.group(1))) != name:
+            return ""
+        p = os.path.join(self._img_dir(name), m.group(2))
+        return p if os.path.exists(p) else ""
+
+    def _image(self, name: str, prompt: str, key: str, facts: dict | None = None, note: str = "", caption: str = "", edit: list | None = None):
         """그림 후보 → {"kind": "image", "content", "images": [{"url"}], "model", "elapsed", "credits"(, "sources")} — 그림은 `<이름>.img/`에.
         `facts` = 그리기 전에 찾은 웹 검색 답(`board_chat.chat` 결과) — 답 글 앞에 그 내용·출처를 같이 보임."""
         if not name:
             return self._json(400, {"error": "칠판 이름이 없어요"})
         t0 = time.time()
         try:
-            out = board_image.generate(key, prompt, base_url=gw.resolve_base_url())
+            out = board_image.generate(key, prompt, base_url=gw.resolve_base_url(), **({"input_images": edit, "n": 1} if edit else {}))   # 고치기는 거의 같은 결과라 1장(크레딧)
         except Exception as e:
             return self._json(502, {"error": f"KAIROS 그림 만들기 실패: {e}"})
         os.makedirs(self._img_dir(name), exist_ok=True)

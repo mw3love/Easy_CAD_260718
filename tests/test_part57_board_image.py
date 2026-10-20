@@ -118,7 +118,8 @@ def test_server_image_with_live_info_searches_first(server, monkeypatch):
     assert out["kind"] == "image" and "12~17도" in out["content"] and out["sources"][0]["url"] == "https://weather.go.kr"
     body = json.dumps({"board": "그림", "kind": "image", "messages": [{"role": "user", "content": "송신탑 그려줘"}]}).encode()   # 최신 정보 말 없음 = 검색 안 함
     with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
-        assert "sources" not in json.loads(r.read()) and seen[-1].startswith("송신탑 그려줘\n\n[오늘 날짜: ")   # 그림 모델은 오늘을 모름 — 날짜만 붙음
+        assert "sources" not in json.loads(r.read()) and seen[-1] == "송신탑 그려줘"   # 날짜 말이 없으면 오늘 날짜도 안 붙임(붙이면 그림에 써 넣었음)
+    assert "[오늘 날짜: " in seen[0]   # 「내일의 전주 날씨」 — 날짜 말이 있으면 오늘 날짜(그림 모델은 오늘을 모름)
 
 
 def test_followup_keeps_first_request_and_facts():
@@ -147,3 +148,26 @@ def test_server_image_followup_routes_and_carries_context(server, monkeypatch):
     with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
         out = json.loads(r.read())
     assert out["kind"] == "image" and "수채화" in seen[-1] and "날짜도 넣어 줘" in seen[-1] and out["caption"] == "송신탑을 수채화로 그려줘"
+
+
+def test_server_image_followup_edits_picked_image(server, monkeypatch):
+    """고른 그림 고치기(2026-10-20, KAIROS 문서 `input_images`) — 칠판이 보낸 그 그림 파일을 data: 주소로 넣고 1장만, 원본 유지 지시."""
+    base, data = server
+    import server as srv
+    calls = []
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="", **kw: calls.append((prompt, kw)) or {"images": [(JPG, "jpg")], "model": "img-m", "credits": 22.9})
+    (data / "그림.img").mkdir()
+    (data / "그림.img" / "1_aaaaaa.png").write_bytes(PNG)
+    msgs = [{"role": "user", "content": "송신탑을 고흐 풍으로 그려줘"}, {"role": "assistant", "content": "그림 후보 2장 — 마음에 드는 것을 눌러 칠판에 붙여요"},
+            {"role": "user", "content": "날짜도 넣어 줘"}]
+
+    def ask(url):
+        body = json.dumps({"board": "그림", "base_image": url, "messages": msgs}).encode()
+        with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
+            return json.loads(r.read())
+    out = ask("/api/img/" + urllib.parse.quote("그림") + "/1_aaaaaa.png")
+    prompt, kw = calls[-1]
+    assert kw["n"] == 1 and kw["input_images"][0].startswith("data:image/png;base64,") and "그대로 유지" in prompt and "날짜도 넣어 줘" in prompt
+    assert out["kind"] == "image" and "고른 그림을 그대로" in out["content"]
+    ask("/api/img/" + urllib.parse.quote("남의칠판") + "/1_aaaaaa.png")   # 다른 칠판 그림 = 못 씀 → 앞 요청 이어 새로 그리기
+    assert "input_images" not in calls[-1][1] and "송신탑을 고흐 풍으로" in calls[-1][0]

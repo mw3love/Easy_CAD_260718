@@ -156,3 +156,20 @@ test('그림 후보 둘을 차례로 누르면 둘째는 첫째와 안 겹치는
   const [a, b] = ims
   expect(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h).toBe(false)
 })
+
+test('그림 뒤 고칠 말 = 고칠 그림 주소를 같이(붙인 것 → 둘째, 「첫 번째」라 하면 첫째)', async ({ page }) => {
+  const name = boardName('imgedit'), seen = []
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII=', 'base64')
+  const imgs = [{ url: `/api/img/${name}/1_aaaaaa.png` }, { url: `/api/img/${name}/2_bbbbbb.png` }]
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', r => { seen.push(r.request().postDataJSON()); return r.fulfill({ json: { kind: 'image', content: '그림 후보', model: 'img-m', elapsed: 1, images: imgs } }) })
+  await page.route('**/api/img/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
+  await openBoard(page, name, { chat: true })
+  await ask(page, '송신탑 그려줘'); await expect(page.getByTestId('image-pick')).toHaveCount(2)
+  expect(seen[0].base_image).toBeUndefined()
+  await page.getByTestId('image-pick').nth(1).click(); await expect(page.getByTestId('image-pick').nth(1)).toContainText('칠판에 붙임 ✓')
+  await ask(page, '날짜도 넣어 줘'); await expect(page.getByTestId('image-pick')).toHaveCount(4)
+  expect(seen[1].base_image).toBe(imgs[1].url)                               // 붙인 그림
+  await ask(page, '첫 번째 그림에 제목 넣어 줘'); await expect(page.getByTestId('image-pick')).toHaveCount(6)
+  expect(seen[2].base_image).toBe(imgs[0].url)                               // 말로 고름
+})

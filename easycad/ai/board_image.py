@@ -71,13 +71,22 @@ def _bytes_of(item: dict, http) -> tuple:
     raise RuntimeError("그림 응답에서 그림을 못 찾음")
 
 
+def edit_prompt(ask: str) -> str:
+    """고른 그림 고치기 지시 — 그 그림(input_images 첫 번째)을 그대로 두고 말한 것만."""
+    return f"첫 번째 이미지를 그대로 유지하고(구도·화풍·글자·색 모두), 다음만 고쳐 줘: {ask.strip()}"
+
+
 def generate(api_key: str, prompt: str, *, n: int = CANDIDATES, model: str = IMAGE_MODEL, aspect: str = ASPECT,
-             base_url: str = gw.BASE_URL, http=None) -> dict:
-    """프롬프트 → {"images": [(바이트, 확장자), …], "model", "credits"}. `http`는 시험용(httpx 흉내)."""
+             base_url: str = gw.BASE_URL, http=None, input_images: list | None = None) -> dict:
+    """프롬프트 → {"images": [(바이트, 확장자), …], "model", "credits"}. `http`는 시험용(httpx 흉내).
+    `input_images` = 고칠 그림 data: 주소 목록 — 있으면 편집 모드(KAIROS 문서 `input_images`, 2026-10-20 실측: flare가 원본 그대로 + 날짜만 추가.
+    처음엔 image·images·reference_images로 보냈다가 게이트웨이가 모르는 필드라 조용히 버려 새 그림이 나왔음)."""
     import httpx
     http = http or httpx
-    r = http.post(base_url + "/images/generate/", headers={"Authorization": f"Bearer {api_key}"},
-                  json={"model": model, "prompt": prompt, "number_of_images": n, "aspect_ratio": aspect}, timeout=300)
+    body = {"model": model, "prompt": prompt, "number_of_images": n, "aspect_ratio": aspect}
+    if input_images:
+        body["input_images"] = list(input_images)
+    r = http.post(base_url + "/images/generate/", headers={"Authorization": f"Bearer {api_key}"}, json=body, timeout=300)
     if r.status_code >= 400:
         raise RuntimeError(f"그림 만들기 실패 HTTP {r.status_code}: {r.text[:200]}")
     d = r.json()
