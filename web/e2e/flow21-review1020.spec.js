@@ -127,3 +127,17 @@ test('글자 끌어 놓기 = 빈 글 상자(「글」 안 남음), 안 쓰고 �
   await clickScene(page, 900, 600)
   expect((await liveDoc(page)).items.filter(it => it.type === 'text')).toHaveLength(0)
 })
+
+test('정리 문서 답의 「🎨 그림으로도」 = 같은 자료로 그림 후보(kind image + infographic)', async ({ page }) => {
+  const seen = []
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: {} } }))
+  await page.route('**/api/chat', async r => { const b = r.request().postDataJSON(); seen.push(b)
+    await r.fulfill({ json: b.kind === 'image' ? { kind: 'image', content: '그림 후보 1장', images: [], model: 'gpt-image-2.5-flare', elapsed: 0.1 }
+      : { kind: 'report', content: '정리 문서 「점검」', title: '점검', html: '<h1>점검</h1>', model: 'claude-opus-5-5', elapsed: 0.1 } }) })
+  await openBoard(page, boardName('infog'), { chat: true })
+  await ask(page, '정리 문서로 만들어 줘'); await expect(page.getByTestId('answer-doc')).toBeVisible()
+  await page.getByRole('button', { name: '🎨 그림으로도' }).click()
+  await expect(page.getByText('그림 후보 1장')).toBeVisible()
+  expect(seen[1]).toMatchObject({ kind: 'image', infographic: true })
+  expect(seen[1].messages.at(-1).content).toBe('「점검」 인포그래픽 그림')
+})

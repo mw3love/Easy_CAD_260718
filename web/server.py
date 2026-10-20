@@ -121,7 +121,10 @@ class Handler(SimpleHTTPRequestHandler):
             if kind == "report":   # 「정리해 줘」 ① — 고른 것(없으면 칠판 전체)을 정리 문서 한 장으로(§8 항목61)
                 return self._report(self._name(str(req.get("board") or "")), str(last.get("content", "")), ctx or str(last.get("context") or ""), prev_html, key)
             if kind == "image":   # 「○○ 그려줘」 — 그림 후보(§8 항목61 ③-4): 칠판 옆 폴더에 두고 주소만 대화 기록에(기록이 그림으로 불지 않게)
-                return self._image(self._name(str(req.get("board") or "")), str(last.get("content", "")), key)
+                name, prompt = self._name(str(req.get("board") or "")), str(last.get("content", ""))
+                if req.get("infographic"):   # 정리 문서의 「🎨 그림으로도」 — 같은 자료(고른 것, 없으면 칠판 전체)로 인포그래픽
+                    prompt = board_image.infographic_prompt(ctx or str(last.get("context") or "") or self._board_material(name))
+                return self._image(name, prompt, key)
             if kind == "board":   # 「지난번 ○○ 뭐였지?」 — 이 칠판의 저장된 글에서 찾아 근거로(§8 항목61 ③-2)
                 refs = self._find(self._name(str(req.get("board") or "")), str(last.get("content", "")), key)
             out = board_chat.chat(key, msgs, model=req.get("model") or gw.FALLBACK_DEFAULT_MODEL,
@@ -135,10 +138,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _report(self, name: str, ask: str, material: str, prev_html: str, key: str):
         """정리 문서 → {"kind": "report", "content", "title", "html", "model", "elapsed"} — 자료 = 고른 것의 글, 없으면 이 칠판 전체 글."""
-        if not material.strip() and not prev_html and name and os.path.exists(self._doc_path(name)):
-            with open(self._doc_path(name), encoding="utf-8") as f:
-                items = board_find.board_items(json.load(f))
-            material = "\n\n".join(f"({board_find.KIND_NAME.get(it['type'], it['type'])}) {it['text']}" for it in items)
+        if not material.strip() and not prev_html:
+            material = self._board_material(name)
         if not material.strip() and not prev_html:
             return self._json(400, {"error": "정리할 것이 없어요 — 칠판에서 메모·글을 고르고 다시 물어 주세요"})
         try:
@@ -147,6 +148,14 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(502, {"error": f"KAIROS 정리 문서 실패: {e}"})
         sys.stderr.write("[정리 문서] %s %.1f초 %d자\n" % (out["model"], out["elapsed"], len(out["html"])))
         return self._json(200, {"kind": "report", "content": f"정리 문서 「{out['title']}」 — 칠판에 붙이면 인쇄용 문서 카드가 돼요", **out})
+
+    def _board_material(self, name: str) -> str:
+        """이 칠판의 저장된 글 전부(「(메모) …」 줄들) — 고른 게 없을 때 정리 문서·인포그래픽의 자료."""
+        if not name or not os.path.exists(self._doc_path(name)):
+            return ""
+        with open(self._doc_path(name), encoding="utf-8") as f:
+            items = board_find.board_items(json.load(f))
+        return "\n\n".join(f"({board_find.KIND_NAME.get(it['type'], it['type'])}) {it['text']}" for it in items)
 
     def _tidy(self, items: list, ask: str, key: str):
         """정리정돈 → {"kind": "tidy", "content", "plan": {title, sections:[{title, items, note}], opinion}, "model", "elapsed"} — 조각 = 칠판이 보낸 목록."""

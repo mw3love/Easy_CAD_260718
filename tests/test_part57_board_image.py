@@ -82,3 +82,22 @@ def test_server_image_saves_files_and_serves_them(server):
     (data / "secret.png").write_bytes(b"SECRET")   # 칠판 폴더 밖 파일 — 이름 규칙에 안 맞아 그림 길목을 안 탐(첫 화면 html이 나갈 뿐)
     with urllib.request.urlopen(base + "/api/img/" + urllib.parse.quote("공부") + "/../secret.png") as r:
         assert b"SECRET" not in r.read()
+
+
+def test_server_infographic_uses_report_material(server, monkeypatch):
+    """「🎨 그림으로도」(2026-10-20) — 질문 글이 아니라 정리 문서와 같은 자료(고른 것의 글, 없으면 칠판 전체)로 인포그래픽 지시."""
+    base, data = server
+    import server as srv
+    seen = []
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="": seen.append(prompt) or {"images": [(JPG, "jpg")], "model": "img-m", "credits": 10.4})
+
+    def ask(msg):
+        body = json.dumps({"board": "점검", "kind": "image", "infographic": True, "messages": [msg]}).encode()
+        with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
+            return json.loads(r.read())
+    assert ask({"role": "user", "content": "「점검」 인포그래픽 그림", "context": "발전기 연료 62%"})["kind"] == "image"
+    assert "인포그래픽" in seen[-1] and "발전기 연료 62%" in seen[-1] and "지어" not in seen[-1] and "넣지 마" in seen[-1]
+    (data / "점검.ecad").write_text(json.dumps({"format": "easycad-doc", "version": 1, "items": [
+        {"type": "memo", "uid": "u1", "pos": [0, 0], "rect": [0, 0, 340, 40], "lines": [{"k": "p", "t": "VSWR 1.12"}]}]}, ensure_ascii=False), encoding="utf-8")
+    ask({"role": "user", "content": "「점검」 인포그래픽 그림"})   # 고른 것 없음 = 칠판 전체
+    assert "VSWR 1.12" in seen[-1]
