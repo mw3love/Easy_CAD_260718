@@ -72,6 +72,23 @@ export function freeSpot(view, boxes, w, h, { pad = 24, step = 24 } = {}) {
   return { x: right + pad * 2, y: Math.max(top, y0) }
 }
 
+// 가운데 먼저, 겹치면 가장 가까운 빈자리(2026-10-20 사용자 — 표·메모·웹을 버튼으로 넣을 때). c = 놓고 싶은 상자의 가운데,
+// 가운데에서 바깥으로 고리처럼 넓혀 가며(가까운 순) 겹치지 않는 첫 자리. 화면 안에서 못 찾으면 가운데 그대로(예측되는 자리가 겹침보다 낫다)
+export function nearSpot(c, boxes, w, h, { pad = 24, step = 24, view = null } = {}) {
+  const free = (x, y) => !boxes.some(b => hit({ x, y, w, h }, b, pad / 2))
+  const x0 = c.x - w / 2, y0 = c.y - h / 2
+  if (free(x0, y0)) return { x: x0, y: y0 }
+  const inView = (x, y) => !view || (x >= view.x && y >= view.y && x + w <= view.x + view.w && y + h <= view.y + view.h)
+  const maxR = view ? Math.ceil(Math.max(view.w, view.h) / step) : 40
+  for (let r = 1; r <= maxR; r++) {
+    const ring = []
+    for (let i = -r; i <= r; i++) ring.push([i, -r], [i, r], [-r, i], [r, i])
+    ring.sort((a, b) => Math.hypot(...a) - Math.hypot(...b))
+    for (const [i, j] of ring) { const x = x0 + i * step, y = y0 + j * step; if (inView(x, y) && free(x, y)) return { x, y } }
+  }
+  return { x: x0, y: y0 }
+}
+
 // 칠판에서 고른 것들의 글 → 질문에 같이 보낼 글(빈 것은 빼고, 겹친 것은 한 번만)
 export function contextText(texts, max = 20000) {
   const seen = new Set(), out = []

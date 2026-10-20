@@ -69,7 +69,7 @@ SHORTCUT_DEFS: list[tuple[str, str, str, str]] = [
     ("insert_photo",      "삽입", "AI 패널: 베끼기 열기", "Ctrl+Shift+P"),
     # ---- 보기 (QAction) ----
     ("zoom_100",     "보기", "100%(1:1)",     "Ctrl+0"),
-    ("zoom_fit",     "보기", "전체 맞춤",      "Ctrl+9"),
+    ("zoom_fit",     "보기", "전체 맞춤",      "Z"),   # 2026-10-20 Ctrl+9 → Z(웹과 같게 — 왼손 자리, 사용자)
     ("toggle_snap",  "보기", "스냅 토글",      "F3"),
     ("toggle_ortho", "보기", "직교 제약 토글",  "F8"),
     ("toggle_grid",  "보기", "격자 토글",      "Shift+G"),

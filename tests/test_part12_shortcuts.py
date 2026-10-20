@@ -213,3 +213,22 @@ def test_shortcut_settings_menu_action_exists():
     with _isolated_shortcuts():
         w = CanvasWindow()
         assert w._act_shortcut_settings.text() == "단축키 설정…"
+
+
+def test_zoom_fit_plain_z_and_text_editing_keeps_z():
+    """2026-10-20 전체 맞춤 Ctrl+9 → Z(웹과 같게). 글 고치는 중의 z는 글자로 들어가야 한다(전체 맞춤이 가로채면 안 됨)."""
+    from easycad.canvas.annotator_core import _TextItem
+    with _isolated_shortcuts():
+        w = CanvasWindow(); w.show(); w.activateWindow(); QApplication.processEvents()
+        assert shortcuts.current_sequence("zoom_fit") == "Z"
+        r = _mk_pen_rect(w); w.push_undo_add_many([r])
+        w._view.resetTransform(); w._view.scale(0.05, 0.05); w._view.setFocus(); QApplication.processEvents()
+        QTest.keyClick(w._view, Qt.Key.Key_Z)
+        z_fit = w._view.transform().m11()
+        assert abs(z_fit - 0.05) > 1e-3   # Z = 전체 맞춤
+        t = _TextItem("#ff000000"); w._scene.addItem(t)
+        t.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction); t.setFocus(); QApplication.processEvents()
+        w._view.resetTransform(); w._view.scale(0.05, 0.05)
+        QTest.keyClick(w._view, Qt.Key.Key_Z, Qt.KeyboardModifier.NoModifier)
+        assert "z" in t.toPlainText().lower()            # 글로 들어감
+        assert abs(w._view.transform().m11() - 0.05) < 1e-6   # 맞춤 안 함

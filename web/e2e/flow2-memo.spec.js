@@ -6,7 +6,7 @@ test('메모에 제목·목록·할 일을 마크다운으로 쓰고 새로고�
   const name = boardName('memo')
   await openBoard(page, name); await setCam(page)
   await page.getByRole('button', { name: '메모', exact: true }).click()
-  await expect(page.getByTestId('memo-editor')).toBeVisible()
+  await expect(page.getByText('치면 바로 써져요')).toBeVisible()          // 만들면 고른 채 — 치면 바로 글(2026-10-20)
   await page.keyboard.type('# 회의 정리'); await page.keyboard.press('Enter')
   await page.keyboard.type('- 첫째'); await page.keyboard.press('Enter'); await page.keyboard.press('Enter')
   await page.keyboard.type('[] 할 일')

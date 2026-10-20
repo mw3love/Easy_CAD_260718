@@ -7,12 +7,12 @@ const tool = (page, label) => page.getByRole('button', { name: label, exact: tru
 const rects = d => d.items.filter(it => it.type === 'rect')
 async function box(page, x, y, w = 120, h = 60) { await pickShape(page, '사각형'); await dragScene(page, { x, y }, { x: x + w, y: y + h }) }
 
-test('언제나 — Ctrl+9 다 보기 · Ctrl+0 100% · Ctrl+S 저장(브라우저 창 안 뜸) · Ctrl+P 내보내기 · F1 도움말', async ({ page }) => {
+test('언제나 — Z 다 보기 · Ctrl+0 100% · Ctrl+S 저장(브라우저 창 안 뜸) · Ctrl+P 내보내기 · F1 도움말', async ({ page }) => {
   const name = boardName('keysall')
   await openBoard(page, name); await setCam(page)
   await box(page, 0, 0); await clickScene(page, 700, 500)
   await setCam(page, { x: -5000, y: -5000, z: 1 })                     // 상자가 화면 밖으로 가게
-  await page.keyboard.press('Control+9')
+  await page.keyboard.press('z')
   let cam = await page.evaluate(() => window.__mb.getCam())
   const b = await page.getByTestId('board').boundingBox(), sx = 60 * cam.z + cam.x
   expect(sx).toBeGreaterThan(0); expect(sx).toBeLessThan(b.width)      // 멀리 있던 상자가 화면 안으로
@@ -39,6 +39,11 @@ test('아무것도 안 골랐을 때 — 숫자 = 도구, Esc = 선택으로, Ct
   await page.keyboard.press('Escape'); await expect(tool(page, '선택')).toHaveAttribute('aria-pressed', 'true')
   await page.keyboard.press('Control+a')
   expect(await page.evaluate(() => window.__mb.ed.getSel().length)).toBe(2)
+  await page.keyboard.press('Escape')
+  const dark0 = await page.evaluate(() => document.documentElement.dataset.theme || getComputedStyle(document.body).backgroundColor)
+  await page.keyboard.press('d')                                         // D = 어둡게 ⇄ 밝게
+  expect(await page.evaluate(() => document.documentElement.dataset.theme || getComputedStyle(document.body).backgroundColor)).not.toBe(dark0)
+  await page.keyboard.press('d')
 })
 
 test('글 도형 하나 골랐을 때 — 숫자·대문자도 글로, Enter = 이어 고치기, 방향키 10/1, Del = 지우기', async ({ page }) => {

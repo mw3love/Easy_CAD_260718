@@ -1,6 +1,6 @@
 // 메모 고치기(§8 항목61 4-b ⑤ 1차) — 메모 자리에 TipTap을 겹쳐 띄움. 제목·글머리·번호·할 일·코드·인용 + 마크다운 입력(`# `·`- `·`1. `·`[] `·`> `·``` ```)은
 // TipTap 확장의 입력 규칙 그대로(`---` = 구분선). 치수는 memo.js MEMO·MEMO_KIND와 render.jsx memoLayout과 같게(고치는 모습 = 결과). Esc·Ctrl+Enter·바깥 클릭 = 끝.
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Editor, Extension } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
@@ -68,6 +68,7 @@ function turnInto(editor, k) {
 
 // spec: { left, top(화면 px — 메모 왼쪽 위), width(화면 px), zoom(칠판 배율 × 아이템 배율), fill(바탕 CSS), lines, caret?(처음 커서 줄), onChange(lines), onWheel(e) }
 // onDone(lines, extra) — extra = { caret: 줄 번호 }(Esc — 그 줄 고르기) | { grab: { i, clientX, clientY } }(⠿를 눌러 끌기 시작) | { pick: { cur, clicked, range } }(단축키 + 다른 줄 클릭 = 줄 고르기) | null
+const mayTake = host => { const a = document.activeElement; return !a || a === document.body || !!host?.contains(a) || !(/INPUT|TEXTAREA|SELECT/.test(a.tagName) || a.isContentEditable) }   // 대기 편집기가 다른 입력 칸의 포커스를 뺏지 않게(text.jsx와 같음)
 export function MemoEditor({ spec, onDone }) {
   const box = useRef(null), host = useRef(null), ed = useRef(null), done = useRef(false), sp = useRef(spec), od = useRef(onDone)
   const [hov, setHov] = useState(null), [turn, setTurn] = useState(null), turnR = useRef(null)   // 손잡이를 띄울 줄 { i, y(칸 안 px) } · 전환 메뉴 { x, y, at }
@@ -98,7 +99,9 @@ export function MemoEditor({ spec, onDone }) {
           if (range && clicked === cur) return false
           e.preventDefault(); finishR.current?.({ pick: { cur, clicked, range } }); return true
         } },
+        handlePaste: () => !!sp.current.armed,   // 대기 중 Ctrl+V = 칠판 붙여넣기
         handleKeyDown: (_v, e) => {   // 전환 메뉴가 떠 있으면 ↑↓ Enter가 메뉴를 움직임
+          if (sp.current.armed) return e.ctrlKey || e.metaKey || e.altKey || !(e.key.length === 1 || e.key === 'Process' || e.keyCode === 229)   // 대기 중 = 글자만 받고 Del·방향키·Enter·Ctrl+… 는 칠판이(메모 지우기·옮기기·고치기 시작)
           const t = turnR.current
           if (!t) { if (e.key === 'Escape') e.stopPropagation(); return false }   // 끝내며 고른 줄을 칠판의 Esc(= 고르기 풀기)가 바로 풀지 않게
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { setTurn({ ...t, at: (t.at + (e.key === 'ArrowDown' ? 1 : LINE_KINDS.length - 1)) % LINE_KINDS.length }); return true }
@@ -111,15 +114,16 @@ export function MemoEditor({ spec, onDone }) {
     ed.current = editor; setEdInst(editor); turnOpenR.current = openTurn
     try {   // 커서 = 고른 줄 끝(Enter로 들어옴) 아니면 맨 끝
       const b = spec.caret != null ? lineBlocks(editor.state.doc)[spec.caret] : null, hit = spec.at && editor.view.posAtCoords({ left: spec.at.x, top: spec.at.y })   // 두 번 누른 자리가 먼저
-      editor.commands.setTextSelection(hit ? hit.pos : b ? (b.node.isTextblock ? b.at + b.node.nodeSize - 1 : b.at) : editor.state.doc.content.size); editor.view.focus()
+      editor.commands.setTextSelection(hit ? hit.pos : b ? (b.node.isTextblock ? b.at + b.node.nodeSize - 1 : b.at) : editor.state.doc.content.size)
+      if (!spec.armed || mayTake(host.current)) editor.view.focus()
     } catch { editor.commands.focus('end') }
-    editor.on('update', () => sp.current.onChange?.(docToLines(editor.getJSON())))   // 치는 동안 메모 높이(칠판에 바로)
-    const onDown = e => { if (e.button === 0 && box.current && !box.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }
+    editor.on('update', () => { if (sp.current.armed) sp.current.onArm?.(); sp.current.onChange?.(docToLines(editor.getJSON())) })   // 치는 동안 메모 높이(칠판에 바로) · 대기 중 글이 들어오면(한글 조합 등) 바로 고치기로
+    const onDown = e => { if (!sp.current.armed && e.button === 0 && box.current && !box.current.contains(e.target) && !e.target.closest?.('[data-keep-edit]')) finish() }
     const tm = setTimeout(() => window.addEventListener('pointerdown', onDown, true), 0)   // 0초 안에 닫히면(개발 모드 두 번 띄우기) 감시가 남아 오류를 쌓던 것 — 타이머도 지움
     // 치는 중에도 휠 = 칠판 확대(입력 칸은 배율 따라 같이 커짐 — 2026-10-18 사용자)
     const el = box.current, onWheel = e => { if (!sp.current.onWheel) return; e.preventDefault(); e.stopPropagation(); sp.current.onWheel(e) }
     el.addEventListener('wheel', onWheel, { passive: false })
-    return () => { clearTimeout(tm); window.removeEventListener('pointerdown', onDown, true); el.removeEventListener('wheel', onWheel); finish(); editor.destroy() }
+    return () => { clearTimeout(tm); window.removeEventListener('pointerdown', onDown, true); el.removeEventListener('wheel', onWheel); if (!sp.current.armed) finish(); editor.destroy() }   // 대기만 하다 사라짐 = 고친 게 없음
   }, [])   // eslint-disable-line
   const z = spec.zoom, P = v => `${v * z}px`, fs = k => P(MEMO_KIND[k].pt * PT), ls = METRICS.board.lineSpacing, g = k => P(MEMO_KIND[k].gap ?? MEMO.GAP)
   // 치는 중에도 줄 손잡이 ⠿(2026-10-18 사용자) — 마우스가 올라간 줄의 첫 줄 높이에. 누르면 고치기를 끝내고 칠판의 손잡이 끌기·메뉴로 이어짐
@@ -135,6 +139,7 @@ export function MemoEditor({ spec, onDone }) {
     })
     if (hit?.i !== hov?.i || hit?.y !== hov?.y) setHov(hit)
   }
+  useEffect(() => { if (!spec.armed && ed.current && !ed.current.view.hasFocus()) ed.current.view.focus() }, [spec.armed])   // 대기 → 고치기(Enter 등) = 커서 그대로 보이게
   const S = '[data-testid=memo-editor]'
   // 블록 = 위아래 TEXT_MARGIN, 블록 사이 GAP(제목은 제 gap), 목록 들여쓰기 INDENT(깊이마다), 인용 = 왼쪽 막대 + QUOTE, 코드 = 고정폭 + 회색 바탕(이어진 줄 사이 여백 없음), 구분선 = 높이 HR*2 가운데 가는 줄
   const css = `${S} .ProseMirror{outline:none;white-space:pre-wrap;word-break:keep-all;overflow-wrap:anywhere;font-family:${BOARD_FONT};font-size:${fs('p')};line-height:${ls};color:#1f1f1f}
@@ -156,6 +161,7 @@ ${S} hr.ProseMirror-selectednode{background:rgba(137,180,250,.25)}
 ${S} .mb-url{color:#2f80ed;text-decoration:underline}${S} code{font-family:${MONO_FONT};font-size:inherit;background:${CODE_BAND}}${S} ::selection{background:rgba(137,180,250,.35)}`
   const item = { all: 'unset', boxSizing: 'border-box', display: 'block', width: '100%', padding: '5px 10px', borderRadius: 5, cursor: 'pointer' }
   // 바탕은 투명 — 칠판이 고치는 메모의 바탕(채움·테두리)만 그려 줌(겹쳐 칠하면 투명한 채움이 진해졌음 — 2026-10-18)
+  if (spec.armed) return <div ref={box} data-testid="memo-armed" style={{ position: 'absolute', left: spec.left, top: spec.top, width: spec.width, boxSizing: 'border-box', padding: `${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.LPAD)}`, opacity: 0, pointerEvents: 'none', zIndex: 20 }}><style>{css.replaceAll(S, '[data-testid=memo-armed]')}</style><div ref={host} /></div>   // 메모만 고른 대기 — 보이지 않게 미리 띄워 첫 글자(한글 조합 포함)를 받음. 같은 host라 고치기로 바뀌어도 편집기는 그대로
   return <div ref={box} data-testid="memo-editor" onPointerDown={e => { e.stopPropagation(); if (e.button === 1) sp.current.onPan?.(e) }} onMouseDown={e => { if (e.button === 1) e.preventDefault() }} onWheel={e => e.stopPropagation()} onMouseMove={onMove} onMouseLeave={() => setHov(null)}
     style={{ position: 'absolute', left: spec.left, top: spec.top, width: spec.width, boxSizing: 'border-box', padding: `${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.LPAD)}`, background: 'transparent', borderRadius: P(10), outline: '1.5px solid #89b4fa', zIndex: 20, colorScheme: 'light' }}>
     <style>{css}</style>

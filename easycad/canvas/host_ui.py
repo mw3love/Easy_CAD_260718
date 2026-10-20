@@ -2902,7 +2902,7 @@ class _UIBuildMixin:
         self._zoom_pct_lbl.clicked.connect(self._zoom_reset)
         self._zoom_pct_lbl.setText(f"{round(self._view.transform().m11() * 100)}%")   # 첫 표시(이후는 _update_zoom_label)
         self._zoom_in_btn = _zbtn("＋", "확대", lambda: self._on_wheel_zoom(1))
-        self._zoom_fit_btn = _zbtn("", "전체 보기 — 도면 전체가 보이게(Ctrl+9)", self._act_fit.trigger, 22)
+        self._zoom_fit_btn = _zbtn("", "전체 보기 — 도면 전체가 보이게(Z)", self._act_fit.trigger, 22)
         self._zoom_fit_btn.setIcon(_svg_icon("zoom_fit", 14, _current_icon_color()))
         self._zoom_fit_btn.setIconSize(QSize(14, 14))
         self._zoom_100_btn = _zbtn("1:1", "실제 크기(100%)", self._act_zoom100.trigger, 24)

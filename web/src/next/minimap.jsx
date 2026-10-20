@@ -59,7 +59,7 @@ export function Minimap({ items, cam, size, setCam, onFit, dark }) {
     <div style={{ display: 'flex', alignItems: 'center', marginBottom: folded ? 0 : 4 }}>
       <span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>미니맵</span>
       <button title="축소" onClick={() => zoomBy(1 / ZOOM_STEP)} style={hb}>−</button>
-      <button title="다 보기 — 칠판 전체가 보이게(Ctrl+9)" onClick={onFit} style={{ ...hb, minWidth: 38 }}>{Math.round(cam.z * 100)}%</button>
+      <button title="다 보기 — 칠판 전체가 보이게(Z)" onClick={onFit} style={{ ...hb, minWidth: 38 }}>{Math.round(cam.z * 100)}%</button>
       <button title="확대" onClick={() => zoomBy(ZOOM_STEP)} style={hb}>＋</button><FoldBtn folded={folded} onClick={toggleFold} />
     </div>
     <div style={{ position: 'relative', width: W, height: H, borderRadius: 4, overflow: 'hidden', background: 'var(--mb-board, transparent)', outline: `1px solid ${C.line}`, cursor: 'pointer' }}
