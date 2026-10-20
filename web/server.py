@@ -440,6 +440,15 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(401, b'{"error":"login"}')
         if path == "/api/models":
             return self._models()
+        if path == "/api/credits":   # 대화창 머리줄 「남은 크레딧」(2026-10-21 사용자 — baze CLI 검토) — 이 요청의 키(「🔑 내 키」면 그 사람 것)
+            key = self._key()
+            if not key:
+                return self._json(503, {"error": "키 없음"})
+            try:
+                remaining, quota = gw.get_credit_balance(key, gw.resolve_base_url())
+            except Exception as e:   # 못 받아도 대화는 됨 — 화면은 숫자를 안 보임
+                return self._json(502, {"error": str(e)})
+            return self._json(200, {"remaining": remaining, "quota": quota})
         if path == "/api/boards":   # 칠판 목록(데스크톱 「웹 칠판 열기」, §8 항목61 ④-2) — 최근에 고친 것부터
             out = []
             for fn in os.listdir(self.data_dir) if os.path.isdir(self.data_dir) else []:

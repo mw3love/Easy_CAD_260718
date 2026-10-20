@@ -109,6 +109,23 @@ def test_server_uses_my_key_header_and_never_stores_it(server):
         assert b"my-own-key-1234" not in f.read_bytes()
 
 
+def test_server_credits_use_request_key(server, monkeypatch):
+    """대화창 머리줄 「남은 크레딧」(2026-10-21) — 이 요청의 키로(「🔑 내 키」면 그 사람 것), 못 받으면 502(화면은 숫자 안 보임)."""
+    import server as srv
+    base, _, _ = server
+    seen = []
+    monkeypatch.setattr(srv.gw, "get_credit_balance", lambda key, base_url="": seen.append(key) or (18401.6, 40000.0))
+    assert _req(base + "/api/credits") == (200, {"remaining": 18401.6, "quota": 40000.0}) and seen == ["test-key"]
+    r = urllib.request.Request(base + "/api/credits", headers={"X-Kairos-Key": "my-own-key-1234"})
+    with urllib.request.urlopen(r) as resp:
+        assert resp.status == 200 and seen[-1] == "my-own-key-1234"
+
+    def boom(*_a, **_k):
+        raise RuntimeError("HTTP 401")
+    monkeypatch.setattr(srv.gw, "get_credit_balance", boom)
+    assert _req(base + "/api/credits") == (502, {"error": "HTTP 401"})
+
+
 def test_server_chat_errors_are_shown_not_hidden(server, monkeypatch):
     base, _, _ = server
     import server as srv

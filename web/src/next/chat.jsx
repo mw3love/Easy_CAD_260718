@@ -165,6 +165,12 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   useEffect(() => {   // 모델 목록은 키마다 다를 수 있어 키를 바꾸면 다시
     fetch('/api/models', { headers: keyHeaders() }).then(r => r.json()).then(setModels).catch(() => setModels({ featured: {}, error: '모델 목록 못 받음' }))
   }, [myKey])
+  // 남은 크레딧(머리줄) — 열 때·키를 바꿀 때·답을 받을 때마다 새로(2026-10-21 사용자 — 월 할당이라 바닥날 수 있음)
+  const [credits, setCredits] = useState(null)
+  useEffect(() => {
+    if (busy) return
+    fetch('/api/credits', { headers: keyHeaders() }).then(r => (r.ok ? r.json() : null)).then(d => setCredits(d && d.quota ? d : null)).catch(() => setCredits(null))
+  }, [busy, myKey])
   useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight }, [msgs.length, busy])
   const asked = useRef(null)
   useEffect(() => { if (!request || !loaded || asked.current === request.id) return; asked.current = request.id; send(request.text, request.kind) }, [request, loaded])   // eslint-disable-line react-hooks/exhaustive-deps
@@ -304,6 +310,8 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
       <div style={css.head}>
         <b style={{ fontSize: 14 }}>KAIROS</b>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {credits && <span data-testid="chat-credits" title={`이번 달 ${Math.round(credits.quota).toLocaleString('ko-KR')} 크레딧 중 남은 것(${myKey ? '내 키' : '서버 키'}) — 답을 받을 때마다 새로`}
+            style={{ font: `500 12px ${F}`, color: credits.remaining < credits.quota * 0.1 ? '#da7756' : C.muted }}>남은 {Math.round(credits.remaining).toLocaleString('ko-KR')}</span>}
           <button title="대화창 닫기" onClick={onClose} style={{ ...css.ghost, padding: '0 7px' }}>✕</button>
         </div>
       </div>
