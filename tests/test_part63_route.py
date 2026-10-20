@@ -71,3 +71,10 @@ def test_self_check_turns_model_off_when_worse_than_rules():
     res = route.self_check("k", http=_Http(("image", 0.9, {"image": 0.9})), base_url="https://g")   # 망가진 모델 = 거의 다 그림
     assert res["ai"] < res["rules"] and not res["use_ai"] and not route.state["ai"]
     route.state["ai"] = True
+
+
+def test_route_explicit_draw_beats_search():
+    """2026-10-20 사용자 실사용 — 「내일의 전주 날씨를 고흐 느낌으로 그려줘」가 jev 검색(0.56)으로 감 → 「그려 줘」가 분명하면 그림."""
+    probs = {"search": 0.6, "image": 0.38, "chat": 0.02}
+    assert _route("내일의 전주 날씨를 고흐 느낌으로 그려줘.", ("search", 0.56, probs))[0] == "image"
+    assert _route("송출 흐름도 그려 줘", ("search", 0.56, probs))[0] != "image"   # 흐름도는 그림 아님

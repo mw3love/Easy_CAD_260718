@@ -101,3 +101,21 @@ def test_server_infographic_uses_report_material(server, monkeypatch):
         {"type": "memo", "uid": "u1", "pos": [0, 0], "rect": [0, 0, 340, 40], "lines": [{"k": "p", "t": "VSWR 1.12"}]}]}, ensure_ascii=False), encoding="utf-8")
     ask({"role": "user", "content": "「점검」 인포그래픽 그림"})   # 고른 것 없음 = 칠판 전체
     assert "VSWR 1.12" in seen[-1]
+
+
+def test_server_image_with_live_info_searches_first(server, monkeypatch):
+    """「내일 날씨를 고흐 느낌으로 그려줘」(2026-10-20) — 최신 정보가 필요한 그림 = 웹 검색 → 그 사실을 넣어 그리기, 답에 검색 내용·출처."""
+    base, _ = server
+    import server as srv
+    seen = []
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="": seen.append(prompt) or {"images": [(JPG, "jpg")], "model": "img-m", "credits": 10.4})
+    monkeypatch.setattr(srv.board_chat, "chat", lambda key, msgs, **kw: {"content": "내일 전주: 오전 비 뒤 맑음, 12~17도[1]", "model": "sonar-x", "kind": kw.get("kind"),
+                                                                      "sources": [{"n": 1, "url": "https://weather.go.kr", "title": "기상청"}]})
+    body = json.dumps({"board": "그림", "kind": "image", "messages": [{"role": "user", "content": "내일의 전주 날씨를 고흐 느낌으로 그려줘"}]}).encode()
+    with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
+        out = json.loads(r.read())
+    assert "12~17도" in seen[-1] and "[1]" not in seen[-1].split("[그림에 반영할")[1]
+    assert out["kind"] == "image" and "12~17도" in out["content"] and out["sources"][0]["url"] == "https://weather.go.kr"
+    body = json.dumps({"board": "그림", "kind": "image", "messages": [{"role": "user", "content": "송신탑 그려줘"}]}).encode()   # 최신 정보 말 없음 = 검색 안 함
+    with urllib.request.urlopen(urllib.request.Request(base + "/api/chat", data=body, method="POST", headers={"Content-Type": "application/json"})) as r:
+        assert "sources" not in json.loads(r.read()) and seen[-1] == "송신탑 그려줘"

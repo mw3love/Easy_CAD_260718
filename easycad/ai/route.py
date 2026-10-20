@@ -34,6 +34,7 @@ CASES = [
     ("발표 리허설 언제로 정했었지?", 0, "board"), ("ATSC 3.0이 뭐야?", 0, "chat"), ("ATSC 3.0 국내 도입 최근 상황", 0, "search"),
     ("이 글 더 짧게 다듬어 줘", 1, "chat"), ("전주 맛집 추천해 줘", 0, "search"), ("내가 정리한 할 일 중에 안 끝난 거 있어?", 0, "board"),
     ("광컨버터 고장나면 뭐부터 확인해?", 0, "chat"), ("오늘 날짜 기준 환율", 0, "search"), ("우리가 얘기한 예산 얼마였지", 0, "board"),
+    ("내일의 전주 날씨를 고흐 느낌으로 그려줘.", 0, "image"),   # 2026-10-20 사용자 실사용 — 검색으로 잘못 감
 ]
 # 주간 자가 시험 결과 — False면 규칙만(서버가 `self_check`로 바꿈). 환경 변수 EASYCAD_ROUTE=rules면 늘 규칙(시험·네트워크 없는 곳)
 state = {"ai": True}
@@ -59,9 +60,12 @@ def ask_model(api_key: str, text: str, has_context: bool, *, base_url: str = gw.
 
 
 def adjust(text: str, choice: str, conf: float, probs: dict) -> str:
-    """판단 모델 답 손질 — 흐름도·도면은 그림이 아님, 확신이 낮고 검색이 1·2등이면 검색."""
+    """판단 모델 답 손질 — 흐름도·도면은 그림이 아님, 「그려 줘」가 분명하면 그림(최신 정보가 필요하면 서버가 검색 → 그리기로 이음),
+    확신이 낮고 검색이 1·2등이면 검색."""
     if choice == "image" and board_chat._DIAGRAM_WORDS.search(text or ""):
         return "chat"
+    if board_chat._IMAGE_WORDS.search(text or "") and not board_chat._DIAGRAM_WORDS.search(text or ""):
+        return "image"   # 2026-10-20 사용자: 「내일의 전주 날씨를 고흐 느낌으로 그려줘」가 검색(0.56)으로 감 — 그림 0.35~0.41로 헷갈림
     top2 = sorted(probs, key=lambda k: -float(probs[k] or 0))[:2]
     if conf < LOW_CONF and "search" in top2 and choice in ("chat", "search"):
         return "search"
