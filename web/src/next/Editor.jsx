@@ -1460,9 +1460,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const fs = opts.free && spotNear(w, h + (opts.caption ? 24 / c.z : 0))
       const at = fs ? { x: fs.x + w / 2, y: fs.y + h / 2 } : opts.at || (mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2 })
       const it = base([at.x - w / 2, at.y - h / 2], { type: 'image', rect: [0, 0, w, h], data, z: topZ(m.items) + 1 })
-      if (opts.caption) {   // 그림 + 밑 글 = 한 묶음
-        const g = 'g' + newId(), cap = base([at.x - w / 2, at.y + h / 2 + 4], { type: 'text', text: opts.caption, color: '#ff8a8f98', font: 9, bg: null, z: topZ(m.items) + 1, group_id: g })
-        commit([...m.items, { ...it, group_id: g }, cap], [it._id], '그림 붙이기')
+      if (opts.caption) {   // 그림 + 밑 글(요청) — 따로(2026-10-20 사용자: 묶음이면 그림만 고르려 해도 글까지 골라져 「고른 것」에 실림). 옛 칠판의 묶음은 Ctrl+Shift+G로 풂
+        const cap = base([at.x - w / 2, at.y + h / 2 + 4], { type: 'text', text: opts.caption, color: '#ff8a8f98', font: 9, bg: null, z: topZ(m.items) + 1 })
+        commit([...m.items, it, cap], [it._id], '그림 붙이기')
       } else commit([...m.items, it], [it._id], '그림 붙여넣기')
       setTool('select'); return it._id
     } catch { setStatus('그림을 읽지 못했어요') } finally { URL.revokeObjectURL(url) }
