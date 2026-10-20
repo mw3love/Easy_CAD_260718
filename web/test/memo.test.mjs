@@ -107,3 +107,9 @@ test('주소 구간: 문장부호·괄호 빼고, 마크다운 [이름](주소)�
   assert.deepEqual(urlSpans(t).map(s => s[2]), ['https://search.naver.com/s?q=전주'])
   assert.deepEqual(urlSpans('주소 없음'), [])
 })
+
+test('답 속 표 → 메모: 기본은 「가 · 나」 글 줄, skip이면 뺌(칠판엔 진짜 표로 따로)', () => {
+  const md = '요약\n| 항목 | 내일 |\n|---|---|\n| 기온 | **9~18℃** |'
+  assert.deepEqual(memoFromAnswer(md).map(l => l.t), ['요약', '항목 · 내일', '기온 · 9~18℃'])
+  assert.deepEqual(memoFromAnswer(md, '', 'skip').map(l => l.t), ['요약'])
+})

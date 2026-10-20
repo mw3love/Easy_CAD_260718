@@ -25,6 +25,13 @@ export function parseAnswer(md) {
     const t = raw.trim()
     if (!t) { if (lines.length && !blank) { lines.push({ kind: 'gap', parts: [] }); blank = true } continue }
     blank = false
+    // 표(| 가 | 나 |) — 붙은 줄을 한 덩어리로, 둘째 줄이 |---| 이면 첫 줄 = 머리글(2026-10-20 사용자: AI 표 답이 | 글자로 보였음)
+    if (/^\|.*\|$/.test(t) && t.length > 2) {
+      const cells = t.slice(1, -1).split('|').map(c => c.trim()), prev = lines[lines.length - 1]
+      if (cells.every(c => /^:?-{2,}:?$/.test(c))) { if (prev?.kind === 'table' && prev.rows.length === 1) prev.header = true; continue }
+      if (prev?.kind === 'table') prev.rows.push(cells); else lines.push({ kind: 'table', rows: [cells], header: false })
+      continue
+    }
     let m
     if ((m = /^(#{1,6})\s+(.*)$/.exec(t))) lines.push({ kind: 'h', level: m[1].length, parts: inlineParts(m[2].replace(/\*\*/g, '')) })
     else if ((m = /^([-*•]|\d+[.)])\s+(.*)$/.exec(t))) { const lv = Math.min(3, Math.floor((raw.length - raw.trimStart().length) / 2))   // 목록 깊이 = 앞 띄어쓰기 둘마다(메모)

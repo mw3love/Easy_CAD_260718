@@ -3,6 +3,14 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { answerToRichText, contextText, freeSpot, inlineParts, parseAnswer, sourceLine } from '../src/chatFormat.js'
 
+test('답 글 읽기 — 표(| 가 | 나 |): 붙은 줄 한 덩어리, |---| 이면 첫 줄 머리글(2026-10-20)', () => {
+  const ln = parseAnswer('날씨 요약\n| 항목 | 내일 |\n|---|:---:|\n| 기온 | **9~18℃** |\n| 오전 | 비 |\n\n끝')
+  assert.deepEqual(ln.map(l => l.kind), ['p', 'table', 'gap', 'p'])
+  assert.deepEqual(ln[1], { kind: 'table', header: true, rows: [['항목', '내일'], ['기온', '**9~18℃**'], ['오전', '비']] })
+  assert.equal(parseAnswer('| a | b |\n| c | d |')[0].header, false)   // 구분 줄 없으면 머리글 아님
+  assert.equal(parseAnswer('a | b')[0].kind, 'p')                       // 양 끝 | 가 없으면 글
+})
+
 test('답 글 읽기 — 제목·목록·굵게·빈 줄 한 칸·코드펜스 줄 뺌', () => {
   const ln = parseAnswer('## 결론\n\n\n**PTP**는 시계 규약이다.\n- 하나\n2. 둘\n```\ncode\n```\n')
   assert.deepEqual(ln.map(l => l.kind), ['h', 'gap', 'p', 'li', 'li', 'code'])

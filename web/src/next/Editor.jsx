@@ -34,7 +34,7 @@ import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob, usesBoardFont, weightsOf } from './exporter.jsx'
 import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
-import { freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
+import { freeSpot, nearSpot, parseAnswer, sourceLine } from '../chatFormat.js'
 import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
@@ -845,15 +845,29 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 지금 화면에서 다른 것과 안 겹치는 자리(왼쪽 카드·오른쪽 속성 카드 자리는 뺌), 카드에 `chat_at` = 답 시각
   const CARD_W = MEMO.W   // 답 메모 폭(옛 카드와 같은 340)
   // 2026-10-18 사용자: 답도 메모로 — 제목·목록·할 일·코드·인용이 줄 단위(정리하기 쉽게). 옛 카드(네모 + 왼쪽 위 라벨)는 그대로 열림
-  function cardItem(msg, x, y, z) {
-    const it = base([x, y], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines: memoFromAnswer(msg.content, sourceLine(msg.model, msg.at)), chat_at: msg.at, z })
+  function cardItem(msg, x, y, z, tables = 'text') {
+    const it = base([x, y], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines: memoFromAnswer(msg.content, sourceLine(msg.model, msg.at), tables), chat_at: msg.at, z })
     return { ...it, rect: [0, 0, MEMO.W, memoHeight(it)] }
+  }
+  // 답 속 표 = 메모 밑에 진짜 표(칸 고치기 되는, 2026-10-20 사용자 — ChatGPT 표 답 참고), 메모·출처와 한 묶음. 메모엔 표 줄을 빼고
+  function cardItems(msg, x, y, z) {
+    if (msg.html) return [docItem(msg, x, y, z)]   // 정리 문서 = 문서 카드 하나
+    const tabs = parseAnswer(msg.content || '').filter(l => l.kind === 'table')
+    const its = answerItems(msg, x, y, z, tabs.length ? 'skip' : 'text')
+    if (!tabs.length) return its
+    let yy = y + its[0].rect[3] + 12
+    const tables = tabs.map(t => {
+      const rows = t.rows.length, cols = Math.max(...t.rows.map(r => r.length)), cells = t.rows.map(r => Array.from({ length: cols }, (_, c) => (r[c] || '').replace(/\*\*/g, '')))
+      const it = fitTable(base([x, yy], { type: 'table', rows, cols, header: t.header, rect: [0, 0, MEMO.W, rows * 30], cells, col_widths: Array(cols).fill(1 / cols), z }))
+      yy += it.rect[3] + 12; return it
+    })
+    const g = its[0].group_id || 'g' + newId()
+    return [...its, ...tables].map(it => ({ ...it, group_id: g }))
   }
   // 웹 검색 답(§8 항목61 ② 담는 법, 2026-10-19) = 요약 메모 + 오른쪽에 출처 웹 카드(본문에 쓰인 번호만, 제목 앞 [n], 가벼운 제목 카드 — 칸 안 페이지 없음) + 메모 → 카드 화살표, 한 묶음.
   // 「어디서 왔는지」가 칠판 위 선으로 보이게(회사 KAIROS 웹은 답과 출처가 따로 놂). 출처가 없으면 메모 하나(cardItem)
-  function cardItems(msg, x, y, z) {
-    if (msg.html) return [docItem(msg, x, y, z)]   // 정리 문서 = 문서 카드 하나
-    const memo = cardItem(msg, x, y, z), src = msg.sources || []
+  function answerItems(msg, x, y, z, tables) {
+    const memo = cardItem(msg, x, y, z, tables), src = msg.sources || []
     if (msg.refs?.length) return boardRefItems(memo, msg.refs, z)
     if (!src.length) return [memo]
     const g = 'g' + newId(), gap = 14, x2 = x + MEMO.W + 90, ch = WEB_HEAD + WEB_INFO_H

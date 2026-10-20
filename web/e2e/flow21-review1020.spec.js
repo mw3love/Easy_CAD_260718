@@ -185,7 +185,7 @@ test('↩ 이어 묻기 = 그 답까지만 앞 대화로 + 그 그림을 고칠 
   await openBoard(page, name, { chat: true }); await setCam(page)
   await ask(page, '고흐 풍 전주 그려줘'); await expect(page.getByText('그림 후보 1')).toBeVisible()
   await ask(page, '날짜 넣어 줘'); await expect(page.getByText('그림 후보 2')).toBeVisible()
-  await page.getByTestId('reply-to').first().click()                        // 첫 그림 답에 이어 묻기
+  await page.getByTestId('answer-menu').first().click(); await page.getByRole('menuitem', { name: /여기서 이어 묻기/ }).click()   // 첫 그림 답에 이어 묻기(⋯ 메뉴)
   await expect(page.getByTestId('reply-chip')).toContainText('고흐 풍 전주 그려줘')
   await ask(page, '날짜 다시 넣어 줘'); await expect(page.getByText('그림 후보 3')).toBeVisible()
   expect(seen[2].messages.map(m => m.content)).toEqual(['고흐 풍 전주 그려줘', '그림 후보 1', '날짜 다시 넣어 줘'])   // 둘째 대화는 안 실림
@@ -233,4 +233,40 @@ test('대화창 그림 = 배율과 상관없이 긴 변 680으로 붙음(2026-10
   await page.getByTestId('image-pick').nth(1).click(); await expect(page.getByTestId('image-pick').nth(1)).toContainText('칠판에 붙임 ✓')
   const ws = (await liveDoc(page)).items.filter(it => it.type === 'image').map(it => Math.round(it.rect[2] * (it.scale || 1)))
   expect(ws).toEqual([680, 680])                                           // 4×3 그림 → 긴 변 680
+})
+
+test('⋯ 메뉴 — 새 대화로 분기(지금 대화는 지난 대화로) · 다시 만들기(이 답만 바뀜)', async ({ page }) => {
+  const seen = []
+  let n = 0
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', r => { seen.push(r.request().postDataJSON()); n++; return r.fulfill({ json: { content: `답 ${n}`, model: 'fake-model', elapsed: 0.1 } }) })
+  await openBoard(page, boardName('branch'), { chat: true })
+  await ask(page, '첫 질문'); await expect(page.getByText('답 1')).toBeVisible()
+  await ask(page, '둘째 질문'); await expect(page.getByText('답 2')).toBeVisible()
+  await page.getByTestId('answer-menu').first().click(); await page.getByRole('menuitem', { name: /새 대화로 분기/ }).click()
+  await expect(page.getByText('둘째 질문')).toHaveCount(0); await expect(page.getByText('답 1')).toBeVisible()
+  await expect(page.getByRole('button', { name: /지난 대화 1/ })).toBeVisible()
+  await ask(page, '갈래 질문'); await expect(page.getByText('답 3')).toBeVisible()
+  expect(seen[2].messages.map(m => m.content)).toEqual(['첫 질문', '답 1', '갈래 질문'])
+  await page.getByTestId('answer-menu').last().click(); await page.getByRole('menuitem', { name: /다시 만들기/ }).click()
+  await expect(page.getByText('답 4')).toBeVisible(); await expect(page.getByText('답 3')).toHaveCount(0)
+  expect(seen[3].messages.map(m => m.content)).toEqual(['첫 질문', '답 1', '갈래 질문'])
+  await page.getByRole('button', { name: /새 대화/ }).click()
+  await page.getByRole('button', { name: /지난 대화 2/ }).click()
+  await expect(page.getByTestId('past-list')).toContainText('⑂ 첫 질문')         // 갈래는 ⑂ 표시
+})
+
+test('표 답 — 대화창엔 표로, 칠판에 붙이면 메모 + 진짜 표 한 묶음', async ({ page }) => {
+  const ANS = ['내일 전주 날씨', '| 항목 | 내일 |', '|---|---|', '| 기온 | **9~18℃** |', '| 오전 | 비 |'].join(String.fromCharCode(10))
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', r => r.fulfill({ json: { content: ANS, model: 'fake-model', elapsed: 0.1 } }))
+  await openBoard(page, boardName('tbl'), { chat: true }); await setCam(page)
+  await ask(page, '표로 정리해 줘')
+  await expect(page.getByTestId('answer-table')).toBeVisible()
+  await expect(page.getByTestId('answer-table').locator('tr')).toHaveCount(3)
+  await page.getByRole('button', { name: '칠판에 붙이기' }).click()
+  const d = await liveDoc(page), memo = d.items.find(it => it.type === 'memo'), tbl = d.items.find(it => it.type === 'table')
+  expect(tbl.cells).toEqual([['항목', '내일'], ['기온', '9~18℃'], ['오전', '비']]); expect(tbl.header).toBe(true)
+  expect(JSON.stringify(memo.lines)).not.toContain('|'); expect(memo.group_id).toBeTruthy(); expect(tbl.group_id).toBe(memo.group_id)
+  expect(tbl.pos[1]).toBeGreaterThan(memo.pos[1])                           // 메모 밑
 })

@@ -37,10 +37,12 @@ export function olNumbers(lines) {
 }
 
 // KAIROS 답 → 메모 줄(제목 # 수 그대로, 목록·번호·할 일·코드·인용, 글 속 **굵게**·`코드`), 맨 끝 회색 출처 줄
-export function memoFromAnswer(md, source = '') {
+// tables = 'text'(표 줄 → 「가 · 나 · 다」 글 줄, 메모 안에 붙일 때) | 'skip'(빼기 — 칠판에 붙일 땐 진짜 표로 따로, Editor `cardItems`)
+export function memoFromAnswer(md, source = '', tables = 'text') {
   const lines = []
   for (const ln of parseAnswer(md)) {
     if (ln.kind === 'gap') continue
+    if (ln.kind === 'table') { if (tables === 'text') for (const r of ln.rows) lines.push({ k: 'p', t: r.map(c => c.replace(/\*\*/g, '')).join(' · ') }); continue }
     if (ln.kind === 'code') { lines.push({ k: 'code', t: ln.parts[0].text.replace(/\t/g, '    ') }); continue }
     if (ln.kind === 'p' && /^\s*([-*_])(\s*\1){2,}\s*$/.test(ln.parts.map(p => p.text).join(''))) { lines.push({ k: 'hr', t: '' }); continue }   // --- · *** · ___ = 구분선
     const src = ln.parts.map(p => (p.code ? '`' + p.text + '`' : p.bold ? `**${p.text}**` : p.text)).join('')

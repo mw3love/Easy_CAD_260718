@@ -8,7 +8,7 @@
 // - 칠판에서(§8 항목61 ③-2): 「지난번·저번·정리해 둔」 → 서버가 이 칠판 글을 뜻으로 찾아 근거로 답, [칠판 n] 고리 = 그 도형으로 가기, 붙이면 근거로 가는 점선 화살표.
 import { useEffect, useRef, useState } from 'react'
 import { DOC_NAME } from './doc.js'
-import { contextText, parseAnswer } from '../chatFormat.js'
+import { contextText, inlineParts, parseAnswer } from '../chatFormat.js'
 import { urlSpans } from './geom.js'
 import { MONO_FONT } from './render.jsx'
 import { siteOf } from './webcard.js'
@@ -66,6 +66,8 @@ const css = {
   input: { font: `400 13.5px/1.5 ${F}`, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 10px', resize: 'none', minHeight: 40, maxHeight: 200, outline: 'none', background: C.card, color: C.ink },
   kind: { font: `600 11px ${F}`, color: C.muted, background: C.seg, borderRadius: 99, padding: '1px 8px' },
   bar: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderBottom: `1px solid ${C.line}` },
+  menu: { position: 'absolute', left: 0, bottom: 'calc(100% + 4px)', zIndex: 3, display: 'flex', flexDirection: 'column', minWidth: 170, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, boxShadow: '0 6px 18px rgba(0,0,0,.18)', padding: 4 },
+  item: { all: 'unset', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, font: `500 12.5px ${F}`, color: C.ink, whiteSpace: 'nowrap' },
   drop: { display: 'flex', flexDirection: 'column', maxHeight: 260, overflowY: 'auto', borderBottom: `1px solid ${C.line}`, background: C.card },
   row: { all: 'unset', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'center', padding: '6px 12px', font: `400 12.5px ${F}`, color: C.ink, borderBottom: `1px solid ${C.line}` },
   select: { font: `500 12px ${F}`, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 4px', background: C.card, maxWidth: 210 },
@@ -75,6 +77,9 @@ const css = {
 function Answer({ text }) {
   return <div>{parseAnswer(text).map((ln, i) => {
     if (ln.kind === 'gap') return <div key={i} style={{ height: 6 }} />
+    if (ln.kind === 'table') return <div key={i} style={{ overflowX: 'auto', margin: '4px 0' }}><table data-testid="answer-table" style={{ borderCollapse: 'collapse', fontSize: 12.5, width: '100%' }}><tbody>   {/* 표 답(2026-10-20) — 칠판에 붙이면 진짜 표 */}
+      {ln.rows.map((r, j) => <tr key={j} style={ln.header && !j ? { background: C.seg, fontWeight: 700 } : null}>{r.map((c, k) => <td key={k} style={{ border: `1px solid ${C.line}`, padding: '3px 6px', verticalAlign: 'top' }}>
+        {inlineParts(c).map((p, q) => (p.bold ? <b key={q}>{p.text}</b> : <span key={q}>{p.text}</span>))}</td>)}</tr>)}</tbody></table></div>
     // 답 속 주소 = 누르면 새 탭(대화창은 읽기만 해서 그냥 클릭 — 2026-10-18 사용자)
     const linked = (t, j) => { if (ln.kind === 'code') return t; const sp = urlSpans(t); if (!sp.length) return t; const out = []; let at = 0
       sp.forEach(([s, n, u], k) => { if (s > at) out.push(t.slice(at, s)); out.push(<a key={`${j}-${k}`} href={u} target="_blank" rel="noopener noreferrer" style={{ color: LINK_CHAT, textDecoration: 'underline', wordBreak: 'break-all' }} onPointerDown={e => e.stopPropagation()}>{u}</a>); at = s + n })
@@ -120,7 +125,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
 
   useEffect(() => {
     fetch(LOG_URL, { cache: 'no-store' }).then(r => (r.status === 404 ? { messages: [] } : r.ok ? r.json() : Promise.reject(r)))
-      .then(d => { setMsgs(d.messages || []); setPast(Array.isArray(d.past) ? d.past : []); setLoaded(true) }).catch(() => { setServer(false); setLoaded(true) })
+      .then(d => { setMsgs(d.messages || []); setPast(Array.isArray(d.past) ? d.past : []); curBranch.current = !!d.branch; setLoaded(true) }).catch(() => { setServer(false); setLoaded(true) })
   }, [])
   useEffect(() => {   // 모델 목록은 키마다 다를 수 있어 키를 바꾸면 다시
     fetch('/api/models', { headers: keyHeaders() }).then(r => r.json()).then(setModels).catch(() => setModels({ featured: {}, error: '모델 목록 못 받음' }))
@@ -131,7 +136,8 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   useEffect(() => { if (!busy) return; const t = setInterval(() => tick(n => n + 1), 1000); return () => clearInterval(t) }, [busy])
 
   const useModel = model || models?.default || 'gpt-6.1-sol'
-  const save = (next, p = pastRef.current) => fetch(LOG_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: next, ...(p.length ? { past: p } : {}) }) })
+  const curBranch = useRef(false)   // 지금 대화가 다른 대화에서 갈라져 나왔나(지난 대화 목록 제목 앞 ⑂)
+  const save = (next, p = pastRef.current) => fetch(LOG_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: next, ...(p.length ? { past: p } : {}), ...(curBranch.current ? { branch: true } : {}) }) })
     .then(r => setServer(r.ok)).catch(() => setServer(false))
   const update = next => { setMsgs(next); save(next) }
 
@@ -187,12 +193,25 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   }
   // 새 대화 — 지금 대화를 지난 대화 맨 위로(빈 대화면 그냥 둠). 질문 하나 = 제목
   const shelve = (cur, p) => { const kept = cur.filter(m => m.role !== 'error'); if (!kept.some(m => m.role === 'user')) return p
-    return [{ at: kept[0].at || Date.now(), title: (kept.find(m => m.role === 'user').content || '').split(/\r?\n/)[0].slice(0, 40), messages: kept }, ...p] }
+    return [{ at: kept[0].at || Date.now(), title: (curBranch.current ? '⑂ ' : '') + (kept.find(m => m.role === 'user').content || '').split(/\r?\n/)[0].slice(0, 40), messages: kept, ...(curBranch.current ? { branch: true } : {}) }, ...p] }
   const reset = () => { setSkipSel(''); setGone({}); setPastOpen(false); setReplyTo(null) }
   // 이어 묻는 답을 한 줄로(「↩ … 에 이어서」 표시) — 그림 답은 처음 요청
   const replyLabel = at => { const a = msgs.find(m => m.at === at); if (!a) return '지운 답'; const t = (a.images?.length ? `🎨 ${a.prompt || '그림'}` : a.content || '').split('\n')[0].replace(/[*#>`]/g, '').trim(); return t.length > 26 ? t.slice(0, 26) + '…' : t }
-  function newChat() { if (busy) return; const p = shelve(msgs, pastRef.current); setPast(p); reset(); setMsgs([]); save([], p) }
-  function openPast(j) { if (busy) return; const pick = pastRef.current[j], p = shelve(msgs, pastRef.current.filter((_, k) => k !== j)); setPast(p); reset(); setMsgs(pick.messages); save(pick.messages, p) }
+  function newChat() { if (busy) return; const p = shelve(msgs, pastRef.current); setPast(p); reset(); curBranch.current = false; setMsgs([]); save([], p) }
+  function openPast(j) { if (busy) return; const pick = pastRef.current[j], p = shelve(msgs, pastRef.current.filter((_, k) => k !== j)); setPast(p); reset(); curBranch.current = !!pick.branch; setMsgs(pick.messages); save(pick.messages, p) }
+  // 새 대화로 분기(2026-10-20 사용자 — Gemini·ChatGPT 참고) — 이 답까지를 복사해 새 대화로, 지금 대화는 「지난 대화」에 그대로
+  function branch(i) { if (busy) return; const keep = msgs.slice(0, i + 1).filter(m => m.role !== 'error'), p = shelve(msgs, pastRef.current); setPast(p); reset(); curBranch.current = true; setMsgs(keep); save(keep, p) }
+  // 다시 만들기 — 같은 질문(그 앞 대화까지)·같은 종류로 한 번 더 물어 이 답을 바꿔 끼움
+  async function regen(i) {
+    const history = msgs.slice(0, i).filter(m => m.role !== 'error'), m = msgs[i]
+    if (busy || history.at(-1)?.role !== 'user') return
+    setBusy(Date.now()); setBusyJob(m.kind || '')
+    try { const a = await ask(history, m.kind || '', m.kind === 'report' && history.at(-2)?.html ? history.at(-2).html : ''); update(msgs.map((x, j) => (j === i ? a : x))) } catch (e) {
+      setMsgs([...msgs.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }])
+    } finally { setBusy(null) }
+  }
+  const [menuAt, setMenuAt] = useState(null)   // ⋯ 메뉴를 연 답의 at
+  useEffect(() => { if (menuAt == null) return; const close = e => { if (!e.target.closest?.('[data-answer-menu]')) setMenuAt(null) }; window.addEventListener('pointerdown', close, true); return () => window.removeEventListener('pointerdown', close, true) }, [menuAt])
   function saveKey(v) { setKairosKey(v.trim()); setMyKey(!!v.trim()); setKeyDraft(''); setKeyOpen(false) }
   // 정리 문서 → 같은 자료로 인포그래픽 그림 후보(2026-10-20 사용자 선택 — 그림은 보기 좋지만 숫자를 지어낼 수 있어 기본은 문서, 원하면 한 번 더)
   function drawReport(i) { const src = msgs.slice(0, i).filter(m => m.role === 'user').at(-1) || {}; send(`「${msgs[i].title || '정리 문서'}」 인포그래픽 그림`, 'image', { context: src.context, ctxCount: src.ctxCount }) }
@@ -286,9 +305,17 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
                 {!m.images?.length && m.kind !== 'tidy' && <button style={{ ...(m.pinned ? css.ghost : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
                   title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : m.refs?.length ? '메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(누르면 빈자리, 끌면 놓은 자리)' : m.sources?.length ? '요약 메모 + 출처 카드를 번호 화살표로 이어 한 묶음으로(누르면 빈자리, 끌면 놓은 자리)' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
                   {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>}
-                {!m.images?.length && !m.html && m.kind !== 'tidy' && <button style={css.ghost} onClick={() => navigator.clipboard?.writeText(m.content).catch(() => {})}>복사</button>}
-                <button data-testid="reply-to" style={{ ...css.ghost, ...(replyTo === m.at ? { color: '#da7756', borderColor: '#da7756' } : null) }} disabled={!!busy} onClick={() => setReplyTo(r => (r === m.at ? null : m.at))}
-                  title="이 답에 이어 묻기 — 다음 질문은 여기까지의 대화를 이어받아요(그림 답이면 그 그림을 고쳐요)">↩</button>
+                {/* ⋯ 하나에 — 이어 묻기·분기·다시 만들기·복사(2026-10-20 사용자: 다른 AI 채팅 참고, 버튼은 늘리지 않게) */}
+                <span data-answer-menu style={{ position: 'relative' }}>
+                  <button data-testid="answer-menu" style={{ ...css.ghost, ...(replyTo === m.at ? { color: '#da7756', borderColor: '#da7756' } : null) }} aria-expanded={menuAt === m.at} onClick={() => setMenuAt(a => (a === m.at ? null : m.at))} title="이 답으로 — 이어 묻기·새 대화로 분기·다시 만들기·복사">{replyTo === m.at ? '↩ ⋯' : '⋯'}</button>
+                  {menuAt === m.at && <div role="menu" style={css.menu}><style>{'.mb-mi:hover:not(:disabled){background:var(--mb-seg)}.mb-mi:disabled{opacity:.45;cursor:default}'}</style>
+                    {[['↩ 여기서 이어 묻기', '다음 질문이 이 답까지를 이어받아요(그림이면 그 그림을 고쳐요)', () => setReplyTo(m.at)],
+                      ['⑂ 새 대화로 분기', '이 답까지를 새 대화로 — 지금 대화는 「지난 대화」에', () => branch(i)],
+                      ...(m.kind !== 'tidy' ? [['↻ 다시 만들기', '같은 질문으로 한 번 더 — 이 답을 바꿔요', () => regen(i)]] : []),
+                      ...(!m.images?.length && !m.html ? [['복사', '답 글을 클립보드로', () => navigator.clipboard?.writeText(m.content).catch(() => {})]] : [])]
+                      .map(([label, tip, fn]) => <button key={label} role="menuitem" className="mb-mi" style={css.item} disabled={!!busy && label !== '복사'} title={tip} onClick={() => { setMenuAt(null); fn() }}>{label}</button>)}
+                  </div>}
+                </span>
                 <span style={{ ...css.meta, marginLeft: 'auto' }}>{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</span>
               </div>
             </div>)}
