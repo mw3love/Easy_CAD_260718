@@ -314,7 +314,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function onPointerMove(e) {
     const s = st.current, p = toSceneP(e), z = R.current.cam.z
     R.current.mouse = p   // 주소 붙여넣기 = 커서 자리에
-    if (!s.kind) { hoverCursor(p); if ((R.current.poly && R.current.tool === 'polygon') || (R.current.lpt && R.current.tool === 'line')) setOverlay(o => ({ ...o, pcur: e.shiftKey && o.lpt ? snap45(o.lpt, p) : p })); return }   // 클릭 배치 중 = 마지막 점에서 커서까지 따라오는 선(데스크톱 `_draw_pts[-1]`)
+    if (!s.kind) { hoverCursor(p); if ((R.current.poly && R.current.tool === 'polygon') || (R.current.lpt && R.current.tool === 'line')) setOverlay(o => ({ ...o, pcur: polyCloseAt(o.poly, p) ? o.poly[0] : e.shiftKey && o.lpt ? snap45(o.lpt, p) : p })); return }   // 클릭 배치 중 = 마지막 점에서 커서까지 따라오는 선(데스크톱 `_draw_pts[-1]`)
     if (s.kind === 'pan') { setCam({ ...s.cam, x: s.cam.x + e.clientX - s.sx, y: s.cam.y + e.clientY - s.sy }); return }
     if (s.kind === 'mline') { if (!s.moved && Math.hypot(p.x - s.start.x, p.y - s.start.y) * z < 4) return; s.moved = true; setCursor('grabbing'); setOverlay(o => ({ ...o, mdrop: { ...memoDropAt(p), from: s.id } })); return }
     if (s.kind === 'move') {
@@ -1126,7 +1126,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     }
     if (t === 'polygon') {
       const poly = overlay.poly || []
-      if (poly.length >= 3 && Math.hypot(p.x - poly[0].x, p.y - poly[0].y) * R.current.cam.z <= 8) return finishPoly(poly, true)
+      if (polyCloseAt(poly, p)) return finishPoly(poly, true)
       setOverlay(o => ({ ...o, poly: [...poly, p], pcur: p })); return
     }
     if (t === 'line' && overlay.lpt) {   // 클릭 배치 선의 둘째 클릭 = 확정(데스크톱 `_finish_place`)
@@ -1139,6 +1139,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     st.current ={ ...st.current, kind: 'draw', tool: t, start: p, cur: p, pts: [p] }
   }
   function newTextAt(p) { const m = R.current.model, it = base([p.x - TEXT_MARGIN, p.y - TEXT_MARGIN], { type: 'text', text: '', color: INK, font: 12, bg: null, z: topZ(m.items) + 1 }); commit([...m.items, it], [it._id], '글'); setEditing({ id: it._id, kind: 'text', fresh: true }) }
+  // 다각형 닫기 자석 — 점 3개 이상이고 커서가 시작점 12px 안(데스크톱 `_POLY_CLOSE_PX`·`_polygon_place_point`: 따라오는 선이 시작점에 붙고 표시가 뜸)
+  const polyCloseAt = (poly, p) => R.current.tool === 'polygon' && poly?.length >= 3 && Math.hypot(p.x - poly[0].x, p.y - poly[0].y) * R.current.cam.z <= 12
   function finishPoly(pts, closed) {
     setOverlay(o => ({ ...o, poly: null, pcur: null }))
     if (pts.length < 2) return
@@ -1679,7 +1681,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             : dr.tool === 'line' ? (b => <Item it={{ ...base([0, 0], { type: 'line', line: [dr.a.x, dr.a.y, b.x, b.y], ...penOf(false) }), _id: 'draft' }} dark={dark} />)(dr.shift ? snap45(dr.a, dr.b) : dr.b)
             : <Item it={{ ...base([0, 0], { type: 'path', elements: dr.pts.map((q, i) => [i ? 'L' : 'M', q.x, q.y]), ...penOf(false), freehand: true }), _id: 'draft' }} dark={dark} />)}
           {(() => { const pts = tool === 'polygon' && overlay.poly ? [...overlay.poly, ...(overlay.pcur ? [overlay.pcur] : [])] : tool === 'line' && overlay.lpt ? [overlay.lpt, overlay.pcur || overlay.lpt] : null   // 클릭 배치 중 = 실제 색·굵기로(데스크톱처럼 그려질 모습 그대로)
-            return pts && <Item it={{ ...base([0, 0], { type: 'polygon', closed: false, pts: pts.map(q => [q.x, q.y]), rect: [0, 0, 0, 0], ...penOf(false), fill: null }), _id: 'draft' }} dark={dark} /> })()}
+            const shut = tool === 'polygon' && overlay.poly?.length >= 3 && overlay.pcur === overlay.poly[0]   // 시작점에 붙음 = 누르면 닫힘(포트점 붙음 표시와 같은 채운 원)
+            return pts && <><Item it={{ ...base([0, 0], { type: 'polygon', closed: false, pts: pts.map(q => [q.x, q.y]), rect: [0, 0, 0, 0], ...penOf(false), fill: null }), _id: 'draft' }} dark={dark} />
+              {shut && <circle data-testid="poly-close" cx={overlay.poly[0].x} cy={overlay.poly[0].y} r={5 / z} fill={BLUE} stroke="#fff" strokeWidth={1.5 / z} />}</> })()}
         </g>
       </svg>
       {lineMenu && <ContextMenu at={lineMenu} onClose={() => setLineMenu(null)} entries={lineMenuEntries(lineMenu)} />}

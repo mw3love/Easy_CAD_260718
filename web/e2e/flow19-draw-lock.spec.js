@@ -18,6 +18,21 @@ test('다각형은 첫 클릭부터 커서를 따라오는 선이 보인다', as
   expect((await liveDoc(page)).items.filter(it => it.type === 'polygon')).toHaveLength(1)
 })
 
+test('다각형 시작점 근처 = 자석(붙고 표시, 누르면 닫힘)', async ({ page }) => {
+  await openBoard(page, boardName('polyclose')); await setCam(page)
+  await page.keyboard.press('5')
+  await clickScene(page, 0, 0); await clickScene(page, 200, 0); await clickScene(page, 200, 150)
+  const near = await toPage(page, 9, 6); await page.mouse.move(near.x, near.y, { steps: 4 })   // 시작점에서 화면 약 11px
+  await expect(page.getByTestId('poly-close')).toBeVisible()
+  const pts = (await page.getByTestId('board').locator('polyline').last().getAttribute('points')).trim().split(/\s+/)
+  expect(pts.at(-1)).toBe('0,0')   // 따라오는 선 끝이 시작점에 딱 붙음
+  const far = await toPage(page, 30, 30); await page.mouse.move(far.x, far.y, { steps: 2 })
+  await expect(page.getByTestId('poly-close')).toHaveCount(0)
+  await page.mouse.click(near.x, near.y)
+  const pg = (await liveDoc(page)).items.filter(it => it.type === 'polygon')
+  expect(pg).toHaveLength(1); expect(pg[0].closed).toBe(true)
+})
+
 test('선은 클릭 두 번으로도 긋고, 그 사이 선이 따라온다', async ({ page }) => {
   await openBoard(page, boardName('line')); await setCam(page)
   await page.keyboard.press('4')
