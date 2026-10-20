@@ -79,6 +79,7 @@ const withLabels = (it, labels) => { const o = { ...it, labels }; delete o.label
 // 화살표 안 점 → 길 위 t·옆 거리(직각 = 꺾은선 길이 비율, 곡선 = 매개변수 — 데스크톱 `_project_to_path`·`_project_to_curve`)
 const projectOn = (it, q) => (it.type === 'sarrow' ? projectToPath(it.pts.map(([x, y]) => ({ x, y })), q) : projectToCurve(it, q))
 const PEN_LAYER = 'pen-notes'   // 발표 판서 레이어
+const IMG_FIXED = 680   // 대화창 그림 후보를 칠판에 붙일 때 긴 변(칠판 단위, 답 메모 340의 두 배) — 배율과 상관없이 같은 크기
 const snap45 = (a, p) => { const t = Math.round(Math.atan2(p.y - a.y, p.x - a.x) / (Math.PI / 4)) * (Math.PI / 4), L = Math.hypot(p.x - a.x, p.y - a.y); return { x: a.x + L * Math.cos(t), y: a.y + L * Math.sin(t) } }   // Shift = 45° 단위
 const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0], locked: false, group_id: null, layer_id: null, _id: newId(), ...extra })
 
@@ -1455,9 +1456,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const cv = document.createElement('canvas'); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext('2d').drawImage(im, 0, 0)
       const data = cv.toDataURL('image/png').split(',')[1]
       const c = R.current.cam, mp = R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
-      const k = Math.min(1, (Math.min(vw.w, vw.h) * 0.6) / Math.max(im.naturalWidth, im.naturalHeight)), w = im.naturalWidth * k, h = im.naturalHeight * k, m = R.current.model
+      // 크기: 보통 = 지금 보이는 곳 짧은 변의 60%(원본보다 크게는 안 함) — 배율 따라 칠판 위 크기가 달라짐.
+      // fixed = 대화창 그림 후보 — 배율과 상관없이 긴 변 680(답 메모 두 개 폭, 2026-10-20 사용자: 붙일 때마다 크기가 제각각)
+      const k = opts.fixed ? IMG_FIXED / Math.max(im.naturalWidth, im.naturalHeight) : Math.min(1, (Math.min(vw.w, vw.h) * 0.6) / Math.max(im.naturalWidth, im.naturalHeight)), w = im.naturalWidth * k, h = im.naturalHeight * k, m = R.current.model
       // free = 버튼으로 붙이기(대화창 그림 후보 누르기) — 가운데 먼저, 겹치면 가까운 빈자리(메모·표 버튼과 같은 `spotNear`, 2026-10-20 사용자: 둘째 그림이 첫째 위에 겹침)
-      const fs = opts.free && spotNear(w, h + (opts.caption ? 24 / c.z : 0))
+      const fs = opts.free && spotNear(w, h + (opts.caption ? (opts.fixed ? 20 : 24 / c.z) : 0))
       const at = fs ? { x: fs.x + w / 2, y: fs.y + h / 2 } : opts.at || (mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2 })
       const it = base([at.x - w / 2, at.y - h / 2], { type: 'image', rect: [0, 0, w, h], data, z: topZ(m.items) + 1 })
       if (opts.caption) {   // 그림 + 밑 글(요청) — 따로(2026-10-20 사용자: 묶음이면 그림만 고르려 해도 글까지 골라져 「고른 것」에 실림). 옛 칠판의 묶음은 Ctrl+Shift+G로 풂
@@ -1470,7 +1473,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 그림 후보 붙이기(대화창 🎨 — 누르면 빈자리, 끌어 놓으면 그 자리) — 서버 그림(/api/img/…)을 받아 이미지로 + 밑에 요청 글
   async function pinImage(url, caption, at) {
     try { const b = await (await fetch(url)).blob()
-      return await insertImage(b, at ? { at, caption } : { free: true, caption }) } catch { setStatus('그림을 못 가져왔어요'); return null }
+      return await insertImage(b, at ? { at, caption, fixed: true } : { free: true, caption, fixed: true }) } catch { setStatus('그림을 못 가져왔어요'); return null }
   }
   // 칠판에 주소 끌어 놓기 — 대화창 그림 후보면 그 그림, 다른 웹 주소면 웹 카드(주소 Ctrl+V와 같게). 전엔 처리가 없어 브라우저가 그 주소로 떠났음
   function dropUrl(url, caption, e) {

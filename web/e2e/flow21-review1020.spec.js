@@ -219,3 +219,18 @@ test('그림 후보에 마우스를 올려 두면 대화창 왼쪽에 크게, �
   await page.mouse.move(10, 500)
   await expect(peek).toHaveCount(0)
 })
+
+test('대화창 그림 = 배율과 상관없이 긴 변 680으로 붙음(2026-10-20 사용자)', async ({ page }) => {
+  const name = boardName('imgsize')
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII=', 'base64')
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', r => r.fulfill({ json: { kind: 'image', content: '그림 후보', model: 'img-m', elapsed: 1, images: [{ url: `/api/img/${name}/1_aaaaaa.png` }, { url: `/api/img/${name}/2_bbbbbb.png` }] } }))
+  await page.route('**/api/img/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
+  await openBoard(page, name, { chat: true }); await setCam(page, { x: 400, y: 200, z: 2.3 })
+  await ask(page, '송신탑 그려줘')
+  await page.getByTestId('image-pick').nth(0).click(); await expect(page.getByTestId('image-pick').nth(0)).toContainText('칠판에 붙임 ✓')
+  await setCam(page, { x: 400, y: 200, z: 0.06 })
+  await page.getByTestId('image-pick').nth(1).click(); await expect(page.getByTestId('image-pick').nth(1)).toContainText('칠판에 붙임 ✓')
+  const ws = (await liveDoc(page)).items.filter(it => it.type === 'image').map(it => Math.round(it.rect[2] * (it.scale || 1)))
+  expect(ws).toEqual([680, 680])                                           // 4×3 그림 → 긴 변 680
+})
