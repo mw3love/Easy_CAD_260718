@@ -232,6 +232,29 @@ export function mirror(items, ids, horizontal, textBox) {
   })
 }
 
+// 크기 바뀐 도형에 붙은 점 = 같은 비율 자리로(데스크톱 `_set_box_rect` "상대 위치 유지"). 안 하면 오른쪽·아래로 키울 때 붙은 점이
+// 도형 안에 남아 화살표가 떨어지고 자동 길은 크게 돌아감(2026-10-20 사용자 화면). prev = 고치기 전 목록, 묶음 붙음(`_group`)은 이미 비율이라 뺌
+export function keepBinds(prev, next) {
+  const before = new Map(prev.map(it => [it._id, it])), box = it => it.rect || (it.type === 'path' && localRect(it)), moved = new Map()
+  for (const it of next) {
+    const o = before.get(it._id); if (!o || o === it || o.type !== it.type) continue
+    const a = box(o), b = a && box(it)
+    if (b && (a[0] !== b[0] || a[1] !== b[1] || a[2] !== b[2] || a[3] !== b[3])) moved.set(it._id, [a, b])
+  }
+  if (!moved.size) return next
+  return next.map(it => {
+    if (it.type !== 'sarrow' && it.type !== 'arrow') return it
+    const o = before.get(it._id); let out = it
+    for (const k of ['bind1', 'bind2']) {
+      const m = moved.get(it['_' + k]), pt = it[k + '_pt']
+      if (!m || it[k + '_group'] || !pt || (o && o[k + '_pt'] !== pt && JSON.stringify(o[k + '_pt']) !== JSON.stringify(pt))) continue   // 이번에 새로 붙인 점은 그대로
+      const [[x0, y0, w0, h0], [x1, y1, w1, h1]] = m
+      out = { ...out, [k + '_pt']: [x1 + (w0 ? (pt[0] - x0) / w0 : 0.5) * w1, y1 + (h0 ? (pt[1] - y0) / h0 : 0.5) * h1] }
+    }
+    return out
+  })
+}
+
 // 화살표 따라가기 — 편집 뒤 붙은 화살표 꼭짓점을 문서에 반영(「자동 길」은 다시 꺾고, 아니면 양 끝만 따라감 — 데스크톱 reroute)
 export function followArrows(items, rectOf) {
   const routes = resolveRoutes(items, rectOf)

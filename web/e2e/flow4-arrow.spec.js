@@ -33,3 +33,22 @@ test('상자 한가운데끼리 화살표 — 양 끝 다 붙고, 옮기면 따�
   expect(doc.items.filter(it => it.type === 'rect')[1].pos).toEqual([400, 0])
   expect(ends(arrowOf(doc))).toEqual([[120, 30], [400, 30]])
 })
+
+test('화살표 붙은 상자를 오른쪽 아래 손잡이로 키워도 — 끝이 같은 변 가운데에 붙어 있음(2026-10-20 사용자: 떨어지고 길이 틀어졌음)', async ({ page }) => {
+  const name = boardName('arrowsize')
+  await openBoard(page, name); await setCam(page)
+  await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 120, y: 60 })
+  await clickScene(page, 700, 500)
+  await pickShape(page, '사각형'); await dragScene(page, { x: 400, y: 0 }, { x: 520, y: 60 })
+  await clickScene(page, 700, 500)
+  await page.keyboard.press('2')
+  await dragScene(page, { x: 60, y: 30 }, { x: 460, y: 30 })
+  await page.keyboard.press('Escape')
+  await clickScene(page, 60, 30)                                // A 고르기
+  await dragScene(page, { x: 120, y: 60 }, { x: 200, y: 100 })  // 오른쪽 아래 손잡이로 키움
+  const a = arrowOf(await liveDoc(page))
+  expect(ends(a)[0]).toEqual([200, 50])                         // 커진 A의 오른쪽 변 가운데
+  expect(ends(a)[1]).toEqual([400, 30])
+  await page.keyboard.press('Control+z')
+  expect(ends(arrowOf(await liveDoc(page)))).toEqual([[120, 30], [400, 30]])
+})

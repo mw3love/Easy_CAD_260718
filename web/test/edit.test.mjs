@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fromEcad, toEcad } from '../src/next/model.js'
-import { duplicate, expandGroups, followArrows, groupItems, hits, mirror, moveItems, removeItems, resizeRect, rotateTo, rubberSelect, toLocal, toScene, toggleLock, topHit, zOrder, boardContents } from '../src/next/edit.js'
+import { applyRect, duplicate, expandGroups, followArrows, keepBinds, groupItems, hits, mirror, moveItems, removeItems, resizeRect, rotateTo, rubberSelect, toLocal, toScene, toggleLock, topHit, zOrder, boardContents } from '../src/next/edit.js'
 import { alignSnap } from '../src/next/align.js'
 
 const raw = JSON.parse(readFileSync(new URL('../../tests/fixtures/all_types.ecad', import.meta.url), 'utf8'))
@@ -106,6 +106,29 @@ test('붙은 화살표 따라가기 — 「자동 길」은 다시 꺾고, 아�
   const manual = [rect('h', 0, 0), { _id: 'ar', type: 'sarrow', pos: [0, 0], pts: [[100, 30], [150, 30], [150, 100]], _bind1: 'h', bind1_pt: [100, 30], width: 2 }]
   const f = followArrows(moveItems(manual, ['h'], 10, 5)).find(it => it._id === 'ar')
   assert.deepEqual(f.pts, [[110, 35], [150, 30], [150, 100]])
+})
+
+test('크기 바꾸면 붙은 점도 같은 비율 자리 — 오른쪽 아래로 키워도 화살표가 안 떨어짐(데스크톱 `_set_box_rect`, 2026-10-20 사용자)', () => {
+  const rectOf = it => it.rect
+  const box = rect('h', 0, 0), other = rect('o', 300, 200)
+  for (const auto of [false, true]) {
+    const ar = { _id: 'ar', type: 'sarrow', routing: 'ortho', auto_route: auto, pos: [0, 0], pts: [[400, 230], [440, 230], [440, 30], [100, 30]],
+      _bind1: 'o', bind1_pt: [100, 30], _bind2: 'h', bind2_pt: [100, 30], width: 1 }
+    const items = [box, other, ar]
+    for (const [h, q, want] of [['br', { x: 160, y: 120 }, [160, 60]], ['tl', { x: -60, y: -60 }, [100, 0]]]) {
+      const nb = applyRect(box, resizeRect(box.rect, h, q)), next = items.map(it => (it._id === 'h' ? nb : it))
+      const f = followArrows(keepBinds(items, next), rectOf).find(it => it._id === 'ar')
+      assert.deepEqual(f.bind2_pt, want, `${auto ? '자동' : '손'} ${h}: 오른쪽 변 가운데 그대로`)
+      assert.deepEqual(f.pts.at(-1), want)
+      assert.ok(f.pts.length <= 4, `${auto ? '자동' : '손'} ${h}: 길이 크게 돌아가지 않음 ${JSON.stringify(f.pts)}`)
+    }
+  }
+  // 이번에 새로 붙인 점(화살표 쪽이 바뀜)은 건드리지 않음 · 묶음 붙음은 그대로
+  const ar = { _id: 'ar', type: 'sarrow', pos: [0, 0], pts: [[0, 0], [100, 30]], _bind2: 'h', bind2_pt: [100, 30] }
+  const re = { ...ar, bind2_pt: [50, 60] }, nb = applyRect(box, [0, 0, 200, 60])
+  assert.deepEqual(keepBinds([box, ar], [nb, re])[1].bind2_pt, [50, 60])
+  const g = { ...ar, bind2_group: 'G', bind2_pt: [1, 0.5] }
+  assert.deepEqual(keepBinds([box, g], [nb, g])[1].bind2_pt, [1, 0.5])
 })
 
 test('스마트 정렬 — 임계 안이면 당김 + 같은 거리 역할은 선 여러 개, 가운데-가운데만 실선 역할', () => {

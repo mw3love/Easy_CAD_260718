@@ -17,7 +17,7 @@ import { sarrowRouting } from './arrows.js'
 import { fromEcad, newId } from './model.js'
 import { bakeSarrow } from './xform.js'
 import {
-  applyRect, boardContents, duplicate, readingOrder, tableOp, expandGroups, flatten, followArrows, groupItems, localRect, mirror, moveItems, removeItems, resizeRect,
+  applyRect, boardContents, keepBinds, duplicate, readingOrder, tableOp, expandGroups, flatten, followArrows, groupItems, localRect, mirror, moveItems, removeItems, resizeRect,
   rotateTo, rubberSelect, sceneBox, toLocal, toScene, toggleLock, topHit, ungroupItems, unionBox, zOrder,
 } from './edit.js'
 import { TextEditor } from './text.jsx'
@@ -108,7 +108,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     next = next.map(it => (it.type === 'memo' && it.rect && Math.abs(memoHeight(it) - it.rect[3]) > 0.5 ? applyRect(it, [it.rect[0], it.rect[1], it.rect[2], memoHeight(it)]) : it))   // 메모 높이 = 줄에 맞춤
     next = syncLegends(next).map(it => { if (it.type !== 'legend') return it; const lo = legendLayout(it); return it.rect && Math.abs(lo.w - it.rect[2]) < 0.5 && Math.abs(lo.h - it.rect[3]) < 0.5 ? it : { ...it, rect: [it.rect?.[0] || 0, it.rect?.[1] || 0, lo.w, lo.h] } })   // 범례 = 줄은 도면에서 저절로, 크기는 줄에 맞춤(2026-10-19 사용자: 부하 없으면 자동)
     next = next.map(it => (it.fit_text && it.label?.align === 'left' && it.rect && Math.abs(fitTextHeight(it) - it.rect[3]) > 0.5 ? applyRect(it, [it.rect[0], it.rect[1], it.rect[2], fitTextHeight(it)]) : it))   // 글에 맞춘 상자(AI 카드·메모)
-    const fixed = followArrows(next, rectOf)
+    const fixed = followArrows(keepBinds(prev, next), rectOf)
     // 되돌리기 칸 = 바뀐 도형만(2026-10-18 공동작업 — 통째로 되돌리면 그사이 남이 고친 것까지 지워짐, `sync.itemDelta`)
     const delta = itemDelta(prev, fixed)
     if (merge && h.mergeKey === merge && now - h.mergeT < 1500 && h.past.length) mergeDelta(h.past[h.past.length - 1], delta)
@@ -402,7 +402,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         next = rotateTo(it, (it.rotation || 0) + ((a1 - a0) * 180) / Math.PI, e.shiftKey) }
       else if (s.kind === 'tscale') { const b = textBox(it), q = toLocal(it, p), k = Math.max(0.2, Math.max(q.x / b.w, q.y / b.h)); next = { ...it, font: Math.max(4, Math.round((it.font || 12) * k)) } }
       else { const q = toLocal(it, p), L = [...it.line]; if (s.handle === 'e0') { L[0] = q.x; L[1] = q.y } else { L[2] = q.x; L[3] = q.y }; next = { ...it, line: L } }
-      setLive(followArrows(s.orig.map(x => (x._id === s.id ? next : x)), rectOf))
+      setLive(followArrows(keepBinds(s.orig, s.orig.map(x => (x._id === s.id ? next : x))), rectOf))
       return
     }
     if (s.kind === 'tline') {   // 공통선 하나만 — 양옆 칸이 나눠 가짐(표 전체 크기 그대로, 데스크톱 열 경계 끌기와 같음)
