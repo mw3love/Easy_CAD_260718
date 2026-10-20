@@ -94,3 +94,36 @@ test('🔑 내 키 — 넣으면 물을 때 머리말로만, 지우면 서버 �
   await ask(page, '다시'); await expect(page.getByText('답 2')).toBeVisible()
   expect(seen[1].headers['x-kairos-key']).toBeUndefined()
 })
+
+test('보이는 것 정리정돈 = 칠판 위 「🧩 정리정돈 중 · 실제 모델」 알약, 끝나면 사라짐', async ({ page }) => {
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: { gpt: [{ id: 'fake-model', price: '' }] }, jobs: { tidy: 'claude-sonnet-5-5' } } }))
+  await page.route('**/api/chat', async r => { await new Promise(s => setTimeout(s, 1500)); await r.fulfill({ status: 502, json: { error: '시험 — 일부러 실패' } }) })
+  await openBoard(page, boardName('tidybusy')); await setCam(page)
+  for (const t of ['하나', '둘']) { await btn(page, '메모').click(); await page.keyboard.type(t); await clickScene(page, 900, 600) }
+  const b = await page.getByTestId('board').boundingBox()
+  await page.mouse.click(b.x + 1000, b.y + 700, { button: 'right' })
+  await page.getByRole('button', { name: /보이는 것 정리정돈하기/ }).click()
+  await expect(page.getByTestId('ai-busy')).toContainText('정리정돈 중 · claude-sonnet-5-5')
+  await expect(page.getByTestId('chat-busy')).toContainText('정리정돈 중 · claude-sonnet-5-5')   // 고른 대화 모델(fake-model)이 아니라
+  await expect(page.getByTestId('ai-busy')).toHaveCount(0)
+  await expect(page.getByText('시험 — 일부러 실패')).toBeVisible()
+})
+
+test('다각형 Shift = 마지막 점에서 45° 단위', async ({ page }) => {
+  await openBoard(page, boardName('polyshift')); await setCam(page)
+  await page.keyboard.press('5')
+  await clickScene(page, 0, 0)
+  await page.keyboard.down('Shift'); await clickScene(page, 100, 12); await page.keyboard.up('Shift')
+  await clickScene(page, 60, 100); await page.keyboard.press('Enter')
+  const pg = (await liveDoc(page)).items.find(it => it.type === 'polygon')
+  expect(Math.abs(pg.pts[1][1] - pg.pts[0][1])).toBeLessThan(0.5)            // 수평으로 붙음
+})
+
+test('글자 끌어 놓기 = 빈 글 상자(「글」 안 남음), 안 쓰고 나가면 지워짐', async ({ page }) => {
+  await openBoard(page, boardName('textdrag')); await setCam(page)
+  const b = await btn(page, '글자').boundingBox(), q = await toPage(page, 200, 200)
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.down()
+  await page.mouse.move(q.x, q.y, { steps: 10 }); await page.mouse.up()
+  await clickScene(page, 900, 600)
+  expect((await liveDoc(page)).items.filter(it => it.type === 'text')).toHaveLength(0)
+})

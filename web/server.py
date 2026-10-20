@@ -93,7 +93,9 @@ class Handler(SimpleHTTPRequestHandler):
                 hit = _MODELS[kid] = (time.time(), board_chat.models(key, gw.resolve_base_url()))
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
-        return self._json(200, hit[1])
+        # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
+        jobs = {"tidy": board_tidy.TIDY_MODEL, "report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL}
+        return self._json(200, {**hit[1], "jobs": jobs})
 
     def _chat(self):
         n = int(self.headers.get("Content-Length") or 0)

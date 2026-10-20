@@ -28,6 +28,12 @@ const KINDS = {
 }   // 대화창 주소(어두운·밝은 화면 둘 다 읽히는 파랑)
 // 「다시 ▾」엔 답하는 방식 셋만 — 정리 문서·정리정돈·그림은 짐작이 틀린 게 아니라 다른 일이라 말(「정리해 줘」「그려 줘」)·칠판 우클릭으로(2026-10-20 사용자: 버튼이 너무 많음)
 const REDO_KINDS = ['chat', 'search', 'board']
+// 기다리는 동안 보일 말 — 일마다 실제로 일하는 모델(서버 /api/models `jobs`)을 같이(2026-10-20 사용자: 정돈인데 고른 gpt가 보여 헷갈림, 칠판엔 아무 표시가 없어 안 되는 줄 알았음)
+const JOB_LABEL = { tidy: '🧩 정리정돈 중', report: '📄 정리 문서 만드는 중', image: '🎨 그림 그리는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
+const BOARD_JOBS = new Set(['tidy', 'report'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
+// 도는 동그라미(칠판 알약·대화창 「생각 중」 공용)
+export const Spinner = () => <><style>{'@keyframes mb-spin{to{transform:rotate(360deg)}}'}</style>
+  <span style={{ display: 'inline-block', flex: 'none', width: 11, height: 11, borderRadius: '50%', border: '2px solid #da7756', borderTopColor: 'transparent', animation: 'mb-spin .8s linear infinite' }} /></>
 
 export const CHAT_W = 360
 const LOG_URL = `/api/chatlog/${encodeURIComponent(DOC_NAME)}`
@@ -76,7 +82,8 @@ function Answer({ text }) {
 }
 
 // ed = Editor 손잡이(selTexts·pinCard·showCard), selKey = 고른 것이 바뀔 때 다시 읽게(main이 넘김)
-export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // request = { id, text, kind } — 칠판에서 시킨 질문(바뀔 때마다 한 번 보냄)   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
+export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) {   // onBusy(글) = 칠판 위 알약(정돈·정리 문서 중에만, 끝나면 '')
+  const [busyJob, setBusyJob] = useState('')   // 기다리는 일의 종류(모르면 '' = 서버가 짐작)   // request = { id, text, kind } — 칠판에서 시킨 질문(바뀔 때마다 한 번 보냄)   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
   const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_KEY) || '' } catch { return '' } })
@@ -124,7 +131,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
     const ctx = contextText(sel)
     const mine = { role: 'user', content: q, at: Date.now(), ...(ctx ? { context: ctx, ctxCount: sel.length } : {}) }
     const next = [...msgs.filter(m => m.role !== 'error'), mine]
-    update(next); if (text == null) setDraft(''); setBusy(Date.now())
+    update(next); if (text == null) setDraft(''); setBusy(Date.now()); setBusyJob(kind || (TIDY_RE.test(q) ? 'tidy' : ''))
     const prev = msgs.filter(m => m.role !== 'error').at(-1)
     try { update([...next, await ask(next, kind, !kind && prev?.role === 'assistant' && prev.html ? prev.html : '')]) } catch (e) {
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
@@ -133,7 +140,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
   // 앱이 짐작한 종류가 틀렸을 때 — 같은 질문을 반대 종류로 다시 물어 그 답을 바꿔 끼움(질문은 그대로, 붙인 표시는 새 답이라 풀림)
   async function redoAs(i, kind) {
     if (busy) return
-    const history = msgs.slice(0, i).filter(m => m.role !== 'error'); setBusy(Date.now())
+    const history = msgs.slice(0, i).filter(m => m.role !== 'error'); setBusy(Date.now()); setBusyJob(kind)
     try { const a = await ask(history, kind); update(msgs.map((x, j) => (j === i ? a : x))) } catch (e) {
       setMsgs([...msgs.filter(m => m.role !== 'error'), { role: 'error', content: String(e.message || e) }])
     } finally { setBusy(null) }
@@ -166,6 +173,9 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
     setMsgs(msgs.filter(m => m.role !== 'error').slice(0, -1)); setDraft(last.content)
   }
 
+  const busyLine = !busy ? '' : `${JOB_LABEL[busyJob] || `${useModel} 생각 중`}${JOB_LABEL[busyJob] && (models?.jobs?.[busyJob] || (busyJob === 'board' ? useModel : '')) ? ` · ${models?.jobs?.[busyJob] || useModel}` : ''}… ${Math.round((Date.now() - busy) / 1000)}초`
+  useEffect(() => { onBusy?.(busy && BOARD_JOBS.has(busyJob) ? busyLine : '') }, [busyLine])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => onBusy?.(''), [])   // eslint-disable-line react-hooks/exhaustive-deps
   const feat = models?.featured || {}
   return (
     <aside style={floating ? { ...css.panel, ...css.float } : css.panel} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
@@ -252,7 +262,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
                 <span style={{ ...css.meta, marginLeft: 'auto' }}>{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</span>
               </div>
             </div>)}
-        {busy && <div style={{ ...css.ai, color: C.muted }}>{useModel} 생각 중… {Math.round((Date.now() - busy) / 1000)}초</div>}
+        {busy && <div data-testid="chat-busy" style={{ ...css.ai, color: C.muted, display: 'flex', alignItems: 'center', gap: 8 }}><Spinner />{busyLine}</div>}
       </div>
       <div style={css.foot}>
         {sel.length > 0 && <span style={css.chip}>칠판에서 고른 것 {sel.length}개를 같이 보냄</span>}

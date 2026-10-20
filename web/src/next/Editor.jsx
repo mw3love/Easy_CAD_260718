@@ -316,7 +316,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function onPointerMove(e) {
     const s = st.current, p = toSceneP(e), z = R.current.cam.z
     R.current.mouse = p   // 주소 붙여넣기 = 커서 자리에
-    if (!s.kind) { hoverCursor(p); if ((R.current.poly && R.current.tool === 'polygon') || (R.current.lpt && R.current.tool === 'line')) setOverlay(o => ({ ...o, pcur: polyCloseAt(o.poly, p) ? o.poly[0] : e.shiftKey && o.lpt ? snap45(o.lpt, p) : p })); return }   // 클릭 배치 중 = 마지막 점에서 커서까지 따라오는 선(데스크톱 `_draw_pts[-1]`)
+    if (!s.kind) { hoverCursor(p); if ((R.current.poly && R.current.tool === 'polygon') || (R.current.lpt && R.current.tool === 'line')) setOverlay(o => { const last = o.lpt || o.poly?.at(-1); return { ...o, pcur: polyCloseAt(o.poly, p) ? o.poly[0] : e.shiftKey && last ? snap45(last, p) : p } }); return }   // Shift = 45° — 다각형은 마지막 점 기준(2026-10-20 사용자: 다각형만 안 먹었음)   // 클릭 배치 중 = 마지막 점에서 커서까지 따라오는 선(데스크톱 `_draw_pts[-1]`)
     if (s.kind === 'pan') { setCam({ ...s.cam, x: s.cam.x + e.clientX - s.sx, y: s.cam.y + e.clientY - s.sy }); return }
     if (s.kind === 'mline') { if (!s.moved && Math.hypot(p.x - s.start.x, p.y - s.start.y) * z < 4) return; s.moved = true; setCursor('grabbing'); setOverlay(o => ({ ...o, mdrop: { ...memoDropAt(p), from: s.id } })); return }
     if (s.kind === 'move') {
@@ -1082,16 +1082,17 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // given = 끌어 놓을 아이템(대화창 카드), onPlaced = 놓았을 때 알림
   // 위 막대 도구를 칠판으로 끌기 = 기본형을 놓은 자리에(2026-10-20 사용자). 선·화살표 = 화면 기준 길이의 가로, 다각형 = 첫 선분 놓고 이어 찍기,
-  // 펜은 끌기 없음(놓아도 도구만 바뀌어 누르기와 같았음 — 2026-10-20 사용자), 글자 = 놓고 바로 쓰기, 번호 = 다음 번호, 메모·표·프레임 = 기본 크기, 웹 = 놓은 자리로 주소 묻기
+  // 펜은 끌기 없음(놓아도 도구만 바뀌어 누르기와 같았음 — 2026-10-20 사용자), 글자 = 빈 글 상자로 바로 쓰기, 번호 = 다음 번호, 메모·표·프레임 = 기본 크기, 웹 = 놓은 자리로 주소 묻기
   function startToolDrag(kind, { table = [3, 3, true], onWeb } = {}) {
     const m = R.current.model, z = R.current.cam.z, L = 120 / z, top = topZ(m.items) + 1
     const seg = extra => base([0, 0], { type: 'polygon', closed: false, rect: [0, 0, L, 0], pts: [[0, 0], [L, 0]], ...penOf(false), fill: null, z: top, ...extra })
     if (kind === 'polygon') return startPaletteDrag(kind, [seg()], (its, p) => { const a = { x: p.x - L / 2, y: p.y }, b = { x: p.x + L / 2, y: p.y }; keepPoly.current = R.current.tool !== 'polygon'; setTool('polygon'); setOverlay(o => ({ ...o, poly: [a, b], pcur: b })) }, true)
+    // 글자 = 끄는 동안만 「글」 미리보기, 놓으면 빈 글 상자에 커서 — 빈 곳 두 번 누르기와 같음(안 쓰면 지워짐, 2026-10-20 사용자: 「글」이 남을 필요 없음)
+    if (kind === 'text') return startPaletteDrag(kind, [base([0, 0], { type: 'text', text: '글', color: INK, font: 12, bg: null, z: top })], its => { setTool('select'); newTextAt({ x: its[0].pos[0] + TEXT_MARGIN, y: its[0].pos[1] + TEXT_MARGIN }) }, true)
     if (kind === 'web') return startPaletteDrag(kind, [base([0, 0], { type: 'rect', rect: [0, 0, 320 / z, 180 / z], pen: '#ff9aa0a6', width: 1, style: 2, fill: null, z: top })], (its, p) => onWeb?.(p), true)
     let proto, after = null
     if (kind === 'line') proto = base([0, 0], { type: 'line', line: [0, 0, L, 0], ...penOf(false), z: top })
     else if (kind === 'arrow') { proto = arrowItem(null, { x: 0, y: 0 }, null, { x: L, y: 0 }, { auto_route: false, pts: [[0, 0], [L, 0]] }); if (stickyKind.current !== 'ortho') proto = swapArrowKind(proto, stickyKind.current, m.items, rectOf, sticky.current.curve_r) }
-    else if (kind === 'text') { proto = base([0, 0], { type: 'text', text: '글', color: INK, font: 12, bg: null, z: top }); after = ids => { setSel(ids); setEditing({ id: ids[0], kind: 'text', fresh: true }) } }
     else if (kind === 'badge') proto = base([0, 0], { type: 'badge', number: nextBadge(m.items), color: sticky.current.color === INK ? '#ffda7756' : sticky.current.color, z: top })
     else if (kind === 'memo') proto = memoProto()
     else if (kind === 'table') proto = tableProto(...table)
@@ -1153,7 +1154,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (t === 'polygon') {
       const poly = overlay.poly || []
       if (polyCloseAt(poly, p)) return finishPoly(poly, true)
-      setOverlay(o => ({ ...o, poly: [...poly, p], pcur: p })); return
+      const q = e?.shiftKey && poly.length ? snap45(poly.at(-1), p) : p
+      setOverlay(o => ({ ...o, poly: [...poly, q], pcur: q })); return
     }
     if (t === 'line' && overlay.lpt) {   // 클릭 배치 선의 둘째 클릭 = 확정(데스크톱 `_finish_place`)
       const a = overlay.lpt, b = e?.shiftKey ? snap45(a, p) : p
