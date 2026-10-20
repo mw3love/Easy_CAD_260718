@@ -7,6 +7,7 @@
 //   검색 답은 쓰인 번호의 출처를 아래에 보이고, 붙이면 요약 메모 + 출처 카드 + 번호 화살표 한 묶음(Editor `cardItems`).
 // - 칠판에서(§8 항목61 ③-2): 「지난번·저번·정리해 둔」 → 서버가 이 칠판 글을 뜻으로 찾아 근거로 답, [칠판 n] 고리 = 그 도형으로 가기, 붙이면 근거로 가는 점선 화살표.
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { DOC_NAME } from './doc.js'
 import { contextText, inlineParts, parseAnswer } from '../chatFormat.js'
 import { urlSpans } from './geom.js'
@@ -48,6 +49,7 @@ const LOG_URL = `/api/chatlog/${encodeURIComponent(DOC_NAME)}`
 const MODEL_KEY = 'magic-board-model'   // 고른 모델은 이 브라우저에만 기억(편의)
 const VENDOR = { gpt: 'GPT', gemini: 'Gemini', claude: 'Claude' }
 const F = "'Pretendard', sans-serif"
+const DONE = '#16a34a'   // 칠판에 붙임(끝남) = 초록 — 코랄은 할 수 있는 일 버튼(2026-10-20 사용자)
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', bar: 'var(--mb-bar)', seg: 'var(--mb-seg)' }
 const css = {
   float: { position: 'absolute', right: 12, top: 12, bottom: 12, zIndex: 5, maxWidth: 'calc(100% - 24px)', border: `1px solid ${C.line}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,.12)' },
@@ -59,6 +61,8 @@ const css = {
   err: { alignSelf: 'stretch', background: '#fff7ed', border: '1px solid #fdba74', color: '#9a3412', borderRadius: 10, padding: '8px 10px' },
   meta: { font: `400 11px ${F}`, color: C.muted },
   ctx: { display: 'block', font: `500 11px ${F}`, color: '#5aa9ff', marginBottom: 2 },
+  bigNav: { font: `600 13px ${F}`, color: '#fff', background: 'rgba(255,255,255,.14)', border: '1px solid rgba(255,255,255,.3)', borderRadius: 7, padding: '6px 12px', cursor: 'pointer' },
+  done: { font: `700 12px ${F}`, color: DONE, background: 'rgba(22,163,74,.1)', border: `1px solid ${DONE}`, borderRadius: 6, padding: '2px 9px', cursor: 'pointer' },
   pin: { font: `700 12px ${F}`, color: '#da7756', background: 'transparent', border: '1px solid #da7756', borderRadius: 6, padding: '2px 9px', cursor: 'pointer' },
   ghost: { font: `500 12px ${F}`, color: C.muted, background: 'transparent', border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 9px', cursor: 'pointer' },
   foot: { borderTop: `1px solid ${C.line}`, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 },
@@ -93,6 +97,27 @@ function Answer({ text }) {
   })}</div>
 }
 
+// 「＋ 칠판에 추가」(그림 후보 왼쪽 위·크게 보기 창) — 늘 보이고, 올리면 코랄로 채워지며 살짝 뜸, 누르는 동안 눌림, 추가하면 1.5초 초록 「✓ 추가됨」(2026-10-20 사용자)
+function AddBtn({ done, onClick, big, testid }) {
+  const [h, setH] = useState(false), [down, setDown] = useState(false)
+  const bg = done ? DONE : big ? (h ? '#c4613f' : '#da7756') : h ? '#da7756' : 'rgba(17,17,17,.62)'   // 크게 보기 창에선 처음부터 코랄(그 창의 할 일)
+  return <button data-testid={testid} onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => { setH(false); setDown(false) }}
+    onMouseDown={() => setDown(true)} onMouseUp={() => setDown(false)}
+    style={{ font: `700 ${big ? 13 : 11}px ${F}`, color: '#fff', background: bg, border: `1px solid ${done || big || h ? bg : 'rgba(255,255,255,.35)'}`, borderRadius: big ? 7 : 6,
+      padding: big ? '6px 14px' : '3px 9px', cursor: 'pointer', backdropFilter: 'blur(4px)', boxShadow: h ? '0 4px 12px rgba(0,0,0,.35)' : '0 1px 4px rgba(0,0,0,.2)',
+      transform: down ? 'scale(.95)' : h ? 'translateY(-1px)' : 'none', transition: 'background .15s, border-color .15s, box-shadow .15s, transform .1s',
+      ...(big ? null : { position: 'absolute', left: 6, top: 6 }) }}>{done ? '✓ 추가됨' : '＋ 칠판에 추가'}</button>
+}
+
+// 크게 보기 창 ‹ › — 그림 가장자리 안쪽 둥근 버튼, 올리면 진해짐
+function NavBtn({ side, onClick, title, testid, children }) {
+  const [h, setH] = useState(false)
+  return <button data-testid={testid} onClick={onClick} title={title} aria-label={title} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+    style={{ position: 'absolute', top: '50%', [side]: 12, transform: `translateY(-50%) scale(${h ? 1.08 : 1})`, width: 44, height: 44, borderRadius: 99, border: '1px solid rgba(255,255,255,.35)',
+      background: h ? 'rgba(17,17,17,.82)' : 'rgba(17,17,17,.5)', color: '#fff', font: `400 30px/1 ${F}`, paddingBottom: 4, cursor: 'pointer', backdropFilter: 'blur(4px)',
+      boxShadow: '0 2px 10px rgba(0,0,0,.35)', transition: 'background .15s, transform .12s' }}>{children}</button>
+}
+
 // ed = Editor 손잡이(selTexts·pinCard·showCard), selKey = 고른 것이 바뀔 때 다시 읽게(main이 넘김)
 export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) {   // onBusy(글) = 칠판 위 알약(정돈·정리 문서 중에만, 끝나면 '')
   const [busyJob, setBusyJob] = useState('')   // 기다리는 일의 종류(모르면 '' = 서버가 짐작)   // request = { id, text, kind } — 칠판에서 시킨 질문(바뀔 때마다 한 번 보냄)   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
@@ -108,20 +133,29 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   const sel = selKey && selKey === skipSel ? [] : ed.current?.selTexts() || []   // eslint-disable-line react-hooks/exhaustive-deps
   const selImgs = selKey && selKey === skipSel ? [] : ed.current?.selImages?.() || []   // 고른 것 속 그림(data: 주소)
   const [replyTo, setReplyTo] = useState(null)   // ↩ 이어 물을 답의 at
-  // 그림 후보 크게 보기 — 마우스를 0.25초 올려 두면 대화창 왼쪽에(2026-10-20 사용자: 크게 보려면 칠판에 붙여야 했음). 훑고 지나갈 땐 안 뜸
-  const [peek, setPeek] = useState(null), peekT = useRef(0)
-  const hoverOff = () => { clearTimeout(peekT.current); setPeek(null) }
-  function hoverOn(url, el) {
-    clearTimeout(peekT.current)
-    peekT.current = setTimeout(() => {
-      const r = el.getBoundingClientRect(), panel = el.closest('aside')?.getBoundingClientRect() || r
-      const w = Math.min(960, panel.left - 32), h = Math.min(w * 2 / 3, window.innerHeight - 32)   // 그림은 대개 3:2
-      if (w < 200) return
-      const top = Math.max(16, Math.min(window.innerHeight - h - 16, r.top + r.height / 2 - h / 2))
-      setPeek({ url, box: { left: panel.left - 16 - w, top, width: w, height: h } })
-    }, 250)
+  // 그림 후보(2026-10-20 사용자): 사진 누르기 = 크게 보기 창, 왼쪽 위 「＋ 칠판에 추가」 하나(늘 보임 — 올리면 반응, 누르면 1.5초 「✓ 추가됨」 뒤 원래대로), 끌기 = 칠판에 추가(정렬선).
+  // 옛 「올려 두면 크게 보기」는 없앰 — 버튼으로 가는 사이 큰 그림이 칠판을 가렸고 툴팁 위에서 깜빡였음, 크게 보기는 누르기가 맡음
+  const [big, setBig] = useState(null), [flash, setFlash] = useState(''), flashT = useRef(0)   // big = { i, j }(크게 보기 창), flash = 'i:j'(방금 추가)
+  const markPicked = (i, j) => { setMsgs(cur => { const next = cur.map((x, k) => (k === i ? { ...x, picked: [...new Set([...(x.picked || []), j])] } : x)); save(next); return next })
+    clearTimeout(flashT.current); setFlash(`${i}:${j}`); flashT.current = setTimeout(() => setFlash(''), 1500) }   // 1.5초 — 1초는 눈이 칠판으로 가는 사이 지나감, 2초는 연달아 누를 때 헷갈림
+  useEffect(() => () => clearTimeout(flashT.current), [])
+  async function pinPick(i, j) {
+    const m = msgs[i], id = await ed.current?.pinImage(m.images[j].url, m.prompt || '')
+    if (id) markPicked(i, j)
+    return id
   }
-  useEffect(() => () => clearTimeout(peekT.current), [])
+  useEffect(() => {   // 크게 보기 창: Esc 닫기 · ←/→ 다른 후보 — 칠판 글쇠(도구 바꾸기 등)로 새지 않게 먼저 받음
+    if (!big) return
+    const key = e => {
+      const n = msgs[big.i]?.images?.length || 0
+      if (e.key === 'Escape') setBig(null)
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') setBig(b => ({ ...b, j: (b.j + (e.key === 'ArrowRight' ? 1 : n - 1)) % n }))
+      else if (e.key === 'Enter') pinPick(big.i, big.j)
+      else return
+      e.preventDefault(); e.stopPropagation()
+    }
+    window.addEventListener('keydown', key, true); return () => window.removeEventListener('keydown', key, true)
+  }, [big, msgs])   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     fetch(LOG_URL, { cache: 'no-store' }).then(r => (r.status === 404 ? { messages: [] } : r.ok ? r.json() : Promise.reject(r)))
@@ -191,6 +225,17 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
     const done = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', done) }
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', done)
   }
+  // 그림 후보 끌기 — 6px 넘게 움직이면 칠판이 실제 크기 그림을 끌고(정렬선), 놓은 자리에 붙음. 대화창 밖에서 떼야 붙음
+  function imgDown(e, i, j) {
+    if (e.button !== 0) return
+    dragged.current = false
+    const sx = e.clientX, sy = e.clientY, m = msgs[i]
+    let up = false
+    const move = ev => { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) <= 6) return; window.removeEventListener('pointermove', move); dragged.current = true
+      ed.current?.dragImage(m.images[j].url, m.prompt || '', ids => { setSkipSel((ids || []).join()); markPicked(i, j) }, () => up) }
+    const done = () => { up = true; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', done) }
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', done)
+  }
   // 새 대화 — 지금 대화를 지난 대화 맨 위로(빈 대화면 그냥 둠). 질문 하나 = 제목
   const shelve = (cur, p) => { const kept = cur.filter(m => m.role !== 'error'); if (!kept.some(m => m.role === 'user')) return p
     return [{ at: kept[0].at || Date.now(), title: (curBranch.current ? '⑂ ' : '') + (kept.find(m => m.role === 'user').content || '').split(/\r?\n/)[0].slice(0, 40), messages: kept, ...(curBranch.current ? { branch: true } : {}) }, ...p] }
@@ -227,8 +272,21 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   const feat = models?.featured || {}
   return (
     <aside style={floating ? { ...css.panel, ...css.float } : css.panel} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
-      {peek && <div data-testid="image-peek" style={{ position: 'fixed', zIndex: 50, pointerEvents: 'none', ...peek.box, borderRadius: 10, overflow: 'hidden', boxShadow: '0 12px 40px rgba(0,0,0,.35)', border: `1px solid ${C.line}`, background: '#fff' }}>
-        <img src={peek.url} alt="" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }} /></div>}
+      {big && msgs[big.i]?.images?.[big.j] && (() => { const m = msgs[big.i], n = m.images.length, go = d => setBig(b => ({ ...b, j: (b.j + d + n) % n }))
+        return createPortal(<div data-testid="image-big" onPointerDown={e => e.stopPropagation()} onClick={() => setBig(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,.72)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, boxSizing: 'border-box' }}>
+          <div onClick={e => e.stopPropagation()} style={{ position: 'relative', display: 'flex', maxWidth: '100%', minHeight: 0 }}>   {/* 2장 이상이면 그림 양옆 ‹ › (사진 보기처럼 — 아래 버튼 줄은 추가 + 닫기만, 2026-10-20 사용자) */}
+            <img src={m.images[big.j].url} alt={`후보 ${big.j + 1}`} draggable={false}
+              style={{ maxWidth: '100%', maxHeight: 'calc(100vh - 140px)', objectFit: 'contain', borderRadius: 10, boxShadow: '0 16px 50px rgba(0,0,0,.5)', background: '#fff' }} />
+            {n > 1 && <NavBtn testid="image-big-prev" side="left" onClick={() => go(-1)} title="이전 후보(←)">‹</NavBtn>}
+            {n > 1 && <NavBtn testid="image-big-next" side="right" onClick={() => go(1)} title="다음 후보(→)">›</NavBtn>}
+          </div>
+          <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 8, alignItems: 'center', font: `500 13px ${F}`, color: '#fff' }}>
+            <AddBtn testid="image-big-pin" big done={flash === `${big.i}:${big.j}`} onClick={() => pinPick(big.i, big.j)} />
+            <button style={css.bigNav} onClick={() => setBig(null)} title="닫기(Esc)">닫기</button>
+          </div>
+          {n > 1 && <div data-testid="image-big-count" style={{ font: `500 12px ${F}`, color: 'rgba(255,255,255,.6)', marginTop: -6 }}>{big.j + 1} / {n}</div>}
+          </div>, document.body) })()}
       <div style={css.head}>
         <b style={{ fontSize: 14 }}>KAIROS</b>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -276,15 +334,17 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
                   <button style={css.ghost} disabled={!!busy} onClick={() => drawReport(i)} title="같은 자료로 인포그래픽 그림 후보 2장 — 보기 좋지만 숫자·날짜를 지어낼 수 있으니 확인하고 쓰세요(약 20크레딧)">🎨 그림으로도</button>
                   <span style={{ ...css.meta, alignSelf: 'center' }}>고칠 점을 이어서 말하면 이 문서를 고쳐 써요</span></div>
               </div>}
-              {m.images?.length > 0 && <div data-testid="answer-images" style={{ marginTop: 6, display: 'grid', gridTemplateColumns: `repeat(${Math.min(2, m.images.length)}, 1fr)`, gap: 6 }}>
-                {m.images.map((g, j) => <button key={g.url} data-testid="image-pick" title="누르면 칠판에 붙여요(끌어 놓으면 그 자리) — 밑에 요청 글이 같이 붙어요"
-                  onClick={async () => { hoverOff(); const id = await ed.current?.pinImage(g.url, m.prompt || ''); if (id) update(msgs.map((x, k) => (k === i ? { ...x, picked: [...new Set([...(x.picked || []), j])] } : x))) }}
-                  onDragStart={e => { hoverOff(); e.dataTransfer.setData('text/uri-list', location.origin + g.url); e.dataTransfer.setData('text/x-mb-caption', m.prompt || '') }} draggable
-                  onMouseEnter={e => hoverOn(g.url, e.currentTarget)} onMouseLeave={hoverOff}
-                  style={{ all: 'unset', cursor: 'pointer', position: 'relative', borderRadius: 8, overflow: 'hidden', border: `2px solid ${m.picked?.includes(j) ? '#da7756' : C.line}` }}>
-                  <img src={g.url} alt={`후보 ${j + 1}`} draggable={false} style={{ display: 'block', width: '100%', aspectRatio: '4 / 3', objectFit: 'cover', background: '#fff' }} />
-                  {m.picked?.includes(j) && <span style={{ position: 'absolute', right: 4, bottom: 4, ...css.kind, color: '#fff', background: '#da7756' }}>칠판에 붙임 ✓</span>}
-                </button>)}</div>}
+              {m.images?.length > 0 && <div data-testid="answer-images" style={{ marginTop: 6, display: 'grid', gridTemplateColumns: `repeat(${Math.min(2, m.images.length)}, 1fr)`, gap: 6, alignItems: 'start' }}>   {/* 원래 비율(2026-10-20 사용자: 4:3으로 채우니 잘림) — 세로로 긴 그림은 320px까지 */}
+                {/* 사진 누르기 = 크게 보기, 왼쪽 위 「＋ 칠판에 추가」, 추가한 적 있으면 테두리만 초록, 사진·버튼 어디서든 끌면 칠판이 직접 끔(실제 크기 + 정렬선) */}
+                {m.images.map((g, j) => { const done = m.picked?.includes(j)
+                  return <div key={g.url} data-testid="image-pick" data-picked={done ? "1" : undefined} role="button" tabIndex={0} aria-label={`후보 ${j + 1} 크게 보기`}
+                    onClick={() => { if (dragged.current) { dragged.current = false; return } setBig({ i, j }) }}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setBig({ i, j }) } }}
+                    onPointerDown={e => imgDown(e, i, j)}
+                    style={{ cursor: 'zoom-in', position: 'relative', borderRadius: 8, overflow: 'hidden', border: `2px solid ${done ? DONE : C.line}` }}>
+                    <img src={g.url} alt={`후보 ${j + 1}`} draggable={false} style={{ display: 'block', width: '100%', height: 'auto', maxHeight: 320, objectFit: 'contain', background: '#fff' }} />
+                    <AddBtn testid="image-pin" done={flash === `${i}:${j}`} onClick={async e => { e.stopPropagation(); if (dragged.current) { dragged.current = false; return } await pinPick(i, j) }} />
+                  </div> })}</div>}
               {m.refs?.length > 0 && <div data-testid="answer-refs" style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {m.refs.map(r => <button key={r.n} onClick={() => ed.current?.showItem(r.uid) || setGone(g => ({ ...g, [m.at + ':' + r.n]: true }))} title="칠판의 그 도형으로 가기"
                   style={{ all: 'unset', cursor: 'pointer', ...css.meta, color: '#d97706', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -295,7 +355,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
                 {m.kind === 'tidy' && <button style={css.pin} onClick={() => ed.current?.showIds(m.frames) || setGone(g => ({ ...g, [m.at + ':tidy']: true }))} title="정돈해 만든 프레임들이 한눈에 보이게">
                   {gone[m.at + ':tidy'] ? '프레임이 지워졌어요' : '정돈한 곳 보기'}</button>}
-                {!m.images?.length && m.kind !== 'tidy' && <button style={{ ...(m.pinned ? css.ghost : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
+                {!m.images?.length && m.kind !== 'tidy' && <button style={{ ...(m.pinned ? css.done : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
                   title={m.pinned ? '누르면 붙인 카드로 가기(지웠으면 다시 붙임) · 칠판으로 끌면 그 자리에 하나 더' : m.refs?.length ? '메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(누르면 빈자리, 끌면 놓은 자리)' : m.sources?.length ? '요약 메모 + 출처 카드를 번호 화살표로 이어 한 묶음으로(누르면 빈자리, 끌면 놓은 자리)' : '누르면 빈자리에, 칠판으로 끌면 놓은 자리에 카드로'}>
                   {m.pinned ? '칠판에 붙임 ✓' : '칠판에 붙이기'}</button>}
                 {/* ⋯ 하나에 — 이어 묻기·분기·다시 만들기·복사(2026-10-20 사용자: 다른 AI 채팅 참고, 버튼은 늘리지 않게) */}

@@ -51,6 +51,7 @@ def test_item_texts_cover_kinds_and_skip_unnamed_or_empty():
     assert set(items) == {"m1", "m2", "r1", "t1", "w1"}   # 이름표 없는 것·글 없는 것은 뺌
     assert items["m1"] == "송신기 이상 보고\n2번 출력 저하"
     assert items["t1"] == "항목 | 값\n전원 | 220V" and "https://x.kr/ptp" in items["w1"]
+    assert board_find.item_text({"type": "image", "uid": "g1", "alt": "송신탑 그려줘"}) == "송신탑 그려줘"   # 그림 = 만든 요청(2026-10-20)
 
 
 def test_find_by_meaning_and_word_bonus_and_cache(tmp_path):

@@ -400,7 +400,7 @@ def _web_card_label(d: dict):
     return {"text": ((d.get("title") or "") + "\n" + (d.get("url") or "")).strip(), "color": "#ff18181b", "font": 10, "bg": None}
 
 
-_WEB_ONLY_KEYS ={"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights")}  # row_heights = 행 높이 비율(웹 2026-10-18, 데스크톱은 같은 높이로 그림)
+_WEB_ONLY_KEYS ={"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights"), "image": ("alt",)}  # row_heights = 행 높이 비율(웹 2026-10-18, 데스크톱은 같은 높이로 그림)
 
 
 def dict_to_item(d: dict):

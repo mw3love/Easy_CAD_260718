@@ -140,3 +140,10 @@ def test_web_deco_runs_survive_desktop_save():
     out = item_to_dict(it)
     assert [0, 3, None, False, None, False, "is"] in out["runs"] and [8, 3, None, True, None, False, "u"] in out["runs"]
     assert [4, 3, "#337ea9", False] in out["runs"]
+
+
+def test_web_image_alt_survives_desktop_save():
+    # 2026-10-20 웹 대화창 그림 = 칠판엔 그림만, 만든 요청은 보이지 않는 설명 `alt`(찾기·뜻으로 찾기가 읽음) — 데스크톱을 거쳐도 남아야 함
+    png = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII="
+    out = _roundtrip(dict(_BASE, type="image", rect=[0.0, 0.0, 680.0, 510.0], data=png, alt="송신탑 그려줘"))
+    assert out["type"] == "image" and out["alt"] == "송신탑 그려줘"

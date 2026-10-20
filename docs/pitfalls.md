@@ -1670,3 +1670,4 @@
 - 웹 칠판 「고른 채 바로 치기」 대기 편집기는 한 도형에 하나만 — 메모에 MemoEditor 대기를 붙였더니 도형용 TextEditor 대기도 같이 떠서 한글 첫 글자(insertText)를 가로챘다(2026-10-20). 새 종류에 대기를 붙이면 다른 대기 자리에서 그 종류를 빼라.
 - 웹 개발 서버 Vite 프록시를 `localhost`로 두면 Node 17+는 IPv6(::1)부터 가서, `--host 127.0.0.1`로 켠 Python 서버에 못 닿고 502(서버 없음처럼 보임). 프록시 주소는 `127.0.0.1`.
 - `npx playwright test`만 돌리면 마지막 빌드(`dist`)로 시험한다 — 고친 뒤엔 `npm run e2e`(빌드 포함)로.
+- 웹 버튼에 `all: unset`을 주면 크롬 UA 규칙 `[draggable=true] { -webkit-user-drag: element }`까지 지워져 `draggable`이어도 끌기가 시작되지 않는다(2026-10-20 그림 후보). 합성 `DragEvent('drop')` 시험은 이걸 못 잡으니 진짜 마우스 끌기(`dragTo`·`mouse.down/move/up`)로 시험할 것.

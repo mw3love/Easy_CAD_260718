@@ -312,6 +312,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
         <button title="틀을 용지 실제 크기(1:1)로 — 가운데 그대로" onClick={() => set(it => { const k = it.scale || 1, [W, H] = paperWH(it.size, it.orient), cx = it.pos[0] + W * k / 2, cy = it.pos[1] + H * k / 2; return { scale: 1, pos: [cx - W / 2, cy - H / 2] } }, '1:1로')}
           style={btn(false, { padding: '0 6px', background: C.seg, fontSize: 11 })}>1:1로</button></Row>
     </>}
+    {items.length === 1 && items[0].type === 'image' && items[0].alt && <Row label="설명"><span data-testid="image-alt" title="그림을 만든 요청 — 찾기(Ctrl+F)·뜻으로 찾기가 이 글로 그림을 찾아요" style={{ fontSize: 12, lineHeight: 1.4, wordBreak: 'break-all', padding: '4px 0' }}>{items[0].alt}</span></Row>}
     {rotItems.length > 0 && <Row label="회전"><RotInput value={rot} onSet={a => set(it => (ROTATABLE.has(it.type) ? rotate(it, a) : null), '회전', '회전')} /></Row>}
     {cells && (() => {   // 고른 칸(들)의 꾸밈 — 표 전체 값 위에 덮음
       const { table: t, r0, r1, c0, c1 } = cells, list = []

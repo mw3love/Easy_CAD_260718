@@ -25,7 +25,7 @@ KIND_NAME = {"doc": "정리 문서", "memo": "메모", "text": "글", "table": "
 
 
 def item_text(it: dict) -> str:
-    """도형 하나의 글(없으면 "") — 메모 줄·이름표·글 상자·표 칸·웹 카드 제목과 주소·화살표 라벨·프레임 이름·표제란 칸."""
+    """도형 하나의 글(없으면 "") — 메모 줄·이름표·글 상자·표 칸·웹 카드 제목과 주소·화살표 라벨·프레임 이름·그림 설명·표제란 칸."""
     t = it.get("type")
     out = []
     if t == "memo":
@@ -41,6 +41,8 @@ def item_text(it: dict) -> str:
         out += [str(it.get("title", "")), str(it.get("desc", "")), str(it.get("url", ""))]
     if t == "frame":
         out.append(str(it.get("name", "")))
+    if t == "image":   # 대화창 그림 = 만든 요청(보이지 않는 설명 `alt`, 2026-10-20)
+        out.append(str(it.get("alt", "")))
     if t == "doc":   # 정리 문서 카드(「정리해 줘」 ①) — 제목 + 문서 글
         from easycad.ai.board_report import plain_text
         out += [str(it.get("title", "")), plain_text(str(it.get("html", "")), MAX_TEXT)]

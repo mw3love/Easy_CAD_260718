@@ -1,7 +1,7 @@
 // 흐름 21 — 10-20 사용자 검토: 번호 = 남은 가장 큰 수 + 1 · 미니맵 % = 100% · Alt+Z 고른 것만 · 펜은 끌기 없음 ·
 // 대화창 「다시 ▾」 셋 · 새 대화·지난 대화 · 🔑 내 키(머리말로만). 진짜 KAIROS는 안 부름(flow3처럼 가짜 답).
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, toPage, clickScene, liveDoc, waitSaved } from './helpers.js'
+import { boardName, openBoard, setCam, toPage, clickScene, liveDoc, waitSaved, pinCandidate } from './helpers.js'
 
 const btn = (page, name) => page.getByRole('button', { name, exact: true })
 
@@ -149,8 +149,8 @@ test('그림 후보 둘을 차례로 누르면 둘째는 첫째와 안 겹치는
   await page.route('**/api/img/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
   await openBoard(page, name, { chat: true }); await setCam(page, { x: 400, y: 200, z: 0.02 })   // 4×3 그림이 화면에서 크게 보이게 멀리서
   await ask(page, '송신탑 그려줘')
-  await page.getByTestId('image-pick').nth(0).click(); await expect(page.getByTestId('image-pick').nth(0)).toContainText('칠판에 붙임 ✓')
-  await page.getByTestId('image-pick').nth(1).click(); await expect(page.getByTestId('image-pick').nth(1)).toContainText('칠판에 붙임 ✓')
+  await pinCandidate(page, 0)
+  await pinCandidate(page, 1)
   const ims = (await liveDoc(page)).items.filter(it => it.type === 'image').map(it => ({ x: it.pos[0], y: it.pos[1], w: it.rect[2], h: it.rect[3] }))
   expect(ims).toHaveLength(2)
   const [a, b] = ims
@@ -167,7 +167,7 @@ test('그림 뒤 고칠 말 = 고칠 그림 주소를 같이(붙인 것 → 둘�
   await openBoard(page, name, { chat: true })
   await ask(page, '송신탑 그려줘'); await expect(page.getByTestId('image-pick')).toHaveCount(2)
   expect(seen[0].base_image).toBeUndefined()
-  await page.getByTestId('image-pick').nth(1).click(); await expect(page.getByTestId('image-pick').nth(1)).toContainText('칠판에 붙임 ✓')
+  await pinCandidate(page, 1)
   await ask(page, '날짜도 넣어 줘'); await expect(page.getByTestId('image-pick')).toHaveCount(4)
   expect(seen[1].base_image).toBe(imgs[1].url)                               // 붙인 그림
   await ask(page, '첫 번째 그림에 제목 넣어 줘'); await expect(page.getByTestId('image-pick')).toHaveCount(6)
@@ -193,7 +193,7 @@ test('↩ 이어 묻기 = 그 답까지만 앞 대화로 + 그 그림을 고칠 
   await expect(page.getByTestId('reply-chip')).toHaveCount(0)
   await expect(page.getByText('↩ 「🎨 고흐 풍 전주 그려줘」에 이어서')).toBeVisible()
 
-  await page.getByTestId('image-pick').nth(0).click()                       // 칠판에 붙임 = 고른 채
+  await pinCandidate(page, 0)                                              // 칠판에 붙임 = 고른 채
   await expect(page.getByTestId('img-chip')).toBeVisible()
   await ask(page, '제목 넣어 줘'); await expect(page.getByText('그림 후보 4')).toBeVisible()
   expect(seen[3].board_images).toHaveLength(1); expect(seen[3].board_images[0]).toMatch(/^data:image\/jpeg;base64,/)
@@ -203,21 +203,36 @@ test('↩ 이어 묻기 = 그 답까지만 앞 대화로 + 그 그림을 고칠 
   expect(JSON.parse(log).messages.find(m => m.content === '제목 넣어 줘').imgCount).toBe(1)
 })
 
-test('그림 후보에 마우스를 올려 두면 대화창 왼쪽에 크게, 빼면 사라짐', async ({ page }) => {
-  const name = boardName('peek')
+// 2026-10-20 사용자: 사진 누르기 = 크게 보기 창(버튼은 추가 + 닫기), 왼쪽 위 「＋ 칠판에 추가」 하나 — 누르면 1초 「✓ 추가됨」 뒤 원래대로(옛 「올려 두면 크게」·「한 번 더」·「칠판에 있음」은 없앰)
+test('그림 후보: 왼쪽 위 추가 버튼(1초 추가됨) · 누르면 크게 보기(←→·Esc·창에서 추가)', async ({ page }) => {
+  const name = boardName('big')
   const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII=', 'base64')
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
-  await page.route('**/api/chat', r => r.fulfill({ json: { kind: 'image', content: '그림 후보', model: 'img-m', elapsed: 1, images: [{ url: `/api/img/${name}/1_aaaaaa.png` }] } }))
+  await page.route('**/api/chat', r => r.fulfill({ json: { kind: 'image', content: '그림 후보', model: 'img-m', elapsed: 1, images: [{ url: `/api/img/${name}/1_aaaaaa.png` }, { url: `/api/img/${name}/2_bbbbbb.png` }] } }))
   await page.route('**/api/img/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
   await openBoard(page, name, { chat: true })
   await ask(page, '송신탑 그려줘')
-  await page.getByTestId('image-pick').first().hover()
-  const peek = page.getByTestId('image-peek')
-  await expect(peek).toBeVisible()
-  const pb = await peek.boundingBox(), cb = await page.getByRole('complementary', { name: 'KAIROS 대화' }).boundingBox()
-  expect(pb.width).toBeGreaterThan(500); expect(pb.x + pb.width).toBeLessThanOrEqual(cb.x)   // 크게, 대화창 왼쪽
-  await page.mouse.move(10, 500)
-  await expect(peek).toHaveCount(0)
+  const pick = page.getByTestId('image-pick').first(), count = async () => (await liveDoc(page)).items.filter(it => it.type === 'image').length
+  await expect(pick.getByTestId('image-pin')).toHaveText('＋ 칠판에 추가')        // 늘 보임
+  await expect(page.getByTestId('image-peek')).toHaveCount(0)                     // 올려 두면 크게 = 없앰
+  await pick.click()                                                               // 누르기 = 크게 보기(추가하지 않음)
+  const big = page.getByTestId('image-big'), shown = () => big.locator('img').getAttribute('alt')
+  await expect(big).toBeVisible(); expect(await shown()).toBe('후보 1'); expect(await count()).toBe(0)
+  await expect(big.getByRole('button')).toHaveText(['‹', '›', '＋ 칠판에 추가', '닫기'])   // 아래 줄은 추가 + 닫기, 2장 이상이면 그림 양옆 ‹ ›
+  await expect(page.getByTestId('image-big-count')).toHaveText('1 / 2')
+  await page.getByTestId('image-big-next').click(); expect(await shown()).toBe('후보 2'); await page.getByTestId('image-big-prev').click(); expect(await shown()).toBe('후보 1')
+  await page.keyboard.press('ArrowRight'); expect(await shown()).toBe('후보 2')
+  await page.keyboard.press('Escape'); await expect(big).toHaveCount(0)
+  await pick.click(); await page.keyboard.press('ArrowLeft'); expect(await shown()).toBe('후보 2')
+  await page.getByTestId('image-big-pin').click()
+  await expect(page.getByTestId('image-big-pin')).toHaveText('✓ 추가됨'); await expect(big).toBeVisible()   // 창은 그대로
+  await expect(page.getByTestId('image-big-pin')).toHaveText('＋ 칠판에 추가', { timeout: 2000 })          // 1초 뒤 원래대로
+  expect(await count()).toBe(1); await expect(page.getByTestId('image-pick').nth(1)).toHaveAttribute('data-picked', '1')
+  await page.keyboard.press('Escape')
+  const p1 = page.getByTestId('image-pick').nth(1).getByTestId('image-pin')
+  await p1.click(); await expect(p1).toHaveText('✓ 추가됨'); await expect(p1).toHaveText('＋ 칠판에 추가', { timeout: 2000 })
+  await expect.poll(count).toBe(2)
+  await waitSaved(page)
 })
 
 test('대화창 그림 = 배율과 상관없이 긴 변 680으로 붙음(2026-10-20 사용자)', async ({ page }) => {
@@ -228,9 +243,9 @@ test('대화창 그림 = 배율과 상관없이 긴 변 680으로 붙음(2026-10
   await page.route('**/api/img/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
   await openBoard(page, name, { chat: true }); await setCam(page, { x: 400, y: 200, z: 2.3 })
   await ask(page, '송신탑 그려줘')
-  await page.getByTestId('image-pick').nth(0).click(); await expect(page.getByTestId('image-pick').nth(0)).toContainText('칠판에 붙임 ✓')
+  await pinCandidate(page, 0)
   await setCam(page, { x: 400, y: 200, z: 0.06 })
-  await page.getByTestId('image-pick').nth(1).click(); await expect(page.getByTestId('image-pick').nth(1)).toContainText('칠판에 붙임 ✓')
+  await pinCandidate(page, 1)
   const ws = (await liveDoc(page)).items.filter(it => it.type === 'image').map(it => Math.round(it.rect[2] * (it.scale || 1)))
   expect(ws).toEqual([680, 680])                                           // 4×3 그림 → 긴 변 680
 })

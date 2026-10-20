@@ -128,7 +128,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -777,6 +777,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (it.type === 'memo') { const t = memoText(it.lines); if (t.trim()) out.push(t) }
     if (it.type === 'doc') out.push(`[정리 문서] ${it.title || ''}\n${docText(it.html)}`)   // 정리 문서도 근거·재료로
     if (it.type === 'web') out.push(`[웹] ${it.title || ''} ${it.url || ''}`.trim())
+    if (it.type === 'image' && it.alt) out.push(`[그림] ${it.alt}`)
     return out
   }
   // ── 「정리해 줘」 ② 레고형 정리정돈(§8 항목61, 2026-10-19) — AI는 묶음 목록만(서버 `board_tidy`), 자리는 `tidy.js` ──
@@ -1462,7 +1463,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   })
   // 웹 카드 넣기 — 서버가 주소를 확인한 뒤(칸 안에 넣어도 되나·제목·대표 그림) 커서 자리(화면 밖이면 가운데)에
   // 그림 파일·클립보드 그림 → 이미지 도형(.ecad image = PNG base64 — 다른 형식도 PNG로 바꿔 넣음, 데스크톱도 그대로 열림). 커서 자리(없으면 화면 가운데), 긴 변 최대 화면의 60%
-  // opts.at = 가운데 자리(칠판 좌표, 없으면 커서·화면 가운데), opts.caption = 그림 밑 작은 회색 글(그림 만들기 요청 — 한 묶음, §8 항목61 ③-4)
+  // opts.at = 가운데 자리(칠판 좌표, 없으면 커서·화면 가운데), opts.caption = 그림 만들기 요청 → 그림의 보이지 않는 설명 `alt`(§8 항목61 ③-4 — 2026-10-20부터 밑 글 없음)
   async function insertImage(file, opts = {}) {
     const url = URL.createObjectURL(file)
     try {
@@ -1474,13 +1475,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       // fixed = 대화창 그림 후보 — 배율과 상관없이 긴 변 680(답 메모 두 개 폭, 2026-10-20 사용자: 붙일 때마다 크기가 제각각)
       const k = opts.fixed ? IMG_FIXED / Math.max(im.naturalWidth, im.naturalHeight) : Math.min(1, (Math.min(vw.w, vw.h) * 0.6) / Math.max(im.naturalWidth, im.naturalHeight)), w = im.naturalWidth * k, h = im.naturalHeight * k, m = R.current.model
       // free = 버튼으로 붙이기(대화창 그림 후보 누르기) — 가운데 먼저, 겹치면 가까운 빈자리(메모·표 버튼과 같은 `spotNear`, 2026-10-20 사용자: 둘째 그림이 첫째 위에 겹침)
-      const fs = opts.free && spotNear(w, h + (opts.caption ? (opts.fixed ? 20 : 24 / c.z) : 0))
+      const fs = opts.free && spotNear(w, h)
       const at = fs ? { x: fs.x + w / 2, y: fs.y + h / 2 } : opts.at || (mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2 })
-      const it = base([at.x - w / 2, at.y - h / 2], { type: 'image', rect: [0, 0, w, h], data, z: topZ(m.items) + 1 })
-      if (opts.caption) {   // 그림 + 밑 글(요청) — 따로(2026-10-20 사용자: 묶음이면 그림만 고르려 해도 글까지 골라져 「고른 것」에 실림). 옛 칠판의 묶음은 Ctrl+Shift+G로 풂
-        const cap = base([at.x - w / 2, at.y + h / 2 + 4], { type: 'text', text: opts.caption, color: '#ff8a8f98', font: 9, bg: null, z: topZ(m.items) + 1 })
-        commit([...m.items, it, cap], [it._id], '그림 붙이기')
-      } else commit([...m.items, it], [it._id], '그림 붙여넣기')
+      // caption = 그림을 만든 요청 — 칠판엔 그림만, 요청은 보이지 않는 설명 `alt`(찾기·뜻으로 찾기·대화 재료가 읽음, 2026-10-20 사용자: 밑 글 빼고 깔끔하게)
+      const it = base([at.x - w / 2, at.y - h / 2], { type: 'image', rect: [0, 0, w, h], data, z: topZ(m.items) + 1, ...(opts.caption ? { alt: opts.caption } : null) })
+      commit([...m.items, it], [it._id], opts.caption ? '그림 붙이기' : '그림 붙여넣기')
       setTool('select'); return it._id
     } catch { setStatus('그림을 읽지 못했어요') } finally { URL.revokeObjectURL(url) }
   }
@@ -1488,6 +1487,18 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   async function pinImage(url, caption, at) {
     try { const b = await (await fetch(url)).blob()
       return await insertImage(b, at ? { at, caption, fixed: true } : { free: true, caption, fixed: true }) } catch { setStatus('그림을 못 가져왔어요'); return null }
+  }
+  // 그림 후보 끌어 붙이기 — 답 메모처럼 칠판이 직접 끔(실제 크기 + 정렬선, 2026-10-20 사용자: 브라우저 끌기는 크기가 다르고 정렬선이 없음). 끄는 동안 손을 떼면 안 붙임
+  async function dragImage(url, caption, onPlaced, released) {
+    try {
+      const b = await (await fetch(url)).blob(), src = URL.createObjectURL(b)
+      const im = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src }); URL.revokeObjectURL(src)
+      if (released()) return
+      const cv = document.createElement('canvas'); cv.width = im.naturalWidth; cv.height = im.naturalHeight; cv.getContext('2d').drawImage(im, 0, 0)
+      const k = IMG_FIXED / Math.max(im.naturalWidth, im.naturalHeight), w = im.naturalWidth * k, h = im.naturalHeight * k, z = topZ(R.current.model.items) + 1
+      const protos = [base([0, 0], { type: 'image', rect: [0, 0, w, h], data: cv.toDataURL('image/png').split(',')[1], z, ...(caption ? { alt: caption } : null) })]   // 요청 = 보이지 않는 설명
+      startPaletteDrag('image', protos, ids => { setTool('select'); onPlaced?.(ids) })
+    } catch { setStatus('그림을 못 가져왔어요') }
   }
   // 칠판에 주소 끌어 놓기 — 대화창 그림 후보면 그 그림, 다른 웹 주소면 웹 카드(주소 Ctrl+V와 같게). 전엔 처리가 없어 브라우저가 그 주소로 떠났음
   function dropUrl(url, caption, e) {
