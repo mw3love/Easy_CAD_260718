@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { DOC_NAME } from './doc.js'
 import { memoText } from './memo.js'
+import { keyHeaders } from './kairosKey.js'
 
 // 정리 문서 HTML → 쉬운 글(찾기·대화 근거) — 서버 `board_report.plain_text`와 같은 뜻
 export const docText = html => { if (!html) return ''; try { const d = new DOMParser().parseFromString(html, 'text/html'); d.querySelectorAll('style,script').forEach(n => n.remove()); return (d.body?.innerText || d.body?.textContent || '').replace(/[ \t]+/g, ' ').trim().slice(0, 4000) } catch { return '' } }
@@ -48,7 +49,7 @@ export function FindBar({ items, server, onMarks, onGo, onClose }) {
     const my = ++ask.current; setBusy(true)
     const h = setTimeout(async () => {
       try {
-        const r = await fetch(`/api/find/${encodeURIComponent(DOC_NAME)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q: t, k: 8 }) })
+        const r = await fetch(`/api/find/${encodeURIComponent(DOC_NAME)}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ q: t, k: 8 }) })
         const d = await r.json().catch(() => ({}))
         if (my !== ask.current) return
         if (!r.ok || d.error) setErr(d.error || `서버 응답 ${r.status}`); else setSem(d.results || [])

@@ -444,6 +444,21 @@ def test_badge_apply_color_updates_own_color_field():
     assert b._color == QColor("#ff0000")
 
 
+def test_next_badge_number_is_largest_left_plus_one():
+    # [2026-10-20 사용자] 1·2·3 쓰다 3을 지우면 다음은 다시 3(옛: 4) — 남은 가장 큰 번호 + 1, 중간 빈 번호는 안 채움(웹 `nextBadge`와 같게).
+    w = CanvasWindow()
+    bs = []
+    for _ in range(3):
+        b = _BadgeItem(w.next_badge_number(), QColor("black")); w._scene.addItem(b); bs.append(b)
+    assert [b._number for b in bs] == [1, 2, 3]
+    w._scene.removeItem(bs[2])
+    assert w.next_badge_number() == 3
+    w._scene.removeItem(bs[1])
+    assert w.next_badge_number() == 2
+    b4 = _BadgeItem(5, QColor("black")); w._scene.addItem(b4)
+    assert w.next_badge_number() == 6
+
+
 
 
 def test_bounding_rect_reserves_handle_space_only_when_selected():

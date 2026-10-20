@@ -73,7 +73,7 @@ test('위 막대 다각형 끌기 = 첫 선분 놓고 이어 찍기, 웹 끌기 
   await expect(page.getByPlaceholder(/유튜브·웹페이지 주소/)).toBeVisible()
 })
 
-test('위 막대 — 「다 보기」 대신 「전체 화면」, 다 보기는 미니맵 %', async ({ page }) => {
+test('위 막대 — 「다 보기」 대신 「전체 화면」, 다 보기는 Z', async ({ page }) => {
   await openBoard(page, boardName('fullbtn'))
   await expect(btn(page, '전체 화면')).toBeVisible()
   await expect(btn(page, '다 보기')).toHaveCount(0)

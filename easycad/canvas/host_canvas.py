@@ -409,7 +409,10 @@ class _CanvasMixin:
 
 
     def next_badge_number(self) -> int:
-        self._badge_n += 1
+        # [2026-10-20] 남은 번호표 중 가장 큰 번호 + 1(사용자: 3을 지우면 다시 3 — 중간 빈 번호는 안 채움, 웹 `nextBadge`와 같게).
+        # 옛 방식(마지막으로 준 번호 + 1)은 지워도 되돌리지 않았다. `_badge_n`은 문서별 상태라 그대로 맞춰 둠.
+        nums = [it._number for it in self._scene.items() if hasattr(it, "_number")]
+        self._badge_n = (max(nums) if nums else 0) + 1
         return self._badge_n
 
 

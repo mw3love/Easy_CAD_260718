@@ -41,7 +41,7 @@ import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 
 NAME_RE = re.compile(r"^[\w\-가-힣]{1,64}$")
 MAX_BYTES = 200 * 1024 * 1024   # 그림이 든 칠판도 넉넉히, 하지만 끝없이는 아니게
-_MODELS = None                  # (받은 시각, 모델 목록) — `/api/models`
+_MODELS = {}                    # 키 지문 → (받은 시각, 모델 목록) — `/api/models`
 
 
 def default_data_dir() -> str:
@@ -75,17 +75,25 @@ class Handler(SimpleHTTPRequestHandler):
     def _json(self, code: int, obj):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
+    def _key(self) -> str:
+        """KAIROS 키 — 브라우저가 「🔑 내 키」로 보낸 머리말 `X-Kairos-Key`가 있으면 그것(2026-10-20 사용자 — 사람마다 자기 크레딧),
+        없으면 이 서버 PC 키. 받은 키는 이 요청에만 쓰고 파일·로그에 남기지 않는다."""
+        mine = (self.headers.get("X-Kairos-Key") or "").strip()
+        return mine if re.fullmatch(r"[!-~]{8,300}", mine) else gw.resolve_api_key()
+
     def _models(self):
-        key = gw.resolve_api_key()
+        key = self._key()
         if not key:
             return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
-        global _MODELS
-        if _MODELS is None or time.time() - _MODELS[0] > 600:   # 10분마다 새로(새 모델이 올라와도 서버를 안 껐다 켜게)
+        import hashlib
+        kid = hashlib.sha256(key.encode()).hexdigest()[:16]   # 키마다 따로(계정마다 모델이 다를 수 있음) — 키 자체는 안 들고 있음
+        hit = _MODELS.get(kid)
+        if hit is None or time.time() - hit[0] > 600:   # 10분마다 새로(새 모델이 올라와도 서버를 안 껐다 켜게)
             try:
-                _MODELS = (time.time(), board_chat.models(key, gw.resolve_base_url()))
+                hit = _MODELS[kid] = (time.time(), board_chat.models(key, gw.resolve_base_url()))
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
-        return self._json(200, _MODELS[1])
+        return self._json(200, hit[1])
 
     def _chat(self):
         n = int(self.headers.get("Content-Length") or 0)
@@ -95,7 +103,7 @@ class Handler(SimpleHTTPRequestHandler):
             req = json.loads(self.rfile.read(n))
         except ValueError:
             return self._json(400, {"error": "json"})
-        key = gw.resolve_api_key()
+        key = self._key()
         if not key:
             return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
         try:
@@ -196,7 +204,7 @@ class Handler(SimpleHTTPRequestHandler):
         if not fname.lower().endswith(meeting.AUDIO_EXT):
             return self._json(400, {"error": "녹음 파일(mp3·m4a·wav·webm·ogg·aac·flac·mp4)만 돼요"})
         data = self.rfile.read(n)
-        key = gw.resolve_api_key()
+        key = self._key()
         if not key:
             return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
         job = secrets.token_hex(6)
@@ -229,7 +237,7 @@ class Handler(SimpleHTTPRequestHandler):
         q = str(req.get("q") or "").strip()[:500]
         if not q:
             return self._json(200, {"results": []})
-        key = gw.resolve_api_key()
+        key = self._key()
         if not key:
             return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다 — 낱말 찾기만 돼요"})
         try:

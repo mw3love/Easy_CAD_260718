@@ -6,6 +6,7 @@ import { flushSync } from 'react-dom'
 import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr } from './render.jsx'
 import { DOC_NAME, boardMembership, drawOrder, itemBounds } from './doc.js'
 import { docText } from './find.jsx'
+import { keyHeaders } from './kairosKey.js'
 import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
@@ -575,7 +576,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     commit(m.items.map(x => (x._id === t._id ? { ...t, cell_styles: styles } : x)), [t._id], label, merge ? merge + t._id : null)
   }
   const [menu, setMenu] = useState(null)   // 제자리 우클릭 메뉴 자리(편집 화면 안 px)
-  const badgeN = useRef(0)   // 마지막으로 놓은 번호표 번호
+  // 번호표 다음 번호 = 칠판에 남은 가장 큰 번호 + 1(2026-10-20 사용자: 3을 지우면 다시 3 — 중간 빈 번호는 안 채움, 데스크톱 `next_badge_number`도 같게)
+  const nextBadge = items => Math.max(0, ...items.filter(it => it.type === 'badge').map(it => it.number || 0)) + 1
   const styleClip = useRef(null)   // 스타일 복사한 서식(데스크톱 `_style_clip`)
   const stickyFill = useRef(null)   // 새 닫힌 도형 채움 — 속성 카드 「채움」(데스크톱 `current_fill`)
   // 새 도형 선 = 화살표와 같은 색·굵기·선 모양(데스크톱 `current_color`·`current_width`·`current_style`은 도형·화살표 공용)
@@ -1080,18 +1082,17 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // given = 끌어 놓을 아이템(대화창 카드), onPlaced = 놓았을 때 알림
   // 위 막대 도구를 칠판으로 끌기 = 기본형을 놓은 자리에(2026-10-20 사용자). 선·화살표 = 화면 기준 길이의 가로, 다각형 = 첫 선분 놓고 이어 찍기,
-  // 펜 = 놓은 자리부터 그리기 시작(손그림엔 기본형이 없음), 글자 = 놓고 바로 쓰기, 번호 = 다음 번호, 메모·표·프레임 = 기본 크기, 웹 = 놓은 자리로 주소 묻기
+  // 펜은 끌기 없음(놓아도 도구만 바뀌어 누르기와 같았음 — 2026-10-20 사용자), 글자 = 놓고 바로 쓰기, 번호 = 다음 번호, 메모·표·프레임 = 기본 크기, 웹 = 놓은 자리로 주소 묻기
   function startToolDrag(kind, { table = [3, 3, true], onWeb } = {}) {
     const m = R.current.model, z = R.current.cam.z, L = 120 / z, top = topZ(m.items) + 1
     const seg = extra => base([0, 0], { type: 'polygon', closed: false, rect: [0, 0, L, 0], pts: [[0, 0], [L, 0]], ...penOf(false), fill: null, z: top, ...extra })
     if (kind === 'polygon') return startPaletteDrag(kind, [seg()], (its, p) => { const a = { x: p.x - L / 2, y: p.y }, b = { x: p.x + L / 2, y: p.y }; keepPoly.current = R.current.tool !== 'polygon'; setTool('polygon'); setOverlay(o => ({ ...o, poly: [a, b], pcur: b })) }, true)
-    if (kind === 'pen') return startPaletteDrag(kind, [seg({ pts: [[0, 0], [L * 0.3, -L * 0.15], [L * 0.6, L * 0.1], [L, 0]] })], (its, p) => { setTool('pen'); setStatus('펜 — 놓은 자리부터 끌어서 그리세요') }, true)
     if (kind === 'web') return startPaletteDrag(kind, [base([0, 0], { type: 'rect', rect: [0, 0, 320 / z, 180 / z], pen: '#ff9aa0a6', width: 1, style: 2, fill: null, z: top })], (its, p) => onWeb?.(p), true)
     let proto, after = null
     if (kind === 'line') proto = base([0, 0], { type: 'line', line: [0, 0, L, 0], ...penOf(false), z: top })
     else if (kind === 'arrow') { proto = arrowItem(null, { x: 0, y: 0 }, null, { x: L, y: 0 }, { auto_route: false, pts: [[0, 0], [L, 0]] }); if (stickyKind.current !== 'ortho') proto = swapArrowKind(proto, stickyKind.current, m.items, rectOf, sticky.current.curve_r) }
     else if (kind === 'text') { proto = base([0, 0], { type: 'text', text: '글', color: INK, font: 12, bg: null, z: top }); after = ids => { setSel(ids); setEditing({ id: ids[0], kind: 'text', fresh: true }) } }
-    else if (kind === 'badge') { const n = Math.max(badgeN.current, ...m.items.filter(it => it.type === 'badge').map(it => it.number || 0)) + 1; proto = base([0, 0], { type: 'badge', number: n, color: sticky.current.color === INK ? '#ffda7756' : sticky.current.color, z: top }); after = () => { badgeN.current = n } }
+    else if (kind === 'badge') proto = base([0, 0], { type: 'badge', number: nextBadge(m.items), color: sticky.current.color === INK ? '#ffda7756' : sticky.current.color, z: top })
     else if (kind === 'memo') proto = memoProto()
     else if (kind === 'table') proto = tableProto(...table)
     else if (kind === 'frame') { const w = size.w * 0.4 / z; proto = base([0, 0], { type: 'frame', rect: [0, 0, w, w * 9 / 16], name: '', no: nextFrameNo(m.items), ratio: '16:9', z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 }) }
@@ -1140,8 +1141,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       return
     }
     if (t === 'text') { newTextAt(p); setTool('select'); return }
-    if (t === 'badge') {   // 번호표 — 누른 자리에 다음 번호(데스크톱 `next_badge_number`: 연 문서의 가장 큰 번호부터 하나씩, 지워도 되돌리지 않음), 색 = 고른 선 색
-      const n = Math.max(badgeN.current, ...m.items.filter(it => it.type === 'badge').map(it => it.number || 0)) + 1; badgeN.current = n
+    if (t === 'badge') {   // 번호표 — 누른 자리에 다음 번호(남은 가장 큰 번호 + 1 — `nextBadge`), 색 = 고른 선 색
+      const n = nextBadge(m.items)
       const it = base([p.x, p.y], { type: 'badge', number: n, color: sticky.current.color === INK ? '#ffda7756' : sticky.current.color, z: topZ(m.items) + 1 })   // 선 색을 안 골랐으면 코랄(기본 잉크로 칠하면 어두운 화면에서 묻힘)
       commit([...m.items, it], [it._id], '번호표'); return   // 도구는 켜 둔 채 — 누를 때마다 다음 번호, Esc·다른 도구로 끝(2026-10-18 사용자 선택, 데스크톱은 한 번 찍고 돌아감)
     }
@@ -1338,7 +1339,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (k.length === 1 || k === 'Process' || e.keyCode === 229) {   // 기본 동작은 막지 않음 — 대기 편집기가 이 글쇠를 받음, 여기선 보이게만
           const ne = { id: ta.id, kind: ta.kind, ...(ta.kind === 'memo' ? {} : { fresh: true }) }; R.current.editing = ne; flushSync(() => setEditing(ne)); return }
       }
-      if (!mod && !e.altKey && e.code === 'KeyZ') return act(() => { const its = e.shiftKey ? R.current.model.items.filter(it => ids.includes(it._id)) : null; onFit?.(its?.length ? its : null) })   // Z = 다 보기 · Shift+Z = 고른 것만(왼손 자리 — 2026-10-20 사용자, 한글 입력이어도 자리로)
+      if (!mod && !e.shiftKey && e.code === 'KeyZ') return act(() => { const its = e.altKey ? R.current.model.items.filter(it => ids.includes(it._id)) : null; onFit?.(its?.length ? its : null) })   // Z = 다 보기 · Alt+Z = 고른 것만(왼손 자리 — 2026-10-20 사용자, 한글 입력이어도 자리로). 옛 Shift+Z는 글 도형 하나를 고르면 글로 들어가 정작 필요할 때 안 먹었음 — Alt는 「치면 글」을 건너뜀
       if (!mod && !e.altKey && !e.shiftKey && e.code === 'KeyD' && !ids.length) return act(() => onDark?.())   // D = 어둡게 ⇄ 밝게(발표와 같은 글쇠, 아무것도 안 골랐을 때)
       const TOOL_KEYS = { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen', 7: 'badge' }   // 데스크톱 `SHORTCUT_DEFS` 도구 1~7
       if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[k]) return act(() => setTool(TOOL_KEYS[k]))
@@ -1489,7 +1490,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     let model = ''; try { model = localStorage.getItem('magic-board-model') || '' } catch { /* 없어도 그만 — 서버 기본 모델 */ }
     try {
       const r = await fetch(`/api/meeting/${encodeURIComponent(DOC_NAME)}${model ? `?model=${encodeURIComponent(model)}` : ''}`, { method: 'POST', body: file,
-        headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) } })
+        headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name), ...keyHeaders() } })
       const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
       if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
       for (;;) {

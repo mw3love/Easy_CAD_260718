@@ -1,7 +1,8 @@
 // KAIROS 대화창(직접 만드는 칠판판) — 옛 tldraw 칠판 `src/chat.jsx`를 옮김(§8 항목61 ⓒ 4단계). 칠판 오른쪽 칸, 위 막대 「KAIROS」로 열고 닫음.
 // - 묻기: 서버 POST /api/chat(키는 서버 PC에만), 앞 대화를 이어 보냄. 칠판에서 고른 것의 글을 같이 보냄(칩).
 // - 「칠판에 붙이기」: 답 → 카드(흰 보드 + 보드 글꼴 글, Editor.pinCard). 붙인 카드는 「칠판에 붙임 ✓」로 찾아감(카드의 .ecad `chat_at` = 답 시각).
-// - 대화 기록: 칠판마다 서버(/api/chatlog/<이름>) — 옛 칠판과 같은 기록을 이어 씀.
+// - 대화 기록: 칠판마다 서버(/api/chatlog/<이름>) — 옛 칠판과 같은 기록을 이어 씀. 「새 대화」 = 지금 대화를 `past`로 넘기고 빈 대화(앞 대화가 안 실려 주제가 안 섞임),
+//   「지난 대화 ▾」 = 골라 다시 열기(2026-10-20 사용자 — 탭은 360px 칸에 2~3개면 꽉 차서 목록으로). 파일 = { messages, past: [{ at, title, messages }] }.
 // - 웹 검색(§8 항목61 ② 담는 법, 2026-10-19): 종류는 서버가 짐작(「최신·뉴스·찾아줘」…), 답 위 표시 「🔎 웹 검색 / 💬 대화」 + 반대로 다시 묻기 한 번.
 //   검색 답은 쓰인 번호의 출처를 아래에 보이고, 붙이면 요약 메모 + 출처 카드 + 번호 화살표 한 묶음(Editor `cardItems`).
 // - 칠판에서(§8 항목61 ③-2): 「지난번·저번·정리해 둔」 → 서버가 이 칠판 글을 뜻으로 찾아 근거로 답, [칠판 n] 고리 = 그 도형으로 가기, 붙이면 근거로 가는 점선 화살표.
@@ -12,6 +13,7 @@ import { urlSpans } from './geom.js'
 import { MONO_FONT } from './render.jsx'
 import { siteOf } from './webcard.js'
 import { TIDY_RE } from './tidy.js'
+import { getKairosKey, KEY_RE, keyHeaders, setKairosKey } from './kairosKey.js'
 const LINK_CHAT = '#4f8fe8'
 // 정리 문서 크게 보기 — 새 탭에 그 HTML(인쇄·PDF는 그 탭에서 Ctrl+P)
 const openHtml = html => { const u = URL.createObjectURL(new Blob([html || ''], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
@@ -24,6 +26,8 @@ const KINDS = {
   tidy: ['🧩 정리정돈', { color: '#0f766e', background: 'rgba(15,118,110,.12)' }, '정리정돈으로 다시', '고른 것(없으면 화면에 보이는 것)을 지우지 않고 주제별 프레임으로 묶어 옮겨요(Ctrl+Z 한 번에 원래대로)'],
   image: ['🎨 그림', { color: '#9333ea', background: 'rgba(147,51,234,.12)' }, '그림으로 다시', '그림 후보 2장을 만들어 이 답을 바꿔요(장당 약 34크레딧)'],
 }   // 대화창 주소(어두운·밝은 화면 둘 다 읽히는 파랑)
+// 「다시 ▾」엔 답하는 방식 셋만 — 정리 문서·정리정돈·그림은 짐작이 틀린 게 아니라 다른 일이라 말(「정리해 줘」「그려 줘」)·칠판 우클릭으로(2026-10-20 사용자: 버튼이 너무 많음)
+const REDO_KINDS = ['chat', 'search', 'board']
 
 export const CHAT_W = 360
 const LOG_URL = `/api/chatlog/${encodeURIComponent(DOC_NAME)}`
@@ -48,6 +52,9 @@ const css = {
   input: { font: `400 13.5px/1.5 ${F}`, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 10px', resize: 'none', minHeight: 40, maxHeight: 200, outline: 'none', background: C.card, color: C.ink },
   kind: { font: `600 11px ${F}`, color: C.muted, background: C.seg, borderRadius: 99, padding: '1px 8px' },
   link: { all: 'unset', cursor: 'pointer', font: `500 11px ${F}`, color: C.muted, textDecoration: 'underline' },
+  bar: { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderBottom: `1px solid ${C.line}` },
+  drop: { display: 'flex', flexDirection: 'column', maxHeight: 260, overflowY: 'auto', borderBottom: `1px solid ${C.line}`, background: C.card },
+  row: { all: 'unset', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'center', padding: '6px 12px', font: `400 12.5px ${F}`, color: C.ink, borderBottom: `1px solid ${C.line}` },
   select: { font: `500 12px ${F}`, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 4px', background: C.card, maxWidth: 210 },
 }
 
@@ -74,22 +81,27 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
   const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_KEY) || '' } catch { return '' } })
   const box = useRef(null), [redoAt, setRedoAt] = useState(null)   // redoAt = 「다시 ▾」를 펼친 답 차례
+  const [past, setPastState] = useState([]), pastRef = useRef([]), [pastOpen, setPastOpen] = useState(false)   // 지난 대화(새것부터)
+  const setPast = p => { pastRef.current = p; setPastState(p) }
+  const [keyOpen, setKeyOpen] = useState(false), [keyDraft, setKeyDraft] = useState(''), [myKey, setMyKey] = useState(() => !!getKairosKey())   // 내 KAIROS 키 칸
   // 방금 칠판에 붙인 것은 어디 붙었나 보이게 고른 채로 남는데, 그대로 다음 질문에 실려 갔음(2026-10-19 점검) — 고름이 그대로인 동안은 안 실음
   const [skipSel, setSkipSel] = useState('')
   const sel = selKey && selKey === skipSel ? [] : ed.current?.selTexts() || []   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     fetch(LOG_URL, { cache: 'no-store' }).then(r => (r.status === 404 ? { messages: [] } : r.ok ? r.json() : Promise.reject(r)))
-      .then(d => { setMsgs(d.messages || []); setLoaded(true) }).catch(() => { setServer(false); setLoaded(true) })
-    fetch('/api/models').then(r => r.json()).then(setModels).catch(() => setModels({ featured: {}, error: '모델 목록 못 받음' }))
+      .then(d => { setMsgs(d.messages || []); setPast(Array.isArray(d.past) ? d.past : []); setLoaded(true) }).catch(() => { setServer(false); setLoaded(true) })
   }, [])
+  useEffect(() => {   // 모델 목록은 키마다 다를 수 있어 키를 바꾸면 다시
+    fetch('/api/models', { headers: keyHeaders() }).then(r => r.json()).then(setModels).catch(() => setModels({ featured: {}, error: '모델 목록 못 받음' }))
+  }, [myKey])
   useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight }, [msgs.length, busy])
   const asked = useRef(null)
   useEffect(() => { if (!request || !loaded || asked.current === request.id) return; asked.current = request.id; send(request.text, request.kind) }, [request, loaded])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!busy) return; const t = setInterval(() => tick(n => n + 1), 1000); return () => clearInterval(t) }, [busy])
 
   const useModel = model || models?.default || 'gpt-6.1-sol'
-  const save = next => fetch(LOG_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: next }) })
+  const save = (next, p = pastRef.current) => fetch(LOG_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: next, ...(p.length ? { past: p } : {}) }) })
     .then(r => setServer(r.ok)).catch(() => setServer(false))
   const update = next => { setMsgs(next); save(next) }
 
@@ -97,7 +109,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
   async function ask(history, kind = '', prevHtml = '') {   // prevHtml = 바로 앞 답이 정리 문서면 그 HTML(「더 짧게」 = 그 문서 고치기 — 서버가 판단)
     const q = history.filter(m => m.role === 'user').at(-1)?.content || ''
     const items = kind === 'tidy' || (!kind && TIDY_RE.test(q)) ? ed.current?.tidyItems() || [] : null   // 정리정돈(「정리해 줘」 ②) — 옮길 조각 목록(uid·종류·글·크기)
-    const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
       body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(items ? { items } : {}), messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
@@ -142,6 +154,13 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
     const done = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', done) }
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', done)
   }
+  // 새 대화 — 지금 대화를 지난 대화 맨 위로(빈 대화면 그냥 둠). 질문 하나 = 제목
+  const shelve = (cur, p) => { const kept = cur.filter(m => m.role !== 'error'); if (!kept.some(m => m.role === 'user')) return p
+    return [{ at: kept[0].at || Date.now(), title: (kept.find(m => m.role === 'user').content || '').split(/\r?\n/)[0].slice(0, 40), messages: kept }, ...p] }
+  const reset = () => { setRedoAt(null); setSkipSel(''); setGone({}); setPastOpen(false) }
+  function newChat() { if (busy) return; const p = shelve(msgs, pastRef.current); setPast(p); reset(); setMsgs([]); save([], p) }
+  function openPast(j) { if (busy) return; const pick = pastRef.current[j], p = shelve(msgs, pastRef.current.filter((_, k) => k !== j)); setPast(p); reset(); setMsgs(pick.messages); save(pick.messages, p) }
+  function saveKey(v) { setKairosKey(v.trim()); setMyKey(!!v.trim()); setKeyDraft(''); setKeyOpen(false) }
   function retry() {
     const last = [...msgs].reverse().find(m => m.role === 'user'); if (!last) return
     setMsgs(msgs.filter(m => m.role !== 'error').slice(0, -1)); setDraft(last.content)
@@ -163,6 +182,26 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
           <button title="대화창 닫기" onClick={onClose} style={{ ...css.ghost, padding: '0 7px' }}>✕</button>
         </div>
       </div>
+      <div style={css.bar}>   {/* 대화 관리 줄 — 새 대화 · 지난 대화 · 내 키 */}
+        <button style={css.ghost} disabled={!!busy || !msgs.some(m => m.role === 'user')} onClick={newChat} title="지금 대화는 「지난 대화」로 넘기고 빈 대화로 — 앞 대화가 다음 질문에 안 실려요">＋ 새 대화</button>
+        {past.length > 0 && <button style={css.ghost} disabled={!!busy} aria-expanded={pastOpen} onClick={() => setPastOpen(o => !o)} title="지난 대화를 골라 다시 열어요(지금 대화는 목록으로)">지난 대화 {past.length} ▾</button>}
+        <button style={{ ...css.ghost, marginLeft: 'auto', ...(myKey ? { color: '#0f766e', borderColor: '#0f766e' } : null) }} aria-expanded={keyOpen} onClick={() => setKeyOpen(o => !o)}
+          title={myKey ? '내 KAIROS 키로 부르는 중 — 바꾸거나 지우기' : '내 KAIROS 키 넣기(안 넣으면 서버 PC 키)'}>🔑 {myKey ? '내 키' : '서버 키'}</button>
+      </div>
+      {pastOpen && <div data-testid="past-list" style={css.drop}>
+        {past.map((c, j) => <button key={c.at + ':' + j} style={css.row} onClick={() => openPast(j)} title={c.title}>
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title || '(제목 없음)'}</span>
+          <span style={css.meta}>{new Date(c.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · {c.messages.filter(m => m.role === 'user').length}문</span></button>)}
+      </div>}
+      {keyOpen && <div data-testid="key-box" style={{ ...css.drop, padding: 10, gap: 6 }}>
+        <span style={css.meta}>내 KAIROS API 키 — 이 브라우저에만 저장되고, 물을 때만 서버로 같이 가요(서버는 남기지 않아요). 비우면 서버 PC 키를 써요.</span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input type="password" autoComplete="off" placeholder={myKey ? '새 키로 바꾸기' : '키 붙여넣기'} value={keyDraft} onChange={e => setKeyDraft(e.target.value)}
+            onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && KEY_RE.test(keyDraft.trim())) saveKey(keyDraft) }} style={{ ...css.input, minHeight: 0, padding: '4px 8px', flex: 1 }} />
+          <button style={css.pin} disabled={!KEY_RE.test(keyDraft.trim())} onClick={() => saveKey(keyDraft)}>저장</button>
+          {myKey && <button style={css.ghost} onClick={() => saveKey('')}>지우기</button>}
+        </div>
+      </div>}
       <div ref={box} style={css.msgs}>
         {loaded && !msgs.length && <div style={{ ...css.meta, fontSize: 12.5, lineHeight: 1.6 }}>
           무엇이든 물어보세요. 남길 답은 「칠판에 붙이기」나 끌어다 놓기로 메모가 됩니다.<br />칠판에서 메모나 글을 고른 채 물으면 그 내용을 같이 보냅니다.</div>}
@@ -177,7 +216,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request }) {   // req
                 <button data-testid="redo-menu" style={css.link} disabled={!!busy} aria-expanded={redoAt === i} onClick={() => setRedoAt(r => (r === i ? null : i))} title="앱이 짐작한 종류가 틀렸으면 다른 종류로 다시 물어 이 답을 바꿔요">다시 ▾</button>
               </div>
               {redoAt === i && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, margin: '2px 0 6px' }}>
-                {Object.entries(KINDS).filter(([k]) => k !== (m.kind || 'chat')).map(([k, [label, look, again, tip]]) =>
+                {REDO_KINDS.filter(k => k !== (m.kind || 'chat')).map(k => [k, KINDS[k]]).map(([k, [label, look, again, tip]]) =>
                   <button key={k} aria-label={again} style={{ ...css.kind, ...look, border: 0, cursor: 'pointer' }} disabled={!!busy} onClick={() => { setRedoAt(null); redoAs(i, k) }} title={tip}>{label}</button>)}
               </div>}
               <Answer text={m.content} />

@@ -1,5 +1,5 @@
 // 우하 「미니맵」 카드 — 데스크톱 `_MinimapView`·`_build_minimap_panel`: 문서 전체를 작게(바뀌면 0.15초 몰아서 한 번 다시 그림), 지금 보는 범위 = 네모(즉시 따라감),
-// 누르거나 끌면 그 자리가 화면 가운데로. 제목 줄 = 미니맵 · − · % · ＋(% 누르면 전체 보기 — 2026-10-18 사용자 선택, 「전체」·1:1 버튼은 뺌. 100%는 휠로).
+// 누르거나 끌면 그 자리가 화면 가운데로. 제목 줄 = 미니맵 · − · % · ＋(% 누르면 100% — 2026-10-20 사용자: 다 보기는 Z가 맡아 겹쳤고 100%로 돌아갈 길이 없었음. 옛 10-18 = % 누르면 다 보기).
 // 보는 범위 네모 = 데스크톱과 같은 고정 시안 #22d3ee 테두리만. 데스크톱은 실제 그림을 축소하지만, 웹은 9천 개 도면에서도 가볍게 도형 윤곽만 캔버스에 그린다(보드는 바탕색 면).
 import { useEffect, useRef } from 'react'
 import { FoldBtn, useFold } from './fold.jsx'
@@ -37,8 +37,8 @@ function draw(ctx, items, f, dark) {
   }
 }
 
-// items = 보이는 도형(숨긴 레이어 뺌), cam·size = 큰 화면, setCam, onFit = 전체 보기
-export function Minimap({ items, cam, size, setCam, onFit, dark }) {
+// items = 보이는 도형(숨긴 레이어 뺌), cam·size = 큰 화면, setCam
+export function Minimap({ items, cam, size, setCam, dark }) {
   const [folded, toggleFold] = useFold('minimap')
   const cv = useRef(null), fitRef = useRef(null)
   useEffect(() => {   // 내용이 바뀌면 0.15초 몰아서 한 번(데스크톱 `_REBUILD_DEBOUNCE_MS`)
@@ -59,7 +59,7 @@ export function Minimap({ items, cam, size, setCam, onFit, dark }) {
     <div style={{ display: 'flex', alignItems: 'center', marginBottom: folded ? 0 : 4 }}>
       <span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>미니맵</span>
       <button title="축소" onClick={() => zoomBy(1 / ZOOM_STEP)} style={hb}>−</button>
-      <button title="다 보기 — 칠판 전체가 보이게(Z)" onClick={onFit} style={{ ...hb, minWidth: 38 }}>{Math.round(cam.z * 100)}%</button>
+      <button title="100%로 — 화면 가운데 기준(Ctrl+0) · 다 보기는 Z" onClick={() => zoomBy(1 / cam.z)} style={{ ...hb, minWidth: 38 }}>{Math.round(cam.z * 100)}%</button>
       <button title="확대" onClick={() => zoomBy(ZOOM_STEP)} style={hb}>＋</button><FoldBtn folded={folded} onClick={toggleFold} />
     </div>
     <div style={{ position: 'relative', width: W, height: H, borderRadius: 4, overflow: 'hidden', background: 'var(--mb-board, transparent)', outline: `1px solid ${C.line}`, cursor: 'pointer' }}
