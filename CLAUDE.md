@@ -109,7 +109,7 @@ easycad/
 │   ├── board_find.py       웹 칠판 「뜻으로 찾기」 — 칠판 글 → KAIROS 임베딩(qwen3.7) 점수·낱말 가산, 뜻 숫자는 `<이름>.emb.json`(§8 항목61 ③-2, 서버 `/api/find`·대화 「칠판에서」)
 │   ├── kr_tools.py         웹 칠판 공공 데이터 = KAIROS MCP 묶음 7개(날씨·달력·법령·KOSIS/한국은행·특보·대기질·국어 규범, 우리 키로 34개 가능) — 낱말로 묶음 고르고 gpt-6-luna가 여러 번 주고받기(찾기 → 받기, 2026-10-21). 날씨는 10개 도시만 — 모르는 도시는 서울로 오니 버림
 │   ├── route.py            웹 칠판 대화창 길 고르기 — 판단 모델 `jev-latest` + 손질 둘 + 낱말 규칙(`board_chat.guess_kind`) 바닥, 정답 있는 25문항 `CASES`(실사용에서 틀린 질문을 더함)·주간 자가 시험(`self_check`, 서버가 `route_check.json`), 시험은 `EASYCAD_ROUTE=rules`
-│   ├── board_chat.py       웹 칠판 KAIROS 대화 — 앞 대화 + 칠판에서 고른 글 → messages·모델 목록(§8 항목61 ⓒ, `web/server.py`가 부름, Qt 비의존) + 웹 검색(`sonar-reasoning-pro` — 10-20 실측·쓰인 [n] 출처, 길 고르기는 `route.py`)
+│   ├── board_chat.py       웹 칠판 KAIROS 대화 — 앞 대화 + 칠판에서 고른 글 → messages·모델 목록(§8 항목61 ⓒ, `web/server.py`가 부름, Qt 비의존) + 웹 검색(KAIROS Exa `/exa/answer/` — 10-21 비교로 sonar에서 바꿈, 안 되면 sonar, 「내일」→ 날짜·이어 묻기는 혼자 통하는 문장으로, 쓰인 [n] 출처, 길 고르기는 `route.py`)
 │   └── photo_to_ops.py     사진→도면 프롬프트·구역 동시 생성 generate_ops_tiled(앱)·부분 다시 generate_ops_region(앱)·수정 루프 generate_ops(도구) (§8 항목28, Qt 비의존)
 ├── fileio/
 │   ├── pdf_export.py       PDF 출력(A4~A0, 전체/선택영역)

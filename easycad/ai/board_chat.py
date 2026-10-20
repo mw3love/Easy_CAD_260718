@@ -19,11 +19,16 @@ SYSTEM = """너는 사용자가 하루 종일 옆에 띄워 두는 「웹 칠판
 
 # 웹 검색(§8 항목61 ② 담는 법, 2026-10-19) — 입구는 대화창 하나, 종류는 앱이 짐작(`guess_kind`)하고 답 위에 보여 한 번에 바꾸게.
 # 검색 답 = 요약 메모 + 본문에 실제로 쓰인 번호([1]…)의 출처만 → 칠판에서 웹 카드·번호 화살표로 이어 놓는다(web Editor `pinCard`).
-SEARCH_MODEL = "sonar-reasoning-pro"   # KAIROS 웹 검색(답 + `citations`·`search_results`). 2026-10-20 검색 5종 비교(history): sonar-pro(옛 기본, 6초)는
-#   「KBS 수신료 최근 상황」에 통합징수 복귀를 빠뜨려 옛 상황을 답함 — reasoning-pro는 맞게, 8~40초·한 번 약 $0.001~0.003(sonar-pro보다 쌈). 사용자 선택
-SEARCH_SYSTEM = """너는 웹 검색 결과로 답하는 도우미다. 한국어로 답한다.
+SEARCH_MODEL = "exa-answer"   # KAIROS `/exa/answer/`(검색 + 출처 번호 단 답, Exa 그대로 중계). 2026-10-21 정답 있는 질문 5개 × 2번 비교(history):
+#   Exa 8/10·2.5초·5크레딧 고정 = sonar-reasoning-pro 8/10·6.1초·약 7, Claude 검색 9/10이지만 약 57크레딧. 사용자 선택(보안은 상관없음 — 회사가 권장한 KAIROS)
+SEARCH_FALLBACK = "sonar-reasoning-pro"   # Exa가 안 될 때(오류·크레딧) — 옛 기본(chat/completions + `citations`·`search_results`)
+REWRITE_MODEL = "gpt-6-luna"              # 이어 묻는 말 → 혼자 통하는 검색 문장(Exa는 앞 대화를 못 봄) — 빠르고 싼 모델
+SEARCH_SYSTEM = """너는 웹 검색 결과로 답하는 도우미다. 한국어 존댓말(~요·~습니다)로 답한다.
 - 결론을 첫 문장에 쓰고, 짧은 목록(- )으로 정리한다. 강조는 **굵게**만.
 - 문장 끝에 근거 출처 번호를 [1]처럼 붙인다. 출처 목록은 따로 쓰지 않는다(앱이 붙인다)."""
+# 「내일 전주 날씨」 — 오늘 날짜를 알려 줘도 검색 답이 어제 기사의 「내일」(= 오늘)을 옮겼음(2026-10-21 5종 모두). 보내기 전에 날짜로 바꿔 넣는다
+_REL_DAYS = {"그저께": -2, "그제": -2, "어제": -1, "오늘": 0, "내일": 1, "모레": 2, "글피": 3}
+_REL_RE = re.compile(r"(그저께|그제|어제|오늘|내일|모레|글피)(?!\s*\()")
 _SEARCH_WORDS = re.compile(r"검색|찾아|최신|최근|요즘|오늘|어제|이번\s*(주|달)|올해|뉴스|기사|출처|링크|사이트|홈페이지|동향|현황|시세|가격|환율|날씨|발표했|출시|일정|언제\s*(부터|까지)")
 # 칠판에서 찾아 답하기(§8 항목61 ③-2 뜻으로 찾기) — 「지난번 송신소 점검 뭐였지?」 → 칠판 글(`board_find`)만 근거, [칠판 n]으로 출처
 BOARD_SYSTEM = """너는 사용자의 「웹 칠판」에 쌓인 메모·글을 찾아 답하는 도우미다. 한국어로 답한다.
@@ -113,6 +118,31 @@ def cited_board(content: str, refs: list) -> list:
     return [{"n": n, "uid": refs[n - 1]["uid"], "kind": refs[n - 1].get("kind", ""), "text": refs[n - 1].get("text", "")[:200]} for n in used]
 
 
+def _day(t: float) -> str:
+    lt = time.localtime(t)
+    return "%d년 %d월 %d일(%s)" % (lt.tm_year, lt.tm_mon, lt.tm_mday, "월화수목금토일"[lt.tm_wday])
+
+
+def absolute_dates(text: str, now: float | None = None) -> str:
+    """「내일 전주 날씨」 → 「내일(2026년 10월 22일(목)) 전주 날씨」 — 낱말은 두고 날짜를 덧붙인다(이미 괄호가 있으면 그대로)."""
+    now = time.time() if now is None else now
+    return _REL_RE.sub(lambda m: f"{m.group(1)}({_day(now + _REL_DAYS[m.group(1)] * 86400)})", text or "")
+
+
+def exa_answer(api_key: str, query: str, system: str, *, base_url: str = gw.BASE_URL, http=None, timeout: float = 120.0) -> tuple:
+    """KAIROS `/exa/answer/` → (답, `cited_sources`가 읽는 꼴 {"citations": [주소], "search_results": [{url, title, date}]}).
+    스트리밍 없음·한 번에. Exa 오류(400 등)·크레딧 없음(402)은 RuntimeError."""
+    import httpx
+    http = http or httpx
+    r = http.post(f"{base_url}/exa/answer/", headers={"Authorization": f"Bearer {api_key}"}, json={"query": query, "systemPrompt": system}, timeout=timeout)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Exa HTTP {r.status_code}: {r.text[:200]}")
+    d = r.json()
+    cites = [c for c in d.get("citations") or [] if c.get("url")]
+    return str(d.get("answer") or ""), {"citations": [c["url"] for c in cites],
+                                        "search_results": [{"url": c["url"], "title": c.get("title") or "", "date": (c.get("publishedDate") or "")[:10]} for c in cites]}
+
+
 def build_messages(history: list, context: str = "", system: str = SYSTEM) -> list:
     """대화창 기록 [{"role": "user"|"assistant", "content", "context"?}] → 게이트웨이에 보낼 messages.
     사용자 말에 딸린 `context`(그때 칠판에서 고른 글)는 그 말 앞에 붙인다. `context` 인자는 마지막 말에 더 붙일 글."""
@@ -129,9 +159,9 @@ def build_messages(history: list, context: str = "", system: str = SYSTEM) -> li
 
 
 def chat(api_key: str, history: list, *, model: str, context: str = "", kind: str = "", board_refs=None, base_url: str = gw.BASE_URL,
-         timeout: float = 180.0, client=None, data: str = "") -> dict:
-    """한 차례 답 → {"content", "model", "elapsed", "kind", "sources"?, "refs"?}. `client`는 시험용(가짜 클라이언트).
-    `kind` = "search"·"chat"·"board"(대화창에서 바꿔 다시 물을 때), 비면 마지막 질문으로 짐작. 검색은 모델을 `SEARCH_MODEL`로 바꾼다.
+         timeout: float = 180.0, client=None, data: str = "", http=None) -> dict:
+    """한 차례 답 → {"content", "model", "elapsed", "kind", "sources"?, "refs"?}. `client`·`http`는 시험용(가짜 클라이언트·가짜 Exa).
+    `kind` = "search"·"chat"·"board"(대화창에서 바꿔 다시 물을 때), 비면 마지막 질문으로 짐작. 검색은 Exa(`SEARCH_MODEL`), 안 되면 `SEARCH_FALLBACK`.
     "board"는 서버가 칠판에서 찾은 글(`board_refs` — `board_find.find` 결과)을 근거로 붙여 묻고, 답에 쓰인 [칠판 n]을 `refs`로 돌려준다."""
     last = next((m for m in reversed(history) if m.get("role") == "user"), {})
     kind = kind if kind in ("search", "chat", "board") else guess_kind(str(last.get("content", "")), bool(context or last.get("context")))
@@ -142,9 +172,33 @@ def chat(api_key: str, history: list, *, model: str, context: str = "", kind: st
     messages = build_messages(history, context, SEARCH_SYSTEM if search else BOARD_SYSTEM if board else SYSTEM)
     if data:   # 공공 데이터 도구 결과(`kr_tools` — 기상청·천문연·법령·통계 등, 2026-10-20) — 숫자는 이것만, 출처 번호는 서버가 단 순서([1] 기상청 …)
         messages[-1] = {"role": "user", "content": f"[공공 데이터 — 숫자·날짜는 여기 것만 쓰고, 근거 문장 끝에 자료 머리의 번호를 [1]처럼. 출처 목록은 따로 쓰지 않는다(앱이 붙인다)]\n{data[:12000]}\n\n{messages[-1]['content']}"}
-    client = client or gw._client(api_key, base_url, timeout=timeout)
-    use = SEARCH_MODEL if search else model
     t0 = time.time()
+    if search:   # 오늘 날짜 + 「내일」→ 날짜(검색 답이 어제 기사의 「내일」을 옮기지 않게)
+        messages[0] = {"role": "system", "content": f"{SEARCH_SYSTEM}\n- 오늘은 {_day(time.time())}."}
+        messages[-1] = {"role": "user", "content": absolute_dates(messages[-1]["content"])}
+        # Exa는 질문 한 줄로만 검색함 — 앞 대화(최근 4차례)는 지시문에 참고로, 이어 묻는 말은 혼자 통하는 검색 문장으로 바꿔서
+        # (「그럼 금액은 얼마야?」를 그대로 보냈더니 「얼마예요」 뜻풀이를 찾아 답했음, 2026-10-21 실측). 칠판에서 고른 글은 이미 질문에 붙어 있음
+        prev = "\n".join(f"{'나' if m['role'] == 'user' else 'AI'}: {m['content'][:500]}" for m in messages[1:-1][-4:])
+        query = messages[-1]["content"]
+        if prev:
+            try:
+                client = client or gw._client(api_key, base_url, timeout=timeout)
+                q = client.chat.completions.create(model=REWRITE_MODEL, max_tokens=200, messages=[
+                    {"role": "system", "content": "앞 대화를 보고 마지막 질문을 혼자서도 뜻이 통하는 한국어 검색 질문 한 문장으로 바꿔라. 괄호 속 날짜는 그대로 둔다. 그 문장만 쓴다."},
+                    {"role": "user", "content": f"[앞 대화]\n{prev}\n\n[마지막 질문]\n{query}"}]).choices[0].message.content or ""
+                query = q.strip().strip('"「」') or query
+            except Exception:   # 못 바꾸면 그대로
+                pass
+        try:
+            content, raw = exa_answer(api_key, query[:4000], messages[0]["content"] + (f"\n\n[앞 대화 — 참고만]\n{prev}" if prev else ""),
+                                      base_url=base_url, http=http, timeout=timeout)
+            text, sources = renumber_sources(content, cited_sources(content, raw))
+            return {"content": text, "model": SEARCH_MODEL, "elapsed": round(time.time() - t0, 1), "kind": kind, "sources": sources}
+        except Exception as e:   # Exa 오류·크레딧 — 옛 검색 모델로(대화창엔 답 모델 이름이 바뀌어 보임)
+            import sys
+            sys.stderr.write("[Exa 실패 → %s] %s\n" % (SEARCH_FALLBACK, e))
+    client = client or gw._client(api_key, base_url, timeout=timeout)
+    use = SEARCH_FALLBACK if search else model
     resp = client.chat.completions.create(model=use, max_tokens=gw.DEFAULT_MAX_TOKENS, messages=messages)
     content = resp.choices[0].message.content or ""
     out = {"content": content, "model": use, "elapsed": round(time.time() - t0, 1), "kind": kind}

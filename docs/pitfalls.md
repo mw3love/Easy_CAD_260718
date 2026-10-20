@@ -1675,3 +1675,5 @@
 - KAIROS 받아쓰기는 본문 25MB·120분까지, webm(브라우저 녹음 기본 형식)은 길이를 못 읽어 400 — 올리기 전에 바꿀 것(`meeting.prepare`). 실시간 받아쓰기 소켓의 끝 신호는 빈 글 `""`(빈 바이너리면 408).
 - KAIROS MCP `kr-macro`(KOSIS)는 표 구조(`get_statistics_meta`)의 분류 목록을 잘라서 줘(260개 중 앞부분), 모델이 지역 코드를 못 찾고 `objL: ["ALL"]`로 받으면 전국·서울 행만 온다 — 시도 코드(전북 52·강원 51, 옛 45·42는 오류)를 지시문에 줄 것. 표만 찾고 숫자 없이 멈추는 일도 있어 「찾기만 했으면 한 번 재촉」(2026-10-21).
 - KAIROS MCP 공공 API는 가끔 `isError` + 「This operation was aborted」(그쪽 시간 초과, 에어코리아 3번 중 1번) — 한 번 다시 부르면 대개 된다.
+- KAIROS에서 GPT·Claude 웹 검색은 `chat/completions`로는 400(도구가 function만)이지만, 각 회사 전용 주소(`/claude/v1/messages` + `web_search_20250305`, `/responses/` + `web_search`)로는 된다 — 「안 된다」 결론 전에 전용 주소까지 볼 것(2026-10-21).
+- 검색 모델에 오늘 날짜를 알려 줘도 「내일 날씨」에 어제 기사의 「내일」(= 오늘)을 답한다(sonar·Exa·Gemini, 2026-10-21) — 질문의 「내일」을 날짜로 바꿔 보낼 것(`board_chat.absolute_dates`). Exa `/answer`는 앞 대화를 못 보니 이어 묻는 말은 혼자 통하는 문장으로 바꿔 보낼 것.

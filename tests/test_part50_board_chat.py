@@ -4,8 +4,10 @@ KAIROS는 부르지 않는다(가짜 클라이언트·가짜 `board_chat.chat`) 
 """
 import json
 import os
+import re
 import sys
 import threading
+import time
 import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -148,19 +150,56 @@ def test_renumber_sources_makes_numbers_sequential():
 
 
 def test_chat_search_switches_model_and_returns_sources():
-    seen = {}
+    # 검색 = Exa(`/exa/answer/`, 2026-10-21) — 질문 한 줄 + 지시문(오늘 날짜·앞 대화), 출처는 Exa `citations`
+    seen, calls = {}, []
+
+    class Http:
+        def post(self, url, headers, json, timeout):
+            seen.update(url=url, **json)
+            return SimpleNamespace(status_code=200, json=lambda: {"answer": "요약이에요.[2]", "citations": [
+                {"url": "https://x.kr/a", "title": "A"}, {"url": "https://y.kr/b", "title": "B", "publishedDate": "2026-10-20T01:00:00Z"}]})
+
+    def create(**kw):   # 이어 묻는 말 바꾸기(REWRITE_MODEL)는 「전주 」를 앞에 붙여 흉내
+        calls.append(kw)
+        last = kw["messages"][-1]["content"]
+        text = "전주 " + last.split("[마지막 질문]\n", 1)[1] if kw["model"] == board_chat.REWRITE_MODEL else "대화 답"
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    hist = [{"role": "user", "content": "전주 날씨"}, {"role": "assistant", "content": "어느 날이요?"}, {"role": "user", "content": "내일 날씨 찾아줘"}]
+    out = board_chat.chat("k", hist, model="m-1", client=fake, http=Http(), base_url="https://g")
+    assert seen["url"] == "https://g/exa/answer/" and out["kind"] == "search" and out["model"] == board_chat.SEARCH_MODEL
+    assert [c["model"] for c in calls] == [board_chat.REWRITE_MODEL]   # 앞 대화가 있으면 혼자 통하는 검색 문장으로(Exa는 앞 대화를 못 봄)
+    assert re.match(r"전주 내일\(\d{4}년 \d+월 \d+일\(.\)\) 날씨 찾아줘", seen["query"])   # 「내일」에 날짜를 붙임
+    assert "출처 번호" in seen["systemPrompt"] and "오늘은 " in seen["systemPrompt"] and "나: 전주 날씨" in seen["systemPrompt"]
+    assert out["sources"] == [{"n": 1, "url": "https://y.kr/b", "title": "B", "date": "2026-10-20"}] and out["content"] == "요약이에요.[1]"   # 번호는 1부터 다시
+    out = board_chat.chat("k", hist, model="m-1", kind="chat", client=fake, http=Http())   # 대화창에서 바꿔 다시
+    assert calls[-1]["model"] == "m-1" and out["kind"] == "chat" and "sources" not in out
+    calls.clear()
+    board_chat.chat("k", hist[-1:], model="m-1", kind="search", client=fake, http=Http())
+    assert not calls and seen["query"].startswith("내일(")   # 처음 묻는 말은 바꾸지 않음
+
+
+def test_search_falls_back_when_exa_fails():
+    class Down:
+        def post(self, url, headers, json, timeout):
+            return SimpleNamespace(status_code=402, text="no credits")
 
     class Resp(SimpleNamespace):
         def model_dump(self):
-            return {"citations": ["https://x.kr/a", "https://y.kr/b"], "search_results": [{"url": "https://y.kr/b", "title": "B"}]}
+            return {"citations": ["https://x.kr/a"], "search_results": [{"url": "https://x.kr/a", "title": "A"}]}
+    seen = {}
 
     def create(**kw):
         seen.update(kw)
-        return Resp(choices=[SimpleNamespace(message=SimpleNamespace(content="요약이에요.[2]"))])
+        return Resp(choices=[SimpleNamespace(message=SimpleNamespace(content="옛 검색 답.[1]"))])
     fake = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    out = board_chat.chat("k", [{"role": "user", "content": "오늘 뉴스 찾아줘"}], model="m-1", client=fake)
-    assert seen["model"] == board_chat.SEARCH_MODEL and out["kind"] == "search" and out["model"] == board_chat.SEARCH_MODEL
-    assert "출처 번호" in seen["messages"][0]["content"]
-    assert out["sources"] == [{"n": 1, "url": "https://y.kr/b", "title": "B", "date": ""}] and out["content"] == "요약이에요.[1]"   # 번호는 1부터 다시
-    out = board_chat.chat("k", [{"role": "user", "content": "오늘 뉴스 찾아줘"}], model="m-1", kind="chat", client=fake)   # 대화창에서 바꿔 다시
-    assert seen["model"] == "m-1" and out["kind"] == "chat" and "sources" not in out
+    out = board_chat.chat("k", [{"role": "user", "content": "오늘 뉴스 찾아줘"}], model="m-1", client=fake, http=Down())
+    assert seen["model"] == board_chat.SEARCH_FALLBACK and out["model"] == board_chat.SEARCH_FALLBACK and out["sources"][0]["title"] == "A"
+    assert seen["messages"][-1]["content"].startswith("오늘(") and "오늘은 " in seen["messages"][0]["content"]
+
+
+def test_absolute_dates():
+    now = time.mktime((2026, 10, 21, 1, 0, 0, 0, 0, -1))
+    assert board_chat.absolute_dates("내일 전주 날씨, 모레는?", now) == "내일(2026년 10월 22일(목)) 전주 날씨, 모레(2026년 10월 23일(금))는?"
+    assert board_chat.absolute_dates("어제 뉴스", now) == "어제(2026년 10월 20일(화)) 뉴스"
+    assert board_chat.absolute_dates("내일(10월 22일) 날씨", now) == "내일(10월 22일) 날씨"   # 이미 날짜가 있으면 그대로
