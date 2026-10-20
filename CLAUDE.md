@@ -133,7 +133,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~62_*.py      테마별 회귀 스모크 1462종(2026-10-19 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~64_*.py      테마별 회귀 스모크 1494종(2026-10-21 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + TipTap 3.32.0(글 편집, 버전 고정). **2026-10-18 5단계 갈아탐: tldraw 뺌**(옛 tldraw 화면
 │                          src/main.jsx·shapes.jsx·cad.jsx·chat.jsx·boardStore.js·ecad.js·ecadExport.js는 지움 — git에 있음). 남은 공용: route.js(길 찾기 = 데스크톱
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecadFormat.js(순수 변환, `npm test`)·symbols.json(`tools/export_web_symbols.py`가
@@ -144,21 +144,21 @@ web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + Reac
 │                          arrowkind.js 종류 바꾸기·xform.js 좌표 + 4단계 props.jsx 우상 속성 카드·palette.jsx 좌상 도형·심볼·layers.jsx 좌하 레이어·minimap.jsx 우하 미니맵·
 │                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례(표 모양 `legend`, 줄 자동)·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿)·formatbar.jsx 드래그 꾸미기 막대·marks.js 기울임·밑줄·취소선·fold.jsx 카드 접기(▾/▸) + ⓕ sync.js 부분 저장·받아 오기·도형 단위 되돌리기·viewer.jsx 게시 화면 + ⓔ htmlshare.js HTML 한 파일) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
 │                          데스크톱 대조 시험 `tools/export_route_cases.py`·`export_connect_cases.py`·`export_arrow_cases.py` → `web/test/fixtures/`(규칙 고치면 다시 돌림)
-│                          + tidy.js 정리정돈 자리 계산(순수) + 다잡기(2026-10-19) keys.js 글쇠 규칙표·help.jsx 도움말(F1) · **화면 자동 시험** `web/e2e/`(Playwright 1.63.0, 깔린 크롬) `npm run e2e` — 매일 쓰는 흐름 42개(flow1~20) · find.jsx 찾기 칸(Ctrl+F)
+│                          + tidy.js 정리정돈 자리 계산(순수) + 다잡기(2026-10-19) keys.js 글쇠 규칙표·help.jsx 도움말(F1) · **화면 자동 시험** `web/e2e/`(Playwright 1.63.0, 깔린 크롬) `npm run e2e` — 매일 쓰는 흐름 60개(flow1~21) · find.jsx 찾기 칸(Ctrl+F) · mic.js 대화창 🎤 실시간 받아쓰기(서버 `/api/stt-token` 일회용 표 → KAIROS 소켓) · kairosKey.js 「🔑 내 키」(머리말 `X-Kairos-Key`)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
 │                          회귀 게이트), screenshot.py(레이아웃 자체검증),
 │                          ai_probe.py(게이트웨이 실측), sketch_ops.py·sketch_ops_probe.py
 │                          (사진→도면 ops 형식 변환·게이트웨이 실측, 2026-10-01),
-│                          pdf_vector_probe.py(CAD 출력 PDF 벡터→.ecad 실험), collect_web_fixture.py(웹 화면 시험이 만든 칠판 → `tests/fixtures/web_made.ecad` 왕복 시험 재료)
+│                          pdf_vector_probe.py(CAD 출력 PDF 벡터→.ecad 실험), collect_web_fixture.py(웹 화면 시험이 만든 칠판 → `tests/fixtures/web_made.ecad` 왕복 시험 재료), kairos_docs_fetch.py(KAIROS 개발자 문서 다시 받아 `docs/reference/kairos/`와 비교 — 문서가 자주 바뀜)
 docs/
 ├── EasyCAD_계획.md          로드맵·§8 다음 순서·큰 설계 필요 항목(완료 항목은 번호+한 줄 요약만)
 ├── EasyCAD_계획_완료기록.md  계획서에서 옮긴 완료 항목 본문 원문(2026-09-25 분할)
 ├── history/2026-07.md 등    월별 상세 진행 기록(완료 사항의 경위·근거)
 ├── pitfalls.md              ⚠ 함정 요약(재발 방지 체크용)
 ├── perf_plan_500_1000.md    500~1000개 부하 감소 계획·최종 수치·남은 항목(2-D)
-└── reference/                참고 이미지
+└── reference/                참고 이미지 · `kairos/` KAIROS API 문서 스냅숏(2026-10-20, `tools/kairos_docs_fetch.py`로 갱신)
 symbol_library/
 └── symbol_library.json     "내 심볼" 팔레트 데이터(폴더·폴더 색·즐겨찾기·썸네일 포함) — 2026-08-20
                              까지 OS AppData에 있던 것을 리포로 이관해 git으로 PC 간 동기화
