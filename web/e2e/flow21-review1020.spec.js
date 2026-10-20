@@ -202,3 +202,20 @@ test('↩ 이어 묻기 = 그 답까지만 앞 대화로 + 그 그림을 고칠 
   expect(log).not.toContain('data:image')                                   // 기록엔 그림 데이터 없음(장수만)
   expect(JSON.parse(log).messages.find(m => m.content === '제목 넣어 줘').imgCount).toBe(1)
 })
+
+test('그림 후보에 마우스를 올려 두면 대화창 왼쪽에 크게, 빼면 사라짐', async ({ page }) => {
+  const name = boardName('peek')
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAFElEQVR4nGP4z8DAwMDAwMDAwAAAHwAB/2Y2E7QAAAAASUVORK5CYII=', 'base64')
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
+  await page.route('**/api/chat', r => r.fulfill({ json: { kind: 'image', content: '그림 후보', model: 'img-m', elapsed: 1, images: [{ url: `/api/img/${name}/1_aaaaaa.png` }] } }))
+  await page.route('**/api/img/**', r => r.fulfill({ body: PNG, contentType: 'image/png' }))
+  await openBoard(page, name, { chat: true })
+  await ask(page, '송신탑 그려줘')
+  await page.getByTestId('image-pick').first().hover()
+  const peek = page.getByTestId('image-peek')
+  await expect(peek).toBeVisible()
+  const pb = await peek.boundingBox(), cb = await page.getByRole('complementary', { name: 'KAIROS 대화' }).boundingBox()
+  expect(pb.width).toBeGreaterThan(500); expect(pb.x + pb.width).toBeLessThanOrEqual(cb.x)   // 크게, 대화창 왼쪽
+  await page.mouse.move(10, 500)
+  await expect(peek).toHaveCount(0)
+})

@@ -103,6 +103,20 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   const sel = selKey && selKey === skipSel ? [] : ed.current?.selTexts() || []   // eslint-disable-line react-hooks/exhaustive-deps
   const selImgs = selKey && selKey === skipSel ? [] : ed.current?.selImages?.() || []   // 고른 것 속 그림(data: 주소)
   const [replyTo, setReplyTo] = useState(null)   // ↩ 이어 물을 답의 at
+  // 그림 후보 크게 보기 — 마우스를 0.25초 올려 두면 대화창 왼쪽에(2026-10-20 사용자: 크게 보려면 칠판에 붙여야 했음). 훑고 지나갈 땐 안 뜸
+  const [peek, setPeek] = useState(null), peekT = useRef(0)
+  const hoverOff = () => { clearTimeout(peekT.current); setPeek(null) }
+  function hoverOn(url, el) {
+    clearTimeout(peekT.current)
+    peekT.current = setTimeout(() => {
+      const r = el.getBoundingClientRect(), panel = el.closest('aside')?.getBoundingClientRect() || r
+      const w = Math.min(960, panel.left - 32), h = Math.min(w * 2 / 3, window.innerHeight - 32)   // 그림은 대개 3:2
+      if (w < 200) return
+      const top = Math.max(16, Math.min(window.innerHeight - h - 16, r.top + r.height / 2 - h / 2))
+      setPeek({ url, box: { left: panel.left - 16 - w, top, width: w, height: h } })
+    }, 250)
+  }
+  useEffect(() => () => clearTimeout(peekT.current), [])
 
   useEffect(() => {
     fetch(LOG_URL, { cache: 'no-store' }).then(r => (r.status === 404 ? { messages: [] } : r.ok ? r.json() : Promise.reject(r)))
@@ -194,6 +208,8 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   const feat = models?.featured || {}
   return (
     <aside style={floating ? { ...css.panel, ...css.float } : css.panel} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
+      {peek && <div data-testid="image-peek" style={{ position: 'fixed', zIndex: 50, pointerEvents: 'none', ...peek.box, borderRadius: 10, overflow: 'hidden', boxShadow: '0 12px 40px rgba(0,0,0,.35)', border: `1px solid ${C.line}`, background: '#fff' }}>
+        <img src={peek.url} alt="" style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }} /></div>}
       <div style={css.head}>
         <b style={{ fontSize: 14 }}>KAIROS</b>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -250,8 +266,9 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
               </div>}
               {m.images?.length > 0 && <div data-testid="answer-images" style={{ marginTop: 6, display: 'grid', gridTemplateColumns: `repeat(${Math.min(2, m.images.length)}, 1fr)`, gap: 6 }}>
                 {m.images.map((g, j) => <button key={g.url} data-testid="image-pick" title="누르면 칠판에 붙여요(끌어 놓으면 그 자리) — 밑에 요청 글이 같이 붙어요"
-                  onClick={async () => { const id = await ed.current?.pinImage(g.url, m.prompt || ''); if (id) update(msgs.map((x, k) => (k === i ? { ...x, picked: [...new Set([...(x.picked || []), j])] } : x))) }}
-                  onDragStart={e => { e.dataTransfer.setData('text/uri-list', location.origin + g.url); e.dataTransfer.setData('text/x-mb-caption', m.prompt || '') }} draggable
+                  onClick={async () => { hoverOff(); const id = await ed.current?.pinImage(g.url, m.prompt || ''); if (id) update(msgs.map((x, k) => (k === i ? { ...x, picked: [...new Set([...(x.picked || []), j])] } : x))) }}
+                  onDragStart={e => { hoverOff(); e.dataTransfer.setData('text/uri-list', location.origin + g.url); e.dataTransfer.setData('text/x-mb-caption', m.prompt || '') }} draggable
+                  onMouseEnter={e => hoverOn(g.url, e.currentTarget)} onMouseLeave={hoverOff}
                   style={{ all: 'unset', cursor: 'pointer', position: 'relative', borderRadius: 8, overflow: 'hidden', border: `2px solid ${m.picked?.includes(j) ? '#da7756' : C.line}` }}>
                   <img src={g.url} alt={`후보 ${j + 1}`} draggable={false} style={{ display: 'block', width: '100%', aspectRatio: '4 / 3', objectFit: 'cover', background: '#fff' }} />
                   {m.picked?.includes(j) && <span style={{ position: 'absolute', right: 4, bottom: 4, ...css.kind, color: '#fff', background: '#da7756' }}>칠판에 붙임 ✓</span>}
