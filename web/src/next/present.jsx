@@ -94,7 +94,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'z') { e.preventDefault(); onUndo(); return }
       if ((e.ctrlKey || e.metaKey) && code === 'Digit0') { e.preventDefault(); setZoom(null); return }   // 원래 배율(브라우저 확대는 그대로)
       if (code === 'KeyF' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); yt.current.f(); return }   // 유튜브 크게 보기 ⇄ 원래(2026-10-20 사용자: F 손버릇 — 유튜브 자체 F는 겹친 전체 화면이 돼 발표가 깨졌음)
-      if (k === ' ' && yt.current.big()) { e.preventDefault(); yt.current.space(); return }   // 크게 보는 중 Space = 재생/일시정지(키보드를 발표가 가지므로 유튜브 대신)
+      if (k === ' ' && yt.current.space()) { e.preventDefault(); return }   // 영상 있는 장의 Space = 재생/일시정지(키보드를 발표가 가지므로 유튜브 대신), 없으면 아래 다음 장
       if (k === 'Escape') { e.preventDefault(); if (menuRef.current) setMenu(null); else if (tool) setTool(null); else onClose(); return }
       if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(k)) { e.preventDefault(); go(1) }
       else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(k)) { e.preventDefault(); go(-1) }
@@ -121,7 +121,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     window.addEventListener('blur', back); return () => window.removeEventListener('blur', back)
   }, [])
   const [webOn, setWebOn] = useState(null)   // 조작 중인 웹 카드(장을 넘기면 풀림)
-  useEffect(() => { setZoom(null); setWebOn(null) }, [i])
+  useEffect(() => { setZoom(null); setWebOn(null); const t = setTimeout(() => yt.current.hint?.(), 600); return () => clearTimeout(t) }, [i])   // 영상 있는 장에 들어오면 Space 알림(넘김 0.4초 뒤)
   useEffect(() => {   // 휠 = 장 넘기기(파워포인트 손버릇), Ctrl+휠 = 커서 자리 확대 — 2026-10-18 사용자
     const el = root.current; if (!el) return
     const onWheel = e => {
@@ -156,12 +156,15 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     const s = Math.min((W - 32) / w0, (H - BIG_BAND - 16) / h0); setWebOn(fr.getAttribute('data-webid')); setZoom({ s, ox: (W - s * w0) / 2 - s * x0, oy: BIG_BAND + (H - BIG_BAND - 16 - s * h0) / 2 - s * y0, card: fr.getAttribute('data-webid'), right: (W + s * w0) / 2, top: BIG_BAND + (H - BIG_BAND - 16 - s * h0) / 2 })   // right·top = 영상 오른쪽 위 — 「원래 크기로」를 그 바로 위에(세로 화면이면 영상이 가운데라 화면 맨 위는 멀었음)   // 영상 몸통을 위 검은 띠(「원래 크기로」 자리) 아래에 꽉 — 둘레 검은 곳 = 눌러 돌아옴
   }
   // 키보드(F·Space) — 키 처리는 effect 안이라 지금 상태를 ref로 넘김
+  // 이 장(화면 안)의 유튜브 칸 — 읽는 순서(위 → 왼쪽)
+  const slideVideos = () => [...(root.current?.querySelectorAll('iframe[data-webid]') || [])].map(f => [f, f.getBoundingClientRect()])
+    .filter(([f, r]) => { const cx = r.x + r.width / 2, cy = r.y + r.height / 2; return /youtube\.com\/embed\//.test(f.src) && cx > 0 && cy > 0 && cx < W && cy < H })
+    .sort((a, b) => a[1].y - b[1].y || a[1].x - b[1].x).map(([f]) => f)
+  const target = () => { const frs = slideVideos(); return frs.find(f => f.getAttribute('data-webid') === (zoom?.card || webOn)) || frs[0] || null }   // 크게 보는 영상 > 방금 누른 영상 > 맨 위·왼쪽
   yt.current = {
-    big: () => !!zoom?.card,
-    f: () => { if (zoom?.card) { setZoom(null); return }
-      const frs = [...(root.current?.querySelectorAll('iframe[data-webid]') || [])].filter(f => { const r = f.getBoundingClientRect(), cx = r.x + r.width / 2, cy = r.y + r.height / 2; return /youtube\.com\/embed\//.test(f.src) && cx > 0 && cy > 0 && cx < W && cy < H })   // 이 장(화면 안)의 영상만
-      const fr = frs.find(f => f.getAttribute('data-webid') === webOn) || (frs.length === 1 ? frs[0] : null); if (fr) bigOn(fr) },   // 방금 누른 영상, 없으면 장에 하나뿐인 영상
-    space: () => { const fr = root.current?.querySelector(`iframe[data-webid="${CSS.escape(zoom.card)}"]`); if (fr) toggleYoutube(fr) },
+    f: () => { if (zoom?.card) { setZoom(null); return } const fr = target(); if (fr) bigOn(fr) },
+    space: () => { const fr = target(); if (!fr) return false; setWebOn(fr.getAttribute('data-webid')); toggleYoutube(fr); return true },   // 영상 있는 장 = 재생/일시정지(2026-10-20 사용자: 넘기기는 →·PageDown·휠), 없으면 false = 다음 장
+    hint: () => { if (slideVideos().length) flash('Space = 영상 재생/정지 · 다음 장은 →') },
   }
   // ── 판서 ──
   const down = e => {
