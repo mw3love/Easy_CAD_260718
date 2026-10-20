@@ -23,7 +23,7 @@ export default defineConfig({
     command: `python server.py --host 127.0.0.1 --port ${PORT} --data .e2e-data`,
     url: `http://127.0.0.1:${PORT}/api/session`,
     reuseExistingServer: false,
-    env: { PYTHONIOENCODING: 'utf-8', MB_PASSWORD: '' },
+    env: { PYTHONIOENCODING: 'utf-8', MB_PASSWORD: '', EASYCAD_ROUTE: 'rules' },   // 길 고르기는 낱말 규칙(판단 모델·주간 자가 시험 안 부름)
     timeout: 30_000,
   },
 })

@@ -16,6 +16,8 @@ os.environ.setdefault("EASYCAD_RECOVERY_DIR", os.path.join(tempfile.gettempdir()
 os.environ.setdefault("EASYCAD_SETTINGS_ORG", "EasyCAD-pytest")
 # [§8 항목56 검토 2026-10-17] 붙여 넣은 그림 자료 보관 폴더도 임시 폴더로(easycad/canvas/ai_control.keep_pasted_images).
 os.environ.setdefault("EASYCAD_AI_SOURCES_DIR", os.path.join(tempfile.gettempdir(), "easycad-pytest-ai-sources"))
+# [2026-10-20] 웹 칠판 길 고르기는 판단 모델(jev)을 부른다 — 시험은 네트워크 없이 낱말 규칙으로(easycad/ai/route.py)
+os.environ.setdefault("EASYCAD_ROUTE", "rules")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

@@ -107,6 +107,7 @@ easycad/
 │   ├── board_image.py      웹 칠판 그림 — 「그려줘」 → KAIROS 그림 후보 2장(gemini-3.1-flash-lite-image, §8 항목61 ③-4, 서버가 `<이름>.img/`에 두고 주소만)
 │   ├── meeting.py          웹 칠판 회의록 — 녹음 → KAIROS 받아쓰기(stt-async-v5, 올리기·기다리기) → 구간 합치기 → 요약 JSON(§8 항목61 ③-3, 서버 `/api/meeting` 뒤 일감)
 │   ├── board_find.py       웹 칠판 「뜻으로 찾기」 — 칠판 글 → KAIROS 임베딩(qwen3.7) 점수·낱말 가산, 뜻 숫자는 `<이름>.emb.json`(§8 항목61 ③-2, 서버 `/api/find`·대화 「칠판에서」)
+│   ├── route.py            웹 칠판 대화창 길 고르기 — 판단 모델 `jev-latest` + 손질 둘 + 낱말 규칙(`board_chat.guess_kind`) 바닥, 정답 있는 24문항 `CASES`·주간 자가 시험(`self_check`, 서버가 `route_check.json`), 시험은 `EASYCAD_ROUTE=rules`
 │   ├── board_chat.py       웹 칠판 KAIROS 대화 — 앞 대화 + 칠판에서 고른 글 → messages·모델 목록(§8 항목61 ⓒ, `web/server.py`가 부름, Qt 비의존) + 웹 검색(`guess_kind`·`sonar-pro`·쓰인 [n] 출처, 10-19)
 │   └── photo_to_ops.py     사진→도면 프롬프트·구역 동시 생성 generate_ops_tiled(앱)·부분 다시 generate_ops_region(앱)·수정 루프 generate_ops(도구) (§8 항목28, Qt 비의존)
 ├── fileio/

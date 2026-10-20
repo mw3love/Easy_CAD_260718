@@ -35,7 +35,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_image, board_report, board_tidy, meeting, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_image, board_report, board_tidy, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 
@@ -111,7 +111,10 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             msgs, ctx = req.get("messages") or [], req.get("context") or ""
             last = next((m for m in reversed(msgs) if isinstance(m, dict) and m.get("role") == "user"), {})
-            kind = req.get("kind") or board_chat.guess_kind(str(last.get("content", "")), bool(ctx or last.get("context")))
+            kind = req.get("kind") or ""
+            if not kind:   # 길 고르기 = 판단 모델 jev + 낱말 규칙 바닥(`easycad/ai/route.py`, 2026-10-20 사용자 선택)
+                kind, how = route.route(key, str(last.get("content", "")), bool(ctx or last.get("context")), has_items=bool(req.get("items")), base_url=gw.resolve_base_url())
+                sys.stderr.write("[길] %s (%s)\n" % (kind, how))
             refs = None
             prev_html = str(req.get("prev_html") or "")
             if kind == "chat" and prev_html and not req.get("kind"):   # 정리 문서 바로 뒤 「더 짧게」 같은 말 = 그 문서 고치기
@@ -676,7 +679,33 @@ def main(argv=None):
         print("web/dist가 없습니다 — 먼저 `cd web && npm run build` (API만 씁니다)")
     print(f"Magic Board 칠판: http://{'localhost' if a.host in ('0.0.0.0', '127.0.0.1') else a.host}:{a.port}  · 저장 폴더: {a.data}")
     print("편집: " + ("공용 비밀번호 필요" if Handler.password else "누구나(비밀번호 없음 — --password 또는 edit_password.txt로 정함)"))
+    threading.Thread(target=_route_check_weekly, args=(a.data,), daemon=True).start()
     _Server((a.host, a.port), Handler).serve_forever()
+
+
+def _route_check_weekly(data_dir: str):
+    """길 고르기 주간 자가 시험(2026-10-20 사용자 선택 — 판단 과목만 매주) — 판단 모델이 규칙보다 못하면 규칙만 쓰게, 결과는 `route_check.json`."""
+    if os.environ.get("EASYCAD_ROUTE") == "rules":
+        return
+    path = os.path.join(data_dir, "route_check.json")
+    while True:
+        try:
+            last = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+        except (OSError, ValueError):
+            last = {}
+        wait = int(last.get("at") or 0) + 7 * 86400 - time.time()
+        if wait > 0:   # 지난 결과가 아직 1주 안 — 그 결과를 따름
+            route.state["ai"] = bool(last.get("use_ai", True))
+            time.sleep(min(wait, 86400))
+            continue
+        key = gw.resolve_api_key()
+        if key:
+            res = route.self_check(key, base_url=gw.resolve_base_url())
+            raw = json.dumps(res, ensure_ascii=False).encode("utf-8")
+            os.makedirs(data_dir, exist_ok=True)
+            write_via_temp(path, lambda tmp: _write(tmp, raw))
+            sys.stderr.write("[길 시험] %s %d/%d · 규칙 %d · 오류 %d → %s\n" % (res["model"], res["ai"], res["of"], res["rules"], res["errors"], "판단 모델" if res["use_ai"] else "규칙만"))
+        time.sleep(86400)
 
 
 if __name__ == "__main__":
