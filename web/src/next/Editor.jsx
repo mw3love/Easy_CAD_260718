@@ -39,6 +39,7 @@ import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalize
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
+import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
 import { TIDY, clearSpot, tidyLayout } from './tidy.js'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
@@ -1440,26 +1441,38 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const m = R.current.model, ents = drawOrder(m.items).filter(([it]) => ids.has(it._id)); if (!ents.length || typeof ClipboardItem === 'undefined') return
     const src = unionBox(ents.map(([it]) => sceneBox(it, textBox))), pad = 8
     const png = buildSvg(ents, { x: src.x - pad, y: src.y - pad, w: src.w + 2 * pad, h: src.h + 2 * pad }, { tight: true, frame: null }, boardMembership(m.items), resolveRoutes(m.items, rectOf)).then(res => pngBlob(res, 192))
-    navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]).catch(() => setStatus('도형은 복사함 — 그림 복사는 브라우저가 막았어요'))
+    const c = clip.current
+    png.then(b => createImageBitmap(b)).then(bm => { c.dims = `${bm.width}x${bm.height}` }).catch(() => {})   // 붙여넣을 때 「이건 칠판이 넣은 그림」 알아보기(브라우저가 PNG를 다시 써도 크기는 같음)
+    navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]).catch(() => { c.noClip = true; setStatus('도형은 복사함 — 그림 복사는 브라우저가 막았어요') })
   }
   function copy() {
     const m = R.current.model, ids = new Set(movingSet(R.current.sel))
-    clip.current = { items: structuredClone(m.items.filter(it => ids.has(it._id))), seq: 0 }
+    clip.current = { items: structuredClone(m.items.filter(it => ids.has(it._id))), seq: 0, fresh: true }   // fresh = 복사한 뒤 다른 창에 안 다녀옴(그동안 Ctrl+V = 칠판 도형)
     imageToClipboard(ids)
     setStatus?.(`${ids.size}개 복사 — 칠판에 붙이면 도형, 한글·PPT에 붙이면 그림`)
   }
-  // 붙여넣기 신호 — 클립보드 글이 주소 하나면 웹 카드(2026-10-18 사용자: 주소 붙여넣기 + 「웹」 버튼), 아니면 칠판 안 붙여넣기
+  // 붙여넣기 신호 — 칠판에서 복사한 것이면 칠판 도형, 아니면 바깥 것: 그림·파일(끌어 놓기와 같게)·주소 = 웹 카드(2026-10-18 사용자)·글(2026-10-21 사용자 — `clipin.js`)
   useEffect(() => {
-    const onPaste = e => {
+    const stale = () => { clip.current.fresh = false }   // 다른 창에 다녀오면 바깥에서 새로 복사했을 수 있음
+    const onPaste = async e => {
       if (readOnly) return
       const ae = document.activeElement
-      if (R.current.editing || /INPUT|TEXTAREA|SELECT/.test(ae?.tagName || '') || ae?.isContentEditable) return   // 글 고치는 중이면 그 칸에
-      const img = [...(e.clipboardData?.items || [])].find(x => x.kind === 'file' && x.type.startsWith('image/'))?.getAsFile()   // 그림 복사 = 이미지로(2026-10-18 사용자: 안 붙었음)
-      if (img) { e.preventDefault(); insertImage(img); return }
-      const url = normalizeUrl(e.clipboardData?.getData('text/plain')); e.preventDefault()
-      if (url) insertWeb(url); else paste()
+      if (R.current.editing || /INPUT|TEXTAREA|SELECT/.test(ae?.tagName || '') || (ae?.isContentEditable && !ae.closest('[data-armed]'))) return   // 글 고치는 중이면 그 칸에(고르기만 한 대기 편집기 = 칠판이 받음)
+      const cd = e.clipboardData, files = [...(cd?.files || [])], text = cd?.getData('text/plain') || '', html = cd?.getData('text/html') || ''
+      e.preventDefault()
+      const c = clip.current, img = files.length === 1 && files[0].type.startsWith('image/') && !text && files[0]
+      if (c.items.length) {   // 칠판 도형 — 칠판은 그림만 넣으니 글이 있으면 바깥 것. 그림뿐이면 복사하고 안 나갔거나 칠판이 넣은 그 그림(크기)일 때
+        let mine = c.noClip ? c.fresh : !text.trim() && (!files.length || img) && c.fresh   // noClip = 그림 넣기가 막힘(클립보드엔 옛것)
+        if (!mine && !c.noClip && img && c.dims) mine = await createImageBitmap(img).then(b => `${b.width}x${b.height}` === c.dims, () => false)
+        if (mine) { paste(); return }
+      }
+      const url = normalizeUrl(text)
+      if (url) { insertWeb(url); return }
+      if (files.length && !text.trim()) { dropFiles(files); return }   // 그림 복사·탐색기에서 복사한 파일(웹 그림 복사는 html에 <img>만 따라옴)
+      if (!pasteOutside(text, html) && files.length) dropFiles(files)   // 엑셀·워드는 글 + 그림이 같이 옴 → 글이 먼저
     }
-    window.addEventListener('paste', onPaste); return () => window.removeEventListener('paste', onPaste)
+    window.addEventListener('paste', onPaste); window.addEventListener('blur', stale)
+    return () => { window.removeEventListener('paste', onPaste); window.removeEventListener('blur', stale) }
   })
   // 웹 카드 넣기 — 서버가 주소를 확인한 뒤(칸 안에 넣어도 되나·제목·대표 그림) 커서 자리(화면 밖이면 가운데)에
   // 그림 파일·클립보드 그림 → 이미지 도형(.ecad image = PNG base64 — 다른 형식도 PNG로 바꿔 넣음, 데스크톱도 그대로 열림). 커서 자리(없으면 화면 가운데), 긴 변 최대 화면의 60%
@@ -1509,9 +1522,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // ── 칠판에 파일 끌어 놓기(2026-10-19) — 그림 = 이미지, 녹음 = 회의록(§8 항목61 ③-3). 그 밖 파일은 알림만(전엔 브라우저가 그 파일을 열며 칠판을 떠났음) ──
   const AUDIO_RE = /\.(mp3|m4a|wav|webm|ogg|aac|flac|mp4)$/i
-  async function dropFiles(files, e) {
+  async function dropFiles(files, e) {   // e 없음 = 붙여넣기(커서 자리, 화면 밖이면 가운데)
     if (readOnly) return
-    const p = toSceneP(e); R.current.mouse = p
+    const p = e ? toSceneP(e) : pasteAt(); R.current.mouse = p
     for (const f of files) {
       if (/^image\//.test(f.type)) await insertImage(f)
       else if (AUDIO_RE.test(f.name) || /^audio\//.test(f.type)) startMeeting(f, p)
@@ -1601,6 +1614,42 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const remap = tmp.map(it => (it._id.startsWith('__clip') ? { ...it, _bind1: it._bind1 && '__clip' + it._bind1, _bind2: it._bind2 && '__clip' + it._bind2 } : it))
     const r = duplicate(remap, remap.filter(it => it._id.startsWith('__clip')).map(it => it._id), 20 * c.seq, 20 * c.seq)   // 데스크톱: 붙일 때마다 20씩 비켜서
     commit(r.items.filter(it => !it._id.startsWith('__clip')), r.ids, '붙여넣음')
+  }
+  // 바깥에서 붙일 자리 — 커서가 지금 화면 안이면 커서, 아니면 화면 가운데(center = 빈자리 찾기)
+  function pasteAt() {
+    const c = R.current.cam, mp = R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
+    return mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2, center: true }
+  }
+  // 바깥 글 붙여넣기(2026-10-21 사용자) → 글자·메모·표 — 모양은 `clipin.js`가 고름. 여럿이면 위아래로 한 묶음, 한 번의 commit = Ctrl+Z 한 번. 붙인 게 없으면 false
+  function pasteOutside(text, html) {
+    const s = +(1 / R.current.cam.z).toPrecision(2), z = topZ(R.current.model.items) + 1   // 지금 배율에서 읽히는 크기(「메모」 버튼과 같게)
+    const memo = lines => { const it = base([0, 0], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines, scale: s, z }); return { ...it, rect: [0, 0, MEMO.W, memoHeight(it)] } }
+    const table = (rows, header) => { const cols = Math.max(...rows.map(r => r.length)), cells = rows.map(r => Array.from({ length: cols }, (_, c) => (r[c] || '').replace(/\*\*/g, '')))
+      return fitTable(base([0, 0], { type: 'table', rows: rows.length, cols, header, rect: [0, 0, Math.max(MEMO.W, cols * 90), rows.length * 30], cells, col_widths: Array(cols).fill(1 / cols), scale: s, z })) }
+    const filled = lines => lines.some(l => l.t || l.k === 'hr')
+    let its = [], what = ''
+    const plan = !looksMarkdown(text) && htmlPlan(html)   // AI 웹 「복사」 버튼 = 마크다운 글이 먼저, 마우스로 긁은 것 = 꾸밈(html)
+    if (plan?.code) { its = [memo(text.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n').map(t => ({ k: 'code', t: t.replace(/\t/g, '    ') })))]; what = '코드' }
+    else if (plan) { if (filled(plan.lines)) its.push(memo(plan.lines)); its.push(...plan.tables.map(t => table(t.rows, t.header))); what = filled(plan.lines) ? '메모' : '표' }
+    else {
+      const k = textKind(text)
+      if (k === 'empty') return false
+      if (k === 'tsv') { its = [table(tsvRows(text), false)]; what = '표' }
+      else if (k === 'line') { its = [base([0, 0], { type: 'text', text: text.trim(), color: INK, font: 12, bg: null, scale: s, z })]; what = '글자' }
+      else {   // 메모 — 마크다운 표는 메모 밑 진짜 표로(대화창 답 붙이기 `cardItems`와 같게)
+        const tabs = parseAnswer(text).filter(l => l.kind === 'table'), lines = memoFromAnswer(text, '', tabs.length ? 'skip' : 'text')
+        its = [...(filled(lines) ? [memo(lines)] : []), ...tabs.map(t => table(t.rows, t.header))]; what = filled(lines) ? '메모' : '표'
+      }
+    }
+    if (!its.length) return false
+    let y = 0
+    its = its.map(it => { const o = { ...it, pos: [0, y] }; y += sceneBox(o, textBox).h + 12 * s; return o })
+    if (its.length > 1) { const g = 'g' + newId(); its = its.map(it => ({ ...it, group_id: g })) }
+    const b = unionBox(its.map(it => sceneBox(it, textBox))), at = pasteAt(), tl = at.center ? spotNear(b.w, b.h) : { x: at.x - b.w / 2, y: at.y - b.h / 2 }
+    its = its.map(it => ({ ...it, pos: [it.pos[0] + tl.x - b.x, it.pos[1] + tl.y - b.y] }))
+    commit([...R.current.model.items, ...its], its.map(it => it._id), '붙여넣음'); setTool('select')
+    setStatus(`${what} 붙여넣음 — 마음에 안 들면 Ctrl+Z`)
+    return true
   }
 
   // 휠 = 커서 기준 확대

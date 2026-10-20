@@ -109,7 +109,7 @@ export function TextEditor({ spec, onDone }) {
     focusNow(ed.current); setPx(spec.px)
   }, [spec.cellKey])   // eslint-disable-line
   const m = METRICS[spec.family === 'board' ? 'board' : 'app'], fs = px * spec.zoom
-  return <div ref={host} data-testid="text-editor" onPointerDown={e => { e.stopPropagation(); if (e.button === 1) sp.current.onPan?.(e) }} onMouseDown={e => { if (e.button === 1) e.preventDefault() }} onWheel={e => e.stopPropagation()}
+  return <div ref={host} data-testid="text-editor" data-armed={spec.armed ? '' : undefined} onPointerDown={e => { e.stopPropagation(); if (e.button === 1) sp.current.onPan?.(e) }} onMouseDown={e => { if (e.button === 1) e.preventDefault() }} onWheel={e => e.stopPropagation()}
     style={{ position: 'absolute', left: spec.center ? spec.center.x : spec.left, top: spec.center ? spec.center.y : spec.top, minWidth: 8, padding: TEXT_MARGIN * spec.zoom, boxSizing: 'border-box',
       transform: spec.center ? 'translate(-50%,-50%)' : spec.rotation ? `rotate(${spec.rotation}deg)` : undefined,   // center = 도형 라벨(가운데 기준)
       transformOrigin: !spec.center && spec.origin ? `${spec.origin.x - spec.left}px ${spec.origin.y - spec.top}px` : undefined,
