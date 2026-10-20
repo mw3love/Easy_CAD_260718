@@ -319,7 +319,7 @@ function Ports({ it, onBoard }) {
 // labels = 'inline'(기본 — 내보내기) | 'skip'(화살표 라벨은 빼고) | 'only'(화살표 라벨만 — 편집 화면이 모든 선 위에 한 번 더 그림)
 // 종이틀 축척 — 틀이 용지의 k배 크기면 종이엔 1/k로 찍힘(「1:2.9」), 작으면 「2:1」. 1배 근처면 안 씀
 export const scaleText = k => { k = k || 1; if (Math.abs(k - 1) < 0.01) return ''; return k > 1 ? ` · 1:${+k.toFixed(1)}` : ` · ${+(1 / k).toFixed(1)}:1` }
-export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode = 'inline', page, web }) {   // web = 웹 카드 칸 안 페이지: 없음 = 그림 카드(내보내기·장 목록), 'view' = 보이기만(누르면 칠판이 받음), 'on' = 조작 중   // page = 종이틀 쪽 번호(편집 화면만)   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
+export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode = 'inline', page, web, noFs, ytBig }) {   // noFs·ytBig = 발표 화면(유튜브 전체 화면 단추 숨김 · 크게 보는 중)   // web = 웹 카드 칸 안 페이지: 없음 = 그림 카드(내보내기·장 목록), 'view' = 보이기만(누르면 칠판이 받음), 'on' = 조작 중   // page = 종이틀 쪽 번호(편집 화면만)   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
   const T = itemTransform(it), fill = it.fill ? cssColor(it.fill) : 'none'
   if (lmode === 'only' && it.type !== 'sarrow' && it.type !== 'arrow') return null
   switch (it.type) {
@@ -406,7 +406,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         <rect x={x} y={y} width={w} height={h} fill="none" stroke={tl} strokeWidth={1} /></g>
     }
     case 'web': {   // 웹 카드 — 위 띠(제목·주소·새 탭 단추) + 칸 안 페이지(들어가는 사이트, 편집·발표 화면만) 또는 대표 그림
-      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'wc-' + (it._id || idx), ob = openBtnRect(it), ic = it.icon ? 16 : 0, tx = x + 10 + (ic && ic + 6), tw = w - ob.w - 26 - (ic && ic + 6)
+      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'wc-' + (it._id || idx), ob = openBtnRect(it), ic = it.icon ? 16 : 0, tx = x + 10 + (ic && ic + 6), yl = noFs && isYoutube(it) ? 84 : 0, tw = w - ob.w - 26 - (ic && ic + 6) - yl   // yl = 발표의 「⤢ 크게 보기」 자리
       const live = (web === 'on' || web === 'view') && it.frameable && bh > 4   // 'sleep' = 많이 줄여 봄 → 페이지 끔(그림·이름만)
       const zm = !isYoutube(it) && it.zoom > 0 && it.zoom < 1 ? it.zoom : 1   // 칸 안 페이지 배율 — 큰 판에 띄우고 통째로 줄임
       const info = () => { const s = Math.min(36, bh - 16), lw = w - s - 34, lines = wrap2(it.desc || siteOf(it.url), 12, lw)   // 막힌 사이트·그림 없음 = 아이콘 + 설명 두 줄
@@ -421,7 +421,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
           <rect x={x} y={y} width={w} height={H} fill="#f4f4f5" />
           {bh > 0 && (live
             ? <foreignObject x={x} y={y + H} width={w} height={bh}>
-                <iframe data-webid={it._id} src={frameSrc(it)} title={it.title || it.url} allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
+                <iframe data-webid={it._id} src={frameSrc(it, noFs)} title={it.title || it.url} allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
                   sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-presentation" style={{ border: 0, width: `${100 / zm}%`, height: `${100 / zm}%`, transform: zm < 1 ? `scale(${zm})` : undefined, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
               </foreignObject>   // sandbox = 칠판 화면을 통째로 다른 주소로 넘기지 못하게(일부 사이트의 「틀 벗어나기」)
             : it.thumb ? <image href={it.thumb} x={x} y={y + H} width={w} height={bh} preserveAspectRatio="xMidYMid slice" />
@@ -434,6 +434,8 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         {ic > 0 && <image href={it.icon} x={x + 10} y={y + (Math.min(WEB_HEAD, h) - ic) / 2} width={ic} height={ic} />}
         <text x={tx} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis(it.title || siteOf(it.url), 13, 700, tw)}</text>
         <text x={tx} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.url, 10, 400, tw)}</text>
+        {yl > 0 && <g style={{ cursor: 'zoom-in' }}><rect x={ob.x - yl} y={ob.y} width={yl - 6} height={ob.h} rx={5} fill={ytBig ? '#da7756' : '#ffffff'} stroke={ytBig ? '#da7756' : '#d4d4d8'} />
+          <text x={ob.x - yl + (yl - 6) / 2} y={ob.y + ob.h / 2} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={600} fontFamily={APP_FONT} fill={ytBig ? '#ffffff' : '#3f3f46'}>{ytBig ? '⤡ 원래대로' : '⤢ 크게 보기'}</text></g>}
         <g><title>새 탭에서 열기</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
       </g>

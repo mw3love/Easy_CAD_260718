@@ -57,14 +57,20 @@ export const WEB_SLEEP_PX = 200   // 화면에서 카드 폭이 이보다 작으
 
 export const isYoutube = it => /^https:\/\/www\.youtube\.com\/embed\//.test(it.embed || '')
 // 칸 안에 넣을 주소(재생 주소가 있으면 그것). 유튜브는 바깥에서 「재생」을 보낼 수 있게 enablejsapi=1
-export const frameSrc = it => (isYoutube(it) ? it.embed + (it.embed.includes('?') ? '&' : '?') + 'enablejsapi=1' : it.embed || it.url)
+export const frameSrc = (it, noFs) => (isYoutube(it) ? it.embed + (it.embed.includes('?') ? '&' : '?') + 'enablejsapi=1' + (noFs ? '&fs=0' : '') : it.embed || it.url)   // noFs = 유튜브 전체 화면 단추 숨김(발표 A안)
 
-// 유튜브 카드에 재생 보내기(IFrame API — 카드 한 번 누르기 = 바로 재생)
-export function playYoutube(id) {
-  const f = document.querySelector(`iframe[data-webid="${CSS.escape(id)}"]`)
+// 유튜브 카드에 명령 보내기(IFrame API — 카드 한 번 누르기 = 바로 재생). target = 아이템 id 또는 iframe 자체.
+// 발표 중엔 뒤 칠판에도 같은 id 칸이 있어 id로 찾으면 숨은 칠판 칸이 재생됨(2026-10-20 사용자: 소리 둘·발표 화면은 멈춤) — 발표는 iframe을 넘김
+function ytCommand(target, func) {
+  const f = typeof target === 'string' ? document.querySelector(`iframe[data-webid="${CSS.escape(target)}"]`) : target
   const w = f?.contentWindow; if (!w) return
-  w.postMessage(JSON.stringify({ event: 'listening', id: id, channel: 'widget' }), 'https://www.youtube.com')   // 먼저 「듣고 있음」(API 연결 인사)
-  w.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), 'https://www.youtube.com')
+  w.postMessage(JSON.stringify({ event: 'listening', id: f.getAttribute('data-webid'), channel: 'widget' }), 'https://www.youtube.com')   // 먼저 「듣고 있음」(API 연결 인사)
+  w.postMessage(JSON.stringify({ event: 'command', func, args: [] }), 'https://www.youtube.com')
+}
+export const playYoutube = target => ytCommand(target, 'playVideo')
+// 한 영역(칠판 등) 밖의 유튜브 칸을 모두 멈춤 — 발표를 열면 뒤 칠판 영상은 멈춤
+export function pauseYoutubeOutside(root) {
+  for (const f of document.querySelectorAll('iframe[data-webid]')) if (!root?.contains(f) && /youtube\.com\/embed\//.test(f.src)) ytCommand(f, 'pauseVideo')
 }
 
 // 오른쪽 위 「새 탭에서 열기」 단추 자리(아이템 안 좌표)
