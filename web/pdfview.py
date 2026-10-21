@@ -80,3 +80,21 @@ def clip_text(path: str, i: int, r) -> str:
     with _open(path) as d:
         p = d[i]
         return _tidy(p.get_text("text", clip=_clip_rect(p, r), sort=True))
+
+
+def lines(path: str, i: int) -> list:
+    """i쪽 글 줄마다 [x0, y0, x1, y1(쪽 안 비율), 글] — 카드 위 보이지 않는 글 층(끌어 고르기·복사, 2026-10-21 사용자: 「글로」 단추 대신).
+    가로줄만(논문 옆 세로 글씨 등은 고를 일이 드묾 — 겹쳐 놓으면 오히려 고르기를 방해)."""
+    with _open(path) as d:
+        p = d[i]
+        W, H = p.rect.width, p.rect.height
+        out = []
+        for b in p.get_text("dict")["blocks"]:
+            for ln in b.get("lines", []):
+                dx, dy = ln.get("dir", (1, 0))
+                t = "".join(s["text"] for s in ln["spans"]).rstrip()
+                if abs(dy) > 0.01 or dx <= 0 or not t.strip():
+                    continue
+                x0, y0, x1, y1 = ln["bbox"]
+                out.append([round(x0 / W, 5), round(y0 / H, 5), round(x1 / W, 5), round(y1 / H, 5), t])
+        return out

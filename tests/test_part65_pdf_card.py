@@ -83,6 +83,33 @@ def test_page_image_clip_and_text(server):
     assert json.loads(t)["text"] == "Bravo"
 
 
+
+def test_lines_for_text_select_layer(server):
+    """끌어 글 고르기(2026-10-21) — 쪽 글 줄마다 비율 상자 + 글, 쪽 차례대로."""
+    base, _ = server
+    url = base + _post(base + "/api/pdf/e2e_l", _pdf())["url"]
+    _, t = _get(url + "/lines/0")
+    ls = json.loads(t)["lines"]
+    assert [ln[4] for ln in ls] == ["Alpha", "Bravo"]
+    x0, y0, x1, y1, _ = ls[0]
+    assert 0 < x0 < x1 < 1 and 0 < y0 < y1 < 0.5                         # 위 절반(쪽 안 비율)
+    assert ls[1][1] > 0.5
+
+
+def test_ocr_endpoint_reads_image(server, monkeypatch):
+    """「그림 속 글 읽기」 — 칠판 그림(base64) → board_ocr.read(KAIROS는 바꿔 끼움)."""
+    import base64
+    from easycad.ai import board_ocr
+    got = {}
+    monkeypatch.setattr(board_ocr, "read", lambda key, png, **kw: got.setdefault("png", png) and {"text": "송신소", "model": "m", "elapsed": 0.1})
+    base, _ = server
+    req = urllib.request.Request(base + "/api/ocr", data=json.dumps({"data": base64.b64encode(b"PNGDATA").decode()}).encode(),
+                                 headers={"Content-Type": "application/json", "X-Kairos-Key": "test-key-12345"}, method="POST")
+    with urllib.request.urlopen(req) as r:
+        assert json.loads(r.read())["text"] == "송신소"
+    assert got["png"] == b"PNGDATA"
+
+
 def test_bad_requests(server):
     base, _ = server
     with pytest.raises(urllib.error.HTTPError) as e:

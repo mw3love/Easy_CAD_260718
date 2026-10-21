@@ -34,7 +34,7 @@ import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob, usesBoardFont, weightsOf } from './exporter.jsx'
 import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
-import { pdfLayout, pdfPageAt } from './pdfcard.jsx'
+import { pdfLayout, pdfPageAt, pdfSelectedText } from './pdfcard.jsx'
 import { freeSpot, nearSpot, parseAnswer, sourceLine } from '../chatFormat.js'
 import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
@@ -230,7 +230,6 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (readOnly) { svg.current.setPointerCapture(e.pointerId); st.current = { ...st.current, kind: 'pan', right: false, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }   // 보기 전용 = 끌면 화면 이동
     if (R.current.editing && e.button === 0) return   // 고치는 중에도 휠·오른쪽 끌기 = 화면 이동(입력은 그대로 — 2026-10-18 사용자)
     if (R.current.webOn && !(e.button === 2 && pdfBodyAt(toSceneP(e))?._id === R.current.webOn)) setWebOn(null)   // 웹 카드 조작 중 바깥을 누름 = 끝(칸 안 누르기는 페이지가 받아 여기 안 옴). 넘겨 보는 PDF 안 우클릭 = 안쪽 메뉴(끝내지 않음)
-    setPdfPick(null)   // PDF 「글로」 단추는 다른 데를 누르면 사라짐
     const p = toSceneP(e), m = R.current.model, z = R.current.cam.z
     svg.current.setPointerCapture(e.pointerId)
     // 가운데·오른쪽 끌기 = 화면 이동(데스크톱 우클릭 끌기 = 팬, 제자리 우클릭 메뉴는 나중)
@@ -1395,6 +1394,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       // 스타일 복사·붙여넣기(데스크톱 Ctrl+Alt+C/V) — 일반 복사보다 먼저. 글쇠 이름은 한글 입력·Alt에 따라 바뀌어 자리(code)로 봄
       if (mod && e.altKey && e.code === 'KeyC') return act(styleCopy)
       if (mod && e.altKey && e.code === 'KeyV') return act(stylePaste)
+      if (mod && k.toLowerCase() === 'c' && pdfSelectedText()) return   // PDF 안 끌어 고른 글 = 브라우저 복사
       if (mod && k.toLowerCase() === 'c') return act(copy)
       if (mod && k.toLowerCase() === 'x') return act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })
       if (mod && k.toLowerCase() === 'd') return act(dupSel)
@@ -1580,9 +1580,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     } catch (err) { done(); setStatus(`PDF 실패 — ${err.message || err}`) }
   }
   // PDF 카드에서 Alt+끌기 = 그 부분을 칠판으로(서버가 200dpi로 다시 그림) — 카드 오른쪽 빈자리, 밑에 「파일 · N쪽」, 카드 → 그림 점선 화살표(어디서 왔는지 — 웹 검색 출처 카드와 같은 원칙).
-  // 그 부분 글은 그림의 보이지 않는 설명(찾기·대화 재료). 붙인 뒤 잠깐 「글로」 단추 = 그림 대신 글 메모로 바꾸기
-  const [pdfPick, setPdfPick] = useState(null)   // { ids: 붙인 것, cardId, text, x, y(화면) }
-  async function clipPdf({ id, page, r, top, bottom, right }, asText = false) {   // asText = 붙이자마자 「글로」(되돌리기 한 번에 둘 다)
+  // 그 부분 글은 그림의 보이지 않는 설명(찾기·대화 재료 — 우클릭 「그림 속 글 읽기」도 이것을 씀)
+  async function clipPdf({ id, page, r, top }) {
     const card = R.current.model.items.find(it => it._id === id); if (!card) return
     const q = `${card.url}/${'%s'}/${page}?r=${r.map(v => v.toFixed(4)).join(',')}`
     setStatus('오려 오는 중…')
@@ -1594,7 +1593,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const cb = sceneBox(card, textBox), k = (card.scale || 1), w = card.rect[2] * k * (r[2] - r[0]), h = w * bm.height / bm.width, z = topZ(R.current.model.items) + 1
       const label = `${card.name || 'PDF'} · ${page + 1}쪽`, s = +(1 / R.current.cam.z).toPrecision(2)
       const cap = base([0, 0], { type: 'text', text: label, color: '#ff8a8f98', font: 9, bg: null, scale: s, z }), capH = sceneBox(cap, textBox).h
-      const ty = toSceneP({ clientX: right, clientY: top }).y, others = hitPool().map(it => sceneBox(it, textBox))
+      const ty = toSceneP({ clientX: 0, clientY: top }).y, others = hitPool().map(it => sceneBox(it, textBox))
       const at = nearSpot({ x: cb.x + cb.w + 60 * s + w / 2, y: ty + (h + capH) / 2 }, others, w, h + capH, { pad: 24 * s, step: 24 * s })
       const g = 'g' + newId()
       const img = base([at.x, at.y], { type: 'image', rect: [0, 0, w, h], data, alt: `${label}${txt ? '\n' + txt : ''}`, z, group_id: g })
@@ -1606,30 +1605,42 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         const a = { p: { x: cb.x + cb.w, y: Math.min(cb.y + cb.h - 10, Math.max(cb.y + WEB_HEAD * k, ty)) }, n: { x: 1, y: 0 } }, t = { id: img._id, p: { x: at.x, y: at.y + h / 2 }, n: { x: -1, y: 0 } }
         arrow = { ...arrowItem(card._id, a.p, img._id, t.p, { auto_route: true, pts: connRoute(card._id, a, t, null).map(p => [p.x, p.y]), color: '#ff9aa0a6', width: 1, style: 2, head: true, head_start: false }), z }
       } finally { R.current.model = keep }
-      const mk = asText ? 'pdftext' + newId() : null, pk = { ids: [img._id, capd._id, arrow._id], cardId: id, text: txt, label, x: right, y: bottom }
-      commit([...R.current.model.items, img, capd, arrow], [img._id], 'PDF에서 오려 옴', mk)
-      if (asText) { if (txt) { pdfToText(pk, mk); return } setStatus(`${label} — 글이 없는 쪽(스캔)이라 그림으로 붙였어요`); return }
-      setPdfPick(pk)
-      setStatus(`${label} 오려 옴${txt ? ' — 「글로」를 누르면 그림 대신 글 메모로' : ''}`)
+      commit([...R.current.model.items, img, capd, arrow], [img._id], 'PDF에서 오려 옴')
+      setStatus(`${label} 오려 옴${txt ? ' — 글이 필요하면 우클릭 「그림 속 글 읽기」' : ''}`)
     } catch (err) { setStatus(`오려 오기 실패 — ${err.message || err}`) }
   }
   // 우클릭 「이 쪽 통째로 칠판에」 — Alt+끌기를 쪽 전체로 한 것과 같음(놓을 자리 = 카드 오른쪽, 높이는 카드 몸통 위)
-  function pdfWholePage(id, page, asText = false) {
+  function pdfWholePage(id, page) {
     const card = R.current.model.items.find(it => it._id === id); if (!card) return
     const c = R.current.cam, r = svg.current.getBoundingClientRect(), b = sceneBox(card, textBox), k = card.scale || 1
     const sx = X => r.left + X * c.z + c.x, sy = Y => r.top + Y * c.z + c.y, top = sy(b.y + WEB_HEAD * k)
-    clipPdf({ id, page, r: [0, 0, 1, 1], top, bottom: top + 40, right: sx(b.x + b.w) }, asText)
+    clipPdf({ id, page, r: [0, 0, 1, 1], top })
   }
-  // 「글로」 — 방금 붙인 그림 자리에 그 부분 글 메모(밑 줄 = 회색 「파일 · N쪽」), 화살표는 메모로 옮겨 붙임. 한 번의 commit
-  function pdfToText(pk0, merge = null) {
-    const pk = pk0?.ids ? pk0 : pdfPick; setPdfPick(null); if (!pk?.text) return
-    const m = R.current.model, img = m.items.find(it => it._id === pk.ids[0]); if (!img) return
-    const s = +(1 / R.current.cam.z).toPrecision(2), lines = [...pk.text.split(/\n+/).filter(t => t.trim()).map(t => ({ k: 'p', t: t.trim() })), { k: 'p', t: pk.label, runs: [[0, pk.label.length, MUTED, false]] }]
-    let memo = base([img.pos[0], img.pos[1]], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines, scale: s, z: img.z, group_id: img.group_id })
+  // 「그림 속 글 읽기」(2026-10-21 사용자: 「글로」 단추 대신 그림 → 글 OCR) — 그림 오른쪽 빈자리에 메모, 그림은 그대로.
+  // PDF에서 오려 온 그림은 이미 그 부분 글을 품고 있어(alt 둘째 줄부터) KAIROS를 안 부름. 나머지는 서버 `/api/ocr`(easycad/ai/board_ocr.py)
+  async function ocrImage(id) {
+    const img0 = R.current.model.items.find(it => it._id === id); if (!img0?.data) return
+    const alt = (img0.alt || '').split('\n'), fromPdf = / · \d+쪽$/.test(alt[0]) && alt.length > 1
+    let text = fromPdf ? alt.slice(1).join('\n') : '', foot = fromPdf ? alt[0] : ''
+    if (!fromPdf) {
+      setStatus('그림 속 글 읽는 중… (KAIROS)')
+      try {
+        const r = await fetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ data: img0.data }) })
+        const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
+        if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
+        text = d.text || ''; foot = `그림 속 글 · ${d.model}`
+      } catch (err) { setStatus(`글 읽기 실패 — ${err.message || err}`); return }
+    }
+    if (!text.trim()) { setStatus('그림에서 읽을 글이 없어요'); return }
+    const m = R.current.model, img = m.items.find(it => it._id === id); if (!img) return
+    const s = +(1 / R.current.cam.z).toPrecision(2), lines = [...text.split(/\n+/).filter(t => t.trim()).map(t => ({ k: 'p', t: t.trim() })), { k: 'p', t: foot, runs: [[0, foot.length, MUTED, false]] }]
+    let memo = base([0, 0], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines, scale: s, z: topZ(m.items) + 1 })
     memo = { ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }
-    const items = m.items.filter(it => it._id !== pk.ids[0] && it._id !== pk.ids[1]).map(it => (it._id === pk.ids[2] ? { ...it, ...bindOf('bind2', memo, { x: memo.pos[0], y: memo.pos[1] + Math.min(memo.rect[3] * s / 2, 30) }) } : it))
-    commit([...items, memo], [memo._id], 'PDF 글로', merge)
-    setStatus(`${pk.label} — 글 메모로 바꿈(Ctrl+Z = 그림으로 되돌리기)`)
+    const ib = sceneBox(img, textBox), mw = MEMO.W * s, mh = memo.rect[3] * s
+    const at = nearSpot({ x: ib.x + ib.w + 40 * s + mw / 2, y: ib.y + mh / 2 }, hitPool().map(it => sceneBox(it, textBox)), mw, mh, { pad: 24 * s, step: 24 * s })
+    memo = { ...memo, pos: [at.x, at.y] }
+    commit([...m.items, memo], [memo._id], '그림 속 글')
+    setStatus(`그림 속 글 → 메모 ${lines.length - 1}줄${fromPdf ? '(PDF 글 그대로)' : ''}`)
   }
   useEffect(() => {
     const on = e => { if (!readOnly) clipPdf(e.detail) }
@@ -1910,8 +1921,6 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
               {shut && <circle data-testid="poly-close" cx={overlay.poly[0].x} cy={overlay.poly[0].y} r={5 / z} fill={BLUE} stroke="#fff" strokeWidth={1.5 / z} />}</> })()}
         </g>
       </svg>
-      {pdfPick?.text && (r => <button data-testid="pdf-to-text" onClick={pdfToText} title="방금 오려 온 그림 대신 그 부분 글을 메모로"
-        style={{ position: 'absolute', left: pdfPick.x - r.left - 64, top: pdfPick.y - r.top + 6, zIndex: 8, padding: '4px 10px', borderRadius: 6, border: '1px solid #da7756', background: '#fff', color: '#da7756', font: "600 12px 'Pretendard', sans-serif", cursor: 'pointer', boxShadow: '0 2px 6px rgba(0,0,0,.15)' }}>📝 글로</button>)(svg.current.getBoundingClientRect())}
       {lineMenu && <ContextMenu at={lineMenu} onClose={() => setLineMenu(null)} entries={lineMenuEntries(lineMenu)} />}
       {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} entries={(() => {
         const m = R.current.model, ids = R.current.sel, has = ids.length > 0, selIt = m.items.filter(it => ids.includes(it._id)), act = f => () => { setMenu(null); f() }
@@ -1919,10 +1928,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (menu.locked && m.items.some(it => it._id === menu.locked && it.locked)) { const uids = expandGroups(m.items, [menu.locked]); out.push(['이 도형 잠금 해제', '', act(() => commit(m.items.map(it => (uids.includes(it._id) ? { ...it, locked: false } : it)), uids, '잠금 해제'))], '-') }   // 묶음이면 묶음째(잠글 때도 묶음째)
         const pin = menu.pdfIn && m.items.find(it => it._id === menu.pdfIn.id)
         if (pin) { const n = menu.pdfIn.page   // PDF 안쪽 = 내용 메뉴만(틀 메뉴·칠판 메뉴 안 섞음)
-          return [[`이 쪽(${n + 1}쪽) 통째로 칠판에`, '', act(() => pdfWholePage(pin._id, n))], [`이 쪽 글을 메모로`, '', act(() => pdfWholePage(pin._id, n, true))],
-            [`이 쪽만 원본으로 새 탭에서`, '', act(() => window.open(`${pin.url}#page=${n + 1}`, '_blank', 'noopener'))], '-', ['넘겨 보기 끝', 'Esc', act(() => setWebOn(null))]] }
+          const picked = pdfSelectedText()   // 끌어 고른 글이 있으면 복사도
+          return [...(picked ? [['고른 글 복사', 'Ctrl+C', act(() => navigator.clipboard?.writeText(picked))]] : []), [`이 쪽(${n + 1}쪽) 통째로 칠판에`, '', act(() => pdfWholePage(pin._id, n))],
+            ['새 탭에서 보기', '', act(() => window.open(`${pin.url}#page=${n + 1}`, '_blank', 'noopener'))], '-', ['넘겨 보기 끝', 'Esc', act(() => setWebOn(null))]] }   // 새 탭 = 원본 전체, 보던 쪽에서 시작
         const card = selIt.length === 1 && ['pdf', 'web', 'doc'].includes(selIt[0].type) ? selIt[0] : null   // 카드(PDF·웹·문서) = 뒤집거나 꾸밀 것이 없음
-        if (card?.type === 'pdf' && card.url) out.push(['넘겨 보기', '', act(() => webActivate(card))], ['원본 새 탭에서 열기', '', act(() => window.open(card.url, '_blank', 'noopener'))], '-')
+        if (card?.type === 'pdf' && card.url) out.push(['넘겨 보기', '', act(() => webActivate(card))], ['새 탭에서 보기', '', act(() => window.open(`${card.url}#page=${pdfPageAt(card, 0) + 1}`, '_blank', 'noopener'))], '-')
+        else if (selIt.length === 1 && selIt[0].type === 'image' && selIt[0].data) out.push(['그림 속 글 읽기', '', act(() => ocrImage(selIt[0]._id))], '-')   // OCR → 옆에 메모
         else if (card?.type === 'web' && card.url) out.push(['새 탭에서 열기', '', act(() => window.open(card.url, '_blank', 'noopener'))], '-')
         else if (card?.type === 'doc') out.push(['크게 보기', '', act(() => openDoc(card))], '-')
         if (has) out.push(['복사', 'Ctrl+C', act(copy)], ['잘라내기', '', act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })],

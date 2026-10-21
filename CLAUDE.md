@@ -105,6 +105,7 @@ easycad/
 │   ├── board_report.py     웹 칠판 「정리해 줘」 ① — 칠판 자료 → 아티팩트 같은 정리 문서 HTML 한 장(claude-opus-5-5, 청소·제목·쉬운 글, 앞 문서 고쳐 쓰기)
 │   ├── board_tidy.py       웹 칠판 「정리해 줘」 ② 레고형 정리정돈 — 칠판 조각(uid·종류·글·크기) → 주제별 묶음 목록 JSON(gpt-6-luna — 10-20 실측으로 바꿈, 좌표는 칠판 `tidy.js`)
 │   ├── board_image.py      웹 칠판 그림 — 「그려줘」 → KAIROS 그림 후보 2장(gpt-image-2.5-flare — 10-20 실측, §8 항목61 ③-4, 서버가 `<이름>.img/`에 두고 주소만) + 이어 고치기(`followup`)·원본 유지 편집(`input_images`)·인포그래픽
+│   ├── board_ocr.py        웹 칠판 「그림 속 글 읽기」 — 그림 → KAIROS(claude-haiku-5-5, 10-21 실측) → 글, 서버 `/api/ocr`
 │   ├── meeting.py          웹 칠판 회의록 — 녹음 → KAIROS 받아쓰기(stt-async-v5, 올리기·기다리기) → 구간 합치기 → 요약 JSON(§8 항목61 ③-3, 서버 `/api/meeting` 뒤 일감)
 │   ├── board_find.py       웹 칠판 「뜻으로 찾기」 — 칠판 글 → KAIROS 임베딩(qwen3.7) 점수·낱말 가산, 뜻 숫자는 `<이름>.emb.json`(§8 항목61 ③-2, 서버 `/api/find`·대화 「칠판에서」)
 │   ├── kr_tools.py         웹 칠판 공공 데이터 = KAIROS MCP 묶음 7개(날씨·달력·법령·KOSIS/한국은행·특보·대기질·국어 규범, 우리 키로 34개 가능) — 낱말로 묶음 고르고 gpt-6-luna가 여러 번 주고받기(찾기 → 받기, 2026-10-21). 날씨는 10개 도시만 — 모르는 도시는 서울로 오니 버림

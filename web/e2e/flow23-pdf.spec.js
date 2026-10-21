@@ -34,6 +34,15 @@ test('PDF 붙여넣기 = 보기 카드 → 누르면 휠로 쪽 넘기기 → Al
   await body.evaluate(el => { el.scrollTop = 0 })
 
   const ph = b.width * 800 / 600                                          // 1쪽 높이(카드 폭에 맞춤)
+  await expect(body.locator('.mb-pdftext span').first()).toBeAttached()  // 끌기(Alt 없이) = 글 고르기 — 보이지 않는 글 층
+  await page.mouse.move(b.x + 3, b.y + 3); await page.mouse.down()
+  await page.mouse.move(b.x + b.width - 3, b.y + ph - 3, { steps: 6 }); await page.mouse.up()
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.keyboard.press('Control+c')                                  // 복사 = 줄마다 줄바꿈
+  const picked = await page.evaluate(() => navigator.clipboard.readText())
+  expect(picked.split(/\r?\n/)).toEqual(['Alpha line', 'Bravo line'])
+  expect((await items(page)).length).toBe(1)                              // 고르기는 칠판에 아무것도 안 만듦
+  await page.mouse.click(b.x + b.width / 2, b.y + 4)                      // 고른 글 풀기(카드 안 누르기)
   await page.keyboard.down('Alt')
   await page.mouse.move(b.x + 5, b.y + 5); await page.mouse.down()
   await page.mouse.move(b.x + b.width - 5, b.y + ph * 0.4, { steps: 6 }); await page.mouse.up()
@@ -45,11 +54,15 @@ test('PDF 붙여넣기 = 보기 카드 → 누르면 휠로 쪽 넘기기 → Al
   expect(arrow.type).toBe('sarrow'); expect(arrow.style).toBe(2)
   expect(img.pos[0]).toBeGreaterThan(card.pos[0] + card.rect[2])         // 카드 오른쪽
 
-  await page.getByTestId('pdf-to-text').click()
-  await expect.poll(async () => (await items(page)).map(it => it.type)).toEqual(['pdf', 'sarrow', 'memo'])
-  const memo = (await items(page))[2]
-  expect(memo.lines.map(l => l.t)).toEqual(['Alpha line', 'two-pages.pdf · 1쪽'])
-  await page.keyboard.press('Control+z')                                  // 되돌리면 다시 그림
+  await expect(page.getByTestId('pdf-to-text')).toHaveCount(0)            // 「글로」 단추는 없앰(2026-10-21) — 그림 우클릭 「그림 속 글 읽기」
+  let ocrCalls = 0; await page.route('**/api/ocr', r => { ocrCalls++; r.fulfill({ json: { text: '', model: 'x' } }) })
+  const ic = await toPage(page, img.pos[0] + img.rect[2] / 2, img.pos[1] + img.rect[3] / 2)
+  await page.mouse.click(ic.x, ic.y, { button: 'right' })
+  await page.getByRole('button', { name: '그림 속 글 읽기' }).click()
+  await expect.poll(async () => (await items(page)).map(it => it.type)).toEqual(['pdf', 'image', 'text', 'sarrow', 'memo'])
+  expect((await items(page))[4].lines.map(l => l.t)).toEqual(['Alpha line', 'two-pages.pdf · 1쪽'])   // PDF 그림 = 품은 글 그대로(KAIROS 안 부름)
+  expect(ocrCalls).toBe(0)
+  await page.keyboard.press('Control+z')
   await expect.poll(async () => (await items(page)).map(it => it.type)).toEqual(['pdf', 'image', 'text', 'sarrow'])
 
   await waitSaved(page); await page.reload()
@@ -96,7 +109,7 @@ test('멀리서 넣어도 쪽 그림(잠들지 않음) · 바깥 눌러도 보�
   const menuBtns = () => page.locator('div[style*="z-index: 30"] > div > button').allInnerTexts()
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2, { button: 'right' })   // 객체(켜지 않은 카드) = 틀 메뉴 — 쪽 메뉴·반전 없음
   let names = (await menuBtns()).join('|')
-  expect(names).toContain('넘겨 보기'); expect(names).toContain('원본 새 탭에서 열기'); expect(names).toContain('삭제')
+  expect(names).toContain('넘겨 보기'); expect(names).toContain('새 탭에서 보기'); expect(names).toContain('삭제')
   expect(names).not.toContain('통째로'); expect(names).not.toContain('좌우 반전'); expect(names).not.toContain('전체 선택')
   await page.keyboard.press('Escape')
   await page.mouse.click(b.x + b.width + 150, b.y + 300, { button: 'right' })   // 빈 곳 = 칠판 메뉴(고른 것 풂)
@@ -106,7 +119,7 @@ test('멀리서 넣어도 쪽 그림(잠들지 않음) · 바깥 눌러도 보�
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2)          // 켜고 안쪽 우클릭 = 내용 메뉴만, 넘겨 보기는 안 꺼짐
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2, { button: 'right' })
   names = (await menuBtns()).join('|')
-  expect(names).toContain('이 쪽(2쪽) 통째로 칠판에'); expect(names).toContain('이 쪽 글을 메모로'); expect(names).not.toContain('삭제'); expect(names).not.toContain('전체 선택')
+  expect(names).toContain('이 쪽(2쪽) 통째로 칠판에'); expect(names).toContain('새 탭에서 보기'); expect(names).not.toContain('삭제'); expect(names).not.toContain('전체 선택')
   await expect(body).toHaveCSS('pointer-events', 'auto')
   await page.getByRole('button', { name: /이 쪽\(2쪽\) 통째로 칠판에/ }).click()
   await expect.poll(async () => (await items(page)).map(it => it.type), { timeout: 10_000 }).toEqual(['pdf', 'image', 'text', 'sarrow'])
@@ -114,14 +127,23 @@ test('멀리서 넣어도 쪽 그림(잠들지 않음) · 바깥 눌러도 보�
   expect(cap.text).toBe('two-pages.pdf · 2쪽'); expect(img.alt).toContain('Charlie')
   expect(img.rect[2]).toBeCloseTo(card.rect[2] * card.scale, 0)           // 쪽 전체 = 카드 폭
 
-  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2, { button: 'right' })   // 「글을 메모로」 = 바로 메모, 되돌리기 한 번에 사라짐
-  await page.getByRole('button', { name: '이 쪽 글을 메모로' }).click()
-  await expect.poll(async () => (await items(page)).length, { timeout: 10_000 }).toBe(6)
-  const memo = (await items(page)).find(it => it.type === 'memo'); expect(memo.lines.map(l => l.t)).toContain('Charlie')
-  await page.keyboard.press('Escape'); await page.keyboard.press('Control+z')
-  await expect.poll(async () => (await items(page)).length).toBe(4)
-
   const [hb] = [await page.locator('[data-pdfid]').boundingBox()]           // ↗ 위 = 손가락 커서
   await page.mouse.move(hb.x + hb.width - 20, hb.y - 20)
   await expect(page.locator('svg[style*="cursor"]').first()).toHaveCSS('cursor', 'pointer')
+})
+
+test('그림 우클릭 「그림 속 글 읽기」 = KAIROS 글 → 그림 옆 메모(그림은 그대로)', async ({ page }) => {
+  await openBoard(page, boardName('ocr')); await setCam(page)
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+  await pasteFile(page, 'shot.png', 'image/png', PNG)
+  await expect.poll(async () => (await items(page)).length).toBe(1)
+  let body = null; await page.route('**/api/ocr', r => { body = r.request().postDataJSON(); r.fulfill({ json: { text: '송신소 점검\n출력 4.8kW', model: 'claude-haiku-5-5', elapsed: 1.2 } }) })
+  const [im] = await items(page), c = await toPage(page, im.pos[0] + im.rect[2] / 2, im.pos[1] + im.rect[3] / 2)
+  await page.mouse.click(c.x, c.y, { button: 'right' })
+  await page.getByRole('button', { name: '그림 속 글 읽기' }).click()
+  await expect.poll(async () => (await items(page)).length).toBe(2)
+  const [img, memo] = await items(page)
+  expect(body.data).toBe(img.data)
+  expect(memo.type).toBe('memo'); expect(memo.lines.map(l => l.t)).toEqual(['송신소 점검', '출력 4.8kW', '그림 속 글 · claude-haiku-5-5'])
+  expect(memo.pos[0]).toBeGreaterThan(img.pos[0] + img.rect[2] * (img.scale || 1))   // 그림 오른쪽
 })

@@ -36,7 +36,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_image, board_report, board_tidy, kr_tools, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_image, board_ocr, board_report, board_tidy, kr_tools, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -342,13 +342,15 @@ class Handler(SimpleHTTPRequestHandler):
             with open(path, "rb") as f:
                 return self._send(200, f.read(), ctype="application/pdf")
         try:
-            r = [float(v) for v in ((q.get("r") or [""])[0]).split(",")] if what != "page" else None
+            r = [float(v) for v in ((q.get("r") or [""])[0]).split(",")] if what in ("clip", "text") else None
             if r is not None and len(r) != 4:
                 return self._json(400, {"error": "r=x0,y0,x1,y1"})
             if what == "page":
                 return self._send(200, pdfview.page_jpeg(path, page, int((q.get("w") or ["1200"])[0])), ctype="image/jpeg")
             if what == "clip":
                 return self._send(200, pdfview.clip_png(path, page, r), ctype="image/png")
+            if what == "lines":   # 보이지 않는 글 층(끌어 고르기)
+                return self._json(200, {"lines": pdfview.lines(path, page)})
             return self._json(200, {"text": pdfview.clip_text(path, page, r)})
         except (IndexError, ValueError) as e:
             return self._json(400, {"error": str(e)})
@@ -520,7 +522,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send(404, b'{"error":"none"}')
             with open(p, "rb") as f:
                 return self._send(200, f.read(), ctype={"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}[m.group(3)])
-        m = re.match(r"^/api/pdf/([^/]+)/(\d+_[0-9a-f]{6})(?:/(page|clip|text)/(\d+))?$", path)
+        m = re.match(r"^/api/pdf/([^/]+)/(\d+_[0-9a-f]{6})(?:/(page|clip|text|lines)/(\d+))?$", path)
         if m:   # PDF 보기 카드 — 원본(↗ 새 탭)·쪽 그림·오려 오기·그 부분 글(`pdfview.py`)
             return self._pdf_get(self._name(m.group(1)), m.group(2), m.group(3), int(m.group(4) or 0), q)
         if path == "/api/link":
@@ -587,6 +589,17 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(401, b'{"error":"login"}')
         if path == "/api/chat":
             return self._chat()
+        if path == "/api/ocr":   # 「그림 속 글 읽기」 — 본문 = {data: PNG base64}(칠판 그림 그대로)
+            req = self._body(30 * 1024 * 1024) or {}
+            key = self._key()
+            if not key:
+                return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다"})
+            try:
+                out = board_ocr.read(key, base64.b64decode(req.get("data") or ""), base_url=gw.resolve_base_url())
+            except Exception as e:
+                return self._json(502, {"error": f"KAIROS 글 읽기 실패: {e}"})
+            sys.stderr.write("[글 읽기] %s %.1f초 %d자\n" % (out["model"], out["elapsed"], len(out["text"])))
+            return self._json(200, out)
         if path == "/api/stt-token":   # 대화창 🎤 — 실시간 받아쓰기 일회용 표(키는 서버에만, 2026-10-20)
             key = self._key()
             if not key:

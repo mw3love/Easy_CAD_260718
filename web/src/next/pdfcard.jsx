@@ -25,6 +25,43 @@ export function pdfPageAt(it, y) {
   return i < 0 ? Math.max(0, lay.length - 1) : i
 }
 
+// 쪽마다 보이지 않는 글 층(2026-10-21 사용자: 「글로」 단추 대신 PDF 안에서 끌어 글 고르기) — 서버가 준 줄 상자에 투명 글자를 겹쳐
+// 브라우저가 원래 하는 끌어 고르기·Ctrl+C를 그대로 씀(PDF.js 없이). 글꼴이 달라 폭은 줄마다 scaleX로 맞춤
+const LINES = new Map()   // `${주소}/${쪽}` → 줄 목록 | Promise
+const SEL_CSS = '.mb-pdftext ::selection { background: rgba(37, 99, 235, .32); color: transparent }'
+function PageText({ it, i, w, top, ph }) {
+  const k = `${it.url}/${i}`, [lines, setLines] = useState(() => (Array.isArray(LINES.get(k)) ? LINES.get(k) : null)), ref = useRef(null)
+  useEffect(() => {
+    if (lines) return
+    let live = true
+    if (!LINES.has(k)) LINES.set(k, fetch(`${it.url}/lines/${i}`).then(r => r.json()).then(d => { LINES.set(k, d.lines || []); return d.lines || [] }, () => { LINES.delete(k); return [] }))
+    Promise.resolve(LINES.get(k)).then(v => { if (live) setLines(v) })
+    return () => { live = false }
+  }, [k])   // eslint-disable-line
+  useLayoutEffect(() => {   // 줄 폭 맞추기 — 화면 글꼴로 잰 폭 → 상자 폭
+    for (const el of ref.current?.querySelectorAll('span') || []) { const want = +el.dataset.w, got = el.offsetWidth; if (want && got) el.style.transform = `scaleX(${want / got})` }
+  }, [lines, w, ph])
+  if (!lines?.length) return null
+  return <div ref={ref} className="mb-pdftext" style={{ position: 'absolute', left: 0, top, width: w, height: ph, userSelect: 'text', cursor: 'text' }}>
+    {lines.map(([x0, y0, x1, y1, t], j) => { const lh = (y1 - y0) * ph
+      return <span key={j} data-w={(x1 - x0) * w} style={{ position: 'absolute', left: x0 * w, top: y0 * ph, height: lh, fontSize: lh * 0.86, lineHeight: `${lh}px`, whiteSpace: 'pre', color: 'transparent', transformOrigin: '0 0', fontFamily: 'sans-serif' }}>{t}</span> })}
+  </div>
+}
+
+// 끌어 고른 PDF 글 — 줄 사이를 줄바꿈으로(브라우저 기본 복사는 떠 있는 줄을 그냥 붙여 「convolutionsentirely」가 됨. <br>을 끼우면
+// 여백에서 끌기 시작할 때 첫 줄을 놓침 — 2026-10-21 시험). 고른 것이 PDF 글 층 밖이면 ""
+export function pdfSelectedText() {
+  const sel = window.getSelection?.(); if (!sel?.rangeCount || sel.isCollapsed) return ''
+  const rg = sel.getRangeAt(0), parts = []
+  for (const sp of document.querySelectorAll('.mb-pdftext span')) {
+    if (!rg.intersectsNode(sp)) continue
+    const tn = sp.firstChild, t = sp.textContent, a = rg.startContainer === tn ? rg.startOffset : 0, b = rg.endContainer === tn ? rg.endOffset : t.length
+    if (b > a) parts.push(t.slice(a, b))
+  }
+  return parts.join('\n')
+}
+if (typeof document !== 'undefined') document.addEventListener('copy', e => { const t = pdfSelectedText(); if (t) { e.clipboardData.setData('text/plain', t); e.preventDefault() } })
+
 export function PdfPages({ it, w, h, on }) {
   const box = useRef(null), [top, setTop] = useState(() => pdfTop(it)), [px, setPx] = useState(1200), [sel, setSel] = useState(null)
   const [hint, setHint] = useState(false)   // 켤 때 4초만 안내(계속 띄우면 쪽 위를 가림)
@@ -63,20 +100,22 @@ export function PdfPages({ it, w, h, on }) {
     if (x1 - x0 < 4 || y1 - y0 < 4) return   // 그냥 누름
     const r = box.current.getBoundingClientRect(), k = r.width / Math.max(1, box.current.offsetWidth)
     window.dispatchEvent(new CustomEvent('mb-pdf-clip', { detail: { id: it._id, page: s.i, r: [x0 / w, (y0 - py) / ph, x1 / w, (y1 - py) / ph],
-      top: r.top + (y0 - box.current.scrollTop) * k, bottom: r.top + (y1 - box.current.scrollTop) * k, right: r.left + x1 * k } }))
+      top: r.top + (y0 - box.current.scrollTop) * k } }))
     e.stopPropagation()
   }
   const rect = sel && { left: Math.min(sel.a.x, sel.b.x), top: Math.min(sel.a.y, sel.b.y), width: Math.abs(sel.a.x - sel.b.x), height: Math.abs(sel.a.y - sel.b.y) }
   return <div style={{ position: 'relative', width: w, height: h }}>
+    {on && <style>{SEL_CSS}</style>}
     <div ref={box} data-pdfid={it._id} onScroll={onScroll} onPointerDown={down} onPointerMove={move} onPointerUp={up}
       style={{ position: 'absolute', inset: 0, overflowY: on ? 'auto' : 'hidden', overflowX: 'hidden', background: '#e4e4e7', pointerEvents: on ? 'auto' : 'none', cursor: on ? 'crosshair' : 'default', overscrollBehavior: 'contain' }}>
       <div style={{ position: 'relative', height: total }}>
         {lay.map(([py, ph], i) => (py + ph < top - h || py > top + 2 * h ? null   // 보이는 쪽 ±1 화면만
           : <img key={i} alt={`${i + 1}쪽`} draggable={false} src={`${it.url}/page/${i}?w=${px}`} style={{ position: 'absolute', left: 0, top: py, width: w, height: ph, background: '#fff', display: 'block', userSelect: 'none' }} />))}
+        {on && lay.map(([py, ph], i) => (py + ph < top - h || py > top + 2 * h ? null : <PageText key={'t' + i} it={it} i={i} w={w} top={py} ph={ph} />))}
         {rect && <div style={{ position: 'absolute', ...rect, border: '1.5px solid #da7756', background: 'rgba(218,119,86,.12)', pointerEvents: 'none' }} />}
       </div>
     </div>
     {lay.length > 0 && <div style={{ position: 'absolute', right: 8, bottom: 8, padding: '2px 8px', borderRadius: 99, background: 'rgba(24,24,27,.72)', color: '#fff', font: "600 11px 'Pretendard', sans-serif", pointerEvents: 'none' }}>{cur + 1} / {lay.length}</div>}
-    {on && hint && <div style={{ position: 'absolute', left: 8, top: 8, right: 8, padding: '4px 8px', borderRadius: 6, background: 'rgba(24,24,27,.72)', color: '#fff', font: "400 11px 'Pretendard', sans-serif", pointerEvents: 'none', textAlign: 'center' }}>휠 = 쪽 넘기기 · Alt+끌기 = 칠판으로 오려 오기 · 바깥 누르기 = 끝</div>}
+    {on && hint && <div style={{ position: 'absolute', left: 8, top: 8, right: 8, padding: '4px 8px', borderRadius: 6, background: 'rgba(24,24,27,.72)', color: '#fff', font: "400 11px 'Pretendard', sans-serif", pointerEvents: 'none', textAlign: 'center' }}>휠 = 쪽 넘기기 · 끌기 = 글 고르기(Ctrl+C) · Alt+끌기 = 그림으로 오려 오기 · 바깥 누르기 = 끝</div>}
   </div>
 }
