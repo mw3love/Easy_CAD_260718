@@ -12,7 +12,7 @@ const pasteFile = (page, name, type, b64) => page.evaluate(([n, t, b]) => {
 }, [name, type, b64])
 const items = async page => (await liveDoc(page)).items
 
-test('PDF 붙여넣기 = 보기 카드 → 누르면 휠로 쪽 넘기기 → Alt+끌기 = 그림 + 출처 + 점선 화살표 → 「글로」 = 글 메모, 다시 열어도 카드', async ({ page }) => {
+test('PDF 붙여넣기 = 보기 카드 → 한 번 = 고르기, 두 번 누르면 휠로 쪽 넘기기 → Alt+끌기 = 그림 + 출처 + 점선 화살표 → 「글로」 = 글 메모, 다시 열어도 카드', async ({ page }) => {
   const name = boardName('pdf')
   await openBoard(page, name); await setCam(page)
   const p = await toPage(page, 300, 300); await page.mouse.move(p.x, p.y)
@@ -25,7 +25,11 @@ test('PDF 붙여넣기 = 보기 카드 → 누르면 휠로 쪽 넘기기 → Al
 
   const body = page.locator('[data-pdfid]'), b = await body.boundingBox()
   await expect(body.locator('img').first()).toHaveJSProperty('complete', true)
-  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2)           // 한 번 누르기 = 넘겨 보기 켜기
+  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2)           // 한 번 누르기 = 고르기만(2026-10-21 사용자)
+  await expect(page.getByText('두 번 누르면 넘겨 보기').first()).toBeVisible()
+  await expect(body).toHaveCSS('pointer-events', 'none')
+  await page.mouse.click(b.x + b.width + 150, b.y + 300)
+  await page.mouse.dblclick(b.x + b.width / 2, b.y + b.height / 2)         // 두 번 누르기 = 넘겨 보기 켜기
   await expect(body).toHaveCSS('pointer-events', 'auto')
   const z0 = (await page.evaluate(() => window.__mb.getCam())).z
   await page.mouse.wheel(0, 400)
@@ -90,7 +94,7 @@ test('멀리서 넣어도 쪽 그림(잠들지 않음) · 바깥 눌러도 보�
   const b = await body.boundingBox()
   expect(b.height).toBeGreaterThan(900 * 0.6)                             // 넣을 때 쪽이 화면 높이 80% 가까이
 
-  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2)
+  await page.mouse.dblclick(b.x + b.width / 2, b.y + b.height / 2)
   await page.mouse.wheel(0, 2000)
   await expect.poll(() => body.evaluate(el => el.scrollTop)).toBeGreaterThan(b.height * 0.8)
   const t = await body.evaluate(el => el.scrollTop)
@@ -98,7 +102,7 @@ test('멀리서 넣어도 쪽 그림(잠들지 않음) · 바깥 눌러도 보�
   await expect(body).toHaveCSS('pointer-events', 'none')
   expect(await body.evaluate(el => el.scrollTop)).toBeCloseTo(t, 0)        // 보던 쪽 그대로
 
-  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2)          // 다시 켜고 글쇠로 쪽 넘기기 — 카드가 옮겨지지 않음
+  await page.mouse.dblclick(b.x + b.width / 2, b.y + b.height / 2)        // 다시 켜고 글쇠로 쪽 넘기기 — 카드가 옮겨지지 않음
   const pos0 = (await items(page))[0].pos
   await page.keyboard.press('Home'); await expect.poll(() => body.evaluate(el => el.scrollTop)).toBe(0)
   await page.keyboard.press('PageDown'); await page.keyboard.press('ArrowDown')
@@ -116,7 +120,7 @@ test('멀리서 넣어도 쪽 그림(잠들지 않음) · 바깥 눌러도 보�
   names = (await menuBtns()).join('|'); expect(names).toContain('전체 선택'); expect(names).not.toContain('삭제')
   await page.keyboard.press('Escape')
 
-  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2)          // 켜고 안쪽 우클릭 = 내용 메뉴만, 넘겨 보기는 안 꺼짐
+  await page.mouse.dblclick(b.x + b.width / 2, b.y + b.height / 2)        // 켜고 안쪽 우클릭 = 내용 메뉴만, 넘겨 보기는 안 꺼짐
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2, { button: 'right' })
   names = (await menuBtns()).join('|')
   expect(names).toContain('이 쪽(2쪽) 통째로 칠판에'); expect(names).toContain('새 탭에서 보기'); expect(names).not.toContain('삭제'); expect(names).not.toContain('전체 선택')

@@ -306,8 +306,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (add) ids = ids.includes(hit._id) ? ids.filter(i => i !== hit._id && !(hit.group_id && m.items.find(x => x._id === i)?.group_id === hit.group_id)) : expandGroups(m.items, [...ids, hit._id])
       else if (!ids.includes(hit._id)) ids = expandGroups(m.items, [hit._id])
       setSel(ids)
-      const webPick = (hit.type === 'pdf' || (hit.type === 'web' && hit.frameable)) && !add && !e.altKey && toLocal(hit, p).y > hit.rect[1] + WEB_HEAD ? hit : null   // 웹 카드 몸통 제자리 클릭 = 칸 안 조작 켜기(놓을 때 — 끌면 이동)
-      if (ids.includes(hit._id)) st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: e.altKey && hit.type === 'frame' ? ids : movingSet(ids), sel: ids, moved: false, webPick }   // Alt+끌기 = 프레임 틀만
+      const body = (hit.type === 'pdf' || (hit.type === 'web' && hit.frameable)) && !add && !e.altKey && toLocal(hit, p).y > hit.rect[1] + WEB_HEAD ? hit : null
+      const webPick = body?.type === 'web' ? body : null, pdfTap = body?.type === 'pdf' ? body : null   // 웹 카드 몸통 제자리 클릭 = 칸 안 조작 켜기(놓을 때 — 끌면 이동). PDF는 한 번 = 고르기만, 두 번 = 넘겨 보기(2026-10-21 사용자 — 옮기기·지우기·휠 확대가 잦은 자료)
+      if (ids.includes(hit._id)) st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: e.altKey && hit.type === 'frame' ? ids : movingSet(ids), sel: ids, moved: false, webPick, pdfTap }   // Alt+끌기 = 프레임 틀만
       return
     }
     if (!add) setSel([])
@@ -472,6 +473,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       setOverlay(o => ({ ...o, guides: null }))
       if (!s.moved && s.cellPick) { const { id, r, c, extend } = s.cellPick; setCellSel(cs => (extend && cs?.id === id ? { ...cs, r1: r, c1: c } : { id, r0: r, c0: c, r1: r, c1: c })) }
       if (!s.moved && s.webPick) webActivate(s.webPick)
+      else if (!s.moved && s.pdfTap && R.current.webOn !== s.pdfTap._id) setStatus('PDF — 두 번 누르면 넘겨 보기(휠로 쪽 넘김)')
       if (s.moved && live) commit(live.filter(it => it), s.sel, '옮김'); else setLive(null); return }
     if (s.kind === 'rubber') {
       setOverlay(o => ({ ...o, rubber: null }))

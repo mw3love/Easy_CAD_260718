@@ -51,7 +51,7 @@ export const KEY_TABLE = [
     ['Enter / Ctrl+Enter', '그 줄 고치기 / 할 일 체크'],
     ['Ctrl+D · Del · Ctrl+/', '줄 복제 · 지우기 · 바꾸기 메뉴'],
   ] },
-  { when: 'PDF 카드를 넘겨 보는 중(카드 한 번 누르기)', rows: [
+  { when: 'PDF 카드를 넘겨 보는 중(카드 두 번 누르기)', rows: [
     ['휠 · ↑ ↓', '조금씩 내리기 · 올리기'],
     ['PageDown · → / PageUp · ←', '다음 / 이전 쪽'],
     ['Home / End', '첫 쪽 / 마지막 쪽'],
