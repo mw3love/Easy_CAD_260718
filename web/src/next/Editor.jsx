@@ -1598,8 +1598,20 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const cb = sceneBox(card, textBox), k = (card.scale || 1), w = card.rect[2] * k * (r[2] - r[0]), h = w * bm.height / bm.width, z = topZ(R.current.model.items) + 1
       const label = `${card.name || 'PDF'} · ${page + 1}쪽`, s = +(1 / R.current.cam.z).toPrecision(2)
       const cap = base([0, 0], { type: 'text', text: label, color: '#ff8a8f98', font: 9, bg: null, scale: s, z }), capH = sceneBox(cap, textBox).h
-      const ty = toSceneP({ clientX: 0, clientY: top }).y, others = hitPool().map(it => sceneBox(it, textBox))
-      const at = nearSpot({ x: cb.x + cb.w + 60 * s + w / 2, y: ty + (h + capH) / 2 }, others, w, h + capH, { pad: 24 * s, step: 24 * s })
+      const ty = toSceneP({ clientX: 0, clientY: top }).y
+      // 놓을 자리 = 카드 오른쪽 한 단(2026-10-22 사용자: 여러 개 오리면 정돈 안 됨) — 이 카드에서 앞서 오려 온 그림이 있으면 그 왼쪽 끝에 맞추고,
+      // 높이는 오린 자리, 겹치면 바로 아래로. 첫 그림은 막히면 오른쪽으로 비켜 단을 정함. 틈 120 = 화살표가 꺾일 여유
+      const items0 = R.current.model.items, prev = items0.filter(a => a.type === 'sarrow' && a._bind1 === card._id)
+        .map(a => items0.find(x => x._id === a._bind2 && x.type === 'image')).filter(Boolean).map(x => sceneBox(x, textBox)).filter(b => b.x > cb.x + cb.w)
+      const solid = hitPool().filter(it => !/arrow|line/.test(it.type)).map(it => sceneBox(it, textBox))   // 화살표·선은 비켜 가지 않음(앞 그림의 화살표가 단을 막지 않게)
+      const gap = 24 * s, free = (x, y) => !solid.some(b => x < b.x + b.w + gap && x + w + gap > b.x && y < b.y + b.h + gap && y + h + capH + gap > b.y)
+      let ax = prev.length ? prev[0].x : cb.x + cb.w + 120 * s, ay = ty
+      if (!prev.length) for (let i = 0; i < 80 && !free(ax, ay); i++) ax += gap
+      for (let i = 0; i < 200 && !free(ax, ay); i++) {   // 겹친 것 바로 밑으로
+        const b = solid.filter(b => ax < b.x + b.w + gap && ax + w + gap > b.x && ay < b.y + b.h + gap && ay + h + capH + gap > b.y)
+        ay = Math.max(...b.map(b => b.y + b.h)) + gap
+      }
+      const at = { x: ax, y: ay }
       const g = 'g' + newId()
       const img = base([at.x, at.y], { type: 'image', rect: [0, 0, w, h], data, alt: `${label}${txt ? '\n' + txt : ''}`, z, group_id: g })
       const capd = { ...cap, pos: [at.x - TEXT_MARGIN * s, at.y + h + 2 * s], group_id: g }
@@ -1607,7 +1619,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       R.current.model = { ...keep, items: [...keep.items, img] }   // 길 찾기가 새 그림을 찾게(아직 칠판엔 안 넣음)
       let arrow
       try {
-        const a = { p: { x: cb.x + cb.w, y: Math.min(cb.y + cb.h - 10, Math.max(cb.y + WEB_HEAD * k, ty)) }, n: { x: 1, y: 0 } }, t = { id: img._id, p: { x: at.x, y: at.y + h / 2 }, n: { x: -1, y: 0 } }
+        // 나가는 높이 = 그림 가운데(카드 몸통 안이면 일직선, 밖으로 밀렸을 때만 한 번 꺾임)
+        const a = { p: { x: cb.x + cb.w, y: Math.min(cb.y + cb.h - 10, Math.max(cb.y + WEB_HEAD * k, at.y + h / 2)) }, n: { x: 1, y: 0 } }, t = { id: img._id, p: { x: at.x, y: at.y + h / 2 }, n: { x: -1, y: 0 } }
         arrow = { ...arrowItem(card._id, a.p, img._id, t.p, { auto_route: true, pts: connRoute(card._id, a, t, null).map(p => [p.x, p.y]), color: '#ff9aa0a6', width: 1, style: 2, head: true, head_start: false }), z }
       } finally { R.current.model = keep }
       commit([...R.current.model.items, img, capd, arrow], [img._id], 'PDF에서 오려 옴')

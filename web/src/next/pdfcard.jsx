@@ -29,6 +29,7 @@ export function pdfPageAt(it, y) {
 // 브라우저가 원래 하는 끌어 고르기·Ctrl+C를 그대로 씀(PDF.js 없이). 글꼴이 달라 폭은 줄마다 scaleX로 맞춤
 const LINES = new Map()   // `${주소}/${쪽}` → 줄 목록 | Promise
 const SEL_CSS = '.mb-pdftext ::selection { background: rgba(37, 99, 235, .32); color: transparent }'
+  + ' .mb-pdf-alt, .mb-pdf-alt * { cursor: crosshair !important }'   // Alt 누르는 동안 = 오려 오기(글 층의 I자 커서를 덮음 — 2026-10-22 사용자: 모드인지 모름)
 function PageText({ it, i, w, top, ph }) {
   const k = `${it.url}/${i}`, [lines, setLines] = useState(() => (Array.isArray(LINES.get(k)) ? LINES.get(k) : null)), ref = useRef(null)
   useEffect(() => {
@@ -63,7 +64,13 @@ export function pdfSelectedText() {
 if (typeof document !== 'undefined') document.addEventListener('copy', e => { const t = pdfSelectedText(); if (t) { e.clipboardData.setData('text/plain', t); e.preventDefault() } })
 
 export function PdfPages({ it, w, h, on }) {
-  const box = useRef(null), [top, setTop] = useState(() => pdfTop(it)), [px, setPx] = useState(1200), [sel, setSel] = useState(null)
+  const box = useRef(null), [top, setTop] = useState(() => pdfTop(it)), [px, setPx] = useState(1200), [sel, setSel] = useState(null), [alt, setAlt] = useState(false)
+  useEffect(() => {   // Alt 누름 상태 — 켜졌을 때만(창을 떠나면 끔)
+    if (!on) { setAlt(false); return }
+    const key = e => setAlt(e.altKey), off = () => setAlt(false)
+    window.addEventListener('keydown', key); window.addEventListener('keyup', key); window.addEventListener('blur', off)
+    return () => { window.removeEventListener('keydown', key); window.removeEventListener('keyup', key); window.removeEventListener('blur', off) }
+  }, [on])
   const lay = pdfLayout(it, w), total = lay.length ? lay[lay.length - 1][0] + lay[lay.length - 1][1] : 0
   useLayoutEffect(() => { if (box.current) box.current.scrollTop = pdfTop(it) }, [on])   // eslint-disable-line
   // 휠 = 카드 안 스크롤(칠판 확대로 안 가게 — 칠판 휠은 svg가 직접 듣는 신호라 여기서 막음). Ctrl+휠은 그대로 칠판 확대
@@ -89,7 +96,7 @@ export function PdfPages({ it, w, h, on }) {
     e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId)
     const p = local(e), i = pageAt(p.y); setSel({ i, a: p, b: p })
   }
-  const move = e => { if (sel) setSel(s => ({ ...s, b: local(e) })) }
+  const move = e => { if (on && e.altKey !== alt) setAlt(e.altKey); if (sel) setSel(s => ({ ...s, b: local(e) })) }
   const up = e => {
     if (!sel) return
     const s = sel; setSel(null)
@@ -104,7 +111,7 @@ export function PdfPages({ it, w, h, on }) {
   const rect = sel && { left: Math.min(sel.a.x, sel.b.x), top: Math.min(sel.a.y, sel.b.y), width: Math.abs(sel.a.x - sel.b.x), height: Math.abs(sel.a.y - sel.b.y) }
   return <div style={{ position: 'relative', width: w, height: h }}>
     {on && <style>{SEL_CSS}</style>}
-    <div ref={box} data-pdfid={it._id} onScroll={onScroll} onPointerDown={down} onPointerMove={move} onPointerUp={up}
+    <div ref={box} data-pdfid={it._id} className={on && (alt || sel) ? 'mb-pdf-alt' : undefined} onScroll={onScroll} onPointerDown={down} onPointerMove={move} onPointerUp={up}
       style={{ position: 'absolute', inset: 0, overflowY: on ? 'auto' : 'hidden', overflowX: 'hidden', background: '#e4e4e7', pointerEvents: on ? 'auto' : 'none', cursor: on ? 'crosshair' : 'default', overscrollBehavior: 'contain' }}>
       <div style={{ position: 'relative', height: total }}>
         {lay.map(([py, ph], i) => (py + ph < top - h || py > top + 2 * h ? null   // 보이는 쪽 ±1 화면만
@@ -113,6 +120,7 @@ export function PdfPages({ it, w, h, on }) {
         {rect && <div style={{ position: 'absolute', ...rect, border: '1.5px solid #da7756', background: 'rgba(218,119,86,.12)', pointerEvents: 'none' }} />}
       </div>
     </div>
+    {on && (alt || sel) && <div style={{ position: 'absolute', left: 8, bottom: 8, padding: '2px 8px', borderRadius: 99, background: '#da7756', color: '#fff', font: "600 11px 'Pretendard', sans-serif", pointerEvents: 'none' }}>✂ 끌어서 오려 오기</div>}
     {lay.length > 0 && <div style={{ position: 'absolute', right: 8, bottom: 8, padding: '2px 8px', borderRadius: 99, background: 'rgba(24,24,27,.72)', color: '#fff', font: "600 11px 'Pretendard', sans-serif", pointerEvents: 'none' }}>{cur + 1} / {lay.length}</div>}
   </div>
 }

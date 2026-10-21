@@ -74,6 +74,37 @@ test('PDF 붙여넣기 = 보기 카드 → 한 번 = 고르기, 두 번 누르�
   await expect.poll(() => page.locator('[data-pdfid] img').first().evaluate(im => im.complete && im.naturalWidth > 0)).toBe(true)   // 다시 열어도 쪽 그림
 })
 
+test('Alt 누르면 십자 커서 + 「끌어서 오려 오기」 · 여러 번 오리면 카드 오른쪽 한 단(왼쪽 끝 같음·안 겹침) · 화살표 일직선', async ({ page }) => {   // 2026-10-22 사용자
+  await openBoard(page, boardName('pdfcol')); await setCam(page)
+  const p = await toPage(page, 300, 300); await page.mouse.move(p.x, p.y)
+  await pasteFile(page, 'two-pages.pdf', 'application/pdf', PDF_B64)
+  await expect.poll(async () => (await items(page)).length, { timeout: 10_000 }).toBe(1)
+  const body = page.locator('[data-pdfid]'), b = await body.boundingBox(), ph = b.width * 800 / 600
+  await expect(body.locator('img').first()).toHaveJSProperty('complete', true)
+  await page.mouse.dblclick(b.x + b.width / 2, b.y + b.height / 2)
+  await body.evaluate(el => { el.scrollTop = 0 })
+  await expect(body.locator('.mb-pdftext span').first()).toHaveCSS('cursor', 'text')
+  await page.mouse.move(b.x + 20, b.y + 20)
+  await page.keyboard.down('Alt')
+  await expect(body.locator('.mb-pdftext span').first()).toHaveCSS('cursor', 'crosshair')
+  await expect(page.getByText('끌어서 오려 오기')).toBeVisible()
+  const clip = async (y0, y1) => {
+    const n = (await items(page)).length
+    await page.mouse.move(b.x + 30, b.y + y0); await page.mouse.down()   // 가장자리 가운데 = 포트점이라 안쪽에서
+    await page.mouse.move(b.x + b.width - 30, b.y + y1, { steps: 6 }); await page.mouse.up()
+    await expect.poll(async () => (await items(page)).length, { timeout: 10_000 }).toBe(n + 3)
+  }
+  await clip(5, ph * 0.4); await clip(ph * 0.5, ph * 0.9); await clip(5, ph * 0.3)   // 셋째는 첫째 자리와 겹침 → 아래로
+  await page.keyboard.up('Alt')
+  await expect(page.getByText('끌어서 오려 오기')).toHaveCount(0)
+  const all = await items(page), imgs = all.filter(it => it.type === 'image'), arrows = all.filter(it => it.type === 'sarrow')
+  expect(imgs.length).toBe(3)
+  for (const im of imgs) expect(im.pos[0]).toBeCloseTo(imgs[0].pos[0], 3)         // 왼쪽 끝 같음
+  const ys = imgs.map(im => [im.pos[1], im.pos[1] + im.rect[3] * (im.scale || 1)]).sort((a, c) => a[0] - c[0])
+  for (let i = 1; i < ys.length; i++) expect(ys[i][0]).toBeGreaterThan(ys[i - 1][1])   // 안 겹침
+  for (const a of arrows.slice(0, 2)) expect(new Set(a.pts.map(q => Math.round(q[1]))).size).toBe(1)   // 카드 몸통 높이 안 = 일직선
+})
+
 test('HTML 파일 붙여넣기 = 문서 카드(파일 이름·제목)', async ({ page }) => {
   await openBoard(page, boardName('html')); await setCam(page)
   const html = '<!doctype html><html><head><title>송신소 안내</title></head><body><h1>안내</h1><script>document.body.textContent="돌았음"</script></body></html>'
