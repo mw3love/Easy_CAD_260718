@@ -1605,12 +1605,15 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         .map(a => items0.find(x => x._id === a._bind2 && x.type === 'image')).filter(Boolean).map(x => sceneBox(x, textBox)).filter(b => b.x > cb.x + cb.w)
       const solid = hitPool().filter(it => !/arrow|line/.test(it.type)).map(it => sceneBox(it, textBox))   // 화살표·선은 비켜 가지 않음(앞 그림의 화살표가 단을 막지 않게)
       const gap = 24 * s, free = (x, y) => !solid.some(b => x < b.x + b.w + gap && x + w + gap > b.x && y < b.y + b.h + gap && y + h + capH + gap > b.y)
-      let ax = prev.length ? prev[0].x : cb.x + cb.w + 120 * s, ay = ty
-      if (!prev.length) for (let i = 0; i < 80 && !free(ax, ay); i++) ax += gap
-      for (let i = 0; i < 200 && !free(ax, ay); i++) {   // 겹친 것 바로 밑으로
-        const b = solid.filter(b => ax < b.x + b.w + gap && ax + w + gap > b.x && ay < b.y + b.h + gap && ay + h + capH + gap > b.y)
-        ay = Math.max(...b.map(b => b.y + b.h)) + gap
+      const down = (x, y) => {   // 겹친 것 바로 밑으로
+        for (let i = 0; i < 200 && !free(x, y); i++) y = Math.max(...solid.filter(b => x < b.x + b.w + gap && x + w + gap > b.x && y < b.y + b.h + gap && y + h + capH + gap > b.y).map(b => b.y + b.h)) + gap
+        return y
       }
+      let ax = prev.length ? prev[prev.length - 1].x : cb.x + cb.w + 120 * s
+      if (!prev.length) for (let i = 0; i < 80 && !free(ax, ty); i++) ax += gap
+      let ay = down(ax, ty)
+      // 밀려 내려가다 카드 아래 끝을 넘으면 오른쪽에 새 단(카드 위 끝부터 — 2026-10-22 사용자: 아래로만 감). 순서 = 위 → 아래, 다음 단
+      if (prev.length && ay > ty && ay + h + capH > cb.y + cb.h) { ax = Math.max(...prev.map(b => b.x + b.w)) + 2 * gap; ay = down(ax, cb.y) }
       const at = { x: ax, y: ay }
       const g = 'g' + newId()
       const img = base([at.x, at.y], { type: 'image', rect: [0, 0, w, h], data, alt: `${label}${txt ? '\n' + txt : ''}`, z, group_id: g })

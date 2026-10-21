@@ -94,15 +94,27 @@ test('Alt 누르면 십자 커서 + 「끌어서 오려 오기」 · 여러 번 
     await page.mouse.move(b.x + b.width - 30, b.y + y1, { steps: 6 }); await page.mouse.up()
     await expect.poll(async () => (await items(page)).length, { timeout: 10_000 }).toBe(n + 3)
   }
-  await clip(5, ph * 0.4); await clip(ph * 0.5, ph * 0.9); await clip(5, ph * 0.3)   // 셋째는 첫째 자리와 겹침 → 아래로
+  await clip(5, ph * 0.4); await clip(ph * 0.5, ph * 0.7); await clip(5, ph * 0.1)   // 셋째는 첫째와 겹침 → 아래로 = 둘째 밑
+  await clip(5, ph * 0.3)                                                    // 넷째는 밀리다 카드 아래 끝을 넘음 → 오른쪽 새 단, 카드 위 끝부터
   await page.keyboard.up('Alt')
   await expect(page.getByText('끌어서 오려 오기')).toHaveCount(0)
   const all = await items(page), imgs = all.filter(it => it.type === 'image'), arrows = all.filter(it => it.type === 'sarrow')
-  expect(imgs.length).toBe(3)
-  for (const im of imgs) expect(im.pos[0]).toBeCloseTo(imgs[0].pos[0], 3)         // 왼쪽 끝 같음
-  const ys = imgs.map(im => [im.pos[1], im.pos[1] + im.rect[3] * (im.scale || 1)]).sort((a, c) => a[0] - c[0])
+  const [c0] = all
+  expect(imgs.length).toBe(4)
+  const col = imgs.slice(0, 3)
+  for (const im of col) expect(im.pos[0]).toBeCloseTo(col[0].pos[0], 3)         // 첫 단 = 왼쪽 끝 같음
+  const ys = col.map(im => [im.pos[1], im.pos[1] + im.rect[3] * (im.scale || 1)]).sort((a, c) => a[0] - c[0])
   for (let i = 1; i < ys.length; i++) expect(ys[i][0]).toBeGreaterThan(ys[i - 1][1])   // 안 겹침
+  expect(imgs[3].pos[0]).toBeGreaterThan(col[0].pos[0] + col[0].rect[2])           // 넷째 = 오른쪽 새 단
+  expect(imgs[3].pos[1]).toBeCloseTo(c0.pos[1], 0)                                // 카드 위 끝부터
   for (const a of arrows.slice(0, 2)) expect(new Set(a.pts.map(q => Math.round(q[1]))).size).toBe(1)   // 카드 몸통 높이 안 = 일직선
+  await page.keyboard.press('Escape')                                       // 넘겨 보기 끝
+  // 오려 온 직후 = 그 그림만 고른 채 → 속성 카드 설명 = 첫 줄 + 접힌 글(2026-10-22 사용자: 너무 길어짐)
+  await expect(page.getByTestId('image-alt')).toHaveText('two-pages.pdf · 1쪽')
+  await expect(page.getByTestId('image-alt-more')).toContainText('들어 있음 ▸')
+  await expect(page.getByText('Alpha line', { exact: true })).toHaveCount(0)
+  await page.getByTestId('image-alt-more').click()
+  await expect(page.getByText('Alpha line', { exact: true })).toBeVisible()
 })
 
 test('HTML 파일 붙여넣기 = 문서 카드(파일 이름·제목)', async ({ page }) => {
