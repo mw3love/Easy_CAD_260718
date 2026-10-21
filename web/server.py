@@ -39,6 +39,7 @@ from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
 from easycad.ai import board_chat, board_find, board_image, board_report, board_tidy, kr_tools, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
+import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
 
 NAME_RE = re.compile(r"^[\w\-가-힣]{1,64}$")
 MAX_BYTES = 200 * 1024 * 1024   # 그림이 든 칠판도 넉넉히, 하지만 끝없이는 아니게
@@ -307,6 +308,51 @@ class Handler(SimpleHTTPRequestHandler):
             Handler.jobs.pop(job, None)   # 한 번 돌려주면 끝(서버 메모리에 안 쌓이게)
         return self._json(200, {k: v for k, v in j.items() if k != "board"})
 
+    # ── PDF 보기 카드(2026-10-21) — 원본은 `<이름>.pdf/<번호>.pdf`, 칠판엔 주소만 ──
+    MAX_PDF = 100 * 1024 * 1024
+
+    def _pdf_put(self, name: str):
+        """POST /api/pdf/<이름> (본문 = PDF, 머리말 X-File-Name) → {url, name, pages, sizes, thumb, text}"""
+        n = int(self.headers.get("Content-Length") or 0)
+        if not name or n <= 0 or n > self.MAX_PDF:
+            return self._json(413 if n > self.MAX_PDF else 400, {"error": "PDF가 없거나 너무 커요(100MB까지)"})
+        from urllib.parse import quote, unquote
+        data = self.rfile.read(n)
+        if not data.startswith(b"%PDF"):
+            return self._json(400, {"error": "PDF 파일이 아니에요"})
+        folder = os.path.join(self.data_dir, name + ".pdf")
+        os.makedirs(folder, exist_ok=True)
+        pid = f"{int(time.time() * 1000)}_{secrets.token_hex(3)}"
+        path = os.path.join(folder, pid + ".pdf")
+        write_via_temp(path, lambda tmp: _write(tmp, data))
+        try:
+            out = pdfview.info(path)
+        except Exception as e:   # 깨진 PDF·암호 걸린 PDF
+            os.remove(path)
+            return self._json(400, {"error": f"PDF를 읽지 못했어요: {e}"})
+        fname = os.path.basename(unquote(self.headers.get("X-File-Name") or "문서.pdf"))[:120]
+        sys.stderr.write("[PDF] %s %s %d쪽\n" % (name, fname, out["pages"]))
+        return self._json(200, {"url": f"/api/pdf/{quote(name)}/{pid}", "name": fname, **out})
+
+    def _pdf_get(self, name: str, pid: str, what: str | None, page: int, q: dict):
+        path = os.path.join(self.data_dir, name + ".pdf", pid + ".pdf") if name else ""
+        if not path or not os.path.exists(path):
+            return self._send(404, b'{"error":"none"}')
+        if not what:   # 원본 — 브라우저 PDF 보기 화면(↗)
+            with open(path, "rb") as f:
+                return self._send(200, f.read(), ctype="application/pdf")
+        try:
+            r = [float(v) for v in ((q.get("r") or [""])[0]).split(",")] if what != "page" else None
+            if r is not None and len(r) != 4:
+                return self._json(400, {"error": "r=x0,y0,x1,y1"})
+            if what == "page":
+                return self._send(200, pdfview.page_jpeg(path, page, int((q.get("w") or ["1200"])[0])), ctype="image/jpeg")
+            if what == "clip":
+                return self._send(200, pdfview.clip_png(path, page, r), ctype="image/png")
+            return self._json(200, {"text": pdfview.clip_text(path, page, r)})
+        except (IndexError, ValueError) as e:
+            return self._json(400, {"error": str(e)})
+
     def _find_api(self, name: str):
         """POST /api/find/<이름> {q, k?} → {"results": [{uid, type, kind, text, score}]} — 칠판 Ctrl+F 「뜻으로 찾기」."""
         req = self._body(64 * 1024) or {}
@@ -474,6 +520,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send(404, b'{"error":"none"}')
             with open(p, "rb") as f:
                 return self._send(200, f.read(), ctype={"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}[m.group(3)])
+        m = re.match(r"^/api/pdf/([^/]+)/(\d+_[0-9a-f]{6})(?:/(page|clip|text)/(\d+))?$", path)
+        if m:   # PDF 보기 카드 — 원본(↗ 새 탭)·쪽 그림·오려 오기·그 부분 글(`pdfview.py`)
+            return self._pdf_get(self._name(m.group(1)), m.group(2), m.group(3), int(m.group(4) or 0), q)
         if path == "/api/link":
             return self._link()
         if path == "/api/symbols":   # 「내 심볼」 — 데스크톱과 같은 파일(git으로 PC 간 동기화), 웹은 읽기만
@@ -552,6 +601,9 @@ class Handler(SimpleHTTPRequestHandler):
         m = re.match(r"^/api/meeting/([^/]+)$", path)
         if m:
             return self._meeting_start(self._name(m.group(1)), self._route()[1])
+        m = re.match(r"^/api/pdf/([^/]+)$", path)
+        if m:
+            return self._pdf_put(self._name(m.group(1)))
         m = re.match(r"^/api/(patch|presence|publish|invite)/([^/]+)$", path)
         if not m:
             return self._send(404, b'{"error":"none"}')

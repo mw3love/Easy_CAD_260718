@@ -25,7 +25,7 @@ test('녹음 끌어 놓기 → 만드는 중 → 프레임 + 요약 + 접힌 전
   await openBoard(page, name); await setCam(page)
   const url0 = page.url()
   await dropFile(page, 'notes.txt', 'text/plain', 100, 100)
-  await expect(page.getByText('칠판엔 그림·녹음 파일만').first()).toBeVisible()
+  await expect(page.getByText('칠판엔 그림·녹음·PDF·HTML 파일을').first()).toBeVisible()
   expect(page.url()).toBe(url0)
 
   await dropFile(page, '10월 회의.m4a', 'audio/mp4', 0, 0)

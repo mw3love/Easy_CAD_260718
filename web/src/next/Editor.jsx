@@ -50,7 +50,7 @@ const INK = '#ff1f1f1f'   // 새로 그리는 선·글 기본색(밝은 칠판)
 // 다른 사람 색 — 접속 id로 늘 같은 색(테두리·이름표)
 const PERSON_COLORS = ['#e8590c', '#7048e8', '#0c8599', '#d6336c', '#2f9e44', '#1971c2']
 const personColor = id => PERSON_COLORS[[...String(id)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7) % PERSON_COLORS.length]
-const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web', 'memo', 'legend', 'doc'])
+const BOXY = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'board', 'polygon', 'path', 'frame', 'web', 'memo', 'legend', 'doc', 'pdf'])
 
 // 글 상자 크기(아이템 안 단위) — 그릴 때와 같은 재기, 아이템 객체마다 한 번
 const _tb = new WeakMap()
@@ -153,7 +153,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const [x, y, w, h] = localRect(it), s = it.scale || 1
       for (const [k, px, py, c] of [['tl', x, y, 'nwse-resize'], ['tr', x + w, y, 'nesw-resize'], ['br', x + w, y + h, 'nwse-resize'], ['bl', x, y + h, 'nesw-resize']]) out.push({ key: k, p: toScene(it, { x: px, y: py }), cursor: c })
       const g = (HANDLE * 1.6) / z / s
-      if (it.type !== 'frame' && it.type !== 'web' && it.type !== 'doc') out.push({ key: 'rot', p: toScene(it, { x: x - g, y: y - g }), cursor: 'grab', round: true })   // 좌상단 대각(데스크톱 `_box_rot_center`) — 프레임은 안 돌림
+      if (it.type !== 'frame' && it.type !== 'web' && it.type !== 'doc' && it.type !== 'pdf') out.push({ key: 'rot', p: toScene(it, { x: x - g, y: y - g }), cursor: 'grab', round: true })   // 좌상단 대각(데스크톱 `_box_rot_center`) — 프레임은 안 돌림
     } else if (it.type === 'text') {
       const b = textBox(it), g = (HANDLE * 1.6) / z / (it.scale || 1)
       out.push({ key: 'scale', p: toScene(it, { x: b.w, y: b.h }), cursor: 'nwse-resize' })
@@ -229,6 +229,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (readOnly) { svg.current.setPointerCapture(e.pointerId); st.current = { ...st.current, kind: 'pan', right: false, sx: e.clientX, sy: e.clientY, cam: R.current.cam }; setCursor('grabbing'); return }   // 보기 전용 = 끌면 화면 이동
     if (R.current.editing && e.button === 0) return   // 고치는 중에도 휠·오른쪽 끌기 = 화면 이동(입력은 그대로 — 2026-10-18 사용자)
     if (R.current.webOn) setWebOn(null)   // 웹 카드 조작 중 바깥을 누름 = 끝(칸 안 누르기는 페이지가 받아 여기 안 옴)
+    setPdfPick(null)   // PDF 「글로」 단추는 다른 데를 누르면 사라짐
     const p = toSceneP(e), m = R.current.model, z = R.current.cam.z
     svg.current.setPointerCapture(e.pointerId)
     // 가운데·오른쪽 끌기 = 화면 이동(데스크톱 우클릭 끌기 = 팬, 제자리 우클릭 메뉴는 나중)
@@ -244,7 +245,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (i >= 0) { const [ax, ay] = cs[(i + 2) % 4]; st.current = { ...st.current, kind: 'mscale', A: { x: ax, y: ay }, box: mb, start: p, orig: m.items, ids: new Set(movingSet(R.current.sel)) }; return }
     }
     const lk = frameLockAt(p); if (lk) { setLoose(l => (l === lk._id ? null : lk._id)); return }   // 이름표 옆 자물쇠 — 잠깐 틀만
-    const wo = webOpenAt(p); if (wo) { if (wo.type === 'doc') openDoc(wo); else window.open(wo.url, '_blank', 'noopener'); return }   // 웹 카드 오른쪽 위 ↗ = 새 탭, 정리 문서 ↗ = 크게 보기
+    const wo = webOpenAt(p); if (wo) { if (wo.type === 'doc') openDoc(wo); else window.open(wo.url, '_blank', 'noopener'); return }   // PDF ↗ = 원본(브라우저 PDF 보기)   // 웹 카드 오른쪽 위 ↗ = 새 탭, 정리 문서 ↗ = 크게 보기
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) { const u = memoLinkHit(p); if (u) { window.open(u, '_blank', 'noopener'); return } }   // 메모 속 주소 Ctrl+클릭 = 새 탭(그냥 클릭은 고르기·고치기 — 2026-10-18 사용자 선택)
     // 줄을 고른 채 Shift·Ctrl+클릭은 손잡이가 아니라 줄 글자 위여도 같음(2026-10-18 사용자: 글자 위를 눌러 고른 것이 다 풀렸음 — 노션은 블록 아무 데나)
     const mh = memoHandleHit(p) || ((e.shiftKey || e.ctrlKey || e.metaKey) && lineSel ? (hv => (hv && hv.it._id === lineSel.id ? hv : null))(memoRowAt(p, 0)) : null)
@@ -305,7 +306,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (add) ids = ids.includes(hit._id) ? ids.filter(i => i !== hit._id && !(hit.group_id && m.items.find(x => x._id === i)?.group_id === hit.group_id)) : expandGroups(m.items, [...ids, hit._id])
       else if (!ids.includes(hit._id)) ids = expandGroups(m.items, [hit._id])
       setSel(ids)
-      const webPick = hit.type === 'web' && hit.frameable && !add && !e.altKey && toLocal(hit, p).y > hit.rect[1] + WEB_HEAD ? hit : null   // 웹 카드 몸통 제자리 클릭 = 칸 안 조작 켜기(놓을 때 — 끌면 이동)
+      const webPick = (hit.type === 'pdf' || (hit.type === 'web' && hit.frameable)) && !add && !e.altKey && toLocal(hit, p).y > hit.rect[1] + WEB_HEAD ? hit : null   // 웹 카드 몸통 제자리 클릭 = 칸 안 조작 켜기(놓을 때 — 끌면 이동)
       if (ids.includes(hit._id)) st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: e.altKey && hit.type === 'frame' ? ids : movingSet(ids), sel: ids, moved: false, webPick }   // Alt+끌기 = 프레임 틀만
       return
     }
@@ -778,6 +779,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (it.type === 'memo') { const t = memoText(it.lines); if (t.trim()) out.push(t) }
     if (it.type === 'doc') out.push(`[정리 문서] ${it.title || ''}\n${docText(it.html)}`)   // 정리 문서도 근거·재료로
     if (it.type === 'web') out.push(`[웹] ${it.title || ''} ${it.url || ''}`.trim())
+    if (it.type === 'pdf') out.push(`[PDF] ${it.name || ''}\n${it.text || ''}`.trim())   // 올릴 때 서버가 뽑은 글
     if (it.type === 'image' && it.alt) out.push(`[그림] ${it.alt}`)
     return out
   }
@@ -1244,10 +1246,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const hit = topHit(hitPool(), p, HIT_PX / R.current.cam.z, textBox)
     if (!hit) { newTextAt(p); return }   // 빈 곳 두 번 누르기 = 그 자리에 글(2026-10-20 사용자 — 아무것도 안 쓰고 나오면 빈 글은 지워짐)
     if (hit.type === 'doc') { setSel([hit._id]); openDoc(hit); return }   // 정리 문서 두 번 누르기 = 크게 보기(고치기는 대화창에 말로)
-    if (hit.type !== 'web' && !guardEdit(hit._id)) return
+    if (hit.type !== 'web' && hit.type !== 'pdf' && !guardEdit(hit._id)) return
     if (hit.type === 'frame') { const b = frameTagBox(hit); if (p.y <= b.y + b.h + 2 / R.current.cam.z) { setSel([hit._id]); setTagEdit(hit._id) } return }   // 이름표 = 그 자리에서 이름 고치기
     if (hit.type === 'memo') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'memo', at }); return }
     if (hit.type === 'web') { setSel([hit._id]); if (hit.frameable) webActivate(hit); else window.open(hit.url, '_blank', 'noopener'); return }   // 막는 사이트 = 새 탭
+    if (hit.type === 'pdf') { webActivate(hit); return }   // PDF 카드 두 번 누르기 = 넘겨 보기
     if (hit.type === 'table') { const cell = cellAt(hit, toLocal(hit, p)); if (cell) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'cell', ...cell, at }) } return }
     if (isArrow(hit)) {   // 화살표 빈 자리 더블클릭 = 그 자리에 새 라벨(여러 개 — 데스크톱 `add_label_at_scene_pos`)
       const labels = labelsOf(hit), pr = projectOn(hit, toLocal(hit, p))
@@ -1528,9 +1531,81 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     for (const f of files) {
       if (/^image\//.test(f.type)) await insertImage(f)
       else if (AUDIO_RE.test(f.name) || /^audio\//.test(f.type)) startMeeting(f, p)
-      else setStatus(`${f.name} — 칠판엔 그림·녹음 파일만 끌어 놓을 수 있어요(.ecad는 「열기」)`)
+      else if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') await insertPdf(f, p)
+      else if (/\.html?$/i.test(f.name) || f.type === 'text/html') await insertHtmlFile(f, p)
+      else setStatus(`${f.name} — 칠판엔 그림·녹음·PDF·HTML 파일을 놓을 수 있어요(.ecad는 「열기」)`)
     }
   }
+  // HTML 파일 = 정리 문서 카드(스크립트는 끔 — 칠판이 안전하게, 2026-10-21 사용자)
+  async function insertHtmlFile(f, at) {
+    const html = await f.text(), m = R.current.model, title = (/<title[^>]*>([^<]*)<\/title>/i.exec(html)?.[1] || '').trim() || f.name.replace(/\.html?$/i, '')
+    const it = docItem({ title, html }, 0, 0, topZ(m.items) + 1), w = it.rect[2], h = it.rect[3]
+    const placed = { ...it, file: f.name, pos: [at.x - w / 2, at.y - h / 2] }
+    commit([...m.items, placed], [placed._id], 'HTML 파일'); setTool('select')
+    setStatus(`HTML 파일 → 문서 카드 — ↗ 또는 두 번 누르기 = 크게 보기(파일 속 프로그램은 꺼서 보여요)`)
+  }
+  // PDF 파일 = PDF 보기 카드(2026-10-21 사용자) — 원본은 서버(`/api/pdf/<칠판>`), 칠판엔 주소·쪽 크기·첫 쪽 작은 그림·글(찾기용)
+  const PDF_W = 420
+  async function insertPdf(f, at) {
+    const id = newId(), done = () => setPend(ps => ps.filter(q => q.id !== id))
+    setPend(ps => [...ps, { id, x: at.x, y: at.y, msg: `「${f.name}」 올리는 중…` }])
+    try {
+      const r = await fetch(`/api/pdf/${encodeURIComponent(DOC_NAME)}`, { method: 'POST', body: f, headers: { 'Content-Type': 'application/pdf', 'X-File-Name': encodeURIComponent(f.name) } })
+      const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
+      if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
+      const s = +(1 / R.current.cam.z).toPrecision(2), [pw, ph] = d.sizes[0] || [595, 842], h = WEB_HEAD + Math.round(PDF_W * Math.min(1.5, ph / pw)), m = R.current.model
+      const it = base([at.x - PDF_W * s / 2, at.y - h * s / 2], { type: 'pdf', rect: [0, 0, PDF_W, h], url: d.url, name: d.name, pages: d.pages, sizes: d.sizes, thumb: d.thumb, text: d.text, scale: s, z: topZ(m.items) + 1 })
+      done(); commit([...m.items, it], [it._id], 'PDF'); setTool('select')
+      setStatus(`PDF ${d.pages}쪽 — 카드를 누르면 넘겨 보기(휠), Alt+끌기 = 칠판으로 오려 오기`)
+    } catch (err) { done(); setStatus(`PDF 실패 — ${err.message || err}`) }
+  }
+  // PDF 카드에서 Alt+끌기 = 그 부분을 칠판으로(서버가 200dpi로 다시 그림) — 카드 오른쪽 빈자리, 밑에 「파일 · N쪽」, 카드 → 그림 점선 화살표(어디서 왔는지 — 웹 검색 출처 카드와 같은 원칙).
+  // 그 부분 글은 그림의 보이지 않는 설명(찾기·대화 재료). 붙인 뒤 잠깐 「글로」 단추 = 그림 대신 글 메모로 바꾸기
+  const [pdfPick, setPdfPick] = useState(null)   // { ids: 붙인 것, cardId, text, x, y(화면) }
+  async function clipPdf({ id, page, r, top, bottom, right }) {
+    const card = R.current.model.items.find(it => it._id === id); if (!card) return
+    const q = `${card.url}/${'%s'}/${page}?r=${r.map(v => v.toFixed(4)).join(',')}`
+    setStatus('오려 오는 중…')
+    try {
+      const [png, txt] = await Promise.all([fetch(q.replace('%s', 'clip')).then(x => { if (!x.ok) throw new Error(`서버 응답 ${x.status}`); return x.blob() }),
+        fetch(q.replace('%s', 'text')).then(x => x.json()).then(d => d.text || '', () => '')])
+      const bm = await createImageBitmap(png), cv = document.createElement('canvas'); cv.width = bm.width; cv.height = bm.height; cv.getContext('2d').drawImage(bm, 0, 0)
+      const data = cv.toDataURL('image/png').split(',')[1]
+      const cb = sceneBox(card, textBox), k = (card.scale || 1), w = card.rect[2] * k * (r[2] - r[0]), h = w * bm.height / bm.width, z = topZ(R.current.model.items) + 1
+      const label = `${card.name || 'PDF'} · ${page + 1}쪽`, s = +(1 / R.current.cam.z).toPrecision(2)
+      const cap = base([0, 0], { type: 'text', text: label, color: '#ff8a8f98', font: 9, bg: null, scale: s, z }), capH = sceneBox(cap, textBox).h
+      const ty = toSceneP({ clientX: right, clientY: top }).y, others = hitPool().map(it => sceneBox(it, textBox))
+      const at = nearSpot({ x: cb.x + cb.w + 60 * s + w / 2, y: ty + (h + capH) / 2 }, others, w, h + capH, { pad: 24 * s, step: 24 * s })
+      const g = 'g' + newId()
+      const img = base([at.x, at.y], { type: 'image', rect: [0, 0, w, h], data, alt: `${label}${txt ? '\n' + txt : ''}`, z, group_id: g })
+      const capd = { ...cap, pos: [at.x - TEXT_MARGIN * s, at.y + h + 2 * s], group_id: g }
+      const keep = R.current.model
+      R.current.model = { ...keep, items: [...keep.items, img] }   // 길 찾기가 새 그림을 찾게(아직 칠판엔 안 넣음)
+      let arrow
+      try {
+        const a = { p: { x: cb.x + cb.w, y: Math.min(cb.y + cb.h - 10, Math.max(cb.y + WEB_HEAD * k, ty)) }, n: { x: 1, y: 0 } }, t = { id: img._id, p: { x: at.x, y: at.y + h / 2 }, n: { x: -1, y: 0 } }
+        arrow = { ...arrowItem(card._id, a.p, img._id, t.p, { auto_route: true, pts: connRoute(card._id, a, t, null).map(p => [p.x, p.y]), color: '#ff9aa0a6', width: 1, style: 2, head: true, head_start: false }), z }
+      } finally { R.current.model = keep }
+      commit([...R.current.model.items, img, capd, arrow], [img._id], 'PDF에서 오려 옴')
+      setPdfPick({ ids: [img._id, capd._id, arrow._id], cardId: id, text: txt, label, x: right, y: bottom })
+      setStatus(`${label} 오려 옴${txt ? ' — 「글로」를 누르면 그림 대신 글 메모로' : ''}`)
+    } catch (err) { setStatus(`오려 오기 실패 — ${err.message || err}`) }
+  }
+  // 「글로」 — 방금 붙인 그림 자리에 그 부분 글 메모(밑 줄 = 회색 「파일 · N쪽」), 화살표는 메모로 옮겨 붙임. 한 번의 commit
+  function pdfToText() {
+    const pk = pdfPick; setPdfPick(null); if (!pk?.text) return
+    const m = R.current.model, img = m.items.find(it => it._id === pk.ids[0]); if (!img) return
+    const s = +(1 / R.current.cam.z).toPrecision(2), lines = [...pk.text.split(/\n+/).filter(t => t.trim()).map(t => ({ k: 'p', t: t.trim() })), { k: 'p', t: pk.label, runs: [[0, pk.label.length, MUTED, false]] }]
+    let memo = base([img.pos[0], img.pos[1]], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines, scale: s, z: img.z, group_id: img.group_id })
+    memo = { ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }
+    const items = m.items.filter(it => it._id !== pk.ids[0] && it._id !== pk.ids[1]).map(it => (it._id === pk.ids[2] ? { ...it, ...bindOf('bind2', memo, { x: memo.pos[0], y: memo.pos[1] + Math.min(memo.rect[3] * s / 2, 30) }) } : it))
+    commit([...items, memo], [memo._id], 'PDF 글로')
+    setStatus(`${pk.label} — 글 메모로 바꿈(Ctrl+Z = 그림으로 되돌리기)`)
+  }
+  useEffect(() => {
+    const on = e => { if (!readOnly) clipPdf(e.detail) }
+    window.addEventListener('mb-pdf-clip', on); return () => window.removeEventListener('mb-pdf-clip', on)
+  })
   // 회의록 — 녹음을 서버로(받아쓰기·요약은 서버 뒤 일감, easycad/ai/meeting.py), 그동안 놓을 자리에 「만드는 중」 점선 틀(그리는 과정 보이기 — §8 항목61 ③), 2초마다 확인
   const [pend, setPend] = useState([])
   async function startMeeting(file, at) {
@@ -1587,9 +1662,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function webActivate(it) {
     setSel([it._id]); setWebOn(it._id)
     if (isYoutube(it)) playYoutube(it._id)
-    setStatus(isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
+    setStatus(it.type === 'pdf' ? 'PDF 넘겨 보는 중 — 휠 = 쪽 넘기기, Alt+끌기 = 칠판으로 오려 오기, 바깥을 누르면 끝' : isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
   }
-  const webOpenAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'web' && it.type !== 'doc') continue
+  const webOpenAt = p => { const z = R.current.cam.z; for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'web' && it.type !== 'doc' && it.type !== 'pdf') continue
     const q = toLocal(it, p), b = openBtnRect(it), pad = 2 / z; if (q.x >= b.x - pad && q.x <= b.x + b.w + pad && q.y >= b.y - pad && q.y <= b.y + b.h + pad) return it } return null }
   // 범례(2026-10-19 사용자: 표 모양 · 자동 갱신 · 「표」 버튼 안) — 줄은 commit이 도면에서 다시 모음, 사람이 적는 건 이름뿐
   function insertLegend() {
@@ -1741,7 +1816,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           {visible.map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
             : it._id === editingId && it.type === 'memo' ? <Item key={it._id} it={{ ...it, lines: [] }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />   // 고치는 메모 = 바탕만(흐린 글자가 투명한 채움 사이로 잔상처럼 비쳤음 — 2026-10-18 사용자)
             : it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
-            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
+            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'pdf' ? (webOn === it._id ? 'on' : it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (it.rect[2] * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
           {pend.map(q => { const w = 2 * MEMO.W + 72, h = 240, fs = 14 / z   // 회의록 만드는 중 — 놓을 자리에 점선 틀(그리는 과정 보이기)
@@ -1803,6 +1878,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
               {shut && <circle data-testid="poly-close" cx={overlay.poly[0].x} cy={overlay.poly[0].y} r={5 / z} fill={BLUE} stroke="#fff" strokeWidth={1.5 / z} />}</> })()}
         </g>
       </svg>
+      {pdfPick?.text && (r => <button data-testid="pdf-to-text" onClick={pdfToText} title="방금 오려 온 그림 대신 그 부분 글을 메모로"
+        style={{ position: 'absolute', left: pdfPick.x - r.left - 64, top: pdfPick.y - r.top + 6, zIndex: 8, padding: '4px 10px', borderRadius: 6, border: '1px solid #da7756', background: '#fff', color: '#da7756', font: "600 12px 'Pretendard', sans-serif", cursor: 'pointer', boxShadow: '0 2px 6px rgba(0,0,0,.15)' }}>📝 글로</button>)(svg.current.getBoundingClientRect())}
       {lineMenu && <ContextMenu at={lineMenu} onClose={() => setLineMenu(null)} entries={lineMenuEntries(lineMenu)} />}
       {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} entries={(() => {
         const m = R.current.model, ids = R.current.sel, has = ids.length > 0, selIt = m.items.filter(it => ids.includes(it._id)), act = f => () => { setMenu(null); f() }

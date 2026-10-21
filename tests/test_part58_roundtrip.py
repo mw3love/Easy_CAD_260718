@@ -22,6 +22,9 @@ LEGEND = {"type": "legend", "uid": "lg1", "pos": [0, 900], "rect": [0, 0, 220, 8
 
 DOC = {"type": "doc", "uid": "dc1", "pos": [500, 900], "rect": [0, 0, 397, 601], "title": "회의 브리핑", "html": "<!doctype html><html><head><title>회의 브리핑</title></head><body><h1>송신기</h1></body></html>",
        "model": "claude-opus-5-5", "chat_at": 1792390000000, "scale": 1, "rotation": 0, "z": 4, "origin": [0, 0], "locked": False, "group_id": None, "layer_id": None}   # 정리 문서 카드(「정리해 줘」 ①)
+PDF = {"type": "pdf", "uid": "pf1", "pos": [1000, 900], "rect": [0, 0, 420, 600], "url": "/api/pdf/main/1792390000000_abcdef", "name": "보고서.pdf", "pages": 2,
+       "sizes": [[595, 842], [842, 595]], "thumb": "data:image/jpeg;base64,AAAA", "text": "[1쪽] 송신기", "scale": 0.5, "rotation": 0, "z": 5, "origin": [0, 0], "locked": False,
+       "group_id": None, "layer_id": None}   # PDF 보기 카드(2026-10-21 — 원본은 웹 서버, 칠판엔 주소)
 
 
 def _close(a, b):
@@ -52,9 +55,9 @@ def _by_uid(items):
 def test_web_made_document_survives_desktop_open_save(tmp_path):
     with open(FIX, encoding="utf-8") as f:
         doc = json.load(f)
-    doc["items"] += [LEGEND, DOC]
+    doc["items"] += [LEGEND, DOC, PDF]
     kinds = {it["type"] for it in doc["items"]}
-    assert {"memo", "web", "frame", "legend", "doc", "sarrow", "image", "text", "table", "rect"} <= kinds   # 재료가 모든 웹 종류를 덮는지
+    assert {"memo", "web", "frame", "legend", "doc", "pdf", "sarrow", "image", "text", "table", "rect"} <= kinds   # 재료가 모든 웹 종류를 덮는지
     assert any(it.get("fold") is True for it in doc["items"])                                      # 회의록 전문(접기)
     src, out = tmp_path / "a.ecad", tmp_path / "b.ecad"
     src.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")

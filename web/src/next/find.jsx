@@ -24,6 +24,7 @@ export function itemText(it) {
   if (it.type === 'frame') out.push(it.name || '')
   if (it.type === 'image') out.push(it.alt || '')   // 그림 = 만든 요청(보이지 않는 설명, 2026-10-20)
   if (it.type === 'doc') out.push(it.title || '', docText(it.html))
+  if (it.type === 'pdf') out.push(it.name || '', it.text || '')   // PDF 보기 카드 — 올릴 때 서버가 뽑은 글(앞 3만 자)
   if (it.type === 'titleblock' && it.fields) out.push(...Object.values(it.fields).map(String))
   return out.map(s => String(s).trim()).filter(Boolean).join('\n')
 }

@@ -39,7 +39,7 @@ const PEN = new Set(['rect', 'ellipse', 'symbol', 'polygon', 'path', 'line'])
 const lineKey = it => (isArrow(it) || it.type === 'badge' ? 'color' : PEN.has(it.type) || it.type === 'table' ? 'pen' : it.type === 'board' ? 'bg' : null)   // 표 선 색 = .ecad 표의 새 칸 pen(웹 먼저)   // 보드는 「바탕」 색
 const hasWidth = it => isArrow(it) || PEN.has(it.type)
 const fillKey = it => (['rect', 'ellipse', 'symbol', 'memo'].includes(it.type) || (it.type === 'polygon' && it.closed) ? 'fill' : it.type === 'text' ? 'bg' : null)
-const TYPE_NAMES = { doc: '정리 문서', rect: '사각형', ellipse: '원', line: '선', arrow: '화살표', sarrow: '화살표', text: '텍스트', badge: '번호', path: '펜', image: '이미지', table: '표', titleblock: '표제란', polygon: '다각형', board: '보드', frame: '프레임', web: '웹 카드', memo: '메모', legend: '범례' }
+const TYPE_NAMES = { doc: '정리 문서', rect: '사각형', ellipse: '원', line: '선', arrow: '화살표', sarrow: '화살표', text: '텍스트', badge: '번호', path: '펜', image: '이미지', table: '표', titleblock: '표제란', polygon: '다각형', board: '보드', frame: '프레임', web: '웹 카드', pdf: 'PDF', memo: '메모', legend: '범례' }
 const typeName = it => (it.type === 'symbol' ? SYMBOLS[it.kind]?.name || '심볼' : TYPE_NAMES[it.type] || '객체')
 
 // 색 비교용 — '#ffrrggbb'(불투명 ARGB)와 '#rrggbb'를 같게

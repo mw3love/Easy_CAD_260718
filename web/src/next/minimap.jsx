@@ -30,7 +30,7 @@ function draw(ctx, items, f, dark) {
     if (it.type === 'path') { for (const e of it.elements) { if (e.length >= 3) ctx[e[0] === 'M' ? 'moveTo' : 'lineTo'](...L(e[e.length - 2], e[e.length - 1])) } ctx.stroke(); continue }
     const b = itemBounds(it), [x, y] = P(b.x, b.y), w = Math.max(1, b.w * f.k), h = Math.max(1, b.h * f.k)
     if (it.type === 'board') { ctx.fillStyle = cssColor(it.bg) || '#ffffff'; ctx.fillRect(x, y, w, h); continue }
-    if (it.type === 'text' || it.type === 'image' || it.type === 'web' || it.type === 'doc' || it.type === 'memo' || it.type === 'legend') { ctx.fillStyle = dark ? 'rgba(220,226,235,.35)' : 'rgba(40,48,60,.28)'; ctx.fillRect(x, y, w, h); continue }
+    if (it.type === 'text' || it.type === 'image' || it.type === 'web' || it.type === 'doc' || it.type === 'pdf' || it.type === 'memo' || it.type === 'legend') { ctx.fillStyle = dark ? 'rgba(220,226,235,.35)' : 'rgba(40,48,60,.28)'; ctx.fillRect(x, y, w, h); continue }
     if (it.type === 'ellipse') { ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); ctx.stroke(); continue }
     if (it.fill) { ctx.fillStyle = cssColor(it.fill); ctx.fillRect(x, y, w, h) }
     ctx.strokeRect(x, y, w, h)

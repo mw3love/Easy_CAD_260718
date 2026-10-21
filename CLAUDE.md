@@ -133,18 +133,18 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~64_*.py      테마별 회귀 스모크 1494종(2026-10-21 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~65_*.py      테마별 회귀 스모크 1497종(2026-10-21 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + TipTap 3.32.0(글 편집, 버전 고정). **2026-10-18 5단계 갈아탐: tldraw 뺌**(옛 tldraw 화면
 │                          src/main.jsx·shapes.jsx·cad.jsx·chat.jsx·boardStore.js·ecad.js·ecadExport.js는 지움 — git에 있음). 남은 공용: route.js(길 찾기 = 데스크톱
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecadFormat.js(순수 변환, `npm test`)·symbols.json(`tools/export_web_symbols.py`가
-│                          데스크톱 심볼에서 뽑음)·chatFormat.js(답 글 읽기·빈자리, 순수)·server.py(감시 PC용 저장 서버 `/api/doc`(.ecad) + 대화 `/api/chat`·`/api/models`·`/api/credits`(남은 크레딧)·
+│                          데스크톱 심볼에서 뽑음)·chatFormat.js(답 글 읽기·빈자리, 순수)·server.py(감시 PC용 저장 서버 `/api/doc`(.ecad) + 대화 `/api/chat`·`/api/models`·`/api/credits`(남은 크레딧)·`/api/pdf`(PDF 보기 카드 — 원본 `<이름>.pdf/`, 쪽 그림·오리기·글, 계산 `web/pdfview.py`)·
 │                          `/api/chatlog` + 웹 카드 `/api/link` + 공동작업 `/api/login`·`patch`·`since`(`?wait` = 롱 폴링)·`presence`·`publish`·`pub`·`invite`·`join`(편집 초대 링크) — 계산은 `web/collab.py`). web_bakeoff/는 바탕 부품 비교 시험(보존용). 주소 `/`(옛 `next.html`은 `/`로 넘기는 안내판).
 │                          **칠판**(직접 만든 것): `index.html` + `src/next/`(geom.js 그리기 계산·render.jsx 종류별 SVG·doc.js .ecad 문서·
 │                          arrows.js 길 다시 찾기 + 2단계 Editor.jsx 편집 화면·edit.js 편집 계산·align.js 정렬선·model.js _id 모델·text.jsx TipTap 글 편집 + 3단계 connect.js 붙는 규칙·arrowedit.js 알약·곡선·라벨·
 │                          arrowkind.js 종류 바꾸기·xform.js 좌표 + 4단계 props.jsx 우상 속성 카드·palette.jsx 좌상 도형·심볼·layers.jsx 좌하 레이어·minimap.jsx 우하 미니맵·
 │                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례(표 모양 `legend`, 줄 자동)·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿)·formatbar.jsx 드래그 꾸미기 막대·marks.js 기울임·밑줄·취소선·fold.jsx 카드 접기(▾/▸) + ⓕ sync.js 부분 저장·받아 오기·도형 단위 되돌리기·viewer.jsx 게시 화면 + ⓔ htmlshare.js HTML 한 파일) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
 │                          데스크톱 대조 시험 `tools/export_route_cases.py`·`export_connect_cases.py`·`export_arrow_cases.py` → `web/test/fixtures/`(규칙 고치면 다시 돌림)
-│                          + tidy.js 정리정돈 자리 계산(순수) + 다잡기(2026-10-19) keys.js 글쇠 규칙표·help.jsx 도움말(F1) · **화면 자동 시험** `web/e2e/`(Playwright 1.63.0, 깔린 크롬) `npm run e2e` — 매일 쓰는 흐름 63개(flow1~22) · clipin.js 바깥 붙여넣기 모양 고르기(글자·메모·표·코드, 2026-10-21) · find.jsx 찾기 칸(Ctrl+F) · mic.js 대화창 🎤 실시간 받아쓰기(서버 `/api/stt-token` 일회용 표 → KAIROS 소켓) · kairosKey.js 「🔑 내 키」(머리말 `X-Kairos-Key`)
+│                          + tidy.js 정리정돈 자리 계산(순수) + 다잡기(2026-10-19) keys.js 글쇠 규칙표·help.jsx 도움말(F1) · **화면 자동 시험** `web/e2e/`(Playwright 1.63.0, 깔린 크롬) `npm run e2e` — 매일 쓰는 흐름 65개(flow1~23) · clipin.js 바깥 붙여넣기 모양 고르기(글자·메모·표·코드, 2026-10-21) · pdfcard.jsx PDF 보기 카드(휠 넘기기·Alt+끌기 오려 오기, 2026-10-21) · find.jsx 찾기 칸(Ctrl+F) · mic.js 대화창 🎤 실시간 받아쓰기(서버 `/api/stt-token` 일회용 표 → KAIROS 소켓) · kairosKey.js 「🔑 내 키」(머리말 `X-Kairos-Key`)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문

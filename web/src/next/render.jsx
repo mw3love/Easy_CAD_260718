@@ -11,6 +11,7 @@ import { sarrowRadius } from './arrows.js'
 import { WEB_HEAD, frameSrc, isYoutube, openBtnRect, siteOf } from './webcard.js'
 import { LISTY, MEMO, MEMO_KIND, MUTED, olNumbers } from './memo.js'
 import { LEGEND, descOf, rowName } from './legend.js'
+import { PdfPages } from './pdfcard.jsx'
 
 // ── 글자 재기(캔버스) ──
 let _ctx = null
@@ -463,8 +464,29 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#ddd6fe" strokeWidth={1} />}
         <rect x={x} y={y} width={w} height={h} rx={6} ry={6} fill="none" stroke="#a78bfa" strokeWidth={1} />
         <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis('📄 ' + (it.title || '정리 문서'), 13, 700, tw)}</text>
-        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(`정리 문서 · KAIROS ${it.model || ''}`, 10, 400, tw)}</text>
+        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.file ? `HTML 파일 · ${it.file}` : `정리 문서 · KAIROS ${it.model || ''}`, 10, 400, tw)}</text>
         <g><title>크게 보기 · 인쇄</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
+          <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
+      </g>
+    }
+    case 'pdf': {   // PDF 보기 카드(2026-10-21) — 위 띠(📕 파일 이름·쪽 수·↗ 원본) + 칸 안 쪽 그림(편집·발표 화면, `pdfcard.jsx`). 서버 없이(내보내기·HTML 공유) = 첫 쪽 작은 그림
+      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'pc-' + (it._id || idx), ob = openBtnRect(it), tw = w - ob.w - 26
+      const live = (web === 'on' || web === 'view') && bh > 4 && it.url
+      return <g transform={T}>
+        <clipPath id={cid}><rect x={x} y={y} width={w} height={h} rx={6} ry={6} /></clipPath>
+        <g clipPath={`url(#${cid})`}>
+          <rect x={x} y={y} width={w} height={h} fill="#ffffff" />
+          <rect x={x} y={y} width={w} height={H} fill="#fef2f2" />
+          {bh > 0 && (live
+            ? <foreignObject x={x} y={y + H} width={w} height={bh}><PdfPages it={it} w={w} h={bh} on={web === 'on'} /></foreignObject>
+            : it.thumb ? <><rect x={x} y={y + H} width={w} height={bh} fill="#e4e4e7" /><image href={it.thumb} x={x} y={y + H} width={w} height={it.sizes?.[0] ? w * it.sizes[0][1] / it.sizes[0][0] : bh} preserveAspectRatio="xMidYMin meet" /></>
+            : <rect x={x} y={y + H} width={w} height={bh} fill="#e4e4e7" />)}
+        </g>
+        {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#fecaca" strokeWidth={1} />}
+        <rect x={x} y={y} width={w} height={h} rx={6} ry={6} fill="none" stroke={web === 'on' ? '#da7756' : '#f87171'} strokeWidth={web === 'on' ? 2 : 1} />
+        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis('📕 ' + (it.name || 'PDF'), 13, 700, tw)}</text>
+        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(`PDF · ${it.pages || 0}쪽 · 누르면 넘겨 보기`, 10, 400, tw)}</text>
+        <g><title>원본 PDF 새 탭에서 열기</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
       </g>
     }
