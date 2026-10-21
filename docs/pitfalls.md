@@ -1681,3 +1681,5 @@
 - 화면 크기로 판단하는 곳(잠듦·LOD 등)은 `rect × scale × z` — 배율을 빼면 멀리서 넣은(배율 큰) 카드가 늘 「작다」로 판정(PDF 카드가 늘 첫 쪽 작은 그림, 2026-10-21)
 - 떠 있는(absolute) 투명 글 층은 브라우저 복사에서 줄바꿈이 사라짐 — <br>을 끼우면 여백에서 시작한 끌기가 첫 줄을 놓침, `copy` 사건에서 직접 이어 붙일 것(2026-10-21 PDF 글 고르기)
 - TipTap 표(`@tiptap/extension-table`)는 `resizable: false`여도 기본 `TableView`가 칸 너비를 colwidth로 다시 써서 renderHTML의 colgroup이 무시됨 → `Table.configure({ View: null })`(메모 표 줄 칸 너비가 고치는 중에만 똑같아졌음, 2026-10-21)
+- Playwright `page.mouse.click(x, y, { modifiers })`의 `modifiers`는 무시된다(그건 `locator.click` 옵션) — Ctrl+클릭은 `keyboard.down('Control')` 뒤 `mouse.click`(2026-10-22, 바로가기 시험이 헛돎)
+- 다른 PC에서 웹 의존성을 더한 뒤 `git pull`만 하면 `npm run build`가 「failed to resolve import」로 깨짐 — `npm install` 먼저. 이때 `package-lock.json`의 `"peer": true` 줄만 바뀌면 npm 판 차이라 되돌림(2026-10-22)
