@@ -64,8 +64,6 @@ if (typeof document !== 'undefined') document.addEventListener('copy', e => { co
 
 export function PdfPages({ it, w, h, on }) {
   const box = useRef(null), [top, setTop] = useState(() => pdfTop(it)), [px, setPx] = useState(1200), [sel, setSel] = useState(null)
-  const [hint, setHint] = useState(false)   // 켤 때 4초만 안내(계속 띄우면 쪽 위를 가림)
-  useEffect(() => { if (!on) return; setHint(true); const t = setTimeout(() => setHint(false), 4000); return () => clearTimeout(t) }, [on])
   const lay = pdfLayout(it, w), total = lay.length ? lay[lay.length - 1][0] + lay[lay.length - 1][1] : 0
   useLayoutEffect(() => { if (box.current) box.current.scrollTop = pdfTop(it) }, [on])   // eslint-disable-line
   // 휠 = 카드 안 스크롤(칠판 확대로 안 가게 — 칠판 휠은 svg가 직접 듣는 신호라 여기서 막음). Ctrl+휠은 그대로 칠판 확대
@@ -116,6 +114,5 @@ export function PdfPages({ it, w, h, on }) {
       </div>
     </div>
     {lay.length > 0 && <div style={{ position: 'absolute', right: 8, bottom: 8, padding: '2px 8px', borderRadius: 99, background: 'rgba(24,24,27,.72)', color: '#fff', font: "600 11px 'Pretendard', sans-serif", pointerEvents: 'none' }}>{cur + 1} / {lay.length}</div>}
-    {on && hint && <div style={{ position: 'absolute', left: 8, top: 8, right: 8, padding: '4px 8px', borderRadius: 6, background: 'rgba(24,24,27,.72)', color: '#fff', font: "400 11px 'Pretendard', sans-serif", pointerEvents: 'none', textAlign: 'center' }}>휠 = 쪽 넘기기 · 끌기 = 글 고르기(Ctrl+C) · Alt+끌기 = 그림으로 오려 오기 · 바깥 누르기 = 끝</div>}
   </div>
 }

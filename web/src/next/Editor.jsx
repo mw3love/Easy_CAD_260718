@@ -1576,7 +1576,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const W = Math.round(Math.max(PDF_W, Math.min(PDF_W_MAX, (size.h * 0.8 - WEB_HEAD) * pw / ph))), h = WEB_HEAD + Math.round(W * Math.min(1.5, ph / pw))
       const it = base([at.x - W * s / 2, at.y - h * s / 2], { type: 'pdf', rect: [0, 0, W, h], url: d.url, name: d.name, pages: d.pages, sizes: d.sizes, thumb: d.thumb, text: d.text, scale: s, z: topZ(m.items) + 1 })
       done(); commit([...m.items, it], [it._id], 'PDF'); setTool('select')
-      setStatus(`PDF ${d.pages}쪽 — 카드를 누르면 넘겨 보기(휠), Alt+끌기 = 칠판으로 오려 오기`)
+      setStatus(`PDF ${d.pages}쪽 — 누르면 넘겨 보기`)
     } catch (err) { done(); setStatus(`PDF 실패 — ${err.message || err}`) }
   }
   // PDF 카드에서 Alt+끌기 = 그 부분을 칠판으로(서버가 200dpi로 다시 그림) — 카드 오른쪽 빈자리, 밑에 「파일 · N쪽」, 카드 → 그림 점선 화살표(어디서 왔는지 — 웹 검색 출처 카드와 같은 원칙).
@@ -1702,7 +1702,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function webActivate(it) {
     setSel([it._id]); setWebOn(it._id)
     if (isYoutube(it)) playYoutube(it._id)
-    setStatus(it.type === 'pdf' ? 'PDF 넘겨 보는 중 — 휠 = 쪽 넘기기, Alt+끌기 = 칠판으로 오려 오기, 바깥을 누르면 끝' : isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
+    setStatus(it.type === 'pdf' ? 'PDF 보는 중 · Alt+끌기 = 그림으로 오려 오기' : isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
   }
   // 점 p가 놓인 PDF 카드 몸통(위 띠 빼고) — 맨 위 것. 우클릭 메뉴가 「안쪽」인지 가르는 데
   const pdfBodyAt = p => { for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'pdf' || !it.url) continue

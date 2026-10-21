@@ -31,7 +31,7 @@ test('흩어진 메모 → 정리정돈 = 주제별 프레임 → Ctrl+Z 한 번
   await clickScene(page, m0.pos[0] + 200, m0.pos[1] + 26, { button: 'right' })
   await page.getByRole('button', { name: '정리정돈하기 (KAIROS)' }).click()
   await expect(page.getByTestId('answer-kind')).toHaveText('🧩 정리정돈')
-  await expect(page.getByText('같이 보냄', { exact: false })).toHaveCount(0)   // 정돈한 프레임은 고른 채로 보이되 다음 질문엔 안 실림(2026-10-19 점검)
+  await expect(page.getByTestId('sel-chip')).toHaveCount(0)   // 정돈한 프레임은 고른 채로 보이되 다음 질문엔 안 실림(2026-10-19 점검)
   expect(seen[0].kind).toBe('tidy')
   expect(seen[0].items.map(it => it.uid).sort()).toEqual(TEXTS.map((_, i) => `m${i}`))   // 화살표는 조각이 아님
   expect(seen[0].items[0]).toMatchObject({ type: 'memo', w: 340, h: 53 })

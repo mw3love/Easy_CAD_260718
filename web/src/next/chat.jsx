@@ -133,6 +133,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   const [skipSel, setSkipSel] = useState('')
   const sel = selKey && selKey === skipSel ? [] : ed.current?.selTexts() || []   // eslint-disable-line react-hooks/exhaustive-deps
   const selImgs = selKey && selKey === skipSel ? [] : ed.current?.selImages?.() || []   // 고른 것 속 그림(data: 주소)
+  const selN = selKey && selKey === skipSel ? 0 : ed.current?.getSel?.()?.length || 0   // 같이 실리는 것이 있을 때만 칩
   const [replyTo, setReplyTo] = useState(null)   // ↩ 이어 물을 답의 at
   // 그림 후보(2026-10-20 사용자): 사진 누르기 = 크게 보기 창, 왼쪽 위 「＋ 칠판에 추가」 하나(늘 보임 — 올리면 반응, 누르면 1.5초 「✓ 추가됨」 뒤 원래대로), 끌기 = 칠판에 추가(정렬선).
   // 옛 「올려 두면 크게 보기」는 없앰 — 버튼으로 가는 사이 큰 그림이 칠판을 가렸고 툴팁 위에서 깜빡였음, 크게 보기는 누르기가 맡음
@@ -399,8 +400,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
       <div style={css.foot}>
         {replyTo != null && <span data-testid="reply-chip" style={{ ...css.chip, color: '#da7756', background: 'rgba(218,119,86,.14)', cursor: 'pointer' }} onClick={() => setReplyTo(null)} title="누르면 이어 묻기 취소">
           ↩ 「{replyLabel(replyTo)}」에 이어서 ✕</span>}
-        {sel.length > 0 && <span style={css.chip}>칠판에서 고른 것 {sel.length}개를 같이 보냄</span>}
-        {selImgs.length > 0 && <span data-testid="img-chip" style={css.chip}>칠판에서 고른 그림 {selImgs.length}장 — 「날짜 넣어 줘」처럼 말하면 그대로 두고 고쳐요</span>}
+        {selN > 0 && (sel.length > 0 || selImgs.length > 0) && <span data-testid="sel-chip" style={css.chip}>{selN}개 선택됨</span>}{/* 2026-10-21 사용자: 글·그림 칩 둘 + 사용법 문장 → 한 칩(사용법은 설명 페이지로) */}
         <textarea style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder="물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)"
           onChange={e => { if (mic === 'listen') micStop.current?.(); setDraft(e.target.value) }}
           onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }} />

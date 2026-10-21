@@ -194,7 +194,7 @@ test('↩ 이어 묻기 = 그 답까지만 앞 대화로 + 그 그림을 고칠 
   await expect(page.getByText('↩ 「🎨 고흐 풍 전주 그려줘」에 이어서')).toBeVisible()
 
   await pinCandidate(page, 0)                                              // 칠판에 붙임 = 고른 채
-  await expect(page.getByTestId('img-chip')).toBeVisible()
+  await expect(page.getByTestId('sel-chip')).toBeVisible()
   await ask(page, '제목 넣어 줘'); await expect(page.getByText('그림 후보 4')).toBeVisible()
   expect(seen[3].board_images).toHaveLength(1); expect(seen[3].board_images[0]).toMatch(/^data:image\/jpeg;base64,/)
   await waitSaved(page)

@@ -486,7 +486,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#fecaca" strokeWidth={1} />}
         <rect x={x} y={y} width={w} height={h} rx={6} ry={6} fill="none" stroke={web === 'on' ? '#da7756' : '#f87171'} strokeWidth={web === 'on' ? 2 : 1} />
         <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis('📕 ' + (it.name || 'PDF'), 13, 700, tw)}</text>
-        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(`PDF · ${it.pages || 0}쪽 · 누르면 넘겨 보기`, 10, 400, tw)}</text>
+        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(`PDF · ${it.pages || 0}쪽`, 10, 400, tw)}</text>
         <g><title>원본 PDF 새 탭에서 열기</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
       </g>
