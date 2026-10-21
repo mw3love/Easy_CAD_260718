@@ -11,7 +11,7 @@ import { sarrowRadius } from './arrows.js'
 import { WEB_HEAD, frameSrc, isYoutube, openBtnRect, siteOf } from './webcard.js'
 import { LISTY, MEMO, MEMO_KIND, MUTED, olNumbers } from './memo.js'
 import { LEGEND, descOf, rowName } from './legend.js'
-import { PdfPages } from './pdfcard.jsx'
+import { PdfPages, pdfPageAt } from './pdfcard.jsx'
 
 // ── 글자 재기(캔버스) ──
 let _ctx = null
@@ -479,6 +479,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
           <rect x={x} y={y} width={w} height={H} fill="#fef2f2" />
           {bh > 0 && (live
             ? <foreignObject x={x} y={y + H} width={w} height={bh}><PdfPages it={it} w={w} h={bh} on={web === 'on'} /></foreignObject>
+            : web === 'sleep' && it.url && pdfPageAt(it, 0) > 0 ? <><rect x={x} y={y + H} width={w} height={bh} fill="#e4e4e7" /><image href={`${it.url}/page/${pdfPageAt(it, 0)}?w=320`} x={x} y={y + H} width={w} height={bh} preserveAspectRatio="xMidYMin meet" /></>   // 멀리서 잠든 카드 = 보던 쪽(첫 쪽으로 돌아가 보이지 않게)
             : it.thumb ? <><rect x={x} y={y + H} width={w} height={bh} fill="#e4e4e7" /><image href={it.thumb} x={x} y={y + H} width={w} height={it.sizes?.[0] ? w * it.sizes[0][1] / it.sizes[0][0] : bh} preserveAspectRatio="xMidYMin meet" /></>
             : <rect x={x} y={y + H} width={w} height={bh} fill="#e4e4e7" />)}
         </g>

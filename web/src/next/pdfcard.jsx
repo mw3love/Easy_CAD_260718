@@ -5,37 +5,50 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export const PDF_GAP = 8          // 쪽 사이(카드 좌표)
 const KEEP = new Map()            // 카드 _id → 스크롤 위치(이 창에서만 — 공동작업 상대 카드가 따라 움직이지 않게)
+// 보던 자리는 이 브라우저에도 남김(2026-10-21 사용자: 바깥 누르면 첫 쪽 — 다시 열어도 보던 데까지). 칠판 문서엔 안 넣음(남의 화면이 따라 넘어가지 않게)
+const keyOf = it => 'mb-pdf-top:' + (it.url || it._id)
+export function pdfTop(it) {
+  if (KEEP.has(it._id)) return KEEP.get(it._id)
+  let v = 0; try { v = +(localStorage.getItem(keyOf(it)) || 0) || 0 } catch { /* 저장소 막힘 — 처음부터 */ }
+  KEEP.set(it._id, v); return v
+}
+function saveTop(it, t) { KEEP.set(it._id, t); try { localStorage.setItem(keyOf(it), String(Math.round(t))) } catch { /* 저장소 막힘 — 이 창에서만 */ } }
 
 // 쪽마다 [위, 높이](카드 폭 w 기준)
 export function pdfLayout(it, w) {
   let y = 0
   return (it.sizes || []).map(([pw, ph]) => { const h = w * ph / pw, o = [y, h]; y += h + PDF_GAP; return o })
 }
+// 카드 몸통 안 y(카드 좌표, 몸통 위 = 0)에 있는 쪽 번호(0부터) — 보던 스크롤 자리 기준. 우클릭 「이 쪽 통째로」·잠든 카드 그림
+export function pdfPageAt(it, y) {
+  const lay = pdfLayout(it, it.rect[2]), t = pdfTop(it) + y, i = lay.findIndex(([py, ph]) => t < py + ph + PDF_GAP)
+  return i < 0 ? Math.max(0, lay.length - 1) : i
+}
 
 export function PdfPages({ it, w, h, on }) {
-  const box = useRef(null), [top, setTop] = useState(KEEP.get(it._id) || 0), [px, setPx] = useState(1200), [sel, setSel] = useState(null)
+  const box = useRef(null), [top, setTop] = useState(() => pdfTop(it)), [px, setPx] = useState(1200), [sel, setSel] = useState(null)
   const [hint, setHint] = useState(false)   // 켤 때 4초만 안내(계속 띄우면 쪽 위를 가림)
   useEffect(() => { if (!on) return; setHint(true); const t = setTimeout(() => setHint(false), 4000); return () => clearTimeout(t) }, [on])
   const lay = pdfLayout(it, w), total = lay.length ? lay[lay.length - 1][0] + lay[lay.length - 1][1] : 0
-  useLayoutEffect(() => { if (box.current) box.current.scrollTop = KEEP.get(it._id) || 0 }, [on])   // eslint-disable-line
+  useLayoutEffect(() => { if (box.current) box.current.scrollTop = pdfTop(it) }, [on])   // eslint-disable-line
   // 휠 = 카드 안 스크롤(칠판 확대로 안 가게 — 칠판 휠은 svg가 직접 듣는 신호라 여기서 막음). Ctrl+휠은 그대로 칠판 확대
   useEffect(() => {
     const el = box.current; if (!el) return
     const onWheel = e => { if (on && !e.ctrlKey) e.stopPropagation() }
     el.addEventListener('wheel', onWheel); return () => el.removeEventListener('wheel', onWheel)
   }, [on])
-  // 받을 그림 폭 — 화면에 보이는 크기 × 화면 배율(흐릿하지 않게, 너무 크지도 않게 세 단계)
+  // 받을 그림 폭 — 화면에 보이는 크기 × 화면 배율 × 1.5(작은 글자가 또렷하게 — 2026-10-21 사용자: 화질), 너무 잦게 다시 받지 않게 네 단계
   useEffect(() => {
     const el = box.current; if (!el) return
-    const k = el.getBoundingClientRect().width / Math.max(1, el.offsetWidth), need = w * k * (window.devicePixelRatio || 1)
-    setPx(need <= 700 ? 600 : need <= 1300 ? 1200 : 2000)
+    const k = el.getBoundingClientRect().width / Math.max(1, el.offsetWidth), need = w * k * (window.devicePixelRatio || 1) * 1.5
+    setPx(need <= 800 ? 800 : need <= 1200 ? 1200 : need <= 1700 ? 1700 : 2400)
   })
-  const onScroll = e => { const t = e.currentTarget.scrollTop; KEEP.set(it._id, t); setTop(t) }
+  const onScroll = e => { const t = e.currentTarget.scrollTop; saveTop(it, t); setTop(t) }
   const pageAt = y => { const i = lay.findIndex(([py, ph]) => y < py + ph + PDF_GAP); return i < 0 ? lay.length - 1 : i }
   const cur = lay.length ? pageAt(top + h * 0.3) : 0
   const local = e => { const r = box.current.getBoundingClientRect(), k = r.width / Math.max(1, box.current.offsetWidth); return { x: (e.clientX - r.left) / k, y: (e.clientY - r.top) / k + box.current.scrollTop } }
   const down = e => {
-    if (!on) return
+    if (!on || e.button === 2) return   // 우클릭 = 칠판 메뉴(「이 쪽 통째로 칠판에」)
     e.stopPropagation()   // 칠판이 「바깥 누름 = 조작 끝」으로 받지 않게
     if (!e.altKey || e.button !== 0) return
     e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId)

@@ -1678,3 +1678,4 @@
 - KAIROS에서 GPT·Claude 웹 검색은 `chat/completions`로는 400(도구가 function만)이지만, 각 회사 전용 주소(`/claude/v1/messages` + `web_search_20250305`, `/responses/` + `web_search`)로는 된다 — 「안 된다」 결론 전에 전용 주소까지 볼 것(2026-10-21).
 - 검색 모델에 오늘 날짜를 알려 줘도 「내일 날씨」에 어제 기사의 「내일」(= 오늘)을 답한다(sonar·Exa·Gemini, 2026-10-21) — 질문의 「내일」을 날짜로 바꿔 보낼 것(`board_chat.absolute_dates`). Exa `/answer`는 앞 대화를 못 보니 이어 묻는 말은 혼자 통하는 문장으로 바꿔 보낼 것.
 - 바깥 붙여넣기: 고른 도형의 보이지 않는 대기 편집기가 포커스를 쥐어 window paste의 contentEditable 가드에 걸림 → `data-armed`로 구분(2026-10-21)
+- 화면 크기로 판단하는 곳(잠듦·LOD 등)은 `rect × scale × z` — 배율을 빼면 멀리서 넣은(배율 큰) 카드가 늘 「작다」로 판정(PDF 카드가 늘 첫 쪽 작은 그림, 2026-10-21)

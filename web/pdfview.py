@@ -52,7 +52,7 @@ def page_jpeg(path: str, i: int, width: int) -> bytes:
     with _open(path) as d:
         p = d[i]
         k = width / p.rect.width
-        return p.get_pixmap(matrix=pymupdf.Matrix(k, k), alpha=False).tobytes("jpeg", jpg_quality=82)
+        return p.get_pixmap(matrix=pymupdf.Matrix(k, k), alpha=False).tobytes("jpeg", jpg_quality=90)   # 82는 작은 글자 둘레가 번짐(2026-10-21)
 
 
 def _clip_rect(p, r):
