@@ -12,7 +12,7 @@ const pasteIn = (page, data, files = []) => page.evaluate(([d, fs]) => {
 const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 const added = async (page, n0) => (await liveDoc(page)).items.slice(n0)
 
-test('글 붙여넣기 — 짧은 한 줄 = 글자(커서 자리), 여러 줄 마크다운 = 메모 + 진짜 표, 탭 표 = 표', async ({ page }) => {
+test('글 붙여넣기 — 짧은 한 줄 = 글자(커서 자리), 여러 줄 마크다운 = 메모 하나(표도 안에), 표뿐 = 칠판 표, 탭 표 = 표', async ({ page }) => {
   await openBoard(page, boardName('paste')); await setCam(page)
   const p = await toPage(page, 300, 200); await page.mouse.move(p.x, p.y)
 
@@ -23,11 +23,15 @@ test('글 붙여넣기 — 짧은 한 줄 = 글자(커서 자리), 여러 줄 �
   expect(Math.abs(t.pos[1] - 200)).toBeLessThan(30)                    // 커서 자리
 
   await pasteIn(page, { 'text/plain': '# 정리\n- 첫째\n- **둘째**\n\n| 가 | 나 |\n|---|---|\n| 1 | 2 |' })
+  await expect.poll(async () => (await liveDoc(page)).items.length).toBe(2)
+  const [memo] = await added(page, 1)
+  expect(memo.type).toBe('memo'); expect(memo.lines.map(l => [l.k, l.t])).toEqual([['h1', '정리'], ['ul', '첫째'], ['ul', '둘째'], ['table', '']])
+  expect(memo.lines[3].rows).toEqual([['가', '나'], ['1', '2']]); expect(memo.lines[3].header).toBe(true)   // 표 = 메모 안 표 줄(2026-10-21 사용자)
+
+  await pasteIn(page, { 'text/plain': '| 가 | 나 |\n|---|---|\n| 1 | 2 |' })                   // 표뿐 = 칠판 진짜 표
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(3)
-  const [memo, tab] = await added(page, 1)
-  expect(memo.type).toBe('memo'); expect(memo.lines.map(l => [l.k, l.t])).toEqual([['h1', '정리'], ['ul', '첫째'], ['ul', '둘째']])
-  expect(tab.type).toBe('table'); expect(tab.cells).toEqual([['가', '나'], ['1', '2']]); expect(tab.header).toBe(true)
-  expect(memo.group_id).toBeTruthy(); expect(tab.group_id).toBe(memo.group_id)   // 한 묶음
+  const [mdt] = await added(page, 2)
+  expect(mdt.type).toBe('table'); expect(mdt.cells).toEqual([['가', '나'], ['1', '2']]); expect(mdt.header).toBe(true)
 
   await pasteIn(page, { 'text/plain': '이름\t값\r\n가\t1\r\n' })
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(4)

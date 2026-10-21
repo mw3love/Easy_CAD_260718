@@ -108,8 +108,17 @@ test('주소 구간: 문장부호·괄호 빼고, 마크다운 [이름](주소)�
   assert.deepEqual(urlSpans('주소 없음'), [])
 })
 
-test('답 속 표 → 메모: 기본은 「가 · 나」 글 줄, skip이면 뺌(칠판엔 진짜 표로 따로)', () => {
-  const md = '요약\n| 항목 | 내일 |\n|---|---|\n| 기온 | **9~18℃** |'
-  assert.deepEqual(memoFromAnswer(md).map(l => l.t), ['요약', '항목 · 내일', '기온 · 9~18℃'])
-  assert.deepEqual(memoFromAnswer(md, '', 'skip').map(l => l.t), ['요약'])
+test('답 속 표 → 메모 안 표 줄(자리 그대로·굵게 표시 뺌·칸 너비 = 글 길이) → 고치기 문서 → 다시 줄(칸 너비 그대로)', () => {
+  const md = '요약\n| 항목 | 내일 날씨 설명 |\n|---|---|\n| 기온 | **9~18℃** |\n\n끝'
+  const L = memoFromAnswer(md)
+  assert.deepEqual(L.map(l => l.k), ['p', 'table', 'p'])
+  const T = L[1]
+  assert.deepEqual(T.rows, [['항목', '내일 날씨 설명'], ['기온', '9~18℃']]); assert.equal(T.header, true)
+  assert.ok(T.cw[1] > T.cw[0]); assert.ok(Math.abs(T.cw[0] + T.cw[1] - 1) < 1e-3)
+  const doc = linesToDoc(L)
+  assert.equal(doc.content[1].type, 'table'); assert.equal(doc.content[1].content[0].content[0].type, 'tableHeader')
+  const custom = structuredClone(doc); custom.content[1].attrs.cw = [0.5, 0.5]; custom.content[1].content[1].content[1].content[0].content[0].text = '10~20℃'
+  const back = docToLines(custom)
+  assert.deepEqual(back[1], { k: 'table', t: '', rows: [['항목', '내일 날씨 설명'], ['기온', '10~20℃']], header: true, cw: [0.5, 0.5] })
+  assert.equal(memoText(L), '요약\n항목 | 내일 날씨 설명\n기온 | 9~18℃\n끝')
 })

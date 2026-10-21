@@ -1,11 +1,12 @@
 // 메모(§8 항목61 4-b ⑤ 1차, 2026-10-18 사용자: 노션 같은 메모장 · KAIROS 답도 메모로) — 줄 목록 하나가 칠판 위 네모 하나.
-// .ecad 새 종류 `memo` = { rect, fill, lines: [{ k, t, runs?, done?, lv? }] } — k = p·h1·h2·h3·ul·ol·todo·code·quote·hr(구분선, 글 없음), lv = 목록 깊이(0부터).
+// .ecad 새 종류 `memo` = { rect, fill, lines: [{ k, t, runs?, done?, lv? }] } — k = p·h1·h2·h3·ul·ol·todo·code·quote·hr(구분선, 글 없음)·table, lv = 목록 깊이(0부터).
+// 표 줄(2026-10-21 사용자: md 하나 = 메모 하나) = { k: 'table', t: '', rows: [[칸 글]], header, cw: 칸 너비 비율 } — 칸은 글만(꾸밈 없음), 칸 너비는 만들 때 글 길이로 정하고 고쳐도 그대로.
 // 그리기(render.jsx `memoLayout`)와 고치기(memoedit.jsx CSS)가 같은 치수(MEMO)를 읽는다 — 고치는 모습 = 결과. 데스크톱은 보존만.
 import { answerToEcadText, parseAnswer } from '../chatFormat.js'
 import { richTextToRuns, runsToRichText } from '../ecadFormat.js'
 
 // LPAD = 왼쪽 여백 — 줄 손잡이 ⠿가 메모 안쪽에 들어가는 자리(2026-10-18 사용자: 바깥 손잡이는 글과 너무 떨어짐)
-export const MEMO = { W: 340, PAD: 14, LPAD: 26, GAP: 5, INDENT: 18, QUOTE: 14, HR: 9 }
+export const MEMO = { W: 340, PAD: 14, LPAD: 26, GAP: 5, INDENT: 18, QUOTE: 14, HR: 9, CELL: 4 }   // CELL = 표 칸 안 여백
 export const MEMO_KIND = {
   p: { pt: 10.5 }, ul: { pt: 10.5 }, ol: { pt: 10.5 }, todo: { pt: 10.5 }, quote: { pt: 10.5 },
   h1: { pt: 16, bold: true, gap: 10 }, h2: { pt: 13.5, bold: true, gap: 8 }, h3: { pt: 11.5, bold: true, gap: 6 }, code: { pt: 10, mono: true }, hr: { pt: 10.5 },
@@ -36,13 +37,22 @@ export function olNumbers(lines) {
   return nums
 }
 
-// KAIROS 답 → 메모 줄(제목 # 수 그대로, 목록·번호·할 일·코드·인용, 글 속 **굵게**·`코드`), 맨 끝 회색 출처 줄
-// tables = 'text'(표 줄 → 「가 · 나 · 다」 글 줄, 메모 안에 붙일 때) | 'skip'(빼기 — 칠판에 붙일 땐 진짜 표로 따로, Editor `cardItems`)
-export function memoFromAnswer(md, source = '', tables = 'text') {
+// 표 줄 만들기 — 칸 수를 맞추고, 칸 너비 = 칸 글 길이 비율(너무 좁거나 넓지 않게 2~24자로 자르고 여백 2자)
+export function tableLine(rows, header) {
+  const n = Math.max(1, ...rows.map(r => r.length)), R = rows.map(r => Array.from({ length: n }, (_, c) => String(r[c] ?? '').replace(/\*\*/g, '').trim()))
+  return { k: 'table', t: '', rows: R.length ? R : [Array(n).fill('')], header: !!header, cw: tableWidths(R, n) }
+}
+export function tableWidths(rows, n = Math.max(1, ...rows.map(r => r.length))) {
+  const w = Array.from({ length: n }, (_, c) => 2 + Math.min(24, Math.max(2, ...rows.map(r => [...(r[c] || '')].reduce((a, ch) => a + (ch.charCodeAt(0) > 0x2e80 ? 2 : 1), 0) / 2))))   // 한글은 두 칸, + 2 = 칸 안 여백(짧은 칸 두 글자가 꺾이지 않게)
+  const sum = w.reduce((a, b) => a + b, 0); return w.map(v => +(v / sum).toFixed(4))
+}
+
+// KAIROS 답 → 메모 줄(제목 # 수 그대로, 목록·번호·할 일·코드·인용·표, 글 속 **굵게**·`코드`), 맨 끝 회색 출처 줄
+export function memoFromAnswer(md, source = '') {
   const lines = []
   for (const ln of parseAnswer(md)) {
     if (ln.kind === 'gap') continue
-    if (ln.kind === 'table') { if (tables === 'text') for (const r of ln.rows) lines.push({ k: 'p', t: r.map(c => c.replace(/\*\*/g, '')).join(' · ') }); continue }
+    if (ln.kind === 'table') { lines.push(tableLine(ln.rows, ln.header)); continue }
     if (ln.kind === 'code') { lines.push({ k: 'code', t: ln.parts[0].text.replace(/\t/g, '    ') }); continue }
     if (ln.kind === 'p' && /^\s*([-*_])(\s*\1){2,}\s*$/.test(ln.parts.map(p => p.text).join(''))) { lines.push({ k: 'hr', t: '' }); continue }   // --- · *** · ___ = 구분선
     const src = ln.parts.map(p => (p.code ? '`' + p.text + '`' : p.bold ? `**${p.text}**` : p.text)).join('')
@@ -63,7 +73,7 @@ function cutFront(L, n) { L.t = L.t.slice(n); if (L.runs) { L.runs = L.runs.map(
 // 줄 → 쉬운 글(대화창에 같이 보낼 글·데스크톱 네모 안 글)
 export function memoText(lines) {
   const nums = olNumbers(lines)
-  return (lines || []).map((ln, i) => (ln.k === 'hr' ? '────────' : '  '.repeat(ln.lv || 0) + ({ h1: '# ', h2: '## ', h3: '### ', ul: '• ', ol: `${nums[i]}. `, todo: ln.done ? '☑ ' : '☐ ', quote: '│ ' }[ln.k] || '') + ln.t)).join('\n')
+  return (lines || []).map((ln, i) => (ln.k === 'hr' ? '────────' : ln.k === 'table' ? (ln.rows || []).map(r => r.join(' | ')).join('\n') : '  '.repeat(ln.lv || 0) + ({ h1: '# ', h2: '## ', h3: '### ', ul: '• ', ol: `${nums[i]}. `, todo: ln.done ? '☑ ' : '☐ ', quote: '│ ' }[ln.k] || '') + ln.t)).join('\n')
 }
 
 // ── 줄 ↔ TipTap 문서(고치기) ──
@@ -77,6 +87,8 @@ export function linesToDoc(lines) {
     if (b.k === 'code') { const t = b.lines.map(l => l.t).join('\n'); content.push(t ? { type: 'codeBlock', content: [{ type: 'text', text: t }] } : { type: 'codeBlock' }); i++; continue }
     if (b.k === 'quote') { content.push({ type: 'blockquote', content: b.lines.map(para) }); i++; continue }
     if (b.k === 'hr') { content.push({ type: 'horizontalRule' }); i++; continue }
+    if (b.k === 'table') { const L = b.lines[0]; content.push({ type: 'table', attrs: { cw: L.cw || null }, content: (L.rows || [['']]).map((r, ri) => ({ type: 'tableRow', content: r.map(c => ({ type: L.header && ri === 0 ? 'tableHeader' : 'tableCell',
+      content: [c ? { type: 'paragraph', content: [{ type: 'text', text: c }] } : { type: 'paragraph' }] })) })) }); i++; continue }
     if (b.k[0] === 'h') { content.push({ type: 'heading', attrs: { level: +b.k[1] }, content: para(b.lines[0]).content }); i++; continue }
     if (!LISTY.has(b.k)) { content.push(para(b.lines[0])); i++; continue }
     let j = i; const run = []
@@ -102,6 +114,7 @@ function buildList(run, lv) {
   }
   return { nodes, used: k }
 }
+const cellText = c => { const ps = []; const walk = n => { if (n.type === 'text') ps[ps.length - 1] += n.text; else if (n.type === 'paragraph') { ps.push(''); (n.content || []).forEach(walk) } else (n.content || []).forEach(walk) }; walk(c); return ps.join(' ').trim() }
 const lineOf = (node, extra) => { const { text, runs } = richTextToRuns({ type: 'doc', content: [node || { type: 'paragraph' }] }); return { t: text, ...(runs.length ? { runs } : {}), ...extra } }
 export function docToLines(doc) {
   const out = []
@@ -118,10 +131,12 @@ export function docToLines(doc) {
     else if (n.type === 'codeBlock') for (const t of (n.content || []).map(c => c.text).join('').split('\n')) out.push({ k: 'code', t })
     else if (n.type === 'blockquote') for (const p of n.content || []) out.push(lineOf(p, { k: 'quote' }))
     else if (n.type === 'horizontalRule') out.push({ k: 'hr', t: '' })
+    else if (n.type === 'table') { const trs = n.content || [], rows = trs.map(tr => (tr.content || []).map(c => cellText(c))), L = tableLine(rows, trs[0]?.content?.length && trs[0].content.every(c => c.type === 'tableHeader'))
+      if (n.attrs?.cw?.length === L.cw.length) L.cw = n.attrs.cw; out.push(L) }   // 칸 너비는 고쳐도 그대로(칸 수가 바뀌었을 때만 새로)
     else if (/List$/.test(n.type)) walkList(n, 0)
     else out.push(lineOf(n, { k: 'p' }))
   }
-  return out.map(ln => { const o = { k: ln.k, t: ln.t }; if (ln.runs) o.runs = ln.runs; if (ln.done) o.done = true; if (ln.lv) o.lv = ln.lv; return o })
+  return out.map(ln => { if (ln.k === 'table') return ln; const o = { k: ln.k, t: ln.t }; if (ln.runs) o.runs = ln.runs; if (ln.done) o.done = true; if (ln.lv) o.lv = ln.lv; return o })
 }
 
 // ── 2차: 줄 손잡이(⠿) — 끌 단위·옮기기·꺼내기·전환·색 ──
@@ -148,7 +163,7 @@ export function moveUnit(lines, [s, e], to) {
 }
 // 줄 종류 바꾸기(전환) — 코드는 부분 서식 없이, 할 일이 아니면 체크 없음, 목록이 아니면 깊이 없음
 export function convertLine(ln, k) {
-  if (ln.k === 'hr') return ln   // 구분선은 글이 없어 바꾸지 않음
+  if (ln.k === 'hr' || ln.k === 'table') return ln   // 구분선·표는 글 줄이 아니라 바꾸지 않음
   const o = { ...ln, k }
   if (k === 'code') delete o.runs
   if (k !== 'todo') delete o.done
@@ -186,7 +201,7 @@ export function caretLine(state, pos = state.selection.from) {   // pos = 그 �
   let idx = 0, found = null
   state.doc.descendants((node, at) => {
     if (found != null) return false
-    if (node.type.name === 'horizontalRule') { if (pos >= at && pos <= at + node.nodeSize) found = idx; idx++; return false }
+    if (node.type.name === 'horizontalRule' || node.type.name === 'table') { if (pos >= at && pos <= at + node.nodeSize) found = idx; idx++; return false }   // 표 = 한 줄
     if (!node.isTextblock) return true
     const end = at + node.nodeSize
     if (node.type.name === 'codeBlock') {
@@ -203,7 +218,7 @@ export function caretLine(state, pos = state.selection.from) {   // pos = 그 �
 export function lineBlocks(doc) {
   const out = []
   doc.descendants((node, at) => {
-    if (node.type.name === 'horizontalRule') { out.push({ at, node }); return false }
+    if (node.type.name === 'horizontalRule' || node.type.name === 'table') { out.push({ at, node }); return false }
     if (!node.isTextblock) return true
     if (node.type.name === 'codeBlock') { node.textContent.split('\n').forEach(() => out.push({ at, node })); return false }
     out.push({ at, node }); return false

@@ -143,6 +143,17 @@ export function memoLayout(it) {
     if (ln.k === 'hr') { const x = MEMO.LPAD, h = MEMO.HR * 2   // 구분선 = 가는 줄 하나(위아래 여백 포함 높이 HR*2)
       rows.push({ ln, i, x, y: y - TEXT_MARGIN, lay: { h, lines: [] }, px: 0, marker: null, box: null, cy: y - TEXT_MARGIN + h / 2, lh: h, joinPrev: false, joinNext: false, hr: true })
       y += h - TEXT_MARGIN; return }
+    if (ln.k === 'table') {   // 표 줄 — 메모 안 폭 그대로, 칸 너비 = cw 비율, 칸 글은 칸 안에서 꺾음(고치기 CSS memoedit.jsx와 같은 치수)
+      const rws = ln.rows?.length ? ln.rows : [['']], n = Math.max(1, ...rws.map(r => r.length)), cw = ln.cw?.length === n ? ln.cw : Array(n).fill(1 / n), cpx = MEMO_KIND.p.pt * PT
+      const xs = [0]; cw.forEach(f => xs.push(xs[xs.length - 1] + f * inner))
+      let ty = 0; const cells = [], rowY = [0]
+      rws.forEach((r, ri) => { const hd = ln.header && ri === 0
+        const lays = xs.slice(0, -1).map((cx, c) => layoutText(r[c] || '', null, cpx, 'board', hd ? 700 : 400, Math.max(10, xs[c + 1] - cx - 2 * MEMO.CELL - 2 * TEXT_MARGIN)))
+        const rh = Math.max(...lays.map(l => l.h)) + 2 * TEXT_MARGIN + 2 * MEMO.CELL
+        lays.forEach((lay, c) => cells.push({ lay, x: xs[c] + MEMO.CELL, y: ty + MEMO.CELL, hd }))
+        ty += rh; rowY.push(ty) })
+      rows.push({ ln, i, x: MEMO.LPAD, y: y - TEXT_MARGIN, lay: { h: ty, lines: [] }, px: cpx, marker: null, box: null, cy: y - TEXT_MARGIN + ty / 2, lh: ty, joinPrev: false, joinNext: false, table: { xs, rowY, cells, w: inner } })
+      y += ty - TEXT_MARGIN; return }
     const ind = LISTY.has(ln.k) ? ((ln.lv || 0) + 1) * MEMO.INDENT : ln.k === 'quote' ? MEMO.QUOTE : 0
     const links = ln.k === 'code' || ln.nolink ? null : urlSpans(ln.t)   // 주소 = 파란 밑줄(줄 메뉴 「링크 끄기」면 보통 글)
     const room = Math.max(10, inner - ind - 2 * TEXT_MARGIN)
@@ -495,8 +506,14 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
       const [x, y, w, h] = it.rect, ml = memoLayout(it), ink0 = ink('#ff1f1f1f', true), fillC = it.fill ? cssColor(it.fill) : '#ffffff'
       return <g transform={T}>
         <rect x={x} y={y} width={w} height={h} rx={10} ry={10} fill={fillC} stroke={it.pen ? cssColor(it.pen) : '#d4d4d8'} strokeWidth={1} />
-        {ml.rows.map(({ ln, i, x: lx, y: ly, lay, px, marker, box, cy, lh, hr }) => {
+        {ml.rows.map(({ ln, i, x: lx, y: ly, lay, px, marker, box, cy, lh, hr, table: tb }) => {
           if (hr) return <line key={i} x1={x + lx} x2={x + w - MEMO.PAD} y1={y + cy} y2={y + cy} stroke="#d4d4d8" strokeWidth={1} />
+          if (tb) { const X = x + lx, Y = y + ly, H = tb.rowY[tb.rowY.length - 1]
+            return <g key={i}>
+              {ln.header && <rect x={X} y={Y} width={tb.w} height={tb.rowY[1]} fill="#f4f4f5" />}
+              {tb.cells.map((c, j) => <TextLines key={j} lay={c.lay} left={X + c.x} top={Y + c.y} color={ink0} />)}
+              <path d={[...tb.rowY.map(ry => `M${X},${Y + ry} H${X + tb.w}`), ...tb.xs.map(cx => `M${X + cx},${Y} V${Y + H}`)].join(' ')} stroke="#d4d4d8" strokeWidth={1} fill="none" />
+            </g> }
           const done = ln.k === 'todo' && ln.done, col = done || ln.more ? MUTED : ln.k === 'quote' ? '#52525b' : ink0
           return <g key={ln.more ? 'more' : i} data-memo-more={ln.more || undefined}>
             {ln.k === 'quote' && <rect x={x + MEMO.LPAD} y={y + ly + (ml.rows[i].joinPrev ? TEXT_MARGIN : 0)} width={3} height={lay.h + (ml.rows[i].joinPrev ? 0 : TEXT_MARGIN) + (ml.rows[i].joinNext ? 0 : TEXT_MARGIN)} fill="#d4d4d8" />}

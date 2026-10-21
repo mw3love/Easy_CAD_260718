@@ -35,7 +35,7 @@ import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob
 import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
 import { pdfLayout, pdfPageAt, pdfSelectedText } from './pdfcard.jsx'
-import { freeSpot, nearSpot, parseAnswer, sourceLine } from '../chatFormat.js'
+import { freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
 import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
@@ -856,29 +856,24 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 지금 화면에서 다른 것과 안 겹치는 자리(왼쪽 카드·오른쪽 속성 카드 자리는 뺌), 카드에 `chat_at` = 답 시각
   const CARD_W = MEMO.W   // 답 메모 폭(옛 카드와 같은 340)
   // 2026-10-18 사용자: 답도 메모로 — 제목·목록·할 일·코드·인용이 줄 단위(정리하기 쉽게). 옛 카드(네모 + 왼쪽 위 라벨)는 그대로 열림
-  function cardItem(msg, x, y, z, tables = 'text') {
-    const it = base([x, y], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines: memoFromAnswer(msg.content, sourceLine(msg.model, msg.at), tables), chat_at: msg.at, z })
+  function cardItem(msg, x, y, z) {
+    const it = base([x, y], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines: memoFromAnswer(msg.content, sourceLine(msg.model, msg.at)), chat_at: msg.at, z })
     return { ...it, rect: [0, 0, MEMO.W, memoHeight(it)] }
   }
-  // 답 속 표 = 메모 밑에 진짜 표(칸 고치기 되는, 2026-10-20 사용자 — ChatGPT 표 답 참고), 메모·출처와 한 묶음. 메모엔 표 줄을 빼고
+  // 답 속 표 = 메모 안 표 줄(2026-10-21 사용자: 한 답 = 메모 하나 — 전엔 메모 밑 진짜 표로 따로). 꾸밀 게 많으면 줄 손잡이 ⠿ 「칠판 표로 바꾸기」
   function cardItems(msg, x, y, z) {
     if (msg.html) return [docItem(msg, x, y, z)]   // 정리 문서 = 문서 카드 하나
-    const tabs = parseAnswer(msg.content || '').filter(l => l.kind === 'table')
-    const its = answerItems(msg, x, y, z, tabs.length ? 'skip' : 'text')
-    if (!tabs.length) return its
-    let yy = y + its[0].rect[3] + 12
-    const tables = tabs.map(t => {
-      const rows = t.rows.length, cols = Math.max(...t.rows.map(r => r.length)), cells = t.rows.map(r => Array.from({ length: cols }, (_, c) => (r[c] || '').replace(/\*\*/g, '')))
-      const it = fitTable(base([x, yy], { type: 'table', rows, cols, header: t.header, rect: [0, 0, MEMO.W, rows * 30], cells, col_widths: Array(cols).fill(1 / cols), z }))
-      yy += it.rect[3] + 12; return it
-    })
-    const g = its[0].group_id || 'g' + newId()
-    return [...its, ...tables].map(it => ({ ...it, group_id: g }))
+    return answerItems(msg, x, y, z)
+  }
+  // 칠판 진짜 표(칸 고치기·칸 꾸밈) — 붙여넣은 표만 있을 때·메모 표 줄 「칠판 표로 바꾸기」
+  function boardTable(rows, header, s, z) {
+    const cols = Math.max(...rows.map(r => r.length)), cells = rows.map(r => Array.from({ length: cols }, (_, c) => (r[c] || '').replace(/\*\*/g, '')))
+    return fitTable(base([0, 0], { type: 'table', rows: rows.length, cols, header, rect: [0, 0, Math.max(MEMO.W, cols * 90), rows.length * 30], cells, col_widths: Array(cols).fill(1 / cols), scale: s, z }))
   }
   // 웹 검색 답(§8 항목61 ② 담는 법, 2026-10-19) = 요약 메모 + 오른쪽에 출처 웹 카드(본문에 쓰인 번호만, 제목 앞 [n], 가벼운 제목 카드 — 칸 안 페이지 없음) + 메모 → 카드 화살표, 한 묶음.
   // 「어디서 왔는지」가 칠판 위 선으로 보이게(회사 KAIROS 웹은 답과 출처가 따로 놂). 출처가 없으면 메모 하나(cardItem)
-  function answerItems(msg, x, y, z, tables) {
-    const memo = cardItem(msg, x, y, z, tables), src = msg.sources || []
+  function answerItems(msg, x, y, z) {
+    const memo = cardItem(msg, x, y, z), src = msg.sources || []
     if (msg.refs?.length) return boardRefItems(memo, msg.refs, z)
     if (!src.length) return [memo]
     const g = 'g' + newId(), gap = 14, x2 = x + MEMO.W + 90, ch = WEB_HEAD + WEB_INFO_H
@@ -985,6 +980,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         ...LINE_COLORS.map(([n, , b]) => [sw(null, `${n} 배경`, b), apply(each(l => recolorLine(l, { bg: b })), '줄 배경')])]],
       ...(idx.some(i => urlSpans(L[i]?.t).length) ? [(() => { const on2 = idx.some(i => urlSpans(L[i]?.t).length && !L[i].nolink)   // 링크 끄기/켜기(고칠 때 자꾸 열려 불편할 때 — 2026-10-18 사용자)
         return [on2 ? '링크 끄기' : '링크 켜기', '', apply(each(l => (on2 ? { ...l, nolink: true } : (({ nolink, ...r }) => r)(l))), on2 ? '링크 끔' : '링크 켬')] })()] : []),
+      ...(idx.length === 1 && cur.k === 'table' ? [['칠판 표로 바꾸기', '', () => {   // 칸 꾸밈·칸 합치기처럼 메모 표 줄이 못 하는 것(2026-10-21) — 메모 오른쪽 옆에, 메모엔 그 줄을 뺌
+        close(); const mm = R.current.model, x0 = mm.items.find(x => x._id === it._id); if (!x0) return
+        const sc = x0.scale || 1, tb = boardTable(cur.rows, cur.header, sc, topZ(mm.items) + 1), rest = x0.lines.filter((_, j) => j !== idx[0])
+        const placed = { ...tb, pos: [x0.pos[0] + (x0.rect[0] + x0.rect[2]) * sc + 24 * sc, x0.pos[1] + x0.rect[1] * sc] }
+        commit([...mm.items.map(x => (x._id === it._id ? withLines(x, rest.length ? rest : [{ k: 'p', t: '' }]) : x)), placed], [placed._id], '칠판 표로'); setLineSel(null) }]] : []),
       '-',
       ['복제', 'Ctrl+D', () => { apply(lines => [...lines.slice(0, last), ...idx.map(i => structuredClone(lines[i])), ...lines.slice(last)], '줄 복제')(); setLineSel({ id: it._id, s: last, e: last + idx.length }) }],
       ['삭제', 'Del', () => { apply(lines => lines.filter((_, j) => !on.has(j)), '줄 지움')(); setLineSel(null) }],
@@ -1745,23 +1745,24 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function pasteOutside(text, html, opt = {}) {   // opt = 글 파일 끌어 놓기 { at: 놓은 자리, file: 이름 — 메모 맨 위 줄 }
     const s = +(1 / R.current.cam.z).toPrecision(2), z = topZ(R.current.model.items) + 1   // 지금 배율에서 읽히는 크기(「메모」 버튼과 같게)
     const memo = lines => { const it = base([0, 0], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines, scale: s, z }); return { ...it, rect: [0, 0, MEMO.W, memoHeight(it)] } }
-    const table = (rows, header) => { const cols = Math.max(...rows.map(r => r.length)), cells = rows.map(r => Array.from({ length: cols }, (_, c) => (r[c] || '').replace(/\*\*/g, '')))
-      return fitTable(base([0, 0], { type: 'table', rows: rows.length, cols, header, rect: [0, 0, Math.max(MEMO.W, cols * 90), rows.length * 30], cells, col_widths: Array(cols).fill(1 / cols), scale: s, z })) }
-    const filled = lines => lines.some(l => l.t || l.k === 'hr')
+    const table = (rows, header) => boardTable(rows, header, s, z)
+    const filled = lines => lines.some(l => l.t || l.k === 'hr')   // 표 말고 글이 있나 — 표뿐이면 칠판 진짜 표로(글 파일은 늘 메모 하나)
     let its = [], what = ''
     const plan = !looksMarkdown(text) && htmlPlan(html)   // AI 웹 「복사」 버튼 = 마크다운 글이 먼저, 마우스로 긁은 것 = 꾸밈(html)
     if (plan?.code) { its = [memo(text.replace(/\r\n?/g, '\n').replace(/\n+$/, '').split('\n').map(t => ({ k: 'code', t: t.replace(/\t/g, '    ') })))]; what = '코드' }
-    else if (plan) { if (filled(plan.lines)) its.push(memo(plan.lines)); its.push(...plan.tables.map(t => table(t.rows, t.header))); what = filled(plan.lines) ? '메모' : '표' }
+    else if (plan) { if (filled(plan.lines)) { its = [memo(plan.lines)]; what = '메모' } else { its = plan.tables.map(t => table(t.rows, t.header)); what = '표' } }   // 글이 있으면 표도 메모 안(clipin이 자리 그대로 줄로)
     else {
       const k = textKind(text)
       if (k === 'empty') return false
       if (k === 'tsv') { its = [table(tsvRows(text), false)]; what = '표' }
       else if (k === 'line') { its = [base([0, 0], { type: 'text', text: text.trim(), color: INK, font: 12, bg: null, scale: s, z })]; what = '글자' }
-      else {   // 메모 — 마크다운 표는 메모 밑 진짜 표로(대화창 답 붙이기 `cardItems`와 같게)
-        const tabs = parseAnswer(text).filter(l => l.kind === 'table'), lines = memoFromAnswer(text, '', tabs.length ? 'skip' : 'text')
-        const top = opt.file ? [{ k: 'p', t: opt.file, runs: [[0, opt.file.length, MUTED, false]] }, ...lines] : lines
-        const mm = filled(lines) && memo(top), long = mm && opt.file && top.length > FILE_FOLD_N
-        its = [...(mm ? [long ? { ...mm, fold: true, rect: [0, 0, MEMO.W, memoHeight({ ...mm, fold: true })] } : mm] : []), ...tabs.map(t => table(t.rows, t.header))]; what = filled(lines) ? '메모' : '표'
+      else {   // 메모 — 마크다운 표는 메모 안 표 줄(대화창 답 붙이기 `cardItems`와 같게). 표뿐인 글은 칠판 진짜 표로
+        const lines = memoFromAnswer(text, ''), tabs = lines.filter(l => l.k === 'table')
+        if (!opt.file && tabs.length && !filled(lines)) { its = tabs.map(t => table(t.rows, t.header)); what = '표' }
+        else {
+          const top = opt.file ? [{ k: 'p', t: opt.file, runs: [[0, opt.file.length, MUTED, false]] }, ...lines] : lines, mm = memo(top)
+          its = [top.length > FILE_FOLD_N && opt.file ? { ...mm, fold: true, rect: [0, 0, MEMO.W, memoHeight({ ...mm, fold: true })] } : mm]; what = '메모'
+        }
       }
     }
     if (!its.length) return false

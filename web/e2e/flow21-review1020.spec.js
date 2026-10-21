@@ -271,7 +271,7 @@ test('⋯ 메뉴 — 새 대화로 분기(지금 대화는 지난 대화로) · 
   await expect(page.getByTestId('past-list')).toContainText('⑂ 첫 질문')         // 갈래는 ⑂ 표시
 })
 
-test('표 답 — 대화창엔 표로, 칠판에 붙이면 메모 + 진짜 표 한 묶음', async ({ page }) => {
+test('표 답 — 대화창엔 표로, 칠판에 붙이면 메모 하나(표 줄이 자리 그대로) → 줄 손잡이 「칠판 표로 바꾸기」 = 메모 옆 진짜 표', async ({ page }) => {   // 2026-10-21 사용자: 한 답 = 메모 하나
   const ANS = ['내일 전주 날씨', '| 항목 | 내일 |', '|---|---|', '| 기온 | **9~18℃** |', '| 오전 | 비 |'].join(String.fromCharCode(10))
   await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {} } }))
   await page.route('**/api/chat', r => r.fulfill({ json: { content: ANS, model: 'fake-model', elapsed: 0.1 } }))
@@ -280,10 +280,20 @@ test('표 답 — 대화창엔 표로, 칠판에 붙이면 메모 + 진짜 표 �
   await expect(page.getByTestId('answer-table')).toBeVisible()
   await expect(page.getByTestId('answer-table').locator('tr')).toHaveCount(3)
   await page.getByRole('button', { name: '칠판에 붙이기' }).click()
-  const d = await liveDoc(page), memo = d.items.find(it => it.type === 'memo'), tbl = d.items.find(it => it.type === 'table')
+  let d = await liveDoc(page)
+  expect(d.items.filter(it => it.type === 'table')).toHaveLength(0)
+  const memo = d.items.find(it => it.type === 'memo')
+  expect(memo.lines.map(l => l.k).slice(0, 2)).toEqual(['p', 'table'])
+  expect(memo.lines[1].rows).toEqual([['항목', '내일'], ['기온', '9~18℃'], ['오전', '비']]); expect(memo.lines[1].header).toBe(true)
+
+  const top = await page.locator('svg text', { hasText: '항목' }).first().boundingBox(), bot = await page.locator('svg text', { hasText: '오전' }).first().boundingBox()
+  const hx = (await toPage(page, memo.pos[0] + 15, memo.pos[1])).x, hy = (top.y + bot.y + bot.height) / 2   // 표 줄 가운데 높이 = 손잡이 자리
+  await page.mouse.move(hx + 40, hy); await page.mouse.move(hx, hy); await page.mouse.down(); await page.mouse.up()
+  await page.getByRole('button', { name: '칠판 표로 바꾸기' }).click()
+  d = await liveDoc(page)
+  const tbl = d.items.find(it => it.type === 'table'), m2 = d.items.find(it => it.type === 'memo')
   expect(tbl.cells).toEqual([['항목', '내일'], ['기온', '9~18℃'], ['오전', '비']]); expect(tbl.header).toBe(true)
-  expect(JSON.stringify(memo.lines)).not.toContain('|'); expect(memo.group_id).toBeTruthy(); expect(tbl.group_id).toBe(memo.group_id)
-  expect(tbl.pos[1]).toBeGreaterThan(memo.pos[1])                           // 메모 밑
+  expect(m2.lines.some(l => l.k === 'table')).toBe(false); expect(tbl.pos[0]).toBeGreaterThan(m2.pos[0] + m2.rect[2] - 1)   // 메모 오른쪽 옆
 })
 
 // 2026-10-20 KAIROS 문서 검토 — 대화창 🎤 실시간 받아쓰기. 진짜 소리·KAIROS는 손 확인(가짜 마이크 파일로 크롬에서 글자가 실시간으로 쌓임 확인)

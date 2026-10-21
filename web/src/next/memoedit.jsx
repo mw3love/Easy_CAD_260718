@@ -1,7 +1,7 @@
 // 메모 고치기(§8 항목61 4-b ⑤ 1차) — 메모 자리에 TipTap을 겹쳐 띄움. 제목·글머리·번호·할 일·코드·인용 + 마크다운 입력(`# `·`- `·`1. `·`[] `·`> `·``` ```)은
 // TipTap 확장의 입력 규칙 그대로(`---` = 구분선). 치수는 memo.js MEMO·MEMO_KIND와 render.jsx memoLayout과 같게(고치는 모습 = 결과). Esc·Ctrl+Enter·바깥 클릭 = 끝.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Editor, Extension } from '@tiptap/core'
+import { Editor, Extension, mergeAttributes } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
@@ -13,7 +13,8 @@ import CodeBlock from '@tiptap/extension-code-block'
 import HorizontalRule from '@tiptap/extension-horizontal-rule'
 import { BulletList, ListItem, ListKeymap, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
 import { BackgroundColor, Color, TextStyle } from '@tiptap/extension-text-style'
-import { UndoRedo } from '@tiptap/extensions'
+import { Gapcursor, UndoRedo } from '@tiptap/extensions'
+import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import { Plugin } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { BOARD_FONT, METRICS, PT, TEXT_MARGIN, urlSpans } from './geom.js'
@@ -21,6 +22,16 @@ import { CODE_BAND, MONO_FONT } from './render.jsx'
 import { LINE_KINDS, MEMO, MEMO_KIND, MUTED, caretLine, docToLines, lineBlocks, linesToDoc } from './memo.js'
 import { Italic, Strike, Underline } from './marks.js'
 import { FormatBar } from './formatbar.jsx'
+
+// 표 줄(memo.js `tableLine`) — 칸 너비 = cw 비율(칠판 그림 memoLayout과 같게), 칸 끌어 넓히기는 없음. Tab = 다음 칸(마지막 칸이면 줄 더하기).
+// 쓸 땐 `View: null` — 기본 TableView는 칸 너비를 colwidth로 다시 써서 cw가 무시됐음
+export const MemoTable = Table.extend({
+  addAttributes() { return { cw: { default: null, parseHTML: el => { try { return JSON.parse(el.dataset.cw || 'null') } catch { return null } }, renderHTML: a => (a.cw ? { 'data-cw': JSON.stringify(a.cw) } : {}) } } },
+  renderHTML({ node, HTMLAttributes }) {
+    const n = Math.max(1, node.firstChild?.childCount || 1), cw = node.attrs.cw?.length === n ? node.attrs.cw : Array(n).fill(1 / n)
+    return ['table', mergeAttributes(HTMLAttributes), ['colgroup', ...cw.map(f => ['col', { style: `width:${(f * 100).toFixed(3)}%` }])], ['tbody', 0]]
+  },
+})
 
 const Finish = Extension.create({
   name: 'memoFinish',
@@ -84,7 +95,7 @@ export function MemoEditor({ spec, onDone }) {
     const editor = new Editor({
       element: host.current,
       extensions: [Document, Paragraph, Text, Bold, Italic, Underline, Strike, Code, TextStyle, Color, BackgroundColor, Heading.configure({ levels: [1, 2, 3] }), Blockquote, CodeBlock, HorizontalRule,
-        BulletList, OrderedList, ListItem, TaskList, TaskItem.configure({ nested: true }), ListKeymap, UndoRedo, UrlPaint.configure({ off: new Set((spec.lines || []).filter(l => l.nolink).map(l => l.t)) }),
+        BulletList, OrderedList, ListItem, TaskList, TaskItem.configure({ nested: true }), ListKeymap, UndoRedo, MemoTable.configure({ View: null }), TableRow, TableHeader, TableCell, Gapcursor, UrlPaint.configure({ off: new Set((spec.lines || []).filter(l => l.nolink).map(l => l.t)) }),
         Finish.configure({ onDone: sel => (turnR.current ? setTurn(null) : finish(sel ? { caret: caretLine(ed.current.state) } : null)), onTurn: openTurn })],
       content: linesToDoc(spec.lines),
       editorProps: {
@@ -158,6 +169,10 @@ ${S} blockquote{border-left:${P(3)} solid #d4d4d8;padding:${P(TEXT_MARGIN)} 0 ${
 ${S} pre{white-space:pre;overflow-x:auto;scrollbar-width:none;font-family:${MONO_FONT};font-size:${fs('code')};background:${CODE_BAND};padding:${P(TEXT_MARGIN)} 0;line-height:${ls}}${S} pre code{font:inherit;background:none}
 ${S} hr{border:0;margin:0;height:${P(MEMO.HR * 2)};position:relative;overflow:visible}${S} hr::after{content:'';position:absolute;left:0;right:0;top:50%;border-top:1px solid #d4d4d8}
 ${S} hr.ProseMirror-selectednode{background:rgba(137,180,250,.25)}
+${S} table{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;margin:0;outline:1px solid #d4d4d8;outline-offset:-1px}
+${S} td,${S} th{vertical-align:top;text-align:left;font-weight:400;padding:${P(MEMO.CELL)} ${P(MEMO.CELL + TEXT_MARGIN)};box-shadow:inset 1px 0 0 #d4d4d8,inset 0 1px 0 #d4d4d8}
+${S} th{font-weight:700;background:#f4f4f5}${S} td p+p,${S} th p+p{margin-top:0}
+${S} .selectedCell{background:rgba(137,180,250,.25)}
 ${S} .mb-url{color:#2f80ed;text-decoration:underline}${S} code{font-family:${MONO_FONT};font-size:inherit;background:${CODE_BAND}}${S} ::selection{background:rgba(137,180,250,.35)}`
   const item = { all: 'unset', boxSizing: 'border-box', display: 'block', width: '100%', padding: '5px 10px', borderRadius: 5, cursor: 'pointer' }
   // 바탕은 투명 — 칠판이 고치는 메모의 바탕(채움·테두리)만 그려 줌(겹쳐 칠하면 투명한 채움이 진해졌음 — 2026-10-18)

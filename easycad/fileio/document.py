@@ -386,6 +386,9 @@ def _web_card_label(d: dict):
         for ln in d.get("lines") or []:
             k = ln.get("k", "p")
             n = n + 1 if k == "ol" else 0
+            if k == "table":   # [웹 칠판 2026-10-21] 메모 안 표 줄 — 칸을 「 | 」로(웹 memoText와 같게)
+                out.extend(" | ".join(r) for r in ln.get("rows") or [])
+                continue
             mk = f"{n}. " if k == "ol" else ("☑ " if ln.get("done") else "☐ ") if k == "todo" else marks.get(k, "")
             out.append("  " * int(ln.get("lv") or 0) + mk + (ln.get("t") or ""))
         return {"text": "\n".join(out), "color": "#ff1f1f1f", "font": 10, "bg": None, "align": "left"}

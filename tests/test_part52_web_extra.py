@@ -101,11 +101,12 @@ def test_web_legend_marks_survive_desktop_save():
 def test_web_memo_survives_desktop_save():
     """웹 메모(2026-10-18 — 줄마다 제목·목록·할 일·코드)는 데스크톱이 줄 글을 적은 둥근 네모로 열고, 저장하면 다시 memo로(줄·바탕색·답 시각 그대로, 보여 주려던 라벨은 뺌)"""
     lines = [{"k": "h2", "t": "회의"}, {"k": "todo", "t": "견적", "done": True}, {"k": "ol", "t": "하나"}, {"k": "ol", "t": "둘"},
-             {"k": "ul", "t": "안", "lv": 1}, {"k": "code", "t": "  x = 1"}, {"k": "p", "t": "끝", "runs": [[0, 1, "#ff0000", True]]}]
+             {"k": "ul", "t": "안", "lv": 1}, {"k": "code", "t": "  x = 1"}, {"k": "table", "t": "", "rows": [["항목", "상태"], ["안테나", "정상"]], "header": True, "cw": [0.4, 0.6]},
+             {"k": "p", "t": "끝", "runs": [[0, 1, "#ff0000", True]]}]
     d = dict(_BASE, type="memo", rect=[0.0, 0.0, 340.0, 200.0], fill="#fffff8c5", lines=lines, chat_at=1792300000000)
     sc = QGraphicsScene()
     it = insert_items(sc, [d])[0]
-    assert it._label.toPlainText() == "## 회의\n☑ 견적\n1. 하나\n2. 둘\n  • 안\n  x = 1\n끝"
+    assert it._label.toPlainText() == "## 회의\n☑ 견적\n1. 하나\n2. 둘\n  • 안\n  x = 1\n항목 | 상태\n안테나 | 정상\n끝"
     out = item_to_dict(it)
     assert out["type"] == "memo" and out["lines"] == lines and out["fill"] == "#fffff8c5" and out["chat_at"] == 1792300000000
     assert "label" not in out and out["rect"] == [0.0, 0.0, 340.0, 200.0]

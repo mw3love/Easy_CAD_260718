@@ -12,6 +12,7 @@ import Blockquote from '@tiptap/extension-blockquote'
 import CodeBlock from '@tiptap/extension-code-block'
 import HorizontalRule from '@tiptap/extension-horizontal-rule'
 import { BulletList, ListItem, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
+import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import { Italic, Strike, Underline } from './marks.js'
 import { docToLines } from './memo.js'
 
@@ -40,10 +41,10 @@ export function textKind(text) {
 // ── text/html(브라우저 안에서만) ──
 // 웹 페이지 색·글꼴은 버린다(어두운 화면 ChatGPT의 흰 글이 메모에서 안 보이지 않게) — 꾸밈은 굵게·기울임·밑줄·취소선·코드·제목·목록만
 const EXT = [Document, Paragraph, Text, Bold, Italic, Underline, Strike, Code, Heading.configure({ levels: [1, 2, 3] }), Blockquote, CodeBlock, HorizontalRule,
-  BulletList, OrderedList, ListItem, TaskList, TaskItem.configure({ nested: true })]
+  BulletList, OrderedList, ListItem, TaskList, TaskItem.configure({ nested: true }), Table, TableRow, TableHeader, TableCell]
 const MONO = /font-family:[^;"']*(consolas|monospace|courier|menlo|cascadia|d2coding|fira code)/i
 
-// 클립보드 HTML → { tables: [{ rows, header }], lines: 메모 줄(없으면 []), code: 코드 칸으로 볼지 }.
+// 클립보드 HTML → { tables: [{ rows, header }], lines: 메모 줄(없으면 []), code: 코드 칸으로 볼지 }. 글이 있으면 표는 lines 안 표 줄(자리 그대로), 표뿐이면 tables로.
 // 글 생김새(꾸밈 태그)가 없으면 null — 그땐 글(text/plain) 규칙으로
 export function htmlPlan(html) {
   if (!html || typeof DOMParser === 'undefined') return null
@@ -54,15 +55,15 @@ export function htmlPlan(html) {
     const rows = [...tb.rows].map(r => [...r.cells].map(c => c.textContent.replace(/\s+/g, ' ').trim()))
     const cols = Math.max(0, ...rows.map(r => r.length))
     if (rows.length * cols >= 2) tables.push({ rows: rows.map(r => Array.from({ length: cols }, (_, i) => r[i] || '')), header: !!tb.querySelector('th') })
-    tb.remove()
   }
-  const rest = body.textContent.trim()
+  const rest = (() => { const c = body.cloneNode(true); c.querySelectorAll('table').forEach(t => t.remove()); return c.textContent.trim() })()
   if (!rest) return tables.length ? { tables, lines: [], code: false } : null
   const rich = /<(h[1-6]|li|strong|b|em|i|u|s|del|pre|blockquote|code|hr)[\s>]/i.test(body.innerHTML)
   if (MONO.test(html) && !/<(h[1-6]|li|p)[\s>]/i.test(body.innerHTML)) return { tables, lines: [], code: true }   // VS Code 등 = 글 그대로 코드 칸
   if (!rich && !tables.length) return null
   body.querySelectorAll('br').forEach(b => b.replaceWith(d.createTextNode('\n')))
-  const lines = docToLines(generateJSON(body.innerHTML, EXT)).filter((l, i, a) => l.t || l.k === 'hr' || (i > 0 && a[i - 1].t))   // 빈 줄은 하나만
-  while (lines.length && !lines[lines.length - 1].t && lines[lines.length - 1].k !== 'hr') lines.pop()
+  const keep = l => l.t || l.k === 'hr' || l.k === 'table'
+  const lines = docToLines(generateJSON(body.innerHTML, EXT)).filter((l, i, a) => keep(l) || (i > 0 && a[i - 1].t))   // 빈 줄은 하나만
+  while (lines.length && !keep(lines[lines.length - 1])) lines.pop()
   return { tables, lines, code: false }
 }
