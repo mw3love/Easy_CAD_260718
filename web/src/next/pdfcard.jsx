@@ -13,6 +13,12 @@ export function pdfTop(it) {
   KEEP.set(it._id, v); return v
 }
 function saveTop(it, t) { KEEP.set(it._id, t); try { localStorage.setItem(keyOf(it), String(Math.round(t))) } catch { /* 저장소 막힘 — 이 창에서만 */ } }
+// 그 쪽(0부터)으로 넘기기 — 오려 온 그림의 출처 바로가기(2026-10-22). 보는 중이면 바로, 아니면 다음에 켤 때 그 자리
+export function pdfGoPage(it, i) {
+  const lay = pdfLayout(it, it.rect[2]), t = lay[Math.max(0, Math.min(lay.length - 1, i))]?.[0] ?? 0
+  saveTop(it, t)
+  const el = typeof document !== 'undefined' && document.querySelector(`[data-pdfid="${it._id}"]`); if (el) el.scrollTop = t
+}
 
 // 쪽마다 [위, 높이](카드 폭 w 기준)
 export function pdfLayout(it, w) {

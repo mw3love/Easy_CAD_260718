@@ -12,7 +12,7 @@ const pasteFile = (page, name, type, b64) => page.evaluate(([n, t, b]) => {
 }, [name, type, b64])
 const items = async page => (await liveDoc(page)).items
 
-test('PDF 붙여넣기 = 보기 카드 → 한 번 = 고르기, 두 번 누르면 휠로 쪽 넘기기 → Alt+끌기 = 그림 + 출처 + 점선 화살표 → 「글로」 = 글 메모, 다시 열어도 카드', async ({ page }) => {
+test('PDF 붙여넣기 = 보기 카드 → 한 번 = 고르기, 두 번 누르면 휠로 쪽 넘기기 → Alt+끌기 = 그림 + 출처(화살표 없음) → 「글로」 = 글 메모, 다시 열어도 카드', async ({ page }) => {
   const name = boardName('pdf')
   await openBoard(page, name); await setCam(page)
   const p = await toPage(page, 300, 300); await page.mouse.move(p.x, p.y)
@@ -51,11 +51,10 @@ test('PDF 붙여넣기 = 보기 카드 → 한 번 = 고르기, 두 번 누르�
   await page.mouse.move(b.x + 5, b.y + 5); await page.mouse.down()
   await page.mouse.move(b.x + b.width - 5, b.y + ph * 0.4, { steps: 6 }); await page.mouse.up()
   await page.keyboard.up('Alt')
-  await expect.poll(async () => (await items(page)).length, { timeout: 10_000 }).toBe(4)
-  const [, img, cap, arrow] = await items(page)
+  await expect.poll(async () => (await items(page)).length, { timeout: 10_000 }).toBe(3)
+  const [, img, cap] = await items(page)
   expect(img.type).toBe('image'); expect(img.alt).toContain('Alpha line'); expect(img.alt).not.toContain('Bravo')   // 오린 부분 글 = 보이지 않는 설명
   expect(cap.text).toBe('two-pages.pdf · 1쪽'); expect(cap.group_id).toBe(img.group_id)
-  expect(arrow.type).toBe('sarrow'); expect(arrow.style).toBe(2)
   expect(img.pos[0]).toBeGreaterThan(card.pos[0] + card.rect[2])         // 카드 오른쪽
 
   await expect(page.getByTestId('pdf-to-text')).toHaveCount(0)            // 「글로」 단추는 없앰(2026-10-21) — 그림 우클릭 「그림 속 글 읽기」
@@ -63,18 +62,18 @@ test('PDF 붙여넣기 = 보기 카드 → 한 번 = 고르기, 두 번 누르�
   const ic = await toPage(page, img.pos[0] + img.rect[2] / 2, img.pos[1] + img.rect[3] / 2)
   await page.mouse.click(ic.x, ic.y, { button: 'right' })
   await page.getByRole('button', { name: '그림 속 글 읽기' }).click()
-  await expect.poll(async () => (await items(page)).map(it => it.type)).toEqual(['pdf', 'image', 'text', 'sarrow', 'memo'])
-  expect((await items(page))[4].lines.map(l => l.t)).toEqual(['Alpha line', 'two-pages.pdf · 1쪽'])   // PDF 그림 = 품은 글 그대로(KAIROS 안 부름)
+  await expect.poll(async () => (await items(page)).map(it => it.type)).toEqual(['pdf', 'image', 'text', 'memo'])
+  expect((await items(page))[3].lines.map(l => l.t)).toEqual(['Alpha line', 'two-pages.pdf · 1쪽'])   // PDF 그림 = 품은 글 그대로(KAIROS 안 부름)
   expect(ocrCalls).toBe(0)
   await page.keyboard.press('Control+z')
-  await expect.poll(async () => (await items(page)).map(it => it.type)).toEqual(['pdf', 'image', 'text', 'sarrow'])
+  await expect.poll(async () => (await items(page)).map(it => it.type)).toEqual(['pdf', 'image', 'text'])
 
   await waitSaved(page); await page.reload()
   await expect(page.getByText(`서버 「${name}」`).first()).toBeVisible()
   await expect.poll(() => page.locator('[data-pdfid] img').first().evaluate(im => im.complete && im.naturalWidth > 0)).toBe(true)   // 다시 열어도 쪽 그림
 })
 
-test('Alt 누르면 십자 커서 + 「끌어서 오려 오기」 · 여러 번 오리면 카드 오른쪽 한 단(왼쪽 끝 같음·안 겹침) · 화살표 일직선', async ({ page }) => {   // 2026-10-22 사용자
+test('Alt 누르면 십자 커서 + 「끌어서 오려 오기」 · 여러 번 오리면 카드 오른쪽 한 단(왼쪽 끝 같음·안 겹침) · 화살표 없음 · Ctrl+클릭·우클릭 = PDF 그 쪽', async ({ page }) => {   // 2026-10-22 사용자
   await openBoard(page, boardName('pdfcol')); await setCam(page)
   const p = await toPage(page, 300, 300); await page.mouse.move(p.x, p.y)
   await pasteFile(page, 'two-pages.pdf', 'application/pdf', PDF_B64)
@@ -92,13 +91,13 @@ test('Alt 누르면 십자 커서 + 「끌어서 오려 오기」 · 여러 번 
     const n = (await items(page)).length
     await page.mouse.move(b.x + 30, b.y + y0); await page.mouse.down()   // 가장자리 가운데 = 포트점이라 안쪽에서
     await page.mouse.move(b.x + b.width - 30, b.y + y1, { steps: 6 }); await page.mouse.up()
-    await expect.poll(async () => (await items(page)).length, { timeout: 10_000 }).toBe(n + 3)
+    await expect.poll(async () => (await items(page)).length, { timeout: 10_000 }).toBe(n + 2)
   }
   await clip(5, ph * 0.4); await clip(ph * 0.5, ph * 0.7); await clip(5, ph * 0.1)   // 셋째는 첫째와 겹침 → 아래로 = 둘째 밑
   await clip(5, ph * 0.3)                                                    // 넷째는 밀리다 카드 아래 끝을 넘음 → 오른쪽 새 단, 카드 위 끝부터
   await page.keyboard.up('Alt')
   await expect(page.getByText('끌어서 오려 오기')).toHaveCount(0)
-  const all = await items(page), imgs = all.filter(it => it.type === 'image'), arrows = all.filter(it => it.type === 'sarrow')
+  const all = await items(page), imgs = all.filter(it => it.type === 'image')
   const [c0] = all
   expect(imgs.length).toBe(4)
   const col = imgs.slice(0, 3)
@@ -107,14 +106,26 @@ test('Alt 누르면 십자 커서 + 「끌어서 오려 오기」 · 여러 번 
   for (let i = 1; i < ys.length; i++) expect(ys[i][0]).toBeGreaterThan(ys[i - 1][1])   // 안 겹침
   expect(imgs[3].pos[0]).toBeGreaterThan(col[0].pos[0] + col[0].rect[2])           // 넷째 = 오른쪽 새 단
   expect(imgs[3].pos[1]).toBeCloseTo(c0.pos[1], 0)                                // 카드 위 끝부터
-  for (const a of arrows.slice(0, 2)) expect(new Set(a.pts.map(q => Math.round(q[1]))).size).toBe(1)   // 카드 몸통 높이 안 = 일직선
+  expect(all.some(it => it.type === 'sarrow')).toBe(false)                     // 화살표 없음(2026-10-22 — 여럿이면 엉킴)
   await page.keyboard.press('Escape')                                       // 넘겨 보기 끝
+  const ip0 = await toPage(page, imgs[2].pos[0] + 10, imgs[2].pos[1] + 5)
   // 오려 온 직후 = 그 그림만 고른 채 → 속성 카드 설명 = 첫 줄 + 접힌 글(2026-10-22 사용자: 너무 길어짐)
   await expect(page.getByTestId('image-alt')).toHaveText('two-pages.pdf · 1쪽')
   await expect(page.getByTestId('image-alt-more')).toContainText('들어 있음 ▸')
   await expect(page.getByText('Alpha line', { exact: true })).toHaveCount(0)
   await page.getByTestId('image-alt-more').click()
   await expect(page.getByText('Alpha line', { exact: true })).toBeVisible()
+
+  const body2 = page.locator('[data-pdfid]')                                // 출처 바로가기 — 우클릭 메뉴·Ctrl+클릭
+  await page.keyboard.press('Escape')
+  const cp = await toPage(page, imgs[1].pos[0] + 10, imgs[1].pos[1] + imgs[1].rect[3] + 8)   // 밑 글 「two-pages.pdf · 1쪽」
+  await body2.evaluate(el => { el.scrollTop = 0 })
+  await page.mouse.click(cp.x, cp.y, { button: 'right' })
+  await expect(page.getByRole('button', { name: /PDF에서 이 쪽\(1쪽\) 보기/ })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.keyboard.down('Control'); await page.mouse.click(ip0.x, ip0.y); await page.keyboard.up('Control')   // Ctrl+클릭 = PDF 카드 넘겨 보기 켜짐
+  await expect(body2).toHaveCSS('pointer-events', 'auto')
+  await expect(body2).toHaveJSProperty('scrollTop', 0)                       // 1쪽 자리
 })
 
 test('HTML 파일 붙여넣기 = 문서 카드(파일 이름·제목)', async ({ page }) => {
@@ -169,7 +180,7 @@ test('멀리서 넣어도 쪽 그림(잠들지 않음) · 바깥 눌러도 보�
   expect(names).toContain('이 쪽(2쪽) 통째로 칠판에'); expect(names).toContain('새 탭에서 보기'); expect(names).not.toContain('삭제'); expect(names).not.toContain('전체 선택')
   await expect(body).toHaveCSS('pointer-events', 'auto')
   await page.getByRole('button', { name: /이 쪽\(2쪽\) 통째로 칠판에/ }).click()
-  await expect.poll(async () => (await items(page)).map(it => it.type), { timeout: 10_000 }).toEqual(['pdf', 'image', 'text', 'sarrow'])
+  await expect.poll(async () => (await items(page)).map(it => it.type), { timeout: 10_000 }).toEqual(['pdf', 'image', 'text'])
   const [card, img, cap] = await items(page)
   expect(cap.text).toBe('two-pages.pdf · 2쪽'); expect(img.alt).toContain('Charlie')
   expect(img.rect[2]).toBeCloseTo(card.rect[2] * card.scale, 0)           // 쪽 전체 = 카드 폭

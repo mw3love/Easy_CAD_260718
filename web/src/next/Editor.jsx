@@ -34,7 +34,7 @@ import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob, usesBoardFont, weightsOf } from './exporter.jsx'
 import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
-import { pdfLayout, pdfPageAt, pdfSelectedText } from './pdfcard.jsx'
+import { pdfGoPage, pdfLayout, pdfPageAt, pdfSelectedText } from './pdfcard.jsx'
 import { freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
 import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
@@ -247,6 +247,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const lk = frameLockAt(p); if (lk) { setLoose(l => (l === lk._id ? null : lk._id)); return }   // 이름표 옆 자물쇠 — 잠깐 틀만
     const wo = webOpenAt(p); if (wo) { if (wo.type === 'doc') openDoc(wo); else window.open(wo.url, '_blank', 'noopener'); return }   // PDF ↗ = 원본(브라우저 PDF 보기)   // 웹 카드 오른쪽 위 ↗ = 새 탭, 정리 문서 ↗ = 크게 보기
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) { const u = memoLinkHit(p); if (u) { window.open(u, '_blank', 'noopener'); return } }   // 메모 속 주소 Ctrl+클릭 = 새 탭(그냥 클릭은 고르기·고치기 — 2026-10-18 사용자 선택)
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) { const h = topHit(hitPool(), p, HIT_PX / z, textBox), src = h && clipSourceOf([h._id]); if (src) { goClipSource(src); return } }   // PDF에서 오려 온 그림·밑 글 Ctrl+클릭 = 그 쪽(2026-10-22)
     // 줄을 고른 채 Shift·Ctrl+클릭은 손잡이가 아니라 줄 글자 위여도 같음(2026-10-18 사용자: 글자 위를 눌러 고른 것이 다 풀렸음 — 노션은 블록 아무 데나)
     const mh = memoHandleHit(p) || ((e.shiftKey || e.ctrlKey || e.metaKey) && lineSel ? (hv => (hv && hv.it._id === lineSel.id ? hv : null))(memoRowAt(p, 0)) : null)
     // ⠿ — 연속 = Shift·Ctrl+Shift 클릭, 개별 = Ctrl·Alt+Shift 클릭(노션 + 흔한 방식 둘 다 — 2026-10-18 사용자), 고른 줄 안을 끌면 고른 줄 전부, Alt 끌기 = 복사
@@ -1599,17 +1600,17 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const label = `${card.name || 'PDF'} · ${page + 1}쪽`, s = +(1 / R.current.cam.z).toPrecision(2)
       const cap = base([0, 0], { type: 'text', text: label, color: '#ff8a8f98', font: 9, bg: null, scale: s, z }), capH = sceneBox(cap, textBox).h
       const ty = toSceneP({ clientX: 0, clientY: top }).y
-      // 놓을 자리 = 카드 오른쪽 한 단(2026-10-22 사용자: 여러 개 오리면 정돈 안 됨) — 이 카드에서 앞서 오려 온 그림이 있으면 그 왼쪽 끝에 맞추고,
-      // 높이는 오린 자리, 겹치면 바로 아래로. 첫 그림은 막히면 오른쪽으로 비켜 단을 정함. 틈 120 = 화살표가 꺾일 여유
-      const items0 = R.current.model.items, prev = items0.filter(a => a.type === 'sarrow' && a._bind1 === card._id)
-        .map(a => items0.find(x => x._id === a._bind2 && x.type === 'image')).filter(Boolean).map(x => sceneBox(x, textBox)).filter(b => b.x > cb.x + cb.w)
+      // 놓을 자리 = 카드 오른쪽 한 단(2026-10-22 사용자: 여러 개 오리면 정돈 안 됨) — 이 카드에서 앞서 오려 온 그림(설명 첫 줄 = 「파일 · N쪽」)이 있으면 그 왼쪽 끝에 맞추고,
+      // 높이는 오린 자리, 겹치면 바로 아래로. 첫 그림은 막히면 오른쪽으로 비켜 단을 정함
+      const prev = R.current.model.items.filter(x => x.type === 'image' && clipOf(x)?.name === (card.name || 'PDF'))
+        .map(x => sceneBox(x, textBox)).filter(b => b.x > cb.x + cb.w)
       const solid = hitPool().filter(it => !/arrow|line/.test(it.type)).map(it => sceneBox(it, textBox))   // 화살표·선은 비켜 가지 않음(앞 그림의 화살표가 단을 막지 않게)
       const gap = 24 * s, free = (x, y) => !solid.some(b => x < b.x + b.w + gap && x + w + gap > b.x && y < b.y + b.h + gap && y + h + capH + gap > b.y)
       const down = (x, y) => {   // 겹친 것 바로 밑으로
         for (let i = 0; i < 200 && !free(x, y); i++) y = Math.max(...solid.filter(b => x < b.x + b.w + gap && x + w + gap > b.x && y < b.y + b.h + gap && y + h + capH + gap > b.y).map(b => b.y + b.h)) + gap
         return y
       }
-      let ax = prev.length ? prev[prev.length - 1].x : cb.x + cb.w + 120 * s
+      let ax = prev.length ? prev[prev.length - 1].x : cb.x + cb.w + 48 * s
       if (!prev.length) for (let i = 0; i < 80 && !free(ax, ty); i++) ax += gap
       let ay = down(ax, ty)
       // 밀려 내려가다 카드 아래 끝을 넘으면 오른쪽에 새 단(카드 위 끝부터 — 2026-10-22 사용자: 아래로만 감). 순서 = 위 → 아래, 다음 단
@@ -1618,17 +1619,25 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const g = 'g' + newId()
       const img = base([at.x, at.y], { type: 'image', rect: [0, 0, w, h], data, alt: `${label}${txt ? '\n' + txt : ''}`, z, group_id: g })
       const capd = { ...cap, pos: [at.x - TEXT_MARGIN * s, at.y + h + 2 * s], group_id: g }
-      const keep = R.current.model
-      R.current.model = { ...keep, items: [...keep.items, img] }   // 길 찾기가 새 그림을 찾게(아직 칠판엔 안 넣음)
-      let arrow
-      try {
-        // 나가는 높이 = 그림 가운데(카드 몸통 안이면 일직선, 밖으로 밀렸을 때만 한 번 꺾임)
-        const a = { p: { x: cb.x + cb.w, y: Math.min(cb.y + cb.h - 10, Math.max(cb.y + WEB_HEAD * k, at.y + h / 2)) }, n: { x: 1, y: 0 } }, t = { id: img._id, p: { x: at.x, y: at.y + h / 2 }, n: { x: -1, y: 0 } }
-        arrow = { ...arrowItem(card._id, a.p, img._id, t.p, { auto_route: true, pts: connRoute(card._id, a, t, null).map(p => [p.x, p.y]), color: '#ff9aa0a6', width: 1, style: 2, head: true, head_start: false }), z }
-      } finally { R.current.model = keep }
-      commit([...R.current.model.items, img, capd, arrow], [img._id], 'PDF에서 오려 옴')
-      setStatus(`${label} 오려 옴${txt ? ' — 글이 필요하면 우클릭 「그림 속 글 읽기」' : ''}`)
+      // 화살표는 없음(2026-10-22 사용자: 그림마다 화살표 = 여럿이면 엉켜 지저분) — 출처는 밑 글 「파일 · N쪽」, Ctrl+클릭·우클릭 = PDF 그 쪽으로
+      commit([...R.current.model.items, img, capd], [img._id], 'PDF에서 오려 옴')
+      setStatus(`${label} 오려 옴 — Ctrl+클릭 = PDF 그 쪽으로`)
     } catch (err) { setStatus(`오려 오기 실패 — ${err.message || err}`) }
+  }
+  // 오려 온 그림의 출처 — 설명 첫 줄 「파일 · N쪽」(밑 글도 같은 묶음). 같은 이름 PDF 카드가 여럿이면 가장 가까운 것
+  function clipOf(it) {
+    const m = /^(.*) · (\d+)쪽$/.exec(String(it?.alt || '').split('\n')[0]); return m ? { name: m[1], page: +m[2] - 1 } : null
+  }
+  function clipSourceOf(ids) {
+    const items = R.current.model.items, its = items.filter(it => ids.includes(it._id)), gid = its.find(it => it.group_id)?.group_id
+    const img = [...its, ...(gid ? items.filter(it => it.group_id === gid) : [])].find(it => it.type === 'image' && clipOf(it)); if (!img) return null
+    const c = clipOf(img), ib = sceneBox(img, textBox), d = it => { const b = sceneBox(it, textBox); return Math.hypot(b.x + b.w / 2 - ib.x, b.y + b.h / 2 - ib.y) }
+    const card = items.filter(it => it.type === 'pdf' && (it.name || 'PDF') === c.name && c.page < (it.pages || Infinity)).sort((a, b) => d(a) - d(b))[0]
+    return card ? { card, page: c.page } : null
+  }
+  function goClipSource(src) {   // PDF 카드를 그 쪽에 맞춰 넘겨 보기로 켜고 화면 가운데로
+    pdfGoPage(src.card, src.page); showItem(src.card._id); setWebOn(src.card._id)
+    setStatus(`${src.card.name || 'PDF'} ${src.page + 1}쪽`)
   }
   // 우클릭 「이 쪽 통째로 칠판에」 — Alt+끌기를 쪽 전체로 한 것과 같음(놓을 자리 = 카드 오른쪽, 높이는 카드 몸통 위)
   function pdfWholePage(id, page) {
@@ -1955,6 +1964,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           const picked = pdfSelectedText()   // 끌어 고른 글이 있으면 복사도
           return [...(picked ? [['고른 글 복사', 'Ctrl+C', act(() => navigator.clipboard?.writeText(picked))]] : []), [`이 쪽(${n + 1}쪽) 통째로 칠판에`, '', act(() => pdfWholePage(pin._id, n))],
             ['새 탭에서 보기', '', act(() => window.open(`${pin.url}#page=${n + 1}`, '_blank', 'noopener'))], '-', ['넘겨 보기 끝', 'Esc', act(() => setWebOn(null))]] }   // 새 탭 = 원본 전체, 보던 쪽에서 시작
+        const csrc = selIt.length <= 2 && clipSourceOf(ids); if (csrc) out.push([`PDF에서 이 쪽(${csrc.page + 1}쪽) 보기`, 'Ctrl+클릭', act(() => goClipSource(csrc))])   // 오려 온 그림(밑 글과 묶음) — 출처
         const card = selIt.length === 1 && ['pdf', 'web', 'doc'].includes(selIt[0].type) ? selIt[0] : null   // 카드(PDF·웹·문서) = 뒤집거나 꾸밀 것이 없음
         if (card?.type === 'pdf' && card.url) out.push(['넘겨 보기', '', act(() => webActivate(card))], ['새 탭에서 보기', '', act(() => window.open(`${card.url}#page=${pdfPageAt(card, 0) + 1}`, '_blank', 'noopener'))], '-')
         else if (selIt.length === 1 && selIt[0].type === 'image' && selIt[0].data) out.push(['그림 속 글 읽기', '', act(() => ocrImage(selIt[0]._id))], '-')   // OCR → 옆에 메모
