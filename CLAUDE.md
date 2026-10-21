@@ -143,7 +143,7 @@ web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + Reac
 │                          **칠판**(직접 만든 것): `index.html` + `src/next/`(geom.js 그리기 계산·render.jsx 종류별 SVG·doc.js .ecad 문서·
 │                          arrows.js 길 다시 찾기 + 2단계 Editor.jsx 편집 화면·edit.js 편집 계산·align.js 정렬선·model.js _id 모델·text.jsx TipTap 글 편집 + 3단계 connect.js 붙는 규칙·arrowedit.js 알약·곡선·라벨·
 │                          arrowkind.js 종류 바꾸기·xform.js 좌표 + 4단계 props.jsx 우상 속성 카드·palette.jsx 좌상 도형·심볼·layers.jsx 좌하 레이어·minimap.jsx 우하 미니맵·
-│                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례(표 모양 `legend`, 줄 자동)·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿)·formatbar.jsx 드래그 꾸미기 막대·marks.js 기울임·밑줄·취소선·fold.jsx 카드 접기(▾/▸) + ⓕ sync.js 부분 저장·받아 오기·도형 단위 되돌리기·viewer.jsx 게시 화면 + ⓔ htmlshare.js HTML 한 파일) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
+│                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례(표 모양 `legend`, 줄 자동)·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿, 표 줄 = `@tiptap/extension-table`)·formatbar.jsx 드래그 꾸미기 막대·marks.js 기울임·밑줄·취소선·fold.jsx 카드 접기(▾/▸) + ⓕ sync.js 부분 저장·받아 오기·도형 단위 되돌리기·viewer.jsx 게시 화면 + ⓔ htmlshare.js HTML 한 파일) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
 │                          데스크톱 대조 시험 `tools/export_route_cases.py`·`export_connect_cases.py`·`export_arrow_cases.py` → `web/test/fixtures/`(규칙 고치면 다시 돌림)
 │                          + tidy.js 정리정돈 자리 계산(순수) + 다잡기(2026-10-19) keys.js 글쇠 규칙표·help.jsx 도움말(F1) · **화면 자동 시험** `web/e2e/`(Playwright 1.63.0, 깔린 크롬) `npm run e2e` — 매일 쓰는 흐름 65개(flow1~23) · clipin.js 바깥 붙여넣기 모양 고르기(글자·메모·표·코드, 2026-10-21) · pdfcard.jsx PDF 보기 카드(휠 넘기기·Alt+끌기 오려 오기, 2026-10-21) · find.jsx 찾기 칸(Ctrl+F) · mic.js 대화창 🎤 실시간 받아쓰기(서버 `/api/stt-token` 일회용 표 → KAIROS 소켓) · kairosKey.js 「🔑 내 키」(머리말 `X-Kairos-Key`)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
@@ -232,10 +232,10 @@ symbol_library/
   **10-19 밤 UI/UX 점검 1·2차**(Claude 점검): 위 막대 「🗂 칠판」(새 칠판·최근 칠판, `claude_`·`e2e_` 숨김)·다시 열 때 빈 자리면 전체 맞추기·「다시 ▾」(10-20 없앰)·붙인/정돈한 고름은 다음 질문에 안 실음·출처 번호 1부터·어두운 화면 남색 잉크·「다 보기」 왼쪽 카드 220px 뺌·붙일 자리가 화면 밖이면 넘친 만큼 옮김·「○○ 정리해 줘」(주제 있고 고른 것 없음) = 보통 짐작(사용자 선택). ⚠ 서버 Python을 고치면 5191 서버를 다시 켜야 반영.
   **10-20 손질**(사용자 검토): 다각형·선 따라오는 선·시작점 자석, 빈 곳 두 번 누르기 = 글, 잠긴 도형 우클릭 하나만 풀기, 위 막대 도구 끌어다 놓기(기본형), 버튼으로 넣기 = 가운데 먼저·겹치면 빈자리,
   메모 = 만들면 고른 채·치면 이어 씀, `Z` 다 보기·`D` 다크·「전체 화면」 버튼, Vite 프록시 `127.0.0.1`(KAIROS 502). 손맛 확인은 다른 PC에서.
-  **10-20 저녁(사용자 검토 여러 차)**: 대화창 = 「all in one」 — 「다시 ▾」 없앰(길은 `route.py` jev + 규칙 바닥, 매주 자가 시험), 「새 대화」·「지난 대화 ▾」, 답마다 「⋯」(이어 묻기·⑂ 새 대화로 분기·다시 만들기·복사), 표 답 → 칠판 진짜 표, 모델 고르기 = 입력 칸 옆, 「🔑 내 키」(`X-Kairos-Key`).
+  **10-20 저녁(사용자 검토 여러 차)**: 대화창 = 「all in one」 — 「다시 ▾」 없앰(길은 `route.py` jev + 규칙 바닥, 매주 자가 시험), 「새 대화」·「지난 대화 ▾」, 답마다 「⋯」(이어 묻기·⑂ 새 대화로 분기·다시 만들기·복사), 표 답 → 메모 안 표 줄(10-21부터 — 전엔 메모 밑 진짜 표), 모델 고르기 = 입력 칸 옆, 「🔑 내 키」(`X-Kairos-Key`).
   그림: 「그려 줘」 우선 + 최신 정보면 검색 → 그리기, 이어 고치기·칠판에서 고른 그림 고치기 = 원본 유지(`input_images`), 날짜 말 있을 때만 오늘 날짜, 붙이기 = 빈자리·긴 변 680·밑 글 따로, 후보 마우스 올리면 크게. 정돈·정리 문서 중 칠판 알약.
   모델 0단계 실측(§8 항목62): 정리정돈 gpt-6-luna·검색 sonar-reasoning-pro·그림 flare, jev는 품질 채점 못 믿음. 그 밖: 미니맵 % = 100%, `Alt+Z` 고른 것만, 번호 = 남은 최대 + 1(두 앱), 펜 끌기 없음, 다각형 Shift. 미결정: 마이크·영상/음성·고른 그림 설명.
-  **10-21**: 바깥 붙여넣기(`clipin.js` — 한 줄 = 글자·여러 줄 = 메모·탭/html 표 = 표·긁은 웹 답 = 꾸밈 메모·파일 = 끌어 놓기와 같게, 칠판 안 복사는 클립보드에 글 없을 때만 도형),
+  **10-21**: 바깥 붙여넣기(`clipin.js` — 한 줄 = 글자·여러 줄 = 메모·표뿐(탭·html·마크다운) = 칠판 표·글 섞인 표 = 메모 안 표 줄(`k: 'table'`, 줄 손잡이 「칠판 표로 바꾸기」)·md·txt 파일 = 붙여넣기와 같게(30줄 넘으면 접어서)·긁은 웹 답 = 꾸밈 메모·파일 = 끌어 놓기와 같게, 칠판 안 복사는 클립보드에 글 없을 때만 도형),
   **PDF 보기 카드**(원본은 서버 `<칠판>.pdf/`, 누르면 휠로 넘기기·Alt+끌기 = 오려 오기 + 출처 + 점선 화살표·「글로」), HTML 파일 = 문서 카드(스크립트 끔). ⚠ `5191`은 `web/dist` 사본 — PC마다 `npm run build`.
 - **§8 항목60 보드 디자인 2차**(2026-10-17) — 아티팩트 시안과 나란히 본 지적 10건 → 원인은 Qt가 아니라 그리기 어휘(HTML 가져오기는 설계서가 끊겨 버림).
   ① `**구절**` 부분 강조(.ecad `runs`) ② Pretendard 싣기(`easycad/fonts.py`, 보드 글만, .ecad `family`·`weight`) ③ 세로 그림 오른쪽 옆 칸
