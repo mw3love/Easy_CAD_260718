@@ -147,3 +147,26 @@ test('그림 우클릭 「그림 속 글 읽기」 = KAIROS 글 → 그림 옆 �
   expect(memo.type).toBe('memo'); expect(memo.lines.map(l => l.t)).toEqual(['송신소 점검', '출력 4.8kW', '그림 속 글 · claude-haiku-5-5'])
   expect(memo.pos[0]).toBeGreaterThan(img.pos[0] + img.rect[2] * (img.scale || 1))   // 그림 오른쪽
 })
+
+test('md·txt 파일 = 붙여넣은 글과 같은 메모(맨 위 파일 이름) · 긴 파일은 접어서 · 끌어 놓은 자리', async ({ page }) => {   // 2026-10-21 사용자: md 끌어 놓아도 반응 없음
+  await openBoard(page, boardName('mdfile')); await setCam(page)
+  const md = '# 할 일\n- [ ] 철탑 점검\n- 보고서\n\n| 가 | 나 |\n|---|---|\n| 1 | 2 |'
+  await pasteFile(page, '메모.md', '', Buffer.from(md).toString('base64'))    // 윈도우 크롬은 .md 종류를 비워 줌
+  await expect.poll(async () => (await items(page)).length).toBe(2)
+  const [m, t] = await items(page)
+  expect(m.type).toBe('memo'); expect(m.lines.map(l => [l.k, l.t])).toEqual([['p', '메모.md'], ['h1', '할 일'], ['todo', '철탑 점검'], ['ul', '보고서']])
+  expect(m.fold).toBeUndefined(); expect(t.type).toBe('table')
+
+  const long = Array.from({ length: 40 }, (_, i) => `${i + 1}번째 줄`).join('\n')
+  const p = await toPage(page, 900, 600)
+  await page.evaluate(([b, x, y]) => {                                     // 진짜 끌어 놓기(칠판 상자에 drop 신호)
+    const dt = new DataTransfer(); dt.items.add(new File([Uint8Array.from(atob(b), c => c.charCodeAt(0))], '긴글.txt', { type: 'text/plain' }))
+    document.elementFromPoint(x, y).dispatchEvent(new DragEvent('drop', { dataTransfer: dt, clientX: x, clientY: y, bubbles: true, cancelable: true }))
+  }, [Buffer.from(long).toString('base64'), p.x, p.y])
+  await expect.poll(async () => (await items(page)).length).toBe(3)
+  const l = (await items(page))[2]
+  expect(l.type).toBe('memo'); expect(l.fold).toBe(true); expect(l.lines.length).toBe(41); expect(l.lines[0].t).toBe('긴글.txt')
+  expect(Math.abs(l.pos[0] + l.rect[2] * (l.scale || 1) / 2 - 900)).toBeLessThan(40)   // 놓은 자리가 가운데
+  await page.keyboard.press('Control+z')
+  await expect.poll(async () => (await items(page)).length).toBe(2)
+})

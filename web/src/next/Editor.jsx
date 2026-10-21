@@ -1544,6 +1544,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // ── 칠판에 파일 끌어 놓기(2026-10-19) — 그림 = 이미지, 녹음 = 회의록(§8 항목61 ③-3). 그 밖 파일은 알림만(전엔 브라우저가 그 파일을 열며 칠판을 떠났음) ──
   const AUDIO_RE = /\.(mp3|m4a|wav|webm|ogg|aac|flac|mp4)$/i
+  const TEXT_FILE_RE = /\.(md|markdown|txt)$/i   // 글 파일 = 그 글을 붙여넣은 것과 같게(2026-10-21 사용자 — md는 AI가 많이 쓰는 문서)
+  const FILE_FOLD_N = 30   // 글 파일 메모가 이보다 길면 접어서 넣음(칠판을 덮지 않게 — 회의록 전문과 같게)
   async function dropFiles(files, e) {   // e 없음 = 붙여넣기(커서 자리, 화면 밖이면 가운데)
     if (readOnly) return
     const p = e ? toSceneP(e) : pasteAt(); R.current.mouse = p
@@ -1552,7 +1554,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       else if (AUDIO_RE.test(f.name) || /^audio\//.test(f.type)) startMeeting(f, p)
       else if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') await insertPdf(f, p)
       else if (/\.html?$/i.test(f.name) || f.type === 'text/html') await insertHtmlFile(f, p)
-      else setStatus(`${f.name} — 칠판엔 그림·녹음·PDF·HTML 파일을 놓을 수 있어요(.ecad는 「열기」)`)
+      else if (TEXT_FILE_RE.test(f.name) || /^text\/(plain|markdown)$/.test(f.type)) { if (!pasteOutside(await f.text(), '', { at: p, file: f.name })) setStatus(`${f.name} — 빈 파일이에요`) }
+      else setStatus(`${f.name} — 칠판엔 그림·녹음·PDF·HTML·md·txt 파일을 놓을 수 있어요(.ecad는 「열기」)`)
     }
   }
   // HTML 파일 = 정리 문서 카드(스크립트는 끔 — 칠판이 안전하게, 2026-10-21 사용자)
@@ -1739,7 +1742,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     return mp && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : { x: vw.x + vw.w / 2, y: vw.y + vw.h / 2, center: true }
   }
   // 바깥 글 붙여넣기(2026-10-21 사용자) → 글자·메모·표 — 모양은 `clipin.js`가 고름. 여럿이면 위아래로 한 묶음, 한 번의 commit = Ctrl+Z 한 번. 붙인 게 없으면 false
-  function pasteOutside(text, html) {
+  function pasteOutside(text, html, opt = {}) {   // opt = 글 파일 끌어 놓기 { at: 놓은 자리, file: 이름 — 메모 맨 위 줄 }
     const s = +(1 / R.current.cam.z).toPrecision(2), z = topZ(R.current.model.items) + 1   // 지금 배율에서 읽히는 크기(「메모」 버튼과 같게)
     const memo = lines => { const it = base([0, 0], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#ffffffff', lines, scale: s, z }); return { ...it, rect: [0, 0, MEMO.W, memoHeight(it)] } }
     const table = (rows, header) => { const cols = Math.max(...rows.map(r => r.length)), cells = rows.map(r => Array.from({ length: cols }, (_, c) => (r[c] || '').replace(/\*\*/g, '')))
@@ -1756,17 +1759,19 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       else if (k === 'line') { its = [base([0, 0], { type: 'text', text: text.trim(), color: INK, font: 12, bg: null, scale: s, z })]; what = '글자' }
       else {   // 메모 — 마크다운 표는 메모 밑 진짜 표로(대화창 답 붙이기 `cardItems`와 같게)
         const tabs = parseAnswer(text).filter(l => l.kind === 'table'), lines = memoFromAnswer(text, '', tabs.length ? 'skip' : 'text')
-        its = [...(filled(lines) ? [memo(lines)] : []), ...tabs.map(t => table(t.rows, t.header))]; what = filled(lines) ? '메모' : '표'
+        const top = opt.file ? [{ k: 'p', t: opt.file, runs: [[0, opt.file.length, MUTED, false]] }, ...lines] : lines
+        const mm = filled(lines) && memo(top), long = mm && opt.file && top.length > FILE_FOLD_N
+        its = [...(mm ? [long ? { ...mm, fold: true, rect: [0, 0, MEMO.W, memoHeight({ ...mm, fold: true })] } : mm] : []), ...tabs.map(t => table(t.rows, t.header))]; what = filled(lines) ? '메모' : '표'
       }
     }
     if (!its.length) return false
     let y = 0
     its = its.map(it => { const o = { ...it, pos: [0, y] }; y += sceneBox(o, textBox).h + 12 * s; return o })
     if (its.length > 1) { const g = 'g' + newId(); its = its.map(it => ({ ...it, group_id: g })) }
-    const b = unionBox(its.map(it => sceneBox(it, textBox))), at = pasteAt(), tl = at.center ? spotNear(b.w, b.h) : { x: at.x - b.w / 2, y: at.y - b.h / 2 }
+    const b = unionBox(its.map(it => sceneBox(it, textBox))), at = opt.at || pasteAt(), tl = at.center ? spotNear(b.w, b.h) : { x: at.x - b.w / 2, y: at.y - b.h / 2 }
     its = its.map(it => ({ ...it, pos: [it.pos[0] + tl.x - b.x, it.pos[1] + tl.y - b.y] }))
     commit([...R.current.model.items, ...its], its.map(it => it._id), '붙여넣음'); setTool('select')
-    setStatus(`${what} 붙여넣음 — 마음에 안 들면 Ctrl+Z`)
+    setStatus(opt.file ? `${opt.file} → ${what}${its.some(it => it.fold) ? ' — 길어서 접어 넣음, 「… 줄 더」를 누르면 펼쳐져요' : ''}` : `${what} 붙여넣음 — 마음에 안 들면 Ctrl+Z`)
     return true
   }
 
