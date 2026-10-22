@@ -79,7 +79,8 @@ easycad/
 │   ├── core_symbols.py     순서도·안테나 심볼 경로 팩토리 + `_SYMBOL_KINDS`(같은 날 같은 이유로 떼어 냄)
 │   ├── core_web.py         웹 칠판 종류(프레임·웹 카드·정리 문서·PDF·범례·메모)를 웹과 같은 모양으로 — `_RectItem` 물려받음, 저장은 원래 칸 통째(§8 항목61 ④-3, 2026-10-22)
 │   ├── core_memo.py        메모 줄 배치(웹 `memoLayout` 옮김)·그리기·마크다운 ↔ 줄 — 웹 render.jsx·memo.js를 고치면 여기도
-│   ├── core_memo_edit.py   메모 제자리 편집 글 상자(메모 자식 `QGraphicsTextItem`) — 줄 ↔ 문서, 입력 규칙·목록·꾸밈·할 일(웹 memoedit.jsx TipTap 규칙이 기준)
+│   ├── core_memo_edit.py   메모 제자리 편집 글 상자(메모 자식 `QGraphicsTextItem`) — 줄 ↔ 문서, 웹 TipTap 규칙표(`LINE_RULES`·`MARK_RULES`·`KEYS`)·꾸미기 막대·Ctrl+/ 전환 메뉴·할 일
+│   ├── core_memo_lines.py  메모 줄 손잡이 ⠿·줄 고르기·끌어 옮기기·줄 메뉴(웹 Editor.jsx 「메모 2차」) — `_MemoItem`이 물려받음, 마우스 올림은 뷰가 `memo_hover`로
 │   ├── core_view.py        `_AnnotatorView` — 마우스/키 이벤트, 드래그선택, 스냅, 팬/줌
 │   ├── host.py             CanvasWindow(창) — __init__만, 나머지는 아래 믹스인 다중상속
 │   ├── host_ui.py / host_fileio.py / host_layers.py / host_style.py / host_undo.py /
@@ -94,6 +95,7 @@ easycad/
 │   ├── host_blocks.py      블록 조립식 보드 배치(§8 항목57) — 12칸 격자·줄 가운데·흐름도 꺾기·넘치면 2장, `_pb_part="blocks[i]"`
 │   ├── host_board.py       보드 틀 믹스인 — 삽입·잉크 맞추기(`_push_entry` 길목)·「보드 색」(§8 항목53 1단계, 틀 자체는 core_shapes `_BoardItem`)
 │   ├── drawing_check.py / host_check.py   「도면 검사」 찾기 / 결과 카드·표시 믹스인(§8 항목48, 2026-10-16)
+│   ├── host_find.py        Ctrl+F 칠판에서 찾기 — 낱말 바로 + KAIROS 뜻으로(`ai/board_find` — 웹 서버와 같은 계산), 노란 점선·그 도형으로(웹 find.jsx)
 │   ├── model_picker.py     모델 고르기 버튼 「기본 · gpt-6.1-sol ▾」 — 회사별 3개·숫자 가격·「기본으로」·여러 개 체크(§8 항목56, 가운데 칸·보드 막대 공용)
 │   ├── start_prompt.py     가운데 칸 「무엇을 그릴까요?」 — AI의 하나뿐인 입구(§8 항목39 → 51): 빈 도면이면 저절로, 「AI」로는 언제든. 「+」·모델 「기본 · gpt-6.1-sol ▾」(§8 항목56 `model_picker`)·파일 여럿이면 자료 A·B·C(§8 항목53)
 │   └── shortcuts.py        단축키 레지스트리(2026-08-21) — QAction·뷰 raw-key 통합(`SHORTCUT_DEFS`),
@@ -129,7 +131,7 @@ easycad/
 │   ├── photo_ops.py        사진→도면 ops JSON → Sketch 아이템(글자 회전 rot, Qt 비의존)
 │   ├── html_share.py       「HTML로 공유」 — 레이어별 SVG + 확대·이동 + 상자 정보(SHAPES)를 HTML 한 파일로(§8 항목46)
 │   └── pdf_import.py       벡터 PDF 열기(PyMuPDF, 쪽마다 빈 용지틀, §8 항목33)
-├── fonts.py              보드 글꼴 Pretendard 등록(`resources/fonts/`, OFL — §8 항목60 ②)
+├── fonts.py              보드 글꼴 Pretendard 등록(`resources/fonts/`, OFL — §8 항목60 ②) + 앱 화면 글꼴도 Pretendard(`apply_ui_font` — 창 만든 뒤에 불러야 함)
 ├── app_settings.py       앱 설정(QSettings) 여는 한 곳 — `EASYCAD_SETTINGS_ORG`로 테스트 격리(2026-10-03).
 │                         `QSettings("EasyCAD", ...)` 직접 열기 금지(테스트가 grep으로 잡음)
 ├── selftest.py           설치 점검 `MagicBoard.exe --selftest`(§8 항목43, 2026-10-16 — exe 이름은 §8 항목50부터 MagicBoard) — 아이콘·라이브러리·KAIROS 호출
@@ -138,7 +140,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~66_*.py      테마별 회귀 스모크 1516종(2026-10-22 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~69_*.py      테마별 회귀 스모크 1554종(2026-10-22 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + TipTap 3.32.0(글 편집, 버전 고정). **2026-10-18 5단계 갈아탐: tldraw 뺌**(옛 tldraw 화면
 │                          src/main.jsx·shapes.jsx·cad.jsx·chat.jsx·boardStore.js·ecad.js·ecadExport.js는 지움 — git에 있음). 남은 공용: route.js(길 찾기 = 데스크톱
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecadFormat.js(순수 변환, `npm test`)·symbols.json(`tools/export_web_symbols.py`가
@@ -207,14 +209,9 @@ symbol_library/
   그리기)는 측정상 −20%뿐이라 보류(바닥 183ms는 Qt 아이템별 기본 비용). 더 가려면 '스냅샷 방식'(멀리서 볼 때 화면을
   한 장 그림으로 저장) — 실사용에서 답답하면 계획. 상세: `docs/history/2026-10.md` "LOD ②".
 
-**최근 항목**(2026-10-17 ~ 10-18, 상세는 `docs/history/2026-10.md`):
-- **§8 항목61 웹 칠판 트랙**(2026-10-17, 심층 인터뷰로 **목표가 바뀜** — `## 목표`) — 바탕 부품 비교(`web_bakeoff/`) → **tldraw 5.5.2 확정**(CAD 확장 시험:
-  직각 화살표·구간 손잡이·큐닷·포트점·A*·TRIM 통과). ⓑ 칠판 바탕 `web/`: .ecad 열기(보드·순서도·계통도 — 데스크톱 그림과 나란히 맞춤, 흰 잉크→검정),
-  글 색·굵기·형광펜은 tldraw 글 편집기(TipTap)에 TextStyle 확장, 정확한 색·크기는 기본 도형의 `getCustomDisplayValues`+`meta.ecad`. 실행 `cd web && npm run dev`,
-  시험 `npm test`. 서버 저장 `python web/server.py`(감시 PC용, 켜는 법 `web/README.md`). 「.ecad 저장」으로 데스크톱 왕복(AI 보드 칸 표시·연결·다각형 유지, `tests/test_part49`). 남은 것: 표·곡선 화살표·회전 등 미지원, 감시 PC 실제 배포.
-  ⓒ 대화 1판(앱 안 KAIROS — 사용자 선택, 범위는 시안 보고 A만): 오른쪽 대화창 → 서버 `/api/chat`(키는 서버 PC에만), 답마다 「칠판에 붙이기」 = 카드,
-  고른 것의 글 같이 보냄, 대화 기록은 칠판마다 서버에, 실제 KAIROS로 확인(`tests/test_part50`). 다음 후보: 카드 고쳐 쓰기·한 장 보드로 정리·크롬 확장.
-  ⚠ **같은 날 바탕을 tldraw → 직접 만들기로 바꿈**(사용자 선택, 근거: 회사 배포 라이선스·데스크톱 규칙 덮어쓰기·문서 형식 둘) — 문서 = `.ecad` 그대로,
+**최근 항목**(2026-10-17 ~ 10-22, 상세는 `docs/history/2026-10.md`):
+- **§8 항목61 웹 칠판 트랙**(2026-10-17, 심층 인터뷰로 **목표가 바뀜** — `## 목표`) — 실행 `cd web && npm run dev`, 시험 `npm test`, 서버 저장 `python web/server.py`(감시 PC용, 켜는 법 `web/README.md`),
+  대화 = 서버 `/api/chat`(키는 서버 PC에만). 바탕은 tldraw 시험 뒤 ⚠ **직접 만들기로 바꿈**(사용자 선택, 근거: 회사 배포 라이선스·데스크톱 규칙 덮어쓰기·문서 형식 둘) — 문서 = `.ecad` 그대로,
   데스크톱 규칙을 옮기고 대조 시험으로 묶음. 순서 1)뼈대 2)기본 편집 3)화살표 4)일상 도구 5)갈아타기 — 계획서 §8 항목61 「바뀐 결정」. 데스크톱: 이미지·표에도 화살표(`_is_conn_host`).
   1~3단계 완료(3단계 손맛 사용자 확인 10-18) — 화살표 설정은 오른쪽 위 「속성」 카드(사용자 선택, 4단계 속성 칸의 씨앗). 10-18: 선택 표시 데스크톱과 같게,
   화살표 도구(2)·선/펜 궤적/묶음에 붙기, 값이 섞이면 「1~3px」+각자 더하기(두 앱), **어두운 화면은 앱이 직접**(사용자 크롬 Dark Reader가 덮어쓰던 것), 새 도형 1px. 데스크톱도 글 회전점을 상자처럼 좌상 대각으로.
@@ -247,7 +244,9 @@ symbol_library/
   **④-3 완료** — 데스크톱이 웹 종류를 웹 모양으로(`canvas/core_web.py`·`core_memo.py`), 메모 고치기(두 번 누르기 = 메모 자리 편집 — 오후에 `core_memo_edit.py`로)·할 일 체크·「삽입 › 메모」, 웹 꾸밈 표 그리기, 복제가 웹 칸 유지.
   데스크톱 일괄 개선(작업실) 때로 미룬 것: 프레임 동작(안의 것 같이 옮기기·발표)·범례 자동 갱신·PDF 넘겨 보기·웹 카드 만들기.
   **10-22 오후 데스크톱 검토**: 메모 편집 칸 확대 따라감·Enter/F2/Ctrl+Enter = 메모 고치기·폭 → 높이·DXF 글, **메모 제자리 편집기**(`core_memo_edit.py` — 치는 대로 제목·목록).
-  웹 `keys.js` 기준 점검 13건(`docs/history/2026-10.md` 끝). 다음: 웹 메모 편집기(TipTap)와 다른 점 맞추기(`---` 즉시·`` `코드` ``·Ctrl+Enter 등) — 인계 파일.
+  **10-22 저녁~밤 데스크톱 = 웹과 같게**(웹 `keys.js` 기준 13건 거의 다): 메모 TipTap 규칙표(`LINE_RULES`·`MARK_RULES`·`KEYS`, 줄마다 시험)·꾸미기 막대·Ctrl+/ 전환·줄 손잡이 ⠿(`core_memo_lines.py` — 고치는 중에도)·칠판 표로 바꾸기,
+  고르고 바로 치면 글(한글 입력기는 그때만 붙임)·Ctrl+X·Z 한 번 더/Alt+Z·빈 곳 두 번 = 글·D 다크·표 칸 고르기(칸 글도 되돌리기)·위 막대 끌어 놓기·Ctrl+F 뜻으로 찾기(`host_find.py`), 화면 글꼴 Pretendard(맑은 고딕 「제」 주황).
+  남은 것: 위 막대 다각형 끌기·휠 클릭 결정 — 인계 파일. ⚠ 진짜 마우스·글쇠 확인은 먼저 묻기(사용자가 같은 PC 사용).
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·
   곡선·직각 같은 *종류*는 캔버스에서 객체를 선택한 뒤 **플로팅 미니툴바의 하위목록**에서
   고르게 한다(Lucid·FigJam 방식). 세부 조절값은 그 종류를 골랐을 때만 노출.
