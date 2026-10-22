@@ -19,6 +19,7 @@ import { FindBar } from './find.jsx'
 
 const ZMIN = 0.02, ZMAX = 40, LEFT_CARDS = 220   // LEFT_CARDS = 왼쪽 카드 줄 폭(12 + 192 + 여유)
 // 화면 색은 next.html의 CSS 변수(밝은/어두운 화면 — 어두운 쪽은 데스크톱과 같은 값)
+import ICONS from './icons.json' with { type: 'json' }   // 위 막대 아이콘 = 데스크톱 손그림 A2(`tools/export_web_icons.py`, 2026-10-22 사용자 W1)
 const C = { bar: 'var(--mb-bar)', group: 'var(--mb-group)', ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', accent: '#da7756', board: 'var(--mb-board)', line: 'var(--mb-line)', card: 'var(--mb-card)' }
 const SAMPLES = [['모든 종류', '/samples/all_types.ecad'], ['보드 샘플', '/samples/paper_board.ecad'], ['login_flow', '/_local/login_flow.ecad'], ['1TV 계통도', '/_local/1TV_계통도_시험.ecad']]
 
@@ -36,13 +37,14 @@ const Btn = ({ icon, label, onClick, onDown, title, on, disabled }) => { const n
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: narrow ? '4px 4px' : '4px 8px', borderRadius: 6, minWidth: narrow ? 24 : 40,   // 좁은 창 옆 여백 6 → 4px: 「칠판」 버튼이 늘며 960px에서 상태 글이 0px로 눌렸음(2026-10-19)
     background: on ? 'rgba(218,119,86,.22)' : 'transparent', font: "500 11px 'Pretendard', sans-serif", color: C.ink }}
     onMouseEnter={e => { if (!disabled && !on) e.currentTarget.style.background = 'rgba(218,119,86,.12)' }} onMouseLeave={e => { e.currentTarget.style.background = on ? 'rgba(218,119,86,.22)' : 'transparent' }}>
-    <span style={{ fontSize: 16, lineHeight: '18px' }}>{icon}</span>{!narrow && <span style={{ whiteSpace: 'nowrap' }}>{label}</span>}   {/* 이름은 한 줄(「전체 화면」이 두 줄로 꺾여 위 막대가 높아졌음 — 2026-10-20) */}
+    {ICONS[icon] ? <span aria-hidden style={{ width: 18, height: 18, display: 'block', color: 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ICONS[icon].replace('<svg ', '<svg width="18" height="18" ') }} />
+      : <span style={{ fontSize: 16, lineHeight: '18px' }}>{icon}</span>}{!narrow && <span style={{ whiteSpace: 'nowrap' }}>{label}</span>}   {/* 이름은 한 줄(「전체 화면」이 두 줄로 꺾여 위 막대가 높아졌음 — 2026-10-20) */}
   </button>
 ) }
 // 펼침 창(표·웹 등)을 버튼 아래에 붙이는 칸 — 칸 안 버튼도 옆으로(2026-10-19 다잡기: 칸이 버튼을 위아래로 쌓아 위 막대가 95px로 늘고 칠판이 밀렸음)
 const ANCHOR = { position: 'relative', display: 'flex', gap: 2 }
 const Group = ({ children }) => <div style={{ display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>{children}</div>
-const TOOLS = [['select', '↖', '선택', '1'], ['arrow', '⤷', '화살표', '2'], ['text', 'T', '글자', '3'], ['line', '╱', '선', '4'], ['polygon', '⬠', '다각형', '5'], ['pen', '✎', '펜', '6'], ['badge', '①', '번호', '7']]
+const TOOLS = [['select', 'select', '선택', '1'], ['arrow', 'sarrow', '화살표', '2'], ['text', 'text', '글자', '3'], ['line', 'line', '선', '4'], ['polygon', 'polygon', '다각형', '5'], ['pen', 'pen', '펜', '6'], ['badge', 'badge', '번호', '7']]   // [도구, 아이콘(icons.json), 이름, 글쇠]
 
 // 표 넣기 — 행·열·첫 행 머리(데스크톱 `_TableSizeDialog`: 기본 3×3, 머리 켬, 행 1~100·열 1~50)
 function TableForm({ onInsert, onLegend, onClose }) {   // onLegend = 범례 넣기(2026-10-19 사용자: 표 기반, 자주 안 쓰니 우클릭 메뉴 대신 여기)
@@ -377,47 +379,47 @@ function App() {
       <div style={{ display: 'flex', alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>
         <Group>
           {server && <div data-pop="board" style={ANCHOR}>
-            <Btn icon="🗂" label="칠판" on={boardOpen} onClick={() => setBoardOpen(o => !o)} title={`지금 칠판 「${DOC_NAME}」 — 새 칠판 만들기·다른 칠판 열기`} />
+            <Btn icon="board" label="칠판" on={boardOpen} onClick={() => setBoardOpen(o => !o)} title={`지금 칠판 「${DOC_NAME}」 — 새 칠판 만들기·다른 칠판 열기`} />
             {boardOpen && <BoardForm onClose={() => setBoardOpen(false)} onSample={u => { setBoardOpen(false); openSample(u) }} />}
           </div>}
-          <Btn icon="📂" label="열기" onClick={() => file.current.click()} title=".ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)" />
-          <Btn icon="💾" label="저장" onClick={server ? saveServer : saveFile} title={server ? `서버 「${DOC_NAME}」에 저장` : '.ecad로 내려받기'} />
-          <Btn icon="⬇" label="내려받기" onClick={saveFile} title=".ecad 파일로 내려받기" />
+          <Btn icon="open" label="열기" onClick={() => file.current.click()} title=".ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)" />
+          <Btn icon="save" label="저장" onClick={server ? saveServer : saveFile} title={server ? `서버 「${DOC_NAME}」에 저장` : '.ecad로 내려받기'} />
+          <Btn icon="download" label="내려받기" onClick={saveFile} title=".ecad 파일로 내려받기" />
           <div data-pop="export" style={{ position: 'relative' }}>
-            <Btn icon="🖨" label="내보내기" on={exportOpen} onClick={() => setExportOpen(o => !o)} title="PDF·PNG·SVG로 내보내기 — 전체 또는 고른 것" />
+            <Btn icon="pdf" label="내보내기" on={exportOpen} onClick={() => setExportOpen(o => !o)} title="PDF·PNG·SVG로 내보내기 — 전체 또는 고른 것" />
             {exportOpen && <ExportForm hasSel={!!ed.current?.getSel().length} selFrames={ed.current?.selFrames() || 0} frameCount={model.items.filter(it => it.type === 'frame' || (it.type === 'titleblock' && it.plain)).length} items={model.items}
             onPreview={o => ed.current?.exportPages(o) ?? Promise.resolve({ error: '' })} onReorder={ids => ed.current?.reorderFrames(ids)} onClose={() => setExportOpen(false)} onExport={async o => { const ok = await ed.current?.exportDoc({ ...o, name: DOC_NAME || 'magic-board' }); if (ok) setExportOpen(false) }} />}
           </div>
         </Group>
         <Group>
-          <Btn icon="↶" label="되돌리기" onClick={() => ed.current?.undo()} title="되돌리기 (Ctrl+Z)" />
-          <Btn icon="↷" label="다시" onClick={() => ed.current?.redo()} title="다시 실행 (Ctrl+Y)" />
+          <Btn icon="undo" label="되돌리기" onClick={() => ed.current?.undo()} title="되돌리기 (Ctrl+Z)" />
+          <Btn icon="redo" label="다시" onClick={() => ed.current?.redo()} title="다시 실행 (Ctrl+Y)" />
         </Group>
         <Group>{TOOLS.map(([k, icon, label, key]) => <Btn key={k} icon={icon} label={label} on={tool === k} onClick={() => setTool(k)} onDown={k === 'select' || k === 'pen' ? undefined : e => toolDown(e, k)} title={`${label} (${key})${k === 'select' || k === 'pen' ? '' : ' — 칠판으로 끌면 그 자리에'}`} />)}</Group>
         <Group><div style={ANCHOR}>
-          <Btn icon="▶" label="발표" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면(고른 프레임부터) · → 다음 · ← 이전 · M 이동/바로 · Esc 끝" />
-          <Btn icon="▭" label="프레임" on={tool === 'frame'} onClick={() => setTool(t => (t === 'frame' ? 'select' : 'frame'))} onDown={e => toolDown(e, 'frame')} title="프레임 — 버튼을 칠판으로 끌면 그 자리에 16:9 · 칠판에서 끌어서 영역을 감싸면 그 안이 출력 한 쪽(번호 순서). 클릭만 = 16:9, 우클릭 「프레임으로 감싸기」도" />
+          <Btn icon="present" label="발표" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면(고른 프레임부터) · → 다음 · ← 이전 · M 이동/바로 · Esc 끝" />
+          <Btn icon="frame" label="프레임" on={tool === 'frame'} onClick={() => setTool(t => (t === 'frame' ? 'select' : 'frame'))} onDown={e => toolDown(e, 'frame')} title="프레임 — 버튼을 칠판으로 끌면 그 자리에 16:9 · 칠판에서 끌어서 영역을 감싸면 그 안이 출력 한 쪽(번호 순서). 클릭만 = 16:9, 우클릭 「프레임으로 감싸기」도" />
         </div><div data-pop="table" style={ANCHOR}>
-          <Btn icon="▦" label="표" on={tableOpen} onClick={() => setTableOpen(o => !o)} onDown={e => toolDown(e, 'table')} title="표 넣기 — 행·열을 고르면 화면 가운데(겹치면 가까운 빈자리) · 칠판으로 끌면 그 자리에(마지막 행·열)" />
+          <Btn icon="table" label="표" on={tableOpen} onClick={() => setTableOpen(o => !o)} onDown={e => toolDown(e, 'table')} title="표 넣기 — 행·열을 고르면 화면 가운데(겹치면 가까운 빈자리) · 칠판으로 끌면 그 자리에(마지막 행·열)" />
           {tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); lastTable.current = [r, c, h]; ed.current?.insertTable(r, c, h) }} onLegend={() => { setTableOpen(false); ed.current?.insertLegend() }} onClose={() => setTableOpen(false)} />}
         </div><div data-pop="web" style={ANCHOR}>
-          <Btn icon="🗒" label="메모" onClick={() => ed.current?.insertMemo()} onDown={e => toolDown(e, 'memo')} title="메모 — 칠판으로 끌면 그 자리에 · 줄마다 제목·목록·할 일·코드·인용(`# `·`- `·`[] `·`> ` 입력), 체크 상자는 칠판에서 바로" />
-          <Btn icon="🌐" label="웹" on={webOpen} onClick={() => { setWebAt(null); setWebOpen(o => !o) }} onDown={e => toolDown(e, 'web')} title="웹 카드 — 칠판으로 끌면 그 자리에 · 유튜브·웹페이지 주소를 칠판에(칠판에 주소를 Ctrl+V 해도 돼요)" />
+          <Btn icon="memo" label="메모" onClick={() => ed.current?.insertMemo()} onDown={e => toolDown(e, 'memo')} title="메모 — 칠판으로 끌면 그 자리에 · 줄마다 제목·목록·할 일·코드·인용(`# `·`- `·`[] `·`> ` 입력), 체크 상자는 칠판에서 바로" />
+          <Btn icon="web" label="웹" on={webOpen} onClick={() => { setWebAt(null); setWebOpen(o => !o) }} onDown={e => toolDown(e, 'web')} title="웹 카드 — 칠판으로 끌면 그 자리에 · 유튜브·웹페이지 주소를 칠판에(칠판에 주소를 Ctrl+V 해도 돼요)" />
           {webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url, webAt || 'near') }} onClose={() => setWebOpen(false)} />}
         </div></Group>
         <Group>
-          <Btn icon="⛶" label={full ? '창으로' : '전체 화면'} on={full} onClick={toggleFull} title="전체 화면 ⇄ 창 (F11과 같음) — 다 보기는 Z 또는 미니맵의 %" />
+          <Btn icon="zoom_fit" label={full ? '창으로' : '전체 화면'} on={full} onClick={toggleFull} title="전체 화면 ⇄ 창 (F11과 같음) — 다 보기는 Z 또는 미니맵의 %" />
         </Group>
         {!narrow && !server && <SampleSelect onPick={openSample} />}
         <span title={server ? `칠판 「${DOC_NAME}」` : ''} style={{ marginLeft: 'auto', color: C.muted, fontSize: 12, minWidth: 0, flexShrink: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{server ? `「${DOC_NAME}」 · ` : ''}</span>
         <span style={{ marginLeft: server ? -4 : 'auto', color: C.muted, fontSize: 12, whiteSpace: 'nowrap' }}>{Math.round(cam.z * 100)}%</span>   {/* 배율은 늘 보이게(이름이 길면 이름만 줄임) */}   {/* 칠판 이름·배율만 — 알림은 칠판 아래 가운데(2026-10-22 디자인 점검: 여기선 60px만 보여 잘렸음) */}
         {server && <span title={people.length ? `지금 이 칠판에: ${people.join(', ')}` : ''} style={{ fontSize: 12, color: C.muted, whiteSpace: 'nowrap', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>👥 {people.length ? people.join(' · ') : (me || '나')}</span>}
         <div data-pop="share" style={{ position: 'relative', opacity: server ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
-          <Btn icon="🔗" label="공유" on={shareOpen} onClick={() => (server ? setShareOpen(o => !o) : setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 공유·KAIROS를 쓸 수 있어요'))} title={server ? '게시 — 로그인 없이 보기·발표만 되는 링크(큰 TV 발표용)' : '서버에 연결 안 됨 — python web/server.py를 켜면 공유할 수 있어요'} />
+          <Btn icon="share" label="공유" on={shareOpen} onClick={() => (server ? setShareOpen(o => !o) : setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 공유·KAIROS를 쓸 수 있어요'))} title={server ? '게시 — 로그인 없이 보기·발표만 되는 링크(큰 TV 발표용)' : '서버에 연결 안 됨 — python web/server.py를 켜면 공유할 수 있어요'} />
           {server && shareOpen && <ShareForm people={people} me={me} onClose={() => setShareOpen(false)} />}
         </div>
-        <Btn icon="💬" label="KAIROS" on={chatOpen} onClick={() => setChatOpen(o => !o)} title="KAIROS 대화창 열기/닫기 — 답을 칠판에 카드로 붙여요" />
-        <Btn icon={dark ? '☀' : '☾'} label={dark ? '밝게' : '어둡게'} onClick={toggleDark} title="밝은 화면 / 어두운 화면" />
+        <Btn icon="generate" label="KAIROS" on={chatOpen} onClick={() => setChatOpen(o => !o)} title="KAIROS 대화창 열기/닫기 — 답을 칠판에 카드로 붙여요" />
+        <Btn icon="theme" label={dark ? '밝게' : '어둡게'} onClick={toggleDark} title="밝은 화면 / 어두운 화면" />
         <input ref={file} type="file" accept=".ecad,application/json" hidden onChange={async e => {
           const f = e.target.files?.[0]; e.target.value = ''; if (!f) return
           try { open(parseDoc(await f.text()), f.name) } catch (err) { setStatus('열기 실패: ' + err.message) }
