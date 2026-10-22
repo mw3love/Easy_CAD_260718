@@ -1686,3 +1686,6 @@
 - 데스크톱 아이템의 `boundingRect`/`_content_rect`에서 `scene.items()`를 부르면 장면이 다시 모든 아이템의 크기를 물어 끝없이 돌다 조용히 죽음(2026-10-22 프레임 번호) — 크기 계산엔 마지막으로 그린 값을 쓰고, 바뀌면 paint에서 `prepareGeometryChange`.
 - 고친 문서가 든 `CanvasWindow`를 시험에서 `close()`하면 「저장할까요?」 창이 대답을 기다려 시험이 멈춤(오류 없이 시간 초과) — 시험 창은 `_confirm_close_doc = lambda d: True`.
 - 데스크톱 화면 대조 그림을 `QT_QPA_PLATFORM=offscreen`으로 찍으면 앱 기본 글꼴(Segoe UI·맑은 고딕)이 □ — 이 PC는 실제 화면 모드로(창은 안 띄워도 됨). 실린 Pretendard는 offscreen에서도 보임.
+- Qt `QTextDocumentLayout.blockBoundingRect(b).y()`는 블록 위 여백(topMargin)을 이미 뺀 「글 첫 줄 위」 — 여기에 topMargin을 또 더하면 글머리·상자가 한 줄쯤 아래에 그려짐(2026-10-22 메모 편집기).
+- 이 PC Bash heredoc(`<<'EOF'`)으로 파이썬을 넘길 때 소스 안 `"\n"`이 진짜 줄바꿈으로 들어가 문자열이 깨진 적 있음(2026-10-22) — 백슬래시가 든 고치기는 Edit 도구로.
+- 데스크톱에 웹 기능을 옮길 땐 웹 쪽 실제 규칙(TipTap 확장·`keys.js`)을 목록으로 뽑아 하나씩 대조 — 기억으로 일부만 옮기면 「웹과 다르다」가 됨(2026-10-22 메모 `---`·백틱·Ctrl+Enter).

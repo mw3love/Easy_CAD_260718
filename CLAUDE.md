@@ -23,7 +23,7 @@
   - 두 앱이 `.ecad`를 양방향으로 왕복한다 — 웹 문서를 데스크톱이 똑같이 그리고 글 고치기까지 한다(메모 줄·할 일 체크 — 2026-10-19 사용자), 데스크톱에서 「웹 칠판에 올리기」로 띄워 공유하고, 웹 → 데스크톱 → 웹을 거쳐도 깨지지 않는다(왕복 시험)
 - 결승점 밖(2026-10-19): 크롬 웹 클리퍼(본질에 집중 — 필요하면 사용자가 다시 꺼냄), 동료와 실제로 같이 쓰기·회사 안 배포·공동작업 2단계(Yjs).
   이미 만든 공동작업 1.5단계(공용 비밀번호·게시 링크·도형 단위 합치기, 2026-10-18 앞당김)는 지킨다.
-- 데스크톱 방향(2026-10-22 사용자): 웬만하면 웹과 같게 — 오히려 **데스크톱이 웹보다 더 많은 기능을 품는 것**이 목표(웹에 있는데 데스크톱에 없으면 만든다).
+- 데스크톱 방향(2026-10-22 사용자): **데스크톱 = 웹 + 추가 기능** — 웹의 사용 경험이 데스크톱으로 그대로 이어지는 게 목표. 웹에 있는 동작은 데스크톱도 **같은 글쇠·같은 규칙**(웹 `keys.js`·메모 TipTap 규칙이 기준), 웹에 있는데 데스크톱에 없으면 만든다. 다르게 할 땐 이유를 기록.
 - 다음 목표(웹 결승점 뒤) = **데스크톱 작업실**: 웹 자료(`.ecad` — 글·사진은 파일 안, 영상은 주소만) → 「Claude Code로 열기」(폴더에 풀어 터미널 Claude Code,
   채팅창은 그 뒤) → 3D 시뮬레이션·PPT·모션그래픽 → 웹의 파일 카드(미리보기·내려받기, 3D는 HTML 한 파일)로 다시 공유. 첫 시험은 철탑 3D.
 - 제약: 웹의 AI는 KAIROS만(대회 우대 조건 「KAIROS 우선」 — 사용자가 들은 것, 정확한 문구 확인 필요). 구독 Claude Code는 규정상 나 혼자만 → 데스크톱에만.
@@ -78,7 +78,8 @@ easycad/
 │   │                       떼어 냄(도형 클래스 안 부르는 순수 기하, core_shapes가 `import *`로 받음)
 │   ├── core_symbols.py     순서도·안테나 심볼 경로 팩토리 + `_SYMBOL_KINDS`(같은 날 같은 이유로 떼어 냄)
 │   ├── core_web.py         웹 칠판 종류(프레임·웹 카드·정리 문서·PDF·범례·메모)를 웹과 같은 모양으로 — `_RectItem` 물려받음, 저장은 원래 칸 통째(§8 항목61 ④-3, 2026-10-22)
-│   ├── core_memo.py        메모 줄 배치(웹 `memoLayout` 옮김)·그리기·마크다운 ↔ 줄(데스크톱 메모 고치기) — 웹 render.jsx·memo.js를 고치면 여기도
+│   ├── core_memo.py        메모 줄 배치(웹 `memoLayout` 옮김)·그리기·마크다운 ↔ 줄 — 웹 render.jsx·memo.js를 고치면 여기도
+│   ├── core_memo_edit.py   메모 제자리 편집 글 상자(메모 자식 `QGraphicsTextItem`) — 줄 ↔ 문서, 입력 규칙·목록·꾸밈·할 일(웹 memoedit.jsx TipTap 규칙이 기준)
 │   ├── core_view.py        `_AnnotatorView` — 마우스/키 이벤트, 드래그선택, 스냅, 팬/줌
 │   ├── host.py             CanvasWindow(창) — __init__만, 나머지는 아래 믹스인 다중상속
 │   ├── host_ui.py / host_fileio.py / host_layers.py / host_style.py / host_undo.py /
@@ -137,7 +138,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~66_*.py      테마별 회귀 스모크 1510종(2026-10-22 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~66_*.py      테마별 회귀 스모크 1516종(2026-10-22 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + TipTap 3.32.0(글 편집, 버전 고정). **2026-10-18 5단계 갈아탐: tldraw 뺌**(옛 tldraw 화면
 │                          src/main.jsx·shapes.jsx·cad.jsx·chat.jsx·boardStore.js·ecad.js·ecadExport.js는 지움 — git에 있음). 남은 공용: route.js(길 찾기 = 데스크톱
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecadFormat.js(순수 변환, `npm test`)·symbols.json(`tools/export_web_symbols.py`가
@@ -243,8 +244,10 @@ symbol_library/
   **10-22**: 오려 오기 결과 = 오린 자리에 「✓ 오려 옴 · N쪽」, `Z` 한 번 더 = 보던 자리로, 게시 링크 PDF 401(게시 칠판 PDF는 로그인 없이). **웹 디자인 점검**(Claude 15장 → 8건):
   위 막대 팝업 = 바깥·Esc로 닫힘·하나만(`data-pop`), 알림 = 칠판 아래 가운데 알약(위 막대엔 이름·배율), 샘플 열기 = 칠판 메뉴 안, 발표 막대 = 화면 폭 따라 크게, 프레임 카드 처음엔 접힘,
   위 막대 아이콘 = 데스크톱 A2 손그림(사용자 W1 — 원본 `easycad/resources/icons/` → `tools/export_web_icons.py` → `web/src/next/icons.json`), 어두운 화면 메모 = 흰 종이 그대로(사용자).
-  **④-3 완료** — 데스크톱이 웹 종류를 웹 모양으로(`canvas/core_web.py`·`core_memo.py`), 메모 고치기(두 번 누르기 = 마크다운 칸)·할 일 체크·「삽입 › 메모」, 웹 꾸밈 표 그리기, 복제가 웹 칸 유지.
+  **④-3 완료** — 데스크톱이 웹 종류를 웹 모양으로(`canvas/core_web.py`·`core_memo.py`), 메모 고치기(두 번 누르기 = 메모 자리 편집 — 오후에 `core_memo_edit.py`로)·할 일 체크·「삽입 › 메모」, 웹 꾸밈 표 그리기, 복제가 웹 칸 유지.
   데스크톱 일괄 개선(작업실) 때로 미룬 것: 프레임 동작(안의 것 같이 옮기기·발표)·범례 자동 갱신·PDF 넘겨 보기·웹 카드 만들기.
+  **10-22 오후 데스크톱 검토**: 메모 편집 칸 확대 따라감·Enter/F2/Ctrl+Enter = 메모 고치기·폭 → 높이·DXF 글, **메모 제자리 편집기**(`core_memo_edit.py` — 치는 대로 제목·목록).
+  웹 `keys.js` 기준 점검 13건(`docs/history/2026-10.md` 끝). 다음: 웹 메모 편집기(TipTap)와 다른 점 맞추기(`---` 즉시·`` `코드` ``·Ctrl+Enter 등) — 인계 파일.
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·
   곡선·직각 같은 *종류*는 캔버스에서 객체를 선택한 뒤 **플로팅 미니툴바의 하위목록**에서
   고르게 한다(Lucid·FigJam 방식). 세부 조절값은 그 종류를 골랐을 때만 노출.
