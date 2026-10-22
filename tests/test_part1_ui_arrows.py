@@ -1742,7 +1742,7 @@ def test_rmb_context_menu_states():
     labels = lambda: [a.text() for a in w._build_context_menu().actions() if not a.isSeparator()]
     assert labels() == ["전체 선택\tCtrl+A"]                       # 빈 캔버스
     it = _mk_pen_rect(w); it.setSelected(True)
-    assert labels()[:4] == ["복사\tCtrl+C", "잘라내기", "복제\tCtrl+D", "삭제\tDel"]
+    assert labels()[:4] == ["복사\tCtrl+C", "잘라내기\tCtrl+X", "복제\tCtrl+D", "삭제\tDel"]
     w.copy_selection()
     assert "붙여넣기\tCtrl+V" in labels()                          # 클립 채우면 붙여넣기
     # delete_selection·undo 왕복(메뉴 액션이 기존 undo 경로를 탄다).

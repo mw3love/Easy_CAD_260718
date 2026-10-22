@@ -344,6 +344,7 @@ def test_zoom_fit_idempotent():
     w._view.scale(7.0, 7.0)
     w._zoom_fit()
     t1 = w._view.transform()
+    w._z_back = None   # (2026-10-22부터 Z 한 번 더 = 보던 자리로 — 여기선 「다시 재도 같은가」만 보므로 그 기억을 비움)
     w._zoom_fit()
     t2 = w._view.transform()
     assert abs(t1.m11() - t2.m11()) < 1e-9

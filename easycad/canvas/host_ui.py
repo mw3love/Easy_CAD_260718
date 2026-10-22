@@ -375,8 +375,11 @@ class _UIBuildMixin:
             self._zoom_reset, shortcut_id="zoom_100")
         self._act_fit = self._make_action("전체 맞춤", "zoom_fit",
             self._zoom_fit, shortcut_id="zoom_fit")
+        self._act_fit_sel = self._make_action("고른 것만 맞춤", "zoom_fit",
+            self._zoom_fit_selection, shortcut_id="zoom_fit_sel")   # [§8 항목61 손맛] Alt+Z — 웹과 같게
         v.addAction(self._act_zoom100)
         v.addAction(self._act_fit)
+        v.addAction(self._act_fit_sel)
         v.addSeparator()
         self._act_snap = self._make_action("스냅 (o-snap)", "snap",
             self._toggle_snap, shortcut_id="toggle_snap", checkable=True)
@@ -435,8 +438,44 @@ class _UIBuildMixin:
         # 측정값도 함께 바뀌어, 반복해서 눌러도 값이 수렴하지 않고 계속 바뀌는 것처럼 보였다
         # (사용자 재현 보고). 측정 전 항상 1:1로 리셋해 매번 같은 기준에서 재도록 고정하면
         # 반복 호출 결과가 항상 동일해진다(멱등).
+        # [§8 항목61 손맛 2026-10-22] Z 한 번 더(그 사이 화면 안 움직임) = 누르기 전 자리로 — 웹 zBack(전체를 슬쩍 보고 돌아가기)
+        back, self._z_back = getattr(self, "_z_back", None), None
+        here = self._view_spot()
+        if back is not None and self._same_spot(here, back[1]):
+            self._view.setTransform(back[0][0])
+            self._view.centerOn(back[0][1])
+            self._update_zoom_label()
+            self._refresh_minimap()
+            self.statusBar().showMessage("보던 자리로", 1500)
+            return
+        self._view.resetTransform()   # ⚠ 재기 전에 1:1(위 주석 — 핸들 여백이 지금 배율에 달려 있음)
+        self._fit_rect(self._scene.itemsBoundingRect())
+        self._z_back = (here, self._view_spot())
+
+    def _zoom_fit_selection(self):
+        """[§8 항목61 손맛] Alt+Z = 고른 것만 화면에 맞춤(웹과 같게). 고른 게 없으면 다 보기."""
+        sel = self._scene.selectedItems()
+        if not sel:
+            self._zoom_fit()
+            return
+        self._z_back = None
+        self._view.resetTransform()   # 크기 재기 전 1:1(위 _zoom_fit 주석과 같은 까닭)
+        rect = QRectF()
+        for it in sel:
+            rect = rect.united(it.sceneBoundingRect())
+        self._fit_rect(rect)
+
+    def _view_spot(self):
+        """지금 화면 자리(배율·가운데) — Z 되돌아가기 비교용."""
+        return (self._view.transform(), self._view.mapToScene(self._view.viewport().rect().center()))
+
+    @staticmethod
+    def _same_spot(a, b) -> bool:
+        return abs(a[0].m11() - b[0].m11()) < 1e-9 and abs(a[0].m22() - b[0].m22()) < 1e-9 \
+            and abs(a[1].x() - b[1].x()) < 0.5 and abs(a[1].y() - b[1].y()) < 0.5
+
+    def _fit_rect(self, rect):
         self._view.resetTransform()
-        rect = self._scene.itemsBoundingRect()
         if rect.isEmpty():
             self._update_zoom_label()
             self._refresh_minimap()

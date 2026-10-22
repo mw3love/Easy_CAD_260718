@@ -37,6 +37,7 @@ SHORTCUT_DEFS: list[tuple[str, str, str, str]] = [
     # ---- 편집 (view) ----
     ("select_all",  "편집", "전체 선택",       "Ctrl+A"),
     ("copy",        "편집", "복사",           "Ctrl+C"),
+    ("cut",         "편집", "잘라내기",        "Ctrl+X"),   # 2026-10-22 웹 keys.js와 같게
     ("paste",       "편집", "붙여넣기",        "Ctrl+V"),
     ("style_copy",  "편집", "스타일 복사",      "Ctrl+Alt+C"),
     ("style_paste", "편집", "스타일 붙여넣기",   "Ctrl+Alt+V"),
@@ -69,7 +70,8 @@ SHORTCUT_DEFS: list[tuple[str, str, str, str]] = [
     ("insert_photo",      "삽입", "AI 패널: 베끼기 열기", "Ctrl+Shift+P"),
     # ---- 보기 (QAction) ----
     ("zoom_100",     "보기", "100%(1:1)",     "Ctrl+0"),
-    ("zoom_fit",     "보기", "전체 맞춤",      "Z"),   # 2026-10-20 Ctrl+9 → Z(웹과 같게 — 왼손 자리, 사용자)
+    ("zoom_fit",     "보기", "전체 맞춤(한 번 더 = 보던 자리로)", "Z"),   # 2026-10-20 Ctrl+9 → Z(웹과 같게 — 왼손 자리, 사용자)
+    ("zoom_fit_sel", "보기", "고른 것만 맞춤",   "Alt+Z"),   # 2026-10-22 웹 keys.js와 같게
     ("toggle_snap",  "보기", "스냅 토글",      "F3"),
     ("toggle_ortho", "보기", "직교 제약 토글",  "F8"),
     ("toggle_grid",  "보기", "격자 토글",      "Shift+G"),

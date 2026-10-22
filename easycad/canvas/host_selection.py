@@ -113,7 +113,6 @@ class _SelectionMixin:
         self._clip = [it.clone() for it in sel]
         self._paste_seq = 0
 
-
     def paste_selection(self):
         if not self._clip:
             self._paste_clipboard_image()   # [신규기능] 내부 버퍼가 비면 시스템 클립보드 이미지로 폴백
@@ -189,7 +188,9 @@ class _SelectionMixin:
 
 
     def _cut_selection(self):
+        """잘라내기(우클릭 메뉴·Ctrl+X) — 복사하고 지움. 붙이면 원래 자리에(첫 붙여넣기는 안 비킴 — 2026-10-22 웹과 같게)."""
         self.copy_selection()
+        self._paste_seq = -1
         self.delete_selection()
 
     # ---- [편의기능] Z-order / 그룹 / 잠금 — 공용 대상 헬퍼 --------------------

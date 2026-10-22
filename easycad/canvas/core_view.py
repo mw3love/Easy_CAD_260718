@@ -19,7 +19,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QPixmap, QImage, QPainter, QPen, QBrush, QColor, QPainterPath,
     QPainterPathStroker, QPolygonF, QFont, QFontMetricsF, QIcon, QCursor,
-    QConicalGradient, QKeySequence,
+    QConicalGradient, QKeySequence, QGuiApplication,
 )
 
 from easycad.canvas import shortcuts as _shortcuts
@@ -340,6 +340,7 @@ class _AnnotatorView(QGraphicsView):
         self._trim_fence_pts: list = []  # 드래그 궤적(렌더용 — 지나간 자취를 점선으로 표시)
         # 선택이 바뀌면 그룹 오버레이(bbox·핸들)를 다시 그린다(개별 아이템 repaint와 별개).
         scene.selectionChanged.connect(self.viewport().update)
+        scene.selectionChanged.connect(self._sync_type_im)   # [§8 항목61 손맛] 글 도형 하나를 고르면 한글 입력기를 붙임(치면 글)
 
     def _is_empty_area(self, view_pos) -> bool:
         """클릭 위치에 선택 가능한 주석 아이템이 없으면(배경뿐) True."""
@@ -3246,21 +3247,7 @@ class _AnnotatorView(QGraphicsView):
             it.setPen(pen)
             self._begin_draw(it)
         elif tool == "text":
-            it = _TextItem(owner.current_color)
-            it.apply_font_size(owner.current_font_size)
-            it.set_bg(owner.current_text_bg)
-            # I-beam(세로 막대 중심)이 클릭점 → 캐럿이 그 자리에 오도록 배치 보정.
-            # documentMargin만큼 왼쪽, 첫 줄 높이 절반만큼 위로 당긴다(안 하면 글자가 처져 보임).
-            margin = it.document().documentMargin()
-            line_h = QFontMetricsF(it.font()).height()
-            it.setPos(QPointF(sp.x() - margin, sp.y() - margin - line_h / 2))
-            self.scene().addItem(it)
-            owner.push_undo_add(it)
-            it.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
-            it.setFocus()
-            # setFocus가 이전 편집 텍스트의 focusOut→재선택을 유발하므로, 그 뒤에 비운다.
-            # (새 텍스트 시작 = 다른 항목 선택 해제. 새 텍스트는 selected 아닌 편집 상태로 둠)
-            self.scene().clearSelection()
+            self._place_text_at(sp)
             # 다른 도구처럼 텍스트 도구를 유지해 연속 배치 가능(빈 텍스트는 focusOut 시 정리).
         elif tool == "badge":
             it = _BadgeItem(owner.next_badge_number(), owner.current_color)
@@ -4498,6 +4485,26 @@ class _AnnotatorView(QGraphicsView):
         cur.select(cur.SelectionType.Document)
         lbl.setTextCursor(cur)
 
+    def _place_text_at(self, sp):
+        """sp(장면 좌표)에 새 글 상자를 놓고 바로 치게 — 글자 도구 누르기·빈 곳 두 번 누르기(§8 항목61 손맛) 공용."""
+        owner = self._owner
+        it = _TextItem(owner.current_color)
+        it.apply_font_size(owner.current_font_size)
+        it.set_bg(owner.current_text_bg)
+        # I-beam(세로 막대 중심)이 클릭점 → 캐럿이 그 자리에 오도록 배치 보정.
+        # documentMargin만큼 왼쪽, 첫 줄 높이 절반만큼 위로 당긴다(안 하면 글자가 처져 보임).
+        margin = it.document().documentMargin()
+        line_h = QFontMetricsF(it.font()).height()
+        it.setPos(QPointF(sp.x() - margin, sp.y() - margin - line_h / 2))
+        self.scene().addItem(it)
+        owner.push_undo_add(it)
+        it.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+        it.setFocus()
+        # setFocus가 이전 편집 텍스트의 focusOut→재선택을 유발하므로, 그 뒤에 비운다.
+        # (새 텍스트 시작 = 다른 항목 선택 해제. 새 텍스트는 selected 아닌 편집 상태로 둠)
+        self.scene().clearSelection()
+        return it
+
     def mouseDoubleClickEvent(self, event):
         # [실사용 버그 수정 2026-08-10] TRIM 도구 중 같은 자리를 빠르게 두 번 누르면(예: EXTEND
         # 재시도) Qt가 두 번째 클릭을 mousePressEvent가 아니라 이 더블클릭 핸들러로 보낸다 —
@@ -4571,7 +4578,54 @@ class _AnnotatorView(QGraphicsView):
                 self._begin_label_edit(target, self.mapToScene(event.position().toPoint()))
                 event.accept()
                 return
+            # [§8 항목61 손맛 2026-10-22] 빈 곳 두 번 누르기 = 그 자리에 글(웹 keys.js — 선택 도구에서도)
+            if self._owner.is_edit_mode() and self._owner.current_tool == "select" and self._is_empty_area(event.position().toPoint()):
+                self._place_text_at(self.mapToScene(event.position().toPoint()))
+                event.accept()
+                return
         super().mouseDoubleClickEvent(event)
+
+    # ---- [§8 항목61 손맛 2026-10-22] 글 도형 하나를 고르고 바로 치면 그 글(웹 keys.js 「글이 들어가는 도형 하나를 골랐을 때」) ----
+    def _type_target(self):
+        """글이 들어가는 도형(상자·원·심볼·닫힌 다각형·글·메모) 하나만 골랐으면 그것 — 화살표·선·표·그림 등은 None(웹과 같음)."""
+        if not self._owner.is_edit_mode() or self._owner.current_tool != "select":
+            return None
+        sel = self.scene().selectedItems()
+        if len(sel) != 1 or getattr(sel[0], "_locked", False):
+            return None
+        it = sel[0]
+        if getattr(it, "_is_web_item", False):
+            return it if hasattr(it, "line_press") else None   # 웹 종류는 메모만
+        if isinstance(it, _TextItem) or (isinstance(it, _CenterLabelMixin) and getattr(it, "_closed", True)):
+            return it
+        return None
+
+    def _start_typing(self, item):
+        """치기 시작 — 도형·글은 있던 글을 통째로 골라(새로 씀), 메모는 끝에 이어 씀(웹과 같음). 글 상자를 돌려줌."""
+        if not self.begin_edit_selected(item):
+            return None
+        fi = self.scene().focusItem()
+        return fi if isinstance(fi, QGraphicsTextItem) else None
+
+    def _sync_type_im(self):
+        """한글 입력기는 「치면 글」 도형을 골랐을 때만 칠판에 붙임 — 아닐 때 붙이면 한글 모드에서 Z·T 같은 한 글자 단축키가 조합으로 먹힘."""
+        want = self._type_target() is not None or isinstance(self.scene().focusItem(), QGraphicsTextItem)
+        if self.testAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled) != want:
+            self.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, want)
+            QGuiApplication.inputMethod().update(Qt.InputMethodQuery.ImEnabled)
+
+    def inputMethodQuery(self, query):
+        if query == Qt.InputMethodQuery.ImEnabled and self.scene().focusItem() is None:
+            return self._type_target() is not None
+        return super().inputMethodQuery(query)
+
+    def inputMethodEvent(self, event):
+        # 글 도형을 고른 채 한글을 치기 시작하면(조합 첫 글자) 그 도형 글 고치기를 열고 같은 조합을 넘김
+        if self.scene().focusItem() is None and (event.preeditString() or event.commitString()):
+            t = self._type_target()
+            if t is not None and self._start_typing(t) is not None:
+                QGuiApplication.inputMethod().update(Qt.InputMethodQuery.ImQueryAll)
+        super().inputMethodEvent(event)
 
     def begin_edit_selected(self, item) -> bool:
         """[신규기능, 2026-08-25] 더블클릭 없이 선택된 아이템의 텍스트 편집을 시작한다
@@ -4629,6 +4683,12 @@ class _AnnotatorView(QGraphicsView):
                 and not (e.modifiers() & _MM_BLOCK_MODS):
             self.keyPressEvent(e)
             return True
+        # [§8 항목61 손맛] 글 도형 하나를 고른 채 글자 글쇠(Shift+H 등) = 글 — 창 단축키(반전 등)가 먼저 가져가지 않게
+        if e.type() == QEvent.Type.ShortcutOverride and self.scene().focusItem() is None and e.text() and e.text().isprintable() \
+                and not (e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)) \
+                and self._type_target() is not None:
+            e.accept()
+            return True
         return super().event(e)
 
     # ---- 키 (Space 토글 / 도구 단축키 / Delete / Ctrl+Z / Esc) -------------
@@ -4673,6 +4733,21 @@ class _AnnotatorView(QGraphicsView):
         lm = getattr(self, "_line_memo", None)   # [§8 항목61 ④-3] 고른 메모 줄 — Esc·Del·Ctrl+D·Ctrl+/·Ctrl+Enter·Enter·↑↓
         if lm is not None and not editing_text and lm.scene() is self.scene() and lm.line_key(self, event):
             return
+        # [§8 항목61 손맛 2026-10-22] 아무것도 안 골랐을 때 D = 어둡게 ⇄ 밝게(웹 keys.js — Ctrl+Shift+L도 그대로)
+        if not editing_text and key == Qt.Key.Key_D and mods == Qt.KeyboardModifier.NoModifier and not self.scene().selectedItems() \
+                and self._owner.is_edit_mode() and hasattr(self._owner, "_toggle_theme"):
+            self._owner._toggle_theme()
+            return
+        # [§8 항목61 손맛 2026-10-22] 글 도형 하나를 고른 채 글자·숫자를 치면 그 도형 글을 새로 씀(메모는 끝에 이어) — 웹 keys.js.
+        # 숫자 도구(1~7)·Z·T·S·Shift+H/V보다 먼저(웹: 글 도형 하나를 골랐을 땐 글로 — 도구는 Esc로 고르기를 푼 뒤)
+        txt = event.text()
+        if not editing_text and txt and txt.isprintable() and not (mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)):
+            t = self._type_target()
+            if t is not None:
+                lbl = self._start_typing(t)
+                if lbl is not None:
+                    lbl.keyPressEvent(event)   # 그 첫 글자를 글 상자에(통째로 고른 글을 덮어씀)
+                    return
         # [마인드맵 뻗기, 2026-08-24] 텍스트 편집 중에도 Tab/Enter가 즉시 다음 노드를
         # 만든다(deep-interview 확정 — "쓰면서 뻗어나가는" 흐름이 핵심). Shift+Enter(줄바꿈)
         # 는 제외해야 하므로 모디파이어를 명시적으로 검사한다. Ctrl+Enter는 라벨 편집
@@ -4808,6 +4883,9 @@ class _AnnotatorView(QGraphicsView):
                 return
             if self._shortcut_hit(event, "copy"):
                 self._owner.copy_selection()
+                return
+            if self._shortcut_hit(event, "cut"):   # [§8 항목61 손맛] 잘라내기 = 복사 + 지우기(되돌리기 한 칸) — 웹과 같게
+                self._owner._cut_selection()
                 return
             if self._shortcut_hit(event, "paste"):
                 self._owner.paste_selection()

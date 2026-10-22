@@ -63,7 +63,7 @@ class _ContextMixin:
         has_clip = bool(getattr(self, "_clip", None))
         if has_sel:
             menu.addAction("복사\tCtrl+C", self.copy_selection)
-            menu.addAction("잘라내기", self._cut_selection)
+            menu.addAction("잘라내기\tCtrl+X", self._cut_selection)
             menu.addAction("복제\tCtrl+D", self.duplicate_selection)
             menu.addAction("삭제\tDel", self.delete_selection)
             menu.addAction("그림으로 복사(한글·PPT)\tCtrl+Shift+C", self._copy_as_image)   # §8 항목42
