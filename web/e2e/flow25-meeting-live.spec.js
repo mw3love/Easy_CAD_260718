@@ -95,3 +95,17 @@ test('받아 적던 회의는 새로 열어도 남음 → 정리하기 / 버리�
   await expect.poll(async () => (await liveDoc(page)).items.length, { timeout: 10_000 }).toBe(3)
   expect(k.posts.at(-1).body).toMatchObject({ duration: 5, segments: [{ speaker: 'Speaker 1', text: '되살린 말' }] })
 })
+
+test('서버가 옛 버전(요약 주소 없음)이면 다시 켜라고 알림 · 받아 적은 글은 남음', async ({ page }) => {
+  const name = boardName('meetold'), k = await fakeKairos(page)
+  await page.route('**/api/meeting/**', r => r.fulfill({ status: 404, body: '{"error":"none"}', contentType: 'application/json' }))
+  await openBoard(page, name); await setCam(page)
+  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await expect.poll(() => k.sockets.length).toBe(1)
+  k.sockets[0].send(JSON.stringify({ tokens: [tok('남아야 할 말', '1', 0, 900)] }))
+  await expect(page.getByTestId('meeting-live')).toContainText('남아야 할 말')
+  await page.getByTestId('meeting-live-end').click()
+  await expect(page.getByTestId('status-toast')).toContainText('python web/server.py를 다시 켜 주세요', { timeout: 10_000 })
+  await expect(page.getByTestId('meeting-live')).toHaveAttribute('data-state', 'saved')
+  await expect(page.getByTestId('meeting-live')).toContainText('남아야 할 말')
+})

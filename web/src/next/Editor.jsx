@@ -1794,6 +1794,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     try {
       const r = await fetch(`/api/meeting/${encodeURIComponent(DOC_NAME)}/live${model ? `?model=${encodeURIComponent(model)}` : ''}`, { method: 'POST',
         headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ segments, duration: dur }) })
+      if (r.status === 404) throw new Error('서버가 옛 버전이에요 — python web/server.py를 다시 켜 주세요')   // 화면만 새것이고 서버는 이 주소 전에 켠 것(2026-10-23 실제로 겪음 — 전엔 「실패 — none」)
       const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
       if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
       for (;;) {
