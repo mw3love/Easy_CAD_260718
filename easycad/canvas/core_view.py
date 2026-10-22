@@ -2875,7 +2875,9 @@ class _AnnotatorView(QGraphicsView):
             if hasattr(fi, "place_caret") and fi.parentItem() is not None \
                     and fi.parentItem().contains(fi.parentItem().mapFromScene(self._press_scene)) \
                     and event.button() == Qt.MouseButton.LeftButton:
-                fi.place_caret(fi.mapFromScene(self._press_scene))
+                memo = fi.parentItem()
+                if not memo.line_press(self, memo.mapFromScene(self._press_scene), event.modifiers(), self._press_scene):   # 고치는 중 ⠿가 먼저
+                    fi.place_caret(fi.mapFromScene(self._press_scene))
                 event.accept()
                 return
             fi.clearFocus()

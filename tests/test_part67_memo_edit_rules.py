@@ -497,3 +497,68 @@ def test_double_click_puts_caret_where_clicked():
         assert ed.textCursor().blockNumber() == 0 and ed.textCursor().positionInBlock() <= 1
     finally:
         w.close()
+
+
+# ---- 메모 남은 3가지(웹과 같게, 2026-10-22) ----
+def test_shift_or_ctrl_click_other_line_while_editing_selects_lines():
+    from PyQt6.QtGui import QMouseEvent
+    for mods, want in ((SHIFT, {"s": 0, "e": 4}), (CTRL, {"s": 3, "e": 4, "more": [[0, 1]]})):
+        w, memo, ed = _open([{"k": "p", "t": "첫째"}, {"k": "ul", "t": "가"}, {"k": "ul", "t": "가-1", "lv": 1}, {"k": "p", "t": "넷째"}])
+        try:
+            cur = ed.textCursor()
+            cur.setPosition(1)                                                             # 커서 = 첫째 줄
+            ed.setTextCursor(cur)
+            b = ed.document().findBlockByNumber(3)
+            pt = ed.document().documentLayout().blockBoundingRect(b).center()
+            _press(w, ed.mapToScene(pt), mods)                                             # 칠판 뷰 → 편집기(실제 경로)
+            assert memo._editor is None and memo._line_sel == want, mods                    # 고치기를 마치고 줄 고르기
+        finally:
+            w.close()
+
+
+def test_shift_click_same_line_while_editing_keeps_text_selection():
+    from PyQt6.QtGui import QMouseEvent
+    w, memo, ed = _open([{"k": "p", "t": "가나다라"}])
+    try:
+        pt = ed.document().documentLayout().blockBoundingRect(ed.document().begin()).center()
+        _press(w, ed.mapToScene(pt), SHIFT)
+        assert memo._editor is ed                                                          # 같은 줄 Shift = 글자 고르기(계속 고침)
+    finally:
+        w.close()
+
+
+def test_handle_while_editing_finishes_and_drags_line():
+    from easycad.canvas.core_memo_lines import _zoom, memo_hover
+    w, (memo,) = _memo_win()
+    try:
+        memo.web_double_click(w._view, memo.sceneBoundingRect().center())
+        ed = memo._editor
+        b = ed.document().findBlockByNumber(3)                                             # 「나」 줄
+        y = ed.mapToParent(QPointF(0, ed.document().documentLayout().blockBoundingRect(b).center().y())).y()
+        memo_hover(w._view, memo.mapToScene(QPointF(memo.rect().left() + 60, y)))
+        assert memo._edit_hov and memo._edit_hov[0] == 3                                    # 고치는 중에도 마우스 줄에 ⠿
+        h = memo.mapToScene(memo.edit_handle_rect(_zoom(w._view, memo)).center())
+        assert memo_hover(w._view, h) == "handle"
+        _press(w, h, release_at=_row_scene(memo, 0) - QPointF(0, 6))                       # ⠿ 끌기 = 고치기 끝 + 줄 옮기기
+        assert memo._editor is None and [l["t"] for l in memo.raw["lines"]] == ["나", "제목", "가", "가-1", "다"]
+    finally:
+        w.close()
+
+
+def test_memo_table_line_to_board_table():
+    from easycad.canvas.core_shapes import _TableItem
+    rows = [["항목", "값"], ["전력", "3kW"]]
+    w, (memo,) = _memo_win([{"k": "p", "t": "위"}, {"k": "table", "t": "", "rows": rows, "header": True, "cw": [0.3, 0.7]}, {"k": "p", "t": "아래"}])
+    try:
+        menu = memo.line_menu([[1, 2]])
+        act = next(a for a in menu.actions() if a.text() == "칠판 표로 바꾸기")
+        assert "칠판 표로 바꾸기" not in [a.text() for a in memo.line_menu([[0, 1]]).actions()]   # 표 줄 하나일 때만
+        act.trigger()
+        t = next(it for it in w._scene.items() if isinstance(it, _TableItem))
+        assert [[t.cell_text(r, c) for c in range(2)] for r in range(2)] == rows and t._header and abs(t._col_widths[0] - 0.3) < 1e-9
+        assert t.mapToScene(t.rect()).boundingRect().left() > memo.mapToScene(memo.rect()).boundingRect().right() and t.isSelected()   # 메모 오른쪽 옆, 고른 채
+        assert [l["t"] for l in memo.raw["lines"]] == ["위", "아래"]                        # 메모엔 그 줄 뺌
+        w.undo()
+        assert t.scene() is None and len(memo.raw["lines"]) == 3                             # Ctrl+Z 한 칸
+    finally:
+        w.close()

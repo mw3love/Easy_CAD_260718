@@ -538,7 +538,8 @@ class _MemoItem(_MemoLinesMixin, _WebItem):
         p.setPen(QPen(_color(d.get("pen"), "#ffd4d4d8"), 1))
         p.setBrush(_color(d.get("fill"), "#ffffffff"))
         p.drawRoundedRect(r, 10, 10)
-        if getattr(self, "_editor", None) is not None:   # 고치는 중 = 글은 편집 글 상자가 그림
+        if getattr(self, "_editor", None) is not None:   # 고치는 중 = 글은 편집 글 상자가 그림(손잡이 ⠿만)
+            self.paint_edit_handle(p)
             return
         from easycad.canvas.core_memo import paint_memo
         paint_memo(p, r, d)

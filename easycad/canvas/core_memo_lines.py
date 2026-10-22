@@ -55,7 +55,15 @@ def memo_hover(view, scene_pos):
     if top is None:
         return None
     q = top.mapFromScene(scene_pos)
-    if getattr(top, "_editor", None) is not None:
+    if getattr(top, "_editor", None) is not None:   # 고치는 중에도 줄 손잡이(웹 memoedit ⠿) — 자리는 편집기 줄에서
+        ed = top._editor
+        hit = ed.line_at_y(ed.mapFromParent(q).y()) if top.rect().adjusted(-28 / _zoom(view, top), 0, 0, 0).contains(q) else None
+        hov = (hit[0], ed.mapToParent(QPointF(0, hit[1])).y()) if hit else None
+        if hov != top._edit_hov:
+            top._edit_hov = hov
+            top.update()
+        if hov and top.edit_handle_rect(_zoom(view, top)).contains(q):
+            return "handle"
         return "text" if top.rect().contains(q) else None
     top.set_hover(q)
     return "handle" if top.handle_hit(q, _zoom(view, top)) is not None else None
@@ -67,6 +75,34 @@ class _MemoLinesMixin:
     _line_sel = None   # {"s", "e", "more"?} — 웹 lineSel
     _hov = None        # 손잡이를 띄울 줄 덩어리 (s, e)
     _drop = None       # 끌어 놓을 자리 표시 y(아이템 좌표)
+    _edit_hov = None   # 고치는 중 손잡이 (줄 번호, 가운데 y — 아이템 좌표)
+
+    def edit_handle_rect(self, k: float) -> QRectF:
+        """고치는 중 ⠿ 자리 — 가로는 평소 손잡이와 같고, 세로는 편집기 줄 가운데."""
+        w, h, R = HW / k, HH / k, self.rect()
+        x = R.left() + MEMO["LPAD"] - w - 3 / k if w + 5 / k <= MEMO["LPAD"] else R.left() - w - 4 / k
+        return QRectF(x, self._edit_hov[1] - h / 2, w, h)
+
+    def _paint_handle_at(self, p, b: QRectF, k: float):
+        p.save()
+        p.translate(b.topLeft())
+        p.scale(1 / k, 1 / k)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(127, 127, 127, 41))
+        p.drawRoundedRect(QRectF(0, 0, HW, HH), 4, 4)
+        f = QFont()
+        f.setPixelSize(12)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor("#8a8f98"))
+        p.drawText(QRectF(0, 0, HW, HH), int(Qt.AlignmentFlag.AlignCenter), "⠿")
+        p.restore()
+
+    def paint_edit_handle(self, p):
+        """고치는 중 ⠿(paint_card가 글 대신 부름)."""
+        if self._edit_hov is not None:
+            k = abs(p.worldTransform().m11()) or 1.0
+            self._paint_handle_at(p, self.edit_handle_rect(k), k)
 
     def _view(self):
         sc = self.scene()
@@ -126,20 +162,7 @@ class _MemoLinesMixin:
             p.setPen(pen)
             p.drawLine(QPointF(r.left() + MEMO["LPAD"], self._drop), QPointF(r.right() - MEMO["PAD"], self._drop))
         if self._hov is not None and not getattr(self, "_locked", False):
-            b = self.handle_rect(self._hov[0], k)
-            p.save()
-            p.translate(b.topLeft())
-            p.scale(1 / k, 1 / k)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(127, 127, 127, 41))
-            p.drawRoundedRect(QRectF(0, 0, HW, HH), 4, 4)
-            f = QFont()
-            f.setPixelSize(12)
-            f.setBold(True)
-            p.setFont(f)
-            p.setPen(QColor("#8a8f98"))
-            p.drawText(QRectF(0, 0, HW, HH), int(Qt.AlignmentFlag.AlignCenter), "⠿")
-            p.restore()
+            self._paint_handle_at(p, self.handle_rect(self._hov[0], k), k)
 
     # ---- 고르기 ----
     def set_line_sel(self, ls):
@@ -160,6 +183,19 @@ class _MemoLinesMixin:
     def line_press(self, view, q: QPointF, mods, scene_pos) -> bool:
         """누르기 — 손잡이(또는 고른 채 Shift·Ctrl+줄)면 처리하고 True(웹 onDown 「⠿」)."""
         k = _zoom(view, self)
+        ed = getattr(self, "_editor", None)
+        if ed is not None:   # 고치는 중 ⠿ 누르기 = 고치기를 마치고 그 줄 끌기·(놓으면) 메뉴로(웹 grab)
+            if self._edit_hov is None or not self.edit_handle_rect(k).contains(q):
+                return False
+            i = self._edit_hov[0]
+            self._edit_hov = None
+            ed.commit()
+            lines = self.raw.get("lines") or []
+            if not (0 <= i < len(lines)):
+                return True
+            s, e = line_unit(lines, i)
+            view._mline = {"memo": self, "units": [[s, e]], "copy": False, "start": QPointF(scene_pos), "moved": False}
+            return True
         ls = self._line_sel
         mh = self.handle_hit(q, k)
         if mh is None and ls and mods & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier):
@@ -338,6 +374,35 @@ class _MemoLinesMixin:
             return False
         return True
 
+    def to_board_table(self, i):
+        """메모 표 줄 → 칠판 표(메모 오른쪽 옆, 웹 「칠판 표로 바꾸기」) — 메모엔 그 줄을 뺌, 되돌리기 한 칸, 새 표를 고름."""
+        from easycad.canvas.core_shapes import _TableItem
+        lines = self.raw.get("lines") or []
+        ln = lines[i] if 0 <= i < len(lines) else {}
+        rows = [list(r) for r in ln.get("rows") or []]
+        if ln.get("k") != "table" or not rows:
+            return None
+        n = max(len(r) for r in rows)
+        cells = [[str(r[c]) if c < len(r) else "" for c in range(n)] for r in rows]
+        R = self.rect()
+        t = _TableItem(len(rows), n, QRectF(0.0, 0.0, max(120.0, R.width() - MEMO["LPAD"] - MEMO["PAD"]), 28.0 * len(rows)),
+                       cells, bool(ln.get("header")), ln.get("cw") if len(ln.get("cw") or []) == n else None)
+        t.setFlags(t.GraphicsItemFlag.ItemIsMovable | t.GraphicsItemFlag.ItemIsSelectable)
+        t.setScale(self.scale() or 1.0)
+        t.setPos(self.mapToScene(QPointF(R.right() + 24, R.top())))
+        sc = self.scene()
+        t.setZValue(max([x.zValue() for x in sc.items()] + [0]) + 1)
+        b0 = self.capture_state()
+        self._put_lines([l for j, l in enumerate(lines) if j != i])
+        sc.addItem(t)
+        self.set_line_sel(None)
+        sc.clearSelection()
+        t.setSelected(True)
+        host = getattr(self._view(), "_owner", None)
+        if host is not None and hasattr(host, "_push_entry"):
+            host._push_entry([("mut", self, "state", b0, self.capture_state()), ("create", t)])
+        return t
+
     def _dup(self, idx):
         lines = self.raw.get("lines") or []
         last = idx[-1] + 1
@@ -374,6 +439,8 @@ class _MemoLinesMixin:
             on2 = any(url_spans(lines[i].get("t") or "") and not lines[i].get("nolink") for i in idx if i < len(lines))
             menu.addAction("링크 끄기" if on2 else "링크 켜기",
                            each(lambda l: {**l, "nolink": True} if on2 else {kk: vv for kk, vv in l.items() if kk != "nolink"}, "링크"))
+        if len(idx) == 1 and cur.get("k") == "table":   # 칸 꾸밈·합치기처럼 메모 표 줄이 못 하는 것(웹 2026-10-21)
+            menu.addAction("칠판 표로 바꾸기", lambda: self.to_board_table(idx[0]))
         menu.addSeparator()
         menu.addAction("복제\tCtrl+D", lambda: self._dup(idx))
         menu.addAction("삭제\tDel", lambda: (self.set_lines(_nonempty([l for i, l in enumerate(self.raw.get("lines") or []) if i not in on])), self.set_line_sel(None)))

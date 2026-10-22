@@ -513,8 +513,26 @@ class _MemoTextEdit(QGraphicsTextItem):
             self.setTextCursor(cur)
         self._sync_bar()
 
-    def _caret_line(self) -> int:
-        pos = self.textCursor().position()
+    def line_at_y(self, y: float):
+        """편집기 y(아이템 좌표)가 든 메모 줄 → (줄 번호, 그 줄 첫 글줄 가운데 y) — 고치는 중 손잡이 ⠿ 자리. 없으면 None."""
+        lay, best = self.document().documentLayout(), None
+        for i, u in enumerate(self._line_units()):
+            if hasattr(u, "lastPosition"):   # 표
+                r = lay.frameBoundingRect(u)
+                top, bot, cy = r.top(), r.bottom(), r.top() + 14
+            else:
+                bl = u.layout()
+                top = bl.position().y()
+                bot = top + bl.boundingRect().height()
+                cy = top + (bl.lineAt(0).height() / 2 if bl.lineCount() else 8)
+            if best is None or y >= top - MEMO["GAP"]:
+                best = (i, cy)
+            if y <= bot:
+                break
+        return best
+
+    def _caret_line(self, pos=None) -> int:
+        pos = self.textCursor().position() if pos is None else pos
         for i, u in enumerate(self._line_units()):
             a, z = (u.firstPosition(), u.lastPosition()) if hasattr(u, "lastPosition") else (u.position(), u.position() + len(u.text()))
             if a <= pos <= z:
@@ -1008,6 +1026,26 @@ class _MemoTextEdit(QGraphicsTextItem):
 
     def mousePressEvent(self, e):
         self._ruled = False
+        # 고치는 중 Shift+다른 줄 = 커서 줄부터 그 줄까지 줄 고르기, Ctrl·Alt+Shift = 커서 줄 + 그 줄 따로(웹 memoedit handleDOMEvents) — 같은 줄 Shift = 글자 고르기 그대로
+        m = e.modifiers()
+        shift, ctrl, alt = (bool(m & k) for k in (Qt.KeyboardModifier.ShiftModifier, Qt.KeyboardModifier.ControlModifier, Qt.KeyboardModifier.AltModifier))
+        rng, pick = shift and not alt, (ctrl and not shift) or (alt and shift)
+        if e.button() == Qt.MouseButton.LeftButton and (rng or pick):
+            hit = self.document().documentLayout().hitTest(QPointF(e.pos()), Qt.HitTestAccuracy.FuzzyHit)
+            cur, clicked = self._caret_line(), self._caret_line(hit) if hit >= 0 else None
+            if clicked is not None and not (rng and clicked == cur):
+                memo = self._memo
+                self.commit()
+                from easycad.canvas.core_memo import line_unit
+                lines = memo.raw.get("lines") or []
+                if cur < len(lines) and clicked < len(lines):
+                    (s1, e1), (s2, e2) = line_unit(lines, cur), line_unit(lines, clicked)
+                    if rng:
+                        memo.set_line_sel({"s": min(s1, s2), "e": max(e1, e2)})
+                    else:
+                        memo.set_line_sel({"s": s2, "e": e2} if s1 == s2 else {"s": s2, "e": e2, "more": [[s1, e1]]})
+                e.accept()
+                return
         b = self._box_at(e.pos())
         if b is not None:
             cur = QTextCursor(b)
