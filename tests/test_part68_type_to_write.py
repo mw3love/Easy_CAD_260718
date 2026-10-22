@@ -268,7 +268,7 @@ def test_toolbar_buttons_drag_to_board_place_default_item_at_drop():
     w, btns = _tb_win()
     v = w._view
     try:
-        assert set(btns) == {"arrow", "text", "line", "badge", "memo", "table"}
+        assert set(btns) == {"arrow", "text", "line", "badge", "memo", "table", "polygon"}
         for i, (k, cls) in enumerate((("arrow", _PolyArrowItem), ("line", _LineItem), ("badge", _BadgeItem), ("memo", _MemoItem), ("table", _TableItem))):
             pt = QPoint(400 + (i % 3) * 300, 200 + (i // 3) * 300)
             _tb_drag(w, btns[k], pt)
@@ -297,5 +297,31 @@ def test_toolbar_text_drag_opens_empty_text_at_drop_and_click_still_works():
         assert w.current_tool == "line"
         _tb_drag(w, btns["memo"], QPoint(-50, -50))                                              # 칠판 밖에 놓으면 취소
         assert not [it for it in w._scene.items() if type(it).__name__ == "_MemoItem"]
+    finally:
+        w.close()
+
+
+def test_toolbar_polygon_drag_places_first_segment_then_continues_clicking():
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtTest import QTest
+    from easycad.canvas.core_shapes import _LineItem, _PolygonItem
+    w, btns = _tb_win()
+    v = w._view
+    try:
+        _tb_drag(w, btns["polygon"], QPoint(500, 300))
+        assert w.current_tool == "polygon"                                                       # 웹처럼 다각형 도구로
+        it = v._place
+        assert isinstance(it, _PolygonItem) and len(it._draw_pts) == 3                           # 확정 2점 + 커서 추종
+        a, b = it._draw_pts[0], it._draw_pts[1]
+        c = v.mapToScene(QPoint(500, 300))
+        assert abs((a.x() + b.x()) / 2 - c.x()) < 30 and abs(a.y() - b.y()) < 1e-6              # 놓은 자리 가운데, 가로 선분
+        assert abs(v.mapFromScene(b).x() - v.mapFromScene(a).x() - 120) <= 2                     # 화면 120px
+        assert not [x for x in w._scene.items() if type(x) is _LineItem]                         # 끄는 동안 미리보기는 지워짐
+        _click(w, v.mapToScene(QPoint(560, 420)))                                                # 이어 찍기
+        QTest.keyClick(v, Qt.Key.Key_Return)                                                     # Enter = 끝
+        made = [x for x in w._scene.items() if type(x) is _PolygonItem]
+        assert len(made) == 1 and v._place is None
+        w.undo()
+        assert not [x for x in w._scene.items() if type(x) is _PolygonItem]                      # Ctrl+Z 한 번
     finally:
         w.close()

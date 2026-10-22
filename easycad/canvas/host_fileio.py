@@ -1148,8 +1148,9 @@ class _FileIOMixin:
 
 
     # [§8 항목61 손맛 2026-10-22] 위 막대 버튼을 칠판으로 끌기 = 놓은 자리에 기본형(웹 startToolDrag) — 왼쪽 도형 카드 끌기와 같은 길
-    # 선·화살표 = 화면 120px 가로, 번호 = 다음 번호, 메모·표 = 기본 크기, 글자 = 끄는 동안만 「글」, 놓으면 빈 글 상자에 바로 쓰기
-    TOOLBAR_DRAG_KINDS = ("arrow", "text", "line", "badge", "memo", "table")
+    # 선·화살표 = 화면 120px 가로, 번호 = 다음 번호, 메모·표 = 기본 크기, 글자 = 끄는 동안만 「글」, 놓으면 빈 글 상자에 바로 쓰기,
+    # 다각형 = 첫 선분(화면 120px 가로)을 놓고 다각형 도구로 이어 찍기
+    TOOLBAR_DRAG_KINDS = ("arrow", "text", "line", "badge", "memo", "table", "polygon")
 
     def _build_toolbar_item(self, kind: str):
         """(아이템, w, h, 놓은 뒤 할 일 | None, 바꿔 놓기?) — 바꿔 놓기 = 임시 도형을 지우고 놓은 자리에 다른 걸 만듦(글자)."""
@@ -1161,6 +1162,10 @@ class _FileIOMixin:
             it.setPen(self.make_pen())
             it.setFlags(flags)
             return it, L, 0.0, None, False
+        if kind == "polygon":   # 끄는 동안은 선분 미리보기, 놓으면 그 자리에서 다각형 이어 찍기
+            it = _LineItem(QLineF(0.0, 0.0, L, 0.0))
+            it.setPen(self.make_pen())
+            return it, L, 0.0, (lambda p: self._polygon_from_drop(p, L)), True
         if kind == "arrow":
             it = _PolyArrowItem(self.current_color, self.current_width, self.arrow_head_at_end,
                                 self.current_head_at_start, self.current_head_scale)
@@ -1191,6 +1196,11 @@ class _FileIOMixin:
             return it, it.boundingRect().width(), it.boundingRect().height(), \
                 (lambda p: self._view._place_text_at(p)), True
         return None
+
+    def _polygon_from_drop(self, p: QPointF, L: float):
+        """위 막대 다각형을 놓은 자리 p(선분 가운데)에서 첫 선분을 확정하고 이어 찍기."""
+        self.set_tool("polygon")
+        self._view._begin_polygon_with(QPointF(p.x() - L / 2.0, p.y()), QPointF(p.x() + L / 2.0, p.y()))
 
     def _create_shape_at(self, tool_key: str, scene_pos: QPointF):
         """[Phase 6 M3 #17] 팔레트에서 드롭한 도구를 scene_pos 중심에 기본 크기로 생성.
@@ -1353,9 +1363,12 @@ class _FileIOMixin:
             self._view.viewport().update()
             return
         after, self._palette_drag_after = getattr(self, "_palette_drag_after", None), None
-        if after is not None and after[1]:   # 바꿔 놓기(글자) — 임시 도형 자리에 진짜를 만듦(되돌리기는 만든 쪽이)
+        if after is not None and after[1]:   # 바꿔 놓기(글자·다각형) — 임시 도형 자리에 진짜를 만듦(되돌리기는 만든 쪽이)
             r = it.sceneBoundingRect()
-            p = QPointF(r.left() + it.document().documentMargin(), r.center().y())   # 「글」 첫 글자 자리 = 커서 자리
+            if hasattr(it, "document"):
+                p = QPointF(r.left() + it.document().documentMargin(), r.center().y())   # 「글」 첫 글자 자리 = 커서 자리
+            else:
+                p = r.center()   # 다각형 = 선분 가운데
             self._scene.removeItem(it)
             self._view.setFocus(Qt.FocusReason.MouseFocusReason)
             after[0](p)

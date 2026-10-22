@@ -820,8 +820,8 @@ class _UIBuildMixin:
             tb.addWidget(btn)
             self._tool_buttons[key] = btn
         self._refresh_arrow_tool_button()   # [화살표 통합] 아이콘을 현재 종류에 맞춤
-        # [§8 항목61 손맛 2026-10-22] 위 막대 버튼을 칠판으로 끌어 놓기(누르기는 그대로) — 웹 startToolDrag. 펜·다각형은 웹도 끌기 없음/별도
-        drag_keys = {self._tool_buttons[k]: k for k in ("arrow", "text", "line", "badge") if k in self._tool_buttons}
+        # [§8 항목61 손맛 2026-10-22] 위 막대 버튼을 칠판으로 끌어 놓기(누르기는 그대로) — 웹 startToolDrag. 펜은 웹도 끌기 없음
+        drag_keys = {self._tool_buttons[k]: k for k in ("arrow", "text", "line", "badge", "polygon") if k in self._tool_buttons}
         for a, k in ((self._act_memo, "memo"), (self._act_tbl, "table")):
             w = tb.widgetForAction(a)
             if w is not None:

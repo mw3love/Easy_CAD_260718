@@ -3460,6 +3460,17 @@ class _AnnotatorView(QGraphicsView):
         it.set_live_points(pts)
         self.viewport().update()
 
+    def _begin_polygon_with(self, a: QPointF, b: QPointF):
+        """[§8 항목61 손맛 2026-10-23] 위 막대 다각형 끌어 놓기 — 첫 선분 a→b를 확정한 채 클릭 배치로(웹 startToolDrag('polygon')).
+        이어 찍기·Enter·처음 점 = 닫기는 평소 다각형 도구 그대로. 도구는 호출부가 먼저 polygon으로 바꿔 둔다(set_tool이 배치를 버리므로)."""
+        it = _PolygonItem([a, b], closed=False)
+        it.setPen(self._owner.make_pen())
+        it.setZValue(1)
+        self.scene().addItem(it)
+        it._draw_pts = [QPointF(a), QPointF(b), QPointF(b)]   # 확정 2점 + 커서 추종 미리보기
+        it.set_live_points(it._draw_pts)
+        self._enter_click_place(it, "polygon")
+
     def _finish_polygon(self, closed: bool):
         """[§8 항목21] 다각형/폴리라인 배치 확정(닫기·더블클릭·Enter 공통) — 정점 부족하면 폐기."""
         it = self._place
