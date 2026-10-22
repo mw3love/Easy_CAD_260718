@@ -6,7 +6,7 @@
 import copy
 
 from _shared import _app  # noqa: F401  (QApplication)
-from PyQt6.QtCore import QEvent, QPointF, Qt
+from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt
 from PyQt6.QtGui import QInputMethodEvent, QKeyEvent, QTextCursor
 from PyQt6.QtWidgets import QApplication
 
@@ -453,5 +453,47 @@ def test_drag_handle_reorders_moves_to_other_memo_and_out_to_new_memo():
         assert m2.scene() is None
         w.undo()
         assert m2.scene() is w._scene and m2.raw["lines"] == [{"k": "p", "t": "다른"}]
+    finally:
+        w.close()
+
+
+# ---- 2026-10-22 사용자 확인 뒤: 빈 메모 커서 안 보임 · 메모 안 이동 커서 ----
+def test_empty_lines_keep_a_text_line_so_caret_shows():
+    """빈 줄에 글자 서식만 걸면 Qt가 그 줄을 다시 배치하지 않아 글줄 0개 → 깜빡이는 커서가 안 그려졌음(빈 메모 두 번 누르기)."""
+    w, memo, ed = _open([{"k": "p", "t": ""}])
+    try:
+        b = ed.document().begin()
+        assert b.layout().lineCount() == 1
+        _type(ed, "# ")                                                                 # 빈 줄 종류 바꾸기(_set_kind)도
+        assert ed.textCursor().block().layout().lineCount() == 1
+    finally:
+        w.close()
+
+
+def test_click_memo_padding_keeps_editing_and_cursor_is_ibeam():
+    from easycad.canvas.core_memo_lines import memo_hover
+    w, memo, ed = _open([{"k": "p", "t": "가나다"}])
+    try:
+        memo.prepareGeometryChange()
+        r = memo.rect()
+        super(type(memo), memo).setRect(QRectF(r.x(), r.y(), r.width(), r.height() + 80))  # 글보다 큰 메모(아래 여백)
+        below = memo.mapToScene(QPointF(r.center().x(), r.bottom() + 60))
+        assert memo_hover(w._view, below) == "text"                                     # 고치는 메모 안 = 글 커서(전엔 이동 커서)
+        _press(w, below)
+        assert memo._editor is ed and ed.isVisible()                                     # 여백을 눌러도 계속 고침(전엔 끝났음)
+        assert ed.textCursor().position() == 3                                           # 가장 가까운 글자 = 끝
+    finally:
+        w.close()
+
+
+def test_double_click_puts_caret_where_clicked():
+    w, (memo,) = _memo_win([{"k": "p", "t": "가나다라마바"}, {"k": "p", "t": "둘째"}])
+    try:
+        from easycad.canvas.core_memo import memo_layout
+        row = memo_layout(memo.raw, memo.rect().width())["rows"][0]
+        at = memo.mapToScene(QPointF(memo.rect().left() + 26 + 2, memo.rect().top() + row["cy"]))   # 첫 줄 맨 앞
+        memo.web_double_click(w._view, at, at=at)
+        ed = w._view._memo_editor
+        assert ed.textCursor().blockNumber() == 0 and ed.textCursor().positionInBlock() <= 1
     finally:
         w.close()

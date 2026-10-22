@@ -2865,6 +2865,13 @@ class _AnnotatorView(QGraphicsView):
         if isinstance(fi, QGraphicsTextItem) \
                 and fi.textInteractionFlags() != Qt.TextInteractionFlag.NoTextInteraction \
                 and fi not in self.items(event.position().toPoint()):
+            # [§8 항목61 ④-3] 고치는 메모 안(글줄 밖 여백)을 누르면 마치지 않고 가까운 글자로 커서(웹 — 메모 안 어디든 계속 고침)
+            if hasattr(fi, "place_caret") and fi.parentItem() is not None \
+                    and fi.parentItem().contains(fi.parentItem().mapFromScene(self._press_scene)) \
+                    and event.button() == Qt.MouseButton.LeftButton:
+                fi.place_caret(fi.mapFromScene(self._press_scene))
+                event.accept()
+                return
             fi.clearFocus()
         # [우리 확장 · §8 항목61 ④-3] 메모 줄 손잡이 ⠿(누르기 = 고르기 + 메뉴, 끌기 = 옮기기) · 고른 줄 Shift·Ctrl+클릭 — 웹 Editor.jsx 「메모 2차」
         if self._owner.current_tool == "select" and event.button() == Qt.MouseButton.LeftButton:
@@ -4102,10 +4109,12 @@ class _AnnotatorView(QGraphicsView):
                     _dbg(f"HOVER trim scene=({sp.x():.1f},{sp.y():.1f}) preview={self._trim_preview!r}")
                 self.viewport().update()
             self._update_hover_cursor(event.position().toPoint())
-            # [§8 항목61 ④-3] 메모 줄 손잡이 ⠿ — 마우스가 올라간 줄 왼쪽에(웹 memoHov), 손잡이 위면 손 모양 커서
+            # [§8 항목61 ④-3] 메모 줄 손잡이 ⠿ — 마우스가 올라간 줄 왼쪽에(웹 memoHov), 손잡이 위면 손 모양 커서,
+            # 고치는 중인 메모 안이면 글 커서(전엔 이동 커서가 덮었음 — 2026-10-22 사용자)
             from easycad.canvas.core_memo_lines import memo_hover
-            if self._owner.current_tool == "select" and memo_hover(self, self.mapToScene(event.position().toPoint())):
-                self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+            mh = memo_hover(self, self.mapToScene(event.position().toPoint())) if self._owner.current_tool == "select" else None
+            if mh:
+                self.viewport().setCursor(Qt.CursorShape.OpenHandCursor if mh == "handle" else Qt.CursorShape.IBeamCursor)
         if self._drawing and self._temp is not None:
             tool = self._owner.current_tool
             if tool == "arrow":
@@ -4547,7 +4556,11 @@ class _AnnotatorView(QGraphicsView):
         if event.button() == Qt.MouseButton.LeftButton:
             web = self._web_at(event.position().toPoint())
             if web is not None:
-                web.web_double_click(self, self.mapToScene(event.position().toPoint()))
+                sp = self.mapToScene(event.position().toPoint())
+                if hasattr(web, "line_press"):   # 메모 = 두 번 누른 글자에 커서(웹 spec.at)
+                    web.web_double_click(self, sp, at=sp)
+                else:
+                    web.web_double_click(self, sp)
                 event.accept()
                 return
         # [우리 확장] 선/화살표 더블클릭 = 라벨 달기/편집(위에 다른 선택형이 없을 때만).

@@ -145,6 +145,7 @@ def lines_to_doc(lines, doc: QTextDocument, width: float):
         for p in _parts(ln.get("t") or "", None if k == "code" else ln.get("runs")):
             cur.insertText(p["text"], _char_fmt(k, p, done))
         prev_k = k
+    doc.markContentsDirty(0, doc.characterCount())   # ⚠ 빈 줄에 글자 서식만 걸면 Qt가 그 줄을 다시 배치하지 않아 글줄 0개 → 커서가 안 보임(빈 메모)
     doc.clearUndoRedoStacks()
 
 
@@ -501,6 +502,17 @@ class _MemoTextEdit(QGraphicsTextItem):
             it += 1
         return out
 
+    def place_caret(self, q: QPointF):
+        """글 상자 밖(메모 여백)을 눌렀을 때 — 가장 가까운 글자 자리로 커서."""
+        r = self.boundingRect()
+        q = QPointF(min(max(q.x(), r.left() + 1), r.right() - 1), min(max(q.y(), r.top() + 1), r.bottom() - 1))
+        pos = self.document().documentLayout().hitTest(q, Qt.HitTestAccuracy.FuzzyHit)
+        if pos >= 0:
+            cur = self.textCursor()
+            cur.setPosition(pos)
+            self.setTextCursor(cur)
+        self._sync_bar()
+
     def _caret_line(self) -> int:
         pos = self.textCursor().position()
         for i, u in enumerate(self._line_units()):
@@ -720,6 +732,7 @@ class _MemoTextEdit(QGraphicsTextItem):
             m.setFontPointSize(base.fontPointSize())
             m.setFontWeight(base.fontWeight())
             c2.mergeCharFormat(m)
+        self.document().markContentsDirty(b.position(), b.length())   # 빈 줄도 다시 배치(커서가 보이게 — lines_to_doc 끝과 같은 까닭)
         self.update()
 
     def _kind(self, cur=None):

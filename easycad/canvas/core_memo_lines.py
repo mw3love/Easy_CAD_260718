@@ -31,7 +31,9 @@ def _rows(item):
 def _memos_at(view, scene_pos, margin=0.0, pad=0.0):
     """scene_pos의 메모들(맨 위부터) — margin = 왼쪽 여유, pad = 위·아래·오른쪽 여유(화면 px)."""
     out = []
-    for it in view.scene().items():
+    vz = abs(view.transform().m11()) or 1.0
+    e = (margin + pad) / vz   # 마우스 둘레만 찾음(장면 색인) — 큰 도면에서 마우스를 움직일 때마다 모든 도형을 훑지 않게
+    for it in view.scene().items(QRectF(scene_pos.x() - e, scene_pos.y() - e, 2 * e, 2 * e)):
         if not hasattr(it, "line_press") or it.scene() is None or getattr(it, "_locked", False):
             continue
         k = _zoom(view, it)
@@ -41,8 +43,9 @@ def _memos_at(view, scene_pos, margin=0.0, pad=0.0):
     return out
 
 
-def memo_hover(view, scene_pos) -> bool:
-    """마우스 이동(누르지 않음) — 맨 위 메모 줄에 손잡이, 다른 메모는 끔. 손잡이 위면 True(커서 = 손)."""
+def memo_hover(view, scene_pos):
+    """마우스 이동(누르지 않음) — 맨 위 메모 줄에 손잡이, 다른 메모는 끔.
+    돌려줌: "handle"(손잡이 위 — 손 커서) · "text"(고치는 중인 메모 안 — 글 커서) · None."""
     hits = _memos_at(view, scene_pos, 28, 0)
     top = hits[0] if hits else None
     old = getattr(view, "_hov_memo", None)
@@ -50,10 +53,12 @@ def memo_hover(view, scene_pos) -> bool:
         old.set_hover(None)
     view._hov_memo = top
     if top is None:
-        return False
+        return None
     q = top.mapFromScene(scene_pos)
+    if getattr(top, "_editor", None) is not None:
+        return "text" if top.rect().contains(q) else None
     top.set_hover(q)
-    return top.handle_hit(q, _zoom(view, top)) is not None
+    return "handle" if top.handle_hit(q, _zoom(view, top)) is not None else None
 
 
 class _MemoLinesMixin:
@@ -216,21 +221,22 @@ class _MemoLinesMixin:
         s["moved"] = True
         view.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
         tg = self._drop_at(view, scene_pos)
-        for it in _memos_at(view, scene_pos, 1e9, 1e9) + [self]:
+        marked = s.setdefault("marked", set())   # 놓을 자리 선을 그린 메모들(지울 때 다시 찾지 않게)
+        for it in list(marked) + ([tg[0]] if tg else []):
             want = tg[2] if tg and tg[0] is it else None
             if it._drop != want:
                 it._drop = want
                 it.update()
+            (marked.add if want is not None else marked.discard)(it)
         view._mline_out = None if tg else QPointF(scene_pos)
         view.viewport().update()
 
     def line_drag_end(self, view, scene_pos, global_pos):
         s, view._mline = view._mline, None
         view._mline_out = None
-        for it in _memos_at(view, scene_pos, 1e9, 1e9) + [self]:
-            if it._drop is not None:
-                it._drop = None
-                it.update()
+        for it in s.get("marked") or ():
+            it._drop = None
+            it.update()
         view.viewport().setCursor(Qt.CursorShape.ArrowCursor)
         units = s["units"]
         if not s["moved"]:   # 제자리 = 그 줄 고르기 + 메뉴

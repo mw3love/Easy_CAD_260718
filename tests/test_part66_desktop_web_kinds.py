@@ -123,6 +123,10 @@ def test_memo_todo_click_and_edit_then_undo():
         dbl(memo.mapToScene(memo.rect().center()))
         ed = v._memo_editor
         assert ed.isVisible() and ed.parentItem() is memo and "점검 메모" in ed.toPlainText()   # 두 번 누르기 = 메모 자리에서 고치기
+        from PyQt6.QtGui import QTextCursor
+        cur = ed.textCursor()
+        cur.movePosition(QTextCursor.MoveOperation.End)                                  # (두 번 누른 자리에 커서가 가므로 끝으로 — 웹과 같음)
+        ed.setTextCursor(cur)
         _type(ed, "\n- 하나 더\n또 하나")                                              # 「- 」 = 목록, 목록에서 Enter = 목록 이어짐
         ed.commit()
         assert memo.raw["lines"][-2:] == [{"k": "ul", "t": "하나 더"}, {"k": "ul", "t": "또 하나"}]

@@ -1693,3 +1693,5 @@
 - `QTest.keyClicks(widget, "한글")`은 PyQt6 실제 화면에서 앱을 0xC0000409로 죽임(파이썬 오류도 안 남음) — 한글은 `QKeyEvent(KeyPress, Key_unknown, NoModifier, "가")`를 `sendEvent`로(2026-10-22)
 - 데스크톱 칠판 아이템은 `setAcceptHoverEvents` + `hoverMoveEvent`로 마우스 올림을 못 받음 — 뷰 `mouseMoveEvent`가 장면에 안 넘김. 올림 표시는 뷰가 직접 계산(`_hover_port_at`·`memo_hover`처럼)(2026-10-22)
 - PyQt6 실제 화면에서 `QTest.mouseMove(viewport, pt)`는 뷰 mouseMoveEvent에 바로 안 닿음 — 확인 스크립트는 `QApplication.sendEvent(viewport, QMouseEvent(MouseMove, ...))`(2026-10-22)
+- Qt 빈 글줄(블록)에 `setBlockCharFormat`만 하면 그 블록 글줄 배치가 0개로 남아 깜빡이는 커서가 안 그려짐(오프스크린 새 QTextDocument에선 안 보이고 QGraphicsTextItem 문서에서 재현) — 뒤에 `doc.markContentsDirty(pos, len)`(2026-10-22)
+- 합성 마우스 이벤트(`sendEvent`)는 클릭 포커스를 안 옮김 → 포커스·커서 깜빡임 확인은 진짜 입력(`user32.mouse_event`). 뒤 프로그램은 창 앞세우기가 막히니 `keybd_event(Alt)` 후 `SetForegroundWindow`(2026-10-22)

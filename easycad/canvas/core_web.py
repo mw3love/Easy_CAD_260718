@@ -483,8 +483,8 @@ class _MemoItem(_MemoLinesMixin, _WebItem):
             self._fit_height(raw)
         self.change_raw(fn)
 
-    def web_double_click(self, view, scene_pos, caret=None):
-        """caret = 커서를 둘 줄 번호(고른 줄에서 Enter — 그 줄 끝), 없으면 맨 끝."""
+    def web_double_click(self, view, scene_pos, caret=None, at=None):
+        """caret = 커서를 둘 줄 번호(고른 줄에서 Enter — 그 줄 끝), at = 두 번 누른 자리(장면 좌표 — 그 글자에 커서, 웹 spec.at), 둘 다 없으면 맨 끝."""
         if getattr(self, "_editor", None) is not None:   # 이미 고치는 중
             return True
         from easycad.canvas.core_memo_edit import _MemoTextEdit
@@ -495,6 +495,8 @@ class _MemoItem(_MemoLinesMixin, _WebItem):
         view._memo_editor = self._editor
         self.update()
         self._editor.start(caret)
+        if at is not None and caret is None:
+            self._editor.place_caret(self._editor.mapFromScene(at))
         return True
 
     def _end_edit(self, editor, new_lines):
