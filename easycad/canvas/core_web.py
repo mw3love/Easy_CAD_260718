@@ -12,6 +12,7 @@ import copy
 from PyQt6.QtCore import QPointF, QRectF, Qt, QUrl
 from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QFont, QFontMetricsF, QPainterPath, QPen, QPixmap
 
+from easycad.canvas.core_memo_lines import _MemoLinesMixin
 from easycad.canvas.core_shapes import _RectItem
 
 WEB_TYPES = ("frame", "web", "memo", "legend", "doc", "pdf")
@@ -437,9 +438,10 @@ class _LegendItem(_WebItem):
             _text(p, x + L["PAD"], row_y(0) + L["ROW"] / 2, "색 있는 선·화살표를 그리면 저절로 채워져요", px, "#71717a")
 
 
-class _MemoItem(_WebItem):
+class _MemoItem(_MemoLinesMixin, _WebItem):
     """메모 — 채운 둥근 네모 + 줄마다 글(제목·목록·할 일·인용·코드). 줄 배치는 웹 memo.js를 옮김.
-    두 번 누르기 = 메모 자리에서 고치기(`core_memo_edit._MemoTextEdit`), 할 일 상자 누르기 = 체크."""
+    두 번 누르기 = 메모 자리에서 고치기(`core_memo_edit._MemoTextEdit`), 할 일 상자 누르기 = 체크,
+    줄 손잡이 ⠿·줄 고르기·끌어 옮기기는 `core_memo_lines._MemoLinesMixin`."""
     RADIUS = 10.0
 
     def __init__(self, rect, raw):
@@ -481,15 +483,18 @@ class _MemoItem(_WebItem):
             self._fit_height(raw)
         self.change_raw(fn)
 
-    def web_double_click(self, view, scene_pos):
+    def web_double_click(self, view, scene_pos, caret=None):
+        """caret = 커서를 둘 줄 번호(고른 줄에서 Enter — 그 줄 끝), 없으면 맨 끝."""
         if getattr(self, "_editor", None) is not None:   # 이미 고치는 중
             return True
         from easycad.canvas.core_memo_edit import _MemoTextEdit
+        self.set_line_sel(None)
+        self._hov = None
         self._edit_rect0 = QRectF(self.rect())
         self._editor = _MemoTextEdit(self)
         view._memo_editor = self._editor
         self.update()
-        self._editor.start()
+        self._editor.start(caret)
         return True
 
     def _end_edit(self, editor, new_lines):
@@ -535,6 +540,7 @@ class _MemoItem(_WebItem):
             return
         from easycad.canvas.core_memo import paint_memo
         paint_memo(p, r, d)
+        self.paint_lines_ui(p, r)
 
 
 _CLASSES = {"frame": _FrameItem, "web": _WebCardItem, "doc": _DocItem, "pdf": _PdfItem, "legend": _LegendItem, "memo": _MemoItem}

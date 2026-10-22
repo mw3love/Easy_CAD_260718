@@ -119,10 +119,10 @@ def test_memo_todo_click_and_edit_then_undo():
         assert memo.raw["lines"][7].get("done") is True                               # 상자 누르기 = 체크
         w.undo()
         assert not memo.raw["lines"][7].get("done")                                   # Ctrl+Z 한 번
+        h0 = memo.rect().height()                                                     # 고치기 전 높이(열면 글 높이에 맞춰 바뀔 수 있음)
         dbl(memo.mapToScene(memo.rect().center()))
         ed = v._memo_editor
         assert ed.isVisible() and ed.parentItem() is memo and "점검 메모" in ed.toPlainText()   # 두 번 누르기 = 메모 자리에서 고치기
-        h0 = memo.rect().height()
         _type(ed, "\n- 하나 더\n또 하나")                                              # 「- 」 = 목록, 목록에서 Enter = 목록 이어짐
         ed.commit()
         assert memo.raw["lines"][-2:] == [{"k": "ul", "t": "하나 더"}, {"k": "ul", "t": "또 하나"}]

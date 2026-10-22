@@ -6,7 +6,7 @@
 import copy
 
 from _shared import _app  # noqa: F401  (QApplication)
-from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QInputMethodEvent, QKeyEvent, QTextCursor
 from PyQt6.QtWidgets import QApplication
 
@@ -165,7 +165,7 @@ def test_keys_table_every_row_pressed():
             assert memo.raw["lines"] == want, (key, mods, start)
         finally:
             w.close()
-    assert seen == set(E.KEYS.values())                                            # 표의 동작을 다 눌러 봄
+    assert seen == set(E.KEYS.values()) - {"turn"}                                 # 표의 동작을 다 눌러 봄(전환 메뉴는 아래 따로)
 
 
 def test_ctrl_enter_outside_todo_finishes_and_keys_beat_window_shortcuts():
@@ -207,5 +207,251 @@ def test_paste_is_plain_text_and_lines_continue_like_enter():
         _key(ed, Qt.Key.Key_V, CTRL)
         ed.commit()
         assert memo.raw["lines"] == [{"k": "ul", "t": "첫째"}, {"k": "ul", "t": "둘째"}]
+    finally:
+        w.close()
+
+
+def _select_all(ed):
+    cur = ed.textCursor()
+    cur.select(QTextCursor.SelectionType.Document)
+    ed.setTextCursor(cur)
+    ed._sync_bar()
+
+
+def test_format_bar_shows_on_selection_and_buttons_style_text():
+    """웹 formatbar.jsx — 글을 고르면 위에 뜨고, 고른 게 없으면 숨음. 버튼을 눌러도 고치기가 안 끝남(포커스 안 뺏음)."""
+    w, memo, ed = _open([{"k": "p", "t": "가나다"}, {"k": "quote", "t": "인용"}])
+    try:
+        ed._sync_bar()
+        assert ed._bar is None or not ed._bar.isVisible()                            # 고른 게 없으면 없음
+        _select_all(ed)
+        bar = ed._bar
+        assert bar.isVisible() and bar.b["bold"].focusPolicy() == Qt.FocusPolicy.NoFocus
+        bar.b["bold"].click()
+        assert bar.b["bold"].property("on") is True and ed.isVisible()              # 켜진 버튼은 강조, 편집은 계속
+        bar.b["color"].click()
+        assert bar.pal.isVisible()
+        red = next(b for b in bar.pal.findChildren(type(bar.b["bold"])) if b.toolTip() == "빨강")
+        red.click()
+        assert not bar.pal.isVisible()
+        ed.commit()
+        assert memo.raw["lines"] == [{"k": "p", "t": "가나다", "runs": [[0, 3, "#ffd44c47", True]]},
+                                     {"k": "quote", "t": "인용", "runs": [[0, 2, "#ffd44c47", True]]}]   # 인용 회색 위에 고른 색이 저장됨
+    finally:
+        w.close()
+
+
+def test_format_bar_highlight_toggles_and_clear_resets_to_line_default():
+    w, memo, ed = _open([{"k": "p", "t": "가나", "runs": [[0, 2, "#ffd44c47", True]]}, {"k": "quote", "t": "인용", "runs": [[0, 2, "#ffd44c47", False]]}])
+    try:
+        _select_all(ed)
+        ed._bar.b["hl"].click()
+        doc = ed.document()
+        assert all(f.charFormat().hasProperty(E.QTextFormat.Property.BackgroundBrush) for f in [doc.begin().begin().fragment()])
+        ed._bar.b["hl"].click()                                                      # 다시 누르면 지움
+        assert not doc.begin().begin().fragment().charFormat().hasProperty(E.QTextFormat.Property.BackgroundBrush)
+        ed._bar.b["hl"].click()
+        ed._bar.b["clear"].click()                                                   # 꾸밈 지우기 = 줄 기본(인용은 회색 그대로 보이기만)
+        ed.commit()
+        assert memo.raw["lines"] == [{"k": "p", "t": "가나"}, {"k": "quote", "t": "인용"}]
+    finally:
+        w.close()
+
+
+def test_turn_menu_ctrl_slash_arrows_enter_and_esc_only_closes_menu():
+    """웹 memoedit.jsx 전환 메뉴 — Ctrl+/ 또는 막대 「줄 ▾」, ↑↓ Enter, Esc = 메뉴만 닫음, 다른 글쇠 = 닫고 글로."""
+    w, memo, ed = _open([{"k": "p", "t": "가"}])
+    try:
+        _key(ed, Qt.Key.Key_Slash, CTRL)
+        assert ed._turn is not None and [b.text() for b in ed._turn.items][:3] == ["텍스트", "제목1", "제목2"]
+        _key(ed, Qt.Key.Key_Escape)
+        assert ed._turn is None and ed.isVisible()                                   # 메뉴만 닫힘
+        _key(ed, Qt.Key.Key_Slash, CTRL)
+        _key(ed, Qt.Key.Key_Down)
+        _key(ed, Qt.Key.Key_Down)
+        _key(ed, Qt.Key.Key_Return)                                                  # 제목2
+        assert ed._turn is None
+        _key(ed, Qt.Key.Key_Slash, CTRL)
+        _key(ed, Qt.Key.Key_Up)                                                      # 맨 위에서 ↑ = 맨 아래(인용)로 돎
+        _key(ed, Qt.Key.Key_Return)
+        _type(ed, "\n")                                                              # (인용에서 Enter = 인용 이어짐)
+        _key(ed, Qt.Key.Key_Slash, CTRL)
+        _type(ed, "x")                                                               # 다른 글쇠 = 메뉴 닫고 글
+        assert ed._turn is None
+        ed.commit()
+        assert memo.raw["lines"] == [{"k": "quote", "t": "가"}, {"k": "quote", "t": "x"}]
+    finally:
+        w.close()
+    w, memo, ed = _open([{"k": "ul", "t": "가", "lv": 2}])
+    try:
+        _select_all(ed)
+        ed._bar.b["turn"].click()                                                    # 막대 「줄 ▾」도 같은 메뉴, 열린 동안 막대는 숨음
+        assert ed._turn is not None and not ed._bar.isVisible()
+        ed._turn.items[6].click()                                                    # 할 일 목록 — 목록에서 빠져나온 뒤(깊이 0)
+        ed.commit()
+        assert memo.raw["lines"] == [{"k": "todo", "t": "가"}]
+    finally:
+        w.close()
+
+
+# ---- 줄 손잡이 ⠿·줄 고르기·끌어 옮기기(웹 Editor.jsx 「메모 2차」) ----
+LL = [{"k": "h2", "t": "제목"}, {"k": "ul", "t": "가"}, {"k": "ul", "t": "가-1", "lv": 1}, {"k": "p", "t": "나"}, {"k": "todo", "t": "다"}]
+
+
+def _memo_win(lines=LL):
+    return _win_with({**copy.deepcopy(DOCS["memo"]), "lines": copy.deepcopy(lines)})
+
+
+def _row_scene(memo, i):
+    from easycad.canvas.core_memo import memo_layout
+    r = next(x for x in memo_layout(memo.raw, memo.rect().width())["rows"] if x["i"] == i)
+    return memo.mapToScene(QPointF(memo.rect().left() + 60, memo.rect().top() + r["cy"]))
+
+
+def _handle_scene(w, memo, i):
+    from easycad.canvas.core_memo import line_unit
+    from easycad.canvas.core_memo_lines import _zoom
+    memo._hov = tuple(line_unit(memo.raw["lines"], i))                                 # 마우스를 그 줄에 올린 것과 같음
+    return memo.mapToScene(memo.handle_rect(memo._hov[0], _zoom(w._view, memo)).center())
+
+
+def _press(w, scene, mods=NO, release_at=None):
+    from PyQt6.QtGui import QMouseEvent
+    v = w._view
+
+    def ev(t, p, btn, btns):
+        vp = v.mapFromScene(p)
+        return QMouseEvent(t, QPointF(vp), QPointF(v.viewport().mapToGlobal(vp)), btn, btns, mods)
+    v.mousePressEvent(ev(QEvent.Type.MouseButtonPress, scene, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton))
+    end = scene
+    if release_at is not None:
+        for t in (0.3, 0.7, 1.0):
+            v.mouseMoveEvent(ev(QEvent.Type.MouseMove, scene + (release_at - scene) * t, Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton))
+        end = release_at
+    v.mouseReleaseEvent(ev(QEvent.Type.MouseButtonRelease, end, Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton))
+    QApplication.processEvents()
+
+
+def test_line_unit_and_handle_rect_follow_web():
+    from easycad.canvas.core_memo import line_unit
+    assert [line_unit(LL, i) for i in range(5)] == [[0, 1], [1, 3], [2, 3], [3, 4], [4, 5]]   # 목록 = 더 깊은 아래 줄까지
+    w, (memo,) = _memo_win()
+    try:
+        b = memo.handle_rect(1, 1.0)
+        assert b.width() == 16 and b.right() <= memo.rect().left() + 26                 # 왼쪽 여백 안, 화면 16×22
+        assert memo.handle_rect(1, 0.25).right() < memo.rect().left()                   # 많이 줄이면 바깥으로
+        assert tuple(memo.row_at(memo.mapFromScene(_row_scene(memo, 2)))) == (2, 3)
+    finally:
+        w.close()
+
+
+def test_handle_click_selects_line_and_menu_then_shift_ctrl_pick():
+    from unittest.mock import patch
+    from PyQt6.QtWidgets import QMenu
+    w, (memo,) = _memo_win()
+    try:
+        with patch.object(QMenu, "popup") as pop:
+            _press(w, _handle_scene(w, memo, 1))                                         # 누르기 = 그 덩어리(가 + 가-1) 고르기 + 메뉴
+        assert memo._line_sel == {"s": 1, "e": 3} and pop.called and w._view._line_memo is memo
+        _press(w, _row_scene(memo, 4), SHIFT)                                            # 고른 채 Shift+줄 글자 = 이어서
+        assert memo._line_sel == {"s": 1, "e": 5}
+        memo.set_line_sel({"s": 0, "e": 1})
+        _press(w, _row_scene(memo, 3), CTRL)                                             # Ctrl+클릭 = 따로 더함
+        assert memo._line_sel == {"s": 3, "e": 4, "more": [[0, 1]]}
+        _press(w, _row_scene(memo, 0), CTRL)                                             # 다시 Ctrl+클릭 = 뺌
+        assert memo._line_sel == {"s": 3, "e": 4}
+        _press(w, memo.mapToScene(memo.rect().center()) + QPointF(0, 300))              # 다른 데 누르기 = 풂
+        assert memo._line_sel is None
+    finally:
+        w.close()
+
+
+def test_selected_lines_keys_delete_dup_todo_arrows_enter_and_undo():
+    w, (memo,) = _memo_win()
+    v = w._view
+    key = lambda k, m=NO: v.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, k, m, ""))   # noqa: E731
+    try:
+        memo.set_line_sel({"s": 3, "e": 4})                                              # 「나」
+        key(Qt.Key.Key_D, CTRL)
+        assert [l["t"] for l in memo.raw["lines"]] == ["제목", "가", "가-1", "나", "나", "다"] and memo._line_sel == {"s": 4, "e": 5}
+        key(Qt.Key.Key_Down, SHIFT)                                                      # 넓히기
+        assert memo._line_sel == {"s": 4, "e": 6}
+        key(Qt.Key.Key_Return, CTRL)                                                     # 고른 할 일 체크
+        assert memo.raw["lines"][5].get("done") is True
+        key(Qt.Key.Key_Delete)
+        assert [l["t"] for l in memo.raw["lines"]] == ["제목", "가", "가-1", "나"] and memo._line_sel is None
+        w.undo()
+        assert [l["t"] for l in memo.raw["lines"]] == ["제목", "가", "가-1", "나", "나", "다"]   # 지우기도 Ctrl+Z 한 칸
+        memo.set_line_sel({"s": 1, "e": 3})
+        key(Qt.Key.Key_Up)                                                               # 옮겨 고르기 = 위 덩어리
+        assert memo._line_sel == {"s": 0, "e": 1}
+        key(Qt.Key.Key_Escape)
+        assert memo._line_sel is None and v._line_memo is None
+        memo.set_line_sel({"s": 1, "e": 3})
+        key(Qt.Key.Key_Return)                                                           # Enter = 고치기, 커서는 그 줄 끝
+        ed = v._memo_editor
+        assert ed.isVisible() and ed.textCursor().block().text() == "가"
+        _type(ed, "!")
+        key(Qt.Key.Key_Escape)                                                           # 고치는 중 Esc(창 경로) = 마치고 커서 줄 고르기
+        assert memo.raw["lines"][1]["t"] == "가!" and memo._line_sel == {"s": 1, "e": 3} and memo._editor is None
+    finally:
+        w.close()
+
+
+def test_line_menu_turn_color_link_dup_delete():
+    w, (memo,) = _memo_win([{"k": "p", "t": "주소 https://a.kr 보기"}, {"k": "p", "t": "둘"}])
+    try:
+        def act(menu, text):
+            for a in menu.actions():
+                if a.menu() is not None:
+                    if act(a.menu(), text):
+                        return True
+                elif a.text().split("\t")[0] == text:
+                    a.trigger()
+                    return True
+            return False
+        assert act(memo.line_menu([[0, 1]]), "제목1")
+        assert memo.raw["lines"][0]["k"] == "h1"
+        assert act(memo.line_menu([[0, 2]]), "빨강 텍스트")                            # 여러 줄 한꺼번에(웹과 같은 색 값)
+        assert memo.raw["lines"][1]["runs"] == [[0, 1, "#d44c47", False]]
+        assert act(memo.line_menu([[1, 2]]), "노랑 배경")
+        assert memo.raw["lines"][1]["runs"] == [[0, 1, "#d44c47", False, "#66fdecc8"]]
+        assert act(memo.line_menu([[0, 1]]), "링크 끄기") and memo.raw["lines"][0]["nolink"] is True
+        assert "링크 켜기" in [a.text() for a in memo.line_menu([[0, 1]]).actions()]
+        assert act(memo.line_menu([[1, 2]]), "복제") and len(memo.raw["lines"]) == 3
+        assert act(memo.line_menu([[1, 3]]), "삭제") and len(memo.raw["lines"]) == 1
+        kinds = memo.line_menu([[0, 1]], kinds_only=True)                                 # Ctrl+/ = 전환 목록만
+        assert [a.text() for a in kinds.actions()][:2] == ["텍스트", "✓ 제목1"]
+    finally:
+        w.close()
+
+
+def test_drag_handle_reorders_moves_to_other_memo_and_out_to_new_memo():
+    from easycad.canvas.core_web import _MemoItem
+    other = {**copy.deepcopy(DOCS["memo"]), "uid": "m2", "pos": [700, 0], "lines": [{"k": "p", "t": "다른"}]}
+    w, (memo, m2) = _win_with({**copy.deepcopy(DOCS["memo"]), "lines": copy.deepcopy(LL)}, other)
+    m2._fit_height(m2.raw)
+    try:
+        _press(w, _handle_scene(w, memo, 3), release_at=_row_scene(memo, 0) - QPointF(0, 6))   # 「나」를 맨 위로
+        assert [l["t"] for l in memo.raw["lines"]] == ["나", "제목", "가", "가-1", "다"]
+        w.undo()
+        assert [l["t"] for l in memo.raw["lines"]] == [l["t"] for l in LL]
+        _press(w, _handle_scene(w, memo, 1), release_at=m2.mapToScene(m2.rect().bottomLeft()) + QPointF(60, -4))   # 「가」 덩어리를 다른 메모 끝으로
+        assert [l["t"] for l in m2.raw["lines"]] == ["다른", "가", "가-1"] and m2.raw["lines"][2]["lv"] == 1
+        assert [l["t"] for l in memo.raw["lines"]] == ["제목", "나", "다"]
+        w.undo()                                                                           # 두 메모가 Ctrl+Z 한 칸에
+        assert [l["t"] for l in m2.raw["lines"]] == ["다른"] and len(memo.raw["lines"]) == 5
+        n0 = len([x for x in w._scene.items() if isinstance(x, _MemoItem)])
+        _press(w, _handle_scene(w, memo, 4), release_at=memo.mapToScene(memo.rect().bottomLeft()) + QPointF(0, 400))   # 밖 = 새 메모
+        memos = [x for x in w._scene.items() if isinstance(x, _MemoItem)]
+        assert len(memos) == n0 + 1 and [l["t"] for l in memo.raw["lines"]] == ["제목", "가", "가-1", "나"]
+        new = next(x for x in memos if x not in (memo, m2))
+        assert new.raw["lines"] == [{"k": "todo", "t": "다"}] and new.isSelected()
+        w.undo()
+        assert len([x for x in w._scene.items() if isinstance(x, _MemoItem)]) == n0
+        _press(w, _handle_scene(w, m2, 0), release_at=memo.mapToScene(memo.rect().bottomLeft()) + QPointF(0, 400))   # 마지막 줄을 끌어내면 빈 메모는 지움
+        assert m2.scene() is None
+        w.undo()
+        assert m2.scene() is w._scene and m2.raw["lines"] == [{"k": "p", "t": "다른"}]
     finally:
         w.close()

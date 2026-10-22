@@ -8,10 +8,10 @@
 import copy
 import re
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt
 from PyQt6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QPainterPath, QPen, QTextBlockFormat, QTextCharFormat,
                          QTextCursor, QTextDocument, QTextFormat, QTextLength, QTextTableFormat)
-from PyQt6.QtWidgets import QGraphicsTextItem
+from PyQt6.QtWidgets import QFrame, QGraphicsTextItem, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from easycad.canvas.core_memo import (BOARD_M, CODE_BAND, LISTY, MEMO, MEMO_KIND, MONO_FAMILIES, MUTED, PT, TEXT_MARGIN,
                                       _board_families, _qcolor, _table_widths, ol_numbers)
@@ -274,7 +274,15 @@ KEYS = {
     "Ctrl+Alt+1": "h1", "Ctrl+Alt+2": "h2", "Ctrl+Alt+3": "h3", "Ctrl+Alt+0": "p",
     "Ctrl+Shift+B": "quote", "Ctrl+Alt+C": "code",
     "Ctrl+Return": "check_or_done",   # 할 일 줄이면 체크·해제, 아니면 마침(2026-10-18 사용자 선택)
+    "Ctrl+/": "turn",                 # 줄 종류 바꾸기 메뉴(memoedit.jsx openTurn)
 }
+# 꾸미기 막대(웹 formatbar.jsx)·전환 메뉴(memo.js LINE_KINDS)와 같은 목록
+LINE_KINDS = [("p", "텍스트"), ("h1", "제목1"), ("h2", "제목2"), ("h3", "제목3"), ("ul", "글머리 기호 목록"), ("ol", "번호 매기기 목록"),
+              ("todo", "할 일 목록"), ("code", "코드"), ("quote", "인용")]
+COLORS = [(None, "기본"), ("#d44c47", "빨강"), ("#d9730d", "주황"), ("#cb912f", "노랑"), ("#448361", "초록"), ("#337ea9", "파랑"),
+          ("#9065b0", "보라"), ("#c14c8a", "분홍"), ("#787774", "회색")]
+HL = QColor(255, 213, 79, 153)   # rgba(255,213,79,0.6)
+_COLOR_P, _BG_P = QTextFormat.Property.UserProperty + 8, QTextFormat.Property.UserProperty + 9   # 원래 값 그대로 되돌리려고 든 색(_char_fmt와 같은 번호)
 _SHIFTED = {"!": "1", "@": "2", "#": "3", "&": "7", "*": "8", "(": "9", ")": "0"}   # Shift+숫자가 기호로 오는 것
 
 
@@ -287,6 +295,8 @@ def key_name(e) -> str:
         name = chr(key)
     elif 32 < key < 127 and chr(key) in _SHIFTED:
         name = _SHIFTED[chr(key)]
+    elif key == Qt.Key.Key_Slash:
+        name = "/"
     else:
         return ""
     return "".join(p for p, m in (("Ctrl+", Qt.KeyboardModifier.ControlModifier), ("Shift+", Qt.KeyboardModifier.ShiftModifier),
@@ -297,6 +307,149 @@ def _is_mono(cf) -> bool:
     return bool(set(cf.fontFamilies() or []) & {"Consolas", "Cascadia Mono", "D2Coding"})   # _block_line과 같은 판정(맑은 고딕은 칠판 글꼴에도 있음)
 
 
+_POP_CSS = ("QWidget#memoPop { background: palette(window); border: 1px solid palette(mid); border-radius: 8px; }"
+            "QPushButton { border: 0; border-radius: 5px; padding: 0 6px; min-width: 26px; min-height: 26px; color: palette(text); background: transparent; text-align: left; }"
+            "QPushButton:hover { background: rgba(127,127,127,.16); } QPushButton[on=\"true\"] { background: rgba(218,119,86,.22); }")
+
+
+def _pop(parent) -> QWidget:
+    w = QWidget(parent)
+    w.setObjectName("memoPop")
+    w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    w.setStyleSheet(_POP_CSS)
+    w.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    return w
+
+
+def _btn(parent, text, tip, fn, rich=None) -> QPushButton:
+    b = QPushButton(text, parent)
+    b.setToolTip(tip)
+    b.setFocusPolicy(Qt.FocusPolicy.NoFocus)   # 눌러도 메모 편집기가 글쇠·커서를 잃지 않게(웹 mousedown 기본 동작 막기)
+    if rich:
+        b.setFont(rich)
+    b.clicked.connect(fn)
+    return b
+
+
+class _FmtBar(QWidget):
+    """드래그 꾸미기 막대(웹 formatbar.jsx) — 글을 고르면 그 위(자리가 없으면 아래)에. 뷰 화면 위 위젯이라 칠판 확대와 상관없이 같은 크기."""
+
+    def __init__(self, ed, parent):
+        super().__init__(parent)
+        self.setObjectName("memoPop")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(_POP_CSS)
+        self._ed = ed
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(2)
+        f = QFont(self.font())
+        bold, ital, und, strike, mono = QFont(f), QFont(f), QFont(f), QFont(f), QFont(f)
+        bold.setBold(True)
+        ital.setItalic(True)
+        und.setUnderline(True)
+        strike.setStrikeOut(True)
+        mono.setFamilies(MONO_FAMILIES)
+        self.b = {
+            "turn": _btn(self, "줄 ▾", "줄 종류 — 제목·목록·할 일·코드…", ed._open_turn),
+            "bold": _btn(self, "B", "굵게 (Ctrl+B)", lambda: ed._do("bold"), bold),
+            "italic": _btn(self, "I", "기울임 (Ctrl+I)", lambda: ed._do("italic"), ital),
+            "underline": _btn(self, "U", "밑줄 (Ctrl+U)", lambda: ed._do("underline"), und),
+            "strike": _btn(self, "S", "취소선 (Ctrl+Shift+X)", lambda: ed._do("strike"), strike),
+            "mono": _btn(self, "</>", "코드 — 고정폭 글꼴", lambda: ed._do("mono"), mono),
+            "color": _btn(self, "A", "글자색", self._toggle_pal),
+            "hl": _btn(self, "", "형광펜 — 다시 누르면 지워요", ed._toggle_hl),
+            "clear": _btn(self, "Tx", "꾸밈 지우기", ed._clear_marks),
+        }
+        for k, b in self.b.items():
+            if k in ("bold", "color", "clear"):
+                lay.addWidget(self._sep())
+            lay.addWidget(b)
+        self.b["hl"].setStyleSheet("QPushButton { background: rgba(255,213,79,.6); min-width: 16px; max-width: 16px; min-height: 12px; max-height: 12px; margin: 7px 5px; border-radius: 2px; }")
+        self.pal = _pop(parent)   # 글자색 9가지(웹과 같은 이름·색)
+        g = QGridLayout(self.pal)
+        g.setContentsMargins(6, 6, 6, 6)
+        g.setSpacing(2)
+        for i, (c, name) in enumerate(COLORS):
+            b = _btn(self.pal, f"A  {name}", name, lambda _=False, c=c: (ed._set_color(c), self.pal.hide()))
+            b.setStyleSheet(f"QPushButton {{ color: {c or 'palette(text)'}; min-width: 66px; }}")
+            g.addWidget(b, i // 3, i % 3)
+        self.pal.hide()
+        self.adjustSize()
+
+    def _sep(self):
+        s = QFrame(self)
+        s.setFrameShape(QFrame.Shape.VLine)
+        s.setFixedSize(1, 18)
+        s.setStyleSheet("background: palette(mid); border: 0;")
+        return s
+
+    def _toggle_pal(self):
+        if self.pal.isVisible():
+            self.pal.hide()
+            return
+        self.pal.adjustSize()
+        p = self.b["color"].mapTo(self.parentWidget(), QPoint(-4, self.b["color"].height() + 4))
+        self.pal.move(p)
+        self.pal.show()
+        self.pal.raise_()
+
+    def set_on(self, cf):
+        for k, on in (("bold", cf.fontWeight() >= 600), ("italic", cf.fontItalic()), ("underline", cf.fontUnderline()),
+                      ("strike", cf.fontStrikeOut()), ("mono", _is_mono(cf)), ("color", self.pal.isVisible())):
+            if self.b[k].property("on") != on:
+                self.b[k].setProperty("on", on)
+                self.b[k].style().unpolish(self.b[k])
+                self.b[k].style().polish(self.b[k])
+
+    def close_all(self):
+        self.pal.deleteLater()
+        self.deleteLater()
+
+
+class _TurnMenu(QWidget):
+    """전환 메뉴(Ctrl+/ · 막대 「줄 ▾」, 웹 memoedit.jsx) — ↑↓ Enter. 글쇠는 편집기가 받아 넘겨 줌(편집기가 글쇠를 안 잃게)."""
+
+    def __init__(self, ed, parent):
+        super().__init__(parent)
+        self.setObjectName("memoPop")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(_POP_CSS)
+        self._ed, self.at = ed, 0
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(0)
+        cap = QLabel("전환 · ↑↓ Enter", self)
+        cap.setStyleSheet("color: palette(placeholder-text); padding: 3px 10px 5px; font-size: 11px;")
+        lay.addWidget(cap)
+        self.items = []
+        for k, name in LINE_KINDS:
+            b = _btn(self, name, name, lambda _=False, k=k: ed._turn_into(k))
+            b.setMinimumWidth(170)
+            lay.addWidget(b)
+            self.items.append(b)
+        self.adjustSize()
+        self.mark()
+
+    def mark(self):
+        for j, b in enumerate(self.items):
+            b.setProperty("on", j == self.at)
+            b.style().unpolish(b)
+            b.style().polish(b)
+
+    def key(self, e) -> bool:
+        """글쇠 하나 — 메뉴가 쓰면 True(↑↓ Enter Esc), 다른 글쇠면 메뉴를 닫고 False(그 글쇠는 글로)."""
+        if e.key() in (Qt.Key.Key_Down, Qt.Key.Key_Up):
+            self.at = (self.at + (1 if e.key() == Qt.Key.Key_Down else len(LINE_KINDS) - 1)) % len(LINE_KINDS)
+            self.mark()
+            return True
+        if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._ed._turn_into(LINE_KINDS[self.at][0])
+            return True
+        self._ed._close_turn()
+        return e.key() == Qt.Key.Key_Escape
+
+
 class _MemoTextEdit(QGraphicsTextItem):
     """메모 자리 편집 글 상자 — 메모(`core_web._MemoItem`)의 자식. 마치면(Esc·바깥 누르기) 메모 줄로 저장."""
 
@@ -304,6 +457,7 @@ class _MemoTextEdit(QGraphicsTextItem):
         super().__init__(memo)
         self._memo, self._done = memo, False
         self._ruled = False   # 방금 입력 규칙이 걸림(다음 Backspace = 되돌리기)
+        self._bar = self._turn = None   # 꾸미기 막대·전환 메뉴(뷰 화면 위 위젯 — 처음 쓸 때 만듦)
         r = memo.rect()
         self.setPos(r.x() + MEMO["LPAD"] - TEXT_MARGIN, r.y() + MEMO["PAD"])
         self.setDefaultTextColor(INK)
@@ -311,6 +465,7 @@ class _MemoTextEdit(QGraphicsTextItem):
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
         self.document().contentsChanged.connect(self._grow)
         self.setZValue(1)
+        self._grow()   # 열 때도 글 높이에 맞춤(저장된 높이가 글과 달라도 테두리가 글을 감쌈)
 
     # 메모 높이 = 글 높이(고치는 동안 늘고 줆 — 기록은 마칠 때 한 번)
     def _grow(self):
@@ -320,17 +475,57 @@ class _MemoTextEdit(QGraphicsTextItem):
             self._memo.prepareGeometryChange()
             super(type(self._memo), self._memo).setRect(QRectF(r.x(), r.y(), r.width(), need))
 
-    def start(self):
+    def start(self, caret=None):
+        """caret = 커서를 둘 메모 줄 번호(그 줄 끝), 없으면 맨 끝."""
         self.setFocus(Qt.FocusReason.MouseFocusReason)
         cur = self.textCursor()
         cur.movePosition(QTextCursor.MoveOperation.End)
+        units = self._line_units()
+        if caret is not None and 0 <= caret < len(units):
+            u = units[caret]
+            if hasattr(u, "lastCursorPosition"):   # 표 줄 = 표 마지막 칸 끝
+                cur = u.lastCursorPosition()
+            else:
+                cur.setPosition(u.position() + len(u.text()))
         self.setTextCursor(cur)
+
+    def _line_units(self):
+        """메모 줄 차례의 문서 덩어리(블록 또는 표) — doc_to_lines와 같은 차례(표 앞뒤 빈 _skip 블록은 줄이 아님)."""
+        out, it = [], self.document().rootFrame().begin()
+        while not it.atEnd():
+            fr, b = it.currentFrame(), it.currentBlock()
+            if fr is not None:
+                out.append(fr)
+            elif b.isValid() and not (b.blockFormat().property(KIND) == "_skip" and not b.text()):
+                out.append(b)
+            it += 1
+        return out
+
+    def _caret_line(self) -> int:
+        pos = self.textCursor().position()
+        for i, u in enumerate(self._line_units()):
+            a, z = (u.firstPosition(), u.lastPosition()) if hasattr(u, "lastPosition") else (u.position(), u.position() + len(u.text()))
+            if a <= pos <= z:
+                return i
+        return 0
+
+    def esc(self):
+        """Esc = 마치고 커서 줄 고르기(웹 Finish — 그 상태에서 Ctrl+D·Del·Ctrl+/)."""
+        i = self._caret_line()
+        memo = self._memo
+        self.commit()
+        from easycad.canvas.core_memo import line_unit
+        lines = memo.raw.get("lines") or []
+        if 0 <= i < len(lines):
+            s, e = line_unit(lines, i)
+            memo.set_line_sel({"s": s, "e": e})
 
     # ---- 마치기 ----
     def commit(self):
         if self._done:
             return
         self._done = True
+        self._close_widgets()
         memo = self._memo
         new = doc_to_lines(self.document(), memo.raw.get("lines"))
         memo._end_edit(self, new)
@@ -339,7 +534,156 @@ class _MemoTextEdit(QGraphicsTextItem):
         if self._done:
             return
         self._done = True
+        self._close_widgets()
         self._memo._end_edit(self, None)
+
+    def _close_widgets(self):
+        if self._bar is not None:
+            self._bar.close_all()
+        if self._turn is not None:
+            self._turn.deleteLater()
+        self._bar = self._turn = None
+
+    # ---- 꾸미기 막대·전환 메뉴 ----
+    def _viewport(self):
+        sc = self.scene()
+        return sc.views()[0].viewport() if sc is not None and sc.views() else None
+
+    def _caret_rect(self, pos: int) -> QRectF:
+        """문서 자리 pos의 글줄 상자(아이템 좌표, 폭 0)."""
+        b = self.document().findBlock(pos)
+        lay = b.layout()
+        ln = lay.lineForTextPosition(pos - b.position())
+        if not ln.isValid():
+            return QRectF(lay.position(), lay.position())
+        base = lay.position()
+        return QRectF(base.x() + ln.cursorToX(pos - b.position())[0], base.y() + ln.y(), 0, ln.height())
+
+    def _to_vp(self, p: QPointF) -> QPoint:
+        v = self.scene().views()[0]
+        return v.mapFromScene(self.mapToScene(p))
+
+    def _sync_bar(self):
+        """고른 글이 있으면 막대를 그 위에(자리가 없으면 아래), 없으면 숨김 — 웹 FormatBar와 같은 조건."""
+        vp = self._viewport()
+        cur = self.textCursor()
+        if self._done or vp is None or not cur.hasSelection() or self._turn is not None:
+            if self._bar is not None:
+                self._bar.hide()
+                self._bar.pal.hide()
+            return
+        if self._bar is None:
+            self._bar = _FmtBar(self, vp)
+        self._bar.set_on(cur.charFormat())
+        self._place_bar()
+        self._bar.show()
+        self._bar.raise_()
+
+    def _place_bar(self):
+        cur, bar, vp = self.textCursor(), self._bar, self._viewport()
+        a, z = self._caret_rect(cur.selectionStart()), self._caret_rect(cur.selectionEnd())
+        top, bot = self._to_vp(QPointF(min(a.left(), z.left()), min(a.top(), z.top()))), self._to_vp(QPointF(0, max(a.bottom(), z.bottom())))
+        y = top.y() - bar.height() - 8
+        y = y if y >= 4 else bot.y() + 8
+        x = max(8, min(vp.width() - bar.width() - 8, top.x()))
+        if bar.pos() != QPoint(x, y):
+            bar.move(x, y)
+
+    def _open_turn(self):
+        vp = self._viewport()
+        if vp is None:
+            return
+        self._close_turn()
+        self._turn = _TurnMenu(self, vp)
+        r = self._caret_rect(self.textCursor().position())
+        p = self._to_vp(r.bottomLeft())
+        self._turn.move(max(4, min(vp.width() - self._turn.width() - 4, p.x())), p.y() + 4)
+        self._turn.show()
+        self._turn.raise_()
+        self._sync_bar()
+
+    def _close_turn(self):
+        if self._turn is not None:
+            self._turn.deleteLater()
+            self._turn = None
+        self._sync_bar()
+
+    def _turn_into(self, k):
+        """커서(고른) 줄 종류 바꾸기 — 목록·인용에서 빠져나온 뒤 바꿈(웹 turnInto = clearNodes 후)."""
+        cur = self.textCursor()
+        for b in self._sel_blocks(cur):
+            if self._kind(QTextCursor(b)) != "_skip":
+                self._set_kind(QTextCursor(b), k, 0)
+        self.setTextCursor(cur)
+        self._close_turn()
+
+    def _each_frag(self, fn):
+        """고른 글의 글자 조각마다 fn(서식, 블록) → 새 서식으로 바꿔 씀(속성을 지울 수 있게 merge 대신 set)."""
+        todo = self._frags()
+        c = QTextCursor(self.document())
+        c.beginEditBlock()
+        for a, z, cf, blk in todo:
+            c.setPosition(a)
+            c.setPosition(z, QTextCursor.MoveMode.KeepAnchor)
+            c.setCharFormat(fn(cf, blk))
+        c.endEditBlock()
+
+    def _frags(self):
+        """고른 글의 글자 조각 [(처음, 끝, 서식, 블록)]."""
+        cur, doc = self.textCursor(), self.document()
+        s, e = cur.selectionStart(), cur.selectionEnd()
+        todo, b = [], doc.findBlock(s)
+        while b.isValid() and b.position() <= e:
+            it = b.begin()
+            while not it.atEnd():
+                fr = it.fragment()
+                a, z = max(s, fr.position()), min(e, fr.position() + fr.length())
+                if a < z:
+                    todo.append((a, z, QTextCharFormat(fr.charFormat()), b))
+                it += 1
+            b = b.next()
+        return todo
+
+    def _derive(self, cf, blk):
+        """색을 지운 뒤 — 끝난 할 일·인용의 회색 글은 다시(보이기만, 저장 칸 아님)."""
+        k, done = blk.blockFormat().property(KIND) or "p", bool(blk.blockFormat().property(DONE))
+        if (k == "todo" and done) or k == "quote":
+            cf.setForeground(_char_fmt(k, None, done).foreground())
+            cf.setProperty(DERIVED, True)
+        return cf
+
+    def _set_color(self, c):
+        def fn(cf, blk):
+            for p in (QTextFormat.Property.ForegroundBrush, _COLOR_P, DERIVED):
+                cf.clearProperty(p)
+            if c is None:
+                return self._derive(cf, blk)
+            q = QColor(c)
+            cf.setForeground(QBrush(q))
+            cf.setProperty(_COLOR_P, _hex(q))
+            return cf
+        self._each_frag(fn)
+        self._sync_bar()
+
+    def _toggle_hl(self):
+        cur = self.textCursor()
+        frs = [cf.hasProperty(QTextFormat.Property.BackgroundBrush) for _, _, cf, _ in self._frags()]
+        off = bool(frs) and all(frs)   # 모두 형광펜이면 지움(웹 hl ? unset : set)
+
+        def fn(cf, blk):
+            cf.clearProperty(QTextFormat.Property.BackgroundBrush)
+            cf.clearProperty(_BG_P)
+            if not off:
+                cf.setBackground(QBrush(HL))
+                cf.setProperty(_BG_P, _hex(HL))
+            return cf
+        self._each_frag(fn)
+        self.setTextCursor(cur)
+        self._sync_bar()
+
+    def _clear_marks(self):   # 꾸밈 지우기(웹 unsetAllMarks) — 그 줄 기본 글로
+        self._each_frag(lambda cf, blk: _char_fmt(blk.blockFormat().property(KIND) or "p", None, bool(blk.blockFormat().property(DONE))))
+        self._sync_bar()
 
     def close(self):   # 옛 편집 칸과 같은 이름(시험·호출부) — 저장하고 닫음
         self.commit()
@@ -383,13 +727,27 @@ class _MemoTextEdit(QGraphicsTextItem):
         return cur.block().blockFormat().property(KIND) or "p"
 
     def keyPressEvent(self, e):
+        if self._turn is not None and self._turn.key(e):   # 전환 메뉴가 떠 있으면 ↑↓ Enter Esc는 메뉴가
+            return
+        self._key(e)
+        self._sync_bar()
+
+    def mouseReleaseEvent(self, e):
+        super().mouseReleaseEvent(e)
+        self._sync_bar()
+
+    def mouseMoveEvent(self, e):
+        super().mouseMoveEvent(e)
+        self._sync_bar()
+
+    def _key(self, e):
         cur = self.textCursor()
         k, key, mods = self._kind(cur), e.key(), e.modifiers()
         ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         ruled, self._ruled = self._ruled, False
         if key == Qt.Key.Key_Escape:
-            self.commit()
+            self.esc()
             return
         act = KEYS.get(key_name(e))
         if act:
@@ -570,6 +928,9 @@ class _MemoTextEdit(QGraphicsTextItem):
     # ---- 글쇠 동작(KEYS) ----
     def _do(self, act):
         cur = self.textCursor()
+        if act == "turn":
+            self._open_turn()
+            return
         if act == "check_or_done":
             todos = [b for b in self._sel_blocks(cur) if self._kind(QTextCursor(b)) == "todo"]
             if not todos:
@@ -594,6 +955,7 @@ class _MemoTextEdit(QGraphicsTextItem):
                 m.setFontFamilies(_char_fmt(self._kind(cur)).fontFamilies() if _is_mono(cf) else MONO_FAMILIES)
             cur.mergeCharFormat(m)
             self.setTextCursor(cur)
+            self._sync_bar()   # 막대 버튼으로 눌렀을 때도 켜짐 표시
             return
         blocks = self._sel_blocks(cur)   # 줄 종류 켜고 끄기 — 고른 줄 모두
         off = all(self._kind(QTextCursor(b)) == act for b in blocks)
@@ -707,6 +1069,8 @@ class _MemoTextEdit(QGraphicsTextItem):
                     lw = QFontMetricsF(_base_font("todo")).horizontalAdvance(b.text())
                     x0 = TEXT_MARGIN + bf.leftMargin()
                     p.drawLine(QPointF(x0, top + lh * 0.55), QPointF(x0 + min(lw, w - x0), top + lh * 0.55))
+        if self._bar is not None and self._bar.isVisible():   # 칠판을 확대·이동하면 막대도 고른 글 위로 따라감
+            self._place_bar()
         from PyQt6.QtWidgets import QStyle, QStyleOptionGraphicsItem
         opt = QStyleOptionGraphicsItem(option)
         opt.state &= ~(QStyle.StateFlag.State_HasFocus | QStyle.StateFlag.State_Selected)   # Qt 기본 점선 테두리 끔(메모 테두리가 곧 편집 자리)

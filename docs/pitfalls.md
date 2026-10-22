@@ -1691,3 +1691,5 @@
 - 데스크톱에 웹 기능을 옮길 땐 웹 쪽 실제 규칙(TipTap 확장·`keys.js`)을 목록으로 뽑아 하나씩 대조 — 기억으로 일부만 옮기면 「웹과 다르다」가 됨(2026-10-22 메모 `---`·백틱·Ctrl+Enter).
 - 웹 정규식을 파이썬으로 옮길 때 JS `$` → `\Z` — 파이썬 `$`는 끝 줄바꿈 앞에서도 맞아서 「---\n」이 `^---$`에 걸림(2026-10-22 메모 입력 규칙)
 - `QTest.keyClicks(widget, "한글")`은 PyQt6 실제 화면에서 앱을 0xC0000409로 죽임(파이썬 오류도 안 남음) — 한글은 `QKeyEvent(KeyPress, Key_unknown, NoModifier, "가")`를 `sendEvent`로(2026-10-22)
+- 데스크톱 칠판 아이템은 `setAcceptHoverEvents` + `hoverMoveEvent`로 마우스 올림을 못 받음 — 뷰 `mouseMoveEvent`가 장면에 안 넘김. 올림 표시는 뷰가 직접 계산(`_hover_port_at`·`memo_hover`처럼)(2026-10-22)
+- PyQt6 실제 화면에서 `QTest.mouseMove(viewport, pt)`는 뷰 mouseMoveEvent에 바로 안 닿음 — 확인 스크립트는 `QApplication.sendEvent(viewport, QMouseEvent(MouseMove, ...))`(2026-10-22)

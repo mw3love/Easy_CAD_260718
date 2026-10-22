@@ -494,3 +494,133 @@ def md_to_lines(text: str, old_lines=None):
             continue
         out.append(keep({"k": "p", "t": s}))
     return out or [{"k": "p", "t": ""}]
+
+
+# ---- 메모 줄 고르기·옮기기(웹 memo.js lineUnit·selUnits·moveLines·pickLines·convertLine·recolorLine·toggleTodos 옮김 — 웹을 고치면 여기도) ----
+# 줄 색(노션 「색」 — 글자 / 배경). 배경은 옅게(형광펜처럼 글자 뒤) — 웹 LINE_COLORS
+LINE_COLORS = [("기본", None, None), ("회색", "#787774", "#55e3e2e0"), ("갈색", "#9f6b53", "#55eee0da"), ("주황", "#d9730d", "#55fadec9"),
+               ("노랑", "#cb912f", "#66fdecc8"), ("초록", "#448361", "#55dbeddb"), ("파랑", "#337ea9", "#55d3e5ef"), ("보라", "#9065b0", "#55e8deee"),
+               ("분홍", "#c14c8a", "#55f5e0e9"), ("빨강", "#d44c47", "#55ffe2dd")]
+
+
+def line_unit(lines, i):
+    """i번 줄이 속한 덩어리 [s, e) — 코드·인용은 이어진 줄 전부, 목록은 더 깊은 아래 줄까지."""
+    if not (0 <= i < len(lines)):
+        return [i, i]
+    k = lines[i].get("k")
+    if k in ("code", "quote"):
+        s, e = i, i + 1
+        while s > 0 and lines[s - 1].get("k") == k:
+            s -= 1
+        while e < len(lines) and lines[e].get("k") == k:
+            e += 1
+        return [s, e]
+    e = i + 1
+    if k in LISTY:
+        while e < len(lines) and lines[e].get("k") in LISTY and (lines[e].get("lv") or 0) > (lines[i].get("lv") or 0):
+            e += 1
+    return [i, e]
+
+
+def sel_units(ls):
+    return sorted([list(u) for u in ls.get("more") or []] + [[ls["s"], ls["e"]]])
+
+
+def sel_idx(ls):
+    return [i for s, e in sel_units(ls) for i in range(s, e)]
+
+
+def move_lines(lines, idx, to, copy_=False):
+    """고른 줄들을 to 자리로(같은 메모) — copy_ = 원래 줄은 둠. 끼울 자리는 원래 줄 번호 기준."""
+    import copy as _c
+    on = set(idx)
+    picked = [_c.deepcopy(lines[i]) if copy_ else lines[i] for i in idx]
+    rest = list(lines) if copy_ else [l for i, l in enumerate(lines) if i not in on]
+    at = to if copy_ else to - len([i for i in idx if i < to])
+    return rest[:at] + picked + rest[at:]
+
+
+def pick_lines(lines, idx):
+    """고른 줄들 떼어 내기(다른 메모·새 메모로) — 깊이는 맨 앞 줄 기준 0부터."""
+    import copy as _c
+    base = lines[idx[0]].get("lv") or 0 if idx else 0
+    out = []
+    for i in idx:
+        o = _c.deepcopy(lines[i])
+        lv = (o.get("lv") or 0) - base
+        if lv > 0:
+            o["lv"] = lv
+        else:
+            o.pop("lv", None)
+        out.append(o)
+    return out
+
+
+def convert_line(ln, k):
+    """줄 종류 바꾸기(전환) — 코드는 부분 서식 없이, 할 일이 아니면 체크 없음, 목록이 아니면 깊이 없음. 구분선·표는 그대로."""
+    if ln.get("k") in ("hr", "table"):
+        return ln
+    o = {**ln, "k": k}
+    if k == "code":
+        o.pop("runs", None)
+    if k != "todo":
+        o.pop("done", None)
+    if k not in LISTY:
+        o.pop("lv", None)
+    return o
+
+
+def recolor_line(ln, color=..., bg=...):
+    """줄 전체 글자색·배경 — 다른 꾸밈(굵게·고정폭·기울임 등)은 그대로. ... = 그 칸은 안 바꿈."""
+    t = ln.get("t") or ""
+    n = len(t)
+    if not n or ln.get("k") in ("code", "hr"):
+        return ln
+    at = [[None, False, None, False, ""] for _ in range(n)]
+    for r in ln.get("runs") or []:
+        s, length = int(r[0]), int(r[1])
+        for i in range(max(0, s), min(n, s + length)):
+            at[i] = [r[2] if len(r) > 2 else None, bool(r[3]) if len(r) > 3 else False, r[4] if len(r) > 4 else None,
+                     bool(r[5]) if len(r) > 5 else False, (r[6] if len(r) > 6 else "") or ""]
+    for a in at:
+        if color is not ...:
+            a[0] = color
+        if bg is not ...:
+            a[2] = bg
+    runs, i = [], 0
+    while i < n:
+        j = i + 1
+        while j < n and at[j] == at[i]:
+            j += 1
+        c, b, g, m, d = at[i]
+        if d:
+            runs.append([i, j - i, c, b, g, m, d])
+        elif m:
+            runs.append([i, j - i, c, b, g, True])
+        elif c or b or g:
+            runs.append([i, j - i, c, b, *([g] if g else [])])
+        i = j
+    o = dict(ln)
+    if runs:
+        o["runs"] = runs
+    else:
+        o.pop("runs", None)
+    return o
+
+
+def toggle_todos(lines, idx):
+    """고른 줄 중 할 일만 — 하나라도 안 끝났으면 모두 끝, 모두 끝났으면 모두 풂. 할 일이 없으면 None."""
+    todo = [i for i in idx if 0 <= i < len(lines) and lines[i].get("k") == "todo"]
+    if not todo:
+        return None
+    done = not all(lines[i].get("done") for i in todo)
+    out = []
+    for j, l in enumerate(lines):
+        if j in todo:
+            l = dict(l)
+            if done:
+                l["done"] = True
+            else:
+                l.pop("done", None)
+        out.append(l)
+    return out

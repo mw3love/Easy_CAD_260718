@@ -2587,6 +2587,15 @@ class _AnnotatorView(QGraphicsView):
         draw_staging = getattr(self._owner, "_draw_ai_staging", None)
         if draw_staging is not None:
             draw_staging(self, painter)
+        out = getattr(self, "_mline_out", None)
+        if out is not None:   # [§8 항목61 ④-3] 메모 줄을 메모 밖으로 끄는 중 = 새 메모 자리(웹 mdrop.out 점선 상자)
+            z = abs(self.transform().m11()) or 1.0
+            painter.save()
+            pen = QPen(QColor("#2f80ed"), 1.5 / z, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(QColor(137, 180, 250, 31))
+            painter.drawRoundedRect(QRectF(out.x() - 24 / z, out.y() - 16 / z, 200 / z, 34 / z), 8 / z, 8 / z)
+            painter.restore()
         if not self._owner.is_edit_mode():
             return
         s = self._view_scale()
@@ -2857,6 +2866,16 @@ class _AnnotatorView(QGraphicsView):
                 and fi.textInteractionFlags() != Qt.TextInteractionFlag.NoTextInteraction \
                 and fi not in self.items(event.position().toPoint()):
             fi.clearFocus()
+        # [우리 확장 · §8 항목61 ④-3] 메모 줄 손잡이 ⠿(누르기 = 고르기 + 메뉴, 끌기 = 옮기기) · 고른 줄 Shift·Ctrl+클릭 — 웹 Editor.jsx 「메모 2차」
+        if self._owner.current_tool == "select" and event.button() == Qt.MouseButton.LeftButton:
+            from easycad.canvas.core_memo_lines import _memos_at
+            for memo in _memos_at(self, self._press_scene, 28, 0):
+                if memo.line_press(self, memo.mapFromScene(self._press_scene), event.modifiers(), self._press_scene):
+                    event.accept()
+                    return
+            lm = getattr(self, "_line_memo", None)
+            if lm is not None:   # 다른 데를 누르면 고른 줄 풂
+                lm.set_line_sel(None)
         # [우리 확장 · §8 항목61 ④-3] 메모 할 일 상자 누르기 = 체크(웹과 같게 — 고르지 않고 바로)
         if self._owner.current_tool == "select" and not event.modifiers():
             web = self._web_at(event.position().toPoint())
@@ -3897,6 +3916,9 @@ class _AnnotatorView(QGraphicsView):
     def mouseMoveEvent(self, event):
         # [성능계획 2-D] 드래그 프록시 진입점 — 어떤 드래그든 반드시 이 함수를 지나가므로
         # press 경로 6곳에 흩지 않고 여기 한 곳에서 켠다(유휴 hover는 불리언 검사 1회로 끝).
+        if getattr(self, "_mline", None) is not None:   # [§8 항목61 ④-3] 메모 줄 끄는 중
+            self._mline["memo"].line_drag_move(self, self.mapToScene(event.position().toPoint()))
+            return
         self._ensure_drag_proxy()
         if event.buttons() & Qt.MouseButton.MiddleButton:
             self._owner._win_drag_move(event.globalPosition().toPoint())
@@ -4080,6 +4102,10 @@ class _AnnotatorView(QGraphicsView):
                     _dbg(f"HOVER trim scene=({sp.x():.1f},{sp.y():.1f}) preview={self._trim_preview!r}")
                 self.viewport().update()
             self._update_hover_cursor(event.position().toPoint())
+            # [§8 항목61 ④-3] 메모 줄 손잡이 ⠿ — 마우스가 올라간 줄 왼쪽에(웹 memoHov), 손잡이 위면 손 모양 커서
+            from easycad.canvas.core_memo_lines import memo_hover
+            if self._owner.current_tool == "select" and memo_hover(self, self.mapToScene(event.position().toPoint())):
+                self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
         if self._drawing and self._temp is not None:
             tool = self._owner.current_tool
             if tool == "arrow":
@@ -4161,6 +4187,9 @@ class _AnnotatorView(QGraphicsView):
 
         실제 처리는 `_mouse_release_impl`에 그대로 두고, 여기서 `try/finally`로 종료 처리만
         감싼다 — 13곳에 각각 넣는 것보다 안전하고, 앞으로 return이 늘어도 자동으로 덮인다."""
+        if getattr(self, "_mline", None) is not None:   # [§8 항목61 ④-3] 메모 줄 끌기 끝(제자리 = 고르기 + 메뉴)
+            self._mline["memo"].line_drag_end(self, self.mapToScene(event.position().toPoint()), event.globalPosition().toPoint())
+            return
         try:
             return self._mouse_release_impl(event)
         finally:
@@ -4621,9 +4650,15 @@ class _AnnotatorView(QGraphicsView):
                 self._cancel_csym_drag()
                 return
         if editing_text and key == Qt.Key.Key_Escape:
+            if hasattr(fi, "esc"):   # [§8 항목61 ④-3] 메모 고치기 = 마치고 커서 줄 고르기(웹 — 메뉴가 떠 있으면 메뉴만 닫음)
+                fi.keyPressEvent(event)
+                return
             # 텍스트 편집 중 ESC = 편집기 닫기가 아니라 텍스트 완료(=Ctrl+Enter와 동일).
             # clearFocus → focusOutEvent가 정리(빈 텍스트 폐기 / 비어있지 않으면 선택 해제).
             fi.clearFocus()
+            return
+        lm = getattr(self, "_line_memo", None)   # [§8 항목61 ④-3] 고른 메모 줄 — Esc·Del·Ctrl+D·Ctrl+/·Ctrl+Enter·Enter·↑↓
+        if lm is not None and not editing_text and lm.scene() is self.scene() and lm.line_key(self, event):
             return
         # [마인드맵 뻗기, 2026-08-24] 텍스트 편집 중에도 Tab/Enter가 즉시 다음 노드를
         # 만든다(deep-interview 확정 — "쓰면서 뻗어나가는" 흐름이 핵심). Shift+Enter(줄바꿈)
