@@ -408,6 +408,12 @@ class _CanvasMixin:
             b.setChecked(k == key)
 
 
+    def badge_color(self):
+        """[§8 항목61 손맛 2026-10-22] 새 번호표 색 — 기본 잉크(안 고른 색)면 코랄(웹 `sticky.color === INK ? 코랄`).
+        전엔 다크 화면 기본 잉크(흰색) 바탕에 흰 숫자라 번호가 안 보였음."""
+        from PyQt6.QtGui import QColor
+        return QColor("#da7756") if getattr(self, "_color_is_default", False) else QColor(self.current_color)
+
     def next_badge_number(self) -> int:
         # [2026-10-20] 남은 번호표 중 가장 큰 번호 + 1(사용자: 3을 지우면 다시 3 — 중간 빈 번호는 안 채움, 웹 `nextBadge`와 같게).
         # 옛 방식(마지막으로 준 번호 + 1)은 지워도 되돌리지 않았다. `_badge_n`은 문서별 상태라 그대로 맞춰 둠.

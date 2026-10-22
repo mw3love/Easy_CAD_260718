@@ -229,3 +229,73 @@ def test_cell_selected_attaches_ime_and_korean_opens_cell_editor():
         assert v._cell_editor is not None and v._cell_editor.isVisible()
     finally:
         w.close()
+
+
+# ---- 위 막대 버튼을 칠판으로 끌어 놓기(웹 startToolDrag) ----
+def _tb_drag(w, btn, vp_pt, release=True):
+    """버튼에 누르기 → (6px 넘게) 끌기 → 칠판 vp_pt에서 놓기 — 이벤트를 버튼에 직접(화면 커서 안 건드림)."""
+    from PyQt6.QtCore import QPoint, QPointF
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtWidgets import QApplication
+    vp = w._view.viewport()
+    start = btn.rect().center()
+    g0, g1 = btn.mapToGlobal(start), vp.mapToGlobal(vp_pt)
+
+    def ev(t, g, b, bs):
+        return QMouseEvent(t, QPointF(btn.mapFromGlobal(g)), QPointF(g), b, bs, NO)
+    L = Qt.MouseButton.LeftButton
+    QApplication.sendEvent(btn, ev(QEvent.Type.MouseButtonPress, g0, L, L))
+    for f in (0.02, 0.3, 0.7, 1.0):
+        QApplication.sendEvent(btn, ev(QEvent.Type.MouseMove, g0 + (g1 - g0) * f, Qt.MouseButton.NoButton, L))
+    if release:
+        QApplication.sendEvent(btn, ev(QEvent.Type.MouseButtonRelease, g1, L, Qt.MouseButton.NoButton))
+    QApplication.processEvents()
+
+
+def _tb_win():
+    w, _ = _win_with()
+    sp = getattr(w, "_start_prompt", None)
+    if sp is not None:
+        sp.hide()                                                                        # 가운데 「무엇을 그릴까요?」 칸(패널 위는 놓기 취소)
+    btns = {k: b for b, k in w._toolbar_drag._keys.items()}
+    return w, btns
+
+
+def test_toolbar_buttons_drag_to_board_place_default_item_at_drop():
+    from PyQt6.QtCore import QPoint
+    from easycad.canvas.core_shapes import _BadgeItem, _LineItem, _PolyArrowItem, _TableItem
+    from easycad.canvas.core_web import _MemoItem
+    w, btns = _tb_win()
+    v = w._view
+    try:
+        assert set(btns) == {"arrow", "text", "line", "badge", "memo", "table"}
+        for i, (k, cls) in enumerate((("arrow", _PolyArrowItem), ("line", _LineItem), ("badge", _BadgeItem), ("memo", _MemoItem), ("table", _TableItem))):
+            pt = QPoint(400 + (i % 3) * 300, 200 + (i // 3) * 300)
+            _tb_drag(w, btns[k], pt)
+            made = [it for it in w._scene.items() if type(it) is cls and it.parentItem() is None]
+            assert len(made) == 1, k
+            it = made[0]
+            assert it.sceneBoundingRect().adjusted(-30, -30, 30, 30).contains(v.mapToScene(pt)), k   # 놓은 자리(가운데)에
+            assert it.opacity() == 1.0 and it.isSelected(), k                                  # 확정 — 반투명 아님, 골라진 채
+        assert w.current_tool == "select"                                                        # 도구는 안 바뀜(끌기 = 놓기만)
+        w.undo()
+        assert not [it for it in w._scene.items() if type(it) is _TableItem]                     # 하나씩 Ctrl+Z 한 칸
+    finally:
+        w.close()
+
+
+def test_toolbar_text_drag_opens_empty_text_at_drop_and_click_still_works():
+    from PyQt6.QtCore import QPoint
+    from easycad.canvas.core_shapes import _TextItem
+    w, btns = _tb_win()
+    try:
+        _tb_drag(w, btns["text"], QPoint(500, 300))
+        fi = w._scene.focusItem()
+        assert isinstance(fi, _TextItem) and fi.toPlainText() == ""                              # 「글」은 끄는 동안만 — 놓으면 빈 글 상자에 바로 쓰기
+        fi.clearFocus()
+        btns["line"].click()                                                                     # 그냥 누르기 = 지금처럼 도구 켜기
+        assert w.current_tool == "line"
+        _tb_drag(w, btns["memo"], QPoint(-50, -50))                                              # 칠판 밖에 놓으면 취소
+        assert not [it for it in w._scene.items() if type(it).__name__ == "_MemoItem"]
+    finally:
+        w.close()

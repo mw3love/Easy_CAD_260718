@@ -36,7 +36,7 @@ from easycad.canvas.host_widgets import (
     _act_icon, _dark_palette, _light_palette, _FloatingPanel, _PaletteButton, _MinimapView,
     _StaticSection, _SymbolFolderDropZone, _apply_native_titlebar_scheme,
     _DragGrip, _SymbolFolderBrowser, _menu_icon, _ACCENT_CORAL, _SECTION_COLOR_SWATCHES,
-    _ARROW_KIND_LABELS, _ARROW_HEAD_LABELS, _set_menu_sep_color, _style_menu_separators,
+    _ARROW_KIND_LABELS, _ARROW_HEAD_LABELS, _set_menu_sep_color, _style_menu_separators, _ToolbarDragFilter,
 )
 
 # Mermaid 중립 shape → 우리 아이템. ('rect'|'ellipse'|'symbol', symbol kind|None).
@@ -817,6 +817,15 @@ class _UIBuildMixin:
             tb.addWidget(btn)
             self._tool_buttons[key] = btn
         self._refresh_arrow_tool_button()   # [화살표 통합] 아이콘을 현재 종류에 맞춤
+        # [§8 항목61 손맛 2026-10-22] 위 막대 버튼을 칠판으로 끌어 놓기(누르기는 그대로) — 웹 startToolDrag. 펜·다각형은 웹도 끌기 없음/별도
+        drag_keys = {self._tool_buttons[k]: k for k in ("arrow", "text", "line", "badge") if k in self._tool_buttons}
+        for a, k in ((self._act_memo, "memo"), (self._act_tbl, "table")):
+            w = tb.widgetForAction(a)
+            if w is not None:
+                drag_keys[w] = k
+        self._toolbar_drag = _ToolbarDragFilter(self, drag_keys)
+        for w in drag_keys:
+            w.installEventFilter(self._toolbar_drag)
         # [실사용 요청 2026-08-25] "도구 고정"은 undo/redo(히스토리 조작)와 무관한, 그리기
         # 도구 자체의 동작 모드(연속 그리기 on/off) 토글이라 도구 묶음 옆이 의미상 맞다 —
         # 옛 위치(편집 그룹, undo/redo 옆)에서 이리 옮긴다. 메뉴(편집(&E)) 쪽 위치는 그대로

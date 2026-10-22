@@ -3260,7 +3260,7 @@ class _AnnotatorView(QGraphicsView):
             self._place_text_at(sp)
             # 다른 도구처럼 텍스트 도구를 유지해 연속 배치 가능(빈 텍스트는 focusOut 시 정리).
         elif tool == "badge":
-            it = _BadgeItem(owner.next_badge_number(), owner.current_color)
+            it = _BadgeItem(owner.next_badge_number(), owner.badge_color())
             it.setScale(owner.current_badge_size / float(_DEFAULT_BADGE))
             it.setPos(sp)
             self.scene().addItem(it)

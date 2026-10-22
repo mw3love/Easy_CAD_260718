@@ -8,7 +8,7 @@
 import sys
 
 from PyQt6.QtCore import (
-    Qt, QPoint, QPointF, QRectF, QSize, QTimer, QMimeData, QEvent, pyqtSignal, QCoreApplication,
+    Qt, QPoint, QPointF, QRectF, QSize, QTimer, QMimeData, QEvent, pyqtSignal, QCoreApplication, QObject,
 )
 from PyQt6.QtGui import (
     QPen, QColor, QBrush, QIcon, QPixmap, QPainter, QPolygonF, QPainterPath, QPalette, QDrag, QFont,
@@ -1759,3 +1759,45 @@ def _pick_custom_color(parent: QWidget, initial, show_alpha: bool, title: str) -
         if col.isValid():
             return col
     return None
+
+
+class _ToolbarDragFilter(QObject):
+    """[§8 항목61 손맛 2026-10-22] 위 막대 버튼을 칠판으로 끌기 = 놓은 자리에 기본형(웹 startToolDrag).
+    버튼에 거는 감시 — 누른 채 6px 넘게 끌면 왼쪽 도형 카드 끌기와 같은 길(`_palette_drag_begin/move/end`, 키 "tb:<종류>")로 보냄.
+    그냥 누르기는 지금처럼(도구 켜기·삽입). 버튼은 누르는 동안 마우스를 잡고 있어 버튼 밖으로 끌어도 이동이 계속 옴."""
+    _THRESH = 6
+
+    def __init__(self, host, keys: dict):
+        super().__init__(host)
+        self._host, self._keys = host, keys   # 버튼 → 종류
+        self._press, self._drag = None, None  # (버튼, 누른 자리) / 끄는 중인 버튼
+
+    def eventFilter(self, obj, e):
+        kind = self._keys.get(obj)
+        if kind is None:
+            return False
+        t = e.type()
+        if t == QEvent.Type.MouseButtonPress and e.button() == Qt.MouseButton.LeftButton:
+            self._press = (obj, e.globalPosition().toPoint())
+            return False
+        if t == QEvent.Type.MouseMove and e.buttons() & Qt.MouseButton.LeftButton:
+            gp = e.globalPosition().toPoint()
+            if self._drag is obj:
+                self._host._palette_drag_move("tb:" + kind, gp)
+                return True
+            if self._press and self._press[0] is obj and (gp - self._press[1]).manhattanLength() >= self._THRESH:
+                self._press = None
+                obj.setDown(False)
+                if self._host._palette_drag_begin("tb:" + kind):
+                    self._drag = obj
+                    self._host._palette_drag_move("tb:" + kind, gp)
+                return True
+            return False
+        if t == QEvent.Type.MouseButtonRelease and e.button() == Qt.MouseButton.LeftButton:
+            self._press = None
+            if self._drag is obj:
+                self._drag = None
+                obj.setDown(False)
+                self._host._palette_drag_end("tb:" + kind, e.globalPosition().toPoint())
+                return True   # 놓기를 삼킴 — 버튼 누르기(도구 켜기·삽입)로 안 이어지게
+        return False

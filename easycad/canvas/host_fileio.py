@@ -11,19 +11,20 @@ import os
 import uuid
 
 from PyQt6.QtCore import (
-    Qt, QPoint, QPointF, QRectF, QTimer, QEvent, QUrl,
+    Qt, QPoint, QPointF, QRectF, QTimer, QEvent, QUrl, QLineF,
 )
 from PyQt6.QtGui import (
     QPen, QBrush, QColor, QPixmap, QDesktopServices,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QFileDialog, QMessageBox, QDialog, QProgressDialog,
+    QApplication, QFileDialog, QMessageBox, QDialog, QProgressDialog, QGraphicsItem,
 )
 
 from easycad.app_settings import app_settings
 from easycad.canvas.annotator_core import (
     _PolyArrowItem, _ImageItem, _TitleBlockItem, _TableItem, _RectItem, _EllipseItem, _SymbolItem, _PolygonItem,
     _TextItem, _attach_port_to_host, _find_port_host_near, _is_closed_trim_shape,
+    _LineItem, _BadgeItem, _DEFAULT_BADGE,
 )
 from easycad.fileio.pdf_export import export_pdf, export_pdf_pages, export_image, export_svg, render_content_image
 from easycad.fileio.dxf_export import export_dxf, export_dwg
@@ -1146,6 +1147,51 @@ class _FileIOMixin:
         return it, w, h
 
 
+    # [§8 항목61 손맛 2026-10-22] 위 막대 버튼을 칠판으로 끌기 = 놓은 자리에 기본형(웹 startToolDrag) — 왼쪽 도형 카드 끌기와 같은 길
+    # 선·화살표 = 화면 120px 가로, 번호 = 다음 번호, 메모·표 = 기본 크기, 글자 = 끄는 동안만 「글」, 놓으면 빈 글 상자에 바로 쓰기
+    TOOLBAR_DRAG_KINDS = ("arrow", "text", "line", "badge", "memo", "table")
+
+    def _build_toolbar_item(self, kind: str):
+        """(아이템, w, h, 놓은 뒤 할 일 | None, 바꿔 놓기?) — 바꿔 놓기 = 임시 도형을 지우고 놓은 자리에 다른 걸 만듦(글자)."""
+        z = abs(self._view.transform().m11()) or 1.0
+        L = 120.0 / z
+        flags = QGraphicsItem.GraphicsItemFlag.ItemIsMovable | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        if kind == "line":
+            it = _LineItem(QLineF(0.0, 0.0, L, 0.0))
+            it.setPen(self.make_pen())
+            it.setFlags(flags)
+            return it, L, 0.0, None, False
+        if kind == "arrow":
+            it = _PolyArrowItem(self.current_color, self.current_width, self.arrow_head_at_end,
+                                self.current_head_at_start, self.current_head_scale)
+            it._style = getattr(self, "current_style", it._style)
+            it.set_points(QPointF(0.0, 0.0), QPointF(L, 0.0))
+            it.setFlags(flags)
+            return it, L, 0.0, None, False
+        if kind == "badge":
+            it = _BadgeItem(self.next_badge_number(), self.badge_color())
+            it.setScale(self.current_badge_size / float(_DEFAULT_BADGE))
+            it.setFlags(flags)
+            return it, 0.0, 0.0, None, False   # 번호표는 가운데가 원점
+        if kind == "memo":
+            it = dict_to_item({"type": "memo", "rect": [0, 0, 340, 60], "fill": "#ffffffff", "lines": [{"k": "p", "t": ""}],
+                               "pos": [0, 0], "scale": 1, "rotation": 0, "z": 0, "origin": [0, 0], "locked": False, "group_id": None, "layer_id": None})
+            it._fit_height(it.raw)
+            return it, it.rect().width(), it.rect().height(), None, False
+        if kind == "table":
+            rows, cols = 3, 3
+            W, H = cols * self._CELL_W, rows * self._CELL_H
+            it = _TableItem(rows, cols, QRectF(0.0, 0.0, W, H), header=True)
+            it.setFlags(flags)
+            return it, W, H, None, False
+        if kind == "text":
+            it = _TextItem(self.current_color)
+            it.apply_font_size(self.current_font_size)
+            it.setPlainText("글")
+            return it, it.boundingRect().width(), it.boundingRect().height(), \
+                (lambda p: self._view._place_text_at(p)), True
+        return None
+
     def _create_shape_at(self, tool_key: str, scene_pos: QPointF):
         """[Phase 6 M3 #17] 팔레트에서 드롭한 도구를 scene_pos 중심에 기본 크기로 생성.
         무장 후 드래그로 그리는 경로(_AnnotatorView.mousePressEvent)와 같은 아이템·펜·플래그를
@@ -1182,6 +1228,20 @@ class _FileIOMixin:
         `_palette_drag_move`/`_palette_drag_end`가 둘 중 있는 쪽만 따른다."""
         if tool_key in ("port_rect", "port_circle"):
             return False
+        self._palette_drag_after = None
+        if tool_key.startswith("tb:"):   # [§8 항목61 손맛] 위 막대 버튼 끌기
+            built = self._build_toolbar_item(tool_key[3:])
+            if built is None:
+                return False
+            it, w, h, after, replace = built
+            it.setOpacity(0.6)
+            self._scene.addItem(it)
+            self._scene.clearSelection()
+            it.setSelected(True)
+            self._palette_drag_item = it
+            self._palette_drag_size = (w, h)
+            self._palette_drag_after = (after, replace) if after else None
+            return True
         if tool_key.startswith("customsym:"):
             built = self._build_custom_symbol_items(tool_key[len("customsym:"):])
             if built is None:
@@ -1290,6 +1350,15 @@ class _FileIOMixin:
         if not self._palette_drop_point_ok(global_pos):
             for x in items:
                 self._scene.removeItem(x)
+            self._view.viewport().update()
+            return
+        after, self._palette_drag_after = getattr(self, "_palette_drag_after", None), None
+        if after is not None and after[1]:   # 바꿔 놓기(글자) — 임시 도형 자리에 진짜를 만듦(되돌리기는 만든 쪽이)
+            r = it.sceneBoundingRect()
+            p = QPointF(r.left() + it.document().documentMargin(), r.center().y())   # 「글」 첫 글자 자리 = 커서 자리
+            self._scene.removeItem(it)
+            self._view.setFocus(Qt.FocusReason.MouseFocusReason)
+            after[0](p)
             self._view.viewport().update()
             return
         for x in items:
