@@ -38,6 +38,7 @@ SHORTCUT_DEFS: list[tuple[str, str, str, str]] = [
     ("select_all",  "편집", "전체 선택",       "Ctrl+A"),
     ("copy",        "편집", "복사",           "Ctrl+C"),
     ("cut",         "편집", "잘라내기",        "Ctrl+X"),   # 2026-10-22 웹 keys.js와 같게
+    ("find",        "편집", "칠판에서 찾기(뜻으로)", "Ctrl+F"),   # 2026-10-22 웹 keys.js와 같게(host_find)
     ("paste",       "편집", "붙여넣기",        "Ctrl+V"),
     ("style_copy",  "편집", "스타일 복사",      "Ctrl+Alt+C"),
     ("style_paste", "편집", "스타일 붙여넣기",   "Ctrl+Alt+V"),

@@ -285,6 +285,9 @@ class _UIBuildMixin:
         for a in (self._act_undo, self._act_redo, self._act_pin):
             e.addAction(a)
         e.addSeparator()
+        self._act_find = self._make_action("칠판에서 찾기", None, self.open_find, shortcut_id="find")   # [§8 항목61 손맛] Ctrl+F — 뜻으로(host_find)
+        e.addAction(self._act_find)
+        e.addSeparator()
         # [단축키 설정, 2026-08-21] 단축키 재할당 창 진입점.
         self._act_shortcut_settings = self._make_action(
             "단축키 설정…", None, self._show_shortcut_settings)

@@ -2590,6 +2590,9 @@ class _AnnotatorView(QGraphicsView):
         if draw_staging is not None:
             draw_staging(self, painter)
         self._draw_cell_sel(painter)   # [§8 항목61 손맛] 고른 표 칸(연한 파랑 + 파란 테두리 — 웹과 같게)
+        draw_marks = getattr(self._owner, "draw_find_marks", None)
+        if draw_marks is not None:   # [§8 항목61 손맛] Ctrl+F 찾은 것 = 노란 점선(host_find)
+            draw_marks(painter)
         out = getattr(self, "_mline_out", None)
         if out is not None:   # [§8 항목61 ④-3] 메모 줄을 메모 밖으로 끄는 중 = 새 메모 자리(웹 mdrop.out 점선 상자)
             z = abs(self.transform().m11()) or 1.0
