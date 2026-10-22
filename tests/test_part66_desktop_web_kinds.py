@@ -179,3 +179,62 @@ def test_memo_fill_from_properties_card_changes_web_fill_and_undoes():
         assert item_to_dict(memo)["fill"] == "#ffffffff"
     finally:
         w.close()
+
+
+def _key(v, k, mod=None):
+    from PyQt6.QtCore import QEvent, Qt
+    from PyQt6.QtGui import QKeyEvent
+    v.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, k, mod or Qt.KeyboardModifier.NoModifier, ""))
+
+
+def test_memo_keys_open_editor_not_label_or_mindmap():
+    """2026-10-22 사용자 검토 뒤 — Ctrl+Enter가 메모 가운데에 글 상자(라벨)를 만들고, Enter는 마인드맵 형제 상자를 만들었음 → 셋 다 메모 고치기"""
+    from PyQt6.QtCore import Qt
+    for k, mod in ((Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier), (Qt.Key.Key_Return, None), (Qt.Key.Key_F2, None)):
+        w, (memo,) = _win_with(DOCS["memo"])
+        try:
+            memo.setSelected(True)
+            n0 = len(w._scene.items())
+            _key(w._view, k, mod)
+            assert not memo._label_alive() and w._view._memo_editor.isVisible(), k
+            assert len(w._scene.items()) == n0, k                                        # 새 상자 없음
+            w._view._memo_editor.close()
+        finally:
+            w.close()
+
+
+def test_memo_editor_follows_zoom():
+    """편집 칸은 확대·이동을 따라감(전엔 그 자리에 남아 메모가 둘로 보였음 — 사용자 스크린숏)"""
+    w, (memo,) = _win_with(DOCS["memo"])
+    try:
+        *_, dbl = _draw_helpers(w._view)
+        dbl(memo.mapToScene(memo.rect().center()))
+        ed = w._view._memo_editor
+        g0 = ed.geometry()
+        w._view.scale(2, 2)
+        w._view.viewport().repaint()
+        QApplication.processEvents()
+        assert ed.geometry().width() > g0.width() * 1.5                                # 메모와 같이 커짐
+        ed.close()
+    finally:
+        w.close()
+
+
+def test_memo_width_change_refits_height():
+    memo = dict_to_item(copy.deepcopy(DOCS["memo"]))
+    h_wide = memo.rect().height()
+    memo.setRect(QRectF(0, 0, 200, h_wide))                                            # 폭만 줄임(크기 손잡이)
+    assert memo.rect().height() == memo_layout(memo.raw, 200)["h"] > h_wide            # 줄이 더 꺾인 만큼 높이도
+
+
+def test_dxf_export_keeps_web_kind_text(tmp_path):
+    import ezdxf
+    from PyQt6.QtWidgets import QGraphicsScene
+    from easycad.fileio.dxf_export import export_dxf
+    sc = QGraphicsScene()
+    for t in ("memo", "web", "legend"):
+        sc.addItem(dict_to_item(copy.deepcopy(DOCS[t])))
+    p = tmp_path / "w.dxf"
+    export_dxf(sc, str(p))
+    texts = " ".join(e.text for e in ezdxf.readfile(str(p)).modelspace() if e.dxftype() == "MTEXT")
+    assert "점검 메모" in texts and "news.kbs.co.kr" in texts and "광케이블" in texts          # 전엔 테두리만 나가 글이 빠졌음

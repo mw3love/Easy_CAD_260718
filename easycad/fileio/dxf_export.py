@@ -366,6 +366,25 @@ def _export_text(msp, it, layer: str):
     mtext.dxf.rotation = -it.rotation()  # Y-flip → 회전 부호 반전
 
 
+def _export_web(msp, it):
+    """[§8 항목61 ④-3 2026-10-22] 웹 종류 — 테두리(+메모 바탕) + 안의 글(MTEXT, 왼쪽 위). 전엔 테두리만 나가 글이 빠졌음."""
+    r = it.rect()
+    if not hasattr(it, "_tag"):   # 프레임은 속이 빔
+        _export_fill(msp, it, [_rect_loop(r)], _brush_color(it))
+    attrs = _attrs(_LAYERS["rect"], QColor("#8a98a8"))
+    pts = [_w(it, r.left(), r.top()), _w(it, r.right(), r.top()), _w(it, r.right(), r.bottom()), _w(it, r.left(), r.bottom())]
+    msp.add_lwpolyline(pts, close=True, dxfattribs=attrs)
+    txt = it.plain_text()
+    if not txt:
+        return
+    ins = _w(it, r.left() + 10, r.top() + 10) if not hasattr(it, "_tag") else _w(it, r.left(), r.top() - 24)
+    mtext = msp.add_mtext(txt, dxfattribs=_attrs(_LAYERS["text"], QColor("#1f1f1f")))
+    mtext.dxf.char_height = 10.0
+    mtext.dxf.insert = (ins[0], ins[1], 0.0)
+    mtext.dxf.attachment_point = 1       # top-left
+    mtext.dxf.width = max(10.0, (r.width() - 20) * (it.scale() or 1.0))
+
+
 def _export_badge(msp, it):
     attrs = _attrs(_LAYERS["badge"], it._color)
     c = _w(it, 0.0, 0.0)
@@ -423,7 +442,9 @@ def _build_dxf_doc(scene, stats: dict | None = None):
 
     for it in scene.items():
         try:
-            if isinstance(it, _SymbolItem):      # QGraphicsRectItem 하위 → rect보다 먼저
+            if getattr(it, "_is_web_item", False):   # [§8 항목61 ④-3] 웹 종류(메모·웹 카드 등) — _RectItem 하위라 먼저
+                _export_web(msp, it)
+            elif isinstance(it, _SymbolItem):      # QGraphicsRectItem 하위 → rect보다 먼저
                 _export_symbol(msp, it)
             elif isinstance(it, _RectItem):
                 _export_rect(msp, it)

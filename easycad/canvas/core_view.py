@@ -4544,6 +4544,8 @@ class _AnnotatorView(QGraphicsView):
             cur.select(cur.SelectionType.Document)
             item.setTextCursor(cur)
             return True
+        if getattr(item, "_is_web_item", False):   # [§8 항목61 ④-3] 웹 종류는 가운데 글 없음 — 메모만 고치기 칸
+            return bool(hasattr(item, "toggle_todo_at") and item.web_double_click(self, item.sceneBoundingRect().center()))
         if isinstance(item, (_RectItem, _EllipseItem, _SymbolItem, _PolygonItem,
                               _LineItem, _ArrowItem, _PolyArrowItem)):
             self._begin_label_edit(item)
@@ -4663,6 +4665,12 @@ class _AnnotatorView(QGraphicsView):
             self._owner._on_escape()
             return
         if self._owner.is_edit_mode() and not editing_text:
+            # [§8 항목61 ④-3 2026-10-22] 메모 하나를 고른 채 Enter·F2·Ctrl+Enter = 메모 고치기(웹과 같게 — 전엔 마인드맵 뻗기·가운데 글 상자가 생겼음)
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_F2) and mods in (Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ControlModifier):
+                sel = self.scene().selectedItems()
+                if len(sel) == 1 and hasattr(sel[0], "toggle_todo_at"):
+                    sel[0].web_double_click(self, sel[0].sceneBoundingRect().center())
+                    return
             # [마인드맵 뻗기, 2026-08-24] 텍스트 편집 중이 아니어도(마우스로 도형만 선택한
             # 상태) Tab/Enter는 동일하게 뻗는다 — "모든 도형에 상시 적용" 확정(다중선택·
             # 비-노드 타입은 mm_create_*가 각각 None을 반환해 조용히 no-op).

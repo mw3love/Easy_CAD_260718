@@ -110,7 +110,7 @@ class _MindMapMixin:
         # `_ConnectorLabel`은 `_TextItem`의 서브클래스지만(화살표를 따라 슬라이드하는
         # 라벨일 뿐 독립 노드가 아님) 마인드맵 대상에서 제외 — `_conn_shapes()`/
         # `_ConnectorLabel._qc_capable()`가 이미 같은 이유로 배제하는 것과 동일한 관례.
-        return isinstance(item, _MM_NODE_TYPES) and not isinstance(item, _ConnectorLabel)
+        return isinstance(item, _MM_NODE_TYPES) and not isinstance(item, _ConnectorLabel)             and not getattr(item, "_is_web_item", False)   # [§8 항목61 ④-3] 메모·웹 카드 등은 마인드맵 뻗기 대상 아님(Enter = 메모 고치기)
 
     def mm_children(self, item):
         """item에서 뻗어나간(=item이 시작점인) 화살표들의 도착 도형 목록.

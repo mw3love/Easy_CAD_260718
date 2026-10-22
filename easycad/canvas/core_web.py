@@ -9,7 +9,7 @@ import base64
 
 import copy
 
-from PyQt6.QtCore import QPointF, QRectF, Qt, QUrl
+from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, QUrl
 from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QFont, QFontMetricsF, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import QPlainTextEdit
 
@@ -125,6 +125,11 @@ class _WebItem(_RectItem):
         """두 번 누르기 — 종류마다(웹 카드 = 브라우저로). 처리했으면 True."""
         return False
 
+    def plain_text(self) -> str:
+        """안의 글을 쉬운 글로(DXF 내보내기 등) — 종류마다."""
+        d = self._web_raw
+        return "\n".join(x for x in (d.get("title") or d.get("name"), d.get("url")) if x)
+
     # 되돌리기 — 원래 칸·크기까지(메모 고치기·할 일 체크가 `push_undo_state`로 실림)
     def capture_state(self) -> dict:
         st = super().capture_state()
@@ -234,6 +239,9 @@ class _FrameItem(_WebItem):
         no, name = self._page() if page is None else page, self._web_raw.get("name")
         tag = f"{'' if no is None else no}{' · ' + name if name else ''}" or "프레임"
         return fs, tag
+
+    def plain_text(self):
+        return self._tag(getattr(self, "_last_page", None) or self._web_raw.get("no"))[1]
 
     def _content_rect(self):
         # 크기 계산에선 장면을 훑지 않음(장면이 크기를 물을 때 또 장면을 훑어 끝없이 돌았음) — 마지막으로 그린 번호, 넉넉히 세 자리
@@ -371,6 +379,10 @@ class _LegendItem(_WebItem):
     """범례 — 제목 + 표(견본 선 | 이름 | 모양). 줄은 저장된 것 그대로(도면 따라 저절로 바뀌는 건 웹 칠판)."""
     RADIUS = 8.0
 
+    def plain_text(self):
+        rows = [f"{self._name(e)} · {STYLE_NAMES.get(e.get('style'), '실선')} · {e.get('width')}px" for e in self._rows()]
+        return "\n".join([self._web_raw.get("title") or "범례", *rows])
+
     def _rows(self):
         return self._web_raw.get("rows") or []
 
@@ -445,15 +457,28 @@ class _MemoEditor(QPlainTextEdit):
         self.setStyleSheet("QPlainTextEdit#memoEditor { background: #ffffff; color: #1f1f1f; border: 2px solid #da7756; border-radius: 6px; padding: 6px; }")
         self.setPlainText(lines_to_md(item.raw.get("lines")))
         self._place()
+        view.viewport().installEventFilter(self)   # 확대·이동하면 따라감(전엔 그 자리에 남아 메모가 둘로 보였음 — 2026-10-22 사용자)
         self.show()
         self.setFocus()
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Type.Paint and not self._done:   # 화면이 다시 그려질 때(확대·이동·스크롤) 자리·글자 크기 맞춤
+            self._place()
+        return False
 
     def _place(self):
         r = self._item.rect()
         pts = [self._view.mapFromScene(self._item.mapToScene(p)) for p in (r.topLeft(), r.bottomRight())]
         x, y = min(p.x() for p in pts), min(p.y() for p in pts)
         w, h = abs(pts[1].x() - pts[0].x()), abs(pts[1].y() - pts[0].y())
-        self.setGeometry(int(x), int(y), max(220, int(w)), max(160, int(h)))
+        geo = (int(x), int(y), max(220, int(w)), max(160, int(h)))
+        if self.geometry().getRect() != geo:
+            self.setGeometry(*geo)
+        pt = max(7.0, 10.5 * self._view.transform().m11() * self._item.scale())
+        if abs(self.font().pointSizeF() - pt) > 0.05:
+            f = self.font()
+            f.setPointSizeF(pt)
+            self.setFont(f)
 
     def commit(self):
         if self._done:
@@ -463,6 +488,13 @@ class _MemoEditor(QPlainTextEdit):
         new = md_to_lines(self.toPlainText(), self._item.raw.get("lines"))
         if new != self._item.raw.get("lines"):
             self._item.set_lines(new)
+
+    def closeEvent(self, event):
+        try:
+            self._view.viewport().removeEventFilter(self)
+        except RuntimeError:   # 뷰가 먼저 닫힘
+            pass
+        super().closeEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
@@ -496,6 +528,19 @@ class _MemoItem(_WebItem):
         self._web_raw["fill"] = "#" + format(q.rgba() & 0xFFFFFFFF, "08x")
         self.setBrush(QBrush(q))
         self.update()
+
+    def plain_text(self):
+        from easycad.canvas.core_memo import lines_to_md
+        return lines_to_md(self._web_raw.get("lines"))
+
+    def setRect(self, *args):
+        """폭이 바뀌면(크기 손잡이·되돌리기) 높이를 글에 맞춤 — 웹 메모와 같게(전엔 줄이 더 꺾여도 높이가 그대로라 글이 넘쳤음).
+        폭이 같으면 그대로(웹이 저장한 높이를 열 때 바꾸지 않음 — 왕복 시험)."""
+        r = QRectF(*args) if len(args) == 4 else QRectF(args[0])
+        if abs(r.width() - self.rect().width()) > 0.5:
+            from easycad.canvas.core_memo import memo_layout
+            r = QRectF(r.x(), r.y(), r.width(), memo_layout(self._web_raw, r.width())["h"])
+        super().setRect(r)
 
     def _fit_height(self, raw):
         """높이를 글에 맞춤(웹 메모처럼 — 줄을 더하면 늘고 지우면 줆)."""
