@@ -2914,6 +2914,26 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
     def _content_rect(self) -> QRectF:
         return QRectF(self.rect())
 
+    # [우리 확장 · §8 항목61 손맛 2026-10-22] 칸 글도 되돌리기에(웹과 같게 — 칸 고르고 Del·칸 고치기가 Ctrl+Z 한 칸). 전엔 칸 편집은 되돌리기 밖이었음
+    def capture_state(self) -> dict:
+        import copy as _copy
+        st = super().capture_state()
+        st["cells"] = [row[:] for row in self._cells]
+        st["cell_runs"] = _copy.deepcopy(self._web().get("cell_runs"))
+        return st
+
+    def apply_state(self, st: dict):
+        super().apply_state(st)
+        if "cells" in st and len(st["cells"]) == self._rows:
+            import copy as _copy
+            self._cells = [row[:] for row in st["cells"]]
+            if self._web() or st.get("cell_runs"):
+                if st.get("cell_runs"):
+                    self._web_extra = {**self._web(), "cell_runs": _copy.deepcopy(st["cell_runs"])}
+                elif "cell_runs" in self._web():
+                    self._web_extra = {k: v for k, v in self._web().items() if k != "cell_runs"}
+            self.update()
+
     # [열폭 드래그] geom undo에 col_widths도 함께 실어야 되돌리기가 폭까지 복원한다
     # (_RectGeometryMixin 기본은 rect()만 담아 여기서 override).
     def _capture_geom_local(self):
@@ -3054,7 +3074,8 @@ class _CellEditor(QLineEdit):
     Enter=아래 칸, Tab=오른쪽(줄 끝이면 다음 줄 첫 칸), Shift+Tab=왼쪽, Esc=취소, 포커스 상실=커밋.
     셀 편집은 undo 스코프 밖(표제란 필드와 동일) — set_cell_text로 직접 반영."""
 
-    def __init__(self, view, item: "_TableItem", r: int, c: int):
+    def __init__(self, view, item: "_TableItem", r: int, c: int, cont: bool = False):
+        """cont = 이어 고치기(커서를 끝에 — 칸 고르고 Enter·F2, 웹과 같게). 아니면 글 통째로 골라 새로 씀."""
         super().__init__(view.viewport())
         self._view = view
         self._item = item
@@ -3064,7 +3085,10 @@ class _CellEditor(QLineEdit):
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setText(item.cell_text(r, c))
-        self.selectAll()
+        if cont:
+            self.end(False)
+        else:
+            self.selectAll()
         self._place()
         self.show()
         self.setFocus()
@@ -3081,7 +3105,13 @@ class _CellEditor(QLineEdit):
     def _commit(self):
         if not self._done:
             self._done = True
+            if self.text() == self._item.cell_text(self._r, self._c):
+                return
+            before = self._item.capture_state()   # [§8 항목61 손맛] 칸 고치기도 되돌리기 한 칸(웹과 같게)
             self._item.set_cell_text(self._r, self._c, self.text())
+            host = getattr(self._view, "_owner", None)
+            if host is not None and hasattr(host, "push_undo_state"):
+                host.push_undo_state([(self._item, before)])
 
     def _cancel(self):
         self._done = True   # 커밋하지 않고 닫기

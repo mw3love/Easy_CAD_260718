@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
     QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsPathItem,
     QGraphicsTextItem, QGraphicsItem, QHBoxLayout,
     QPushButton, QToolButton, QButtonGroup, QLabel, QLineEdit,
-    QStyle, QStyleOptionGraphicsItem,
+    QStyle, QStyleOptionGraphicsItem, QApplication,
 )
 
 from easycad.theme import (
@@ -341,6 +341,7 @@ class _AnnotatorView(QGraphicsView):
         # 선택이 바뀌면 그룹 오버레이(bbox·핸들)를 다시 그린다(개별 아이템 repaint와 별개).
         scene.selectionChanged.connect(self.viewport().update)
         scene.selectionChanged.connect(self._sync_type_im)   # [§8 항목61 손맛] 글 도형 하나를 고르면 한글 입력기를 붙임(치면 글)
+        scene.selectionChanged.connect(self._cells_follow_selection)   # [§8 항목61 손맛] 표를 안 고르면 칸 고르기도 풂
 
     def _is_empty_area(self, view_pos) -> bool:
         """클릭 위치에 선택 가능한 주석 아이템이 없으면(배경뿐) True."""
@@ -2588,6 +2589,7 @@ class _AnnotatorView(QGraphicsView):
         draw_staging = getattr(self._owner, "_draw_ai_staging", None)
         if draw_staging is not None:
             draw_staging(self, painter)
+        self._draw_cell_sel(painter)   # [§8 항목61 손맛] 고른 표 칸(연한 파랑 + 파란 테두리 — 웹과 같게)
         out = getattr(self, "_mline_out", None)
         if out is not None:   # [§8 항목61 ④-3] 메모 줄을 메모 밖으로 끄는 중 = 새 메모 자리(웹 mdrop.out 점선 상자)
             z = abs(self.transform().m11()) or 1.0
@@ -2874,6 +2876,14 @@ class _AnnotatorView(QGraphicsView):
                 event.accept()
                 return
             fi.clearFocus()
+        # [§8 항목61 손맛 2026-10-22] 이미 고른 표의 칸을 한 번 더 누르면(끌지 않고 놓으면) 그 칸 고르기, Shift = 범위로(웹 cellPick) — 놓을 때 정함
+        self._cell_pick = None
+        if self._owner.current_tool == "select" and event.button() == Qt.MouseButton.LeftButton:
+            _sel = self.scene().selectedItems()
+            if len(_sel) == 1 and isinstance(_sel[0], _TableItem):
+                _cell = _sel[0].cell_at(_sel[0].mapFromScene(self._press_scene))
+                if _cell is not None:
+                    self._cell_pick = (_sel[0], _cell, bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier), event.position().toPoint())
         # [우리 확장 · §8 항목61 ④-3] 메모 줄 손잡이 ⠿(누르기 = 고르기 + 메뉴, 끌기 = 옮기기) · 고른 줄 Shift·Ctrl+클릭 — 웹 Editor.jsx 「메모 2차」
         if self._owner.current_tool == "select" and event.button() == Qt.MouseButton.LeftButton:
             from easycad.canvas.core_memo_lines import _memos_at
@@ -4186,10 +4196,16 @@ class _AnnotatorView(QGraphicsView):
         if getattr(self, "_mline", None) is not None:   # [§8 항목61 ④-3] 메모 줄 끌기 끝(제자리 = 고르기 + 메뉴)
             self._mline["memo"].line_drag_end(self, self.mapToScene(event.position().toPoint()), event.globalPosition().toPoint())
             return
+        pick, self._cell_pick = getattr(self, "_cell_pick", None), None
         try:
             return self._mouse_release_impl(event)
         finally:
             self._end_drag_session()
+            if pick is not None and (event.position().toPoint() - pick[3]).manhattanLength() < 4 \
+                    and self.scene().selectedItems() == [pick[0]]:   # 끌지 않고 놓음 = 그 칸(끌면 표 이동)
+                t, (r, c), ext, _p = pick
+                cs = self._cell_sel
+                self._set_cell_sel({**cs, "r1": r, "c1": c} if ext and cs and cs["item"] is t else {"item": t, "r0": r, "c0": c, "r1": r, "c1": c})
 
     def _end_drag_session(self):
         """드래그 종료 뒷정리 — 위 `mouseReleaseEvent`의 finally에서만 부른다.
@@ -4453,9 +4469,11 @@ class _AnnotatorView(QGraphicsView):
                 return None
         return None
 
-    def _begin_cell_edit(self, item, r, c):
-        """[우리 확장 · Phase 4] 표 셀 (r, c)에 인라인 편집기를 띄운다."""
-        self._cell_editor = _CellEditor(self, item, r, c)
+    def _begin_cell_edit(self, item, r, c, cont=False):
+        """[우리 확장 · Phase 4] 표 셀 (r, c)에 인라인 편집기를 띄운다(cont = 이어 고치기 — 커서를 끝에)."""
+        self._set_cell_sel(None)
+        self._cell_editor = _CellEditor(self, item, r, c, cont)
+        return self._cell_editor
 
     def _begin_label_edit(self, item, scene_pos=None):
         """[우리 확장] 선/화살표의 라벨을 생성(없으면)하고 편집 모드로 진입.
@@ -4585,6 +4603,77 @@ class _AnnotatorView(QGraphicsView):
                 return
         super().mouseDoubleClickEvent(event)
 
+    # ---- [§8 항목61 손맛 2026-10-22] 표 칸 고르기(웹 cellSel) — 칸 고르고 치면 새로 씀 · Enter/F2 이어 고침 · 방향키(Shift 넓히기) · Del 칸 글만 ----
+    _cell_sel = None   # {"item", "r0", "c0", "r1", "c1"}
+
+    def _set_cell_sel(self, cs):
+        self._cell_sel = cs
+        self._sync_type_im()
+        self.viewport().update()
+
+    def _cells_follow_selection(self):
+        cs = self._cell_sel
+        if cs is not None and self.scene().selectedItems() != [cs["item"]]:
+            self._set_cell_sel(None)
+
+    def _cell_range(self):
+        cs = self._cell_sel
+        return min(cs["r0"], cs["r1"]), max(cs["r0"], cs["r1"]), min(cs["c0"], cs["c1"]), max(cs["c0"], cs["c1"])
+
+    def _cell_key(self, event) -> bool:
+        """칸을 고른 채 글쇠 — 처리했으면 True."""
+        cs = self._cell_sel
+        if cs is None or cs["item"].scene() is not self.scene():
+            return False
+        t, key, mods = cs["item"], event.key(), event.modifiers()
+        if mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier):
+            return False
+        r0, r1, c0, c1 = self._cell_range()
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):   # 칸 글만 지움(표는 그대로) — 되돌리기 한 칸
+            before = t.capture_state()
+            for r in range(r0, r1 + 1):
+                for c in range(c0, c1 + 1):
+                    t.set_cell_text(r, c, "")
+            self._owner.push_undo_state([(t, before)])
+            return True
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_F2):
+            self._begin_cell_edit(t, r0, c0, cont=True)
+            return True
+        dirs = {Qt.Key.Key_Left: (0, -1), Qt.Key.Key_Right: (0, 1), Qt.Key.Key_Up: (-1, 0), Qt.Key.Key_Down: (1, 0)}
+        if key in dirs:   # 엑셀처럼 옆 칸 — Shift = 넓히기
+            dr, dc = dirs[key]
+            rows, cols = t.dims()
+            cl = lambda v, n: max(0, min(n - 1, v))   # noqa: E731
+            if mods & Qt.KeyboardModifier.ShiftModifier:
+                self._set_cell_sel({**cs, "r1": cl(cs["r1"] + dr, rows), "c1": cl(cs["c1"] + dc, cols)})
+            else:
+                r, c = cl(r0 + dr, rows), cl(c0 + dc, cols)
+                self._set_cell_sel({"item": t, "r0": r, "c0": c, "r1": r, "c1": c})
+            return True
+        if key == Qt.Key.Key_Escape:
+            self._set_cell_sel(None)
+            return True
+        txt = event.text()
+        if txt and txt.isprintable():   # 글자 = 그 칸에 새로 씀(엑셀처럼)
+            ed = self._begin_cell_edit(t, r0, c0)
+            QApplication.sendEvent(ed, event)
+            return True
+        return False
+
+    def _draw_cell_sel(self, painter):
+        cs = self._cell_sel
+        if cs is None or cs["item"].scene() is not self.scene():
+            return
+        t = cs["item"]
+        r0, r1, c0, c1 = self._cell_range()
+        box = t.cell_rect(r0, c0).united(t.cell_rect(r1, c1))
+        z = abs(self.transform().m11()) or 1.0
+        painter.save()
+        painter.setPen(QPen(QColor("#2f80ed"), 2 / z))
+        painter.setBrush(QColor(137, 180, 250, 46))
+        painter.drawPolygon(t.mapToScene(box))
+        painter.restore()
+
     # ---- [§8 항목61 손맛 2026-10-22] 글 도형 하나를 고르고 바로 치면 그 글(웹 keys.js 「글이 들어가는 도형 하나를 골랐을 때」) ----
     def _type_target(self):
         """글이 들어가는 도형(상자·원·심볼·닫힌 다각형·글·메모) 하나만 골랐으면 그것 — 화살표·선·표·그림 등은 None(웹과 같음)."""
@@ -4609,18 +4698,22 @@ class _AnnotatorView(QGraphicsView):
 
     def _sync_type_im(self):
         """한글 입력기는 「치면 글」 도형을 골랐을 때만 칠판에 붙임 — 아닐 때 붙이면 한글 모드에서 Z·T 같은 한 글자 단축키가 조합으로 먹힘."""
-        want = self._type_target() is not None or isinstance(self.scene().focusItem(), QGraphicsTextItem)
+        want = self._type_target() is not None or self._cell_sel is not None or isinstance(self.scene().focusItem(), QGraphicsTextItem)
         if self.testAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled) != want:
             self.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, want)
             QGuiApplication.inputMethod().update(Qt.InputMethodQuery.ImEnabled)
 
     def inputMethodQuery(self, query):
         if query == Qt.InputMethodQuery.ImEnabled and self.scene().focusItem() is None:
-            return self._type_target() is not None
+            return self._type_target() is not None or self._cell_sel is not None
         return super().inputMethodQuery(query)
 
     def inputMethodEvent(self, event):
         # 글 도형을 고른 채 한글을 치기 시작하면(조합 첫 글자) 그 도형 글 고치기를 열고 같은 조합을 넘김
+        if self.scene().focusItem() is None and self._cell_sel is not None and (event.preeditString() or event.commitString()):
+            r0, _r1, c0, _c1 = self._cell_range()   # 칸을 고른 채 한글 = 그 칸 편집기를 열고 같은 조합을 넘김
+            QApplication.sendEvent(self._begin_cell_edit(self._cell_sel["item"], r0, c0), event)
+            return
         if self.scene().focusItem() is None and (event.preeditString() or event.commitString()):
             t = self._type_target()
             if t is not None and self._start_typing(t) is not None:
@@ -4686,7 +4779,7 @@ class _AnnotatorView(QGraphicsView):
         # [§8 항목61 손맛] 글 도형 하나를 고른 채 글자 글쇠(Shift+H 등) = 글 — 창 단축키(반전 등)가 먼저 가져가지 않게
         if e.type() == QEvent.Type.ShortcutOverride and self.scene().focusItem() is None and e.text() and e.text().isprintable() \
                 and not (e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)) \
-                and self._type_target() is not None:
+                and (self._type_target() is not None or self._cell_sel is not None):
             e.accept()
             return True
         return super().event(e)
@@ -4732,6 +4825,8 @@ class _AnnotatorView(QGraphicsView):
             return
         lm = getattr(self, "_line_memo", None)   # [§8 항목61 ④-3] 고른 메모 줄 — Esc·Del·Ctrl+D·Ctrl+/·Ctrl+Enter·Enter·↑↓
         if lm is not None and not editing_text and lm.scene() is self.scene() and lm.line_key(self, event):
+            return
+        if not editing_text and self._cell_key(event):   # [§8 항목61 손맛] 고른 표 칸 글쇠(웹 cellSel)
             return
         # [§8 항목61 손맛 2026-10-22] 아무것도 안 골랐을 때 D = 어둡게 ⇄ 밝게(웹 keys.js — Ctrl+Shift+L도 그대로)
         if not editing_text and key == Qt.Key.Key_D and mods == Qt.KeyboardModifier.NoModifier and not self.scene().selectedItems() \

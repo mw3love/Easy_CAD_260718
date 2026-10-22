@@ -142,3 +142,90 @@ def test_double_click_empty_area_places_text_there():
         assert isinstance(fi, _TextItem) and fi.sceneBoundingRect().contains(v.mapToScene(vp)) and w.current_tool == "select"
     finally:
         w.close()
+
+
+# ---- 표 칸 고르기(웹 cellSel) ----
+def _table_win():
+    from PyQt6.QtCore import QRectF
+    from easycad.canvas.core_shapes import _TableItem
+    w, _ = _win_with()
+    t = _TableItem(3, 3, QRectF(0, 0, 300, 90), [["가", "나", "다"], ["1", "2", "3"], ["", "", ""]])
+    t.setFlags(t.GraphicsItemFlag.ItemIsMovable | t.GraphicsItemFlag.ItemIsSelectable)
+    w._scene.addItem(t)
+    w._view.centerOn(t)
+    t.setSelected(True)
+    return w, t
+
+
+def _click(w, scene_pt, mods=NO):
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QMouseEvent
+    v = w._view
+    vp = v.mapFromScene(scene_pt)
+    g = v.viewport().mapToGlobal(vp)
+    v.mousePressEvent(QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(vp), QPointF(g), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, mods))
+    v.mouseReleaseEvent(QMouseEvent(QEvent.Type.MouseButtonRelease, QPointF(vp), QPointF(g), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, mods))
+
+
+def _cell_pt(t, r, c):
+    return t.mapToScene(t.cell_rect(r, c).center())
+
+
+def test_click_selected_table_picks_cell_shift_extends_and_arrows_move():
+    w, t = _table_win()
+    v = w._view
+    try:
+        _click(w, _cell_pt(t, 1, 1))                                                     # 고른 표의 칸을 한 번 더 = 그 칸
+        assert v._cell_sel and (v._cell_sel["r0"], v._cell_sel["c0"]) == (1, 1)
+        _click(w, _cell_pt(t, 2, 2), SHIFT)                                              # Shift = 범위
+        assert v._cell_range() == (1, 2, 1, 2)
+        _key(v, Qt.Key.Key_Left, "")                                                     # 방향키 = 옆 칸(범위는 풀림)
+        assert v._cell_range() == (1, 1, 0, 0)
+        _key(v, Qt.Key.Key_Down, "", SHIFT)                                              # Shift+방향키 = 넓히기
+        assert v._cell_range() == (1, 2, 0, 0)
+        w._scene.clearSelection()                                                        # 표를 안 고르면 칸 고르기도 풂
+        assert v._cell_sel is None
+    finally:
+        w.close()
+
+
+def test_cell_keys_type_fresh_enter_continue_delete_with_undo():
+    w, t = _table_win()
+    v = w._view
+    try:
+        _click(w, _cell_pt(t, 0, 0))
+        _key(v, Qt.Key.Key_X, "x")                                                       # 글자 = 그 칸에 새로 씀
+        ed = v._cell_editor
+        assert ed.text() == "x"
+        ed._commit(); ed.close()
+        assert t.cell_text(0, 0) == "x"
+        w.undo()
+        assert t.cell_text(0, 0) == "가"                                                 # 칸 고치기도 Ctrl+Z 한 칸(전엔 되돌리기 밖)
+        t.setSelected(True)
+        _click(w, _cell_pt(t, 0, 1))
+        _key(v, Qt.Key.Key_F2, "")                                                       # F2 = 이어 고치기(커서 끝)
+        ed = v._cell_editor
+        assert ed.text() == "나" and not ed.hasSelectedText() and ed.cursorPosition() == 1
+        ed._commit(); ed.close()
+        t.setSelected(True)
+        _click(w, _cell_pt(t, 1, 0))
+        _click(w, _cell_pt(t, 1, 2), SHIFT)
+        _key(v, Qt.Key.Key_Delete, "")                                                   # Del = 칸 글만(표는 그대로)
+        assert [t.cell_text(1, c) for c in range(3)] == ["", "", ""] and t.scene() is w._scene
+        w.undo()
+        assert [t.cell_text(1, c) for c in range(3)] == ["1", "2", "3"]
+    finally:
+        w.close()
+
+
+def test_cell_selected_attaches_ime_and_korean_opens_cell_editor():
+    w, t = _table_win()
+    v = w._view
+    try:
+        assert v.inputMethodQuery(Qt.InputMethodQuery.ImEnabled) is False               # 표만 고름 = 글 도형 아님
+        _click(w, _cell_pt(t, 2, 0))
+        assert v.inputMethodQuery(Qt.InputMethodQuery.ImEnabled) is True
+        v.inputMethodEvent(QInputMethodEvent("ㄱ", []))
+        assert v._cell_editor is not None and v._cell_editor.isVisible()
+    finally:
+        w.close()
