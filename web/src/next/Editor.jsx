@@ -41,7 +41,7 @@ import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
-import { TIDY, clearSpot, tidyLayout } from './tidy.js'
+import { TIDY, clearSpot, faceArrows, tidyLayout } from './tidy.js'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
@@ -835,6 +835,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const o = clearSpot({ x: o0.x, y: o0.y - tag }, lay0.w, lay0.h + tag + memoH, others), lay = tidyLayout(secs, { x: o.x, y: o.y + tag })
     let next = m.items
     secs.forEach((s, i) => s.units.forEach((u, k) => { const f = lay.frames[i], to = f.at[k]; next = moveItems(next, u.ids, f.inner.x + to.x - u.box.x, f.inner.y + to.y - u.box.y) }))
+    next = faceArrows(next, moved.flatMap(u => u.ids), rectOf)   // 자리가 바뀌어 등지게 된 화살표 = 마주 보는 변으로(안 그러면 프레임 밖으로 돌아감)
     const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = orderedFrames(m.items).length
     const frames = secs.map((s, i) => { const f = lay.frames[i]; return base([f.x, f.y], { type: 'frame', rect: [0, 0, f.w, f.h], name: s.title, no: no0 + i + 1, z: zb }) })
     const notes = secs.flatMap((s, i) => (s.note ? [{ ...s.note, pos: [lay.frames[i].note.x - TEXT_MARGIN, lay.frames[i].note.y - TEXT_MARGIN], z: zt }] : []))

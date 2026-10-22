@@ -3,6 +3,7 @@
 // KAIROS는 가짜(/api/chat) — 서버는 tests/test_part62, 자리 계산은 web/test/tidy.test.mjs, 진짜는 손 확인.
 import { test, expect } from '@playwright/test'
 import { boardName, openBoard, setCam, clickScene, liveDoc, waitSaved } from './helpers.js'
+import { resolveRoutes } from '../src/next/arrows.js'
 
 const TEXTS = ['송신기 2번 출력 70%', '회의: 다음 주 화요일', '송신기 냉각 팬 소음', '점심 메뉴 고민', '회의 안건 — 예산', '송신기 예비품 주문', '회의록 공유하기', '송신기 교체 견적']
 const POS = [[0, 0], [700, 40], [260, 380], [1100, 300], [120, 760], [820, 620], [1250, 0], [480, 1000]]
@@ -47,6 +48,8 @@ test('흩어진 메모 → 정리정돈 = 주제별 프레임 → Ctrl+Z 한 번
   expect([ar.bind1, ar.bind2].map(i => d.items[i].uid)).toEqual(['m0', 'm2'])          // 화살표 안 끊김 — 옮긴 메모를 따라감
   const a2 = d.items.find(it => it.uid === 'm2'), end = ar.pts.at(-1)
   expect(end[0] >= a2.pos[0] - 1 && end[0] <= a2.pos[0] + 341 && end[1] >= a2.pos[1] - 1 && end[1] <= a2.pos[1] + 54).toBe(true)
+  const f0 = frames[0], ai = d.items.indexOf(ar), route = resolveRoutes(d.items).get(ai).map(([x, y]) => [x + ar.pos[0], y + ar.pos[1]])   // 화면이 그리는 길과 같은 계산
+  for (const [x, y] of route) expect(x >= f0.pos[0] && x <= f0.pos[0] + f0.rect[2] && y >= f0.pos[1] && y <= f0.pos[1] + f0.rect[3], `화살표 길 ${x},${y}`).toBe(true)   // 같은 프레임 안 두 조각 = 프레임 밖으로 안 돌아감(10-23)
   expect(d.items.find(it => it.type === 'memo' && it.lines.some(l => l.t.includes('송신기 교체가 가장 급해'))).fill).toBe('#fffff8c5')   // 핵심 의견 = 노란 메모
 
   await clickScene(page, 5000, 4000); await page.keyboard.press('Control+z')         // 한 번에 원래대로

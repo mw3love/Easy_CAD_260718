@@ -1,7 +1,8 @@
 // node --test web/test — 「정리해 줘」 ② 레고형 정리정돈 자리 계산(§8 항목61, `src/next/tidy.js`)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { TIDY, TIDY_RE, clearSpot, packUnits, tidyLayout } from '../src/next/tidy.js'
+import { TIDY, TIDY_RE, clearSpot, faceArrows, packUnits, tidyLayout } from '../src/next/tidy.js'
+import { resolveRoutes } from '../src/next/arrows.js'
 
 const overlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 
@@ -40,4 +41,18 @@ test('겹치면 아래로 비킴 — 안 겹치면 제자리', () => {
   assert.deepEqual(clearSpot({ x: 0, y: 0 }, 500, 300, [{ x: 600, y: 0, w: 100, h: 100 }]), { x: 0, y: 0 })
   const at = clearSpot({ x: 0, y: 0 }, 500, 300, [{ x: 100, y: 100, w: 100, h: 100 }, { x: 0, y: 260, w: 50, h: 300 }])
   assert.equal(at.x, 0); assert.ok(at.y >= 560)
+})
+
+test('정돈 뒤 등지게 된 화살표 = 마주 보는 변으로 — 프레임 밖으로 안 돌아감', () => {
+  // 원래 A 위·B 아래(A 아래변 → B 위변)였는데 정돈으로 나란히(16px)
+  const A = { _id: 'a', type: 'rect', pos: [0, 0], rect: [0, 0, 100, 60] }, B = { _id: 'b', type: 'rect', pos: [116, 0], rect: [0, 0, 100, 60] }
+  const S = { _id: 's', type: 'sarrow', pos: [0, 0], auto_route: true, routing: 'ortho', pts: [[50, 60], [166, 0]], _bind1: 'a', bind1_pt: [50, 60], _bind2: 'b', bind2_pt: [50, 0], width: 1 }
+  const rectOf = it => it.rect, ys = its => resolveRoutes(its, rectOf).get(2).map(p => p[1])
+  assert.ok(Math.min(...ys([A, B, S])) < -TIDY.PAD)                                     // 고치기 전: B 위로 프레임 밖까지(재현)
+  const out = faceArrows([A, B, S], ['a', 'b'], rectOf), s = out[2]
+  assert.deepEqual([s.bind1_pt, s.bind2_pt], [[100, 30], [0, 30]])                      // A 오른변 → B 왼변
+  assert.ok(ys(out).every(y => y >= 0 && y <= 60))                                     // 두 상자 사이로 곧게
+  const keep = { ...S, bind1_pt: [100, 30], bind2_pt: [0, 30] }
+  assert.equal(faceArrows([A, B, keep], ['a', 'b'], rectOf)[2], keep)                    // 이미 마주 보면 그대로
+  assert.equal(faceArrows([A, B, S], ['a'], rectOf)[2], S)                               // 한쪽만 옮겼으면 손대지 않음
 })
