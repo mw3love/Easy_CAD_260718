@@ -300,6 +300,30 @@ class Handler(SimpleHTTPRequestHandler):
         threading.Thread(target=run, daemon=True).start()
         return self._json(200, {"job": job})
 
+    def _meeting_live(self, name: str, q: dict):
+        """POST /api/meeting/<이름>/live {"segments", "duration"} — 「🎙 회의」 실시간 받아 적은 구간 → 요약만(같은 일감 방식, 2026-10-23)"""
+        req = self._body()
+        segs = req.get("segments") if isinstance(req, dict) else None
+        if not name or not isinstance(segs, list) or not segs:
+            return self._json(400, {"error": "받아 적은 말이 없어요"})
+        key = self._key()
+        if not key:
+            return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
+        job = secrets.token_hex(6)
+        model = (q.get("model") or [""])[0] or gw.FALLBACK_DEFAULT_MODEL
+        duration = float(req.get("duration") or 0)
+        Handler.jobs[job] = {"board": name, "status": "run", "msg": "요약하는 중…"}
+
+        def run():
+            try:
+                res = meeting.minutes_from_live(key, segs, model=model, duration=duration, base_url=gw.resolve_base_url())
+                Handler.jobs[job].update(status="done", msg="끝", result=res)
+                sys.stderr.write("[회의록 실시간] %s %.0f초 · %d구간\n" % (name, res["duration"], len(res["turns"])))
+            except Exception as e:
+                Handler.jobs[job].update(status="error", error=str(e))
+        threading.Thread(target=run, daemon=True).start()
+        return self._json(200, {"job": job})
+
     def _meeting_status(self, name: str, job: str):
         j = Handler.jobs.get(job)
         if not j or j["board"] != name:
@@ -614,6 +638,9 @@ class Handler(SimpleHTTPRequestHandler):
         m = re.match(r"^/api/find/([^/]+)$", path)
         if m:
             return self._find_api(self._name(m.group(1)))
+        m = re.match(r"^/api/meeting/([^/]+)/live$", path)
+        if m:
+            return self._meeting_live(self._name(m.group(1)), self._route()[1])
         m = re.match(r"^/api/meeting/([^/]+)$", path)
         if m:
             return self._meeting_start(self._name(m.group(1)), self._route()[1])

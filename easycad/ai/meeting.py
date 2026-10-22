@@ -183,6 +183,17 @@ def make_minutes(api_key: str, data: bytes, filename: str, *, model: str, base_u
     return {**out, "turns": tns, "duration": round(float(stt["duration"] or 0), 1), "credits": round(float(stt["credits"] or 0), 2), "model": model}
 
 
+def minutes_from_live(api_key: str, segments: list, *, model: str, duration: float = 0, base_url: str = gw.BASE_URL, client=None) -> dict:
+    """「🎙 회의」 실시간 받아쓰기(2026-10-23) — 브라우저가 모은 구간 → 파일 회의록과 같은 모양. 받아쓰기는 이미 끝났으니 요약만.
+    화자는 실시간 답의 "1"·"2"를 브라우저가 "Speaker 1"처럼 보냄(파일 받아쓰기와 같은 이름 → `turns`가 「화자 1」로). 크레딧은 받아쓰기 쪽을 모름(None)."""
+    tns = turns(segments)
+    if not tns:
+        raise RuntimeError("받아 적은 말이 없어요")
+    client = client or gw._client(api_key, base_url, timeout=300)
+    out = summarize(client, tns, model=model)
+    return {**out, "turns": tns, "duration": round(float(duration or 0), 1), "credits": None, "model": model}
+
+
 # ── 실시간 받아쓰기(대화창 🎤, 2026-10-20 KAIROS 문서 검토) — 브라우저가 KAIROS 소켓에 바로 붙되 키는 서버에만 ──
 # POST `/realtime/sessions/` {"model": "stt-rt-v5"} → 60초 동안 한 번만 쓰는 표. 브라우저는 `wss://<호스트><url>?token=…`로 붙고(Soniox 실시간 형식 그대로),
 # 첫 프레임 JSON 설정 → 0.1초씩 PCM 16비트 → 끝은 빈 글("" — 빈 바이너리면 408). 실측: 말 뒤 0.1~0.3초에 임시 글, 문장 끝에 확정. 과금 = 처리한 오디오 초.

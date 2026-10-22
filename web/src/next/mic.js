@@ -8,11 +8,17 @@ const WORKLET = `class MbPcm extends AudioWorkletProcessor {
 }
 registerProcessor('mb-pcm', MbPcm)`
 
-// 반환 = 멈추기 함수(남은 소리를 보내고 확정 글을 받은 뒤 닫힘). onText(확정, 임시), onState('listen'|'stopping'|'off'), onError(쉬운 말)
-export async function startMic({ onText, onState, onError, headers = {} }) {
-  const r = await fetch('/api/stt-token', { method: 'POST', headers })
-  const tok = await r.json().catch(() => ({}))
-  if (!r.ok || !tok.url) throw new Error(tok.error || `서버 응답 ${r.status}`)
+// 반환 = 멈추기 함수(남은 소리를 보내고 확정 글을 받은 뒤 닫힘). onText(확정, 임시), onState('listen'|'reconnect'|'stopping'|'off'), onError(쉬운 말)
+// 「🎙 회의」(2026-10-23): diarize = 말한 사람 나누기(실측 — 실시간도 토큰마다 speaker "1"·"2"), onTokens(확정 토큰[], 임시 토큰[]) — 토큰 = {text, speaker, start_ms, end_ms}
+// (시간은 첫 연결부터 센 것), reconnect = 연결이 닫혀도(KAIROS 한 연결 60분 상한 `session cap` 등) 새 표로 다시 붙음 — 그동안 소리는 모아 뒀다 보냄
+export async function startMic({ onText = () => {}, onTokens, onState, onError, headers = {}, diarize = false, reconnect = false }) {
+  const token = async () => {
+    const r = await fetch('/api/stt-token', { method: 'POST', headers })
+    const tok = await r.json().catch(() => ({}))
+    if (!r.ok || !tok.url) throw new Error(tok.error || `서버 응답 ${r.status}`)
+    return tok.url
+  }
+  const url0 = await token()
   let stream
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
@@ -24,32 +30,53 @@ export async function startMic({ onText, onState, onError, headers = {} }) {
   await ctx.audioWorklet.addModule(modUrl); URL.revokeObjectURL(modUrl)
   const src = ctx.createMediaStreamSource(stream), node = new AudioWorkletNode(ctx, 'mb-pcm'), mute = ctx.createGain()
   mute.gain.value = 0; src.connect(node); node.connect(mute); mute.connect(ctx.destination)   // 끝까지 이어야 처리가 돎(소리는 0 — 내 목소리가 스피커로 안 나옴)
-  const ws = new WebSocket(tok.url)
-  let final = '', buf = [], len = 0, open = false, stopping = false, closed = false, timer = 0
+  let ws = null, final = '', buf = [], len = 0, open = false, stopping = false, closed = false, timer = 0, sent = 0, offset = 0, fails = 0
   const micOff = () => stream.getTracks().forEach(t => t.stop())
   const done = () => { if (closed) return; closed = true; clearTimeout(timer); micOff(); ctx.close().catch(() => {}); try { ws.close() } catch { /* 이미 닫힘 */ } onState('off') }
   const flush = () => {
-    if (!len || ws.readyState !== 1) return
+    if (!len || !ws || ws.readyState !== 1) return
     const pcm = new Int16Array(len); let o = 0
     for (const f of buf) for (let i = 0; i < f.length; i++) { const v = Math.max(-1, Math.min(1, f[i])); pcm[o++] = v < 0 ? v * 0x8000 : v * 0x7fff }
-    ws.send(pcm.buffer); buf = []; len = 0
+    ws.send(pcm.buffer); sent += len; buf = []; len = 0
   }
-  ws.onopen = () => {
-    open = true
-    ws.send(JSON.stringify({ model: 'stt-rt-v5', audio_format: 'pcm_s16le', sample_rate: ctx.sampleRate, num_channels: 1, language_hints: ['ko'] }))
-    onState('listen')
+  const connect = url => {
+    const s = ws = new WebSocket(url)
+    open = false; offset = Math.round(sent / ctx.sampleRate * 1000)   // 새 연결의 시간은 0부터 — 앞 연결까지 보낸 소리만큼 밀어 줌
+    const shift = t => ({ text: t.text, speaker: t.speaker || '', start_ms: (t.start_ms || 0) + offset, end_ms: (t.end_ms || 0) + offset })
+    s.onopen = () => {
+      open = true; fails = 0
+      s.send(JSON.stringify({ model: 'stt-rt-v5', audio_format: 'pcm_s16le', sample_rate: ctx.sampleRate, num_channels: 1, language_hints: ['ko'], ...(diarize ? { enable_speaker_diarization: true } : {}) }))
+      onState('listen'); flush()
+    }
+    s.onmessage = e => {
+      if (s !== ws) return
+      let m; try { m = JSON.parse(e.data) } catch { return }
+      if (m.error_code || m.error_message) { onError(`받아쓰기 오류: ${m.error_message || m.error_code}`); return done() }
+      let fin = '', non = ''; const fins = [], nons = []
+      for (const t of m.tokens || []) { if (/^<.+>$/.test(t.text || '')) continue; if (t.is_final) { fin += t.text; fins.push(shift(t)) } else { non += t.text; nons.push(shift(t)) } }
+      final += fin; onText(final, non); if (onTokens) onTokens(fins, nons)
+      if (m.finished) done()
+    }
+    s.onerror = () => { if (s === ws && !closed && !reconnect) onError('받아쓰기 연결이 끊겼어요') }
+    s.onclose = async e => {
+      if (s !== ws || closed) return
+      if (reconnect && !stopping && e.code !== 4402 && fails < 3) {   // 60분 상한·잠깐 끊김 = 새 표로 다시(크레딧 부족이면 그만)
+        open = false; fails++; onState('reconnect')
+        try { connect(await token()) } catch (err) { onError(`받아쓰기를 다시 못 붙였어요 — ${err.message || err}`); done() }
+        return
+      }
+      if (!stopping && e.code !== 1000) onError(e.code === 4402 ? '크레딧이 모자라요' : `받아쓰기 연결이 끊겼어요(${e.code})`)
+      done()
+    }
   }
-  node.port.onmessage = e => { if (!open || stopping) return; buf.push(e.data); len += e.data.length; if (len >= ctx.sampleRate / 10) flush() }
-  ws.onmessage = e => {
-    let m; try { m = JSON.parse(e.data) } catch { return }
-    if (m.error_code || m.error_message) { onError(`받아쓰기 오류: ${m.error_message || m.error_code}`); return done() }
-    let fin = '', non = ''
-    for (const t of m.tokens || []) { if (/^<.+>$/.test(t.text || '')) continue; if (t.is_final) fin += t.text; else non += t.text }
-    final += fin; onText(final, non)
-    if (m.finished) done()
+  node.port.onmessage = e => {
+    if (stopping || closed) return
+    if (!open && !(reconnect && ws)) return   // 다시 붙는 동안은 모아 둠(아래 30초까지)
+    buf.push(e.data); len += e.data.length
+    if (!open) { while (len > ctx.sampleRate * 30) len -= buf.shift().length; return }
+    if (len >= ctx.sampleRate / 10) flush()
   }
-  ws.onerror = () => { if (!closed) onError('받아쓰기 연결이 끊겼어요') }
-  ws.onclose = e => { if (!closed && !stopping && e.code !== 1000) onError(e.code === 4402 ? '크레딧이 모자라요' : `받아쓰기 연결이 끊겼어요(${e.code})`); done() }
+  connect(url0)
   return () => {
     if (stopping || closed) return
     stopping = true; onState('stopping'); micOff()   // 마이크 표시는 바로 끔

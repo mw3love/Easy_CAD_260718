@@ -112,7 +112,7 @@ easycad/
 │   ├── board_tidy.py       웹 칠판 「정리해 줘」 ② 레고형 정리정돈 — 칠판 조각(uid·종류·글·크기) → 주제별 묶음 목록 JSON(gpt-6-luna — 10-20 실측으로 바꿈, 좌표는 칠판 `tidy.js`)
 │   ├── board_image.py      웹 칠판 그림 — 「그려줘」 → KAIROS 그림 후보 2장(gpt-image-2.5-flare — 10-20 실측, §8 항목61 ③-4, 서버가 `<이름>.img/`에 두고 주소만) + 이어 고치기(`followup`)·원본 유지 편집(`input_images`)·인포그래픽
 │   ├── board_ocr.py        웹 칠판 「그림 속 글 읽기」 — 그림 → KAIROS(claude-haiku-5-5, 10-21 실측) → 글, 서버 `/api/ocr`
-│   ├── meeting.py          웹 칠판 회의록 — 녹음 → KAIROS 받아쓰기(stt-async-v5, 올리기·기다리기) → 구간 합치기 → 요약 JSON(§8 항목61 ③-3, 서버 `/api/meeting` 뒤 일감)
+│   ├── meeting.py          웹 칠판 회의록 — 녹음 → KAIROS 받아쓰기(stt-async-v5, 올리기·기다리기) → 구간 합치기 → 요약 JSON(§8 항목61 ③-3, 서버 `/api/meeting` 뒤 일감) + 실시간 「🎙 회의」 요약만(`minutes_from_live`, `/api/meeting/<칠판>/live`)
 │   ├── board_find.py       웹 칠판 「뜻으로 찾기」 — 칠판 글 → KAIROS 임베딩(qwen3.7) 점수·낱말 가산, 뜻 숫자는 `<이름>.emb.json`(§8 항목61 ③-2, 서버 `/api/find`·대화 「칠판에서」)
 │   ├── kr_tools.py         웹 칠판 공공 데이터 = KAIROS MCP 묶음 7개(날씨·달력·법령·KOSIS/한국은행·특보·대기질·국어 규범, 우리 키로 34개 가능) — 낱말로 묶음 고르고 gpt-6-luna가 여러 번 주고받기(찾기 → 받기, 2026-10-21). 날씨는 10개 도시만 — 모르는 도시는 서울로 오니 버림
 │   ├── route.py            웹 칠판 대화창 길 고르기 — 판단 모델 `jev-latest` + 손질 둘 + 낱말 규칙(`board_chat.guess_kind`) 바닥, 정답 있는 25문항 `CASES`(실사용에서 틀린 질문을 더함)·주간 자가 시험(`self_check`, 서버가 `route_check.json`), 시험은 `EASYCAD_ROUTE=rules`
@@ -151,7 +151,7 @@ web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + Reac
 │                          arrowkind.js 종류 바꾸기·xform.js 좌표 + 4단계 props.jsx 우상 속성 카드·palette.jsx 좌상 도형·심볼·layers.jsx 좌하 레이어·minimap.jsx 우하 미니맵·
 │                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례(표 모양 `legend`, 줄 자동)·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿, 표 줄 = `@tiptap/extension-table`)·formatbar.jsx 드래그 꾸미기 막대·marks.js 기울임·밑줄·취소선·fold.jsx 카드 접기(▾/▸) + ⓕ sync.js 부분 저장·받아 오기·도형 단위 되돌리기·viewer.jsx 게시 화면 + ⓔ htmlshare.js HTML 한 파일) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
 │                          데스크톱 대조 시험 `tools/export_route_cases.py`·`export_connect_cases.py`·`export_arrow_cases.py` → `web/test/fixtures/`(규칙 고치면 다시 돌림)
-│                          + tidy.js 정리정돈 자리 계산(순수) + 다잡기(2026-10-19) keys.js 글쇠 규칙표·help.jsx 도움말(F1) · **화면 자동 시험** `web/e2e/`(Playwright 1.63.0, 깔린 크롬) `npm run e2e` — 매일 쓰는 흐름 72개(flow1~24) · clipin.js 바깥 붙여넣기 모양 고르기(글자·메모·표·코드, 2026-10-21) · pdfcard.jsx PDF 보기 카드(휠 넘기기·Alt+끌기 오려 오기, 2026-10-21) · find.jsx 찾기 칸(Ctrl+F) · mic.js 대화창 🎤 실시간 받아쓰기(서버 `/api/stt-token` 일회용 표 → KAIROS 소켓) · kairosKey.js 「🔑 내 키」(머리말 `X-Kairos-Key`)
+│                          + tidy.js 정리정돈 자리 계산(순수) + 다잡기(2026-10-19) keys.js 글쇠 규칙표·help.jsx 도움말(F1) · **화면 자동 시험** `web/e2e/`(Playwright 1.63.0, 깔린 크롬) `npm run e2e` — 매일 쓰는 흐름 72개(flow1~24) · clipin.js 바깥 붙여넣기 모양 고르기(글자·메모·표·코드, 2026-10-21) · pdfcard.jsx PDF 보기 카드(휠 넘기기·Alt+끌기 오려 오기, 2026-10-21) · find.jsx 찾기 칸(Ctrl+F) · mic.js 대화창 🎤·「🎙 회의」 실시간 받아쓰기(화자 나누기·다시 붙기 옵션)(서버 `/api/stt-token` 일회용 표 → KAIROS 소켓) · kairosKey.js 「🔑 내 키」(머리말 `X-Kairos-Key`)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -247,6 +247,7 @@ symbol_library/
   **10-22 저녁~밤 데스크톱 = 웹과 같게**(웹 `keys.js` 기준 13건 거의 다): 메모 TipTap 규칙표(`LINE_RULES`·`MARK_RULES`·`KEYS`, 줄마다 시험)·꾸미기 막대·Ctrl+/ 전환·줄 손잡이 ⠿(`core_memo_lines.py` — 고치는 중에도)·칠판 표로 바꾸기,
   고르고 바로 치면 글(한글 입력기는 그때만 붙임)·Ctrl+X·Z 한 번 더/Alt+Z·빈 곳 두 번 = 글·D 다크·표 칸 고르기(칸 글도 되돌리기)·위 막대 끌어 놓기·Ctrl+F 뜻으로 찾기(`host_find.py`), 화면 글꼴 Pretendard(맑은 고딕 「제」 주황).
   10-23: 위 막대 다각형 끌기(첫 선분 놓고 이어 찍기), 휠 클릭 끌기는 이미 화면 이동이었음(`_win_drag_*` = 이름만 창). ⚠ 진짜 마우스·글쇠 확인은 먼저 묻기(사용자가 같은 PC 사용).
+  **10-23 「🎙 회의」 실시간 회의록**(웹 위 막대): 실시간 받아쓰기도 화자를 나눔(실측) → 점선 틀에 화자별 글 → 「끝내기」 = 요약만(`/api/meeting/<칠판>/live`) → 파일 회의록과 같은 프레임, 브라우저 임시 저장·60분 상한 다시 붙기. 시험 `e2e/flow25`(가짜 마이크·가짜 소켓).
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·
   곡선·직각 같은 *종류*는 캔버스에서 객체를 선택한 뒤 **플로팅 미니툴바의 하위목록**에서
   고르게 한다(Lucid·FigJam 방식). 세부 조절값은 그 종류를 골랐을 때만 노출.

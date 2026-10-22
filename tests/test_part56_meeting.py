@@ -185,3 +185,41 @@ def test_live_token_builds_wss_url_with_token():
     out = meeting.live_token("k", base_url="https://api.baze.co/v1/gateway", http=H())
     assert seen == {"url": "https://api.baze.co/v1/gateway/realtime/sessions/", "json": {"model": "stt-rt-v5"}}
     assert out["url"] == "wss://api.baze.co/v1/gateway/soniox/transcribe-websocket?token=T0k"
+
+
+# ── 「🎙 회의」 실시간 받아쓰기(2026-10-23) — 브라우저가 모은 구간 → 요약만, 파일 회의록과 같은 모양 ──
+def test_minutes_from_live_merges_and_summarizes_without_stt():
+    client, seen = _fake_client('{"title": "점검 일정", "decisions": ["수요일 10시"]}')
+    out = meeting.minutes_from_live("k", SEGS, model="m-2", duration=68.4, client=client)
+    assert [t["speaker"] for t in out["turns"]] == ["화자 1", "화자 2"] and out["turns"][0]["text"] == "회의 시작합니다. 첫 안건은 송신기 교체."
+    assert out["title"] == "점검 일정" and out["decisions"] == ["수요일 10시"] and out["duration"] == 68.4 and out["credits"] is None and out["model"] == "m-2"
+    assert "[01:05] 화자 2" in seen["messages"][1]["content"]
+    with pytest.raises(RuntimeError):
+        meeting.minutes_from_live("k", [{"speaker": "Speaker 1", "text": " "}], model="m", client=client)
+
+
+def test_server_meeting_live_job(server, monkeypatch):
+    import server as srv
+    base, got = server
+
+    def fake_live(key, segs, *, model, duration=0, base_url="", **kw):
+        got.update(key=key, segs=segs, model=model, duration=duration)
+        return {"title": "실시간", "summary": "", "decisions": [], "todos": [], "next": "", "turns": meeting.turns(segs), "duration": duration, "credits": None, "model": model}
+    monkeypatch.setattr(srv.meeting, "minutes_from_live", fake_live)
+    body = json.dumps({"segments": SEGS[:3], "duration": 68.4}).encode()
+    req = urllib.request.Request(base + "/api/meeting/" + urllib.parse.quote("공부") + "/live?model=m-7", data=body, method="POST", headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as r:
+        job = json.loads(r.read())["job"]
+    url = base + "/api/meeting/" + urllib.parse.quote("공부") + "/" + job
+    for _ in range(50):
+        with urllib.request.urlopen(url) as r:
+            st = json.loads(r.read())
+        if st["status"] != "run":
+            break
+        time.sleep(0.05)
+    assert st["status"] == "done" and st["result"]["title"] == "실시간" and len(st["result"]["turns"]) == 2
+    assert got == {"key": "test-key", "segs": SEGS[:3], "model": "m-7", "duration": 68.4}
+    empty = urllib.request.Request(base + "/api/meeting/x/live", data=b'{"segments": []}', method="POST", headers={"Content-Type": "application/json"})
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(empty)
+    assert e.value.code == 400

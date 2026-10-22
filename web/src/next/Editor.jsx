@@ -7,6 +7,7 @@ import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, legendLayout
 import { DOC_NAME, boardMembership, drawOrder, itemBounds } from './doc.js'
 import { docText } from './find.jsx'
 import { keyHeaders } from './kairosKey.js'
+import { startMic } from './mic.js'
 import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
@@ -88,7 +89,7 @@ const base = (pos, extra) => ({ pos, scale: 1, rotation: 0, z: 0, origin: [0, 0]
 // 뜬 대화창 폭(좁은 창 — main.jsx가 칠판 칸에 `--mb-right-inset`으로 적음) — 「다 보기」·프레임으로 가기·AI 답 자리는 그만큼 오른쪽을 뺌(2026-10-19)
 export const rightInset = el => (el ? parseFloat(getComputedStyle(el).getPropertyValue('--mb-right-inset')) || 0 : 0)
 
-export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onFit, onDark, onHelp, onAsk, marks = [], readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
+export const Editor = forwardRef(function Editor({ others = [], dark, model, setModel, onCommit, size, cam, setCam, tool, setTool, setStatus, library, libFolders, activeLayer, onSel, onExportSel, onFit, onDark, onHelp, onAsk, onMeet, marks = [], readOnly = false }, ref) {   // readOnly = 게시 링크로 보기(2026-10-18 공동작업 — 끌기 = 화면 이동, 고치기 없음)
   const [sel, setSel] = useState([])
   const [live, setLive] = useState(null)          // 끄는 동안 보이는 아이템 목록(놓으면 확정)
   const [overlay, setOverlay] = useState({})      // { rubber, guides, draw, poly }
@@ -131,7 +132,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
 
@@ -1724,7 +1725,86 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const H = Math.max(sum.rect[3], full.rect[3]) + 2 * pad, W = 2 * MEMO.W + gap + 2 * pad
     const fr = base([at.x, at.y], { type: 'frame', rect: [0, 0, W, H], name: `회의 ${when} · ${res.title || ''}`.trim(), no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
     commit([...m.items, fr, sum, full], [sum._id], '회의록')
-    setStatus(`회의록 — ${res.title || '회의'} · ${Math.round(res.duration || 0)}초 녹음 · ${res.credits ?? '?'}크레딧. 전문은 「… 줄 더」를 누르면 펼쳐져요`)
+    setStatus(`회의록 — ${res.title || '회의'} · ${Math.round(res.duration || 0)}초 녹음${res.credits != null ? ` · ${res.credits}크레딧` : ''}. 전문은 「… 줄 더」를 누르면 펼쳐져요`)
+  }
+  // 「🎙 회의」 실시간 회의록(2026-10-23) — 마이크 → KAIROS 실시간 받아쓰기(말한 사람 나눔, mic.js) → 놓을 자리 점선 틀에 글이 쌓임 → 「끝내기」 = 서버가 요약만(`/api/meeting/<칠판>/live`)
+  // → 파일 회의록과 같은 `insertMeeting`. 받아 적는 글은 문서에 안 넣고(되돌리기·공동작업 저장이 글자마다 쌓임) 이 브라우저에 3초마다 임시 저장 — 창이 닫혀도 다시 열면 「정리하기 · 버리기」
+  // meet = { at, s(배율), t0, segs: [{speaker, text, start_ms, end_ms}], part(임시 글), state: 'start'|'listen'|'reconnect'|'stopping'|'saved', err }
+  const MEET_KEY = `mb-meet:${DOC_NAME}`
+  const [meet, setMeetS] = useState(() => { if (readOnly) return null; try { const d = JSON.parse(localStorage.getItem(MEET_KEY) || 'null'); return d?.segs?.length ? { ...d, part: '', state: 'saved' } : null } catch { return null } })
+  const meetRef = useRef(meet), meetStopFn = useRef(null)
+  const setMeet = f => { const v = typeof f === 'function' ? f(meetRef.current) : f; meetRef.current = v; setMeetS(v) }
+  useEffect(() => { onMeet?.(meet ? meet.state : '') }, [meet?.state])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {   // 임시 저장 — 확정 글이 바뀌면 3초 안에
+    if (!meet?.segs?.length || meet.state === 'saved') return
+    const t = setTimeout(() => { try { localStorage.setItem(MEET_KEY, JSON.stringify({ at: meet.at, s: meet.s, t0: meet.t0, dur: meet.dur, segs: meet.segs })) } catch { /* 저장 못 해도 받아쓰기는 계속 */ } }, 3000)
+    return () => clearTimeout(t)
+  }, [meet?.segs])   // eslint-disable-line react-hooks/exhaustive-deps
+  const [, setTick] = useState(0)
+  useEffect(() => { if (meet?.state !== 'listen' && meet?.state !== 'reconnect') return; const t = setInterval(() => setTick(n => n + 1), 1000); return () => clearInterval(t) }, [meet?.state])
+  const MEET_W = 2 * MEMO.W + 72, MEET_H = 300
+  async function meetStart() {
+    if (meetRef.current) return
+    const s = +(1 / R.current.cam.z).toPrecision(2), at = spotNear(MEET_W * s, MEET_H * s)
+    setMeet({ at, s, t0: Date.now(), segs: [], part: '', state: 'start' })
+    setStatus('🎙 회의 — 마이크를 켜는 중…')
+    const add = fins => setMeet(m => {
+      if (!m || !fins.length) return m
+      const segs = m.segs.slice()
+      for (const t of fins) {
+        const last = segs[segs.length - 1]
+        if (last && last.speaker === t.speaker) segs[segs.length - 1] = { ...last, text: last.text + t.text, end_ms: t.end_ms }
+        else if (t.text.trim()) segs.push({ speaker: t.speaker, text: t.text.trimStart(), start_ms: t.start_ms, end_ms: t.end_ms })
+      }
+      return { ...m, segs }
+    })
+    try {
+      meetStopFn.current = await startMic({ headers: keyHeaders(), diarize: true, reconnect: true,
+        onTokens: (fins, nons) => { add(fins); const part = nons.map(t => t.text).join(''); setMeet(m => (m && m.part !== part ? { ...m, part } : m)) },
+        onState: st => {
+          const m = meetRef.current; if (!m) return
+          if (st === 'off') { meetStopFn.current = null; if (m.state === 'stopping') meetSummarize(); else setMeet({ ...m, part: '', state: 'saved' }); return }
+          if (st !== 'stopping') { setMeet({ ...m, state: st }); if (st === 'listen' && m.state === 'start') setStatus('🎙 회의 받아 적는 중 — 끝나면 「끝내기」') }
+        },
+        onError: msg => { setMeet(m => (m ? { ...m, err: msg } : m)); setStatus(`회의 — ${msg}`) } })
+    } catch (err) { setMeet(null); setStatus(`회의를 시작 못 했어요 — ${err.message || err}`) }
+  }
+  function meetStop() {   // 「끝내기」 = 남은 말 받고 → 요약 / 이미 멈춘(되살린) 것 = 바로 요약
+    const m = meetRef.current; if (!m) return
+    if (m.state === 'saved') return meetSummarize()
+    setMeet({ ...m, state: 'stopping', dur: Math.round((Date.now() - m.t0) / 1000) })
+    if (meetStopFn.current) meetStopFn.current(); else meetSummarize()
+  }
+  function meetDiscard() {
+    try { meetStopFn.current?.() } catch { /* 이미 닫힘 */ }
+    meetStopFn.current = null; setMeet(null); try { localStorage.removeItem(MEET_KEY) } catch { /* 그만 */ }
+    setStatus('받아 적은 회의를 버렸어요')
+  }
+  async function meetSummarize() {
+    const m = meetRef.current; if (!m) return
+    if (!m.segs.length) { setMeet(null); try { localStorage.removeItem(MEET_KEY) } catch { /* 그만 */ } return setStatus('받아 적은 말이 없어 회의록을 안 만들었어요') }
+    const dur = m.dur || Math.round((m.segs[m.segs.length - 1].end_ms || 0) / 1000)
+    try { localStorage.setItem(MEET_KEY, JSON.stringify({ at: m.at, s: m.s, t0: m.t0, dur, segs: m.segs })) } catch { /* 그만 */ }
+    setMeet(null)
+    const id = newId(), say = msg => setPend(ps => ps.map(q => (q.id === id ? { ...q, msg } : q)))
+    setPend(ps => [...ps, { id, x: m.at.x, y: m.at.y, msg: '요약하는 중…' }])
+    const done = () => setPend(ps => ps.filter(q => q.id !== id))
+    let model = ''; try { model = localStorage.getItem('magic-board-model') || '' } catch { /* 서버 기본 모델 */ }
+    const segments = m.segs.map(g => ({ ...g, speaker: g.speaker ? `Speaker ${g.speaker}` : 'Speaker Unknown' }))
+    try {
+      const r = await fetch(`/api/meeting/${encodeURIComponent(DOC_NAME)}/live${model ? `?model=${encodeURIComponent(model)}` : ''}`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ segments, duration: dur }) })
+      const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
+      if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
+      for (;;) {
+        await new Promise(ok => setTimeout(ok, 2000))
+        const g = await fetch(`/api/meeting/${encodeURIComponent(DOC_NAME)}/${d.job}`, { cache: 'no-store' }), st = await g.json().catch(() => ({ status: 'error', error: `서버 응답 ${g.status}` }))
+        if (st.status === 'run') { say(st.msg || '요약하는 중…'); continue }
+        if (st.status !== 'done') throw new Error(st.error || '회의록을 못 만들었어요')
+        done(); try { localStorage.removeItem(MEET_KEY) } catch { /* 그만 */ }
+        insertMeeting(st.result, m.at, '실시간 받아쓰기'); return
+      }
+    } catch (err) { done(); setMeet({ ...m, dur, part: '', state: 'saved', err: '' }); setStatus(`회의록 실패 — ${err.message || err}. 받아 적은 글은 남아 있어요(「정리하기」로 다시)`) }
   }
   async function insertWeb(url, where) {   // where = 'near'(「웹」 버튼 — 가운데 먼저·빈자리) | {x,y}(위 막대에서 끌어 놓은 자리) | 없음(붙여넣기·끌어 놓기 = 커서 자리)
     const c = R.current.cam, mp = where && where !== 'near' ? where : R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
@@ -1906,6 +1986,21 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           {pend.map(q => { const w = 2 * MEMO.W + 72, h = 240, fs = 14 / z   // 회의록 만드는 중 — 놓을 자리에 점선 틀(그리는 과정 보이기)
             return <g key={'pend' + q.id} data-testid="meeting-pending" pointerEvents="none"><rect x={q.x} y={q.y} width={w} height={h} rx={10} fill="rgba(218,119,86,.06)" stroke="#da7756" strokeWidth={1.5 / z} strokeDasharray={`${8 / z} ${5 / z}`} />
               <text x={q.x + w / 2} y={q.y + h / 2} textAnchor="middle" dominantBaseline="central" fontSize={fs} fontFamily={APP_FONT} fill="#da7756">회의록 만드는 중 · {q.msg}</text></g> })}
+          {meet && (() => { const s = meet.s, w = MEET_W * s, h = MEET_H * s, sec = Math.max(0, Math.floor((Date.now() - meet.t0) / 1000)), two = n => String(n).padStart(2, '0')   // 「🎙 회의」 받아 적는 중 — 점선 틀 안에 말한 사람별 글(마지막 줄이 보이게)
+            const clk = ms => { const t = Math.floor((ms || 0) / 1000); return `${two(Math.floor(t / 60))}:${two(t % 60)}` }, saved = meet.state === 'saved', who = new Set(meet.segs.map(g => g.speaker)).size
+            const head = saved ? `🎙 받아 적던 회의 · ${meet.segs.length}구간` : meet.state === 'start' ? '🎙 마이크 켜는 중…' : meet.state === 'reconnect' ? '🎙 다시 붙는 중…(소리는 모아 두는 중)' : meet.state === 'stopping' ? '🎙 마지막 말 받는 중…' : `🎙 받아 적는 중 · ${two(Math.floor(sec / 60))}:${two(sec % 60)}${who ? ` · ${who}명` : ''}`
+            const stop = e => e.stopPropagation(), btn = { all: 'unset', cursor: 'pointer', padding: '2px 10px', borderRadius: 99, fontWeight: 600, fontSize: 12 }
+            return <g data-testid="meeting-live" data-state={meet.state}><rect x={meet.at.x} y={meet.at.y} width={w} height={h} rx={10 * s} fill="rgba(218,119,86,.06)" stroke="#da7756" strokeWidth={1.5 / z} strokeDasharray={`${8 / z} ${5 / z}`} pointerEvents="none" />
+              <foreignObject x={0} y={0} width={MEET_W} height={MEET_H} transform={`translate(${meet.at.x},${meet.at.y}) scale(${s})`}>
+                <div style={{ width: MEET_W, height: MEET_H, boxSizing: 'border-box', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6, font: `400 14px ${APP_FONT}`, color: '#3f3f46' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#da7756', fontWeight: 600 }}><span style={{ flex: 1 }}>{head}</span>
+                    {(saved || meet.state === 'listen' || meet.state === 'reconnect') && <button data-testid="meeting-live-end" onPointerDown={stop} onClick={meetStop} style={{ ...btn, background: '#da7756', color: '#fff' }}>{saved ? '정리하기' : '끝내기'}</button>}
+                    {saved && <button data-testid="meeting-live-drop" onPointerDown={stop} onClick={meetDiscard} style={{ ...btn, color: '#71717a' }}>버리기</button>}</div>
+                  <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 4, lineHeight: 1.5 }}>
+                    {meet.segs.slice(-12).map((g, i) => <div key={i}><span style={{ color: '#a1a1aa' }}>[{clk(g.start_ms)}] 화자 {g.speaker || '?'}: </span>{g.text}</div>)}
+                    {meet.part && <div style={{ color: '#a1a1aa' }}>{meet.part}</div>}
+                    {!meet.segs.length && !meet.part && <div style={{ color: '#a1a1aa' }}>{meet.state === 'listen' ? '말하면 여기에 받아 적어요 — 끝나면 「끝내기」 = 요약·결정·할 일로 정리' : ''}</div>}
+                    {meet.err && <div style={{ color: '#dc2626' }}>{meet.err}</div>}</div></div></foreignObject></g> })()}
           {marks.filter(id => byId.has(id)).map(id => { const b = sceneBox(byId.get(id), textBox), pad = 6 / z   // 찾기 결과에 불 켜기(Ctrl+F — 2026-10-19)
             return <rect key={'find' + id} data-testid="find-mark" pointerEvents="none" x={b.x - pad} y={b.y - pad} width={b.w + 2 * pad} height={b.h + 2 * pad} rx={6 / z} fill="rgba(250,204,21,.12)" stroke="#f59e0b" strokeWidth={2.5 / z} strokeDasharray={`${6 / z} ${4 / z}`} /> })}
           {others.map(o => { const c = personColor(o.id), ids = [...new Set([...(o.sel || []), ...(o.edit ? [o.edit] : [])])].filter(id => byId.has(id))   // 다른 사람이 고른·고치는 도형 = 그 사람 색 테두리 + 이름표(2026-10-19)
