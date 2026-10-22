@@ -238,7 +238,7 @@ def test_memo_input_rules_turn_lines_as_you_type():
         _type(ed, "# ")
         assert ed.textCursor().block().blockFormat().property(KIND) == "h1"           # 치는 순간 제목
         # 목록·인용·코드 안 Enter = 같은 종류 이어짐, 빈 줄에서 Enter = 그 줄이 보통 글로(TipTap과 같게)
-        _type(ed, "제목\n- 하나\n둘\n\n1. 가\n\n[] 할 일\n\n> 인용\n\n```\ncode()\n\n---\n끝")
+        _type(ed, "제목\n- 하나\n둘\n\n1. 가\n\n[] 할 일\n\n> 인용\n\n```\ncode()\n\n\n---끝")   # 코드 = 빈 줄 두 번에 밖, `---` = 바로(웹 — test_part67)
         ed.commit()
         assert memo.raw["lines"] == [{"k": "h1", "t": "제목"}, {"k": "ul", "t": "하나"}, {"k": "ul", "t": "둘"}, {"k": "ol", "t": "가"},
                                      {"k": "todo", "t": "할 일"}, {"k": "quote", "t": "인용"}, {"k": "code", "t": "code()"},

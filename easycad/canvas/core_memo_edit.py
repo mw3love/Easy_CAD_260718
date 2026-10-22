@@ -3,7 +3,7 @@
 메모의 자식 글 상자(`QGraphicsTextItem`) — 칠판 안이라 확대·이동을 같이 따라가고, 고치는 동안 메모는 바탕만 그린다.
 메모 줄 하나 = 문서 블록 하나(종류는 블록 속성), 메모 안 표 = 문서 표. 글자 꾸밈(굵게·색·기울임·밑줄·취소선·형광펜·고정폭)은
 문서 글자 서식으로 들고 고친다 — 마칠 때 다시 메모 줄(`lines`·`runs`)로. 치수는 메모 그리기(`core_memo`)와 같은 숫자.
-입력 규칙은 웹 TipTap과 같게: 줄 맨 앞 `# `·`## `·`### `·`- `·`1. `·`[] `·`> ` + 띄어쓰기, ```` ``` ````·`---` + Enter.
+입력 규칙·글쇠는 웹 TipTap과 같게 — 아래 `LINE_RULES`·`MARK_RULES`·`KEYS` 표(시험이 줄마다 쳐 봄).
 """
 import copy
 import re
@@ -249,8 +249,52 @@ def _sig(ln: dict):
     return (ln.get("k"), ln.get("t") or "", int(ln.get("lv") or 0), bool(ln.get("done")), runs, rows, bool(ln.get("header")))
 
 
-_PREFIX = [(re.compile(r"^###$"), "h3"), (re.compile(r"^##$"), "h2"), (re.compile(r"^#$"), "h1"), (re.compile(r"^[-*•]$"), "ul"),
-           (re.compile(r"^\d+[.)]$"), "ol"), (re.compile(r"^\[ ?\]$"), "todo"), (re.compile(r"^\[[xX]\]$"), "todo_done"), (re.compile(r"^>$"), "quote")]
+# ---- 웹 메모 편집기(TipTap)와 같은 규칙표 — 2026-10-22 `web/node_modules/@tiptap/*/dist/index.js` 원본에서 옮김(기억으로 다시 쓰지 말 것) ----
+# 검사 글 = 커서 앞 글 + 방금 친 글자(Enter = "\n"). TipTap처럼 JS `\s`가 Enter도 받으므로 「#」+Enter도 제목. JS `$` = `\Z`(파이썬 `$`는 끝 줄바꿈 앞에서도 맞음).
+# 줄 규칙은 보통 글 줄에서만(웹은 목록 안 제목 같은 겹침이 되지만 메모 줄은 한 겹이라 못 담음). 코드 줄·고정폭 글 옆에선 안 걸림(웹과 같음).
+LINE_RULES = [
+    (re.compile(r"^#\s\Z"), "h1"), (re.compile(r"^##\s\Z"), "h2"), (re.compile(r"^###\s\Z"), "h3"),   # extension-heading `^(#{1,n})\s$`
+    (re.compile(r"^\s*[-+*]\s\Z"), "ul"),                                                            # extension-list bulletListInputRegex
+    (re.compile(r"^\d+\.\s\Z"), "ol"),                                                               # orderedListInputRegex(시작 번호는 메모 줄에 없음)
+    (re.compile(r"^\s*\[ ?\]\s\Z"), "todo"), (re.compile(r"^\s*\[x\]\s\Z"), "todo_done"),           # TaskItem inputRegex
+    (re.compile(r"^\s*>\s\Z"), "quote"),                                                             # extension-blockquote
+    (re.compile(r"^```([a-z]+)?\s\Z"), "code"), (re.compile(r"^~~~([a-z]+)?\s\Z"), "code"),        # extension-code-block(띄어쓰기·Enter)
+    (re.compile(r"^(?:---|—-|___\s|\*\*\*\s)\Z"), "hr"),                                             # extension-horizontal-rule(`---`는 세 번째 글자에)
+]
+# 글자 꾸밈 규칙 — (정규식, 꾸밈, 안쪽 글 묶음 번호). 닫는 글자를 치는 순간 기호를 지우고 안쪽 글만 꾸밈, 뒤에 치는 글은 안 꾸밈(removeStoredMark)
+MARK_RULES = [
+    (re.compile(r"(?:^|\s)(\*\*(?!\s+\*\*)([^*]+)\*\*(?!\s+\*\*))\Z"), "bold", 2),                  # extension-bold starInputRegex
+    (re.compile(r"(?:^|\s)(__(?!\s+__)([^_]+)__(?!\s+__))\Z"), "bold", 2),                          # underscoreInputRegex
+    (re.compile(r"(?<!`)(`([^`]+)`)\Z"), "mono", 2),                                                 # extension-code inputRegexMatch
+]
+# 글쇠 → 동작(웹 TipTap `Mod-…`·memoedit.jsx Finish). 줄 종류 글쇠는 켜고 끄기(이미 그 종류면 보통 글)
+KEYS = {
+    "Ctrl+B": "bold", "Ctrl+I": "italic", "Ctrl+U": "underline", "Ctrl+E": "mono", "Ctrl+Shift+X": "strike",
+    "Ctrl+Shift+7": "ol", "Ctrl+Shift+8": "ul", "Ctrl+Shift+9": "todo",
+    "Ctrl+Alt+1": "h1", "Ctrl+Alt+2": "h2", "Ctrl+Alt+3": "h3", "Ctrl+Alt+0": "p",
+    "Ctrl+Shift+B": "quote", "Ctrl+Alt+C": "code",
+    "Ctrl+Return": "check_or_done",   # 할 일 줄이면 체크·해제, 아니면 마침(2026-10-18 사용자 선택)
+}
+_SHIFTED = {"!": "1", "@": "2", "#": "3", "&": "7", "*": "8", "(": "9", ")": "0"}   # Shift+숫자가 기호로 오는 것
+
+
+def key_name(e) -> str:
+    """글쇠 이벤트 → 「Ctrl+Shift+7」 같은 이름(KEYS 찾기용)."""
+    mods, key = e.modifiers(), e.key()
+    if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        name = "Return"
+    elif Qt.Key.Key_A <= key <= Qt.Key.Key_Z or Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
+        name = chr(key)
+    elif 32 < key < 127 and chr(key) in _SHIFTED:
+        name = _SHIFTED[chr(key)]
+    else:
+        return ""
+    return "".join(p for p, m in (("Ctrl+", Qt.KeyboardModifier.ControlModifier), ("Shift+", Qt.KeyboardModifier.ShiftModifier),
+                                  ("Alt+", Qt.KeyboardModifier.AltModifier)) if mods & m) + name
+
+
+def _is_mono(cf) -> bool:
+    return bool(set(cf.fontFamilies() or []) & {"Consolas", "Cascadia Mono", "D2Coding"})   # _block_line과 같은 판정(맑은 고딕은 칠판 글꼴에도 있음)
 
 
 class _MemoTextEdit(QGraphicsTextItem):
@@ -259,6 +303,7 @@ class _MemoTextEdit(QGraphicsTextItem):
     def __init__(self, memo):
         super().__init__(memo)
         self._memo, self._done = memo, False
+        self._ruled = False   # 방금 입력 규칙이 걸림(다음 Backspace = 되돌리기)
         r = memo.rect()
         self.setPos(r.x() + MEMO["LPAD"] - TEXT_MARGIN, r.y() + MEMO["PAD"])
         self.setDefaultTextColor(INK)
@@ -341,77 +386,233 @@ class _MemoTextEdit(QGraphicsTextItem):
         cur = self.textCursor()
         k, key, mods = self._kind(cur), e.key(), e.modifiers()
         ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        ruled, self._ruled = self._ruled, False
         if key == Qt.Key.Key_Escape:
             self.commit()
             return
-        if ctrl and key in (Qt.Key.Key_B, Qt.Key.Key_I, Qt.Key.Key_U):   # 굵게·기울임·밑줄
-            cf = cur.charFormat()
-            m = QTextCharFormat()
-            if key == Qt.Key.Key_B:
-                m.setFontWeight(400 if cf.fontWeight() >= 600 else 700)
-            elif key == Qt.Key.Key_I:
-                m.setFontItalic(not cf.fontItalic())
-            else:
-                m.setFontUnderline(not cf.fontUnderline())
-            cur.mergeCharFormat(m)
-            self.setTextCursor(cur)
+        act = KEYS.get(key_name(e))
+        if act:
+            self._do(act)
             return
-        if key == Qt.Key.Key_Space and not ctrl and k == "p" and not cur.hasSelection():   # 줄 맨 앞 입력 규칙
-            before = cur.block().text()[:cur.positionInBlock()]
-            for rx, nk in _PREFIX:
-                if rx.match(before) and cur.positionInBlock() == len(before):
-                    c2 = QTextCursor(cur.block())
-                    c2.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(before))
-                    c2.removeSelectedText()
-                    self._set_kind(cur, "todo" if nk == "todo_done" else nk, 0, done=nk == "todo_done")
-                    return
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not ctrl and not (mods & Qt.KeyboardModifier.ShiftModifier):
-            text = cur.block().text()
-            if k == "p" and text.strip() == "```":
-                self._clear_block(cur)
-                self._set_kind(cur, "code")
+        if ctrl and key == Qt.Key.Key_V:   # 붙여넣기 = 글만(다른 프로그램 글꼴·크기가 메모에 섞이지 않게), 여러 줄 = Enter로 친 것처럼
+            from PyQt6.QtWidgets import QApplication
+            for i, part in enumerate((QApplication.clipboard().text() or "").replace("\r\n", "\n").split("\n")):
+                if i:
+                    self._enter(self.textCursor())
+                self.textCursor().insertText(part)
+            return
+        if key == Qt.Key.Key_Backspace and ruled and not cur.hasSelection():   # 방금 걸린 입력 규칙 되돌리기(TipTap undoInputRule — 「- 」가 목록이 됐으면 다시 글로)
+            self.document().undo()
+            return
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not ctrl and not shift:
+            if self._try_rules(cur, "\n"):
                 return
-            if k == "p" and re.fullmatch(r"([-*_])\1{2,}", text.strip()):
-                self._clear_block(cur)
-                self._set_kind(cur, "hr")
-                cur.movePosition(QTextCursor.MoveOperation.EndOfBlock)
-                cur.insertBlock(_block_fmt("p"), _char_fmt("p"))
-                self.setTextCursor(cur)
-                return
-            if k in LISTY | {"quote"} and not text:   # 빈 목록 줄에서 Enter = 목록 끝
-                self._set_kind(cur, "p")
-                return
-            if k == "code" and not text and cur.block().previous().blockFormat().property(KIND) == "code":
-                self._set_kind(cur, "p")
-                return
-            nk = k if k in LISTY | {"code", "quote"} else "p"
-            lv = int(cur.block().blockFormat().property(LV) or 0)
-            cur.insertBlock(_block_fmt(nk, lv if nk in LISTY else 0, join_prev=nk in ("code", "quote")), _char_fmt(nk))
-            self.setTextCursor(cur)
+            self._enter(cur)
             return
         if key == Qt.Key.Key_Backspace and cur.positionInBlock() == 0 and not cur.hasSelection() and k not in ("p", "_skip"):
-            self._set_kind(cur, "p")   # 줄 맨 앞 지우기 = 종류만 풂(노션·TipTap)
+            prev = cur.block().previous()
+            lv = int(cur.block().blockFormat().property(LV) or 0)
+            if k == "code" and prev.isValid() and prev.blockFormat().property(KIND) == "code":
+                pass                                        # 코드 줄끼리 = 앞 줄과 붙음(웹: 코드 블록 한 덩어리 안 줄바꿈 지우기)
+            elif k in LISTY and lv:
+                self._set_kind(cur, k, lv - 1, bool(cur.block().blockFormat().property(DONE)))   # 웹 liftListItem — 한 단계 바깥으로
+                return
+            else:
+                self._set_kind(cur, "p")   # 줄 맨 앞 지우기 = 종류만 풂(노션 — 웹은 제목·인용이면 앞 줄과 붙지만 종류 풀기가 덜 놀람)
+                return
+        if key == Qt.Key.Key_Down and k == "code" and not cur.block().next().isValid() and cur.atBlockEnd():   # 웹 exitOnArrowDown — 끝 코드 줄에서 ↓ = 코드 밖 새 줄
+            cur.insertBlock(_block_fmt("p"), _char_fmt("p"))
+            self.setTextCursor(cur)
             return
         if key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab) and k in LISTY:
             lv = int(cur.block().blockFormat().property(LV) or 0)
-            lv = max(0, lv - 1) if key == Qt.Key.Key_Backtab or mods & Qt.KeyboardModifier.ShiftModifier else min(5, lv + 1)
+            lv = max(0, lv - 1) if key == Qt.Key.Key_Backtab or shift else min(5, lv + 1)
             self._set_kind(cur, k, lv, bool(cur.block().blockFormat().property(DONE)))
             return
+        typed = e.text() and e.text().isprintable() and not ctrl
         super().keyPressEvent(e)
+        if typed:
+            self._try_rules(self.textCursor(), "")
         self.update()
 
+    def inputMethodEvent(self, e):
+        super().inputMethodEvent(e)
+        if e.commitString() and not e.preeditString():   # 한글 조합이 끝난 순간에만 규칙 확인(웹 compositionend) — 조합 중엔 안 끼어듦
+            self._try_rules(self.textCursor(), "")
+
     def sceneEvent(self, e):
-        # Tab은 뷰·창의 포커스 이동이 먼저 가져가므로 여기서 받음
         from PyQt6.QtCore import QEvent
+        # Tab은 뷰·창의 포커스 이동이 먼저 가져가므로 여기서 받음
         if e.type() == QEvent.Type.KeyPress and e.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
             self.keyPressEvent(e)
             return True
+        # 편집기 글쇠(Ctrl+Alt+C 등)를 창 단축키(스타일 복사 등)가 먼저 가져가지 않게
+        if e.type() == QEvent.Type.ShortcutOverride and (KEYS.get(key_name(e)) or e.modifiers() & Qt.KeyboardModifier.ControlModifier
+                                                          and e.key() in (Qt.Key.Key_V, Qt.Key.Key_C, Qt.Key.Key_X, Qt.Key.Key_A, Qt.Key.Key_Z, Qt.Key.Key_Y)):
+            e.accept()
+            return True
         return super().sceneEvent(e)
 
-    def _clear_block(self, cur):
-        c2 = QTextCursor(cur.block())
-        c2.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
-        c2.removeSelectedText()
+    # ---- Enter: 목록·인용·코드는 이어지고, 빈 줄이면 빠져나감(웹 TipTap 기본 동작) ----
+    def _enter(self, cur):
+        b = cur.block()
+        k, text = self._kind(cur), b.text()
+        lv = int(b.blockFormat().property(LV) or 0)
+        if k in LISTY and not text:   # 빈 목록 줄 = 한 단계 바깥(맨 바깥이면 보통 글) — splitListItem
+            self._set_kind(cur, k if lv else "p", max(0, lv - 1), False)
+            return
+        if k == "quote" and not text:
+            self._set_kind(cur, "p")
+            return
+        prev = b.previous()
+        last_code = not b.next().isValid() or self._kind(QTextCursor(b.next())) != "code"
+        if k == "code" and not text and last_code and prev.isValid() and prev.blockFormat().property(KIND) == "code" and not prev.text():
+            # 코드 끝에 빈 줄 둘 + Enter = 빈 두 줄 지우고 코드 밖으로(exitOnTripleEnter)
+            c2 = QTextCursor(prev)
+            c2.setPosition(b.position(), QTextCursor.MoveMode.KeepAnchor)
+            c2.beginEditBlock()
+            c2.removeSelectedText()
+            self._set_kind(c2, "p")
+            c2.endEditBlock()
+            self.setTextCursor(c2)
+            return
+        heading_split = k in ("h1", "h2", "h3") and not cur.atBlockEnd()   # 제목 가운데서 Enter = 뒷부분도 제목(splitBlock)
+        nk = k if k in LISTY | {"code", "quote"} or heading_split else "p"
+        cur.insertBlock(_block_fmt(nk, lv if nk in LISTY else 0, join_prev=nk in ("code", "quote")), _char_fmt(nk))
+        self.setTextCursor(cur)
+
+    # ---- 입력 규칙(LINE_RULES·MARK_RULES) — 걸리면 True ----
+    def _try_rules(self, cur, extra: str) -> bool:
+        if cur.hasSelection():
+            return False
+        b, pos = cur.block(), cur.positionInBlock()
+        k = self._kind(cur)
+        if k == "code":
+            return False
+        if pos and _is_mono(cur.charFormat()):   # 고정폭 글 바로 뒤에선 안 걸림(웹: 코드 꾸밈 옆 규칙 끔)
+            return False
+        s = b.text()[:pos] + extra
+        if k == "p":
+            for rx, nk in LINE_RULES:
+                if rx.search(s):
+                    self._apply_line_rule(cur, nk)
+                    self._ruled = True
+                    return True
+        if extra:
+            return False
+        for rx, mark, g in MARK_RULES:
+            m = rx.search(s)
+            if m:
+                self._apply_mark_rule(cur, m, mark, g)
+                self._ruled = True
+                return True
+        return False
+
+    def _apply_line_rule(self, cur, nk):
+        b = cur.block()
+        c2 = QTextCursor(b)
+        c2.beginEditBlock()
+        c2.setPosition(cur.position(), QTextCursor.MoveMode.KeepAnchor)
+        c2.removeSelectedText()                              # 친 기호 지움(뒤 글은 남음)
+        if nk != "hr":
+            self._set_kind(c2, "todo" if nk == "todo_done" else nk, 0, done=nk == "todo_done")
+            c2.endEditBlock()
+            self.setTextCursor(c2)
+            return
+        if b.text():                                          # 뒤에 글이 있으면 구분선을 앞에 새 줄로
+            c2.insertBlock(b.blockFormat(), b.charFormat())
+            c2.movePosition(QTextCursor.MoveOperation.PreviousBlock)
+            self._set_kind(c2, "hr")
+            c2.movePosition(QTextCursor.MoveOperation.NextBlock)
+        else:
+            self._set_kind(c2, "hr")
+            nxt = b.next()
+            if nxt.isValid() and self._kind(QTextCursor(nxt)) not in ("hr", "_skip"):
+                c2.setPosition(nxt.position())               # 다음 줄이 있으면 그리로(웹 setHorizontalRule)
+            else:
+                c2.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+                c2.insertBlock(_block_fmt("p"), _char_fmt("p"))
+        c2.endEditBlock()
+        self.setTextCursor(c2)
+
+    def _apply_mark_rule(self, cur, m, mark, g):
+        start = cur.block().position()
+        whole, inner = m.span(1), m.span(g)
+        c2 = QTextCursor(cur)
+        c2.beginEditBlock()
+        c2.setPosition(start + inner[1])
+        c2.setPosition(start + whole[1], QTextCursor.MoveMode.KeepAnchor)
+        c2.removeSelectedText()                              # 닫는 기호
+        c2.setPosition(start + whole[0])
+        c2.setPosition(start + inner[0], QTextCursor.MoveMode.KeepAnchor)
+        c2.removeSelectedText()                              # 여는 기호
+        n = inner[1] - inner[0]
+        c2.setPosition(start + whole[0])
+        c2.setPosition(start + whole[0] + n, QTextCursor.MoveMode.KeepAnchor)
+        f = QTextCharFormat()
+        if mark == "bold":
+            f.setFontWeight(700)
+        else:
+            f.setFontFamilies(MONO_FAMILIES)
+        c2.mergeCharFormat(f)
+        c2.clearSelection()
+        c2.setPosition(start + whole[0] + n)
+        after = QTextCharFormat(c2.charFormat())             # 뒤에 치는 글은 안 꾸밈
+        if mark == "bold":
+            after.setFontWeight(int(_char_fmt(self._kind(c2)).fontWeight()))
+        else:
+            after.setFontFamilies(_char_fmt(self._kind(c2)).fontFamilies())
+        c2.setCharFormat(after)
+        c2.endEditBlock()
+        self.setTextCursor(c2)
+
+    # ---- 글쇠 동작(KEYS) ----
+    def _do(self, act):
+        cur = self.textCursor()
+        if act == "check_or_done":
+            todos = [b for b in self._sel_blocks(cur) if self._kind(QTextCursor(b)) == "todo"]
+            if not todos:
+                self.commit()
+                return
+            done = not all(b.blockFormat().property(DONE) for b in todos)   # 하나라도 안 끝났으면 모두 끝, 모두 끝났으면 모두 풂
+            for b in todos:
+                self._set_kind(QTextCursor(b), "todo", None, done)
+            return
+        if act in ("bold", "italic", "underline", "strike", "mono"):
+            cf = cur.charFormat()
+            m = QTextCharFormat()
+            if act == "bold":
+                m.setFontWeight(400 if cf.fontWeight() >= 600 else 700)
+            elif act == "italic":
+                m.setFontItalic(not cf.fontItalic())
+            elif act == "underline":
+                m.setFontUnderline(not cf.fontUnderline())
+            elif act == "strike":
+                m.setFontStrikeOut(not cf.fontStrikeOut())
+            else:
+                m.setFontFamilies(_char_fmt(self._kind(cur)).fontFamilies() if _is_mono(cf) else MONO_FAMILIES)
+            cur.mergeCharFormat(m)
+            self.setTextCursor(cur)
+            return
+        blocks = self._sel_blocks(cur)   # 줄 종류 켜고 끄기 — 고른 줄 모두
+        off = all(self._kind(QTextCursor(b)) == act for b in blocks)
+        for b in blocks:
+            bk = self._kind(QTextCursor(b))
+            if bk == "_skip":
+                continue
+            nk = "p" if off else act
+            self._set_kind(QTextCursor(b), nk, None if bk in LISTY and nk in LISTY else 0)
+        self.setTextCursor(cur)
+
+    def _sel_blocks(self, cur):
+        doc = self.document()
+        b, last = doc.findBlock(cur.selectionStart()), doc.findBlock(cur.selectionEnd())
+        out = [b]
+        while b != last and b.isValid():
+            b = b.next()
+            out.append(b)
+        return out
 
     # ---- 할 일 상자 누르기 ----
     def _box_at(self, pos: QPointF):
@@ -431,6 +632,7 @@ class _MemoTextEdit(QGraphicsTextItem):
         return None
 
     def mousePressEvent(self, e):
+        self._ruled = False
         b = self._box_at(e.pos())
         if b is not None:
             cur = QTextCursor(b)
@@ -457,6 +659,19 @@ class _MemoTextEdit(QGraphicsTextItem):
             top, h = r.y(), b.layout().boundingRect().height()
             px = MEMO_KIND.get(k, MEMO_KIND["p"])["pt"] * PT
             lh = b.layout().lineAt(0).height() if b.layout().lineCount() else BOARD_M["lineSpacing"] * px
+            if k != "code":   # 글 속 코드(고정폭) = 회색 띠 — 마친 메모 그림과 같게(꾸밈 칸이 아니라 보이기만)
+                it, lay_b, base = b.begin(), b.layout(), b.layout().position()
+                while not it.atEnd():
+                    fr = it.fragment()
+                    if _is_mono(fr.charFormat()):
+                        s0, s1 = fr.position() - b.position(), fr.position() - b.position() + fr.length()
+                        for li in range(lay_b.lineCount()):
+                            ln = lay_b.lineAt(li)
+                            a, z = max(s0, ln.textStart()), min(s1, ln.textStart() + ln.textLength())
+                            if a < z:
+                                x1, x2 = ln.cursorToX(a)[0], ln.cursorToX(z)[0]
+                                p.fillRect(QRectF(base.x() + x1 - 2, base.y() + ln.y(), x2 - x1 + 4, ln.height()), CODE_BAND)
+                    it += 1
             if k == "code":
                 p.fillRect(QRectF(TEXT_MARGIN - 4, top - (0 if i and lines[i - 1]["k"] == "code" else TEXT_MARGIN), w - TEXT_MARGIN + 4,
                                   h + (0 if i and lines[i - 1]["k"] == "code" else TEXT_MARGIN) + (0 if i + 1 < len(lines) and lines[i + 1]["k"] == "code" else TEXT_MARGIN)), CODE_BAND)

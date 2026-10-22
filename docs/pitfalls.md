@@ -1689,3 +1689,5 @@
 - Qt `QTextDocumentLayout.blockBoundingRect(b).y()`는 블록 위 여백(topMargin)을 이미 뺀 「글 첫 줄 위」 — 여기에 topMargin을 또 더하면 글머리·상자가 한 줄쯤 아래에 그려짐(2026-10-22 메모 편집기).
 - 이 PC Bash heredoc(`<<'EOF'`)으로 파이썬을 넘길 때 소스 안 `"\n"`이 진짜 줄바꿈으로 들어가 문자열이 깨진 적 있음(2026-10-22) — 백슬래시가 든 고치기는 Edit 도구로.
 - 데스크톱에 웹 기능을 옮길 땐 웹 쪽 실제 규칙(TipTap 확장·`keys.js`)을 목록으로 뽑아 하나씩 대조 — 기억으로 일부만 옮기면 「웹과 다르다」가 됨(2026-10-22 메모 `---`·백틱·Ctrl+Enter).
+- 웹 정규식을 파이썬으로 옮길 때 JS `$` → `\Z` — 파이썬 `$`는 끝 줄바꿈 앞에서도 맞아서 「---\n」이 `^---$`에 걸림(2026-10-22 메모 입력 규칙)
+- `QTest.keyClicks(widget, "한글")`은 PyQt6 실제 화면에서 앱을 0xC0000409로 죽임(파이썬 오류도 안 남음) — 한글은 `QKeyEvent(KeyPress, Key_unknown, NoModifier, "가")`를 `sendEvent`로(2026-10-22)
