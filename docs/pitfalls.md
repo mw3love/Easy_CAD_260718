@@ -1695,3 +1695,4 @@
 - PyQt6 실제 화면에서 `QTest.mouseMove(viewport, pt)`는 뷰 mouseMoveEvent에 바로 안 닿음 — 확인 스크립트는 `QApplication.sendEvent(viewport, QMouseEvent(MouseMove, ...))`(2026-10-22)
 - Qt 빈 글줄(블록)에 `setBlockCharFormat`만 하면 그 블록 글줄 배치가 0개로 남아 깜빡이는 커서가 안 그려짐(오프스크린 새 QTextDocument에선 안 보이고 QGraphicsTextItem 문서에서 재현) — 뒤에 `doc.markContentsDirty(pos, len)`(2026-10-22)
 - 합성 마우스 이벤트(`sendEvent`)는 클릭 포커스를 안 옮김 → 포커스·커서 깜빡임 확인은 진짜 입력(`user32.mouse_event`). 뒤 프로그램은 창 앞세우기가 막히니 `keybd_event(Alt)` 후 `SetForegroundWindow`(2026-10-22)
+- 윈도우 맑은 고딕 「제」는 어두운 화면 메뉴에서 주황으로 그려짐(글꼴 다듬기 — 팔레트 무관). 앱 화면 글꼴은 Pretendard(`fonts.apply_ui_font`) — `app.setStyle("Fusion")` 뒤에 불러야 메뉴 글꼴이 안 되돌아감(2026-10-22)

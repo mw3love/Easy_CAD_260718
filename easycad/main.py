@@ -18,6 +18,8 @@ def main():
     app.setWindowIcon(QIcon(str(_icons_dir() / "app_magic_board.svg")))   # §8 항목50 — 창·작업 표시줄 아이콘
     init_crash_reporting()
     win = CanvasWindow()
+    from easycad.fonts import apply_ui_font
+    apply_ui_font(app)   # 화면 글꼴 = Pretendard(맑은 고딕 「제」 주황) — 창(Fusion 켜기) 뒤에야 메뉴 글꼴이 안 되돌아감
     # [첫 화면 재디자인 2026-10-07, 사용자 결정] 새 상단바(아이콘+글자)는 약 1,300px라 기본 창
     # 1200×800엔 다 안 들어간다 — 처음엔 최대화로 켠다(창을 줄이면 넘친 버튼은 » 목록으로).
     win.showMaximized()
