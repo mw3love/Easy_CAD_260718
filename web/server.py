@@ -484,6 +484,9 @@ class Handler(SimpleHTTPRequestHandler):
             if rev >= int(doc.get("rev") or 0) and rev >= 0:
                 return self._send(204)
             return self._json(200, dict(doc, board=board))
+        m = re.match(r"^/api/pdf/([^/]+)/(\d+_[0-9a-f]{6})(?:/(page|clip|text|lines)/(\d+))?$", path)
+        if m and not self._authed() and self._name(m.group(1)) in self._publish_map():   # 게시한 칠판의 PDF = 로그인 없이 보기(게시 링크에서 쪽 그림이 401이었음, 2026-10-22)
+            return self._pdf_get(self._name(m.group(1)), m.group(2), m.group(3), int(m.group(4) or 0), q)
         if path.startswith("/api/") and not self._authed():
             return self._send(401, b'{"error":"login"}')
         if path == "/api/models":

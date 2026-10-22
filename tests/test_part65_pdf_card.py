@@ -123,3 +123,26 @@ def test_bad_requests(server):
     with pytest.raises(urllib.error.HTTPError) as e:
         _get(base + "/api/pdf/other/1_abcdef")
     assert e.value.code == 404
+
+
+def test_published_board_pdf_pages_open_without_login(server):
+    """게시 링크(로그인 없이 보기)에서도 PDF 쪽 그림이 보임 — 전엔 401(2026-10-22). 게시 안 한 칠판의 PDF는 여전히 로그인."""
+    import server as srv
+    base, data_dir = server
+    out = _post(base + "/api/pdf/e2e_b", _pdf())
+    srv.Handler.password = "pw"
+    try:
+        def code(u):
+            try:
+                with urllib.request.urlopen(base + u) as r:
+                    return r.status
+            except urllib.error.HTTPError as e:
+                return e.code
+        assert code(out["url"] + "/page/0") == 401                       # 게시 전 = 로그인 필요
+        (data_dir / "publish.json").write_text(json.dumps({"e2e_b": "tok_abcdefgh"}), encoding="utf-8")
+        assert code(out["url"] + "/page/0") == 200                       # 게시한 칠판 = 쪽 그림
+        assert code(out["url"] + "/lines/0") == 200 and code(out["url"]) == 200   # 글 층·원본(↗)
+        assert code(out["url"].replace("e2e_b", "e2e_other") + "/page/0") == 401   # 다른(게시 안 한) 칠판 이름
+        assert code("/api/doc/e2e_b") == 401                             # 문서 자체는 그대로 로그인(게시 화면은 /api/pub)
+    finally:
+        srv.Handler.password = ""
