@@ -1598,6 +1598,21 @@ class _FileIOMixin:
         self.statusBar().showMessage(
             f"표 삽입: {rows}×{cols} — 셀 더블클릭해 편집(Enter/Tab 이동)", 5000)
 
+    def _insert_memo(self):
+        """[§8 항목61 ④-3 2026-10-22] 메모 넣기 — 웹 칠판과 같은 메모(`core_web._MemoItem`)를 화면 가운데에, 바로 고치기 칸."""
+        it = dict_to_item({"type": "memo", "rect": [0, 0, 340, 60], "fill": "#ffffffff", "lines": [{"k": "p", "t": ""}],
+                           "pos": [0, 0], "scale": 1, "rotation": 0, "z": 0, "origin": [0, 0], "locked": False, "group_id": None, "layer_id": None})
+        it._fit_height(it.raw)
+        center = self._view.mapToScene(self._view.viewport().rect().center())
+        it.setPos(center.x() - it.rect().width() / 2.0, center.y() - it.rect().height() / 2.0)
+        it.setZValue(max([x.zValue() for x in self._scene.items()] + [0]) + 1)
+        self._scene.addItem(it)
+        self._scene.clearSelection()
+        it.setSelected(True)
+        self.push_undo_add(it)
+        self.set_tool("select")
+        it.web_double_click(self._view, it.sceneBoundingRect().center())
+
     # ---- Mermaid 가져오기 (Phase 4) -----------------------------------------
     _MMD_NODE_W, _MMD_NODE_H = 120.0, 56.0   # 노드 기본 치수(mermaid_import 레이아웃 상수와 동일)
     # [§8 항목36 피드백 6차, 2026-10-05] 긴 글이 상자(폭 120 고정) 밖으로 나감 — 글자 축소가 하한 5pt에 걸려도 넘쳤다

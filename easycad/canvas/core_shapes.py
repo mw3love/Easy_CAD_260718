@@ -2720,6 +2720,25 @@ class _TitleBlockItem(QGraphicsRectItem):
 # 균등 비례 격자(전체 리사이즈 시 모든 열·행이 같은 비율로 스케일 — 개별 열폭 조절은 후속 스코프).
 # 셀 텍스트는 2차원 리스트(_cells[r][c]). 셀 편집은 뷰가 인라인 QLineEdit(_CellEditor)로 처리.
 # 첫 행 헤더(_header=True면 굵게+옅은 배경). DXF 제외(isinstance 체인 밖), .ecad 직렬화.
+def _web_cell_parts(text: str, runs) -> list:
+    """[§8 항목61 ④-3] 웹 표 칸 부분 꾸밈 runs([시작, 길이, 색, 굵게, 배경?, 고정폭?, 꾸밈?]) → 같은 꾸밈끼리 조각(첫 줄만 — 칸은 한 줄)."""
+    text = text.split("\n")[0]
+    attr = [None] * len(text)
+    for r in runs or []:
+        a = {"color": r[2] if len(r) > 2 else None, "bold": bool(r[3]) if len(r) > 3 else False,
+             "bg": r[4] if len(r) > 4 else None, "deco": (r[6] if len(r) > 6 else "") or ""}
+        for i in range(max(0, int(r[0])), min(len(text), int(r[0]) + int(r[1]))):
+            attr[i] = a
+    parts, i = [], 0
+    while i < len(text):
+        j = i + 1
+        while j < len(text) and attr[j] == attr[i]:
+            j += 1
+        parts.append({"text": text[i:j], **(attr[i] or {})})
+        i = j
+    return parts
+
+
 class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
     """NxM 표. rect 기반 — _ImageItem과 동일한 자유 리사이즈(꼭짓점 2D·변 1축)를 상속.
     종횡비 고정은 하지 않는다(표는 임의 비율) — 기본 _constrain_box_rect(무변형)를 그대로 쓴다.
@@ -2783,8 +2802,26 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
 
     def set_cell_text(self, r: int, c: int, text: str):
         if 0 <= r < self._rows and 0 <= c < self._cols:
+            if str(text) != self._cells[r][c]:   # [§8 항목61 ④-3] 글이 바뀌면 그 칸의 웹 부분 꾸밈(글자 차례 기준)은 버림
+                (self._web().get("cell_runs") or {}).pop(f"{r},{c}", None)
             self._cells[r][c] = str(text)
             self.update()
+
+    # ---- [§8 항목61 ④-3 2026-10-22] 웹 칠판 표 꾸밈 — 표 font·color·pen, 칸 cell_styles·cell_runs, 행 row_heights ----
+    # 저장은 `document._WEB_ONLY_KEYS`가 `_web_extra`로 그대로 돌려줌. 그리기는 웹 render.jsx 'table'을 옮김(웹 꾸밈이 있는 표만 — 데스크톱 표는 그대로).
+    def _web(self) -> dict:
+        return getattr(self, "_web_extra", None) or {}
+
+    def _row_edges_local(self) -> list:
+        box = self.rect()
+        fr = self._web().get("row_heights")
+        fr = fr if isinstance(fr, list) and len(fr) == self._rows else None
+        out, y = [box.top()], box.top()
+        for i in range(self._rows):
+            y += (fr[i] if fr else 1.0 / self._rows) * box.height()
+            out.append(y)
+        out[-1] = box.bottom()
+        return out
 
     # ---- 셀 기하(로컬좌표) --------------------------------------------------
     def _col_edges_local(self) -> list:
@@ -2800,10 +2837,8 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
         return edges
 
     def cell_rect(self, r: int, c: int) -> QRectF:
-        box = self.rect()
-        edges = self._col_edges_local()
-        ch = box.height() / self._rows
-        return QRectF(edges[c], box.top() + r * ch, edges[c + 1] - edges[c], ch)
+        edges, re = self._col_edges_local(), self._row_edges_local()
+        return QRectF(edges[c], re[r], edges[c + 1] - edges[c], re[r + 1] - re[r])
 
     def cell_at(self, local: QPointF):
         """로컬좌표 local이 속한 (r, c) — 격자 밖이면 None."""
@@ -2819,7 +2854,8 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
             if local.x() < edges[i + 1]:
                 c = i
                 break
-        r = min(max(int((local.y() - box.top()) / ch), 0), self._rows - 1)
+        re = self._row_edges_local()
+        r = next((i for i in range(self._rows) if local.y() < re[i + 1]), self._rows - 1)
         return (r, c)
 
     # ---- [열폭 드래그] 내부 경계선 잡기·이동(2026-07-31) ---------------------
@@ -2870,6 +2906,9 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
         c = _TableItem(self._rows, self._cols, QRectF(self.rect()),
                        [row[:] for row in self._cells], self._header,
                        list(self._col_widths))
+        if self._web():   # [§8 항목61 ④-3] 웹 꾸밈도 같이 복제(전엔 복사하면 칸 색·글자 크기를 잃었음)
+            import copy as _copy
+            c._web_extra = _copy.deepcopy(self._web())
         return self._copy_common_to(c)
 
     def _content_rect(self) -> QRectF:
@@ -2886,7 +2925,88 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
         if len(widths) == self._cols:
             self._col_widths = list(widths)
 
+    def _paint_web(self, painter):
+        """웹 꾸밈이 있는 표 — 칸 채움·글자 크기(직접 정한 pt = 그대로, 아니면 칸에 맞춰 줄임)·굵게·색·정렬·부분 꾸밈."""
+        wb, box = self._web(), self.rect()
+        edges, re = self._col_edges_local(), self._row_edges_local()
+        styles, runs_all = wb.get("cell_styles") or {}, wb.get("cell_runs") or {}
+        for r in range(self._rows):
+            for c in range(self._cols):
+                st = styles.get(f"{r},{c}") or {}
+                cell = QRectF(edges[c], re[r], edges[c + 1] - edges[c], re[r + 1] - re[r])
+                if st.get("fill"):
+                    painter.fillRect(cell, QColor(st["fill"]))
+                txt = self._cells[r][c]
+                if not txt:
+                    continue
+                font_pt = st.get("font", wb.get("font"))
+                bold = st.get("bold", self._header and r == 0)
+                col = st.get("color", wb.get("color"))
+                # 웹 ink() — 검정에 가까운 글은 어두운 화면에서 테마 잉크로, 채운 칸 안은 제 색
+                if col and (st.get("fill") or QColor(col).lightness() > 40):
+                    ink = QColor(col)
+                else:
+                    ink = QColor("#111111") if st.get("fill") else self._ink_color()
+                fs = font_pt * 96 / 72 if font_pt else max(1.0, min(cell.height() * 0.5, cell.width() * 0.3))
+                parts = _web_cell_parts(txt, runs_all.get(f"{r},{c}"))
+                f = QFont(painter.font())
+                widths = []
+                for p in parts:
+                    f.setPixelSize(max(1, round(fs)))
+                    f.setBold(bool(p.get("bold") or bold))
+                    widths.append(QFontMetricsF(f).horizontalAdvance(p["text"]))
+                tw = sum(widths)
+                room = max(1.0, cell.width() - 4)
+                if not font_pt and tw > room:   # 웹 cellFontPx — 칸 폭을 넘으면 줄임
+                    k = room / tw
+                    fs, widths, tw = max(1.0, fs * k), [w * k for w in widths], room
+                al = st.get("align") or "center"
+                x = cell.left() + 3 if al == "left" else cell.right() - 3 - tw if al == "right" else cell.center().x() - tw / 2
+                cy = cell.center().y()
+                painter.save()
+                painter.setClipRect(cell)
+                for p, w in zip(parts, widths):
+                    if p.get("bg"):
+                        bg = p["bg"]
+                        painter.fillRect(QRectF(x, cy - fs * 0.6, w, fs * 1.2), QColor(*bg) if isinstance(bg, list) else QColor(bg))
+                    fc = QColor(p["color"]) if p.get("color") else ink
+                    f.setPixelSize(max(1, round(fs)))
+                    f.setBold(bool(p.get("bold") or bold))
+                    f.setItalic("i" in (p.get("deco") or ""))
+                    painter.setFont(f)
+                    painter.setPen(QPen(fc))
+                    painter.drawText(QRectF(x, cy - fs, w + 2, fs * 2), int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), p["text"])
+                    th = max(0.6, fs * 0.06)
+                    if "u" in (p.get("deco") or ""):
+                        painter.fillRect(QRectF(x, cy + fs * 0.42, w, th), fc)
+                    if "s" in (p.get("deco") or ""):
+                        painter.fillRect(QRectF(x, cy - th / 2, w, th), fc)
+                    x += w
+                painter.restore()
+        pen_c = wb.get("pen")
+        line = QColor(pen_c) if pen_c and QColor(pen_c).lightness() > 40 else self._line_color()
+        painter.setPen(QPen(line, 0.5))
+        for x in edges[1:-1]:
+            painter.drawLine(QPointF(x, box.top()), QPointF(x, box.bottom()))
+        for y in re[1:-1]:
+            painter.drawLine(QPointF(box.left(), y), QPointF(box.right(), y))
+        if self._header and self._rows > 1:
+            painter.setPen(QPen(line, 1.0))
+            painter.drawLine(QPointF(box.left(), re[1]), QPointF(box.right(), re[1]))
+        painter.setPen(QPen(line, 1.0))
+        painter.drawRect(box)
+
     def paint(self, painter, option, widget=None):
+        if any(k in self._web() for k in ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights")):   # 웹에서 꾸민 표
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            self._paint_web(painter)
+            painter.restore()
+            if self.isSelected():
+                self._paint_selection_outline(painter, self._scale_or_1())
+            self._paint_handle(painter)
+            return
         box = self.rect()
         edges = self._col_edges_local()
         ch = box.height() / self._rows

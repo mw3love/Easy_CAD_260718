@@ -218,6 +218,8 @@ _SVG_ACT_ICON_NAMES = frozenset({
     "pdf", "titleblock", "table", "image", "mermaid", "zoom_100", "zoom_fit",
     # [§8 항목53 1단계, 2026-10-16] 「보드」 — 같은 A2 규칙(16:9 틀 외곽선 + 위 띠만 채움).
     "board",
+    # [§8 항목61 ④-3, 2026-10-22] 「메모」 — 웹 칠판 위 막대와 같은 A2 손그림(접힌 모서리만 채움).
+    "memo",
     # [§8 항목28, 2026-10-01] 사진→도면 — 같은 A2 규칙(카메라 외곽선 + 렌즈만 채움).
     "photo",
     # [§8 항목42, 2026-10-16] 「그림 복사」 — 같은 A2 규칙(겹친 종이 외곽선 + 그림만 채움).
@@ -581,6 +583,8 @@ _TYPE_NAMES = {
     "_ArrowItem": "화살표", "_PolyArrowItem": "직선화살", "_TextItem": "텍스트",
     "_BadgeItem": "번호", "_PathItem": "펜", "_SymbolItem": "심볼",
     "_ImageItem": "이미지", "_TableItem": "표", "_TitleBlockItem": "표제란",
+    # [§8 항목61 ④-3] 웹 칠판 종류(`core_web.py`)
+    "_MemoItem": "메모", "_FrameItem": "프레임", "_WebCardItem": "웹 카드", "_DocItem": "정리 문서", "_PdfItem": "PDF", "_LegendItem": "범례",
 }
 # [Phase 6 M2] one-shot 대상 도구 — 하나 그리면 자동으로 선택모드로 복귀(pin OFF일 때).
 # 심볼(sym:*)은 prefix로 함께 처리. pen(자유 연속선)은 스트로크마다 해제되면 방해라 제외 —

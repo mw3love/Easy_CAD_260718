@@ -10,6 +10,7 @@ import base64
 import json
 
 from easycad.fileio.safe_write import write_via_temp
+from easycad.canvas.core_web import web_item_from_dict, _WebItem
 
 from PyQt6.QtCore import Qt, QRectF, QLineF, QPointF, QBuffer, QByteArray, QIODevice
 from PyQt6.QtGui import QColor, QPen, QBrush, QPainterPath, QPixmap
@@ -358,51 +359,20 @@ def item_to_dict(it) -> dict | None:
         if k == "label.align":
             if "label" in d:
                 d["label"]["align"] = v
-        elif k == "type":   # 웹 프레임·웹 카드 — 네모로 열었던 것을 다시 frame·web으로
-            d["type"] = v
-            if v in ("web", "memo", "legend", "doc", "pdf"):   # 보이려고 붙인 라벨(제목·주소 / 메모·범례 줄 글)은 웹에선 안 씀
-                d.pop("label", None)
         elif k not in d:
             d[k] = v
     raw = getattr(it, "_web_raw", None)
-    if raw is not None:   # 웹 종류(프레임·웹 카드·메모·범례) = 원래 칸 + 데스크톱이 정하는 자리·크기·묶음만. 데스크톱이 보이려고 붙인 테두리·라벨 칸은 안 남김
+    if raw is not None:   # 웹 종류(`canvas/core_web.py`) = 원래 칸 + 데스크톱이 정하는 자리·크기·묶음만. 네모로서 붙는 테두리·채움 칸은 안 남김
         return {**raw, **{k: d[k] for k in _DESK_KEYS if k in d and k != "type"}}
     return d
 
 
-# [§8 항목61 ④-1] 웹 종류 — 데스크톱은 아직 대리 네모로 그림(④-3에서 똑같이), 저장은 원래 칸 통째(`_web_raw`)
+# [§8 항목61 ④-1·④-3] 웹 종류 — 데스크톱도 웹과 같은 모양으로 그림(`canvas/core_web.py`), 저장은 원래 칸 통째(`_web_raw`)
 _WEB_TYPES = ("frame", "web", "memo", "legend", "doc", "pdf")   # doc = 정리 문서 카드(「정리해 줘」 ①, 2026-10-19), pdf = PDF 보기 카드(2026-10-21)
 # 데스크톱이 정하는 칸(옮기기·크기·돌리기·쌓는 순서·잠금·묶음·레이어·포트·자국·AI 보드 표시) — 웹 종류도 이것만은 데스크톱 값이 이김
 _DESK_KEYS = ("type", "pos", "scale", "rotation", "z", "origin", "locked", "group_id", "layer_id", "rect", "ports", "cuts", "pb_part", "pb_card", "pb_piece")
 
 _WEB_ONLY_KEYS_ALL =("fit_text", "chat_at", "legend", "legend_key", "uid")   # legend·legend_key = 웹 범례 표시(다시 모을 때 이름 지키기), uid = 웹 공동작업 도형 이름표(2026-10-18)
-
-
-def _web_card_label(d: dict):
-    """웹 카드를 데스크톱에서 볼 때 네모 안 글(제목·주소) — 저장할 땐 빼고 다시 web으로(`item_to_dict`)."""
-    if d.get("type") == "memo":   # 메모 줄 → 쉬운 글(웹 memo.js `memoText`와 같은 표시)
-        marks = {"h1": "# ", "h2": "## ", "h3": "### ", "ul": "• ", "quote": "│ "}
-        n, out = 0, []
-        for ln in d.get("lines") or []:
-            k = ln.get("k", "p")
-            n = n + 1 if k == "ol" else 0
-            if k == "table":   # [웹 칠판 2026-10-21] 메모 안 표 줄 — 칸을 「 | 」로(웹 memoText와 같게)
-                out.extend(" | ".join(r) for r in ln.get("rows") or [])
-                continue
-            mk = f"{n}. " if k == "ol" else ("☑ " if ln.get("done") else "☐ ") if k == "todo" else marks.get(k, "")
-            out.append("  " * int(ln.get("lv") or 0) + mk + (ln.get("t") or ""))
-        return {"text": "\n".join(out), "color": "#ff1f1f1f", "font": 10, "bg": None, "align": "left"}
-    if d.get("type") == "legend":   # [웹 칠판 2026-10-19] 범례 2판 — 줄마다 「이름 · 모양」(웹 legend.js `rowName`·`descOf`와 같은 표시)
-        sn = {1: "실선", 2: "파선", 3: "점선", 4: "일점쇄선", 5: "이점쇄선"}
-        rows = [f"{(d.get('names') or {}).get(e.get('key'), '선')} · {sn.get(e.get('style'), '실선')} · {e.get('width')}px" for e in d.get("rows") or []]
-        return {"text": "\n".join([d.get("title") or "범례", *rows]), "color": "#ff1f1f1f", "font": 10, "bg": None, "align": "left"}
-    if d.get("type") == "doc":   # 정리 문서 — 제목 + 안내(본문 HTML은 웹 칠판에서 봄)
-        return {"text": f"📄 {d.get('title') or '정리 문서'}\n(웹 칠판에서 보기·인쇄)", "color": "#ff1f1f1f", "font": 11, "bg": None}
-    if d.get("type") == "pdf":   # PDF 보기 카드 — 파일 이름 + 안내(쪽은 웹 칠판 서버에 있음)
-        return {"text": f"📕 {d.get('name') or 'PDF'} · {d.get('pages') or 0}쪽\n(웹 칠판에서 넘겨 보기)", "color": "#ff1f1f1f", "font": 11, "bg": None}
-    if d.get("type") != "web":
-        return None
-    return {"text": ((d.get("title") or "") + "\n" + (d.get("url") or "")).strip(), "color": "#ff18181b", "font": 10, "bg": None}
 
 
 _WEB_ONLY_KEYS ={"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights"), "image": ("alt",)}  # row_heights = 행 높이 비율(웹 2026-10-18, 데스크톱은 같은 높이로 그림)
@@ -442,24 +412,9 @@ def dict_to_item(d: dict):
         it.setPen(_mkpen(d))
         if it._closed:
             it.setBrush(_mkbrush(d))
-    elif t == "frame":   # [웹 칠판 2026-10-18] 프레임(출력 한 쪽·슬라이드 영역) — 데스크톱은 아직 모름: 점선 네모로 보이고, 저장할 때 다시 frame으로(`_web_extra["type"]`)
-        fd = {"pen": "#ff8a98a8", "width": 1.5, "style": 2, "fill": None}
-        it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(fd)); it.setBrush(_mkbrush(fd))
-    elif t == "web":   # [웹 칠판 2026-10-18] 웹 카드(유튜브·웹페이지) — 데스크톱은 아직 모름: 제목·주소를 적은 네모로 보이고, 저장할 때 다시 web으로
-        wd = {"pen": "#ffa1a1aa", "width": 1.0, "style": 1, "fill": "#fff4f4f5"}
-        it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(wd)); it.setBrush(_mkbrush(wd)); it._radius = 8.0
-    elif t == "memo":   # [웹 칠판 2026-10-18] 메모(줄마다 제목·목록·할 일·코드·인용) — 데스크톱은 아직 모름: 줄 글을 적은 둥근 네모로 보이고, 저장할 때 다시 memo로
-        md = {"pen": "#ffd4d4d8", "width": 1.0, "style": 1, "fill": d.get("fill") or "#ffffffff"}
-        it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(md)); it.setBrush(_mkbrush(md)); it._radius = 10.0
-    elif t == "doc":   # [웹 칠판 2026-10-19] 정리 문서 카드(AI가 쓴 HTML 한 장) — 데스크톱은 아직 모름: 제목을 적은 네모로 보이고, 저장은 원래 칸 통째(`_web_raw`)
-        dd = {"pen": "#ffa1a1aa", "width": 1.0, "style": 1, "fill": "#ffffffff"}
-        it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(dd)); it.setBrush(_mkbrush(dd)); it._radius = 6.0
-    elif t == "pdf":   # [웹 칠판 2026-10-21] PDF 보기 카드(원본은 웹 칠판 서버) — 데스크톱은 아직 모름: 파일 이름을 적은 네모로 보이고, 저장은 원래 칸 통째(`_web_raw`)
-        pd = {"pen": "#fff87171", "width": 1.0, "style": 1, "fill": "#ffffffff"}
-        it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(pd)); it.setBrush(_mkbrush(pd)); it._radius = 6.0
-    elif t == "legend":   # [웹 칠판 2026-10-19] 범례 2판(표 모양, 줄은 도면에서 저절로) — 데스크톱은 아직 모름: 줄 글을 적은 둥근 네모로 보이고, 저장할 때 다시 legend로
-        ld = {"pen": "#ffd4d4d8", "width": 1.0, "style": 1, "fill": "#ffffffff"}
-        it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(ld)); it.setBrush(_mkbrush(ld)); it._radius = 8.0
+    elif t in _WEB_TYPES:   # [§8 항목61 ④-3 2026-10-22] 웹 종류 = 웹과 같은 모양으로 그리는 클래스(`canvas/core_web.py`) — 전엔 글을 적은 대리 네모.
+        # 저장은 원래 칸 통째(`_web_raw`) + 데스크톱이 정하는 칸만 데스크톱 값(`item_to_dict` 끝)
+        it = web_item_from_dict(d, {k: v for k, v in d.items() if k not in _DESK_KEYS or k == "type"})
     elif t == "rect":
         it = _RectItem(QRectF(*d["rect"])); it.setPen(_mkpen(d)); it.setBrush(_mkbrush(d))
         it._radius = float(d.get("radius") or 0)
@@ -515,18 +470,8 @@ def dict_to_item(d: dict):
     extra = {k: d[k] for k in _WEB_ONLY_KEYS.get(t, ()) + _WEB_ONLY_KEYS_ALL if k in d}
     if (d.get("label") or {}).get("align"):
         extra["label.align"] = d["label"]["align"]
-    if t == "frame":
-        extra.update({"type": "frame", **{k: d[k] for k in ("name", "no", "ratio", "magnet") if k in d}})
-    if t == "web":
-        extra.update({"type": "web", **{k: d[k] for k in ("url", "title", "thumb", "embed", "frameable", "desc", "icon", "zoom") if k in d}})   # desc·icon·zoom = 2026-10-19
-    if t == "memo":
-        extra.update({"type": "memo", **{k: d[k] for k in ("lines",) if k in d}})
-    if t == "legend":
-        extra.update({"type": "legend", **{k: d[k] for k in ("rows", "names", "title") if k in d}})
-    if extra:
+    if extra and t not in _WEB_TYPES:   # 웹 종류는 원래 칸을 통째로 들고 있음(`_WebItem._web_raw`)
         it._web_extra = extra
-    if t in _WEB_TYPES:   # [§8 항목61 ④-1 2026-10-19] 웹 종류는 원래 칸을 통째로 — 칸 목록을 적는 방식은 웹에 새 칸이 생길 때마다 잃었음(메모 `fold`)
-        it._web_raw = {k: v for k, v in d.items() if k not in _DESK_KEYS or k == "type"}
     for pd in d.get("ports", []):
         _port_from_dict(pd, it)
     # [§8 항목17 6단계] TRIM cut 구간 복원 — _add_border_cut을 안 쓰고 직접 대입한다(그
@@ -632,8 +577,8 @@ def insert_items(scene, items: list[dict]) -> list:
                 if ld.get("bg") is not None:
                     lbl.set_bg(QColor(*ld["bg"]))
             it._sync_label()
-        elif (d.get("label") or _web_card_label(d)) and hasattr(it, "restore_label"):
-            it.restore_label(d.get("label") or _web_card_label(d))
+        elif d.get("label") and hasattr(it, "restore_label") and not isinstance(it, _WebItem):   # 웹 종류는 라벨 없음(글은 웹 칸이 들고 그림)
+            it.restore_label(d.get("label"))
             # [우리 확장] 화살표 라벨의 경로/곡선 위 위치(t·off) 복원 후 재배치(없으면 기본 중점).
             if isinstance(it, (_ArrowItem, _PolyArrowItem)):
                 it._label_t = d["label"].get("t", 0.5)

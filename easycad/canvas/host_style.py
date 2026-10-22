@@ -844,7 +844,7 @@ class _StyleMixin:
             self._pf_text_color_btn.setToolTip(f"글자 색 — {tcol.name() if tcol is not None else '혼합'}")
 
             # [미니패널 통합] 타입 전용 행 노출 — 옛 _reposition_floating_toolbar의 판정을 그대로.
-            show_swap = len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem))
+            show_swap = len(sel) == 1 and isinstance(sel[0], (_RectItem, _EllipseItem, _SymbolItem))                 and not getattr(sel[0], "_is_web_item", False)   # [§8 항목61 ④-3] 메모·웹 카드 등은 다른 도형으로 안 바꿈(웹 칸을 잃음)
             show_routing = len(sel) == 1 and isinstance(sel[0], (_ArrowItem, _PolyArrowItem))
             show_head = any(isinstance(it, (_ArrowItem, _PolyArrowItem)) for it in sel)
             # [실사용 피드백 2026-08-21] '방향'(뒤집기)은 화살촉이 한쪽만 있을 때만 의미가

@@ -2857,6 +2857,12 @@ class _AnnotatorView(QGraphicsView):
                 and fi.textInteractionFlags() != Qt.TextInteractionFlag.NoTextInteraction \
                 and fi not in self.items(event.position().toPoint()):
             fi.clearFocus()
+        # [우리 확장 · §8 항목61 ④-3] 메모 할 일 상자 누르기 = 체크(웹과 같게 — 고르지 않고 바로)
+        if self._owner.current_tool == "select" and not event.modifiers():
+            web = self._web_at(event.position().toPoint())
+            if web is not None and hasattr(web, "toggle_todo_at") and web.toggle_todo_at(web.mapFromScene(self._press_scene)):
+                event.accept()
+                return
         # 이미 선택된 화살표/선의 끝점·곡선(bend) 조절 핸들 위 press는 겹친 도형 테두리보다 우선한다
         # (선택된 아이템의 핸들이 먼저 작동해야 함). 끝점/핸들은 도형 테두리에 딱 붙는 일이 잦아
         # Z-order 배달로는 아래 도형이 press를 가로챈다 → 그 아이템을 잠깐 최상단으로 올려 Qt가
@@ -4378,8 +4384,21 @@ class _AnnotatorView(QGraphicsView):
         for it in self.items(view_pos):
             if it is getattr(self._owner, "_bg_item", None):
                 continue
+            if getattr(it, "_is_web_item", False):   # [§8 항목61 ④-3] 웹 종류(메모·웹 카드 등)는 가운데 글을 안 붙임 — 두 번 누르기는 종류마다(`_web_at`)
+                return None
             if isinstance(it, (_LineItem, _ArrowItem, _PolyArrowItem,
                                _SymbolItem, _RectItem, _EllipseItem, _PolygonItem)):
+                return it
+            if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
+                return None
+        return None
+
+    def _web_at(self, view_pos):
+        """[§8 항목61 ④-3] 커서 아래 '맨 위 선택형'이 웹 종류(`core_web._WebItem`)면 그것, 아니면 None."""
+        for it in self.items(view_pos):
+            if it is getattr(self._owner, "_bg_item", None):
+                continue
+            if getattr(it, "_is_web_item", False):
                 return it
             if it.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
                 return None
@@ -4493,6 +4512,13 @@ class _AnnotatorView(QGraphicsView):
             hit = self._table_cell_at(event.position().toPoint())
             if hit is not None:
                 self._begin_cell_edit(*hit)
+                event.accept()
+                return
+        # [우리 확장 · §8 항목61 ④-3] 웹 종류 더블클릭 = 종류마다(메모 = 글 고치기, 웹 카드·PDF·정리 문서 = 브라우저로).
+        if event.button() == Qt.MouseButton.LeftButton:
+            web = self._web_at(event.position().toPoint())
+            if web is not None:
+                web.web_double_click(self, self.mapToScene(event.position().toPoint()))
                 event.accept()
                 return
         # [우리 확장] 선/화살표 더블클릭 = 라벨 달기/편집(위에 다른 선택형이 없을 때만).

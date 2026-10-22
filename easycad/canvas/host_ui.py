@@ -302,7 +302,10 @@ class _UIBuildMixin:
         # [§8 항목53 1단계] 16:9 보드 틀 — 끌면 안의 것도 같이, 출력은 늘 흰 종이
         self._act_board = self._make_action("보드", "board", self._insert_board)
         self._act_board.setToolTip("보드 넣기 — 16:9 틀(끌면 안의 것도 같이 움직임, 색은 우클릭)")
-        for a in (self._act_tb, self._act_tbl, self._act_board):
+        # [§8 항목61 ④-3 2026-10-22] 메모(웹 칠판과 같은 종류 — 줄마다 제목·목록·할 일·코드) — 넣으면 바로 고치기 칸
+        self._act_memo = self._make_action("메모", "memo", self._insert_memo)
+        self._act_memo.setToolTip("메모 넣기 — 웹 칠판과 같은 메모(# 제목 · - 목록 · [ ] 할 일 · > 인용), 두 번 누르면 고치기")
+        for a in (self._act_tb, self._act_tbl, self._act_board, self._act_memo):
             i.addAction(a)
         i.addSeparator()   # [2026-08-13] 위 2개(문서 내장 요소) vs 아래 2개(외부 소스 가져오기) 구분
         # [2026-08-13 재피드백] "파일" 메뉴에 있던 이미지/SVG 삽입을 여기로 이동 — 열기와
@@ -695,7 +698,7 @@ class _UIBuildMixin:
     # (`text()`)는 그대로 두고 `iconText`만 바꾼다. 그리기 도구(액션 없는 QToolButton)도 여기서.
     _TOOLBAR_LABELS = {
         "new": "새로", "open": "열기", "save": "저장", "pdf": "PDF", "copy_image": "그림 복사",
-        "undo": "되돌리기", "redo": "다시", "titleblock": "표제란", "table": "표", "board": "보드", "image": "이미지",
+        "undo": "되돌리기", "redo": "다시", "titleblock": "표제란", "table": "표", "board": "보드", "memo": "메모", "image": "이미지",
         "select": "선택", "arrow": "화살표", "text": "글자", "line": "선", "polygon": "다각형",
         "pen": "펜", "badge": "번호", "trim": "Trim", "pin": "고정",
     }
@@ -715,7 +718,7 @@ class _UIBuildMixin:
         for a, key in ((self._act_new, "new"), (self._act_open, "open"), (self._act_save, "save"),
                        (self._act_pdf, "pdf"), (self._act_copy_img, "copy_image"),
                        (self._act_undo, "undo"), (self._act_redo, "redo"),
-                       (self._act_tb, "titleblock"), (self._act_tbl, "table"), (self._act_board, "board"),
+                       (self._act_tb, "titleblock"), (self._act_tbl, "table"), (self._act_board, "board"), (self._act_memo, "memo"),
                        (self._act_img, "image"), (self._act_pin, "pin")):
             a.setIconText(lbl[key])
 
@@ -740,7 +743,7 @@ class _UIBuildMixin:
         # 삽입(&I)
         # [§8 항목36] AI 생성 아이콘 세 개(Mermaid·SVG·사진→도면) → 「AI로 만들기」 하나(패널 켜기/끄기).
         # [첫 화면 재디자인 2026-10-07] 그 「AI로 만들기」는 강조 버튼으로 보기 토글 뒤에 따로 둔다.
-        for a in (self._act_tb, self._act_tbl, self._act_board, self._act_img):
+        for a in (self._act_tb, self._act_tbl, self._act_board, self._act_memo, self._act_img):
             tb.addAction(a)
         tb.addSeparator()
 

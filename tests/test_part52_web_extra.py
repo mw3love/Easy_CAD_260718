@@ -62,12 +62,12 @@ def test_web_frame_survives_desktop_save():
 
 
 def test_web_card_survives_desktop_save():
-    """웹 카드(2026-10-18 — 유튜브·웹페이지)는 데스크톱이 제목·주소를 적은 네모로 열고, 저장하면 다시 web으로(보여 주려고 붙인 라벨은 뺌)"""
+    """웹 카드(2026-10-18 — 유튜브·웹페이지)는 데스크톱도 웹 카드 모양으로 열고(④-3 2026-10-22 — 전엔 제목·주소를 적은 네모), 저장하면 다시 web으로"""
     d = dict(_BASE, type="web", rect=[0.0, 0.0, 480.0, 310.0], url="https://www.youtube.com/watch?v=dQw4w9WgXcQ", title="노래",
              embed="https://www.youtube.com/embed/dQw4w9WgXcQ", thumb="data:image/jpeg;base64,AAAA", frameable=True)
     sc = QGraphicsScene()
     it = insert_items(sc, [d])[0]
-    assert it._label is not None and "youtube.com" in it._label.toPlainText()   # 데스크톱에선 주소가 보임
+    assert type(it).__name__ == "_WebCardItem" and not it.has_label()   # 위 띠에 제목·주소를 그림(라벨 없음)
     out = item_to_dict(it)
     assert out["type"] == "web" and out["rect"] == [0.0, 0.0, 480.0, 310.0] and "label" not in out
     assert (out["url"], out["title"], out["embed"], out["thumb"], out["frameable"]) == (d["url"], "노래", d["embed"], d["thumb"], True)
@@ -99,14 +99,14 @@ def test_web_legend_marks_survive_desktop_save():
 
 
 def test_web_memo_survives_desktop_save():
-    """웹 메모(2026-10-18 — 줄마다 제목·목록·할 일·코드)는 데스크톱이 줄 글을 적은 둥근 네모로 열고, 저장하면 다시 memo로(줄·바탕색·답 시각 그대로, 보여 주려던 라벨은 뺌)"""
+    """웹 메모(2026-10-18 — 줄마다 제목·목록·할 일·코드)는 데스크톱도 메모 모양으로 열고(④-3 2026-10-22 — 전엔 줄 글을 적은 둥근 네모), 저장하면 다시 memo로(줄·바탕색·답 시각 그대로)"""
     lines = [{"k": "h2", "t": "회의"}, {"k": "todo", "t": "견적", "done": True}, {"k": "ol", "t": "하나"}, {"k": "ol", "t": "둘"},
              {"k": "ul", "t": "안", "lv": 1}, {"k": "code", "t": "  x = 1"}, {"k": "table", "t": "", "rows": [["항목", "상태"], ["안테나", "정상"]], "header": True, "cw": [0.4, 0.6]},
              {"k": "p", "t": "끝", "runs": [[0, 1, "#ff0000", True]]}]
     d = dict(_BASE, type="memo", rect=[0.0, 0.0, 340.0, 200.0], fill="#fffff8c5", lines=lines, chat_at=1792300000000)
     sc = QGraphicsScene()
     it = insert_items(sc, [d])[0]
-    assert it._label.toPlainText() == "## 회의\n☑ 견적\n1. 하나\n2. 둘\n  • 안\n  x = 1\n항목 | 상태\n안테나 | 정상\n끝"
+    assert type(it).__name__ == "_MemoItem" and not it.has_label()   # 줄을 메모 모양으로 그림(라벨 없음)
     out = item_to_dict(it)
     assert out["type"] == "memo" and out["lines"] == lines and out["fill"] == "#fffff8c5" and out["chat_at"] == 1792300000000
     assert "label" not in out and out["rect"] == [0.0, 0.0, 340.0, 200.0]
@@ -122,7 +122,7 @@ def test_web_card_new_keys_and_legend_survive_desktop_save():
     lg = dict(_BASE, type="legend", rect=[0.0, 0.0, 256.0, 87.0], rows=rows, names={"ff34c759|1|5": "주 신호선"}, title="범례")
     sc = QGraphicsScene()
     it = insert_items(sc, [lg])[0]
-    assert it._label.toPlainText() == "범례\n주 신호선 · 실선 · 5px"   # 데스크톱에선 줄 글이 보임
+    assert type(it).__name__ == "_LegendItem" and not it.has_label()   # 표 모양으로 그림(라벨 없음)
     out = item_to_dict(it)
     assert out["type"] == "legend" and out["rows"] == rows and out["names"] == lg["names"] and out["title"] == "범례" and "label" not in out
 
