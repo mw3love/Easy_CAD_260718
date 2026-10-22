@@ -28,6 +28,8 @@ export async function toPage(page, x, y) {
 /** 화면을 정해진 자리·배율로(시험이 좌표를 예측할 수 있게) */
 export async function setCam(page, cam = { x: 400, y: 200, z: 1 }) {
   await page.evaluate(c => window.__mb.setCam(c), cam)
+  // 화면이 실제로 그 자리로 다시 그려질 때까지(바로 글쇠를 누르면 칠판이 옛 자리를 들고 있음 — 2026-10-22 flow9 Z 되돌아가기가 가끔 실패)
+  await page.waitForFunction(c => { const g = window.__mb.getCam(); return Math.abs(g.x - c.x) < 1e-6 && Math.abs(g.y - c.y) < 1e-6 && Math.abs(g.z - c.z) < 1e-6 }, cam, { timeout: 2000 }).catch(() => {})
 }
 
 /** 브라우저가 들고 있는 지금 문서(.ecad 모양) */

@@ -215,13 +215,14 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   const btn = on => ({ all: 'unset', cursor: 'pointer', minWidth: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, padding: '0 6px', boxSizing: 'border-box',
     color: on ? '#fff' : 'rgba(255,255,255,.85)', background: on ? '#da7756' : 'transparent', font: "600 14px 'Pretendard', sans-serif" })
   const th = THEMES[dark ? 'dark' : 'light']
+  const barZoom = Math.min(1.35, Math.max(1, (typeof window !== 'undefined' ? window.innerWidth : 1400) / 1400))   // 큰 화면일수록 막대도 크게(2026-10-22 디자인 점검: TV 앞에 서서 누르기엔 글자가 작았음) — 1400px = 1배, 1920 = 1.35배
   const sep = <span style={{ width: 1, height: 28, background: 'rgba(255,255,255,.2)', margin: '0 4px' }} />
   const tbtn = on => ({ ...btn(on), flexDirection: 'column', gap: 1, height: 40, minWidth: 40, padding: '2px 4px' })
   // 두 칸 고르기 — 지금 상태가 켜진 칸(2026-10-18 사용자: 「이동」 버튼이 지금 상태인지 누르면 바뀐다는 뜻인지 모르겠음)
   const seg = (label, opts, cur, set, key) => <div title={`${label} (${key})`} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, margin: '0 2px' }}>
     <div style={{ display: 'flex', background: 'rgba(255,255,255,.08)', borderRadius: 6, padding: 1 }}>{opts.map(([v, name, tip]) => <button key={name} title={tip || name} onClick={() => set(v)}
-      style={{ all: 'unset', cursor: 'pointer', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', font: "600 11px 'Pretendard', sans-serif", color: cur === v ? '#fff' : 'rgba(255,255,255,.6)', background: cur === v ? '#da7756' : 'transparent' }}>{name}</button>)}</div>
-    <span style={{ fontSize: 10, color: 'rgba(255,255,255,.55)', whiteSpace: 'nowrap' }}>{label}</span></div>
+      style={{ all: 'unset', cursor: 'pointer', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap', font: "600 12px 'Pretendard', sans-serif", color: cur === v ? '#fff' : 'rgba(255,255,255,.6)', background: cur === v ? '#da7756' : 'transparent' }}>{name}</button>)}</div>
+    <span style={{ fontSize: 11, color: 'rgba(255,255,255,.6)', whiteSpace: 'nowrap' }}>{label}</span></div>
   return <div ref={root} tabIndex={-1} data-testid="presenter" onPointerDown={down} onPointerMove={move} onPointerUp={up} onContextMenu={e => e.preventDefault()}
     style={{ position: 'fixed', inset: 0, zIndex: 1000, outline: 'none', background: '#000', cursor: laserShown ? 'none' : show ? (tool && tool !== 'erase' ? 'crosshair' : zoom?.card ? 'zoom-out' : 'default') : 'none', ...th }}>
     <svg width={W} height={H} style={{ display: 'block' }}>
@@ -266,17 +267,17 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       </div> })()}
     {/* 아래 막대 — 마우스를 움직이면 나타남, 2초 가만히 있으면 숨음(도구를 쓰는 중엔 계속) */}
     <div data-testid="present-bar" onPointerDown={e => e.stopPropagation()} onPointerEnter={() => { barHover.current = true; setNearBottom(true) }} onPointerLeave={() => { barHover.current = false; wake() }}
-      style={{ position: 'absolute', left: '50%', bottom: 16, transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 2, padding: 4, borderRadius: 10, background: 'rgba(24,24,27,.86)',
+      style={{ position: 'absolute', left: '50%', bottom: 16, transform: 'translateX(-50%)', zoom: barZoom, display: 'flex', alignItems: 'center', gap: 2, padding: 4, borderRadius: 10, background: 'rgba(24,24,27,.86)',
         boxShadow: '0 4px 16px rgba(0,0,0,.4)', opacity: barShow ? 1 : 0, pointerEvents: barShow ? 'auto' : 'none', transition: 'opacity .25s' }}>
       <button title="이전 (←)" onClick={() => go(-1)} style={btn(false)}>◀</button>
       <button title="장 목록 (Tab) — 눌러서 바로 가기 · 방향키 + Enter · 번호 + Enter" onClick={() => setList(l => (l ? null : { typed: '', pick: i }))} style={{ ...btn(!!list), font: "500 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{i + 1} / {n}{f.name ? ` · ${f.name}` : ''} ▴</button>
       <button title="다음 (→ · 스페이스 · 클릭)" onClick={() => go(1)} style={btn(false)}>▶</button>
       {sep}
       {TOOLS.map(([id, icon, name, key]) => <button key={id} title={`${name} (${key}) — 다시 누르면 끄기(끄면 클릭 = 다음 장)${id === 'arrow' ? ' · Shift = 45° · X = 방금 그린 화살표 뒤집기' : id === 'erase' ? ' · 판서만, 스치면 지움' : ''} · Ctrl+Z 되돌리기`}
-        onClick={() => setTool(t => (t === id ? null : id))} style={tbtn(tool === id)}>{icon}<span style={{ fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap' }}>{name}</span></button>)}
+        onClick={() => setTool(t => (t === id ? null : id))} style={tbtn(tool === id)}>{icon}<span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>{name}</span></button>)}
       {sep}
       <button title="레이저 (` · L) — 켜 두면 커서가 빨간 점, 펜·네모 등과 같이 써요" onClick={() => setLaserOn(v => !v)} style={tbtn(laserOn)}>
-        {I(<><circle cx="9" cy="9" r="2.6" fill="currentColor" /><circle cx="9" cy="9" r="6" opacity=".5" /></>)}<span style={{ fontSize: 10, fontWeight: 500, whiteSpace: 'nowrap' }}>레이저</span></button>
+        {I(<><circle cx="9" cy="9" r="2.6" fill="currentColor" /><circle cx="9" cy="9" r="6" opacity=".5" /></>)}<span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>레이저</span></button>
       {sep}
       {COLORS.map(([c, name, code]) => { const cur = tool === 'hl' ? hlColor : penColor
         return <button key={c} title={`${name} (${code.slice(3)})${tool === 'hl' ? ' — 형광펜' : ' — 펜·네모·화살표·글자'}`} onClick={() => pickColor(c)}
@@ -288,7 +289,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       {sep}
       {seg('넘길 때', [[true, '이동', '칠판 위를 0.4초 미끄러져 감'], [false, '바로', '곧장 바뀜']], glide, setGlide, 'M')}
       {seg('화면', [[false, '밝게', ''], [true, '어둡게', '']], dark, setDark, 'D')}
-      <button title="끝 (Esc)" onClick={onClose} style={tbtn(false)}>{I(<><path d="M5 5 L13 13" /><path d="M13 5 L5 13" /></>)}<span style={{ fontSize: 10, fontWeight: 500 }}>끝</span></button>
+      <button title="끝 (Esc)" onClick={onClose} style={tbtn(false)}>{I(<><path d="M5 5 L13 13" /><path d="M13 5 L5 13" /></>)}<span style={{ fontSize: 11, fontWeight: 500 }}>끝</span></button>
     </div>
   </div>
 }

@@ -9,7 +9,7 @@ const GRIP = <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor"
 
 // items = 문서 아이템, sel = 고른 것 _id, onReorder(ids 새 순서), onRename(id, 이름), onGo(id), dark
 export function Frames({ items, sel, onReorder, onRename, onGo, onPresent, dark }) {
-  const [folded, toggleFold] = useFold('frames')
+  const [folded, toggleFold] = useFold('frames', true)
   const frames = orderedFrames(items), [hover, setHover] = useState(null), [drag, setDrag] = useState(null), [over, setOver] = useState(null), [renaming, setRenaming] = useState(null)
   if (!frames.length) return null
   const drop = to => {

@@ -24,9 +24,14 @@ test('카드 접기는 새로고침 뒤에도 그대로', async ({ page }) => {
   await page.getByRole('button', { name: '프레임', exact: true }).click(); await clickScene(page, 100, 100)   // 클릭만 = 16:9 프레임(프레임 카드는 프레임이 있을 때만 뜸)
   await waitSaved(page)
   const card = page.getByTestId('frames-card')
-  await card.getByTitle('접기').click()
-  await expect(card).toHaveAttribute('data-folded', /.*/)
+  await expect(card).toHaveAttribute('data-folded', /.*/)                       // 처음엔 접힘(2026-10-22 디자인 점검 — 도형 카드가 잘렸음), 제목 줄 ▶발표는 보임
+  await expect(card.getByRole('button', { name: /발표/ })).toBeVisible()
+  await card.getByTitle('펴기').click()
+  await expect(card).not.toHaveAttribute('data-folded', /.*/)
   await page.reload()
+  await expect(page.getByText(`서버 「${name}」`).first()).toBeVisible()
+  await expect(page.getByTestId('frames-card')).not.toHaveAttribute('data-folded', /.*/)   // 편 것도 기억
+  await page.getByTestId('frames-card').getByTitle('접기').click(); await page.reload()
   await expect(page.getByText(`서버 「${name}」`).first()).toBeVisible()
   await expect(page.getByTestId('frames-card')).toHaveAttribute('data-folded', /.*/)
 })
