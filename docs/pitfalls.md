@@ -1683,3 +1683,6 @@
 - TipTap 표(`@tiptap/extension-table`)는 `resizable: false`여도 기본 `TableView`가 칸 너비를 colwidth로 다시 써서 renderHTML의 colgroup이 무시됨 → `Table.configure({ View: null })`(메모 표 줄 칸 너비가 고치는 중에만 똑같아졌음, 2026-10-21)
 - Playwright `page.mouse.click(x, y, { modifiers })`의 `modifiers`는 무시된다(그건 `locator.click` 옵션) — Ctrl+클릭은 `keyboard.down('Control')` 뒤 `mouse.click`(2026-10-22, 바로가기 시험이 헛돎)
 - 다른 PC에서 웹 의존성을 더한 뒤 `git pull`만 하면 `npm run build`가 「failed to resolve import」로 깨짐 — `npm install` 먼저. 이때 `package-lock.json`의 `"peer": true` 줄만 바뀌면 npm 판 차이라 되돌림(2026-10-22)
+- 데스크톱 아이템의 `boundingRect`/`_content_rect`에서 `scene.items()`를 부르면 장면이 다시 모든 아이템의 크기를 물어 끝없이 돌다 조용히 죽음(2026-10-22 프레임 번호) — 크기 계산엔 마지막으로 그린 값을 쓰고, 바뀌면 paint에서 `prepareGeometryChange`.
+- 고친 문서가 든 `CanvasWindow`를 시험에서 `close()`하면 「저장할까요?」 창이 대답을 기다려 시험이 멈춤(오류 없이 시간 초과) — 시험 창은 `_confirm_close_doc = lambda d: True`.
+- 데스크톱 화면 대조 그림을 `QT_QPA_PLATFORM=offscreen`으로 찍으면 앱 기본 글꼴(Segoe UI·맑은 고딕)이 □ — 이 PC는 실제 화면 모드로(창은 안 띄워도 됨). 실린 Pretendard는 offscreen에서도 보임.
