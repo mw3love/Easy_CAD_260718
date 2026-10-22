@@ -16,6 +16,12 @@ test('언제나 — Z 다 보기 · Ctrl+0 100% · Ctrl+S 저장(브라우저 �
   let cam = await page.evaluate(() => window.__mb.getCam())
   const b = await page.getByTestId('board').boundingBox(), sx = 60 * cam.z + cam.x
   expect(sx).toBeGreaterThan(0); expect(sx).toBeLessThan(b.width)      // 멀리 있던 상자가 화면 안으로
+  await page.keyboard.press('z')                                        // 한 번 더 = 보던 자리로(2026-10-22 사용자)
+  await expect.poll(() => page.evaluate(() => window.__mb.getCam())).toEqual({ x: -5000, y: -5000, z: 1 })
+  await page.keyboard.press('z'); await page.keyboard.press('z')       // 몇 번이든 번갈아(다 보기 ⇄ 보던 자리)
+  await expect.poll(() => page.evaluate(() => window.__mb.getCam().x)).toBe(-5000)
+  await page.keyboard.press('z'); await setCam(page, { x: -3000, y: -3000, z: 1 }); await page.keyboard.press('z')   // 다 보기 뒤 화면을 움직였으면 Z = 다시 다 보기(되돌아가지 않음)
+  cam = await page.evaluate(() => window.__mb.getCam()); expect(cam.x).not.toBe(-3000); expect(cam.x).not.toBe(-5000)
   await page.keyboard.press('Control+0')
   cam = await page.evaluate(() => window.__mb.getCam()); expect(cam.z).toBe(1)
   let downloaded = false; page.on('download', () => { downloaded = true })

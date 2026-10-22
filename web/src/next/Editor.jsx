@@ -96,6 +96,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const [cursor, setCursor] = useState('default')
   const st = useRef({}), hist = useRef({ past: [], future: [] }), clip = useRef({ items: [], seq: 0 }), svg = useRef(null)
   const items = live || model.items
+  const zBack = useRef(null)   // Z 다 보기 전 자리 {before, after} — Z 한 번 더 = 되돌아감
   const R = useRef(); R.current = { vhosts: new Map(), ...R.current, model, sel, cam, tool, items, editing, hp: overlay.hp, activeLayer, live: !!live, poly: !!overlay.poly, lpt: overlay.lpt, others }
   // 누를 수 있는 것 = 숨긴 레이어 밖(데스크톱 setVisible(False)는 눌리지도 않음)
   const layerLocked = it => { const l = layersOf(R.current.model).find(x => x.id === layerIdOf(it)); return !!l?.locked }
@@ -1387,7 +1388,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (k.length === 1 || k === 'Process' || e.keyCode === 229) {   // 기본 동작은 막지 않음 — 대기 편집기가 이 글쇠를 받음, 여기선 보이게만
           const ne = { id: ta.id, kind: ta.kind, ...(ta.kind === 'memo' ? {} : { fresh: true }) }; R.current.editing = ne; flushSync(() => setEditing(ne)); return }
       }
-      if (!mod && !e.shiftKey && e.code === 'KeyZ') return act(() => { const its = e.altKey ? R.current.model.items.filter(it => ids.includes(it._id)) : null; onFit?.(its?.length ? its : null) })   // Z = 다 보기 · Alt+Z = 고른 것만(왼손 자리 — 2026-10-20 사용자, 한글 입력이어도 자리로). 옛 Shift+Z는 글 도형 하나를 고르면 글로 들어가 정작 필요할 때 안 먹었음 — Alt는 「치면 글」을 건너뜀
+      if (!mod && !e.shiftKey && e.code === 'KeyZ') return act(() => {
+        const c = R.current.cam, zb = zBack.current; zBack.current = null
+        if (!e.altKey && zb?.after && ['x', 'y', 'z'].every(q => Math.abs(c[q] - zb.after[q]) < 1e-6)) { setCam(zb.before); setStatus('보던 자리로'); return }   // Z 한 번 더(그 사이 화면 안 움직임) = 누르기 전 자리로(2026-10-22 사용자: 전체를 슬쩍 보고 돌아가기)
+        const its = e.altKey ? R.current.model.items.filter(it => ids.includes(it._id)) : null; onFit?.(its?.length ? its : null)
+        if (!e.altKey) { const zb2 = { before: { ...c } }; zBack.current = zb2; requestAnimationFrame(() => { if (zBack.current === zb2) zb2.after = { ...R.current.cam } }) }   // 맞춘 뒤 자리 = 다음 렌더에서 읽음
+      })   // Z = 다 보기 · Alt+Z = 고른 것만(왼손 자리 — 2026-10-20 사용자, 한글 입력이어도 자리로). 옛 Shift+Z는 글 도형 하나를 고르면 글로 들어가 정작 필요할 때 안 먹었음 — Alt는 「치면 글」을 건너뜀
       if (!mod && !e.altKey && !e.shiftKey && e.code === 'KeyD' && !ids.length) return act(() => onDark?.())   // D = 어둡게 ⇄ 밝게(발표와 같은 글쇠, 아무것도 안 골랐을 때)
       const TOOL_KEYS = { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen', 7: 'badge' }   // 데스크톱 `SHORTCUT_DEFS` 도구 1~7
       if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[k]) return act(() => setTool(TOOL_KEYS[k]))
