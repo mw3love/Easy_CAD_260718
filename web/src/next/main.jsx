@@ -81,10 +81,16 @@ function WebForm({ onInsert, onClose }) {
   </div>
 }
 
+// 샘플 열기 — 지금 칠판을 그 내용으로 바꿈(서버 없으면 위 막대, 있으면 칠판 메뉴 안)
+const SampleSelect = ({ onPick }) => <select data-testid="sample-select" onChange={e => { const u = e.target.value; e.target.value = ''; if (u) onPick(u) }} defaultValue="" title="샘플 칠판으로 바꾸기 — 지금 칠판 내용이 바뀌어요(Ctrl+Z로 되돌리기)"
+  style={{ font: "500 12px 'Pretendard', sans-serif", padding: '4px 6px', borderRadius: 6, border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>
+  <option value="">샘플 열기…</option>{SAMPLES.map(([n, u]) => <option key={u} value={u}>{n}</option>)}
+</select>
+
 // 칠판 고르기 — 새 칠판·최근 칠판(2026-10-19 점검: 주소창에 `?board=`를 직접 쳐야만 옮겨 갈 수 있었음). 옮겨 가기 = 그 주소로 다시 열기(칠판 이름은 주소가 정함)
 const TEST_BOARD = /^(claude|e2e)_/   // Claude·화면 시험이 만든 칠판은 목록에서 숨김
 const ago = s => { const d = Date.now() / 1000 - s; return d < 60 ? '방금' : d < 3600 ? `${Math.floor(d / 60)}분 전` : d < 86400 ? `${Math.floor(d / 3600)}시간 전` : `${Math.floor(d / 86400)}일 전` }
-function BoardForm({ onClose }) {
+function BoardForm({ onClose, onSample }) {
   const [list, setList] = useState(null), [name, setName] = useState(''), [all, setAll] = useState(false)
   useEffect(() => { api.boards().then(setList) }, [])
   const goTo = n => { location.href = `${location.pathname}?board=${encodeURIComponent(n)}` }
@@ -109,6 +115,7 @@ function BoardForm({ onClose }) {
           <span style={{ fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{b.items}개 · {ago(b.mtime)}</span></button>)}
     </div>
     {hidden > 0 && <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.muted }}><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} />시험 칠판 {hidden}개도 보기</label>}
+    <SampleSelect onPick={onSample} />   {/* 위 막대에서 옮김(2026-10-22 디자인 점검 — 평소엔 안 써서 알림 자리만 좁혔음) */}
   </div>
 }
 
@@ -266,6 +273,7 @@ function App() {
     if (fromServer) { sync.current.base = snapshotModel(m); sync.current.rev = doc.rev || 0 }   // 서버에서 받은 것 = 맞춘 기준
     else if (sync.current.base) saveServerDoc(toEcad(m)).then(rev => { if (typeof rev === 'number') { sync.current.base = snapshotModel(m); sync.current.rev = rev } })   // 파일·샘플을 이 칠판에 열기 = 통째 바꿈
     setActiveLayer('default'); ed.current?.reset(); const c = keepCam && savedCam(); if (c && camShowsAny(c, m.items)) setCam(c); else fit(m.items); camReady.current = true; setStatus(`${how} · ${m.items.length}개`) }, [fit])   // eslint-disable-line
+  const openSample = async u => { try { open(parseDoc(await (await fetch(u)).text()), u.split('/').pop()) } catch (err) { setStatus('샘플 열기 실패: ' + err.message) } }
   useEffect(() => { if (!camReady.current) return; const t = setTimeout(() => { try { localStorage.setItem(camKey, JSON.stringify(cam)) } catch { /* 저장 못 해도 그만 */ } }, 300); return () => clearTimeout(t) }, [cam])   // eslint-disable-line
 
   // 공동작업 맞추기(2026-10-18) — 고친 뒤 0.6초 쉬면 바뀐 도형만 보내고(부분 저장), 2초마다 남이 바꾼 것을 받아 내 안 보낸 변경을 그 위에 다시 얹음
@@ -339,6 +347,19 @@ function App() {
   const keyAct = useRef(null)
   keyAct.current = { fit: () => fit(modelRef.current.items), save: () => (server ? saveServer() : saveFile()),
     zoom100: () => setCam(c => { const cx = (size.w - rightInset(box.current)) / 2, cy = size.h / 2; return { z: 1, x: cx - (cx - c.x) / c.z, y: cy - (cy - c.y) / c.z } }) }
+  // 위 막대 팝업(칠판·내보내기·표·웹·공유) — 바깥 누르기·Esc = 닫기, 하나만(2026-10-22 디자인 점검: Esc는 팝업 안에 커서가 있을 때만 먹고 둘이 겹쳐 열렸음)
+  const anyPop = boardOpen || exportOpen || tableOpen || webOpen || shareOpen
+  useEffect(() => {
+    if (!anyPop) return
+    const close = (keep = '') => { if (keep !== 'board') setBoardOpen(false); if (keep !== 'export') setExportOpen(false); if (keep !== 'table') setTableOpen(false); if (keep !== 'web') setWebOpen(false); if (keep !== 'share') setShareOpen(false) }
+    const down = e => close(e.target.closest?.('[data-pop]')?.dataset.pop || '')   // 그 팝업(버튼 포함) 안이면 그것만 남김 — 다른 팝업 버튼 = 앞 것 닫고 새로 열기
+    const key = e => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close() } }   // 칠판의 Esc(고른 것 풀기)보다 먼저 — 팝업만 닫음
+    window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key, true)
+    return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true) }
+  }, [anyPop])
+  // 알림 = 칠판 아래 가운데에 잠깐(글 길이만큼 2~6초). 다 지나도 글은 남기고 투명하게만(시험이 글을 찾음)
+  const [toastOn, setToastOn] = useState(false)
+  useEffect(() => { if (!status) return; setToastOn(true); const t = setTimeout(() => setToastOn(false), Math.min(6000, 2000 + status.length * 50)); return () => clearTimeout(t) }, [status])
   useEffect(() => {
     const on = e => {
       if (document.querySelector('[data-testid=presenter]')) return
@@ -355,14 +376,14 @@ function App() {
       <Narrow.Provider value={narrow}>
       <div style={{ display: 'flex', alignItems: 'center', gap: narrow ? 4 : 8, padding: '4px 8px', background: C.bar, borderBottom: `1px solid ${C.line}` }}>
         <Group>
-          {server && <div style={ANCHOR}>
+          {server && <div data-pop="board" style={ANCHOR}>
             <Btn icon="🗂" label="칠판" on={boardOpen} onClick={() => setBoardOpen(o => !o)} title={`지금 칠판 「${DOC_NAME}」 — 새 칠판 만들기·다른 칠판 열기`} />
-            {boardOpen && <BoardForm onClose={() => setBoardOpen(false)} />}
+            {boardOpen && <BoardForm onClose={() => setBoardOpen(false)} onSample={u => { setBoardOpen(false); openSample(u) }} />}
           </div>}
           <Btn icon="📂" label="열기" onClick={() => file.current.click()} title=".ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)" />
           <Btn icon="💾" label="저장" onClick={server ? saveServer : saveFile} title={server ? `서버 「${DOC_NAME}」에 저장` : '.ecad로 내려받기'} />
           <Btn icon="⬇" label="내려받기" onClick={saveFile} title=".ecad 파일로 내려받기" />
-          <div style={{ position: 'relative' }}>
+          <div data-pop="export" style={{ position: 'relative' }}>
             <Btn icon="🖨" label="내보내기" on={exportOpen} onClick={() => setExportOpen(o => !o)} title="PDF·PNG·SVG로 내보내기 — 전체 또는 고른 것" />
             {exportOpen && <ExportForm hasSel={!!ed.current?.getSel().length} selFrames={ed.current?.selFrames() || 0} frameCount={model.items.filter(it => it.type === 'frame' || (it.type === 'titleblock' && it.plain)).length} items={model.items}
             onPreview={o => ed.current?.exportPages(o) ?? Promise.resolve({ error: '' })} onReorder={ids => ed.current?.reorderFrames(ids)} onClose={() => setExportOpen(false)} onExport={async o => { const ok = await ed.current?.exportDoc({ ...o, name: DOC_NAME || 'magic-board' }); if (ok) setExportOpen(false) }} />}
@@ -376,10 +397,10 @@ function App() {
         <Group><div style={ANCHOR}>
           <Btn icon="▶" label="발표" onClick={() => ed.current?.startPresent()} title="발표 — 프레임 순서대로 한 장씩 전체 화면(고른 프레임부터) · → 다음 · ← 이전 · M 이동/바로 · Esc 끝" />
           <Btn icon="▭" label="프레임" on={tool === 'frame'} onClick={() => setTool(t => (t === 'frame' ? 'select' : 'frame'))} onDown={e => toolDown(e, 'frame')} title="프레임 — 버튼을 칠판으로 끌면 그 자리에 16:9 · 칠판에서 끌어서 영역을 감싸면 그 안이 출력 한 쪽(번호 순서). 클릭만 = 16:9, 우클릭 「프레임으로 감싸기」도" />
-        </div><div style={ANCHOR}>
+        </div><div data-pop="table" style={ANCHOR}>
           <Btn icon="▦" label="표" on={tableOpen} onClick={() => setTableOpen(o => !o)} onDown={e => toolDown(e, 'table')} title="표 넣기 — 행·열을 고르면 화면 가운데(겹치면 가까운 빈자리) · 칠판으로 끌면 그 자리에(마지막 행·열)" />
           {tableOpen && <TableForm onInsert={(r, c, h) => { setTableOpen(false); lastTable.current = [r, c, h]; ed.current?.insertTable(r, c, h) }} onLegend={() => { setTableOpen(false); ed.current?.insertLegend() }} onClose={() => setTableOpen(false)} />}
-        </div><div style={ANCHOR}>
+        </div><div data-pop="web" style={ANCHOR}>
           <Btn icon="🗒" label="메모" onClick={() => ed.current?.insertMemo()} onDown={e => toolDown(e, 'memo')} title="메모 — 칠판으로 끌면 그 자리에 · 줄마다 제목·목록·할 일·코드·인용(`# `·`- `·`[] `·`> ` 입력), 체크 상자는 칠판에서 바로" />
           <Btn icon="🌐" label="웹" on={webOpen} onClick={() => { setWebAt(null); setWebOpen(o => !o) }} onDown={e => toolDown(e, 'web')} title="웹 카드 — 칠판으로 끌면 그 자리에 · 유튜브·웹페이지 주소를 칠판에(칠판에 주소를 Ctrl+V 해도 돼요)" />
           {webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url, webAt || 'near') }} onClose={() => setWebOpen(false)} />}
@@ -387,13 +408,11 @@ function App() {
         <Group>
           <Btn icon="⛶" label={full ? '창으로' : '전체 화면'} on={full} onClick={toggleFull} title="전체 화면 ⇄ 창 (F11과 같음) — 다 보기는 Z 또는 미니맵의 %" />
         </Group>
-        {!narrow && <select onChange={async e => { const u = e.target.value; e.target.value = ''; if (!u) return; try { open(parseDoc(await (await fetch(u)).text()), u.split('/').pop()) } catch (err) { setStatus('샘플 열기 실패: ' + err.message) } }}
-          defaultValue="" style={{ font: "500 12px 'Pretendard', sans-serif", padding: '4px 6px', borderRadius: 6, border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>
-          <option value="">샘플 열기…</option>{SAMPLES.map(([n, u]) => <option key={u} value={u}>{n}</option>)}
-        </select>}
-        <span title={status} style={{ marginLeft: 'auto', color: C.muted, fontSize: 12, minWidth: 0, flexShrink: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{status} · {Math.round(cam.z * 100)}%</span>   {/* 한 줄 고정 — 알림이 길면 위 막대가 두 줄로 늘어 칠판이 밀렸음(2026-10-19) */}
+        {!narrow && !server && <SampleSelect onPick={openSample} />}
+        <span title={server ? `칠판 「${DOC_NAME}」` : ''} style={{ marginLeft: 'auto', color: C.muted, fontSize: 12, minWidth: 0, flexShrink: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{server ? `「${DOC_NAME}」 · ` : ''}</span>
+        <span style={{ marginLeft: server ? -4 : 'auto', color: C.muted, fontSize: 12, whiteSpace: 'nowrap' }}>{Math.round(cam.z * 100)}%</span>   {/* 배율은 늘 보이게(이름이 길면 이름만 줄임) */}   {/* 칠판 이름·배율만 — 알림은 칠판 아래 가운데(2026-10-22 디자인 점검: 여기선 60px만 보여 잘렸음) */}
         {server && <span title={people.length ? `지금 이 칠판에: ${people.join(', ')}` : ''} style={{ fontSize: 12, color: C.muted, whiteSpace: 'nowrap', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>👥 {people.length ? people.join(' · ') : (me || '나')}</span>}
-        <div style={{ position: 'relative', opacity: server ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
+        <div data-pop="share" style={{ position: 'relative', opacity: server ? 1 : 0.4 }}>   {/* 서버가 없으면 숨기지 않고 흐리게 — 안 보이면 왜 없는지 몰랐음(2026-10-20 사용자) */}
           <Btn icon="🔗" label="공유" on={shareOpen} onClick={() => (server ? setShareOpen(o => !o) : setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 공유·KAIROS를 쓸 수 있어요'))} title={server ? '게시 — 로그인 없이 보기·발표만 되는 링크(큰 TV 발표용)' : '서버에 연결 안 됨 — python web/server.py를 켜면 공유할 수 있어요'} />
           {server && shareOpen && <ShareForm people={people} me={me} onClose={() => setShareOpen(false)} />}
         </div>
@@ -414,6 +433,8 @@ function App() {
         style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${CHAT_W + 12}px` : '0px' }}>
         <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onAsk={(text, kind) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind }) }} />
         {helpOpen && <HelpCard onClose={() => setHelpOpen(false)} />}
+        {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 99,
+          background: 'rgba(24,24,27,.86)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none', opacity: toastOn ? 1 : 0, transition: 'opacity .3s' }}>{status}</div>}
         {aiBusy && <div data-testid="ai-busy" role="status" style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 99,
           background: 'var(--mb-card)', border: '1px solid var(--mb-line)', boxShadow: '0 2px 8px rgba(0,0,0,.12)', font: "600 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', pointerEvents: 'none', whiteSpace: 'nowrap' }}><Spinner />{aiBusy}</div>}   {/* 정돈·정리 문서 중 — 칠판만 보고 있어도 도는 게 보이게(2026-10-20 사용자) */}
         {findOpen > 0 && <FindBar key={findOpen} items={model.items} server={server} onMarks={setMarks} onGo={id => ed.current?.showItem(id)} onClose={() => setFindOpen(0)} />}
