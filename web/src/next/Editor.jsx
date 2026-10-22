@@ -1587,8 +1587,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // PDF 카드에서 Alt+끌기 = 그 부분을 칠판으로(서버가 200dpi로 다시 그림) — 카드 오른쪽 빈자리, 밑에 「파일 · N쪽」, 카드 → 그림 점선 화살표(어디서 왔는지 — 웹 검색 출처 카드와 같은 원칙).
   // 그 부분 글은 그림의 보이지 않는 설명(찾기·대화 재료 — 우클릭 「그림 속 글 읽기」도 이것을 씀)
-  async function clipPdf({ id, page, r, top }) {
-    const card = R.current.model.items.find(it => it._id === id); if (!card) return
+  async function clipPdf({ id, page, r, top, key }) {
+    const tell = (ok, msg) => window.dispatchEvent(new CustomEvent('mb-pdf-clipped', { detail: { key, ok, msg } }))   // 카드의 오린 자리에 결과(2026-10-22 사용자: PDF를 크게 보면 칠판이 안 보임)
+    const card = R.current.model.items.find(it => it._id === id); if (!card) { tell(false, '✗ 오려 오기 실패 — 카드를 못 찾음'); return }
     const q = `${card.url}/${'%s'}/${page}?r=${r.map(v => v.toFixed(4)).join(',')}`
     setStatus('오려 오는 중…')
     try {
@@ -1621,8 +1622,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const capd = { ...cap, pos: [at.x - TEXT_MARGIN * s, at.y + h + 2 * s], group_id: g }
       // 화살표는 없음(2026-10-22 사용자: 그림마다 화살표 = 여럿이면 엉켜 지저분) — 출처는 밑 글 「파일 · N쪽」, Ctrl+클릭·우클릭 = PDF 그 쪽으로
       commit([...R.current.model.items, img, capd], [img._id], 'PDF에서 오려 옴')
-      setStatus(`${label} 오려 옴 — Ctrl+클릭 = PDF 그 쪽으로`)
-    } catch (err) { setStatus(`오려 오기 실패 — ${err.message || err}`) }
+      setStatus(`${label} 오려 옴 — Ctrl+클릭 = PDF 그 쪽으로`); tell(true, `✓ 오려 옴 · ${page + 1}쪽`)
+    } catch (err) { setStatus(`오려 오기 실패 — ${err.message || err}`); tell(false, `✗ 오려 오기 실패 — ${err.message || err}`) }
   }
   // 오려 온 그림의 출처 — 설명 첫 줄 「파일 · N쪽」(밑 글도 같은 묶음). 같은 이름 PDF 카드가 여럿이면 가장 가까운 것
   function clipOf(it) {

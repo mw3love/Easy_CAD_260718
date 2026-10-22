@@ -1,6 +1,7 @@
 // PDF 보기 카드 몸통(2026-10-21 사용자: 휠로 쭉쭉 보다가 Alt+드래그로 칠판에 오려 오기) — 카드 칸 안(foreignObject) HTML.
 // 쪽 그림은 서버가 그때그때(`web/pdfview.py`, 보이는 쪽 ±1만 받음). 켜짐(on) = 웹 카드처럼 한 번 눌러 조작 — 휠 = 쪽 넘기기, Alt+끌기 = 오려 오기.
-// 오려 오기·위치는 칠판(Editor)이 받는다: 창 신호 `mb-pdf-clip` {id, page, r: [x0, y0, x1, y1](쪽 안 비율), top: 화면 y}.
+// 오려 오기·위치는 칠판(Editor)이 받는다: 창 신호 `mb-pdf-clip` {id, page, r: [x0, y0, x1, y1](쪽 안 비율), top: 화면 y, key}.
+// 끝나면 칠판이 `mb-pdf-clipped` {key, ok, msg}로 알려 줌 → 오린 자리에 결과 표시(2026-10-22 사용자: PDF를 크게 보면 칠판이 안 보여 됐는지 모름)
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export const PDF_GAP = 8          // 쪽 사이(카드 좌표)
@@ -71,6 +72,15 @@ if (typeof document !== 'undefined') document.addEventListener('copy', e => { co
 
 export function PdfPages({ it, w, h, on }) {
   const box = useRef(null), [top, setTop] = useState(() => pdfTop(it)), [px, setPx] = useState(1200), [sel, setSel] = useState(null), [alt, setAlt] = useState(false)
+  const [marks, setMarks] = useState([])   // 오린 자리 표시 {key, rect, st: 'busy'|'ok'|'fail', msg} — 몸통 좌표라 스크롤 따라감
+  useEffect(() => {
+    const T = []
+    const got = e => { const { key, ok, msg } = e.detail || {}
+      setMarks(ms => ms.map(m => (m.key === key ? { ...m, st: ok ? 'ok' : 'fail', msg } : m)))
+      T.push(setTimeout(() => setMarks(ms => ms.filter(m => m.key !== key)), ok ? 1500 : 2500)) }   // 1.5초 — 대화창 「추가됨」과 같은 길이, 실패는 이유를 읽게 조금 더
+    window.addEventListener('mb-pdf-clipped', got)
+    return () => { window.removeEventListener('mb-pdf-clipped', got); T.forEach(clearTimeout) }
+  }, [])
   useEffect(() => {   // Alt 누름 상태 — 켜졌을 때만(창을 떠나면 끔)
     if (!on) { setAlt(false); return }
     const key = e => setAlt(e.altKey), off = () => setAlt(false)
@@ -109,9 +119,10 @@ export function PdfPages({ it, w, h, on }) {
     const [py, ph] = lay[s.i], cl = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
     const x0 = cl(Math.min(s.a.x, s.b.x), 0, w), x1 = cl(Math.max(s.a.x, s.b.x), 0, w), y0 = cl(Math.min(s.a.y, s.b.y), py, py + ph), y1 = cl(Math.max(s.a.y, s.b.y), py, py + ph)
     if (x1 - x0 < 4 || y1 - y0 < 4) return   // 그냥 누름
-    const r = box.current.getBoundingClientRect(), k = r.width / Math.max(1, box.current.offsetWidth)
+    const r = box.current.getBoundingClientRect(), k = r.width / Math.max(1, box.current.offsetWidth), key = Math.random().toString(36).slice(2)
+    setMarks(ms => [...ms, { key, rect: { left: x0, top: y0, width: x1 - x0, height: y1 - y0 }, st: 'busy', msg: '오려 오는 중…' }])
     window.dispatchEvent(new CustomEvent('mb-pdf-clip', { detail: { id: it._id, page: s.i, r: [x0 / w, (y0 - py) / ph, x1 / w, (y1 - py) / ph],
-      top: r.top + (y0 - box.current.scrollTop) * k } }))
+      top: r.top + (y0 - box.current.scrollTop) * k, key } }))
     e.stopPropagation()
   }
   const rect = sel && { left: Math.min(sel.a.x, sel.b.x), top: Math.min(sel.a.y, sel.b.y), width: Math.abs(sel.a.x - sel.b.x), height: Math.abs(sel.a.y - sel.b.y) }
@@ -124,6 +135,10 @@ export function PdfPages({ it, w, h, on }) {
           : <img key={i} alt={`${i + 1}쪽`} draggable={false} src={`${it.url}/page/${i}?w=${px}`} style={{ position: 'absolute', left: 0, top: py, width: w, height: ph, background: '#fff', display: 'block', userSelect: 'none' }} />))}
         {on && lay.map(([py, ph], i) => (py + ph < top - h || py > top + 2 * h ? null : <PageText key={'t' + i} it={it} i={i} w={w} top={py} ph={ph} />))}
         {rect && <div style={{ position: 'absolute', ...rect, border: '1.5px solid #da7756', background: 'rgba(218,119,86,.12)', pointerEvents: 'none' }} />}
+        {marks.map(m => { const c = m.st === 'ok' ? '#16a34a' : m.st === 'fail' ? '#dc2626' : '#da7756'
+          return <div key={m.key} data-testid={`pdf-clip-${m.st}`} style={{ position: 'absolute', ...m.rect, border: `2px ${m.st === 'busy' ? 'dashed' : 'solid'} ${c}`, background: m.st === 'ok' ? 'rgba(22,163,74,.10)' : 'transparent', pointerEvents: 'none' }}>
+            <div style={{ position: 'absolute', left: -2, ...(m.rect.top - top < 24 ? { top: 2, left: 2 } : { bottom: '100%', marginBottom: 2 }), padding: '2px 8px', borderRadius: 99, background: c, color: '#fff', font: "600 12px 'Pretendard', sans-serif", whiteSpace: 'nowrap' }}>{m.msg}</div>
+          </div> })}
       </div>
     </div>
     {on && (alt || sel) && <div style={{ position: 'absolute', left: 8, bottom: 8, padding: '2px 8px', borderRadius: 99, background: '#da7756', color: '#fff', font: "600 11px 'Pretendard', sans-serif", pointerEvents: 'none' }}>✂ 끌어서 오려 오기</div>}

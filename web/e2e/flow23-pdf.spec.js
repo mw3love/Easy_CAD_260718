@@ -56,6 +56,8 @@ test('PDF 붙여넣기 = 보기 카드 → 한 번 = 고르기, 두 번 누르�
   expect(img.type).toBe('image'); expect(img.alt).toContain('Alpha line'); expect(img.alt).not.toContain('Bravo')   // 오린 부분 글 = 보이지 않는 설명
   expect(cap.text).toBe('two-pages.pdf · 1쪽'); expect(cap.group_id).toBe(img.group_id)
   expect(img.pos[0]).toBeGreaterThan(card.pos[0] + card.rect[2])         // 카드 오른쪽
+  await expect(page.getByTestId('pdf-clip-ok')).toContainText('오려 옴 · 1쪽')   // 오린 자리에 결과(2026-10-22 사용자: PDF를 크게 보면 칠판이 안 보임) → 1.5초 뒤 사라짐
+  await expect(page.getByTestId('pdf-clip-ok')).toHaveCount(0, { timeout: 4000 })
 
   await expect(page.getByTestId('pdf-to-text')).toHaveCount(0)            // 「글로」 단추는 없앰(2026-10-21) — 그림 우클릭 「그림 속 글 읽기」
   let ocrCalls = 0; await page.route('**/api/ocr', r => { ocrCalls++; r.fulfill({ json: { text: '', model: 'x' } }) })
