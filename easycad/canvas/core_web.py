@@ -9,9 +9,8 @@ import base64
 
 import copy
 
-from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, QUrl
+from PyQt6.QtCore import QPointF, QRectF, Qt, QUrl
 from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QFont, QFontMetricsF, QPainterPath, QPen, QPixmap
-from PyQt6.QtWidgets import QPlainTextEdit
 
 from easycad.canvas.core_shapes import _RectItem
 
@@ -438,84 +437,9 @@ class _LegendItem(_WebItem):
             _text(p, x + L["PAD"], row_y(0) + L["ROW"] / 2, "색 있는 선·화살표를 그리면 저절로 채워져요", px, "#71717a")
 
 
-class _MemoEditor(QPlainTextEdit):
-    """메모 고치기 칸 — 메모 자리에 떠서 마크다운 글로 고침(`# 제목`·`- 목록`·`[ ] 할 일`·`> 인용`·``` 코드 ```·`| 표 |`).
-    Esc = 취소, Ctrl+Enter·바깥 누르기 = 마침. 고치지 않은 줄의 꾸밈(굵게·색)은 그대로(`core_memo.md_to_lines`)."""
-
-    def __init__(self, view, item: "_MemoItem"):
-        super().__init__(view.viewport())
-        from easycad.canvas.core_memo import lines_to_md
-        self._view, self._item, self._done = view, item, False
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        self.setObjectName("memoEditor")
-        z = view.transform().m11() * item.scale()
-        f = QFont()
-        from easycad.canvas.core_memo import _board_families
-        f.setFamilies(_board_families())
-        f.setPointSizeF(max(7.0, 10.5 * z))
-        self.setFont(f)
-        self.setStyleSheet("QPlainTextEdit#memoEditor { background: #ffffff; color: #1f1f1f; border: 2px solid #da7756; border-radius: 6px; padding: 6px; }")
-        self.setPlainText(lines_to_md(item.raw.get("lines")))
-        self._place()
-        view.viewport().installEventFilter(self)   # 확대·이동하면 따라감(전엔 그 자리에 남아 메모가 둘로 보였음 — 2026-10-22 사용자)
-        self.show()
-        self.setFocus()
-
-    def eventFilter(self, obj, ev):
-        if ev.type() == QEvent.Type.Paint and not self._done:   # 화면이 다시 그려질 때(확대·이동·스크롤) 자리·글자 크기 맞춤
-            self._place()
-        return False
-
-    def _place(self):
-        r = self._item.rect()
-        pts = [self._view.mapFromScene(self._item.mapToScene(p)) for p in (r.topLeft(), r.bottomRight())]
-        x, y = min(p.x() for p in pts), min(p.y() for p in pts)
-        w, h = abs(pts[1].x() - pts[0].x()), abs(pts[1].y() - pts[0].y())
-        geo = (int(x), int(y), max(220, int(w)), max(160, int(h)))
-        if self.geometry().getRect() != geo:
-            self.setGeometry(*geo)
-        pt = max(7.0, 10.5 * self._view.transform().m11() * self._item.scale())
-        if abs(self.font().pointSizeF() - pt) > 0.05:
-            f = self.font()
-            f.setPointSizeF(pt)
-            self.setFont(f)
-
-    def commit(self):
-        if self._done:
-            return
-        self._done = True
-        from easycad.canvas.core_memo import md_to_lines
-        new = md_to_lines(self.toPlainText(), self._item.raw.get("lines"))
-        if new != self._item.raw.get("lines"):
-            self._item.set_lines(new)
-
-    def closeEvent(self, event):
-        try:
-            self._view.viewport().removeEventFilter(self)
-        except RuntimeError:   # 뷰가 먼저 닫힘
-            pass
-        super().closeEvent(event)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape:
-            self._done = True
-            self.close()
-            return
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            self.commit()
-            self.close()
-            return
-        super().keyPressEvent(event)
-
-    def focusOutEvent(self, event):
-        self.commit()
-        self.close()
-        super().focusOutEvent(event)
-
-
 class _MemoItem(_WebItem):
     """메모 — 채운 둥근 네모 + 줄마다 글(제목·목록·할 일·인용·코드). 줄 배치는 웹 memo.js를 옮김.
-    두 번 누르기 = 고치기(`_MemoEditor`), 할 일 상자 누르기 = 체크."""
+    두 번 누르기 = 메모 자리에서 고치기(`core_memo_edit._MemoTextEdit`), 할 일 상자 누르기 = 체크."""
     RADIUS = 10.0
 
     def __init__(self, rect, raw):
@@ -558,14 +482,31 @@ class _MemoItem(_WebItem):
         self.change_raw(fn)
 
     def web_double_click(self, view, scene_pos):
-        if getattr(view, "_memo_editor", None) is not None:
-            try:
-                view._memo_editor.commit()
-                view._memo_editor.close()
-            except RuntimeError:   # 이미 닫혀 지워진 칸
-                pass
-        view._memo_editor = _MemoEditor(view, self)
+        if getattr(self, "_editor", None) is not None:   # 이미 고치는 중
+            return True
+        from easycad.canvas.core_memo_edit import _MemoTextEdit
+        self._edit_rect0 = QRectF(self.rect())
+        self._editor = _MemoTextEdit(self)
+        view._memo_editor = self._editor
+        self.update()
+        self._editor.start()
         return True
+
+    def _end_edit(self, editor, new_lines):
+        """고치기 끝 — 글 상자를 떼고, 바뀌었으면 메모 줄로 저장(되돌리기 한 칸 — 고치기 전 크기부터)."""
+        if self._editor is not editor:
+            return
+        self._editor = None
+        sc = editor.scene()
+        editor.setParentItem(None)
+        if sc is not None:
+            sc.removeItem(editor)
+        r0 = self._edit_rect0
+        self.prepareGeometryChange()
+        super().setRect(r0)   # 고치는 동안 늘었던 높이를 되돌린 뒤 기록(되돌리기가 고치기 전 모습으로)
+        if new_lines is not None and new_lines != self._web_raw.get("lines"):
+            self.set_lines(new_lines)
+        self.update()
 
     def toggle_todo_at(self, local: QPointF) -> bool:
         """local(아이템 좌표)에 할 일 상자가 있으면 체크를 바꾸고 True."""
@@ -590,6 +531,8 @@ class _MemoItem(_WebItem):
         p.setPen(QPen(_color(d.get("pen"), "#ffd4d4d8"), 1))
         p.setBrush(_color(d.get("fill"), "#ffffffff"))
         p.drawRoundedRect(r, 10, 10)
+        if getattr(self, "_editor", None) is not None:   # 고치는 중 = 글은 편집 글 상자가 그림
+            return
         from easycad.canvas.core_memo import paint_memo
         paint_memo(p, r, d)
 

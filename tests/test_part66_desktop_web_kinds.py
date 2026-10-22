@@ -121,11 +121,10 @@ def test_memo_todo_click_and_edit_then_undo():
         assert not memo.raw["lines"][7].get("done")                                   # Ctrl+Z 한 번
         dbl(memo.mapToScene(memo.rect().center()))
         ed = v._memo_editor
-        assert ed.isVisible() and "# 점검 메모" in ed.toPlainText()                    # 두 번 누르기 = 마크다운 고치기 칸
+        assert ed.isVisible() and ed.parentItem() is memo and "점검 메모" in ed.toPlainText()   # 두 번 누르기 = 메모 자리에서 고치기
         h0 = memo.rect().height()
-        ed.setPlainText(ed.toPlainText() + "\n- 하나 더\n- 또 하나")
+        _type(ed, "\n- 하나 더\n또 하나")                                              # 「- 」 = 목록, 목록에서 Enter = 목록 이어짐
         ed.commit()
-        ed.close()
         assert memo.raw["lines"][-2:] == [{"k": "ul", "t": "하나 더"}, {"k": "ul", "t": "또 하나"}]
         assert memo.raw["lines"][1] == LINES[1]                                       # 안 고친 줄 꾸밈 그대로
         assert memo.rect().height() > h0                                              # 높이가 글에 맞춰 늘어남
@@ -158,9 +157,8 @@ def test_insert_memo_from_menu_opens_editor_and_saves_as_web_memo():
         memo = next(it for it in w._scene.items() if isinstance(it, W._MemoItem))
         ed = w._view._memo_editor
         assert ed.isVisible() and memo.isSelected()                                  # 넣으면 바로 고치기 칸
-        ed.setPlainText("# 오늘\n[ ] 점검표 쓰기")
+        _type(ed, "# 오늘\n[] 점검표 쓰기")
         ed.commit()
-        ed.close()
         d = item_to_dict(memo)
         assert d["type"] == "memo" and d["lines"] == [{"k": "h1", "t": "오늘"}, {"k": "todo", "t": "점검표 쓰기"}]   # 웹 칠판이 그대로 여는 메모
         assert "메모" in [a.iconText() for a in w.findChildren(type(w._act_memo)) if a is w._act_memo]
@@ -197,25 +195,88 @@ def test_memo_keys_open_editor_not_label_or_mindmap():
             n0 = len(w._scene.items())
             _key(w._view, k, mod)
             assert not memo._label_alive() and w._view._memo_editor.isVisible(), k
-            assert len(w._scene.items()) == n0, k                                        # 새 상자 없음
+            assert len(w._scene.items()) == n0 + 1, k                                    # 새 상자 없음(+1 = 메모 안 편집 글 상자)
             w._view._memo_editor.close()
         finally:
             w.close()
 
 
-def test_memo_editor_follows_zoom():
-    """편집 칸은 확대·이동을 따라감(전엔 그 자리에 남아 메모가 둘로 보였음 — 사용자 스크린숏)"""
+def test_memo_editor_lives_inside_memo():
+    """편집 글 상자 = 메모의 자식(칠판 안) — 확대·이동을 원리적으로 같이 따라감(전엔 화면 위 창이라 그 자리에 남아 메모가 둘로 보였음 — 사용자 스크린숏)"""
     w, (memo,) = _win_with(DOCS["memo"])
     try:
         *_, dbl = _draw_helpers(w._view)
         dbl(memo.mapToScene(memo.rect().center()))
         ed = w._view._memo_editor
-        g0 = ed.geometry()
-        w._view.scale(2, 2)
-        w._view.viewport().repaint()
-        QApplication.processEvents()
-        assert ed.geometry().width() > g0.width() * 1.5                                # 메모와 같이 커짐
+        assert ed.parentItem() is memo and ed.scene() is w._scene
         ed.close()
+        assert ed.scene() is None and memo._editor is None                             # 마치면 떼어 냄
+    finally:
+        w.close()
+
+
+def _type(ed, text):
+    """편집 글 상자에 글쇠로 치기 — \\n = Enter, 띄어쓰기 = Space(입력 규칙이 걸리게)."""
+    from PyQt6.QtCore import QEvent, Qt
+    from PyQt6.QtGui import QKeyEvent
+    for ch in text:
+        k = Qt.Key.Key_Return if ch == "\n" else Qt.Key.Key_Space if ch == " " else Qt.Key.Key_unknown
+        ed.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, k, Qt.KeyboardModifier.NoModifier, "\r" if ch == "\n" else ch))
+
+
+def _fresh_editor(lines):
+    w, (memo,) = _win_with({**DOCS["memo"], "lines": lines})
+    memo.web_double_click(w._view, memo.sceneBoundingRect().center())
+    return w, memo, w._view._memo_editor
+
+
+def test_memo_input_rules_turn_lines_as_you_type():
+    """웹 TipTap과 같은 입력 규칙 — 줄 맨 앞에서 치는 순간 바뀜(전엔 마칠 때 한 번에)"""
+    from easycad.canvas.core_memo_edit import KIND
+    w, memo, ed = _fresh_editor([{"k": "p", "t": ""}])
+    try:
+        _type(ed, "# ")
+        assert ed.textCursor().block().blockFormat().property(KIND) == "h1"           # 치는 순간 제목
+        # 목록·인용·코드 안 Enter = 같은 종류 이어짐, 빈 줄에서 Enter = 그 줄이 보통 글로(TipTap과 같게)
+        _type(ed, "제목\n- 하나\n둘\n\n1. 가\n\n[] 할 일\n\n> 인용\n\n```\ncode()\n\n---\n끝")
+        ed.commit()
+        assert memo.raw["lines"] == [{"k": "h1", "t": "제목"}, {"k": "ul", "t": "하나"}, {"k": "ul", "t": "둘"}, {"k": "ol", "t": "가"},
+                                     {"k": "todo", "t": "할 일"}, {"k": "quote", "t": "인용"}, {"k": "code", "t": "code()"},
+                                     {"k": "hr", "t": ""}, {"k": "p", "t": "끝"}]
+    finally:
+        w.close()
+
+
+def test_memo_editor_tab_bold_backspace_and_todo_click():
+    from PyQt6.QtCore import QEvent, Qt
+    from PyQt6.QtGui import QKeyEvent, QTextCursor
+    w, memo, ed = _fresh_editor([{"k": "ul", "t": "위"}, {"k": "ul", "t": "아래"}, {"k": "todo", "t": "일"}])
+    try:
+        key = lambda k, m=Qt.KeyboardModifier.NoModifier: ed.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, k, m, ""))   # noqa: E731
+        cur = ed.textCursor()
+        cur.setPosition(ed.document().findBlockByNumber(1).position())
+        ed.setTextCursor(cur)
+        key(Qt.Key.Key_Tab)                                                             # 깊이 +1
+        cur = ed.textCursor()
+        cur.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+        ed.setTextCursor(cur)
+        key(Qt.Key.Key_B, Qt.KeyboardModifier.ControlModifier)                         # 굵게
+        cur = ed.textCursor()
+        cur.setPosition(ed.document().findBlockByNumber(0).position())
+        ed.setTextCursor(cur)
+        key(Qt.Key.Key_Backspace)                                                       # 줄 맨 앞 지우기 = 목록 풂
+        blk = ed.document().findBlockByNumber(2)
+        from easycad.canvas.core_memo import MEMO, MEMO_KIND, PT, TEXT_MARGIN, BOARD_M
+        from easycad.canvas.core_memo_edit import DONE
+        r = ed.document().documentLayout().blockBoundingRect(blk)
+        bf, px = blk.blockFormat(), MEMO_KIND["todo"]["pt"] * PT
+        box_c = QPointF(TEXT_MARGIN + bf.leftMargin() - MEMO["INDENT"] + 2 + px * 0.45, r.y() + BOARD_M["lineSpacing"] * px / 2)
+        assert ed._box_at(box_c) is not None and ed._box_at(QPointF(r.right() - 2, box_c.y())) is None   # 그린 상자 자리 = 누를 자리
+        ed._set_kind(QTextCursor(blk), "todo", None, True)                              # 상자 누르기와 같은 길
+        assert blk.blockFormat().property(DONE)
+        ed.commit()
+        assert memo.raw["lines"] == [{"k": "p", "t": "위"}, {"k": "ul", "t": "아래", "lv": 1, "runs": [[0, 2, None, True]]},
+                                     {"k": "todo", "t": "일", "done": True}]
     finally:
         w.close()
 
