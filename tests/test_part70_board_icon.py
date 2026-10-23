@@ -24,14 +24,15 @@ ICON = '<svg viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8"/></svg>'
 
 
 def test_guess_icon_only_with_make_words():
-    assert board_chat.guess_kind("파라볼라 안테나 아이콘 그려 줘") == "icon"
-    assert board_chat.guess_kind("이 그림 심볼로 바꿔 줘") == "icon"
+    assert board_chat.guess_kind("파라볼라 안테나를 SVG로 그려 줘") == "icon"
     assert board_chat.guess_kind("마이크를 선 그림으로 그려줘") == "icon"
-    assert board_chat.guess_kind("송신탑 그려줘") == "image"              # 아이콘 말이 없으면 그림 그대로
-    assert board_chat.guess_kind("아이콘 만드는 법 알려줘") == "chat"
+    assert board_chat.guess_kind("카메라를 고칠 수 있게 벡터로 만들어 줘") == "icon"
+    assert board_chat.guess_kind("펭귄 아이콘 그려줘") == "image"          # 「아이콘」은 뜻이 둘 — 자동은 그림, 도형은 「+ › ✏️ 아이콘」(2026-10-23 사용자)
+    assert board_chat.guess_kind("송신기 심볼 하나 그려 줘") == "image"
+    assert board_chat.guess_kind("SVG 만드는 법 알려줘") == "chat"
     assert board_chat.guess_kind("엑셀 아이콘 어디 있어?") == "chat"
-    assert route.adjust("송신기 심볼 하나 만들어 줘", "image", 0.9, {"image": 0.9}) == "icon"   # 판단 모델엔 이 길이 없음 — 낱말이 이김
-    assert ("파라볼라 안테나 아이콘 그려 줘", 0, "icon") in route.CASES
+    assert route.adjust("송신기를 선 그림으로 만들어 줘", "image", 0.9, {"image": 0.9}) == "icon"   # 판단 모델엔 이 길이 없음 — 낱말이 이김
+    assert ("펭귄 아이콘 그려줘", 0, "image") in route.CASES
 
 
 def test_make_two_candidates_drops_unusable(monkeypatch):
@@ -89,9 +90,10 @@ def _ask(base, **body):
 
 def test_server_icon_paths(server):
     base, seen = server
-    out = _ask(base, messages=[{"role": "user", "content": "파라볼라 안테나 아이콘 그려 줘"}])
+    out = _ask(base, kind="icon", messages=[{"role": "user", "content": "파라볼라 안테나"}])   # 대화창 「+ › ✏️ 아이콘」 이름표
     assert out["kind"] == "icon" and out["svgs"] == [ICON, ICON] and out["model"] == "icon-m" and "후보 2개" in out["content"]
-    assert seen[-1] == ("파라볼라 안테나 아이콘 그려 줘", "", "")
+    assert seen[-1] == ("파라볼라 안테나", "", "")
+    assert _ask(base, messages=[{"role": "user", "content": "마이크를 선 그림으로 그려줘"}])["kind"] == "icon"   # 뜻이 분명한 말은 자동으로도
 
     out = _ask(base, base_svg=ICON, messages=[{"role": "user", "content": "선을 더 굵게"}])   # 아이콘 답 뒤 — 대화창이 고른 아이콘을 실어 보냄
     assert out["kind"] == "icon" and seen[-1] == ("선을 더 굵게", ICON, "") and "고쳤어요" in out["content"]
@@ -101,8 +103,8 @@ def test_server_icon_paths(server):
     from PIL import Image
     Image.new("RGB", (4, 4), "white").save(png, "PNG")
     url = "data:image/png;base64," + base64.b64encode(png.getvalue()).decode()
-    out = _ask(base, board_images=[url], messages=[{"role": "user", "content": "이 그림 아이콘으로 바꿔 줘"}])   # 그림 고치기(image)보다 먼저
-    assert out["kind"] == "icon" and seen[-1] == ("이 그림 아이콘으로 바꿔 줘", "", url)
+    out = _ask(base, kind="icon", board_images=[url], messages=[{"role": "user", "content": "이 그림 아이콘으로"}])   # 고른 그림 + 아이콘 이름표 = 그 그림을 보고
+    assert out["kind"] == "icon" and seen[-1] == ("이 그림 아이콘으로", "", url)
 
     with urllib.request.urlopen(base + "/api/models") as r:   # 기다리는 줄에 실제로 일하는 모델
         pass
