@@ -16,6 +16,7 @@ test('프레임 셋 → 발표 넘기기·마지막에서 멈춤·판서는 「�
   let doc = await liveDoc(page)
   const frames = doc.items.filter(it => it.type === 'frame')
   expect(frames).toHaveLength(3)
+  await page.getByTestId('dock-frame').click()                                    // 프레임 목록 = 왼쪽 판 「프레임」 칸(2026-10-23)
   await expect(page.getByTestId('frame-row')).toHaveCount(3)
 
   await clickScene(page, 600, 700)   // 빈 곳 — 고른 프레임이 있으면 그 장부터 시작(의도된 동작)

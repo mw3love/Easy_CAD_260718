@@ -2,7 +2,7 @@
 // 줄을 누르면 그 레이어가 「그리는 중」(새 도형이 들어갈 곳). 레이어 목록은 .ecad 문서 `layers`(데스크톱 save_document와 같은 모양), 도형은 `layer_id`(없으면 기본).
 // 표시·잠금은 되돌리기 밖(데스크톱과 같음 — 문서 설정). 잠금은 그 레이어 도형의 `locked`를 같이 바꾼다(데스크톱 `_set_item_lock_flags`).
 import { useState } from 'react'
-import { FoldBtn, useFold } from './fold.jsx'
+import { DOCKED, FoldBtn, useFold } from './fold.jsx'
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', on: '#da7756' }
 export const LAYER_COLORS = ['#8a98a8', '#5aa9ff', '#e8c15a', '#5fbf8a', '#e0646a', '#b48cf2', '#da7756', '#4fd1e0']   // 데스크톱 `_LAYER_COLORS`
@@ -20,8 +20,8 @@ const PEN = <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke={
 const iconBtn = { all: 'unset', cursor: 'pointer', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: C.ink }
 
 // model·setModel = 문서, active/setActive = 「그리는 중」, onChanged = 저장 알림, onMoveSel(id) = 고른 도형을 그 레이어로(Editor — 되돌리기 칸)
-export function Layers({ model, setModel, active, setActive, onChanged, onMoveSel, dark }) {
-  const [folded, toggleFold] = useFold('layers')
+export function Layers({ model, setModel, active, setActive, onChanged, onMoveSel, dark, docked }) {
+  const [f0, toggleFold] = useFold('layers'), folded = !docked && f0
   const layers = layersOf(model), [menu, setMenu] = useState(null), [renaming, setRenaming] = useState(null)
   const count = id => model.items.filter(it => layerIdOf(it) === id).length
   const cur = layers.some(l => l.id === active) ? active : 'default'
@@ -35,8 +35,8 @@ export function Layers({ model, setModel, active, setActive, onChanged, onMoveSe
     if (cur === id) setActive('default') }
   const rowBg = dark ? '#2d3640' : '#dfe5eb'   // 「그리는 중」 줄만 옅은 면(데스크톱 `_style_layer_row`)
   return <div data-folded={folded || undefined} onPointerDown={e => e.stopPropagation()} style={{ pointerEvents: 'auto', width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: '8px 8px 8px',
-    boxShadow: '0 2px 8px rgba(0,0,0,.06)', color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', position: 'relative', flex: 'none' }}>
-    <div style={{ display: 'flex', alignItems: 'center' }}><span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>레이어</span><FoldBtn folded={folded} onClick={toggleFold} /></div>
+    boxShadow: '0 2px 8px rgba(0,0,0,.06)', color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', position: 'relative', flex: 'none', ...(docked ? DOCKED : {}) }}>
+    <div style={{ display: 'flex', alignItems: 'center' }}><span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>레이어</span>{!docked && <FoldBtn folded={folded} onClick={toggleFold} />}</div>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 240, overflowY: 'auto' }}>
       {layers.map(l => <div key={l.id} onClick={() => l.visible && !l.locked && setActive(l.id)} onContextMenu={e => { e.preventDefault(); setMenu({ id: l.id, y: e.currentTarget.offsetTop + 22 }) }}
         title={l.visible && !l.locked ? '누르면 「그리는 중」 — 새 도형이 이 레이어로 들어가요' : '숨기거나 잠근 레이어엔 그릴 수 없어요'}

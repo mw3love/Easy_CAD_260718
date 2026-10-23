@@ -9,5 +9,8 @@ export function useFold(key, def = false) {   // def = 아직 안 눌러 봤을 
   return [folded, toggle]
 }
 
+// 왼쪽 판에 붙였을 때(2026-10-23 — 카드 대신 판 하나): 카드 테두리·그림자·폭을 걷어 냄. 접기는 판이 통째로(레일), 카드마다 접기는 없음
+export const DOCKED = { width: '100%', border: 'none', borderRadius: 0, boxShadow: 'none', background: 'transparent', position: 'relative', right: 'auto', bottom: 'auto' }
+
 export const FoldBtn = ({ folded, onClick }) => <button onClick={onClick} title={folded ? '펴기' : '접기'}
   style={{ all: 'unset', cursor: 'pointer', width: 21, height: 21, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: 'var(--mb-muted)', font: "400 12px 'Pretendard', sans-serif" }}>{folded ? '▸' : '▾'}</button>

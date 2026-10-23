@@ -7,7 +7,7 @@ test('「칠판」으로 새 칠판 만들기 → 그리면 최근 목록에 →
   await openBoard(page, a); await setCam(page)
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 200, y: 100 }); await waitSaved(page)
 
-  await page.getByRole('button', { name: '칠판', exact: true }).click()
+  await page.getByTestId('dock-board').click()                                       // 왼쪽 판 「칠판」 칸(2026-10-23)
   const form = page.getByTestId('board-form')
   await expect(form.getByTestId('board-row').filter({ hasText: a })).toBeVisible()    // 지금 칠판도 목록에(1개)
   await expect(form.getByTestId('board-row').filter({ hasText: /^e2e_/ })).toHaveCount(0)   // 시험 칠판은 숨김
@@ -16,7 +16,7 @@ test('「칠판」으로 새 칠판 만들기 → 그리면 최근 목록에 →
   await expect(page).toHaveURL(new RegExp(`board=${encodeURIComponent(b)}`))
   await expect(page.getByText(`서버 「${b}」 · 새 칠판`).first()).toBeVisible()
 
-  await page.getByRole('button', { name: '칠판', exact: true }).click()
+  await expect(page.getByTestId('dock-board')).toHaveAttribute('aria-pressed', 'true')   // 옮겨 가도 연 칸은 그대로(이 브라우저에 기억)
   await page.getByTestId('board-row').filter({ hasText: a }).click()                  // 저장 안 한 새 칠판 B는 목록에 없음 — A로 돌아감
   await expect(page.getByText(`서버 「${a}」`).first()).toBeVisible()
   expect((await liveDoc(page)).items.filter(it => it.type === 'rect')).toHaveLength(1)

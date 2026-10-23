@@ -884,7 +884,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const box = unionBox([...all, ...lay.frames])
     setTidyPrev({ base: m.items, items: [...next, ...add], frames: frames.map(f => f._id), ghost, box,
       msg: `정리정돈 — ${secs.length}묶음 · 조각 ${moved.length}개. 마음에 안 들면 Ctrl+Z 한 번에 원래대로` })
-    const L = 220, W = size.w - rightInset(svg.current) - L, zz = Math.min(1.5, Math.max(ZMIN, Math.min(W / (box.w * 1.1), size.h / (box.h * 1.25))))   // 전과 후가 한눈에(showIds와 같은 계산)
+    const L = 24, W = size.w - rightInset(svg.current) - L, zz = Math.min(1.5, Math.max(ZMIN, Math.min(W / (box.w * 1.1), size.h / (box.h * 1.25))))   // 전과 후가 한눈에(showIds와 같은 계산)
     setCam({ z: zz, x: L + W / 2 - (box.x + box.w / 2) * zz, y: size.h / 2 - (box.y + box.h / 2) * zz })
     setStatus(`정리정돈 미리보기 — ${secs.length}묶음 · 조각 ${moved.length}개. 점선 자리로 옮겨요 — 「적용」 또는 「취소」(Esc)`)
     return frames.map(f => f._id)
@@ -892,7 +892,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 여러 도형이 한눈에 들어오게(정돈한 곳 보기) — 없으면 false
   function showIds(ids) {
     const its = R.current.model.items.filter(it => ids?.includes(it._id)); if (!its.length) return false
-    const L = 220, b = unionBox(its.map(it => sceneBox(it, textBox))), W = size.w - rightInset(svg.current) - L, z = Math.min(1.5, Math.max(ZMIN, Math.min(W / (b.w * 1.1), size.h / (b.h * 1.2))))   // 왼쪽 카드(도형·프레임 목록) 자리는 빼고
+    const L = 24, b = unionBox(its.map(it => sceneBox(it, textBox))), W = size.w - rightInset(svg.current) - L, z = Math.min(1.5, Math.max(ZMIN, Math.min(W / (b.w * 1.1), size.h / (b.h * 1.2))))   // 왼쪽 카드(도형·프레임 목록) 자리는 빼고
     setSel(its.map(it => it._id)); setCam({ z, x: L + W / 2 - (b.x + b.w / 2) * z, y: size.h / 2 - (b.y + b.h / 2) * z })
     return true
   }
@@ -1056,7 +1056,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       commit(m2.items.map(x => (x._id === nx.id ? { ...it, lines: ls } : x)), R.current.sel, '메모 고침', 'memo' + nx.id) }, 300) }
   function pinCard(msg, drop) {   // drop = 칠판 좌표(끌어 놓은 자리 — 왼쪽 위), 없으면 빈자리
     const m = R.current.model, c = R.current.cam, b0 = unionBox(cardItems(msg, 0, 0, 0).map(it => sceneBox(it, textBox))), h = b0.h, W = b0.w
-    const left = 220 / c.z, right = (220 + rightInset(svg.current)) / c.z, top = 48 / c.z   // 위 48px = 감싸도 프레임 이름표가 칠판 밖으로 안 나감(2026-10-19 점검)
+    const left = 24 / c.z, right = (24 + rightInset(svg.current)) / c.z, top = 48 / c.z   // 위 48px = 감싸도 프레임 이름표가 칠판 밖으로 안 나감(2026-10-19 점검)
     const view = { x: -c.x / c.z + left, y: -c.y / c.z + top, w: Math.max(W, size.w / c.z - left - right), h: size.h / c.z - top }
     const boxes = m.items.map(it => sceneBox(it, textBox))
     const at = drop || freeSpot(view, boxes, W, h)
