@@ -128,24 +128,31 @@ function BoardForm({ onClose, onSample, docked, children }) {   // docked = 왼�
 // 왼쪽 판(2026-10-23 사용자 — Foxit·PDF-XChange처럼 아이콘 레일 + 판, 오른쪽 KAIROS 창과 대칭으로 위 막대 아래부터 바닥까지). 레일 칸 = 칠판·도형·프레임·레이어,
 // 열린 칸을 다시 누르면 판이 접힘(레일만 — VS Code와 같게, 따로 접기 단추는 위 막대와 헷갈려 뺌 — 사용자). 미니맵은 판 맨 아래에 늘(칸을 바꿔도 보이게).
 // 카드마다 접기는 없앰(자리가 고정이라 접어도 칠판이 안 넓어짐 — 사용자). ⚠ 10-07 「레일 = 번거로움」·10-11 「도형·레이어 카드 합치지 않기」를 이번에 바꿈(사용자 선택 — 대칭·접으면 칠판이 가장 넓음)
-export const RAIL_W = 52, DOCK_W = 216
+export const RAIL_W = 40, DOCK_W = 192, DOCK_MAX = 400   // 레일 40(이름 유지)·판 192 = 미니맵 기준 최소, 경계를 끌면 400까지(2026-10-23 사용자 — 프레임 이름이 잘려 보임)
 const svgI = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`
 const DOCK_ICONS = { shape: svgI('<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><circle cx="17" cy="7.3" r="3.8"/><path d="M7.3 13.5l4 7h-8z"/><path d="M17 13.5l3.8 3.5-3.8 3.5-3.8-3.5z"/>'),
   layer: svgI('<path d="M12 3.5l8.5 4.5-8.5 4.5-8.5-4.5z"/><path d="M3.5 12l8.5 4.5 8.5-4.5"/><path d="M3.5 16l8.5 4.5 8.5-4.5"/>') }
 const DOCK_TABS = [['board', '칠판', '칠판 — 새 칠판·최근 칠판·열기·내려받기'], ['shape', '도형', '도형·심볼 — 칠판으로 끌거나 눌러서 그리기'], ['frame', '프레임', '프레임 — 순서 = 출력·발표 순서'], ['layer', '레이어', '레이어 — 보이기·잠그기·그리는 중']]
-function Dock({ tab, setTab, panes, mini }) {
+function Dock({ tab, setTab, panes, mini, width, setWidth }) {   // mini(w) = 그 판 폭의 미니맵
   return <div data-testid="dock" style={{ display: 'flex', flex: 'none', minHeight: 0, background: C.bar, borderRight: `1px solid ${C.line}` }}>
     <div style={{ width: RAIL_W, flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, paddingTop: 8, borderRight: tab ? `1px solid ${C.line}` : 'none' }}>
       {DOCK_TABS.map(([k, label, tip]) => { const on = tab === k, ic = DOCK_ICONS[k] || ICONS[k]
         return <button key={k} data-testid={`dock-${k}`} aria-label={`${label} 판`} aria-pressed={on} title={on ? `${label} 판 접기` : tip} onClick={() => setTab(on ? '' : k)}
-          style={{ all: 'unset', cursor: 'pointer', width: 44, padding: '6px 0 4px', borderRadius: 8, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, font: "500 10.5px 'Pretendard', sans-serif",
+          style={{ all: 'unset', cursor: 'pointer', width: 36, padding: '6px 0 4px', borderRadius: 8, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, font: "500 10px 'Pretendard', sans-serif",
             color: on ? C.accent : C.ink, background: on ? 'rgba(218,119,86,.18)' : 'transparent' }}
           onMouseEnter={e => { if (!on) e.currentTarget.style.background = 'rgba(218,119,86,.10)' }} onMouseLeave={e => { e.currentTarget.style.background = on ? 'rgba(218,119,86,.18)' : 'transparent' }}>
           <span aria-hidden style={{ width: 20, height: 20, display: 'block', color: on ? C.accent : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ic.replace('<svg ', '<svg width="20" height="20" ') }} />{label}</button> })}
     </div>
-    {tab && <div data-testid="dock-panel" style={{ width: DOCK_W, flex: 'none', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    {tab && <div data-testid="dock-panel" style={{ width, flex: 'none', display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>{panes[tab]}</div>
-      {mini}
+      {mini(width - 16)}
+      {/* 폭 조절 — 오른쪽 경계 끌기(192~400), 두 번 누르면 192 */}
+      <div data-testid="dock-resize" title="끌어서 판 폭 조절 · 두 번 누르면 기본 폭" onDoubleClick={() => setWidth(DOCK_W)}
+        onPointerDown={e => { e.preventDefault(); const x0 = e.clientX, w0 = width, el = e.currentTarget; el.setPointerCapture(e.pointerId)
+          const mv = ev => setWidth(Math.max(DOCK_W, Math.min(DOCK_MAX, Math.round(w0 + ev.clientX - x0)))), up = () => { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up) }
+          el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up) }}
+        style={{ position: 'absolute', top: 0, bottom: 0, right: -4, width: 8, cursor: 'col-resize', zIndex: 3 }}
+        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(218,119,86,.35)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }} />
     </div>}
   </div>
 }
@@ -264,6 +271,8 @@ function App() {
   const [tableOpen, setTableOpen] = useState(false), [exportOpen, setExportOpen] = useState(false), [webOpen, setWebOpen] = useState(false)
   const [dockTab, setDockTabS] = useState(() => { try { const v = localStorage.getItem('mb-dock'); return v ?? (window.innerWidth < NARROW_W ? '' : 'shape') } catch { return 'shape' } })   // 왼쪽 판 열린 칸('' = 접힘) — 이 브라우저에 기억, 좁은 창은 처음엔 접힘
   const setDockTab = v => { setDockTabS(v); try { localStorage.setItem('mb-dock', v) } catch { /* 기억 못 해도 그만 */ } }
+  const [dockW, setDockWS] = useState(() => { try { return Math.max(DOCK_W, Math.min(DOCK_MAX, +localStorage.getItem('mb-dock-w') || DOCK_W)) } catch { return DOCK_W } })   // 왼쪽 판 폭 — 이 브라우저에 기억
+  const setDockW = v => { setDockWS(v); try { localStorage.setItem('mb-dock-w', String(v)) } catch { /* 기억 못 해도 그만 */ } }
   const [chatOpen, setChatOpen] = useState(() => { try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창)
   useEffect(() => { try { localStorage.setItem('mb-chat-open', chatOpen ? '1' : '0') } catch { /* 기억 못 해도 그만 */ } }, [chatOpen])
   const [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_W)   // 좁은 창 = 위 막대 아이콘만 + 대화창은 칠판 위에 뜸
@@ -458,7 +467,7 @@ function App() {
       </div>
       </Narrow.Provider>
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>   {/* 왼쪽 판 + 작업공간 + 오른쪽 KAIROS 대화창(좁은 창은 대화창만 칠판 위에 뜸) */}
-      <Dock tab={dockTab} setTab={setDockTab} mini={<Minimap docked items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
+      <Dock tab={dockTab} setTab={setDockTab} width={dockW} setWidth={setDockW} mini={w => <Minimap docked width={w} items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
         board: <BoardForm docked onClose={() => {}} onSample={openSample}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
             {[['열기', () => file.current.click(), '.ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)'], ['내려받기', saveFile, '.ecad 파일로 내려받기'], ['저장', server ? saveServer : saveFile, server ? `서버 「${DOC_NAME}」에 저장 (Ctrl+S)` : '.ecad로 내려받기 (Ctrl+S)']].map(([l, f, t]) =>

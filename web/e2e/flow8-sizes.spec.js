@@ -33,11 +33,21 @@ test('왼쪽 판 — 칸 바꾸기 · 열린 칸 다시 누르면 접힘(칠판 
   const w0 = (await page.getByTestId('board').boundingBox()).width
   await page.getByTestId('dock-frame').click()                                      // 열린 칸 = 접기
   await expect(page.getByTestId('dock-panel')).toHaveCount(0)
-  expect((await page.getByTestId('board').boundingBox()).width).toBeGreaterThan(w0 + 200)
+  expect((await page.getByTestId('board').boundingBox()).width).toBeGreaterThan(w0 + 180)   // 판 192만큼
   await page.reload()
   await expect(page.getByText(`서버 「${name}」`).first()).toBeVisible()
   await expect(page.getByTestId('dock-panel')).toHaveCount(0)                       // 접은 것 기억
   await page.getByTestId('dock-layer').click(); await page.reload()
   await expect(page.getByText(`서버 「${name}」`).first()).toBeVisible()
   await expect(page.getByTestId('dock-layer')).toHaveAttribute('aria-pressed', 'true')   // 연 칸도 기억
+  const panel = page.getByTestId('dock-panel'), r = await page.getByTestId('dock-resize').boundingBox()   // 폭 조절 — 192(미니맵 기준)~400, 미니맵이 판 폭을 따라감
+  expect(Math.round((await panel.boundingBox()).width)).toBe(192)
+  await page.mouse.move(r.x + 4, r.y + 300); await page.mouse.down(); await page.mouse.move(r.x + 104, r.y + 300, { steps: 5 }); await page.mouse.up()
+  expect(Math.round((await panel.boundingBox()).width)).toBe(292)
+  expect(Math.round((await panel.locator('canvas').boundingBox()).width)).toBe(292 - 16)
+  await page.mouse.move(r.x + 104, r.y + 300); await page.mouse.down(); await page.mouse.move(r.x - 300, r.y + 300, { steps: 5 }); await page.mouse.up()
+  expect(Math.round((await panel.boundingBox()).width)).toBe(192)                   // 최소 아래로는 안 줄어듦
+  await page.mouse.move(r.x + 4, r.y + 300); await page.mouse.down(); await page.mouse.move(r.x + 54, r.y + 300, { steps: 3 }); await page.mouse.up()
+  await page.getByTestId('dock-resize').dblclick()
+  expect(Math.round((await panel.boundingBox()).width)).toBe(192)                   // 두 번 누르면 기본 폭
 })

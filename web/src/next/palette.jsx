@@ -41,18 +41,19 @@ const shapeIcon = key => { const k = key.replace(/^sym:/, '')
 
 function Cell({ k, name, icon, on, onDown, onClick }) {
   return <button title={`${name} — 클릭하면 그리기, 칠판으로 끌면 바로 놓기`} aria-pressed={on} onPointerDown={e => onDown(e, k)} onClick={() => onClick(k)}
-    style={{ all: 'unset', boxSizing: 'border-box', cursor: 'pointer', width: 40, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '4px 0', borderRadius: 6,
+    style={{ all: 'unset', boxSizing: 'border-box', cursor: 'pointer', width: 38, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, padding: '3px 0', borderRadius: 6,
       background: on ? 'rgba(218,119,86,.22)' : 'transparent', color: C.ink }}>
-    <span style={{ height: 24, display: 'flex', alignItems: 'center' }}>{icon}</span>
-    <span style={{ font: "500 10px 'Pretendard', sans-serif", maxWidth: 40, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{name}</span>
+    <span style={{ height: 20, display: 'flex', alignItems: 'center', transform: 'scale(.82)' }}>{icon}</span>   {/* 한 단계 작게(2026-10-23 사용자: 조금 큼) */}
+    <span style={{ font: "500 10px 'Pretendard', sans-serif", maxWidth: 38, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{name}</span>
   </button>
 }
+// 칸 격자 = auto-fill — 왼쪽 판을 넓히면 한 줄에 더(2026-10-23 판 폭 조절)
 function Section({ title, color, count, children }) {
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 6px', borderRadius: 5, background: color ? `color-mix(in srgb, ${color} 35%, transparent)` : 'transparent', font: "600 12px 'Pretendard', sans-serif" }}>
       <span style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</span>
       {count != null && <span style={{ font: "400 11px 'Pretendard', sans-serif", color: C.muted }}>{count}</span>}</div>
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 40px)', gap: 2, justifyContent: 'space-between' }}>{children}</div>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 38px)', gap: 2, justifyContent: 'space-between' }}>{children}</div>
   </div>
 }
 
