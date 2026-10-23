@@ -2,7 +2,7 @@
 // 데스크톱 `host_style._refresh_properties`와 같은 자리·같은 항목·같은 차례(종류 → 선 → 채움 → 화살표 → 글자). 섞어 고르면 해당하는 것에만.
 // 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄.
 import { useEffect, useRef, useState } from 'react'
-import { ColorChip } from './colorpop.jsx'
+import { ColorChip, FloatPanel } from './colorpop.jsx'
 import { FmtButtons, edAct, edRun, edState, useEdTick } from './textfmt.jsx'
 import { FoldBtn, useFold } from './fold.jsx'
 import SYMBOLS from '../symbols.json' with { type: 'json' }
@@ -208,22 +208,25 @@ function Stepper({ values, step = 1, fmt = v => v, onStep, onSet, title, grow, t
     {pm(step, '+')}
   </div>
 }
-// 회전 각도 — 쳐서 Enter(또는 칸을 벗어나면), 휠·↑↓는 1°씩. 서로 다르면 빈칸(쳐 넣으면 전부 그 각도 — 데스크톱과 같음)
-function RotInput({ value, onSet }) {
-  const [txt, setTxt] = useState(null), shown = txt ?? (value == null ? '' : String(value))
-  const commit = v => { setTxt(null); const n = parseFloat(v); if (Number.isFinite(n)) onSet(((n % 360) + 360) % 360) }
-  return <div style={{ display: 'flex', alignItems: 'center', gap: 4, background: C.seg, borderRadius: 8, padding: '2px 8px' }}>
-    <input value={shown} placeholder="서로 다름" title="회전 각도" onChange={e => setTxt(e.target.value)} onBlur={e => txt != null && commit(e.target.value)}
-      onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') commit(e.currentTarget.value); else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); commit((value ?? 0) + (e.key === 'ArrowUp' ? 1 : -1)) } }}
-      onWheel={e => commit((value ?? 0) + (e.deltaY < 0 ? 1 : -1))}
-      style={{ all: 'unset', width: 64, height: 22, fontSize: 12, fontVariantNumeric: 'tabular-nums', color: C.ink }} /><span style={{ color: C.muted, fontSize: 12 }}>°</span>
+// 선 모양 고르기 — 지금 모양 버튼 + 떠 있는 목록(카드에 안 잘림, 고르는 동안 열린 채 — 닫기는 바깥·Esc). 속성 카드 선 줄·범례 줄 공용
+function DashPick({ id, pop, setPop, value, onPick, title = '선 모양' }) {
+  const ref = useRef(null), open = pop === id
+  return <div ref={ref} data-ppop={id} style={{ flex: 'none' }}>
+    <button title={title} aria-label={title} aria-expanded={open} onClick={() => setPop(open ? null : id)} style={btn(open, { width: 52, background: C.seg, justifyContent: 'space-between', padding: '0 6px' })}>
+      {value ? <svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" stroke="currentColor" strokeWidth="2" strokeDasharray={DASH[value]} strokeLinecap="round" /></svg> : <span style={{ fontSize: 11, color: C.muted }}>섞임</span>}<span style={{ color: C.muted }}>▾</span></button>
+    {open && <FloatPanel anchor={ref} id={id} width={126} testid={'pop-' + id}>
+      {STYLES.map(([st, name]) => <button key={st} title={name} onClick={() => onPick(st)} style={btn(value === st, { width: '100%', justifyContent: 'space-between', padding: '0 8px' })}>
+        {dashIcon(st)}<span style={{ fontSize: 11, color: C.muted }}>{name}</span></button>)}
+    </FloatPanel>}
   </div>
 }
+const wrap360 = a => +((((a % 360) + 360) % 360).toFixed(1))
 
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
 export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells, onLegend, align, liveEd }) {   // liveEd = 글 고치는 중 편집기(TipTap) — 「글자」 꾸밈이 고른 글자(없으면 글 전체)에 먹음, 2026-10-23   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
+  const swapRef = useRef(null)
   const [pop, setPop] = useState(null)   // 지금 열린 펼침 하나 — 'swap'·'dash'·색 칸 이름(한 번에 하나만)
   useEffect(() => {
     if (!pop) return
@@ -251,7 +254,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
   const swapOne = items.length === 1 && ['rect', 'ellipse', 'symbol'].includes(items[0].type) ? items[0] : null
   // 묶음 하나를 통째로 골랐으면(내 심볼에서 온 것 등) 그것도 바꿀 수 있음 — 기본 도형으로 돌아가기·다른 내 심볼로
   const swapGrp = !swapOne && items.length >= 2 && items[0].group_id && items.every(it => it.group_id === items[0].group_id && !isArrow(it)) ? items.map(it => it._id) : null
-  const rotItems = items.filter(it => ROTATABLE.has(it.type)), rot = one(rotItems.map(it => +(it.rotation || 0).toFixed(1)))
+  const rotItems = items.filter(it => ROTATABLE.has(it.type))
   const hlItems = items.filter(hlHost)
   useEdTick(liveEd)   // 고치는 중 = 편집기 커서·고른 글자가 바뀔 때마다 켜짐 상태 다시
   const edLive = liveEd && !liveEd.isDestroyed ? liveEd : null
@@ -281,10 +284,10 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
     padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: 'calc(100% - 24px)', overflowY: 'auto' }}>   {/* 높이 = 칠판 끝까지(미니맵은 왼쪽 판으로 감 — 전엔 아래 180을 비워 일찍 스크롤) */}
     {/* 머리말 = 고른 것의 종류(2026-10-23 사용자 검토: 「속성」 제목과 「종류」 줄이 같은 말 — 한 줄로). 도형이면 눌러서 다른 도형으로 */}
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: folded ? 0 : 2 }}>
-      {(swapOne || swapGrp) && !folded ? <div data-ppop="swap" style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+      {(swapOne || swapGrp) && !folded ? <div ref={swapRef} data-ppop="swap" style={{ flex: 1, minWidth: 0 }}>
         <button title="클릭: 다른 도형으로 바꾸기(크기·연결 유지)" aria-expanded={pop === 'swap'} onClick={() => setPop(pop === 'swap' ? null : 'swap')} style={btn(pop === 'swap', { width: '100%', justifyContent: 'flex-start', gap: 6, padding: '0 4px', height: 28 })}>
           {swapOne ? shapeIcon(kindOf(swapOne)) : null}<span data-testid="prop-type" style={{ font: "700 15px 'Pretendard', sans-serif", overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{swapOne ? title : `묶음 ${items.length}개`}</span><span style={{ color: C.muted, marginLeft: 'auto' }}>▾</span></button>
-        {pop === 'swap' && <div style={{ position: 'absolute', zIndex: 3, top: 30, left: 0, right: 0, maxHeight: 360, overflowY: 'auto', background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 4px 12px rgba(0,0,0,.1)' }}>
+        {pop === 'swap' && <FloatPanel anchor={swapRef} id="swap" width={180} testid="pop-swap">   {/* 떠 있는 목록 — 카드 안에 펼쳐 스크롤이 생겼음(2026-10-23 전수조사) */}
           {SWAP_KINDS.map(k => <button key={k} onClick={() => { if (swapGrp) onSwapTo(swapGrp, k === 'rect' || k === 'ellipse' ? k : 'sym:' + k); else if (k !== kindOf(swapOne)) set(it => (it._id === swapOne._id ? swapPatch(k) : null), '도형 바꾸기'); setPop(null) }}
             style={btn(!!swapOne && k === kindOf(swapOne), { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>{shapeIcon(k)}<span style={{ fontSize: 12 }}>{kindName(k)}</span></button>)}
           {/* 내 심볼 — 폴더마다 구분선(데스크톱 `_fill_swap_menu`). 묶음으로 바뀌고 라벨은 안 옮김(여러 조각 중 어디에 둘지 애매 — 데스크톱과 같음) */}
@@ -293,7 +296,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
               {list.map(s => <button key={s.id} onClick={() => { onSwapTo(swapGrp || [swapOne._id], 'customsym:' + s.id); setPop(null) }} style={btn(false, { width: '100%', justifyContent: 'flex-start', gap: 8, padding: '0 8px' })}>
                 <img alt="" src={'data:image/png;base64,' + s.thumb} width="20" height="20" style={{ filter: dark ? 'invert(1) hue-rotate(180deg)' : undefined }} />
                 <span style={{ fontSize: 12, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{s.name}</span></button>)}</div> })}
-        </div>}
+        </FloatPanel>}
       </div>
       : <span data-testid="prop-type" style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</span>}
       <FoldBtn minus folded={folded} onClick={toggleFold} /></div>
@@ -303,13 +306,8 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
     {/* 선 = 색 칸 한 줄 + (모양 ▾ · 굵기 −/+) 한 줄. 굵기 숫자 버튼(1·2·3·5)은 뺌 — 스테퍼 하나로(2026-10-23 사용자) */}
     {showLine && <Row label={boardsOnly ? '바탕' : wItems.length || tables.length ? '선' : '색'}><ColorChip id="line" keepEdit={!!edLive} pop={pop} setPop={setPop} value={color} title={boardsOnly ? '바탕 색' : '선 색'}
       onPick={(c, drag) => set(it => (lineKey(it) ? { [lineKey(it)]: c } : null), boardsOnly ? '바탕 색' : '색', drag ? 'color' : null)} /></Row>}
-    {showLine && wItems.length > 0 && <Row label=""><div data-ppop="dash" style={{ position: 'relative', flex: 'none' }}>
-      <button title="선 모양" aria-label="선 모양" aria-expanded={pop === 'dash'} onClick={() => setPop(pop === 'dash' ? null : 'dash')} style={btn(pop === 'dash', { width: 52, background: C.seg, justifyContent: 'space-between', padding: '0 6px' })}>{style ? <svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" stroke="currentColor" strokeWidth="2" strokeDasharray={DASH[style]} strokeLinecap="round" /></svg> : <span style={{ fontSize: 11, color: C.muted }}>섞임</span>}<span style={{ color: C.muted }}>▾</span></button>
-      {pop === 'dash' && <div style={{ position: 'absolute', zIndex: 2, top: 28, left: 0, width: 126, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 4px 12px rgba(0,0,0,.1)' }}>
-        {STYLES.map(([st, name]) => <button key={st} title={name} onClick={() => set(it => (hasWidth(it) ? { style: st } : null), '선 모양', 'dash')} style={btn(style === st, { width: '100%', justifyContent: 'space-between', padding: '0 8px' })}>
-          {dashIcon(st)}<span style={{ fontSize: 11, color: C.muted }}>{name}</span></button>)}
-      </div>}
-    </div><Stepper grow testid="width-step" title="선 굵기" {...num(wItems, it => it.width, 1, 1, 40, 1, '굵기', (it, v) => ({ width: v }))} fmt={v => v + 'px'} /></Row>}
+    {showLine && wItems.length > 0 && <Row label=""><DashPick id="dash" pop={pop} setPop={setPop} value={style} onPick={st => set(it => (hasWidth(it) ? { style: st } : null), '선 모양', 'dash')} />
+<Stepper grow testid="width-step" title="선 굵기" {...num(wItems, it => it.width, 1, 1, 40, 1, '굵기', (it, v) => ({ width: v }))} fmt={v => +(+v).toFixed(1) + 'px'} /></Row>}   {/* 펜 굵기는 소수(1.1228…)라 한 자리만 — 카드가 옆으로 넘쳤음 */}
     {fillItems.length > 0 && <Row label={fillLabel}><ColorChip id="fill" keepEdit={!!edLive} fill pop={pop} setPop={setPop} value={fillMixed ? undefined : fill} title={fillLabel}
       onPick={(c, drag) => set(it => { const k = fillKey(it); return k ? { [k]: k === 'bg' ? argbToBg(c) : c } : null }, fillLabel, drag ? 'fill' : null)} /></Row>}
     {arrows.length > 0 && <>
@@ -329,7 +327,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
           onChange={e => set(() => ({ title: e.target.value }), '웹 카드 제목', 'wtitle')}
           style={{ flex: 1, minWidth: 0, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, background: 'transparent', color: C.ink, padding: '0 6px', font: 'inherit' }} /></Row>
         <Row label="주소"><button title={w.url} onClick={() => window.open(w.url, '_blank', 'noopener')} style={{ all: 'unset', cursor: 'pointer', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#3b82f6', fontSize: 11 }}>↗ 새 탭에서 열기</button></Row>
-        {w.frameable && !w.embed && <Row label="배율"><div style={{ flex: 1, display: 'flex', gap: 2, background: C.group, borderRadius: 8, padding: 2 }}>
+        {w.frameable && !w.embed && <Row label="배율"><div style={{ flex: 1, display: 'flex', gap: 2, background: C.seg, borderRadius: 8, padding: 2 }}>
           {WEB_ZOOMS.map(v => { const on = (w.zoom || 1) === v
             return <button key={v} title={v < 1 ? `페이지를 ${v * 100}%로 — 카드 크기는 그대로, 더 많이 보임` : '원래 크기'} onClick={() => set(() => ({ zoom: v < 1 ? v : undefined }), '웹 카드 배율')}
               style={{ all: 'unset', cursor: 'pointer', flex: 1, textAlign: 'center', padding: '2px 0', borderRadius: 6, fontSize: 11, background: on ? 'rgba(218,119,86,.22)' : 'transparent', color: on ? '#da7756' : C.ink, fontWeight: on ? 600 : 400 }}>{v * 100}%</button> })}</div></Row>}
@@ -344,11 +342,12 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
         <Row label="크기"><div style={{ display: 'flex', gap: 4 }}>{[['작게', 0.8], ['크게', 1.25]].map(([t, f]) => <button key={t} onClick={() => set(it => ({ scale: +((it.scale || 1) * f).toFixed(3) }), '범례 크기')} style={{ all: 'unset', cursor: 'pointer', padding: '2px 10px', borderRadius: 6, background: C.seg, fontSize: 11 }}>{t}</button>)}</div></Row>
         <div style={{ fontSize: 11, color: C.muted }}>{rows.length ? '선을 그리거나 바꾸면 저절로 따라가요. 모양·굵기·색을 고르면 도면 속 그 선이 전부 바뀌어요' : '색 있는 선·화살표를 그리면 저절로 채워져요'}</div>
         {rows.map(e => <div key={e.key} data-testid="legend-row" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, paddingBottom: 4, borderBottom: `1px solid ${C.line}` }}>   {/* 한 줄 = 색·이름 / 모양·굵기(카드 폭이 좁아 이름이 잘렸음) */}
-          <input type="color" title="색 — 이 선 전부" value={hex6(e.color)} onChange={ev => onLegend(L._id, e.key, { color: '#ff' + ev.target.value.slice(1) })} style={{ width: 22, height: 22, padding: 0, border: 0, background: 'none', cursor: 'pointer' }} />
           <input key={L._id + e.key} defaultValue={rowName(L, e)} title={`이 선 ${e.count}개`} onKeyDown={ev => { ev.stopPropagation(); if (ev.key === 'Enter') ev.currentTarget.blur() }} onChange={ev => onLegend(L._id, e.key, { name: ev.target.value })}
-            style={{ flex: '1 0 calc(100% - 30px)', minWidth: 0, height: 22, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 5, background: 'transparent', color: C.ink, padding: '0 5px', font: 'inherit', fontSize: 11 }} />
-          <select title="선 모양 — 이 선 전부" value={e.style} onChange={ev => onLegend(L._id, e.key, { style: +ev.target.value })} style={{ ...sel, flex: 1, marginLeft: 26 }}>{Object.entries(STYLE_NAMES).map(([v, n]) => <option key={v} value={v}>{n}</option>)}</select>
-          <select title="굵기 — 이 선 전부" value={e.width} onChange={ev => onLegend(L._id, e.key, { width: +ev.target.value })} style={{ ...sel, width: 58 }}>{[...new Set([...LG_WIDTHS, e.width])].sort((a, b) => a - b).map(v => <option key={v} value={v}>{v}px</option>)}</select>
+            style={{ flex: 1, minWidth: 0, height: 24, boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 5, background: 'transparent', color: C.ink, padding: '0 5px', font: 'inherit', fontSize: 11 }} />
+          <select title="굵기 — 이 선 전부" value={e.width} onChange={ev => onLegend(L._id, e.key, { width: +ev.target.value })} style={{ ...sel, width: 58, height: 24 }}>{[...new Set([...LG_WIDTHS, e.width])].sort((a, b) => a - b).map(v => <option key={v} value={v}>{v}px</option>)}</select>
+          <div style={{ display: 'flex', gap: 4, width: '100%' }}>
+            <ColorChip id={'lg' + e.key} pop={pop} setPop={setPop} value={hex6(e.color).toLowerCase()} title="색 — 이 선 전부" onPick={c => onLegend(L._id, e.key, { color: '#ff' + c.slice(1) })} />
+            <DashPick id={'lgd' + e.key} pop={pop} setPop={setPop} value={e.style} title="선 모양 — 이 선 전부" onPick={st => onLegend(L._id, e.key, { style: st })} /></div>
         </div>)}
       </> })()}
     {items.length === 1 && items[0].type === 'frame' && (() => { const f = items[0]   // 프레임 — 이름·비율(순서는 좌하 「프레임」 카드, 틀만 옮기기는 이름표 옆 자물쇠·Alt+끌기)
@@ -367,7 +366,8 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
           style={btn(false, { padding: '0 6px', background: C.seg, fontSize: 11 })}>1:1로</button></Row>
     </>}
     {items.length === 1 && items[0].type === 'image' && items[0].alt && <Row label="설명"><ImageAlt key={items[0]._id} alt={items[0].alt} /></Row>}
-    {rotItems.length > 0 && <Row label="회전"><RotInput value={rot} onSet={a => set(it => (ROTATABLE.has(it.type) ? rotate(it, a) : null), '회전', '회전')} /></Row>}
+    {rotItems.length > 0 && <Row label="회전"><Stepper testid="rot-step" title="회전 각도" values={rotItems.map(it => +(it.rotation || 0).toFixed(1))} fmt={v => v + '°'}
+      onStep={d => set(it => (ROTATABLE.has(it.type) ? rotate(it, wrap360((it.rotation || 0) + d)) : null), '회전', '회전')} onSet={v => set(it => (ROTATABLE.has(it.type) ? rotate(it, wrap360(v)) : null), '회전')} /></Row>}
     {cells && (() => {   // 고른 칸(들)의 꾸밈 — 표 전체 값 위에 덮음
       const { table: t, r0, r1, c0, c1 } = cells, list = []
       for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) list.push({ r, c, s: t.cell_styles?.[`${r},${c}`] || {} })

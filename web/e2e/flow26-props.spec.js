@@ -135,11 +135,18 @@ test('−/+ 누르고 있으면 계속(되돌리기 한 번) · 숫자 두 번 �
   await page.getByRole('button', { name: '선 모양' }).click()
   await page.getByRole('button', { name: '점선' }).click()
   await expect(page.getByRole('button', { name: '도트' })).toBeVisible()           // 골라도 열린 채(눌러 가며 비교)
+  const cardScroll = () => page.getByTestId('width-step').evaluate(el => { const c = el.closest('[data-folded], [style*="right: calc"]'); return c.scrollHeight - c.clientHeight })
+  expect(await cardScroll()).toBeLessThanOrEqual(1)                               // 목록은 카드 밖에 떠서 카드에 스크롤이 안 생김(2026-10-23 전수조사)
   await page.getByRole('button', { name: '도트' }).click()
   expect((await last(page)).style).toBe(3)
   await page.keyboard.press('Escape'); await expect(page.getByRole('button', { name: '도트' })).toHaveCount(0)
+  await page.locator('[aria-label="회전 각도 늘리기"]').click()                    // 회전도 −/+ 칸(1°씩)
+  expect((await last(page)).rotation).toBe(1)
+  await page.getByTestId('rot-step-value').dblclick(); await page.keyboard.type('370'); await page.keyboard.press('Enter')
+  expect((await last(page)).rotation).toBe(10)                                    // 한 바퀴 넘으면 돌아옴
+  await page.getByTestId('rot-step-value').dblclick(); await page.keyboard.type('0'); await page.keyboard.press('Enter')
 
-  await page.keyboard.type('글'); await page.keyboard.press('Escape'); await clickScene(page, 10, 10)
+  await clickScene(page, 80, 40); await page.keyboard.type('글'); await page.keyboard.press('Escape'); await clickScene(page, 10, 10)
   await expect(page.getByTestId('props-fmt')).toBeVisible()
   await expect(page.getByTestId('pfmt-꾸밈')).toHaveCount(0)                    // 꾸밈 지우기 뺌(각 버튼을 다시 누르면 풀림)
   const f0 = (await last(page)).label.font

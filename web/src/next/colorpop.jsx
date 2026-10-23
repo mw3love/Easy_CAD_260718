@@ -43,6 +43,19 @@ function popPlace(el, h, align) {
   return { left, top: below + h <= vh - 8 ? below : Math.max(8, r.top - 4 - h) }
 }
 
+// 펼침 목록(선 모양·도형 바꾸기 등) — 색 창처럼 화면 위에 떠서(포털) 카드에 잘리지 않음, 아래가 모자라면 위로(2026-10-23 전수조사: 카드 안에 펼쳐 스크롤이 생겼음)
+// anchor = 기준 요소 ref, id = data-ppop 이름(여는 쪽의 바깥 누르기 판정), width = 폭(없으면 기준 폭), maxHeight = 넘치면 목록 안에서 스크롤
+export function FloatPanel({ anchor, id, width, maxHeight = 360, children, testid }) {
+  const el = useRef(null), [at, setAt] = useState(null)
+  const place = () => { if (!anchor.current || !el.current) return; const r = anchor.current.getBoundingClientRect(), W = width || r.width, h = el.current.offsetHeight, vw = window.innerWidth, vh = window.innerHeight
+    const p = { left: Math.max(8, Math.min(vw - W - 8, r.left)), top: r.bottom + 4 + h <= vh - 8 ? r.bottom + 4 : Math.max(8, r.top - 4 - h), w: W }
+    if (!at || p.left !== at.left || p.top !== at.top || p.w !== at.w) setAt(p) }
+  useLayoutEffect(place)
+  useEffect(() => { window.addEventListener('resize', place); return () => window.removeEventListener('resize', place) })
+  return createPortal(<div ref={el} data-ppop={id} data-keep-edit data-testid={testid} onPointerDown={e => e.stopPropagation()}
+    style={{ position: 'fixed', zIndex: 70, left: at?.left ?? -9999, top: at?.top ?? -9999, width: at?.w ?? width ?? 160, boxSizing: 'border-box', maxHeight, overflowY: 'auto', background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 8px 24px rgba(0,0,0,.18)', font: "400 12px 'Pretendard', sans-serif" }}>{children}</div>, document.body)
+}
+
 // 색 창. anchor = 기준 요소 ref, id = data-ppop 이름(여는 쪽의 바깥 누르기 판정), value·fill은 ColorChip과 같음, onPick(색, 끌기 중)
 export function ColorPop({ anchor, id, value, fill, onPick, align, keepEdit, onReset }) {   // onReset = 「기본」(꾸미기 막대 글자색 — 색 지우기)
   const mixed = value === '' || value === undefined, none = fill ? value === null : !mixed && alphaOf(value) === 0
