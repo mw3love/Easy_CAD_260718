@@ -66,14 +66,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ── API ──
     def _board_path(self):
-        """칠판 문서(`/api/doc/<이름>` → `<이름>.ecad`)·대화 기록(`/api/chatlog/<이름>` → `<이름>.chat.json`) 파일 자리.
+        """칠판 문서(`/api/doc/<이름>` → `<이름>.ecad`)·대화 기록(`/api/chatlog/<이름>` → `<이름>.chat.json`)·
+        「🎙 회의」 받아 적는 글 사본(`/api/meetdraft/<이름>` → `<이름>.meet.json`, 2026-10-23 — 브라우저가 죽어도 남게) 파일 자리.
         API 경로가 아니면 None, 이름이 나쁘면 ""."""
-        m = re.match(r"^/api/(chatlog|doc)/([^/?#]+)$", self.path)
+        m = re.match(r"^/api/(chatlog|doc|meetdraft)/([^/?#]+)$", self.path)
         if not m:
             return None
         from urllib.parse import unquote
         name = unquote(m.group(2))
-        ext = {"chatlog": ".chat.json", "doc": ".ecad"}[m.group(1)]
+        ext = {"chatlog": ".chat.json", "doc": ".ecad", "meetdraft": ".meet.json"}[m.group(1)]
         return os.path.join(self.data_dir, name + ext) if NAME_RE.match(name) else ""
 
     def _json(self, code: int, obj):
@@ -586,6 +587,8 @@ class Handler(SimpleHTTPRequestHandler):
         if p == "":
             return self._send(400, b'{"error":"bad name"}')
         if not os.path.exists(p):
+            if p.endswith(".meet.json"):
+                return self._send(204)   # 받아 적던 회의 없음 = 보통(칠판 열 때마다 물어봄 — 404면 콘솔에 오류가 쌓임)
             return self._send(404, b'{"error":"none"}')
         with open(p, "rb") as f:
             self._send(200, f.read())

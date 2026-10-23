@@ -407,7 +407,11 @@ function App() {
           <Btn icon="memo" label="메모" onClick={() => ed.current?.insertMemo()} onDown={e => toolDown(e, 'memo')} title="메모 — 칠판으로 끌면 그 자리에 · 줄마다 제목·목록·할 일·코드·인용(`# `·`- `·`[] `·`> ` 입력), 체크 상자는 칠판에서 바로" />
           <Btn icon="web" label="웹" on={webOpen} onClick={() => { setWebAt(null); setWebOpen(o => !o) }} onDown={e => toolDown(e, 'web')} title="웹 카드 — 칠판으로 끌면 그 자리에 · 유튜브·웹페이지 주소를 칠판에(칠판에 주소를 Ctrl+V 해도 돼요)" />
           {webOpen && <WebForm onInsert={u => { const url = /^https?:\/\//i.test(u) ? u : 'https://' + u; setWebOpen(false); ed.current?.insertWeb(url, webAt || 'near') }} onClose={() => setWebOpen(false)} />}
-        </div></Group>
+        </div>{/* 「회의」 = 칠판에 회의록을 넣는 도구(2026-10-23 사용자 — 전엔 오른쪽 KAIROS 옆) */}
+        <Btn icon="🎙" label={meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의'} on={!!meetSt} disabled={meetSt === 'start' || meetSt === 'stopping'}
+          onClick={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : meetSt ? ed.current?.meetStop() : ed.current?.meetStart())}
+          title={meetSt ? '회의 끝내기 — 받아 적은 글을 요약·결정·할 일로 정리해 칠판에(KAIROS)' : '회의 받아 적기 — 마이크로 말한 사람별로 실시간 받아 적고, 끝내면 회의록으로 정리(KAIROS)'} />
+        </Group>
         <Group>
           <Btn icon="zoom_fit" label={full ? '창으로' : '전체 화면'} on={full} onClick={toggleFull} title="전체 화면 ⇄ 창 (F11과 같음) — 다 보기는 Z 또는 미니맵의 %" />
         </Group>
@@ -419,9 +423,6 @@ function App() {
           <Btn icon="share" label="공유" on={shareOpen} onClick={() => (server ? setShareOpen(o => !o) : setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 공유·KAIROS를 쓸 수 있어요'))} title={server ? '게시 — 로그인 없이 보기·발표만 되는 링크(큰 TV 발표용)' : '서버에 연결 안 됨 — python web/server.py를 켜면 공유할 수 있어요'} />
           {server && shareOpen && <ShareForm people={people} me={me} onClose={() => setShareOpen(false)} />}
         </div>
-        <Btn icon="🎙" label={meetSt === 'saved' ? '정리하기' : meetSt ? '끝내기' : '회의'} on={!!meetSt} disabled={meetSt === 'start' || meetSt === 'stopping'}
-          onClick={() => (!server ? setStatus('서버에 연결 안 됨 — python web/server.py를 켜야 회의를 받아 적을 수 있어요') : meetSt ? ed.current?.meetStop() : ed.current?.meetStart())}
-          title={meetSt ? '회의 끝내기 — 받아 적은 글을 요약·결정·할 일로 정리해 칠판에(KAIROS)' : '회의 받아 적기 — 마이크로 말한 사람별로 실시간 받아 적고, 끝내면 회의록으로 정리(KAIROS)'} />
         <Btn icon="generate" label="KAIROS" on={chatOpen} onClick={() => setChatOpen(o => !o)} title="KAIROS 대화창 열기/닫기 — 답을 칠판에 카드로 붙여요" />
         <Btn icon="theme" label={dark ? '밝게' : '어둡게'} onClick={toggleDark} title="밝은 화면 / 어두운 화면" />
         <input ref={file} type="file" accept=".ecad,application/json" hidden onChange={async e => {

@@ -14,7 +14,9 @@ export const OPP = { t: 'b', b: 't', l: 'r', r: 'l' }
 
 // 화살표가 붙는 도형인가(`_is_conn_host`) — 상자·원·심볼·이미지·표·닫힌 다각형·글
 export const ROUTE_BOX = new Set(['rect', 'ellipse', 'symbol', 'image', 'table', 'web', 'memo', 'doc', 'pdf'])   // `_ROUTE_BOX_TYPES`(길 찾기 장애물·연결 상자)
-export const isConnHost = it => !!it && (ROUTE_BOX.has(it.type) || (it.type === 'polygon' && it.closed) || it.type === 'text')
+// 프레임 = 속 빈 틀(2026-10-23 사용자: 큐닷이 없어 화살표가 안 붙음) — 테두리에만 붙고, 안(빈 곳)은 안의 도형 몫. 길 찾기 장애물도 아님(ROUTE_BOX 밖 — 안의 화살표가 틀을 피해 돌지 않게)
+export const isHollow = it => it?.type === 'frame'
+export const isConnHost = it => !!it && (ROUTE_BOX.has(it.type) || (it.type === 'polygon' && it.closed) || it.type === 'text' || isHollow(it))
 // 화살표 끝이 붙어 따라다닐 수 있는 것 = 위 도형 + 펜 궤적(데스크톱 `_conn_paths` — 양 끝 포트·궤적 어디든, 지속 연결 됨)
 export const isBindHost = it => isConnHost(it) || it?.type === 'path'
 // 끝이 '좌표로만' 붙는 것 = 선·화살표·열린 다각형(데스크톱 `_conn_lines` — 연결은 안 걸림)
@@ -177,7 +179,7 @@ export function snapAt(hosts, sp, z, rectOf, lines = []) {
 export function dropTarget(hosts, sp, z, rectOf, srcId, lines = []) {
   const s = snapAt(hosts, sp, z, rectOf, lines); if (s) return s
   for (let i = hosts.length - 1; i >= 0; i--) {
-    const it = hosts[i]; if (it._id === srcId || it.type === 'path') continue   // 펜 궤적엔 '안'이 없음
+    const it = hosts[i]; if (it._id === srcId || it.type === 'path' || isHollow(it)) continue   // 펜 궤적·프레임엔 '안'이 없음
     const [l, t, w, h] = rectOf(it), q = toLocal(it, sp)
     if (q.x < l || q.x > l + w || q.y < t || q.y > t + h) continue
     let best = null, bd = Infinity

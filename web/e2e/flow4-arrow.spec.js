@@ -52,3 +52,47 @@ test('화살표 붙은 상자를 오른쪽 아래 손잡이로 키워도 — 끝
   await page.keyboard.press('Control+z')
   expect(ends(arrowOf(await liveDoc(page)))).toEqual([[120, 30], [400, 30]])
 })
+
+test('프레임 테두리에도 화살표가 붙음 · 프레임 속 빈 곳은 안 붙음(2026-10-23 사용자: 프레임엔 큐닷이 없어 안 붙었음)', async ({ page }) => {
+  const name = boardName('arrowframe')
+  await openBoard(page, name); await setCam(page)
+  await pickShape(page, '사각형'); await dragScene(page, { x: 40, y: 40 }, { x: 160, y: 120 })
+  await clickScene(page, 700, 500)
+  for (const x of [0, 500]) {
+    await page.getByRole('button', { name: '프레임', exact: true }).click()
+    await dragScene(page, { x, y: 0 }, { x: x + 300, y: 200 })
+  }
+  await clickScene(page, 700, 500)
+  let doc = await liveDoc(page)
+  const [f1, f2] = doc.items.filter(it => it.type === 'frame'), box = doc.items.find(it => it.type === 'rect')
+  await page.keyboard.press('2')
+  await dragScene(page, { x: 300, y: 100 }, { x: 500, y: 100 })   // 프레임 오른쪽 변 → 다음 프레임 왼쪽 변
+  doc = await liveDoc(page)
+  let a = arrowOf(doc)
+  expect([a.bind1, a.bind2]).toEqual([doc.items.indexOf(doc.items.find(it => it.uid === f1.uid)), doc.items.indexOf(doc.items.find(it => it.uid === f2.uid))])   // 붙은 곳 = 항목 순번
+  expect(ends(a)).toEqual([[300, 100], [500, 100]])
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('2')
+  await dragScene(page, { x: 100, y: 80 }, { x: 240, y: 170 })    // 상자 안 → 프레임 속 빈 곳
+  doc = await liveDoc(page)
+  a = doc.items.filter(it => it.type === 'sarrow')[1]
+  expect(a.bind1).toBe(doc.items.findIndex(it => it.uid === box.uid))
+  expect(a.bind2 ?? null).toBeNull()                              // 프레임 속은 안의 도형 몫 — 프레임에 붙지 않음
+})
+
+test('여러 개 고르면 속성 카드 맨 위에 정렬 아이콘 줄 — 왼쪽 맞춤 · 3개부터 균등 분배(2026-10-23 사용자: 우클릭 메뉴를 못 찾음)', async ({ page }) => {
+  await openBoard(page, boardName('alignrow')); await setCam(page)
+  for (const [x, y] of [[0, 0], [260, 140], [90, 300]]) { await pickShape(page, '사각형'); await dragScene(page, { x, y }, { x: x + 120, y: y + 60 }); await clickScene(page, 900, 600) }
+  await clickScene(page, 60, 30)
+  await expect(page.getByTestId('align-row')).toHaveCount(0)                   // 하나만 고르면 없음
+  await page.keyboard.press('Control+a')
+  await expect(page.getByTestId('align-row')).toBeVisible()
+  await page.getByRole('button', { name: '왼쪽 맞춤' }).click()
+  let rs = (await liveDoc(page)).items.filter(it => it.type === 'rect')
+  expect(rs.map(r => r.pos[0])).toEqual([0, 0, 0])
+  await page.getByRole('button', { name: '세로 균등 분배' }).click()
+  rs = (await liveDoc(page)).items.filter(it => it.type === 'rect').sort((a, b) => a.pos[1] - b.pos[1])
+  expect(rs[1].pos[1] - (rs[0].pos[1] + 60)).toBeCloseTo(rs[2].pos[1] - (rs[1].pos[1] + 60), 3)
+  await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z')
+  expect((await liveDoc(page)).items.filter(it => it.type === 'rect').map(r => r.pos[0])).toEqual([0, 260, 90])
+})

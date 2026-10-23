@@ -32,10 +32,20 @@ test('흩어진 메모 → 정리정돈 = 주제별 프레임 → Ctrl+Z 한 번
   await clickScene(page, m0.pos[0] + 200, m0.pos[1] + 26, { button: 'right' })
   await page.getByRole('button', { name: '정리정돈하기 (KAIROS)' }).click()
   await expect(page.getByTestId('answer-kind')).toHaveText('🧩 정리정돈')
+  await expect(page.getByTestId('tidy-preview')).toBeVisible()                        // 바로 안 바꾸고 미리보기(2026-10-23 사용자: 휙 바뀌어 헷갈림)
+  expect((await liveDoc(page)).items.filter(it => it.type === 'frame')).toHaveLength(0)
+  await page.keyboard.press('Escape')                                                  // 취소 = 칠판 그대로
+  await expect(page.getByTestId('tidy-preview')).toHaveCount(0)
+  for (const it of (await liveDoc(page)).items.filter(x => x.type === 'memo')) expect(it.pos).toEqual(before.items.find(x => x.uid === it.uid).pos)
+  await page.keyboard.press('Control+a')
+  await clickScene(page, m0.pos[0] + 200, m0.pos[1] + 26, { button: 'right' })
+  await page.getByRole('button', { name: '정리정돈하기 (KAIROS)' }).click()
+  await expect(page.getByTestId('tidy-preview')).toBeVisible()
+  await page.getByTestId('tidy-apply').click()
   await expect(page.getByTestId('sel-chip')).toHaveCount(0)   // 정돈한 프레임은 고른 채로 보이되 다음 질문엔 안 실림(2026-10-19 점검)
   expect(seen[0].kind).toBe('tidy')
-  expect(seen[0].items.map(it => it.uid).sort()).toEqual(TEXTS.map((_, i) => `m${i}`))   // 화살표는 조각이 아님
-  expect(seen[0].items[0]).toMatchObject({ type: 'memo', w: 340, h: 53 })
+  expect(seen[0].items.map(it => it.uid).sort()).toEqual(TEXTS.map((_, i) => `m${i}`).filter(u => u !== 'm2'))   // 화살표는 조각이 아님 · 화살표로 이어진 m0·m2 = 한 조각(10-23)
+  expect(seen[0].items[0]).toMatchObject({ uid: 'm0', type: 'memo 외 1개 묶음', w: 600, h: 433 })
 
   let d = await liveDoc(page)
   const frames = d.items.filter(it => it.type === 'frame')
@@ -46,7 +56,8 @@ test('흩어진 메모 → 정리정돈 = 주제별 프레임 → Ctrl+Z 한 번
   expect(Math.min(...frames.map(f => f.pos[0]))).toBe(0)                               // 원래 자리(바깥 상자 왼쪽 위)에서
   const ar = d.items.find(it => it.type === 'sarrow')
   expect([ar.bind1, ar.bind2].map(i => d.items[i].uid)).toEqual(['m0', 'm2'])          // 화살표 안 끊김 — 옮긴 메모를 따라감
-  const a2 = d.items.find(it => it.uid === 'm2'), end = ar.pts.at(-1)
+  const a2 = d.items.find(it => it.uid === 'm2'), a0 = d.items.find(it => it.uid === 'm0'), end = ar.pts.at(-1)
+  expect([a2.pos[0] - a0.pos[0], a2.pos[1] - a0.pos[1]]).toEqual([260, 380])           // 이어진 둘은 서로 자리 그대로(화살표 모양도 그대로)
   expect(end[0] >= a2.pos[0] - 1 && end[0] <= a2.pos[0] + 341 && end[1] >= a2.pos[1] - 1 && end[1] <= a2.pos[1] + 54).toBe(true)
   const f0 = frames[0], ai = d.items.indexOf(ar), route = resolveRoutes(d.items).get(ai).map(([x, y]) => [x + ar.pos[0], y + ar.pos[1]])   // 화면이 그리는 길과 같은 계산
   for (const [x, y] of route) expect(x >= f0.pos[0] && x <= f0.pos[0] + f0.rect[2] && y >= f0.pos[1] && y <= f0.pos[1] + f0.rect[3], `화살표 길 ${x},${y}`).toBe(true)   // 같은 프레임 안 두 조각 = 프레임 밖으로 안 돌아감(10-23)
@@ -60,13 +71,13 @@ test('흩어진 메모 → 정리정돈 = 주제별 프레임 → Ctrl+Z 한 번
 
   await page.keyboard.press('Control+y')
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'frame').length).toBe(3)
-  await page.getByRole('button', { name: '정돈한 곳 보기' }).click()
+  await page.getByRole('button', { name: '정돈한 곳 보기' }).last().click()
   await expect.poll(() => page.evaluate(() => window.__mb.ed.getSel().length)).toBe(3)   // 프레임 셋을 골라 한눈에
   await waitSaved(page); await page.reload()
   await expect(page.getByText(`서버 「${name}」`).first()).toBeVisible()
   await page.getByTitle('KAIROS 대화창 열기/닫기', { exact: false }).click()
-  await expect(page.getByTestId('answer-kind')).toHaveText('🧩 정리정돈')            // 기록은 다시 열려도
+  await expect(page.getByTestId('answer-kind').last()).toHaveText('🧩 정리정돈')     // 기록은 다시 열려도
   d = await liveDoc(page)
   expect(d.items.filter(it => it.type === 'frame')).toHaveLength(3)                     // 또 정돈하지 않음
-  expect(seen).toHaveLength(1)
+  expect(seen).toHaveLength(2)                                                          // 취소 한 번 + 적용 한 번
 })

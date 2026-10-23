@@ -142,6 +142,24 @@ const Row = ({ label, children }) => <div style={{ display: 'flex', alignItems: 
   <span style={{ width: 40, flex: 'none', color: C.muted, fontSize: 12 }}>{label}</span>{children}</div>
 const btn = (on, extra) => ({ all: 'unset', boxSizing: 'border-box', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, height: 26, borderRadius: 6,
   color: on ? C.on : C.ink, background: on ? C.onBg : 'transparent', outline: on ? `1px solid ${C.on}` : 'none', ...extra })
+// 정렬·분배 아이콘 줄(2026-10-23 사용자: 우클릭 「정렬 / 분배」를 못 찾음 — Figma처럼 여러 개 고르면 속성 카드 맨 위에). align = { n, align(mode), dist(axis) }
+const AL = (bar, rects) => <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">{bar}{rects.map(([x, y, w, h], i) => <rect key={i} x={x} y={y} width={w} height={h} rx="0.8" fill="currentColor" fillOpacity=".25" />)}</svg>
+const ALIGNS = [
+  ['left', '왼쪽 맞춤', AL(<path d="M2 1.5v13" />, [[2.5, 3.5, 7, 3], [2.5, 9.5, 11, 3]])],
+  ['hcenter', '가로 가운데', AL(<path d="M8 1.5v13" />, [[4.5, 3.5, 7, 3], [2.5, 9.5, 11, 3]])],
+  ['right', '오른쪽 맞춤', AL(<path d="M14 1.5v13" />, [[6.5, 3.5, 7, 3], [2.5, 9.5, 11, 3]])],
+  ['top', '위쪽 맞춤', AL(<path d="M1.5 2h13" />, [[3.5, 2.5, 3, 7], [9.5, 2.5, 3, 11]])],
+  ['vcenter', '세로 가운데', AL(<path d="M1.5 8h13" />, [[3.5, 4.5, 3, 7], [9.5, 2.5, 3, 11]])],
+  ['bottom', '아래쪽 맞춤', AL(<path d="M1.5 14h13" />, [[3.5, 6.5, 3, 7], [9.5, 2.5, 3, 11]])],
+]
+const DISTS = [['x', '가로 균등 분배(3개부터)', AL(<path d="M1.5 2v12M14.5 2v12" />, [[6.5, 4, 3, 8]])], ['y', '세로 균등 분배(3개부터)', AL(<path d="M2 1.5h12M2 14.5h12" />, [[4, 6.5, 8, 3]])]]
+function AlignRow({ align }) {
+  const b = dis => btn(false, { width: 20, height: 24, opacity: dis ? 0.35 : 1, cursor: dis ? 'default' : 'pointer' })
+  return <div data-testid="align-row" style={{ display: 'flex', gap: 1, justifyContent: 'space-between', paddingBottom: 4, marginBottom: 2, borderBottom: `1px solid ${C.line}` }}>
+    {ALIGNS.map(([m, t, ic]) => <button key={m} title={t} aria-label={t} onClick={() => align.align(m)} style={b(false)}>{ic}</button>)}
+    {DISTS.map(([a, t, ic]) => <button key={a} title={t} aria-label={t.replace(/\(.*\)/, '')} disabled={align.n < 3} onClick={() => align.dist(a)} style={b(align.n < 3)}>{ic}</button>)}
+  </div>
+}
 // 표 글자 「자동」 켜고 끄기(2026-10-18 사용자: 끄려고 크기를 일부러 바꿔야 했음) — 켜짐 = 칸에 맞춰 줄어듦, 끄면 지금 보이는 크기 그대로 고정
 function AutoToggle({ on, onClick }) {
   return <button title={on ? '자동 — 칸에 맞춰 글자 크기가 바뀌어요. 누르면 지금 크기로 고정' : '고정 — 누르면 칸에 맞춰 자동으로'} onClick={onClick}
@@ -207,7 +225,7 @@ function RotInput({ value, onSet }) {
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells, onLegend }) {   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
+export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells, onLegend, align }) {   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
   const [openDash, setOpenDash] = useState(false), [openSwap, setOpenSwap] = useState(false)
   const [folded, toggleFold] = useFold('props')
   const one = v => (v.length && v.every(x => x === v[0]) ? v[0] : null)
@@ -239,6 +257,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
   return <div data-folded={folded || undefined} onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
     padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: 'calc(100% - 180px)', overflowY: 'auto' }}>
     <div style={{ display: 'flex', alignItems: 'center', marginBottom: folded ? 0 : 2 }}><span style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1 }}>속성</span><FoldBtn folded={folded} onClick={toggleFold} /></div>
+    {!folded && align?.n >= 2 && <AlignRow align={align} />}
     <Row label="종류">{allArrows
       ? <Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} />
       : swapOne || swapGrp ? <div style={{ position: 'relative', flex: 1 }}>

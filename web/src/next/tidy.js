@@ -38,14 +38,16 @@ export function tidyLayout(sections, origin) {
 }
 
 // 정돈 뒤 직각 화살표의 붙은 변 다시 고르기 — 위아래였던 두 조각이 나란히 서면 옛 변(아래 → 위)에 붙은 채라 길이 프레임 밖으로 돌아갔음.
-// 두 끝이 모두 옮긴 도형에 붙었고 두 변이 서로 마주 보지 않을 때만, 서로 가장 가까운 포트 짝으로(마주 보면 사용자가 붙인 자리 그대로)
-export function faceArrows(items, movedIds, rectOf) {
+// 두 끝이 모두 옮긴 도형에 붙었고 두 변이 서로 마주 보지 않을 때만, 서로 가장 가까운 포트 짝으로(마주 보면 사용자가 붙인 자리 그대로).
+// unitOf(도형 id → 덩어리 번호)가 같으면 그대로 — 한 덩어리는 통째로 옮겨 서로 자리가 안 바뀜(2026-10-23: 사용자가 일부러 돌려 붙인 화살표까지 바꿨음)
+export function faceArrows(items, movedIds, rectOf, unitOf = null) {
   const byId = new Map(items.map(it => [it._id, it])), moved = new Set(movedIds)
   const toward = (e, q) => e.n.x * (q.x - e.p.x) + e.n.y * (q.y - e.p.y) > 1e-6
   return items.map(it => {
     if (it.type !== 'sarrow' || it.bind1_group || it.bind2_group || !it.bind1_pt || !it.bind2_pt) return it
     const h1 = byId.get(it._bind1), h2 = byId.get(it._bind2)
     if (!h1 || !h2 || h1 === h2 || !moved.has(h1._id) || !moved.has(h2._id)) return it
+    if (unitOf && unitOf.has(h1._id) && unitOf.get(h1._id) === unitOf.get(h2._id)) return it
     const e1 = { p: toScene(h1, { x: it.bind1_pt[0], y: it.bind1_pt[1] }) }, e2 = { p: toScene(h2, { x: it.bind2_pt[0], y: it.bind2_pt[1] }) }
     e1.n = nearestBorder(h1, e1.p, rectOf).n; e2.n = nearestBorder(h2, e2.p, rectOf).n
     if (toward(e1, e2.p) && toward(e2, e1.p)) return it

@@ -11,7 +11,7 @@ import { startMic } from './mic.js'
 import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
-import { ROUTE_BOX, bindPt, dropTarget, edgeMid, bindEnd, groupFrac, groupHost, hostPorts, isBindHost, isConnHost, isSnapLine, nearestBorder, OPP, qcDelta, qcDots, snapAt } from './connect.js'
+import { ROUTE_BOX, bindPt, dropTarget, edgeMid, bindEnd, groupFrac, groupHost, hostPorts, isBindHost, isConnHost, isHollow, isSnapLine, nearestBorder, OPP, qcDelta, qcDots, snapAt } from './connect.js'
 import { routeOrtho } from '../route.js'
 import { projectToCurve, projectToPath, snapLabelOff } from './arrowedit.js'
 import { beginSegment, beginSubdivide, bendCurve, BEND_TS, curvePoint, dragSegment, endSegment, nearestSegment, onPill, SEG_HANDLE_PX, SEG_HIT_PX, segmentHandles, setCurveEnd, snapCurve, subdividePreview } from './arrowedit.js'
@@ -68,6 +68,7 @@ const QC_BLUE = 'rgb(90,150,235)', BEND_GREEN = '#a6e3a1'   // 데스크톱 큐�
 const HP_MARGIN = 30, CONN_DRAG_PX = 8, CONN_STRAIGHT_PX = 10   // 포트점 후보 범위·끌기 시작·출구 축 맞추기(데스크톱 `_hover_port_at`·`_hp_*`)
 // 도형 '속'에 있나(데스크톱 `_shape_interior_contains` — 원은 타원 안, 나머지는 바탕 사각형 안)
 function inside(it, p) {
+  if (isHollow(it)) return false   // 프레임 속 = 빈 곳(안의 도형 몫)
   const q = toLocal(it, p), [x, y, w, h] = rectOf(it)
   if (it.type === 'ellipse') { const dx = (q.x - x - w / 2) / (w / 2 || 1), dy = (q.y - y - h / 2) / (h / 2 || 1); return dx * dx + dy * dy <= 1 }
   return q.x >= x && q.x <= x + w && q.y >= y && q.y <= y + h
@@ -501,6 +502,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         seen.add(it.group_id); host = groupHost(items, it.group_id, rectOf); R.current.vhosts.set(host._id, host)
       }
       const b = boxOf(host)
+      if (isHollow(host) && p.x > b.x + m && p.x < b.x + b.w - m && p.y > b.y + m && p.y < b.y + b.h - m) continue   // 프레임은 테두리 근처에서만
       if (p.x >= b.x - m && p.x <= b.x + b.w + m && p.y >= b.y - m && p.y <= b.y + b.h + m) out.push(host)
     }
     return out
@@ -798,8 +800,37 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // ── 「정리해 줘」 ② 레고형 정리정돈(§8 항목61, 2026-10-19) — AI는 묶음 목록만(서버 `board_tidy`), 자리는 `tidy.js` ──
   // 조각 = 옮기는 단위: 묶음(group_id)·보드(안의 것까지)는 통째로 하나, 화살표·선·펜·판서는 빼고(붙은 도형 따라 저절로),
   // 프레임은 안의 것까지 건너뜀(프레임 안에 프레임을 겹쳐 넣지 않음). 고른 것이 없으면 지금 화면에 가운데가 보이는 것
+  // 정리정돈 미리보기(2026-10-23 사용자: 한 번에 휙 바뀌어 헷갈림) — 바뀔 자리를 점선으로 먼저 보이고 「적용 · 취소」. 칠판은 적용 전까지 그대로
+  // tidyPrev = { base(그때 칠판 items), items(적용하면 될 items), frames(새 프레임 id), sel, msg, ghost: { frames: [{x,y,w,h,name}], units: [{from, to}] }, box }
+  const [tidyPrev, setTidyPrev] = useState(null)
+  function tidyApply() {
+    const t = tidyPrev; if (!t) return
+    setTidyPrev(null)
+    if (R.current.model.items !== t.base) return setStatus('그사이 칠판이 바뀌어 정돈을 안 했어요 — 다시 「정리정돈」 해 주세요')
+    commit(t.items, t.frames, '정리정돈'); setStatus(t.msg)
+  }
+  const tidyCancel = () => { if (tidyPrev) { setTidyPrev(null); setStatus('정리정돈을 안 했어요 — 칠판은 그대로') } }
   const tidyLine = it => it.type === 'line' || isArrow(it) || (it.type === 'path' && it.freehand) || (it.type === 'polygon' && !it.closed) || it.type === 'titleblock' || it.layer_id === PEN_LAYER
-  const tidyMembers = (items, uid) => movingSet(expandGroups(items, [uid]))
+  // 한 조각 = 묶음 + 화살표로 이어진 것 전부(2026-10-23 사용자: 정돈하면 화살표가 뭉개짐 — 이어진 도형을 따로따로 바둑판에 놓아 자리 관계가 깨졌음).
+  // 이어진 덩어리는 서로 자리 그대로 통째로 옮기니 안의 화살표 모양도 그대로. 프레임에 붙은 끝은 따라가지 않음(프레임은 정돈 대상이 아님)
+  const tidyMembers = (items, uid) => {
+    const ids = new Set(movingSet(expandGroups(items, [uid]))), byId = new Map(items.map(it => [it._id, it]))
+    const endOf = (a, k) => a['_' + k] ?? (a[k + '_group'] ? items.find(x => x.group_id === a[k + '_group'])?._id : null)
+    for (let grew = true; grew;) {
+      grew = false
+      for (const a of items) {
+        if (!isArrow(a)) continue
+        const [e1, e2] = [endOf(a, 'bind1'), endOf(a, 'bind2')]
+        for (const [p, q] of [[e1, e2], [e2, e1]]) {
+          const o = q && byId.get(q)
+          if (!p || !ids.has(p) || !o || ids.has(q) || o.type === 'frame' || o.locked) continue
+          for (const id of movingSet(expandGroups(items, [q]))) ids.add(id)
+          grew = true
+        }
+      }
+    }
+    return [...ids]
+  }
   function tidyItems() {
     const m = R.current.model, c = R.current.cam, pool = hitPool().filter(it => !it.locked)
     let scope
@@ -836,7 +867,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const o = clearSpot({ x: o0.x, y: o0.y - tag }, lay0.w, lay0.h + tag + memoH, others), lay = tidyLayout(secs, { x: o.x, y: o.y + tag })
     let next = m.items
     secs.forEach((s, i) => s.units.forEach((u, k) => { const f = lay.frames[i], to = f.at[k]; next = moveItems(next, u.ids, f.inner.x + to.x - u.box.x, f.inner.y + to.y - u.box.y) }))
-    next = faceArrows(next, moved.flatMap(u => u.ids), rectOf)   // 자리가 바뀌어 등지게 된 화살표 = 마주 보는 변으로(안 그러면 프레임 밖으로 돌아감)
+    const unitOf = new Map(moved.flatMap((u, i) => u.ids.map(id => [id, i])))
+    next = faceArrows(next, moved.flatMap(u => u.ids), rectOf, unitOf)   // 덩어리 사이에서 등지게 된 화살표만 마주 보는 변으로(안 그러면 프레임 밖으로 돌아감)
     const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = orderedFrames(m.items).length
     const frames = secs.map((s, i) => { const f = lay.frames[i]; return base([f.x, f.y], { type: 'frame', rect: [0, 0, f.w, f.h], name: s.title, no: no0 + i + 1, z: zb }) })
     const notes = secs.flatMap((s, i) => (s.note ? [{ ...s.note, pos: [lay.frames[i].note.x - TEXT_MARGIN, lay.frames[i].note.y - TEXT_MARGIN], z: zt }] : []))
@@ -847,8 +879,14 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         lines: [{ k: 'h3', t: plan.title || '핵심 의견' }, { k: 'p', t: '💡 ' + plan.opinion }, { k: 'p', t: src, runs: [[0, src.length, MUTED, false]] }] })
       memo = { ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }; add.push(memo)
     }
-    commit([...next, ...add], frames.map(f => f._id), '정리정돈')
-    setStatus(`정리정돈 — ${secs.length}묶음 · 조각 ${moved.length}개. 마음에 안 들면 Ctrl+Z 한 번에 원래대로`)
+    const ghost = { frames: secs.map((s, i) => ({ ...lay.frames[i], name: s.title })),
+      units: secs.flatMap((s, i) => s.units.map((u, k) => ({ from: u.box, to: { x: lay.frames[i].inner.x + lay.frames[i].at[k].x, y: lay.frames[i].inner.y + lay.frames[i].at[k].y, w: u.w, h: u.h } }))) }
+    const box = unionBox([...all, ...lay.frames])
+    setTidyPrev({ base: m.items, items: [...next, ...add], frames: frames.map(f => f._id), ghost, box,
+      msg: `정리정돈 — ${secs.length}묶음 · 조각 ${moved.length}개. 마음에 안 들면 Ctrl+Z 한 번에 원래대로` })
+    const L = 220, W = size.w - rightInset(svg.current) - L, zz = Math.min(1.5, Math.max(ZMIN, Math.min(W / (box.w * 1.1), size.h / (box.h * 1.25))))   // 전과 후가 한눈에(showIds와 같은 계산)
+    setCam({ z: zz, x: L + W / 2 - (box.x + box.w / 2) * zz, y: size.h / 2 - (box.y + box.h / 2) * zz })
+    setStatus(`정리정돈 미리보기 — ${secs.length}묶음 · 조각 ${moved.length}개. 점선 자리로 옮겨요 — 「적용」 또는 「취소」(Esc)`)
     return frames.map(f => f._id)
   }
   // 여러 도형이 한눈에 들어오게(정돈한 곳 보기) — 없으면 false
@@ -1367,6 +1405,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (k === 'ArrowDown') { if (ls.e >= L.length) return; const [, ne] = lineUnit(L, ls.e); setLineSel(e.shiftKey ? { ...ls, e: ne } : { id: ls.id, s: ls.e, e: ne }) }   // 개별로 고른 것(more)은 화살표에선 풀림(Shift는 유지)
           else { if (ls.s <= 0) return; const s0 = lineUnit(L, ls.s - 1)[0]; setLineSel(e.shiftKey ? { ...ls, s: s0 } : { id: ls.id, s: s0, e: lineUnit(L, s0)[1] }) } })   // 위 줄(코드·인용은 그 덩어리 처음)
       }
+      if (k === 'Escape' && tidyPrev) { tidyCancel(); return }   // 정리정돈 미리보기 = 취소
       if (k === 'Escape') { setOverlay(o => ({ ...o, poly: null, draw: null, lpt: null, pcur: null })); if (R.current.tool !== 'select') setTool('select'); else if (cellSel) setCellSel(null); else setSel([]); return }
       if (k === 'Enter' && overlay.poly) return act(() => finishPoly(overlay.poly, false))
       // 칸을 고른 채로 — 엑셀처럼: 글자를 치면 바로 그 칸에 새로 씀(두 번 누르지 않아도 — 2026-10-18 사용자), Enter·F2 = 있는 글 이어 고치기, Delete = 칸 글만 지움(표는 그대로)
@@ -1609,21 +1648,21 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const label = `${card.name || 'PDF'} · ${page + 1}쪽`, s = +(1 / R.current.cam.z).toPrecision(2)
       const cap = base([0, 0], { type: 'text', text: label, color: '#ff8a8f98', font: 9, bg: null, scale: s, z }), capH = sceneBox(cap, textBox).h
       const ty = toSceneP({ clientX: 0, clientY: top }).y
-      // 놓을 자리 = 카드 오른쪽 한 단(2026-10-22 사용자: 여러 개 오리면 정돈 안 됨) — 이 카드에서 앞서 오려 온 그림(설명 첫 줄 = 「파일 · N쪽」)이 있으면 그 왼쪽 끝에 맞추고,
-      // 높이는 오린 자리, 겹치면 바로 아래로. 첫 그림은 막히면 오른쪽으로 비켜 단을 정함
+      // 놓을 자리 = 쪽마다 한 줄(2026-10-23 사용자 — 전엔 카드 오른쪽 한 단): 같은 쪽을 이어 오리면 앞 그림 오른쪽, 다른 쪽이면 앞서 오린 것들 아래에 새 줄(왼쪽 끝 맞춤).
+      // 줄 순서 = 오린 순서. 앞 그림 = 이 카드에서 오려 온 그림(설명 첫 줄 = 「파일 · N쪽」). 첫 그림은 오린 높이, 막히면 오른쪽으로 비켜 줄 시작을 정함. 겹치면 바로 아래로
       const prev = R.current.model.items.filter(x => x.type === 'image' && clipOf(x)?.name === (card.name || 'PDF'))
-        .map(x => sceneBox(x, textBox)).filter(b => b.x > cb.x + cb.w)
-      const solid = hitPool().filter(it => !/arrow|line/.test(it.type)).map(it => sceneBox(it, textBox))   // 화살표·선은 비켜 가지 않음(앞 그림의 화살표가 단을 막지 않게)
+        .map(x => ({ ...sceneBox(x, textBox), page: clipOf(x).page })).filter(b => b.x > cb.x + cb.w)
+      const solid = hitPool().filter(it => !/arrow|line/.test(it.type)).map(it => sceneBox(it, textBox))   // 화살표·선은 비켜 가지 않음
       const gap = 24 * s, free = (x, y) => !solid.some(b => x < b.x + b.w + gap && x + w + gap > b.x && y < b.y + b.h + gap && y + h + capH + gap > b.y)
       const down = (x, y) => {   // 겹친 것 바로 밑으로
         for (let i = 0; i < 200 && !free(x, y); i++) y = Math.max(...solid.filter(b => x < b.x + b.w + gap && x + w + gap > b.x && y < b.y + b.h + gap && y + h + capH + gap > b.y).map(b => b.y + b.h)) + gap
         return y
       }
-      let ax = prev.length ? prev[prev.length - 1].x : cb.x + cb.w + 48 * s
-      if (!prev.length) for (let i = 0; i < 80 && !free(ax, ty); i++) ax += gap
-      let ay = down(ax, ty)
-      // 밀려 내려가다 카드 아래 끝을 넘으면 오른쪽에 새 단(카드 위 끝부터 — 2026-10-22 사용자: 아래로만 감). 순서 = 위 → 아래, 다음 단
-      if (prev.length && ay > ty && ay + h + capH > cb.y + cb.h) { ax = Math.max(...prev.map(b => b.x + b.w)) + 2 * gap; ay = down(ax, cb.y) }
+      const last = prev[prev.length - 1]
+      let ax, ay
+      if (!last) { ax = cb.x + cb.w + 48 * s; for (let i = 0; i < 80 && !free(ax, ty); i++) ax += gap; ay = down(ax, ty) }
+      else if (last.page === page) { ax = last.x + last.w + gap; ay = down(ax, last.y) }   // 같은 쪽 = 같은 줄 오른쪽
+      else { ax = Math.min(...prev.map(b => b.x)); ay = down(ax, Math.max(...prev.map(b => b.y + b.h + capH)) + gap) }   // 다른 쪽 = 새 줄
       const at = { x: ax, y: ay }
       const g = 'g' + newId()
       const img = base([at.x, at.y], { type: 'image', rect: [0, 0, w, h], data, alt: `${label}${txt ? '\n' + txt : ''}`, z, group_id: g })
@@ -1728,18 +1767,42 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     setStatus(`회의록 — ${res.title || '회의'} · ${Math.round(res.duration || 0)}초 녹음${res.credits != null ? ` · ${res.credits}크레딧` : ''}. 전문은 「… 줄 더」를 누르면 펼쳐져요`)
   }
   // 「🎙 회의」 실시간 회의록(2026-10-23) — 마이크 → KAIROS 실시간 받아쓰기(말한 사람 나눔, mic.js) → 놓을 자리 점선 틀에 글이 쌓임 → 「끝내기」 = 서버가 요약만(`/api/meeting/<칠판>/live`)
-  // → 파일 회의록과 같은 `insertMeeting`. 받아 적는 글은 문서에 안 넣고(되돌리기·공동작업 저장이 글자마다 쌓임) 이 브라우저에 3초마다 임시 저장 — 창이 닫혀도 다시 열면 「정리하기 · 버리기」
+  // → 파일 회의록과 같은 `insertMeeting`. 받아 적는 글은 문서에 안 넣고(되돌리기·공동작업 저장이 글자마다 쌓임) 이 브라우저(5초)·서버(30초)에 임시 저장 — 창이 닫혀도 다시 열면 「정리하기 · 전문만 · 버리기」
   // meet = { at, s(배율), t0, segs: [{speaker, text, start_ms, end_ms}], part(임시 글), state: 'start'|'listen'|'reconnect'|'stopping'|'saved', err }
   const MEET_KEY = `mb-meet:${DOC_NAME}`
   const [meet, setMeetS] = useState(() => { if (readOnly) return null; try { const d = JSON.parse(localStorage.getItem(MEET_KEY) || 'null'); return d?.segs?.length ? { ...d, part: '', state: 'saved' } : null } catch { return null } })
   const meetRef = useRef(meet), meetStopFn = useRef(null)
   const setMeet = f => { const v = typeof f === 'function' ? f(meetRef.current) : f; meetRef.current = v; setMeetS(v) }
   useEffect(() => { onMeet?.(meet ? meet.state : '') }, [meet?.state])   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {   // 임시 저장 — 확정 글이 바뀌면 3초 안에
-    if (!meet?.segs?.length || meet.state === 'saved') return
-    const t = setTimeout(() => { try { localStorage.setItem(MEET_KEY, JSON.stringify({ at: meet.at, s: meet.s, t0: meet.t0, dur: meet.dur, segs: meet.segs })) } catch { /* 저장 못 해도 받아쓰기는 계속 */ } }, 3000)
-    return () => clearTimeout(t)
-  }, [meet?.segs])   // eslint-disable-line react-hooks/exhaustive-deps
+  // 임시 저장 — 말이 쉬지 않아도 5초마다 이 브라우저에, 30초마다 서버에(`<칠판>.meet.json` — 브라우저·PC가 죽어도 남게, 2026-10-23 사용자: 30분 회의가 날아가는 게 최악).
+  // 전엔 「새 글 뒤 3초 조용하면」이라 쉬지 않고 말하면 한 번도 저장 안 됐음
+  const meetSaved = useRef({ local: null, srv: null, srvAt: 0 })
+  function meetPersist(m, srvNow = false) {
+    if (!m?.segs?.length) return
+    const d = JSON.stringify({ at: m.at, s: m.s, t0: m.t0, dur: m.dur, segs: m.segs }), k = meetSaved.current
+    if (k.local !== m.segs) { k.local = m.segs; try { localStorage.setItem(MEET_KEY, d) } catch { /* 저장 못 해도 받아쓰기는 계속 */ } }
+    if (k.srv !== m.segs && (srvNow || Date.now() - k.srvAt >= 30000)) {
+      k.srv = m.segs; k.srvAt = Date.now()
+      fetch(`/api/meetdraft/${encodeURIComponent(DOC_NAME)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: d }).catch(() => { k.srv = null })   // 서버 없음 = 다음에 다시
+    }
+  }
+  function meetForget() {   // 정리 끝·버리기 = 두 사본 다 지움
+    try { localStorage.removeItem(MEET_KEY) } catch { /* 그만 */ }
+    meetSaved.current = { local: null, srv: null, srvAt: 0 }
+    fetch(`/api/meetdraft/${encodeURIComponent(DOC_NAME)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {})
+  }
+  useEffect(() => {
+    if (!meet || meet.state === 'saved') return
+    const t = setInterval(() => meetPersist(meetRef.current), 5000)
+    return () => clearInterval(t)
+  }, [meet?.state])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {   // 이 브라우저에 없으면 서버 사본 — 다른 PC·브라우저가 죽은 뒤에도 「정리하기 · 전문만 · 버리기」
+    if (readOnly || meetRef.current) return
+    fetch(`/api/meetdraft/${encodeURIComponent(DOC_NAME)}`, { cache: 'no-store' }).then(r => (r.status === 200 ? r.json() : null)).then(d => {
+      if (!d?.segs?.length || meetRef.current) return
+      setMeet({ ...d, part: '', state: 'saved' }); setStatus(`받아 적던 회의가 서버에 남아 있어요(${d.segs.length}구간) — 「정리하기」 또는 「전문만」`)
+    }).catch(() => {})
+  }, [])   // eslint-disable-line react-hooks/exhaustive-deps
   const [, setTick] = useState(0)
   useEffect(() => { if (meet?.state !== 'listen' && meet?.state !== 'reconnect') return; const t = setInterval(() => setTick(n => n + 1), 1000); return () => clearInterval(t) }, [meet?.state])
   const MEET_W = 2 * MEMO.W + 72, MEET_H = 300
@@ -1777,14 +1840,23 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   function meetDiscard() {
     try { meetStopFn.current?.() } catch { /* 이미 닫힘 */ }
-    meetStopFn.current = null; setMeet(null); try { localStorage.removeItem(MEET_KEY) } catch { /* 그만 */ }
+    meetStopFn.current = null; setMeet(null); meetForget()
     setStatus('받아 적은 회의를 버렸어요')
+  }
+  function meetRaw() {   // 「전문만」 — 요약 없이 받아 적은 글만 회의록 프레임으로(KAIROS 요약이 계속 안 될 때 탈출구, 2026-10-23)
+    const m = meetRef.current; if (!m?.segs.length) return
+    const tns = []
+    for (const g of m.segs) { const sp = `화자 ${g.speaker || '?'}`, t = (g.text || '').trim(); if (!t) continue
+      const last = tns[tns.length - 1]; if (last && last.speaker === sp) last.text += ' ' + t; else tns.push({ speaker: sp, start_ms: g.start_ms || 0, text: t }) }   // 서버 `meeting.turns`와 같게
+    const dur = m.dur || Math.round((m.segs[m.segs.length - 1].end_ms || 0) / 1000)
+    setMeet(null); meetForget()
+    insertMeeting({ title: '회의(요약 없음)', turns: tns, duration: dur }, m.at, '실시간 받아쓰기')
   }
   async function meetSummarize() {
     const m = meetRef.current; if (!m) return
-    if (!m.segs.length) { setMeet(null); try { localStorage.removeItem(MEET_KEY) } catch { /* 그만 */ } return setStatus('받아 적은 말이 없어 회의록을 안 만들었어요') }
+    if (!m.segs.length) { setMeet(null); meetForget(); return setStatus('받아 적은 말이 없어 회의록을 안 만들었어요') }
     const dur = m.dur || Math.round((m.segs[m.segs.length - 1].end_ms || 0) / 1000)
-    try { localStorage.setItem(MEET_KEY, JSON.stringify({ at: m.at, s: m.s, t0: m.t0, dur, segs: m.segs })) } catch { /* 그만 */ }
+    meetPersist({ ...m, dur }, true)
     setMeet(null)
     const id = newId(), say = msg => setPend(ps => ps.map(q => (q.id === id ? { ...q, msg } : q)))
     setPend(ps => [...ps, { id, x: m.at.x, y: m.at.y, msg: '요약하는 중…' }])
@@ -1802,10 +1874,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         const g = await fetch(`/api/meeting/${encodeURIComponent(DOC_NAME)}/${d.job}`, { cache: 'no-store' }), st = await g.json().catch(() => ({ status: 'error', error: `서버 응답 ${g.status}` }))
         if (st.status === 'run') { say(st.msg || '요약하는 중…'); continue }
         if (st.status !== 'done') throw new Error(st.error || '회의록을 못 만들었어요')
-        done(); try { localStorage.removeItem(MEET_KEY) } catch { /* 그만 */ }
+        done(); meetForget()
         insertMeeting(st.result, m.at, '실시간 받아쓰기'); return
       }
-    } catch (err) { done(); setMeet({ ...m, dur, part: '', state: 'saved', err: '' }); setStatus(`회의록 실패 — ${err.message || err}. 받아 적은 글은 남아 있어요(「정리하기」로 다시)`) }
+    } catch (err) { done(); setMeet({ ...m, dur, part: '', state: 'saved', err: '' }); setStatus(`회의록 실패 — ${err.message || err}. 받아 적은 글은 남아 있어요(「정리하기」로 다시 · 「전문만」 = 요약 없이)`) }
   }
   async function insertWeb(url, where) {   // where = 'near'(「웹」 버튼 — 가운데 먼저·빈자리) | {x,y}(위 막대에서 끌어 놓은 자리) | 없음(붙여넣기·끌어 놓기 = 커서 자리)
     const c = R.current.cam, mp = where && where !== 'near' ? where : R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
@@ -1984,6 +2056,20 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'pdf' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
+          {tidyPrev && (() => { const g = tidyPrev.ghost, sw = 1.5 / z, dash = `${8 / z} ${5 / z}`, fs = 13 / z, b = tidyPrev.box   // 정리정돈 미리보기 — 프레임(주황 점선)·옮길 자리(파랑 점선)·원래 자리 → 새 자리 가는 선
+            return <g data-testid="tidy-preview">
+              {g.units.map((u, i) => <g key={'tu' + i} pointerEvents="none">
+                <rect x={u.from.x} y={u.from.y} width={u.from.w} height={u.from.h} fill="rgba(113,113,122,.08)" stroke="#a1a1aa" strokeWidth={sw} strokeDasharray={dash} />
+                <line x1={u.from.x + u.from.w / 2} y1={u.from.y + u.from.h / 2} x2={u.to.x + u.to.w / 2} y2={u.to.y + u.to.h / 2} stroke="rgba(37,99,235,.45)" strokeWidth={sw} />
+                <rect x={u.to.x} y={u.to.y} width={u.to.w} height={u.to.h} fill="rgba(37,99,235,.10)" stroke="#2563eb" strokeWidth={sw} strokeDasharray={dash} /></g>)}
+              {g.frames.map((f, i) => <g key={'tf' + i} pointerEvents="none"><rect x={f.x} y={f.y} width={f.w} height={f.h} rx={6 / z} fill="none" stroke="#da7756" strokeWidth={sw} strokeDasharray={dash} />
+                <text x={f.x} y={f.y - 6 / z} fontSize={fs} fontFamily={APP_FONT} fontWeight={600} fill="#da7756">{f.name}</text></g>)}
+              <foreignObject x={0} y={0} width={420} height={44} transform={`translate(${b.x},${b.y - 64 / z}) scale(${1 / z})`}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', font: `600 13px ${APP_FONT}`, color: '#da7756' }}>
+                  <span style={{ background: 'rgba(255,255,255,.92)', padding: '4px 10px', borderRadius: 99, border: '1px solid #da7756' }}>🧩 정리정돈 미리보기</span>
+                  <button data-testid="tidy-apply" onPointerDown={e => e.stopPropagation()} onClick={tidyApply} style={{ all: 'unset', cursor: 'pointer', padding: '4px 14px', borderRadius: 99, background: '#da7756', color: '#fff' }}>적용</button>
+                  <button data-testid="tidy-cancel" onPointerDown={e => e.stopPropagation()} onClick={tidyCancel} style={{ all: 'unset', cursor: 'pointer', padding: '4px 14px', borderRadius: 99, background: 'rgba(255,255,255,.92)', color: '#71717a', border: '1px solid #d4d4d8' }}>취소</button></div>
+              </foreignObject></g> })()}
           {pend.map(q => { const w = 2 * MEMO.W + 72, h = 240, fs = 14 / z   // 회의록 만드는 중 — 놓을 자리에 점선 틀(그리는 과정 보이기)
             return <g key={'pend' + q.id} data-testid="meeting-pending" pointerEvents="none"><rect x={q.x} y={q.y} width={w} height={h} rx={10} fill="rgba(218,119,86,.06)" stroke="#da7756" strokeWidth={1.5 / z} strokeDasharray={`${8 / z} ${5 / z}`} />
               <text x={q.x + w / 2} y={q.y + h / 2} textAnchor="middle" dominantBaseline="central" fontSize={fs} fontFamily={APP_FONT} fill="#da7756">회의록 만드는 중 · {q.msg}</text></g> })}
@@ -1996,6 +2082,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
                 <div style={{ width: MEET_W, height: MEET_H, boxSizing: 'border-box', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6, font: `400 14px ${APP_FONT}`, color: '#3f3f46' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#da7756', fontWeight: 600 }}><span style={{ flex: 1 }}>{head}</span>
                     {(saved || meet.state === 'listen' || meet.state === 'reconnect') && <button data-testid="meeting-live-end" onPointerDown={stop} onClick={meetStop} style={{ ...btn, background: '#da7756', color: '#fff' }}>{saved ? '정리하기' : '끝내기'}</button>}
+                    {saved && <button data-testid="meeting-live-raw" onPointerDown={stop} onClick={meetRaw} title="요약 없이 받아 적은 글만 칠판에" style={{ ...btn, color: '#da7756', border: '1px solid #da7756' }}>전문만</button>}
                     {saved && <button data-testid="meeting-live-drop" onPointerDown={stop} onClick={meetDiscard} style={{ ...btn, color: '#71717a' }}>버리기</button>}</div>
                   <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 4, lineHeight: 1.5 }}>
                     {meet.segs.slice(-12).map((g, i) => <div key={i}><span style={{ color: '#a1a1aa' }}>[{clk(g.start_ms)}] 화자 {g.speaker || '?'}: </span>{g.text}</div>)}
@@ -2134,7 +2221,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         return <TextEditor key={ed.id} spec={{ ...s, onReady: setLiveEd, at: ed.at, onPan: startPan, onWheel: wheelZoom, armed: !!ed.armed, fresh: !!ed.fresh,
           onArm: () => { const ne = { id: ed.id, kind: ed.kind, fresh: true }; R.current.editing = ne; setEditing(ne) } }} onDone={finishEdit} /> })(editing ? (editing.kind !== 'cell' && editing.kind !== 'memo' ? editing : null) : (t => (t?.kind === 'memo' ? null : t))(armTarget()))}   {/* 메모 대기는 위 MemoEditor가 받음(둘이 같이 뜨면 이 편집기가 첫 글자를 가로챘음) */}
       {editing && liveEd && <FormatBar ed={liveEd} />}   {/* 드래그 꾸미기 막대(2026-10-19 — 옛 오른쪽 위 「글자」 카드 대신) */}
-      {selItems.length > 0 && !editing && <Props items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
+      {selItems.length > 0 && !editing && <Props align={selItems.length >= 2 ? { n: alignTargets().length, align: alignSel, dist: a => distributeSel(a) } : null} items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )

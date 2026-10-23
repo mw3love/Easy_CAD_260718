@@ -109,3 +109,27 @@ test('서버가 옛 버전(요약 주소 없음)이면 다시 켜라고 알림 �
   await expect(page.getByTestId('meeting-live')).toHaveAttribute('data-state', 'saved')
   await expect(page.getByTestId('meeting-live')).toContainText('남아야 할 말')
 })
+
+test('쉬지 않고 말해도 5초 안에 저장 · 요약이 안 되면 서버 사본으로 되살려 「전문만」', async ({ page }) => {
+  const name = boardName('meetsafe'), k = await fakeKairos(page)
+  await page.route('**/api/meeting/**', r => r.fulfill({ status: 502, json: { error: 'KAIROS 요약 실패(가짜)' } }))
+  await openBoard(page, name); await setCam(page)
+  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await expect.poll(() => k.sockets.length).toBe(1)
+  for (let i = 0; i < 8; i++) { k.sockets[0].send(JSON.stringify({ tokens: [tok(` 쉬지 않는 말 ${i}.`, '1', i * 1000, i * 1000 + 900)] })); await page.waitForTimeout(800) }   // 0.8초마다 새 말 — 전엔 「3초 조용하면」이라 안 저장됐음
+  expect(await page.evaluate(n => localStorage.getItem(`mb-meet:${n}`), name)).toContain('쉬지 않는 말 0.')
+  await page.getByTestId('meeting-live-end').click()
+  await expect(page.getByTestId('status-toast')).toContainText('KAIROS 요약 실패(가짜)', { timeout: 10_000 })
+  await expect.poll(async () => (await page.request.get(`/api/meetdraft/${name}`)).status()).toBe(200)   // 끝내는 순간 서버에도
+  await page.evaluate(n => localStorage.removeItem(`mb-meet:${n}`), name)                                // 이 브라우저 사본이 없어져도(다른 PC·기록 지움)
+  await page.reload()
+  const live = page.getByTestId('meeting-live')
+  await expect(live).toHaveAttribute('data-state', 'saved')
+  await expect(live).toContainText('쉬지 않는 말 7.')
+  await page.getByTestId('meeting-live-raw').click()                                                     // 요약 없이 전문만
+  await expect.poll(async () => (await liveDoc(page)).items.length, { timeout: 10_000 }).toBe(3)
+  const doc = await liveDoc(page), full = doc.items.find(it => it.type === 'memo' && it.fold)
+  expect(full.lines.map(l => l.t).join('\n')).toContain('화자 1: 쉬지 않는 말 0.')
+  expect(doc.items.find(it => it.type === 'frame').name).toContain('회의(요약 없음)')
+  await expect.poll(async () => (await page.request.get(`/api/meetdraft/${name}`)).text()).toBe('{}')     // 다 붙이면 서버 사본도 지움
+})
