@@ -42,6 +42,7 @@ import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
+import { looksSvg, svgFits, svgItems } from './svgin.js'
 import { TIDY, clearSpot, faceArrows, tidyLayout } from './tidy.js'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
@@ -1547,6 +1548,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       }
       const url = normalizeUrl(text)
       if (url) { insertWeb(url); return }
+      if (looksSvg(text) && insertSvg(text, pasteAt(), 'SVG 코드')) return   // AI가 준 SVG 코드 = 도형(못 읽는 모양이면 아래 글 규칙으로)
       if (files.length && !text.trim()) { dropFiles(files); return }   // 그림 복사·탐색기에서 복사한 파일(웹 그림 복사는 html에 <img>만 따라옴)
       if (!pasteOutside(text, html) && files.length) dropFiles(files)   // 엑셀·워드는 글 + 그림이 같이 옴 → 글이 먼저
     }
@@ -1607,13 +1609,25 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (readOnly) return
     const p = e ? toSceneP(e) : pasteAt(); R.current.mouse = p
     for (const f of files) {
-      if (/^image\//.test(f.type)) await insertImage(f)
+      if (/\.svg$/i.test(f.name) || f.type === 'image/svg+xml') { if (!insertSvg(await f.text(), p, f.name)) { await insertImage(f); setStatus(`${f.name} — 도형으로 못 읽는 부분(옮기기·그라디언트 등)이 있어 그림으로 넣었어요`) } }
+      else if (/^image\//.test(f.type)) await insertImage(f)
       else if (AUDIO_RE.test(f.name) || /^audio\//.test(f.type)) startMeeting(f, p)
       else if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') await insertPdf(f, p)
       else if (/\.html?$/i.test(f.name) || f.type === 'text/html') await insertHtmlFile(f, p)
       else if (TEXT_FILE_RE.test(f.name) || /^text\/(plain|markdown)$/.test(f.type)) { if (!pasteOutside(await f.text(), '', { at: p, file: f.name })) setStatus(`${f.name} — 빈 파일이에요`) }
       else setStatus(`${f.name} — 칠판엔 그림·녹음·PDF·HTML·md·txt 파일을 놓을 수 있어요(.ecad는 「열기」)`)
     }
+  }
+  // SVG → 고칠 수 있는 도형(§8 항목63) — 데스크톱 `_insert_svgs_at`과 같게: 긴 변 160·가운데 = at, 펜 = 지금 그리기색·채움 없음(글자는 제 색),
+  // 묶지 않고 다 고른 채(2026-08-04 사용자: 일부만 고를 수 있어야 — 묶으려면 Ctrl+G). 못 읽는 모양이면 false
+  const SVG_LONG = 160
+  function insertSvg(svg, at, what = 'SVG') {
+    if (!svgFits(svg)) return false
+    const m = R.current.model, z = topZ(m.items) + 1
+    const its = svgItems(svg, SVG_LONG, at).items.map((g, i) => base(g.pos, g.type === 'text' ? { ...g, bg: null, z: z + i } : { ...penOf(false), ...(g.type === 'path' || g.type === 'line' ? null : { fill: null }), ...g, z: z + i }))
+    commit([...m.items, ...its], its.map(it => it._id), what); setTool('select')
+    setStatus(`${what} → 도형 ${its.length}개 — 하나씩 골라 고칠 수 있어요(묶기 Ctrl+G)`)
+    return true
   }
   // HTML 파일 = 정리 문서 카드(스크립트는 끔 — 칠판이 안전하게, 2026-10-21 사용자)
   async function insertHtmlFile(f, at) {
