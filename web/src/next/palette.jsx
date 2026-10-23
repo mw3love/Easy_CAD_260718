@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import { DOCKED, FoldBtn, useFold } from './fold.jsx'
 import SYMBOLS from '../symbols.json' with { type: 'json' }
-import { symbolPath } from './symbols.js'
+import { shapeWH, symbolPath } from './symbols.js'
 import { Item } from './render.jsx'
 import { drawOrder, itemBounds } from './doc.js'
 import { fromEcad } from './model.js'
@@ -35,9 +35,10 @@ function SymIcon({ e, dark }) {
     {drawOrder(v.items).map(([it, i]) => <Item key={i} it={it} idx={i} dark={dark} />)}</svg>
 }
 
-const shapeIcon = key => { const k = key.replace(/^sym:/, '')
-  return <svg width="30" height="20" viewBox="-1 -1 32 22" fill="none" stroke="currentColor" strokeWidth="1.4">
-    {k === 'rect' ? <rect x="0" y="0" width="30" height="20" /> : k === 'ellipse' ? <ellipse cx="15" cy="10" rx="15" ry="10" /> : <path d={symbolPath(k, 30, 20).d} />}</svg> }
+// 기본 도형 아이콘 = 칠판에 놓이는 기본 크기 비율 그대로(W×H 칸 가운데). 속성 카드 「도형 바꾸기」도 이걸 씀
+export const shapeIcon = (key, W = 30, H = 20, sw = 1.4) => { const k = key.replace(/^sym:/, ''), [bw, bh] = shapeWH(key), s = Math.min(W / bw, H / bh), w = bw * s, h = bh * s
+  return <svg width={W} height={H} viewBox={`-1 -1 ${W + 2} ${H + 2}`} fill="none" stroke="currentColor" strokeWidth={sw}><g transform={`translate(${(W - w) / 2} ${(H - h) / 2})`}>
+    {k === 'rect' ? <rect x="0" y="0" width={w} height={h} /> : k === 'ellipse' ? <ellipse cx={w / 2} cy={h / 2} rx={w / 2} ry={h / 2} /> : <path d={symbolPath(k, w, h).d} />}</g></svg> }
 
 function Cell({ k, name, icon, on, onDown, onClick }) {
   return <button title={`${name} — 클릭하면 그리기, 칠판으로 끌면 바로 놓기`} aria-pressed={on} onPointerDown={e => onDown(e, k)} onClick={() => onClick(k)}

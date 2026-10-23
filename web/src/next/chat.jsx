@@ -45,7 +45,8 @@ async function shrinkImage(src) {
   return cv.toDataURL('image/jpeg', 0.9)
 }
 
-export const CHAT_W = 360
+export const CHAT_W = 360, CHAT_MIN = 320, CHAT_MAX = 720   // 기본 폭 · 끌어서 바꾸는 범위(2026-10-23 사용자: 왼쪽 판처럼 폭 조절 — 칠판이 화면 절반 아래로 줄지는 않게)
+export const chatClamp = w => Math.max(CHAT_MIN, Math.min(CHAT_MAX, Math.round(window.innerWidth / 2), Math.round(w)))
 const LOG_URL = `/api/chatlog/${encodeURIComponent(DOC_NAME)}`
 const MODEL_KEY = 'magic-board-model'   // 고른 모델은 이 브라우저에만 기억(편의)
 const VENDOR = { gpt: 'GPT', gemini: 'Gemini', claude: 'Claude' }
@@ -54,7 +55,7 @@ const DONE = '#16a34a'   // 칠판에 붙임(끝남) = 초록 — 코랄은 할 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', bar: 'var(--mb-bar)', seg: 'var(--mb-seg)' }
 const css = {
   float: { position: 'absolute', right: 12, top: 12, bottom: 12, zIndex: 5, maxWidth: 'calc(100% - 24px)', border: `1px solid ${C.line}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 4px 16px rgba(0,0,0,.12)' },
-  panel: { width: CHAT_W, flex: 'none', display: 'flex', flexDirection: 'column', background: C.bar, borderLeft: `1px solid ${C.line}`, font: `400 13.5px/1.55 ${F}`, color: C.ink, minHeight: 0 },
+  panel: { width: CHAT_W, flex: 'none', position: 'relative', display: 'flex', flexDirection: 'column', background: C.bar, borderLeft: `1px solid ${C.line}`, font: `400 13.5px/1.55 ${F}`, color: C.ink, minHeight: 0 },
   head: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '10px 12px', borderBottom: `1px solid ${C.line}` },
   msgs: { flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 },
   me: { alignSelf: 'flex-end', maxWidth: '92%', background: C.seg, borderRadius: 10, padding: '7px 10px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
@@ -120,7 +121,7 @@ function NavBtn({ side, onClick, title, testid, children }) {
 }
 
 // ed = Editor 손잡이(selTexts·pinCard·showCard), selKey = 고른 것이 바뀔 때 다시 읽게(main이 넘김)
-export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) {   // onBusy(글) = 칠판 위 알약(정돈·정리 문서 중에만, 끝나면 '')
+export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, width = CHAT_W, setWidth }) {   // width·setWidth = 폭(왼쪽 경계 끌기 — main.jsx가 이 브라우저에 기억)   // onBusy(글) = 칠판 위 알약(정돈·정리 문서 중에만, 끝나면 '')
   const [busyJob, setBusyJob] = useState('')   // 기다리는 일의 종류(모르면 '' = 서버가 짐작)   // request = { id, text, kind } — 칠판에서 시킨 질문(바뀔 때마다 한 번 보냄)   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
@@ -292,7 +293,14 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy }) { 
   useEffect(() => () => onBusy?.(''), [])   // eslint-disable-line react-hooks/exhaustive-deps
   const feat = models?.featured || {}
   return (
-    <aside style={floating ? { ...css.panel, ...css.float } : css.panel} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
+    <aside style={{ ...(floating ? { ...css.panel, ...css.float } : css.panel), width }} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
+      {/* 폭 조절 — 왼쪽 경계 끌기(320~720, 화면 절반까지), 두 번 누르면 기본 폭(왼쪽 판 `dock-resize`와 같은 손맛) */}
+      {setWidth && <div data-testid="chat-resize" title="끌어서 대화창 폭 조절 · 두 번 누르면 기본 폭" onDoubleClick={() => setWidth(CHAT_W)}
+        onPointerDown={e => { e.preventDefault(); const x0 = e.clientX, w0 = width, el = e.currentTarget; el.setPointerCapture(e.pointerId)
+          const mv = ev => setWidth(chatClamp(w0 - (ev.clientX - x0))), up = () => { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up) }
+          el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up) }}
+        style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: 6, cursor: 'col-resize', zIndex: 6 }}
+        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(218,119,86,.35)' }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }} />}
       {big && msgs[big.i]?.images?.[big.j] && (() => { const m = msgs[big.i], n = m.images.length, go = d => setBig(b => ({ ...b, j: (b.j + d + n) % n }))
         return createPortal(<div data-testid="image-big" onPointerDown={e => e.stopPropagation()} onClick={() => setBig(null)}
           style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,.72)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, boxSizing: 'border-box' }}>

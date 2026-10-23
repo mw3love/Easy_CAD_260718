@@ -13,7 +13,7 @@ import { Palette, useLibrary } from './palette.jsx'
 import { Layers, layersOf, layerIdOf } from './layers.jsx'
 import { Frames } from './frames.jsx'
 import { Minimap } from './minimap.jsx'
-import { CHAT_W, ChatPanel, Spinner } from './chat.jsx'
+import { ChatPanel, CHAT_W, chatClamp, Spinner } from './chat.jsx'
 import { HelpCard } from './help.jsx'
 import { FindBar } from './find.jsx'
 
@@ -275,6 +275,8 @@ function App() {
   const setDockW = v => { setDockWS(v); try { localStorage.setItem('mb-dock-w', String(v)) } catch { /* 기억 못 해도 그만 */ } }
   const [chatOpen, setChatOpen] = useState(() => { try { return localStorage.getItem('mb-chat-open') !== '0' } catch { return true } }), [selKey, setSelKey] = useState('')   // 대화창 열림은 이 브라우저에 기억(기본 열림 — 화면 원칙: 작업공간 + AI 대화창)
   useEffect(() => { try { localStorage.setItem('mb-chat-open', chatOpen ? '1' : '0') } catch { /* 기억 못 해도 그만 */ } }, [chatOpen])
+  const [chatW, setChatWS] = useState(() => { try { return chatClamp(+localStorage.getItem('mb-chat-w') || CHAT_W) } catch { return CHAT_W } })   // 대화창 폭 — 이 브라우저에 기억(왼쪽 판 `mb-dock-w`와 같게)
+  const setChatW = v => { setChatWS(v); try { localStorage.setItem('mb-chat-w', String(v)) } catch { /* 기억 못 해도 그만 */ } }
   const [narrow, setNarrow] = useState(() => window.innerWidth < NARROW_W)   // 좁은 창 = 위 막대 아이콘만 + 대화창은 칠판 위에 뜸
   useEffect(() => { const on = () => setNarrow(window.innerWidth < NARROW_W); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
   const [activeLayer, setActiveLayer] = useState('default')   // 「그리는 중」 레이어(파일을 열면 기본부터 — 데스크톱 `_apply_loaded_layers`)
@@ -482,7 +484,7 @@ function App() {
         onDrop={e => { const fs = [...(e.dataTransfer?.files || [])]; e.preventDefault()   // 끌어 놓기 — 파일(그림·녹음 = 회의록) 또는 주소(대화창 그림 후보·웹 주소 = 웹 카드). 막지 않으면 브라우저가 그 파일·주소로 떠남
           if (fs.length) return ed.current?.dropFiles(fs, e)
           const u = (e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).find(x => x && !x.startsWith('#')); if (u) ed.current?.dropUrl(u, e.dataTransfer.getData('text/x-mb-caption') || '', e) }}
-        style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${CHAT_W + 12}px` : '0px' }}>
+        style={{ flex: 1, position: 'relative', overflow: 'hidden', '--mb-right-inset': narrow && chatOpen ? `${chatW + 12}px` : '0px' }}>
         <Editor ref={ed} others={others} dark={dark} model={model} setModel={setModel} onCommit={onCommit} size={size} cam={cam} setCam={setCam} tool={tool} setTool={setTool} setStatus={setStatus} library={lib?.symbols} libFolders={lib?.folders} activeLayer={activeLayer} onSel={s => setSelKey(s.join())} onExportSel={() => setExportOpen(true)} onFit={its => fit(its || modelRef.current.items)} onDark={toggleDark} onHelp={() => setHelpOpen(true)} marks={marks} onMeet={setMeetSt} onAsk={(text, kind) => { setChatOpen(true); setChatAsk({ id: Date.now(), text, kind }) }} />
         {helpOpen && <HelpCard onClose={() => setHelpOpen(false)} />}
         {status && <div data-testid="status-toast" role="status" title={status} style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 6, maxWidth: 'min(640px, max(240px, calc(100% - 480px)))', padding: '6px 14px', borderRadius: 99,
@@ -491,7 +493,7 @@ function App() {
           background: 'var(--mb-card)', border: '1px solid var(--mb-line)', boxShadow: '0 2px 8px rgba(0,0,0,.12)', font: "600 13px 'Pretendard', sans-serif", color: 'var(--mb-ink)', pointerEvents: 'none', whiteSpace: 'nowrap' }}><Spinner />{aiBusy}</div>}   {/* 정돈·정리 문서 중 — 칠판만 보고 있어도 도는 게 보이게(2026-10-20 사용자) */}
         {findOpen > 0 && <FindBar key={findOpen} items={model.items} server={server} onMarks={setMarks} onGo={id => ed.current?.showItem(id)} onClose={() => setFindOpen(0)} />}
       </div>
-      {chatOpen && <ChatPanel ed={ed} selKey={selKey} floating={narrow} onClose={() => setChatOpen(false)} request={chatAsk} onBusy={setAiBusy} />}
+      {chatOpen && <ChatPanel ed={ed} selKey={selKey} floating={narrow} onClose={() => setChatOpen(false)} request={chatAsk} onBusy={setAiBusy} width={chatW} setWidth={setChatW} />}
       </div>
     </div>
   )

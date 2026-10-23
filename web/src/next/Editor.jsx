@@ -26,7 +26,7 @@ import { TextEditor } from './text.jsx'
 import { Props, captureStyle, styleFor } from './props.jsx'
 import { FormatBar } from './formatbar.jsx'
 import { arrowKindOf, swapArrowKind } from './arrowkind.js'
-import { symbolPath } from './symbols.js'
+import { shapeWH, symbolPath } from './symbols.js'
 import { cssColor } from '../ecadFormat.js'
 import { colEdges, colFracs, frameTag, frameTagFs, rowEdges } from './geom.js'
 import { orderedFrames, setFrameOrder } from './edit.js'
@@ -659,7 +659,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
 
   // ── 도형 카드에서 끌어다 놓기(데스크톱 `_PaletteButton` 6px 넘게 끌기) — 진짜 도형이 손에 붙어 따라오고 정렬선도 걸림, 칠판 밖(카드 위 등)에 놓으면 취소 ──
   // 도형·심볼 카드 도구 — 'rect'·'ellipse'·'sym:<종류>'는 상자처럼 끌어 그리기, 'customsym:<id>'(내 심볼)는 원래 모양 그대로 놓기
-  const boxDefault = t => (t === 'ellipse' ? [100, 100] : t === 'rect' ? [120, 60] : [120, 72])   // 심볼 기본 크기 = 데스크톱 `_PALETTE_SYM_WH`
+  const boxDefault = shapeWH   // 기본 크기 = 도형 카드 아이콘과 같은 비율(symbols.js)
   const boxItem = (t, x0, y0, w, h) => base([x0, y0], { ...(t.startsWith('sym:') ? { type: 'symbol', kind: t.slice(4) } : { type: t }), rect: [0, 0, w, h], ...penOf(true) })
   // 내 심볼 아이템들(새 _id, 안의 화살표 연결은 그대로, 둘 이상이면 새 묶음 — 데스크톱 `_finish_custom_symbol_placement`). 칠판 위 맨 앞, 안의 앞뒤 차례는 유지
   function customItems(key) {
