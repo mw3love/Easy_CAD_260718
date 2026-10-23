@@ -1,14 +1,15 @@
 // 오른쪽 위 「속성」 카드(고를 때만) — 고른 것 모두의 선 색·굵기·선 모양·채움, 화살표 칸(종류·화살촉·머리 크기·모서리), 글자 크기·색.
 // 데스크톱 `host_style._refresh_properties`와 같은 자리·같은 항목·같은 차례(종류 → 선 → 채움 → 화살표 → 글자). 섞어 고르면 해당하는 것에만.
 // 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄.
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { FoldBtn, useFold } from './fold.jsx'
 import SYMBOLS from '../symbols.json' with { type: 'json' }
 import { shapeIcon as paletteIcon } from './palette.jsx'
 import { FRAME_RATIOS, paperWH } from './geom.js'
 // 프레임 비율 바꾸기 — 긴 쪽 방향은 그대로(가로로 길면 폭 유지, 세로로 길면 높이 유지)
 const frameRatio = (it, ratio) => { const [x, y, w, h] = it.rect; if (!ratio) return { ratio: undefined }; const r = FRAME_RATIOS[ratio]; return { ratio, rect: w >= h ? [x, y, w, w / r] : [x, y, h / r, h] } }
-import { cellPt, tableAutoPt } from './render.jsx'
+import { cellPt, labelNeedW, labelShownPt, tableAutoPt } from './render.jsx'
 import { WEB_ZOOMS } from './webcard.js'
 import { STYLE_NAMES, rowName } from './legend.js'
 const LG_WIDTHS = [0.5, 1, 1.5, 2, 3, 4, 5, 6, 8]
@@ -27,8 +28,6 @@ const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line
 // 두 줄 꽉 채움(8+8) — 데스크톱 색 창과 같은 짜임: 진한 6색(`_COLOR_GRID_HUES`) + 검정 + 다른 색 / 같은 6색의 연한 색(Qt lighter(150)) + 회색 + 흰색
 export const ARROW_COLORS = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#AF52DE', '#000000', null,
   '#ffb4af', '#ffca7f', '#ffe57f', '#6eff93', '#7fbdff', '#e3acff', '#9e9e9e', '#ffffff']
-// 채움 견본 — 데스크톱 `_DEFAULT_FILL_PRESETS`(첫 칸 없음, 나머지는 약 1/3 불투명이라 밝은·어두운 칠판과 흰 종이 모두에서 글이 읽힘)
-const FILL_PRESETS = [null, '#555aa9ff', '#555fbf8a', '#55e8c15a', '#55e0646a', '#55b48cf2', '#55da7756', '#558a98a8']
 const STYLES = [[1, '실선'], [2, '점선'], [3, '도트'], [4, '일점쇄선'], [5, '이점쇄선']]
 const DASH = { 1: undefined, 2: '6 3', 3: '1.5 3', 4: '6 3 1.5 3', 5: '6 3 1.5 3 1.5 3' }
 const INK = '#1f1f1f'
@@ -56,8 +55,15 @@ function textSlots(it) {
   if (it.type === 'text') return [{ font: it.font || 12, color: it.color || INK, text: it.text || '' }]
   if (it.type === 'table') return [{ font: it.font || tableAutoPt(it), fonts: it.font ? null : tableCellPts(it), color: it.color || '#111111', text: (it.cells || []).flat().find(Boolean) || '' }]   // 표 글자 = 표 전체 하나. 크기를 표 전체로 안 정했으면 칸마다 지금 보이는 크기(자동 칸은 줄어든 실제 크기 — 범위로 보임)
   if (isArrow(it)) return arrowLabels(it).filter(L => L.text?.trim()).map(L => ({ font: L.font || 16, color: L.color || it.color || INK, text: L.text }))
-  if (['rect', 'ellipse', 'symbol', 'polygon', 'line'].includes(it.type) && it.label?.text?.trim()) return [{ font: it.label.font || 16, color: it.label.color || it.pen || INK, text: it.label.text }]
+  if (['rect', 'ellipse', 'symbol', 'polygon', 'line'].includes(it.type) && it.label?.text?.trim()) return [{ font: FIT.has(it.type) ? labelShownPt(it) : it.label.font || 16, color: it.label.color || it.pen || INK, text: it.label.text }]   // 상자에 맞춰 줄어든 글은 보이는 크기
   return []
+}
+// 상자 폭에 맞춰 글을 줄이는 도형(render.jsx `CenterLabel`) — 글을 키웠는데 상자보다 크면 상자 폭을 늘림(가운데 그대로, 2026-10-23 사용자 선택)
+const FIT = new Set(['rect', 'ellipse', 'symbol'])
+function growToFit(it, p) {
+  if (!p?.label || !FIT.has(it.type) || it.label?.align === 'left') return p
+  const [x, y, w, h] = it.rect, need = Math.ceil(labelNeedW({ ...it, label: p.label }, p.label.font))
+  return need > w ? { ...p, rect: [x - (need - w) / 2, y, need, h] } : p
 }
 // 그 글들에 f(글) → { font?, color? }를 입힌 아이템 고칠 값(없으면 null)
 function patchTexts(it, f) {
@@ -196,18 +202,11 @@ function ColorGrid({ value, onPick, s = 14 }) {   // onPick(색, 끌기 중이�
         boxShadow: on ? `0 0 0 2px #fff, 0 0 0 3.5px ${C.on}` : 'inset 0 0 0 1px rgba(0,0,0,.15)' }} /> })}
   </div>
 }
-// 채움 견본(없음 + 7 — 데스크톱 `_DEFAULT_FILL_PRESETS`)
-const fillSwatch = (c, on, s) => ({ all: 'unset', cursor: 'pointer', width: s, height: s, borderRadius: 4, position: 'relative', overflow: 'hidden', flex: 'none',
-  background: c ? `linear-gradient(${argbCss(c)},${argbCss(c)}), #fff` : '#fff',
-  boxShadow: on ? `0 0 0 2px #fff, 0 0 0 3.5px ${C.on}` : 'inset 0 0 0 1px rgba(0,0,0,.2)' })
 const NoneMark = ({ s }) => <svg width={s} height={s} style={{ position: 'absolute', inset: 0 }}><line x1="2" y1={s - 2} x2={s - 2} y2="2" stroke="#e02424" strokeWidth="1.4" /></svg>
-function FillGrid({ value, onPick, s = 14 }) {
-  return <div style={{ display: 'grid', gridTemplateColumns: `repeat(8, ${s}px)`, gap: 2, justifyContent: 'space-between' }}>
-    {FILL_PRESETS.map((c, i) => <button key={i} title={c ? c : '없음'} aria-pressed={value === c} onClick={() => onPick(c)} style={fillSwatch(c, value === c, s)}>{!c && <NoneMark s={s} />}</button>)}
-  </div>
-}
 
-// ── 색 칸(2026-10-23 사용자: 색표 세 벌이 다 펼쳐져 복잡함) — 지금 색 견본 + 코드 한 칸, 누르면 색 창(견본·최근 쓴 색·코드·채움은 투명도까지) ──
+// ── 색 칸(2026-10-23 사용자: 색표 세 벌이 다 펼쳐져 복잡함 → 같은 날 2차: 코드는 칸에서 바로, 색 창은 셋 다 같은 모양, 카드 밖으로) ──
+// 칸 = [견본][코드][진하기%] (피그마식) — 견본을 누르면 색 창, 코드 글자를 누르면 그 자리에서 고침(Enter·칸 벗어나기 = 적용, Esc = 취소).
+// 색 창 = 16색 두 줄 + 최근 쓴 색(셋 다 같음), 채움만 아래에 「없음」·진하기. 화면 위에 떠서(포털) 카드에 잘리지 않고, 아래가 모자라면 위로 펼침
 // 최근 쓴 색 = 이 브라우저만(편의용 — 못 읽으면 줄이 안 보일 뿐)
 const RECENT_KEY = 'mb-recent-colors'
 const rgbOf = c => (c && c.length === 9 ? '#' + c.slice(3) : c || '').toLowerCase()
@@ -215,44 +214,56 @@ const loadRecent = () => { try { return (JSON.parse(localStorage.getItem(RECENT_
 const pushRecent = c => { const v = rgbOf(c); if (!/^#[0-9a-f]{6}$/.test(v)) return; try { localStorage.setItem(RECENT_KEY, JSON.stringify([v, ...loadRecent().filter(x => x !== v)].slice(0, 8))) } catch { /* 저장 못 해도 그만 */ } }
 const alphaOf = c => (c && c.length === 9 ? parseInt(c.slice(1, 3), 16) : 255)
 const withAlpha = (rgb, a) => '#' + hex2(a) + rgbOf(rgb).slice(1)
-// 칸에 보이는 글 — #RRGGBB(투명하면 뒤에 %)
-const codeLabel = c => { const a = alphaOf(c); return rgbOf(c).toUpperCase() + (a < 255 ? ` ${Math.round(a / 2.55)}%` : '') }
+const FILL_NEW_ALPHA = 0x55   // 채움 없던 것에 처음 칠하면 약 1/3 진하기 — 옛 채움 견본(데스크톱 `_DEFAULT_FILL_PRESETS`)과 같아 칠해도 글이 읽힘
 const MONO = '12px ui-monospace, Consolas, monospace'
-// 코드 입력 — Enter로 적용. 6자리 = 색만(채움은 지금 투명도 유지), 8자리 = 투명도까지(채움만)
+// 코드 — 칸 안에서 바로 고침. 6자리 = 색만(채움은 지금 진하기 유지), 8자리(AARRGGBB) = 진하기까지(채움만)
 function CodeInput({ value, onCode, alpha, ph = '' }) {
   const [txt, setTxt] = useState(null), shown = txt ?? (value ? rgbOf(value).slice(1).toUpperCase() : '')
   const apply = () => { const m = /^#?([0-9a-f]{6}|[0-9a-f]{8})$/i.exec((txt ?? '').trim()); setTxt(null); if (!m) return; onCode(m[1].length === 8 && alpha ? '#' + m[1].toLowerCase() : '#' + m[1].slice(-6).toLowerCase()) }
-  return <label style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 2, height: 26, padding: '0 6px', boxSizing: 'border-box', border: `1px solid ${C.line}`, borderRadius: 6, font: MONO, color: C.muted }}>#
-    <input data-testid="color-code" value={shown} placeholder={ph} title={alpha ? '색 코드 — 예: D9703F (Enter로 적용, 8자리면 투명도까지)' : '색 코드 — 예: D9703F (Enter로 적용)'}
-      onChange={e => setTxt(e.target.value)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') apply(); if (e.key === 'Escape') setTxt(null) }} onBlur={() => txt != null && apply()}
-      style={{ all: 'unset', flex: 1, minWidth: 0, font: MONO, color: C.ink }} /></label>
+  return <input data-testid="color-code" value={shown} placeholder={ph} spellCheck={false} title={alpha ? '색 코드 — 고치고 Enter(8자리면 진하기까지)' : '색 코드 — 고치고 Enter'}
+    onChange={e => setTxt(e.target.value)} onFocus={e => e.currentTarget.select()} onBlur={() => txt != null && apply()}
+    onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setTxt(null); e.currentTarget.blur() } }}
+    style={{ all: 'unset', flex: 1, minWidth: 0, font: MONO, color: C.ink, cursor: 'text' }} />
+}
+// 색 창 자리 — 칸 바로 아래(오른쪽 끝 맞춤), 아래가 모자라면 칸 위로. 화면 밖으로는 안 나감
+function popPlace(el, h) {
+  const r = el.getBoundingClientRect(), W = 172, vw = window.innerWidth, vh = window.innerHeight
+  const left = Math.max(8, Math.min(vw - W - 8, r.right - W)), below = r.bottom + 4
+  return { left, top: below + h <= vh - 8 ? below : Math.max(8, r.top - 4 - h) }
 }
 // id = 이 색 칸 이름(한 번에 하나만 열림 — Props `pop`), value = 지금 색('#rrggbb'·'#aarrggbb', 없음 = null, 서로 다름 = ''/undefined)
-// fill = 채움 칸(「없음」·견본·투명도), onPick(색, 끌기 중) — 색 = 선·글은 '#rrggbb', 채움은 '#aarrggbb'|null
+// fill = 채움 칸(「없음」·진하기), onPick(색, 끌기 중) — 색 = 선·글은 '#rrggbb', 채움은 '#aarrggbb'|null
 function ColorChip({ id, pop, setPop, value, fill, onPick, title }) {
   const open = pop === id, mixed = value === '' || value === undefined, none = fill ? value === null : !mixed && alphaOf(value) === 0   // 선이 완전히 투명(채운 면의 선 등)이면 「없음」
   const a = fill && value ? alphaOf(value) : 255
   const chipBg = mixed ? 'conic-gradient(#9e9e9e 0 50%, #fff 0)' : none ? '#fff' : fill || value.length === 9 ? `linear-gradient(${argbCss(value)},${argbCss(value)}), #fff` : value
   const pick = (c, drag) => { onPick(c, drag); if (!drag) { if (c) pushRecent(c); setPop(null) } }   // 견본은 한 번 누르면 끝 — 창 닫힘
-  const rgbPick = (c, drag) => pick(fill ? withAlpha(c, value ? a : 255) : rgbOf(c), drag)   // 채움에 진한 견본 = 지금 투명도 그대로(없음이었으면 불투명)
+  const rgbPick = (c, drag) => pick(fill ? withAlpha(c, value ? a : FILL_NEW_ALPHA) : rgbOf(c), drag)   // 채움 = 지금 진하기 그대로(없음이었으면 1/3)
+  const onCode = c => { onPick(fill ? (c.length === 9 ? c : withAlpha(c, value ? a : 255)) : c); pushRecent(c) }
+  const anchor = useRef(null), popEl = useRef(null), [at, setAt] = useState(null)
+  useLayoutEffect(() => { if (!open) { setAt(null); return } const place = () => anchor.current && setAt(popPlace(anchor.current, popEl.current?.offsetHeight || 140)); place()
+    window.addEventListener('resize', place); return () => window.removeEventListener('resize', place) }, [open])
+  useLayoutEffect(() => { if (open && at && popEl.current && anchor.current) { const p = popPlace(anchor.current, popEl.current.offsetHeight); if (p.top !== at.top || p.left !== at.left) setAt(p) } })   // 실제 높이로 한 번 더 맞춤
   const recent = open ? loadRecent() : []
-  return <div data-ppop={id} style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-    <button data-testid={'chip-' + id} title={title + ' — 눌러서 바꾸기'} aria-expanded={open} onClick={() => setPop(open ? null : id)}
-      style={btn(open, { width: '100%', background: C.seg, justifyContent: 'flex-start', gap: 6, padding: '0 8px' })}>
-      <span style={{ position: 'relative', overflow: 'hidden', flex: 'none', width: 14, height: 14, borderRadius: 4, boxShadow: `inset 0 0 0 1px ${C.line}`, background: chipBg }}>{none && <NoneMark s={14} />}</span>
-      <span style={{ font: mixed || none ? "12px 'Pretendard', sans-serif" : MONO, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{mixed ? '서로 다름' : none ? '없음' : codeLabel(value)}</span>
-      <span style={{ marginLeft: 'auto', color: C.muted }}>{open ? '▴' : '▾'}</span></button>
-    {open && <div data-testid={'pop-' + id}
-      style={{ position: 'absolute', zIndex: 4, top: 30, right: 0, width: 172, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, boxShadow: '0 8px 24px rgba(0,0,0,.16)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {fill && <FillGrid value={value} onPick={c => pick(c)} s={18} />}
+  const swatchBtn = <button data-testid={'chip-' + id} title={title + ' — 눌러서 색 고르기'} aria-label={title} aria-expanded={open} onClick={() => setPop(open ? null : id)}
+    style={{ all: 'unset', cursor: 'pointer', position: 'relative', overflow: 'hidden', flex: 'none', width: 16, height: 16, borderRadius: 4, boxShadow: `inset 0 0 0 1px ${C.line}`, background: chipBg }}>{none && <NoneMark s={16} />}</button>
+  return <div ref={anchor} data-ppop={id} data-testid={'colorrow-' + id} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, height: 26, padding: '0 8px', boxSizing: 'border-box', borderRadius: 6, background: C.seg, outline: open ? `1px solid ${C.on}` : 'none' }}>
+    {swatchBtn}
+    {mixed || none ? <span onClick={() => setPop(open ? null : id)} style={{ flex: 1, cursor: 'pointer', fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{mixed ? '서로 다름' : '없음'}</span>
+      : <CodeInput key={value} value={value} alpha={fill} onCode={onCode} />}
+    {fill && value && a < 255 && <span title="진하기(색 창에서 바꿈)" style={{ flex: 'none', fontSize: 11, color: C.muted, fontVariantNumeric: 'tabular-nums' }}>{Math.round(a / 2.55)}%</span>}
+    {open && createPortal(<div ref={popEl} data-ppop={id} data-testid={'pop-' + id} onPointerDown={e => e.stopPropagation()}
+      style={{ position: 'fixed', zIndex: 50, left: at?.left ?? -9999, top: at?.top ?? -9999, width: 172, boxSizing: 'border-box', background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, boxShadow: '0 8px 24px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 6, font: "400 12px 'Pretendard', sans-serif" }}>
       <ColorGrid value={mixed || none ? '' : rgbOf(value)} onPick={rgbPick} s={18} />
       {recent.length > 0 && <><span style={{ fontSize: 11, color: C.muted }}>최근 쓴 색</span>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 18px)', gap: 2, justifyContent: 'space-between' }}>{recent.map(c => <button key={c} title={c} onClick={() => rgbPick(c)} style={{ all: 'unset', cursor: 'pointer', width: 18, height: 18, borderRadius: 4, background: c, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.15)' }} />)}</div></>}
-      {fill && value && <label title="채움 진하기 — 낮을수록 비쳐요(칸의 % 와 같은 값)" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.muted }}>진하기
-        <input data-testid="fill-alpha" type="range" min="0" max="100" value={Math.round(a / 2.55)} onChange={e => onPick(withAlpha(value, Math.round(+e.target.value * 255 / 100)), true)} style={{ flex: 1, minWidth: 0, accentColor: C.on }} />
-        <span style={{ width: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(a / 2.55)}%</span></label>}
-      <CodeInput key={value || ''} value={mixed || none ? '' : value} ph={mixed ? '서로 다름' : '코드 입력'} alpha={fill} onCode={c => pick(fill ? (c.length === 9 ? c : withAlpha(c, value ? a : 255)) : c)} />
-    </div>}
+      {fill && <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.muted }}>
+        <button data-testid="fill-none" title="채움 없음" aria-pressed={none} onClick={() => pick(null)} style={btn(none, { padding: '0 6px', height: 22, gap: 4, fontSize: 11, background: none ? C.onBg : C.seg })}>
+          <span style={{ position: 'relative', overflow: 'hidden', width: 12, height: 12, borderRadius: 3, background: '#fff', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.2)' }}><NoneMark s={12} /></span>없음</button>
+        {value ? <><input data-testid="fill-alpha" type="range" min="0" max="100" title="진하기 — 낮을수록 비쳐요" value={Math.round(a / 2.55)} onChange={e => onPick(withAlpha(value, Math.round(+e.target.value * 255 / 100)), true)} style={{ flex: 1, minWidth: 0, accentColor: C.on }} />
+          <span style={{ width: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(a / 2.55)}%</span></> : <span style={{ flex: 1, whiteSpace: 'nowrap' }}>칠하면 진하기 33%</span>}
+      </div>}
+    </div>, document.body)}
   </div>
 }
 
@@ -310,7 +321,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
   const onArrows = f => it => (isArrow(it) ? f(it) : null)
   // 글자 줄들 — 크기 · 색 · (굵게 · 형광펜). 글만 골랐으면 카드 맨 위에(글이 주인공 — 2026-10-23)
   const textRows = texts.length > 0 && !cells && <>
-    <Row label="크기"><Stepper title="글자 크기" values={texts.flatMap(t => t.fonts || [t.font])} onStep={d => set(it => (it.type === 'table' && !it.font ? stepTableCells(it, d) : patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) }))), '글자 크기', '글자 크기')} fmt={ptFmt} />
+    <Row label="크기"><Stepper testid="font-step" title="글자 크기" values={texts.flatMap(t => t.fonts || [t.font])} onStep={d => set(it => { if (it.type === 'table' && !it.font) return stepTableCells(it, d); const p = patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })); return d > 0 ? growToFit(it, p) : p }, '글자 크기', '글자 크기')} fmt={ptFmt} />
       {tables.length > 0 && (() => { const on = !items.some(hasFixedFont)
         return <AutoToggle on={on} onClick={() => set(it => (it.type !== 'table' ? null : on ? stepTableCells(it, 0) : clearTableFont(it)), on ? '글자 크기 고정' : '글자 크기 자동')} /> })()}</Row>
     <Row label="색"><ColorChip id="text" pop={pop} setPop={setPop} value={tColor} title="글자 색" onPick={(c, drag) => set(it => patchTexts(it, () => ({ color: c })), '글자 색', drag ? 'tcolor' : null)} /></Row>
@@ -321,7 +332,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
   </>
 
   return <div data-folded={folded || undefined} onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
-    padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: 'calc(100% - 180px)', overflowY: 'auto' }}>
+    padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: 'calc(100% - 24px)', overflowY: 'auto' }}>   {/* 높이 = 칠판 끝까지(미니맵은 왼쪽 판으로 감 — 전엔 아래 180을 비워 일찍 스크롤) */}
     {/* 머리말 = 고른 것의 종류(2026-10-23 사용자 검토: 「속성」 제목과 「종류」 줄이 같은 말 — 한 줄로). 도형이면 눌러서 다른 도형으로 */}
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: folded ? 0 : 2 }}>
       {(swapOne || swapGrp) && !folded ? <div data-ppop="swap" style={{ position: 'relative', flex: 1, minWidth: 0 }}>
@@ -339,7 +350,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
         </div>}
       </div>
       : <span data-testid="prop-type" style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</span>}
-      <FoldBtn folded={folded} onClick={toggleFold} /></div>
+      <FoldBtn minus folded={folded} onClick={toggleFold} /></div>
     {!folded && align?.n >= 2 && <AlignRow align={align} />}
     {allArrows && <Row label="종류"><Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} /></Row>}
     {allText && textRows}

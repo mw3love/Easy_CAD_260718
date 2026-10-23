@@ -259,6 +259,13 @@ export const minStroke = w => ({ strokeWidth: `max(${w}px, calc(1px / var(--z, 1
 const strokeProps = (it, onBoard) => ({ stroke: stroke(it, onBoard), style: minStroke(it.width || 1), strokeDasharray: dashArray(it.style, it.width), strokeLinecap: 'round', strokeLinejoin: 'round' })
 
 // ── 도형 안 라벨(한 줄씩, 넘치면 글자를 줄임 — `_fit_label_to_shape`) ──
+// 라벨이 그 크기(pt)로 줄지 않고 들어가려면 필요한 상자 폭 · 지금 실제로 보이는 크기 — 속성 카드 글자 크기가 씀(2026-10-23 사용자: 키워도 안 커짐 — 상자에 맞춰 줄었음)
+export const labelNeedW = (it, pt) => { const L = it.label, lay = layoutText(L.text, L.runs, pt * PT, L.family ? 'board' : 'app'); return (lay.w + 2 * TEXT_MARGIN) / labelInset(it.type, it.kind) }
+export function labelShownPt(it) {
+  const L = it.label; let pt = Math.max(5, Math.round(L.font || 16)); if (L.align === 'left') return pt
+  while (pt > 5 && labelNeedW(it, pt) > Math.max(1, it.rect[2])) pt -= 1
+  return pt
+}
 function CenterLabel({ it, onBoard }) {
   const L = it.label; if (!L?.text) return null
   const [x, y, w] = it.rect, family = L.family ? 'board' : 'app'

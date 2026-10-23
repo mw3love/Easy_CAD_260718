@@ -135,8 +135,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
   useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
-    debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing }) }))
+    debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
+  // 속성 카드에서 색·선을 바꾼 뒤 = 선택선·꼭짓점 사각을 숨김(데스크톱 `_style_preview_active` — 파란 선이 바꾼 선 색을 덮음, 멀리서 볼수록).
+  // 마우스가 칠판으로 돌아오거나 고른 것이 바뀌면 다시 보임. 큐닷·회전 점은 그대로(무엇이 골라졌는지는 보임)
+  const [stylePv, setStylePv] = useState(false); R.current.stylePv = stylePv
+  useEffect(() => { setStylePv(false) }, [sel.join()])   // eslint-disable-line react-hooks/exhaustive-deps — 고친 뒤 같은 것을 다시 고른 상태(새 배열)는 그대로
   useEffect(() => { onSel?.(sel) }, [sel])   // eslint-disable-line react-hooks/exhaustive-deps — 대화창 칩(고른 것 N개)
   const keepPoly = useRef(false)   // 위 막대에서 다각형을 끌어 놓은 직후 = 첫 선분을 이어 그리는 중(도구가 바뀌어도 버리지 않음)
   useEffect(() => { if (keepPoly.current) { keepPoly.current = false; return } setOverlay(o => (o.poly || o.lpt ? { ...o, poly: null, lpt: null, pcur: null } : o)) }, [tool])   // 도구를 바꾸면 그리다 만 다각형·선은 버림(다음에 이어 붙지 않게)
@@ -2020,6 +2024,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const s0 = cur.find(x => x.pen !== undefined), ps = s0 && per(s0)
     if (ps) { if (ps.pen !== undefined) sticky.current.color = ps.pen; if (ps.width !== undefined) sticky.current.width = ps.width; if (ps.style !== undefined) sticky.current.style = ps.style; if (ps.fill !== undefined) stickyFill.current = ps.fill }
     commit(m.items.map(x => { if (!selIds.has(x._id)) return x; const p = per(x); if (!p) return x; const pt = { ...p }; if (x.type !== 'sarrow') delete pt.curve_r; return { ...x, ...pt } }), sel, label, merge ? merge + [...selIds].join() : null)
+    setStylePv(true)
   }
   // 여러 개 선택 틀 — 화살촉까지 감쌈(데스크톱 `_GroupTransform.bbox` = 꼭짓점 + 화살촉 끝, 2026-10-18 사용자와 맞춤)
   const selBoxOf = it => {
@@ -2047,7 +2052,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       <svg ref={svg} width={size.w} height={size.h} style={{ display: 'block', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }} data-testid="board"
-        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onDoubleClick={onDoubleClick} onContextMenu={e => e.preventDefault()}
+        onPointerDown={onPointerDown} onPointerMove={e => { if (R.current.stylePv) setStylePv(false); onPointerMove(e) }} onPointerUp={onPointerUp} onDoubleClick={onDoubleClick} onContextMenu={e => e.preventDefault()}
         onMouseDown={e => { if (R.current.editing && e.button !== 0) e.preventDefault() }}>
         <g transform={`translate(${cam.x},${cam.y}) scale(${z})`} style={{ '--z': z }}>
           {visible.map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
@@ -2096,7 +2101,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
               return <g key={o.id + id} data-testid="other-mark" pointerEvents="none"><rect x={b.x - pad} y={b.y - pad} width={b.w + 2 * pad} height={b.h + 2 * pad} rx={4 / z} fill="none" stroke={c} strokeWidth={2 / z} strokeDasharray={o.edit === id ? undefined : `${6 / z} ${3 / z}`} />
                 <rect x={b.x - pad} y={b.y - pad - fs * 1.7} width={tw} height={fs * 1.6} rx={3 / z} fill={c} />
                 <text x={b.x - pad + 5 / z} y={b.y - pad - fs * 0.9} dominantBaseline="central" fontSize={fs} fontWeight={600} fontFamily={APP_FONT} fill="#fff">{tag}</text></g> }) })}
-          {(overlay.rubber?.sub ? selItems.filter(it => !overlay.rubber.hits?.includes(it._id)) : selItems).map(outline)}   {/* Shift 끌기 빼기 = 걸린 것의 파란 띠를 바로 지움(2026-10-18 사용자: 빨강 대신) */}
+          {!stylePv && (overlay.rubber?.sub ? selItems.filter(it => !overlay.rubber.hits?.includes(it._id)) : selItems).map(outline)}   {/* Shift 끌기 빼기 = 걸린 것의 파란 띠를 바로 지움(2026-10-18 사용자: 빨강 대신) */}
           {cellSel && byId.get(cellSel.id) && (() => { const t = byId.get(cellSel.id), g = cellRange(cellSel), a = cellRect(t, g.r0, g.c0), b = cellRect(t, g.r1, g.c1)
             return <g transform={transformOf(t)}><rect x={a.x} y={a.y} width={b.x + b.w - a.x} height={b.y + b.h - a.y} fill="rgba(137,180,250,.18)" stroke={BLUE} strokeWidth={2 / z} /></g> })()}
           {!overlay.rubber?.sub && overlay.rubber?.hits?.map(id => byId.get(id)).filter(Boolean).map(preview)}
@@ -2105,14 +2110,14 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
               <rect x={x} y={b.y} width={sz} height={sz} rx={sz * 0.25} fill={open ? '#da7756' : '#3f3f46'} />
               <g transform={`translate(${x + sz * 0.2},${b.y + sz * 0.16}) scale(${sz * 0.6 / 16})`} fill="none" stroke="#fff" strokeWidth={1.6} strokeLinecap="round">
                 <rect x="3.5" y="7" width="9" height="6.5" rx="1" /><path d={open ? 'M5.5 7 V5 a2.5 2.5 0 0 1 5 0' : 'M5.5 7 V5 a2.5 2.5 0 0 1 5 0 V7'} /></g></g> })()}
-          {multiBox && <rect x={multiBox.x} y={multiBox.y} width={multiBox.w} height={multiBox.h} fill="none" stroke={BLUE} strokeWidth={1 / z} strokeDasharray={`${4 / z} ${3 / z}`} />}
-          {multiBox && !editing && [[multiBox.x, multiBox.y], [multiBox.x + multiBox.w, multiBox.y], [multiBox.x + multiBox.w, multiBox.y + multiBox.h], [multiBox.x, multiBox.y + multiBox.h]].map(([cx, cy], i) =>
+          {multiBox && !stylePv && <rect x={multiBox.x} y={multiBox.y} width={multiBox.w} height={multiBox.h} fill="none" stroke={BLUE} strokeWidth={1 / z} strokeDasharray={`${4 / z} ${3 / z}`} />}
+          {multiBox && !editing && !stylePv && [[multiBox.x, multiBox.y], [multiBox.x + multiBox.w, multiBox.y], [multiBox.x + multiBox.w, multiBox.y + multiBox.h], [multiBox.x, multiBox.y + multiBox.h]].map(([cx, cy], i) =>
             <rect key={'mh' + i} x={cx - HANDLE / 2 / z} y={cy - HANDLE / 2 / z} width={HANDLE / z} height={HANDLE / z} fill="#fff" stroke={BLUE} strokeWidth={1.2 / z} />)}
           {selItems.filter(it => it.locked).map(it => { const b = sceneBox(it, textBox); return <text key={'lk' + it._id} x={b.x + b.w} y={b.y} fontSize={12 / z} fill={BLUE}>🔒</text> })}
           {handles.map(h => (h.pill ? pill(h.key, h.p, h.horizontal, true) : h.bend ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={HANDLE / 2 / z} fill={BEND_GREEN} stroke="#fff" strokeWidth={1 / z} />
             : h.qc ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={(HANDLE * (hoverKey === h.key ? 0.75 : 0.45)) / z} fill={QC_BLUE} stroke="#fff" strokeWidth={1 / z} style={{ transition: 'r .12s ease-out' }} />
             : h.round ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={HANDLE / 2 / z} fill={PEACH} stroke="#fff" strokeWidth={1 / z} />
-            : <rect key={h.key} x={h.p.x - HANDLE / 2 / z} y={h.p.y - HANDLE / 2 / z} width={HANDLE / z} height={HANDLE / z} fill={BLUE} stroke="#fff" strokeWidth={1 / z} />))}
+            : stylePv ? null : <rect key={h.key} x={h.p.x - HANDLE / 2 / z} y={h.p.y - HANDLE / 2 / z} width={HANDLE / z} height={HANDLE / z} fill={BLUE} stroke="#fff" strokeWidth={1 / z} />))}
           {memoHov && !editing && !live && (() => { const it = byId.get(memoHov.id); if (!it || it.type !== 'memo') return null; const b = memoHandleRect(it, memoHov.s), k = z * (it.scale || 1)
             return <g transform={transformOf(it)} style={{ pointerEvents: 'none' }}><rect x={b.x} y={b.y} width={b.w} height={b.h} rx={4 / k} fill="rgba(127,127,127,.16)" />
               {[0, 1, 2].flatMap(r => [0, 1].map(c => <circle key={`${r}${c}`} cx={b.x + b.w * (c ? 0.66 : 0.34)} cy={b.y + b.h * (0.28 + r * 0.22)} r={1.5 / k} fill="#8a8f98" />))}</g> })()}
