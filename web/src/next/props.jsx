@@ -1,7 +1,7 @@
 // 오른쪽 위 「속성」 카드(고를 때만) — 고른 것 모두의 선 색·굵기·선 모양·채움, 화살표 칸(종류·화살촉·머리 크기·모서리), 글자 크기·색.
 // 데스크톱 `host_style._refresh_properties`와 같은 자리·같은 항목·같은 차례(종류 → 선 → 채움 → 화살표 → 글자). 섞어 고르면 해당하는 것에만.
 // 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ColorChip } from './colorpop.jsx'
 import { FmtButtons, edAct, edRun, edState, useEdTick } from './textfmt.jsx'
 import { FoldBtn, useFold } from './fold.jsx'
@@ -112,8 +112,7 @@ const patchHl = (it, on) => patchRuns(it, 2, on ? HL : null)
 // 속성 카드 꾸밈 버튼(글 전체) — 꾸미기 막대와 같은 항목(`textfmt.jsx`)
 const DECO = { italic: 'i', underline: 'u', strike: 's' }
 const decoSet = (d, l, on) => 'ius'.split('').filter(x => (x === l ? on : d.includes(x))).join('')
-const patchFmt = (it, k, on) => { if (k === 'clear') { const h = hlHost(it); return h && (it.type === 'text' ? { runs: [] } : { label: { ...it.label, runs: [] } }) }
-  return k === 'bold' ? patchRuns(it, 1, on) : k === 'hl' ? patchHl(it, on) : k === 'code' ? patchRuns(it, 3, on) : patchRuns(it, 4, d => decoSet(d, DECO[k], on)) }
+const patchFmt = (it, k, on) => (k === 'bold' ? patchRuns(it, 1, on) : k === 'hl' ? patchHl(it, on) : k === 'code' ? patchRuns(it, 3, on) : patchRuns(it, 4, d => decoSet(d, DECO[k], on)))
 const fmtOn = (h, k) => (k === 'bold' ? allChars(h, 1) : k === 'hl' ? allChars(h, 2) : k === 'code' ? allChars(h, 3) : allChars(h, 4, DECO[k]))
 
 // 도형 바꾸기(데스크톱 `_fill_swap_menu` 기본도형 8종 — 「내 심볼」은 심볼 팔레트를 옮길 때). 같은 _id라 붙은 화살표·라벨·색은 그대로
@@ -185,13 +184,28 @@ function Seg({ items, value, onPick }) {
 // − 값 + (휠로도). 여러 개를 골라 값이 다르면 「1~3px」처럼 범위로 보이고, ±는 각자에 같은 만큼 더함(차이 유지 — 2026-10-18 사용자 선택)
 // values = 고른 것들의 값, onStep(d) = 각자 d만큼(부르는 쪽이 범위 안으로 자름), grow = 줄 남은 폭을 다 씀
 export const stepClamp = (v, d, min, max, step) => +(Math.round(Math.min(max, Math.max(min, v + d)) / step) * step).toFixed(6)   // 0.1 단위의 떠다니는 소수 자리(1.2000000000000002) 없앰
-function Stepper({ values, step = 1, fmt = v => v, onStep, title, grow, testid }) {
+// −/+ 를 누르고 있으면 계속(0.4초 뒤부터, 오래 누를수록 빠르게 — 되돌리기는 같은 묶음 열쇠라 한 번에), 숫자를 두 번 누르면 직접 입력(2026-10-23 사용자).
+// onSet(값) = 쳐 넣은 값을 모두에 그대로(섞였어도 — 회전 칸과 같은 규칙). 없으면 지금 값과의 차이만큼 onStep
+function Stepper({ values, step = 1, fmt = v => v, onStep, onSet, title, grow, testid }) {
   const lo = Math.min(...values), hi = Math.max(...values), mixed = hi - lo > 1e-9
   const text = mixed ? `${String(fmt(lo)).replace(/[^\d.]+$/, '')}~${fmt(hi)}` : fmt(lo)
-  return <div data-testid={testid} title={mixed ? `${title} — 서로 다름(±는 각자에 더함)` : title} onWheel={e => onStep(e.deltaY < 0 ? step : -step)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: C.seg, borderRadius: 8, padding: 2, ...(grow ? { flex: 1, minWidth: 0 } : {}) }}>
-    <button aria-label={title + ' 줄이기'} onClick={() => onStep(-step)} style={btn(false, { width: 22 })}>−</button>
-    <span style={{ minWidth: 34, textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontSize: 12, whiteSpace: 'nowrap', padding: '0 2px' }}>{text}</span>
-    <button aria-label={title + ' 늘리기'} onClick={() => onStep(step)} style={btn(false, { width: 22 })}>+</button>
+  const latest = useRef(onStep); latest.current = onStep   // 누르고 있는 동안 = 다시 그린 뒤의 onStep(표 칸처럼 지금 값을 붙잡아 둔 것도 새 값으로)
+  const timer = useRef(null), [typing, setTyping] = useState(null)
+  const stop = () => { clearTimeout(timer.current); timer.current = null }
+  useEffect(() => stop, [])
+  const hold = d => e => { if (e.button !== 0) return; e.preventDefault(); latest.current(d); let n = 0
+    const tick = () => { latest.current(d); n++; timer.current = setTimeout(tick, Math.max(25, 80 - n * 3)) }
+    timer.current = setTimeout(tick, 400) }
+  const commit = v => { setTyping(null); const x = parseFloat(String(v).replace(/[^\d.\-]/g, '')); if (!Number.isFinite(x)) return; if (onSet) onSet(x); else if (!mixed) onStep(x - lo) }
+  const pm = (d, label) => <button aria-label={title + (d < 0 ? ' 줄이기' : ' 늘리기')} onPointerDown={hold(d)} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop}
+    onClick={e => { if (e.detail === 0) onStep(d) }} style={btn(false, { width: 22 })}>{label}</button>   // 글쇠(Enter·Space)로 누르면 한 번
+  return <div data-testid={testid} title={mixed ? `${title} — 서로 다름(±는 각자에 더함, 숫자 두 번 누르면 모두 같은 값)` : `${title} — 숫자 두 번 누르면 직접 입력`} onWheel={e => onStep(e.deltaY < 0 ? step : -step)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: C.seg, borderRadius: 8, padding: 2, ...(grow ? { flex: 1, minWidth: 0 } : {}) }}>
+    {pm(-step, '−')}
+    {typing != null ? <input data-testid={testid ? testid + '-input' : 'step-input'} autoFocus value={typing} onChange={e => setTyping(e.target.value)} onFocus={e => e.currentTarget.select()}
+        onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') commit(typing); if (e.key === 'Escape') setTyping(null) }} onBlur={() => commit(typing)}
+        style={{ all: 'unset', width: 38, textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontSize: 12, background: C.card, borderRadius: 4, outline: `1px solid ${C.on}` }} />
+      : <span data-testid={testid ? testid + '-value' : undefined} onDoubleClick={() => setTyping(mixed ? '' : String(+lo.toFixed(2)))} style={{ minWidth: 34, textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontSize: 12, whiteSpace: 'nowrap', padding: '0 2px', cursor: 'text' }}>{text}</span>}
+    {pm(step, '+')}
   </div>
 }
 // 회전 각도 — 쳐서 Enter(또는 칸을 벗어나면), 휠·↑↓는 1°씩. 서로 다르면 빈칸(쳐 넣으면 전부 그 각도 — 데스크톱과 같음)
@@ -242,17 +256,19 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
   useEdTick(liveEd)   // 고치는 중 = 편집기 커서·고른 글자가 바뀔 때마다 켜짐 상태 다시
   const edLive = liveEd && !liveEd.isDestroyed ? liveEd : null
   const fmtSt = edLive ? edState(edLive) : Object.fromEntries(['bold', 'italic', 'underline', 'strike', 'code', 'hl'].map(k => [k, hlItems.length > 0 && hlItems.every(it => fmtOn(hlHost(it), k))]))
-  const fmtAct = k => (edLive ? edAct(edLive, k, true) : set(it => patchFmt(it, k, !fmtSt[k]), { bold: '굵게', italic: '기울임', underline: '밑줄', strike: '취소선', code: '코드', hl: '형광펜', clear: '꾸밈 지우기' }[k]))
+  const fmtAct = k => (edLive ? edAct(edLive, k, true) : set(it => patchFmt(it, k, !fmtSt[k]), { bold: '굵게', italic: '기울임', underline: '밑줄', strike: '취소선', code: '코드', hl: '형광펜' }[k]))
   const tables = items.filter(it => it.type === 'table'), ptFmt = tables.length ? v => Math.round(v) + 'pt' : v => v + 'pt'   // 표 자동 크기는 11.3처럼 소수 — 반올림해 보임(「자동」 버튼 자리)
   const fillLabel = fillItems.every(it => fillKey(it) === 'bg') ? '바탕' : '채움'   // 글의 채움 = 글 뒤 바탕
   // 숫자 칸 — 각자에 d만큼(범위 안으로)
   const num = (list, get, d0, min, max, step, name, write) => ({ values: list.map(it => get(it) ?? d0), step,
-    onStep: d => { const ids = new Set(list.map(it => it._id)); set(it => (ids.has(it._id) ? write(it, stepClamp(get(it) ?? d0, d, min, max, step)) : null), name, name) } })
+    onStep: d => { const ids = new Set(list.map(it => it._id)); set(it => (ids.has(it._id) ? write(it, stepClamp(get(it) ?? d0, d, min, max, step)) : null), name, name) },
+    onSet: v => { const ids = new Set(list.map(it => it._id)); set(it => (ids.has(it._id) ? write(it, stepClamp(v, 0, min, max, step)) : null), name) } })
   const onArrows = f => it => (isArrow(it) ? f(it) : null)
   // 글자 줄들 — 크기 · 색 · (굵게 · 형광펜). 글만 골랐으면 카드 맨 위에(글이 주인공 — 2026-10-23)
   const hasText = (texts.length > 0 || !!edLive) && !cells   // 고치는 중이면 글이 아직 안 들어갔어도(새 상자에 치는 중)
   const textRows = hasText && <>
-    <Row label="크기"><Stepper testid="font-step" title="글자 크기" values={texts.length ? texts.flatMap(t => t.fonts || [t.font]) : [items[0]?.label?.font || items[0]?.font || 16]} onStep={d => set(it => { if (it.type === 'table' && !it.font) return stepTableCells(it, d); const p = patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })) ?? (edLive ? (it.type === 'text' ? { font: stepClamp(it.font || 12, d, 2, 200, 1) } : { label: { ...(it.label || { text: '' }), font: stepClamp(it.label?.font || 16, d, 2, 200, 1) } }) : null)   // 새 상자에 치는 중(글이 아직 안 들어감)이어도
+    <Row label="크기"><Stepper testid="font-step" title="글자 크기" onSet={v => { const pt = stepClamp(v, 0, 2, 200, 1)
+        set(it => { if (it.type === 'table') return { ...clearTableFont(it), font: pt }; const p = patchTexts(it, () => ({ font: pt })) ?? (edLive ? (it.type === 'text' ? { font: pt } : { label: { ...(it.label || { text: '' }), font: pt } }) : null); return growToFit(it, p) }, '글자 크기') }} values={texts.length ? texts.flatMap(t => t.fonts || [t.font]) : [items[0]?.label?.font || items[0]?.font || 16]} onStep={d => set(it => { if (it.type === 'table' && !it.font) return stepTableCells(it, d); const p = patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })) ?? (edLive ? (it.type === 'text' ? { font: stepClamp(it.font || 12, d, 2, 200, 1) } : { label: { ...(it.label || { text: '' }), font: stepClamp(it.label?.font || 16, d, 2, 200, 1) } }) : null)   // 새 상자에 치는 중(글이 아직 안 들어감)이어도
         return d > 0 ? growToFit(it, p) : p }, '글자 크기', '글자 크기')} fmt={ptFmt} />
       {tables.length > 0 && (() => { const on = !items.some(hasFixedFont)
         return <AutoToggle on={on} onClick={() => set(it => (it.type !== 'table' ? null : on ? stepTableCells(it, 0) : clearTableFont(it)), on ? '글자 크기 고정' : '글자 크기 자동')} /> })()}</Row>
@@ -288,9 +304,9 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
     {showLine && <Row label={boardsOnly ? '바탕' : wItems.length || tables.length ? '선' : '색'}><ColorChip id="line" keepEdit={!!edLive} pop={pop} setPop={setPop} value={color} title={boardsOnly ? '바탕 색' : '선 색'}
       onPick={(c, drag) => set(it => (lineKey(it) ? { [lineKey(it)]: c } : null), boardsOnly ? '바탕 색' : '색', drag ? 'color' : null)} /></Row>}
     {showLine && wItems.length > 0 && <Row label=""><div data-ppop="dash" style={{ position: 'relative', flex: 'none' }}>
-      <button title="선 모양" aria-expanded={pop === 'dash'} onClick={() => setPop(pop === 'dash' ? null : 'dash')} style={btn(pop === 'dash', { width: 52, background: C.seg, justifyContent: 'space-between', padding: '0 6px' })}>{style ? <svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" stroke="currentColor" strokeWidth="2" strokeDasharray={DASH[style]} strokeLinecap="round" /></svg> : <span style={{ fontSize: 11, color: C.muted }}>섞임</span>}<span style={{ color: C.muted }}>▾</span></button>
+      <button title="선 모양" aria-label="선 모양" aria-expanded={pop === 'dash'} onClick={() => setPop(pop === 'dash' ? null : 'dash')} style={btn(pop === 'dash', { width: 52, background: C.seg, justifyContent: 'space-between', padding: '0 6px' })}>{style ? <svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" stroke="currentColor" strokeWidth="2" strokeDasharray={DASH[style]} strokeLinecap="round" /></svg> : <span style={{ fontSize: 11, color: C.muted }}>섞임</span>}<span style={{ color: C.muted }}>▾</span></button>
       {pop === 'dash' && <div style={{ position: 'absolute', zIndex: 2, top: 28, left: 0, width: 126, background: C.card, border: `1px solid ${C.line}`, borderRadius: 8, padding: 3, boxShadow: '0 4px 12px rgba(0,0,0,.1)' }}>
-        {STYLES.map(([st, name]) => <button key={st} title={name} onClick={() => { set(it => (hasWidth(it) ? { style: st } : null), '선 모양'); setPop(null) }} style={btn(style === st, { width: '100%', justifyContent: 'space-between', padding: '0 8px' })}>
+        {STYLES.map(([st, name]) => <button key={st} title={name} onClick={() => set(it => (hasWidth(it) ? { style: st } : null), '선 모양', 'dash')} style={btn(style === st, { width: '100%', justifyContent: 'space-between', padding: '0 8px' })}>
           {dashIcon(st)}<span style={{ fontSize: 11, color: C.muted }}>{name}</span></button>)}
       </div>}
     </div><Stepper grow testid="width-step" title="선 굵기" {...num(wItems, it => it.width, 1, 1, 40, 1, '굵기', (it, v) => ({ width: v }))} fmt={v => v + 'px'} /></Row>}
@@ -360,7 +376,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
       return <>
         <div style={{ borderTop: `1px solid ${C.line}`, margin: '4px 0 0' }} />
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}><span style={{ fontWeight: 600 }}>칸</span><span style={{ fontSize: 11, color: C.muted }}>{n}개 · Shift+클릭으로 넓히기</span></div>
-        <Row label="크기"><Stepper title="칸 글자 크기" values={fontV} onStep={d => setCells((s, r, c) => ({ font: stepClamp(cellPt(t, r, c), d, 1, 200, 1) }), '칸 글자 크기', 'cfont')} fmt={x => Math.round(x) + 'pt'} />
+        <Row label="크기"><Stepper title="칸 글자 크기" onSet={v => setCells(() => ({ font: stepClamp(v, 0, 1, 200, 1) }), '칸 글자 크기')} values={fontV} onStep={d => setCells((s, r, c) => ({ font: stepClamp(cellPt(t, r, c), d, 1, 200, 1) }), '칸 글자 크기', 'cfont')} fmt={x => Math.round(x) + 'pt'} />
           <AutoToggle on={auto} onClick={() => (auto ? setCells((s, r, c) => ({ font: cellPt(t, r, c, true) }), '칸 글자 크기 고정') : setCells(() => ({ font: undefined }), '칸 글자 크기 자동'))} /></Row>
         <Row label="굵게"><Seg value={v(e => e.s.bold ?? !!(t.header && e.r === 0))} onPick={b => setCells(() => ({ bold: b }), '칸 굵게')} items={[[true, <b key="b">굵게</b>, '굵게'], [false, <span key="n">보통</span>, '보통']]} /></Row>
         <Row label="정렬"><Seg value={v(e => e.s.align || 'center')} onPick={a => setCells(() => ({ align: a === 'center' ? undefined : a }), '칸 정렬')}

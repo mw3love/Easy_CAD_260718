@@ -1,4 +1,4 @@
-// 글 꾸밈 버튼 한 줄 — 드래그 꾸미기 막대와 속성 카드 「글자」가 같이 씀(2026-10-23 사용자: 두 곳이 같은 항목이어야).
+// 글 꾸밈 버튼 한 줄 — 드래그 꾸미기 막대와 속성 카드 「글자」가 같이 씀(2026-10-23 사용자: 두 곳이 같은 항목이어야). 「꾸밈 지우기」는 뺌(같은 날 — 각 버튼을 다시 누르면 풀림)
 // st = { bold, italic, underline, strike, code, hl } 지금 켜짐, act(이름) = 누름. color = 글자색 버튼(막대만 — 속성 카드는 색 칸 줄이 따로)
 import { useEffect, useState } from 'react'
 
@@ -20,7 +20,6 @@ export function FmtButtons({ st, act, color, prefix = 'fmt', w = 24 }) {   // w 
     {sep}
     {color}
     {fbtn(st.hl, '형광펜 — 다시 누르면 지워요', <span style={{ width: 16, height: 12, borderRadius: 2, background: HL_CSS }} />, () => act('hl'), `${prefix}-형광펜`, w)}
-    {fbtn(false, '꾸밈 지우기', <span style={{ fontSize: 12 }}>T<sub style={{ fontSize: 9 }}>x</sub></span>, () => act('clear'), `${prefix}-꾸밈`, w)}
   </>
 }
 // TipTap 편집기 — 지금 켜짐 · 누름. whole = 고른 글자가 없으면 글 전체에(속성 카드)
@@ -31,7 +30,7 @@ export function edRun(ed, f, whole) {
   f(ed.chain().focus()).run()
 }
 export const edAct = (ed, k, whole) => { const st = edState(ed)
-  edRun(ed, c => (k === 'bold' ? c.toggleBold() : k === 'code' ? c.toggleCode() : k === 'hl' ? (st.hl ? c.unsetBackgroundColor() : c.setBackgroundColor(HL_CSS)) : k === 'clear' ? c.unsetAllMarks() : c.toggleMark(k)), whole) }
+  edRun(ed, c => (k === 'bold' ? c.toggleBold() : k === 'code' ? c.toggleCode() : k === 'hl' ? (st.hl ? c.unsetBackgroundColor() : c.setBackgroundColor(HL_CSS)) : c.toggleMark(k)), whole) }
 // 편집기가 바뀔 때마다 다시 그림
 export function useEdTick(ed) {
   const [, tick] = useState(0)

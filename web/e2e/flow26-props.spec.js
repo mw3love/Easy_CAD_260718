@@ -109,6 +109,39 @@ test('글자 굵게 — 도형 안 글 전체, 다시 누르면 보통(형광펜
   expect((await last(page)).label.runs[0][3]).toBe(false)
 })
 
+test('−/+ 누르고 있으면 계속(되돌리기 한 번) · 숫자 두 번 누르면 직접 입력 · 선 모양은 골라도 목록이 열린 채 · 꾸밈 지우기 없음', async ({ page }) => {
+  await openBoard(page, boardName('stepper')); await setCam(page)
+  await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 160, y: 80 })
+  const plus = page.locator('[aria-label="선 굵기 늘리기"]')
+  await plus.hover(); await page.mouse.down(); await page.waitForTimeout(900); await page.mouse.up()
+  const w = (await last(page)).width
+  expect(w).toBeGreaterThan(4)                                                   // 0.4초 뒤부터 계속 늘어남
+  await page.waitForTimeout(300); expect((await last(page)).width).toBe(w)       // 떼면 멈춤
+  await page.mouse.move(700, 600); await page.keyboard.press('Control+z')
+  expect((await last(page)).width ?? 1).toBe(1)                                   // 되돌리기 한 번에 통째로
+  await page.getByTestId('width-step-value').dblclick()
+  const inp = page.getByTestId('width-step-input'); await expect(inp).toBeFocused()
+  await page.keyboard.type('7'); await page.keyboard.press('Enter')
+  expect((await last(page)).width).toBe(7)
+
+  await page.getByRole('button', { name: '선 모양' }).click()
+  await page.getByRole('button', { name: '점선' }).click()
+  await expect(page.getByRole('button', { name: '도트' })).toBeVisible()           // 골라도 열린 채(눌러 가며 비교)
+  await page.getByRole('button', { name: '도트' }).click()
+  expect((await last(page)).style).toBe(3)
+  await page.keyboard.press('Escape'); await expect(page.getByRole('button', { name: '도트' })).toHaveCount(0)
+
+  await page.keyboard.type('글'); await page.keyboard.press('Escape'); await clickScene(page, 10, 10)
+  await expect(page.getByTestId('props-fmt')).toBeVisible()
+  await expect(page.getByTestId('pfmt-꾸밈')).toHaveCount(0)                    // 꾸밈 지우기 뺌(각 버튼을 다시 누르면 풀림)
+  const f0 = (await last(page)).label.font
+  await page.getByTestId('font-step-value').dblclick(); await page.keyboard.type('30'); await page.keyboard.press('Escape')   // Esc = 취소
+  await expect(page.getByTestId('font-step-input')).toHaveCount(0)
+  expect((await last(page)).label.font).toBe(f0)
+  await page.getByTestId('font-step-value').dblclick(); await page.keyboard.type('20'); await page.keyboard.press('Enter')
+  expect((await last(page)).label.font).toBe(20)
+})
+
 test('KAIROS 대화창 폭 — 왼쪽 경계를 끌면 넓어지고, 다시 열어도 기억, 두 번 누르면 기본 360', async ({ page }) => {
   const name = boardName('chatw')
   await openBoard(page, name, { chat: true })
