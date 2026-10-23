@@ -109,6 +109,21 @@ def decide(api_key: str, text: str, has_context: bool = False, *, has_items: boo
     return kind, "ai", ask_choices(choice, kind, probs, has_items)
 
 
+# 되묻기 버튼 대신 입력 칸에 친 말(「선으로 해 줘」·「그림인데 수채화로」) → 버튼 중 하나. 앞이 먼저(「선 그림」은 그림보다 아이콘)
+CHOICE_WORDS = [("icon", r"선\s*(으로|그림|도형)|도형|svg|벡터|고칠\s*수|아이콘으로"), ("image", r"그림|이미지|사진|일러스트|수채화|유화|그려"),
+                ("report", r"문서|보고서|한\s*장|인쇄"), ("tidy", r"정돈|묶어|옮겨"), ("search", r"검색|찾아\s*(줘|봐)|최신"),
+                ("board", r"칠판에서|적어\s*둔"), ("chat", r"그냥|글로|대화로|설명")]
+
+
+def pick_from(text: str, choices: list) -> str:
+    """되묻기에 글로 답함 → 그 말이 가리키는 버튼 길, 못 알아들으면 ""(서버는 다시 묻지 않고 원래 1등 길 — 한 요청에 한 번만 묻기)."""
+    import re
+    for k, words in CHOICE_WORDS:
+        if k in choices and re.search(words, text or "", re.I):
+            return k
+    return ""
+
+
 def ask_choices(choice: str, kind: str, probs: dict, has_items: bool = True) -> list:
     """판단 모델 1·2등이 가깝고(차 < `ASK_GAP`) 비싼 길이 끼면 [1등, 2등] — 낱말 손질이 길을 바꿨으면(말이 분명) 안 물음."""
     if kind != choice:

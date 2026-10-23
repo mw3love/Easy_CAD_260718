@@ -91,3 +91,25 @@ def test_server_asks_before_making(server):
     assert _post(base, kind="icon", messages=q)["kind"] == "icon"       # 버튼 = 그 길 이름표로 다시
     assert _post(base, ask_pref={"icon|image": "icon"}, messages=q)["kind"] == "icon"   # 기억된 길이면 안 물음
     assert made == ["펭귄 아이콘 그려줘", "펭귄 아이콘 그려줘"]
+
+
+def test_pick_from_typed_reply():
+    both = ["image", "icon"]
+    assert route.pick_from("선으로 해 줘", both) == "icon"
+    assert route.pick_from("선 그림으로", both) == "icon"          # 「그림」보다 「선 그림」이 먼저
+    assert route.pick_from("그림인데 수채화로", both) == "image"
+    assert route.pick_from("음 잘 모르겠어", both) == ""            # 못 알아들음 — 서버는 원래 1등 길(다시 안 물음)
+    assert route.pick_from("문서로", ["chat", "report"]) == "report"
+    assert route.pick_from("문서로", both) == ""                    # 버튼에 없는 길은 안 고름
+
+
+def test_server_typed_reply_and_remembered_flag(server):
+    base, made = server
+    q = [{"role": "user", "content": "펭귄 아이콘 그려줘\n선으로 해 줘"}]
+    out = _post(base, ask_add="선으로 해 줘", ask_reply={"choices": ["image", "icon"], "default": "image"}, messages=q)
+    assert out["kind"] == "icon" and "remembered" not in out
+    out = _post(base, ask_add="음 잘 모르겠어", ask_reply={"choices": ["image", "icon"], "default": "icon"}, messages=q)
+    assert out["kind"] == "icon"                                     # 못 알아들으면 원래 1등 길 — 다시 묻지 않음
+    out = _post(base, ask_pref={"icon|image": "icon"}, messages=[{"role": "user", "content": "펭귄 아이콘 그려줘"}])
+    assert out["remembered"] == {"key": "icon|image", "choices": ["image", "icon"]}   # 대화창이 「그림으로 바꾸기」를 붙임
+    assert "remembered" not in _post(base, kind="icon", messages=[{"role": "user", "content": "펭귄 아이콘 그려줘"}])   # 버튼·이름표로 고른 건 기억이 아님

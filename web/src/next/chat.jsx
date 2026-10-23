@@ -218,7 +218,8 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
     return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
       ...(d.images?.length ? { images: d.images, prompt: d.caption || history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}),
       ...(d.svgs?.length ? { svgs: d.svgs, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),   // caption = 이어 고친 그림이면 처음 요청(서버)
-      ...(d.html ? { html: d.html, title: d.title || '정리 문서' } : {}), ...(frames ? { frames } : {}), ...(d.kind === 'ask' ? { choices: d.choices || [], askKey: d.key || '' } : {}) }
+      ...(d.html ? { html: d.html, title: d.title || '정리 문서' } : {}), ...(frames ? { frames } : {}), ...(d.kind === 'ask' ? { choices: d.choices || [], askKey: d.key || '' } : {}),
+      ...(d.remembered ? { askKey: d.remembered.key, alt: (d.remembered.choices || []).filter(k => k !== d.kind) } : {}) }   // 기억으로 고른 답 — 「다른 쪽으로」 버튼
   }
   // 🎤 실시간 받아쓰기(2026-10-20) — 말하는 동안 입력 칸에 글자가 쌓임(누르기 전 글 뒤에), 다시 누르거나 보내면 멈춤. 직접 치면 멈춤
   const [mic, setMic] = useState('off'), [micErr, setMicErr] = useState(''), micStop = useRef(null), micBase = useRef('')
@@ -234,6 +235,8 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
 
   async function send(text = null, kind = '', from = null) {   // text·kind = 밖에서 시킨 질문(칠판 우클릭 「정리 문서 만들기」 — 입구는 대화창 하나), from = 「그림으로도」(정리 문서와 같은 자료)
     if (text == null && !kind) kind = pickTool   // 입력 칸에서 보낼 때만 이름표(칠판 우클릭 등 밖에서 시킨 질문은 제 길)
+    const pend = text == null && !from && replyTo == null ? msgs.findLastIndex(m => m.role !== 'error') : -1
+    if (pend >= 0 && msgs[pend].kind === 'ask' && draft.trim() && !busy) return choose(pend, kind, draft.trim())   // 되묻기에 글로 답함(§8 항목64)
     const q = (text ?? draft).trim() || (text == null ? EMPTY_ASK[kind] || '' : ''); if (!q || busy) return
     if (text == null && mic !== 'off') micStop.current?.()   // 말하다 보내면 받아쓰기도 멈춤(지금까지 글로 보냄)
     const ctx = from ? from.context || '' : contextText(sel), n = from ? from.ctxCount : sel.length
@@ -254,14 +257,20 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
     } finally { setBusy(null) }
   }
-  // 되묻기 버튼 — 고른 길을 기억하고, 같은 질문(그 앞 대화까지)을 그 길로 보내 이 되묻기 자리에 답을 끼움
-  async function choose(i, k) {
+  // 되묻기 버튼(또는 기억으로 고른 답의 「다른 쪽으로」) — 고른 길을 기억하고, 같은 질문(그 앞 대화까지)을 그 길로 보내 이 자리에 답을 끼움.
+  // add = 덧붙일 말(입력 칸 — 버튼과 같이 눌렀거나 버튼 대신 친 글): 처음 질문 뒤에 붙여 보내고, 길이 안 정해졌으면 서버가 그 말로 고름(못 알아들으면 원래 1등 — 다시 안 물음)
+  async function choose(i, k, add = '') {
     const history = msgs.slice(0, i).filter(m => m.role !== 'error' && m.kind !== 'ask'), m = msgs[i]
     if (busy || history.at(-1)?.role !== 'user') return
-    if (m.askKey) rememberAsk(m.askKey, k)
+    if (m.askKey && k) rememberAsk(m.askKey, k)
+    if (!add && m.kind === 'ask' && draft.trim()) add = draft.trim()
+    const q = history.at(-1), sent = add ? [...history.slice(0, -1), { ...q, content: `${q.content}\n${add}` }] : history
+    const shown = add ? [...msgs.slice(0, i), { role: 'user', content: add, at: Date.now(), addTo: true }] : msgs.slice(0, i)   // 덧붙인 말도 기록에 보이게
+    if (add) { setDraft(''); setPickTool(''); if (mic !== 'off') micStop.current?.() }
+    const extra = { ...(add && !k ? { ask_add: add, ask_reply: { choices: m.choices || [], default: m.choices?.[0] || '' } } : {}) }
     const boardImgs = selImgs.length ? await Promise.all(selImgs.map(shrinkImage)) : []
     setBusy(Date.now()); setBusyJob(k)
-    try { const a = await ask(history, k, '', boardImgs.length ? { board_images: boardImgs } : {}); update(msgs.map((x, j) => (j === i ? a : x))) } catch (e) {
+    try { const a = await ask(sent, k, '', { ...extra, ...(boardImgs.length ? { board_images: boardImgs } : {}) }); update([...shown, a, ...msgs.slice(i + 1)]) } catch (e) {
       setMsgs([...msgs.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }])
     } finally { setBusy(null) }
   }
@@ -396,7 +405,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
         {loaded && !msgs.length && <div style={{ ...css.meta, fontSize: 12.5, lineHeight: 1.6 }}>
           무엇이든 물어보세요. 남길 답은 「칠판에 붙이기」나 끌어다 놓기로 메모가 됩니다.<br />칠판에서 메모나 글을 고른 채 물으면 그 내용을 같이 보냅니다.</div>}
         {msgs.map((m, i) => m.role === 'user'
-          ? <div key={i} style={css.me}>{m.reply_to ? <span style={css.ctx}>↩ 「{replyLabel(m.reply_to)}」에 이어서</span> : null}
+          ? <div key={i} style={css.me}>{m.addTo ? <span style={css.ctx}>위 질문에 덧붙여</span> : null}{m.reply_to ? <span style={css.ctx}>↩ 「{replyLabel(m.reply_to)}」에 이어서</span> : null}
             {m.ctxCount ? <span style={css.ctx}>칠판에서 고른 것 {m.ctxCount}개와 함께</span> : null}{m.imgCount ? <span style={css.ctx}>칠판에서 고른 그림 {m.imgCount}장을 고쳐 달라고</span> : null}{m.content}</div>
           : m.role === 'error'
             ? <div key={i} style={css.err}>{m.content}<div style={{ marginTop: 6 }}><button style={css.ghost} onClick={retry}>질문 다시 고치기</button></div></div>
@@ -404,12 +413,16 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                 <span data-testid="answer-kind" style={{ ...css.kind, ...(KINDS[m.kind] ? KINDS[m.kind][1] : null) }}>{(KINDS[m.kind] || KINDS.chat)[0]}</span>
               </div>
+              {m.alt?.length > 0 && <div data-testid="ask-remembered" style={{ ...css.meta, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 }}>
+                <span>기억한 대로 {(ASK_LABEL[m.kind] || [m.kind])[0]} 했어요</span>
+                {m.alt.map(k => <button key={k} data-testid="ask-other" data-kind={k} style={css.ghost} disabled={!!busy} onClick={() => choose(i, k)} title="같은 질문을 이쪽으로 다시 — 다음엔 다시 물어요">{(ASK_LABEL[k] || [k])[0]} 바꾸기</button>)}
+              </div>}
               <Answer text={m.content} />
               {m.kind === 'ask' && <div data-testid="ask-choices" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
                 {(m.choices || []).map(k => <button key={k} data-testid="ask-choice" data-kind={k} disabled={!!busy} onClick={() => choose(i, k)} title={(ASK_LABEL[k] || [])[1]}
                   style={{ ...css.pin, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, padding: '6px 10px', textAlign: 'left' }}>
                   <span>{(ASK_LABEL[k] || [k])[0]}</span><span style={{ ...css.meta, fontWeight: 400 }}>{(ASK_LABEL[k] || [])[1]}</span></button>)}
-                <span style={css.meta}>같은 걸 두 번 고르면 다음부터는 묻지 않고 바로 해요</span>
+                <span style={css.meta}>보기에 없으면 아래 칸에 적어 주세요. 같은 걸 두 번 고르면 다음엔 바로 해요</span>
               </div>}
               {m.html && <div data-testid="answer-doc" style={{ marginTop: 6 }}>   {/* 정리 문서 미리보기 — A4 폭 794px를 대화창 폭에 맞춰 줄임(스크립트 없는 iframe) */}
                 <div style={{ height: 300, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', cursor: 'zoom-in' }} title="크게 보기·인쇄" onClick={() => openHtml(m.html)}>
@@ -477,7 +490,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
         {selN > 0 && (sel.length > 0 || selImgs.length > 0) && <span data-testid="sel-chip" style={css.chip}>{selN}개 선택됨</span>}{/* 2026-10-21 사용자: 글·그림 칩 둘 + 사용법 문장 → 한 칩(사용법은 설명 페이지로) */}
         {pickTool && <span data-testid="tool-chip" style={{ ...css.chip, color: '#da7756', background: 'rgba(218,119,86,.14)', cursor: 'pointer' }} onClick={() => setPickTool('')} title="누르면 이름표를 떼고 다시 앱이 길을 골라요">
           {TOOLS.find(t => t[0] === pickTool)?.[1]} ✕</span>}
-        <textarea style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder={TOOLS.find(t => t[0] === pickTool)?.[3] || '물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)'}
+        <textarea style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder={TOOLS.find(t => t[0] === pickTool)?.[3] || (msgs.filter(m => m.role !== 'error').at(-1)?.kind === 'ask' ? '버튼을 누르거나, 원하는 걸 직접 적어 주세요' : '물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)')}
           onChange={e => { if (mic === 'listen') micStop.current?.(); setDraft(e.target.value) }}
           onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>   {/* 모델 고르기 = 입력 칸 옆(2026-10-20 사용자 — Gemini·Claude·ChatGPT처럼 묻는 자리에서) */}

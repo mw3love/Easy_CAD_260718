@@ -110,6 +110,7 @@ class Handler(SimpleHTTPRequestHandler):
             req = json.loads(self.rfile.read(n))
         except ValueError:
             return self._json(400, {"error": "json"})
+        self._extra = {}   # 아이콘·그림 답에 덧붙일 칸(되묻기 기억 — 연결을 다시 쓸 수 있어 요청마다 비움)
         key = self._key()
         if not key:
             return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
@@ -117,6 +118,10 @@ class Handler(SimpleHTTPRequestHandler):
             msgs, ctx = req.get("messages") or [], req.get("context") or ""
             last = next((m for m in reversed(msgs) if isinstance(m, dict) and m.get("role") == "user"), {})
             kind = req.get("kind") or ""
+            reply = req.get("ask_reply") if isinstance(req.get("ask_reply"), dict) else None
+            if not kind and reply:   # 되묻기 버튼 대신 입력 칸에 친 말(§8 항목64) — 그 말이 가리키는 버튼, 못 알아들으면 원래 1등 길(다시 안 물음)
+                kind = route.pick_from(str(req.get("ask_add") or ""), [str(c) for c in reply.get("choices") or []]) or str(reply.get("default") or "") or "chat"
+                sys.stderr.write("[되묻기 답] %s\n" % kind)
             fu = board_image.followup(msgs)   # 바로 앞 답이 그림이면 그 줄기(요청·찾은 정보)
             # 칠판에서 고른 그림(대화 기록엔 안 남음, 2026-10-20 사용자 — 칠판에서 고르고 말하기) — data:image만, 4장까지
             bimgs = [s for s in req.get("board_images") or [] if isinstance(s, str) and s.startswith("data:image/")][:4]
@@ -135,6 +140,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if choices:   # 애매하고 비싼 갈림길 — 만들기 전에 버튼으로 물음(§8 항목64). 누르면 대화창이 그 길 이름표로 다시 보냄
                     return self._json(200, {"kind": "ask", "choices": choices, "default": kind, "key": "|".join(sorted(choices)),
                                             "content": "어느 쪽으로 만들까요?", "model": route.ROUTE_MODEL if how == "ai" else "낱말 규칙", "elapsed": 0})
+                if board_chat.maybe_icon(text) and prefs.get("icon|image") == kind:   # 기억으로 고른 길 — 대화창이 답에 「다른 쪽으로」 버튼을 붙임
+                    self._extra = {"remembered": {"key": "icon|image", "choices": ["image", "icon"]}}
                 if kind == "icon":   # 되묻기에서 두 번 고른 길(`ask_pref`)
                     return self._icon(text, key, "", bimgs[0] if bimgs else "")
             refs = None
@@ -213,7 +220,7 @@ class Handler(SimpleHTTPRequestHandler):
         head = "고른 아이콘을 바탕으로 고쳤어요" if base_svg else "고른 그림을 보고 그렸어요" if image_url else f"아이콘 후보 {len(out['svgs'])}개"
         # 선 굵기·색은 칠판 펜이 정함(SVG 원본 값은 안 읽음 — 데스크톱과 같게) — 「굵게」라고 했는데 그대로면 헷갈림(2026-10-23 실측)
         tip = "\n\n선 굵기·색은 붙인 뒤 오른쪽 위 속성 카드 「선」에서 바로 바꿀 수 있어요." if re.search(r"굵|가늘|얇|색", ask) else ""
-        return self._json(200, {"kind": "icon", "content": head + " — 누르면 칠판에 붙어요(선 하나하나 고칠 수 있어요)" + tip, **out})
+        return self._json(200, {"kind": "icon", "content": head + " — 누르면 칠판에 붙어요(선 하나하나 고칠 수 있어요)" + tip, **out, **getattr(self, "_extra", {})})
 
     def _report(self, name: str, ask: str, material: str, prev_html: str, key: str):
         """정리 문서 → {"kind": "report", "content", "title", "html", "model", "elapsed"} — 자료 = 고른 것의 글, 없으면 이 칠판 전체 글."""
@@ -280,7 +287,7 @@ class Handler(SimpleHTTPRequestHandler):
         el = round(time.time() - t0, 1)
         sys.stderr.write("[그림] %s %d장 %.1f초 · %s크레딧\n" % (out["model"], len(urls), el, out.get("credits")))
         head = f"{facts.get('head') or board_image.FACTS_HEAD}({facts['model']}).\n{facts['content']}\n\n" if facts else note
-        return self._json(200, {"kind": "image", "content": head + f"그림 후보 {len(urls)}장 — 마음에 드는 것을 눌러 칠판에 붙여요", "images": urls,
+        return self._json(200, {"kind": "image", "content": head + f"그림 후보 {len(urls)}장 — 마음에 드는 것을 눌러 칠판에 붙여요", "images": urls, **getattr(self, "_extra", {}),
                                 "model": out["model"], "elapsed": el, "credits": out.get("credits"), **({"sources": facts["sources"]} if facts and facts.get("sources") else {}),
                                 **({"caption": caption} if caption else {})})
 
