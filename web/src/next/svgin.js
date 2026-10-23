@@ -141,3 +141,17 @@ export const svgFits = svg => !/\btransform\s*=|<(use|image|clipPath|mask|patter
 
 // 붙여넣은 글이 SVG 코드인가(AI 답에서 복사한 것 — 앞의 <?xml>·주석은 봐줌)
 export const looksSvg = t => /^\s*(<\?xml[^>]*\?>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE[^>]*>\s*)?<svg[\s>]/i.test(t || '') && /<\/svg>\s*$/i.test(t || '')
+
+// 대화창 아이콘 후보 미리보기 — 칠판에 들어갈 도형 그대로 그린 SVG 글(원본 색·채움이 아니라 우리 선으로 — 붙이면 보이는 모양과 같게)
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+export function svgPreview(svg, ink = '#222') {
+  const n = v => +v.toFixed(2), body = svgItems(svg, 100, { x: 50, y: 50 }).items.map(it =>
+    it.type === 'line' ? `<line x1="${n(it.line[0])}" y1="${n(it.line[1])}" x2="${n(it.line[2])}" y2="${n(it.line[3])}"/>`
+      : it.type === 'rect' ? `<rect x="${n(it.rect[0])}" y="${n(it.rect[1])}" width="${n(it.rect[2])}" height="${n(it.rect[3])}"/>`
+        : it.type === 'ellipse' ? `<ellipse cx="${n(it.rect[0] + it.rect[2] / 2)}" cy="${n(it.rect[1] + it.rect[3] / 2)}" rx="${n(it.rect[2] / 2)}" ry="${n(it.rect[3] / 2)}"/>`
+          : it.type === 'polygon' ? `<${it.closed ? 'polygon' : 'polyline'} points="${it.pts.map(p => p.map(n).join(',')).join(' ')}"/>`
+            : it.type === 'path' ? `<path d="${it.elements.map(e => e[0] + e.slice(1).map(n).join(' ')).join(' ')}"/>`
+              : `<text x="${n(it.pos[0])}" y="${n(it.pos[1] + it.font)}" font-size="${it.font}" fill="${ink}" stroke="none">${esc(it.text)}</text>`).join('')
+  // 선은 늘 가늘게(크기와 상관없이 1.5px) — 칠판도 굵기는 원본이 아니라 지금 펜(데스크톱과 같게), 미리보기가 굵으면 「굵게 해 줘」가 된 줄 앎(실측)
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -4 108 108" fill="none" stroke="${ink}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><style>*{vector-effect:non-scaling-stroke}</style>${body}</svg>`
+}

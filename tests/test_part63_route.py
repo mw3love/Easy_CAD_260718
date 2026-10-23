@@ -66,7 +66,8 @@ def test_route_falls_back_to_rules():
 
 def test_self_check_turns_model_off_when_worse_than_rules():
     right = {route._state_text(q, bool(c)): want for q, c, want in route.CASES}
-    res = route.self_check("k", http=_Http(lambda s: (right[s], 0.9, {right[s]: 0.9})), base_url="https://g")
+    jev = lambda s: right[s] if right[s] in route.CRITERIA else "image"   # 아이콘 길은 판단 모델에 없음 — 그림으로 답해도 낱말 손질이 아이콘으로(§8 항목63)
+    res = route.self_check("k", http=_Http(lambda s: (jev(s), 0.9, {jev(s): 0.9})), base_url="https://g")
     assert res["ai"] == len(route.CASES) and res["use_ai"] and route.state["ai"]
     res = route.self_check("k", http=_Http(("image", 0.9, {"image": 0.9})), base_url="https://g")   # 망가진 모델 = 거의 다 그림
     assert res["ai"] < res["rules"] and not res["use_ai"] and not route.state["ai"]

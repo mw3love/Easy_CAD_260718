@@ -38,6 +38,18 @@ _BOARD_WORDS = re.compile(r"지난번|저번|예전에|아까|칠판에(서)?\s*
 # 그림(§8 항목61 ③-4) — 「그려줘·일러스트·이미지 만들어」. 흐름도·도면·표처럼 칠판 도형으로 그릴 것은 그림 모델이 아니라 대화로(그림 모델은 글자·선이 엉킴)
 _IMAGE_WORDS = re.compile(r"그려\s*(줘|주세요|봐)|그림\s*(을|으로|좀)?\s*(그려|만들|생성)|이미지\s*(를|로)?\s*(만들|생성|그려)|일러스트|삽화|캐릭터\s*(만들|그려)")
 _DIAGRAM_WORDS = re.compile(r"흐름도|순서도|플로우|도면|계통도|다이어그램|표로|마인드맵|조직도")
+# 아이콘(§8 항목63) — 선을 고칠 수 있는 SVG 도형(`board_icon`). 「아이콘·심볼·기호」 + 만들기 말이 같이 있을 때만(「아이콘 만드는 법」·「엑셀 아이콘 어디」는 대화)
+_ICON_WORDS = re.compile(r"아이콘|심볼|기호|픽토그램|벡터|svg|선\s*그림|라인\s*아트", re.I)
+_MAKE_WORDS = re.compile(r"그려|그리|만들|생성|디자인|바꿔|바꾸|으로\s*(줘|해)")
+_HOWTO_WORDS = re.compile(r"방법|어떻게|하는\s*법|드는\s*법|뭐야|뭔가요|무엇|어디|알려|종류|추천")
+
+
+def is_icon(text: str) -> bool:
+    """「파라볼라 안테나 아이콘 그려 줘」·「이 그림 심볼로 바꿔 줘」 → 아이콘 길."""
+    t = text or ""
+    return bool(_ICON_WORDS.search(t) and _MAKE_WORDS.search(t) and not _HOWTO_WORDS.search(t))
+
+
 # 정리 문서(「정리해 줘」 ①) — 칠판 자료를 아티팩트 같은 보고서·인포그래픽 한 장으로(`board_report`)
 _REPORT_WORDS = re.compile(r"정리해\s*(줘|주세요|봐)|정리\s*(문서|보고서)|보고서|인포그래픽|브리핑\s*(자료|문서|으로)|한\s*장(으로|짜리)|요약\s*(문서|자료|보고)|인쇄용")
 # 정리정돈(「정리해 줘」 ②) — 고른 것을 지우지 않고 주제별로 묶어 옮김(`board_tidy`). 「정리해 줘」만은 ①(문서) — 묶기·정돈 말이 있고 문서 말이 없을 때만
@@ -58,7 +70,7 @@ _NO_SEARCH = re.compile(r"칠판에서 고른|이 (메모|글|카드)|위 (내�
 
 
 def guess_kind(text: str, has_context: bool = False) -> str:
-    """질문 → "tidy"(정리정돈) | "report"(정리 문서) | "board"(칠판에서 찾아 답) | "image"(그림 후보) | "search"(웹 검색) | "chat"(대화).
+    """질문 → "tidy"(정리정돈) | "report"(정리 문서) | "board"(칠판에서 찾아 답) | "icon"(아이콘 후보) | "image"(그림 후보) | "search"(웹 검색) | "chat"(대화).
     낱말 규칙(데스크톱 `guess_kind`처럼) — 칠판에서 고른 글을 다루는 말이면 대화."""
     t = text or ""
     if _TIDY_WORDS.search(t) and not _DOC_WORDS.search(t):
@@ -67,6 +79,8 @@ def guess_kind(text: str, has_context: bool = False) -> str:
         return "report"
     if _BOARD_WORDS.search(t):
         return "board"
+    if is_icon(t):
+        return "icon"
     if _IMAGE_WORDS.search(t) and not _DIAGRAM_WORDS.search(t):
         return "image"
     if has_context and _NO_SEARCH.search(t):

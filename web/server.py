@@ -36,7 +36,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_image, board_ocr, board_report, board_tidy, kr_tools, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_icon, board_image, board_ocr, board_report, board_tidy, kr_tools, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -99,7 +99,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
         # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
-        jobs = {"tidy": board_tidy.TIDY_MODEL, "report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL}
+        jobs = {"tidy": board_tidy.TIDY_MODEL, "report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL}
         return self._json(200, {**hit[1], "jobs": jobs})
 
     def _chat(self):
@@ -120,6 +120,12 @@ class Handler(SimpleHTTPRequestHandler):
             fu = board_image.followup(msgs)   # 바로 앞 답이 그림이면 그 줄기(요청·찾은 정보)
             # 칠판에서 고른 그림(대화 기록엔 안 남음, 2026-10-20 사용자 — 칠판에서 고르고 말하기) — data:image만, 4장까지
             bimgs = [s for s in req.get("board_images") or [] if isinstance(s, str) and s.startswith("data:image/")][:4]
+            text, base_svg = str(last.get("content", "")), str(req.get("base_svg") or "")[:60000]
+            follow_svg = bool(base_svg and board_icon.FOLLOW_WORDS.search(text))   # 아이콘 답 뒤 「선을 더 굵게」 = 고른 아이콘 고치기
+            if not kind and (board_chat.is_icon(text) or follow_svg):
+                kind = "icon"   # 그림 고치기보다 먼저 — 「이 그림 아이콘으로 바꿔 줘」는 그림을 보고 아이콘(§8 항목63)
+            if kind == "icon":
+                return self._icon(text, key, base_svg if follow_svg else "", "" if follow_svg else (bimgs[0] if bimgs else ""))
             if not kind and (fu or bimgs) and (board_image.FOLLOW_WORDS.search(str(last.get("content", ""))) or board_chat._IMAGE_WORDS.search(str(last.get("content", "")))):
                 kind = "image"   # 그림 뒤·그림을 고른 채 「날짜도 넣어 줘」 = 그 그림 고치기(판단 모델은 앞 대화·고른 그림을 안 봄)
             if not kind:   # 길 고르기 = 판단 모델 jev + 낱말 규칙 바닥(`easycad/ai/route.py`, 2026-10-20 사용자 선택)
@@ -190,6 +196,18 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(502, {"error": f"KAIROS 호출 실패: {e}"})
         sys.stderr.write("[대화] %s %.1f초\n" % (out["model"], out["elapsed"]))
         return self._json(200, out)
+
+    def _icon(self, ask: str, key: str, base_svg: str = "", image_url: str = ""):
+        """아이콘 → {"kind": "icon", "content", "svgs": [SVG 글…], "model", "elapsed"} — 도형으로 바꾸기는 칠판(`svgin.js`), 대화 기록에 SVG 글 그대로(작음)."""
+        try:
+            out = board_icon.make(key, ask, base_svg=base_svg, image_url=image_url, base_url=gw.resolve_base_url())
+        except Exception as e:
+            return self._json(502, {"error": f"KAIROS 아이콘 만들기 실패: {e}"})
+        sys.stderr.write("[아이콘] %s %d개 %.1f초%s\n" % (out["model"], len(out["svgs"]), out["elapsed"], " (고치기)" if base_svg else " (그림 보고)" if image_url else ""))
+        head = "고른 아이콘을 바탕으로 고쳤어요" if base_svg else "고른 그림을 보고 그렸어요" if image_url else f"아이콘 후보 {len(out['svgs'])}개"
+        # 선 굵기·색은 칠판 펜이 정함(SVG 원본 값은 안 읽음 — 데스크톱과 같게) — 「굵게」라고 했는데 그대로면 헷갈림(2026-10-23 실측)
+        tip = "\n\n선 굵기·색은 붙인 뒤 오른쪽 위 속성 카드 「선」에서 바로 바꿀 수 있어요." if re.search(r"굵|가늘|얇|색", ask) else ""
+        return self._json(200, {"kind": "icon", "content": head + " — 누르면 칠판에 붙어요(선 하나하나 고칠 수 있어요)" + tip, **out})
 
     def _report(self, name: str, ask: str, material: str, prev_html: str, key: str):
         """정리 문서 → {"kind": "report", "content", "title", "html", "model", "elapsed"} — 자료 = 고른 것의 글, 없으면 이 칠판 전체 글."""

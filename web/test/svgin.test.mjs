@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { svgItems, svgFits } from '../src/next/svgin.js'
+import { svgItems, svgFits, svgPreview, looksSvg } from '../src/next/svgin.js'
 
 const cases = JSON.parse(readFileSync(new URL('./fixtures/svg_cases.json', import.meta.url)))
 const TOL = 1e-6
@@ -41,4 +41,15 @@ test('끌어 놓은 SVG — 우리가 읽는 모양이면 도형, 옮기기·되
 test('숫자가 모자란 경로는 거기까지만(데스크톱은 파일 전체 실패 — 웹은 부분 성공)', () => {
   const { items } = svgItems('<svg viewBox="0 0 10 10"><path d="M1 1 L5 5 L7"/></svg>')
   assert.deepEqual(items[0].elements, [['M', 1, 1], ['L', 5, 5]])
+})
+
+test('아이콘 미리보기 = 칠판에 들어갈 도형 그대로(요소 수 같음·가는 선), SVG 코드 붙여넣기 알아보기', () => {
+  for (const c of cases.filter(c => c.name.startsWith('AI '))) {
+    const pv = svgPreview(c.svg), n = (pv.match(/<(line|rect|ellipse|polygon|polyline|path|text)\b/g) || []).length
+    assert.equal(n, svgItems(c.svg).items.length, c.name)
+    assert.ok(svgFits(pv), c.name)   // 미리보기 자체도 우리가 읽는 모양
+  }
+  assert.match(svgPreview('<svg viewBox="0 0 10 10"><text x="1" y="5">A&amp;B</text></svg>'), /A&amp;B/)
+  assert.ok(looksSvg('<?xml version="1.0"?>\n<svg viewBox="0 0 1 1"><rect/></svg>\n'))
+  assert.ok(!looksSvg('svg 코드 예: <svg></svg>'))
 })

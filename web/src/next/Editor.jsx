@@ -134,7 +134,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -1621,14 +1621,24 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // SVG → 고칠 수 있는 도형(§8 항목63) — 데스크톱 `_insert_svgs_at`과 같게: 긴 변 160·가운데 = at, 펜 = 지금 그리기색·채움 없음(글자는 제 색),
   // 묶지 않고 다 고른 채(2026-08-04 사용자: 일부만 고를 수 있어야 — 묶으려면 Ctrl+G). 못 읽는 모양이면 false
   const SVG_LONG = 160
+  const svgProtos = (svg, at) => { const z = topZ(R.current.model.items) + 1
+    return svgItems(svg, SVG_LONG, at).items.map((g, i) => base(g.pos, g.type === 'text' ? { ...g, bg: null, z: z + i } : { ...penOf(false), ...(g.type === 'path' || g.type === 'line' ? null : { fill: null }), ...g, z: z + i })) }
   function insertSvg(svg, at, what = 'SVG') {
     if (!svgFits(svg)) return false
-    const m = R.current.model, z = topZ(m.items) + 1
-    const its = svgItems(svg, SVG_LONG, at).items.map((g, i) => base(g.pos, g.type === 'text' ? { ...g, bg: null, z: z + i } : { ...penOf(false), ...(g.type === 'path' || g.type === 'line' ? null : { fill: null }), ...g, z: z + i }))
+    const m = R.current.model, its = svgProtos(svg, at)
     commit([...m.items, ...its], its.map(it => it._id), what); setTool('select')
     setStatus(`${what} → 도형 ${its.length}개 — 하나씩 골라 고칠 수 있어요(묶기 Ctrl+G)`)
     return true
   }
+  // 대화창 ✏️ 아이콘 후보(2단계) — 넣는 모양은 위와 같게, 자리는 그림 후보처럼: 누르면 가운데 먼저·겹치면 빈자리, 끌면 놓은 자리(정렬선).
+  // AI가 만든 것은 `svgFits`로 막지 않음(데스크톱 「심볼」과 같게 — 못 읽는 부분만 건너뜀). 넣은 도형 _id들(없으면 null)
+  function pinSvg(svg) {
+    const ps = svgProtos(svg, { x: 0, y: 0 }); if (!ps.length) { setStatus('아이콘을 도형으로 못 읽었어요'); return null }
+    const m = R.current.model, b = unionBox(ps.map(it => sceneBox(it, textBox))), at = spotNear(b.w, b.h), its = placeAt(ps, at.x, at.y)
+    commit([...m.items, ...its], its.map(it => it._id), '아이콘 붙이기'); setTool('select')
+    return its.map(it => it._id)
+  }
+  const dragSvg = (svg, onPlaced) => { const ps = svgProtos(svg, { x: 0, y: 0 }); if (ps.length) startPaletteDrag('svg', ps, onPlaced) }
   // HTML 파일 = 정리 문서 카드(스크립트는 끔 — 칠판이 안전하게, 2026-10-21 사용자)
   async function insertHtmlFile(f, at) {
     const html = await f.text(), m = R.current.model, title = (/<title[^>]*>([^<]*)<\/title>/i.exec(html)?.[1] || '').trim() || f.name.replace(/\.html?$/i, '')

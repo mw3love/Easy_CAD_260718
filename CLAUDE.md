@@ -111,6 +111,7 @@ easycad/
 │   ├── board_report.py     웹 칠판 「정리해 줘」 ① — 칠판 자료 → 아티팩트 같은 정리 문서 HTML 한 장(claude-opus-5-5, 청소·제목·쉬운 글, 앞 문서 고쳐 쓰기)
 │   ├── board_tidy.py       웹 칠판 「정리해 줘」 ② 레고형 정리정돈 — 칠판 조각(uid·종류·글·크기) → 주제별 묶음 목록 JSON(gpt-6-luna — 10-20 실측으로 바꿈, 좌표는 칠판 `tidy.js`)
 │   ├── board_image.py      웹 칠판 그림 — 「그려줘」 → KAIROS 그림 후보 2장(gpt-image-2.5-flare — 10-20 실측, §8 항목61 ③-4, 서버가 `<이름>.img/`에 두고 주소만) + 이어 고치기(`followup`)·원본 유지 편집(`input_images`)·인포그래픽
+│   ├── board_icon.py       웹 칠판 아이콘 — 「○○ 아이콘 그려 줘」 → KAIROS SVG 후보 둘(claude-sonnet-5-5 — 10-23 실측, 지시문은 데스크톱 `text_to_svg`) + 고른 아이콘 고치기·고른 그림 보고 그리기, 도형으로는 칠판 `svgin.js`(§8 항목63)
 │   ├── board_ocr.py        웹 칠판 「그림 속 글 읽기」 — 그림 → KAIROS(claude-haiku-5-5, 10-21 실측) → 글, 서버 `/api/ocr`
 │   ├── meeting.py          웹 칠판 회의록 — 녹음 → KAIROS 받아쓰기(stt-async-v5, 올리기·기다리기) → 구간 합치기 → 요약 JSON(§8 항목61 ③-3, 서버 `/api/meeting` 뒤 일감) + 실시간 「🎙 회의」 요약만(`minutes_from_live`, `/api/meeting/<칠판>/live`)
 │   ├── board_find.py       웹 칠판 「뜻으로 찾기」 — 칠판 글 → KAIROS 임베딩(qwen3.7) 점수·낱말 가산, 뜻 숫자는 `<이름>.emb.json`(§8 항목61 ③-2, 서버 `/api/find`·대화 「칠판에서」)
@@ -140,7 +141,7 @@ tests/
 ├── test_easycad.py         전체 실행 진입점(하위호환 shim) — python tests/test_easycad.py
 ├── _shared.py              공용 임포트·헬퍼(QApplication 등)
 ├── conftest.py             pytest용 env·sys.path 부트스트랩
-└── test_part1~69_*.py      테마별 회귀 스모크 1554종(2026-10-22 기준, 개별·전체 pytest 실행 가능)
+└── test_part1~70_*.py      테마별 회귀 스모크 1563종(2026-10-23 기준, 개별·전체 pytest 실행 가능)
 web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + React 18 + TipTap 3.32.0(글 편집, 버전 고정). **2026-10-18 5단계 갈아탐: tldraw 뺌**(옛 tldraw 화면
 │                          src/main.jsx·shapes.jsx·cad.jsx·chat.jsx·boardStore.js·ecad.js·ecadExport.js는 지움 — git에 있음). 남은 공용: route.js(길 찾기 = 데스크톱
 │                          `_route_ortho` 옮김, `tools/export_route_cases.py`로 대조 시험)·ecadFormat.js(순수 변환, `npm test`)·symbols.json(`tools/export_web_symbols.py`가
@@ -151,7 +152,7 @@ web/                       웹 칠판(§8 항목61, 2026-10-17~) — Vite + Reac
 │                          arrowkind.js 종류 바꾸기·xform.js 좌표 + 4단계 props.jsx 우상 속성 카드·palette.jsx 좌상 도형·심볼·layers.jsx 좌하 레이어·minimap.jsx 우하 미니맵·
 │                          exporter.jsx PNG·PDF·SVG·chat.jsx KAIROS 대화창·ctxmenu.jsx 우클릭 메뉴 + 판정 뒤 frames.jsx 좌하 프레임 카드(순서 = 출력·발표)·present.jsx 발표(판서·레이저·장 목록) + 4-b webcard.js 웹 카드·legend.js 범례(표 모양 `legend`, 줄 자동)·memo.js·memoedit.jsx 메모(줄 손잡이 ⠿, 표 줄 = `@tiptap/extension-table`)·formatbar.jsx 드래그 꾸미기 막대(꾸밈 줄 `textfmt.jsx`·색 창 `colorpop.jsx` = 속성 카드와 공용)·marks.js 기울임·밑줄·취소선·fold.jsx 카드 접기(▾/▸) + ⓕ sync.js 부분 저장·받아 오기·도형 단위 되돌리기·viewer.jsx 게시 화면 + ⓔ htmlshare.js HTML 한 파일) — 데스크톱 paint·core_view 규칙을 옮김, 기준 문서 `tools/make_all_types_ecad.py` → `tests/fixtures/all_types.ecad`,
 │                          데스크톱 대조 시험 `tools/export_route_cases.py`·`export_connect_cases.py`·`export_arrow_cases.py` → `web/test/fixtures/`(규칙 고치면 다시 돌림)
-│                          + tidy.js 정리정돈 자리 계산(순수) + 다잡기(2026-10-19) keys.js 글쇠 규칙표·help.jsx 도움말(F1) · **화면 자동 시험** `web/e2e/`(Playwright 1.63.0, 깔린 크롬) `npm run e2e` — 매일 쓰는 흐름 87개(flow1~27, 2026-10-23) · clipin.js 바깥 붙여넣기 모양 고르기(글자·메모·표·코드, 2026-10-21) · svgin.js SVG → 고칠 수 있는 도형(데스크톱 `svg_import.py` 옮김 — `.svg` 놓기·SVG 코드 붙여넣기, 대조 시험 `tools/export_svg_cases.py`, §8 항목63) · pdfcard.jsx PDF 보기 카드(휠 넘기기·Alt+끌기 오려 오기, 2026-10-21) · find.jsx 찾기 칸(Ctrl+F) · mic.js 대화창 🎤·「🎙 회의」 실시간 받아쓰기(화자 나누기·다시 붙기 옵션)(서버 `/api/stt-token` 일회용 표 → KAIROS 소켓) · kairosKey.js 「🔑 내 키」(머리말 `X-Kairos-Key`)
+│                          + tidy.js 정리정돈 자리 계산(순수) + 다잡기(2026-10-19) keys.js 글쇠 규칙표·help.jsx 도움말(F1) · **화면 자동 시험** `web/e2e/`(Playwright 1.63.0, 깔린 크롬) `npm run e2e` — 매일 쓰는 흐름 88개(flow1~28, 2026-10-23) · clipin.js 바깥 붙여넣기 모양 고르기(글자·메모·표·코드, 2026-10-21) · svgin.js SVG → 고칠 수 있는 도형(데스크톱 `svg_import.py` 옮김 — `.svg` 놓기·SVG 코드 붙여넣기, 대조 시험 `tools/export_svg_cases.py`, §8 항목63) · pdfcard.jsx PDF 보기 카드(휠 넘기기·Alt+끌기 오려 오기, 2026-10-21) · find.jsx 찾기 칸(Ctrl+F) · mic.js 대화창 🎤·「🎙 회의」 실시간 받아쓰기(화자 나누기·다시 붙기 옵션)(서버 `/api/stt-token` 일회용 표 → KAIROS 소켓) · kairosKey.js 「🔑 내 키」(머리말 `X-Kairos-Key`)
 tools/                     개발용 스크립트(앱 런타임 비의존) — perf_bench.py/profile_*.py
 │                          (성능 실측·cProfile), make_perf_doc.py(부하테스트용 .ecad 결정론
 │                          생성 --preset 500/1000), perf_baseline_check.py(기하+시각 지문
@@ -219,8 +220,7 @@ symbol_library/
   `symbol_library.json`, 검색 초성)·번호표(7)·표(칸 편집)·좌하 레이어·우하 미니맵·내보내기(PDF는 인쇄 창 「PDF로 저장」)·KAIROS 대화창(옛 카드 = 채운 둥근 네모 + 왼쪽 위 라벨 `label.align`·`fit_text` — 10-18 밤부터 답은 메모로, 끌어 붙이기)·우클릭 메뉴(정렬·분배, `Ctrl+C` = 칠판용 + 클립보드 그림).
   같은 날 사용자 지적 3차 반영(원칙 **고치는 모습 = 결과**): 표 칸 고르기·칸 꾸밈·부분 서식(`cell_styles`·`cell_runs`, 직접 글자 크기 = 칸이 늘어남), 여러 개 한 번에 크기, 고치는 중 「글자」 카드(10-19 드래그 꾸미기 막대로 바뀜 — `formatbar.jsx`).
   웹 전용 .ecad 칸은 데스크톱 `document._WEB_ONLY_KEYS`가 보존(rect `radius`는 그림까지, 웹 종류 `frame`·`memo` 등은 10-22부터 데스크톱도 웹 모양으로 — `canvas/core_web.py`).
-  **판정 4~13차**(10-18 저녁): 화살표 배율 녹이기(`xform.bakeSarrow`), 표 행·열 공통선(`row_heights`)·자동 크기 켜고 끄기·칸 고르고 바로 입력(보이지 않는 편집기 미리 포커스 — 한글 첫 글자),
-  **종이틀 → 프레임**(사용자: 종이 비율은 의미 없음 — 드래그로 감싼 영역 = 출력 한 쪽, 이름표, 안의 것 같이 움직임·Alt/자물쇠 = 틀만, 순서 = 좌하 프레임 카드, 내보내기 「프레임만」·미리보기,
+  **판정 4~13차**(10-18 저녁, 세부는 history): **종이틀 → 프레임**(사용자: 종이 비율은 의미 없음 — 드래그로 감싼 영역 = 출력 한 쪽, 이름표, 안의 것 같이 움직임·Alt/자물쇠 = 틀만, 순서 = 좌하 프레임 카드, 내보내기 「프레임만」·미리보기,
   옛 종이틀은 열리기만), **발표**(슬라이드형 + 0.4초 이동, 판서 → 「판서」 레이어, 레이저 `, 장 목록 Tab, 클릭으론 안 넘김, 마지막 장에서 멈춤, 우클릭·휠 클릭 끌기 = 이동). 계획서 §8 항목61 4-b.
   **10-18 밤(4-b ~ 5단계 ~ ⓕ)**: 데스크톱 맞추기는 웹 마무리 뒤로 미룸(사용자 결정 — 그동안 웹 새 칸은 `_WEB_ONLY_KEYS`에 보존만). 웹 카드(`web` — 주소 Ctrl+V·「웹」, 들어가는 사이트는 칸 안·막는 사이트는
   그림 카드, 서버 `/api/link`가 머리말로 판단), 코드 블록(runs 여섯째 칸 = 고정폭), 범례(10-19 2판: 표 모양·자동 갱신·줄에서 선 일괄 변경, 「표」 창 안), 메모(`memo` — KAIROS 답 = 메모, 마크다운 입력, 칠판 위 체크, 줄 손잡이 ⠿ =
@@ -250,6 +250,8 @@ symbol_library/
   **10-23 「🎙 회의」 실시간 회의록**(웹 위 막대): 실시간 받아쓰기도 화자를 나눔(실측) → 점선 틀에 화자별 글 → 「끝내기」 = 요약만(`/api/meeting/<칠판>/live`) → 파일 회의록과 같은 프레임, 브라우저 임시 저장·60분 상한 다시 붙기. 시험 `e2e/flow25`(가짜 마이크·가짜 소켓).
   **10-23 실테스트 손질**: 회의 = 5초 브라우저·30초 서버 사본(`<칠판>.meet.json`)·「전문만」, 회의 버튼 = 「웹」 옆, 프레임 테두리에 화살표(`connect.js` `isHollow`), PDF 오려 오기 = 쪽마다 한 줄, 여러 개 고르면 속성 카드 위 정렬 아이콘, 정리정돈 = 이어진 덩어리 통째 + 미리보기(적용·취소). 저녁: **웹 왼쪽 판 = 아이콘 레일(칠판·도형·프레임·레이어) + 판**(위 막대 아래부터, 레일 40·판 192~400 끌어서, 열린 칸 다시 누르면 접힘, 미니맵 = 판 폭, 카드별 접기 없음 — 10-07 「레일 번거로움」·10-11 「도형·레이어 따로」를 웹에서 바꿈, `main.jsx` `Dock`), KAIROS = 오른쪽 끝 코랄 버튼, 「어둡게」는 「전체 화면」 옆.
   **10-23 밤 속성 카드 다듬기**(사용자 검토, 시안 4장): 색 = 한 덩이 칸 → 화면 위에 뜨는 색 창(`colorpop.jsx` — 맨 위 코드·16색·최근, 고르는 동안 열린 채, 꾸미기 막대 글자색도 같은 창), 속성에서 바꾸면 선택선 숨김(칠판을 누르면 다시), 글 고치는 중에도 카드 — 「글자」 꾸밈 줄 = 꾸미기 막대와 같은 부품(`textfmt.jsx`, 고른 글자에·없으면 전체), 꽉 찬 도형 글을 키우면 상자 폭이 늘어남, 굵기 = 스테퍼 하나, 머리말 = 종류, 굵게 버튼, 이름 겹침(둥글기·꺾임·촉) 정리, 도형 기본 크기 = 아이콘 비율(`symbols.js` `shapeWH` — 사각형 3:2·삼각형 정삼각형), KAIROS 창 폭 끌기(320~720). ⚠ 데스크톱(사각형 120×120 등)은 아직 — 다음.
+- **§8 항목63 웹 아이콘(SVG)**(2026-10-23, 사용자 선택 「SVG 생성만」 — 베끼기는 데스크톱에만): `svgin.js`(데스크톱 `svg_import.py` 옮김, 대조 51사례) — `.svg` 놓기·SVG 코드 붙여넣기 = 도형,
+  대화창 「○○ 아이콘 그려 줘」 = ✏️ 후보 둘(`ai/board_icon.py`, claude-sonnet-5-5 — 0단계 실측) → 누르면 빈자리·끌면 그 자리, 묶지 않고 다 고른 채, 「선을 더 굵게」 = 고른 아이콘 고치기. 굵기·색은 칠판 펜(원본 값 안 읽음 — 데스크톱과 같게).
 - **최상단 툴바에 종류를 두지 않는다.** 상단엔 «화살표» 같은 상위 도구 하나만 두고, 직선·
   곡선·직각 같은 *종류*는 캔버스에서 객체를 선택한 뒤 **플로팅 미니툴바의 하위목록**에서
   고르게 한다(Lucid·FigJam 방식). 세부 조절값은 그 종류를 골랐을 때만 노출.
