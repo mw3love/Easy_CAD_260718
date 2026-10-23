@@ -138,8 +138,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
   // 속성 카드에서 색·선을 바꾼 뒤 = 선택선·꼭짓점 사각을 숨김(데스크톱 `_style_preview_active` — 파란 선이 바꾼 선 색을 덮음, 멀리서 볼수록).
-  // 마우스가 칠판으로 돌아오거나 고른 것이 바뀌면 다시 보임. 큐닷·회전 점은 그대로(무엇이 골라졌는지는 보임)
+  // 칠판을 누르거나 글쇠를 누르거나 고른 것이 바뀌면 다시 보임 — 마우스를 칠판으로 옮기기만 해서는 그대로(바꾼 색을 보러 가는 길, 2026-10-23 사용자). 큐닷·회전 점은 그대로
   const [stylePv, setStylePv] = useState(false); R.current.stylePv = stylePv
+  useEffect(() => { if (!stylePv) return; const k = e => { if (!e.target.closest?.('input, textarea, [contenteditable], [data-ppop], [data-keep-edit]')) setStylePv(false) }   // 카드·색 창 안에서 치는 것은 빼고
+    window.addEventListener('keydown', k, true); return () => window.removeEventListener('keydown', k, true) }, [stylePv])
   useEffect(() => { setStylePv(false) }, [sel.join()])   // eslint-disable-line react-hooks/exhaustive-deps — 고친 뒤 같은 것을 다시 고른 상태(새 배열)는 그대로
   useEffect(() => { onSel?.(sel) }, [sel])   // eslint-disable-line react-hooks/exhaustive-deps — 대화창 칩(고른 것 N개)
   const keepPoly = useRef(false)   // 위 막대에서 다각형을 끌어 놓은 직후 = 첫 선분을 이어 그리는 중(도구가 바뀌어도 버리지 않음)
@@ -2052,7 +2054,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       <svg ref={svg} width={size.w} height={size.h} style={{ display: 'block', cursor, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }} data-testid="board"
-        onPointerDown={onPointerDown} onPointerMove={e => { if (R.current.stylePv) setStylePv(false); onPointerMove(e) }} onPointerUp={onPointerUp} onDoubleClick={onDoubleClick} onContextMenu={e => e.preventDefault()}
+        onPointerDown={e => { if (R.current.stylePv) setStylePv(false); onPointerDown(e) }} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onDoubleClick={onDoubleClick} onContextMenu={e => e.preventDefault()}
         onMouseDown={e => { if (R.current.editing && e.button !== 0) e.preventDefault() }}>
         <g transform={`translate(${cam.x},${cam.y}) scale(${z})`} style={{ '--z': z }}>
           {visible.map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
@@ -2226,7 +2228,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         return <TextEditor key={ed.id} spec={{ ...s, onReady: setLiveEd, at: ed.at, onPan: startPan, onWheel: wheelZoom, armed: !!ed.armed, fresh: !!ed.fresh,
           onArm: () => { const ne = { id: ed.id, kind: ed.kind, fresh: true }; R.current.editing = ne; setEditing(ne) } }} onDone={finishEdit} /> })(editing ? (editing.kind !== 'cell' && editing.kind !== 'memo' ? editing : null) : (t => (t?.kind === 'memo' ? null : t))(armTarget()))}   {/* 메모 대기는 위 MemoEditor가 받음(둘이 같이 뜨면 이 편집기가 첫 글자를 가로챘음) */}
       {editing && liveEd && <FormatBar ed={liveEd} />}   {/* 드래그 꾸미기 막대(2026-10-19 — 옛 오른쪽 위 「글자」 카드 대신) */}
-      {selItems.length > 0 && !editing && <Props align={selItems.length >= 2 ? { n: alignTargets().length, align: alignSel, dist: a => distributeSel(a) } : null} items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
+      {selItems.length > 0 && <Props liveEd={editing && !editing.armed && editing.kind !== 'memo' ? liveEd : null} align={selItems.length >= 2 ? { n: alignTargets().length, align: alignSel, dist: a => distributeSel(a) } : null} items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )

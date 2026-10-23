@@ -1,8 +1,9 @@
 // 오른쪽 위 「속성」 카드(고를 때만) — 고른 것 모두의 선 색·굵기·선 모양·채움, 화살표 칸(종류·화살촉·머리 크기·모서리), 글자 크기·색.
 // 데스크톱 `host_style._refresh_properties`와 같은 자리·같은 항목·같은 차례(종류 → 선 → 채움 → 화살표 → 글자). 섞어 고르면 해당하는 것에만.
 // 첫 화면 규칙(CLAUDE.md): 폭 192, 제목 15px 굵게, 켜짐만 코랄.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useState } from 'react'
+import { ColorChip } from './colorpop.jsx'
+import { FmtButtons, edAct, edRun, edState, useEdTick } from './textfmt.jsx'
 import { FoldBtn, useFold } from './fold.jsx'
 import SYMBOLS from '../symbols.json' with { type: 'json' }
 import { shapeIcon as paletteIcon } from './palette.jsx'
@@ -25,9 +26,6 @@ const hasFixedFont = it => it.type === 'table' && (it.font || Object.values(it.c
 const clearTableFont = it => { const st = {}; for (const [k, v] of Object.entries(it.cell_styles || {})) { const { font, ...rest } = v; if (Object.keys(rest).length) st[k] = rest } return { font: undefined, cell_styles: Object.keys(st).length ? st : undefined } }
 
 const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line)', card: 'var(--mb-card)', seg: 'var(--mb-seg)', on: '#da7756', onBg: 'var(--mb-onbg)' }   // 화면 색 = next.html CSS 변수
-// 두 줄 꽉 채움(8+8) — 데스크톱 색 창과 같은 짜임: 진한 6색(`_COLOR_GRID_HUES`) + 검정 + 다른 색 / 같은 6색의 연한 색(Qt lighter(150)) + 회색 + 흰색
-export const ARROW_COLORS = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#AF52DE', '#000000', null,
-  '#ffb4af', '#ffca7f', '#ffe57f', '#6eff93', '#7fbdff', '#e3acff', '#9e9e9e', '#ffffff']
 const STYLES = [[1, '실선'], [2, '점선'], [3, '도트'], [4, '일점쇄선'], [5, '이점쇄선']]
 const DASH = { 1: undefined, 2: '6 3', 3: '1.5 3', 4: '6 3 1.5 3', 5: '6 3 1.5 3 1.5 3' }
 const INK = '#1f1f1f'
@@ -47,7 +45,6 @@ const norm = c => (c || '').replace(/^#ff(?=[0-9a-f]{6}$)/i, '#').toLowerCase()
 const hex2 = n => Math.round(n).toString(16).padStart(2, '0')
 const fillArgb = v => (v == null ? null : Array.isArray(v) ? '#' + hex2(v[3]) + hex2(v[0]) + hex2(v[1]) + hex2(v[2]) : (v.length === 7 ? '#ff' + v.slice(1) : v).toLowerCase())
 const argbToBg = c => (c == null ? null : [parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16), parseInt(c.slice(7, 9), 16), parseInt(c.slice(1, 3), 16)])
-const argbCss = c => { if (!c) return 'transparent'; const a = parseInt(c.slice(1, 3), 16) / 255; return `rgba(${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${parseInt(c.slice(7, 9), 16)},${a.toFixed(3)})` }
 
 // 글자 — 독립 글은 그 자신, 도형·선·화살표는 안에 붙은 글(라벨) 전부. → [{ font, color, text }]
 const arrowLabels = it => it.labels || (it.label ? [it.label] : [])   // 옛 파일은 단수 label
@@ -101,9 +98,9 @@ const hlHost = it => (it.type === 'text' ? (it.text ? it : null) : ['rect', 'ell
 const charAttrs = (text, runs) => { const a = Array.from({ length: text.length }, () => [null, false, null, false, ''])
   for (const [st, len, c, b, g, m, d] of runs || []) for (let i = Math.max(0, st); i < Math.min(text.length, st + len); i++) a[i] = [c || null, !!b, g || null, !!m, d || '']
   return a }
-const allChars = (h, k) => { const a = charAttrs(h.text, h.runs); return [...h.text].every((ch, i) => ch === '\n' || !!a[i][k]) }   // k = 1 굵게 · 2 바탕
-function runsWith(text, runs, k, v) {
-  const a = charAttrs(text, runs).map(x => { const y = [...x]; y[k] = v; return y }), out = []
+const allChars = (h, k, l) => { const a = charAttrs(h.text, h.runs); return [...h.text].every((ch, i) => ch === '\n' || (l ? a[i][4].includes(l) : !!a[i][k])) }   // k = 1 굵게 · 2 바탕 · 3 고정폭 · 4 꾸밈(l = 'i'·'u'·'s')
+function runsWith(text, runs, k, v) {   // v = 값, 또는 함수(지금 값 → 새 값)
+  const a = charAttrs(text, runs).map(x => { const y = [...x]; y[k] = typeof v === 'function' ? v(y[k]) : v; return y }), out = []
   for (let i = 0; i < a.length;) { let j = i + 1; while (j < a.length && a[j].every((v, k) => v === a[i][k])) j++
     const [c, b, g, m, d] = a[i]
     if (c || b || g || m || d) out.push([i, j - i, c, b, ...(g || m || d ? [g] : []), ...(m || d ? [m] : []), ...(d ? [d] : [])]); i = j }
@@ -112,7 +109,12 @@ function runsWith(text, runs, k, v) {
 const patchRuns = (it, k, v) => { const h = hlHost(it); if (!h) return null; const runs = runsWith(h.text, h.runs, k, v)
   return it.type === 'text' ? { runs } : { label: { ...it.label, runs } } }
 const patchHl = (it, on) => patchRuns(it, 2, on ? HL : null)
-const patchBold = (it, on) => patchRuns(it, 1, on)
+// 속성 카드 꾸밈 버튼(글 전체) — 꾸미기 막대와 같은 항목(`textfmt.jsx`)
+const DECO = { italic: 'i', underline: 'u', strike: 's' }
+const decoSet = (d, l, on) => 'ius'.split('').filter(x => (x === l ? on : d.includes(x))).join('')
+const patchFmt = (it, k, on) => { if (k === 'clear') { const h = hlHost(it); return h && (it.type === 'text' ? { runs: [] } : { label: { ...it.label, runs: [] } }) }
+  return k === 'bold' ? patchRuns(it, 1, on) : k === 'hl' ? patchHl(it, on) : k === 'code' ? patchRuns(it, 3, on) : patchRuns(it, 4, d => decoSet(d, DECO[k], on)) }
+const fmtOn = (h, k) => (k === 'bold' ? allChars(h, 1) : k === 'hl' ? allChars(h, 2) : k === 'code' ? allChars(h, 3) : allChars(h, 4, DECO[k]))
 
 // 도형 바꾸기(데스크톱 `_fill_swap_menu` 기본도형 8종 — 「내 심볼」은 심볼 팔레트를 옮길 때). 같은 _id라 붙은 화살표·라벨·색은 그대로
 const SWAP_KINDS = ['rect', 'ellipse', 'triangle', 'decision', 'terminal', 'data', 'prep', 'database']
@@ -192,81 +194,6 @@ function Stepper({ values, step = 1, fmt = v => v, onStep, title, grow, testid }
     <button aria-label={title + ' 늘리기'} onClick={() => onStep(step)} style={btn(false, { width: 22 })}>+</button>
   </div>
 }
-// 색 견본 8+8(마지막 칸 = 다른 색). value = 지금 색(서로 다르면 '' — 아무것도 안 켬), s = 견본 한 칸 크기
-function ColorGrid({ value, onPick, s = 14 }) {   // onPick(색, 끌기 중이면 true — 되돌리기 한 칸으로 묶음)
-  return <div style={{ display: 'grid', gridTemplateColumns: `repeat(8, ${s}px)`, gap: 2, justifyContent: 'space-between' }}>
-    {ARROW_COLORS.map((c, i) => { if (!c) return <label key={i} title="다른 색" style={{ width: s, height: s, borderRadius: 4, cursor: 'pointer', background: 'conic-gradient(#f33,#fc0,#3c6,#39f,#c3f,#f33)', position: 'relative', overflow: 'hidden' }}>
-        <input type="color" value={/^#[0-9a-f]{6}$/.test(value) ? value : '#1f1f1f'} onChange={e => onPick(e.target.value, true)} style={{ opacity: 0, position: 'absolute', inset: 0, cursor: 'pointer' }} /></label>
-      const on = value === c.toLowerCase()
-      return <button key={i} title={c} aria-pressed={on} onClick={() => onPick(c)} style={{ all: 'unset', cursor: 'pointer', width: s, height: s, borderRadius: 4, background: c,
-        boxShadow: on ? `0 0 0 2px #fff, 0 0 0 3.5px ${C.on}` : 'inset 0 0 0 1px rgba(0,0,0,.15)' }} /> })}
-  </div>
-}
-const NoneMark = ({ s }) => <svg width={s} height={s} style={{ position: 'absolute', inset: 0 }}><line x1="2" y1={s - 2} x2={s - 2} y2="2" stroke="#e02424" strokeWidth="1.4" /></svg>
-
-// ── 색 칸(2026-10-23 사용자: 색표 세 벌이 다 펼쳐져 복잡함 → 같은 날 2차: 코드는 칸에서 바로, 색 창은 셋 다 같은 모양, 카드 밖으로) ──
-// 칸 = [견본][코드][진하기%] (피그마식) — 견본을 누르면 색 창, 코드 글자를 누르면 그 자리에서 고침(Enter·칸 벗어나기 = 적용, Esc = 취소).
-// 색 창 = 16색 두 줄 + 최근 쓴 색(셋 다 같음), 채움만 아래에 「없음」·진하기. 화면 위에 떠서(포털) 카드에 잘리지 않고, 아래가 모자라면 위로 펼침
-// 최근 쓴 색 = 이 브라우저만(편의용 — 못 읽으면 줄이 안 보일 뿐)
-const RECENT_KEY = 'mb-recent-colors'
-const rgbOf = c => (c && c.length === 9 ? '#' + c.slice(3) : c || '').toLowerCase()
-const loadRecent = () => { try { return (JSON.parse(localStorage.getItem(RECENT_KEY) || '[]') || []).filter(c => /^#[0-9a-f]{6}$/.test(c)).slice(0, 8) } catch { return [] } }
-const pushRecent = c => { const v = rgbOf(c); if (!/^#[0-9a-f]{6}$/.test(v)) return; try { localStorage.setItem(RECENT_KEY, JSON.stringify([v, ...loadRecent().filter(x => x !== v)].slice(0, 8))) } catch { /* 저장 못 해도 그만 */ } }
-const alphaOf = c => (c && c.length === 9 ? parseInt(c.slice(1, 3), 16) : 255)
-const withAlpha = (rgb, a) => '#' + hex2(a) + rgbOf(rgb).slice(1)
-const FILL_NEW_ALPHA = 0x55   // 채움 없던 것에 처음 칠하면 약 1/3 진하기 — 옛 채움 견본(데스크톱 `_DEFAULT_FILL_PRESETS`)과 같아 칠해도 글이 읽힘
-const MONO = '12px ui-monospace, Consolas, monospace'
-// 코드 — 칸 안에서 바로 고침. 6자리 = 색만(채움은 지금 진하기 유지), 8자리(AARRGGBB) = 진하기까지(채움만)
-function CodeInput({ value, onCode, alpha, ph = '' }) {
-  const [txt, setTxt] = useState(null), shown = txt ?? (value ? rgbOf(value).slice(1).toUpperCase() : '')
-  const apply = () => { const m = /^#?([0-9a-f]{6}|[0-9a-f]{8})$/i.exec((txt ?? '').trim()); setTxt(null); if (!m) return; onCode(m[1].length === 8 && alpha ? '#' + m[1].toLowerCase() : '#' + m[1].slice(-6).toLowerCase()) }
-  return <input data-testid="color-code" value={shown} placeholder={ph} spellCheck={false} title={alpha ? '색 코드 — 고치고 Enter(8자리면 진하기까지)' : '색 코드 — 고치고 Enter'}
-    onChange={e => setTxt(e.target.value)} onFocus={e => e.currentTarget.select()} onBlur={() => txt != null && apply()}
-    onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setTxt(null); e.currentTarget.blur() } }}
-    style={{ all: 'unset', flex: 1, minWidth: 0, font: MONO, color: C.ink, cursor: 'text' }} />
-}
-// 색 창 자리 — 칸 바로 아래(오른쪽 끝 맞춤), 아래가 모자라면 칸 위로. 화면 밖으로는 안 나감
-function popPlace(el, h) {
-  const r = el.getBoundingClientRect(), W = 172, vw = window.innerWidth, vh = window.innerHeight
-  const left = Math.max(8, Math.min(vw - W - 8, r.right - W)), below = r.bottom + 4
-  return { left, top: below + h <= vh - 8 ? below : Math.max(8, r.top - 4 - h) }
-}
-// id = 이 색 칸 이름(한 번에 하나만 열림 — Props `pop`), value = 지금 색('#rrggbb'·'#aarrggbb', 없음 = null, 서로 다름 = ''/undefined)
-// fill = 채움 칸(「없음」·진하기), onPick(색, 끌기 중) — 색 = 선·글은 '#rrggbb', 채움은 '#aarrggbb'|null
-function ColorChip({ id, pop, setPop, value, fill, onPick, title }) {
-  const open = pop === id, mixed = value === '' || value === undefined, none = fill ? value === null : !mixed && alphaOf(value) === 0   // 선이 완전히 투명(채운 면의 선 등)이면 「없음」
-  const a = fill && value ? alphaOf(value) : 255
-  const chipBg = mixed ? 'conic-gradient(#9e9e9e 0 50%, #fff 0)' : none ? '#fff' : fill || value.length === 9 ? `linear-gradient(${argbCss(value)},${argbCss(value)}), #fff` : value
-  const pick = (c, drag) => { onPick(c, drag); if (!drag) { if (c) pushRecent(c); setPop(null) } }   // 견본은 한 번 누르면 끝 — 창 닫힘
-  const rgbPick = (c, drag) => pick(fill ? withAlpha(c, value ? a : FILL_NEW_ALPHA) : rgbOf(c), drag)   // 채움 = 지금 진하기 그대로(없음이었으면 1/3)
-  const onCode = c => { onPick(fill ? (c.length === 9 ? c : withAlpha(c, value ? a : 255)) : c); pushRecent(c) }
-  const anchor = useRef(null), popEl = useRef(null), [at, setAt] = useState(null)
-  useLayoutEffect(() => { if (!open) { setAt(null); return } const place = () => anchor.current && setAt(popPlace(anchor.current, popEl.current?.offsetHeight || 140)); place()
-    window.addEventListener('resize', place); return () => window.removeEventListener('resize', place) }, [open])
-  useLayoutEffect(() => { if (open && at && popEl.current && anchor.current) { const p = popPlace(anchor.current, popEl.current.offsetHeight); if (p.top !== at.top || p.left !== at.left) setAt(p) } })   // 실제 높이로 한 번 더 맞춤
-  const recent = open ? loadRecent() : []
-  const swatchBtn = <button data-testid={'chip-' + id} title={title + ' — 눌러서 색 고르기'} aria-label={title} aria-expanded={open} onClick={() => setPop(open ? null : id)}
-    style={{ all: 'unset', cursor: 'pointer', position: 'relative', overflow: 'hidden', flex: 'none', width: 16, height: 16, borderRadius: 4, boxShadow: `inset 0 0 0 1px ${C.line}`, background: chipBg }}>{none && <NoneMark s={16} />}</button>
-  return <div ref={anchor} data-ppop={id} data-testid={'colorrow-' + id} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, height: 26, padding: '0 8px', boxSizing: 'border-box', borderRadius: 6, background: C.seg, outline: open ? `1px solid ${C.on}` : 'none' }}>
-    {swatchBtn}
-    {mixed || none ? <span onClick={() => setPop(open ? null : id)} style={{ flex: 1, cursor: 'pointer', fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{mixed ? '서로 다름' : '없음'}</span>
-      : <CodeInput key={value} value={value} alpha={fill} onCode={onCode} />}
-    {fill && value && a < 255 && <span title="진하기(색 창에서 바꿈)" style={{ flex: 'none', fontSize: 11, color: C.muted, fontVariantNumeric: 'tabular-nums' }}>{Math.round(a / 2.55)}%</span>}
-    {open && createPortal(<div ref={popEl} data-ppop={id} data-testid={'pop-' + id} onPointerDown={e => e.stopPropagation()}
-      style={{ position: 'fixed', zIndex: 50, left: at?.left ?? -9999, top: at?.top ?? -9999, width: 172, boxSizing: 'border-box', background: C.card, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, boxShadow: '0 8px 24px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column', gap: 6, font: "400 12px 'Pretendard', sans-serif" }}>
-      <ColorGrid value={mixed || none ? '' : rgbOf(value)} onPick={rgbPick} s={18} />
-      {recent.length > 0 && <><span style={{ fontSize: 11, color: C.muted }}>최근 쓴 색</span>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 18px)', gap: 2, justifyContent: 'space-between' }}>{recent.map(c => <button key={c} title={c} onClick={() => rgbPick(c)} style={{ all: 'unset', cursor: 'pointer', width: 18, height: 18, borderRadius: 4, background: c, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.15)' }} />)}</div></>}
-      {fill && <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.muted }}>
-        <button data-testid="fill-none" title="채움 없음" aria-pressed={none} onClick={() => pick(null)} style={btn(none, { padding: '0 6px', height: 22, gap: 4, fontSize: 11, background: none ? C.onBg : C.seg })}>
-          <span style={{ position: 'relative', overflow: 'hidden', width: 12, height: 12, borderRadius: 3, background: '#fff', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.2)' }}><NoneMark s={12} /></span>없음</button>
-        {value ? <><input data-testid="fill-alpha" type="range" min="0" max="100" title="진하기 — 낮을수록 비쳐요" value={Math.round(a / 2.55)} onChange={e => onPick(withAlpha(value, Math.round(+e.target.value * 255 / 100)), true)} style={{ flex: 1, minWidth: 0, accentColor: C.on }} />
-          <span style={{ width: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{Math.round(a / 2.55)}%</span></> : <span style={{ flex: 1, whiteSpace: 'nowrap' }}>칠하면 진하기 33%</span>}
-      </div>}
-    </div>, document.body)}
-  </div>
-}
-
 // 회전 각도 — 쳐서 Enter(또는 칸을 벗어나면), 휠·↑↓는 1°씩. 서로 다르면 빈칸(쳐 넣으면 전부 그 각도 — 데스크톱과 같음)
 function RotInput({ value, onSet }) {
   const [txt, setTxt] = useState(null), shown = txt ?? (value == null ? '' : String(value))
@@ -282,7 +209,7 @@ function RotInput({ value, onSet }) {
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells, onLegend, align }) {   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
+export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells, onLegend, align, liveEd }) {   // liveEd = 글 고치는 중 편집기(TipTap) — 「글자」 꾸밈이 고른 글자(없으면 글 전체)에 먹음, 2026-10-23   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
   const [pop, setPop] = useState(null)   // 지금 열린 펼침 하나 — 'swap'·'dash'·색 칸 이름(한 번에 하나만)
   useEffect(() => {
     if (!pop) return
@@ -311,27 +238,30 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
   // 묶음 하나를 통째로 골랐으면(내 심볼에서 온 것 등) 그것도 바꿀 수 있음 — 기본 도형으로 돌아가기·다른 내 심볼로
   const swapGrp = !swapOne && items.length >= 2 && items[0].group_id && items.every(it => it.group_id === items[0].group_id && !isArrow(it)) ? items.map(it => it._id) : null
   const rotItems = items.filter(it => ROTATABLE.has(it.type)), rot = one(rotItems.map(it => +(it.rotation || 0).toFixed(1)))
-  const hlItems = items.filter(hlHost), hlOn = hlItems.length > 0 && hlItems.every(it => allChars(hlHost(it), 2)), boldOn = hlItems.length > 0 && hlItems.every(it => allChars(hlHost(it), 1))
+  const hlItems = items.filter(hlHost)
+  useEdTick(liveEd)   // 고치는 중 = 편집기 커서·고른 글자가 바뀔 때마다 켜짐 상태 다시
+  const edLive = liveEd && !liveEd.isDestroyed ? liveEd : null
+  const fmtSt = edLive ? edState(edLive) : Object.fromEntries(['bold', 'italic', 'underline', 'strike', 'code', 'hl'].map(k => [k, hlItems.length > 0 && hlItems.every(it => fmtOn(hlHost(it), k))]))
+  const fmtAct = k => (edLive ? edAct(edLive, k, true) : set(it => patchFmt(it, k, !fmtSt[k]), { bold: '굵게', italic: '기울임', underline: '밑줄', strike: '취소선', code: '코드', hl: '형광펜', clear: '꾸밈 지우기' }[k]))
   const tables = items.filter(it => it.type === 'table'), ptFmt = tables.length ? v => Math.round(v) + 'pt' : v => v + 'pt'   // 표 자동 크기는 11.3처럼 소수 — 반올림해 보임(「자동」 버튼 자리)
   const fillLabel = fillItems.every(it => fillKey(it) === 'bg') ? '바탕' : '채움'   // 글의 채움 = 글 뒤 바탕
-  const firstText = (texts.find(t => t.text.trim())?.text.trim().split('\n')[0]) || ''
   // 숫자 칸 — 각자에 d만큼(범위 안으로)
   const num = (list, get, d0, min, max, step, name, write) => ({ values: list.map(it => get(it) ?? d0), step,
     onStep: d => { const ids = new Set(list.map(it => it._id)); set(it => (ids.has(it._id) ? write(it, stepClamp(get(it) ?? d0, d, min, max, step)) : null), name, name) } })
   const onArrows = f => it => (isArrow(it) ? f(it) : null)
   // 글자 줄들 — 크기 · 색 · (굵게 · 형광펜). 글만 골랐으면 카드 맨 위에(글이 주인공 — 2026-10-23)
-  const textRows = texts.length > 0 && !cells && <>
-    <Row label="크기"><Stepper testid="font-step" title="글자 크기" values={texts.flatMap(t => t.fonts || [t.font])} onStep={d => set(it => { if (it.type === 'table' && !it.font) return stepTableCells(it, d); const p = patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })); return d > 0 ? growToFit(it, p) : p }, '글자 크기', '글자 크기')} fmt={ptFmt} />
+  const hasText = (texts.length > 0 || !!edLive) && !cells   // 고치는 중이면 글이 아직 안 들어갔어도(새 상자에 치는 중)
+  const textRows = hasText && <>
+    <Row label="크기"><Stepper testid="font-step" title="글자 크기" values={texts.length ? texts.flatMap(t => t.fonts || [t.font]) : [items[0]?.label?.font || items[0]?.font || 16]} onStep={d => set(it => { if (it.type === 'table' && !it.font) return stepTableCells(it, d); const p = patchTexts(it, t => ({ font: stepClamp(t.font, d, 2, 200, 1) })) ?? (edLive ? (it.type === 'text' ? { font: stepClamp(it.font || 12, d, 2, 200, 1) } : { label: { ...(it.label || { text: '' }), font: stepClamp(it.label?.font || 16, d, 2, 200, 1) } }) : null)   // 새 상자에 치는 중(글이 아직 안 들어감)이어도
+        return d > 0 ? growToFit(it, p) : p }, '글자 크기', '글자 크기')} fmt={ptFmt} />
       {tables.length > 0 && (() => { const on = !items.some(hasFixedFont)
         return <AutoToggle on={on} onClick={() => set(it => (it.type !== 'table' ? null : on ? stepTableCells(it, 0) : clearTableFont(it)), on ? '글자 크기 고정' : '글자 크기 자동')} /> })()}</Row>
-    <Row label="색"><ColorChip id="text" pop={pop} setPop={setPop} value={tColor} title="글자 색" onPick={(c, drag) => set(it => patchTexts(it, () => ({ color: c })), '글자 색', drag ? 'tcolor' : null)} /></Row>
-    {hlItems.length > 0 && <Row label=""><button title="굵게 — 고른 글 전체. 다시 누르면 보통" aria-label="굵게" aria-pressed={boldOn} onClick={() => set(it => patchBold(it, !boldOn), '굵게')}
-        style={btn(boldOn, { width: 30, background: boldOn ? C.onBg : C.seg, fontSize: 13, fontWeight: 800 })}>B</button>
-      <button title="형광펜 — 고른 글 전체. 다시 누르면 지워요" aria-pressed={hlOn} onClick={() => set(it => patchHl(it, !hlOn), '형광펜')}
-        style={btn(hlOn, { padding: '0 10px', background: hlOn ? C.onBg : C.seg, fontSize: 12, gap: 6 })}><span style={{ width: 14, height: 10, borderRadius: 2, background: 'rgba(255,213,79,.6)' }} />형광펜</button></Row>}
+    <Row label="색"><ColorChip id="text" pop={pop} setPop={setPop} keepEdit={!!edLive} value={edLive ? edState(edLive).color || tColor : tColor} title="글자 색"
+      onPick={(c, drag) => (edLive ? edRun(edLive, ch => ch.setColor(c), true) : set(it => patchTexts(it, () => ({ color: c })), '글자 색', drag ? 'tcolor' : null))} /></Row>
+    {(hlItems.length > 0 || edLive) && <div data-testid="props-fmt" style={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'space-between', background: C.seg, borderRadius: 8, padding: 2 }}><FmtButtons prefix="pfmt" w={20} st={fmtSt} act={fmtAct} /></div>}
   </>
 
-  return <div data-folded={folded || undefined} onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
+  return <div data-folded={folded || undefined} data-keep-edit={edLive ? '' : undefined} onPointerDown={e => e.stopPropagation()} onMouseDown={e => { if (edLive && e.target.tagName !== 'INPUT') e.preventDefault() }} style={{ position: 'absolute', right: 'calc(12px + var(--mb-right-inset, 0px))', top: 12, width: 192, boxSizing: 'border-box', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10,
     padding: '8px 10px 10px', boxShadow: '0 2px 8px rgba(0,0,0,.06)', font: "400 13px 'Pretendard', sans-serif", color: C.ink, display: 'flex', flexDirection: 'column', gap: 4, userSelect: 'none', maxHeight: 'calc(100% - 24px)', overflowY: 'auto' }}>   {/* 높이 = 칠판 끝까지(미니맵은 왼쪽 판으로 감 — 전엔 아래 180을 비워 일찍 스크롤) */}
     {/* 머리말 = 고른 것의 종류(2026-10-23 사용자 검토: 「속성」 제목과 「종류」 줄이 같은 말 — 한 줄로). 도형이면 눌러서 다른 도형으로 */}
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: folded ? 0 : 2 }}>
@@ -355,7 +285,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
     {allArrows && <Row label="종류"><Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} /></Row>}
     {allText && textRows}
     {/* 선 = 색 칸 한 줄 + (모양 ▾ · 굵기 −/+) 한 줄. 굵기 숫자 버튼(1·2·3·5)은 뺌 — 스테퍼 하나로(2026-10-23 사용자) */}
-    {showLine && <Row label={boardsOnly ? '바탕' : wItems.length || tables.length ? '선' : '색'}><ColorChip id="line" pop={pop} setPop={setPop} value={color} title={boardsOnly ? '바탕 색' : '선 색'}
+    {showLine && <Row label={boardsOnly ? '바탕' : wItems.length || tables.length ? '선' : '색'}><ColorChip id="line" keepEdit={!!edLive} pop={pop} setPop={setPop} value={color} title={boardsOnly ? '바탕 색' : '선 색'}
       onPick={(c, drag) => set(it => (lineKey(it) ? { [lineKey(it)]: c } : null), boardsOnly ? '바탕 색' : '색', drag ? 'color' : null)} /></Row>}
     {showLine && wItems.length > 0 && <Row label=""><div data-ppop="dash" style={{ position: 'relative', flex: 'none' }}>
       <button title="선 모양" aria-expanded={pop === 'dash'} onClick={() => setPop(pop === 'dash' ? null : 'dash')} style={btn(pop === 'dash', { width: 52, background: C.seg, justifyContent: 'space-between', padding: '0 6px' })}>{style ? <svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" stroke="currentColor" strokeWidth="2" strokeDasharray={DASH[style]} strokeLinecap="round" /></svg> : <span style={{ fontSize: 11, color: C.muted }}>섞임</span>}<span style={{ color: C.muted }}>▾</span></button>
@@ -364,7 +294,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
           {dashIcon(st)}<span style={{ fontSize: 11, color: C.muted }}>{name}</span></button>)}
       </div>}
     </div><Stepper grow testid="width-step" title="선 굵기" {...num(wItems, it => it.width, 1, 1, 40, 1, '굵기', (it, v) => ({ width: v }))} fmt={v => v + 'px'} /></Row>}
-    {fillItems.length > 0 && <Row label={fillLabel}><ColorChip id="fill" fill pop={pop} setPop={setPop} value={fillMixed ? undefined : fill} title={fillLabel}
+    {fillItems.length > 0 && <Row label={fillLabel}><ColorChip id="fill" keepEdit={!!edLive} fill pop={pop} setPop={setPop} value={fillMixed ? undefined : fill} title={fillLabel}
       onPick={(c, drag) => set(it => { const k = fillKey(it); return k ? { [k]: k === 'bg' ? argbToBg(c) : c } : null }, fillLabel, drag ? 'fill' : null)} /></Row>}
     {arrows.length > 0 && <>
       <Row label="화살촉"><Seg value={head} onPick={h => set(onArrows(() => ({ head: h === 'end' || h === 'both', head_start: h === 'start' || h === 'both' })), '화살촉')}
@@ -439,10 +369,9 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
         <Row label="채움"><ColorChip id="cfill" fill pop={pop} setPop={setPop} title="칸 채움" value={list.every(e => fillArgb(e.s.fill) === fillArgb(list[0].s.fill)) ? fillArgb(list[0].s.fill) ?? null : undefined} onPick={(c, drag) => setCells(() => ({ fill: c || undefined }), '칸 채움', drag ? 'cfill' : null)} /></Row>
       </>
     })()}
-    {texts.length > 0 && !cells && !allText && <>
+    {hasText && !allText && <>
       <div style={{ borderTop: `1px solid ${C.line}`, margin: '4px 0 0' }} />
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}><span style={{ fontWeight: 600 }}>글자</span>
-        {firstText && <span style={{ fontSize: 11, color: C.muted, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>「{firstText.slice(0, 10)}{firstText.length > 10 ? '…' : ''}」</span>}</div>
+      <div style={{ fontWeight: 600 }}>글자{edLive && <span style={{ fontWeight: 400, fontSize: 11, color: C.muted }}> · 고른 글자에(없으면 전체)</span>}</div>
       {textRows}
     </>}
   </div>

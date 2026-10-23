@@ -90,6 +90,7 @@ export function TextEditor({ spec, onDone }) {
     return () => { clearTimeout(tm); window.removeEventListener('pointerdown', onDown, true); window.removeEventListener('pointerup', onUp); el.removeEventListener('wheel', onWheel); finish(); spec.onReady?.(null); editor.destroy() }
   }, [])   // eslint-disable-line
   const [px, setPx] = useState(spec.px)
+  useEffect(() => { if (!spec.pxFor && !spec.armed) setPx(spec.px) }, [spec.px])   // eslint-disable-line react-hooks/exhaustive-deps — 고치는 중 속성 카드로 글자 크기를 바꾸면 편집 칸도 바로(2026-10-23 — 고치는 중에도 속성 카드)
   const wasArmed = useRef(!!spec.armed)
   useLayoutEffect(() => {   // 표 칸 대기(엑셀처럼 칸을 고르면 보이지 않는 편집기가 미리 포커스 — 첫 키부터 한글 입력기가 켜져 있게, 2026-10-18 사용자: 「ㅎ」이 「g」로 들어감)
     const e = ed.current; if (!e) return

@@ -13,43 +13,62 @@ test('클릭만 해 놓으면 기본 크기 = 도형 카드 아이콘 비율 —
   expect(await wh('삼각형', 600)).toEqual([77.94, 90])
 })
 
-test('색 = [견본][코드] 한 칸 — 코드는 칸에서 바로, 견본 = 색 창(카드 밖에 떠서 안 잘림, 셋 다 같은 모양), 바꾸면 선택선 숨김', async ({ page }) => {
+test('색 칸 = 한 덩이(어디 눌러도 색 창, 열리면 바로 코드 입력) · 견본을 눌러도 창은 열린 채 · 채움 휠 = 진하기 · 바꾸면 선택선 숨김(칠판을 눌러야 다시)', async ({ page }) => {
   await openBoard(page, boardName('colorchip')); await setCam(page)
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 120, y: 80 })
-  await expect(page.getByTestId('chip-line')).toBeVisible()
   await expect(page.locator('button[title="#007AFF"]')).toHaveCount(0)          // 색표는 접혀 있음(전엔 세 벌이 다 펼쳐짐)
   await expect(page.locator('button[title="2 px"]')).toHaveCount(0)             // 굵기 숫자 버튼(1·2·3·5) 없음 — 스테퍼 하나
-  const code = page.getByTestId('colorrow-line').getByTestId('color-code')
-  await code.fill('D9703F'); await code.press('Enter')                          // 색 창 안 열고 칸에서 바로
+  await page.getByTestId('chip-line').click({ position: { x: 90, y: 12 } })     // 코드 글자 자리를 눌러도 창이 열림(누를 자리가 넓게)
+  const pop = page.getByTestId('pop-line')
+  await expect(pop.getByTestId('color-code')).toBeFocused()                     // 열리면 코드가 골라진 채 — 바로 치면 바뀜
+  await page.keyboard.type('D9703F'); await page.keyboard.press('Enter')
   expect((await last(page)).pen).toBe('#d9703f')
+  await pop.locator('button[title="#007AFF"]').click()
+  await expect(pop).toBeVisible()                                                // 견본을 눌러도 열린 채(눌러 가며 비교)
+  expect((await last(page)).pen).toBe('#007aff')
+  await pop.locator('button[title="#FF3B30"]').click()
+  expect((await last(page)).pen).toBe('#ff3b30')
+  await page.keyboard.press('Escape'); await expect(pop).toHaveCount(0)
+  await expect(page.getByTestId('chip-line')).toContainText('FF3B30')
+
   expect((await page.evaluate(() => window.__mb.ed.debugState())).stylePv).toBe(true)   // 바꾼 뒤 = 선택선 숨김(바꾼 색이 보이게)
-  await page.mouse.move(700, 600)                                                // 칠판으로 돌아오면 다시
+  await page.mouse.move(700, 600); await page.mouse.move(650, 560)               // 칠판으로 옮기기만 해서는 그대로(바꾼 색을 보러 가는 길)
+  expect((await page.evaluate(() => window.__mb.ed.debugState())).stylePv).toBe(true)
+  await clickScene(page, 60, 40)                                                 // 칠판을 누르면 다시
   await expect.poll(() => page.evaluate(() => window.__mb.ed.debugState().stylePv)).toBe(false)
 
-  await page.getByTestId('chip-line').click()
-  const pop = page.getByTestId('pop-line')
-  await pop.locator('button[title="#007AFF"]').click()
-  await expect(pop).toHaveCount(0)                                               // 견본을 누르면 바로 닫힘
-  expect((await last(page)).pen).toBe('#007aff')
-  await expect(page.getByTestId('colorrow-line').getByTestId('color-code')).toHaveValue('007AFF')
-
-  // 세 색 창 모양이 같음 — 색 두 줄(16칸) 그대로, 채움만 아래 「없음」·진하기
+  // 세 색 창 모양이 같음 — 맨 위 코드 + 색 두 줄 16칸 + 최근, 채움만 아래 「없음」·진하기
   await page.getByTestId('chip-fill').click()
   const fp = page.getByTestId('pop-fill')
-  await expect(fp.locator(':scope > div').first().locator(':scope > *')).toHaveCount(16)   // 색 두 줄 16칸(마지막 = 다른 색) — 선 색 창과 같음(전엔 채움만 연한 견본 한 줄 더)
-  await fp.locator('button[title="#007AFF"]').click()                            // 없음이던 채움 = 진하기 1/3
+  await expect(fp.getByTestId('color-grid').locator(':scope > *')).toHaveCount(16)
+  await fp.getByTestId('color-grid').locator('button[title="#007AFF"]').click()  // 없음이던 채움 = 진하기 1/3
   expect((await last(page)).fill).toBe('#55007aff')
-  await page.getByTestId('chip-fill').click()
   await page.getByTestId('fill-alpha').fill('50')
   expect((await last(page)).fill).toBe('#80007aff')
-  await expect(page.getByTestId('colorrow-fill')).toContainText('50%')
   await page.keyboard.press('Escape')
-  await expect(page.getByTestId('pop-fill')).toHaveCount(0)
-  await expect(page.getByTestId('chip-fill')).toBeVisible()                       // Esc는 창만 닫고 고른 것은 그대로
+  await expect(page.getByTestId('chip-fill')).toContainText('50%')
+  await page.getByTestId('chip-fill').hover(); await page.mouse.wheel(0, -100)    // 휠 = 진하기 5%씩
+  await expect.poll(async () => (await last(page)).fill).toBe('#8c007aff')
+  await expect(page.getByTestId('chip-fill')).toBeVisible()
   await page.getByTestId('chip-fill').click(); await page.getByTestId('fill-none').click()
   expect((await last(page)).fill ?? null).toBeNull()
+  await page.keyboard.press('Escape')
   await page.locator('[aria-label="선 굵기 늘리기"]').click()
   expect((await last(page)).width).toBe(2)
+})
+
+test('글 고치는 중에도 속성 카드 — 「글자」 꾸밈 버튼 = 꾸미기 막대와 같은 줄, 드래그한 부분에만 먹음', async ({ page }) => {
+  await openBoard(page, boardName('editprops')); await setCam(page)
+  await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 200, y: 80 })
+  await page.keyboard.type('ABCD')                                               // 고치는 중(아직 안 끝냄)
+  await expect(page.getByTestId('props-fmt')).toBeVisible()                       // 전엔 고치는 중엔 속성 카드가 숨었음
+  await page.keyboard.press('Shift+ArrowLeft'); await page.keyboard.press('Shift+ArrowLeft')   // 「CD」만 고름
+  const bar = await page.getByTestId('format-bar').locator('button').evaluateAll(bs => bs.map(b => b.getAttribute('aria-label')))
+  const card = await page.getByTestId('props-fmt').locator('button').evaluateAll(bs => bs.map(b => b.getAttribute('aria-label')))
+  expect(card).toEqual(bar.filter(n => n !== '글자색'))                          // 같은 항목(글자색은 카드에선 「색」 줄)
+  await page.getByTestId('pfmt-굵게').click()
+  await page.keyboard.press('Escape')
+  expect((await last(page)).label.runs).toEqual([[2, 2, null, true]])            // 고른 「CD」에만
 })
 
 test('색 창은 카드 밖에 떠서 안 잘림 — 카드 아래쪽 글자 색도 화면 안, 카드에 스크롤 안 생김', async ({ page }) => {
