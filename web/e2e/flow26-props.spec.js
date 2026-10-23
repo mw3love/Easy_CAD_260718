@@ -62,13 +62,21 @@ test('글 고치는 중에도 속성 카드 — 「글자」 꾸밈 버튼 = 꾸
   await pickShape(page, '사각형'); await dragScene(page, { x: 0, y: 0 }, { x: 200, y: 80 })
   await page.keyboard.type('ABCD')                                               // 고치는 중(아직 안 끝냄)
   await expect(page.getByTestId('props-fmt')).toBeVisible()                       // 전엔 고치는 중엔 속성 카드가 숨었음
+  await expect(page.getByTestId('fmt-scope')).toHaveText(' · 글 전체에')        // 안 골랐으면 = 글 전체
   await page.keyboard.press('Shift+ArrowLeft'); await page.keyboard.press('Shift+ArrowLeft')   // 「CD」만 고름
+  await expect(page.getByTestId('fmt-scope')).toHaveText(' · 드래그한 글자에만')
   const bar = await page.getByTestId('format-bar').locator('button').evaluateAll(bs => bs.map(b => b.getAttribute('aria-label')))
   const card = await page.getByTestId('props-fmt').locator('button').evaluateAll(bs => bs.map(b => b.getAttribute('aria-label')))
   expect(card).toEqual(bar.filter(n => n !== '글자색'))                          // 같은 항목(글자색은 카드에선 「색」 줄)
   await page.getByTestId('pfmt-굵게').click()
   await page.keyboard.press('Escape')
   expect((await last(page)).label.runs).toEqual([[2, 2, null, true]])            // 고른 「CD」에만
+  await clickScene(page, 10, 10); await page.keyboard.press('Enter')             // 다시 고치기 — 「CD」를 골라 코드도 켬
+  await page.keyboard.press('End'); await page.keyboard.press('Shift+ArrowLeft'); await page.keyboard.press('Shift+ArrowLeft')
+  await page.getByTestId('fmt-코드').click()
+  await expect(page.getByTestId('fmt-굵게')).toHaveAttribute('aria-pressed', 'true')   // 코드를 켜도 굵게가 안 풀림(막대도 카드처럼 — 전엔 코드가 다른 꾸밈을 뗌)
+  await page.keyboard.press('Escape')
+  expect((await last(page)).label.runs).toEqual([[2, 2, null, true, null, true]])
 })
 
 test('색 창은 카드 밖에 떠서 안 잘림 — 카드 아래쪽 글자 색도 화면 안, 카드에 스크롤 안 생김', async ({ page }) => {

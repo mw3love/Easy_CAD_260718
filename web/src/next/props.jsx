@@ -387,7 +387,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
     })()}
     {hasText && !allText && <>
       <div style={{ borderTop: `1px solid ${C.line}`, margin: '4px 0 0' }} />
-      <div style={{ fontWeight: 600 }}>글자{edLive && <span style={{ fontWeight: 400, fontSize: 11, color: C.muted }}> · 고른 글자에(없으면 전체)</span>}</div>
+      <div style={{ fontWeight: 600 }}>글자{edLive && <span data-testid="fmt-scope" style={{ fontWeight: 400, fontSize: 11, color: C.muted }}> · {edLive.state.selection.empty ? '글 전체에' : '드래그한 글자에만'}</span>}</div>
       {textRows}
     </>}
   </div>

@@ -28,7 +28,7 @@ export function runsToRichText(text, runs = [], weight = null) {
       let j = i + 1
       while (j < line.length && same(attr[pos + j], a)) j++
       const node = { type: 'text', text: line.slice(i, j) }, marks = []
-      if (a?.mono) { node.marks = [{ type: 'code' }, ...decoMarks(a.deco)]; content.push(node); i = j; continue }
+      if (a?.mono) marks.push({ type: 'code' })   // 코드도 굵게·색·형광펜·꾸밈과 같이(2026-10-23 — 전엔 코드면 나머지를 떼어 굵은 코드 글자가 고치면 보통으로 돌아갔음. 편집기 code도 `excludes: ''`)
       // 굵은 조각은 바탕 굵기보다 가늘어지지 않게(800 제목 안 굵은 조각이 700으로 내려가지 않도록)
       const w = a?.bold ? Math.max(700, weight || 0) : weight
       if (a?.bold) marks.push({ type: 'bold' })   // 굵게 표시는 늘 남긴다(내보낼 때 되살림) — 안쪽 textStyle 굵기가 실제 굵기를 정함

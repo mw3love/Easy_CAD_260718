@@ -23,6 +23,13 @@ test('고정폭 조각 ↔ 편집기(TipTap code 표시) 왕복', () => {
   assert.deepEqual(back.runs, runs)
 })
 
+test('코드 + 굵게·색·형광펜·기울임이 같이 있어도 편집기 왕복에 안 빠짐(2026-10-23 — 전엔 코드면 나머지를 뗌)', () => {
+  const runs = [[0, 3, '#ff0000', true, '#99ffd54f', true, 'i']]
+  const doc = runsToRichText('abc', runs)
+  assert.deepEqual(doc.content[0].content[0].marks.map(m => m.type).sort(), ['bold', 'code', 'italic', 'textStyle'])
+  assert.deepEqual(richTextToRuns(doc).runs, runs)
+})
+
 test('글 속 `코드` = 고정폭 조각(따옴표는 뺌), 줄 바탕은 코드만 있는 줄에만', () => {
   const { text, runs } = answerToEcadText('이렇게 부르면 `3`이 나와요.\n`npm test`')
   assert.equal(text, '이렇게 부르면 3이 나와요.\nnpm test')

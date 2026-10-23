@@ -6,7 +6,9 @@ import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import Bold from '@tiptap/extension-bold'
-import Code from '@tiptap/extension-code'
+import CodeMark from '@tiptap/extension-code'
+// 코드 글자도 굵게·기울임·색·형광펜과 같이(기본은 `excludes: '_'` = 다른 꾸밈을 다 뗌 — 속성 카드·.ecad·데스크톱은 따로 된 칸, 2026-10-23 사용자)
+const Code = CodeMark.extend({ excludes: '' })
 import Heading from '@tiptap/extension-heading'
 import Blockquote from '@tiptap/extension-blockquote'
 import CodeBlock from '@tiptap/extension-code-block'
