@@ -878,6 +878,7 @@ AI 웹은 세로 스크롤이라 질문·답이 밀려나 날아간다 → 대�
     웹 AI 그림은 「🎨 그림」(점 그림 — 선을 못 고침)뿐이고, `.svg` 파일을 놓아도 도형이 안 됨(SVG는 내보내기만). 웹은 결과 종류(`path`·`polygon`·`line`·`ellipse`·`rect`·`text`)와
     묶기(`group_id`)를 이미 그림 — 새로 할 것은 만들기 쪽뿐. **베끼기는 데스크톱에만**(정밀 도면 = 작업실, 결승점 밖, 모서리 맞추기·부분 다시·구역당 수십 초 — 웹 사진은 `.ecad`로 넘겨 베낌).
     0) 실측: 데스크톱 `text_to_svg.generate_svg`를 KAIROS 모델 2~3개로 같은 부품 5개(안테나·서버·카메라 등) — 우리 파서 통과율·눈으로·시간·크레딧 → 기본 모델(§8 항목62 방식).
+       **0단계 완료(2026-10-23)**: 기본 = `claude-sonnet-5-5`(5/5 통과·3~4초·한 개 약 5크레딧, sol과 같은 품질에 3~4배 빠름). luna는 1개 시간 초과·안테나 약함, gemini-3.8-flash는 10~35초·2배 값. 표는 `docs/history/2026-10.md` 끝.
     1) SVG → 칠판 도형(JS, 새 `svgin.js` 순수): 데스크톱 `fileio/svg_import.py` 규칙 그대로(지원 요소·호 → 베지어·viewBox 긴 변 맞추기) → 도형들 + 한 `group_id`.
        `svg_import.py`가 Qt(`QPainterPath`)를 써서 서버에서 못 돌리므로 JS로 옮기고, 대조 시험(`tools/export_svg_cases.py` → `web/test/fixtures/`, 데스크톱 결과와 점 비교).
        덤: `.svg` 파일 끌어다 놓기·붙여넣기 = 같은 길(`clipin.js`).
