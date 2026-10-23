@@ -37,7 +37,7 @@ BOARD_SYSTEM = """너는 사용자의 「웹 칠판」에 쌓인 메모·글을 
 _BOARD_WORDS = re.compile(r"지난번|저번|예전에|아까|칠판에(서)?\s*(찾|있|적)|우리가\s*(정리|적|메모)|(정리|메모|기록|적어)\s*(해\s*)?(둔|놨|뒀|했던|한\s*거)")
 # 그림(§8 항목61 ③-4) — 「그려줘·일러스트·이미지 만들어」. 흐름도·도면·표처럼 칠판 도형으로 그릴 것은 그림 모델이 아니라 대화로(그림 모델은 글자·선이 엉킴)
 _IMAGE_WORDS = re.compile(r"그려\s*(줘|주세요|봐)|그림\s*(을|으로|좀)?\s*(그려|만들|생성)|이미지\s*(를|로)?\s*(만들|생성|그려)|일러스트|삽화|캐릭터\s*(만들|그려)")
-_DIAGRAM_WORDS = re.compile(r"흐름도|순서도|플로우|도면|계통도|다이어그램|표로|마인드맵|조직도")
+_DIAGRAM_WORDS = re.compile(r"흐름도|순서도|플로우|도면|계통도|구성도|다이어그램|표로|마인드맵|조직도")   # 구성도 = 2026-10-23 측정(「송신소 구성도」가 그림으로 갔음)
 # 아이콘(§8 항목63) — 선을 고칠 수 있는 SVG 도형(`board_icon`). 뜻이 분명한 말(SVG·벡터·선 그림) + 만들기 말이 같이 있을 때만.
 # 「아이콘·심볼」은 뜻이 둘이라(귀여운 그림 vs 고칠 도형) 자동으론 안 보냄 — 대화창 「+ › ✏️ 아이콘」이 맡음(2026-10-23 사용자)
 _ICON_WORDS = re.compile(r"svg|벡터|선\s*그림|라인\s*아트|고칠\s*수\s*있", re.I)
@@ -49,6 +49,15 @@ def is_icon(text: str) -> bool:
     """「파라볼라 안테나 아이콘 그려 줘」·「이 그림 심볼로 바꿔 줘」 → 아이콘 길."""
     t = text or ""
     return bool(_ICON_WORDS.search(t) and _MAKE_WORDS.search(t) and not _HOWTO_WORDS.search(t))
+
+
+_ICON_AMBIG = re.compile(r"아이콘|로고|심볼|기호|픽토그램|엠블럼")
+
+
+def maybe_icon(text: str) -> bool:
+    """「펭귄 아이콘 그려줘」 — 그림일 수도·고칠 도형일 수도(뜻이 둘) → 대화창이 되물음(§8 항목64). 뜻이 분명한 말(SVG·선 그림)이면 아님."""
+    t = text or ""
+    return bool(_ICON_AMBIG.search(t) and _MAKE_WORDS.search(t) and not _HOWTO_WORDS.search(t) and not is_icon(t))
 
 
 # 정리 문서(「정리해 줘」 ①) — 칠판 자료를 아티팩트 같은 보고서·인포그래픽 한 장으로(`board_report`)

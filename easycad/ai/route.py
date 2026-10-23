@@ -36,7 +36,8 @@ CASES = [
     ("광컨버터 고장나면 뭐부터 확인해?", 0, "chat"), ("오늘 날짜 기준 환율", 0, "search"), ("우리가 얘기한 예산 얼마였지", 0, "board"),
     ("내일의 전주 날씨를 고흐 느낌으로 그려줘.", 0, "image"),   # 2026-10-20 사용자 실사용 — 검색으로 잘못 감
     ("파라볼라 안테나를 SVG로 그려 줘", 0, "icon"), ("송신기를 선 그림으로 만들어 줘", 0, "icon"), ("아이콘 만드는 법 알려줘", 0, "chat"),   # §8 항목63
-    ("펭귄 아이콘 그려줘", 0, "image"),   # 「아이콘」은 뜻이 둘 — 자동은 그림, 도형은 「+ › ✏️ 아이콘」(2026-10-23 사용자)
+    ("펭귄 아이콘 그려줘", 0, "image"),   # 「아이콘」은 뜻이 둘 — 안 물었으면 그림, 대화창은 되물음(`decide`, §8 항목64)
+    ("송신소 구성도 만들어 줘", 0, "chat"),   # 2026-10-23 측정 — 구성도가 그림으로 갔음
 ]
 # 주간 자가 시험 결과 — False면 규칙만(서버가 `self_check`로 바꿈). 환경 변수 EASYCAD_ROUTE=rules면 늘 규칙(시험·네트워크 없는 곳)
 state = {"ai": True}
@@ -78,17 +79,45 @@ def adjust(text: str, choice: str, conf: float, probs: dict) -> str:
 
 def route(api_key: str, text: str, has_context: bool = False, *, has_items: bool = True, base_url: str = gw.BASE_URL, http=None) -> tuple:
     """질문 → (길, 어떻게 골랐나 "ai"|"rules"). 정리정돈인데 칠판이 조각 목록을 안 보냈으면 규칙(조각 없이는 정돈 못 함)."""
+    kind, how, _ = decide(api_key, text, has_context, has_items=has_items, base_url=base_url, http=http)
+    return kind, how
+
+
+# 되묻기(§8 항목64, 2026-10-23 사용자 승인) — 애매하고 비싼 갈림길에서 한 번, 버튼으로. 대화·검색은 틀려도 몇 초면 다시라 안 물음.
+# 0단계 실측(41문항 × 3번): 「발표 자료 만들어 줘」 1·2등 차 0.03~0.11에 chat 2·report 1로 흔들림, 분명한 문항 중 차 < 0.3이고 비싼 길이 낀 것은 1개
+ASK_GAP = 0.3
+COSTLY = {"image", "report", "tidy"}
+
+
+def decide(api_key: str, text: str, has_context: bool = False, *, has_items: bool = True, prefs: dict | None = None,
+           base_url: str = gw.BASE_URL, http=None) -> tuple:
+    """질문 → (길, "ai"|"rules", 물어볼 길 목록 — 안 물으면 []). 물을 때 길 = 안 물었으면 갔을 길.
+    `prefs` = {갈림길 이름: 길} — 사용자가 같은 갈림길에서 같은 답을 고른 적이 있으면 묻지 않고 그 길(대화창이 보냄)."""
+    if board_chat.maybe_icon(text):   # 「아이콘·로고·심볼」 — 판단 모델엔 아이콘 길이 없어 점수로는 못 봄(0단계: 「펭귄 아이콘」 image 1.0) → 낱말로
+        pick = (prefs or {}).get("icon|image")
+        return (pick, "rules", []) if pick in ("image", "icon") else ("image", "rules", ["image", "icon"])
     rules = board_chat.guess_kind(text, has_context)
     if os.environ.get("EASYCAD_ROUTE") == "rules" or not state["ai"] or not api_key:
-        return rules, "rules"
+        return rules, "rules", []
     try:
         choice, conf, probs = ask_model(api_key, text, has_context, base_url=base_url, http=http)
     except Exception:
-        return rules, "rules"
+        return rules, "rules", []
     kind = adjust(text, choice, conf, probs)
     if kind == "tidy" and not has_items:
-        return rules, "rules"
-    return kind, "ai"
+        return rules, "rules", []
+    return kind, "ai", ask_choices(choice, kind, probs, has_items)
+
+
+def ask_choices(choice: str, kind: str, probs: dict, has_items: bool = True) -> list:
+    """판단 모델 1·2등이 가깝고(차 < `ASK_GAP`) 비싼 길이 끼면 [1등, 2등] — 낱말 손질이 길을 바꿨으면(말이 분명) 안 물음."""
+    if kind != choice:
+        return []
+    top = [k for k in sorted(probs, key=lambda k: -float(probs[k] or 0)) if k in CRITERIA and (k != "tidy" or has_items)][:2]
+    # 고른 길과 점수 1등이 다를 때도 있음(실측 chat 고름 · chat 0.49 / report 0.49) — 가장 애매한 경우라 1·2등 안에만 있으면 됨
+    if len(top) < 2 or kind not in top or float(probs[top[0]] or 0) - float(probs[top[1]] or 0) >= ASK_GAP or not COSTLY & set(top):
+        return []
+    return [kind] + [k for k in top if k != kind]
 
 
 def self_check(api_key: str, *, base_url: str = gw.BASE_URL, http=None) -> dict:

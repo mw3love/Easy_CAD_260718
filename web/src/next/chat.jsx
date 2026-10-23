@@ -30,7 +30,17 @@ const KINDS = {
   tidy: ['🧩 정리정돈', { color: '#0f766e', background: 'rgba(15,118,110,.12)' }],
   image: ['🎨 그림', { color: '#9333ea', background: 'rgba(147,51,234,.12)' }],
   icon: ['✏️ 아이콘', { color: '#0e7490', background: 'rgba(14,116,144,.12)' }],   // 선을 고칠 수 있는 도형(§8 항목63)
+  ask: ['❓ 확인', { color: '#da7756', background: 'rgba(218,119,86,.12)' }],   // 되묻기(§8 항목64) — 만들기 전에 버튼으로
 }
+// 되묻기 버튼 — [이름, 설명]. 서버가 애매하고 비싼 갈림길에서만 길 둘을 보냄(`easycad/ai/route.py` `decide`)
+const ASK_LABEL = { image: ['🎨 그림으로', '사진·일러스트 같은 그림'], icon: ['✏️ 고칠 수 있는 선 도형으로', '선을 하나하나 고칠 수 있는 아이콘(SVG)'],
+  report: ['📄 정리 문서로', '인쇄할 수 있는 문서 한 장'], tidy: ['🧩 칠판 정리정돈', '조각을 주제별로 묶어 옮기기'], chat: ['💬 글로 바로 답하기', '대화창에 글로'],
+  search: ['🔎 웹 검색으로', '최신 정보 + 출처'], board: ['📌 칠판에서 찾기', '이 칠판에 적어 둔 것에서'] }
+// 고른 답 기억(이 브라우저만 — 편의) — { 갈림길: [최근 고른 길 둘] }, 같은 길을 두 번 연달아 고르면 다음부터 안 물음(서버 `ask_pref`)
+const ASK_KEY = 'magic-board-ask'
+const askMemo = () => { try { return JSON.parse(localStorage.getItem(ASK_KEY) || '{}') || {} } catch { return {} } }
+const askPrefs = () => Object.fromEntries(Object.entries(askMemo()).filter(([, v]) => Array.isArray(v) && v.length >= 2 && v.at(-1) === v.at(-2)).map(([k, v]) => [k, v.at(-1)]))
+const rememberAsk = (key, kind) => { try { const m = askMemo(); m[key] = [...(m[key] || []), kind].slice(-2); localStorage.setItem(ASK_KEY, JSON.stringify(m)) } catch { /* 기억 못 해도 그만 */ } }
 // 기다리는 동안 보일 말 — 일마다 실제로 일하는 모델(서버 /api/models `jobs`)을 같이(2026-10-20 사용자: 정돈인데 고른 gpt가 보여 헷갈림, 칠판엔 아무 표시가 없어 안 되는 줄 알았음)
 const JOB_LABEL = { tidy: '🧩 정리정돈 중', report: '📄 정리 문서 만드는 중', image: '🎨 그림 그리는 중', icon: '✏️ 아이콘 그리는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
 // 「+」 도구 — [길, 이름, 설명, 입력 칸 안내]. 서버는 길(`kind`)을 그대로 따름
@@ -198,8 +208,9 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
   async function ask(history, kind = '', prevHtml = '', extra = {}) {   // prevHtml = 바로 앞 답이 정리 문서면 그 HTML(「더 짧게」 = 그 문서 고치기 — 서버가 판단)
     const q = history.filter(m => m.role === 'user').at(-1)?.content || ''
     const items = kind === 'tidy' || (!kind && TIDY_RE.test(q)) ? ed.current?.tidyItems() || [] : null   // 정리정돈(「정리해 줘」 ②) — 옮길 조각 목록(uid·종류·글·크기)
+    const prefs = kind ? {} : askPrefs()
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
-      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(items ? { items } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), ...(history.at(-1)?.base_svg ? { base_svg: history.at(-1).base_svg } : {}), ...extra, messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
+      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), ...(Object.keys(prefs).length ? { ask_pref: prefs } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(items ? { items } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), ...(history.at(-1)?.base_svg ? { base_svg: history.at(-1).base_svg } : {}), ...extra, messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
     const frames = d.kind === 'tidy' && d.plan ? ed.current?.applyTidy(d.plan, d.model) || [] : null   // 답이 도착한 이때 한 번만 칠판에(기록을 다시 열 땐 안 함)
@@ -207,7 +218,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
     return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
       ...(d.images?.length ? { images: d.images, prompt: d.caption || history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}),
       ...(d.svgs?.length ? { svgs: d.svgs, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),   // caption = 이어 고친 그림이면 처음 요청(서버)
-      ...(d.html ? { html: d.html, title: d.title || '정리 문서' } : {}), ...(frames ? { frames } : {}) }
+      ...(d.html ? { html: d.html, title: d.title || '정리 문서' } : {}), ...(frames ? { frames } : {}), ...(d.kind === 'ask' ? { choices: d.choices || [], askKey: d.key || '' } : {}) }
   }
   // 🎤 실시간 받아쓰기(2026-10-20) — 말하는 동안 입력 칸에 글자가 쌓임(누르기 전 글 뒤에), 다시 누르거나 보내면 멈춤. 직접 치면 멈춤
   const [mic, setMic] = useState('off'), [micErr, setMicErr] = useState(''), micStop = useRef(null), micBase = useRef('')
@@ -228,7 +239,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
     const ctx = from ? from.context || '' : contextText(sel), n = from ? from.ctxCount : sel.length
     // ↩ 이어 묻기(2026-10-20 사용자 — 특정 답을 토대로) = 그 답까지만 앞 대화로 보냄(화면 기록엔 맨 끝에 쌓임, 무엇에 이었는지 표시)
     const ri = replyTo == null ? -1 : msgs.findIndex(m => m.at === replyTo)
-    const before = (ri >= 0 ? msgs.slice(0, ri + 1) : msgs).filter(m => m.role !== 'error')
+    const before = (ri >= 0 ? msgs.slice(0, ri + 1) : msgs).filter(m => m.role !== 'error' && m.kind !== 'ask')   // 답 안 한 되묻기는 앞 대화에 안 실음
     // 바로 앞(또는 이어 묻는) 답이 그림 후보면 고칠 그림 — 「두 번째」라 하면 둘째, 아니면 칠판에 마지막으로 붙인 것, 없으면 첫째(서버가 원본 유지 고치기 — input_images, 2026-10-20 사용자)
     const lastA = before.at(-1), ims = lastA?.role === 'assistant' ? lastA.images || [] : []
     const pick = /두\s*번째|둘째|2\s*번째?|오른쪽/.test(q) ? 1 : /첫\s*번째|첫째|1\s*번째?|왼쪽/.test(q) ? 0 : lastA?.picked?.at(-1) ?? 0
@@ -241,6 +252,17 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
     update(next); setReplyTo(null); if (text == null) setDraft(''); setBusy(Date.now()); setBusyJob(kind || (TIDY_RE.test(q) ? 'tidy' : ''))
     try { update([...next, await ask([...before, mine], kind, (!kind || kind === 'report') && lastA?.role === 'assistant' && lastA.html ? lastA.html : '', boardImgs.length ? { board_images: boardImgs } : {})]) } catch (e) {
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
+    } finally { setBusy(null) }
+  }
+  // 되묻기 버튼 — 고른 길을 기억하고, 같은 질문(그 앞 대화까지)을 그 길로 보내 이 되묻기 자리에 답을 끼움
+  async function choose(i, k) {
+    const history = msgs.slice(0, i).filter(m => m.role !== 'error' && m.kind !== 'ask'), m = msgs[i]
+    if (busy || history.at(-1)?.role !== 'user') return
+    if (m.askKey) rememberAsk(m.askKey, k)
+    const boardImgs = selImgs.length ? await Promise.all(selImgs.map(shrinkImage)) : []
+    setBusy(Date.now()); setBusyJob(k)
+    try { const a = await ask(history, k, '', boardImgs.length ? { board_images: boardImgs } : {}); update(msgs.map((x, j) => (j === i ? a : x))) } catch (e) {
+      setMsgs([...msgs.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }])
     } finally { setBusy(null) }
   }
   function pin(i) {
@@ -383,6 +405,12 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
                 <span data-testid="answer-kind" style={{ ...css.kind, ...(KINDS[m.kind] ? KINDS[m.kind][1] : null) }}>{(KINDS[m.kind] || KINDS.chat)[0]}</span>
               </div>
               <Answer text={m.content} />
+              {m.kind === 'ask' && <div data-testid="ask-choices" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                {(m.choices || []).map(k => <button key={k} data-testid="ask-choice" data-kind={k} disabled={!!busy} onClick={() => choose(i, k)} title={(ASK_LABEL[k] || [])[1]}
+                  style={{ ...css.pin, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, padding: '6px 10px', textAlign: 'left' }}>
+                  <span>{(ASK_LABEL[k] || [k])[0]}</span><span style={{ ...css.meta, fontWeight: 400 }}>{(ASK_LABEL[k] || [])[1]}</span></button>)}
+                <span style={css.meta}>같은 걸 두 번 고르면 다음부터는 묻지 않고 바로 해요</span>
+              </div>}
               {m.html && <div data-testid="answer-doc" style={{ marginTop: 6 }}>   {/* 정리 문서 미리보기 — A4 폭 794px를 대화창 폭에 맞춰 줄임(스크립트 없는 iframe) */}
                 <div style={{ height: 300, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', cursor: 'zoom-in' }} title="크게 보기·인쇄" onClick={() => openHtml(m.html)}>
                   <iframe srcDoc={m.html} title={m.title || '정리 문서'} sandbox="" scrolling="no" style={{ border: 0, width: 794, height: 300 / 0.41, transform: 'scale(0.41)', transformOrigin: '0 0', pointerEvents: 'none' }} />
@@ -421,7 +449,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
               {m.sources?.length > 0 && <div data-testid="answer-sources" style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {m.sources.map(s => <a key={s.n} href={s.url} target="_blank" rel="noopener noreferrer" title={s.url} onPointerDown={e => e.stopPropagation()}
                   style={{ ...css.meta, color: LINK_CHAT, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>[{s.n}] {s.title || siteOf(s.url)} · {siteOf(s.url)}</a>)}</div>}
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+              {m.kind !== 'ask' && <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
                 {m.kind === 'tidy' && <button style={css.pin} onClick={() => ed.current?.showIds(m.frames) || setGone(g => ({ ...g, [m.at + ':tidy']: true }))} title="정돈해 만든 프레임들이 한눈에 보이게">
                   {gone[m.at + ':tidy'] ? '프레임이 지워졌어요' : '정돈한 곳 보기'}</button>}
                 {!m.images?.length && !m.svgs?.length && m.kind !== 'tidy' && <button style={{ ...(m.pinned ? css.done : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
@@ -439,7 +467,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
                   </div>}
                 </span>
                 <span style={{ ...css.meta, marginLeft: 'auto' }}>{m.model}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</span>
-              </div>
+              </div>}
             </div>)}
         {busy && <div data-testid="chat-busy" style={{ ...css.ai, color: C.muted, display: 'flex', alignItems: 'center', gap: 8 }}><Spinner />{busyLine}</div>}
       </div>

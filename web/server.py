@@ -129,8 +129,14 @@ class Handler(SimpleHTTPRequestHandler):
             if not kind and (fu or bimgs) and (board_image.FOLLOW_WORDS.search(str(last.get("content", ""))) or board_chat._IMAGE_WORDS.search(str(last.get("content", "")))):
                 kind = "image"   # 그림 뒤·그림을 고른 채 「날짜도 넣어 줘」 = 그 그림 고치기(판단 모델은 앞 대화·고른 그림을 안 봄)
             if not kind:   # 길 고르기 = 판단 모델 jev + 낱말 규칙 바닥(`easycad/ai/route.py`, 2026-10-20 사용자 선택)
-                kind, how = route.route(key, str(last.get("content", "")), bool(ctx or last.get("context")), has_items=bool(req.get("items")), base_url=gw.resolve_base_url())
-                sys.stderr.write("[길] %s (%s)\n" % (kind, how))
+                prefs = req.get("ask_pref") if isinstance(req.get("ask_pref"), dict) else {}
+                kind, how, choices = route.decide(key, str(last.get("content", "")), bool(ctx or last.get("context")), has_items=bool(req.get("items")), prefs=prefs, base_url=gw.resolve_base_url())
+                sys.stderr.write("[길] %s (%s)%s\n" % (kind, how, " — 되묻기 " + "|".join(choices) if choices else ""))
+                if choices:   # 애매하고 비싼 갈림길 — 만들기 전에 버튼으로 물음(§8 항목64). 누르면 대화창이 그 길 이름표로 다시 보냄
+                    return self._json(200, {"kind": "ask", "choices": choices, "default": kind, "key": "|".join(sorted(choices)),
+                                            "content": "어느 쪽으로 만들까요?", "model": route.ROUTE_MODEL if how == "ai" else "낱말 규칙", "elapsed": 0})
+                if kind == "icon":   # 되묻기에서 두 번 고른 길(`ask_pref`)
+                    return self._icon(text, key, "", bimgs[0] if bimgs else "")
             refs = None
             # 날씨·공휴일·법령·통계·특보·대기질·국어 규범 = 공공 데이터 도구(KAIROS MCP, `kr_tools` — 2026-10-20). 못 쓰면(도시 밖·도구 실패) 지금처럼 웹 검색
             found = []
