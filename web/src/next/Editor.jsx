@@ -35,7 +35,7 @@ import { layersOf, layerIdOf } from './layers.jsx'
 import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob, usesBoardFont, weightsOf } from './exporter.jsx'
 import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
-import { pdfGoPage, pdfLayout, pdfPageAt, pdfSelectedText } from './pdfcard.jsx'
+import { pdfGoPage, pdfLayout, pdfPageAt, pdfScroll, pdfSelectedText } from './pdfcard.jsx'
 import { freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
 import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
@@ -1387,8 +1387,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (pbox && !mod && /^(Arrow(Up|Down|Left|Right)|Page(Up|Down)|Home|End)$/.test(k)) {   // PDF 넘겨 보는 중 = 쪽 넘기기(2026-10-21: 화살표가 카드를 옮기던 것)
         e.preventDefault()
         const lay = pdfLayout(pdfOn, pdfOn.rect[2]), t = pbox.scrollTop, cur = Math.max(0, lay.findIndex(([py, ph]) => t < py + ph - 4))
-        const go = i => { pbox.scrollTop = lay[Math.max(0, Math.min(lay.length - 1, i))]?.[0] ?? 0 }
-        if (k === 'ArrowDown') pbox.scrollTop = t + 60; else if (k === 'ArrowUp') pbox.scrollTop = t - 60
+        const go = i => pdfScroll(pdfOn, pbox, lay[Math.max(0, Math.min(lay.length - 1, i))]?.[0] ?? 0)
+        if (k === 'ArrowDown') pdfScroll(pdfOn, pbox, t + 60); else if (k === 'ArrowUp') pdfScroll(pdfOn, pbox, t - 60)
         else if (k === 'Home') go(0); else if (k === 'End') go(lay.length - 1)
         else go(cur + (k === 'PageDown' || k === 'ArrowRight' ? 1 : t > lay[cur][0] + 4 ? 0 : -1))   // 앞으로 = 지금 쪽 첫머리, 이미 첫머리면 앞 쪽
         return
@@ -1437,9 +1437,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       }
       if (!mod && !e.shiftKey && e.code === 'KeyZ') return act(() => {
         const c = R.current.cam, zb = zBack.current; zBack.current = null
-        if (!e.altKey && zb?.after && ['x', 'y', 'z'].every(q => Math.abs(c[q] - zb.after[q]) < 1e-6)) { setCam(zb.before); setStatus('보던 자리로'); return }   // Z 한 번 더(그 사이 화면 안 움직임) = 누르기 전 자리로(2026-10-22 사용자: 전체를 슬쩍 보고 돌아가기)
-        const its = e.altKey ? R.current.model.items.filter(it => ids.includes(it._id)) : null; onFit?.(its?.length ? its : null)
-        if (!e.altKey) { const zb2 = { before: { ...c } }; zBack.current = zb2; requestAnimationFrame(() => { if (zBack.current === zb2) zb2.after = { ...R.current.cam } }) }   // 맞춘 뒤 자리 = 다음 렌더에서 읽음
+        const same = p => p && ['x', 'y', 'z'].every(q => Math.abs(c[q] - p[q]) < 1e-6)
+        if (!e.altKey && zb?.after && (same(zb.after) || same(zb.before))) { setCam(zb.before); setStatus('보던 자리로'); return }   // Z 한 번 더(그 사이 화면 안 움직임) = 누르기 전 자리로(2026-10-22 사용자: 전체를 슬쩍 보고 돌아가기). before와 같음 = 맞춘 자리가 아직 안 그려짐(연달아 누름)
+        const its = e.altKey ? R.current.model.items.filter(it => ids.includes(it._id)) : null, after = onFit?.(its?.length ? its : null)
+        if (!e.altKey && after) zBack.current = { before: { ...c }, after }   // 맞춘 자리는 fit이 바로 돌려줌 — 전엔 다음 화면 그리기에서 읽어, 그 전에 Z를 또 누르면 다 보기를 한 번 더 했음(10-23 화면 시험 흔들림)
       })   // Z = 다 보기 · Alt+Z = 고른 것만(왼손 자리 — 2026-10-20 사용자, 한글 입력이어도 자리로). 옛 Shift+Z는 글 도형 하나를 고르면 글로 들어가 정작 필요할 때 안 먹었음 — Alt는 「치면 글」을 건너뜀
       if (!mod && !e.altKey && !e.shiftKey && e.code === 'KeyD' && !ids.length) return act(() => onDark?.())   // D = 어둡게 ⇄ 밝게(발표와 같은 글쇠, 아무것도 안 골랐을 때)
       const TOOL_KEYS = { 1: 'select', 2: 'arrow', 3: 'text', 4: 'line', 5: 'polygon', 6: 'pen', 7: 'badge' }   // 데스크톱 `SHORTCUT_DEFS` 도구 1~7

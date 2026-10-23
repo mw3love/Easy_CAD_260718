@@ -25,6 +25,7 @@ test('PDF 붙여넣기 = 보기 카드 → 한 번 = 고르기, 두 번 누르�
 
   const body = page.locator('[data-pdfid]'), b = await body.boundingBox()
   await expect(body.locator('img').first()).toHaveJSProperty('complete', true)
+  await waitSaved(page)                                                   // 넣은 카드 저장이 끝난 뒤 — 「저장됨」 알림이 아래 안내를 덮어쓰던 흔들림(10-23)
   await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2)           // 한 번 누르기 = 고르기만(2026-10-21 사용자)
   await expect(page.getByText('두 번 누르면 넘겨 보기').first()).toBeVisible()
   await expect(body).toHaveCSS('pointer-events', 'none')

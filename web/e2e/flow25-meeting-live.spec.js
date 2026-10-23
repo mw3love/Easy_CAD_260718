@@ -48,9 +48,9 @@ test('회의 → 화자별 글 → 연결 닫혀도 다시 붙음 → 끝내기 
   await expect(live).toContainText('화자 2: 수요일 오전이 좋겠습니다.')
   expect((await liveDoc(page)).items).toHaveLength(0)                            // 받아 적는 동안은 문서에 안 넣음
 
-  const sent0 = k.audio[0]
   await s0.close({ code: 1000, reason: 'session cap' })                          // KAIROS 한 연결 60분 상한
   await expect.poll(() => k.sockets.length).toBe(2)
+  const sent0 = k.audio[0]   // 닫힌 뒤에 잰다 — 닫기 전에 재면 닫는 사이 0.1초 덩이 하나가 더 가서 가끔 어긋났음(10-23)
   expect(k.tokens).toBe(2)
   await expect(live).toHaveAttribute('data-state', 'listen')
   await expect.poll(() => k.audio[1]).toBeGreaterThan(0)
@@ -63,7 +63,9 @@ test('회의 → 화자별 글 → 연결 닫혀도 다시 붙음 → 끝내기 
   const segs = k.posts[0].body.segments
   expect(k.posts[0].url).toContain(`/api/meeting/${name}/live`)
   expect(segs.map(g => g.speaker)).toEqual(['Speaker 1', 'Speaker 2', 'Speaker 1', 'Speaker 2'])
-  expect(segs[2].start_ms).toBe(Math.round(sent0 / 2 / 24000 * 1000))           // 바이트 → 16비트 샘플 → 밀리초
+  const ms0 = Math.round(sent0 / 2 / 24000 * 1000)                               // 바이트 → 16비트 샘플 → 밀리초
+  expect(segs[2].start_ms).toBeGreaterThanOrEqual(ms0)                           // 앱은 자기가 보낸 만큼 밈 — 닫히는 순간 보낸 덩이는
+  expect(segs[2].start_ms).toBeLessThanOrEqual(ms0 + 110)                        // 가짜 서버가 못 받을 수 있어 한 덩이(약 101ms)까지 봐줌
   expect(segs[3].text).toBe('마지막 말입니다.')                                    // 「끝내기」 뒤 남은 말까지
   const d = await liveDoc(page), frame = d.items.find(it => it.type === 'frame'), full = d.items.find(it => it.type === 'memo' && it.fold)
   expect(frame.name).toContain('송신소 점검 일정')

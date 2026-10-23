@@ -21,6 +21,9 @@ export function pdfGoPage(it, i) {
   const el = typeof document !== 'undefined' && document.querySelector(`[data-pdfid="${it._id}"]`); if (el) el.scrollTop = t
 }
 
+// 보는 중인 카드를 t 자리로 — 보던 자리도 바로 적음(글쇠로 넘김). scroll 신호는 다음 화면 그리기에 와서, 그 전에 넘겨 보기를 끄면 옛 자리로 되돌아갔음(10-23)
+export function pdfScroll(it, el, t) { el.scrollTop = t; saveTop(it, el.scrollTop) }
+
 // 쪽마다 [위, 높이](카드 폭 w 기준)
 export function pdfLayout(it, w) {
   let y = 0
