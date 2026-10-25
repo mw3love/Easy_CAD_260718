@@ -70,7 +70,7 @@ def test_make_plan_and_replan_prompt():
     assert out["model"] == deep_mode.EDITOR_MODEL and len(out["plan"]["sections"]) == 5
     assert out["estimate"]["credits"][0] < out["estimate"]["credits"][1] and out["estimate"]["seconds"][0] >= 25   # 공공 꼭지가 있으면 더 오래
     sys_, user = c.sent[0]["messages"][0]["content"], c.sent[0]["messages"][1]["content"]
-    assert "2026년 10월 25일" in sys_ and "움직이는 카드" not in sys_                # 칠판이 아직 빈 자리로 그리는 모양은 안 내놓게
+    assert "2026년 10월 25일" in sys_ and "움직이는 카드(한 판에 하나까지" in sys_   # 4단계부터 원리 꼭지 = 움직이는 카드(시험 `test_part74`)
     assert "- 무엇에: 보고·결정" in user and "앞 계획" not in user
     deep_mode.make_plan(c, "반도체 수출 동향", {}, prev=out["plan"], fix="그래프 하나 더")
     user2 = c.sent[1]["messages"][1]["content"]

@@ -8,7 +8,8 @@ import { memoFromAnswer, tableLine, tableWidths } from './memo.js'
 import { newId } from './model.js'
 import { chartData, chartGuess, chartWhy, textW } from './chart.js'
 import { graphTiles } from './deep.js'
-import { siteOf } from './webcard.js'
+import { WEB_HEAD, siteOf } from './webcard.js'
+import { LIVE_H, LIVE_W } from './livecard.js'
 import { DEEP_STYLES } from './deepstyle.js'
 
 const CLEAR = '#00ffffff', CALM = DEEP_STYLES.calm.look   // 색·카드 모양은 디자인 묶음(deepstyle.js `look`)에서
@@ -71,8 +72,11 @@ export function deepSection(plan, sec, x, y, w, k, v = '', S = CALM) {
     case '접힌 메모':
       items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, ...memoFromAnswer(b.md || '')], card(S, { fold: true }))]
       break
-    case '움직이는 카드':   // 4단계 전까지 자리만 — 같은 꼭지 머리 + 무엇이 들어올지(흐린 글)
-      items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, muted(b.note || '움직이는 카드 — 4단계에서 만들어요', S), { k: 'p', t: '' }, muted('▶ 움직이는 카드 자리', S)], { fill: S.moving.fill, pen: S.moving.pen })]
+    case '움직이는 카드':   // 스크립트만 켠 문서 카드(4단계 — livecard.js 틀, 기준 720×480 비율) + 밑 설명 한 줄(note). 카드를 못 만들었으면(서버가 비워 보냄) 설명 메모
+      if (b.html) {
+        const cd = base([x, y], { type: 'doc', live: true, rect: [0, 0, w, WEB_HEAD + Math.round(w * LIVE_H / LIVE_W)], title: sec.title, html: b.html, model: b.card_model || '' })
+        items = [cd, ...(b.note ? [memo(x, bottomOf([cd]) + 4, w, k * 0.9, [muted(b.note, S)], { fill: CLEAR, pen: CLEAR })] : [])]
+      } else items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, muted(b.note || sec.question || '', S), { k: 'p', t: '' }, muted('▶ 움직이는 카드를 못 만들었어요 — 이 꼭지만 다시 만들어 보세요', S)], { fill: S.moving.fill, pen: S.moving.pen })]
       break
     case '단계 카드': {   // 가로로 늘어놓고 사이에 화살표(Editor) — 한 장이 130px보다 좁으면 두 줄
       const head = title(x, y, w, k, sec.title, S), st = b.steps || [], top = bottomOf([head]) + 4

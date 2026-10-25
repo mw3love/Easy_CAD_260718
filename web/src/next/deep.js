@@ -25,6 +25,7 @@ export function spanRange(sec, P = DEEP) {
   if (shape === '단계 카드') { lo = Math.max(lo, (b.steps?.length || 4) >= 5 ? 8 : 6); hi = 12 }
   if (shape === '표') { lo = Math.max(lo, 5); hi = Math.max(hi, 8) }
   if (shape === '숫자 타일') { lo = Math.max(lo, (b.tiles?.length || 3) >= 3 ? 4 : 3); hi = Math.max(hi, 6) }
+  if (shape === '움직이는 카드' && b.html) { lo = Math.max(lo, 5); hi = Math.max(hi, 8) }   // 조작 부품이 읽히는 폭(칸 5개 ≈ 650px — 카드는 기준 720을 줄여 보여 줌). 못 만들어 설명 메모면 보통 꼭지
   if (shape === '출처 카드') hi = Math.min(hi, 4)
   const up = P.boost?.[shape] || 0; lo += up; hi += up
   return [Math.min(12, lo), Math.min(12, Math.max(lo, hi))]
@@ -33,8 +34,8 @@ export function spanRange(sec, P = DEEP) {
 export const variantsOf = sec => (sec.shape === '숫자 타일' ? ['row', 'col'] : sec.shape === '단계 카드' ? ['row', 'grid'] : sec.shape === '그래프' ? ['tall', 'short'] : [''])
 // 그 폭에서 쓸 만한 모양인가 — 숫자 위아래 쌓기는 좁은 칸에서만(넓은 칸에서 쌓으면 타일 속이 텅 빔)
 const variantOk = (sec, v, w) => !(v === 'col' && w > 520) && !(v === 'grid' && (sec.body?.steps?.length || 0) < 4)
-// 위아래로 쌓을 수 있나 — 주인공·넓게 늘어놓는 모양(단계·표)은 혼자
-const stackable = sec => sec.size !== '주인공' && sec.shape !== '단계 카드' && sec.shape !== '표'
+// 위아래로 쌓을 수 있나 — 주인공·넓게 늘어놓는 모양(단계·표)·움직이는 카드는 혼자
+const stackable = sec => sec.size !== '주인공' && sec.shape !== '단계 카드' && sec.shape !== '표' && !(sec.shape === '움직이는 카드' && sec.body?.html)
 
 // 한 줄(꼭지 a..b-1)의 칸 나누기 후보 중 가장 좋은 것 — slots: [[i] | [i, j]] 차례대로
 function bestRow(secs, a, b, hOf, col, P) {

@@ -2,6 +2,7 @@
 // 한 번 = 고르기(칸 안은 안 받음) · 두 번 = 조작 · 바깥 누르기 = 끝, 인터넷·저장소·칠판(부모 창)에 못 닿음, 새로고침해도 그대로,
 // 크게 보기 = 같은 틀(그 페이지엔 스크립트 없음), 보통 문서 크게 보기 = 스크립트 꺼짐(끌어 놓은 HTML 파일 구멍). 데스크톱 쪽은 tests/test_part74.
 import { test, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
 import { boardName, openBoard, setCam, clickScene, liveDoc } from './helpers.js'
 
 const CARD = `<!doctype html><html><head><title>시험 카드</title><style>body{margin:0;font:16px sans-serif}</style></head><body>
@@ -82,4 +83,52 @@ test('움직이는 카드 — 한 번 = 고르기 · 두 번 = 조작 · 바깥 
   await big2.waitForLoadState()
   expect(await big2.title()).toBe('파일')                                        // 스크립트가 안 돎(돌면 RAN)
   await big2.close()
+})
+
+// 4-2·4-3 대화창 — 「+ › ▶ 움직이는 카드」(서버가 할 수 있을 때만) → 답 = 대화창 안에서 바로 만져 보는 카드 → 칠판에 붙이기 = 움직이는 문서 카드
+// → 고칠 말 = 앞 카드 HTML을 같이 보냄(prev_kind) · 딥모드 판의 원리 꼭지 = 진짜 카드(고정 계획 셋 — 겹침 0은 flow31). KAIROS·서버는 가짜
+test('대화창 「+ › 움직이는 카드」 → 대화창에서 만져 보기 → 칠판에 붙이기 → 말로 고치기', async ({ page }) => {
+  const sent = []
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { live: 'gpt-6.1-sol' } } }))
+  await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); sent.push(b)
+    r.fulfill({ json: { kind: 'live', content: `${b.prev_html ? '말한 대로 고친 ' : ''}움직이는 카드 「시험 카드」`, title: '시험 카드', html: CARD, model: 'gpt-6.1-sol', elapsed: 50 } }) })
+  const name = boardName('livechat')
+  await openBoard(page, name, { chat: true }); await setCam(page)
+  await page.getByTestId('plus').click()
+  await page.getByRole('menuitemradio', { name: /움직이는 카드/ }).click()
+  await page.getByPlaceholder('무엇을 움직여 볼까요', { exact: false }).click()
+  await page.keyboard.type('가격 × 물량 = 수출액'); await page.keyboard.press('Enter')
+  await expect(page.getByTestId('answer-kind').last()).toHaveText('▶ 움직이는 카드')
+  expect(sent[0].kind).toBe('live')
+  const pv = page.getByTestId('answer-live').locator('iframe')
+  await expect(pv).toHaveAttribute('sandbox', 'allow-scripts')
+  const inner = page.frameLocator('[data-testid="answer-live"] iframe')
+  await expect(inner.locator('#r')).toHaveText(/parent 막힘/)
+  const f = await pv.boundingBox(), k = f.width / 720, r = await inner.locator('#inc').evaluate(e => { const b = e.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2] })
+  await page.mouse.click(f.x + r[0] * k, f.y + r[1] * k)                         // 대화창 안에선 바로 만져 봄
+  await expect(inner.locator('#v')).toHaveText('1')
+
+  await page.getByRole('button', { name: '칠판에 붙이기' }).last().click()
+  const card = (await liveDoc(page)).items.find(it => it.type === 'doc')
+  expect(card.live).toBe(true); expect(card.html).toBe(CARD)
+  expect(card.rect[3] - 40).toBe(Math.round(card.rect[2] * 480 / 720))           // 띠 + 기준 비율
+  await expect(page.locator(`iframe[data-liveid="${card.uid}"]`)).toHaveCount(1)
+
+  await page.getByPlaceholder('무엇을 움직여 볼까요', { exact: false }).click()
+  await page.keyboard.type('막대를 더 크게'); await page.keyboard.press('Enter')
+  await expect(page.getByTestId('answer-kind')).toHaveCount(2)
+  expect(sent[1].prev_html).toBe(CARD); expect(sent[1].prev_kind).toBe('live')
+})
+
+test('딥모드 판의 원리 꼭지 = 움직이는 카드(카드 HTML 있을 때) · 없으면 설명 메모', async ({ page }) => {
+  const load = t => JSON.parse(readFileSync(new URL(`../test/fixtures/deep_${t}.json`, import.meta.url), 'utf-8'))
+  await openBoard(page, boardName('livedeep')); await setCam(page, { x: 100, y: 100, z: 0.4 })
+  await page.evaluate(p => window.__mb.ed.deepBoard(p, { x: 0, y: 0 }), load('real_tx'))
+  let docs = (await liveDoc(page)).items.filter(it => it.type === 'doc')
+  expect(docs.length).toBe(1); expect(docs[0].live).toBe(true); expect(docs[0].deep_sec).toBeGreaterThanOrEqual(0)
+  expect(docs[0].rect[2]).toBeGreaterThan(560)                                   // 조작 부품이 읽히는 폭(칸 5개 이상)
+  await page.evaluate(p => window.__mb.ed.deepBoard(p, { x: 0, y: 3000 }), load('tx'))   // 2단계 고정 계획 = 카드 HTML 없음
+  docs = (await liveDoc(page)).items.filter(it => it.type === 'doc')
+  expect(docs.length).toBe(1)
+  expect(JSON.stringify((await liveDoc(page)).items.filter(it => it.type === 'memo').map(it => it.lines))).toContain('움직이는 카드를 못 만들었어요')
 })

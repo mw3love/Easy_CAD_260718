@@ -36,7 +36,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_icon, deep_mode, board_image, board_ocr, board_report, board_tidy, kr_tools, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_icon, deep_mode, board_image, board_ocr, board_report, board_tidy, kr_tools, live_card, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -99,7 +99,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
         # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
-        jobs = {"tidy": board_tidy.TIDY_MODEL, "report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "deep": deep_mode.EDITOR_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3)
+        jobs = {"tidy": board_tidy.TIDY_MODEL, "report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "deep": deep_mode.EDITOR_MODEL, "live": live_card.LIVE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
         return self._json(200, {**hit[1], "jobs": jobs})
 
     def _chat(self):
@@ -120,6 +120,10 @@ class Handler(SimpleHTTPRequestHandler):
             kind = req.get("kind") or ""
             if kind == "deep":   # 딥모드(§8 항목66) — 대화창 질문지·계획 카드가 단계(`deep.step`)를 정해 보냄, 길 고르기 없음
                 return self._deep(req, key)
+            if kind == "live":   # 「+ › 움직이는 카드」(§8 항목66 4단계) — 하나만 따로, 재료 = 고른 것의 글. 앞 답이 카드이고 고칠 말이면 그 카드 고치기
+                t = str(last.get("content", ""))
+                fix = str(req.get("prev_html") or "") if req.get("prev_kind") == "live" and live_card.FOLLOW_WORDS.search(t) else ""
+                return self._live(t, ctx or str(last.get("context") or ""), key, fix)
             reply = req.get("ask_reply") if isinstance(req.get("ask_reply"), dict) else None
             if not kind and reply:   # 되묻기 버튼 대신 입력 칸에 친 말(§8 항목64) — 그 말이 가리키는 버튼, 못 알아들으면 원래 1등 길(다시 안 물음)
                 kind = route.pick_from(str(req.get("ask_add") or ""), [str(c) for c in reply.get("choices") or []]) or str(reply.get("default") or "") or "chat"
@@ -156,8 +160,10 @@ class Handler(SimpleHTTPRequestHandler):
                 except Exception as e:
                     sys.stderr.write("[도구 실패] %s\n" % e)
             prev_html = str(req.get("prev_html") or "")
-            if kind == "chat" and prev_html and not req.get("kind"):   # 정리 문서 바로 뒤 「더 짧게」 같은 말 = 그 문서 고치기
-                kind = "report"
+            if kind == "chat" and prev_html and not req.get("kind"):   # 정리 문서 바로 뒤 「더 짧게」 같은 말 = 그 문서 고치기(움직이는 카드 뒤면 그 카드 — §8 항목66 4-3)
+                kind = "live" if req.get("prev_kind") == "live" else "report"
+            if kind == "live":
+                return self._live(str(last.get("content", "")), ctx or str(last.get("context") or ""), key, prev_html if req.get("prev_kind") == "live" else "")
             if kind == "tidy":   # 「정리해 줘」 ② 레고형 정리정돈 — 묶음 목록만 답, 자리는 칠판이 잡음(§8 항목61)
                 return self._tidy(req.get("items") or [], str(last.get("content", "")), key)
             if kind == "report":   # 「정리해 줘」 ① — 고른 것(없으면 칠판 전체)을 정리 문서 한 장으로(§8 항목61)
@@ -237,6 +243,19 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             return self._json(502, {"error": f"KAIROS 딥모드 실패: {e}"})
         return self._json(400, {"error": "딥모드 단계(plan·build)를 몰라요"})
+
+    def _live(self, ask: str, material: str, key: str, prev_html: str = ""):
+        """움직이는 카드 하나 → {"kind": "live", "content", "title", "html", "model", "elapsed"} — 칠판에 붙이면 문서 카드 `live`(스크립트만 켠 칸).
+        prev_html = 바로 앞 답이 움직이는 카드면 그 카드를 말대로 고침(정리 문서 `prev_html`과 같은 길)."""
+        try:
+            out = live_card.make(gw._client(key, gw.resolve_base_url(), timeout=600), ask, material, prev_html=prev_html)
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        except Exception as e:
+            return self._json(502, {"error": f"KAIROS 움직이는 카드 실패: {e}"})
+        sys.stderr.write("[움직이는 카드] %s %.1f초 %d자%s\n" % (out["model"], out["elapsed"], len(out["html"]), " (고치기)" if prev_html else ""))
+        head = "말한 대로 고친 움직이는 카드" if prev_html else "움직이는 카드"
+        return self._json(200, {"kind": "live", "content": f"{head} 「{out['title']}」 — 칠판에 붙이고 두 번 누르면 움직여 볼 수 있어요", **out})
 
     def _icon(self, ask: str, key: str, base_svg: str = "", image_url: str = ""):
         """아이콘 → {"kind": "icon", "content", "svgs": [SVG 글…], "model", "elapsed"} — 도형으로 바꾸기는 칠판(`svgin.js`), 대화 기록에 SVG 글 그대로(작음)."""

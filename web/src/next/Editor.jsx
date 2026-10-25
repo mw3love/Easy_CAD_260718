@@ -1194,7 +1194,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const DOC_W = 397
   const LIVE_DOC_W = 480   // 움직이는 카드(§8 항목66 4단계) — 기준 칸 720×480을 2/3로(높이 = 띠 + 같은 비율)
   function docItem(msg, x, y, z) {
-    if (msg.live) return base([x, y], { type: 'doc', live: true, rect: [0, 0, LIVE_DOC_W, WEB_HEAD + Math.round(LIVE_DOC_W * LIVE_H / LIVE_W)], title: msg.title || '움직이는 카드', html: msg.html, model: msg.model || '', chat_at: msg.at, z })
+    if (msg.live || msg.kind === 'live') return base([x, y], { type: 'doc', live: true, rect: [0, 0, LIVE_DOC_W, WEB_HEAD + Math.round(LIVE_DOC_W * LIVE_H / LIVE_W)], title: msg.title || '움직이는 카드', html: msg.html, model: msg.model || '', chat_at: msg.at, z })
     return base([x, y], { type: 'doc', rect: [0, 0, DOC_W, WEB_HEAD + Math.round(DOC_W * 1.414)], title: msg.title || '정리 문서', html: msg.html, model: msg.model || '', chat_at: msg.at, z })
   }
   // 「칠판에서」 답(§8 항목61 ③-2) = 메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(메모 쪽 변 → 근거 쪽 변, 가까운 포트끼리). 근거 도형은 제자리 그대로 — 메모와 화살표만 한 묶음

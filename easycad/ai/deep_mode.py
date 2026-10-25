@@ -13,13 +13,13 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import board_chat, kr_tools
+from . import board_chat, kr_tools, live_card
 from . import gateway as gw
 
 EDITOR_MODEL = "claude-opus-5-5"
 WRITER_MODEL = "claude-sonnet-5-5"
-# 칠판이 그릴 줄 아는 모양(`deepboard.js`). 「움직이는 카드」는 4단계 전까지 빈 자리라 계획에선 안 씀, 그림·아이콘 꼭지도 아직
-SHAPES = ("주인공 글", "숫자 타일", "단계 카드", "그래프", "표", "용어 풀이", "접힌 메모", "확인 문제", "출처 카드")
+# 칠판이 그릴 줄 아는 모양(`deepboard.js`). 「움직이는 카드」 = 스크립트 켠 HTML(`live_card`, 4단계 — 한 판에 하나), 그림·아이콘 꼭지는 아직
+SHAPES = ("주인공 글", "숫자 타일", "단계 카드", "그래프", "표", "움직이는 카드", "용어 풀이", "접힌 메모", "확인 문제", "출처 카드")
 SOURCES = ("ai", "web", "kr", "board")
 CHARTS = ("세로 막대", "가로 막대", "꺾은선", "원")
 NUMERIC = ("숫자 타일", "그래프", "표")
@@ -35,7 +35,8 @@ EDITOR = """너는 「웹 칠판」의 편집장이다. 사용자의 주제 하�
                  "source": 재료 출처, "query": 검색·조회 문장 또는 null, "size": "주인공" | "보통" | "작게"}}]}}
 
 - sections는 5~9개, 읽는 순서대로. "주인공"은 하나만. 마지막은 보통 「출처 카드」(숫자·사실 꼭지가 있으면 꼭).
-- shape는 다음 중 하나: {shapes}. 꼭지마다 모양 하나 — 숫자 비교 = 그래프, 순서 = 단계 카드, 핵심 숫자 몇 개 = 숫자 타일, 낯선 낱말 = 용어 풀이.
+- shape는 다음 중 하나: {shapes}. 꼭지마다 모양 하나 — 숫자 비교 = 그래프, 순서 = 단계 카드, 핵심 숫자 몇 개 = 숫자 타일, 낯선 낱말 = 용어 풀이,
+  직접 만져 보면 이해되는 원리(값을 바꾸면 결과가 바뀌는 것) = 움직이는 카드(한 판에 하나까지, source ai — 숫자는 다른 꼭지 재료에서 가져다 씀).
 - chart는 shape가 그래프일 때만: {charts}. 자료에 맞는 종류(비교 = 막대, 시간 흐름 = 꺾은선, 전체 중 몫 = 원).
 - source는 다음 중 하나: ai(일반 지식으로 AI가 씀 — 설명·용어·문제·원리 단계), web(웹 검색), kr(한국 공공 데이터 — 통계청·한국은행·법령·날씨), board(이 칠판에 있는 자료).
 - **숫자·날짜·최신 사실이 들어가는 꼭지는 source가 web 또는 kr**(ai 금지). query는 앞 대화 없이 혼자 통하는 한국어 검색 문장(최신이면 연도·달 포함).
@@ -53,6 +54,7 @@ SCHEMA = {
     "확인 문제": '{"items": ["…을 말할 수 있다", …]} — 3개',
     "출처 카드": '{"links": [n, …]} — 판에서 쓴 출처 번호',
     "접힌 메모": '{"md": "- 줄\\n- 줄"} — 5~8줄, 숫자엔 [n]',
+    "움직이는 카드": '{"note": "무엇을 움직이면 무엇이 보이는지 한 줄"} — 카드 HTML은 따로 만듦(칠판엔 카드 밑 설명)',
 }
 
 WRITER = """너는 「웹 칠판」 딥모드의 기자다. 편집장이 세운 지면 계획의 꼭지마다 **본문**을 쓴다. 칠판이 그대로 물건으로 짓는다(메모·표·그래프·숫자 타일).
@@ -106,6 +108,11 @@ def clean_plan(plan) -> dict:
         src = s.get("source") if s.get("source") in SOURCES else "ai"
         if shape in NUMERIC and src == "ai":   # 숫자는 재료에서만(0단계 원칙) — 계획이 어겨도 검색으로
             src = "web"
+        if shape == "움직이는 카드":   # 한 판에 하나(비싸고 화면을 크게 먹음 — 4단계 계획), 재료는 다른 꼭지 것을 씀
+            if any(x["shape"] == "움직이는 카드" for x in secs):
+                shape = "단계 카드"
+            else:
+                src = "ai"
         if shape == "출처 카드":   # 판에서 모은 출처를 보일 뿐 — 재료를 따로 안 모음(편집장이 web·board로 적어 검색 한 번이 헛돌았음, 3-3 실측)
             src = "ai"
         size = s.get("size") if s.get("size") in SIZES else "보통"
@@ -124,9 +131,11 @@ def estimate(plan: dict) -> dict:
     """「이대로 만들기」 값 어림(재료 + 본문) — 3-0 실측(웹 꼭지 3초·5cr, 공공 22~26초, 본문 sonnet 38~80cr·23~37초)에서. 추정."""
     secs = plan.get("sections") or []
     web, kr = sum(s["source"] == "web" for s in secs), sum(s["source"] == "kr" for s in secs)
-    lo = 5 * web + 8 * kr + 25 + 3 * len(secs)
+    live = any(s["shape"] == "움직이는 카드" for s in secs)   # 카드 한 장 약 45cr·55~75초(4-0 실측 sol) — 본문과 동시. 4-2 실조건 한 판 = 만들기 113초·117cr
+    lo = 5 * web + 8 * kr + 25 + 3 * len(secs) + (40 if live else 0)
     hi = round(lo * 1.6)
-    return {"credits": [lo, hi], "seconds": [(25 if kr else 4) + 23, (35 if kr else 8) + 40]}
+    sec = [(25 if kr else 4) + 23, (35 if kr else 8) + 40]
+    return {"credits": [lo, hi], "seconds": [max(sec[0], 60), max(sec[1], 120)] if live else sec}
 
 
 def plan_prompt(topic: str, brief: dict, prev: dict | None = None, fix: str = "") -> str:
@@ -232,10 +241,26 @@ def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: st
     t0, day = time.time(), today()
     plan = clean_plan(plan)
     mat = gather(key, plan, base_url=base_url, day=day, exa=exa, kr=kr)
-    secs = write(client, plan, mat, brief, model=model, board=board, day=day)
+    li = next((i for i, s in enumerate(plan["sections"]) if s["shape"] == "움직이는 카드"), None)
+    with ThreadPoolExecutor(max_workers=2) as ex:   # 원리 꼭지 카드 = 본문과 동시에(4단계 — 재료는 판 전체)
+        fw = ex.submit(write, client, plan, mat, brief, model=model, board=board, day=day)
+        fl = ex.submit(_live, client, plan, mat, li, brief) if li is not None else None
+        secs, card = fw.result(), fl.result() if fl else None
+    if card and card.get("html"):
+        secs[li]["body"] = {**(secs[li]["body"] or {}), "html": card["html"], "card_model": card["model"]}
     if mat["sources"]:   # 출처 카드 = 판에서 쓴 번호(기자가 비워도)
         for s in secs:
             if s["shape"] == "출처 카드" and not (s["body"] or {}).get("links"):
                 s["body"] = {"links": [x["n"] for x in mat["sources"]]}
     return {"plan": {**plan, "sources": mat["sources"], "sections": secs}, "model": model, "elapsed": round(time.time() - t0, 1),
-            "missing": [s["title"] for s, m in zip(plan["sections"], mat["materials"]) if m is not None and not m.get("text")]}
+            "missing": [s["title"] for s, m in zip(plan["sections"], mat["materials"]) if m is not None and not m.get("text")]
+            + ([plan["sections"][li]["title"] + "(움직이는 카드: " + card["error"] + ")"] if card and card.get("error") else [])}
+
+
+def _live(client, plan: dict, mat: dict, idx: int, brief: dict) -> dict:
+    """원리 꼭지 하나의 카드 HTML — 못 만들면 {"error"}(판은 그대로 짓고 그 꼭지만 설명 메모)."""
+    who = (brief or {}).get("누구에게")
+    try:
+        return live_card.make(client, "", user=live_card.section_prompt(plan, mat, idx), audience=who if who and who != AUTO else "처음 보는 사람")
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"[:200]}

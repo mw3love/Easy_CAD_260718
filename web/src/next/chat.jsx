@@ -21,9 +21,11 @@ import { startMic } from './mic.js'
 import { svgPreview } from './svgin.js'
 import { DeepAsk, DeepPlan, briefOf, keptPlan } from './deepchat.jsx'
 import { recommendStyle } from './deepstyle.js'
+import { LIVE_CSP, LIVE_H, LIVE_W, bigPage, liveSrc } from './livecard.js'
 const LINK_CHAT = '#4f8fe8'
 // 정리 문서 크게 보기 — 새 탭에 그 HTML(인쇄·PDF는 그 탭에서 Ctrl+P)
-const openHtml = html => { const u = URL.createObjectURL(new Blob([html || ''], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
+// 크게 보기 = 칠판 「크게 보기」와 같은 페이지(livecard.js `bigPage` — 앱 주소 blob이라 그 페이지엔 스크립트 없음, 움직이는 카드는 그 안 틀에서만)
+const openHtml = (html, live = false) => { const u = URL.createObjectURL(new Blob([bigPage({ type: 'doc', live, html })], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
 // 답 종류 — [표시, 표시 꾸밈] — 서버가 고른 길(판단 모델 jev + 규칙, `easycad/ai/route.py`)을 답 위에 보이기만.
 // 옛 「다시 ▾」(다른 종류로 다시 묻기)는 2026-10-20 없앰(사용자: 대화창 하나로 다 — 길은 앱이 고르고, 틀리면 말로 다시)
 const KINDS = {
@@ -33,7 +35,8 @@ const KINDS = {
   report: ['📄 정리 문서', { color: '#7c3aed', background: 'rgba(124,58,237,.12)' }],
   tidy: ['🧩 정리정돈', { color: '#0f766e', background: 'rgba(15,118,110,.12)' }],
   image: ['🎨 그림', { color: '#9333ea', background: 'rgba(147,51,234,.12)' }],
-  icon: ['✏️ 아이콘', { color: '#0e7490', background: 'rgba(14,116,144,.12)' }],   // 선을 고칠 수 있는 도형(§8 항목63)
+  icon: ['✏️ 아이콘', { color: '#0e7490', background: 'rgba(14,116,144,.12)' }],
+  live: ['▶ 움직이는 카드', { color: '#b4532f', background: 'rgba(218,119,86,.14)' }],   // 원리를 직접 만져 보는 카드(§8 항목66 4단계)   // 선을 고칠 수 있는 도형(§8 항목63)
   ask: ['❓ 확인', { color: '#da7756', background: 'rgba(218,119,86,.12)' }],   // 되묻기(§8 항목64) — 만들기 전에 버튼으로
   deep: ['📰 딥모드', { color: '#b4532f', background: 'rgba(180,83,47,.12)' }],   // 한 주제 한 판(§8 항목66) — 질문지·지면 계획 카드(deepchat.jsx)
 }
@@ -47,13 +50,14 @@ const askMemo = () => { try { return JSON.parse(localStorage.getItem(ASK_KEY) ||
 const askPrefs = () => Object.fromEntries(Object.entries(askMemo()).filter(([, v]) => Array.isArray(v) && v.length >= 2 && v.at(-1) === v.at(-2)).map(([k, v]) => [k, v.at(-1)]))
 const rememberAsk = (key, kind) => { try { const m = askMemo(); m[key] = [...(m[key] || []), kind].slice(-2); localStorage.setItem(ASK_KEY, JSON.stringify(m)) } catch { /* 기억 못 해도 그만 */ } }
 // 기다리는 동안 보일 말 — 일마다 실제로 일하는 모델(서버 /api/models `jobs`)을 같이(2026-10-20 사용자: 정돈인데 고른 gpt가 보여 헷갈림, 칠판엔 아무 표시가 없어 안 되는 줄 알았음)
-const JOB_LABEL = { tidy: '🧩 정리정돈 중', report: '📄 정리 문서 만드는 중', image: '🎨 그림 그리는 중', icon: '✏️ 아이콘 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 딥모드 지면 만드는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
+const JOB_LABEL = { live: '▶ 움직이는 카드 만드는 중', tidy: '🧩 정리정돈 중', report: '📄 정리 문서 만드는 중', image: '🎨 그림 그리는 중', icon: '✏️ 아이콘 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 딥모드 지면 만드는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
 // 「+」 도구 — [길, 이름, 설명, 입력 칸 안내]. 서버는 길(`kind`)을 그대로 따름
 const TOOLS = [['image', '🎨 그림 만들기', '사진·일러스트 같은 그림', '무엇을 그릴까요? 예: 산 위 송신탑 수채화'],
   ['icon', '✏️ 아이콘', '선을 하나하나 고칠 수 있는 도형(SVG)', '무엇의 아이콘? 예: 파라볼라 안테나'],
   ['search', '🔎 웹 검색', '최신 정보 + 출처', '무엇을 찾을까요?'],
   ['report', '📄 정리 문서', '고른 것(없으면 칠판 전체)을 문서 한 장으로', '어떻게 정리할까요? 비워도 돼요'],
   ['tidy', '🧩 정리정돈', '칠판 조각을 주제별로 묶어 옮기기', '어떻게 묶을까요? 비워도 돼요'],
+  ['live', '▶ 움직이는 카드', '원리를 직접 만져 보는 카드 하나(고른 것이 재료, 약 45크레딧)', '무엇을 움직여 볼까요? 예: 가격 × 물량 = 수출액'],
   ['deep', '📰 딥모드', '한 주제로 칠판 한 판 — 질문지 → 지면 계획 → 만들기(크레딧 많이)', '어떤 주제로 한 판? 예: 신입에게 어텐션 설명']]   // 딥모드는 서버가 할 수 있을 때만(/api/models `jobs.deep`)
 const EMPTY_ASK = { report: '정리해 줘', tidy: '주제별로 묶어 정돈해 줘' }   // 이름표만 두고 빈 칸으로 보내면
 const BOARD_JOBS = new Set(['tidy', 'report', 'deep-build'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
@@ -132,6 +136,20 @@ function Answer({ text, chart }) {
 }
 
 // 「＋ 칠판에 추가」(그림 후보 왼쪽 위·크게 보기 창) — 늘 보이고, 올리면 코랄로 채워지며 살짝 뜸, 누르는 동안 눌림, 추가하면 1.5초 초록 「✓ 추가됨」(2026-10-20 사용자)
+// 움직이는 카드 답(§8 항목66 4단계) = 대화창 안에서 바로 만져 보기 — 칠판과 같은 틀(livecard.js), 기준 720×480을 대화창 폭에 맞춰 줄임
+function LivePreview({ m }) {
+  const box = useRef(null), [k, setK] = useState(0.45)
+  useEffect(() => { const el = box.current; if (!el) return; const ro = new ResizeObserver(() => setK(el.clientWidth / LIVE_W)); ro.observe(el); return () => ro.disconnect() }, [])
+  return <div data-testid="answer-live" style={{ marginTop: 6 }}>
+    <div ref={box} style={{ width: '100%', aspectRatio: `${LIVE_W} / ${LIVE_H}`, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff' }}>
+      <iframe srcDoc={liveSrc(m.html)} title={m.title || '움직이는 카드'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
+        style={{ border: 0, width: LIVE_W, height: LIVE_H, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff' }} />
+    </div>
+    <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}><button style={css.ghost} onClick={() => openHtml(m.html, true)}>크게 보기</button>
+      <span style={{ ...css.meta, alignSelf: 'center' }}>여기서 바로 만져 보세요 · 고칠 점을 이어서 말하면 이 카드를 고쳐요</span></div>
+  </div>
+}
+
 function AddBtn({ done, onClick, big, testid }) {
   const [h, setH] = useState(false), [down, setDown] = useState(false)
   const bg = done ? DONE : big ? (h ? '#c4613f' : '#da7756') : h ? '#da7756' : 'rgba(17,17,17,.62)'   // 크게 보기 창에선 처음부터 코랄(그 창의 할 일)
@@ -231,7 +249,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
     return { role: 'assistant', content: d.content, model: d.model, at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
       ...(d.images?.length ? { images: d.images, prompt: d.caption || history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}),
       ...(d.svgs?.length ? { svgs: d.svgs, prompt: history.filter(m => m.role === 'user').at(-1)?.content || '' } : {}), ...(d.credits != null ? { credits: d.credits } : {}),   // caption = 이어 고친 그림이면 처음 요청(서버)
-      ...(d.html ? { html: d.html, title: d.title || '정리 문서' } : {}), ...(frames ? { frames } : {}), ...(d.kind === 'ask' ? { choices: d.choices || [], askKey: d.key || '' } : {}),
+      ...(d.html ? { html: d.html, title: d.title || (d.kind === 'live' ? '움직이는 카드' : '정리 문서') } : {}), ...(frames ? { frames } : {}), ...(d.kind === 'ask' ? { choices: d.choices || [], askKey: d.key || '' } : {}),
       ...(d.remembered ? { askKey: d.remembered.key, alt: (d.remembered.choices || []).filter(k => k !== d.kind) } : {}) }   // 기억으로 고른 답 — 「다른 쪽으로」 버튼
   }
   // 🎤 실시간 받아쓰기(2026-10-20) — 말하는 동안 입력 칸에 글자가 쌓임(누르기 전 글 뒤에), 다시 누르거나 보내면 멈춤. 직접 치면 멈춤
@@ -267,7 +285,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
       ...(ri >= 0 ? { reply_to: replyTo } : {}), ...(boardImgs.length ? { imgCount: boardImgs.length } : {}) }
     const next = [...msgs.filter(m => m.role !== 'error'), mine]
     update(next); setReplyTo(null); if (text == null) setDraft(''); setBusy(Date.now()); setBusyJob(kind || (TIDY_RE.test(q) ? 'tidy' : ''))
-    try { update([...next, await ask([...before, mine], kind, (!kind || kind === 'report') && lastA?.role === 'assistant' && lastA.html ? lastA.html : '', boardImgs.length ? { board_images: boardImgs } : {})]) } catch (e) {
+    try { update([...next, await ask([...before, mine], kind, (!kind || kind === 'report' || kind === 'live') && lastA?.role === 'assistant' && lastA.html && (kind !== 'live' || lastA.kind === 'live') ? lastA.html : '', { ...(boardImgs.length ? { board_images: boardImgs } : {}), ...(lastA?.kind === 'live' ? { prev_kind: 'live' } : {}) })]) } catch (e) {
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
     } finally { setBusy(null) }
   }
@@ -418,7 +436,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
   useEffect(() => { onBusy?.(busy && BOARD_JOBS.has(busyJob) ? busyLine : '') }, [busyLine])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => onBusy?.(''), [])   // eslint-disable-line react-hooks/exhaustive-deps
   const feat = models?.featured || {}
-  const lastM = msgs.filter(m => m.role !== 'error').at(-1), tools = TOOLS.filter(t => t[0] !== 'deep' || models?.jobs?.deep)
+  const lastM = msgs.filter(m => m.role !== 'error').at(-1), tools = TOOLS.filter(t => (t[0] !== 'deep' && t[0] !== 'live') || models?.jobs?.[t[0]])   // 딥모드·움직이는 카드 = 서버가 할 수 있을 때만
   return (
     <aside style={{ ...(floating ? { ...css.panel, ...css.float } : css.panel), width }} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
       {/* 폭 조절 — 왼쪽 경계 끌기(320~720, 화면 절반까지), 두 번 누르면 기본 폭(왼쪽 판 `dock-resize`와 같은 손맛) */}
@@ -499,7 +517,8 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
                   <span>{(ASK_LABEL[k] || [k])[0]}</span><span style={{ ...css.meta, fontWeight: 400 }}>{(ASK_LABEL[k] || [])[1]}</span></button>)}
                 <span style={css.meta}>보기에 없으면 아래 칸에 적어 주세요. 같은 걸 두 번 고르면 다음엔 바로 해요</span>
               </div>}
-              {m.html && <div data-testid="answer-doc" style={{ marginTop: 6 }}>   {/* 정리 문서 미리보기 — A4 폭 794px를 대화창 폭에 맞춰 줄임(스크립트 없는 iframe) */}
+              {m.html && m.kind === 'live' && <LivePreview m={m} />}
+              {m.html && m.kind !== 'live' && <div data-testid="answer-doc" style={{ marginTop: 6 }}>   {/* 정리 문서 미리보기 — A4 폭 794px를 대화창 폭에 맞춰 줄임(스크립트 없는 iframe) */}
                 <div style={{ height: 300, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', cursor: 'zoom-in' }} title="크게 보기·인쇄" onClick={() => openHtml(m.html)}>
                   <iframe srcDoc={m.html} title={m.title || '정리 문서'} sandbox="" scrolling="no" style={{ border: 0, width: 794, height: 300 / 0.41, transform: 'scale(0.41)', transformOrigin: '0 0', pointerEvents: 'none' }} />
                 </div>
