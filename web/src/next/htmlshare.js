@@ -2,6 +2,8 @@
 // 받는 사람은 앱·서버·인터넷 없이 브라우저로 연다(글꼴·스크립트 모두 안에). 데스크톱 「HTML로 공유」(`easycad/fileio/html_share.py`)와 같은 뜻.
 // 전체 = 끌기·휠로 이동·확대, 발표 = 장마다 화면에 꽉 차게(→ · 스페이스 · 휠 = 다음, ← = 이전, Esc = 끝, F = 전체 화면) — 칠판 발표와 같은 손버릇.
 
+import { LIVE_CSP, LIVE_W } from './livecard.js'
+
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
 // overview = 전체 그림 svg 글, slides = [{ svg, name }], fonts = @font-face 글(한 번만), made = 만든 시각 글
@@ -47,7 +49,12 @@ var drag=null;ov.addEventListener('pointerdown',function(e){drag={x:e.clientX-x,
 ov.addEventListener('pointermove',function(e){if(!drag)return;x=e.clientX-drag.x;y=e.clientY-drag.y;put()});
 ov.addEventListener('pointerup',function(e){var d=drag;drag=null;ov.style.cursor='grab';if(d&&Math.abs(e.clientX-d.sx)+Math.abs(e.clientY-d.sy)<5)webClick(d.t,e)});
 // 웹 카드 누르기 — 몸통 = 그 자리에 실제 페이지(유튜브는 바로 재생, 인터넷이 없으면 그림 그대로), 위 띠·막는 사이트 = 새 탭
-function webClick(t,e){var g=t&&t.closest&&t.closest('[data-web-url]');if(!g)return;var url=g.getAttribute('data-web-url'),src=g.getAttribute('data-web-src'),r=g.getBoundingClientRect(),head=+g.getAttribute('data-web-head')||0;
+// 움직이는 카드(§8 항목66 4단계) = 누르면 그 자리에 틀(스크립트만 켠 칸 — 칠판과 같은 sandbox·CSP, 글은 내보낼 때 남긴 data-live-src)
+function liveClick(t){var g=t&&t.closest&&t.closest('[data-live-src]');if(!g)return false;if(g.querySelector('foreignObject'))return true;var b=g.getAttribute('data-doc-box').split(',').map(Number),k=b[2]/${LIVE_W};
+var fo=document.createElementNS('http://www.w3.org/2000/svg','foreignObject');fo.setAttribute('x',b[0]);fo.setAttribute('y',b[1]);fo.setAttribute('width',b[2]);fo.setAttribute('height',b[3]);
+var f=document.createElement('iframe');f.setAttribute('sandbox','allow-scripts');f.setAttribute('csp',${JSON.stringify(LIVE_CSP)});f.srcdoc=g.getAttribute('data-live-src');
+f.style.cssText='border:0;display:block;background:#fff;width:${LIVE_W}px;height:'+b[3]/k+'px;transform-origin:0 0;transform:scale('+k+')';fo.appendChild(f);g.appendChild(fo);return true}
+function webClick(t,e){if(liveClick(t))return;var g=t&&t.closest&&t.closest('[data-web-url]');if(!g)return;var url=g.getAttribute('data-web-url'),src=g.getAttribute('data-web-src'),r=g.getBoundingClientRect(),head=+g.getAttribute('data-web-head')||0;
 var yt=src&&src.indexOf('youtube.com/embed/')>=0;
 // 유튜브는 내 PC에서 바로 연 파일(file://)이면 「오류 153」(어디서 왔는지 안 보냄 — 2026-10-19 확인) → 새 탭에서 재생
 if(!src||(e.clientY-r.top)/r.height<head||(yt&&location.protocol==='file:')){window.open(url,'_blank','noopener');return}

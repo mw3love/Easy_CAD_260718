@@ -8,6 +8,8 @@
 import base64
 
 import copy
+import html as _html
+import re
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, QUrl
 from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QFont, QFontMetricsF, QPainterPath, QPen, QPixmap
@@ -320,20 +322,53 @@ def _server_url(path: str) -> QUrl | None:
     return QUrl(base + path) if base and path else None
 
 
+# 움직이는 카드(§8 항목66 4단계) — 웹 `web/src/next/livecard.js`와 같은 틀: 카드 HTML 맨 앞에 CSP(인터넷 금지), 스크립트는 sandbox 칸 안에서만.
+# 브라우저로 여는 페이지 자체엔 스크립트가 없어야 함(스크립트 없는 문서는 STATIC_CSP로 끔). 글을 바꾸면 웹도 — `test_part74`가 두 파일이 같은지 봄
+LIVE_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:"
+STATIC_CSP = "default-src 'none'; style-src 'unsafe-inline' https:; img-src data: blob: https: http:; font-src data: https:"
+LIVE_MAX = 200_000
+_KICK = "<script>addEventListener('load',()=>(function k(){innerWidth?dispatchEvent(new Event('resize')):requestAnimationFrame(k)})())</script>"
+
+
+def _head(csp: str) -> str:
+    return f'<!doctype html><meta http-equiv="Content-Security-Policy" content="{csp}"><meta charset="utf-8">'
+
+
+def _body(html: str) -> str:
+    return re.sub(r"^\s*(?:<!--.*?-->\s*)*<!doctype[^>]*>", "", html or "", flags=re.I | re.S)
+
+
+def live_fits(d: dict) -> bool:
+    return bool(d.get("live")) and bool(d.get("html")) and len(d["html"]) <= LIVE_MAX
+
+
+def big_page(d: dict) -> str:
+    """두 번 누르기로 브라우저에 열 페이지 — 웹 `bigPage`와 같은 글."""
+    if not live_fits(d):
+        return _head(STATIC_CSP) + _body(d.get("html"))
+    inner = _head(LIVE_CSP) + _KICK + _body(d["html"])
+    return (_head(LIVE_CSP) + f"<title>{_html.escape(d.get('title') or '움직이는 카드')}</title>"
+            "<style>html,body{margin:0;height:100%;background:#fff}iframe{border:0;width:100%;height:100%;display:block}</style>"
+            f'<iframe sandbox="allow-scripts" csp="{LIVE_CSP}" srcdoc="{_html.escape(inner, quote=True)}"></iframe>')
+
+
 class _DocItem(_WebItem):
-    """정리 문서 카드(「정리해 줘」 ①) — 보라 띠 + 자리 글. 두 번 누르기 = 문서를 브라우저로(HTML을 임시 파일로)."""
+    """정리 문서 카드(「정리해 줘」 ①) — 보라 띠 + 자리 글. 두 번 누르기 = 문서를 브라우저로(HTML을 임시 파일로).
+    움직이는 카드(`live`)도 같은 카드 — 칠판 안에선 자리 글, 두 번 누르기 = 브라우저에서 움직임(스크립트는 틀 안에서만)."""
     RADIUS = 6.0
 
     def paint_card(self, p, r):
         d = self._web_raw
+        lv = bool(d.get("live"))
 
         def body(p, b):
             p.fillRect(b, QColor("#fafafa"))
-            _text(p, b.center().x(), b.center().y(), "📄 정리 문서 — 웹 칠판에서 크게 보기·인쇄", min(16.0, b.height() / 6), "#8a8f98",
+            msg = ("▶ 움직이는 카드 — 두 번 누르면 브라우저에서 움직여요" if live_fits(d) else "▶ 움직이는 카드 — 너무 커서 못 띄워요") if lv else "📄 정리 문서 — 웹 칠판에서 크게 보기·인쇄"
+            _text(p, b.center().x(), b.center().y(), msg, min(16.0, b.height() / 6), "#8a8f98",
                   max_w=b.width() - 16, align=Qt.AlignmentFlag.AlignHCenter)
 
-        sub = f"HTML 파일 · {d['file']}" if d.get("file") else f"정리 문서 · KAIROS {d.get('model') or ''}"
-        self._paint_head_card(p, r, "#f5f3ff", "#ddd6fe", "#a78bfa", "📄 " + (d.get("title") or "정리 문서"), sub, body)
+        sub = f"HTML 파일 · {d['file']}" if d.get("file") else f"{'움직이는 카드' if lv else '정리 문서'} · KAIROS {d.get('model') or ''}"
+        self._paint_head_card(p, r, "#f5f3ff", "#ddd6fe", "#a78bfa", ("▶ " if lv else "📄 ") + (d.get("title") or ("움직이는 카드" if lv else "정리 문서")), sub, body)
 
     def web_double_click(self, view, scene_pos):
         html = self._web_raw.get("html")
@@ -343,7 +378,7 @@ class _DocItem(_WebItem):
         import tempfile
         path = os.path.join(tempfile.gettempdir(), f"easycad_doc_{abs(hash(html)) % 10**8}.html")
         with open(path, "w", encoding="utf-8") as f:
-            f.write(html)
+            f.write(big_page(self._web_raw))   # 끌어 놓은 HTML 파일 속 스크립트도 끔(웹 「크게 보기」와 같게)
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
         return True
 

@@ -174,6 +174,8 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     if (e.button === 2 || e.button === 1) { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); pan.current = { x: e.clientX, y: e.clientY, moved: false, z0: zoom }; return }   // 우클릭: 끌면 화면 이동, 제자리면 메뉴(편집 화면과 같음 — 2026-10-18 사용자)
     if (!tool && e.button === 0) {   // 웹 카드 = 눌러야 칸 안 조작(처음부터 켜 두면 카드 위 휠이 장 넘기기 대신 페이지 스크롤 — 2026-10-19), 유튜브는 바로 재생
       const g = e.target.closest?.('[data-web-url]'), fr = g?.querySelector('iframe[data-webid]'), id = fr?.getAttribute('data-webid'), yt = /youtube\.com\/embed\//.test(g?.getAttribute('data-web-src') || '')
+      const lid = e.target.closest?.('[data-doc-box]')?.querySelector('iframe[data-liveid]')?.getAttribute('data-liveid')   // 움직이는 카드 = 누르면 칸 안 조작(§8 항목66 4단계 — 편집 화면은 두 번, 발표는 판서와 안 겹쳐 한 번)
+      if (lid && !zoom?.card) { setWebOn(lid); return }
       if (zoom?.card) { setZoom(null); return }   // 크게 보는 중 영상 밖(검은 곳·제목 띠) 누르기 = 원래대로(영상 안 클릭은 유튜브가 받음)
       if (id && yt && e.clientY < fr.closest('foreignObject').getBoundingClientRect().top) {   // 제목 띠 = 크게 보기(오른쪽 ↗ = 새 탭)
         const gr = g.getBoundingClientRect(), cw = +(g.getAttribute('data-web-box') || '0,0,480').split(',')[2] || 480
@@ -228,7 +230,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
     <svg width={W} height={H} style={{ display: 'block' }}>
       {!zoom?.card && <rect x={hx - g} y={hy - g} width={hw + 2 * g} height={hh + 2 * g} fill={th['--mb-board']} />}
       <g transform={`translate(${zx},${zy}) scale(${zs})`}><g transform={`translate(${gx},${gy}) scale(${gk})`} style={{ '--z': k * (zoom?.s || 1) }}>
-        {order.filter(([it]) => !zoom?.card || it._id === zoom.card).map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} web={it.type === 'web' ? (!tool && webOn === it._id ? 'on' : 'view') : it.type === 'doc' ? 'view' : undefined} noFs ytBig={zoom?.card === it._id} fsScale={it.type === 'web' ? +(k * (zoom?.s || 1) * (it.scale || 1)).toFixed(2) : undefined} />)}   // fsScale = 목표 배율(넘기는 동안 매 장면이 아니라 한 번만 바뀜)
+        {order.filter(([it]) => !zoom?.card || it._id === zoom.card).map(([it, idx]) => <Item key={it._id} it={it} idx={idx} onBoard={onBoard[idx]} route={routes.get(idx)} labels="inline" dark={dark} web={it.type === 'web' ? (!tool && webOn === it._id ? 'on' : 'view') : it.type === 'doc' ? (!tool && webOn === it._id ? 'on' : 'view') : undefined} noFs ytBig={zoom?.card === it._id} fsScale={it.type === 'web' ? +(k * (zoom?.s || 1) * (it.scale || 1)).toFixed(2) : undefined} />)}   // fsScale = 목표 배율(넘기는 동안 매 장면이 아니라 한 번만 바뀜)
       </g></g>
       {/* 프레임 밖 가림(구멍 뚫린 검은 판) — 출력한 쪽과 같은 범위만 보임 */}
       {!zoom?.card && <path d={`M${hx - g},${hy - g} H${hx + hw + g} V${hy + hh + g} H${hx - g} Z M${hx},${hy} V${hy + hh} H${hx + hw} V${hy} Z`} fill={th['--mb-board']} fillRule="evenodd" />}

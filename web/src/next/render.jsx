@@ -13,6 +13,7 @@ import { LISTY, MEMO, MEMO_KIND, MUTED, olNumbers } from './memo.js'
 import { LEGEND, descOf, rowName } from './legend.js'
 import { PdfPages, pdfPageAt } from './pdfcard.jsx'
 import { chartScene, isChart } from './chart.js'
+import { LIVE_CSP, LIVE_W, isLive, liveFits, liveSrc } from './livecard.js'
 
 // ── 글자 재기(캔버스) ──
 let _ctx = null
@@ -475,25 +476,30 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
     }
     case 'doc': {   // 정리 문서 카드(「정리해 줘」 ①, 2026-10-19) — 위 띠(📄 제목·↗ 크게 보기) + 칸 안에 AI가 쓴 HTML(A4 폭 794px를 카드 폭에 맞춰 줄임, 스크립트 없는 iframe).
       // 'sleep'(많이 줄여 봄)·내보내기·HTML 공유는 문서 대신 제목 자리만(iframe은 그림으로 안 찍힘)
-      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'dc-' + (it._id || idx), ob = openBtnRect(it), tw = w - ob.w - 26, k = w / 794
-      const live = (web === 'on' || web === 'view') && bh > 4 && it.html
-      return <g transform={T} data-doc-box={`${x},${y + H},${w},${bh}`}>
+      // 움직이는 카드(`live`, §8 항목66 4단계) = 같은 카드에 스크립트만 켠 틀(livecard.js) — 기준 폭 720, 'on'(두 번 누름)일 때만 칸 안을 누를 수 있음. 내보내기엔 틀 글(data-live-src)을 남겨 HTML 공유가 띄움
+      const [x, y, w, h] = it.rect, H = Math.min(WEB_HEAD, h), bh = h - H, cid = 'dc-' + (it._id || idx), ob = openBtnRect(it), tw = w - ob.w - 26
+      const lv = isLive(it), fits = liveFits(it), k = w / (lv ? LIVE_W : 794)
+      const live = (web === 'on' || web === 'view') && bh > 4 && it.html && (!lv || fits)
+      return <g transform={T} data-doc-box={`${x},${y + H},${w},${bh}`} data-live-src={lv && fits && !web ? liveSrc(it.html) : undefined}>
         <clipPath id={cid}><rect x={x} y={y} width={w} height={h} rx={6} ry={6} /></clipPath>
         <g clipPath={`url(#${cid})`}>
           <rect x={x} y={y} width={w} height={h} fill="#ffffff" />
           <rect x={x} y={y} width={w} height={H} fill="#f5f3ff" />
           {bh > 0 && (live
             ? <foreignObject x={x} y={y + H} width={w} height={bh}>
-                <iframe data-docid={it._id} srcDoc={it.html} title={it.title || '정리 문서'} sandbox="" scrolling="no"
-                  style={{ border: 0, width: 794, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: 'none' }} />
+                {lv
+                  ? <iframe data-docid={it._id} data-liveid={it._id} srcDoc={liveSrc(it.html)} title={it.title || '움직이는 카드'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
+                      style={{ border: 0, width: LIVE_W, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
+                  : <iframe data-docid={it._id} srcDoc={it.html} title={it.title || '정리 문서'} sandbox="" scrolling="no"
+                      style={{ border: 0, width: 794, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: 'none' }} />}
               </foreignObject>
             : <><rect x={x} y={y + H} width={w} height={bh} fill="#fafafa" />
-              <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(16, bh / 6)} fontFamily={APP_FONT} fill="#8a8f98">📄 정리 문서 — ↗로 크게 보기·인쇄</text></>)}
+              <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(16, bh / 6)} fontFamily={APP_FONT} fill="#8a8f98">{lv ? (fits ? '▶ 움직이는 카드 — 칠판에서 두 번 눌러 움직여 보세요' : '▶ 움직이는 카드 — 너무 커서 못 띄워요') : '📄 정리 문서 — ↗로 크게 보기·인쇄'}</text></>)}
         </g>
         {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#ddd6fe" strokeWidth={1} />}
-        <rect x={x} y={y} width={w} height={h} rx={6} ry={6} fill="none" stroke="#a78bfa" strokeWidth={1} />
-        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis('📄 ' + (it.title || '정리 문서'), 13, 700, tw)}</text>
-        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.file ? `HTML 파일 · ${it.file}` : `정리 문서 · KAIROS ${it.model || ''}`, 10, 400, tw)}</text>
+        <rect x={x} y={y} width={w} height={h} rx={6} ry={6} fill="none" stroke={web === 'on' ? '#da7756' : '#a78bfa'} strokeWidth={web === 'on' ? 2 : 1} />
+        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis((lv ? '▶ ' : '📄 ') + (it.title || (lv ? '움직이는 카드' : '정리 문서')), 13, 700, tw)}</text>
+        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.file ? `HTML 파일 · ${it.file}` : `${lv ? '움직이는 카드' : '정리 문서'} · KAIROS ${it.model || ''}`, 10, 400, tw)}</text>
         <g><title>크게 보기 · 인쇄</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
       </g>

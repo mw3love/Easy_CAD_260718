@@ -41,6 +41,7 @@ import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
 import { pdfGoPage, pdfLayout, pdfPageAt, pdfScroll, pdfSelectedText } from './pdfcard.jsx'
 import { answerTable, freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
+import { LIVE_H, LIVE_W, bigPage, liveFits } from './livecard.js'
 import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
@@ -321,8 +322,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (add) ids = ids.includes(hit._id) ? ids.filter(i => i !== hit._id && !(hit.group_id && m.items.find(x => x._id === i)?.group_id === hit.group_id)) : expandGroups(m.items, [...ids, hit._id])
       else if (!ids.includes(hit._id)) ids = expandGroups(m.items, [hit._id])
       setSel(ids)
-      const body = (hit.type === 'pdf' || (hit.type === 'web' && hit.frameable)) && !add && !e.altKey && toLocal(hit, p).y > hit.rect[1] + WEB_HEAD ? hit : null
-      const webPick = body?.type === 'web' ? body : null, pdfTap = body?.type === 'pdf' ? body : null   // 웹 카드 몸통 제자리 클릭 = 칸 안 조작 켜기(놓을 때 — 끌면 이동). PDF는 한 번 = 고르기만, 두 번 = 넘겨 보기(2026-10-21 사용자 — 옮기기·지우기·휠 확대가 잦은 자료)
+      const body = (hit.type === 'pdf' || (hit.type === 'web' && hit.frameable) || liveFits(hit)) && !add && !e.altKey && toLocal(hit, p).y > hit.rect[1] + WEB_HEAD ? hit : null
+      const webPick = body?.type === 'web' ? body : null, pdfTap = body?.type === 'pdf' || body?.type === 'doc' ? body : null   // 움직이는 카드도 PDF처럼(§8 항목66 4단계)   // 웹 카드 몸통 제자리 클릭 = 칸 안 조작 켜기(놓을 때 — 끌면 이동). PDF는 한 번 = 고르기만, 두 번 = 넘겨 보기(2026-10-21 사용자 — 옮기기·지우기·휠 확대가 잦은 자료)
       if (ids.includes(hit._id)) st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: e.altKey && hit.type === 'frame' ? ids : movingSet(ids), sel: ids, moved: false, webPick, pdfTap }   // Alt+끌기 = 프레임 틀만
       return
     }
@@ -488,7 +489,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       setOverlay(o => ({ ...o, guides: null }))
       if (!s.moved && s.cellPick) { const { id, r, c, extend } = s.cellPick; setCellSel(cs => (extend && cs?.id === id ? { ...cs, r1: r, c1: c } : { id, r0: r, c0: c, r1: r, c1: c })) }
       if (!s.moved && s.webPick) webActivate(s.webPick)
-      else if (!s.moved && s.pdfTap && R.current.webOn !== s.pdfTap._id) setStatus('PDF — 두 번 누르면 넘겨 보기(휠로 쪽 넘김)')
+      else if (!s.moved && s.pdfTap && R.current.webOn !== s.pdfTap._id) setStatus(s.pdfTap.type === 'doc' ? '움직이는 카드 — 두 번 누르면 움직여 보기' : 'PDF — 두 번 누르면 넘겨 보기(휠로 쪽 넘김)')
       if (s.moved && live) commit(live.filter(it => it), s.sel, '옮김'); else setLive(null); return }
     if (s.kind === 'rubber') {
       setOverlay(o => ({ ...o, rubber: null }))
@@ -1189,9 +1190,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     return b ? showItem(b._id) : false
   }
   // 정리 문서(「정리해 줘」 ①) — 크게 보기 = 새 탭에 그 HTML(인쇄·PDF는 그 탭에서 Ctrl+P), 카드 = A4 비율(폭 397 = 문서 폭 794의 절반)
-  function openDoc(it) { const u = URL.createObjectURL(new Blob([it.html || ''], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
+  function openDoc(it) { const u = URL.createObjectURL(new Blob([bigPage(it)], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
   const DOC_W = 397
-  function docItem(msg, x, y, z) { return base([x, y], { type: 'doc', rect: [0, 0, DOC_W, WEB_HEAD + Math.round(DOC_W * 1.414)], title: msg.title || '정리 문서', html: msg.html, model: msg.model || '', chat_at: msg.at, z }) }
+  const LIVE_DOC_W = 480   // 움직이는 카드(§8 항목66 4단계) — 기준 칸 720×480을 2/3로(높이 = 띠 + 같은 비율)
+  function docItem(msg, x, y, z) {
+    if (msg.live) return base([x, y], { type: 'doc', live: true, rect: [0, 0, LIVE_DOC_W, WEB_HEAD + Math.round(LIVE_DOC_W * LIVE_H / LIVE_W)], title: msg.title || '움직이는 카드', html: msg.html, model: msg.model || '', chat_at: msg.at, z })
+    return base([x, y], { type: 'doc', rect: [0, 0, DOC_W, WEB_HEAD + Math.round(DOC_W * 1.414)], title: msg.title || '정리 문서', html: msg.html, model: msg.model || '', chat_at: msg.at, z })
+  }
   // 「칠판에서」 답(§8 항목61 ③-2) = 메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(메모 쪽 변 → 근거 쪽 변, 가까운 포트끼리). 근거 도형은 제자리 그대로 — 메모와 화살표만 한 묶음
   function boardRefItems(memo, refs, z) {
     const items = R.current.model.items, hosts = refs.map(r => items.find(it => it._id === r.uid)).filter(it => it && isConnHost(it))
@@ -1409,7 +1414,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (lb) { if (!guardEdit(lb.it._id)) return; setSel([lb.it._id]); setEditing({ id: lb.it._id, kind: 'alabel', i: lb.i, at }); return }
     const hit = topHit(hitPool(), p, HIT_PX / R.current.cam.z, textBox)
     if (!hit) { newTextAt(p); return }   // 빈 곳 두 번 누르기 = 그 자리에 글(2026-10-20 사용자 — 아무것도 안 쓰고 나오면 빈 글은 지워짐)
-    if (hit.type === 'doc') { setSel([hit._id]); openDoc(hit); return }   // 정리 문서 두 번 누르기 = 크게 보기(고치기는 대화창에 말로)
+    if (hit.type === 'doc') { setSel([hit._id]); if (liveFits(hit)) webActivate(hit); else openDoc(hit); return }   // 정리 문서 두 번 누르기 = 크게 보기(고치기는 대화창에 말로), 움직이는 카드 = 칸 안 조작
     if (hit.type !== 'web' && hit.type !== 'pdf' && !guardEdit(hit._id)) return
     if (hit.type === 'frame') { const b = frameTagBox(hit); if (p.y <= b.y + b.h + 2 / R.current.cam.z) { setSel([hit._id]); setTagEdit(hit._id) } return }   // 이름표 = 그 자리에서 이름 고치기
     if (hit.type === 'memo') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'memo', at }); return }
@@ -1492,6 +1497,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const act = (f, label) => { e.preventDefault(); f(label) }
       const pdfOn = R.current.webOn && m.items.find(it => it._id === R.current.webOn && it.type === 'pdf'), pbox = pdfOn && document.querySelector(`[data-pdfid="${pdfOn._id}"]`)
       if (pbox && k === 'Escape' && !R.current.menuOpen) return act(() => setWebOn(null))   // Esc = 넘겨 보기 끝(보던 쪽 그대로, 카드는 고른 채)
+      if (k === 'Escape' && !R.current.menuOpen && R.current.webOn && m.items.some(it => it._id === R.current.webOn && it.type === 'doc')) return act(() => setWebOn(null))   // 움직이는 카드 조작 끝(카드 안에 커서가 있으면 Esc는 카드가 받음 — 바깥 누르기)
       if (pbox && !mod && /^(Arrow(Up|Down|Left|Right)|Page(Up|Down)|Home|End)$/.test(k)) {   // PDF 넘겨 보는 중 = 쪽 넘기기(2026-10-21: 화살표가 카드를 옮기던 것)
         e.preventDefault()
         const lay = pdfLayout(pdfOn, pdfOn.rect[2]), t = pbox.scrollTop, cur = Math.max(0, lay.findIndex(([py, ph]) => t < py + ph - 4))
@@ -2031,7 +2037,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function webActivate(it) {
     setSel([it._id]); setWebOn(it._id)
     if (isYoutube(it)) playYoutube(it._id)
-    setStatus(it.type === 'pdf' ? 'PDF 보는 중 · Alt+끌기 = 그림으로 오려 오기' : isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
+    setStatus(it.type === 'pdf' ? 'PDF 보는 중 · Alt+끌기 = 그림으로 오려 오기' : it.type === 'doc' ? '움직이는 카드 조작 중 — 바깥을 누르거나 Esc = 끝' : isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
   }
   // 점 p가 놓인 PDF 카드 몸통(위 띠 빼고) — 맨 위 것. 우클릭 메뉴가 「안쪽」인지 가르는 데
   const pdfBodyAt = p => { for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'pdf' || !it.url) continue
@@ -2193,7 +2199,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           {visible.map(([it0, i]) => [asTable(it0), i]).map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
             : it._id === editingId && it.type === 'memo' ? <Item key={it._id} it={{ ...it, lines: [] }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />   // 고치는 메모 = 바탕만(흐린 글자가 투명한 채움 사이로 잔상처럼 비쳤음 — 2026-10-18 사용자)
             : it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
-            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'pdf' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
+            : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'pdf' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
           {tidyPrev && (() => { const g = tidyPrev.ghost, sw = 1.5 / z, dash = `${8 / z} ${5 / z}`, fs = 13 / z, b = tidyPrev.box   // 정리정돈 미리보기 — 프레임(주황 점선)·옮길 자리(파랑 점선)·원래 자리 → 새 자리 가는 선
