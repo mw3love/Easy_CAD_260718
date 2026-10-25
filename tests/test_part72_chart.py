@@ -76,6 +76,26 @@ def test_desktop_keeps_chart_and_draws_it(tmp_path):
     assert out["cells"][1][1] == "70"
 
 
+def test_desktop_chart_theme_colors_and_keeps_it():
+    """딥모드 디자인 색 순서(`chart_theme`) — 데스크톱도 그 순서로 칠하고, 열었다 저장해도 칸이 남음."""
+    from PyQt6.QtGui import QImage, QPainter, QColor
+    from easycad.fileio.document import dict_to_item, item_to_dict
+
+    d = {"type": "table", "pos": [0, 0], "scale": 1, "rotation": 0, "z": 1, "origin": [0, 0], "locked": False, "group_id": None, "layer_id": None,
+         "rect": [0, 0, 360, 240], "rows": 3, "cols": 2, "header": True, "cells": [["나라", "비중"], ["중국", "60"], ["미국", "40"]],
+         "col_widths": [0.5, 0.5], "chart": "pie", "table_wh": [200, 90], "chart_theme": "red"}
+    it = dict_to_item(d)
+    img = QImage(400, 280, QImage.Format.Format_ARGB32)
+    img.fill(QColor("#808080"))
+    p = QPainter(img)
+    it.paint(p, None)
+    p.end()
+    reds = sum(1 for x in range(0, 360, 4) for y in range(0, 240, 4) if img.pixelColor(x, y).name() == cc.CHART_THEMES["red"][0])
+    assert reds > 50                                                        # 첫 조각 = 빨강(기본 파랑이 아님)
+    assert item_to_dict(it)["chart_theme"] == "red"
+    assert cc.chart_colors({"chart_theme": "없는 이름"}) == cc.CHART_COLORS
+
+
 def test_plain_table_unchanged():
     """chart 칸이 없거나 안 맞는 모양이면 표 그대로(그래프 dict 없음)."""
     from easycad.fileio.document import dict_to_item

@@ -30,12 +30,14 @@ test('디자인 바꾸기 · 되돌리기 · 꼭지 모양 · 손으로 고친 �
   expect(f.uid).toBe(uid)                                                           // 같은 프레임(발표 차례 그대로)
   expect(noOverlap(d)).toBe(0)
   expect(d.items.filter(it => it.deep_of === uid).length).toBeGreaterThan(5)
+  expect(d.items.filter(it => it.deep_of === uid && it.chart).map(it => it.chart_theme)).toEqual(expect.arrayContaining(['red']))   // 그래프 색 순서 = 디자인 묶음(신문 = 빨강부터)
   await page.getByTestId('board').screenshot({ path: 'test-results/deepstyle-news.png' })
 
   await page.keyboard.press('Control+z')
   d = await liveDoc(page)
   expect(root(d).deep_plan.style).toBe('calm')                                      // 되돌리기 한 번
   expect(d.items.length).toBe(n0)
+  expect(d.items.filter(it => it.deep_of === uid && it.chart).every(it => !it.chart_theme)).toBe(true)   // 차분 = 기본 색 순서
 
   const tile = d.items.find(it => it.deep_of === uid && PLAN.sections[it.deep_sec]?.shape === '숫자 타일')
   await page.evaluate(id => window.__mb.ed.setSel([id]), tile.uid)

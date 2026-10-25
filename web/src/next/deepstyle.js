@@ -1,6 +1,6 @@
 // 딥모드 디자인 묶음(§8 항목66 3-1, 2026-10-25 사용자 「디자인은 한 가지 정답이 없다 — 처음에 고르기·일부 개선·다른 형식으로 전면 개선」).
 // 디자인 = 색·카드 모양(look) + 배치 무게(layout — deep.js `DEEP`를 덮어씀). 내용(계획·본문)은 그대로, 묶음만 바꿔 다시 짓는다 — AI 크레딧 없음.
-// 색은 .ecad 꼴(#AARRGGBB, 글 runs는 #RRGGBB). CLEAR = 투명(테두리 없는 카드).
+// 색은 .ecad 꼴(#AARRGGBB, 글 runs는 #RRGGBB). CLEAR = 투명(테두리 없는 카드). look.chart = 그래프 색 순서(chart.js `CHART_THEMES` — 없으면 기본 파랑·주황, 차분·인포그래픽).
 const CLEAR = '#00ffffff'
 
 export const DEEP_STYLES = {
@@ -14,14 +14,14 @@ export const DEEP_STYLES = {
   // 신문 — 흰 바탕에 검은 선(가는 괘선), 헤드라인 크게, 빽빽하게(간격 좁게 · 본문 조금 작게)
   news: { name: '신문', tip: '헤드라인 크게 · 검은 괘선 · 빽빽하게',
     layout: { G: 12, M: 40, K: 0.95 },
-    look: { accent: '#9b1c1c', muted: '#57534e', title: 'h2', head: 1.75,
+    look: { accent: '#9b1c1c', muted: '#57534e', title: 'h2', head: 1.75, chart: 'red',
       hero: { bg: '#ffffffff', pen: '#ff18181b', ink: '#27272a', hi: '#9b1c1c', scale: 1.3 },
       card: { fill: '#ffffffff', pen: '#ff3f3f46' }, step: { fill: '#ffffffff', pen: '#ff3f3f46' },
       tile: { fill: '#ffffffff', pen: '#ff18181b', num: '#9b1c1c', scale: 1.05 }, moving: { fill: '#fff5f5f4', pen: '#ff3f3f46' } } },
   // 잡지 — 주인공 크게, 여백 넉넉, 테두리 없는 옅은 면(남색·모래색)
   magazine: { name: '잡지', tip: '주인공 크게 · 넉넉한 여백 · 테두리 없는 면',
     layout: { G: 24, M: 72, K: 1.05, hero: [7, 9] },
-    look: { accent: '#1f5f7a', muted: '#6b7280', title: 'h3', head: 1.6,
+    look: { accent: '#1f5f7a', muted: '#6b7280', title: 'h3', head: 1.6, chart: 'cool',
       hero: { bg: '#ff1f3a4d', pen: '#ff1f3a4d', ink: '#e6edf2', hi: '#ffd9a7', scale: 1.25 },
       card: { fill: '#fff6f3ee', pen: CLEAR }, step: { fill: '#ffedf3f6', pen: CLEAR },
       tile: { fill: '#fff6f3ee', pen: CLEAR, num: '#1f5f7a', scale: 1.15 }, moving: { fill: '#ffeef0f2', pen: CLEAR } } },

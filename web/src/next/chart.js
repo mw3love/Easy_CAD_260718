@@ -7,6 +7,10 @@ export const CHART_KINDS = [['table', '표'], ['col', '세로 막대'], ['row', 
 // 계열 색 — dataviz 기본 팔레트 밝은 화면 칸(검사기로 이웃 색 구별 통과, 순서가 색약 안전 장치라 바꾸지 않음). 그래프는 흰 종이 카드라 어두운 화면에도 이 색
 export const CHART_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948']
 export const MAX_SERIES = CHART_COLORS.length
+// 색 순서(테마) — 같은 8색의 순서만 바꿈(딥모드 디자인 묶음, 2026-10-25). 순서마다 검사기 통과(이웃 짝 색약 ΔE ≥ 9·보통 시력 ≥ 19.6, 흰 카드, 앞 셋 모든 짝 ≥ 12 — 원 그래프).
+// 표 칸 `chart_theme`(없으면 기본) — 데스크톱 `core_chart.CHART_THEMES`와 같게
+export const CHART_THEMES = { red: ['#e34948', '#eda100', '#e87ba4', '#008300', '#2a78d6', '#eb6834', '#6250d6', '#1baf7a'], cool: ['#2a78d6', '#008300', '#e87ba4', '#eda100', '#e34948', '#6250d6', '#eb6834', '#1baf7a'] }
+export const chartColors = it => CHART_THEMES[it?.chart_theme] || CHART_COLORS
 export const CHART_MIN = [360, 240]   // 표 → 그래프로 바꿀 때 이보다 작으면 키움(돌아가면 표 크기로 — `table_wh`)
 export const INK = { title: '#18181b', text: '#3f3f46', muted: '#71717a', grid: '#e4e4e7', base: '#a1a1aa', card: '#ffffff', edge: '#d4d4d8' }
 const PAD = 14, HEAD = 24, CAT = 20, FS = 11
@@ -127,7 +131,7 @@ const valText = (s, k) => (s.texts[k] || '').trim() || tickText(s.values[k])
 
 /** 그릴 조각들(아이템 안 좌표) — { t: 'rect'|'line'|'path'|'circle'|'text', … }. 마우스 올림 글 = `tip` */
 export function chartScene(it) {
-  const [x, y, w, h] = it.rect, kind = it.chart, data = chartData(it), { cats, series } = data, out = []
+  const [x, y, w, h] = it.rect, kind = it.chart, data = chartData(it), { cats, series } = data, out = [], COL = chartColors(it)
   out.push({ t: 'rect', x, y, w, h, rx: 8, f: INK.card, s: INK.edge, sw: 1 })
   const why = chartWhy(data, kind)
   if (why) { out.push({ t: 'text', x: x + w / 2, y: y + h / 2, s: fitText('숫자 칸이 없어요', FS, w - 2 * PAD), fs: FS, c: INK.muted, a: 'middle' }); return out }
@@ -139,13 +143,13 @@ export function chartScene(it) {
       const share = (R - L) / series.length   // 견본은 왼쪽부터 붙여 늘어놓되 한 계열이 폭을 넘지 않게
       let sx = L
       series.forEach((s, j) => { const name = fitText(s.name || `계열 ${j + 1}`, FS, share - 20)
-        out.push({ t: 'rect', x: r1(sx), y: T + 3, w: 10, h: 10, rx: 2, f: CHART_COLORS[j] })
+        out.push({ t: 'rect', x: r1(sx), y: T + 3, w: 10, h: 10, rx: 2, f: COL[j] })
         out.push({ t: 'text', x: r1(sx + 14), y: T + 8, s: name, fs: FS, c: INK.text, a: 'start' })
         sx += 14 + textW(name, FS) + 16 })
     }
   }
   const top = T + HEAD, bottom = y + h - PAD
-  if (kind === 'pie') return pieScene(out, data, L, top - HEAD + 4, R, bottom)
+  if (kind === 'pie') return pieScene(out, data, L, top - HEAD + 4, R, bottom, COL)
   const all = series.flatMap(s => s.values).filter(v => v != null), ticks = niceTicks(Math.min(...all), Math.max(...all))
   const lo = ticks[0], hi = ticks[ticks.length - 1]
   if (kind === 'row') {
@@ -158,7 +162,7 @@ export function chartScene(it) {
       out.push({ t: 'text', x: pl - 6, y: r1(cy), s: fitText(c, FS, labW - 8), fs: FS, c: INK.text, a: 'end' })
       series.forEach((s, j) => { const v = s.values[i]; if (v == null) return
         const by = cy - inner / 2 + j * (bh + 2), x0 = X(0), x1 = X(v)
-        out.push({ t: 'path', d: barPath(Math.min(x0, x1), by, Math.abs(x1 - x0), bh, v >= 0 ? 'right' : 'left'), f: CHART_COLORS[j], tip: `${c}${s.name ? ' · ' + s.name : ''}: ${valText(s, i)}` })
+        out.push({ t: 'path', d: barPath(Math.min(x0, x1), by, Math.abs(x1 - x0), bh, v >= 0 ? 'right' : 'left'), f: COL[j], tip: `${c}${s.name ? ' · ' + s.name : ''}: ${valText(s, i)}` })
         if (labels) out.push({ t: 'text', x: r1(v >= 0 ? x1 + 4 : x1 - 4), y: r1(by + bh / 2), s: valText(s, i), fs: 10, c: INK.text, a: v >= 0 ? 'start' : 'end' }) }) })
     return out
   }
@@ -172,7 +176,7 @@ export function chartScene(it) {
     const inner = band * 0.7, bw = Math.max(1, (inner - 2 * (series.length - 1)) / series.length), labels = cats.length * series.length <= 12 && bw >= 16
     cats.forEach((c, i) => series.forEach((s, j) => { const v = s.values[i]; if (v == null) return
       const bx = pl + band * i + (band - inner) / 2 + j * (bw + 2), y0 = Y(0), y1 = Y(v)
-      out.push({ t: 'path', d: barPath(bx, Math.min(y0, y1), bw, Math.abs(y1 - y0), v >= 0 ? 'up' : 'down'), f: CHART_COLORS[j], tip: `${c}${s.name ? ' · ' + s.name : ''}: ${valText(s, i)}` })
+      out.push({ t: 'path', d: barPath(bx, Math.min(y0, y1), bw, Math.abs(y1 - y0), v >= 0 ? 'up' : 'down'), f: COL[j], tip: `${c}${s.name ? ' · ' + s.name : ''}: ${valText(s, i)}` })
       if (labels) out.push({ t: 'text', x: r1(bx + bw / 2), y: r1(v >= 0 ? y1 - 8 : y1 + 8), s: valText(s, i), fs: 10, c: INK.text, a: 'middle' }) }))
     return out
   }
@@ -181,16 +185,16 @@ export function chartScene(it) {
     const pts = s.values.map((v, i) => (v == null ? null : [r1(pl + band * i + band / 2), r1(Y(v))]))
     let d = '', pen = false
     pts.forEach(p => { if (!p) { pen = false; return } d += `${pen ? ' L' : (d ? ' M' : 'M')}${p[0]},${p[1]}`; pen = true })
-    if (d) out.push({ t: 'path', d, s: CHART_COLORS[j], sw: 2 })
+    if (d) out.push({ t: 'path', d, s: COL[j], sw: 2 })
     pts.forEach((p, i) => { if (!p) return
-      out.push({ t: 'circle', cx: p[0], cy: p[1], r: 4, f: CHART_COLORS[j], s: INK.card, sw: 2, tip: `${cats[i]}${s.name ? ' · ' + s.name : ''}: ${valText(s, i)}` })
+      out.push({ t: 'circle', cx: p[0], cy: p[1], r: 4, f: COL[j], s: INK.card, sw: 2, tip: `${cats[i]}${s.name ? ' · ' + s.name : ''}: ${valText(s, i)}` })
       if (series.length === 1 && cats.length <= 8) out.push({ t: 'text', x: p[0], y: r1(p[1] - 12), s: valText(s, i), fs: 10, c: INK.text, a: 'middle' }) })
   })
   return out
 }
 
 // 원 — 왼쪽 원(조각 사이 흰 틈 2px), 오른쪽 목록(견본 · 이름 · 몫 %). 호는 2° 마다 점(데스크톱이 같은 길을 그림)
-function pieScene(out, { cats, series }, L, top, R, bottom) {
+function pieScene(out, { cats, series }, L, top, R, bottom, COL = CHART_COLORS) {
   const s = series[0], vals = s.values.map(v => (v == null ? 0 : v)), sum = vals.reduce((a, b) => a + b, 0)
   const listW = Math.min((R - L) * 0.45, Math.max(...cats.map(c => textW(c, FS))) + 64)
   if (s.name) { out.push({ t: 'text', x: L, y: top + 4, s: fitText(s.name, 13, R - L), fs: 13, b: 1, c: INK.title, a: 'start' }); top += HEAD }   // 제목 밑부터 원
@@ -199,11 +203,11 @@ function pieScene(out, { cats, series }, L, top, R, bottom) {
   vals.forEach((v, i) => { if (v <= 0) return
     const sweep = (v / sum) * 360, n = Math.max(2, Math.ceil(sweep / 2)), pts = [[cx, cy]]
     for (let k = 0; k <= n; k++) { const t = ((a + (sweep * k) / n) * Math.PI) / 180; pts.push([cx + rad * Math.cos(t), cy + rad * Math.sin(t)]) }
-    out.push({ t: 'path', d: 'M' + pts.map(p => `${r1(p[0])},${r1(p[1])}`).join(' L') + ' Z', f: CHART_COLORS[i], s: INK.card, sw: 2, tip: `${cats[i]}: ${valText(s, i)} (${Math.round((v / sum) * 100)}%)` })
+    out.push({ t: 'path', d: 'M' + pts.map(p => `${r1(p[0])},${r1(p[1])}`).join(' L') + ' Z', f: COL[i], s: INK.card, sw: 2, tip: `${cats[i]}: ${valText(s, i)} (${Math.round((v / sum) * 100)}%)` })
     a += sweep })
   const lx = x0 + size + 20, rowH = 20, ly0 = cy - (cats.length * rowH) / 2 + rowH / 2
   cats.forEach((c, i) => { const ly = r1(ly0 + i * rowH)
-    out.push({ t: 'rect', x: lx, y: ly - 5, w: 10, h: 10, rx: 2, f: CHART_COLORS[i] })
+    out.push({ t: 'rect', x: lx, y: ly - 5, w: 10, h: 10, rx: 2, f: COL[i] })
     out.push({ t: 'text', x: lx + 14, y: ly, s: fitText(c, FS, listW - 56), fs: FS, c: INK.text, a: 'start' })
     out.push({ t: 'text', x: lx + listW - 4, y: ly, s: sum > 0 ? Math.round((vals[i] / sum) * 100) + '%' : '', fs: FS, b: 1, c: INK.title, a: 'end' }) })
   return out

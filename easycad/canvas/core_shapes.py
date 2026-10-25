@@ -3022,7 +3022,8 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
             return None
         from easycad.canvas.core_chart import is_chart
         box = self.rect()
-        d = {"type": "table", "rect": [box.x(), box.y(), box.width(), box.height()], "cells": self._cells, "header": self._header, "chart": self._web()["chart"]}
+        d = {"type": "table", "rect": [box.x(), box.y(), box.width(), box.height()], "cells": self._cells, "header": self._header, "chart": self._web()["chart"],
+             "chart_theme": self._web().get("chart_theme")}   # 색 순서(딥모드 디자인)
         return d if is_chart(d) else None
 
     def paint(self, painter, option, widget=None):

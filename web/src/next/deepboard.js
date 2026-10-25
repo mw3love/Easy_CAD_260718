@@ -130,7 +130,7 @@ export function deepSection(plan, sec, x, y, w, k, v = '', S = CALM) {
       // 표 = 머리 행·왼쪽 열(항목 이름)에 옅은 바탕 + 굵게 — 칸 내용과 갈라 보이게(2026-10-25 사용자 판정)
       const cs = {}; if (!kind) for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) if ((b.header && r === 0) || (c === 0 && C > 1)) cs[`${r},${c}`] = { bold: true, fill: r === 0 && b.header ? '#fff1ebe6' : '#fffaf7f4' }
       const tb = base([x, top], { type: 'table', rows: R, cols: C, header: !!b.header, cells, col_widths: kind ? Array(C).fill(1 / C) : tableWidths(cells, C), rect: [0, 0, tw, th], scale: k,
-        ...(kind ? { chart: kind, table_wh: [tw, R * 26] } : { cell_styles: cs }) })
+        ...(kind ? { chart: kind, table_wh: [tw, R * 26], ...(S.chart ? { chart_theme: S.chart } : {}) } : { cell_styles: cs }) })   // 그래프 색 순서 = 디자인 묶음
       items = [head, tb, ...(notes.length ? [memo(x, bottomOf([tb]) + 2, w, k * 0.9, notes, { fill: CLEAR, pen: CLEAR })] : [])]
       break
     }

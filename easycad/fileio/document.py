@@ -375,7 +375,7 @@ _DESK_KEYS = ("type", "pos", "scale", "rotation", "z", "origin", "locked", "grou
 _WEB_ONLY_KEYS_ALL =("fit_text", "chat_at", "legend", "legend_key", "uid", "deep_of", "deep_sec")   # legend·legend_key = 웹 범례 표시(다시 모을 때 이름 지키기), uid = 웹 공동작업 도형 이름표(2026-10-18), deep_of·deep_sec = 딥모드 판 물건 표시(§8 항목66 3-1 — 웹 「디자인」 다시 짓기)
 
 
-_WEB_ONLY_KEYS ={"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights", "chart", "table_wh"), "image": ("alt",)}  # row_heights = 행 높이 비율(웹 2026-10-18, 데스크톱은 같은 높이로 그림), chart·table_wh = 그래프 모양·표일 때 크기(§8 항목66 1단계 — 데스크톱도 그래프로 그림 `core_chart`)
+_WEB_ONLY_KEYS ={"table": ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights", "chart", "table_wh", "chart_theme"), "image": ("alt",)}  # row_heights = 행 높이 비율(웹 2026-10-18, 데스크톱은 같은 높이로 그림), chart·table_wh = 그래프 모양·표일 때 크기(§8 항목66 1단계 — 데스크톱도 그래프로 그림 `core_chart`, chart_theme = 색 순서 — 딥모드 디자인)
 
 
 def dict_to_item(d: dict):

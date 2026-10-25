@@ -13,6 +13,13 @@ import re
 CHART_KINDS = [("table", "표"), ("col", "세로 막대"), ("row", "가로 막대"), ("line", "꺾은선"), ("pie", "원")]
 CHART_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 MAX_SERIES = len(CHART_COLORS)
+# 색 순서(테마) — 같은 8색의 순서만(딥모드 디자인 묶음, 2026-10-25 — 웹 `chart.js` `CHART_THEMES`와 같게). 표 칸 `chart_theme`(없으면 기본)
+CHART_THEMES = {"red": ["#e34948", "#eda100", "#e87ba4", "#008300", "#2a78d6", "#eb6834", "#6250d6", "#1baf7a"],
+                "cool": ["#2a78d6", "#008300", "#e87ba4", "#eda100", "#e34948", "#6250d6", "#eb6834", "#1baf7a"]}
+
+
+def chart_colors(it: dict) -> list:
+    return CHART_THEMES.get(it.get("chart_theme") or "", CHART_COLORS)
 INK = {"title": "#18181b", "text": "#3f3f46", "muted": "#71717a", "grid": "#e4e4e7", "base": "#a1a1aa", "card": "#ffffff", "edge": "#d4d4d8"}
 PAD, HEAD, CAT, FS = 14, 24, 20, 11
 
@@ -183,6 +190,7 @@ def chart_scene(it: dict) -> list:
     data = chart_data(it)
     cats, series = data["cats"], data["series"]
     out = [{"t": "rect", "x": x, "y": y, "w": w, "h": h, "rx": 8, "f": INK["card"], "s": INK["edge"], "sw": 1}]
+    COL = chart_colors(it)
     if chart_why(data, kind):
         out.append({"t": "text", "x": x + w / 2, "y": y + h / 2, "s": fit_text("숫자 칸이 없어요", FS, w - 2 * PAD), "fs": FS, "c": INK["muted"], "a": "middle"})
         return out
@@ -196,12 +204,12 @@ def chart_scene(it: dict) -> list:
             sx = L
             for j, s in enumerate(series):
                 name = fit_text(s["name"] or f"계열 {j + 1}", FS, share - 20)
-                out.append({"t": "rect", "x": _r1(sx), "y": T + 3, "w": 10, "h": 10, "rx": 2, "f": CHART_COLORS[j]})
+                out.append({"t": "rect", "x": _r1(sx), "y": T + 3, "w": 10, "h": 10, "rx": 2, "f": COL[j]})
                 out.append({"t": "text", "x": _r1(sx + 14), "y": T + 8, "s": name, "fs": FS, "c": INK["text"], "a": "start"})
                 sx += 14 + text_w(name, FS) + 16
     top, bottom = T + HEAD, y + h - PAD
     if kind == "pie":
-        return _pie_scene(out, data, L, top - HEAD + 4, R, bottom)
+        return _pie_scene(out, data, L, top - HEAD + 4, R, bottom, COL)
     allv = [v for s in series for v in s["values"] if v is not None]
     ticks = nice_ticks(min(allv), max(allv))
     lo, hi = ticks[0], ticks[-1]
@@ -228,7 +236,7 @@ def chart_scene(it: dict) -> list:
                 if v is None:
                     continue
                 by, x0, x1 = cy - inner / 2 + j * (bh + 2), X(0), X(v)
-                out.append({"t": "path", "d": _bar_path(min(x0, x1), by, abs(x1 - x0), bh, "right" if v >= 0 else "left"), "f": CHART_COLORS[j], "tip": tip(c, s, i)})
+                out.append({"t": "path", "d": _bar_path(min(x0, x1), by, abs(x1 - x0), bh, "right" if v >= 0 else "left"), "f": COL[j], "tip": tip(c, s, i)})
                 if labels:
                     out.append({"t": "text", "x": _r1(x1 + 4 if v >= 0 else x1 - 4), "y": _r1(by + bh / 2), "s": _val_text(s, i), "fs": 10, "c": INK["text"], "a": "start" if v >= 0 else "end"})
         return out
@@ -251,7 +259,7 @@ def chart_scene(it: dict) -> list:
                 if v is None:
                     continue
                 bx, y0, y1 = pl + band * i + (band - inner) / 2 + j * (bw + 2), Y(0), Y(v)
-                out.append({"t": "path", "d": _bar_path(bx, min(y0, y1), bw, abs(y1 - y0), "up" if v >= 0 else "down"), "f": CHART_COLORS[j], "tip": tip(c, s, i)})
+                out.append({"t": "path", "d": _bar_path(bx, min(y0, y1), bw, abs(y1 - y0), "up" if v >= 0 else "down"), "f": COL[j], "tip": tip(c, s, i)})
                 if labels:
                     out.append({"t": "text", "x": _r1(bx + bw / 2), "y": _r1(y1 - 8 if v >= 0 else y1 + 8), "s": _val_text(s, i), "fs": 10, "c": INK["text"], "a": "middle"})
         return out
@@ -265,17 +273,17 @@ def chart_scene(it: dict) -> list:
             d += f"{' L' if pen else (' M' if d else 'M')}{_js(p[0])},{_js(p[1])}"
             pen = True
         if d:
-            out.append({"t": "path", "d": d, "s": CHART_COLORS[j], "sw": 2})
+            out.append({"t": "path", "d": d, "s": COL[j], "sw": 2})
         for i, p in enumerate(pts):
             if not p:
                 continue
-            out.append({"t": "circle", "cx": p[0], "cy": p[1], "r": 4, "f": CHART_COLORS[j], "s": INK["card"], "sw": 2, "tip": tip(cats[i], s, i)})
+            out.append({"t": "circle", "cx": p[0], "cy": p[1], "r": 4, "f": COL[j], "s": INK["card"], "sw": 2, "tip": tip(cats[i], s, i)})
             if len(series) == 1 and len(cats) <= 8:
                 out.append({"t": "text", "x": p[0], "y": _r1(p[1] - 12), "s": _val_text(s, i), "fs": 10, "c": INK["text"], "a": "middle"})
     return out
 
 
-def _pie_scene(out, data, L, top, R, bottom):
+def _pie_scene(out, data, L, top, R, bottom, COL=CHART_COLORS):
     cats, s = data["cats"], data["series"][0]
     vals = [0.0 if v is None else v for v in s["values"]]
     total = sum(vals)
@@ -297,13 +305,13 @@ def _pie_scene(out, data, L, top, R, bottom):
             t = ((a + (sweep * k) / n) * math.pi) / 180
             pts.append([cx + rad * math.cos(t), cy + rad * math.sin(t)])
         d = "M" + " L".join(f"{_js(_r1(p[0]))},{_js(_r1(p[1]))}" for p in pts) + " Z"
-        out.append({"t": "path", "d": d, "f": CHART_COLORS[i], "s": INK["card"], "sw": 2, "tip": f"{cats[i]}: {_val_text(s, i)} ({round_half_up(v / total * 100)}%)"})
+        out.append({"t": "path", "d": d, "f": COL[i], "s": INK["card"], "sw": 2, "tip": f"{cats[i]}: {_val_text(s, i)} ({round_half_up(v / total * 100)}%)"})
         a += sweep
     lx, row_h = x0 + size + 20, 20
     ly0 = cy - (len(cats) * row_h) / 2 + row_h / 2
     for i, c in enumerate(cats):
         ly = _r1(ly0 + i * row_h)
-        out.append({"t": "rect", "x": lx, "y": ly - 5, "w": 10, "h": 10, "rx": 2, "f": CHART_COLORS[i]})
+        out.append({"t": "rect", "x": lx, "y": ly - 5, "w": 10, "h": 10, "rx": 2, "f": COL[i]})
         out.append({"t": "text", "x": lx + 14, "y": ly, "s": fit_text(c, FS, list_w - 56), "fs": FS, "c": INK["text"], "a": "start"})
         out.append({"t": "text", "x": lx + list_w - 4, "y": ly, "s": f"{round_half_up(vals[i] / total * 100)}%" if total > 0 else "", "fs": FS, "b": 1, "c": INK["title"], "a": "end"})
     return out
