@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { DEEP, deepLayout, deepWaste, inside, overlaps, spanRange, variantsOf } from '../src/next/deep.js'
+import { DEEP, deepLayout, deepWaste, graphTiles, inside, overlaps, spanRange, variantsOf } from '../src/next/deep.js'
 import { DEEP_STYLES, STYLE_KEYS, recommendStyle } from '../src/next/deepstyle.js'
 
 const load = t => JSON.parse(readFileSync(new URL(`./fixtures/deep_${t}.json`, import.meta.url), 'utf-8'))
@@ -80,4 +80,14 @@ test('처음 고르기 추천(3-2) — 보고 = 신문 · 발표 = 잡지 · 숫
   assert.equal(recommendStyle({ 무엇에: '발표' }, num)[0], 'magazine')
   assert.equal(recommendStyle({ 무엇에: '알아서' }, num)[0], 'info')
   assert.equal(recommendStyle({}, load('paper'))[0], 'calm')
+})
+
+test('숫자가 모자란 그래프 = 숫자 타일(3-3 실조건 — 두 점 꺾은선)', () => {
+  const two = { rows: [['시점', '주민등록인구(명)'], ['2025년 12월 말', '1724856 [8]'], ['2026년 9월 말', '1716229 [1]']], header: true, kind: 'line' }
+  assert.deepEqual(graphTiles(two), [['1,724,856명', '2025년 12월 말', 8], ['1,716,229명', '2026년 9월 말', 1]])
+  assert.equal(graphTiles({ ...two, rows: [...two.rows, ['2027년', '1700000 [2]']] }), null)          // 셋이면 그래프 그대로
+  assert.equal(graphTiles({ rows: [['연령대', '순이동(명)']], header: true }), null)                     // 숫자가 없으면 설명 카드 몫
+  const multi = { rows: [['해', '수출(억 달러)', '수입(억 달러)'], ['2025', '603 [1]', '-12.5 [2]']], header: true }
+  assert.deepEqual(graphTiles(multi), [['603억 달러', '2025 · 수출', 1], ['-12.5억 달러', '2025 · 수입', 2]])
+  assert.equal(graphTiles({ rows: [['a', 'b', 'c', 'd'], ['x', '1', '2', '3'], ['y', '4', '5', '6']], header: true }), null)   // 타일이 넷 넘으면 그래프
 })

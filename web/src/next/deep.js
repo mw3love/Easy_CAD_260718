@@ -133,3 +133,16 @@ export function overlaps(boxes, eps = 0.5) {
 }
 /** 안에 있나(넘침 검사) */
 export const inside = (a, frame, eps = 0.5) => a.x >= frame.x - eps && a.y >= frame.y - eps && a.x + a.w <= frame.x + frame.w + eps && a.y + a.h <= frame.y + frame.h + eps
+
+/** 숫자가 모자란 그래프 → 숫자 타일(3-3 실조건 — 공공 데이터가 두 시점만 줘서 점 두 개 꺾은선). 데이터 줄이 셋 미만이고 타일 넷 이하일 때만 [[값+단위, 항목, 출처 번호]], 아니면 null.
+ *  rows = 꼭지 본문 표(칸 글에 [n]), 단위 = 머리 칸 끝 괄호(「주민등록인구(명)」 → 명) */
+export function graphTiles(b = {}) {
+  const rows = b.rows || [], hdr = b.header ? rows[0] || [] : null, data = rows.slice(b.header ? 1 : 0).filter(r => r.slice(1).some(c => String(c).replace(/\[\d+\]/g, '').trim()))
+  if (data.length >= 3 || !data.length) return null
+  const tiles = data.flatMap(r => r.slice(1).map((c, j) => {
+    const s = String(c), n = +(s.match(/\[(\d+)\]/)?.[1]) || null, raw = s.replace(/\[\d+\]/g, '').trim(), head = hdr?.[j + 1] ? String(hdr[j + 1]) : ''
+    const unit = head.match(/\(([^)]+)\)\s*$/)?.[1] || '', num = /^-?\d+(\.\d+)?$/.test(raw.replace(/,/g, '')) ? Number(raw.replace(/,/g, '')).toLocaleString('ko-KR') : raw
+    return raw ? [num + (unit && !raw.endsWith(unit) ? unit : ''), `${r[0]}${r.length > 2 && head ? ` · ${head.replace(/\s*\([^)]*\)\s*$/, '')}` : ''}`, n] : null
+  })).filter(Boolean)
+  return tiles.length && tiles.length <= 4 ? tiles : null
+}

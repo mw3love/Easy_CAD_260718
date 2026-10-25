@@ -7,6 +7,7 @@ import { memoHeight } from './render.jsx'
 import { memoFromAnswer, tableLine, tableWidths } from './memo.js'
 import { newId } from './model.js'
 import { chartData, chartGuess, chartWhy, textW } from './chart.js'
+import { graphTiles } from './deep.js'
 import { siteOf } from './webcard.js'
 import { DEEP_STYLES } from './deepstyle.js'
 
@@ -104,6 +105,12 @@ export function deepSection(plan, sec, x, y, w, k, v = '', S = CALM) {
       const { cells, refs } = answerTable(b.rows || [['']]), R = cells.length, C = cells[0].length
       if (R < (b.header ? 2 : 1) || cells.slice(b.header ? 1 : 0).every(r => r.every(c => !String(c).trim()))) {   // 재료에 숫자가 없어 머리 줄만 온 것(3-3 실측 — 빈 표가 깨진 것처럼 보였음) = 설명 카드
         items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, muted(b.caption || '이번 재료에서 숫자를 못 찾았어요', S), ...(refs.length ? [muted(siteLines(plan, refs), S)] : [])], card(S))]
+        break
+      }
+      const gt = sec.shape === '그래프' ? graphTiles(b) : null   // 숫자가 둘뿐 = 그래프 대신 숫자 타일(점 두 개 꺾은선은 보여 주는 게 없음 — 3-3 실조건), 설명은 밑에
+      if (gt) {
+        items = deepSection(plan, { ...sec, shape: '숫자 타일', body: { tiles: gt } }, x, y, w, k, '', S).items
+        if (b.caption) items.push(memo(x, bottomOf(items) + 2, w, k * 0.9, [muted(b.caption, S)], { fill: CLEAR, pen: CLEAR }))
         break
       }
       let kind = sec.shape === '그래프' ? (b.kind || CHART_KIND[sec.chart] || 'col') : null
