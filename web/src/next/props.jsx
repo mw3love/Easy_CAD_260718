@@ -13,6 +13,7 @@ const frameRatio = (it, ratio) => { const [x, y, w, h] = it.rect; if (!ratio) re
 import { cellPt, labelNeedW, labelShownPt, tableAutoPt } from './render.jsx'
 import { WEB_ZOOMS } from './webcard.js'
 import { STYLE_NAMES, rowName } from './legend.js'
+import { CHART_KINDS, CHART_MIN, chartWhys, isChart } from './chart.js'
 const LG_WIDTHS = [0.5, 1, 1.5, 2, 3, 4, 5, 6, 8]
 // 글 있는 칸들의 지금 크기(pt)
 const tableCellPts = it => { const out = []; for (let r = 0; r < it.rows; r++) for (let c = 0; c < it.cols; c++) if (it.cells?.[r]?.[c]) out.push(cellPt(it, r, c)); return out.length ? out : [tableAutoPt(it)] }
@@ -33,11 +34,11 @@ const INK = '#1f1f1f'
 // ── 종류마다 무엇을 갖나(데스크톱 `_read_props`·`_text_targets`와 같은 판정, .ecad 칸 이름) ──
 export const isArrow = it => it?.type === 'sarrow' || it?.type === 'arrow'
 const PEN = new Set(['rect', 'ellipse', 'symbol', 'polygon', 'path', 'line'])
-const lineKey = it => (isArrow(it) || it.type === 'badge' ? 'color' : PEN.has(it.type) || it.type === 'table' ? 'pen' : it.type === 'board' ? 'bg' : null)   // 표 선 색 = .ecad 표의 새 칸 pen(웹 먼저)   // 보드는 「바탕」 색
+const lineKey = it => (isArrow(it) || it.type === 'badge' ? 'color' : PEN.has(it.type) || (it.type === 'table' && !isChart(it)) ? 'pen' : it.type === 'board' ? 'bg' : null)   // 표 선 색 = .ecad 표의 새 칸 pen(웹 먼저)   // 보드는 「바탕」 색
 const hasWidth = it => isArrow(it) || PEN.has(it.type)
 const fillKey = it => (['rect', 'ellipse', 'symbol', 'memo'].includes(it.type) || (it.type === 'polygon' && it.closed) ? 'fill' : it.type === 'text' ? 'bg' : null)
 const TYPE_NAMES = { doc: '정리 문서', rect: '사각형', ellipse: '원', line: '선', arrow: '화살표', sarrow: '화살표', text: '텍스트', badge: '번호', path: '펜', image: '이미지', table: '표', titleblock: '표제란', polygon: '다각형', board: '보드', frame: '프레임', web: '웹 카드', pdf: 'PDF', memo: '메모', legend: '범례' }
-const typeName = it => (it.type === 'symbol' ? SYMBOLS[it.kind]?.name || '심볼' : TYPE_NAMES[it.type] || '객체')
+const typeName = it => (it.type === 'symbol' ? SYMBOLS[it.kind]?.name || '심볼' : isChart(it) ? '그래프' : TYPE_NAMES[it.type] || '객체')
 
 // 색 비교용 — '#ffrrggbb'(불투명 ARGB)와 '#rrggbb'를 같게
 const norm = c => (c || '').replace(/^#ff(?=[0-9a-f]{6}$)/i, '#').toLowerCase()
@@ -50,6 +51,7 @@ const argbToBg = c => (c == null ? null : [parseInt(c.slice(3, 5), 16), parseInt
 const arrowLabels = it => it.labels || (it.label ? [it.label] : [])   // 옛 파일은 단수 label
 function textSlots(it) {
   if (it.type === 'text') return [{ font: it.font || 12, color: it.color || INK, text: it.text || '' }]
+  if (it.type === 'table' && isChart(it)) return []   // 그래프 글자 = 그래프가 정함(크기는 상자로)
   if (it.type === 'table') return [{ font: it.font || tableAutoPt(it), fonts: it.font ? null : tableCellPts(it), color: it.color || '#111111', text: (it.cells || []).flat().find(Boolean) || '' }]   // 표 글자 = 표 전체 하나. 크기를 표 전체로 안 정했으면 칸마다 지금 보이는 크기(자동 칸은 줄어든 실제 크기 — 범위로 보임)
   if (isArrow(it)) return arrowLabels(it).filter(L => L.text?.trim()).map(L => ({ font: L.font || 16, color: L.color || it.color || INK, text: L.text }))
   if (['rect', 'ellipse', 'symbol', 'polygon', 'line'].includes(it.type) && it.label?.text?.trim()) return [{ font: FIT.has(it.type) ? labelShownPt(it) : it.label.font || 16, color: it.label.color || it.pen || INK, text: it.label.text }]   // 상자에 맞춰 줄어든 글은 보이는 크기
@@ -220,6 +222,21 @@ function DashPick({ id, pop, setPop, value, onPick, title = '선 모양' }) {
     </FloatPanel>}
   </div>
 }
+// 그래프 모양 아이콘(18×16)
+const CHART_ICONS = {
+  table: <Svg><rect x="2.5" y="2.5" width="13" height="11" rx="1" /><path d="M2.5 6.5H15.5M7 2.5V13.5" /></Svg>,
+  col: <Svg><path d="M4 13.5V8M9 13.5V3.5M14 13.5V6.5" strokeWidth="2.6" /></Svg>,
+  row: <Svg><path d="M2.5 4H10M2.5 8H15M2.5 12H7" strokeWidth="2.6" /></Svg>,
+  line: <Svg><path d="M2.5 12L7 7.5L10.5 10L15.5 4" /></Svg>,
+  pie: <Svg><circle cx="9" cy="8" r="5.5" /><path d="M9 8V2.5M9 8L13.6 11" /></Svg>,
+}
+// 표 ↔ 그래프 — 그래프로 갈 때 작으면 키우고(CHART_MIN) 표 크기를 기억(`table_wh`), 표로 돌아오면 그 크기로
+function chartPatch(it, k) {
+  const [x, y, w, h] = it.rect
+  if (k === 'table') return { chart: undefined, table_wh: undefined, ...(it.table_wh ? { rect: [x, y, ...it.table_wh] } : {}) }
+  if (it.chart && it.chart !== 'table') return { chart: k }
+  return { chart: k, table_wh: [w, h], rect: [x, y, Math.max(w, CHART_MIN[0]), Math.max(h, CHART_MIN[1])] }
+}
 const wrap360 = a => +((((a % 360) + 360) % 360).toFixed(1))
 
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
@@ -318,6 +335,12 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
       {kind === 'ortho' && <Row label="꺾임"><Stepper title="꺾인 곳 둥글기(0 = 각짐)" {...num(arrows, a => a.curve_r, 10, 0, 40, 1, '꺾임 둥글기', (a, v) => ({ curve_r: v }))} /></Row>}
     </>}
     {items.some(it => it.type === 'rect') && <Row label="둥글기"><Stepper title="네모 모서리 둥글기(0 = 각짐)" {...num(items.filter(it => it.type === 'rect'), it => it.radius, 0, 0, 60, 2, '모서리 둥글기', (it, v) => ({ radius: v || undefined }))} /></Row>}
+    {tables.length === 1 && (() => { const t = tables[0], why = chartWhys(t), cur = isChart(t) ? t.chart : 'table'   // 그래프 = 표 + 모양(§8 항목66 1단계 — 시안 「그래프 = 표 + 모양」), 안 맞는 모양은 흐리게 + 까닭
+      return <><Row label="모양"><div data-testid="chart-kinds" style={{ display: 'flex', gap: 2, background: C.seg, borderRadius: 8, padding: 2, flex: 1 }}>
+        {CHART_KINDS.map(([k, name]) => { const no = !!why[k]
+          return <button key={k} data-chart-kind={k} title={no ? `${name} — ${why[k]}` : name} aria-label={name} aria-pressed={cur === k} disabled={no} onClick={() => set(it => (it._id === t._id ? chartPatch(it, k) : null), '그래프 모양')}
+            style={btn(cur === k, { flex: 1, opacity: no ? 0.3 : 1, cursor: no ? 'not-allowed' : 'pointer' })}>{CHART_ICONS[k]}</button> })}</div></Row>
+        {cur !== 'table' && <div style={{ fontSize: 11, color: C.muted }}>두 번 누르면 표로 펼쳐 숫자를 고쳐요 · 바깥을 누르면 다시 그래프</div>}</> })()}
     {tables.length > 0 && <Row label="첫 행">
       <Seg value={one(tables.map(it => !!it.header))} onPick={v => set(it => (it.type === 'table' ? { header: v } : null), '머리 행')} items={[[true, <b key="b">머리</b>, '첫 행을 머리로(굵게)'], [false, <span key="n">보통</span>, '첫 행도 보통']]} />
     </Row>}

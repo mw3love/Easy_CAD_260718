@@ -12,6 +12,7 @@ import { WEB_HEAD, frameSrc, isYoutube, openBtnRect, siteOf } from './webcard.js
 import { LISTY, MEMO, MEMO_KIND, MUTED, olNumbers } from './memo.js'
 import { LEGEND, descOf, rowName } from './legend.js'
 import { PdfPages, pdfPageAt } from './pdfcard.jsx'
+import { chartScene, isChart } from './chart.js'
 
 // ── 글자 재기(캔버스) ──
 let _ctx = null
@@ -338,6 +339,15 @@ function Ports({ it, onBoard }) {
 // labels = 'inline'(기본 — 내보내기) | 'skip'(화살표 라벨은 빼고) | 'only'(화살표 라벨만 — 편집 화면이 모든 선 위에 한 번 더 그림)
 // 종이틀 축척 — 틀이 용지의 k배 크기면 종이엔 1/k로 찍힘(「1:2.9」), 작으면 「2:1」. 1배 근처면 안 씀
 export const scaleText = k => { k = k || 1; if (Math.abs(k - 1) < 0.01) return ''; return k > 1 ? ` · 1:${+k.toFixed(1)}` : ` · ${+(1 / k).toFixed(1)}:1` }
+// 그래프 조각 → SVG(chart.js `chartScene`) — 마우스 올림 = 그 값(`tip`)
+function chartPrim(p, k) {
+  const tip = p.tip ? <title>{p.tip}</title> : null
+  if (p.t === 'rect') return <rect key={k} x={p.x} y={p.y} width={p.w} height={p.h} rx={p.rx || 0} fill={p.f || 'none'} stroke={p.s || 'none'} strokeWidth={p.sw || 0}>{tip}</rect>
+  if (p.t === 'line') return <line key={k} x1={p.x1} y1={p.y1} x2={p.x2} y2={p.y2} stroke={p.s} strokeWidth={p.sw} />
+  if (p.t === 'path') return <path key={k} d={p.d} fill={p.f || 'none'} stroke={p.s || 'none'} strokeWidth={p.sw || 0} strokeLinejoin="round" strokeLinecap="round">{tip}</path>
+  if (p.t === 'circle') return <circle key={k} cx={p.cx} cy={p.cy} r={p.r} fill={p.f} stroke={p.s} strokeWidth={p.sw}>{tip}</circle>
+  return <text key={k} x={p.x} y={p.y} textAnchor={p.a} dominantBaseline="central" fontSize={p.fs} fontWeight={p.b ? 700 : 400} fontFamily={APP_FONT} fill={p.c} style={{ whiteSpace: 'pre' }}>{p.s}</text>
+}
 export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode = 'inline', page, web, noFs, ytBig, fsScale }) {   // noFs·ytBig·fsScale = 발표 화면(유튜브 전체 화면 단추 숨김 · 크게 보는 중 · 화면 배율)   // web = 웹 카드 칸 안 페이지: 없음 = 그림 카드(내보내기·장 목록), 'view' = 보이기만(누르면 칠판이 받음), 'on' = 조작 중   // page = 종이틀 쪽 번호(편집 화면만)   // props의 dark: 화면이 바뀌면 다시 그리게(memo가 props를 비교)
   const T = itemTransform(it), fill = it.fill ? cssColor(it.fill) : 'none'
   if (lmode === 'only' && it.type !== 'sarrow' && it.type !== 'arrow') return null
@@ -393,6 +403,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
         <text y={0} textAnchor="middle" dominantBaseline="central" fontSize={12 * PT} fontWeight={700} fontFamily={APP_FONT} fill="#fff">{it.number}</text></g>
     }
     case 'table': {
+      if (isChart(it)) return <g transform={T} data-chart={it.chart}>{chartScene(it).map(chartPrim)}</g>   // 그래프 = 표 + 모양(chart.js) — 숫자를 못 읽게 되면 표로
       const [x, y, w, h] = it.rect, rows = it.rows, edges = colEdges(x, w, colFracs(it)), re = rowEdges(y, h, it)
       const cells = []
       for (let r = 0; r < rows; r++) for (let c = 0; c < it.cols; c++) {

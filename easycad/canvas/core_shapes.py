@@ -3016,7 +3016,28 @@ class _TableItem(_RectGeometryMixin, _HandleResizeMixin, QGraphicsRectItem):
         painter.setPen(QPen(line, 1.0))
         painter.drawRect(box)
 
+    def _chart_dict(self):
+        """[§8 항목66 1단계] 웹에서 그래프로 바꾼 표 → 그릴 dict(아니면 None). 숫자는 표 칸 그대로라 데스크톱에서 칸을 고치면 따라감."""
+        if not self._web().get("chart"):
+            return None
+        from easycad.canvas.core_chart import is_chart
+        box = self.rect()
+        d = {"type": "table", "rect": [box.x(), box.y(), box.width(), box.height()], "cells": self._cells, "header": self._header, "chart": self._web()["chart"]}
+        return d if is_chart(d) else None
+
     def paint(self, painter, option, widget=None):
+        chart = self._chart_dict()
+        if chart:   # 그래프(웹 chart.js를 옮긴 core_chart — 흰 종이 카드)
+            from easycad.canvas.core_chart import paint_chart
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+            paint_chart(painter, chart)
+            painter.restore()
+            if self.isSelected():
+                self._paint_selection_outline(painter, self._scale_or_1())
+            self._paint_handle(painter)
+            return
         if any(k in self._web() for k in ("font", "color", "pen", "cell_styles", "cell_runs", "row_heights")):   # 웹에서 꾸민 표
             painter.save()
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)

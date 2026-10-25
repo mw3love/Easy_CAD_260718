@@ -11,6 +11,7 @@ import { startMic } from './mic.js'
 import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
+import { isChart } from './chart.js'
 import { ROUTE_BOX, bindPt, dropTarget, edgeMid, bindEnd, groupFrac, groupHost, hostPorts, isBindHost, isConnHost, isHollow, isSnapLine, nearestBorder, OPP, qcDelta, qcDots, snapAt } from './connect.js'
 import { routeOrtho } from '../route.js'
 import { projectToCurve, projectToPath, snapLabelOff } from './arrowedit.js'
@@ -114,7 +115,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const prev = R.current.model.items, h = hist.current, now = Date.now()
     const al = R.current.activeLayer, ly = al && al !== 'default' && layersOf(R.current.model).find(l => l.id === al)
     if (ly && ly.visible && !ly.locked) { const had = new Set(prev.map(it => it._id)); next = next.map(it => (had.has(it._id) || it.layer_id ? it : { ...it, layer_id: al })) }
-    next = next.map(it => (it.type === 'table' && (it.font || it.cell_styles) ? fitTable(it) : it))   // 직접 정한 표 글자 = 그대로, 칸이 늘어남
+    next = next.map(it => (it.type === 'table' && !isChart(it) && (it.font || it.cell_styles) ? fitTable(it) : it))   // 직접 정한 표 글자 = 그대로, 칸이 늘어남
     next = next.map(it => (it.type === 'memo' && it.rect && Math.abs(memoHeight(it) - it.rect[3]) > 0.5 ? applyRect(it, [it.rect[0], it.rect[1], it.rect[2], memoHeight(it)]) : it))   // 메모 높이 = 줄에 맞춤
     next = syncLegends(next).map(it => { if (it.type !== 'legend') return it; const lo = legendLayout(it); return it.rect && Math.abs(lo.w - it.rect[2]) < 0.5 && Math.abs(lo.h - it.rect[3]) < 0.5 ? it : { ...it, rect: [it.rect?.[0] || 0, it.rect?.[1] || 0, lo.w, lo.h] } })   // 범례 = 줄은 도면에서 저절로, 크기는 줄에 맞춤(2026-10-19 사용자: 부하 없으면 자동)
     next = next.map(it => (it.fit_text && it.label?.align === 'left' && it.rect && Math.abs(fitTextHeight(it) - it.rect[3]) > 0.5 ? applyRect(it, [it.rect[0], it.rect[1], it.rect[2], fitTextHeight(it)]) : it))   // 글에 맞춘 상자(AI 카드·메모)
@@ -205,7 +206,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 변 가까이(선택한 상자류) — 한 축 크기 바꾸기
   // 고른 표의 안쪽 경계선(행·열 공통선 — 엑셀처럼 그 선만 끌기, 2026-10-18 사용자). 바깥 테두리는 표 크기(edgeAt)
   function tableLineAt(it, p) {
-    if (!it || it.type !== 'table' || it.locked) return null
+    if (!it || it.type !== 'table' || it.locked || chartMode(it)) return null
     const q = toLocal(it, p), [x, y, w, h] = it.rect, t = EDGE_PX / R.current.cam.z / (it.scale || 1)
     if (q.x < x || q.x > x + w || q.y < y || q.y > y + h) return null
     const ce = colEdges(x, w, colFracs(it)); for (let i = 1; i < it.cols; i++) if (Math.abs(q.x - ce[i]) <= t) return { axis: 'c', i }
@@ -308,7 +309,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (!add && !e.altKey && !inMemoGutter(p)) { const hp = hoverPort(p); if (hp?.target) { st.current = { ...st.current, kind: 'conn', src: hp.target.id, port: { p: hp.target.p, n: hp.target.n }, start: p, cur: p, fromQc: false, moved: false }; return } }
     const hit = topHit(hitPool(), p, HIT_PX / z, textBox) || groupAt(p)
     // 이미 고른 표를 한 번 더 누르면 그 칸을 고름(놓을 때 — 끌면 표 이동), Shift = 범위로 늘림(2026-10-18 사용자: 어느 칸을 눌렀는지 알 수 없음)
-    if (hit?.type === 'table' && R.current.sel.length === 1 && R.current.sel[0] === hit._id) {
+    if (hit?.type === 'table' && !chartMode(hit) && R.current.sel.length === 1 && R.current.sel[0] === hit._id) {
       const cell = cellAt(hit, toLocal(hit, p))
       if (cell) { st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: movingSet([hit._id]), sel: [hit._id], moved: false, cellPick: { id: hit._id, ...cell, extend: e.shiftKey } }; return }
     }
@@ -413,7 +414,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         next = { ...it, scale: +k.toFixed(4), pos: [SA.x - A[0] * k, SA.y - A[1] * k] }
       } else if (s.kind === 'resize') {
         next = applyRect(it, resizeRect(localRect(it), s.handle, toLocal(it, p), { keepRatio: it.type === 'image' || (it.type === 'frame' && !!it.ratio) || e.shiftKey }))
-        if (next.type === 'table' && (next.font || next.cell_styles)) {   // 끄는 동안에도 확정과 같게 — 글보다 작아지지 않음(2026-10-18 사용자: 놓기 전엔 글이 넘침). 왼쪽·위 손잡이면 맞은편 변 고정
+        if (next.type === 'table' && !isChart(next) && (next.font || next.cell_styles)) {   // 끄는 동안에도 확정과 같게 — 글보다 작아지지 않음(2026-10-18 사용자: 놓기 전엔 글이 넘침). 왼쪽·위 손잡이면 맞은편 변 고정
           const [x0, y0, w0, h0] = next.rect, f = fitTable(next), [, , w1, h1] = f.rect
           next = f === next ? next : { ...f, rect: [/l/.test(s.handle) ? x0 + w0 - w1 : x0, /t/.test(s.handle) ? y0 + h0 - h1 : y0, w1, h1] }
         }
@@ -1132,6 +1133,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     commit([...m.items, it], [it._id], '표'); setTool('select')
     setStatus(`표 넣음: ${rows}×${cols} — 칸을 두 번 눌러 고치기(Enter 아래·Tab 오른쪽)`)
   }
+  const chartMode = it => isChart(it) && R.current.editing?.id !== it._id && cellSel?.id !== it._id   // 그래프로 보이는 중(칸 고르기 없음)
   // 표 칸(안 좌표) — 데스크톱 `cell_rect`/`cell_at`
   const cellRect = (it, r, c) => { const [x, y, w, h] = it.rect, re = rowEdges(y, h, it), e = colEdges(x, w, colFracs(it)); return { x: e[c], y: re[r], w: e[c + 1] - e[c], h: re[r + 1] - re[r] } }
   const cellAt = (it, q) => { const [x, y, w, h] = it.rect; if (q.x < x || q.y < y || q.x > x + w || q.y > y + h) return null
@@ -1309,6 +1311,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (hit.type === 'memo') { setSel([hit._id]); setEditing({ id: hit._id, kind: 'memo', at }); return }
     if (hit.type === 'web') { setSel([hit._id]); if (hit.frameable) webActivate(hit); else window.open(hit.url, '_blank', 'noopener'); return }   // 막는 사이트 = 새 탭
     if (hit.type === 'pdf') { webActivate(hit); return }   // PDF 카드 두 번 누르기 = 넘겨 보기
+    if (hit.type === 'table' && chartMode(hit)) { const r = Math.min(1, hit.rows - 1), c = Math.min(1, hit.cols - 1); setSel([hit._id]); setCellSel({ id: hit._id, r0: r, c0: c, r1: r, c1: c }); setEditing({ id: hit._id, kind: 'cell', r, c, at }); return }   // 그래프 두 번 누르기 = 표로 펼쳐 첫 숫자 칸부터
     if (hit.type === 'table') { const cell = cellAt(hit, toLocal(hit, p)); if (cell) { setSel([hit._id]); setEditing({ id: hit._id, kind: 'cell', ...cell, at }) } return }
     if (isArrow(hit)) {   // 화살표 빈 자리 더블클릭 = 그 자리에 새 라벨(여러 개 — 데스크톱 `add_label_at_scene_pos`)
       const labels = labelsOf(hit), pr = projectOn(hit, toLocal(hit, p))
@@ -2019,6 +2022,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const view = { x: -cam.x / cam.z, y: -cam.y / cam.z, w: size.w / cam.z, h: size.h / cam.z }, mg = 40 / cam.z
   const visible = order.filter(([it, i]) => { const b = bounds[i]; return it.type === 'board' || (b.x < view.x + view.w + mg && b.x + b.w > view.x - mg && b.y < view.y + view.h + mg && b.y + b.h > view.y - mg) })
   const editingId = editing?.id
+  const asTable = it => (isChart(it) && (it._id === editingId || cellSel?.id === it._id) ? { ...it, chart: undefined } : it)   // 그래프 칸 고치는 중 = 그 자리에서 표로 펼침(밖을 누르면 다시 그래프)
 
   // ── 덧그림(칠판 좌표, 굵기는 ÷z) ──
   const z = cam.z, sw = 1.6 / z
@@ -2082,7 +2086,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         onPointerDown={e => { if (R.current.stylePv) setStylePv(false); onPointerDown(e) }} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onDoubleClick={onDoubleClick} onContextMenu={e => e.preventDefault()}
         onMouseDown={e => { if (R.current.editing && e.button !== 0) e.preventDefault() }}>
         <g transform={`translate(${cam.x},${cam.y}) scale(${z})`} style={{ '--z': z }}>
-          {visible.map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
+          {visible.map(([it0, i]) => [asTable(it0), i]).map(([it, i]) => (it._id === editingId && it.label?.align === 'left' && editing?.kind === 'label' ? <Item key={it._id} it={{ ...it, label: { ...it.label, text: '' } }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />
             : it._id === editingId && it.type === 'memo' ? <Item key={it._id} it={{ ...it, lines: [] }} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" />   // 고치는 메모 = 바탕만(흐린 글자가 투명한 채움 사이로 잔상처럼 비쳤음 — 2026-10-18 사용자)
             : it._id === editingId ? <g key={it._id} opacity={0.15}><Item it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" /></g>
             : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'pdf' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
