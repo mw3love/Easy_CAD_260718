@@ -12,7 +12,7 @@ import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, he
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
 import { CHART_MIN, isChart } from './chart.js'
-import { deepLayout } from './deep.js'
+import { deepLayout, deepWaste } from './deep.js'
 import { deepHead, deepMeasure, deepSection } from './deepboard.js'
 import { ROUTE_BOX, bindPt, dropTarget, edgeMid, bindEnd, groupFrac, groupHost, hostPorts, isBindHost, isConnHost, isHollow, isSnapLine, nearestBorder, OPP, qcDelta, qcDots, snapAt } from './connect.js'
 import { routeOrtho } from '../route.js'
@@ -939,17 +939,17 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     setStatus('그래프로 붙였어요 — 두 번 누르면 표로 펼쳐 숫자를 고쳐요 · 모양은 속성 카드에서')
     return its.map(it => it._id)
   }
-  // 딥모드 지면(§8 항목66 2단계, 2026-10-25) — 계획(꼭지 + 본문) → 16:9 프레임(들) 안에 진짜 칠판 물건. 자리는 deep.js, 물건은 deepboard.js, 단계 사이 화살표만 여기(길 찾기).
-  // at = 첫 장 왼쪽 위(없으면 지금 칠판의 오른쪽 빈자리). 프레임 번호 = 발표 차례. 되돌리기 한 번에 통째로. 넣은 _id들
+  // 딥모드 지면(§8 항목66 2단계, 2026-10-25) — 계획(꼭지 + 본문) → 프레임(들) 안에 진짜 칠판 물건. 자리는 deep.js, 물건은 deepboard.js, 단계 사이 화살표만 여기(길 찾기).
+  // 프레임 = 폭 1600 · 높이는 내용만큼(16:9 고집 버림 — 같은 날 2차 판정). at = 첫 장 왼쪽 위(없으면 지금 칠판의 오른쪽 빈자리). 프레임 번호 = 발표 차례. 되돌리기 한 번에 통째로
   function deepBoard(plan, at) {
     const m = R.current.model, lay = deepLayout(plan, deepMeasure(plan)), n = lay.pages.length
     const right = m.items.length ? unionBox(m.items.map(it => sceneBox(it, textBox))) : null, o = at || (right ? { x: right.x + right.w + 200, y: right.y } : { x: 0, y: 0 })
     const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = orderedFrames(m.items).length, out = [], links = []
     lay.pages.forEach((pg, p) => {
       const X = o.x + pg.x, Y = o.y
-      out.push(base([X, Y], { type: 'frame', rect: [0, 0, pg.W, pg.H], name: (plan.title || '딥모드') + (n > 1 ? ` (${p + 1}/${n})` : ''), no: no0 + p + 1, ratio: '16:9', z: zb }))
+      out.push(base([X, Y], { type: 'frame', rect: [0, 0, pg.W, pg.H], name: (plan.title || '딥모드') + (n > 1 ? ` (${p + 1}/${n})` : ''), no: no0 + p + 1, z: zb }))
       out.push(...deepHead(plan, X + pg.head.x, Y + pg.head.y, pg.head.w, pg.k, p, n).map(it => ({ ...it, z: zt })))
-      pg.cells.forEach(c => { const r = deepSection(plan, plan.sections[c.i], X + c.x, Y + c.y, c.w, pg.k); out.push(...r.items.map(it => ({ ...it, z: zt }))); links.push(...r.links) })
+      pg.cells.forEach(c => { const r = deepSection(plan, plan.sections[c.i], X + c.x, Y + c.y, c.w, pg.k, c.v); out.push(...r.items.map(it => ({ ...it, z: zt }))); links.push(...r.links) })
     })
     const keep = R.current.model
     R.current.model = { ...keep, items: [...keep.items, ...out] }   // 길 찾기·붙는 끝이 새 카드를 찾게(answerItems와 같게)
@@ -962,8 +962,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       }
     } finally { R.current.model = keep }
     commit([...m.items, ...out], [], '딥모드 지면')
-    setStatus(`딥모드 지면 — ${n}장 · 꼭지 ${plan.sections?.length || 0}개${lay.pages[0].fit ? ' (간격·글을 조여 한 장에)' : ''}`)
-    return { ids: out.map(it => it._id), pages: lay.pages.map(pg => ({ x: o.x + pg.x, y: o.y, w: pg.W, h: pg.H, fit: pg.fit, k: pg.k, masonry: !!pg.masonry, need: Math.round(pg.need), head: Math.round(pg.head.h), cells: pg.cells.map(c => [c.i, Math.round(c.w), Math.round(c.h)]) })) }
+    setStatus(`딥모드 지면 — ${n}장 · 꼭지 ${plan.sections?.length || 0}개`)
+    return { ids: out.map(it => it._id), pages: lay.pages.map(pg => ({ x: o.x + pg.x, y: o.y, w: pg.W, h: pg.H, waste: deepWaste(pg), rows: lay.rows.map(r => r.slots.map((sl, k) => `${sl.map(i => i + (r.v[i] ? r.v[i][0] : '')).join('+')}:${r.spans[k]}`).join(' ')) })) }
   }
   // 웹 검색 답(§8 항목61 ② 담는 법, 2026-10-19) = 요약 메모 + 오른쪽에 출처 웹 카드(본문에 쓰인 번호만, 제목 앞 [n], 가벼운 제목 카드 — 칸 안 페이지 없음) + 메모 → 카드 화살표, 한 묶음.
   // 「어디서 왔는지」가 칠판 위 선으로 보이게(회사 KAIROS 웹은 답과 출처가 따로 놂). 출처가 없으면 메모 하나(cardItem)

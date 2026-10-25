@@ -1,11 +1,12 @@
 // 딥모드 지면 물건(§8 항목66 2단계, 2026-10-25) — 꼭지 하나를 진짜 칠판 물건으로(새 종류 없음: 메모·표 + 모양·웹 카드, 단계 사이 화살표는 Editor가 길 찾기).
 // 자리 계산은 deep.js(순수), 여기는 「이 폭·이 배율로 만들면 무엇이 얼마나 높은가」 — 같은 함수가 재기와 놓기를 맡아 잰 높이 = 놓인 높이.
 // 꾸밈은 시안(③ 완성 지면) 그대로: 진한 주인공 면, 코랄 테두리 숫자 타일, 흰 종이 그래프, 옅은 단계 카드. 꾸미려고 넣는 요소 없음(계획서 항목66).
+// 출처는 작은 목록 메모(웹 카드 넷은 공간만 먹었음 — 2026-10-25 판정)
 import { answerTable, answerToEcadText } from '../chatFormat.js'
 import { memoHeight } from './render.jsx'
 import { memoFromAnswer } from './memo.js'
 import { newId } from './model.js'
-import { siteOf, webCardFields, WEB_HEAD, WEB_INFO_H } from './webcard.js'
+import { siteOf } from './webcard.js'
 
 const ACCENT = '#b4532f', CORAL = '#ffda7756', MUTE = '#71717a', HERO_BG = '#ff27272a', HERO_INK = '#e4e4e7', HERO_HI = '#ffffff', CLEAR = '#00ffffff'
 const STEP_GAP = 30   // 단계 카드 사이(화살표 자리)
@@ -39,8 +40,8 @@ export function deepHead(plan, x, y, w, k, page = 0, pages = 1) {
   return [memo(x, y, w, k * 1.4, [muted(eye), ...(plan.headline ? [{ k: 'h1', t: plan.headline }] : [])], { fill: CLEAR, pen: CLEAR })]
 }
 
-/** 꼭지 하나 → { items, links: [[앞 id, 뒤 id]] } — 왼쪽 위 (x, y), 폭 w, 본문 배율 k */
-export function deepSection(plan, sec, x, y, w, k) {
+/** 꼭지 하나 → { items, links: [[앞 id, 뒤 id]] } — 왼쪽 위 (x, y), 폭 w, 본문 배율 k, v = 모양 바꿔 보기(deep.js `variantsOf`) */
+export function deepSection(plan, sec, x, y, w, k, v = '') {
   const b = sec.body || {}, links = []
   let items = []
   switch (sec.shape) {
@@ -61,7 +62,7 @@ export function deepSection(plan, sec, x, y, w, k) {
       break
     case '단계 카드': {   // 가로로 늘어놓고 사이에 화살표(Editor) — 한 장이 130px보다 좁으면 두 줄
       const head = title(x, y, w, k, sec.title), st = b.steps || [], top = bottomOf([head]) + 4
-      const per = Math.max(1, Math.min(st.length, Math.floor((w + STEP_GAP) / (130 * k + STEP_GAP)))), rows = Math.ceil(st.length / per)
+      const per = Math.max(1, Math.min(v === 'grid' ? Math.ceil(st.length / 2) : st.length, Math.floor((w + STEP_GAP) / (130 * k + STEP_GAP)))), rows = Math.ceil(st.length / per)   // grid = 두 줄
       const cw = (w - (per - 1) * STEP_GAP) / per
       items = [head]
       let ry = top
@@ -73,9 +74,9 @@ export function deepSection(plan, sec, x, y, w, k) {
       }
       break
     }
-    case '숫자 타일': {   // 나란히(한 장 150px 바닥 — 모자라면 아래로), 큰 숫자 코랄 + 한 줄 + 출처 번호
+    case '숫자 타일': {   // row = 나란히(한 장 150px 바닥), col = 위아래로 — 큰 숫자 코랄 + 한 줄 + 출처 번호
       const head = title(x, y, w, k, sec.title), ts = b.tiles || [], top = bottomOf([head]) + 4, gap = 10
-      const per = Math.max(1, Math.min(ts.length, Math.floor((w + gap) / (150 * k + gap)))), cw = (w - (per - 1) * gap) / per
+      const per = v === 'col' ? 1 : Math.max(1, Math.min(ts.length, Math.floor((w + gap) / (150 * k + gap)))), cw = (w - (per - 1) * gap) / per   // col = 위아래로 쌓은 숫자 줄(시안 옆 칸처럼)
       items = [head]
       let ry = top
       for (let r = 0; r * per < ts.length; r++) {
@@ -89,18 +90,18 @@ export function deepSection(plan, sec, x, y, w, k) {
       const head = title(x, y, w, k, sec.title), top = bottomOf([head]) + 4
       const { cells, refs } = answerTable(b.rows || [['']]), R = cells.length, C = cells[0].length
       const kind = sec.shape === '그래프' ? (b.kind || CHART_KIND[sec.chart] || 'col') : null
-      const tw = w / k, th = kind ? Math.max(180, Math.min(tw * 0.5, 260)) : R * 26   // 그래프 = 폭에 비례하되 지면 한 줄을 다 먹지 않게(340이면 한 장에 안 들어갔음)
+      const tw = w / k, th = !kind ? R * 26 : v === 'short' ? Math.max(170, Math.min(tw * 0.34, 200)) : Math.max(180, Math.min(tw * 0.5, 260))   // 그래프 = 폭에 비례하되 지면 한 줄을 다 먹지 않게, short = 옆 꼭지가 낮을 때
+      // 표 = 머리 행·왼쪽 열(항목 이름)에 옅은 바탕 + 굵게 — 칸 내용과 갈라 보이게(2026-10-25 사용자 판정)
+      const cs = {}; if (!kind) for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) if ((b.header && r === 0) || (c === 0 && C > 1)) cs[`${r},${c}`] = { bold: true, fill: r === 0 && b.header ? '#fff1ebe6' : '#fffaf7f4' }
       const tb = base([x, top], { type: 'table', rows: R, cols: C, header: !!b.header, cells, col_widths: Array(C).fill(1 / C), rect: [0, 0, tw, th], scale: k,
-        ...(kind ? { chart: kind, table_wh: [tw, R * 26] } : {}) })
+        ...(kind ? { chart: kind, table_wh: [tw, R * 26] } : { cell_styles: cs }) })
       const src = refs.map(n => srcLine(plan, n)).filter(Boolean).join('  '), notes = [...(b.caption ? [muted(b.caption)] : []), ...(src ? [muted(src)] : [])]   // 출처는 한 덩어리(줄마다 쌓으면 꼭지가 길어졌음)
       items = [head, tb, ...(notes.length ? [memo(x, bottomOf([tb]) + 2, w, k * 0.9, notes, { fill: CLEAR, pen: CLEAR })] : [])]
       break
     }
-    case '출처 카드': {   // 가벼운 제목 카드(검색 답 출처와 같은 모양), 폭이 되면 두 단
-      const head = title(x, y, w, k, sec.title), ns = b.links || [], top = bottomOf([head]) + 4, gap = 10
-      const per = Math.max(1, Math.min(ns.length, Math.floor((w + gap) / (240 + gap)))), cw = (w - (per - 1) * gap) / per, ch = WEB_HEAD + WEB_INFO_H   // 폭이 되는 만큼 나란히
-      items = [head, ...ns.map(n => (plan.sources || []).find(s => s.n === n)).filter(Boolean).map((s, j) => base([x + (j % per) * (cw + gap), top + Math.floor(j / per) * (ch + gap)],
-        { ...webCardFields({ url: s.url, title: `[${s.n}] ${s.title}`, desc: siteOf(s.url), frameable: false }), rect: [0, 0, cw, ch] }))]
+    case '출처 카드': {   // 작은 목록 메모 — 번호·제목 + 주소(Ctrl+클릭으로 열림). 웹 카드 넷은 「쓸데없이 공간을 차지」(2026-10-25 사용자 판정)
+      const ss = (b.links || []).map(n => (plan.sources || []).find(s => s.n === n)).filter(Boolean)
+      items = [memo(x, y, w, k, [{ k: 'h3', t: sec.title }, ...ss.flatMap(s => [line('p', `**[${s.n}]** ${s.title}`), { k: 'p', t: s.url, runs: [[0, s.url.length, MUTE, false]] }])])]
       break
     }
     default:   // 모르는 모양 = 글 메모(계획이 새 모양을 내도 지면이 깨지지 않게)
@@ -113,9 +114,9 @@ export function deepSection(plan, sec, x, y, w, k) {
 /** 꼭지(또는 머리, i = -1) 높이 — deep.js `deepLayout`의 measure */
 export function deepMeasure(plan) {
   const cache = new Map()
-  return (i, w, k, page = 0) => {
-    const key = `${i}|${w.toFixed(2)}|${k}|${page}`
-    if (!cache.has(key)) { const its = i < 0 ? deepHead(plan, 0, 0, w, k, page, 2) : deepSection(plan, plan.sections[i], 0, 0, w, k).items; cache.set(key, bottomOf(its)) }
+  return (i, w, k, v = '') => {   // v = 머리면 장 번호, 꼭지면 모양
+    const key = `${i}|${w.toFixed(2)}|${k}|${v}`
+    if (!cache.has(key)) { const its = i < 0 ? deepHead(plan, 0, 0, w, k, v || 0, 2) : deepSection(plan, plan.sections[i], 0, 0, w, k, v).items; cache.set(key, bottomOf(its)) }
     return cache.get(key)
   }
 }

@@ -194,17 +194,17 @@ function pieScene(out, { cats, series }, L, top, R, bottom) {
   const s = series[0], vals = s.values.map(v => (v == null ? 0 : v)), sum = vals.reduce((a, b) => a + b, 0)
   const listW = Math.min((R - L) * 0.45, Math.max(...cats.map(c => textW(c, FS))) + 64)
   if (s.name) { out.push({ t: 'text', x: L, y: top + 4, s: fitText(s.name, 13, R - L), fs: 13, b: 1, c: INK.title, a: 'start' }); top += HEAD }   // 제목 밑부터 원
-  const size = Math.min(R - L - listW - 12, bottom - top), cx = L + size / 2, cy = (top + bottom) / 2, rad = size / 2
+  const size = Math.min(R - L - listW - 12, bottom - top), x0 = L + Math.max(0, (R - L - (size + 20 + listW)) / 2), cx = x0 + size / 2, cy = (top + bottom) / 2, rad = size / 2   // 원 + 목록 한 덩어리를 가운데(넓은 칸에서 사이가 벌어졌음 — 2026-10-25 사용자)
   let a = -90
   vals.forEach((v, i) => { if (v <= 0) return
     const sweep = (v / sum) * 360, n = Math.max(2, Math.ceil(sweep / 2)), pts = [[cx, cy]]
     for (let k = 0; k <= n; k++) { const t = ((a + (sweep * k) / n) * Math.PI) / 180; pts.push([cx + rad * Math.cos(t), cy + rad * Math.sin(t)]) }
     out.push({ t: 'path', d: 'M' + pts.map(p => `${r1(p[0])},${r1(p[1])}`).join(' L') + ' Z', f: CHART_COLORS[i], s: INK.card, sw: 2, tip: `${cats[i]}: ${valText(s, i)} (${Math.round((v / sum) * 100)}%)` })
     a += sweep })
-  const lx = R - listW + 4, rowH = 20, ly0 = cy - (cats.length * rowH) / 2 + rowH / 2
+  const lx = x0 + size + 20, rowH = 20, ly0 = cy - (cats.length * rowH) / 2 + rowH / 2
   cats.forEach((c, i) => { const ly = r1(ly0 + i * rowH)
     out.push({ t: 'rect', x: lx, y: ly - 5, w: 10, h: 10, rx: 2, f: CHART_COLORS[i] })
     out.push({ t: 'text', x: lx + 14, y: ly, s: fitText(c, FS, listW - 56), fs: FS, c: INK.text, a: 'start' })
-    out.push({ t: 'text', x: R, y: ly, s: sum > 0 ? Math.round((vals[i] / sum) * 100) + '%' : '', fs: FS, b: 1, c: INK.title, a: 'end' }) })
+    out.push({ t: 'text', x: lx + listW - 4, y: ly, s: sum > 0 ? Math.round((vals[i] / sum) * 100) + '%' : '', fs: FS, b: 1, c: INK.title, a: 'end' }) })
   return out
 }

@@ -1,5 +1,6 @@
 // 흐름 31 — 딥모드 지면 배치(§8 항목66 2단계, 2026-10-25): 고정 계획 셋(논문·송신 장비·시사 — 계획은 0단계 opus, 본문은 가짜)을 칠판에 놓고
-// ① 물건끼리 겹침 0(화살표 빼고) ② 모두 프레임 안 ③ 실제로 그린 글자(<text>)가 모두 제 물건 상자 안 — 시안이 겹쳤던 「글이 아래 줄로 넘침」을 브라우저 치수로 잼.
+// ① 물건끼리 겹침 0(화살표 빼고) ② 모두 프레임 안 ③ 실제로 그린 글자(<text>)가 모두 제 물건 상자 안 — 시안이 겹쳤던 「글이 아래 줄로 넘침」을 브라우저 치수로 잼
+// ④ 갇힌 빈칸 15% 미만(2차 — 사용자 판정 「공간을 효율적으로 못 씀」을 숫자로, 1차 16:9 배치는 이 값이 컸음).
 // 계산은 web/test/deep.test.mjs. 캡처 test-results/deep-*.png
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
@@ -10,7 +11,7 @@ const plan = t => JSON.parse(readFileSync(new URL(`../test/fixtures/deep_${t}.js
 test.use({ viewport: { width: 1700, height: 1000 }, deviceScaleFactor: 2 })   // 캡처를 시안과 나란히 볼 때 글자가 읽히게
 const box = it => ({ x: it.pos[0], y: it.pos[1], w: it.rect[2] * (it.scale || 1), h: it.rect[3] * (it.scale || 1) })
 
-for (const t of ['paper', 'tx', 'news']) test(`딥모드 지면 — ${t}: 겹침·넘침 0, 글자는 제 상자 안`, async ({ page }) => {
+for (const t of ['paper', 'tx', 'news']) test(`딥모드 지면 — ${t}: 겹침·넘침 0, 글자는 제 상자 안, 갇힌 빈칸 15% 미만`, async ({ page }) => {
   await openBoard(page, boardName('deep_' + t))
   const P = plan(t)
   const r = await page.evaluate(p => window.__mb.ed.deepBoard(p, { x: 0, y: 0 }), P)
@@ -38,6 +39,7 @@ for (const t of ['paper', 'tx', 'news']) test(`딥모드 지면 — ${t}: 겹침
     return out
   }, [B, F])
   expect(stray).toEqual([])
+  for (const p of r.pages) expect(p.waste).toBeLessThan(0.15)                                  // ④ 갇힌 빈칸
   await page.getByTestId('board').screenshot({ path: `test-results/deep-${t}.png` })
-  console.log(`[deep ${t}] ${r.pages.length}장 · 폭 ${r.pages.map(p => p.w).join('/')} · 조임 ${r.pages.map(p => p.fit).join('/')}${r.pages[0].masonry ? ' · 벽돌' : ''} · 물건 ${things.length}`, JSON.stringify(r.pages.map(p => ({ need: p.need, head: p.head, cells: p.cells }))))
+  console.log(`[deep ${t}] ${r.pages.length}장 · ${r.pages.map(p => `${p.w}×${Math.round(p.h)}`).join(' / ')} · 갇힌 빈칸 ${r.pages.map(p => (p.waste * 100).toFixed(1) + '%').join(' / ')} · 줄 ${r.pages[0].rows.join(' | ')}`)
 })

@@ -284,7 +284,8 @@ def _pie_scene(out, data, L, top, R, bottom):
         out.append({"t": "text", "x": L, "y": top + 4, "s": fit_text(s["name"], 13, R - L), "fs": 13, "b": 1, "c": INK["title"], "a": "start"})
         top += HEAD
     size = min(R - L - list_w - 12, bottom - top)
-    cx, cy, rad = L + size / 2, (top + bottom) / 2, size / 2
+    x0 = L + max(0.0, (R - L - (size + 20 + list_w)) / 2)   # 원 + 목록 한 덩어리를 가운데(넓은 칸에서 원과 목록 사이가 벌어졌음 — 2026-10-25 사용자)
+    cx, cy, rad = x0 + size / 2, (top + bottom) / 2, size / 2
     a = -90.0
     for i, v in enumerate(vals):
         if v <= 0:
@@ -298,13 +299,13 @@ def _pie_scene(out, data, L, top, R, bottom):
         d = "M" + " L".join(f"{_js(_r1(p[0]))},{_js(_r1(p[1]))}" for p in pts) + " Z"
         out.append({"t": "path", "d": d, "f": CHART_COLORS[i], "s": INK["card"], "sw": 2, "tip": f"{cats[i]}: {_val_text(s, i)} ({round_half_up(v / total * 100)}%)"})
         a += sweep
-    lx, row_h = R - list_w + 4, 20
+    lx, row_h = x0 + size + 20, 20
     ly0 = cy - (len(cats) * row_h) / 2 + row_h / 2
     for i, c in enumerate(cats):
         ly = _r1(ly0 + i * row_h)
         out.append({"t": "rect", "x": lx, "y": ly - 5, "w": 10, "h": 10, "rx": 2, "f": CHART_COLORS[i]})
         out.append({"t": "text", "x": lx + 14, "y": ly, "s": fit_text(c, FS, list_w - 56), "fs": FS, "c": INK["text"], "a": "start"})
-        out.append({"t": "text", "x": R, "y": ly, "s": f"{round_half_up(vals[i] / total * 100)}%" if total > 0 else "", "fs": FS, "b": 1, "c": INK["title"], "a": "end"})
+        out.append({"t": "text", "x": lx + list_w - 4, "y": ly, "s": f"{round_half_up(vals[i] / total * 100)}%" if total > 0 else "", "fs": FS, "b": 1, "c": INK["title"], "a": "end"})
     return out
 
 
