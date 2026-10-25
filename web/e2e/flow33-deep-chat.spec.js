@@ -27,7 +27,7 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   await page.route('**/api/chat', r => { const b = r.request().postDataJSON(); sent.push(b); const d = b.deep || {}
     if (d.step === 'plan' && !d.prev) return r.fulfill({ json: { kind: 'deep', plan: bare(FULL), estimate: { credits: [90, 155], seconds: [45, 90] }, model: 'claude-opus-5-5', elapsed: 21, credits: 44 } })
     if (d.step === 'plan') return r.fulfill({ json: { kind: 'deep', plan: { ...d.prev, sections: [...d.prev.sections, GRAPH] }, estimate: { credits: [100, 160], seconds: [50, 90] }, model: 'claude-opus-5-5', elapsed: 18, credits: 40 } })
-    return r.fulfill({ json: { kind: 'deep', plan: { ...d.plan, sources: [...FULL.sources, ...NEWS.sources.map(s => ({ ...s, n: s.n + 100 }))], sections: d.plan.sections.map(s => ({ ...s, body: BODY.get(s.title) })) }, model: 'claude-sonnet-5-5', elapsed: 33, credits: 61 } })
+    return r.fulfill({ json: { kind: 'deep', plan: { ...d.plan, sources: [...FULL.sources, ...NEWS.sources.map(s => ({ ...s, n: s.n + 100 }))], sections: d.plan.sections.map(s => ({ ...s, body: BODY.get(s.title) })) }, model: 'claude-sonnet-5-5', elapsed: 33, credits: 61, missing: ['원리 카드(움직이는 카드: HTML이 끊김)'] } })
   })
   const name = boardName('deepchat')
   await openBoard(page, name, { chat: true }); await setCam(page)
@@ -74,6 +74,7 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
 
   await plan2.getByTestId('deep-build').click()
   await expect(plan2.getByTestId('deep-show')).toBeVisible({ timeout: 10_000 })
+  await expect(plan2.getByTestId('deep-missing')).toContainText('원리 카드(움직이는 카드: HTML이 끊김)')   // 못 쓴 꼭지·까닭도 대화창에(서버 창에만 있었음)
   expect(sent[2].deep.step).toBe('build'); expect(sent[2].deep.style).toBeUndefined(); expect(sent[2].deep.plan.sections).toHaveLength(N)
   let d = await liveDoc(page)
   const root = d.items.find(it => it.type === 'frame' && it.deep_plan)

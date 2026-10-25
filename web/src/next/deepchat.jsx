@@ -54,7 +54,8 @@ export function DeepPlan({ m, drop, build, show, busy, css }) {
     </div>
     {m.built ? <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         <button data-testid="deep-show" style={css.done} onClick={show}>✓ 칠판에 지었어요{m.pages > 1 ? ` · ${m.pages}장` : ''} — 보기</button>
-        <span style={css.meta}>판을 고르면 톤(색)·꼭지 모양을 바꿀 수 있어요</span></div>
+        <span style={css.meta}>판을 고르면 톤(색)·꼭지 모양을 바꿀 수 있어요</span>
+        {m.missing && <span data-testid="deep-missing" style={css.meta}>그대로 둔 꼭지(못 씀): {m.missing.join(', ')} — 그 꼭지를 골라 다시 쓸 수 있어요</span>}</div>
       : m.stale ? <span style={css.meta}>아래에 고친 계획이 있어요</span>
       : <><button data-testid="deep-build" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy} onClick={build}>
           이대로 만들기{est ? ` · 약 ${rng(est.credits, '크레딧')}` : ''}</button>

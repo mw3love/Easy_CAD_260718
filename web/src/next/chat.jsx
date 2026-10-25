@@ -340,7 +340,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
     const d = await deepCall({ step: 'build', topic: m.topic, brief: m.brief, plan }, 'deep-build'); if (!d) return
     const built = d.plan ? { ...d.plan, sections: await deepImgs(d.plan.sections) } : plan
     const r = ed.current?.deepBoard(built, null, 'calm', { topic: m.topic, brief: m.brief })   // 톤은 만든 뒤 속성 카드에서(2026-10-25 사용자 — 처음 고르기 없앰); if (!r) return
-    setMsg(i, { built: r.ids[0], pages: r.pages.length, model: d.model, elapsed: d.elapsed, credits: d.credits })
+    setMsg(i, { built: r.ids[0], pages: r.pages.length, model: d.model, elapsed: d.elapsed, credits: d.credits, missing: d.missing?.length ? d.missing : undefined })   // 못 쓴 꼭지·까닭(2026-10-25 실조건 — 카드가 비었는데 까닭이 서버 창에만 있었음)
     ed.current?.showIds([r.ids[0]]); setSkipSel(String(r.ids[0]))   // 보여 주려고 고른 판은 다음 질문에 안 실음(붙이기와 같게)
   }
   // 꼭지 다시 쓰기(§8 항목66 5단계) — tg = ed.deepTarget(), ask = 고칠 말(비면 「더 자세히」). 손으로 고친 판이면 크레딧 쓰기 전에 먼저 물음(덮어쓰기 확인 카드)
