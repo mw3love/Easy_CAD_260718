@@ -4,8 +4,9 @@
 // 출처는 작은 목록 메모(웹 카드 넷은 공간만 먹었음 — 2026-10-25 판정)
 import { answerTable, answerToEcadText } from '../chatFormat.js'
 import { memoHeight } from './render.jsx'
-import { memoFromAnswer } from './memo.js'
+import { memoFromAnswer, tableLine, tableWidths } from './memo.js'
 import { newId } from './model.js'
+import { chartData, chartGuess, chartWhy, textW } from './chart.js'
 import { siteOf } from './webcard.js'
 
 const ACCENT = '#b4532f', CORAL = '#ffda7756', MUTE = '#71717a', HERO_BG = '#ff27272a', HERO_INK = '#e4e4e7', HERO_HI = '#ffffff', CLEAR = '#00ffffff'
@@ -30,7 +31,17 @@ function line(k, md, color, hi) {
   return { k, t: text, runs: out }
 }
 const muted = t => ({ k: 'p', t, runs: [[0, t.length, MUTE, false]] })
-const srcLine = (plan, n) => { const s = (plan.sources || []).find(x => x.n === n); return s ? `[${n}] ${s.title} · ${siteOf(s.url)}` : '' }
+const srcOf = (plan, n) => (plan.sources || []).find(x => x.n === n)
+const siteLine = (plan, n) => { const s = srcOf(plan, n); return s ? `[${n}] ${s.url ? siteOf(s.url) : s.title}` : '' }   // 짧게 — 문서 제목 전체는 좁은 타일을 몇 줄씩 늘렸음(3-0 실제 본문)
+const siteLines = (plan, ns, max = 3) => { const ls = ns.map(n => siteLine(plan, n)).filter(Boolean); return ls.slice(0, max).join(' · ') + (ls.length > max ? ` 외 ${ls.length - max}` : '') }
+// 판에서 출처 번호가 쓰인 횟수(많이 쓰인 것부터 — 출처 카드 차례)
+function usedRefs(plan) {
+  const cnt = new Map()
+  for (const sec of plan.sections || []) { const b = sec.body || {}
+    for (const m of JSON.stringify(b).matchAll(/\[(\d+)\]/g)) cnt.set(+m[1], (cnt.get(+m[1]) || 0) + 1)
+    for (const t of b.tiles || []) if (Number.isInteger(t[2])) cnt.set(t[2], (cnt.get(t[2]) || 0) + 1) }
+  return [...cnt].sort((a, b) => b[1] - a[1] || a[0] - b[0]).map(([n]) => n)
+}
 // 제목만 있는 투명 메모(그래프·숫자·단계처럼 물건이 여럿인 꼭지 머리)
 const title = (x, y, w, s, t) => memo(x, y, w, s, [{ k: 'h3', t }], { fill: CLEAR, pen: CLEAR })
 
@@ -81,7 +92,7 @@ export function deepSection(plan, sec, x, y, w, k, v = '') {
       let ry = top
       for (let r = 0; r * per < ts.length; r++) {
         const row = ts.slice(r * per, r * per + per).map(([v, d, n], j) => memo(x + j * (cw + gap), ry, cw, k,
-          [{ k: 'h1', t: v, runs: [[0, v.length, ACCENT, true]] }, { k: 'p', t: d }, ...(n ? [muted(srcLine(plan, n))] : [])], { pen: CORAL }))
+          [{ k: 'h1', t: v, runs: [[0, v.length, ACCENT, true]] }, { k: 'p', t: d }, ...(n ? [muted(siteLine(plan, n))] : [])], { pen: CORAL }))
         items.push(...row); ry = bottomOf(row) + gap
       }
       break
@@ -89,19 +100,27 @@ export function deepSection(plan, sec, x, y, w, k, v = '') {
     case '그래프': case '표': {   // 표 = 칠판 표, 그래프 = 표 + 모양(대화창 표 답 「그래프로」와 같은 길). 밑에 설명·출처(흐림)
       const head = title(x, y, w, k, sec.title), top = bottomOf([head]) + 4
       const { cells, refs } = answerTable(b.rows || [['']]), R = cells.length, C = cells[0].length
-      const kind = sec.shape === '그래프' ? (b.kind || CHART_KIND[sec.chart] || 'col') : null
+      let kind = sec.shape === '그래프' ? (b.kind || CHART_KIND[sec.chart] || 'col') : null
+      if (kind && chartWhy(chartData({ cells, header: !!b.header }), kind)) kind = chartGuess({ type: 'table', cells, header: !!b.header }) || null   // 정한 모양이 자료에 안 맞으면(금액인데 원 등 — 3-0 실측) 자료에 맞는 모양, 숫자가 없으면 표
+      const long = !kind && cells.some(r => r.some(c => textW(c, 12) > 150))   // 문장이 든 표 = 메모 표 줄(칸 안에서 꺾임 — 칠판 표는 한 줄에 맞춰 글자를 줄여 아주 작아졌음, 3-0 실제 본문)
+      const notes = [...(b.caption ? [muted(b.caption)] : []), ...(refs.length ? [muted(siteLines(plan, refs))] : [])]   // 출처는 사이트 이름만 셋까지(외 N)
+      if (long) {
+        const mm = memo(x, top, w, k, [tableLine(cells, !!b.header)])
+        items = [head, mm, ...(notes.length ? [memo(x, bottomOf([mm]) + 2, w, k * 0.9, notes, { fill: CLEAR, pen: CLEAR })] : [])]
+        break
+      }
       const tw = w / k, th = !kind ? R * 26 : v === 'short' ? Math.max(170, Math.min(tw * 0.34, 200)) : Math.max(180, Math.min(tw * 0.5, 260))   // 그래프 = 폭에 비례하되 지면 한 줄을 다 먹지 않게, short = 옆 꼭지가 낮을 때
       // 표 = 머리 행·왼쪽 열(항목 이름)에 옅은 바탕 + 굵게 — 칸 내용과 갈라 보이게(2026-10-25 사용자 판정)
       const cs = {}; if (!kind) for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) if ((b.header && r === 0) || (c === 0 && C > 1)) cs[`${r},${c}`] = { bold: true, fill: r === 0 && b.header ? '#fff1ebe6' : '#fffaf7f4' }
-      const tb = base([x, top], { type: 'table', rows: R, cols: C, header: !!b.header, cells, col_widths: Array(C).fill(1 / C), rect: [0, 0, tw, th], scale: k,
+      const tb = base([x, top], { type: 'table', rows: R, cols: C, header: !!b.header, cells, col_widths: kind ? Array(C).fill(1 / C) : tableWidths(cells, C), rect: [0, 0, tw, th], scale: k,
         ...(kind ? { chart: kind, table_wh: [tw, R * 26] } : { cell_styles: cs }) })
-      const src = refs.map(n => srcLine(plan, n)).filter(Boolean).join('  '), notes = [...(b.caption ? [muted(b.caption)] : []), ...(src ? [muted(src)] : [])]   // 출처는 한 덩어리(줄마다 쌓으면 꼭지가 길어졌음)
       items = [head, tb, ...(notes.length ? [memo(x, bottomOf([tb]) + 2, w, k * 0.9, notes, { fill: CLEAR, pen: CLEAR })] : [])]
       break
     }
     case '출처 카드': {   // 작은 목록 메모 — 번호·제목 + 주소(Ctrl+클릭으로 열림). 웹 카드 넷은 「쓸데없이 공간을 차지」(2026-10-25 사용자 판정)
-      const ss = (b.links || []).map(n => (plan.sources || []).find(s => s.n === n)).filter(Boolean)
-      items = [memo(x, y, w, k, [{ k: 'h3', t: sec.title }, ...ss.flatMap(s => [line('p', `**[${s.n}]** ${s.title}`), { k: 'p', t: s.url, runs: [[0, s.url.length, MUTE, false]] }])])]
+      // 판에서 많이 쓰인 출처부터, 셋만 펼치고 나머지는 접음(실제 본문은 출처가 20개 넘게 — 주소가 칸을 끝없이 늘렸음)
+      const used = usedRefs(plan), pick = [...new Set([...used, ...(b.links || [])])], ss = pick.map(n => srcOf(plan, n)).filter(Boolean)
+      items = [memo(x, y, w, k, [{ k: 'h3', t: sec.title }, ...ss.flatMap(s => [line('p', `**[${s.n}]** ${s.title}`), ...(s.url ? [{ k: 'p', t: s.url, runs: [[0, s.url.length, MUTE, false]] }] : [])])], ss.length > 3 ? { fold: true } : {})]
       break
     }
     default:   // 모르는 모양 = 글 메모(계획이 새 모양을 내도 지면이 깨지지 않게)

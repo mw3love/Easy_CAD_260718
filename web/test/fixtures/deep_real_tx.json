@@ -1,0 +1,409 @@
+{
+ "_note": "딥모드 3-0 실측 실제 본문 — 계획 0단계 opus, 재료 Exa·KOSIS(2026-10-25), 본문 claude-sonnet-5-5 한 번에(tools/deepbody_probe.py B)",
+ "title": "ATSC 3.0 송신기 첫걸음",
+ "headline": "방송 데이터가 전파가 되기까지: ATSC 3.0 송신기 한눈에 보기",
+ "sources": [
+  {
+   "n": 1,
+   "title": "A/322, \"Physical Layer Protocol\"",
+   "url": "https://www.atsc.org/wp-content/uploads/2026/01/A322-2026-01-Physical-Layer-Protocol.pdf"
+  },
+  {
+   "n": 2,
+   "title": "A/322, “Physical Layer Protocol\" - ATSC : NextGen TV",
+   "url": "https://www.atsc.org/atsc-documents/a3222016-physical-layer-protocol/"
+  },
+  {
+   "n": 3,
+   "title": "A/327, Physical Layer Recommended Practice",
+   "url": "https://www.atsc.org/wp-content/uploads/2025/02/A327-2025-02-Physical-Layer-RP.pdf"
+  },
+  {
+   "n": 4,
+   "title": "A/322, \"Physical Layer Protocol\"",
+   "url": "https://www.atsc.org/wp-content/uploads/2024/10/A322-2024-09-Physical-Layer-Protocol.pdf"
+  },
+  {
+   "n": 5,
+   "title": "A/322. \"Physical Layer Protocol\"",
+   "url": "https://www.atsc.org/wp-content/uploads/2022/04/A322-2022-03-Physical-Layer-Protocol.pdf"
+  },
+  {
+   "n": 6,
+   "title": "A/322, \"Physical Layer Protocol\"",
+   "url": "https://www.atsc.org/wp-content/uploads/2025/11/A322-2025-07a-Physical-Layer-Protocol.pdf"
+  },
+  {
+   "n": 7,
+   "title": "A/327:2023-03 Amendment No. 1",
+   "url": "https://www.atsc.org/wp-content/uploads/2023/06/A327-2023-03-Amend-No-1.pdf"
+  },
+  {
+   "n": 8,
+   "title": "A/327, Physical Layer Recommended Practice",
+   "url": "https://www.atsc.org/wp-content/uploads/2021/04/A327-2020-Physical-Layer-RP.pdf"
+  },
+  {
+   "n": 9,
+   "title": "Performance Analysis of All Modulation and Code Combinations in ATSC 3.0 Physical Layer Protocol",
+   "url": "https://doi.org/10.1109/tbc.2018.2871372"
+  },
+  {
+   "n": 10,
+   "title": "ATSC 3.0 STATUS UPDATE",
+   "url": "https://img1.wsimg.com/blobby/go/88f8f9ce-d37c-43eb-9f1f-18f8cf4ffb9f/downloads/4bfed274-9bc4-4fe1-a1ea-32c6e9483383/JTS%20SBE%20BOS%203.0%20Update%20March%202024%20A.pdf?ver=1734457981087"
+  },
+  {
+   "n": 11,
+   "title": "https://riunet.upv.es/bitstreams/027eafa2-897e-4c0f-8288-89f6139517ec/download",
+   "url": "https://riunet.upv.es/bitstreams/027eafa2-897e-4c0f-8288-89f6139517ec/download"
+  },
+  {
+   "n": 12,
+   "title": "Bit-Interleaved Coded Modulation (BICM) for ATSC 3.0",
+   "url": "https://doi.org/10.1109/tbc.2015.2505414"
+  },
+  {
+   "n": 13,
+   "title": "Modulation and coding for ATSC 3.0",
+   "url": "https://doi.org/10.1109/bmsb.2015.7177209"
+  },
+  {
+   "n": 14,
+   "title": "Evaluation of ATSC 3.0 MODCODs for TV 3.0",
+   "url": "https://doi.org/10.1109/bmsb62888.2024.10608286"
+  },
+  {
+   "n": 15,
+   "title": "NEXT GENERATION TELEVISION (ATSC 3.0) STATION TRANSITION GUIDE",
+   "url": "https://www.atsc.org/wp-content/uploads/2020/05/NAB-ATSC-3.0-Guide_Final.pdf"
+  },
+  {
+   "n": 16,
+   "title": "ATSC 3.0 Physical Layer Modulation and Coding Performance Analysis | IEEE Conference Publication | IEEE Xplore",
+   "url": "https://ieeexplore.ieee.org/document/8436876/"
+  },
+  {
+   "n": 17,
+   "title": "Preparation of Papers in Two-Column Format",
+   "url": "https://www.gatesairuniversity.com/documents/Horspool_-_Transmission_Site_Planning_for_ATSC_3.0.pdf"
+  },
+  {
+   "n": 18,
+   "title": "The ATSC 3.0 Physical Layer—Bootstrap Basics | TV Tech",
+   "url": "https://www.tvtechnology.com/opinions/the-atsc-30-physical-layerbootstrap-basics"
+  },
+  {
+   "n": 19,
+   "title": "Transmitter Sites: Things to Consider for ATSC 3.0 | TV Tech",
+   "url": "https://www.tvtechnology.com/opinions/transmitter-sites-things-to-consider-for-atsc-30"
+  },
+  {
+   "n": 20,
+   "title": "방송망 구축을 위한 ATSC 3.0 전송 기술 | Sungho Jeon",
+   "url": "https://sunghojeon.github.io/ATSC3p0_PHYoverview/"
+  },
+  {
+   "n": 21,
+   "title": "A/300, \"ATSC 3.0 System Standard\"",
+   "url": "https://www.atsc.org/wp-content/uploads/2025/08/A300-2025-07-ATSC-3-System-Standard.pdf"
+  },
+  {
+   "n": 22,
+   "title": "Real World Experience",
+   "url": "https://www.gatesairuniversity.com/documents/2017-04-rossiter-atsc-30-real-world-experience.pdf"
+  },
+  {
+   "n": 23,
+   "title": "Field Verification of Integrated ATSC 3.0 & 1.0 MATV System in SFN Environment",
+   "url": "https://doi.org/10.1109/ictc62082.2024.10827148"
+  },
+  {
+   "n": 24,
+   "title": "A/324, \"Scheduler / Studio-to-Transmitter Link\"",
+   "url": "https://www.atsc.org/wp-content/uploads/2026/04/A324-2026-04-Scheduler-STL.pdf"
+  },
+  {
+   "n": 25,
+   "title": "A/324, “Scheduler / Studio to Transmitter Link” - ATSC : NextGen TV",
+   "url": "https://www.atsc.org/atsc-documents/3242018-scheduler-studio-transmitter-link/"
+  },
+  {
+   "n": 26,
+   "title": "3.0 Standards - ATSC : NextGen TV",
+   "url": "https://www.atsc.org/atsc-documents/type/3-0-standards/"
+  },
+  {
+   "n": 27,
+   "title": "A/324, \"Scheduler / Studio-to-Transmitter Link\"",
+   "url": "https://www.atsc.org/wp-content/uploads/2026/08/S32-626r204-CS-Scheduler-STL.pdf"
+  },
+  {
+   "n": 28,
+   "title": "A/300, \"ATSC 3.0 System\"",
+   "url": "https://www.atsc.org/wp-content/uploads/2026/04/A300-2026-04-ATSC-3-System-Standard.pdf"
+  },
+  {
+   "n": 29,
+   "title": "A/322, \"Physical Layer Protocol\"",
+   "url": "https://www.atsc.org/wp-content/uploads/2024/04/A322-2024-04-Physical-Layer-Protocol.pdf"
+  },
+  {
+   "n": 30,
+   "title": "A/324, \"Scheduler / Studio-to-Transmitter Link\"",
+   "url": "https://www.atsc.org/wp-content/uploads/2025/08/A324-2025-07-Scheduler-STL.pdf"
+  }
+ ],
+ "sections": [
+  {
+   "title": "송신기는 한마디로 무슨 일을 하나",
+   "question": "ATSC 3.0 송신기는 무엇을 받아서 무엇으로 바꿔 내보내는 장비인가?",
+   "shape": "주인공 글",
+   "chart": null,
+   "source": "ai",
+   "size": "주인공",
+   "body": {
+    "text": [
+     "ATSC 3.0 송신기는 스튜디오 쪽에서 온 **디지털 데이터를 전파로 바꿔 안테나로 내보내는 장비**입니다. 영상, 소리, 자막은 이미 IP 패킷 같은 데이터 묶음이 되어 도착합니다.",
+     "송신기는 이 데이터에 오류를 바로잡는 정보를 덧붙이고 여러 개의 작은 반송파에 나누어 싣습니다(OFDM 변조). 이어서 신호를 멀리 갈 만큼 키웁니다. 마지막으로 **다른 채널을 방해하지 않게 걸러** 안테나에 보냅니다.",
+     "송신소 사람이 하는 일은 데이터가 들어와 전파로 나가는 길목을 지키는 것입니다. 설정값이 곧 방송의 튼튼함과 용량을 정하므로 흐름을 알아 두면 문제를 빨리 찾습니다."
+    ]
+   }
+  },
+  {
+   "title": "신호가 안테나까지 가는 길",
+   "question": "스튜디오에서 온 데이터는 송신소 안에서 어떤 장비를 어떤 순서로 거쳐 전파가 되나?",
+   "shape": "단계 카드",
+   "chart": null,
+   "source": "ai",
+   "size": "보통",
+   "body": {
+    "steps": [
+     [
+      "방송 게이트웨이",
+      "스튜디오에서 방송 데이터를 묶고, 송신기마다 전송 설정과 시간표를 정해 줍니다."
+     ],
+     [
+      "STL 전송",
+      "스튜디오에서 송신소까지 데이터를 보냅니다. 광케이블이나 마이크로웨이브 등을 씁니다."
+     ],
+     [
+      "송신소 수신",
+      "송신소 장비가 데이터를 받아 시간을 맞추고 송신기에 넘깁니다."
+     ],
+     [
+      "익사이터",
+      "오류 정정 부호를 붙이고 OFDM으로 변조해 작은 전파 신호를 만듭니다."
+     ],
+     [
+      "전력 증폭",
+      "작은 신호를 방송에 필요한 세기로 키웁니다."
+     ],
+     [
+      "필터와 안테나",
+      "불필요한 전파를 걸러 낸 뒤 안테나로 내보냅니다."
+     ]
+    ]
+   }
+  },
+  {
+   "title": "직접 눌러 보기: 튼튼함과 용량 맞바꾸기",
+   "question": "변조 방식과 오류 정정 세기를 바꾸면 전송 용량과 수신 범위가 어떻게 달라지나?",
+   "shape": "움직이는 카드",
+   "chart": null,
+   "source": "ai",
+   "size": "보통",
+   "body": {
+    "note": "변조 방식을 단순한 쪽(QPSK)에서 복잡한 쪽(QAM 계열)으로, 오류 정정 세기를 강한 쪽에서 약한 쪽으로 움직여 보세요. 전송 용량은 늘고 수신 범위는 좁아지는 모습이 보입니다."
+   }
+  },
+  {
+   "title": "기억할 핵심 숫자",
+   "question": "ATSC 3.0 물리계층에서 송신소 사람이 꼭 알아야 할 기본 수치는 무엇인가?",
+   "shape": "숫자 타일",
+   "chart": null,
+   "source": "web",
+   "size": "보통",
+   "body": {
+    "tiles": [
+     [
+      "6MHz",
+      "채널 대역폭의 기준입니다.",
+      3
+     ],
+     [
+      "3가지",
+      "FFT 크기는 8K, 16K, 32K입니다. 수신 환경에 맞춰 고릅니다.",
+      1
+     ],
+     [
+      "12개",
+      "가드 인터벌(GI)의 길이 선택지입니다. 긴 에코도 막아 줍니다.",
+      3
+     ],
+     [
+      "57Mbps 이상",
+      "6MHz 채널의 최대 전송률입니다. 모드에 따라 1Mbps 미만까지 내려갑니다.",
+      3
+     ]
+    ]
+   }
+  },
+  {
+   "title": "설정에 따라 달라지는 전송률",
+   "question": "변조 방식과 부호율 조합마다 실을 수 있는 데이터 양과 필요한 신호 세기는 얼마나 다른가?",
+   "shape": "그래프",
+   "chart": "세로 막대",
+   "source": "web",
+   "size": "보통",
+   "body": {
+    "rows": [
+     [
+      "변조 방식",
+      "최저 SNR(dB)",
+      "최고 SNR(dB)"
+     ],
+     [
+      "QPSK",
+      "-6 [10][12]",
+      "11 [10][12]"
+     ],
+     [
+      "16QAM",
+      "-2 [10]",
+      "17 [10]"
+     ],
+     [
+      "64QAM",
+      "1 [10]",
+      "22 [10]"
+     ],
+     [
+      "256QAM",
+      "3 [10]",
+      "27 [10]"
+     ],
+     [
+      "1024·4096QAM",
+      "5 [10]",
+      "37 [10]"
+     ]
+    ],
+    "header": true,
+    "kind": "col",
+    "caption": "변조가 복잡할수록 필요한 신호 세기(SNR)도 올라갑니다. 1024·4096QAM은 지상파 방송용으로 권장되지 않습니다 [10]."
+   }
+  },
+  {
+   "title": "옛 송신기(ATSC 1.0)와 무엇이 다른가",
+   "question": "8VSB 방식의 ATSC 1.0 송신기와 OFDM 방식의 ATSC 3.0 송신기는 구조와 운용에서 무엇이 다른가?",
+   "shape": "표",
+   "chart": null,
+   "source": "web",
+   "size": "보통",
+   "body": {
+    "rows": [
+     [
+      "",
+      "ATSC 1.0",
+      "ATSC 3.0"
+     ],
+     [
+      "변조 방식",
+      "단일 반송파인 8-VSB [18][17]",
+      "수천 개 반송파를 쓰는 OFDM [18][17]"
+     ],
+     [
+      "SFN(단일 주파수 망)",
+      "신호 간섭 제어가 어려워 운용에 한계 [15][19][17]",
+      "가드 인터벌로 같은 주파수의 여러 송신기를 효율적으로 동기화 [15][19][17]"
+     ],
+     [
+      "시스템 구성",
+      "—",
+      "IP 기반 게이트웨이로 신호 전달, GPS 기반 정밀 시간 동기 필수 [19][20][21]"
+     ],
+     [
+      "전력 특성(PAPR)",
+      "기준",
+      "1.0보다 약 2dB 높아 송신기 용량과 필터 사양 변경이 필요할 수 있음 [15][17]"
+     ]
+    ],
+    "header": true
+   }
+  },
+  {
+   "title": "송신소에서 듣게 될 낱말",
+   "question": "STL, 익사이터, PLP, 부트스트랩, SFN 같은 말은 무슨 뜻인가?",
+   "shape": "용어 풀이",
+   "chart": null,
+   "source": "ai",
+   "size": "작게",
+   "body": {
+    "terms": [
+     [
+      "STL",
+      "스튜디오에서 송신소까지 데이터를 보내는 연결 구간입니다."
+     ],
+     [
+      "익사이터",
+      "데이터를 받아 변조해 전파 신호의 원형을 만드는 장치입니다."
+     ],
+     [
+      "PLP",
+      "물리계층 파이프입니다. 서비스마다 튼튼함과 용량을 따로 정하는 통로입니다."
+     ],
+     [
+      "부트스트랩",
+      "신호 맨 앞에 붙는 안내 신호입니다. 수신기가 방송을 찾고 설정을 읽게 해 줍니다."
+     ],
+     [
+      "SFN",
+      "여러 송신기가 같은 주파수로 같은 신호를 동시에 내보내는 방송망입니다."
+     ]
+    ]
+   }
+  },
+  {
+   "title": "확인 문제",
+   "question": "송신기 신호 흐름과 핵심 원리를 제대로 이해했는지 어떻게 확인하나?",
+   "shape": "확인 문제",
+   "chart": null,
+   "source": "ai",
+   "size": "작게",
+   "body": {
+    "items": [
+     "스튜디오 데이터가 STL, 익사이터, 전력 증폭, 필터를 거쳐 안테나로 가는 순서를 말할 수 있다",
+     "변조 방식과 오류 정정 세기를 바꾸면 용량과 수신 범위가 어떻게 달라지는지 설명할 수 있다",
+     "ATSC 1.0과 3.0 송신기의 변조 방식과 SFN 운용 차이를 말할 수 있다"
+    ]
+   }
+  },
+  {
+   "title": "더 읽을거리와 출처",
+   "question": "이 내용은 어디서 왔고, 더 깊이 공부하려면 어떤 규격 문서를 보면 되나?",
+   "shape": "출처 카드",
+   "chart": null,
+   "source": "web",
+   "size": "작게",
+   "body": {
+    "links": [
+     1,
+     2,
+     3,
+     4,
+     10,
+     12,
+     15,
+     17,
+     18,
+     19,
+     20,
+     21,
+     24,
+     25
+    ]
+   }
+  }
+ ]
+}

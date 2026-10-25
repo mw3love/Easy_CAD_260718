@@ -1,0 +1,326 @@
+{
+ "_note": "딥모드 3-0 실측 실제 본문 — 계획 0단계 opus, 재료 Exa·KOSIS(2026-10-25), 본문 claude-sonnet-5-5 한 번에(tools/deepbody_probe.py B)",
+ "title": "신입 교육: 어텐션 한눈에 보기",
+ "headline": "어텐션, AI가 문장에서 '어디를 볼지' 정하는 방법",
+ "sources": [
+  {
+   "n": 1,
+   "title": "LLM Context Window Size: The New Moore’s Law? | Jeremy Burton | Platform",
+   "url": "https://os.platformstud.io/guild/articles/llm-context-window-size-the-new-moore-s-law-by-jeremy-burton"
+  },
+  {
+   "n": 2,
+   "title": "LLM Context Window Race 2023-2026: Claimed vs Effective | Presenc AI",
+   "url": "https://presenc.ai/research/llm-context-window-race-2023-2026"
+  },
+  {
+   "n": 3,
+   "title": "[2502.17129] Thus Spake Long-Context Large Language Model",
+   "url": "https://ar5iv.labs.arxiv.org/html/2502.17129"
+  },
+  {
+   "n": 4,
+   "title": "The Context Length Observation | Matt Rickard",
+   "url": "https://mattrickard.com/the-context-length-observation"
+  },
+  {
+   "n": 5,
+   "title": "Every major LLM's context window, charted over time | dataku",
+   "url": "https://dataku.ai/blog/every-llm-context-window-charted"
+  },
+  {
+   "n": 6,
+   "title": "LLMs now accept longer inputs, and the best models can use them more effectively | Epoch AI",
+   "url": "https://epoch.ai/data-insights/context-windows"
+  },
+  {
+   "n": 7,
+   "title": "LLM의 긴 컨텍스트 RAG 성능 | Databricks Blog",
+   "url": "https://www.databricks.com/kr/blog/long-context-rag-performance-llms"
+  },
+  {
+   "n": 8,
+   "title": "Towards infinite LLM context windows | Towards Data Science",
+   "url": "https://towardsdatascience.com/towards-infinite-llm-context-windows-e099225abaaf/"
+  },
+  {
+   "n": 9,
+   "title": "Attention Is All You Need",
+   "url": "https://arxiv.org/html/1706.03762"
+  },
+  {
+   "n": 10,
+   "title": "Attention Is All You Need",
+   "url": "https://doi.org/10.65215/2q58a426"
+  },
+  {
+   "n": 11,
+   "title": "Attention is All you Need",
+   "url": "https://proceedings.neurips.cc/paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html"
+  },
+  {
+   "n": 12,
+   "title": "Attention Is All You Need",
+   "url": "https://en.wikipedia.org/wiki/Attention_Is_All_You_Need"
+  },
+  {
+   "n": 13,
+   "title": "[논문정리] Attention is all you need",
+   "url": "https://haystar.tistory.com/77"
+  },
+  {
+   "n": 14,
+   "title": "Attention Is All You Need",
+   "url": "https://pdfs.semanticscholar.org/3012/b0f92468ec0679ba79bfc6c823979d85ee21.pdf"
+  },
+  {
+   "n": 15,
+   "title": "Attention Is All You Need | papers | ASa Book",
+   "url": "https://www.asabook.cc/ja/papers/attention-is-all-you-need/"
+  },
+  {
+   "n": 16,
+   "title": "Attention Is All You Need",
+   "url": "https://www.tech-odyssey.cn/pdf/AI/Attention-is-all-your-need-ZH.pdf"
+  },
+  {
+   "n": 17,
+   "title": "Attention Is All You Need",
+   "url": "https://arxiv.org/abs/1706.03762v5"
+  },
+  {
+   "n": 18,
+   "title": "Attention Is All You Need",
+   "url": "https://arxiv.org/html/1706.03762v1"
+  },
+  {
+   "n": 19,
+   "title": "The Annotated Transformer",
+   "url": "https://nlp.seas.harvard.edu/annotated-transformer/"
+  },
+  {
+   "n": 20,
+   "title": "The Annotated Transformer",
+   "url": "https://doi.org/10.18653/v1/w18-2509"
+  },
+  {
+   "n": 21,
+   "title": "Attention is all you need - 전설의 논문을 온전히 흡수하는 방법 | Notiona",
+   "url": "https://notiona.github.io/posts/transformer-faq-kor/"
+  },
+  {
+   "n": 22,
+   "title": "The Illustrated Transformer – Jay Alammar – Visualizing machine learning one concept at a time.",
+   "url": "https://jalammar.github.io/illustrated-transformer/"
+  },
+  {
+   "n": 23,
+   "title": "어텐션 메커니즘 (Attention Mechanism) · ML감자",
+   "url": "https://pebpung.github.io/transformer/2021/10/19/Transformer-1.html"
+  },
+  {
+   "n": 24,
+   "title": "To Understand Transformers, Focus on Attention – Scott H. Hawley",
+   "url": "https://drscotthawley.github.io/blog/posts/Transformers1-Attention.html"
+  }
+ ],
+ "sections": [
+  {
+   "title": "어텐션이란 무엇인가",
+   "question": "어텐션이 뭐고, 왜 요즘 AI의 핵심이라고 하나?",
+   "shape": "주인공 글",
+   "chart": null,
+   "source": "ai",
+   "size": "주인공",
+   "body": {
+    "text": [
+     "어텐션은 AI가 문장을 읽을 때 **어느 단어를 더 눈여겨볼지 정하는 방법**입니다. 사람도 글을 읽다가 '그것'이라는 말이 나오면 앞에서 무엇을 가리키는지 되짚어 봅니다. 어텐션은 이런 되짚어 보기를 계산으로 해 줍니다.",
+     "단어마다 다른 단어들에 **중요도 점수**를 매기고, 점수가 높은 단어의 정보를 더 많이 가져옵니다. 덕분에 AI는 가까운 단어뿐 아니라 멀리 떨어진 단어와의 관계도 잡아냅니다. 그래서 문장의 뜻을 문맥에 맞게 읽을 수 있습니다.",
+     "요즘 대형 언어 모델은 대부분 어텐션을 중심으로 만든 **트랜스포머** 구조를 씁니다. 번역, 요약, 대화 같은 일을 잘하는 핵심 이유가 어텐션입니다. 그래서 어텐션을 'AI의 핵심'이라고 부릅니다."
+    ]
+   }
+  },
+  {
+   "title": "먼저 알아 둘 낱말",
+   "question": "토큰, 쿼리·키·값, 가중치 같은 말은 무슨 뜻인가?",
+   "shape": "용어 풀이",
+   "chart": null,
+   "source": "ai",
+   "size": "보통",
+   "body": {
+    "terms": [
+     [
+      "토큰",
+      "AI가 글을 읽는 가장 작은 조각입니다. 단어나 단어의 일부가 한 토큰이 됩니다."
+     ],
+     [
+      "쿼리(Q)",
+      "'나는 지금 무엇을 찾고 있나'를 나타내는 값입니다. 보는 쪽 단어가 가집니다."
+     ],
+     [
+      "키(K)",
+      "'나는 이런 내용이에요'라는 이름표 값입니다. 쿼리와 맞춰 보며 얼마나 관련 있는지 가늠합니다."
+     ],
+     [
+      "값(V)",
+      "단어가 실제로 건네주는 정보입니다. 점수에 따라 섞여 다음 단계로 넘어갑니다."
+     ],
+     [
+      "가중치",
+      "각 단어를 얼마나 반영할지 정한 비율입니다. 높을수록 더 주목한다는 뜻이고, 모두 더하면 1이 됩니다."
+     ]
+    ]
+   }
+  },
+  {
+   "title": "어텐션이 계산되는 순서",
+   "question": "단어 하나가 다른 단어들을 '보는' 과정은 어떤 단계로 이루어지나?",
+   "shape": "단계 카드",
+   "chart": null,
+   "source": "ai",
+   "size": "보통",
+   "body": {
+    "steps": [
+     [
+      "토큰 준비",
+      "문장을 토큰으로 나누고, 각 토큰을 숫자 묶음으로 바꿉니다."
+     ],
+     [
+      "Q·K·V 만들기",
+      "토큰마다 쿼리, 키, 값을 하나씩 만듭니다."
+     ],
+     [
+      "점수 매기기",
+      "한 단어의 쿼리를 모든 단어의 키와 맞춰 관련 점수를 구합니다."
+     ],
+     [
+      "가중치로 바꾸기",
+      "점수를 크기 조절한 뒤, 합이 1이 되는 비율(가중치)로 바꿉니다."
+     ],
+     [
+      "값 섞기",
+      "가중치만큼 각 단어의 값을 섞어 그 단어의 새 표현을 만듭니다."
+     ]
+    ]
+   }
+  },
+  {
+   "title": "직접 눌러 보기: 이 단어는 어디를 볼까",
+   "question": "예문에서 단어를 고르면 어떤 단어에 더 주목하는지 눈으로 볼 수 있나?",
+   "shape": "움직이는 카드",
+   "chart": null,
+   "source": "ai",
+   "size": "보통",
+   "body": {
+    "note": "예문에서 단어를 하나 고르면, 그 단어가 다른 단어들을 얼마나 보는지 진하기로 보여 줍니다. 진할수록 더 주목한다는 뜻입니다."
+   }
+  },
+  {
+   "title": "어텐션이 볼 수 있는 길이는 어떻게 늘었나",
+   "question": "트랜스포머 등장 이후 AI 모델이 한 번에 읽는 글의 길이는 해마다 얼마나 커졌나?",
+   "shape": "그래프",
+   "chart": "꺾은선",
+   "source": "web",
+   "size": "보통",
+   "body": {
+    "rows": [
+     [
+      "시기",
+      "컨텍스트 길이(토큰)"
+     ],
+     [
+      "2018 GPT-1",
+      "512 [4][1]"
+     ],
+     [
+      "2020 GPT-3",
+      "2048 [4][1]"
+     ],
+     [
+      "2022~23 시작",
+      "4096 [5][1]"
+     ],
+     [
+      "2022~23 최대",
+      "200000 [5][1]"
+     ],
+     [
+      "2024",
+      "1000000 [1][2]"
+     ],
+     [
+      "2025~26 표준",
+      "1000000 [2]"
+     ]
+    ],
+    "header": true,
+    "kind": "line",
+    "caption": "몇 년 사이 수백 토큰에서 100만 토큰으로 커졌습니다. 다만 실제로 잘 쓰는 길이는 광고 수치의 50~65% 수준인 경우가 많습니다 [2]."
+   }
+  },
+  {
+   "title": "기억할 숫자 3개",
+   "question": "어텐션을 처음 소개한 논문과 원조 트랜스포머 구조에서 꼭 기억할 숫자는?",
+   "shape": "숫자 타일",
+   "chart": null,
+   "source": "web",
+   "size": "작게",
+   "body": {
+    "tiles": [
+     [
+      "6층 + 6층",
+      "원조 트랜스포머는 인코더 6층, 디코더 6층으로 만들었습니다.",
+      9
+     ],
+     [
+      "8개",
+      "멀티헤드 어텐션의 헤드 수입니다(h=8).",
+      9
+     ],
+     [
+      "512 / 64",
+      "층의 표현 차원은 512, 헤드 하나의 차원은 64(=512÷8)입니다.",
+      9
+     ]
+    ]
+   }
+  },
+  {
+   "title": "확인 문제",
+   "question": "오늘 배운 어텐션 개념을 제대로 이해했는지 어떻게 점검할까?",
+   "shape": "확인 문제",
+   "chart": null,
+   "source": "ai",
+   "size": "작게",
+   "body": {
+    "items": [
+     "어텐션이 문장에서 무엇을 하는지 한 문장으로 말할 수 있다",
+     "쿼리·키·값과 가중치가 각각 어떤 역할인지 설명할 수 있다",
+     "점수 매기기부터 값 섞기까지 어텐션의 계산 순서를 말할 수 있다"
+    ]
+   }
+  },
+  {
+   "title": "더 읽어 볼 자료",
+   "question": "더 깊이 공부하려면 어떤 원문과 해설을 보면 되나?",
+   "shape": "출처 카드",
+   "chart": null,
+   "source": "web",
+   "size": "작게",
+   "body": {
+    "links": [
+     17,
+     18,
+     19,
+     20,
+     21,
+     9,
+     1,
+     2,
+     4,
+     5
+    ]
+   }
+  }
+ ]
+}
