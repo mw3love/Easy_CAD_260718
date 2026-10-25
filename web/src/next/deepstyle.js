@@ -37,3 +37,11 @@ export const STYLE_KEYS = Object.keys(DEEP_STYLES)
 export const styleOf = key => DEEP_STYLES[key] || DEEP_STYLES.calm
 // 꼭지 모양 바꿔 보기의 이름(속성 카드 「꼭지 모양」)
 export const variantName = (shape, v) => ({ row: shape === '단계 카드' ? '한 줄' : '나란히', col: '위아래', grid: '두 줄', tall: '높게', short: '낮게' })[v] || v
+// 처음 고르기(3-2 지면 계획 카드) — 질문지 답·계획으로 묶음 하나 추천 → [키, 까닭]. 보고는 빽빽한 신문, 발표(큰 화면)는 여백 넉넉한 잡지, 숫자 꼭지가 셋 이상이면 인포그래픽, 나머지 차분
+export function recommendStyle(brief = {}, plan = {}) {
+  const nums = (plan.sections || []).filter(s => s.shape === '그래프' || s.shape === '숫자 타일').length
+  if (brief['무엇에'] === '보고·결정' || brief['누구에게'] === '윗사람(보고)') return ['news', '보고용 — 한 장에 빽빽하게']
+  if (brief['무엇에'] === '발표') return ['magazine', '발표용 — 큰 화면에서 주인공 크게']
+  if (nums >= 3) return ['info', `숫자 꼭지 ${nums}개 — 숫자·그래프 위주`]
+  return ['calm', '설명용 — 차분하게']
+}

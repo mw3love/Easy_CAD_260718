@@ -19,6 +19,8 @@ import { TIDY_RE } from './tidy.js'
 import { getKairosKey, KEY_RE, keyHeaders, setKairosKey } from './kairosKey.js'
 import { startMic } from './mic.js'
 import { svgPreview } from './svgin.js'
+import { DeepAsk, DeepPlan, briefOf, keptPlan } from './deepchat.jsx'
+import { recommendStyle } from './deepstyle.js'
 const LINK_CHAT = '#4f8fe8'
 // 정리 문서 크게 보기 — 새 탭에 그 HTML(인쇄·PDF는 그 탭에서 Ctrl+P)
 const openHtml = html => { const u = URL.createObjectURL(new Blob([html || ''], { type: 'text/html;charset=utf-8' })); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60_000) }
@@ -33,6 +35,7 @@ const KINDS = {
   image: ['🎨 그림', { color: '#9333ea', background: 'rgba(147,51,234,.12)' }],
   icon: ['✏️ 아이콘', { color: '#0e7490', background: 'rgba(14,116,144,.12)' }],   // 선을 고칠 수 있는 도형(§8 항목63)
   ask: ['❓ 확인', { color: '#da7756', background: 'rgba(218,119,86,.12)' }],   // 되묻기(§8 항목64) — 만들기 전에 버튼으로
+  deep: ['📰 딥모드', { color: '#b4532f', background: 'rgba(180,83,47,.12)' }],   // 한 주제 한 판(§8 항목66) — 질문지·지면 계획 카드(deepchat.jsx)
 }
 // 되묻기 버튼 — [이름, 설명]. 서버가 애매하고 비싼 갈림길에서만 길 둘을 보냄(`easycad/ai/route.py` `decide`)
 const ASK_LABEL = { image: ['🎨 그림으로', '사진·일러스트 같은 그림'], icon: ['✏️ 고칠 수 있는 선 도형으로', '선을 하나하나 고칠 수 있는 아이콘(SVG)'],
@@ -44,15 +47,16 @@ const askMemo = () => { try { return JSON.parse(localStorage.getItem(ASK_KEY) ||
 const askPrefs = () => Object.fromEntries(Object.entries(askMemo()).filter(([, v]) => Array.isArray(v) && v.length >= 2 && v.at(-1) === v.at(-2)).map(([k, v]) => [k, v.at(-1)]))
 const rememberAsk = (key, kind) => { try { const m = askMemo(); m[key] = [...(m[key] || []), kind].slice(-2); localStorage.setItem(ASK_KEY, JSON.stringify(m)) } catch { /* 기억 못 해도 그만 */ } }
 // 기다리는 동안 보일 말 — 일마다 실제로 일하는 모델(서버 /api/models `jobs`)을 같이(2026-10-20 사용자: 정돈인데 고른 gpt가 보여 헷갈림, 칠판엔 아무 표시가 없어 안 되는 줄 알았음)
-const JOB_LABEL = { tidy: '🧩 정리정돈 중', report: '📄 정리 문서 만드는 중', image: '🎨 그림 그리는 중', icon: '✏️ 아이콘 그리는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
+const JOB_LABEL = { tidy: '🧩 정리정돈 중', report: '📄 정리 문서 만드는 중', image: '🎨 그림 그리는 중', icon: '✏️ 아이콘 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 딥모드 지면 만드는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
 // 「+」 도구 — [길, 이름, 설명, 입력 칸 안내]. 서버는 길(`kind`)을 그대로 따름
 const TOOLS = [['image', '🎨 그림 만들기', '사진·일러스트 같은 그림', '무엇을 그릴까요? 예: 산 위 송신탑 수채화'],
   ['icon', '✏️ 아이콘', '선을 하나하나 고칠 수 있는 도형(SVG)', '무엇의 아이콘? 예: 파라볼라 안테나'],
   ['search', '🔎 웹 검색', '최신 정보 + 출처', '무엇을 찾을까요?'],
   ['report', '📄 정리 문서', '고른 것(없으면 칠판 전체)을 문서 한 장으로', '어떻게 정리할까요? 비워도 돼요'],
-  ['tidy', '🧩 정리정돈', '칠판 조각을 주제별로 묶어 옮기기', '어떻게 묶을까요? 비워도 돼요']]
+  ['tidy', '🧩 정리정돈', '칠판 조각을 주제별로 묶어 옮기기', '어떻게 묶을까요? 비워도 돼요'],
+  ['deep', '📰 딥모드', '한 주제로 칠판 한 판 — 질문지 → 지면 계획 → 만들기(크레딧 많이)', '어떤 주제로 한 판? 예: 신입에게 어텐션 설명']]   // 딥모드는 서버가 할 수 있을 때만(/api/models `jobs.deep`)
 const EMPTY_ASK = { report: '정리해 줘', tidy: '주제별로 묶어 정돈해 줘' }   // 이름표만 두고 빈 칸으로 보내면
-const BOARD_JOBS = new Set(['tidy', 'report'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
+const BOARD_JOBS = new Set(['tidy', 'report', 'deep-build'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
 // 도는 동그라미(칠판 알약·대화창 「생각 중」 공용)
 export const Spinner = () => <><style>{'@keyframes mb-spin{to{transform:rotate(360deg)}}'}</style>
   <span style={{ display: 'inline-block', flex: 'none', width: 11, height: 11, borderRadius: '50%', border: '2px solid #da7756', borderTopColor: 'transparent', animation: 'mb-spin .8s linear infinite' }} /></>
@@ -244,6 +248,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
 
   async function send(text = null, kind = '', from = null) {   // text·kind = 밖에서 시킨 질문(칠판 우클릭 「정리 문서 만들기」 — 입구는 대화창 하나), from = 「그림으로도」(정리 문서와 같은 자료)
     if (text == null && !kind) kind = pickTool   // 입력 칸에서 보낼 때만 이름표(칠판 우클릭 등 밖에서 시킨 질문은 제 길)
+    if (text == null && !busy && deepSend(kind)) return
     const pend = text == null && !from && replyTo == null ? msgs.findLastIndex(m => m.role !== 'error') : -1
     if (pend >= 0 && msgs[pend].kind === 'ask' && draft.trim() && !busy) return choose(pend, kind, draft.trim())   // 되묻기에 글로 답함(§8 항목64)
     const q = (text ?? draft).trim() || (text == null ? EMPTY_ASK[kind] || '' : ''); if (!q || busy) return
@@ -251,7 +256,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
     const ctx = from ? from.context || '' : contextText(sel), n = from ? from.ctxCount : sel.length
     // ↩ 이어 묻기(2026-10-20 사용자 — 특정 답을 토대로) = 그 답까지만 앞 대화로 보냄(화면 기록엔 맨 끝에 쌓임, 무엇에 이었는지 표시)
     const ri = replyTo == null ? -1 : msgs.findIndex(m => m.at === replyTo)
-    const before = (ri >= 0 ? msgs.slice(0, ri + 1) : msgs).filter(m => m.role !== 'error' && m.kind !== 'ask')   // 답 안 한 되묻기는 앞 대화에 안 실음
+    const before = (ri >= 0 ? msgs.slice(0, ri + 1) : msgs).filter(m => m.role !== 'error' && m.kind !== 'ask' && m.kind !== 'deep' && !m.deep)   // 답 안 한 되묻기·딥모드 카드는 앞 대화에 안 실음
     // 바로 앞(또는 이어 묻는) 답이 그림 후보면 고칠 그림 — 「두 번째」라 하면 둘째, 아니면 칠판에 마지막으로 붙인 것, 없으면 첫째(서버가 원본 유지 고치기 — input_images, 2026-10-20 사용자)
     const lastA = before.at(-1), ims = lastA?.role === 'assistant' ? lastA.images || [] : []
     const pick = /두\s*번째|둘째|2\s*번째?|오른쪽/.test(q) ? 1 : /첫\s*번째|첫째|1\s*번째?|왼쪽/.test(q) ? 0 : lastA?.picked?.at(-1) ?? 0
@@ -266,10 +271,55 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
       setMsgs([...next, { role: 'error', content: String(e.message || e) }])   // 오류는 기록에 안 남김
     } finally { setBusy(null) }
   }
+  // 딥모드(§8 항목66 3-2) — ① 「+ › 딥모드」 + 주제 = 질문지 카드(서버 안 부름) ② 「지면 계획 짜기」(입력 칸 글 = 「더」) ③ 계획 카드에서 말로 고치기 = 계획 다시 ④ 「이대로 만들기」 = 본문 → 칠판에 판.
+  // 서버 길 = /api/chat `kind: 'deep'` + `deep: { step: 'plan' | 'build', topic, brief, prev?, fix?, plan?, style? }`(3-3에서 서버가 맡음). 입력 칸에서 보낼 때 먼저 봄 — 맡았으면 true
+  function deepSend(kind) {
+    const li = msgs.findLastIndex(m => m.role !== 'error'), last = msgs[li], t = draft.trim()
+    if (last?.kind === 'deep' && last.step === 'ask' && !last.done) { deepGo(li, t); return true }
+    if (last?.kind === 'deep' && last.step === 'plan' && !last.built && !last.stale && t && (!kind || kind === 'deep')) { deepReplan(li, t); return true }
+    if (kind !== 'deep' || !t) return false
+    const at = Date.now()
+    update([...msgs.filter(m => m.role !== 'error'), { role: 'user', content: t, at, deep: true }, { role: 'assistant', kind: 'deep', step: 'ask', topic: t, brief: {}, at: at + 1 }])
+    setDraft(''); setPickTool(''); if (mic !== 'off') micStop.current?.()
+    return true
+  }
+  const setMsg = (i, patch) => setMsgs(cur => { const next = cur.map((x, j) => (j === i ? { ...x, ...patch } : x)); save(next); return next })
+  async function deepCall(body, job) {
+    setBusy(Date.now()); setBusyJob(job)
+    try {
+      const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
+        body: JSON.stringify({ model: useModel, board: DOC_NAME, kind: 'deep', deep: body, messages: [{ role: 'user', content: body.topic }] }) })
+      const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
+      if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
+      return d
+    } catch (e) { setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: String(e.message || e) }]); return null } finally { setBusy(null) }
+  }
+  const planMsg = (m, d, style) => { const rec = recommendStyle(m.brief, d.plan)
+    return { role: 'assistant', kind: 'deep', step: 'plan', topic: m.topic, brief: m.brief, plan: d.plan, estimate: d.estimate, rec, style: style || rec[0], drop: [], model: d.model, elapsed: d.elapsed, credits: d.credits, at: Date.now() } }
+  async function deepGo(i, more) {
+    const m = msgs[i], brief = briefOf(m.brief, more)
+    if (more) setDraft('')
+    const d = await deepCall({ step: 'plan', topic: m.topic, brief }, 'deep-plan'); if (!d) return
+    setMsgs(cur => { const next = [...cur.map((x, j) => (j === i ? { ...x, done: true, ...(more ? { more } : {}) } : x)), planMsg({ ...m, brief }, d)]; save(next); return next })
+  }
+  async function deepReplan(i, fix) {
+    const m = msgs[i], mine = { role: 'user', content: fix, at: Date.now(), deep: true }
+    setDraft(''); setMsgs(cur => [...cur, mine])
+    const d = await deepCall({ step: 'plan', topic: m.topic, brief: m.brief, prev: keptPlan(m), fix }, 'deep-plan')
+    if (!d) { setMsgs(cur => cur.filter(x => x !== mine)); setDraft(fix); return }
+    setMsgs(cur => { const next = [...cur.map((x, j) => (j === i ? { ...x, stale: true } : x)), planMsg(m, d, m.style !== m.rec?.[0] ? m.style : '')]; save(next); return next })   // 손으로 고른 디자인은 그대로
+  }
+  async function deepBuild(i) {
+    const m = msgs[i], plan = keptPlan(m)
+    const d = await deepCall({ step: 'build', topic: m.topic, brief: m.brief, plan, style: m.style }, 'deep-build'); if (!d) return
+    const r = ed.current?.deepBoard(d.plan || plan, null, m.style); if (!r) return
+    setMsg(i, { built: r.ids[0], pages: r.pages.length, model: d.model, elapsed: d.elapsed, credits: d.credits })
+    ed.current?.showIds([r.ids[0]]); setSkipSel(String(r.ids[0]))   // 보여 주려고 고른 판은 다음 질문에 안 실음(붙이기와 같게)
+  }
   // 되묻기 버튼(또는 기억으로 고른 답의 「다른 쪽으로」) — 고른 길을 기억하고, 같은 질문(그 앞 대화까지)을 그 길로 보내 이 자리에 답을 끼움.
   // add = 덧붙일 말(입력 칸 — 버튼과 같이 눌렀거나 버튼 대신 친 글): 처음 질문 뒤에 붙여 보내고, 길이 안 정해졌으면 서버가 그 말로 고름(못 알아들으면 원래 1등 — 다시 안 물음)
   async function choose(i, k, add = '') {
-    const history = msgs.slice(0, i).filter(m => m.role !== 'error' && m.kind !== 'ask'), m = msgs[i]
+    const history = msgs.slice(0, i).filter(m => m.role !== 'error' && m.kind !== 'ask' && m.kind !== 'deep' && !m.deep), m = msgs[i]
     if (busy || history.at(-1)?.role !== 'user') return
     if (m.askKey && k) rememberAsk(m.askKey, k)
     if (!add && m.kind === 'ask' && draft.trim()) add = draft.trim()
@@ -368,6 +418,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
   useEffect(() => { onBusy?.(busy && BOARD_JOBS.has(busyJob) ? busyLine : '') }, [busyLine])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => onBusy?.(''), [])   // eslint-disable-line react-hooks/exhaustive-deps
   const feat = models?.featured || {}
+  const lastM = msgs.filter(m => m.role !== 'error').at(-1), tools = TOOLS.filter(t => t[0] !== 'deep' || models?.jobs?.deep)
   return (
     <aside style={{ ...(floating ? { ...css.panel, ...css.float } : css.panel), width }} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
       {/* 폭 조절 — 왼쪽 경계 끌기(320~720, 화면 절반까지), 두 번 누르면 기본 폭(왼쪽 판 `dock-resize`와 같은 손맛) */}
@@ -436,7 +487,12 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
                 <span>기억한 대로 {(ASK_LABEL[m.kind] || [m.kind])[0]} 했어요</span>
                 {m.alt.map(k => <button key={k} data-testid="ask-other" data-kind={k} style={css.ghost} disabled={!!busy} onClick={() => choose(i, k)} title="같은 질문을 이쪽으로 다시 — 다음엔 다시 물어요">{(ASK_LABEL[k] || [k])[0]} 바꾸기</button>)}
               </div>}
-              <Answer text={m.content} chart={m.kind === 'ask' ? null : chartAct(m)} />
+              {m.kind === 'deep' ? (m.step === 'ask'
+                ? <DeepAsk m={m} busy={busy} css={css} set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => deepGo(i, draft.trim())} />
+                : <DeepPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
+                  pickStyle={k => setMsg(i, { style: k })} build={() => deepBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':deep']: true }))} />)
+                : <Answer text={m.content} chart={m.kind === 'ask' ? null : chartAct(m)} />}
+              {m.kind === 'deep' && (m.model || gone[m.at + ':deep']) && <div style={{ ...css.meta, marginTop: 6, textAlign: 'right' }}>{gone[m.at + ':deep'] ? '판이 지워졌어요 · ' : ''}{m.model || ''}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</div>}
               {m.kind === 'ask' && <div data-testid="ask-choices" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
                 {(m.choices || []).map(k => <button key={k} data-testid="ask-choice" data-kind={k} disabled={!!busy} onClick={() => choose(i, k)} title={(ASK_LABEL[k] || [])[1]}
                   style={{ ...css.pin, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, padding: '6px 10px', textAlign: 'left' }}>
@@ -481,7 +537,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
               {m.sources?.length > 0 && <div data-testid="answer-sources" style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {m.sources.map(s => <a key={s.n} href={s.url} target="_blank" rel="noopener noreferrer" title={s.url} onPointerDown={e => e.stopPropagation()}
                   style={{ ...css.meta, color: LINK_CHAT, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>[{s.n}] {s.title || siteOf(s.url)} · {siteOf(s.url)}</a>)}</div>}
-              {m.kind !== 'ask' && <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+              {m.kind !== 'ask' && m.kind !== 'deep' && <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
                 {m.kind === 'tidy' && <button style={css.pin} onClick={() => ed.current?.showIds(m.frames) || setGone(g => ({ ...g, [m.at + ':tidy']: true }))} title="정돈해 만든 프레임들이 한눈에 보이게">
                   {gone[m.at + ':tidy'] ? '프레임이 지워졌어요' : '정돈한 곳 보기'}</button>}
                 {!m.images?.length && !m.svgs?.length && m.kind !== 'tidy' && <button style={{ ...(m.pinned ? css.done : css.pin), cursor: 'grab' }} onPointerDown={e => dragDown(e, i)} onClick={() => { if (dragged.current) { dragged.current = false; return } pin(i) }}
@@ -509,7 +565,9 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
         {selN > 0 && (sel.length > 0 || selImgs.length > 0) && <span data-testid="sel-chip" style={css.chip}>{selN}개 선택됨</span>}{/* 2026-10-21 사용자: 글·그림 칩 둘 + 사용법 문장 → 한 칩(사용법은 설명 페이지로) */}
         {pickTool && <span data-testid="tool-chip" style={{ ...css.chip, color: '#da7756', background: 'rgba(218,119,86,.14)', cursor: 'pointer' }} onClick={() => setPickTool('')} title="누르면 이름표를 떼고 다시 앱이 길을 골라요">
           {TOOLS.find(t => t[0] === pickTool)?.[1]} ✕</span>}
-        <textarea style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder={TOOLS.find(t => t[0] === pickTool)?.[3] || (msgs.filter(m => m.role !== 'error').at(-1)?.kind === 'ask' ? '버튼을 누르거나, 원하는 걸 직접 적어 주세요' : '물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)')}
+        <textarea style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder={TOOLS.find(t => t[0] === pickTool)?.[3] || (lastM?.kind === 'ask' ? '버튼을 누르거나, 원하는 걸 직접 적어 주세요'
+            : lastM?.kind === 'deep' && lastM.step === 'ask' && !lastM.done ? '꼭 넣을 것·바라는 점(비워도 돼요) — Enter = 지면 계획 짜기'
+            : lastM?.kind === 'deep' && lastM.step === 'plan' && !lastM.built && !lastM.stale ? '계획을 고칠 점을 말하면 다시 짜요 — 예: 그래프를 하나 더' : '물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)')}
           onChange={e => { if (mic === 'listen') micStop.current?.(); setDraft(e.target.value) }}
           onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>   {/* 모델 고르기 = 입력 칸 옆(2026-10-20 사용자 — Gemini·Claude·ChatGPT처럼 묻는 자리에서) */}
@@ -517,7 +575,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
             <button data-testid="plus" style={{ ...css.ghost, padding: '2px 9px', ...(plusOpen || pickTool ? { color: '#da7756', borderColor: '#da7756' } : null) }} aria-expanded={plusOpen} onClick={() => setPlusOpen(o => !o)}
               title="도구 고르기 — 그림·아이콘·웹 검색·정리 문서·정리정돈(안 고르면 앱이 말을 보고 골라요)">＋</button>
             {plusOpen && <div role="menu" style={{ ...css.menu, minWidth: 250 }}><style>{'.mb-mi:hover:not(:disabled){background:var(--mb-seg)}'}</style>
-              {TOOLS.map(([k, label, tip]) => <button key={k} role="menuitemradio" aria-checked={pickTool === k} className="mb-mi" style={{ ...css.item, display: 'flex', flexDirection: 'column', gap: 1, whiteSpace: 'normal' }}
+              {tools.map(([k, label, tip]) => <button key={k} role="menuitemradio" aria-checked={pickTool === k} className="mb-mi" style={{ ...css.item, display: 'flex', flexDirection: 'column', gap: 1, whiteSpace: 'normal' }}
                 onClick={() => { setPickTool(t => (t === k ? '' : k)); setPlusOpen(false) }}>
                 <span>{label}{pickTool === k ? ' ✓' : ''}</span><span style={{ ...css.meta, fontWeight: 400 }}>{tip}</span></button>)}
             </div>}

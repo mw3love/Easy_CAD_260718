@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { DEEP, deepLayout, deepWaste, inside, overlaps, spanRange, variantsOf } from '../src/next/deep.js'
-import { DEEP_STYLES, STYLE_KEYS } from '../src/next/deepstyle.js'
+import { DEEP_STYLES, STYLE_KEYS, recommendStyle } from '../src/next/deepstyle.js'
 
 const load = t => JSON.parse(readFileSync(new URL(`./fixtures/deep_${t}.json`, import.meta.url), 'utf-8'))
 const chars = sec => JSON.stringify(sec.body || {}).length
@@ -71,4 +71,13 @@ test('디자인 묶음 넷(3-1) — 묶음 간격·여백으로 줄 폭이 맞�
   assert.deepEqual(spanRange({ size: '보통', shape: '그래프' }, { ...DEEP, ...DEEP_STYLES.info.layout }), [5, 7])
   const plan = load('news'), ti = plan.sections.findIndex(sec => sec.shape === '숫자 타일')
   for (const v of ['row', 'col']) assert.equal(deepLayout(plan, fake(plan), { fix: { [ti]: v } }).pages.flatMap(pg => pg.cells).find(c => c.i === ti).v, v)
+})
+
+test('처음 고르기 추천(3-2) — 보고 = 신문 · 발표 = 잡지 · 숫자 꼭지 셋 이상 = 인포그래픽 · 나머지 차분', () => {
+  const num = { sections: [{ shape: '그래프' }, { shape: '숫자 타일' }, { shape: '그래프' }, { shape: '글' }] }
+  assert.equal(recommendStyle({ 무엇에: '보고·결정' }, num)[0], 'news')
+  assert.equal(recommendStyle({ 누구에게: '윗사람(보고)' })[0], 'news')
+  assert.equal(recommendStyle({ 무엇에: '발표' }, num)[0], 'magazine')
+  assert.equal(recommendStyle({ 무엇에: '알아서' }, num)[0], 'info')
+  assert.equal(recommendStyle({}, load('paper'))[0], 'calm')
 })
