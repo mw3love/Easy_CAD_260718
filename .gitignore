@@ -54,6 +54,7 @@ tools/_sketch_ops/
 tools/_deepmode_probe/
 tools/_deepbody_probe/
 tools/_livecard_probe/
+tools/_deepredo_probe/
 
 # 대회 제출물 — 제안서에 전화번호·사번이 있어 저장소에 올리지 않는다(2026-10-16 사용자 결정)
 대회/

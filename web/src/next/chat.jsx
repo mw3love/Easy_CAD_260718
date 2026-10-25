@@ -19,7 +19,7 @@ import { TIDY_RE } from './tidy.js'
 import { getKairosKey, KEY_RE, keyHeaders, setKairosKey } from './kairosKey.js'
 import { startMic } from './mic.js'
 import { svgPreview } from './svgin.js'
-import { DeepAsk, DeepPlan, briefOf, keptPlan } from './deepchat.jsx'
+import { DeepAsk, DeepConfirm, DeepPlan, REDO_RE, briefOf, keptPlan } from './deepchat.jsx'
 import { recommendStyle } from './deepstyle.js'
 import { LIVE_CSP, LIVE_H, LIVE_W, bigPage, liveSrc } from './livecard.js'
 const LINK_CHAT = '#4f8fe8'
@@ -50,7 +50,7 @@ const askMemo = () => { try { return JSON.parse(localStorage.getItem(ASK_KEY) ||
 const askPrefs = () => Object.fromEntries(Object.entries(askMemo()).filter(([, v]) => Array.isArray(v) && v.length >= 2 && v.at(-1) === v.at(-2)).map(([k, v]) => [k, v.at(-1)]))
 const rememberAsk = (key, kind) => { try { const m = askMemo(); m[key] = [...(m[key] || []), kind].slice(-2); localStorage.setItem(ASK_KEY, JSON.stringify(m)) } catch { /* 기억 못 해도 그만 */ } }
 // 기다리는 동안 보일 말 — 일마다 실제로 일하는 모델(서버 /api/models `jobs`)을 같이(2026-10-20 사용자: 정돈인데 고른 gpt가 보여 헷갈림, 칠판엔 아무 표시가 없어 안 되는 줄 알았음)
-const JOB_LABEL = { live: '▶ 움직이는 카드 만드는 중', tidy: '🧩 정리정돈 중', report: '📄 정리 문서 만드는 중', image: '🎨 그림 그리는 중', icon: '✏️ 아이콘 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 딥모드 지면 만드는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
+const JOB_LABEL = { live: '▶ 움직이는 카드 만드는 중', tidy: '🧩 정리정돈 중', report: '📄 정리 문서 만드는 중', image: '🎨 그림 그리는 중', icon: '✏️ 아이콘 그리는 중', 'deep-plan': '📰 지면 계획 짜는 중', 'deep-build': '📰 딥모드 지면 만드는 중', 'deep-section': '📰 꼭지 다시 쓰는 중', search: '🔎 웹 검색 중', board: '📌 칠판에서 찾는 중' }
 // 「+」 도구 — [길, 이름, 설명, 입력 칸 안내]. 서버는 길(`kind`)을 그대로 따름
 const TOOLS = [['image', '🎨 그림 만들기', '사진·일러스트 같은 그림', '무엇을 그릴까요? 예: 산 위 송신탑 수채화'],
   ['icon', '✏️ 아이콘', '선을 하나하나 고칠 수 있는 도형(SVG)', '무엇의 아이콘? 예: 파라볼라 안테나'],
@@ -60,7 +60,7 @@ const TOOLS = [['image', '🎨 그림 만들기', '사진·일러스트 같은 �
   ['live', '▶ 움직이는 카드', '원리를 직접 만져 보는 카드 하나(고른 것이 재료, 약 45크레딧)', '무엇을 움직여 볼까요? 예: 가격 × 물량 = 수출액'],
   ['deep', '📰 딥모드', '한 주제로 칠판 한 판 — 질문지 → 지면 계획 → 만들기(크레딧 많이)', '어떤 주제로 한 판? 예: 신입에게 어텐션 설명']]   // 딥모드는 서버가 할 수 있을 때만(/api/models `jobs.deep`)
 const EMPTY_ASK = { report: '정리해 줘', tidy: '주제별로 묶어 정돈해 줘' }   // 이름표만 두고 빈 칸으로 보내면
-const BOARD_JOBS = new Set(['tidy', 'report', 'deep-build'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
+const BOARD_JOBS = new Set(['tidy', 'report', 'deep-build', 'deep-section'])   // 칠판을 바꾸거나 칠판 자료로 만드는 일 — 칠판 위에도 알약(main `aiBusy`)
 // 도는 동그라미(칠판 알약·대화창 「생각 중」 공용)
 export const Spinner = () => <><style>{'@keyframes mb-spin{to{transform:rotate(360deg)}}'}</style>
   <span style={{ display: 'inline-block', flex: 'none', width: 11, height: 11, borderRadius: '50%', border: '2px solid #da7756', borderTopColor: 'transparent', animation: 'mb-spin .8s linear infinite' }} /></>
@@ -185,6 +185,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
   const sel = selKey && selKey === skipSel ? [] : ed.current?.selTexts() || []   // eslint-disable-line react-hooks/exhaustive-deps
   const selImgs = selKey && selKey === skipSel ? [] : ed.current?.selImages?.() || []   // 고른 것 속 그림(data: 주소)
   const selN = selKey && selKey === skipSel ? 0 : ed.current?.getSel?.()?.length || 0   // 같이 실리는 것이 있을 때만 칩
+  const deepTg = selN ? ed.current?.deepTarget?.() : null   // 딥모드 판 꼭지를 골랐나(칩·입력 칸 안내 — 5단계)
   const [replyTo, setReplyTo] = useState(null)   // ↩ 이어 물을 답의 at
   // 그림 후보(2026-10-20 사용자): 사진 누르기 = 크게 보기 창, 왼쪽 위 「＋ 칠판에 추가」 하나(늘 보임 — 올리면 반응, 누르면 1.5초 「✓ 추가됨」 뒤 원래대로), 끌기 = 칠판에 추가(정렬선).
   // 옛 「올려 두면 크게 보기」는 없앰 — 버튼으로 가는 사이 큰 그림이 칠판을 가렸고 툴팁 위에서 깜빡였음, 크게 보기는 누르기가 맡음
@@ -266,6 +267,9 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
 
   async function send(text = null, kind = '', from = null) {   // text·kind = 밖에서 시킨 질문(칠판 우클릭 「정리 문서 만들기」 — 입구는 대화창 하나), from = 「그림으로도」(정리 문서와 같은 자료)
     if (text == null && !kind) kind = pickTool   // 입력 칸에서 보낼 때만 이름표(칠판 우클릭 등 밖에서 시킨 질문은 제 길)
+    const tg = !busy && !from && (kind === 'deep-section' || (text == null && !kind)) ? ed.current?.deepTarget?.() : null   // 판 꼭지를 고른 채 고치는 말 = 그 꼭지만 다시(5단계) — 질문은 보통 대화
+    if (kind === 'deep-section' && busy) return
+    if (kind === 'deep-section' || (tg && REDO_RE.test(draft.trim()))) { deepSection(tg, kind === 'deep-section' ? '' : draft.trim()); return }
     if (text == null && !busy && deepSend(kind)) return
     const pend = text == null && !from && replyTo == null ? msgs.findLastIndex(m => m.role !== 'error') : -1
     if (pend >= 0 && msgs[pend].kind === 'ask' && draft.trim() && !busy) return choose(pend, kind, draft.trim())   // 되묻기에 글로 답함(§8 항목64)
@@ -330,9 +334,32 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
   async function deepBuild(i) {
     const m = msgs[i], plan = keptPlan(m)
     const d = await deepCall({ step: 'build', topic: m.topic, brief: m.brief, plan, style: m.style }, 'deep-build'); if (!d) return
-    const r = ed.current?.deepBoard(d.plan || plan, null, m.style); if (!r) return
+    const r = ed.current?.deepBoard(d.plan || plan, null, m.style, { topic: m.topic, brief: m.brief }); if (!r) return
     setMsg(i, { built: r.ids[0], pages: r.pages.length, model: d.model, elapsed: d.elapsed, credits: d.credits })
     ed.current?.showIds([r.ids[0]]); setSkipSel(String(r.ids[0]))   // 보여 주려고 고른 판은 다음 질문에 안 실음(붙이기와 같게)
+  }
+  // 꼭지 다시 쓰기(§8 항목66 5단계) — tg = ed.deepTarget(), ask = 고칠 말(비면 「더 자세히」). 손으로 고친 판이면 크레딧 쓰기 전에 먼저 물음(덮어쓰기 확인 카드)
+  function deepSection(tg, ask) {
+    if (!tg) { setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: '딥모드 판에서 다시 쓸 꼭지를 골라 주세요(프레임째 고르면 안 돼요)' }]); return }
+    const at = Date.now(), mine = { role: 'user', content: `${tg.titles.map(t => `「${t}」`).join(' ')} — ${ask || '더 자세히'}`, at, deep: true }
+    if (ask) setDraft('')
+    if (tg.edited) { update([...msgs.filter(m => m.role !== 'error'), mine, { role: 'assistant', kind: 'deep', step: 'confirm', root: tg.root, idx: tg.idx, titles: tg.titles, ask, at: at + 1 }]); return }
+    update([...msgs.filter(m => m.role !== 'error'), mine]); deepSectionRun(tg, ask)
+  }
+  async function deepSectionRun(tg, ask) {
+    const d = await deepCall({ step: 'section', topic: tg.topic, brief: tg.brief, plan: tg.plan, idx: tg.idx, ask }, 'deep-section'); if (!d) return
+    const r = d.sections?.length ? ed.current?.deepRedoSection(tg.root, d.sections, d.sources) : null
+    if (r) setSkipSel(String(tg.root))   // 다시 지은 판(고른 채)은 다음 질문에 안 실음(붙이기와 같게)
+    const miss = d.missing?.length ? `\n\n그대로 둔 꼭지(못 씀): ${d.missing.join(', ')}` : ''
+    const content = r ? `${d.sections.map(s => `「${s.title}」`).join(' ')}를 다시 써서 판을 다시 지었어요 — 마음에 안 들면 Ctrl+Z 한 번이면 돌아가요${miss}` : `다시 쓰지 못했어요${miss || ' — 판이 지워졌거나 답이 비었어요'}`
+    setMsgs(cur => { const next = [...cur.filter(x => x.role !== 'error'), { role: 'assistant', kind: 'deep', step: 'section', root: tg.root, content, model: d.model, elapsed: d.elapsed, credits: d.credits, at: Date.now() }]; save(next); return next })
+  }
+  // 덮어쓰기 확인 카드 「덮어쓰고 다시 쓰기」 — 그 판 그 꼭지(그사이 고른 것이 바뀌어도)
+  function deepConfirm(i) {
+    const m = msgs[i], tg = ed.current?.deepTarget?.(m.root, m.idx)
+    setMsg(i, { done: true })
+    if (tg) deepSectionRun(tg, m.ask)
+    else setMsgs(cur => [...cur.filter(x => x.role !== 'error'), { role: 'error', content: '그 판이 지워졌어요' }])
   }
   // 되묻기 버튼(또는 기억으로 고른 답의 「다른 쪽으로」) — 고른 길을 기억하고, 같은 질문(그 앞 대화까지)을 그 길로 보내 이 자리에 답을 끼움.
   // add = 덧붙일 말(입력 칸 — 버튼과 같이 눌렀거나 버튼 대신 친 글): 처음 질문 뒤에 붙여 보내고, 길이 안 정해졌으면 서버가 그 말로 고름(못 알아들으면 원래 1등 — 다시 안 물음)
@@ -505,7 +532,9 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
                 <span>기억한 대로 {(ASK_LABEL[m.kind] || [m.kind])[0]} 했어요</span>
                 {m.alt.map(k => <button key={k} data-testid="ask-other" data-kind={k} style={css.ghost} disabled={!!busy} onClick={() => choose(i, k)} title="같은 질문을 이쪽으로 다시 — 다음엔 다시 물어요">{(ASK_LABEL[k] || [k])[0]} 바꾸기</button>)}
               </div>}
-              {m.kind === 'deep' ? (m.step === 'ask'
+              {m.kind === 'deep' ? (m.step === 'section' ? <Answer text={m.content} />
+                : m.step === 'confirm' ? <DeepConfirm m={m} busy={busy} css={css} yes={() => deepConfirm(i)} no={() => setMsg(i, { done: 'no' })} />
+                : m.step === 'ask'
                 ? <DeepAsk m={m} busy={busy} css={css} set={(q, v) => setMsg(i, { brief: { ...m.brief, [q]: v } })} go={() => deepGo(i, draft.trim())} />
                 : <DeepPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
                   pickStyle={k => setMsg(i, { style: k })} build={() => deepBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':deep']: true }))} />)
@@ -581,12 +610,13 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
       <div style={css.foot}>
         {replyTo != null && <span data-testid="reply-chip" style={{ ...css.chip, color: '#da7756', background: 'rgba(218,119,86,.14)', cursor: 'pointer' }} onClick={() => setReplyTo(null)} title="누르면 이어 묻기 취소">
           ↩ 「{replyLabel(replyTo)}」에 이어서 ✕</span>}
-        {selN > 0 && (sel.length > 0 || selImgs.length > 0) && <span data-testid="sel-chip" style={css.chip}>{selN}개 선택됨</span>}{/* 2026-10-21 사용자: 글·그림 칩 둘 + 사용법 문장 → 한 칩(사용법은 설명 페이지로) */}
+        {selN > 0 && (sel.length > 0 || selImgs.length > 0) && <span data-testid="sel-chip" style={css.chip} title={deepTg ? '고치는 말(더 자세히·바꿔 줘·표로…)이면 이 꼭지만 다시 써요 — 묻는 말이면 보통 대화' : undefined}>{selN}개 선택됨{deepTg ? ` · 꼭지 ${deepTg.titles.map(t => `「${t}」`).join(' ')}` : ''}</span>}{/* 2026-10-21 사용자: 글·그림 칩 둘 + 사용법 문장 → 한 칩(사용법은 설명 페이지로) */}
         {pickTool && <span data-testid="tool-chip" style={{ ...css.chip, color: '#da7756', background: 'rgba(218,119,86,.14)', cursor: 'pointer' }} onClick={() => setPickTool('')} title="누르면 이름표를 떼고 다시 앱이 길을 골라요">
           {TOOLS.find(t => t[0] === pickTool)?.[1]} ✕</span>}
         <textarea style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder={TOOLS.find(t => t[0] === pickTool)?.[3] || (lastM?.kind === 'ask' ? '버튼을 누르거나, 원하는 걸 직접 적어 주세요'
             : lastM?.kind === 'deep' && lastM.step === 'ask' && !lastM.done ? '꼭 넣을 것·바라는 점(비워도 돼요) — Enter = 지면 계획 짜기'
-            : lastM?.kind === 'deep' && lastM.step === 'plan' && !lastM.built && !lastM.stale ? '계획을 고칠 점을 말하면 다시 짜요 — 예: 그래프를 하나 더' : '물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)')}
+            : lastM?.kind === 'deep' && lastM.step === 'plan' && !lastM.built && !lastM.stale ? '계획을 고칠 점을 말하면 다시 짜요 — 예: 그래프를 하나 더'
+            : deepTg ? '이 꼭지를 고칠 점을 말하면 그 꼭지만 다시 써요 — 예: 더 자세히 · 표로 바꿔 줘' : '물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)')}
           onChange={e => { if (mic === 'listen') micStop.current?.(); setDraft(e.target.value) }}
           onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>   {/* 모델 고르기 = 입력 칸 옆(2026-10-20 사용자 — Gemini·Claude·ChatGPT처럼 묻는 자리에서) */}

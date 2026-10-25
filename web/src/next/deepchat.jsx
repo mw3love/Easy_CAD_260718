@@ -69,3 +69,17 @@ export function DeepPlan({ m, drop, pickStyle, build, show, busy, css }) {
         <span style={css.meta}>{est?.seconds ? `${rng(est.seconds, '초')} 걸려요(추정) · ` : ''}꼭지 {left}개 · 고칠 점은 아래 칸에 말하면 계획을 다시 짜요</span></>}
   </div>
 }
+
+// 꼭지 다시 쓰기(5단계) — 판 꼭지를 고른 채 이런 말 = 그 꼭지만 다시(묻는 말은 보통 대화 — 질문 하나에 꼭지가 바뀌면 안 됨). 「정리해」는 정리 문서·정돈 길이라 뺌
+export const REDO_RE = /자세히|자세하게|바꿔|바꾸|고쳐|고치|다시|넣어|추가|더해|보태|빼|지워|없애|줄여|늘려|채워|쉽게|짧게|길게|간단|단순|표로|그래프로|숫자로|예시|더\s|덜\s/
+
+// 덮어쓰기 확인 — m = { titles, ask, done }. 판을 손으로 고친 뒤면 다시 지을 때 덮어써서, 크레딧을 쓰기 전에 한 번 물음(속성 카드 「디자인」과 같은 생각)
+export function DeepConfirm({ m, busy, css, yes, no }) {
+  return <div data-testid="deep-confirm-chat" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <span>이 판에 손으로 고친 것이 있어요. {m.titles.map(t => `「${t}」`).join(' ')}를 다시 쓰면 판을 다시 지어서 손으로 고친 것을 덮어써요(Ctrl+Z로 되돌릴 수 있어요).</span>
+    {m.done ? <span style={css.meta}>{m.done === 'no' ? '그대로 뒀어요' : '덮어쓰고 다시 썼어요'}</span>
+      : <div style={{ display: 'flex', gap: 6 }}>
+        <button data-testid="deep-confirm-chat-yes" style={css.pin} disabled={!!busy} onClick={yes}>덮어쓰고 다시 쓰기</button>
+        <button style={css.ghost} disabled={!!busy} onClick={no}>그대로</button></div>}
+  </div>
+}

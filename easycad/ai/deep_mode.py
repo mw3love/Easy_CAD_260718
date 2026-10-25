@@ -157,9 +157,10 @@ def make_plan(client, topic: str, brief: dict, *, prev: dict | None = None, fix:
     return {"plan": plan, "estimate": estimate(plan), "model": model, "elapsed": round(time.time() - t0, 1)}
 
 
-def gather(key: str, plan: dict, *, base_url: str = gw.BASE_URL, day: str = "", exa=None, kr=None) -> dict:
+def gather(key: str, plan: dict, *, base_url: str = gw.BASE_URL, day: str = "", exa=None, kr=None, known=None) -> dict:
     """꼭지마다 재료 글 + 판 전체 출처 목록 {"sources": [{n, title, url}], "materials": [{"text"} | None]}.
-    재료 글 속 [k](도구마다 따로 매긴 번호)는 판 번호 [n]으로 바꿈. 공공 데이터가 비면 웹 검색으로 갈아탐. exa·kr = 시험용 바꿔 끼우기."""
+    재료 글 속 [k](도구마다 따로 매긴 번호)는 판 번호 [n]으로 바꿈. 공공 데이터가 비면 웹 검색으로 갈아탐. exa·kr = 시험용 바꿔 끼우기.
+    known = 판에 이미 있는 출처(꼭지 다시 쓰기 — 같은 주소는 같은 번호, 새 출처는 그 뒤 번호)."""
     exa = exa or (lambda q: board_chat.exa_answer(key, q, board_chat.SEARCH_SYSTEM, base_url=base_url))
     kr = kr or (lambda q: kr_tools.gather(key, q, base_url=base_url, today=day or today()))
 
@@ -184,7 +185,7 @@ def gather(key: str, plan: dict, *, base_url: str = gw.BASE_URL, day: str = "", 
     secs = plan.get("sections") or []
     with ThreadPoolExecutor(max_workers=max(1, len(secs))) as ex:
         got = list(ex.map(one, secs))
-    allsrc, mats = [], []
+    allsrc, mats = [dict(x) for x in known or []], []
     for g in got:
         if not g:
             mats.append(None)
@@ -257,10 +258,108 @@ def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: st
             + ([plan["sections"][li]["title"] + "(움직이는 카드: " + card["error"] + ")"] if card and card.get("error") else [])}
 
 
-def _live(client, plan: dict, mat: dict, idx: int, brief: dict) -> dict:
-    """원리 꼭지 하나의 카드 HTML — 못 만들면 {"error"}(판은 그대로 짓고 그 꼭지만 설명 메모)."""
+def _live(client, plan: dict, mat: dict, idx: int, brief: dict, ask: str = "") -> dict:
+    """원리 꼭지 하나의 카드 HTML — 못 만들면 {"error"}(판은 그대로 짓고 그 꼭지만 설명 메모).
+    ask = 꼭지 다시 쓰기의 고칠 말 — 그 꼭지에 카드가 있으면 그 카드를 고침(대화창 4-3과 같은 길)."""
     who = (brief or {}).get("누구에게")
+    aud = who if who and who != AUTO else "처음 보는 사람"
     try:
-        return live_card.make(client, "", user=live_card.section_prompt(plan, mat, idx), audience=who if who and who != AUTO else "처음 보는 사람")
+        old = ((plan.get("sections") or [])[idx].get("body") or {}).get("html") if ask else ""
+        if old:
+            return live_card.make(client, ask, prev_html=old, audience=aud)
+        return live_card.make(client, "", user=live_card.section_prompt(plan, mat, idx), audience=aud)
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"[:200]}
+
+
+# ── 꼭지 다시 쓰기(5단계, 2026-10-25) — 판에서 고른 꼭지만: 재료 다시(검색 문장 + 고칠 말) → 그 꼭지들만 본문, 카드면 그 카드 고치기. 판은 칠판이 다시 지음(`deepRedo`) ──
+NEED = {"주인공 글": "text", "용어 풀이": "terms", "단계 카드": "steps", "그래프": "rows", "표": "rows", "숫자 타일": "tiles", "확인 문제": "items", "출처 카드": "links", "접힌 메모": "md", "움직이는 카드": "note"}
+MORE = "더 자세히 — 빠진 내용을 채우고 한두 항목 더"   # 고칠 말 없이 「다시 만들기」
+REDO = """
+이번엔 판 전체가 아니라 **고칠 꼭지만** 다시 쓴다(판의 다른 꼭지는 그대로 — 내용이 겹치지 않게).
+- 「지금 본문」을 바탕으로 사용자 요청대로 고친다. 요청에 없는 것은 그대로 둔다.
+- 그래프는 열(계열)을 그대로 두고 같은 열을 채우는 항목만 더한다 — 빈 칸이 생기는 줄·다른 기준의 숫자는 넣지 말고 caption에 한 줄로(5-0 실측: 빈 칸 섞인 그래프).
+- 사용자가 다른 모양을 말했을 때만 "shape": 새 모양(위 모양 칸 중 하나 — 움직이는 카드·출처 카드 빼고). 아니면 shape 칸을 쓰지 않는다.
+- 출력: {{"sections": [{{"title": "꼭지 제목 그대로", "shape"(바꿀 때만): "…", "body": {{…}}}}, …]}}"""
+
+
+def redo_text(plan: dict, idx: list, mat: dict, ask: str, board: str = "") -> str:
+    secs = plan.get("sections") or []
+    lines = [f"[지면] {plan.get('title')} — {plan.get('headline')}", "",
+             "[판의 다른 꼭지 — 겹치지 않게] " + " · ".join(s.get("title", "") for j, s in enumerate(secs) if j not in idx), "", "[고칠 꼭지]"]
+    for k, i in enumerate(idx):
+        s = secs[i]
+        lines.append(f"{k + 1}. {s.get('title')} · 모양 {s.get('shape')}{' · ' + s['chart'] if s.get('chart') else ''} · 출처 {s.get('source')} · 크기 {s.get('size')}\n   독자의 질문: {s.get('question')}")
+        lines.append("   [지금 본문] " + json.dumps(s.get("body") or {}, ensure_ascii=False)[:4000])
+        m = mat["materials"][k]
+        if m and m.get("text"):
+            lines.append("   [재료]\n" + "\n".join("   " + x for x in m["text"][:5000].splitlines()))
+        elif s.get("source") in ("web", "kr"):
+            lines.append("   [새 재료 없음 — 지금 본문의 숫자·출처 번호는 그대로 써도 됨]")
+        elif s.get("source") == "board":
+            lines.append("   [재료 = 아래 「이 칠판」]" if board else "   [이 칠판이 비어 있음 — 일반 지식으로, 숫자 없이]")
+    if board:
+        lines.append("\n[이 칠판에 있는 자료]\n" + board[:8000])
+    lines.append(f"\n[사용자 요청]\n{ask}")
+    lines.append("\n[출처 번호]\n" + ("\n".join(f"[{s['n']}] {s['title']} — {s['url']}" for s in mat["sources"]) or "(없음)"))
+    return "\n".join(lines) + "\n\n고칠 꼭지마다 body를 다시 써서 JSON 하나로."
+
+
+def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None) -> dict:
+    """판(꼭지마다 body + sources) + 고른 꼭지 번호 + 고칠 말 → {"sections": [{"i", …꼭지(새 body)}], "sources"(판 전체 — 새 출처는 뒤 번호), "model", "elapsed", "missing"}.
+    출처 카드는 다시 쓸 게 없어 뺌(칠판이 판에서 쓴 번호로 채움). 움직이는 카드 꼭지 = 그 카드를 고칠 말대로(카드가 없으면 새로)."""
+    t0, day = time.time(), today()
+    secs = plan.get("sections") or []
+    idx = sorted({int(i) for i in idx or [] if isinstance(i, int) or str(i).isdigit()})
+    idx = [i for i in idx if 0 <= i < len(secs) and secs[i].get("shape") != "출처 카드"]
+    if not idx:
+        raise ValueError("다시 쓸 꼭지가 없어요 — 판에서 꼭지 하나를 골라 주세요(출처 카드는 판에서 쓴 출처를 보일 뿐이에요)")
+    user_ask = str(ask or "").strip()[:500]
+    ask = user_ask or MORE
+    known = [x for x in plan.get("sources") or [] if isinstance(x, dict) and isinstance(x.get("n"), int)]
+    words = [i for i in idx if secs[i].get("shape") != "움직이는 카드"]
+    cards = [i for i in idx if secs[i].get("shape") == "움직이는 카드"]
+    sub = {"sections": [{**secs[i], "query": ((secs[i].get("query") or secs[i].get("title") or "") + (" " + user_ask if user_ask else ""))[:300]} for i in words]}
+    mat = gather(key, sub, base_url=base_url, day=day, exa=exa, kr=kr, known=known) if any(s.get("source") in ("web", "kr") for s in sub["sections"]) else {"sources": known, "materials": [None] * len(words)}
+    full = {"sources": mat["sources"], "materials": [None] * len(secs)}   # 카드 새로 만들기(section_prompt)가 읽는 꼴
+    for k, i in enumerate(words):
+        full["materials"][i] = mat["materials"][k]
+
+    def write_words():
+        if not words:
+            return {}
+        shapes = sorted({secs[i]["shape"] for i in words} | ({sh for sh in SCHEMA if sh not in ("움직이는 카드", "출처 카드")} if user_ask else set()))
+        who = (brief or {}).get("누구에게")
+        system = WRITER.format(audience=who if who and who != AUTO else "처음 보는 사람", today=day, schema="\n".join(f"- {sh}: {SCHEMA[sh]}" for sh in shapes if sh in SCHEMA)) + REDO.format()
+        r = client.chat.completions.create(model=model, max_tokens=6000, messages=[
+            {"role": "system", "content": system}, {"role": "user", "content": redo_text(plan, words, mat, ask, board)}])
+        got = [s for s in (parse_json(r.choices[0].message.content or "") or {}).get("sections") or [] if isinstance(s, dict)]
+        out = {}
+        for k, i in enumerate(words):   # 제목이 조금 바뀌어 와도 차례로
+            s = next((x for x in got if str(x.get("title")) == secs[i]["title"]), got[k] if k < len(got) else None)
+            if s:
+                out[i] = s
+        return out
+
+    with ThreadPoolExecutor(max_workers=1 + len(cards)) as ex:
+        fw = ex.submit(write_words)
+        fc = {i: ex.submit(_live, client, {**plan, "sources": mat["sources"]}, full, i, brief, ask) for i in cards}
+        got, made = fw.result(), {i: f.result() for i, f in fc.items()}
+    res, missing = [], []
+    for i in idx:
+        s = secs[i]
+        if i in made:
+            c = made[i]
+            if c.get("html"):
+                res.append({**s, "i": i, "body": {**(s.get("body") or {}), "html": c["html"], "card_model": c["model"]}})
+            else:
+                missing.append(f"{s['title']}(움직이는 카드: {c.get('error') or '못 만듦'})")
+            continue
+        g = got.get(i) or {}
+        shape = g.get("shape") if user_ask and g.get("shape") in NEED and g.get("shape") not in ("움직이는 카드", "출처 카드") else s["shape"]
+        body = g.get("body")
+        if not isinstance(body, dict) or NEED.get(shape) not in body:   # 칸이 틀린 답 = 그 꼭지는 그대로(빈 꼭지로 덮지 않음)
+            missing.append(s["title"])
+            continue
+        res.append({**s, "i": i, "shape": shape, "chart": s.get("chart") if shape == "그래프" else None, "body": body})
+    return {"sections": res, "sources": mat["sources"], "model": model if words else live_card.LIVE_MODEL, "elapsed": round(time.time() - t0, 1), "missing": missing}

@@ -174,7 +174,7 @@ function AlignRow({ align }) {
   </div>
 }
 // 딥모드 판(§8 항목66 3-1) — 「디자인」 = 같은 내용을 다른 묶음으로 다시 짓기, 「꼭지 모양」 = 고른 꼭지만 다른 모양(나머지는 그대로 다시 배치).
-// deep = { style, edited(), onStyle(키), sec: { shape, cur, opts, onPick(모양) } | null }. 손으로 고친 게 있으면 덮어쓰기 전에 카드 안에서 한 번 물음(브라우저 확인 창 없이)
+// deep = { style, edited(), onStyle(키), sec: { shape, cur, opts, onPick(모양) } | null, redo: { n, card, go() } | null(꼭지 다시 쓰기 — 5단계, 대화창이 맡음) }. 손으로 고친 게 있으면 덮어쓰기 전에 카드 안에서 한 번 물음(브라우저 확인 창 없이)
 function DeepRows({ deep }) {
   const [ask, setAsk] = useState(null)   // 덮어쓰기 확인을 기다리는 디자인 키
   const pick = k => { if (k === deep.style) return; if (deep.edited()) setAsk(k); else deep.onStyle(k) }
@@ -187,6 +187,8 @@ function DeepRows({ deep }) {
         <button onClick={() => setAsk(null)} style={btn(false, { flex: 1, fontSize: 12, background: C.seg })}>그대로</button></div></div>}
     {deep.sec && <Row label="꼭지"><div data-testid="deep-variants" style={{ flex: 1, display: 'flex', gap: 2, background: C.seg, borderRadius: 8, padding: 2 }}>
       {deep.sec.opts.map(v => <button key={v} data-variant={v} aria-pressed={deep.sec.cur === v} title={`이 꼭지만 ${variantName(deep.sec.shape, v)} — 나머지는 그대로 다시 배치`} onClick={() => v !== deep.sec.cur && deep.sec.onPick(v)} style={btn(deep.sec.cur === v, { flex: 1, fontSize: 12 })}>{variantName(deep.sec.shape, v)}</button>)}</div></Row>}
+    {deep.redo && <button data-testid="deep-redo" onClick={deep.redo.go} title={`${deep.redo.n > 1 ? `고른 꼭지 ${deep.redo.n}개만` : '이 꼭지만'} 더 자세히 다시 써요 — KAIROS 약 ${deep.redo.card ? '60' : 20 * deep.redo.n + '~' + 30 * deep.redo.n}크레딧(추정). 고칠 점은 대화창에 말해도 돼요`}
+      style={btn(false, { fontSize: 12, background: C.seg })}>{deep.redo.n > 1 ? `꼭지 ${deep.redo.n}개 더 자세히` : '이 꼭지 더 자세히'}</button>}
   </div>
 }
 // 표 글자 「자동」 켜고 끄기(2026-10-18 사용자: 끄려고 크기를 일부러 바꿔야 했음) — 켜짐 = 칸에 맞춰 줄어듦, 끄면 지금 보이는 크기 그대로 고정

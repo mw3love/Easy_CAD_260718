@@ -219,7 +219,8 @@ class Handler(SimpleHTTPRequestHandler):
         return self._json(200, out)
 
     def _deep(self, req: dict, key: str):
-        """딥모드 → step plan: {"kind": "deep", "plan"(본문 없이), "estimate", "model", "elapsed"} · step build: {"kind": "deep", "plan"(꼭지마다 body + sources), "model", "elapsed", "missing"}.
+        """딥모드 → step plan: {"kind": "deep", "plan"(본문 없이), "estimate", "model", "elapsed"} · step build: {"kind": "deep", "plan"(꼭지마다 body + sources), "model", "elapsed", "missing"}
+        · step section(5단계): {"kind": "deep", "step": "section", "sections": [{"i", …새 꼭지}], "sources"(판 전체), "model", "elapsed", "missing"}.
         판은 칠판이 짓는다(`ed.deepBoard`). 재료 꼭지 board = 이 칠판의 저장된 글."""
         d = req.get("deep") if isinstance(req.get("deep"), dict) else {}
         step, topic = d.get("step"), str(d.get("topic") or "")
@@ -238,11 +239,19 @@ class Handler(SimpleHTTPRequestHandler):
                 out = deep_mode.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, board=material)
                 sys.stderr.write("[딥모드 만들기] %s %.1f초 출처 %d%s\n" % (out["model"], out["elapsed"], len(out["plan"]["sources"]), " 재료 없음: " + ", ".join(out["missing"]) if out["missing"] else ""))
                 return self._json(200, {"kind": "deep", **out})
+            if step == "section":   # 판에서 고른 꼭지만 다시(5단계) — plan = 칠판 `deep_plan.plan`(꼭지마다 body + sources), 판은 칠판이 다시 지음
+                plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
+                idx = d.get("idx") if isinstance(d.get("idx"), list) else []
+                uses_board = any(isinstance(s, dict) and s.get("source") == "board" for j, s in enumerate(plan.get("sections") or []) if j in idx)
+                material = self._board_material(self._name(str(req.get("board") or ""))) if uses_board else ""
+                out = deep_mode.redo(key, gw._client(key, base, timeout=600), plan, idx, brief, str(d.get("ask") or ""), base_url=base, board=material)
+                sys.stderr.write("[딥모드 꼭지 다시] %s %.1f초 꼭지 %s%s\n" % (out["model"], out["elapsed"], [s["i"] for s in out["sections"]], " 못 씀: " + ", ".join(out["missing"]) if out["missing"] else ""))
+                return self._json(200, {"kind": "deep", "step": "section", **out})
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:
             return self._json(502, {"error": f"KAIROS 딥모드 실패: {e}"})
-        return self._json(400, {"error": "딥모드 단계(plan·build)를 몰라요"})
+        return self._json(400, {"error": "딥모드 단계(plan·build·section)를 몰라요"})
 
     def _live(self, ask: str, material: str, key: str, prev_html: str = ""):
         """움직이는 카드 하나 → {"kind": "live", "content", "title", "html", "model", "elapsed"} — 칠판에 붙이면 문서 카드 `live`(스크립트만 켠 칸).

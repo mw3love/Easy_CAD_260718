@@ -139,7 +139,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepRedo, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepRedo, deepTarget, deepRedoSection, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -945,9 +945,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 프레임 = 폭 1600 · 높이는 내용만큼(16:9 고집 버림 — 같은 날 2차 판정). 프레임 번호 = 발표 차례. 되돌리기 한 번에 통째로.
   // 3-1 디자인 묶음: 첫 프레임에 `deep_plan` { plan, style, fix, vs, sig } — 같은 내용을 다른 묶음·꼭지 모양으로 다시 지음(`deepRedo`).
   // 지은 물건마다 `deep_of` = 첫 프레임 _id(다시 지을 때 지울 것), 꼭지 물건은 `deep_sec` = 꼭지 번호(「꼭지 모양」)
-  const deepSig = items => { const t = JSON.stringify(items.filter(it => it.type !== 'frame').map(it => [it.type, it.deep_sec ?? -1, Math.round(it.pos[0]), Math.round(it.pos[1]), (it.lines || []).map(l => l.t), it.cells, it.chart || '', it.fill || '']))
-    let h = 5381; for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return String(h >>> 0) }   // 손으로 고쳤나(다시 지을 때 먼저 물음) — 자리·글·칸만
-  function deepBuild(plan, o, { style = 'calm', fix = {}, keep = null } = {}) {
+  const deepSig = items => { const t = JSON.stringify(items.filter(it => it.type !== 'frame').map(it => [it.type, it.deep_sec ?? -1, Math.round(it.pos[0]), Math.round(it.pos[1]), (it.lines || []).map(l => l.t), it.cells, it.chart || '', it.fill || '', ...(it.html ? [it.html.length, it.html.slice(-80)] : [])]))
+    let h = 5381; for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return String(h >>> 0) }   // 손으로 고쳤나(다시 지을 때 먼저 물음) — 자리·글·칸만(+ 움직이는 카드 HTML — 5단계)
+  // meta = { topic, brief } — 꼭지 다시 쓰기(5단계)가 「누구에게」를 알게 계획과 같이 둠
+  function deepBuild(plan, o, { style = 'calm', fix = {}, keep = null, meta = {} } = {}) {
     const m = R.current.model, S = styleOf(style), lay = deepLayout(plan, deepMeasure(plan, S.look), { ...S.layout, fix }), n = lay.pages.length
     const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = keep ? keep.no - 1 : orderedFrames(m.items).length, out = [], links = []
     const rootId = keep?.id || newId(), vs = {}
@@ -968,14 +969,14 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         out.push({ ...arrowItem(a, pa.p, b, pb.p, { auto_route: true, pts, color: S.look.arrow || '#ffc4613f', width: 1.5, style: 1, head: true, head_start: false }), z: zt, group_id: A.group_id, deep_of: rootId, deep_sec: A.deep_sec })
       }
     } finally { R.current.model = keepM }
-    out[0] = { ...out[0], deep_plan: { plan, style, fix, vs, sig: deepSig(out) } }
+    out[0] = { ...out[0], deep_plan: { ...meta, plan, style, fix, vs, sig: deepSig(out) } }
     return { out, lay, n, o }
   }
   const deepInfo = r => ({ ids: r.out.map(it => it._id), pages: r.lay.pages.map(pg => ({ x: r.o.x + pg.x, y: r.o.y, w: pg.W, h: pg.H, waste: deepWaste(pg), rows: r.lay.rows.map(rr => rr.slots.map((sl, k) => `${sl.map(i => i + (rr.v[i] ? rr.v[i][0] : '')).join('+')}:${rr.spans[k]}`).join(' ')) })) })
   // at = 첫 장 왼쪽 위(없으면 지금 칠판의 오른쪽 빈자리)
-  function deepBoard(plan, at, style = 'calm') {
+  function deepBoard(plan, at, style = 'calm', meta = {}) {
     const m = R.current.model, right = m.items.length ? unionBox(m.items.map(it => sceneBox(it, textBox))) : null, o = at || (right ? { x: right.x + right.w + 200, y: right.y } : { x: 0, y: 0 })
-    const r = deepBuild(plan, o, { style })
+    const r = deepBuild(plan, o, { style, meta })
     commit([...m.items, ...r.out], [], '딥모드 지면')
     setStatus(`딥모드 지면 — ${r.n}장 · 꼭지 ${plan.sections?.length || 0}개 · ${styleOf(style).name}`)
     return deepInfo(r)
@@ -984,16 +985,35 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const deepRoot = it => { if (!it) return null; const items = R.current.model.items; return it.deep_plan ? it : it.deep_of ? items.find(x => x._id === it.deep_of && x.deep_plan) || null : null }
   const deepEdited = root => deepSig(R.current.model.items.filter(it => it.deep_of === root._id || it._id === root._id)) !== root.deep_plan.sig
   // 같은 내용을 다른 디자인(style)·꼭지 모양(fix = { 꼭지: 모양 })으로 다시 지음 — 첫 프레임 자리·번호·_id는 그대로(발표 차례 유지), 되돌리기 한 번
-  function deepRedo(rootId, { style, fix } = {}) {
+  // plan·fixAll = 꼭지 다시 쓰기(5단계 `deepRedoSection`) — 새 계획과 모양 기억 통째
+  function deepRedo(rootId, { style, fix, plan, fixAll } = {}) {
     const m = R.current.model, root = m.items.find(it => it._id === rootId && it.deep_plan); if (!root) return null
-    const d = root.deep_plan, st = style || d.style, fx = fix ? { ...d.fix, ...fix } : d.fix
+    const d = root.deep_plan, st = style || d.style, fx = fixAll || (fix ? { ...d.fix, ...fix } : d.fix)
+    const meta = Object.fromEntries(['topic', 'brief'].filter(k => d[k] != null).map(k => [k, d[k]]))
     const rest = m.items.filter(it => it._id !== rootId && it.deep_of !== rootId)
     R.current.model = { ...m, items: rest }   // 지을 자리 계산·길 찾기가 옛 물건을 안 보게
     let r
-    try { r = deepBuild(d.plan, { x: root.pos[0], y: root.pos[1] }, { style: st, fix: fx, keep: { id: rootId, no: root.no } }) } finally { R.current.model = m }
-    commit([...deepRebind(m.items, rest, r.out, rootId), ...r.out], [rootId], style ? `디자인 — ${styleOf(st).name}` : '꼭지 모양')
-    setStatus(style ? `디자인을 「${styleOf(st).name}」로 다시 지었어요 — 마음에 안 들면 Ctrl+Z` : '꼭지 모양을 바꿔 다시 배치했어요 — Ctrl+Z로 되돌리기')
+    try { r = deepBuild(plan || d.plan, { x: root.pos[0], y: root.pos[1] }, { style: st, fix: fx, keep: { id: rootId, no: root.no }, meta }) } finally { R.current.model = m }
+    commit([...deepRebind(m.items, rest, r.out, rootId), ...r.out], [rootId], plan ? '꼭지 다시 쓰기' : style ? `디자인 — ${styleOf(st).name}` : '꼭지 모양')
+    setStatus(plan ? '꼭지를 다시 써서 판을 다시 지었어요 — Ctrl+Z로 되돌리기' : style ? `디자인을 「${styleOf(st).name}」로 다시 지었어요 — 마음에 안 들면 Ctrl+Z` : '꼭지 모양을 바꿔 다시 배치했어요 — Ctrl+Z로 되돌리기')
     return deepInfo(r)
+  }
+  // 꼭지 다시 쓰기(§8 항목66 5단계) — 고른 것이 한 판의 꼭지들뿐이면 { root, idx, titles, edited, plan, brief, topic }.
+  // 프레임·머리를 같이 골랐거나 출처 카드뿐이면 null(판 통째는 대화창 계획 카드로 — 이번 범위 밖). rootId·only = 고른 것 대신 그 판 그 꼭지(덮어쓰기 확인 뒤 — 그사이 고른 것이 바뀌어도)
+  function deepTarget(rootId, only) {
+    const m = R.current.model, ids = new Set(movingSet(R.current.sel)), selIt = m.items.filter(it => ids.has(it._id))
+    const root = rootId ? m.items.find(it => it._id === rootId && it.deep_plan) : selIt.length ? deepRoot(selIt[0]) : null
+    if (!root || (!rootId && selIt.some(it => deepRoot(it) !== root || !Number.isInteger(it.deep_sec)))) return null
+    const d = root.deep_plan, secs = d.plan.sections || [], idx = only || [...new Set(selIt.map(it => it.deep_sec))].sort((a, b) => a - b)
+    if (idx.every(i => !secs[i] || secs[i].shape === '출처 카드')) return null
+    return { root: root._id, idx, titles: idx.map(i => secs[i]?.title || ''), edited: deepEdited(root), plan: d.plan, brief: d.brief || {}, topic: d.topic || d.plan.title || '' }
+  }
+  // 서버가 다시 쓴 꼭지([{ i, …꼭지 }]) + 판 출처 → 계획에 적고 다시 지음 — 계획에 적으니 「디자인」으로 다시 지어도 새 꼭지(4단계에서 남긴 것). 모양이 바뀐 꼭지는 모양 기억(fix)을 지움
+  function deepRedoSection(rootId, secs, sources) {
+    const root = R.current.model.items.find(it => it._id === rootId && it.deep_plan); if (!root || !secs?.length) return null
+    const d = root.deep_plan, ss = [...d.plan.sections], fix = { ...d.fix }
+    for (const { i, ...s } of secs) if (ss[i]) { if (ss[i].shape !== s.shape) delete fix[i]; ss[i] = s }
+    return deepRedo(rootId, { plan: { ...d.plan, sections: ss, ...(sources ? { sources } : {}) }, fixAll: fix })
   }
   // 다시 지을 때 손으로 그린 화살표(판 밖 물건)의 끝 — 옛 판 물건에 붙어 있었으면 같은 꼭지·같은 종류의 새 물건(그 꼭지 안 차례도 같게)으로 옮겨 붙임.
   // 물건 안 점은 크기 비율로 옮김(테두리 위 점은 새 테두리 위로). 맞는 새 물건이 없으면 끝이 그 자리에 떠 있음
@@ -1024,8 +1044,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const selIt = R.current.sel.map(id => R.current.model.items.find(it => it._id === id)).filter(Boolean), root = deepRoot(selIt.find(it => it.deep_plan || it.deep_of)); if (!root) return null
     const d = root.deep_plan, secs = [...new Set(selIt.map(it => it.deep_sec))], si = secs.length === 1 && Number.isInteger(secs[0]) ? secs[0] : null
     const sec = si != null ? d.plan.sections[si] : null, opts = sec ? variantsOf(sec) : []
+    const tg = onAsk ? deepTarget() : null   // 꼭지 다시 쓰기(5단계) = 대화창이 맡음(덮어쓰기 확인·크레딧 표시도 거기)
     return { style: d.style || 'calm', edited: () => deepEdited(root), onStyle: k => deepRedo(root._id, { style: k }),
-      sec: opts.length > 1 ? { shape: sec.shape, cur: d.fix?.[si] || d.vs?.[si] || opts[0], opts, onPick: v => deepRedo(root._id, { fix: { [si]: v } }) } : null }
+      sec: opts.length > 1 ? { shape: sec.shape, cur: d.fix?.[si] || d.vs?.[si] || opts[0], opts, onPick: v => deepRedo(root._id, { fix: { [si]: v } }) } : null,
+      redo: tg ? { n: tg.idx.length, card: tg.idx.some(i => d.plan.sections[i]?.shape === '움직이는 카드'), go: () => onAsk('', 'deep-section') } : null }
   }
   // 웹 검색 답(§8 항목61 ② 담는 법, 2026-10-19) = 요약 메모 + 오른쪽에 출처 웹 카드(본문에 쓰인 번호만, 제목 앞 [n], 가벼운 제목 카드 — 칸 안 페이지 없음) + 메모 → 카드 화살표, 한 묶음.
   // 「어디서 왔는지」가 칠판 위 선으로 보이게(회사 KAIROS 웹은 답과 출처가 따로 놂). 출처가 없으면 메모 하나(cardItem)
