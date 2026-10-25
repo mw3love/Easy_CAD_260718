@@ -53,7 +53,7 @@ def test_trace_smaller_width_shrinks_fonts_too(monkeypatch):
     _fake(monkeypatch, {})
     out = board_trace.trace("k", _png(400, 200), width=200, base_url="http://x")   # 배율 0.5 = SCALE의 1/4
     text = next(d for d in out["items"] if d["type"] == "text")
-    assert text["font"] == 6 and out["w"] == 200                            # 14 / 4 → 4 → 바닥 6
+    assert text["font"] == 4 and out["w"] == 200                            # 14 / 4 = 3.5 → 4(바닥 2 — 작게 놓이면 글자도 작게)
 
 
 def test_trace_big_photo_is_fitted_before_sending(monkeypatch):
@@ -145,3 +145,11 @@ def test_desktop_only_locked_picked_menu_is_unlock_and_toggle():
     assert labels == ["잠금 해제 (1개)", "잠금 전환\tCtrl+L"]
     w.toggle_lock_selection()                                          # 잠긴 것만 = 풀기
     assert not a._locked and a.isSelected() and b._locked
+
+
+def test_trace_font_missing_still_scales(monkeypatch):
+    """AI가 글자 크기를 안 적어도 기본값(글 13)에 배율 — 작게 놓인 그림 옆에서 글이 상자 밖으로 넘치지 않게(10-25 실조건)"""
+    monkeypatch.setattr(board_trace.gw, "_client", lambda key, base, timeout=0: None)
+    monkeypatch.setattr(board_trace, "generate_ops_tiled", lambda *a, **k: ({"ops": [{"op": "text", "x": 0, "y": 0, "text": "가"}]}, []))
+    out = board_trace.trace("k", _png(400, 200), width=200, base_url="http://x")
+    assert out["items"][0]["font"] == 3                                # 13 / 4 = 3.25 → 3

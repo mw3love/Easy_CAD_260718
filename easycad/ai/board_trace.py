@@ -20,8 +20,10 @@ def _scale_fonts(spec: dict, k: float) -> dict:
     """ops의 글자 크기는 SCALE(2배)에 맞춘 값 — 다른 배율로 그리면 글자도 같은 비율로(회전 축 계산도 이 값을 씀)."""
     out = []
     for op in spec.get("ops", []):
-        if isinstance(op, dict) and isinstance(op.get("font"), (int, float)):
-            op = {**op, "font": max(6, round(op["font"] * k))}
+        if isinstance(op, dict) and op.get("op") in ("text", "box"):   # 글자 크기를 안 적은 것도 기본값(`ops_to_sketch` 글 13·상자 15)에 배율을
+            f = op.get("font")
+            f = f if isinstance(f, (int, float)) else (13 if op["op"] == "text" else 15)
+            op = {**op, "font": max(2, round(f * k))}   # 바닥 2 — 그림이 작게 놓이면 글자도 작게(6이면 상자 밖으로 넘쳐 겹쳤음, 10-25 실조건)
         out.append(op)
     return {**spec, "ops": out}
 
