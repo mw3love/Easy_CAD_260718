@@ -117,7 +117,7 @@ easycad/
 │   ├── deep_mode.py        웹 칠판 딥모드(§8 항목66) — 주제 + 질문지 답 → 편집장(claude-opus-5-5) 지면 계획 → 꼭지마다 재료(Exa·공공 데이터, 못 찾으면 웹) → 기자(claude-sonnet-5-5) 본문, 판은 칠판 `deepBoard`가 지음(서버 `/api/chat` `kind: 'deep'`) + 고른 꼭지만 다시 쓰기(`redo`, `step: 'section'`)
 │   ├── live_card.py        웹 칠판 「움직이는 카드」(§8 항목66 4단계) — 원리를 직접 만져 보는 HTML 한 장(gpt-6.1-sol — 4-0 실측 `tools/livecard_probe.py`), 딥모드 원리 꼭지(본문과 동시)·대화창 「+ › 움직이는 카드」(`kind: 'live'`)·말로 고치기(`prev_kind`), 칠판은 `livecard.js` 틀에서만 돌림
 │   ├── board_find.py       웹 칠판 「뜻으로 찾기」 — 칠판 글 → KAIROS 임베딩(qwen3.7) 점수·낱말 가산, 뜻 숫자는 `<이름>.emb.json`(§8 항목61 ③-2, 서버 `/api/find`·대화 「칠판에서」)
-│   ├── kr_tools.py         웹 칠판 공공 데이터 = KAIROS MCP 묶음 7개(날씨·달력·법령·KOSIS/한국은행·특보·대기질·국어 규범, 우리 키로 34개 가능) — 낱말로 묶음 고르고 gpt-6-luna가 여러 번 주고받기(찾기 → 받기, 2026-10-21). 날씨는 10개 도시만 — 모르는 도시는 서울로 오니 버림
+│   ├── kr_tools.py         웹 칠판 공공 데이터 = KAIROS MCP 묶음 7개(날씨·달력·법령·KOSIS/한국은행·특보·대기질·국어 규범, 우리 키로 34개 가능) — 낱말로 묶음 고르고 gpt-6-luna가 여러 번 주고받기(찾기 → 받기, 2026-10-21). 날씨는 10개 도시만 — 모르는 도시는 서울로 오니 버림, 질문 글에 그 도시가 있을 때만(모델이 전주를 서울로 바꿔 부름 — 없으면 웹 검색)
 │   ├── route.py            웹 칠판 대화창 길 고르기 — 판단 모델 `jev-latest` + 손질 둘 + 낱말 규칙(`board_chat.guess_kind`) 바닥, 정답 있는 25문항 `CASES`(실사용에서 틀린 질문을 더함)·주간 자가 시험(`self_check`, 서버가 `route_check.json`), 시험은 `EASYCAD_ROUTE=rules` + 되묻기 `decide`(1·2등 차 < 0.3이고 비싼 길이면 버튼 둘, 「아이콘·로고」는 낱말로 — §8 항목64)
 │   ├── board_chat.py       웹 칠판 KAIROS 대화 — 앞 대화 + 칠판에서 고른 글 → messages·모델 목록(§8 항목61 ⓒ, `web/server.py`가 부름, Qt 비의존) + 웹 검색(KAIROS Exa `/exa/answer/` — 10-21 비교로 sonar에서 바꿈, 안 되면 sonar, 「내일」→ 날짜·이어 묻기는 혼자 통하는 문장으로, 쓰인 [n] 출처, 길 고르기는 `route.py`)
 │   └── photo_to_ops.py     사진→도면 프롬프트·구역 동시 생성 generate_ops_tiled(앱)·부분 다시 generate_ops_region(앱)·수정 루프 generate_ops(도구) (§8 항목28, Qt 비의존)
