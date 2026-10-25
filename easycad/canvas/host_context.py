@@ -61,6 +61,13 @@ class _ContextMixin:
         sel = self._scene.selectedItems()
         has_sel = bool(sel)
         has_clip = bool(getattr(self, "_clip", None))
+        locked = self._locked_sel()   # [2026-10-25] 잠긴 고름 — 한 번에 풀기를 맨 위에(웹과 같게)
+        if locked:
+            menu.addAction(f"잠금 해제 ({len(locked)}개)", self.unlock_locked_sel)
+            if not has_sel:   # 잠긴 것만 고름 = 안 바꾸는 일만
+                menu.addAction("잠금 전환\tCtrl+L", self.toggle_lock_selection)
+                return menu
+            menu.addSeparator()
         if has_sel:
             menu.addAction("복사\tCtrl+C", self.copy_selection)
             menu.addAction("잘라내기\tCtrl+X", self._cut_selection)
@@ -120,17 +127,12 @@ class _ContextMixin:
             # 안 「형식」 콤보와 중복이라 제거 — 항목 하나만 남긴다(host_ui.py 파일 메뉴와
             # 동일 판단).
             menu.addSeparator()
-            menu.addAction("내보내기…", lambda: self._export_document("pdf", True))
+            menu.addAction("내보내기…\tCtrl+P", lambda: self._export_document("pdf", True))
         if has_clip:
             if has_sel:
                 menu.addSeparator()
             menu.addAction("붙여넣기\tCtrl+V", self.paste_selection)
-        if not has_sel:
-            if has_clip:
-                menu.addSeparator()
-            menu.addAction("전체 선택\tCtrl+A", self.select_all)
-            if any(getattr(it, "_locked", False) for it in self._zorder_pool()):
-                menu.addAction("잠금 해제 (전체)", self.unlock_all)
+        # 빈 곳 = 붙여넣기만(2026-10-25 사용자 — 웹과 같게: 전체 선택은 Ctrl+A, 잠긴 것은 눌러 고른 뒤 「잠금 해제」), 없으면 메뉴 안 띄움
         return menu if not menu.isEmpty() else None
 
 

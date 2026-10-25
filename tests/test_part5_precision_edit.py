@@ -1041,9 +1041,9 @@ def test_lock_toggle_blocks_selection_and_move():
     assert not (it.flags() & it.GraphicsItemFlag.ItemIsSelectable)
     assert not (it.flags() & it.GraphicsItemFlag.ItemIsMovable)
     # 잠긴 객체는 select_all로도 안 잡힌다.
-    w.select_all()
-    assert not it.isSelected()
-    w.unlock_all()
+    w.select_all()   # 진짜 선택엔 안 들어가고(못 옮김) 「잠긴 고름」에 들어가 한 번에 풀 수 있다(2026-10-25)
+    assert not it.isSelected() and w._locked_sel() == [it]
+    w.unlock_locked_sel()
     assert it._locked is False
     assert it.flags() & it.GraphicsItemFlag.ItemIsSelectable
     assert it.flags() & it.GraphicsItemFlag.ItemIsMovable

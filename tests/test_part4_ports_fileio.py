@@ -1677,7 +1677,7 @@ def test_context_menu_export_action_present_only_with_selection():
 
     rect.setSelected(True)
     menu_sel = w._build_context_menu()
-    sel_export = [a for a in menu_sel.actions() if a.text() == "내보내기…"]
+    sel_export = [a for a in menu_sel.actions() if a.text() == "내보내기…\tCtrl+P"]   # 단축키 표시(2026-10-25 — 웹과 같게)
     assert len(sel_export) == 1
     assert sel_export[0].menu() is None
 

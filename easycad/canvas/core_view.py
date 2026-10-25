@@ -2578,6 +2578,23 @@ class _AnnotatorView(QGraphicsView):
             y += sp
         painter.restore()
 
+    def _draw_locked_pick(self, painter):
+        picks = [it for it in getattr(self.scene(), "_locked_pick", None) or [] if it.scene() is self.scene()]
+        if not picks:
+            return
+        z = abs(self.transform().m11()) or 1.0
+        painter.save()
+        painter.setPen(QPen(QColor("#2f80ed"), 1.5 / z, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        f = painter.font()
+        f.setPointSizeF(max(1.0, 11.0 / z))
+        painter.setFont(f)
+        for it in picks:
+            r = it.sceneBoundingRect()
+            painter.drawRect(r)
+            painter.drawText(QPointF(r.right() + 2 / z, r.top() + 11 / z), "🔒")
+        painter.restore()
+
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
         # [성능계획 2-D] 프록시 중이면 씬 아이템이 스스로 그리지 않으므로 여기서 대신 그린다.
@@ -2589,6 +2606,7 @@ class _AnnotatorView(QGraphicsView):
         draw_staging = getattr(self._owner, "_draw_ai_staging", None)
         if draw_staging is not None:
             draw_staging(self, painter)
+        self._draw_locked_pick(painter)   # [2026-10-25] 잠긴 고름 = 파란 점선 + 🔒(웹 선택 표시와 같은 자리)
         self._draw_cell_sel(painter)   # [§8 항목61 손맛] 고른 표 칸(연한 파랑 + 파란 테두리 — 웹과 같게)
         draw_marks = getattr(self._owner, "draw_find_marks", None)
         if draw_marks is not None:   # [§8 항목61 손맛] Ctrl+F 찾은 것 = 노란 점선(host_find)
@@ -3127,6 +3145,9 @@ class _AnnotatorView(QGraphicsView):
                 # Shift면 기존 선택에 더하고, 아니면 새로 시작(빈영역 클릭=선택해제와 일관).
                 shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
                 self._rb_base = list(self.scene().selectedItems()) if shift else []
+                # [2026-10-25 웹과 같게] 잠긴 도형 위 = 제자리 누르기면 그것을 고름(놓을 때), 끌면 그대로 끌어 고르기(바탕 위 작업)
+                lk = getattr(self._owner, "_locked_at", None)
+                self._rb_lock_tap = (lk(self.mapToScene(vpos)), shift) if lk is not None else None
                 self._apply_rubber_selection()
                 self.viewport().update()
                 return
@@ -4257,6 +4278,11 @@ class _AnnotatorView(QGraphicsView):
                 self._owner._win_drag_end()
                 self.viewport().unsetCursor()
             elif hasattr(self._owner, "_show_context_menu"):
+                vp = event.position().toPoint()
+                lk = getattr(self._owner, "_locked_at", None)
+                it = lk(self.mapToScene(vp)) if lk is not None and self._is_empty_area(vp) else None
+                if it is not None and it not in self._owner._locked_sel():   # 잠긴 도형 위 우클릭 = 그것을 고르고 같은 메뉴(「잠금 해제」 맨 위)
+                    self._owner._locked_tap(it)
                 self._owner._show_context_menu(event.globalPosition().toPoint())
             return
         if self._none_win_dragging:  # 손 모드 창 이동 종료
@@ -4318,6 +4344,10 @@ class _AnnotatorView(QGraphicsView):
             # 정확한 최종 선택을 1회 확정한다(_apply_rubber_selection, 기존 정밀 로직 그대로).
             self._rb_current = event.position().toPoint()
             self._apply_rubber_selection()
+            tap = getattr(self, "_rb_lock_tap", None)
+            self._rb_lock_tap = None
+            if tap is not None and tap[0] is not None and (self._rb_current - self._rb_origin).manhattanLength() < 4:
+                self._owner._locked_tap(tap[0], add=tap[1])
             self._last_sel_rect = self._rb_scene_rect()   # [Stage2b] 박스 '기억'(S stretch용)
             self._rb_active = False
             self._rb_origin = self._rb_current = None
@@ -4892,6 +4922,9 @@ class _AnnotatorView(QGraphicsView):
             if self.scene().selectedItems():
                 self.scene().clearSelection()
                 return
+            if getattr(self.scene(), "_locked_pick", None):   # [2026-10-25] 잠긴 고름만 있으면 그것만 풂
+                self._owner._set_locked_sel([])
+                return
             # [우리 확장 · §8 항목56] 보드 안에 들어가 있으면 Esc = 보드 밖으로(편집기 닫기보다 먼저)
             exit_inside = getattr(self._owner, "_board_exit_inside", None)
             if exit_inside is not None and exit_inside():
@@ -4944,6 +4977,9 @@ class _AnnotatorView(QGraphicsView):
             }.get(key)
             if arrow is not None:
                 sel = self.scene().selectedItems()
+                if not sel and getattr(self.scene(), "_locked_pick", None):   # [2026-10-25] 잠긴 것만 고름 = 말로만 알림(웹과 같게)
+                    self._owner.statusBar().showMessage(self._owner.LOCK_MSG, 4000)
+                    return
                 if sel:
                     # 이동 전 위치 기록(Ctrl+Z 원복). 같은 선택의 연속 nudge는 하나로 합쳐
                     # undo 폭주를 막는다(coalesce_key=선택 집합).
@@ -5040,6 +5076,9 @@ class _AnnotatorView(QGraphicsView):
                 # Backspace는 삭제의 고정 별칭(운영체제 관례) — 설정 창에서 "삭제"를
                 # 다른 키로 바꿔도 계속 동작한다(사용자가 놀라지 않게 하는 의도적 예외).
                 selected = list(self.scene().selectedItems())
+                if not selected and getattr(self.scene(), "_locked_pick", None):   # [2026-10-25] 잠긴 것만 고름 = 말로만 알림(웹과 같게)
+                    self._owner.statusBar().showMessage(self._owner.LOCK_MSG, 4000)
+                    return
                 if hasattr(self._owner, "_board_delete_scope"):   # [§8 항목53] 보드를 지우면 안의 것도 같이(2026-10-16 사용자)
                     selected = self._owner._board_delete_scope(selected)
                 if selected:

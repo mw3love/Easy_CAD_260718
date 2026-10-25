@@ -190,6 +190,7 @@ class CanvasWindow(
         doc.scene.selectionChanged.connect(self._sync_selection_count_cache)
         doc.scene.selectionChanged.connect(self._sync_group_selection)
         doc.scene.selectionChanged.connect(self._refresh_properties)
+        doc.scene.selectionChanged.connect(self._locked_follow_selection)   # 다른 것을 고르면 잠긴 고름은 풂(2026-10-25)
 
     def showEvent(self, event):
         """[§8 항목10 Stage B] `_create_doc()`가 하는 `view.centerOn(0, 0)`은 뷰가 아직 탭

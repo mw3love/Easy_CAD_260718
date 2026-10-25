@@ -721,9 +721,7 @@ def test_context_menu_layer_menu_lists_layers():
     w = CanvasWindow()
     w.add_layer("배선")
     r = _mk_pen_rect(w, x=0, y=0)
-    menu = w._build_context_menu()
-    submenu_titles = [act.text() for act in menu.actions() if act.menu() is not None]
-    assert not any(t == "레이어로 이동" for t in submenu_titles)   # 선택 없으면 없음
+    assert w._build_context_menu() is None   # 선택 없으면 레이어 메뉴도 없음(빈 곳 메뉴는 붙일 것이 있을 때만 — 2026-10-25)
     r.setSelected(True)
     menu2 = w._build_context_menu()
     layer_action = next(act for act in menu2.actions() if act.text() == "레이어로 이동")

@@ -79,3 +79,69 @@ def test_desktop_svg_insert_is_one_group_per_file():
     new = [it for it in w._scene.items() if it not in before and getattr(it, "_group_id", None) is not None]
     gids = {it._group_id for it in new}
     assert len(new) == 4 and len(gids) == 2                                 # 파일마다 따로 묶음
+
+
+# ---- 데스크톱 잠긴 도형 고르기(2026-10-25 — 웹 flow19와 같은 규칙) ----
+
+def _mouse(v, etype, scene_pt, mods=Qt.KeyboardModifier.NoModifier):
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    vp = QPointF(v.mapFromScene(scene_pt))
+    t = {"press": QEvent.Type.MouseButtonPress, "release": QEvent.Type.MouseButtonRelease, "move": QEvent.Type.MouseMove}[etype]
+    btn = Qt.MouseButton.LeftButton
+    e = QMouseEvent(t, vp, vp, btn if etype != "move" else Qt.MouseButton.NoButton, btn, mods)
+    {"press": v.mousePressEvent, "release": v.mouseReleaseEvent, "move": v.mouseMoveEvent}[etype](e)
+
+
+def _two_locked(w):
+    a, b = _mk_pen_rect(w, x=0, y=0, ww=100, hh=60), _mk_pen_rect(w, x=300, y=0, ww=100, hh=60)
+    w._scene.clearSelection()
+    a.setSelected(True); b.setSelected(True)
+    w.toggle_lock_selection()
+    return a, b
+
+
+def test_desktop_locked_click_picks_but_never_moves_or_deletes():
+    w = CanvasWindow()
+    a, b = _two_locked(w)
+    assert set(w._locked_sel()) == {a, b} and not w._scene.selectedItems()   # 잠근 뒤에도 골라진 채(🔒)
+    w._set_locked_sel([])
+    v = w._view
+    _mouse(v, "press", QPointF(50, 30)); _mouse(v, "release", QPointF(50, 30))   # 제자리 누르기 = 그것만
+    assert w._locked_sel() == [a]
+    pos0 = QPointF(a.pos())
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtCore import QEvent
+    for k in (Qt.Key.Key_Delete, Qt.Key.Key_Right):
+        v.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, k, Qt.KeyboardModifier.NoModifier))
+    assert a.scene() is w._scene and a.pos() == pos0                    # 지우기·방향키 = 막힘
+    assert "잠긴 도형" in w.statusBar().currentMessage()
+    _mouse(v, "press", QPointF(50, 30)); _mouse(v, "move", QPointF(120, 50)); _mouse(v, "move", QPointF(250, 80)); _mouse(v, "release", QPointF(250, 80))
+    assert a.pos() == pos0                                             # 잠긴 것 위에서 끌기 = 끌어 고르기(안 움직임)
+    _mouse(v, "press", QPointF(350, 30), Qt.KeyboardModifier.ShiftModifier); _mouse(v, "release", QPointF(350, 30), Qt.KeyboardModifier.ShiftModifier)
+    assert set(w._locked_sel()) == {b} or set(w._locked_sel()) == {a, b}   # Shift = 더하기(끌기 뒤 고름이 풀렸으면 b만)
+
+
+def test_desktop_select_all_then_menu_unlocks_all_at_once():
+    w = CanvasWindow()
+    a, b = _two_locked(w)
+    c = _mk_pen_rect(w, x=0, y=200)
+    w._scene.clearSelection(); w._set_locked_sel([])
+    w.select_all()
+    assert c.isSelected() and set(w._locked_sel()) == {a, b}
+    labels = [x.text() for x in w._build_context_menu().actions() if not x.isSeparator()]
+    assert labels[0] == "잠금 해제 (2개)"
+    w.unlock_locked_sel()
+    assert not a._locked and not b._locked and a.isSelected() and b.isSelected()
+    w.undo()
+    assert a._locked and b._locked                                     # 되돌리기 한 칸
+
+
+def test_desktop_only_locked_picked_menu_is_unlock_and_toggle():
+    w = CanvasWindow()
+    a, b = _two_locked(w)
+    w._set_locked_sel([a])
+    labels = [x.text() for x in w._build_context_menu().actions() if not x.isSeparator()]
+    assert labels == ["잠금 해제 (1개)", "잠금 전환\tCtrl+L"]
+    w.toggle_lock_selection()                                          # 잠긴 것만 = 풀기
+    assert not a._locked and a.isSelected() and b._locked

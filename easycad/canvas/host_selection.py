@@ -185,6 +185,8 @@ class _SelectionMixin:
     def select_all(self):
         self._bulk_select([it for it in self._scene.items()
                            if it.flags() & it.GraphicsItemFlag.ItemIsSelectable])
+        self._set_locked_sel([it for it in self._zorder_pool()   # 잠긴 것도(2026-10-25 웹과 같게 — 여럿 한 번에 풀기), 잠긴 레이어의 것만 빼고
+                              if getattr(it, "_locked", False) and not self._layer_locked(it) and it.isVisible()])
 
 
     def _cut_selection(self):
@@ -595,8 +597,10 @@ class _SelectionMixin:
 
 
     def toggle_lock_selection(self):
-        """선택 중 하나라도 미잠금이면 전부 잠금, 전부 이미 잠겼으면 전부 해제(공통 토글 UX)."""
+        """선택 중 하나라도 미잠금이면 전부 잠금, 전부 이미 잠겼으면 전부 해제(공통 토글 UX).
+        「잠긴 고름」(아래)도 대상 — 잠근 것은 잠긴 고름으로 남고(웹처럼 🔒 표시로 골라진 채), 푼 것은 다시 진짜 선택."""
         sel = self._edit_targets()
+        sel += [it for it in self._locked_sel() if it not in sel]
         if not sel:
             return
         lock_to = any(not getattr(it, "_locked", False) for it in sel)
@@ -604,15 +608,67 @@ class _SelectionMixin:
         for it in sel:
             self._set_item_lock_flags(it, lock_to)
         self._push_entry([("mut", it, "lock", old, lock_to) for it, old in snaps])
+        if lock_to:
+            self._set_locked_sel(sel)
+        else:
+            self._set_locked_sel([])
+            self._bulk_select(sel)
 
+    # ---- [2026-10-25] 잠긴 도형 고르기 — 웹 칠판과 같은 규칙(누르기·Shift·Ctrl+A로 골라짐, 끌어 고르기엔 빠짐,
+    # 옮기기·지우기·고치기만 막힘). 데스크톱은 「고른 것」(Qt selectedItems)을 쓰는 곳이 90곳쯤이라 잠긴 것을 진짜 선택에
+    # 넣지 않고 씬마다 따로 든다(`scene._locked_pick`) — 진짜 선택이 아니니 고치는 길은 전부 저절로 막히고, 이 목록은
+    # 잠금 해제·잠금 전환·우클릭 메뉴에만 쓴다. 웹은 고르기는 같은 선택 + 바꾸기를 길목(commit) 한 곳에서 막음(구조가 달라서).
+    LOCK_MSG = "잠긴 도형이에요 — 옮기기·지우기·고치기는 막혀 있어요(풀기 Ctrl+L)"
 
-    def unlock_all(self):
-        """잠긴 객체는 선택이 안 돼 개별 우클릭으로 못 푸므로, 빈 영역 메뉴에 두는 탈출구."""
-        locked = [it for it in self._zorder_pool() if getattr(it, "_locked", False)]
-        if not locked:
+    def _locked_sel(self) -> list:
+        return [it for it in getattr(self._scene, "_locked_pick", []) or []
+                if it.scene() is self._scene and getattr(it, "_locked", False)]
+
+    def _set_locked_sel(self, items):
+        self._scene._locked_pick = list(items)
+        for v in self._scene.views():
+            v.viewport().update()
+
+    def _layer_locked(self, it) -> bool:
+        layer = self._layer_by_id(self._item_layer_id(it)) if hasattr(self, "_layer_by_id") else None
+        return bool(layer and layer.get("locked"))
+
+    def _locked_at(self, scene_pos):
+        """그 자리의 맨 위 잠긴 도형(잠긴 레이어의 것은 빼고 — 레이어 카드에서 푼다). 없으면 None"""
+        bg = getattr(self, "_bg_item", None)
+        for it in self._scene.items(scene_pos):
+            top = it.topLevelItem()
+            if top is bg or not top.isVisible():
+                continue
+            if getattr(top, "_locked", False) and not self._layer_locked(top):
+                return top
+        return None
+
+    def _locked_tap(self, it, add: bool = False):
+        """잠긴 도형 누르기 = 잠긴 고름(묶음이면 묶음째), Shift = 더하기·빼기"""
+        gid = getattr(it, "_group_id", None)
+        grp = [x for x in self._zorder_pool() if gid and getattr(x, "_group_id", None) == gid and getattr(x, "_locked", False)] or [it]
+        cur = self._locked_sel()
+        if add:
+            new = [x for x in cur if x not in grp] if it in cur else cur + [x for x in grp if x not in cur]
+        else:
+            self._scene.clearSelection()
+            new = grp
+        self._set_locked_sel(new)
+        self.statusBar().showMessage(self.LOCK_MSG, 4000)
+
+    def _locked_follow_selection(self):
+        if getattr(self._scene, "_locked_pick", None):
+            self._set_locked_sel([])
+
+    def unlock_locked_sel(self):
+        """잠긴 고름 한 번에 풀기(우클릭 「잠금 해제 (N개)」) — 푼 것은 진짜 선택으로"""
+        items = self._locked_sel()
+        if not items:
             return
-        snaps = [(it, True) for it in locked]
-        for it in locked:
+        for it in items:
             self._set_item_lock_flags(it, False)
-        self._push_entry([("mut", it, "lock", old, False) for it, old in snaps])
+        self._push_entry([("mut", it, "lock", True, False) for it in items])
+        self._set_locked_sel([])
+        self._bulk_select(items)
 

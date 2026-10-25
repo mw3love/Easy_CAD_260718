@@ -1740,7 +1740,7 @@ def test_rmb_context_menu_states():
     # [M3 #16] 컨텍스트 메뉴 구성 — 선택/클립보드 유무로 항목이 달라진다. 액션은 기존 편집 경로.
     w = CanvasWindow()
     labels = lambda: [a.text() for a in w._build_context_menu().actions() if not a.isSeparator()]
-    assert labels() == ["전체 선택\tCtrl+A"]                       # 빈 캔버스
+    assert w._build_context_menu() is None                        # 빈 캔버스·붙일 것 없음 = 메뉴 없음(2026-10-25 — 웹과 같게)
     it = _mk_pen_rect(w); it.setSelected(True)
     assert labels()[:4] == ["복사\tCtrl+C", "잘라내기\tCtrl+X", "복제\tCtrl+D", "삭제\tDel"]
     w.copy_selection()
