@@ -1,7 +1,7 @@
 // 딥모드 대화창 카드(§8 항목66 3-2, 2026-10-25) — ① 질문지 한 장 ② 지면 계획 카드. 상태는 대화 기록의 답 하나(`kind: 'deep'`)에 — 다시 열어도 그대로.
 // 질문지는 서버를 안 부름(왕복 없이 한 번 — 항목64가 버린 「여러 번 묻기」의 예외: 몇 분짜리 비싼 일이라 묻는 값이 쌈). 보기에 없는 말은 기존 입력 칸.
-// 계획 카드 = 꼭지(× 빼기) · 디자인 넷(질문지 답으로 추천) · 예상 크레딧 → 「이대로 만들기」 전엔 비싼 생성 없음. 말로 고치기 = 입력 칸(chat.jsx가 계획을 다시 짜게 보냄)
-import { DEEP_STYLES, STYLE_KEYS } from './deepstyle.js'
+// 계획 카드 = 꼭지(× 빼기) · 예상 크레딧(톤은 만든 뒤 속성 카드 — 2026-10-25 처음 고르기 없앰) → 「이대로 만들기」 전엔 비싼 생성 없음. 말로 고치기 = 입력 칸(chat.jsx가 계획을 다시 짜게 보냄)
+import { useState } from 'react'
 
 // [질문, 보기, 여럿 고르기] — 답 꼴은 `tools/deepmode_probe.py` ANSWERS와 같게(3-3 서버가 그대로 지시문에)
 export const DEEP_QS = [
@@ -36,9 +36,9 @@ export function DeepAsk({ m, set, go, busy, css }) {
   </div>
 }
 
-// 지면 계획 — m = { plan, drop, style, rec: [키, 까닭], estimate: { credits: [lo, hi], seconds: [lo, hi] }, built, pages, stale }
-// drop(i) · pickStyle(키) · build() · show() = 지은 판으로
-export function DeepPlan({ m, drop, pickStyle, build, show, busy, css }) {
+// 지면 계획 — m = { plan, drop, estimate: { credits: [lo, hi], seconds: [lo, hi] }, built, pages, stale }
+// drop(i) · build() · show() = 지은 판으로
+export function DeepPlan({ m, drop, build, show, busy, css }) {
   const secs = m.plan?.sections || [], dropped = new Set(m.drop || []), left = secs.length - dropped.size, lock = !!m.built || !!m.stale || !!busy
   const est = m.estimate, rng = (a, u) => (Array.isArray(a) ? (a[0] === a[1] ? `${a[0]}${u}` : `${a[0]}~${a[1]}${u}`) : a != null ? `${a}${u}` : '')
   return <div data-testid="deep-plan" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -47,22 +47,14 @@ export function DeepPlan({ m, drop, pickStyle, build, show, busy, css }) {
       {secs.map((s, i) => <div key={i} data-testid="deep-sec" data-dropped={dropped.has(i) ? '1' : undefined} style={{ display: 'flex', gap: 6, alignItems: 'center', opacity: dropped.has(i) ? 0.4 : 1 }}>
         <span style={{ ...css.kind, flex: 'none', ...(s.size === '주인공' ? { color: '#da7756', background: 'rgba(218,119,86,.12)' } : null) }}>{s.shape}</span>
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: dropped.has(i) ? 'line-through' : 'none' }} title={s.question || s.title}>{s.title}</span>
-        <span style={{ ...css.meta, flex: 'none' }}>{s.shape === '출처 카드' ? '모은 출처' : SOURCE[s.source] || s.source || ''}</span>
+        <span style={{ ...css.meta, flex: 'none' }}>{s.shape === '출처 카드' ? '모은 출처' : s.shape === '요약 그림' ? 'AI 그림 · 판 내용으로' : SOURCE[s.source] || s.source || ''}</span>
         {!lock && <button data-testid="deep-sec-x" aria-label={dropped.has(i) ? `「${s.title}」 되살리기` : `「${s.title}」 빼기`} title={dropped.has(i) ? '되살리기' : '이 꼭지 빼기'}
           disabled={!dropped.has(i) && left <= 3} onClick={() => drop(i)} style={{ ...css.ghost, padding: '0 6px', flex: 'none' }}>{dropped.has(i) ? '↺' : '×'}</button>}
       </div>)}
     </div>
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <span style={css.meta}>디자인 — 만든 뒤에도 판을 고르면 바꿀 수 있어요</span>
-      <div data-testid="deep-plan-styles" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
-        {STYLE_KEYS.map(k => <button key={k} data-style={k} aria-pressed={m.style === k} disabled={lock} onClick={() => pickStyle(k)} title={`${DEEP_STYLES[k].tip}${m.rec?.[0] === k ? ` — 추천: ${m.rec[1]}` : ''}`}
-          style={{ ...(m.style === k ? css.pin : css.ghost), ...(m.style === k ? { background: 'rgba(218,119,86,.12)' } : null), display: 'flex', justifyContent: 'space-between', gap: 4, cursor: lock ? 'default' : 'pointer' }}>
-          <span>{DEEP_STYLES[k].name}</span>{m.rec?.[0] === k && <span data-testid="deep-rec" style={{ ...css.meta, color: '#da7756' }}>추천</span>}</button>)}
-      </div>
-    </div>
     {m.built ? <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         <button data-testid="deep-show" style={css.done} onClick={show}>✓ 칠판에 지었어요{m.pages > 1 ? ` · ${m.pages}장` : ''} — 보기</button>
-        <span style={css.meta}>판을 고르면 디자인·꼭지 모양을 바꿀 수 있어요</span></div>
+        <span style={css.meta}>판을 고르면 톤(색)·꼭지 모양을 바꿀 수 있어요</span></div>
       : m.stale ? <span style={css.meta}>아래에 고친 계획이 있어요</span>
       : <><button data-testid="deep-build" style={{ ...css.pin, alignSelf: 'flex-start', padding: '4px 12px' }} disabled={!!busy} onClick={build}>
           이대로 만들기{est ? ` · 약 ${rng(est.credits, '크레딧')}` : ''}</button>
@@ -81,5 +73,19 @@ export function DeepConfirm({ m, busy, css, yes, no }) {
       : <div style={{ display: 'flex', gap: 6 }}>
         <button data-testid="deep-confirm-chat-yes" style={css.pin} disabled={!!busy} onClick={yes}>덮어쓰고 다시 쓰기</button>
         <button style={css.ghost} disabled={!!busy} onClick={no}>그대로</button></div>}
+  </div>
+}
+
+// 꼭지 다시 쓰기 전·후(2026-10-25 사용자 「바로 교체라 비교가 어려움」) — 판을 그 자리에서 원래 것 ↔ 바꾼 것으로 번갈아 다시 지음(Editor `deepFlip`).
+// 그 판의 마지막 다시 쓰기 답에만, 이 창에서 다시 쓴 것만(새로고침하면 기억이 없어 안 보임). 지금 어느 쪽인지는 누를 때마다 판에서 다시 봄(Ctrl+Z와 섞여도 맞게)
+export function DeepFlip({ ed, root, last, css }) {
+  const [, tick] = useState(0), [note, setNote] = useState('')
+  const now = last ? ed.current?.deepFlipState?.(root) : null
+  if (!now) return null
+  const go = () => { const r = ed.current?.deepFlip(root); setNote(r === 'edited' ? '판을 손으로 고친 뒤라 안 바꿨어요(Ctrl+Z로 되돌려요)' : ''); tick(n => n + 1) }
+  return <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+    <button data-testid="deep-flip" data-now={now} style={css.pin} onClick={go} title="판을 그 자리에서 다시 지어 원래 것과 바꾼 것을 번갈아 봐요(크레딧 없음)">
+      {now === 'after' ? '↺ 원래대로 보기' : '↻ 바꾼 것 보기'}</button>
+    <span style={css.meta}>{note || (now === 'after' ? '지금 칠판 = 바꾼 것' : '지금 칠판 = 원래 것')}</span>
   </div>
 }

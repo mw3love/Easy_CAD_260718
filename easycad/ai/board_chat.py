@@ -62,9 +62,6 @@ def maybe_icon(text: str) -> bool:
 
 # 정리 문서(「정리해 줘」 ①) — 칠판 자료를 아티팩트 같은 보고서·인포그래픽 한 장으로(`board_report`)
 _REPORT_WORDS = re.compile(r"정리해\s*(줘|주세요|봐)|정리\s*(문서|보고서)|보고서|인포그래픽|브리핑\s*(자료|문서|으로)|한\s*장(으로|짜리)|요약\s*(문서|자료|보고)|인쇄용")
-# 정리정돈(「정리해 줘」 ②) — 고른 것을 지우지 않고 주제별로 묶어 옮김(`board_tidy`). 「정리해 줘」만은 ①(문서) — 묶기·정돈 말이 있고 문서 말이 없을 때만
-TIDY_WORDS = r"정돈|분류해|묶어\s*(줘|주세요|봐|서|놓)|모아\s*(줘|주세요|놓|서)|주제별|종류별|그룹(으로|별|지어)|끼리\s*(묶|모아)|레고"
-_TIDY_WORDS = re.compile(TIDY_WORDS)
 _DOC_WORDS = re.compile(r"문서|보고서|인포그래픽|브리핑|한\s*장|인쇄")
 # 「○○ 정리해 줘」처럼 칠판에 없는 주제가 붙으면 정리 문서가 아니라 보통 짐작으로(2026-10-19 사용자 선택 — 「송신소 정전 점검 순서 정리해줘」가
 # 칠판의 엉뚱한 자료로 「0건」 빈 틀 문서가 됐음). 그냥 「정리해 줘」·「이거·칠판 정리해 줘」·고른 것이 있을 때·문서 말(보고서·한 장…)이 있으면 그대로 정리 문서
@@ -80,11 +77,9 @@ _NO_SEARCH = re.compile(r"칠판에서 고른|이 (메모|글|카드)|위 (내�
 
 
 def guess_kind(text: str, has_context: bool = False) -> str:
-    """질문 → "tidy"(정리정돈) | "report"(정리 문서) | "board"(칠판에서 찾아 답) | "icon"(아이콘 후보) | "image"(그림 후보) | "search"(웹 검색) | "chat"(대화).
+    """질문 → "report"(정리 문서) | "board"(칠판에서 찾아 답) | "icon"(아이콘 후보) | "image"(그림 후보) | "search"(웹 검색) | "chat"(대화).
     낱말 규칙(데스크톱 `guess_kind`처럼) — 칠판에서 고른 글을 다루는 말이면 대화."""
     t = text or ""
-    if _TIDY_WORDS.search(t) and not _DOC_WORDS.search(t):
-        return "tidy"
     if _REPORT_WORDS.search(t) and (has_context or _DOC_WORDS.search(t) or not _has_topic(t)):
         return "report"
     if _BOARD_WORDS.search(t):

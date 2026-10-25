@@ -36,7 +36,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_icon, deep_mode, board_image, board_ocr, board_report, board_tidy, kr_tools, live_card, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_icon, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -99,7 +99,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
         # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
-        jobs = {"tidy": board_tidy.TIDY_MODEL, "report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "deep": deep_mode.EDITOR_MODEL, "live": live_card.LIVE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
+        jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "deep": deep_mode.EDITOR_MODEL, "live": live_card.LIVE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
         return self._json(200, {**hit[1], "jobs": jobs})
 
     def _chat(self):
@@ -141,7 +141,7 @@ class Handler(SimpleHTTPRequestHandler):
                 kind = "image"   # 그림 뒤·그림을 고른 채 「날짜도 넣어 줘」 = 그 그림 고치기(판단 모델은 앞 대화·고른 그림을 안 봄)
             if not kind:   # 길 고르기 = 판단 모델 jev + 낱말 규칙 바닥(`easycad/ai/route.py`, 2026-10-20 사용자 선택)
                 prefs = req.get("ask_pref") if isinstance(req.get("ask_pref"), dict) else {}
-                kind, how, choices = route.decide(key, str(last.get("content", "")), bool(ctx or last.get("context")), has_items=bool(req.get("items")), prefs=prefs, base_url=gw.resolve_base_url())
+                kind, how, choices = route.decide(key, str(last.get("content", "")), bool(ctx or last.get("context")), prefs=prefs, base_url=gw.resolve_base_url())
                 sys.stderr.write("[길] %s (%s)%s\n" % (kind, how, " — 되묻기 " + "|".join(choices) if choices else ""))
                 if choices:   # 애매하고 비싼 갈림길 — 만들기 전에 버튼으로 물음(§8 항목64). 누르면 대화창이 그 길 이름표로 다시 보냄
                     return self._json(200, {"kind": "ask", "choices": choices, "default": kind, "key": "|".join(sorted(choices)),
@@ -164,8 +164,6 @@ class Handler(SimpleHTTPRequestHandler):
                 kind = "live" if req.get("prev_kind") == "live" else "report"
             if kind == "live":
                 return self._live(str(last.get("content", "")), ctx or str(last.get("context") or ""), key, prev_html if req.get("prev_kind") == "live" else "")
-            if kind == "tidy":   # 「정리해 줘」 ② 레고형 정리정돈 — 묶음 목록만 답, 자리는 칠판이 잡음(§8 항목61)
-                return self._tidy(req.get("items") or [], str(last.get("content", "")), key)
             if kind == "report":   # 「정리해 줘」 ① — 고른 것(없으면 칠판 전체)을 정리 문서 한 장으로(§8 항목61)
                 return self._report(self._name(str(req.get("board") or "")), str(last.get("content", "")), ctx or str(last.get("context") or ""), prev_html, key)
             if kind == "image":   # 「○○ 그려줘」 — 그림 후보(§8 항목61 ③-4): 칠판 옆 폴더에 두고 주소만 대화 기록에(기록이 그림으로 불지 않게)
@@ -237,7 +235,7 @@ class Handler(SimpleHTTPRequestHandler):
                 plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
                 uses_board = any(isinstance(s, dict) and s.get("source") == "board" for s in plan.get("sections") or [])
                 material = self._board_material(self._name(str(req.get("board") or ""))) if uses_board else ""
-                out = deep_mode.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, board=material)
+                out = deep_mode.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base))
                 sys.stderr.write("[딥모드 만들기] %s %.1f초 출처 %d%s\n" % (out["model"], out["elapsed"], len(out["plan"]["sources"]), " 재료 없음: " + ", ".join(out["missing"]) if out["missing"] else ""))
                 for w in out.get("switched") or []:   # 공공 데이터 → 웹 검색으로 갈아탄 꼭지(숫자 없음·다른 품목 — 실사용에서 얼마나 걸리나 보려고)
                     sys.stderr.write("[딥모드 웹으로] %s\n" % w)
@@ -247,7 +245,7 @@ class Handler(SimpleHTTPRequestHandler):
                 idx = d.get("idx") if isinstance(d.get("idx"), list) else []
                 uses_board = any(isinstance(s, dict) and s.get("source") == "board" for j, s in enumerate(plan.get("sections") or []) if j in idx)
                 material = self._board_material(self._name(str(req.get("board") or ""))) if uses_board else ""
-                out = deep_mode.redo(key, gw._client(key, base, timeout=600), plan, idx, brief, str(d.get("ask") or ""), base_url=base, board=material)
+                out = deep_mode.redo(key, gw._client(key, base, timeout=600), plan, idx, brief, str(d.get("ask") or ""), base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base))
                 sys.stderr.write("[딥모드 꼭지 다시] %s %.1f초 꼭지 %s%s\n" % (out["model"], out["elapsed"], [s["i"] for s in out["sections"]], " 못 씀: " + ", ".join(out["missing"]) if out["missing"] else ""))
                 return self._json(200, {"kind": "deep", "step": "section", **out, "credits": self._spent(key, base, b0)})
         except ValueError as e:
@@ -255,6 +253,26 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             return self._json(502, {"error": f"KAIROS 딥모드 실패: {e}"})
         return self._json(400, {"error": "딥모드 단계(plan·build·section)를 몰라요"})
+
+    def _deep_image(self, board: str, key: str, base: str):
+        """딥모드 요약 그림 그리기 — 지시문 → 그림 한 장을 칠판 옆 `<이름>.img/`에 두고 {"img": 주소, "w", "h", "model"}(칠판이 받아 그림 칸으로). 칠판 이름이 없으면 None."""
+        name = self._name(board)
+        if not name:
+            return None
+
+        def draw(prompt: str) -> dict:
+            out = board_image.generate(key, prompt, n=1, base_url=base)
+            data, ext = out["images"][0]
+            url = self._save_img(name, data, ext)
+            from io import BytesIO
+            try:
+                from PIL import Image
+                w, h = Image.open(BytesIO(data)).size
+            except Exception:   # 크기를 못 읽으면 요청한 비율(4:3)로 — 칠판이 그림을 받으면 실제 크기로 고침
+                w, h = 1536, 1152
+            sys.stderr.write("[딥모드 요약 그림] %s %dx%d · %s크레딧\n" % (out["model"], w, h, out.get("credits")))
+            return {"img": url, "w": w, "h": h, "model": out["model"]}
+        return draw
 
     @staticmethod
     def _balance(key: str, base: str):
@@ -306,8 +324,10 @@ class Handler(SimpleHTTPRequestHandler):
             out = board_report.make(gw._client(key, gw.resolve_base_url(), timeout=600), material, ask, prev_html=prev_html)
         except Exception as e:
             return self._json(502, {"error": f"KAIROS 정리 문서 실패: {e}"})
-        sys.stderr.write("[정리 문서] %s %.1f초 %d자\n" % (out["model"], out["elapsed"], len(out["html"])))
-        return self._json(200, {"kind": "report", "content": f"정리 문서 「{out['title']}」 — 칠판에 붙이면 인쇄용 문서 카드가 돼요", **out})
+        sys.stderr.write("[정리 문서] %s %.1f초 %d자%s\n" % (out["model"], out["elapsed"], len(out["html"]), " 확인할 숫자 %d" % len(out["unchecked"]) if out.get("unchecked") else ""))
+        tone = board_report.TONES.get(out.get("tone") or "", {}).get("name")
+        note = f"\n\n칠판 자료에서 그대로 찾지 못한 숫자: {', '.join(out['unchecked'])} — 계산한 값일 수 있어요. 문서에서 한 번 확인해 주세요" if out.get("unchecked") else ""
+        return self._json(200, {"kind": "report", "content": f"정리 문서 「{out['title']}」{f' · {tone} 톤' if tone else ''} — 칠판에 붙이면 인쇄용 문서 카드가 돼요{note}", **out})
 
     def _board_material(self, name: str) -> str:
         """이 칠판의 저장된 글 전부(「(메모) …」 줄들) — 고른 게 없을 때 정리 문서·인포그래픽의 자료."""
@@ -317,16 +337,14 @@ class Handler(SimpleHTTPRequestHandler):
             items = board_find.board_items(json.load(f))
         return "\n\n".join(f"({board_find.KIND_NAME.get(it['type'], it['type'])}) {it['text']}" for it in items)
 
-    def _tidy(self, items: list, ask: str, key: str):
-        """정리정돈 → {"kind": "tidy", "content", "plan": {title, sections:[{title, items, note}], opinion}, "model", "elapsed"} — 조각 = 칠판이 보낸 목록."""
-        if not isinstance(items, list) or len(items) < 2:
-            return self._json(400, {"error": "정돈할 조각이 2개 이상 있어야 해요 — 칠판에서 고르거나 화면에 보이게 하고 다시 물어 주세요"})
-        try:
-            out = board_tidy.make(gw._client(key, gw.resolve_base_url(), timeout=300), items, ask)
-        except Exception as e:
-            return self._json(502, {"error": f"KAIROS 정리정돈 실패: {e}"})
-        sys.stderr.write("[정리정돈] %s %.1f초 %d묶음\n" % (out["model"], out["elapsed"], len(out["plan"]["sections"])))
-        return self._json(200, {"kind": "tidy", **out})
+    def _save_img(self, name: str, data: bytes, ext: str) -> str:
+        """그림 바이트 → 칠판 옆 `<이름>.img/<시각>_<무작위>.<확장자>`(새 이름이라 덮어쓸 일 없음), 주소 `/api/img/<이름>/<파일>`."""
+        from urllib.parse import quote
+        os.makedirs(self._img_dir(name), exist_ok=True)
+        fn = f"{int(time.time() * 1000)}_{secrets.token_hex(3)}.{ext}"
+        with open(os.path.join(self._img_dir(name), fn), "wb") as f:
+            f.write(data)
+        return f"/api/img/{quote(name)}/{fn}"
 
     def _img_dir(self, name: str) -> str:
         return os.path.join(self.data_dir, name + ".img")
@@ -350,14 +368,7 @@ class Handler(SimpleHTTPRequestHandler):
             out = board_image.generate(key, prompt, base_url=gw.resolve_base_url(), **({"input_images": edit, "n": 1} if edit else {}))   # 고치기는 거의 같은 결과라 1장(크레딧)
         except Exception as e:
             return self._json(502, {"error": f"KAIROS 그림 만들기 실패: {e}"})
-        os.makedirs(self._img_dir(name), exist_ok=True)
-        urls = []
-        for data, ext in out["images"]:
-            fn = f"{int(time.time() * 1000)}_{secrets.token_hex(3)}.{ext}"   # 새 이름이라 덮어쓸 일 없음
-            with open(os.path.join(self._img_dir(name), fn), "wb") as f:
-                f.write(data)
-            from urllib.parse import quote
-            urls.append({"url": f"/api/img/{quote(name)}/{fn}"})
+        urls = [{"url": self._save_img(name, data, ext)} for data, ext in out["images"]]
         el = round(time.time() - t0, 1)
         sys.stderr.write("[그림] %s %d장 %.1f초 · %s크레딧\n" % (out["model"], len(urls), el, out.get("credits")))
         head = f"{facts.get('head') or board_image.FACTS_HEAD}({facts['model']}).\n{facts['content']}\n\n" if facts else note

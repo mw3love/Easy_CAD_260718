@@ -48,7 +48,6 @@ import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAn
 import { MemoEditor } from './memoedit.jsx'
 import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
 import { looksSvg, svgFits, svgItems } from './svgin.js'
-import { TIDY, clearSpot, faceArrows, tidyLayout } from './tidy.js'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
@@ -139,7 +138,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepRedo, deepTarget, deepRedoSection, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -796,7 +795,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const m = R.current.model, ids = new Set(movingSet(R.current.sel))
     return m.items.filter(it => ids.has(it._id) && it.type === 'image' && it.data).slice(0, 4).map(it => (it.data.startsWith('data:') ? it.data : 'data:image/png;base64,' + it.data))
   }
-  function itemTexts(it) {   // 도형 하나의 글(대화 재료·정리정돈 조각 글)
+  function itemTexts(it) {   // 도형 하나의 글(대화 재료)
     const out = []
     if (it.type === 'text' && it.text?.trim()) out.push(it.text)
     if (it.label?.text?.trim()) out.push(it.label.text)
@@ -809,99 +808,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (it.type === 'image' && it.alt) out.push(`[그림] ${it.alt}`)
     return out
   }
-  // ── 「정리해 줘」 ② 레고형 정리정돈(§8 항목61, 2026-10-19) — AI는 묶음 목록만(서버 `board_tidy`), 자리는 `tidy.js` ──
-  // 조각 = 옮기는 단위: 묶음(group_id)·보드(안의 것까지)는 통째로 하나, 화살표·선·펜·판서는 빼고(붙은 도형 따라 저절로),
-  // 프레임은 안의 것까지 건너뜀(프레임 안에 프레임을 겹쳐 넣지 않음). 고른 것이 없으면 지금 화면에 가운데가 보이는 것
-  // 정리정돈 미리보기(2026-10-23 사용자: 한 번에 휙 바뀌어 헷갈림) — 바뀔 자리를 점선으로 먼저 보이고 「적용 · 취소」. 칠판은 적용 전까지 그대로
-  // tidyPrev = { base(그때 칠판 items), items(적용하면 될 items), frames(새 프레임 id), sel, msg, ghost: { frames: [{x,y,w,h,name}], units: [{from, to}] }, box }
-  const [tidyPrev, setTidyPrev] = useState(null)
-  function tidyApply() {
-    const t = tidyPrev; if (!t) return
-    setTidyPrev(null)
-    if (R.current.model.items !== t.base) return setStatus('그사이 칠판이 바뀌어 정돈을 안 했어요 — 다시 「정리정돈」 해 주세요')
-    commit(t.items, t.frames, '정리정돈'); setStatus(t.msg)
-  }
-  const tidyCancel = () => { if (tidyPrev) { setTidyPrev(null); setStatus('정리정돈을 안 했어요 — 칠판은 그대로') } }
-  const tidyLine = it => it.type === 'line' || isArrow(it) || (it.type === 'path' && it.freehand) || (it.type === 'polygon' && !it.closed) || it.type === 'titleblock' || it.layer_id === PEN_LAYER
-  // 한 조각 = 묶음 + 화살표로 이어진 것 전부(2026-10-23 사용자: 정돈하면 화살표가 뭉개짐 — 이어진 도형을 따로따로 바둑판에 놓아 자리 관계가 깨졌음).
-  // 이어진 덩어리는 서로 자리 그대로 통째로 옮기니 안의 화살표 모양도 그대로. 프레임에 붙은 끝은 따라가지 않음(프레임은 정돈 대상이 아님)
-  const tidyMembers = (items, uid) => {
-    const ids = new Set(movingSet(expandGroups(items, [uid]))), byId = new Map(items.map(it => [it._id, it]))
-    const endOf = (a, k) => a['_' + k] ?? (a[k + '_group'] ? items.find(x => x.group_id === a[k + '_group'])?._id : null)
-    for (let grew = true; grew;) {
-      grew = false
-      for (const a of items) {
-        if (!isArrow(a)) continue
-        const [e1, e2] = [endOf(a, 'bind1'), endOf(a, 'bind2')]
-        for (const [p, q] of [[e1, e2], [e2, e1]]) {
-          const o = q && byId.get(q)
-          if (!p || !ids.has(p) || !o || ids.has(q) || o.type === 'frame' || o.locked) continue
-          for (const id of movingSet(expandGroups(items, [q]))) ids.add(id)
-          grew = true
-        }
-      }
-    }
-    return [...ids]
-  }
-  function tidyItems() {
-    const m = R.current.model, c = R.current.cam, pool = hitPool().filter(it => !it.locked)
-    let scope
-    if (R.current.sel.length) { const ids = new Set(movingSet(R.current.sel)); scope = pool.filter(it => ids.has(it._id)) }
-    else { const vx = -c.x / c.z, vy = -c.y / c.z, vw = (size.w - rightInset(svg.current)) / c.z, vh = size.h / c.z
-      scope = pool.filter(it => { const b = sceneBox(it, textBox), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= vx && cx <= vx + vw && cy >= vy && cy <= vy + vh }) }
-    const frames = scope.filter(it => it.type === 'frame').map(it => it._id), skip = new Set([...frames, ...boardContents(m.items, frames, textBox)]), used = new Set(), out = []
-    for (const it of scope) {
-      if (used.has(it._id) || skip.has(it._id) || tidyLine(it)) continue
-      const ids = tidyMembers(m.items, it._id).filter(id => !used.has(id) && !skip.has(id)); ids.forEach(id => used.add(id))
-      const its = m.items.filter(x => ids.includes(x._id)), b = unionBox(its.map(x => sceneBox(x, textBox)))
-      out.push({ uid: it._id, type: its.length > 1 ? `${it.type} 외 ${its.length - 1}개 묶음` : it.type, text: its.flatMap(itemTexts).join(' / ').slice(0, 400), w: Math.round(b.w), h: Math.round(b.h) })
-    }
-    return out
-  }
-  // 답(plan = { title, sections: [{ title, items: [uid], note }], opinion }) → 묶음마다 프레임, 조각 옮김, 핵심 의견 = 노란 메모. 한 번의 commit = Ctrl+Z 한 번. 새 프레임 id들(없으면 null)
-  function applyTidy(plan, model = '') {
-    const m = R.current.model, have = new Set(m.items.map(it => it._id)), used = new Set(), secs = []
-    for (const s of plan?.sections || []) {
-      const units = []
-      for (const uid of s.items || []) {
-        if (!have.has(uid) || used.has(uid)) continue
-        const ids = tidyMembers(m.items, uid).filter(id => !used.has(id)); if (!ids.length) continue; ids.forEach(id => used.add(id))
-        const b = unionBox(m.items.filter(x => ids.includes(x._id)).map(x => sceneBox(x, textBox))); units.push({ ids, box: b, w: b.w, h: b.h })
-      }
-      if (!units.length) continue
-      const note = s.note ? base([0, 0], { type: 'text', text: s.note, color: '#ff8a8f98', font: 10, bg: null }) : null, nb = note && textBox(note)
-      secs.push({ title: s.title || '묶음', units, note, noteW: nb?.w || 0, noteH: nb?.h || 0 })
-    }
-    if (!secs.length) return null
-    const moved = secs.flatMap(s => s.units), all = moved.map(u => u.box), o0 = { x: Math.min(...all.map(b => b.x)), y: Math.min(...all.map(b => b.y)) }
-    const lay0 = tidyLayout(secs, o0), memoH = plan.opinion ? 140 : 0, tag = 40   // 프레임 이름표·의견 메모 자리까지 비우기
-    const others = m.items.filter(it => !used.has(it._id) && !tidyLine(it)).map(it => sceneBox(it, textBox))
-    const o = clearSpot({ x: o0.x, y: o0.y - tag }, lay0.w, lay0.h + tag + memoH, others), lay = tidyLayout(secs, { x: o.x, y: o.y + tag })
-    let next = m.items
-    secs.forEach((s, i) => s.units.forEach((u, k) => { const f = lay.frames[i], to = f.at[k]; next = moveItems(next, u.ids, f.inner.x + to.x - u.box.x, f.inner.y + to.y - u.box.y) }))
-    const unitOf = new Map(moved.flatMap((u, i) => u.ids.map(id => [id, i])))
-    next = faceArrows(next, moved.flatMap(u => u.ids), rectOf, unitOf)   // 덩어리 사이에서 등지게 된 화살표만 마주 보는 변으로(안 그러면 프레임 밖으로 돌아감)
-    const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = orderedFrames(m.items).length
-    const frames = secs.map((s, i) => { const f = lay.frames[i]; return base([f.x, f.y], { type: 'frame', rect: [0, 0, f.w, f.h], name: s.title, no: no0 + i + 1, z: zb }) })
-    const notes = secs.flatMap((s, i) => (s.note ? [{ ...s.note, pos: [lay.frames[i].note.x - TEXT_MARGIN, lay.frames[i].note.y - TEXT_MARGIN], z: zt }] : []))
-    const add = [...frames, ...notes]
-    if (plan.opinion) {
-      const src = `KAIROS 정리정돈 · ${model} · ${new Date().toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`
-      let memo = base([lay.frames[0].x, o.y + tag + lay.h + TIDY.FGAP * 0.6], { type: 'memo', rect: [0, 0, MEMO.W, 40], fill: '#fffff8c5', z: zt,
-        lines: [{ k: 'h3', t: plan.title || '핵심 의견' }, { k: 'p', t: '💡 ' + plan.opinion }, { k: 'p', t: src, runs: [[0, src.length, MUTED, false]] }] })
-      memo = { ...memo, rect: [0, 0, MEMO.W, memoHeight(memo)] }; add.push(memo)
-    }
-    const ghost = { frames: secs.map((s, i) => ({ ...lay.frames[i], name: s.title })),
-      units: secs.flatMap((s, i) => s.units.map((u, k) => ({ from: u.box, to: { x: lay.frames[i].inner.x + lay.frames[i].at[k].x, y: lay.frames[i].inner.y + lay.frames[i].at[k].y, w: u.w, h: u.h } }))) }
-    const box = unionBox([...all, ...lay.frames])
-    setTidyPrev({ base: m.items, items: [...next, ...add], frames: frames.map(f => f._id), ghost, box,
-      msg: `정리정돈 — ${secs.length}묶음 · 조각 ${moved.length}개. 마음에 안 들면 Ctrl+Z 한 번에 원래대로` })
-    const L = 24, W = size.w - rightInset(svg.current) - L, zz = Math.min(1.5, Math.max(ZMIN, Math.min(W / (box.w * 1.1), size.h / (box.h * 1.25))))   // 전과 후가 한눈에(showIds와 같은 계산)
-    setCam({ z: zz, x: L + W / 2 - (box.x + box.w / 2) * zz, y: size.h / 2 - (box.y + box.h / 2) * zz })
-    setStatus(`정리정돈 미리보기 — ${secs.length}묶음 · 조각 ${moved.length}개. 점선 자리로 옮겨요 — 「적용」 또는 「취소」(Esc)`)
-    return frames.map(f => f._id)
-  }
-  // 여러 도형이 한눈에 들어오게(정돈한 곳 보기) — 없으면 false
+  // 여러 도형이 한눈에 들어오게(딥모드 판 보기 등) — 없으면 false
   function showIds(ids) {
     const its = R.current.model.items.filter(it => ids?.includes(it._id)); if (!its.length) return false
     const L = 24, b = unionBox(its.map(it => sceneBox(it, textBox))), W = size.w - rightInset(svg.current) - L, z = Math.min(1.5, Math.max(ZMIN, Math.min(W / (b.w * 1.1), size.h / (b.h * 1.2))))   // 왼쪽 카드(도형·프레임 목록) 자리는 빼고
@@ -943,13 +850,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // 딥모드 지면(§8 항목66 2단계, 2026-10-25) — 계획(꼭지 + 본문) → 프레임(들) 안에 진짜 칠판 물건. 자리는 deep.js, 물건은 deepboard.js, 단계 사이 화살표만 여기(길 찾기).
   // 프레임 = 폭 1600 · 높이는 내용만큼(16:9 고집 버림 — 같은 날 2차 판정). 프레임 번호 = 발표 차례. 되돌리기 한 번에 통째로.
-  // 3-1 디자인 묶음: 첫 프레임에 `deep_plan` { plan, style, fix, vs, sig } — 같은 내용을 다른 묶음·꼭지 모양으로 다시 지음(`deepRedo`).
+  // 3-1 톤(옛 디자인 묶음): 첫 프레임에 `deep_plan` { plan, style, fix, vs, sig } — 같은 내용을 다른 톤·꼭지 모양으로 다시 지음(`deepRedo`).
   // 지은 물건마다 `deep_of` = 첫 프레임 _id(다시 지을 때 지울 것), 꼭지 물건은 `deep_sec` = 꼭지 번호(「꼭지 모양」)
   const deepSig = items => { const t = JSON.stringify(items.filter(it => it.type !== 'frame').map(it => [it.type, it.deep_sec ?? -1, Math.round(it.pos[0]), Math.round(it.pos[1]), (it.lines || []).map(l => l.t), it.cells, it.chart || '', it.fill || '', ...(it.html ? [it.html.length, it.html.slice(-80)] : [])]))
     let h = 5381; for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return String(h >>> 0) }   // 손으로 고쳤나(다시 지을 때 먼저 물음) — 자리·글·칸만(+ 움직이는 카드 HTML — 5단계)
   // meta = { topic, brief } — 꼭지 다시 쓰기(5단계)가 「누구에게」를 알게 계획과 같이 둠
   function deepBuild(plan, o, { style = 'calm', fix = {}, keep = null, meta = {} } = {}) {
-    const m = R.current.model, S = styleOf(style), lay = deepLayout(plan, deepMeasure(plan, S.look), { ...S.layout, fix }), n = lay.pages.length
+    const m = R.current.model, S = styleOf(style), lay = deepLayout(plan, deepMeasure(plan, S.look), { fix }), n = lay.pages.length
     const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = keep ? keep.no - 1 : orderedFrames(m.items).length, out = [], links = []
     const rootId = keep?.id || newId(), vs = {}
     lay.pages.forEach((pg, p) => {
@@ -969,9 +876,16 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         out.push({ ...arrowItem(a, pa.p, b, pb.p, { auto_route: true, pts, color: S.look.arrow || '#ffc4613f', width: 1.5, style: 1, head: true, head_start: false }), z: zt, group_id: A.group_id, deep_of: rootId, deep_sec: A.deep_sec })
       }
     } finally { R.current.model = keepM }
-    out[0] = { ...out[0], deep_plan: { ...meta, plan, style, fix, vs, sig: deepSig(out) } }
+    out[0] = { ...out[0], deep_plan: { ...meta, plan: deepBare(plan), style, fix, vs, sig: deepSig(out) } }
     return { out, lay, n, o }
   }
+  // 요약 그림(2026-10-25) — 그림 바이트(data)는 그림 물건에만 두고 계획엔 주소·크기만(파일이 그림 두 벌로 불지 않게). 다시 지을 땐 판의 그림 물건에서 되살림
+  const deepBare = plan => ({ ...plan, sections: (plan.sections || []).map(s => (s.body?.data ? { ...s, body: Object.fromEntries(Object.entries(s.body).filter(([k]) => k !== 'data')) } : s)) })
+  const deepWithImgs = (plan, items, rootId) => ({ ...plan, sections: (plan.sections || []).map((s, i) => {
+    if (s.shape !== '요약 그림' || !s.body?.img || s.body.data) return s
+    const im = items.find(it => it.type === 'image' && it.deep_of === rootId && it.deep_sec === i)
+    return im ? { ...s, body: { ...s.body, data: im.data } } : s
+  }) })
   const deepInfo = r => ({ ids: r.out.map(it => it._id), pages: r.lay.pages.map(pg => ({ x: r.o.x + pg.x, y: r.o.y, w: pg.W, h: pg.H, waste: deepWaste(pg), rows: r.lay.rows.map(rr => rr.slots.map((sl, k) => `${sl.map(i => i + (rr.v[i] ? rr.v[i][0] : '')).join('+')}:${rr.spans[k]}`).join(' ')) })) })
   // at = 첫 장 왼쪽 위(없으면 지금 칠판의 오른쪽 빈자리)
   function deepBoard(plan, at, style = 'calm', meta = {}) {
@@ -984,18 +898,18 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 딥모드 판의 첫 프레임(그 판 물건 하나 또는 프레임에서) — 없으면 null
   const deepRoot = it => { if (!it) return null; const items = R.current.model.items; return it.deep_plan ? it : it.deep_of ? items.find(x => x._id === it.deep_of && x.deep_plan) || null : null }
   const deepEdited = root => deepSig(R.current.model.items.filter(it => it.deep_of === root._id || it._id === root._id)) !== root.deep_plan.sig
-  // 같은 내용을 다른 디자인(style)·꼭지 모양(fix = { 꼭지: 모양 })으로 다시 지음 — 첫 프레임 자리·번호·_id는 그대로(발표 차례 유지), 되돌리기 한 번
+  // 같은 내용을 다른 톤(style)·꼭지 모양(fix = { 꼭지: 모양 })으로 다시 지음 — 첫 프레임 자리·번호·_id는 그대로(발표 차례 유지), 되돌리기 한 번
   // plan·fixAll = 꼭지 다시 쓰기(5단계 `deepRedoSection`) — 새 계획과 모양 기억 통째
-  function deepRedo(rootId, { style, fix, plan, fixAll } = {}) {
+  function deepRedo(rootId, { style, fix, plan, fixAll, label } = {}) {
     const m = R.current.model, root = m.items.find(it => it._id === rootId && it.deep_plan); if (!root) return null
     const d = root.deep_plan, st = style || d.style, fx = fixAll || (fix ? { ...d.fix, ...fix } : d.fix)
     const meta = Object.fromEntries(['topic', 'brief'].filter(k => d[k] != null).map(k => [k, d[k]]))
     const rest = m.items.filter(it => it._id !== rootId && it.deep_of !== rootId)
     R.current.model = { ...m, items: rest }   // 지을 자리 계산·길 찾기가 옛 물건을 안 보게
     let r
-    try { r = deepBuild(plan || d.plan, { x: root.pos[0], y: root.pos[1] }, { style: st, fix: fx, keep: { id: rootId, no: root.no }, meta }) } finally { R.current.model = m }
-    commit([...deepRebind(m.items, rest, r.out, rootId), ...r.out], [rootId], plan ? '꼭지 다시 쓰기' : style ? `디자인 — ${styleOf(st).name}` : '꼭지 모양')
-    setStatus(plan ? '꼭지를 다시 써서 판을 다시 지었어요 — Ctrl+Z로 되돌리기' : style ? `디자인을 「${styleOf(st).name}」로 다시 지었어요 — 마음에 안 들면 Ctrl+Z` : '꼭지 모양을 바꿔 다시 배치했어요 — Ctrl+Z로 되돌리기')
+    try { r = deepBuild(deepWithImgs(plan || d.plan, m.items, rootId), { x: root.pos[0], y: root.pos[1] }, { style: st, fix: fx, keep: { id: rootId, no: root.no }, meta }) } finally { R.current.model = m }
+    commit([...deepRebind(m.items, rest, r.out, rootId), ...r.out], [rootId], label || (plan ? '꼭지 다시 쓰기' : style ? `톤 — ${styleOf(st).name}` : '꼭지 모양'))
+    setStatus(label ? `${label} — 판을 다시 지었어요` : plan ? '꼭지를 다시 써서 판을 다시 지었어요 — Ctrl+Z로 되돌리기' : style ? `톤을 「${styleOf(st).name}」로 바꿔 다시 지었어요 — 마음에 안 들면 Ctrl+Z` : '꼭지 모양을 바꿔 다시 배치했어요 — Ctrl+Z로 되돌리기')
     return deepInfo(r)
   }
   // 꼭지 다시 쓰기(§8 항목66 5단계) — 고른 것이 한 판의 꼭지들뿐이면 { root, idx, titles, edited, plan, brief, topic }.
@@ -1008,12 +922,33 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (idx.every(i => !secs[i] || secs[i].shape === '출처 카드')) return null
     return { root: root._id, idx, titles: idx.map(i => secs[i]?.title || ''), edited: deepEdited(root), plan: d.plan, brief: d.brief || {}, topic: d.topic || d.plan.title || '' }
   }
-  // 서버가 다시 쓴 꼭지([{ i, …꼭지 }]) + 판 출처 → 계획에 적고 다시 지음 — 계획에 적으니 「디자인」으로 다시 지어도 새 꼭지(4단계에서 남긴 것). 모양이 바뀐 꼭지는 모양 기억(fix)을 지움
+  // 서버가 다시 쓴 꼭지([{ i, …꼭지 }]) + 판 출처 → 계획에 적고 다시 지음 — 계획에 적으니 「톤」으로 다시 지어도 새 꼭지(4단계에서 남긴 것). 모양이 바뀐 꼭지는 모양 기억(fix)을 지움
   function deepRedoSection(rootId, secs, sources) {
-    const root = R.current.model.items.find(it => it._id === rootId && it.deep_plan); if (!root || !secs?.length) return null
+    const m = R.current.model, root = m.items.find(it => it._id === rootId && it.deep_plan); if (!root || !secs?.length) return null
     const d = root.deep_plan, ss = [...d.plan.sections], fix = { ...d.fix }
     for (const { i, ...s } of secs) if (ss[i]) { if (ss[i].shape !== s.shape) delete fix[i]; ss[i] = s }
-    return deepRedo(rootId, { plan: { ...d.plan, sections: ss, ...(sources ? { sources } : {}) }, fixAll: fix })
+    const before = { plan: deepWithImgs(d.plan, m.items, rootId), fix: d.fix || {} }, after = { plan: { ...d.plan, sections: ss, ...(sources ? { sources } : {}) }, fix }
+    const r = deepRedo(rootId, { plan: after.plan, fixAll: fix })
+    if (r) deepAlt.current.set(rootId, { before, after })
+    return r
+  }
+  // 꼭지 다시 쓰기 전·후 비교(2026-10-25 사용자 「바로 교체라 비교가 어려움」) — 대화창 답의 「원래대로 ↔ 바꾼 것」 버튼이 판을 그 자리에서 번갈아 다시 지음.
+  // 두 계획은 이 창에만 기억(새로고침하면 버튼이 사라짐 — Ctrl+Z는 그대로). 지금 판이 어느 쪽인지는 계획을 견줘 봄(Ctrl+Z로 돌아가도 맞게).
+  // 그사이 손으로 고쳤으면 덮어쓰지 않고 'edited'
+  const deepAlt = useRef(new Map())
+  const planKey = plan => JSON.stringify(deepBare(plan).sections)
+  function deepFlipState(rootId) {
+    const a = deepAlt.current.get(rootId), root = R.current.model.items.find(it => it._id === rootId && it.deep_plan); if (!a || !root) return null
+    const k = planKey(root.deep_plan.plan)
+    return k === planKey(a.after.plan) ? 'after' : k === planKey(a.before.plan) ? 'before' : null
+  }
+  function deepFlip(rootId) {
+    const now = deepFlipState(rootId); if (!now) return null
+    const root = R.current.model.items.find(it => it._id === rootId && it.deep_plan)
+    if (deepEdited(root)) { setStatus('판을 손으로 고친 뒤라 바꾸면 덮어써요 — 되돌리려면 Ctrl+Z'); return 'edited' }
+    const to = now === 'after' ? 'before' : 'after', t = deepAlt.current.get(rootId)[to]
+    deepRedo(rootId, { plan: t.plan, fixAll: t.fix, label: to === 'before' ? '꼭지 원래대로 보기' : '꼭지 바꾼 것 보기' })
+    return to
   }
   // 다시 지을 때 손으로 그린 화살표(판 밖 물건)의 끝 — 옛 판 물건에 붙어 있었으면 같은 꼭지·같은 종류의 새 물건(그 꼭지 안 차례도 같게)으로 옮겨 붙임.
   // 물건 안 점은 크기 비율로 옮김(테두리 위 점은 새 테두리 위로). 맞는 새 물건이 없으면 끝이 그 자리에 떠 있음
@@ -1547,7 +1482,6 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (k === 'ArrowDown') { if (ls.e >= L.length) return; const [, ne] = lineUnit(L, ls.e); setLineSel(e.shiftKey ? { ...ls, e: ne } : { id: ls.id, s: ls.e, e: ne }) }   // 개별로 고른 것(more)은 화살표에선 풀림(Shift는 유지)
           else { if (ls.s <= 0) return; const s0 = lineUnit(L, ls.s - 1)[0]; setLineSel(e.shiftKey ? { ...ls, s: s0 } : { id: ls.id, s: s0, e: lineUnit(L, s0)[1] }) } })   // 위 줄(코드·인용은 그 덩어리 처음)
       }
-      if (k === 'Escape' && tidyPrev) { tidyCancel(); return }   // 정리정돈 미리보기 = 취소
       if (k === 'Escape') { setOverlay(o => ({ ...o, poly: null, draw: null, lpt: null, pcur: null })); if (R.current.tool !== 'select') setTool('select'); else if (cellSel) setCellSel(null); else setSel([]); return }
       if (k === 'Enter' && overlay.poly) return act(() => finishPoly(overlay.poly, false))
       // 칸을 고른 채로 — 엑셀처럼: 글자를 치면 바로 그 칸에 새로 씀(두 번 누르지 않아도 — 2026-10-18 사용자), Enter·F2 = 있는 글 이어 고치기, Delete = 칸 글만 지움(표는 그대로)
@@ -2224,20 +2158,6 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'pdf' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
-          {tidyPrev && (() => { const g = tidyPrev.ghost, sw = 1.5 / z, dash = `${8 / z} ${5 / z}`, fs = 13 / z, b = tidyPrev.box   // 정리정돈 미리보기 — 프레임(주황 점선)·옮길 자리(파랑 점선)·원래 자리 → 새 자리 가는 선
-            return <g data-testid="tidy-preview">
-              {g.units.map((u, i) => <g key={'tu' + i} pointerEvents="none">
-                <rect x={u.from.x} y={u.from.y} width={u.from.w} height={u.from.h} fill="rgba(113,113,122,.08)" stroke="#a1a1aa" strokeWidth={sw} strokeDasharray={dash} />
-                <line x1={u.from.x + u.from.w / 2} y1={u.from.y + u.from.h / 2} x2={u.to.x + u.to.w / 2} y2={u.to.y + u.to.h / 2} stroke="rgba(37,99,235,.45)" strokeWidth={sw} />
-                <rect x={u.to.x} y={u.to.y} width={u.to.w} height={u.to.h} fill="rgba(37,99,235,.10)" stroke="#2563eb" strokeWidth={sw} strokeDasharray={dash} /></g>)}
-              {g.frames.map((f, i) => <g key={'tf' + i} pointerEvents="none"><rect x={f.x} y={f.y} width={f.w} height={f.h} rx={6 / z} fill="none" stroke="#da7756" strokeWidth={sw} strokeDasharray={dash} />
-                <text x={f.x} y={f.y - 6 / z} fontSize={fs} fontFamily={APP_FONT} fontWeight={600} fill="#da7756">{f.name}</text></g>)}
-              <foreignObject x={0} y={0} width={420} height={44} transform={`translate(${b.x},${b.y - 64 / z}) scale(${1 / z})`}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', font: `600 13px ${APP_FONT}`, color: '#da7756' }}>
-                  <span style={{ background: 'rgba(255,255,255,.92)', padding: '4px 10px', borderRadius: 99, border: '1px solid #da7756' }}>🧩 정리정돈 미리보기</span>
-                  <button data-testid="tidy-apply" onPointerDown={e => e.stopPropagation()} onClick={tidyApply} style={{ all: 'unset', cursor: 'pointer', padding: '4px 14px', borderRadius: 99, background: '#da7756', color: '#fff' }}>적용</button>
-                  <button data-testid="tidy-cancel" onPointerDown={e => e.stopPropagation()} onClick={tidyCancel} style={{ all: 'unset', cursor: 'pointer', padding: '4px 14px', borderRadius: 99, background: 'rgba(255,255,255,.92)', color: '#71717a', border: '1px solid #d4d4d8' }}>취소</button></div>
-              </foreignObject></g> })()}
           {pend.map(q => { const w = 2 * MEMO.W + 72, h = 240, fs = 14 / z   // 회의록 만드는 중 — 놓을 자리에 점선 틀(그리는 과정 보이기)
             return <g key={'pend' + q.id} data-testid="meeting-pending" pointerEvents="none"><rect x={q.x} y={q.y} width={w} height={h} rx={10} fill="rgba(218,119,86,.06)" stroke="#da7756" strokeWidth={1.5 / z} strokeDasharray={`${8 / z} ${5 / z}`} />
               <text x={q.x + w / 2} y={q.y + h / 2} textAnchor="middle" dominantBaseline="central" fontSize={fs} fontFamily={APP_FONT} fill="#da7756">회의록 만드는 중 · {q.msg}</text></g> })}
@@ -2352,13 +2272,11 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', '', act(wrapFrame)])
           out.push('-', ['내보내기…', '', act(() => onExportSel?.())])
           if (onAsk) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
-          if (onAsk && ids.length >= 2) out.push(['정리정돈하기 (KAIROS)', '', act(() => onAsk('고른 것을 주제별로 묶어 정돈해 줘', 'tidy'))])   // 「정리해 줘」 ② — 지우지 않고 묶어 옮김
         }
         if (clip.current?.items?.length) { if (has) out.push('-'); out.push(['붙여넣기', 'Ctrl+V', act(paste)]) }
         if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))])
           if (m.items.some(it => it.locked && !layerLocked(it))) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked && !layerLocked(it) ? { ...it, locked: false } : it)), [], '잠금 해제'))])   // 잠긴 레이어의 도형은 그대로(레이어 자물쇠와 어긋나지 않게)
           if (onAsk && m.items.length) out.push('-', ['칠판 전체 정리 문서 만들기 (KAIROS)', '', act(() => onAsk('이 칠판 전체를 정리한 문서 한 장으로 만들어 줘', 'report'))])
-          if (onAsk && m.items.length >= 2) out.push(['보이는 것 정리정돈하기 (KAIROS)', '', act(() => onAsk('화면에 보이는 것을 주제별로 묶어 정돈해 줘', 'tidy'))])
           if (onHelp) out.push('-', ['글쇠 도움말', 'F1', act(onHelp)]) }
         return out })()} />}
       {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))

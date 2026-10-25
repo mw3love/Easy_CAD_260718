@@ -1,5 +1,5 @@
 // 흐름 35 — 딥모드 꼭지 다시 쓰기(§8 항목66 5단계, 2026-10-25): 판 꼭지를 고른 채 대화창에 고치는 말 = 그 꼭지만 다시(서버 step section) → 계획에 적고 판 다시 지음.
-// 묻는 말은 보통 대화(꼭지 안 바뀜) · 나머지 꼭지 글 그대로 · 겹침 0 · Ctrl+Z 한 번 · 「디자인」으로 다시 지어도 새 꼭지 · 손으로 고친 판은 크레딧 쓰기 전에 물음 ·
+// 묻는 말은 보통 대화(꼭지 안 바뀜) · 나머지 꼭지 글 그대로 · 겹침 0 · 전·후 버튼 · Ctrl+Z 한 번 · 「톤」으로 다시 지어도 새 꼭지 · 손으로 고친 판은 크레딧 쓰기 전에 물음 ·
 // 속성 카드 「이 꼭지 더 자세히」 · 움직이는 카드 꼭지 = 카드 고치기(계획 속 HTML도 새것). KAIROS·서버는 가짜(/api/chat) — 진짜 서버 길은 `tests/test_part73`
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
@@ -71,6 +71,15 @@ test('고른 꼭지만 다시 — 질문은 그대로 · 나머지 그대로 · 
   expect(root(d).deep_plan.plan.sections[HERO].body.text.at(-1)).toBe(NEW_P)                  // 계획에 적힘
   expect(root(d).deep_plan.plan.sources).toHaveLength(PLAN.sources.length + 1)
   await page.getByTestId('board').screenshot({ path: 'test-results/deepredo-hero.png' })
+  const flip = page.getByTestId('deep-flip')                                                    // 전·후 비교(2026-10-25 사용자 「바로 교체라 비교가 어려움」)
+  await expect(flip).toHaveAttribute('data-now', 'after'); await expect(flip).toHaveText('↺ 원래대로 보기')
+  await flip.click()
+  d = await liveDoc(page)
+  expect(contents(d)).toEqual(before); expect(root(d).uid).toBe(uid); expect(noOverlap(d)).toBe(0)   // 같은 자리에서 원래 것(크레딧 없이)
+  await expect(flip).toHaveAttribute('data-now', 'before')
+  await flip.click()
+  expect(contents(await liveDoc(page))[HERO]).toContain('새 문단')
+  await expect(flip).toHaveAttribute('data-now', 'after')
 
   await page.keyboard.press('Escape')
   await page.evaluate(() => window.__mb.ed.undo())                                            // 되돌리기 한 번 = 다시 쓰기 전

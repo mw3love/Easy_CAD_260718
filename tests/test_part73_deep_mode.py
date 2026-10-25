@@ -67,7 +67,8 @@ def test_brief_text_defaults_and_more():
 def test_make_plan_and_replan_prompt():
     c = FakeClient("```json\n" + json.dumps(PLAN, ensure_ascii=False) + "\n```", json.dumps(PLAN, ensure_ascii=False))
     out = deep_mode.make_plan(c, "반도체 수출 동향", {"무엇에": "보고·결정"}, day="2026년 10월 25일")
-    assert out["model"] == deep_mode.EDITOR_MODEL and len(out["plan"]["sections"]) == 5
+    assert out["model"] == deep_mode.EDITOR_MODEL and len(out["plan"]["sections"]) == 6                 # + 앱이 넣은 요약 그림
+    assert out["plan"]["sections"][1]["shape"] == deep_mode.SUMMARY                                      # 주인공 바로 뒤
     assert out["estimate"]["credits"][0] < out["estimate"]["credits"][1] and out["estimate"]["seconds"][0] >= 25   # 공공 꼭지가 있으면 더 오래
     sys_, user = c.sent[0]["messages"][0]["content"], c.sent[0]["messages"][1]["content"]
     assert "2026년 10월 25일" in sys_ and "움직이는 카드(한 판에 하나까지" in sys_   # 4단계부터 원리 꼭지 = 움직이는 카드(시험 `test_part74`)
@@ -77,6 +78,36 @@ def test_make_plan_and_replan_prompt():
     assert "[앞 계획" in user2 and "그래프 하나 더" in user2 and "흐름" in user2
     with pytest.raises(ValueError):
         deep_mode.make_plan(c, "  ", {})
+
+
+def test_summary_and_timeline_in_plan():
+    """요약 그림(2026-10-25) — 편집장 모양 목록엔 없고 앱이 한 판에 하나(주인공 뒤), 계획 카드에서 ×로 뺀 뒤 다시 짜도 안 넣음, 꼭지 수 한도에 안 셈.
+    타임라인 = 때 순서(숫자·날짜라 ai면 웹으로)."""
+    c = FakeClient(json.dumps(PLAN, ensure_ascii=False), json.dumps(PLAN, ensure_ascii=False))
+    out = deep_mode.make_plan(c, "반도체", {})
+    sys_ = c.sent[0]["messages"][0]["content"]
+    assert deep_mode.SUMMARY not in sys_ and "타임라인" in sys_
+    pic = out["plan"]["sections"][1]
+    assert pic["shape"] == deep_mode.SUMMARY and pic["source"] == "ai" and pic["query"] is None
+    est = deep_mode.estimate(out["plan"]), deep_mode.estimate(deep_mode.clean_plan(PLAN))
+    assert est[0]["credits"][0] - est[1]["credits"][0] >= 10 and est[0]["seconds"][0] > est[1]["seconds"][0]   # 그림 한 장 값·시간
+    dropped = {**out["plan"], "sections": [s for s in out["plan"]["sections"] if s["shape"] != deep_mode.SUMMARY]}
+    again = deep_mode.make_plan(c, "반도체", {}, prev=dropped, fix="그래프 하나 더")
+    assert all(s["shape"] != deep_mode.SUMMARY for s in again["plan"]["sections"])                      # × 뺀 것은 그대로 빠짐
+    two = deep_mode.clean_plan({"sections": [{"title": f"t{i}", "shape": "용어 풀이"} for i in range(12)] + [{"title": "그림", "shape": deep_mode.SUMMARY}, {"title": "그림2", "shape": deep_mode.SUMMARY}]})
+    assert sum(s["shape"] == deep_mode.SUMMARY for s in two["sections"]) <= 1
+    ten = deep_mode.clean_plan({"sections": [{"title": "그림", "shape": deep_mode.SUMMARY}] + [{"title": f"t{i}", "shape": "용어 풀이"} for i in range(12)]})
+    assert len(ten["sections"]) == deep_mode.MAX_SECTIONS + 1                                          # 그림은 꼭지 수에 안 셈
+    tl = deep_mode.clean_plan({"sections": [{"title": "연혁", "shape": "타임라인", "source": "ai"}]})["sections"][0]
+    assert tl["source"] == "web" and tl["query"] == "연혁" and "events" in deep_mode.SCHEMA["타임라인"]
+
+
+def test_board_material_reads_as_much_as_report():
+    """재료 「이 칠판」 = 정리 문서와 같은 4만 자(2026-10-25 — 8천 자에서 잘렸음)."""
+    plan = deep_mode.clean_plan({"sections": [{"title": "칠판", "shape": "접힌 메모", "source": "board"}]})
+    board = "가" * 30_000 + "끝표시"
+    assert "끝표시" in deep_mode.material_text(plan, {"sources": [], "materials": [None]}, board)
+    assert deep_mode.MAX_BOARD == 40_000
 
 
 def test_gather_numbers_sources_once_and_kr_falls_back_to_web():
@@ -133,6 +164,38 @@ def test_build_writes_bodies_and_fills_source_card():
     assert secs[3]["body"] == {} and secs[4]["body"] == {"links": [1]}                              # 칸이 틀린 body는 비움, 출처 카드 = 쓴 번호
     w = c.sent[0]["messages"]
     assert "독자: 윗사람(보고)" in w[0]["content"] and "[출처 번호]\n[1] 가" in w[1]["content"]
+
+
+def test_build_draws_summary_from_bodies_after_writing():
+    """요약 그림 = 기자 본문을 다 쓴 뒤 그 본문으로(숫자·단계, [n]·굵게 표시는 뺌), 그림 칸 = 주소·크기. 그리기가 없거나 실패하면 그 꼭지만 안내(판은 지음)."""
+    plan = deep_mode.with_summary(deep_mode.clean_plan(PLAN))
+    bodies = {"sections": [{"title": "기억할 숫자", "body": {"tiles": [["603억 달러", "9월 **수출** [1]", 1]]}}, {"title": "한눈에 보기", "body": {}},
+                           {"title": "흐름", "body": {"rows": [["달", "수출"], ["1월", "60 [1]"]], "kind": "line"}}, {"title": "원리", "body": {"steps": [["설계", "b"], ["제조", "c"]]}},
+                           {"title": "이상한 모양", "body": {"md": "- x"}}, {"title": "출처", "body": {}}]}
+    asked = []
+
+    def image(prompt):
+        asked.append(prompt)
+        return {"img": "/api/img/공부/1_abc.png", "w": 1536, "h": 1152, "model": "flare", "credits": 11}
+    web = lambda q: ("답 [1]", {"search_results": [{"title": "가", "url": "https://a"}]})
+    out = deep_mode.build("k", FakeClient(json.dumps(bodies, ensure_ascii=False)), "반도체", {}, plan, exa=web, kr=lambda q: [], image=image)
+    secs = out["plan"]["sections"]
+    assert secs[1]["body"] == {"img": "/api/img/공부/1_abc.png", "w": 1536, "h": 1152, "model": "flare"}
+    assert len(asked) == 1 and "603억 달러 9월 수출" in asked[0] and "설계 → 제조" in asked[0] and "[1]" not in asked[0].split("\n\n", 1)[1]
+    assert "목록에 없는 숫자" in asked[0]
+    out = deep_mode.build("k", FakeClient(json.dumps(bodies, ensure_ascii=False)), "반도체", {}, plan, exa=web, kr=lambda q: [], image=None)
+    assert "error" in out["plan"]["sections"][1]["body"] and any("요약 그림" in m for m in out["missing"])
+    bad = lambda p: (_ for _ in ()).throw(RuntimeError("HTTP 500"))
+    out = deep_mode.build("k", FakeClient(json.dumps(bodies, ensure_ascii=False)), "반도체", {}, plan, exa=web, kr=lambda q: [], image=bad)
+    assert "HTTP 500" in out["plan"]["sections"][1]["body"]["error"] and out["plan"]["sections"][0]["body"]["tiles"]   # 그림이 틀어져도 판은
+
+
+def test_redo_summary_redraws_with_ask():
+    plan = {**BUILT, "sections": [BUILT["sections"][0], {"title": "한눈에 보기", "shape": deep_mode.SUMMARY, "source": "ai", "size": "보통", "body": {"img": "/old.png", "w": 4, "h": 3}}] + BUILT["sections"][1:]}
+    asked = []
+    out = deep_mode.redo("k", FakeClient(), plan, [1], {}, "숫자를 더 크게", image=lambda p: asked.append(p) or {"img": "/new.png", "w": 4, "h": 3, "model": "flare"})
+    assert out["sections"] == [{**plan["sections"][1], "i": 1, "body": {"img": "/new.png", "w": 4, "h": 3, "model": "flare"}}]
+    assert "[고칠 점]\n숫자를 더 크게" in asked[0] and "옛 문단" in asked[0] and out["model"] == "flare"
 
 
 BUILT = {"title": "반도체 수출", "headline": "한 판에", "sources": [{"n": 1, "title": "가", "url": "https://a"}, {"n": 2, "title": "나", "url": "https://b"}], "sections": [
@@ -266,3 +329,25 @@ def test_server_deep_plan_build_and_models(server):
     with pytest.raises(urllib.error.HTTPError) as e:
         _post(base + "/api/chat", {"board": "공부", "kind": "deep", "deep": {"step": "??"}, "messages": msgs})
     assert e.value.code == 400
+
+
+def test_server_deep_image_saves_picture_next_to_board(server, monkeypatch):
+    """서버 요약 그림 = KAIROS 그림 한 장 → 칠판 옆 `<이름>.img/`, 칠판엔 주소·실제 크기만. 칠판 이름이 없으면 그리기 없음."""
+    import io
+    import server as srv
+    from PIL import Image
+    buf = io.BytesIO(); Image.new("RGB", (40, 30), "white").save(buf, "PNG")
+    calls = []
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, **kw: calls.append((prompt, kw)) or {"images": [(buf.getvalue(), "png")], "model": "flare", "credits": 11})
+
+    def build(key, client, topic, brief, plan, *, image=None, **_k):
+        return {"plan": {**plan, "sources": [], "sections": [{**s, "body": image("요약 지시") if s.get("shape") == deep_mode.SUMMARY else {}} for s in plan["sections"]]}, "model": "sonnet", "elapsed": 0.1, "missing": []}
+    monkeypatch.setattr(srv.deep_mode, "build", build)
+    base, _ = server
+    plan = {"title": "t", "sections": [{"title": "그림", "shape": deep_mode.SUMMARY}]}
+    got = _post(base + "/api/chat", {"board": "공부", "kind": "deep", "deep": {"step": "build", "topic": "t", "brief": {}, "plan": plan}, "messages": [{"role": "user", "content": "t"}]})
+    body = got["plan"]["sections"][0]["body"]
+    assert body["w"] == 40 and body["h"] == 30 and body["model"] == "flare" and calls[0][1]["n"] == 1
+    with urllib.request.urlopen(base + body["img"].replace("공부", urllib.parse.quote("공부"))) as r:
+        assert r.read() == buf.getvalue()
+    assert srv.Handler.__dict__["_deep_image"](SimpleNamespace(_name=lambda raw: ""), "", "k", "b") is None

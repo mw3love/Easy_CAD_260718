@@ -17,25 +17,25 @@ export const DEEP = {
 }
 
 /** 꼭지 칸 수 범위 [바닥, 한도] — 크기(주인공·보통·작게)와 모양으로. 바닥은 꼭 지킴(그래프 360px·단계 가로 늘어놓기), 한도는 넘으면 벌점(작은 꼭지가 줄을 통째로 먹어 속이 텅 빈 것).
- *  P = 배치 무게(디자인 묶음 `layout` — hero: 주인공 [바닥, 한도], boost: { 모양: 칸 더 }) */
-export function spanRange(sec, P = DEEP) {
-  const size = sec.size, shape = sec.shape, b = sec.body || {}, hero = P.hero || [6, 8]
-  let lo = size === '주인공' ? hero[0] : 3, hi = size === '주인공' ? hero[1] : size === '작게' ? 4 : 6
+ */
+export function spanRange(sec) {
+  const size = sec.size, shape = sec.shape, b = sec.body || {}
+  let lo = size === '주인공' ? 6 : 3, hi = size === '주인공' ? 8 : size === '작게' ? 4 : 6
   if (shape === '그래프') { lo = Math.max(lo, 4); hi = Math.max(hi, 6) }
   if (shape === '단계 카드') { lo = Math.max(lo, (b.steps?.length || 4) >= 5 ? 8 : 6); hi = 12 }
   if (shape === '표') { lo = Math.max(lo, 5); hi = Math.max(hi, 8) }
   if (shape === '숫자 타일') { lo = Math.max(lo, (b.tiles?.length || 3) >= 3 ? 4 : 3); hi = Math.max(hi, 6) }
-  if (shape === '움직이는 카드' && b.html) { lo = Math.max(lo, 5); hi = Math.max(hi, 8) }   // 조작 부품이 읽히는 폭(칸 5개 ≈ 650px — 카드는 기준 720을 줄여 보여 줌). 못 만들어 설명 메모면 보통 꼭지
+  if (shape === '움직이는 카드' && b.html) { lo = Math.max(lo, 5); hi = Math.max(hi, 8) }
+  if (shape === '요약 그림' && b.data) { lo = Math.max(lo, 4); hi = Math.max(hi, 6) }   // 그림 속 글자가 읽히는 폭(칸 4개 ≈ 500px)   // 조작 부품이 읽히는 폭(칸 5개 ≈ 650px — 카드는 기준 720을 줄여 보여 줌). 못 만들어 설명 메모면 보통 꼭지
   if (shape === '출처 카드') hi = Math.min(hi, 4)
-  const up = P.boost?.[shape] || 0; lo += up; hi += up
   return [Math.min(12, lo), Math.min(12, Math.max(lo, hi))]
 }
 /** 꼭지 모양 바꿔 보기(카피피팅 — 신문은 내용을 칸에 맞춰 다듬음): 숫자 = 나란히|위아래, 단계 = 한 줄|두 줄, 그래프 = 높게|낮게. 줄마다 높이가 가장 잘 맞는 것을 고름 */
 export const variantsOf = sec => (sec.shape === '숫자 타일' ? ['row', 'col'] : sec.shape === '단계 카드' ? ['row', 'grid'] : sec.shape === '그래프' ? ['tall', 'short'] : [''])
 // 그 폭에서 쓸 만한 모양인가 — 숫자 위아래 쌓기는 좁은 칸에서만(넓은 칸에서 쌓으면 타일 속이 텅 빔)
 const variantOk = (sec, v, w) => !(v === 'col' && w > 520) && !(v === 'grid' && (sec.body?.steps?.length || 0) < 4)
-// 위아래로 쌓을 수 있나 — 주인공·넓게 늘어놓는 모양(단계·표)·움직이는 카드는 혼자
-const stackable = sec => sec.size !== '주인공' && sec.shape !== '단계 카드' && sec.shape !== '표' && !(sec.shape === '움직이는 카드' && sec.body?.html)
+// 위아래로 쌓을 수 있나 — 주인공·넓게 늘어놓는 모양(단계·표)·움직이는 카드·요약 그림은 혼자
+const stackable = sec => sec.size !== '주인공' && sec.shape !== '단계 카드' && sec.shape !== '표' && !(sec.shape === '움직이는 카드' && sec.body?.html) && !(sec.shape === '요약 그림' && sec.body?.data)
 
 // 한 줄(꼭지 a..b-1)의 칸 나누기 후보 중 가장 좋은 것 — slots: [[i] | [i, j]] 차례대로
 function bestRow(secs, a, b, hOf, col, P) {
@@ -49,7 +49,7 @@ function bestRow(secs, a, b, hOf, col, P) {
   walk(a, [])
   let best = null
   for (const slots of parts) {
-    const R = slots.map(s => { const rs = s.map(i => spanRange(secs[i], P)); return [Math.max(...rs.map(r => r[0])), Math.max(...rs.map(r => r[1]))] })
+    const R = slots.map(s => { const rs = s.map(i => spanRange(secs[i])); return [Math.max(...rs.map(r => r[0])), Math.max(...rs.map(r => r[1]))] })
     if (R.reduce((t, r) => t + r[0], 0) > 12) continue
     const spans = Array(slots.length), members = slots.flat(), vlist = members.map(i => (P.fix?.[i] ? [P.fix[i]] : variantsOf(secs[i])))   // fix = 사용자가 「꼭지 모양」으로 정한 것
     const score = () => {   // 이 칸 수로 모양 조합마다
@@ -93,7 +93,7 @@ export function deepRows(secs, measure, col, P = DEEP) {
 }
 
 /** 지면 짜기 — 반환 { pages: [{ x, W, H, head, cells, k, G }], rows }. 칸 = { i, v: 모양, x, y, w, h, row, slot, top: 그 줄 위, rh: 줄 높이 } (장 안 좌표).
- *  L = 디자인 묶음 `layout`(G·M·K·hero·boost) + fix(꼭지 → 모양) — DEEP를 덮어씀 */
+ *  L = DEEP 덮어쓰기(시험용 G·M·K 등) + fix(꼭지 → 모양 — 속성 카드 「꼭지」) */
 export function deepLayout(plan, measure, L = {}) {
   const P = { ...DEEP, ...L }, secs = plan.sections || [], { W, M, G, K } = P, cw = W - 2 * M, col = (cw - 11 * G) / 12
   const rows = deepRows(secs, measure, col, P)

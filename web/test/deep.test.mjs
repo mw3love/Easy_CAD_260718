@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { DEEP, deepLayout, deepWaste, graphTiles, inside, overlaps, spanRange, variantsOf } from '../src/next/deep.js'
-import { DEEP_STYLES, STYLE_KEYS, recommendStyle } from '../src/next/deepstyle.js'
+import { DEEP_STYLES, STYLE_KEYS } from '../src/next/deepstyle.js'
 
 const load = t => JSON.parse(readFileSync(new URL(`./fixtures/deep_${t}.json`, import.meta.url), 'utf-8'))
 const chars = sec => JSON.stringify(sec.body || {}).length
@@ -55,31 +55,13 @@ test('아주 길면 줄 경계에서 여러 장 — 빠진 꼭지·장 겹침 �
   assert.deepEqual(overlaps(lay.pages.map(pg => ({ x: pg.x, y: 0, w: pg.W, h: pg.H }))), [])
 })
 
-test('디자인 묶음 넷(3-1) — 묶음 간격·여백으로 줄 폭이 맞고 겹침 0, 주인공·칸 더 주기·사용자가 정한 꼭지 모양을 지킴', () => {
-  for (const s of STYLE_KEYS) for (const t of ['paper', 'tx', 'news']) {
-    const plan = load(t), L = DEEP_STYLES[s].layout, P = { ...DEEP, ...L }, lay = deepLayout(plan, fake(plan), L), cw = P.W - 2 * P.M
-    assert.deepEqual(lay.pages.flatMap(pg => pg.cells.map(c => c.i)), plan.sections.map((_, i) => i), `${s} ${t}`)
-    for (const pg of lay.pages) {
-      assert.deepEqual(overlaps(boxes(pg)), [], `${s} ${t}`)
-      assert.equal(pg.head.x, P.M, `${s} 여백`)
-      const ws = new Map(); for (const c of pg.cells) ws.set(`${c.row}:${c.slot}`, [c.row, c.w])
-      const byRow = new Map(); for (const [r, w] of ws.values()) byRow.set(r, (byRow.get(r) || []).concat(w))
-      for (const w of byRow.values()) assert.ok(Math.abs(w.reduce((a, b) => a + b, 0) + (w.length - 1) * P.G - cw) < 1e-6, `${s} ${t} 줄 폭`)
-    }
-  }
-  assert.deepEqual(spanRange({ size: '주인공', shape: '주인공 글' }, { ...DEEP, ...DEEP_STYLES.magazine.layout }), [7, 9])
-  assert.deepEqual(spanRange({ size: '보통', shape: '그래프' }, { ...DEEP, ...DEEP_STYLES.info.layout }), [5, 7])
+test('톤 넷(3-1 → 최종 판정) — 색만 다르고 글 크기·카드 모양이 같아 배치가 같음, 사용자가 정한 꼭지 모양을 지킴', () => {
+  const shape = S => JSON.stringify({ title: S.look.title, head: S.look.head, hero: S.look.hero.scale, tile: S.look.tile.scale })
+  for (const s of STYLE_KEYS) assert.equal(shape(DEEP_STYLES[s]), shape(DEEP_STYLES.calm), s)
+  assert.equal(new Set(STYLE_KEYS.map(s => DEEP_STYLES[s].look.accent)).size, STYLE_KEYS.length)   // 색은 다 다름
+  assert.deepEqual(spanRange({ size: '주인공', shape: '주인공 글' }), [6, 8])
   const plan = load('news'), ti = plan.sections.findIndex(sec => sec.shape === '숫자 타일')
   for (const v of ['row', 'col']) assert.equal(deepLayout(plan, fake(plan), { fix: { [ti]: v } }).pages.flatMap(pg => pg.cells).find(c => c.i === ti).v, v)
-})
-
-test('처음 고르기 추천(3-2) — 보고 = 신문 · 발표 = 잡지 · 숫자 꼭지 셋 이상 = 인포그래픽 · 나머지 차분', () => {
-  const num = { sections: [{ shape: '그래프' }, { shape: '숫자 타일' }, { shape: '그래프' }, { shape: '글' }] }
-  assert.equal(recommendStyle({ 무엇에: '보고·결정' }, num)[0], 'news')
-  assert.equal(recommendStyle({ 누구에게: '윗사람(보고)' })[0], 'news')
-  assert.equal(recommendStyle({ 무엇에: '발표' }, num)[0], 'magazine')
-  assert.equal(recommendStyle({ 무엇에: '알아서' }, num)[0], 'info')
-  assert.equal(recommendStyle({}, load('paper'))[0], 'calm')
 })
 
 test('숫자가 모자란 그래프 = 숫자 타일(3-3 실조건 — 두 점 꺾은선)', () => {

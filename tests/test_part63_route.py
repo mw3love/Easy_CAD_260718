@@ -48,7 +48,7 @@ def test_route_uses_model_choice_and_sends_criteria():
         os.environ["EASYCAD_ROUTE"] = old or "rules"
     url, body = http.calls[0]
     assert url == "https://g/decisions/" and body["model"] == route.ROUTE_MODEL
-    assert set(body["questions"]["q"]["criteria"]) == {"search", "board", "chat", "image", "report", "tidy"}
+    assert set(body["questions"]["q"]["criteria"]) == {"search", "board", "chat", "image", "report"}
 
 
 def test_route_fixes_diagram_image_and_low_confidence_search():
@@ -60,7 +60,6 @@ def test_route_fixes_diagram_image_and_low_confidence_search():
 def test_route_falls_back_to_rules():
     assert _route("삼성전자 주가 얼마야", RuntimeError("timeout")) == (route.board_chat.guess_kind("삼성전자 주가 얼마야"), "rules")
     assert _route("내일 날씨", 500)[1] == "rules"
-    assert _route("이것들 묶어 줘", ("tidy", 0.9, {"tidy": 0.9}), has_items=False)[1] == "rules"   # 조각 목록 없이는 정돈 못 함
     assert route.route("k", "내일 날씨", http=_Http(("chat", 1, {})))[1] == "rules"   # conftest: EASYCAD_ROUTE=rules
 
 

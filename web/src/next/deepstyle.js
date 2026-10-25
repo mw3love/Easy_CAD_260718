@@ -1,47 +1,30 @@
-// 딥모드 디자인 묶음(§8 항목66 3-1, 2026-10-25 사용자 「디자인은 한 가지 정답이 없다 — 처음에 고르기·일부 개선·다른 형식으로 전면 개선」).
-// 디자인 = 색·카드 모양(look) + 배치 무게(layout — deep.js `DEEP`를 덮어씀). 내용(계획·본문)은 그대로, 묶음만 바꿔 다시 짓는다 — AI 크레딧 없음.
-// 색은 .ecad 꼴(#AARRGGBB, 글 runs는 #RRGGBB). CLEAR = 투명(테두리 없는 카드). look.chart = 그래프 색 순서(chart.js `CHART_THEMES` — 없으면 기본 파랑·주황, 차분·인포그래픽).
-const CLEAR = '#00ffffff'
+// 딥모드 톤(§8 항목66 3-1, 2026-10-25) — 같은 판을 다른 색으로 다시 짓기(내용·배치는 그대로, AI 크레딧 없음). 판을 고르면 속성 카드 「톤」.
+// 처음엔 「디자인 묶음」(색 + 배치 무게 — 차분·신문·잡지·인포그래픽)이었다(사용자 「디자인은 한 가지 정답이 없다」).
+// 색은 .ecad 꼴(#AARRGGBB, 글 runs는 #RRGGBB). look.chart = 그래프 색 순서(chart.js `CHART_THEMES` — 없으면 기본 파랑·주황).
+// 2026-10-25 최종 판정 → **톤**(사용자 「차분·신문만 괜찮고 둘은 구성이 거의 같음 — 구성 하나에 색만 다르게, 일단 만들고 톤은 나중에」):
+// 배치는 넷 다 차분과 같고(빈칸 없이 빽빽한 2차 판정 배치) 색만 다름 — 글 크기·카드 모양도 같게. 처음 고르기·추천은 없앰(만든 뒤 속성 카드 「톤」).
+// 키는 옛 판 그대로 읽히게 둠(magazine = 남색, info = 파랑 — 옛 잡지·인포그래픽 배치는 버림).
+const tone = (name, tip, c) => ({ name, tip,
+  look: { accent: c.accent, muted: c.muted, title: 'h3', head: 1.4, ...(c.chart ? { chart: c.chart } : {}),
+    hero: { bg: c.hero, pen: c.heroPen || c.hero, ink: c.heroInk, hi: c.heroHi, scale: 1.2 },
+    card: { fill: '#ffffffff', pen: c.cardPen || null }, step: { fill: c.step, pen: c.stepPen },
+    tile: { fill: '#ffffffff', pen: c.tilePen, num: c.accent, scale: 1 }, moving: { fill: c.moving, pen: c.movingPen } } })
 
 export const DEEP_STYLES = {
   // 차분 — 2차 판정 「톤은 차분해서 좋음」 그대로(진한 주인공 면·코랄 테두리 숫자·옅은 단계)
-  calm: { name: '차분', tip: '진한 주인공 면 · 코랄 숫자 · 흰 카드',
-    layout: {},
-    look: { accent: '#b4532f', muted: '#71717a', title: 'h3', head: 1.4,
-      hero: { bg: '#ff27272a', pen: '#ff27272a', ink: '#e4e4e7', hi: '#ffffff', scale: 1.2 },
-      card: { fill: '#ffffffff', pen: null }, step: { fill: '#fffffaf7', pen: '#fff0c9b8' },
-      tile: { fill: '#ffffffff', pen: '#ffda7756', num: '#b4532f', scale: 1 }, moving: { fill: '#fff4f4f5', pen: '#ffd4d4d8' } } },
-  // 신문 — 흰 바탕에 검은 선(가는 괘선), 헤드라인 크게, 빽빽하게(간격 좁게 · 본문 조금 작게)
-  news: { name: '신문', tip: '헤드라인 크게 · 검은 괘선 · 빽빽하게',
-    layout: { G: 12, M: 40, K: 0.95 },
-    look: { accent: '#9b1c1c', muted: '#57534e', title: 'h2', head: 1.75, chart: 'red',
-      hero: { bg: '#ffffffff', pen: '#ff18181b', ink: '#27272a', hi: '#9b1c1c', scale: 1.3 },
-      card: { fill: '#ffffffff', pen: '#ff3f3f46' }, step: { fill: '#ffffffff', pen: '#ff3f3f46' },
-      tile: { fill: '#ffffffff', pen: '#ff18181b', num: '#9b1c1c', scale: 1.05 }, moving: { fill: '#fff5f5f4', pen: '#ff3f3f46' } } },
-  // 잡지 — 주인공 크게, 여백 넉넉, 테두리 없는 옅은 면(남색·모래색)
-  magazine: { name: '잡지', tip: '주인공 크게 · 넉넉한 여백 · 테두리 없는 면',
-    layout: { G: 24, M: 72, K: 1.05, hero: [7, 9] },
-    look: { accent: '#1f5f7a', muted: '#6b7280', title: 'h3', head: 1.6, chart: 'cool',
-      hero: { bg: '#ff1f3a4d', pen: '#ff1f3a4d', ink: '#e6edf2', hi: '#ffd9a7', scale: 1.25 },
-      card: { fill: '#fff6f3ee', pen: CLEAR }, step: { fill: '#ffedf3f6', pen: CLEAR },
-      tile: { fill: '#fff6f3ee', pen: CLEAR, num: '#1f5f7a', scale: 1.15 }, moving: { fill: '#ffeef0f2', pen: CLEAR } } },
-  // 인포그래픽 — 큰 숫자·그래프가 주인공(칸을 더 줌), 파랑 한 색, 옅은 파랑 면
-  info: { name: '인포그래픽', tip: '큰 숫자 · 그래프 위주 · 파랑 한 색',
-    layout: { boost: { 그래프: 1, '숫자 타일': 1 } },
-    look: { accent: '#2a78d6', muted: '#64748b', title: 'h3', head: 1.5,
-      hero: { bg: '#ff2a78d6', pen: '#ff2a78d6', ink: '#eaf2fc', hi: '#ffffff', scale: 1.2 },
-      card: { fill: '#fff3f7fd', pen: CLEAR }, step: { fill: '#ffe8f1fb', pen: CLEAR },
-      tile: { fill: '#ffffffff', pen: '#ff2a78d6', num: '#2a78d6', scale: 1.3 }, moving: { fill: '#ffeef3f9', pen: CLEAR } } },
+  calm: tone('차분', '진한 회색 · 코랄', { accent: '#b4532f', muted: '#71717a', hero: '#ff27272a', heroInk: '#e4e4e7', heroHi: '#ffffff',
+    step: '#fffffaf7', stepPen: '#fff0c9b8', tilePen: '#ffda7756', moving: '#fff4f4f5', movingPen: '#ffd4d4d8' }),
+  // 신문 — 흰 바탕에 검은 괘선 · 빨강(배치는 차분과 같음)
+  news: tone('신문', '흰 바탕 · 검은 괘선 · 빨강', { accent: '#9b1c1c', muted: '#57534e', chart: 'red', hero: '#ffffffff', heroPen: '#ff18181b', heroInk: '#27272a', heroHi: '#9b1c1c',
+    cardPen: '#ff3f3f46', step: '#ffffffff', stepPen: '#ff3f3f46', tilePen: '#ff18181b', moving: '#fff5f5f4', movingPen: '#ff3f3f46' }),
+  // 남색 — 옛 잡지의 색만(남색 면·모래색 강조)
+  magazine: tone('남색', '남색 면 · 모래색 강조', { accent: '#1f5f7a', muted: '#6b7280', chart: 'cool', hero: '#ff1f3a4d', heroInk: '#e6edf2', heroHi: '#ffd9a7',
+    step: '#ffedf3f6', stepPen: '#ffc6d9e2', tilePen: '#ff1f5f7a', moving: '#ffeef0f2', movingPen: '#ffcfd6dc' }),
+  // 파랑 — 옛 인포그래픽의 색만(파랑 한 색)
+  info: tone('파랑', '파랑 한 색', { accent: '#2a78d6', muted: '#64748b', hero: '#ff2a78d6', heroInk: '#eaf2fc', heroHi: '#ffffff',
+    step: '#ffe8f1fb', stepPen: '#ffbcd6f3', tilePen: '#ff2a78d6', moving: '#ffeef3f9', movingPen: '#ffcbd9ea' }),
 }
 export const STYLE_KEYS = Object.keys(DEEP_STYLES)
 export const styleOf = key => DEEP_STYLES[key] || DEEP_STYLES.calm
 // 꼭지 모양 바꿔 보기의 이름(속성 카드 「꼭지 모양」)
 export const variantName = (shape, v) => ({ row: shape === '단계 카드' ? '한 줄' : '나란히', col: '위아래', grid: '두 줄', tall: '높게', short: '낮게' })[v] || v
-// 처음 고르기(3-2 지면 계획 카드) — 질문지 답·계획으로 묶음 하나 추천 → [키, 까닭]. 보고는 빽빽한 신문, 발표(큰 화면)는 여백 넉넉한 잡지, 숫자 꼭지가 셋 이상이면 인포그래픽, 나머지 차분
-export function recommendStyle(brief = {}, plan = {}) {
-  const nums = (plan.sections || []).filter(s => s.shape === '그래프' || s.shape === '숫자 타일').length
-  if (brief['무엇에'] === '보고·결정' || brief['누구에게'] === '윗사람(보고)') return ['news', '보고용 — 한 장에 빽빽하게']
-  if (brief['무엇에'] === '발표') return ['magazine', '발표용 — 큰 화면에서 주인공 크게']
-  if (nums >= 3) return ['info', `숫자 꼭지 ${nums}개 — 숫자·그래프 위주`]
-  return ['calm', '설명용 — 차분하게']
-}

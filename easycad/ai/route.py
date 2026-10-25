@@ -1,4 +1,4 @@
-"""웹 칠판 대화창 길 고르기(2026-10-20, Qt 비의존, `web/server.py`가 부름) — 질문 → 대화·웹 검색·칠판에서·그림·정리 문서·정리정돈.
+"""웹 칠판 대화창 길 고르기(2026-10-20, Qt 비의존, `web/server.py`가 부름) — 질문 → 대화·웹 검색·칠판에서·그림·정리 문서.
 
 판단은 KAIROS 판단 모델 `jev-latest`(POST /decisions/, choice + 확신도)에 맡기고, 낱말 규칙(`board_chat.guess_kind`)을 바닥으로 깐다:
 바깥 모델이 없어지거나·오류·`TIMEOUT`을 넘기거나·주간 자가 시험에서 규칙보다 못하면 규칙으로(앱은 안 멈춤).
@@ -22,14 +22,13 @@ CRITERIA = {
     "chat": "AI가 아는 일반 지식·방법·설명, 또는 고른 글을 번역·요약·다듬기",
     "image": "그림·일러스트를 새로 그리기(흐름도·도면·표는 chat)",
     "report": "칠판 자료를 문서·보고서 한 장으로 정리",
-    "tidy": "칠판 조각을 주제별로 묶어 옮기기",
 }
 # 정답 있는 시험 문제(질문, 칠판에서 고른 것 있음, 정답) — 주간 자가 시험·모델 시험장(§8 항목62)이 같이 씀. 늘릴 땐 사람이 정답을 단다.
 CASES = [
     ("내일 전주 날씨 어때?", 0, "search"), ("오늘 회의 내용 정리해 줘", 0, "report"), ("송신소 발전기 점검 주기는 보통 얼마야?", 0, "chat"),
     ("지난번에 적어 둔 VSWR 값 뭐였지?", 0, "board"), ("요즘 AI 반도체 동향 알려줘", 0, "search"), ("이 메모 영어로 번역해 줘", 1, "chat"),
     ("KBS 수신료 지금 어떻게 걷어?", 0, "search"), ("엑셀에서 VLOOKUP 쓰는 법", 0, "chat"), ("우리 송신소 점검 결과 어땠지?", 0, "board"),
-    ("송신탑 있는 산 풍경 그려 줘", 0, "image"), ("방송 송출 흐름도 그려 줘", 0, "chat"), ("이것들 주제별로 묶어 줘", 1, "tidy"),
+    ("송신탑 있는 산 풍경 그려 줘", 0, "image"), ("방송 송출 흐름도 그려 줘", 0, "chat"),
     ("칠판 내용 보고서 한 장으로", 0, "report"), ("삼성전자 주가 얼마야", 0, "search"), ("파이썬 리스트 정렬 방법", 0, "chat"),
     ("발표 리허설 언제로 정했었지?", 0, "board"), ("ATSC 3.0이 뭐야?", 0, "chat"), ("ATSC 3.0 국내 도입 최근 상황", 0, "search"),
     ("이 글 더 짧게 다듬어 줘", 1, "chat"), ("전주 맛집 추천해 줘", 0, "search"), ("내가 정리한 할 일 중에 안 끝난 거 있어?", 0, "board"),
@@ -77,19 +76,19 @@ def adjust(text: str, choice: str, conf: float, probs: dict) -> str:
     return choice
 
 
-def route(api_key: str, text: str, has_context: bool = False, *, has_items: bool = True, base_url: str = gw.BASE_URL, http=None) -> tuple:
-    """질문 → (길, 어떻게 골랐나 "ai"|"rules"). 정리정돈인데 칠판이 조각 목록을 안 보냈으면 규칙(조각 없이는 정돈 못 함)."""
-    kind, how, _ = decide(api_key, text, has_context, has_items=has_items, base_url=base_url, http=http)
+def route(api_key: str, text: str, has_context: bool = False, *, base_url: str = gw.BASE_URL, http=None) -> tuple:
+    """질문 → (길, 어떻게 골랐나 "ai"|"rules")."""
+    kind, how, _ = decide(api_key, text, has_context, base_url=base_url, http=http)
     return kind, how
 
 
 # 되묻기(§8 항목64, 2026-10-23 사용자 승인) — 애매하고 비싼 갈림길에서 한 번, 버튼으로. 대화·검색은 틀려도 몇 초면 다시라 안 물음.
 # 0단계 실측(41문항 × 3번): 「발표 자료 만들어 줘」 1·2등 차 0.03~0.11에 chat 2·report 1로 흔들림, 분명한 문항 중 차 < 0.3이고 비싼 길이 낀 것은 1개
 ASK_GAP = 0.3
-COSTLY = {"image", "report", "tidy"}
+COSTLY = {"image", "report"}
 
 
-def decide(api_key: str, text: str, has_context: bool = False, *, has_items: bool = True, prefs: dict | None = None,
+def decide(api_key: str, text: str, has_context: bool = False, *, prefs: dict | None = None,
            base_url: str = gw.BASE_URL, http=None) -> tuple:
     """질문 → (길, "ai"|"rules", 물어볼 길 목록 — 안 물으면 []). 물을 때 길 = 안 물었으면 갔을 길.
     `prefs` = {갈림길 이름: 길} — 사용자가 같은 갈림길에서 같은 답을 고른 적이 있으면 묻지 않고 그 길(대화창이 보냄)."""
@@ -104,14 +103,12 @@ def decide(api_key: str, text: str, has_context: bool = False, *, has_items: boo
     except Exception:
         return rules, "rules", []
     kind = adjust(text, choice, conf, probs)
-    if kind == "tidy" and not has_items:
-        return rules, "rules", []
-    return kind, "ai", ask_choices(choice, kind, probs, has_items)
+    return kind, "ai", ask_choices(choice, kind, probs)
 
 
 # 되묻기 버튼 대신 입력 칸에 친 말(「선으로 해 줘」·「그림인데 수채화로」) → 버튼 중 하나. 앞이 먼저(「선 그림」은 그림보다 아이콘)
 CHOICE_WORDS = [("icon", r"선\s*(으로|그림|도형)|도형|svg|벡터|고칠\s*수|아이콘으로"), ("image", r"그림|이미지|사진|일러스트|수채화|유화|그려"),
-                ("report", r"문서|보고서|한\s*장|인쇄"), ("tidy", r"정돈|묶어|옮겨"), ("search", r"검색|찾아\s*(줘|봐)|최신"),
+                ("report", r"문서|보고서|한\s*장|인쇄"), ("search", r"검색|찾아\s*(줘|봐)|최신"),
                 ("board", r"칠판에서|적어\s*둔"), ("chat", r"그냥|글로|대화로|설명")]
 
 
@@ -124,11 +121,11 @@ def pick_from(text: str, choices: list) -> str:
     return ""
 
 
-def ask_choices(choice: str, kind: str, probs: dict, has_items: bool = True) -> list:
+def ask_choices(choice: str, kind: str, probs: dict) -> list:
     """판단 모델 1·2등이 가깝고(차 < `ASK_GAP`) 비싼 길이 끼면 [1등, 2등] — 낱말 손질이 길을 바꿨으면(말이 분명) 안 물음."""
     if kind != choice:
         return []
-    top = [k for k in sorted(probs, key=lambda k: -float(probs[k] or 0)) if k in CRITERIA and (k != "tidy" or has_items)][:2]
+    top = [k for k in sorted(probs, key=lambda k: -float(probs[k] or 0)) if k in CRITERIA][:2]
     # 고른 길과 점수 1등이 다를 때도 있음(실측 chat 고름 · chat 0.49 / report 0.49) — 가장 애매한 경우라 1·2등 안에만 있으면 됨
     if len(top) < 2 or kind not in top or float(probs[top[0]] or 0) - float(probs[top[1]] or 0) >= ASK_GAP or not COSTLY & set(top):
         return []

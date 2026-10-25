@@ -13,16 +13,22 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import board_chat, kr_tools, live_card
+from . import board_chat, board_report, kr_tools, live_card
 from . import gateway as gw
 
 EDITOR_MODEL = "claude-opus-5-5"
 WRITER_MODEL = "claude-sonnet-5-5"
-# 칠판이 그릴 줄 아는 모양(`deepboard.js`). 「움직이는 카드」 = 스크립트 켠 HTML(`live_card`, 4단계 — 한 판에 하나), 그림·아이콘 꼭지는 아직
-SHAPES = ("주인공 글", "숫자 타일", "단계 카드", "그래프", "표", "움직이는 카드", "용어 풀이", "접힌 메모", "확인 문제", "출처 카드")
+# 칠판이 그릴 줄 아는 모양(`deepboard.js`). 「움직이는 카드」 = 스크립트 켠 HTML(`live_card`, 4단계 — 한 판에 하나).
+# 「요약 그림」 = 판 전체를 한 장으로 요약한 인포그래픽(2026-10-25 사용자 「그림은 가장 자유도·완성도가 높은 정보 — 자료와 겹치면 아까우니 전체 요약·핵심으로」) —
+# 편집장은 안 고르고 앱이 계획에 하나 넣음(`with_summary` — 사용자가 계획 카드에서 × 가능), 본문을 다 쓴 뒤 그 본문으로 그림(`summary_prompt`).
+# 「타임라인」 = 때 순서(연혁·일정 — 정리 문서가 자료에 맞게 고르던 모양 하나를 가져옴, 같은 날)
+SUMMARY = "요약 그림"
+SHAPES = ("주인공 글", "숫자 타일", "단계 카드", "그래프", "표", "타임라인", "움직이는 카드", "용어 풀이", "접힌 메모", "확인 문제", "출처 카드", SUMMARY)
+EDITOR_SHAPES = tuple(sh for sh in SHAPES if sh != SUMMARY)
+MAX_BOARD = board_report.MAX_MATERIAL   # 재료 「이 칠판」 글 상한 — 정리 문서와 같게(2026-10-25: 8천 자에서 잘리던 것)
 SOURCES = ("ai", "web", "kr", "board")
 CHARTS = ("세로 막대", "가로 막대", "꺾은선", "원")
-NUMERIC = ("숫자 타일", "그래프", "표")
+NUMERIC = ("숫자 타일", "그래프", "표", "타임라인")
 SIZES = ("주인공", "보통", "작게")
 MAX_SECTIONS = 9
 
@@ -35,11 +41,11 @@ EDITOR = """너는 「웹 칠판」의 편집장이다. 사용자의 주제 하�
                  "source": 재료 출처, "query": 검색·조회 문장 또는 null, "size": "주인공" | "보통" | "작게"}}]}}
 
 - sections는 5~9개, 읽는 순서대로. "주인공"은 하나만. 마지막은 보통 「출처 카드」(숫자·사실 꼭지가 있으면 꼭).
-- shape는 다음 중 하나: {shapes}. 꼭지마다 모양 하나 — 숫자 비교 = 그래프, 순서 = 단계 카드, 핵심 숫자 몇 개 = 숫자 타일, 낯선 낱말 = 용어 풀이,
+- shape는 다음 중 하나: {shapes}. 꼭지마다 모양 하나 — 숫자 비교 = 그래프, 순서 = 단계 카드, 때 순서(연혁·일정) = 타임라인, 핵심 숫자 몇 개 = 숫자 타일, 낯선 낱말 = 용어 풀이,
   직접 만져 보면 이해되는 원리(값을 바꾸면 결과가 바뀌는 것) = 움직이는 카드(한 판에 하나까지, source ai — 숫자는 다른 꼭지 재료에서 가져다 씀).
 - chart는 shape가 그래프일 때만: {charts}. 자료에 맞는 종류(비교 = 막대, 시간 흐름 = 꺾은선, 전체 중 몫 = 원).
 - source는 다음 중 하나: ai(일반 지식으로 AI가 씀 — 설명·용어·문제·원리 단계), web(웹 검색), kr(한국 공공 데이터 — 통계청·한국은행·법령·날씨), board(이 칠판에 있는 자료).
-- **숫자·날짜·최신 사실이 들어가는 꼭지는 source가 web 또는 kr**(ai 금지). query는 앞 대화 없이 혼자 통하는 한국어 검색 문장(최신이면 연도·달 포함).
+- **숫자·날짜·최신 사실이 들어가는 꼭지(타임라인 포함)는 source가 web 또는 kr**(ai 금지). query는 앞 대화 없이 혼자 통하는 한국어 검색 문장(최신이면 연도·달 포함).
   kr이면 query에 「통계」「법령」 같은 낱말을 넣는다.
 - 계획에는 숫자·사실을 쓰지 않는다(제목은 「기억할 숫자 3개」처럼). 숫자는 재료에서 온다.
 - 질문지 답(누구에게·무엇에·깊이·꼭 넣을 것·재료)을 따른다. 「알아서」는 네가 정한다."""
@@ -48,6 +54,8 @@ SCHEMA = {
     "주인공 글": '{"text": ["문단", "문단"]} — 2~3문단, 핵심은 **굵게**',
     "용어 풀이": '{"terms": [["낱말", "풀이 한 줄"], …]} — 3~5개',
     "단계 카드": '{"steps": [["단계 이름(짧게)", "한 줄 설명"], …]} — 3~6단계',
+    "타임라인": '{"events": [["때(짧게 — 2019년·3월 등)", "한 줄 [n]"], …]} — 3~7개, 앞선 때부터',
+    SUMMARY: '{} — 빈 body(앱이 다른 꼭지 본문으로 그림을 그림)',
     "그래프": '{"rows": [["항목 이름", "계열 이름(단위)"], ["항목", "숫자 [n]"], …], "header": true, "kind": "line"|"col"|"row"|"pie", "caption": "한 줄"} — 칸 숫자마다 [n]',
     "표": '{"rows": [["", "열 이름", …], ["행 이름", "칸", …], …], "header": true} — 숫자 칸엔 [n]',
     "숫자 타일": '{"tiles": [["값+단위", "한 줄 설명", n], …]} — 2~4개, n = 출처 번호(숫자)',
@@ -113,6 +121,10 @@ def clean_plan(plan) -> dict:
                 shape = "단계 카드"
             else:
                 src = "ai"
+        if shape == SUMMARY:   # 한 판에 하나, 재료 = 다른 꼭지 본문(앱이 그림)
+            if any(x["shape"] == SUMMARY for x in secs):
+                continue
+            src = "ai"
         if shape == "출처 카드":   # 판에서 모은 출처를 보일 뿐 — 재료를 따로 안 모음(편집장이 web·board로 적어 검색 한 번이 헛돌았음, 3-3 실측)
             src = "ai"
         size = s.get("size") if s.get("size") in SIZES else "보통"
@@ -124,7 +136,17 @@ def clean_plan(plan) -> dict:
                      "source": src, "query": (q or str(s["title"]))[:300] if src in ("web", "kr") else None, "size": size})
     if not secs:
         raise ValueError("편집장이 꼭지를 하나도 못 짰어요 — 주제를 조금 더 구체적으로 적어 주세요")
-    return {"title": str(plan.get("title") or "").strip()[:60] or secs[0]["title"], "headline": str(plan.get("headline") or "").strip()[:120], "sections": secs[:MAX_SECTIONS]}
+    return {"title": str(plan.get("title") or "").strip()[:60] or secs[0]["title"], "headline": str(plan.get("headline") or "").strip()[:120], "sections": secs[:MAX_SECTIONS + any(x["shape"] == SUMMARY for x in secs)]}   # 요약 그림은 앱이 더한 것 — 꼭지 수에 안 셈
+
+
+def with_summary(plan: dict, prev: dict | None = None) -> dict:
+    """요약 그림 꼭지를 주인공 바로 뒤(없으면 맨 앞)에 하나 — 앞 계획에서 사용자가 뺐으면(× — 앞 계획에 없음) 다시 넣지 않음."""
+    secs = plan["sections"]
+    if any(s["shape"] == SUMMARY for s in secs) or (prev and not any(isinstance(s, dict) and s.get("shape") == SUMMARY for s in prev.get("sections") or [])):
+        return plan
+    at = next((i + 1 for i, s in enumerate(secs) if s["size"] == "주인공"), 0)
+    pic = {"title": "한눈에 보기", "question": "이 판 전체를 그림 한 장으로 보면?", "shape": SUMMARY, "chart": None, "source": "ai", "query": None, "size": "보통"}
+    return {**plan, "sections": secs[:at] + [pic] + secs[at:]}
 
 
 def estimate(plan: dict) -> dict:
@@ -132,9 +154,10 @@ def estimate(plan: dict) -> dict:
     secs = plan.get("sections") or []
     web, kr = sum(s["source"] == "web" for s in secs), sum(s["source"] == "kr" for s in secs)
     live = any(s["shape"] == "움직이는 카드" for s in secs)   # 카드 한 장 약 45cr·55~75초(4-0 실측 sol) — 본문과 동시. 4-2 실조건 한 판 = 만들기 113초·117cr
-    lo = 5 * web + 8 * kr + 25 + 3 * len(secs) + (40 if live else 0)
+    pic = any(s["shape"] == SUMMARY for s in secs)   # 그림 한 장 약 10~12cr·16~20초(flare 실측) — 본문을 다 쓴 뒤라 시간에 더해짐
+    lo = 5 * web + 8 * kr + 25 + 3 * len(secs) + (40 if live else 0) + (11 if pic else 0)
     hi = round(lo * 1.6)
-    sec = [(25 if kr else 4) + 23, (35 if kr else 8) + 40]
+    sec = [(25 if kr else 4) + 23 + (16 if pic else 0), (35 if kr else 8) + 40 + (22 if pic else 0)]
     return {"credits": [lo, hi], "seconds": [max(sec[0], 60), max(sec[1], 120)] if live else sec}
 
 
@@ -151,9 +174,9 @@ def make_plan(client, topic: str, brief: dict, *, prev: dict | None = None, fix:
         raise ValueError("주제가 비어 있어요")
     t0 = time.time()
     r = client.chat.completions.create(model=model, max_tokens=6000, messages=[
-        {"role": "system", "content": EDITOR.format(today=day or today(), shapes="·".join(SHAPES), charts="·".join(CHARTS))},
+        {"role": "system", "content": EDITOR.format(today=day or today(), shapes="·".join(EDITOR_SHAPES), charts="·".join(CHARTS))},
         {"role": "user", "content": plan_prompt(topic, brief, prev, fix)}])
-    plan = clean_plan(parse_json(r.choices[0].message.content or ""))
+    plan = with_summary(clean_plan(parse_json(r.choices[0].message.content or "")), prev)
     return {"plan": plan, "estimate": estimate(plan), "model": model, "elapsed": round(time.time() - t0, 1)}
 
 
@@ -256,7 +279,7 @@ def material_text(plan: dict, mat: dict, board: str = "") -> str:
         elif s.get("source") == "board":
             lines.append("   [재료 = 아래 「이 칠판」]" if board else "   [이 칠판이 비어 있음 — 일반 지식으로, 숫자 없이]")
     if board:
-        lines.append("\n[이 칠판에 있는 자료]\n" + board[:8000])
+        lines.append("\n[이 칠판에 있는 자료]\n" + board[:MAX_BOARD])
     lines.append("\n[출처 번호]\n" + ("\n".join(f"[{s['n']}] {s['title']} — {s['url']}" for s in mat["sources"]) or "(없음)"))
     return "\n".join(lines)
 
@@ -279,16 +302,22 @@ def write(client, plan: dict, mat: dict, brief: dict, *, model: str = WRITER_MOD
     return out
 
 
-def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None, fit=None) -> dict:
-    """계획(사용자가 고친 것) → 재료 → 본문 → {"plan": {title, headline, sources, sections[body]}, "model", "elapsed"}."""
+def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None, fit=None, image=None) -> dict:
+    """계획(사용자가 고친 것) → 재료 → 본문 → {"plan": {title, headline, sources, sections[body]}, "model", "elapsed"}.
+    image = 요약 그림 그리기(지시문 → {"img": 주소, "w", "h", "model"}) — 서버가 그림을 칠판 옆 폴더에 두고 주소만. 없으면 그 꼭지는 못 그림."""
     t0, day = time.time(), today()
     plan = clean_plan(plan)
     mat = gather(key, plan, base_url=base_url, day=day, exa=exa, kr=kr, fit=fit)
     li = next((i for i, s in enumerate(plan["sections"]) if s["shape"] == "움직이는 카드"), None)
+    pi = next((i for i, s in enumerate(plan["sections"]) if s["shape"] == SUMMARY), None)
     with ThreadPoolExecutor(max_workers=2) as ex:   # 원리 꼭지 카드 = 본문과 동시에(4단계 — 재료는 판 전체)
         fw = ex.submit(write, client, plan, mat, brief, model=model, board=board, day=day)
         fl = ex.submit(_live, client, plan, mat, li, brief) if li is not None else None
-        secs, card = fw.result(), fl.result() if fl else None
+        secs = fw.result()
+        pic = _summary({**plan, "sections": secs}, image) if pi is not None else None   # 본문을 다 쓴 뒤(카드는 아직 돌 수 있음)
+        card = fl.result() if fl else None
+    if pic is not None:
+        secs[pi]["body"] = pic
     if card and card.get("html"):
         secs[li]["body"] = {**(secs[li]["body"] or {}), "html": card["html"], "card_model": card["model"]}
     if mat["sources"]:   # 출처 카드 = 판에서 쓴 번호(기자가 비워도)
@@ -297,8 +326,50 @@ def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: st
                 s["body"] = {"links": [x["n"] for x in mat["sources"]]}
     return {"plan": {**plan, "sources": mat["sources"], "sections": secs}, "model": model, "elapsed": round(time.time() - t0, 1),
             "missing": [s["title"] for s, m in zip(plan["sections"], mat["materials"]) if m is not None and not m.get("text")]
-            + ([plan["sections"][li]["title"] + "(움직이는 카드: " + card["error"] + ")"] if card and card.get("error") else []),
+            + ([plan["sections"][li]["title"] + "(움직이는 카드: " + card["error"] + ")"] if card and card.get("error") else [])
+            + ([plan["sections"][pi]["title"] + "(요약 그림: " + pic["error"] + ")"] if pic and pic.get("error") else []),
             "switched": [f"{s['title']}: {m['switched']}" for s, m in zip(plan["sections"], mat["materials"]) if m and m.get("switched")]}
+
+
+# 요약 그림 = 판의 **핵심만**(2026-10-25 실조건: 꼭지를 다 넘겼더니 판 전체를 다시 그림 — 사용자 「자료와 겹치면 아까움, 전체 요약·핵심 위주」).
+# 그래서 주인공 글·핵심 숫자·흐름(단계·때)만 넘기고, 그래프·표·용어는 판에 따로 있으니 다시 그리지 말라고 함
+SUMMARY_PROMPT = ("다음 지면의 **핵심만** 한눈에 보는 한국어 요약 그림 한 장을 그려 줘. 이 그림은 지면 맨 위에 놓이고, 그래프·표·용어 풀이는 지면에 따로 있으니 **다시 그리지 마**. "
+                  "구성: 큰 제목 한 줄 + 내용을 떠올리게 하는 큰 일러스트 하나(중심) + 핵심 숫자 2~3개 + 흐름이 있으면 짧은 화살표 흐름. 글자는 적게·짧게, 한글은 정확하게. "
+                  "**아래 목록에 없는 숫자·날짜·문구는 넣지 마.** 출처 번호([1] 같은 것)는 넣지 마. 흰 바탕의 깔끔한 업무용 디자인.")
+
+
+def summary_prompt(plan: dict, ask: str = "") -> str:
+    """판 본문 → 요약 그림 지시(정리 문서 「그림으로도」의 인포그래픽 지시와 같은 생각 — 숫자는 판에 있는 것만). ask = 꼭지 다시 쓰기의 고칠 말."""
+    def clean(t):
+        return re.sub(r"\*\*|\[\d+\]", "", str(t or "")).strip()
+
+    def pairs(rows, k=2):
+        return [r for r in rows or [] if isinstance(r, list) and len(r) >= k]
+
+    out = [f"[제목] {plan.get('title') or ''}", f"[한 줄 요약] {plan.get('headline') or ''}"]
+    for s in plan.get("sections") or []:
+        b, sh, head = s.get("body") or {}, s.get("shape"), f"[{s.get('title')}] "
+        if sh == "주인공 글":
+            out.append("[핵심] " + " ".join(clean(t) for t in b.get("text") or [])[:600])
+        elif sh == "숫자 타일":
+            out.append("[핵심 숫자] " + " · ".join(f"{clean(t[0])} {clean(t[1])}" for t in pairs(b.get("tiles"))))
+        elif sh == "단계 카드":
+            out.append(head + " → ".join(clean(t[0]) for t in pairs(b.get("steps"), 1)))
+        elif sh == "타임라인":
+            out.append(head + " → ".join(clean(t[0]) for t in pairs(b.get("events"), 1)))
+    text = SUMMARY_PROMPT + "\n\n" + "\n".join(out)[:2500]
+    return text + (f"\n\n[고칠 점]\n{ask.strip()[:300]}" if str(ask or "").strip() else "")
+
+
+def _summary(plan: dict, image, ask: str = "") -> dict:
+    """요약 그림 한 장 → 꼭지 body {"img", "w", "h", "model"} 또는 {"error"}(판은 그대로 짓고 그 꼭지만 안내 메모)."""
+    if image is None:
+        return {"error": "그림을 둘 칠판이 없어요"}
+    try:
+        out = image(summary_prompt(plan, ask))
+        return {k: out[k] for k in ("img", "w", "h", "model") if k in out}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"[:200]}
 
 
 def _live(client, plan: dict, mat: dict, idx: int, brief: dict, ask: str = "") -> dict:
@@ -316,13 +387,13 @@ def _live(client, plan: dict, mat: dict, idx: int, brief: dict, ask: str = "") -
 
 
 # ── 꼭지 다시 쓰기(5단계, 2026-10-25) — 판에서 고른 꼭지만: 재료 다시(검색 문장 + 고칠 말) → 그 꼭지들만 본문, 카드면 그 카드 고치기. 판은 칠판이 다시 지음(`deepRedo`) ──
-NEED = {"주인공 글": "text", "용어 풀이": "terms", "단계 카드": "steps", "그래프": "rows", "표": "rows", "숫자 타일": "tiles", "확인 문제": "items", "출처 카드": "links", "접힌 메모": "md", "움직이는 카드": "note"}
+NEED = {"주인공 글": "text", "용어 풀이": "terms", "단계 카드": "steps", "타임라인": "events", "그래프": "rows", "표": "rows", "숫자 타일": "tiles", "확인 문제": "items", "출처 카드": "links", "접힌 메모": "md", "움직이는 카드": "note", SUMMARY: "img"}
 MORE = "더 자세히 — 빠진 내용을 채우고 한두 항목 더"   # 고칠 말 없이 「다시 만들기」
 REDO = """
 이번엔 판 전체가 아니라 **고칠 꼭지만** 다시 쓴다(판의 다른 꼭지는 그대로 — 내용이 겹치지 않게).
 - 「지금 본문」을 바탕으로 사용자 요청대로 고친다. 요청에 없는 것은 그대로 둔다.
 - 그래프는 열(계열)을 그대로 두고 같은 열을 채우는 항목만 더한다 — 빈 칸이 생기는 줄·다른 기준의 숫자는 넣지 말고 caption에 한 줄로(5-0 실측: 빈 칸 섞인 그래프).
-- 사용자가 다른 모양을 말했을 때만 "shape": 새 모양(위 모양 칸 중 하나 — 움직이는 카드·출처 카드 빼고). 아니면 shape 칸을 쓰지 않는다.
+- 사용자가 다른 모양을 말했을 때만 "shape": 새 모양(위 모양 칸 중 하나 — 움직이는 카드·출처 카드·요약 그림 빼고). 아니면 shape 칸을 쓰지 않는다.
 - change = 무엇을 고쳤는지 한 줄(쉬운 말). 요청대로 못 한 것이 있으면 그 까닭도(예: 「중간 조합은 같은 기준 숫자가 없어 못 넣었어요」) — 대화창 답에 그대로 보임.
 - 출력: {{"sections": [{{"title": "꼭지 제목 그대로", "shape"(바꿀 때만): "…", "change": "한 줄", "body": {{…}}}}, …]}}"""
 
@@ -343,16 +414,17 @@ def redo_text(plan: dict, idx: list, mat: dict, ask: str, board: str = "") -> st
         elif s.get("source") == "board":
             lines.append("   [재료 = 아래 「이 칠판」]" if board else "   [이 칠판이 비어 있음 — 일반 지식으로, 숫자 없이]")
     if board:
-        lines.append("\n[이 칠판에 있는 자료]\n" + board[:8000])
+        lines.append("\n[이 칠판에 있는 자료]\n" + board[:MAX_BOARD])
     lines.append(f"\n[사용자 요청]\n{ask}")
     lines.append("\n[출처 번호]\n" + ("\n".join(f"[{s['n']}] {s['title']} — {s['url']}" for s in mat["sources"]) or "(없음)"))
     return "\n".join(lines) + "\n\n고칠 꼭지마다 body를 다시 써서 JSON 하나로."
 
 
-def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None, fit=None) -> dict:
+def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None, fit=None, image=None) -> dict:
     """판(꼭지마다 body + sources) + 고른 꼭지 번호 + 고칠 말 → {"sections": [{"i", …꼭지(새 body)}], "sources"(판 전체 — 새 출처는 뒤 번호), "model", "elapsed", "missing",
     "changes": [{"i", "title", "text"}](기자가 적은 「무엇을 고쳤나·못 한 까닭」 — 계획엔 안 넣고 대화창 답에만)}.
-    출처 카드는 다시 쓸 게 없어 뺌(칠판이 판에서 쓴 번호로 채움). 움직이는 카드 꼭지 = 그 카드를 고칠 말대로(카드가 없으면 새로)."""
+    출처 카드는 다시 쓸 게 없어 뺌(칠판이 판에서 쓴 번호로 채움). 움직이는 카드 꼭지 = 그 카드를 고칠 말대로(카드가 없으면 새로).
+    요약 그림 꼭지 = 지금 판 본문 + 고칠 말로 새로 그림(`image` — build와 같음)."""
     t0, day = time.time(), today()
     secs = plan.get("sections") or []
     idx = sorted({int(i) for i in idx or [] if isinstance(i, int) or str(i).isdigit()})
@@ -362,8 +434,9 @@ def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_
     user_ask = str(ask or "").strip()[:500]
     ask = user_ask or MORE
     known = [x for x in plan.get("sources") or [] if isinstance(x, dict) and isinstance(x.get("n"), int)]
-    words = [i for i in idx if secs[i].get("shape") != "움직이는 카드"]
+    words = [i for i in idx if secs[i].get("shape") not in ("움직이는 카드", SUMMARY)]
     cards = [i for i in idx if secs[i].get("shape") == "움직이는 카드"]
+    pics = [i for i in idx if secs[i].get("shape") == SUMMARY]
     sub = {"sections": [{**secs[i], "query": ((secs[i].get("query") or secs[i].get("title") or "") + (" " + user_ask if user_ask else ""))[:300]} for i in words]}
     mat = gather(key, sub, base_url=base_url, day=day, exa=exa, kr=kr, known=known, fit=fit) if any(s.get("source") in ("web", "kr") for s in sub["sections"]) else {"sources": known, "materials": [None] * len(words)}
     full = {"sources": mat["sources"], "materials": [None] * len(secs)}   # 카드 새로 만들기(section_prompt)가 읽는 꼴
@@ -373,7 +446,7 @@ def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_
     def write_words():
         if not words:
             return {}
-        shapes = sorted({secs[i]["shape"] for i in words} | ({sh for sh in SCHEMA if sh not in ("움직이는 카드", "출처 카드")} if user_ask else set()))
+        shapes = sorted({secs[i]["shape"] for i in words} | ({sh for sh in SCHEMA if sh not in ("움직이는 카드", "출처 카드", SUMMARY)} if user_ask else set()))
         who = (brief or {}).get("누구에게")
         system = WRITER.format(audience=who if who and who != AUTO else "처음 보는 사람", today=day, schema="\n".join(f"- {sh}: {SCHEMA[sh]}" for sh in shapes if sh in SCHEMA)) + REDO.format()
         r = client.chat.completions.create(model=model, max_tokens=6000, messages=[
@@ -386,13 +459,20 @@ def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_
                 out[i] = s
         return out
 
-    with ThreadPoolExecutor(max_workers=1 + len(cards)) as ex:
+    with ThreadPoolExecutor(max_workers=1 + len(cards) + len(pics)) as ex:
         fw = ex.submit(write_words)
         fc = {i: ex.submit(_live, client, {**plan, "sources": mat["sources"]}, full, i, brief, ask) for i in cards}
-        got, made = fw.result(), {i: f.result() for i, f in fc.items()}
+        fp = {i: ex.submit(_summary, plan, image, user_ask) for i in pics}   # 지금 판 본문으로(다른 꼭지를 같이 고쳐도 그림은 옛 본문 — 같이 기다리면 느려짐)
+        got, made, drawn = fw.result(), {i: f.result() for i, f in fc.items()}, {i: f.result() for i, f in fp.items()}
     res, missing, changes = [], [], []
     for i in idx:
         s = secs[i]
+        if i in drawn:
+            if drawn[i].get("img"):
+                res.append({**s, "i": i, "body": drawn[i]})
+            else:
+                missing.append(f"{s['title']}(요약 그림: {drawn[i].get('error') or '못 그림'})")
+            continue
         if i in made:
             c = made[i]
             if c.get("html"):
@@ -401,7 +481,7 @@ def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_
                 missing.append(f"{s['title']}(움직이는 카드: {c.get('error') or '못 만듦'})")
             continue
         g = got.get(i) or {}
-        shape = g.get("shape") if user_ask and g.get("shape") in NEED and g.get("shape") not in ("움직이는 카드", "출처 카드") else s["shape"]
+        shape = g.get("shape") if user_ask and g.get("shape") in NEED and g.get("shape") not in ("움직이는 카드", "출처 카드", SUMMARY) else s["shape"]
         body = g.get("body")
         if not isinstance(body, dict) or NEED.get(shape) not in body:   # 칸이 틀린 답 = 그 꼭지는 그대로(빈 꼭지로 덮지 않음)
             missing.append(s["title"])
@@ -409,4 +489,4 @@ def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_
         res.append({**s, "i": i, "shape": shape, "chart": s.get("chart") if shape == "그래프" else None, "body": body})
         if str(g.get("change") or "").strip():
             changes.append({"i": i, "title": s["title"], "text": str(g["change"]).strip()[:200]})
-    return {"sections": res, "sources": mat["sources"], "model": model if words else live_card.LIVE_MODEL, "elapsed": round(time.time() - t0, 1), "missing": missing, "changes": changes}
+    return {"sections": res, "sources": mat["sources"], "model": model if words else live_card.LIVE_MODEL if cards else (next(iter(drawn.values()), {}).get("model") or "그림"), "elapsed": round(time.time() - t0, 1), "missing": missing, "changes": changes}

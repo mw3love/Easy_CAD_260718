@@ -173,16 +173,16 @@ function AlignRow({ align }) {
     {DISTS.map(([a, t, ic]) => <button key={a} title={t} aria-label={t.replace(/\(.*\)/, '')} disabled={align.n < 3} onClick={() => align.dist(a)} style={b(align.n < 3)}>{ic}</button>)}
   </div>
 }
-// 딥모드 판(§8 항목66 3-1) — 「디자인」 = 같은 내용을 다른 묶음으로 다시 짓기, 「꼭지 모양」 = 고른 꼭지만 다른 모양(나머지는 그대로 다시 배치).
+// 딥모드 판(§8 항목66 3-1) — 「톤」 = 같은 내용·배치를 다른 색으로 다시 짓기, 「꼭지 모양」 = 고른 꼭지만 다른 모양(나머지는 그대로 다시 배치).
 // deep = { style, edited(), onStyle(키), sec: { shape, cur, opts, onPick(모양) } | null, redo: { n, card, go() } | null(꼭지 다시 쓰기 — 5단계, 대화창이 맡음) }. 손으로 고친 게 있으면 덮어쓰기 전에 카드 안에서 한 번 물음(브라우저 확인 창 없이)
 function DeepRows({ deep }) {
-  const [ask, setAsk] = useState(null)   // 덮어쓰기 확인을 기다리는 디자인 키
+  const [ask, setAsk] = useState(null)   // 덮어쓰기 확인을 기다리는 톤 키
   const pick = k => { if (k === deep.style) return; if (deep.edited()) setAsk(k); else deep.onStyle(k) }
   return <div data-testid="deep-rows" style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 4, marginBottom: 2, borderBottom: `1px solid ${C.line}` }}>
-    <Row label="디자인"><div data-testid="deep-styles" style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, background: C.seg, borderRadius: 8, padding: 2 }}>
+    <Row label="톤"><div data-testid="deep-styles" style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, background: C.seg, borderRadius: 8, padding: 2 }}>
       {STYLE_KEYS.map(k => <button key={k} data-style={k} aria-pressed={deep.style === k} title={`${DEEP_STYLES[k].name} — ${DEEP_STYLES[k].tip}`} onClick={() => pick(k)} style={btn(deep.style === k, { fontSize: 12 })}>{DEEP_STYLES[k].name}</button>)}</div></Row>
     {ask && <div data-testid="deep-confirm" style={{ fontSize: 11.5, color: C.muted, display: 'flex', flexDirection: 'column', gap: 4 }}>
-      손으로 고친 것이 있어요 — 「{DEEP_STYLES[ask].name}」로 다시 지으면 덮어써요(Ctrl+Z로 되돌릴 수 있어요)
+      손으로 고친 것이 있어요 — 「{DEEP_STYLES[ask].name}」 톤으로 다시 지으면 덮어써요(Ctrl+Z로 되돌릴 수 있어요)
       <div style={{ display: 'flex', gap: 4 }}><button data-testid="deep-confirm-yes" onClick={() => { deep.onStyle(ask); setAsk(null) }} style={btn(true, { flex: 1, fontSize: 12 })}>덮어쓰기</button>
         <button onClick={() => setAsk(null)} style={btn(false, { flex: 1, fontSize: 12, background: C.seg })}>그대로</button></div></div>}
     {deep.sec && <Row label="꼭지"><div data-testid="deep-variants" style={{ flex: 1, display: 'flex', gap: 2, background: C.seg, borderRadius: 8, padding: 2 }}>

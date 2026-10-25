@@ -70,15 +70,63 @@ def plain_text(doc: str, limit: int = 4000) -> str:
     return "\n".join(ln for ln in lines if ln)[:limit]
 
 
+# 톤 — 웹 칠판 딥모드 판과 같은 색 넷(`web/src/next/deepstyle.js` — 2026-10-25 사용자 「정리 문서와 딥모드는 장점을 서로 바꿔 쓰기」: 한 칠판에서 두 결과가 어울리게).
+# 기본 = 차분, 요청에 톤 이름(신문·남색·파랑·차분)이 있으면 그 톤. 시험 `test_part61_report`가 deepstyle.js와 맞춰 봄
+TONES = {
+    "calm": {"name": "차분", "main": "#27272a", "accent": "#b4532f", "muted": "#71717a", "line": "#da7756"},
+    "news": {"name": "신문", "main": "#18181b", "accent": "#9b1c1c", "muted": "#57534e", "line": "#3f3f46"},
+    "magazine": {"name": "남색", "main": "#1f3a4d", "accent": "#1f5f7a", "muted": "#6b7280", "line": "#1f5f7a"},
+    "info": {"name": "파랑", "main": "#2a78d6", "accent": "#2a78d6", "muted": "#64748b", "line": "#2a78d6"},
+}
+
+
+def tone_of(ask: str) -> str:
+    """요청 속 톤 이름 → 톤 키(없으면 "")."""
+    for k, t in TONES.items():
+        if re.search(t["name"] + r"\s*(톤|색|으로|로)", ask or ""):
+            return k
+    return ""
+
+
+def tone_line(key: str) -> str:
+    t = TONES.get(key) or TONES["calm"]
+    return (f"[색 — 칠판 「{t['name']}」 톤(딥모드 판과 같은 색)] 주색 {t['main']} · 강조 {t['accent']} · 흐린 글 {t['muted']} · 선·테두리 {t['line']}. "
+            "제목 띠·숫자 카드·그래프를 이 색들(과 그 옅은 색)로만, 흰 바탕.")
+
+
+# 숫자 검사(딥모드의 「숫자마다 출처」를 정리 문서에도 — 같은 날): 문서에 쓴 숫자 중 칠판 자료에 그대로 없는 것. 계산한 값(합계·비율)일 수 있어 막지 않고 답에 알림
+_NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _nums(text: str) -> set:
+    return {n.replace(",", "").rstrip(".") for n in _NUM.findall(text or "") if len(n.replace(",", "")) >= 2}
+
+
+def unchecked_numbers(doc: str, material: str, limit: int = 8) -> list:
+    """정리 문서 글의 두 자리 이상 숫자 중 자료에 없는 것(나온 차례, 겹침 없이) — 자료가 비면 [](견줄 게 없음)."""
+    if not str(material or "").strip():
+        return []
+    have, out = _nums(material), []
+    for n in _NUM.findall(plain_text(doc, 60_000)):
+        k = n.replace(",", "").rstrip(".")
+        if len(k) >= 2 and k not in have and n not in out:
+            out.append(n)
+    return out[:limit]
+
+
 def make(client, material: str, ask: str = "", *, prev_html: str = "", model: str = REPORT_MODEL) -> dict:
-    """칠판 자료(+요청) → {"html", "title", "model", "elapsed"}. `prev_html`이 있으면 그 문서를 `ask`대로 고쳐 씀."""
+    """칠판 자료(+요청) → {"html", "title", "model", "elapsed", "tone", "unchecked"}. `prev_html`이 있으면 그 문서를 `ask`대로 고쳐 씀(톤은 말했을 때만 바꿈).
+    unchecked = 자료에서 그대로 못 찾은 숫자(`unchecked_numbers` — 서버가 답 글에 알림)."""
+    tone = tone_of(ask)
     if prev_html:
-        user = REVISE.format(prev=prev_html[:60_000], ask=ask or "더 보기 좋게")
+        user = REVISE.format(prev=prev_html[:60_000], ask=ask or "더 보기 좋게") + ("\n\n" + tone_line(tone) if tone else "")
     else:
-        user = "[칠판 자료]\n" + (material or "").strip()[:MAX_MATERIAL] + "\n\n" + (f"[요청]\n{ask}\n\n" if ask else "") + "위 자료를 정리한 문서 한 장을 만들어 줘."
+        tone = tone or "calm"
+        user = ("[칠판 자료]\n" + (material or "").strip()[:MAX_MATERIAL] + "\n\n" + (f"[요청]\n{ask}\n\n" if ask else "") + tone_line(tone) + "\n\n"
+                + "위 자료를 정리한 문서 한 장을 만들어 줘.")
     t0 = time.time()
     r = client.chat.completions.create(model=model, max_tokens=MAX_TOKENS, messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}])
     doc = clean_html(r.choices[0].message.content or "")
     if "<" not in doc:
         raise RuntimeError("정리 문서를 만들지 못했어요(HTML이 아닌 답)")
-    return {"html": doc, "title": title_of(doc), "model": model, "elapsed": round(time.time() - t0, 1)}
+    return {"html": doc, "title": title_of(doc), "model": model, "elapsed": round(time.time() - t0, 1), "tone": tone, "unchecked": unchecked_numbers(doc, material)}

@@ -69,6 +69,18 @@ export function deepSection(plan, sec, x, y, w, k, v = '', S = CALM) {
     case '확인 문제':
       items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, ...(b.items || []).map(t => ({ k: 'todo', t }))], card(S))]
       break
+    case '타임라인':   // 때 순서(2026-10-25 — 정리 문서가 고르던 모양을 가져옴): 줄마다 「때」를 강조색 굵게 + 한 줄 설명([n] 그대로)
+      items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, ...(b.events || []).filter(e => Array.isArray(e) && e.length >= 2).map(([when, what]) => {
+        const pre = `${when}  `, { text, runs } = answerToEcadText(String(what || ''))
+        return { k: 'p', t: pre + text, runs: [[0, String(when).length, S.accent, true], ...runs.map(([s0, ...r]) => [s0 + pre.length, ...r])] }
+      })], card(S))]
+      break
+    case '요약 그림':   // 판 전체를 한 장으로 요약한 인포그래픽(2026-10-25 사용자) — 칠판 그림 + 밑 설명 한 줄. data = 칠판이 받은 그림(대화창 `deepImgs`), 못 그렸으면 안내 메모
+      if (b.data && b.w > 0 && b.h > 0) {
+        const im = base([x, y], { type: 'image', rect: [0, 0, w, w * b.h / b.w], data: b.data, alt: `${sec.title} — 딥모드 요약 그림` })
+        items = [im, memo(x, bottomOf([im]) + 4, w, k * 0.9, [muted('AI가 이 판 내용으로 그린 요약 그림 — 숫자의 출처는 각 꼭지에', S)], { fill: CLEAR, pen: CLEAR })]
+      } else items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, muted(b.error ? `요약 그림을 못 그렸어요 — ${b.error}` : '요약 그림이 없어요', S), muted('이 꼭지를 고르고 대화창에 「다시 그려 줘」', S)], { fill: S.moving.fill, pen: S.moving.pen })]
+      break
     case '접힌 메모':
       items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, ...memoFromAnswer(b.md || '')], card(S, { fold: true }))]
       break

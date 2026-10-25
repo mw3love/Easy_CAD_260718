@@ -36,9 +36,8 @@ def test_clear_or_cheap_or_word_fixed_does_not_ask():
     assert _decide("KBS 수신료 지금 어떻게 걷어?", ("chat", 0.5, {"chat": 0.59, "search": 0.41}))[2] == []   # 가깝지만 둘 다 싼 길
     # 「고흐 날씨」 — search 0.6 / image 0.39로 가깝지만 「그려줘」 낱말이 길을 정함(말이 분명)
     assert _decide("내일의 전주 날씨를 고흐 느낌으로 그려줘.", ("search", 0.5, {"search": 0.6, "image": 0.39})) == ("image", "ai", [])
-    # 정리정돈이 2등이어도 칠판이 조각 목록을 안 보냈으면 후보가 아님
-    assert _decide("이거 정리해 줘", ("chat", 0.46, {"chat": 0.55, "tidy": 0.31, "report": 0.11}), has_items=False)[2] == []
-    assert _decide("이거 정리해 줘", ("chat", 0.46, {"chat": 0.55, "tidy": 0.31, "report": 0.11}))[2] == ["chat", "tidy"]
+    # 비싼 길이 3등이면 안 물음(1·2등 안에 있어야) — 옛 정리정돈 길은 2026-10-25 뺐다
+    assert _decide("이거 정리해 줘", ("chat", 0.46, {"chat": 0.55, "search": 0.31, "report": 0.11}))[2] == []
 
 
 def test_icon_words_ask_by_words_and_remember():

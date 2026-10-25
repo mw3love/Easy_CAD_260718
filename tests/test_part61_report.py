@@ -54,6 +54,29 @@ def test_make_new_and_revise():
     assert "[앞 문서]\n<html>앞 문서</html>" in c.seen[1]["messages"][1]["content"] and "[고칠 점]\n더 짧게" in c.seen[1]["messages"][1]["content"]
 
 
+def test_tone_same_as_deep_board_and_picked_by_name():
+    """정리 문서 톤 = 칠판 딥모드 톤(`deepstyle.js` — 2026-10-25 장점 바꿔 쓰기): 같은 키·이름·강조색. 기본 차분, 요청에 톤 이름이면 그 톤."""
+    import re
+    js = open(os.path.join(ROOT, "web", "src", "next", "deepstyle.js"), encoding="utf-8").read()
+    got = {k: (n, acc) for k, n, acc in re.findall(r"^  (\w+): tone\('([^']+)', '[^']*', \{ accent: '(#[0-9a-f]{6})'", js, re.M)}
+    assert got == {k: (t["name"], t["accent"]) for k, t in board_report.TONES.items()}
+    assert board_report.tone_of("신문 톤으로 해 줘") == "news" and board_report.tone_of("파랑으로") == "info" and board_report.tone_of("표로") == ""
+    c = FakeClient()
+    out = board_report.make(c, "(메모) 송신기 이상", "")
+    assert out["tone"] == "calm" and "「차분」 톤" in c.seen[0]["messages"][1]["content"] and "#b4532f" in c.seen[0]["messages"][1]["content"]
+    out = board_report.make(c, "", "더 짧게", prev_html="<html>앞</html>")
+    assert out["tone"] == "" and "톤" not in c.seen[1]["messages"][1]["content"]   # 고칠 땐 톤을 말했을 때만 바꿈
+    board_report.make(c, "", "남색 톤으로", prev_html="<html>앞</html>")
+    assert "「남색」 톤" in c.seen[2]["messages"][1]["content"]
+
+
+def test_unchecked_numbers_flags_numbers_not_in_material():
+    """숫자 검사(딥모드 「숫자마다 출처」를 정리 문서에도) — 두 자리 이상 숫자 중 자료에 그대로 없는 것만, 쉼표는 같게 봄, 자료가 비면 안 견줌."""
+    doc = "<html><head><title>2099 제목</title><style>p{margin:14mm}</style></head><body><p>출력 1,200W · 시청률 35.2% · 3단계 · 합계 4,800</p></body></html>"
+    assert board_report.unchecked_numbers(doc, "송신기 출력 1200W, 시청률 35.2%") == ["4,800"]   # 머리·스타일은 안 봄, 한 자리 숫자는 안 셈
+    assert board_report.unchecked_numbers(doc, "") == []
+
+
 def test_doc_card_text_is_searchable():
     it = {"type": "doc", "uid": "d1", "title": "회의 브리핑", "html": "<html><body><h1>송신기 교체</h1><p>견적은 금요일</p></body></html>"}
     assert board_find.item_text(it) == "회의 브리핑\n송신기 교체\n견적은 금요일"
@@ -67,7 +90,7 @@ def server(tmp_path, monkeypatch):
 
     def fake_make(client, material, ask="", *, prev_html="", model=board_report.REPORT_MODEL):
         seen.append({"material": material, "ask": ask, "prev": prev_html})
-        return {"html": "<html><title>T</title></html>", "title": "T", "model": model, "elapsed": 0.1}
+        return {"html": "<html><title>T</title></html>", "title": "T", "model": model, "elapsed": 0.1, "tone": "calm", "unchecked": ["4,800"] if "합계" in ask else []}
     monkeypatch.setattr(srv.board_report, "make", fake_make)
     monkeypatch.setattr(srv.gw, "_client", lambda *a, **k: None)
     srv.Handler.data_dir = str(tmp_path)
@@ -95,3 +118,5 @@ def test_server_report_material_whole_board_selection_and_revise(server):
     assert seen[-1]["material"] == "- 고른 메모"
     _post(base + "/api/chat", {"board": "공부", "prev_html": "<html>앞</html>", "messages": [{"role": "user", "content": "더 짧게"}]})
     assert seen[-1]["prev"] == "<html>앞</html>" and seen[-1]["ask"] == "더 짧게"   # 「더 짧게」 = 앞 문서 고치기
+    out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "합계까지 보고서로", "context": "- 고른 메모"}]})
+    assert "차분 톤" in out["content"] and "그대로 찾지 못한 숫자: 4,800" in out["content"]   # 숫자 검사는 답 글에 알림(막지 않음)

@@ -93,16 +93,16 @@ test('🔑 내 키 — 넣으면 물을 때 머리말로만, 지우면 서버 �
   expect(seen[1].headers['x-kairos-key']).toBeUndefined()
 })
 
-test('보이는 것 정리정돈 = 칠판 위 「🧩 정리정돈 중 · 실제 모델」 알약, 끝나면 사라짐', async ({ page }) => {
-  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: { gpt: [{ id: 'fake-model', price: '' }] }, jobs: { tidy: 'claude-sonnet-5-5' } } }))
+test('칠판 전체 정리 문서 = 칠판 위 「📄 정리 문서 만드는 중 · 실제 모델」 알약, 끝나면 사라짐', async ({ page }) => {
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: { gpt: [{ id: 'fake-model', price: '' }] }, jobs: { report: 'claude-opus-5-5' } } }))
   await page.route('**/api/chat', async r => { await new Promise(s => setTimeout(s, 1500)); await r.fulfill({ status: 502, json: { error: '시험 — 일부러 실패' } }) })
-  await openBoard(page, boardName('tidybusy')); await setCam(page)
+  await openBoard(page, boardName('reportbusy')); await setCam(page)
   for (const t of ['하나', '둘']) { await btn(page, '메모').click(); await page.keyboard.type(t); await clickScene(page, 900, 600) }
   const b = await page.getByTestId('board').boundingBox()
   await page.mouse.click(b.x + 1000, b.y + 700, { button: 'right' })
-  await page.getByRole('button', { name: /보이는 것 정리정돈하기/ }).click()
-  await expect(page.getByTestId('ai-busy')).toContainText('정리정돈 중 · claude-sonnet-5-5')
-  await expect(page.getByTestId('chat-busy')).toContainText('정리정돈 중 · claude-sonnet-5-5')   // 고른 대화 모델(fake-model)이 아니라
+  await page.getByRole('button', { name: /칠판 전체 정리 문서 만들기/ }).click()
+  await expect(page.getByTestId('ai-busy')).toContainText('정리 문서 만드는 중 · claude-opus-5-5')
+  await expect(page.getByTestId('chat-busy')).toContainText('정리 문서 만드는 중 · claude-opus-5-5')   // 고른 대화 모델(fake-model)이 아니라
   await expect(page.getByTestId('ai-busy')).toHaveCount(0)
   await expect(page.getByText('시험 — 일부러 실패')).toBeVisible()
 })
