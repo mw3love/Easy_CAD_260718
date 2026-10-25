@@ -990,9 +990,33 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     R.current.model = { ...m, items: rest }   // 지을 자리 계산·길 찾기가 옛 물건을 안 보게
     let r
     try { r = deepBuild(d.plan, { x: root.pos[0], y: root.pos[1] }, { style: st, fix: fx, keep: { id: rootId, no: root.no } }) } finally { R.current.model = m }
-    commit([...rest, ...r.out], [rootId], style ? `디자인 — ${styleOf(st).name}` : '꼭지 모양')
+    commit([...deepRebind(m.items, rest, r.out, rootId), ...r.out], [rootId], style ? `디자인 — ${styleOf(st).name}` : '꼭지 모양')
     setStatus(style ? `디자인을 「${styleOf(st).name}」로 다시 지었어요 — 마음에 안 들면 Ctrl+Z` : '꼭지 모양을 바꿔 다시 배치했어요 — Ctrl+Z로 되돌리기')
     return deepInfo(r)
+  }
+  // 다시 지을 때 손으로 그린 화살표(판 밖 물건)의 끝 — 옛 판 물건에 붙어 있었으면 같은 꼭지·같은 종류의 새 물건(그 꼭지 안 차례도 같게)으로 옮겨 붙임.
+  // 물건 안 점은 크기 비율로 옮김(테두리 위 점은 새 테두리 위로). 맞는 새 물건이 없으면 끝이 그 자리에 떠 있음
+  function deepRebind(all, rest, out, rootId) {
+    const old = all.filter(it => it.deep_of === rootId && !isArrow(it)), fresh = out.filter(it => !isArrow(it) && it.type !== 'frame')
+    const key = it => `${it.deep_sec ?? -1}|${it.type}`, rank = (list, it) => list.filter(x => key(x) === key(it)).indexOf(it)
+    const pair = new Map(old.map(it => { const c = fresh.filter(x => key(x) === key(it)), s = fresh.filter(x => (x.deep_sec ?? -1) === (it.deep_sec ?? -1))
+      return [it._id, c[rank(old, it)] || c[0] || s[0] || null] }))
+    const grp = new Map(old.filter(it => it.group_id).map(it => [it.group_id, pair.get(it._id)?.group_id || null]))
+    const oldById = new Map(old.map(it => [it._id, it]))
+    return rest.map(a => {
+      if (!isArrow(a)) return a
+      let n = a
+      for (const k of ['bind1', 'bind2']) {
+        const o = oldById.get(a['_' + k]), g = a[k + '_group']
+        if (o) {
+          const nw = pair.get(o._id), pt = a[k + '_pt']
+          if (!nw || !pt) { n = { ...n, ['_' + k]: null, [k + '_pt']: null }; continue }
+          const [ox, oy, ow, oh] = rectOf(o), [nx, ny, nW, nH] = rectOf(nw)
+          n = { ...n, ['_' + k]: nw._id, [k + '_pt']: [nx + ((pt[0] - ox) / (ow || 1)) * nW, ny + ((pt[1] - oy) / (oh || 1)) * nH] }
+        } else if (g && grp.has(g)) n = grp.get(g) ? { ...n, [k + '_group']: grp.get(g) } : { ...n, [k + '_group']: null, [k + '_pt']: null }
+      }
+      return n
+    })
   }
   // 속성 카드 딥모드 줄 — 고른 것이 딥모드 판이면(프레임 또는 그 판 물건). 꼭지 하나(그 묶음)만 골랐고 모양이 둘 이상이면 「꼭지」 줄도
   function deepProps() {

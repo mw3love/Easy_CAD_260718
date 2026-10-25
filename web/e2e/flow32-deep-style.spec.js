@@ -2,7 +2,7 @@
 // Ctrl+Z 한 번에 차분으로 → 숫자 타일 꼭지를 고르면 「꼭지」 줄 → 위아래로(그 꼭지만, 판에 기억) → 손으로 옮긴 뒤 잡지를 누르면 덮어쓰기 확인 → 덮어쓰기 → 새로고침해도 그대로.
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { boardName, openBoard, setCam, liveDoc, dragScene, waitSaved } from './helpers.js'
+import { boardName, openBoard, setCam, liveDoc, dragScene, waitSaved, pickShape } from './helpers.js'
 import { overlaps } from '../src/next/deep.js'
 
 const PLAN = JSON.parse(readFileSync(new URL('../test/fixtures/deep_real_news.json', import.meta.url), 'utf-8'))
@@ -67,4 +67,40 @@ test('디자인 바꾸기 · 되돌리기 · 꼭지 모양 · 손으로 고친 �
   d = await liveDoc(page)
   expect(root(d).deep_plan.style).toBe('magazine')
   expect(d.items.filter(it => it.deep_of === root(d).uid).length).toBeGreaterThan(5)
+})
+
+// 판 물건에서 판 밖 도형으로 손으로 그린 화살표 — 디자인을 바꿔도 남고, 두 끝이 같은 꼭지의 새 물건·그 도형에 붙어 있음(2026-10-25 — 다시 지으면 물건 id가 새로 바뀜)
+test('손으로 그린 화살표는 디자인을 바꿔도 붙어 있음', async ({ page }) => {
+  await openBoard(page, boardName('deeparrow'))
+  await page.evaluate(p => window.__mb.ed.deepBoard(p, { x: 0, y: 0 }), PLAN)
+  await setCam(page, { x: 400, y: 40, z: 0.5 })
+  await pickShape(page, '사각형'); await dragScene(page, { x: -500, y: 1000 }, { x: -300, y: 1100 })
+  let d = await liveDoc(page)
+  const uid = root(d).uid, memo = d.items.find(it => it.deep_of === uid && it.type === 'memo' && it.deep_sec != null && !it.group_id), b = box(memo)
+  const rect = d.items.find(it => it.type === 'rect' && !it.deep_of), n0 = d.items.length
+  await page.evaluate(() => window.__mb.ed.setSel([]))
+  await dragScene(page, { x: b.x + b.w / 2, y: b.y + 12 }, { x: -400, y: 1050 }, 16)          // 메모 윗변 가운데 포트 → 사각형(화살표 뽑기)
+  d = await liveDoc(page)
+  const hand = d.items.find(it => it.type === 'sarrow' && !it.deep_of)
+  expect(hand).toBeTruthy()
+  const ends = a => [a.bind1, a.bind2].map(i => d.items[i]?.uid ?? null)   // 저장 꼴 bind = 목록 순번
+  expect(ends(hand).sort()).toEqual([memo.uid, rect.uid].sort())
+
+  await page.evaluate(id => window.__mb.ed.setSel([id]), uid)
+  await page.getByTestId('deep-styles').locator('[data-style="news"]').click()
+  if (await page.getByTestId('deep-confirm').count()) await page.getByTestId('deep-confirm-yes').click()
+  d = await liveDoc(page)
+  expect(root(d).deep_plan.style).toBe('news')
+  const h2 = d.items.find(it => it.uid === hand.uid)
+  expect(h2).toBeTruthy()                                                                          // ① 남아 있음
+  const e2 = [h2.bind1, h2.bind2].map(i => d.items[i])
+  expect(e2.every(Boolean)).toBe(true)                                                             // ② 두 끝 다 붙음
+  const nm = e2.find(it => it.uid !== rect.uid)
+  expect(nm.deep_of).toBe(uid); expect(nm.deep_sec).toBe(memo.deep_sec); expect(nm.type).toBe('memo')   // 같은 꼭지의 새 메모
+  await page.getByTestId('board').screenshot({ path: 'test-results/deeparrow-news.png' })
+  await page.keyboard.press('Control+z')
+  d = await liveDoc(page)
+  expect(root(d).deep_plan.style).toBe('calm'); expect(d.items.length).toBe(n0 + 1)               // ③ 한 번에 되돌아옴
+  const h3 = d.items.find(it => it.uid === hand.uid)
+  expect([h3.bind1, h3.bind2].map(i => d.items[i]?.uid).sort()).toEqual([memo.uid, rect.uid].sort())
 })
