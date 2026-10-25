@@ -12,6 +12,8 @@ import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, he
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
 import { CHART_MIN, isChart } from './chart.js'
+import { deepLayout } from './deep.js'
+import { deepHead, deepMeasure, deepSection } from './deepboard.js'
 import { ROUTE_BOX, bindPt, dropTarget, edgeMid, bindEnd, groupFrac, groupHost, hostPorts, isBindHost, isConnHost, isHollow, isSnapLine, nearestBorder, OPP, qcDelta, qcDots, snapAt } from './connect.js'
 import { routeOrtho } from '../route.js'
 import { projectToCurve, projectToPath, snapLabelOff } from './arrowedit.js'
@@ -135,7 +137,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -936,6 +938,32 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     commit([...m.items, ...its], its.map(it => it._id), '그래프로 붙이기'); setTool('select')
     setStatus('그래프로 붙였어요 — 두 번 누르면 표로 펼쳐 숫자를 고쳐요 · 모양은 속성 카드에서')
     return its.map(it => it._id)
+  }
+  // 딥모드 지면(§8 항목66 2단계, 2026-10-25) — 계획(꼭지 + 본문) → 16:9 프레임(들) 안에 진짜 칠판 물건. 자리는 deep.js, 물건은 deepboard.js, 단계 사이 화살표만 여기(길 찾기).
+  // at = 첫 장 왼쪽 위(없으면 지금 칠판의 오른쪽 빈자리). 프레임 번호 = 발표 차례. 되돌리기 한 번에 통째로. 넣은 _id들
+  function deepBoard(plan, at) {
+    const m = R.current.model, lay = deepLayout(plan, deepMeasure(plan)), n = lay.pages.length
+    const right = m.items.length ? unionBox(m.items.map(it => sceneBox(it, textBox))) : null, o = at || (right ? { x: right.x + right.w + 200, y: right.y } : { x: 0, y: 0 })
+    const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = orderedFrames(m.items).length, out = [], links = []
+    lay.pages.forEach((pg, p) => {
+      const X = o.x + pg.x, Y = o.y
+      out.push(base([X, Y], { type: 'frame', rect: [0, 0, pg.W, pg.H], name: (plan.title || '딥모드') + (n > 1 ? ` (${p + 1}/${n})` : ''), no: no0 + p + 1, ratio: '16:9', z: zb }))
+      out.push(...deepHead(plan, X + pg.head.x, Y + pg.head.y, pg.head.w, pg.k, p, n).map(it => ({ ...it, z: zt })))
+      pg.cells.forEach(c => { const r = deepSection(plan, plan.sections[c.i], X + c.x, Y + c.y, c.w, pg.k); out.push(...r.items.map(it => ({ ...it, z: zt }))); links.push(...r.links) })
+    })
+    const keep = R.current.model
+    R.current.model = { ...keep, items: [...keep.items, ...out] }   // 길 찾기·붙는 끝이 새 카드를 찾게(answerItems와 같게)
+    try {
+      for (const [a, b] of links) {
+        const A = out.find(it => it._id === a), B = out.find(it => it._id === b), ba = sceneBox(A, textBox), bb = sceneBox(B, textBox), cy = Math.min(ba.y + ba.h, bb.y + bb.h) / 2 + Math.max(ba.y, bb.y) / 2
+        const pa = { p: { x: ba.x + ba.w, y: cy }, n: { x: 1, y: 0 } }, pb = { id: b, p: { x: bb.x, y: cy }, n: { x: -1, y: 0 } }
+        const pts = connRoute(a, pa, pb, null).map(q => [q.x, q.y])
+        out.push({ ...arrowItem(a, pa.p, b, pb.p, { auto_route: true, pts, color: '#ffc4613f', width: 1.5, style: 1, head: true, head_start: false }), z: zt, group_id: A.group_id })
+      }
+    } finally { R.current.model = keep }
+    commit([...m.items, ...out], [], '딥모드 지면')
+    setStatus(`딥모드 지면 — ${n}장 · 꼭지 ${plan.sections?.length || 0}개${lay.pages[0].fit ? ' (간격·글을 조여 한 장에)' : ''}`)
+    return { ids: out.map(it => it._id), pages: lay.pages.map(pg => ({ x: o.x + pg.x, y: o.y, w: pg.W, h: pg.H, fit: pg.fit, k: pg.k, masonry: !!pg.masonry, need: Math.round(pg.need), head: Math.round(pg.head.h), cells: pg.cells.map(c => [c.i, Math.round(c.w), Math.round(c.h)]) })) }
   }
   // 웹 검색 답(§8 항목61 ② 담는 법, 2026-10-19) = 요약 메모 + 오른쪽에 출처 웹 카드(본문에 쓰인 번호만, 제목 앞 [n], 가벼운 제목 카드 — 칸 안 페이지 없음) + 메모 → 카드 화살표, 한 묶음.
   // 「어디서 왔는지」가 칠판 위 선으로 보이게(회사 KAIROS 웹은 답과 출처가 따로 놂). 출처가 없으면 메모 하나(cardItem)
