@@ -47,7 +47,7 @@ export function DeepPlan({ m, drop, pickStyle, build, show, busy, css }) {
       {secs.map((s, i) => <div key={i} data-testid="deep-sec" data-dropped={dropped.has(i) ? '1' : undefined} style={{ display: 'flex', gap: 6, alignItems: 'center', opacity: dropped.has(i) ? 0.4 : 1 }}>
         <span style={{ ...css.kind, flex: 'none', ...(s.size === '주인공' ? { color: '#da7756', background: 'rgba(218,119,86,.12)' } : null) }}>{s.shape}</span>
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: dropped.has(i) ? 'line-through' : 'none' }} title={s.question || s.title}>{s.title}</span>
-        <span style={{ ...css.meta, flex: 'none' }}>{SOURCE[s.source] || s.source || ''}</span>
+        <span style={{ ...css.meta, flex: 'none' }}>{s.shape === '출처 카드' ? '모은 출처' : SOURCE[s.source] || s.source || ''}</span>
         {!lock && <button data-testid="deep-sec-x" aria-label={dropped.has(i) ? `「${s.title}」 되살리기` : `「${s.title}」 빼기`} title={dropped.has(i) ? '되살리기' : '이 꼭지 빼기'}
           disabled={!dropped.has(i) && left <= 3} onClick={() => drop(i)} style={{ ...css.ghost, padding: '0 6px', flex: 'none' }}>{dropped.has(i) ? '↺' : '×'}</button>}
       </div>)}

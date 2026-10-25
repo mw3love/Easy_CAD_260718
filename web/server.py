@@ -36,7 +36,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_icon, board_image, board_ocr, board_report, board_tidy, kr_tools, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_icon, deep_mode, board_image, board_ocr, board_report, board_tidy, kr_tools, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -99,7 +99,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
         # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
-        jobs = {"tidy": board_tidy.TIDY_MODEL, "report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL}
+        jobs = {"tidy": board_tidy.TIDY_MODEL, "report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "deep": deep_mode.EDITOR_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3)
         return self._json(200, {**hit[1], "jobs": jobs})
 
     def _chat(self):
@@ -118,6 +118,8 @@ class Handler(SimpleHTTPRequestHandler):
             msgs, ctx = req.get("messages") or [], req.get("context") or ""
             last = next((m for m in reversed(msgs) if isinstance(m, dict) and m.get("role") == "user"), {})
             kind = req.get("kind") or ""
+            if kind == "deep":   # 딥모드(§8 항목66) — 대화창 질문지·계획 카드가 단계(`deep.step`)를 정해 보냄, 길 고르기 없음
+                return self._deep(req, key)
             reply = req.get("ask_reply") if isinstance(req.get("ask_reply"), dict) else None
             if not kind and reply:   # 되묻기 버튼 대신 입력 칸에 친 말(§8 항목64) — 그 말이 가리키는 버튼, 못 알아들으면 원래 1등 길(다시 안 물음)
                 kind = route.pick_from(str(req.get("ask_add") or ""), [str(c) for c in reply.get("choices") or []]) or str(reply.get("default") or "") or "chat"
@@ -209,6 +211,32 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(502, {"error": f"KAIROS 호출 실패: {e}"})
         sys.stderr.write("[대화] %s %.1f초\n" % (out["model"], out["elapsed"]))
         return self._json(200, out)
+
+    def _deep(self, req: dict, key: str):
+        """딥모드 → step plan: {"kind": "deep", "plan"(본문 없이), "estimate", "model", "elapsed"} · step build: {"kind": "deep", "plan"(꼭지마다 body + sources), "model", "elapsed", "missing"}.
+        판은 칠판이 짓는다(`ed.deepBoard`). 재료 꼭지 board = 이 칠판의 저장된 글."""
+        d = req.get("deep") if isinstance(req.get("deep"), dict) else {}
+        step, topic = d.get("step"), str(d.get("topic") or "")
+        brief = d.get("brief") if isinstance(d.get("brief"), dict) else {}
+        base = gw.resolve_base_url()
+        try:
+            if step == "plan":
+                prev = d.get("prev") if isinstance(d.get("prev"), dict) else None
+                out = deep_mode.make_plan(gw._client(key, base, timeout=300), topic, brief, prev=prev, fix=str(d.get("fix") or "") if prev else "")
+                sys.stderr.write("[딥모드 계획] %s %.1f초 꼭지 %d%s\n" % (out["model"], out["elapsed"], len(out["plan"]["sections"]), " (고치기)" if prev else ""))
+                return self._json(200, {"kind": "deep", **out})
+            if step == "build":
+                plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
+                uses_board = any(isinstance(s, dict) and s.get("source") == "board" for s in plan.get("sections") or [])
+                material = self._board_material(self._name(str(req.get("board") or ""))) if uses_board else ""
+                out = deep_mode.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, board=material)
+                sys.stderr.write("[딥모드 만들기] %s %.1f초 출처 %d%s\n" % (out["model"], out["elapsed"], len(out["plan"]["sources"]), " 재료 없음: " + ", ".join(out["missing"]) if out["missing"] else ""))
+                return self._json(200, {"kind": "deep", **out})
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        except Exception as e:
+            return self._json(502, {"error": f"KAIROS 딥모드 실패: {e}"})
+        return self._json(400, {"error": "딥모드 단계(plan·build)를 몰라요"})
 
     def _icon(self, ask: str, key: str, base_svg: str = "", image_url: str = ""):
         """아이콘 → {"kind": "icon", "content", "svgs": [SVG 글…], "model", "elapsed"} — 도형으로 바꾸기는 칠판(`svgin.js`), 대화 기록에 SVG 글 그대로(작음)."""

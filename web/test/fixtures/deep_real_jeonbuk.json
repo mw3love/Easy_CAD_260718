@@ -1,0 +1,374 @@
+{
+ "_note": "딥모드 3-3 실조건(2026-10-25) — 대화창에서 진짜 KAIROS로 지은 판(계획 opus·본문 sonnet, 재료 공공 데이터 → 웹). 재료가 없어 머리 줄만 온 그래프 둘 포함",
+ "title": "전북 인구 감소 한눈에 보기",
+ "headline": "전북 인구, 얼마나 빨리 줄고 있나",
+ "sources": [
+  {
+   "n": 1,
+   "title": "전북특별자치도 인구 1,716,229명 - 2026년 9월 말 주민등록 · 연령별 · 1년 증감 | 다셈",
+   "url": "https://dasem.app/stats/population/jeonbuk"
+  },
+  {
+   "n": 2,
+   "title": "전북특별자치도 도정현황통계시스템",
+   "url": "https://stat.jeonbuk.go.kr/html/sub3/index3_1.jsp?page=1"
+  },
+  {
+   "n": 3,
+   "title": "전북특별자치도 통계시스템",
+   "url": "https://stat.jeonbuk.go.kr/index.jsp"
+  },
+  {
+   "n": 4,
+   "title": "전북특별자치도 인구 및 인구 추이 | 4ool Korea Data",
+   "url": "https://kor.4ool.com/ko/regions/jeonbuk/"
+  },
+  {
+   "n": 5,
+   "title": "전북특별자치도 인구 통계 - 2026년 9월 - 똑똑정보찾기",
+   "url": "https://dokdokinfo.kr/statsbyregionspecific/5200000000/"
+  },
+  {
+   "n": 6,
+   "title": "전북특별자치도 도정현황통계시스템",
+   "url": "https://stat.jeonbuk.go.kr/html/sub3/index3_1.jsp?b_idx=13&bd_idx=1518&gubun=view&page=1"
+  },
+  {
+   "n": 7,
+   "title": "전북 주민등록 인구 통계 (2026년도 9월) | GData",
+   "url": "https://gdata.kr/population/resident/jeonbuk/"
+  },
+  {
+   "n": 8,
+   "title": "전북소개 > 일반현황 > 인구 및 세대 | 전북특별자치도",
+   "url": "https://www.jeonbuk.go.kr/index.jeonbuk?menuCd=DOM_000000101004003000"
+  },
+  {
+   "n": 9,
+   "title": "초고령사회 가속 페달 밟은 전북, 이제는 막을 수 없는 흐름 - 전북도민일보",
+   "url": "https://domin.co.kr/news/articleView.html?idxno=1541877&sc_section_code=S1N7"
+  },
+  {
+   "n": 10,
+   "title": "전북, 출생률 소폭 상승에도 인구감소세 악화",
+   "url": "https://www.jjan.kr/article/20250326580245"
+  },
+  {
+   "n": 11,
+   "title": "(2025년 인구동향조사) 출생·사망통계(잠정)[전자자료] :국가데이터처 | 도서 | 디지털집현전",
+   "url": "https://k-knowledge.kr/srch/read.jsp?id=287907613"
+  },
+  {
+   "n": 12,
+   "title": "멈추지 않는 위기...무너지는 전북 인구구조",
+   "url": "https://www.jjan.kr/article/20250226580198"
+  },
+  {
+   "n": 13,
+   "title": "전북특별자치도 도정현황통계시스템",
+   "url": "https://stat.jeonbuk.go.kr/html/sub3/index3.jsp?page=1"
+  },
+  {
+   "n": 14,
+   "title": "전북특별자치도 도정현황통계시스템",
+   "url": "http://stat.jeonbuk.go.kr/html/sub3/index3_1.jsp?b_idx=13&bd_idx=1458&gubun=view&page=1"
+  },
+  {
+   "n": 15,
+   "title": "전북특별자치도 통계시스템",
+   "url": "https://stat.jeonbuk.go.kr/"
+  },
+  {
+   "n": 16,
+   "title": "전북특별자치도 도정현황통계시스템",
+   "url": "https://stat.jeonbuk.go.kr/html/sub3/index3.jsp"
+  },
+  {
+   "n": 17,
+   "title": "전북특별자치도 도정현황통계시스템",
+   "url": "https://stat.jeonbuk.go.kr/html/sub3/index3.jsp?b_idx=2&bd_idx=1522&gubun=view&page=1"
+  },
+  {
+   "n": 18,
+   "title": "전북특별자치도_인구추이_20131231 | 공공데이터포털",
+   "url": "https://www.data.go.kr/data/15051315/fileData.do"
+  },
+  {
+   "n": 19,
+   "title": "행정안전부_통계연보_연도별 주민등록인구 | 공공데이터포털",
+   "url": "https://www.data.go.kr/data/15107307/openapi.do"
+  },
+  {
+   "n": 20,
+   "title": "교육데이터 활용•지원 서비스",
+   "url": "https://data.edmgr.kr/dataView.do?id=bigdatahub-go-kr-204386"
+  },
+  {
+   "n": 21,
+   "title": "전북특별자치도 도정현황통계시스템",
+   "url": "https://stat.jeonbuk.go.kr/html/sub3/index3.jsp?b_idx=2&bd_idx=1263&gubun=view&page=2"
+  },
+  {
+   "n": 22,
+   "title": "전북 인구이동 (전입·전출) 통계 (2025년도) | GData",
+   "url": "https://gdata.kr/population/migration-region/jeonbuk/"
+  },
+  {
+   "n": 23,
+   "title": "https://kostat.go.kr/boardDownload.es?bid=5148&list_no=382661&seq=5",
+   "url": "https://kostat.go.kr/boardDownload.es?bid=5148&list_no=382661&seq=5"
+  },
+  {
+   "n": 24,
+   "title": "전북특별자치도_장래인구추계 시군별 순이동지수_20201231 | 공공데이터포털",
+   "url": "https://www.data.go.kr/data/15118579/fileData.do"
+  },
+  {
+   "n": 25,
+   "title": "전북특별자치도_시군별 인구인동_20160728 | 공공데이터포털",
+   "url": "https://www.data.go.kr/data/15051324/fileData.do"
+  },
+  {
+   "n": 26,
+   "title": "전북 전주시 인구이동 (전입·전출) 통계 (2025년도) | GData",
+   "url": "https://gdata.kr/population/migration-region/jeonbuk/jeonju-si/"
+  },
+  {
+   "n": 27,
+   "title": "전북특별자치도 도정현황통계시스템",
+   "url": "https://stat.jeonbuk.go.kr/html/sub3/index3.jsp?b_idx=2&page=1"
+  },
+  {
+   "n": 28,
+   "title": "KBS 뉴스",
+   "url": "https://news.kbs.co.kr/news/view.do?ncd=8247955"
+  }
+ ],
+ "sections": [
+  {
+   "title": "지금 전북 인구는 어디까지 왔나",
+   "question": "전북 인구는 지금 몇 명이고, 감소는 얼마나 심각한가?",
+   "shape": "주인공 글",
+   "chart": null,
+   "source": "kr",
+   "query": "전북특별자치도 주민등록인구 2026년 9월 기준 통계 및 전년 대비 증감",
+   "size": "주인공",
+   "body": {
+    "text": [
+     "2026년 9월 말 전북특별자치도 주민등록인구는 **1,716,229명**이에요 [1]. 1년 전(2025년 9월 말)보다 **11,487명 줄었고, 감소율은 -0.66%**예요 [1].",
+     "남자는 855,441명, 여자는 860,788명으로 여자가 조금 더 많아요 [1]. 세대수는 874,457세대예요 [1].",
+     "참고로 2025년 12월 31일 기준 총인구는 1,724,856명으로 집계됐어요 [8]."
+    ]
+   }
+  },
+  {
+   "title": "기억할 숫자 4개",
+   "question": "전북 인구 감소를 설명할 때 꼭 들고 가야 할 핵심 숫자는?",
+   "shape": "숫자 타일",
+   "chart": null,
+   "source": "kr",
+   "query": "전북특별자치도 2025년 출생아 수 사망자 수 순이동 인구 고령인구 비율 통계",
+   "size": "보통",
+   "body": {
+    "tiles": [
+     [
+      "1,716,229명",
+      "2026년 9월 말 주민등록인구. 1년 새 11,487명(-0.66%) 줄었어요",
+      1
+     ],
+     [
+      "26.6%",
+      "2025년 12월 말 65세 이상 비율(458,975명). 초고령사회예요",
+      9
+     ],
+     [
+      "-10,302명",
+      "2024년 출생 6,784명 대비 사망 17,086명, 자연감소 규모예요",
+      12
+     ],
+     [
+      "-3,575명",
+      "2025년 순이동 인구. 들어온 사람보다 나간 사람이 많아요",
+      22
+     ]
+    ]
+   }
+  },
+  {
+   "title": "연도별 인구 추이",
+   "question": "전북 인구는 언제부터, 어떤 속도로 줄어 왔나?",
+   "shape": "그래프",
+   "chart": "꺾은선",
+   "source": "kr",
+   "query": "전라북도 전북특별자치도 연도별 주민등록인구 2000년부터 2025년까지 통계",
+   "size": "보통",
+   "body": {
+    "rows": [
+     [
+      "시점",
+      "주민등록인구(명)"
+     ],
+     [
+      "2025년 12월 말",
+      "1724856 [8]"
+     ],
+     [
+      "2026년 9월 말",
+      "1716229 [1]"
+     ]
+    ],
+    "header": true,
+    "kind": "line",
+    "caption": "장기 연도별 숫자는 이번 재료에 없어 두 시점만 담았어요. 연말 기준 통계연보는 도정현황통계시스템에서 볼 수 있어요 [16]"
+   }
+  },
+  {
+   "title": "왜 줄어드나: 자연감소와 순유출",
+   "question": "인구 감소는 출생보다 사망이 많아서인가, 사람이 빠져나가서인가?",
+   "shape": "그래프",
+   "chart": "세로 막대",
+   "source": "kr",
+   "query": "전북 연도별 자연증가 출생아 사망자 순이동 전입 전출 통계 2015년부터 2025년",
+   "size": "보통",
+   "body": {
+    "rows": [
+     [
+      "연도",
+      "순이동 인구(명)"
+     ],
+     [
+      "2020",
+      "-8494 [22]"
+     ],
+     [
+      "2021",
+      "-5801 [22]"
+     ],
+     [
+      "2022",
+      "-5115 [22]"
+     ],
+     [
+      "2023",
+      "-4457 [22]"
+     ],
+     [
+      "2024",
+      "-6060 [22]"
+     ],
+     [
+      "2025",
+      "-3575 [22]"
+     ]
+    ],
+    "header": true,
+    "kind": "col",
+    "caption": "해마다 나간 사람이 더 많았어요. 여기에 2024년 사망이 출생보다 10,302명 많은 자연감소가 겹쳐요 [12]"
+   }
+  },
+  {
+   "title": "누가 떠나나: 연령대별 순이동",
+   "question": "전북을 떠나는 사람은 주로 어느 나이대인가?",
+   "shape": "그래프",
+   "chart": "가로 막대",
+   "source": "kr",
+   "query": "전북특별자치도 2025년 연령대별 순이동 인구 통계 국내인구이동",
+   "size": "보통",
+   "body": {
+    "rows": [
+     [
+      "연령대",
+      "순이동(명)"
+     ]
+    ],
+    "header": true,
+    "kind": "row",
+    "caption": "연령대별 숫자는 이번 재료에 없어요. 다만 20대를 중심으로 수도권·광주 등으로 빠져나가는 흐름이 이어지고 있어요 [23][12]"
+   }
+  },
+  {
+   "title": "시군별로 보면",
+   "question": "14개 시군 중 어디가 가장 많이 줄고, 버티는 곳은 어디인가?",
+   "shape": "그래프",
+   "chart": "가로 막대",
+   "source": "kr",
+   "query": "전북특별자치도 14개 시군별 주민등록인구 최근 10년 증감률 통계 2025년",
+   "size": "보통",
+   "body": {
+    "rows": [
+     [
+      "시군",
+      "증감률(%)"
+     ]
+    ],
+    "header": true,
+    "kind": "row",
+    "caption": "14개 시군별 증감률 숫자는 이번 재료에 없어요. 매년 말 기준 시군별 인구는 도정현황통계시스템 통계연보에서 비교할 수 있어요 [16][27]"
+   }
+  },
+  {
+   "title": "앞으로의 전망",
+   "question": "이대로 가면 전북 인구는 몇 년 뒤 어느 수준이 되나?",
+   "shape": "표",
+   "chart": null,
+   "source": "kr",
+   "query": "통계청 시도별 장래인구추계 전북 총인구 및 고령인구 비율 전망 통계",
+   "size": "작게",
+   "body": {
+    "rows": [
+     [
+      "",
+      "내용"
+     ],
+     [
+      "현재 인구(2026년 9월 말)",
+      "1,716,229명 [1]"
+     ],
+     [
+      "최근 1년 변화",
+      "-11,487명(-0.66%) [1]"
+     ],
+     [
+      "장래 추계",
+      "구체적인 추계 숫자는 재료에 없어요. 시군별 순이동지수 자료는 공공데이터포털에 있어요 [24]"
+     ]
+    ],
+    "header": true
+   }
+  },
+  {
+   "title": "숫자 볼 때 주의할 점",
+   "question": "주민등록인구와 추계인구는 어떻게 다르고, 어느 숫자를 써야 하나?",
+   "shape": "접힌 메모",
+   "chart": null,
+   "source": "ai",
+   "query": null,
+   "size": "작게",
+   "body": {
+    "md": "- 주민등록인구는 주민등록에 올라 있는 사람 수를 세는 거예요.\n- 추계인구는 통계청 등이 조사와 계산으로 어림하는 값이에요.\n- 주민등록은 실제 사는 곳과 다를 수 있어요. 학업·직장 때문에 주소만 두는 경우가 있어요.\n- 지금 인구를 말할 땐 시점이 분명한 주민등록인구가 쓰기 편해요.\n- 먼 미래를 말할 땐 추계인구(장래인구추계)를 봐요.\n- 두 숫자를 한 문장에 섞지 말고, 어느 쪽인지 기준 시점과 함께 적어요."
+   }
+  },
+  {
+   "title": "출처 카드",
+   "question": "이 숫자들은 어디서 왔고, 언제 기준인가?",
+   "shape": "출처 카드",
+   "chart": null,
+   "source": "board",
+   "query": null,
+   "size": "작게",
+   "body": {
+    "links": [
+     1,
+     8,
+     9,
+     12,
+     22,
+     23,
+     24,
+     16,
+     27
+    ]
+   }
+  }
+ ]
+}

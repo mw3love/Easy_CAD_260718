@@ -11,7 +11,7 @@ const plan = t => JSON.parse(readFileSync(new URL(`../test/fixtures/deep_${t}.js
 test.use({ viewport: { width: 1700, height: 1000 }, deviceScaleFactor: 2 })   // 캡처를 시안과 나란히 볼 때 글자가 읽히게
 const box = it => ({ x: it.pos[0], y: it.pos[1], w: it.rect[2] * (it.scale || 1), h: it.rect[3] * (it.scale || 1) })
 
-for (const style of ['calm', 'news', 'magazine', 'info']) for (const t of ['paper', 'tx', 'news', 'real_paper', 'real_tx', 'real_news']) test(`딥모드 지면 — ${t} · ${style}: 겹침·넘침 0, 글자는 제 상자 안, 갇힌 빈칸 15% 미만`, async ({ page }) => {
+for (const style of ['calm', 'news', 'magazine', 'info']) for (const t of ['paper', 'tx', 'news', 'real_paper', 'real_tx', 'real_news', 'real_jeonbuk']) test(`딥모드 지면 — ${t} · ${style}: 겹침·넘침 0, 글자는 제 상자 안, 갇힌 빈칸 15% 미만`, async ({ page }) => {
   await openBoard(page, boardName(`deep_${t}_${style}`))
   const P = plan(t)
   const r = await page.evaluate(([p, st]) => window.__mb.ed.deepBoard(p, { x: 0, y: 0 }, st), [P, style])
@@ -21,7 +21,7 @@ for (const style of ['calm', 'news', 'magazine', 'info']) for (const t of ['pape
   const d = await liveDoc(page)
   const frames = d.items.filter(it => it.type === 'frame'), things = d.items.filter(it => it.type !== 'frame' && it.type !== 'sarrow' && it.type !== 'arrow')
   expect(frames).toHaveLength(r.pages.length)
-  expect(d.items.filter(it => it.type === 'sarrow').length).toBeGreaterThan(0)                    // 단계 사이 화살표
+  if (P.sections.some(s => s.shape === '단계 카드')) expect(d.items.filter(it => it.type === 'sarrow').length).toBeGreaterThan(0)   // 단계 사이 화살표(단계 꼭지가 있을 때)
   const B = things.map(box)
   expect(overlaps(B).map(([a, b]) => [things[a].type, things[b].type])).toEqual([])              // ① 겹침 0
   const F = frames.map(box)

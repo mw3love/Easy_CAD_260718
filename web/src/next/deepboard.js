@@ -102,6 +102,10 @@ export function deepSection(plan, sec, x, y, w, k, v = '', S = CALM) {
     case '그래프': case '표': {   // 표 = 칠판 표, 그래프 = 표 + 모양(대화창 표 답 「그래프로」와 같은 길). 밑에 설명·출처(흐림)
       const head = title(x, y, w, k, sec.title, S), top = bottomOf([head]) + 4
       const { cells, refs } = answerTable(b.rows || [['']]), R = cells.length, C = cells[0].length
+      if (R < (b.header ? 2 : 1) || cells.slice(b.header ? 1 : 0).every(r => r.every(c => !String(c).trim()))) {   // 재료에 숫자가 없어 머리 줄만 온 것(3-3 실측 — 빈 표가 깨진 것처럼 보였음) = 설명 카드
+        items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, muted(b.caption || '이번 재료에서 숫자를 못 찾았어요', S), ...(refs.length ? [muted(siteLines(plan, refs), S)] : [])], card(S))]
+        break
+      }
       let kind = sec.shape === '그래프' ? (b.kind || CHART_KIND[sec.chart] || 'col') : null
       if (kind && chartWhy(chartData({ cells, header: !!b.header }), kind)) kind = chartGuess({ type: 'table', cells, header: !!b.header }) || null   // 정한 모양이 자료에 안 맞으면(금액인데 원 등 — 3-0 실측) 자료에 맞는 모양, 숫자가 없으면 표
       const long = !kind && cells.some(r => r.some(c => textW(c, 12) > 150))   // 문장이 든 표 = 메모 표 줄(칸 안에서 꺾임 — 칠판 표는 한 줄에 맞춰 글자를 줄여 아주 작아졌음, 3-0 실제 본문)
