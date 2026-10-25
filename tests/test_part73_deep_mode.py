@@ -125,12 +125,13 @@ def test_redo_rewrites_only_picked_sections_and_continues_source_numbers():
     def exa(q):
         asked.append(q)
         return "새 숫자 [1] · 옛 주소 [2]", {"search_results": [{"title": "다", "url": "https://c"}, {"title": "가", "url": "https://a"}]}
-    ans = {"sections": [{"title": "흐름", "body": {"rows": [["달", "수출"], ["1월", "60 [1]"], ["2월", "70 [3]"]], "header": True, "kind": "line"}}]}
+    ans = {"sections": [{"title": "흐름", "change": "2월 숫자를 더했어요", "body": {"rows": [["달", "수출"], ["1월", "60 [1]"], ["2월", "70 [3]"]], "header": True, "kind": "line"}}]}
     c = FakeClient(json.dumps(ans, ensure_ascii=False))
     out = deep_mode.redo("k", c, BUILT, [1, 3], {"누구에게": "윗사람(보고)"}, "", exa=exa, kr=lambda q: [])
     assert [s["i"] for s in out["sections"]] == [1] and out["missing"] == []                  # 출처 카드는 다시 쓸 게 없어 뺌
     assert out["sections"][0]["body"]["rows"][2] == ["2월", "70 [3]"] and out["sections"][0]["shape"] == "그래프"
     assert out["sources"] == BUILT["sources"] + [{"n": 3, "title": "다", "url": "https://c"}]    # 같은 주소 = 같은 번호, 새 출처 = 뒤 번호
+    assert out["changes"] == [{"i": 1, "title": "흐름", "text": "2월 숫자를 더했어요"}] and "change" not in out["sections"][0]   # 고친 것 한 줄 = 대화창 답에만(계획엔 안 넣음)
     assert asked == ["반도체 수출 통계"]                                                        # 고칠 말이 없으면 원래 검색 문장
     sys_, user = c.sent[0]["messages"][0]["content"], c.sent[0]["messages"][1]["content"]
     assert "고칠 꼭지만" in sys_ and "독자: 윗사람(보고)" in sys_ and "- 표:" not in sys_         # 모양 바꾸기 말이 없으면 그 모양 칸만

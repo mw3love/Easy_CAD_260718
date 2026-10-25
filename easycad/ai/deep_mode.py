@@ -280,7 +280,8 @@ REDO = """
 - 「지금 본문」을 바탕으로 사용자 요청대로 고친다. 요청에 없는 것은 그대로 둔다.
 - 그래프는 열(계열)을 그대로 두고 같은 열을 채우는 항목만 더한다 — 빈 칸이 생기는 줄·다른 기준의 숫자는 넣지 말고 caption에 한 줄로(5-0 실측: 빈 칸 섞인 그래프).
 - 사용자가 다른 모양을 말했을 때만 "shape": 새 모양(위 모양 칸 중 하나 — 움직이는 카드·출처 카드 빼고). 아니면 shape 칸을 쓰지 않는다.
-- 출력: {{"sections": [{{"title": "꼭지 제목 그대로", "shape"(바꿀 때만): "…", "body": {{…}}}}, …]}}"""
+- change = 무엇을 고쳤는지 한 줄(쉬운 말). 요청대로 못 한 것이 있으면 그 까닭도(예: 「중간 조합은 같은 기준 숫자가 없어 못 넣었어요」) — 대화창 답에 그대로 보임.
+- 출력: {{"sections": [{{"title": "꼭지 제목 그대로", "shape"(바꿀 때만): "…", "change": "한 줄", "body": {{…}}}}, …]}}"""
 
 
 def redo_text(plan: dict, idx: list, mat: dict, ask: str, board: str = "") -> str:
@@ -306,7 +307,8 @@ def redo_text(plan: dict, idx: list, mat: dict, ask: str, board: str = "") -> st
 
 
 def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None) -> dict:
-    """판(꼭지마다 body + sources) + 고른 꼭지 번호 + 고칠 말 → {"sections": [{"i", …꼭지(새 body)}], "sources"(판 전체 — 새 출처는 뒤 번호), "model", "elapsed", "missing"}.
+    """판(꼭지마다 body + sources) + 고른 꼭지 번호 + 고칠 말 → {"sections": [{"i", …꼭지(새 body)}], "sources"(판 전체 — 새 출처는 뒤 번호), "model", "elapsed", "missing",
+    "changes": [{"i", "title", "text"}](기자가 적은 「무엇을 고쳤나·못 한 까닭」 — 계획엔 안 넣고 대화창 답에만)}.
     출처 카드는 다시 쓸 게 없어 뺌(칠판이 판에서 쓴 번호로 채움). 움직이는 카드 꼭지 = 그 카드를 고칠 말대로(카드가 없으면 새로)."""
     t0, day = time.time(), today()
     secs = plan.get("sections") or []
@@ -345,7 +347,7 @@ def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_
         fw = ex.submit(write_words)
         fc = {i: ex.submit(_live, client, {**plan, "sources": mat["sources"]}, full, i, brief, ask) for i in cards}
         got, made = fw.result(), {i: f.result() for i, f in fc.items()}
-    res, missing = [], []
+    res, missing, changes = [], [], []
     for i in idx:
         s = secs[i]
         if i in made:
@@ -362,4 +364,6 @@ def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_
             missing.append(s["title"])
             continue
         res.append({**s, "i": i, "shape": shape, "chart": s.get("chart") if shape == "그래프" else None, "body": body})
-    return {"sections": res, "sources": mat["sources"], "model": model if words else live_card.LIVE_MODEL, "elapsed": round(time.time() - t0, 1), "missing": missing}
+        if str(g.get("change") or "").strip():
+            changes.append({"i": i, "title": s["title"], "text": str(g["change"]).strip()[:200]})
+    return {"sections": res, "sources": mat["sources"], "model": model if words else live_card.LIVE_MODEL, "elapsed": round(time.time() - t0, 1), "missing": missing, "changes": changes}

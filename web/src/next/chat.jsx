@@ -351,7 +351,8 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
     const r = d.sections?.length ? ed.current?.deepRedoSection(tg.root, d.sections, d.sources) : null
     if (r) setSkipSel(String(tg.root))   // 다시 지은 판(고른 채)은 다음 질문에 안 실음(붙이기와 같게)
     const miss = d.missing?.length ? `\n\n그대로 둔 꼭지(못 씀): ${d.missing.join(', ')}` : ''
-    const content = r ? `${d.sections.map(s => `「${s.title}」`).join(' ')}를 다시 써서 판을 다시 지었어요 — 마음에 안 들면 Ctrl+Z 한 번이면 돌아가요${miss}` : `다시 쓰지 못했어요${miss || ' — 판이 지워졌거나 답이 비었어요'}`
+    const what = (d.changes || []).map(c => `\n- ${d.changes.length > 1 ? `「${c.title}」: ` : ''}${c.text}`).join('')   // 기자가 적은 「무엇을 고쳤나·못 한 까닭」(더한 게 없을 때도 알게 — 5-4 실조건)
+    const content = r ? `${d.sections.map(s => `「${s.title}」`).join(' ')}를 다시 써서 판을 다시 지었어요.${what}${miss}\n\n마음에 안 들면 Ctrl+Z 한 번이면 돌아가요` : `다시 쓰지 못했어요${miss || ' — 판이 지워졌거나 답이 비었어요'}`
     setMsgs(cur => { const next = [...cur.filter(x => x.role !== 'error'), { role: 'assistant', kind: 'deep', step: 'section', root: tg.root, content, model: d.model, elapsed: d.elapsed, credits: d.credits, at: Date.now() }]; save(next); return next })
   }
   // 덮어쓰기 확인 카드 「덮어쓰고 다시 쓰기」 — 그 판 그 꼭지(그사이 고른 것이 바뀌어도)

@@ -25,6 +25,7 @@ function fake(page, sent) {
     page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: {}, jobs: { deep: 'claude-opus-5-5', live: 'gpt-6.1-sol' } } })),
     page.route('**/api/chat', r => { const b = r.request().postDataJSON(); sent.push(b); const d = b.deep || {}
       if (d.step === 'section') return r.fulfill({ json: { kind: 'deep', step: 'section', model: 'claude-sonnet-5-5', elapsed: 12, credits: 18, missing: [],
+        changes: d.idx.map(i => ({ i, title: d.plan.sections[i].title, text: '중간 조합은 같은 기준 숫자가 없어 못 넣었어요' })),
         sources: [...d.plan.sources, { n: d.plan.sources.length + 1, title: '새 출처', url: 'https://new.example/a' }],
         sections: d.idx.map(i => { const s = d.plan.sections[i]
           return { i, ...s, body: s.shape === '움직이는 카드' ? { ...s.body, html: NEW_HTML } : { ...s.body, text: [...(s.body.text || []), NEW_P] } } }) } })
@@ -55,6 +56,7 @@ test('고른 꼭지만 다시 — 질문은 그대로 · 나머지 그대로 · 
   await page.getByPlaceholder('이 꼭지를 고칠 점', { exact: false }).click()
   await page.keyboard.type('더 자세히 써 줘'); await page.keyboard.press('Enter')
   await expect(page.locator('aside[aria-label="KAIROS 대화"]').getByText('를 다시 써서 판을 다시 지었어요', { exact: false })).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('aside[aria-label="KAIROS 대화"]').getByText('중간 조합은 같은 기준 숫자가 없어 못 넣었어요')).toBeVisible()   // 고친 것·못 한 까닭 한 줄
   const q = sent.at(-1)
   expect(q.kind).toBe('deep'); expect(q.deep.step).toBe('section'); expect(q.deep.idx).toEqual([HERO]); expect(q.deep.ask).toBe('더 자세히 써 줘')
   expect(q.deep.brief).toEqual(META.brief); expect(q.deep.plan.sections[CARD].body.html).toBeTruthy()   // 판 계획(본문 포함)을 그대로 보냄
