@@ -8,6 +8,8 @@ KAIROS `/mcp/{suite}/`(MCP JSON-RPC, 상태 없는 streamable HTTP — `Accept`�
 
 ⚠ 날씨 도구 셋은 10개 도시(`CITIES`)만 안다 — 모르는 도시(전주 등)는 알리지 않고 서울 날씨를 돌려준다(2026-10-20 실측).
 그래서 목록 밖 도시면 부르지 않고, 돌아온 도시가 물은 도시와 다르면 버린다 — 그때는 지금처럼 웹 검색으로.
+⚠ 도구 고르는 모델이 「전주 날씨」를 서울로 바꿔 부를 때가 있다(2026-10-25 실측, 두 번 중 한 번) — 그래서 날씨는 질문 글에
+목록 도시 이름이 있을 때만 쓴다(도시 없는 「내일 날씨」도 서울로 정하지 않고 웹 검색으로 — 사용자는 전주).
 """
 from __future__ import annotations
 
@@ -132,6 +134,8 @@ def gather(api_key: str, question: str, *, base_url: str = gw.BASE_URL, client=N
     """질문 → 실제로 부른 도구 결과 [{"suite", "tool", "args", "text"}](없으면 빈 목록).
     모델이 도구를 부르면 결과를 돌려주고 다시 묻기를 `MAX_ROUNDS`번까지(찾기 → 받기). 날씨는 10개 도시일 때만."""
     suites = pick_suites(question)
+    if "kr-weather" in suites and not any(c in question for c in CITIES):   # 도시 없음·목록 밖 도시 = 날씨 도구 안 씀(웹 검색으로)
+        suites.remove("kr-weather")
     if not suites or (os.environ.get("EASYCAD_ROUTE") == "rules" and client is None):   # 시험(길 고르기와 같은 스위치) — 가짜 client를 주면 돎
         return []
     if not today:
@@ -160,7 +164,8 @@ def gather(api_key: str, question: str, *, base_url: str = gw.BASE_URL, client=N
             suite, _, name = c.function.name.partition("__")
             try:
                 args = json.loads(c.function.arguments or "{}")
-                text = _call(api_key, base_url, suite, name, args, http)
+                # 질문에 없는 도시로 부른 날씨 = 버림(「전주와 서울」의 서울은 씀)
+                text = "" if suite == "kr-weather" and str(args.get("city", "서울")) not in question else _call(api_key, base_url, suite, name, args, http)
             except (ValueError, RuntimeError) as e:   # 도구 하나가 틀어져도 나머지는 — 모델에겐 실패를 알려 다른 길로
                 messages.append({"role": "tool", "tool_call_id": ids[i], "content": f"실패: {e}"[:300]})
                 continue

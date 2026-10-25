@@ -83,6 +83,20 @@ def test_unknown_city_is_not_used_and_fallback_to_seoul_is_dropped():
     assert kr_tools.gather("k", "내일 부산 날씨", base_url="https://g2", client=client2, http=http2) == []
 
 
+def test_weather_city_must_be_in_question():
+    # 「전주 날씨」를 모델이 서울로 바꿔 불렀음(2026-10-25 실측) — 질문에 없는 도시면 버림, 도시 없는 「내일 날씨」는 날씨 도구를 안 줌(웹 검색으로)
+    kr_tools._defs.clear()
+    http = FakeHttp(weather)
+    client, _ = fake_client([("kr-weather__get_forecast", {"city": "서울"})])
+    assert kr_tools.gather("k", "내일 전주 날씨를 고흐풍으로 그려줘", base_url="https://g7", client=client, http=http) == []
+    client, seen = fake_client([("kr-weather__get_forecast", {"city": "서울"})])
+    assert kr_tools.gather("k", "내일 날씨 어때?", base_url="https://g7", client=client, http=http) == [] and "model" not in seen
+    assert not [c for c in http.calls if c[1] == "tools/call"]
+    client, _ = fake_client([("kr-weather__get_forecast", {"city": "서울"}), ("kr-weather__get_forecast", {"city": "전주"})])
+    found = kr_tools.gather("k", "내일 전주랑 서울 날씨", base_url="https://g7", client=client, http=http)
+    assert [f["args"]["city"] for f in found] == ["서울"]   # 물은 도시 중 아는 곳은 씀
+
+
 def test_calendar_and_no_words_and_test_mode():
     kr_tools._defs.clear()
     http = FakeHttp(lambda p: '{"year": 2026, "items": [{"date": "2026-12-25", "name": "기독탄신일"}]}')
