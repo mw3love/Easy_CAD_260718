@@ -226,19 +226,22 @@ class Handler(SimpleHTTPRequestHandler):
         step, topic = d.get("step"), str(d.get("topic") or "")
         brief = d.get("brief") if isinstance(d.get("brief"), dict) else {}
         base = gw.resolve_base_url()
+        b0 = self._balance(key, base)   # 쓴 크레딧 = 잔액 차이(대화 모델 답엔 credits_charged가 없음) — 같은 키를 동시에 쓰면 섞임(대화창이 「약」)
         try:
             if step == "plan":
                 prev = d.get("prev") if isinstance(d.get("prev"), dict) else None
                 out = deep_mode.make_plan(gw._client(key, base, timeout=300), topic, brief, prev=prev, fix=str(d.get("fix") or "") if prev else "")
                 sys.stderr.write("[딥모드 계획] %s %.1f초 꼭지 %d%s\n" % (out["model"], out["elapsed"], len(out["plan"]["sections"]), " (고치기)" if prev else ""))
-                return self._json(200, {"kind": "deep", **out})
+                return self._json(200, {"kind": "deep", **out, "credits": self._spent(key, base, b0)})
             if step == "build":
                 plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
                 uses_board = any(isinstance(s, dict) and s.get("source") == "board" for s in plan.get("sections") or [])
                 material = self._board_material(self._name(str(req.get("board") or ""))) if uses_board else ""
                 out = deep_mode.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, board=material)
                 sys.stderr.write("[딥모드 만들기] %s %.1f초 출처 %d%s\n" % (out["model"], out["elapsed"], len(out["plan"]["sources"]), " 재료 없음: " + ", ".join(out["missing"]) if out["missing"] else ""))
-                return self._json(200, {"kind": "deep", **out})
+                for w in out.get("switched") or []:   # 공공 데이터 → 웹 검색으로 갈아탄 꼭지(숫자 없음·다른 품목 — 실사용에서 얼마나 걸리나 보려고)
+                    sys.stderr.write("[딥모드 웹으로] %s\n" % w)
+                return self._json(200, {"kind": "deep", **out, "credits": self._spent(key, base, b0)})
             if step == "section":   # 판에서 고른 꼭지만 다시(5단계) — plan = 칠판 `deep_plan.plan`(꼭지마다 body + sources), 판은 칠판이 다시 지음
                 plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
                 idx = d.get("idx") if isinstance(d.get("idx"), list) else []
@@ -246,12 +249,27 @@ class Handler(SimpleHTTPRequestHandler):
                 material = self._board_material(self._name(str(req.get("board") or ""))) if uses_board else ""
                 out = deep_mode.redo(key, gw._client(key, base, timeout=600), plan, idx, brief, str(d.get("ask") or ""), base_url=base, board=material)
                 sys.stderr.write("[딥모드 꼭지 다시] %s %.1f초 꼭지 %s%s\n" % (out["model"], out["elapsed"], [s["i"] for s in out["sections"]], " 못 씀: " + ", ".join(out["missing"]) if out["missing"] else ""))
-                return self._json(200, {"kind": "deep", "step": "section", **out})
+                return self._json(200, {"kind": "deep", "step": "section", **out, "credits": self._spent(key, base, b0)})
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:
             return self._json(502, {"error": f"KAIROS 딥모드 실패: {e}"})
         return self._json(400, {"error": "딥모드 단계(plan·build·section)를 몰라요"})
+
+    @staticmethod
+    def _balance(key: str, base: str):
+        try:
+            return gw.get_credit_balance(key, base)[0]
+        except Exception:   # 잔액을 못 읽어도 일은 함 — 답에 크레딧만 안 붙음
+            return None
+
+    def _spent(self, key: str, base: str, b0):
+        """일 앞 잔액 → 쓴 크레딧(정산이 늦게 잡혀 1.5초 뒤에 읽음 — 실측 도구는 2초). 못 읽으면 None"""
+        if b0 is None:
+            return None
+        time.sleep(1.5)
+        b1 = self._balance(key, base)
+        return round(b0 - b1, 1) if b1 is not None else None
 
     def _live(self, ask: str, material: str, key: str, prev_html: str = ""):
         """움직이는 카드 하나 → {"kind": "live", "content", "title", "html", "model", "elapsed"} — 칠판에 붙이면 문서 카드 `live`(스크립트만 켠 칸).

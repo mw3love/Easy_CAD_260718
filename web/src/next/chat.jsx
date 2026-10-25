@@ -540,7 +540,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
                 : <DeepPlan m={m} busy={busy} css={css} drop={k => setMsg(i, { drop: (m.drop || []).includes(k) ? m.drop.filter(x => x !== k) : [...(m.drop || []), k] })}
                   pickStyle={k => setMsg(i, { style: k })} build={() => deepBuild(i)} show={() => ed.current?.showIds([m.built]) || setGone(g => ({ ...g, [m.at + ':deep']: true }))} />)
                 : <Answer text={m.content} chart={m.kind === 'ask' ? null : chartAct(m)} />}
-              {m.kind === 'deep' && (m.model || gone[m.at + ':deep']) && <div style={{ ...css.meta, marginTop: 6, textAlign: 'right' }}>{gone[m.at + ':deep'] ? '판이 지워졌어요 · ' : ''}{m.model || ''}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</div>}
+              {m.kind === 'deep' && (m.model || gone[m.at + ':deep']) && <div style={{ ...css.meta, marginTop: 6, textAlign: 'right' }}>{gone[m.at + ':deep'] ? '판이 지워졌어요 · ' : ''}{m.model || ''}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · 약 ${Math.round(m.credits)}크레딧` : ''}</div>}
               {m.kind === 'ask' && <div data-testid="ask-choices" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
                 {(m.choices || []).map(k => <button key={k} data-testid="ask-choice" data-kind={k} disabled={!!busy} onClick={() => choose(i, k)} title={(ASK_LABEL[k] || [])[1]}
                   style={{ ...css.pin, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, padding: '6px 10px', textAlign: 'left' }}>

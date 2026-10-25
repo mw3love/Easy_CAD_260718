@@ -97,6 +97,30 @@ def test_gather_numbers_sources_once_and_kr_falls_back_to_web():
     assert bad["materials"][0]["text"] == "" and "402" in bad["materials"][0]["error"]
 
 
+def test_kr_material_without_numbers_or_off_topic_switches_to_web():
+    """0단계: 공공 데이터 숫자 꼭지 셋 중 하나만 맞음 — 표만 찾고 끝남(숫자 없음)·다른 품목 표(반도체에 열전자관) → 웹 검색으로 갈아탐."""
+    find = {"suite": "kr-macro", "tool": "search_statistics", "args": {"query": "반도체"}, "text": '{"tables":[{"title":"수출물량지수"}]}'}
+    empty = {"suite": "kr-macro", "tool": "get_statistics_data", "args": {}, "text": '{"rows":[],"returned":0}'}
+    rows = {"suite": "kr-macro", "tool": "get_statistics_data", "args": {}, "text": '{"rows":[{"category":"열전자관냉음극관 및 광전과","value":4574763,"unit":"천달러"}]}'}
+    assert not deep_mode.has_data([find]) and not deep_mode.has_data([find, empty]) and deep_mode.has_data([find, rows])
+    assert deep_mode.has_data([{"suite": "korean-law", "tool": "get_law_article", "args": {}, "text": "제1조 …"}])   # JSON 아닌 조문 = 받은 것
+    plan = {"sections": [{"title": "표만", "source": "kr", "query": "a"}, {"title": "다른 품목", "source": "kr", "query": "b"}, {"title": "맞음", "source": "kr", "query": "c"}]}
+    by_q = {"a": [find, empty], "b": [find, rows], "c": [find, rows]}
+    judged, webbed = [], []
+    def fit(sec, text):
+        judged.append(sec["title"])
+        return (sec["title"] == "맞음", "품목이 반도체가 아님")
+    mat = deep_mode.gather("k", plan, exa=lambda q: (webbed.append(q) or "웹 답 [1]", {"search_results": [{"title": "웹", "url": "https://w/" + q}]}), kr=lambda q: by_q[q], fit=fit)
+    m = mat["materials"]
+    assert sorted(judged) == ["다른 품목", "맞음"]                                      # 숫자 없는 건 검사 전에 걸러냄(공짜)
+    assert sorted(webbed) == ["a", "b"]
+    assert "숫자를 못 받음" in m[0]["switched"] and "꼭지와 다름 — 품목이 반도체가 아님" in m[1]["switched"]
+    assert "switched" not in m[2] and "열전자관" in m[2]["text"]
+    c = FakeClient('{"ok": false, "why": "다른 품목"}', "JSON 아님")
+    assert deep_mode.fits(c, {"title": "반도체 수출"}, "열전자관 …") == (False, "다른 품목") and c.sent[0]["model"] == deep_mode.FIT_MODEL
+    assert deep_mode.fits(c, {"title": "반도체 수출"}, "…") == (True, "")                # 검사 답이 틀어지면 재료를 막지 않음
+
+
 def test_build_writes_bodies_and_fills_source_card():
     plan = deep_mode.clean_plan(PLAN)
     bodies = {"sections": [{"title": "기억할 숫자", "body": {"tiles": [["603억 달러", "9월", 1]]}}, {"title": "흐름 (바뀐 제목)", "body": {"rows": [["달", "수출"], ["1월", "60 [1]"]], "kind": "line"}},
@@ -197,6 +221,9 @@ def server(tmp_path, monkeypatch):
         seen.append(("section", idx, ask, board))
         return {"sections": [{"i": idx[0], **plan["sections"][idx[0]], "body": {"text": ["새"]}}], "sources": plan.get("sources") or [], "model": "sonnet", "elapsed": 0.1, "missing": []}
     monkeypatch.setattr(srv.deep_mode, "redo", fake_redo)
+    bal = iter(range(1000, 0, -7))   # 부를 때마다 7씩 줄어드는 잔액 = 일 하나에 7크레딧
+    monkeypatch.setattr(srv.gw, "get_credit_balance", lambda *a, **k: (float(next(bal)), 40000.0))
+    monkeypatch.setattr(srv.time, "sleep", lambda s: None)
     monkeypatch.setattr(srv.gw, "_client", lambda *a, **k: None)
     monkeypatch.setattr(srv.board_chat, "models", lambda *a, **k: {"default": "m", "featured": {}})
     srv._MODELS.clear()
@@ -223,6 +250,7 @@ def test_server_deep_plan_build_and_models(server):
     msgs = [{"role": "user", "content": "반도체"}]
     out = _post(base + "/api/chat", {"board": "공부", "kind": "deep", "deep": {"step": "plan", "topic": "반도체", "brief": {"깊이": "보통"}}, "messages": msgs})
     assert out["kind"] == "deep" and len(out["plan"]["sections"]) == 5 and out["estimate"]["credits"]
+    assert out["credits"] == 7.0                                                # 쓴 크레딧 = 일 앞뒤 잔액 차이(대화 모델 답엔 값이 없음)
     assert seen[-1] == ("plan", "반도체", {"깊이": "보통"}, None, "")
     _post(base + "/api/chat", {"board": "공부", "kind": "deep", "deep": {"step": "plan", "topic": "반도체", "brief": {}, "prev": out["plan"], "fix": "하나 더"}, "messages": msgs})
     assert seen[-1][3] == out["plan"] and seen[-1][4] == "하나 더"
@@ -231,6 +259,7 @@ def test_server_deep_plan_build_and_models(server):
     assert got["kind"] == "deep" and got["model"] == "sonnet" and len(got["plan"]["sections"]) == 6
     assert "송신기 점검 메모" in seen[-1][3]                                    # 재료가 「이 칠판」인 꼭지가 있으면 칠판 글을 같이
     sec = _post(base + "/api/chat", {"board": "공부", "kind": "deep", "deep": {"step": "section", "plan": plan, "idx": [0], "ask": "더 쉽게", "brief": {}}, "messages": msgs})
+    assert got["credits"] == 7.0 and sec["credits"] == 7.0                      # 만들기·꼭지 다시 쓰기도
     assert sec["step"] == "section" and sec["sections"][0]["i"] == 0 and seen[-1][:3] == ("section", [0], "더 쉽게") and seen[-1][3] == ""   # 고른 꼭지가 칠판 재료가 아니면 칠판 글 안 읽음
     _post(base + "/api/chat", {"board": "공부", "kind": "deep", "deep": {"step": "section", "plan": plan, "idx": [5], "brief": {}}, "messages": msgs})
     assert "송신기 점검 메모" in seen[-1][3]

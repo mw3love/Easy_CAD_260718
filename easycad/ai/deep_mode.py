@@ -157,12 +157,47 @@ def make_plan(client, topic: str, brief: dict, *, prev: dict | None = None, fix:
     return {"plan": plan, "estimate": estimate(plan), "model": model, "elapsed": round(time.time() - t0, 1)}
 
 
-def gather(key: str, plan: dict, *, base_url: str = gw.BASE_URL, day: str = "", exa=None, kr=None, known=None) -> dict:
-    """꼭지마다 재료 글 + 판 전체 출처 목록 {"sources": [{n, title, url}], "materials": [{"text"} | None]}.
-    재료 글 속 [k](도구마다 따로 매긴 번호)는 판 번호 [n]으로 바꿈. 공공 데이터가 비면 웹 검색으로 갈아탐. exa·kr = 시험용 바꿔 끼우기.
+FIT_MODEL = kr_tools.TOOL_MODEL   # 공공 재료 검사(빠른 모델 — 한 꼭지 1~2초)
+FIT = """너는 통계 재료 검사관이다. 꼭지가 묻는 숫자와 재료 속 표가 **같은 것을 재는지**만 본다(품목·대상·지역·단위).
+JSON 하나만: {"ok": true 또는 false, "why": "한 줄"}.
+- 품목·대상이 다르면 false(예: 반도체를 물었는데 다른 품목 표, 전국을 물었는데 다른 지역 표).
+- 같은 것을 재면 기간이 조금 달라도·질문의 일부만 답해도 true."""
+
+
+def has_data(found: list) -> bool:
+    """공공 도구 결과에 받은 숫자·조문이 있나 — 찾기·구조 보기뿐이거나 데이터 줄이 0개면 False(0단계: 표 구조만 보고 끝남)."""
+    for f in found or []:
+        if kr_tools._finding(f.get("tool") or ""):
+            continue
+        try:
+            d = json.loads(f.get("text") or "")
+        except ValueError:
+            return True
+        if isinstance(d, dict) and "rows" in d and not d["rows"]:
+            continue
+        return True
+    return False
+
+
+def fits(client, sec: dict, text: str, model: str = FIT_MODEL) -> tuple:
+    """공공 재료가 꼭지 질문과 같은 것을 재나 → (ok, 까닭). 검사가 틀어지면 (True, "") — 재료를 막지 않음."""
+    try:
+        r = client.chat.completions.create(model=model, max_tokens=300, messages=[{"role": "system", "content": FIT}, {"role": "user", "content":
+            f"[꼭지] {sec.get('title')}\n[독자의 질문] {sec.get('question') or ''}\n[찾은 문장] {sec.get('query') or ''}\n\n[재료]\n{text[:6000]}"}])
+        d = parse_json(r.choices[0].message.content or "") or {}
+        return (d.get("ok") is not False, str(d.get("why") or "")[:200])
+    except Exception:
+        return True, ""
+
+
+def gather(key: str, plan: dict, *, base_url: str = gw.BASE_URL, day: str = "", exa=None, kr=None, known=None, fit=None) -> dict:
+    """꼭지마다 재료 글 + 판 전체 출처 목록 {"sources": [{n, title, url}], "materials": [{"text"(, "switched")} | None]}.
+    재료 글 속 [k](도구마다 따로 매긴 번호)는 판 번호 [n]으로 바꿈. exa·kr·fit = 시험용 바꿔 끼우기.
+    공공 데이터는 숫자가 없거나(`has_data`) 꼭지와 다른 것을 재면(`fits` — 0단계 「반도체」에 다른 품목 표) 웹 검색으로 갈아탐(switched = 까닭).
     known = 판에 이미 있는 출처(꼭지 다시 쓰기 — 같은 주소는 같은 번호, 새 출처는 그 뒤 번호)."""
     exa = exa or (lambda q: board_chat.exa_answer(key, q, board_chat.SEARCH_SYSTEM, base_url=base_url))
     kr = kr or (lambda q: kr_tools.gather(key, q, base_url=base_url, today=day or today()))
+    fit = fit or (lambda sec, text: fits(gw._client(key, base_url, timeout=60), sec, text))
 
     def web(q):
         ans, raw = exa(q[:4000])
@@ -173,9 +208,16 @@ def gather(key: str, plan: dict, *, base_url: str = gw.BASE_URL, day: str = "", 
         try:
             if src == "kr":
                 found = kr(q)
-                if found:
-                    return {"text": kr_tools.context_text(found), "sources": [{"title": s["title"], "url": s["url"]} for s in kr_tools.sources(found)]}
-                return web(q)   # 공공 데이터가 못 찾으면 웹 검색(0단계: 셋 중 하나만 성공)
+                why = "" if found else "공공 데이터에서 못 찾음"
+                if found and not has_data(found):
+                    why = "공공 데이터가 표만 찾고 숫자를 못 받음"
+                elif found:
+                    text = kr_tools.context_text(found)
+                    ok, w = fit(sec, text)
+                    if ok:
+                        return {"text": text, "sources": [{"title": s["title"], "url": s["url"]} for s in kr_tools.sources(found)]}
+                    why = "공공 데이터 표가 꼭지와 다름" + (f" — {w}" if w else "")
+                return {**web(q), "switched": why}   # 웹 검색으로(0단계: 셋 중 하나만 맞았음)
             if src == "web":
                 return web(q)
         except Exception as e:   # 한 꼭지가 틀어져도 나머지는 — 기자에게 「재료 없음」으로
@@ -198,7 +240,7 @@ def gather(key: str, plan: dict, *, base_url: str = gw.BASE_URL, day: str = "", 
                 allsrc.append(hit)
             local[k] = hit["n"]
         text = re.sub(r"\[(\d+)\]", lambda m: f"[{local[int(m.group(1))]}]" if int(m.group(1)) in local else "", g["text"])
-        mats.append({"text": text, **({"error": g["error"]} if g.get("error") else {})})
+        mats.append({"text": text, **({"error": g["error"]} if g.get("error") else {}), **({"switched": g["switched"]} if g.get("switched") else {})})
     return {"sources": allsrc, "materials": mats}
 
 
@@ -237,11 +279,11 @@ def write(client, plan: dict, mat: dict, brief: dict, *, model: str = WRITER_MOD
     return out
 
 
-def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None) -> dict:
+def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None, fit=None) -> dict:
     """계획(사용자가 고친 것) → 재료 → 본문 → {"plan": {title, headline, sources, sections[body]}, "model", "elapsed"}."""
     t0, day = time.time(), today()
     plan = clean_plan(plan)
-    mat = gather(key, plan, base_url=base_url, day=day, exa=exa, kr=kr)
+    mat = gather(key, plan, base_url=base_url, day=day, exa=exa, kr=kr, fit=fit)
     li = next((i for i, s in enumerate(plan["sections"]) if s["shape"] == "움직이는 카드"), None)
     with ThreadPoolExecutor(max_workers=2) as ex:   # 원리 꼭지 카드 = 본문과 동시에(4단계 — 재료는 판 전체)
         fw = ex.submit(write, client, plan, mat, brief, model=model, board=board, day=day)
@@ -255,7 +297,8 @@ def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: st
                 s["body"] = {"links": [x["n"] for x in mat["sources"]]}
     return {"plan": {**plan, "sources": mat["sources"], "sections": secs}, "model": model, "elapsed": round(time.time() - t0, 1),
             "missing": [s["title"] for s, m in zip(plan["sections"], mat["materials"]) if m is not None and not m.get("text")]
-            + ([plan["sections"][li]["title"] + "(움직이는 카드: " + card["error"] + ")"] if card and card.get("error") else [])}
+            + ([plan["sections"][li]["title"] + "(움직이는 카드: " + card["error"] + ")"] if card and card.get("error") else []),
+            "switched": [f"{s['title']}: {m['switched']}" for s, m in zip(plan["sections"], mat["materials"]) if m and m.get("switched")]}
 
 
 def _live(client, plan: dict, mat: dict, idx: int, brief: dict, ask: str = "") -> dict:
@@ -306,7 +349,7 @@ def redo_text(plan: dict, idx: list, mat: dict, ask: str, board: str = "") -> st
     return "\n".join(lines) + "\n\n고칠 꼭지마다 body를 다시 써서 JSON 하나로."
 
 
-def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None) -> dict:
+def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_url: str = gw.BASE_URL, board: str = "", model: str = WRITER_MODEL, exa=None, kr=None, fit=None) -> dict:
     """판(꼭지마다 body + sources) + 고른 꼭지 번호 + 고칠 말 → {"sections": [{"i", …꼭지(새 body)}], "sources"(판 전체 — 새 출처는 뒤 번호), "model", "elapsed", "missing",
     "changes": [{"i", "title", "text"}](기자가 적은 「무엇을 고쳤나·못 한 까닭」 — 계획엔 안 넣고 대화창 답에만)}.
     출처 카드는 다시 쓸 게 없어 뺌(칠판이 판에서 쓴 번호로 채움). 움직이는 카드 꼭지 = 그 카드를 고칠 말대로(카드가 없으면 새로)."""
@@ -322,7 +365,7 @@ def redo(key: str, client, plan: dict, idx, brief: dict, ask: str = "", *, base_
     words = [i for i in idx if secs[i].get("shape") != "움직이는 카드"]
     cards = [i for i in idx if secs[i].get("shape") == "움직이는 카드"]
     sub = {"sections": [{**secs[i], "query": ((secs[i].get("query") or secs[i].get("title") or "") + (" " + user_ask if user_ask else ""))[:300]} for i in words]}
-    mat = gather(key, sub, base_url=base_url, day=day, exa=exa, kr=kr, known=known) if any(s.get("source") in ("web", "kr") for s in sub["sections"]) else {"sources": known, "materials": [None] * len(words)}
+    mat = gather(key, sub, base_url=base_url, day=day, exa=exa, kr=kr, known=known, fit=fit) if any(s.get("source") in ("web", "kr") for s in sub["sections"]) else {"sources": known, "materials": [None] * len(words)}
     full = {"sources": mat["sources"], "materials": [None] * len(secs)}   # 카드 새로 만들기(section_prompt)가 읽는 꼴
     for k, i in enumerate(words):
         full["materials"][i] = mat["materials"][k]
