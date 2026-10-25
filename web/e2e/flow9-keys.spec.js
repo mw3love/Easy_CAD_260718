@@ -33,9 +33,8 @@ test('언제나 — Z 다 보기 · Ctrl+0 100% · Ctrl+S 저장(브라우저 �
   await expect(help).toBeVisible()
   for (const g of KEY_TABLE) await expect(help).toContainText(g.when)  // 표가 그대로 보임
   await page.keyboard.press('Escape'); await expect(help).toBeHidden()
-  const p = await page.getByTestId('board').boundingBox()                // 우클릭(빈 곳) 메뉴에서도
-  await page.mouse.click(p.x + 800, p.y + 600, { button: 'right' })
-  await page.getByRole('button', { name: /글쇠 도움말/ }).click(); await expect(help).toBeVisible()
+  await page.getByTestId('help-btn').click(); await expect(help).toBeVisible()   // 왼쪽 줄 맨 아래 「?」에서도(2026-10-25 — 옛 빈 곳 우클릭 메뉴 대신)
+  await page.getByTestId('help-btn').click(); await expect(help).toBeHidden()    // 한 번 더 = 닫힘
 })
 
 test('아무것도 안 골랐을 때 — 숫자 = 도구, Esc = 선택으로, Ctrl+A = 전체', async ({ page }) => {

@@ -69,8 +69,30 @@ test('잠긴 도형 위 우클릭 = 그것만 잠금 해제', async ({ page }) =
   await page.keyboard.press('Control+a')   // 다 고르고 한 번에 잠금
   await page.keyboard.press('Control+l')
   expect((await liveDoc(page)).items.every(it => it.locked)).toBe(true)
-  const p = await toPage(page, 75, 50); await page.mouse.click(p.x, p.y, { button: 'right' })
-  await page.getByText('이 도형 잠금 해제').click()
+  await page.keyboard.press('Escape')
+  const p = await toPage(page, 75, 50); await page.mouse.click(p.x, p.y, { button: 'right' })   // 잠긴 것 위 우클릭 = 그것을 고르고 「잠금 해제 (1개)」
+  await page.getByText('잠금 해제 (1개)').click()
   const items = (await liveDoc(page)).items.sort((a, b) => (a.pos[0] + a.rect[0]) - (b.pos[0] + b.rect[0]))
   expect(items.map(it => !!it.locked)).toEqual([false, true])
+})
+
+// 잠긴 도형도 고르기(2026-10-25 사용자): 누르기·Shift·Ctrl+A로 골라짐, 옮기기·지우기·고치기만 막힘 · 그 위에서 끌면 끌어 고르기 · 여럿 한 번에 잠금 해제
+test('잠긴 도형 — 눌러 고르기 · 끌면 끌어 고르기(안 움직임) · 지우기 막힘 · Ctrl+A 뒤 한 번에 풀기', async ({ page }) => {
+  await openBoard(page, boardName('lock2')); await setCam(page)
+  for (const x of [0, 300]) { await pickShape(page, '사각형'); await dragScene(page, { x, y: 0 }, { x: x + 150, y: 100 }); await page.keyboard.press('Escape') }
+  await page.keyboard.press('Control+a'); await page.keyboard.press('Control+l'); await page.keyboard.press('Escape')
+  const before = JSON.stringify((await liveDoc(page)).items.map(it => it.pos))
+  await clickScene(page, 75, 50)                                                            // 누르기 = 고름
+  expect(await page.evaluate(() => window.__mb.ed.getSel().length)).toBe(1)
+  await page.keyboard.press('Delete'); await page.keyboard.press('ArrowRight')             // 지우기·방향키 = 막힘
+  expect((await liveDoc(page)).items).toHaveLength(2)
+  await expect(page.getByText('잠긴 도형이에요', { exact: false })).toBeVisible()
+  await dragScene(page, { x: 20, y: 20 }, { x: 600, y: 200 })                               // 잠긴 것 위에서 끌기 = 끌어 고르기(옮기기 아님)
+  expect(JSON.stringify((await liveDoc(page)).items.map(it => it.pos))).toBe(before)
+  await page.keyboard.press('Escape'); await page.keyboard.press('Control+a')               // 잠긴 것도 전체 선택에
+  expect(await page.evaluate(() => window.__mb.ed.getSel().length)).toBe(2)
+  const p = await toPage(page, 375, 50); await page.mouse.click(p.x, p.y, { button: 'right' })
+  await expect(page.getByRole('button', { name: /^삭제/ })).toHaveCount(0)                   // 잠긴 것만 고름 = 안 바뀌는 일만
+  await page.getByText('잠금 해제 (2개)').click()
+  expect((await liveDoc(page)).items.every(it => !it.locked)).toBe(true)
 })

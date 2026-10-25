@@ -349,7 +349,7 @@ def big_page(d: dict) -> str:
     if not live_fits(d):
         return _head(STATIC_CSP) + _body(d.get("html"))
     inner = _head(LIVE_CSP) + _KICK + _body(d["html"])
-    return (_head(LIVE_CSP) + f"<title>{_html.escape(d.get('title') or '움직이는 카드')}</title>"
+    return (_head(LIVE_CSP) + f"<title>{_html.escape(d.get('title') or '인터랙티브 HTML')}</title>"
             "<style>html,body{margin:0;height:100%;background:#fff}iframe{border:0;width:100%;height:100%;display:block}</style>"
             f'<iframe sandbox="allow-scripts" csp="{LIVE_CSP}" srcdoc="{_html.escape(inner, quote=True)}"></iframe>')
 
@@ -365,12 +365,12 @@ class _DocItem(_WebItem):
 
         def body(p, b):
             p.fillRect(b, QColor("#fafafa"))
-            msg = ("▶ 움직이는 카드 — 두 번 누르면 브라우저에서 움직여요" if live_fits(d) else "▶ 움직이는 카드 — 너무 커서 못 띄워요") if lv else "📄 정리 문서 — 웹 칠판에서 크게 보기·인쇄"
+            msg = ("▶ 인터랙티브 HTML — 두 번 누르면 브라우저에서 움직여요" if live_fits(d) else "▶ 인터랙티브 HTML — 너무 커서 못 띄워요") if lv else "📄 정리 문서 — 웹 칠판에서 크게 보기·인쇄"
             _text(p, b.center().x(), b.center().y(), msg, min(16.0, b.height() / 6), "#8a8f98",
                   max_w=b.width() - 16, align=Qt.AlignmentFlag.AlignHCenter)
 
-        sub = f"HTML 파일 · {d['file']}" if d.get("file") else f"{'움직이는 카드' if lv else '정리 문서'} · KAIROS {d.get('model') or ''}"
-        self._paint_head_card(p, r, "#f5f3ff", "#ddd6fe", "#a78bfa", ("▶ " if lv else "📄 ") + (d.get("title") or ("움직이는 카드" if lv else "정리 문서")), sub, body)
+        sub = f"HTML 파일 · {d['file']}" if d.get("file") else f"{'인터랙티브 HTML' if lv else '정리 문서'} · KAIROS {d.get('model') or ''}"
+        self._paint_head_card(p, r, "#f5f3ff", "#ddd6fe", "#a78bfa", ("▶ " if lv else "📄 ") + (d.get("title") or ("인터랙티브 HTML" if lv else "정리 문서")), sub, body)
 
     def web_double_click(self, view, scene_pos):
         html = self._web_raw.get("html")

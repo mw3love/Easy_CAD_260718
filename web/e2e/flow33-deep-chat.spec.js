@@ -18,7 +18,7 @@ test('서버가 딥모드를 못 하면 「+」에 없음', async ({ page }) => 
   await openBoard(page, boardName('deepchat0'), { chat: true })
   await page.getByTestId('plus').click()
   await expect(page.getByRole('menuitemradio', { name: /아이콘/ })).toBeVisible()
-  await expect(page.getByRole('menuitemradio', { name: /딥모드/ })).toHaveCount(0)
+  await expect(page.getByRole('menuitemradio', { name: /Deep Mode/ })).toHaveCount(0)
 })
 
 test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 다시 열어도 그대로', async ({ page }) => {
@@ -32,8 +32,8 @@ test('딥모드 — 질문지 → 지면 계획 → 고치기 → 만들기 → 
   const name = boardName('deepchat')
   await openBoard(page, name, { chat: true }); await setCam(page)
   await page.getByTestId('plus').click()
-  await page.getByRole('menuitemradio', { name: /딥모드/ }).click()
-  await expect(page.getByTestId('tool-chip')).toHaveText('📰 딥모드 ✕')
+  await page.getByRole('menuitemradio', { name: /Deep Mode/ }).click()
+  await expect(page.getByTestId('tool-chip')).toHaveText('📰 Deep Mode ✕')
   await page.getByPlaceholder('어떤 주제로 한 판', { exact: false }).click()
   await page.keyboard.type('어텐션이 뭐야? 신입 교육용으로'); await page.keyboard.press('Enter')
   const ask = page.getByTestId('deep-ask')

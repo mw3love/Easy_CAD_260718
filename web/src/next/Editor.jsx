@@ -48,6 +48,7 @@ import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAn
 import { MemoEditor } from './memoedit.jsx'
 import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
 import { looksSvg, svgFits, svgItems } from './svgin.js'
+import { BoardSkeleton } from './skeleton.jsx'
 import { applyDelta, itemDelta, mergeDelta } from './sync.js'
 
 const ZOOM_STEP = 1.15, ZMIN = 0.02, ZMAX = 40
@@ -114,8 +115,16 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
 
   // 확정 — 붙은 화살표 따라가기 + 되돌리기 칸
   // merge = 같은 열쇠로 1.5초 안에 또 고치면 되돌리기 한 칸으로 묶음(−/+ 연타·색 고르기 끌기)
+  // 고친 뒤 알릴 말 — 고치면 곧바로 「고치는 중…」·「저장됨」(main `onCommit`)이 알림을 덮으므로 저장 알림 뒤에 다시(크레딧·막힘처럼 꼭 봐야 할 말만)
+  const sayLater = msg => setTimeout(() => setStatus(msg), 1200)
   const commit = useCallback((next, nextSel, label = '', merge = null) => {
     const prev = R.current.model.items, h = hist.current, now = Date.now()
+    // 잠긴 도형 = 고를 수는 있어도 안 바뀜(2026-10-25 사용자 — 옮기기·지우기·고치기만 막음). 길목 한 곳에서: 잠긴 채 바뀐 것은 옛것으로, 사라진 것은 되살림. 잠금을 푸는 것(locked: false)만 통과
+    const lockedPrev = new Map(prev.filter(it => it.locked).map(it => [it._id, it]))
+    if (lockedPrev.size) { let kept = 0; const seen = new Set()
+      next = next.map(it => { const o = lockedPrev.get(it._id); if (o) seen.add(it._id); if (!o || it === o || !it.locked) return it; if (JSON.stringify(it) !== JSON.stringify(o)) kept++; return o })   // 통째로 새로 만든(값은 같은) 것은 막은 것으로 안 셈
+      const gone = [...lockedPrev.values()].filter(o => !seen.has(o._id)); kept += gone.length; next = [...next, ...gone]
+      if (kept) sayLater(`잠긴 도형 ${kept}개는 그대로예요 — 바꾸려면 먼저 잠금 해제(Ctrl+L)`) }
     const al = R.current.activeLayer, ly = al && al !== 'default' && layersOf(R.current.model).find(l => l.id === al)
     if (ly && ly.visible && !ly.locked) { const had = new Set(prev.map(it => it._id)); next = next.map(it => (had.has(it._id) || it.layer_id ? it : { ...it, layer_id: al })) }
     next = next.map(it => (it.type === 'table' && !isChart(it) && (it.font || it.cell_styles) ? fitTable(it) : it))   // 직접 정한 표 글자 = 그대로, 칸이 늘어남
@@ -138,7 +147,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepPending, deepSectionPending, pendHide, deepRedo, deepTarget, deepRedoSection, deepFlip, deepFlipState, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -236,8 +245,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
 
   // 끄는 것 + 함께 움직일 것(보드 안 것·같은 묶음)
   const [loose, setLoose] = useState(null); R.current.loose = loose   // 자물쇠를 잠깐 푼 프레임(틀만 옮김 — 고른 게 풀리면 다시 같이, 2026-10-18 사용자: 「자물쇠 개념」)
-  const movingSet = ids => { const its = R.current.model.items, lz = R.current.loose
+  // 고른 것 + 틀(프레임·보드) 안의 것 — 복사·내보내기·정리 문서 재료처럼 안 바꾸는 일은 이것(잠긴 것도 포함)
+  const withContents = ids => { const its = R.current.model.items, lz = R.current.loose
     return [...new Set([...ids, ...boardContents(lz ? its.map(it => (it._id === lz ? { ...it, magnet: false } : it)) : its, ids, textBox)])] }
+  const movingSet = ids => { const lk = new Set(R.current.model.items.filter(it => it.locked).map(it => it._id)); return withContents(ids).filter(id => !lk.has(id)) }   // 옮기기·지우기 = 잠긴 것 빼고(2026-10-25 — 골라도 안 바뀜)
+  // 잠긴 도형 찾기 — 안 잠긴 것이 하나도 안 걸렸을 때만(잠긴 바탕 위에 그린 것이 늘 먼저). 잠긴 레이어의 것은 빼고(레이어 카드에서 품)
+  const lockedAt = p => topHit(hitPool().filter(it => it.locked && !layerLocked(it)).map(it => ({ ...it, locked: false })), p, HIT_PX / R.current.cam.z, textBox)
 
   // ── 포인터 ──
   function onPointerDown(e) {
@@ -326,10 +339,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (ids.includes(hit._id)) st.current = { ...st.current, kind: 'move', start: p, orig: m.items, ids: e.altKey && hit.type === 'frame' ? ids : movingSet(ids), sel: ids, moved: false, webPick, pdfTap }   // Alt+끌기 = 프레임 틀만
       return
     }
+    const lockTap = lockedAt(p)   // 잠긴 도형(2026-10-25 사용자): 제자리 누르기 = 고르기(놓을 때), 끌기 = 그 위에서도 끌어 고르기(바탕 위 작업 그대로)
+    if (lockTap && add) { const m2 = R.current.model, ids = R.current.sel
+      setSel(ids.includes(lockTap._id) ? ids.filter(i => i !== lockTap._id && !(lockTap.group_id && m2.items.find(x => x._id === i)?.group_id === lockTap.group_id)) : expandGroups(m2.items, [...ids, lockTap._id])); return }
     if (!add) setSel([])
     // 끌어 고르기 — Ctrl = 더하기, Shift = 빼기(2026-10-18 사용자 선택 — 클릭은 둘 다 뒤집기 그대로). 방향 규칙(왼→오 다 들어간 것, 오→왼 걸친 것)은 빼기에도 같음
     const sub = e.shiftKey && !(e.ctrlKey || e.metaKey)
-    st.current = { ...st.current, kind: 'rubber', start: p, add: add && !sub ? R.current.sel : [], sub, base: R.current.sel }
+    st.current = { ...st.current, kind: 'rubber', start: p, add: add && !sub ? R.current.sel : [], sub, base: R.current.sel, lockTap: lockTap?._id }
   }
 
   function onPointerMove(e) {
@@ -458,14 +474,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (s.kind === 'pan' && s.right && Math.hypot(e.clientX - s.sx, e.clientY - s.sy) < 4) {   // 제자리 우클릭 = 메뉴(고른 것 그대로 — 데스크톱과 같음)
       const r = svg.current.getBoundingClientRect(), one = R.current.sel.length === 1 && R.current.model.items.find(x => x._id === R.current.sel[0])
       const cell = one?.type === 'table' ? (cellAt(one, toLocal(one, p)) || (cellSel?.id === one._id ? { r: cellSel.r1, c: cellSel.c1 } : null)) : null   // 고른 표의 칸 위에서 우클릭 = 그 칸 기준 행·열 메뉴
-      const lockedHit = topHit(hitPool().filter(it => it.locked && !layerLocked(it)).map(it => ({ ...it, locked: false })), p, HIT_PX / R.current.cam.z, textBox)   // 잠긴 도형 위 우클릭 = 그것만 풀기(잠긴 레이어의 것은 레이어 카드에서)
       // 누른 자리마다 다른 메뉴(2026-10-21 사용자): 넘겨 보는 PDF 안 = 내용 메뉴만 · 도형 = 그 도형(안 고른 것이면 그것을 고름) · 빈 곳 = 칠판 메뉴(고른 것 풂)
       const pc = pdfBodyAt(p)
       if (pc && pc._id === R.current.webOn) { setMenu({ x: e.clientX - r.left, y: e.clientY - r.top, pdfIn: { id: pc._id, page: pdfPageAt(pc, toLocal(pc, p).y - pc.rect[1] - WEB_HEAD) } }); return }
-      const hit = !cell && (topHit(hitPool(), p, HIT_PX / R.current.cam.z, textBox) || groupAt(p))
+      const hit = !cell && (topHit(hitPool(), p, HIT_PX / R.current.cam.z, textBox) || groupAt(p) || lockedAt(p))   // 잠긴 도형도 그것을 고르고 같은 메뉴(「잠금 해제」가 맨 위)
       if (hit && !R.current.sel.includes(hit._id)) setSel(expandGroups(R.current.model.items, [hit._id]))
-      else if (!hit && !cell && !lockedHit) setSel([])
-      setMenu({ x: e.clientX - r.left, y: e.clientY - r.top, cell, locked: lockedHit?._id ?? null }); return }
+      else if (!hit && !cell) setSel([])
+      setMenu({ x: e.clientX - r.left, y: e.clientY - r.top, cell }); return }
     if (s.kind === 'mline') { setOverlay(o => ({ ...o, mdrop: null }))
       if (!s.moved) { const r = svg.current.getBoundingClientRect(), [a0, ...rest] = s.units.slice().reverse()   // 제자리 = 그 줄 고르기(고른 줄 안이면 그대로) + 메뉴
         setLineSel({ id: s.id, s: a0[0], e: a0[1], ...(rest.length ? { more: rest } : {}) }); setLineMenu({ x: e.clientX - r.left + 6, y: e.clientY - r.top - 6, id: s.id, units: s.units }); return }
@@ -488,13 +503,14 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       setOverlay(o => ({ ...o, guides: null }))
       if (!s.moved && s.cellPick) { const { id, r, c, extend } = s.cellPick; setCellSel(cs => (extend && cs?.id === id ? { ...cs, r1: r, c1: c } : { id, r0: r, c0: c, r1: r, c1: c })) }
       if (!s.moved && s.webPick) webActivate(s.webPick)
-      else if (!s.moved && s.pdfTap && R.current.webOn !== s.pdfTap._id) setStatus(s.pdfTap.type === 'doc' ? '움직이는 카드 — 두 번 누르면 움직여 보기' : 'PDF — 두 번 누르면 넘겨 보기(휠로 쪽 넘김)')
+      else if (!s.moved && s.pdfTap && R.current.webOn !== s.pdfTap._id) setStatus(s.pdfTap.type === 'doc' ? '인터랙티브 HTML — 두 번 누르면 움직여 보기' : 'PDF — 두 번 누르면 넘겨 보기(휠로 쪽 넘김)')
       if (s.moved && live) commit(live.filter(it => it), s.sel, '옮김'); else setLive(null); return }
     if (s.kind === 'rubber') {
       setOverlay(o => ({ ...o, rubber: null }))
       if (Math.hypot(p.x - s.start.x, p.y - s.start.y) * R.current.cam.z > 3) {
         const hits = expandGroups(R.current.model.items, rubberSelect(hitPool(), s.start, p, textBox))
         if (s.sub) { const out = new Set(hits); setSel(s.base.filter(id => !out.has(id))) } else setSel(expandGroups(R.current.model.items, [...new Set([...s.add, ...hits])])) }
+      else if (s.lockTap) { setSel(expandGroups(R.current.model.items, [s.lockTap])); setStatus('잠긴 도형이에요 — 옮기기·지우기·고치기는 막혀 있어요(풀기 Ctrl+L)') }
       return
     }
     if (['resize', 'rotate', 'tscale', 'lineend'].includes(s.kind)) { if (live) commit(live, R.current.sel, '바꿈'); return }
@@ -759,7 +775,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     // 칠판 규칙(2026-10-18 사용자와 정함 — 데스크톱 「틀이 있으면 전체 = 틀」을 바꿈): 용지틀도 보통 도형
     const all = drawOrder(m.items).filter(([it]) => !hid.has(layerIdOf(it)))
     // 「고른 것」에 종이틀이 있으면 틀마다 한 쪽(틀 안의 것은 고르지 않아도 전부), 어느 틀에도 안 든 고른 것은 마지막 한 쪽에 모음(2026-10-18 사용자와 정함 — 「고른 것」·「종이틀대로」를 하나로)
-    const onlyFrames = o.scope === 'frames', selIds = onlyFrames ? null : o.selection ? new Set(movingSet(R.current.sel)) : null
+    const onlyFrames = o.scope === 'frames', selIds = onlyFrames ? null : o.selection ? new Set(withContents(R.current.sel)) : null
     const isFrame = it => it.type === 'frame' || (it.type === 'titleblock' && (it.plain || !onlyFrames))
     const selFrames = onlyFrames ? all.filter(([it]) => it.type === 'frame' || (it.type === 'titleblock' && it.plain)) : selIds ? all.filter(([it]) => selIds.has(it._id) && isFrame(it)) : []   // 프레임은 순서대로, 종이틀은 줄/칸 우선
     if (onlyFrames && !selFrames.length) return { error: '프레임이 없어요 — 상단 「프레임」으로 영역을 감싸 보세요' }
@@ -787,12 +803,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // ── KAIROS 대화창 길목(chat.jsx) ──
   // 고른 것(보드면 안의 것까지)의 글 — 질문에 같이 보냄
   function selTexts() {
-    const m = R.current.model, ids = new Set(movingSet(R.current.sel))
+    const m = R.current.model, ids = new Set(withContents(R.current.sel))
     return m.items.filter(it => ids.has(it._id)).flatMap(itemTexts)
   }
   // 고른 것 속 그림(최대 4장) — 대화창이 「이거 고쳐 줘」의 고칠 그림으로 보냄(서버 `input_images`, 2026-10-20 사용자: 칠판에서 고르고 말하기)
   function selImages() {
-    const m = R.current.model, ids = new Set(movingSet(R.current.sel))
+    const m = R.current.model, ids = new Set(withContents(R.current.sel))
     return m.items.filter(it => ids.has(it._id) && it.type === 'image' && it.data).slice(0, 4).map(it => (it.data.startsWith('data:') ? it.data : 'data:image/png;base64,' + it.data))
   }
   function itemTexts(it) {   // 도형 하나의 글(대화 재료)
@@ -860,7 +876,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = keep ? keep.no - 1 : orderedFrames(m.items).length, out = [], links = []
     const rootId = keep?.id || newId(), vs = {}
     lay.pages.forEach((pg, p) => {
-      const X = o.x + pg.x, Y = o.y, name = (plan.title || '딥모드') + (n > 1 ? ` (${p + 1}/${n})` : '')
+      const X = o.x + pg.x, Y = o.y, name = (plan.title || 'Deep Mode') + (n > 1 ? ` (${p + 1}/${n})` : '')
       out.push(p === 0 ? { ...base([X, Y], { type: 'frame', rect: [0, 0, pg.W, pg.H], name, no: no0 + 1, z: zb }), _id: rootId } : base([X, Y], { type: 'frame', rect: [0, 0, pg.W, pg.H], name, no: no0 + p + 1, z: zb, deep_of: rootId }))
       out.push(...deepHead(plan, X + pg.head.x, Y + pg.head.y, pg.head.w, pg.k, p, n, S.look).map(it => ({ ...it, z: zt, deep_of: rootId })))
       pg.cells.forEach(c => { vs[c.i] = c.v || ''
@@ -888,11 +904,29 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }) })
   const deepInfo = r => ({ ids: r.out.map(it => it._id), pages: r.lay.pages.map(pg => ({ x: r.o.x + pg.x, y: r.o.y, w: pg.W, h: pg.H, waste: deepWaste(pg), rows: r.lay.rows.map(rr => rr.slots.map((sl, k) => `${sl.map(i => i + (rr.v[i] ? rr.v[i][0] : '')).join('+')}:${rr.spans[k]}`).join(' ')) })) })
   // at = 첫 장 왼쪽 위(없으면 지금 칠판의 오른쪽 빈자리)
+  const deepSpot = () => { const m = R.current.model, right = m.items.length ? unionBox(m.items.map(it => sceneBox(it, textBox))) : null; return right ? { x: right.x + right.w + 200, y: right.y } : { x: 0, y: 0 } }   // 새 판 자리 = 칠판 오른쪽 끝
+  // Deep Mode 스켈레톤(2026-10-25) — 만드는 동안 판이 놓일 자리에 꼭지 칸 n개(폭 1600 = 판 폭, 높이는 어림) + 그리로 화면 이동. 돌려준 번호로 pendHide
+  function deepPending(n) {
+    const o = deepSpot(), id = newId(), w = 1600, h = 260 + Math.ceil(Math.max(3, n || 6) / 3) * 300
+    setPend(ps => [...ps, { id, kind: 'deep', label: 'Deep Mode 판 만드는 중', x: o.x, y: o.y, w, h, n }])
+    const L = 24, W = size.w - rightInset(svg.current) - L, z = Math.min(1, Math.max(ZMIN, Math.min(W / (w * 1.1), size.h / (h * 1.2))))
+    setCam({ z, x: L + W / 2 - (o.x + w / 2) * z, y: size.h / 2 - (o.y + h / 2) * z })
+    return id
+  }
+  // 꼭지 다시 쓰기 스켈레톤 — 그 꼭지 물건들 자리마다 막대(판은 그대로 보이고 그 칸만 깜빡)
+  function deepSectionPending(rootId, idx) {
+    const m = R.current.model, ids = []
+    for (const i of idx || []) { const its = m.items.filter(it => it.deep_of === rootId && it.deep_sec === i); if (!its.length) continue
+      const b = unionBox(its.map(it => sceneBox(it, textBox))), id = newId(); ids.push(id)
+      setPend(ps => [...ps, { id, kind: 'section', label: '꼭지 다시 쓰는 중', x: b.x, y: b.y, w: b.w, h: b.h }]) }
+    return ids
+  }
+  const pendHide = ids => { const del = new Set([].concat(ids || [])); setPend(ps => ps.filter(q => !del.has(q.id))) }
   function deepBoard(plan, at, style = 'calm', meta = {}) {
-    const m = R.current.model, right = m.items.length ? unionBox(m.items.map(it => sceneBox(it, textBox))) : null, o = at || (right ? { x: right.x + right.w + 200, y: right.y } : { x: 0, y: 0 })
+    const m = R.current.model, o = at || deepSpot()
     const r = deepBuild(plan, o, { style, meta })
-    commit([...m.items, ...r.out], [], '딥모드 지면')
-    setStatus(`딥모드 지면 — ${r.n}장 · 꼭지 ${plan.sections?.length || 0}개 · ${styleOf(style).name}`)
+    commit([...m.items, ...r.out], [], 'Deep Mode 판')
+    setStatus(`Deep Mode 판 — ${r.n}장 · 꼭지 ${plan.sections?.length || 0}개 · ${styleOf(style).name}`)
     return deepInfo(r)
   }
   // 딥모드 판의 첫 프레임(그 판 물건 하나 또는 프레임에서) — 없으면 null
@@ -902,6 +936,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // plan·fixAll = 꼭지 다시 쓰기(5단계 `deepRedoSection`) — 새 계획과 모양 기억 통째
   function deepRedo(rootId, { style, fix, plan, fixAll, label } = {}) {
     const m = R.current.model, root = m.items.find(it => it._id === rootId && it.deep_plan); if (!root) return null
+    if (m.items.some(it => (it._id === rootId || it.deep_of === rootId) && it.locked)) { setStatus('잠긴 판이라 다시 지을 수 없어요 — 먼저 잠금 해제(Ctrl+L)'); return null }   // 지우고 새로 짓는 길이라 길목 지킴이가 옛것을 되살려 겹침
     const d = root.deep_plan, st = style || d.style, fx = fixAll || (fix ? { ...d.fix, ...fix } : d.fix)
     const meta = Object.fromEntries(['topic', 'brief'].filter(k => d[k] != null).map(k => [k, d[k]]))
     const rest = m.items.filter(it => it._id !== rootId && it.deep_of !== rootId)
@@ -915,7 +950,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // 꼭지 다시 쓰기(§8 항목66 5단계) — 고른 것이 한 판의 꼭지들뿐이면 { root, idx, titles, edited, plan, brief, topic }.
   // 프레임·머리를 같이 골랐거나 출처 카드뿐이면 null(판 통째는 대화창 계획 카드로 — 이번 범위 밖). rootId·only = 고른 것 대신 그 판 그 꼭지(덮어쓰기 확인 뒤 — 그사이 고른 것이 바뀌어도)
   function deepTarget(rootId, only) {
-    const m = R.current.model, ids = new Set(movingSet(R.current.sel)), selIt = m.items.filter(it => ids.has(it._id))
+    const m = R.current.model, ids = new Set(withContents(R.current.sel)), selIt = m.items.filter(it => ids.has(it._id))
     const root = rootId ? m.items.find(it => it._id === rootId && it.deep_plan) : selIt.length ? deepRoot(selIt[0]) : null
     if (!root || (!rootId && selIt.some(it => deepRoot(it) !== root || !Number.isInteger(it.deep_sec)))) return null
     const d = root.deep_plan, secs = d.plan.sections || [], idx = only || [...new Set(selIt.map(it => it.deep_sec))].sort((a, b) => a - b)
@@ -1151,7 +1186,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const DOC_W = 397
   const LIVE_DOC_W = 480   // 움직이는 카드(§8 항목66 4단계) — 기준 칸 720×480을 2/3로(높이 = 띠 + 같은 비율)
   function docItem(msg, x, y, z) {
-    if (msg.live || msg.kind === 'live') return base([x, y], { type: 'doc', live: true, rect: [0, 0, LIVE_DOC_W, WEB_HEAD + Math.round(LIVE_DOC_W * LIVE_H / LIVE_W)], title: msg.title || '움직이는 카드', html: msg.html, model: msg.model || '', chat_at: msg.at, z })
+    if (msg.live || msg.kind === 'live') return base([x, y], { type: 'doc', live: true, rect: [0, 0, LIVE_DOC_W, WEB_HEAD + Math.round(LIVE_DOC_W * LIVE_H / LIVE_W)], title: msg.title || '인터랙티브 HTML', html: msg.html, model: msg.model || '', chat_at: msg.at, z })
     return base([x, y], { type: 'doc', rect: [0, 0, DOC_W, WEB_HEAD + Math.round(DOC_W * 1.414)], title: msg.title || '정리 문서', html: msg.html, model: msg.model || '', chat_at: msg.at, z })
   }
   // 「칠판에서」 답(§8 항목61 ③-2) = 메모 + 근거가 된 칠판 도형으로 가는 점선 화살표(메모 쪽 변 → 근거 쪽 변, 가까운 포트끼리). 근거 도형은 제자리 그대로 — 메모와 화살표만 한 묶음
@@ -1188,7 +1223,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // 감싸기: 고른 것을 여백 두고 감싸는 프레임(자유 비율)
   function wrapFrame() {
-    const m = R.current.model, ids = new Set(movingSet(R.current.sel)), its = m.items.filter(it => ids.has(it._id) && it.type !== 'titleblock' && it.type !== 'frame'); if (!its.length) return
+    const m = R.current.model, ids = new Set(withContents(R.current.sel)), its = m.items.filter(it => ids.has(it._id) && it.type !== 'titleblock' && it.type !== 'frame'); if (!its.length) return
     const b = unionBox(its.map(it => sceneBox(it, textBox))), pad = 16   // 작고 일정한 여백(2026-10-18 사용자 선택 — 전엔 내용의 6%라 큰 묶음일수록 여백이 컸음)
     const it = base([b.x - pad, b.y - pad], { type: 'frame', rect: [0, 0, b.w + 2 * pad, b.h + 2 * pad], name: '', no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
     commit([...m.items, it], [it._id], '프레임으로 감싸기'); setStatus(`프레임 ${it.no} — 내보내기 하면 이 틀이 한 쪽이 돼요`)
@@ -1466,7 +1501,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       }
       if (mod && k.toLowerCase() === 'z' && !e.shiftKey) return act(undo)
       if (mod && (k.toLowerCase() === 'y' || (k.toLowerCase() === 'z' && e.shiftKey))) return act(redo)
-      if (mod && k.toLowerCase() === 'a') return act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))
+      if (mod && k.toLowerCase() === 'a') return act(() => setSel(hitPool().filter(it => !layerLocked(it)).map(it => it._id)))   // 잠긴 것도(2026-10-25 — 여럿 한 번에 풀기), 잠긴 레이어의 것만 빼고
       if (lineSel) {   // 고른 메모 줄(노션) — Esc 풀기 · Del 지우기 · Ctrl+D 복제 · Ctrl+/ 전환 · ↑↓ 옮겨 고르기(Shift = 넓히기) · Enter 고치기
         const ls = lineSel, it = m.items.find(x => x._id === ls.id), L = it?.lines || []
         const put = (lines, label) => { setLineMenu(null); commit(m.items.map(x => (x._id === it._id ? { ...x, lines: lines.length ? lines : [{ k: 'p', t: '' }] } : x)), [it._id], label) }
@@ -1517,6 +1552,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (!mod && !e.altKey && !e.shiftKey && TOOL_KEYS[k]) return act(() => setTool(TOOL_KEYS[k]))
       if (mod && k.toLowerCase() === 'v') return   // 붙여넣기는 브라우저 붙여넣기 신호에서(주소면 웹 카드, 아니면 칠판 붙여넣기 — 아래 onPaste). 여기서 막으면 그 신호가 안 옴
       if (!ids.length) return
+      const LOCK_MSG = '잠긴 도형이에요 — 옮기기·지우기·고치기는 막혀 있어요(풀기 Ctrl+L)'
+      if (ids.length && ids.every(id => m.items.find(x => x._id === id)?.locked) && ['Delete', 'Backspace', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(k)) return act(() => setStatus(LOCK_MSG))   // 잠긴 것만 고름 = 말로만 알림
       if (k === 'Delete' || k === 'Backspace') return act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))
       // 스타일 복사·붙여넣기(데스크톱 Ctrl+Alt+C/V) — 일반 복사보다 먼저. 글쇠 이름은 한글 입력·Alt에 따라 바뀌어 자리(code)로 봄
       if (mod && e.altKey && e.code === 'KeyC') return act(styleCopy)
@@ -1525,6 +1562,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       if (mod && k.toLowerCase() === 'c') return act(copy)
       if (mod && k.toLowerCase() === 'x') return act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })
       if (mod && k.toLowerCase() === 'd') return act(dupSel)
+      if (mod && e.altKey && e.code === 'KeyG') return act(wrapFrame)   // 프레임으로 감싸기(Figma와 같은 글쇠, 2026-10-25) — Alt+G는 한글 입력·Alt에 따라 이름이 바뀌어 자리로
       if (mod && k.toLowerCase() === 'g') return act(() => commit(e.shiftKey ? ungroupItems(m.items, ids) : groupItems(m.items, ids), ids, e.shiftKey ? '묶음 풂' : '묶음'))
       if (mod && k.toLowerCase() === 'l') return act(() => commit(toggleLock(m.items, ids), ids, '잠금'))
       if (mod && (k === ']' || k === '[')) return act(() => commit(zOrder(m.items, ids, k === ']'), ids, k === ']' ? '맨 앞으로' : '맨 뒤로'))
@@ -1542,7 +1580,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const m = R.current.model, sel = R.current.sel, ld = lastDup.current
     // 방금 만든 복제본을 그대로 고른 채면 그 복제본만 — 다시 「안의 것」을 모으면 20 비켜 겹친 앞 복제본까지 딸려 와 개수가 배로 붙어남(2026-10-18 사용자: 프레임 번호 133·197·229…)
     const live = ld && ld.ids.filter(id => m.items.some(x => x._id === id)), same = !!live?.length && sel.length > 0 && sel.every(id => live.includes(id))
-    const ids = same ? live : movingSet(sel); if (!ids.length) return
+    const ids = same ? live : withContents(sel); if (!ids.length) return
     let dx = 20, dy = 20
     if (same) { const a = m.items.find(x => x._id === ld.src), b = m.items.find(x => x._id === ld.dup)
       if (a && b) { const sa = sceneBox(a, textBox), sb = sceneBox(b, textBox); dx = sb.x - sa.x; dy = sb.y - sa.y } }
@@ -1595,7 +1633,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]).catch(() => { c.noClip = true; setStatus('도형은 복사함 — 그림 복사는 브라우저가 막았어요') })
   }
   function copy() {
-    const m = R.current.model, ids = new Set(movingSet(R.current.sel))
+    const m = R.current.model, ids = new Set(withContents(R.current.sel))
     clip.current = { items: structuredClone(m.items.filter(it => ids.has(it._id))), seq: 0, fresh: true }   // fresh = 복사한 뒤 다른 창에 안 다녀옴(그동안 Ctrl+V = 칠판 도형)
     imageToClipboard(ids)
     setStatus?.(`${ids.size}개 복사 — 칠판에 붙이면 도형, 한글·PPT에 붙이면 그림`)
@@ -1688,15 +1726,15 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     }
   }
   // SVG → 고칠 수 있는 도형(§8 항목63) — 데스크톱 `_insert_svgs_at`과 같게: 긴 변 160·가운데 = at, 펜 = 지금 그리기색·채움 없음(글자는 제 색),
-  // 묶지 않고 다 고른 채(2026-08-04 사용자: 일부만 고를 수 있어야 — 묶으려면 Ctrl+G). 못 읽는 모양이면 false
+  // 묶음 하나로(2026-10-25 사용자: 모여 있어야 뜻이 있음 — 끌어 고르기도 하나만 걸리면 통째, 낱개로 고치려면 Ctrl+Shift+G. 옛 2026-08-04 「묶지 않음」을 뒤집음). 못 읽는 모양이면 false
   const SVG_LONG = 160
-  const svgProtos = (svg, at) => { const z = topZ(R.current.model.items) + 1
-    return svgItems(svg, SVG_LONG, at).items.map((g, i) => base(g.pos, g.type === 'text' ? { ...g, bg: null, z: z + i } : { ...penOf(false), ...(g.type === 'path' || g.type === 'line' ? null : { fill: null }), ...g, z: z + i })) }
+  const svgProtos = (svg, at) => { const z = topZ(R.current.model.items) + 1, its = svgItems(svg, SVG_LONG, at).items, g = its.length > 1 ? 'g' + newId() : null
+    return its.map((s, i) => base(s.pos, s.type === 'text' ? { ...s, bg: null, z: z + i, group_id: g } : { ...penOf(false), ...(s.type === 'path' || s.type === 'line' ? null : { fill: null }), ...s, z: z + i, group_id: g })) }
   function insertSvg(svg, at, what = 'SVG') {
     if (!svgFits(svg)) return false
     const m = R.current.model, its = svgProtos(svg, at)
     commit([...m.items, ...its], its.map(it => it._id), what); setTool('select')
-    setStatus(`${what} → 도형 ${its.length}개 — 하나씩 골라 고칠 수 있어요(묶기 Ctrl+G)`)
+    setStatus(`${what} → 도형 ${its.length}개 묶음 — 선 하나씩 고치려면 묶음 풀기(Ctrl+Shift+G)`)
     return true
   }
   // 대화창 ✏️ 아이콘 후보(2단계) — 넣는 모양은 위와 같게, 자리는 그림 후보처럼: 누르면 가운데 먼저·겹치면 빈자리, 끌면 놓은 자리(정렬선).
@@ -1719,8 +1757,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // PDF 파일 = PDF 보기 카드(2026-10-21 사용자) — 원본은 서버(`/api/pdf/<칠판>`), 칠판엔 주소·쪽 크기·첫 쪽 작은 그림·글(찾기용)
   const PDF_W = 420, PDF_W_MAX = 760   // 넣을 때 화면 폭 — 쪽 하나가 화면 높이의 80%쯤 들어오게(2026-10-21 사용자: 너무 작아 못 읽음), 이 사이로
   async function insertPdf(f, at) {
-    const id = newId(), done = () => setPend(ps => ps.filter(q => q.id !== id))
-    setPend(ps => [...ps, { id, x: at.x, y: at.y, msg: `「${f.name}」 올리는 중…` }])
+    const id = newId(), done = () => setPend(ps => ps.filter(q => q.id !== id)), s0 = 1 / R.current.cam.z, pw0 = PDF_W * s0, ph0 = pw0 * 1.414
+    setPend(ps => [...ps, { id, kind: 'pdf', label: 'PDF 올리는 중', x: at.x - pw0 / 2, y: at.y - ph0 / 2, w: pw0, h: ph0, msg: f.name }])
     try {
       const r = await fetch(`/api/pdf/${encodeURIComponent(DOC_NAME)}`, { method: 'POST', body: f, headers: { 'Content-Type': 'application/pdf', 'X-File-Name': encodeURIComponent(f.name) } })
       const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
@@ -1796,18 +1834,50 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   // 「그림 속 글 읽기」(2026-10-21 사용자: 「글로」 단추 대신 그림 → 글 OCR) — 그림 오른쪽 빈자리에 메모, 그림은 그대로.
   // PDF에서 오려 온 그림은 이미 그 부분 글을 품고 있어(alt 둘째 줄부터) KAIROS를 안 부름. 나머지는 서버 `/api/ocr`(easycad/ai/board_ocr.py)
+  // 「도면으로 베끼기」(2026-10-25 사용자 — 웹은 단순하게): 그림 → 서버(데스크톱 베끼기 엔진, `easycad/ai/board_trace.py`) → 그림 오른쪽 옆에 같은 크기로, 묶음 하나.
+  // 모서리 맞추기·흐린 바탕·부분 다시는 없음(마무리는 그림을 보며 손으로). 기다리는 동안 그 자리에 구역 6칸 스켈레톤이 끝난 구역부터 참
+  async function traceImage(id) {
+    const img = R.current.model.items.find(it => it._id === id); if (!img?.data) return
+    const ib = sceneBox(img, textBox), gap = 40 / R.current.cam.z
+    const at = nearSpot({ x: ib.x + ib.w + gap + ib.w / 2, y: ib.y + ib.h / 2 }, hitPool().map(it => sceneBox(it, textBox)), ib.w, ib.h, { pad: gap * 0.6, step: gap })
+    const pid = newId(), say = patch => setPend(ps => ps.map(q => (q.id === pid ? { ...q, ...patch } : q)))
+    setPend(ps => [...ps, { id: pid, kind: 'trace', label: '도면으로 베끼는 중', x: at.x, y: at.y, w: ib.w, h: ib.h, cols: 3, rows: 2, done: 0, total: 6 }])
+    setStatus('도면으로 베끼는 중… (KAIROS — 1분쯤, 구역 6곳 동시)')
+    try {
+      const r = await fetch(`/api/trace/${encodeURIComponent(DOC_NAME)}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ data: img.data, width: ib.w }) })
+      const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
+      if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
+      let res
+      for (;;) {
+        await new Promise(ok => setTimeout(ok, 1500))
+        const g = await fetch(`/api/trace/${encodeURIComponent(DOC_NAME)}/${d.job}`, { cache: 'no-store' }), st = await g.json().catch(() => ({ status: 'error', error: `서버 응답 ${g.status}` }))
+        if (st.status === 'run') { say({ done: st.done || 0, total: st.total || 6 }); continue }
+        if (st.status !== 'done') throw new Error(st.error || '베끼지 못했어요')
+        res = st.result; break
+      }
+      const m = R.current.model, z0 = topZ(m.items) + 1, g = 'g' + newId(), pen = sticky.current.color
+      const its = fromEcad({ items: res.items }).items.map((it, i) => ({ ...base([0, 0], {}), ...it, _id: it._id, z: z0 + i, group_id: g, layer_id: null,
+        ...(it.type === 'sarrow' || it.type === 'text' ? { color: pen } : { pen }), ...(it.label ? { label: { ...it.label, color: pen } } : null) }))   // 색 = 지금 펜(SVG 넣기와 같게 — 다크에서도 보이게)
+      if (!its.length) throw new Error('그림에서 도면으로 옮길 것을 못 찾았어요')
+      const placed = moveItems(its, its.map(it => it._id), at.x, at.y)
+      commit([...m.items, ...placed], placed.map(it => it._id), '도면으로 베끼기')
+      sayLater(`도면으로 베낌 — 도형 ${placed.length}개 묶음 · ${Math.round(res.elapsed || 0)}초${res.credits != null ? ` · ${res.credits}크레딧` : ''} — 선 하나씩 고치려면 묶음 풀기(Ctrl+Shift+G)`)
+    } catch (err) { setStatus(`베끼기 실패 — ${err.message || err}`) } finally { setPend(ps => ps.filter(q => q.id !== pid)) }
+  }
   async function ocrImage(id) {
     const img0 = R.current.model.items.find(it => it._id === id); if (!img0?.data) return
     const alt = (img0.alt || '').split('\n'), fromPdf = / · \d+쪽$/.test(alt[0]) && alt.length > 1
     let text = fromPdf ? alt.slice(1).join('\n') : '', foot = fromPdf ? alt[0] : ''
     if (!fromPdf) {
       setStatus('그림 속 글 읽는 중… (KAIROS)')
+      const pid = newId(), ib0 = sceneBox(img0, textBox), s0 = 1 / R.current.cam.z
+      setPend(ps => [...ps, { id: pid, kind: 'ocr', label: '그림 속 글 읽는 중', x: ib0.x + ib0.w + 40 * s0, y: ib0.y, w: MEMO.W * s0, h: 150 * s0, n: 5 }])
       try {
         const r = await fetch('/api/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify({ data: img0.data }) })
         const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
         if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
         text = d.text || ''; foot = `그림 속 글 · ${d.model}`
-      } catch (err) { setStatus(`글 읽기 실패 — ${err.message || err}`); return }
+      } catch (err) { setStatus(`글 읽기 실패 — ${err.message || err}`); return } finally { setPend(ps => ps.filter(q => q.id !== pid)) }
     }
     if (!text.trim()) { setStatus('그림에서 읽을 글이 없어요'); return }
     const m = R.current.model, img = m.items.find(it => it._id === id); if (!img) return
@@ -1828,7 +1898,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const [pend, setPend] = useState([])
   async function startMeeting(file, at) {
     const id = newId(), say = msg => setPend(ps => ps.map(q => (q.id === id ? { ...q, msg } : q)))
-    setPend(ps => [...ps, { id, x: at.x, y: at.y, msg: `「${file.name}」 올리는 중…` }])
+    setPend(ps => [...ps, { id, kind: 'meeting', label: '회의록 만드는 중', x: at.x, y: at.y, w: 2 * MEMO.W + 72, h: 240, msg: `「${file.name}」 올리는 중…` }])
     const done = () => setPend(ps => ps.filter(q => q.id !== id))
     let model = ''; try { model = localStorage.getItem('magic-board-model') || '' } catch { /* 없어도 그만 — 서버 기본 모델 */ }
     try {
@@ -1959,7 +2029,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     meetPersist({ ...m, dur }, true)
     setMeet(null)
     const id = newId(), say = msg => setPend(ps => ps.map(q => (q.id === id ? { ...q, msg } : q)))
-    setPend(ps => [...ps, { id, x: m.at.x, y: m.at.y, msg: '요약하는 중…' }])
+    setPend(ps => [...ps, { id, kind: 'meeting', label: '회의록 만드는 중', x: m.at.x, y: m.at.y, w: 2 * MEMO.W + 72, h: 240, msg: '요약하는 중…' }])
     const done = () => setPend(ps => ps.filter(q => q.id !== id))
     let model = ''; try { model = localStorage.getItem('magic-board-model') || '' } catch { /* 서버 기본 모델 */ }
     const segments = m.segs.map(g => ({ ...g, speaker: g.speaker ? `Speaker ${g.speaker}` : 'Speaker Unknown' }))
@@ -1983,7 +2053,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const c = R.current.cam, mp = where && where !== 'near' ? where : R.current.mouse, vw = { x: -c.x / c.z, y: -c.y / c.z, w: size.w / c.z, h: size.h / c.z }
     const at = mp && where !== 'near' && mp.x >= vw.x && mp.x <= vw.x + vw.w && mp.y >= vw.y && mp.y <= vw.y + vw.h ? mp : null
     setStatus(`웹 주소 확인 중… ${siteOf(url)}`)
-    const info = await fetchLinkInfo(url), f = webCardFields(info), m = R.current.model
+    const f0 = webCardFields({ url }), t0 = at ? { x: at.x - f0.rect[2] / 2, y: at.y - f0.rect[3] / 2 } : spotNear(f0.rect[2], f0.rect[3]), pid = newId()   // 확인하는 동안 카드 자리에 스켈레톤
+    setPend(ps => [...ps, { id: pid, kind: 'web', label: '웹 주소 확인 중', x: t0.x, y: t0.y, w: f0.rect[2], h: f0.rect[3], msg: siteOf(url), n: 3 }])
+    const info = await fetchLinkInfo(url).finally(() => setPend(ps => ps.filter(q => q.id !== pid))), f = webCardFields(info), m = R.current.model
     const tl = at ? { x: at.x - f.rect[2] / 2, y: at.y - f.rect[3] / 2 } : spotNear(f.rect[2], f.rect[3])
     const it = base([tl.x, tl.y], { ...f, z: topZ(m.items) + 1 })
     commit([...m.items, it], [it._id], '웹 카드'); setTool('select')
@@ -1993,7 +2065,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function webActivate(it) {
     setSel([it._id]); setWebOn(it._id)
     if (isYoutube(it)) playYoutube(it._id)
-    setStatus(it.type === 'pdf' ? 'PDF 보는 중 · Alt+끌기 = 그림으로 오려 오기' : it.type === 'doc' ? '움직이는 카드 조작 중 — 바깥을 누르거나 Esc = 끝' : isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
+    setStatus(it.type === 'pdf' ? 'PDF 보는 중 · Alt+끌기 = 그림으로 오려 오기' : it.type === 'doc' ? '인터랙티브 HTML 조작 중 — 바깥을 누르거나 Esc = 끝' : isYoutube(it) ? '재생 — 영상을 누르면 멈춤, 바깥을 누르면 끝' : '웹 카드 안을 조작하는 중 — 바깥을 누르면 끝')
   }
   // 점 p가 놓인 PDF 카드 몸통(위 띠 빼고) — 맨 위 것. 우클릭 메뉴가 「안쪽」인지 가르는 데
   const pdfBodyAt = p => { for (let k = R.current.order.length - 1; k >= 0; k--) { const it = R.current.order[k][0]; if (it.type !== 'pdf' || !it.url) continue
@@ -2158,9 +2230,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             : <Item key={it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="skip" page={pageNo.get(it._id)} web={it.type === 'web' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'pdf' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : it.type === 'doc' ? (webOn === it._id ? 'on' : it.rect[2] * (it.scale || 1) * z < WEB_SLEEP_PX ? 'sleep' : 'view') : undefined} />))}
           {/* 화살표 라벨은 모든 선·도형 위에(다른 화살표가 지나가도 안 덮임 — 2026-10-18 사용자 지적) */}
           {visible.map(([it, i]) => (isArrow(it) && (it.labels?.length || it.label) && it._id !== editingId ? <Item key={'lb' + it._id} it={it} idx={i} onBoard={onBoard[i]} route={routes.get(i)} dark={dark} labels="only" /> : null))}
-          {pend.map(q => { const w = 2 * MEMO.W + 72, h = 240, fs = 14 / z   // 회의록 만드는 중 — 놓을 자리에 점선 틀(그리는 과정 보이기)
-            return <g key={'pend' + q.id} data-testid="meeting-pending" pointerEvents="none"><rect x={q.x} y={q.y} width={w} height={h} rx={10} fill="rgba(218,119,86,.06)" stroke="#da7756" strokeWidth={1.5 / z} strokeDasharray={`${8 / z} ${5 / z}`} />
-              <text x={q.x + w / 2} y={q.y + h / 2} textAnchor="middle" dominantBaseline="central" fontSize={fs} fontFamily={APP_FONT} fill="#da7756">회의록 만드는 중 · {q.msg}</text></g> })}
+          {pend.map(q => <BoardSkeleton key={'pend' + q.id} q={q} z={z} />)}   {/* 오래 걸리는 일 = 놓일 자리에 회색 틀(skeleton.jsx — 회의록·PDF·글 읽기·베끼기·Deep Mode) */}
           {meet && (() => { const s = meet.s, w = MEET_W * s, h = MEET_H * s, sec = Math.max(0, Math.floor((Date.now() - meet.t0) / 1000)), two = n => String(n).padStart(2, '0')   // 「🎙 회의」 받아 적는 중 — 점선 틀 안에 말한 사람별 글(마지막 줄이 보이게)
             const clk = ms => { const t = Math.floor((ms || 0) / 1000); return `${two(Math.floor(t / 60))}:${two(t % 60)}` }, saved = meet.state === 'saved', who = new Set(meet.segs.map(g => g.speaker)).size
             const head = saved ? `🎙 받아 적던 회의 · ${meet.segs.length}구간` : meet.state === 'start' ? '🎙 마이크 켜는 중…' : meet.state === 'reconnect' ? '🎙 다시 붙는 중…(소리는 모아 두는 중)' : meet.state === 'stopping' ? '🎙 마지막 말 받는 중…' : `🎙 받아 적는 중 · ${two(Math.floor(sec / 60))}:${two(sec % 60)}${who ? ` · ${who}명` : ''}`
@@ -2237,7 +2307,12 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} entries={(() => {
         const m = R.current.model, ids = R.current.sel, has = ids.length > 0, selIt = m.items.filter(it => ids.includes(it._id)), act = f => () => { setMenu(null); f() }
         const out = []
-        if (menu.locked && m.items.some(it => it._id === menu.locked && it.locked)) { const uids = expandGroups(m.items, [menu.locked]); out.push(['이 도형 잠금 해제', '', act(() => commit(m.items.map(it => (uids.includes(it._id) ? { ...it, locked: false } : it)), uids, '잠금 해제'))], '-') }   // 묶음이면 묶음째(잠글 때도 묶음째)
+        const lockedSel = selIt.filter(it => it.locked && !layerLocked(it))   // 고른 것 중 잠긴 것 — 한 번에 풀기(2026-10-25 사용자, 잠긴 레이어의 것은 레이어 카드에서)
+        if (lockedSel.length) { const uids = new Set(lockedSel.map(it => it._id)); out.push([`잠금 해제 (${lockedSel.length}개)`, '', act(() => commit(m.items.map(it => (uids.has(it._id) ? { ...it, locked: false } : it)), ids, '잠금 해제'))], '-') }
+        if (has && lockedSel.length === selIt.length) {   // 잠긴 것만 고름 = 안 바뀌는 일만(복사·내보내기·정리 문서)
+          out.push(['복사', 'Ctrl+C', act(copy)], ['잠금 전환', 'Ctrl+L', act(() => commit(toggleLock(m.items, ids), ids, '잠금'))], '-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
+          if (onAsk) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])
+          return out }
         const pin = menu.pdfIn && m.items.find(it => it._id === menu.pdfIn.id)
         if (pin) { const n = menu.pdfIn.page   // PDF 안쪽 = 내용 메뉴만(틀 메뉴·칠판 메뉴 안 섞음)
           const picked = pdfSelectedText()   // 끌어 고른 글이 있으면 복사도
@@ -2246,10 +2321,10 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         const csrc = selIt.length <= 2 && clipSourceOf(ids); if (csrc) out.push([`PDF에서 이 쪽(${csrc.page + 1}쪽) 보기`, 'Ctrl+클릭', act(() => goClipSource(csrc))])   // 오려 온 그림(밑 글과 묶음) — 출처
         const card = selIt.length === 1 && ['pdf', 'web', 'doc'].includes(selIt[0].type) ? selIt[0] : null   // 카드(PDF·웹·문서) = 뒤집거나 꾸밀 것이 없음
         if (card?.type === 'pdf' && card.url) out.push(['넘겨 보기', '', act(() => webActivate(card))], ['새 탭에서 보기', '', act(() => window.open(`${card.url}#page=${pdfPageAt(card, 0) + 1}`, '_blank', 'noopener'))], '-')
-        else if (selIt.length === 1 && selIt[0].type === 'image' && selIt[0].data) out.push(['그림 속 글 읽기', '', act(() => ocrImage(selIt[0]._id))], '-')   // OCR → 옆에 메모
+        else if (selIt.length === 1 && selIt[0].type === 'image' && selIt[0].data) out.push(['그림 속 글 읽기', '', act(() => ocrImage(selIt[0]._id))], ['도면으로 베끼기 (KAIROS)', '', act(() => traceImage(selIt[0]._id))], '-')   // OCR → 옆에 메모 · 베끼기 → 옆에 도형 묶음
         else if (card?.type === 'web' && card.url) out.push(['새 탭에서 열기', '', act(() => window.open(card.url, '_blank', 'noopener'))], '-')
         else if (card?.type === 'doc') out.push(['크게 보기', '', act(() => openDoc(card))], '-')
-        if (has) out.push(['복사', 'Ctrl+C', act(copy)], ['잘라내기', '', act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })],
+        if (has) out.push(['복사', 'Ctrl+C', act(copy)], ['잘라내기', 'Ctrl+X', act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })],
           ['복제', 'Ctrl+D', act(dupSel)],
           ['삭제', 'Del', act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))])
         if (!card && (ids.length === 1 || styleClip.current)) { out.push('-'); if (ids.length === 1) out.push(['스타일 복사', 'Ctrl+Alt+C', act(styleCopy)]); if (has && styleClip.current) out.push(['스타일 붙여넣기', 'Ctrl+Alt+V', act(stylePaste)]) }
@@ -2269,15 +2344,13 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (ids.length >= 2) out.push(['그룹', 'Ctrl+G', act(() => commit(groupItems(m.items, ids), ids, '묶음'))])
           if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
-          if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', '', act(wrapFrame)])
-          out.push('-', ['내보내기…', '', act(() => onExportSel?.())])
+          if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', 'Ctrl+Alt+G', act(wrapFrame)])
+          out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
           if (onAsk) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
         }
+        // 빈 곳 = 붙여넣기만(2026-10-25 사용자: 빈 곳 메뉴는 없어도 됨 — 전체 선택은 Ctrl+A, 칠판 전체 정리 문서는 전체 선택 뒤 우클릭, 도움말은 왼쪽 「?」).
+        // 우클릭한 그 자리에 붙는 것이 Ctrl+V와 다른 쓸모라 남김. 붙일 것도 없으면 메뉴를 안 띄움(항목 0개 = ContextMenu가 안 그림)
         if (clip.current?.items?.length) { if (has) out.push('-'); out.push(['붙여넣기', 'Ctrl+V', act(paste)]) }
-        if (!has) { if (clip.current?.items?.length) out.push('-'); out.push(['전체 선택', 'Ctrl+A', act(() => setSel(hitPool().filter(it => !it.locked).map(it => it._id)))])
-          if (m.items.some(it => it.locked && !layerLocked(it))) out.push(['잠금 해제 (전체)', '', act(() => commit(m.items.map(it => (it.locked && !layerLocked(it) ? { ...it, locked: false } : it)), [], '잠금 해제'))])   // 잠긴 레이어의 도형은 그대로(레이어 자물쇠와 어긋나지 않게)
-          if (onAsk && m.items.length) out.push('-', ['칠판 전체 정리 문서 만들기 (KAIROS)', '', act(() => onAsk('이 칠판 전체를 정리한 문서 한 장으로 만들어 줘', 'report'))])
-          if (onHelp) out.push('-', ['글쇠 도움말', 'F1', act(onHelp)]) }
         return out })()} />}
       {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))
         return <Presenter frames={fr.map(f => ({ id: f._id, name: f.name, box: sceneBox(f, textBox) }))} order={order.filter(([it]) => it.type !== 'frame' || isDeepPaper(it)).map(([it, i]) => (isDeepPaper(it) ? [deepPaper(it), i] : [it, i]))} onBoard={onBoard} routes={routes}

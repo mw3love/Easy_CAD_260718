@@ -23,7 +23,7 @@ test('그려줘 → 🎨 후보 둘 → 누르면 그림 + 요청 글 묶음 →
   await openBoard(page, name, { chat: true }); await setCam(page)
   await page.getByPlaceholder('물어보세요', { exact: false }).click()
   await page.keyboard.type('산 위 송신탑 그려줘'); await page.keyboard.press('Enter')
-  await expect(page.getByTestId('answer-kind')).toHaveText('🎨 그림')
+  await expect(page.getByTestId('answer-kind')).toHaveText('🎨 이미지')
   await expect(page.getByTestId('image-pick')).toHaveCount(2)
   await expect(page.getByRole('button', { name: '칠판에 붙이기' })).toHaveCount(0)   // 그림 답은 고르는 것이 곧 붙이기
   await pinCandidate(page, 0)

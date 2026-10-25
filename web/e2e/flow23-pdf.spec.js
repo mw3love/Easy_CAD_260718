@@ -178,8 +178,8 @@ test('멀리서 넣어도 쪽 그림(잠들지 않음) · 바깥 눌러도 보�
   expect(names).toContain('넘겨 보기'); expect(names).toContain('새 탭에서 보기'); expect(names).toContain('삭제')
   expect(names).not.toContain('통째로'); expect(names).not.toContain('좌우 반전'); expect(names).not.toContain('전체 선택')
   await page.keyboard.press('Escape')
-  await page.mouse.click(b.x + b.width + 150, b.y + 300, { button: 'right' })   // 빈 곳 = 칠판 메뉴(고른 것 풂)
-  names = (await menuBtns()).join('|'); expect(names).toContain('전체 선택'); expect(names).not.toContain('삭제')
+  await page.mouse.click(b.x + b.width + 150, b.y + 300, { button: 'right' })   // 빈 곳 = 고른 것 풂, 붙일 것이 없으면 메뉴 없음(2026-10-25)
+  names = (await menuBtns()).join('|'); expect(names).not.toContain('전체 선택'); expect(names).not.toContain('삭제')
   await page.keyboard.press('Escape')
 
   await page.mouse.dblclick(b.x + b.width / 2, b.y + b.height / 2)        // 켜고 안쪽 우클릭 = 내용 메뉴만, 넘겨 보기는 안 꺼짐

@@ -1,4 +1,4 @@
-// 글쇠 도움말 카드(§8 항목61 다잡기, 2026-10-19) — keys.js 표를 그대로. F1·우클릭 「글쇠 도움말」로 열고 Esc·F1·바깥 누르기로 닫음.
+// 글쇠 도움말 카드(§8 항목61 다잡기, 2026-10-19) — keys.js 표를 그대로. F1·왼쪽 레일 「?」로 열고 Esc·F1·「?」·바깥 누르기로 닫음.
 import { useEffect, useRef } from 'react'
 import { KEY_TABLE } from './keys.js'
 
@@ -7,7 +7,7 @@ const C = { ink: 'var(--mb-ink)', muted: 'var(--mb-muted)', line: 'var(--mb-line
 export function HelpCard({ onClose }) {
   const ref = useRef(null)
   useEffect(() => {
-    const down = e => { if (ref.current && !ref.current.contains(e.target)) onClose() }
+    const down = e => { if (ref.current && !ref.current.contains(e.target) && !e.target.closest?.('[data-help-btn]')) onClose() }   // 「?」는 제 손으로 닫음(여기서 닫으면 곧바로 다시 열림)
     const key = e => { if (e.key === 'Escape' || e.key === 'F1') { e.preventDefault(); e.stopImmediatePropagation(); onClose() } }
     window.addEventListener('pointerdown', down, true); window.addEventListener('keydown', key, true)
     return () => { window.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key, true) }

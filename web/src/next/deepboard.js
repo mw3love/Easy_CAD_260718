@@ -51,7 +51,7 @@ const card = (S, extra = {}) => ({ fill: S.card.fill, ...(S.card.pen ? { pen: S.
 
 /** 머리 — 머리말(흐림: 제목 · 꼭지 수) + 헤드라인(크게) — 제목은 프레임 이름표에도 있어 크게 두 번 쓰지 않음(시안 머리와 같게). 반환 아이템 목록 */
 export function deepHead(plan, x, y, w, k, page = 0, pages = 1, S = CALM) {
-  const eye = `${plan.title || '딥모드'} · 꼭지 ${plan.sections?.length || 0}개${pages > 1 ? ` · ${page + 1}/${pages}장` : ''}`
+  const eye = `${plan.title || 'Deep Mode'} · 꼭지 ${plan.sections?.length || 0}개${pages > 1 ? ` · ${page + 1}/${pages}장` : ''}`
   return [memo(x, y, w, k * S.head, [muted(eye, S), ...(plan.headline ? [{ k: 'h1', t: plan.headline }] : [])], { fill: CLEAR, pen: CLEAR })]
 }
 
@@ -77,7 +77,7 @@ export function deepSection(plan, sec, x, y, w, k, v = '', S = CALM) {
       break
     case '요약 그림':   // 판 전체를 한 장으로 요약한 인포그래픽(2026-10-25 사용자) — 칠판 그림 + 밑 설명 한 줄. data = 칠판이 받은 그림(대화창 `deepImgs`), 못 그렸으면 안내 메모
       if (b.data && b.w > 0 && b.h > 0) {
-        const im = base([x, y], { type: 'image', rect: [0, 0, w, w * b.h / b.w], data: b.data, alt: `${sec.title} — 딥모드 요약 그림` })
+        const im = base([x, y], { type: 'image', rect: [0, 0, w, w * b.h / b.w], data: b.data, alt: `${sec.title} — Deep Mode 요약 그림` })
         items = [im, memo(x, bottomOf([im]) + 4, w, k * 0.9, [muted('AI가 이 판 내용으로 그린 요약 그림 — 숫자의 출처는 각 꼭지에', S)], { fill: CLEAR, pen: CLEAR })]
       } else items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, muted(b.error ? `요약 그림을 못 그렸어요 — ${b.error}` : '요약 그림이 없어요', S), muted('이 꼭지를 고르고 대화창에 「다시 그려 줘」', S)], { fill: S.moving.fill, pen: S.moving.pen })]
       break
@@ -88,7 +88,7 @@ export function deepSection(plan, sec, x, y, w, k, v = '', S = CALM) {
       if (b.html) {
         const cd = base([x, y], { type: 'doc', live: true, rect: [0, 0, w, WEB_HEAD + Math.round(w * LIVE_H / LIVE_W)], title: sec.title, html: b.html, model: b.card_model || '' })
         items = [cd, ...(b.note ? [memo(x, bottomOf([cd]) + 4, w, k * 0.9, [muted(b.note, S)], { fill: CLEAR, pen: CLEAR })] : [])]
-      } else items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, muted(b.note || sec.question || '', S), { k: 'p', t: '' }, muted('▶ 움직이는 카드를 못 만들었어요 — 이 꼭지만 다시 만들어 보세요', S)], { fill: S.moving.fill, pen: S.moving.pen })]
+      } else items = [memo(x, y, w, k, [{ k: S.title, t: sec.title }, muted(b.note || sec.question || '', S), { k: 'p', t: '' }, muted('▶ 인터랙티브 HTML을 못 만들었어요 — 이 꼭지만 다시 만들어 보세요', S)], { fill: S.moving.fill, pen: S.moving.pen })]
       break
     case '단계 카드': {   // 가로로 늘어놓고 사이에 화살표(Editor) — 한 장이 130px보다 좁으면 두 줄
       const head = title(x, y, w, k, sec.title, S), st = b.steps || [], top = bottomOf([head]) + 4

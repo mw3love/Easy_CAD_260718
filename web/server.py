@@ -36,7 +36,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_icon, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -99,7 +99,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:   # 목록을 못 받아도 대화는 기본 모델로 된다
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
         # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
-        jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "deep": deep_mode.EDITOR_MODEL, "live": live_card.LIVE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
+        jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "deep": deep_mode.EDITOR_MODEL, "live": live_card.LIVE_MODEL, "trace": board_trace.TRACE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
         return self._json(200, {**hit[1], "jobs": jobs})
 
     def _chat(self):
@@ -441,6 +441,35 @@ class Handler(SimpleHTTPRequestHandler):
         threading.Thread(target=run, daemon=True).start()
         return self._json(200, {"job": job})
 
+    def _trace_start(self, name: str):
+        """POST /api/trace/<이름> {"data": 그림(data 주소·base64), "width": 칠판 폭} — 「도면으로 베끼기」(2026-10-25). 2~3분 → 회의록과 같은 일감 방식"""
+        req = self._body(30 * 1024 * 1024) or {}
+        raw = str(req.get("data") or "")
+        if not name or not raw:
+            return self._json(400, {"error": "베낄 그림이 없어요"})
+        key = self._key()
+        if not key:
+            return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
+        try:
+            png = base64.b64decode(raw.split(",", 1)[1] if raw.startswith("data:") else raw)
+        except ValueError:
+            return self._json(400, {"error": "그림을 못 읽었어요"})
+        job, base = secrets.token_hex(6), gw.resolve_base_url()
+        Handler.jobs[job] = {"board": name, "status": "run", "msg": "구역 6곳으로 나눠 그리는 중…", "done": 0, "total": 0}
+
+        def run():
+            b0, t0 = self._balance(key, base), time.time()
+            try:
+                res = board_trace.trace(key, png, width=float(req.get("width") or 0), base_url=base,
+                                        progress=lambda i, n, t: Handler.jobs[job].update(done=i, total=n, msg=t))
+                res.update(elapsed=round(time.time() - t0, 1), credits=self._spent(key, base, b0))
+                Handler.jobs[job].update(status="done", msg="끝", result=res)
+                sys.stderr.write("[베끼기] %s 도형 %d개 · %.0f초 · %s크레딧\n" % (name, len(res["items"]), res["elapsed"], res["credits"]))
+            except Exception as e:
+                Handler.jobs[job].update(status="error", error=str(e))
+        threading.Thread(target=run, daemon=True).start()
+        return self._json(200, {"job": job})
+
     def _meeting_status(self, name: str, job: str):
         j = Handler.jobs.get(job)
         if not j or j["board"] != name:
@@ -655,7 +684,7 @@ class Handler(SimpleHTTPRequestHandler):
                     continue
                 out.append({"name": name, "mtime": int(os.path.getmtime(p)), "items": n})
             return self._json(200, {"boards": sorted(out, key=lambda b: -b["mtime"])})
-        m = re.match(r"^/api/meeting/([^/]+)/([0-9a-f]{12})$", path)
+        m = re.match(r"^/api/(?:meeting|trace)/([^/]+)/([0-9a-f]{12})$", path)   # 일감 확인(회의록·베끼기 같은 방식)
         if m:
             return self._meeting_status(self._name(m.group(1)), m.group(2))
         m = re.match(r"^/api/img/([^/]+)/(\d+_[0-9a-f]{6}\.(png|jpg|webp))$", path)
@@ -766,6 +795,9 @@ class Handler(SimpleHTTPRequestHandler):
         m = re.match(r"^/api/pdf/([^/]+)$", path)
         if m:
             return self._pdf_put(self._name(m.group(1)))
+        m = re.match(r"^/api/trace/([^/]+)$", path)
+        if m:
+            return self._trace_start(self._name(m.group(1)))
         m = re.match(r"^/api/(patch|presence|publish|invite)/([^/]+)$", path)
         if not m:
             return self._send(404, b'{"error":"none"}')

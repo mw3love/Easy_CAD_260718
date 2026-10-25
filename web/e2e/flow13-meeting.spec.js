@@ -29,9 +29,9 @@ test('녹음 끌어 놓기 → 만드는 중 → 프레임 + 요약 + 접힌 전
   expect(page.url()).toBe(url0)
 
   await dropFile(page, '10월 회의.m4a', 'audio/mp4', 0, 0)
-  await expect(page.getByTestId('meeting-pending')).toBeVisible()
+  await expect(page.locator('[data-testid="board-skeleton"][data-kind="meeting"]')).toBeVisible()
   expect(decodeURIComponent(posts[0].file)).toBe('10월 회의.m4a')
-  await expect(page.getByTestId('meeting-pending')).toBeHidden({ timeout: 10_000 })
+  await expect(page.locator('[data-testid="board-skeleton"][data-kind="meeting"]')).toBeHidden({ timeout: 10_000 })
   const d = await liveDoc(page)
   const frame = d.items.find(it => it.type === 'frame'), memos = d.items.filter(it => it.type === 'memo')
   expect(frame.name).toContain('송신기 교체 회의')

@@ -20,6 +20,6 @@ export const staticSrc = html => head(STATIC_CSP) + body(html)
 // 「크게 보기」 새 탭에 둘 페이지 — 앱 주소의 blob이라 그 페이지 자체엔 스크립트가 없어야 함. 움직이는 카드는 그 안의 틀(iframe)에서만 돎
 export function bigPage(it) {
   if (!liveFits(it)) return staticSrc(it?.html)
-  return head(LIVE_CSP) + `<title>${attr(it.title || '움직이는 카드')}</title><style>html,body{margin:0;height:100%;background:#fff}iframe{border:0;width:100%;height:100%;display:block}</style>`
+  return head(LIVE_CSP) + `<title>${attr(it.title || '인터랙티브 HTML')}</title><style>html,body{margin:0;height:100%;background:#fff}iframe{border:0;width:100%;height:100%;display:block}</style>`
     + `<iframe sandbox="allow-scripts" csp="${LIVE_CSP}" srcdoc="${attr(liveSrc(it.html))}"></iframe>`
 }

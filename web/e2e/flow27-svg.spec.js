@@ -19,14 +19,14 @@ const box = its => { const xs = [], ys = []
     for (const [x, y] of pts) { xs.push(x + it.pos[0]); ys.push(y + it.pos[1]) } }
   return { cx: (Math.min(...xs) + Math.max(...xs)) / 2, cy: (Math.min(...ys) + Math.max(...ys)) / 2, w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) } }
 
-test('SVG 파일 놓기 = 데스크톱과 같은 도형(묶지 않고 다 고른 채), 코드 붙여넣기도, 못 읽는 모양은 그림, 다시 열어도 그대로', async ({ page }) => {
+test('SVG 파일 놓기 = 데스크톱과 같은 도형(묶음 하나로 다 고른 채), 코드 붙여넣기도, 못 읽는 모양은 그림, 다시 열어도 그대로', async ({ page }) => {
   const name = boardName('svg')
   await openBoard(page, name); await setCam(page)
   await dropSvg(page, '안테나.svg', ICON, await toPage(page, 300, 200))
   await expect.poll(async () => (await liveDoc(page)).items.length).toBe(DESK.length)
   const its = (await liveDoc(page)).items
   expect(its.map(it => it.type)).toEqual(DESK.map(it => it.type))                       // 데스크톱과 같은 종류·차례
-  expect(its.every(it => it.group_id == null)).toBe(true)                               // 묶지 않음(2026-08-04 사용자)
+  expect(its[0].group_id).toBeTruthy(); expect(its.every(it => it.group_id === its[0].group_id)).toBe(true)   // 묶음 하나(2026-10-25 사용자 — 옛 「묶지 않음」을 뒤집음)
   expect(its.filter(it => it.type !== 'text').every(it => it.fill == null && it.width > 0)).toBe(true)   // 채움 없음·지금 펜
   expect(await page.evaluate(() => window.__mb.ed.getSel().length)).toBe(DESK.length)   // 다 고른 채
   const b = box(its)

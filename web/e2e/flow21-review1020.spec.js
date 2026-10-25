@@ -98,9 +98,10 @@ test('칠판 전체 정리 문서 = 칠판 위 「📄 정리 문서 만드는 �
   await page.route('**/api/chat', async r => { await new Promise(s => setTimeout(s, 1500)); await r.fulfill({ status: 502, json: { error: '시험 — 일부러 실패' } }) })
   await openBoard(page, boardName('reportbusy')); await setCam(page)
   for (const t of ['하나', '둘']) { await btn(page, '메모').click(); await page.keyboard.type(t); await clickScene(page, 900, 600) }
-  const b = await page.getByTestId('board').boundingBox()
-  await page.mouse.click(b.x + 1000, b.y + 700, { button: 'right' })
-  await page.getByRole('button', { name: /칠판 전체 정리 문서 만들기/ }).click()
+  await page.keyboard.press('Control+a')                                   // 칠판 전체 = 전체 선택 뒤 우클릭(2026-10-25 — 빈 곳 메뉴는 없앰)
+  const m0 = (await liveDoc(page)).items.find(it => it.type === 'memo'), q = await toPage(page, m0.pos[0] + 10, m0.pos[1] + 10)
+  await page.mouse.click(q.x, q.y, { button: 'right' })
+  await page.getByRole('button', { name: /정리 문서 만들기/ }).click()
   await expect(page.getByTestId('ai-busy')).toContainText('정리 문서 만드는 중 · claude-opus-5-5')
   await expect(page.getByTestId('chat-busy')).toContainText('정리 문서 만드는 중 · claude-opus-5-5')   // 고른 대화 모델(fake-model)이 아니라
   await expect(page.getByTestId('ai-busy')).toHaveCount(0)

@@ -45,7 +45,7 @@ test('애매한 아이콘 → 버튼 둘 → 고르면 그 길로 → 두 번 �
   await expect(page.getByTestId('ask-remembered')).toContainText('기억한 대로')      // 기억으로 고른 답 = 다른 쪽 버튼(2026-10-23 사용자: 세 번째에 다른 걸 고르고 싶으면?)
 
   await page.getByTestId('ask-other').click()                                         // 「🎨 그림으로 바꾸기」 = 같은 질문을 그림으로, 그 자리에 답
-  await expect(page.getByTestId('answer-kind').last()).toHaveText('🎨 그림')
+  await expect(page.getByTestId('answer-kind').last()).toHaveText('🎨 이미지')
   expect(sent[5].kind).toBe('image')
   expect(sent[5].messages.at(-1)).toEqual({ role: 'user', content: '펭귄 아이콘 그려줘' })   // 같은 질문(앞 대화는 그대로)
   await expect(page.getByTestId('svg-pick')).toHaveCount(4)

@@ -26,7 +26,9 @@ export function ContextMenu({ at, entries, onClose }) {
     if (over > 0) el.style.top = `${Math.max(-4 - over, pr.top + 4 - r.top - 4)}px`
     if (r.right > pr.right - 4) { el.style.left = 'auto'; el.style.right = '100%'; el.style.marginLeft = '0'; el.style.marginRight = '2px' }
   }
-  if (!entries.length) return null
+  const none = !entries.length
+  useEffect(() => { if (none) onClose() }, [none, onClose])   // 띄울 것이 없으면(빈 곳·붙일 것 없음) 바로 닫음 — 남아 있으면 나중에 복사했을 때 옛 자리에 뜸
+  if (none) return null
   const hover = e => { e.currentTarget.style.background = 'rgba(218,119,86,.14)' }, leave = e => { e.currentTarget.style.background = 'transparent' }
   return <div ref={ref} onContextMenu={e => e.preventDefault()} onPointerDown={e => e.stopPropagation()} style={{ ...box, left: pos.x, top: pos.y }}>
     {entries.map((en, i) => en === '-' ? <Sep key={i} /> : (

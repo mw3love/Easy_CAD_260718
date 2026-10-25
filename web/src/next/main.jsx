@@ -133,7 +133,7 @@ const svgI = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 const DOCK_ICONS = { shape: svgI('<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><circle cx="17" cy="7.3" r="3.8"/><path d="M7.3 13.5l4 7h-8z"/><path d="M17 13.5l3.8 3.5-3.8 3.5-3.8-3.5z"/>'),
   layer: svgI('<path d="M12 3.5l8.5 4.5-8.5 4.5-8.5-4.5z"/><path d="M3.5 12l8.5 4.5 8.5-4.5"/><path d="M3.5 16l8.5 4.5 8.5-4.5"/>') }
 const DOCK_TABS = [['board', '칠판', '칠판 — 새 칠판·최근 칠판·열기·내려받기'], ['shape', '도형', '도형·심볼 — 칠판으로 끌거나 눌러서 그리기'], ['frame', '프레임', '프레임 — 순서 = 출력·발표 순서'], ['layer', '레이어', '레이어 — 보이기·잠그기·그리는 중']]
-function Dock({ tab, setTab, panes, mini, width, setWidth }) {   // mini(w) = 그 판 폭의 미니맵
+function Dock({ tab, setTab, panes, mini, width, setWidth, help, onHelp }) {   // mini(w) = 그 판 폭의 미니맵, help = 도움말 카드가 열렸나
   return <div data-testid="dock" style={{ display: 'flex', flex: 'none', minHeight: 0, background: C.bar, borderRight: `1px solid ${C.line}` }}>
     <div style={{ width: RAIL_W, flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, paddingTop: 8, borderRight: tab ? `1px solid ${C.line}` : 'none' }}>
       {DOCK_TABS.map(([k, label, tip]) => { const on = tab === k, ic = DOCK_ICONS[k] || ICONS[k]
@@ -142,6 +142,10 @@ function Dock({ tab, setTab, panes, mini, width, setWidth }) {   // mini(w) = �
             color: on ? C.accent : C.ink, background: on ? 'rgba(218,119,86,.18)' : 'transparent' }}
           onMouseEnter={e => { if (!on) e.currentTarget.style.background = 'rgba(218,119,86,.10)' }} onMouseLeave={e => { e.currentTarget.style.background = on ? 'rgba(218,119,86,.18)' : 'transparent' }}>
           <span aria-hidden style={{ width: 20, height: 20, display: 'block', color: on ? C.accent : 'var(--mb-icon)' }} dangerouslySetInnerHTML={{ __html: ic.replace('<svg ', '<svg width="20" height="20" ') }} />{label}</button> })}
+      {/* 도움말 = 레일 맨 아래 「?」(2026-10-25 사용자 — 옛 빈 곳 우클릭 「글쇠 도움말」 대신. 나중에 사용설명서 페이지가 생기면 카드 안에 길) */}
+      <button data-testid="help-btn" data-help-btn aria-label="도움말" aria-pressed={help} title="도움말 — 글쇠 모음(F1)" onClick={onHelp}
+        style={{ all: 'unset', cursor: 'pointer', marginTop: 'auto', marginBottom: 8, width: 28, height: 28, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          font: "700 14px 'Pretendard', sans-serif", color: help ? C.accent : 'var(--mb-icon)', border: `1.5px solid ${help ? C.accent : 'var(--mb-icon)'}`, boxSizing: 'border-box' }}>?</button>
     </div>
     {tab && <div data-testid="dock-panel" style={{ width, flex: 'none', display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>{panes[tab]}</div>
@@ -195,7 +199,8 @@ function ExportForm({ hasSel, selFrames, frameCount, items, onExport, onPreview,
     <div data-testid="export-preview" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <span style={{ color: C.muted }}>미리보기{prev?.pages ? ` · ${prev.pages.length}쪽` : ''}{prev?.pages?.filter(q => q.frameId).length > 1 ? ' — 끌어서 순서' : ''}</span>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 280, overflowY: 'auto', padding: 6, background: C.group, borderRadius: 8, minHeight: 40 }}>
-        {prev?.error ? <span style={{ color: C.muted }}>{prev.error}</span> : !prev?.pages ? <span style={{ color: C.muted }}>만드는 중…</span>
+        {prev?.error ? <span style={{ color: C.muted }}>{prev.error}</span> : !prev?.pages ? <div data-testid="export-skeleton" className="mb-pulse" style={{ display: 'flex', gap: 8 }}><style>{'@keyframes mb-pulse{50%{opacity:.45}}.mb-pulse{animation:mb-pulse 1.6s ease-in-out infinite}'}</style>
+            {[0, 1, 2].map(i => <div key={i} style={{ width: 118, height: 160, borderRadius: 4, background: 'rgba(128,128,128,.14)' }} />)}</div>
           : prev.pages.map((pg, i) => <Thumb key={i} pg={pg} i={i} drag={drag} onDrag={setDrag} onDrop={dropAt} />)}
       </div></div>
     <div style={{ fontSize: 11, color: C.muted }}>{f === 'pdf' ? '인쇄 창이 뜨면 「PDF로 저장」을 고르세요' : f === 'png' ? '200dpi 그림으로 내려받아요' : f === 'html' ? '파일 하나 — 앱·서버·인터넷 없이 열림. 전체 그림(확대·이동) + 프레임 = 발표 장(방송 예비본)' : '선·글이 그대로인 그림 파일'}</div>
@@ -470,7 +475,7 @@ function App() {
       </div>
       </Narrow.Provider>
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>   {/* 왼쪽 판 + 작업공간 + 오른쪽 KAIROS 대화창(좁은 창은 대화창만 칠판 위에 뜸) */}
-      <Dock tab={dockTab} setTab={setDockTab} width={dockW} setWidth={setDockW} mini={w => <Minimap docked width={w} items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
+      <Dock tab={dockTab} setTab={setDockTab} width={dockW} setWidth={setDockW} help={helpOpen} onHelp={() => setHelpOpen(o => !o)} mini={w => <Minimap docked width={w} items={mapItems} cam={cam} size={size} setCam={setCam} dark={dark} />} panes={{
         board: <BoardForm docked onClose={() => {}} onSample={openSample}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${C.line}`, paddingTop: 8 }}>
             {[['열기', () => file.current.click(), '.ecad 파일 열기(지금 칠판을 그 내용으로 바꿈)'], ['내려받기', saveFile, '.ecad 파일로 내려받기'], ['저장', server ? saveServer : saveFile, server ? `서버 「${DOC_NAME}」에 저장 (Ctrl+S)` : '.ecad로 내려받기 (Ctrl+S)']].map(([l, f, t]) =>

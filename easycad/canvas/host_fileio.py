@@ -917,12 +917,12 @@ class _FileIOMixin:
             except Exception as e:  # noqa: BLE001 — 외부 파일 파싱, 원인 다양(구조 손상 등)
                 failed.append((path, e))
                 continue
-            # [실사용 요청 2026-08-04] 도형끼리 자동 그룹 안 함 — 종전엔 DXF INSERT 흡수와
-            # 같은 방식으로 `_group_id`를 묶어 하나처럼 선택되게 했는데, SVG 아이콘은 DXF
-            # 블록과 달리 "손실 없이 이미 쪼개진 낱개 도형"이라 처음부터 개별 선택·이동이
-            # 가능해야 한다는 지적("일부만 선택해도 전체가 선택되네") — 나중에 묶고 싶으면
-            # 기존 Ctrl+G로 하면 된다.
+            # 파일 하나 = 묶음 하나(2026-10-25 사용자 — 아이콘은 모여 있어야 뜻이 있음, 웹 `svgProtos`와 같게).
+            # 옛 2026-08-04 「묶지 않음」("일부만 선택해도 전체가 선택되네")은 끌어 고를 때 일부만 걸린 것처럼
+            # 보이던 혼란이었고, 묶음이면 하나만 걸려도 통째라 문제가 없다는 판단. 낱개로 고치려면 Ctrl+Shift+G.
+            gid = uuid.uuid4().hex[:8] if len(items) >= 2 else None
             for it in items:
+                it._group_id = gid
                 if not isinstance(it, _TextItem):
                     it.setPen(QPen(pen))
                     if hasattr(it, "setBrush"):

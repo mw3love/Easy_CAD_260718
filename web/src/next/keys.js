@@ -1,5 +1,5 @@
 // 글쇠 규칙표(§8 항목61 다잡기, 2026-10-19) — 「무엇을 골랐나」에 따라 같은 글쇠의 뜻이 바뀌므로 상황별로 한 장에.
-// 도움말 카드(help.jsx — F1·우클릭 「글쇠 도움말」)가 이 표를 그대로 보여 주고, 화면 시험(e2e/flow9-keys)이 줄마다 확인한다.
+// 도움말 카드(help.jsx — F1·왼쪽 레일 「?」)가 이 표를 그대로 보여 주고, 화면 시험(e2e/flow9-keys)이 줄마다 확인한다.
 // 동작을 바꾸면 이 표도 같이 고칠 것(표 = 약속). 데스크톱 기본값은 `easycad/canvas/shortcuts.py` SHORTCUT_DEFS.
 export const KEY_TABLE = [
   { when: '언제나', rows: [
@@ -37,7 +37,8 @@ export const KEY_TABLE = [
     ['Ctrl+C / Ctrl+X / Ctrl+D', '복사 / 잘라내기 / 복제(오른쪽 아래로)'],
     ['Ctrl+Alt+C / Ctrl+Alt+V', '스타일 복사 / 붙여넣기'],
     ['Ctrl+G / Ctrl+Shift+G', '묶기 / 풀기'],
-    ['Ctrl+L', '잠그기 · 풀기'],
+    ['Ctrl+Alt+G', '프레임으로 감싸기'],
+    ['Ctrl+L', '잠그기 · 풀기 — 잠긴 것도 눌러 골라지고(끌어 고르기엔 빠짐) 옮기기·지우기·고치기만 막힘'],
     ['Ctrl+] / Ctrl+[', '맨 앞으로 / 맨 뒤로'],
   ] },
   { when: '표 칸을 골랐을 때', rows: [

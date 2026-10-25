@@ -492,18 +492,18 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
           {bh > 0 && (live
             ? <foreignObject x={x} y={y + H} width={w} height={bh}>
                 {lv
-                  ? <iframe data-docid={it._id} data-liveid={it._id} srcDoc={liveSrc(it.html)} title={it.title || '움직이는 카드'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
+                  ? <iframe data-docid={it._id} data-liveid={it._id} srcDoc={liveSrc(it.html)} title={it.title || '인터랙티브 HTML'} sandbox="allow-scripts" csp={LIVE_CSP} scrolling="no"
                       style={{ border: 0, width: LIVE_W, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: web === 'on' ? 'auto' : 'none' }} />
                   : <iframe data-docid={it._id} srcDoc={it.html} title={it.title || '정리 문서'} sandbox="" scrolling="no"
                       style={{ border: 0, width: 794, height: bh / k, transform: `scale(${k})`, transformOrigin: '0 0', display: 'block', background: '#fff', pointerEvents: 'none' }} />}
               </foreignObject>
             : <><rect x={x} y={y + H} width={w} height={bh} fill="#fafafa" />
-              <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(16, bh / 6)} fontFamily={APP_FONT} fill="#8a8f98">{lv ? (fits ? '▶ 움직이는 카드 — 칠판에서 두 번 눌러 움직여 보세요' : '▶ 움직이는 카드 — 너무 커서 못 띄워요') : '📄 정리 문서 — ↗로 크게 보기·인쇄'}</text></>)}
+              <text x={x + w / 2} y={y + H + bh / 2} textAnchor="middle" dominantBaseline="central" fontSize={Math.min(16, bh / 6)} fontFamily={APP_FONT} fill="#8a8f98">{lv ? (fits ? '▶ 인터랙티브 HTML — 칠판에서 두 번 눌러 움직여 보세요' : '▶ 인터랙티브 HTML — 너무 커서 못 띄워요') : '📄 정리 문서 — ↗로 크게 보기·인쇄'}</text></>)}
         </g>
         {bh > 0 && <path d={`M${x},${y + H} H${x + w}`} stroke="#ddd6fe" strokeWidth={1} />}
         <rect x={x} y={y} width={w} height={h} rx={6} ry={6} fill="none" stroke={web === 'on' ? '#da7756' : '#a78bfa'} strokeWidth={web === 'on' ? 2 : 1} />
-        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis((lv ? '▶ ' : '📄 ') + (it.title || (lv ? '움직이는 카드' : '정리 문서')), 13, 700, tw)}</text>
-        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.file ? `HTML 파일 · ${it.file}` : `${lv ? '움직이는 카드' : '정리 문서'} · KAIROS ${it.model || ''}`, 10, 400, tw)}</text>
+        <text x={x + 10} y={y + 15} dominantBaseline="central" fontSize={13} fontWeight={700} fontFamily={APP_FONT} fill="#18181b">{ellipsis((lv ? '▶ ' : '📄 ') + (it.title || (lv ? '인터랙티브 HTML' : '정리 문서')), 13, 700, tw)}</text>
+        <text x={x + 10} y={y + 31} dominantBaseline="central" fontSize={10} fontFamily={APP_FONT} fill="#71717a">{ellipsis(it.file ? `HTML 파일 · ${it.file}` : `${lv ? '인터랙티브 HTML' : '정리 문서'} · KAIROS ${it.model || ''}`, 10, 400, tw)}</text>
         <g><title>크게 보기 · 인쇄</title><rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} rx={5} fill="#ffffff" stroke="#d4d4d8" />
           <path d={`M${ob.x + 10},${ob.y + 7} H${ob.x + 17} V${ob.y + 14} M${ob.x + 17},${ob.y + 7} L${ob.x + 8},${ob.y + 16}`} fill="none" stroke="#52525b" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /></g>
       </g>
