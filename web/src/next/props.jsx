@@ -222,8 +222,8 @@ function DashPick({ id, pop, setPop, value, onPick, title = '선 모양' }) {
     </FloatPanel>}
   </div>
 }
-// 그래프 모양 아이콘(18×16)
-const CHART_ICONS = {
+// 그래프 모양 아이콘(18×16) — 대화창 표 답 「그래프로」 단추도 씀
+export const CHART_ICONS = {
   table: <Svg><rect x="2.5" y="2.5" width="13" height="11" rx="1" /><path d="M2.5 6.5H15.5M7 2.5V13.5" /></Svg>,
   col: <Svg><path d="M4 13.5V8M9 13.5V3.5M14 13.5V6.5" strokeWidth="2.6" /></Svg>,
   row: <Svg><path d="M2.5 4H10M2.5 8H15M2.5 12H7" strokeWidth="2.6" /></Svg>,

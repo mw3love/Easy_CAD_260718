@@ -11,7 +11,7 @@ import { startMic } from './mic.js'
 import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, headTriangle, labelAnchor, roundedPath, roundedPts, strokeOutline, trimmedPts } from './geom.js'
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
-import { isChart } from './chart.js'
+import { CHART_MIN, isChart } from './chart.js'
 import { ROUTE_BOX, bindPt, dropTarget, edgeMid, bindEnd, groupFrac, groupHost, hostPorts, isBindHost, isConnHost, isHollow, isSnapLine, nearestBorder, OPP, qcDelta, qcDots, snapAt } from './connect.js'
 import { routeOrtho } from '../route.js'
 import { projectToCurve, projectToPath, snapLabelOff } from './arrowedit.js'
@@ -37,7 +37,7 @@ import { buildSvg, download, exportPdf, exportPng, exportSvg, fontFaces, pngBlob
 import { buildHtml } from './htmlshare.js'
 import { ContextMenu } from './ctxmenu.jsx'
 import { pdfGoPage, pdfLayout, pdfPageAt, pdfScroll, pdfSelectedText } from './pdfcard.jsx'
-import { freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
+import { answerTable, freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
 import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
 import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
@@ -135,7 +135,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -921,6 +921,21 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function boardTable(rows, header, s, z) {
     const cols = Math.max(...rows.map(r => r.length)), cells = rows.map(r => Array.from({ length: cols }, (_, c) => (r[c] || '').replace(/\*\*/g, '')))
     return fitTable(base([0, 0], { type: 'table', rows: rows.length, cols, header, rect: [0, 0, Math.max(MEMO.W, cols * 90), rows.length * 30], cells, col_widths: Array(cols).fill(1 / cols), scale: s, z }))
+  }
+  // 대화창 표 답 「그래프로」(§8 항목66 1단계 이어서, 2026-10-25) — 칠판 표 + 모양(`chart`), 표 크기는 기억(`table_wh` — 속성 카드에서 표로 돌아가면 그 크기).
+  // 칸에 출처 번호가 있었으면 그 출처를 그래프 밑 회색 글로(한 묶음) — 어디서 온 숫자인지 남게. t = { rows, header, kind, sources }
+  function chartItems(t) {
+    const { cells, refs } = answerTable(t.rows), z = topZ(R.current.model.items) + 1, tb = boardTable(cells, t.header, 1, z), [, , w, h] = tb.rect
+    const ch = { ...tb, chart: t.kind, table_wh: [w, h], rect: [0, 0, Math.max(w, CHART_MIN[0]), Math.max(h, CHART_MIN[1])] }
+    const used = (t.sources || []).filter(x => refs.includes(x.n)); if (!used.length) return [ch]
+    const g = 'g' + newId(), note = base([0, ch.rect[3] + 6], { type: 'text', text: used.map(x => `[${x.n}] ${x.title || siteOf(x.url)} · ${siteOf(x.url)}`).join('\n'), color: '#ff8a8f98', font: 10, bg: null, z, group_id: g })
+    return [{ ...ch, group_id: g }, note]
+  }
+  function pinChart(t) {   // 누르기 = 화면 가운데 먼저·겹치면 빈자리(그림·아이콘 후보와 같게), 넣은 _id들
+    const ps = chartItems(t), m = R.current.model, b = unionBox(ps.map(it => sceneBox(it, textBox))), at = spotNear(b.w, b.h), its = placeAt(ps, at.x, at.y)
+    commit([...m.items, ...its], its.map(it => it._id), '그래프로 붙이기'); setTool('select')
+    setStatus('그래프로 붙였어요 — 두 번 누르면 표로 펼쳐 숫자를 고쳐요 · 모양은 속성 카드에서')
+    return its.map(it => it._id)
   }
   // 웹 검색 답(§8 항목61 ② 담는 법, 2026-10-19) = 요약 메모 + 오른쪽에 출처 웹 카드(본문에 쓰인 번호만, 제목 앞 [n], 가벼운 제목 카드 — 칸 안 페이지 없음) + 메모 → 카드 화살표, 한 묶음.
   // 「어디서 왔는지」가 칠판 위 선으로 보이게(회사 KAIROS 웹은 답과 출처가 따로 놂). 출처가 없으면 메모 하나(cardItem)

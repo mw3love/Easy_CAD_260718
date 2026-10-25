@@ -9,7 +9,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { DOC_NAME } from './doc.js'
-import { contextText, inlineParts, parseAnswer } from '../chatFormat.js'
+import { answerTable, contextText, inlineParts, parseAnswer } from '../chatFormat.js'
+import { CHART_KINDS, chartChoices } from './chart.js'
+import { CHART_ICONS } from './props.jsx'
 import { urlSpans } from './geom.js'
 import { MONO_FONT } from './render.jsx'
 import { siteOf } from './webcard.js'
@@ -98,13 +100,20 @@ const css = {
   select: { font: `500 12px ${F}`, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 6, padding: '2px 4px', background: C.card, maxWidth: 210 },
 }
 
-// 답 글 보이기(굵게·목록·제목만 — 카드에 붙는 모양과 같은 규칙)
-function Answer({ text }) {
+// 답 글 보이기(굵게·목록·제목만 — 카드에 붙는 모양과 같은 규칙). chart = { pick(표 줄, 모양), down(e, 표 줄, 모양) } — 있으면 숫자 표 밑에 「그래프로」 단추
+const CHART_NAME = Object.fromEntries(CHART_KINDS)
+function Answer({ text, chart }) {
   return <div>{parseAnswer(text).map((ln, i) => {
     if (ln.kind === 'gap') return <div key={i} style={{ height: 6 }} />
-    if (ln.kind === 'table') return <div key={i} style={{ overflowX: 'auto', margin: '4px 0' }}><table data-testid="answer-table" style={{ borderCollapse: 'collapse', fontSize: 12.5, width: '100%' }}><tbody>   {/* 표 답(2026-10-20) — 칠판에 붙이면 진짜 표 */}
-      {ln.rows.map((r, j) => <tr key={j} style={ln.header && !j ? { background: C.seg, fontWeight: 700 } : null}>{r.map((c, k) => <td key={k} style={{ border: `1px solid ${C.line}`, padding: '3px 6px', verticalAlign: 'top' }}>
-        {inlineParts(c).map((p, q) => (p.bold ? <b key={q}>{p.text}</b> : <span key={q}>{p.text}</span>))}</td>)}</tr>)}</tbody></table></div>
+    if (ln.kind === 'table') { const ks = chart ? chartChoices({ type: 'table', header: ln.header, cells: answerTable(ln.rows).cells }) : []
+      return <div key={i} style={{ margin: '4px 0' }}><div style={{ overflowX: 'auto' }}><table data-testid="answer-table" style={{ borderCollapse: 'collapse', fontSize: 12.5, width: '100%' }}><tbody>   {/* 표 답(2026-10-20) — 칠판에 붙이면 진짜 표 */}
+        {ln.rows.map((r, j) => <tr key={j} style={ln.header && !j ? { background: C.seg, fontWeight: 700 } : null}>{r.map((c, k) => <td key={k} style={{ border: `1px solid ${C.line}`, padding: '3px 6px', verticalAlign: 'top' }}>
+          {inlineParts(c).map((p, q) => (p.bold ? <b key={q}>{p.text}</b> : <span key={q}>{p.text}</span>))}</td>)}</tr>)}</tbody></table></div>
+        {/* 숫자 표 = 바로 그래프로(§8 항목66 1단계 이어서, 2026-10-25) — 되는 모양만, 맨 앞(코랄) = 자료에 맞는 모양. 누르면 빈자리·끌면 놓은 자리 */}
+        {ks.length > 0 && <div data-testid="answer-chart" style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 5, flexWrap: 'wrap' }}><span style={css.meta}>그래프로</span>
+          {ks.map((k, j) => <button key={k} data-chart-kind={k} onPointerDown={e => chart.down(e, ln, k)} onClick={() => chart.pick(ln, k)}
+            title={`${CHART_NAME[k]} 그래프로 칠판에${j ? '' : '(이 자료에 맞는 모양)'} — 누르면 빈자리, 끌면 놓은 자리. 두 번 누르면 표로 숫자를 고쳐요`}
+            style={{ ...(j ? css.ghost : css.pin), display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 7px 1px 4px', cursor: 'grab' }}>{CHART_ICONS[k]}{CHART_NAME[k]}</button>)}</div>}</div> }
     // 답 속 주소 = 누르면 새 탭(대화창은 읽기만 해서 그냥 클릭 — 2026-10-18 사용자)
     const linked = (t, j) => { if (ln.kind === 'code') return t; const sp = urlSpans(t); if (!sp.length) return t; const out = []; let at = 0
       sp.forEach(([s, n, u], k) => { if (s > at) out.push(t.slice(at, s)); out.push(<a key={`${j}-${k}`} href={u} target="_blank" rel="noopener noreferrer" style={{ color: LINK_CHAT, textDecoration: 'underline', wordBreak: 'break-all' }} onPointerDown={e => e.stopPropagation()}>{u}</a>); at = s + n })
@@ -290,6 +299,16 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
     const done = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', done) }
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', done)
   }
+  // 표 답 「그래프로」 — 누르기 = 빈자리, 6px 넘게 끌면 칠판이 그래프를 끌고 놓은 자리에(위 dragDown과 같은 방식). 붙인 것은 다음 질문에 안 실음
+  const chartAct = m => ({
+    pick: (ln, kind) => { if (dragged.current) { dragged.current = false; return } const ids = ed.current?.pinChart({ rows: ln.rows, header: ln.header, kind, sources: m.sources }); if (ids) setSkipSel(ids.join()) },
+    down: (e, ln, kind) => { if (e.button !== 0) return
+      dragged.current = false; const sx = e.clientX, sy = e.clientY
+      const move = ev => { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) <= 6) return; done(); dragged.current = true
+        ed.current?.dragChart({ rows: ln.rows, header: ln.header, kind, sources: m.sources }, ids => setSkipSel((ids || []).join())) }
+      const done = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', done) }
+      window.addEventListener('pointermove', move); window.addEventListener('pointerup', done) },
+  })
   // 그림 후보 끌기 — 6px 넘게 움직이면 칠판이 실제 크기 그림을 끌고(정렬선), 놓은 자리에 붙음. 대화창 밖에서 떼야 붙음
   function imgDown(e, i, j) {
     if (e.button !== 0) return
@@ -417,7 +436,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
                 <span>기억한 대로 {(ASK_LABEL[m.kind] || [m.kind])[0]} 했어요</span>
                 {m.alt.map(k => <button key={k} data-testid="ask-other" data-kind={k} style={css.ghost} disabled={!!busy} onClick={() => choose(i, k)} title="같은 질문을 이쪽으로 다시 — 다음엔 다시 물어요">{(ASK_LABEL[k] || [k])[0]} 바꾸기</button>)}
               </div>}
-              <Answer text={m.content} />
+              <Answer text={m.content} chart={m.kind === 'ask' ? null : chartAct(m)} />
               {m.kind === 'ask' && <div data-testid="ask-choices" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
                 {(m.choices || []).map(k => <button key={k} data-testid="ask-choice" data-kind={k} disabled={!!busy} onClick={() => choose(i, k)} title={(ASK_LABEL[k] || [])[1]}
                   style={{ ...css.pin, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, padding: '6px 10px', textAlign: 'left' }}>

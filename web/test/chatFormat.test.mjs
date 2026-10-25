@@ -60,3 +60,10 @@ test('answerToEcadText — 굵게·제목·목록·출처 줄이 .ecad runs로',
 test('**굵게 속 `코드`**도 코드 조각 — 백틱이 글자로 남지 않음(2026-10-19)', () => {
   assert.deepEqual(inlineParts('**`pathlib`로 바꿉니다.** 끝'), [{ text: 'pathlib', bold: true, code: true }, { text: '로 바꿉니다.', bold: true }, { text: ' 끝', bold: false }])
 })
+
+import { answerTable } from '../src/chatFormat.js'
+test('답 표 → 칠판 표 칸: 줄 길이 맞춤·굵게·출처 번호 뺌', () => {
+  const t = answerTable([['모델', '점수'], ['**GPT**', '28.4 [1]'], ['나', '25.1[2, 3]', '덤']])
+  assert.deepEqual(t.cells, [['모델', '점수', ''], ['GPT', '28.4', ''], ['나', '25.1', '덤']])
+  assert.deepEqual(t.refs, [1, 2, 3])
+})

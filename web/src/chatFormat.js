@@ -43,6 +43,14 @@ export function parseAnswer(md) {
   return lines
 }
 
+// 답 속 표 → 칠판 표 칸 — 줄 길이를 맞추고 **굵게**·출처 번호 [1]·[1, 3]를 뺌(번호가 붙은 숫자는 그래프가 못 읽음). refs = 칸에 쓰였던 출처 번호(작은 순)
+export function answerTable(rows) {
+  const refs = new Set(), cols = Math.max(0, ...rows.map(r => r.length))
+  const cells = rows.map(r => Array.from({ length: cols }, (_, c) => String(r[c] ?? '').replace(/\*\*/g, '')
+    .replace(/\s*\[(\d+(?:\s*[,，]\s*\d+)*)\]/g, (_, ns) => { ns.split(/[,，]/).forEach(n => refs.add(+n)); return '' }).trim()))
+  return { cells, refs: [...refs].sort((a, b) => a - b) }
+}
+
 const textNode = (text, marks) => (marks.length ? { type: 'text', text, marks } : { type: 'text', text })
 
 // 답 글 → 칠판 카드 글(TipTap 문서). 맨 끝에 회색 출처 줄(「KAIROS · 모델 · 시각」).

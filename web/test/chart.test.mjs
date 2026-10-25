@@ -94,3 +94,16 @@ test('글 폭 어림·자르기', () => {
   assert.equal(fitText('아주 긴 항목 이름입니다', 10, 40).endsWith('…'), true)
   assert.equal(fitText('짧음', 10, 40), '짧음')
 })
+
+import { chartChoices, chartGuess } from '../src/next/chart.js'
+test('기본 모양 짐작 — 비중 = 원, 시간 흐름 = 꺾은선, 긴 이름 = 가로 막대, 그 밖 세로 막대, 숫자 없음 = 없음', () => {
+  assert.equal(chartGuess(BLEU), 'row')   // 「Transformer (big)」이 길어서
+  assert.equal(chartGuess(table([['팀', '점수'], ['가', '3'], ['나', '5']])), 'col')
+  assert.equal(chartGuess(table([['나라', '비중'], ['중국', '40%'], ['홍콩', '35%'], ['대만', '25%']])), 'pie')
+  assert.equal(chartGuess(table([['연도', '매출'], ['2023', '10'], ['2024년', '12'], ['2025', '15']])), 'line')
+  assert.equal(chartGuess(table([['달', '비'], ['1월', '3'], ['2월', '5'], ['3월', '4']])), 'line')
+  assert.equal(chartGuess(table([['분기', '값'], ['1분기', '3'], ['2분기', '5']])), 'col')   // 둘뿐이면 막대
+  assert.equal(chartGuess(table([['이름', '설명'], ['가', '좋음'], ['나', '나쁨']])), '')
+  assert.deepEqual(chartChoices(table([['팀', '점수'], ['가', '3'], ['나', '5']])), ['col', 'row', 'line'])   // 원은 막힘
+  assert.deepEqual(chartChoices(table([['이름', '설명'], ['가', '좋음']])), [])
+})

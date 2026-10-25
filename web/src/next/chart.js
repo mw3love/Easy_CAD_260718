@@ -83,6 +83,24 @@ export function chartWhy(data, kind) {
 }
 /** 표 아이템의 모든 모양 → 까닭 */
 export const chartWhys = it => { const d = chartData(it); return Object.fromEntries(CHART_KINDS.map(([k]) => [k, chartWhy(d, k)])) }
+// 시간 흐름처럼 보이는 항목 이름 — 연도·「3월」·「2분기」·「Q1」·「2026.03」·요일·시각
+const TIME = /^(((19|20)\d\d)\s*년?(\s*[.\-/]?\s*\d{1,2}\s*(월|분기)?)?|\d{1,2}\s*(월|일|시|주차?)|[1-4]\s*분기|[1-4]\s*Q|Q\s*[1-4]|[월화수목금토일](요일)?|\d{1,2}:\d\d)$/i
+/** 자료에 맞는 기본 모양('' = 그래프가 안 됨) — 비중 = 원, 시간 흐름(항목 셋 이상) = 꺾은선, 항목이 많거나 이름이 길면 가로 막대, 그 밖 세로 막대.
+ *  대화창 표 답 「그래프로」가 첫째로 내놓는 모양(§8 항목66 1단계 이어서, 2026-10-25) */
+export function chartGuess(it) {
+  const d = chartData(it), ok = k => !chartWhy(d, k)
+  if (!ok('col')) return ''
+  if (ok('pie')) return 'pie'
+  if (ok('line') && d.cats.length >= 3 && d.cats.every(c => TIME.test(c.trim()))) return 'line'
+  if (d.cats.length > 8 || Math.max(...d.cats.map(c => textW(c, FS))) > 84) return 'row'
+  return 'col'
+}
+/** 되는 모양들(표 빼고) — 기본 모양이 맨 앞 */
+export function chartChoices(it) {
+  const g = chartGuess(it); if (!g) return []
+  const w = chartWhys(it)
+  return [g, ...CHART_KINDS.map(([k]) => k).filter(k => k !== 'table' && k !== g && !w[k])]
+}
 /** 지금 그래프로 그릴 수 있나(안 되면 표로 그림 — 칸을 고쳐 숫자가 사라진 경우 등) */
 export const isChart = it => it?.type === 'table' && !!it.chart && it.chart !== 'table' && !chartWhy(chartData(it), it.chart)
 
