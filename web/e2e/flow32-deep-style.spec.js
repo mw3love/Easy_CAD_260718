@@ -20,6 +20,7 @@ test('톤 바꾸기 · 되돌리기 · 꼭지 모양 · 손으로 고친 뒤 확
   const at = d => d.items.filter(it => it.deep_of === uid && it.deep_sec != null && !['sarrow', 'arrow'].includes(it.type)).map(it => [it.deep_sec, it.type, Math.round(it.pos[0]), Math.round(it.pos[1]), Math.round(it.rect[3])])
   const at0 = at(d)
   expect(f.deep_plan.style).toBe('calm')
+  await expect(page.getByTestId('board').locator('rect[fill="#ffffff"][stroke="var(--mb-muted, #8a98a8)"]')).toHaveCount(1)   // 판 프레임 = 흰 종이(어두운 화면에서 투명 메모 제목이 묻혔음 — 2026-10-25 사용자)
   await page.evaluate(id => window.__mb.ed.setSel([id]), uid)
   const styles = page.getByTestId('deep-styles')
   await expect(styles.locator('[data-style]')).toHaveCount(4)

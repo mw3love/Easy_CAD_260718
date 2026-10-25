@@ -108,6 +108,17 @@ def test_frame_tags_number_like_web_order():
         w.close()
 
 
+def test_deep_board_frame_is_white_paper_on_dark():
+    """딥모드 판 프레임 = 흰 종이(웹 render.jsx `isDeepPaper`) — 판 제목은 투명 메모라 어두운 화면에 묻혔음(2026-10-25 사용자). 보통 프레임은 속이 비어 바탕이 비침"""
+    for raw, want in (({**DOCS["frame"], "deep_plan": {"style": "calm"}}, "#ffffff"), ({**DOCS["frame"], "deep_of": "f0"}, "#ffffff"), (DOCS["frame"], "#1e2731")):
+        img = QImage(1000, 700, QImage.Format.Format_ARGB32)
+        img.fill(QColor("#1e2731"))                                                  # 어두운 칠판 바탕
+        p = QPainter(img)
+        dict_to_item(copy.deepcopy(raw)).paint(p, None)
+        p.end()
+        assert img.pixelColor(450, 300).name() == want
+
+
 def test_memo_todo_click_and_edit_then_undo():
     w, (memo,) = _win_with(DOCS["memo"])
     v = w._view

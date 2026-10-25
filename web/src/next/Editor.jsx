@@ -3,7 +3,7 @@
 // 화면 = 칠판 × z + (x, y). 손잡이·선 굵기는 화면 px 고정(÷ z).
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr } from './render.jsx'
+import { arrowAt, arrowLabelBoxes, cellFontPx, cellStyle, fitTable, legendLayout, tableMins, fitTextHeight, ink, Item, LABEL_PAD, layoutText, measure, memoHeight, memoLayout, memoLinkAt, rr, isDeepPaper, deepPaper } from './render.jsx'
 import { DOC_NAME, boardMembership, drawOrder, itemBounds } from './doc.js'
 import { docText } from './find.jsx'
 import { keyHeaders } from './kairosKey.js'
@@ -2280,7 +2280,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (onHelp) out.push('-', ['글쇠 도움말', 'F1', act(onHelp)]) }
         return out })()} />}
       {present != null && (() => { const fr = orderedFrames(items.filter(it => !hiddenL.has(layerIdOf(it))))
-        return <Presenter frames={fr.map(f => ({ id: f._id, name: f.name, box: sceneBox(f, textBox) }))} order={order.filter(([it]) => it.type !== 'frame')} onBoard={onBoard} routes={routes}
+        return <Presenter frames={fr.map(f => ({ id: f._id, name: f.name, box: sceneBox(f, textBox) }))} order={order.filter(([it]) => it.type !== 'frame' || isDeepPaper(it)).map(([it, i]) => (isDeepPaper(it) ? [deepPaper(it), i] : [it, i]))} onBoard={onBoard} routes={routes}
           start={Math.min(present, fr.length - 1)} dark={dark} onClose={() => setPresent(null)} onAdd={addPenNotes} onUndo={undo} onFlipArrow={() => { const m = R.current.model, a = m.items.filter(it => it.layer_id === PEN_LAYER && it.type === 'sarrow').sort((p, q) => (q.z ?? 0) - (p.z ?? 0))[0]   // 방금(맨 위) 그린 판서 화살표 방향 뒤집기
             if (a) commit(m.items.map(it => (it._id === a._id ? { ...it, pts: [...it.pts].reverse() } : it)), R.current.sel, '화살표 뒤집기') }} onClearNotes={box => { const m = R.current.model, inBox = it => { const b = sceneBox(it, textBox), cx = b.x + b.w / 2, cy = b.y + b.h / 2; return cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h }   // 이 장(프레임) 안 판서만
             const ids = m.items.filter(it => it.layer_id === PEN_LAYER && inBox(it)).map(it => it._id); if (ids.length) commit(removeItems(m.items, ids), R.current.sel, '이 장 판서 지움') }}

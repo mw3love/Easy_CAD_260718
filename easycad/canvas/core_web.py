@@ -256,7 +256,9 @@ class _FrameItem(_WebItem):
         pen = QPen(QColor("#8a98a8"), 1.5)
         pen.setCosmetic(True)   # 웹 vectorEffect="non-scaling-stroke"
         p.setPen(pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
+        # 딥모드 판 = 흰 종이(웹 render.jsx `isDeepPaper` — 투명 메모 제목이 어두운 화면에 묻혔음, 2026-10-25). 그리기만 — 고르기는 그대로 테두리
+        deep = self._web_raw.get("deep_plan") or self._web_raw.get("deep_of")
+        p.setBrush(QColor("#ffffff") if deep else Qt.BrushStyle.NoBrush)
         p.drawRect(r)
         page = self._page()
         if page != getattr(self, "_last_page", None):

@@ -246,6 +246,10 @@ export const setInkDark = v => { DARK = !!v }
 const nearBlack = c => { const m = /^#([0-9a-f]{6})$/i.exec(c || ''); if (!m) return false; const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255
   return 0.299 * r + 0.587 * g + 0.114 * b < 64 && Math.max(r, g, b) - Math.min(r, g, b) <= 64 }
 export const ink = (c, onBoard) => { const css = cssColor(c); if (onBoard) return css; return DARK ? (nearBlack(css) ? '#ffffff' : css) : (near(css, true) ? '#1f1f1f' : css) }
+// 딥모드 판 프레임 = 흰 종이(2026-10-25 사용자 「어두운 화면에서도 잘 보여야」) — 판의 제목·밑 글은 투명 메모(메모 글은 늘 검은 잉크)·흰 종이 기준 톤이라 어두운 칠판에 묻혔음.
+// 판 = 인쇄하는 한 장이라 바탕째 종이로(메모 = 흰 종이 그대로와 같은 생각). 발표 화면은 프레임을 안 그려 종이만 네모로(`deepPaper`). 데스크톱 core_web `_FrameItem`도 같게
+export const isDeepPaper = it => it.type === 'frame' && !!(it.deep_plan || it.deep_of)
+export const deepPaper = it => ({ ...it, type: 'rect', fill: '#ffffff', style: 0, label: undefined, cuts: undefined })
 // Qt QColor.darker(118)/lighter(135) — HSV 명도만
 function shade(css, f) {
   const m = /^#([0-9a-f]{6})$/i.exec(css || ''); if (!m) return css
@@ -570,7 +574,7 @@ export const Item = memo(function Item({ it, idx, onBoard, route, labels: lmode 
     }
     case 'frame': {   // 프레임 — 얇은 테두리 + 위 왼쪽 이름표(Lucid Frame·Figma Section). 안은 비움(위에 그림)
       const [x, y, w, h] = it.rect, fs = frameTagFs(it), tag = frameTag({ ...it, no: page ?? it.no }), tw = measure(tag, fs, 'app', 600) + fs
-      return <g transform={T}><rect x={x} y={y} width={w} height={h} fill="none" stroke="var(--mb-muted, #8a98a8)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+      return <g transform={T}><rect x={x} y={y} width={w} height={h} fill={isDeepPaper(it) ? '#ffffff' : 'none'} stroke="var(--mb-muted, #8a98a8)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
         <rect x={x} y={y - fs * 1.7} width={tw} height={fs * 1.45} rx={fs * 0.3} fill="#3f3f46" />
         <text x={x + fs / 2} y={y - fs * 0.97} dominantBaseline="central" fontSize={fs} fontWeight={600} fontFamily={APP_FONT} fill="#ffffff">{tag}</text></g>
     }
