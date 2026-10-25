@@ -16,15 +16,17 @@ export const DEEP = {
   ROW_MAX: 5,       // 한 줄에 꼭지 최대
 }
 
-/** 꼭지 칸 수 범위 [바닥, 한도] — 크기(주인공·보통·작게)와 모양으로. 바닥은 꼭 지킴(그래프 360px·단계 가로 늘어놓기), 한도는 넘으면 벌점(작은 꼭지가 줄을 통째로 먹어 속이 텅 빈 것) */
-export function spanRange(sec) {
-  const size = sec.size, shape = sec.shape, b = sec.body || {}
-  let lo = size === '주인공' ? 6 : 3, hi = size === '주인공' ? 8 : size === '작게' ? 4 : 6
+/** 꼭지 칸 수 범위 [바닥, 한도] — 크기(주인공·보통·작게)와 모양으로. 바닥은 꼭 지킴(그래프 360px·단계 가로 늘어놓기), 한도는 넘으면 벌점(작은 꼭지가 줄을 통째로 먹어 속이 텅 빈 것).
+ *  P = 배치 무게(디자인 묶음 `layout` — hero: 주인공 [바닥, 한도], boost: { 모양: 칸 더 }) */
+export function spanRange(sec, P = DEEP) {
+  const size = sec.size, shape = sec.shape, b = sec.body || {}, hero = P.hero || [6, 8]
+  let lo = size === '주인공' ? hero[0] : 3, hi = size === '주인공' ? hero[1] : size === '작게' ? 4 : 6
   if (shape === '그래프') { lo = Math.max(lo, 4); hi = Math.max(hi, 6) }
   if (shape === '단계 카드') { lo = Math.max(lo, (b.steps?.length || 4) >= 5 ? 8 : 6); hi = 12 }
   if (shape === '표') { lo = Math.max(lo, 5); hi = Math.max(hi, 8) }
   if (shape === '숫자 타일') { lo = Math.max(lo, (b.tiles?.length || 3) >= 3 ? 4 : 3); hi = Math.max(hi, 6) }
   if (shape === '출처 카드') hi = Math.min(hi, 4)
+  const up = P.boost?.[shape] || 0; lo += up; hi += up
   return [Math.min(12, lo), Math.min(12, Math.max(lo, hi))]
 }
 /** 꼭지 모양 바꿔 보기(카피피팅 — 신문은 내용을 칸에 맞춰 다듬음): 숫자 = 나란히|위아래, 단계 = 한 줄|두 줄, 그래프 = 높게|낮게. 줄마다 높이가 가장 잘 맞는 것을 고름 */
@@ -35,8 +37,8 @@ const variantOk = (sec, v, w) => !(v === 'col' && w > 520) && !(v === 'grid' && 
 const stackable = sec => sec.size !== '주인공' && sec.shape !== '단계 카드' && sec.shape !== '표'
 
 // 한 줄(꼭지 a..b-1)의 칸 나누기 후보 중 가장 좋은 것 — slots: [[i] | [i, j]] 차례대로
-function bestRow(secs, a, b, hOf, col) {
-  const G = DEEP.G, cw = col * 12 + G * 11
+function bestRow(secs, a, b, hOf, col, P) {
+  const G = P.G, cw = col * 12 + G * 11
   const parts = []   // 칸 묶음 나누기(하나씩 · 이웃 둘 쌓기) 모두
   const walk = (i, acc) => {
     if (i === b) { if (acc.length <= 4) parts.push(acc); return }
@@ -46,14 +48,14 @@ function bestRow(secs, a, b, hOf, col) {
   walk(a, [])
   let best = null
   for (const slots of parts) {
-    const R = slots.map(s => { const rs = s.map(i => spanRange(secs[i])); return [Math.max(...rs.map(r => r[0])), Math.max(...rs.map(r => r[1]))] })
+    const R = slots.map(s => { const rs = s.map(i => spanRange(secs[i], P)); return [Math.max(...rs.map(r => r[0])), Math.max(...rs.map(r => r[1]))] })
     if (R.reduce((t, r) => t + r[0], 0) > 12) continue
-    const spans = Array(slots.length), members = slots.flat(), vlist = members.map(i => variantsOf(secs[i]))
+    const spans = Array(slots.length), members = slots.flat(), vlist = members.map(i => (P.fix?.[i] ? [P.fix[i]] : variantsOf(secs[i])))   // fix = 사용자가 「꼭지 모양」으로 정한 것
     const score = () => {   // 이 칸 수로 모양 조합마다
       const vs = Array(members.length).fill(0)
       for (;;) {
         const vOf = Object.fromEntries(members.map((i, m) => [i, vlist[m][vs[m]]]))
-        const ok = slots.every((s, k) => s.every(i => variantOk(secs[i], vOf[i], spans[k] * col + (spans[k] - 1) * G)))
+        const ok = slots.every((s, k) => s.every(i => P.fix?.[i] || variantOk(secs[i], vOf[i], spans[k] * col + (spans[k] - 1) * G)))   // 사용자가 정한 모양은 폭을 안 따짐
         const hs = !ok ? null : slots.map((s, k) => s.reduce((t, i) => t + hOf(i, spans[k], vOf[i]), 0) + (s.length - 1) * G), rh = hs ? Math.max(...hs) : 0
         let cost = hs ? cw * G : Infinity   // 줄 하나 = 간격 한 줄(줄이 많을수록 조금씩 손해 — 꼭지 하나씩 통째 줄로 쌓는 것 막기)
         if (hs) slots.forEach((s, k) => { const w = spans[k] * col + (spans[k] - 1) * G
@@ -75,30 +77,31 @@ function bestRow(secs, a, b, hOf, col) {
 }
 
 /** 줄 짜기 — 계획 차례 그대로, 모든 나누기 중 점수 합이 가장 작은 것(동적 계획법). [{ slots, spans, rh, hs, cost, v: { 꼭지: 모양 } }]. measure(i, w, k, 모양) */
-export function deepRows(secs, measure, col, k = DEEP.K) {
-  const cache = new Map(), G = DEEP.G
+export function deepRows(secs, measure, col, P = DEEP) {
+  const cache = new Map(), G = P.G, k = P.K
   const hOf = (i, span, v) => { const key = `${i}|${span}|${v}`; if (!cache.has(key)) cache.set(key, measure(i, span * col + (span - 1) * G, k, v)); return cache.get(key) }
   const n = secs.length, best = Array(n + 1).fill(null)
   best[0] = { cost: 0, rows: [] }
-  for (let b = 1; b <= n; b++) for (let a = Math.max(0, b - DEEP.ROW_MAX); a < b; a++) {
+  for (let b = 1; b <= n; b++) for (let a = Math.max(0, b - P.ROW_MAX); a < b; a++) {
     if (!best[a]) continue
-    const r = bestRow(secs, a, b, hOf, col); if (!r) continue
+    const r = bestRow(secs, a, b, hOf, col, P); if (!r) continue
     const c = best[a].cost + r.cost
     if (!best[b] || c < best[b].cost) best[b] = { cost: c, rows: [...best[a].rows, r] }
   }
   return best[n]?.rows || []
 }
 
-/** 지면 짜기 — 반환 { pages: [{ x, W, H, head, cells, k, G }], rows }. 칸 = { i, v: 모양, x, y, w, h, row, slot, top: 그 줄 위, rh: 줄 높이 } (장 안 좌표) */
-export function deepLayout(plan, measure) {
-  const secs = plan.sections || [], { W, M, G, K } = DEEP, cw = W - 2 * M, col = (cw - 11 * G) / 12
-  const rows = deepRows(secs, measure, col, K)
+/** 지면 짜기 — 반환 { pages: [{ x, W, H, head, cells, k, G }], rows }. 칸 = { i, v: 모양, x, y, w, h, row, slot, top: 그 줄 위, rh: 줄 높이 } (장 안 좌표).
+ *  L = 디자인 묶음 `layout`(G·M·K·hero·boost) + fix(꼭지 → 모양) — DEEP를 덮어씀 */
+export function deepLayout(plan, measure, L = {}) {
+  const P = { ...DEEP, ...L }, secs = plan.sections || [], { W, M, G, K } = P, cw = W - 2 * M, col = (cw - 11 * G) / 12
+  const rows = deepRows(secs, measure, col, P)
   const pages = []
   let page = null, y = 0
-  const open = () => { const headH = measure(-1, cw, K, pages.length); page = { x: pages.length * (W + DEEP.PAGE_GAP), W, H: 0, k: K, G, head: { x: M, y: M, w: cw, h: headH }, cells: [] }; y = M + headH + DEEP.HEAD_GAP; pages.push(page) }
+  const open = () => { const headH = measure(-1, cw, K, pages.length); page = { x: pages.length * (W + P.PAGE_GAP), W, H: 0, k: K, G, head: { x: M, y: M, w: cw, h: headH }, cells: [] }; y = M + headH + P.HEAD_GAP; pages.push(page) }
   open()
   rows.forEach((r, ri) => {
-    if (page.cells.length && y + r.rh + M > DEEP.MAX_H) open()
+    if (page.cells.length && y + r.rh + M > P.MAX_H) open()
     let x = M
     r.slots.forEach((s, k) => { const w = r.spans[k] * col + (r.spans[k] - 1) * G
       let sy = y

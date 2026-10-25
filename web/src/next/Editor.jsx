@@ -12,8 +12,9 @@ import { APP_FONT, paperWH, PT, TEXT_MARGIN, urlSpans, cutPolyline, headSize, he
 import { applyRouting, minStubs, resolveRoutes, sarrowRadius, sceneRect } from './arrows.js'
 import { alignSnap } from './align.js'
 import { CHART_MIN, isChart } from './chart.js'
-import { deepLayout, deepWaste } from './deep.js'
+import { deepLayout, deepWaste, variantsOf } from './deep.js'
 import { deepHead, deepMeasure, deepSection } from './deepboard.js'
+import { styleOf } from './deepstyle.js'
 import { ROUTE_BOX, bindPt, dropTarget, edgeMid, bindEnd, groupFrac, groupHost, hostPorts, isBindHost, isConnHost, isHollow, isSnapLine, nearestBorder, OPP, qcDelta, qcDots, snapAt } from './connect.js'
 import { routeOrtho } from '../route.js'
 import { projectToCurve, projectToPath, snapLabelOff } from './arrowedit.js'
@@ -137,7 +138,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const redo = () => { const h = hist.current, f = h.future.pop(); h.mergeKey = null; if (!f) return; h.past.push(f); const items = applyDelta(R.current.model.items, f.after); R.current.model = { ...R.current.model, items }; setModel(m => ({ ...m, items })); onCommit?.('다시 실행') }
 
   // busy = 끄는 중·고치는 중·다각형 찍는 중(공동작업: 그동안 남의 변경 받기를 미룸)
-  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
+  useImperativeHandle(ref, () => ({ undo, redo, startToolDrag, busy: () => !!(st.current.kind || R.current.editing || R.current.live || R.current.poly), getSel: () => R.current.sel, editingId: () => R.current.editing?.id || '', syncBusy: () => !!(st.current.kind || R.current.poly || (R.current.live && !R.current.editing)), setSel, insertTable, insertLegend, insertWeb, insertMemo, moveSelToLayer, exportDoc, exportPages, startPresent, reorderFrames, renameFrame, goFrame, frameIds: () => orderedFrames(R.current.model.items).map(f => f._id), selFrames: () => { const ids = new Set(R.current.sel); return R.current.model.items.filter(it => ids.has(it._id) && (it.type === 'titleblock' || it.type === 'frame')).length }, selTexts, selImages, meetStart, meetStop, meetDiscard, tidyItems, applyTidy, showIds, pinCard, showCard, showItem, dropFiles, dropUrl, pinImage, dragImage, pinSvg, dragSvg, pinChart, deepBoard, deepRedo, dragChart: (t, onPlaced) => startPaletteDrag('chart', chartItems(t), onPlaced), dragCard: (msg, onPlaced) => startPaletteDrag('card', cardItems(msg, 0, 0, topZ(R.current.model.items) + 1), onPlaced), reset: () => { hist.current = { past: [], future: [] }; setSel([]) }, startPaletteDrag,
     // 시험용(Playwright 자체확인) — 손잡이·상태 들여다보기
     debugHandle: p => ({ single: single?._id, hs: handlesOf(single).map(h => [h.key, h.p]), at: handleAt(p)?.key }), debugState: () => ({ kind: st.current.kind, handle: st.current.handle, live: !!live, editing: R.current.editing, stylePv: R.current.stylePv }) }))
 
@@ -940,30 +941,66 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     return its.map(it => it._id)
   }
   // 딥모드 지면(§8 항목66 2단계, 2026-10-25) — 계획(꼭지 + 본문) → 프레임(들) 안에 진짜 칠판 물건. 자리는 deep.js, 물건은 deepboard.js, 단계 사이 화살표만 여기(길 찾기).
-  // 프레임 = 폭 1600 · 높이는 내용만큼(16:9 고집 버림 — 같은 날 2차 판정). at = 첫 장 왼쪽 위(없으면 지금 칠판의 오른쪽 빈자리). 프레임 번호 = 발표 차례. 되돌리기 한 번에 통째로
-  function deepBoard(plan, at) {
-    const m = R.current.model, lay = deepLayout(plan, deepMeasure(plan)), n = lay.pages.length
-    const right = m.items.length ? unionBox(m.items.map(it => sceneBox(it, textBox))) : null, o = at || (right ? { x: right.x + right.w + 200, y: right.y } : { x: 0, y: 0 })
-    const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = orderedFrames(m.items).length, out = [], links = []
+  // 프레임 = 폭 1600 · 높이는 내용만큼(16:9 고집 버림 — 같은 날 2차 판정). 프레임 번호 = 발표 차례. 되돌리기 한 번에 통째로.
+  // 3-1 디자인 묶음: 첫 프레임에 `deep_plan` { plan, style, fix, vs, sig } — 같은 내용을 다른 묶음·꼭지 모양으로 다시 지음(`deepRedo`).
+  // 지은 물건마다 `deep_of` = 첫 프레임 _id(다시 지을 때 지울 것), 꼭지 물건은 `deep_sec` = 꼭지 번호(「꼭지 모양」)
+  const deepSig = items => { const t = JSON.stringify(items.filter(it => it.type !== 'frame').map(it => [it.type, it.deep_sec ?? -1, Math.round(it.pos[0]), Math.round(it.pos[1]), (it.lines || []).map(l => l.t), it.cells, it.chart || '', it.fill || '']))
+    let h = 5381; for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return String(h >>> 0) }   // 손으로 고쳤나(다시 지을 때 먼저 물음) — 자리·글·칸만
+  function deepBuild(plan, o, { style = 'calm', fix = {}, keep = null } = {}) {
+    const m = R.current.model, S = styleOf(style), lay = deepLayout(plan, deepMeasure(plan, S.look), { ...S.layout, fix }), n = lay.pages.length
+    const zb = Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1, zt = topZ(m.items) + 1, no0 = keep ? keep.no - 1 : orderedFrames(m.items).length, out = [], links = []
+    const rootId = keep?.id || newId(), vs = {}
     lay.pages.forEach((pg, p) => {
-      const X = o.x + pg.x, Y = o.y
-      out.push(base([X, Y], { type: 'frame', rect: [0, 0, pg.W, pg.H], name: (plan.title || '딥모드') + (n > 1 ? ` (${p + 1}/${n})` : ''), no: no0 + p + 1, z: zb }))
-      out.push(...deepHead(plan, X + pg.head.x, Y + pg.head.y, pg.head.w, pg.k, p, n).map(it => ({ ...it, z: zt })))
-      pg.cells.forEach(c => { const r = deepSection(plan, plan.sections[c.i], X + c.x, Y + c.y, c.w, pg.k, c.v); out.push(...r.items.map(it => ({ ...it, z: zt }))); links.push(...r.links) })
+      const X = o.x + pg.x, Y = o.y, name = (plan.title || '딥모드') + (n > 1 ? ` (${p + 1}/${n})` : '')
+      out.push(p === 0 ? { ...base([X, Y], { type: 'frame', rect: [0, 0, pg.W, pg.H], name, no: no0 + 1, z: zb }), _id: rootId } : base([X, Y], { type: 'frame', rect: [0, 0, pg.W, pg.H], name, no: no0 + p + 1, z: zb, deep_of: rootId }))
+      out.push(...deepHead(plan, X + pg.head.x, Y + pg.head.y, pg.head.w, pg.k, p, n, S.look).map(it => ({ ...it, z: zt, deep_of: rootId })))
+      pg.cells.forEach(c => { vs[c.i] = c.v || ''
+        const r = deepSection(plan, plan.sections[c.i], X + c.x, Y + c.y, c.w, pg.k, c.v, S.look); out.push(...r.items.map(it => ({ ...it, z: zt, deep_of: rootId, deep_sec: c.i }))); links.push(...r.links) })
     })
-    const keep = R.current.model
-    R.current.model = { ...keep, items: [...keep.items, ...out] }   // 길 찾기·붙는 끝이 새 카드를 찾게(answerItems와 같게)
+    const keepM = R.current.model
+    R.current.model = { ...keepM, items: [...keepM.items, ...out] }   // 길 찾기·붙는 끝이 새 카드를 찾게(answerItems와 같게)
     try {
       for (const [a, b] of links) {
         const A = out.find(it => it._id === a), B = out.find(it => it._id === b), ba = sceneBox(A, textBox), bb = sceneBox(B, textBox), cy = Math.min(ba.y + ba.h, bb.y + bb.h) / 2 + Math.max(ba.y, bb.y) / 2
         const pa = { p: { x: ba.x + ba.w, y: cy }, n: { x: 1, y: 0 } }, pb = { id: b, p: { x: bb.x, y: cy }, n: { x: -1, y: 0 } }
         const pts = connRoute(a, pa, pb, null).map(q => [q.x, q.y])
-        out.push({ ...arrowItem(a, pa.p, b, pb.p, { auto_route: true, pts, color: '#ffc4613f', width: 1.5, style: 1, head: true, head_start: false }), z: zt, group_id: A.group_id })
+        out.push({ ...arrowItem(a, pa.p, b, pb.p, { auto_route: true, pts, color: S.look.arrow || '#ffc4613f', width: 1.5, style: 1, head: true, head_start: false }), z: zt, group_id: A.group_id, deep_of: rootId, deep_sec: A.deep_sec })
       }
-    } finally { R.current.model = keep }
-    commit([...m.items, ...out], [], '딥모드 지면')
-    setStatus(`딥모드 지면 — ${n}장 · 꼭지 ${plan.sections?.length || 0}개`)
-    return { ids: out.map(it => it._id), pages: lay.pages.map(pg => ({ x: o.x + pg.x, y: o.y, w: pg.W, h: pg.H, waste: deepWaste(pg), rows: lay.rows.map(r => r.slots.map((sl, k) => `${sl.map(i => i + (r.v[i] ? r.v[i][0] : '')).join('+')}:${r.spans[k]}`).join(' ')) })) }
+    } finally { R.current.model = keepM }
+    out[0] = { ...out[0], deep_plan: { plan, style, fix, vs, sig: deepSig(out) } }
+    return { out, lay, n, o }
+  }
+  const deepInfo = r => ({ ids: r.out.map(it => it._id), pages: r.lay.pages.map(pg => ({ x: r.o.x + pg.x, y: r.o.y, w: pg.W, h: pg.H, waste: deepWaste(pg), rows: r.lay.rows.map(rr => rr.slots.map((sl, k) => `${sl.map(i => i + (rr.v[i] ? rr.v[i][0] : '')).join('+')}:${rr.spans[k]}`).join(' ')) })) })
+  // at = 첫 장 왼쪽 위(없으면 지금 칠판의 오른쪽 빈자리)
+  function deepBoard(plan, at, style = 'calm') {
+    const m = R.current.model, right = m.items.length ? unionBox(m.items.map(it => sceneBox(it, textBox))) : null, o = at || (right ? { x: right.x + right.w + 200, y: right.y } : { x: 0, y: 0 })
+    const r = deepBuild(plan, o, { style })
+    commit([...m.items, ...r.out], [], '딥모드 지면')
+    setStatus(`딥모드 지면 — ${r.n}장 · 꼭지 ${plan.sections?.length || 0}개 · ${styleOf(style).name}`)
+    return deepInfo(r)
+  }
+  // 딥모드 판의 첫 프레임(그 판 물건 하나 또는 프레임에서) — 없으면 null
+  const deepRoot = it => { if (!it) return null; const items = R.current.model.items; return it.deep_plan ? it : it.deep_of ? items.find(x => x._id === it.deep_of && x.deep_plan) || null : null }
+  const deepEdited = root => deepSig(R.current.model.items.filter(it => it.deep_of === root._id || it._id === root._id)) !== root.deep_plan.sig
+  // 같은 내용을 다른 디자인(style)·꼭지 모양(fix = { 꼭지: 모양 })으로 다시 지음 — 첫 프레임 자리·번호·_id는 그대로(발표 차례 유지), 되돌리기 한 번
+  function deepRedo(rootId, { style, fix } = {}) {
+    const m = R.current.model, root = m.items.find(it => it._id === rootId && it.deep_plan); if (!root) return null
+    const d = root.deep_plan, st = style || d.style, fx = fix ? { ...d.fix, ...fix } : d.fix
+    const rest = m.items.filter(it => it._id !== rootId && it.deep_of !== rootId)
+    R.current.model = { ...m, items: rest }   // 지을 자리 계산·길 찾기가 옛 물건을 안 보게
+    let r
+    try { r = deepBuild(d.plan, { x: root.pos[0], y: root.pos[1] }, { style: st, fix: fx, keep: { id: rootId, no: root.no } }) } finally { R.current.model = m }
+    commit([...rest, ...r.out], [rootId], style ? `디자인 — ${styleOf(st).name}` : '꼭지 모양')
+    setStatus(style ? `디자인을 「${styleOf(st).name}」로 다시 지었어요 — 마음에 안 들면 Ctrl+Z` : '꼭지 모양을 바꿔 다시 배치했어요 — Ctrl+Z로 되돌리기')
+    return deepInfo(r)
+  }
+  // 속성 카드 딥모드 줄 — 고른 것이 딥모드 판이면(프레임 또는 그 판 물건). 꼭지 하나(그 묶음)만 골랐고 모양이 둘 이상이면 「꼭지」 줄도
+  function deepProps() {
+    const selIt = R.current.sel.map(id => R.current.model.items.find(it => it._id === id)).filter(Boolean), root = deepRoot(selIt.find(it => it.deep_plan || it.deep_of)); if (!root) return null
+    const d = root.deep_plan, secs = [...new Set(selIt.map(it => it.deep_sec))], si = secs.length === 1 && Number.isInteger(secs[0]) ? secs[0] : null
+    const sec = si != null ? d.plan.sections[si] : null, opts = sec ? variantsOf(sec) : []
+    return { style: d.style || 'calm', edited: () => deepEdited(root), onStyle: k => deepRedo(root._id, { style: k }),
+      sec: opts.length > 1 ? { shape: sec.shape, cur: d.fix?.[si] || d.vs?.[si] || opts[0], opts, onPick: v => deepRedo(root._id, { fix: { [si]: v } }) } : null }
   }
   // 웹 검색 답(§8 항목61 ② 담는 법, 2026-10-19) = 요약 메모 + 오른쪽에 출처 웹 카드(본문에 쓰인 번호만, 제목 앞 [n], 가벼운 제목 카드 — 칸 안 페이지 없음) + 메모 → 카드 화살표, 한 묶음.
   // 「어디서 왔는지」가 칠판 위 선으로 보이게(회사 KAIROS 웹은 답과 출처가 따로 놂). 출처가 없으면 메모 하나(cardItem)
@@ -2300,7 +2337,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         return <TextEditor key={ed.id} spec={{ ...s, onReady: setLiveEd, at: ed.at, onPan: startPan, onWheel: wheelZoom, armed: !!ed.armed, fresh: !!ed.fresh,
           onArm: () => { const ne = { id: ed.id, kind: ed.kind, fresh: true }; R.current.editing = ne; setEditing(ne) } }} onDone={finishEdit} /> })(editing ? (editing.kind !== 'cell' && editing.kind !== 'memo' ? editing : null) : (t => (t?.kind === 'memo' ? null : t))(armTarget()))}   {/* 메모 대기는 위 MemoEditor가 받음(둘이 같이 뜨면 이 편집기가 첫 글자를 가로챘음) */}
       {editing && liveEd && <FormatBar ed={liveEd} />}   {/* 드래그 꾸미기 막대(2026-10-19 — 옛 오른쪽 위 「글자」 카드 대신) */}
-      {selItems.length > 0 && <Props liveEd={editing && !editing.armed && editing.kind !== 'memo' ? liveEd : null} align={selItems.length >= 2 ? { n: alignTargets().length, align: alignSel, dist: a => distributeSel(a) } : null} items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
+      {selItems.length > 0 && <Props deep={deepProps()} liveEd={editing && !editing.armed && editing.kind !== 'memo' ? liveEd : null} align={selItems.length >= 2 ? { n: alignTargets().length, align: alignSel, dist: a => distributeSel(a) } : null} items={selItems} kind={selArrows.length && selArrows.every(x => arrowKindOf(x) === arrowKindOf(selArrows[0])) ? arrowKindOf(selArrows[0]) : null} set={setProps} rotate={(it, a) => rotateTo(it, a, false)} library={library ? { symbols: library, folders: libFolders } : null} onSwapTo={swapShape} dark={dark} onLegend={legendEdit} cells={cellSel && byId.get(cellSel.id) ? { table: byId.get(cellSel.id), ...cellRange(cellSel) } : null} setCells={setCells}
         onKind={k => { stickyKind.current = k; const m = R.current.model; commit(m.items.map(x => (selArrowIds.has(x._id) ? swapArrowKind(x, k, m.items, rectOf, sticky.current.curve_r) : x)), sel, '화살표 종류') }} />}
     </div>
   )

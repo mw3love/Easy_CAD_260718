@@ -14,6 +14,7 @@ import { cellPt, labelNeedW, labelShownPt, tableAutoPt } from './render.jsx'
 import { WEB_ZOOMS } from './webcard.js'
 import { STYLE_NAMES, rowName } from './legend.js'
 import { CHART_KINDS, CHART_MIN, chartWhys, isChart } from './chart.js'
+import { DEEP_STYLES, STYLE_KEYS, variantName } from './deepstyle.js'
 const LG_WIDTHS = [0.5, 1, 1.5, 2, 3, 4, 5, 6, 8]
 // 글 있는 칸들의 지금 크기(pt)
 const tableCellPts = it => { const out = []; for (let r = 0; r < it.rows; r++) for (let c = 0; c < it.cols; c++) if (it.cells?.[r]?.[c]) out.push(cellPt(it, r, c)); return out.length ? out : [tableAutoPt(it)] }
@@ -172,6 +173,22 @@ function AlignRow({ align }) {
     {DISTS.map(([a, t, ic]) => <button key={a} title={t} aria-label={t.replace(/\(.*\)/, '')} disabled={align.n < 3} onClick={() => align.dist(a)} style={b(align.n < 3)}>{ic}</button>)}
   </div>
 }
+// 딥모드 판(§8 항목66 3-1) — 「디자인」 = 같은 내용을 다른 묶음으로 다시 짓기, 「꼭지 모양」 = 고른 꼭지만 다른 모양(나머지는 그대로 다시 배치).
+// deep = { style, edited(), onStyle(키), sec: { shape, cur, opts, onPick(모양) } | null }. 손으로 고친 게 있으면 덮어쓰기 전에 카드 안에서 한 번 물음(브라우저 확인 창 없이)
+function DeepRows({ deep }) {
+  const [ask, setAsk] = useState(null)   // 덮어쓰기 확인을 기다리는 디자인 키
+  const pick = k => { if (k === deep.style) return; if (deep.edited()) setAsk(k); else deep.onStyle(k) }
+  return <div data-testid="deep-rows" style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 4, marginBottom: 2, borderBottom: `1px solid ${C.line}` }}>
+    <Row label="디자인"><div data-testid="deep-styles" style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, background: C.seg, borderRadius: 8, padding: 2 }}>
+      {STYLE_KEYS.map(k => <button key={k} data-style={k} aria-pressed={deep.style === k} title={`${DEEP_STYLES[k].name} — ${DEEP_STYLES[k].tip}`} onClick={() => pick(k)} style={btn(deep.style === k, { fontSize: 12 })}>{DEEP_STYLES[k].name}</button>)}</div></Row>
+    {ask && <div data-testid="deep-confirm" style={{ fontSize: 11.5, color: C.muted, display: 'flex', flexDirection: 'column', gap: 4 }}>
+      손으로 고친 것이 있어요 — 「{DEEP_STYLES[ask].name}」로 다시 지으면 덮어써요(Ctrl+Z로 되돌릴 수 있어요)
+      <div style={{ display: 'flex', gap: 4 }}><button data-testid="deep-confirm-yes" onClick={() => { deep.onStyle(ask); setAsk(null) }} style={btn(true, { flex: 1, fontSize: 12 })}>덮어쓰기</button>
+        <button onClick={() => setAsk(null)} style={btn(false, { flex: 1, fontSize: 12, background: C.seg })}>그대로</button></div></div>}
+    {deep.sec && <Row label="꼭지"><div data-testid="deep-variants" style={{ flex: 1, display: 'flex', gap: 2, background: C.seg, borderRadius: 8, padding: 2 }}>
+      {deep.sec.opts.map(v => <button key={v} data-variant={v} aria-pressed={deep.sec.cur === v} title={`이 꼭지만 ${variantName(deep.sec.shape, v)} — 나머지는 그대로 다시 배치`} onClick={() => v !== deep.sec.cur && deep.sec.onPick(v)} style={btn(deep.sec.cur === v, { flex: 1, fontSize: 12 })}>{variantName(deep.sec.shape, v)}</button>)}</div></Row>}
+  </div>
+}
 // 표 글자 「자동」 켜고 끄기(2026-10-18 사용자: 끄려고 크기를 일부러 바꿔야 했음) — 켜짐 = 칸에 맞춰 줄어듦, 끄면 지금 보이는 크기 그대로 고정
 function AutoToggle({ on, onClick }) {
   return <button title={on ? '자동 — 칸에 맞춰 글자 크기가 바뀌어요. 누르면 지금 크기로 고정' : '고정 — 누르면 칸에 맞춰 자동으로'} onClick={onClick}
@@ -242,7 +259,7 @@ const wrap360 = a => +((((a % 360) + 360) % 360).toFixed(1))
 // items = 고른 것 전부. set(아이템 → 고칠 값 | null, 이름, 묶음 열쇠) — 해당 없는 아이템은 null.
 // kind = 고른 것이 모두 화살표이고 종류가 같으면 그것('straight'|'curved'|'ortho'), onKind(k) = 화살표 종류 바꾸기
 // 값이 서로 다르면: 고르는 칸은 아무것도 안 켬(누르면 전부 그 값), 숫자 칸은 범위(데스크톱도 같은 규칙, 2026-10-18)
-export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells, onLegend, align, liveEd }) {   // liveEd = 글 고치는 중 편집기(TipTap) — 「글자」 꾸밈이 고른 글자(없으면 글 전체)에 먹음, 2026-10-23   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
+export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dark, cells, setCells, onLegend, align, liveEd, deep }) {   // deep = 딥모드 판 줄(DeepRows)   // liveEd = 글 고치는 중 편집기(TipTap) — 「글자」 꾸밈이 고른 글자(없으면 글 전체)에 먹음, 2026-10-23   // onLegend(범례 id, 줄 열쇠, { name } | { color·style·width }) — 범례 줄 이름·도면 속 그 선 일괄 바꾸기   // cells = 고른 표 칸 { table, r0, r1, c0, c1 }, setCells(꾸밈 → 고칠 값, 이름, 묶음)   // library = 내 심볼(서버 파일), onSwapTo(아이디들, 'customsym:<id>'|'rect'|'sym:<종류>')   // rotate(아이템, 각도) → 회전한 아이템(가운데 기준, Editor `rotateTo`)
   const swapRef = useRef(null)
   const [pop, setPop] = useState(null)   // 지금 열린 펼침 하나 — 'swap'·'dash'·색 칸 이름(한 번에 하나만)
   useEffect(() => {
@@ -317,6 +334,7 @@ export function Props({ items, kind, set, onKind, rotate, library, onSwapTo, dar
       </div>
       : <span data-testid="prop-type" style={{ font: "700 15px 'Pretendard', sans-serif", flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</span>}
       <FoldBtn minus folded={folded} onClick={toggleFold} /></div>
+    {!folded && deep && <DeepRows deep={deep} />}
     {!folded && align?.n >= 2 && <AlignRow align={align} />}
     {allArrows && <Row label="종류"><Seg value={kind} onPick={onKind} items={[['straight', ICONS.straight, '직선'], ['curved', ICONS.curved, '곡선'], ['ortho', ICONS.ortho, '직각']]} /></Row>}
     {allText && textRows}

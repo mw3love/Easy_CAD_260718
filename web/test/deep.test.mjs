@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { DEEP, deepLayout, deepWaste, inside, overlaps, spanRange, variantsOf } from '../src/next/deep.js'
+import { DEEP_STYLES, STYLE_KEYS } from '../src/next/deepstyle.js'
 
 const load = t => JSON.parse(readFileSync(new URL(`./fixtures/deep_${t}.json`, import.meta.url), 'utf-8'))
 const chars = sec => JSON.stringify(sec.body || {}).length
@@ -52,4 +53,22 @@ test('아주 길면 줄 경계에서 여러 장 — 빠진 꼭지·장 겹침 �
   assert.deepEqual(lay.pages.flatMap(pg => pg.cells.map(c => c.i)).sort((a, b) => a - b), plan.sections.map((_, i) => i))
   for (const pg of lay.pages) assert.ok(pg.H <= DEEP.MAX_H || pg.cells.every(c => c.row === pg.cells[0].row))
   assert.deepEqual(overlaps(lay.pages.map(pg => ({ x: pg.x, y: 0, w: pg.W, h: pg.H }))), [])
+})
+
+test('디자인 묶음 넷(3-1) — 묶음 간격·여백으로 줄 폭이 맞고 겹침 0, 주인공·칸 더 주기·사용자가 정한 꼭지 모양을 지킴', () => {
+  for (const s of STYLE_KEYS) for (const t of ['paper', 'tx', 'news']) {
+    const plan = load(t), L = DEEP_STYLES[s].layout, P = { ...DEEP, ...L }, lay = deepLayout(plan, fake(plan), L), cw = P.W - 2 * P.M
+    assert.deepEqual(lay.pages.flatMap(pg => pg.cells.map(c => c.i)), plan.sections.map((_, i) => i), `${s} ${t}`)
+    for (const pg of lay.pages) {
+      assert.deepEqual(overlaps(boxes(pg)), [], `${s} ${t}`)
+      assert.equal(pg.head.x, P.M, `${s} 여백`)
+      const ws = new Map(); for (const c of pg.cells) ws.set(`${c.row}:${c.slot}`, [c.row, c.w])
+      const byRow = new Map(); for (const [r, w] of ws.values()) byRow.set(r, (byRow.get(r) || []).concat(w))
+      for (const w of byRow.values()) assert.ok(Math.abs(w.reduce((a, b) => a + b, 0) + (w.length - 1) * P.G - cw) < 1e-6, `${s} ${t} 줄 폭`)
+    }
+  }
+  assert.deepEqual(spanRange({ size: '주인공', shape: '주인공 글' }, { ...DEEP, ...DEEP_STYLES.magazine.layout }), [7, 9])
+  assert.deepEqual(spanRange({ size: '보통', shape: '그래프' }, { ...DEEP, ...DEEP_STYLES.info.layout }), [5, 7])
+  const plan = load('news'), ti = plan.sections.findIndex(sec => sec.shape === '숫자 타일')
+  for (const v of ['row', 'col']) assert.equal(deepLayout(plan, fake(plan), { fix: { [ti]: v } }).pages.flatMap(pg => pg.cells).find(c => c.i === ti).v, v)
 })
