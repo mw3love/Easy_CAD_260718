@@ -53,6 +53,15 @@ def test_presence_forgets_after_ttl():
     assert p.ping("b", "2", "작가", now=112) == ["작가"]
 
 
+def test_presence_leave_is_immediate():
+    """창을 닫으면 「나감」 신호로 바로 빠짐(2026-10-26 실검증 — 전엔 15초 기다려 이름이 20초쯤 남았음)"""
+    p = collab.Presence(ttl=10)
+    p.ping("b", "1", "기자", now=100); p.ping("b", "2", "작가", now=100)
+    p.leave("b", "1")
+    assert p.ping("b", "2", "작가", now=101) == ["작가"]
+    p.leave("b", "없는 사람"); p.leave("없는 칠판", "2")   # 모르는 것은 그냥 지나감
+
+
 @pytest.fixture
 def server(tmp_path):
     import server as srv

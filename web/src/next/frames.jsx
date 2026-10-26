@@ -39,7 +39,7 @@ export function Frames({ items, sel, onReorder, onRename, onGo, onPresent, dark,
           ? <input autoFocus defaultValue={f.name || ''} placeholder="이름" onClick={e => e.stopPropagation()} onChange={e => onRename(f._id, e.target.value)}
             onBlur={() => setRenaming(null)} onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') setRenaming(null) }}
             style={{ flex: 1, minWidth: 0, height: 20, border: `1px solid ${C.line}`, borderRadius: 4, background: 'transparent', color: C.ink, font: 'inherit', padding: '0 4px' }} />
-          : <span onDoubleClick={e => { e.stopPropagation(); setRenaming(f._id) }} style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', color: f.name ? C.ink : C.muted }}>{f.name || '이름 없음'}</span>}
+          : <span onDoubleClick={e => { e.stopPropagation(); setRenaming(f._id) }} style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', color: f.name ? C.ink : C.muted }} title="두 번 누르면 이름 바꾸기">{f.name || `프레임 ${i + 1}`}</span>}   {/* 이름 안 지은 프레임 = 「프레임 N」 흐리게(2026-10-26 실검증 — 「이름 없음」은 빠진 것처럼 보였음) */}
         {hover === f._id && renaming !== f._id && <button data-testid="frame-play" title="이 장부터 발표" onClick={e => { e.stopPropagation(); onPresent(f._id) }}
           style={{ all: 'unset', cursor: 'pointer', flex: 'none', width: 20, height: 18, borderRadius: 4, background: C.on, color: '#fff', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>▶</button>}
       </div>)}

@@ -828,6 +828,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self._send(400, b'{"error":"bad request"}')
         if m.group(1) == "presence":
             cid = str(req.get("id") or "")
+            if req.get("leave"):   # 창 닫힘(브라우저 pagehide) = 바로 뺌
+                self.presence.leave(name, cid)
+                return self._json(200, {"ok": True})
             people = self.presence.ping(name, cid, str(req.get("name") or ""), sel=req.get("sel") if isinstance(req.get("sel"), list) else None, edit=str(req.get("edit") or ""))
             return self._json(200, {"people": people, "others": self.presence.others(name, cid)})
         if m.group(1) in ("publish", "invite"):   # 켜기·끄기·새 링크(옛 링크 막힘) — 게시와 초대가 같은 방식

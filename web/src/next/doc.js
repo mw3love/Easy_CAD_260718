@@ -72,6 +72,7 @@ export const api = {
   login: async password => (await post('/api/login', { password })).ok,
   patch: async body => { const r = await post(`/api/patch/${B}`, body); return r.ok ? (await r.json()).rev : null },
   since: async (rev, wait = 0) => { const r = await fetch(`/api/since/${B}?rev=${rev}${wait ? `&wait=${wait}` : ''}`, { cache: 'no-store' }); return r.status === 200 ? parseDoc(await r.text()) : null },   // wait = 바뀔 때까지 서버가 기다림(롱 폴링)
+  leave: id => { try { fetch(`/api/presence/${B}`, { method: 'POST', headers: J, body: JSON.stringify({ id, leave: true }), keepalive: true }) } catch { /* 닫히는 중 — 못 보내면 15초 뒤 빠짐 */ } },   // 창 닫힘 = 접속자에서 바로 빠짐(keepalive = 닫혀도 보냄)
   presence: async (id, name, sel = [], edit = '') => { try { const r = await post(`/api/presence/${B}`, { id, name, sel, edit }); return r.ok ? await r.json() : null } catch { return null } },   // → { people: 이름들, others: [{ id, name, sel, edit }] }
   getPublish: async () => { try { const r = await fetch(`/api/publish/${B}`, { cache: 'no-store' }); return r.ok ? (await r.json()).token : null } catch { return null } },
   setPublish: async (on, renew = false) => { const r = await post(`/api/publish/${B}`, { on, renew }); return r.ok ? (await r.json()).token : null },

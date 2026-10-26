@@ -1,4 +1,4 @@
-// 흐름 36 — 10-25 사용자 검토: 우클릭 메뉴 단축키(Ctrl+X·Ctrl+Alt+G·Ctrl+P) · 빈 곳 우클릭 = 붙일 것 없으면 메뉴 없음 ·
+// 흐름 36 — 10-25 사용자 검토: 우클릭 메뉴 단축키(Ctrl+X·Alt+G — 10-26 실검증에서 Ctrl+Alt+G를 바꿈·Ctrl+P) · 빈 곳 우클릭 = 붙일 것 없으면 메뉴 없음 ·
 // 「+」 메뉴 이름(이미지·아이콘(SVG)·인터랙티브 HTML·Deep Mode, 정리 문서 뺌) · 대화창 스켈레톤 · 그림 「도면으로 베끼기」(구역 스켈레톤 → 그림 옆 묶음).
 // KAIROS·서버 일감은 가짜(/api/chat·/api/trace) — 진짜 베끼기 엔진은 tests/test_part75.
 import { test, expect } from '@playwright/test'
@@ -11,16 +11,16 @@ const dropPng = (page, p) => page.evaluate(([b64, x, y]) => {
   document.elementFromPoint(x, y).dispatchEvent(new DragEvent('drop', { dataTransfer: dt, clientX: x, clientY: y, bubbles: true, cancelable: true }))
 }, [PNG, p.x, p.y])
 
-test('우클릭 메뉴 단축키 · Ctrl+Alt+G = 프레임으로 감싸기 · 빈 곳 우클릭(붙일 것 없음) = 메뉴 없음', async ({ page }) => {
+test('우클릭 메뉴 단축키 · Alt+G = 프레임으로 감싸기 · 빈 곳 우클릭(붙일 것 없음) = 메뉴 없음', async ({ page }) => {
   await openBoard(page, boardName('menu1025')); await setCam(page)
   await pickShape(page, '사각형'); await dragScene(page, { x: 100, y: 100 }, { x: 250, y: 200 }); await page.keyboard.press('Escape')
   const p = await toPage(page, 175, 150); await page.mouse.click(p.x, p.y, { button: 'right' })
   const names = await menuBtns(page)
   expect(names.find(n => n.startsWith('잘라내기'))).toContain('Ctrl+X')
-  expect(names.find(n => n.startsWith('프레임으로 감싸기'))).toContain('Ctrl+Alt+G')
+  expect(names.find(n => n.startsWith('프레임으로 감싸기'))).toContain('Alt+G'); expect(names.find(n => n.startsWith('프레임으로 감싸기'))).not.toContain('Ctrl')
   expect(names.find(n => n.startsWith('내보내기'))).toContain('Ctrl+P')
   await page.keyboard.press('Escape')
-  await page.keyboard.press('Control+Alt+g')
+  await page.keyboard.press('Alt+g')
   await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'frame').length).toBe(1)
   await page.keyboard.press('Escape')
   const q = await toPage(page, 700, 500); await page.mouse.click(q.x, q.y, { button: 'right' })

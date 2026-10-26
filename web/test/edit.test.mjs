@@ -210,6 +210,17 @@ test('프레임 안의 것 같이 움직임', async () => {
   assert.deepEqual(boardContents(items.map(it => (it._id === 'f' ? { ...it, magnet: false } : it)), ['f'], tb), [])
 })
 
+// 겹친 프레임(2026-10-26 실검증): 가운데가 두 틀 안이면 더 작은(안쪽) 틀 것 — 큰 틀을 끌어도 이웃 프레임 물건은 남음
+test('겹친 프레임 — 물건은 더 작은 틀 것', async () => {
+  const { boardContents } = await import('../src/next/edit.js')
+  const tb = it => ({ w: 10, h: 10 }), R = (id, x, y) => ({ _id: id, type: 'rect', pos: [x, y], rect: [0, 0, 20, 20] })
+  const items = [{ _id: 'A', type: 'frame', pos: [0, 0], rect: [0, 0, 400, 300] }, { _id: 'B', type: 'frame', pos: [300, 0], rect: [0, 0, 300, 300] },
+    R('a', 50, 50), R('ab', 340, 50), R('b', 500, 50)]   // ab = 겹친 자리(가운데 350,60 — A·B 둘 다 안, B가 더 작음)
+  assert.deepEqual(boardContents(items, ['A'], tb).sort(), ['a'])
+  assert.deepEqual(boardContents(items, ['B'], tb).sort(), ['ab', 'b'])
+  assert.deepEqual(boardContents(items, ['A', 'B'], tb).sort(), ['a', 'ab', 'b'])
+})
+
 // 프레임 순서(2026-10-18): no 오름차순·같으면 문서 순서, 번호 없는 건 끝 — 다시 매기면 1..n(겹침 없음)
 test('프레임 순서', async () => {
   const { orderedFrames, setFrameOrder } = await import('../src/next/edit.js')

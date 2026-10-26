@@ -361,7 +361,8 @@ function App() {
   useEffect(() => { if (!server) return   // 접속자 — 5초마다 이름 신호
     // 1초마다 — 내가 고른·고치는 도형도 같이(2026-10-19 사용자: 누가 어디를 고치는지). 바뀐 게 없어도 보냄(15초 안 오면 나간 것으로)
     const ping = () => api.presence(sync.current.id, me || '이름 없음', ed.current?.getSel?.() || [], ed.current?.editingId?.() || '').then(p => { if (!p) return; setPeople(p.people || []); setOthers(o => (JSON.stringify(o) === JSON.stringify(p.others || []) ? o : p.others || [])) })
-    ping(); const t = setInterval(ping, 1000); return () => clearInterval(t) }, [server, me])
+    const bye = () => api.leave(sync.current.id)   // 창을 닫으면 바로 빠짐(2026-10-26 실검증 — 전엔 15초 신호 끊김을 기다려 20초쯤 남았음)
+    ping(); const t = setInterval(ping, 1000); window.addEventListener('pagehide', bye); return () => { clearInterval(t); window.removeEventListener('pagehide', bye) } }, [server, me])
 
   // 시험·자체확인용 손잡이(Playwright)
   useEffect(() => { window.__mb = { setCam, getCam: () => cam, open: async u => open(parseDoc(await (await fetch(u)).text()), u), model, toEcad: () => toEcad(model), get ed() { return ed.current }, setTool,

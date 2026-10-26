@@ -35,9 +35,9 @@ export const KEY_TABLE = [
   ] },
   { when: '고른 것이 있을 때(공통)', rows: [
     ['Ctrl+C / Ctrl+X / Ctrl+D', '복사 / 잘라내기 / 복제(오른쪽 아래로)'],
-    ['Ctrl+Alt+C / Ctrl+Alt+V', '스타일 복사 / 붙여넣기'],
+    ['Alt+C / Alt+V', '스타일 복사 / 붙여넣기'],
     ['Ctrl+G / Ctrl+Shift+G', '묶기 / 풀기'],
-    ['Ctrl+Alt+G', '프레임으로 감싸기'],
+    ['Alt+G', '프레임으로 감싸기'],
     ['Ctrl+L', '잠그기 · 풀기 — 잠긴 것도 눌러 골라지고(끌어 고르기엔 빠짐) 옮기기·지우기·고치기만 막힘'],
     ['Ctrl+] / Ctrl+[', '맨 앞으로 / 맨 뒤로'],
   ] },

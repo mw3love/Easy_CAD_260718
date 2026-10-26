@@ -130,12 +130,21 @@ export function expandGroups(items, ids) {
 // 보드 안에 든 것(가운데가 보드 안) — 보드를 옮기거나 지우면 같이(데스크톱 `_board_delete_scope`·끌 때)
 export function boardContents(items, boardIds, textBox) {
   // 담는 틀 = AI 보드 + 프레임(「안의 것 같이 움직임」 켠 것 — 기본 켬, 2026-10-18 사용자: Lucid Magnetize). 가운데가 틀 안이면 안의 것
-  const boxes = items.filter(it => boardIds.includes(it._id) && (it.type === 'board' || (it.type === 'frame' && it.magnet !== false))).map(it => ({ r: sceneBox(it, textBox), board: it.type === 'board' }))
+  const boxes = items.filter(it => boardIds.includes(it._id) && (it.type === 'board' || (it.type === 'frame' && it.magnet !== false))).map(it => ({ id: it._id, r: sceneBox(it, textBox), board: it.type === 'board' }))
   if (!boxes.length) return []
-  return items.filter(it => !boardIds.includes(it._id) && !it.locked).filter(it => {
+  const picked = items.filter(it => !boardIds.includes(it._id) && !it.locked).filter(it => {
     const s = sceneBox(it, textBox), cx = s.x + s.w / 2, cy = s.y + s.h / 2
     if (it.type === 'frame') return boxes.some(({ r }) => s.x >= r.x && s.y >= r.y && s.x + s.w <= r.x + r.w && s.y + s.h <= r.y + r.h)   // 프레임 안 프레임은 통째로 들어 있을 때만(겹친 이웃 프레임까지 딸려 오지 않게)
     return boxes.some(({ r, board }) => !(board && it.type === 'board') && cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h)   // 보드 안 보드는 따로(전과 같음), 프레임 안 보드는 같이
+  })
+  // 겹친 틀(2026-10-26 실검증 — 큰 프레임을 끌면 겹친 이웃 프레임의 물건까지 딸려 옴): 물건의 주인 = 가운데를 담은 틀 중 가장 작은 것, 주인이 같이 움직일 때만
+  const holders = items.filter(it => it.type === 'board' || it.type === 'frame').map(it => ({ id: it._id, r: sceneBox(it, textBox) }))
+  const going = new Set([...boxes.map(b => b.id), ...picked.map(it => it._id)])
+  return picked.filter(it => {
+    if (it.type === 'frame') return true
+    const s = sceneBox(it, textBox), cx = s.x + s.w / 2, cy = s.y + s.h / 2
+    const own = holders.filter(h => h.id !== it._id && cx >= h.r.x && cx <= h.r.x + h.r.w && cy >= h.r.y && cy <= h.r.y + h.r.h).sort((a, b) => a.r.w * a.r.h - b.r.w * b.r.h)[0]
+    return !own || going.has(own.id)
   }).map(it => it._id)
 }
 

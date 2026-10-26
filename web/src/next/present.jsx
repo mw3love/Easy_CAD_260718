@@ -67,7 +67,10 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   // 레이저 포인터(2026-10-18 사용자) — ` · L로 켜고 끔(휠 클릭은 편집 화면처럼 화면 이동)
   const [mpos, setMpos] = useState(null), mouse = useRef({ x: -99, y: -99 })
   const [laserOn, setLaserOn] = useState(false)   // 레이저 = 도구와 따로 켜는 커서 — 켠 채로 펜·네모 등도 씀(2026-10-18 사용자)
-  const laserShown = laserOn, laserRef = useRef(false); laserRef.current = laserShown
+  const laserShown = laserOn && !tool, laserRef = useRef(false); laserRef.current = laserShown   // 도구를 켜면 그 도구 커서, 끄면 다시 레이저(2026-10-26 실검증 — 판서하는데 커서가 계속 빨간 점이라 불편)
+  // 레이저로 누른 채 끌기 = 빨간 자취(0.6초 뒤 사라짐) — 전엔 글 선택(파란 칠)이 잡히거나 깜빡였음(2026-10-26 실검증)
+  const [trail, setTrail] = useState([]), trailOn = useRef(false), TRAIL_MS = 600
+  useEffect(() => { if (!trail.length) return; const t = setTimeout(() => setTrail(tr => tr.filter(q => Date.now() - q.t < TRAIL_MS)), 40); return () => clearTimeout(t) }, [trail])
   // 막대 = 화면 아래 근처(100px)에서만(2026-10-18 사용자 — 판서할 때 그림을 안 가리게), 시작 때 3초 보여 줌
   const [nearBottom, setNearBottom] = useState(false), [intro, setIntro] = useState(true)   // intro = 시작 3초는 마우스가 어디 있든 보여 줌
   useEffect(() => { const t = setTimeout(() => setIntro(false), 3000); return () => clearTimeout(t) }, [])
@@ -184,6 +187,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       }
       if (id) { setWebOn(id); if (yt) playYoutube(fr) } else { if (g) window.open(g.getAttribute('data-web-url'), '_blank', 'noopener'); setWebOn(null) }
     }
+    if (!tool && laserRef.current && e.button === 0) { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); trailOn.current = true; setTrail([{ x: e.clientX, y: e.clientY, t: Date.now() }]); return }   // preventDefault = 글 선택 안 잡힘
     if (!tool) return   // 클릭으로 장을 넘기지 않음(2026-10-18 사용자: 글 선택을 풀거나 판서를 보다가 넘어감) — 끌면 글 선택(기본 동작)
     if (e.button !== 0) return
     const p = { x: e.clientX, y: e.clientY }
@@ -194,12 +198,13 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
   const move = e => { const pn = pan.current
     if (pn) { const dx = e.clientX - pn.x, dy = e.clientY - pn.y; if (!pn.moved && Math.hypot(dx, dy) < 4) return; pn.moved = true
       setZoom({ s: pn.z0?.s || 1, ox: (pn.z0?.ox || 0) + dx, oy: (pn.z0?.oy || 0) + dy }); return }
-    wake(); mouse.current = { x: e.clientX, y: e.clientY }; if (laserRef.current) setMpos({ ...mouse.current }); const nb = e.clientY >= window.innerHeight - 100; if (nb !== nearBottom) setNearBottom(nb); if (!draft) return; const p = { x: e.clientX, y: e.clientY }
+    wake(); mouse.current = { x: e.clientX, y: e.clientY }; if (laserRef.current) setMpos({ ...mouse.current }); if (trailOn.current) setTrail(tr => [...tr, { x: e.clientX, y: e.clientY, t: Date.now() }]); const nb = e.clientY >= window.innerHeight - 100; if (nb !== nearBottom) setNearBottom(nb); if (!draft) return; const p = { x: e.clientX, y: e.clientY }
     if (draft.tool === 'erase') { const q = draft.pts.at(-1), dd = Math.hypot(p.x - q.x, p.y - q.y), steps = Math.max(1, Math.ceil(dd / 6))   // 빠르게 그어도 사이를 빠뜨리지 않게
       for (let j = 1; j <= steps; j++) { const s = toScene(q.x + (p.x - q.x) * j / steps, q.y + (p.y - q.y) * j / steps); onErase(s, 8 / k, draft.key) }
       setDraft(d => ({ ...d, pts: [...d.pts, p] })); return }
     setDraft(d => ({ ...d, b: d.tool === 'arrow' && e.shiftKey ? snap45(d.a, p) : p, pts: d.tool === 'pen' || d.tool === 'hl' ? (Math.hypot(p.x - d.pts.at(-1).x, p.y - d.pts.at(-1).y) >= 2 ? [...d.pts, p] : d.pts) : d.pts })) }
   const up = e => {
+    trailOn.current = false
     setTimeout(() => { const sl = getSelection(); if (sl?.isCollapsed) sl.removeAllRanges() }, 0)   // 글자 위 클릭이 남긴 빈 선택(깜빡이는 세로 막대)을 지움 — 끌어 고른 글은 그대로(2026-10-18 사용자)
     if ((e.button === 2 || e.button === 1) && pan.current) { const pn = pan.current; pan.current = null; if (!pn.moved && e.button === 2) setMenu({ x: e.clientX, y: e.clientY }); return }   // 휠 클릭은 이동만(메뉴 없음)
     const d = draft; setDraft(null); if (!d || d.tool === 'erase') return
@@ -257,6 +262,8 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       style={{ all: 'unset', cursor: 'pointer', position: 'absolute', right: 16, top: 16, padding: '6px 12px', borderRadius: 16, background: 'rgba(24,24,27,.86)', color: '#fff', font: "600 12px 'Pretendard', sans-serif", boxShadow: '0 2px 10px rgba(0,0,0,.4)' }}>
       {Math.round(zoom.s * 100)}% · 원래대로</button>}
     {toast && <div style={{ position: 'absolute', left: '50%', top: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8, background: 'rgba(24,24,27,.9)', color: '#fff', font: "500 13px 'Pretendard', sans-serif", pointerEvents: 'none' }}>{toast}</div>}
+    {trail.length > 1 && <svg data-testid="laser-trail" width={W} height={H} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>{trail.slice(1).map((q, j) => { const a = trail[j], f = Math.max(0, 1 - (Date.now() - q.t) / TRAIL_MS)
+      return <line key={q.t + ':' + j} x1={a.x} y1={a.y} x2={q.x} y2={q.y} stroke="#ff2a2a" strokeWidth={3 + 5 * f} strokeLinecap="round" opacity={f} style={{ filter: 'drop-shadow(0 0 4px rgba(255,40,40,.8))' }} /> })}</svg>}
     {laserShown && mpos && <div data-testid="laser" style={{ position: 'absolute', left: mpos.x - 7, top: mpos.y - 7, width: 14, height: 14, borderRadius: 7, background: '#ff2a2a', boxShadow: '0 0 10px 4px rgba(255,40,40,.6)', pointerEvents: 'none' }} />}
     {textAt && <input autoFocus placeholder="글 쓰고 Enter" onPointerDown={e => e.stopPropagation()} onKeyDown={e => { if (e.key === 'Enter') commitText(e.currentTarget.value); if (e.key === 'Escape') setTextAt(null) }} onBlur={e => commitText(e.currentTarget.value)}
       style={{ ...(b => ({ left: b.x, top: b.y, height: b.h, padding: b.pad, fontSize: b.F }))(textBoxAt(textAt)), position: 'absolute', minWidth: 160, boxSizing: 'border-box', fontFamily: APP_FONT, fontWeight: 400, lineHeight: METRICS.app.lineSpacing, color: penColor, background: 'rgba(0,0,0,.12)', border: 'none', outline: `1.5px dashed ${penColor}`, borderRadius: 2 }} />}
@@ -278,7 +285,7 @@ export function Presenter({ frames, order, onBoard, routes, start = 0, dark: dar
       {TOOLS.map(([id, icon, name, key]) => <button key={id} title={`${name} (${key}) — 다시 누르면 끄기(끄면 클릭 = 다음 장)${id === 'arrow' ? ' · Shift = 45° · X = 방금 그린 화살표 뒤집기' : id === 'erase' ? ' · 판서만, 스치면 지움' : ''} · Ctrl+Z 되돌리기`}
         onClick={() => setTool(t => (t === id ? null : id))} style={tbtn(tool === id)}>{icon}<span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>{name}</span></button>)}
       {sep}
-      <button title="레이저 (` · L) — 켜 두면 커서가 빨간 점, 펜·네모 등과 같이 써요" onClick={() => setLaserOn(v => !v)} style={tbtn(laserOn)}>
+      <button title="레이저 (` · L) — 켜 두면 커서가 빨간 점, 누른 채 끌면 빨간 자취 · 펜·네모 등을 켜면 그 도구 커서, 끄면 다시 레이저" onClick={() => setLaserOn(v => !v)} style={tbtn(laserOn)}>
         {I(<><circle cx="9" cy="9" r="2.6" fill="currentColor" /><circle cx="9" cy="9" r="6" opacity=".5" /></>)}<span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>레이저</span></button>
       {sep}
       {COLORS.map(([c, name, code]) => { const cur = tool === 'hl' ? hlColor : penColor

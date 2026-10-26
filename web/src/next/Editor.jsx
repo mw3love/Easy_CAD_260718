@@ -1558,14 +1558,14 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       const LOCK_MSG = '잠긴 도형이에요 — 옮기기·지우기·고치기는 막혀 있어요(풀기 Ctrl+L)'
       if (ids.length && ids.every(id => m.items.find(x => x._id === id)?.locked) && ['Delete', 'Backspace', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(k)) return act(() => setStatus(LOCK_MSG))   // 잠긴 것만 고름 = 말로만 알림
       if (k === 'Delete' || k === 'Backspace') return act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))
-      // 스타일 복사·붙여넣기(데스크톱 Ctrl+Alt+C/V) — 일반 복사보다 먼저. 글쇠 이름은 한글 입력·Alt에 따라 바뀌어 자리(code)로 봄
-      if (mod && e.altKey && e.code === 'KeyC') return act(styleCopy)
-      if (mod && e.altKey && e.code === 'KeyV') return act(stylePaste)
+      // 스타일 복사·붙여넣기 = Alt+C/V(2026-10-26 실검증 — Ctrl+Alt+C는 윈도 Copilot이 먼저 가로챔, 왼손 하나로. 옛 Ctrl+Alt도 그대로 받음) — 일반 복사보다 먼저. 글쇠 이름은 한글 입력·Alt에 따라 바뀌어 자리(code)로 봄
+      if (e.altKey && !e.shiftKey && e.code === 'KeyC') return act(styleCopy)
+      if (e.altKey && !e.shiftKey && e.code === 'KeyV') return act(stylePaste)
       if (mod && k.toLowerCase() === 'c' && pdfSelectedText()) return   // PDF 안 끌어 고른 글 = 브라우저 복사
       if (mod && k.toLowerCase() === 'c') return act(copy)
       if (mod && k.toLowerCase() === 'x') return act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })
       if (mod && k.toLowerCase() === 'd') return act(dupSel)
-      if (mod && e.altKey && e.code === 'KeyG') return act(wrapFrame)   // 프레임으로 감싸기(Figma와 같은 글쇠, 2026-10-25) — Alt+G는 한글 입력·Alt에 따라 이름이 바뀌어 자리로
+      if (e.altKey && !e.shiftKey && e.code === 'KeyG') return act(wrapFrame)   // 프레임으로 감싸기 = Alt+G(2026-10-26 실검증 — Ctrl+Alt+G는 다른 프로그램 단축키와 겹침, 옛 글쇠도 받음) — 한글 입력·Alt에 따라 이름이 바뀌어 자리로
       if (mod && k.toLowerCase() === 'g') return act(() => commit(e.shiftKey ? ungroupItems(m.items, ids) : groupItems(m.items, ids), ids, e.shiftKey ? '묶음 풂' : '묶음'))
       if (mod && k.toLowerCase() === 'l') return act(() => commit(toggleLock(m.items, ids), ids, '잠금'))
       if (mod && (k === ']' || k === '[')) return act(() => commit(zOrder(m.items, ids, k === ']'), ids, k === ']' ? '맨 앞으로' : '맨 뒤로'))
@@ -1598,7 +1598,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   }
   function stylePaste() {
     const m = R.current.model, ids = R.current.sel, sc = styleClip.current
-    if (!sc) return setStatus('붙여넣을 스타일이 없어요 — 먼저 Ctrl+Alt+C')
+    if (!sc) return setStatus('붙여넣을 스타일이 없어요 — 먼저 Alt+C')
     const set = new Set(ids); commit(m.items.map(it => { const p = set.has(it._id) && styleFor(it, sc); return p ? { ...it, ...p } : it }), ids, '스타일 붙여넣기')
     setStatus(`스타일 붙여넣기 — ${ids.length}개`)
   }
@@ -2359,7 +2359,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         if (has) out.push(['복사', 'Ctrl+C', act(copy)], ['잘라내기', 'Ctrl+X', act(() => { copy(); commit(removeItems(m.items, movingSet(ids)), [], '잘라냄') })],
           ['복제', 'Ctrl+D', act(dupSel)],
           ['삭제', 'Del', act(() => commit(removeItems(m.items, movingSet(ids)), [], '지움'))])
-        if (!card && (ids.length === 1 || styleClip.current)) { out.push('-'); if (ids.length === 1) out.push(['스타일 복사', 'Ctrl+Alt+C', act(styleCopy)]); if (has && styleClip.current) out.push(['스타일 붙여넣기', 'Ctrl+Alt+V', act(stylePaste)]) }
+        if (!card && (ids.length === 1 || styleClip.current)) { out.push('-'); if (ids.length === 1) out.push(['스타일 복사', 'Alt+C', act(styleCopy)]); if (has && styleClip.current) out.push(['스타일 붙여넣기', 'Alt+V', act(stylePaste)]) }
         if (menu.cell && selIt.length === 1 && selIt[0].type === 'table') {   // 표 칸 — 행·열 넣기·지우기
           const t = selIt[0], { r, c } = menu.cell, op = (o, label) => act(() => commit(m.items.map(x => (x._id === t._id ? tableOp(t, o, r, c) : x)), ids, label))
           out.push('-', ['행 · 열', '', null, [['위에 행 넣기', op('rowAbove', '행 넣기')], ['아래에 행 넣기', op('rowBelow', '행 넣기')], ['왼쪽에 열 넣기', op('colLeft', '열 넣기')], ['오른쪽에 열 넣기', op('colRight', '열 넣기')], '-',
@@ -2376,7 +2376,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           if (ids.length >= 2) out.push(['그룹', 'Ctrl+G', act(() => commit(groupItems(m.items, ids), ids, '묶음'))])
           if (selIt.some(it => it.group_id)) out.push(['그룹 해제', 'Ctrl+Shift+G', act(() => commit(ungroupItems(m.items, ids), ids, '묶음 풂'))])
           out.push(['레이어로 이동', '', null, layersOf(m).map(l => [l.name, act(() => moveSelToLayer(l.id))])])
-          if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', 'Ctrl+Alt+G', act(wrapFrame)])
+          if (selIt.some(it => it.type !== 'titleblock' && it.type !== 'frame')) out.push('-', ['프레임으로 감싸기', 'Alt+G', act(wrapFrame)])
           out.push('-', ['내보내기…', 'Ctrl+P', act(() => onExportSel?.())])
           if (onAsk) out.push(['정리 문서 만들기 (KAIROS)', '', act(() => onAsk('고른 것을 정리한 문서 한 장으로 만들어 줘', 'report'))])   // 「정리해 줘」 ① — 고른 것이 재료
         }

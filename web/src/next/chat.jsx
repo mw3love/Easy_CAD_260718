@@ -581,12 +581,12 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
               </div>}
               {m.html && m.kind === 'live' && <LivePreview m={m} />}
               {m.html && m.kind !== 'live' && <div data-testid="answer-doc" style={{ marginTop: 6 }}>   {/* 정리 문서 미리보기 — A4 폭 794px를 대화창 폭에 맞춰 줄임(스크립트 없는 iframe) */}
-                <div style={{ height: 300, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', cursor: 'zoom-in' }} title="크게 보기·인쇄" onClick={() => openHtml(m.html)}>
+                <div style={{ height: 300, overflow: 'hidden', border: `1px solid ${C.line}`, borderRadius: 8, background: '#fff', cursor: 'zoom-in' }} title="누르면 크게 보기 · 인쇄" onClick={() => openHtml(m.html)}>
                   <iframe srcDoc={m.html} title={m.title || '정리 문서'} sandbox="" scrolling="no" style={{ border: 0, width: 794, height: 300 / 0.41, transform: 'scale(0.41)', transformOrigin: '0 0', pointerEvents: 'none' }} />
                 </div>
-                <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}><button style={css.ghost} onClick={() => openHtml(m.html)}>크게 보기 · 인쇄</button>
+                <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>   {/* 「크게 보기 · 인쇄」 단추는 뺌 — 미리보기 누르기와 같았음(2026-10-26 실검증) */}
                   <button style={css.ghost} disabled={!!busy} onClick={() => drawReport(i)} title="같은 자료로 인포그래픽 그림 후보 2장 — 보기 좋지만 숫자·날짜를 지어낼 수 있으니 확인하고 쓰세요(약 20크레딧)">🎨 그림으로도</button>
-                  <span style={{ ...css.meta, alignSelf: 'center' }}>고칠 점을 이어서 말하면 이 문서를 고쳐 써요</span></div>
+                  <span style={{ ...css.meta, alignSelf: 'center' }}>미리보기를 누르면 크게 보기·인쇄 · 고칠 점을 이어서 말하면 이 문서를 고쳐 써요</span></div>
               </div>}
               {m.images?.length > 0 && <div data-testid="answer-images" style={{ marginTop: 6, display: 'grid', gridTemplateColumns: `repeat(${Math.min(2, m.images.length)}, 1fr)`, gap: 6, alignItems: 'start' }}>   {/* 원래 비율(2026-10-20 사용자: 4:3으로 채우니 잘림) — 세로로 긴 그림은 320px까지 */}
                 {/* 사진 누르기 = 크게 보기, 왼쪽 위 「＋ 칠판에 추가」, 추가한 적 있으면 테두리만 초록, 사진·버튼 어디서든 끌면 칠판이 직접 끔(실제 크기 + 정렬선) */}
@@ -636,7 +636,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
                 <span data-testid="answer-model" style={{ ...css.meta, marginLeft: 'auto' }} title={m.swap ? `원래 모델 ${m.swap.from}이 KAIROS에서 ${m.swap.why === '은퇴' ? '은퇴해서' : '없어져서'} ${m.swap.to}로 했어요` : undefined}>{m.model}{m.swap ? ' (대신)' : ''}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</span>
               </div>}
             </div>)}
-        {busy && <div data-testid="chat-busy" style={{ ...css.ai, color: C.muted }}><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Spinner />{busyLine}<button data-testid="chat-stop" style={{ ...css.ghost, marginLeft: 'auto' }} title="이 답 기다리기를 그만둬요(서버에서 이미 시작한 일은 끝까지 가서 크레딧이 들 수 있어요)" onClick={() => stopRef.current?.abort()}>취소</button></div><ChatSkeleton kind={busyJob} /></div>}
+        {busy && <div data-testid="chat-busy" style={{ ...css.ai, color: C.muted }}><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Spinner />{busyLine}<button data-testid="chat-stop" style={{ ...css.ghost, marginLeft: 'auto', flex: 'none', whiteSpace: 'nowrap' }} title="이 답 기다리기를 그만둬요(서버에서 이미 시작한 일은 끝까지 가서 크레딧이 들 수 있어요)" onClick={() => stopRef.current?.abort()}>취소</button></div><ChatSkeleton kind={busyJob} /></div>}
       </div>
       <div style={css.foot}>
         {replyTo != null && <span data-testid="reply-chip" style={{ ...css.chip, color: '#da7756', background: 'rgba(218,119,86,.14)', cursor: 'pointer' }} onClick={() => setReplyTo(null)} title="누르면 이어 묻기 취소">

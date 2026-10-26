@@ -78,7 +78,7 @@ export function Palette({ lib, tool, onDown, onClick, dark, docked }) {
     {q.trim() ? (() => { const hits = [...BASIC.filter(([, n]) => nameMatch(n, q)).map(([k]) => k), ...syms.filter(s => nameMatch(s.name, q)).map(s => 'customsym:' + s.id)]
       return hits.length ? <Section title="검색 결과" count={hits.length}>{hits.map(cellOf)}</Section> : <div style={{ fontSize: 12, color: C.muted }}>찾는 도형·심볼이 없어요</div> })() : <>
     {fav.length > 0 && <Section title={<><span style={{ color: C.on }}>★</span> 즐겨찾기</>} count={fav.length}>{fav.map(cellOf)}</Section>}
-    <Section title="□○△ 기본 도형" color={lib?.section_colors?.basic || BASIC_BLUE} count={BASIC.length}>{BASIC.map(([k]) => cellOf(k))}</Section>
+    <Section title="기본 도형" color={lib?.section_colors?.basic || BASIC_BLUE} count={BASIC.length}>{BASIC.map(([k]) => cellOf(k))}</Section>
     {folders.map(f => { const list = syms.filter(s => s.folder === f); return <Section key={f} title={f} color={lib?.folder_colors?.[f] || FOLDER_GRAY} count={list.length}>{list.map(s => cellOf('customsym:' + s.id))}</Section> })}
     </>}
     {!lib && <div style={{ fontSize: 11, color: C.muted }}>내 심볼은 저장 서버를 켜면 보여요</div>}

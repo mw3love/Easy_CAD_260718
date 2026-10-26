@@ -117,6 +117,10 @@ class Presence:
             del b[c]
         return sorted({v[0] for v in b.values()})
 
+    def leave(self, board: str, client: str) -> None:
+        """창을 닫음 = 바로 뺌(2026-10-26 실검증 — ttl만 기다리면 이름이 20초쯤 남았음)"""
+        self.boards.get(board, {}).pop(client, None)
+
     def others(self, board: str, client: str) -> list:
         """나를 뺀 접속자 [{ id, name, sel, edit }] — 화면에 그 사람 색 테두리·이름표"""
         return [{"id": c, "name": v[0], "sel": v[2], "edit": v[3]} for c, v in sorted(self.boards.get(board, {}).items()) if c != client]
