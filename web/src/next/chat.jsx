@@ -180,7 +180,7 @@ function NavBtn({ side, onClick, title, testid, children }) {
 }
 
 // ed = Editor 손잡이(selTexts·pinCard·showCard), selKey = 고른 것이 바뀔 때 다시 읽게(main이 넘김)
-export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, width = CHAT_W, setWidth }) {   // width·setWidth = 폭(왼쪽 경계 끌기 — main.jsx가 이 브라우저에 기억)   // onBusy(글) = 칠판 위 알약(정리 문서·딥모드 중에만, 끝나면 '')
+export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBusy, width = CHAT_W, setWidth }) {   // width·setWidth = 폭(왼쪽 경계 끌기 — main.jsx가 이 브라우저에 기억)   // onBusy(글) = 칠판 위 알약(정리 문서·딥모드 중에만, 끝나면 '')   // focus = { id, tool } — 빈 칠판 안내가 입력 칸으로(그 길 이름표까지, 2026-10-26)
   const [busyJob, setBusyJob] = useState('')   // 기다리는 일의 종류(모르면 '' = 서버가 짐작)   // request = { id, text, kind } — 칠판에서 시킨 질문(바뀔 때마다 한 번 보냄)   // floating = 좁은 창 — 칠판 위에 뜬 카드(2026-10-19)
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
@@ -472,6 +472,10 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
   useEffect(() => () => onBusy?.(''), [])   // eslint-disable-line react-hooks/exhaustive-deps
   const feat = models?.featured || {}
   const lastM = msgs.filter(m => m.role !== 'error').at(-1), tools = TOOLS.filter(t => (t[0] !== 'deep' && t[0] !== 'live') || models?.jobs?.[t[0]])   // 딥모드·움직이는 카드 = 서버가 할 수 있을 때만
+  const ta = useRef(null)
+  const focused = useRef(null)   // 대화창이 막 열리면 모델 목록(그 길을 할 수 있나)이 늦게 와서 — 목록이 온 뒤 한 번만
+  useEffect(() => { if (!focus || focused.current === focus.id || (focus.tool && !models)) return; focused.current = focus.id
+    if (focus.tool && tools.some(t => t[0] === focus.tool)) setPickTool(focus.tool); ta.current?.focus() }, [focus, models])   // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <aside style={{ ...(floating ? { ...css.panel, ...css.float } : css.panel), width }} aria-label="KAIROS 대화" onPointerDown={e => e.stopPropagation()}>
       {/* 폭 조절 — 왼쪽 경계 끌기(320~720, 화면 절반까지), 두 번 누르면 기본 폭(왼쪽 판 `dock-resize`와 같은 손맛) */}
@@ -619,7 +623,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, onBusy, widt
         {selN > 0 && (sel.length > 0 || selImgs.length > 0) && <span data-testid="sel-chip" style={css.chip} title={deepTg ? '고치는 말(더 자세히·바꿔 줘·표로…)이면 이 꼭지만 다시 써요 — 묻는 말이면 보통 대화' : undefined}>{selN}개 선택됨{deepTg ? ` · 꼭지 ${deepTg.titles.map(t => `「${t}」`).join(' ')}` : ''}</span>}{/* 2026-10-21 사용자: 글·그림 칩 둘 + 사용법 문장 → 한 칩(사용법은 설명 페이지로) */}
         {pickTool && <span data-testid="tool-chip" style={{ ...css.chip, color: '#da7756', background: 'rgba(218,119,86,.14)', cursor: 'pointer' }} onClick={() => setPickTool('')} title="누르면 이름표를 떼고 다시 앱이 길을 골라요">
           {TOOLS.find(t => t[0] === pickTool)?.[1]} ✕</span>}
-        <textarea style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder={TOOLS.find(t => t[0] === pickTool)?.[3] || (lastM?.kind === 'ask' ? '버튼을 누르거나, 원하는 걸 직접 적어 주세요'
+        <textarea ref={ta} style={css.input} rows={Math.min(8, Math.max(2, draft.split('\n').length))} value={draft} placeholder={TOOLS.find(t => t[0] === pickTool)?.[3] || (lastM?.kind === 'ask' ? '버튼을 누르거나, 원하는 걸 직접 적어 주세요'
             : lastM?.kind === 'deep' && lastM.step === 'ask' && !lastM.done ? '꼭 넣을 것·바라는 점(비워도 돼요) — Enter = 지면 계획 짜기'
             : lastM?.kind === 'deep' && lastM.step === 'plan' && !lastM.built && !lastM.stale ? '계획을 고칠 점을 말하면 다시 짜요 — 예: 그래프를 하나 더'
             : deepTg ? '이 꼭지를 고칠 점을 말하면 그 꼭지만 다시 써요 — 예: 더 자세히 · 표로 바꿔 줘' : '물어보세요 (Enter 보내기 · Shift+Enter 줄바꿈)')}
