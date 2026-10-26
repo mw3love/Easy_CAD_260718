@@ -1372,7 +1372,8 @@ class _UIBuildMixin:
         m = 4
         r = QRectF(m, m, px - 2 * m, px - 2 * m)
         if kind == "rect":
-            p.drawRect(r)
+            # [2026-10-26] 놓이는 크기(120×80, 3:2)와 같은 비율 — 웹 도형 카드와 같게.
+            p.drawRect(QRectF(r.left(), r.center().y() - r.width() / 3, r.width(), r.width() * 2 / 3))
         elif kind == "ellipse":
             p.drawEllipse(r)
         elif kind in ("port_rect", "port_circle"):
