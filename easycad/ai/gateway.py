@@ -254,7 +254,7 @@ def list_text_models(api_key: str, base_url: str = BASE_URL, timeout: float = 8.
 
 
 MODEL_VENDORS = ("gpt", "gemini", "claude")   # 모델 목록에 보이는 차례(§8 항목56 — 사용자 확정 2026-10-16)
-FALLBACK_DEFAULT_MODEL = "gpt-6.1-sol"         # 가격표를 아직 못 받았을 때의 기본(받으면 `default_model_id`가 정함)
+FALLBACK_DEFAULT_MODEL = "gpt-6.1-sol"         # 대화 기본 모델(재 보고 고른 것) — 새 버전·은퇴는 `default_model_id`가 따라감
 SUCCESSOR_PRICE_FLOOR = 0.5                    # 이름이 다른 후속 모델로 볼 가격 하한(옛 모델 출력 가격의 몇 배 초과) — `_is_successor`
 
 
@@ -355,17 +355,25 @@ def featured_models(info: list, per: int = 3) -> dict:
 
 
 def default_model_id(info: list) -> str:
-    """[§8 항목56] 기본 모델 = 위 거르기를 한 gpt 가운데 두 번째로 비싼 것(사용자 제안 2026-10-16 — 맨 위 최고가는 피하고 최신
-    주력. 2026-10-16 목록에선 gpt-6.1-sol, 베끼기 시험에서 품질·비용으로 뽑힌 모델과 같다). 목록이 없으면 `FALLBACK_DEFAULT_MODEL`."""
-    feat = featured_models(info)
-    gpt = feat.get("gpt") or []
-    if len(gpt) >= 2:
-        return gpt[1]["id"]
-    if gpt:
-        return gpt[0]["id"]
+    """[§8 항목56 → 2026-10-26] 기본 모델 = 재 보고 고른 `FALLBACK_DEFAULT_MODEL`(gpt-6.1-sol — 베끼기 시험에서 품질·비용으로 뽑힘)에서 시작,
+    은퇴·없어짐은 모델 대체(`model_pick.pick`)가 따라가고, 같은 계열 새 버전(값 1.5배 안 — gpt-7-sol 같은)이 나오면 그것.
+    그 계열이 목록에 없으면 회사별 거르기를 한 모델 가운데 자동 상한(`model_pick.AUTO_MAX`) 안에서 가장 비싼 것(gpt 먼저).
+    옛 규칙 「gpt 가운데 두 번째로 비싼 것」은 순위라 더 비싼 새 모델이 오면 기본이 gpt-6-astra($50)로 밀려 올라갔다(2026-10-26 검토).
+    목록이 없으면 `FALLBACK_DEFAULT_MODEL`."""
+    from easycad.ai import model_pick   # 늦게 — model_pick이 이 모듈을 부름
+    rows = [m for m in info if m.get("output") is not None]
+    base = model_pick.pick(FALLBACK_DEFAULT_MODEL)
+    have = next((m for m in rows if m["id"] == base), None)
+    cap = have["output"] * model_pick.PRICE_FACTOR if have else model_pick.AUTO_MAX
+    line = [m for m in rows if model_line(m["id"]) == model_line(base) and m["output"] <= cap
+            and m.get("created", 0) >= (have or {}).get("created", 0)]
+    if line:
+        return max(line, key=lambda m: (m.get("created", 0), m["id"]))["id"]
+    feat = featured_models(info, per=99)
     for v in MODEL_VENDORS:
-        if feat.get(v):
-            return feat[v][0]["id"]
+        ok = [m for m in feat.get(v) or [] if m["output"] <= model_pick.AUTO_MAX]
+        if ok:
+            return ok[0]["id"]   # 비싼 것부터 — 상한 안 주력
     return FALLBACK_DEFAULT_MODEL
 
 

@@ -134,6 +134,17 @@ def test_featured_models_hide_old_and_default_is_second_gpt():
     assert gw.price_text({"input": 0.75, "output": 3.75}) == "$0.75 / 3.75" and gw.price_text({"input": None}) == ""
 
 
+def test_default_does_not_climb_when_pricier_model_arrives():
+    """[2026-10-26] 옛 규칙(gpt 두 번째로 비싼 것)은 더 비싼 새 gpt가 오면 astra($50)가 기본이 됐다 — 이제 실측한 이름에서 시작."""
+    nova = [{"id": "gpt-7-nova", "input": 20.0, "output": 100.0, "created": 130}]
+    assert [m["id"] for m in gw.featured_models(_MODELS + nova)["gpt"]][:2] == ["gpt-7-nova", "gpt-6-astra"]
+    assert gw.default_model_id(_MODELS + nova) == "gpt-6.1-sol"
+    pricey7 = [{"id": "gpt-7-sol", "input": 6.0, "output": 30.0, "created": 120}]   # 같은 계열이어도 값이 1.5배를 넘으면 안 따라감
+    assert gw.default_model_id(_MODELS + pricey7) == "gpt-6.1-sol"
+    no_sol = [m for m in _MODELS if "-sol" not in m["id"]]   # 실측한 계열이 목록에서 사라짐 → 상한($25) 안 주력(gpt 먼저)
+    assert gw.default_model_id(no_sol) == "gpt-6-luna"   # astra $50·5.5 $30은 상한 밖
+
+
 
 def test_featured_models_new_version_does_not_hide_other_tier():
     """[2026-10-17 검토] 원래 아래 급이던 계열의 다음 버전은 값이 올라도(0.5~1배) 위 급을 지우지 않는다.
