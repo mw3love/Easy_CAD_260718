@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import re
 
-from easycad.ai import gateway as gw
+from easycad.ai import gateway as gw, model_pick
 
 IMAGE_MODEL = "gpt-image-2.5-flare"
 CANDIDATES = 2
@@ -86,15 +86,23 @@ def generate(api_key: str, prompt: str, *, n: int = CANDIDATES, model: str = IMA
     처음엔 image·images·reference_images로 보냈다가 게이트웨이가 모르는 필드라 조용히 버려 새 그림이 나왔음)."""
     import httpx
     http = http or httpx
-    body = {"model": model, "prompt": prompt, "number_of_images": n, "aspect_ratio": aspect}
+    use = model_pick.pick(model)   # 은퇴·없어진 그림 모델은 대신할 것으로(2026-10-26)
+    body = {"model": use, "prompt": prompt, "number_of_images": n, "aspect_ratio": aspect}
     if input_images:
         body["input_images"] = list(input_images)
     r = http.post(base_url + "/images/generate/", headers={"Authorization": f"Bearer {api_key}"}, json=body, timeout=300)
+    if r.status_code == 404 and "not found" in str(r.text).lower():   # 그림 모델이 없어짐 — 같은 종류에서 대신할 것으로 한 번 다시
+        alt = model_pick.fallback(use, "image", api_key, base_url, http=http)
+        if alt:
+            use = body["model"] = alt
+            r = http.post(base_url + "/images/generate/", headers={"Authorization": f"Bearer {api_key}"}, json=body, timeout=300)
     if r.status_code >= 400:
         raise RuntimeError(f"그림 만들기 실패 HTTP {r.status_code}: {r.text[:200]}")
     d = r.json()
     items = d.get("data") or d.get("images") or []
     if not items:
         raise RuntimeError(f"그림 응답이 비었어요: {str(d)[:200]}")
-    return {"images": [_bytes_of(it if isinstance(it, dict) else {"url": it}, http) for it in items], "model": model,
+    if isinstance(d.get("credits_charged"), (int, float)):
+        model_pick.note_cost(use, d["credits_charged"] / len(items))   # 이 모델이 없어지면 대신할 것의 값 상한으로
+    return {"images": [_bytes_of(it if isinstance(it, dict) else {"url": it}, http) for it in items], "model": model,   # 갈아탄 이름은 서버가 답에 씀(`model_pick.mark`)
             "credits": d.get("credits_charged")}

@@ -32,6 +32,20 @@ test('묻고 → 답 → 칠판에 붙이기 = 메모, 새로고침해도 메모
   await expect(page.getByRole('button', { name: '칠판에 붙임 ✓' })).toBeVisible()  // 붙인 표시도 남음
 })
 
+test('모델이 없어져 대신한 답 = 답 옆 「(대신)」 + 까닭, 전에 고른 모델이 목록에 없어도 「기본」으로 안 보임(2026-10-26 모델 대체)', async ({ page }) => {
+  const name = boardName('kairosswap')
+  await page.addInitScript(() => localStorage.setItem('magic-board-model', 'old-model'))
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: { gpt: [{ id: 'fake-model', price: '' }] } } }))
+  await page.route('**/api/chat', r => r.fulfill({ json: { content: ANSWER, model: 'sub-model', swap: { from: 'old-model', to: 'sub-model', why: '없어짐' }, elapsed: 0.1 } }))
+  await openBoard(page, name, { chat: true }); await setCam(page)
+  await expect(page.locator('select[title^="대화 답에 쓸 모델"] option').first()).toHaveText('old-model')
+  const box = page.getByPlaceholder('물어보세요', { exact: false })
+  await box.click(); await page.keyboard.type('안녕'); await page.keyboard.press('Enter')
+  const meta = page.getByTestId('answer-model').last()
+  await expect(meta).toContainText('sub-model (대신)')
+  await expect(meta).toHaveAttribute('title', /old-model.*없어져서.*sub-model/)
+})
+
 test('칠판에서 메모를 고른 채 물으면 그 글이 같이 감', async ({ page }) => {
   const seen = [], name = boardName('kairosctx')
   await fakeKairos(page, seen)

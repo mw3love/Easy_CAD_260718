@@ -216,7 +216,9 @@ def _client(api_key: str, base_url: str = BASE_URL, timeout: float = 600.0):
     cache_key = (api_key, norm_url, timeout)
     client = _client_cache.get(cache_key)
     if client is None:
-        client = OpenAI(api_key=api_key, base_url=norm_url, timeout=timeout, max_retries=0)
+        from easycad.ai import model_pick   # 늦게 — model_pick이 이 모듈을 부름
+        # [2026-10-26] 대화·임베딩은 모델 대체를 거침 — 정해 둔 모델이 은퇴·없어져도 대신할 것으로(`model_pick`)
+        client = model_pick.guarded(OpenAI(api_key=api_key, base_url=norm_url, timeout=timeout, max_retries=0), api_key, norm_url)
         _client_cache[cache_key] = client
     return client
 
@@ -269,6 +271,11 @@ def list_text_models_info(api_key: str, base_url: str = BASE_URL, timeout: float
 
     반환 [{"id", "input", "output", "created"}] — gpt·gemini·claude(§8 항목56에서 claude도 — 사용자 요청), 이미지·음성 전용과
     은퇴(legacy) 제외, 가격이 없는 모델은 input/output이 None. 출력 가격 오름차순(싼 것부터)."""
+    return text_models_from(models_raw(api_key, base_url, timeout))
+
+
+def models_raw(api_key: str, base_url: str = BASE_URL, timeout: float = 8.0) -> list:
+    """`/models` 목록 그대로(모든 종류 — `type`·`lifecycle`·`replacement`·`pricing`…). 받을 때마다 모델 대체(`model_pick`)가 기억한다(2026-10-26)."""
     import httpx
 
     url = _normalize_base_url(base_url) + "/models"
@@ -280,6 +287,13 @@ def list_text_models_info(api_key: str, base_url: str = BASE_URL, timeout: float
         raise RuntimeError(f"HTTP {e.response.status_code}") from e
     except httpx.HTTPError as e:
         raise RuntimeError(str(e)) from e
+    from easycad.ai import model_pick   # 늦게 — model_pick이 이 모듈을 부름
+    model_pick.remember(data)
+    return data
+
+
+def text_models_from(data: list) -> list:
+    """`models_raw` 목록 → `list_text_models_info`의 글 모델 + 가격 줄."""
     out = []
     for m in data:
         mid = str(m.get("id", ""))

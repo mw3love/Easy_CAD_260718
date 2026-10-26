@@ -36,7 +36,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from easycad.fileio.safe_write import write_via_temp  # noqa: E402  (Qt 안 씀)
-from easycad.ai import board_chat, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
+from easycad.ai import board_chat, board_find, board_icon, board_trace, deep_mode, board_image, board_ocr, board_report, kr_tools, live_card, meeting, model_pick, route, gateway as gw  # noqa: E402  (Qt 안 씀 — 키 찾기만 QSettings를 늦게 부른다)
 sys.path.insert(0, HERE)
 import collab  # noqa: E402  (공동작업 계산 — web/collab.py)
 import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
@@ -78,6 +78,7 @@ class Handler(SimpleHTTPRequestHandler):
         return os.path.join(self.data_dir, name + ext) if NAME_RE.match(name) else ""
 
     def _json(self, code: int, obj):
+        obj = model_pick.mark(obj)   # 답의 "model"이 은퇴·없어져 갈아탄 이름이면 실제로 부른 이름 + "swap"(대화창 「대신」, 2026-10-26)
         self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
     def _key(self) -> str:
@@ -211,7 +212,7 @@ class Handler(SimpleHTTPRequestHandler):
                                       context=ctx, kind=kind, board_refs=refs, base_url=gw.resolve_base_url())
         except ValueError as e:
             return self._json(400, {"error": str(e)})
-        except Exception as e:   # 게이트웨이 오류는 대화창에 그대로 보여 준다(조용히 다른 모델로 갈아타지 않음)
+        except Exception as e:   # 게이트웨이 오류는 대화창에 그대로 보여 준다(갈아타는 건 「모델 없음」일 때만, 답에 「대신」으로 — `model_pick`)
             return self._json(502, {"error": f"KAIROS 호출 실패: {e}"})
         sys.stderr.write("[대화] %s %.1f초\n" % (out["model"], out["elapsed"]))
         return self._json(200, out)
@@ -1005,6 +1006,8 @@ def main(argv=None):
     print(f"Magic Board 칠판: http://{'localhost' if a.host in ('0.0.0.0', '127.0.0.1') else a.host}:{a.port}  · 저장 폴더: {a.data}")
     print("편집: " + ("공용 비밀번호 필요" if Handler.password else "누구나(비밀번호 없음 — --password 또는 edit_password.txt로 정함)"))
     threading.Thread(target=_route_check_weekly, args=(a.data,), daemon=True).start()
+    if gw.resolve_api_key():   # 모델 목록을 먼저 받아 둠 — 은퇴한 모델을 첫 요청부터 대신할 것으로(`model_pick` ①, 2026-10-26)
+        threading.Thread(target=model_pick.load, args=(gw.resolve_api_key(), gw.resolve_base_url()), daemon=True).start()
     _Server((a.host, a.port), Handler).serve_forever()
 
 

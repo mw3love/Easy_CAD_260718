@@ -15,6 +15,8 @@ import math
 import os
 import re
 
+from easycad.ai import model_pick
+
 EMBED_MODEL = "qwen3.7-text-embedding"   # KAIROS 임베딩(위 비교, 1.0초·1024차원) — 바꾸면 모아 둔 뜻 숫자는 버리고 다시 만든다(_load_cache)
 MAX_TEXT = 2000        # 도형 하나 글 상한(자) — 긴 메모도 앞부분이면 뜻은 충분
 MIN_SCORE = 0.42       # 이보다 낮은 뜻 점수는 「관련 없음」(qwen 실측: 정답 최저 0.43, 오답은 대부분 0.40 아래)
@@ -72,19 +74,19 @@ def _cos(a, b) -> float:
     return sum(x * y for x, y in zip(a, b)) / (na * nb)
 
 
-def _load_cache(path: str) -> dict:
+def _load_cache(path: str, model: str = EMBED_MODEL) -> dict:
     try:
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
-        return d.get("vecs", {}) if d.get("model") == EMBED_MODEL else {}
+        return d.get("vecs", {}) if d.get("model") == model else {}
     except (OSError, ValueError):
         return {}
 
 
-def _save_cache(path: str, vecs: dict) -> None:
+def _save_cache(path: str, vecs: dict, model: str = EMBED_MODEL) -> None:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"model": EMBED_MODEL, "vecs": vecs}, f, separators=(",", ":"))
+        json.dump({"model": model, "vecs": vecs}, f, separators=(",", ":"))
     os.replace(tmp, path)
 
 
@@ -108,17 +110,22 @@ def find(client, doc: dict, query: str, *, k: int = 8, cache_path: str = "") -> 
     items = board_items(doc)
     if not query or not items:
         return []
-    cache = _load_cache(cache_path) if cache_path else {}
+    # 모아 둔 뜻 숫자는 실제로 부르는 임베딩 이름별 — 은퇴·없어져 다른 모델로 갈아타면 섞이지 않게 새로(2026-10-26 `model_pick`)
+    name = model_pick.pick(EMBED_MODEL)
+    cache = _load_cache(cache_path, name) if cache_path else {}
     keys = [_sha(it["text"]) for it in items]
-    missing = sorted({h for h in keys if h not in cache})
     by_sha = {h: it["text"] for h, it in zip(keys, items)}
+    missing = sorted({h for h in keys if h not in cache})
     vecs = embed(client, [by_sha[h] for h in missing] + [query])
+    if model_pick.pick(EMBED_MODEL) != name:   # 부르는 동안 없어져 갈아탐 — 앞 숫자와 섞이지 않게 모두 새 모델로
+        name, cache, missing = model_pick.pick(EMBED_MODEL), {}, sorted(set(keys))
+        vecs = embed(client, [by_sha[h] for h in missing] + [query])
     qv = vecs[-1]
     for h, v in zip(missing, vecs[:-1]):
         cache[h] = v
     if cache_path and missing:
         live = set(keys)   # 지워진 글의 숫자는 버림(파일이 끝없이 커지지 않게)
-        _save_cache(cache_path, {h: v for h, v in cache.items() if h in live})
+        _save_cache(cache_path, {h: v for h, v in cache.items() if h in live}, name)
     words = _words(query)
     sems = [_cos(qv, cache[h]) for h in keys]
     floor = max(MIN_SCORE, (max(sems) if sems else 0.0) - NEAR_TOP)

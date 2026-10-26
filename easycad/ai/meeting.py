@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 import time
 
-from easycad.ai import gateway as gw
+from easycad.ai import gateway as gw, model_pick
 
 STT_MODEL = "stt-async-v5"
 POLL_S = 2.0
@@ -42,7 +42,12 @@ def transcribe(api_key: str, data: bytes, filename: str, *, base_url: str = gw.B
     import httpx
     http = http or httpx
     h = {"Authorization": f"Bearer {api_key}"}
-    r = http.post(base_url + "/audio/transcriptions", headers=h, files={"file": (filename, data)}, data={"model": STT_MODEL, "language_hints": LANGUAGE_HINT}, timeout=300)
+    use = model_pick.pick(STT_MODEL)   # 은퇴·없어진 받아쓰기 모델은 대신할 것으로(2026-10-26)
+    r = http.post(base_url + "/audio/transcriptions", headers=h, files={"file": (filename, data)}, data={"model": use, "language_hints": LANGUAGE_HINT}, timeout=300)
+    if r.status_code == 404 and "not found" in str(r.text).lower():   # 같은 창구(soniox)의 다른 모델로 한 번 다시
+        alt = model_pick.fallback(use, "stt", api_key, base_url, http=http)
+        if alt:
+            r = http.post(base_url + "/audio/transcriptions", headers=h, files={"file": (filename, data)}, data={"model": alt, "language_hints": LANGUAGE_HINT}, timeout=300)
     if r.status_code >= 400:
         raise RuntimeError(f"받아쓰기 올리기 실패 HTTP {r.status_code}: {r.text[:200]}")
     first = r.json()
