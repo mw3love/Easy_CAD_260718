@@ -11,10 +11,12 @@ const RESULT = turns => ({ title: '송신소 점검 일정', summary: '점검 �
   turns, duration: 0, credits: null, model: 'fake-model' })
 
 async function fakeKairos(page) {
-  const k = { tokens: 0, configs: [], audio: [0], sockets: [], posts: [] }
-  await page.route('**/api/stt-token', r => { k.tokens++; return r.fulfill({ json: { url: `ws://127.0.0.1:5291/fake-stt?token=t${k.tokens}`, model: 'stt-rt-v5' } }) })
+  const k = { tokens: 0, configs: [], audio: [0], sockets: [], posts: [], down: false, mute: -1 }   // down = 인터넷 끊김(표를 못 받음), mute = 답을 멈춘 소켓 번호(조용히 죽은 연결)
+  await page.route('**/api/stt-token', r => { if (k.down) return r.abort('internetdisconnected'); k.tokens++; return r.fulfill({ json: { url: `ws://127.0.0.1:5291/fake-stt?token=t${k.tokens}`, model: 'stt-rt-v5' } }) })
   await page.routeWebSocket('**/fake-stt**', ws => {
     const n = k.sockets.length; k.sockets.push(ws); k.audio[n] = 0
+    const beat = setInterval(() => { if (k.mute !== n) try { ws.send(JSON.stringify({ tokens: [] })) } catch { clearInterval(beat) } }, 1000)   // 진짜 KAIROS처럼 말이 없어도 약 1초마다 빈 답(2026-10-26 실측)
+    ws.onClose(() => clearInterval(beat))
     ws.onMessage(m => {
       if (typeof m === 'string' && m.startsWith('{')) { k.configs.push(JSON.parse(m)); return }
       if (m === '') { ws.send(JSON.stringify({ tokens: [tok(' 마지막 말입니다.', '2', 9000, 9800)], finished: true })); return }
@@ -22,8 +24,12 @@ async function fakeKairos(page) {
     })
   })
   await page.route('**/api/meeting/**', async r => {
-    if (r.request().method() === 'POST') { k.posts.push({ url: r.request().url(), body: r.request().postDataJSON() }); return r.fulfill({ json: { job: 'abcdef123456' } }) }
-    const segs = k.posts.at(-1).body.segments
+    const q = r.request()
+    if (q.method() === 'POST') {   // 실시간 요약(/live, JSON) · 녹음 파일(그 밖 — 「녹음으로 정리」)
+      k.posts.push(q.url().endsWith('/live') ? { url: q.url(), body: q.postDataJSON() } : { url: q.url(), type: q.headers()['content-type'], name: decodeURIComponent(q.headers()['x-file-name'] || ''), size: q.postDataBuffer()?.length || 0 })
+      return r.fulfill({ json: { job: 'abcdef123456' } })
+    }
+    const last = k.posts.at(-1), segs = last.body ? last.body.segments : [{ speaker: 'Speaker 1', start_ms: 0, text: '녹음으로 받아쓴 말' }]
     await r.fulfill({ json: { status: 'done', msg: '끝', result: RESULT(segs.map(g => ({ speaker: g.speaker.replace('Speaker ', '화자 '), start_ms: g.start_ms, text: g.text }))) } })
   })
   return k
@@ -134,4 +140,90 @@ test('쉬지 않고 말해도 5초 안에 저장 · 요약이 안 되면 서버 
   expect(full.lines.map(l => l.t).join('\n')).toContain('화자 1: 쉬지 않는 말 0.')
   expect(doc.items.find(it => it.type === 'frame').name).toContain('회의(요약 없음)')
   await expect.poll(async () => (await page.request.get(`/api/meetdraft/${name}`)).text()).toBe('{}')     // 다 붙이면 서버 사본도 지움
+})
+
+// 마이크 지킴이(2026-10-26, 노션 데스크톱 회의 알약 참고) — 전엔 마이크가 빠지거나 무음이어도 「받아 적는 중」 시계만 흘렀음(실험으로 확인)
+const SOUND = () => {   // 마이크 대신 소리 크기를 시험이 정하는 가짜 장치 — window.__mbGain.gain.value = 0(무음) · 0.5(소리)
+  navigator.mediaDevices.getUserMedia = async () => {
+    const ac = new AudioContext(), osc = ac.createOscillator(), g = ac.createGain(), d = ac.createMediaStreamDestination()
+    g.gain.value = 0; osc.connect(g); g.connect(d); osc.start(); window.__mbGain = g; window.__mbStream = d.stream; return d.stream
+  }
+}
+
+test('소리가 10초째 안 들어오면 경고 → 다시 들리면 사라짐', async ({ page }) => {
+  const name = boardName('meetmute'), k = await fakeKairos(page)
+  await page.addInitScript(SOUND)
+  await openBoard(page, name); await setCam(page)
+  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await expect.poll(() => k.sockets.length).toBe(1)
+  const warn = page.getByTestId('meeting-live-warn')
+  await page.waitForTimeout(7000); await expect(warn).toBeHidden()                 // 10초 전엔 조용
+  await expect(warn).toContainText('소리가 10초째 안 들어와요', { timeout: 8000 })
+  await expect(page.getByTestId('meeting-live')).toHaveAttribute('data-state', 'listen')   // 경고만 — 받아 적기는 그대로
+  await page.evaluate(() => { window.__mbGain.gain.value = 0.5 })
+  await expect(warn).toBeHidden()
+})
+
+test('마이크가 끊기면(장치 빠짐) 알리고 받아 적던 회의로 남김', async ({ page }) => {
+  const name = boardName('meetgone'), k = await fakeKairos(page)
+  await page.addInitScript(SOUND)
+  await openBoard(page, name); await setCam(page)
+  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await expect.poll(() => k.sockets.length).toBe(1)
+  k.sockets[0].send(JSON.stringify({ tokens: [tok('끊기기 전 말', '1', 0, 900)] }))
+  const live = page.getByTestId('meeting-live')
+  await expect(live).toContainText('끊기기 전 말')
+  await page.evaluate(() => window.__mbStream.getAudioTracks()[0].dispatchEvent(new Event('ended')))   // 진짜 장치 빠짐은 브라우저가 이 신호를 냄
+  await expect(live).toHaveAttribute('data-state', 'saved', { timeout: 10_000 })
+  await expect(live).toContainText('마이크가 끊겼어요')
+  await expect(live).toContainText('끊기기 전 말')
+  await expect(page.getByTestId('meeting-live-end')).toHaveText('정리하기')
+})
+
+test('받아쓰기 답이 끊기면(조용히 죽은 연결) 8초 뒤 경고 → 15초면 새 연결로 → 경고 사라짐', async ({ page }) => {
+  const name = boardName('meetnet'), k = await fakeKairos(page)
+  await page.addInitScript(SOUND)
+  await openBoard(page, name); await setCam(page)
+  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await expect.poll(() => k.sockets.length).toBe(1)
+  await page.evaluate(() => { window.__mbGain.gain.value = 0.5 })                 // 소리는 들어옴 — 무음 경고와 헷갈리지 않게
+  k.mute = 0                                                                       // 첫 연결만 조용히 죽음
+  const warn = page.getByTestId('meeting-live-warn')
+  await expect(warn).toContainText('받아쓰기 응답이 끊겼어요', { timeout: 10_000 })
+  await expect.poll(() => k.sockets.length, { timeout: 10_000 }).toBe(2)
+  await expect(warn).toBeHidden({ timeout: 5000 })
+  await expect(page.getByTestId('meeting-live')).toHaveAttribute('data-state', 'listen')
+})
+
+test('인터넷이 끊기면 녹음은 계속 → 끝내기 = 글만으로 요약하지 않음 → 「녹음으로 정리」 = 녹음 파일로 회의록 · 「녹음 받기」', async ({ page }) => {
+  const name = boardName('meetoff'), k = await fakeKairos(page)
+  await page.addInitScript(SOUND)
+  await openBoard(page, name); await setCam(page)
+  await page.getByRole('button', { name: '회의', exact: true }).click()
+  await expect.poll(() => k.sockets.length).toBe(1)
+  await page.evaluate(() => { window.__mbGain.gain.value = 0.5 })
+  k.sockets[0].send(JSON.stringify({ tokens: [tok('끊기기 전 말', '1', 0, 900)] }))
+  const live = page.getByTestId('meeting-live')
+  await expect(live).toContainText('끊기기 전 말')
+  k.down = true; await k.sockets[0].close({ code: 1001, reason: 'network' })
+  await expect(live).toHaveAttribute('data-state', 'reconnect')
+  await expect(live).toContainText('녹음은 계속하는 중')
+  await expect(page.getByTestId('meeting-live-warn')).toContainText('받아쓰기 응답이 끊겼어요', { timeout: 6000 })   // 표를 못 받음 = 인터넷 경고
+  await page.waitForTimeout(3500)                                                  // 3초마다 다시 시도해도 끝나지 않음
+  await expect(live).toHaveAttribute('data-state', 'reconnect')
+  await page.getByTestId('meeting-live-end').click()
+  await expect(live).toHaveAttribute('data-state', 'saved', { timeout: 10_000 })
+  await expect(live).toContainText('인터넷이 끊긴 동안의 말은 녹음에만 있어요')
+  expect(k.posts).toHaveLength(0)                                                  // 빠진 구간이 있으니 글만으로 요약하지 않음
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.getByTestId('meeting-live-save-rec').click()])
+  expect(dl.suggestedFilename()).toMatch(/^회의 녹음 .+\.(m4a|webm)$/)
+  k.down = false
+  await page.getByTestId('meeting-live-rec').click()
+  await expect.poll(async () => (await liveDoc(page)).items.length, { timeout: 10_000 }).toBe(3)
+  expect(k.posts[0].url.split('?')[0]).toMatch(new RegExp(`/api/meeting/${name}$`))   // 실시간 요약(/live)이 아니라 녹음 파일 길
+  expect(k.posts[0].type).toMatch(/^audio\/(mp4|webm)/)
+  expect(k.posts[0].size).toBeGreaterThan(1000)
+  await expect(live).toBeHidden()
+  const full = (await liveDoc(page)).items.find(it => it.type === 'memo' && it.fold)
+  expect(full.lines.map(l => l.t).join('\n')).toContain('녹음으로 받아쓴 말')
 })

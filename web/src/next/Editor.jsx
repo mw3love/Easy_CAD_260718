@@ -1912,9 +1912,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
         const g = await fetch(`/api/meeting/${encodeURIComponent(DOC_NAME)}/${d.job}`, { cache: 'no-store' }), st = await g.json().catch(() => ({ status: 'error', error: `서버 응답 ${g.status}` }))
         if (st.status === 'run') { say(st.msg || '만드는 중…'); continue }
         if (st.status !== 'done') throw new Error(st.error || '회의록을 못 만들었어요')
-        done(); insertMeeting(st.result, at, file.name); return
+        done(); insertMeeting(st.result, at, file.name); return true
       }
-    } catch (err) { done(); setStatus(`회의록 실패 — ${err.message || err}`) }
+    } catch (err) { done(); setStatus(`회의록 실패 — ${err.message || err}`); return false }
   }
   // 회의록 놓기 = 「회의 날짜 · 제목」 프레임 안에 요약 메모(결정·할 일 체크·다음 회의) + 전문 메모(말한 사람·시간, 접힘 — 펼치기). 배치는 앱(AI는 내용만)
   function insertMeeting(res, at, fname = '') {
@@ -1945,7 +1945,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   // meet = { at, s(배율), t0, segs: [{speaker, text, start_ms, end_ms}], part(임시 글), state: 'start'|'listen'|'reconnect'|'stopping'|'saved', err }
   const MEET_KEY = `mb-meet:${DOC_NAME}`
   const [meet, setMeetS] = useState(() => { if (readOnly) return null; try { const d = JSON.parse(localStorage.getItem(MEET_KEY) || 'null'); return d?.segs?.length ? { ...d, part: '', state: 'saved' } : null } catch { return null } })
-  const meetRef = useRef(meet), meetStopFn = useRef(null)
+  const meetRef = useRef(meet), meetStopFn = useRef(null), meetRec = useRef(null)   // meetRec = PC에 같이 녹음한 것 { blob, gap } — 이 창에만(새로 열면 없음), 인터넷이 끊겨도 녹음은 남음(2026-10-26)
+  const GAP_MSG = '인터넷이 끊긴 동안의 말은 녹음에만 있어요 — 「녹음으로 정리」 = 녹음 전체로 회의록(인터넷이 돌아온 뒤) · 「녹음 받기」 = 파일로 보관'
   const setMeet = f => { const v = typeof f === 'function' ? f(meetRef.current) : f; meetRef.current = v; setMeetS(v) }
   useEffect(() => { onMeet?.(meet ? meet.state : '') }, [meet?.state])   // eslint-disable-line react-hooks/exhaustive-deps
   // 임시 저장 — 말이 쉬지 않아도 5초마다 이 브라우저에, 30초마다 서버에(`<칠판>.meet.json` — 브라우저·PC가 죽어도 남게, 2026-10-23 사용자: 30분 회의가 날아가는 게 최악).
@@ -1961,6 +1962,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     }
   }
   function meetForget() {   // 정리 끝·버리기 = 두 사본 다 지움
+    meetRec.current = null
     try { localStorage.removeItem(MEET_KEY) } catch { /* 그만 */ }
     meetSaved.current = { local: null, srv: null, srvAt: 0 }
     fetch(`/api/meetdraft/${encodeURIComponent(DOC_NAME)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {})
@@ -1982,6 +1984,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   const MEET_W = 2 * MEMO.W + 72, MEET_H = 300
   async function meetStart() {
     if (meetRef.current) return
+    meetRec.current = null
     const s = +(1 / R.current.cam.z).toPrecision(2), at = spotNear(MEET_W * s, MEET_H * s)
     setMeet({ at, s, t0: Date.now(), segs: [], part: '', state: 'start' })
     setStatus('🎙 회의 — 마이크를 켜는 중…')
@@ -1996,13 +1999,19 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
       return { ...m, segs }
     })
     try {
-      meetStopFn.current = await startMic({ headers: keyHeaders(), diarize: true, reconnect: true,
+      meetStopFn.current = await startMic({ headers: keyHeaders(), diarize: true, reconnect: true, record: true, onRecord: (blob, gap) => { meetRec.current = { blob, gap } },
         onTokens: (fins, nons) => { add(fins); const part = nons.map(t => t.text).join(''); setMeet(m => (m && m.part !== part ? { ...m, part } : m)) },
         onState: st => {
           const m = meetRef.current; if (!m) return
-          if (st === 'off') { meetStopFn.current = null; if (m.state === 'stopping') meetSummarize(); else setMeet({ ...m, part: '', state: 'saved' }); return }
+          if (st === 'off') {   // 받아쓰기가 빠진 구간이 있으면 글만으로 요약하지 않고 녹음으로 정리하게 둠
+            meetStopFn.current = null
+            if (m.state === 'stopping' && !meetRec.current?.gap) meetSummarize()
+            else { setMeet({ ...m, part: '', state: 'saved', ...(m.state === 'stopping' ? { err: GAP_MSG } : null) }); if (m.state === 'stopping') setStatus(GAP_MSG) }
+            return
+          }
           if (st !== 'stopping') { setMeet({ ...m, state: st }); if (st === 'listen' && m.state === 'start') setStatus('🎙 회의 받아 적는 중 — 끝나면 「끝내기」') }
         },
+        onWarn: w => { setMeet(m => (m && (m.warn || '') !== w ? { ...m, warn: w } : m)); if (w) setStatus(`회의 — ${w}`) },
         onError: msg => { setMeet(m => (m ? { ...m, err: msg } : m)); setStatus(`회의 — ${msg}`) } })
     } catch (err) { setMeet(null); setStatus(`회의를 시작 못 했어요 — ${err.message || err}`) }
   }
@@ -2011,6 +2020,19 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (m.state === 'saved') return meetSummarize()
     setMeet({ ...m, state: 'stopping', dur: Math.round((Date.now() - m.t0) / 1000) })
     if (meetStopFn.current) meetStopFn.current(); else meetSummarize()
+  }
+  async function meetFromRec() {   // 「녹음으로 정리」 — PC에 같이 녹음한 것을 파일 회의록 길로(받아쓰기가 빠진 구간까지). 실패하면 받아 적던 회의를 그대로 되돌림
+    const m = meetRef.current, r = meetRec.current; if (!m || !r) return
+    const d = new Date(), two = n => String(n).padStart(2, '0')
+    const file = new File([r.blob], `회의 녹음 ${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}${two(d.getMinutes())}.${r.blob.type.includes('mp4') ? 'm4a' : 'webm'}`, { type: r.blob.type })
+    setMeet(null)
+    if (await startMeeting(file, m.at)) meetForget(); else { meetRec.current = r; setMeet(m) }
+  }
+  function meetSaveRec() {   // 「녹음 받기」 — 파일로 보관(나중에 칠판에 끌어 놓으면 회의록)
+    const r = meetRec.current; if (!r) return
+    const a = document.createElement('a'), d = new Date(), two = n => String(n).padStart(2, '0')
+    a.href = URL.createObjectURL(r.blob); a.download = `회의 녹음 ${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}${two(d.getMinutes())}.${r.blob.type.includes('mp4') ? 'm4a' : 'webm'}`
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 10000)
   }
   function meetDiscard() {
     try { meetStopFn.current?.() } catch { /* 이미 닫힘 */ }
@@ -2237,7 +2259,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
           {pend.map(q => <BoardSkeleton key={'pend' + q.id} q={q} z={z} />)}   {/* 오래 걸리는 일 = 놓일 자리에 회색 틀(skeleton.jsx — 회의록·PDF·글 읽기·베끼기·Deep Mode) */}
           {meet && (() => { const s = meet.s, w = MEET_W * s, h = MEET_H * s, sec = Math.max(0, Math.floor((Date.now() - meet.t0) / 1000)), two = n => String(n).padStart(2, '0')   // 「🎙 회의」 받아 적는 중 — 점선 틀 안에 말한 사람별 글(마지막 줄이 보이게)
             const clk = ms => { const t = Math.floor((ms || 0) / 1000); return `${two(Math.floor(t / 60))}:${two(t % 60)}` }, saved = meet.state === 'saved', who = new Set(meet.segs.map(g => g.speaker)).size
-            const head = saved ? `🎙 받아 적던 회의 · ${meet.segs.length}구간` : meet.state === 'start' ? '🎙 마이크 켜는 중…' : meet.state === 'reconnect' ? '🎙 다시 붙는 중…(소리는 모아 두는 중)' : meet.state === 'stopping' ? '🎙 마지막 말 받는 중…' : `🎙 받아 적는 중 · ${two(Math.floor(sec / 60))}:${two(sec % 60)}${who ? ` · ${who}명` : ''}`
+            const head = saved ? `🎙 받아 적던 회의 · ${meet.segs.length}구간` : meet.state === 'start' ? '🎙 마이크 켜는 중…' : meet.state === 'reconnect' ? '🎙 다시 붙는 중…(녹음은 계속하는 중)' : meet.state === 'stopping' ? '🎙 마지막 말 받는 중…' : `🎙 받아 적는 중 · ${two(Math.floor(sec / 60))}:${two(sec % 60)}${who ? ` · ${who}명` : ''}`
             const stop = e => e.stopPropagation(), btn = { all: 'unset', cursor: 'pointer', padding: '2px 10px', borderRadius: 99, fontWeight: 600, fontSize: 12 }
             return <g data-testid="meeting-live" data-state={meet.state}><rect x={meet.at.x} y={meet.at.y} width={w} height={h} rx={10 * s} fill="rgba(218,119,86,.06)" stroke="#da7756" strokeWidth={1.5 / z} strokeDasharray={`${8 / z} ${5 / z}`} pointerEvents="none" />
               <foreignObject x={0} y={0} width={MEET_W} height={MEET_H} transform={`translate(${meet.at.x},${meet.at.y}) scale(${s})`}>
@@ -2245,11 +2267,14 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#da7756', fontWeight: 600 }}><span style={{ flex: 1 }}>{head}</span>
                     {(saved || meet.state === 'listen' || meet.state === 'reconnect') && <button data-testid="meeting-live-end" onPointerDown={stop} onClick={meetStop} style={{ ...btn, background: '#da7756', color: '#fff' }}>{saved ? '정리하기' : '끝내기'}</button>}
                     {saved && <button data-testid="meeting-live-raw" onPointerDown={stop} onClick={meetRaw} title="요약 없이 받아 적은 글만 칠판에" style={{ ...btn, color: '#da7756', border: '1px solid #da7756' }}>전문만</button>}
+                    {saved && meetRec.current && <button data-testid="meeting-live-rec" onPointerDown={stop} onClick={meetFromRec} title="PC에 같이 녹음한 것으로 처음부터 다시 받아써서 회의록 — 인터넷이 끊긴 동안의 말까지" style={{ ...btn, color: '#da7756', border: '1px solid #da7756' }}>녹음으로 정리</button>}
+                    {saved && meetRec.current && <button data-testid="meeting-live-save-rec" onPointerDown={stop} onClick={meetSaveRec} title="녹음을 파일로 받아 두기 — 나중에 칠판에 끌어 놓으면 회의록" style={{ ...btn, color: '#71717a' }}>녹음 받기</button>}
                     {saved && <button data-testid="meeting-live-drop" onPointerDown={stop} onClick={meetDiscard} style={{ ...btn, color: '#71717a' }}>버리기</button>}</div>
                   <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 4, lineHeight: 1.5 }}>
                     {meet.segs.slice(-12).map((g, i) => <div key={i}><span style={{ color: '#a1a1aa' }}>[{clk(g.start_ms)}] 화자 {g.speaker || '?'}: </span>{g.text}</div>)}
                     {meet.part && <div style={{ color: '#a1a1aa' }}>{meet.part}</div>}
                     {!meet.segs.length && !meet.part && <div style={{ color: '#a1a1aa' }}>{meet.state === 'listen' ? '말하면 여기에 받아 적어요 — 끝나면 「끝내기」 = 요약·결정·할 일로 정리' : ''}</div>}
+                    {meet.warn && !saved && <div data-testid="meeting-live-warn" style={{ color: '#b45309', fontWeight: 600 }}>🔇 {meet.warn}</div>}
                     {meet.err && <div style={{ color: '#dc2626' }}>{meet.err}</div>}</div></div></foreignObject></g> })()}
           {marks.filter(id => byId.has(id)).map(id => { const b = sceneBox(byId.get(id), textBox), pad = 6 / z   // 찾기 결과에 불 켜기(Ctrl+F — 2026-10-19)
             return <rect key={'find' + id} data-testid="find-mark" pointerEvents="none" x={b.x - pad} y={b.y - pad} width={b.w + 2 * pad} height={b.h + 2 * pad} rx={6 / z} fill="rgba(250,204,21,.12)" stroke="#f59e0b" strokeWidth={2.5 / z} strokeDasharray={`${6 / z} ${4 / z}`} /> })}

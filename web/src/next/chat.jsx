@@ -276,7 +276,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
     setMicErr(''); setMic('wait'); micBase.current = draft
     const join = t => { const b = micBase.current; return b && t && !/\s$/.test(b) ? `${b} ${t}` : b + t }
     try {
-      micStop.current = await startMic({ headers: keyHeaders(), onText: (fin, non) => setDraft(join(fin + non)), onState: setMic, onError: setMicErr })
+      micStop.current = await startMic({ headers: keyHeaders(), onText: (fin, non) => setDraft(join(fin + non)), onState: setMic, onError: setMicErr, onWarn: setMicErr })
     } catch (e) { setMic('off'); setMicErr(e.message || String(e)) }
   }
   useEffect(() => () => micStop.current?.(), [])
