@@ -233,7 +233,7 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:   # 게이트웨이 오류는 대화창에 그대로 보여 준다(갈아타는 건 「모델 없음」일 때만, 답에 「대신」으로 — `model_pick`)
-            return self._json(502, {"error": f"KAIROS 호출 실패: {e}"})
+            return self._json(502, {"error": gw.friendly_error(e)})
         sys.stderr.write("[대화] %s %.1f초\n" % (out["model"], out["elapsed"]))
         return self._json(200, out)
 
@@ -272,7 +272,7 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:
-            return self._json(502, {"error": f"KAIROS 딥모드 실패: {e}"})
+            return self._json(502, {"error": f"딥모드 실패: {gw.friendly_error(e)}"})
         return self._json(400, {"error": "딥모드 단계(plan·build·section)를 몰라요"})
 
     def _deep_image(self, board: str, key: str, base: str):
@@ -318,7 +318,7 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:
-            return self._json(502, {"error": f"KAIROS 움직이는 카드 실패: {e}"})
+            return self._json(502, {"error": f"움직이는 카드 실패: {gw.friendly_error(e)}"})
         sys.stderr.write("[움직이는 카드] %s %.1f초 %d자%s\n" % (out["model"], out["elapsed"], len(out["html"]), " (고치기)" if prev_html else ""))
         head = "말한 대로 고친 움직이는 카드" if prev_html else "움직이는 카드"
         return self._json(200, {"kind": "live", "content": f"{head} 「{out['title']}」 — 칠판에 붙이고 두 번 누르면 움직여 볼 수 있어요", **out})
@@ -328,7 +328,7 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             out = self._with("icon", board_icon.ICON_MODEL, lambda m: board_icon.make(key, ask, base_svg=base_svg, image_url=image_url, base_url=gw.resolve_base_url(), model=m))
         except Exception as e:
-            return self._json(502, {"error": f"KAIROS 아이콘 만들기 실패: {e}"})
+            return self._json(502, {"error": f"아이콘 만들기 실패: {gw.friendly_error(e)}"})
         sys.stderr.write("[아이콘] %s %d개 %.1f초%s\n" % (out["model"], len(out["svgs"]), out["elapsed"], " (고치기)" if base_svg else " (그림 보고)" if image_url else ""))
         head = "고른 아이콘을 바탕으로 고쳤어요" if base_svg else "고른 그림을 보고 그렸어요" if image_url else f"아이콘 후보 {len(out['svgs'])}개"
         # 선 굵기·색은 칠판 펜이 정함(SVG 원본 값은 안 읽음 — 데스크톱과 같게) — 「굵게」라고 했는데 그대로면 헷갈림(2026-10-23 실측)
@@ -344,7 +344,7 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             out = self._with("report", board_report.REPORT_MODEL, lambda m: board_report.make(gw._client(key, gw.resolve_base_url(), timeout=600), material, ask, prev_html=prev_html, model=m))
         except Exception as e:
-            return self._json(502, {"error": f"KAIROS 정리 문서 실패: {e}"})
+            return self._json(502, {"error": f"정리 문서 실패: {gw.friendly_error(e)}"})
         sys.stderr.write("[정리 문서] %s %.1f초 %d자%s\n" % (out["model"], out["elapsed"], len(out["html"]), " 확인할 숫자 %d" % len(out["unchecked"]) if out.get("unchecked") else ""))
         tone = board_report.TONES.get(out.get("tone") or "", {}).get("name")
         note = f"\n\n칠판 자료에서 그대로 찾지 못한 숫자: {', '.join(out['unchecked'])} — 계산한 값일 수 있어요. 문서에서 한 번 확인해 주세요" if out.get("unchecked") else ""
@@ -388,7 +388,7 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             out = self._with("image", board_image.IMAGE_MODEL, lambda m: board_image.generate(key, prompt, base_url=gw.resolve_base_url(), model=m, **({"input_images": edit, "n": 1} if edit else {})))   # 고치기는 거의 같은 결과라 1장(크레딧)
         except Exception as e:
-            return self._json(502, {"error": f"KAIROS 그림 만들기 실패: {e}"})
+            return self._json(502, {"error": f"그림 만들기 실패: {gw.friendly_error(e)}"})
         urls = [{"url": self._save_img(name, data, ext)} for data, ext in out["images"]]
         el = round(time.time() - t0, 1)
         sys.stderr.write("[그림] %s %d장 %.1f초 · %s크레딧\n" % (out["model"], len(urls), el, out.get("credits")))
@@ -434,7 +434,7 @@ class Handler(SimpleHTTPRequestHandler):
                 Handler.jobs[job].update(status="done", msg="끝", result=res)
                 sys.stderr.write("[회의록] %s %.0f초 녹음 · %.1f크레딧\n" % (name, res["duration"], res["credits"]))
             except Exception as e:   # 브라우저에 그대로 보여 준다
-                Handler.jobs[job].update(status="error", error=str(e))
+                Handler.jobs[job].update(status="error", error=gw.friendly_error(e))
         threading.Thread(target=run, daemon=True).start()
         return self._json(200, {"job": job})
 
@@ -458,7 +458,7 @@ class Handler(SimpleHTTPRequestHandler):
                 Handler.jobs[job].update(status="done", msg="끝", result=res)
                 sys.stderr.write("[회의록 실시간] %s %.0f초 · %d구간\n" % (name, res["duration"], len(res["turns"])))
             except Exception as e:
-                Handler.jobs[job].update(status="error", error=str(e))
+                Handler.jobs[job].update(status="error", error=gw.friendly_error(e))
         threading.Thread(target=run, daemon=True).start()
         return self._json(200, {"job": job})
 
@@ -487,7 +487,7 @@ class Handler(SimpleHTTPRequestHandler):
                 Handler.jobs[job].update(status="done", msg="끝", result=res)
                 sys.stderr.write("[베끼기] %s 도형 %d개 · %.0f초 · %s크레딧\n" % (name, len(res["items"]), res["elapsed"], res["credits"]))
             except Exception as e:
-                Handler.jobs[job].update(status="error", error=str(e))
+                Handler.jobs[job].update(status="error", error=gw.friendly_error(e))
         threading.Thread(target=run, daemon=True).start()
         return self._json(200, {"job": job})
 
@@ -558,7 +558,7 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             res = self._find(name, q, key, k=max(1, min(20, int(req.get("k") or 8))))
         except Exception as e:
-            return self._json(502, {"error": f"KAIROS 호출 실패: {e}"})
+            return self._json(502, {"error": gw.friendly_error(e)})
         return self._json(200, {"results": [{**r, "text": r["text"][:300]} for r in res]})
 
     def _link(self):
@@ -793,7 +793,7 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 out = board_ocr.read(key, base64.b64decode(req.get("data") or ""), base_url=gw.resolve_base_url())
             except Exception as e:
-                return self._json(502, {"error": f"KAIROS 글 읽기 실패: {e}"})
+                return self._json(502, {"error": f"글 읽기 실패: {gw.friendly_error(e)}"})
             sys.stderr.write("[글 읽기] %s %.1f초 %d자\n" % (out["model"], out["elapsed"], len(out["text"])))
             return self._json(200, out)
         if path == "/api/stt-token":   # 대화창 🎤 — 실시간 받아쓰기 일회용 표(키는 서버에만, 2026-10-20)
@@ -869,12 +869,24 @@ class Handler(SimpleHTTPRequestHandler):
                 self._doc_save(name, doc)
             return self._json(200, {"ok": True, "rev": doc["rev"]})
         os.makedirs(self.data_dir, exist_ok=True)
-        if os.path.exists(p):
-            root, ext = os.path.splitext(p)
-            prev = root + ".prev" + ext
-            write_via_temp(prev, lambda tmp: _copy(p, tmp))
-        write_via_temp(p, lambda tmp: _write(tmp, raw))
-        self._send(200, b'{"ok":true}')
+        with self.lock:
+            moved, rev = 0, None
+            if p.endswith(".chat.json") and isinstance(doc, dict):   # 대화 기록 = 판 번호로 합치기(두 창이 덮어쓰던 것, 2026-10-26 점검)
+                try:
+                    with open(p, encoding="utf-8") as f:
+                        old = json.load(f)
+                except (OSError, ValueError):
+                    old = None
+                doc, moved = collab.merge_chatlog(old if isinstance(old, dict) else None, doc)
+                raw, rev = json.dumps(doc, ensure_ascii=False).encode("utf-8"), doc["rev"]
+            if os.path.exists(p):
+                root, ext = os.path.splitext(p)
+                prev = root + ".prev" + ext
+                write_via_temp(prev, lambda tmp: _copy(p, tmp))
+            write_via_temp(p, lambda tmp: _write(tmp, raw))
+        if rev is None:
+            return self._send(200, b'{"ok":true}')
+        self._json(200, {"ok": True, "rev": rev, "moved": moved})
 
     def log_message(self, fmt, *args):   # 저장 요청만 짧게(대화는 `_chat`이 따로 남김)
         if self.command == "PUT":

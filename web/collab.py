@@ -120,3 +120,50 @@ class Presence:
     def others(self, board: str, client: str) -> list:
         """나를 뺀 접속자 [{ id, name, sel, edit }] — 화면에 그 사람 색 테두리·이름표"""
         return [{"id": c, "name": v[0], "sel": v[2], "edit": v[3]} for c, v in sorted(self.boards.get(board, {}).items()) if c != client]
+
+
+# ── 대화 기록 합치기(2026-10-26 점검 — 두 창이 같은 칠판에 각자 물으면 나중 저장이 앞 창 대화를 통째로 덮었음) ──
+# 기록 `<칠판>.chat.json` = { rev, messages: 지금 대화, past: [{ at, title, messages }] }. 브라우저는 읽은 판 번호를 `base`로 보내고,
+# 서버 판이 그사이 바뀌었으면(다른 창이 저장했거나·못 읽은 채 저장) 새 기록 어디에도 없는 앞 메시지를 「지난 대화」로 옮겨 둔다(지우지 않음).
+# 같은 메시지 = 역할 + 시각(`at`, 밀리초) — 고른 표시·붙임 같은 칸은 바뀌어도 같은 메시지.
+
+def _msg_key(m) -> tuple | None:
+    return (m.get("role"), m.get("at")) if isinstance(m, dict) and m.get("at") is not None else None
+
+
+def _convs(log: dict) -> list:
+    """지금 대화 + 지난 대화들 — [(제목 또는 None, 메시지 목록)]"""
+    out = [(None, [m for m in log.get("messages") or [] if isinstance(m, dict)])]
+    for p in log.get("past") or []:
+        if isinstance(p, dict):
+            out.append((p.get("title"), [m for m in p.get("messages") or [] if isinstance(m, dict)]))
+    return out
+
+
+def merge_chatlog(old: dict | None, new: dict) -> tuple[dict, int]:
+    """저장할 기록 + 옮겨 둔 메시지 수. 판이 맞으면(아무도 그사이 안 씀) 받은 그대로 — 고쳐 묻기·다시 만들기로 지운 것은 지운 대로."""
+    base = new.get("base")
+    new = {k: v for k, v in new.items() if k != "base"}
+    rev = int((old or {}).get("rev") or 0)
+    new["rev"] = rev + 1
+    if not old or base == rev:
+        return new, 0
+    have = {_msg_key(m) for _, ms in _convs(new) for m in ms} - {None}
+    past, moved = list(new.get("past") or []), 0
+    for title, ms in _convs(old):
+        lost = [m for m in ms if _msg_key(m) not in have and _msg_key(m) is not None]
+        if not lost:
+            continue
+        moved += len(lost)
+        keys = {_msg_key(m) for m in ms}
+        hit = next((p for p in past if isinstance(p, dict) and keys & {_msg_key(m) for m in p.get("messages") or []}), None)
+        if hit is not None:   # 이미 옮겨 둔 같은 대화 — 늘어난 만큼 이어 붙임(조각조각 안 늘게)
+            extra = [m for m in hit.get("messages") or [] if _msg_key(m) not in keys]
+            hit["messages"] = sorted(ms + extra, key=lambda m: m.get("at") or 0)
+            continue
+        first = next((m for m in ms if m.get("role") == "user"), None) or ms[0]
+        head = str(first.get("content") or "").split("\n")[0][:40]
+        past.insert(0, {"at": ms[0].get("at") or 0, "title": title or ("다른 창 · " + head), "messages": ms})
+        have |= keys
+    new["past"] = past
+    return new, moved

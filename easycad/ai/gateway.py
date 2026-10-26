@@ -452,6 +452,31 @@ def classify_error(exc: Exception) -> ErrorClass:
     return "other"
 
 
+def friendly_error(exc: Exception) -> str:
+    """화면에 띄울 한 줄(2026-10-26 점검 — SDK 영어 원문이 대화창에 그대로 떴음). 끝 괄호에 원문 앞부분만 남김(손 확인용)."""
+    if isinstance(exc, ValueError) and re.search(r"[가-힣]", str(exc)):
+        return str(exc)   # 우리가 한글로 쓴 까닭(너무 긴 녹음 등)은 그대로
+    raw = str(exc).strip().splitlines()[0][:90] if str(exc).strip() else type(exc).__name__
+    low = str(exc).lower()
+    if "402" in low or "credit" in low or "insufficient" in low or "크레딧" in low:
+        why = "KAIROS 크레딧이 모자라요 — 「🔑 내 키」로 다른 키를 넣거나 다음 달 배정을 기다려 주세요"
+    else:
+        kind = classify_error(exc)
+        if kind == "quota":
+            why = "KAIROS에 요청이 너무 잦아요 — 잠시 뒤 다시 해 주세요"
+        elif kind == "server_busy":
+            why = "KAIROS가 지금 바빠요 — 잠시 뒤 다시 해 주세요"
+        elif kind == "timeout":
+            why = "KAIROS 답이 너무 오래 걸려 끊겼어요 — 다시 하거나 더 짧게 물어 주세요"
+        elif kind == "model_not_found":
+            why = "그 모델이 KAIROS에 없어요 — ⚙ 모델 설정을 「자동」으로 바꿔 주세요"
+        elif "connect" in low or "connection" in low or "name resolution" in low:
+            why = "KAIROS에 연결하지 못했어요 — 서버 PC의 인터넷을 확인해 주세요"
+        else:
+            why = "KAIROS 처리 중 오류가 났어요 — 다시 해 주세요"
+    return f"{why} ({raw})"
+
+
 def select_fallback_model(failed_model: str, chain: tuple = ()) -> Optional[str]:
     """실패 모델이 아닌 사슬의 첫 항목. 남은 후보가 없으면 None."""
     for candidate in chain:

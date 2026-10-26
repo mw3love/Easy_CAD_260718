@@ -87,7 +87,7 @@ def test_server_chat_and_chat_log_round_trip(server):
     assert _req(base + "/api/chatlog/공부")[0] == 404
     log = {"messages": [{"role": "user", "content": "안녕"}, {"role": "assistant", "content": "1번째 답", "cardId": "shape:x"}]}
     assert _req(base + "/api/chatlog/공부", "PUT", log)[0] == 200
-    assert _req(base + "/api/chatlog/공부") == (200, log)
+    assert _req(base + "/api/chatlog/공부") == (200, {**log, "rev": 1})   # 판 번호 = 두 창 합치기(2026-10-26)
     assert os.path.exists(data / "공부.chat.json") and not os.path.exists(data / "공부.json")
     assert _req(base + "/api/chatlog/a.b")[0] == 400   # 점 든 이름 금지 — 칠판 이름과 파일이 겹치지 않게
 
@@ -104,7 +104,7 @@ def test_server_uses_my_key_header_and_never_stores_it(server):
     assert ask("my-own-key-1234") == 200 and calls[-1][0] == "my-own-key-1234"
     assert ask("short") == 200 and calls[-1][0] == "test-key"   # 키 모양이 아니면 무시
     log = {"messages": [], "past": [{"at": 1, "title": "지난 질문", "messages": [{"role": "user", "content": "지난 질문"}]}]}
-    assert _req(base + "/api/chatlog/키", "PUT", log)[0] == 200 and _req(base + "/api/chatlog/키") == (200, log)   # 지난 대화도 그대로 왕복
+    assert _req(base + "/api/chatlog/키", "PUT", log)[0] == 200 and _req(base + "/api/chatlog/키") == (200, {**log, "rev": 1})   # 지난 대화도 그대로 왕복
     for f in data.iterdir():
         assert b"my-own-key-1234" not in f.read_bytes()
 

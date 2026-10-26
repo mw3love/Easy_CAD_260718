@@ -62,3 +62,15 @@ test('녹음을 다른 물건 위에 놓으면 회의록은 가까운 빈자리�
   expect(ov).toBe(false)
   for (const m of d.items.filter(it => it.type === 'memo')) { expect(m.pos[0]).toBeGreaterThanOrEqual(fr.pos[0]); expect(m.pos[1]).toBeGreaterThanOrEqual(fr.pos[1]) }   // 요약·전문도 같이 옮겨 프레임 안
 })
+
+test('빈자리가 화면 밖이면 화면이 회의록으로 따라감(2026-10-26 점검 — 만들어졌는데 안 보였음)', async ({ page }) => {
+  await page.route('**/api/meeting/**', async r => r.request().method() === 'POST' ? r.fulfill({ json: { job: 'abcdef123456' } }) : r.fulfill({ json: { status: 'done', msg: '끝', result: RESULT } }))
+  await openBoard(page, boardName('meetfollow')); await setCam(page)
+  const box = await page.getByTestId('board').boundingBox()
+  await pickShape(page, '사각형'); await dragScene(page, { x: -380, y: -180 }, { x: box.width - 440, y: box.height - 230 }); await page.keyboard.press('Escape')   // 보이는 칠판을 큰 상자로 꽉 채움
+  await dropFile(page, '회의.m4a', 'audio/mp4', 50, 50)
+  await expect.poll(async () => (await liveDoc(page)).items.filter(it => it.type === 'frame').length, { timeout: 10_000 }).toBe(1)
+  const fr = (await liveDoc(page)).items.find(it => it.type === 'frame')
+  await expect.poll(async () => { const c = await page.evaluate(() => window.__mb.getCam()), x = fr.pos[0] * c.z + c.x, y = fr.pos[1] * c.z + c.y
+    return x >= 0 && x < box.width && y >= 0 && y < box.height }).toBe(true)   // 프레임 왼쪽 위가 화면 안
+})

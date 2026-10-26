@@ -119,3 +119,47 @@ def test_presence_others_carry_selection_and_editing():
     assert p.others("b", "c2") == [{"id": "c1", "name": "기자", "sel": ["u1", "u2"], "edit": "u1"}]
     assert p.others("b", "c1") == [{"id": "c2", "name": "작가", "sel": [], "edit": ""}]
     assert p.ping("b", "c2", "작가", now=20) == ["작가"] and p.others("b", "c2") == []   # 15초(여기선 10초) 안 오면 사라짐
+
+
+# ── 대화 기록 합치기(2026-10-26 점검) — 두 창이 같은 칠판에 각자 물으면 나중 저장이 앞 창 대화를 덮었음 ──
+def _q(at, text):
+    return {"role": "user", "content": text, "at": at}
+
+
+def _a(at, text):
+    return {"role": "assistant", "content": text, "at": at}
+
+
+def test_chatlog_same_base_is_written_as_is_even_when_messages_were_removed():
+    old = {"rev": 3, "messages": [_q(1, "가"), _a(2, "답")]}
+    new, moved = collab.merge_chatlog(old, {"base": 3, "messages": [_q(1, "가")]})   # 답 다시 만들기 등으로 지움 = 지운 대로
+    assert moved == 0 and new["rev"] == 4 and new["messages"] == [_q(1, "가")] and "base" not in new
+
+
+def test_chatlog_two_windows_keep_both_conversations():
+    start = {"rev": 1, "messages": []}
+    a, _ = collab.merge_chatlog(start, {"base": 1, "messages": [_q(10, "PC 질문"), _a(11, "PC 답")]})
+    b, moved = collab.merge_chatlog(a, {"base": 1, "messages": [_q(20, "폰 질문"), _a(21, "폰 답")]})   # 폰은 PC 저장을 모름
+    assert moved == 2 and b["rev"] == 3
+    assert b["messages"][0]["content"] == "폰 질문"
+    assert b["past"][0]["title"] == "다른 창 · PC 질문" and [m["at"] for m in b["past"][0]["messages"]] == [10, 11]
+    # PC가 이어 물음(PC는 rev 2를 앎) — 폰 대화가 지난 대화로, 이미 옮겨 둔 PC 대화는 PC 지금 대화와 겹쳐 또 안 생김
+    c, moved = collab.merge_chatlog(b, {"base": 2, "messages": [_q(10, "PC 질문"), _a(11, "PC 답"), _q(12, "PC 이어"), _a(13, "PC 이어 답")]})
+    assert moved == 2 and c["messages"][-1]["at"] == 13
+    assert [p["title"] for p in c["past"]] == ["다른 창 · 폰 질문"]
+    # 폰이 또 저장(폰은 rev 3) — 앞서 옮겨 둔 PC 대화가 있으면 거기에 늘어난 만큼 이어 붙임(조각 안 늘어남)
+    d, _ = collab.merge_chatlog(c, {"base": 3, "messages": [_q(20, "폰 질문"), _a(21, "폰 답")], "past": [{"title": "다른 창 · PC 질문", "messages": [_q(10, "PC 질문"), _a(11, "PC 답")]}]})
+    assert len(d["past"]) == 1 and [m["at"] for m in d["past"][0]["messages"]] == [10, 11, 12, 13]
+
+
+def test_chatlog_save_without_reading_does_not_wipe():
+    old = {"rev": 5, "messages": [_q(1, "어제 질문"), _a(2, "어제 답")], "past": [{"title": "그제", "messages": [_q(0, "그제 질문")]}]}
+    new, moved = collab.merge_chatlog(old, {"base": None, "messages": [_q(9, "새 질문")]})   # 읽기가 실패한 창이 저장
+    assert moved == 3 and new["messages"] == [_q(9, "새 질문")]
+    assert {p["title"] for p in new["past"]} == {"그제", "다른 창 · 어제 질문"}
+
+
+def test_chatlog_first_save_and_old_file_without_rev():
+    assert collab.merge_chatlog(None, {"base": 0, "messages": [_q(1, "가")]})[0]["rev"] == 1
+    new, moved = collab.merge_chatlog({"messages": [_q(1, "가")]}, {"base": 0, "messages": [_q(1, "가"), _a(2, "답")]})   # rev 없던 옛 파일 = 0
+    assert moved == 0 and new["rev"] == 1

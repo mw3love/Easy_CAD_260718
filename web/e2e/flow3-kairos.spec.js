@@ -1,7 +1,9 @@
 // 흐름 3 — KAIROS 묻고 칠판에 붙이기. 진짜 KAIROS는 부르지 않는다(크레딧·답이 매번 다름) — /api/chat·/api/models를 가짜 답으로 바꿔 끼움.
 // 진짜 호출은 손 확인 몫(`tests/test_part50`이 서버 쪽 실호출을 지킴).
 import { test, expect } from '@playwright/test'
-import { boardName, openBoard, setCam, clickScene, liveDoc, waitSaved } from './helpers.js'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { boardName, openBoard, setCam, clickScene, liveDoc, waitSaved, DATA } from './helpers.js'
 
 const ANSWER = '## 오늘 할 일\n- 계통도 고치기\n- **발표** 준비\n1. 첫째\n2. 둘째'
 
@@ -88,4 +90,42 @@ test('칠판에서 메모를 고른 채 물으면 그 글이 같이 감', async 
   await box.click(); await page.keyboard.type('요약해 줘'); await page.keyboard.press('Enter')
   await expect(page.getByText('계통도 고치기').first()).toBeVisible()
   expect(JSON.stringify(seen[0].messages.at(-1).context || '')).toContain('송신소 점검 결과 이상 없음')
+})
+
+test('두 창이 같은 칠판에 각자 물어도 — 앞 창 대화가 안 지워지고 「지난 대화」로 남음(2026-10-26 점검)', async ({ browser }) => {
+  const name = boardName('chat2win'), log = () => JSON.parse(readFileSync(join(DATA, `${name}.chat.json`), 'utf-8'))
+  const ca = await browser.newContext(), cb = await browser.newContext()
+  const pc = await ca.newPage(), phone = await cb.newPage()
+  for (const p of [pc, phone]) { await fakeKairos(p, []); await openBoard(p, name, { chat: true }) }   // 둘 다 빈 기록을 읽은 뒤
+  const ask = async (p, q) => { const box = p.getByPlaceholder('물어보세요', { exact: false }); await box.click(); await p.keyboard.type(q); await p.keyboard.press('Enter'); await expect(p.getByText('계통도 고치기').first()).toBeVisible() }
+  await ask(pc, 'PC에서 물음')
+  await expect.poll(() => JSON.stringify(log())).toContain('PC에서 물음')
+  await ask(phone, '폰에서 물음')   // 폰은 PC 저장을 모름 — 전엔 여기서 PC 대화가 통째로 덮였음
+  await expect.poll(() => JSON.stringify(log())).toContain('폰에서 물음')
+  const d = log()
+  expect(d.messages.map(m => m.content)).toContain('폰에서 물음')
+  expect(d.past.map(p => p.title)).toContain('다른 창 · PC에서 물음')
+  await expect(phone.getByRole('button', { name: /지난 대화/ })).toBeVisible()   // 폰 화면도 받아 옴
+  await ask(pc, 'PC에서 이어 물음')   // PC가 이어 물어도 폰 대화가 남음
+  await expect.poll(() => JSON.stringify(log())).toContain('PC에서 이어 물음')
+  const e = log(), all = JSON.stringify(e)
+  expect(all).toContain('폰에서 물음'); expect(all).toContain('PC에서 물음')
+  expect(e.past.length).toBe(1)   // 옮겨 둔 대화가 조각조각 늘지 않음
+  await ca.close(); await cb.close()
+})
+
+test('답을 기다리다 「취소」 — 바로 풀리고 까닭이 보이고, 다시 물을 수 있음(2026-10-26 점검: 멈추면 새로고침밖에 없었음)', async ({ page }) => {
+  const name = boardName('chatstop')
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: { gpt: [{ id: 'fake-model', price: '' }] } } }))
+  let first = true
+  await page.route('**/api/chat', async r => { if (first) { first = false; return } await r.fulfill({ json: { content: ANSWER, model: 'fake-model', elapsed: 0.1 } }) })   // 첫 질문은 답이 영영 안 옴
+  await openBoard(page, name, { chat: true })
+  const box = page.getByPlaceholder('물어보세요', { exact: false })
+  await box.click(); await page.keyboard.type('멈춘 질문'); await page.keyboard.press('Enter')
+  await expect(page.getByTestId('chat-busy')).toBeVisible()
+  await page.getByTestId('chat-stop').click()
+  await expect(page.getByTestId('chat-busy')).toBeHidden()
+  await expect(page.getByText('취소했어요', { exact: false })).toBeVisible()
+  await box.click(); await page.keyboard.type('다시 물음'); await page.keyboard.press('Enter')
+  await expect(page.getByText('계통도 고치기').first()).toBeVisible()
 })

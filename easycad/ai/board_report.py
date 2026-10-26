@@ -102,12 +102,37 @@ def _nums(text: str) -> set:
     return {n.replace(",", "").rstrip(".") for n in _NUM.findall(text or "") if len(n.replace(",", "")) >= 2}
 
 
+# 시각·날짜는 모양만 바꿔 쓰는 일이 많아(14:00 ↔ 오후 2시, 2026-07-31 ↔ 2026.7.31 ↔ 7월 31일) 지어낸 숫자 검사에서 뺌(2026-10-26 점검 — 회의록 「오후 2시」·기사 날짜가 다 걸렸음)
+_TIME = re.compile(r"\d{1,2}:\d{2}")
+_YMD = re.compile(r"(\d{4})\s*[.\-/년]\s*(\d{1,2})(?:\s*[.\-/월]\s*(\d{1,2}))?")
+_MD = re.compile(r"(?<![\d.])(\d{1,2})\s*(?:[./]|월\s*)\s*(\d{1,2})(?![\d.])")
+
+
+def _dates(text: str) -> tuple:
+    """자료 속 날짜 — (년, 월) 모음과 (월, 일) 모음."""
+    ym, md = set(), set()
+    for y, m, d in _YMD.findall(text or ""):
+        ym.add((int(y), int(m)))
+        if d:
+            md.add((int(m), int(d)))
+    md |= {(int(m), int(d)) for m, d in _MD.findall(text or "")}
+    return {(y, m) for y, m in ym if 1 <= m <= 12}, {(m, d) for m, d in md if 1 <= m <= 12 and 1 <= d <= 31}
+
+
+def _drop_dates(text: str, material: str) -> str:
+    """문서 글에서 시각, 그리고 자료에 있는 날짜를 지움(남은 숫자만 검사)."""
+    ym, md = _dates(material)
+    text = _TIME.sub(" ", text)
+    text = _YMD.sub(lambda m: " " if (int(m[1]), int(m[2])) in ym and (not m[3] or (int(m[2]), int(m[3])) in md) else m[0], text)
+    return _MD.sub(lambda m: " " if (int(m[1]), int(m[2])) in md else m[0], text)
+
+
 def unchecked_numbers(doc: str, material: str, limit: int = 8) -> list:
-    """정리 문서 글의 두 자리 이상 숫자 중 자료에 없는 것(나온 차례, 겹침 없이) — 자료가 비면 [](견줄 게 없음)."""
+    """정리 문서 글의 두 자리 이상 숫자 중 자료에 없는 것(나온 차례, 겹침 없이) — 자료가 비면 [](견줄 게 없음). 시각·자료에 있는 날짜는 안 셈."""
     if not str(material or "").strip():
         return []
     have, out = _nums(material), []
-    for n in _NUM.findall(plain_text(doc, 60_000)):
+    for n in _NUM.findall(_drop_dates(plain_text(doc, 60_000), material)):
         k = n.replace(",", "").rstrip(".")
         if len(k) >= 2 and k not in have and n not in out:
             out.append(n)

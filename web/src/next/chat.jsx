@@ -232,7 +232,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
 
   useEffect(() => {
     fetch(LOG_URL, { cache: 'no-store' }).then(r => (r.status === 404 ? { messages: [] } : r.ok ? r.json() : Promise.reject(r)))
-      .then(d => { setMsgs(d.messages || []); setPast(Array.isArray(d.past) ? d.past : []); curBranch.current = !!d.branch; setLoaded(true) }).catch(() => { setServer(false); setLoaded(true) })
+      .then(d => { logRev.current = d.rev || 0; setMsgs(d.messages || []); setPast(Array.isArray(d.past) ? d.past : []); curBranch.current = !!d.branch; setLoaded(true) }).catch(() => { setServer(false); setLoaded(true) })
   }, [])
   useEffect(() => {   // 모델 목록은 키마다 다를 수 있어 키를 바꾸면 다시
     fetch('/api/models', { headers: keyHeaders() }).then(r => r.json()).then(setModels).catch(() => setModels({ featured: {}, error: '모델 목록 못 받음' }))
@@ -250,17 +250,27 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
 
   const useModel = model || models?.default || 'gpt-6.1-sol'
   const curBranch = useRef(false)   // 지금 대화가 다른 대화에서 갈라져 나왔나(지난 대화 목록 제목 앞 ⑂)
-  const save = (next, p = pastRef.current) => fetch(LOG_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: next, ...(p.length ? { past: p } : {}), ...(curBranch.current ? { branch: true } : {}) }) })
-    .then(r => setServer(r.ok)).catch(() => setServer(false))
+  // 저장 = 읽은 판 번호(base)와 함께, 한 번에 하나씩 — 그사이 다른 창이 저장했으면 서버가 그 대화를 「지난 대화」로 옮겨 두고 알려 줌(2026-10-26 점검: 나중 저장이 통째로 덮었음)
+  const logRev = useRef(null), saveQ = useRef(Promise.resolve())
+  const save = (next, given) => { const branch = curBranch.current
+    saveQ.current = saveQ.current.then(() => { const p = given || pastRef.current   // 지난 대화는 보낼 때 읽음(앞 저장이 옮겨 받은 것까지)
+      return fetch(LOG_URL, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: next, ...(p.length ? { past: p } : {}), ...(branch ? { branch: true } : {}), base: logRev.current }) }) })
+      .then(async r => { setServer(r.ok); const d = r.ok ? await r.json().catch(() => ({})) : {}; if (typeof d.rev === 'number') logRev.current = d.rev
+        if (d.moved > 0) { const g = await fetch(LOG_URL, { cache: 'no-store' }).then(x => x.json()).catch(() => null); if (Array.isArray(g?.past)) setPast(g.past) } })
+      .catch(() => setServer(false)) }
   const update = next => { setMsgs(next); save(next) }
 
   // 묻기 — history = 지금까지(마지막이 질문), kind = 'search'·'chat'(비면 서버가 짐작) → 답 한 차례
   // extra = 대화 기록엔 안 남기고 이번 요청에만 실을 것(칠판에서 고른 그림 data: 주소 — 기록이 그림으로 불지 않게)
+  // 기다리는 답 끊기(2026-10-26 점검 — 답이 멈추면 새로고침밖에 없었음). 서버가 이미 시작한 KAIROS 일은 끝까지 가서 크레딧이 들 수 있음
+  const stopRef = useRef(null)
+  const chatPost = body => { const ac = new AbortController(); stopRef.current = ac
+    return fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() }, body: JSON.stringify(body), signal: ac.signal })
+      .catch(e => { throw e.name === 'AbortError' ? new Error('취소했어요 — 서버에서 이미 시작한 일은 끝까지 가서 크레딧이 들 수 있어요') : e }) }
   async function ask(history, kind = '', prevHtml = '', extra = {}) {   // prevHtml = 바로 앞 답이 정리 문서면 그 HTML(「더 짧게」 = 그 문서 고치기 — 서버가 판단)
     const q = history.filter(m => m.role === 'user').at(-1)?.content || ''
     const prefs = kind ? {} : askPrefs()
-    const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
-      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: picks } : {}), ...(kind ? { kind } : {}), ...(Object.keys(prefs).length ? { ask_pref: prefs } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), ...(history.at(-1)?.base_svg ? { base_svg: history.at(-1).base_svg } : {}), ...extra, messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
+    const r = await chatPost({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: picks } : {}), ...(kind ? { kind } : {}), ...(Object.keys(prefs).length ? { ask_pref: prefs } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), ...(history.at(-1)?.base_svg ? { base_svg: history.at(-1).base_svg } : {}), ...extra, messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
     return { role: 'assistant', content: d.content, model: d.model, ...(d.swap ? { swap: d.swap } : {}), at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
@@ -325,8 +335,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
   async function deepCall(body, job) {
     setBusy(Date.now()); setBusyJob(job)
     try {
-      const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
-        body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: picks } : {}), kind: 'deep', deep: body, messages: [{ role: 'user', content: body.topic }] }) })
+      const r = await chatPost({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: picks } : {}), kind: 'deep', deep: body, messages: [{ role: 'user', content: body.topic }] })
       const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
       if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
       return d
@@ -627,7 +636,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
                 <span data-testid="answer-model" style={{ ...css.meta, marginLeft: 'auto' }} title={m.swap ? `원래 모델 ${m.swap.from}이 KAIROS에서 ${m.swap.why === '은퇴' ? '은퇴해서' : '없어져서'} ${m.swap.to}로 했어요` : undefined}>{m.model}{m.swap ? ' (대신)' : ''}{m.elapsed != null ? ` · ${m.elapsed}초` : ''}{m.credits != null ? ` · ${Math.round(m.credits)}크레딧` : ''}</span>
               </div>}
             </div>)}
-        {busy && <div data-testid="chat-busy" style={{ ...css.ai, color: C.muted }}><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Spinner />{busyLine}</div><ChatSkeleton kind={busyJob} /></div>}
+        {busy && <div data-testid="chat-busy" style={{ ...css.ai, color: C.muted }}><div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Spinner />{busyLine}<button data-testid="chat-stop" style={{ ...css.ghost, marginLeft: 'auto' }} title="이 답 기다리기를 그만둬요(서버에서 이미 시작한 일은 끝까지 가서 크레딧이 들 수 있어요)" onClick={() => stopRef.current?.abort()}>취소</button></div><ChatSkeleton kind={busyJob} /></div>}
       </div>
       <div style={css.foot}>
         {replyTo != null && <span data-testid="reply-chip" style={{ ...css.chip, color: '#da7756', background: 'rgba(218,119,86,.14)', cursor: 'pointer' }} onClick={() => setReplyTo(null)} title="누르면 이어 묻기 취소">

@@ -313,8 +313,13 @@ def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: st
     with ThreadPoolExecutor(max_workers=2) as ex:   # 원리 꼭지 카드 = 본문과 동시에(4단계 — 재료는 판 전체)
         fw = ex.submit(write, client, plan, mat, brief, model=model, board=board, day=day)
         fl = ex.submit(_live, client, plan, mat, li, brief) if li is not None else None
-        secs = fw.result()
-        pic = _summary({**plan, "sections": secs}, image) if pi is not None else None   # 본문을 다 쓴 뒤(카드는 아직 돌 수 있음)
+        try:   # 본문 한 번이 실패해도 판은 꼭지 머리로 남김 — 모은 재료(크레딧)가 살고, 꼭지마다 「다시 쓰기」로 채움(2026-10-26 점검: 전엔 판 전체 실패)
+            secs, fail = fw.result(), ""
+            if not any(s["body"] for s in secs):
+                fail = "본문을 못 읽음 — 답이 잘렸거나 형식이 틀림"
+        except Exception as e:  # noqa: BLE001 — KAIROS 오류·시간 초과 모두 같은 길
+            secs, fail = [{**s, "body": {}} for s in plan["sections"]], f"본문 쓰기 실패 — {gw.friendly_error(e)}"
+        pic = _summary({**plan, "sections": secs}, image) if pi is not None and not fail else None   # 본문을 다 쓴 뒤(카드는 아직 돌 수 있음)
         card = fl.result() if fl else None
     if pic is not None:
         secs[pi]["body"] = pic
@@ -325,7 +330,8 @@ def build(key: str, client, topic: str, brief: dict, plan: dict, *, base_url: st
             if s["shape"] == "출처 카드" and not (s["body"] or {}).get("links"):
                 s["body"] = {"links": [x["n"] for x in mat["sources"]]}
     return {"plan": {**plan, "sources": mat["sources"], "sections": secs}, "model": model, "elapsed": round(time.time() - t0, 1),
-            "missing": [s["title"] for s, m in zip(plan["sections"], mat["materials"]) if m is not None and not m.get("text")]
+            "missing": ([f"모든 꼭지({fail})"] if fail else [])
+            + [s["title"] for s, m in zip(plan["sections"], mat["materials"]) if m is not None and not m.get("text")]
             + ([plan["sections"][li]["title"] + "(움직이는 카드: " + card["error"] + ")"] if card and card.get("error") else [])
             + ([plan["sections"][pi]["title"] + "(요약 그림: " + pic["error"] + ")"] if pic and pic.get("error") else []),
             "switched": [f"{s['title']}: {m['switched']}" for s, m in zip(plan["sections"], mat["materials"]) if m and m.get("switched")]}

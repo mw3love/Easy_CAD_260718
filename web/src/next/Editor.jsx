@@ -1168,14 +1168,16 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const at = drop || freeSpot(view, boxes, W, h)
     const its = cardItems(msg, at.x, at.y, topZ(m.items) + 1)
     commit([...m.items, ...its], its.map(it => it._id), '칠판에 붙이기')
-    // 화면 밖으로 나간 만큼만 화면을 옮김(배율 그대로) — 붙였는데 안 보여 아무 일도 없던 것 같았음(2026-10-19 점검). 가운데로 옮기면 옆 메모가 왼쪽 카드 밑으로 갔음
-    if (!drop) {
-      const nb = unionBox(its.map(it => sceneBox(it, textBox))), vx = -c.x / c.z + left, vy = -c.y / c.z + top, vw = (size.w - rightInset(svg.current)) / c.z - left, vh = size.h / c.z - top, pad = 20 / c.z
-      const need = (a, len, v0, vlen) => (len > vlen || a < v0 ? v0 + pad - a : a + len > v0 + vlen ? v0 + vlen - pad - (a + len) : 0)   // 넘치면 앞(왼쪽·위)부터
-      const dx = need(nb.x, nb.w, vx, vw), dy = need(nb.y, nb.h, vy, vh)
-      if (dx || dy) setCam({ z: c.z, x: c.x + dx * c.z, y: c.y + dy * c.z })   // need = 묶음이 화면에서 옮겨 보여야 할 칠판 거리
-    }
+    if (!drop) bringIn(unionBox(its.map(it => sceneBox(it, textBox))))
     return its.map(it => it._id)   // 고른 채로 둠(어디 붙었나 보이게) — 대화창은 이 고름을 다음 질문에 싣지 않음(chat.jsx `skipSel`)
+  }
+  // 화면 밖으로 나간 만큼만 화면을 옮김(배율 그대로) — 붙였는데 안 보여 아무 일도 없던 것 같았음(2026-10-19 점검). 가운데로 옮기면 옆 메모가 왼쪽 카드 밑으로 갔음
+  function bringIn(nb) {
+    const c = R.current.cam, left = 24 / c.z, top = 48 / c.z
+    const vx = -c.x / c.z + left, vy = -c.y / c.z + top, vw = (size.w - rightInset(svg.current)) / c.z - left, vh = size.h / c.z - top, pad = 20 / c.z
+    const need = (a, len, v0, vlen) => (len > vlen || a < v0 ? v0 + pad - a : a + len > v0 + vlen ? v0 + vlen - pad - (a + len) : 0)   // 넘치면 앞(왼쪽·위)부터
+    const dx = need(nb.x, nb.w, vx, vw), dy = need(nb.y, nb.h, vy, vh)
+    if (dx || dy) setCam({ z: c.z, x: c.x + dx * c.z, y: c.y + dy * c.z })   // need = 묶음이 화면에서 옮겨 보여야 할 칠판 거리
   }
   // 이미 붙인 카드로 — 고르고 화면 가운데로. 없으면(지웠으면) false
   function showCard(at) {
@@ -1938,6 +1940,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     if (to.x !== at.x || to.y !== at.y) { const dx = to.x - at.x, dy = to.y - at.y; for (const it of [sum, full]) it.pos = [it.pos[0] + dx, it.pos[1] + dy]; at = to }
     const fr = base([at.x, at.y], { type: 'frame', rect: [0, 0, W, H], name: `회의 ${when} · ${res.title || ''}`.trim(), no: nextFrameNo(m.items), z: Math.min(0, ...m.items.map(x => x.z ?? 0)) - 1 })
     commit([...m.items, fr, sum, full], [sum._id], '회의록')
+    bringIn({ x: at.x, y: at.y, w: W, h: H })   // 빈자리를 찾아 화면 밖에 놓이면 안 보였음(2026-10-26 점검)
     setStatus(`회의록 — ${res.title || '회의'} · ${Math.round(res.duration || 0)}초 녹음${res.credits != null ? ` · ${res.credits}크레딧` : ''}. 전문은 「… 줄 더」를 누르면 펼쳐져요`)
   }
   // 「🎙 회의」 실시간 회의록(2026-10-23) — 마이크 → KAIROS 실시간 받아쓰기(말한 사람 나눔, mic.js) → 놓을 자리 점선 틀에 글이 쌓임 → 「끝내기」 = 서버가 요약만(`/api/meeting/<칠판>/live`)

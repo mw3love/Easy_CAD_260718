@@ -120,3 +120,11 @@ def test_server_report_material_whole_board_selection_and_revise(server):
     assert seen[-1]["prev"] == "<html>앞</html>" and seen[-1]["ask"] == "더 짧게"   # 「더 짧게」 = 앞 문서 고치기
     out = _post(base + "/api/chat", {"board": "공부", "messages": [{"role": "user", "content": "합계까지 보고서로", "context": "- 고른 메모"}]})
     assert "차분 톤" in out["content"] and "그대로 찾지 못한 숫자: 4,800" in out["content"]   # 숫자 검사는 답 글에 알림(막지 않음)
+
+
+def test_unchecked_numbers_skips_times_and_dates_written_differently():
+    """2026-10-26 점검 — 회의 「오후 2시」를 14:00으로, 기사 날짜 2026-07-31을 2026.7.31·9.21로 쓴 것까지 「못 찾은 숫자」로 떴음."""
+    material = "다음 회의는 월요일 오후 2시. 기사 2026-07-31 · yna.co.kr, 2026-09-21 · ddaily. 송신기 출력 1200W"
+    doc = "<p>다음 회의 14:00</p><p>7월 31일 KBS, 9.21 kt ENA, 2026.7.31 정리</p><p>출력 1200W → 4,800W, 시청률 35.2%</p>"
+    assert board_report.unchecked_numbers(doc, material) == ["4,800", "35.2"]
+    assert board_report.unchecked_numbers("<p>2026.8.15 발표</p>", material) == ["2026.8", "15"]   # 자료에 없는 날짜는 그대로 알림

@@ -351,3 +351,34 @@ def test_server_deep_image_saves_picture_next_to_board(server, monkeypatch):
     with urllib.request.urlopen(base + body["img"].replace("공부", urllib.parse.quote("공부"))) as r:
         assert r.read() == buf.getvalue()
     assert srv.Handler.__dict__["_deep_image"](SimpleNamespace(_name=lambda raw: ""), "", "k", "b") is None
+
+
+class _BoomClient(FakeClient):
+    def __init__(self, exc):
+        super().__init__()
+        self.exc = exc
+
+    def create(self, **kw):
+        raise self.exc
+
+
+def test_build_keeps_board_when_writer_fails_or_answer_is_cut():
+    """2026-10-26 점검 — 본문 한 번 실패가 판 전체 실패(모은 재료·크레딧까지 날림)였음 → 꼭지 머리만으로 판 + 까닭."""
+    plan = deep_mode.clean_plan(PLAN)
+    web = lambda q: ("답 [1]", {"search_results": [{"title": "가", "url": "https://a"}]})  # noqa: E731
+    out = deep_mode.build("k", _BoomClient(RuntimeError("Error code: 402 - insufficient credits")), "반도체", {}, plan, exa=web, kr=lambda q: [])
+    assert [s["title"] for s in out["plan"]["sections"]] == [s["title"] for s in plan["sections"]]
+    assert out["plan"]["sources"] and out["plan"]["sections"][-1]["body"] == {"links": [1]}   # 재료·출처는 살아 있음
+    assert out["missing"][0].startswith("모든 꼭지(본문 쓰기 실패 — KAIROS 크레딧이 모자라요")
+    cut = deep_mode.build("k", FakeClient('{"sections": [{"title": "기억할 숫자", "body": {"tiles": [["60'), "반도체", {}, plan, exa=web, kr=lambda q: [])
+    assert cut["missing"][0] == "모든 꼭지(본문을 못 읽음 — 답이 잘렸거나 형식이 틀림)"
+
+
+def test_friendly_error_is_korean_and_keeps_our_own_reasons():
+    from easycad.ai import gateway as gw
+    assert gw.friendly_error(RuntimeError("Error code: 402 - {'error': 'insufficient credits'}")).startswith("KAIROS 크레딧이 모자라요")
+    assert gw.friendly_error(RuntimeError("Request timed out.")).startswith("KAIROS 답이 너무 오래 걸려")
+    assert gw.friendly_error(RuntimeError("Error code: 503 - unavailable")).startswith("KAIROS가 지금 바빠요")
+    assert gw.friendly_error(RuntimeError("Connection error.")).startswith("KAIROS에 연결하지 못했어요")
+    assert gw.friendly_error(ValueError("녹음이 40분을 넘어요")) == "녹음이 40분을 넘어요"
+    assert gw.friendly_error(RuntimeError("weird")) == "KAIROS 처리 중 오류가 났어요 — 다시 해 주세요 (weird)"
