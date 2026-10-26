@@ -32,7 +32,8 @@ LANGUAGE_HINT = "ko"           # 문서: 언어가 정해져 있으면 하나만
 SUMMARY_SYSTEM = """너는 회의 녹취를 정리하는 도우미다. 한국어로 쓴다. 아래 모양의 JSON 하나만 출력한다(다른 글·코드펜스 없이):
 {"title": "회의 제목(짧게)", "summary": "무엇을 논의했는지 2~3문장", "decisions": ["정한 것", ...],
  "todos": [{"who": "맡은 사람(모르면 빈 글)", "what": "할 일", "due": "기한(모르면 빈 글)"}], "next": "다음 회의 일정(없으면 빈 글)"}
-- 녹취에 없는 내용은 지어내지 않는다. 결정·할 일이 없으면 빈 목록."""
+- 녹취에 없는 내용은 지어내지 않는다. 결정·할 일이 없으면 빈 목록.
+- 녹취는 소리를 글로 옮긴 것이라 이름이 틀릴 수 있다. 사내 AI 「KAIROS」(카이로스)로 들리는 말(예: KIYOS·카이로·카이오스)은 KAIROS로 바로잡는다. 그 밖의 이름은 녹취 그대로."""   # 2026-10-26 시연 캡처: 「KAIROS 활용 사례」 → 「KIYOS」(받아쓰기엔 단어 힌트 칸이 없음 — 문서 reference_audio-stt)
 
 
 def transcribe(api_key: str, data: bytes, filename: str, *, base_url: str = gw.BASE_URL, http=None, sleep=time.sleep,

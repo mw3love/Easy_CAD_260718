@@ -223,3 +223,10 @@ def test_server_meeting_live_job(server, monkeypatch):
     with pytest.raises(urllib.error.HTTPError) as e:
         urllib.request.urlopen(empty)
     assert e.value.code == 400
+
+
+def test_summary_prompt_fixes_kairos_misheard():
+    # 2026-10-26 시연 캡처: 받아쓰기가 「KAIROS」를 「KIYOS」로 — 받아쓰기엔 단어 힌트 칸이 없어 요약 지시문이 바로잡음(진짜 KAIROS로 한 번 확인: 할 일에 KAIROS)
+    client, seen = _fake_client('{"title": "t"}')
+    meeting.summarize(client, meeting.turns(SEGS), model="m")
+    assert "KIYOS" in seen["messages"][0]["content"] and "KAIROS로 바로잡는다" in seen["messages"][0]["content"]
