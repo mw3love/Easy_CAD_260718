@@ -196,3 +196,67 @@ def test_gateway_client_is_guarded_and_list_is_remembered(monkeypatch):
     with patch("httpx.get", return_value=Resp()):
         gw.list_text_models_info("k")
     assert mp.pick("gpt-6.1-sol") == "gpt-9-sol"   # 대화창 목록을 받을 때 같이 기억 → 은퇴를 바로 따라감
+
+
+@pytest.fixture
+def server(tmp_path, monkeypatch):
+    import threading
+    from http.server import ThreadingHTTPServer
+    sys.path.insert(0, os.path.join(ROOT, "web"))
+    import server as srv
+    monkeypatch.setattr(srv.gw, "resolve_api_key", lambda explicit="": "test-key")
+    monkeypatch.setattr(srv.board_chat, "models", lambda key, base="": {"default": "gpt-6.1-sol", "featured": {}})
+    srv._MODELS.clear()
+    srv.Handler.data_dir, srv.Handler.password = str(tmp_path), ""
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", srv
+    httpd.shutdown()
+
+
+def _post(base, body):
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(base + "/api/chat", data=json.dumps(body).encode(), method="POST", headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+def test_server_picked_model_first_then_default_when_it_cannot(server, monkeypatch):
+    """「모델 설정」(2026-10-26) — 고른 모델로 먼저, 그 모델이 이 일을 못 하면 앱 기본으로 한 번 다시 + 답에 「(대신)」. 크레딧 오류는 다시 안 함."""
+    base, srv = server
+    used = []
+
+    def make(client, material, ask, prev_html="", model=""):
+        used.append(model)
+        if model == "bad-model":
+            raise RuntimeError("정리 문서 HTML이 아닌 답")
+        if model == "broke-model":
+            raise RuntimeError("Error code: 429 - quota exceeded")
+        return {"title": "점검", "html": "<p>x</p>", "model": model, "elapsed": 1.0}
+    monkeypatch.setattr(srv.board_report, "make", make)
+    ask = lambda picks: _post(base, {"board": "b", "kind": "report", "models": picks, "messages": [{"role": "user", "content": "정리해 줘", "context": "VSWR 1.12"}]})   # noqa: E731
+    code, out = ask({"report": "claude-sonnet-5-5"})
+    assert code == 200 and out["model"] == "claude-sonnet-5-5" and "swap" not in out and used == ["claude-sonnet-5-5"]
+    code, out = ask({"report": "bad-model"})
+    assert code == 200 and out["model"] == srv.board_report.REPORT_MODEL and out["swap"] == {"from": "bad-model", "to": srv.board_report.REPORT_MODEL, "why": "못 함"}
+    code, out = ask({"report": "broke-model"})
+    assert code == 502 and used[-1] == "broke-model"   # 크레딧은 다른 모델로도 안 됨 — 다시 안 함
+    code, out = ask({"report": "x; rm -rf"})   # 이상한 이름은 버리고 자동
+    assert code == 200 and used[-1] == srv.board_report.REPORT_MODEL
+
+
+def test_server_models_lists_by_kind_and_jobs_follow_retirement(server):
+    import urllib.request
+    base, srv = server
+    mp.remember(ROWS + [_llm("claude-opus-5-5", 20, 70, owner="claude", life="legacy", rep="claude-sonnet-5-5")])
+    mp.note_cost("gpt-image-2.5-flare", 10.41)
+    with urllib.request.urlopen(base + "/api/models") as r:
+        out = json.loads(r.read())
+    llm, img = [m["id"] for m in out["choices"]["llm"]], [m["id"] for m in out["choices"]["image"]]
+    assert "gpt-6.1-sol" in llm and "jev-1.14.0" not in llm and "gpt-image-2.5-flare" not in llm and "gpt-5.4-mini" not in llm   # 판단·그림·은퇴는 대화 칸에 없음
+    assert img[0] == "gpt-image-2.5-flare" and next(m for m in out["choices"]["image"] if m["id"] == "gpt-image-2.5-flare")["price"] == "장당 약 10.41크레딧"
+    assert out["jobs"]["report"] == "claude-sonnet-5-5" and out["jobs"]["deep_write"] == srv.deep_mode.WRITER_MODEL   # 은퇴한 정리 문서 모델 = 지금 부르는 이름으로

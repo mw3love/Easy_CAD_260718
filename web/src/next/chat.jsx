@@ -87,6 +87,11 @@ export const CHAT_W = 360, CHAT_MIN = 320, CHAT_MAX = 720   // 기본 폭 · 끌
 export const chatClamp = w => Math.max(CHAT_MIN, Math.min(CHAT_MAX, Math.round(window.innerWidth / 2), Math.round(w)))
 const LOG_URL = `/api/chatlog/${encodeURIComponent(DOC_NAME)}`
 const MODEL_KEY = 'magic-board-model'   // 고른 모델은 이 브라우저에만 기억(편의)
+const PICKS_KEY = 'magic-board-models'  // 「모델 설정」 — 일마다 고른 모델 {일: id}(없으면 자동, 2026-10-26)
+// 「모델 설정」 칸 — 고를 의미가 있는 일만(2026-10-26 사용자 선택). 길 고르기·검색·받아쓰기·찾기·글 읽기는 늘 자동. [일, 이름, 종류(서버 choices), 서버 jobs 이름]
+const PICK_ROWS = [['chat', '대화 · 회의 요약', 'llm'], ['image', '이미지', 'image'], ['icon', '아이콘 (SVG)', 'llm'], ['report', '정리 문서', 'llm'], ['live', '인터랙티브 HTML', 'llm'],
+  ['deep_plan', 'Deep Mode 지면 계획', 'llm'], ['deep_write', 'Deep Mode 본문', 'llm']]
+const JOB_PICK = { 'deep-plan': 'deep_plan', 'deep-build': 'deep_write', 'deep-section': 'deep_write' }   // 기다리는 일 → 그 일의 모델 칸
 const VENDOR = { gpt: 'GPT', gemini: 'Gemini', claude: 'Claude' }
 const F = "'Pretendard', sans-serif"
 const DONE = '#16a34a'   // 칠판에 붙임(끝남) = 초록 — 코랄은 할 수 있는 일 버튼(2026-10-20 사용자)
@@ -185,6 +190,11 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
   const [msgs, setMsgs] = useState([]), [loaded, setLoaded] = useState(false), [draft, setDraft] = useState(''), [busy, setBusy] = useState(null)
   const [, tick] = useState(0), [models, setModels] = useState(null), [server, setServer] = useState(true), [gone, setGone] = useState({})
   const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_KEY) || '' } catch { return '' } })
+  const [picks, setPicksState] = useState(() => { try { return JSON.parse(localStorage.getItem(PICKS_KEY) || '{}') || {} } catch { return {} } }), [cfgOpen, setCfgOpen] = useState(false)
+  const setPick = (job, id) => {
+    if (job === 'chat') { setModel(id); try { id ? localStorage.setItem(MODEL_KEY, id) : localStorage.removeItem(MODEL_KEY) } catch { /* 기억 못 해도 그만 */ } return }
+    setPicksState(cur => { const next = { ...cur }; if (id) next[job] = id; else delete next[job]; try { localStorage.setItem(PICKS_KEY, JSON.stringify(next)) } catch { /* 기억 못 해도 그만 */ } return next })
+  }
   const box = useRef(null)
   const [past, setPastState] = useState([]), pastRef = useRef([]), [pastOpen, setPastOpen] = useState(false)   // 지난 대화(새것부터)
   const setPast = p => { pastRef.current = p; setPastState(p) }
@@ -250,7 +260,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
     const q = history.filter(m => m.role === 'user').at(-1)?.content || ''
     const prefs = kind ? {} : askPrefs()
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
-      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(kind ? { kind } : {}), ...(Object.keys(prefs).length ? { ask_pref: prefs } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), ...(history.at(-1)?.base_svg ? { base_svg: history.at(-1).base_svg } : {}), ...extra, messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
+      body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: picks } : {}), ...(kind ? { kind } : {}), ...(Object.keys(prefs).length ? { ask_pref: prefs } : {}), ...(prevHtml ? { prev_html: prevHtml } : {}), ...(history.at(-1)?.infographic ? { infographic: true } : {}), ...(history.at(-1)?.base_image ? { base_image: history.at(-1).base_image } : {}), ...(history.at(-1)?.base_svg ? { base_svg: history.at(-1).base_svg } : {}), ...extra, messages: history.map(({ role, content, context }) => ({ role, content, ...(context ? { context } : {}) })) }) })
     const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
     if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
     return { role: 'assistant', content: d.content, model: d.model, ...(d.swap ? { swap: d.swap } : {}), at: Date.now(), elapsed: d.elapsed, kind: d.kind || 'chat', ...(d.sources?.length ? { sources: d.sources } : {}), ...(d.refs?.length ? { refs: d.refs } : {}),
@@ -316,7 +326,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
     setBusy(Date.now()); setBusyJob(job)
     try {
       const r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', ...keyHeaders() },
-        body: JSON.stringify({ model: useModel, board: DOC_NAME, kind: 'deep', deep: body, messages: [{ role: 'user', content: body.topic }] }) })
+        body: JSON.stringify({ model: useModel, board: DOC_NAME, ...(Object.keys(picks).length ? { models: picks } : {}), kind: 'deep', deep: body, messages: [{ role: 'user', content: body.topic }] }) })
       const d = await r.json().catch(() => ({ error: `서버 응답 ${r.status}` }))
       if (!r.ok || d.error) throw new Error(d.error || `서버 응답 ${r.status}`)
       return d
@@ -454,6 +464,7 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
     } finally { setBusy(null) }
   }
   const [menuAt, setMenuAt] = useState(null)   // ⋯ 메뉴를 연 답의 at
+  useEffect(() => { if (!cfgOpen) return; const close = e => { if (!e.target.closest?.('[data-model-set]')) setCfgOpen(false) }; window.addEventListener('pointerdown', close, true); return () => window.removeEventListener('pointerdown', close, true) }, [cfgOpen])   // 「모델 설정」 = 바깥 누르면 닫힘
   useEffect(() => { if (menuAt == null) return; const close = e => { if (!e.target.closest?.('[data-answer-menu]')) setMenuAt(null) }; window.addEventListener('pointerdown', close, true); return () => window.removeEventListener('pointerdown', close, true) }, [menuAt])
   // 「+」 도구(2026-10-23 사용자 — Gemini·ChatGPT·Claude처럼): 기본은 앱이 길을 고르고, 고르면 이름표가 남아 그 길로만(× = 다시 자동). 「아이콘」처럼 뜻이 둘인 말을 위해
   const [pickTool, setPickTool] = useState(''), [plusOpen, setPlusOpen] = useState(false)
@@ -466,7 +477,8 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
     setMsgs(msgs.filter(m => m.role !== 'error').slice(0, -1)); setDraft(last.content)
   }
 
-  const busyLine = !busy ? '' : `${JOB_LABEL[busyJob] || (busyJob === 'chat' ? `${useModel} 생각 중` : 'KAIROS 생각 중')}${JOB_LABEL[busyJob] && (models?.jobs?.[busyJob] || (busyJob === 'board' ? useModel : '')) ? ` · ${models?.jobs?.[busyJob] || useModel}` : ''}… ${Math.round((Date.now() - busy) / 1000)}초`
+  const jobModel = picks[JOB_PICK[busyJob] || busyJob] || models?.jobs?.[JOB_PICK[busyJob] || busyJob]   // 고른 모델이 있으면 그것(「모델 설정」)
+  const busyLine = !busy ? '' : `${JOB_LABEL[busyJob] || (busyJob === 'chat' ? `${useModel} 생각 중` : 'KAIROS 생각 중')}${JOB_LABEL[busyJob] && (jobModel || (busyJob === 'board' ? useModel : '')) ? ` · ${jobModel || useModel}` : ''}… ${Math.round((Date.now() - busy) / 1000)}초`
   // 일을 아직 모를 때(서버가 짐작 — 「정리 문서로 만들어 줘」를 쳐서 물음)는 모델 이름을 안 씀: 고른 모델이 아닐 수 있음(2026-10-20 실화면)
   useEffect(() => { onBusy?.(busy && BOARD_JOBS.has(busyJob) ? busyLine : '') }, [busyLine])   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => onBusy?.(''), [])   // eslint-disable-line react-hooks/exhaustive-deps
@@ -651,8 +663,40 @@ export function ChatPanel({ ed, selKey, floating, onClose, request, focus, onBus
                 {rows.map(m => <option key={m.id} value={m.id}>{m.id === models.default ? '기본 · ' : ''}{m.id}{m.price ? `  ${m.price}` : ''}</option>)}
               </optgroup>))}
           </select>
+          <span data-model-set style={{ position: 'relative' }}>
+            <button data-testid="model-settings" style={{ ...css.ghost, padding: '2px 7px', ...(cfgOpen || Object.keys(picks).length ? { color: '#da7756', borderColor: '#da7756' } : null) }} aria-expanded={cfgOpen} onClick={() => setCfgOpen(o => !o)}
+              title="모델 설정 — 일마다 쓸 모델(안 고르면 자동: 앱이 재 보고 고른 모델, 은퇴·없어지면 KAIROS 대체로 저절로)">⚙</button>
+            {cfgOpen && <ModelSettings models={models} picks={{ ...picks, ...(model ? { chat: model } : {}) }} setPick={setPick} />}
+          </span>
         </div>
       </div>
     </aside>
   )
+}
+
+// 「모델 설정」(2026-10-26 사용자 — 회사에 넘긴 뒤에도 고를 수는 있게, 관리는 없이) — 일마다 쓸 모델. 맨 위 = 자동(앱이 재 보고 고른 모델 — 은퇴·없어지면 저절로 대체),
+// 그 아래 = 그 종류(KAIROS `type`)의 지금 모델 전부(서버 `choices` — 회사별·비싼 것부터, 판단 모델 jev 같은 것은 종류가 달라 안 섞임). 고른 값은 이 브라우저에만
+function ModelSettings({ models, picks, setPick }) {
+  const ch = models?.choices || {}, jobs = models?.jobs || {}
+  const rows = PICK_ROWS.filter(([job]) => job === 'chat' || (job.startsWith('deep') ? jobs.deep : jobs[job]))   // 서버가 못 하는 일(딥모드 등)은 칸도 없음
+  const auto = job => (job === 'chat' ? models?.default : jobs[job]) || '앱 기본'
+  return (
+    <div role="dialog" aria-label="모델 설정" data-testid="model-settings-pop" style={{ ...css.menu, left: 'auto', right: 0, width: 300, maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', padding: 10, gap: 8 }}>
+      <div style={{ font: `700 13px ${F}` }}>모델 설정</div>
+      {rows.map(([job, label, type]) => {
+        const list = ch[type] || [], cur = picks[job] || ''
+        return (
+          <label key={job} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={css.meta}>{label}</span>
+            <select data-testid={`pick-${job}`} style={{ ...css.select, maxWidth: 'none', width: '100%' }} value={cur} onChange={e => setPick(job, e.target.value)}>
+              <option value="">자동 · {auto(job)}</option>
+              {cur && !list.some(m => m.id === cur) && <option value={cur}>{cur}</option>}
+              {[...new Set(list.map(m => m.maker))].map(g => (
+                <optgroup key={g} label={g}>{list.filter(m => m.maker === g).map(m => <option key={m.id} value={m.id}>{m.id}{m.price ? `  ${m.price}` : ''}</option>)}</optgroup>))}
+            </select>
+          </label>)
+      })}
+      <span style={{ ...css.meta, whiteSpace: 'normal' }}>고른 모델이 그 일을 못 하면 자동 모델로 한 번 다시 해요(답에 「대신」). 값 = 100만 토큰당 입력 / 출력 달러, 이미지는 장당 크레딧.</span>
+      {Object.keys(picks).length > 0 && <button data-testid="picks-reset" style={{ ...css.ghost, alignSelf: 'flex-start' }} onClick={() => PICK_ROWS.forEach(([j]) => setPick(j, ''))}>모두 자동으로</button>}
+    </div>)
 }

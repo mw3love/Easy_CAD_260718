@@ -64,7 +64,7 @@ def server(tmp_path, monkeypatch):
     import server as srv
     monkeypatch.setattr(srv.gw, "resolve_api_key", lambda explicit="": "test-key")
     made = []
-    monkeypatch.setattr(srv.board_icon, "make", lambda key, ask, base_svg="", image_url="", base_url="": made.append(ask) or
+    monkeypatch.setattr(srv.board_icon, "make", lambda key, ask, base_svg="", image_url="", base_url="", **_: made.append(ask) or
                         {"svgs": ["<svg/>"], "model": "icon-m", "elapsed": 1.0})
     monkeypatch.setattr(srv.board_image, "make", lambda *a, **k: made.append("image") or {"images": [], "model": "img-m", "elapsed": 1.0}, raising=False)
     srv.Handler.data_dir = str(tmp_path)

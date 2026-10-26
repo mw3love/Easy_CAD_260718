@@ -46,6 +46,35 @@ test('모델이 없어져 대신한 답 = 답 옆 「(대신)」 + 까닭, 전�
   await expect(meta).toHaveAttribute('title', /old-model.*없어져서.*sub-model/)
 })
 
+test('⚙ 모델 설정 = 일마다 그 종류의 모델만, 고르면 요청에 실리고 새로고침해도 기억, 「모두 자동으로」(2026-10-26)', async ({ page }) => {
+  const seen = [], name = boardName('kairospick')
+  await page.route('**/api/models', r => r.fulfill({ json: { default: 'fake-model', featured: { gpt: [{ id: 'fake-model', price: '' }] },
+    jobs: { report: 'claude-opus-5-5', image: 'gpt-image-2.5-flare', icon: 'claude-sonnet-5-5', live: 'gpt-6.1-sol' },
+    choices: { llm: [{ id: 'claude-sonnet-5-5', maker: 'claude', price: '$2 / 10' }, { id: 'fake-model', maker: 'openai', price: '' }],
+      image: [{ id: 'gpt-image-2.5-flare', maker: 'openai', price: '장당 약 10크레딧' }, { id: 'fal-ai/fast-sdxl', maker: 'stability-ai', price: '' }] } } }))
+  await page.route('**/api/chat', async r => { seen.push(r.request().postDataJSON()); await r.fulfill({ json: { content: ANSWER, model: 'fake-model', elapsed: 0.1 } }) })
+  await openBoard(page, name, { chat: true }); await setCam(page)
+  await page.getByTestId('model-settings').click()
+  const pop = page.getByTestId('model-settings-pop')
+  await expect(pop.getByTestId('pick-report').locator('option').first()).toHaveText('자동 · claude-opus-5-5')
+  await expect(pop.getByTestId('pick-deep_plan')).toHaveCount(0)   // 서버가 딥모드를 못 하면 칸도 없음
+  await expect(pop.getByTestId('pick-image').locator('option')).toHaveText(['자동 · gpt-image-2.5-flare', 'gpt-image-2.5-flare  장당 약 10크레딧', 'fal-ai/fast-sdxl'])   // 그림 칸 = 그림 모델만
+  await pop.getByTestId('pick-report').selectOption('claude-sonnet-5-5')
+  await pop.getByTestId('pick-image').selectOption('fal-ai/fast-sdxl')
+  await page.mouse.click(700, 400)   // 바깥 = 닫힘
+  await expect(pop).toHaveCount(0)
+  const box = page.getByPlaceholder('물어보세요', { exact: false })
+  await box.click(); await page.keyboard.type('안녕'); await page.keyboard.press('Enter')
+  await expect(page.getByText('계통도 고치기').first()).toBeVisible()
+  expect(seen[0].models).toEqual({ report: 'claude-sonnet-5-5', image: 'fal-ai/fast-sdxl' })
+  await page.reload()
+  await page.getByTestId('model-settings').click()
+  await expect(page.getByTestId('pick-report')).toHaveValue('claude-sonnet-5-5')
+  await page.getByTestId('picks-reset').click()
+  await expect(page.getByTestId('pick-report')).toHaveValue('')
+  await expect(page.getByTestId('picks-reset')).toHaveCount(0)
+})
+
 test('칠판에서 메모를 고른 채 물으면 그 글이 같이 감', async ({ page }) => {
   const seen = [], name = boardName('kairosctx')
   await fakeKairos(page, seen)

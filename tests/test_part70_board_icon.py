@@ -72,7 +72,7 @@ def server(tmp_path, monkeypatch):
     import server as srv
     monkeypatch.setattr(srv.gw, "resolve_api_key", lambda explicit="": "test-key")
     seen = []
-    monkeypatch.setattr(srv.board_icon, "make", lambda key, ask, base_svg="", image_url="", base_url="": seen.append((ask, base_svg, image_url)) or
+    monkeypatch.setattr(srv.board_icon, "make", lambda key, ask, base_svg="", image_url="", base_url="", **_: seen.append((ask, base_svg, image_url)) or
                         {"svgs": [ICON, ICON], "model": "icon-m", "elapsed": 3.2})
     srv.Handler.data_dir = str(tmp_path)
     srv.Handler.password = ""

@@ -44,6 +44,7 @@ import pdfview  # noqa: E402  (PDF 보기 카드 — web/pdfview.py)
 NAME_RE = re.compile(r"^[\w\-가-힣]{1,64}$")
 MAX_BYTES = 200 * 1024 * 1024   # 그림이 든 칠판도 넉넉히, 하지만 끝없이는 아니게
 _MODELS = {}                    # 키 지문 → (받은 시각, 모델 목록) — `/api/models`
+PICK_JOBS = ("image", "icon", "report", "live", "deep_plan", "deep_write")   # 「모델 설정」으로 고를 수 있는 일(대화·회의 요약은 원래 `model`) — 2026-10-26 사용자: 고를 의미 있는 일만
 # 그림 요청에 날짜 말이 있을 때만 오늘 날짜를 알려 줌(없는데 알려 주면 그림에 오늘 날짜를 써 넣음 — 2026-10-20 실측)
 DATE_WORDS = re.compile(r"오늘|내일|모레|어제|그제|날짜|요일|주말|이번\s*주|다음\s*주|지난\s*주|이번\s*달|다음\s*달|\d+\s*월\s*\d+\s*일")
 
@@ -101,7 +102,24 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, {"default": gw.FALLBACK_DEFAULT_MODEL, "featured": {}, "error": str(e)})
         # 일마다 정해 둔 모델 — 대화창 「생각 중」 줄이 고른 모델이 아니라 실제로 일하는 모델을 보이게(2026-10-20 사용자: 정돈인데 gpt로 보였음)
         jobs = {"report": board_report.REPORT_MODEL, "search": board_chat.SEARCH_MODEL, "image": board_image.IMAGE_MODEL, "icon": board_icon.ICON_MODEL, "deep": deep_mode.EDITOR_MODEL, "live": live_card.LIVE_MODEL, "trace": board_trace.TRACE_MODEL}   # deep = 대화창 「+ › 딥모드」를 보임(§8 항목66 3-3), live = 「+ › 움직이는 카드」(4단계)
-        return self._json(200, {**hit[1], "jobs": jobs})
+        jobs.update(deep_plan=deep_mode.EDITOR_MODEL, deep_write=deep_mode.WRITER_MODEL)   # 「모델 설정」 칸(2026-10-26)
+        jobs = {k: model_pick.pick(v) for k, v in jobs.items()}   # 은퇴·없어져 갈아탄 것은 지금 부르는 이름으로
+        return self._json(200, {**hit[1], "jobs": jobs, "choices": model_pick.choices()})
+
+    def _with(self, job: str, default: str, fn):
+        """대화창 「모델 설정」에서 사람이 고른 모델(`models`)로 먼저 — 그 모델이 이 일을 못 하면(형식이 깨짐·창구가 안 받음 등) 앱 기본으로 한 번 다시,
+        답에 「(대신)」(2026-10-26). 크레딧·바쁨·시간 초과는 다시 안 함(그대로 오류 — 시간 초과를 다시 하면 두 배로 기다림)."""
+        mine = (getattr(self, "_picked", None) or {}).get(job)
+        if not mine or mine == default:
+            return fn(default)
+        try:
+            return fn(mine)
+        except Exception as e:
+            if gw.classify_error(e) in ("quota", "server_busy", "timeout"):
+                raise
+            sys.stderr.write("[고른 모델 못 함] %s %s → %s: %s\n" % (job, mine, default, str(e)[:200]))
+            out = fn(default)
+            return {**out, "swap": {"from": mine, "to": out.get("model") or default, "why": "못 함"}} if isinstance(out, dict) else out
 
     def _chat(self):
         n = int(self.headers.get("Content-Length") or 0)
@@ -112,6 +130,8 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError:
             return self._json(400, {"error": "json"})
         self._extra = {}   # 아이콘·그림 답에 덧붙일 칸(되묻기 기억 — 연결을 다시 쓸 수 있어 요청마다 비움)
+        picked = req.get("models") if isinstance(req.get("models"), dict) else {}   # 대화창 「모델 설정」 — 일마다 사람이 고른 모델(없으면 앱 기본, `_with`)
+        self._picked = {k: v for k, v in picked.items() if k in PICK_JOBS and isinstance(v, str) and re.fullmatch(r"[\w.:/\-]{1,120}", v)}
         key = self._key()
         if not key:
             return self._json(503, {"error": "이 서버 PC에 KAIROS 키가 없습니다(~/.claude/.secrets/easycad-gateway.key)"})
@@ -229,14 +249,14 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if step == "plan":
                 prev = d.get("prev") if isinstance(d.get("prev"), dict) else None
-                out = deep_mode.make_plan(gw._client(key, base, timeout=300), topic, brief, prev=prev, fix=str(d.get("fix") or "") if prev else "")
+                out = self._with("deep_plan", deep_mode.EDITOR_MODEL, lambda m: deep_mode.make_plan(gw._client(key, base, timeout=300), topic, brief, prev=prev, fix=str(d.get("fix") or "") if prev else "", model=m))
                 sys.stderr.write("[딥모드 계획] %s %.1f초 꼭지 %d%s\n" % (out["model"], out["elapsed"], len(out["plan"]["sections"]), " (고치기)" if prev else ""))
                 return self._json(200, {"kind": "deep", **out, "credits": self._spent(key, base, b0)})
             if step == "build":
                 plan = d.get("plan") if isinstance(d.get("plan"), dict) else {}
                 uses_board = any(isinstance(s, dict) and s.get("source") == "board" for s in plan.get("sections") or [])
                 material = self._board_material(self._name(str(req.get("board") or ""))) if uses_board else ""
-                out = deep_mode.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base))
+                out = self._with("deep_write", deep_mode.WRITER_MODEL, lambda m: deep_mode.build(key, gw._client(key, base, timeout=600), topic, brief, plan, base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base), model=m))
                 sys.stderr.write("[딥모드 만들기] %s %.1f초 출처 %d%s\n" % (out["model"], out["elapsed"], len(out["plan"]["sources"]), " 재료 없음: " + ", ".join(out["missing"]) if out["missing"] else ""))
                 for w in out.get("switched") or []:   # 공공 데이터 → 웹 검색으로 갈아탄 꼭지(숫자 없음·다른 품목 — 실사용에서 얼마나 걸리나 보려고)
                     sys.stderr.write("[딥모드 웹으로] %s\n" % w)
@@ -246,7 +266,7 @@ class Handler(SimpleHTTPRequestHandler):
                 idx = d.get("idx") if isinstance(d.get("idx"), list) else []
                 uses_board = any(isinstance(s, dict) and s.get("source") == "board" for j, s in enumerate(plan.get("sections") or []) if j in idx)
                 material = self._board_material(self._name(str(req.get("board") or ""))) if uses_board else ""
-                out = deep_mode.redo(key, gw._client(key, base, timeout=600), plan, idx, brief, str(d.get("ask") or ""), base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base))
+                out = self._with("deep_write", deep_mode.WRITER_MODEL, lambda m: deep_mode.redo(key, gw._client(key, base, timeout=600), plan, idx, brief, str(d.get("ask") or ""), base_url=base, board=material, image=self._deep_image(str(req.get("board") or ""), key, base), model=m))
                 sys.stderr.write("[딥모드 꼭지 다시] %s %.1f초 꼭지 %s%s\n" % (out["model"], out["elapsed"], [s["i"] for s in out["sections"]], " 못 씀: " + ", ".join(out["missing"]) if out["missing"] else ""))
                 return self._json(200, {"kind": "deep", "step": "section", **out, "credits": self._spent(key, base, b0)})
         except ValueError as e:
@@ -262,7 +282,7 @@ class Handler(SimpleHTTPRequestHandler):
             return None
 
         def draw(prompt: str) -> dict:
-            out = board_image.generate(key, prompt, n=1, base_url=base)
+            out = self._with("image", board_image.IMAGE_MODEL, lambda m: board_image.generate(key, prompt, n=1, base_url=base, model=m))
             data, ext = out["images"][0]
             url = self._save_img(name, data, ext)
             from io import BytesIO
@@ -294,7 +314,7 @@ class Handler(SimpleHTTPRequestHandler):
         """움직이는 카드 하나 → {"kind": "live", "content", "title", "html", "model", "elapsed"} — 칠판에 붙이면 문서 카드 `live`(스크립트만 켠 칸).
         prev_html = 바로 앞 답이 움직이는 카드면 그 카드를 말대로 고침(정리 문서 `prev_html`과 같은 길)."""
         try:
-            out = live_card.make(gw._client(key, gw.resolve_base_url(), timeout=600), ask, material, prev_html=prev_html)
+            out = self._with("live", live_card.LIVE_MODEL, lambda m: live_card.make(gw._client(key, gw.resolve_base_url(), timeout=600), ask, material, prev_html=prev_html, model=m))
         except ValueError as e:
             return self._json(400, {"error": str(e)})
         except Exception as e:
@@ -306,7 +326,7 @@ class Handler(SimpleHTTPRequestHandler):
     def _icon(self, ask: str, key: str, base_svg: str = "", image_url: str = ""):
         """아이콘 → {"kind": "icon", "content", "svgs": [SVG 글…], "model", "elapsed"} — 도형으로 바꾸기는 칠판(`svgin.js`), 대화 기록에 SVG 글 그대로(작음)."""
         try:
-            out = board_icon.make(key, ask, base_svg=base_svg, image_url=image_url, base_url=gw.resolve_base_url())
+            out = self._with("icon", board_icon.ICON_MODEL, lambda m: board_icon.make(key, ask, base_svg=base_svg, image_url=image_url, base_url=gw.resolve_base_url(), model=m))
         except Exception as e:
             return self._json(502, {"error": f"KAIROS 아이콘 만들기 실패: {e}"})
         sys.stderr.write("[아이콘] %s %d개 %.1f초%s\n" % (out["model"], len(out["svgs"]), out["elapsed"], " (고치기)" if base_svg else " (그림 보고)" if image_url else ""))
@@ -322,7 +342,7 @@ class Handler(SimpleHTTPRequestHandler):
         if not material.strip() and not prev_html:
             return self._json(400, {"error": "정리할 것이 없어요 — 칠판에서 메모·글을 고르고 다시 물어 주세요"})
         try:
-            out = board_report.make(gw._client(key, gw.resolve_base_url(), timeout=600), material, ask, prev_html=prev_html)
+            out = self._with("report", board_report.REPORT_MODEL, lambda m: board_report.make(gw._client(key, gw.resolve_base_url(), timeout=600), material, ask, prev_html=prev_html, model=m))
         except Exception as e:
             return self._json(502, {"error": f"KAIROS 정리 문서 실패: {e}"})
         sys.stderr.write("[정리 문서] %s %.1f초 %d자%s\n" % (out["model"], out["elapsed"], len(out["html"]), " 확인할 숫자 %d" % len(out["unchecked"]) if out.get("unchecked") else ""))
@@ -366,7 +386,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(400, {"error": "칠판 이름이 없어요"})
         t0 = time.time()
         try:
-            out = board_image.generate(key, prompt, base_url=gw.resolve_base_url(), **({"input_images": edit, "n": 1} if edit else {}))   # 고치기는 거의 같은 결과라 1장(크레딧)
+            out = self._with("image", board_image.IMAGE_MODEL, lambda m: board_image.generate(key, prompt, base_url=gw.resolve_base_url(), model=m, **({"input_images": edit, "n": 1} if edit else {})))   # 고치기는 거의 같은 결과라 1장(크레딧)
         except Exception as e:
             return self._json(502, {"error": f"KAIROS 그림 만들기 실패: {e}"})
         urls = [{"url": self._save_img(name, data, ext)} for data, ext in out["images"]]
@@ -1006,8 +1026,11 @@ def main(argv=None):
     print(f"Magic Board 칠판: http://{'localhost' if a.host in ('0.0.0.0', '127.0.0.1') else a.host}:{a.port}  · 저장 폴더: {a.data}")
     print("편집: " + ("공용 비밀번호 필요" if Handler.password else "누구나(비밀번호 없음 — --password 또는 edit_password.txt로 정함)"))
     threading.Thread(target=_route_check_weekly, args=(a.data,), daemon=True).start()
-    if gw.resolve_api_key():   # 모델 목록을 먼저 받아 둠 — 은퇴한 모델을 첫 요청부터 대신할 것으로(`model_pick` ①, 2026-10-26)
-        threading.Thread(target=model_pick.load, args=(gw.resolve_api_key(), gw.resolve_base_url()), daemon=True).start()
+    if gw.resolve_api_key():   # 모델 목록을 먼저 받아 둠 — 은퇴한 모델을 첫 요청부터 대신할 것으로(`model_pick` ①) + 「모델 설정」 그림 값(무료 견적), 2026-10-26
+        def warm(key=gw.resolve_api_key(), base=gw.resolve_base_url()):
+            model_pick.load(key, base)
+            model_pick.price_images(key, gw._normalize_base_url(base))
+        threading.Thread(target=warm, daemon=True).start()
     _Server((a.host, a.port), Handler).serve_forever()
 
 

@@ -27,6 +27,7 @@ IMAGE_MAX = 15.0       # 원래 그림 값을 모를 때 장당 크레딧 상한
 DEAD_TTL = 3600        # 「없음」 기억(초) — 지나면 원래 이름으로 한 번 다시 부름(돌아왔을 수도)
 LIST_TTL = 600         # 대신할 것을 찾을 때 목록이 이보다 오래면 새로 받음(서버 `/api/models`와 같은 10분)
 CHAT_PATH = "/chat/completions/"
+MAKER_ORDER = {"openai": 0, "claude": 1, "gemini": 2, "google": 2}   # 「모델 설정」 목록 차례(나머지 회사는 그 뒤 이름순)
 
 _lock = threading.Lock()
 _seen: dict = {}       # id → 목록 한 줄(한 번이라도 본 것 — 목록에서 사라져도 회사·값을 기억)
@@ -232,6 +233,29 @@ def fallback(mid: str, kind: str, api_key: str, base_url: str = gw.BASE_URL, *, 
             _swaps[mid] = {"to": alt, "why": "없어짐"}
     sys.stderr.write("[모델 없음] %s → %s\n" % (mid, alt or "대신할 것 없음"))
     return alt
+
+
+def choices() -> dict:
+    """대화창 「모델 설정」 목록(2026-10-26) — 종류(`type`)로 나눈 지금 모델 전부, 회사별·비싼 것부터.
+    {"llm": [{"id", "maker", "price"}], "image": [{"id", "maker", "price"(장당 견적 — 아직 모르면 "")}]}. 판단(jev)·음성·임베딩은 고르는 칸이 없어 안 넣음."""
+    llm = [r for r in _rows("llm") if _price(r) is not None and any(str(e).endswith(CHAT_PATH) for e in r.get("endpoints") or [CHAT_PATH])
+           and not any(w in r["id"].lower() for w in ("image", "tts", "audio"))]
+    first = lambda r: (MAKER_ORDER.get(str(r.get("owned_by")), 9), str(r.get("owned_by")))   # noqa: E731 — 대화창 목록과 같은 차례(GPT·Claude·Gemini 먼저)
+    llm.sort(key=lambda r: (first(r), -_price(r), r["id"]))
+    img = sorted(_rows("image"), key=lambda r: (first(r), _cost.get(r["id"], 1e9), r["id"]))
+    p = lambda r: gw.price_text({"input": (r.get("pricing") or {}).get("input"), "output": _price(r)})   # noqa: E731
+    return {"llm": [{"id": r["id"], "maker": r.get("owned_by") or "", "price": p(r)} for r in llm],
+            "image": [{"id": r["id"], "maker": r.get("owned_by") or "",
+                       "price": f"장당 약 {_cost[r['id']]:g}크레딧" if r["id"] in _cost else ""} for r in img]}
+
+
+def price_images(api_key: str, base_url: str = gw.BASE_URL, http=None):
+    """그림 모델마다 한 장 견적(무료)을 받아 둠 — 「모델 설정」 목록에 값을 보이려고(서버를 켤 때 뒤에서)."""
+    if http is None:
+        import httpx
+        http = httpx
+    with ThreadPoolExecutor(8) as ex:
+        list(ex.map(lambda r: _estimate(api_key, base_url, r["id"], http), _rows("image")))
 
 
 class _Over:

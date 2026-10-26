@@ -58,7 +58,7 @@ def test_guess_image_but_diagrams_stay_chat():
 def server(tmp_path, monkeypatch):
     import server as srv
     monkeypatch.setattr(srv.gw, "resolve_api_key", lambda explicit="": "test-key")
-    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="": {"images": [(JPG, "jpg"), (PNG, "png")], "model": "img-m", "credits": 68.2})
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="", **_: {"images": [(JPG, "jpg"), (PNG, "png")], "model": "img-m", "credits": 68.2})
     srv.Handler.data_dir = str(tmp_path)
     srv.Handler.password = ""
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
@@ -89,7 +89,7 @@ def test_server_infographic_uses_report_material(server, monkeypatch):
     base, data = server
     import server as srv
     seen = []
-    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="": seen.append(prompt) or {"images": [(JPG, "jpg")], "model": "img-m", "credits": 10.4})
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="", **_: seen.append(prompt) or {"images": [(JPG, "jpg")], "model": "img-m", "credits": 10.4})
 
     def ask(msg):
         body = json.dumps({"board": "점검", "kind": "image", "infographic": True, "messages": [msg]}).encode()
@@ -108,7 +108,7 @@ def test_server_image_with_live_info_searches_first(server, monkeypatch):
     base, _ = server
     import server as srv
     seen = []
-    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="": seen.append(prompt) or {"images": [(JPG, "jpg")], "model": "img-m", "credits": 10.4})
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="", **_: seen.append(prompt) or {"images": [(JPG, "jpg")], "model": "img-m", "credits": 10.4})
     monkeypatch.setattr(srv.board_chat, "chat", lambda key, msgs, **kw: {"content": "내일 전주: 오전 비 뒤 맑음, 12~17도[1]", "model": "sonar-x", "kind": kw.get("kind"),
                                                                       "sources": [{"n": 1, "url": "https://weather.go.kr", "title": "기상청"}]})
     body = json.dumps({"board": "그림", "kind": "image", "messages": [{"role": "user", "content": "내일의 전주 날씨를 고흐 느낌으로 그려줘"}]}).encode()
@@ -141,7 +141,7 @@ def test_server_image_followup_routes_and_carries_context(server, monkeypatch):
     base, _ = server
     import server as srv
     seen = []
-    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="": seen.append(prompt) or {"images": [(JPG, "jpg")], "model": "img-m", "credits": 10.4})
+    monkeypatch.setattr(srv.board_image, "generate", lambda key, prompt, base_url="", **_: seen.append(prompt) or {"images": [(JPG, "jpg")], "model": "img-m", "credits": 10.4})
     msgs = [{"role": "user", "content": "송신탑을 수채화로 그려줘"}, {"role": "assistant", "content": "그림 후보 2장 — 마음에 드는 것을 눌러 칠판에 붙여요"},
             {"role": "user", "content": "날짜도 넣어 줘"}]   # 종류 없이 — 그림 뒤 고칠 말이면 그림으로
     body = json.dumps({"board": "그림", "messages": msgs}).encode()
