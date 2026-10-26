@@ -21,7 +21,7 @@ import { Plugin } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { BOARD_FONT, METRICS, PT, TEXT_MARGIN, urlSpans } from './geom.js'
 import { CODE_BAND, MONO_FONT } from './render.jsx'
-import { LINE_KINDS, MEMO, MEMO_KIND, MUTED, caretLine, docToLines, lineBlocks, linesToDoc } from './memo.js'
+import { HANDLE_MIN_Z, LINE_KINDS, MEMO, MEMO_KIND, MUTED, caretLine, docToLines, lineBlocks, linesToDoc } from './memo.js'
 import { Italic, Strike, Underline } from './marks.js'
 import { FormatBar } from './formatbar.jsx'
 
@@ -183,7 +183,7 @@ ${S} .mb-url{color:#2f80ed;text-decoration:underline}${S} code{font-family:${MON
     style={{ position: 'absolute', left: spec.left, top: spec.top, width: spec.width, boxSizing: 'border-box', padding: `${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.PAD)} ${P(MEMO.LPAD)}`, background: 'transparent', borderRadius: P(10), outline: '1.5px solid #89b4fa', zIndex: 20, colorScheme: 'light' }}>
     <style>{css}</style>
     <div ref={host} />
-    {hov && !turn && <div data-testid="memo-edit-handle" title="끌기 = 옮기기 · 누르기 = 메뉴"
+    {hov && !turn && z >= HANDLE_MIN_Z && <div data-testid="memo-edit-handle" title="끌기 = 옮기기 · 누르기 = 메뉴"
       onPointerDown={e => { e.preventDefault(); e.stopPropagation(); finishR.current?.({ grab: { i: hov.i, clientX: e.clientX, clientY: e.clientY } }) }}
       style={{ position: 'absolute', left: hx, top: hov.y - HH / 2, width: HW, height: HH, borderRadius: 4, background: 'rgba(127,127,127,.16)', cursor: 'grab', display: 'grid', placeItems: 'center', color: '#8a8f98', font: '700 12px sans-serif', lineHeight: 1, userSelect: 'none' }}>⠿</div>}
     {!turn && <FormatBar ed={edInst} onTurn={() => turnOpenR.current?.()} />}

@@ -345,6 +345,27 @@ def test_line_unit_and_handle_rect_follow_web():
         w.close()
 
 
+def test_handle_hidden_when_zoomed_far_out():
+    """2026-10-26 사용자: 많이 줄이면 ⠿가 줄 여럿에 걸쳐 헷갈림 — 60% 밑에선 숨김(81~60%는 메모 바깥에), 웹 HANDLE_MIN_Z와 같게."""
+    from easycad.canvas.core_memo_lines import HANDLE_MIN_Z, _zoom, memo_hover
+    w, (memo,) = _memo_win()
+    try:
+        v = w._view
+        v.resetTransform()
+        v.scale(0.7, 0.7)
+        memo_hover(v, _row_scene(memo, 1))
+        assert memo._hov is not None                                                    # 70% = 아직 보임(바깥)
+        assert memo.handle_hit(memo.mapFromScene(_handle_scene(w, memo, 1)), _zoom(v, memo)) is not None
+        v.resetTransform()
+        v.scale(0.5, 0.5)
+        assert _zoom(v, memo) < HANDLE_MIN_Z
+        assert memo.handle_hit(memo.mapFromScene(_handle_scene(w, memo, 1)), _zoom(v, memo)) is None   # 휠로 줄여 남은 손잡이도 못 잡음
+        memo_hover(v, _row_scene(memo, 1))
+        assert memo._hov is None                                                        # 50% = 손잡이 없음
+    finally:
+        w.close()
+
+
 def test_handle_click_selects_line_and_menu_then_shift_ctrl_pick():
     from unittest.mock import patch
     from PyQt6.QtWidgets import QMenu

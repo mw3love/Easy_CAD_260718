@@ -44,7 +44,7 @@ import { answerTable, freeSpot, nearSpot, sourceLine } from '../chatFormat.js'
 import { LIVE_H, LIVE_W, bigPage, liveFits } from './livecard.js'
 import { WEB_HEAD, WEB_INFO_H, WEB_SLEEP_PX, fetchLinkInfo, isYoutube, normalizeUrl, openBtnRect, playYoutube, siteOf, webCardFields } from './webcard.js'
 import { legendEntries, restyleLegendRow, syncLegends } from './legend.js'
-import { LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
+import { HANDLE_MIN_Z, LINE_COLORS, LINE_KINDS, MEMO, MUTED, convertLine, lineUnit, memoFromAnswer, memoText, moveLines, pickLines, recolorLine, selIdx, selUnits, toggleTodos } from './memo.js'
 import { MemoEditor } from './memoedit.jsx'
 import { htmlPlan, looksMarkdown, textKind, tsvRows } from './clipin.js'
 import { looksSvg, svgFits, svgItems } from './svgin.js'
@@ -658,8 +658,8 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
   function hoverCursor(p) {
     if (readOnly) { setCursor('grab'); return }
     const t = R.current.tool
-    if (t === 'select' && !R.current.editing) { const hv = memoRowAt(p), k = hv ? `${hv.it._id}:${hv.s}:${hv.e}` : null   // 메모 줄 위 = 왼쪽 ⠿
-      if (k !== (R.current.memoHov ? `${R.current.memoHov.id}:${R.current.memoHov.s}:${R.current.memoHov.e}` : null)) setMemoHov(hv ? { id: hv.it._id, s: hv.s, e: hv.e } : null)
+    if (t === 'select' && !R.current.editing) { const hv = memoRowAt(p), on = hv && memoHandleOn(hv.it), k = on ? `${hv.it._id}:${hv.s}:${hv.e}` : null   // 메모 줄 위 = 왼쪽 ⠿(많이 줄이면 없음)
+      if (k !== (R.current.memoHov ? `${R.current.memoHov.id}:${R.current.memoHov.s}:${R.current.memoHov.e}` : null)) setMemoHov(on ? { id: hv.it._id, s: hv.s, e: hv.e } : null)
       if (hv && memoHandleHit(p)) { setHp(null); setCursor('grab'); return }
       if (hv && inMemoGutter(p)) { setHp(null); setCursor('default'); return }
       if (hv && (memoCheckAt(p) || memoMoreAt(p))) { setHp(null); setCursor('pointer'); return }
@@ -1082,8 +1082,9 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
     const x = w + 5 / k <= MEMO.LPAD ? it.rect[0] + MEMO.LPAD - w - 3 / k : it.rect[0] - w - 4 / k
     return { x, y: it.rect[1] + r.cy - h / 2, w, h }
   }
+  function memoHandleOn(it) { return R.current.cam.z * (it.scale || 1) >= HANDLE_MIN_Z }   // 많이 줄여 보면 ⠿ 숨김(휠로 줄여 마우스가 안 움직였어도)
   function memoHandleHit(p) {
-    const hv = R.current.memoHov, it = hv && R.current.model.items.find(x => x._id === hv.id); if (!it) return null
+    const hv = R.current.memoHov, it = hv && R.current.model.items.find(x => x._id === hv.id); if (!it || !memoHandleOn(it)) return null
     const q = toLocal(it, p), b = memoHandleRect(it, hv.s); return q.x >= b.x && q.x <= b.x + b.w && q.y >= b.y && q.y <= b.y + b.h ? { it, s: hv.s, e: hv.e } : null
   }
   function inMemoGutter(p) {   // ⠿가 뜨는 메모 왼쪽 띠 — 여기선 화살표 뽑기(포트점)를 안 함(손잡이를 조금 빗나가도 화살표가 생기지 않게)
@@ -2274,7 +2275,7 @@ export const Editor = forwardRef(function Editor({ others = [], dark, model, set
             : h.qc ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={(HANDLE * (hoverKey === h.key ? 0.75 : 0.45)) / z} fill={QC_BLUE} stroke="#fff" strokeWidth={1 / z} style={{ transition: 'r .12s ease-out' }} />
             : h.round ? <circle key={h.key} cx={h.p.x} cy={h.p.y} r={HANDLE / 2 / z} fill={PEACH} stroke="#fff" strokeWidth={1 / z} />
             : stylePv ? null : <rect key={h.key} x={h.p.x - HANDLE / 2 / z} y={h.p.y - HANDLE / 2 / z} width={HANDLE / z} height={HANDLE / z} fill={BLUE} stroke="#fff" strokeWidth={1 / z} />))}
-          {memoHov && !editing && !live && (() => { const it = byId.get(memoHov.id); if (!it || it.type !== 'memo') return null; const b = memoHandleRect(it, memoHov.s), k = z * (it.scale || 1)
+          {memoHov && !editing && !live && (() => { const it = byId.get(memoHov.id); if (!it || it.type !== 'memo' || !memoHandleOn(it)) return null; const b = memoHandleRect(it, memoHov.s), k = z * (it.scale || 1)
             return <g transform={transformOf(it)} style={{ pointerEvents: 'none' }}><rect x={b.x} y={b.y} width={b.w} height={b.h} rx={4 / k} fill="rgba(127,127,127,.16)" />
               {[0, 1, 2].flatMap(r => [0, 1].map(c => <circle key={`${r}${c}`} cx={b.x + b.w * (c ? 0.66 : 0.34)} cy={b.y + b.h * (0.28 + r * 0.22)} r={1.5 / k} fill="#8a8f98" />))}</g> })()}
           {lineSel && !editing && (() => { const it = byId.get(lineSel.id); if (!it || it.type !== 'memo') return null; const rows = memoLayout(it).rows

@@ -7,6 +7,8 @@ import { richTextToRuns, runsToRichText } from '../ecadFormat.js'
 
 // LPAD = 왼쪽 여백 — 줄 손잡이 ⠿가 메모 안쪽에 들어가는 자리(2026-10-18 사용자: 바깥 손잡이는 글과 너무 떨어짐)
 export const MEMO = { W: 340, PAD: 14, LPAD: 26, GAP: 5, INDENT: 18, QUOTE: 14, HR: 9, CELL: 4 }   // CELL = 표 칸 안 여백
+// 이보다 작게 보면 줄 손잡이 ⠿를 숨김 — 한 줄이 손잡이(22px)보다 한참 낮아져 어느 줄 것인지 헷갈리고 글도 거의 안 읽힘(2026-10-26 사용자, 데스크톱 core_memo_lines와 같게)
+export const HANDLE_MIN_Z = 0.6
 export const MEMO_KIND = {
   p: { pt: 10.5 }, ul: { pt: 10.5 }, ol: { pt: 10.5 }, todo: { pt: 10.5 }, quote: { pt: 10.5 },
   h1: { pt: 16, bold: true, gap: 10 }, h2: { pt: 13.5, bold: true, gap: 8 }, h3: { pt: 11.5, bold: true, gap: 6 }, code: { pt: 10, mono: true }, hr: { pt: 10.5 },

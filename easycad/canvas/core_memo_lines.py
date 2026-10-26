@@ -18,6 +18,7 @@ from easycad.canvas.core_memo import (LINE_COLORS, MEMO, TEXT_MARGIN, convert_li
 BLUE = QColor("#2f80ed")
 SEL = QColor(137, 180, 250, 71)   # rgba(137,180,250,.28)
 HW, HH = 16, 22                   # 손잡이 화면 크기(px)
+HANDLE_MIN_Z = 0.6                # 이보다 작게 보면 손잡이 숨김 — 줄이 손잡이보다 한참 낮아져 어느 줄 것인지 헷갈림(2026-10-26, 웹 memo.js와 같게)
 
 
 def _zoom(view, item) -> float:
@@ -55,9 +56,10 @@ def memo_hover(view, scene_pos):
     if top is None:
         return None
     q = top.mapFromScene(scene_pos)
+    on = _zoom(view, top) >= HANDLE_MIN_Z   # 많이 줄여 보면 손잡이 없음
     if getattr(top, "_editor", None) is not None:   # 고치는 중에도 줄 손잡이(웹 memoedit ⠿) — 자리는 편집기 줄에서
         ed = top._editor
-        hit = ed.line_at_y(ed.mapFromParent(q).y()) if top.rect().adjusted(-28 / _zoom(view, top), 0, 0, 0).contains(q) else None
+        hit = ed.line_at_y(ed.mapFromParent(q).y()) if on and top.rect().adjusted(-28 / _zoom(view, top), 0, 0, 0).contains(q) else None
         hov = (hit[0], ed.mapToParent(QPointF(0, hit[1])).y()) if hit else None
         if hov != top._edit_hov:
             top._edit_hov = hov
@@ -65,7 +67,7 @@ def memo_hover(view, scene_pos):
         if hov and top.edit_handle_rect(_zoom(view, top)).contains(q):
             return "handle"
         return "text" if top.rect().contains(q) else None
-    top.set_hover(q)
+    top.set_hover(q if on else None)
     return "handle" if top.handle_hit(q, _zoom(view, top)) is not None else None
 
 
@@ -100,8 +102,8 @@ class _MemoLinesMixin:
 
     def paint_edit_handle(self, p):
         """고치는 중 ⠿(paint_card가 글 대신 부름)."""
-        if self._edit_hov is not None:
-            k = abs(p.worldTransform().m11()) or 1.0
+        k = abs(p.worldTransform().m11()) or 1.0
+        if self._edit_hov is not None and k >= HANDLE_MIN_Z:
             self._paint_handle_at(p, self.edit_handle_rect(k), k)
 
     def _view(self):
@@ -129,7 +131,7 @@ class _MemoLinesMixin:
         return QRectF(x, R.top() + r["cy"] - h / 2, w, h)
 
     def handle_hit(self, q: QPointF, k: float):
-        if self._hov is None:
+        if self._hov is None or k < HANDLE_MIN_Z:   # 휠로 줄여 마우스가 안 움직였어도
             return None
         return self._hov if self.handle_rect(self._hov[0], k).contains(q) else None
 
@@ -161,7 +163,7 @@ class _MemoLinesMixin:
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             p.setPen(pen)
             p.drawLine(QPointF(r.left() + MEMO["LPAD"], self._drop), QPointF(r.right() - MEMO["PAD"], self._drop))
-        if self._hov is not None and not getattr(self, "_locked", False):
+        if self._hov is not None and not getattr(self, "_locked", False) and k >= HANDLE_MIN_Z:
             self._paint_handle_at(p, self.handle_rect(self._hov[0], k), k)
 
     # ---- 고르기 ----
@@ -185,7 +187,7 @@ class _MemoLinesMixin:
         k = _zoom(view, self)
         ed = getattr(self, "_editor", None)
         if ed is not None:   # 고치는 중 ⠿ 누르기 = 고치기를 마치고 그 줄 끌기·(놓으면) 메뉴로(웹 grab)
-            if self._edit_hov is None or not self.edit_handle_rect(k).contains(q):
+            if self._edit_hov is None or k < HANDLE_MIN_Z or not self.edit_handle_rect(k).contains(q):
                 return False
             i = self._edit_hov[0]
             self._edit_hov = None
